@@ -1632,6 +1632,21 @@ export class MagnetKit {
     this.arena.showFloatingText(caster.x, caster.y - 40, '🛹 MAG-LEV', '#aa66ff');
   }
 
+  /**
+   * Ruin Mastery — Second Skin. The Mag-Lev board is a locomotion mode: while it is under you
+   * the click slings instead of firing and contact is a bash, which makes it a form rather than
+   * a buff. `dismountMagLev` is the kit's own way off, shield collapse and all.
+   */
+  revertForms(f: Fighter): string[] {
+    const owner: 'player' | 'npc' | null = f === this.arena.player ? 'player'
+      : f === this.arena.npc ? 'npc' : null;
+    if (!owner) return [];
+    const mounted = owner === 'player' ? this.magLevMounted : this.npcMagLevMounted;
+    if (!mounted) return [];
+    this.dismountMagLev(owner);
+    return ['Mag-Lev'];
+  }
+
   private dismountMagLev(owner: 'player' | 'npc'): void {
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     caster.shieldHp = 0; // dismounting removes all shield HP you have

@@ -14,11 +14,10 @@ const fire: ElementCodex = {
 
   abilities: {
     fireball: {
-      magic:
-        'The simplest working of the school and the one every other fire ability is built on — air '
-        + 'compressed against the palm until it ignites, then thrown. There is no guidance on it and '
-        + 'no fuse: the caster shapes a burning mass at arm\'s length, a flash blows off the hand as '
-        + 'it leaves, and after that it is just a hot rock travelling in a straight line.',
+      basics:
+        'Your basic attack: a fireball thrown at the cursor for 20 damage. It flies 520 px/s in a '
+        + 'straight line, is used up on the first fighter it touches, and comes back every 0.5s — the '
+        + 'only fire ability you can lean on continuously.',
       cast: 'Click, aimed at the cursor. No wind-up, no lock — it fires the instant the cooldown is clear.',
       effects: [
         { tag: 'damage', label: 'Impact', detail: '20 damage to the first fighter it touches. The projectile is consumed on contact.' },
@@ -26,10 +25,9 @@ const fire: ElementCodex = {
         { tag: 'utility', label: 'Rate of fire', detail: '0.5s cooldown — roughly two per second, and the only fire ability you can lean on continuously.' },
       ],
       upgrade: {
-        magic:
-          'Flameshredder does not change the throw, it changes what the fire does after it lands. The '
-          + 'flame is packed so it clings rather than flashing off, and the target keeps burning after '
-          + 'the impact has faded.',
+        basics:
+          'The throw is unchanged; what lands now sticks. Every hit sets a burn of 1 damage every 0.5s '
+          + 'for 3 seconds, so a connected fireball is 20 up front and 6 more afterwards.',
         effects: [
           { tag: 'dot', label: 'Clinging burn', detail: '1 damage every 0.5s for 3s after a hit — 6 extra damage, if they do not break away from the fight.', requiresUpgrade: 'click' },
         ],
@@ -40,11 +38,10 @@ const fire: ElementCodex = {
     },
 
     'flame-dash': {
-      magic:
-        'A controlled deflagration behind the caster, used as propulsion. They fire off the ground they '
-        + 'are standing on and let the blast throw them along the aim line, leaving a comet tail through '
-        + 'the space they crossed. The damage is not at the destination — it is at the launch point, '
-        + 'where the charge actually went off.',
+      basics:
+        'Dashes you toward the cursor at 640 velocity and explodes where you launched from — 18 damage '
+        + 'in a 90px radius on the spot you left, not the spot you land. It lays a burning trail over the '
+        + 'first 180px and leaves a 46px scorch on the launch point.',
       cast: 'E, aimed at the cursor. Instant. The dash carries you 640 units of velocity along the aim.',
       effects: [
         { tag: 'movement', label: 'Blast propulsion', detail: 'Dashes the caster toward the cursor at 640 velocity. Trail is laid over the first 180px of the path.' },
@@ -52,9 +49,10 @@ const fire: ElementCodex = {
         { tag: 'area', label: 'Scorch mark', detail: 'A 46px scorch and a 12-ember scatter are left on the launch point as a visual record of where the blast was.' },
       ],
       upgrade: {
-        magic:
-          'Propulsion turns one clean detonation into a ragged chain of them — the caster leaks burning '
-          + 'fuel across the whole dash instead of spending it all at the launch.',
+        basics:
+          'The launch blast still happens, and four more are added along the way: blasts sampled down the '
+          + 'dash path 70ms apart, 5–8 damage each in a 50px radius. The whole lane you crossed is '
+          + 'dangerous instead of only the spot you left.',
         effects: [
           { tag: 'damage', label: 'Trail of explosions', detail: '4 blasts sampled along the dash path 70ms apart, each 5–8 damage in a 50px radius. The whole lane you crossed is dangerous, not just the launch point.', requiresUpgrade: 'e' },
         ],
@@ -65,11 +63,10 @@ const fire: ElementCodex = {
     },
 
     'pressure-bomb': {
-      magic:
-        'A charge of compressed fire lobbed onto a spot and left to cook. The ground under it is marked '
-        + 'red the moment it lands, which is a genuine warning and not decoration — anybody watching has '
-        + 'the full fuse to walk out. This is fire used as area denial rather than as a projectile: it '
-        + 'does not chase, it just makes a circle of floor expensive to stand in.',
+      basics:
+        'Plants a charge at the cursor that cooks for 1.5 seconds and then deals 32 damage in a 100px '
+        + 'radius with no falloff. The floor is marked red for the whole fuse — it is area denial, not a '
+        + 'hit — and the blast shakes the camera for 140ms.',
       cast: 'R, planted at the cursor. Instant to throw; the charge itself takes 1.5s to go off.',
       effects: [
         { tag: 'area', label: 'Fuse', detail: '1.5s from planting to detonation, with the ground marked red for the whole window.' },
@@ -77,10 +74,10 @@ const fire: ElementCodex = {
         { tag: 'utility', label: 'Camera', detail: 'A 140ms shake on the blast, so a bomb going off behind you is felt as well as seen.' },
       ],
       upgrade: {
-        magic:
-          'Cluster Bomb packs the charge so the casing fails outward. The main blast still lands, and then '
-          + 'the crater throws six more charges into the ring around it — the dangerous circle roughly '
-          + 'doubles in width a beat after everyone has already decided it is over.',
+        basics:
+          'The 32-damage blast still lands, and then the crater throws six bomblets 30–85px outward, 70ms '
+          + 'apart, each going off about 0.7s later for 12 damage in a 55px radius. The dangerous circle '
+          + 'roughly doubles in width a beat after everyone has decided it is over.',
         effects: [
           { tag: 'damage', label: 'Bomblets', detail: '6 bomblets scatter 30–85px from the crater and go off ~0.7s later for 12 damage each in a 55px radius.', requiresUpgrade: 'r' },
           { tag: 'utility', label: 'Stagger', detail: 'Bomblets are spaced 70ms apart rather than firing as one, so the second wave reads as a rolling barrage.', requiresUpgrade: 'r' },
@@ -93,11 +90,10 @@ const fire: ElementCodex = {
     },
 
     'flame-body': {
-      magic:
-        'The caster stops throwing fire and becomes the fire. A wreath of flame closes around the body '
-        + 'and stays there — no cooldown, no duration, it simply burns until switched off. It is the one '
-        + 'ability in the kit with no target: the whole effect is a standing change to what the caster is, '
-        + 'and the cost is paid continuously out of their own health.',
+      basics:
+        'A toggle with no cooldown in either direction. While lit you move at double speed and burn 2 '
+        + 'HP every 0.25s — 8 a second — indefinitely, until you switch it off. The 34px wreath itself '
+        + 'deals nothing; the only limit is how much health you are willing to spend.',
       cast: 'F to toggle on, F again to toggle off. No cooldown on either direction, and no cast lock.',
       effects: [
         { tag: 'buff', label: 'Double speed', detail: 'Move speed ×2 while lit. This is what the ability is actually for — the wreath is a cost, not a weapon.' },
@@ -106,11 +102,10 @@ const fire: ElementCodex = {
         { tag: 'area', label: 'Wreath', detail: '34px wreath at base intensity, with a bloom and ring thrown outward each time it is lit.' },
       ],
       upgrade: {
-        magic:
-          'Flame Affinity stops the slow bleed and replaces it with a straight gamble. The wreath burns '
-          + 'hotter and wider, the caster stops paying by the second — and every hit that gets through '
-          + 'lands for double. It turns a grinding cost into a single decision about whether you can '
-          + 'avoid being hit at all.',
+        basics:
+          'Same toggle, a different bargain. The self-burn stops completely, you deal double damage and '
+          + 'take double damage, and the wreath widens to 44px. The doubled speed stays — you pay in risk '
+          + 'now instead of in health.',
         effects: [
           { tag: 'buff', label: 'Doubled output', detail: 'All outgoing damage ×2 while lit.', requiresUpgrade: 'f' },
           { tag: 'cost', label: 'Doubled intake', detail: 'All incoming damage ×2 while lit.', requiresUpgrade: 'f' },
@@ -127,12 +122,11 @@ const fire: ElementCodex = {
     },
 
     'flame-nuke': {
-      magic:
-        'The ultimate, and the only fire working that needs preparation. The caster roots and spends two '
-        + 'full seconds hauling fire inward — a containment ring squeezing down on a core that keeps '
-        + 'getting brighter — and then lets go of it. What comes out is a wall of flame, a column punching '
-        + 'straight up, and a shrapnel tail that outlives the blast itself. It is the largest single '
-        + 'number in the base game and it is telegraphed for two seconds to pay for that.',
+      basics:
+        'The ultimate. Locks you in place for 2 seconds with no way to cancel, then detonates for 80 '
+        + 'damage in a 220px radius centred on where you started, with a 420ms camera shake and a white '
+        + 'flash. 30s cooldown, and the two-second telegraph is what pays for the biggest number in the '
+        + 'base game.',
       cast: 'Q. Locks the caster for 2s with no way to cancel; the detonation is centred on where you stood when you started.',
       effects: [
         { tag: 'cost', label: 'Channel lock', detail: 'The caster cannot move or act for the full 2s. The blast fires from the start position, so being knocked around does not re-aim it.' },
@@ -141,10 +135,10 @@ const fire: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '30s cooldown — roughly two casts in a long fight.' },
       ],
       upgrade: {
-        magic:
-          'Flame Charge is a different ability wearing the same key. It is only reachable while Flame Body '
-          + 'is lit, and instead of a channelled blast at range it plants a delayed charge at the caster\'s '
-          + 'own feet — a trap you have to be standing on to set, and standing clear of to survive.',
+        basics:
+          'Only reachable while Flame Body is lit — unlit, Q is still the ordinary nuke. Instead of a '
+          + 'channelled blast it plants a charge at your feet: a 1s lock to commit it, a 3s fuse, then 80 '
+          + 'damage to everything in range, the caster included. There is no safe placement, only distance.',
         effects: [
           { tag: 'cost', label: 'Requires Flame Body', detail: 'Q only produces the charge while Flame Body or Flame Affinity is lit. Unlit, Q casts the normal nuke.', requiresUpgrade: 'q' },
           { tag: 'cost', label: 'Planting lock', detail: 'A 1s lock while the charge is committed, then the fuse begins at whatever spot you were standing on.', requiresUpgrade: 'q' },
@@ -159,10 +153,11 @@ const fire: ElementCodex = {
 
   perks: {
     alcohol: {
-      magic:
-        'The flask. Flame Dash stops being a dash at all and becomes a drink — the caster stops '
-        + 'throwing fire outward and starts pouring it inward. Everything gets easier for six '
-        + 'seconds and then the bill arrives, and while you are lit you burn twice as fast.',
+      basics:
+        'Replaces Flame Dash with a drink. E fetches a flask, E again drinks it: 25% less damage taken '
+        + 'for 6 seconds, then a 50% slow for 2 seconds the moment it expires. While intoxicated Flame '
+        + 'Body burns you twice as fast (16 HP a second) but grows a 50px aura dealing 2 damage every '
+        + '0.333s, and Flame Dash loses its 18-damage launch blast entirely.',
       cast: 'E with no flask fetches one. E with a flask drinks it.',
       effects: [
         { tag: 'buff', label: 'Drink Up!', detail: '25% less damage taken for 6s.' },
@@ -175,10 +170,10 @@ const fire: ElementCodex = {
   },
   mastery: {
     'burning-body': {
-      magic:
-        'The wreath stops being something you switch on and becomes what you are. Anything that '
-        + 'closes to contact range is burning for it, and fire stops being able to stick to you at '
-        + 'all — you are already the hottest thing in the room.',
+      basics:
+        'Always on, no key and no cost. Every enemy within 50px takes 3 damage every 0.5s — 6 a second '
+        + '— and every damage-over-time effect on you is stripped every single frame, so nothing can hold '
+        + 'a burn, a poison or a bleed on you for even one tick.',
       effects: [
         { tag: 'dot', label: 'Contact burn', detail: '3 damage every 0.5s to every enemy within 50px — 6 a second, with no toggle, no cooldown and no self-cost. It counts as fire damage over time.' },
         { tag: 'heal', label: 'Cleanse', detail: 'Every damage-over-time effect on you is stripped every single frame — 60 times a second. Nothing can hold a burn, a poison or a bleed on you for even one tick.' },
@@ -188,11 +183,10 @@ const fire: ElementCodex = {
       ],
     },
     heatwave: {
-      magic:
-        'A flat yellow wave pushed out along the aim that passes through everybody and hurts '
-        + 'nobody. What it leaves behind is worse: the people it touched are Exposed, and the next '
-        + 'thing that hits them hits half again as hard. It is a setup tool in a kit that otherwise '
-        + 'has none.',
+      basics:
+        'A bindable wave along your aim that deals no damage whatsoever. It pierces every enemy it '
+        + 'passes through and leaves them Exposed for 5 seconds, so the next hit they take lands for '
+        + '1.5×. 420px of range at 520 px/s, on its own 6s cooldown.',
       cast: 'Bindable to E, R, F or Q. Fires along the aim and pierces every enemy it touches.',
       effects: [
         { tag: 'debuff', label: 'Exposed', detail: '5s of ☀️ Exposed on every enemy the wave passes through. The next hit they take deals 1.5×.' },

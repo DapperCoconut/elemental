@@ -36,48 +36,48 @@ import { Music } from '../audio';
 
 // ── Element pools for Infinity enemy selection ───────────────────────────────
 
-interface ElementDef { id: string; name: string; emoji: string; }
+interface ElementDef { id: string; name: string }
 
 const INFINITY_BASE_ELEMENTS: ElementDef[] = [
-  { id: 'fire',  name: 'Fire',  emoji: '🔥' },
-  { id: 'water', name: 'Water', emoji: '💧' },
-  { id: 'life',  name: 'Life',  emoji: '🌿' },
-  { id: 'air',   name: 'Air',   emoji: '💨' },
-  { id: 'earth', name: 'Earth', emoji: '🪨' },
+  { id: 'fire',  name: 'Fire' },
+  { id: 'water', name: 'Water' },
+  { id: 'life',  name: 'Life' },
+  { id: 'air',   name: 'Air' },
+  { id: 'earth', name: 'Earth' },
 ];
 
 const INFINITY_COMBINED_ELEMENTS: ElementDef[] = [
-  { id: 'oil',      name: 'Oil',      emoji: '🛢️' },
-  { id: 'shadow',   name: 'Shadow',   emoji: '🌑'  },
-  { id: 'ice',      name: 'Ice',      emoji: '🧊'  },
-  { id: 'growth',   name: 'Growth',   emoji: '🦠'  },
-  { id: 'crystal',  name: 'Crystal',  emoji: '💎'  },
-  { id: 'soul',     name: 'Soul',     emoji: '👻'  },
-  { id: 'hunt',     name: 'Hunt',     emoji: '🐺'  },
-  { id: 'sand',     name: 'Time',     emoji: '⏳'  },
-  { id: 'gravity',  name: 'Gravity',  emoji: '🌌'  },
-  { id: 'creation', name: 'Creation', emoji: '⚒️' },
+  { id: 'oil',      name: 'Oil' },
+  { id: 'shadow',   name: 'Shadow'  },
+  { id: 'ice',      name: 'Ice'  },
+  { id: 'growth',   name: 'Growth'  },
+  { id: 'crystal',  name: 'Crystal'  },
+  { id: 'soul',     name: 'Soul'  },
+  { id: 'hunt',     name: 'Hunt'  },
+  { id: 'sand',     name: 'Time'  },
+  { id: 'gravity',  name: 'Gravity'  },
+  { id: 'creation', name: 'Creation' },
 ];
 
 const INFINITY_ABSTRACT_ELEMENTS: ElementDef[] = [
-  { id: 'electricity', name: 'Electricity', emoji: '⚡' },
-  { id: 'slime',       name: 'Acid',        emoji: '🟢' },
-  { id: 'fate',        name: 'Fate',        emoji: '🃏' },
-  { id: 'sound',       name: 'Sound',       emoji: '🔊' },
-  { id: 'light',       name: 'Light',       emoji: '✨' },
+  { id: 'electricity', name: 'Electricity' },
+  { id: 'slime',       name: 'Acid' },
+  { id: 'fate',        name: 'Fate' },
+  { id: 'sound',       name: 'Sound' },
+  { id: 'light',       name: 'Light' },
 ];
 
 const INFINITY_ABSTRACT_COMBINED_ELEMENTS: ElementDef[] = [
-  { id: 'magnet',     name: 'Magnet',     emoji: '🧲' },
-  { id: 'metal',      name: 'Metal',      emoji: '⚙️'  },
-  { id: 'plasma',     name: 'Plasma',     emoji: '🔮'  },
-  { id: 'gunpowder', name: 'Gunpowder', emoji: '💀'  },
-  { id: 'echo',       name: 'Echo',       emoji: '🦇'  },
-  { id: 'rubber',     name: 'Rubber',     emoji: '🪀'  },
-  { id: 'magic',      name: 'Magic',      emoji: '📖'  },
-  { id: 'technology', name: 'Technology', emoji: '💻'  },
-  { id: 'silence',    name: 'Silence',    emoji: '🫥'  },
-  { id: 'subterfuge', name: 'Subterfuge', emoji: '🕴️' },
+  { id: 'magnet',     name: 'Magnet' },
+  { id: 'metal',      name: 'Metal'  },
+  { id: 'plasma',     name: 'Plasma'  },
+  { id: 'gunpowder', name: 'Gunpowder'  },
+  { id: 'echo',       name: 'Echo'  },
+  { id: 'rubber',     name: 'Rubber'  },
+  { id: 'magic',      name: 'Magic'  },
+  { id: 'technology', name: 'Technology'  },
+  { id: 'silence',    name: 'Silence'  },
+  { id: 'subterfuge', name: 'Subterfuge' },
 ];
 
 const ABSTRACT_UNLOCK_MAP: Record<string, string> = {

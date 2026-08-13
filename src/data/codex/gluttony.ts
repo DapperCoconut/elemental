@@ -4,9 +4,9 @@ import { ElementCodex } from '../AbilityCodex';
  * Gluttony — a chef with a larder, and the thing the chef becomes when the larder runs out.
  *
  * Verified against `src/elements/gluttony.ts` and `kits/GluttonyKit.ts`; the food table is
- * `FOOD` in `kits/GluttonyVisuals.ts`. Gluttony has no perks and no mastery enhancements. The
- * ability list is ten entries — 0–4 the chef, 5–9 the butcher — and F is the door between them
- * in both directions.
+ * `FOOD` in `kits/GluttonyVisuals.ts`. Gluttony has no perks. The ability list is ten entries —
+ * 0–4 the chef, 5–9 the butcher — and F is the door between them in both directions, which is
+ * also why the mastery below refuses to be bound over it.
  *
  * Its five shop upgrades are the only ones in the game that buy two abilities each, because a
  * Gluttony slot *is* two abilities. Every `upgrade` block below therefore documents one half of
@@ -30,16 +30,21 @@ const gluttony: ElementCodex = {
     {
       emoji: '🍄',
       name: 'The Larder',
-      magic:
-        'Four ingredients, and the difference between raw and cooked is the whole economy of the '
-        + 'element. Cooked is double the healing and it costs nothing but the time on the grate '
-        + 'and the walk back to collect it. Nothing else in the game asks you to do prep.',
+      basics:
+        'The ingredient table. Carrot 🥕 heals 10 raw and 20 cooked, taking 5 seconds on the grate and '
+        + 'worth 3 seconds of butcher form. Mushroom 🍄 is 15/30, 10 seconds, 5 seconds. Potato 🥔 is '
+        + '20/40, 12 seconds, 8 seconds. Meat 🍖 is 20/50, 15 seconds, 15 seconds — and Forage never '
+        + 'turns it up, it only comes off a skewer. Right-click eats whatever is in your hand, wherever '
+        + 'you are standing, with no cast time and no cooldown. The rat\'s three are separate: bread '
+        + '30/60, cheese 25/45 and pie 30/60 with +20% speed for 8s, none of which can be foraged or '
+        + 'grilled — they only come out of the hole in exchange for something cooked.',
       effects: [
         { tag: 'heal', label: 'Carrot 🥕', detail: 'Heals 10 raw, 20 cooked. 5 seconds on the grate, and 3 seconds of butcher form eaten.' },
         { tag: 'heal', label: 'Mushroom 🍄', detail: 'Heals 15 raw, 30 cooked. 10 seconds on the grate, 5 seconds of butcher form.' },
         { tag: 'heal', label: 'Potato 🥔', detail: 'Heals 20 raw, 40 cooked. 12 seconds on the grate, 8 seconds of butcher form.' },
         { tag: 'heal', label: 'Meat 🍖', detail: 'Heals 20 raw, 50 cooked. 15 seconds on the grate, 15 seconds of butcher form. Forage never turns it up — it only comes off a skewer.' },
         { tag: 'utility', label: 'Eating', detail: 'Right-click eats whatever is in your hand, wherever you are standing. There is no cast time and no cooldown on it.' },
+        { tag: 'heal', label: 'The rat\'s three 🍞🧀🥧', requiresMastery: true, detail: 'Bread 30/60, cheese 25/45, pie 30/60 with +20% speed for 8s. Nothing forages them and the grill never makes one — they only come back out of the hole in exchange for something cooked. See Chef\'s Friend.' },
       ],
       notes: [
         'Cooked meat is 50 HP off one right-click, which is the largest single heal in the element by a distance — and the only way to get it is to skewer somebody in butcher form and then cook the piece you took.',
@@ -50,11 +55,15 @@ const gluttony: ElementCodex = {
       emoji: '🔥',
       name: 'The Grill',
       form: 0,
-      magic:
-        'A lit grill stands in the middle of every arena, and it is the only fixed point in the '
-        + 'element. Four things fit on the grate. Standing next to it with an empty hand heats '
-        + 'your blade; standing next to it with something finished on the grate collects it. Every '
-        + 'good thing Gluttony does happens within about sixty pixels of it.',
+      basics:
+        'Four slots, and only raw ingredients cook — a cooked one thrown at it bounces off onto the '
+        + 'floor, as does anything thrown at a full grate. Cooking takes 5 seconds for a carrot, 10 for a '
+        + 'mushroom, 12 for a potato and 15 for a cut of meat, at double speed for the 6 seconds after '
+        + 'charcoal lands. Standing within 66px in chef form with an empty hand heats the blade in 2 '
+        + 'seconds — 1 while superheated — and a heated blade throws for 35 instead of 25. Collection is '
+        + 'automatic: walk within 66px and everything of yours that has finished goes onto the strip. '
+        + 'While the maw is out none of this works, for either fighter: nothing cooks, charcoal will not '
+        + 'fuel it, nothing can be collected and no blade can be heated.',
       effects: [
         { tag: 'utility', label: 'The grate', detail: '4 slots. Only raw ingredients cook — a cooked one thrown at it bounces off onto the floor, and so does anything thrown at a full grate.' },
         { tag: 'resource', label: 'Cooking', detail: '5 seconds for a carrot, 10 for a mushroom, 12 for a potato, 15 for a cut of meat. Double speed for the 6 seconds after charcoal lands on it.' },
@@ -72,10 +81,13 @@ const gluttony: ElementCodex = {
       emoji: '📦',
       name: 'The Prep Strip',
       form: 0,
-      magic:
-        'Six tiles along the top-left of the screen, with the knife\'s own tile set apart at the '
-        + 'end of them. Whatever is in your hand is what your click throws and what your '
-        + 'right-click eats, so the strip is not an inventory screen — it is the weapon select.',
+      basics:
+        'Six slots for ingredients; a seventh cannot be stowed and Forage drops it at your feet with '
+        + '"📦 STRIP FULL". Clicking a tile puts that ingredient in your hand instead of the knife, and '
+        + 'clicking it again, clicking an empty tile or clicking the knife tile puts the blade back. What '
+        + 'your click throws follows: food at 540 px/s while you are holding food, the knife while you '
+        + 'are holding nothing. A cooked item carries a green pip in the corner of its tile, and the '
+        + 'knife tile carries its own heat bar along the bottom.',
       effects: [
         { tag: 'utility', label: 'Six slots', detail: 'A seventh ingredient cannot be stowed: Forage drops it at your feet instead and says "📦 STRIP FULL".' },
         { tag: 'utility', label: 'Picking up', detail: 'Clicking a tile puts that ingredient in your hand instead of the knife. Clicking it again, clicking an empty tile, or clicking the knife tile puts the blade back.' },
@@ -91,11 +103,12 @@ const gluttony: ElementCodex = {
       emoji: '👄',
       name: 'The Maw',
       form: 1,
-      magic:
-        'While anybody is the butcher, the grill in the middle of the arena is a mouth: a lip of '
-        + 'teeth, a working throat, and four tentacles rooted under it. It belongs to whoever is '
-        + 'transformed, it breathes on its own, and once a second it spits a piece of meat at '
-        + 'whoever they are fighting. It does this whether or not you are anywhere near it.',
+      basics:
+        'While anybody is in butcher form the grill is a mouth instead. It spits a gobbet at the '
+        + 'nearest enemy once a second for 5 damage, at 390 px/s, dying on a body or a wall — 10 a shot '
+        + 'for 6 seconds after a Cannibalize connects. It belongs to whoever is transformed, with the '
+        + 'player winning the tie in a Gluttony mirror. And it is not a grill while it is a maw: no '
+        + 'cooking, no collecting, no fuel and no heating a blade, for either fighter.',
       effects: [
         { tag: 'damage', label: 'Spat meat', detail: '5 damage every second at the nearest enemy, from wherever the maw is. 390 px/s, dying on a body or a wall.' },
         { tag: 'damage', label: 'Frenzy', detail: '10 a shot instead of 5 for 6 seconds after a Cannibalize connects.' },
@@ -112,12 +125,16 @@ const gluttony: ElementCodex = {
       emoji: '🔴',
       name: 'The Hunger Bar',
       form: 1,
-      magic:
-        'Thirty seconds, counting down in real time under the prep strip, and every point of '
-        + 'damage aimed at you is charged to it instead of your health. It is not a shield — '
-        + 'nothing regenerates it, nothing stops it draining, and when it reaches zero you are the '
-        + 'chef again whether you were ready or not. The only thing that puts time back on it is '
-        + 'food.',
+      basics:
+        'Butcher form\'s health. Every point of damage aimed at you takes 0.2 seconds off the bar '
+        + 'instead of your health, so a full 30-second bar is 150 damage of buffer on top of your '
+        + 'untouched health — but it also runs down in real time, so standing perfectly still and being '
+        + 'hit by nothing still ends the form in 30 seconds. Eating puts time back: 3 seconds a carrot, 5 '
+        + 'a mushroom, 8 a potato, 15 a cut of meat, and it still heals you for the item\'s full value on '
+        + 'top; a Cannibalize that lands is 3 more. The bar sits ahead of every shield layer, so shield '
+        + 'charges, shield HP and clotted HP are not spent while you are the butcher — they are simply '
+        + 'not consulted. Armour still counts, because the figure charged to the bar is the damage after '
+        + 'every multiplier.',
       effects: [
         { tag: 'shield', label: 'Damage as time', detail: '0.2 seconds off the bar per point of damage — a full 30-second bar is 150 damage of buffer on top of your untouched health.' },
         { tag: 'cost', label: 'The clock', detail: 'It also runs down in real time. Standing perfectly still and being hit by nothing still ends the form in 30 seconds.' },
@@ -136,13 +153,15 @@ const gluttony: ElementCodex = {
   abilities: {
     // ── Chef ────────────────────────────────────────────────────────
     'glut-knife': {
-      magic:
-        'The one weapon in the chef\'s half of the kit, and it does two completely different jobs '
-        + 'depending on what is in your hand. Empty-handed it is a thrown knife — and if you spent '
-        + 'the last two seconds standing over the coals, it comes off them glowing and hits for '
-        + 'half again as much. Holding an ingredient instead, the same button posts that ingredient '
-        + 'onto the grate from across the arena, which is how you cook without standing in the '
-        + 'middle of the fight.',
+      basics:
+        'Throws whatever the prep strip has put in your hand. Empty-handed that is the cleaver: 25 '
+        + 'damage at 780 px/s with a 22px hitbox and 1.5 seconds of life, dying on the first body — or 35 '
+        + 'red hot, once the heat bar is full, which throwing spends, or 53 against anything Charcoal '
+        + 'Chuck has burnt in the last 8 seconds. Heating takes 2 seconds within 66px of the grill with '
+        + 'an empty hand, or 1 while the coals are superheated. Holding food it throws that instead, at '
+        + '540 px/s for 1.3 seconds: landing within 42px of the grill centre puts it on the grate if '
+        + 'there is a free slot and it is still raw, hitting a body deals 3 and drops the ingredient '
+        + 'beside them, and a miss leaves it on the floor for 30 seconds. 1.25s between throws.',
       cast: 'Click, aimed at the cursor. 1.25s between throws. What it throws is whatever the prep strip has in your hand.',
       effects: [
         { tag: 'damage', label: 'Cold blade', detail: '25 damage. 780 px/s, 1.5 seconds of life, a 22px hitbox, dying on the first body it touches.' },
@@ -160,11 +179,13 @@ const gluttony: ElementCodex = {
         'The knife tile\'s heat bar keeps its charge while you are carrying an ingredient; it just stops filling until your hand is empty again.',
       ],
       upgrade: {
-        magic:
-          'Cleave (Click+), the chef\'s half. The knife is replaced by a cleaver: a slab with a '
-          + 'square tip and a spine you could stand on, and it does not stop in the first body it '
-          + 'finds. It also stops losing its heat the moment you let go of it — a red cleaver '
-          + 'stays red for four seconds no matter whose ribs it is passing through.',
+        basics:
+          'The throw pierces — 25, or 35 red, to every enemy in its line, once each, for the full 1.5 '
+          + 'seconds of flight — and the heat stops being a charge and becomes a 4-second clock. Throwing '
+          + 'no longer spends it, so one trip to the coals is worth every throw you fit into those 4 '
+          + 'seconds. A cleaver already in flight goes cold mid-flight when the clock runs out, and cold '
+          + 'when thrown counts as cold on arrival. The blade tile\'s bar flips meaning: filling orange '
+          + 'while you heat, then draining pale from full as the seconds run down.',
         effects: [
           { tag: 'damage', label: 'Straight through', requiresUpgrade: 'click', detail: 'The throw pierces: 25 (or 35 red) to every enemy in its line, once each, for the full 1.5 seconds of flight.' },
           { tag: 'buff', label: 'The heat holds', requiresUpgrade: 'click', detail: 'Filling the heat bar arms a 4-second clock instead of a charge. Throwing no longer spends it, so one trip to the coals is worth every throw you fit into those 4 seconds.' },
@@ -175,10 +196,11 @@ const gluttony: ElementCodex = {
     },
 
     'glut-forage': {
-      magic:
-        'The chef crouches and digs. Two seconds of head-down scrabbling at half speed, which is a '
-        + 'genuinely dangerous thing to do in the middle of a fight, and at the end of it something '
-        + 'comes out of the ground. You do not get to choose what.',
+      basics:
+        'Two seconds of digging at ×0.5 move speed with your head down — you can still walk and nothing '
+        + 'interrupts it — turning up one of mushroom, carrot or potato, evenly, and never meat. Raw they '
+        + 'heal 15, 10 and 20; cooked, 30, 20 and 40. With all six strip slots taken it still comes out '
+        + 'of the ground and simply lands at your feet as a drop, with "📦 STRIP FULL". 6s cooldown.',
       cast: 'E, no aim. 2 seconds of channelling at half move speed — you can still walk, and nothing interrupts it. 6s cooldown.',
       effects: [
         { tag: 'cost', label: 'The dig', detail: '2 seconds at ×0.5 move speed, head down, with a status entry counting it out.' },
@@ -192,11 +214,16 @@ const gluttony: ElementCodex = {
         'The half-speed window is the real cost, and it is why foraging next to the grill — where you also heat the blade and collect the grate — is worth the crowding.',
       ],
       upgrade: {
-        magic:
-          'Head Chef (E+), the chef\'s half. The larder goes from three things to seven, and four '
-          + 'of them are not sustain at all — they are buffs with a meal attached. One of the four '
-          + 'is poisonous, one of them is ruined by cooking, and knowing which is which is the '
-          + 'whole upgrade.',
+        basics:
+          'The table widens from three entries to seven: the original three plus Bristle Berries, Winter '
+          + 'Mint, Pineapple and Death Cap, six weighted 1 and the Death Cap 0.34 — roughly one dig in '
+          + 'twenty. 🫐 Bristle Berries heal 5 and give +20% outgoing damage for 8s raw, or 12 and +35% '
+          + 'after 5 seconds on the grate. 🍃 Winter Mint heals 10% of your maximum HP and −20% damage '
+          + 'taken for 8s raw, and cooking it — only 2 seconds, so it is easy to do by accident — drops it '
+          + 'to 1% and no buff at all. 🍍 Pineapple is 30 raw and 50 cooked with no buff either way, on a '
+          + '20-second cook, the second longest in the element. ☠️ Death Cap costs you 30 HP raw for +25% '
+          + 'walk speed for 8s, and 25 seconds on the grate turns that into a 50 heal and +35% — the '
+          + 'biggest swing any ingredient makes. In butcher seconds they are worth 2, 3, 10 and 12.',
         effects: [
           { tag: 'resource', label: 'The wider table', requiresUpgrade: 'e', detail: 'Seven entries: the original three plus Bristle Berries, Winter Mint, Pineapple and Death Cap. Six are weighted 1 and the Death Cap 0.34 — roughly one dig in twenty.' },
           { tag: 'buff', label: 'Bristle Berries 🫐', requiresUpgrade: 'e', detail: 'Heals 5 and +20% outgoing damage for 8s raw. 5 seconds on the grate makes it 12 and +35%.' },
@@ -209,11 +236,13 @@ const gluttony: ElementCodex = {
     },
 
     'glut-charcoal': {
-      magic:
-        'A briquette of charcoal, hurled. It is the only thing in the kit that is genuinely two '
-        + 'abilities pointing in opposite directions: thrown at a person it is a burn that makes '
-        + 'your knife hurt half again as much, and thrown at your own grill it is fuel that doubles '
-        + 'the rate of everything on it for six seconds.',
+      basics:
+        'Throws a coal at the cursor: 15 damage on a body at 560 px/s with a 24px hitbox and 1.9 '
+        + 'seconds of life, leaving them Burnt for 8 seconds, during which a heated kitchen knife deals '
+        + '50% more — 53 instead of 35. Landed within 45px of the grill centre it superheats the coals '
+        + 'for 6 seconds instead: everything on the grate cooks at double rate and the blade heats in 1 '
+        + 'second rather than 2. The grill\'s catch radius is deliberately bigger than a person, because '
+        + 'this is the throw you make under pressure. 12s cooldown, the longest of the chef\'s five.',
       cast: 'R, at the cursor. 12s cooldown — the longest of the chef\'s five.',
       effects: [
         { tag: 'damage', label: 'On a body', detail: '15 damage. 560 px/s, 1.9 seconds of life, 24px hitbox.' },
@@ -227,12 +256,16 @@ const gluttony: ElementCodex = {
         'Superheat is a property of the grill, not of a side. Fuel you throw speeds up an enemy Gluttony\'s cooking too.',
       ],
       upgrade: {
-        magic:
-          'Pit Master (R+), the chef\'s half. The briquette burns blue instead of orange, and a '
-          + 'blue grill does not stop at done. An ingredient finishes cooking exactly when it '
-          + 'always did — and then starts a second pass. Walk over and you take it as cooked; '
-          + 'leave it and it comes off worth a quarter more with three extra seconds on whatever '
-          + 'buff it carries.',
+        basics:
+          'Superheat runs at ×3 rather than ×2 for its 6 seconds — a potato in 4 seconds instead of 6, a '
+          + 'blade in 0.67 instead of 1 — and cooked food keeps taking heat for another 50% of its own cook '
+          + 'time (2.5s a carrot, 6s a potato, 7.5s a cut of meat) to become over-seared: +25% healing '
+          + 'rounded, so a cooked potato goes 40 → 50 and a cut of meat 50 → 63, and +3 seconds on the '
+          + 'food\'s own buff, so over-seared Bristle Berries are +35% damage for 11 seconds. Collection is '
+          + 'still automatic within 66px, so an over-sear costs you the walk — standing at your own kitchen '
+          + 'through the second pass takes the item as merely cooked. The ember ring fills and the item '
+          + 'turns cooked, then the ring restarts from empty in blue with a second blue ring outside it, '
+          + 'going green when the over-sear lands.',
         effects: [
           { tag: 'buff', label: 'Blue coals', requiresUpgrade: 'r', detail: 'Superheat runs at ×3 instead of ×2 for its 6 seconds: a potato in 4s instead of 6, and a blade heated in 0.67s instead of 1.' },
           { tag: 'buff', label: 'The second pass', requiresUpgrade: 'r', detail: 'A cooked item keeps taking heat for another 50% of its own cook time — 2.5s a carrot, 6s a potato, 7.5s a cut of meat — and becomes over-seared at the end of it.' },
@@ -245,11 +278,15 @@ const gluttony: ElementCodex = {
     },
 
     'glut-butcher': {
-      magic:
-        'The toque comes off. The whites take spatter, the knife goes behind the back where you '
-        + 'cannot see what it is doing, and the grill in the middle of the arena opens a mouth. '
-        + 'Thirty seconds in which damage does not touch your health at all — and the only thing '
-        + 'that buys more of them is the food you spent the first half of the fight cooking.',
+      basics:
+        'Transforms you into the butcher for up to 30 seconds. Every point of damage aimed at you takes '
+        + '0.2 seconds off the hunger bar instead of your health — 150 damage of buffer if nothing else '
+        + 'touches you — but the bar also drains in real time, so doing nothing at all still ends it in '
+        + '30 seconds. The tray becomes Cleave, Poach, Cannibalize, Return and Maw Awakening, and the '
+        + 'chef\'s five are unreachable until you change back. Your grill becomes a mouth that spits 5 '
+        + 'damage a second at your enemy and stops being usable as a grill by anybody. Eating still heals '
+        + 'you in full and puts time back on the bar: 3s a carrot, 5s a mushroom, 8s a potato, 15s a cut '
+        + 'of meat. 45s cooldown, the longest in the element; it ends on Return or when the bar empties.',
       cast: 'F. 45s cooldown, the longest in the element. Ends on Return, or on its own when the bar empties.',
       effects: [
         { tag: 'shield', label: 'The hunger bar', detail: '30 seconds, and every point of damage aimed at you takes 0.2s off it instead of your health — 150 damage of buffer if nothing else touches you.' },
@@ -265,10 +302,10 @@ const gluttony: ElementCodex = {
         'The transformation is not free damage. It buys survivability and a different toolkit; the toolkit is where the damage is.',
       ],
       upgrade: {
-        magic:
-          'Murderous Intent (F+), the chef\'s half — and the quietest half of any of the five. It '
-          + 'does nothing to the transformation itself. What it changes is the price of leaving: '
-          + 'walking back into the kitchen refunds a fifth of the wait for the next one.',
+        basics:
+          'Pressing Return knocks 9 seconds — 20% of 45 — off Special Ingredient\'s running cooldown, once '
+          + 'per transformation. A butcher who exits at once is back on F after 36 seconds rather than 45, '
+          + 'so short deliberate transformations stop being wasteful.',
         effects: [
           { tag: 'buff', label: 'The refund', requiresUpgrade: 'f', detail: 'Pressing Return knocks 9 seconds — 20% of 45 — off Special Ingredient\'s running cooldown, once per transformation.' },
           { tag: 'utility', label: 'What that means', requiresUpgrade: 'f', detail: 'A butcher who exits at once is back on F after 36 seconds rather than 45, so short deliberate transformations stop being wasteful.' },
@@ -277,11 +314,13 @@ const gluttony: ElementCodex = {
     },
 
     'glut-feast': {
-      magic:
-        'Everything on the strip goes into one pot over your head, and for three seconds it just '
-        + 'swirls. Then it pays out double what all of it was worth eaten one at a time — to you '
-        + 'and to everyone fighting alongside you. It is the reward for having cooked: the pot pays '
-        + 'double on the *cooked* value, so a grill you kept busy is worth twice a grill you did not.',
+      basics:
+        'Empties the whole strip, anything in your hand included, into a pot: three seconds later '
+        + 'everyone on your side is healed for twice the sum of what every item would have healed. Six '
+        + 'cooked potatoes is 240 HP into every ally, and every fighter you are not allowed to hurt gets '
+        + '100% of that figure rather than a share — one ally or three, they each get all of it. There is '
+        + 'no partial Feast, and casting it with nothing on the strip is legal, does nothing, says "🍲 '
+        + 'NOTHING IN IT" and spends the 30s cooldown.',
       cast: 'Q. No aim. The strip is emptied at the cast; the healing lands 3 seconds later. Ultimate, 30s cooldown.',
       effects: [
         { tag: 'heal', label: 'The pot', detail: 'Twice the sum of what everything on the strip heals. Six cooked potatoes is 240 HP into every ally.' },
@@ -296,10 +335,14 @@ const gluttony: ElementCodex = {
         'It is a strictly better use of a full strip than eating it item by item — the same food, twice the healing, and it reaches your allies.',
       ],
       upgrade: {
-        magic:
-          'Resourceful (Q+), the chef\'s half. You scrape the pot. Two parcels of leftovers land '
-          + 'on the strip the moment the Feast is cast, worth a share of what the pot is about to '
-          + 'pay — and worth twice that again if you can leave them alone for twenty-five seconds.',
+        basics:
+          'Two parcels of leftovers are stowed at the cast, with any overflow landing at your feet as a '
+          + 'drop. Fresh, each is worth 12% of the Feast\'s own heal — a 240 HP pot leaves two parcels of 29 '
+          + '— and after 25 seconds on the strip they rest by themselves and become worth 25% of the pot '
+          + 'instead, 60 apiece off the same 240. A parcel tile carries its own rest bar along the bottom, '
+          + 'and the parcel opens and starts steaming once it has turned. They are food like anything else: '
+          + '4 seconds of butcher form and 1 second of Maw Awakening each, and they will cook on a grate if '
+          + 'you would rather over-sear them.',
         effects: [
           { tag: 'resource', label: 'Two parcels', requiresUpgrade: 'q', detail: '2 leftovers stowed at the cast. A full strip means the overflow lands at your feet as a drop instead.' },
           { tag: 'heal', label: 'Fresh', requiresUpgrade: 'q', detail: '12% of the Feast\'s own heal, each. A 240 HP pot leaves two parcels worth 29 apiece.' },
@@ -312,10 +355,10 @@ const gluttony: ElementCodex = {
 
     // ── Butcher ─────────────────────────────────────────────────────
     'glut-cleave': {
-      magic:
-        'The knife comes round in front of you in one flat arc. No throw, no travel time and '
-        + 'nothing in the air to dodge — the only way to not be hit by this is to not be standing '
-        + 'in front of the man holding it. It is a very wide arc, and it does not stop at one body.',
+      basics:
+        'The butcher\'s click: 30 damage to every enemy inside a 132° fan reaching 110px — 66° either '
+        + 'side of your aim, with no falloff and no single-target limit. A swing that catches nothing '
+        + 'still draws the arc, in steel rather than blood, and still runs the full 1.25s cooldown.',
       cast: 'Click, aimed at the cursor. 1.25s between swings.',
       effects: [
         { tag: 'damage', label: 'The cut', detail: '30 damage to every enemy inside the arc — no falloff and no single-target limit.' },
@@ -328,10 +371,12 @@ const gluttony: ElementCodex = {
         'The chef\'s knife throw is on the same 1.25s clock but reaches across the arena for 25. This trades all of that range for six more damage and no travel time.',
       ],
       upgrade: {
-        magic:
-          'Cleave (Click+), the butcher\'s half. The swing is the same swing — the change is what '
-          + 'landing one does to you. Every arc that catches somebody kicks you forward for two '
-          + 'seconds, which turns the butcher from a man who walks at you into a man who keeps up.',
+        basics:
+          'Any swing that connects gives +25% walk speed for 2 seconds, refreshed by the next landed '
+          + 'swing rather than stacked — and with a 1.25s cooldown that holds indefinitely while you stay '
+          + 'in range. A whiffed arc gives nothing: the speed is the reward for closing, not the tool for '
+          + 'closing. It multiplies with a Death Cap\'s +25%/+35% rather than overwriting it, so both at '
+          + 'once is ×1.56 or ×1.69.',
         effects: [
           { tag: 'buff', label: 'Carving', requiresUpgrade: 'click', detail: '+25% walk speed for 2 seconds on any swing that connects. Refreshed by the next landed swing rather than stacked, and the cooldown is 1.25s — so it holds indefinitely while you are in range.' },
           { tag: 'cost', label: 'It has to land', requiresUpgrade: 'click', detail: 'A whiffed arc gives nothing. The speed is the reward for closing, not the tool for closing.' },
@@ -341,11 +386,14 @@ const gluttony: ElementCodex = {
     },
 
     'glut-poach': {
-      magic:
-        'A cooking skewer, thrown hard. It does not stop at the first person — it goes through '
-        + 'everybody in its way, takes a cut of meat out of the first one on the way past, and '
-        + 'carries it on to the wall, where it sticks with the meat still on it. Walking over the '
-        + 'skewer is what actually collects it, and a cut of meat is the best food in the game.',
+      basics:
+        'Throws a skewer at the cursor that deals 15 damage to every body it passes through, once each, '
+        + 'at 720 px/s with a 26px hitbox and no slowing down. The first body it hits loses a cut of '
+        + 'meat, which rides the skewer to the wall — one cut a throw however many people it hits. The '
+        + 'skewer stays in the wall 22 seconds with meat on it, or 1.8 seconds if it came away with '
+        + 'nothing. Raw meat heals 20 and buys 15 seconds of butcher form; cooked, after 15 seconds on '
+        + 'the grate, it heals 50. Walk within 48px of the landed skewer to collect it, and a full strip '
+        + 'refuses it until you make room. 8s cooldown.',
       cast: 'E, at the cursor. 8s cooldown. The skewer stays in the wall until you walk to it.',
       effects: [
         { tag: 'damage', label: 'The pass', detail: '15 damage to every body it passes through, once each. 720 px/s, 26px hitbox, and it does not slow down.' },
@@ -360,11 +408,17 @@ const gluttony: ElementCodex = {
         'The meat has to be carried back to the kitchen, cooked for 15 seconds and collected — three separate trips across the arena, started in a form that is on a 30-second clock.',
       ],
       upgrade: {
-        magic:
-          'Head Chef (E+), the butcher\'s half — "Cooking with Maw". The mouth in the middle of '
-          + 'the arena is the second cooker, and what it does to food is not cooking. Four things '
-          + 'fit on the teeth. Six seconds and they spoil, and a spoiled ingredient is not a meal '
-          + 'any more: it is ammunition.',
+        basics:
+          'The maw grows rot slots. Holding an ingredient, the butcher\'s click throws it instead of '
+          + 'swinging, and landing it within 42px of the maw puts it on one of 4 teeth to spoil for a flat '
+          + '6 seconds — no heat involved and superheat does nothing to it — after which walking within '
+          + '66px takes it back. A thrown rotten item deals what the cooked version would have healed: 20 a '
+          + 'carrot, 30 a mushroom, 40 a potato, 50 a cut of meat, 50 a Death Cap, 50 a pineapple, 12 a '
+          + 'berry. Rotten Winter Mint is the exception, priced off the target at 15% of their maximum '
+          + 'health. Eaten, a rotten item heals half what the raw one would, rounded — and a rotten Death '
+          + 'Cap still costs you 15, because half of −30 is still a mushroom that wants you dead. When the '
+          + 'form ends the maw becomes a grill again and everything on the teeth falls onto the floor as '
+          + 'drops, spoiled or not.',
         effects: [
           { tag: 'utility', label: 'Loading it', requiresUpgrade: 'e', detail: 'Holding an ingredient, the butcher\'s click throws it instead of swinging. Landing it within 42px of the maw puts it on one of 4 rot slots.' },
           { tag: 'resource', label: 'Spoiling', requiresUpgrade: 'e', detail: '6 seconds flat, whatever it is — no heat involved, and superheat does nothing to it. Walk within 66px of the maw to take it back.' },
@@ -377,11 +431,13 @@ const gluttony: ElementCodex = {
     },
 
     'glut-cannibalize': {
-      magic:
-        'A short hard lunge and a bite. It is the only ability in the element that heals your real '
-        + 'health while you are the butcher, it buys three more seconds of being the butcher, and '
-        + 'it sends the maw in the middle of the arena into a frenzy for six seconds. All of that '
-        + 'is conditional on the bite connecting.',
+      basics:
+        'A 150ms lunge at 620 px/s — about 90px, driven after your own movement so you cannot steer out '
+        + 'of it — and a bite for 20 damage to everything within 66px of a point about 52px ahead of you. '
+        + 'A hit gives 15 HP of real health back, not hunger, plus 3 seconds onto the hunger bar, and '
+        + 'sends the maw into frenzy: 10 a shot instead of 5 for 6 seconds, refreshed rather than stacked '
+        + 'by another bite. A miss prints "😬 NOTHING TO BITE", and you have still dashed and still spent '
+        + 'the full 9 seconds.',
       cast: 'R, at the cursor. A 150ms dash at 620 px/s carries you in whether it lands or not. 9s cooldown.',
       effects: [
         { tag: 'movement', label: 'The lunge', detail: '620 px/s for 150ms — about 90px — driven after your own movement, so you cannot steer out of it.' },
@@ -396,11 +452,12 @@ const gluttony: ElementCodex = {
         'Frenzy is worth roughly 30 extra damage over its 6 seconds without you aiming anything, which is most of what a bite is worth.',
       ],
       upgrade: {
-        magic:
-          'Pit Master (R+), the butcher\'s half. Stand over the mouth and it climbs the blade. An '
-          + 'ichorous cleaver is a dark wet red with the stuff running off its edge, and for five '
-          + 'seconds everything it cuts feeds the hunger bar — the form starts paying for itself '
-          + 'as long as you fight standing on top of it.',
+        basics:
+          'Standing within 66px of the maw in butcher form coats the cleaver for 5 seconds, refreshed '
+          + 'every frame you stay there. While it is coated, every 25 damage the cleaver deals is 1 second '
+          + 'back on the hunger bar — 40ms a point, so one 30-damage Cleave into two bodies is 2.4 seconds. '
+          + 'Cleave only: Poach, Cannibalize and everything the maw does itself pay nothing into the bar, '
+          + 'however ichorous the blade looks.',
         effects: [
           { tag: 'buff', label: 'Getting coated', requiresUpgrade: 'r', detail: 'Standing within 66px of the maw in butcher form. 5 seconds, refreshed every frame you are still standing there.' },
           { tag: 'resource', label: 'What it buys', requiresUpgrade: 'r', detail: '1 second of butcher form per 25 damage the cleaver deals — 40ms a point. One 30-damage Cleave into two bodies is 2.4 seconds back on the bar.' },
@@ -410,10 +467,12 @@ const gluttony: ElementCodex = {
     },
 
     'glut-return': {
-      magic:
-        'The hat goes back on. The whites are ruined but the knife comes back out in front, the '
-        + 'mouth in the middle of the arena closes back into a grill, and the kitchen reopens — '
-        + 'cooking, collecting, charcoal and a blade you can heat again.',
+      basics:
+        'Changes back to the chef: the tray becomes Kitchen Knife, Forage, Charcoal Chuck, Special '
+        + 'Ingredient and Feast, damage goes back to your health, and the maw becomes a grill again with '
+        + 'cooking, collection, charcoal fuel and blade heating all working from the moment you change. '
+        + 'The hunger bar is emptied outright, and any awakened maw and any frenzy end with it. 1.2s '
+        + 'cooldown.',
       cast: 'F while transformed. 1.2s cooldown.',
       effects: [
         { tag: 'utility', label: 'Back to the chef', detail: 'The tray becomes Kitchen Knife, Forage, Charcoal Chuck, Special Ingredient and Feast, and damage goes back to your health.' },
@@ -426,11 +485,15 @@ const gluttony: ElementCodex = {
         'Changing back mid-frenzy throws away up to 6 seconds of a doubled maw.',
       ],
       upgrade: {
-        magic:
-          'Murderous Intent (F+), the butcher\'s half — and nothing about it is on this key. What '
-          + 'the purchase does here is arm the maw: the lazy one-a-second spit becomes a cone, and '
-          + 'the mouth grows a reach and a bite of its own. The F entry documents it because F is '
-          + 'the slot it was bought in.',
+        basics:
+          'The maw stops being a single spitter and works on its own. It fires 5 gobbets a second instead '
+          + 'of 1, fanned across about 44°, each for the full 5 — or 10 in frenzy — so up to 25 a second on '
+          + 'a target standing close enough to eat the whole fan, and every gobbet that lands leaves '
+          + 'Tenderised, +15% damage taken for 2 seconds, which does not stack with itself but is refreshed '
+          + 'every second by the cone. Every 10 seconds it grabs the nearest enemy within 300px and stuns '
+          + 'them for 2 seconds, and anyone inside 78px is bitten for 30 at most once every 1.6 seconds, '
+          + 'with that timer only spending itself when there is somebody there to bite. None of the three '
+          + 'needs a button or an aim, and all of it runs while the maw is still sitting on the grill.',
         effects: [
           { tag: 'damage', label: 'The cone', requiresUpgrade: 'f', detail: '5 gobbets a second instead of 1, fanned across about 44°, each for the full 5 (or 10 in frenzy) — up to 25 a second on a target standing close enough to eat the whole fan.' },
           { tag: 'debuff', label: 'Tenderised', requiresUpgrade: 'f', detail: 'Every cone gobbet that lands leaves +15% damage taken for 2 seconds. It does not stack with itself, and the cone refreshes it every second.' },
@@ -442,11 +505,15 @@ const gluttony: ElementCodex = {
     },
 
     'glut-maw': {
-      magic:
-        'You feed the mouth everything you own and it comes off the floor. Seven tentacles instead '
-        + 'of four, a body that walks at the enemy on its own, whips at anything close and barrages '
-        + 'of meat at anything at all. It lasts three seconds — plus however long the larder you '
-        + 'just poured into it is worth, which is the entire point of the ability.',
+      basics:
+        'Consumes every ingredient on the strip, anything in your hand included, and wakes the maw for '
+        + '3 seconds plus 1 a carrot, 3 a mushroom, 5 a potato and 10 a cut of meat — six cuts of meat '
+        + 'would be 63 seconds. It leaves the grill and walks at the nearest enemy at 165 px/s, stopping '
+        + 'within 40px and clamped inside the arena, whipping everything within 120px for 15 damage a '
+        + 'second and firing 5 gobbets every 1.4 seconds at 6 damage each, 30 a volley, fanned across '
+        + 'about 37° at 390 px/s — with the ordinary once-a-second spit still running underneath all of '
+        + 'it. The strip is empty afterwards, and so is the plan for feeding the hunger bar. 40s '
+        + 'cooldown.',
       cast: 'Q, in butcher form. No aim; the strip is consumed at the cast. Ultimate, 40s cooldown.',
       effects: [
         { tag: 'resource', label: 'The feeding', detail: '3 seconds base, plus 1 a carrot, 3 a mushroom, 5 a potato and 10 a cut of meat. Six cuts of meat would be 63 seconds.' },
@@ -463,11 +530,14 @@ const gluttony: ElementCodex = {
         'At full tilt — whip, barrage and spit together — it is around 45 damage a second on top of anything you are doing yourself, and none of it needs aiming.',
       ],
       upgrade: {
-        magic:
-          'Resourceful (Q+), the butcher\'s half. What comes off the floor now has a face: a crown '
-          + 'of bone spurs shoved up through the tiles, a ring of eyes between them that all look '
-          + 'the same way at once, and a second jaw turning the wrong way deep in the throat. Its '
-          + 'limbs go up all four walls of the arena, and every few seconds it screams.',
+        basics:
+          'Everything the maw does is ×1.5: the whip 15 → 23, barrage gobbets 6 → 9, the ordinary spit 5 '
+          + '→ 8 and frenzied 10 → 15, the close bite 30 → 45. A 30px band along all four arena edges deals '
+          + '8 damage every 0.5s to anyone standing in it, and the butcher is the one person in the room it '
+          + 'will not touch. And it screams: 35 damage to everything within 240px every 5 seconds, starting '
+          + '1.2s after the awakening, with nothing to dodge and nothing to block — only distance works — '
+          + 'and each scream is a 2-second stun on everyone it reaches, so a 5-second cycle leaves 40% of '
+          + 'the awakening as time the enemy cannot move.',
         effects: [
           { tag: 'damage', label: 'Half again', requiresUpgrade: 'q', detail: '×1.5 on everything the maw does: the whip 15 → 23, barrage gobbets 6 → 9, the ordinary spit 5 → 8 (frenzied 10 → 15), the close bite 30 → 45.' },
           { tag: 'area', label: 'The walls', requiresUpgrade: 'q', detail: 'A 30px band along all four arena edges, drawn as the band it actually is. 8 damage every 0.5s to anyone standing in it — the butcher is the one person in the room it will not touch.' },
@@ -477,6 +547,82 @@ const gluttony: ElementCodex = {
         // The scream is deliberately not multiplied by the ×1.5 above: 35 is the printed
         // figure and 52 through the whole arena every 5 seconds would be a different ability.
       },
+    },
+  },
+
+  mastery: {
+    snacking: {
+      basics:
+        'Passive regeneration scaled by what is on your strip: 1 health a second with it entirely '
+        + 'empty, rising in a straight line — rate = 1 + 8 × (pool ÷ 200) — to 9 a second once the strip '
+        + 'carries 200 points of healing or more, so a strip worth 100 is 5 a second. The pool is what '
+        + 'each item would heal you if you ate it, summed: cooked counts double raw, over-seared 25% more '
+        + 'again, a Winter Mint counts 10% of your own maximum health, and a rotten scrap counts half of '
+        + 'whatever the raw one was. Nothing negative counts — a raw Death Cap contributes 0, not −30, '
+        + 'and cannot drag the rate below the floor. It runs in butcher form too, where damage is coming '
+        + 'off the hunger bar, so it is quietly repairing the health bar you will go back to.',
+      cast: 'Passive. Always on, in both forms, while Gluttony Mastery is enabled and Gluttony is the element being played.',
+      effects: [
+        { tag: 'heal', label: 'The floor', detail: '1 health a second with an entirely empty strip. It is not nothing, and over a 90-second fight it is 90.' },
+        { tag: 'heal', label: 'The ceiling', detail: '9 health a second once the strip is carrying 200 points of healing or more.' },
+        { tag: 'heal', label: 'In between', detail: 'A straight line: rate = 1 + 8 × (pool ÷ 200). A strip worth 100 is 5 a second.' },
+        { tag: 'resource', label: 'What the pool counts', detail: 'What each item would heal *you* if you ate it, summed. Cooked counts double raw, an over-seared anything counts 25% more again, a Winter Mint counts 10% of your own maximum health, and a rotten scrap counts half of whatever the raw one was.' },
+        { tag: 'utility', label: 'Both forms', detail: 'It runs while you are the butcher too. Damage is coming off the hunger bar there, so the regeneration is quietly repairing the health bar you will go back to.' },
+        { tag: 'cost', label: 'Nothing negative counts', detail: 'A raw Death Cap is worth −30 and contributes 0, not −30. It cannot drag the rate below the 1/s floor.' },
+      ],
+      notes: [
+        'It is the exact inverse of the rest of the element. Gluttony has always paid for being alive by eating; this pays you for *not* eating, and every mouthful you take makes the next second of regeneration slower.',
+        'Feast is the sharpest interaction in the kit. It empties the strip in one keystroke, so the moment the pot goes on the rate falls to 1/s and stays there until you have foraged the larder back.',
+        'It stops entirely at full health and starts again the frame you are hit, so it is a between-engagements heal rather than a sustain during one.',
+        'A Gluttony NPC on Nightmare snacks too. The passive is the element\'s, not the player\'s.',
+      ],
+    },
+    'chefs-friend': {
+      basics:
+        'Opens a rat hole on the top wall the moment it is bound, and it stays all match. Throwing a '
+        + 'cooked item at it — raw or rotten is refused and lands as an ordinary drop — trades it, and '
+        + '1.2 seconds later one of three things drops out at random: 🍞 bread, 30 raw and 60 cooked on '
+        + 'an 8-second cook and 6 seconds of butcher form; 🧀 cheese, 25/45, 5 seconds and 5 seconds; or '
+        + '🥧 pie, 30/60, 10 seconds and 7 seconds, and eating one is +20% movement speed for 8 seconds '
+        + 'either way. The bound key does different work in each form. In the kitchen it is a fetch: the '
+        + 'rat runs out at 360 px/s, picks up your nearest drop — or the cut of meat still stuck on a '
+        + 'skewer in the wall — and puts it straight on your strip, coming home empty after 6 seconds; '
+        + 'with nothing of yours lying about it goes down the hole instead and one of its own three comes '
+        + 'back, so the cast is never wasted. In butcher form the rat is out and hunting every second, at '
+        + '175 px/s, slashing for 12 every 1.1 seconds inside 46px and collecting anything of yours on '
+        + 'the floor within 280px between swings — it fights and fetches at the same time. Throwing any '
+        + 'item at it, raw, cooked or rotten, feeds it: +25% slash damage and +15% speed a mouthful to a '
+        + 'maximum of four, so 12 damage becomes 24 and 1.1 seconds between swings becomes 0.7, and every '
+        + 'feeding sets a 12-second stay, so a fed rat keeps fighting after butcher form ends. The '
+        + 'whistle in butcher form sics it on whoever is nearest your cursor within 420px: the next slash '
+        + 'it lands is doubled, with the ring round it saying so until it connects, and 4 seconds to land '
+        + 'it. A Gluttony slot is two abilities, so binding over E costs Forage and Poach, over R '
+        + 'Charcoal Chuck and Cannibalize, over Q Feast and Maw Awakening; F is refused outright. 14s '
+        + 'cooldown either way.',
+      cast: 'The bound key (E, R or Q). In the kitchen it is a fetch; in butcher form it is a sic. 14 second cooldown either way. F is refused as a drop target.',
+      effects: [
+        { tag: 'summon', label: 'The hole', detail: 'Opens on the top wall the moment the enhancement is bound, and stays there all match. Nothing else in the element occupies that part of the arena.' },
+        { tag: 'resource', label: 'The trade', detail: 'Throw a **cooked** item at the hole and it is taken. 1.2 seconds later one of three things drops out below it, at random. A raw or rotten throw is refused and lands on the floor as an ordinary drop.' },
+        { tag: 'heal', label: '🍞 Bread', detail: 'Heals 30 raw, 60 cooked. 8 seconds on the grate, and 6 seconds of butcher form eaten.' },
+        { tag: 'heal', label: '🧀 Cheese', detail: 'Heals 25 raw, 45 cooked. 5 seconds on the grate, 5 seconds of butcher form.' },
+        { tag: 'heal', label: '🥧 Pie', detail: 'Heals 30 raw, 60 cooked. 10 seconds on the grate, 7 seconds of butcher form — and eating one is +20% movement speed for 8 seconds either way.' },
+        { tag: 'utility', label: 'The fetch', detail: 'Chef form. The rat runs out at 360 px/s, picks up the nearest drop of yours — or the cut of meat still stuck on a skewer in the wall — and puts it straight on your strip. Six seconds to find it or it comes home empty.' },
+        { tag: 'utility', label: 'Nothing to fetch', detail: 'With nothing of yours lying about anywhere, the whistle instead sends him down the hole for 1.2 seconds and one of his own three comes back out. The cast is never wasted.' },
+        { tag: 'summon', label: 'The butcher\'s rat', detail: 'Every second you are the butcher it is out of the hole and hunting: 175 px/s, and it slashes for **12** every 1.1 seconds inside 46px.' },
+        { tag: 'utility', label: 'And it still tidies', detail: 'Between swings, anything of yours on the floor within 280px of it is collected and carried back onto the strip. It fights and it fetches at the same time.' },
+        { tag: 'buff', label: 'Feeding it', detail: 'Throw any item — raw, cooked, rotten, anything — at the rat while it is out. **+25% slash damage and +15% speed per mouthful, to a maximum of four**: 12 damage becomes 24, and 1.1 seconds between swings becomes 0.7.' },
+        { tag: 'buff', label: 'And it stays', detail: 'Every feeding sets a **12-second stay**. Butcher form ending does not send a fed rat home — it keeps fighting for whatever is left on that clock, and only then walks back to the hole.' },
+        { tag: 'damage', label: 'The sic', detail: 'Butcher form. The whistle sets it on whoever is nearest your cursor within 420px: the next slash it lands is **doubled**, and the ring round it says so until it connects. 4 seconds to land it.' },
+        { tag: 'cost', label: 'The slot', detail: 'A Gluttony slot is two abilities. Binding over E costs you Forage *and* Poach; over R, Charcoal Chuck *and* Cannibalize; over Q, Feast *and* Maw Awakening. F is refused outright.' },
+      ],
+      notes: [
+        'Q is the expensive bind and the interesting one: it deletes both ultimates, and what it hands back is a permanent second body that never has to be re-cast.',
+        'The rat cannot be killed, targeted or displaced. Like the maw, it is furniture that fights.',
+        'Feeding costs you the item outright — it is not eaten by you and it does not touch the hunger bar. A rat fed to four on the way out of a transformation has spent four tiles of larder.',
+        'The three foods are not on either forage table and the grill will never produce one. The rat is the only source, which makes the trade the only way to convert a surplus of cooked carrots into something worth 60.',
+        'A sic drops whatever the rat was carrying at the time. It is not a delivery run any more.',
+        'Both halves of a Gluttony mirror can own a hole; when they do, the two are set 110px either side of centre so it is obvious whose is whose.',
+      ],
     },
   },
 };

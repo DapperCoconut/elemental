@@ -6,9 +6,11 @@ import { Sfx } from '../../audio';
 import { isDebuff, seedEffectSnapshot, stretchNewEffects } from '../../combat/StatusEffects';
 import {
   RAD, RadiationAvatar, RadiationColorFn, RadiationFx, afterimageLance, boneOverlay, cancerArm,
-  criticalAura, doseTicks, dropFootprint, flareRound, geigerTracer, leadArmour, radPuddle,
-  redshift, revolver, sustainedBeam, trefoil, wasteDrum,
+  criticalAura, doseTicks, dropFootprint, flareRound, gammaChain, geigerTracer, leadArmour,
+  leashRing, radPuddle, redshift, revolver, sightLine, sustainedBeam, tetherAnchor, trefoil,
+  wasteDrum,
 } from './RadiationVisuals';
+import { meterStep } from '../../combat/Meters';
 
 type Owner = 'player' | 'npc';
 
@@ -141,6 +143,25 @@ const FLARE_WINDOW_MS = 12_000;
 const AIRDROP_TELL_MS = 1700;
 const AIRDROP_DAMAGE = 200;
 
+// ── Mastery ──────────────────────────────────────────────────────────────────
+const TETHER_ID = 'gamma-tether';
+/** How long the post stands, and what the green bar on the front of it is counting down. */
+const TETHER_MS = 6000;
+const TETHER_COOLDOWN_MS = 15_000;
+/** How far the chain will reach to catch somebody who is not caught yet. */
+const TETHER_CATCH_R = 260;
+/** …and how far it lets them get once it has. The whole ability is this circle. */
+const TETHER_LEASH_R = 150;
+/** How long the post takes to finish driving itself into the floor, purely cosmetic. */
+const TETHER_PLANT_MS = 220;
+/** Sniper's Instinct: below this range the armour is worth nothing at all. */
+const INSTINCT_MIN_D = 140;
+/** …and at this range it is worth all of `INSTINCT_MAX_CUT`. */
+const INSTINCT_MAX_D = 620;
+const INSTINCT_MAX_CUT = 0.45;
+/** The bot re-reads the board this often rather than every frame. */
+const NPC_TETHER_CHECK_MS = 250;
+
 /**
  * Closest point on the segment (ax,ay)→(bx,by) to (px,py).
  *
@@ -255,6 +276,24 @@ interface Airdrop {
   landsAt: number;
 }
 
+/**
+ * Gamma Tether (mastery): the post, and whoever is on the end of its chain.
+ *
+ * The device is a fixed point in the world rather than anything attached to the caster — he can
+ * walk off and leave it working, which is the entire reason a sniper wants it.
+ */
+interface Tether {
+  owner: Owner;
+  x: number;
+  y: number;
+  plantedAt: number;
+  until: number;
+  /** Null until something walks inside `TETHER_CATCH_R`; the post waits rather than expiring. */
+  victim: Fighter | null;
+  /** 0–1, how hard the chain is pulling right now. Drives the wire, the ring and nothing else. */
+  taut: number;
+}
+
 /** One swing of the baton, purely for the arc that gets drawn behind the hit. */
 interface Swing {
   x: number;
@@ -299,6 +338,15 @@ interface Side {
   // ── The come-down ──
   meltdownUntil: number;
   meltdownNextAt: number;
+  // ── Mastery ──
+  tether: Tether | null;
+  /**
+   * Game-clock time of the last Gamma Tether. Seeded a full cooldown in the past so the first
+   * match a kit ever sees — which runs the constructor, not `reset` — starts with the card ready.
+   */
+  tetherCastAt: number;
+  /** The bot re-reads the board on this timer rather than every frame. */
+  npcTetherCheckAt: number;
 }
 
 function makeSide(owner: Owner): Side {
@@ -309,6 +357,7 @@ function makeSide(owner: Owner): Side {
     superUntil: 0, armourAt: 0, absorber: null, prevAbsorber: null,
     auraDose: new Map(), auraStep: new Map(),
     meltdownUntil: 0, meltdownNextAt: 0,
+    tether: null, tetherCastAt: -TETHER_COOLDOWN_MS, npcTetherCheckAt: 0,
   };
 }
 
@@ -358,6 +407,13 @@ export interface RadiationArenaApi {
   setStatusIndicator(id: string, status: CustomStatus | null): void;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
+  /** Which mastery enhancement each side dropped over an E/R/F/Q slot, or null. */
+  masteryBindFor(slot: string): string | null;
+  npcMasteryBindFor(slot: string): string | null;
+  /** Mastery progress. Gated on the element by the adapter, so the kit records unconditionally. */
+  recordMasteryStat(key: string, amount: number): void;
+  /** Online: a mastery cast on a private timer never reaches the peer on its own. */
+  broadcastMasteryCast(enhId: string): void;
   /** Shop upgrades: the local player's equipped slots. */
   hasUpgrade(slot: string): boolean;
   /** …and the online opponent's, so their upgraded tricks reproduce on this sim. */
@@ -457,6 +513,8 @@ export class RadiationKit {
   private xrayed = new Set<Fighter>();
   /** Everything Final Vision has shrunk, and the factor this kit multiplied into `sizeMult`. */
   private shrunk = new Map<Fighter, number>();
+  /** Everything Sniper's Instinct has written armour onto, so a stale cut can always be cleared. */
+  private instinctArmoured = new Set<Fighter>();
 
   constructor(api: RadiationArenaApi) {
     this.api = api;
@@ -557,8 +615,13 @@ export class RadiationKit {
       if (!f) continue;
       f.healInvertedUntil = 0;
       f.onHealInverted = null;
+      f.radiationIncomingMult = 1;
       this.clearHitbox(f);
     }
+    // The set is walked separately from `allFighters` because a body this kit armoured may have
+    // left the roster (a husk that died) between the last frame and the match ending.
+    for (const f of this.instinctArmoured) if (f) f.radiationIncomingMult = 1;
+    this.instinctArmoured.clear();
     // The outgoing multiplier is shared with half a dozen other systems, so it is handed back
     // by dividing out exactly what this kit put in rather than by writing 1 over the top.
     for (const [f] of this.appliedOut) this.setOutgoing(f, 1);
@@ -594,6 +657,9 @@ export class RadiationKit {
     this.api.setStatusIndicator('radiation-supercritical', null);
     this.api.setStatusIndicator('radiation-beam', null);
     this.api.setStatusIndicator('radiation-meltdown', null);
+    this.api.setStatusIndicator('radiation-instinct', null);
+    this.api.setStatusIndicator('radiation-tether', null);
+    this.api.setStatusIndicator('radiation-tethered', null);
   }
 
   private ensureLayers(): void {
@@ -720,6 +786,9 @@ export class RadiationKit {
     const rose = !!prev && lv > prev.level;
     const ms = IRRADIATED_MS * IRRADIATED_SCALE[lv];
 
+    // Mastery: every promotion to the top rung counts, whichever of the four routes got there.
+    if (lv >= 3 && (prev?.level ?? 0) < 3) this.record(by, 'level3Doses', 1);
+
     const snapshot = prev?.snapshot ?? new Map<string, number>();
     // The decay halving diffs expiries against a snapshot, so the snapshot has to be seeded at
     // the moment the victim reaches level 2 — otherwise everything already on them reads as
@@ -752,7 +821,11 @@ export class RadiationKit {
 
   /** One rung up the ladder, refreshing the window at the new level. Exposure's whole job. */
   private escalate(victim: Fighter, by: Owner): number {
-    const lv = Math.min(3, (this.irradiated.get(victim)?.level ?? 0) + 1);
+    // Ruin's Combo Breaker halves every meter in the game, and the dose ladder is one: half of
+    // the rungs simply do not happen, carried so the other half still arrive on schedule.
+    const rungs = meterStep(this.fighter(by), 'dose');
+    const lv = Math.min(3, (this.irradiated.get(victim)?.level ?? 0) + rungs);
+    if (rungs <= 0) return lv;
     this.irradiate(victim, by, false, lv);
     return lv;
   }
@@ -761,9 +834,17 @@ export class RadiationKit {
     return this.irradiated.get(victim)?.level ?? 0;
   }
 
-  private updateIrradiated(): void {
+  private updateIrradiated(delta: number): void {
     const wall = Date.now();
     for (const [v, d] of [...this.irradiated]) {
+      // Gamma Tether (mastery): the chain holds the window open. Both clocks — the kit's own and
+      // the healing lock on the fighter, which runs on the wall clock — are pushed forward by
+      // exactly the frame that just passed, so the bar over their head sits where it is. The
+      // bleed and the arm are deliberately left running: the dose is paused, not suspended.
+      if (this.alive(v) && this.tetherHolding(v)) {
+        d.until += delta;
+        v.healInvertedUntil += delta;
+      }
       if (!this.alive(v) || this.now >= d.until) {
         this.irradiated.delete(v);
         if (v) { v.healInvertedUntil = 0; v.onHealInverted = null; }
@@ -806,6 +887,288 @@ export class RadiationKit {
     return Math.sin(victim.x * 0.013 + victim.y * 0.017) * 0.9 - 0.5;
   }
 
+  // ── Mastery ────────────────────────────────────────────────────────────────
+
+  /** Whether Element Mastery is on for whichever side is asking, and they are the Radiation. */
+  private masteryOn(owner: Owner): boolean {
+    return this.isRadiation(owner)
+      && (owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
+  }
+
+  /**
+   * Which slot Gamma Tether was dropped on, or null. R is not scanned — `excludeSlots` refuses
+   * it, because Final Vision is a prerequisite for Cutdown's Supercritical and binding over it
+   * would quietly disable an F+ the player had already bought.
+   */
+  private tetherSlot(owner: Owner): 'e' | 'f' | 'q' | null {
+    if (!this.masteryOn(owner)) return null;
+    for (const s of ['e', 'f', 'q'] as const) {
+      const bind = owner === 'player' ? this.api.masteryBindFor(s) : this.api.npcMasteryBindFor(s);
+      if (bind === TETHER_ID) return s;
+    }
+    return null;
+  }
+
+  /** The player's key for a bound slot. */
+  private keyFor(slot: 'e' | 'f' | 'q'): Phaser.Input.Keyboard.Key {
+    return slot === 'e' ? this.api.eKey : slot === 'f' ? this.api.fKey : this.api.qKey;
+  }
+
+  /**
+   * Mastery progress. Only ever recorded for the player — the grind is the human's, not the
+   * bot's — and deliberately not gated on the mastery being *on*, since earning it is the point.
+   */
+  private record(owner: Owner, key: string, amount = 1): void {
+    if (owner === 'player') this.api.recordMasteryStat(key, amount);
+  }
+
+  /**
+   * Sniper's Instinct's armour half.
+   *
+   * Rewritten from scratch every frame — the same arrangement as the X-ray hitbox — so a match
+   * that ends mid-shot, or a mastery toggled off between two runs, can never leave a body
+   * permanently armoured. Measured against whichever enemy is actually nearest, because the
+   * passive is a score on the range being played rather than a window that gets opened.
+   */
+  private updateInstinct(): void {
+    for (const f of this.instinctArmoured) if (f) f.radiationIncomingMult = 1;
+    this.instinctArmoured.clear();
+    for (const owner of BOTH) {
+      if (!this.masteryOn(owner)) continue;
+      const f = this.fighter(owner);
+      if (!this.alive(f)) continue;
+      f.radiationIncomingMult = 1 - INSTINCT_MAX_CUT * this.instinctCut(owner);
+      this.instinctArmoured.add(f);
+    }
+  }
+
+  /** 0–1 of the passive's maximum, off the current range. Also the number on the tray. */
+  private instinctCut(owner: Owner): number {
+    const f = this.fighter(owner);
+    const t = this.nearestTarget(owner);
+    const d = t && this.alive(f)
+      ? Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y)
+      : INSTINCT_MAX_D;
+    return Phaser.Math.Clamp((d - INSTINCT_MIN_D) / (INSTINCT_MAX_D - INSTINCT_MIN_D), 0, 1);
+  }
+
+  /**
+   * Sniper's Instinct's sight half: where a round fired *right now* would actually stop.
+   *
+   * The same three answers `updateRounds` gives — a body, a wall, or the end of the range — run
+   * analytically rather than by stepping, because this has to be true on the frame it is drawn.
+   * Nothing here is new information; it is the maths the click was already doing, made visible.
+   */
+  private sightStop(owner: Owner): { x: number; y: number; onBody: boolean } {
+    const m = this.muzzle(owner);
+    const s = this.side(owner);
+    const flaring = !!s.flares && s.flares.ammo > 0;
+    const ang = Math.atan2(s.aimY - m.y, s.aimX - m.x);
+    const cx = Math.cos(ang);
+    const cy = Math.sin(ang);
+    const hitR = flaring ? FLARE_HIT_R : TRACER_HIT_R;
+
+    // The arena edges: a round that leaves the floor is a miss, so the sight stops where it does.
+    let stop = flaring ? FLARE_RANGE : TRACER_RANGE;
+    if (cx > 1e-4) stop = Math.min(stop, (this.right - m.x) / cx);
+    else if (cx < -1e-4) stop = Math.min(stop, (this.left - m.x) / cx);
+    if (cy > 1e-4) stop = Math.min(stop, (this.bottom - m.y) / cy);
+    else if (cy < -1e-4) stop = Math.min(stop, (this.top - m.y) / cy);
+    stop = Math.max(0, stop);
+
+    let hit: Fighter | null = null;
+    for (const t of this.targetsOf(owner)) {
+      const rr = hitR + 18 + this.swell(t);
+      if (rr <= 0) continue;
+      const along = (t.x - m.x) * cx + (t.y - m.y) * cy;
+      if (along < 0 || along > stop + rr) continue;
+      const perp = Math.abs((t.y - m.y) * cx - (t.x - m.x) * cy);
+      if (perp > rr) continue;
+      const reach = Math.max(0, along - Math.sqrt(Math.max(0, rr * rr - perp * perp)));
+      if (reach > stop) continue;
+      stop = reach;
+      hit = t;
+    }
+    if (hit) return { x: hit.x, y: hit.y, onBody: true };
+    return { x: m.x + cx * stop, y: m.y + cy * stop, onBody: false };
+  }
+
+  /**
+   * Gamma Tether, from the bound key or from the bot's own decision.
+   *
+   * Refuses rather than queues, and every refusal is voiced. Nothing here goes through
+   * `castAbility` — the enhancement is not in the element's ability list — so the refusals that
+   * gate every other key in the game have to be repeated by hand, or a disarm would stop
+   * mattering the moment the mastery was bound.
+   */
+  private tryTether(owner: Owner, tx: number, ty: number): boolean {
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return false;
+    const s = this.side(owner);
+    const wall = Date.now();
+    if (wall < f.disarmedUntil || wall < f.chickenUntil || wall < f.silencedUntil) return false;
+    if (this.drivesBody(owner) || this.stunned.has(f)) return false;
+
+    if (s.tether) {
+      if (owner === 'player') {
+        this.api.showFloatingText(f.x, f.y - 50, '📡 ONE POST AT A TIME', this.hex(RAD.hazard));
+      }
+      return false;
+    }
+    if (this.now - s.tetherCastAt < TETHER_COOLDOWN_MS) return false;
+
+    s.tetherCastAt = this.now;
+    this.plantTether(owner, tx, ty);
+    // A private timer never reaches the peer on its own — see `broadcastMasteryCast`.
+    if (owner === 'player') this.api.broadcastMasteryCast(TETHER_ID);
+    return true;
+  }
+
+  /**
+   * The post going in. Separate from the refusals above because an online replica has to plant
+   * the same device on this sim off a body that never pressed anything.
+   */
+  private plantTether(owner: Owner, tx: number, ty: number): void {
+    const f = this.fighter(owner);
+    this.ensureLayers();
+    this.ensureAvatars();
+    const s = this.side(owner);
+    const x = Phaser.Math.Clamp(tx, this.left, this.right);
+    const y = Phaser.Math.Clamp(ty, this.top, this.bottom);
+    s.aimX = tx;
+    s.aimY = ty;
+    s.tether = {
+      owner, x, y,
+      plantedAt: this.now,
+      until: this.now + TETHER_MS,
+      victim: null,
+      taut: 0,
+    };
+    this.avatar(owner)?.play('slam', Math.atan2(y - f.y, x - f.x));
+    this.avatar(owner)?.ping();
+    this.fx(owner).anchorDrop(x, y);
+    this.api.showFloatingText(x, y - 58, '📡 GAMMA TETHER', this.hex(RAD.neonLit));
+    Sfx.playAt('grenade-throw', x, { rate: 1.3, volume: 0.7 });
+    Sfx.playAt('nail', x, { rate: 0.55, volume: 0.95 });
+  }
+
+  /** Online: the opponent planted a post on their machine, so one has to stand here too. */
+  doNpcTether(tx: number, ty: number): void {
+    const s = this.sides.npc;
+    if (s.tether) return;
+    s.tetherCastAt = this.now;
+    this.plantTether('npc', tx, ty);
+  }
+
+  /**
+   * The post's whole life: hunt, catch, hold.
+   *
+   * The leash is resolved by force-writing the victim's position and stripping the outward half
+   * of their velocity, every frame, from `update` — which runs after both movement paths have
+   * already written their own. The same arrangement Waste Disposal's fall and Exposure's launch
+   * rely on, and for the same reason: anything gentler is simply overwritten on the next tick.
+   */
+  private updateTethers(delta: number): void {
+    for (const owner of BOTH) {
+      const s = this.side(owner);
+      const th = s.tether;
+      if (!th) continue;
+      const f = this.fighter(owner);
+      if (this.now >= th.until || !this.alive(f)) { this.dropTether(owner); continue; }
+
+      // A dead body, or one that has become unstoppable, is let go rather than dragged.
+      if (th.victim && (!this.alive(th.victim) || th.victim.unstoppable)) th.victim = null;
+
+      if (!th.victim) {
+        // Still hunting. A post planted where nobody is standing yet is not wasted — it lies
+        // there and takes the first body that walks into range, which is most of the reason to
+        // place it somewhere the enemy is going rather than somewhere they are.
+        let best: Fighter | null = null;
+        let bestD = TETHER_CATCH_R;
+        for (const t of this.targetsOf(owner)) {
+          if (t.unstoppable) continue;
+          const d = Phaser.Math.Distance.Between(th.x, th.y, t.x, t.y);
+          if (d < bestD) { bestD = d; best = t; }
+        }
+        if (best) {
+          th.victim = best;
+          this.fx(owner).chainSnap(th.x, th.y, best.x, best.y);
+          // Live waste on a wire. The dose is what the hold is then worth — a tether on somebody
+          // carrying nothing would be six seconds of pausing a clock that is not running.
+          this.irradiate(best, owner);
+          this.api.showFloatingText(best.x, best.y - 58, '⛓ TETHERED', this.hex(RAD.neonLit));
+          Sfx.playAt('nail', best.x, { rate: 0.75, volume: 1 });
+          Sfx.playAt('status-stun', best.x, { rate: 0.65, volume: 0.7 });
+        }
+      }
+
+      const v = th.victim;
+      if (!v) { th.taut = Math.max(0, th.taut - delta / 240); continue; }
+      const d = Phaser.Math.Distance.Between(th.x, th.y, v.x, v.y);
+      th.taut = Phaser.Math.Clamp((d - TETHER_LEASH_R * 0.72) / (TETHER_LEASH_R * 0.28), 0, 1);
+      if (d <= TETHER_LEASH_R) continue;
+
+      const ang = Math.atan2(v.y - th.y, v.x - th.x);
+      v.x = th.x + Math.cos(ang) * TETHER_LEASH_R;
+      v.y = th.y + Math.sin(ang) * TETHER_LEASH_R;
+      const body = this.body(v);
+      const outward = body.velocity.x * Math.cos(ang) + body.velocity.y * Math.sin(ang);
+      // Only the outward half is taken: inside the circle they still move exactly as they like,
+      // and at the edge of it they slide around the ring rather than sticking to a point.
+      if (outward > 0) {
+        body.setVelocity(
+          body.velocity.x - Math.cos(ang) * outward,
+          body.velocity.y - Math.sin(ang) * outward,
+        );
+      }
+    }
+  }
+
+  private dropTether(owner: Owner): void {
+    const s = this.side(owner);
+    const th = s.tether;
+    if (!th) return;
+    s.tether = null;
+    this.fx(owner).chainBreak(th.x, th.y);
+    if (th.victim && this.alive(th.victim)) this.fx(owner).shed(th.victim.x, th.victim.y);
+    Sfx.playAt('status-expire', th.x, { rate: 0.85, volume: 0.7 });
+    if (owner === 'player') {
+      this.api.showFloatingText(th.x, th.y - 42, '📡 TETHER SPENT', this.hex(RAD.hazard));
+    }
+  }
+
+  /** True while any post on the field is holding this body — which is what pauses their dose. */
+  private tetherHolding(victim: Fighter): boolean {
+    for (const owner of BOTH) if (this.sides[owner].tether?.victim === victim) return true;
+    return false;
+  }
+
+  /**
+   * The bot's half of the mastery.
+   *
+   * The kit presses this rather than `doRadiationAbilities` because the kit is the only thing
+   * that knows where the post can actually catch somebody — and the whole value of the ability
+   * is a synergy the AI cannot see: everything Radiation owns past the click needs the target to
+   * stay somewhere for a second, and a tethered target cannot leave a circle the bot chose. It
+   * plants the post *on* the enemy so the catch is guaranteed, and publishes the fact that the
+   * combo is live through `npcTetherHeld` so the rotation can commit to the drum and the baton.
+   */
+  private updateNpcMastery(): void {
+    if (!this.tetherSlot('npc')) return;
+    const s = this.sides.npc;
+    if (this.now < s.npcTetherCheckAt) return;
+    s.npcTetherCheckAt = this.now + NPC_TETHER_CHECK_MS;
+    if (s.tether || this.now - s.tetherCastAt < TETHER_COOLDOWN_MS) return;
+    const f = this.api.npc;
+    if (!this.alive(f) || this.isBusy('npc')) return;
+    const t = this.nearestTarget('npc');
+    if (!t || t.unstoppable) return;
+    // Only worth a post where the bot can still reach what it just pinned. Past this the enemy
+    // is held somewhere the bot has no ability that can profit from it.
+    if (Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) > 520) return;
+    this.tryTether('npc', t.x, t.y);
+  }
+
   // ── Input ──────────────────────────────────────────────────────────────────
 
   handleInput(time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
@@ -820,11 +1183,16 @@ export class RadiationKit {
     if (!this.alive(p) || this.drivesBody('player') || this.stunned.has(p)) return;
 
     const ctx = this.api.buildPlayerContext(mouseX, mouseY);
+    // Mastery: whichever of E/F/Q the post was dropped on stops being its own ability, so that
+    // key is skipped below and pressed for the tether instead.
+    const bound = this.tetherSlot('player');
+
     if (pointer.isDown) p.castAbility('radiation-railgun', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('radiation-baton', ctx);
+    if (bound !== 'e' && Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('radiation-baton', ctx);
     if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('radiation-xray', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('radiation-waste', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('radiation-extermination', ctx);
+    if (bound !== 'f' && Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('radiation-waste', ctx);
+    if (bound !== 'q' && Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('radiation-extermination', ctx);
+    if (bound && Phaser.Input.Keyboard.JustDown(this.keyFor(bound))) this.tryTether('player', mouseX, mouseY);
   }
 
   // ── Ability entry points (called from build*Context) ───────────────────────
@@ -1097,6 +1465,7 @@ export class RadiationKit {
     // Confirmed. The three are spent on the shot rather than left on the body, so the next
     // railgun costs another three clicks — the ability is a reload, not a stack.
     s.stuck.delete(victim);
+    this.record(owner, 'confirms', 1);
     const heat = heart ? set.reduce((a, b) => a + b, 0) / set.length : 0;
     // Final Vision turns the confirm into a held beam instead of a hitscan lance. It is checked
     // before the railgun so R+ and Click+ never both pay out on the same set of three.
@@ -1323,6 +1692,8 @@ export class RadiationKit {
     for (const t of this.targetsOf(a.owner)) {
       t.takeDamage(drop);
       this.api.spawnHitFlash(t.x, t.y, this.col(a.owner)(RAD.core));
+      // Read before the dose: a level 3 landing on a corpse would still be a kill by the drop.
+      if (t.hp <= 0) this.record(a.owner, 'nukeKills', 1);
       this.irradiate(t, a.owner, !finality, finality ? 3 : 1);
     }
     const caster = this.fighter(a.owner);
@@ -1557,6 +1928,9 @@ export class RadiationKit {
     const fresh = this.now >= s.superUntil;
     s.superUntil = this.now + SUPER_MS;
     s.armourAt = 0;
+    // Only a window that actually opened counts — a second direct drum inside a running one is
+    // an extension, not a second Supercritical.
+    if (fresh) this.record(owner, 'supercriticals', 1);
     if (fresh) {
       s.prevAbsorber = f.damageAbsorber;
       // Chained rather than assigned: Time's Remain and Air's wind dodge live in this same slot,
@@ -1793,7 +2167,8 @@ export class RadiationKit {
     const npcIs = this.isRadiation('npc');
     const anyState = this.rounds.length || this.puddles.length || this.irradiated.size
       || this.stunned.size || this.xrayed.size || this.airdrop || this.appliedOut.size
-      || this.afterimages.length || this.shrunk.size || this.knocked.size;
+      || this.afterimages.length || this.shrunk.size || this.knocked.size
+      || this.instinctArmoured.size || this.sides.player.tether || this.sides.npc.tether;
     if (!playerIs && !npcIs && !anyState) return;
 
     this.ensureLayers();
@@ -1806,10 +2181,15 @@ export class RadiationKit {
     this.updateRevolvers(delta);
     this.updateSupercritical();
     this.updatePuddles();
-    this.updateIrradiated();
+    this.updateIrradiated(delta);
     this.updateAfterimages();
     this.updateBeams();
     this.updateStuns();
+    // After the stuns and after both movement paths: the leash has to be the last thing that
+    // writes a tethered body's position, or a chase would simply walk out of it.
+    this.updateTethers(delta);
+    this.updateNpcMastery();
+    this.updateInstinct();
     this.updateXray();
     this.updateFlareWindow();
     this.updateAirdrop();
@@ -1853,6 +2233,14 @@ export class RadiationKit {
       const r = Math.max(this.api.width, this.api.height) * 0.62;
       dropFootprint(g, this.col(a.owner), a.x, a.y, r, 0.95, k, this.vizT);
     }
+
+    // Gamma Tether's leash, on the floor where both people can read it. It is not a hazard —
+    // it is the edge of where the victim is allowed to be — so it is dashed rather than solid.
+    for (const owner of BOTH) {
+      const th = this.side(owner).tether;
+      if (!th) continue;
+      leashRing(g, this.col(owner), th.x, th.y, TETHER_LEASH_R, 0.9, this.vizT, th.taut);
+    }
   }
 
   /**
@@ -1881,6 +2269,30 @@ export class RadiationKit {
     const g = this.airGfx;
     if (!g) return;
     g.clear();
+
+    // ── Sniper's Instinct's sight ──
+    // Drawn first so everything else in the element sits on top of it: it is the quietest thing
+    // on the screen by design, and it is the player's own instrument rather than a threat.
+    if (this.masteryOn('player') && this.alive(this.api.player) && !this.side('player').beam) {
+      const m = this.muzzle('player');
+      const stop = this.sightStop('player');
+      sightLine(g, this.pcol, m.x, m.y, stop.x, stop.y, 0.9, this.vizT, stop.onBody);
+    }
+
+    // ── Gamma Tether ──
+    for (const owner of BOTH) {
+      const th = this.side(owner).tether;
+      if (!th) continue;
+      const tint = this.col(owner);
+      if (th.victim && this.alive(th.victim)) {
+        gammaChain(g, tint, th.x, th.y - 17, th.victim.x, th.victim.y, 0.95, this.vizT, th.taut);
+      }
+      tetherAnchor(g, tint, th.x, th.y, 0.98, this.vizT, {
+        charge: Phaser.Math.Clamp((th.until - this.now) / TETHER_MS, 0, 1),
+        latched: !!th.victim,
+        plant: Phaser.Math.Clamp((this.now - th.plantedAt) / TETHER_PLANT_MS, 0, 1),
+      });
+    }
 
     // ── Drums ──
     for (const owner of BOTH) {
@@ -2136,6 +2548,31 @@ export class RadiationKit {
       until: s.meltdownUntil,
     } : null);
 
+    // ── Mastery ──
+    const cut = this.instinctCut('player');
+    this.api.setStatusIndicator('radiation-instinct', this.masteryOn('player') ? {
+      name: "Sniper's Instinct", emoji: '🎯', color: RAD.neonLit, priority: 149,
+      description: `Everything aimed at you lands for less the further away you are standing: nothing at all inside ${INSTINCT_MIN_D}px, and ${Math.round(INSTINCT_MAX_CUT * 100)}% less at ${INSTINCT_MAX_D}px or beyond. Measured live off whichever enemy is nearest. The sight line from your hand ends exactly where the next click would.`,
+      count: Math.round(cut * INSTINCT_MAX_CUT * 100), suffix: '%',
+    } : null);
+
+    const th = s.tether;
+    this.api.setStatusIndicator('radiation-tether', playerIs && th ? {
+      name: 'Gamma Tether', emoji: '📡', color: RAD.neon, priority: 143,
+      description: th.victim
+        ? `The chain is on. They cannot get further than ${TETHER_LEASH_R}px from the post, and their dose is not running down for as long as it holds.`
+        : `The post is planted and hunting. It takes the first body inside ${TETHER_CATCH_R}px of it and holds them within ${TETHER_LEASH_R}px until it dies.`,
+      until: th.until,
+    } : null);
+
+    // The victim's half, which is the only reason a tethered player knows why they stopped.
+    const held = this.sides.npc.tether?.victim === p ? this.sides.npc.tether : null;
+    this.api.setStatusIndicator('radiation-tethered', held ? {
+      name: 'Tethered', emoji: '⛓️', color: RAD.hazard, priority: 3,
+      description: `A gamma post has you on a chain. You cannot get further than ${TETHER_LEASH_R}px from it, and any dose you are carrying has stopped counting down until the post dies.`,
+      until: held.until,
+    } : null);
+
     const fl = s.flares;
     this.api.setStatusIndicator('radiation-flares', playerIs && fl ? {
       name: 'Extermination', emoji: '🔫', color: RAD.neon, priority: 141,
@@ -2188,5 +2625,35 @@ export class RadiationKit {
   targetIrradiated(owner: Owner): boolean {
     const t = this.nearestTarget(owner);
     return !!t && this.irradiated.has(t);
+  }
+
+  // ── Mastery (read by ArenaScene / the AI) ───────────────────────────────────
+
+  /**
+   * The opportunity the mastery creates, published for `doRadiationAbilities`.
+   *
+   * True while that side's post has a body on the end of its chain — which is the one moment
+   * every procedure in this kit is free: three tracers, a 132px drum, seven pools and a 104px
+   * baton wedge all need the target to still be there, and a tethered target cannot leave a
+   * 150px circle. Side-effect-free: it is a read of state the kit already owns.
+   */
+  tetherHeld(owner: Owner): boolean {
+    return !!this.side(owner).tether?.victim;
+  }
+
+  /** The slot the bot's post is bound over, so the AI does not press the ability that is gone. */
+  npcTetherSlot(): 'e' | 'f' | 'q' | undefined {
+    return this.tetherSlot('npc') ?? undefined;
+  }
+
+  /**
+   * The mastery card. A live post counts its own six seconds down; once it is gone the card goes
+   * back to counting the fifteen, which is what every other bindable on a private timer does.
+   */
+  getBarRatio(abilityId: string, time: number): number {
+    if (abilityId !== TETHER_ID) return 1;
+    const s = this.sides.player;
+    if (s.tether) return Phaser.Math.Clamp((s.tether.until - time) / TETHER_MS, 0, 1);
+    return Phaser.Math.Clamp((time - s.tetherCastAt) / TETHER_COOLDOWN_MS, 0, 1);
   }
 }

@@ -22,11 +22,14 @@ const silence: ElementCodex = {
     {
       emoji: '🌫️',
       name: 'The Fog',
-      magic:
-        'There is a ninety-pixel band of dark around the whole arena border, and things reach out '
-        + 'of it and think better of it. Standing in the band makes you invisible on the spot and '
-        + 'starts filling a stealth meter. Step out and you stay invisible for as long as the '
-        + 'meter lasts — and the knife you are carrying is worth more the fuller it is.',
+      basics:
+        'A 90px band around the entire arena edge. Standing anywhere in it makes you invisible '
+        + 'immediately — to the other player you are gone, sprite and health bar both, while on your own '
+        + 'screen you stay faintly visible at 35% so you can still play. A 0–100 meter gains 10 a second '
+        + 'in the fog and drains 10 a second outside it, and a Stab converts the whole meter into damage: '
+        + '+25 at a full 100, taking a 20-damage stab to 45, spending the meter entirely. Every watcher '
+        + 'you own is +20% stealth gain and −20% drain, so three fill the meter at 16 a second and empty '
+        + 'it at 4.',
       effects: [
         { tag: 'area', label: 'The band', detail: '90px around the entire arena edge. Standing anywhere in it makes you invisible immediately.' },
         { tag: 'resource', label: 'The meter', detail: '0–100. Gains 10 a second in the fog, drains 10 a second outside it.' },
@@ -43,10 +46,11 @@ const silence: ElementCodex = {
     {
       emoji: '🔇',
       name: 'Silenced',
-      magic:
-        'The debuff the element is named after. A silenced fighter can still click — that is all '
-        + 'they can do. Every keyed ability they own simply refuses, for twelve seconds off a '
-        + 'backstab and twenty off a ritual, which is longer than most fights have left.',
+      basics:
+        'The lockout this element exists to apply. It takes every ability except the Click — E, R, F '
+        + 'and Q all refuse outright — for 12 seconds from a backstab, 20 from a Ritual beam or 10 from a '
+        + 'sacrificed watcher, with a muted-speaker mark turning over their head for the whole time, '
+        + 'facing whichever way they are.',
       effects: [
         { tag: 'debuff', label: 'What it takes', detail: 'Every ability except the Click. E, R, F and Q all refuse outright for the duration.' },
         { tag: 'debuff', label: 'How long', detail: '12 seconds from a backstab, 20 from a Ritual beam, 10 from a sacrificed watcher.' },
@@ -60,10 +64,10 @@ const silence: ElementCodex = {
     {
       emoji: '👁️',
       name: 'The Rear Arc',
-      magic:
-        'Every fighter in the game has an eye, and Silence is the only element that reads it. Come '
-        + 'at somebody from the hundred and twenty degrees behind them and the knife goes in '
-        + 'differently — half again as hard, and their abilities go with it.',
+      basics:
+        'A 120° wedge behind every fighter — ±60° of the direction they are facing away from. A stab '
+        + 'landed inside it deals ×1.5, so a full-stealth backstab is 67 rather than 45, and it carries '
+        + '12 seconds of Silence, which only ever comes from a backstab and never from a face-on one.',
       effects: [
         { tag: 'damage', label: 'The backstab', detail: '×1.5 damage — so a full-stealth stab from behind is 67 rather than 45.' },
         { tag: 'debuff', label: 'And the lockout', detail: '12 seconds of Silence, which only ever comes from a backstab and never from a face-on one.' },
@@ -78,11 +82,11 @@ const silence: ElementCodex = {
 
   abilities: {
     'silence-stab': {
-      magic:
-        'A short dash forward and a knife. It is the only conventional damage in the kit and the '
-        + 'only thing that spends the stealth meter — which makes it the payoff for everything '
-        + 'else. Come at them from the front and it is a stab; come at them from behind and it '
-        + 'takes their abilities away for twelve seconds.',
+      basics:
+        'Dashes 170px forward along your aim, cutting a 110px-wide lane, so the click is a gap-closer '
+        + 'as well as an attack. The knife deals 20 plus up to 25 more from a full stealth meter — 45 at '
+        + '100 — and the meter is consumed either way. From behind it is ×1.5 and 12 seconds of Silence, '
+        + 'so a full-stealth backstab is 67 damage and a total lockout. 1s cooldown.',
       cast: 'Click, dashing 170px forward along the aim and cutting a 110px-wide lane. 1s cooldown.',
       effects: [
         { tag: 'damage', label: 'The knife', detail: '20 damage, plus up to 25 more from a full stealth meter — 45 at 100 — and the whole meter is consumed either way.' },
@@ -90,10 +94,10 @@ const silence: ElementCodex = {
         { tag: 'movement', label: 'The dash', detail: '170px forward, so the click is a gap-closer as well as an attack.' },
       ],
       upgrade: {
-        magic:
-          'Sacrifice lets you stab your own. A knife into one of your watchers releases what it '
-          + 'was holding — a shockwave of quiet that hurts and silences everything nearby — and '
-          + 'the watcher survives, but it will not finish growing up for another five seconds.',
+        basics:
+          'A stab that passes through one of your own watchers sacrifices it: 15 damage and 10 seconds of '
+          + 'Silence to every enemy within 130px. It sets that watcher back 5 seconds before it can mature, '
+          + 'so sacrificing a nearly-grown one costs you a Grabber.',
         effects: [
           { tag: 'damage', label: 'The shockwave', detail: '15 damage and 10 seconds of Silence to every enemy within 130px of the watcher.', requiresUpgrade: 'click' },
           { tag: 'cost', label: 'It sets the watcher back', detail: 'The stabbed watcher cannot mature for 5 seconds, so sacrificing a nearly-grown one costs you a Grabber.', requiresUpgrade: 'click' },
@@ -107,11 +111,12 @@ const silence: ElementCodex = {
     },
 
     'silence-watch': {
-      magic:
-        'A thin figure is planted where you point and it stands there. It does not attack, it does '
-        + 'not follow, and one hit kills it. What it does is watch — and for as long as it is '
-        + 'standing, the fog works better for you and your knife hits harder. Leave one alone for '
-        + 'thirty-five seconds and it grows into something the Ritual can use.',
+      basics:
+        'Plants a 14px watcher at the cursor — three at once, and a single hit of anything destroys '
+        + 'one. Each is worth +20% stealth gain, −20% stealth drain and +10% damage on everything this '
+        + 'element deals. Standing untouched for 35 seconds matures it, and a matured watcher is what '
+        + 'Ritual turns into a Grabber. It pulses every 15 seconds, which is both flavour and a reminder '
+        + 'of where your board is. 5s cooldown.',
       cast: 'E, planted at the cursor. 5s cooldown. Three at a time.',
       effects: [
         { tag: 'summon', label: 'The watcher', detail: 'Up to 3 at once, 14px, and destroyed by a single hit of anything.' },
@@ -120,10 +125,13 @@ const silence: ElementCodex = {
         { tag: 'utility', label: 'It pulses', detail: 'Every 15 seconds it makes itself known, which is both flavour and a reminder of where your board is.' },
       ],
       upgrade: {
-        magic:
-          'Mutant is what happens when you put a watcher on top of another watcher. The two fold '
-          + 'together into a winged Seeker that flies, takes three hits to kill, and sweeps a red '
-          + 'gaze across the arena. Anything caught in the gaze panics.',
+        basics:
+          'Watchers become Seekers: 3 hits instead of 1, moving at 120 px/s and turning to a new heading '
+          + 'every 1.5 seconds, with a 200px cone ±30° wide that leaves anything inside it Panicking for 8 '
+          + 'seconds — "I see you" haunts their screen. Stabbing a panicking enemy drains only 50 stealth '
+          + 'instead of the whole meter, so a panicked target can be stabbed twice at strength. Ritual on a '
+          + 'matured Seeker raises a Vulture rather than a Grabber: every 20 seconds it carries an enemy '
+          + 'off the top of the screen and drops them back 50 health lighter and covered in blood.',
         effects: [
           { tag: 'summon', label: 'The Seeker', detail: 'Takes 3 hits instead of 1, moves at 120 px/s, and turns to a new heading every 1.5 seconds.', requiresUpgrade: 'e' },
           { tag: 'debuff', label: 'The gaze', detail: 'A 200px cone, ±30° wide. Anything inside it Panics for 8 seconds — "I see you" haunts their screen.', requiresUpgrade: 'e' },
@@ -139,11 +147,13 @@ const silence: ElementCodex = {
     },
 
     'silence-ritual': {
-      magic:
-        'A circle is drawn on the ground at your cursor and for one second nothing happens. Then a '
-        + 'red beam comes down through it. Anything standing in the circle takes it and loses '
-        + 'every ability it owns for twenty seconds. And if the circle happens to be drawn around '
-        + 'one of your own grown watchers, the beam does something else entirely.',
+      basics:
+        'Draws a 75px circle up to 450px away that strikes one full second later — visible the whole '
+        + 'time and dodgeable on purpose — for 25 damage to everything inside and 20 seconds of Silence, '
+        + 'the longest in the element and the only source that does not need you behind them. Cast on a '
+        + 'matured watcher it raises a Grabber instead: 60 seconds of life, throwing a gangly arm every '
+        + '20 seconds (the first after 10) that drags a victim 300 px/s toward it for up to 2.5 seconds '
+        + 'and, if it lands, deals 50 damage plus a permanent 20% cooldown penalty. 14s cooldown.',
       cast: 'R, at the cursor, up to 450px away. A 75px circle, striking 1 second after it is drawn. 14s cooldown.',
       effects: [
         { tag: 'damage', label: 'The beam', detail: '25 damage to everything inside the 75px circle.' },
@@ -152,10 +162,13 @@ const silence: ElementCodex = {
         { tag: 'summon', label: 'On a matured watcher', detail: 'It becomes a Grabber: 60 seconds of life, and every 20 seconds — the first after 10 — it throws a gangly arm out, drags a victim 300 px/s toward it for up to 2.5 seconds, and does 50 damage plus a permanent 20% cooldown penalty if it lands.' },
       ],
       upgrade: {
-        magic:
-          'Night Terror turns being frightening into a resource. A TERROR bar fills for every '
-          + 'enemy currently suffering something of yours, and at full bar you may draw the '
-          + 'circle on *yourself* — and what stands up out of it is the Striker.',
+        basics:
+          'A terror bar fills at +1 a second per afflicted enemy, to 100, and Ritual cast on yourself at '
+          + 'full terror turns you into the Striker for 20 seconds with a completely new clawed moveset. '
+          + 'Everything that hits you while transformed is stored rather than prevented and taken in one '
+          + 'hit when you revert, at 25% off — a loan and not a shield. The clock moves with the fight: +1 '
+          + 'second per 5 damage you deal and −1 second per 15 you absorb, so an aggressive Striker lasts '
+          + 'and a hunted one does not.',
         effects: [
           { tag: 'resource', label: 'The bar', detail: '+1 a second per afflicted enemy, to a maximum of 100.' },
           { tag: 'utility', label: 'Becoming the Striker', detail: 'Ritual on yourself at full terror. 20 seconds of a completely new clawed moveset.', requiresUpgrade: 'r' },
@@ -171,11 +184,12 @@ const silence: ElementCodex = {
     },
 
     'silence-feast': {
-      magic:
-        'A ring of teeth opens in the floor and chews for eight seconds, leaning toward wherever '
-        + 'you are looking. Standing in it is not immediately dangerous — it is dangerous if you '
-        + 'are still in it six seconds later, at which point something is very badly wrong with '
-        + 'what the victim can see for the next half-minute.',
+      basics:
+        'Opens a 110px ring at the cursor for 8 seconds that leans 60px toward whatever you are facing, '
+        + 'so it can be walked onto somebody rather than only placed. Anybody who spends 6 of those 8 '
+        + 'seconds inside it is bitten for 35 and hallucinates for 30 seconds: against a player their '
+        + 'screen is haunted, with an eye covering it every 10 seconds for 2 and a false copy of you '
+        + 'appearing every 8 for 3; against a bot it simply misses 20% of the time. 18s cooldown.',
       cast: 'F, at the cursor. A 110px circle for 8 seconds that follows the caster\'s facing by 60px. 18s cooldown.',
       effects: [
         { tag: 'damage', label: 'The bite', detail: '35 damage, but only to somebody who has spent 6 of the 8 seconds inside the ring.' },
@@ -183,11 +197,10 @@ const silence: ElementCodex = {
         { tag: 'utility', label: 'It follows you', detail: 'The ring leans 60px toward whatever the caster is facing, so it can be walked onto somebody rather than only placed.' },
       ],
       upgrade: {
-        magic:
-          'Flesh Banquet takes the hallucination further than a screen effect. The whole arena '
-          + 'turns to meat for the victim — eyeballs and teeth across every surface — and five '
-          + 'small toothy things are let out to hound them personally for as long as the visions '
-          + 'last.',
+        basics:
+          'Five midgets crawl out at 140 px/s and bite for 5 damage every 0.5 seconds until the '
+          + 'hallucinations end, and the arena turns with them — 26 flesh decals of eyeballs and teeth '
+          + 'across the floor for the whole 30 seconds.',
         effects: [
           { tag: 'summon', label: 'The midgets', detail: '5 of them at 140 px/s, biting for 5 damage every 0.5 seconds until the hallucinations end.', requiresUpgrade: 'f' },
           { tag: 'utility', label: 'The arena turns', detail: '26 flesh decals across the floor — eyeballs and teeth — for the whole 30 seconds.', requiresUpgrade: 'f' },
@@ -201,11 +214,16 @@ const silence: ElementCodex = {
     },
 
     'silence-run': {
-      magic:
-        'A gangly arm comes out of you and reaches five hundred pixels. If it catches somebody, '
-        + 'the arena stops — both of you are dragged into a dark corridor with a door at the far '
-        + 'end, you become the blob, and they run. They have to reach the door. You have to reach '
-        + 'them first.',
+      basics:
+        'Reaches 500px over 350ms with a 60px catch, and both fighters leave the arena entirely for a '
+        + 'pocket corridor 220px wide where the victim is untargetable by anybody else. A blob chases at '
+        + '380 px/s with a 50px catch against a victim moving at 80% speed, and reaching them is 80 '
+        + 'damage. They win by crossing the top of the corridor: the door opens 4.5 seconds in and the '
+        + 'chase times out at 14. A player mashes 14 presses to break the initial grab and a bot has a '
+        + 'flat 33% chance, and a bot escapes the hallway about half the time before any spitting. Click '
+        + 'during the chase spits for 5 damage and a half-second slow at 430 px/s, and every spit that '
+        + 'lands cuts a bot\'s survival odds by 2%. 60s cooldown — but a whiff refunds 45 of it, leaving '
+        + 'about 15.',
       cast: 'Q, ultimate. The arm reaches 500px over 350ms with a 60px catch. 60s cooldown — but a whiff refunds 45 of it, leaving about 15.',
       effects: [
         { tag: 'control', label: 'The hallway', detail: 'Both fighters leave the arena entirely for a pocket corridor 220px wide. The victim is untargetable by anybody else while it runs.' },
@@ -215,10 +233,11 @@ const silence: ElementCodex = {
         { tag: 'utility', label: 'A bot\'s odds', detail: 'A bot escapes the hallway about half the time before any spitting.' },
       ],
       upgrade: {
-        magic:
-          'The Labyrinth replaces the corridor with a maze. They are shrunk, slowed further and '
-          + 'can barely see past their own feet, the camera pulls in, and the blob does not need '
-          + 'the corridors at all — it eats through the walls.',
+        basics:
+          'The corridor becomes a 9×6 labyrinth, with the camera zoomed to 1.6× and 170px of vision, and '
+          + 'the victim is shrunk to 60% size and slowed a further 30% on top of the hallway\'s own 20%. The '
+          + 'blob cheats: it chews through a wall in 1.2 seconds, so the maze is a delay rather than a '
+          + 'defence. A bot\'s survival chance is halved outright.',
         effects: [
           { tag: 'control', label: 'The maze', detail: 'A 9×6 labyrinth instead of a straight hallway, with the camera zoomed to 1.6× and 170px of vision.', requiresUpgrade: 'q' },
           { tag: 'debuff', label: 'What it does to them', detail: 'Shrunk to 60% size and slowed a further 30% on top of the hallway\'s own 20%.', requiresUpgrade: 'q' },
@@ -236,11 +255,11 @@ const silence: ElementCodex = {
 
   perks: {
     torture: {
-      magic:
-        'The Ritual stops being an execution and becomes a ceremony. The beam does not kill '
-        + 'quickly any more — the victim is racked instead, bleeding for six seconds and losing '
-        + 'another second of their voice with every one of them. And a second ritual on somebody '
-        + 'already racked simply tightens it.',
+      basics:
+        'The Ritual beam racks its victim: 4 damage a second for 6 seconds — 24 in all, against the '
+        + 'beam\'s single 25 — with +1 second of Silence per tick, so a full rack is 6 more seconds on top '
+        + 'of the 20. Ritualling the same racked victim again tightens it for +2 damage a second, up to 3 '
+        + 'stacks and 8 a second at full tension.',
       effects: [
         { tag: 'dot', label: 'The rack', detail: '4 damage a second for 6 seconds — 24 in all, against the beam\'s single 25.' },
         { tag: 'debuff', label: 'It extends the Silence', detail: '+1 second of Silence per tick, so a full rack is 6 more seconds on top of the 20.' },
@@ -255,11 +274,11 @@ const silence: ElementCodex = {
 
   mastery: {
     weep: {
-      magic:
-        'You only exist while somebody is looking at you. The moment every enemy in the match is '
-        + 'facing away, you move half again as fast and the fog holds onto you longer — and the '
-        + 'instant one of them turns their eye back on you, you drop to an ordinary walk in the '
-        + 'middle of whatever you were doing.',
+      basics:
+        'While every living enemy is facing away from you — meaning outside ±50° of their facing, a '
+        + '100° wedge — you move 50% faster and your stealth drains 25% slower, on top of whatever your '
+        + 'watchers are already doing. It also keeps a terror bar even without the Night Terror upgrade, '
+        + 'so Puppetmaster always has something to spend.',
       effects: [
         { tag: 'movement', label: 'Unwatched', detail: '+50% move speed while every living enemy is facing away from you.' },
         { tag: 'buff', label: 'And the fog holds', detail: 'Stealth drains 25% slower while unwatched, on top of whatever your watchers are already doing.' },
@@ -272,13 +291,16 @@ const silence: ElementCodex = {
       ],
     },
     puppetmaster: {
-      magic:
-        'Within five seconds of a knife landing, you stitch a doll of them and plant it in the '
-        + 'ground. Everything you put into the doll goes into the person, with interest, and they '
-        + 'cannot touch it. And then you cast the Ritual on the doll — and instead of the doll '
-        + 'dying, *they* wake up: their eyes go white, their body cracks open, and something with '
-        + 'four spider-legged tentacles climbs out wearing them. You steer that instead of '
-        + 'yourself.',
+      basics:
+        'A bindable doll, planted within 5 seconds of a landed stab for 25 terror. Everything you put '
+        + 'into the doll is relayed to the enemy at ×1.25, it breaks after 50 damage has gone through it, '
+        + 'and they can neither damage nor move it themselves. Ritual on the doll and the doll survives — '
+        + 'the enemy is possessed instead, for 15 seconds, and you control their body rather than your '
+        + 'own: Click slashes for 15 in a ±60° arc out to 100px, E bites for 10 and heals you 12, R '
+        + 'cannibalizes their own muck for 20 and heals you 20, F slams the ground and drags up 3 '
+        + 'awakened-kin that crawl over and stab them for 10 apiece every 2.5 seconds for 20 seconds, and '
+        + 'Q hands the body back and costs them 20 on the way out. Cannot be bound to R, since Ritual is '
+        + 'what awakens the doll. 12s cooldown.',
       cast: 'The bound key, within 5 seconds of a landed stab, for 25 terror. Cannot be bound to R — Ritual is what awakens the doll. 12s cooldown.',
       effects: [
         { tag: 'damage', label: 'The doll', detail: 'Everything you put into it is relayed to the enemy at ×1.25. It breaks after 50 damage has gone through it, and they cannot damage or move it themselves.' },

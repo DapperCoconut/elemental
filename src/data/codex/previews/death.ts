@@ -77,8 +77,8 @@ const DISHONOR_MS = 20_000;
 const DISHONOR_STEP = 0.02;
 const WALL_THICK = 15;
 
-const CUT_LIFE_MS = 5000;
-const CUT_EVERY_MS = 90;
+const CUT_LIFE_MS = 20_000;
+const CUT_STEP = 24;
 const CUT_LEN = 46;
 const CUT_R = 34;
 const CUT_SLOW = 0.25;
@@ -88,6 +88,17 @@ const TENTACLES = 5;
 const TENT_LEN = 74;
 const GRAB_R = 175;
 const MASK_CHARGES = 3;
+
+const INEV_WINDOW_MS = 2000;
+const INEV_TRIGGER = 50;
+const INEV_MS = 5000;
+const INEV_REGEN = 5;
+
+const DELAY_MS = 8000;
+const DELAY_CLOCK_MS = 8000;
+const DELAY_DR = 0.5;
+const DELAY_REGEN = 5;
+const DELAY_DASH_MULT = 3;
 
 interface Mark { x: number; y: number }
 
@@ -552,10 +563,10 @@ export const riposteUpgraded: PreviewScript = {
 // ── F — Amputate ──────────────────────────────────────────────────────
 
 export const amputate: PreviewScript = {
-  duration: 7200,
+  duration: 8600,
   scale: 0.9,
   bodyTexture: '',
-  caption: 'F — no damage. A limb off everything the dash passes through, and nothing grows back',
+  caption: 'F — no damage. Land the dash and you choose a limb; miss it and it was only a dash',
   run(ctx) {
     const home: Mark = { x: ctx.w * 0.16, y: ctx.h * 0.6 };
     const s = drivenCaster(ctx, home);
@@ -566,24 +577,28 @@ export const amputate: PreviewScript = {
     ctx.onFrame((dt) => { clockMs = Math.max(0, clockMs - dt); });
     clock(ctx, () => clockMs);
 
-    // The picker: the decision is which limb, and it is made before the dash leaves.
-    const pick = ctx.adopt(ctx.scene.add.text(ctx.w * 0.5, ctx.h * 0.2, '🦵 LEFT LEG', {
+    // The picker. It is a *consequence*: it only comes up once the pass has landed on somebody
+    // with a limb left, which is the whole shape of the ability.
+    const pick = ctx.adopt(ctx.scene.add.text(ctx.w * 0.5, ctx.h * 0.2, '', {
       fontSize: '11px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
       color: hex(DEA.bone), backgroundColor: '#0d0a17', padding: { x: 6, y: 3 },
-    }).setOrigin(0.5).setDepth(19));
+    }).setOrigin(0.5).setDepth(19).setVisible(false));
 
-    const dash = (at: number, limbLabel: string, apply: () => void): void => {
-      ctx.at(at - 500, () => pick.setText(limbLabel).setVisible(true));
+    /**
+     * One charge. `toX` is where he ends up, so a pass that stops short of them is a miss — and
+     * a miss opens nothing. The menu and the limb are scheduled off the dash's own fixed length
+     * rather than off the frame that connected, so the timeline stays deterministic.
+     */
+    const dash = (at: number, toX: number, limbLabel: string | null, apply: () => void): void => {
+      let cut = false;
       ctx.at(at, () => {
-        pick.setVisible(false);
         const ang = Math.atan2(foe.y - home.y, foe.x - home.x);
         s.av.play('sweep', ang);
         s.fx.sweep(home.x, home.y, ang, 0.5, 90, 320, 10, DEA.blade);
         const x0 = home.x;
         const y0 = home.y;
-        const x1 = Phaser.Math.Clamp(foe.x + 70, 16, ctx.w - 16);
+        const x1 = Phaser.Math.Clamp(toX, 16, ctx.w - 16);
         let run = 0;
-        let cut = false;
         ctx.onFrame((dt) => {
           if (run >= AMP_MS) return;
           run = Math.min(AMP_MS, run + dt);
@@ -594,19 +609,35 @@ export const amputate: PreviewScript = {
           home.y = y0;
           if (cut || Phaser.Math.Distance.Between(home.x, home.y, foe.x, foe.y) > AMP_HIT_R + 14) return;
           cut = true;
-          apply();
         });
+      });
+      ctx.at(at + AMP_MS + 60, () => {
+        if (!cut) { tick(ctx, home.x, home.y - 46, '🗡️ CUT NOTHING', DEA.pale); return; }
+        if (!limbLabel) { tick(ctx, foe.x, foe.y - 44, '🗡️ SLASHED — NOTHING LEFT', DEA.pale); return; }
+        tick(ctx, foe.x, foe.y - 58, '🗡️ CUT LANDED', DEA.edge);
+        pick.setText(limbLabel).setVisible(true);
+      });
+      ctx.at(at + AMP_MS + 760, () => {
+        if (!cut || !limbLabel) return;
+        pick.setVisible(false);
+        apply();
       });
     };
 
-    dash(900, '🦵 LEFT LEG', () => {
+    // Landed — the menu comes up afterwards and the leg comes off when it is answered.
+    dash(700, ctx.w * 0.56 + 70, '🦵 LEFT LEG', () => {
       state.legs = 1;
       s.fx.amputate(foe.x, foe.y, 0, true);
       tick(ctx, foe.x, foe.y - 40, '🗡️ 🦵 LEFT LEG TAKEN', DEA.blood);
       tick(ctx, foe.x, foe.y - 22, `−${Math.round((1 - AMP_LEG_SPEED[1]) * 100)}% SPEED`, DEA.bone);
     });
-    ctx.at(2600, () => { home.x = ctx.w * 0.16; });
-    dash(3600, '💪 LEFT ARM', () => {
+    ctx.at(2300, () => { home.x = ctx.w * 0.16; });
+
+    // Short — he stops well before them. No menu, no limb, and the cooldown is gone anyway.
+    dash(3000, ctx.w * 0.3, null, () => {});
+    ctx.at(4200, () => { home.x = ctx.w * 0.16; });
+
+    dash(4900, ctx.w * 0.56 + 70, '💪 LEFT ARM', () => {
       state.arms = 1;
       s.fx.amputate(foe.x, foe.y, 0, false);
       tick(ctx, foe.x, foe.y - 40, '🗡️ 💪 LEFT ARM TAKEN', DEA.blood);
@@ -615,13 +646,13 @@ export const amputate: PreviewScript = {
         DEA.bone);
       tick(ctx, foe.x, foe.y - 4, 'NOTHING MORE TO TAKE', DEA.pale);
     });
-    ctx.at(5400, () => {
-      s.fx.soot(home.x, home.y, 6, 20, 460, 9);
-      tick(ctx, foe.x, foe.y - 40, '🦴 NOTHING LEFT', DEA.pale);
-    });
+    ctx.at(6300, () => { home.x = ctx.w * 0.16; });
+
+    // Nothing left to give, and the dash is still worth making — it just slashes through.
+    dash(7000, ctx.w * 0.56 + 70, null, () => {});
 
     label(ctx, ctx.w * 0.5, ctx.h - 10,
-      `two limbs per body for the whole match · both legs is ×${AMP_LEG_SPEED[2]} speed, both arms is −${Math.round((1 - AMP_ARM_DMG[2]) * 100)}% damage`,
+      `land it to choose · two limbs per body for the whole match · both legs is ×${AMP_LEG_SPEED[2]} speed, both arms is −${Math.round((1 - AMP_ARM_DMG[2]) * 100)}% damage`,
       DEA.pale);
   },
 };
@@ -630,7 +661,7 @@ export const amputateUpgraded: PreviewScript = {
   duration: 8000,
   scale: 0.9,
   bodyTexture: '',
-  caption: 'Death by 1000 Cuts — a trail of gashes that deal nothing and make everything else 1.5× worse',
+  caption: 'Death by 1000 Cuts — the dash carves a corridor that deals nothing and makes everything else 1.5× worse',
   run(ctx) {
     const home: Mark = { x: ctx.w * 0.18, y: ctx.h * 0.34 };
     const s = drivenCaster(ctx, home);
@@ -643,26 +674,50 @@ export const amputateUpgraded: PreviewScript = {
 
     interface Cut { x: number; y: number; ang: number; born: number; seed: number }
     const cuts: Cut[] = [];
-    const last = { x: home.x, y: home.y, next: 0 };
     const g = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
     let carved = false;
+    // Only ever advanced by a dash. Walking around leaves the floor alone — that is the whole
+    // point of the rework, so the loop has to be visibly *still* between the two charges.
+    const dashing = { on: false, run: 0, x0: 0, y0: 0, x1: 0, y1: 0, cx: 0, cy: 0, ang: 0 };
 
-    // He walks a loop and the blade drags behind him the whole way.
-    ctx.onFrame((dt, elapsed) => {
-      const t = elapsed / 1000;
-      home.x = ctx.w * 0.44 + Math.cos(t * 1.1) * ctx.w * 0.26;
-      home.y = ctx.h * 0.5 + Math.sin(t * 1.1) * ctx.h * 0.3;
+    const lay = (x: number, y: number, along: number, elapsed: number): void => {
+      // Across the path rather than along it: a slash he left, not a skidmark.
+      cuts.push({
+        x, y, ang: along + Math.PI / 2 + (Math.random() - 0.5) * 0.7,
+        born: elapsed, seed: Math.random() * 999,
+      });
+    };
 
-      if (elapsed >= last.next && Phaser.Math.Distance.Between(last.x, last.y, home.x, home.y) >= 11) {
-        const along = Math.atan2(home.y - last.y, home.x - last.x);
-        last.next = elapsed + CUT_EVERY_MS;
-        last.x = home.x;
-        last.y = home.y;
-        // Across the path rather than along it: a slash he left, not a skidmark.
-        cuts.push({
-          x: home.x, y: home.y, ang: along + Math.PI / 2 + (Math.random() - 0.5) * 0.7,
-          born: elapsed, seed: Math.random() * 999,
+    /** One Amputate charge, carving the line it runs down. */
+    const dash = (at: number, x1: number, y1: number): void => {
+      ctx.at(at, () => {
+        const ang = Math.atan2(y1 - home.y, x1 - home.x);
+        s.av.play('sweep', ang);
+        s.fx.sweep(home.x, home.y, ang, 0.5, 90, 320, 10, DEA.blade);
+        Object.assign(dashing, {
+          on: true, run: 0, x0: home.x, y0: home.y, x1, y1, cx: home.x, cy: home.y, ang,
         });
+        lay(home.x, home.y, ang, at);
+      });
+    };
+
+    ctx.onFrame((dt, elapsed) => {
+      if (dashing.on) {
+        dashing.run = Math.min(AMP_MS, dashing.run + dt);
+        const k = dashing.run / AMP_MS;
+        // Ease out — he arrives at speed and stops.
+        const e = 1 - (1 - k) * (1 - k);
+        home.x = dashing.x0 + (dashing.x1 - dashing.x0) * e;
+        home.y = dashing.y0 + (dashing.y1 - dashing.y0) * e;
+        if (Phaser.Math.Distance.Between(dashing.cx, dashing.cy, home.x, home.y) >= CUT_STEP) {
+          lay(home.x, home.y, Math.atan2(home.y - dashing.cy, home.x - dashing.cx), elapsed);
+          dashing.cx = home.x;
+          dashing.cy = home.y;
+        }
+        if (k >= 1) {
+          dashing.on = false;
+          lay(home.x, home.y, dashing.ang, elapsed);
+        }
       }
 
       g.clear();
@@ -671,7 +726,8 @@ export const amputateUpgraded: PreviewScript = {
         const c = cuts[i];
         const life = 1 - (elapsed - c.born) / CUT_LIFE_MS;
         if (life <= 0) { cuts.splice(i, 1); continue; }
-        cutMark(g, ctx.tint, c.x, c.y, c.ang, CUT_LEN, life);
+        // They barely fade inside a preview — twenty seconds is four of these loops.
+        cutMark(g, ctx.tint, c.x, c.y, c.ang, CUT_LEN, 0.35 + life * 0.6);
         if (Phaser.Math.Distance.Between(c.x, c.y, foe.x, foe.y) <= CUT_R + 10) inIt = true;
       }
       if (inIt && !carved) {
@@ -688,18 +744,26 @@ export const amputateUpgraded: PreviewScript = {
     });
 
     // A full brand, so the amplifier has something real to multiply.
-    ctx.at(1400, () => {
+    ctx.at(700, () => {
       state.stacks = STYX_MAX;
       s.fx.brand(foe.x, foe.y, 24, 10);
       tick(ctx, foe.x, foe.y - 56, '🌊 STYX ×3 · −45%', DEA.styx);
     });
+
+    // Straight through them, then back across at an angle: two lines, one corridor, and the
+    // gashes from the first are still open when the second crosses them.
+    dash(1600, ctx.w * 0.82, ctx.h * 0.74);
     ctx.at(3000, () => {
       tick(ctx, foe.x, foe.y - 56,
         `×${CUT_AMP} → −${Math.round(STYX_STEP * STYX_MAX * CUT_AMP * 100)}%`, DEA.blade);
     });
+    dash(4200, ctx.w * 0.2, ctx.h * 0.5);
+    ctx.at(5600, () => {
+      tick(ctx, home.x, home.y - 46, '🗡️ THE FLOOR KEEPS IT — 20s', DEA.blade);
+    });
 
     label(ctx, ctx.w * 0.5, ctx.h - 10,
-      `a ${CUT_R}px gash every ${CUT_EVERY_MS}ms while moving, ${CUT_LIFE_MS / 1000}s each · everybody's debuffs, not just his`,
+      `only the dash lays them · a ${CUT_R}px gash every ${CUT_STEP}px of the charge, ${CUT_LIFE_MS / 1000}s each · everybody's debuffs, not just his`,
       DEA.pale);
   },
 };
@@ -926,5 +990,204 @@ export const nothingIsDamage: PreviewScript = {
 
     label(ctx, ctx.w * 0.5, ctx.h - 8,
       'worn as reduced incoming damage on the reaper — one field, so the least weakened enemy sets it', DEA.pale);
+  },
+};
+
+// ── Mastery ───────────────────────────────────────────────────────────
+
+/** The running readout both mastery loops carry, since both of them are arithmetic on a timer. */
+function meterLine(ctx: PreviewCtx): Phaser.GameObjects.Text {
+  return ctx.adopt(ctx.scene.add.text(ctx.w * 0.5, 12, '', {
+    fontSize: '11px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
+    color: hex(DEA.pale),
+  }).setOrigin(0.5).setDepth(19));
+}
+
+export const masteryInevitability: PreviewScript = {
+  duration: 9600,
+  scale: 0.9,
+  caption: 'Passive — 50 damage inside two seconds buys 5s of +33% dodge, +25% speed and 5 HP/s',
+  run(ctx) {
+    const s = stageIt(ctx);
+    const foe: Mark = { x: ctx.w * 0.84, y: ctx.h * 0.52 };
+    victim(ctx, foe);
+    let clockMs = MIDNIGHT_MS * 0.5;
+    ctx.onFrame((dt) => { clockMs = Math.max(0, clockMs - dt); });
+    clock(ctx, () => clockMs);
+
+    // The window is the passive. Everything else is what falls out of it crossing fifty.
+    const hits: { at: number; amount: number }[] = [];
+    let until = -9999;
+    let hp = 190;
+    let accum = 0;
+    let now = 0;
+    const meter = meterLine(ctx);
+    const ring = ctx.adopt(ctx.scene.add.graphics().setDepth(7));
+
+    ctx.onFrame((dt, elapsed) => {
+      now = elapsed;
+      while (hits.length && elapsed - hits[0].at > INEV_WINDOW_MS) hits.shift();
+      let sum = 0;
+      for (const h of hits) sum += h.amount;
+      const live = elapsed < until;
+      if (live) {
+        accum += INEV_REGEN * (dt / 1000);
+        const whole = Math.floor(accum);
+        if (whole > 0) { accum -= whole; hp += whole; }
+      }
+      meter.setText(live
+        ? `⏳ INEVITABLE  ${((until - elapsed) / 1000).toFixed(1)}s    +33% dodge · +25% speed · ${INEV_REGEN} HP/s    ${hp} HP`
+        : `window  ${Math.round(sum)} / ${INEV_TRIGGER} damage in ${INEV_WINDOW_MS / 1000}s    ${hp} HP`);
+      meter.setColor(hex(live ? DEA.bone : DEA.pale));
+
+      // A ring of bone closing on the body, with the sand running back up through it.
+      ring.clear();
+      if (!live) return;
+      const t = elapsed / 1000;
+      const k = Phaser.Math.Clamp((until - elapsed) / INEV_MS, 0, 1);
+      const pulse = 0.5 + 0.5 * Math.sin(t * 7);
+      ring.lineStyle(1.6 + pulse * 1.4, ctx.tint(DEA.bone), 0.2 + k * 0.4);
+      ring.strokeCircle(ctx.cx, ctx.cy, 26 + pulse * 4);
+      for (let i = 0; i < 6; i++) {
+        const a = t * 1.5 + i * (Math.PI * 2 / 6);
+        const rise = (t * 0.7 + i * 0.17) % 1;
+        ring.fillStyle(ctx.tint(DEA.pale), (1 - rise) * 0.6 * k);
+        ring.fillCircle(ctx.cx + Math.cos(a) * 23, ctx.cy + 15 - rise * 36, 1.9 - rise);
+      }
+    });
+
+    const land = (amount: number): void => {
+      hits.push({ at: now, amount });
+      hp -= amount;
+      s.fx.soot(ctx.cx, ctx.cy, 3, 12, 380, 9);
+      tick(ctx, ctx.cx + 16, ctx.cy - 22, `−${amount}`, DEA.blood);
+      let sum = 0;
+      for (const h of hits) sum += h.amount;
+      if (sum < INEV_TRIGGER) return;
+      // The window is *spent*, so the same burst cannot keep refreshing itself.
+      hits.length = 0;
+      const refresh = now < until;
+      until = now + INEV_MS;
+      s.fx.toll(ctx.cx, ctx.cy, 14, 120, 640, 11, DEA.bone);
+      tick(ctx, ctx.cx, ctx.cy - 46, refresh ? '⏳ INEVITABILITY REFRESHED' : '⏳ INEVITABILITY', DEA.bone);
+      if (!refresh) tick(ctx, ctx.cx, ctx.cy - 28, `+33% DODGE · +25% SPEED · ${INEV_REGEN} HP/s`, DEA.pale);
+    };
+
+    const shoot = (at: number, amount: number): void => {
+      ctx.at(at, () => {
+        ctx.fly({
+          texture: 'proj-fire', from: { x: foe.x, y: foe.y }, to: { x: ctx.cx, y: ctx.cy },
+          speed: 640, onHit: () => land(amount),
+        });
+      });
+    };
+
+    // Chip first: three twelves, spaced far enough apart that the window keeps expiring under
+    // them. Being worn down slowly is exactly the thing this passive does not answer.
+    shoot(500, 12);
+    shoot(1600, 12);
+    shoot(2700, 12);
+    // Then somebody commits: three twenties inside two seconds, which is the whole trigger.
+    shoot(4600, 20);
+    shoot(5000, 20);
+    shoot(5400, 20);
+
+    label(ctx, ctx.w * 0.5, ctx.h - 8,
+      'chip never reaches 50 in 2s — a burst does, and the two seconds that paid for it are cleared',
+      DEA.pale);
+  },
+};
+
+export const masteryDelay: PreviewScript = {
+  duration: 11_000,
+  scale: 0.9,
+  bodyTexture: '',
+  caption: 'Bindable — put 8 seconds back on your own clock and spend them at half damage taken',
+  run(ctx) {
+    const at: Mark = { x: ctx.w * 0.3, y: ctx.h * 0.56 };
+    const s = drivenCaster(ctx, at);
+    const foe: Mark = { x: ctx.w * 0.86, y: ctx.h * 0.5 };
+    victim(ctx, foe);
+    let clockMs = MIDNIGHT_MS * 0.3;
+    ctx.onFrame((dt) => { clockMs = Math.max(0, clockMs - dt); });
+    clock(ctx, () => clockMs);
+
+    let until = -9999;
+    let now = 0;
+    let dash: { x0: number; x1: number; t0: number } | null = null;
+    const meter = meterLine(ctx);
+    const chest = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+
+    ctx.onFrame((_dt, elapsed) => {
+      now = elapsed;
+      if (dash) {
+        const k = Phaser.Math.Clamp((elapsed - dash.t0) / 260, 0, 1);
+        at.x = dash.x0 + (dash.x1 - dash.x0) * (1 - (1 - k) * (1 - k));
+        if (k >= 1) dash = null;
+      }
+      const live = elapsed < until;
+      meter.setText(live
+        ? `🕰️ DELAYING  ${((until - elapsed) / 1000).toFixed(1)}s    ×${DELAY_DR} damage taken · +50% speed · +25% dodge · ${DELAY_REGEN} HP/s    your cooldowns +25%`
+        : 'the only ability in the element that makes the minute longer');
+      meter.setColor(hex(live ? DEA.gold : DEA.pale));
+
+      chest.clear();
+      if (!live) return;
+      const t = elapsed / 1000;
+      const left = Phaser.Math.Clamp((until - elapsed) / DELAY_MS, 0, 1);
+      // `frac` is remaining time and the wedge is what has been spent — handed `1 − left`, the
+      // wedge shrinks as the window runs down, which is the hand walking backwards.
+      clockFace(chest, ctx.tint, at.x, at.y - 34, 12, 1 - left, 0.95, { numerals: false, seed: 5 });
+      chest.lineStyle(2.2, ctx.tint(DEA.gold), 0.25 + 0.25 * Math.sin(t * 4));
+      chest.strokeCircle(at.x, at.y, 30 + Math.sin(t * 4) * 3);
+    });
+
+    // One shot before the window, for the number to be compared against.
+    const shoot = (delay: number, raw: number): void => {
+      ctx.at(delay, () => {
+        ctx.fly({
+          texture: 'proj-fire', from: { x: foe.x, y: foe.y }, to: { x: at.x, y: at.y }, speed: 560,
+          onHit: () => {
+            const live = now < until;
+            const dealt = live ? Math.round(raw * DELAY_DR) : raw;
+            s.fx.soot(at.x, at.y, 3, 12, 380, 9);
+            tick(ctx, at.x + 16, at.y - 22, `−${dealt}`, live ? DEA.bone : DEA.blood);
+            if (live) tick(ctx, at.x + 16, at.y - 38, `(${raw} halved)`, DEA.gold);
+          },
+        });
+      });
+    };
+    shoot(400, 30);
+
+    ctx.at(1500, () => {
+      until = 1500 + DELAY_MS;
+      clockMs += DELAY_CLOCK_MS;
+      s.fx.toll(at.x, at.y, 12, 130, 760, 11, DEA.gold);
+      s.av.play('flex');
+      tick(ctx, at.x, at.y - 50, '🕰️ DELAY THE INEVITABLE', DEA.gold);
+      tick(ctx, at.x, at.y - 32, `+${DELAY_CLOCK_MS / 1000}s TO MIDNIGHT`, DEA.blood);
+      tick(ctx, at.x, at.y - 14, '−50% DAMAGE TAKEN · +50% SPEED', DEA.bone);
+    });
+
+    shoot(2600, 30);
+    shoot(4200, 30);
+
+    // The dodge, three times as long — 520px becomes 1560, which is most of an arena.
+    ctx.at(5600, () => {
+      dash = { x0: at.x, x1: Math.min(ctx.w - 34, at.x + ctx.w * 0.5), t0: 5600 };
+      s.fx.soot(at.x, at.y, 8, 22, 480, 9);
+      tick(ctx, at.x, at.y - 46, `🌀 DODGE ×${DELAY_DASH_MULT} DISTANCE`, DEA.gold);
+    });
+    ctx.at(7000, () => {
+      tick(ctx, at.x, at.y - 46, '🩸 5 HP/s WHILE IT RUNS', DEA.bone);
+    });
+    ctx.at(1500 + DELAY_MS, () => {
+      tick(ctx, at.x, at.y - 46, '🕰️ THE DELAY IS OVER', DEA.pale);
+      s.fx.toll(at.x, at.y, 10, 90, 620, 11, DEA.pale);
+    });
+
+    label(ctx, ctx.w * 0.5, ctx.h - 8,
+      'the eight seconds are bought from the sixty you are playing for — an honoured Deal is −10, this is +8',
+      DEA.pale);
   },
 };

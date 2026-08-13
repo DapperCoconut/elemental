@@ -56,7 +56,10 @@ The `CastContext` (defined in `src/elements/Ability.ts`) is a large object passe
 Four screens pick an element for a fight: `MenuScene`, `CampaignElementSelectScene`, `GauntletElementSelectScene` and `OnlineLobbyScene`. They must never hand-copy the roster — that is what left the campaign and gauntlet years out of date. Instead:
 
 - `src/data/ElementRoster.ts` — the roster tables plus `unlockedExtraElements()`, `allSelectableElements()` and `findElementDef()`.
-- `src/ui/ElementSelectGrid.ts` — `renderElementGrid(scene, opts)` draws the paged card grid (mastery crown, ℹ info, M mastery, ⚙ customize). Returns the objects it made; the caller destroys them on its next render.
+- `src/ui/ElementSelectGrid.ts` — `renderElementGrid(scene, opts)` draws the paged card grid. Each card is a leaning plate carrying a complexity star rating, the name + archetype, a live character portrait, a one-line blurb, and the select prompt, with ℹ info / M mastery / CUSTOMIZE hanging off it. **No emoji on a card** — the portrait is the element's identity. Returns the objects it made; the caller destroys them on its next render.
+- `src/data/ElementProfiles.ts` — the per-element `archetype`, `blurb` and 1–5 `complexity` rating the cards print. A new element needs an entry here or it falls back to an "unknown" dossier.
+- `src/ui/ElementPortrait.ts` — the live portrait: the real `elem-<id>` body with the element's real rig standing on it (mastered silhouette and equipped skin included), inside a scaled, masked container. Not a GameObject — the grid hands it out on a Zone handle that destroys it.
+- `src/elements/kits/ElementAvatars.ts` — element id → its `BaseAvatar` factory, for anything that must build a rig for an id it does not know at author time. Mind the two id traps: `sand` is Time and `dune` is Sand; `slime` is Acid and `gum` is Slime.
 - `src/ui/ElementPanels.ts` — the four full-screen overlays behind those buttons. Construct one per scene with a redraw callback: `new ElementPanels(this, () => this.renderElements())`.
 
 The lobby draws its own compact tile grid (it lives inside a panel), but still reads `allSelectableElements()`.
@@ -110,6 +113,14 @@ this.[element]Kit.update(dt);
 4. Delegates to a per-element method like `doFireAbilities()` which uses `castAbility()` — which internally respects `cooldownMult` and timestamps
 
 `castSkipChance` in difficulty presets causes lower-difficulty NPCs to randomly skip special abilities. `aimOffsetDeg` adds angular error to hitscan calculations.
+
+**Bot synergy contract** (mandatory for every new or reworked element): every kit has internal synergies — casts only worth making because of something else the kit already put on the field (Silence rituals a matured watcher into a grabber; its Click+ stab through an own stalker detonates the Sacrifice). Bots must execute these deliberately, not by accident:
+
+- The **kit** computes each opportunity owner-side and publishes it as an `NpcAiState` field (a cast position or a "combo is live" flag). The kit owns the geometry and upgrade checks; the AI never re-derives either. Reads must be side-effect-free.
+- `do[Element]Abilities` checks opportunity fields **first**, before its generic rotation.
+- When implementing an element's bot, enumerate the kit's synergies ("X enables Y") and wire each through this pattern. A bot that never plays its kit's synergies is an incomplete implementation. Canonical examples: `npcSilenceMatureStalker`, `npcSilenceSacrificeStab`, `npcMagmaChargeTarget`, `gluttonyGrillPoint`.
+
+The bot-overhaul roadmap (per-element batch checklist, remaining elements, and hard-won gotchas like reaction-tick probability retuning) lives in `docs/bot-overhaul.md` — read it before any bot/AI work, and keep it current as batches land.
 
 ArenaScene reacts to certain returned cast IDs in the `npcCastId` block (e.g. `if (npcCastId === 'flame-body')`) to trigger state changes that couldn't happen inside the NPC context method.
 

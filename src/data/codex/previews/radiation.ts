@@ -2,8 +2,9 @@ import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import {
   RAD, RadiationAvatar, RadiationColorFn, RadiationFx, afterimageLance, boneOverlay, cancerArm,
-  criticalAura, doseTicks, dropFootprint, flareRound, geigerTracer, leadArmour, radPuddle,
-  redshift, revolver, sustainedBeam, trefoil, wasteDrum,
+  criticalAura, doseTicks, dropFootprint, flareRound, gammaChain, geigerTracer, leadArmour,
+  leashRing, radPuddle, redshift, revolver, sightLine, sustainedBeam, tetherAnchor, trefoil,
+  wasteDrum,
 } from '../../../elements/kits/RadiationVisuals';
 
 /**
@@ -1282,5 +1283,170 @@ export const exterminationUpgraded: PreviewScript = {
     }
     ctx.at(9000, () => readout.setText('15 damage apiece — 600 of ammunition, if they stay anywhere near the crater'));
     ctx.at(12600, () => readout.setText('the ultimate stops being a full stop and becomes the setup for the next F'));
+  },
+};
+
+// ══ MASTERY — Sniper's Instinct ═══════════════════════════════════════
+
+export const masteryInstinct: PreviewScript = {
+  duration: 15000,
+  // Wider than the house framing because the loop is *about* a 140→620px ramp: at 0.9 the
+  // whole passive would resolve inside a third of the box and the point would be invisible.
+  scale: 0.66,
+  caption: "Passive — 0% armour in melee up to 45% at 620px, and a sight that ends where the click would",
+  run(ctx) {
+    const av = ctx.useAvatar(() => new RadiationAvatar(ctx.scene, ctx.tint));
+    av.setMastered(true);
+    const me = { x: ctx.cx, y: ctx.cy };
+    const muzzle = { x: ctx.cx + 18, y: ctx.cy - 2 };
+    const mark = { x: ctx.cx + 150, y: ctx.cy - 8 };
+    dummyAt(ctx, mark);
+    ctx.onFrame(() => av.setFacing(Math.atan2(mark.y - me.y, mark.x - me.x)));
+
+    const readout = label(ctx, ctx.w * 0.5, 12, '#c2ff8f', 12);
+    const armour = label(ctx, ctx.w * 0.5, ctx.h - 20, '#e0b52a', 11);
+
+    // The mark walks out and back, so the ramp is something watched rather than read.
+    const walk = { on: false, vx: 105 };
+    ctx.onFrame((dt) => {
+      if (walk.on) mark.x = Phaser.Math.Clamp(mark.x + walk.vx * (dt / 1000), me.x + 60, ctx.w - 46);
+      const d = Phaser.Math.Distance.Between(me.x, me.y, mark.x, mark.y);
+      const cut = Phaser.Math.Clamp((d - 140) / (620 - 140), 0, 1) * 0.45;
+      armour.setText(`range ${Math.round(d)}px   ·   −${Math.round(cut * 100)}% damage taken   ·   a 40 lands for ${Math.round(40 * (1 - cut))}`);
+    });
+
+    // The sight, drawn exactly as the kit draws it: it stops at the body, or at the wall, or at
+    // the 700px where a tracer simply runs out.
+    const cursor = { x: 0, y: 0 };
+    const sight = ctx.adopt(ctx.scene.add.graphics().setDepth(18));
+    ctx.onFrame((_dt, elapsed) => {
+      sight.clear();
+      const t = elapsed / 1000;
+      // A cursor sweeping through the mark and off it, so both reticles get shown every loop.
+      cursor.x = mark.x + 90;
+      cursor.y = mark.y + Math.sin(t * 1.15) * 150;
+      const ang = Math.atan2(cursor.y - muzzle.y, cursor.x - muzzle.x);
+      const cx = Math.cos(ang);
+      const cy = Math.sin(ang);
+      let stop = 700;
+      if (cx > 1e-4) stop = Math.min(stop, (ctx.w - 14 - muzzle.x) / cx);
+      else if (cx < -1e-4) stop = Math.min(stop, (14 - muzzle.x) / cx);
+      if (cy > 1e-4) stop = Math.min(stop, (ctx.h - 14 - muzzle.y) / cy);
+      else if (cy < -1e-4) stop = Math.min(stop, (14 - muzzle.y) / cy);
+      stop = Math.max(0, stop);
+      const rr = 17 + 18;
+      const along = (mark.x - muzzle.x) * cx + (mark.y - muzzle.y) * cy;
+      const perp = Math.abs((mark.y - muzzle.y) * cx - (mark.x - muzzle.x) * cy);
+      let onBody = false;
+      let px = muzzle.x + cx * stop;
+      let py = muzzle.y + cy * stop;
+      if (along > 0 && perp <= rr && along - Math.sqrt(Math.max(0, rr * rr - perp * perp)) <= stop) {
+        onBody = true;
+        px = mark.x;
+        py = mark.y;
+      }
+      sightLine(sight, ctx.tint, muzzle.x, muzzle.y, px, py, 0.95, t, onBody);
+    });
+
+    ctx.at(300, () => readout.setText('in his face, the armour is worth nothing at all'));
+    ctx.at(1800, () => { walk.on = true; readout.setText('every pixel of separation is worth something…'); });
+    ctx.at(5200, () => readout.setText('…up to 45% less at 620px, measured live off whichever enemy is nearest'));
+    ctx.at(7600, () => { walk.vx = -150; readout.setText('and it is given straight back the moment they close'); });
+    ctx.at(10000, () => { walk.vx = 130; readout.setText('the line ends where the next click would: green on a body, yellow on floor'); });
+    ctx.at(12800, () => readout.setText('no new information — just the maths the click was already running, drawn'));
+  },
+};
+
+// ══ MASTERY — Gamma Tether ════════════════════════════════════════════
+
+export const masteryTether: PreviewScript = {
+  duration: 15000,
+  scale: 0.78,
+  caption: 'Mastery — a post that chains the nearest enemy inside 150px of it, and stops their dose running down',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new RadiationAvatar(ctx.scene, ctx.tint));
+    av.setMastered(true);
+    av.setFacing(ctx.aim);
+
+    const post = { x: ctx.cx + 330, y: ctx.cy + 8, plantedAt: -1, until: -1, latched: false, taut: 0 };
+    const mark = { x: ctx.w - 60, y: ctx.cy - 8 };
+    dummyAt(ctx, mark);
+    const dose = { left: 0, paused: false };
+    doseMarker(ctx, mark, () => dose.left);
+    ctx.onFrame((dt) => { if (dose.left > 0 && !dose.paused) dose.left -= (dt / 1000) / 10; });
+    const readout = label(ctx, ctx.w * 0.5, 12, '#c2ff8f', 11);
+    const clock = label(ctx, ctx.w * 0.5, ctx.h - 20, '#e0b52a', 11);
+    ctx.onFrame(() => clock.setText(dose.paused
+      ? `dose ${(dose.left * 10).toFixed(1)}s — HELD`
+      : `dose ${Math.max(0, dose.left * 10).toFixed(1)}s`));
+
+    // The post and its chain, through the kit's own painters.
+    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(16));
+    ctx.onFrame((_dt, elapsed) => {
+      ground.clear();
+      air.clear();
+      if (post.plantedAt < 0 || elapsed >= post.until) return;
+      const t = elapsed / 1000;
+      leashRing(ground, ctx.tint, post.x, post.y, 150, 0.9, t, post.taut);
+      if (post.latched) {
+        gammaChain(air, ctx.tint, post.x, post.y - 17, mark.x, mark.y, 0.95, t, post.taut);
+      }
+      tetherAnchor(air, ctx.tint, post.x, post.y, 0.98, t, {
+        charge: Phaser.Math.Clamp((post.until - elapsed) / 6000, 0, 1),
+        latched: post.latched,
+        plant: Phaser.Math.Clamp((elapsed - post.plantedAt) / 220, 0, 1),
+      });
+    });
+
+    // The mark walks at the caster and is caught on the way past.
+    const walk = { on: false };
+    ctx.onFrame((dt, elapsed) => {
+      if (walk.on) mark.x = Math.max(ctx.cx + 54, mark.x - 150 * (dt / 1000));
+      if (post.plantedAt < 0 || elapsed >= post.until) return;
+      const d = Phaser.Math.Distance.Between(post.x, post.y, mark.x, mark.y);
+      if (!post.latched && d <= 260) {
+        post.latched = true;
+        dose.paused = true;
+        ctx.capture(() => fx.chainSnap(post.x, post.y - 17, mark.x, mark.y));
+        float(ctx, mark.x, mark.y - 58, '⛓ TETHERED', hex(RAD.neonLit), 12);
+        readout.setText('caught at 260px — and from here they cannot leave a 150px circle');
+      }
+      if (!post.latched) return;
+      post.taut = Phaser.Math.Clamp((d - 108) / 42, 0, 1);
+      if (d <= 150) return;
+      const ang = Math.atan2(mark.y - post.y, mark.x - post.x);
+      mark.x = post.x + Math.cos(ang) * 150;
+      mark.y = post.y + Math.sin(ang) * 150;
+    });
+
+    ctx.at(300, () => {
+      dose.left = 1;
+      ctx.capture(() => fx.dose(mark.x, mark.y));
+      float(ctx, mark.x, mark.y - 48, '☢ IRRADIATED', hex(RAD.neon), 11);
+      readout.setText('a dose lands, and starts running down as it always does');
+    });
+    ctx.at(1400, () => {
+      post.plantedAt = 1400;
+      post.until = 7400;
+      av.play('slam', Math.atan2(post.y - ctx.cy, post.x - ctx.cx));
+      suit(av)?.ping();
+      ctx.capture(() => fx.anchorDrop(post.x, post.y));
+      float(ctx, post.x, post.y - 58, '📡 GAMMA TETHER', hex(RAD.neonLit), 12);
+      walk.on = true;
+      readout.setText('the post goes in at the cursor — six seconds, and it hunts on its own');
+    });
+    ctx.at(4600, () => readout.setText('the chain is holding their dose open: the bar over their head has stopped'));
+    ctx.at(6200, () => readout.setText('and it deals nothing. Everything it is worth is what lands on somebody pinned.'));
+    ctx.at(7400, () => {
+      post.latched = false;
+      dose.paused = false;
+      ctx.capture(() => { fx.chainBreak(post.x, post.y); fx.shed(mark.x, mark.y); });
+      float(ctx, post.x, post.y - 42, '📡 TETHER SPENT', hex(RAD.hazard), 11);
+      readout.setText('six seconds later the post is gone — and the clock picks up where it stopped');
+    });
+    ctx.at(10600, () => readout.setText('the pause is not a refresh: what was left is still exactly what is left'));
+    ctx.at(13000, () => readout.setText('15 second cooldown, one post at a time, and R will not take it'));
   },
 };

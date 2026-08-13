@@ -131,7 +131,7 @@ export class CampaignElementSelectScene extends Phaser.Scene {
       if (obj.active) (obj as Phaser.GameObjects.GameObject & { destroy(): void }).destroy();
     }
     this.phaseObjects = renderElementGrid(this, {
-      y: this.scale.height / 2 + 20,
+      y: this.scale.height / 2 + 52,
       page: this.elemPage,
       panels: this.panels,
       accent: this.accent,

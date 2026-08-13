@@ -472,6 +472,154 @@ export function bloatShell(
   g.strokePath();
 }
 
+/**
+ * One slimeling — what a mastered slime becomes when it is killed.
+ *
+ * Deliberately the same body the avatar draws, at a third of the size and with the eyes moved
+ * onto it: three of these have to read as *you, three times* rather than as pets. `hp` (0–1)
+ * drains the fill toward the murk underneath, so a slimeling about to pop is visibly thin.
+ */
+export function slimeling(
+  g: Phaser.GameObjects.Graphics,
+  tint: GumColorFn,
+  x: number, y: number, r: number, alpha: number, t: number,
+  { seed = 4, hp = 1, aim = 0, lead = false } = {},
+): void {
+  // Its own little puddle, so it sits on the floor rather than hovering over it.
+  g.fillStyle(tint(GUM.murk), alpha * 0.5);
+  g.fillEllipse(x, y + r * 0.9, r * 2.4, r * 0.8);
+  oozeBlob(g, tint, x, y, r, alpha * (0.55 + hp * 0.45), t, {
+    seed, squat: 0.46, wobble: 0.15,
+    deep: GUM.oozeDeep, fill: hp > 0.34 ? GUM.ooze : GUM.oozeDeep, lit: GUM.oozeLit,
+  });
+  // The mastered jade core, shrunk with the rest of it.
+  g.fillStyle(tint(GUM.solid), alpha * 0.7);
+  g.fillCircle(x, y + r * 0.2, r * 0.3);
+
+  // Eyes. Small, close together and turned toward the aim — the one thing that makes a blob
+  // read as a creature rather than a droplet.
+  const ex = Math.cos(aim);
+  const ey = Math.sin(aim);
+  const blink = Math.sin(t * 2.1 + seed * 3) > 0.985 ? 0.15 : 1;
+  for (const side of [-1, 1]) {
+    const bx = x + side * r * 0.36 - ey * r * 0.06;
+    const by = y - r * 0.24 + ex * r * 0.06;
+    g.fillStyle(tint(GUM.shine), alpha * 0.95);
+    g.fillEllipse(bx, by, r * 0.42, r * 0.42 * blink);
+    g.fillStyle(tint(GUM.murk), alpha);
+    g.fillEllipse(bx + ex * r * 0.1, by + ey * r * 0.1, r * 0.2, r * 0.2 * blink);
+  }
+  // The lead one wears the shine the other two do not, so the player can tell which body the
+  // physics is actually attached to.
+  if (lead) {
+    g.lineStyle(1.4, tint(GUM.solidLit), alpha * 0.7);
+    g.strokeCircle(x, y, r * 1.3 + Math.sin(t * 4) * 0.6);
+  }
+  drips(g, tint, x, y + r * 0.5, r * 1.2, 2, alpha * 0.6, t, { seed: seed + 5 });
+}
+
+/**
+ * The Oobleck slab: a wobbling rectangle of half-set slime, held broadside-on.
+ *
+ * The whole tell is the *material*. Soft, it is a translucent green pane with the shots hanging
+ * suspended inside it and a rippling surface; hard, it is pale glassy jade with facets down its
+ * length and a flat, dead surface — because a hard slab has stopped being a filter and become a
+ * wall, and the player has to know which one they are standing behind at a glance.
+ */
+export function oobleckSlab(
+  g: Phaser.GameObjects.Graphics,
+  tint: GumColorFn,
+  x: number, y: number, ang: number, len: number, thick: number, alpha: number, t: number,
+  {
+    seed = 6, hard = false, life = 1, held = false,
+    stuck = [] as { along: number; across: number; seed: number; life: number }[],
+  } = {},
+): void {
+  const c = Math.cos(ang);
+  const s = Math.sin(ang);
+  /** Slab-local (along the long axis, across the short one) → world. */
+  const P = (a: number, b: number): Phaser.Geom.Point =>
+    new Phaser.Geom.Point(x + c * a - s * b, y + s * a + c * b);
+
+  const deep = hard ? GUM.solidDeep : GUM.oozeDeep;
+  const fill = hard ? GUM.solid : GUM.ooze;
+  const lit = hard ? GUM.solidLit : GUM.oozeLit;
+  const half = len / 2;
+  const th = thick / 2;
+
+  // The outline, walked as one loop so the two long edges can wobble independently. A soft slab
+  // breathes; a hard one is drawn dead straight, which is the difference between the two states.
+  const edge = (b: number, dir: number): Phaser.Geom.Point[] => {
+    const out: Phaser.Geom.Point[] = [];
+    const steps = 12;
+    for (let i = 0; i <= steps; i++) {
+      const u = dir > 0 ? i / steps : 1 - i / steps;
+      const a = -half + len * u;
+      const w = hard ? 0 : Math.sin(t * 2.6 + u * 6.5 + seed + (b > 0 ? 0 : 2.2)) * 2.4;
+      out.push(P(a, b + w * Math.sign(b)));
+    }
+    return out;
+  };
+  const shell = [...edge(-th, 1), ...edge(th, -1)];
+
+  g.fillStyle(tint(deep), alpha * 0.85 * life);
+  g.fillPoints(shell.map((p) => new Phaser.Geom.Point(p.x, p.y + 2)), true);
+  g.fillStyle(tint(fill), alpha * (hard ? 0.72 : 0.5) * life);
+  g.fillPoints(shell, true);
+
+  // Ribs across the short axis: a slab has grain, and the grain is what stops it reading as a
+  // flat bar of UI. Hard slabs get long facets instead — glass cracks, ooze ripples.
+  if (hard) {
+    for (let i = 0; i < 5; i++) {
+      const a = -half + (len * (i + 0.5)) / 5 + jitter(seed, i) * 10;
+      const p = P(a, 0);
+      slimeShard(g, tint, p.x, p.y, ang + (jitter(seed, i + 9) - 0.5) * 0.5,
+        thick * 1.5, alpha * 0.85 * life, { seed: seed + i });
+    }
+  } else {
+    for (let i = 0; i < 7; i++) {
+      const u = (i + 0.5) / 7;
+      const a = -half + len * u;
+      const ripple = Math.sin(t * 3.1 - u * 7 + seed) * th * 0.4;
+      const p0 = P(a, -th * 0.72 + ripple);
+      const p1 = P(a, th * 0.72 + ripple);
+      g.lineStyle(1.6, tint(lit), alpha * 0.3 * life);
+      g.lineBetween(p0.x, p0.y, p1.x, p1.y);
+    }
+  }
+
+  // The lit face, offset toward the side the holder is on — this is the "broadside" tell.
+  g.lineStyle(Math.max(2, thick * 0.16), tint(GUM.shine), alpha * (hard ? 0.75 : 0.45) * life);
+  g.beginPath();
+  for (let i = 0; i <= 10; i++) {
+    const u = i / 10;
+    const p = P(-half * 0.86 + len * 0.86 * u, -th * 0.42
+      + (hard ? 0 : Math.sin(t * 2.2 + u * 5 + seed) * 1.6));
+    if (i === 0) g.moveTo(p.x, p.y); else g.lineTo(p.x, p.y);
+  }
+  g.strokePath();
+
+  // The rim, brighter on a hard slab because that is the version you cannot walk through.
+  g.lineStyle(hard ? 2.6 : 1.8, tint(lit), alpha * (hard ? 0.95 : 0.6) * life);
+  g.strokePoints(shell, true);
+
+  // Everything caught in it, suspended and dissolving. Drawn last so the shots read as being
+  // *inside* the pane rather than painted on it.
+  for (const q of stuck) {
+    const p = P(q.along, q.across);
+    const fade = Phaser.Math.Clamp(q.life, 0, 1);
+    g.fillStyle(tint(GUM.murk), alpha * 0.8 * fade);
+    g.fillCircle(p.x, p.y, 5.4 * fade + 1);
+    g.fillStyle(tint(GUM.shine), alpha * 0.55 * fade);
+    g.fillCircle(p.x - 1.2, p.y - 1.4, 1.8 * fade + 0.5);
+    // The dimple the shot made going in, closing up as it dissolves.
+    g.lineStyle(1.4, tint(lit), alpha * 0.6 * fade);
+    g.strokeCircle(p.x, p.y, 9 - fade * 3.5);
+  }
+
+  if (!hard) drips(g, tint, x, y + th * 0.7, len * 0.7, 4, alpha * (held ? 0.5 : 0.8) * life, t, { seed });
+}
+
 // ── Fx ────────────────────────────────────────────────────────────────────
 
 export class GumFx extends FxBase {
@@ -609,6 +757,87 @@ export class GumFx extends FxBase {
         g.fillCircle(x + Math.cos(b.a) * r * b.d * e * 1.5, y + Math.sin(b.a) * r * b.d * e * 1.5,
           r * b.s * (1 - t * 0.7));
       }
+    });
+  }
+
+  /**
+   * The split: one body coming apart into three. Three lobes pull out of the centre and settle,
+   * with a shockwave of ooze under them — the one moment in the element where the character is
+   * destroyed and keeps playing, so it is deliberately the loudest thing the kit draws.
+   */
+  split(x: number, y: number, depth = 9): void {
+    const lobes = [0, 1, 2].map((i) => ({ a: -Math.PI / 2 + (i / 3) * TAU, d: 44 + Math.random() * 10 }));
+    const bits = Array.from({ length: 16 }, (_, i) => ({
+      a: (i / 16) * TAU + Math.random() * 0.4, d: 0.5 + Math.random() * 1,
+    }));
+    this.anim(depth, 760, (g, t) => {
+      const e = easeOut(t);
+      g.fillStyle(this.tint(GUM.oozeDeep), (1 - t) * 0.5);
+      g.fillEllipse(x, y + 6, 60 + e * 140, 24 + e * 54);
+      g.lineStyle(5 * (1 - t) + 1, this.tint(GUM.solidLit), (1 - t) * 0.9);
+      g.strokeCircle(x, y, 18 + e * 96);
+      for (const l of lobes) {
+        const px = x + Math.cos(l.a) * l.d * e;
+        const py = y + Math.sin(l.a) * l.d * e;
+        // The strand of ooze still running back to where the body was.
+        g.lineStyle(6 * (1 - e) + 1.5, this.tint(GUM.ooze), (1 - t) * 0.8);
+        g.lineBetween(x, y, px, py);
+        oozeBlob(g, this.tint, px, py, 13 * (0.6 + e * 0.4), (1 - t * 0.5), t * 6,
+          { seed: l.d, squat: 0.4, wobble: 0.24 });
+      }
+      for (const b of bits) {
+        g.fillStyle(this.tint(GUM.oozeLit), (1 - t) * 0.8);
+        g.fillCircle(x + Math.cos(b.a) * 80 * b.d * e, y + Math.sin(b.a) * 80 * b.d * e,
+          3.4 * (1 - t) + 0.8);
+      }
+    });
+  }
+
+  /** A slimeling popping — smaller and wetter than a gum bubble going off. */
+  lingPop(x: number, y: number, depth = 8): void {
+    const bits = Array.from({ length: 11 }, (_, i) => ({ a: (i / 11) * TAU, d: 0.5 + Math.random() * 0.8 }));
+    this.anim(depth, 420, (g, t) => {
+      const e = easeOut(t);
+      g.fillStyle(this.tint(GUM.oozeDeep), (1 - t) * 0.6);
+      g.fillEllipse(x, y + 4, 30 * (0.5 + e), 14 * (0.5 + e));
+      for (const b of bits) {
+        g.fillStyle(this.tint(GUM.ooze), (1 - t) * 0.9);
+        g.fillCircle(x + Math.cos(b.a) * 34 * b.d * e, y + Math.sin(b.a) * 34 * b.d * e,
+          3.2 * (1 - t * 0.6) + 0.6);
+      }
+      g.lineStyle(2.4 * (1 - t) + 0.6, this.tint(GUM.shine), (1 - t) * 0.7);
+      g.strokeCircle(x, y, 10 + e * 24);
+    });
+  }
+
+  /** The Oobleck slab landing: a broad, flat wave of ooze along its own long axis. */
+  slabSet(x: number, y: number, ang: number, len: number, hard = false, depth = 6): void {
+    const c = Math.cos(ang);
+    const s = Math.sin(ang);
+    this.anim(depth, 420, (g, t) => {
+      const e = easeOut(t);
+      for (let i = -3; i <= 3; i++) {
+        const a = (i / 3) * (len / 2);
+        const px = x + c * a;
+        const py = y + s * a;
+        g.fillStyle(this.tint(hard ? GUM.solid : GUM.ooze), (1 - t) * 0.75);
+        g.fillCircle(px - s * (1 - e) * 16, py + c * (1 - e) * 16, 9 * (1 - t * 0.5));
+        g.fillCircle(px + s * (1 - e) * 16, py - c * (1 - e) * 16, 9 * (1 - t * 0.5));
+      }
+      g.lineStyle(3 * (1 - t) + 1, this.tint(hard ? GUM.solidLit : GUM.oozeLit), (1 - t) * 0.9);
+      g.lineBetween(x - c * len * 0.5 * (0.6 + e * 0.4), y - s * len * 0.5 * (0.6 + e * 0.4),
+        x + c * len * 0.5 * (0.6 + e * 0.4), y + s * len * 0.5 * (0.6 + e * 0.4));
+    });
+  }
+
+  /** A shot burying itself in the slab: a small, wet, inward pucker. */
+  stick(x: number, y: number, depth = 8): void {
+    this.anim(depth, 300, (g, t) => {
+      const e = easeIn(t);
+      g.lineStyle(2.6 * (1 - t) + 0.6, this.tint(GUM.oozeLit), (1 - t) * 0.95);
+      g.strokeCircle(x, y, 20 * (1 - e * 0.8));
+      g.fillStyle(this.tint(GUM.ooze), (1 - t) * 0.5);
+      g.fillCircle(x, y, 12 * (1 - e * 0.7));
     });
   }
 

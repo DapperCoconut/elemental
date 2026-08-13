@@ -907,6 +907,74 @@ export function flameSpirit(
   ], true);
 }
 
+/**
+ * Mastery — Restructure: one piece of the caster, loose in the room.
+ *
+ * A shard is not a sheet. `paperSheet` draws something folded and flat with a soft crease;
+ * this is the opposite — a long torn wedge with a ragged spine, a honed leading edge and a
+ * blot of ink still on it from whatever page it used to be part of. The point is that a room
+ * full of these reads as a person who has come apart, not as confetti.
+ *
+ * `home` 0–1 is how far through the reassembly this piece is: it brightens and grows a
+ * comet-tail of accent as it turns round and starts coming back.
+ */
+export function paperShard(
+  g: Phaser.GameObjects.Graphics,
+  tint: PaperColorFn,
+  x: number, y: number, ang: number, len: number, alpha: number,
+  { accent = PAP.gilt, seed = 0, home = 0, drop = 2.4 } = {},
+): void {
+  const ca = Math.cos(ang);
+  const sa = Math.sin(ang);
+  const P = (u: number, v: number) => pt(x, y, ca, sa, u, v);
+  const j = (i: number) => (jitter(seed, i) - 0.5) * len * 0.34;
+  const w = len * 0.44;
+
+  // The tail it drags on the way home — never behind a shard that is still flying out.
+  if (home > 0.01) {
+    g.fillStyle(tint(accent), alpha * 0.22 * home);
+    g.fillPoints([P(0, -w * 0.5), P(-len * (1.4 + home * 1.6), j(11) * 0.4), P(0, w * 0.5)], true);
+  }
+
+  // A five-sided wedge: sharp nose, ragged spine down one flank, blunt torn butt.
+  const face = [
+    P(len * 0.92, j(1) * 0.2),
+    P(len * 0.18, -w * 0.72 + j(2)),
+    P(-len * 0.5 + j(3), -w * 0.5),
+    P(-len * 0.72, w * 0.34 + j(4)),
+    P(len * 0.1, w * 0.66 + j(5)),
+  ];
+
+  if (drop > 0) {
+    g.fillStyle(shade(tint(PAP.drop), 1), alpha * 0.32);
+    g.fillPoints(offset(face, drop, drop), true);
+  }
+  g.fillStyle(tint(PAP.pulp), alpha);
+  g.fillPoints(face, true);
+  // The shaded half, split along the spine rather than across a fold — a shard has no fold.
+  g.fillStyle(shade(tint(PAP.pulp), 0.82), alpha);
+  g.fillPoints([face[0], face[3], face[4]], true);
+
+  // Ink still on the page: two ruled stubs that run off the torn edge.
+  g.lineStyle(1, tint(PAP.ink), alpha * (0.3 + home * 0.2));
+  for (let i = 0; i < 2; i++) {
+    const v = -w * 0.24 + i * w * 0.46;
+    const a0 = P(-len * 0.42, v);
+    const a1 = P(len * 0.34 - jitter(seed, 30 + i) * len * 0.3, v);
+    g.lineBetween(a0.x, a0.y, a1.x, a1.y);
+  }
+
+  // The honed edge, and the accent the book is lending it. Both hotter the closer it is to home.
+  g.lineStyle(1.4, tint(PAP.bright), alpha * (0.6 + home * 0.4));
+  g.lineBetween(face[1].x, face[1].y, face[0].x, face[0].y);
+  g.lineStyle(1.1, tint(accent), alpha * (0.45 + home * 0.55));
+  g.strokePoints(face, true, true);
+  if (home > 0.4) {
+    g.fillStyle(tint(accent), alpha * (home - 0.4) * 0.5);
+    g.fillCircle(P(len * 0.92, 0).x, P(len * 0.92, 0).y, len * 0.22);
+  }
+}
+
 // ── Fx ────────────────────────────────────────────────────────────────────
 
 export class PaperFx extends FxBase {

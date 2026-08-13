@@ -47,7 +47,7 @@ const riposte: Ability = {
 const amputate: Ability = {
   id: 'death-amputate',
   name: 'Amputate',
-  description: 'Pick a limb, then dash to your cursor and take it off everything you pass through. Deals no damage. A body has two arms and two legs and can lose two of them for the whole game — nothing grows back. One leg: 33% slower. Two legs: 66% slower. One arm: 25% longer cooldowns and 10% less damage. Two arms: 33% longer cooldowns and 25% less damage.',
+  description: 'Dash to your cursor with the blade out. Miss and nothing happens at all; land it and you choose which limb to take off everything the pass went through. Deals no damage. A body has two arms and two legs and can lose two of them for the whole game — nothing grows back. One leg: 33% slower. Two legs: 66% slower. One arm: 25% longer cooldowns and 10% less damage. Two arms: 33% longer cooldowns and 25% less damage. A body with nothing left to give is still worth charging through: the dash is yours to use as a dash.',
   displayKey: 'F',
   cooldown: 15000,
   cast(ctx: CastContext) { ctx.deathAmputate(ctx.targetX, ctx.targetY); },

@@ -4,6 +4,7 @@ import {
   ALL_CORNERS, BOTTOM_CORNERS, Corners,
   drawCornerBrackets, drawGlow, drawSheen, fillDiamond, fillNotched, fillNotchedGradient, strokeNotched,
 } from './Shapes';
+import { drawIcon, IconName } from './Icons';
 import { UiButton } from './Button';
 
 export interface PanelOptions {
@@ -25,6 +26,8 @@ export interface PanelOptions {
   /** Draws a header band with this label across the top of the panel. */
   title?: string;
   subtitle?: string;
+  /** Drawn glyph set to the left of the title. */
+  titleIcon?: IconName;
 }
 
 export interface PanelHandle {
@@ -88,12 +91,17 @@ export function addPanel(scene: Phaser.Scene, opts: PanelOptions): PanelHandle {
     fillDiamond(g, x + w / 2, y + bandH + 2, 4, accent, 0.9 * alpha);
 
     const titleY = opts.subtitle ? y + 20 : y + bandH / 2 + 1;
-    objects.push(scene.add.text(opts.x, titleY, opts.title, {
+    const titleText = scene.add.text(opts.x + (opts.titleIcon ? 14 : 0), titleY, opts.title, {
       fontSize: '19px',
       fontFamily: FONT_DISPLAY,
       color: accentText(accent),
       letterSpacing: 2,
-    }).setOrigin(0.5).setDepth(depth + 1));
+    }).setOrigin(0.5).setDepth(depth + 1);
+    objects.push(titleText);
+    if (opts.titleIcon) {
+      drawIcon(g, opts.titleIcon, titleText.x - titleText.width / 2 - 16, titleY, 10,
+        mix(accent, 0xffffff, 0.5));
+    }
 
     if (opts.subtitle) {
       objects.push(scene.add.text(opts.x, y + 39, opts.subtitle, {
@@ -167,6 +175,8 @@ export function addHeaderBar(scene: Phaser.Scene, opts: {
   depth?: number;
   /** Centre the title (default) or push it right of the back button. */
   align?: 'center' | 'left';
+  /** Drawn glyph struck into the band ahead of the title. */
+  iconArt?: IconName;
 }): {
   g: Phaser.GameObjects.Graphics;
   titleText: Phaser.GameObjects.Text;
@@ -199,7 +209,7 @@ export function addHeaderBar(scene: Phaser.Scene, opts: {
     g.beginPath(); g.moveTo(x, h - (long ? 12 : 6)); g.lineTo(x, h - 2); g.strokePath();
   }
 
-  const tx = opts.align === 'left' ? 156 : width / 2;
+  const tx = (opts.align === 'left' ? 156 : width / 2) + (opts.iconArt && opts.align !== 'left' ? 20 : 0);
   const originX = opts.align === 'left' ? 0 : 0.5;
 
   const titleText = scene.add.text(tx, opts.subtitle ? h / 2 - 9 : h / 2 - 2, opts.title, {
@@ -212,6 +222,11 @@ export function addHeaderBar(scene: Phaser.Scene, opts: {
   }).setOrigin(originX, 0.5).setDepth(depth + 1);
 
   titleText.setShadow(0, 3, hex(mix(accent, 0x000000, 0.8)), 8, false, true);
+
+  if (opts.iconArt) {
+    const ix = originX === 0 ? tx - 32 : tx - titleText.width / 2 - 26;
+    drawIcon(g, opts.iconArt, ix, titleText.y, 15, mix(accent, 0xffffff, 0.5));
+  }
 
   const subtitleText = opts.subtitle
     ? scene.add.text(tx, h / 2 + 17, opts.subtitle, {
@@ -321,6 +336,8 @@ export function addRowPlate(scene: Phaser.Scene, opts: {
 export function addOverlayChrome(scene: Phaser.Scene, opts: {
   title: string;
   subtitle?: string;
+  /** Drawn glyph struck into the header band ahead of the title. */
+  iconArt?: IconName;
   accent?: number;
   /** Base depth; the scrim sits here and everything else above it. */
   depth?: number;
@@ -339,6 +356,7 @@ export function addOverlayChrome(scene: Phaser.Scene, opts: {
   const header = addHeaderBar(scene, {
     title: opts.title,
     subtitle: opts.subtitle,
+    iconArt: opts.iconArt,
     accent,
     height: opts.subtitle ? 74 : 62,
     depth: depth + 2,

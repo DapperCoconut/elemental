@@ -3,7 +3,8 @@ import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import {
   DRM, DreamAvatar, DreamFx, DreamPortal, OasisView, TrancePendulum,
-  dreamOrb, dreamcatcherShape, ekgTrace, sleepMeter, sleepyZ, star,
+  dreamCrown, dreamOrb, dreamcatcherShape, ekgTrace, hauntBolt, leashRing, sleepMeter, sleepyZ,
+  spiritForm, spiritThread, spiritTearShape, star, tearMoon, wishCounter,
 } from '../../../elements/kits/DreamVisuals';
 
 /**
@@ -122,10 +123,10 @@ function pendulum(
 // ══ CLICK — Trance ════════════════════════════════════════════════════
 
 export const trance: PreviewScript = {
-  duration: 11000,
+  duration: 15000,
   scale: 0.9,
   bodyTexture: '',
-  caption: 'Click — your own pacing pumps the pendulum; a full swing is 34 sleepiness a second out to 176px',
+  caption: 'Click — your own pacing pumps the pendulum; a full swing is 11.3 sleepiness a second out to 176px',
   run(ctx) {
     const at = { x: ctx.w * 0.34, y: ctx.cy };
     const { fx, av } = drivenCaster(ctx, at);
@@ -147,12 +148,12 @@ export const trance: PreviewScript = {
     });
     // The pacing that drives it, and the meter it fills.
     ctx.onFrame((dt, elapsed) => {
-      if (elapsed > 700 && elapsed < 8200) at.x = home + Math.sin((elapsed - 700) / 260) * 46;
+      if (elapsed > 700 && elapsed < 13000) at.x = home + Math.sin((elapsed - 700) / 260) * 46;
       if (!st.on || sleep.asleep) return;
       const radius = 92 + (176 - 92) * st.heat;
       const inRange = Phaser.Math.Distance.Between(at.x, at.y, victim.x, victim.y) <= radius;
       if (st.heat >= 0.06 && inRange) {
-        sleep.drowsy = Math.min(100, sleep.drowsy + 34 * Math.pow(st.heat, 1.25) * (dt / 1000));
+        sleep.drowsy = Math.min(100, sleep.drowsy + 11.3 * Math.pow(st.heat, 1.25) * (dt / 1000));
       } else {
         sleep.drowsy = Math.max(0, sleep.drowsy - 6 * (dt / 1000));
       }
@@ -167,10 +168,13 @@ export const trance: PreviewScript = {
         readout.setText('asleep for 8 seconds — no movement, no abilities');
       }
     });
-    ctx.at(9400, () => {
+    // The meter deliberately does not top out inside the window: from empty, a
+    // hard wind is the better part of ten seconds, and the preview should say so
+    // rather than compress it into a beat that reads as instant.
+    ctx.at(13200, () => {
       st.on = false;
       float(ctx, at.x, at.y - 40, 'Pendulum stilled', '#9fb8ff', 11);
-      readout.setText('click again to put it away — and standing still kills the swing anyway');
+      readout.setText('about 9 seconds of hard winding from empty puts them under — and standing still kills the swing');
     });
   },
 };
@@ -443,7 +447,7 @@ export const oasis: PreviewScript = {
 // ══ Passives ══════════════════════════════════════════════════════════
 
 export const passiveSleepiness: PreviewScript = {
-  duration: 11000,
+  duration: 16000,
   scale: 0.9,
   caption: 'Sleepiness — 100 is 8 seconds down; it bleeds off at 6/s and any damage at all resets it',
   run(ctx) {
@@ -457,11 +461,11 @@ export const passiveSleepiness: PreviewScript = {
     const readout = label(ctx, ctx.w * 0.5, 12, '#8b5cf6', 11);
     let filling = false;
 
-    ctx.at(400, () => { filling = true; readout.setText('a full swing is 34 a second'); });
+    ctx.at(400, () => { filling = true; readout.setText('a full swing is 11.3 a second'); });
     ctx.onFrame((dt) => {
       if (sleep.asleep) return;
       sleep.drowsy = Phaser.Math.Clamp(
-        sleep.drowsy + (filling ? 34 : -6) * (dt / 1000), 0, 100);
+        sleep.drowsy + (filling ? 11.3 : -6) * (dt / 1000), 0, 100);
       if (!sleep.asleep) readout.setText(filling
         ? `${Math.round(sleep.drowsy)}/100`
         : `${Math.round(sleep.drowsy)}/100 — bleeding off at 6 a second`);
@@ -477,7 +481,7 @@ export const passiveSleepiness: PreviewScript = {
       }
     });
     // Then the other half of the rule: any hit at all ends it, and empties the meter.
-    ctx.at(6200, () => {
+    ctx.at(11800, () => {
       if (!sleep.asleep) return;
       sleep.asleep = false;
       sleep.drowsy = 0;
@@ -486,7 +490,7 @@ export const passiveSleepiness: PreviewScript = {
       float(ctx, victim.x, victim.y - 42, '⏰ AWAKE!', '#d8e2ff', 12);
       readout.setText('one point of damage is enough — and the meter goes back to 0');
     });
-    ctx.at(8400, () => readout.setText('anything unstoppable never drops: the meter sticks at 99 and says ☕ WIDE AWAKE'));
+    ctx.at(14000, () => readout.setText('anything unstoppable never drops: the meter sticks at 99 and says ☕ WIDE AWAKE'));
   },
 };
 
@@ -605,6 +609,269 @@ export const passiveRest: PreviewScript = {
         readout.setText(elapsed < 1200
           ? 'walking — Rest pays nothing, but the pendulum is swinging'
           : 'one step and the second you were part-way through is gone');
+      }
+    });
+  },
+};
+
+// ══ MASTERY · Dream Duel ══════════════════════════════════════════════
+
+/**
+ * The duel, staged as the kit runs it: two anchors, two leashes, two threads, two spirits, and
+ * the victim walking as far as the ring will let them while the bolts come.
+ */
+export const dreamDuel: PreviewScript = {
+  duration: 12000,
+  scale: 0.82,
+  bodyTexture: '',
+  caption: 'Space while still and they are asleep — both spirits come out, and only yours is armed',
+  run(ctx) {
+    const fx = ctx.capture(() => new DreamFx(ctx.scene, ctx.tint).setSink(ctx.sink));
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const readout = label(ctx, ctx.w * 0.5, 12, '#e4f1ff', 11);
+
+    const myAnchor = { x: ctx.w * 0.28, y: ctx.cy };
+    const foeAnchor = { x: ctx.w * 0.72, y: ctx.cy };
+    const me = { x: myAnchor.x, y: myAnchor.y };
+    const foe = { x: foeAnchor.x, y: foeAnchor.y };
+    const leash = 92;
+    let duel = false;
+    const bolts: { x: number; y: number; vx: number; vy: number }[] = [];
+
+    const av = ctx.useAvatar(() => new DreamAvatar(ctx.scene, ctx.tint));
+    ctx.onFrame((dt) => {
+      av.setFacing(Math.atan2(foe.y - me.y, foe.x - me.x));
+      av.update(dt, me.x, me.y, duel ? 0.3 : 1);
+    });
+
+    ctx.at(300, () => readout.setText('they are asleep, and you have not moved — Space'));
+    ctx.at(1200, () => {
+      duel = true;
+      fx.tear(me.x, me.y, 34, 44, false);
+      fx.tear(foe.x, foe.y, 34, 44, false);
+      fx.ring(me.x, me.y, 12, leash, DRM.spirit, 700, 5, 8);
+      float(ctx, me.x, me.y - 56, '👻 DREAM DUEL', '#e4f1ff', 13);
+      readout.setText('+3s on their sleep, and neither of you can leave your own ring');
+    });
+    ctx.at(2600, () => readout.setText('they cannot cast at all — the only thing left is dodging'));
+    // Three volleys, on the ability's own 1.8s cadence with its 0.5s stagger.
+    for (const t0 of [3000, 6000, 9000]) {
+      for (let i = 0; i < 3; i++) {
+        ctx.at(t0 + i * 500, () => {
+          const a = Math.atan2(foe.y - me.y, foe.x - me.x);
+          bolts.push({ x: me.x + Math.cos(a) * 22, y: me.y + Math.sin(a) * 22,
+            vx: Math.cos(a) * 200, vy: Math.sin(a) * 200 });
+        });
+      }
+    }
+    ctx.at(4800, () => readout.setText('5 a bolt, three of them, half a second apart'));
+    ctx.at(7600, () => readout.setText('nothing can hurt you — and nothing can heal you either'));
+    ctx.at(10600, () => readout.setText('it ends exactly when the sleep does'));
+
+    ctx.onFrame((dt, elapsed) => {
+      const t = elapsed / 1000;
+      // The spirits pace: yours strafes, theirs runs for the edge of its own leash.
+      if (duel) {
+        me.y = myAnchor.y + Math.sin(t * 1.3) * 46;
+        me.x = myAnchor.x + Math.cos(t * 0.9) * 26;
+        foe.x = foeAnchor.x + Math.cos(t * 2.1) * 70;
+        foe.y = foeAnchor.y + Math.sin(t * 1.7) * 52;
+      }
+      for (let i = bolts.length - 1; i >= 0; i--) {
+        const b = bolts[i];
+        b.x += b.vx * (dt / 1000);
+        b.y += b.vy * (dt / 1000);
+        if (Phaser.Math.Distance.Between(b.x, b.y, foe.x, foe.y) < 20) {
+          ctx.capture(() => {
+            fx.ring(foe.x, foe.y, 6, 34, DRM.haunt, 320, 3, 7);
+            float(ctx, foe.x, foe.y - 40, '5', '#ff8899', 13);
+          });
+          bolts.splice(i, 1);
+        } else if (b.x > ctx.w + 30) bolts.splice(i, 1);
+      }
+
+      g.clear();
+      if (!duel) return;
+      for (const [body, anchor, hostile] of [
+        [me, myAnchor, false], [foe, foeAnchor, true],
+      ] as Array<[{ x: number; y: number }, { x: number; y: number }, boolean]>) {
+        const press = Phaser.Math.Clamp(
+          Phaser.Math.Distance.Between(body.x, body.y, anchor.x, anchor.y) / leash, 0, 1);
+        leashRing(g, ctx.tint, anchor.x, anchor.y, leash, t, press * press, 1, hostile);
+        g.fillStyle(ctx.tint(DRM.night), 0.5);
+        g.fillEllipse(anchor.x, anchor.y + 16, 34, 12);
+        g.fillStyle(ctx.tint(hostile ? DRM.hauntDeep : DRM.spiritDeep), 0.42);
+        g.fillEllipse(anchor.x, anchor.y + 4, 26, 30);
+        spiritThread(g, ctx.tint, anchor.x, anchor.y, body.x, body.y, leash, t, 1, hostile);
+        spiritForm(g, ctx.tint, body.x, body.y - 6, 22, t, 0.92, hostile,
+          Math.atan2(foe.y - body.y, foe.x - body.x));
+      }
+      for (const b of bolts) hauntBolt(g, ctx.tint, b.x, b.y, Math.atan2(b.vy, b.vx), 9, t);
+    });
+  },
+};
+
+// ══ MASTERY · Lifelong Dream ══════════════════════════════════════════
+
+/**
+ * The counter, the +2 a hit puts back on it, and the crown a landed dream leaves. The picker
+ * itself is a full-screen menu and does not stage — the loop opens on the choice already made.
+ */
+export const lifelongDream: PreviewScript = {
+  duration: 13000,
+  scale: 0.9,
+  caption: 'Pick an element, hold the thought for 10s — every hit adds 2 — then take its whole statline',
+  run(ctx) {
+    const fx = ctx.capture(() => new DreamFx(ctx.scene, ctx.tint).setSink(ctx.sink));
+    const av = ctx.useAvatar(() => new DreamAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const at = { x: ctx.cx - 40, y: ctx.cy };
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(16));
+    const num = label(ctx, at.x, at.y - 64, '#ffd98a', 11);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#ffd98a', 11);
+
+    let left = 10000;
+    let jolt = 0;
+    let granted = false;
+    ctx.onFrame((dt) => {
+      av.update(dt, at.x, at.y, 1);
+      jolt = Math.max(0, jolt - dt / 420);
+      if (!granted) left = Math.max(0, left - dt);
+      g.clear();
+      const t = ctx.scene.time.now / 1000;
+      if (granted) {
+        num.setVisible(false);
+        dreamCrown(g, ctx.tint, at.x, at.y - 38, 22, 3, t, 1, 0xff4400);
+      } else {
+        num.setVisible(true).setPosition(at.x, at.y - 64)
+          .setText((left / 1000).toFixed(1)).setColor(jolt > 0 ? '#ff3b6b' : '#ffd98a');
+        wishCounter(g, ctx.tint, at.x, at.y - 64, 15, left / 10000, t, jolt);
+      }
+    });
+
+    ctx.at(300, () => readout.setText('🔥 FIRE — ten seconds, and you fight the whole way through it'));
+    // Two hits, each buying them two more seconds of it.
+    for (const [when, note] of [[2600, 'a hit lands — +2 seconds'], [5200, 'and another']] as Array<[number, string]>) {
+      ctx.at(when, () => {
+        left += 2000;
+        jolt = 1;
+        ctx.capture(() => {
+          fx.ring(at.x, at.y, 8, 46, DRM.dread, 380, 3, 16);
+          float(ctx, at.x, at.y - 78, '⏳ +2s', '#ff3b6b', 12);
+        });
+        readout.setText(note);
+      });
+    }
+    ctx.at(7400, () => readout.setText('nobody landing on you means nobody holding it open'));
+    ctx.at(11000, () => {
+      granted = true;
+      fx.ring(at.x, at.y, 12, 150, DRM.wish, 900, 7, 16);
+      fx.stardust(at.x, at.y, 24, 70, 1400, 16);
+      float(ctx, at.x, at.y - 60, '✨ THE DREAM COMES TRUE', '#ffd98a', 13);
+      readout.setText('🔥 Flame Body · Burning Body · Exposed — for the rest of the match');
+    });
+    ctx.at(11700, () => float(ctx, at.x, at.y - 44, '🔥 FLAME BODY', '#ffe9a8', 11));
+    ctx.at(12000, () => float(ctx, at.x, at.y - 48, '🌋 BURNING BODY', '#ffe9a8', 11));
+    ctx.at(12300, () => float(ctx, at.x, at.y - 52, '☀️ EXPOSED', '#ffe9a8', 11));
+  },
+};
+
+// ══ DUEL · CLICK — Haunt ══════════════════════════════════════════════
+
+export const haunt: PreviewScript = {
+  duration: 8000,
+  scale: 0.9,
+  bodyTexture: '',
+  caption: 'Click (duel only) — three red bolts, 5 each, half a second apart along one fixed line',
+  run(ctx) {
+    const fx = ctx.capture(() => new DreamFx(ctx.scene, ctx.tint).setSink(ctx.sink));
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const readout = label(ctx, ctx.w * 0.5, 12, '#ff8899', 11);
+    const me = { x: ctx.w * 0.24, y: ctx.cy };
+    const foe = { x: ctx.w * 0.78, y: ctx.cy };
+    dummyAt(ctx, foe);
+    const bolts: { x: number; y: number; vx: number; vy: number }[] = [];
+
+    ctx.at(300, () => readout.setText('the angle is locked in at the press — all three go down one line'));
+    for (const t0 of [900, 4200]) {
+      for (let i = 0; i < 3; i++) {
+        ctx.at(t0 + i * 500, () => {
+          bolts.push({ x: me.x + 22, y: me.y, vx: 230, vy: 0 });
+        });
+      }
+    }
+    ctx.at(2900, () => readout.setText('15 in total, and none of it will ever wake the sleeper'));
+    ctx.at(6200, () => readout.setText('1.8s cooldown — shorter than the volley, so they queue'));
+
+    ctx.onFrame((dt, elapsed) => {
+      const t = elapsed / 1000;
+      // The spirit strafes while it fires; a spirit that stands still is a spirit being hit.
+      me.y = ctx.cy + Math.sin(t * 1.6) * 30;
+      g.clear();
+      spiritForm(g, ctx.tint, me.x, me.y - 6, 22, t, 0.92, false, 0);
+      for (let i = bolts.length - 1; i >= 0; i--) {
+        const b = bolts[i];
+        b.x += b.vx * (dt / 1000);
+        b.y += b.vy * (dt / 1000);
+        if (Phaser.Math.Distance.Between(b.x, b.y, foe.x, foe.y) < 20) {
+          ctx.capture(() => {
+            fx.ring(foe.x, foe.y, 6, 34, DRM.haunt, 320, 3, 7);
+            float(ctx, foe.x, foe.y - 40, '🩸 5', '#ff8899', 13);
+          });
+          bolts.splice(i, 1);
+        } else if (b.x > ctx.w + 30) bolts.splice(i, 1);
+        else hauntBolt(g, ctx.tint, b.x, b.y, Math.atan2(b.vy, b.vx), 9, t);
+      }
+    });
+  },
+};
+
+// ══ DUEL · E — Spirit Tear ════════════════════════════════════════════
+
+export const spiritTear: PreviewScript = {
+  duration: 10000,
+  scale: 0.86,
+  bodyTexture: '',
+  caption: 'E (duel only) — a huge slow piercing tear at 10, with two moons at 5 going round it',
+  run(ctx) {
+    const fx = ctx.capture(() => new DreamFx(ctx.scene, ctx.tint).setSink(ctx.sink));
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const readout = label(ctx, ctx.w * 0.5, 12, '#e4f1ff', 11);
+    const me = { x: ctx.w * 0.16, y: ctx.cy };
+    const foe = { x: ctx.w * 0.72, y: ctx.cy };
+    dummyAt(ctx, foe);
+    const tears: { x: number; phase: number; hitAt: number }[] = [];
+
+    ctx.at(300, () => readout.setText('86 px/s — slower than anybody walks'));
+    ctx.at(1000, () => {
+      tears.push({ x: me.x + 26, phase: 0, hitAt: -1 });
+      fx.ring(me.x, me.y, 10, 70, DRM.spirit, 520, 5, 7);
+      float(ctx, me.x, me.y - 48, '🕳️ SPIRIT TEAR', '#e4f1ff', 12);
+    });
+    ctx.at(4200, () => readout.setText('it pierces — a body it has cut can be cut again after 0.9s'));
+    ctx.at(7000, () => readout.setText('115px wide counting the moons, in a ring only 168px across'));
+
+    ctx.onFrame((dt, elapsed) => {
+      const t = elapsed / 1000;
+      g.clear();
+      spiritForm(g, ctx.tint, me.x, me.y - 6, 22, t, 0.92, false, 0);
+      for (const tr of tears) {
+        tr.x += 34 * (dt / 1000);
+        tr.phase += (dt / 1000) * 2.4;
+        const moons = [0, Math.PI].map((off) => ({
+          x: tr.x + Math.cos(tr.phase + off) * 34,
+          y: ctx.cy + Math.sin(tr.phase + off) * 21,
+        }));
+        for (const m of moons) tearMoon(g, ctx.tint, m.x, m.y, 9, t);
+        spiritTearShape(g, ctx.tint, tr.x, ctx.cy, 20, t);
+        // The re-hit clock, played at the kit's own 0.9s.
+        const onHead = Phaser.Math.Distance.Between(tr.x, ctx.cy, foe.x, foe.y) <= 32;
+        const onMoon = moons.some((m) => Phaser.Math.Distance.Between(m.x, m.y, foe.x, foe.y) <= 19);
+        if ((onHead || onMoon) && elapsed > tr.hitAt) {
+          tr.hitAt = elapsed + 900;
+          const dmg = onHead ? 10 : 5;
+          ctx.capture(() => float(ctx, foe.x, foe.y - 42, `${onHead ? '🕳️' : '🌙'} ${dmg}`, '#e4f1ff', 13));
+        }
       }
     });
   },

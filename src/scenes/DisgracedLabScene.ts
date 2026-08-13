@@ -18,6 +18,7 @@ import {
   addBackButton, addButton, addChip, addHeaderBar, addTabs, addCardPlate, addPanel, addWell,
   ALL_CORNERS, fillHex, strokeHex, fillDiamond, fillNotched,
   fillNotchedGradient, strokeNotched, drawGlow, drawOrnateRule,
+  addElementCrest,
 } from '../ui';
 import { Music, Sfx } from '../audio';
 
@@ -1037,20 +1038,13 @@ export class DisgracedLabScene extends Phaser.Scene {
     const plate = addCardPlate(this, { x, y, w, h, accent, cut: 14, muted: done });
     const top = y - h / 2;
 
-    // Crest — the target element.
-    const halo = this.add.graphics().setDepth(DEPTH.content - 1);
-    if (!done) {
-      for (let k = 5; k >= 1; k--) {
-        halo.fillStyle(b.color, 0.05);
-        halo.fillCircle(x, top + 46, 14 + k * 5);
-      }
-    }
-    this.add.text(x, top + 46, b.emoji, { fontSize: '34px' })
-      .setOrigin(0.5).setDepth(DEPTH.content).setAlpha(done ? 0.4 : 1);
-    this.add.text(x, top + 82, b.name.toUpperCase(), {
-      fontSize: '13px', fontFamily: FONT_DISPLAY,
-      color: done ? T.ghost : hex(mix(b.color, 0xffffff, 0.6)), letterSpacing: 1,
-    }).setOrigin(0.5).setDepth(DEPTH.content);
+    // Crest — the target itself, standing in the frame. A contract that names a fighter
+    // should show the fighter, the same way the roster cards do.
+    addElementCrest(this, {
+      x, y: top + 58, w: w - 16, h: 96,
+      elementId: b.elementId, name: `${b.emoji}  ${b.name}`, accent: b.color,
+      muted: done, depth: DEPTH.panel + 1, portraitScale: 0.54,
+    });
 
     // Difficulty pip row — five diamonds, lit up to the contract's level.
     const pips = this.add.graphics().setDepth(DEPTH.content);

@@ -476,6 +476,115 @@ export function snapLine(
 }
 
 /**
+ * Predictor's Snare (mastery passive): a closed eye burnt into the floor.
+ *
+ * It has to read as *shut* from across the arena, so it is drawn as a seam rather than as a dim
+ * version of `thirdEye` — one heavy lash-line with a lid folded over it, the lashes hanging down
+ * instead of standing out, and the whole thing laid into an ellipse so it sits on the floor
+ * rather than facing the camera. The ring around it breathes very slowly: a trap that pulsed at
+ * the rate of everything else in the kit would read as an ability going off.
+ *
+ * `arm` is 0 while it is still settling and 1 once it can catch somebody, and it is the rim that
+ * carries it — an unarmed rune is drawn open-ended, and the ring closes as it becomes live.
+ */
+export function snareRune(
+  g: Phaser.GameObjects.Graphics,
+  tint: PsychicColorFn,
+  x: number, y: number, r: number, alpha: number, t: number, arm: number,
+): void {
+  const breathe = 0.86 + 0.14 * Math.sin(t * 1.4);
+  const k = Phaser.Math.Clamp(arm, 0, 1);
+
+  // The scorch it is sitting in.
+  g.fillStyle(tint(PSY.ink), alpha * 0.42);
+  g.fillEllipse(x, y, r * 2.1, r * 1.35);
+  g.fillStyle(tint(PSY.robeDeep), alpha * 0.34 * breathe);
+  g.fillEllipse(x, y, r * 1.7, r * 1.05);
+
+  // The rim, drawn as an arc so an unarmed rune is visibly still closing.
+  g.lineStyle(1.5, tint(PSY.violet), alpha * 0.55);
+  g.beginPath();
+  g.arc(x, y, r * 1.15, -Math.PI / 2, -Math.PI / 2 + k * TAU, false);
+  g.strokePath();
+
+  // The lid: a shallow arc sampled as a polyline, with a heavier seam under it.
+  const lid: Phaser.Geom.Point[] = [];
+  for (let i = 0; i <= 12; i++) {
+    const u = -1 + (i / 12) * 2;
+    lid.push(new Phaser.Geom.Point(x + u * r, y - (1 - u * u) * r * 0.36));
+  }
+  g.lineStyle(2.4, tint(PSY.violetLit), alpha * 0.85);
+  g.strokePoints(lid, false);
+  g.lineStyle(3.2, tint(PSY.gold), alpha * (0.55 + 0.35 * breathe));
+  g.lineBetween(x - r * 0.92, y, x + r * 0.92, y);
+  g.lineStyle(1.2, tint(PSY.aether), alpha * 0.7);
+  g.lineBetween(x - r * 0.6, y - 0.6, x + r * 0.6, y - 0.6);
+
+  // Lashes hanging off the seam — the tell that this is an eye and not a rune circle.
+  g.lineStyle(1.3, tint(PSY.gold), alpha * 0.6);
+  for (let i = 0; i < 7; i++) {
+    const u = -0.86 + (i / 6) * 1.72;
+    const px = x + u * r;
+    const drop = r * (0.3 + 0.22 * (1 - Math.abs(u))) * breathe;
+    g.lineBetween(px, y + 1, px + u * 2.6, y + 1 + drop);
+  }
+
+  // Two tick marks at the corners, so the seam has ends rather than fading out.
+  g.lineStyle(1.6, tint(PSY.violetLit), alpha * 0.75);
+  for (const s of [-1, 1]) {
+    g.lineBetween(x + s * r * 0.96, y - 2.6, x + s * r * 1.16, y);
+    g.lineBetween(x + s * r * 0.96, y + 2.6, x + s * r * 1.16, y);
+  }
+}
+
+/**
+ * Utter Focus (mastery ability), on the floor under a psychic with his eyes shut.
+ *
+ * Three rings of a mandala turning at different rates, a rim arc that empties as the window runs
+ * out, and a ring of small closed eyes facing inward — the same seam `snareRune` draws, repeated,
+ * because the ability is the passive turned all the way up rather than a different idea. Drawn
+ * wide (well past the body) so it is unmistakable at a glance which of the two psychics on screen
+ * is the one currently five seconds ahead.
+ */
+export function focusMandala(
+  g: Phaser.GameObjects.Graphics,
+  tint: PsychicColorFn,
+  x: number, y: number, r: number, left: number, t: number, alpha = 1,
+): void {
+  const k = Phaser.Math.Clamp(left, 0, 1);
+  const breathe = 0.9 + 0.1 * Math.sin(t * 2.4);
+
+  g.fillStyle(tint(PSY.robeDeep), alpha * 0.22);
+  g.fillEllipse(x, y + 14, r * 2, r * 0.82);
+  for (let ring = 0; ring < 3; ring++) {
+    g.lineStyle(1.6 - ring * 0.4, tint(ring === 0 ? PSY.gold : PSY.violet), alpha * (0.6 - ring * 0.15) * breathe);
+    g.strokeEllipse(x, y + 14, r * (2 - ring * 0.46), r * (0.82 - ring * 0.19));
+  }
+
+  // The window, as an arc emptying anticlockwise from noon.
+  g.lineStyle(3.4, tint(PSY.gold), alpha * 0.9);
+  g.beginPath();
+  g.arc(x, y + 14, r * 0.96, -Math.PI / 2, -Math.PI / 2 - k * TAU, true);
+  g.strokePath();
+
+  // Closed eyes around the rim, turning slowly the other way to the rings.
+  for (let i = 0; i < 6; i++) {
+    const a = -t * 0.5 + (i / 6) * TAU;
+    snareRune(g, tint, x + Math.cos(a) * r * 0.82, y + 14 + Math.sin(a) * r * 0.34,
+      5.4, alpha * 0.75, t + i, 1);
+  }
+
+  // Spokes marching inward: thought being pulled in rather than sent out.
+  g.lineStyle(1, tint(PSY.violetLit), alpha * 0.45);
+  for (let i = 0; i < 12; i++) {
+    const a = t * 0.9 + (i / 12) * TAU;
+    const inner = r * (0.3 + 0.12 * Math.sin(t * 3 + i));
+    g.lineBetween(x + Math.cos(a) * inner, y + 14 + Math.sin(a) * inner * 0.4,
+      x + Math.cos(a) * r * 0.66, y + 14 + Math.sin(a) * r * 0.27);
+  }
+}
+
+/**
  * A coma: a slow spiral collapsing into the body, with the three rings of a mandala around it.
  * Drawn under the victim so it never covers the health bar the player is watching drain.
  */
@@ -689,6 +798,71 @@ export class PsychicFx extends FxBase {
       }
       g.lineStyle(3 * (1 - t) + 0.6, this.tint(PSY.stress), (1 - t) * 0.8);
       g.strokeCircle(x, y, r * e);
+    });
+  }
+
+  /**
+   * Predictor's Snare (mastery passive): arriving on the marker.
+   *
+   * The ghost that was standing there is *replaced* rather than dispersed, so the figure shuts
+   * as the body lands in it and the rune is stamped underneath in the same beat — the whole point
+   * of the passive is that the prediction and the arrival are the same event.
+   */
+  snare(fromX: number, fromY: number, toX: number, toY: number, depth = 16): void {
+    this.flashIn(toX, toY, 20, PSY.aether, PSY.violetLit, depth);
+    this.anim(depth, 440, (g, t) => {
+      const e = easeOut(t);
+      // The thread the body travelled, drawn once and left behind.
+      g.lineStyle(4 * (1 - t) + 0.6, this.tint(PSY.robeDeep), (1 - t) * 0.4);
+      g.lineBetween(fromX, fromY, toX, toY);
+      g.lineStyle(1.4, this.tint(PSY.violetLit), (1 - t) * 0.75);
+      g.lineBetween(fromX, fromY, toX, toY);
+      // The ghost's own eye shutting as he takes its place.
+      thirdEye(g, this.tint, toX, toY - 6, 9 + e * 5, 1 - t, (1 - t) * 0.9,
+        { iris: PSY.gold, lash: false, glow: 0.6 });
+      g.lineStyle(2.2 * (1 - t), this.tint(PSY.gold), (1 - t) * 0.7);
+      g.strokeEllipse(toX, toY + 8, (26 + e * 22), (10 + e * 9));
+    });
+  }
+
+  /** The rune catching somebody: the seam snapping open, once, straight into their feet. */
+  snareTrip(x: number, y: number, depth = 15): void {
+    this.flashIn(x, y, 16, PSY.aether, PSY.stress, depth);
+    this.anim(depth, 480, (g, t) => {
+      const e = easeOut(t);
+      // Open on the way out, shut on the way back: a blink rather than a fade.
+      const open = t < 0.35 ? t / 0.35 : 1 - (t - 0.35) / 0.65;
+      thirdEye(g, this.tint, x, y, 13 + e * 6, open, 0.95, { iris: PSY.stress, glow: 1.1 });
+      g.lineStyle(2.6 * (1 - t) + 0.5, this.tint(PSY.stress), (1 - t) * 0.8);
+      g.strokeEllipse(x, y, (22 + e * 40), (9 + e * 16));
+    });
+  }
+
+  /**
+   * Utter Focus (mastery ability) opening: everything on screen pulled *into* him.
+   *
+   * The rings travel inward rather than out, which is the whole tell — every other burst in this
+   * kit is something leaving the caster, and this one is the man closing his eyes and taking the
+   * next five seconds in.
+   */
+  focus(x: number, y: number, depth = 16): void {
+    this.anim(depth, 780, (g, t) => {
+      const e = easeOut(t);
+      for (let i = 0; i < 3; i++) {
+        const k = Phaser.Math.Clamp(t * 2 - i * 0.28, 0, 1);
+        if (k <= 0) continue;
+        g.lineStyle(3 * (1 - k) + 0.8, this.tint(i === 0 ? PSY.gold : PSY.violetLit), (1 - k) * 0.8);
+        g.strokeCircle(x, y, 130 * (1 - k) + 22);
+      }
+      // Six eyes closing as they arrive at him.
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * TAU - t * 1.1;
+        const d = 96 * (1 - e) + 30;
+        thirdEye(g, this.tint, x + Math.cos(a) * d, y + Math.sin(a) * d,
+          7, 1 - easeIn(t), (1 - t) * 0.9, { iris: PSY.gold, lash: false, glow: 0.5 });
+      }
+      mindSigil(g, this.tint, x, y - 30, 14 + e * 8, (1 - t) * 0.85,
+        { phase: t * 5, sides: 7, color: PSY.gold, eye: false });
     });
   }
 

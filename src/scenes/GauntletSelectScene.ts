@@ -1,10 +1,11 @@
 import Phaser from 'phaser';
 import * as PlayerData from '../data/PlayerData';
 import { GAUNTLET_GROUPS, GAUNTLET_ELEMENTS, INFINITY_GAUNTLET_ID } from '../data/GauntletData';
+import { findElementDef } from '../data/ElementRoster';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addBackdrop, addBackButton, addBadge, addButton, addCardPlate, addChip, addTitle, addToggle,
-  fillDiamond,
+  addElementCrest, fillDiamond,
 } from '../ui';
 import { Music } from '../audio';
 
@@ -47,11 +48,11 @@ export class GauntletSelectScene extends Phaser.Scene {
 
     // ── Element gauntlet cards ──────────────────────────────────────
     const cardW = 156;
-    const cardH = 218;
+    const cardH = 240;
     const cardGap = 18;
     const totalW = GAUNTLET_ELEMENTS.length * cardW + (GAUNTLET_ELEMENTS.length - 1) * cardGap;
     const startX = cx - totalW / 2 + cardW / 2;
-    const cardCY = 300;
+    const cardCY = 306;
 
     GAUNTLET_ELEMENTS.forEach((el, i) => {
       const bx = startX + i * (cardW + cardGap);
@@ -65,37 +66,43 @@ export class GauntletSelectScene extends Phaser.Scene {
 
       const top = cardCY - cardH / 2;
 
-      // Element sigil — glyph over a soft pool of its own colour.
-      const halo = this.add.graphics().setDepth(DEPTH.content - 1);
-      for (let k = 5; k >= 1; k--) {
-        halo.fillStyle(el.color, 0.05);
-        halo.fillCircle(bx, top + 58, 20 + k * 6);
-      }
-      this.add.text(bx, top + 58, el.emoji, { fontSize: '44px' })
-        .setOrigin(0.5).setDepth(DEPTH.content);
+      // The champion you are challenging, standing in his own light — the same live
+      // portrait the roster cards use, in place of a 44px emoji.
+      addElementCrest(this, {
+        x: bx, y: top + 70, w: cardW - 18, h: 112,
+        elementId: el.id, name: `${el.emoji}  ${el.name}`, accent: el.color,
+        mastered: PlayerData.isMasteryEnabled(el.id),
+        depth: DEPTH.panel + 1, portraitScale: 0.62,
+      });
 
-      this.add.text(bx, top + 108, el.name.toUpperCase(), {
-        fontSize: '17px', fontFamily: FONT_DISPLAY, color: T.bright, letterSpacing: 1.5,
-        wordWrap: { width: cardW - 16 }, align: 'center',
-      }).setOrigin(0.5).setDepth(DEPTH.content);
-
-      // Opponent roster, drawn as a rule of element glyphs.
+      // Opponent roster: a rule, a row of tinted gems, and the names beneath them.
       const rule = this.add.graphics().setDepth(DEPTH.content - 1);
       rule.lineStyle(1, el.color, 0.25);
-      rule.beginPath(); rule.moveTo(bx - cardW / 2 + 18, top + 132); rule.lineTo(bx + cardW / 2 - 18, top + 132); rule.strokePath();
-      fillDiamond(rule, bx, top + 132, 3, el.color, 0.6);
+      rule.beginPath(); rule.moveTo(bx - cardW / 2 + 18, top + 140); rule.lineTo(bx + cardW / 2 - 18, top + 140); rule.strokePath();
+      fillDiamond(rule, bx, top + 140, 3, el.color, 0.6);
 
-      this.add.text(bx, top + 148, 'FOES', {
+      this.add.text(bx, top + 154, 'FOES', {
         fontSize: '8px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 2,
       }).setOrigin(0.5).setDepth(DEPTH.content);
 
       const pool = GAUNTLET_GROUPS[el.id];
-      this.add.text(bx, top + 172, pool.map((e) => {
-        const found = GAUNTLET_ELEMENTS.find((ge) => ge.id === e);
-        return found?.emoji ?? e;
-      }).join(' '), {
-        fontSize: '15px', wordWrap: { width: cardW - 20 }, align: 'center',
-      }).setOrigin(0.5).setDepth(DEPTH.content);
+      // The foes as their own emoji, over a pool of each one's colour.
+      const gems = this.add.graphics().setDepth(DEPTH.content - 1);
+      pool.forEach((foeId, k) => {
+        const foe = findElementDef(foeId);
+        const gx = bx - ((pool.length - 1) * 24) / 2 + k * 24;
+        for (let r = 3; r >= 1; r--) {
+          gems.fillStyle(foe?.color ?? C.steel, 0.06);
+          gems.fillCircle(gx, top + 176, 5 + r * 3);
+        }
+        this.add.text(gx, top + 176, foe?.emoji ?? '?', { fontSize: '16px' })
+          .setOrigin(0.5).setDepth(DEPTH.content);
+      });
+
+      this.add.text(bx, top + 194, pool.map((e) => findElementDef(e)?.name ?? e).join('  ·  '), {
+        fontSize: '9px', fontFamily: FONT_DISPLAY, color: T.dim, letterSpacing: 0.5,
+        wordWrap: { width: cardW - 22 }, align: 'center', lineSpacing: 3,
+      }).setOrigin(0.5, 0).setDepth(DEPTH.content);
 
       if (isCompleted) {
         addBadge(this, {

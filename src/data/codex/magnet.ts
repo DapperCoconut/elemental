@@ -18,11 +18,14 @@ const magnet: ElementCodex = {
     {
       emoji: '🔩',
       name: 'The Rods',
-      magic:
-        'Four machined bars of iron, one in each corner, there before anybody has cast anything. '
-        + 'They are not projectiles — they are objects with momentum, smearing along their heading '
-        + 'when thrown, bouncing off the arena walls, shoving each other apart when they collide, '
-        + 'and grinding to a halt on friction if nothing is pulling them.',
+      basics:
+        'Four iron bars spawn 80px in from each corner at the start of every magnet match. They belong '
+        + 'to whoever is playing magnet, never expire, and are the kit\'s real damage: 8 to an enemy '
+        + 'within 28px of a moving rod, on a 500ms per-rod per-target cooldown, and nothing at all once a '
+        + 'rod has slowed below 30 px/s. They lose 12% of their speed a frame to friction, bounce hard '
+        + 'off all four walls, and shove each other 26px apart with their velocities swapped when they '
+        + 'touch. A rod launched by the Atom Smasher deals 16 instead of 8 and keeps 99.5% of its speed a '
+        + 'frame for the 3-second window rather than 88%.',
       effects: [
         { tag: 'summon', label: 'Four bars', detail: 'Spawned 80px in from each corner at the start of every magnet match. They belong to whichever fighter is playing magnet and never expire.' },
         { tag: 'damage', label: 'Contact', detail: '8 damage to an enemy within 28px of a moving rod, with a 500ms per-rod, per-target cooldown. A rod that has slowed below 30 px/s deals nothing at all.' },
@@ -39,11 +42,13 @@ const magnet: ElementCodex = {
 
   abilities: {
     'mag-pulse': {
-      magic:
-        'A point of attraction thrown onto the floor at the cursor. Field lines spring out of it, '
-        + 'iron filings kick up, and every rod within reach drops whatever it was doing and comes '
-        + 'straight at it — through anything standing in the way. The pulse itself does nothing; '
-        + 'the damage is entirely a question of what was lying between the rod and the mark.',
+      basics:
+        'Places a mark at the cursor and calls every rod you own within 380px to it at 680 px/s — 1360 '
+        + 'with the Blade perk. The damage is the rods\' own 8 per contact within 28px, so four converging '
+        + 'on one point is up to 32. An enemy carrying your nails is hauled toward the mark for 350ms at '
+        + '220 px/s, plus 140 more per extra nail, so three nails drag at 500 px/s. With Protect orbs up '
+        + 'and the mark inside 380px, you are pulled to it instead at 1200 px/s, invincible for the '
+        + '40–320ms of travel. 0.8s cooldown — the only ability here you can lean on.',
       cast: 'Click, placed at the cursor. Instant.',
       effects: [
         { tag: 'utility', label: 'Rod call', detail: 'Every rod you own within 380px of the mark is launched at it at 680 px/s (1360 with the Blade perk).' },
@@ -53,11 +58,11 @@ const magnet: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '0.8s cooldown — the only ability here you can lean on.' },
       ],
       upgrade: {
-        magic:
-          'Repulse is the same field with the polarity reversed, and it lives on the other mouse '
-          + 'button so you keep both. Everything metal near you is thrown outward instead of pulled '
-          + 'in — which is how you turn a defensive orb shell into a shove, and how you get a nailed '
-          + 'enemy off you rather than onto the rods.',
+        basics:
+          'Adds a right-click that reverses everything: every rod you own within 320px is thrown directly '
+          + 'away from you at 680 px/s, an enemy carrying any of your nails is knocked away at 500 '
+          + 'velocity, and an enemy standing within 80px of you while your Protect orbs are up is knocked '
+          + 'away at 600 — the harder of the two shoves.',
         effects: [
           { tag: 'utility', label: 'Rods flung out', detail: 'Right-click. Every rod you own within 320px is thrown directly away from you at 680 px/s.', requiresUpgrade: 'click' },
           { tag: 'control', label: 'Nail shove', detail: 'An enemy carrying any of your nails is knocked directly away from you at 500 velocity.', requiresUpgrade: 'click' },
@@ -72,11 +77,12 @@ const magnet: ElementCodex = {
     },
 
     'nail-implant': {
-      magic:
-        'A single iron nail thrown flat and driven home. It stays in — for ten full seconds you have '
-        + 'a tether into the other fighter, drawn as a field line running from the wound back to '
-        + 'your hand, quietly hauling them toward you the whole time. Pressing the key again does '
-        + 'not throw a second one; it rips the first back out.',
+      basics:
+        'Throws a nail at 520 px/s for 18 damage inside 24px. It sticks for 10 seconds, and while it is '
+        + 'in, the victim is pulled toward you at +180 px/s of added velocity a second whenever they are '
+        + 'more than 80px away. A second press tears it out for another 18 and refunds 2 seconds of the '
+        + 'cooldown. 3s cooldown on the throw, free and instant to recall, and you cannot throw while one '
+        + 'is in flight or in a body.',
       cast: 'E to throw. E again while one is implanted to recall it. Cannot be thrown while one is in flight or in a body.',
       effects: [
         { tag: 'damage', label: 'Impact', detail: '18 damage on a hit inside 24px, at 520 px/s.' },
@@ -85,11 +91,12 @@ const magnet: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '3s cooldown on the throw; the recall is free and instant.' },
       ],
       upgrade: {
-        magic:
-          'Nail Barrage stops making you choose. Three gold nails leave the hand in a tight fan, and '
-          + 'every one that lands makes the tether stronger — the pull is no longer a nuisance but a '
-          + 'genuine drag, and every ability that reads "how many nails are in them" gets a bigger '
-          + 'number to read.',
+        basics:
+          'Three gold nails at ±6° from the aim, 18 damage each — 54 if the whole fan lands. Each one '
+          + 'that sticks adds a stack up to 3, multiplying the implant pull by 1 + 0.5 per stack, so a full '
+          + 'set drags 2.5× as hard. A recall rips out every nail at once for 18 each and still refunds 2 '
+          + 'seconds, and you may have up to 3 in the air, with a fourth throw refused until some come '
+          + 'home.',
         effects: [
           { tag: 'damage', label: 'Three nails', detail: '3 gold nails at ±6° from the aim, 18 damage each — 54 if the whole fan lands.', requiresUpgrade: 'e' },
           { tag: 'debuff', label: 'Pull stacks', detail: 'Each nail that lands adds a stack, up to 3. The implant pull is multiplied by 1 + 0.5 per stack, so a full set drags 2.5× as hard.', requiresUpgrade: 'e' },
@@ -104,11 +111,14 @@ const magnet: ElementCodex = {
     },
 
     magnetize: {
-      magic:
-        'The other fighter is made of iron. A red field clamps onto them and for eight seconds every '
-        + 'rod on the floor within reach falls toward them of its own accord — accelerating harder '
-        + 'the closer it gets — and nails you throw near them curve in. You do not aim at a '
-        + 'magnetised opponent so much as let go of things in their general direction.',
+      basics:
+        'Marks an enemy for 8 seconds with a 180px ring drawn on them — that ring is the real '
+        + 'attraction range, not decoration. Rods inside it accelerate toward them at up to 1600 px/s² '
+        + 'capped at 900 px/s of travel (1400 for Blade swords), and nails within 150px curve in at 600 '
+        + 'px/s² of steering capped at 700. If your Protect orbs are up you are dragged toward them too, '
+        + 'at up to 1400 px/s² — the shell is iron as well. It only lands if the cursor is within 80px of '
+        + 'the enemy, and a miss still spends the cooldown. 5s cooldown against an 8s duration, so it can '
+        + 'be kept up permanently.',
       cast: 'F, at the cursor. Only lands if the cursor is within 80px of the enemy; a miss does nothing and still spends the cooldown.',
       effects: [
         { tag: 'debuff', label: 'Magnetised', detail: '8 seconds, with a 180px ring drawn on them — that ring is the real rod-attraction range, not decoration.' },
@@ -118,11 +128,11 @@ const magnet: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '5s cooldown against an 8s duration, so it can be kept up permanently.' },
       ],
       upgrade: {
-        magic:
-          'Copper Barrage makes the field manufacture its own ammunition. While the enemy is '
-          + 'magnetised, soft copper rods keep condensing at their feet and flying at you — which '
-          + 'sounds backwards until you notice that the thing they pass through on the way is the '
-          + 'person who made them.',
+        basics:
+          'A copper rod now spawns at the magnetised enemy\'s feet every 1.2 seconds and is thrown toward '
+          + 'you at 250 px/s with up to ±0.3 rad of scatter. Copper deals the normal 8 but shatters on its '
+          + 'first contact instead of carrying on — and it is yours from the moment it spawns, so a pulse '
+          + 'or a repulse can redirect it mid-flight.',
         effects: [
           { tag: 'summon', label: 'Copper rods', detail: 'One spawned at the magnetised enemy\'s feet every 1.2s, thrown toward you at 250 px/s with up to ±0.3 rad of scatter.', requiresUpgrade: 'f' },
           { tag: 'damage', label: 'One hit each', detail: 'Copper deals the normal 8 rod damage but shatters on its first contact rather than continuing.', requiresUpgrade: 'f' },
@@ -136,10 +146,13 @@ const magnet: ElementCodex = {
     },
 
     protect: {
-      magic:
-        'Ten ball bearings snap into orbit around you at arm\'s length, turning slowly, each one '
-        + 'visibly denting and dimming as it soaks a shot. They are not a shield bar — they are ten '
-        + 'separate objects, and a shot has to actually meet one to be stopped.',
+      basics:
+        'Ten bearings at 5 HP each orbiting 52px out. A bearing subtracts an incoming projectile\'s full '
+        + 'damage from its own 5 HP and destroys the shot outright, but only projectiles passing within '
+        + '12px of a bearing are stopped — melee, area damage and anything that threads the gaps go '
+        + 'through. While the ring is up, Mag Pulse becomes a 1200 px/s dash to the cursor with '
+        + 'invincibility for its 40–320ms. 15s cooldown, and recasting replaces the whole ring rather '
+        + 'than topping it up.',
       cast: 'R. Instant. Recasting replaces the whole ring rather than topping it up.',
       effects: [
         { tag: 'shield', label: 'The ring', detail: '10 bearings at 5 HP each, orbiting 52px out. A bearing subtracts an incoming projectile\'s full damage from its own 5 HP and destroys the shot outright.' },
@@ -148,11 +161,12 @@ const magnet: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '15s cooldown — the longest in the kit apart from the ultimate.' },
       ],
       upgrade: {
-        magic:
-          'Reflect Burst spends three of the bearings to slam a hard shell up instead. For a second '
-          + 'and a half everything the other fighter has in the air inside that shell turns round and '
-          + 'goes home, still carrying its own damage — the shell is anchored where you stood, not '
-          + 'to you, so it is a place you make safe rather than a thing you wear.',
+        basics:
+          'With 3 or more bearings up, R consumes three of them for a 180px reflect field lasting 1.5 '
+          + 'seconds, centred where you stood: every enemy projectile inside has its velocity reversed and '
+          + 'its ownership flipped to you, so it now damages them for its own full figure. It replaces the '
+          + 'cast entirely — with 3 or more bearings R can no longer re-lay the ring, and you must be down '
+          + 'to 2 or fewer to make a fresh one.',
         effects: [
           { tag: 'shield', label: 'The field', detail: 'R with 3 or more bearings up consumes 3 of them and creates a 180px reflect field for 1.5s, centred on where you were standing.', requiresUpgrade: 'r' },
           { tag: 'damage', label: 'Turned around', detail: 'Every enemy projectile within the 180px radius has its velocity reversed and its ownership flipped to you — it now damages them for its own full figure, whatever that was.', requiresUpgrade: 'r' },
@@ -167,12 +181,15 @@ const magnet: ElementCodex = {
     },
 
     'atom-smasher': {
-      magic:
-        'A grey industrial drum dropped on the floor, hazard-striped and already pulling. For three '
-        + 'seconds it hauls the other fighter and every rod you own inward — harder for each nail '
-        + 'they are carrying — and then two ram plates come in from opposite sides of the screen and '
-        + 'meet in the middle. Everything caught between them is crushed, and everything metal that '
-        + 'was dragged in is thrown back out at ballistic speed.',
+      basics:
+        'Drops a drum at the cursor that fires 3 seconds later. While it winds up, the enemy within '
+        + '320px is dragged toward it at 260 px/s plus 170 more per nail in them — 770 with three — and '
+        + 'your rods within 340px are hauled in at up to 560 px/s so the crush has metal to throw. Two '
+        + 'plates then close at 900 px/s from both edges of the screen, dealing 15 damage inside 50px on '
+        + 'a 500ms per-plate cooldown on the way in, and 35 to everything within 120px when they meet. A '
+        + 'crushed enemy carrying your nails loses every one and takes a further 30. Rods within 200px of '
+        + 'the crush are flung at 750–1050 px/s and bounce off walls for 3 seconds, dealing 16 apiece '
+        + 'instead of 8. 20s cooldown, with a 180ms shake on the drop and 320ms on the crush.',
       cast: 'Q, dropped at the cursor. Instant to place; the plates fire 3 seconds later.',
       effects: [
         { tag: 'control', label: 'Suction', detail: 'The enemy within 320px is dragged toward the drum at 260 px/s, plus 170 more per nail implanted in them — 770 px/s with three.' },
@@ -184,11 +201,11 @@ const magnet: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '20s cooldown, with a 180ms shake on the drop and a 320ms shake on the crush.' },
       ],
       upgrade: {
-        magic:
-          'Forged Rods re-tempers everything caught in the compaction. The crush comes out visibly '
-          + 'bigger — wider, longer, more metal in the air — and each rod that went through it keeps '
-          + 'a permanent edge afterwards. Cast it enough times and the four bars lying around the '
-          + 'arena are simply better than they used to be.',
+        basics:
+          'Every compaction permanently forges the rods caught in it: +2 damage forever per rod per '
+          + 'crush, stacking with every subsequent Q, plus 8 more during the 3-second bounce window, so a '
+          + 'freshly forged bouncing rod hits for 26. The crush itself grows from 150px to 210px, throws 26 '
+          + 'pieces of shrapnel instead of 16, runs 620ms instead of 480 and shakes the camera for 460ms.',
         effects: [
           { tag: 'buff', label: 'Permanent bonus', detail: '+2 damage forever, per rod, per compaction it is caught in. It stacks with every subsequent Q.', requiresUpgrade: 'q' },
           { tag: 'damage', label: 'Bounce bonus', detail: '+8 more on top during the 3s bounce window, so a freshly forged bouncing rod hits for 26.', requiresUpgrade: 'q' },
@@ -205,10 +222,12 @@ const magnet: ElementCodex = {
 
   perks: {
     blade: {
-      magic:
-        'The bars are reforged as swords. Thinner, longer, sharper, and much lighter — which means '
-        + 'every field in the kit throws them twice as hard, and a sword called into a magnetised '
-        + 'target frequently sails straight past it and has to come back round.',
+      basics:
+        'The rods become swords: 16 damage per contact instead of 8, and 32 instead of 16 during an '
+        + 'Atom Smasher bounce. Magnetize accelerates them at up to 3200 px/s² instead of 1600 with the '
+        + 'cap rising from 900 to 1400 px/s, and Mag Pulse throws them at 1360 px/s rather than 680. The '
+        + 'catch is overshoot — a sword travelling over 600 px/s that passes within 30px of a magnetised '
+        + 'target has its velocity multiplied by another 1.3 and is flung past rather than caught.',
       effects: [
         { tag: 'damage', label: 'Double contact', detail: '16 damage per contact instead of 8, and 32 instead of 16 during an Atom Smasher bounce window.' },
         { tag: 'utility', label: 'Twice the pull', detail: 'Magnetize accelerates a sword at up to 3200 px/s² instead of 1600, and the speed cap rises from 900 to 1400 px/s.' },
@@ -224,11 +243,13 @@ const magnet: ElementCodex = {
 
   mastery: {
     'metal-detector': {
-      magic:
-        'There is older iron under this arena than anything you brought. Two ancient rods lie buried '
-        + 'at random with no marker on the map at all — a faint bronze disturbance in the filings if '
-        + 'you know to look — and a mag-pulse that happens to land on one digs it up. Run the '
-        + 'compactor over an exposed one and it does not get thrown; it wakes up.',
+      basics:
+        'Two extra rods are buried at random positions at least 80px from any wall, once per match, and '
+        + 'a mag-pulse within 62px of one exposes it. An exposed rod becomes an ordinary rod you own — 8 '
+        + 'damage on contact, thrown by pulses and pulled by magnetise like any other. An Atom Smasher '
+        + 'whose plates pass within 100px of an exposed rod\'s row activates it, and both can be woken at '
+        + 'once: an activated rod fires a 5-damage laser every 3 seconds, but only at an enemy who is '
+        + 'currently magnetised or carrying your nails.',
       effects: [
         { tag: 'summon', label: 'Two finds', detail: '2 rods buried at random positions at least 80px from any wall, once per match. A mag-pulse within 62px of one exposes it.' },
         { tag: 'damage', label: 'An exposed rod', detail: 'Becomes an ordinary rod you own — 8 damage on contact, thrown by pulses and pulled by magnetise like any other.' },
@@ -241,11 +262,13 @@ const magnet: ElementCodex = {
       ],
     },
     'mag-lev': {
-      magic:
-        'A deck of violet plate riding on a visible cushion of field lines, hovering clear of the '
-        + 'floor. Standing on it you are carrying fifty points of shield, you hurt anything you '
-        + 'touch, and a click throws you across the arena at nearly a thousand pixels a second. '
-        + 'Stepping off costs you every point of shield you have, not just the board\'s.',
+      basics:
+        'A bindable board you mount and dismount with the same key. Mounting grants +50 shield HP; '
+        + 'losing it back down to whatever you had before dismounts you automatically, and getting off '
+        + 'deliberately sets your shield HP to 0 outright, including any shield you were carrying '
+        + 'beforehand. While riding you bash anything within 36px for 15 damage on a 400ms per-target '
+        + 'cooldown, and Click is replaced by a sling that launches you toward the cursor at 950 px/s '
+        + 'with 200ms of dodge frames. 6s cooldown on re-mounting; dismounting is never gated.',
       cast:
         'Bindable to E, R, F or Q, replacing that slot\'s base ability for the match. Press to mount, '
         + 'press again to dismount.',

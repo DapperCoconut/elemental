@@ -18,6 +18,10 @@ import {
 import {
   ELEMENT_DATA_MAP, ELEMENT_FORM_TABS, allSelectableElements, findElementDef,
 } from '../data/ElementRoster';
+import { dreamBoons, dreamSummary, dreamableElementIds } from '../data/DreamBuffs';
+import {
+  BEYOND_JUSTICE_RANK, COMBO_KIND_LABELS, ComboKind, JUSTICE_COMBOS, STYLE_RANKS, combosOfKind,
+} from '../data/JusticeCombos';
 import { C, hex, mix, FONT_DISPLAY, FONT_UI } from './Theme';
 import { addButton } from './Button';
 import { addCardPlate, addRowPlate } from './Panel';
@@ -35,7 +39,7 @@ import {
 } from './AbilityPreview';
 
 /** Which page of the info screen is showing. */
-type InfoTab = 'abilities' | 'perks' | 'mastery' | 'build' | 'journal';
+type InfoTab = 'abilities' | 'perks' | 'mastery' | 'build' | 'journal' | 'dreambook' | 'lawbook';
 
 /** What the left rail currently has selected. */
 type InfoSelection =
@@ -183,6 +187,8 @@ export class ElementPanels {
     if (!element) return;
     if (this.infoTab === 'build' && elementId !== 'creation') this.infoTab = 'abilities';
     if (this.infoTab === 'journal' && elementId !== 'paper') this.infoTab = 'abilities';
+    if (this.infoTab === 'dreambook' && elementId !== 'dream') this.infoTab = 'abilities';
+    if (this.infoTab === 'lawbook' && elementId !== 'justice') this.infoTab = 'abilities';
     if (this.infoTab === 'mastery' && !getMasteryDef(elementId)) this.infoTab = 'abilities';
 
     const upgrades = getElementUpgrades(elementId);
@@ -208,6 +214,10 @@ export class ElementPanels {
     if (getMasteryDef(elementId)) tabs.push({ id: 'mastery', label: '★ MASTERY', accent: C.gold });
     if (elementId === 'creation') tabs.push({ id: 'build', label: '🔨 BUILD', accent: 0xcc6622 });
     if (elementId === 'paper') tabs.push({ id: 'journal', label: '📖 JOURNAL', accent: 0xe8c65c });
+    // The two mastery reference tables. Both are far too long to live in a dossier pane, and
+    // both are the thing their mastery is actually *about* — see DreamBuffs and JusticeCombos.
+    if (elementId === 'dream') tabs.push({ id: 'dreambook', label: '🌠 DREAM JOURNAL', accent: 0x8b5cf6 });
+    if (elementId === 'justice') tabs.push({ id: 'lawbook', label: '⚖ RULES OF LAW', accent: 0xf0d68a });
 
     const tabW = 116, tabH = 24, tabGap = 5;
     const tabsW = tabs.length * tabW + (tabs.length - 1) * tabGap;
@@ -254,6 +264,16 @@ export class ElementPanels {
     if (this.infoTab === 'journal') {
       this.renderScrollingSection(width, height, cx, divY + 10,
         (c, colX, colW, y) => this.renderPaperJournal(c, cx, colX, colW, y, width, height));
+      return;
+    }
+    if (this.infoTab === 'dreambook') {
+      this.renderScrollingSection(width, height, cx, divY + 10,
+        (c, colX, colW, y) => this.renderDreamJournal(c, cx, colX, colW, y, width, height));
+      return;
+    }
+    if (this.infoTab === 'lawbook') {
+      this.renderScrollingSection(width, height, cx, divY + 10,
+        (c, colX, colW, y) => this.renderRulesOfLaw(c, cx, colX, colW, y));
       return;
     }
     // ── ABILITIES / PERKS / MASTERY: all master–detail ──────────────────
@@ -457,8 +477,12 @@ export class ElementPanels {
     const passive = sel.kind === 'passive' ? passives[sel.index] : undefined;
     const perk = sel.kind === 'perk' ? perks.find((pk) => pk.id === sel.id) : undefined;
     const enh = sel.kind === 'mastery' ? enhancements.find((e) => e.id === sel.id) : undefined;
-    const upgrade = ability ? upgrades.find((u) => u.slot === ability.displayKey.toLowerCase()) : undefined;
     const entry = ability ? getAbilityCodex(elementId, ability.id) : undefined;
+    // Matched by display key, which is right everywhere except an ability that shares a key
+    // with an upgrade belonging to something else — see `AbilityCodexEntry.noUpgrade`.
+    const upgrade = ability && !entry?.noUpgrade
+      ? upgrades.find((u) => u.slot === ability.displayKey.toLowerCase())
+      : undefined;
     const canUpgrade = !!entry?.upgrade || !!upgrade;
     const showUp = this.infoUpgraded && canUpgrade;
 
@@ -636,8 +660,8 @@ export class ElementPanels {
     };
 
     if (passive) {
-      heading('— WHAT IT IS —', '#7f89ab');
-      prose(passive.magic);
+      heading('— THE BASICS —', '#7f89ab');
+      prose(passive.basics);
       heading('— EFFECTS —', '#7f89ab');
       for (const e of passive.effects) effectRow(e);
       if (passive.notes?.length) {
@@ -649,11 +673,11 @@ export class ElementPanels {
           + 'not been written yet.', '#5c5a3f');
       }
     } else if (ability && entry) {
-      heading('— THE MAGIC —', '#7f89ab');
-      prose(showUp && entry.upgrade?.magic ? entry.upgrade.magic : entry.magic,
-        showUp && entry.upgrade?.magic ? '#d9c48a' : '#a8b0c8');
-      if (showUp && entry.upgrade?.magic) {
-        prose(entry.magic, '#7f879c');
+      heading('— THE BASICS —', '#7f89ab');
+      prose(showUp && entry.upgrade?.basics ? entry.upgrade.basics : entry.basics,
+        showUp && entry.upgrade?.basics ? '#d9c48a' : '#a8b0c8');
+      if (showUp && entry.upgrade?.basics) {
+        prose(entry.basics, '#7f879c');
       }
 
       heading('— HOW IT IS CAST —', '#7f89ab');
@@ -703,8 +727,8 @@ export class ElementPanels {
       }
 
       if (codexEntry) {
-        heading('— THE MAGIC —', '#7f89ab');
-        prose(codexEntry.magic);
+        heading('— THE BASICS —', '#7f89ab');
+        prose(codexEntry.basics);
         if (codexEntry.cast) {
           heading('— HOW IT IS USED —', '#7f89ab');
           prose(codexEntry.cast, '#94a8c4');
@@ -874,6 +898,198 @@ export class ElementPanels {
         y += 15 + body.height + 8;
       }
       y += 6;
+    }
+
+    return y + 10;
+  }
+
+  /**
+   * Renders Dream's Dream Journal tab — every boon Lifelong Dream can hand out. Returns innerY.
+   *
+   * One collapsed row per element, forty-eight of them, for the reason the Paper journal has
+   * them: every boon of every element expanded at once is two hundred rows of text and nobody
+   * reads that. The one-line summary on a collapsed row is computed from the boons themselves
+   * (`dreamSummary`), so it cannot drift away from what the ability actually gives you.
+   */
+  private renderDreamJournal(
+    container: Phaser.GameObjects.Container,
+    cx: number, colX: number, colW: number, startY: number,
+    width: number, height: number,
+  ): number {
+    let y = startY;
+    const ids = dreamableElementIds();
+
+    const hdr = this.scene.add.text(cx, y, `— THE DREAM JOURNAL · ${ids.length} ELEMENTS —`, {
+      fontSize: '11px', fontFamily: FONT_DISPLAY, color: '#8b5cf6',
+    }).setOrigin(0.5);
+    container.add(hdr);
+    y += 22;
+
+    const intro = this.scene.add.text(colX + 14, y,
+      'Lifelong Dream asks you to name an element and then hold the thought for ten seconds — '
+      + 'two more every time you are hit. When the counter reaches zero you are given every '
+      + 'standing buff that element could ever be given, all at once, for the rest of the match. '
+      + 'You keep your own five keys; what you take is its statline. Dream and Quantum are the '
+      + 'only two missing: you already are one, and the other is not an element but a pair of '
+      + 'them. Tap a row to read it.', {
+        fontSize: '10px', fontFamily: FONT_UI, color: '#a89cc8',
+        wordWrap: { width: colW - 28 }, lineSpacing: 3,
+      });
+    container.add(intro);
+    y += intro.height + 14;
+
+    for (const id of ids) {
+      const def = findElementDef(id);
+      const boons = dreamBoons(id);
+      const color = def?.color ?? C.arcane;
+      const hexColor = '#' + color.toString(16).padStart(6, '0');
+      const expanded = this.expandedJournal.has(`dream:${id}`);
+      const rowH = 32;
+
+      const rowBg = this.overlayRow(cx, y + rowH / 2, colW, rowH - 4, color).g;
+      const nameText = this.scene.add.text(colX + 16, y + 11,
+        `${def?.emoji ?? '❔'}  ${(def?.name ?? id).toUpperCase()}`, {
+          fontSize: '12px', fontFamily: FONT_DISPLAY, color: hexColor,
+        }).setOrigin(0, 0.5);
+      const sum = this.scene.add.text(colX + 16, y + 24, dreamSummary(id), {
+        fontSize: '8px', fontFamily: FONT_UI, color: '#6b7285',
+      }).setOrigin(0, 0.5);
+      const count = this.scene.add.text(colX + colW - 16, y + rowH / 2,
+        `${boons.length} boon${boons.length === 1 ? '' : 's'}`, {
+          fontSize: '9px', fontFamily: FONT_DISPLAY, color: '#776f8a',
+        }).setOrigin(1, 0.5);
+
+      const hit = this.scene.add.rectangle(cx, y + rowH / 2, colW, rowH - 4, 0xffffff, 0)
+        .setInteractive({ useHandCursor: true });
+      hit.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
+        ptr.event.stopPropagation();
+        const key = `dream:${id}`;
+        if (expanded) this.expandedJournal.delete(key); else this.expandedJournal.add(key);
+        Sfx.play('ui-click');
+        this.showElementInfo('dream', width, height, cx);
+      });
+      container.add([rowBg, nameText, sum, count, hit]);
+      y += rowH + 4;
+
+      if (!expanded) continue;
+      for (const b of boons) {
+        const title = this.scene.add.text(colX + 30, y, `${b.emoji} ${b.name}`, {
+          fontSize: '11px', fontFamily: FONT_DISPLAY, color: '#e9dcff',
+        });
+        const body = this.scene.add.text(colX + 30, y + 15, b.blurb, {
+          fontSize: '9px', fontFamily: FONT_UI, color: '#9a92b0',
+          wordWrap: { width: colW - 62 }, lineSpacing: 2,
+        });
+        container.add([title, body]);
+        y += 15 + body.height + 8;
+      }
+      y += 6;
+    }
+
+    return y + 10;
+  }
+
+  /**
+   * Renders Justice's Rules of Law tab — every combo Combo Excelsius pays for, plus the rank
+   * ladder it feeds. Returns innerY.
+   *
+   * Grouped by kind rather than listed flat, because the six groups are six different things
+   * you can be good at and a reader picking a build wants the section, not the alphabet.
+   */
+  private renderRulesOfLaw(
+    container: Phaser.GameObjects.Container,
+    cx: number, colX: number, colW: number, startY: number,
+  ): number {
+    let y = startY;
+
+    const hdr = this.scene.add.text(cx, y, `— THE RULES OF LAW · ${JUSTICE_COMBOS.length} COMBOS —`, {
+      fontSize: '11px', fontFamily: FONT_DISPLAY, color: '#f0d68a',
+    }).setOrigin(0.5);
+    container.add(hdr);
+    y += 22;
+
+    const intro = this.scene.add.text(colX + 14, y,
+      'Combo Excelsius does not measure damage. Damage is the job, not the art. What the meter '
+      + 'pays for is arrangement — a thing you set up earlier being the reason a thing that just '
+      + 'happened worked. Six ranks, a hundred style each, bleeding the whole time and faster the '
+      + 'higher you are.', {
+        fontSize: '10px', fontFamily: FONT_UI, color: '#c8bc98',
+        wordWrap: { width: colW - 28 }, lineSpacing: 3,
+      });
+    container.add(intro);
+    y += intro.height + 14;
+
+    // ── The ladder ──
+    const ladderHdr = this.scene.add.text(colX + 14, y, '— THE LADDER —', {
+      fontSize: '9px', fontFamily: FONT_DISPLAY, color: '#8a7a4a',
+    });
+    container.add(ladderHdr);
+    y += 18;
+
+    for (const r of STYLE_RANKS) {
+      const rowH = 26;
+      const rowBg = this.overlayRow(cx, y + rowH / 2, colW, rowH - 4, r.color).g;
+      const letter = this.scene.add.text(colX + 24, y + rowH / 2, r.letter, {
+        fontSize: '15px', fontFamily: FONT_DISPLAY, color: r.text,
+      }).setOrigin(0.5);
+      const name = this.scene.add.text(colX + 48, y + rowH / 2, r.name, {
+        fontSize: '11px', fontFamily: FONT_DISPLAY, color: r.text,
+      }).setOrigin(0, 0.5);
+      const stats = this.scene.add.text(colX + colW - 16, y + rowH / 2,
+        `+${Math.round((r.will - 1) * 100)}% will  ·  +${Math.round((r.speed - 1) * 100)}% speed  ·  `
+        + `−${Math.round((1 - r.cooldown) * 100)}% cooldown  ·  −${r.decay}/s`, {
+          fontSize: '9px', fontFamily: FONT_UI, color: '#8a8f9c',
+        }).setOrigin(1, 0.5);
+      container.add([rowBg, letter, name, stats]);
+      y += rowH + 3;
+    }
+
+    const beyond = this.scene.add.text(colX + 14, y + 6,
+      `▸ At ${STYLE_RANKS[BEYOND_JUSTICE_RANK].letter} and above, Judgement Day stops weighing `
+      + 'anybody: no tally, no tier, DAMNED every time — with I AM BEYOND JUSTICE across the screen.', {
+        fontSize: '9px', fontFamily: FONT_UI, color: '#ff9aae',
+        wordWrap: { width: colW - 28 }, lineSpacing: 2,
+      });
+    container.add(beyond);
+    y += beyond.height + 18;
+
+    // ── The combos, by kind ──
+    for (const kind of ['arena', 'chain', 'spear', 'nerve', 'flight', 'verdict'] as ComboKind[]) {
+      const meta = COMBO_KIND_LABELS[kind];
+      const rows = combosOfKind(kind);
+      if (!rows.length) continue;
+      const kHex = '#' + meta.color.toString(16).padStart(6, '0');
+
+      const kHdr = this.scene.add.text(colX + 14, y, `— ${meta.label} —`, {
+        fontSize: '10px', fontFamily: FONT_DISPLAY, color: kHex,
+      });
+      container.add(kHdr);
+      y += 16;
+      const kSub = this.scene.add.text(colX + 14, y, meta.blurb, {
+        fontSize: '9px', fontFamily: FONT_UI, color: '#6f6a58',
+        wordWrap: { width: colW - 28 },
+      });
+      container.add(kSub);
+      y += kSub.height + 8;
+
+      for (const c of rows) {
+        const howText = this.scene.add.text(colX + 62, y + 20, c.how, {
+          fontSize: '9px', fontFamily: FONT_UI, color: '#9ba3bd',
+          wordWrap: { width: colW - 86 }, lineSpacing: 3,
+        });
+        const rowH = 20 + howText.height + 12;
+        const rowBg = this.overlayRow(cx, y + rowH / 2, colW, rowH - 4, meta.color, true).g;
+        const style = this.scene.add.text(colX + 30, y + rowH / 2, `+${c.style}`, {
+          fontSize: '13px', fontFamily: FONT_DISPLAY, color: kHex,
+        }).setOrigin(0.5);
+        const nameText = this.scene.add.text(colX + 62, y + 11, c.name.toUpperCase()
+          + (c.cooldownMs ? `   ·   ${(c.cooldownMs / 1000).toFixed(0)}s gate` : ''), {
+          fontSize: '11px', fontFamily: FONT_DISPLAY, color: '#e6eeff',
+        }).setOrigin(0, 0.5);
+        container.add([rowBg, style, nameText, howText]);
+        y += rowH + 4;
+      }
+      y += 10;
     }
 
     return y + 10;
@@ -1921,7 +2137,7 @@ export class ElementPanels {
     innerY += Math.max(prompt.height, 24) + 14;
 
     const roster = allSelectableElements()
-      .filter((e) => e.available && e.id !== 'quantum' && e.id !== 'dummy');
+      .filter((e) => e.available && e.id !== 'quantum');
 
     const COLS = 4;
     const gap = 8;
@@ -2132,7 +2348,7 @@ export class ElementPanels {
   }
 
   private isBondPartnerAllowed(id: string): boolean {
-    if (id === 'quantum' || id === 'dummy') return false;
+    if (id === 'quantum') return false;
     if (this.bondDraftFirst) return PlayerData.isBondResearched(this.bondDraftFirst, id);
     // A cheat profile is granted every pair without any of them being stored (see
     // `PlayerData.isBondResearched`), so reading the saved list alone would leave it with two

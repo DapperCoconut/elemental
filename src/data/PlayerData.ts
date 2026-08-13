@@ -16,9 +16,16 @@ interface SaveData {
   gauntletsCompleted: string[];      // base element IDs of completed gauntlets
   gauntletHardUnlocked: boolean;
   gauntletsCompletedHard: string[]; // base element IDs of hard-mode completed gauntlets
-  dummyUnlocked: boolean;            // true once the WWSSADADBA code has been entered
   labLevel: number;                  // 0 = base, 1-3 = upgraded
   corruptShards: number;             // currency earned in Invasion mode
+  /**
+   * Husk variant ids the player has personally put down, in discovery order. Fills the
+   * Study's journal — a husk you have never killed is a `???` entry in the book, so the
+   * bestiary is earned rather than handed over.
+   */
+  huskJournal: string[];
+  /** True once the cellar's eye has been woken at least once. Gates nothing; it is a memory. */
+  apocalypseSeen: boolean;
   unlockedPerks: Record<string, string[]>;   // elementId → owned perk ids
   equippedPerks: Record<string, string>;     // elementId → single equipped perk id
   unlockedMutations: string[];       // mutation IDs explicitly unlocked (excludes unlockedByDefault ones)
@@ -159,9 +166,10 @@ function load(): SaveData {
         gauntletsCompleted: parsed.gauntletsCompleted ?? [],
         gauntletHardUnlocked: parsed.gauntletHardUnlocked ?? false,
         gauntletsCompletedHard: parsed.gauntletsCompletedHard ?? [],
-        dummyUnlocked: parsed.dummyUnlocked ?? false,
         labLevel: parsed.labLevel ?? 0,
         corruptShards: parsed.corruptShards ?? 0,
+        huskJournal: parsed.huskJournal ?? [],
+        apocalypseSeen: parsed.apocalypseSeen ?? false,
         unlockedPerks: parsed.unlockedPerks ?? {},
         equippedPerks: parsed.equippedPerks ?? {},
         unlockedMutations: parsed.unlockedMutations ?? [],
@@ -211,7 +219,7 @@ function load(): SaveData {
     // corrupted save — start fresh
   }
   // A save that never existed has nothing to migrate — born already stamped.
-  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], dummyUnlocked: false, labLevel: 0, corruptShards: 0, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {}, achievements: [], equippedSkins: {}, divineNuclei: 0, kingDefeated: false, devourerDefeated: false, devourerChoice: '', bountyRerollOffset: 0, completedBountyKeys: [], passionQTaps: 0, passionQCensored: false, paperJournal: {}, quantumBond: [], quantumResearched: [], quantumResearching: '', quantumQuestProgress: {}, migratedSubterfugeId: true, screwdriverFound: false, screwdriverPage: -1, screwsRemoved: {}, secretModesUnlocked: [], pendingUnstable: null };
+  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], labLevel: 0, corruptShards: 0, huskJournal: [], apocalypseSeen: false, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {}, achievements: [], equippedSkins: {}, divineNuclei: 0, kingDefeated: false, devourerDefeated: false, devourerChoice: '', bountyRerollOffset: 0, completedBountyKeys: [], passionQTaps: 0, passionQCensored: false, paperJournal: {}, quantumBond: [], quantumResearched: [], quantumResearching: '', quantumQuestProgress: {}, migratedSubterfugeId: true, screwdriverFound: false, screwdriverPage: -1, screwsRemoved: {}, secretModesUnlocked: [], pendingUnstable: null };
 }
 
 function save(data: SaveData): void {
@@ -397,18 +405,6 @@ export function completeGauntletHard(elementId: string): void {
   save(data);
 }
 
-export function isDummyUnlocked(): boolean {
-  return load().dummyUnlocked;
-}
-
-export function unlockDummy(): void {
-  const data = load();
-  if (!data.dummyUnlocked) {
-    data.dummyUnlocked = true;
-    save(data);
-  }
-}
-
 // ── Secret modes ─────────────────────────────────────────────────────
 // The screwdriver, the four screws on every difficulty plate, and the modes
 // that come off with them. See `src/data/SecretModes.ts` for the table.
@@ -493,6 +489,31 @@ export function getCorruptShards(): number {
 export function addCorruptShards(amount: number): void {
   const data = load();
   data.corruptShards += amount;
+  save(data);
+}
+
+/** Every husk variant id the player has killed — the Study journal's unlock list. */
+export function getHuskJournal(): string[] {
+  return load().huskJournal;
+}
+
+/** Idempotent. Returns true only on the *first* kill of this variant (worth a banner). */
+export function recordHuskKill(variantId: string): boolean {
+  const data = load();
+  if (data.huskJournal.includes(variantId)) return false;
+  data.huskJournal = [...data.huskJournal, variantId];
+  save(data);
+  return true;
+}
+
+export function isApocalypseSeen(): boolean {
+  return load().apocalypseSeen;
+}
+
+export function markApocalypseSeen(): void {
+  const data = load();
+  if (data.apocalypseSeen) return;
+  data.apocalypseSeen = true;
   save(data);
 }
 

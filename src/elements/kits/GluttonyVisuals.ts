@@ -73,6 +73,21 @@ export const GLT = {
   parcel: 0xc9b48a,
   rot: 0x7d9b34,
   rotDark: 0x3c4d18,
+  /** Chef's Friend — what comes back up out of the hole. */
+  bread: 0xc98b4a,
+  breadCrumb: 0xf3e2b8,
+  cheese: 0xf2c33d,
+  cheeseRind: 0xc8912a,
+  pieCrust: 0xdcae63,
+  pieFilling: 0x8e2b3a,
+  /** The rat, and the hole it lives in. */
+  ratFur: 0x8c6b5a,
+  ratFurDark: 0x4d382e,
+  ratSkin: 0xe0a8a0,
+  ratEye: 0xff4a4a,
+  ratMutant: 0xa8556a,
+  ratMutantDark: 0x561d2c,
+  hole: 0x120d10,
   /** Pit Master's blue coals, and the char an over-seared thing carries. */
   blueCoal: 0x3fa9ff,
   blueHot: 0xd6f0ff,
@@ -92,7 +107,10 @@ export type FoodKind =
   // Head Chef (E+) opens the second half of the larder.
   | 'berries' | 'mint' | 'pineapple' | 'deathcap'
   // Resourceful (Q+) — what is scraped out of the pot afterwards.
-  | 'leftovers';
+  | 'leftovers'
+  // Chef's Friend (mastery) — the only three the ground never turns up. They come back out of
+  // the rat hole in exchange for something cooked, and nothing else in the element makes them.
+  | 'bread' | 'cheese' | 'pie';
 
 export interface FoodProfile {
   label: string;
@@ -154,7 +172,26 @@ export const FOOD: Record<FoodKind, FoodProfile> = {
     label: 'LEFTOVERS', emoji: '🥡', color: GLT.parcel, cookedColor: 0xb08334,
     cookMs: 25000, healRaw: 0, healCooked: 0, hungerSec: 4,
   },
+  bread: {
+    label: 'BREAD', emoji: '🍞', color: GLT.bread, cookedColor: 0x8f5a24,
+    cookMs: 8000, healRaw: 30, healCooked: 60, hungerSec: 6,
+  },
+  cheese: {
+    label: 'CHEESE', emoji: '🧀', color: GLT.cheese, cookedColor: 0xd99a1e,
+    cookMs: 5000, healRaw: 25, healCooked: 45, hungerSec: 5,
+  },
+  pie: {
+    label: 'PIE', emoji: '🥧', color: GLT.pieCrust, cookedColor: 0xb97d33,
+    cookMs: 10000, healRaw: 30, healCooked: 60, hungerSec: 7,
+  },
 };
+
+/**
+ * What the rat hands back. Deliberately not on either forage table — the three of them exist
+ * only as the far side of a trade, and a chef who has not paid for Chef's Friend will never see
+ * one.
+ */
+export const RAT_LARDER: FoodKind[] = ['bread', 'cheese', 'pie'];
 
 /** What Forage can turn up. Meat is butchery, not foraging — it only comes off a skewer. */
 export const FORAGEABLE: FoodKind[] = ['mushroom', 'carrot', 'potato'];
@@ -804,6 +841,168 @@ export function foodShape(
       }
       break;
     }
+
+    case 'bread': {
+      // A bloomer: flat base, domed top, and three diagonal slashes across the crust. Raw it is
+      // a pale unbaked dough with the slashes still shut; baked they have opened and the cut end
+      // shows crumb, which is the only part of the drawing that changes shape rather than colour.
+      const s = size;
+      const w = s * 0.78;
+      const h = s * 0.46;
+      const loaf: Phaser.Geom.Point[] = [];
+      for (let i = 0; i <= 12; i++) {
+        const a = Math.PI + (i / 12) * Math.PI;
+        loaf.push(new Phaser.Geom.Point(
+          x + Math.cos(a) * w * 0.5,
+          y + Math.sin(a) * h * (cooked ? 0.98 : 0.86) + h * 0.24,
+        ));
+      }
+      loaf.push(new Phaser.Geom.Point(x + w * 0.5, y + h * 0.34));
+      loaf.push(new Phaser.Geom.Point(x - w * 0.5, y + h * 0.34));
+      g.fillStyle(tint(cooked ? 0x5f3512 : 0xbda887), alpha * 0.9);
+      g.fillPoints(loaf.map((p) => new Phaser.Geom.Point(p.x + 1.2, p.y + 1.6)), true);
+      g.fillStyle(tint(body), alpha);
+      g.fillPoints(loaf, true);
+      // The end of the loaf, cut off square, showing the crumb inside it.
+      g.fillStyle(tint(GLT.breadCrumb), alpha * (cooked ? 0.95 : 0.6));
+      g.fillEllipse(x - w * 0.42, y + h * 0.06, w * 0.2, h * 0.9);
+      if (cooked) {
+        // Air holes in the crumb face — what stops it reading as a bar of soap.
+        g.fillStyle(tint(0xd2b884), alpha * 0.8);
+        for (let i = 0; i < 4; i++) {
+          g.fillCircle(x - w * 0.42 + (jitter(19, i) - 0.5) * w * 0.1,
+            y + h * 0.06 + (jitter(19, 8 + i) - 0.5) * h * 0.6, s * (0.02 + jitter(19, 16 + i) * 0.02));
+        }
+      }
+      // Three slashes across the top. Shut and shallow raw, split open and dark once baked.
+      for (let i = -1; i <= 1; i++) {
+        const sx = x + i * w * 0.22 + w * 0.06;
+        g.lineStyle(cooked ? Math.max(1.6, s * 0.06) : 1, tint(cooked ? 0x6b3d16 : 0xa8916f),
+          alpha * (cooked ? 0.9 : 0.55));
+        g.lineBetween(sx - w * 0.08, y - h * 0.32, sx + w * 0.08, y + h * 0.02);
+        if (cooked) {
+          g.lineStyle(1, tint(GLT.breadCrumb), alpha * 0.7);
+          g.lineBetween(sx - w * 0.05, y - h * 0.3, sx + w * 0.06, y - h * 0.02);
+        }
+      }
+      if (cooked) {
+        // Flour dusting stays; the crust gets a sheen.
+        g.fillStyle(tint(0xf6e9c8), alpha * 0.22);
+        g.fillEllipse(x + w * 0.06, y - h * 0.24, w * 0.4, h * 0.2);
+        sear(g, tint, x, y, w * 0.8, h * 0.9, 0, alpha, 2);
+      } else {
+        g.fillStyle(tint(0xf1e7d2), alpha * 0.35);
+        for (let i = 0; i < 5; i++) {
+          g.fillCircle(x + (jitter(23, i) - 0.5) * w * 0.7, y - h * 0.1 + (jitter(23, 9 + i) - 0.5) * h * 0.5,
+            s * 0.022);
+        }
+      }
+      break;
+    }
+
+    case 'cheese': {
+      // A wedge, point-out, with a rind along the back and holes bored through the face. Melting
+      // it slumps the whole silhouette: the point droops, the holes run together and a bright
+      // string trails off the low corner.
+      const s = size;
+      const droop = cooked ? s * 0.16 : 0;
+      const wedge = [
+        new Phaser.Geom.Point(x - s * 0.36, y - s * 0.3),
+        new Phaser.Geom.Point(x + s * 0.42, y - s * 0.04 + droop * 0.4),
+        new Phaser.Geom.Point(x + s * 0.3, y + s * 0.2 + droop),
+        new Phaser.Geom.Point(x - s * 0.36, y + s * 0.3 + droop * 0.3),
+      ];
+      g.fillStyle(tint(cooked ? 0x9a6a12 : GLT.cheeseRind), alpha * 0.9);
+      g.fillPoints(wedge.map((p) => new Phaser.Geom.Point(p.x + 1.2, p.y + 1.6)), true);
+      g.fillStyle(tint(body), alpha);
+      g.fillPoints(wedge, true);
+      // The rind: the back face, always a shade darker than the paste.
+      g.fillStyle(tint(GLT.cheeseRind), alpha * (cooked ? 0.7 : 0.95));
+      g.fillRect(x - s * 0.4, y - s * 0.3, s * 0.07, s * 0.6 + droop * 0.3);
+      // Holes.
+      const holes: Array<[number, number, number]> = cooked
+        ? [[-0.1, -0.02, 0.11], [0.14, 0.06, 0.08]]
+        : [[-0.14, -0.1, 0.075], [0.06, 0.04, 0.055], [0.16, -0.06, 0.04], [-0.06, 0.14, 0.045]];
+      for (const [hx, hy, hr] of holes) {
+        g.fillStyle(tint(cooked ? 0xb8801a : 0xd9a821), alpha * 0.9);
+        g.fillCircle(x + hx * s, y + hy * s + droop * 0.4, hr * s);
+        g.fillStyle(tint(cooked ? 0xe8bd52 : 0xfbe08f), alpha * 0.55);
+        g.fillCircle(x + hx * s - hr * s * 0.25, y + hy * s - hr * s * 0.25 + droop * 0.4, hr * s * 0.5);
+      }
+      if (cooked) {
+        // The string. Two of them, swaying, and they are what says "melted" from across a HUD tile.
+        g.lineStyle(Math.max(1.4, s * 0.055), tint(0xf7d878), alpha * 0.9);
+        for (let i = 0; i < 2; i++) {
+          const bx = x + s * (0.06 + i * 0.16);
+          const sway = Math.sin(wob * 2 + i * 1.7) * s * 0.06;
+          g.beginPath();
+          g.moveTo(bx, y + s * 0.24 + droop);
+          g.lineTo(bx + sway, y + s * 0.4 + droop);
+          g.lineTo(bx + sway * 1.6, y + s * 0.52 + droop);
+          g.strokePath();
+        }
+        g.fillStyle(tint(0xfff0b8), alpha * 0.3);
+        g.fillEllipse(x, y - s * 0.14, s * 0.4, s * 0.12);
+        sear(g, tint, x + s * 0.02, y + s * 0.02, s * 0.6, s * 0.4, 0.15, alpha, 2);
+      } else {
+        g.lineStyle(1, tint(GLT.cheeseRind), alpha * 0.7);
+        g.strokePoints(wedge, true);
+      }
+      break;
+    }
+
+    case 'pie': {
+      // A pie in its dish, seen from three-quarters on: a crimped rim, a lattice over the top and
+      // dark filling under it. Baking browns the pastry and pushes the filling up through every
+      // gap in the lattice, which is the whole read — a raw one is flat and pale, a baked one is
+      // overflowing.
+      const s = size;
+      const rw = s * 0.86;
+      const rh = s * 0.46;
+      // Dish.
+      g.fillStyle(tint(cooked ? 0x3d3a3f : GLT.iron), alpha * 0.95);
+      g.fillEllipse(x, y + s * 0.16, rw * 0.94, rh * 0.62);
+      // Pastry body.
+      g.fillStyle(tint(cooked ? 0x8a5a20 : 0xc4b492), alpha * 0.9);
+      g.fillEllipse(x + 1, y + s * 0.05, rw, rh);
+      g.fillStyle(tint(body), alpha);
+      g.fillEllipse(x, y + s * 0.02, rw * 0.96, rh * 0.94);
+      // Filling well, under the lattice.
+      g.fillStyle(tint(cooked ? GLT.pieFilling : 0x6f2b36), alpha * 0.95);
+      g.fillEllipse(x, y + s * 0.02, rw * 0.68, rh * 0.6);
+      // Lattice: two crossing families of strips.
+      g.lineStyle(Math.max(1.6, s * 0.07), tint(cooked ? 0xe0a95c : 0xd8cbaa), alpha * 0.95);
+      for (let i = -1; i <= 1; i++) {
+        g.lineBetween(x + i * rw * 0.22 - rw * 0.2, y - rh * 0.28,
+          x + i * rw * 0.22 + rw * 0.2, y + rh * 0.32);
+        g.lineBetween(x + i * rw * 0.22 - rw * 0.2, y + rh * 0.32,
+          x + i * rw * 0.22 + rw * 0.2, y - rh * 0.28);
+      }
+      // Crimped rim, drawn last so it sits over the lattice ends.
+      const crimps = 11;
+      for (let i = 0; i < crimps; i++) {
+        const a = (i / crimps) * TAU;
+        g.fillStyle(tint(cooked ? 0xe8b163 : 0xdbcfae), alpha * 0.95);
+        g.fillCircle(x + Math.cos(a) * rw * 0.48, y + s * 0.02 + Math.sin(a) * rh * 0.46, s * 0.055);
+      }
+      if (cooked) {
+        // Filling boiling up through the lattice, and steam off the top of it.
+        for (let i = 0; i < 3; i++) {
+          const a = wob * 0.7 + i * 2.1;
+          g.fillStyle(tint(0xc7414f), alpha * 0.9);
+          g.fillCircle(x + Math.cos(a) * rw * 0.2, y + Math.sin(a) * rh * 0.18,
+            s * (0.05 + 0.02 * Math.sin(wob * 3 + i)));
+        }
+        for (let i = 0; i < 3; i++) {
+          const ph = (wob * 0.35 + i * 0.33) % 1;
+          g.fillStyle(tint(0xf0e4cc), alpha * 0.28 * (1 - ph));
+          g.fillCircle(x + Math.sin(wob * 1.4 + i * 2) * s * 0.18, y - s * 0.28 - ph * s * 0.5,
+            s * (0.06 + ph * 0.09));
+        }
+        sear(g, tint, x, y + s * 0.02, rw * 0.8, rh * 0.8, 0, alpha, 2);
+      }
+      break;
+    }
   }
 }
 
@@ -1401,6 +1600,269 @@ export function cookRing(
   if (oversear && !done) {
     g.lineStyle(1, tint(GLT.blueHot), alpha * 0.5);
     g.strokeCircle(x, y, r + 2.6);
+  }
+}
+
+// ── Chef's Friend ─────────────────────────────────────────────────────────
+
+/**
+ * The hole in the wall at the top of the arena, drawn as a mouse-hole arch cut into the skirting
+ * with two eyes floating in the black of it.
+ *
+ * `eyes` (0–1) is how far the rat has come up to the entrance — 0 is an empty hole, 1 is a pair of
+ * beads right at the lip. `pending` (0–1) is the swallow: the arch flushes warm and the rim
+ * swells while something is being turned into something else down there, so the trade has a
+ * visible duration rather than being an instant swap.
+ */
+export function ratHole(
+  g: Phaser.GameObjects.Graphics,
+  tint: GluttonyColorFn,
+  x: number, y: number,
+  r: number,
+  t: number,
+  eyes: number,
+  pending: number,
+  alpha: number,
+): void {
+  const w = r * 1.5;
+  const h = r * 1.7;
+  // A patch of wall around it, so the hole reads as cut into something rather than painted on.
+  g.fillStyle(tint(0x2a232a), alpha * 0.8);
+  g.fillEllipse(x, y + h * 0.1, w * 1.5, h * 1.05);
+  // The arch: a half-round top on straight sides sitting on the floor line.
+  const arch: Phaser.Geom.Point[] = [];
+  for (let i = 0; i <= 14; i++) {
+    const a = Math.PI + (i / 14) * Math.PI;
+    arch.push(new Phaser.Geom.Point(x + Math.cos(a) * w * 0.5, y + Math.sin(a) * h * 0.5 + h * 0.2));
+  }
+  arch.push(new Phaser.Geom.Point(x + w * 0.5, y + h * 0.62));
+  arch.push(new Phaser.Geom.Point(x - w * 0.5, y + h * 0.62));
+  // Gnawed rim — the arch is not smooth, it was chewed out.
+  const rim = arch.map((p, i) => new Phaser.Geom.Point(
+    p.x + (jitter(53, i) - 0.5) * r * 0.16,
+    p.y + (jitter(53, 20 + i) - 0.5) * r * 0.12,
+  ));
+  g.fillStyle(tint(pending > 0.02 ? 0x6b4030 : GLT.ratFurDark),
+    alpha * (0.85 + pending * 0.15));
+  g.fillPoints(rim.map((p) => new Phaser.Geom.Point(p.x, p.y - 1.4)), true);
+  g.fillStyle(tint(GLT.hole), alpha);
+  g.fillPoints(arch, true);
+  // The depth of it: a second, smaller darkness set back inside.
+  g.fillStyle(tint(0x000000), alpha * 0.75);
+  g.fillEllipse(x, y + h * 0.14, w * 0.6, h * 0.44);
+
+  if (pending > 0.02) {
+    // Something is being dealt with down there. A warm glow and a couple of scuffle motes.
+    g.fillStyle(tint(GLT.ember), alpha * 0.2 * pending);
+    g.fillEllipse(x, y + h * 0.2, w * 0.7, h * 0.5);
+    for (let i = 0; i < 3; i++) {
+      const a = t * 6 + i * 2.1;
+      g.fillStyle(tint(GLT.linenDark), alpha * 0.6 * pending);
+      g.fillCircle(x + Math.cos(a) * w * 0.22, y + h * 0.2 + Math.sin(a) * h * 0.14, 1.4);
+    }
+  }
+
+  if (eyes > 0.02) {
+    // Two beads and the whiskers either side of them. The blink is on its own slow clock so a
+    // hole nobody is looking at still has something alive in it.
+    const bob = Math.sin(t * 2.4) * 1.2;
+    const lid = Math.max(0, Math.sin(t * 0.9) * 8 - 7.2) * 4;
+    const ey = y + h * 0.16 + bob;
+    const sep = r * 0.34;
+    g.fillStyle(tint(GLT.ratEye), alpha * eyes);
+    g.fillEllipse(x - sep, ey, r * 0.19, r * 0.19 * Math.max(0.08, 1 - lid));
+    g.fillEllipse(x + sep, ey, r * 0.19, r * 0.19 * Math.max(0.08, 1 - lid));
+    g.fillStyle(tint(0xfff0f0), alpha * eyes * 0.9);
+    g.fillCircle(x - sep - r * 0.05, ey - r * 0.05, r * 0.05);
+    g.fillCircle(x + sep - r * 0.05, ey - r * 0.05, r * 0.05);
+    // A snout below them, barely out of the dark.
+    g.fillStyle(tint(GLT.ratSkin), alpha * eyes * 0.55);
+    g.fillEllipse(x, ey + r * 0.24, r * 0.2, r * 0.12);
+    g.lineStyle(0.8, tint(GLT.linen), alpha * eyes * 0.45);
+    for (let i = -1; i <= 1; i++) {
+      g.lineBetween(x - r * 0.08, ey + r * 0.24, x - r * 0.5, ey + r * (0.16 + i * 0.12));
+      g.lineBetween(x + r * 0.08, ey + r * 0.24, x + r * 0.5, ey + r * (0.16 + i * 0.12));
+    }
+  }
+}
+
+/**
+ * The rat, nose-first along `ang`.
+ *
+ * `mutant` (0–1) is the whole tell between the two halves of the element: at 0 it is a plain
+ * brown rat about the size of a shoe, and at 1 it is the thing that was always down the hole —
+ * half again as big, flushed raw pink-red, with a hunched spine of quills, a jaw that opens too
+ * wide and forelimbs long enough to reach. Everything in between is a real blend, because the kit
+ * ramps it rather than switching it.
+ *
+ * `feed` (0–1) is how many mouthfuls it has been thrown: it swells the body, brightens the eye
+ * and adds a stack ring of pips around it, so "this one has been fed" is legible at a glance.
+ */
+export function ratBody(
+  g: Phaser.GameObjects.Graphics,
+  tint: GluttonyColorFn,
+  x: number, y: number, ang: number,
+  size: number,
+  mutant: number,
+  feed: number,
+  t: number,
+  alpha: number,
+): void {
+  const m = Phaser.Math.Clamp(mutant, 0, 1);
+  const s = size * (1 + m * 0.5) * (1 + feed * 0.14);
+  const ca = Math.cos(ang);
+  const sa = Math.sin(ang);
+  const P = (u: number, v: number) => pt(x, y, ca, sa, u, v);
+  const fur = Phaser.Display.Color.Interpolate.ColorWithColor(
+    Phaser.Display.Color.ValueToColor(GLT.ratFur),
+    Phaser.Display.Color.ValueToColor(GLT.ratMutant), 100, m * 100);
+  const furHex = (fur.r << 16) | (fur.g << 8) | fur.b;
+  const furDark = m > 0.5 ? GLT.ratMutantDark : GLT.ratFurDark;
+  // Scurry: the whole body bounces on a fast cycle, which is most of what says "rat".
+  const scurry = Math.sin(t * (14 - m * 4)) * s * 0.05;
+
+  // ── Tail: a long taper that whips behind, drawn first so the body sits on its root ──
+  g.lineStyle(Math.max(1.2, s * (0.09 - m * 0.02)), tint(GLT.ratSkin), alpha * 0.9);
+  g.beginPath();
+  g.moveTo(P(-s * 0.42, 0).x, P(-s * 0.42, 0).y);
+  for (let i = 1; i <= 5; i++) {
+    const u = -s * (0.42 + i * 0.19);
+    const v = Math.sin(t * 7 - i * 0.9) * s * 0.13 * i * 0.4;
+    const p = P(u, v);
+    g.lineTo(p.x, p.y);
+  }
+  g.strokePath();
+
+  // ── Legs: four, paired, scuttling out of phase ──
+  g.lineStyle(Math.max(1.4, s * 0.08), tint(furDark), alpha * 0.95);
+  for (let i = 0; i < 4; i++) {
+    const u = i < 2 ? s * 0.16 : -s * 0.2;
+    const side = i % 2 ? 1 : -1;
+    const step = Math.sin(t * 14 + i * 1.9) * s * 0.16;
+    const a = P(u, side * s * 0.2);
+    const b = P(u + step, side * s * (0.42 + m * 0.08));
+    g.lineBetween(a.x, a.y, b.x, b.y);
+  }
+
+  // ── Body: a fat teardrop, hunched higher the more mutated it is ──
+  const hump = 1 + m * 0.22;
+  const bodyPts: Phaser.Geom.Point[] = [];
+  for (let i = 0; i < 14; i++) {
+    const a = (i / 14) * TAU;
+    const u = Math.cos(a) * s * 0.46 * (a > Math.PI / 2 && a < Math.PI * 1.5 ? 0.86 : 1);
+    const v = Math.sin(a) * s * 0.3 * hump;
+    bodyPts.push(P(u, v + scurry));
+  }
+  g.fillStyle(tint(furDark), alpha * 0.9);
+  g.fillPoints(bodyPts.map((p) => new Phaser.Geom.Point(p.x + 1, p.y + 1.6)), true);
+  g.fillStyle(tint(furHex), alpha);
+  g.fillPoints(bodyPts, true);
+
+  // Quills along the spine — only once it has started to turn.
+  if (m > 0.06) {
+    g.fillStyle(tint(GLT.bone), alpha * m);
+    for (let i = 0; i < 5; i++) {
+      const u = s * (0.2 - i * 0.13);
+      const q = s * (0.14 + 0.1 * Math.sin(t * 5 + i));
+      const root = P(u, -s * 0.24 * hump + scurry);
+      const tipA = P(u - q * 0.5, -s * 0.24 * hump - q + scurry);
+      g.fillTriangle(root.x - 1.6, root.y, root.x + 1.6, root.y, tipA.x, tipA.y);
+    }
+  }
+
+  // ── Head: a wedge with the snout at the point of it ──
+  const headU = s * 0.44;
+  const head = [
+    P(headU + s * 0.3, scurry),
+    P(headU, -s * 0.19 + scurry),
+    P(headU - s * 0.1, -s * 0.1 + scurry),
+    P(headU - s * 0.1, s * 0.1 + scurry),
+    P(headU, s * 0.19 + scurry),
+  ];
+  g.fillStyle(tint(furDark), alpha * 0.9);
+  g.fillPoints(head.map((p) => new Phaser.Geom.Point(p.x + 1, p.y + 1.4)), true);
+  g.fillStyle(tint(furHex), alpha);
+  g.fillPoints(head, true);
+
+  // Ears: round and papery, laid back further the angrier it is.
+  for (const side of [-1, 1]) {
+    const e = P(headU - s * 0.16, side * s * (0.2 + m * 0.04) + scurry);
+    g.fillStyle(tint(GLT.ratSkin), alpha * 0.95);
+    g.fillEllipse(e.x, e.y, s * (0.2 - m * 0.05), s * (0.22 - m * 0.06));
+    g.fillStyle(tint(furDark), alpha * 0.55);
+    g.fillEllipse(e.x, e.y, s * (0.11 - m * 0.03), s * (0.12 - m * 0.03));
+  }
+
+  // Eye — one visible from this angle, and it goes from bead-black to lit red.
+  const eye = P(headU + s * 0.04, -s * 0.07 + scurry);
+  g.fillStyle(tint(m > 0.3 ? GLT.ratEye : GLT.char), alpha);
+  g.fillCircle(eye.x, eye.y, s * (0.055 + m * 0.03 + feed * 0.015));
+  if (m > 0.3) {
+    g.fillStyle(tint(0xffd0d0), alpha * 0.8);
+    g.fillCircle(eye.x - s * 0.02, eye.y - s * 0.02, s * 0.022);
+  }
+
+  // Snout, nose and whiskers.
+  const nose = P(headU + s * 0.3, scurry);
+  g.fillStyle(tint(GLT.ratSkin), alpha);
+  g.fillCircle(nose.x, nose.y, s * 0.06);
+  g.lineStyle(0.8, tint(GLT.linen), alpha * 0.55);
+  for (let i = -1; i <= 1; i++) {
+    for (const side of [-1, 1]) {
+      const w = P(headU + s * 0.5, side * s * (0.1 + i * 0.09));
+      g.lineBetween(nose.x, nose.y, w.x, w.y);
+    }
+  }
+
+  // ── The mouth. A plain rat gets two incisors; the mutant gets a jaw. ──
+  if (m < 0.4) {
+    g.fillStyle(tint(GLT.tooth), alpha * 0.95);
+    for (const side of [-1, 1]) {
+      const tp = P(headU + s * 0.26, side * s * 0.04);
+      g.fillTriangle(tp.x, tp.y, tp.x + ca * s * 0.11 - sa * side * s * 0.01,
+        tp.y + sa * s * 0.11 + ca * side * s * 0.01, tp.x - sa * side * s * 0.045,
+        tp.y + ca * side * s * 0.045);
+    }
+  } else {
+    const gape = 0.3 + 0.16 * Math.sin(t * 6);
+    const jawTop = P(headU + s * 0.34, -s * 0.02);
+    const jawLow = P(headU + s * 0.3, s * (0.06 + gape * 0.2));
+    g.fillStyle(tint(GLT.gut), alpha * 0.9);
+    g.fillTriangle(P(headU, 0).x, P(headU, 0).y, jawTop.x, jawTop.y, jawLow.x, jawLow.y);
+    g.fillStyle(tint(GLT.tooth), alpha);
+    for (let i = 0; i < 4; i++) {
+      const u = headU + s * (0.1 + i * 0.07);
+      const up = P(u, -s * 0.03);
+      const dn = P(u, s * (0.05 + gape * 0.18));
+      g.fillTriangle(up.x - 1.2, up.y, up.x + 1.2, up.y, up.x + sa * s * 0.08, up.y - ca * s * 0.08);
+      g.fillTriangle(dn.x - 1.2, dn.y, dn.x + 1.2, dn.y, dn.x - sa * s * 0.08, dn.y + ca * s * 0.08);
+    }
+  }
+
+  // ── Forelimbs, only once it is big enough to reach with them ──
+  if (m > 0.35) {
+    g.lineStyle(Math.max(1.6, s * 0.1), tint(GLT.ratMutantDark), alpha * m);
+    for (const side of [-1, 1]) {
+      const reach = Math.sin(t * 8 + (side > 0 ? 0 : 1.6)) * s * 0.12;
+      const a0 = P(s * 0.24, side * s * 0.22);
+      const a1 = P(s * 0.52 + reach, side * s * 0.34);
+      g.lineBetween(a0.x, a0.y, a1.x, a1.y);
+      // Claws.
+      g.lineStyle(1.2, tint(GLT.bone), alpha * m);
+      for (let i = -1; i <= 1; i++) {
+        const c = P(s * 0.68 + reach, side * s * 0.34 + i * s * 0.06);
+        g.lineBetween(a1.x, a1.y, c.x, c.y);
+      }
+      g.lineStyle(Math.max(1.6, s * 0.1), tint(GLT.ratMutantDark), alpha * m);
+    }
+  }
+
+  // ── Feed pips: one bead per mouthful, orbiting the body ──
+  const stacks = Math.round(feed * 4);
+  for (let i = 0; i < stacks; i++) {
+    const a = t * 2.2 + (i / Math.max(1, stacks)) * TAU;
+    g.fillStyle(tint(GLT.stewLit), alpha * 0.9);
+    g.fillCircle(x + Math.cos(a) * s * 0.72, y + Math.sin(a) * s * 0.52 - s * 0.2, s * 0.07);
   }
 }
 

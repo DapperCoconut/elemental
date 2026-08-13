@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
 import { Projectile } from '../../combat/Projectile';
+import { meterStep } from '../../combat/Meters';
 import {
   FROST_TONES, ICE, IceArmor, IceAvatar, IceColorFn, IceFx, iceShard, tonesFor,
 } from './IceVisuals';
@@ -1239,6 +1240,12 @@ export class IceKit {
    * Never stomps a stack count already elevated past 5 by an Icicle Impale shatter.
    */
   addFrostStackTo(f: Fighter, forceVoid?: boolean): void {
+    // Ruin's Combo Breaker halves every meter in the game, and a frost stack is one — carried
+    // rather than rounded, because each stack has a timer of its own that a fraction would
+    // desync. The bar belongs to whoever is freezing them, which in every mode this kit runs
+    // in is simply the other side.
+    const froster = f === this.arena.player ? this.arena.npc : this.arena.player;
+    if (meterStep(froster, 'frost') <= 0) return;
     const useVoid = forceVoid ?? this.playerBlackIceMorphActive;
     const stackMs = this.isImpaled(f) ? ICICLE_EXTENDED_STACK_MS : 8000;
     if (useVoid) {
@@ -1503,13 +1510,17 @@ export class IceKit {
     const t = ic.target;
     const useVoid = t.voidFrostStacks > 0 || (t.frostStacks === 0 && ic.isVoid);
     const fresh = Date.now() + ICICLE_EXTENDED_STACK_MS;
+    // Combo Breaker again, on the two-stack shatter — see `addFrostStackTo`.
+    const froster = t === this.arena.player ? this.arena.npc : this.arena.player;
     if (useVoid) {
-      const add = Math.min(2, Math.max(0, ICICLE_STACK_HARD_CAP - t.voidFrostStacks));
+      const add = meterStep(froster, 'frost',
+        Math.min(2, Math.max(0, ICICLE_STACK_HARD_CAP - t.voidFrostStacks)));
       for (let i = 0; i < add; i++) t.voidFrostStackTimers.push(fresh);
       t.voidFrostStacks = Math.min(ICICLE_STACK_HARD_CAP, t.voidFrostStacks + add);
       t.incomingDamageMultiplier = this.frostDamageMultiplier(t.voidFrostStacks);
     } else {
-      const add = Math.min(2, Math.max(0, ICICLE_STACK_HARD_CAP - t.frostStacks));
+      const add = meterStep(froster, 'frost',
+        Math.min(2, Math.max(0, ICICLE_STACK_HARD_CAP - t.frostStacks)));
       for (let i = 0; i < add; i++) t.frostStackTimers.push(fresh);
       t.frostStacks = Math.min(ICICLE_STACK_HARD_CAP, t.frostStacks + add);
       t.incomingDamageMultiplier = this.frostDamageMultiplier(t.frostStacks);

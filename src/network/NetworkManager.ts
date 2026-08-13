@@ -4,7 +4,7 @@ import type { NetStatusEntry } from './NetStatusSync';
 import type { NetConquestSnap } from '../elements/kits/ConquestKit';
 
 /** Bump when the wire protocol or gameplay sync changes incompatibly. */
-export const NET_PROTOCOL_VERSION = 23;
+export const NET_PROTOCOL_VERSION = 28;
 
 /** Lobby selection payload exchanged while both players pick loadouts. */
 export interface NetSelection {
@@ -77,7 +77,14 @@ export type NetIllusionMsg =
   // Attacker → victim: a Blade Dance dagger found you, and you are now over there. Sent
   // rather than resolved locally because a replica's position belongs to the peer's state
   // stream — moving our copy would simply be undone by their next packet.
-  | { t: 'ill'; k: 'blink'; x: number; y: number };
+  | { t: 'ill'; k: 'blink'; x: number; y: number }
+  // Victim → illusionist: I clicked on your face. Resolved entirely on the illusionist's sim,
+  // because the whole ability is that the person reaching does not know what they will find:
+  // a mask comes off, and an empty face costs them 15.
+  | { t: 'ill'; k: 'grab' }
+  // Illusionist → victim: the mask is on / off. Sent so the victim's sim can keep hiding the
+  // bonus in the damage numbers it draws — never so it can draw the mask, which it must not.
+  | { t: 'ill'; k: 'mask'; on: boolean };
 
 /**
  * Psychic events, and the one element whose netcode runs *backwards*.
@@ -101,7 +108,16 @@ export type NetPsychicMsg =
   // Psychic → victim: Whip Snap (Click+) caught the end of your route. Put yourself there.
   // Sent rather than applied because a replica's position is streamed from the machine that
   // owns it — moving the copy here would be undone by the next position packet.
-  | { t: 'psy'; k: 'snap'; x: number; y: number };
+  | { t: 'psy'; k: 'snap'; x: number; y: number }
+  // Psychic → victim (mastery, ≈2 Hz while it runs): Utter Focus. `ms` is how much of the window
+  // is *left* rather than how long it was, because every hit the psychic takes shortens it —
+  // a heartbeat carrying the remainder is self-correcting where a one-shot duration would drift.
+  // 0 ends it. The victim's own sim is what actually holds their casts and their movement keys.
+  | { t: 'psy'; k: 'utter'; ms: number }
+  // Victim → psychic (≈6 Hz while focused): where my buffered movement keys are actually going
+  // to take me, as a flat [x0,y0,x1,y1,…]. Only sent under Utter Focus — outside it a replica's
+  // route is unknowable from over here and falls back to dead reckoning.
+  | { t: 'psy'; k: 'route'; pts: number[] };
 
 /**
  * Conquest ships its whole board rather than events.
@@ -131,12 +147,20 @@ export interface NetHuskState {
 
 /** Host → guest: the mansion's authoritative room state, inside huskSnap. */
 export interface NetMansionState {
-  /** Room HP for rooms 1–4 (the hall is indestructible). */
+  /** Room HP for rooms 1–8 (the hall is indestructible; 5–8 only exist in apocalypse). */
   hp: number[];
   /** Bitmask of lost rooms (bit 0 = room 1). */
   lost: number;
   /** Room index the current wave targets, or -1. */
   target: number;
+  /** Apocalypse co-op: the second room under attack this wave, or -1. */
+  t2?: number;
+  /** True once the cellar's eye has been woken. */
+  ap?: boolean;
+  /** Corruption per room, quantised to 0–255. Indexed by room. */
+  co?: number[];
+  /** Bitmask of health tonics still on the kitchen shelf (bit 0 = first bottle). */
+  tn?: number;
 }
 
 export type NetMatchMode = 'pvp' | 'invasion';
@@ -180,6 +204,16 @@ export type NetMsg =
   | { t: 'waveWarn'; wave: number; room: number }
   // Host → guest: a room fell. The snap's mansion state seals it; this shows the banner.
   | { t: 'roomLost'; room: number }
+  // Either → either: somebody held the cellar's eye for five seconds. Both sides
+  // flip into apocalypse; the guest's own mansion unfolds its corner wings.
+  | { t: 'apoc' }
+  // Either → either: a health tonic left the shared shelf.
+  | { t: 'tonic'; slot: number }
+  // Host → guest: a room's corruption was seeded, took the room, or was cut out.
+  | { t: 'corrupt'; room: number; kind: 'seeded' | 'taken' | 'cleansed' }
+  // Guest → host: the guest aligned a constellation and the run's shared purse
+  // paid for it. The host owns the ledger that gets banked at the end.
+  | { t: 'shardSpend'; amount: number }
   | { t: 'huskDeath'; id: number; reward: number; x: number; y: number }
   | { t: 'waveClear'; wave: number; bonus: number }
   | { t: 'huskDamage'; id: number; amount: number } // guest → host

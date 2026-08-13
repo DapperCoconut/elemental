@@ -9,6 +9,7 @@ import {
   ArmGesture, SILENCE, SilenceAura, SilenceAuraStyle, SilenceAvatar, SilenceColorFn, SilenceFx,
   bloodSplat, clawFingerLayered, fogBank, silenceEye, toothRing,
 } from './SilenceVisuals';
+import { meterGain } from '../../combat/Meters';
 
 // ── SilenceArenaApi ────────────────────────────────────────────────────────
 
@@ -49,6 +50,8 @@ export interface SilenceArenaApi {
   silenceColor(owner: Owner, base: number): number;
   /** Silence Mastery is enabled and the local player is actually playing Silence. */
   readonly masteryActive: boolean;
+  /** The opponent's Silence Mastery — a remote mastered player or a Nightmare bot. Drives its Weep. */
+  readonly npcMasteryActive: boolean;
   /** The mastery enhancement bound over an ability slot this match, or null. */
   masteryBindFor(slot: string): string | null;
   /** Requirement counters. The adapter gates these on `elementId === 'silence'`. */
@@ -662,6 +665,8 @@ export class SilenceKit {
   // Puppetmaster is owner-indexed, because online the victim's machine runs the copy
   // that owns the possessed body.
   private weepUnwatched = false;
+  /** Npc-side Weep (Nightmare bot mastery): true while the player is facing away from it. */
+  private npcWeepUnwatched = false;
   private dolls: Record<Owner, VoodooDoll | null> = { player: null, npc: null };
   private awakened: Record<Owner, AwakenedState | null> = { player: null, npc: null };
   private kin: AwakenedKin[] = [];
@@ -676,6 +681,15 @@ export class SilenceKit {
 
   // NPC mirror AI helpers
   private npcLockUntil = 0;
+  /**
+   * Npc mirror AI: true while the bot has committed to a full stealth recharge in the
+   * fog. The commitment (rather than a bare `stealth < 35` check) is what killed the
+   * old corner bug — without it the bot flickered between the kit's slink and doAI's
+   * chase at the fog line, sixty times a second, for the whole match.
+   */
+  private npcFogFarming = false;
+  /** Which way round the fog ring the bot is patrolling while it recharges. */
+  private npcFogDir = 1;
 
   // Input edge tracking
   private prevPointerDown = false;
@@ -800,6 +814,9 @@ export class SilenceKit {
     this.nextFakePosAt = 0;
     this.stealth = { player: 0, npc: 0 };
     this.npcLockUntil = 0;
+    this.npcFogFarming = false;
+    this.npcFogDir = 1;
+    this.npcWeepUnwatched = false;
     this.prevPointerDown = false;
     this.playerIsSilence = false;
     this.npcIsSilence = false;
@@ -1477,39 +1494,57 @@ export class SilenceKit {
 
   /** True while nothing alive is pointed at you (drives the speed + drain bonus). */
   private updateWeep(): void {
+    // ── Player side (the status indicator is player-only — the tray shows what is on YOU) ──
     if (!this.arena.masteryActive) {
       if (this.weepUnwatched) {
         this.weepUnwatched = false;
         this.arena.setStatusIndicator('silence-weep', null);
       }
-      return;
-    }
-    const player = this.arena.player;
-    if (!player.active || player.hp <= 0) return;
+    } else {
+      const player = this.arena.player;
+      if (player.active && player.hp > 0) {
+        let watched = false;
+        for (const foe of this.foesOf('player')) {
+          if (!foe.active || foe.hp <= 0 || foe.downed) continue;
+          const toPlayer = Math.atan2(player.y - foe.y, player.x - foe.x);
+          if (Math.abs(Phaser.Math.Angle.Wrap(toPlayer - foe.facingAngle)) <= WEEP_WATCH_ARC_RAD) {
+            watched = true;
+            break;
+          }
+        }
+        // A possessed host is looking out of your own eyes — it can't be watching you.
+        if (this.awakened.player) watched = false;
 
-    let watched = false;
-    for (const foe of this.foesOf('player')) {
-      if (!foe.active || foe.hp <= 0 || foe.downed) continue;
-      const toPlayer = Math.atan2(player.y - foe.y, player.x - foe.x);
-      if (Math.abs(Phaser.Math.Angle.Wrap(toPlayer - foe.facingAngle)) <= WEEP_WATCH_ARC_RAD) {
-        watched = true;
-        break;
+        const wasUnwatched = this.weepUnwatched;
+        // The speed half of Weep is read back out of getPlayerSpeedMult(), not pushed here.
+        this.weepUnwatched = !watched;
+        if (this.weepUnwatched !== wasUnwatched) {
+          this.arena.setStatusIndicator('silence-weep', this.weepUnwatched ? {
+            name: 'Weep',
+            emoji: '🥲',
+            color: 0x8844cc,
+            description: 'Nothing is looking at you. +50% movement speed, and stealth drains 25% slower.',
+            priority: 118,
+          } : null);
+        }
       }
     }
-    // A possessed host is looking out of your own eyes — it can't be watching you.
-    if (this.awakened.player) watched = false;
 
-    const wasUnwatched = this.weepUnwatched;
-    // The speed half of Weep is read back out of getPlayerSpeedMult(), not pushed here.
-    this.weepUnwatched = !watched;
-    if (this.weepUnwatched !== wasUnwatched) {
-      this.arena.setStatusIndicator('silence-weep', this.weepUnwatched ? {
-        name: 'Weep',
-        emoji: '🥲',
-        color: 0x8844cc,
-        description: 'Nothing is looking at you. +50% movement speed, and stealth drains 25% slower.',
-        priority: 118,
-      } : null);
+    // ── Npc side — a Nightmare bot's Weep (never an online replica: its machine owns it) ──
+    this.npcWeepUnwatched = false;
+    const npc = this.arena.npc;
+    if (
+      this.arena.npcMasteryActive && this.npcIsSilence && !npc.netGhost
+      && npc.active && npc.hp > 0
+    ) {
+      const player = this.arena.player;
+      const toNpc = Math.atan2(npc.y - player.y, npc.x - player.x);
+      const watched = player.active && player.hp > 0
+        && Math.abs(Phaser.Math.Angle.Wrap(toNpc - player.facingAngle)) <= WEEP_WATCH_ARC_RAD;
+      this.npcWeepUnwatched = !watched;
+      // Unlike the player half (pulled by ArenaScene), the npc speed aggregate is
+      // pushed per-frame — same channel every other npc-side speed effect uses.
+      if (this.npcWeepUnwatched) this.arena.applyNpcSpeedMult(WEEP_SPEED_MULT);
     }
   }
 
@@ -1800,6 +1835,26 @@ export class SilenceKit {
       until,
       priority: 2,
     });
+  }
+
+  /**
+   * Ruin Mastery — Second Skin. The form Silence owns is worn by somebody else: a possessed
+   * host has a new texture, a new scale and a moveset that is not its own, which is the most
+   * literal transformation in the game. A plate landing on that host ends the possession
+   * through `endAwakened`, so the texture, the scale and the puppet control all go back.
+   *
+   * No penalty: that 20 belongs to the puppeteer's own voluntary hand-back, and being shot out
+   * of somebody is not voluntary.
+   *
+   * Stealth and the fog are deliberately untouched — being hard to see is a state, not a body.
+   */
+  revertForms(f: Fighter): string[] {
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      if (this.awakened[owner]?.host !== f) continue;
+      this.endAwakened(owner, false);
+      return ['Possession'];
+    }
+    return [];
   }
 
   /** `withPenalty` = the voluntary Q hand-back, which costs the host 20 on the way out. */
@@ -2742,6 +2797,7 @@ export class SilenceKit {
       if (!this.npcAvatar) this.npcAvatar = new SilenceAvatar(scene, this.ncol, 'npc');
       const av = this.npcAvatar;
       av.setFacing(npc.facingAngle);
+      av.setMastered(this.arena.npcMasteryActive);
       av.setStealth(this.stealth.npc / STEALTH_MAX);
       av.setTerror(this.hasTerrorBar('npc') ? this.terror.npc / TERROR_MAX : 0);
       av.setIntensity(this.strikers.npc ? 1.4 : 1);
@@ -2843,8 +2899,8 @@ export class SilenceKit {
       if (this.corrupts.some((c) => c.owner === owner)) return;
       this.stealth[owner] = Math.min(STEALTH_MAX, this.stealth[owner] + STEALTH_GAIN_PER_S * (1 + STALKER_RATE_BONUS * stalkerCount) * dt);
     } else {
-      // Mastery — Weep: unwatched, you bleed stealth 25% slower.
-      const weep = owner === 'player' && this.weepUnwatched ? WEEP_DRAIN_MULT : 1;
+      // Mastery — Weep: unwatched, you bleed stealth 25% slower (either owner's).
+      const weep = (owner === 'player' ? this.weepUnwatched : this.npcWeepUnwatched) ? WEEP_DRAIN_MULT : 1;
       this.stealth[owner] = Math.max(0, this.stealth[owner] - STEALTH_DRAIN_PER_S * weep * Math.max(0, 1 - STALKER_RATE_BONUS * stalkerCount) * dt);
     }
   }
@@ -3449,7 +3505,8 @@ export class SilenceKit {
    * terror, for a mastered Silence player whether or not they bought the R+ upgrade.
    */
   private hasTerrorBar(owner: Owner): boolean {
-    return this.arena.hasUpgrade(owner, 'r') || (owner === 'player' && this.arena.masteryActive);
+    return this.arena.hasUpgrade(owner, 'r')
+      || (owner === 'player' ? this.arena.masteryActive : this.arena.npcMasteryActive);
   }
 
   private updateTerror(owner: Owner, dt: number): void {
@@ -3464,7 +3521,9 @@ export class SilenceKit {
     }
     if (afflicted === 0) return;
     const before = this.terror[owner];
-    this.terror[owner] = Math.min(TERROR_MAX, before + afflicted * dt);
+    // Ruin's Combo Breaker halves every meter in the game — the fear bar included.
+    this.terror[owner] = Math.min(TERROR_MAX,
+      before + meterGain(this.fighterOf(owner), afflicted * dt));
     if (before < TERROR_MAX && this.terror[owner] >= TERROR_MAX && this.arena.hasUpgrade(owner, 'r')) {
       const caster = this.fighterOf(owner);
       this.arena.showFloatingText(caster.x, caster.y - 36, '🐺 TERROR FULL — RITUAL YOURSELF', '#ff2233');
@@ -4553,8 +4612,16 @@ export class SilenceKit {
     const invis = this.isInvisible('npc');
     const stealth = this.stealth.npc;
 
+    // Striker form: twenty seconds of monster. Movement is doAI's problem (the assassin
+    // profile already runs the target down); nothing here to slink or farm.
+    if (this.strikers.npc) {
+      this.npcFogFarming = false;
+      return;
+    }
+
     if (invis && npc.getCooldownRatio(STAB_CD_ID) >= 1 && stealth > 30) {
       // Ambush: slide to a point behind the player's facing, then backstab.
+      this.npcFogFarming = false;
       const behindX = player.x + Math.cos(player.facingAngle + Math.PI) * 60;
       const behindY = player.y + Math.sin(player.facingAngle + Math.PI) * 60;
       const d = Phaser.Math.Distance.Between(npc.x, npc.y, behindX, behindY);
@@ -4567,25 +4634,89 @@ export class SilenceKit {
       return;
     }
 
-    if (!invis && stealth < 35) {
-      // Slink to the nearest fog edge to recharge.
-      const W = this.arena.width;
-      const H = this.arena.height;
-      const candidates = [
-        { x: FOG_WIDTH / 2, y: npc.y },
-        { x: W - FOG_WIDTH / 2, y: npc.y },
-        { x: npc.x, y: FOG_WIDTH / 2 },
-        { x: npc.x, y: H - FOG_WIDTH / 2 },
-      ];
-      let target = candidates[0];
-      let best = Number.MAX_VALUE;
-      for (const c of candidates) {
-        const d = Phaser.Math.Distance.Between(npc.x, npc.y, c.x, c.y);
-        if (d < best) { best = d; target = c; }
-      }
-      const ang = Math.atan2(target.y - npc.y, target.x - npc.x);
-      body.setVelocity(Math.cos(ang) * npc.speed, Math.sin(ang) * npc.speed);
+    // ── Stealth recharge, with commitment ────────────────────────────
+    // Dropping visible and low starts a farming run; only a full meter (or the ambush
+    // above claiming the body) ends it. While farming, the bot patrols the fog ring
+    // instead of standing at the nearest edge point — the old version's full-speed
+    // seek toward a static wall point is what left it vibrating in a corner.
+    if (stealth < 35 && !invis) this.npcFogFarming = true;
+    if (stealth >= STEALTH_MAX) this.npcFogFarming = false;
+    if (!this.npcFogFarming) return;
+
+    const W = this.arena.width;
+    const H = this.arena.height;
+    const cx = W / 2;
+    const cy = H / 2;
+    // A point on the fog centerline in direction `theta` from the arena center.
+    const ringPoint = (theta: number): { x: number; y: number } => {
+      const c = Math.cos(theta);
+      const s = Math.sin(theta);
+      const rx = (W / 2 - FOG_WIDTH / 2) / Math.max(Math.abs(c), 1e-6);
+      const ry = (H / 2 - FOG_WIDTH / 2) / Math.max(Math.abs(s), 1e-6);
+      const r = Math.min(rx, ry);
+      return { x: cx + c * r, y: cy + s * r };
+    };
+    const myTheta = Math.atan2(npc.y - cy, npc.x - cx);
+    // If the player is crowding the path ahead, patrol the other way round.
+    const ahead = ringPoint(myTheta + this.npcFogDir * 0.55);
+    if (Phaser.Math.Distance.Between(player.x, player.y, ahead.x, ahead.y) < 200) {
+      this.npcFogDir *= -1;
     }
+    const target = ringPoint(myTheta + this.npcFogDir * 0.4);
+    const d = Phaser.Math.Distance.Between(npc.x, npc.y, target.x, target.y);
+    const ang = Math.atan2(target.y - npc.y, target.x - npc.x);
+    // Arrival damping: approach speed falls off near the target, so joining the ring
+    // never degenerates into the old wall-vibration.
+    const v = npc.speed * Phaser.Math.Clamp(d / 60, 0.45, 1);
+    body.setVelocity(Math.cos(ang) * v, Math.sin(ang) * v);
+  }
+
+  /** NpcAiState: full terror + Night Terror means the bot should ritual *itself*. */
+  isTerrorFull(owner: Owner): boolean {
+    return this.hasTerrorBar(owner) && this.arena.hasUpgrade(owner, 'r')
+      && this.terror[owner] >= TERROR_MAX;
+  }
+
+  /** NpcAiState: transformed into the Striker — E/R are Boggle/Allure, the click a slash. */
+  isStriker(owner: Owner): boolean {
+    return this.strikers[owner] !== null;
+  }
+
+  /**
+   * NpcAiState — Click+ Sacrifice synergy: a stalker of the bot's own that its stab lane
+   * can reach while the player is standing inside the scream. Aiming the stab AT the
+   * stalker guarantees the lane crosses it, so one cast is the whole combo: the dash,
+   * the detonation, and the silence it drops on the player. Null when the combo isn't
+   * on the table, so the AI never has to re-derive the geometry.
+   */
+  getNpcSacrificeStabTarget(): { x: number; y: number } | null {
+    if (!this.npcIsSilence || this.strikers.npc || !this.arena.hasUpgrade('npc', 'click')) return null;
+    const npc = this.arena.npc;
+    const player = this.arena.player;
+    if (!npc.active || npc.hp <= 0 || !player.active || player.hp <= 0) return null;
+    for (const s of this.stalkers) {
+      if (s.owner !== 'npc') continue;
+      if (Phaser.Math.Distance.Between(npc.x, npc.y, s.x, s.y) > STAB_DASH_LEN + STAB_LANE_HALF_W) continue;
+      if (Phaser.Math.Distance.Between(player.x, player.y, s.x, s.y) > SACRIFICE_RADIUS * 0.9) continue;
+      return { x: s.x, y: s.y };
+    }
+    return null;
+  }
+
+  /**
+   * NpcAiState — E+ Mutant synergy: the watcher to re-cast Watch onto so it grows into a
+   * seeker. Only offered while the network is full AND at least two watchers remain, and
+   * always the youngest of them — mutation must never starve the matured-watcher supply
+   * that Ritual's grabber synergy feeds on.
+   */
+  getNpcSeekerMutateTarget(): { x: number; y: number } | null {
+    if (!this.npcIsSilence || this.strikers.npc || !this.arena.hasUpgrade('npc', 'e')) return null;
+    const own = this.stalkers.filter((s) => s.owner === 'npc');
+    if (own.length < STALKER_MAX) return null;
+    const watchers = own.filter((s) => s.kind === 'watcher');
+    if (watchers.length < 2) return null;
+    const youngest = watchers.reduce((a, b) => (a.bornAt > b.bornAt ? a : b));
+    return { x: youngest.x, y: youngest.y };
   }
 
   // ── HUD ────────────────────────────────────────────────────────────

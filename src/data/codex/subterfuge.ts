@@ -22,10 +22,13 @@ const subterfuge: ElementCodex = {
     {
       emoji: '💵',
       name: 'Dirty Money',
-      magic:
-        'Three red banknotes drift above your head, and they are the whole economy. Nothing in '
-        + 'this element regenerates, cools down or charges — it is bought, out of a wallet that '
-        + 'fills on its own at a fixed rate whether you are winning or not.',
+      basics:
+        'You start with 2 notes and earn 1 more every 5 seconds, holding 3 at once — 4 with Big Pockets '
+        + '— with anything past the cap simply lost, so sitting on a full wallet is throwing money away. '
+        + 'It buys everything: a 25-round Spray reload (1), a Lackey (1), a Money Runner (1), a Bribe '
+        + '(1), a Thug (2), a Specialist (3) and a retainer recast of a stolen ultimate (2). Reloads, '
+        + 'recruits, bribes and recasts all compete for the same three notes; there is no second resource '
+        + 'anywhere in the kit.',
       effects: [
         { tag: 'resource', label: 'The income', detail: '2 at the start of the match, and 1 more every 5 seconds.' },
         { tag: 'resource', label: 'The cap', detail: '3 at once — 4 with Big Pockets. Income past the cap is simply lost, so sitting on a full wallet is throwing money away.' },
@@ -40,11 +43,12 @@ const subterfuge: ElementCodex = {
     {
       emoji: '🔫',
       name: 'Kickbacks',
-      magic:
-        'Damage you deal with your own two weapons is paid back to you in brass. The daggers and '
-        + 'the Spray both do it, which is what makes the Spray sustainable at all — a magazine '
-        + 'that fed itself would be a boring gun, and one that only refilled for money would be '
-        + 'unusable.',
+      basics:
+        'Damage you personally deal with daggers or Spray refills the gun: 3 bullets for every 10 '
+        + 'damage, up to a magazine of 50 — 75 with Steady Hands. You start each match with 25 rounds, '
+        + 'and pressing E with none left buys a 25-round reload for 1 money. A recruit\'s damage, a stolen '
+        + 'ultimate\'s damage and a Sonic Boom all pay nothing: the kickback is only on the two things you '
+        + 'aim yourself.',
       effects: [
         { tag: 'resource', label: 'The conversion', detail: '3 bullets for every 10 damage dealt with daggers or Spray, up to a magazine of 50 — 75 with Steady Hands.' },
         { tag: 'resource', label: 'The magazine', detail: 'You start each match with 25 rounds. Pressing E with none left buys a 25-round reload for 1 money.' },
@@ -59,11 +63,13 @@ const subterfuge: ElementCodex = {
 
   abilities: {
     'sub-cutter': {
-      magic:
-        'A stiletto — red or black, alternating so the pair balances — thrown hard and left '
-        + 'standing wherever it lands. Up to three of them are out at once, planted in the floor '
-        + 'like a claim on the room. The next click does not throw a fourth: it beckons, and all '
-        + 'three come back at once, through anything standing in the way.',
+      basics:
+        'With fewer than three blades out, Click throws one: 8 damage to the first body it passes '
+        + 'through at 900 px/s, and then it plants where you aimed. At three out, Click recalls them all '
+        + 'for 12 damage each on the way home, once per body per blade — so three blades converging on '
+        + 'somebody standing between you and them is 36. Each blade forgets what it has hit when the '
+        + 'recall starts. Every point of dagger damage feeds Kickbacks, so a full three-blade recall is '
+        + 'about 10 bullets. No cooldown at all.',
       cast: 'Click. Under three out it throws one; at three out it recalls them all. No cooldown at all.',
       effects: [
         { tag: 'damage', label: 'The throw', detail: '8 damage to the first body it passes through at 900 px/s, then it plants where you aimed.' },
@@ -72,10 +78,11 @@ const subterfuge: ElementCodex = {
         { tag: 'resource', label: 'It pays for the gun', detail: 'Every point of dagger damage feeds Kickbacks — a full three-blade recall is 36 damage and about 10 bullets.' },
       ],
       upgrade: {
-        magic:
-          'Blade Dance is what happens when a knife gets used to your hand. Some of the blades '
-          + 'that make it home simply do not stop — they keep turning around you, and anything '
-          + 'that comes near you is cut on them.',
+        basics:
+          'Each blade that reaches you has a 15% chance, rolled on arrival, to stay in orbit instead: '
+          + '48px out, turning at 2.6 radians a second for 10 seconds, dealing 12 damage to anything it '
+          + 'touches no more than once every 0.5 seconds per blade and surviving the hit. An orbiting blade '
+          + 'is not one of your three — it does not need recalling and it does not stop you throwing.',
         effects: [
           { tag: 'summon', label: 'The orbit', detail: '15% chance per blade that reaches you, rolled on arrival. It turns at 2.6 radians a second on a 48px orbit and lasts 10 seconds.', requiresUpgrade: 'click' },
           { tag: 'damage', label: 'The contact', detail: '12 damage to anything the orbiting dagger touches, no more than once every 0.5 seconds per blade — and it survives the hit.', requiresUpgrade: 'click' },
@@ -89,10 +96,12 @@ const subterfuge: ElementCodex = {
     },
 
     'sub-spray': {
-      magic:
-        'A machine pistol, held sideways, emptying into a fifteen-degree cone of hitscan. Every '
-        + 'individual round is contemptible. What makes it work is that the rounds come back: '
-        + 'the daggers feed the magazine, and the magazine feeds the daggers\' cover.',
+      basics:
+        'A held submachine gun: one hitscan round every 80ms inside a 15° cone out to 520px, 2 damage '
+        + 'each, roughly 25 damage a second on the trigger. The magazine holds 50, starting at 25, and '
+        + 'Kickbacks refills it at 3 rounds per 10 damage dealt with daggers or Spray. Pressing E on '
+        + 'empty buys a 25-round reload for 1 money instead of firing — there is no free reload anywhere '
+        + 'in the kit. 1s cooldown on the press.',
       cast: 'E, held. One round every 80ms while the trigger is down. 1s cooldown on the press. Pressing it with an empty magazine buys a 25-round reload for 1 money instead of firing.',
       effects: [
         { tag: 'damage', label: 'The round', detail: '2 damage, hitscan, out to 520px, inside a 15° cone. Roughly 25 damage a second while the trigger is held.' },
@@ -100,10 +109,11 @@ const subterfuge: ElementCodex = {
         { tag: 'resource', label: 'The reload', detail: '1 money for 25 rounds, bought by pressing E on empty. There is no free reload anywhere in the kit.' },
       ],
       upgrade: {
-        magic:
-          'Steady Hands is what practice looks like. Keep the trigger down and the cone closes — '
-          + 'the shots wander less and less until the weapon is putting every round on exactly '
-          + 'the same point. Let off for half a second and your hands go loose again.',
+        basics:
+          'The magazine goes to 75 rounds and Kickbacks fills all of it, and the 15° cone narrows '
+          + 'continuously over about 8 seconds of unbroken fire to perfect accuracy at the end. A gap of '
+          + '0.45 seconds without firing drops the focus back to zero: this is a weapon for holding down '
+          + 'rather than tapping.',
         effects: [
           { tag: 'buff', label: 'The magazine', detail: '75 rounds instead of 50, and Kickbacks fills all of it.', requiresUpgrade: 'e' },
           { tag: 'buff', label: 'The focus', detail: 'The 15° cone narrows continuously over about 8 seconds of unbroken fire, to perfect accuracy at the end of it.', requiresUpgrade: 'e' },
@@ -117,11 +127,13 @@ const subterfuge: ElementCodex = {
     },
 
     'sub-recruit': {
-      magic:
-        'Somebody walks in wearing your colours, with a yellow loyalty bar over their head, and '
-        + 'starts shooting at whoever you are fighting. They are not summoned and they are not '
-        + 'magic — they are hired, and the bar is exactly what it looks like: how long they are '
-        + 'going to keep doing this for the money you already gave them.',
+      basics:
+        'Hires a Lackey for 1 money: it keeps its distance and sprays the enemy down at 1 damage a '
+        + 'pellet every 140ms out to 560px, with a 25-round magazine and a 5-second reload. Loyalty runs '
+        + '20 seconds and drains continuously, and every projectile that hits them costs 2 seconds on '
+        + 'top. A Bribe refills a recruit\'s loyalty to 120% of its maximum, which is the only way to keep '
+        + 'one past its contract. 1s cooldown, and with The Rolodex, holding R opens a hiring wheel '
+        + 'instead.',
       cast: 'R, 1 money. 1s cooldown. With The Rolodex, hold R for a hiring wheel instead.',
       effects: [
         { tag: 'summon', label: 'The Lackey', detail: '1 money. Keeps its distance and sprays the enemy down: 1 damage a pellet every 140ms, a 25-round magazine, a 5-second reload, out to 560px.' },
@@ -129,9 +141,14 @@ const subterfuge: ElementCodex = {
         { tag: 'utility', label: 'Buying more time', detail: 'A Bribe refills a recruit\'s loyalty to 120% of its maximum — the only way to keep one past its contract.' },
       ],
       upgrade: {
-        magic:
-          'The Rolodex turns the hire into a decision. Hold R and a wheel of four opens: the '
-          + 'Lackey you already had, and three specialists who cost more and are worth it.',
+        basics:
+          'Three more recruits on a held hiring wheel, with the cursor picking the slice and a release on '
+          + 'one you cannot afford simply not hiring. Money Runner (1) sprints around the arena at 280 '
+          + 'px/s, holds on for 12 seconds and pays out 2 money when it quits — the only recruit that is a '
+          + 'net profit. Thug (2) has 35 seconds of loyalty and a bat: 12 damage, a 2-second stun and heavy '
+          + 'knockback within 46px, once every 1.8 seconds. Specialist (3) is armoured, so projectile hits '
+          + 'cost it no loyalty at all, carrying a 5-pellet close-range shotgun at 2 damage a pellet, 0.5s '
+          + 'between shots, five shots and then a reload, out to 230px.',
         effects: [
           { tag: 'summon', label: 'Money Runner', detail: '1 money. Sprints around the arena at 280 px/s, holds on for 12 seconds, and pays out 2 money when it quits — the only recruit that is a net profit.', requiresUpgrade: 'r' },
           { tag: 'summon', label: 'Thug', detail: '2 money. 35 seconds of loyalty and a bat: 12 damage, a 2-second stun and heavy knockback within 46px, once every 1.8 seconds.', requiresUpgrade: 'r' },
@@ -147,11 +164,13 @@ const subterfuge: ElementCodex = {
     },
 
     'sub-bribe': {
-      magic:
-        'Six banknotes physically cross the gap between you and whoever the cursor is over. That '
-        + 'is the whole ability — money changing hands, on screen. An enemy who takes it hits '
-        + 'softer and has a black censor bar over their eyes for the duration. One of your own '
-        + 'people who takes it remembers who pays them.',
+      basics:
+        'One note, aimed at the cursor. On an enemy it is −25% damage dealt for 8 seconds, with money '
+        + 'raining on them and a censor bar over their face throughout; on one of your own recruits it '
+        + 'refills loyalty to 120% of its maximum, taking a Lackey to 24 seconds and a Thug to 42. A body '
+        + 'within 36px of the cursor is bribed directly, and with nothing under the cursor it goes to '
+        + 'whichever valid target is nearest instead of failing, so the money is never simply thrown '
+        + 'away. 1s cooldown.',
       cast: 'F, 1 money, aimed at the cursor. 1s cooldown. A body within 36px of the cursor is bribed directly; otherwise it goes to whichever valid target is nearest the cursor.',
       effects: [
         { tag: 'debuff', label: 'Bribing an enemy', detail: '−25% damage dealt for 8 seconds, with money raining on them and a censor bar over their face for the whole time.' },
@@ -159,11 +178,13 @@ const subterfuge: ElementCodex = {
         { tag: 'utility', label: 'It always finds somebody', detail: 'With nothing under the cursor it bribes the nearest valid target instead of failing, so the money is never simply thrown away.' },
       ],
       upgrade: {
-        magic:
-          'Hardened Criminals turns the people you hire into people you have. They earn — for '
-          + 'time served, for damage dealt, and above all for being paid — and every level is '
-          + 'marked in Roman numerals over their loyalty bar. At the fifth they change what they '
-          + 'are and wear their colours inverted to say so.',
+        basics:
+          'Recruits start levelling. XP comes in at +1 a second, +10 per Bribe and +1 per 25 damage '
+          + 'dealt, at 50 XP a level up to V, and every level is +10% move speed, more damage and 8% slower '
+          + 'loyalty loss above the first. At level V a Lackey reloads 50% faster, a Money Runner pays 1 '
+          + 'money every 15 seconds instead of only on quitting, a Thug doubles its stun to 4 seconds and '
+          + 'hits 1.5× harder on the knockback, and a Specialist fires 7 pellets instead of 5. At 10 XP a '
+          + 'bribe — a fifth of a level for 1 money — F is the cheapest way to build a made man.',
         effects: [
           { tag: 'resource', label: 'The XP', detail: '+1 a second, +10 per Bribe, and +1 per 25 damage dealt. 50 XP a level, up to V.', requiresUpgrade: 'f' },
           { tag: 'buff', label: 'Every level', detail: '+10% move speed, more damage, and 8% slower loyalty loss per level above the first.', requiresUpgrade: 'f' },
@@ -179,12 +200,13 @@ const subterfuge: ElementCodex = {
     },
 
     'sub-treachery': {
-      magic:
-        'Black fog gathers around you for two seconds, and then you cast their ultimate. Not '
-        + 'something like it — theirs, reinterpreted through a crooked lens: Growth\'s ultimate '
-        + 'becomes two free employees, Life\'s becomes a contract that splits your damage across '
-        + 'your staff, Metal\'s becomes fifty shield and no explanation. Everything else on the '
-        + 'roster is simply cast at them, out of your hands.',
+      basics:
+        'Steals the enemy element\'s ultimate: whatever their Q does, you do. Most of the roster is '
+        + 'routed straight through their own ability, and about a dozen have bespoke crooked versions, '
+        + 'all listed below. It takes a 2-second channel of black fog before anything happens, the '
+        + 'longest telegraph on any ultimate in this bracket. Gunpowder and Rubber have no version at '
+        + 'all, and anything else the game cannot route prints 🚫 NO CONTRACT and is wasted. 40s '
+        + 'cooldown.',
       cast: 'Q, ultimate. A 2-second channel, then it resolves. 40s cooldown.',
       effects: [
         { tag: 'utility', label: 'The theft', detail: 'Whatever the enemy element\'s Q does, you do. Most of the roster is routed straight through their own ability; a dozen have bespoke crooked versions.' },
@@ -207,10 +229,11 @@ const subterfuge: ElementCodex = {
         ],
       },
       upgrade: {
-        magic:
-          'On Retainer keeps the contract on the books. For eight seconds after a theft resolves, '
-          + 'the same ultimate is sitting there waiting — tap Q again and it happens a second '
-          + 'time, immediately, for two notes and no channel at all.',
+        basics:
+          'For 8 seconds after a theft resolves you can run it again for 2 money out of the same wallet '
+          + 'the reloads and recruits come from — no second channel and no cooldown. It re-runs the stolen '
+          + 'element rather than rolling fresh, so a good theft is worth twice as much and a 🚫 NO CONTRACT '
+          + 'is worth nothing twice.',
         effects: [
           { tag: 'utility', label: 'The window', detail: '8 seconds from the moment the theft resolves.', requiresUpgrade: 'q' },
           { tag: 'resource', label: 'The recast', detail: '2 money, out of the same wallet the reloads and the recruits come from. No second channel and no cooldown.', requiresUpgrade: 'q' },
@@ -227,11 +250,11 @@ const subterfuge: ElementCodex = {
 
   perks: {
     'sonic-boom': {
-      magic:
-        'The blades come home faster than their own noise. Every dagger that reaches your hand '
-        + 'leaves a hole in the air where it was standing, and the sound arrives a moment later '
-        + 'as a hard ring — everything in it is thrown off its feet. A blade that finds somebody '
-        + 'on the way back breaks on them instead.',
+      basics:
+        'Every recalled dagger booms: 10 damage in a 96px ring plus 420 px/s of knockback over 160ms '
+        + 'and a 240ms stagger. It lands wherever the blade was standing when the recall began, so a '
+        + 'recall from three planted positions is three separate rings across the arena — or on the '
+        + 'victim instead, if the dagger connects on the way back. Once either way.',
       effects: [
         { tag: 'damage', label: 'The boom', detail: '10 damage in a 96px ring.' },
         { tag: 'control', label: 'The shove', detail: '420 px/s of knockback over 160ms, and a 240ms stagger on top of it.' },
@@ -247,10 +270,11 @@ const subterfuge: ElementCodex = {
 
   mastery: {
     'big-pockets': {
-      magic:
-        'A fourth banknote joins the three over your head. That is the entire enhancement, and it '
-        + 'is worth more than it sounds: a Specialist costs three, and until now buying one meant '
-        + 'an empty wallet and no reload.',
+      basics:
+        'The wallet cap goes from 3 to 4 on the same 1-per-5-seconds income. A full wallet now buys a '
+        + 'Specialist and leaves change for a reload or a bribe instead of leaving you with nothing, and '
+        + 'because income past the cap is lost, it is also 5 more seconds of grace before the tick starts '
+        + 'being thrown away.',
       effects: [
         { tag: 'resource', label: 'The cap', detail: '4 money instead of 3, on the same 1-per-5-seconds income.' },
         { tag: 'utility', label: 'Why it matters', detail: 'A full wallet now buys a Specialist and leaves change for a reload or a bribe, instead of leaving you with nothing at all.' },
@@ -261,11 +285,15 @@ const subterfuge: ElementCodex = {
       ],
     },
     'smoke-break': {
-      magic:
-        'You light a cigarette. While it is in your mouth everything hurts less, and it burns '
-        + 'down over twenty-five seconds — faster when you are being hit, because a man being '
-        + 'shot at draws harder. Press the key again and you flick it at your cursor, where it '
-        + 'goes up into a bank of smoke that you can see through and they absolutely cannot.',
+      basics:
+        'A bindable cigarette: lighting it is −25% damage taken for as long as it burns, 25 seconds of '
+        + 'it, with every hit you take costing 1 second on top. The same key again throws it at 900 px/s '
+        + 'to the cursor as a 132px cloud lasting 8 seconds. Standing in your own smoke hides you '
+        + 'completely, though attacking from inside gives you away and exposes you for 3 seconds, and '
+        + 'recruits standing in it lose loyalty at 40% of the usual rate — a Lackey in smoke lasts 50 '
+        + 'seconds instead of 20. It blinds only them: on the enemy\'s screen the cloud is drawn over '
+        + 'everything as a solid wall, while on yours it sits under the fighters as a thin haze. The same '
+        + 'object, rendered at two different depths. 20s cooldown from lighting up.',
       cast: 'The bound key lights it; the same key again throws it. 20s cooldown, counted from lighting up.',
       effects: [
         { tag: 'shield', label: 'The cigarette', detail: '−25% damage taken for as long as it is lit.' },

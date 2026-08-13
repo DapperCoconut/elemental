@@ -3,7 +3,7 @@ import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import {
   CNQ, ConquestAvatar, ConquestFx, barbarianKing, barracksBody, barricadeBody, buildingHpBar,
-  contestTile, fireballOrb, gridCell, hasteRing, linkChain, soldier, territoryTile,
+  contestTile, fireballOrb, gridCell, hasteRing, linkChain, marketBody, soldier, territoryTile,
   townCenterBody, townColor, turretBody, wizardTroop,
 } from '../../../elements/kits/ConquestVisuals';
 
@@ -38,7 +38,7 @@ const TURRET_RANGE = 220;
 const BUILDING_R = 24;
 const BUILDINGS_PER_TOWN = 9;
 
-const BUILD_COST = { barracks: 35, turret: 25, barricade: 10 };
+const BUILD_COST = { barracks: 35, turret: 25, barricade: 10, market: 30 };
 const EXPANSION_COST = 150;
 const EXPANSION_COST_ENHANCED = 100;
 
@@ -55,6 +55,16 @@ const FORCE_DAMAGE = 1.2;
 const GUILD_TRAMPLE = 12;
 const SURPRISE_BONUS = 10;
 const WIZARD_RANGE = CELL * 3;
+
+// Conquest Mastery.
+const MARKET_HP = 50;
+const MARKET_INCOME = 1;
+const DICTATORSHIP_PER = 10;
+const DICTATORSHIP_MAX = 30;
+const VAULT_STEP = 25;
+const VAULT_RATE = 0.25;
+const PROPAGANDA_RATE = 0.6;
+const PROPAGANDA_MS = 8000;
 
 interface Mark { x: number; y: number }
 
@@ -901,6 +911,161 @@ export const onePathOnly: PreviewScript = {
 
     label(ctx, ctx.w * 0.5, ctx.h - 8,
       'every building keeps its own tree, so several cheap specialists beat one expensive generalist',
+      CNQ.stoneDark);
+  },
+};
+
+// ── Mastery ───────────────────────────────────────────────────────────
+
+export const masteryDictatorship: PreviewScript = {
+  duration: 8600,
+  scale: 0.9,
+  bodyTexture: '',
+  caption: 'Dictatorship — +1 pike damage per 10 Authority banked, up to +30, and spending hands it straight back',
+  run(ctx) {
+    const bd = board(ctx, { cols: 6, rows: 3 });
+    const town = bd.cell(1, 1);
+    // Standing off his own land on purpose: the bonus is added to the base, and the base is
+    // quartered at home, so the showcase has to be somewhere the pike is worth its full number.
+    const s = drivenCaster(ctx, { x: bd.cell(3, 1).x, y: bd.cell(3, 1).y });
+    s.cav?.setMastered(true);
+    const foe: Mark = { x: bd.cell(5, 1).x, y: bd.cell(5, 1).y };
+    dummy(ctx, foe);
+    for (let cy = 0; cy < 3; cy++) for (let cx = 0; cx <= 2; cx++) bd.own(cx, cy, 0);
+    buildings(ctx, [{ at: town, kind: 'town', hp: 1, max: 1, ang: 0 }]);
+
+    // A minute of banking, run at about twenty times the real rate so the whole curve fits.
+    let gold = 40;
+    authority(ctx, () => gold);
+    ctx.onFrame((dt) => { gold += 44 * (dt / 1000); });
+
+    const reach = PIKE_REACH * (bd.size / CELL);
+    const thrust = (at: number, note?: string): void => {
+      ctx.at(at, () => {
+        const bonus = Math.min(DICTATORSHIP_MAX, Math.floor(gold / DICTATORSHIP_PER));
+        s.av.play('punch', ctx.aim);
+        s.fx.thrust(s.at.x, s.at.y, ctx.aim, reach, bonus > 0 ? CNQ.gold : CNQ.banner);
+        tick(ctx, foe.x, foe.y - 14, `${PIKE_DAMAGE + bonus}`, bonus > 0 ? CNQ.gold : CNQ.banner);
+        tick(ctx, s.at.x, s.at.y - 44, `👑 +${bonus}`, CNQ.gold);
+        if (note) tick(ctx, s.at.x, s.at.y - 62, note, CNQ.parchment);
+      });
+    };
+
+    thrust(600, `${PIKE_DAMAGE} PLUS WHATEVER IS IN THE BANK`);
+    thrust(2400);
+    thrust(4200, `CAPPED AT +${DICTATORSHIP_MAX}`);
+
+    // And the cost of it: the money is either an army or a weapon, never both.
+    ctx.at(5400, () => {
+      gold = Math.max(0, gold - EXPANSION_COST);
+      s.fx.claim(bd.cell(4, 0).x - bd.size, bd.cell(4, 0).y, bd.size * 3, townColor('player', 1));
+      tick(ctx, s.at.x, s.at.y - 44, `🏛️ EXPANSION −${EXPANSION_COST} 👑`, CNQ.banner);
+    });
+    thrust(6600, 'SPENT IS SPENT — THE PIKE IS A POKE AGAIN');
+
+    label(ctx, ctx.w * 0.5, ctx.h - 8,
+      `+1 per ${DICTATORSHIP_PER} banked · capped at +${DICTATORSHIP_MAX} · still quartered on your own land`,
+      CNQ.stoneDark);
+  },
+};
+
+export const masteryMarket: PreviewScript = {
+  duration: 10400,
+  scale: 0.9,
+  bodyTexture: '',
+  caption: 'Market — a 50 HP stall that pays you back, with a vault, a loan and a propaganda window on its tree',
+  run(ctx) {
+    const bd = board(ctx, { cols: 7, rows: 4 });
+    const town = bd.cell(1, 2);
+    const s = drivenCaster(ctx, { x: bd.cell(2, 2).x, y: bd.cell(2, 2).y });
+    s.cav?.setMastered(true);
+    for (let cy = 1; cy <= 3; cy++) for (let cx = 0; cx <= 2; cx++) bd.own(cx, cy, 0);
+    buildings(ctx, [{ at: town, kind: 'town', hp: 1, max: 1, ang: 0 }]);
+
+    let gold = 70;
+    let rate = 2;
+    authority(ctx, () => gold, { rate: () => Math.round(rate * 10) / 10 });
+    ctx.onFrame((dt) => { gold += rate * (dt / 1000); });
+
+    // The stall. Drawn by the kit's own painter, so the strongbox and the speaking trumpet on it
+    // are the same ones the arena puts up.
+    const stall = { at: bd.cell(3, 2), up: false, vault: 0, propaganda: false, hp: MARKET_HP };
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(6));
+    const size = BUILDING_R * 1.6;
+    ctx.onFrame((_dt, elapsed) => {
+      g.clear();
+      if (!stall.up) return;
+      marketBody(g, ctx.tint, stall.at.x, stall.at.y, size, townColor('player', 0),
+        { vault: stall.vault, propaganda: stall.propaganda, t: elapsed / 1000 }, 1);
+      if (stall.hp < MARKET_HP) {
+        buildingHpBar(g, stall.at.x, stall.at.y - size * 0.7, size, stall.hp / MARKET_HP, 0xd83a3a, 1);
+      }
+    });
+
+    ctx.at(500, () => {
+      stall.up = true;
+      gold -= BUILD_COST.market;
+      rate += MARKET_INCOME;
+      bd.own(3, 2, 0);
+      s.av.play('slam', Math.PI / 2);
+      s.fx.raise(stall.at.x, stall.at.y, size, townColor('player', 0));
+      tick(ctx, stall.at.x, stall.at.y - 34, `🏪 MARKET −${BUILD_COST.market} 👑`, CNQ.gold);
+      tick(ctx, stall.at.x, stall.at.y - 52, `${MARKET_HP} HP · +${MARKET_INCOME}/s`, CNQ.parchment);
+    });
+
+    ctx.at(1700, () => {
+      rate += 1;
+      s.fx.coins(stall.at.x, stall.at.y - 16, 4);
+      tick(ctx, stall.at.x, stall.at.y - 34, '💰 ECONOMIC BOOST · +1/s', CNQ.gold);
+    });
+
+    // Securities: money moved out of the bank and into the building, where it grows and where it
+    // can be taken away from you.
+    ctx.at(2900, () => {
+      gold -= VAULT_STEP;
+      stall.vault += VAULT_STEP;
+      s.fx.vault(stall.at.x, stall.at.y - 10, true);
+      tick(ctx, stall.at.x, stall.at.y - 34, `🏦 DEPOSIT ${VAULT_STEP}`, CNQ.gold);
+    });
+    ctx.at(4100, () => {
+      const grown = Math.round(stall.vault * (1 + VAULT_RATE));
+      tick(ctx, stall.at.x, stall.at.y - 34, `📈 +${grown - stall.vault} · ${grown}`, CNQ.gold);
+      stall.vault = grown;
+      s.fx.coins(stall.at.x, stall.at.y - 16, 3);
+    });
+
+    // Propaganda Central: eight seconds of paying for hits in money instead of health.
+    ctx.at(5300, () => {
+      stall.propaganda = true;
+      s.fx.propaganda(s.at.x, s.at.y - 10, 74);
+      tick(ctx, s.at.x, s.at.y - 46, `📢 PROPAGANDA · ${PROPAGANDA_MS / 1000}s`, CNQ.crimson);
+    });
+    for (const [at, hit] of [[6000, 20], [6800, 30]] as [number, number][]) {
+      ctx.at(at, () => {
+        const cost = Math.round(hit * PROPAGANDA_RATE);
+        gold = Math.max(0, gold - cost);
+        s.fx.chip(s.at.x, s.at.y, CNQ.crimson);
+        tick(ctx, s.at.x, s.at.y - 30, `−${cost} 👑`, CNQ.crimson);
+        tick(ctx, s.at.x, s.at.y - 48, `INSTEAD OF ${hit} HP`, CNQ.parchment);
+      });
+    }
+    ctx.at(7600, () => {
+      gold = 0;
+      rate = 0;
+      tick(ctx, s.at.x, s.at.y - 46, '💸 BANKRUPT — DOUBLE DAMAGE', CNQ.blood);
+    });
+
+    // And the risk the vault was always carrying.
+    ctx.at(8800, () => {
+      stall.hp = 0;
+      stall.up = false;
+      s.fx.rubble(stall.at.x, stall.at.y, size);
+      tick(ctx, stall.at.x, stall.at.y - 34, `💸 ${Math.round(stall.vault)} LOST WITH IT`, CNQ.blood);
+      stall.vault = 0;
+    });
+
+    label(ctx, ctx.w * 0.5, ctx.h - 8,
+      `${BUILD_COST.market} Authority · ${MARKET_HP} HP · ECONOMY / WAR / BANKING, one path past tier 2`,
       CNQ.stoneDark);
   },
 };

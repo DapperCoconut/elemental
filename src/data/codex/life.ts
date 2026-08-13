@@ -14,10 +14,12 @@ const life: ElementCodex = {
     {
       emoji: '🌱',
       name: 'The Garden',
-      magic:
-        'Everything Life does is downstream of what is currently growing. Seeds are chosen from a bar at '
-        + 'the top of the screen before they are planted, and the choice of which five are in the ground '
-        + 'is the real decision the element asks you to make.',
+      basics:
+        'Five seeds, and five plants at a time per owner — a sixth is refused rather than replacing the '
+        + 'oldest. Sunflower (25 HP) fires a 10-damage bullet every second. Rose (75 HP) is the toughest, '
+        + 'with thorns that reflect damage to attackers. Nurse Lily (25 HP) walks with you and heals 3 HP '
+        + 'every 2s. Nightcap (25 HP) lays poison puddles. Pitcher (50 HP) traps an enemy that comes near '
+        + 'for 3s. Cotton (25 HP) follows you and grants +50% speed for 1s.',
       effects: [
         { tag: 'summon', label: 'Plant cap', detail: 'Five plants at once, per owner. Planting a sixth is refused rather than replacing the oldest.' },
         { tag: 'summon', label: 'Sunflower', detail: '25 HP. Fires a 10 damage bullet every 1s. The damage plant.' },
@@ -35,10 +37,9 @@ const life: ElementCodex = {
 
   abilities: {
     'petal-shotgun': {
-      magic:
-        'The one thing in the kit aimed at a person. Three blades of petal thrown in a tight fan, each a '
-        + 'separate throw with its own muzzle — at range they scatter and one or two connect, at contact '
-        + 'range all three land at once. Leaf litter shakes loose behind the caster from the effort.',
+      basics:
+        'Three petals in a fixed −15°/0°/+15° spread, 8 damage each at 480 px/s — 24 if all three land, '
+        + 'which means standing close. 0.5s cooldown.',
       cast: 'Click, aimed at the cursor. Instant. The spread is fixed at −15°, 0° and +15°.',
       effects: [
         { tag: 'damage', label: 'Three petals', detail: '3 projectiles at 8 damage each — 24 if all three land, which needs the target close.' },
@@ -46,9 +47,9 @@ const life: ElementCodex = {
         { tag: 'utility', label: 'Rate of fire', detail: '0.5s cooldown.' },
       ],
       upgrade: {
-        magic:
-          'Petal Burst widens the fan and thins each blade. More of the arc is covered and the total goes '
-          + 'up, but only for someone standing close enough to catch the whole pattern.',
+        basics:
+          'Five petals instead of three, at 5 damage each: 25 at point blank against the old 24, and far '
+          + 'more forgiving of aim.',
         effects: [
           { tag: 'damage', label: 'Five petals', detail: '5 petals per shot at 5 damage each — 25 at point blank, against 24 from three, but far more forgiving of aim.', requiresUpgrade: 'click' },
         ],
@@ -56,10 +57,10 @@ const life: ElementCodex = {
     },
 
     plant: {
-      magic:
-        'A seed pressed into the arena floor and told to hurry. Which seed is whichever is selected on the '
-        + 'bar at the top of the screen, and the plant that comes up is a real object with its own health '
-        + 'bar that both fighters can attack. Everything else in the kit exists to keep these alive.',
+      basics:
+        'Places the seed you have selected at the cursor with 25–75 HP depending on which one, and it '
+        + 'can be destroyed. Five plants maximum per owner — the enemy\'s garden does not count against '
+        + 'yours — on a 5s cooldown, so filling a garden from empty takes 20 seconds.',
       cast: 'E, placed at the cursor. Instant. Uses the currently selected seed from the bar.',
       effects: [
         { tag: 'summon', label: 'Grow a plant', detail: 'Places the selected seed at the cursor. It has the HP from the seed table (25–75) and can be destroyed.' },
@@ -67,9 +68,9 @@ const life: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '5s cooldown — filling a garden from empty takes 20 seconds.' },
       ],
       upgrade: {
-        magic:
-          'Verdant Growth makes the garden mobile. Plants stop being placed terrain and become something '
-          + 'you drag around the fight — hardier, and able to drift toward wherever you pull them.',
+        basics:
+          'Every plant gains 50% more HP, and plants become draggable with the mouse: they drift toward '
+          + 'where you pull them rather than teleporting.',
         effects: [
           { tag: 'buff', label: 'Hardier', detail: 'All plants gain 50% more HP.', requiresUpgrade: 'e' },
           { tag: 'movement', label: 'Draggable', detail: 'Plants can be dragged with the mouse; they drift toward where you pull them rather than teleporting.', requiresUpgrade: 'e' },
@@ -78,10 +79,9 @@ const life: ElementCodex = {
     },
 
     grow: {
-      magic:
-        'A wash of yellow light over an area of the garden — not healing so much as forcing a season\'s '
-        + 'growth into five seconds. Everything caught in it repairs and runs hot for a short while '
-        + 'afterwards.',
+      basics:
+        'Heals every plant in the targeted area for 50% of its maximum HP and gives them a power boost '
+        + 'for 5 seconds. 8s cooldown.',
       cast: 'R, centred on an area. Instant, affects every plant inside it.',
       effects: [
         { tag: 'heal', label: 'Repair', detail: 'Plants hit are healed 50% of their maximum HP.' },
@@ -89,10 +89,9 @@ const life: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '8s cooldown.' },
       ],
       upgrade: {
-        magic:
-          'Perma-Fertilize means some of that season stays. Each application leaves a permanent mark on '
-          + 'the plant — blue stars above it — and a plant that survives three fertilizings is a '
-          + 'meaningfully different plant from the one you put in the ground.',
+        basics:
+          'Also leaves a small permanent buff on the plants it touches, stacking up to three times and '
+          + 'shown on them as blue stars.',
         effects: [
           { tag: 'buff', label: 'Permanent stacks', detail: 'Also grants a small permanent buff to affected plants, stacking up to 3×, shown as blue stars.', requiresUpgrade: 'r' },
         ],
@@ -100,10 +99,9 @@ const life: ElementCodex = {
     },
 
     thorns: {
-      magic:
-        'One plant is picked out and sealed. For three seconds nothing can touch it at all, and when the '
-        + 'seal breaks the plant comes back whole. It is the answer to focused fire: the enemy commits to '
-        + 'killing a sunflower, and at the end of it the sunflower is at full health.',
+      basics:
+        'Seals the plant under your cursor so it takes no damage for 3 seconds, and when the seal '
+        + 'expires it heals to full regardless of how low it had fallen. 8s cooldown.',
       cast: 'F, targeting the plant under the cursor. Instant.',
       effects: [
         { tag: 'shield', label: 'Sealed', detail: 'The cursored plant takes no damage for 3s.' },
@@ -111,9 +109,9 @@ const life: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '8s cooldown.' },
       ],
       upgrade: {
-        magic:
-          'Living Roots turns the seal red and gives the plant teeth while it is invulnerable. Standing '
-          + 'next to something you cannot hurt now costs you.',
+        basics:
+          'The sealed plant fights while it is protected: 10 damage to nearby enemies, and anything it '
+          + 'lashes is slowed 15% for 3 seconds.',
         effects: [
           { tag: 'damage', label: 'Vine lash', detail: 'The sealed plant lashes nearby enemies for 10 damage.', requiresUpgrade: 'f' },
           { tag: 'control', label: 'Slow', detail: 'Lashed enemies are slowed 15% for 3s.', requiresUpgrade: 'f' },
@@ -122,11 +120,11 @@ const life: ElementCodex = {
     },
 
     'thorn-drag': {
-      magic:
-        'The caster roots into the ground and the whole grove answers — a trunk of growth punching up out '
-        + 'of them, a bloom thrown outward, pollen rolling off the front. For five seconds the gardener '
-        + 'and the garden are one organism, and anything aimed at the gardener is shared out among the '
-        + 'plants instead. It is not damage reduction: it is damage redirection, and it costs the garden.',
+      basics:
+        'For 5 seconds all incoming damage is split evenly across your plants instead of landing on '
+        + 'you. They take it for real and can die of it, so a five-plant garden survives far more than a '
+        + 'one-plant one. You keep full control throughout, the screen shakes 300ms as the grove '
+        + 'connects, and it is a 30s cooldown.',
       cast: 'Q. Instant. You keep full control for the 5s.',
       effects: [
         { tag: 'shield', label: 'Shared intake', detail: 'For 5s all your incoming damage is split evenly across your plants instead of landing on you.' },
@@ -135,10 +133,9 @@ const life: ElementCodex = {
         { tag: 'utility', label: 'Screen impact', detail: '300ms camera shake as the grove connects.' },
       ],
       upgrade: {
-        magic:
-          'Cycle of Life closes the loop. A plant dying during Thrive! is no longer just a loss — it hands '
-          + 'its remaining life back to the gardener, and a garden burning down around you becomes the '
-          + 'largest heal in the element.',
+        basics:
+          'While Thrive! is running, every plant that dies heals you 20 HP — the garden\'s destruction '
+          + 'pays you back instead of being pure loss.',
         effects: [
           { tag: 'heal', label: 'Death returns life', detail: 'While Thrive! is active, any plant that dies heals you 20 HP.', requiresUpgrade: 'q' },
         ],
@@ -151,10 +148,9 @@ const life: ElementCodex = {
 
   perks: {
     mycology: {
-      magic:
-        'Every seed comes up a mushroom, in that seed\'s colour. The garden keeps its behaviours and '
-        + 'loses its shapes, and mushrooms planted near one another feed each other — the element '
-        + 'stops being five separate plants and becomes one colony that wants to be crowded.',
+      basics:
+        'Every seed grows as a mushroom rendered in that seed\'s colour, keeping its own behaviour. '
+        + 'Mushrooms within 170px of one another count as clustered and gain bonus HP for it.',
       cast: 'Passive. Changes what every seed grows into.',
       effects: [
         { tag: 'summon', label: 'All mushrooms', detail: 'Every seed grows as a mushroom rendered in that seed\'s colour, keeping its own behaviour.' },
@@ -164,10 +160,10 @@ const life: ElementCodex = {
   },
   mastery: {
     'thorn-thrash': {
-      magic:
-        'Your petals stop being wasted on your own garden. A click that clips one of your plants '
-        + 'sets it off — it throws a fistful of thorns in every direction at once. Aiming through '
-        + 'your own flowers becomes the point rather than the mistake.',
+      basics:
+        'Hitting your own plant with a click petal makes it thrash: 5 thorns at 5 damage each, fired in '
+        + 'random directions at 420 px/s. Each plant can thrash once every 3 seconds, so a five-plant '
+        + 'garden is five independent timers.',
       effects: [
         { tag: 'damage', label: 'Thrash', detail: 'Hitting your own plant with a click petal launches 5 thorns at 5 damage each in random directions.' },
         { tag: 'utility', label: 'Per-plant cooldown', detail: 'Each plant can thrash once every 3s, so a five-plant garden is five independent timers.' },
@@ -175,10 +171,12 @@ const life: ElementCodex = {
       ],
     },
     reap: {
-      magic:
-        'You take a plant apart and wear what it was. The garden becomes a set of twenty-second '
-        + 'buffs you can cash in, and which flower you sacrifice is a real decision — the whole '
-        + 'point of choosing seeds at the start is now also about what you might tear up later.',
+      basics:
+        'Destroys the plant under your cursor — or the nearest one — and takes its gift for 20 seconds. '
+        + 'Sunflower: +2 petal shotgun damage. Rose: enemies take 5 damage for every 20 you take. Nurse '
+        + 'Lily: heal 10% of all damage you deal. Nightcap: poison puddles bloom around you every second. '
+        + 'Pitcher: your petals slow 15% for 2s. Cotton: +25% move speed. 15s cooldown, and with a '
+        + 'five-plant cap on a 5s plant timer it costs 5 seconds of gardening.',
       cast: 'Bindable to E, R, F or Q. Destroys the plant under the cursor, or the nearest one.',
       effects: [
         { tag: 'buff', label: 'Sunflower', detail: '+2 petal shotgun damage for 20s.' },

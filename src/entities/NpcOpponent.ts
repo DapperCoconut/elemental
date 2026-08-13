@@ -6,7 +6,98 @@ import { Projectile } from '../combat/Projectile';
 import { slimeElement } from '../elements/slime';
 import { HP_SCALE } from '../data/Balance';
 
-type AiState = 'chase' | 'attack';
+type AiState = 'chase' | 'attack' | 'retreat';
+
+/**
+ * How a bot of a given element wants to fight. The archetype decides what "in range"
+ * looks like: a brawler keeps walking into you the way Earth always has, a zoner
+ * back-pedals the moment you push inside its band, an assassin orbits tight and fast.
+ * The band is a *movement* preference only — every ability keeps its own range checks
+ * in the do*Abilities routines, so a zoner still fires everything it has while it kites.
+ */
+interface MovementProfile {
+  archetype: 'brawler' | 'skirmisher' | 'zoner' | 'summoner' | 'assassin';
+  /** Preferred distance band [min, max]: outside it approach, inside min back off. */
+  range: [number, number];
+  /** HP ratio under which the bot briefly disengages to let cooldowns breathe. */
+  retreatHp: number;
+}
+
+const ARCHETYPE_DEFAULTS: Record<MovementProfile['archetype'], { weave: number; strafe: number; backSpeed: number }> = {
+  brawler:    { weave: 0.25, strafe: 0.62, backSpeed: 0.0  },
+  skirmisher: { weave: 0.45, strafe: 0.65, backSpeed: 0.55 },
+  zoner:      { weave: 0.50, strafe: 0.70, backSpeed: 0.75 },
+  summoner:   { weave: 0.40, strafe: 0.60, backSpeed: 0.60 },
+  assassin:   { weave: 0.65, strafe: 0.80, backSpeed: 0.45 },
+};
+
+const DEFAULT_PROFILE: MovementProfile = { archetype: 'skirmisher', range: [160, 300], retreatHp: 0.28 };
+
+/**
+ * Per-element movement personalities. Rough first pass — each element's Phase-3 AI
+ * batch tunes its own entry alongside its ability rewrite. Anything missing runs the
+ * default skirmisher.
+ */
+const MOVEMENT_PROFILES: Record<string, MovementProfile> = {
+  fire:        { archetype: 'skirmisher', range: [120, 260], retreatHp: 0.25 },
+  water:       { archetype: 'zoner',      range: [260, 420], retreatHp: 0.35 },
+  life:        { archetype: 'summoner',   range: [220, 380], retreatHp: 0.30 },
+  air:         { archetype: 'skirmisher', range: [140, 280], retreatHp: 0.30 },
+  earth:       { archetype: 'brawler',    range: [40, 140],  retreatHp: 0.12 },
+  oil:         { archetype: 'summoner',   range: [220, 380], retreatHp: 0.30 },
+  shadow:      { archetype: 'zoner',      range: [200, 360], retreatHp: 0.30 },
+  ice:         { archetype: 'zoner',      range: [240, 400], retreatHp: 0.32 },
+  growth:      { archetype: 'summoner',   range: [200, 360], retreatHp: 0.30 },
+  crystal:     { archetype: 'zoner',      range: [260, 420], retreatHp: 0.32 },
+  soul:        { archetype: 'summoner',   range: [240, 400], retreatHp: 0.32 },
+  hunt:        { archetype: 'skirmisher', range: [100, 240], retreatHp: 0.20 },
+  sand:        { archetype: 'zoner',      range: [240, 400], retreatHp: 0.30 },
+  gravity:     { archetype: 'zoner',      range: [240, 400], retreatHp: 0.30 },
+  creation:    { archetype: 'summoner',   range: [220, 380], retreatHp: 0.30 },
+  electricity: { archetype: 'skirmisher', range: [100, 220], retreatHp: 0.20 },
+  slime:       { archetype: 'skirmisher', range: [140, 280], retreatHp: 0.28 },
+  fate:        { archetype: 'zoner',      range: [240, 400], retreatHp: 0.32 },
+  sound:       { archetype: 'skirmisher', range: [160, 300], retreatHp: 0.28 },
+  light:       { archetype: 'skirmisher', range: [160, 320], retreatHp: 0.25 },
+  magnet:      { archetype: 'skirmisher', range: [150, 290], retreatHp: 0.28 },
+  metal:       { archetype: 'brawler',    range: [60, 160],  retreatHp: 0.15 },
+  plasma:      { archetype: 'skirmisher', range: [150, 290], retreatHp: 0.28 },
+  gunpowder:   { archetype: 'zoner',      range: [260, 420], retreatHp: 0.32 },
+  rubber:      { archetype: 'brawler',    range: [60, 170],  retreatHp: 0.15 },
+  magic:       { archetype: 'zoner',      range: [240, 400], retreatHp: 0.32 },
+  technology:  { archetype: 'zoner',      range: [260, 420], retreatHp: 0.32 },
+  silence:     { archetype: 'assassin',   range: [50, 150],  retreatHp: 0.22 },
+  echo:        { archetype: 'skirmisher', range: [160, 300], retreatHp: 0.28 },
+  subterfuge:  { archetype: 'skirmisher', range: [180, 320], retreatHp: 0.30 },
+  justice:     { archetype: 'skirmisher', range: [140, 280], retreatHp: 0.25 },
+  dream:       { archetype: 'assassin',   range: [100, 240], retreatHp: 0.25 },
+  chalk:       { archetype: 'zoner',      range: [240, 400], retreatHp: 0.32 },
+  magma:       { archetype: 'summoner',   range: [220, 380], retreatHp: 0.30 },
+  illusion:    { archetype: 'zoner',      range: [220, 380], retreatHp: 0.30 },
+  depths:      { archetype: 'skirmisher', range: [160, 300], retreatHp: 0.28 },
+  conquest:    { archetype: 'summoner',   range: [260, 420], retreatHp: 0.32 },
+  passion:     { archetype: 'skirmisher', range: [150, 290], retreatHp: 0.28 },
+  ruin:        { archetype: 'zoner',      range: [220, 380], retreatHp: 0.30 },
+  dune:        { archetype: 'skirmisher', range: [160, 300], retreatHp: 0.28 },
+  paper:       { archetype: 'skirmisher', range: [160, 300], retreatHp: 0.28 },
+  death:       { archetype: 'brawler',    range: [70, 170],  retreatHp: 0.15 },
+  fortune:     { archetype: 'zoner',      range: [240, 400], retreatHp: 0.32 },
+  marrow:      { archetype: 'brawler',    range: [90, 200],  retreatHp: 0.18 },
+  psychic:     { archetype: 'zoner',      range: [240, 400], retreatHp: 0.32 },
+  radiation:   { archetype: 'skirmisher', range: [150, 290], retreatHp: 0.28 },
+  bind:        { archetype: 'summoner',   range: [220, 380], retreatHp: 0.30 },
+  gum:         { archetype: 'brawler',    range: [50, 150],  retreatHp: 0.15 },
+  gluttony:    { archetype: 'brawler',    range: [80, 200],  retreatHp: 0.18 },
+};
+
+/**
+ * Reaction tick per difficulty level: ability decisions run on this cadence rather than
+ * every frame, so a bot commits to a beat of play instead of twitch-evaluating at 60hz.
+ * Movement, dodging, charge release and the seek overrides all stay per-frame — only
+ * the "what do I press next" question waits for the tick.
+ */
+const DECISION_MS: Record<number, number> = { 1: 420, 2: 320, 3: 230, 4: 160, 5: 110 };
+const TRUE_NIGHTMARE_DECISION_MS = 85;
 
 /**
  * Psychic: the smallest stress pool an npc will spend its ultimate on. 60 points is three
@@ -51,6 +142,28 @@ export const DIFFICULTY_PRESETS: DifficultyConfig[] = [
   { level: 5, label: 'Nightmare', hp: 360 * HP_SCALE, speed: 175, aimOffsetDeg:  1, dodgeRange: 160, castSkipChance: 0    },
 ];
 
+/**
+ * Everything the kits tell the bot about the world this frame.
+ *
+ * ## The synergy contract
+ *
+ * Every kit has internal synergies — casts that are only worth making because of
+ * something else the kit already put on the field (Silence rituals a matured watcher
+ * into a grabber; a Click+ stab through its own stalker detonates the Sacrifice).
+ * Bots must execute these deliberately, never by accident:
+ *
+ * - The KIT computes each opportunity owner-side and publishes it here as a field —
+ *   a position to cast at, or a flag saying the combo is live. It owns the geometry
+ *   and the upgrade checks; the AI should never re-derive either.
+ * - `do[Element]Abilities` checks opportunity fields FIRST, before its generic
+ *   rotation, so a live combo always outranks an ordinary cast.
+ * - Reads must be side-effect-free (getters may not consume charges or gates) — the
+ *   one exception is documented on `npcDreamMayCatch`.
+ *
+ * When adding or reworking an element, enumerate its kit's synergies ("X enables Y")
+ * and wire each one through this pattern. A kit whose bot never plays its synergies
+ * is incomplete.
+ */
 export interface NpcAiState {
   isLocked: boolean;
   hasActiveGeyser: boolean;
@@ -109,6 +222,14 @@ export interface NpcAiState {
   npcSilenceStalkers?: number;
   npcSilenceMatureStalker?: { x: number; y: number } | null;
   npcSilenceInvisible?: boolean;
+  /** R+ Night Terror: the bar is full, and a ritual cast on itself becomes the Striker. */
+  npcSilenceTerrorFull?: boolean;
+  /** Transformed: the click is a slash, E is Boggle, R is Allure — play it as a melee monster. */
+  npcSilenceStriker?: boolean;
+  /** Click+ synergy: stab AT this own stalker — the lane detonates it onto the adjacent player. */
+  npcSilenceSacrificeStab?: { x: number; y: number };
+  /** E+ synergy: re-cast Watch onto this own watcher to grow it into a seeker. */
+  npcSilenceMutateWatcher?: { x: number; y: number };
   // Echo — no persistent ai state needed
   echoAttachActive?: boolean;
   // Quantum
@@ -143,10 +264,16 @@ export interface NpcAiState {
   npcChalkMasterpiece?: boolean;
   /** No blue line on the floor, so Perma-Chalk is worth spending. */
   npcChalkMayPerma?: boolean;
+  /**
+   * Chalk Mastery — the slot Living Chalk has taken over. The enhancement is not in
+   * `element.abilities`, so the kit casts it off its own timer; all the AI has to do is stop
+   * spending a key that no longer belongs to it.
+   */
+  npcChalkLivingSlot?: 'e' | 'r' | 'f' | 'q' | null;
   // Magma
   /** Hatched. Everything is aimed at the target rather than at its own summons. */
   npcMagmaDragon?: boolean;
-  npcMagmaFist?: boolean;
+  npcMagmaJet?: boolean;
   npcMagmaBloat?: boolean;
   npcMagmaVolcanoes?: number;
   npcMagmaHasEgg?: boolean;
@@ -158,11 +285,32 @@ export interface NpcAiState {
   /** The target is already folded, so the Tesseract has nothing left to spend itself on. */
   npcIllusionTargetFolded?: boolean;
   /**
+   * The slot Masquerade is bound over for this bot, if any. The mask itself is put on by the
+   * kit on a blind timer — the AI's only job is to stop casting the base ability it replaced.
+   */
+  npcIllusionMaskSlot?: 'e' | 'r' | 'f' | 'q' | null;
+  /**
    * The vessel the AI should be charging, or undefined when it has nothing left to fill.
    * Magma's summons are fed by its own attacks, so this is what it aims *at* — the one
    * element in the game whose AI sometimes deliberately shoots away from you.
    */
   npcMagmaChargeTarget?: { x: number; y: number };
+  /**
+   * Magma Mastery: a saw is out. The kit runs the whole thing off its own timer, so all the
+   * routine has to do is stop layering casts on top of a tool it is already holding.
+   */
+  npcMagmaSawOut?: boolean;
+  /**
+   * Magma Mastery: the slot Magma Saw was bound over. The base ability underneath it is gone
+   * for the bot exactly as it is for a player, so the routine has to stop asking for it.
+   */
+  npcMagmaSawSlot?: string;
+  /**
+   * Magma Mastery: a critical cone of the bot's own with overfill banked in it. Standing in
+   * that collapse is the only way an Obsidian Coat is ever earned, so the kit hands the point
+   * over rather than hoping the fight drifts back through it.
+   */
+  magmaObsidianPoint?: { x: number; y: number };
   // Depths
   /**
    * Somewhere the AI has to physically be, overriding chase/strafe entirely: the air pocket
@@ -179,6 +327,21 @@ export interface NpcAiState {
   npcDepthsTargetLatches?: number;
   /** The AI is the one drowning: everything except running for air can wait. */
   npcDepthsDrowning?: boolean;
+  /** Depths Mastery: the slot Release the Kraken was dropped on, so the base ability is skipped. */
+  npcDepthsKrakenSlot?: string;
+  /**
+   * Somebody one of the bot's own tentacles is holding right now. A Lungfish Strike aimed at a
+   * body that cannot move always connects — and a strike that connects is the only thing that
+   * ever starts a drowning, so this is the combination the kraken exists to set up.
+   */
+  npcDepthsKrakenStun?: { x: number; y: number };
+  /**
+   * One of the bot's own skele-fish, close enough to be eaten off the end of a slash — offered
+   * only while the fifty health is actually worth the sixteen seconds.
+   */
+  npcDepthsSkeleMeal?: { x: number; y: number };
+  /** Camo Fade has finished: the line is reaching the two fish only a hidden angler can land. */
+  npcDepthsCamoed?: boolean;
 
   // Gluttony
   /**
@@ -213,6 +376,12 @@ export interface NpcAiState {
   npcRuinDecayStacks?: number;
   /** The target has actually used something that isn't already locked. */
   npcRuinCanLock?: boolean;
+  /**
+   * Mastery: the slot Second Skin was bound over, so the rotation stops casting an ability that
+   * is no longer on the tray. The kit fires the shed itself off its own timer — see
+   * `RuinKit.updateNpcSecondSkin` — because the burst has no aim to pass through here.
+   */
+  npcRuinSkinSlot?: 'e' | 'r' | 'f' | 'q' | null;
 
   // Sand (element id `dune`)
   /** A course is standing and unclaimed — the kit is flying the body up it, so stay off the keys. */
@@ -238,6 +407,11 @@ export interface NpcAiState {
   /** Seconds left before midnight — the bot plays for time once it is close. */
   npcDeathClock?: number;
   /**
+   * Mastery: the slot Delay The Inevitable was bound over, so the base ability under it is no
+   * longer there to press. The kit casts the delay itself off its own read of the fight.
+   */
+  npcDeathDelaySlot?: 'e' | 'r' | 'f';
+  /**
    * Its own weapon, lying where a Death's Disarm upgrade put it. Nothing it presses works until
    * it is standing on this, so fetching it overrides chase/strafe the way Depths' air does.
    */
@@ -254,6 +428,12 @@ export interface NpcAiState {
   npcFortuneBeaming?: boolean;
   /** Turnstiles already up — a second wall would only restart a live one. */
   npcFortuneWall?: boolean;
+  /**
+   * The mastery car is sitting on the bank key. Published by the kit rather than re-derived
+   * here, because which slot the enhancement landed on is the kit's business — the AI only
+   * needs to know that pressing E would be a refused (and audible) cast.
+   */
+  npcFortuneNoBank?: boolean;
 
   // Marrow
   /** Occupied sockets on the bone bar, 0–5. A sixth cell is refused outright. */
@@ -272,6 +452,12 @@ export interface NpcAiState {
   npcPsychicBigCast?: boolean;
   /** Stress on the target. The Q is a payout, so the bot waits for the pool to be worth it. */
   npcPsychicStress?: number;
+  /**
+   * Mastery: the slot Utter Focus was dropped over, if any. The kit presses the window itself
+   * (it owns both the cooldown and the reason to open it), so this is only here to stop the AI
+   * pressing the ability that is no longer in that slot.
+   */
+  npcPsychicMasterySlot?: 'r' | 'f' | 'q';
 
   // Radiation
   /** Tracers already stuck on the target. Three confirms the shot; a miss scrubs all of them. */
@@ -282,6 +468,15 @@ export interface NpcAiState {
   npcRadiationBusy?: boolean;
   /** The target already has a dose, which is what turns the baton from an opener into a stun. */
   npcRadiationTargetDosed?: boolean;
+  /**
+   * Mastery: a Gamma Tether post has the target on a chain, so they cannot leave a 150px circle.
+   * Every procedure in this kit needs the target to still be there in a second's time, so this
+   * is the window in which all of them are free. The kit plants the post itself — it owns the
+   * geometry — and publishes the fact here.
+   */
+  npcRadiationTethered?: boolean;
+  /** The slot the post was bound over, so the AI stops pressing the ability that is no longer there. */
+  npcRadiationMasterySlot?: 'e' | 'f' | 'q';
 
   // Bind
   /** 0–100 of the patron's patience. Above 70 the bot stops spending anything at all. */
@@ -298,6 +493,14 @@ export interface NpcAiState {
   npcBindChained?: boolean;
   /** Converts standing, or -1 with no cult unlocked. Below the cap, R buys a body, not an idol. */
   npcBindCult?: number;
+  /**
+   * Bind Mastery: the slot Ritual Sacrifice took, or undefined. The dagger itself is cast by the
+   * kit off a private timer — an enhancement id is not in `element.abilities`, so there is nothing
+   * here for `castAbility` to find — and all this routine owes it is not casting the base ability
+   * out of a slot that no longer holds one. (Pathetic Stab needs no such guard: the slot the
+   * ultimate takes is locked for the bot exactly as it always was, and the kit plays the lunge.)
+   */
+  npcBindRitualSlot?: string;
 
   // Slime (id: gum)
   /** Solidify threw its hand away — nothing it presses will answer until it grows back. */
@@ -308,6 +511,13 @@ export interface NpcAiState {
   npcGumAbsorbArmed?: boolean;
   /** The target is already sealed in gum, so a second barrage buys nothing. */
   npcGumTargetEncased?: boolean;
+  /** Slime Mastery: which of E/R/F Oobleck was bound over. That key is the kit's, not the rotation's. */
+  npcGumOobleckSlot?: 'e' | 'r' | 'f';
+  /**
+   * Slime Mastery: a slab is standing and has not been set yet. Solidify turns it into a wall
+   * neither fighter can cross — the one combo in the kit worth pressing the ultimate for on its own.
+   */
+  npcGumSlabSoft?: boolean;
 
   // Paper
   /** Which storybook is open: 0 Knight, 1 Alien, 2 Fantasy. Decides what Click and Q even are. */
@@ -318,6 +528,10 @@ export interface NpcAiState {
   npcPaperRiding?: boolean;
   /** Monsters still lying on the floor. F is wasted while a decent field is already down. */
   npcPaperMaches?: number;
+  /** Paper Mastery: the bot is in pieces — no hands, nothing to cast with. */
+  npcPaperTorn?: boolean;
+  /** Paper Mastery: the slot Restructure took, which no longer holds the ability under it. */
+  npcPaperRestructureSlot?: 'e' | 'r' | 'f' | null;
 
   // Passion
   /** A rose is already in its teeth; the kit throws that one, so F must not be re-cast. */
@@ -326,6 +540,18 @@ export interface NpcAiState {
   npcPassionPosing?: boolean;
   /** 0–1 of the target's love bar. The whole element is this number, so every branch reads it. */
   npcPassionTargetLove?: number;
+  /**
+   * Passion Mastery: the centre of a perfume cloud the bot sprayed itself and has not finished
+   * drinking in. Standing in it is the only way the aura is ever banked, so the kit hands the
+   * point over rather than hoping the fight drifts through it.
+   */
+  passionCloudPoint?: { x: number; y: number };
+  /**
+   * Passion Mastery: the slot Perfume was bound over. The base ability underneath it is gone for
+   * the bot exactly as it is for a player, so the routine has to stop asking for it — the kit
+   * casts the spray itself, since enhancement ids are not in `element.abilities`.
+   */
+  npcPassionPerfumeSlot?: string;
 
   /**
    * Conquest: the square the bot is walking to in order to place its next building. Every
@@ -358,9 +584,25 @@ export interface NpcAiState {
 
 export class NpcOpponent extends Fighter {
   private aiState: AiState = 'chase';
-  private readonly attackRange = 280;
+  private readonly profile: MovementProfile;
+  private readonly attackRange: number;
   private strafeDir = 1;
   private nextStrafeDirChange = 0;
+  /** Per-bot phase for the approach weave, so two bots never snake in lockstep. */
+  private readonly weavePhase = Math.random() * Math.PI * 2;
+  /** Low-HP disengage window, and the earliest the next one may start. */
+  private retreatUntil = 0;
+  private nextRetreatAt = 0;
+  /** The next moment the ability-decision pass is allowed to run (see DECISION_MS). */
+  private nextDecisionAt = 0;
+  /**
+   * Where an Expert+ bot expects the target to *be*: the target's position led by a
+   * fraction of its velocity over an estimated projectile flight time. Aim fuzz still
+   * applies on top. Phase-3 ability rewrites read these for projectile abilities;
+   * hitscan abilities should keep aiming at the target's true position.
+   */
+  public leadX = 0;
+  public leadY = 0;
   private lastFlameBodyToggle = -10000;
   private readonly difficulty: DifficultyConfig;
   /** When true, the NPC stays put (Boss mutation): casts abilities but never moves. */
@@ -385,7 +627,7 @@ export class NpcOpponent extends Fighter {
    */
   public get movementPlan(): { closing: boolean; range: number; strafe: number; speed: number; frozen: boolean } {
     return {
-      closing: this.aiState !== 'attack',
+      closing: this.aiState === 'chase',
       range: this.attackRange,
       strafe: this.strafeDir,
       speed: this.speed,
@@ -443,6 +685,8 @@ export class NpcOpponent extends Fighter {
   ) {
     super(scene, x, y, textureKey, element, difficulty.hp, difficulty.speed);
     this.difficulty = difficulty;
+    this.profile = MOVEMENT_PROFILES[element.id] ?? DEFAULT_PROFILE;
+    this.attackRange = this.profile.range[1];
   }
 
   doAI(
@@ -452,12 +696,6 @@ export class NpcOpponent extends Fighter {
     aiState: NpcAiState,
   ): string | null {
     if (aiState.isLocked) return null;
-
-    // Dummy element: stand completely still, do nothing
-    if (this.element.id === 'dummy') {
-      (this.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-      return null;
-    }
 
     // Initialise charge cooldown on the very first tick so mastered NPCs don't
     // immediately charge before moving.
@@ -470,13 +708,21 @@ export class NpcOpponent extends Fighter {
 
     const dist = Phaser.Math.Distance.Between(this.x, this.y, target.x, target.y);
     const hpRatio = this.hp / this.maxHp;
+    const prof = this.profile;
 
-    // State transitions
-    if (dist <= this.attackRange) {
-      this.aiState = 'attack';
-    } else {
-      this.aiState = 'chase';
+    // ── State transitions ─────────────────────────────────────────
+    // Retreat is a *window*, not a mode: a hurt bot peels off for a beat or two while
+    // its cooldowns breathe, then finds its courage again — it never runs forever.
+    if (
+      time >= this.retreatUntil && time >= this.nextRetreatAt &&
+      hpRatio < prof.retreatHp && dist < prof.range[1] + 80
+    ) {
+      this.retreatUntil = time + Phaser.Math.Between(1400, 2400);
+      this.nextRetreatAt = this.retreatUntil + Phaser.Math.Between(3500, 6500);
     }
+    this.aiState = time < this.retreatUntil ? 'retreat'
+      : dist > prof.range[1] ? 'chase'
+      : 'attack';
 
     // Periodically flip strafe direction
     if (time > this.nextStrafeDirChange) {
@@ -510,6 +756,20 @@ export class NpcOpponent extends Fighter {
     const aimAngle = angleToTarget + aimOffsetRad;
     const aimX = this.x + Math.cos(aimAngle) * dist;
     const aimY = this.y + Math.sin(aimAngle) * dist;
+
+    // ── Velocity-led aim (Expert+) ────────────────────────────────
+    // A partial lead over an assumed ~620px/s projectile flight. Kept in fields rather
+    // than folded into aimX/aimY because hitscan abilities must keep shooting at where
+    // the target *is* — projectile routines opt into these in their own rewrites.
+    if (this.difficulty.level >= 4) {
+      const tBody = target.body as Phaser.Physics.Arcade.Body | null;
+      const leadTime = Math.min(0.5, dist / 620) * 0.6;
+      this.leadX = target.x + (tBody?.velocity.x ?? 0) * leadTime;
+      this.leadY = target.y + (tBody?.velocity.y ?? 0) * leadTime;
+    } else {
+      this.leadX = target.x;
+      this.leadY = target.y;
+    }
 
     // ── Dodge incoming projectiles ────────────────────────────────
     let dodging = false;
@@ -567,31 +827,81 @@ export class NpcOpponent extends Fighter {
     }
 
     // ── Movement (skipped if dodge triggered) ────────────────────
+    const arch = ARCHETYPE_DEFAULTS[prof.archetype];
     if (!dodging) {
       switch (this.aiState) {
         case 'chase': {
-          body.setVelocity(
-            Math.cos(angleToTarget) * this.speed,
-            Math.sin(angleToTarget) * this.speed,
-          );
+          // A curved run-in rather than a beeline: the weave makes the approach read
+          // as footwork and incidentally makes the bot a worse target on the way in.
+          const weave = Math.sin(time * 0.004 + this.weavePhase) * arch.weave;
+          const a = angleToTarget + weave;
+          body.setVelocity(Math.cos(a) * this.speed, Math.sin(a) * this.speed);
           break;
         }
         case 'attack': {
-          // Earth rushes into melee; others strafe
-          if (this.element.id === 'earth') {
+          if (arch.backSpeed <= 0) {
+            // Brawlers keep walking into you — the old Earth rush, now an archetype.
             body.setVelocity(
               Math.cos(angleToTarget) * this.speed,
               Math.sin(angleToTarget) * this.speed,
             );
+          } else if (dist < prof.range[0]) {
+            // Pushed inside the band: give ground on a diagonal, still half-strafing,
+            // so it back-pedals like a player rather than reversing down a rail.
+            const away = angleToTarget + Math.PI + this.strafeDir * (Math.PI / 5);
+            body.setVelocity(
+              Math.cos(away) * this.speed * arch.backSpeed,
+              Math.sin(away) * this.speed * arch.backSpeed,
+            );
           } else {
             const strafeAngle = angleToTarget + this.strafeDir * (Math.PI / 2);
             body.setVelocity(
-              Math.cos(strafeAngle) * this.speed * 0.6,
-              Math.sin(strafeAngle) * this.speed * 0.6,
+              Math.cos(strafeAngle) * this.speed * arch.strafe,
+              Math.sin(strafeAngle) * this.speed * arch.strafe,
             );
           }
           break;
         }
+        case 'retreat': {
+          // Full-speed disengage with a wobble, so the exit line is not a free shot.
+          const wob = Math.sin(time * 0.006 + this.weavePhase) * 0.35;
+          const away = angleToTarget + Math.PI + wob;
+          body.setVelocity(Math.cos(away) * this.speed, Math.sin(away) * this.speed);
+          break;
+        }
+      }
+
+      // ── Walls: slide along them, never grind into them ───────────
+      // Whatever the state chose, a velocity pressing into a nearby wall is converted
+      // into a slide: the into-wall component is redirected toward the middle of the
+      // arena and the strafe direction flips so the orbit peels away instead of
+      // pinning. This is the general cure for the bug where a bot sat vibrating in a
+      // corner for the whole match.
+      const wb = this.scene.physics.world.bounds;
+      const margin = 48;
+      const vNow = body.velocity;
+      const intoLeft = this.x < wb.x + margin && vNow.x < 0;
+      const intoRight = this.x > wb.right - margin && vNow.x > 0;
+      const intoTop = this.y < wb.y + margin && vNow.y < 0;
+      const intoBottom = this.y > wb.bottom - margin && vNow.y > 0;
+      if (intoLeft || intoRight || intoTop || intoBottom) {
+        if (this.aiState === 'attack') {
+          this.strafeDir *= -1;
+          this.nextStrafeDirChange = time + Phaser.Math.Between(1200, 2800);
+        }
+        let vx = vNow.x;
+        let vy = vNow.y;
+        if (intoLeft || intoRight) vx = Math.sign(wb.centerX - this.x) * Math.abs(vx) * 0.6;
+        if (intoTop || intoBottom) vy = Math.sign(wb.centerY - this.y) * Math.abs(vy) * 0.6;
+        // Cornered outright: nothing tangential left to slide on, so break for open
+        // ground even if that means running the gauntlet past the player.
+        const speedNow = Math.sqrt(vx * vx + vy * vy);
+        if (speedNow < this.speed * 0.4) {
+          const aOut = Phaser.Math.Angle.Between(this.x, this.y, wb.centerX, wb.centerY);
+          vx = Math.cos(aOut) * this.speed;
+          vy = Math.sin(aOut) * this.speed;
+        }
+        body.setVelocity(vx, vy);
       }
     }
 
@@ -681,6 +991,32 @@ export class NpcOpponent extends Fighter {
       }
     }
 
+    // ── Passion: standing in its own perfume ─────────────────────
+    // Softer than the seeks above — the cloud is worth walking into, not worth abandoning the
+    // fight for, so it only steers while the bot is actually outside the cloud and it keeps
+    // whatever the movement state was doing once it is in.
+    if (aiState.passionCloudPoint) {
+      const seek = aiState.passionCloudPoint;
+      const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
+      if (d > 70) {
+        const a = Phaser.Math.Angle.Between(this.x, this.y, seek.x, seek.y);
+        body.setVelocity(Math.cos(a) * this.speed, Math.sin(a) * this.speed);
+      }
+    }
+
+    // ── Magma: standing in its own supercritical collapse ────────
+    // Same soft shape as the perfume walk above, and for the same reason: the coat is worth
+    // walking into, not worth abandoning the fight for. Inside the blast it goes back to
+    // whatever the movement state was already doing.
+    if (aiState.magmaObsidianPoint) {
+      const seek = aiState.magmaObsidianPoint;
+      const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
+      if (d > 110) {
+        const a = Phaser.Math.Angle.Between(this.x, this.y, seek.x, seek.y);
+        body.setVelocity(Math.cos(a) * this.speed, Math.sin(a) * this.speed);
+      }
+    }
+
     // ── Death: going to pick its weapon back up ──────────────────
     // Same shape as the Depths seek above, and the strongest of them: a disarmed bot cannot
     // cast anything at all until it is standing on the core, so nothing else is worth doing.
@@ -697,6 +1033,17 @@ export class NpcOpponent extends Fighter {
 
     // ── Stationary override (Boss mutation) ──────────────────────
     if (this.stationary) body.setVelocity(0, 0);
+
+    // ── Reaction tick ─────────────────────────────────────────────
+    // Everything above (movement, dodge, charge, seeks) ran per-frame; the question of
+    // what to press next only gets asked on a human-ish cadence. This also means the
+    // per-decision random gates in the routines below fire like choices instead of
+    // like a 60hz slot machine.
+    if (time < this.nextDecisionAt) return null;
+    const tickMs = this.trueNightmare
+      ? TRUE_NIGHTMARE_DECISION_MS
+      : DECISION_MS[this.difficulty.level] ?? 230;
+    this.nextDecisionAt = time + tickMs * Phaser.Math.FloatBetween(0.75, 1.25);
 
     // ── Ability decisions ─────────────────────────────────────────
     if (this.element.id === 'fire') {
@@ -963,6 +1310,15 @@ export class NpcOpponent extends Fighter {
     // No hand: the kit refuses every cast, so there is nothing to press.
     if (aiState.npcGumHandless) return null;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const bound = aiState.npcGumOobleckSlot;
+
+    // Mastery: a slab that is standing is worth setting, and setting it is what Solidify is for
+    // now. GumKit plants the slab itself; this is the half of the combo that needs a key. The
+    // distance refusal below does not apply to it: mastery is a Nightmare loadout, and a
+    // Nightmare loadout owns Hand of Stone, so there is no three-second paralysis to fear.
+    if (!skipSpecials && aiState.npcGumSlabSoft) {
+      if (this.castAbility('gum-solidify', buildContext(aimX, aimY))) return 'gum-solidify';
+    }
 
     // The ultimate is a three-second paralysis, so it is only ever thrown from a safe distance —
     // and it is worth far more with slimeballs and a gummed body already on the field to harden.
@@ -971,18 +1327,18 @@ export class NpcOpponent extends Fighter {
     }
 
     // Gum first: everything else in the kit is worth more against an encased target.
-    if (!skipSpecials && dist < 400 && !aiState.npcGumTargetEncased) {
+    if (!skipSpecials && bound !== 'r' && dist < 400 && !aiState.npcGumTargetEncased) {
       if (this.castAbility('gum-gumball', buildContext(aimX, aimY))) return 'gum-gumball';
     }
 
     // Open up while there is still range to be shot across — swallowing a shot is worth more
     // than swallowing a punch, and the swelling makes it an easier target either way.
-    if (!skipSpecials && dist > 220 && !aiState.npcGumAbsorbArmed && hpRatio < 0.8) {
+    if (!skipSpecials && bound !== 'f' && dist > 220 && !aiState.npcGumAbsorbArmed && hpRatio < 0.8) {
       if (this.castAbility('gum-oozorbtion', buildContext(aimX, aimY))) return 'gum-oozorbtion';
     }
 
     // Ammunition. Out of punching range the click is the throw, so an empty floor is a mute bot.
-    if ((aiState.npcGumBalls ?? 0) < 2) {
+    if (bound !== 'e' && (aiState.npcGumBalls ?? 0) < 2) {
       if (this.castAbility('gum-surge', buildContext(aimX, aimY))) return 'gum-surge';
     }
 
@@ -1020,6 +1376,13 @@ export class NpcOpponent extends Fighter {
     // Mid-drum or mid-fall the kit owns the body; anything pressed now is thrown away.
     if (aiState.npcRadiationBusy) return null;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    // Mastery: the post is played by the kit (it owns the geometry). All this has to do is stop
+    // pressing whichever ability is no longer in that slot.
+    const bound = aiState.npcRadiationMasterySlot;
+    // …and cash the window in when the kit has actually caught somebody. A tethered target is
+    // pinned inside 150px of a spot the bot chose, which is the one state in which the drum, the
+    // baton and the whole tracer chain stop being bets and start being certainties.
+    const held = !!aiState.npcRadiationTethered;
 
     // The flare gun overrides everything. Nothing else is worth a button while it is out.
     if (aiState.npcRadiationFlares) {
@@ -1029,8 +1392,9 @@ export class NpcOpponent extends Fighter {
       return null;
     }
 
-    // The ultimate is only worth drawing where five rounds can actually be placed.
-    if (!skipSpecials && dist < 380) {
+    // The ultimate is only worth drawing where five rounds can actually be placed — and a
+    // tethered body cannot dodge the fifth one, which is the only round that ever misses.
+    if (!skipSpecials && bound !== 'q' && dist < (held ? 520 : 380)) {
       if (this.castAbility('radiation-extermination', buildContext(aimX, aimY))) {
         return 'radiation-extermination';
       }
@@ -1042,19 +1406,22 @@ export class NpcOpponent extends Fighter {
       if (this.castAbility('radiation-xray', buildContext(aimX, aimY))) return 'radiation-xray';
     }
 
-    // The drum wants a target close enough for the blast and the puddles to both matter.
-    if (!skipSpecials && dist < 300) {
+    // The drum wants a target close enough for the blast and the puddles to both matter — and a
+    // chained one cannot walk out of seven pools, so the range it is worth throwing at widens.
+    if (!skipSpecials && bound !== 'f' && dist < (held ? 460 : 300)) {
       if (this.castAbility('radiation-waste', buildContext(aimX, aimY))) return 'radiation-waste';
     }
 
-    // The baton is the finisher, not the opener — held until a dose is already on them.
-    if (dist < 150 && aiState.npcRadiationTargetDosed) {
+    // The baton is the finisher, not the opener — held until a dose is already on them. The
+    // chain plants that dose itself, so a tethered target is always worth the swing.
+    if (bound !== 'e' && dist < 150 && (aiState.npcRadiationTargetDosed || held)) {
       if (this.castAbility('radiation-baton', buildContext(aimX, aimY))) return 'radiation-baton';
     }
 
     // The engine. Held inside the range where the tracer will actually arrive, because the whole
-    // chain this bot is building dies on one stray click.
-    const safeRange = (aiState.npcRadiationTracers ?? 0) > 0 ? 420 : 620;
+    // chain this bot is building dies on one stray click — unless the target is on a chain, in
+    // which case it is not going anywhere and the tracer cannot be walked out of.
+    const safeRange = held ? 700 : (aiState.npcRadiationTracers ?? 0) > 0 ? 420 : 620;
     if (dist < safeRange) {
       if (this.castAbility('radiation-railgun', buildContext(aimX, aimY))) return 'radiation-railgun';
     }
@@ -1070,6 +1437,10 @@ export class NpcOpponent extends Fighter {
    * ceiling: no barrage, no idol and no beam past two-thirds heat, because every one of those is
    * a bill and the punishment costs far more than any of them buys. The beam is released at 0.72
    * heat rather than run to the top, which is exactly the decision a good player makes with it.
+   *
+   * With Bind Mastery's Ritual Sacrifice bound, that ceiling moves: the bot has a way to buy the
+   * bar back down at 25 health a stab, so it is allowed to run to 82 instead of 70. The dagger and
+   * the Pathetic Stab are both played by the kit, not from here — see `npcBindRitualSlot`.
    */
   private doBindAbilities(
     target: Fighter,
@@ -1089,7 +1460,11 @@ export class NpcOpponent extends Fighter {
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
     const anger = aiState.npcBindAnger ?? 0;
     const heat = aiState.npcBindHeat ?? 0;
-    const calm = anger < 70;
+    // Bind Mastery: with the dagger available the bot can *afford* a high bar, because it can pay
+    // one down at 15 a stab. Its ceiling on spending goes up accordingly — 70 is where a bot with
+    // no way out of the bill has to stop, not where the bar becomes dangerous.
+    const ritual = aiState.npcBindRitualSlot;
+    const calm = anger < (ritual ? 82 : 70);
 
     // The ultimate is free of anger entirely — it is paid for in abilities — so it goes first.
     if (!skipSpecials && dist < 620) {
@@ -1097,13 +1472,13 @@ export class NpcOpponent extends Fighter {
     }
 
     // The ward is worth its anger only when there is something left to protect.
-    if (!skipSpecials && hpRatio < 0.55 && (aiState.npcBindWard ?? 0) === 0 && anger < 85) {
+    if (!skipSpecials && ritual !== 'f' && hpRatio < 0.55 && (aiState.npcBindWard ?? 0) === 0 && anger < 85) {
       if (this.castAbility('bind-protection', buildContext(aimX, aimY))) return 'bind-protection';
     }
 
     // An idol is a turret while it is standing on top of you and a bill the moment it is not,
     // so the bot only ever plants one at its own feet — and only while it can afford to be wrong.
-    if (!skipSpecials && calm && (aiState.npcBindIdolFaith ?? -1) < 0 && dist < 420) {
+    if (!skipSpecials && ritual !== 'r' && calm && (aiState.npcBindIdolFaith ?? -1) < 0 && dist < 420) {
       if (this.castAbility('bind-idol', buildContext(this.x, this.y))) return 'bind-idol';
     }
 
@@ -1111,11 +1486,11 @@ export class NpcOpponent extends Fighter {
     // means the press buys a permanent body to stand in front of it instead, and three of those
     // is the difference between an idol that bills and one that pays for itself.
     const cult = aiState.npcBindCult ?? -1;
-    if (!skipSpecials && cult >= 0 && cult < 3 && (aiState.npcBindIdolFaith ?? -1) >= 0) {
+    if (!skipSpecials && ritual !== 'r' && cult >= 0 && cult < 3 && (aiState.npcBindIdolFaith ?? -1) >= 0) {
       if (this.castAbility('bind-idol', buildContext(this.x, this.y))) return 'bind-idol';
     }
 
-    if (!skipSpecials && calm && dist < 560) {
+    if (!skipSpecials && ritual !== 'e' && calm && dist < 560) {
       if (this.castAbility('bind-shards', buildContext(aimX, aimY))) return 'bind-shards';
     }
 
@@ -1155,9 +1530,13 @@ export class NpcOpponent extends Fighter {
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
     const queued = aiState.npcPsychicQueue ?? 0;
     const stress = aiState.npcPsychicStress ?? 0;
+    // Mastery: whichever of R/F/Q Utter Focus was dropped on is not that ability any more. The
+    // kit opens the window on its own schedule, so all the rotation has to do is stop pressing
+    // a key that no longer answers.
+    const taken = aiState.npcPsychicMasterySlot;
 
     // The payout. Three seconds under is the floor worth 30 seconds of cooldown.
-    if (stress >= COMA_WORTH_IT) {
+    if (taken !== 'q' && stress >= COMA_WORTH_IT) {
       if (this.castAbility('psychic-coma', buildContext(aimX, aimY))) return 'psychic-coma';
     }
 
@@ -1168,14 +1547,14 @@ export class NpcOpponent extends Fighter {
 
     // Anything else in the queue is answered by simply not being there when it lands. Held back
     // while healthy, because 1.25 seconds spent invincible at full HP is 1.25 seconds not whipping.
-    if (queued > 0 && hpRatio < 0.8) {
+    if (taken !== 'r' && queued > 0 && hpRatio < 0.8) {
       if (this.castAbility('psychic-dodge-destiny', buildContext(aimX, aimY))) return 'psychic-dodge-destiny';
     }
 
     // The charge. It sits for two and a half seconds before it goes off, so it is thrown where
     // they are going rather than where they are — dead reckoning off their current velocity,
     // led by rather less than the full fuse because nobody walks a straight line for that long.
-    if (!skipSpecials && dist < 480) {
+    if (taken !== 'f' && !skipSpecials && dist < 480) {
       const vel = (target.body as Phaser.Physics.Arcade.Body | null)?.velocity;
       const vx = vel?.x ?? 0;
       const vy = vel?.y ?? 0;
@@ -1244,9 +1623,11 @@ export class NpcOpponent extends Fighter {
       if (this.castAbility('fortune-paywall', buildContext(wx, aimY))) return 'fortune-paywall';
     }
 
-    // Surplus only. Ten coins is a beam and a bit, so anything past that can go to work.
+    // Surplus only. Ten coins is a beam and a bit, so anything past that can go to work. With
+    // Fortune Mastery on, the bank key is the car's and the whole surplus goes to the market.
     if (!skipSpecials && coins > 12) {
-      if (Math.random() < 0.5) {
+      const bank = !aiState.npcFortuneNoBank && Math.random() < 0.5;
+      if (bank) {
         if (this.castAbility('fortune-safe', buildContext(aimX, aimY))) return 'fortune-safe';
       } else if (this.castAbility('fortune-risky', buildContext(aimX, aimY))) return 'fortune-risky';
     }
@@ -1366,23 +1747,31 @@ export class NpcOpponent extends Fighter {
       if (this.castAbility('death-deal', buildContext(aimX, aimY))) return 'death-deal';
     }
 
+    // Whichever slot the mastery took is no longer an ability — the kit presses the delay for
+    // itself out of `updateNpcMastery`, off the same two-second damage window the passive reads.
+    const gone = aiState.npcDeathDelaySlot;
+
     // Taking a leg off is permanent and the dash closes the gap for free, so it outranks
     // everything except the deal — but only twice, because that is all the body has.
-    if (!skipSpecials && (aiState.npcDeathLimbsTaken ?? 0) < 2 && dist < 400) {
+    //
+    // Inside 340, not 400: the dash is clamped to a 340px reach, so a cast from further out is a
+    // guaranteed whiff. It always was, but the limb is now decided by the *pass* landing rather
+    // than at the cast, so a whiff spends the full 15s for nothing at all.
+    if (!skipSpecials && gone !== 'f' && (aiState.npcDeathLimbsTaken ?? 0) < 2 && dist < 340) {
       if (this.castAbility('death-amputate', buildContext(aimX, aimY))) return 'death-amputate';
     }
 
     // A cleave, not a poke: it only exists inside its own arc. The stun is now bought with Styx
     // stacks, so swinging at an unbranded target is worth only the speed boost — still worth
     // something, just not worth committing to, hence the roll.
-    if (!skipSpecials && dist < 120
+    if (!skipSpecials && gone !== 'e' && dist < 120
       && ((aiState.npcDeathTargetStyx ?? 0) > 0 || Math.random() < 0.3)) {
       if (this.castAbility('death-disarm', buildContext(aimX, aimY))) return 'death-disarm';
     }
 
     // Holding a blade out at somebody standing next to you cuts nothing — the ability is for
     // the range they are shooting from.
-    if (!skipSpecials && !aiState.npcDeathGuarding && dist > 210) {
+    if (!skipSpecials && gone !== 'r' && !aiState.npcDeathGuarding && dist > 210) {
       if (this.castAbility('death-riposte', buildContext(aimX, aimY))) return 'death-riposte';
     }
 
@@ -1417,8 +1806,14 @@ export class NpcOpponent extends Fighter {
     void time;
     // Mid-glide the kit is flying the body; casting off it would fight the kit for control.
     if (aiState.npcPaperRiding) return null;
+    // Mastery: in pieces there is nothing to cast with, and the kit is flying every one of them.
+    if (aiState.npcPaperTorn) return null;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
     const book = aiState.npcPaperBook ?? 0;
+    // Mastery: whichever key Restructure was dropped on no longer holds the ability below it.
+    // The tear itself is the kit's decision, not this one — it is spent on a health threshold
+    // and needs a rebuild point, neither of which is visible from out here.
+    const torn = aiState.npcPaperRestructureSlot ?? null;
 
     // The Climax, spent on whichever book's terms make sense. The charge wants the target out in
     // the open, the bombardment wants them anywhere at all, and the spirit is worth casting early
@@ -1432,19 +1827,19 @@ export class NpcOpponent extends Fighter {
 
     // Monsters, but only when there is a field worth having. Cast low as a panic zoning tool too:
     // six mines between you and a pursuer is the cheapest disengage in the kit.
-    if (!skipSpecials && (aiState.npcPaperMaches ?? 0) < 2 && (dist < 260 || hpRatio < 0.5)) {
+    if (torn !== 'f' && !skipSpecials && (aiState.npcPaperMaches ?? 0) < 2 && (dist < 260 || hpRatio < 0.5)) {
       if (this.castAbility('paper-mache', buildContext(aimX, aimY))) return 'paper-mache';
     }
 
     // The shuriken is a straight line, so it wants a gap to cross — and the bleed is worth most
     // against a target that still has health left for 2% of it to mean something.
-    if (!skipSpecials && dist > 150 && dist < 620) {
+    if (torn !== 'r' && !skipSpecials && dist > 150 && dist < 620) {
       if (this.castAbility('paper-shuriken', buildContext(aimX, aimY))) return 'paper-shuriken';
     }
 
     // E is thrown at mid range for the 10 and ridden at long range to close — the kit reads which
     // one was meant off the distance, so there is nothing more to decide here.
-    if (!skipSpecials && dist > 200) {
+    if (torn !== 'e' && !skipSpecials && dist > 200) {
       if (this.castAbility('paper-plane', buildContext(aimX, aimY))) return 'paper-plane';
     }
 
@@ -1546,25 +1941,27 @@ export class NpcOpponent extends Fighter {
     void time;
     void hpRatio;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    // Mastery: whichever key Second Skin was dropped on no longer holds the ability below it.
+    const skin = aiState.npcRuinSkinSlot ?? null;
 
     // Permanent, stacking and never wasted — the first thing off cooldown every time.
-    if ((aiState.npcRuinDecayStacks ?? 0) < 10) {
+    if (skin !== 'q' && (aiState.npcRuinDecayStacks ?? 0) < 10) {
       if (this.castAbility('ruin-decay', buildContext(aimX, aimY))) return 'ruin-decay';
     }
 
     // The ring is worn rather than thrown, so it only ever pays when the target is already
     // close enough that walking out of 122px in two seconds is a real decision.
-    if (!skipSpecials && !aiState.npcRuinRingUp && dist < 170) {
+    if (skin !== 'f' && !skipSpecials && !aiState.npcRuinRingUp && dist < 170) {
       if (this.castAbility('ruin-spikes', buildContext(aimX, aimY))) return 'ruin-spikes';
     }
 
     // The skewer needs room to reach a wall with somebody on it — point blank it beaches
     // itself immediately and the ride is over before it starts.
-    if (!skipSpecials && !aiState.npcRuinSkewerOut && dist > 90 && dist < 520) {
+    if (skin !== 'r' && !skipSpecials && !aiState.npcRuinSkewerOut && dist > 90 && dist < 520) {
       if (this.castAbility('ruin-skewer', buildContext(aimX, aimY))) return 'ruin-skewer';
     }
 
-    if (!skipSpecials && aiState.npcRuinCanLock && dist < 440) {
+    if (skin !== 'e' && !skipSpecials && aiState.npcRuinCanLock && dist < 440) {
       if (this.castAbility('ruin-lockdown', buildContext(aimX, aimY))) return 'ruin-lockdown';
     }
 
@@ -1596,27 +1993,31 @@ export class NpcOpponent extends Fighter {
     if (aiState.npcPassionPosing) return null;
     const love = aiState.npcPassionTargetLove ?? 0;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    // Mastery: whichever key Perfume was bound over no longer has an ability under it. PassionKit
+    // pulls the trigger on the spray itself and steers the bot into the cloud through
+    // `passionCloudPoint`; all that is left here is not casting into an empty slot.
+    const gone = aiState.npcPassionPerfumeSlot;
 
     // Exhibition wants them close enough that walking out of the cone isn't free, and is worth
     // most while there is still bar left to fill.
-    if (!skipSpecials && dist < 460 && love < 0.9) {
+    if (gone !== 'q' && !skipSpecials && dist < 460 && love < 0.9) {
       if (this.castAbility('passion-exhibition', buildContext(aimX, aimY))) return 'passion-exhibition';
     }
 
     // The kiss is the biggest single jump in the kit, but only past the halfway gate.
-    if (!skipSpecials && love >= 0.5 && dist < 300) {
+    if (gone !== 'r' && !skipSpecials && love >= 0.5 && dist < 300) {
       if (this.castAbility('passion-smooch', buildContext(aimX, aimY))) return 'passion-smooch';
     }
 
     // Flirt is pure meter and pays more the further along they already are — spend it on cooldown
     // whenever they are actually inside the cone's reach.
-    if (!skipSpecials && dist < 190) {
+    if (gone !== 'e' && !skipSpecials && dist < 190) {
       if (this.castAbility('passion-flirt', buildContext(aimX, aimY))) return 'passion-flirt';
     }
 
     // The rose is armour first and a projectile second, so it goes out early and the kit
     // decides when to throw it.
-    if (!skipSpecials && !aiState.npcPassionHasRose) {
+    if (gone !== 'f' && !skipSpecials && !aiState.npcPassionHasRose) {
       if (this.castAbility('passion-manipulate', buildContext(aimX, aimY))) return 'passion-manipulate';
     }
 
@@ -1690,6 +2091,10 @@ export class NpcOpponent extends Fighter {
     // stillness it is paying for on nothing.
     if (aiState.npcDepthsFishing) return null;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    // Depths Mastery: the kraken's own press is made kit-side (enhancement ids are not in
+    // `element.abilities`, so there is nothing here for `castAbility` to find). All this
+    // routine has to know is which base ability the bind took away.
+    const kraken = aiState.npcDepthsKrakenSlot;
 
     // Drowning outranks everything — the movement pass is already sprinting for the puddle,
     // and the only thing worth doing on the way is chewing.
@@ -1699,26 +2104,49 @@ export class NpcOpponent extends Fighter {
       return null;
     }
 
+    // ── Mastery synergies, ahead of the ordinary rotation ──
+    // Both of these spend the same key, and the meal comes first: fifty health while hurt is
+    // worth more than a drowning that is about to be interrupted by dying.
+    if (kraken !== 'e' && !skipSpecials) {
+      const meal = aiState.npcDepthsSkeleMeal;
+      if (meal && this.castAbility('depths-lungfish', buildContext(meal.x, meal.y))) {
+        return 'depths-lungfish';
+      }
+      // A body a tentacle is holding cannot dodge the slash, and the slash is what buys the
+      // drown — this is the whole reason the kraken is worth a slot.
+      const held = aiState.npcDepthsKrakenStun;
+      if (held && this.castAbility('depths-lungfish', buildContext(held.x, held.y))) {
+        return 'depths-lungfish';
+      }
+    }
+
     // The shark is an opener when the target is out in the open, and an answer when it isn't.
-    if (!aiState.npcDepthsSharkOut && !skipSpecials && dist < 560 && (hpRatio < 0.7 || dist > 200)) {
+    if (kraken !== 'q' && !aiState.npcDepthsSharkOut && !skipSpecials
+      && dist < 560 && (hpRatio < 0.7 || dist > 200)) {
       if (this.castAbility('depths-megalodon', buildContext(aimX, aimY))) return 'depths-megalodon';
     }
 
     // The whole ability now rides on the slash connecting, so this has to be inside the
     // blade's actual reach (96px of dash plus the dash's own travel) rather than "nearby" —
     // a whiff costs sixteen seconds and starts nothing.
-    if (!skipSpecials && dist < 120) {
+    if (kraken !== 'e' && !skipSpecials && dist < 120) {
       if (this.castAbility('depths-lungfish', buildContext(aimX, aimY))) return 'depths-lungfish';
     }
 
-    // The bloom heals both sides, so it is only ever worth casting from behind.
-    if (!skipSpecials && hpRatio < 0.65) {
+    // The bloom heals both sides, so it is only ever worth casting from behind — unless the
+    // mastery has finished fading the bot out, in which case every orb it walks over becomes a
+    // trap on the way past, and the bloom is worth planting at any health at all.
+    if (kraken !== 'r' && !skipSpecials && (hpRatio < 0.65 || (aiState.npcDepthsCamoed && hpRatio < 0.98))) {
       if (this.castAbility('depths-eutrophication', buildContext(aimX, aimY))) return 'depths-eutrophication';
     }
 
     // Fishing is only affordable out of reach — three seconds standing still inside 250px is
-    // a gift. The kit freezes the body and throws the catch on its own.
-    if (!aiState.npcDepthsHasFish && !skipSpecials && dist > 280 && hpRatio > 0.4) {
+    // a gift. The kit freezes the body and throws the catch on its own, and aims that throw at
+    // its own kraken whenever there is a stump to grow back.
+    // While invisible the line is worth casting from much closer: nothing can aim at the bot at
+    // all, and the two fish on the far side of the fade are the reason to be hidden.
+    const anglerRange = aiState.npcDepthsCamoed ? 140 : 280;
+    if (!aiState.npcDepthsHasFish && !skipSpecials && dist > anglerRange && hpRatio > 0.4) {
       if (this.castAbility('depths-angler', buildContext(aimX, aimY))) return 'depths-angler';
     }
 
@@ -1748,27 +2176,30 @@ export class NpcOpponent extends Fighter {
     void target;
     void time;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    // Mastery: whichever key Masquerade was bound over is no longer that ability. The mask is
+    // put on by IllusionKit rather than decided here — see the note on `npcIllusionMaskSlot`.
+    const masked = aiState.npcIllusionMaskSlot ?? null;
 
     // Twenty seconds of bullets passing through is the answer to being caught, so it is
     // spent on being caught — and while it runs, everything else is just the click.
-    if (!aiState.npcIllusionDancing && !skipSpecials && (hpRatio < 0.45 || dist < 140)) {
+    if (masked !== 'q' && !aiState.npcIllusionDancing && !skipSpecials && (hpRatio < 0.45 || dist < 140)) {
       if (this.castAbility('illusion-dance', buildContext(aimX, aimY))) return 'illusion-dance';
     }
 
     // Relocate is an escape hatch. Mid-dance it is redundant — the dance hops on its own.
-    if (!aiState.npcIllusionDancing && !skipSpecials && dist < 170 && hpRatio < 0.8) {
+    if (masked !== 'r' && !aiState.npcIllusionDancing && !skipSpecials && dist < 170 && hpRatio < 0.8) {
       if (this.castAbility('illusion-relocate', buildContext(aimX, aimY))) return 'illusion-relocate';
     }
 
     // The pane goes up between us, and it is worth most when there is a gap for a shot to
     // cross before it arrives.
-    if (!skipSpecials && !aiState.npcIllusionHasVeil && dist > 170) {
+    if (masked !== 'e' && !skipSpecials && !aiState.npcIllusionHasVeil && dist > 170) {
       if (this.castAbility('illusion-veil', buildContext(aimX, aimY))) return 'illusion-veil';
     }
 
     // The cube is slow, so it wants a target that is neither too far to reach nor already
     // wearing the shape it would apply.
-    if (!skipSpecials && !aiState.npcIllusionTargetFolded && dist < 430) {
+    if (masked !== 'f' && !skipSpecials && !aiState.npcIllusionTargetFolded && dist < 430) {
       if (this.castAbility('illusion-tesseract', buildContext(aimX, aimY))) return 'illusion-tesseract';
     }
 
@@ -1799,6 +2230,10 @@ export class NpcOpponent extends Fighter {
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
     const charge = aiState.npcMagmaChargeTarget;
     const dragon = !!aiState.npcMagmaDragon;
+    // Magma Mastery: the saw is cast by the kit off a private timer (enhancement ids are not in
+    // `element.abilities`, so there is nothing here for `castAbility` to find). All this routine
+    // owes it is the slot it took, and the good sense not to pile casts on top of a live saw.
+    const sawSlot = aiState.npcMagmaSawSlot;
 
     // Hatched: no more investing, just breathing on people.
     if (dragon) {
@@ -1806,19 +2241,21 @@ export class NpcOpponent extends Fighter {
       return null;
     }
 
+    if (aiState.npcMagmaSawOut) return null;
+
     // The egg is the long game and only worth starting when there is time to pay for it.
-    if (!skipSpecials && !aiState.npcMagmaHasEgg && hpRatio > 0.5) {
+    if (!skipSpecials && sawSlot !== 'q' && !aiState.npcMagmaHasEgg && hpRatio > 0.5) {
       if (this.castAbility('magma-dragon-kin', buildContext(this.x, this.y))) return 'magma-dragon-kin';
     }
 
     // A free block is worth having up before it is needed, not after.
-    if (!skipSpecials && !aiState.npcMagmaBloat && (dist < 300 || hpRatio < 0.7)) {
+    if (!skipSpecials && sawSlot !== 'r' && !aiState.npcMagmaBloat && (dist < 300 || hpRatio < 0.7)) {
       if (this.castAbility('magma-bloat', buildContext(aimX, aimY))) return 'magma-bloat';
     }
 
     // Volcanoes go between us: close enough to the player that the lava is in the way, close
     // enough to the AI that its own plumes and its own fist can still reach up and charge it.
-    if (!skipSpecials && (aiState.npcMagmaVolcanoes ?? 0) < 2) {
+    if (!skipSpecials && sawSlot !== 'e' && (aiState.npcMagmaVolcanoes ?? 0) < 2) {
       const toX = aimX - this.x;
       const toY = aimY - this.y;
       const len = Math.hypot(toX, toY) || 1;
@@ -1828,10 +2265,11 @@ export class NpcOpponent extends Fighter {
       if (this.castAbility('magma-volcano', buildContext(vx, vy))) return 'magma-volcano';
     }
 
-    // The fist is the fastest way to fill a vessel, and a decent melee tool when there is
-    // nothing to fill. Either way it wants to be out.
-    if (!skipSpecials && !aiState.npcMagmaFist && (charge || dist < 300)) {
-      if (this.castAbility('magma-fist', buildContext(aimX, aimY))) return 'magma-fist';
+    // The jet is the fastest way to fill a vessel and the only disengage in the kit — and
+    // because it shoves you away from whatever you point it at, both of those are the same
+    // press. It wants to be out whenever there is something in front of it.
+    if (!skipSpecials && sawSlot !== 'f' && !aiState.npcMagmaJet && (charge || dist < 260)) {
+      if (this.castAbility('magma-jet', buildContext(aimX, aimY))) return 'magma-jet';
     }
 
     // Plume: at the vessel if there is one with room in it, otherwise at the player.
@@ -1866,24 +2304,27 @@ export class NpcOpponent extends Fighter {
     if (aiState.npcChalkDrawing || aiState.npcChalkMasterpiece) return null;
 
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    // Chalk Mastery: whichever key Living Chalk was bound over is not this bot's to spend. The
+    // kit casts the enhancement itself off a private timer.
+    const taken = aiState.npcChalkLivingSlot ?? null;
 
     // Eight seconds of untouchable is the answer to losing, so it is spent on losing.
-    if (!skipSpecials && hpRatio < 0.4) {
+    if (!skipSpecials && taken !== 'q' && hpRatio < 0.4) {
       if (this.castAbility('chalk-masterpiece', buildContext(aimX, aimY))) return 'chalk-masterpiece';
     }
 
     // The shield is worth having up whenever something is close enough to be stopped by it.
-    if (!skipSpecials && (aiState.npcChalkShieldHp ?? 0) <= 0 && (dist < 260 || hpRatio < 0.65)) {
+    if (!skipSpecials && taken !== 'f' && (aiState.npcChalkShieldHp ?? 0) <= 0 && (dist < 260 || hpRatio < 0.65)) {
       if (this.castAbility('chalk-shield', buildContext(aimX, aimY))) return 'chalk-shield';
     }
 
     // The blue line is drawn between us, so closing the gap means walking over it.
-    if (!skipSpecials && aiState.npcChalkMayPerma) {
+    if (!skipSpecials && taken !== 'r' && aiState.npcChalkMayPerma) {
       if (this.castAbility('chalk-perma', buildContext(aimX, aimY))) return 'chalk-perma';
     }
 
     // The fuse needs the three seconds it takes to draw and burn, so it wants distance.
-    if (!skipSpecials && dist > 150) {
+    if (!skipSpecials && taken !== 'e' && dist > 150) {
       if (this.castAbility('chalk-explosive', buildContext(aimX, aimY))) return 'chalk-explosive';
     }
 
@@ -3237,6 +3678,14 @@ export class NpcOpponent extends Fighter {
     return null;
   }
 
+  /**
+   * Silence. The kit owns the body for the two moves that matter — the fog-ring stealth
+   * farm and the invisible slide into a backstab (SilenceKit.updateNpcMirrorAI) — so
+   * everything here is about what to *press*, in priority order: become the Striker the
+   * moment terror allows it, keep the stalker network alive, and only fight loudly
+   * while visible. While invisible every special is held, because noise is the one
+   * thing an ambush cannot afford.
+   */
   private doSilenceAbilities(
     _target: Fighter,
     buildContext: (tX: number, tY: number) => CastContext,
@@ -3251,20 +3700,60 @@ export class NpcOpponent extends Fighter {
     const stalkers = aiState.npcSilenceStalkers ?? 0;
     const invisible = aiState.npcSilenceInvisible ?? false;
 
+    // ── The Striker ──
+    // Twenty seconds of borrowed monster: the form defers all incoming damage, so the
+    // only wrong move is shyness. Slash on top of the target, Boggle (E) for the
+    // orbiting eyes mid-range, Allure (R) to pull a distant target into reach.
+    if (aiState.npcSilenceStriker) {
+      if (dist < 95) {
+        if (this.castAbility('silence-stab', buildContext(aimX, aimY))) return 'silence-stab';
+      }
+      if (!skipSpecials && dist < 280) {
+        if (this.castAbility('silence-watch', buildContext(aimX, aimY))) return 'silence-watch';
+      }
+      if (!skipSpecials && dist > 200) {
+        if (this.castAbility('silence-ritual', buildContext(aimX, aimY))) return 'silence-ritual';
+      }
+      return null;
+    }
+
+    // ── Night Terror ──
+    // A full bar is the whole element's payoff: ritual *yourself* and transform. Cast
+    // at its own feet — doRitual reads a self-target as the transformation.
+    if (aiState.npcSilenceTerrorFull) {
+      if (this.castAbility('silence-ritual', buildContext(this.x, this.y))) return 'silence-ritual';
+    }
+
     if (!skipSpecials) {
+      // ── Synergies first (see the NpcAiState synergy contract) ──
       // Convert a matured stalker into a grabber the moment Ritual comes up.
       const mature = aiState.npcSilenceMatureStalker;
       if (mature) {
         if (this.castAbility('silence-ritual', buildContext(mature.x, mature.y))) return 'silence-ritual';
       }
 
-      // Keep the stalker network up — drop them along the fog border.
+      // Click+ Sacrifice: dash-stab THROUGH its own stalker while the player stands
+      // beside it — the lane detonates the watcher and the scream silences them,
+      // which is also what feeds the terror bar.
+      const sac = aiState.npcSilenceSacrificeStab;
+      if (sac && !invisible) {
+        if (this.castAbility('silence-stab', buildContext(sac.x, sac.y))) return 'silence-stab';
+      }
+
+      // E+ Mutant: with the network full, re-cast Watch onto its youngest watcher to
+      // grow a seeker. The kit only offers this while ritual fodder remains.
+      const mut = aiState.npcSilenceMutateWatcher;
+      if (mut && Math.random() < 0.35) {
+        if (this.castAbility('silence-watch', buildContext(mut.x, mut.y))) return 'silence-watch';
+      }
+
+      // Keep the stalker network up — drop them along the fog border. Placement uses
+      // the physics bounds (the arena), not the render surface.
       if (stalkers < 3 && Math.random() < 0.5) {
-        const W = this.scene.scale.width;
-        const H = this.scene.scale.height;
+        const wb = this.scene.physics.world.bounds;
         const edge = Phaser.Math.Between(0, 3);
-        const sx = edge === 2 ? 55 : edge === 3 ? W - 55 : Phaser.Math.Between(40, W - 40);
-        const sy = edge === 0 ? 55 : edge === 1 ? H - 55 : Phaser.Math.Between(40, H - 40);
+        const sx = edge === 2 ? wb.x + 24 : edge === 3 ? wb.right - 24 : Phaser.Math.Between(wb.x + 10, wb.right - 10);
+        const sy = edge === 0 ? wb.y + 24 : edge === 1 ? wb.bottom - 24 : Phaser.Math.Between(wb.y + 10, wb.bottom - 10);
         if (this.castAbility('silence-watch', buildContext(sx, sy))) return 'silence-watch';
       }
 

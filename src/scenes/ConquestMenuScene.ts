@@ -115,6 +115,39 @@ export class ConquestMenuScene extends Phaser.Scene {
       this.push(btn.container);
     }
 
+    // The market's buttons. Same place as the link and for the same reason — none of them is a
+    // tier, so none of them belongs in a column — but there can be several, so they share a row.
+    if (model.actions.length) {
+      const lay2 = LAYOUT[model.paths.length === 3 ? 3 : 2];
+      const gap = 10;
+      const w = Math.min(230, (lay2.modalW - 60) / model.actions.length - gap);
+      const span = (w + gap) * (model.actions.length - 1);
+      model.actions.forEach((action, i) => {
+        const btn = addButton(this, {
+          x: cx - span / 2 + i * (w + gap), y: cy + 150, w, h: 34,
+          label: action.label, icon: action.icon,
+          trailing: action.blocked ?? undefined,
+          trailingColor: T.bad,
+          accent: action.active ? C.gold : model.color,
+          variant: action.active ? 'solid' : 'quiet',
+          fontSize: 11, depth: DEPTH.modalContent,
+          disabled: !!action.blocked,
+          onClick: () => {
+            if (!this.host.runAction(action.id)) return;
+            this.render(this.scale.width / 2, this.scale.height / 2);
+          },
+        });
+        this.push(btn.container);
+      });
+    }
+
+    // What the stall is currently holding, and what is currently running on it.
+    if (model.status) {
+      this.push(this.add.text(cx, cy + 174, model.status, {
+        fontSize: '11px', fontFamily: FONT_MONO, color: T.gold, letterSpacing: 1,
+      }).setOrigin(0.5).setDepth(DEPTH.modalContent));
+    }
+
     // The rule, stated where it can still be acted on rather than discovered.
     this.push(this.add.text(cx, cy + 186,
       'One path only past tier 2 — committing to a third tier caps the others.', {

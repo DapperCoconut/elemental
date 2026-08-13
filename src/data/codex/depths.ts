@@ -3,9 +3,9 @@ import { ElementCodex } from '../AbilityCodex';
 /**
  * Depths — the element that wins by making you go somewhere.
  *
- * Verified against `src/elements/depths.ts`, `kits/DepthsKit.ts` and the five shop upgrades in
- * `data/Upgrades.ts`. Depths has no perks and no mastery enhancements; every figure below is a
- * constant at the top of the kit.
+ * Verified against `src/elements/depths.ts`, `kits/DepthsKit.ts`, the five shop upgrades in
+ * `data/Upgrades.ts` and the two mastery enhancements in `data/Mastery.ts`. Depths has no
+ * perks; every figure below is a constant at the top of the kit.
  */
 const depths: ElementCodex = {
   identity:
@@ -23,13 +23,13 @@ const depths: ElementCodex = {
     {
       emoji: '🎣',
       name: 'The Anglerfish',
-      magic:
-        'Stop moving and you start disappearing. The body fades into the water over a second and '
-        + 'a half, the health bar goes with it once you are most of the way gone, and a soft '
-        + 'green orb on a barely-visible thread hangs in the water between you and whoever you '
-        + 'are fighting, with a column of bubbles rising off it. It is painted with the same '
-        + 'painter Eutrophication uses. There is no way to tell it from a heal by looking, which '
-        + 'is the entire point of it.',
+      basics:
+        'Standing still — under 14 px/s — for 450ms starts a 1.4-second fade to fully invisible, with '
+        + 'the health bar hidden past 85%, and moving brings you back in 220ms. A lure orb hangs 56px '
+        + 'from you on the side the nearest enemy is coming from, brightening as you fade, and pays out '
+        + 'to anything that comes within 44px of it. It is placed in front rather than on top of you '
+        + 'specifically so a biter ends up beside you rather than inside you. After a bite the lure '
+        + 'cannot come back for 1.6 seconds, so one long stand is not infinite value.',
       effects: [
         { tag: 'utility', label: 'Going under', detail: 'Standing still — under 14 px/s — for 450ms starts a 1.4s fade. Moving brings you back in 220ms.' },
         { tag: 'utility', label: 'What vanishes', detail: 'Your sprite fades all the way to invisible, and past 85% faded the health bar is hidden too. A green bar floating over nothing would give the whole thing away.' },
@@ -46,11 +46,11 @@ const depths: ElementCodex = {
     {
       emoji: '🩸',
       name: 'Feeding Frenzy',
-      magic:
-        'Something takes the bait, there is a wet snap of teeth where the orb was, a red ❗ over '
-        + 'the biter, and you are back — fully visible, moving fast, and holding the only real '
-        + 'burst this element owns. It lasts one second. Everything Depths does is arranged '
-        + 'around being ready to spend it.',
+      basics:
+        'The moment anything touches the lure you get a one-second window: ×1.5 move speed, multiplied '
+        + 'against any chill or drag already on you, and a Lungfish Strike cast inside it deals 30 '
+        + 'instead of 15 — the same cast, so it still starts the drowning. The fade drops to zero on the '
+        + 'bite, so you are visible and the bar is back before the window opens.',
       effects: [
         { tag: 'buff', label: 'The window', detail: '1 second, starting the frame anything touches the lure.' },
         { tag: 'movement', label: 'The speed', detail: '×1.5 move speed for the whole second, multiplied against any chill or drag already on you.' },
@@ -66,11 +66,14 @@ const depths: ElementCodex = {
 
   abilities: {
     'depths-piranha': {
-      magic:
-        'A single small red-bellied fish is thrown out of your hand and swims at whatever you '
-        + 'pointed at, wiggling as it goes. It does no damage at all when it arrives. What it '
-        + 'does is *stay* — it clamps onto the body, orbits it nose-in, and chews, and the '
-        + 'ability is entirely a matter of how many of them you can get on at once.',
+      basics:
+        'One piranha a press, swimming at 640 px/s for 1.7 seconds and landing on the first body within '
+        + '24px. It deals nothing on arrival — a piranha that lands and is immediately shaken has done '
+        + 'nothing at all — and instead chews for 3 HP a second for 3 seconds, billed once per victim as '
+        + 'a single figure rather than per fish so five read as one number on the health bar. Five is the '
+        + 'cap on one body, and a sixth refreshes the timer on the oldest already there and takes '
+        + 'ownership of it. A victim whose last piranha falls off mid-second drops the fraction. 1.2s '
+        + 'cooldown.',
       cast: 'Click, one per press. 1.2s cooldown.',
       effects: [
         { tag: 'utility', label: 'The swim', detail: '640 px/s, alive for 1.7 seconds, landing on the first body within 24px of it.' },
@@ -80,10 +83,11 @@ const depths: ElementCodex = {
         { tag: 'utility', label: 'Part-ticks are lost', detail: 'A victim whose last piranha falls off mid-second drops the fraction rather than banking it for the next school.' },
       ],
       upgrade: {
-        magic:
-          'Swarm Tactics is about weight of numbers. Every piranha swims and chews half again as '
-          + 'long, so a school can be assembled from further out and holds together for longer — '
-          + 'and once there are enough of them on one body, they stop being a nuisance.',
+        basics:
+          'Flight goes from 1.7s to 2.55s and the chew from 3s to 4.5s, so one piranha is 13 damage '
+          + 'rather than 9. Three or more on one body makes every piranha on it bite for 6 a second instead '
+          + 'of 3 — 18 a second at three, 30 at a full five — and a full school of 5 drags them 20% slower '
+          + 'for 5 seconds, refreshed while the school stays full, printing 🐟 SWARMED the first time.',
         effects: [
           { tag: 'dot', label: 'Longer', detail: 'Flight goes from 1.7s to 2.55s and the chew from 3s to 4.5s — so one piranha is 13 damage rather than 9.', requiresUpgrade: 'click' },
           { tag: 'dot', label: 'Three is the threshold', detail: 'With 3 or more on one body every piranha on it bites for 6 a second instead of 3. Three is 18 a second; a full five is 30.', requiresUpgrade: 'click' },
@@ -98,12 +102,16 @@ const depths: ElementCodex = {
     },
 
     'depths-lungfish': {
-      magic:
-        'A short hard dash forward with a cyan arc of teeth thrown out in front of it. The dash '
-        + 'and the cut are the small half of this ability. The large half is what happens to '
-        + 'whoever it reaches: the water closes over their head, a bar of air appears above them, '
-        + 'and a black pool opens up on the far side of the arena. They have five seconds of '
-        + 'breath and a very long walk.',
+      basics:
+        'A 122px dash at 720 px/s over 170ms straight at the cursor, applied after movement resolves so '
+        + 'WASD cannot cancel it, slashing everything within 44px of a 96px line for 15 damage — or 30 if '
+        + 'a lure bite is still inside its one-second window. The nearest body the blade reached starts '
+        + 'drowning: 5 seconds of air, then 12 HP a second until they reach the pool, with the whole '
+        + 'thing running 12 seconds before they surface whatever happened. The air pocket is a 48px black '
+        + 'puddle at the mirror of their position across the arena, sent to the far corner instead if '
+        + 'that would land within 280px of them, because a step is not a run. Touching it refills the bar '
+        + 'to 100% outright and resets the tick, as many times as they can get back to it. A miss pays '
+        + 'nothing — no damage, no drowning, 🫧 MISSED, and the full 16 seconds gone.',
       cast: 'E, aimed at the cursor. The dash is applied after movement resolves, so WASD cannot cancel it. 16s cooldown, spent whether or not the blade found anything.',
       effects: [
         { tag: 'movement', label: 'The dash', detail: '720 px/s for 170ms — about 122px — straight at the cursor.' },
@@ -114,11 +122,13 @@ const depths: ElementCodex = {
         { tag: 'cost', label: 'A miss pays nothing', detail: 'No damage, no drowning, 🫧 MISSED, and the full 16 seconds are gone.' },
       ],
       upgrade: {
-        magic:
-          'Knock the Breath Out connects the rest of the kit to the drowning. Every point of '
-          + 'damage that lands on somebody with air still in their lungs takes some of it, so a '
-          + 'school of piranhas or a thrown sword fish is no longer just damage — it is time off '
-          + 'the clock they are running against.',
+        basics:
+          'Damage now costs air: 0.6% of the oxygen bar per point, from any source, so a 50-damage sword '
+          + 'fish is 30% of the bar, a 12-point algae trap is 7% and a piranha\'s 3 a second is about 2% a '
+          + 'second. It is charged by the size of the hit rather than flat, so a piranha costs a sip and an '
+          + 'ultimate costs a third of the bar, and it does nothing once the bar is already empty — which '
+          + 'is also why the drown\'s own 12 a second cannot feed itself. 💨 WINDED shows only for hits '
+          + 'worth 5% of the bar or more, otherwise a school of piranhas would bury the screen.',
         effects: [
           { tag: 'debuff', label: 'The rate', detail: '0.6% of the oxygen bar per point of damage, from any source. A 50-damage sword fish is 30% of the bar; a 12-point algae trap is 7%; a piranha\'s 3-a-second is about 2% a second.', requiresUpgrade: 'e' },
           { tag: 'utility', label: 'Per point, not per hit', detail: 'Deliberately charged by the size of the hit rather than flat, so a piranha costs a sip and an ultimate costs a third of the bar.', requiresUpgrade: 'e' },
@@ -134,11 +144,12 @@ const depths: ElementCodex = {
     },
 
     'depths-eutrophication': {
-      magic:
-        'A ring of green goes out from you and twelve algae orbs bloom across the whole arena, '
-        + 'spaced out rather than piled up. They are real, they are honest, and they are open to '
-        + 'everybody. It is the only ability in this element that helps the person it is aimed '
-        + 'at, and it is in the kit because a Depths player needs somewhere to be standing still.',
+      basics:
+        'Scatters 12 orbs across the whole playable area — not at the cursor — each healing 12 to '
+        + 'whoever gets there first, with no owner check at all: you, them, an ally or an Invasion husk. '
+        + 'They are 28px pickups alive for 25 seconds, placed with ten attempts each at staying 80px '
+        + 'clear of the others, and a fighter at maximum health walks straight over one and leaves it '
+        + 'standing. 20s cooldown.',
       cast: 'R. Instant, no aim — the bloom is placed across the arena, not at the cursor. 20s cooldown.',
       effects: [
         { tag: 'heal', label: 'The orbs', detail: '12 of them, healing 12 each to whoever gets there first — you, them, an ally or an Invasion husk. There is no owner check.' },
@@ -146,11 +157,15 @@ const depths: ElementCodex = {
         { tag: 'utility', label: 'Full health does not consume one', detail: 'A fighter at maximum health walks straight over a green orb and leaves it standing.' },
       ],
       upgrade: {
-        magic:
-          'Algae Trap doubles the bloom and poisons half of it. Twelve more orbs come up, '
-          + 'alternating with the real ones so the fake half gets exactly the same quality of '
-          + 'placement — and on your screen, and only on your screen, those twelve are red. '
-          + 'Everybody else in the match, the bot included, is looking at a field of heals.',
+        basics:
+          'Twelve poisoned orbs are interleaved with the healing ones — 24 on the floor in total — each '
+          + 'dealing 18 damage to whoever touches one and then gone. Red is a view rather than a property: '
+          + 'the orb is only painted red for the side that planted it, so an online opponent\'s trap arrives '
+          + 'on your screen as an ordinary green heal, which is the whole ability. There is no owner check '
+          + 'on a red orb either, so walking into your own costs you the same 18, and unlike a green orb it '
+          + 'does not care what your health is. The poisoned half is interleaved rather than appended, so a '
+          + 'trap that always landed in the leftover corners is not something an opponent can learn to '
+          + 'read.',
         effects: [
           { tag: 'damage', label: 'The poison', detail: '18 damage to whoever touches one, and then it is gone like a real orb. 12 of them, for 24 orbs on the floor in total.', requiresUpgrade: 'r' },
           { tag: 'utility', label: 'Red is a view, not a property', detail: 'The orb is only painted red for the side that planted it. An online opponent\'s trap arrives on your screen as an ordinary green heal, which is the whole ability.', requiresUpgrade: 'r' },
@@ -166,12 +181,13 @@ const depths: ElementCodex = {
     },
 
     'depths-angler': {
-      magic:
-        'A line goes out and you have to stand there. Three seconds of not moving and something '
-        + 'comes up out of the water and clamps in your jaw — one of five, and you do not get to '
-        + 'choose which. Press F again and you throw it. Every one of the five is a completely '
-        + 'different weapon, which is why this is the only key in the game whose value is decided '
-        + 'by a dice roll after you have already paid for it.',
+      basics:
+        'Casts a line and waits 3 seconds, counted down only on the frames you are actually standing '
+        + 'still — walking pauses the line rather than cancelling it — and every instance of damage you '
+        + 'take while it is out adds a full second, with a 🎣 +1s to say so. F again throws the catch at '
+        + 'the cursor as a recast rather than a second cast, so it does not touch the cooldown. The '
+        + 'ability bar shows the line coming in rather than a cooldown, and sits full while a catch is in '
+        + 'your jaw. 10s cooldown.',
       cast: 'F to cast out, F again to throw the catch at the cursor. The throw is a recast rather than a second cast, so it does not touch the cooldown. 10s cooldown.',
       effects: [
         { tag: 'utility', label: 'The wait', detail: '3 seconds, counted down only on the frames you are actually standing still. Walking does not cancel the line, it pauses it.' },
@@ -189,11 +205,11 @@ const depths: ElementCodex = {
         ],
       },
       upgrade: {
-        magic:
-          'Deep Fishing gives you something to do with a fish you did not want. Hold F on a catch '
-          + 'instead of tapping it and the fish goes on the hook as bait rather than at the enemy '
-          + '— and the next thing that comes up the line is off a completely different table, '
-          + 'from the bottom.',
+        basics:
+          'Holding F for half a second on a landed catch gives it up as bait — and because a tap still '
+          + 'throws, the throw moves to the key release, so there is no way on the press to know which of '
+          + 'the two it will be. The bait is spent by the next catch, which is drawn from the rare table '
+          + 'instead of the common one. The wait, the cooldown and the standing-still are all unchanged.',
         effects: [
           { tag: 'utility', label: 'The trade', detail: 'Hold F for 0.5s on a landed catch to give it up. The tap still throws, so the throw moves to the key release — there is no way on the press to know which of the two it will be.', requiresUpgrade: 'f' },
           { tag: 'utility', label: 'One bait, one rare', detail: 'The bait is spent by the next catch, which is drawn from the rare table instead of the common one. The wait, the cooldown and the standing-still are all unchanged.', requiresUpgrade: 'f' },
@@ -207,13 +223,15 @@ const depths: ElementCodex = {
     },
 
     'depths-megalodon': {
-      magic:
-        'The floor behind you opens and a two-hundred-pixel shark comes up out of it at speed, '
-        + 'along exactly the line you were pointing. It surfaces *behind* you so it sweeps '
-        + 'through where you are standing, and its mouth leads its body by most of a body length. '
-        + 'Anything that mouth passes over goes in. It carries them to the wall, beaches itself, '
-        + 'turns to face the room, and holds them there in its teeth for eight seconds before '
-        + 'spitting them into the middle of the arena.',
+      basics:
+        'Sends a shark from 150px behind you at 780 px/s along your aim until its mouth leaves the '
+        + 'arena, swallowing anything within 62px of the mouth — which runs 88px ahead of its centre — '
+        + 'with no limit on how many. Everything held takes 8 HP a second for 8 seconds with their bodies '
+        + 'written to the mouth position every frame, so they do not get to walk out, and all of them are '
+        + 'dropped in the dead centre of the arena at a random 26px offset when the time is up. A shark '
+        + 'that caught nobody still beaches, but holds for only 1.4 seconds, just long enough to be seen '
+        + 'leaving. The ability bar shows the shark\'s eight seconds rather than the cooldown. One per '
+        + 'side. 50s cooldown.',
       cast: 'Q, ultimate, aimed at the cursor. 50s cooldown. One shark per side at a time — a second would only steal the first one\'s mouthful.',
       effects: [
         { tag: 'control', label: 'The swallow', detail: 'Anything within 62px of the mouth as it passes is taken, and there is no limit on how many. The mouth runs 88px ahead of the shark\'s centre.' },
@@ -224,11 +242,13 @@ const depths: ElementCodex = {
         { tag: 'utility', label: 'The bar', detail: 'The ability bar shows the shark\'s eight seconds rather than the cooldown for as long as one is out.' },
       ],
       upgrade: {
-        magic:
-          'Command the Depths gives the beached shark a steering wheel. Instead of sitting where '
-          + 'it landed it follows your cursor around the arena with somebody in its jaws — and '
-          + 'every algae orb it drives over, yours or theirs, green or red, is ground straight '
-          + 'into whoever is inside it.',
+        basics:
+          'The shark steers: 120 px/s toward the cursor for the whole eight seconds, clamped 40px inside '
+          + 'the walls, turning to face where it is going. And it grinds — 30 damage per orb it eats to '
+          + 'every fighter in its mouth, taking any orb within 62px and destroying it. Colour is irrelevant '
+          + 'because the damage is the grinding rather than the algae, so your own healing bloom is '
+          + 'ammunition: with a full 24-orb Algae Trap on the floor that is a theoretical 720 damage on one '
+          + 'held body.',
         effects: [
           { tag: 'movement', label: 'The steering', detail: '120 px/s toward the cursor for the whole eight seconds, clamped 40px inside the walls, and it turns to face where it is going.', requiresUpgrade: 'q' },
           { tag: 'damage', label: 'The grinding', detail: '30 damage per orb to every fighter in the mouth. Colour is irrelevant — the damage is the grinding, not the algae — so your own healing bloom is ammunition.', requiresUpgrade: 'q' },
@@ -240,6 +260,90 @@ const depths: ElementCodex = {
         'The shark reverses its facing when it beaches, which is what keeps a held fighter inside the arena rather than through the wall it just hit.',
         'Being spat into the centre is often a favour to the victim in a 1v1 and a disaster for them in Invasion, where the centre is where everything else already is.',
         'Anything that dies inside the mouth is quietly dropped from the hold, so the shark never carries a corpse.',
+      ],
+    },
+  },
+
+  mastery: {
+    'camo-fade': {
+      basics:
+        'A second fade that rises to full over 6 seconds and runs whether you are moving, dashing or '
+        + 'standing, independent of the Anglerfish fade — whichever has taken more of you is what is '
+        + 'painted. At full it takes your sprite to zero alpha, hides the health bar past 85%, and '
+        + 'suppresses every effect this kit draws at the source, though damage numbers and hit flashes '
+        + 'belong to the arena and still appear on whoever you hit. Bots cannot fight it: a fully faded '
+        + 'angler is fed to the AI as an invisible target, so it stops its rotation entirely and ambles '
+        + 'at 80% speed in random 0.6–1.2s bursts. Any single hit worth more than 5 damage in one frame '
+        + 'resets the whole 6 seconds, while chip damage never does — a piranha billing 3 a second, a '
+        + '2-point burn tick or a barb will not strip it. The Anglerfish lure is refused while the '
+        + 'camouflage is complete, because one is a light and the other is the absence of one. An algae '
+        + 'orb you walk into while hidden still heals you 12 but is not consumed: it turns poisoned, red '
+        + 'on your screen only, and stays on the floor with a fresh 25 seconds, refusing to feed you '
+        + 'again for 4 seconds. And a line that lands while hidden pulls from a longer table — the '
+        + 'lionfish joins the five common catches and the skele-fish the five rare ones, neither of which '
+        + 'exists at all for an angler who can be seen.',
+      cast: 'Always on with Depths Mastery. Six seconds of not being hit for more than 5 by any one thing.',
+      effects: [
+        { tag: 'utility', label: 'The fade', detail: 'Rises to full over 6 seconds and runs whether you are moving, dashing or standing. Independent of the Anglerfish fade — whichever has taken more of you is what is painted.' },
+        { tag: 'utility', label: 'What is hidden', detail: 'Sprite alpha to 0, health bar off past 85%, and past the top of the fade every effect this kit draws is suppressed at the source. Damage numbers and hit flashes are the arena\'s, not the element\'s, and still appear on whoever you hit.' },
+        { tag: 'buff', label: 'Bots cannot fight you', detail: 'A fully faded angler is fed to the AI as an invisible target: it stops its rotation entirely and ambles at 80% speed in random 0.6–1.2s bursts, exactly as it does against Silence stealth.' },
+        { tag: 'cost', label: 'What breaks it', detail: 'Any single hit worth more than 5 damage in one frame resets the whole 6 seconds. Chip damage does not — a piranha billing 3 a second, a 2-point burn tick or a barb will never strip it.' },
+        { tag: 'utility', label: 'The lure goes out', detail: 'The Anglerfish orb is refused while the camouflage is complete. The two passives are exclusive at the top end: one is a light, the other is the absence of one.' },
+        { tag: 'summon', label: 'Spoiled blooms', detail: 'An algae orb you walk into while hidden still heals you 12, but is not consumed — it turns poisoned (18 damage, red on your screen only) and stays on the floor with a fresh 25s life. It refuses to feed you again for 4 seconds so you are not standing in your own trap.' },
+        { tag: 'utility', label: 'Two more fish', detail: 'A line that lands while you are hidden pulls from a longer table: the lionfish joins the five common catches, and the skele-fish joins the five rare ones. Neither exists at all for an angler who can be seen.' },
+      ],
+      variants: {
+        label: 'The two catches only a hidden angler ever lands',
+        variants: [
+          {
+            emoji: '🦂',
+            name: 'Lionfish — common catch, no bait needed',
+            description: 'It is not thrown: the fish comes apart where you stand and sheds 15 poison barbs, which drift out of the burst and then hang in the water for 7 seconds. Each one is 2 damage, 3 HP/s of poison for 5 seconds, and 15% off everything the victim deals for 5 seconds. Fifteen of them is a field you have made expensive to walk into rather than a shot you have to land.',
+          },
+          {
+            emoji: '💀',
+            name: 'Skele-Fish — rare catch, needs bait',
+            description: 'Thrown, it gets up: 50 health, 12 seconds, 270 px/s, homing on whoever is nearest and biting for 15 once a second. Only enemy projectiles can put damage into it — melee, auras and area damage pass straight through a set of bones — and a Lungfish Strike that passes over one of your own eats it for 50 health, with the strike still running in full so the drowning is not given up for the meal.',
+            requiresUpgrade: 'f',
+          },
+        ],
+      },
+      notes: [
+        'The threshold is what makes this a real passive rather than a coin flip. Every element in the game does chip damage; almost none of them can put 6 points into one frame at range without committing to something. The counterplay is "land something", not "touch them".',
+        'Being hidden and standing still are two different things, and the two fades stack in the sense that they cannot uncover you: an angler who is camouflaged and then stops moving is not somehow more visible for it.',
+        'A spoiled bloom is the only trap in the element you get for free. Eutrophication\'s own red half needs the R+ upgrade bought; this one only needs you to be invisible when you walk over a green one, including one the enemy planted.',
+        'The bot half is real. A Nightmare Depths bot fades exactly as you do, walks its own bloom to poison it, and casts its line from far closer once it is gone — and its avatar shows the mastered rig the whole time, which is your only warning.',
+        'The water still makes a noise. Sound is deliberately not suppressed: an opponent who is listening can hear the splash of a line being cast, which is the one tell left.',
+      ],
+    },
+    'release-the-kraken': {
+      basics:
+        'A bindable kraken planted at the cursor, clamped 40px inside the walls, standing 25 seconds '
+        + 'and never moving; casting again while one is out replaces it. Each of its three arms takes the '
+        + 'first enemy within 132px of the mantle and holds them for 2 seconds with velocity pinned to '
+        + 'zero and unable to act — the same hard stun Earth\'s pillars apply. An arm will not take a body '
+        + 'another arm already has, so the hold is never more than 2 seconds at once, but all three in '
+        + 'sequence is up to 6 seconds of somebody standing still. An arm that has had its turn is spent '
+        + 'and stays a stump, and a kraken with nothing left is a beak that watches — unless you feed it: '
+        + 'throwing any fish at it, resolved as a feed inside 76px of the beak, grows every stump back at '
+        + 'once, and every catch counts including the catfish, the lionfish and the skele-fish, none of '
+        + 'which fly. Anything Unstoppable is ignored entirely, and a body already held elsewhere is '
+        + 'skipped rather than fought over. Bindable to E, R or Q, never F. 35s cooldown.',
+      cast: 'The bound key (E, R or Q — never F). Placed at the cursor, clamped 40px inside the walls. 35 second cooldown; the ability card shows the kraken\'s own 25 seconds first and the cooldown afterwards.',
+      effects: [
+        { tag: 'summon', label: 'The kraken', detail: 'One per side, at the cursor, for 25 seconds. Casting again while one is out replaces it. It never moves.' },
+        { tag: 'control', label: 'The grab', detail: 'An arm takes the first enemy within 132px of the mantle and holds them for 2 seconds — velocity pinned to zero and unable to act, the same hard stun Earth\'s pillars apply.' },
+        { tag: 'control', label: 'One grip at a time', detail: 'An arm will not take a body another arm already has, so the hold is never more than 2 seconds at once. As each arm lets go the next may take its turn, so all three in sequence is up to 6 seconds of somebody standing still.' },
+        { tag: 'resource', label: 'Three arms, then stumps', detail: 'An arm that has had its turn is spent, and stays a stump. A kraken with nothing left is a beak that watches.' },
+        { tag: 'resource', label: 'Feeding it', detail: 'Throw any fish at the kraken instead of at them — the throw resolves as a feed inside 76px of the beak — and every stump grows back at once. Every catch counts, including the catfish, the lionfish and the skele-fish, none of which fly.' },
+        { tag: 'utility', label: 'What it will not take', detail: 'Anything Unstoppable is ignored entirely, and a body already held elsewhere is skipped rather than fought over.' },
+      ],
+      notes: [
+        'The arms are the ability and the fish are its upkeep, which is why this cannot be bound over F. Six seconds of stun once every 35 is a fair rate; six seconds every 35 *plus* every time you land a catch is what the loadout is actually for.',
+        'Two seconds is exactly long enough to walk a Lungfish Strike into somebody, and the strike is the only thing in the element that starts a drowning. That is the combination the kraken exists to buy, and the bot plays it deliberately.',
+        'It does not drag. A grabbed fighter stays where the arm found them, which means the kraken never posts anybody through a wall and never rescues them out of a hazard they were already standing in.',
+        'Placement is the whole skill. It cannot follow, so a kraken dropped where they are is worth nothing by the time it surfaces — drop it where they are going, or on the air pocket a drowning enemy has to run to.',
+        'Spikes of Ruin razes it like any other structure, along with any skele-fish caught in the ring. Everything else Depths puts on the water — barbs, algae, fish in flight, the Megalodon — is a hazard rather than a building, and survives.',
       ],
     },
   },

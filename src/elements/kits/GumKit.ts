@@ -6,8 +6,8 @@ import { CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
 import { Sfx } from '../../audio';
 import {
-  GUM, GumAvatar, GumColorFn, GumFx, bloatShell, drips, gripSplat, gumBubble, gumShell,
-  oozeBlob, slimeBeacon, slimePuddle, slimeShard, zipLine,
+  GUM, GumAvatar, GumColorFn, GumFx, bloatShell, drips, gripSplat, gumBubble, gumShell, gummyArm,
+  oobleckSlab, oozeBlob, slimeBeacon, slimeling, slimePuddle, slimeShard, zipLine,
 } from './GumVisuals';
 
 type Owner = 'player' | 'npc';
@@ -142,6 +142,40 @@ const BEACON_MAX_ACTIVE_MS = 6000;
 const BEACON_HEAL_RATE = 8;
 const BEACON_SLOW_MULT = 0.5;
 
+// ── Slime Split (mastery passive) ────────────────────────────────────────────
+const SPLIT_COUNT = 3;
+const SPLIT_HP = 50;
+/** The whole pool a split body fights on. Splitting is a second life, not a heal. */
+const SPLIT_POOL = SPLIT_COUNT * SPLIT_HP;
+/** Hitbox and sprite while split. The cluster is genuinely a smaller target. */
+const SPLIT_SIZE = 0.56;
+/** The rig the lead slimeling is drawn at. */
+const SPLIT_RIG = 0.62;
+const LING_R = 12;
+/** How far the two satellites orbit the body the physics is attached to. */
+const LING_ORBIT = 42;
+const LING_SPRING = 7.5;
+const LING_ABSORB_R = 30;
+
+// ── Oobleck (mastery bindable) ───────────────────────────────────────────────
+const OOBLECK_COOLDOWN_MS = 16000;
+/** How long a slab that has been set down lasts. A carried one never ages. */
+const OOBLECK_MS = 22000;
+/** The long side — the one that faces you while it is held. */
+const SLAB_LEN = 132;
+const SLAB_THICK = 26;
+/** Shots it can hold at once. The sixth is the one that breaks it. */
+const SLAB_CATCH = 5;
+const SLAB_DISSOLVE_MS = 5000;
+/** Bodies are stopped by a hardened slab at this much clearance. */
+const SLAB_BODY_R = 18;
+const OOBLECK_EFFECT_MS = 12000;
+/** Speed at the very end of the effect. The ramp is the whole ability. */
+const OOBLECK_SLOW_FLOOR = 0.3;
+/** The slow the moment it lands, as a fraction of the ramp — a small bite, then a debt. */
+const OOBLECK_SLOW_BITE = 0.15;
+const NPC_OOBLECK_CHECK_MS = 400;
+
 // ── World objects ────────────────────────────────────────────────────────────
 
 /**
@@ -247,11 +281,58 @@ interface Lodged {
   seed: number;
 }
 
+/** A shot buried in an Oobleck slab, in slab-local coordinates so it rides the pane. */
+interface Stuck {
+  along: number;
+  across: number;
+  seed: number;
+  /** Game-clock time it has finished dissolving and its slot comes free. */
+  until: number;
+}
+
+/**
+ * The Oobleck slab.
+ *
+ * Soft it is a filter: bodies pass through it and pick up the ramp, shots do not. Hard — once
+ * Solidify has set it — it is a wall, and the same object stops both. One struct for both states
+ * for the same reason a puddle and a beacon are one: hardening it is a state change, not a
+ * replacement, and everything that finds it has to keep finding it.
+ */
+interface Slab {
+  owner: Owner;
+  x: number;
+  y: number;
+  /** Direction of the *long* axis. Held, this is perpendicular to the arm. */
+  ang: number;
+  until: number;
+  hard: boolean;
+  seed: number;
+  stuck: Stuck[];
+  /** Who was standing in it last frame, so a walk-through is a crossing and not a tick. */
+  inside: Set<Fighter>;
+}
+
+/** One of the three bodies a mastered slime comes apart into. */
+interface Ling {
+  /** 0 is the lead — the one the physics body is actually attached to. */
+  index: number;
+  x: number;
+  y: number;
+  seed: number;
+  /** Its place in the orbit, so the three never sit on top of each other. */
+  phase: number;
+  /** Its own swallowed shot. Each slimeling gets one. */
+  lodged: Lodged | null;
+  /** Its burst has been played. A heal can put it back, and then it can pop again. */
+  popped: boolean;
+}
+
 interface Held {
-  kind: 'ball' | 'body' | 'puddle';
+  kind: 'ball' | 'body' | 'puddle' | 'oobleck';
   ball: Ball | null;
   victim: Fighter | null;
   puddle: Puddle | null;
+  slab: Slab | null;
 }
 
 interface Side {
@@ -296,6 +377,22 @@ interface Side {
   haul: number;
   /** Rate-limits the bot's "reach out, then pull" ball throws. */
   nextBotThrowAt: number;
+
+  // ── Mastery ──
+  /** Oobleck: the one slab this side has out, held or standing. */
+  slab: Slab | null;
+  /**
+   * Game-clock time of the last Oobleck. Seeded a full cooldown in the past so the first match a
+   * kit ever plays does not open with the card locked — the constructor runs, `reset` does not.
+   */
+  oobleckCastAt: number;
+  nextOobleckCheckAt: number;
+  /** Slime Split: the three bodies, once it has happened. Empty before and after. */
+  lings: Ling[];
+  /** The split is once per match, whether or not anything is left of it. */
+  splitSpent: boolean;
+  /** Max HP before the split took it down to the pool, so a reused Fighter can be handed it back. */
+  preSplitMaxHp: number;
 }
 
 function makeSide(owner: Owner): Side {
@@ -308,6 +405,8 @@ function makeSide(owner: Owner): Side {
     absorbUntil: 0, swollen: false, lodged: null, prevAbsorber: null, absorberInstalled: false,
     prevMouseX: 0, prevMouseY: 0, haveMouse: false, smackGate: new Map(),
     haul: 0, nextBotThrowAt: 0,
+    slab: null, oobleckCastAt: -OOBLECK_COOLDOWN_MS, nextOobleckCheckAt: 0,
+    lings: [], splitSpent: false, preSplitMaxHp: 0,
   };
 }
 
@@ -341,6 +440,11 @@ export interface GumArenaApi {
   setStatusIndicator(id: string, status: CustomStatus | null): void;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
+  /** Which mastery enhancement each side dropped over an E/R/F/Q slot, or null. */
+  masteryBindFor(slot: string): string | null;
+  npcMasteryBindFor(slot: string): string | null;
+  /** Mastery progress. Gated on the element by the adapter, so the kit records unconditionally. */
+  recordMasteryStat(key: string, amount: number): void;
   /** Shop upgrades: the local player's equipped slots. */
   hasUpgrade(slot: string): boolean;
   /** …and the online opponent's, so their upgraded tricks reproduce on this sim. */
@@ -419,6 +523,13 @@ export class GumKit {
   /** This frame's mouse travel, consumed by the drag and cleared straight after. */
   private mouseDX = 0;
   private mouseDY = 0;
+  /**
+   * Oobleck's ramp, per body: the slow gets worse the closer it is to expiring, so what matters
+   * is when it started as much as when it ends.
+   */
+  private oobleck = new Map<Fighter, { owner: Owner; from: number; until: number }>();
+  /** Everything Slime Split has put a death floor on, so `reset` can hand every one of them back. */
+  private floored = new Set<Fighter>();
 
   constructor(api: GumArenaApi) {
     this.api = api;
@@ -521,7 +632,18 @@ export class GumKit {
     for (const owner of BOTH) {
       this.dropAbsorber(owner);
       this.unswell(owner);
+      // A split body borrowed its own max HP down to the pool. If the same Fighter is still
+      // standing here next match it has to be given back, or the swarm's 150 becomes permanent.
+      const s = this.sides[owner];
+      const f = this.fighter(owner);
+      if (s.preSplitMaxHp > 0 && f && f.maxHp < s.preSplitMaxHp) {
+        f.increaseMaxHp(s.preSplitMaxHp - f.maxHp);
+      }
     }
+    for (const f of this.floored) {
+      if (f && f.active) f.minHpFloor = 0;
+    }
+    this.floored.clear();
     for (const f of this.touchedWalk) {
       if (f && f.active) f.walkSpeedMult = 1;
     }
@@ -529,6 +651,9 @@ export class GumKit {
     for (const f of this.allFighters()) {
       if (f) f.oozeSizeMult = 1;
     }
+    this.playerAvatar?.setRigScale(1);
+    this.npcAvatar?.setRigScale(1);
+    this.oobleck.clear();
 
     this.sides = { player: makeSide('player'), npc: makeSide('npc') };
     this.balls = [];
@@ -563,6 +688,9 @@ export class GumKit {
     this.api.setStatusIndicator('gum-puddles', null);
     this.api.setStatusIndicator('gum-mire', null);
     this.api.setStatusIndicator('gum-bloat', null);
+    this.api.setStatusIndicator('gum-split', null);
+    this.api.setStatusIndicator('gum-slab', null);
+    this.api.setStatusIndicator('gum-oobleck', null);
   }
 
   /**
@@ -632,9 +760,15 @@ export class GumKit {
     }
 
     const ctx = this.api.buildPlayerContext(mouseX, mouseY);
-    if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('gum-surge', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('gum-gumball', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('gum-oozorbtion', ctx);
+    // Mastery: whichever of E/R/F the slab was dropped on stops being its own ability, so that
+    // key is checked first and the base cast underneath it is skipped entirely.
+    const bound = this.oobleckSlot('player');
+    if (bound && Phaser.Input.Keyboard.JustDown(this.keyFor(bound))) {
+      this.tryOobleck('player', mouseX, mouseY);
+    }
+    if (bound !== 'e' && Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('gum-surge', ctx);
+    if (bound !== 'r' && Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('gum-gumball', ctx);
+    if (bound !== 'f' && Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('gum-oozorbtion', ctx);
     if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('gum-solidify', ctx);
   }
 
@@ -653,7 +787,7 @@ export class GumKit {
     for (const [victim, enc] of this.encased) {
       if (enc.owner !== owner || !this.alive(victim)) continue;
       if (Phaser.Math.Distance.Between(hx, hy, victim.x, victim.y) > GRAB_R + 14) continue;
-      s.held = { kind: 'body', ball: null, victim, puddle: null };
+      s.held = { kind: 'body', ball: null, victim, puddle: null, slab: null };
       this.flung.delete(victim);
       this.avatar(owner)?.setCarry(true);
       this.api.showFloatingText(victim.x, victim.y - 40, '🫳 GRABBED', this.hex(GUM.gumLit));
@@ -670,9 +804,19 @@ export class GumKit {
       if (d <= bestD) { best = b; bestD = d; }
     }
     if (best) {
-      s.held = { kind: 'ball', ball: best, victim: null, puddle: null };
+      s.held = { kind: 'ball', ball: best, victim: null, puddle: null, slab: null };
       this.avatar(owner)?.setCarry(true);
       Sfx.playAt('slime-splat', best.x, { rate: 1.3, volume: 0.5 });
+      return;
+    }
+
+    // 2½ — the Oobleck slab we set down earlier. It is a shield: picking it back up to carry it
+    // somewhere better is the whole reason it is dropped rather than thrown.
+    if (s.slab && !s.slab.hard && this.inSlab(s.slab, hx, hy, 16)) {
+      s.held = { kind: 'oobleck', ball: null, victim: null, puddle: null, slab: s.slab };
+      this.avatar(owner)?.setCarry(true);
+      this.api.showFloatingText(s.slab.x, s.slab.y - 30, '🛡 OOBLECK', this.hex(GUM.oozeLit));
+      Sfx.playAt('stretch', s.slab.x, { rate: 0.85, volume: 0.7 });
       return;
     }
 
@@ -685,7 +829,7 @@ export class GumKit {
       if (d <= bestPudD) { bestPud = pd; bestPudD = d; }
     }
     if (bestPud) {
-      s.held = { kind: 'puddle', ball: null, victim: null, puddle: bestPud };
+      s.held = { kind: 'puddle', ball: null, victim: null, puddle: bestPud, slab: null };
       // Picking a lit beacon back up puts it out. Winding it again is the price of moving it.
       bestPud.activeUntil = 0;
       bestPud.shake = 0;
@@ -704,7 +848,7 @@ export class GumKit {
         damage: caught, seed: Math.random() * 999, landsAt: 0, hit: new Set(),
       };
       this.balls.push(ball);
-      s.held = { kind: 'ball', ball, victim: null, puddle: null };
+      s.held = { kind: 'ball', ball, victim: null, puddle: null, slab: null };
       this.avatar(owner)?.setCarry(true);
       this.fx(owner).pop(hx, hy, 16);
       this.api.showFloatingText(hx, hy - 26, `🫳 CAUGHT ${caught}`, this.hex(GUM.oozeLit));
@@ -755,6 +899,26 @@ export class GumKit {
   }
 
   /** Let go of whatever the hand has. `throwIt` is false when the hand was taken from us. */
+  /**
+   * Ruin Mastery — Second Skin. A grip on a zip-line is a third locomotion mode: the ride owns
+   * the body outright and the mouse is not read at all while it holds, which is what makes it a
+   * form rather than a dash. Ended the way the kit ends it, so the velocity is zeroed and the
+   * rig lets go of the line.
+   *
+   * Only the ride: anything the hand is *carrying* is not a body the fighter is in.
+   */
+  revertForms(f: Fighter): string[] {
+    const owner: Owner | null = f === this.api.player ? 'player'
+      : f === this.api.npc ? 'npc' : null;
+    if (!owner) return [];
+    const s = this.side(owner);
+    if (!s.riding) return [];
+    s.riding = null;
+    this.avatar(owner)?.setGrip(false);
+    if (this.alive(f)) (f.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+    return ['Zip-Line'];
+  }
+
   private letGo(owner: Owner, throwIt: boolean): void {
     const s = this.side(owner);
     const av = this.avatar(owner);
@@ -775,6 +939,9 @@ export class GumKit {
     // A beacon is never thrown, however it came out of the hand — it is set down, and whatever
     // shaking it collected on the way is what it runs on.
     if (held.kind === 'puddle' && held.puddle?.beacon) { this.setDownBeacon(owner, held.puddle); return; }
+    // Nor is a slab. It is cover, and cover is put down where you were standing — so a drop and
+    // a throw both route here, above the `throwIt` branch, exactly as a beacon does.
+    if (held.kind === 'oobleck' && held.slab) { this.setDownSlab(owner, held.slab); return; }
     if (!throwIt) {
       // Dropped rather than thrown — a ball falls where it is, a body simply stops being carried.
       if (held.kind === 'ball' && held.ball) { held.ball.flying = false; held.ball.vx = 0; held.ball.vy = 0; }
@@ -864,6 +1031,7 @@ export class GumKit {
     const enc = this.encased.get(victim);
     (victim.body as Phaser.Physics.Arcade.Body).setVelocity(vx, vy);
     this.flung.set(victim, { owner, hard: enc?.hard ?? false, until: this.now + FLUNG_MS, vx, vy });
+    this.record(owner, 'bodyThrows');
     this.api.showFloatingText(victim.x, victim.y - 44, '🤾 THROWN', this.hex(GUM.gumLit));
     Sfx.playAt('whoosh', victim.x, { rate: 0.7, volume: 1 });
   }
@@ -921,6 +1089,7 @@ export class GumKit {
       this.hurt(owner, t, PUNCH_DAMAGE + (stone ? SHARD_PUNCH_BONUS : 0),
         stone ? GUM.stoneLit : GUM.oozeLit);
       if (stone) {
+        if (t.hp <= 0) this.record(owner, 'clawKills');
         this.solidifyTouch(owner, t);
         this.fx(owner).shardBurst(t.x, t.y, 5);
       } else {
@@ -1100,17 +1269,502 @@ export class GumKit {
       this.makeBeacon(owner, pd);
       beacons++;
     }
+    // Mastery: the slab sets too, and a set slab is a different object — it stops being cover
+    // that shots stick in and becomes a wall neither of you can walk through or shoot past.
+    let walled = false;
+    if (s.slab && !s.slab.hard) {
+      this.hardenSlab(owner, s.slab);
+      walled = true;
+    }
 
     this.avatar(owner)?.play('raise');
     this.api.scene.cameras.main.shake(320, 0.008);
     const tally = [
       hardened > 0 ? `${hardened} HARDENED` : '',
       beacons > 0 ? `${beacons} BEACONS` : '',
+      walled ? 'WALL' : '',
     ].filter(Boolean).join(' · ');
     this.api.showFloatingText(f.x, f.y - 58,
       tally ? `🧊 SOLIDIFY · ${tally}` : '🧊 SOLIDIFY', this.hex(GUM.solidLit));
     Sfx.playAt('ice-shatter', f.x, { rate: 1.1, volume: 1 });
     Sfx.playAt('crystal-shatter', f.x, { rate: 0.85, volume: 0.8 });
+  }
+
+  // ── Mastery: shared ────────────────────────────────────────────────────────
+
+  /** Whether Element Mastery is on for whichever side is asking, and they are the Slime. */
+  private masteryOn(owner: Owner): boolean {
+    return this.isGum(owner)
+      && (owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
+  }
+
+  /**
+   * Which slot Oobleck was dropped on, or null. Q is not scanned — `excludeSlots` refuses it,
+   * because Solidify is what turns the slab into a wall and binding over it would delete the
+   * upgrade path written into the ability's own description.
+   */
+  private oobleckSlot(owner: Owner): 'e' | 'r' | 'f' | null {
+    if (!this.masteryOn(owner)) return null;
+    for (const s of ['e', 'r', 'f'] as const) {
+      const bind = owner === 'player' ? this.api.masteryBindFor(s) : this.api.npcMasteryBindFor(s);
+      if (bind === 'oobleck') return s;
+    }
+    return null;
+  }
+
+  /** The player's key for a bound slot. */
+  private keyFor(slot: 'e' | 'r' | 'f'): Phaser.Input.Keyboard.Key {
+    return slot === 'e' ? this.api.eKey : slot === 'r' ? this.api.rKey : this.api.fKey;
+  }
+
+  /**
+   * Mastery progress. Only ever recorded for the player — the grind is the human's, not the
+   * bot's — and deliberately not gated on the mastery being *on*, since earning it is the point.
+   */
+  private record(owner: Owner, key: string, amount = 1): void {
+    if (owner === 'player') this.api.recordMasteryStat(key, amount);
+  }
+
+  // ── Oobleck ────────────────────────────────────────────────────────────────
+
+  /** Slab-local coordinates: distance along the long axis, and across the short one. */
+  private slabLocal(sl: Slab, x: number, y: number): { along: number; across: number } {
+    const dx = x - sl.x;
+    const dy = y - sl.y;
+    const c = Math.cos(sl.ang);
+    const s = Math.sin(sl.ang);
+    return { along: dx * c + dy * s, across: -dx * s + dy * c };
+  }
+
+  private inSlab(sl: Slab, x: number, y: number, pad = 0): boolean {
+    const { along, across } = this.slabLocal(sl, x, y);
+    return Math.abs(along) <= SLAB_LEN / 2 + pad && Math.abs(across) <= SLAB_THICK / 2 + pad;
+  }
+
+  /**
+   * Oobleck, from the bound key or from the bot's own decision.
+   *
+   * Nothing here goes through `castAbility` — the enhancement is not in the element's ability
+   * list — so the refusals that gate every other key in the game have to be repeated by hand, or
+   * a disarm would stop mattering the moment the mastery was bound. The hand refusals are this
+   * element's own on top of that: a slab is summoned *into* the hand, so a hand that is full,
+   * gone, or holding a zip-line has nowhere to put it.
+   */
+  private tryOobleck(owner: Owner, tx: number, ty: number): boolean {
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return false;
+    const s = this.side(owner);
+    const wall = Date.now();
+    if (wall < f.disarmedUntil || wall < f.chickenUntil || wall < f.silencedUntil) return false;
+
+    if (this.now < s.handBackAt) {
+      if (owner === 'player') {
+        this.api.showFloatingText(f.x, f.y - 48, '🫠 NO HAND', this.hex(GUM.solidLit));
+      }
+      return false;
+    }
+    if (s.slab) {
+      if (owner === 'player') {
+        this.api.showFloatingText(f.x, f.y - 50, '🛡 ONE SLAB AT A TIME', this.hex(GUM.oozeDeep));
+      }
+      return false;
+    }
+    if (s.held || s.riding) {
+      if (owner === 'player') {
+        this.api.showFloatingText(f.x, f.y - 50, '✊ HAND FULL', this.hex(GUM.oozeDeep));
+      }
+      return false;
+    }
+    if (this.now - s.oobleckCastAt < OOBLECK_COOLDOWN_MS) return false;
+
+    s.oobleckCastAt = this.now;
+    // The player's slab is summoned into the hand — it is a shield first and a wall second, so it
+    // starts where a shield starts. A bot has no cursor to carry one with, so its slab is planted.
+    this.spawnSlab(owner, tx, ty, owner === 'player');
+    return true;
+  }
+
+  /**
+   * The slab coming into being. Separate from the refusals above so the bot, and anything else
+   * that plants one without pressing a key, lands the same object.
+   */
+  private spawnSlab(owner: Owner, tx: number, ty: number, held: boolean): void {
+    const f = this.fighter(owner);
+    this.ensureLayers();
+    this.ensureAvatars();
+    const s = this.side(owner);
+    const hand = this.handPoint(owner);
+    const x = held ? hand.x : Phaser.Math.Clamp(tx, this.left, this.right);
+    const y = held ? hand.y : Phaser.Math.Clamp(ty, this.top, this.bottom);
+    // The long side faces the summoner: the pane is turned across the line from the body to it,
+    // which is what makes it read as a shield being held rather than a plank lying about.
+    const ang = Math.atan2(y - f.y, x - f.x) + Math.PI / 2;
+
+    const slab: Slab = {
+      owner, x, y, ang,
+      until: this.now + OOBLECK_MS,
+      hard: false, seed: Math.random() * 999,
+      stuck: [], inside: new Set(),
+    };
+    s.slab = slab;
+    if (held) {
+      s.held = { kind: 'oobleck', ball: null, victim: null, puddle: null, slab };
+      this.avatar(owner)?.setCarry(true);
+    }
+    this.avatar(owner)?.play('raise', ang - Math.PI / 2);
+    this.fx(owner).slabSet(x, y, ang, SLAB_LEN);
+    this.api.showFloatingText(f.x, f.y - 56, '🛡 OOBLECK', this.hex(GUM.oozeLit));
+    Sfx.playAt('slime-splat', x, { rate: 0.55, volume: 1 });
+    Sfx.playAt('stretch', x, { rate: 0.8, volume: 0.7 });
+  }
+
+  /**
+   * The slab setting. A hard slab is put down first if it was being carried — a wall you are
+   * holding out at arm's length would follow you around the room, which is not a wall.
+   */
+  private hardenSlab(owner: Owner, sl: Slab): void {
+    const s = this.side(owner);
+    if (s.held?.kind === 'oobleck' && s.held.slab === sl) {
+      s.held = null;
+      this.avatar(owner)?.setCarry(false);
+      sl.x = Phaser.Math.Clamp(s.handX, this.left, this.right);
+      sl.y = Phaser.Math.Clamp(s.handY, this.top, this.bottom);
+    }
+    sl.hard = true;
+    sl.inside.clear();
+    sl.until = this.now + OOBLECK_MS;
+    this.fx(owner).harden(sl.x, sl.y, 40);
+    this.fx(owner).slabSet(sl.x, sl.y, sl.ang, SLAB_LEN, true);
+    this.api.showFloatingText(sl.x, sl.y - 34, '🧱 WALL', this.hex(GUM.solidLit));
+    Sfx.playAt('crystal-shatter', sl.x, { rate: 0.7, volume: 0.9 });
+  }
+
+  /** Letting go of a slab. It is set down where the hand was, never thrown. */
+  private setDownSlab(owner: Owner, sl: Slab): void {
+    const s = this.side(owner);
+    sl.x = Phaser.Math.Clamp(s.handX, this.left, this.right);
+    sl.y = Phaser.Math.Clamp(s.handY, this.top, this.bottom);
+    sl.until = this.now + OOBLECK_MS;
+    this.fx(owner).slabSet(sl.x, sl.y, sl.ang, SLAB_LEN, sl.hard);
+    this.api.showFloatingText(sl.x, sl.y - 30, '🧱 SET DOWN', this.hex(GUM.oozeDeep));
+    Sfx.playAt('slime-splat', sl.x, { rate: 0.6, volume: 0.8 });
+  }
+
+  /** The sixth shot. Five is what it holds, and the one after that is what breaks it. */
+  private burstSlab(owner: Owner, sl: Slab): void {
+    const c = Math.cos(sl.ang);
+    const s = Math.sin(sl.ang);
+    for (const k of [-1, 1]) {
+      this.spawnPuddle(owner, 'slow', sl.x + c * SLAB_LEN * 0.3 * k, sl.y + s * SLAB_LEN * 0.3 * k);
+    }
+    this.dropSlab(owner);
+    this.fx(owner).splat(sl.x, sl.y, 44, 6);
+    this.api.scene.cameras.main.shake(180, 0.005);
+    this.api.showFloatingText(sl.x, sl.y - 34, '💥 OVERFULL', this.hex(GUM.oozeLit));
+    Sfx.playAt('explosion-medium', sl.x, { rate: 1.35, volume: 0.75 });
+  }
+
+  private dropSlab(owner: Owner): void {
+    const s = this.side(owner);
+    const sl = s.slab;
+    if (!sl) return;
+    s.slab = null;
+    if (s.held?.kind === 'oobleck' && s.held.slab === sl) {
+      s.held = null;
+      this.avatar(owner)?.setCarry(false);
+    }
+    sl.inside.clear();
+  }
+
+  /**
+   * Everything the slab does, every frame: ride the hand, catch what is fired at it, dissolve
+   * what it caught, mire whoever walks through it, and — once it is hard — refuse to let anybody
+   * past at all.
+   */
+  private updateSlabs(): void {
+    for (const owner of BOTH) {
+      const s = this.side(owner);
+      const sl = s.slab;
+      if (!sl) continue;
+      const carried = s.held?.kind === 'oobleck' && s.held.slab === sl;
+      const f = this.fighter(owner);
+
+      if (carried) {
+        // Held: the pane hangs off the hand, broadside-on to the body behind it. A carried slab
+        // does not age — the clock is on cover you have left somewhere, not cover you are using.
+        sl.x = s.handX;
+        sl.y = s.handY;
+        if (this.alive(f)) sl.ang = Math.atan2(sl.y - f.y, sl.x - f.x) + Math.PI / 2;
+        sl.until = this.now + OOBLECK_MS;
+      } else if (this.now >= sl.until) {
+        this.fx(owner).pop(sl.x, sl.y, 30);
+        this.api.showFloatingText(sl.x, sl.y - 28, '🫠 DISSOLVED', this.hex(GUM.oozeDeep));
+        this.dropSlab(owner);
+        continue;
+      }
+
+      // What it caught, breaking down. Each slot comes free on its own five seconds.
+      for (let i = sl.stuck.length - 1; i >= 0; i--) {
+        if (this.now >= sl.stuck[i].until) sl.stuck.splice(i, 1);
+      }
+
+      this.catchIntoSlab(owner, sl);
+      if (!s.slab) continue;
+      this.sweepSlab(owner, sl);
+    }
+  }
+
+  /**
+   * The catch. A soft slab takes enemy fire only — it is your shield. A hard one is a wall, so it
+   * eats everything that reaches it, including your own, which is the price of setting it.
+   */
+  private catchIntoSlab(owner: Owner, sl: Slab): void {
+    const reach = SLAB_LEN / 2 + 12;
+    const sides: Owner[] = sl.hard ? BOTH : [owner === 'player' ? 'npc' : 'player'];
+    for (const from of sides) {
+      const fromPlayer = from === 'player';
+      // Snapshot: `destroy` splices the group's own array, and skipping every other shot in a
+      // pane whose whole job is to catch them would be a hard bug to see.
+      for (const obj of [...this.api.projectiles.getChildren()]) {
+        const p = obj as Projectile;
+        if (!p.active || p.isFromPlayer !== fromPlayer || p.isHeal) continue;
+        if (!this.inSlab(sl, p.x, p.y, 12)) continue;
+        const local = this.slabLocal(sl, p.x, p.y);
+        p.destroy();
+        if (!this.stickShot(owner, sl, local.along, local.across)) return;
+      }
+      const reg = this.api.projectileRegistry.within(from, sl.x, sl.y, reach);
+      for (const r of reg) {
+        const rx = r.getX();
+        const ry = r.getY();
+        if (!this.inSlab(sl, rx, ry, 12)) continue;
+        const local = this.slabLocal(sl, rx, ry);
+        this.api.projectileRegistry.steal(r);
+        if (!this.stickShot(owner, sl, local.along, local.across)) return;
+      }
+    }
+  }
+
+  /** Bury one shot in the pane. Returns false if that was the one that broke it. */
+  private stickShot(owner: Owner, sl: Slab, along: number, across: number): boolean {
+    const c = Math.cos(sl.ang);
+    const s = Math.sin(sl.ang);
+    this.fx(owner).stick(sl.x + c * along - s * across, sl.y + s * along + c * across);
+    Sfx.playAt('slime-splat', sl.x, { rate: 1.5, volume: 0.4 });
+    // A hard slab has no limit at all: it is not holding them, it is stopping them.
+    if (!sl.hard && sl.stuck.length >= SLAB_CATCH) {
+      this.burstSlab(owner, sl);
+      return false;
+    }
+    sl.stuck.push({
+      along: Phaser.Math.Clamp(along, -SLAB_LEN / 2 + 8, SLAB_LEN / 2 - 8),
+      across: Phaser.Math.Clamp(across, -SLAB_THICK / 2 + 4, SLAB_THICK / 2 - 4),
+      seed: Math.random() * 999,
+      until: this.now + SLAB_DISSOLVE_MS,
+    });
+    return true;
+  }
+
+  /**
+   * Bodies against the pane. Soft, it is a doorway that costs something to walk through; hard, it
+   * is a wall, and a wall stops the slime that made it as surely as anybody else — pushed out by
+   * writing the position directly, because this runs after both movement paths have had their say.
+   */
+  private sweepSlab(owner: Owner, sl: Slab): void {
+    const foes = this.targetsOf(owner);
+    const seen = new Set<Fighter>();
+    for (const f of this.allFighters()) {
+      if (!this.alive(f)) continue;
+
+      if (sl.hard) {
+        const { along, across } = this.slabLocal(sl, f.x, f.y);
+        const limit = SLAB_THICK / 2 + SLAB_BODY_R;
+        if (Math.abs(along) <= SLAB_LEN / 2 + SLAB_BODY_R * 0.5 && Math.abs(across) < limit) {
+          const dir = across >= 0 ? 1 : -1;
+          const push = limit * dir - across;
+          f.x += -Math.sin(sl.ang) * push;
+          f.y += Math.cos(sl.ang) * push;
+          const body = f.body as Phaser.Physics.Arcade.Body | null;
+          if (body) {
+            // Kill only the component going *into* the wall, so sliding along it still works.
+            const nx = -Math.sin(sl.ang) * dir;
+            const ny = Math.cos(sl.ang) * dir;
+            const into = body.velocity.x * -nx + body.velocity.y * -ny;
+            if (into > 0) body.setVelocity(body.velocity.x + nx * into, body.velocity.y + ny * into);
+          }
+        }
+        continue;
+      }
+
+      if (!foes.includes(f)) continue;
+      if (!this.inSlab(sl, f.x, f.y, SLAB_BODY_R * 0.5)) continue;
+      seen.add(f);
+      if (sl.inside.has(f)) continue;
+      this.applyOobleck(owner, f);
+    }
+    if (!sl.hard) sl.inside = seen;
+  }
+
+  /** The debt: twelve seconds that get worse the whole way down. */
+  private applyOobleck(owner: Owner, victim: Fighter): void {
+    this.oobleck.set(victim, { owner, from: this.now, until: this.now + OOBLECK_EFFECT_MS });
+    this.fx(owner).splat(victim.x, victim.y, 22, 5);
+    this.api.showFloatingText(victim.x, victim.y - 42, '🫧 OOBLECK', this.hex(GUM.oozeLit));
+    Sfx.playAt('slime-splat', victim.x, { rate: 0.65, volume: 0.8 });
+  }
+
+  /** 0–1 of Oobleck's ramp on this body: how much of the slow has arrived. */
+  private oobleckRamp(f: Fighter): number {
+    const o = this.oobleck.get(f);
+    if (!o || this.now >= o.until) return 0;
+    const run = Phaser.Math.Clamp((this.now - o.from) / OOBLECK_EFFECT_MS, 0, 1);
+    return OOBLECK_SLOW_BITE + (1 - OOBLECK_SLOW_BITE) * run;
+  }
+
+  // ── Slime Split ────────────────────────────────────────────────────────────
+
+  /**
+   * The pool a split body is fighting on, and what each slimeling is worth out of it.
+   *
+   * Derived rather than tracked: `ling(i)` holds whatever is left of the pool above `i × 50`, so
+   * the hindmost is always the one being peeled and the lead is always the last to go. Nothing
+   * has to be reconciled against `Fighter.hp`, which means a heal, a Justice floor or anything
+   * else that writes health from outside is picked up for free on the next frame.
+   */
+  private lingHp(owner: Owner, index: number): number {
+    const f = this.fighter(owner);
+    if (!f) return 0;
+    return Phaser.Math.Clamp(f.hp - index * SPLIT_HP, 0, SPLIT_HP);
+  }
+
+  private lingsAlive(owner: Owner): Ling[] {
+    return this.side(owner).lings.filter((l) => this.lingHp(owner, l.index) > 0);
+  }
+
+  /**
+   * The passive itself.
+   *
+   * The death floor is written from scratch every frame while the split is still owed, so a
+   * mastery switched off between matches — or a Slime that is not this element any more — can
+   * never leave somebody standing at 1 HP forever. Once it is spent the floor comes straight off
+   * again: the whole point of the three bodies is that the last of them really can die.
+   */
+  private updateSplit(delta: number): void {
+    for (const owner of BOTH) {
+      const s = this.side(owner);
+      const f = this.fighter(owner);
+      if (!f) continue;
+      const owed = this.masteryOn(owner) && !s.splitSpent;
+
+      if (owed && this.alive(f)) {
+        f.minHpFloor = Math.max(f.minHpFloor, 1);
+        this.floored.add(f);
+      } else if (this.floored.has(f)) {
+        f.minHpFloor = 0;
+        this.floored.delete(f);
+      }
+
+      // The hit that would have finished it. The floor caught the body at 1; this is what it
+      // does with the moment it bought.
+      if (owed && f.hp > 0 && f.hp <= 1) { this.beginSplit(owner); continue; }
+      if (!s.lings.length) continue;
+
+      // Somebody coming off, or coming back — the pool is the only authority on which, so both
+      // are read off it rather than tracked. `popped` is what keeps a burst from replaying.
+      const alive = this.lingsAlive(owner);
+      let lost = false;
+      for (const l of s.lings) {
+        const up = this.lingHp(owner, l.index) > 0;
+        if (up) { l.popped = false; continue; }
+        if (l.popped) continue;
+        l.popped = true;
+        lost = true;
+        this.fx(owner).lingPop(l.x, l.y);
+        Sfx.playAt('bubble', l.x, { rate: 1.5, volume: 0.7 });
+      }
+      if (lost && alive.length > 0 && owner === 'player') {
+        this.api.showFloatingText(f.x, f.y - 54, `🟢 ${alive.length} LEFT`, this.hex(GUM.oozeLit));
+      }
+      if (!this.alive(f)) { s.lings = []; continue; }
+
+      // The satellites, hauled along after the body the physics is attached to. They lag on
+      // purpose: three points moving in lockstep read as one sprite with decorations.
+      const dt = Math.min(0.05, delta / 1000);
+      for (const l of s.lings) {
+        if (l.index === 0) { l.x = f.x; l.y = f.y; continue; }
+        const a = l.phase + this.vizT * 0.7;
+        const tx = f.x + Math.cos(a) * LING_ORBIT;
+        const ty = f.y + Math.sin(a) * LING_ORBIT * 0.72;
+        const k = Math.min(1, LING_SPRING * dt);
+        l.x += (tx - l.x) * k;
+        l.y += (ty - l.y) * k;
+      }
+    }
+  }
+
+  /** Coming apart. */
+  private beginSplit(owner: Owner): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    this.ensureLayers();
+    this.ensureAvatars();
+    s.splitSpent = true;
+    // The floor has done its job; from here the last slimeling dying is a real death.
+    f.minHpFloor = 0;
+    this.floored.delete(f);
+    // Whatever the hand had goes on the floor. The body it belonged to no longer exists.
+    this.letGo(owner, false);
+
+    s.preSplitMaxHp = f.maxHp;
+    if (f.maxHp > SPLIT_POOL) f.reduceMaxHp(f.maxHp - SPLIT_POOL);
+    else if (f.maxHp < SPLIT_POOL) f.increaseMaxHp(SPLIT_POOL - f.maxHp);
+    f.hp = SPLIT_POOL;
+
+    s.lings = Array.from({ length: SPLIT_COUNT }, (_, i) => ({
+      index: i,
+      x: f.x + Math.cos((i / SPLIT_COUNT) * TAU) * LING_ORBIT,
+      y: f.y + Math.sin((i / SPLIT_COUNT) * TAU) * LING_ORBIT * 0.72,
+      seed: Math.random() * 999,
+      phase: (i / SPLIT_COUNT) * TAU,
+      lodged: null,
+      popped: false,
+    }));
+
+    f.oozeSizeMult = SPLIT_SIZE;
+    f.applySizeMult();
+    this.avatar(owner)?.setRigScale(SPLIT_RIG);
+
+    this.fx(owner).split(f.x, f.y);
+    this.api.scene.cameras.main.shake(420, 0.011);
+    this.api.showFloatingText(f.x, f.y - 60, '🟢 SLIME SPLIT', this.hex(GUM.solidLit));
+    Sfx.playAt('slime-splat', f.x, { rate: 0.45, volume: 1 });
+    Sfx.playAt('boing', f.x, { rate: 0.6, volume: 1 });
+  }
+
+  // ── Mastery: the bot ───────────────────────────────────────────────────────
+
+  /**
+   * The bot's half of Oobleck.
+   *
+   * It cannot carry a shield — it has no cursor to hold one out with, and a held slab would pin
+   * a player's body where the AI expects to walk — so it plants one instead, broadside-on across
+   * the line to whatever it is fighting. That is the placement a player would carry it to anyway,
+   * and it leaves the slab standing where `npcGumSlabSoft` can tell the rotation to set it.
+   */
+  private updateNpcMastery(): void {
+    if (!this.oobleckSlot('npc')) return;
+    const s = this.sides.npc;
+    if (this.now < s.nextOobleckCheckAt) return;
+    s.nextOobleckCheckAt = this.now + NPC_OOBLECK_CHECK_MS;
+    if (s.slab) return;
+    const f = this.api.npc;
+    const t = this.targetsOf('npc')[0];
+    if (!this.alive(f) || !t) return;
+    const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
+    if (d < 90) return;
+    // Far enough out to be cover rather than a doorway it is standing in.
+    const a = Math.atan2(t.y - f.y, t.x - f.x);
+    this.tryOobleck('npc', f.x + Math.cos(a) * 76, f.y + Math.sin(a) * 76);
   }
 
   // ── Puddles and beacons ────────────────────────────────────────────────────
@@ -1194,6 +1848,11 @@ export class GumKit {
       enc.until += HARD_ENCASE_BONUS_MS;
       this.fx(owner).harden(v.x, v.y, 34);
     }
+    // A slab the claw drags across sets like everything else does — the same wall Q makes, made
+    // by walking a stone hand along it instead.
+    if (s.slab && !s.slab.hard && this.inSlab(s.slab, hx, hy, SHARD_TOUCH_R)) {
+      this.hardenSlab(owner, s.slab);
+    }
   }
 
   /** A Slime Bomb going off: one radius, everybody in it, and fresh ground where it landed. */
@@ -1204,6 +1863,7 @@ export class GumKit {
       b.hit.add(t);
       this.hurt(owner, t, b.damage, b.hard ? GUM.solidLit : GUM.oozeLit);
       this.applySlow(t, BALL_SLOW_MS);
+      this.record(owner, 'bombHits');
     }
     this.spawnPuddle(owner, 'slow', b.x, b.y);
     this.fx(owner).splat(b.x, b.y, 42, 6);
@@ -1451,9 +2111,26 @@ export class GumKit {
   }
 
   /** Something has been swallowed. It sits in the body until it breaks down into health. */
-  private lodge(owner: Owner, damage: number): void {
+  private lodge(owner: Owner, damage: number, ling?: Ling): void {
     const s = this.side(owner);
     const f = this.fighter(owner);
+    this.record(owner, 'absorbs');
+    // Slime Split: each slimeling gets its own. The window only closes once they all have one,
+    // which is what makes a single Oozorbtion worth three shots to a body that has come apart.
+    const hungry = ling ?? this.lingsAlive(owner).find((l) => !l.lodged);
+    if (hungry) {
+      hungry.lodged = { damage, digestAt: this.now + DIGEST_MS, seed: Math.random() * 999 };
+      this.fx(owner).swallow(hungry.x, hungry.y);
+      this.api.showFloatingText(hungry.x, hungry.y - 30, `🫗 ${damage}`, this.hex(GUM.oozeLit));
+      Sfx.playAt('boing', hungry.x, { rate: 1.1, volume: 0.75 });
+      if (!this.lingsAlive(owner).some((l) => !l.lodged)) {
+        s.absorbUntil = 0;
+        this.unswell(owner);
+        this.dropAbsorber(owner);
+      }
+      this.emesis(owner);
+      return;
+    }
     s.lodged = { damage, digestAt: this.now + DIGEST_MS, seed: Math.random() * 999 };
     s.absorbUntil = 0;
     this.unswell(owner);
@@ -1463,9 +2140,17 @@ export class GumKit {
     this.api.showFloatingText(f.x, f.y - 46, `🫗 ABSORBED ${damage}`, this.hex(GUM.oozeLit));
     Sfx.playAt('boing', f.x, { rate: 0.8, volume: 0.9 });
 
-    // F+ — Emesis. Swallowing something brings some of you back up with it: three pink puddles
-    // around your feet that feed you instead of slowing anybody.
-    if (!this.up(owner, 'f')) return;
+    this.emesis(owner);
+  }
+
+  /**
+   * F+ — Emesis. Swallowing something brings some of you back up with it: three pink puddles
+   * around your feet that feed you instead of slowing anybody. Its own method because a split
+   * body reaches the swallow down a different path and still owns the upgrade.
+   */
+  private emesis(owner: Owner): void {
+    const f = this.fighter(owner);
+    if (!this.up(owner, 'f') || !this.alive(f)) return;
     for (let i = 0; i < EMESIS_COUNT; i++) {
       const a = (i / EMESIS_COUNT) * TAU + Math.random() * 0.5;
       const d = 46 + Math.random() * 26;
@@ -1486,6 +2171,13 @@ export class GumKit {
       if (this.now < s.absorbUntil && !s.lodged && this.alive(f)) {
         const caught = this.catchShot(owner, f.x, f.y, ABSORB_R);
         if (caught !== null) this.lodge(owner, caught);
+        // Split: the satellites open too, and each of them catches its own. This is the one
+        // place the passive adds a hitbox rather than just a second life.
+        for (const l of this.lingsAlive(owner)) {
+          if (l.index === 0 || l.lodged) continue;
+          const got = this.catchShot(owner, l.x, l.y, LING_ABSORB_R);
+          if (got !== null) this.lodge(owner, got, l);
+        }
       } else if (this.now >= s.absorbUntil && s.swollen && !s.lodged) {
         // The window closed with nothing caught. The swelling was the whole cost.
         this.unswell(owner);
@@ -1503,6 +2195,19 @@ export class GumKit {
         this.fx(owner).digest(f.x, f.y);
         this.api.showFloatingText(f.x, f.y - 52, `🍽 DIGESTED +${amount}`, this.hex(GUM.shine));
         Sfx.playAt('heal', f.x, { rate: 0.9, volume: 0.85 });
+      }
+
+      // Each slimeling breaks down its own. The health goes into the shared pool, because the
+      // pool *is* the three of them — a slimeling with nothing left in it is simply gone.
+      for (const l of s.lings) {
+        if (!l.lodged || this.now < l.lodged.digestAt) continue;
+        const amount = l.lodged.damage;
+        l.lodged = null;
+        if (!this.alive(f)) continue;
+        f.heal(amount);
+        this.fx(owner).digest(l.x, l.y);
+        this.api.showFloatingText(l.x, l.y - 26, `🍽 +${amount}`, this.hex(GUM.shine));
+        Sfx.playAt('heal', l.x, { rate: 1.15, volume: 0.7 });
       }
     }
   }
@@ -1590,6 +2295,7 @@ export class GumKit {
         this.hurt(owner, t, SMACK_DAMAGE + (stone ? SHARD_SMACK_BONUS : 0),
           stone ? GUM.stoneLit : GUM.oozeLit);
         if (stone) {
+          if (t.hp <= 0) this.record(owner, 'clawKills');
           this.solidifyTouch(owner, t);
           this.fx(owner).sparks(t.x, t.y, 20);
         } else {
@@ -1909,6 +2615,10 @@ export class GumKit {
     // The puddle ramp: shallow the moment you step in, crippling if you stand there.
     const soak = this.slowSoak.get(f) ?? 0;
     if (soak > 0) m *= 1 - (1 - PUDDLE_SLOW_FLOOR) * soak;
+    // Oobleck: the ramp runs the other way round to a puddle's — it is worst at the end, and
+    // stepping out of the slab does not stop it. There is nothing to do but wait it out.
+    const ramp = this.oobleckRamp(f);
+    if (ramp > 0) m *= 1 - (1 - OOBLECK_SLOW_FLOOR) * ramp;
     // A lit green beacon slows flat, wherever inside its aura you are.
     for (const pd of this.puddles) {
       if (!pd.beacon || pd.kind !== 'slow' || this.now >= pd.activeUntil) continue;
@@ -1940,6 +2650,9 @@ export class GumKit {
     }
     for (const [f, until] of [...this.slowUntil]) {
       if (!f.active || this.now >= until) this.slowUntil.delete(f);
+    }
+    for (const [f, o] of [...this.oobleck]) {
+      if (!f.active || this.now >= o.until) this.oobleck.delete(f);
     }
   }
 
@@ -1978,7 +2691,8 @@ export class GumKit {
     const npcIs = this.isGum('npc');
     const anyState = this.balls.length || this.bubbles.length || this.shards.length
       || this.puddles.length || this.encased.size || this.flung.size || this.stuckUntil.size
-      || this.slowUntil.size || this.sides.player.lodged || this.sides.npc.lodged;
+      || this.slowUntil.size || this.sides.player.lodged || this.sides.npc.lodged
+      || this.oobleck.size || this.sides.player.slab || this.sides.npc.slab;
     if (!playerIs && !npcIs && !anyState) return;
 
     this.ensureLayers();
@@ -1998,6 +2712,11 @@ export class GumKit {
     this.updateCarriedAndFlung();
     this.updateShards(delta);
     this.updatePuddles(delta);
+    // The split first: everything after it reads slimeling positions, and the hard slab's
+    // push-out has to be the last word on where a body actually ended up this frame.
+    this.updateSplit(delta);
+    this.updateSlabs();
+    this.updateNpcMastery();
     this.updateAbsorb();
     this.pushWalkSpeeds();
 
@@ -2059,6 +2778,36 @@ export class GumKit {
         { seed: pd.seed, heal: pd.kind === 'heal', soak, life });
     }
 
+    // A soft slab lying on the floor is something you walk *through*, so it is painted under the
+    // people walking through it. A held one, and a hard one, go on the air layer instead.
+    for (const owner of BOTH) {
+      const sl = this.side(owner).slab;
+      if (!sl || sl.hard) continue;
+      if (this.side(owner).held?.slab === sl) continue;
+      this.paintSlab(g, sl);
+    }
+
+    // The slimelings, under the arm that is made out of all three of them.
+    for (const owner of BOTH) {
+      for (const l of this.side(owner).lings) {
+        const hp = this.lingHp(owner, l.index) / SPLIT_HP;
+        if (hp <= 0) continue;
+        // The lead is drawn by its own rig, so only the satellites are painted here.
+        if (l.index === 0) continue;
+        const s = this.side(owner);
+        slimeling(g, this.col(owner), l.x, l.y, LING_R, 0.95, this.vizT,
+          { seed: l.seed, hp, aim: Math.atan2(s.handY - l.y, s.handX - l.x) });
+        // Its share of the one hand: a thin arm running from it to wherever the hand is.
+        gummyArm(g, this.col(owner), l.x, l.y - 2, s.handX, s.handY, 4.6, 3.2, 0.8, this.vizT,
+          { stretch: 0.5, seed: l.seed });
+        if (l.lodged) {
+          const left = Phaser.Math.Clamp((l.lodged.digestAt - this.now) / DIGEST_MS, 0, 1);
+          g.fillStyle(this.col(owner)(GUM.murk), 0.8 * left);
+          g.fillCircle(l.x, l.y + 1, 4 * left + 1.5);
+        }
+      }
+    }
+
     // Grips.
     for (const owner of BOTH) {
       const s = this.side(owner);
@@ -2098,10 +2847,43 @@ export class GumKit {
     }
   }
 
+  /** One slab, wherever it is and whatever state it is in. */
+  private paintSlab(g: Phaser.GameObjects.Graphics, sl: Slab): void {
+    const held = this.side(sl.owner).held?.slab === sl;
+    const life = held || sl.hard
+      ? 1 : Phaser.Math.Clamp((sl.until - this.now) / 1600, 0.25, 1);
+    oobleckSlab(g, this.col(sl.owner), sl.x, sl.y, sl.ang, SLAB_LEN, SLAB_THICK, 1, this.vizT, {
+      seed: sl.seed, hard: sl.hard, life, held,
+      stuck: sl.stuck.map((q) => ({
+        along: q.along, across: q.across, seed: q.seed,
+        life: Phaser.Math.Clamp((q.until - this.now) / SLAB_DISSOLVE_MS, 0, 1),
+      })),
+    });
+    // The count, as pips along the top edge — five slots, and the sixth is what breaks it.
+    if (sl.hard) return;
+    const c = Math.cos(sl.ang);
+    const s = Math.sin(sl.ang);
+    for (let i = 0; i < SLAB_CATCH; i++) {
+      const a = -SLAB_LEN / 2 + (SLAB_LEN * (i + 0.5)) / SLAB_CATCH;
+      const px = sl.x + c * a + s * (SLAB_THICK / 2 + 6);
+      const py = sl.y + s * a - c * (SLAB_THICK / 2 + 6);
+      const on = i < sl.stuck.length;
+      g.fillStyle(this.col(sl.owner)(on ? GUM.oozeLit : GUM.murk), on ? 0.95 : 0.5);
+      g.fillCircle(px, py, on ? 2.8 : 1.8);
+    }
+  }
+
   private paintAir(): void {
     const g = this.airGfx;
     if (!g) return;
     g.clear();
+
+    // Slabs that are being carried, and every hardened one — a wall has to occlude.
+    for (const owner of BOTH) {
+      const sl = this.side(owner).slab;
+      if (!sl) continue;
+      if (sl.hard || this.side(owner).held?.slab === sl) this.paintSlab(g, sl);
+    }
 
     // Zip-lines, hung across the room. On the air layer because they are overhead — the player
     // has to read them as something to reach up and catch rather than a stripe on the floor.
@@ -2340,6 +3122,34 @@ export class GumKit {
       count: bl.layers,
     } : null);
 
+    // ── Mastery ──
+    const lings = this.lingsAlive('player');
+    this.api.setStatusIndicator('gum-split', playerIs && lings.length > 0 ? {
+      name: 'Split', emoji: '🟢', color: GUM.solidLit, priority: 131,
+      description: `You were killed and came apart instead. ${SPLIT_COUNT} slimelings of ${SPLIT_HP} HP each, one shared hand, and the hindmost one takes every hit — you are only really dead when the last of them is gone. Each of them can swallow its own projectile.`,
+      count: lings.length, suffix: `/${SPLIT_COUNT}`,
+    } : null);
+
+    const slab = s.slab;
+    this.api.setStatusIndicator('gum-slab', playerIs && slab ? (slab.hard ? {
+      name: 'Oobleck Wall', emoji: '🧱', color: GUM.solidLit, priority: 137,
+      description: 'Solidify set the slab. It now blocks every projectile with no limit at all — yours included — and neither of you can walk through it. It is no longer cover; it is a wall across the room.',
+      until: slab.until,
+    } : {
+      name: 'Oobleck', emoji: '🛡', color: GUM.oozeLit, priority: 138,
+      description: `A slab of half-set slime. Shots stick in it and dissolve out over ${SLAB_DISSOLVE_MS / 1000}s; a sixth while all ${SLAB_CATCH} are full bursts it into two puddles. Anyone who walks through it is Oobleck-slowed for ${OOBLECK_EFFECT_MS / 1000}s. Hold Click on it to carry it, let go to set it down — and Solidify turns it into a wall.`,
+      count: slab.stuck.length, suffix: `/${SLAB_CATCH}`,
+    }) : null);
+
+    const ooze = p ? this.oobleckRamp(p) : 0;
+    const oozeEntry = p ? this.oobleck.get(p) : undefined;
+    this.api.setStatusIndicator('gum-oobleck', ooze > 0 && oozeEntry?.owner === 'npc' ? {
+      name: 'Oobleck', emoji: '🫧', color: GUM.ooze, priority: 5,
+      description: `You walked through a slime slab and it is still on you. The slow gets worse the whole time it runs — down to ${Math.round(OOBLECK_SLOW_FLOOR * 100)}% speed in the last moment before it lets go. Getting out of the slab did nothing; there is only waiting.`,
+      count: Math.round((1 - (1 - OOBLECK_SLOW_FLOOR) * ooze) * 100), suffix: '% spd',
+      until: oozeEntry.until,
+    } : null);
+
     // Your own slime never mires you, so this only ever fires for the other side's puddles.
     const soak = p ? (this.slowSoak.get(p) ?? 0) : 0;
     this.api.setStatusIndicator('gum-mire', soak > 0.02 ? {
@@ -2388,5 +3198,35 @@ export class GumKit {
       if (this.encased.has(t)) return true;
     }
     return false;
+  }
+
+  // ── Mastery (read by ArenaScene / the AI) ──────────────────────────────────
+
+  /**
+   * The opportunity the mastery creates, published for `doGumAbilities`: the bot has a soft slab
+   * standing on the field, and Solidify turns it into a wall. The geometry and the upgrade checks
+   * stay here; the rotation only has to know the combo is live.
+   */
+  npcSlabSoft(): boolean {
+    const sl = this.sides.npc.slab;
+    return !!sl && !sl.hard;
+  }
+
+  /** Which slot the bot gave up for Oobleck, so its base rotation can skip that key. */
+  npcOobleckSlot(): 'e' | 'r' | 'f' | undefined {
+    return this.oobleckSlot('npc') ?? undefined;
+  }
+
+  /**
+   * The mastery card. A slab that is out counts its own life down — the cooldown is not what the
+   * player is waiting on while one is standing — and the cooldown afterwards.
+   */
+  getOobleckCooldownRatio(time: number): number {
+    const s = this.sides.player;
+    if (s.slab) {
+      const held = s.held?.slab === s.slab;
+      return held ? 1 : Phaser.Math.Clamp((s.slab.until - time) / OOBLECK_MS, 0, 1);
+    }
+    return Phaser.Math.Clamp((time - s.oobleckCastAt) / OOBLECK_COOLDOWN_MS, 0, 1);
   }
 }

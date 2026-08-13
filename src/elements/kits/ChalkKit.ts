@@ -1,13 +1,18 @@
 import Phaser from 'phaser';
+import { Sfx } from '../../audio';
 import { Fighter } from '../../entities/Fighter';
 import { Projectile } from '../../combat/Projectile';
+import type { SummonPurgeTarget } from '../../combat/SummonPurge';
 import { CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
 import {
-  CHK, ChalkAvatar, ChalkColorFn, ChalkFx, chalkBlob, chalkLine, chalkStick, grain,
+  CHK, ChalkAvatar, ChalkColorFn, ChalkFx, chalkBlob, chalkEyes, chalkLegs, chalkLine, chalkStick,
+  grain,
 } from './ChalkVisuals';
 
 type Owner = 'player' | 'npc';
+type Slot = 'e' | 'r' | 'f' | 'q';
+const SLOTS: Slot[] = ['e', 'r', 'f', 'q'];
 
 /**
  * Every kind of chalk in the game. The first four are the four drawing abilities; the last
@@ -154,6 +159,77 @@ const PRODIGY_BOOST = 1.5;
 /** What an orange-enhanced blue line adds to its burn. */
 const PRODIGY_PERMA_DPS = 2;
 
+// ── Mastery passive: Chalk Smudge ────────────────────────────────────────────
+/**
+ * Marks of chalk between smudges. The whole point of counting marks rather than rolling a die
+ * is that a smudge is paid for in *line*, so the long abilities shed and the short ones barely
+ * do — Perma-Chalk draws for half a second and would otherwise be the best smudge generator in
+ * the kit rather than the rarest.
+ */
+const SMUDGE_EVERY = 9;
+/** …and the blue line pays four times over on top of that, because a blue smudge is forever. */
+const SMUDGE_EVERY_RARE = 22;
+const SMUDGE_MAX = 24;
+/** A smudge that never finds anybody rubs itself out rather than joining a permanent crowd. */
+const SMUDGE_LIFE_MS = 14000;
+const SMUDGE_SPEED = 96;
+/** How close its head has to get to a body to bite it. */
+const SMUDGE_REACH = 24;
+const SMUDGE_DAMAGE = 8;
+const SMUDGE_BOOM_DAMAGE = 15;
+const SMUDGE_BOOM_RADIUS = 46;
+const SMUDGE_ORANGE_DAMAGE = 15;
+const SMUDGE_ORANGE_BURN_MS = 3000;
+const SMUDGE_CRIMSON_DAMAGE = 25;
+const SMUDGE_TEAL_SPEED = 2.6;
+const SMUDGE_CRIMSON_SPEED = 0.42;
+/** Green smudges are the only ones on a clock of their own — they are a heal, not a hunter. */
+const SMUDGE_GREEN_MS = 8000;
+const SMUDGE_GREEN_HEAL = 5;
+const SMUDGE_GREEN_RADIUS = 74;
+const SMUDGE_GREEN_INTERVAL_MS = 1000;
+/** A blue smudge does not die on its bite — it backs off and comes round again. */
+const SMUDGE_PERMA_BITE_MS = 1400;
+const SMUDGE_BODY_R = 7;
+/** Shield smudges: the long bars. Length is the whole ability — they are a wall on legs. */
+const SMUDGE_BAR_HALF = 23;
+const SMUDGE_BAR_THICK = 7;
+/** How far out from their owner the bars patrol. */
+const SMUDGE_GUARD_R = 64;
+const SMUDGE_GUARD_SPIN = 0.55;
+const SMUDGE_SHIELD_BLOCKS = 3;
+/** A red bar breaks formation for anything this close and goes off in its face. */
+const SMUDGE_CHARGE_R = 132;
+
+// ── Mastery bindable: Living Chalk ───────────────────────────────────────────
+const LIVING_COOLDOWN_MS = 21000;
+const LIVING_DRAW_MS = 3000;
+/** The pause between the hand coming off the board and the drawing standing up. */
+const LIVING_WAKE_MS = 900;
+const LIVING_CIRCLE_R = 74;
+/** How far in front of the caster the circle opens, along the cursor. */
+const LIVING_CIRCLE_DIST = 104;
+const LIVING_LIFE_MS = 30000;
+const LIVING_HP = 35;
+const LIVING_DAMAGE = 15;
+const LIVING_SPEED = 92;
+const LIVING_BITE_MS = 1100;
+const LIVING_REACH = 30;
+/** What each read shape is worth. */
+const LIVING_TRI_DAMAGE = 10;
+const LIVING_CIRCLE_SPEED = 34;
+const LIVING_SQUARE_HP = 20;
+/** …and what each stick is worth, as a fraction of the drawing done in it. */
+const LIVING_BOOM_MULT = 0.6;
+const LIVING_PERMA_MULT = 1;
+const LIVING_SHIELD_HP = 45;
+/** Shape reading. A loop this much of its own size away from its start still counts as closed. */
+const LIVING_CLOSE_FRAC = 0.3;
+/** Below this wobble in the radius it is a circle whatever its corners say. */
+const LIVING_ROUND_MAX = 0.12;
+/** …and below this the strongest corner count is not strong enough to be a corner count. */
+const LIVING_HARMONIC_MIN = 0.05;
+
 const ARENA_PAD = 32;
 
 // ── World objects ────────────────────────────────────────────────────────────
@@ -203,6 +279,71 @@ interface AreaBlast {
   at: number;
 }
 
+/**
+ * Chalk Mastery — a smear that walked off the line. What it does is decided entirely by the
+ * chalk it came off and whether that chalk was being drawn inside a shield window: `guard`
+ * smudges are long bars that patrol and eat shots, everything else is a six-legged biter.
+ */
+interface Smudge {
+  owner: Owner;
+  /** The stick it was smudged off. Drives colour, damage, speed and whether it survives biting. */
+  chalk: ChalkKind;
+  guard: boolean;
+  x: number;
+  y: number;
+  /** Body heading. For a guard this is the bar's long axis, held across its patrol circle. */
+  ang: number;
+  /** Free-running leg phase. */
+  gait: number;
+  /** Guards: where on their owner's ring this one walks. */
+  orbit: number;
+  seed: number;
+  /** Expiry, or 0 for the blue ones, which never leave. */
+  until: number;
+  /** Guards: shots left before it crumbles. Infinity for a blue bar. */
+  blocks: number;
+  /** Blue biters come round again rather than dying, so their bite is on a clock. */
+  nextBiteAt: number;
+  nextHealAt: number;
+  bornAt: number;
+}
+
+/** One dab of the drawing a Living Chalk is made of, held relative to its own centre. */
+interface LivingPart {
+  dx: number;
+  dy: number;
+  pdx: number;
+  pdy: number;
+  linked: boolean;
+  seed: number;
+  color: number;
+}
+
+/** Chalk Mastery — the drawing that stood up. */
+interface Living {
+  owner: Owner;
+  x: number;
+  y: number;
+  ang: number;
+  hp: number;
+  maxHp: number;
+  /** White chalk in the drawing: a pool that eats shots before its health does. */
+  shield: number;
+  shieldMax: number;
+  damage: number;
+  speed: number;
+  /** How far out its own art reaches — its hitbox, and how big the legs have to be. */
+  radius: number;
+  parts: LivingPart[];
+  shapes: { tri: number; round: number; square: number };
+  /** Nothing moves or bites until the drawing has finished getting up. */
+  wakeAt: number;
+  diesAt: number;
+  nextBiteAt: number;
+  gait: number;
+  seed: number;
+}
+
 /** A live drawing window: the cursor is laying `kind` until `until`. */
 interface Session {
   kind: ChalkKind;
@@ -215,9 +356,17 @@ interface Session {
   started: boolean;
   /** Chalk Shield: nothing may be drawn outside `SHIELD_RANGE` of the caster. */
   confined: boolean;
+  /**
+   * Living Chalk: the small circle on the floor the drawing is pinned inside. Distinct from
+   * `confined` because this ring does not move with the caster and does not become a shield —
+   * everything drawn in it becomes a body instead.
+   */
+  living: { x: number; y: number } | null;
   /** Masterpiece: chalk only flows while the button is held. */
   requireHold: boolean;
   step: number;
+  /** Chalk Smudge: marks laid since the last smear came off the line. */
+  smudgeRun: number;
 }
 
 /** One piece of the shield, held in polar coordinates about its owner. */
@@ -267,6 +416,11 @@ interface Side {
   curY: number;
   /** Pacing gate so the AI does not redraw its blue line every time it comes off cooldown. */
   nextPermaAt: number;
+  // ── Mastery: Living Chalk ──
+  /** Private cast clock — the enhancement is not in `element.abilities`, so `Fighter` has none. */
+  livingCastAt: number;
+  /** Whichever stick the circle is being drawn in, kept across the window's own kind swaps. */
+  livingStick: ChalkKind;
 }
 
 /** Shoelace area of a closed run of marks — how much floor a red loop actually shut in. */
@@ -309,6 +463,11 @@ function makeSide(owner: Owner): Side {
     curX: 0,
     curY: 0,
     nextPermaAt: 0,
+    // The kit's constructor runs on the first match and `reset` on every one after it, and
+    // readiness is measured against the absolute clock — so a zero here would lock the
+    // ability out for the first twenty-one seconds of the first fight.
+    livingCastAt: -LIVING_COOLDOWN_MS,
+    livingStick: 'green',
   };
 }
 
@@ -339,6 +498,14 @@ export interface ChalkArenaApi {
   setStatusIndicator(id: string, status: CustomStatus | null): void;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
+  /** Which enhancement each side has dropped over which ability slot. */
+  masteryBindFor(slot: string): string | null;
+  npcMasteryBindFor(slot: string): string | null;
+  /** Progress towards the four Chalk Mastery requirements. Recorded whether it is on or not. */
+  recordMasteryStat(key: string, amount: number): void;
+  /** Living Chalk is cast off a private timer, so the peer only learns about it here. */
+  broadcastMasteryCast(enhId: string): void;
+  get isOnline(): boolean;
   /** Shop upgrades: the local player's equipped slots. */
   hasUpgrade(slot: string): boolean;
   /** …and the online opponent's, so their upgraded chalk reproduces on this sim. */
@@ -347,7 +514,7 @@ export interface ChalkArenaApi {
 
 // ── ChalkKit ─────────────────────────────────────────────────────────────────
 
-export class ChalkKit {
+export class ChalkKit implements SummonPurgeTarget {
   private api: ChalkArenaApi;
 
   // ── Visuals ──
@@ -366,6 +533,12 @@ export class ChalkKit {
   private staticDirty = true;
   /** Chalk with a fuse burning. Few, short-lived, and has to pulse — so it is per-frame. */
   private liveGfx: Phaser.GameObjects.Graphics | null = null;
+  /**
+   * Chalk Mastery — the things that walked off the line, and whatever a Living Chalk was drawn
+   * as. Its own layer because it is the one part of the element that moves every frame and is
+   * neither ground chalk nor a fuse burning.
+   */
+  private crawlGfx: Phaser.GameObjects.Graphics | null = null;
   /** Above the fighters: the shield and the drawing ring. */
   private airGfx: Phaser.GameObjects.Graphics | null = null;
   private hudGfx: Phaser.GameObjects.Graphics | null = null;
@@ -379,6 +552,10 @@ export class ChalkKit {
   private clouds: Cloud[] = [];
   /** Explosive Release — floor a closed red line has boxed in, waiting on the line. */
   private areaBlasts: AreaBlast[] = [];
+  /** Chalk Mastery — every smear currently on legs, both sides. */
+  private smudges: Smudge[] = [];
+  /** …and the drawings that stood up. At most one per side. */
+  private livings: Living[] = [];
   private nextStroke = 1;
   /** Per-victim blast immunity, so overlapping detonations cannot chain-delete anyone. */
   private blastGate = new Map<Fighter, number>();
@@ -470,6 +647,28 @@ export class ChalkKit {
       && Phaser.Math.Distance.Between(c.x, c.y, x, y) <= DEBRIS_RADIUS);
   }
 
+  /** Whether this side is fighting with Chalk Mastery switched on. */
+  private masteryOn(owner: Owner): boolean {
+    if (!this.isChalk(owner)) return false;
+    return owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive;
+  }
+
+  /** The slot Living Chalk is bound over for this side, or null when it is not bound at all. */
+  private livingSlot(owner: Owner): Slot | null {
+    if (!this.masteryOn(owner)) return null;
+    for (const s of SLOTS) {
+      const bind = owner === 'player' ? this.api.masteryBindFor(s) : this.api.npcMasteryBindFor(s);
+      if (bind === 'living-chalk') return s;
+    }
+    return null;
+  }
+
+  /** Requirement progress. Only ever the player's own doing — the adapter gates on the element. */
+  private note(owner: Owner, key: string, amount: number): void {
+    if (owner !== 'player' || amount <= 0) return;
+    this.api.recordMasteryStat(key, amount);
+  }
+
   /** The chalk this side is holding right now — the stick in the avatar's hand. */
   private heldChalk(owner: Owner): number {
     const s = this.side(owner);
@@ -496,6 +695,8 @@ export class ChalkKit {
     this.marks = [];
     this.clouds = [];
     this.areaBlasts = [];
+    this.smudges = [];
+    this.livings = [];
     this.nextStroke = 1;
     this.blastGate.clear();
     this.burnAccum.clear();
@@ -508,6 +709,7 @@ export class ChalkKit {
     this.npcAvatar?.destroy(); this.npcAvatar = null;
     this.staticGfx?.destroy(); this.staticGfx = null;
     this.liveGfx?.destroy(); this.liveGfx = null;
+    this.crawlGfx?.destroy(); this.crawlGfx = null;
     this.airGfx?.destroy(); this.airGfx = null;
     this.hudGfx?.destroy(); this.hudGfx = null;
     this.hudLabel?.destroy(); this.hudLabel = null;
@@ -542,6 +744,26 @@ export class ChalkKit {
       return;
     }
 
+    // Mastery: inside the little circle the three keys you did *not* bind Living Chalk over
+    // are the other three sticks, and the bound one closes the window early. Read before the
+    // shield branch because a Living Chalk window is neither confined nor a shield.
+    if (s.session?.living) {
+      const bound = this.livingSlot('player');
+      const pick = (slot: Slot, kind: ChalkKind): void => {
+        if (slot === bound) return;
+        if (Phaser.Input.Keyboard.JustDown(this.keyFor(slot))) this.pickLivingChalk('player', kind);
+      };
+      pick('e', 'boom');
+      pick('r', 'perma');
+      pick('f', 'shield');
+      pick('q', 'green');
+      if (bound && Phaser.Input.Keyboard.JustDown(this.keyFor(bound))) {
+        // Finish early rather than cancel: whatever is in the circle still stands up.
+        s.session.until = time;
+      }
+      return;
+    }
+
     // Supreme Shield: two and a half seconds is long enough to be worth changing stick
     // part-way through, so the shield window keeps the keyboard instead of swallowing it.
     if (s.session?.confined && this.up('player', 'f')) {
@@ -556,11 +778,42 @@ export class ChalkKit {
     // by the time a `cast` runs its cooldown has already been stamped.
     if (s.session) return;
 
+    // Mastery: Living Chalk takes over whichever slot it was bound to, and is read before the
+    // base keys because `JustDown` consumes the flag — testing the bind after would eat it.
+    const living = this.livingSlot('player');
+    if (living && Phaser.Input.Keyboard.JustDown(this.keyFor(living))) {
+      this.tryCastLiving('player', mouseX, mouseY);
+    }
+
     if (clicked) p.castAbility('chalk-ward', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('chalk-explosive', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('chalk-perma', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('chalk-shield', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('chalk-masterpiece', ctx);
+    if (living !== 'e' && Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('chalk-explosive', ctx);
+    if (living !== 'r' && Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('chalk-perma', ctx);
+    if (living !== 'f' && Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('chalk-shield', ctx);
+    if (living !== 'q' && Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('chalk-masterpiece', ctx);
+  }
+
+  private keyFor(slot: Slot): Phaser.Input.Keyboard.Key {
+    if (slot === 'e') return this.api.eKey;
+    if (slot === 'r') return this.api.rKey;
+    if (slot === 'f') return this.api.fKey;
+    return this.api.qKey;
+  }
+
+  /**
+   * Living Chalk — change the stick inside the circle. The stroke id is deliberately kept, the
+   * way Supreme Shield keeps it: the whole window is lifted off the floor as one drawing when
+   * it closes, so a body drawn in three colours has to stay one run.
+   */
+  private pickLivingChalk(owner: Owner, kind: ChalkKind): void {
+    const s = this.side(owner);
+    if (!s.session || s.session.kind === kind) return;
+    s.session.kind = kind;
+    s.session.started = false;
+    s.livingStick = kind;
+    const f = this.fighter(owner);
+    this.avatar(owner)?.setChalk(TONE[kind]);
+    this.fx(owner).dust(f.x, f.y - 8, 5, 18, 420, TONE[kind]);
+    this.api.showFloatingText(f.x, f.y - 46, `🖍️ ${LABEL[kind]}`, this.hex(TONE[kind]));
   }
 
   /**
@@ -678,6 +931,7 @@ export class ChalkKit {
 
   private openSession(
     owner: Owner, kind: ChalkKind, ms: number, confined: boolean, requireHold: boolean, step: number,
+    living: { x: number; y: number } | null = null,
   ): void {
     const s = this.side(owner);
     s.session = {
@@ -689,8 +943,10 @@ export class ChalkKit {
       lastY: 0,
       started: false,
       confined,
+      living,
       requireHold,
       step,
+      smudgeRun: 0,
     };
     this.avatar(owner)?.setChalk(TONE[kind]);
   }
@@ -711,6 +967,7 @@ export class ChalkKit {
       this.feedSession(owner, time);
       this.updateMasterpiece(owner, time);
     }
+    this.updateNpcLiving(time);
 
     this.expireMarks(time);
     this.updateClouds(time);
@@ -720,10 +977,13 @@ export class ChalkKit {
     this.updateGround(delta);
     this.updatePermaBlock();
     this.updateShields(delta);
+    this.updateSmudges(time, delta);
+    this.updateLivings(time, delta);
     this.updateAvatars(delta, playerIs, npcIs);
 
     this.paintStatic();
     this.paintLive(time);
+    this.paintCrawlers(time);
     this.paintAir(time);
     this.paintHud(playerIs);
     this.pushStatuses(playerIs, time);
@@ -733,6 +993,9 @@ export class ChalkKit {
     const { scene } = this.api;
     if (!this.staticGfx) { this.staticGfx = scene.add.graphics().setDepth(2); this.staticDirty = true; }
     if (!this.liveGfx) this.liveGfx = scene.add.graphics().setDepth(3);
+    // Level with the projectiles: above every chalk floor layer, below the fighters at 5 —
+    // a smudge is a thing crawling about on the board, not a thing hanging over it.
+    if (!this.crawlGfx) this.crawlGfx = scene.add.graphics().setDepth(4);
     if (!this.airGfx) this.airGfx = scene.add.graphics().setDepth(7);
     if (!this.hudGfx) this.hudGfx = scene.add.graphics().setDepth(20).setScrollFactor(0);
   }
@@ -755,6 +1018,27 @@ export class ChalkKit {
     const target = this.enemyOf(owner);
     const kind = s.session?.kind ?? 'ward';
 
+    s.curAng += (delta / 1000) * 2.6;
+
+    // Mastery: inside a Living Chalk circle the phantom cursor walks a triangle rather than a
+    // ring. A bot cannot decide what to draw, so what it draws is decided here — and a triangle
+    // is the one shape whose payoff (more damage) a movement state machine can actually use.
+    const ring = s.session?.living;
+    if (ring) {
+      const k = (((s.curAng * 0.9) % (Math.PI * 2)) / (Math.PI * 2)) * 3;
+      const leg = Math.floor(k);
+      const u = k - leg;
+      const vertex = (n: number): { x: number; y: number } => ({
+        x: ring.x + Math.cos(-Math.PI / 2 + (n % 3) * (Math.PI * 2 / 3)) * LIVING_CIRCLE_R * 0.8,
+        y: ring.y + Math.sin(-Math.PI / 2 + (n % 3) * (Math.PI * 2 / 3)) * LIVING_CIRCLE_R * 0.8,
+      });
+      const a = vertex(leg);
+      const b = vertex(leg + 1);
+      s.curX = a.x + (b.x - a.x) * u;
+      s.curY = a.y + (b.y - a.y) * u;
+      return;
+    }
+
     let cx = f.x;
     let cy = f.y;
     let radius = 60;
@@ -774,7 +1058,6 @@ export class ChalkKit {
       radius = 58;
     }
 
-    s.curAng += (delta / 1000) * 2.6;
     s.curX = Phaser.Math.Clamp(cx + Math.cos(s.curAng) * radius, this.left, this.right);
     s.curY = Phaser.Math.Clamp(cy + Math.sin(s.curAng) * radius * 0.8, this.top, this.bottom);
   }
@@ -790,6 +1073,8 @@ export class ChalkKit {
       // Chalk Shield's window closing is what actually builds the shield. `confined` rather
       // than the kind, because a Supreme Shield may have been finished in red or blue.
       if (sess.confined) this.raiseShield(owner, sess.stroke);
+      // Mastery: and the little circle closing is what makes a body out of the drawing.
+      else if (sess.living) this.hatchLiving(owner, sess);
       // Explosive Release works out what the line boxed in now, while the marks that drew it
       // are all still on the floor — in a second they will have gone off and been deleted.
       else if (sess.kind === 'boom' && this.up(owner, 'e')) this.armEnclosure(owner, sess);
@@ -820,6 +1105,17 @@ export class ChalkKit {
       }
     }
 
+    // Living Chalk is pinned the same way, but to a circle standing still on the floor rather
+    // than to one riding the caster — walking away does not drag the drawing with you.
+    if (sess.living) {
+      const d = Phaser.Math.Distance.Between(sess.living.x, sess.living.y, x, y);
+      if (d > LIVING_CIRCLE_R) {
+        const a = Math.atan2(y - sess.living.y, x - sess.living.x);
+        x = sess.living.x + Math.cos(a) * LIVING_CIRCLE_R;
+        y = sess.living.y + Math.sin(a) * LIVING_CIRCLE_R;
+      }
+    }
+
     if (sess.started) {
       const moved = Phaser.Math.Distance.Between(sess.lastX, sess.lastY, x, y);
       if (moved < sess.step) return;
@@ -846,8 +1142,9 @@ export class ChalkKit {
     };
 
     // A Supreme Shield drawn in red is a shield, not a minefield: chalk inside the ring is
-    // about to be lifted off the floor, so nothing laid there is given a fuse.
-    if (sess.confined) {
+    // about to be lifted off the floor, so nothing laid there is given a fuse. The same is
+    // true of a Living Chalk — red in the circle is a hotter body, not a mine.
+    if (sess.confined || sess.living) {
       /* no fuse — the whole run comes up when the window closes */
     } else if (sess.kind === 'ward') {
       // Every dab of the run shares one detonation time, so it all goes at once however long
@@ -872,6 +1169,18 @@ export class ChalkKit {
 
     if (mark.fuseAt === 0) this.staticDirty = true;
     if (linked) this.fx(owner).lay(mark.px, mark.py, mark.x, mark.y, TONE[mark.kind]);
+
+    // Mastery: the hand is not clean. Paid for in line rather than rolled for, so the long
+    // abilities shed and the half-second blue line barely does — which is the entire reason a
+    // blue smudge, the one that never dies, is the rarest thing the passive makes.
+    if (this.masteryOn(owner) && !sess.living) {
+      sess.smudgeRun++;
+      const every = mark.kind === 'perma' ? SMUDGE_EVERY_RARE : SMUDGE_EVERY;
+      if (sess.smudgeRun >= every) {
+        sess.smudgeRun = 0;
+        this.shedSmudge(owner, mark, sess.confined, time);
+      }
+    }
 
     this.trimMarks();
   }
@@ -947,7 +1256,9 @@ export class ChalkKit {
       // One blast per body per gate, however many marks overlap them.
       if (time < (this.blastGate.get(t) ?? 0)) continue;
       this.blastGate.set(t, time + BLAST_GATE_MS);
-      t.takeDamage(Math.round(BOOM_DAMAGE * this.chalkDamageMult(m.owner, t)));
+      const dmg = Math.round(BOOM_DAMAGE * this.chalkDamageMult(m.owner, t));
+      t.takeDamage(dmg);
+      this.note(m.owner, 'blastDamage', dmg);
       this.api.spawnHitFlash(t.x, t.y, TONE[m.kind]);
     }
   }
@@ -980,7 +1291,9 @@ export class ChalkKit {
       this.blastGate.set(t, time + BLAST_GATE_MS);
       const stacks = Math.min(covered, WARD_MAX_STACKS);
       const base = WARD_DAMAGE + (stacks - 1) * WARD_STACK_DAMAGE;
-      t.takeDamage(Math.round(base * this.chalkDamageMult(owner, t)));
+      const dmg = Math.round(base * this.chalkDamageMult(owner, t));
+      t.takeDamage(dmg);
+      this.note(owner, 'blastDamage', dmg);
       this.api.spawnHitFlash(t.x, t.y, TONE.ward);
       if (stacks > 1) {
         this.api.showFloatingText(t.x, t.y - 54, `💥 WARD ×${stacks}`, this.hex(CHK.white));
@@ -1076,7 +1389,9 @@ export class ChalkKit {
       // Deliberately not gated: the line's own blasts fired moments ago, and the shape is one
       // hit by construction. It stamps the gate on the way out so nothing double-dips it.
       this.blastGate.set(t, time + BLAST_GATE_MS);
-      t.takeDamage(Math.round(RELEASE_DAMAGE * this.chalkDamageMult(blast.owner, t)));
+      const dmg = Math.round(RELEASE_DAMAGE * this.chalkDamageMult(blast.owner, t));
+      t.takeDamage(dmg);
+      this.note(blast.owner, 'blastDamage', dmg);
       this.api.spawnHitFlash(t.x, t.y, CHK.red);
       this.api.showFloatingText(t.x, t.y - 54, '⭕ ENCLOSED', this.hex(CHK.red));
     }
@@ -1124,7 +1439,7 @@ export class ChalkKit {
    */
   private updateGround(delta: number): void {
     const dt = delta / 1000;
-    const burn = new Map<Fighter, { dps: number; color: number }>();
+    const burn = new Map<Fighter, { dps: number; color: number; owner: Owner }>();
     for (const m of this.marks) {
       if (m.kind === 'perma' || m.kind === 'orange') {
         const r = m.kind === 'perma' ? PERMA_RADIUS : MP_TOUCH_R;
@@ -1138,7 +1453,7 @@ export class ChalkKit {
           // crimson lifts it too — both fold in before the max, so the strongest mark wins.
           const scaled = dps * this.chalkDamageMult(m.owner, t);
           const cur = burn.get(t);
-          if (!cur || scaled > cur.dps) burn.set(t, { dps: scaled, color: TONE[m.kind] });
+          if (!cur || scaled > cur.dps) burn.set(t, { dps: scaled, color: TONE[m.kind], owner: m.owner });
         }
       }
     }
@@ -1150,6 +1465,7 @@ export class ChalkKit {
       this.burnAccum.set(t, acc - whole);
       if (whole > 0) {
         t.takeDamage(whole);
+        this.note(b.owner, 'burnDamage', whole);
         if (Math.random() < 0.25) this.api.spawnHitFlash(t.x, t.y, b.color);
       }
     }
@@ -1194,6 +1510,7 @@ export class ChalkKit {
         this.fx(owner).snap(proj.x, proj.y, CHK.blue);
         this.api.spawnHitFlash(proj.x, proj.y, CHK.blue);
         proj.destroy();
+        this.note(owner, 'permaBlocks', 1);
       }
     }
   }
@@ -1278,6 +1595,9 @@ export class ChalkKit {
     f.damageAbsorber = (amount: number) => {
       const st = this.side(owner);
       if (st.shieldHp <= 0 || !st.shieldNodes.length) return false;
+      // Counted against what the board actually had left, so the hit that breaks it is not
+      // credited with the whole of its overkill.
+      this.note(owner, 'shieldAbsorbed', Math.round(Math.min(amount, st.shieldHp)));
       st.shieldHp -= amount;
       this.shieldPayback(owner, this.now);
       this.chipShield(owner);
@@ -1352,6 +1672,7 @@ export class ChalkKit {
         this.fx(owner).snap(f.x + Math.cos(a) * hit.dist, f.y + Math.sin(a) * hit.dist, TONE[hit.kind]);
         this.api.spawnHitFlash(proj.x, proj.y, TONE[hit.kind]);
         proj.destroy();
+        this.note(owner, 'shieldAbsorbed', Math.round(Math.min(SHIELD_PROJ_COST, s.shieldHp)));
         s.shieldHp -= SHIELD_PROJ_COST;
         this.shieldPayback(owner, this.now);
         this.chipShield(owner);
@@ -1375,6 +1696,7 @@ export class ChalkKit {
         const whole = Math.floor(s.shieldGrindAccum);
         if (whole > 0) {
           s.shieldGrindAccum -= whole;
+          this.note(owner, 'shieldAbsorbed', Math.round(Math.min(whole, s.shieldHp)));
           s.shieldHp -= whole;
           this.chipShield(owner);
           if (s.shieldHp <= 0) this.breakShield(owner, true);
@@ -1413,6 +1735,516 @@ export class ChalkKit {
       this.fx(owner).ring(f.x, f.y, 14, 90, TONE[winner], 620);
       this.api.showFloatingText(f.x, f.y - 66, `🔵 PERMA: ${LABEL[winner]}`, this.hex(TONE[winner]));
     }
+  }
+
+  // ── Mastery passive: Chalk Smudge ──────────────────────────────────────────
+
+  /**
+   * One smear comes off the line. What it becomes is decided entirely by the stick in hand and
+   * by whether that stick was being held inside a shield window — the passive has no table of
+   * its own, it only reads what the artist was already doing.
+   */
+  private shedSmudge(owner: Owner, mark: Mark, guard: boolean, time: number): void {
+    if (this.smudges.filter((s) => s.owner === owner).length >= SMUDGE_MAX) return;
+    const permanent = mark.kind === 'perma';
+    const green = mark.kind === 'green';
+    this.smudges.push({
+      owner,
+      chalk: mark.kind,
+      guard,
+      x: mark.x,
+      y: mark.y,
+      ang: Math.random() * Math.PI * 2,
+      gait: Math.random() * Math.PI * 2,
+      orbit: Math.random() * Math.PI * 2,
+      seed: Math.random() * 999,
+      until: permanent ? 0 : time + (green ? SMUDGE_GREEN_MS : SMUDGE_LIFE_MS),
+      blocks: guard ? (permanent ? Infinity : SMUDGE_SHIELD_BLOCKS) : 0,
+      nextBiteAt: 0,
+      nextHealAt: time + SMUDGE_GREEN_INTERVAL_MS,
+      bornAt: time,
+    });
+    this.fx(owner).dust(mark.x, mark.y, 4, 12, 380, TONE[mark.kind]);
+    Sfx.playAt('claw', mark.x, { volume: 0.22, rate: 1.55 });
+  }
+
+  /** Teal is the fast one and crimson is the slow one — the two Masterpiece colours that are
+   * purely a movement decision rather than a damage one. */
+  private smudgeSpeed(sm: Smudge): number {
+    if (sm.chalk === 'teal') return SMUDGE_SPEED * SMUDGE_TEAL_SPEED;
+    if (sm.chalk === 'crimson') return SMUDGE_SPEED * SMUDGE_CRIMSON_SPEED;
+    return sm.guard ? SMUDGE_SPEED * 1.1 : SMUDGE_SPEED;
+  }
+
+  /** What one bite is worth before the element's own multipliers. */
+  private smudgeBite(sm: Smudge): number {
+    if (sm.chalk === 'orange') return SMUDGE_ORANGE_DAMAGE;
+    if (sm.chalk === 'crimson') return SMUDGE_CRIMSON_DAMAGE;
+    return SMUDGE_DAMAGE;
+  }
+
+  /** Whether a point lies on a guard's bar. The bar *is* the hitbox — that is the whole idea. */
+  private inBar(sm: Smudge, px: number, py: number): boolean {
+    const dx = px - sm.x;
+    const dy = py - sm.y;
+    const c = Math.cos(-sm.ang);
+    const s = Math.sin(-sm.ang);
+    return Math.abs(dx * c - dy * s) <= SMUDGE_BAR_HALF + 4
+      && Math.abs(dx * s + dy * c) <= SMUDGE_BAR_THICK + 4;
+  }
+
+  private nearestTarget(owner: Owner, x: number, y: number): Fighter | null {
+    let best: Fighter | null = null;
+    let bd = Infinity;
+    for (const t of this.targetsOf(owner)) {
+      const d = Phaser.Math.Distance.Between(x, y, t.x, t.y);
+      if (d < bd) { bd = d; best = t; }
+    }
+    return best;
+  }
+
+  private updateSmudges(time: number, delta: number): void {
+    if (!this.smudges.length) return;
+    const dt = delta / 1000;
+    // Backwards, because everything in here can rub itself out mid-pass.
+    for (let i = this.smudges.length - 1; i >= 0; i--) {
+      const sm = this.smudges[i];
+      sm.gait += dt * (5.5 + this.smudgeSpeed(sm) / 24);
+      const artist = this.fighter(sm.owner);
+      if (!artist || !artist.active || artist.hp <= 0) { this.rubOut(sm, i, false); continue; }
+      if (sm.until > 0 && time >= sm.until) { this.rubOut(sm, i, sm.guard && sm.chalk === 'boom'); continue; }
+      if (sm.guard) this.updateGuard(sm, i, dt, artist);
+      else this.updateBiter(sm, i, time, dt);
+    }
+  }
+
+  /** Walk, and turn towards where you are walking. Turning is separate so a smudge banks. */
+  private stepToward(sm: Smudge, tx: number, ty: number, speed: number, dt: number, stopAt: number): void {
+    const d = Phaser.Math.Distance.Between(sm.x, sm.y, tx, ty);
+    sm.ang = Phaser.Math.Angle.RotateTo(sm.ang, Math.atan2(ty - sm.y, tx - sm.x), dt * 7);
+    if (d <= stopAt) return;
+    sm.x = Phaser.Math.Clamp(sm.x + Math.cos(sm.ang) * speed * dt, this.left, this.right);
+    sm.y = Phaser.Math.Clamp(sm.y + Math.sin(sm.ang) * speed * dt, this.top, this.bottom);
+  }
+
+  private updateBiter(sm: Smudge, i: number, time: number, dt: number): void {
+    const speed = this.smudgeSpeed(sm);
+
+    // Green is the one colour that never goes hunting. It walks at your heel and heals.
+    if (sm.chalk === 'green') {
+      const f = this.fighter(sm.owner);
+      this.stepToward(sm, f.x, f.y + 6, speed, dt, 26);
+      if (time < sm.nextHealAt) return;
+      sm.nextHealAt = time + SMUDGE_GREEN_INTERVAL_MS;
+      if (Phaser.Math.Distance.Between(sm.x, sm.y, f.x, f.y) > SMUDGE_GREEN_RADIUS || f.hp <= 0) return;
+      f.heal(SMUDGE_GREEN_HEAL);
+      this.fx(sm.owner).ring(sm.x, sm.y, 6, SMUDGE_GREEN_RADIUS * 0.6, CHK.green, 400);
+      return;
+    }
+
+    const target = this.nearestTarget(sm.owner, sm.x, sm.y);
+    if (!target) {
+      // Nothing to walk at: it mills about rather than freezing mid-stride.
+      this.stepToward(sm, sm.x + Math.cos(sm.gait * 0.4) * 60, sm.y + Math.sin(sm.gait * 0.4) * 60,
+        speed * 0.35, dt, 0);
+      return;
+    }
+    this.stepToward(sm, target.x, target.y, speed, dt, 0);
+    if (Phaser.Math.Distance.Between(sm.x, sm.y, target.x, target.y) > SMUDGE_REACH) return;
+
+    // Red does not bite at all — it bursts, and the burst is what kills it.
+    if (sm.chalk === 'boom') { this.rubOut(sm, i, true); return; }
+
+    // Blue is the one that survives its own bite, so it is the one on a clock.
+    if (sm.chalk === 'perma') {
+      if (time < sm.nextBiteAt) return;
+      sm.nextBiteAt = time + SMUDGE_PERMA_BITE_MS;
+      this.bite(sm, target);
+      // Backs off a body length so the next one is an approach rather than a grind.
+      sm.x -= Math.cos(sm.ang) * 30;
+      sm.y -= Math.sin(sm.ang) * 30;
+      return;
+    }
+
+    this.bite(sm, target);
+    this.rubOut(sm, i, false);
+  }
+
+  private bite(sm: Smudge, target: Fighter): void {
+    const dmg = Math.max(1, Math.round(this.smudgeBite(sm) * this.chalkDamageMult(sm.owner, target)));
+    target.takeDamage(dmg);
+    this.api.spawnHitFlash(target.x, target.y, TONE[sm.chalk]);
+    this.fx(sm.owner).dust(sm.x, sm.y, 4, 15, 320, TONE[sm.chalk]);
+    // Orange is the Masterpiece's burning colour, so its smudge leaves the same fire behind it.
+    if (sm.chalk === 'orange') {
+      target.burningUntil = Math.max(target.burningUntil,
+        this.now + Math.round(SMUDGE_ORANGE_BURN_MS * target.statusDurMult));
+      this.api.showFloatingText(target.x, target.y - 44, '🔥 SMUDGED', this.hex(CHK.orange));
+    }
+  }
+
+  /**
+   * A bar on legs. It patrols its owner's ring broadside-on, because a bar is only a wall when
+   * it is across whatever is coming — and a red one abandons the ring entirely for anything
+   * near enough to be worth going off in the face of.
+   */
+  private updateGuard(sm: Smudge, i: number, dt: number, artist: Fighter): void {
+    const speed = this.smudgeSpeed(sm);
+    const charge = sm.chalk === 'boom' ? this.nearestTarget(sm.owner, sm.x, sm.y) : null;
+    if (charge && Phaser.Math.Distance.Between(sm.x, sm.y, charge.x, charge.y) <= SMUDGE_CHARGE_R) {
+      this.stepToward(sm, charge.x, charge.y, speed * 1.15, dt, 0);
+      if (Phaser.Math.Distance.Between(sm.x, sm.y, charge.x, charge.y) <= SMUDGE_REACH) {
+        this.rubOut(sm, i, true);
+        return;
+      }
+    } else {
+      sm.orbit += dt * SMUDGE_GUARD_SPIN;
+      const gx = artist.x + Math.cos(sm.orbit) * SMUDGE_GUARD_R;
+      const gy = artist.y + Math.sin(sm.orbit) * SMUDGE_GUARD_R;
+      const k = Math.min(1, dt * 6);
+      sm.x = Phaser.Math.Linear(sm.x, gx, k);
+      sm.y = Phaser.Math.Linear(sm.y, gy, k);
+      sm.ang = sm.orbit + Math.PI / 2;
+    }
+
+    // Shots die on it. Snapshotted for the same reason the shield's own sweep is: `destroy()`
+    // splices the group's live array under a plain walk.
+    for (const child of [...this.api.projectiles.getChildren()]) {
+      const proj = child as Projectile;
+      if (!proj.active) continue;
+      const hostile = sm.owner === 'player' ? !proj.isFromPlayer : proj.isFromPlayer;
+      if (!hostile) continue;
+      if (!this.inBar(sm, proj.x, proj.y)) continue;
+      this.fx(sm.owner).snap(proj.x, proj.y, TONE[sm.chalk]);
+      this.api.spawnHitFlash(proj.x, proj.y, TONE[sm.chalk]);
+      proj.destroy();
+      sm.blocks -= 1;
+      if (sm.blocks <= 0) { this.rubOut(sm, i, sm.chalk === 'boom'); return; }
+    }
+  }
+
+  /** A smudge leaves the board — as powder, or as a red one always does, as a hole. */
+  private rubOut(sm: Smudge, index: number, explode: boolean): void {
+    this.smudges.splice(index, 1);
+    const fx = this.fx(sm.owner);
+    if (!explode) {
+      fx.dust(sm.x, sm.y, 5, 16, 420, TONE[sm.chalk]);
+      return;
+    }
+    fx.boom(sm.x, sm.y, SMUDGE_BOOM_RADIUS, CHK.red);
+    const time = this.now;
+    for (const t of this.targetsOf(sm.owner)) {
+      if (Phaser.Math.Distance.Between(sm.x, sm.y, t.x, t.y) > SMUDGE_BOOM_RADIUS) continue;
+      // Same gate as every other chalk explosion, so a swarm cannot chain-delete anyone.
+      if (time < (this.blastGate.get(t) ?? 0)) continue;
+      this.blastGate.set(t, time + BLAST_GATE_MS);
+      t.takeDamage(Math.max(1, Math.round(SMUDGE_BOOM_DAMAGE * this.chalkDamageMult(sm.owner, t))));
+      this.api.spawnHitFlash(t.x, t.y, CHK.red);
+    }
+  }
+
+  // ── Mastery bindable: Living Chalk ─────────────────────────────────────────
+
+  /** The bound key, or the bot's own decision. Answers whether the circle actually opened. */
+  private tryCastLiving(owner: Owner, tx: number, ty: number): boolean {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (!f || !f.active || f.hp <= 0) return false;
+    // One hand, one stick — the same refusal every other cast in the element makes.
+    if (s.session || s.mpOn) return false;
+    if (this.now - s.livingCastAt < LIVING_COOLDOWN_MS) return false;
+    s.livingCastAt = this.now;
+    this.castLiving(owner, tx, ty);
+    // Cast off a private timer rather than through `castAbility`, so the peer only learns
+    // about it here.
+    if (owner === 'player') this.api.broadcastMasteryCast('living-chalk');
+    return true;
+  }
+
+  /**
+   * Online: the opponent drew one on their machine. Only the fact of it crosses the wire — the
+   * shapes and the sticks are three seconds of somebody else's mouse — so the replica is built
+   * to the base statline and the same drawing everybody's first one is.
+   */
+  doNpcLivingChalk(tx: number, ty: number): void {
+    this.sides.npc.livingCastAt = this.now;
+    this.castLiving('npc', tx, ty);
+  }
+
+  private castLiving(owner: Owner, tx: number, ty: number): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    // Only one of yours may be standing; casting again rubs out the last one.
+    this.killLiving(owner);
+    const ang = Math.atan2(ty - f.y, tx - f.x);
+    const cx = Phaser.Math.Clamp(f.x + Math.cos(ang) * LIVING_CIRCLE_DIST,
+      this.left + LIVING_CIRCLE_R, this.right - LIVING_CIRCLE_R);
+    const cy = Phaser.Math.Clamp(f.y + Math.sin(ang) * LIVING_CIRCLE_DIST,
+      this.top + LIVING_CIRCLE_R, this.bottom - LIVING_CIRCLE_R);
+    s.livingStick = 'green';
+    this.openSession(owner, 'green', LIVING_DRAW_MS, false, false, STEP, { x: cx, y: cy });
+    this.avatar(owner)?.play('raise');
+    const fx = this.fx(owner);
+    fx.ring(cx, cy, 8, LIVING_CIRCLE_R, CHK.green, 520);
+    fx.dust(cx, cy, 8, LIVING_CIRCLE_R * 0.7, 700, CHK.dust);
+    this.api.showFloatingText(f.x, f.y - 50, '⭕ DRAW IT', this.hex(CHK.green));
+    Sfx.playAt('mutate', f.x, { volume: 0.5, rate: 1.1 });
+  }
+
+  /**
+   * The window has closed. Peel the drawing off the floor, read what is in it, and stand it up.
+   *
+   * The shapes are the build and the sticks are the material — nothing here is a random roll,
+   * which is the whole reason the ability is worth three seconds of standing still.
+   */
+  private hatchLiving(owner: Owner, sess: Session): void {
+    const drawn = this.marks.filter((m) => m.stroke === sess.stroke);
+    this.marks = this.marks.filter((m) => m.stroke !== sess.stroke);
+    this.staticDirty = true;
+    const f = this.fighter(owner);
+    if (!f) return;
+    if (drawn.length < 3) {
+      this.api.showFloatingText(f.x, f.y - 44, 'Nothing drawn', '#8a8a8a');
+      return;
+    }
+
+    let cx = 0;
+    let cy = 0;
+    for (const m of drawn) { cx += m.x; cy += m.y; }
+    cx /= drawn.length;
+    cy /= drawn.length;
+
+    const shapes = this.readShapes(drawn);
+    const frac = (k: ChalkKind): number => drawn.filter((m) => m.kind === k).length / drawn.length;
+    const boomFrac = frac('boom');
+    const permaFrac = frac('perma');
+    const whiteFrac = frac('shield');
+
+    let radius = 0;
+    const parts: LivingPart[] = drawn.map((m) => {
+      radius = Math.max(radius, Phaser.Math.Distance.Between(cx, cy, m.x, m.y));
+      return {
+        dx: m.x - cx, dy: m.y - cy, pdx: m.px - cx, pdy: m.py - cy,
+        linked: m.linked, seed: m.seed, color: TONE[m.kind],
+      };
+    });
+
+    const maxHp = Math.round((LIVING_HP + shapes.square * LIVING_SQUARE_HP)
+      * (1 + permaFrac * LIVING_PERMA_MULT));
+    const damage = Math.round((LIVING_DAMAGE + shapes.tri * LIVING_TRI_DAMAGE)
+      * (1 + boomFrac * LIVING_BOOM_MULT));
+    const shield = Math.round(LIVING_SHIELD_HP * whiteFrac);
+    const wakeAt = this.now + LIVING_WAKE_MS;
+
+    this.livings.push({
+      owner,
+      x: cx,
+      y: cy,
+      ang: Math.atan2(cy - f.y, cx - f.x),
+      hp: maxHp,
+      maxHp,
+      shield,
+      shieldMax: shield,
+      damage,
+      speed: LIVING_SPEED + shapes.round * LIVING_CIRCLE_SPEED,
+      radius: Phaser.Math.Clamp(radius, 16, LIVING_CIRCLE_R),
+      parts,
+      shapes,
+      wakeAt,
+      diesAt: wakeAt + LIVING_LIFE_MS,
+      nextBiteAt: 0,
+      gait: 0,
+      seed: Math.random() * 999,
+    });
+
+    const fx = this.fx(owner);
+    fx.ring(cx, cy, 10, LIVING_CIRCLE_R * 0.8, CHK.green, 620);
+    const read: string[] = [];
+    if (shapes.tri) read.push(`△×${shapes.tri}`);
+    if (shapes.round) read.push(`◯×${shapes.round}`);
+    if (shapes.square) read.push(`▢×${shapes.square}`);
+    this.api.showFloatingText(cx, cy - 52, `🕷️ ${maxHp} HP · ${damage} DMG`, this.hex(CHK.green));
+    if (read.length) this.api.showFloatingText(cx, cy - 70, read.join(' '), this.hex(CHK.teal));
+    if (shield > 0) this.api.showFloatingText(cx, cy - 88, `🛡️ ${shield}`, this.hex(CHK.white));
+    Sfx.playAt('vine-grow', cx, { volume: 0.5, rate: 1.2 });
+  }
+
+  /**
+   * Every closed loop in the drawing, sorted into the three builds. Split on pen lifts, because
+   * two circles drawn without lifting are one wandering line and should read as one shape.
+   */
+  private readShapes(run: Mark[]): { tri: number; round: number; square: number } {
+    const out = { tri: 0, round: 0, square: 0 };
+    let cur: Mark[] = [];
+    const flush = (): void => {
+      const shape = this.readShape(cur);
+      if (shape) out[shape]++;
+      cur = [];
+    };
+    for (const m of run) {
+      if (!m.linked && cur.length) flush();
+      cur.push(m);
+    }
+    flush();
+    return out;
+  }
+
+  /**
+   * What one stroke is, near enough.
+   *
+   * Corners are deliberately *not* counted — a hand-drawn triangle at 12px resolution has a
+   * dozen of them and a shaky circle has four. Instead the stroke's radius about its own centre
+   * is read as a signal and its 3rd and 4th harmonics compared: a lumpy triangle still has
+   * nearly all of its wobble at three-per-turn, and a squashed square at four, whatever the
+   * hand did between the corners. A stroke whose radius barely wobbles at all is a circle
+   * before either harmonic is even consulted.
+   */
+  private readShape(pts: Mark[]): 'tri' | 'round' | 'square' | null {
+    if (pts.length < 6) return null;
+
+    let cx = 0;
+    let cy = 0;
+    for (const p of pts) { cx += p.x; cy += p.y; }
+    cx /= pts.length;
+    cy /= pts.length;
+
+    let rMean = 0;
+    let maxR = 0;
+    for (const p of pts) {
+      const r = Phaser.Math.Distance.Between(cx, cy, p.x, p.y);
+      rMean += r;
+      maxR = Math.max(maxR, r);
+    }
+    rMean /= pts.length;
+    if (rMean < 10) return null;
+
+    // Closed enough. Nobody shuts a chalk circle exactly, so the tolerance scales with the
+    // size of the thing rather than being a flat number of pixels.
+    const gap = Phaser.Math.Distance.Between(
+      pts[0].x, pts[0].y, pts[pts.length - 1].x, pts[pts.length - 1].y,
+    );
+    if (gap > Math.max(34, maxR * 2 * LIVING_CLOSE_FRAC)) return null;
+
+    let variance = 0;
+    for (const p of pts) {
+      variance += (Phaser.Math.Distance.Between(cx, cy, p.x, p.y) - rMean) ** 2;
+    }
+    if (Math.sqrt(variance / pts.length) / rMean < LIVING_ROUND_MAX) return 'round';
+
+    const harmonic = (k: number): number => {
+      let re = 0;
+      let im = 0;
+      for (const p of pts) {
+        const th = Math.atan2(p.y - cy, p.x - cx);
+        const r = Phaser.Math.Distance.Between(cx, cy, p.x, p.y);
+        re += r * Math.cos(k * th);
+        im += r * Math.sin(k * th);
+      }
+      return Math.hypot(re, im) / (pts.length * rMean);
+    };
+    const h3 = harmonic(3);
+    const h4 = harmonic(4);
+    if (Math.max(h3, h4) < LIVING_HARMONIC_MIN) return 'round';
+    return h3 >= h4 ? 'tri' : 'square';
+  }
+
+  private hurtLiving(lv: Living, amount: number): void {
+    let left = amount;
+    // White chalk in the drawing is a coat of shield on it, spent before its health is.
+    if (lv.shield > 0) {
+      const eaten = Math.min(lv.shield, left);
+      lv.shield -= eaten;
+      left -= eaten;
+    }
+    if (left > 0) lv.hp -= left;
+  }
+
+  private dropLiving(index: number): void {
+    const lv = this.livings[index];
+    this.livings.splice(index, 1);
+    const fx = this.fx(lv.owner);
+    // It comes apart into the marks it was made of, which is the only honest way for a
+    // drawing to die.
+    for (let i = 0; i < lv.parts.length; i += 3) {
+      fx.dust(lv.x + lv.parts[i].dx, lv.y + lv.parts[i].dy, 2, 14, 520, lv.parts[i].color);
+    }
+    this.api.showFloatingText(lv.x, lv.y - 40, '🧹 RUBBED OUT', this.hex(CHK.whiteDim));
+  }
+
+  private killLiving(owner: Owner): void {
+    const i = this.livings.findIndex((l) => l.owner === owner);
+    if (i >= 0) this.dropLiving(i);
+  }
+
+  private updateLivings(time: number, delta: number): void {
+    if (!this.livings.length) return;
+    const dt = delta / 1000;
+    for (let i = this.livings.length - 1; i >= 0; i--) {
+      const lv = this.livings[i];
+      const artist = this.fighter(lv.owner);
+      if (!artist || !artist.active || artist.hp <= 0) { this.dropLiving(i); continue; }
+      if (time >= lv.diesAt) { this.dropLiving(i); continue; }
+      // Getting up. It shivers on the floor and does nothing at all until it is standing.
+      if (time < lv.wakeAt) continue;
+      lv.gait += dt * (4.5 + lv.speed / 30);
+
+      const target = this.nearestTarget(lv.owner, lv.x, lv.y);
+      if (target) {
+        const d = Phaser.Math.Distance.Between(lv.x, lv.y, target.x, target.y);
+        lv.ang = Phaser.Math.Angle.RotateTo(lv.ang, Math.atan2(target.y - lv.y, target.x - lv.x), dt * 5);
+        if (d > LIVING_REACH) {
+          lv.x = Phaser.Math.Clamp(lv.x + Math.cos(lv.ang) * lv.speed * dt, this.left, this.right);
+          lv.y = Phaser.Math.Clamp(lv.y + Math.sin(lv.ang) * lv.speed * dt, this.top, this.bottom);
+        } else if (time >= lv.nextBiteAt) {
+          lv.nextBiteAt = time + LIVING_BITE_MS;
+          const dmg = Math.max(1, Math.round(lv.damage * this.chalkDamageMult(lv.owner, target)));
+          target.takeDamage(dmg);
+          this.api.spawnHitFlash(target.x, target.y, CHK.green);
+          this.fx(lv.owner).dust(lv.x, lv.y, 6, 20, 340, CHK.dust);
+          this.api.showFloatingText(target.x, target.y - 46, '🕷️ BITE', this.hex(CHK.green));
+          Sfx.playAt('claw', lv.x, { volume: 0.38, rate: 0.85 });
+        }
+      }
+
+      // Shots hit it. It is not a `Fighter`, so nothing in ArenaScene's overlap can find it —
+      // the kit is the only thing that can give it a body to be shot in.
+      for (const child of [...this.api.projectiles.getChildren()]) {
+        const proj = child as Projectile;
+        if (!proj.active) continue;
+        const hostile = lv.owner === 'player' ? !proj.isFromPlayer : proj.isFromPlayer;
+        if (!hostile) continue;
+        if (Phaser.Math.Distance.Between(lv.x, lv.y, proj.x, proj.y) > lv.radius + 10) continue;
+        this.hurtLiving(lv, proj.damage);
+        this.fx(lv.owner).snap(proj.x, proj.y, lv.shield > 0 ? CHK.white : CHK.green);
+        this.api.spawnHitFlash(proj.x, proj.y, CHK.dust);
+        proj.destroy();
+        if (lv.hp <= 0) break;
+      }
+      if (lv.hp <= 0) this.dropLiving(i);
+    }
+  }
+
+  /**
+   * The bot's own trigger. It lives here rather than in `doChalkAbilities` because enhancement
+   * ids are not in `element.abilities` — `castAbility('living-chalk')` would do nothing at all
+   * — so the kit is the only thing that can pull it. The synergy the AI is handed instead is
+   * the shape: its phantom cursor walks a triangle inside the circle (see `advanceCursor`), so
+   * the bot's drawing is reliably the damage build rather than an accident.
+   */
+  private updateNpcLiving(time: number): void {
+    // Online the npc is a remote player: their own client casts it and it arrives via replay.
+    if (this.api.isOnline) return;
+    const s = this.sides.npc;
+    if (!this.livingSlot('npc')) return;
+    if (s.session || s.mpOn) return;
+    if (time - s.livingCastAt < LIVING_COOLDOWN_MS) return;
+    const f = this.api.npc;
+    const target = this.api.player;
+    if (!f || !f.active || f.hp <= 0) return;
+    if (!target || !target.active || target.hp <= 0) return;
+    // Three seconds of drawing is only worth it if there is somebody for it to walk at.
+    if (Phaser.Math.Distance.Between(f.x, f.y, target.x, target.y) > 520) return;
+    this.tryCastLiving('npc', target.x, target.y);
   }
 
   // ── Avatars ────────────────────────────────────────────────────────────────
@@ -1542,6 +2374,111 @@ export class ChalkKit {
     }
   }
 
+  /**
+   * Chalk Mastery — everything of this element's that walks.
+   *
+   * Both kinds are drawn as chalk that has been *given legs*, not as new creatures: a biter is
+   * the same grainy blob a mark is, and a Living Chalk is literally the player's own strokes,
+   * held in the pose they were drawn in and bobbing along on six legs underneath. Nothing here
+   * is rotated to the heading — the legs and the eyes carry the direction, because a drawing
+   * spun round to face east stops being the drawing you made.
+   */
+  private paintCrawlers(time: number): void {
+    const g = this.crawlGfx;
+    if (!g) return;
+    g.clear();
+
+    for (const sm of this.smudges) {
+      const tint = this.col(sm.owner);
+      const color = TONE[sm.chalk];
+      // Fading out thins rather than blinking, and a fresh one swells into being.
+      const life = sm.until > 0 ? Phaser.Math.Clamp((sm.until - time) / 900, 0, 1) : 1;
+      const alpha = 0.45 + life * 0.5;
+      const born = Phaser.Math.Clamp((time - sm.bornAt) / 260, 0, 1);
+
+      if (sm.guard) {
+        chalkLegs(g, tint, sm.x, sm.y, sm.ang, SMUDGE_BAR_HALF * 0.55, 14, sm.gait, color, alpha, sm.seed);
+        const hx = Math.cos(sm.ang) * SMUDGE_BAR_HALF * born;
+        const hy = Math.sin(sm.ang) * SMUDGE_BAR_HALF * born;
+        chalkLine(g, tint, sm.x - hx, sm.y - hy, sm.x + hx, sm.y + hy,
+          SMUDGE_BAR_THICK, color, alpha, sm.seed);
+        // A bar looks the way it walks: eyes on the leading long edge, not on an end.
+        chalkEyes(g, tint, sm.x, sm.y, sm.ang + Math.PI / 2, 7, 1.6, alpha);
+        // How many shots are left in it. A blue bar has no count — it never runs out.
+        if (Number.isFinite(sm.blocks)) {
+          for (let b = 0; b < sm.blocks; b++) {
+            g.fillStyle(tint(CHK.dust), alpha * 0.8);
+            g.fillCircle(sm.x + Math.cos(sm.ang) * (b - 1) * 7 + Math.cos(sm.ang + Math.PI / 2) * 13,
+              sm.y + Math.sin(sm.ang) * (b - 1) * 7 + Math.sin(sm.ang + Math.PI / 2) * 13, 1.6);
+          }
+        } else {
+          g.lineStyle(1, tint(CHK.blue), 0.2 + 0.16 * Math.sin(this.vizT * 3 + sm.seed));
+          g.strokeCircle(sm.x, sm.y, SMUDGE_BAR_HALF + 6);
+        }
+        continue;
+      }
+
+      chalkLegs(g, tint, sm.x, sm.y, sm.ang, 4.5, 12, sm.gait, color, alpha, sm.seed);
+      chalkBlob(g, tint, sm.x, sm.y, SMUDGE_BODY_R * born, color, alpha, sm.seed);
+      chalkEyes(g, tint, sm.x, sm.y, sm.ang, 6, 1.5, alpha);
+      // The blue one is the only permanent thing the passive makes, so it is ringed.
+      if (sm.chalk === 'perma') {
+        g.lineStyle(1, tint(CHK.blue), 0.24 + 0.2 * Math.sin(this.vizT * 4 + sm.seed));
+        g.strokeCircle(sm.x, sm.y, SMUDGE_BODY_R + 5);
+      }
+      // …and the green one shows the reach of what it is actually for.
+      if (sm.chalk === 'green') {
+        g.lineStyle(1, tint(CHK.green), 0.1 + 0.09 * Math.sin(this.vizT * 2.5 + sm.seed));
+        g.strokeCircle(sm.x, sm.y, SMUDGE_GREEN_RADIUS);
+      }
+      // The red one is a fuse walking, so it burns brighter the closer it gets.
+      if (sm.chalk === 'boom') {
+        g.fillStyle(tint(CHK.spark), 0.3 + 0.3 * Math.abs(Math.sin(this.vizT * 9 + sm.seed)));
+        g.fillCircle(sm.x, sm.y, 2.4);
+      }
+    }
+
+    for (const lv of this.livings) {
+      const tint = this.col(lv.owner);
+      const waking = time < lv.wakeAt;
+      const rise = Phaser.Math.Clamp(1 - (lv.wakeAt - time) / LIVING_WAKE_MS, 0, 1);
+      const alpha = waking ? 0.45 + rise * 0.55 : 1;
+      // Rising: it peels off the board and shivers before it is standing on anything.
+      const lift = waking ? rise * 6 : 6 + Math.sin(lv.gait) * 1.7;
+      const wob = waking ? (1 - rise) * Math.sin(time / 22) * 3 : Math.sin(lv.gait * 0.9) * 1.3;
+
+      if (!waking) {
+        chalkLegs(g, tint, lv.x, lv.y, lv.ang, lv.radius * 0.45, lv.radius * 0.8 + 6, lv.gait,
+          CHK.dust, 0.85, lv.seed);
+      }
+      for (const p of lv.parts) {
+        const x1 = lv.x + p.dx + wob;
+        const y1 = lv.y + p.dy - lift;
+        if (p.linked) {
+          chalkLine(g, tint, lv.x + p.pdx + wob, lv.y + p.pdy - lift, x1, y1, 3, p.color, alpha, p.seed);
+        } else {
+          chalkBlob(g, tint, x1, y1, 2.6, p.color, alpha, p.seed);
+        }
+      }
+      chalkEyes(g, tint,
+        lv.x + Math.cos(lv.ang) * lv.radius * 0.5, lv.y + Math.sin(lv.ang) * lv.radius * 0.5 - lift,
+        lv.ang, 9, 2.2, alpha);
+      if (waking) continue;
+
+      // A coat of white chalk reads as a coat: a hand-drawn ring that thins as it is spent.
+      if (lv.shield > 0) {
+        g.lineStyle(2, tint(CHK.white), 0.2 + 0.4 * (lv.shield / Math.max(1, lv.shieldMax)));
+        g.strokeCircle(lv.x, lv.y - lift * 0.5, lv.radius + 7);
+      }
+      const w = Phaser.Math.Clamp(lv.radius * 1.3, 26, 70);
+      const by = lv.y + lv.radius * 0.6 + 10;
+      g.fillStyle(tint(CHK.slate), 0.8);
+      g.fillRect(lv.x - w / 2, by, w, 3);
+      g.fillStyle(tint(CHK.green), 0.95);
+      g.fillRect(lv.x - w / 2, by, w * Phaser.Math.Clamp(lv.hp / lv.maxHp, 0, 1), 3);
+    }
+  }
+
   private paintMark(g: Phaser.GameObjects.Graphics, m: Mark, alpha: number): void {
     const tint = this.col(m.owner);
     const color = TONE[m.kind];
@@ -1563,18 +2500,24 @@ export class ChalkKit {
       if (!f || !f.active || f.hp <= 0) continue;
       const tint = this.col(owner);
 
-      // Drawing area — a dashed hand-drawn ring, cheap enough to run every frame.
-      if (s.session?.confined) {
+      // Drawing area — a dashed hand-drawn ring, cheap enough to run every frame. The shield's
+      // rides the caster; Living Chalk's stands still on the floor where it was opened.
+      const ring = s.session?.confined
+        ? { x: f.x, y: f.y, r: SHIELD_RANGE, color: CHK.white }
+        : s.session?.living
+          ? { x: s.session.living.x, y: s.session.living.y, r: LIVING_CIRCLE_R, color: CHK.green }
+          : null;
+      if (ring && s.session) {
         const fade = Phaser.Math.Clamp((s.session.until - time) / 260, 0, 1);
         const dashes = 22;
         for (let i = 0; i < dashes; i++) {
           if (grain(i * 3.3, 1) > 0.82) continue;
           const a0 = (i / dashes) * Math.PI * 2 + this.vizT * 0.5;
           const a1 = a0 + (Math.PI * 2 / dashes) * 0.62;
-          g.lineStyle(2, tint(CHK.white), 0.5 * fade);
+          g.lineStyle(2, tint(ring.color), 0.5 * fade);
           g.lineBetween(
-            f.x + Math.cos(a0) * SHIELD_RANGE, f.y + Math.sin(a0) * SHIELD_RANGE,
-            f.x + Math.cos(a1) * SHIELD_RANGE, f.y + Math.sin(a1) * SHIELD_RANGE,
+            ring.x + Math.cos(a0) * ring.r, ring.y + Math.sin(a0) * ring.r,
+            ring.x + Math.cos(a1) * ring.r, ring.y + Math.sin(a1) * ring.r,
           );
         }
       }
@@ -1662,7 +2605,10 @@ export class ChalkKit {
       // Just the colour while the work is up — the palette rack sits where the long form of
       // the label would run into it, and the sticks say the rest anyway.
       s.mpOn ? `${LABEL[s.mpChalk].split(' ')[0]}\nHOLD LMB · ${this.up('player', 'q') ? 'E/R/F/Q' : 'E/R/F'}`
-        : `${s.session ? LABEL[s.session.kind] : 'CHALK'}\n${permaLine}`,
+        // Inside the little circle the stick in hand is the *material*, not the ability, so
+        // the label says both — which stick, and what it is being spent on.
+        : s.session?.living ? `LIVING · ${LABEL[s.session.kind].split(' ')[0]}\nDRAW IN THE CIRCLE`
+          : `${s.session ? LABEL[s.session.kind] : 'CHALK'}\n${permaLine}`,
     );
     this.hudLabel.setColor(this.hex(held));
   }
@@ -1673,8 +2619,11 @@ export class ChalkKit {
     const s = this.sides.player;
 
     this.api.setStatusIndicator('chalk-drawing', playerIsChalk && s.session ? {
-      name: `${LABEL[s.session.kind]} chalk`, emoji: '🖍️', color: TONE[s.session.kind],
-      description: 'Your cursor is laying chalk. Where you move the mouse is where the chalk goes.',
+      name: s.session.living ? 'Drawing a body' : `${LABEL[s.session.kind]} chalk`,
+      emoji: '🖍️', color: TONE[s.session.kind],
+      description: s.session.living
+        ? 'Your cursor is pinned inside the circle. Triangles make it hit harder, circles make it faster, squares make it tougher — and the three keys you did not bind Living Chalk over are the other three sticks.'
+        : 'Your cursor is laying chalk. Where you move the mouse is where the chalk goes.',
       until: s.session.until, priority: 118,
     } : null);
 
@@ -1729,6 +2678,25 @@ export class ChalkKit {
       priority: 16,
     } : null);
 
+    // Mastery: the swarm, counted rather than listed — twenty-four of them would be a wall of
+    // boxes, and what actually matters is how many are out and whether any of them are blue.
+    const mine = this.smudges.filter((sm) => sm.owner === 'player');
+    // Blue is the only chalk that makes something permanent, biter or bar alike.
+    const permanent = mine.filter((sm) => sm.chalk === 'perma').length;
+    this.api.setStatusIndicator('chalk-smudges', playerIsChalk && mine.length > 0 ? {
+      name: permanent > 0 ? `Smudges (${permanent} blue)` : 'Smudges',
+      emoji: '🕷️', color: CHK.smudge,
+      description: 'Smears that came off your own chalk and grew legs. What each one does is whatever it was smudged off — white bites, red bursts, blue never dies, and the ones from a shield window are bars that eat shots.',
+      count: mine.length, priority: 108,
+    } : null);
+
+    const living = this.livings.find((lv) => lv.owner === 'player');
+    this.api.setStatusIndicator('chalk-living', playerIsChalk && living ? {
+      name: 'Living Chalk', emoji: '🖍️', color: CHK.green,
+      description: `Your drawing, on legs — ${living!.damage} damage a bite every ${(LIVING_BITE_MS / 1000).toFixed(1)}s. It dies when its health runs out or ${Math.ceil(LIVING_LIFE_MS / 1000)} seconds after it stood up.`,
+      count: Math.max(0, Math.round(living!.hp)), suffix: ' HP', until: living!.diesAt, priority: 106,
+    } : null);
+
     const p = this.api.player;
     this.api.setStatusIndicator('chalk-debris', this.inCloud('npc', p.x, p.y) ? {
       name: 'Chalk Debris', emoji: '🌫️', color: CHK.dust,
@@ -1770,6 +2738,49 @@ export class ChalkKit {
     return stroke >= 0 && this.marks.some((m) => m.stroke === stroke);
   }
 
+  /**
+   * The slot Living Chalk has taken over on the bot's side, or null. `doChalkAbilities` reads
+   * this and skips that slot's base ability — the enhancement replaces it outright, exactly as
+   * it does for the player, and a bot casting Explosive Chalk off a key it no longer owns would
+   * be the only sim on which the bind does nothing.
+   */
+  npcLivingSlot(): 'e' | 'r' | 'f' | 'q' | null {
+    return this.livingSlot('npc');
+  }
+
+  /**
+   * Ruin's Spikes of Ruin (see `combat/SummonPurge.ts`). Smudges and a Living Chalk are the
+   * only things Chalk *summons* — marks on the floor are decals and the shield is worn, so
+   * neither is touched here.
+   */
+  purgeSummons(
+    x: number, y: number, radius: number, exceptOwner: 'player' | 'npc',
+    report?: (px: number, py: number) => void,
+  ): number {
+    const near = (px: number, py: number): boolean => {
+      if (Phaser.Math.Distance.Between(x, y, px, py) > radius) return false;
+      report?.(px, py);
+      return true;
+    };
+    let razed = 0;
+    for (let i = this.smudges.length - 1; i >= 0; i--) {
+      const sm = this.smudges[i];
+      if (sm.owner === exceptOwner) continue;
+      if (!near(sm.x, sm.y)) continue;
+      // Razed, not detonated — a red smudge scrubbed off the board does not get to go off.
+      this.rubOut(sm, i, false);
+      razed++;
+    }
+    for (let i = this.livings.length - 1; i >= 0; i--) {
+      const lv = this.livings[i];
+      if (lv.owner === exceptOwner) continue;
+      if (!near(lv.x, lv.y)) continue;
+      this.dropLiving(i);
+      razed++;
+    }
+    return razed;
+  }
+
   /** AI pacing gate — the blue line is not worth redrawing every time R comes back up. */
   mayRedrawPerma(owner: Owner, time: number): boolean {
     const s = this.side(owner);
@@ -1786,6 +2797,15 @@ export class ChalkKit {
   getBarRatio(abilityId: string, time: number): number {
     const s = this.sides.player;
     const p = this.api.player;
+
+    // Mastery: the card counts the drawing window, then whatever it made, then the cooldown —
+    // the enhancement has no `Fighter` cooldown at all, so this is its only clock.
+    if (abilityId === 'living-chalk') {
+      if (s.session?.living) return Phaser.Math.Clamp((s.session.until - time) / s.session.total, 0, 1);
+      const alive = this.livings.find((lv) => lv.owner === 'player');
+      if (alive) return Phaser.Math.Clamp(alive.hp / alive.maxHp, 0, 1);
+      return Phaser.Math.Clamp((time - s.livingCastAt) / LIVING_COOLDOWN_MS, 0, 1);
+    }
 
     if (abilityId === 'chalk-shield' && s.shieldNodes.length) {
       return Phaser.Math.Clamp(s.shieldHp / SHIELD_HP, 0, 1);

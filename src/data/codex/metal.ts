@@ -18,11 +18,13 @@ const metal: ElementCodex = {
     {
       emoji: '🩸',
       name: 'The Blood Bar',
-      magic:
-        'A red gauge under the health bars, filled by the mess you make. Every fifty points of '
-        + 'damage you deal opens the wound wide enough to leave a pool on the ground where they '
-        + 'were standing — and pools are not damage, they are stock. Walk over one and it drains '
-        + 'into you.',
+      basics:
+        'Metal\'s resource. Every 50 cumulative damage you deal, by any means, drops a 30px blood puddle '
+        + 'at the victim; standing within 48px of one of your own drains 10 blood a second into a bar '
+        + 'that runs 0 to 100, and each puddle holds 25 — two and a half seconds of standing on it. Only '
+        + 'the owner can drain a puddle, so an opponent bleeding on your floor is filling your bar and '
+        + 'not theirs. Blood Transfusion spends it 1:1 for health, Clot Armor spends all of it for shield '
+        + 'at 1.25×, Blood Blade costs the whole 100 and Steel Shield costs 25.',
       effects: [
         { tag: 'summon', label: 'Puddles from damage', detail: 'One 30px blood puddle spawned at the victim for every 50 cumulative damage you deal, by any means.' },
         { tag: 'resource', label: 'Collecting', detail: 'Standing within 48px of one of your own puddles drains 10 blood per second into the bar. Each puddle holds 25 blood — 2.5 seconds of standing on it.' },
@@ -37,10 +39,10 @@ const metal: ElementCodex = {
     {
       emoji: '🗡️',
       name: 'Aggressive Bleeding',
-      magic:
-        'A wound that will not close. The victim ticks down and keeps dropping pools behind them '
-        + 'as they run — pools that belong to whoever opened them, so a bleeding opponent is '
-        + 'painting the arena with your ammunition.',
+      basics:
+        '2 damage every second for as long as it runs, plus a blood puddle at the victim\'s feet every 3 '
+        + 'seconds, owned by whoever applied it. A second application refreshes rather than stacks — the '
+        + 'timer extends to the later of the two and the tick does not double.',
       effects: [
         { tag: 'dot', label: 'The tick', detail: '2 damage every 1 second for as long as it runs.' },
         { tag: 'summon', label: 'Trail of pools', detail: 'A blood puddle dropped at the victim\'s feet every 3 seconds, owned by whoever applied the bleed.' },
@@ -54,10 +56,10 @@ const metal: ElementCodex = {
 
   abilities: {
     'metal-slash': {
-      magic:
-        'A sword. Actually a sword — a hilt, a crossguard and a length of steel swept through the '
-        + 'aim with a crescent of torn air chasing the tip. It is the most ordinary attack in the '
-        + 'game and it is also this element\'s only reliable way of putting blood on the floor.',
+      basics:
+        'A 25-damage sweep of everything within 90px along your aim, throwing them 350 of velocity '
+        + 'directly away from you and zeroing it again after 200ms. A click aimed within 30° of your idle '
+        + 'flail head also sets the flail swinging instead of only slashing. 0.6s cooldown.',
       cast: 'Click, swept along the aim. Instant.',
       effects: [
         { tag: 'damage', label: 'The swing', detail: '25 damage to everything within 90px of you along the arc.' },
@@ -66,11 +68,13 @@ const metal: ElementCodex = {
         { tag: 'utility', label: 'Whips the flail', detail: 'A click while aiming within 30° of your idle flail head sets it swinging instead of only slashing.' },
       ],
       upgrade: {
-        magic:
-          'Mighty Sabre turns the swing into a wind-up. Gold light gathers around the blade as you '
-          + 'hold, orbs collect, and at three full seconds the whole character goes yellow — and '
-          + 'then the release is not just a bigger number but a duelist\'s move: the flail is '
-          + 'thrown at the cursor and every shot in the air near you is batted back at its owner.',
+        basics:
+          'Click becomes chargeable: 25 damage at a tap scaling linearly to 75 at a 3-second hold, with '
+          + 'the charge visual reading the whole way up, and a swing over 40 damage reaching 104px across a '
+          + '130° arc instead of 90px. A max-charge release also hurls your idle flail head at the cursor '
+          + 'at 700 px/s for 40 damage — 60 for the heavy mace — consuming the flail, and destroys every '
+          + 'enemy projectile within 130px, dealing the opponent 1.5× each of those projectiles\' own '
+          + 'damage.',
         effects: [
           { tag: 'damage', label: 'Charged swing', detail: 'Damage scales linearly from 25 at a tap to 75 at a 3s hold. The charge visual reads the whole way up.', requiresUpgrade: 'click' },
           { tag: 'damage', label: 'Flail launch', detail: 'A max-charge release hurls your idle flail head at the cursor at 700 px/s for 40 damage (60 for the E+ heavy mace), consuming the flail.', requiresUpgrade: 'click' },
@@ -86,11 +90,13 @@ const metal: ElementCodex = {
     },
 
     'metal-flail-craft': {
-      magic:
-        'A head forged on the spot and hung off a chain that trails south of you. Left alone it just '
-        + 'follows you around. Aim at it and click and it starts going round — and every further '
-        + 'whip drives it faster, up to a point where the head is glowing and the chain is a blur. '
-        + 'Then it bleeds speed, and speed is the only thing that makes it dangerous.',
+      basics:
+        'Forges a flail head that trails 70px behind you at rest and orbits at 95px while swinging, '
+        + 'dying 10 seconds after it is made whether or not you use it. Contact within 30px deals 3 '
+        + 'damage at a crawl up to 13 at full spin, read live off how fast it is going, on a 250ms '
+        + 'cooldown. The first whip sets 9 rad/s in a random direction and every further whip adds 5.4 up '
+        + 'to a cap of 24, restarting the decay; spin bleeds linearly to zero over 3.33 seconds from the '
+        + 'last whip, after which it hangs idle. 25s cooldown, the longest non-ultimate in the kit.',
       cast:
         'E to forge. Click while aiming within 30° of the head to start it swinging, and again to '
         + 'accelerate it.',
@@ -102,11 +108,12 @@ const metal: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '25s cooldown — the longest non-ultimate in the kit.' },
       ],
       upgrade: {
-        magic:
-          'Heavy Metal Rock swaps the head for a black spiked mace on a shorter chain. It is harder '
-          + 'to get going and it will not stay going, but what it does on contact is twice what the '
-          + 'iron head does — and past about two thirds speed it goes molten and starts dripping '
-          + 'fire on the floor as it flies.',
+        basics:
+          'A heavy mace: exactly double damage at every speed, 6 at a crawl to 26 at full spin. It is '
+          + 'harder to wind — 2.7 rad/s a whip instead of 5.4, decaying over 1.67 seconds instead of 3.33 — '
+          + 'and the chain is 75% as long, 52px idle and 71px swinging, so it reaches less far but is '
+          + 'easier to keep on a target. Above 60% spin the head goes orange and drops an 18px fire puddle '
+          + 'every 150ms along its path, each lasting 3 seconds.',
         effects: [
           { tag: 'damage', label: 'Double damage', detail: '6 at a crawl up to 26 at full spin — exactly twice the plain head at every speed.', requiresUpgrade: 'e' },
           { tag: 'cost', label: 'Harder to wind', detail: 'Each whip adds 2.7 rad/s instead of 5.4, and the spin decays over 1.67 seconds instead of 3.33.', requiresUpgrade: 'e' },
@@ -121,11 +128,10 @@ const metal: ElementCodex = {
     },
 
     'metal-blood-transfusion': {
-      magic:
-        'Putting it back. The caster opens the bar straight into their own body — thirty points a '
-        + 'second, one for one, dripping the whole time — and it simply keeps going until the bar '
-        + 'is empty or the key comes up. No cooldown, no cast, no cap on how much of a fight it can '
-        + 'undo.',
+      basics:
+        'Hold R to convert blood to health at exactly 1:1, 30 a second, so a full bar is 100 HP. No '
+        + 'cooldown, no lock, and you can stop and restart at will. The real cost is that it is the same '
+        + 'bar Clot Armor and Blood Blade need — healing with it is choosing not to have armour.',
       cast: 'Hold R. Drains continuously per frame; stops the instant the bar hits zero.',
       effects: [
         { tag: 'heal', label: 'The rate', detail: '30 blood per second converted to 30 HP per second, exactly 1:1. A full bar is 100 HP of healing.' },
@@ -133,10 +139,11 @@ const metal: ElementCodex = {
         { tag: 'cost', label: 'The real cost', detail: 'The bar is the same bar Clot Armor and Blood Blade need. Healing with it is choosing not to have armour.' },
       ],
       upgrade: {
-        magic:
-          'Blood Clottage catches the overflow. Once the bar is full, blood you keep collecting has '
-          + 'nowhere to go — so it goes into the health you already have, turning it dark red. You '
-          + 'gain no extra points; the points you have simply become much harder to take away.',
+        basics:
+          'Blood gained past a full bar now converts an equal amount of normal HP into clotted HP, '
+          + 'leaving your total unchanged. Clotted HP takes 50% less damage and is always spent first, so a '
+          + '50-damage hit eats 25 clotted and 25 real, and it is drawn as its own dark red segment of the '
+          + 'health bar so both fighters can see how much is left.',
         effects: [
           { tag: 'shield', label: 'Clotted health', detail: 'Blood gained past a full bar converts an equal amount of normal HP into clotted HP. Total health is unchanged.', requiresUpgrade: 'r' },
           { tag: 'shield', label: 'Half price', detail: 'Clotted HP takes 50% less damage, and is always spent before normal HP — so a 50-damage hit eats 25 clotted and 25 real.', requiresUpgrade: 'r' },
@@ -150,11 +157,12 @@ const metal: ElementCodex = {
     },
 
     'metal-chain-tether': {
-      magic:
-        'A hook on a chain, thrown overhand. It bites in and snaps taut, and for five seconds the '
-        + 'other fighter cannot get further than a body length from you — they are physically '
-        + 'repositioned back onto the leash, not merely slowed. And they are bleeding the whole '
-        + 'time, dropping pools you can stand on afterwards.',
+      basics:
+        'Throws a chain at 520 px/s that connects within 28px and dies at the arena edge. On a hit it '
+        + 'leashes for 5 seconds, snapping the target back to 80px from you the instant they exceed it — '
+        + 'a hard reposition every frame rather than a pull — and applies 3 seconds of Aggressive '
+        + 'Bleeding, 2 damage a second with a pool every 3s. Three more blood puddles are dropped on them '
+        + 'over the leash, one every 1.67 seconds. 9.6s cooldown.',
       cast: 'F, thrown at the cursor. Instant. The chain travels; nothing happens until it connects.',
       effects: [
         { tag: 'utility', label: 'The throw', detail: '520 px/s in a straight line, connecting within 28px. It dies at the arena edge.' },
@@ -164,12 +172,12 @@ const metal: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '9.6s cooldown.' },
       ],
       upgrade: {
-        magic:
-          'Ground Anchor drives the hook into the floor instead of into a person. Hold F for three '
-          + 'seconds and a stake goes into the ground at the cursor and stays there for twelve — '
-          + 'pulsing a wide white shockwave that reaches into every pool of blood nearby and hauls '
-          + 'it back to you. It is the harvest, and it is why blood on the far side of the arena is '
-          + 'still worth something.',
+        basics:
+          'Holding F a full 3 seconds plants an anchor instead — releasing early still casts the ordinary '
+          + 'tether. The stake stands 12 seconds, one at a time with a second replacing the first, and '
+          + 'deals nothing to anybody: every 1.5 seconds it blasts out to 150px and pulls up to 15 blood '
+          + 'from each of your puddles inside that radius straight into your bar, eight pulses over its '
+          + 'life. It is pure collection.',
         effects: [
           { tag: 'cost', label: 'The charge', detail: 'F must be held a full 3 seconds. Releasing early instead casts the ordinary Chain Tether at the cursor.', requiresUpgrade: 'f' },
           { tag: 'summon', label: 'The stake', detail: '12 seconds planted at the cursor. Only one exists at a time; a second anchor replaces the first.', requiresUpgrade: 'f' },
@@ -184,11 +192,13 @@ const metal: ElementCodex = {
     },
 
     'metal-clot-armor': {
-      magic:
-        'The whole bar slammed shut into plate. Blood clots over the body as armour, worth more '
-        + 'than the blood that went into it — and it is not quiet armour. Every twenty-five points '
-        + 'of it that come off blow outward as a spray of hardened shards in random directions, '
-        + 'each one opening a fresh pool wherever it lands.',
+      basics:
+        'Consumes your whole blood bar for shield HP at 1.25× — a full 100 is 125 shield. Every 25 '
+        + 'shield HP lost fires 5 shards at 10 damage each, 420 px/s in random directions, and each shard '
+        + 'that connects spawns a blood puddle where it hit, so armour taken off you is ammunition put '
+        + 'back on the floor. There is no regeneration: once the plate is gone it is gone, and recasting '
+        + 'replaces the whole thing rather than topping it up, discarding whatever was left. 40s '
+        + 'cooldown, refused on an empty bar.',
       cast: 'Q. Instant. Refuses to cast on an empty bar.',
       effects: [
         { tag: 'shield', label: 'The plate', detail: 'Shield HP equal to 1.25× your blood — a full 100 bar is 125 shield. The whole bar is consumed.' },
@@ -198,12 +208,15 @@ const metal: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '40s cooldown.' },
       ],
       upgrade: {
-        magic:
-          'Blood Blade is what a hundred blood buys instead. Hold Q and a serrated blade falls out '
-          + 'of the sky and lands point first hard enough to split the floor — and then it is your '
-          + 'sword. It swings faster the more blood you are carrying, its hits pour blood directly '
-          + 'into the bar rather than onto the ground, and it disappears the instant you spend any. '
-          + 'While it is out, everything hurts you half again as much.',
+        basics:
+          'Holding Q for half a second draws the Blood Blade instead — it needs a full 100 blood, '
+          + 'consumes all of it, and spends the Q cooldown, while a shorter tap is still ordinary Clot '
+          + 'Armor. It replaces Slash with a 25-damage swing across a 150px frontal arc, far longer than '
+          + 'the 90px sword, at an interval of 700ms minus 4ms per point of blood held, floored at 200ms, '
+          + 'so a refilled bar swings three and a half times as often. While it is out, every 50 damage you '
+          + 'deal adds 25 blood straight to the bar instead of leaving a puddle. The price is steep: you '
+          + 'take 1.5× damage from everything, and the blade vanishes the moment your blood drops for any '
+          + 'reason at all, transfusing included.',
         effects: [
           { tag: 'cost', label: 'Cost and gate', detail: 'Hold Q for 0.5s. Needs a full 100 blood and consumes all of it, and it spends the Q cooldown. A tap under 0.5s is the ordinary Clot Armor.', requiresUpgrade: 'q' },
           { tag: 'damage', label: 'The swing', detail: '25 damage in a 150px frontal arc, replacing the ordinary Slash. It reaches much further than the 90px sword.', requiresUpgrade: 'q' },
@@ -222,10 +235,11 @@ const metal: ElementCodex = {
 
   perks: {
     gunpowder: {
-      magic:
-        'Exsanguinate. The seams of the armour fail wider and the pools run further — the same '
-        + 'ability set, tuned so that everything metal spills is worth more of the bar it is '
-        + 'trying to fill.',
+      basics:
+        'Clot Armor and the mastery\'s red Steel Shield fire 8 shards a burst instead of 5, at the same '
+        + '10 damage each, and every blood puddle from every source is 50% larger — 45px instead of 30 — '
+        + 'so each is collected from a wider stand. A larger pool still holds the same 25 blood: the gain '
+        + 'is reach, not volume.',
       effects: [
         { tag: 'damage', label: 'Wider bursts', detail: 'Clot Armor and the mastery\'s red Steel Shield fire 8 shards per burst instead of 5, at the same 10 damage each.' },
         { tag: 'resource', label: 'Bigger pools', detail: 'Every blood puddle from every source is 50% larger — 45px instead of 30 — so each one is collected from a wider stand.' },
@@ -239,10 +253,10 @@ const metal: ElementCodex = {
 
   mastery: {
     'natural-clot': {
-      magic:
-        'The body stops bothering to bleed for small things. Nothing under three points gets '
-        + 'through at all — chip damage, weak burns and slow poisons simply stop being events that '
-        + 'happen to you.',
+      basics:
+        'Every hit you take is reduced by a flat 3, from every source, so anything of 3 or less deals '
+        + 'nothing at all. No key, no cooldown, no cost, and it applies before every other reduction in '
+        + 'the kit.',
       effects: [
         { tag: 'shield', label: 'Flat reduction', detail: 'Every hit you take is reduced by 3, from every source. Anything of 3 or less deals nothing.' },
         { tag: 'utility', label: 'Always on', detail: 'No key, no cooldown, no cost, and it applies before every other reduction in the kit.' },
@@ -253,11 +267,13 @@ const metal: ElementCodex = {
       ],
     },
     'steel-shield': {
-      magic:
-        'A plate of steel planted in the air in front of you, tracking your cursor. Shots stop dead '
-        + 'on the face of it, and everything that does get past hurts you a quarter less. Cast it '
-        + 'while you are wearing Clot Armor and the plate comes up red — and then every shot it '
-        + 'eats is answered with a full spray of blood shards.',
+      basics:
+        'A bindable plate that costs 25 blood — a quarter of a full bar, and refused below that — '
+        + 'planted 46px ahead along your aim and following your cursor for the 5 seconds it stands. Any '
+        + 'enemy projectile within 38px of it is destroyed outright, and it has no HP so it cannot be '
+        + 'broken. While it is up all damage you take is multiplied by 0.75, whether or not the plate is '
+        + 'between you and the source. Cast while Clot Armor is active it comes out red, and every shot '
+        + 'it blocks fires a full 5-shard burst at 10 damage each — 8 with Exsanguinate. 8s cooldown.',
       cast:
         'Bindable to E, R, F or Q, replacing that slot\'s base ability for the match. Plants 46px '
         + 'ahead of you along the aim and follows the cursor while it stands.',

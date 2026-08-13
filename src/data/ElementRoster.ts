@@ -41,7 +41,6 @@ import { silenceElement } from '../elements/silence';
 import { echoElement } from '../elements/echo';
 import { subterfugeElement } from '../elements/subterfuge';
 import { quantumElement } from '../elements/quantum';
-import { dummyElement } from '../elements/dummy';
 import { justiceElement } from '../elements/justice';
 import { dreamElement } from '../elements/dream';
 import { chalkElement } from '../elements/chalk';
@@ -87,7 +86,6 @@ export const ELEMENT_DATA_MAP: Record<string, Element> = {
   echo: echoElement,
   subterfuge: subterfugeElement,
   quantum: quantumElement,
-  dummy: dummyElement,
   // Kit-less for now, but their info panels are the whole point of unlocking
   // them — leaving these out would make the ℹ button on the card do nothing.
   justice: justiceElement,
@@ -233,6 +231,18 @@ export const ELEMENT_FORM_TABS: Record<string,
       hint: '+33% speed and +20% damage taken, for 2 Willpower a second. F lands you again.',
     },
   ],
+  // The spirit's two keys only exist while Dream Mastery's Dream Duel is running, so the
+  // second tab is a form the element cannot enter at all until the mastery is unlocked.
+  dream: [
+    {
+      label: '🌙 AWAKE', accent: 0x8b5cf6, text: '#d8e2ff',
+      hint: 'The five waking keys. The pendulum stacks sleepiness; everything else spends it.',
+    },
+    {
+      label: '👻 DUEL', accent: 0xe4f1ff, text: '#e4f1ff',
+      hint: 'Dream Mastery only. Space while standing still and the enemy is asleep — both spirits come out and the tray becomes these two.',
+    },
+  ],
 };
 
 /**
@@ -334,7 +344,6 @@ export function allSelectableElements(): ElementDef[] {
  * save may not own, because this is also how an *opponent* is named on a versus line.
  */
 export function findElementDef(id: string): ElementDef | undefined {
-  if (id === 'dummy') return { id: 'dummy', name: 'Dummy', emoji: '🎯', color: 0x888888, available: true };
   return ELEMENTS.find((e) => e.id === id)
     ?? COMBINED_ELEMENTS.find((e) => e.id === id)
     ?? ABSTRACT_ELEMENTS.find((e) => e.id === id)

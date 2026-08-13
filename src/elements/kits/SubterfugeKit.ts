@@ -5,6 +5,7 @@ import {
   ArmGesture, SUB, SubAuraStyle, SubColorFn, SubterfugeAura, SubterfugeAvatar, SubterfugeFx,
   banknoteLayered, smokeBank, stiletto,
 } from './SubterfugeVisuals';
+import { meterGain } from '../../combat/Meters';
 
 // ── Arena API ────────────────────────────────────────────────────────────────
 
@@ -1021,6 +1022,9 @@ export class SubterfugeKit {
 
   private _tickMoney(owner: 'player' | 'npc', delta: number): void {
     const cap = this._moneyMax(owner);
+    // Ruin's Combo Breaker halves every meter in the game. This one fills on a clock rather
+    // than on an amount, so what is halved is how fast the clock runs.
+    delta = meterGain(owner === 'player' ? this.api.player : this.api.npc, delta);
     if (owner === 'player') {
       if (this.money >= cap) { this.moneyAccumMs = 0; return; }
       this.moneyAccumMs += delta;

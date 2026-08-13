@@ -9,6 +9,7 @@ import {
   ArmGesture, TECH, TechAuraStyle, TechColorFn, TechnologyAura, TechnologyAvatar, TechnologyFx,
   bitTileLayered, windowPane,
 } from './TechnologyVisuals';
+import { meterGain } from '../../combat/Meters';
 
 type Owner = 'player' | 'npc';
 const OWNERS: Owner[] = ['player', 'npc'];
@@ -2091,7 +2092,8 @@ export class TechnologyKit {
   /** Every coin earned on the web — clicker, factory or wheel — counts toward the mastery. */
   private gainBrowserCoins(n: number): void {
     if (n <= 0) return;
-    this.browserCoins += n;
+    // Ruin's Combo Breaker halves every meter in the game — the coin counter included.
+    this.browserCoins += meterGain(this.arena.player, n);
     this.arena.recordMasteryStat('webCoins', n);
   }
 

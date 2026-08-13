@@ -4,6 +4,7 @@ import {
   ArmGesture, MAGIC, MagicAura, MagicAuraStyle, MagicAvatar, MagicColorFn, MagicFx,
   arcaneRing, runeOrb, sigilStarLayered, vineLash,
 } from './MagicVisuals';
+import { meterGain } from '../../combat/Meters';
 
 // ── Arena API ─────────────────────────────────────────────────────────────────
 
@@ -553,9 +554,29 @@ export class MagicKit {
     this.api.npc.levitating = false;
   }
 
+  /**
+   * Ruin Mastery — Second Skin. Transmogrify is the one form in the game somebody else puts you
+   * *in*: a different texture, a different cooldown multiplier, and no casting at all while it
+   * holds. Ended exactly as `reset()` ends it — texture back to the element sprite, the stored
+   * `cooldownMult` handed back, and the timestamp cleared so `Fighter.castAbility` stops
+   * refusing.
+   */
+  revertForms(f: Fighter): string[] {
+    const st = this.chickenStates.get(f);
+    if (!st) return [];
+    if (f.active) {
+      f.setTexture(`elem-${f.element.id}`);
+      f.cooldownMult = st.prevCooldownMult;
+    }
+    f.chickenUntil = 0;
+    this.chickenStates.delete(f);
+    return ['Transmogrify'];
+  }
+
   private addDarkness(amount: number): void {
     const before = this.darkness;
-    this.darkness = Math.min(100, this.darkness + amount);
+    // Ruin's Combo Breaker halves every meter in the game — the corruption bar included.
+    this.darkness = Math.min(100, this.darkness + meterGain(this.api.player, amount));
     this.api.recordMasteryStat('darkEnergyGained', amount);
     const { player } = this.api;
     // The corruption climbing you is the passive's whole cost, so it gets a moment.

@@ -18,11 +18,13 @@ const oil: ElementCodex = {
     {
       emoji: '🛩️',
       name: 'The Drone Swarm',
-      magic:
-        'Quadcopters spun up out of a puff of exhaust and parked in orbit around you, each with a '
-        + 'lens tracking whoever you are fighting and a strip of pips showing how many rounds it has '
-        + 'left. They are the element\'s currency: everything else in the kit either spends them, '
-        + 'sizes itself off them, or needs them alive.',
+      basics:
+        'The resource everything else spends. Up to 6 drones for a player, 4 for an AI, held on orbit '
+        + 'indefinitely, each carrying a magazine of 3 shots — a drone at zero shots is destroyed on the '
+        + 'spot, so the swarm is ammunition rather than a permanent escort. Every Drone Command volley '
+        + 'costs 1 shot from every drone at once, Drone Destroy consumes a whole drone, and Train Morph '
+        + 'eats the entire swarm when it ends. Train Morph also runs 1.5 seconds per drone you had at the '
+        + 'cast, so the ultimate is only as long as the fleet you built for it.',
       effects: [
         { tag: 'resource', label: 'The cap', detail: '6 drones for a player, 4 for an AI. Held on orbit indefinitely until spent.' },
         { tag: 'resource', label: 'Magazines', detail: '3 shots each. A drone at zero shots is destroyed on the spot — the swarm is consumable, not a permanent escort.' },
@@ -37,10 +39,14 @@ const oil: ElementCodex = {
     {
       emoji: '🛢️',
       name: 'Oil Puddles and Oily',
-      magic:
-        'Crude spilled on the floor, welling out from wherever it was dropped and draining away '
-        + 'rather than blinking out. It is inert until something sets it alight, and anybody who '
-        + 'walks through it wears the stuff — coated, slick, and one laser away from being on fire.',
+      basics:
+        'The floor half of the kit. A puddle is 30px across and stands 12 seconds, left by rolling '
+        + 'barrels every 80px, by every barrel detonation (two extra) and by a Train Morph every 2s. '
+        + 'Standing in one applies Oily for 8 seconds, refreshed while you stay. A lit puddle deals 2 '
+        + 'damage every 0.3s — about 6.7 a second — and sets Burning, which is 3 damage every 0.5s for 5 '
+        + 'seconds, 30 in total. Lighting a puddle halves whatever life it had left: twice as hot for '
+        + 'half as long. Shooting an Oily enemy with a drone laser burns the coat straight off them and '
+        + 'Burns them too.',
       effects: [
         { tag: 'area', label: 'The spill', detail: '30px radius, standing 12s. Left by rolling barrels every 80px, by every barrel detonation (2 extra), and by a Train Morph every 2s.' },
         { tag: 'debuff', label: 'Oily', detail: 'Standing in a puddle applies Oily for 8s, refreshed continuously while you stay in it.' },
@@ -56,11 +62,15 @@ const oil: ElementCodex = {
 
   abilities: {
     'drone-command': {
-      magic:
-        'One button running the whole fleet, and which job it does depends entirely on how long you '
-        + 'hold it. Held, the caster is a factory: airframes assemble out of exhaust and climb onto '
-        + 'the orbit one after another. Tapped, every drone in the sky snaps its lens onto the cursor '
-        + 'and fires at once — a converging cage of laser beams onto a single point.',
+      basics:
+        'One key doing three jobs. Hold it to build drones — the first 0.5s in, then one a second to '
+        + 'the cap — or release inside 300ms to fire a volley: 3 damage per drone within 40px of the '
+        + 'cursor, so a full six is 18 on one point, at the cost of one shot from every drone whether or '
+        + 'not it hit. Beams destroy enemy projectiles within 14px of their path, set your own puddles '
+        + 'alight within 20px, and strip the coat off an Oily enemy within 40px to Burn them for 5 '
+        + 'seconds. Volleys are 1 second apart. A tap while a barrel is rolling detonates the barrel '
+        + 'instead — a bigger blast than a natural one, with an oil pillar, a 220ms shake, and both '
+        + 'scatter puddles lit as they land.',
       cast: 'Click. Held past 300ms it builds; released under 300ms it is a volley. A tap while a barrel is rolling detonates the barrel instead.',
       effects: [
         { tag: 'summon', label: 'Building', detail: 'First drone 0.5s into the hold, then one every 1s, to the cap of 6.' },
@@ -72,10 +82,10 @@ const oil: ElementCodex = {
         { tag: 'utility', label: 'Barrel detonator', detail: 'A tap with a barrel in play blows the barrel instead: a bigger blast than a natural one, with an oil pillar, a 220ms shake, and both scatter puddles lit on arrival.' },
       ],
       upgrade: {
-        magic:
-          'Bomb Drones stops a spent airframe being wasted. A drone that fires its last round no '
-          + 'longer just pops — it tumbles to the mark trailing smoke with its fuse lamp strobing, '
-          + 'and goes up as an actual bomb. The swarm also stops being harmless to touch.',
+        basics:
+          'A drone that reaches 0 shots is no longer discarded: it flies to the cursor over 0.4s and '
+          + 'detonates for 5 damage in a 60px radius. Orbiting drones also deal 5 melee damage to anything '
+          + 'that touches them, once a second each.',
         effects: [
           { tag: 'damage', label: 'Spent-drone bomb', detail: 'A drone that hits 0 shots flies to the cursor over 0.4s and detonates for 5 damage in a 60px radius rather than being discarded.', requiresUpgrade: 'click' },
           { tag: 'damage', label: 'Contact damage', detail: 'Orbiting drones deal 5 melee damage to an enemy that touches them, on a 1s cooldown per drone.', requiresUpgrade: 'click' },
@@ -88,11 +98,12 @@ const oil: ElementCodex = {
     },
 
     'barrel-roll': {
-      magic:
-        'A drum of crude bowled out along the floor. It rolls at a fixed speed, the staves visibly '
-        + 'turning at the rate the distance demands, laying a skid track and dribbling oil behind it '
-        + 'the whole way — and it is unstable. Anything it touches sets it off, including a shot from '
-        + 'the enemy, which makes it as much a hazard for you as for them.',
+      basics:
+        'Rolls a barrel from you toward the cursor at 300 px/s, leaving a 30px puddle every 80px of '
+        + 'travel. It detonates for 20 damage in a 50px radius with a 150ms shake and two more puddles '
+        + 'scattered within 25px — set off by touching an enemy, reaching a wall, or being hit by an '
+        + 'enemy projectile, so you do not choose the moment unless you click it. 3s cooldown, and '
+        + 'casting again while one is rolling blows the old one first.',
       cast: 'E, aimed at the cursor. Casting again while one is rolling detonates the old barrel first.',
       effects: [
         { tag: 'damage', label: 'Detonation', detail: '20 damage in a 50px radius, plus a 150ms camera shake.' },
@@ -102,10 +113,10 @@ const oil: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '3s cooldown.' },
       ],
       upgrade: {
-        magic:
-          'Barrel Roll makes it a vehicle. You throw the drum out from under your own feet and ride '
-          + 'it, standing on top while it steers toward the cursor — the only movement ability in the '
-          + 'kit, and one that is still a bomb the whole time you are on it.',
+        basics:
+          'You ride it. Glued to the drum at its 300 px/s with WASD doing nothing, steering toward the '
+          + 'cursor at 150° a second so it curves rather than snapping. Release E to drop off — or hit a '
+          + 'wall or the enemy, which detonates the barrel underneath you.',
         effects: [
           { tag: 'movement', label: 'The ride', detail: 'You are glued to the barrel and carried at its 300 px/s. WASD does nothing — the barrel is the only thing moving you.', requiresUpgrade: 'e' },
           { tag: 'movement', label: 'Steering', detail: 'The barrel turns toward the cursor at 150° per second while ridden, so it curves rather than tracking instantly.', requiresUpgrade: 'e' },
@@ -119,11 +130,10 @@ const oil: ElementCodex = {
     },
 
     'drone-destroy': {
-      magic:
-        'One airframe taken off the orbit and thrown away. It kicks off station under a strobing '
-        + 'arming lamp that beats faster the closer it gets, trailing exhaust the whole run, and goes '
-        + 'in nose first. There is nothing clever about it — it is the only way the kit turns a drone '
-        + 'directly into a number.',
+      basics:
+        'Sends one drone from its orbit to the cursor over 500ms whatever the distance, arriving for 20 '
+        + 'damage in a 60px radius with a 120ms shake. It costs the whole drone and any shots it still '
+        + 'had. Refuses to cast with no drones, always takes the most recently built one, 3s cooldown.',
       cast: 'R at the cursor. Refuses to cast with no drones. The drone taken is the most recently built one.',
       effects: [
         { tag: 'damage', label: 'Impact', detail: '20 damage in a 60px radius on arrival, with a 120ms camera shake.' },
@@ -132,10 +142,12 @@ const oil: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '3s cooldown.' },
       ],
       upgrade: {
-        magic:
-          'Overclock refuses to let the magazine go to waste. The drone glows blue, dumps every '
-          + 'bullet it has left at the cursor in a rapid string, and only then flies in — and the '
-          + 'detonation is sized off the magazine it started with, so emptying it first costs nothing.',
+        basics:
+          'The run now empties the magazine on the way in: after a 340ms charge, 4 damage per remaining '
+          + 'shot fired at the live cursor 90ms apart — 12 extra from a full drone, 20 from a Bio Fuel one '
+          + '— and the crash itself becomes 5 × its shots + 5, so 20 from a full drone, 30 from a five-shot '
+          + 'one and still 5 from an empty one. The drone tracks your cursor throughout, so both the volley '
+          + 'and the crash can be re-aimed mid-run.',
         effects: [
           { tag: 'damage', label: 'The dump', detail: '4 damage per remaining shot, fired at the live cursor 90ms apart after a 340ms charge. A full 3-shot drone is 12 extra damage; a Bio Fuel drone is 20.', requiresUpgrade: 'r' },
           { tag: 'damage', label: 'Scaled blast', detail: 'The detonation becomes 5 × (shots it had) + 5 — 20 damage from a full 3-shot drone, 30 from a 5-shot one, and still 5 from an empty one.', requiresUpgrade: 'r' },
@@ -149,11 +161,13 @@ const oil: ElementCodex = {
     },
 
     'shield-gen': {
-      magic:
-        'A hexagonal plinth driven into the ground with a dome of hex lattice snapping up around it. '
-        + 'It is a point-defence installation and nothing else: it will not chase, it will not damage '
-        + 'a fighter directly, and it stops working when it runs down. What it does inside its window '
-        + 'is delete every projectile that comes near it.',
+      basics:
+        'Places a generator at the cursor that destroys every enemy projectile within 150px outright, '
+        + 'with a beam out to the kill and 8 damage in a 30px radius where it comes apart — a shot '
+        + 'brought down beside the enemy hurts them. It holds a 5-second charge, dimming visibly across '
+        + 'the whole window, and a Drone Command volley within 60px refills it for another 5 with no '
+        + 'limit on how often. 15s cooldown to place, and a second one destroys the first: there is only '
+        + 'ever one.',
       cast: 'F at the cursor. Placing a second one destroys the first — there is only ever one.',
       effects: [
         { tag: 'shield', label: 'Interception', detail: 'Every enemy projectile within 150px of the generator is destroyed outright, with a beam out to the kill and shrapnel where it came apart.' },
@@ -163,10 +177,11 @@ const oil: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '15s cooldown on placing one — but a placed generator can be kept alive indefinitely with volleys.' },
       ],
       upgrade: {
-        magic:
-          'Shield Boost is meant to widen the charge window. In the kit as it stands it does something '
-          + 'else: the generator keeps a tally of what it has shot down and visibly grimes up with the '
-          + 'scrap of every second kill.',
+        basics:
+          'Every 2 interceptions add a point of scrap and the generator darkens with wreckage up to 10 — '
+          + 'purely a record of the work. Note that the shop card promises an 8-second charge; the kit '
+          + 'still runs a flat 5-second window whether or not this is owned, so the scrap tally is the only '
+          + 'real change.',
         effects: [
           { tag: 'utility', label: 'Scrap tally', detail: 'Every 2 interceptions add a point of scrap, and the generator darkens with wreckage up to 10 scrap. Cosmetic — it is a record of the work, not a bonus.', requiresUpgrade: 'f' },
           { tag: 'cost', label: 'Not the 8s window', detail: 'The shop card promises an 8s charge instead of 5s. The kit still uses a flat 5s window whether or not this is owned; only the scrap tally actually changes.', requiresUpgrade: 'f' },
@@ -179,12 +194,15 @@ const oil: ElementCodex = {
     },
 
     'train-morph': {
-      magic:
-        'The caster stops being a person. A locomotive assembles out of the frame in a blast of '
-        + 'steam, and from that moment you are a snake of coupled wagons rolling on rails you cannot '
-        + 'get off — no stopping, no reversing, only four directions. Five lumps of coal are scattered '
-        + 'across the arena, and the whole ultimate is a race to shovel them into the firebox before '
-        + 'the boiler runs dry.',
+      basics:
+        'You become a train on rails: a constant 200 px/s in whichever of the four cardinal directions '
+        + 'you last pressed, unable to stop, cancel or travel diagonally. It runs 1.5 seconds per drone '
+        + 'you had at the cast (minimum 1.5, so a full fleet is 9 seconds) and destroys every drone when '
+        + 'it ends. The head deals 8 damage within 28px on a shared 0.5s cooldown, every wagon 3 within '
+        + '20px on its own independent 0.5s timer — a long rake dragged over somebody bills them '
+        + 'repeatedly — and a puddle drops every 2 seconds. Five coal lumps are scattered at random: each '
+        + 'is +5% speed to a ×2.0 cap and +10% train damage to a ×3.0 cap. 30s cooldown, counted from '
+        + 'when the train ends.',
       cast: 'Q. WASD snaps to the four cardinal directions; there is no way to stop or cancel. The cooldown starts when the train ends, not when it begins.',
       effects: [
         { tag: 'movement', label: 'On rails', detail: 'A constant 200 px/s in whichever of the four directions you last pressed. You cannot stand still and you cannot travel diagonally.' },
@@ -196,10 +214,12 @@ const oil: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '30s cooldown, counted from the moment the train ends.' },
       ],
       upgrade: {
-        magic:
-          'Coal Overload is the reward for actually collecting all five. The boiler lets go — a pillar '
-          + 'out of the stack, a blast ring and a hard shake — and the train comes out the other side '
-          + 'longer, angrier, and leaving fire instead of oil.',
+        basics:
+          'Collecting all five lumps doubles the whole train damage multiplier on top of the +10% each '
+          + 'already gave — a fully fuelled overloaded train is at ×3.0, so 24 from the head and 9 from '
+          + 'every wagon — adds 5 seconds to the remaining run, and turns the spillage into fire: a puddle '
+          + 'every 1 second instead of 2, each lit as it lands. Every segment glows orange for the rest of '
+          + 'the run.',
         effects: [
           { tag: 'buff', label: 'Doubled damage', detail: 'The whole train damage multiplier is doubled on top of the +10% each lump already gave — a fully fuelled overloaded train is at ×3.0, so 24 from the head and 9 from every wagon.', requiresUpgrade: 'q' },
           { tag: 'utility', label: 'Extra time', detail: '+5s onto the remaining duration, whenever in the run the fifth lump was collected.', requiresUpgrade: 'q' },
@@ -216,10 +236,10 @@ const oil: ElementCodex = {
 
   perks: {
     'bio-fuel': {
-      magic:
-        'Better fuel in the same airframes. Nothing about the swarm changes except how long each '
-        + 'drone stays useful — which is the whole element, because a drone at zero shots is a dead '
-        + 'drone and the ultimate is measured in drones.',
+      basics:
+        'Magazines go from 3 shots to 5, which is 67% more volleys out of the same building time. It '
+        + 'compounds with Overclock: a full drone dumps 20 damage of bullets instead of 12 and detonates '
+        + 'for 30 instead of 20.',
       effects: [
         { tag: 'resource', label: 'Bigger magazines', detail: '5 shots per drone instead of 3 — 67% more volleys out of the same time spent building.' },
         { tag: 'damage', label: 'More out of Overclock', detail: 'With R+ a full drone dumps 20 damage of bullets instead of 12, and detonates for 30 instead of 20.' },
@@ -229,11 +249,15 @@ const oil: ElementCodex = {
       ],
     },
     gasoline: {
-      magic:
-        'The divine perk. The workshop stops turning out one airframe and starts turning out four — '
-        + 'each new drone is rolled from a table, and a special is announced over your head as it '
-        + 'spins up. Every kind still orbits, still spends shots and still dies at zero; what changes '
-        + 'is what a shot does and what a kamikaze run leaves behind.',
+      basics:
+        'Every drone rolls its kind as it is assembled: 14% Med-Drone, 14% Bash-Drone, 14% Blast-Drone, '
+        + '8% Drone-Prime — a 50% chance of something special, 50% a standard airframe. 💊 Med heals you '
+        + '2 HP a second while it stays on the orbit. 🥊 Bash spends its shot ramming: it drops off, '
+        + 'crosses in about 0.2s, deals 10 damage in a 46px radius with a 620 shove for 220ms, and climbs '
+        + 'back on station. 💣 Blast lobs a 10-damage bomb instead of a laser and doubles every '
+        + 'detonation it is part of — 40 from a Drone Destroy. ⭐ Prime carries 5 shots whatever else is '
+        + 'fitted and survives a Drone Destroy: it pulls out of the run, the blast still lands, and the '
+        + 'airframe flies home.',
       cast: 'Nothing to press. Every drone built rolls its kind on assembly.',
       effects: [
         { tag: 'utility', label: 'The roll', detail: '14% Med-Drone, 14% Bash-Drone, 14% Blast-Drone, 8% Drone-Prime — 50% chance of a special per build, and 50% a standard airframe.' },
@@ -247,11 +271,11 @@ const oil: ElementCodex = {
 
   mastery: {
     'drone-array': {
-      magic:
-        'The swarm stops being only ammunition and starts being armour. Plates of the drones\' own '
-        + 'lattice close around you in proportion to the fleet, so a full six-drone build is the '
-        + 'single largest damage reduction any element can carry — and it evaporates the moment you '
-        + 'spend it.',
+      basics:
+        'Every drone on the orbit is 10% damage reduction — 60% off everything at the 6-drone cap. It '
+        + 'drops the instant a drone is destroyed, launched by Drone Destroy or eaten by a Train Morph, '
+        + 'so a volley that kills your last-round drones costs the armour with them. A lattice of plates '
+        + 'around you shows the count, with a floating 🛡️ Array readout on every build.',
       effects: [
         { tag: 'shield', label: 'Resistance', detail: '10% damage reduction per drone currently on the orbit — 60% off everything at the 6-drone cap.' },
         { tag: 'cost', label: 'Spend it and lose it', detail: 'The number drops the instant a drone is destroyed, launched by Drone Destroy, or eaten by a Train Morph. Firing a volley that kills the last-round drones costs you the armour with them.' },
@@ -262,11 +286,13 @@ const oil: ElementCodex = {
       ],
     },
     turret: {
-      magic:
-        'Three drones stripped for parts and bolted down into a laser turret. It is a real object — '
-        + 'it has health, it soaks shots aimed past it, and it can be destroyed — and it is worth far '
-        + 'more mounted than left alone. Riding it roots you in place and hands you a rapid-fire beam '
-        + 'that nothing else in the kit provides.',
+      basics:
+        'A bindable turret built at the cursor for 3 drones — half a fleet, and 30% of your damage '
+        + 'resistance if you run Drone Array. It has 150 health and a 24px body, stands 10 seconds or '
+        + 'until destroyed, and soaks enemy projectiles that reach it instead of you. Recast within 64px '
+        + 'to mount: held click then fires a 2-damage laser every 100ms in a 20px radius, 20 damage a '
+        + 'second sustained, but mounting roots you and the turret owns your movement and mouse until you '
+        + 'jump off. 20s cooldown, and it refuses to build with fewer than 3 drones.',
       cast: 'Bindable to E, R, F or Q. First cast builds it at the cursor. Recast next to it to mount; recast again to jump off. Refuses to cast with fewer than 3 drones.',
       effects: [
         { tag: 'resource', label: 'The cost', detail: '3 drones, consumed on construction — half a full fleet, and with Drone Array 30% of your damage resistance.' },

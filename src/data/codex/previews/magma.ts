@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import {
-  MAG, MagmaAvatar, MagmaFx, breathCone, dragonEgg, lavaRock, magmaArm, magmaFist,
-  moltenPool, pressureGauge, volcanoCone,
+  MAG, MagmaAvatar, MagmaFx, breathCone, dragonEgg, lavaRock, magmaArm, magmaFist, magmaSaw,
+  moltenPool, obsidianCoat, pressureGauge, volcanoCone,
 } from '../../../elements/kits/MagmaVisuals';
 
 /**
@@ -369,107 +369,93 @@ export const bloat: PreviewScript = {
   },
 };
 
-// ══ F — Magma Fist ════════════════════════════════════════════════════
+// ══ F — Magma Jet ══════════════════════════════════════
 
-export const fist: PreviewScript = {
+export const jet: PreviewScript = {
   duration: 13000,
   scale: 0.83,
   bodyTexture: BODY,
-  caption: 'F — flick across for a 15-damage slap, drive down the arm for a 35-damage punch',
+  caption: 'F — hold for a cone of flame at the cursor and 330 px/s of thrust the other way',
   run(ctx) {
     const fx = fxOf(ctx);
     const av = ctx.useAvatar(() => new MagmaAvatar(ctx.scene, ctx.tint));
     av.setFacing(ctx.aim);
     molten(av)?.setVenting(true);
-    const vessels: Vessel[] = [{ x: ctx.cx + 210, y: ctx.cy + 40, r: 26, p: 20, max: 250, kind: 'egg', seed: 11 }];
+    const vessels: Vessel[] = [{ x: ctx.cx + 170, y: ctx.cy + 50, r: 26, p: 20, max: 250, kind: 'egg', seed: 11 }];
     field(ctx, [], vessels);
-    const victim = { x: ctx.cx + 150, y: ctx.cy - 20 };
+    const victim = { x: ctx.cx + 130, y: ctx.cy - 20 };
     dummyAt(ctx, victim);
     const readout = label(ctx, ctx.w * 0.5, 12, '#ff8b22', 11);
 
-    // The cursor the fist chases, and the fist chasing it at the kit's own follow rate.
-    const cur = { x: ctx.cx + 90, y: ctx.cy };
-    const f = { x: ctx.cx, y: ctx.cy, speed: 0, dx: 1, dy: 0, clench: 0 };
+    // Where the flame is pointed, whether the throttle is open, and how much fuel is left.
+    const jetState = { aimX: victim.x, aimY: victim.y, on: false, spent: 0, bodyX: ctx.cx, bodyY: ctx.cy };
     const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
-    ctx.onFrame((delta, elapsed) => {
-      const dt = delta / 1000;
-      let tx = cur.x, ty = cur.y;
-      const reach = Phaser.Math.Distance.Between(ctx.cx, ctx.cy, tx, ty);
-      if (reach > 262) {
-        const a = Math.atan2(ty - ctx.cy, tx - ctx.cx);
-        tx = ctx.cx + Math.cos(a) * 262; ty = ctx.cy + Math.sin(a) * 262;
-      }
-      const px = f.x, py = f.y;
-      const k = Math.min(1, 22 * dt);
-      f.x += (tx - f.x) * k; f.y += (ty - f.y) * k;
-      const mx = f.x - px, my = f.y - py;
-      const raw = dt > 0 ? Math.hypot(mx, my) / dt : 0;
-      f.speed = Math.max(raw, f.speed * Math.exp(-dt * 8));
-      if (raw > 140) {
-        const inv = 1 / Math.max(1e-4, Math.hypot(mx, my));
-        f.dx = mx * inv; f.dy = my * inv;
-      }
-      f.clench += ((f.speed > 520 * 0.6 ? 1 : 0) - f.clench) * Math.min(1, dt * 8);
-
-      g.clear();
-      const t = elapsed / 1000;
-      const ang = Math.atan2(f.y - ctx.cy, f.x - ctx.cx);
-      magmaArm(g, ctx.tint, ctx.cx, ctx.cy, f.x, f.y, 7.5, t, 13, 1);
-      magmaFist(g, ctx.tint, f.x, f.y, ang, 1 + f.clench * 0.16, f.clench, t, 21,
-        MAG.lava, MAG.basalt, 1);
-      if (f.speed > 520 * 0.7) {
-        const s = Phaser.Math.Clamp((f.speed - 520 * 0.7) / 520, 0, 1);
-        g.lineStyle(6 * s + 1, ctx.tint(MAG.gold), 0.4 * s);
-        g.lineBetween(f.x, f.y, f.x - f.dx * 34 * s, f.y - f.dy * 34 * s);
-      }
-      // The classifier, read against the arm exactly as the kit reads it.
-      const ax = f.x - ctx.cx, ay = f.y - ctx.cy;
-      const alen = Math.hypot(ax, ay) || 1;
-      const radial = (f.dx * ax + f.dy * ay) / alen;
-      gauge.setText(`fist ${Math.round(f.speed)} px/s   ·   along the arm ${(radial * 100).toFixed(0)}%`
-        + `   ·   ${f.speed >= 560 && radial >= 0.55 ? 'PUNCH' : f.speed >= 520 && Math.abs(radial) < 0.55 ? 'SLAP' : '—'}`);
-    });
     const gauge = label(ctx, ctx.w * 0.5, ctx.h - 18, '#ffc44a', 10);
 
+    ctx.onFrame((delta, elapsed) => {
+      const dt = delta / 1000;
+      const t = elapsed / 1000;
+      g.clear();
+      if (jetState.on && jetState.spent < 3000) {
+        jetState.spent += delta;
+        const ang = Math.atan2(jetState.aimY - jetState.bodyY, jetState.aimX - jetState.bodyX);
+        // The thrust: the caster is pushed straight back down the line they are burning along.
+        jetState.bodyX -= Math.cos(ang) * 330 * dt * 0.45;
+        jetState.bodyY -= Math.sin(ang) * 330 * dt * 0.45;
+        av.setFacing(ang);
+        const left = Phaser.Math.Clamp(1 - jetState.spent / 3000, 0, 1);
+        breathCone(g, ctx.tint,
+          jetState.bodyX + Math.cos(ang) * 12, jetState.bodyY + Math.sin(ang) * 12, ang,
+          175, 0.42, t, 3, MAG.lava, MAG.magma, 0.6 + left * 0.4);
+        // The exhaust out of the back, which is the visual reason the caster is retreating.
+        for (let i = 0; i < 3; i++) {
+          const a = ang + Math.PI + (i - 1) * 0.28;
+          const len = 20 + Math.sin(t * 22 + i * 2) * 7;
+          g.fillStyle(ctx.tint(i === 1 ? MAG.white : MAG.gold), 0.55 * left);
+          g.fillPoints([
+            new Phaser.Geom.Point(jetState.bodyX + Math.cos(a - 0.18) * 8, jetState.bodyY + Math.sin(a - 0.18) * 8),
+            new Phaser.Geom.Point(jetState.bodyX + Math.cos(a) * len, jetState.bodyY + Math.sin(a) * len),
+            new Phaser.Geom.Point(jetState.bodyX + Math.cos(a + 0.18) * 8, jetState.bodyY + Math.sin(a + 0.18) * 8),
+          ], true);
+        }
+      }
+      av.update(delta, jetState.bodyX, jetState.bodyY, 1);
+      gauge.setText(`fuel ${((3000 - jetState.spent) / 1000).toFixed(1)}s`
+        + `   ·   ${jetState.on ? 'THROTTLE OPEN' : 'closed'}`);
+    });
+
     ctx.at(300, () => {
-      ctx.capture(() => fx.erupt(ctx.cx, ctx.cy, 46, MAG.magma));
-      float(ctx, ctx.cx, ctx.cy - 52, '👊 MAGMA FIST', hex(MAG.magma), 12);
-      readout.setText('a limb, not a button — 262px of reach, and it goes where the cursor goes');
+      ctx.capture(() => fx.erupt(ctx.cx, ctx.cy, 40, MAG.lava));
+      float(ctx, ctx.cx, ctx.cy - 52, '🚀 MAGMA JET', hex(MAG.lava), 12);
+      readout.setText('held, not pressed — three seconds of fuel, spent only while F is down');
     });
-    // A flick across them: tangential motion, so it reads as a slap.
-    ctx.at(1600, () => readout.setText('flicked sideways across them — motion across the arm'));
-    ctx.onFrame((_dt, elapsed) => {
-      if (elapsed < 1800 || elapsed > 2100) return;
-      cur.x = victim.x + 90; cur.y = victim.y;
-    });
-    ctx.at(1750, () => { cur.x = victim.x - 90; cur.y = victim.y; });
-    ctx.at(2050, () => {
-      ctx.capture(() => fx.splat(victim.x, victim.y, 34));
-      float(ctx, victim.x, victim.y - 40, '🖐️ SLAP', hex(MAG.magma), 12);
-      float(ctx, victim.x, victim.y - 22, '15', '#ffb3aa', 15);
-      readout.setText('15 damage, and a 190px shove *along the swing* — a backhand, not a push');
-    });
-    // Wind back down the arm, then drive out: radial motion, so it reads as a punch.
-    ctx.at(3600, () => { cur.x = ctx.cx + 40; cur.y = ctx.cy - 8; readout.setText('winding back down the arm…'); });
-    ctx.at(4400, () => { cur.x = victim.x + 30; cur.y = victim.y; });
-    ctx.at(4620, () => {
-      ctx.capture(() => fx.erupt(victim.x, victim.y, 46, MAG.gold));
-      float(ctx, victim.x, victim.y - 40, '👊 PUNCH', hex(MAG.gold), 13);
-      float(ctx, victim.x, victim.y - 22, '35', '#ffb3aa', 18);
-      readout.setText('35 damage down the arm — more than twice the slap, for the same fist');
-    });
-    // And the reason the fist exists: charging your own egg.
-    ctx.at(6400, () => { cur.x = ctx.cx + 40; cur.y = ctx.cy; readout.setText('and the best charger in the kit is the same punch, aimed at your own egg'); });
-    for (let i = 0; i < 4; i++) {
-      ctx.at(7000 + i * 1000, () => { cur.x = vessels[0].x - 60; cur.y = vessels[0].y - 30; });
-      ctx.at(7300 + i * 1000, () => {
-        cur.x = vessels[0].x; cur.y = vessels[0].y;
-        vessels[0].p = Math.min(250, vessels[0].p + 22);
-        ctx.capture(() => fx.ember(vessels[0].x, vessels[0].y, 6, 22, 520, MAG.scaleLit));
-        float(ctx, vessels[0].x, vessels[0].y - 46, '+22', hex(MAG.scaleLit), 12);
+
+    // Burn the dummy, and be shoved away from it while doing so.
+    ctx.at(900, () => { jetState.on = true; jetState.aimX = victim.x; jetState.aimY = victim.y; });
+    for (let i = 0; i < 6; i++) {
+      ctx.at(1000 + i * 150, () => {
+        float(ctx, victim.x + (i % 2 ? 10 : -10), victim.y - 26 - i * 3, '12', '#ffb3aa', 13);
       });
     }
-    ctx.at(11600, () => readout.setText('22 a punch, once per vessel per 500ms — about six seconds of punching hatches one'));
+    ctx.at(1200, () => readout.setText('12 every 0.15s in the cone — and 330 px/s carrying you the other way'));
+    ctx.at(1900, () => { jetState.on = false; readout.setText('let go and it stops, whatever fuel is left'); });
+
+    // Then the reason it exists: pointing it at your own egg is the fastest charge in the kit.
+    ctx.at(3400, () => {
+      jetState.bodyX = ctx.cx - 40; jetState.bodyY = ctx.cy - 30;
+      readout.setText('and the best charger in the kit is the same jet, aimed at your own egg');
+    });
+    ctx.at(4200, () => { jetState.on = true; jetState.aimX = vessels[0].x; jetState.aimY = vessels[0].y; });
+    for (let i = 0; i < 8; i++) {
+      ctx.at(4400 + i * 200, () => {
+        vessels[0].p = Math.min(250, vessels[0].p + 5.2);
+        ctx.capture(() => fx.ember(vessels[0].x, vessels[0].y, 3, 18, 420, MAG.scaleLit));
+      });
+    }
+    ctx.at(4600, () => readout.setText('26 pressure a second, for as long as the flame is on it'));
+    ctx.at(6100, () => { jetState.on = false; });
+    ctx.at(7200, () => readout.setText('the thrust is written over your movement — while the jet is open, aim is the steering'));
+    ctx.at(10000, () => readout.setText('with Jet Slam (F+), riding it into a wall brings a dozen rocks down around you'));
   },
 };
 
@@ -668,5 +654,234 @@ export const lavaOnTheFloor: PreviewScript = {
       tally.setText(`burning: ${burn.total} total`);
     });
     ctx.at(9600, () => readout.setText('and the crust skins over as they cool — grey means it is nearly finished'));
+  },
+};
+
+// ══ MASTERY — Obsidian Coat ═══════════════════════════════════════════
+
+export const masteryObsidianCoat: PreviewScript = {
+  duration: 17000,
+  scale: 0.85,
+  bodyTexture: BODY,
+  caption: 'Mastery passive — overfill a dying cone, stand in the collapse, wear the glass for 15s',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new MagmaAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const pools: Pool[] = [];
+    const vessels: Vessel[] = [];
+    field(ctx, pools, vessels);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#ffc44a', 11);
+    const tally = label(ctx, ctx.w * 0.5, ctx.h - 18, '#fff0c0', 10);
+
+    // A cone already at 100 and already counting down — the passive only ever starts here.
+    const v: Vessel = { x: ctx.cx + 108, y: ctx.cy + 4, r: 30, p: 100, max: 100, kind: 'volcano', seed: 4 };
+    const state = { over: 0, sawFrom: -1, coatFrom: -1, power: 0 };
+
+    // The saw held against it, which is how the overfill actually gets in: 30 a second.
+    const tool = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    ctx.onFrame((dt, elapsed) => {
+      tool.clear();
+      if (state.sawFrom < 0 || elapsed < state.sawFrom || state.over >= 250) return;
+      const ang = Math.atan2(v.y - ctx.cy, v.x - ctx.cx);
+      const heat = Phaser.Math.Clamp((elapsed - state.sawFrom) / 8000, 0, 1);
+      magmaSaw(tool, ctx.tint, ctx.cx + Math.cos(ang) * 34, ctx.cy + Math.sin(ang) * 34, ang,
+        (elapsed / 1000) * (2.6 + heat * 3.4), heat, 1, elapsed / 1000, 11);
+      // Compressed: 250 overfill at the real 30/s is over eight seconds of holding.
+      state.over = Math.min(250, state.over + 30 * 2.6 * (dt / 1000));
+      if (Math.random() < 0.3) {
+        ctx.capture(() => fx.ember(v.x + (Math.random() - 0.5) * 30, v.y - 16, 1, 10, 420, MAG.white));
+      }
+    });
+
+    ctx.at(200, () => {
+      vessels.push(v);
+      ctx.capture(() => fx.erupt(v.x, v.y - v.r, 60, MAG.gold));
+      float(ctx, v.x, v.y - 78, '🌋 CRITICAL', hex(MAG.white), 12);
+      readout.setText('a critical cone normally refuses everything — five seconds and it is gone');
+    });
+    ctx.at(1500, () => {
+      state.sawFrom = 1500;
+      readout.setText('mastery takes the lid off: everything past 100 banks as overfill');
+    });
+    ctx.onFrame((_dt, elapsed) => {
+      if (state.coatFrom >= 0) return;
+      tally.setText(elapsed < 1500 ? 'overfill  0 / 250'
+        : `overfill  ${Math.round(state.over)} / 250   —   30 a second, held against it`);
+    });
+    ctx.at(4200, () => readout.setText('and the blast grows with it: +0.7 damage and +0.9px of radius per point'));
+
+    // The collapse, with the caster deliberately standing inside it.
+    ctx.at(6400, () => {
+      state.sawFrom = -1;
+      const radius = 150 + state.over * 0.9;
+      vessels.length = 0;
+      state.power = Phaser.Math.Clamp(state.over / 250, 0, 1);
+      ctx.capture(() => {
+        fx.erupt(v.x, v.y, radius * 0.7, MAG.magma);
+        fx.shock(v.x, v.y, 30, radius, MAG.gold, 720);
+        fx.shock(v.x, v.y, 22, radius * 1.15, MAG.white, 820);
+        fx.smoke(v.x, v.y - 20, 12, 1400);
+      });
+      float(ctx, v.x, v.y - 60, `💥 SUPERCRITICAL ${Math.round(60 + state.over * 0.7)}`, hex(MAG.gold), 14);
+      readout.setText(`${Math.round(radius)}px of blast — and the caster is standing in it on purpose`);
+    });
+    ctx.at(7000, () => {
+      state.coatFrom = 7000;
+      ctx.capture(() => {
+        fx.glass(ctx.cx, ctx.cy, 26, 20);
+        fx.ember(ctx.cx, ctx.cy - 6, 8, 30, 640, MAG.gold);
+      });
+      float(ctx, ctx.cx, ctx.cy - 52, `🪨 OBSIDIAN ${Math.round(10 + state.power * 90)}%`, hex(MAG.gold), 13);
+      readout.setText('the glass sets on whoever was inside the blast');
+    });
+
+    // The coat itself, painted with the kit's own painter for the rest of the loop.
+    const coatG = ctx.adopt(ctx.scene.add.graphics().setDepth(8));
+    ctx.onFrame((_dt, elapsed) => {
+      coatG.clear();
+      if (state.coatFrom < 0 || elapsed - state.coatFrom > 15000) return;
+      obsidianCoat(coatG, ctx.tint, ctx.cx, ctx.cy, state.power, elapsed / 1000, 1);
+      const left = (15000 - (elapsed - state.coatFrom)) / 1000;
+      tally.setText(`+${Math.round((0.10 + 0.35 * state.power) * 100)}% damage dealt`
+        + `   ·   −${Math.round((0.08 + 0.22 * state.power) * 100)}% taken`
+        + `   ·   +${Math.round(1 + 3 * state.power)} globs on click`
+        + `   ·   ${left.toFixed(1)}s`);
+    });
+
+    // …and what those extra globs actually look like coming out of the click.
+    ctx.at(9400, () => readout.setText('and the click throws a wider fan for as long as it is on'));
+    for (let k = 0; k < 2; k++) {
+      ctx.at(9800 + k * 2600, () => {
+        av.play('sweep', ctx.aim);
+        molten(av)?.setVenting(true);
+        const n = 5 + Math.round(1 + 3 * state.power);
+        for (let i = 0; i < n; i++) {
+          const a = ctx.aim + ((i / (n - 1)) - 0.5) * 2 * 0.62;
+          const d = 38 + 80 * (0.35 + ((i * 41) % 65) / 100);
+          lob(pools, { x: ctx.cx, y: ctx.cy },
+            ctx.cx + Math.cos(a) * d, ctx.cy + Math.sin(a) * d, 9800 + k * 2600);
+        }
+        float(ctx, ctx.cx, ctx.cy - 46, `${n} GLOBS`, hex(MAG.lava), 11);
+      });
+    }
+    ctx.at(14200, () => {
+      molten(av)?.setVenting(false);
+      readout.setText('a second collapse refreshes the 15s and keeps the better coat — thin ones never add up');
+    });
+  },
+};
+
+// ══ MASTERY — Magma Saw ═══════════════════════════════════════════════
+
+export const masteryMagmaSaw: PreviewScript = {
+  duration: 17000,
+  scale: 0.85,
+  bodyTexture: BODY,
+  caption: 'Mastery — 20 a second climbing to 80, and at 8 seconds it detonates in your hands',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new MagmaAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const victim = { x: ctx.cx + 96, y: ctx.cy - 2 };
+    dummyAt(ctx, victim);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#ffc44a', 11);
+    const tally = label(ctx, ctx.w * 0.5, ctx.h - 18, '#fff0c0', 10);
+
+    // One record, driving both saws in the loop. `from < 0` means there is no saw out.
+    const saw = { revFrom: -1, from: -1, planMs: 8000, tick: 0, dealt: 0 };
+    const tool = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+
+    ctx.onFrame((_dt, elapsed) => {
+      tool.clear();
+      const ang = Math.atan2(victim.y - ctx.cy, victim.x - ctx.cx);
+
+      // Revving: held tight to the body, shorter bar, no heat on it yet.
+      if (saw.from < 0 && saw.revFrom >= 0) {
+        const rev = Phaser.Math.Clamp((elapsed - saw.revFrom) / 1600, 0, 1);
+        magmaSaw(tool, ctx.tint, ctx.cx + Math.cos(ang) * 17, ctx.cy + Math.sin(ang) * 17, ang,
+          (elapsed / 1000) * (1.4 + rev * 1.6), 0, rev, elapsed / 1000, 11, 0.55 + rev * 0.45);
+        tally.setText(`rev  ${(rev * 100).toFixed(0)}%   —   runtime ${((2500 + rev * 5500) / 1000).toFixed(1)}s`);
+        return;
+      }
+      if (saw.from < 0) return;
+
+      const run = elapsed - saw.from;
+      if (run >= saw.planMs) { saw.from = -1; return; }
+      const heat = Phaser.Math.Clamp(run / 8000, 0, 1);
+      magmaSaw(tool, ctx.tint, ctx.cx + Math.cos(ang) * 34, ctx.cy + Math.sin(ang) * 34, ang,
+        (elapsed / 1000) * (2.6 + heat * 3.4), heat, 1, elapsed / 1000, 11);
+
+      // The real tick: one point every 50ms, one more per bite every 2 seconds.
+      if (elapsed >= saw.tick) {
+        saw.tick = elapsed + 50;
+        const bite = Math.min(4, 1 + Math.floor(run / 2000));
+        saw.dealt += bite;
+        // A float every hit would be a wall of numbers, so one in six speaks for the rest.
+        if (Math.random() < 0.17) {
+          float(ctx, victim.x + (Math.random() - 0.5) * 22, victim.y - 24, `${bite}`, '#ffb3aa', 11);
+        }
+      }
+      const bite = Math.min(4, 1 + Math.floor(run / 2000));
+      tally.setText(`${bite} every 0.05s  =  ${bite * 20} a second`
+        + `   ·   ${saw.dealt} dealt   ·   ${((8000 - run) / 1000).toFixed(1)}s to detonation`);
+    });
+
+    // ── The long saw: wound all the way up, and ridden into the blast ──
+    ctx.at(200, () => {
+      saw.revFrom = 200;
+      readout.setText('hold the key to rev — the charge buys runtime and nothing else');
+    });
+    ctx.at(1800, () => {
+      saw.revFrom = -1;
+      saw.from = 1800;
+      saw.planMs = 8000;
+      saw.tick = 0;
+      ctx.capture(() => fx.ember(ctx.cx, ctx.cy, 8, 26, 460, MAG.gold));
+      float(ctx, ctx.cx, ctx.cy - 52, '🪚 MAGMA SAW', hex(MAG.gold), 12);
+      readout.setText('a full rev is the full 8 seconds — which is also exactly when it goes off');
+    });
+    ctx.at(3900, () => readout.setText('two seconds in the bite doubles: 40 a second, and the bar starts to whiten'));
+    ctx.at(5900, () => readout.setText('four seconds: 60 a second'));
+    ctx.at(7900, () => readout.setText('six: 80 a second, and the bar is red. This is where you decide.'));
+    ctx.at(9800, () => {
+      saw.from = -1;
+      ctx.capture(() => {
+        fx.erupt(ctx.cx, ctx.cy, 150 * 0.75, MAG.magma);
+        fx.shock(ctx.cx, ctx.cy, 24, 150, MAG.white, 720);
+        fx.smoke(ctx.cx, ctx.cy, 10, 1200);
+      });
+      float(ctx, victim.x, victim.y - 44, '🪚 35', hex(MAG.magma), 14);
+      float(ctx, ctx.cx, ctx.cy - 56, '💥 TOO HOT  −35', hex(MAG.white), 14);
+      readout.setText('35 inside 150px to everybody, the pilot included, and everyone thrown clear');
+      tally.setText('them: 240px of knockback   ·   you: 190px, back down the line you were cutting');
+    });
+    // Thrown clear — the dummy is a plain record, so the shove is just its position moving.
+    ctx.onFrame((dt, elapsed) => {
+      if (elapsed < 9800 || elapsed > 10100) return;
+      victim.x += 240 * 3.4 * (dt / 1000);
+    });
+
+    // ── The short one: the same saw, motor cut before it can bite back ──
+    ctx.at(11800, () => {
+      victim.x = ctx.cx + 96;
+      saw.revFrom = 11800;
+      readout.setText('or wind in a short one — a tap runs 2.5 seconds and can never reach the blast');
+    });
+    ctx.at(12400, () => {
+      saw.revFrom = -1;
+      saw.from = 12400;
+      saw.planMs = 8000;
+      saw.tick = 0;
+      saw.dealt = 0;
+      float(ctx, ctx.cx, ctx.cy - 52, '🪚 MAGMA SAW', hex(MAG.gold), 12);
+    });
+    ctx.at(14800, () => {
+      saw.from = -1;
+      ctx.capture(() => fx.smoke(ctx.cx, ctx.cy, 5, 640));
+      float(ctx, ctx.cx, ctx.cy - 48, '🪚 MOTOR CUT', '#8a8a8a', 12);
+      readout.setText('and pressing the key again cuts the motor at any moment — that is the whole ability');
+      tally.setText('14 second cooldown, counted from the moment the saw starts');
+    });
   },
 };

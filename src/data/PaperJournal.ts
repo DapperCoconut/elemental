@@ -448,17 +448,6 @@ const JOURNAL_ELEMENTS: Record<string, JournalElement> = {
       ['Between Contracts', 'It is broke and alone for a window every cycle. That window is the fight.'],
     ],
   },
-  dummy: {
-    name: 'Practice Dummy', emoji: '🎯', color: 0xbbaa88, archetype: 'attrition',
-    pages: [
-      ['Losing to Furniture', 'It does nothing. There is no note to write here that is kind.'],
-      ['Patience', 'It will outlast anyone who is not paying attention, including you.'],
-      ['Stuffing', 'There is more of it than there looks. Bring enough to finish the job.'],
-      ['Centre Mass', 'It does not dodge. Every shot you take should be a shot that lands.'],
-      ['No Reprisal', 'Nothing it does needs respecting. Spend everything, every time.'],
-      ['Sawdust', 'Once you know how much it holds, the fight is just arithmetic you have already done.'],
-    ],
-  },
   justice: {
     name: 'Justice', emoji: '⚖️', color: 0xffd76a, archetype: 'burst',
     pages: [

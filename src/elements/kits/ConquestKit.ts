@@ -3,25 +3,43 @@ import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
 import { Projectile } from '../../combat/Projectile';
 import {
-  BannerForm, BannerStats, BarracksStats, BarricadeStats, BuildKind, PathIdx, TurretStats, Tiers,
-  BANNER_AURA, BANNER_ORDER, BANNER_STATS, BUILD_COST, EXPANSION_COST, EXPANSION_COST_ENHANCED,
-  KIND_LABEL, PATHS, SHOP_SLOT, barracksStats, barricadeStats,
-  empireStats, nextUpgrade, pathLocked, townStats, turretStats,
+  BannerForm, BannerStats, BarracksStats, BarricadeStats, BuildKind, MarketStats, PathIdx,
+  TurretStats, Tiers,
+  BANKING_AT, BANKING_MAX, BANNER_AURA, BANNER_ORDER, BANNER_STATS, BLOOD_MAX, BLOOD_PER,
+  BLOOD_RANGE, BLOOD_STEP, BUILD_COST, DICTATORSHIP_MAX, DICTATORSHIP_PER, EXPANSION_COST,
+  EXPANSION_COST_ENHANCED, INTEREST_MS, INVEST_CAP, INVEST_RATE, KIND_LABEL, LOAN_DAMAGE,
+  LOAN_PAYS, PATHS, PROPAGANDA_COOLDOWN_MS, PROPAGANDA_MS, PROPAGANDA_PENALTY, PROPAGANDA_RATE,
+  SHOP_SLOT, VAULT_MAX, VAULT_RATE, VAULT_STEP, WARMONGER_PAYS, WARMONGER_PER,
+  barracksStats, barricadeStats, empireStats, marketStats, nextUpgrade, pathLocked, townStats,
+  turretStats,
 } from './ConquestUpgrades';
 import {
   CNQ, ConquestAvatar, ConquestColorFn, ConquestFx, barbarianKing, barracksBody,
   barricadeBody, buildingHpBar, contestTile, fireballOrb, gridCell, hasteRing, linkChain,
-  revengeBomb, soldier, territoryTile, townCenterBody, townColor, turretBody, wizardTroop,
+  marketBody, revengeBomb, soldier, territoryTile, townCenterBody, townColor, turretBody,
+  wizardTroop,
 } from './ConquestVisuals';
+import { meterGain } from '../../combat/Meters';
 
 type Owner = 'player' | 'npc';
 
 /** Anything a placed building can be. The town center is a `Town`, not a `Building`. */
-type PlaceKind = 'barracks' | 'turret' | 'barricade';
+type PlaceKind = 'barracks' | 'turret' | 'barricade' | 'market';
 
 /** Building kinds as integers, for the online snapshot. */
-const KIND_CODE: Record<PlaceKind, number> = { barracks: 0, turret: 1, barricade: 2 };
-const KIND_OF_CODE: PlaceKind[] = ['barracks', 'turret', 'barricade'];
+const KIND_CODE: Record<PlaceKind, number> = { barracks: 0, turret: 1, barricade: 2, market: 3 };
+const KIND_OF_CODE: PlaceKind[] = ['barracks', 'turret', 'barricade', 'market'];
+
+/**
+ * Conquest Mastery's bindable enhancement id. The passive (Dictatorship) needs no id here — it
+ * is gated on the mastery being on at all, not on a slot.
+ */
+const MARKET_ID = 'market';
+/** The market is placed on a key, so it gets the same 600ms the other three placements have. */
+const MARKET_COOLDOWN_MS = 600;
+
+type Slot = 'e' | 'r' | 'f' | 'q';
+const SLOTS: Slot[] = ['e', 'r', 'f', 'q'];
 
 /**
  * One side's entire empire on the wire. Flat number arrays rather than objects: this goes out
@@ -34,7 +52,7 @@ export interface NetConquestSnap {
   c: string;
   /** Town centers, as groups of 5: cell, path-0/1/2 tiers, fireball-ready flag. */
   tw: number[];
-  /** Buildings, as groups of 7: cell, kind code, town, hp, path-0/1/2 tiers. */
+  /** Buildings, as groups of 8: cell, kind code, town, hp, path-0/1/2 tiers, vault. */
   b: number[];
   /**
    * Soldiers, as groups of 11: cell, town, hp, base HP, king, damage, attack interval, crowd
@@ -45,6 +63,8 @@ export interface NetConquestSnap {
   bf: number;
   /** The cell of their Personal Wall, or -1. Carried only so the chain can be drawn. */
   lw: number;
+  /** Propaganda Central: 1 while their window is open. Carried only so the aura can be drawn. */
+  pg: number;
 }
 
 // ── The board ────────────────────────────────────────────────────────────────
@@ -187,6 +207,13 @@ interface Building {
   lastHitAt: number;
   /** Boom Back: when this turret last threw one, so a DoT can't turn it into a mortar battery. */
   bombAt: number;
+  /**
+   * Securities: Authority deposited *into this stall*. It is not part of the bank — it is only
+   * ever spendable once it has been withdrawn, and it dies with the building.
+   */
+  vault: number;
+  /** Market: time toward the next five-second interest tick. */
+  bankAccum: number;
   seed: number;
 }
 
@@ -297,6 +324,27 @@ interface Side {
    * is carried purely so the chain is drawn on both screens.
    */
   netLinkCell: number;
+  // ── Conquest Mastery ──
+  /** Market: when this side last placed one, for the ability card's own 600ms. */
+  marketCastAt: number;
+  /** Investing: the empire-wide five-second interest clock. Vaults keep their own, per stall. */
+  interestAccum: number;
+  /** Warmongering: damage dealt since the last payout, and the ledger it is polled from. */
+  warCarry: number;
+  dealtSeen: Map<Fighter, number>;
+  /** Propaganda Central: when the window closes, when it may be opened again, and whether the
+   *  bank ran dry inside it — once it has, the rest of the window costs double. */
+  propagandaUntil: number;
+  propagandaAt: number;
+  propagandaBroke: boolean;
+  /**
+   * Pressed, but not yet started. The button lives in a menu that *freezes the match*, and the
+   * clock this kit runs on is the arena's — so the eight seconds are armed on the first live
+   * frame after the menu closes rather than while the game is standing still.
+   */
+  propagandaPending: boolean;
+  /** A *remote* opponent's window, as their snapshot last reported it. Drawing only. */
+  netPropaganda: boolean;
 }
 
 function makeSide(owner: Owner): Side {
@@ -304,6 +352,12 @@ function makeSide(owner: Owner): Side {
     owner, authority: START_AUTHORITY, towns: [], lastRaw: 0, insuranceCarry: 0,
     thinkAccum: 0, dragAccum: 0, seek: null, seekKind: null,
     banner: 'offense', linkedWall: null, netLinkCell: -1,
+    // Seeded a full cooldown in the past: the kit's first match runs the constructor rather than
+    // `reset`, and readiness is measured against an absolute clock.
+    marketCastAt: -MARKET_COOLDOWN_MS, interestAccum: 0,
+    warCarry: 0, dealtSeen: new Map(),
+    propagandaUntil: 0, propagandaAt: -PROPAGANDA_COOLDOWN_MS, propagandaBroke: false,
+    propagandaPending: false, netPropaganda: false,
   };
 }
 
@@ -338,7 +392,26 @@ export interface ConquestMenuModel {
    * the wall you are linked to, another one is, or none is.
    */
   link: 'linked' | 'elsewhere' | 'free' | null;
+  /**
+   * Buttons that are not purchases. The market's whole WAR and BANKING payoff is here — a loan,
+   * a vault to move money in and out of, and the propaganda window — and none of them is a tier,
+   * so none of them belongs in a column.
+   */
+  actions: ConquestMenuAction[];
+  /** A line of state under the columns: what the vault holds, how long propaganda has left. */
+  status: string | null;
   color: number;
+}
+
+/** One of the market's buttons. `id` is handed straight back to `runAction`. */
+export interface ConquestMenuAction {
+  id: string;
+  label: string;
+  icon: string;
+  /** Why it can't be pressed, or null when it can. Shown in place of the label's own colour. */
+  blocked: string | null;
+  /** Lit rather than quiet — used for the window that is currently open. */
+  active?: boolean;
 }
 
 export interface ConquestMenuHost {
@@ -346,6 +419,8 @@ export interface ConquestMenuHost {
   buyUpgrade(path: PathIdx): boolean;
   /** Personal Wall: link to this barricade, or unlink if it is already the linked one. */
   toggleLink(): boolean;
+  /** The market's own buttons — loan, deposit, withdraw, propaganda. */
+  runAction(id: string): boolean;
   closeUpgradeMenu(): void;
 }
 
@@ -383,6 +458,11 @@ export interface ConquestArenaApi {
   get isCoop(): boolean;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
+  /** Which mastery enhancement each side dropped over an E/R/F/Q slot this match. */
+  masteryBindFor(slot: string): string | null;
+  npcMasteryBindFor(slot: string): string | null;
+  /** Cumulative mastery counters. Written unconditionally; the adapter gates on the element. */
+  recordMasteryStat(key: string, amount: number): void;
   /** True if the local player (Conquest) has the given shop upgrade slot equipped. */
   hasUpgrade(slot: string): boolean;
   /** True if the online opponent (Conquest) has it — their upgraded board replays on this sim. */
@@ -512,9 +592,113 @@ export class ConquestKit implements ConquestMenuHost {
     return owner === 'player' ? this.api.hasUpgrade(slot) : this.api.hasNpcUpgrade(slot);
   }
 
-  /** Whether a tree's shop-gated third column is open to this side at all. */
+  /**
+   * Whether a tree's shop-gated third column is open to this side at all.
+   *
+   * The market is the exception, and the reason `SHOP_SLOT.market` is empty: it has no key of its
+   * own, so its BANKING column is unlocked by the shop upgrade for whichever slot the Market was
+   * bound over. Bind it on E and Barracks Enhanced opens the bank; bind it on Q and Expansion
+   * Enhanced does. That is a real decision rather than a technicality — the slot you give up is
+   * also the upgrade you are spending.
+   */
   private pathUnlocked(owner: Owner, kind: BuildKind): boolean {
+    if (kind === 'market') {
+      const slot = this.marketSlot(owner);
+      return !!slot && this.owns(owner, slot);
+    }
     return this.owns(owner, SHOP_SLOT[kind]);
+  }
+
+  // ── Conquest Mastery ───────────────────────────────────────────────────────
+
+  /** Whether Element Mastery is on for whichever side is asking. */
+  private masteryOn(owner: Owner): boolean {
+    return this.isConquest(owner)
+      && (owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
+  }
+
+  /** Which of E/R/F/Q the Market was dropped on, or null. */
+  private marketSlot(owner: Owner): Slot | null {
+    if (!this.masteryOn(owner)) return null;
+    for (const s of SLOTS) {
+      const bind = owner === 'player' ? this.api.masteryBindFor(s) : this.api.npcMasteryBindFor(s);
+      if (bind === MARKET_ID) return s;
+    }
+    return null;
+  }
+
+  /** The player's key for a bound slot. */
+  private keyFor(slot: Slot): Phaser.Input.Keyboard.Key {
+    return slot === 'e' ? this.api.eKey
+      : slot === 'r' ? this.api.rKey
+        : slot === 'f' ? this.api.fKey : this.api.qKey;
+  }
+
+  /**
+   * Only ever recorded for the player: the grind is the human's, not the bot's. Written whether
+   * or not the mastery is on — that is how it gets unlocked in the first place.
+   */
+  private record(owner: Owner, key: string, amount = 1): void {
+    if (owner === 'player' && amount > 0) this.api.recordMasteryStat(key, amount);
+  }
+
+  /** Every market this side has standing. */
+  private marketsOf(owner: Owner): Building[] {
+    return this.buildings.filter((b) => b.owner === owner && b.kind === 'market');
+  }
+
+  /** One stall's stats, at this empire's current Fortress tier. */
+  private marketStatsOf(b: Building): MarketStats {
+    return marketStats(b.tiers, this.empire(b.owner).fortressHp);
+  }
+
+  /**
+   * Dictatorship. The pike answers to the treasury: one more point of damage for every ten
+   * Authority in the bank, up to thirty. Added to the base exactly as Enchantment is, so the
+   * home-ground quarter still takes three quarters of it — being rich is not being safe.
+   */
+  private dictatorshipBonus(owner: Owner): number {
+    if (!this.masteryOn(owner)) return 0;
+    return Math.min(DICTATORSHIP_MAX, Math.floor(this.side(owner).authority / DICTATORSHIP_PER));
+  }
+
+  /**
+   * Blood money. Anything of this side's standing within two squares of a stall that has bought
+   * it hits harder, by however much is banked — five per cent per fifty Authority, capped at
+   * half again. Read at the moment of the swing rather than cached, because the bank moves
+   * every time anything is bought.
+   */
+  private bloodMult(owner: Owner, x: number, y: number): number {
+    let near = false;
+    for (const b of this.marketsOf(owner)) {
+      if (!this.marketStatsOf(b).bloodMoney) continue;
+      if (Phaser.Math.Distance.Between(x, y, b.x, b.y) > BLOOD_RANGE) continue;
+      near = true;
+      break;
+    }
+    if (!near) return 1;
+    const bank = this.side(owner).authority;
+    return 1 + Math.min(BLOOD_MAX, Math.floor(bank / BLOOD_PER) * BLOOD_STEP);
+  }
+
+  /**
+   * The placement the Market took the key of. Binding it on E costs you the barracks, on R the
+   * turret, on F the barricade and on Q the Expansion — the ability that opens the bank is also
+   * the one that closes a build, which is the whole cost of the mastery.
+   */
+  private lostBuild(owner: Owner): PlaceKind | 'expansion' | null {
+    const slot = this.marketSlot(owner);
+    if (!slot) return null;
+    return slot === 'e' ? 'barracks'
+      : slot === 'r' ? 'turret'
+        : slot === 'f' ? 'barricade' : 'expansion';
+  }
+
+  /** Whether this side's propaganda window is open — or pressed and waiting for the match. */
+  private propagandaOn(owner: Owner): boolean {
+    if (owner === 'npc' && this.npcIsRemote) return this.side('npc').netPropaganda;
+    const side = this.side(owner);
+    return side.propagandaPending || this.now < side.propagandaUntil;
   }
 
   /** Which columns a side may spend into — three with the shop upgrade, two without. */
@@ -785,6 +969,28 @@ export class ConquestKit implements ConquestMenuHost {
     return empireStats(this.side(owner).towns.map((t) => t.tiers));
   }
 
+  /**
+   * Everything this side earns a second, the readout's own number: town centres (doubled by
+   * Money Mania), every stall's own income plus whatever the Revolutions are paying it, and the
+   * best Banking tier's contribution at the bank's current size.
+   */
+  private incomeOf(owner: Owner): number {
+    const markets = this.marketsOf(owner);
+    const mania = markets.some((b) => this.marketStatsOf(b).mania);
+    let income = this.empire(owner).income * (mania ? 2 : 1);
+    const revolutions = markets.reduce((n, b) => n + (this.marketStatsOf(b).revolution ? 1 : 0), 0);
+    let banking = 0;
+    for (const b of markets) {
+      const s = this.marketStatsOf(b);
+      income += s.income + (revolutions - (s.revolution ? 1 : 0));
+      if (s.banking) {
+        banking = Math.max(banking,
+          BANKING_MAX * Phaser.Math.Clamp(this.side(owner).authority / BANKING_AT, 0, 1));
+      }
+    }
+    return income + banking;
+  }
+
   private buildingCount(owner: Owner): number {
     return this.buildings.reduce((n, b) => n + (b.owner === owner ? 1 : 0), 0);
   }
@@ -801,6 +1007,7 @@ export class ConquestKit implements ConquestMenuHost {
     const fort = this.empire(b.owner).fortressHp;
     if (b.kind === 'barracks') return barracksStats(b.tiers, fort).maxHp;
     if (b.kind === 'turret') return turretStats(b.tiers, fort).maxHp;
+    if (b.kind === 'market') return marketStats(b.tiers, fort).maxHp;
     return barricadeStats(b.tiers, fort).maxHp;
   }
 
@@ -808,14 +1015,20 @@ export class ConquestKit implements ConquestMenuHost {
     const side = this.side(owner);
     if (!side.towns.length) return;
     const emp = this.empire(owner);
-    side.authority += emp.income * dt;
+    // Money Mania is the one upgrade in the game that multiplies somebody else's building.
+    const markets = this.marketsOf(owner);
+    const mania = markets.some((b) => this.marketStatsOf(b).mania);
+    // Ruin's Combo Breaker halves every meter in the game, and Authority is the largest of
+    // them — every one of the empire's income streams below is taxed at the point it pays.
+    side.authority += meterGain(this.fighter(owner), emp.income * (mania ? 2 : 1) * dt);
+    this.tickMarkets(owner, markets, dt);
 
     // Coins out of each town center, so income is visible without reading the HUD.
     for (const t of side.towns) {
       t.coinAccum += dt;
       if (t.coinAccum >= 3) {
         t.coinAccum = 0;
-        this.fx(owner).coins(t.x, t.y - 18, 3);
+        this.fx(owner).coins(t.x, t.y - 18, mania ? 5 : 3);
       }
       this.tickArcane(t, dt * 1000);
     }
@@ -834,6 +1047,157 @@ export class ConquestKit implements ConquestMenuHost {
       side.authority += INSURANCE_PAYS;
       this.api.showFloatingText(f.x, f.y - 52, `🛡️ +${INSURANCE_PAYS}`, this.hex(CNQ.gold));
     }
+  }
+
+  // ── The market's economy (Conquest Mastery) ────────────────────────────────
+
+  /**
+   * Every stall's income, and the two clocks the BANKING column runs on.
+   *
+   * Market Revolution is the reason this is a sweep rather than a per-building tick: a stall that
+   * has bought it pays *every other* stall a point a second, so what one market earns depends on
+   * what all of them own.
+   */
+  private tickMarkets(owner: Owner, markets: Building[], dt: number): void {
+    if (!markets.length) return;
+    const side = this.side(owner);
+    const revolutions = markets.reduce((n, b) => n + (this.marketStatsOf(b).revolution ? 1 : 0), 0);
+
+    let banking = 0;
+    let investing = false;
+    for (const b of markets) {
+      const s = this.marketStatsOf(b);
+      // A Revolution never pays itself — it is the *other* stalls that get the point.
+      const patronage = revolutions - (s.revolution ? 1 : 0);
+      side.authority += meterGain(this.fighter(owner), (s.income + patronage) * dt);
+      // Banking is taken as the best across the empire rather than summed, like Fortress: two
+      // banks are two incomes, not four more Authority a second.
+      if (s.banking) {
+        banking = Math.max(banking, BANKING_MAX * Phaser.Math.Clamp(side.authority / BANKING_AT, 0, 1));
+      }
+      investing = investing || s.investing;
+
+      // Coins over the stall, on the same three-second beat the town centres use.
+      b.accum += dt;
+      if (b.accum >= 3) {
+        b.accum = 0;
+        this.fx(owner).coins(b.x, b.y - 16, 2);
+      }
+
+      // Securities: each vault grows on its own five seconds, so a stall raised late is not
+      // handed a tick it never waited for.
+      if (!s.securities) continue;
+      b.bankAccum += dt * 1000;
+      if (b.bankAccum < INTEREST_MS) continue;
+      b.bankAccum -= INTEREST_MS;
+      if (b.vault <= 0) continue;
+      const grown = Math.min(VAULT_MAX, b.vault * (1 + VAULT_RATE));
+      if (grown <= b.vault) continue;
+      this.fx(owner).vault(b.x, b.y - 10, false);
+      this.api.showFloatingText(b.x, b.y - 34, `📈 +${Math.round(grown - b.vault)}`, this.hex(CNQ.gold));
+      b.vault = grown;
+    }
+    side.authority += meterGain(this.fighter(owner), banking * dt);
+
+    // Investing: the whole bank, on one empire-wide clock. Capped — ten per cent of an uncapped
+    // bank compounds into an uncapped Blood money and an uncapped Dictatorship pike inside a
+    // minute, and this is the one number in the tree that had to be the designer's rather than
+    // the player's.
+    if (!investing) { side.interestAccum = 0; return; }
+    side.interestAccum += dt * 1000;
+    if (side.interestAccum < INTEREST_MS) return;
+    side.interestAccum -= INTEREST_MS;
+    const gain = meterGain(this.fighter(owner), Math.min(INVEST_CAP, side.authority * INVEST_RATE));
+    if (gain < 1) return;
+    side.authority += gain;
+    const at = markets.find((b) => this.marketStatsOf(b).investing) ?? markets[0];
+    this.fx(owner).coins(at.x, at.y - 20, 5);
+    this.api.showFloatingText(at.x, at.y - 34, `📈 +${Math.round(gain)}`, this.hex(CNQ.gold));
+  }
+
+  /**
+   * Warmongering. Polled off what this side's enemies have taken rather than hooked onto its own
+   * hits: Conquest deals damage from a dozen places (the pike, four kinds of turret round,
+   * soldiers, fireballs, ash) and a ledger catches all of them without a hook in each.
+   *
+   * The approximation it accepts is that anything else hurting them counts too — a husk killed by
+   * another player's fire pays this market. That is the same trade Insurance already makes on the
+   * other side of the ledger, and it never pays for damage that did not happen.
+   */
+  private tickWarmongering(owner: Owner): void {
+    const side = this.side(owner);
+    let dealt = 0;
+    for (const t of this.targetsOf(owner)) {
+      const prev = side.dealtSeen.get(t);
+      side.dealtSeen.set(t, t.rawDamageTaken);
+      // A body seen for the first time is only ever a baseline — otherwise walking into a husk
+      // that was already hurt would pay out for somebody else's whole fight.
+      if (prev !== undefined && t.rawDamageTaken > prev) dealt += t.rawDamageTaken - prev;
+    }
+    if (dealt <= 0) return;
+    if (!this.marketsOf(owner).some((b) => this.marketStatsOf(b).warmonger)) return;
+
+    side.warCarry += dealt;
+    const f = this.fighter(owner);
+    while (side.warCarry >= WARMONGER_PER) {
+      side.warCarry -= WARMONGER_PER;
+      side.authority += meterGain(this.fighter(owner), WARMONGER_PAYS);
+      if (!this.alive(f)) continue;
+      this.fx(owner).bounty(f.x, f.y - 20);
+      this.api.showFloatingText(f.x, f.y - 62, `⚔️ +${WARMONGER_PAYS}`, this.hex(CNQ.gold));
+    }
+  }
+
+  /** Arming a pressed propaganda window on the first live frame, and closing it when it is up. */
+  private tickPropaganda(owner: Owner): void {
+    const side = this.side(owner);
+    if (side.propagandaPending) {
+      side.propagandaPending = false;
+      side.propagandaAt = this.now;
+      side.propagandaUntil = this.now + PROPAGANDA_MS;
+      side.propagandaBroke = false;
+      const caster = this.fighter(owner);
+      if (this.alive(caster)) {
+        this.fx(owner).propaganda(caster.x, caster.y - 10, 70);
+        this.api.showFloatingText(caster.x, caster.y - 58, '📢 PROPAGANDA', this.hex(CNQ.crimson));
+      }
+      return;
+    }
+    if (side.propagandaUntil <= 0 || this.now < side.propagandaUntil) return;
+    side.propagandaUntil = 0;
+    side.propagandaBroke = false;
+    const f = this.fighter(owner);
+    if (this.alive(f)) {
+      this.api.showFloatingText(f.x, f.y - 58, '📢 SILENCE', this.hex(CNQ.stoneDark));
+    }
+  }
+
+  /**
+   * Propaganda Central taking a hit out of the treasury instead of the body.
+   *
+   * Returns true when the bank swallowed it whole. The moment it cannot, the window turns: the
+   * hit that broke it lands normally and every hit after it lands doubled, because
+   * `conquestIncomingMult` is rewritten each frame from `propagandaBroke`.
+   */
+  private propagandaPays(owner: Owner, amount: number): boolean {
+    const side = this.side(owner);
+    if (this.now >= side.propagandaUntil || side.propagandaBroke) return false;
+    const f = this.fighter(owner);
+    const cost = amount * PROPAGANDA_RATE;
+    if (side.authority >= cost) {
+      side.authority -= cost;
+      if (this.alive(f)) {
+        this.api.showFloatingText(f.x, f.y - 46, `📢 −${Math.round(cost)}👑`, this.hex(CNQ.crimson));
+      }
+      return true;
+    }
+    side.authority = 0;
+    side.propagandaBroke = true;
+    if (this.alive(f)) {
+      this.fx(owner).chip(f.x, f.y, CNQ.blood);
+      this.api.showFloatingText(f.x, f.y - 46, '💸 BANKRUPT — DOUBLE DAMAGE', this.hex(CNQ.blood));
+    }
+    return false;
   }
 
   // ── The ARCANE path (Q+) ───────────────────────────────────────────────────
@@ -975,6 +1339,8 @@ export class ConquestKit implements ConquestMenuHost {
   private buildRefusal(owner: Owner, kind: PlaceKind): string | null {
     const f = this.fighter(owner);
     if (!this.alive(f)) return 'DEAD';
+    // The market only exists while the mastery ability is bound to a key.
+    if (kind === 'market' && !this.marketSlot(owner)) return 'NO MARKET';
     const cell = this.cellAt(f.x, f.y);
     if (cell < 0 || this.cellOwner[cell] !== owner) return 'NOT YOUR LAND';
     if (this.buildingAt(cell) || this.townAt(cell)) return 'SQUARE TAKEN';
@@ -1019,7 +1385,8 @@ export class ConquestKit implements ConquestMenuHost {
     // Enchantment adds on top of that. The home-ground quarter still applies to all of it —
     // the land is where you are safe, never where you are strong, and no upgrade changes that.
     const banner = this.bannerOf(owner);
-    const base = (banner?.damage ?? PIKE_DAMAGE) + this.empire(owner).bannerBonus;
+    const dictator = this.dictatorshipBonus(owner);
+    const base = (banner?.damage ?? PIKE_DAMAGE) + this.empire(owner).bannerBonus + dictator;
     const dmg = Math.max(1, Math.round(base * (home ? PIKE_HOME_MULT : 1) * this.outMult(owner)));
     const color = banner?.color ?? townColor(owner, Math.max(0, this.standingTown(owner)));
 
@@ -1057,6 +1424,9 @@ export class ConquestKit implements ConquestMenuHost {
     }
     if (hitB && !victim) this.damageBuilding(hitB, dmg, { kind: 'fighter', f });
 
+    if (dictator > 0 && (victim || hitB)) {
+      this.api.showFloatingText(f.x, f.y - 62, `👑 +${dictator}`, this.hex(CNQ.gold));
+    }
     if (home && !victim && !hitB) {
       this.api.showFloatingText(f.x, f.y - 46, 'HOME GROUND', this.hex(CNQ.gold));
     }
@@ -1081,6 +1451,7 @@ export class ConquestKit implements ConquestMenuHost {
       burstLeft: 0, burstAccum: 0,
       aimAng: owner === 'player' ? 0 : Math.PI,
       recoil: 0, spikeCarry: 0, lastHitAt: -HP_BAR_MS, bombAt: -BOMB_COOLDOWN_MS,
+      vault: 0, bankAccum: 0,
       seed: Math.random() * 999,
     };
     b.hp = this.maxHpOf(b);
@@ -1101,6 +1472,7 @@ export class ConquestKit implements ConquestMenuHost {
     const side = this.side(owner);
     side.authority -= this.expansionCost(owner);
     const town = this.foundTown(owner, cell);
+    this.record(owner, 'expansions');
 
     this.avatar(owner)?.play('raise');
     this.api.showFloatingText(f.x, f.y - 56, '🏛️ EXPANSION', this.hex(townColor(owner, town.index)));
@@ -1208,6 +1580,7 @@ export class ConquestKit implements ConquestMenuHost {
    */
   private splash(
     x: number, y: number, radius: number, owner: Owner, damage: number, except?: Mark,
+    bill?: (amount: number) => void,
   ): void {
     if (damage <= 0) return;
     for (const m of this.marksAgainst(owner)) {
@@ -1218,7 +1591,18 @@ export class ConquestKit implements ConquestMenuHost {
       const my = m.kind === 'troop' ? this.troopY(m.t) : m.y;
       if (Phaser.Math.Distance.Between(x, y, mx, my) > radius) continue;
       this.hitMark(m, damage, null, owner);
+      bill?.(damage);
     }
+  }
+
+  /**
+   * Field Of Fire, the mastery's fourth requirement. Every route a turret's output can take is
+   * billed here: an ordinary round, a Sniper Nest's hitscan, a Boom Bullet burst, a Blast
+   * Nucleus detonation and a revenge bomb. A fireball is not a turret and is deliberately not
+   * counted.
+   */
+  private billTurret(owner: Owner, amount: number): void {
+    this.record(owner, 'turretDamage', Math.max(0, Math.round(amount)));
   }
 
   private sameMark(a: Mark, b: Mark): boolean {
@@ -1247,6 +1631,13 @@ export class ConquestKit implements ConquestMenuHost {
     if (i >= 0) this.buildings.splice(i, 1);
     this.fx(b.owner).rubble(b.x, b.y, CELL);
     this.api.showFloatingText(b.x, b.y - 30, `${KIND_LABEL[b.kind]} DOWN`, this.hex(CNQ.blood));
+    // Securities. Everything in the vault dies with the stall — that is the whole risk the
+    // twenty-five per cent is paid for, and the reason a bank is worth walling in.
+    if (b.vault > 0) {
+      this.fx(b.owner).vault(b.x, b.y - 10, true);
+      this.api.showFloatingText(b.x, b.y - 48, `💸 ${Math.round(b.vault)} LOST`, this.hex(CNQ.blood));
+      b.vault = 0;
+    }
     // Soldiers outlive the barracks that trained them; they simply stop being replaced.
   }
 
@@ -1349,7 +1740,9 @@ export class ConquestKit implements ConquestMenuHost {
       const fort = this.empire(b.owner).fortressHp;
       if (b.kind === 'barracks') this.tickBarracks(b, barracksStats(b.tiers, fort), dtMs);
       else if (b.kind === 'turret') this.tickTurret(b, turretStats(b.tiers, fort), dtMs);
-      else this.tickBarricade(b, barricadeStats(b.tiers, fort), dt);
+      // A market's own clocks are run by `tickMarkets`, because what one stall earns depends on
+      // what every other stall of theirs has bought.
+      else if (b.kind !== 'market') this.tickBarricade(b, barricadeStats(b.tiers, fort), dt);
       // Fortress can be bought mid-match, so the ceiling moves; never let hp sit above it.
       b.hp = Math.min(b.hp, this.maxHpOf(b));
     }
@@ -1373,6 +1766,7 @@ export class ConquestKit implements ConquestMenuHost {
       return;
     }
 
+    this.record(b.owner, 'troopsTrained');
     this.troops.push({
       owner: b.owner, town: b.town, cell: b.cell,
       hp: Math.round(s.troopHp * this.empire(b.owner).troopMult), baseHp: s.troopHp,
@@ -1425,7 +1819,9 @@ export class ConquestKit implements ConquestMenuHost {
     b.recoil = 1;
     const mx = b.x + Math.cos(ang) * 20;
     const my = b.y + Math.sin(ang) * 20;
-    const out = this.outMult(b.owner);
+    // Blood money rides on top of Force Shield: a gun standing next to a rich market is worth
+    // half again, and the number is read at the shot rather than at the purchase.
+    const out = this.outMult(b.owner) * this.bloodMult(b.owner, b.x, b.y);
 
     // Blast Nucleus replaces the gun outright — no muzzle, no bullet, no line. It goes off on
     // whatever it acquired, which is why the tower had to give up half its range for it.
@@ -1440,7 +1836,8 @@ export class ConquestKit implements ConquestMenuHost {
       const bx = b.x + Math.cos(ang) * d;
       const by = b.y + Math.sin(ang) * d;
       this.fx(b.owner).blast(bx, by, s.blastRadius, s.atomic);
-      this.splash(bx, by, s.blastRadius, b.owner, Math.max(1, Math.round(s.blastDamage * out)));
+      this.splash(bx, by, s.blastRadius, b.owner, Math.max(1, Math.round(s.blastDamage * out)),
+        undefined, (n) => this.billTurret(b.owner, n));
       return;
     }
 
@@ -1464,12 +1861,14 @@ export class ConquestKit implements ConquestMenuHost {
       this.fx(b.owner).tracer(mx, my, ex, ey);
       if (best) {
         this.hitMark(best, damage, null, b.owner);
+        this.billTurret(b.owner, damage);
         if (head) this.api.showFloatingText(best.x, best.y - 24, '🎯 HEADSHOT', this.hex(CNQ.tracer));
         // Boom Bullets works on a hitscan shot too — the burst is what the round does when it
         // arrives, not how long it took to get there.
         if (s.boomBullets) {
           this.fx(b.owner).boom(best.x, best.y, s.boomRadius);
-          this.splash(best.x, best.y, s.boomRadius, b.owner, Math.round(s.boomDamage * out), best);
+          this.splash(best.x, best.y, s.boomRadius, b.owner, Math.round(s.boomDamage * out), best,
+            (n) => this.billTurret(b.owner, n));
         }
       }
       return;
@@ -1558,7 +1957,10 @@ export class ConquestKit implements ConquestMenuHost {
       let bonus = this.bannerTroopBonus(t);
       if (t.surprise && t.fresh) { bonus += SURPRISE_BONUS; t.fresh = false; }
       const wiz = t.wizard && this.empire(t.owner).ash ? 1.5 : 1;
-      const damage = Math.max(1, Math.round((t.damage + crowd + bonus) * mult * wiz * this.outMult(t.owner)));
+      const blood = this.bloodMult(t.owner, tx, ty);
+      const damage = Math.max(1, Math.round(
+        (t.damage + crowd + bonus) * mult * wiz * blood * this.outMult(t.owner),
+      ));
       this.hitMark(best, damage, { kind: 'troop', t }, t.owner);
     }
   }
@@ -1659,11 +2061,12 @@ export class ConquestKit implements ConquestMenuHost {
       }
 
       this.hitMark(hit, p.damage, null, p.owner);
+      this.billTurret(p.owner, p.damage);
       if (p.head) this.api.showFloatingText(hit.x, hit.y - 24, '🎯 HEADSHOT', this.hex(CNQ.tracer));
       // Boom Bullets.
       if (p.boomR > 0) {
         this.fx(p.owner).boom(p.x, p.y, p.boomR);
-        this.splash(p.x, p.y, p.boomR, p.owner, p.boomDamage, hit);
+        this.splash(p.x, p.y, p.boomR, p.owner, p.boomDamage, hit, (n) => this.billTurret(p.owner, n));
       }
       this.bullets.splice(i, 1);
     }
@@ -1674,7 +2077,9 @@ export class ConquestKit implements ConquestMenuHost {
     const r = p.kind === 'fireball' ? FIREBALL_RADIUS : BOMB_RADIUS;
     if (p.kind === 'fireball') this.fx(p.owner).fireburst(p.x, p.y, r);
     else this.fx(p.owner).blast(p.x, p.y, r, p.drag);
-    this.splash(p.x, p.y, r, p.owner, p.damage);
+    // A revenge bomb is a turret's output; a fireball is a town centre's, and is not billed.
+    this.splash(p.x, p.y, r, p.owner, p.damage, undefined,
+      p.kind === 'bomb' ? (n) => this.billTurret(p.owner, n) : undefined);
 
     if (!p.drag) return;
     // Atomic Annihilation. Only fighters are hauled — a soldier is defined by the square it
@@ -1874,14 +2279,53 @@ export class ConquestKit implements ConquestMenuHost {
       p.nextCastCooldownMult = 1;
     }
 
-    if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) this.tryBuild(p, ctx, 'barracks');
-    if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) this.tryBuild(p, ctx, 'turret');
-    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) this.tryBuild(p, ctx, 'barricade');
-    if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) {
+    // Mastery: whichever of E/R/F/Q the Market was dropped on stops placing what it used to.
+    // Every key is read exactly once — `JustDown` consumes the flag, so a second read of the
+    // same key in the same frame is always false.
+    const bound = this.marketSlot('player');
+    const just: Record<Slot, boolean> = {
+      e: Phaser.Input.Keyboard.JustDown(this.api.eKey),
+      r: Phaser.Input.Keyboard.JustDown(this.api.rKey),
+      f: Phaser.Input.Keyboard.JustDown(this.api.fKey),
+      q: Phaser.Input.Keyboard.JustDown(this.api.qKey),
+    };
+
+    if (bound && just[bound]) this.tryCastMarket('player');
+    if (bound !== 'e' && just.e) this.tryBuild(p, ctx, 'barracks');
+    if (bound !== 'r' && just.r) this.tryBuild(p, ctx, 'turret');
+    if (bound !== 'f' && just.f) this.tryBuild(p, ctx, 'barricade');
+    if (bound !== 'q' && just.q) {
       const why = this.expansionRefusal('player');
       if (why) this.api.showFloatingText(p.x, p.y - 46, why, this.hex(CNQ.blood));
       else p.castAbility('conquest-expansion', ctx);
     }
+  }
+
+  /**
+   * The Market press.
+   *
+   * It never goes near `castAbility` — the enhancement is not in the element's ability list — so
+   * every refusal that function applies has to be repeated here, or a disarmed commander would
+   * find one key on their bar still building.
+   */
+  private tryCastMarket(owner: Owner): void {
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    const wall = Date.now();
+    if (wall < f.disarmedUntil || wall < f.silencedUntil || wall < f.chickenUntil) return;
+    if (this.now - this.side(owner).marketCastAt < MARKET_COOLDOWN_MS) return;
+
+    const why = this.buildRefusal(owner, 'market');
+    if (why) {
+      if (owner === 'player') this.api.showFloatingText(f.x, f.y - 46, why, this.hex(CNQ.blood));
+      return;
+    }
+    this.side(owner).marketCastAt = this.now;
+    this.doBuild(owner, 'market');
+    // `triggerCooldown` is what the ability card counts down from. Online it also puts an
+    // unknown cast id on the wire, which is harmless: the stall itself reaches the opponent in
+    // the board snapshot rather than as a replayed cast.
+    if (owner === 'player') f.triggerCooldown(MARKET_ID);
   }
 
   /** Banner Bearer: offensive → defensive → healing → offensive. */
@@ -2059,8 +2503,139 @@ export class ConquestKit implements ConquestMenuHost {
       next,
       blocked,
       link: this.linkStateOf(b),
+      actions: this.actionsOf(b),
+      status: this.statusOf(b),
       color: townColor(owner, isTown ? (t as Town).index : (t as Building).town),
     };
+  }
+
+  /**
+   * The market's buttons. Everything here spends or moves Authority without being a tier, which
+   * is why none of it lives in a column — a loan is not an upgrade, it is a decision you make
+   * again every time you are short.
+   */
+  private actionsOf(b: Building | null): ConquestMenuAction[] {
+    if (!b || b.kind !== 'market') return [];
+    const s = this.marketStatsOf(b);
+    const side = this.side(b.owner);
+    const f = this.fighter(b.owner);
+    const out: ConquestMenuAction[] = [];
+
+    if (s.loans) {
+      out.push({
+        id: 'loan',
+        label: `LOAN — ${LOAN_DAMAGE} HP FOR ${LOAN_PAYS}`,
+        icon: '🩸',
+        // A loan that would kill you is refused. Everything else about it is your own business.
+        blocked: !this.alive(f) ? 'DEAD' : f.hp <= LOAN_DAMAGE ? 'TOO POOR IN BLOOD' : null,
+      });
+    }
+    if (s.securities) {
+      out.push({
+        id: 'deposit',
+        label: `DEPOSIT ${VAULT_STEP}`,
+        icon: '🏦',
+        blocked: b.vault >= VAULT_MAX ? 'VAULT FULL'
+          : side.authority < VAULT_STEP ? `NEEDS ${VAULT_STEP} AUTHORITY` : null,
+      });
+      out.push({
+        id: 'withdraw',
+        label: 'WITHDRAW ALL',
+        icon: '💰',
+        blocked: b.vault <= 0 ? 'VAULT EMPTY' : null,
+      });
+    }
+    if (s.propaganda) {
+      const cooling = Math.max(0, PROPAGANDA_COOLDOWN_MS - (this.now - side.propagandaAt));
+      out.push({
+        id: 'propaganda',
+        label: this.propagandaOn(b.owner) ? 'PROPAGANDA — RUNNING' : 'PROPAGANDA',
+        icon: '📢',
+        blocked: this.propagandaOn(b.owner) ? null
+          : cooling > 0 ? `${Math.ceil(cooling / 1000)}s` : null,
+        active: this.propagandaOn(b.owner),
+      });
+    }
+    return out;
+  }
+
+  /** The line under the columns: what this stall is holding, and what is currently running. */
+  private statusOf(b: Building | null): string | null {
+    if (!b || b.kind !== 'market') return null;
+    const s = this.marketStatsOf(b);
+    const bits: string[] = [];
+    if (s.securities) bits.push(`🏦 VAULT ${Math.round(b.vault)} / ${VAULT_MAX}`);
+    if (s.propaganda && this.propagandaOn(b.owner)) {
+      const side = this.side(b.owner);
+      const left = side.propagandaPending
+        ? PROPAGANDA_MS
+        : Math.max(0, side.propagandaUntil - this.now);
+      bits.push(`📢 ${(left / 1000).toFixed(1)}s`);
+    }
+    if (this.side(b.owner).propagandaBroke) bits.push('💸 BANKRUPT');
+    return bits.length ? bits.join('   ·   ') : null;
+  }
+
+  /**
+   * The market's buttons, pressed. Returns false when nothing happened, which is the menu's cue
+   * not to repaint.
+   */
+  runAction(id: string): boolean {
+    const t = this.menuTarget;
+    if (!t || !('kind' in t) || t.kind !== 'market') return false;
+    if (this.actionsOf(t).some((a) => a.id === id && a.blocked)) return false;
+    return this.marketAction(t, id);
+  }
+
+  /** The four market actions, shared by the menu and the bot. */
+  private marketAction(b: Building, id: string): boolean {
+    const side = this.side(b.owner);
+    const s = this.marketStatsOf(b);
+    const f = this.fighter(b.owner);
+
+    if (id === 'loan') {
+      if (!s.loans || !this.alive(f) || f.hp <= LOAN_DAMAGE) return false;
+      // Pierced and self-inflicted: a loan is not an attack, and it must never be the thing
+      // Propaganda pays for — a hit you deal yourself and then charge to the bank at a discount
+      // would be a money printer.
+      f.takeDamage(LOAN_DAMAGE, { selfInflicted: true, pierce: true });
+      side.authority += LOAN_PAYS;
+      this.fx(b.owner).bounty(b.x, b.y - 10);
+      this.api.showFloatingText(f.x, f.y - 46, `🩸 +${LOAN_PAYS}👑`, this.hex(CNQ.blood));
+      return true;
+    }
+
+    if (id === 'deposit') {
+      if (!s.securities || b.vault >= VAULT_MAX || side.authority < VAULT_STEP) return false;
+      const moved = Math.min(VAULT_STEP, VAULT_MAX - b.vault, Math.floor(side.authority));
+      if (moved <= 0) return false;
+      side.authority -= moved;
+      b.vault += moved;
+      this.fx(b.owner).vault(b.x, b.y - 10, true);
+      this.api.showFloatingText(b.x, b.y - 34, `🏦 ${Math.round(b.vault)}`, this.hex(CNQ.gold));
+      return true;
+    }
+
+    if (id === 'withdraw') {
+      if (b.vault <= 0) return false;
+      side.authority += b.vault;
+      this.api.showFloatingText(b.x, b.y - 34, `💰 +${Math.round(b.vault)}`, this.hex(CNQ.gold));
+      b.vault = 0;
+      this.fx(b.owner).vault(b.x, b.y - 10, false);
+      return true;
+    }
+
+    if (id === 'propaganda') {
+      if (!s.propaganda || this.propagandaOn(b.owner)) return false;
+      if (this.now - side.propagandaAt < PROPAGANDA_COOLDOWN_MS) return false;
+      // Armed on the next live frame rather than here: the button that opens it is in a menu
+      // that has the match paused, and eight seconds spent reading a tree are not eight seconds
+      // of shouting. `tickPropaganda` does the rest.
+      side.propagandaPending = true;
+      this.api.showFloatingText(b.x, b.y - 34, '📢 READY TO SHOUT', this.hex(CNQ.crimson));
+      return true;
+    }
+    return false;
   }
 
   /** Whether the menu should offer Personal Wall's link button, and what it should say. */
@@ -2112,8 +2687,18 @@ export class ConquestKit implements ConquestMenuHost {
     const before = new Map<Building, number>();
     for (const b of this.buildings) if (b.owner === t.owner) before.set(b, this.maxHpOf(b));
 
+    // Whether this purchase was the last one this building could ever take — the mastery's
+    // first requirement. Measured against the paths that side may actually *spend* into, so a
+    // two-column tree with no shop upgrade behind it can still be finished.
+    const wasDone = this.fullyUpgraded(t, kind);
+
     side.authority -= up.cost;
     t.tiers[path]++;
+
+    if (!wasDone && this.fullyUpgraded(t, kind)) {
+      this.record(t.owner, 'buildingsMaxed');
+      this.api.showFloatingText(t.x, t.y - 44, '🏆 MAXED', this.hex(CNQ.gold));
+    }
 
     for (const [b, was] of before) {
       const now = this.maxHpOf(b);
@@ -2122,6 +2707,15 @@ export class ConquestKit implements ConquestMenuHost {
     }
     for (const tr of this.troops) if (tr.owner === t.owner) tr.hp = Math.min(tr.hp, this.troopMaxHp(tr));
     return true;
+  }
+
+  /**
+   * Nothing left to buy on this building — one path pushed as far as it goes and every other
+   * one pinned. The paths counted are the ones that side may spend into, so a tree whose third
+   * column the shop never opened still finishes at 4 + 2.
+   */
+  private fullyUpgraded(t: Building | Town, kind: BuildKind): boolean {
+    return this.pathsFor(t.owner, kind).every((p) => !nextUpgrade(kind, t.tiers, p));
   }
 
   closeUpgradeMenu(): void {
@@ -2153,6 +2747,11 @@ export class ConquestKit implements ConquestMenuHost {
       this.npcMarch();
     }
 
+    // Arrivals are read every frame, not on the think tick: the square is only free for as long
+    // as nobody else is standing on it. `doConquestAbilities` does exactly this for the other
+    // four builds; the market has no ability id, so it is done here.
+    this.npcPlaceMarket();
+
     if (side.thinkAccum < NPC_THINK_MS) return;
     side.thinkAccum = 0;
 
@@ -2174,6 +2773,56 @@ export class ConquestKit implements ConquestMenuHost {
     // ── Spend what the shop paths gave it ──
     this.npcLink();
     this.npcFireball();
+    this.npcMarketActions();
+  }
+
+  /**
+   * Conquest Mastery, on the bot's side.
+   *
+   * The market's whole WAR and BANKING payoff is buttons in a menu rather than abilities, so
+   * none of it can reach `do[Element]Abilities` — there is no id for `castAbility` to find. The
+   * kit therefore plays these four itself, on the same 600ms think tick it buys upgrades on,
+   * which is the same arrangement Magma's saw and Depths' kraken use.
+   *
+   * Each one is a synergy the tree set up and somebody has to actually take: propaganda is only
+   * worth opening while there is a bank to spend and a body being shot at, a loan is only worth
+   * taking with the opposite of both, and the vault is where the surplus between builds goes.
+   */
+  private npcMarketActions(): void {
+    const side = this.side('npc');
+    const f = this.api.npc;
+    if (!this.alive(f)) return;
+
+    for (const b of this.marketsOf('npc')) {
+      const s = this.marketStatsOf(b);
+      if (s.propaganda && !this.propagandaOn('npc')
+        && f.hp < f.maxHp * 0.6 && side.authority >= 60) {
+        this.marketAction(b, 'propaganda');
+      }
+      // Blood for money, but only while there is plenty of the first and none of the second.
+      if (s.loans && side.authority < 20 && f.hp > f.maxHp * 0.6) this.marketAction(b, 'loan');
+      if (!s.securities) continue;
+      // The surplus between builds earns 25% in the vault; it comes back out the moment there
+      // is something to spend it on.
+      if (side.authority > 120 && b.vault < VAULT_MAX) this.marketAction(b, 'deposit');
+      else if (side.authority < 30 && b.vault > 0) this.marketAction(b, 'withdraw');
+    }
+  }
+
+  /**
+   * The one build the AI routine cannot cast: `market` is a mastery enhancement rather than an
+   * element ability, so `NpcOpponent.castAbility` has nothing to look up. The kit converts the
+   * arrival into a placement itself and clears its own seek.
+   */
+  private npcPlaceMarket(): void {
+    const side = this.side('npc');
+    if (side.seekKind !== 'market' || !side.seek) return;
+    const f = this.api.npc;
+    if (!this.alive(f)) return;
+    if (Phaser.Math.Distance.Between(f.x, f.y, side.seek.x, side.seek.y) > 16) return;
+    if (this.buildRefusal('npc', 'market')) return;
+    this.tryCastMarket('npc');
+    this.npcClearSeek();
   }
 
   /** Personal Wall, on the bot's side: link the first wall that can be linked to and stay linked. */
@@ -2213,9 +2862,13 @@ export class ConquestKit implements ConquestMenuHost {
     const side = this.side('npc');
     const owned = this.buildingCount('npc');
     const cap = this.buildingCap('npc');
+    // The Market takes a key rather than being added to the bar, so whichever build used to be
+    // under that key is gone for the bot exactly as it is for the player.
+    const lost = this.lostBuild('npc');
 
     // A second capital, once the first one is genuinely full and paid for.
-    if (owned >= cap && side.authority >= this.expansionCost('npc') && side.towns.length < 3) {
+    if (owned >= cap && lost !== 'expansion'
+      && side.authority >= this.expansionCost('npc') && side.towns.length < 3) {
       const spot = this.npcExpansionSpot();
       if (spot >= 0) {
         side.seek = { x: this.centreX(spot), y: this.centreY(spot) };
@@ -2229,10 +2882,21 @@ export class ConquestKit implements ConquestMenuHost {
     // worth walling. Barricades are cheap enough to be the fallback for spare Authority.
     const barracks = this.buildings.filter((b) => b.owner === 'npc' && b.kind === 'barracks').length;
     const turrets = this.buildings.filter((b) => b.owner === 'npc' && b.kind === 'turret').length;
-    let kind: PlaceKind = 'barricade';
-    if (barracks < 2 || barracks <= turrets) kind = 'barracks';
-    else if (turrets < 3) kind = 'turret';
-    if (side.authority < this.costOf('npc', kind)) return;
+    const markets = this.marketsOf('npc').length;
+    // In preference order, with fallbacks behind it — the first one it is allowed to build and
+    // can actually pay for is the one it walks to. A stall pays its 30 back inside half a
+    // minute, so it wants one as soon as it has something to defend, but never before the first
+    // barracks and never more than two.
+    const wants: PlaceKind[] = [];
+    if (this.marketSlot('npc') && markets < 2 && barracks >= 1 && markets <= turrets) {
+      wants.push('market');
+    }
+    if (barracks < 2 || barracks <= turrets) wants.push('barracks');
+    else if (turrets < 3) wants.push('turret');
+    wants.push('barricade', 'turret', 'barracks');
+
+    const kind = wants.find((k) => k !== lost && side.authority >= this.costOf('npc', k));
+    if (!kind) return;
 
     const cell = this.npcBuildSpot(kind);
     if (cell < 0) return;
@@ -2255,10 +2919,22 @@ export class ConquestKit implements ConquestMenuHost {
       const d = this.alive(enemy)
         ? Phaser.Math.Distance.Between(this.centreX(i), this.centreY(i), enemy.x, enemy.y)
         : 0;
-      let score = kind === 'barricade' ? d : -d;
+      // A market is a 50 HP box of money: it wants to be as far back as a barricade, not as
+      // far forward as a gun.
+      let score = kind === 'barricade' || kind === 'market' ? d : -d;
       if (kind === 'barricade') {
         const neighbours = this.buildings.filter((b) => b.owner === 'npc' && this.adjacent(b.cell, i)).length;
         score += neighbours * 300;
+      }
+      // Blood money only pays what is standing within two squares of the stall, so a gun placed
+      // in a market's patronage is worth much more than the same gun placed outside it.
+      if (kind === 'turret') {
+        for (const m of this.marketsOf('npc')) {
+          if (!this.marketStatsOf(m).bloodMoney) continue;
+          if (Phaser.Math.Distance.Between(this.centreX(i), this.centreY(i), m.x, m.y) > BLOOD_RANGE) continue;
+          score += 400;
+          break;
+        }
       }
       if (score > bestScore) { bestScore = score; best = i; }
     }
@@ -2363,9 +3039,12 @@ export class ConquestKit implements ConquestMenuHost {
   }
 
   /** True when the NPC is standing where it meant to stand and can afford what it came for. */
-  npcReadyToBuild(): PlaceKind | 'expansion' | null {
+  npcReadyToBuild(): Exclude<PlaceKind, 'market'> | 'expansion' | null {
     const side = this.side('npc');
     if (!side.seek || !side.seekKind) return null;
+    // The market is deliberately never offered: there is no `conquest-market` ability for
+    // `castAbility` to find, so `npcPlaceMarket` converts that arrival itself.
+    if (side.seekKind === 'market') return null;
     const f = this.api.npc;
     if (!this.alive(f)) return null;
     if (Phaser.Math.Distance.Between(f.x, f.y, side.seek.x, side.seek.y) > 16) return null;
@@ -2383,6 +3062,17 @@ export class ConquestKit implements ConquestMenuHost {
   }
 
   npcAuthority(): number { return Math.floor(this.side('npc').authority); }
+
+  /**
+   * Ability tray fill for the mastery card. The market is a placement rather than a state, so
+   * this is only ever its own 600ms — but it is a private timer, so ArenaScene cannot read it
+   * off the cooldown map.
+   */
+  getBarRatio(abilityId: string, time: number): number {
+    if (abilityId !== MARKET_ID) return 0;
+    void time;
+    return Phaser.Math.Clamp((this.now - this.side('player').marketCastAt) / MARKET_COOLDOWN_MS, 0, 1);
+  }
 
   // ── Online ─────────────────────────────────────────────────────────────────
 
@@ -2416,7 +3106,7 @@ export class ConquestKit implements ConquestMenuHost {
     for (const bd of this.buildings) {
       if (bd.owner !== 'player') continue;
       b.push(bd.cell, KIND_CODE[bd.kind], bd.town, Math.round(bd.hp),
-        bd.tiers[0], bd.tiers[1], bd.tiers[2]);
+        bd.tiers[0], bd.tiers[1], bd.tiers[2], Math.round(bd.vault));
     }
 
     const tr: number[] = [];
@@ -2436,6 +3126,7 @@ export class ConquestKit implements ConquestMenuHost {
       a: Math.round(side.authority), c: cells, tw, b, tr,
       bf: this.owns('player', 'click') ? BANNER_ORDER.indexOf(side.banner) : -1,
       lw: linked && this.buildings.includes(linked) ? linked.cell : -1,
+      pg: this.propagandaOn('player') ? 1 : 0,
     };
   }
 
@@ -2489,7 +3180,7 @@ export class ConquestKit implements ConquestMenuHost {
     // ── Buildings ──
     const keptBuildings: Building[] = [];
     const spare = this.buildings.filter((bd) => bd.owner === 'npc');
-    for (let i = 0; i + 6 < snap.b.length; i += 7) {
+    for (let i = 0; i + 7 < snap.b.length; i += 8) {
       const cell = this.mirrorCell(snap.b[i]);
       const kind = KIND_OF_CODE[snap.b[i + 1]] ?? 'barricade';
       const idx = spare.findIndex((bd) => bd.cell === cell && bd.kind === kind);
@@ -2503,6 +3194,7 @@ export class ConquestKit implements ConquestMenuHost {
           hp: 0, tiers: [0, 0, 0], accum: 0, regenCarry: 0,
           burstLeft: 0, burstAccum: 0, aimAng: Math.PI, recoil: 0,
           spikeCarry: 0, lastHitAt: -HP_BAR_MS, bombAt: -BOMB_COOLDOWN_MS,
+          vault: 0, bankAccum: 0,
           seed: Math.random() * 999,
         };
         this.fx('npc').raise(bd.x, bd.y, CELL, townColor('npc', snap.b[i + 2]));
@@ -2513,6 +3205,9 @@ export class ConquestKit implements ConquestMenuHost {
       if (snap.b[i + 3] < bd.hp) bd.lastHitAt = this.now;
       bd.hp = snap.b[i + 3];
       bd.tiers = [snap.b[i + 4], snap.b[i + 5], snap.b[i + 6]];
+      // Their vault is theirs — it is carried only so the strongbox is drawn with the right
+      // stack on it, and it grows on their sim rather than this one.
+      bd.vault = snap.b[i + 7];
       keptBuildings.push(bd);
     }
     for (const dead of spare) this.fx('npc').rubble(dead.x, dead.y, CELL);
@@ -2571,9 +3266,11 @@ export class ConquestKit implements ConquestMenuHost {
       }
     }
 
-    // ── Banner Bearer and Personal Wall ──
+    // ── Banner Bearer, Personal Wall and Propaganda ──
     if (snap.bf >= 0 && snap.bf < BANNER_ORDER.length) side.banner = BANNER_ORDER[snap.bf];
     side.netLinkCell = snap.lw >= 0 ? this.mirrorCell(snap.lw) : -1;
+    // Their window pays out of their bank on their own sim; this is only what it looks like.
+    side.netPropaganda = snap.pg === 1;
   }
 
   /** Reflect a cell across the board's vertical centre line. */
@@ -2596,10 +3293,19 @@ export class ConquestKit implements ConquestMenuHost {
     this.ensureLayers();
     if (!this.seeded) this.seed();
 
-    if (playerIs) this.tickEconomy('player', dt);
+    if (playerIs) {
+      this.tickEconomy('player', dt);
+      this.tickWarmongering('player');
+      this.tickPropaganda('player');
+    }
     // A remote player banks their own Authority and decides their own builds; we only ever
     // learn the result. A bot does both here.
-    if (npcIs && !this.npcIsRemote) { this.tickEconomy('npc', dt); this.npcThink(dt); }
+    if (npcIs && !this.npcIsRemote) {
+      this.tickEconomy('npc', dt);
+      this.tickWarmongering('npc');
+      this.tickPropaganda('npc');
+      this.npcThink(dt);
+    }
 
     this.tickTerritory(dt);
     this.tickBuildings(dt);
@@ -2618,7 +3324,12 @@ export class ConquestKit implements ConquestMenuHost {
     for (const owner of ['player', 'npc'] as Owner[]) {
       const f = this.fighter(owner);
       if (!f) continue;
-      f.conquestIncomingMult = this.isConquest(owner) && this.standingTown(owner) >= 0 ? HOME_ARMOUR : 1;
+      const home = this.isConquest(owner) && this.standingTown(owner) >= 0;
+      // Propaganda Central's other half: once the bank has run dry inside the window, the rest
+      // of it is paid in blood at double rate. The hit that emptied the bank lands at the
+      // ordinary rate — the penalty starts from the frame after, which is the warning.
+      const broke = this.side(owner).propagandaBroke && this.propagandaOn(owner);
+      f.conquestIncomingMult = (home ? HOME_ARMOUR : 1) * (broke ? PROPAGANDA_PENALTY : 1);
     }
 
     // Last thing before drawing: ArenaScene has already resolved this frame's movement, so a
@@ -2640,9 +3351,13 @@ export class ConquestKit implements ConquestMenuHost {
     const f = this.fighter(owner);
     if (!f) return;
     const mine = this.absorbers[owner];
-    const wall = owner === 'npc' && this.npcIsRemote ? null : this.linkedWall(owner);
+    const remote = owner === 'npc' && this.npcIsRemote;
+    const wall = remote ? null : this.linkedWall(owner);
+    // Propaganda wants the same one slot, and for the same reason — a hit has to be intercepted
+    // before the shield logic to be paid for with something other than health.
+    const wants = !!wall || (!remote && this.now < this.side(owner).propagandaUntil);
 
-    if (!wall) {
+    if (!wants) {
       if (mine && f.damageAbsorber === mine) f.damageAbsorber = null;
       delete this.absorbers[owner];
       return;
@@ -2650,9 +3365,13 @@ export class ConquestKit implements ConquestMenuHost {
     if (mine && f.damageAbsorber === mine) return;
     if (f.damageAbsorber) return;
 
-    // The closure re-reads the link rather than closing over the wall, so unlinking mid-match —
-    // or the wall being knocked down — takes effect without reinstalling anything.
+    // The closure re-reads both the window and the link rather than closing over either, so
+    // unlinking mid-match, the wall being knocked down, or the eight seconds running out all
+    // take effect without reinstalling anything.
     const fn = (amount: number): boolean => {
+      // The treasury is asked first: while propaganda is up it is the health bar, and a wall
+      // that is also linked is being saved rather than spent.
+      if (this.propagandaPays(owner, amount)) return true;
       const w = this.linkedWall(owner);
       if (!w) return false;
       this.damageBuilding(w, amount, null);
@@ -2838,7 +3557,20 @@ export class ConquestKit implements ConquestMenuHost {
       const col = townColor(b.owner, b.town);
       if (b.kind === 'barracks') barracksBody(g, c, b.x, b.y, CELL, col, 1);
       else if (b.kind === 'turret') turretBody(g, c, b.x, b.y, CELL, col, b.aimAng, b.recoil, 1);
-      else {
+      else if (b.kind === 'market') {
+        marketBody(g, c, b.x, b.y, CELL, col, {
+          vault: b.vault,
+          propaganda: this.marketStatsOf(b).propaganda,
+          t: this.vizT,
+        }, 1);
+        // Blood money's patronage, drawn on the floor of the stall's reach — a gun standing
+        // inside this ring is worth half again, and that has to be placeable on purpose.
+        if (this.marketStatsOf(b).bloodMoney) {
+          const bank = Math.min(BLOOD_MAX, Math.floor(this.side(b.owner).authority / BLOOD_PER) * BLOOD_STEP);
+          g.lineStyle(1.4, c(CNQ.blood), 0.18 + (bank / BLOOD_MAX) * 0.3);
+          g.strokeCircle(b.x, b.y, BLOOD_RANGE);
+        }
+      } else {
         const fort = this.empire(b.owner).fortressHp;
         barricadeBody(g, c, b.x, b.y, CELL, col, barricadeStats(b.tiers, fort).spikes, 1);
       }
@@ -2858,6 +3590,23 @@ export class ConquestKit implements ConquestMenuHost {
         g.fillStyle(c(CNQ.shroud), 0.4 + 0.15 * Math.sin(this.vizT * 3 + t.march));
         g.fillEllipse(x, y + 6, 18, 7);
       }
+    }
+
+    // Propaganda Central: a ring of speech around whoever is currently paying for their hits in
+    // money. It turns red once the bank is empty, which is the moment it stops being a shield.
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      if (!this.isConquest(owner) || !this.propagandaOn(owner)) continue;
+      const f = this.fighter(owner);
+      if (!this.alive(f)) continue;
+      const broke = this.side(owner).propagandaBroke;
+      const c = this.col(owner);
+      for (let i = 0; i < 3; i++) {
+        const wob = Math.sin(this.vizT * 4 - i * 0.8) * 3;
+        g.lineStyle(2 - i * 0.4, c(broke ? CNQ.blood : CNQ.crimson), (broke ? 0.75 : 0.5) - i * 0.12);
+        g.strokeCircle(f.x, f.y, 30 + i * 11 + wob);
+      }
+      g.fillStyle(c(broke ? CNQ.blood : CNQ.gold), 0.8);
+      g.fillTriangle(f.x + 18, f.y - 26, f.x + 34, f.y - 33, f.x + 34, f.y - 19);
     }
 
     // Personal Wall's chain, on both sides — a remote opponent's link arrives as a cell.
@@ -2945,25 +3694,38 @@ export class ConquestKit implements ConquestMenuHost {
 
     if (!this.isConquest('player')) { txt.setText(''); return; }
     const side = this.side('player');
-    const emp = this.empire('player');
     const owned = this.cellOwner.reduce((n, o) => n + (o === 'player' ? 1 : 0), 0);
 
     const banner = this.bannerOf('player');
+    // Everything the markets add to the readout: their own income, the vaults they are holding,
+    // and the window if one is open.
+    const markets = this.marketsOf('player');
+    const income = Math.round(this.incomeOf('player') * 10) / 10;
+    const vaulted = markets.reduce((n, b) => n + b.vault, 0);
+    const propaganda = this.propagandaOn('player');
+    const marketLine = markets.length
+      ? `\n🏪 ${markets.length}${vaulted > 0 ? `   🏦 ${Math.round(vaulted)}` : ''}`
+        + (propaganda
+          ? `   📢 ${((this.side('player').propagandaUntil - this.now) / 1000).toFixed(1)}s`
+          + (side.propagandaBroke ? ' 💸' : '')
+          : '')
+      : '';
     const x = 14;
     const y = 78;
-    const h = banner ? 64 : 46;
+    const h = 46 + (banner ? 18 : 0) + (marketLine ? 18 : 0);
     g.fillStyle(0x0a0a14, 0.78);
     g.fillRect(x - 6, y - 6, 190, h);
-    g.lineStyle(1.5, this.pcol(banner ? banner.color : CNQ.gold), 0.6);
+    g.lineStyle(1.5, this.pcol(propaganda ? CNQ.crimson : banner ? banner.color : CNQ.gold), 0.6);
     g.strokeRect(x - 6, y - 6, 190, h);
 
     txt.setPosition(x, y);
     txt.setText(
-      `👑 ${Math.floor(side.authority)}  (+${emp.income}/s)\n`
+      `👑 ${Math.floor(side.authority)}  (+${income}/s)\n`
       + `🏗️ ${this.buildingCount('player')}/${this.buildingCap('player')}   🗺️ ${owned}`
       // Which standard is up, and the reminder of how to change it — the right button is the
       // only input in the element that nothing else uses, so it needs saying.
-      + (banner ? `\n🚩 ${banner.label}  ·  RMB` : ''),
+      + (banner ? `\n🚩 ${banner.label}  ·  RMB` : '')
+      + marketLine,
     );
 
     if (!banner) return;

@@ -1,15 +1,20 @@
 import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
+import { Projectile } from '../../combat/Projectile';
+import type { SummonPurgeTarget } from '../../combat/SummonPurge';
 import { CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
 import { Sfx } from '../../audio';
 import {
   DPT, DepthsAvatar, DepthsColorFn, DepthsFx, FISH_COLOR, FISH_EMOJI, FISH_LABEL,
-  FISH_PROFILE, FishKind, REMORA_PROFILE, algaeOrb, bubbleColumn, darkPuddle, fishBody,
-  oxygenBar, piranha as drawPiranha, sharkBody,
+  FISH_PROFILE, FishKind, QuietDepthsFx, REMORA_PROFILE, algaeOrb, bubbleColumn, darkPuddle,
+  fishBody, krakenArm, krakenHead, oxygenBar, piranha as drawPiranha, poisonBarb, sharkBody,
 } from './DepthsVisuals';
+import { meterGain } from '../../combat/Meters';
 
 type Owner = 'player' | 'npc';
+type Slot = 'e' | 'r' | 'f' | 'q';
+const SLOTS: Slot[] = ['e', 'r', 'f', 'q'];
 
 const ARENA_PAD = 32;
 
@@ -91,6 +96,10 @@ const FISH_STATS: Record<FishKind, { speed: number; r: number; life: number; len
   flyingfish: { speed: 900, r: 22, life: 3000, len: 32 },
   // Never actually thrown — resolved the instant it leaves your jaw. Here for the held-fish art.
   catfish: { speed: 420, r: 26, life: 2000, len: 42 },
+  // Also never thrown as a projectile: the lionfish sheds where it stands and the skele-fish
+  // gets up and walks. Both entries exist for the art in the angler's jaw.
+  lionfish: { speed: 400, r: 26, life: 2000, len: 40 },
+  skelefish: { speed: 300, r: 22, life: 12000, len: 40 },
 };
 
 // ── Megalodon (Q) ────────────────────────────────────────────────────────────
@@ -129,6 +138,9 @@ const RED_ALGAE_DAMAGE = 18;
 /** How long F has to be held on a landed fish before it becomes bait instead of a throw. */
 const BAIT_HOLD_MS = 500;
 const RARE_FISH: FishKind[] = ['sawfish', 'swordfish', 'whaleshark', 'flyingfish', 'catfish'];
+/** Depths Mastery: the two tables a line cast from inside the camouflage pulls from instead. */
+const CAMO_ALL_FISH: FishKind[] = [...ALL_FISH, 'lionfish'];
+const CAMO_RARE_FISH: FishKind[] = [...RARE_FISH, 'skelefish'];
 
 /** Saw fish: it doesn't pass through, it stays in. */
 const SAW_STICK_MS = 5000;
@@ -155,6 +167,58 @@ const CATFISH_BONUS = 1.25;
 // ── Q+ — Command the Depths ──────────────────────────────────────────────────
 const SHARK_FOLLOW_SPEED = 120;
 const SHARK_ALGAE_DAMAGE = 30;
+
+// ── Mastery — Camo Fade (passive) ────────────────────────────────────────────
+const CAMO_ID = 'camo-fade';
+/** How long you have to go untouched before the water has taken you completely. */
+const CAMO_FULL_MS = 6000;
+/**
+ * A hit has to be worth more than this to count as being attacked. Deliberately a threshold
+ * rather than "any damage at all": a piranha bills 3 a second in whole points and a burn tick
+ * is 2, and a camouflage that any chip in the game could strip would never finish once.
+ */
+const CAMO_BREAK_DAMAGE = 5;
+/** Past this, the body is gone: bots stop being able to aim at it and the kit goes silent. */
+const CAMO_HIDDEN_AT = 0.999;
+/** How long a bloom you just poisoned refuses to feed *you* again. */
+const CAMO_ALGAE_ARM_MS = 4000;
+
+// ── Mastery — the lionfish ───────────────────────────────────────────────────
+const LION_BARBS = 15;
+const LION_BARB_DAMAGE = 2;
+const LION_BARB_SPEED = 150;
+/** Friction on a shed barb, per second. They drift out and then hang there. */
+const LION_BARB_DRAG = 0.03;
+const LION_BARB_LIFE_MS = 7000;
+const LION_BARB_R = 17;
+const LION_POISON_MS = 5000;
+const LION_POISON_DPS = 3;
+const LION_WEAKEN_MULT = 0.85;
+const LION_WEAKEN_MS = 5000;
+
+// ── Mastery — the skele-fish ─────────────────────────────────────────────────
+const SKELE_HP = 50;
+const SKELE_LIFE_MS = 12000;
+const SKELE_SPEED = 270;
+const SKELE_BITE = 15;
+const SKELE_BITE_MS = 1000;
+const SKELE_R = 22;
+const SKELE_EAT_HEAL = 50;
+
+// ── Mastery — Release the Kraken ─────────────────────────────────────────────
+const KRAKEN_ID = 'release-the-kraken';
+const KRAKEN_COOLDOWN_MS = 35000;
+const KRAKEN_LIFE_MS = 25000;
+const KRAKEN_ARMS = 3;
+const KRAKEN_HEAD_R = 26;
+/** How far an arm can reach off the mantle. */
+const KRAKEN_REACH = 132;
+const KRAKEN_GRAB_MS = 2000;
+/** Throw a fish inside this of the beak and it is a feed rather than a throw. */
+const KRAKEN_FEED_R = 76;
+/** The bot re-checks whether the kraken is worth releasing this often. */
+const NPC_KRAKEN_CHECK_MS = 500;
+const NPC_KRAKEN_RANGE = 300;
 
 // ── World objects ────────────────────────────────────────────────────────────
 
@@ -213,6 +277,60 @@ interface Algae {
   until: number;
   seed: number;
   bad: boolean;
+  /**
+   * Camo Fade turns a bloom you walk over into a trap rather than eating it. That leaves you
+   * standing on top of a live red orb, so the fighter who made it is refused by it until
+   * `armedAt` — long enough to walk off, and not a second longer.
+   */
+  armedFor?: Fighter | null;
+  armedAt?: number;
+}
+
+/** One of the lionfish's shed rays, hanging in the water. */
+interface Barb {
+  owner: Owner;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  ang: number;
+  diesAt: number;
+  wig: number;
+}
+
+/** A skele-fish that got up. It hunts on its own until something kills it or its time is up. */
+interface Skele {
+  owner: Owner;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  hp: number;
+  diesAt: number;
+  /** Next time it is allowed to bite whatever it is chewing on. */
+  biteAt: number;
+  wig: number;
+}
+
+/** One of the kraken's three arms. */
+interface Arm {
+  /** `ready` may grab, `holding` has somebody, `spent` is a stump until the beak is fed. */
+  state: 'ready' | 'holding' | 'spent';
+  victim: Fighter | null;
+  until: number;
+  /** Where the arm hangs when it has nothing — evenly spaced around the mantle. */
+  rest: number;
+  phase: number;
+}
+
+interface Kraken {
+  owner: Owner;
+  x: number;
+  y: number;
+  until: number;
+  seed: number;
+  arms: Arm[];
+  gape: number;
 }
 
 /** A saw fish that stuck. It rides the body it found until its five seconds are up. */
@@ -309,6 +427,16 @@ interface Side {
   fConsumed: boolean;
   /** A fish has been given up to the hook. The next landed catch comes off the rare table. */
   baited: boolean;
+  // Mastery — Camo Fade
+  /** 0–1 fade into the water, driven purely by not being hit. Independent of `hidden`. */
+  camo: number;
+  /** `rawDamageTaken` as of the last frame — the poll behind "was that worth more than 5?". */
+  camoRaw: number;
+  /** Latched, so `forceInvisible` is handed back exactly once. */
+  camoForced: boolean;
+  // Mastery — Release the Kraken
+  krakenCastAt: number;
+  npcKrakenCheckAt: number;
 }
 
 function makeSide(owner: Owner): Side {
@@ -319,6 +447,9 @@ function makeSide(owner: Owner): Side {
     dashUntil: 0, dashVx: 0, dashVy: 0,
     fishing: false, fishRemain: 0, fish: null, lastRaw: 0, npcThrowAt: 0,
     fHeldSince: 0, fConsumed: false, baited: false,
+    camo: 0, camoRaw: 0, camoForced: false,
+    // Negative, so the first match's very first press is not refused by a cooldown nobody paid.
+    krakenCastAt: -KRAKEN_COOLDOWN_MS, npcKrakenCheckAt: 0,
   };
 }
 
@@ -330,6 +461,8 @@ export interface DepthsArenaApi {
   get npc(): Fighter;
   /** Everything the player is allowed to hurt — husks in Invasion, the npc in a plain 1v1. */
   get enemies(): Fighter[];
+  /** Every shot in flight — the only way anything can put damage into a skele-fish. */
+  get projectiles(): Phaser.Physics.Arcade.Group;
   get eKey(): Phaser.Input.Keyboard.Key;
   get rKey(): Phaser.Input.Keyboard.Key;
   get fKey(): Phaser.Input.Keyboard.Key;
@@ -348,6 +481,11 @@ export interface DepthsArenaApi {
   setStatusIndicator(id: string, status: CustomStatus | null): void;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
+  /** Which mastery enhancement each side dropped over an E/R/F/Q slot this match. */
+  masteryBindFor(slot: string): string | null;
+  npcMasteryBindFor(slot: string): string | null;
+  /** Cumulative mastery counters. Written unconditionally; the adapter gates on the element. */
+  recordMasteryStat(key: string, amount: number): void;
   /** Shop upgrades: the local player's equipped slots. */
   hasUpgrade(slot: string): boolean;
   /** …and the online opponent's, so their upgraded water reproduces on this sim. */
@@ -356,7 +494,7 @@ export interface DepthsArenaApi {
 
 // ── DepthsKit ────────────────────────────────────────────────────────────────
 
-export class DepthsKit {
+export class DepthsKit implements SummonPurgeTarget {
   private api: DepthsArenaApi;
 
   // ── Visuals ──
@@ -364,6 +502,9 @@ export class DepthsKit {
   private readonly ncol: DepthsColorFn;
   private readonly pfx: DepthsFx;
   private readonly nfx: DepthsFx;
+  /** Handed out in place of the real Fx while that side is fully camouflaged. */
+  private readonly pquiet: DepthsFx;
+  private readonly nquiet: DepthsFx;
   private playerAvatar: DepthsAvatar | null = null;
   private npcAvatar: DepthsAvatar | null = null;
   /** Puddles, blooms and lures: on the floor, under the fighters. */
@@ -385,6 +526,15 @@ export class DepthsKit {
   private sharks: Shark[] = [];
   private saws: Saw[] = [];
   private remoras: Remora[] = [];
+  private barbs: Barb[] = [];
+  private skeles: Skele[] = [];
+  private krakens: Kraken[] = [];
+  /**
+   * The lionfish's weaken. `outgoingDamageMult` is shared with every other kit that writes it,
+   * so this kit's own share is tracked per victim and divided straight back out on expiry —
+   * the same arrangement Echo's blossoms and Magma's coat use.
+   */
+  private weakened = new Map<Fighter, { until: number; applied: number }>();
   /** Icefish chill: fighter → the timestamp it wears off. */
   private slowed = new Map<Fighter, number>();
   /** Swarm Tactics' own slow, kept apart from the chill so the two can stack and read apart. */
@@ -404,6 +554,8 @@ export class DepthsKit {
     this.ncol = (base) => api.depthsColor('npc', base);
     this.pfx = new DepthsFx(api.scene, this.pcol);
     this.nfx = new DepthsFx(api.scene, this.ncol);
+    this.pquiet = new QuietDepthsFx(api.scene, this.pcol);
+    this.nquiet = new QuietDepthsFx(api.scene, this.ncol);
   }
 
   // ── Small helpers ──────────────────────────────────────────────────────────
@@ -411,7 +563,18 @@ export class DepthsKit {
   private get now(): number { return this.api.scene.time.now; }
   private side(owner: Owner): Side { return this.sides[owner]; }
   private fighter(owner: Owner): Fighter { return owner === 'player' ? this.api.player : this.api.npc; }
-  private fx(owner: Owner): DepthsFx { return owner === 'player' ? this.pfx : this.nfx; }
+  /**
+   * This side's effects — or a silent stand-in while Camo Fade has finished.
+   *
+   * Every visual the kit throws goes through here, so one branch is the whole of "all particle
+   * effects are removed while you are invisible". Damage numbers and hit flashes are
+   * ArenaScene's, not this kit's, and deliberately survive: the enemy is still allowed to know
+   * that something is happening to *them*.
+   */
+  private fx(owner: Owner): DepthsFx {
+    if (this.camoHidden(owner)) return owner === 'player' ? this.pquiet : this.nquiet;
+    return owner === 'player' ? this.pfx : this.nfx;
+  }
   private col(owner: Owner): DepthsColorFn { return owner === 'player' ? this.pcol : this.ncol; }
   private body(f: Fighter): Phaser.Physics.Arcade.Body { return f.body as Phaser.Physics.Arcade.Body; }
 
@@ -458,6 +621,53 @@ export class DepthsKit {
     return owner === 'player' ? this.api.elementId === 'depths' : this.api.npcElementId === 'depths';
   }
 
+  // ── Mastery helpers ────────────────────────────────────────────────────────
+
+  /** Whether Element Mastery is on for whichever side is asking. */
+  private masteryOn(owner: Owner): boolean {
+    return this.isDepths(owner)
+      && (owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
+  }
+
+  /** Which slot Release the Kraken was dropped on, or null. */
+  private krakenSlot(owner: Owner): Slot | null {
+    if (!this.masteryOn(owner)) return null;
+    for (const s of SLOTS) {
+      const bind = owner === 'player' ? this.api.masteryBindFor(s) : this.api.npcMasteryBindFor(s);
+      if (bind === KRAKEN_ID) return s;
+    }
+    return null;
+  }
+
+  /** The player's key for a bound slot. */
+  private keyFor(slot: Slot): Phaser.Input.Keyboard.Key {
+    return slot === 'e' ? this.api.eKey
+      : slot === 'r' ? this.api.rKey
+        : slot === 'f' ? this.api.fKey : this.api.qKey;
+  }
+
+  /** True once the water has taken this side completely. */
+  private camoHidden(owner: Owner): boolean {
+    return this.sides[owner].camo >= CAMO_HIDDEN_AT;
+  }
+
+  /**
+   * Anything the caster says about themselves, swallowed while they are invisible. Text about
+   * what happened to *somebody else* keeps using `showFloatingText` directly.
+   */
+  private say(owner: Owner, x: number, y: number, text: string, color: number): void {
+    if (this.camoHidden(owner)) return;
+    this.api.showFloatingText(x, y, text, this.hex(color));
+  }
+
+  /**
+   * Only ever recorded for the player: the grind is the human's, not the bot's. Written whether
+   * or not the mastery is on — that is how it gets unlocked in the first place.
+   */
+  private record(owner: Owner, key: string, amount = 1): void {
+    if (owner === 'player' && amount > 0) this.api.recordMasteryStat(key, amount);
+  }
+
   /**
    * Whether this side is running the given shop upgrade. The npc only ever answers true in
    * online play, where it is a real person's replica carrying that person's purchases.
@@ -502,8 +712,14 @@ export class DepthsKit {
       const f = this.fighter(owner);
       if (!f) continue;
       if (this.sides[owner].alphaOwned) f.setAlpha(1);
+      if (this.sides[owner].camoForced) f.forceInvisible = false;
       if (this.sides[owner].barHidden && f.active && f.hp > 0) f.setHealthBarVisible(true);
     }
+    // The lionfish's share of a shared multiplier, handed back before the map is dropped.
+    for (const [f, w] of this.weakened) {
+      if (f && w.applied !== 1) f.outgoingDamageMult /= w.applied;
+    }
+    this.weakened.clear();
 
     this.sides = { player: makeSide('player'), npc: makeSide('npc') };
     this.swimmers = [];
@@ -516,6 +732,9 @@ export class DepthsKit {
     this.sharks = [];
     this.saws = [];
     this.remoras = [];
+    this.barbs = [];
+    this.skeles = [];
+    this.krakens = [];
     this.slowed.clear();
     this.swarmSlow.clear();
     this.swarming.clear();
@@ -544,16 +763,24 @@ export class DepthsKit {
     const ctx = this.api.buildPlayerContext(mouseX, mouseY);
     const clicked = pointer.isDown && !this.api.pointerWasDown;
 
+    // Mastery: whichever of E/R/F/Q the kraken was dropped on stops being its own ability.
+    const bound = this.krakenSlot('player');
+    if (bound && Phaser.Input.Keyboard.JustDown(this.keyFor(bound))) {
+      this.tryCastKraken('player', mouseX, mouseY);
+    }
+
     if (clicked) p.castAbility('depths-piranha', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('depths-lungfish', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('depths-eutrophication', ctx);
+    if (bound !== 'e' && Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('depths-lungfish', ctx);
+    if (bound !== 'r' && Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('depths-eutrophication', ctx);
 
     // F is one key with two meanings once Deep Fishing is equipped: a tap still throws the
     // catch, a hold gives it up to the hook. That forces the throw down to the *release* —
     // on the press there is no way yet to know which of the two this is going to be. The
     // JustDown flag is consumed exactly once either way, so the two paths can't fight over it.
-    const fJust = Phaser.Input.Keyboard.JustDown(this.api.fKey);
-    const fDown = this.api.fKey.isDown;
+    // A bound F is neither, and the whole block is skipped; `excludeSlots` refuses that bind
+    // anyway, since the fish are what the kraken eats.
+    const fJust = bound === 'f' ? false : Phaser.Input.Keyboard.JustDown(this.api.fKey);
+    const fDown = bound === 'f' ? false : this.api.fKey.isDown;
     if (this.up('player', 'f') && (s.fish || s.fHeldSince > 0)) {
       if (fJust) { s.fHeldSince = time; s.fConsumed = false; }
       if (fDown && s.fish && !s.fConsumed && s.fHeldSince > 0 && time - s.fHeldSince >= BAIT_HOLD_MS) {
@@ -572,7 +799,9 @@ export class DepthsKit {
       else p.castAbility('depths-angler', ctx);
     }
 
-    if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('depths-megalodon', ctx);
+    if (bound !== 'q' && Phaser.Input.Keyboard.JustDown(this.api.qKey)) {
+      p.castAbility('depths-megalodon', ctx);
+    }
   }
 
   // ── Ability entry points (called from build*Context) ───────────────────────
@@ -620,6 +849,12 @@ export class DepthsKit {
 
     const ex = f.x + Math.cos(ang) * SLASH_REACH;
     const ey = f.y + Math.sin(ang) * SLASH_REACH;
+
+    // Mastery: a skeleton of your own on the end of the blade is a meal, not a target. Checked
+    // before the enemy scan so a strike that catches both is unambiguously the meal — and it
+    // still runs the rest of the ability, so the drowning is not given up for the fifty health.
+    this.eatSkele(owner, f.x, f.y, ex, ey);
+
     const dmg = boosted ? SLASH_DAMAGE_BOOSTED : SLASH_DAMAGE;
     let victim: Fighter | null = null;
     let victimDist = Infinity;
@@ -634,10 +869,10 @@ export class DepthsKit {
 
     this.avatar(owner)?.play('dash', ang);
     this.fx(owner).slashArc(f.x, f.y, ang, SLASH_REACH * 0.8, boosted ? DPT.lure : DPT.cyan);
-    if (boosted) this.api.showFloatingText(f.x, f.y - 50, '🩸 FED', this.hex(DPT.blood));
+    if (boosted) this.say(owner, f.x, f.y - 50, '🩸 FED', DPT.blood);
 
     if (victim) this.startDrown(owner, victim);
-    else this.api.showFloatingText(f.x, f.y - 46, '🫧 MISSED', this.hex(DPT.trench));
+    else this.say(owner, f.x, f.y - 46, '🫧 MISSED', DPT.trench);
   }
 
   /** R — Eutrophication. The only ability in the kit that helps the person it is aimed at. */
@@ -671,8 +906,8 @@ export class DepthsKit {
 
     this.avatar(owner)?.play('flex');
     this.fx(owner).ring(f.x, f.y, 20, 240, trap ? DPT.rot : DPT.algae, 700);
-    this.api.showFloatingText(f.x, f.y - 50,
-      trap ? '🌿 ALGAE TRAP' : '🌿 EUTROPHICATION', this.hex(trap ? DPT.rot : DPT.algae));
+    this.say(owner, f.x, f.y - 50,
+      trap ? '🌿 ALGAE TRAP' : '🌿 EUTROPHICATION', trap ? DPT.rot : DPT.algae);
     Sfx.playAt('bloom', f.x, { volume: 0.8 });
   }
 
@@ -690,7 +925,7 @@ export class DepthsKit {
     s.fishRemain = FISH_CATCH_MS;
     s.lastRaw = f.rawDamageTaken;
     this.avatar(owner)?.play('sweep', Math.atan2(ty - f.y, tx - f.x));
-    this.api.showFloatingText(f.x, f.y - 46, '🎣 CAST OUT', this.hex(DPT.foam));
+    this.say(owner, f.x, f.y - 46, '🎣 CAST OUT', DPT.foam);
     Sfx.playAt('splash', f.x, { volume: 0.5, rate: 1.3 });
   }
 
@@ -720,7 +955,7 @@ export class DepthsKit {
     this.avatar(owner)?.play('raise');
     this.fx(owner).ring(f.x, f.y, 20, 180, DPT.trench, 640);
     this.fx(owner).bubbles(f.x, f.y, 14, 70, DPT.foam, 800, 7);
-    this.api.showFloatingText(f.x, f.y - 54, '🦈 MEGALODON', this.hex(DPT.shark));
+    this.say(owner, f.x, f.y - 54, '🦈 MEGALODON', DPT.shark);
     Sfx.playAt('roar', f.x, { volume: 0.95, rate: 0.55 });
   }
 
@@ -737,6 +972,8 @@ export class DepthsKit {
     for (const owner of ['player', 'npc'] as Owner[]) {
       if (!this.isDepths(owner)) continue;
       this.updateDash(owner, time);
+      // Camo first: the fade it computes is what the lure pass then paints onto the body.
+      this.updateCamo(owner, delta);
       this.updateLure(owner, time, delta);
       this.updateFishing(owner, time, delta);
     }
@@ -746,10 +983,15 @@ export class DepthsKit {
     this.updateFishProjectiles(time, delta);
     this.updateSaws(time, delta);
     this.updateRemoras(time, delta);
+    this.updateBarbs(time, delta);
+    this.updateSkeles(time, delta);
+    this.updateKrakens(time, delta);
     this.updateSharks(time, delta);
     this.updateDrowns(time, delta);
     this.updateAlgae(time);
     this.updateSlows(time);
+    this.updateWeakened(time);
+    this.updateNpcKraken();
     this.updateAvatars(delta, playerIs, npcIs);
 
     this.paintGround(time);
@@ -763,6 +1005,62 @@ export class DepthsKit {
     // goes over, because a fish that passes behind a body reads as a decal.
     if (!this.groundGfx) this.groundGfx = scene.add.graphics().setDepth(4);
     if (!this.airGfx) this.airGfx = scene.add.graphics().setDepth(8);
+  }
+
+  // ── Mastery passive: Camo Fade ─────────────────────────────────────────────
+
+  /**
+   * The mastery's second fade.
+   *
+   * The base passive pays you for standing still; this one pays you for not being hit, and it
+   * runs whatever your feet are doing. Six seconds untouched and there is nothing there at all
+   * — no body, no health bar, no bubbles, no lure, and nothing a bot is able to aim at.
+   *
+   * The price is written into the threshold rather than the timer: any single hit worth more
+   * than five points puts the whole six seconds back to zero, so the counterplay to an
+   * invisible angler is to land one real thing on them rather than to chip at them.
+   */
+  private updateCamo(owner: Owner, delta: number): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+
+    if (!this.masteryOn(owner) || !this.alive(f)) {
+      s.camo = 0;
+      if (f) {
+        s.camoRaw = f.rawDamageTaken;
+        if (s.camoForced) { f.forceInvisible = false; s.camoForced = false; }
+      }
+      return;
+    }
+
+    // Polled every frame: this is the damage that landed inside *this* frame, so a burn tick
+    // and a piranha bite are each judged on their own rather than as a running total.
+    const raw = f.rawDamageTaken;
+    if (raw - s.camoRaw > CAMO_BREAK_DAMAGE) {
+      if (s.camo > 0.25) {
+        // Said with the real Fx: by the time this fires the camouflage is already gone.
+        this.api.showFloatingText(f.x, f.y - 50, '👁️ SPOTTED', this.hex(DPT.blood));
+        this.fx(owner).ring(f.x, f.y, 12, 66, DPT.foam, 380);
+      }
+      s.camo = 0;
+    }
+    s.camoRaw = raw;
+
+    const was = this.camoHidden(owner);
+    s.camo = Phaser.Math.Clamp(
+      s.camo + meterGain(this.fighter(owner), delta / CAMO_FULL_MS), 0, 1);
+    if (!was && this.camoHidden(owner)) {
+      // The last thing said before the kit goes quiet, and the only announcement of it.
+      this.api.showFloatingText(f.x, f.y - 54, '🫥 GONE', this.hex(DPT.trench));
+    }
+
+    // `forceInvisible` exists for exactly this: without it `takeDamage`'s alpha flash would
+    // paint a body back onto the water every time a piranha chewed on somebody invisible.
+    const wantForced = this.camoHidden(owner);
+    if (wantForced !== s.camoForced) {
+      s.camoForced = wantForced;
+      f.forceInvisible = wantForced;
+    }
   }
 
   // ── Passive: the lure ──────────────────────────────────────────────────────
@@ -794,21 +1092,27 @@ export class DepthsKit {
     const step = delta / (want ? FADE_IN_MS : FADE_OUT_MS);
     s.hidden = Phaser.Math.Clamp(s.hidden + (want ? step : -step), 0, 1);
 
-    if (s.hidden > 0.02) {
-      f.setAlpha(1 - s.hidden);
+    // The two fades are one number on the body. Whichever has taken more of you wins, so a
+    // camouflaged angler who then stands still does not become somehow more visible.
+    const veil = Math.max(s.hidden, s.camo);
+
+    if (veil > 0.02) {
+      f.setAlpha(1 - veil);
       s.alphaOwned = true;
     } else if (s.alphaOwned) {
       f.setAlpha(1);
       s.alphaOwned = false;
     }
 
-    const wantBarHidden = s.hidden > 0.85;
+    const wantBarHidden = veil > 0.85;
     if (wantBarHidden !== s.barHidden) {
       s.barHidden = wantBarHidden;
       f.setHealthBarVisible(!wantBarHidden);
     }
 
-    if (s.hidden < 0.3) { s.lureOn = false; return; }
+    // Camouflage puts the lure out. It is a light, and the whole point of the mastery is that
+    // there is nothing to see — so the two passives are exclusive at the top end.
+    if (s.hidden < 0.3 || this.camoHidden(owner)) { s.lureOn = false; return; }
 
     if (!s.lureOn) {
       s.lureOn = true;
@@ -842,7 +1146,7 @@ export class DepthsKit {
     const fx = this.fx(owner);
     fx.chomp(s.lureX, s.lureY, Math.atan2(f.y - victim.y, f.x - victim.x), 28, DPT.lure);
     fx.ring(f.x, f.y, 10, 90, DPT.lure, 420);
-    this.api.showFloatingText(f.x, f.y - 50, '🎣 BITE!', this.hex(DPT.lure));
+    this.say(owner, f.x, f.y - 50, '🎣 BITE!', DPT.lure);
     this.api.showFloatingText(victim.x, victim.y - 40, '❗', this.hex(DPT.blood));
     Sfx.playAt('bubble', f.x, { volume: 0.9, rate: 0.8 });
   }
@@ -1030,6 +1334,7 @@ export class DepthsKit {
       while (d.tick >= 1000) {
         d.tick -= 1000;
         d.victim.takeDamage(DROWN_DPS);
+        this.record(d.owner, 'drownDamage', DROWN_DPS);
         this.api.spawnHitFlash(d.victim.x, d.victim.y, DPT.trench);
         this.fx(d.owner).bubbles(d.victim.x, d.victim.y - 10, 5, 18, DPT.cyan, 420, 9);
       }
@@ -1048,7 +1353,9 @@ export class DepthsKit {
 
         if (a.bad) {
           // A red orb feeds on whoever reaches it first, exactly like a green one — and that
-          // includes the person who planted it. There is no owner check here on purpose.
+          // includes the person who planted it. There is no owner check here on purpose. The
+          // one exception is the angler still standing on a bloom they *just* poisoned.
+          if (a.armedFor === f && time < (a.armedAt ?? 0)) continue;
           f.takeDamage(RED_ALGAE_DAMAGE);
           this.api.spawnHitFlash(f.x, f.y, DPT.rot);
           this.fx(a.owner).bubbles(a.x, a.y, 7, 26, DPT.rot, 520, 9);
@@ -1056,15 +1363,44 @@ export class DepthsKit {
         } else {
           if (f.hp >= f.maxHp) continue;
           f.heal(ALGAE_HEAL);
-          const fx = f === this.api.player ? this.pfx : this.nfx;
-          fx.bubbles(a.x, a.y, 7, 26, DPT.algae, 520, 9);
-          this.api.showFloatingText(f.x, f.y - 44, `+${ALGAE_HEAL}`, this.hex(DPT.algae));
+          // Mastery: an angler nobody can see does not eat a bloom, they *spoil* it. The heal
+          // is theirs and the orb stays on the floor as the thing the enemy walks into next.
+          const spoiler = this.camoSpoiler(f);
+          if (!spoiler) {
+            const fx = f === this.api.player ? this.pfx : this.nfx;
+            fx.bubbles(a.x, a.y, 7, 26, DPT.algae, 520, 9);
+            this.api.showFloatingText(f.x, f.y - 44, `+${ALGAE_HEAL}`, this.hex(DPT.algae));
+          }
+          if (f === this.api.player && this.isDepths('player')) {
+            this.record('player', 'algaeHealed', ALGAE_HEAL);
+          }
+
+          if (spoiler) {
+            a.bad = true;
+            a.owner = spoiler;
+            a.until = time + ALGAE_LIFE_MS;
+            a.seed = Math.random() * 999;
+            a.armedFor = f;
+            a.armedAt = time + CAMO_ALGAE_ARM_MS;
+            break;
+          }
         }
 
         this.algae.splice(i, 1);
         break;
       }
     }
+  }
+
+  /**
+   * Which side, if either, this body is a fully camouflaged Depths angler for. The one place
+   * "who is invisible right now" is turned back into an owner.
+   */
+  private camoSpoiler(f: Fighter): Owner | null {
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      if (this.fighter(owner) === f && this.camoHidden(owner)) return owner;
+    }
+    return null;
   }
 
   // ── Angler ─────────────────────────────────────────────────────────────────
@@ -1081,7 +1417,7 @@ export class DepthsKit {
       const raw = f.rawDamageTaken;
       if (raw > s.lastRaw + 0.01) {
         s.fishRemain += FISH_DAMAGE_PENALTY_MS;
-        this.api.showFloatingText(f.x, f.y - 40, '🎣 +1s', this.hex(DPT.blood));
+        this.say(owner, f.x, f.y - 40, '🎣 +1s', DPT.blood);
       }
       s.lastRaw = raw;
 
@@ -1089,19 +1425,29 @@ export class DepthsKit {
       if (s.fishRemain <= 0) {
         s.fishing = false;
         // A baited line pulls from the rare table instead, and the bait is spent doing it.
-        const table = s.baited ? RARE_FISH : ALL_FISH;
+        // Mastery: a line cast by something the water has already swallowed reaches two things
+        // that do not exist for anybody visible — one on each table.
+        const hidden = this.camoHidden(owner);
+        const table = s.baited
+          ? (hidden ? CAMO_RARE_FISH : RARE_FISH)
+          : (hidden ? CAMO_ALL_FISH : ALL_FISH);
+        if (s.baited) this.record(owner, 'rareFishCaught', 1);
         s.baited = false;
         s.fish = table[Math.floor(Math.random() * table.length)];
         s.npcThrowAt = time + NPC_THROW_DELAY_MS;
         this.fx(owner).splash(f.x, f.y - 20, 34, FISH_COLOR[s.fish]);
-        this.api.showFloatingText(f.x, f.y - 54,
-          `${FISH_EMOJI[s.fish]} ${FISH_LABEL[s.fish]}`, this.hex(FISH_COLOR[s.fish]));
+        this.say(owner, f.x, f.y - 54,
+          `${FISH_EMOJI[s.fish]} ${FISH_LABEL[s.fish]}`, FISH_COLOR[s.fish]);
         Sfx.playAt('splash', f.x, { volume: 0.9, rate: 0.9 });
       }
       return;
     }
 
     if (s.fish && owner === 'npc' && time >= s.npcThrowAt) {
+      // Mastery synergy: a kraken with a stump on it is worth more than any throw. The bot
+      // posts the catch into the beak rather than at the player, and gets its arms back.
+      const feed = this.npcThrowAim();
+      if (feed) { this.throwFish('npc', feed.x, feed.y); return; }
       const e = this.enemyOf('npc');
       if (e) this.throwFish('npc', e.x, e.y);
     }
@@ -1122,7 +1468,7 @@ export class DepthsKit {
     this.avatar(owner)?.play('flex');
     this.fx(owner).bubbles(f.x, f.y - 12, 8, 26, FISH_COLOR[kind], 560, 9);
     this.fx(owner).ring(f.x, f.y, 8, 60, DPT.lure, 420);
-    this.api.showFloatingText(f.x, f.y - 52, '🎣 BAITED', this.hex(DPT.lure));
+    this.say(owner, f.x, f.y - 52, '🎣 BAITED', DPT.lure);
     Sfx.playAt('bubble', f.x, { volume: 0.75, rate: 0.85 });
   }
 
@@ -1131,10 +1477,22 @@ export class DepthsKit {
     const kind = s.fish;
     const f = this.fighter(owner);
     if (!kind || !this.alive(f)) return;
+
+    // Aim at your own kraken and the throw is a feed instead. Every fish counts, including the
+    // three that never become projectiles — which is the only reason the check lives here at
+    // the throw rather than on a flying body passing through the beak.
+    const mouth = this.krakens.find((k) => k.owner === owner
+      && Phaser.Math.Distance.Between(k.x, k.y, tx, ty) <= KRAKEN_FEED_R);
+    if (mouth) { s.fish = null; this.feedKraken(mouth, kind); return; }
+
     s.fish = null;
 
     // The catfish never flies. Its whole ability is what it does to the bloom on the floor.
     if (kind === 'catfish') { this.doCatfish(owner); return; }
+    // Nor does the lionfish: it comes apart in your hands where you stand.
+    if (kind === 'lionfish') { this.doLionfish(owner); return; }
+    // The skele-fish is not thrown at anything either — it is put down, and it walks.
+    if (kind === 'skelefish') { this.releaseSkele(owner, tx, ty); return; }
 
     const stats = FISH_STATS[kind];
     const ang = Math.atan2(ty - f.y, tx - f.x);
@@ -1156,8 +1514,7 @@ export class DepthsKit {
 
     this.avatar(owner)?.play('punch', ang);
     this.fx(owner).bubbles(f.x, f.y, 5, 18, DPT.foam, 380, 7);
-    this.api.showFloatingText(f.x, f.y - 46,
-      `${FISH_EMOJI[kind]} THROWN`, this.hex(FISH_COLOR[kind]));
+    this.say(owner, f.x, f.y - 46, `${FISH_EMOJI[kind]} THROWN`, FISH_COLOR[kind]);
     Sfx.playAt('whoosh', f.x, { volume: 0.6, rate: 1.15 });
   }
 
@@ -1182,10 +1539,12 @@ export class DepthsKit {
     this.fx(owner).ring(f.x, f.y, 16, 200, DPT.cat, 660);
     if (heal > 0) {
       f.heal(heal);
-      this.api.showFloatingText(f.x, f.y - 52, `🐈 +${heal}`, this.hex(DPT.algae));
+      // Every point of it came off the bloom, so it counts exactly as eating the orbs would.
+      this.record(owner, 'algaeHealed', heal);
+      this.say(owner, f.x, f.y - 52, `🐈 +${heal}`, DPT.algae);
       Sfx.playAt('bloom', f.x, { volume: 0.85, rate: 1.1 });
     } else {
-      this.api.showFloatingText(f.x, f.y - 52, '🐈 NOTHING TO EAT', this.hex(DPT.cat));
+      this.say(owner, f.x, f.y - 52, '🐈 NOTHING TO EAT', DPT.cat);
       Sfx.playAt('bubble', f.x, { volume: 0.5, rate: 0.7 });
     }
   }
@@ -1449,6 +1808,358 @@ export class DepthsKit {
       this.hex(DPT.gulper));
   }
 
+  // ── Mastery: the lionfish ──────────────────────────────────────────────────
+
+  /**
+   * The lionfish. It is not a throw at all — the fish comes apart where you are standing and
+   * leaves fifteen of its rays hanging in the water around you.
+   *
+   * Every barb is worth almost nothing on its own (two points) and the field of them is worth
+   * a great deal, which is exactly the shape the rest of the element already has: it is an
+   * area you have made expensive to walk into rather than a shot you have to land.
+   */
+  private doLionfish(owner: Owner): void {
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+
+    const base = Math.random() * Math.PI * 2;
+    for (let i = 0; i < LION_BARBS; i++) {
+      // A ring with the angles jittered, so it reads as a thing that burst rather than a dial.
+      const a = base + (i / LION_BARBS) * Math.PI * 2 + (Math.random() - 0.5) * 0.35;
+      const speed = LION_BARB_SPEED * (0.55 + Math.random() * 0.75);
+      this.barbs.push({
+        owner,
+        x: f.x + Math.cos(a) * 14,
+        y: f.y + Math.sin(a) * 14,
+        vx: Math.cos(a) * speed,
+        vy: Math.sin(a) * speed,
+        ang: a,
+        diesAt: this.now + LION_BARB_LIFE_MS,
+        wig: Math.random() * 6,
+      });
+    }
+
+    this.avatar(owner)?.play('flex');
+    this.fx(owner).ring(f.x, f.y, 10, 90, DPT.lion, 520);
+    this.fx(owner).bubbles(f.x, f.y, 9, 40, DPT.venom, 620, 9);
+    this.say(owner, f.x, f.y - 52, `🦂 ${LION_BARBS} BARBS`, DPT.venom);
+    Sfx.playAt('slime-splat', f.x, { volume: 0.7, rate: 1.35 });
+  }
+
+  private updateBarbs(time: number, delta: number): void {
+    const dt = delta / 1000;
+    for (let i = this.barbs.length - 1; i >= 0; i--) {
+      const b = this.barbs[i];
+      // They drift out of the burst and then simply hang there for the rest of their life —
+      // a thicket you have to walk around, not a volley you have to dodge.
+      const drag = Math.pow(LION_BARB_DRAG, dt);
+      b.vx *= drag;
+      b.vy *= drag;
+      b.x = Phaser.Math.Clamp(b.x + b.vx * dt, this.left, this.right);
+      b.y = Phaser.Math.Clamp(b.y + b.vy * dt, this.top, this.bottom);
+      b.wig += dt * 3;
+      if (Math.hypot(b.vx, b.vy) > 6) b.ang = Math.atan2(b.vy, b.vx);
+
+      if (time >= b.diesAt) { this.barbs.splice(i, 1); continue; }
+
+      for (const t of this.targetsOf(b.owner)) {
+        if (Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) > LION_BARB_R + 10) continue;
+        this.stingBarb(b, t);
+        this.barbs.splice(i, 1);
+        break;
+      }
+    }
+  }
+
+  /** One barb goes in. Two points, then five seconds of the parts that actually matter. */
+  private stingBarb(b: Barb, t: Fighter): void {
+    t.takeDamage(LION_BARB_DAMAGE);
+    this.api.spawnHitFlash(t.x, t.y, DPT.venom);
+    this.fx(b.owner).bubbles(t.x, t.y, 4, 18, DPT.venom, 420, 9);
+
+    // Poison rides the generic toxic fields, so the status tray, the DOT tick and the network
+    // mirror all pick it up without this kit owning any of them.
+    t.toxicUntil = Math.max(t.toxicUntil, this.now + LION_POISON_MS);
+    t.toxicDps = Math.max(t.toxicDps, LION_POISON_DPS);
+    this.applyWeaken(t);
+  }
+
+  /**
+   * The venom's other half: everything the stung fighter does hits softer.
+   *
+   * `outgoingDamageMult` is shared with every other kit that writes it, so this kit's own
+   * factor is banked per victim and divided back out rather than assigned — a refresh replaces
+   * the timer, never the multiplier, so fifteen barbs are worth one weaken and not fifteen.
+   */
+  private applyWeaken(t: Fighter): void {
+    const held = this.weakened.get(t);
+    if (held) {
+      held.until = this.now + LION_WEAKEN_MS;
+      return;
+    }
+    t.outgoingDamageMult *= LION_WEAKEN_MULT;
+    this.weakened.set(t, { until: this.now + LION_WEAKEN_MS, applied: LION_WEAKEN_MULT });
+    this.api.showFloatingText(t.x, t.y - 46, '🦂 ENVENOMED', this.hex(DPT.venom));
+  }
+
+  private updateWeakened(time: number): void {
+    for (const [t, w] of [...this.weakened]) {
+      if (time < w.until && this.alive(t)) continue;
+      if (t && w.applied !== 1) t.outgoingDamageMult /= w.applied;
+      this.weakened.delete(t);
+    }
+  }
+
+  // ── Mastery: the skele-fish ────────────────────────────────────────────────
+
+  /** The catch gets up. One per throw, and there is no cap on how many can be walking. */
+  private releaseSkele(owner: Owner, tx: number, ty: number): void {
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    const ang = Math.atan2(ty - f.y, tx - f.x);
+    this.skeles.push({
+      owner,
+      x: f.x + Math.cos(ang) * 26,
+      y: f.y + Math.sin(ang) * 26,
+      vx: Math.cos(ang) * SKELE_SPEED,
+      vy: Math.sin(ang) * SKELE_SPEED,
+      hp: SKELE_HP,
+      diesAt: this.now + SKELE_LIFE_MS,
+      biteAt: 0,
+      wig: Math.random() * 6,
+    });
+    this.avatar(owner)?.play('punch', ang);
+    this.fx(owner).splash(f.x, f.y - 16, 30, DPT.skele);
+    this.say(owner, f.x, f.y - 50, '💀 IT MOVED', DPT.skele);
+    Sfx.playAt('claw', f.x, { volume: 0.7, rate: 0.7 });
+  }
+
+  private updateSkeles(time: number, delta: number): void {
+    const dt = delta / 1000;
+    for (let i = this.skeles.length - 1; i >= 0; i--) {
+      const k = this.skeles[i];
+      if (time >= k.diesAt || k.hp <= 0) {
+        this.fx(k.owner).bubbles(k.x, k.y, 6, 22, DPT.skele, 460, 9);
+        this.api.showFloatingText(k.x, k.y - 20, '💀 BONES', this.hex(DPT.skele));
+        this.skeles.splice(i, 1);
+        continue;
+      }
+
+      // Home on whoever is nearest. Nothing else about it is clever — it is a set of jaws.
+      const t = this.targetsOf(k.owner).reduce<Fighter | null>((best, c) => {
+        if (!best) return c;
+        return Phaser.Math.Distance.Between(k.x, k.y, c.x, c.y)
+          < Phaser.Math.Distance.Between(k.x, k.y, best.x, best.y) ? c : best;
+      }, null);
+      if (t) {
+        const a = Math.atan2(t.y - k.y, t.x - k.x);
+        k.vx = Math.cos(a) * SKELE_SPEED;
+        k.vy = Math.sin(a) * SKELE_SPEED;
+      }
+      k.x = Phaser.Math.Clamp(k.x + k.vx * dt, this.left, this.right);
+      k.y = Phaser.Math.Clamp(k.y + k.vy * dt, this.top, this.bottom);
+      k.wig += dt * 15;
+
+      if (t && time >= k.biteAt
+        && Phaser.Math.Distance.Between(k.x, k.y, t.x, t.y) <= SKELE_R + 14) {
+        k.biteAt = time + SKELE_BITE_MS;
+        t.takeDamage(SKELE_BITE);
+        this.api.spawnHitFlash(t.x, t.y, DPT.skele);
+        this.fx(k.owner).chomp(t.x, t.y, Math.atan2(t.y - k.y, t.x - k.x), 22, DPT.blood);
+        Sfx.playAt('claw', t.x, { volume: 0.55, rate: 1.5 });
+      }
+
+      // The only thing in the game that can put damage into it: a shot from the other side.
+      // Melee, auras and area damage pass straight through a set of bones, by design.
+      for (const child of [...this.api.projectiles.getChildren()]) {
+        const proj = child as Projectile;
+        if (!proj.active) continue;
+        const hostile = k.owner === 'player' ? !proj.isFromPlayer : proj.isFromPlayer;
+        if (!hostile) continue;
+        if (Phaser.Math.Distance.Between(k.x, k.y, proj.x, proj.y) > SKELE_R + 10) continue;
+        k.hp -= proj.damage;
+        this.api.spawnHitFlash(k.x, k.y, DPT.bone);
+        this.api.showFloatingText(k.x, k.y - 16, `${Math.round(proj.damage)}`, this.hex(DPT.bone));
+        proj.destroy();
+        break;
+      }
+    }
+  }
+
+  /**
+   * The Lungfish Strike, aimed at your own skeleton. Whoever wrote the rule that a fish in the
+   * jaw is worth something clearly never checked whether the fish had to be alive.
+   */
+  private eatSkele(owner: Owner, ax: number, ay: number, bx: number, by: number): boolean {
+    const f = this.fighter(owner);
+    for (let i = 0; i < this.skeles.length; i++) {
+      const k = this.skeles[i];
+      if (k.owner !== owner) continue;
+      if (this.distToSegment(ax, ay, bx, by, k.x, k.y) > SLASH_HALF_WIDTH + SKELE_R) continue;
+      this.skeles.splice(i, 1);
+      f.heal(SKELE_EAT_HEAL);
+      this.fx(owner).chomp(f.x, f.y, Math.atan2(by - ay, bx - ax), 30, DPT.skele);
+      this.say(owner, f.x, f.y - 52, `💀 +${SKELE_EAT_HEAL}`, DPT.algae);
+      Sfx.playAt('bloom', f.x, { volume: 0.85, rate: 0.85 });
+      return true;
+    }
+    return false;
+  }
+
+  // ── Mastery: Release the Kraken ────────────────────────────────────────────
+
+  /**
+   * The press.
+   *
+   * It never goes near `castAbility` — the enhancement is not in the element's ability list —
+   * so every refusal that function applies has to be repeated here, or a disarmed angler would
+   * find one key on their bar still worked.
+   */
+  private tryCastKraken(owner: Owner, tx: number, ty: number): void {
+    const f = this.fighter(owner);
+    const s = this.side(owner);
+    if (!this.alive(f)) return;
+    const wall = Date.now();
+    if (wall < f.disarmedUntil || wall < f.silencedUntil || wall < f.chickenUntil) return;
+    if (this.now - s.krakenCastAt < KRAKEN_COOLDOWN_MS) return;
+    this.summonKraken(owner, tx, ty);
+    // `triggerCooldown` is both what the ability card counts down from and what puts the cast
+    // on the wire — online it reaches the opponent as an unknown id and lands in
+    // `replayNpcMastery`, which calls `doNpcKraken`.
+    if (owner === 'player') f.triggerCooldown(KRAKEN_ID);
+  }
+
+  private summonKraken(owner: Owner, tx: number, ty: number): void {
+    const s = this.side(owner);
+    s.krakenCastAt = this.now;
+    // One per side. A second would only ever be standing in the first one's water.
+    const old = this.krakens.findIndex((k) => k.owner === owner);
+    if (old >= 0) this.releaseKraken(this.krakens[old], old);
+
+    const x = Phaser.Math.Clamp(tx, this.left + 40, this.right - 40);
+    const y = Phaser.Math.Clamp(ty, this.top + 40, this.bottom - 40);
+    this.krakens.push({
+      owner, x, y,
+      until: this.now + KRAKEN_LIFE_MS,
+      seed: Math.random() * 999,
+      gape: 0.3,
+      arms: Array.from({ length: KRAKEN_ARMS }, (_, i) => ({
+        state: 'ready' as const,
+        victim: null,
+        until: 0,
+        rest: (i / KRAKEN_ARMS) * Math.PI * 2 + Math.random() * 0.4,
+        phase: Math.random() * 6,
+      })),
+    });
+
+    this.avatar(owner)?.play('raise');
+    this.fx(owner).ring(x, y, 16, 150, DPT.kraken, 620);
+    this.fx(owner).bubbles(x, y, 14, 70, DPT.foam, 800, 9);
+    this.api.showFloatingText(x, y - 54, '🐙 THE KRAKEN', this.hex(DPT.kraken));
+    Sfx.playAt('roar', x, { volume: 0.95, rate: 0.45 });
+  }
+
+  /** Online replay: the remote angler pressed their bound key. */
+  doNpcKraken(tx: number, ty: number): void {
+    this.summonKraken('npc', tx, ty);
+  }
+
+  /** Everything a kraken is holding is let go, and the record dropped. */
+  private releaseKraken(k: Kraken, index: number): void {
+    for (const a of k.arms) a.victim = null;
+    this.fx(k.owner).ring(k.x, k.y, 20, 120, DPT.krakenDeep, 520);
+    this.fx(k.owner).bubbles(k.x, k.y, 10, 50, DPT.foam, 620, 9);
+    this.krakens.splice(index, 1);
+  }
+
+  /** A fish went into the beak. Every stump grows back. */
+  private feedKraken(k: Kraken, kind: FishKind): void {
+    let regrown = 0;
+    for (const a of k.arms) {
+      if (a.state !== 'spent') continue;
+      a.state = 'ready';
+      regrown++;
+    }
+    k.gape = 1;
+    this.fx(k.owner).chomp(k.x, k.y + KRAKEN_HEAD_R * 0.4, Math.PI / 2, 30, FISH_COLOR[kind]);
+    this.fx(k.owner).bubbles(k.x, k.y, 8, 34, DPT.kraken, 560, 9);
+    this.api.showFloatingText(k.x, k.y - 48,
+      regrown ? `🐙 +${regrown} ARM${regrown > 1 ? 'S' : ''}` : '🐙 FED', this.hex(DPT.kraken));
+    Sfx.playAt('slime-splat', k.x, { volume: 0.8, rate: 0.6 });
+  }
+
+  /** Whether any arm anywhere already has this body. A tentacle will not take a second grip. */
+  private krakenHolds(f: Fighter): boolean {
+    return this.krakens.some((k) => k.arms.some((a) => a.state === 'holding' && a.victim === f));
+  }
+
+  private updateKrakens(time: number, delta: number): void {
+    for (let i = this.krakens.length - 1; i >= 0; i--) {
+      const k = this.krakens[i];
+      if (time >= k.until) { this.releaseKraken(k, i); continue; }
+      k.gape = Math.max(0.18 + 0.12 * Math.sin(time / 260 + k.seed), k.gape - delta / 700);
+
+      for (const a of k.arms) {
+        if (a.state === 'holding') {
+          const v = a.victim;
+          if (!v || !this.alive(v) || time >= a.until) {
+            a.state = 'spent';
+            a.victim = null;
+            continue;
+          }
+          // Held rather than dragged: the body stays where the arm found it. Pinning the
+          // velocity is the whole stun, because `earthStunnedUntil` is inert for a player.
+          this.body(v).setVelocity(0, 0);
+          v.earthStunnedUntil = Math.max(v.earthStunnedUntil, a.until);
+          continue;
+        }
+        if (a.state !== 'ready') continue;
+
+        for (const t of this.targetsOf(k.owner)) {
+          if (t.unstoppable) continue;
+          if (this.krakenHolds(t)) continue;
+          if (Phaser.Math.Distance.Between(k.x, k.y, t.x, t.y) > KRAKEN_REACH) continue;
+          a.state = 'holding';
+          a.victim = t;
+          a.until = time + KRAKEN_GRAB_MS;
+          t.earthStunnedUntil = Math.max(t.earthStunnedUntil, a.until);
+          k.gape = 1;
+          this.fx(k.owner).ring(t.x, t.y, 8, 44, DPT.kraken, 380);
+          this.api.showFloatingText(t.x, t.y - 48, '🐙 GRABBED', this.hex(DPT.kraken));
+          Sfx.playAt('claw', t.x, { volume: 0.85, rate: 0.55 });
+          break;
+        }
+      }
+    }
+  }
+
+  /**
+   * The bot's half of the mastery.
+   *
+   * Enhancement ids are not in `element.abilities`, so there is nothing for `castAbility` to
+   * find and the press has to be made here — the same private-timer arrangement Magma's saw
+   * uses. Everything the kraken is *worth* to a bot (a two-second stun it can walk a Lungfish
+   * Strike into) is published as an opportunity field instead, so `doDepthsAbilities` never has
+   * to reason about the mastery at all.
+   */
+  private updateNpcKraken(): void {
+    const s = this.sides.npc;
+    if (!this.krakenSlot('npc')) return;
+    if (this.now < s.npcKrakenCheckAt) return;
+    s.npcKrakenCheckAt = this.now + NPC_KRAKEN_CHECK_MS;
+    const f = this.api.npc;
+    if (!this.alive(f)) return;
+    if (this.now - s.krakenCastAt < KRAKEN_COOLDOWN_MS) return;
+    if (this.krakens.some((k) => k.owner === 'npc')) return;
+    const t = this.enemyOf('npc');
+    if (!t) return;
+    if (Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) > NPC_KRAKEN_RANGE) return;
+    // Dropped a little ahead of them rather than on them: by the time the mantle settles they
+    // have walked on, and an arm that reaches 132px only has to be roughly right.
+    const b = this.body(t);
+    this.tryCastKraken('npc', t.x + b.velocity.x * 0.3, t.y + b.velocity.y * 0.3);
+  }
+
   // ── Rare fish: the saw, and the whale shark's escort ───────────────────────
 
   /**
@@ -1569,6 +2280,8 @@ export class DepthsKit {
           if (Phaser.Math.Distance.Between(mouthX, mouthY, a.x, a.y) > SHARK_MOUTH_R) continue;
           this.algae.splice(k, 1);
           this.fx(s.owner).chomp(a.x, a.y, s.ang, 26, a.bad ? DPT.rot : DPT.algae);
+          // The mastery's fourth requirement: a *poisoned* orb ground into somebody's mouth.
+          if (a.bad && s.swallowed.length) this.record(s.owner, 'badAlgaeFeeds', 1);
           for (const f of s.swallowed) {
             f.takeDamage(SHARK_ALGAE_DAMAGE);
             this.api.spawnHitFlash(f.x, f.y, DPT.blood);
@@ -1627,6 +2340,7 @@ export class DepthsKit {
       this.playerAvatar.setFacing(Math.atan2(this.aimY - f.y, this.aimX - f.x));
       this.playerAvatar.setIntensity(s.boostUntil > this.now ? 1.35 : 1);
       this.playerAvatar.setHidden(s.hidden);
+      this.playerAvatar.setCamo(s.camo);
       this.playerAvatar.setFish(s.fish);
       this.playerAvatar.setFishing(s.fishing ? 1 - s.fishRemain / FISH_CATCH_MS : 0);
       this.playerAvatar.setMastered(this.api.masteryActive);
@@ -1645,6 +2359,7 @@ export class DepthsKit {
       this.npcAvatar.setFacing(Math.atan2(this.npcAimY - f.y, this.npcAimX - f.x));
       this.npcAvatar.setIntensity(s.boostUntil > this.now ? 1.35 : 1);
       this.npcAvatar.setHidden(s.hidden);
+      this.npcAvatar.setCamo(s.camo);
       this.npcAvatar.setFish(s.fish);
       this.npcAvatar.setFishing(s.fishing ? 1 - s.fishRemain / FISH_CATCH_MS : 0);
       this.npcAvatar.setMastered(this.api.npcMasteryActive);
@@ -1675,6 +2390,25 @@ export class DepthsKit {
       // online opponent's trap arrives painted green, which is the entire ability.
       algaeOrb(g, this.col(a.owner), a.x, a.y, 8, this.vizT, fade, a.seed,
         a.bad && a.owner === 'player');
+    }
+
+    // The kraken's arms lie on the floor under everybody; only its head rises into the water.
+    for (const k of this.krakens) {
+      const fade = Phaser.Math.Clamp((k.until - time) / 800, 0, 1);
+      const tint = this.col(k.owner);
+      for (const a of k.arms) {
+        if (a.state === 'spent') {
+          // A stump: a short curl of what is left, so an empty kraken reads as an empty one.
+          const tx = k.x + Math.cos(a.rest) * 26;
+          const ty = k.y + Math.sin(a.rest) * 26;
+          krakenArm(g, tint, k.x, k.y, tx, ty, this.vizT, fade * 0.55, 5, a.phase, false);
+          continue;
+        }
+        const holding = a.state === 'holding' && a.victim && this.alive(a.victim);
+        const tx = holding ? a.victim!.x : k.x + Math.cos(a.rest) * KRAKEN_REACH * 0.62;
+        const ty = holding ? a.victim!.y : k.y + Math.sin(a.rest) * KRAKEN_REACH * 0.62;
+        krakenArm(g, tint, k.x, k.y, tx, ty, this.vizT, fade, 9, a.phase, !!holding);
+      }
     }
 
     for (const owner of ['player', 'npc'] as Owner[]) {
@@ -1753,6 +2487,33 @@ export class DepthsKit {
       fishBody(g, this.col(r.owner), r.x, r.y, ang, 17, DPT.scale, 1, REMORA_PROFILE, r.wig);
     }
 
+    // ── Poison barbs, hanging where the lionfish shed them ──
+    for (const b of this.barbs) {
+      const fade = Phaser.Math.Clamp((b.diesAt - time) / 900, 0, 1);
+      poisonBarb(g, this.col(b.owner), b.x, b.y, b.ang, 26, fade, b.wig);
+    }
+
+    // ── Skele-fish ──
+    for (const k of this.skeles) {
+      const ang = Math.atan2(k.vy, k.vx) + Math.sin(k.wig) * 0.22;
+      const fade = Phaser.Math.Clamp((k.diesAt - time) / 900, 0, 1);
+      fishBody(g, this.col(k.owner), k.x, k.y, ang, FISH_STATS.skelefish.len,
+        FISH_COLOR.skelefish, fade, FISH_PROFILE.skelefish, k.wig);
+      // A bone bar under it — the fifty points are the whole counterplay, so they are shown.
+      const w = 30;
+      const r = Phaser.Math.Clamp(k.hp / SKELE_HP, 0, 1);
+      g.fillStyle(this.col(k.owner)(DPT.abyss), fade * 0.8);
+      g.fillRect(k.x - w / 2 - 1, k.y + 17, w + 2, 4);
+      g.fillStyle(this.col(k.owner)(DPT.bone), fade * 0.95);
+      g.fillRect(k.x - w / 2, k.y + 18, w * r, 2);
+    }
+
+    // ── The kraken's head ──
+    for (const k of this.krakens) {
+      const fade = Phaser.Math.Clamp((k.until - time) / 800, 0, 1);
+      krakenHead(g, this.col(k.owner), k.x, k.y, KRAKEN_HEAD_R, this.vizT, fade, k.gape, k.seed);
+    }
+
     // ── Sharks ──
     for (const s of this.sharks) {
       sharkBody(g, this.col(s.owner), s.x, s.y, s.ang, SHARK_LEN, 1, s.gape, this.vizT);
@@ -1808,8 +2569,43 @@ export class DepthsKit {
 
     this.api.setStatusIndicator('depths-bait', playerIsDepths && s.baited ? {
       name: 'Baited Line', emoji: '🎣', color: DPT.lure,
-      description: 'A fish is on the hook. The next catch comes off the rare table — saw fish, sword fish, whale shark, flying fish or catfish.',
+      description: this.masteryOn('player')
+        ? 'A fish is on the hook. The next catch comes off the rare table — and if the water has taken you when it lands, the skele-fish is on that table too.'
+        : 'A fish is on the hook. The next catch comes off the rare table — saw fish, sword fish, whale shark, flying fish or catfish.',
       priority: 110,
+    } : null);
+
+    // ── Mastery ──
+    const camoOn = playerIsDepths && this.masteryOn('player') && s.camo > 0.01;
+    this.api.setStatusIndicator('depths-camo', camoOn ? {
+      name: this.camoHidden('player') ? 'Gone' : 'Camo Fade', emoji: '🫥', color: DPT.trench,
+      description: this.camoHidden('player')
+        ? 'The water has you. Nothing you do makes a bubble, bots cannot aim at you at all, algae you walk over turns to poison behind you, and the line reaches the lionfish and the skele-fish. One hit worth more than 5 ends it.'
+        : 'Fading. Six seconds untouched and there is nothing left to see — but any single hit worth more than 5 puts it back to the start.',
+      count: Math.round(s.camo * 100), suffix: '%', priority: 112,
+    } : null);
+
+    const kraken = this.krakens.find((k) => k.owner === 'player');
+    const arms = kraken ? kraken.arms.filter((a) => a.state !== 'spent').length : 0;
+    this.api.setStatusIndicator('depths-kraken', kraken ? {
+      name: 'The Kraken', emoji: '🐙', color: DPT.kraken,
+      description: `Your kraken is on the floor. ${arms} arm${arms === 1 ? '' : 's'} left — each takes one body for 2 seconds and is then a stump until you throw a fish into the beak.`,
+      count: arms, until: kraken.until, priority: 114,
+    } : null);
+
+    // ── Victim side ──
+    const grabbed = this.krakens.some((k) => k.arms.some((a) => a.state === 'holding' && a.victim === p));
+    this.api.setStatusIndicator('depths-grabbed', grabbed ? {
+      name: 'Grabbed', emoji: '🐙', color: DPT.kraken,
+      description: 'A tentacle has you. You cannot move or act for two seconds — and when it lets go, one of the other arms may take its turn.',
+      priority: 5,
+    } : null);
+
+    const weak = this.weakened.get(p);
+    this.api.setStatusIndicator('depths-envenomed', weak && weak.until > time ? {
+      name: 'Envenomed', emoji: '🦂', color: DPT.venom,
+      description: 'Lionfish venom. Everything you deal is worth 15% less until it works out of you.',
+      until: weak.until, priority: 26,
     } : null);
 
     // ── Victim side: everything below can be on the player whoever is playing Depths. ──
@@ -1898,10 +2694,16 @@ export class DepthsKit {
     const drown = this.drowns.find((d) => d.victim === npc);
     if (drown) return { x: drown.px, y: drown.py };
 
-    if (npc.hp < npc.maxHp * 0.9 && this.algae.length) {
+    // Mastery synergy: an invisible angler does not eat a bloom, it poisons one. That is worth
+    // walking to at *any* health short of full, because the payout is the trap and not the 12.
+    const spoiling = this.camoHidden('npc');
+    if ((spoiling ? npc.hp < npc.maxHp : npc.hp < npc.maxHp * 0.9) && this.algae.length) {
       let best: Algae | null = null;
       let bestD = Infinity;
       for (const a of this.algae) {
+        // A poisoned orb is nothing to walk to while camouflaged: there is no heal in it and
+        // nothing left to spoil.
+        if (spoiling && a.bad) continue;
         const d = Phaser.Math.Distance.Between(npc.x, npc.y, a.x, a.y);
         if (d < bestD) { bestD = d; best = a; }
       }
@@ -1923,6 +2725,66 @@ export class DepthsKit {
   latchCount(f: Fighter): number { return this.latches.filter((l) => l.victim === f).length; }
   isDrowning(f: Fighter): boolean { return this.drowns.some((d) => d.victim === f); }
 
+  // ── Mastery: what the AI and ArenaScene are allowed to ask ─────────────────
+
+  /**
+   * True once that side has faded out completely. ArenaScene folds the player's answer into
+   * `NpcAiState.targetInvisible`, which is the whole of "bots cannot attack you" — the bot
+   * stops fighting and ambles instead, exactly as it does against Silence's stealth.
+   */
+  isCamoFull(owner: Owner): boolean {
+    return this.isDepths(owner) && this.camoHidden(owner);
+  }
+
+  /** Which base ability the bot has given up to the kraken, so its rotation can skip it. */
+  npcKrakenSlot(): string | null { return this.krakenSlot('npc'); }
+
+  /**
+   * A body one of the bot's own tentacles is holding right now.
+   *
+   * The kraken's payoff is not the two seconds by itself — it is that a Lungfish Strike aimed
+   * at somebody who cannot move always connects, and a strike that connects is what buys the
+   * drowning. Published here so `doDepthsAbilities` plays the combination deliberately.
+   */
+  npcKrakenStunTarget(): { x: number; y: number } | null {
+    for (const k of this.krakens) {
+      if (k.owner !== 'npc') continue;
+      for (const a of k.arms) {
+        if (a.state === 'holding' && a.victim && this.alive(a.victim)) {
+          return { x: a.victim.x, y: a.victim.y };
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * One of the bot's own skeletons, close enough to be eaten off the end of a slash. Only
+   * offered while it is actually worth fifty health, since the strike costs sixteen seconds.
+   */
+  npcSkeleMeal(): { x: number; y: number } | null {
+    const npc = this.api.npc;
+    if (!this.alive(npc) || npc.hp > npc.maxHp - SKELE_EAT_HEAL * 0.6) return null;
+    for (const k of this.skeles) {
+      if (k.owner !== 'npc') continue;
+      if (Phaser.Math.Distance.Between(npc.x, npc.y, k.x, k.y) > SLASH_REACH + SKELE_R) continue;
+      return { x: k.x, y: k.y };
+    }
+    return null;
+  }
+
+  /**
+   * Where the bot should throw the fish in its jaw, when the throw is worth more as a meal.
+   *
+   * Unlike every other synergy in this kit this one is consumed here rather than by the AI:
+   * the npc never presses F for the throw at all — `updateFishing` does it 600ms after the
+   * catch lands — so the *aim* is the only decision there is, and it belongs where the throw is.
+   */
+  private npcThrowAim(): { x: number; y: number } | null {
+    const hungry = this.krakens.find((k) => k.owner === 'npc' && k.arms.some((a) => a.state === 'spent'));
+    return hungry ? { x: hungry.x, y: hungry.y } : null;
+  }
+
   /**
    * Ability tray fill. Three of the five spend most of their life showing something that is
    * not a cooldown: the line coming in, the drowning clock, and the shark's own eight seconds.
@@ -1931,6 +2793,12 @@ export class DepthsKit {
     const p = this.api.player;
     const s = this.sides.player;
 
+    if (abilityId === KRAKEN_ID) {
+      // The kraken's own twenty-five seconds first, its thirty-five afterwards.
+      const k = this.krakens.find((kr) => kr.owner === 'player');
+      if (k) return Phaser.Math.Clamp((k.until - time) / KRAKEN_LIFE_MS, 0, 1);
+      return Phaser.Math.Clamp((this.now - s.krakenCastAt) / KRAKEN_COOLDOWN_MS, 0, 1);
+    }
     if (abilityId === 'depths-angler') {
       if (s.fish) return 1;
       if (s.fishing) return Phaser.Math.Clamp(1 - s.fishRemain / FISH_CATCH_MS, 0, 1);
@@ -1947,5 +2815,40 @@ export class DepthsKit {
       }
     }
     return p.getCooldownRatio(abilityId);
+  }
+
+  /**
+   * Ruin's Spikes of Ruin, razing the board.
+   *
+   * Only the two things the mastery *builds* answer: the kraken and a skele-fish that got up.
+   * Barbs, algae, thrown fish, piranhas and the Megalodon are all shots and hazards rather
+   * than structures, and are left alone exactly as the contract asks.
+   */
+  purgeSummons(
+    x: number, y: number, radius: number, exceptOwner: Owner,
+    report?: (px: number, py: number) => void,
+  ): number {
+    let razed = 0;
+    const near = (px: number, py: number): boolean => {
+      if (Phaser.Math.Distance.Between(x, y, px, py) > radius) return false;
+      razed++;
+      report?.(px, py);
+      return true;
+    };
+
+    for (let i = this.krakens.length - 1; i >= 0; i--) {
+      const k = this.krakens[i];
+      if (k.owner === exceptOwner) continue;
+      if (!near(k.x, k.y)) continue;
+      this.releaseKraken(k, i);
+    }
+    for (let i = this.skeles.length - 1; i >= 0; i--) {
+      const k = this.skeles[i];
+      if (k.owner === exceptOwner) continue;
+      if (!near(k.x, k.y)) continue;
+      this.fx(k.owner).bubbles(k.x, k.y, 6, 22, DPT.skele, 460, 9);
+      this.skeles.splice(i, 1);
+    }
+    return razed;
   }
 }

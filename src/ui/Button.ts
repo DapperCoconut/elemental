@@ -4,6 +4,7 @@ import {
   ALL_CORNERS, Corners,
   drawCornerBrackets, drawGlow, drawSheen, fillDiamond, fillHex, fillNotchedGradient, strokeHex, strokeNotched,
 } from './Shapes';
+import { drawIcon, IconName } from './Icons';
 import { Sfx } from '../audio';
 
 export type ButtonVariant =
@@ -27,8 +28,17 @@ export interface ButtonOptions {
   label: string;
   /** Small line under the label. */
   sublabel?: string;
-  /** Emoji or glyph shown ahead of the label. */
+  /** Emoji or glyph shown ahead of the label. Prefer `iconArt`. */
   icon?: string;
+  /**
+   * Drawn glyph ahead of the label, taking the button's accent.
+   *
+   * Wins over `icon` where both are set. Emoji render differently on every machine and
+   * ignore the plate they sit on; these are struck from the same metal as the frame.
+   */
+  iconArt?: IconName;
+  /** Override the drawn icon's colour. Defaults to a lightened accent. */
+  iconColor?: number;
   /** Right-aligned text, typically a price. */
   trailing?: string;
   trailingColor?: string;
@@ -61,6 +71,7 @@ export class UiButton {
   private labelText: Phaser.GameObjects.Text;
   private subText: Phaser.GameObjects.Text | null = null;
   private iconText: Phaser.GameObjects.Text | null = null;
+  private iconArt: Phaser.GameObjects.Graphics | null = null;
   private trailingText: Phaser.GameObjects.Text | null = null;
   private hit: Phaser.GameObjects.Rectangle;
   private opts: Required<Pick<ButtonOptions, 'w' | 'h' | 'accent' | 'variant' | 'cut'>> & ButtonOptions;
@@ -87,15 +98,26 @@ export class UiButton {
     this.container.add(this.g);
 
     const leftPad = 16;
-    const hasIcon = !!options.icon;
+    const hasIcon = !!options.icon || !!options.iconArt;
     const centred = (options.align ?? 'center') === 'center';
 
     if (hasIcon) {
       const ix = centred ? -this.estimateLabelWidth() / 2 - 14 : -w / 2 + leftPad + 8;
-      this.iconText = scene.add.text(ix, options.sublabel ? -8 : 0, options.icon!, {
-        fontSize: `${Math.round((options.fontSize ?? 18) * 1.15)}px`,
-      }).setOrigin(0.5);
-      this.container.add(this.iconText);
+      const iy = options.sublabel ? -8 : 0;
+      if (options.iconArt) {
+        this.iconArt = scene.add.graphics();
+        drawIcon(
+          this.iconArt, options.iconArt, ix, iy,
+          Math.round((options.fontSize ?? 18) * 0.62),
+          options.iconColor ?? mix(this.opts.accent, 0xffffff, 0.35),
+        );
+        this.container.add(this.iconArt);
+      } else {
+        this.iconText = scene.add.text(ix, iy, options.icon!, {
+          fontSize: `${Math.round((options.fontSize ?? 18) * 1.15)}px`,
+        }).setOrigin(0.5);
+        this.container.add(this.iconText);
+      }
     }
 
     const labelX = centred ? (hasIcon ? 10 : 0) : -w / 2 + leftPad + (hasIcon ? 30 : 0);
@@ -240,6 +262,7 @@ export class UiButton {
     this.labelText.setColor(labelColor);
     if (this.subText) this.subText.setColor(this.disabled ? T.ghost : hot ? T.normal : T.dim);
     if (this.iconText) this.iconText.setAlpha(this.disabled ? 0.35 : 1);
+    if (this.iconArt) this.iconArt.setAlpha(this.disabled ? 0.3 : hot ? 1 : 0.88);
     if (this.trailingText) this.trailingText.setAlpha(this.disabled ? 0.4 : 1);
   }
 
@@ -332,7 +355,7 @@ export function addBackButton(
  * buttons, where a full plate would be too heavy.
  */
 export function addIconButton(scene: Phaser.Scene, opts: {
-  x: number; y: number; r?: number; icon: string; accent?: number;
+  x: number; y: number; r?: number; icon?: string; iconArt?: IconName; accent?: number;
   depth?: number; onClick: () => void; tooltip?: string;
 }): Phaser.GameObjects.Container {
   const r = opts.r ?? 21;
@@ -343,8 +366,14 @@ export function addIconButton(scene: Phaser.Scene, opts: {
   const g = scene.add.graphics();
   container.add(g);
 
-  const icon = scene.add.text(0, 0, opts.icon, { fontSize: `${Math.round(r * 0.86)}px` }).setOrigin(0.5);
-  container.add(icon);
+  if (opts.iconArt) {
+    const art = scene.add.graphics();
+    drawIcon(art, opts.iconArt, 0, 0, r * 0.5, mix(accent, 0xffffff, 0.45));
+    container.add(art);
+  } else {
+    const icon = scene.add.text(0, 0, opts.icon ?? '?', { fontSize: `${Math.round(r * 0.86)}px` }).setOrigin(0.5);
+    container.add(icon);
+  }
 
   let tip: Phaser.GameObjects.Text | null = null;
 

@@ -587,6 +587,17 @@ export class SlimeKit {
     }
   }
 
+  /**
+   * Ruin Mastery — Second Skin. Being under the acid is a form, not a buff: the body is gone,
+   * it is invincible, and the whole moveset while burrowed is a different one. `unburrow` is the
+   * kit's own surfacing, which is also the only thing that hands back the invincibility safely.
+   */
+  revertForms(f: Fighter): string[] {
+    if (f !== this.arena.player || !this.burrowed) return [];
+    this.unburrow('🐍 Dragged up!');
+    return ['Burrow'];
+  }
+
   private unburrow(reason: string): void {
     this.burrowed = false;
     this.despawnMurkToad();

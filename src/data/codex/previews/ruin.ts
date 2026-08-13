@@ -4,7 +4,7 @@ import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import { HealthBar } from '../../../combat/HealthBar';
 import {
   RUI, RuinAvatar, RuinFx, chainRun, crackWeb, decayCoat, padlock, rubyJewel,
-  ruinCluster, ruinRing, rustySpike, shredWedge, shrapnelShard,
+  ruinCluster, ruinRing, rustySpike, shredWedge, shrapnelShard, skinShard,
 } from '../../../elements/kits/RuinVisuals';
 
 /**
@@ -696,6 +696,159 @@ export const rust: PreviewScript = {
       tick(ctx, foe.x, foe.y - 34, `25 — ${Math.round(eaten)} off the grey`, RUI.bright);
     });
     ctx.at(4400, () => tick(ctx, foe.x, foe.y - 34, 'and the rest just leaks away at 3/s', RUI.ash));
+  },
+};
+
+/**
+ * Mastery passive — Combo Breaker. Nothing about it is drawable on a body, so the showcase is
+ * the honest one: two identical bars, one taxed and one not, filling side by side off the same
+ * clock until the difference is the whole picture.
+ */
+export const masteryComboBreaker: PreviewScript = {
+  duration: 9000,
+  scale: 0.9,
+  caption: 'Mastery passive — every meter every enemy owns fills at half speed. Nothing else about it changes',
+  run(ctx) {
+    stage(ctx, { noDummy: true });
+
+    const BAR_W = 168;
+    const BAR_H = 13;
+    const rows = [
+      { name: 'their bar, normally', mult: 1, y: ctx.cy - 34, color: RUI.bone },
+      { name: 'their bar, against Ruin', mult: 0.5, y: ctx.cy + 12, color: RUI.red },
+    ];
+    const x0 = ctx.w * 0.44;
+    for (const r of rows) label(ctx, x0 + BAR_W / 2, r.y - 14, r.name, r.color);
+    label(ctx, x0 + BAR_W / 2, ctx.cy + 54,
+      'charge · fear · hunger · anger · hype · Authority · DNA · stress', RUI.ash);
+
+    const full = new Set<number>();
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(12));
+    ctx.onFrame((_dt, elapsed) => {
+      g.clear();
+      rows.forEach((r, i) => {
+        // Both bars are fed the same number; only the multiplier between them differs.
+        const fill = Phaser.Math.Clamp((elapsed / 4200) * r.mult, 0, 1);
+        g.fillStyle(ctx.tint(RUI.voidDark), 0.8);
+        g.fillRect(x0 - 2, r.y - 2, BAR_W + 4, BAR_H + 4);
+        g.fillStyle(ctx.tint(RUI.ash), 0.6);
+        g.fillRect(x0, r.y, BAR_W, BAR_H);
+        g.fillStyle(ctx.tint(r.color), 0.95);
+        g.fillRect(x0, r.y, BAR_W * fill, BAR_H);
+        g.lineStyle(1.2, ctx.tint(RUI.iron), 0.8);
+        g.strokeRect(x0, r.y, BAR_W, BAR_H);
+        if (fill < 1 || full.has(i)) return;
+        full.add(i);
+        tick(ctx, x0 + BAR_W + 34, r.y + BAR_H / 2,
+          `FULL — ${(elapsed / 1000).toFixed(1)}s`, r.color);
+      });
+    });
+
+    ctx.at(4400, () => tick(ctx, ctx.w * 0.5, ctx.cy + 78,
+      'the payoff at the top is the same size — the climb is twice as long', RUI.decay));
+  },
+};
+
+/**
+ * Mastery bindable — Second Skin. Twenty-five plates in a circle off the real primitive, a body
+ * that visibly shrinks and stays shrunk, and a transformed dummy dragged back to its base shape.
+ */
+export const masterySecondSkin: PreviewScript = {
+  duration: 9600,
+  scale: 0.9,
+  caption: 'The bound key — 25 plates in every direction for 15, every form they hit ends, and you are 20% smaller for good',
+  run(ctx) {
+    const { fx, av } = stage(ctx, { noDummy: true });
+
+    // The victim, drawn twice its base size while it is still "transformed".
+    const foe = { x: ctx.w * 0.68, y: ctx.cy - 6 };
+    let beast = true;
+    const foeG = ctx.adopt(ctx.scene.add.graphics().setDepth(5));
+    ctx.onFrame((_dt, elapsed) => {
+      foeG.clear();
+      const r = beast ? 26 : 15;
+      const t = elapsed / 1000;
+      foeG.fillStyle(beast ? 0x5a3630 : 0x2b2f3d, 1);
+      foeG.fillCircle(foe.x, foe.y, r);
+      foeG.fillStyle(beast ? 0x7d4a3f : 0x3c4254, 1);
+      foeG.fillCircle(foe.x, foe.y, r * 0.76);
+      foeG.fillStyle(beast ? 0xffcc55 : 0x8e97ad, 0.9);
+      foeG.fillCircle(foe.x - r * 0.3, foe.y - r * 0.24, r * 0.19);
+      foeG.fillCircle(foe.x + r * 0.3, foe.y - r * 0.24, r * 0.19);
+      if (!beast) return;
+      // Ears, so "a form" reads at a glance rather than "a bigger circle".
+      foeG.fillStyle(0x5a3630, 1);
+      for (const s of [-1, 1]) {
+        foeG.fillTriangle(
+          foe.x + s * r * 0.6, foe.y - r * 0.7,
+          foe.x + s * r * 0.2, foe.y - r * 1.35 - Math.sin(t * 4) * 1.5,
+          foe.x + s * r * 0.9, foe.y - r * 0.95,
+        );
+      }
+    });
+    label(ctx, foe.x, foe.y + 44, 'in a form', RUI.ember);
+
+    // The caster's own layers, and the ring of plates each shed throws.
+    let scale = 1;
+    const shards: Array<{
+      x: number; y: number; vx: number; vy: number; spin: number; seed: number;
+      dies: number; hit: boolean;
+    }> = [];
+    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(11));
+    const body = ctx.adopt(ctx.scene.add.graphics().setDepth(6));
+    ctx.onFrame((dt, elapsed) => {
+      air.clear();
+      body.clear();
+      // The layer that is left: a ring around the caster that tightens with every cast.
+      body.lineStyle(2, ctx.tint(RUI.rust), 0.5);
+      body.strokeCircle(ctx.cx, ctx.cy, 30 * scale);
+
+      const s = dt / 1000;
+      for (let i = shards.length - 1; i >= 0; i--) {
+        const sh = shards[i];
+        sh.x += sh.vx * s;
+        sh.y += sh.vy * s;
+        sh.spin += s * 12;
+        if (elapsed >= sh.dies) { shards.splice(i, 1); continue; }
+        const fade = Phaser.Math.Clamp((sh.dies - elapsed) / 260, 0, 1);
+        skinShard(air, ctx.tint, sh.x, sh.y, Math.atan2(sh.vy, sh.vx), 15, fade, sh.spin, sh.seed);
+        // One plate per body, exactly as the volley's shared hit list enforces.
+        if (sh.hit || shards.some((o) => o.hit)) continue;
+        if (Phaser.Math.Distance.Between(sh.x, sh.y, foe.x, foe.y) > 22) continue;
+        sh.hit = true;
+        fx.bite(foe.x, foe.y, 24, RUI.bone);
+        tick(ctx, foe.x, foe.y - 34, '15', RUI.bone);
+        if (!beast) return;
+        beast = false;
+        fx.unform(foe.x, foe.y, 42);
+        tick(ctx, foe.x, foe.y - 56, '🦎 BEAST FORM BROKEN', RUI.bright);
+      }
+    });
+
+    const shed = (at: number, left: number): void => {
+      ctx.at(at, () => {
+        scale *= 0.8;
+        av.play('flex');
+        fx.shed(ctx.cx, ctx.cy, 30);
+        fx.ring(ctx.cx, ctx.cy, 14, 90, RUI.bone, 480);
+        tick(ctx, ctx.cx, ctx.cy - 52, '🦎 SECOND SKIN', RUI.bone);
+        tick(ctx, ctx.cx, ctx.cy - 34, `${left} LAYERS LEFT`, RUI.ash);
+        const off = Math.random() * Math.PI * 2;
+        for (let i = 0; i < 25; i++) {
+          const a = off + (i / 25) * Math.PI * 2;
+          shards.push({
+            x: ctx.cx + Math.cos(a) * 22, y: ctx.cy + Math.sin(a) * 22,
+            vx: Math.cos(a) * 540, vy: Math.sin(a) * 540,
+            spin: Math.random() * Math.PI * 2, seed: i * 7,
+            dies: at + 820, hit: false,
+          });
+        }
+      });
+    };
+
+    shed(700, 4);
+    shed(4200, 3);
+    ctx.at(7400, () => label(ctx, ctx.cx, ctx.cy + 62, 'two layers gone — 64% size, for the rest of the match', RUI.rust));
   },
 };
 

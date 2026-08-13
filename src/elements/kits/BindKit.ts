@@ -6,8 +6,9 @@ import { Sfx } from '../../audio';
 import {
   BND, BindAvatar, BindColorFn, BindFx, arenaBinding, chainLink, chainRun, cosmicVeil, cultistFigure,
   darkMark, eviscerateCharge, faithRing, godBeam, hexWard, idolStatue, oblivionShard, overrageAura,
-  patronEye, spreadReticle, vesselHalo,
+  patheticLunge, patronEye, ritualDagger, spreadReticle, vesselHalo, vesselMark,
 } from './BindVisuals';
+import { meterGain } from '../../combat/Meters';
 
 type Owner = 'player' | 'npc';
 
@@ -140,6 +141,36 @@ const SACRIFICE_SLOTS: { id: string; key: string }[] = [
   { id: 'bind-protection', key: 'F' },
 ];
 
+// ── Mastery: Vessel Of The Broken God (passive) ───────────────────────────────
+/** Shards the vessel throws off its own body alongside every barrage. */
+const VESSEL_SHARDS = 3;
+const VESSEL_SHARD_SPREAD = 42;
+/**
+ * The enrage covers the whole open sky *and* the five seconds of wrath that always close it. The
+ * first fifteen are spent chained to the floor, so a window that ended with the ultimate would be
+ * a buff the player never gets to use — the tail is the half that is worth owning.
+ */
+const ENRAGE_MS = AWAKE_MS + WRATH_MS;
+const ENRAGE_SPEED = 0.35;
+const ENRAGE_INCOMING = 0.6;
+/** How often an enraged body sheds whatever has been stuck to it. Fast enough to read as immunity. */
+const ENRAGE_PURGE_MS = 250;
+
+// ── Mastery: Pathetic Stab (what the taken slot becomes) ──────────────────────
+const STAB_DAMAGE = 15;
+const STAB_DASH = 118;
+const STAB_MS = 150;
+const STAB_HIT_R = 30;
+const STAB_COOLDOWN = 1800;
+const STAB_HUD_DESC = 'Lunge at your cursor for 15 melee damage';
+
+// ── Mastery: Ritual Sacrifice (bindable) ─────────────────────────────────────
+const RITUAL_ID = 'ritual-sacrifice';
+const RITUAL_SELF_DAMAGE = 25;
+const RITUAL_ANGER = 15;
+/** Below this the god refuses the offering — a sacrifice must not finish the job for it. */
+const RITUAL_HP_FLOOR = 25;
+
 // ── World objects ────────────────────────────────────────────────────────────
 
 /** One shard in the air, on its way to the point it will burst at. */
@@ -157,7 +188,26 @@ interface Shard {
   diesAt: number;
   /** True while the patron is aiming this at the person who summoned it. */
   turned: boolean;
+  /**
+   * This shard came out of the E barrage itself rather than out of an idol, a convert or the open
+   * sky — the only thing the Oblivion mastery requirement is allowed to count.
+   */
+  counted: boolean;
   seed: number;
+}
+
+/** Mastery — one Pathetic Stab in flight: a short lunge with a dagger on the end of it. */
+interface Stab {
+  until: number;
+  x0: number;
+  y0: number;
+  tx: number;
+  ty: number;
+  ang: number;
+  /** Everyone it has already gone through — a lunge hits each body once. */
+  hit: Fighter[];
+  lastX: number;
+  lastY: number;
 }
 
 interface Idol {
@@ -266,6 +316,22 @@ interface Side {
   sacrificeAskedAt: number;
   /** Which slots have been given up, in order, for the HUD. Two ultimates cost two of them. */
   sacrificed: string[];
+
+  // ── Mastery ──
+  /** Game-clock expiry of the enrage the ultimate lights on a vessel. */
+  enragedUntil: number;
+  /** Next scour of whatever has been stuck to an enraged body. */
+  nextPurgeAt: number;
+  /**
+   * Display keys the god took and handed back as Pathetic Stab. Only ever filled while the mastery
+   * is on — without it the same keys are locked out instead, and this stays empty.
+   */
+  stabSlots: string[];
+  /** Game-clock time the next lunge is allowed. 0 = ready, which is what a fresh vessel is. */
+  stabReadyAt: number;
+  stab: Stab | null;
+  /** Bots only: the next moment the routine will consider stabbing itself. */
+  npcRitualAt: number;
 }
 
 function makeSide(owner: Owner): Side {
@@ -277,6 +343,7 @@ function makeSide(owner: Owner): Side {
     taxSpeed: 0, taxVuln: 0, taxWeak: 0, ward: null,
     awakeUntil: 0, nextVolleyAt: 0, nextSwipeAt: 0, nextLaserAt: 0, nextBlastAt: 0,
     pendingSacrifice: false, sacrificeAskedAt: 0, sacrificed: [],
+    enragedUntil: 0, nextPurgeAt: 0, stabSlots: [], stabReadyAt: 0, stab: null, npcRitualAt: 0,
   };
 }
 
@@ -304,6 +371,22 @@ export interface BindArenaApi {
   setStatusIndicator(id: string, status: CustomStatus | null): void;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
+  /** Mastery: the enhancement bound over each of the player's slots this match. */
+  masteryBindFor(slot: string): string | null;
+  /** …and the opponent's, for a bot or remote player running the mastery. */
+  npcMasteryBindFor(slot: string): string | null;
+  recordMasteryStat(key: string, amount: number): void;
+  /**
+   * Mastery (the enrage): strip every discrete debuff off a fighter. Routed through the arena
+   * rather than called on `clearDebuffs` directly because ArenaScene still keeps a second,
+   * older copy of a few of the player's own DOT timers alongside the ones on `Fighter`.
+   */
+  purgeDebuffs(f: Fighter): number;
+  /**
+   * Mastery (Pathetic Stab): rename one ability card in place. The price of the ultimate is not
+   * chosen until mid-match, so the tray cannot be built already knowing which slot became a stab.
+   */
+  setAbilityCardLabel(abilityId: string, name: string, description: string): void;
   /** Shop upgrades: the local player's equipped slots. */
   hasUpgrade(slot: string): boolean;
   /** …and the online opponent's, so their upgraded tricks reproduce on this sim. */
@@ -335,6 +418,15 @@ export interface BindArenaApi {
  * routine*: `runGod` fires volleys, swipes, laser sprays and dark-light beams, and a single
  * `turned` boolean decides whether it points at the enemy or at the person who summoned it.
  * That is not an economy — it is the reason the fantasy holds together at all.
+ *
+ * **The mastery inverts both rules, deliberately.** Vessel Of The Broken God stops the element
+ * being a negotiation and makes it a possession: the body wears the patron's own eye, throws its
+ * own shards, and goes red with it when the sky opens — and the twenty seconds it is red are the
+ * one window in the element where nothing sticks to you. Ritual Sacrifice breaks the *second* rule
+ * outright by being the only thing that ever takes anger off the bar, at 15 a stab for 25 of your
+ * own health, so every price the kit charges finally has a way to be paid rather than merely
+ * survived. And Pathetic Stab is the "nothing here is refundable" rule bending exactly one inch:
+ * the god still takes the limb, and hands back fifteen damage.
  */
 export class BindKit {
   private api: BindArenaApi;
@@ -436,6 +528,45 @@ export class BindKit {
     return owner === 'player' ? this.api.hasUpgrade(slot) : this.api.hasNpcUpgrade(slot);
   }
 
+  // ── Mastery helpers ────────────────────────────────────────────────────────
+
+  /** Whether Element Mastery is on for whichever side is asking. */
+  private masteryOn(owner: Owner): boolean {
+    return owner === 'player' ? this.api.masteryActive
+      : this.api.npcMasteryActive && this.isBind('npc');
+  }
+
+  /**
+   * Which slot Ritual Sacrifice was dropped on, or null. Q is not scanned — `excludeSlots` refuses
+   * it as a drop target, because the enrage and the stab both hang off the ultimate existing.
+   */
+  private ritualSlot(owner: Owner): 'e' | 'r' | 'f' | null {
+    if (!this.masteryOn(owner)) return null;
+    for (const s of ['e', 'r', 'f'] as const) {
+      const bind = owner === 'player' ? this.api.masteryBindFor(s) : this.api.npcMasteryBindFor(s);
+      if (bind === RITUAL_ID) return s;
+    }
+    return null;
+  }
+
+  /** True while the eye on that side's body is red — the ultimate's window, plus its wrath. */
+  private enraged(owner: Owner): boolean {
+    return this.now < this.side(owner).enragedUntil;
+  }
+
+  /** True for a display key the god took and the mastery handed back as Pathetic Stab. */
+  private isStabSlot(owner: Owner, key: string): boolean {
+    return this.masteryOn(owner) && this.side(owner).stabSlots.includes(key);
+  }
+
+  /**
+   * Mastery progress. Recorded unconditionally — the arena adapter gates it on the element, and
+   * the whole point of a requirement is that it is earned before the mastery is on.
+   */
+  private record(key: string, amount = 1): void {
+    this.api.recordMasteryStat(key, amount);
+  }
+
   /**
    * The sky is open and the summoner is bolted to the middle of the floor by four chains. Nothing
    * in the kit answers while this is true — the god has the hands, and that is the point of it.
@@ -504,7 +635,8 @@ export class BindKit {
     amount *= Math.max(0, cut);
     if (amount <= 0) return;
     const before = s.anger;
-    s.anger = Math.min(ANGER_MAX, s.anger + amount);
+    // Ruin's Combo Breaker halves every meter in the game — the patron's patience included.
+    s.anger = Math.min(ANGER_MAX, s.anger + meterGain(this.fighter(owner), amount));
     if (why && amount >= 3 && s.anger > before) {
       const f = this.fighter(owner);
       if (this.alive(f)) {
@@ -563,6 +695,7 @@ export class BindKit {
     this.api.setStatusIndicator('bind-cult', null);
     this.api.setStatusIndicator('bind-vessel', null);
     this.api.setStatusIndicator('bind-overrage', null);
+    this.api.setStatusIndicator('bind-enraged', null);
   }
 
   private ensureLayers(): void {
@@ -628,13 +761,25 @@ export class BindKit {
     }
 
     const ctx = this.api.buildPlayerContext(mouseX, mouseY);
-    if (pointer.isDown) p.castAbility('bind-summon', ctx);
+    // Mastery: two things can take a key away from its base ability, and both outrank it. Ritual
+    // Sacrifice owns whichever slot it was dropped on, and Pathetic Stab owns whichever slot the
+    // god has already taken — a slot the base kit would simply have locked out for the match.
+    const ritual = this.ritualSlot('player');
+
+    if (pointer.isDown) {
+      if (this.isStabSlot('player', 'Click')) this.tryStab('player', mouseX, mouseY);
+      else p.castAbility('bind-summon', ctx);
+    }
 
     // ── E, with or without Eviscerate ──
     // Charged, the key is a hold: winding up costs anger by the second and buys accuracy, and
     // the cast itself only happens on the release, so the barrage lands where you finished
     // aiming rather than where you started.
-    if (this.up('player', 'e')) {
+    if (ritual === 'e') {
+      if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) this.tryRitual('player');
+    } else if (this.isStabSlot('player', 'E')) {
+      if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) this.tryStab('player', mouseX, mouseY);
+    } else if (this.up('player', 'e')) {
       const held = this.api.eKey.isDown;
       const ready = p.getCooldownRatio('bind-shards') >= 1;
       if (held && !s.chargeStartedAt && ready && !this.turned('player')) {
@@ -651,8 +796,16 @@ export class BindKit {
       p.castAbility('bind-shards', ctx);
     }
 
-    if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('bind-idol', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('bind-protection', ctx);
+    if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) {
+      if (ritual === 'r') this.tryRitual('player');
+      else if (this.isStabSlot('player', 'R')) this.tryStab('player', mouseX, mouseY);
+      else p.castAbility('bind-idol', ctx);
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) {
+      if (ritual === 'f') this.tryRitual('player');
+      else if (this.isStabSlot('player', 'F')) this.tryStab('player', mouseX, mouseY);
+      else p.castAbility('bind-protection', ctx);
+    }
     if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('bind-treachery', ctx);
   }
 
@@ -759,7 +912,14 @@ export class BindKit {
     const charge = s.chargeAtCast;
     s.chargeAtCast = 0;
     const spread = Phaser.Math.Linear(SHARD_SPREAD, EVIS_TIGHT_SPREAD, charge);
-    this.throwVolley(owner, tx, ty, SHARD_COUNT, SHARD_DAMAGE, spread, false);
+    this.throwVolley(owner, tx, ty, SHARD_COUNT, SHARD_DAMAGE, spread, false, undefined, true);
+    // Mastery — Vessel Of The Broken God: the body is carrying the patron's eye now, and it throws
+    // too. These come off the summoner rather than out of the hole in the ceiling, which is the
+    // whole visible tell for the passive.
+    if (this.masteryOn(owner)) {
+      this.throwVolley(owner, tx, ty, VESSEL_SHARDS, SHARD_DAMAGE, VESSEL_SHARD_SPREAD, false,
+        { x: f.x, y: f.y }, true);
+    }
     this.avatar(owner)?.play('slam', Math.atan2(ty - f.y, tx - f.x));
     Sfx.playAt('crystal-shatter', f.x, { rate: 0.85 + charge * 0.4, volume: 0.9 });
     if (charge > 0.15) {
@@ -843,6 +1003,8 @@ export class BindKit {
       this.fx(owner).wardBlock(f.x, f.y);
       this.api.showFloatingText(f.x, f.y - 44, `✦ WARDED (${ward.charges})`, this.hex(BND.goldLit));
       Sfx.playAt('shield-block', f.x, { rate: 0.75, volume: 0.9 });
+      // Mastery requirement (Behind The Hexes): one per hit the bound one eats on your behalf.
+      if (owner === 'player') this.record('wardBlocks');
       this.addAnger(owner, amount * WARD_ANGER_SHARE, 'WARD');
       if (ward.charges <= 0) this.dropWard(owner, true);
       return true;
@@ -899,8 +1061,15 @@ export class BindKit {
     Sfx.playAt('judgement', f.x, { rate: 0.7, volume: 0.85 });
     Sfx.playAt('chain', f.x, { rate: 0.5, volume: 1 });
 
+    // Mastery requirement (Unbound): the ultimate itself, whether or not the mastery is on yet.
+    if (owner === 'player') this.record('unbindings');
+
     // Awakening: every convert this side owns comes out from under its hood at once.
     if (this.up(owner, 'q')) this.awakenCult(owner);
+
+    // Mastery — the eye you are wearing goes red with the one in the ceiling, for the whole open
+    // sky and the wrath that always closes it.
+    if (this.masteryOn(owner)) this.beginEnrage(owner);
 
     // Whatever is still alive to be taken. A second ultimate cannot be bought with a limb the
     // god removed the first time.
@@ -927,10 +1096,32 @@ export class BindKit {
     this.hidePrompt();
     const f = this.fighter(owner);
     if (!this.alive(f)) return;
-    f.lockAbility(abilityId, SACRIFICE_MS);
     this.fx(owner).shardBurst(f.x, f.y, true);
-    this.api.showFloatingText(f.x, f.y - 56, `⛓ ${key} TAKEN`, this.hex(BND.wrath));
     Sfx.playAt('chain', f.x, { rate: 0.6, volume: 1 });
+
+    // Mastery: the god still takes the limb, but a vessel does not get left with a hole — the key
+    // comes back as Pathetic Stab.
+    //
+    // The two sides reach that through different doors, which is why only one of them skips the
+    // lock. A player presses keys, so `handleInput` reroutes the key and the base ability must stay
+    // castable-looking for nobody; the tray is retitled instead, because a card still reading
+    // "Shards of Oblivion" would be a lie about what E does. A bot presses a *rotation* it cannot
+    // reroute, so its base ability is locked exactly as it always was and the lunge is played for it
+    // by `updateNpcMastery` — otherwise it would keep casting the ability it just gave up.
+    if (this.masteryOn(owner)) {
+      if (!s.stabSlots.includes(key)) s.stabSlots.push(key);
+      s.stabReadyAt = 0;
+      if (owner === 'player') {
+        this.api.setAbilityCardLabel(abilityId, 'Pathetic Stab', STAB_HUD_DESC);
+      } else {
+        f.lockAbility(abilityId, SACRIFICE_MS);
+      }
+      this.api.showFloatingText(f.x, f.y - 56, `⛓ ${key} TAKEN · PATHETIC STAB`, this.hex(BND.gold));
+      return;
+    }
+
+    f.lockAbility(abilityId, SACRIFICE_MS);
+    this.api.showFloatingText(f.x, f.y - 56, `⛓ ${key} TAKEN`, this.hex(BND.wrath));
   }
 
   private showPrompt(left: { id: string; key: string }[]): void {
@@ -1012,6 +1203,8 @@ export class BindKit {
       c.nextVolleyAt = this.now + 500 + i * 320;
       c.nextDashAt = this.now + 1400 + i * 700;
       this.fx(owner).cultistAwaken(c.x, c.y);
+      // Mastery requirement (Hoods Off): one per convert that actually comes out from under it.
+      if (owner === 'player') this.record('cultistsAwakened');
     }
     const f = this.fighter(owner);
     if (this.alive(f)) {
@@ -1132,6 +1325,183 @@ export class BindKit {
     dash.lastY = c.y;
 
     if (d <= step + 0.5) c.dash = null;
+  }
+
+  // ── Mastery: Vessel Of The Broken God ──────────────────────────────────────
+
+  /**
+   * A refusal with no cooldown behind it to hand back — the mastery's own casts. `refuse` cannot be
+   * reused for these: Ritual Sacrifice has no cooldown at all, and Pathetic Stab's is the kit's own
+   * timer rather than an entry in the fighter's cooldown map.
+   */
+  private deny(owner: Owner, why: string): void {
+    const s = this.side(owner);
+    if (this.now - s.lastRefusalAt < 700) return;
+    s.lastRefusalAt = this.now;
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    this.api.showFloatingText(f.x, f.y - 50, why, this.hex(BND.wrath));
+    Sfx.playAt('ui-denied', f.x, { rate: 0.8, volume: 0.7 });
+  }
+
+  /**
+   * The eye on the body reddens with the one in the ceiling.
+   *
+   * Lit by the ultimate and deliberately outliving it by the length of the wrath the sky closing
+   * always causes: for the first fifteen seconds the summoner is bolted to the middle of the floor
+   * and the speed is worth nothing, so the part of the window that matters is the five seconds
+   * afterwards, when the god is pointed inward and the vessel can finally move.
+   */
+  private beginEnrage(owner: Owner): void {
+    const s = this.side(owner);
+    s.enragedUntil = this.now + ENRAGE_MS;
+    s.nextPurgeAt = 0;
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    this.fx(owner).vesselEnrage(f.x, f.y);
+    this.api.showFloatingText(f.x, f.y - 96, '👁️ THE VESSEL IS ENRAGED', this.hex(BND.wrath));
+    Sfx.playAt('nightmare', f.x, { rate: 1.15, volume: 0.8 });
+  }
+
+  /**
+   * The enrage running. The speed and the mitigation are read out of `speedMult` and `updateTithes`
+   * respectively — this only owns the clock and the scouring, which is re-run four times a second
+   * rather than once on the press so nothing new can stick while the window is open.
+   */
+  private updateVessel(): void {
+    for (const owner of BOTH) {
+      const s = this.side(owner);
+      if (!s.enragedUntil) continue;
+      const f = this.fighter(owner);
+      if (this.now >= s.enragedUntil) {
+        s.enragedUntil = 0;
+        if (this.alive(f)) {
+          this.api.showFloatingText(f.x, f.y - 70, '👁️ THE RAGE PASSES', this.hex(BND.goldDeep));
+        }
+        continue;
+      }
+      if (this.now < s.nextPurgeAt || !this.alive(f)) continue;
+      s.nextPurgeAt = this.now + ENRAGE_PURGE_MS;
+      const shed = this.api.purgeDebuffs(f);
+      if (shed > 0 && owner === 'player') {
+        this.api.showFloatingText(f.x, f.y - 40,
+          `👁️ SHED ${shed} EFFECT${shed > 1 ? 'S' : ''}`, this.hex(BND.wrath));
+      }
+    }
+  }
+
+  /**
+   * Ritual Sacrifice — the one thing in the element that buys the patron's patience back, and the
+   * only price the kit has never charged in before: your own health, straight off the top, with no
+   * cooldown standing between one stab and the next.
+   */
+  private tryRitual(owner: Owner): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    // The chains are the one silence a dagger cannot talk through — the hands are not yours while
+    // the sky is open. A turned patron needs no refusal here: it emptied the bar on its way round.
+    if (this.chained(owner)) { this.deny(owner, '⛓ THE CHAINS HOLD YOU'); return; }
+    if (s.anger < 1) { this.deny(owner, '⛓ IT IS ALREADY CALM'); return; }
+    if (f.hp <= RITUAL_HP_FLOOR) { this.deny(owner, '⛓ NOTHING LEFT TO GIVE'); return; }
+
+    const before = s.anger;
+    s.anger = Math.max(0, s.anger - RITUAL_ANGER);
+    this.fx(owner).ritualStab(f.x, f.y);
+    this.avatar(owner)?.play('slam', Math.PI / 2);
+    this.api.showFloatingText(f.x, f.y - 68,
+      `🗡 SACRIFICE · −${Math.round(before - s.anger)} ANGER`, this.hex(BND.goldLit));
+    Sfx.playAt('curse-cast', f.x, { rate: 1.2, volume: 0.75 });
+    // Last, so the bar is already paid down if the offering happens to be the end of the vessel.
+    f.applySelfDamage(RITUAL_SELF_DAMAGE);
+  }
+
+  /**
+   * Pathetic Stab — the lunge the god leaves in the hole where an ability used to be.
+   *
+   * Armed here and resolved in `stepStab` from `update()`, for the same reason the corner chains
+   * are: by then ArenaScene has already applied this frame's movement keys, so a position written
+   * afterwards is the one that survives. Pushing on the velocity would just argue with WASD.
+   */
+  private tryStab(owner: Owner, tx: number, ty: number): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (!this.alive(f) || s.stab) return;
+    if (this.turned(owner)) { this.deny(owner, '⛓ IT IS NOT LISTENING'); return; }
+    if (this.chained(owner)) { this.deny(owner, '⛓ THE CHAINS HOLD YOU'); return; }
+    if (this.now < s.stabReadyAt) return;
+
+    s.stabReadyAt = this.now + STAB_COOLDOWN;
+    const ang = Math.atan2(ty - f.y, tx - f.x);
+    s.stab = {
+      until: this.now + STAB_MS,
+      x0: f.x,
+      y0: f.y,
+      tx: Phaser.Math.Clamp(f.x + Math.cos(ang) * STAB_DASH, this.left, this.right),
+      ty: Phaser.Math.Clamp(f.y + Math.sin(ang) * STAB_DASH, this.top, this.bottom),
+      ang,
+      hit: [],
+      lastX: f.x,
+      lastY: f.y,
+    };
+    this.avatar(owner)?.play('punch', ang);
+    Sfx.playAt('space-slash', f.x, { rate: 1.4, volume: 0.5 });
+  }
+
+  private stepStab(owner: Owner, delta: number): void {
+    const s = this.side(owner);
+    const st = s.stab;
+    if (!st) return;
+    const f = this.fighter(owner);
+    if (!this.alive(f) || this.now >= st.until) { s.stab = null; return; }
+
+    const k = Math.min(1, delta / Math.max(1, STAB_MS * 0.55));
+    f.x = Phaser.Math.Linear(f.x, st.tx, k);
+    f.y = Phaser.Math.Linear(f.y, st.ty, k);
+    (f.body as Phaser.Physics.Arcade.Body | null)?.setVelocity(0, 0);
+
+    // Swept, not sampled: the lunge covers most of its 118px in under nine frames, so a body
+    // standing between two frames' worth of positions would otherwise be walked straight through.
+    for (const t of this.targetsOf(owner)) {
+      if (st.hit.includes(t)) continue;
+      if (this.distToSegment(t.x, t.y, st.lastX, st.lastY, f.x, f.y) > STAB_HIT_R) continue;
+      st.hit.push(t);
+      this.hurt(owner, t, STAB_DAMAGE, false, BND.goldLit);
+      this.fx(owner).stabHit(t.x, t.y, st.ang);
+    }
+    st.lastX = f.x;
+    st.lastY = f.y;
+  }
+
+  /**
+   * The bot's half of the mastery.
+   *
+   * Kept here rather than in `NpcOpponent` for the reason every mastery is: an enhancement only
+   * exists while it is bound to a slot, and which slot that is — or whether the god has already
+   * taken one — is knowledge the kit has and the AI does not.
+   */
+  private updateNpcMastery(): void {
+    if (!this.masteryOn('npc')) return;
+    const s = this.sides.npc;
+    const f = this.api.npc;
+    if (!this.alive(f) || this.turned('npc') || this.chained('npc')) return;
+
+    // The dagger. Bought the moment the bar is close enough to the top that 25 health is the
+    // cheaper of the two prices, and never so close to the floor that the ability would refuse it.
+    if (this.ritualSlot('npc') && this.now >= s.npcRitualAt && s.anger >= 60
+        && f.hp > RITUAL_HP_FLOOR + RITUAL_SELF_DAMAGE + 40) {
+      s.npcRitualAt = this.now + 900;
+      this.tryRitual('npc');
+      return;
+    }
+
+    // The lunge. Fifteen damage is not worth crossing a room for, so it is only ever thrown at a
+    // range the bot is already standing at for its own reasons.
+    if (!s.stabSlots.length || s.stab || this.now < s.stabReadyAt) return;
+    const p = this.api.player;
+    if (!this.alive(p)) return;
+    if (Phaser.Math.Distance.Between(f.x, f.y, p.x, p.y) > STAB_DASH + STAB_HIT_R) return;
+    this.tryStab('npc', p.x, p.y);
   }
 
   // ── The patron ─────────────────────────────────────────────────────────────
@@ -1290,6 +1660,7 @@ export class BindKit {
     owner: Owner, tx: number, ty: number,
     count: number, damage: number, spread: number, turned: boolean,
     from?: { x: number; y: number },
+    counted = false,
   ): void {
     for (let i = 0; i < count; i++) {
       const a = Math.random() * TAU;
@@ -1306,6 +1677,7 @@ export class BindKit {
         liveAt: this.now + i * SHARD_STAGGER_MS,
         diesAt: this.now + i * SHARD_STAGGER_MS + 2600,
         turned,
+        counted,
         seed: Math.random() * 999,
       });
     }
@@ -1333,6 +1705,9 @@ export class BindKit {
     for (const t of this.godVictims(sh.owner, sh.turned)) {
       if (Phaser.Math.Distance.Between(sh.tx, sh.ty, t.x, t.y) > SHARD_BLAST_R) continue;
       this.hurt(sh.owner, t, sh.damage, sh.turned, BND.gold);
+      // Mastery requirement (Oblivion): one per body per shard, and only for shards the barrage
+      // itself threw — an idol's volley or the open sky's is not the ability being asked about.
+      if (sh.counted && sh.owner === 'player' && !sh.turned) this.record('shardHits');
     }
   }
 
@@ -1435,7 +1810,10 @@ export class BindKit {
         flock++;
         this.fx(owner).offering(c.x, c.y);
       }
-      const swing = (fed ? 1 : -1) + flock * CULT_FAITH_SHARE;
+      // Combo Breaker halves the meter's *gains*, so a fed idol fills half as fast — but a
+      // starving one starves at full speed, because the drain is the bar's own business.
+      const raw = (fed ? 1 : -1) + flock * CULT_FAITH_SHARE;
+      const swing = raw > 0 ? meterGain(f, raw) : raw;
       idol.faith = Phaser.Math.Clamp(idol.faith + swing, 0, IDOL_FAITH_MAX);
       if (fed) this.fx(owner).offering(f.x, f.y);
 
@@ -1504,7 +1882,9 @@ export class BindKit {
       const f = this.fighter(owner);
       if (!f) continue;
       if (!this.isBind(owner)) { f.bindIncomingMult = 1; this.setOutgoing(f, 1); continue; }
-      f.bindIncomingMult = TAX_VULN_STEP ** s.taxVuln;
+      // The enrage rides the same rewritten-every-frame field the tithe does, so a vessel carrying
+      // four debts and a red eye still lands on exactly the product both of them agreed to.
+      f.bindIncomingMult = (TAX_VULN_STEP ** s.taxVuln) * (this.enraged(owner) ? ENRAGE_INCOMING : 1);
       // Chosen Vessel rides on the same multiplier the tithe eats out of — one writer, so a
       // vessel with two debts on it still lands on exactly the number both of them agreed to.
       this.setOutgoing(f, (TAX_STEP ** s.taxWeak) * (1 + VESSEL_STEP * this.vesselHexes(owner)));
@@ -1526,6 +1906,7 @@ export class BindKit {
     this.vizT += delta / 1000;
 
     this.updatePatron(delta);
+    this.updateVessel();
     this.updateCharge(delta);
     this.updateBeam(delta);
     this.updateIdols();
@@ -1562,6 +1943,11 @@ export class BindKit {
         }
       }
     }
+
+    // Mastery, last of the sim: the bot's own casts, and the lunge — which has to write the body's
+    // position after everything else has finished moving it, exactly like the corner chains above.
+    this.updateNpcMastery();
+    for (const owner of BOTH) this.stepStab(owner, delta);
 
     this.paintGround();
     this.paintAir();
@@ -1644,6 +2030,32 @@ export class BindKit {
       const hexes = this.vesselHexes(owner);
       if (hexes) vesselHalo(g, this.col(owner), f.x, f.y, hexes, 0.9, this.vizT);
       if (s.ward) hexWard(g, this.col(owner), f.x, f.y, 34, 0.9, s.ward.charges, this.vizT);
+
+      // ── Mastery ──
+      // The mark: the patron's veil and its eye, worn. The eye reddens and spikes on the enrage
+      // because it is literally the same painter the one in the ceiling uses.
+      if (this.masteryOn(owner)) {
+        const rage = this.enraged(owner) ? 1 : 0;
+        vesselMark(g, this.col(owner), f.x, f.y - 34, 12, 0.95,
+          { wrath: rage, t: this.vizT, seed: owner === 'player' ? 11 : 41 });
+        if (rage) {
+          // Rings off the body, thinning as the window runs out — the only clock the enrage has
+          // out in the world, since the tray box is player-side only.
+          const left = Phaser.Math.Clamp((s.enragedUntil - this.now) / ENRAGE_MS, 0, 1);
+          for (let i = 0; i < 2; i++) {
+            const u = ((this.vizT * 1.1 + i / 2) % 1);
+            g.lineStyle(2.4 * (1 - u) + 0.4, this.col(owner)(i % 2 ? BND.wrath : BND.wrathDeep),
+              (1 - u) * 0.55 * (0.4 + left * 0.6));
+            g.strokeCircle(f.x, f.y, 18 + u * 26);
+          }
+        }
+      }
+      // The lunge, drawn as the wake behind the dagger rather than as a dash.
+      if (s.stab) {
+        patheticLunge(g, this.col(owner), s.stab.x0, s.stab.y0, f.x, f.y, 0.9);
+        ritualDagger(g, this.col(owner),
+          f.x + Math.cos(s.stab.ang) * 21, f.y + Math.sin(s.stab.ang) * 21, s.stab.ang, 0.95);
+      }
       if (s.overrage) overrageAura(g, this.col(owner), f.x, f.y, 0.95, this.vizT);
       if (s.chargeStartedAt) {
         eviscerateCharge(g, this.col(owner), f.x, f.y, this.chargeOf(owner), 0.95, this.vizT);
@@ -1824,12 +2236,40 @@ export class BindKit {
       description: `The beam is being held past the point the patron said stop. It keeps its fastest tick rate for as long as the button is down, and it costs ${OVERRAGE_SELF_DPS} HP and ${OVERRAGE_ANGER_RATE} anger every second you keep it there.`,
     } : null);
 
+    this.api.setStatusIndicator('bind-enraged', playerIs && this.enraged('player') ? {
+      name: 'Enraged', emoji: '👁️', color: BND.wrath, priority: 2,
+      description: `The eye you are wearing has gone red with the one in the ceiling. ${Math.round(ENRAGE_SPEED * 100)}% more speed, ${Math.round((1 - ENRAGE_INCOMING) * 100)}% less damage taken, and every debuff scoured off you four times a second — so the wrath that closes the ultimate cannot make anything stick.`,
+      until: s.enragedUntil,
+    } : null);
+
     const taxes = s.taxSpeed + s.taxVuln + s.taxWeak;
+    // With the mastery on the god still takes a slot, but it hands a Pathetic Stab back into the
+    // hole — so the tithe box has to say which of the two happened rather than always saying "gone".
+    const taken = s.stabSlots.length
+      ? `, and your ${s.stabSlots.join(' and ')} slot${s.stabSlots.length > 1 ? 's are' : ' is'} down to a Pathetic Stab`
+      : s.sacrificed.length ? `, and your ${s.sacrificed.join(' and ')} slot${s.sacrificed.length > 1 ? 's' : ''}` : '';
     this.api.setStatusIndicator('bind-tithe', playerIs && (taxes > 0 || s.sacrificed.length) ? {
       name: 'Tithe', emoji: '⛓️', color: BND.wrathDeep, priority: 4,
-      description: `What the god has already taken: ${s.taxSpeed} × speed, ${s.taxVuln} × vulnerability, ${s.taxWeak} × damage${s.sacrificed.length ? `, and your ${s.sacrificed.join(' and ')} slot${s.sacrificed.length > 1 ? 's' : ''}` : ''}. None of it comes back.`,
+      description: `What the god has already taken: ${s.taxSpeed} × speed, ${s.taxVuln} × vulnerability, ${s.taxWeak} × damage${taken}. None of it comes back.`,
       count: taxes,
     } : null);
+  }
+
+  /**
+   * Mastery — what Bind's own ability cards are counting.
+   *
+   * Only two of them are ever anything other than their own cooldown: a slot the god took is now
+   * counting the lunge's 1.8 seconds rather than the dead ability underneath it, and Ritual
+   * Sacrifice has no cooldown at all, so its card is simply always full.
+   */
+  getBarRatio(abilityId: string, time: number): number {
+    if (abilityId === RITUAL_ID) return 1;
+    const s = this.sides.player;
+    const key = SACRIFICE_SLOTS.find((sl) => sl.id === abilityId)?.key;
+    if (key && s.stabSlots.includes(key)) {
+      return Phaser.Math.Clamp(1 - (s.stabReadyAt - time) / STAB_COOLDOWN, 0, 1);
+    }
+    return this.api.player.getCooldownRatio(abilityId);
   }
 
   // ── Public accessors (read by ArenaScene / the AI) ──────────────────────────
@@ -1845,11 +2285,12 @@ export class BindKit {
 
   private speedMult(owner: Owner): number {
     if (!this.isBind(owner)) return 1;
-    // The tithe takes, the cult and the hexes give back. All three are read from here so the
-    // pulled multiplier is the only place any of them exists.
+    // The tithe takes, the cult, the hexes and the enrage give back. All four are read from here so
+    // the pulled multiplier is the only place any of them exists.
     return (TAX_STEP ** this.side(owner).taxSpeed)
       * (1 + CULT_SPEED * this.cultCount(owner))
-      * (1 + VESSEL_STEP * this.vesselHexes(owner));
+      * (1 + VESSEL_STEP * this.vesselHexes(owner))
+      * (this.enraged(owner) ? 1 + ENRAGE_SPEED : 1);
   }
 
   /** 0–100. The bot's whole decision surface. */
@@ -1895,5 +2336,16 @@ export class BindKit {
 
   wardCharges(owner: Owner): number {
     return this.side(owner).ward?.charges ?? 0;
+  }
+
+  /**
+   * Mastery — the slot Ritual Sacrifice took from the opponent, or null.
+   *
+   * Read side-effect-free by `doBindAbilities` so its rotation stops casting the base ability out
+   * of a key that no longer holds one. The dagger itself never goes through `castAbility` at all:
+   * an enhancement id is not in `element.abilities`, so the kit casts it off its own timer.
+   */
+  npcRitualSlot(): 'e' | 'r' | 'f' | null {
+    return this.ritualSlot('npc');
   }
 }

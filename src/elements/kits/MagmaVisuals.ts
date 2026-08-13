@@ -533,6 +533,244 @@ export function breathCone(
   }
 }
 
+/**
+ * Mag-Mortar's shell (Click+). A finned artillery round coming down nose-first, drawn along
+ * `ang` — the whole point of the upgrade is that the incoming is legible as artillery rather
+ * than as a blob of lava, so it gets a real silhouette: casing, driving band, three fins and a
+ * hot nose.
+ */
+export function mortarShell(
+  g: Phaser.GameObjects.Graphics,
+  tint: MagmaColorFn,
+  x: number, y: number, ang: number, alpha = 1,
+): void {
+  const cos = Math.cos(ang), sin = Math.sin(ang);
+  const px = -sin, py = cos;
+  const at = (d: number, o: number) => new Phaser.Geom.Point(x + cos * d + px * o, y + sin * d + py * o);
+
+  // Fins at the tail.
+  g.fillStyle(tint(MAG.basalt), alpha);
+  for (const o of [-1, 1]) {
+    g.fillPoints([at(-9, o * 1.6), at(-15, o * 6), at(-9, o * 5.4)], true);
+  }
+  // Casing: a capsule from tail to nose, with a lit shoulder.
+  g.fillStyle(tint(MAG.crustDeep), alpha);
+  g.fillPoints([at(-10, -4), at(5, -4.4), at(11, 0), at(5, 4.4), at(-10, 4)], true);
+  g.fillStyle(tint(MAG.ash), alpha * 0.7);
+  g.fillPoints([at(-9, -3.6), at(4, -3.8), at(8, -1.4), at(-9, -1.6)], true);
+  // Driving band.
+  g.fillStyle(tint(MAG.gold), alpha * 0.9);
+  g.fillPoints([at(-4, -4.2), at(-1.5, -4.3), at(-1.5, 4.3), at(-4, 4.2)], true);
+  // The nose, glowing, and the heat trail behind it.
+  const nose = at(11, 0);
+  g.fillStyle(tint(MAG.lava), alpha * 0.9);
+  g.fillCircle(nose.x, nose.y, 3.4);
+  g.fillStyle(tint(MAG.white), alpha);
+  g.fillCircle(nose.x, nose.y, 1.7);
+  for (let i = 1; i <= 4; i++) {
+    const p = at(-14 - i * 5, 0);
+    g.fillStyle(tint(i < 2 ? MAG.lava : MAG.smoke), alpha * (0.5 - i * 0.1));
+    g.fillCircle(p.x, p.y, 4.5 - i * 0.7);
+  }
+}
+
+/**
+ * Full Draconic's scale armour (Q+): overlapping plates clamped over the dragon, turning
+ * slowly. Distinct from the hatched glow underneath it, because four seconds of immunity has
+ * to be readable from across the arena.
+ */
+export function scaleArmor(
+  g: Phaser.GameObjects.Graphics,
+  tint: MagmaColorFn,
+  x: number, y: number, t: number, alpha = 1,
+): void {
+  const r = 30;
+  g.fillStyle(tint(MAG.membrane), alpha * 0.2);
+  g.fillCircle(x, y, r + 4);
+  // Two rings of plates, counter-turning, each plate a rounded wedge pointing outward.
+  for (let ring = 0; ring < 2; ring++) {
+    const n = 9 + ring * 3;
+    const rr = r * (0.68 + ring * 0.32);
+    const spin = t * (ring === 0 ? 0.9 : -0.6);
+    for (let i = 0; i < n; i++) {
+      const a = spin + (i / n) * Math.PI * 2;
+      const cx = x + Math.cos(a) * rr;
+      const cy = y + Math.sin(a) * rr * 0.86;
+      const w = 7 - ring * 1.4;
+      g.fillStyle(tint(ring === 0 ? MAG.scaleDeep : MAG.scale), alpha * 0.9);
+      g.fillPoints([
+        new Phaser.Geom.Point(cx + Math.cos(a) * w, cy + Math.sin(a) * w),
+        new Phaser.Geom.Point(cx + Math.cos(a + 2.2) * w * 0.8, cy + Math.sin(a + 2.2) * w * 0.8),
+        new Phaser.Geom.Point(cx + Math.cos(a - 2.2) * w * 0.8, cy + Math.sin(a - 2.2) * w * 0.8),
+      ], true);
+      g.fillStyle(tint(MAG.scaleLit), alpha * 0.5);
+      g.fillCircle(cx + Math.cos(a) * w * 0.35, cy + Math.sin(a) * w * 0.35, 1.4);
+    }
+  }
+  // A bright rim that pulses, so the four seconds are visibly counting.
+  g.lineStyle(2.2, tint(MAG.scaleLit), alpha * (0.5 + 0.35 * Math.sin(t * 6)));
+  g.strokeCircle(x, y, r + 4);
+}
+
+/**
+ * Magma Mastery — the chainsaw, drawn along `ang` with its motor at `x,y` and the bar running
+ * out in front of it. `heat` (0–1) is how close it is to detonating and drives everything:
+ * the bar's colour from gold through white to a furious red, how far the teeth throw sparks,
+ * and how hard the whole tool shakes in the hand. `rev` (0–1) is the charge, so a saw being
+ * wound up is visibly a shorter, tighter version of the same object.
+ */
+export function magmaSaw(
+  g: Phaser.GameObjects.Graphics,
+  tint: MagmaColorFn,
+  x: number, y: number, ang: number, spin: number, heat: number, rev: number,
+  t: number, seed: number, alpha = 1,
+): void {
+  const c = Math.cos(ang);
+  const s = Math.sin(ang);
+  const nx = -s;
+  const ny = c;
+  // Length is bought by the charge; the shake is bought by the heat.
+  const len = 34 + rev * 22;
+  const halfW = 7.5;
+  const shake = heat * heat * 2.4;
+  const ox = x + Math.sin(t * 41 + seed) * shake;
+  const oy = y + Math.cos(t * 37 + seed) * shake;
+  const at = (d: number, o: number): Phaser.Geom.Point =>
+    new Phaser.Geom.Point(ox + c * d + nx * o, oy + s * d + ny * o);
+
+  // The colour of the cut: gold when cold, white as it climbs, red-hot at the end.
+  const blade = heat < 0.45 ? MAG.gold : heat < 0.78 ? MAG.white : MAG.magma;
+  const glow = heat < 0.45 ? MAG.lava : heat < 0.78 ? MAG.gold : MAG.lava;
+
+  // Heat haze around the whole tool.
+  g.fillStyle(tint(glow), alpha * (0.1 + heat * 0.22));
+  g.fillCircle(ox + c * len * 0.5, oy + s * len * 0.5, len * 0.72);
+
+  // Motor housing: a crusted block behind the bar, with a vent slot showing the fire inside.
+  g.fillStyle(tint(MAG.basalt), alpha);
+  g.fillPoints([at(-16, -10), at(2, -9), at(2, 9), at(-16, 10)], true);
+  g.fillStyle(tint(MAG.crustDeep), alpha);
+  g.fillPoints([at(-14, -7.5), at(0, -7), at(0, 7), at(-14, 7.5)], true);
+  for (let i = 0; i < 3; i++) {
+    const d = -12 + i * 4.4;
+    g.lineStyle(2, tint(glow), alpha * (0.5 + 0.5 * Math.sin(t * 24 + i + seed)));
+    const a1 = at(d, -5);
+    const a2 = at(d, 5);
+    g.lineBetween(a1.x, a1.y, a2.x, a2.y);
+  }
+  // Grip loop over the top of the motor, so it reads as a tool somebody is holding.
+  g.lineStyle(2.6, tint(MAG.ash), alpha * 0.9);
+  const g1 = at(-15, -10.5);
+  const g2 = at(-6, -15);
+  const g3 = at(1, -9.5);
+  g.beginPath();
+  g.moveTo(g1.x, g1.y);
+  g.lineTo(g2.x, g2.y);
+  g.lineTo(g3.x, g3.y);
+  g.strokePath();
+
+  // The bar: a rounded blade with a molten core running down the middle of it.
+  const bar: Phaser.Geom.Point[] = [
+    at(0, -halfW), at(len - 6, -halfW * 0.7), at(len, 0),
+    at(len - 6, halfW * 0.7), at(0, halfW),
+  ];
+  g.fillStyle(tint(MAG.basalt), alpha);
+  g.fillPoints(bar, true);
+  g.fillStyle(tint(glow), alpha * (0.55 + heat * 0.45));
+  g.fillPoints([at(2, -halfW * 0.4), at(len - 7, -halfW * 0.3), at(len - 4, 0),
+    at(len - 7, halfW * 0.3), at(2, halfW * 0.4)], true);
+
+  // Teeth: chain links marching round the bar, so the thing is visibly *running*.
+  const links = 16;
+  for (let i = 0; i < links; i++) {
+    // One parameter walking the perimeter — down one edge, round the nose, back the other.
+    const p = ((i / links) + spin) % 1;
+    let d: number;
+    let o: number;
+    if (p < 0.45) { d = (p / 0.45) * len; o = -halfW - 1.4; }
+    else if (p < 0.55) { d = len + Math.sin((p - 0.45) / 0.1 * Math.PI) * 2.4; o = ((p - 0.5) / 0.05) * halfW; }
+    else { d = (1 - (p - 0.55) / 0.45) * len; o = halfW + 1.4; }
+    const pt = at(d, o);
+    g.fillStyle(tint(i % 2 ? blade : MAG.crust), alpha);
+    g.fillCircle(pt.x, pt.y, 2.1);
+    // Every fourth link carries a cutter, angled the way the chain is travelling.
+    if (i % 4 === 0) {
+      const lead = at(d + (o < 0 ? 3.4 : -3.4), o * 1.5);
+      g.fillStyle(tint(blade), alpha * 0.95);
+      g.fillTriangle(pt.x, pt.y, lead.x, lead.y, pt.x + nx * Math.sign(o) * 1.6, pt.y + ny * Math.sign(o) * 1.6);
+    }
+  }
+
+  // Sparks thrown off the nose, more and further the hotter it gets.
+  const sparks = 3 + Math.round(heat * 6);
+  for (let i = 0; i < sparks; i++) {
+    const ph = (t * (3 + heat * 4) + noise(seed, i)) % 1;
+    const a = ang + (noise(seed, 40 + i) - 0.5) * 2.4;
+    const d = len + ph * (10 + heat * 26);
+    g.fillStyle(tint(ph < 0.35 ? MAG.white : blade), alpha * (1 - ph) * 0.9);
+    g.fillCircle(ox + Math.cos(a) * d, oy + Math.sin(a) * d, (1 + heat * 1.6) * (1 - ph * 0.5));
+  }
+
+  // The last second before it goes: a warning ring that closes on the motor.
+  if (heat > 0.86) {
+    const warn = (heat - 0.86) / 0.14;
+    g.lineStyle(2 + warn * 2, tint(MAG.magma), alpha * (0.4 + 0.6 * Math.abs(Math.sin(t * 26))));
+    g.strokeCircle(ox, oy, 34 - warn * 16);
+  }
+}
+
+/**
+ * Magma Mastery — Obsidian Coat. Glassy black plates locked over the wearer, catching the light
+ * along their broken edges with fire showing in the seams between them. `p` (0–1) is how much
+ * overfill bought it, and it decides how many plates there are and how much of the body they
+ * cover, so a thin coat and a full one are the same object at two different thicknesses.
+ */
+export function obsidianCoat(
+  g: Phaser.GameObjects.Graphics,
+  tint: MagmaColorFn,
+  x: number, y: number, p: number, t: number, alpha = 1,
+): void {
+  const r = 26;
+  // The fire trapped underneath, showing through everywhere the glass has not closed over.
+  g.fillStyle(tint(MAG.magma), alpha * (0.1 + p * 0.16));
+  g.fillCircle(x, y, r + 5);
+
+  const plates = 7 + Math.round(p * 7);
+  for (let i = 0; i < plates; i++) {
+    const a = (i / plates) * TAU + t * 0.35;
+    const rr = r * (0.72 + noise(i * 13 + 7, 1) * 0.34);
+    const cx = x + Math.cos(a) * rr;
+    const cy = y + Math.sin(a) * rr * 0.88;
+    const size = (4.4 + p * 3.6) * (0.7 + noise(i * 5 + 3, 2) * 0.6);
+    // Each plate is a shard of volcanic glass — angular, never round.
+    const pts: Phaser.Geom.Point[] = [];
+    for (let k = 0; k < 4; k++) {
+      const ka = a + 0.9 + (k / 4) * TAU;
+      const kr = size * (0.7 + noise(i * 17 + k, 3) * 0.7);
+      pts.push(new Phaser.Geom.Point(cx + Math.cos(ka) * kr, cy + Math.sin(ka) * kr));
+    }
+    g.fillStyle(tint(MAG.scorch), alpha * 0.95);
+    g.fillPoints(pts, true);
+    // The conchoidal sheen: one lit edge per shard, which is what makes it read as glass.
+    g.lineStyle(1.4, tint(MAG.ash), alpha * (0.35 + p * 0.35));
+    g.lineBetween(pts[0].x, pts[0].y, pts[1].x, pts[1].y);
+    g.lineStyle(1, tint(MAG.gold), alpha * 0.5 * (0.4 + 0.6 * Math.sin(t * 4 + i)));
+    g.lineBetween(pts[2].x, pts[2].y, pts[3].x, pts[3].y);
+  }
+
+  // Seams of heat running between the plates — the coat is still cooling.
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * TAU - t * 0.35;
+    g.lineStyle(1.6, tint(MAG.magma), alpha * (0.2 + p * 0.3) * (0.5 + 0.5 * Math.sin(t * 5 + i * 2)));
+    g.lineBetween(x + Math.cos(a) * r * 0.32, y + Math.sin(a) * r * 0.28,
+      x + Math.cos(a) * (r + 3), y + Math.sin(a) * (r + 3) * 0.9);
+  }
+
+  // A hard black rim, so a coated fighter has a silhouette rather than a halo.
+  g.lineStyle(2.2, tint(MAG.basalt), alpha * 0.9);
+  g.strokeEllipse(x, y, (r + 5) * 2, (r + 4) * 1.9);
+}
+
 // ── Fx ────────────────────────────────────────────────────────────────────
 
 export class MagmaFx extends FxBase {
@@ -637,6 +875,32 @@ export class MagmaFx extends FxBase {
     this.shock(x, y, radius * 0.3, radius * 1.05, color, 520, depth - 1);
     this.crack(x, y, radius * 0.9, color);
     this.ember(x, y, 12, radius * 0.7, 780, MAG.ember, depth);
+  }
+
+  /**
+   * Volcanic glass setting on somebody: black shards flying in from all round and locking
+   * onto the wearer, rather than the usual burst flying away from a point.
+   */
+  glass(x: number, y: number, r: number, count = 14, ms = 620, depth = 10): void {
+    const seed = Math.random() * 999;
+    const shards = Array.from({ length: count }, (_, i) => ({
+      a: (i / count) * TAU + noise(seed, i) * 0.6,
+      d: r * (1.5 + noise(seed, 20 + i) * 1.1),
+      s: 3 + noise(seed, 40 + i) * 4,
+    }));
+    this.anim(depth, ms, (g, t) => {
+      const e = easeOut(t);
+      for (const p of shards) {
+        // Inward, and settling — a coat arriving, not an explosion leaving.
+        const d = p.d * (1 - e);
+        const px = x + Math.cos(p.a) * d;
+        const py = y + Math.sin(p.a) * d * 0.9;
+        crustPlate(g, this.tint, px, py, p.s * (0.6 + e * 0.5), p.a + t * 3, seed + p.s,
+          MAG.scorch, 0.95);
+        g.lineStyle(1.2, this.tint(MAG.gold), (1 - t) * 0.6);
+        g.strokeCircle(px, py, p.s * 0.7);
+      }
+    });
   }
 
   /** Dark puffs — a vessel venting, or something cooling. */

@@ -6,7 +6,7 @@ import { GAUNTLET_COST } from '../data/GauntletData';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addBackdrop, addButton, addChip, addIconButton, addToggle, showToast,
-  fillDiamond, drawGlow,
+  addFeatureCard, drawIcon, fillDiamond, drawGlow, IconName,
 } from '../ui';
 import { Music } from '../audio';
 
@@ -14,13 +14,13 @@ import { Music } from '../audio';
 const LOGO_COLD = 0xff8a2b;
 const LOGO_HOT = 0xff1133;
 
-/** The five base elements, orbiting the sigil ring behind the wordmark. */
-const SIGIL_ELEMENTS: Array<{ emoji: string; color: number }> = [
-  { emoji: '🔥', color: 0xff4400 },
-  { emoji: '💧', color: 0x0088ff },
-  { emoji: '🌿', color: 0x44cc44 },
-  { emoji: '💨', color: 0xaaddff },
-  { emoji: '🪨', color: 0x887755 },
+/** The five base elements, set into the engraved rail under the menu. */
+const SIGIL_ELEMENTS: Array<{ icon: IconName; color: number }> = [
+  { icon: 'flame', color: 0xff4400 },
+  { icon: 'droplet', color: 0x0088ff },
+  { icon: 'leaf', color: 0x44cc44 },
+  { icon: 'wind', color: 0xaaddff },
+  { icon: 'rock', color: 0x887755 },
 ];
 
 export class TitleScene extends Phaser.Scene {
@@ -52,79 +52,89 @@ export class TitleScene extends Phaser.Scene {
       fontSize: '12px', fontFamily: FONT_UI, color: T.dim, letterSpacing: 4,
     }).setOrigin(0.5).setDepth(DEPTH.content);
 
-    // ── Navigation grid ─────────────────────────────────────────────
+    // ── Navigation cards ────────────────────────────────────────────
+    // A row of dossiers, the same shape the element roster uses: glyph in a lit well,
+    // name, archetype line, one line of what it is, and the prompt. The old grid was six
+    // wide plates whose only picture was an emoji nailed to the left edge.
     const gauntletUnlocked = PlayerData.isGauntletUnlocked();
     const tiles: Array<{
-      label: string; sub: string; icon: string; accent: number; action: (() => void) | null;
+      label: string; kicker: string; blurb: string; icon: IconName; status: string;
+      accent: number; action: (() => void) | null;
     }> = [
       {
-        label: 'PLAY', sub: 'Duel a rival element', icon: '⚔', accent: C.verdant,
+        label: 'PLAY', kicker: 'Duel', icon: 'sword', accent: C.verdant,
+        blurb: 'One element against another. Pick your rival and settle it.',
+        status: '▶  FIGHT',
         // Explicit {} (not omitted) — Phaser only overwrites scene data when the
         // argument is truthy, so omitting it here would leak a stale
         // { mode: 'invasion' } from a previous visit to the INVASION button.
         action: () => this.scene.start('MenuScene', {}),
       },
       {
-        label: 'CAMPAIGN', sub: 'Journey the worlds', icon: '🗺', accent: C.ember,
+        label: 'CAMPAIGN', kicker: 'Journey', icon: 'map', accent: C.ember,
+        blurb: 'Forty-seven Sovereigns across the worlds, and whatever waits past them.',
+        status: '▶  TRAVEL',
         action: () => this.scene.start('CampaignSlotSelectScene'),
       },
       {
-        label: 'INVASION', sub: 'Hold back the husks', icon: '👾', accent: C.corrupt,
+        label: 'INVASION', kicker: 'Siege', icon: 'husk', accent: C.corrupt,
+        blurb: 'Hold the mansion. The husks keep coming and they keep learning.',
+        status: '▶  HOLD',
         action: () => this.scene.start('MenuScene', { mode: 'invasion' }),
       },
       {
-        label: 'SHOP', sub: 'Spend your shards', icon: '💎', accent: C.frost,
+        label: 'SHOP', kicker: 'Trade', icon: 'shard', accent: C.frost,
+        blurb: 'Turn shards into ability upgrades, one slot at a time.',
+        status: '▶  BROWSE',
         action: () => this.scene.start('ShopScene'),
       },
       {
-        label: 'LAB', sub: 'Fuse and forge', icon: '⚗', accent: C.arcane,
+        label: 'LAB', kicker: 'Forge', icon: 'flask', accent: C.arcane,
+        blurb: 'Fuse two elements into a third. Forge perks out of the rest.',
+        status: '▶  ENTER',
         action: () => this.scene.start('LabScene'),
       },
       {
-        label: 'GAUNTLETS',
-        sub: gauntletUnlocked ? 'Six fights, one life' : `Locked — 💎${GAUNTLET_COST} in Shop`,
-        icon: gauntletUnlocked ? '🏆' : '🔒',
+        label: 'GAUNTLETS', kicker: 'Trial', icon: gauntletUnlocked ? 'trophy' : 'lock',
         accent: C.gold,
+        blurb: gauntletUnlocked
+          ? 'Six fights, one life, no second chances between them.'
+          : `Sealed until you buy the key in the Shop — ${GAUNTLET_COST} shards.`,
+        status: gauntletUnlocked ? '▶  RUN IT' : 'LOCKED',
         action: gauntletUnlocked ? () => this.scene.start('GauntletSelectScene') : null,
       },
     ];
 
-    const tileW = 236;
-    const tileH = 88;
-    const gapX = 18;
-    const gapY = 16;
-    const cols = 3;
-    const gridW = cols * tileW + (cols - 1) * gapX;
-    const startX = cx - gridW / 2 + tileW / 2;
-    const startY = 262;
+    const cardW = 148;
+    const cardH = 186;
+    const cardGap = 10;
+    const gridW = tiles.length * cardW + (tiles.length - 1) * cardGap;
+    const startX = cx - gridW / 2 + cardW / 2;
+    const cardY = 344;
 
     tiles.forEach((tile, i) => {
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-      addButton(this, {
-        x: startX + col * (tileW + gapX),
-        y: startY + row * (tileH + gapY),
-        w: tileW, h: tileH,
-        label: tile.label,
-        sublabel: tile.sub,
-        icon: tile.icon,
+      addFeatureCard(this, {
+        x: startX + i * (cardW + cardGap),
+        y: cardY, w: cardW, h: cardH,
         accent: tile.accent,
-        variant: tile.action ? 'ghost' : 'quiet',
-        fontSize: 21,
-        align: 'left',
-        cut: 14,
-        disabled: !tile.action,
+        icon: tile.icon,
+        title: tile.label,
+        kicker: tile.kicker,
+        blurb: tile.blurb,
+        status: tile.status,
+        locked: !tile.action,
+        depth: DEPTH.panel,
         onClick: () => tile.action?.(),
       });
     });
 
     // ── Online battle rail ──────────────────────────────────────────
-    const onlineY = startY + 2 * (tileH + gapY) + 22;
+    const onlineY = cardY + cardH / 2 + 40;
     addButton(this, {
-      x: cx, y: onlineY, w: gridW, h: 54,
+      x: cx, y: onlineY, w: gridW, h: 50,
       label: 'ONLINE BATTLE',
       sublabel: 'Challenge a friend over a peer-to-peer link',
-      icon: '🌐',
+      iconArt: 'globe',
       accent: 0x2ee6c0,
       variant: 'solid',
       fontSize: 19,
@@ -140,12 +150,12 @@ export class TitleScene extends Phaser.Scene {
 
     // ── Corner chrome ───────────────────────────────────────────────
     addIconButton(this, {
-      x: 40, y: 44, icon: '🏆', accent: C.gold, tooltip: 'Achievements',
+      x: 40, y: 44, iconArt: 'trophy', accent: C.gold, tooltip: 'Achievements',
       onClick: () => this.scene.start('AchievementsScene'),
     });
 
     addIconButton(this, {
-      x: 92, y: 44, icon: '🔊', accent: 0x2ee6c0, tooltip: 'Audio settings',
+      x: 92, y: 44, iconArt: 'speaker', accent: 0x2ee6c0, tooltip: 'Audio settings',
       onClick: () => {
         this.scene.pause();
         this.scene.launch('AudioSettingsScene', { parentSceneKey: this.scene.key });
@@ -153,13 +163,15 @@ export class TitleScene extends Phaser.Scene {
     });
 
     addChip(this, {
-      x: width - 20, y: 30, icon: '💎', value: `${PlayerData.getShards()}`,
+      x: width - 20, y: 30, iconArt: 'shard', value: `${PlayerData.getShards()}`,
       accent: C.gold, originX: 1,
     });
 
     if (Cheats.isCheatMode()) {
       // Clears the audio button that now sits beside the achievements one.
-      this.add.text(130, 44, '😈 CHEAT PROFILE', {
+      const markG = this.add.graphics().setDepth(DEPTH.content);
+      drawIcon(markG, 'skull', 138, 44, 8, C.blood);
+      this.add.text(152, 44, 'CHEAT PROFILE', {
         fontSize: '13px', fontFamily: FONT_DISPLAY, color: hex(C.blood), letterSpacing: 1,
       }).setOrigin(0, 0.5).setDepth(DEPTH.content);
     }
@@ -181,8 +193,8 @@ export class TitleScene extends Phaser.Scene {
           konamiIdx = 0;
           const { campaignSlot } = applyKonamiCheat();
           showToast(this, campaignSlot
-            ? '🏆 All Gauntlets Complete!\n+9999 💎  +9999 🩸  +9999 🗝️  +9999 ✨ (Slot 1)\n🌀 Slot 1 cheat-flagged'
-            : '🏆 All Gauntlets Complete!\n+9999 💎  +9999 🩸', { accent: C.gold });
+            ? 'ALL GAUNTLETS COMPLETE\n+9999 shards · corrupt · keys · essence (Slot 1)\nSlot 1 cheat-flagged'
+            : 'ALL GAUNTLETS COMPLETE\n+9999 shards  ·  +9999 corrupt', { accent: C.gold });
         }
       } else {
         konamiIdx = key === KONAMI[0] ? 1 : 0;
@@ -259,8 +271,9 @@ export class TitleScene extends Phaser.Scene {
       gem.lineStyle(1, el.color, 0.25);
       gem.strokeCircle(gx, cy, 19);
 
-      this.add.text(gx, cy, el.emoji, { fontSize: '15px' })
-        .setOrigin(0.5).setAlpha(0.9).setDepth(DEPTH.base + 3);
+      // The element's own mark, struck into the setting rather than stuck on top of it.
+      const mark = this.add.graphics().setDepth(DEPTH.base + 3);
+      drawIcon(mark, el.icon, gx, cy, 8.5, mix(el.color, 0xffffff, 0.35));
 
       this.tweens.add({
         targets: gem, alpha: { from: 0.45, to: 1 },
@@ -311,7 +324,7 @@ export class TitleScene extends Phaser.Scene {
     const flash = this.add.rectangle(width / 2, height / 2, width, height, 0xff0022, 0.55).setDepth(DEPTH.toast - 1);
     this.tweens.add({ targets: flash, alpha: 0, duration: 700, onComplete: () => flash.destroy() });
 
-    showToast(this, '😈 CHEATS UNLOCKED\nUse the toggle in the bottom-right corner', { accent: C.blood, holdMs: 4000 });
+    showToast(this, 'CHEATS UNLOCKED\nUse the toggle in the bottom-right corner', { accent: C.blood, holdMs: 4000 });
     this.buildCheatToggle(width, height);
   }
 
@@ -328,7 +341,9 @@ export class TitleScene extends Phaser.Scene {
     const accent = on ? C.blood : C.steel;
     drawGlow(plate, bx - 96, by - 18, 192, 36, accent, on ? 0.4 : 0.15, 3, 2.5, 8);
 
-    this.add.text(bx - 84, by, on ? '😈 CHEATS' : '🎮 NORMAL', {
+    drawIcon(plate, on ? 'skull' : 'shield', bx - 90, by, 7,
+      on ? mix(C.blood, 0xffffff, 0.4) : C.steel);
+    this.add.text(bx - 78, by, on ? 'CHEATS' : 'NORMAL', {
       fontSize: '12px', fontFamily: FONT_DISPLAY,
       color: on ? hex(mix(C.blood, 0xffffff, 0.5)) : T.faint,
       letterSpacing: 1,
@@ -342,13 +357,13 @@ export class TitleScene extends Phaser.Scene {
     // Rebuild button — re-maxes the cheat profile after new content is added
     if (on) {
       addIconButton(this, {
-        x: bx - 122, y: by, r: 16, icon: '↻', accent: C.steel, tooltip: 'Rebuild cheat save',
+        x: bx - 124, y: by, r: 16, iconArt: 'refresh', accent: C.steel, tooltip: 'Rebuild cheat save',
         onClick: () => {
           // A rebuild that cannot reach some content is the one moment anybody would ever
           // notice, so say so here rather than only in the console.
           const gaps = createCheatSave();
           if (gaps.length) {
-            showToast(this, `⚠ Cheat save incomplete\n${gaps.length} gap${gaps.length === 1 ? '' : 's'} — see console`, { accent: C.blood, holdMs: 4000 });
+            showToast(this, `CHEAT SAVE INCOMPLETE\n${gaps.length} gap${gaps.length === 1 ? '' : 's'} — see console`, { accent: C.blood, holdMs: 4000 });
           } else {
             this.scene.restart();
           }

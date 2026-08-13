@@ -3,7 +3,8 @@ import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import {
   PSN, PassionAvatar, PassionFx,
-  blush, heart, heartEyes, kissMark, loveBar, rose as drawRose,
+  attractionRebound, attractionRing, blush, heart, heartEyes, kissMark, loveBar,
+  perfumeAura, perfumeCloud, rose as drawRose,
 } from '../../../elements/kits/PassionVisuals';
 
 /**
@@ -755,6 +756,184 @@ export const theThreeStages: PreviewScript = {
       const m = meter(BAR_MAX * r.at);
       loveTarget(ctx, at, m);
       label(ctx, at.x, at.y + 34, r.note, i === 0 ? PSN.wine : PSN.pink);
+    });
+  },
+};
+
+// ── Mastery ───────────────────────────────────────────────────────────
+
+/**
+ * Attraction. The ring is 260px in play and the preview panel is not, so it is drawn to the
+ * panel and the real figure lives in the caption — but the *rule* is not faked: the loop runs
+ * the kit's own clamp against a target that is genuinely trying to leave, so what you are
+ * watching is the mechanic and not an animation of it.
+ */
+export const masteryAttraction: PreviewScript = {
+  duration: 8000,
+  scale: 0.85,
+  caption: 'Passive — a 260px ring that walks with you. Whatever steps inside it does not get back out',
+  run(ctx) {
+    const { fx, av } = stageIt(ctx);
+    const R = Math.min(ctx.w, ctx.h) * 0.4;
+    const foe = { x: ctx.cx + R + 60, y: ctx.cy - 14 };
+    const m = meter(BAR_MAX * 0.16);
+    loveTarget(ctx, foe, m);
+
+    const ring = ctx.adopt(ctx.scene.add.graphics().setDepth(1));
+    const push = ctx.adopt(ctx.scene.add.graphics().setDepth(12));
+    let caught = false;
+    let heldAng = 0;
+    let heldUntil = -1;
+
+    ctx.onFrame((dt, elapsed) => {
+      const s = dt / 1000;
+      const t = elapsed / 1000;
+
+      // What the target is trying to do: walk in, bolt for the far wall, then run the ring
+      // looking for a gap in it.
+      if (elapsed < 1500) {
+        foe.x -= 105 * s;
+      } else if (elapsed < 3300) {
+        foe.x += 120 * s;
+        foe.y -= 26 * s;
+      } else {
+        const a = Math.atan2(foe.y - ctx.cy, foe.x - ctx.cx) + 0.85 * s;
+        const d = Phaser.Math.Distance.Between(ctx.cx, ctx.cy, foe.x, foe.y) + 70 * s;
+        foe.x = ctx.cx + Math.cos(a) * d;
+        foe.y = ctx.cy + Math.sin(a) * d;
+      }
+
+      // …and the rule, exactly as the kit applies it.
+      const dist = Phaser.Math.Distance.Between(ctx.cx, ctx.cy, foe.x, foe.y);
+      if (!caught && dist <= R) {
+        caught = true;
+        fx.heartRing(foe.x, foe.y, 8, 44, PSN.pink, 480);
+        tick(ctx, foe.x, foe.y - 44, '💞 CAUGHT', PSN.hot);
+      }
+      if (caught && dist > R) {
+        heldAng = Math.atan2(foe.y - ctx.cy, foe.x - ctx.cx);
+        heldUntil = elapsed + 240;
+        foe.x = ctx.cx + Math.cos(heldAng) * R;
+        foe.y = ctx.cy + Math.sin(heldAng) * R;
+      }
+
+      ring.clear();
+      attractionRing(ring, ctx.tint, ctx.cx, ctx.cy, R, t, 1, 3);
+      push.clear();
+      if (elapsed < heldUntil) {
+        const left = (heldUntil - elapsed) / 240;
+        attractionRebound(push, ctx.tint, foe.x, foe.y, heldAng, left, left);
+      }
+    });
+
+    label(ctx, ctx.cx, ctx.h - 12, 'they are trying to leave the whole time', PSN.wine);
+
+    // The point of the cage: everything with a range gate now always reaches.
+    for (const when of [4200, 6300]) {
+      ctx.at(when, () => {
+        const ang = Math.atan2(foe.y - ctx.cy, foe.x - ctx.cx);
+        av.play('sweep', ang);
+        fx.flirtCone(ctx.cx, ctx.cy, ang, FLIRT_REACH, FLIRT_HALF_ANGLE);
+        addLove(ctx, fx, foe, m, FLIRT_LOVE + stageOf(m.cur / m.max) * FLIRT_STAGE_BONUS, '❤', when);
+      });
+    }
+  },
+};
+
+/**
+ * Perfume. Both halves in one loop, because either on its own is a different ability: the cloud
+ * charming somebody standing in it, and the caster walking through their own cloud and leaving
+ * wearing it.
+ */
+export const masteryPerfume: PreviewScript = {
+  duration: 8000,
+  scale: 0.85,
+  caption: 'Bound key — a 6s, 110px cloud worth 12 love a second. A second inside banks 2s of a 96px aura worth 10 more',
+  run(ctx) {
+    const me = { x: ctx.cx - 70, y: ctx.cy + 16 };
+    const { fx, av, pav } = drivenCaster(ctx, () => me);
+    const foe = { x: ctx.cx + 150, y: ctx.cy - 12 };
+    const m = meter(BAR_MAX * 0.2);
+    loveTarget(ctx, foe, m);
+
+    const cloudR = Math.min(ctx.w, ctx.h) * 0.3;
+    const auraR = cloudR * 0.8;
+    const cloud = { x: ctx.cx + 24, y: ctx.cy, bornAt: -1, seed: 41.7 };
+    let auraUntil = -1;
+    let nextCloudTextAt = 0;
+    let nextAuraTextAt = 0;
+
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
+    const banked = ctx.adopt(ctx.scene.add.text(ctx.cx, ctx.h - 14, '', {
+      fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
+      color: hex(PSN.blush),
+    }).setOrigin(0.5).setDepth(19));
+
+    ctx.at(500, () => {
+      const ang = Math.atan2(cloud.y - me.y, cloud.x - me.x);
+      av.play('punch', ang);
+      const tip = pav?.pistolTip();
+      fx.spray(tip && Number.isFinite(tip.x) ? tip.x : me.x, tip && Number.isFinite(tip.y) ? tip.y : me.y,
+        ang, cloudR);
+      cloud.bornAt = 500;
+      tick(ctx, me.x, me.y - 52, '🌸 PERFUME', PSN.pink);
+      nextCloudTextAt = 1500;
+      nextAuraTextAt = 1500;
+    });
+
+    ctx.onFrame((dt, elapsed) => {
+      const s = dt / 1000;
+      const t = elapsed / 1000;
+
+      // The caster walks into their own cloud, stands in it, then leaves wearing it.
+      if (elapsed > 900 && elapsed < 4200) {
+        me.x += (cloud.x - me.x) * Math.min(1, s * 1.6);
+        me.y += (cloud.y - me.y) * Math.min(1, s * 1.6);
+      } else if (elapsed >= 4200) {
+        // Closing on the target, which is now the only thing the aura is for.
+        me.x += (foe.x - 44 - me.x) * Math.min(1, s * 1.1);
+        me.y += (foe.y - me.y) * Math.min(1, s * 1.1);
+      }
+      // The target drifts across the cloud rather than standing in it politely.
+      foe.x -= 16 * s;
+
+      g.clear();
+      const alive = cloud.bornAt >= 0 && elapsed < cloud.bornAt + 6000;
+      if (alive) {
+        const rise = Phaser.Math.Clamp((elapsed - cloud.bornAt) / 300, 0, 1);
+        const fade = Phaser.Math.Clamp((cloud.bornAt + 6000 - elapsed) / 700, 0, 1);
+        perfumeCloud(g, ctx.tint, cloud.x, cloud.y, cloudR * (0.55 + rise * 0.45), t,
+          Math.min(rise, fade), cloud.seed);
+
+        // Standing in it banks two seconds for every one, to a ceiling of twelve.
+        if (Phaser.Math.Distance.Between(me.x, me.y, cloud.x, cloud.y) <= cloudR) {
+          auraUntil = Math.min(elapsed + 12000, Math.max(auraUntil, elapsed) + dt * 2);
+        }
+        // And anybody else in it is simply falling for you.
+        if (Phaser.Math.Distance.Between(foe.x, foe.y, cloud.x, cloud.y) <= cloudR) {
+          m.cur = Math.min(m.max, m.cur + 12 * s);
+          if (elapsed >= nextCloudTextAt) {
+            nextCloudTextAt = elapsed + 1000;
+            tick(ctx, foe.x, foe.y - 34, '+12 🌸', PSN.pink);
+          }
+        }
+      }
+
+      if (auraUntil > elapsed) {
+        perfumeAura(g, ctx.tint, me.x, me.y, auraR, t,
+          Phaser.Math.Clamp((auraUntil - elapsed) / 700, 0, 1));
+        if (Phaser.Math.Distance.Between(foe.x, foe.y, me.x, me.y) <= auraR) {
+          m.cur = Math.min(m.max, m.cur + 10 * s);
+          if (elapsed >= nextAuraTextAt) {
+            nextAuraTextAt = elapsed + 1000;
+            tick(ctx, foe.x, foe.y - 46, '+10 💐', PSN.blush);
+          }
+        }
+      }
+
+      const left = Math.max(0, (auraUntil - elapsed) / 1000);
+      banked.setText(left > 0.05 ? `wearing it: ${left.toFixed(1)}s left of 12`
+        : cloud.bornAt < 0 ? '' : 'walk into your own cloud to bank it');
     });
   },
 };

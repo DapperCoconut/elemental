@@ -6,6 +6,7 @@ import {
   ArmGesture, ELECTRIC, ElectricColorFn, ElectricityAura, ElectricityAvatar, ElectricityFx,
   LIVE_TONES, NPC_TONES, PHOENIX_TONES, PLASMA_TONES, STORM_TONES,
 } from './ElectricityVisuals';
+import { meterGain } from '../../combat/Meters';
 
 interface StormCloud {
   /** Redrawn every frame — the boiling mass, its interior flicker and its sagging underside. */
@@ -305,7 +306,8 @@ export class ElectricityKit {
   onDamageReceived(amount: number, time: number): void {
     if (amount <= 0) return;
     const cap = this.arena.hasUpgrade('r') ? 100 : 50;
-    this.kineticPower = Math.min(cap, this.kineticPower + amount);
+    // Ruin's Combo Breaker halves every meter in the game — the charge bar included.
+    this.kineticPower = Math.min(cap, this.kineticPower + meterGain(this.arena.player, amount));
     this.updateHud(cap);
 
     const player = this.arena.player;

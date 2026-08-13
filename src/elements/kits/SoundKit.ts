@@ -6,6 +6,7 @@ import {
   ArmGesture, SOUND, SoundAura, SoundAvatar, SoundColorFn, SoundFx, SoundInstrument, TrackNoteKind,
 } from './SoundVisuals';
 import { CustomStatus } from './StatusHudKit';
+import { meterGain } from '../../combat/Meters';
 
 // ── SoundArenaApi ─────────────────────────────────────────────────────────
 
@@ -874,7 +875,8 @@ export class SoundKit {
     }
 
     if (hits > 0) {
-      this.discSpeedStacks = Math.min(DISC_SPEED_MAX_STACKS, this.discSpeedStacks + hits);
+      this.discSpeedStacks = Math.min(DISC_SPEED_MAX_STACKS,
+        this.discSpeedStacks + meterGain(this.arena.player, hits));
       this.discSpeedUntil = time + DISC_SPEED_MS;
       this.arena.showFloatingText(player.x, player.y - 34,
         `💿 +${Math.round(DISC_SPEED_PER_HIT * this.discSpeedStacks * 100)}% SPEED`, '#ffaadd');
@@ -1452,7 +1454,8 @@ export class SoundKit {
 
   /** Put hype on the ladder and climb whatever rungs it reaches. */
   private gainHype(gained: number): void {
-    this.hype += gained;
+    // Ruin's Combo Breaker halves every meter in the game — the hype ladder included.
+    this.hype += meterGain(this.arena.player, gained);
     while (this.hype >= CODA_PER_LEVEL && this.codaLevel < CODA_MAX_LEVEL) {
       this.hype -= CODA_PER_LEVEL;
       this.codaLevel++;
@@ -2500,7 +2503,8 @@ export class SoundKit {
     }
     if (!hitAny) return;
 
-    this.harmonyStacks = Math.min(HARMONY_MAX_STACKS, this.harmonyStacks + 1);
+    this.harmonyStacks = Math.min(HARMONY_MAX_STACKS,
+      this.harmonyStacks + meterGain(this.arena.player, 1));
     this.harmonyUntil = time + HARMONY_BUFF_MS;
     this.pfx.sparkle(player.x, player.y, 9, 34, 10, SOUND.gold);
     this.arena.showFloatingText(ex, ey - 30, `🌟 HARMONY ×${this.harmonyStacks}`, '#ffeecc');

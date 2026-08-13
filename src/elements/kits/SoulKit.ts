@@ -196,9 +196,17 @@ const VARIANT_ZOMBIE_CHANCE = 0.35;
 /**
  * Every rollable elemental variant, all three tiers — a grave zombie can come
  * up wearing any element the invasion lightning knows. Decoys and other
- * no-reward husks are excluded; they are props, not bodies worth raising.
+ * no-reward husks are excluded; they are props, not bodies worth raising. So
+ * are the tenth-wave bosses, the Graveyard's own titan and everything a boss
+ * calls in: none of those are a body that walked through a window.
  */
-const RECRUITABLE_VARIANTS: HuskVariantDef[] = HUSK_VARIANTS.filter((v) => !v.isBoss && v.id !== 'basic' && !v.noReward);
+const RECRUITABLE_VARIANTS: HuskVariantDef[] = HUSK_VARIANTS.filter((v) => (
+  !v.isBoss
+  && v.behavior !== 'titan'
+  && !v.id.startsWith('boss-')
+  && v.id !== 'basic'
+  && !v.noReward
+));
 const ANGERED_HP_MULT = 2;
 const ANGERED_SPEED_MULT = 1.25;
 

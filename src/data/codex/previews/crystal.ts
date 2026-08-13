@@ -347,6 +347,13 @@ export const crystalPortal: PreviewScript = {
         },
       });
     });
+    // The headline the shard demo buries: you go through it too. Walk into A, come out of B.
+    ctx.at(2900, () => ctx.glideCaster({ to: { x: a.x, y: a.y }, ms: 420 }));
+    ctx.at(3340, () => {
+      fx.translate(a.x, a.y, b.x, b.y, 5, CLEAR_TONES);
+      ctx.moveCaster(b.x, b.y);
+      pop(ctx, b.x, b.y - 30, 'YOU');
+    });
     // And what happens when they follow you in.
     ctx.at(4000, () => {
       fx.shatter(a.x, a.y, 56, { shards: 9, dust: 1, duration: 340, splinter: false });
@@ -369,9 +376,13 @@ export const crystalPortalUpgraded: PreviewScript = {
     gate(ctx, { x: a.x, y: a.y, label: 'A', hue: CRYSTAL.violet, born: 200 });
     gate(ctx, { x: b.x, y: b.y, label: 'B', hue: CRYSTAL.magenta, born: 200 });
     // A loop through the pair, each jump re-arming the boost before the last expires.
+    // Walk into the first gate, then keep looping — the boost is on the *jump*, so the
+    // showcase has to be a caster going through it rather than a light show between gates.
+    ctx.at(400, () => ctx.glideCaster({ to: { x: a.x, y: a.y }, ms: 400 }));
     [800, 2000, 3200].forEach((at, i) => ctx.at(at, () => {
       const from = i % 2 === 0 ? a : b;
       const to = i % 2 === 0 ? b : a;
+      ctx.moveCaster(to.x, to.y);
       fx.translate(from.x, from.y, to.x, to.y, 5, CLEAR_TONES);
       fx.prismBloom(to.x, to.y, 40, 460, 6, CLEAR_TONES);
       const t = ctx.adopt(ctx.scene.add.text(to.x, to.y - 34, '⚡ +20% · 3s', {

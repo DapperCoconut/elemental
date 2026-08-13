@@ -3,9 +3,9 @@ import { ElementCodex } from '../AbilityCodex';
 /**
  * Fortune — a shopkeeper who set his stall up in the middle of a fight.
  *
- * Verified against `src/elements/fortune.ts`, `kits/FortuneKit.ts` and the five shop upgrades in
- * `Upgrades.ts`. Fortune has no perks and no mastery enhancements; every figure below is a
- * constant at the top of the kit or an entry in its catalogue tables.
+ * Verified against `src/elements/fortune.ts`, `kits/FortuneKit.ts`, the five shop upgrades in
+ * `Upgrades.ts` and the two mastery enhancements in `Mastery.ts`. Fortune has no perks; every
+ * figure below is a constant at the top of the kit or an entry in one of its tables.
  */
 const fortune: ElementCodex = {
   identity:
@@ -21,11 +21,12 @@ const fortune: ElementCodex = {
     {
       emoji: '🪙',
       name: 'Blood Coins',
-      magic:
-        'Coins do not drop, they bleed. Every wound anybody in the arena takes is metered, and '
-        + 'somebody gets paid for it — including the enemy, for hurting you. There is no other '
-        + 'income in the element and no way to farm it except by fighting, which is why a Fortune '
-        + 'who is losing is also a Fortune who is broke.',
+      basics:
+        '1 coin for every 20 damage dealt, measured on the raw figure before any mitigation, with the '
+        + 'remainder carried so nothing is rounded away. Both sides earn: damage dealt to the Fortune '
+        + 'player pays the enemy at exactly the same rate, so they are running the same economy you are. '
+        + 'Coins buy everything — the stall, both investments and the ultimate, which eats 6 a second '
+        + 'while it is on.',
       effects: [
         { tag: 'resource', label: 'The rate', detail: '1 coin per 20 damage dealt, measured on the raw figure before any mitigation. The remainder is carried, so nothing is rounded away.' },
         { tag: 'utility', label: 'Both sides earn', detail: 'Damage dealt to the Fortune player pays the enemy at exactly the same rate. They are running the same economy you are.' },
@@ -39,11 +40,13 @@ const fortune: ElementCodex = {
     {
       emoji: '🏪',
       name: 'The Stall',
-      magic:
-        'A canvas-and-timber shop stands in the dead centre of every Fortune match, and it is not '
-        + 'yours alone. Stand within reach of the counter and the catalogue opens; press a number '
-        + 'to buy. The enemy gets the same counter and the same general page — and every purchase '
-        + 'they make hands you a commission.',
+      basics:
+        'A counter fixed at the centre of the arena, served within 132px by either side. Number keys '
+        + '1–8 buy the row and T changes tab, though only for the shopkeeper. Half of any enemy purchase, '
+        + 'rounded down, is paid straight into your purse — a 20-coin Donation hands you 10. There are '
+        + 'three pages: GENERAL is public, while ARMS and MODS are the illegal pages only you can see or '
+        + 'buy from, so an enemy at the counter is locked to GENERAL. Your loadout is one gun at a time, '
+        + 'a second replacing the first, and at most two attachments.',
       effects: [
         { tag: 'utility', label: 'The counter', detail: 'Fixed at the centre of the arena. Served within 132px, for either side.' },
         { tag: 'utility', label: 'Buying', detail: 'Number keys 1–8 buy the row. T changes tab, but only for the person who owns the stall.' },
@@ -60,10 +63,21 @@ const fortune: ElementCodex = {
     {
       emoji: '🛒',
       name: 'The Catalogue',
-      magic:
-        'Eight things on the public shelf, five guns behind the counter, and eight attachments in '
-        + 'the drawer under them. This is where the element\'s real numbers live — the five keys are '
-        + 'mostly plumbing for the purse, and the purse is what buys a rifle with a fifty-cal on it.',
+      basics:
+        'The public shelf. 🩹 Bandages (4) heals 20 on the spot. 🌶️ Spicy Pepper (3) lays a fire trail '
+        + 'for 5 seconds — a patch every 70ms, each living 2.6s, 26 damage a second inside 22px and 0.9s '
+        + 'alight — with overlapping patches splitting one patch\'s worth between them, so a doubled-back '
+        + 'trail is wider rather than hotter. 🧨 Explosives Pouch (3) makes your next 5 damaging hits '
+        + 'also blast everything else within 96px for the same damage, gated to one blast per 260ms and '
+        + 'deliberately sparing the body that was hit. 🧪 Cure-All (10) cleanses every debuff, heals 50 '
+        + 'and refuses all new debuffs for 20 seconds, re-applied every frame. 🗡️ Ornate Daggers (5) '
+        + 'fires 3 volleys of 8 daggers 170ms apart at 620 px/s in a 0.62-radian fan for 2 damage each — '
+        + '48 if every one lands. 🤖 Death Machine (8) is a knife on a vacuum: 96 px/s, turning at 3.2 '
+        + 'rad/s, chasing the nearest enemy for 25 on touch with a 1.4-second per-victim gate, up to 3 at '
+        + 'once. 🏺 The Miracle (12) doubles every good thing for 20 seconds — heals, item durations, '
+        + 'capital gains and a winning market settlement. 💝 Donation (20) thanks you for your generous '
+        + 'support. With Safe Marketing three more join the public page: 🥶 Chilly Pepper (3), 🗼 Heal '
+        + 'Pylon (5) and 🌀 Tele-Core (8).',
       effects: [
         { tag: 'heal', label: '🩹 Bandages — 4', detail: 'Heal 20 HP on the spot.' },
         { tag: 'dot', label: '🌶️ Spicy Pepper — 3', detail: 'A fire trail behind you for 5 seconds: a patch every 70ms, each living 2.6s, 26 damage a second inside 22px and setting them alight for 0.9s. Overlapping patches split one patch\'s worth between them — a doubled-back trail is wider, not hotter.' },
@@ -92,12 +106,18 @@ const fortune: ElementCodex = {
 
   abilities: {
     'fortune-fire': {
-      magic:
-        'Pull the trigger on whatever is in your hand. You start with a free pistol and everything '
-        + 'better is a purchase — so this button changes completely over the course of a match, from '
-        + 'a peashooter to a single-shot rifle to a golden hitscan that gets stronger the richer you '
-        + 'are. The gun is the rate limiter, not the cooldown: it fires the instant the slide has '
-        + 'finished travelling.',
+      basics:
+        'Fires whichever gun you are holding, held down. Out of the box that is the Pistol — 10 damage, '
+        + '10 rounds, a shot every 190ms at 900 px/s with a 1.15s reload — free and yours from the first '
+        + 'frame. Bought guns replace it: Revolver 20, Rifle 30, AR 3×8 in a burst, Golden Pistol 20 '
+        + 'hitscan plus 1 per 2 coins held, and up to +15 on top from two damage attachments. Bullets '
+        + 'live 1.6 seconds, are 8px across and stop on the first body unless a Sniper Scope is fitted, '
+        + 'which doubles their speed and makes them pierce; an empty magazine starts the reload '
+        + 'automatically. Acceleration Gear (9 coins) cycles the action faster the emptier the magazine '
+        + 'is — 1× on a full one ramping to 2.2× on the last round, closing a pistol\'s 190ms gap to 86ms. '
+        + 'Every bullet that lands is damage, and damage is coins. Refused and refunded while reloading, '
+        + 'mid-cycle, out of ammunition or while the beam is up, so a held button never quietly burns the '
+        + 'cooldown.',
       cast: 'Click, held. Refused (and refunded) while reloading, mid-cycle, out of ammunition or while the beam is up — so a held button never quietly burns the cooldown.',
       effects: [
         { tag: 'damage', label: 'Out of the box', detail: 'The Pistol: 10 damage, 10 rounds, a shot every 190ms, 900 px/s, 1.15s reload. It is free and it is yours from the first frame.' },
@@ -108,11 +128,20 @@ const fortune: ElementCodex = {
         { tag: 'resource', label: 'It pays for itself', detail: 'Every bullet that lands is damage, and damage is coins at 1 per 20.' },
       ],
       upgrade: {
-        magic:
-          'Alt-Fire is a second trigger under the first one, and it is a different trigger on '
-          + 'every gun. The pistol empties itself in one long inaccurate rattle. The revolver is '
-          + 'held and spun. The AR throws the rest of its clip like a grenade. The golden pistol '
-          + 'coughs up something slow and enormous that turns whoever it touches into money.',
+        basics:
+          'Right click becomes a second trigger, different on every gun. The Pistol dumps the whole '
+          + 'magazine, one round every 55ms across 0.34 radians, and starts its own reload. The Revolver '
+          + 'spins up over 3 seconds, walking one round from 20 to 30 damage at up to 1.5× speed and 1.6× '
+          + 'size — a fully spun round also pierces. The AR throws the whole remaining clip at 640 px/s to '
+          + 'the cursor, where it bursts into one bullet per round left, thrown radially at 760 px/s, so 30 '
+          + 'rounds is 30 bullets. The Golden Pistol spends 5 coins and 2 rounds on a 250 px/s Midas slug: '
+          + '25 damage and 5 seconds gilded, during which every coin their wounds mint is worth double. The '
+          + 'Launcher\'s Exit Strategy detonates every shell at your own feet at once for 20 damage each '
+          + 'within 113px — 60 from a full drum — and then takes you off the screen for 3 seconds, '
+          + 'unhittable and invisible, before you fall back down. The Blaster spends 4 rounds on a '
+          + '20-damage bolt carrying 12 wall bounces that passes through bodies and forgets who it has hit '
+          + 'every time it comes off a wall. The Rifle has none: it holds one round, and there is nothing '
+          + 'clever to do with one round.',
         effects: [
           { tag: 'damage', label: 'Pistol — mag dump', detail: 'Every round left in the magazine, one every 55ms, scattered across 0.34 radians. It starts the reload itself, because there is nothing left to reload.', requiresUpgrade: 'click' },
           { tag: 'damage', label: 'Revolver — spin-up', detail: 'Held. 3 seconds of spinning walks the round from 20 to 30 damage, at up to 1.5× speed and 1.6× size, for one round. A fully spun round also pierces.', requiresUpgrade: 'click' },
@@ -133,10 +162,13 @@ const fortune: ElementCodex = {
     },
 
     'fortune-safe': {
-      magic:
-        'Five coins into the bank, and the bank does what banks do: it pays you for leaving it '
-        + 'alone. It is the only genuinely free money in the game — no risk, no condition, no way '
-        + 'to lose it — and it is slow enough that using it means betting the fight will last.',
+      basics:
+        'The safe. Tap E to deposit 5 coins, or whatever you have if it is less, refused with "NOTHING '
+        + 'TO DEPOSIT" at zero; hold for 340ms to withdraw the whole balance in one go and reset the '
+        + 'clock. The balance pays capital gains of 10% every 10 seconds, rounded down but never less '
+        + 'than 1 coin however small it is — doubled to 20% a settlement while the Miracle runs. The tap '
+        + 'resolves on release, because until the key comes back up there is no way to know it was not a '
+        + 'hold.',
       cast: 'E. Tap to deposit; hold for 340ms to withdraw the whole balance at once. The tap resolves on release, because until the key comes back up there is no way to know it was not a hold.',
       effects: [
         { tag: 'resource', label: 'The deposit', detail: '5 coins per tap, or whatever you have if it is less. Refused with "NOTHING TO DEPOSIT" at zero.' },
@@ -145,10 +177,16 @@ const fortune: ElementCodex = {
         { tag: 'buff', label: 'Under the Miracle', detail: 'Capital gains are doubled for the 20 seconds it runs — 20% a settlement.' },
       ],
       upgrade: {
-        magic:
-          'Safe Marketing does not touch the bank at all. It restocks the shop: three new lines '
-          + 'on the public shelf, which is the safest investment the element has — you are not '
-          + 'betting on a market, you are widening the counter.',
+        basics:
+          'Adds three lines to the public GENERAL page, so the enemy at your counter can buy them too — '
+          + 'and hands you half the price when they do. 🥶 Chilly Pepper (3) throws a 132px ring of rime '
+          + 'off you every 3 seconds for 12 seconds, the first the instant you buy it, slowing anything of '
+          + 'theirs it catches to 80% speed for 5 seconds. 🗼 Heal Pylon (5) drops a pylon at a random '
+          + 'point on the floor; walking within 30px of a lit one heals 10 and darkens it for 5 seconds, '
+          + 'they stack to 4, and a body already at full health does not spend the charge. 🌀 Tele-Core (8) '
+          + 'makes Space a teleport straight to the cursor instead of a 520px dash for 12 seconds, clamped '
+          + '44px inside the arena. Under the Miracle the Pepper and the Tele-Core run 24 seconds and a '
+          + 'pylon heals 20.',
         effects: [
           { tag: 'control', label: '🥶 Chilly Pepper — 3', detail: 'A ring of rime 132px across, thrown off you every 3 seconds for 12 seconds. Everything of theirs it catches moves at 80% speed for 5 seconds. The first ring goes off the instant you buy it.', requiresUpgrade: 'e' },
           { tag: 'heal', label: '🗼 Heal Pylon — 5', detail: 'One pylon at a random point on the floor. Walking within 30px of a lit one heals 10 HP and darkens it for 5 seconds. They stack to 4, and a body already at full health does not spend the charge.', requiresUpgrade: 'e' },
@@ -165,11 +203,14 @@ const fortune: ElementCodex = {
     },
 
     'fortune-risky': {
-      magic:
-        'Five coins into the market, and the market judges you on the ten seconds that follow. '
-        + 'Deal damage and it grows; take damage and it shrinks. Do both and it splits the '
-        + 'difference rather than picking a side. It is the same deposit as the bank with the '
-        + 'safety taken off, and the thing it is really measuring is whether you are winning.',
+      basics:
+        'The market, judged on how the last ten seconds actually went. Tap R to invest 5 coins, refused '
+        + 'with "NOTHING TO INVEST" at zero; hold 340ms to cash out. Over 50 damage dealt in the window '
+        + 'settles at +20%, at least 1 coin. Over 100 damage taken settles at −20%, at least 1 coin, and '
+        + 'it can be ground to nothing. Both at once splits the difference at +10%, and a quiet ten '
+        + 'seconds settles at exactly zero — idling does not grow it. The Miracle doubles the winning '
+        + 'rate to +40% and leaves the losing rate alone. Fresh money resets the window it will be judged '
+        + 'on, so a deposit at 9.9 seconds is not settled on somebody else\'s fight.',
       cast: 'R. Tap to invest; hold for 340ms to cash out. Fresh money resets the window it will be judged on, so a deposit made at 9.9 seconds is not settled on somebody else\'s fight.',
       effects: [
         { tag: 'resource', label: 'The deposit', detail: '5 coins per tap. Refused with "NOTHING TO INVEST" at zero.' },
@@ -180,10 +221,17 @@ const fortune: ElementCodex = {
         { tag: 'buff', label: 'Under the Miracle', detail: 'The winning rate is doubled to +40%; the losing rate is not.' },
       ],
       upgrade: {
-        magic:
-          'Risky Marketing, like Safe Marketing, is not about the button at all — it is what the '
-          + 'shopkeeper is willing to keep under the counter. Two guns nobody should be selling '
-          + 'and three grips that trade one trigger against the other.',
+        basics:
+          'Opens the ARMS and MODS pages further. 💣 Grenade Launcher (20) holds 3 shells with a 2.7s '
+          + 'reload and a shot every 700ms, each flying 380 px/s to where you aimed and bursting for 20 '
+          + 'inside 94px, halving out to the rim. 🟢 Bouncy Blaster (12) holds 8 rounds of 10 at 700 px/s '
+          + 'with 3 wall bounces each, and a bounced round can hit somebody it has already passed through. '
+          + '🖐️ Specialized Grip (6) is ×1.5 alt-fire and ×0.7 ordinary fire; ✊ Basic Grip (6) is ×1.35 '
+          + 'ordinary and ×0.6 alt — fitting both at once is ×0.945 and ×0.9, a worse gun twice over. 🤞 '
+          + 'Dual Grip (25) puts the next gun you buy in your right hand instead of replacing what you '
+          + 'hold: two guns, two magazines, two reloads, with right click now that gun\'s trigger rather '
+          + 'than an alt-fire. All three grips occupy one of your two attachment slots, so Dual Grip costs '
+          + 'you a 50 Cal. as well as 25 coins.',
         effects: [
           { tag: 'damage', label: '💣 Grenade Launcher — 20', detail: '3 shells, a 2.7s reload and a shot every 700ms. Each shell flies at 380 px/s to where you aimed and bursts for 20 damage inside 94px, halving out to the rim.', requiresUpgrade: 'r' },
           { tag: 'damage', label: '🟢 Bouncy Blaster — 12', detail: '8 rounds of 10 at 700 px/s, each with 3 wall bounces in it. A bounced round can hit somebody it has already passed through.', requiresUpgrade: 'r' },
@@ -201,11 +249,17 @@ const fortune: ElementCodex = {
     },
 
     'fortune-paywall': {
-      magic:
-        'A row of brass turnstiles drops from the top of the arena to the bottom at your cursor — '
-        + 'a full-height line the enemy has to deal with rather than a wall they can walk around. '
-        + 'It blocks nothing at all. What it does is bill them: every shot they put through it and '
-        + 'every time a body crosses it, charged out of their purse and into yours.',
+      basics:
+        'Raises a full-height turnstile at the cursor\'s horizontal position, clamped 24px inside the '
+        + 'edges, standing 5 seconds — one per side. Every enemy projectile that crosses the 30px billing '
+        + 'band costs 1 coin, charged once per shot on the crossing rather than on being inside it, so a '
+        + 'rifle round moving 20px a frame is caught as surely as a lobbed grenade, and both the shared '
+        + 'projectile group and every kit-local projectile in the game are billed. A body crossing costs '
+        + '3, charged on the crossing itself, so leaning on it from one side is free and walking through '
+        + 'is not. Everything collected goes straight into your purse — nothing is destroyed, it changes '
+        + 'hands. An unpaid coin is taken in blood at 8 damage each, so a body crossing with an empty '
+        + 'purse pays 24, gated to one blood toll per side every 0.4s, and that damage mints its own '
+        + 'coins back through the passive. 12s cooldown.',
       cast: 'F, aimed at the cursor — only the horizontal position is used. Clamped 24px inside the arena edges. 12s cooldown.',
       effects: [
         { tag: 'summon', label: 'The line', detail: 'Full arena height, a 30px-wide billing band, 5 seconds. One per side.' },
@@ -215,10 +269,13 @@ const fortune: ElementCodex = {
         { tag: 'damage', label: 'Broke customers', detail: 'An unpaid coin is taken in blood instead: 8 damage each, so a body crossing with an empty purse pays 24. Gated to one blood toll per side every 0.4s, and that damage mints its own coins back through the passive.' },
       ],
       upgrade: {
-        magic:
-          'Tax Evasion keeps the turnstiles up half again as long, and puts them on somebody\'s '
-          + 'desk. Take enough through one wall and a man in a hat is lying at the top of the '
-          + 'arena with a rifle, and a red dot settles onto your enemy for five long seconds.',
+        basics:
+          'The wall stands 7.5 seconds instead of 5, and collecting more than 10 actual coins through one '
+          + 'wall — blood tolls do not count — summons an auditor. He aims for 5 seconds at the healthiest '
+          + 'enemy, the reticle closing from 22px to 10px as he settles, then fires the instant the laser '
+          + 'stops moving for 35 damage that cannot miss and does not care about range, leaving them 20% '
+          + 'slower and taking 20% more damage from every source for 8 seconds. One auditor per side at a '
+          + 'time, one per wall.',
         effects: [
           { tag: 'utility', label: 'Longer', detail: 'The wall stands 7.5 seconds instead of 5.', requiresUpgrade: 'f' },
           { tag: 'utility', label: 'The trigger', detail: 'More than 10 coins actually collected through one wall. Blood tolls do not count toward it — coins do.', requiresUpgrade: 'f' },
@@ -236,11 +293,16 @@ const fortune: ElementCodex = {
     },
 
     'fortune-p2w': {
-      magic:
-        'A slab of golden light thrown out in front of you that burns everything it touches, and '
-        + 'it does not aim — it turns, slowly, toward wherever you are pointing. You walk it onto '
-        + 'people. And it is metered: six coins a second, taken as they come due, and it stops '
-        + 'dead the instant the purse is empty.',
+      basics:
+        'A continuous beam dealing 95 damage a second to anything within 15px of a 520px line out of '
+        + 'your chest, turning toward the cursor at 1.15 radians a second — about 66°, so it is walked '
+        + 'onto a target and never snapped to one. It costs 6 coins a second, deducted a whole coin at a '
+        + 'time, so 8 seconds of full uptime is 48 coins, and it runs for 8 seconds or until the money '
+        + 'runs out or you die. Going broke ends it with "💸 OUT OF MONEY" and nothing is refunded. Your '
+        + 'gun is refused for the whole time it is up, and it is the one source of damage in the element '
+        + 'that mints no coins at all — every point it burns off somebody is subtracted from the passive, '
+        + 'so the ultimate cannot pay for itself. Refused outright with "💸 INSUFFICIENT FUNDS" if you '
+        + 'cannot afford a single second. 22s cooldown.',
       cast: 'Q, aimed at the cursor. Refused outright with "💸 INSUFFICIENT FUNDS" if you cannot afford a single second of it. Ultimate, 22s cooldown.',
       effects: [
         { tag: 'damage', label: 'The beam', detail: '95 damage a second, continuous, to anything within 15px of a 520px line out of your chest.' },
@@ -252,10 +314,13 @@ const fortune: ElementCodex = {
         { tag: 'utility', label: 'It earns nothing', detail: 'The one source of damage in the element that mints no coins. Every point it burns off somebody is subtracted from the passive, so the ultimate cannot pay for itself.' },
       ],
       upgrade: {
-        magic:
-          'Golden Excess turns the line into a wedge, and the wedge grows with the money going '
-          + 'into it. It widens, it brightens, and the gold walks toward furnace orange as the '
-          + 'bill climbs — until half the arena is inside it and the purse is empty.',
+        basics:
+          'The beam widens and heats as it eats. The half-angle starts at 0.10 radians and grows 0.011 '
+          + 'per coin burned, up to 1.2 radians — a 138° wedge 520px long. Damage starts at the same 95 a '
+          + 'second and grows 4.5 per coin burned, capped at 700 a second. The drain accelerates with it: 6 '
+          + 'a second at the start, +0.22 per coin already burned, up to 70 a second, so a big purse goes '
+          + 'into it in seconds rather than over the full 8. The palette walks from gold to furnace orange '
+          + 'over the first 90 coins, so the cone reads as how much it has cost.',
         effects: [
           { tag: 'area', label: 'The cone', detail: 'A half-angle of 0.10 radians on the first coin, +0.011 per coin the ultimate has burned, up to 1.2 radians — a 138° wedge 520px long.', requiresUpgrade: 'q' },
           { tag: 'damage', label: 'The heat', detail: '95 damage a second at the start, +4.5 per coin burned, capped at 700 a second.', requiresUpgrade: 'q' },
@@ -268,6 +333,90 @@ const fortune: ElementCodex = {
         'The slow turn is what makes it a positional ability: standing still and sweeping is a way to lose the beam, walking with it is how you keep somebody in it.',
         'It cannot be cast at under 6 coins, so a Paywall that emptied you or a stall run you could not afford genuinely locks your ultimate.',
         'Under Golden Excess a 200-coin purse is gone in about five seconds and buys a 100° cone doing several hundred damage a second. It is not a beam any more, it is a decision about the whole fight.',
+      ],
+    },
+  },
+
+  mastery: {
+    'battle-pass': {
+      basics:
+        'A 30-tier ladder bought strictly in order with B, anywhere in the arena, at 3 coins a tier — '
+        + '90 for the whole thing — and rolled fresh every match. Twelve of the rewards are stat buffs '
+        + 'that stack with themselves: +12% weapon damage, +10% fire rate, −12% reload, +2 magazine, +6% '
+        + 'movement, +10% coin rate, +3% capital gains, investments settling 15% sooner, +1 coin every '
+        + 'reload, piercing bullets, +15 maximum health, +25 shield HP. About a third of the non-star '
+        + 'tiers hand over ordinary public-shelf items rather than selling them — guns and attachments '
+        + 'are never on the pass, so the ARMS and MODS pages stay something you buy. Every fifth tier is '
+        + 'an item⁺: Bandages⁺ heals 55, Cure-All⁺ is 120 health and 45 seconds, Ornate Daggers⁺ is 5 '
+        + 'volleys of 12 at 6 each, Death Machine⁺ is 45 damage at 150 px/s and does not count against '
+        + 'your three, Explosives Pouch⁺ is 12 charges and catches the body you actually hit, Spicy '
+        + 'Pepper⁺ burns 1.8× as hot for 12.5s, and The Miracle⁺ runs 45 seconds. The item tiers are '
+        + 'filtered by which corrupt upgrades you own. And 90 coins is three Golden Pistols, two full '
+        + 'beams or nine Cure-Alls — the pass is the fourth thing your purse is for, not free value.',
+      cast: 'Passive, with a key. B buys the next tier for 3 coins, anywhere in the arena, and the tiers are bought strictly in order. The whole ladder is randomised at the start of every match.',
+      effects: [
+        { tag: 'resource', label: 'The ladder', detail: '30 tiers, 3 coins each — 90 coins for the whole thing. Strictly in order; there is no skipping to the good one.' },
+        { tag: 'buff', label: 'Mostly stat buffs', detail: '12 of them, rolled at random and stacking with themselves: +12% weapon damage, +10% fire rate, −12% reload, +2 magazine, +6% movement, +10% coin rate, +3% capital gains, investments settling 15% sooner, +1 coin every reload, piercing bullets, +15 maximum health, +25 shield HP.' },
+        { tag: 'utility', label: 'And free items', detail: 'About a third of the non-star tiers are ordinary lines off the public shelf, handed over rather than sold. Guns and attachments are never on the pass — the ARMS and MODS pages stay something you have to buy.' },
+        { tag: 'buff', label: 'Every fifth tier is an item⁺', detail: 'Tiers 5, 10, 15, 20, 25 and 30 — six of them. Bandages⁺ heals 55 rather than 20. Cure-All⁺ is 120 health and 45 seconds. Ornate Daggers⁺ is 5 volleys of 12 at 6 each rather than 3 of 8 at 2. Death Machine⁺ is 45 damage and 150 px/s, and it does not count against your three. Explosives Pouch⁺ is 12 charges and catches the body you actually hit. Spicy Pepper⁺ burns 1.8× as hot for 12.5s. The Miracle⁺ runs 45 seconds.' },
+        { tag: 'utility', label: 'Rolled fresh', detail: 'Every match is a different ladder. The item tiers are filtered by which corrupt upgrades you own, so a Safe Marketing player can be handed Tele-Cores and a player without it cannot.' },
+        { tag: 'cost', label: 'It is competing with everything', detail: '90 coins is three Golden Pistols, or two full 8-second beams, or nine Cure-Alls. The pass is not free value, it is the fourth thing your purse is for.' },
+      ],
+      notes: [
+        'A buff rolled twice is applied twice. Two Filed Triggers is genuinely +21% fire rate — nothing on the ladder is unique.',
+        'The coin-rate buff is taken off the price of a coin rather than added to the payout, so the fractional remainder still carries and nothing is rounded away.',
+        'Vitamins and Cheap Plating are the only two that happen to your body rather than to a number, so they are the only two a Ruin Combo Breaker cannot slow down.',
+        'A Fortune NPC on Nightmare climbs the pass too, with anything it is not saving for a beam. It has no ribbon to read; it simply spends.',
+      ],
+    },
+    'drive-by-flex': {
+      basics:
+        'A bindable car launched on the heading the cursor sets, which it never changes again: 155 '
+        + 'px/s, reflecting off the arena edges, 5 bounces and then it explodes. It rams anything within '
+        + '27px for 18 damage on a 0.9-second per-victim gate, and the wreck is 30 damage inside 92px '
+        + 'falling to 18 at the rim — not optional, the car always ends this way. Space within 54px puts '
+        + 'you on the roof, where your body is carried and you have traded steering for a firing '
+        + 'platform: 40% faster reload and a 35% faster trigger, both multipliers on the rate rather than '
+        + 'subtractions from the gap, so they stack with Acceleration Gear and the battle pass without '
+        + 'ever producing a negative wait. Space again steps off, and a car that explodes with you aboard '
+        + 'throws you clear — it is your car. It also adds a GARAGE tab to your stall, reachable with T, '
+        + 'holding nine buffs of which the car may carry three, for the whole match rather than per car: '
+        + '🛞 Quick Tires (1) +45% speed, re-read every frame so it speeds up the car already on the '
+        + 'floor; 🔱 Spiked Bumper (2) ram 18 → 34; 🛡️ Stronger Chassis (2) +3 bounces; 💣 Suicide '
+        + 'Mission (2) a 25% bigger death blast throwing 16 shrapnel rounds of 8 at 620 px/s; 🌤️ Sunroof '
+        + '(3) a 60% faster reload, 70% faster trigger and +20% weapon damage aboard; 🎖️ Mounted Gunner '
+        + '(3) +5 magazine while riding, topped up the instant you climb on and taken back when you step '
+        + 'down; 🤖 Robo-Gunner (3) an automatic on the roof firing 3 rounds a second at 2 damage each '
+        + 'within 200px, aiming itself independently of where the car is going; 🏁 Speedster (5) 2.4× '
+        + 'speed, +10 bounces and a burning trail of the Spicy Pepper\'s own fire patches every 80ms; 🚜 '
+        + 'Tank (7) 0.45× speed, +5 bounces, ram ×2.2 and a 15-damage shell in a 70px blast every 3 '
+        + 'seconds at anything within 165px. One car at a time, and the 24s cooldown does not start until '
+        + 'the car is gone.',
+      cast: 'The bound key (E, R, F or Q), aimed — the cursor sets the heading it leaves on, and it never turns again. One car at a time; the 24 second cooldown does not start until the car is gone.',
+      effects: [
+        { tag: 'summon', label: 'The car', detail: '155 px/s, 5 bounces, and it explodes on the fifth. It reflects off the arena edges; a corner counts as one bounce, not two.' },
+        { tag: 'damage', label: 'The ram', detail: '18 damage to anything within 27px of it, with a 0.9 second per-victim gate so a car grinding along somebody is not a blender.' },
+        { tag: 'damage', label: 'The wreck', detail: '30 damage inside 92px when the last bounce runs out, falling to 18 at the rim. It is not optional — the car always ends this way.' },
+        { tag: 'movement', label: 'Riding it', detail: 'Space within 54px puts you on the roof. Your body is carried by the car; you have traded steering for a firing platform. Space again steps off.' },
+        { tag: 'buff', label: 'What the roof is worth', detail: '40% faster reload and a 35% faster trigger while you are aboard. Both are multipliers on the rate rather than subtractions from the gap, so they stack with Acceleration Gear and the battle pass without ever producing a negative wait.' },
+        { tag: 'utility', label: 'It will not hurt you', detail: 'A car that explodes with you on it throws you clear instead. It is your car.' },
+        { tag: 'utility', label: 'The GARAGE', detail: 'A fourth tab on your own stall, reachable with T like the others. Nine buffs, and the car may carry three of them — for the whole match, not per car.' },
+        { tag: 'movement', label: '🛞 Quick Tires — 1', detail: '+45% speed. Re-read every frame, so it speeds up the car already on the floor.' },
+        { tag: 'damage', label: '🔱 Spiked Bumper — 2', detail: 'Ram damage 18 → 34.' },
+        { tag: 'utility', label: '🛡️ Stronger Chassis — 2', detail: '+3 bounces, so 8 instead of 5.' },
+        { tag: 'damage', label: '💣 Suicide Mission — 2', detail: 'The death blast grows 25% and throws 16 shrapnel rounds of 8 damage each, radially, at 620 px/s.' },
+        { tag: 'buff', label: '🌤️ Sunroof — 3', detail: 'The ride becomes a 60% faster reload and a 70% faster trigger, plus 20% weapon damage for as long as you are aboard.' },
+        { tag: 'resource', label: '🎖️ Mounted Gunner — 3', detail: '+5 magazine while riding, topped up the instant you climb on rather than at the next reload — and taken back off when you step down.' },
+        { tag: 'damage', label: '🤖 Robo-Gunner — 3', detail: 'An automatic on the roof: 3 rounds a second at 2 damage each, at anything within 200px. It aims itself, independently of where the car is going.' },
+        { tag: 'movement', label: '🏁 Speedster — 5', detail: '2.4× speed, +10 bounces, and a burning trail behind it — the Spicy Pepper\'s own fire patches, 26 damage a second, laid every 80ms.' },
+        { tag: 'damage', label: '🚜 Tank — 7', detail: '0.45× speed, +5 bounces, ram damage ×2.2 (so 40, or 75 with a Spiked Bumper), and a 15-damage explosive shell inside a 70px blast every 3 seconds at anything within 165px.' },
+      ],
+      notes: [
+        'Speedster and Tank are the two ends of the same idea and they stack — 2.4 × 0.45 is very nearly the speed you started with, with fifteen extra bounces and a cannon on it.',
+        'Everything the garage sells is read out of the buff list every frame rather than baked into the car when it spawned, so a buff bought mid-drive applies to the car already out.',
+        'The cooldown is measured from the wreck, not from the cast. A Speedster with a Stronger Chassis is out for a very long time, and it has already paid for that in the time it was out.',
+        'The shrapnel, the Robo-Gunner\'s rounds and the Tank\'s shells are ordinary Fortune bullets, so a Paywall bills the other side for them exactly as it bills anything else.',
+        'A Fortune NPC on Nightmare climbs onto its own car to reload and steps off the moment the magazine is back or the fight comes within 150px. It never rides into a fight it cannot move out of.',
       ],
     },
   },

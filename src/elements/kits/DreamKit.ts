@@ -3,10 +3,17 @@ import { Sfx } from '../../audio';
 import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
+import { Projectile } from '../../combat/Projectile';
 import {
   DRM, DreamAvatar, DreamColorFn, DreamFx, DreamPortal, OasisView, TrancePendulum,
-  dreamOrb, dreamcatcherShape, ekgTrace, sleepMeter, sleepyZ, star,
+  angryRam, cosmicCannon, dreamCrown, dreamOrb, dreamcatcherShape, ekgTrace, hauntBolt,
+  leashRing, nightTerror, pendulumBob, pillowFort, sleepMeter, sleepyZ, spiritForm,
+  spiritThread, star, spiritTearShape, tearMoon, wishCounter,
 } from './DreamVisuals';
+import { meterGain } from '../../combat/Meters';
+import { DreamBoon, dreamBoons } from '../../data/DreamBuffs';
+import { DreamElementPicker } from './DreamPicker';
+import { findElementDef } from '../../data/ElementRoster';
 
 type Owner = 'player' | 'npc';
 
@@ -37,19 +44,91 @@ const PEND_G = 1600;
 const PEND_DAMP = 0.7;
 /** Anchor acceleration is a second derivative of a position sampled once a frame — cap it. */
 const PEND_MAX_DRIVE = 5200;
+/**
+ * How far out from the body the hand holding the chain sits. This is the whole rework: the
+ * pivot is carried around by the *cursor*, not by the feet, so circling the mouse whips the
+ * pivot in a circle and the pendulum is driven by that circle's acceleration. A player who
+ * circles at roughly the pendulum's own √(g/L) ≈ 4.85 rad/s is driving it on resonance.
+ */
+const HAND_R = 26;
 /** Tip speed (px/s) at which the drowsy field is at full strength. */
 const TRANCE_MAX_TIP = 380;
+/**
+ * Cursor spin (rad/s) below which winding counts as fidgeting, and the rate at which it alone
+ * guarantees a full-strength field. The physics above is the *feel*; this is the promise —
+ * spin harder and the aura is bigger, whatever phase the bob happens to be caught at.
+ */
+const SPIN_DEADZONE = 1.2;
+const SPIN_FULL = 8.4;
+/** Cap on the bob's angular rate, so a hard wind never turns it into a strobing blur. */
+const OMEGA_MAX = 8;
 const TRANCE_R_MIN = 92;
 const TRANCE_R_MAX = 176;
-/** Sleepiness per second at a full-strength swing. */
-const TRANCE_GAIN = 34;
+/**
+ * Sleepiness per second at a full-strength swing. Deliberately a third of what it
+ * used to be: a full swing used to fill the meter in about three seconds, which made
+ * every other key in the kit a formality. Winding is now the long part of the plan.
+ */
+const TRANCE_GAIN = 11.3;
 /** Below this the pendulum is just hanging there, and hanging is not hypnotism. */
 const TRANCE_MIN_SWING = 0.06;
 /**
- * The AI cannot feather WASD to pump a pendulum, so its swing is topped up directly. Small
- * enough that an NPC standing still still takes a couple of seconds to get going.
+ * The AI has no mouse to circle, so it is handed a spin rate directly. Enough to matter,
+ * not enough to match a player who is actually winding.
  */
-const NPC_PUMP = 2.4;
+const NPC_SPIN = 4.6;
+
+// ── Knocked Out (Click+) ─────────────────────────────────────────────────────
+/** Below this heat, switching the pendulum off just puts it away. */
+const THROW_MIN_HEAT = 0.4;
+const THROW_SPEED = 620;
+const THROW_BASE_DAMAGE = 14;
+const THROW_HEAT_DAMAGE = 46;
+const THROW_R = 20;
+const THROW_LIFE_MS = 900;
+/** Sleepiness at which a hit from the flying bob puts them straight under. */
+const THROW_KO_AT = 75;
+
+// ── Pillow Fort (E+) ─────────────────────────────────────────────────────────
+const FORT_BASE_HP = 75;
+const FORT_HEAL = 25;
+const FORT_MAX_LEVEL = 5;
+const FORT_R = 46;
+/** L3 and L5 each add this to the footprint and to the pool. */
+const FORT_GROW_R = 11;
+const FORT_GROW_HP = 50;
+/** Rest inside a fort of level ≥2 is worth this much more a second, again at level 5. */
+const FORT_REST_BONUS = 2;
+const RAM_EVERY_MS = 12000;
+const RAM_LIFE_MS = 5000;
+const RAM_SPEED = 290;
+const RAM_DAMAGE = 22;
+const RAM_KNOCK = 240;
+const RAM_HIT_R = 22;
+const CANNON_COOLDOWN_MS = 15000;
+const CANNON_DAMAGE = 25;
+const CANNON_SLEEP = 20;
+const CANNON_SPEED = 700;
+const CANNON_R = 22;
+/** Knockback is played out as a position shove — see `Shove`. */
+const SHOVE_MS = 260;
+
+// ── Good Dreams (R+) ─────────────────────────────────────────────────────────
+const GOOD_DREAM_CHANCE = 0.2;
+const GOOD_BUFF_MS = 40000;
+
+// ── Phobia (F+) ──────────────────────────────────────────────────────────────
+const PHOBIA_PER_STACK = 0.15;
+
+// ── Night Terrors (Q+) ───────────────────────────────────────────────────────
+/** How long the victim is held inside the nightmare before it lets them out. */
+const TERROR_HOLD_MS = 4000;
+const TERROR_EXHAUST_MS = 12000;
+const TERROR_EXHAUST_MULT = 0.67;
+const TERROR_STUN_MS = 5000;
+const TERROR_BLEED_MS = 10000;
+const TERROR_BLEED_TICK_MS = 1000;
+const TERROR_BLEED_DAMAGE = 5;
 
 // ── Pillow Fight (E) ─────────────────────────────────────────────────────────
 const PILLOW_DAMAGE = 10;
@@ -92,6 +171,44 @@ const FALLS_LOOP_MS = 1500;
 
 const ARENA_PAD = 32;
 
+// ── Dream Duel (Dream Mastery — passive) ─────────────────────────────────────
+export const DUEL_ID = 'dream-duel';
+/** How much longer the sleeper stays under because a duel was called on them. */
+const DUEL_SLEEP_BONUS_MS = 3000;
+/** How far either spirit may get from the body it stepped out of. */
+const DUEL_LEASH = 168;
+/** Body speed (px/s) below which the caller counts as standing still enough to call one. */
+const DUEL_STILL_SPEED = 8;
+/** A duel cannot be re-opened straight after the last one ended. */
+const DUEL_COOLDOWN_MS = 6000;
+
+const HAUNT_DAMAGE = 5;
+const HAUNT_SHOTS = 3;
+const HAUNT_GAP_MS = 500;
+const HAUNT_SPEED = 560;
+const HAUNT_R = 13;
+const HAUNT_LIFE_MS = 1600;
+
+const TEAR_DAMAGE = 10;
+const TEAR_MOON_DAMAGE = 5;
+const TEAR_SPEED = 86;
+const TEAR_R = 26;
+const TEAR_MOON_R = 11;
+const TEAR_ORBIT = 46;
+const TEAR_LIFE_MS = 7000;
+/** A pierced body cannot be cut by the same tear again inside this window. */
+const TEAR_REHIT_MS = 900;
+
+// ── Lifelong Dream (Dream Mastery — bindable) ────────────────────────────────
+export const LIFELONG_ID = 'lifelong-dream';
+const LIFELONG_COOLDOWN_MS = 40000;
+/** How long the wish takes to come true, with nobody interfering. */
+const WISH_MS = 10000;
+/** How much every hit taken puts back on it. */
+const WISH_HIT_PENALTY_MS = 2000;
+/** How long the counter flashes red after a hit put time back on it. */
+const WISH_JOLT_MS = 420;
+
 // ── World objects ────────────────────────────────────────────────────────────
 
 interface Dreamcatcher {
@@ -101,9 +218,158 @@ interface Dreamcatcher {
   until: number;
   /** Dreams currently held, waiting to be walked over. */
   dreams: number;
+  /** Good Dreams (R+): how many of the above came out golden. */
+  good: number;
   drainAccum: number;
   /** Who it is currently pulling from, for the thread — recomputed each frame. */
   draining: Fighter | null;
+}
+
+/** Knocked Out (Click+): the bob, off its chain and on its way to the cursor. */
+interface Thrown {
+  owner: Owner;
+  x: number; y: number;
+  vx: number; vy: number;
+  until: number;
+  /** 0–1 swing strength at the moment it was released. Scales the damage. */
+  heat: number;
+  seed: number;
+}
+
+/**
+ * Pillow Fort (E+). One per side, and the only structure Dream ever builds — a piece of cover
+ * that eats what the enemy shoots at it, heals whoever rests inside it, and grows teeth as it
+ * is fed more pillows.
+ */
+interface Fort {
+  owner: Owner;
+  x: number; y: number;
+  r: number;
+  hp: number;
+  maxHp: number;
+  level: number;
+  nextRamAt: number;
+  /** `scene.time.now` the cannon may next be loaded. */
+  cannonReadyAt: number;
+  /** True once Space has loaded the cannon and the next click is the shot. */
+  cannonArmed: boolean;
+  bornAt: number;
+}
+
+/** A ram sheep charging out of a level-4 fort. */
+interface Ram {
+  owner: Owner;
+  x: number; y: number;
+  /** Where it is currently pointed. Latched so the painter and the sim agree. */
+  ang: number;
+  until: number;
+  /** Bodies it has already hit — a ram is a charge, not a lawnmower. */
+  hit: Set<Fighter>;
+}
+
+/** A cosmic cannon shell in flight. */
+interface Shell {
+  owner: Owner;
+  x: number; y: number;
+  vx: number; vy: number;
+  until: number;
+  seed: number;
+}
+
+/** A knockback in progress, played out as position because velocity is stomped every frame. */
+interface Shove {
+  target: Fighter;
+  vx: number; vy: number;
+  until: number;
+}
+
+/** One Good Dream buff riding on the Dream player. */
+type GoodBuffKind = 'swift' | 'fierce' | 'tough' | 'mending';
+
+interface GoodBuff {
+  kind: GoodBuffKind;
+  until: number;
+}
+
+const GOOD_BUFFS: Record<GoodBuffKind, { emoji: string; name: string; blurb: string }> = {
+  swift: { emoji: '💨', name: 'Light Sleeper', blurb: '12% move speed' },
+  fierce: { emoji: '🗡️', name: 'Lucid', blurb: '15% more damage dealt' },
+  tough: { emoji: '🛡️', name: 'Well Rested', blurb: '15% less damage taken' },
+  mending: { emoji: '🌿', name: 'Deep Sleep', blurb: '2 HP a second' },
+};
+
+/** Night Terrors (Q+): which of the three a victim is living through, and its aftermath. */
+interface Terror {
+  victim: Fighter;
+  by: Owner;
+  kind: 0 | 1 | 2;
+  /** `scene.time.now` the cutscene lets them go and the after-effect lands. */
+  endsAt: number;
+}
+
+// ── Dream Duel ───────────────────────────────────────────────────────────────
+
+/**
+ * A duel in progress. There is only ever one, and only ever called by the local player: it is
+ * a mastery passive, and a bot has no mastery loadout to switch it on with.
+ *
+ * Neither fighter is replaced by anything — both keep driving their own bodies, which *are*
+ * the spirits for the duration. What is pinned is where each of them stepped out of: the
+ * abandoned body stays at `*AnchorX/Y`, the thread is drawn back to it, and neither side may
+ * travel further from their own anchor than {@link DUEL_LEASH}.
+ */
+interface Duel {
+  victim: Fighter;
+  /** `scene.time.now` the duel ends on its own — tied to the sleep that opened it. */
+  until: number;
+  myAnchorX: number; myAnchorY: number;
+  foeAnchorX: number; foeAnchorY: number;
+  /** The caster's own `isInvincible`, so a Stealthy mutation survives the duel. */
+  wasInvincible: boolean;
+  /** Haunt volleys still paying out, oldest first. */
+  volleys: { angle: number; left: number; nextAt: number }[];
+}
+
+/** One Haunt bolt in flight. */
+interface Bolt {
+  x: number; y: number;
+  vx: number; vy: number;
+  until: number;
+  seed: number;
+}
+
+/** One Spirit Tear, drifting, with its two moons. */
+interface Tear {
+  x: number; y: number;
+  vx: number; vy: number;
+  until: number;
+  /** Orbit phase of the leading moon; the trailing one is half a turn behind it. */
+  phase: number;
+  /** `scene.time.now` each body it has already cut may be cut again. */
+  hit: Map<Fighter, number>;
+}
+
+// ── Lifelong Dream ───────────────────────────────────────────────────────────
+
+/** The wish that is currently being held, or the one that has already come true. */
+interface Wish {
+  elementId: string;
+  /** `scene.time.now` it lands on. Pushed forward every time the dreamer is hit. */
+  dueAt: number;
+  /** True once it has landed and the boons are being held. */
+  granted: boolean;
+  /** `scene.time.now` the counter stops flashing red. */
+  joltUntil: number;
+  /** Last seen `rawDamageTaken`, for the +2s. Its own tally: the sleep ledger is per-victim. */
+  lastRaw: number;
+  /** The boons, resolved once at grant so a table edit mid-match cannot half-apply. */
+  boons: DreamBoon[];
+  /** What was handed over once and has to be handed back — see `undoOneShots`. */
+  gaveMaxHp: number;
+  /** The caster's own flags before the dream touched them. */
+  hadKnockbackImmune: boolean;
+  hadUnstoppable: boolean;
+  hadLevitating: boolean;
 }
 
 /**
@@ -124,13 +390,26 @@ interface SleepState {
    * detected without claiming the fighter's damage callback, which ArenaScene already owns.
    */
   lastRaw: number;
+  /**
+   * Phobia (F+): how many times each named attack has torn this body out of its sleep. The
+   * key is a kit tag for Dream's own damage and the waker's `lastCastAbilityId` for anything
+   * else — either way it is "the exact thing that woke them", which is what the fear is of.
+   */
+  phobia: Map<string, number>;
+  /** Night Terrors (Q+): a bleed still running after the horde caught them. */
+  bleedUntil: number;
+  bleedAccum: number;
+  bleedBy: Owner;
+  /** Night Terrors (Q+): exhausted after the corridor. */
+  exhaustedUntil: number;
 }
 
 function makeSleep(): SleepState {
   return {
     drowsy: 0, asleepUntil: 0, by: 'player',
     nightmareUntil: 0, nightmareAccum: 0, nightmareBy: 'player',
-    lastRaw: 0,
+    lastRaw: 0, phobia: new Map(),
+    bleedUntil: 0, bleedAccum: 0, bleedBy: 'player', exhaustedUntil: 0,
   };
 }
 
@@ -144,9 +423,15 @@ interface Side {
   /** Radians from straight down, positive toward +x. */
   theta: number;
   omega: number;
+  /** Last frame's *hand* position — the pivot the cursor drags around. */
   prevX: number; prevY: number;
   prevVx: number; prevVy: number;
   smoothAx: number; smoothAy: number;
+  /** Last frame's cursor bearing from the body, and the smoothed rate it is turning at. */
+  curAng: number;
+  spin: number;
+  /** Where the hand is this frame. Latched so the painter and the sim agree. */
+  handX: number; handY: number;
   pendulum: TrancePendulum | null;
 
   // ── Oasis ──
@@ -182,6 +467,11 @@ interface Side {
 
   /** NPC pacing, so the AI does not re-place a dreamcatcher the instant one expires. */
   nextCatcherAt: number;
+
+  /** Good Dreams (R+): everything currently riding on this side. */
+  buffs: GoodBuff[];
+  /** Accumulator for the `mending` buff's per-second tick. */
+  mendAccum: number;
 }
 
 function makeSide(owner: Owner): Side {
@@ -191,6 +481,7 @@ function makeSide(owner: Owner): Side {
     theta: 0.0001, omega: 0,
     prevX: 0, prevY: 0, prevVx: 0, prevVy: 0,
     smoothAx: 0, smoothAy: 0,
+    curAng: 0, spin: 0, handX: 0, handY: 0,
     pendulum: null,
     portalX: 0, portalY: 0, portalUntil: 0, portalOpen: 0, portal: null,
     oasisUntil: 0, oasisHealAccum: 0, oasisHealed: 0, oasisGrow: 0, oasis: null,
@@ -199,6 +490,7 @@ function makeSide(owner: Owner): Side {
     cursorInside: new Set(),
     ghostX: 0, ghostY: 0, ghostVx: 0, ghostVy: 0,
     nextCatcherAt: 0,
+    buffs: [], mendAccum: 0,
   };
 }
 
@@ -214,11 +506,15 @@ export interface DreamArenaApi {
   get rKey(): Phaser.Input.Keyboard.Key;
   get fKey(): Phaser.Input.Keyboard.Key;
   get qKey(): Phaser.Input.Keyboard.Key;
+  /** Pillow Fort (E+): Space loads the cosmic cannon while standing on a level-5 fort. */
+  get spaceKey(): Phaser.Input.Keyboard.Key;
   get pointerWasDown(): boolean;
   get elementId(): string;
   get npcElementId(): string;
   get width(): number;
   get height(): number;
+  /** Pillow Fort (E+): the fort eats enemy shots, so it has to be able to see them. */
+  get projectiles(): Phaser.Physics.Arcade.Group;
   /** Skins: maps a Dream visual colour through that side's equipped skin. */
   dreamColor(owner: Owner, base: number): number;
   spawnHitFlash(x: number, y: number, color: number): void;
@@ -226,8 +522,17 @@ export interface DreamArenaApi {
   getNearestEnemy(fromX: number, fromY: number): Fighter;
   buildPlayerContext(x: number, y: number): CastContext;
   setStatusIndicator(id: string, status: CustomStatus | null): void;
+  /** Shop upgrades on the local player. */
+  hasUpgrade(slot: string): boolean;
+  /** Shop upgrades on the online opponent, replayed on this victim-side sim. */
+  hasNpcUpgrade(slot: string): boolean;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
+  /** Mastery: the enhancement bound over each of the player's slots this match. */
+  masteryBindFor(slot: string): string | null;
+  recordMasteryStat(key: string, amount: number): void;
+  /** Dream Duel swaps the whole tray for the spirit's two keys. */
+  setDuelHud(on: boolean): void;
 }
 
 // ── DreamKit ─────────────────────────────────────────────────────────────────
@@ -254,6 +559,8 @@ export class DreamKit {
   private cursorGfx: Phaser.GameObjects.Graphics | null = null;
   private hudGfx: Phaser.GameObjects.Graphics | null = null;
   private hudLabel: Phaser.GameObjects.Text | null = null;
+  /** Lifelong Dream's countdown, in world space over the dreamer's head. */
+  private wishLabel: Phaser.GameObjects.Text | null = null;
   private cursorHidden = false;
   private vizT = 0;
 
@@ -261,6 +568,20 @@ export class DreamKit {
   private sides: Record<Owner, Side> = { player: makeSide('player'), npc: makeSide('npc') };
   private sleep = new Map<Fighter, SleepState>();
   private catchers: Dreamcatcher[] = [];
+  private thrown: Thrown[] = [];
+  private forts: Fort[] = [];
+  private rams: Ram[] = [];
+  private shells: Shell[] = [];
+  private shoves: Shove[] = [];
+  private terrors: Terror[] = [];
+  /**
+   * Phobia (F+): the tag the kit is currently dealing damage under, so a hit from the pillow
+   * is remembered as "the pillow" rather than as whatever the caster last pressed. Set around
+   * every kit damage call and cleared straight afterwards.
+   */
+  private attackTag: string | null = null;
+  /** This kit's current share of each fighter's shared `outgoingDamageMult`. */
+  private outApplied = new Map<Fighter, number>();
   /**
    * Drowsiness handed out this frame, so a target being swung at gains instead of decaying.
    * Rebuilt every frame — a target that drops out of every field simply stops appearing.
@@ -272,6 +593,36 @@ export class DreamKit {
   private fallsAccum = 0;
   /** Latched swing strength per side, for the HUD and the avatar. */
   private swing: Record<Owner, number> = { player: 0, npc: 0 };
+
+  // ── Mastery ──
+  /** Dream Duel: the duel in progress, or null. Only ever one, and only ever the player's. */
+  private duel: Duel | null = null;
+  /** `scene.time.now` a new duel may be called. Init to `-COOLDOWN` — see `reset()`. */
+  private duelReadyAt = -DUEL_COOLDOWN_MS;
+  /** Latched so the tray is only swapped when the duel actually starts or ends. */
+  private duelHudOn = false;
+  private bolts: Bolt[] = [];
+  private tears: Tear[] = [];
+  /** Lifelong Dream: the element picker overlay, built lazily on the first press. */
+  private picker: DreamElementPicker | null = null;
+  /** What the picker took from the player while it was open, to hand back on close. */
+  private pickerWasInvincible = false;
+  private wish: Wish | null = null;
+  private lifelongAt = -LIFELONG_COOLDOWN_MS;
+  /** Accumulators for the boons that pay out per second. */
+  private boonRegenAccum = 0;
+  private boonContactAccum = 0;
+  /** Damage tallies the boons watch: the enemy's, for lifesteal, and ours, for thorns. */
+  private boonFoeRaw = new Map<Fighter, number>();
+  private boonSelfRaw = 0;
+  /** Everything the boons have written onto the caster, so `reset()` hands all of it back. */
+  private boonTouched = false;
+  /** Once-per-match stats, so a single long fight cannot farm them. */
+  private masteryStatsSeeded = false;
+  /** Last frame's Space state — see the rising-edge note in `handleInput`. */
+  private prevSpaceDown = false;
+  /** The exact `healStopUntil` the duel last wrote, so only its own block is ever lifted. */
+  private duelHealStop = 0;
 
   constructor(api: DreamArenaApi) {
     this.api = api;
@@ -294,6 +645,54 @@ export class DreamKit {
   private body(f: Fighter): Phaser.Physics.Arcade.Body { return f.body as Phaser.Physics.Arcade.Body; }
   private isDream(owner: Owner): boolean {
     return owner === 'player' ? this.api.elementId === 'dream' : this.api.npcElementId === 'dream';
+  }
+
+  /** Shop upgrades, for whichever side is asking. */
+  private up(owner: Owner, slot: string): boolean {
+    return owner === 'player' ? this.api.hasUpgrade(slot) : this.api.hasNpcUpgrade(slot);
+  }
+
+  private hex(color: number): string {
+    return `#${color.toString(16).padStart(6, '0')}`;
+  }
+
+  private alive(f: Fighter | null | undefined): boolean {
+    return !!f && f.active && f.hp > 0;
+  }
+
+  private fortOf(owner: Owner): Fort | null {
+    return this.forts.find((x) => x.owner === owner) ?? null;
+  }
+
+  /**
+   * Damage dealt by the kit, tagged so Phobia can remember what it was. Every one of Dream's
+   * own damage sources goes through here rather than calling `takeDamage` directly — that is
+   * what makes "the exact attack that woke them" a real answer and not a guess.
+   */
+  private strike(t: Fighter, amount: number, tag: string): void {
+    this.attackTag = tag;
+    t.takeDamage(amount);
+    this.attackTag = null;
+  }
+
+  /** The name the phobia ledger files a wake-up under. */
+  private wakerTag(st: SleepState): string {
+    if (this.attackTag) return this.attackTag;
+    const caster = this.fighter(st.by);
+    return caster?.lastCastAbilityId ?? 'something';
+  }
+
+  /** A readable name for a phobia tag, for the pop-up and the tray. */
+  private tagLabel(tag: string): string {
+    const kit: Record<string, string> = {
+      'dream:pillow': 'the pillow',
+      'dream:cursor': 'the cursor',
+      'dream:pendulum': 'the pendulum',
+      'dream:cannon': 'the cannon',
+      'dream:ram': 'the rams',
+      'dream:nightmare': 'the nightmare',
+    };
+    return kit[tag] ?? tag.replace(/^[a-z]+-/, '').replace(/-/g, ' ');
   }
 
   private get left(): number { return ARENA_PAD; }
@@ -323,9 +722,34 @@ export class DreamKit {
     return owner === 'player' ? this.playerAvatar : this.npcAvatar;
   }
 
-  /** The pendulum hangs off the caster's hands, not their feet. */
-  private anchorOf(f: Fighter): { x: number; y: number } {
-    return { x: f.x, y: f.y + 4 };
+  /** Where this side is pointing. The npc's phantom eye stands in for a mouse. */
+  private aimXFor(owner: Owner): number {
+    if (owner === 'player') return this.lastAimX || this.api.player.x + 1;
+    const s = this.sides.npc;
+    return s.ghostX || this.api.player.x;
+  }
+
+  private aimYFor(owner: Owner): number {
+    if (owner === 'player') return this.lastAimY || this.api.player.y;
+    const s = this.sides.npc;
+    return s.ghostY || this.api.player.y;
+  }
+
+  /**
+   * The pendulum hangs off the caster's hand, and the hand is held out toward the cursor —
+   * which is the whole of the Trance rework: circling the cursor circles the pivot, and a
+   * circling pivot is what drives the bob.
+   */
+  private anchorOf(owner: Owner): { x: number; y: number } {
+    const f = this.fighter(owner);
+    if (!f) return { x: 0, y: 0 };
+    const ang = Math.atan2(this.aimYFor(owner) - f.y, this.aimXFor(owner) - f.x);
+    return { x: f.x + Math.cos(ang) * HAND_R, y: f.y + 4 + Math.sin(ang) * HAND_R * 0.8 };
+  }
+
+  /** Inside your own fort — the test for resting in it, and for reaching its cannon. */
+  private standingOnFort(f: Fighter, fort: Fort): boolean {
+    return this.alive(f) && Phaser.Math.Distance.Between(f.x, f.y, fort.x, fort.y) <= fort.r;
   }
 
   private releaseCursor(): void {
@@ -337,6 +761,28 @@ export class DreamKit {
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
   reset(): void {
+    // Before the state is thrown away: everything the mastery parked on a Fighter has to be
+    // handed back, or the next element picked would walk out wearing somebody else's dream.
+    this.endDuel('reset');
+    this.undoBoons();
+    this.picker?.destroy();
+    this.picker = null;
+    this.wish = null;
+    this.bolts = [];
+    this.tears = [];
+    // `scene.time.now` does not restart between matches and readiness is absolute, so a plain 0
+    // here would lock both of these for their whole cooldown at the start of the first match.
+    this.duelReadyAt = -DUEL_COOLDOWN_MS;
+    this.lifelongAt = -LIFELONG_COOLDOWN_MS;
+    this.duelHudOn = false;
+    this.boonRegenAccum = 0;
+    this.boonContactAccum = 0;
+    this.boonFoeRaw.clear();
+    this.boonSelfRaw = 0;
+    this.masteryStatsSeeded = false;
+    this.prevSpaceDown = false;
+    this.duelHealStop = 0;
+
     for (const owner of ['player', 'npc'] as Owner[]) {
       const s = this.sides[owner];
       s.pendulum?.destroy();
@@ -347,6 +793,13 @@ export class DreamKit {
     this.sleep.clear();
     this.gained.clear();
     this.catchers = [];
+    this.thrown = [];
+    this.forts = [];
+    this.rams = [];
+    this.shells = [];
+    this.shoves = [];
+    this.terrors = [];
+    this.attackTag = null;
     this.swing = { player: 0, npc: 0 };
     this.vizT = 0;
     this.fallsAccum = 0;
@@ -360,6 +813,7 @@ export class DreamKit {
     this.cursorGfx?.destroy(); this.cursorGfx = null;
     this.hudGfx?.destroy(); this.hudGfx = null;
     this.hudLabel?.destroy(); this.hudLabel = null;
+    this.wishLabel?.destroy(); this.wishLabel = null;
     this.releaseCursor();
 
     // Anything the oasis was holding on a fighter has to be handed back, or a Dream match
@@ -368,7 +822,55 @@ export class DreamKit {
       if (!f) continue;
       f.isInvincible = false;
       f.forceInvisible = false;
+      // Phobia parks a multiplier on the Fighter; hand it back or the next match starts with
+      // somebody permanently terrified.
+      f.dreamIncomingMult = 1;
+      // Lucid and the corridor's exhaustion both ride the shared outgoing multiplier, so
+      // whatever this kit put on it is divided back out rather than stomped to 1.
+      this.applyOutgoing(f, 1);
     }
+    this.outApplied.clear();
+  }
+
+  /**
+   * Write this kit's share of the *shared* outgoing-damage multiplier, dividing out whatever
+   * it wrote last. Lust and the gauntlet cards live on the same field, so a flat assignment
+   * here would quietly delete theirs.
+   */
+  private applyOutgoing(f: Fighter, mult: number): void {
+    const prev = this.outApplied.get(f) ?? 1;
+    if (Math.abs(prev - mult) < 1e-6) return;
+    f.outgoingDamageMult = (f.outgoingDamageMult / prev) * mult;
+    if (Math.abs(mult - 1) < 1e-6) this.outApplied.delete(f);
+    else this.outApplied.set(f, mult);
+  }
+
+  // ── Mastery helpers ────────────────────────────────────────────────────────
+
+  /** Whether Element Mastery is on for the local Dream player. */
+  private get mastered(): boolean {
+    return this.api.elementId === 'dream' && this.api.masteryActive;
+  }
+
+  /** Which slot Lifelong Dream was dropped on, or null. */
+  private lifelongSlot(): 'e' | 'r' | 'f' | 'q' | null {
+    if (!this.mastered) return null;
+    for (const s of ['e', 'r', 'f', 'q'] as const) {
+      if (this.api.masteryBindFor(s) === LIFELONG_ID) return s;
+    }
+    return null;
+  }
+
+  /** The player's key for a bound slot. */
+  private keyFor(slot: 'e' | 'r' | 'f' | 'q'): Phaser.Input.Keyboard.Key {
+    return slot === 'e' ? this.api.eKey
+      : slot === 'r' ? this.api.rKey
+      : slot === 'f' ? this.api.fKey : this.api.qKey;
+  }
+
+  /** Only ever recorded for the player: the grind is the human's, not the bot's. */
+  private record(owner: Owner, key: string, amount = 1): void {
+    if (owner === 'player') this.api.recordMasteryStat(key, amount);
   }
 
   // ── Input ──────────────────────────────────────────────────────────────────
@@ -382,6 +884,18 @@ export class DreamKit {
 
     const s = this.sides.player;
     const p = this.api.player;
+    // Space is read as a **rising edge on `isDown`**, never with `JustDown`.
+    //
+    // `JustDown` consumes the flag, and ArenaScene's dodge block — which runs after this — asks
+    // the same question of the same key. Reading it here with `JustDown` would silently delete
+    // the roll for every Dream player on every frame this method runs. `suppressesDodge()` is
+    // what stops a press being both things; this is what stops it being neither.
+    const spaceDown = this.api.spaceKey.isDown;
+    const spacePressed = spaceDown && !this.prevSpaceDown;
+    this.prevSpaceDown = spaceDown;
+
+    // The picker owns the keyboard while it is up: every letter belongs to the search box.
+    if (this.picker?.isOpen()) return;
     // Asleep or resting — either way the controls are not yours.
     if (s.oasisUntil > time) return;
     if (this.isAsleep(p)) return;
@@ -389,38 +903,640 @@ export class DreamKit {
     const ctx = this.api.buildPlayerContext(mouseX, mouseY);
     const clicked = pointer.isDown && !this.api.pointerWasDown;
 
+    // ── Dream Duel: the spirit's own two keys, and nothing else ──
+    if (this.duel) {
+      if (clicked) p.castAbility('dream-haunt', ctx);
+      if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('dream-spirit-tear', ctx);
+      return;
+    }
+    if (spacePressed && this.canCallDuel()) {
+      this.beginDuel();
+      return;
+    }
+
+    // ── Lifelong Dream, on whichever key it was bound to ──
+    const lifelong = this.lifelongSlot();
+    if (lifelong && Phaser.Input.Keyboard.JustDown(this.keyFor(lifelong))) {
+      this.openLifelongPicker();
+      return;
+    }
+
+    // ── The cosmic cannon (E+, level 5) ──
+    // Space loads it, and the load has to be consumed here rather than in `doTrance`, because
+    // a loaded click is not a Trance toggle at all — it is the shot.
+    const fort = this.fortOf('player');
+    if (fort && fort.level >= FORT_MAX_LEVEL && this.standingOnFort(p, fort) && spacePressed) {
+      this.loadCannon(fort);
+    }
+    if (clicked && fort?.cannonArmed) {
+      this.fireCannon(fort, mouseX, mouseY);
+      return;
+    }
+
     if (clicked) p.castAbility('dream-trance', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('dream-pillow-fight', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('dream-dreamcatcher', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('dream-nightmare', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('dream-oasis', ctx);
+    if (lifelong !== 'e' && Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('dream-pillow-fight', ctx);
+    if (lifelong !== 'r' && Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('dream-dreamcatcher', ctx);
+    if (lifelong !== 'f' && Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('dream-nightmare', ctx);
+    if (lifelong !== 'q' && Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('dream-oasis', ctx);
+  }
+
+  // ── Dream Duel (Dream Mastery — passive) ───────────────────────────────────
+
+  /**
+   * The three conditions, checked together: mastery on, feet planted, and somebody of yours
+   * asleep within reach. Side-effect free — the HUD prompt asks the same question every frame.
+   */
+  private duelCandidate(): Fighter | null {
+    if (!this.mastered || this.duel) return null;
+    const p = this.api.player;
+    if (!this.alive(p)) return null;
+    const b = this.body(p);
+    if (b && Math.hypot(b.velocity.x, b.velocity.y) > DUEL_STILL_SPEED) return null;
+    let best: Fighter | null = null;
+    let bestD = Infinity;
+    for (const t of this.targetsOf('player')) {
+      if (!this.isAsleep(t)) continue;
+      const d = Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y);
+      if (d < bestD) { bestD = d; best = t; }
+    }
+    return best;
+  }
+
+  private canCallDuel(): boolean {
+    return this.now >= this.duelReadyAt && !!this.duelCandidate();
+  }
+
+  private beginDuel(): void {
+    const victim = this.duelCandidate();
+    if (!victim) return;
+    const p = this.api.player;
+    const st = this.state(victim);
+    // The duel does not merely happen during their nap — it lengthens it, and the duel runs
+    // exactly as long as the sleep it is riding.
+    st.asleepUntil = Math.max(st.asleepUntil, this.now) + DUEL_SLEEP_BONUS_MS;
+
+    this.duel = {
+      victim,
+      until: st.asleepUntil,
+      myAnchorX: p.x, myAnchorY: p.y,
+      foeAnchorX: victim.x, foeAnchorY: victim.y,
+      wasInvincible: p.isInvincible,
+      volleys: [],
+    };
+    // Both keys come back the instant the duel opens: they are not the keys you were holding.
+    p.resetCooldown('dream-haunt');
+    p.resetCooldown('dream-spirit-tear');
+
+    this.pfx.tear(p.x, p.y, 34, 44, false);
+    this.pfx.tear(victim.x, victim.y, 34, 44, false);
+    this.pfx.ring(p.x, p.y, 12, DUEL_LEASH, DRM.spirit, 700, 5, 8);
+    Sfx.playAt('ghost-wail', p.x, { rate: 0.85, volume: 0.9 });
+    this.api.showFloatingText(p.x, p.y - 56, '👻 DREAM DUEL', '#e4f1ff');
+  }
+
+  /** The single unwind path — a finished duel, a death, and `reset()` all come through here. */
+  private endDuel(why: 'over' | 'reset'): void {
+    const d = this.duel;
+    if (!d) return;
+    this.duel = null;
+    this.bolts = [];
+    this.tears = [];
+    this.duelReadyAt = this.now + DUEL_COOLDOWN_MS;
+    const p = this.api.player;
+    if (p) {
+      p.isInvincible = d.wasInvincible;
+      // The heal block is a wall-clock stamp; letting it simply expire would leave a fraction
+      // of a second of dead healing after the spirit is back in. Only lifted if the value on
+      // the fighter is still the one *we* wrote — a Cursed mutation's own block outranks this.
+      if (p.healStopUntil === this.duelHealStop) p.healStopUntil = 0;
+    }
+    if (why === 'reset') return;
+    if (p && this.alive(p)) {
+      this.pfx.tear(p.x, p.y, 34, 44, true);
+      this.pfx.stardust(p.x, p.y, 12, 34, 800, 7);
+      this.api.showFloatingText(p.x, p.y - 48, '🫥 BACK IN THE BODY', '#d8e2ff');
+    }
+  }
+
+  /**
+   * The duel's upkeep. Both bodies are still driven by their owners — what is enforced here is
+   * the leash, the invulnerability, the ban on healing, and the fact that the other side cannot
+   * cast anything at all.
+   */
+  private updateDuel(time: number, delta: number): void {
+    const d = this.duel;
+    if (!d) {
+      if (this.duelHudOn) { this.duelHudOn = false; this.api.setDuelHud(false); }
+      return;
+    }
+    const p = this.api.player;
+    const v = d.victim;
+    if (!this.alive(p) || !this.alive(v) || time >= d.until || !this.isAsleep(v)) {
+      this.endDuel('over');
+      if (this.duelHudOn) { this.duelHudOn = false; this.api.setDuelHud(false); }
+      return;
+    }
+    if (!this.duelHudOn) { this.duelHudOn = true; this.api.setDuelHud(true); }
+
+    // Nothing reaches a body nobody is standing in…
+    p.isInvincible = true;
+    // …and a spirit is not resting, so nothing heals it either. Never shortened: a longer
+    // block somebody else is holding stays theirs.
+    const stop = Date.now() + 400;
+    if (stop > p.healStopUntil) { p.healStopUntil = stop; this.duelHealStop = stop; }
+    // They have nothing to attack *with*. Refreshed rather than set long, so the disarm ends
+    // with the duel instead of outliving it.
+    v.applyDisarm(200);
+
+    this.leash(p, d.myAnchorX, d.myAnchorY);
+    this.leash(v, d.foeAnchorX, d.foeAnchorY);
+
+    // The staggered half-second between Haunt's three bolts.
+    for (let i = d.volleys.length - 1; i >= 0; i--) {
+      const vol = d.volleys[i];
+      if (time < vol.nextAt) continue;
+      this.fireHaunt(vol.angle);
+      vol.left--;
+      vol.nextAt = time + HAUNT_GAP_MS;
+      if (vol.left <= 0) d.volleys.splice(i, 1);
+    }
+
+    this.updateBolts(delta);
+    this.updateTears(delta);
+  }
+
+  /** Hold a body inside the circle its own spirit may not leave. */
+  private leash(f: Fighter, ax: number, ay: number): void {
+    const d = Phaser.Math.Distance.Between(f.x, f.y, ax, ay);
+    if (d <= DUEL_LEASH) return;
+    const ang = Math.atan2(f.y - ay, f.x - ax);
+    f.setPosition(ax + Math.cos(ang) * DUEL_LEASH, ay + Math.sin(ang) * DUEL_LEASH);
+    const b = this.body(f);
+    if (b) b.reset(f.x, f.y);
+  }
+
+  /** Click, in a duel. Three bolts, half a second apart — this only queues the volley. */
+  doHaunt(tx: number, ty: number): void {
+    const d = this.duel;
+    if (!d) return;
+    const p = this.api.player;
+    d.volleys.push({
+      angle: Math.atan2(ty - p.y, tx - p.x),
+      left: HAUNT_SHOTS,
+      nextAt: this.now,
+    });
+    this.playerAvatar?.play('punch', Math.atan2(ty - p.y, tx - p.x));
+  }
+
+  private fireHaunt(angle: number): void {
+    const p = this.api.player;
+    if (!this.alive(p)) return;
+    this.bolts.push({
+      x: p.x + Math.cos(angle) * 22,
+      y: p.y + Math.sin(angle) * 22,
+      vx: Math.cos(angle) * HAUNT_SPEED,
+      vy: Math.sin(angle) * HAUNT_SPEED,
+      until: this.now + HAUNT_LIFE_MS,
+      seed: Math.random() * 999,
+    });
+    this.pfx.stardust(p.x + Math.cos(angle) * 24, p.y + Math.sin(angle) * 24, 3, 12, 340, 7);
+    Sfx.playAt('ghost-wail', p.x, { rate: 1.4, volume: 0.45 });
+  }
+
+  private updateBolts(delta: number): void {
+    const dt = Math.min(0.05, delta / 1000);
+    for (let i = this.bolts.length - 1; i >= 0; i--) {
+      const b = this.bolts[i];
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      const out = b.x < this.left - 20 || b.x > this.right + 20
+        || b.y < this.top - 20 || b.y > this.bottom + 20;
+      if (this.now >= b.until || out) { this.bolts.splice(i, 1); continue; }
+
+      const victim = this.targetsOf('player')
+        .find((t) => Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) <= HAUNT_R + 12);
+      if (!victim) continue;
+      this.strike(victim, HAUNT_DAMAGE, 'dream:haunt');
+      // Deliberately *not* `syncDamage`: the whole duel is riding on the victim staying
+      // asleep, and this is the one damage source that must not be an alarm clock.
+      this.state(victim).lastRaw = victim.rawDamageTaken;
+      this.api.spawnHitFlash(victim.x, victim.y, DRM.haunt);
+      this.pfx.ring(victim.x, victim.y, 6, 34, DRM.haunt, 320, 3, 7);
+      this.api.showFloatingText(victim.x, victim.y - 40, `🩸 ${HAUNT_DAMAGE}`, '#ff8899');
+      this.bolts.splice(i, 1);
+    }
+  }
+
+  /** E, in a duel. One enormous slow tear, with two smaller ones going round it. */
+  doSpiritTear(tx: number, ty: number): void {
+    if (!this.duel) return;
+    const p = this.api.player;
+    const ang = Math.atan2(ty - p.y, tx - p.x);
+    this.tears.push({
+      x: p.x + Math.cos(ang) * 26,
+      y: p.y + Math.sin(ang) * 26,
+      vx: Math.cos(ang) * TEAR_SPEED,
+      vy: Math.sin(ang) * TEAR_SPEED,
+      until: this.now + TEAR_LIFE_MS,
+      phase: 0,
+      hit: new Map(),
+    });
+    this.playerAvatar?.play('raise');
+    this.pfx.ring(p.x, p.y, 10, 70, DRM.spirit, 520, 5, 7);
+    Sfx.playAt('beam-charge', p.x, { rate: 0.55, volume: 0.8 });
+    this.api.showFloatingText(p.x, p.y - 48, '🕳️ SPIRIT TEAR', '#e4f1ff');
+  }
+
+  private updateTears(delta: number): void {
+    const dt = Math.min(0.05, delta / 1000);
+    for (let i = this.tears.length - 1; i >= 0; i--) {
+      const t = this.tears[i];
+      t.x += t.vx * dt;
+      t.y += t.vy * dt;
+      t.phase += dt * 2.4;
+      const out = t.x < this.left - 40 || t.x > this.right + 40
+        || t.y < this.top - 40 || t.y > this.bottom + 40;
+      if (this.now >= t.until || out) { this.tears.splice(i, 1); continue; }
+
+      // The head pierces, so it is a repeated hit on a timer rather than a one-shot removal.
+      for (const f of this.targetsOf('player')) {
+        const ready = (t.hit.get(f) ?? 0) <= this.now;
+        const onHead = Phaser.Math.Distance.Between(t.x, t.y, f.x, f.y) <= TEAR_R + 12;
+        const onMoon = this.moonPositions(t)
+          .some((m) => Phaser.Math.Distance.Between(m.x, m.y, f.x, f.y) <= TEAR_MOON_R + 10);
+        if (!ready || (!onHead && !onMoon)) continue;
+        const dmg = onHead ? TEAR_DAMAGE : TEAR_MOON_DAMAGE;
+        t.hit.set(f, this.now + TEAR_REHIT_MS);
+        this.strike(f, dmg, 'dream:spirit-tear');
+        this.state(f).lastRaw = f.rawDamageTaken;
+        this.api.spawnHitFlash(f.x, f.y, DRM.spirit);
+        this.pfx.stardust(f.x, f.y, 5, 20, 460, 7);
+        this.api.showFloatingText(f.x, f.y - 42, `${onHead ? '🕳️' : '🌙'} ${dmg}`, '#e4f1ff');
+      }
+    }
+  }
+
+  /** Where a tear's two moons are this frame — half a turn apart, on the same ring. */
+  private moonPositions(t: Tear): { x: number; y: number }[] {
+    return [0, Math.PI].map((off) => ({
+      x: t.x + Math.cos(t.phase + off) * TEAR_ORBIT,
+      y: t.y + Math.sin(t.phase + off) * TEAR_ORBIT * 0.62,
+    }));
+  }
+
+  // ── Lifelong Dream (Dream Mastery — bindable) ──────────────────────────────
+
+  private openLifelongPicker(): void {
+    if (this.wish) {
+      this.api.showFloatingText(this.api.player.x, this.api.player.y - 40,
+        this.wish.granted ? 'The dream already came true' : 'Already dreaming', '#6b6b88');
+      return;
+    }
+    if (this.now < this.lifelongAt + LIFELONG_COOLDOWN_MS) return;
+    this.lifelongAt = this.now;
+    if (!this.picker) {
+      this.picker = new DreamElementPicker(this.api.scene, this.pcol, (id) => this.beginWish(id));
+    }
+    // Standing in a menu in the middle of a fight would otherwise simply be a death sentence,
+    // and the choice is the ability. Latched so a Stealthy mutation survives the menu.
+    this.pickerWasInvincible = this.api.player.isInvincible;
+    this.api.player.isInvincible = true;
+    this.picker.show();
+  }
+
+  private beginWish(elementId: string): void {
+    const p = this.api.player;
+    p.isInvincible = this.pickerWasInvincible;
+    const def = findElementDef(elementId);
+    this.wish = {
+      elementId,
+      dueAt: this.now + WISH_MS,
+      granted: false,
+      joltUntil: 0,
+      lastRaw: p.rawDamageTaken,
+      boons: [],
+      gaveMaxHp: 0,
+      hadKnockbackImmune: p.knockbackImmune,
+      hadUnstoppable: p.unstoppable,
+      hadLevitating: p.levitating,
+    };
+    this.pfx.ring(p.x, p.y, 10, 90, DRM.wish, 620, 5, 8);
+    this.pfx.stardust(p.x, p.y, 14, 40, 900, 7);
+    this.api.showFloatingText(p.x, p.y - 56,
+      `🌠 DREAMING OF ${(def?.name ?? elementId).toUpperCase()}`, '#ffd98a');
+  }
+
+  /** The counter, the +2s, and the moment it lands. */
+  private updateWish(time: number, delta: number): void {
+    this.picker?.update(delta);
+    const w = this.wish;
+    if (!w) return;
+    const p = this.api.player;
+    if (!this.alive(p)) return;
+
+    if (!w.granted) {
+      // Every hit puts two seconds back on. Read off the fighter's own running tally rather
+      // than claiming its damage callback, which ArenaScene already owns.
+      if (p.rawDamageTaken > w.lastRaw + 0.5) {
+        w.dueAt += WISH_HIT_PENALTY_MS;
+        w.joltUntil = time + WISH_JOLT_MS;
+        this.pfx.ring(p.x, p.y, 8, 46, DRM.dread, 380, 3, 16);
+        this.api.showFloatingText(p.x, p.y - 68, '⏳ +2s', '#ff3b6b');
+      }
+      w.lastRaw = p.rawDamageTaken;
+      if (time >= w.dueAt) this.grantWish(w);
+      return;
+    }
+
+    this.holdBoons(w, delta);
+  }
+
+  private grantWish(w: Wish): void {
+    const p = this.api.player;
+    w.granted = true;
+    w.boons = dreamBoons(w.elementId);
+    const def = findElementDef(w.elementId);
+
+    // The one-shots, paid here and only here.
+    for (const b of w.boons) {
+      if (b.maxHp) {
+        p.increaseMaxHp(b.maxHp);
+        p.heal(b.maxHp);
+        w.gaveMaxHp += b.maxHp;
+      }
+      if (b.shield) p.shieldHp += b.shield;
+      if (b.charges) p.shieldCharges += b.charges;
+    }
+    this.boonTouched = true;
+
+    this.pfx.ring(p.x, p.y, 12, 170, DRM.wish, 900, 7, 16);
+    this.pfx.stardust(p.x, p.y, 24, 70, 1400, 16);
+    Sfx.playAt('ui-purchase', p.x, { rate: 0.7, volume: 1 });
+    this.api.showFloatingText(p.x, p.y - 60,
+      `✨ ${(def?.name ?? w.elementId).toUpperCase()} — THE DREAM COMES TRUE`, '#ffd98a');
+    // Named one at a time so the player can read what they were actually given.
+    w.boons.forEach((b, i) => {
+      this.api.scene.time.delayedCall(220 * (i + 1), () => {
+        if (!this.alive(p) || this.wish !== w) return;
+        this.api.showFloatingText(p.x, p.y - 44 - i * 4, `${b.emoji} ${b.name.toUpperCase()}`, '#ffe9a8');
+      });
+    });
+  }
+
+  /**
+   * Everything a granted dream writes onto the body, rewritten from scratch every frame.
+   *
+   * The three multipliers it shares with other systems (`dreamIncomingMult`, the outgoing
+   * multiplier and the speed aggregate) are folded in where those are already resolved, so this
+   * only has to hold the fields nobody else is holding — plus the two that pay out per second.
+   */
+  private holdBoons(w: Wish, delta: number): void {
+    const p = this.api.player;
+    let cooldown = 1, size = 1, flat = 0, cap = 0, floor = 0;
+    let dodge = 0, crit = 0, critMult = 0, regen = 0, contact = 0, lifesteal = 0, thorns = 0;
+    let knockback = false, unstoppable = false, levitate = false, cleanse = false, phase = false;
+    for (const b of w.boons) {
+      if (b.cooldown) cooldown *= b.cooldown;
+      if (b.size) size *= b.size;
+      flat = Math.max(flat, b.flatCut ?? 0);
+      cap = cap && b.cap ? Math.min(cap, b.cap) : Math.max(cap, b.cap ?? 0);
+      floor = Math.max(floor, b.floor ?? 0);
+      dodge += b.dodge ?? 0;
+      crit += b.crit ?? 0;
+      critMult = Math.max(critMult, b.critMult ?? 0);
+      regen += b.regen ?? 0;
+      contact += b.contact ?? 0;
+      lifesteal += b.lifesteal ?? 0;
+      thorns += b.thorns ?? 0;
+      knockback ||= !!b.knockbackImmune;
+      unstoppable ||= !!b.unstoppable;
+      levitate ||= !!b.levitate;
+      cleanse ||= !!b.cleanse;
+      phase ||= !!b.phase;
+    }
+
+    p.dreamCooldownMult = cooldown;
+    if (Math.abs(p.dreamSizeMult - size) > 1e-4) {
+      p.dreamSizeMult = size;
+      p.applySizeMult();
+    }
+    p.flatDamageReduction = Math.max(p.flatDamageReduction, flat);
+    if (cap > 0) p.hardDamageCap = p.hardDamageCap > 0 ? Math.min(p.hardDamageCap, cap) : cap;
+    if (floor > 0) p.minHpFloor = Math.max(p.minHpFloor, floor);
+    // Re-asserted as a floor rather than added, so spending a dodge never empties the pool.
+    if (dodge > 0) p.dodgeChance = Math.max(p.dodgeChance, dodge);
+    if (crit > 0) p.critChance = Math.max(p.critChance, crit);
+    if (critMult > 0) p.critMult = Math.max(p.critMult, critMult);
+    if (knockback) p.knockbackImmune = true;
+    if (unstoppable) p.unstoppable = true;
+    if (levitate) p.levitating = true;
+    if (phase) p.projectilePhase = true;
+    if (cleanse) {
+      // Nothing sticks: every tick in the game is scrubbed off as it lands.
+      p.burningUntil = 0;
+      p.moltenUntil = 0;
+      p.toxicUntil = 0;
+      p.oilyBurnUntil = 0;
+      p.lavaRockBurnUntil = 0;
+      p.bleedingUntil = 0;
+      p.bleeding = false;
+      p.sicknessUntil = 0;
+      p.frostStacks = 0;
+      p.frostStackTimers = [];
+      p.voidFrostStacks = 0;
+      p.voidFrostStackTimers = [];
+    }
+
+    if (regen > 0) {
+      this.boonRegenAccum += delta;
+      while (this.boonRegenAccum >= 1000) {
+        this.boonRegenAccum -= 1000;
+        const before = p.hp;
+        p.heal(regen);
+        const got = Math.round(p.hp - before);
+        if (got > 0) this.api.showFloatingText(p.x, p.y - 28, `🌠 +${got}`, '#ffd98a');
+      }
+    }
+
+    if (contact > 0) {
+      this.boonContactAccum += delta;
+      while (this.boonContactAccum >= 500) {
+        this.boonContactAccum -= 500;
+        for (const t of this.targetsOf('player')) {
+          if (Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) > 46) continue;
+          this.strike(t, Math.round(contact / 2), 'dream:lifelong');
+          this.api.spawnHitFlash(t.x, t.y, DRM.wish);
+        }
+      }
+    }
+
+    // Lifesteal is read off what has actually landed on the people you are fighting, which is
+    // the only tally the kit can honestly see without owning every damage path in the game.
+    if (lifesteal > 0) {
+      for (const t of this.targetsOf('player')) {
+        const seen = this.boonFoeRaw.get(t);
+        if (seen === undefined) { this.boonFoeRaw.set(t, t.rawDamageTaken); continue; }
+        const dealt = t.rawDamageTaken - seen;
+        this.boonFoeRaw.set(t, t.rawDamageTaken);
+        if (dealt <= 0.5) continue;
+        const back = Math.round(dealt * lifesteal);
+        if (back > 0) p.heal(back);
+      }
+    }
+
+    if (thorns > 0) {
+      if (this.boonSelfRaw === 0) this.boonSelfRaw = p.rawDamageTaken;
+      const took = p.rawDamageTaken - this.boonSelfRaw;
+      this.boonSelfRaw = p.rawDamageTaken;
+      if (took > 0.5) {
+        const back = Math.round(took * thorns);
+        const near = this.api.getNearestEnemy(p.x, p.y);
+        if (back > 0 && this.alive(near) && this.targetsOf('player').includes(near)) {
+          this.strike(near, back, 'dream:lifelong');
+          this.api.spawnHitFlash(near.x, near.y, DRM.wish);
+          this.api.showFloatingText(near.x, near.y - 40, `🌠 ${back}`, '#ffd98a');
+        }
+      }
+    }
+  }
+
+  /** The share of the three shared multipliers a granted dream is holding. */
+  private boonTotals(): { damage: number; armor: number; speed: number } {
+    const w = this.wish;
+    if (!w || !w.granted) return { damage: 1, armor: 1, speed: 1 };
+    let damage = 1, armor = 1, speed = 1;
+    for (const b of w.boons) {
+      if (b.damage) damage *= b.damage;
+      if (b.armor) armor *= b.armor;
+      if (b.speed) speed *= b.speed;
+    }
+    return { damage, armor, speed };
+  }
+
+  /** Hand back everything a dream parked on the caster. Safe to call with no dream running. */
+  private undoBoons(): void {
+    if (!this.boonTouched) return;
+    this.boonTouched = false;
+    const p = this.api.player;
+    const w = this.wish;
+    if (!p) return;
+    p.dreamCooldownMult = 1;
+    if (p.dreamSizeMult !== 1) { p.dreamSizeMult = 1; p.applySizeMult(); }
+    p.flatDamageReduction = 0;
+    p.hardDamageCap = 0;
+    p.minHpFloor = 0;
+    p.projectilePhase = false;
+    if (w) {
+      p.knockbackImmune = w.hadKnockbackImmune;
+      p.unstoppable = w.hadUnstoppable;
+      p.levitating = w.hadLevitating;
+      if (w.gaveMaxHp > 0) p.reduceMaxHp(w.gaveMaxHp);
+    }
   }
 
   // ── Ability entry points (called from build*Context) ───────────────────────
 
-  /** Click — Trance. A toggle: the pendulum stays up until it is put away. */
+  /**
+   * Click — Trance. A toggle: the pendulum stays up until it is put away, and while it is up
+   * the way you wind it is by circling the cursor around yourself.
+   */
   doTrance(owner: Owner): void {
     const s = this.side(owner);
     const f = this.fighter(owner);
     if (s.tranceOn) {
+      const heat = this.swing[owner];
       s.tranceOn = false;
       s.pendulum?.destroy();
       s.pendulum = null;
+      // Knocked Out (Click+): a bob still travelling is not put away, it is let go of.
+      if (this.up(owner, 'click') && heat >= THROW_MIN_HEAT) {
+        this.releaseBob(owner, heat);
+        return;
+      }
       this.api.showFloatingText(f.x, f.y - 40, 'Pendulum stilled', '#9fb8ff');
       return;
     }
     s.tranceOn = true;
     s.theta = 0.55;
     s.omega = 0;
-    const a = this.anchorOf(f);
-    s.prevX = f.x; s.prevY = f.y;
+    const a = this.anchorOf(owner);
+    s.prevX = a.x; s.prevY = a.y;
+    s.handX = a.x; s.handY = a.y;
     s.prevVx = 0; s.prevVy = 0;
     s.smoothAx = 0; s.smoothAy = 0;
+    s.spin = 0;
+    s.curAng = Math.atan2(this.aimYFor(owner) - f.y, this.aimXFor(owner) - f.x);
     s.pendulum = new TrancePendulum(this.api.scene, this.col(owner));
     this.avatar(owner)?.play('flex');
     this.fx(owner).ring(a.x, a.y, 12, TRANCE_R_MIN, DRM.violet, 480, 5, 6);
     this.fx(owner).stardust(a.x, a.y, 10, 30, 800);
-    this.api.showFloatingText(f.x, f.y - 42, '🌀 TRANCE', '#8b5cf6');
+    this.api.showFloatingText(f.x, f.y - 42, '🌀 TRANCE — circle the cursor', '#8b5cf6');
+  }
+
+  // ── Knocked Out (Click+) ───────────────────────────────────────────────────
+
+  /** The bob comes off the chain and goes where the cursor is, carrying its swing with it. */
+  private releaseBob(owner: Owner, heat: number): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    const tx = this.aimXFor(owner);
+    const ty = this.aimYFor(owner);
+    const ang = Math.atan2(ty - f.y, tx - f.x);
+    this.thrown.push({
+      owner,
+      x: s.handX || f.x, y: s.handY || f.y,
+      vx: Math.cos(ang) * THROW_SPEED,
+      vy: Math.sin(ang) * THROW_SPEED,
+      until: this.now + THROW_LIFE_MS,
+      heat,
+      seed: Math.random() * 999,
+    });
+    this.avatar(owner)?.play('punch', ang);
+    this.fx(owner).stardust(f.x, f.y, 10, 30, 620, 7);
+    Sfx.playAt('whoosh', f.x, { rate: 0.8 + heat * 0.5, volume: 0.7 });
+    this.api.showFloatingText(f.x, f.y - 44,
+      `🌠 LET GO — ${Math.round(THROW_BASE_DAMAGE + THROW_HEAT_DAMAGE * heat)}`, '#8b5cf6');
+  }
+
+  private updateThrown(dt: number): void {
+    for (let i = this.thrown.length - 1; i >= 0; i--) {
+      const b = this.thrown[i];
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      const out = b.x < this.left - 30 || b.x > this.right + 30
+        || b.y < this.top - 30 || b.y > this.bottom + 30;
+      if (this.now >= b.until || out) {
+        this.fx(b.owner).stardust(b.x, b.y, 6, 22, 480, 7);
+        this.thrown.splice(i, 1);
+        continue;
+      }
+
+      const victim = this.targetsOf(b.owner)
+        .find((t) => Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) <= THROW_R + 12);
+      if (!victim) continue;
+
+      const dmg = Math.round(THROW_BASE_DAMAGE + THROW_HEAT_DAMAGE * b.heat);
+      const st = this.state(victim);
+      // Read *before* the hit, so a body sitting on 80% is knocked out by the blow that would
+      // otherwise have woken them straight back up.
+      const wasDeep = (st.asleepUntil > this.now ? 100 : st.drowsy) >= THROW_KO_AT;
+      this.strike(victim, dmg, 'dream:pendulum');
+      this.syncDamage(victim);
+      this.api.spawnHitFlash(victim.x, victim.y, DRM.purple);
+      this.fx(b.owner).ring(victim.x, victim.y, 10, 62, DRM.violet, 480, 5, 7);
+      this.api.showFloatingText(victim.x, victim.y - 44, `🌠 ${dmg}`, '#c4b5fd');
+
+      if (wasDeep && !victim.unstoppable) {
+        st.drowsy = SLEEP_MAX;
+        st.by = b.owner;
+        st.asleepUntil = this.now + SLEEP_MS;
+        this.record(b.owner, 'sleepsInduced');
+        this.body(victim).setVelocity(0, 0);
+        this.fx(b.owner).zzzPuff(victim.x, victim.y);
+        this.api.showFloatingText(victim.x, victim.y - 60, '💫 KNOCKED OUT COLD', '#8b5cf6');
+      }
+      this.thrown.splice(i, 1);
+    }
   }
 
   /** E — Pillow Fight. A wedge in front of you that hits like a truck on a sleeper. */
@@ -444,10 +1560,12 @@ export class DreamKit {
       // A sleeping target counts as fully drowsy — they are, by definition, all the way there.
       const ratio = st.asleepUntil > this.now ? 1 : Phaser.Math.Clamp(st.drowsy / SLEEP_MAX, 0, 1);
       const dmg = Math.round(PILLOW_DAMAGE + PILLOW_SLEEP_BONUS * ratio);
-      t.takeDamage(dmg);
+      this.strike(t, dmg, 'dream:pillow');
       // Resolved immediately rather than on the next frame's sweep, so the wake-up jolt is
       // part of this hit and the sleepiness multiplier below sees the post-wake number.
+      this.attackTag = 'dream:pillow';
       this.syncDamage(t);
+      this.attackTag = null;
 
       st.drowsy = Math.min(SLEEP_MAX, st.drowsy * PILLOW_SLEEP_MULT);
       st.by = owner;
@@ -460,7 +1578,244 @@ export class DreamKit {
       }
     }
 
+    // Pillow Fort (E+): a swing that found nobody is not a wasted swing, it is masonry.
+    if (!connected && this.up(owner, 'e')) {
+      this.buildOrFeedFort(owner, angle);
+      return;
+    }
+
     if (!connected) fx.feathers(f.x + Math.cos(angle) * 50, f.y + Math.sin(angle) * 50, 4, angle);
+  }
+
+  // ── Pillow Fort (E+) ───────────────────────────────────────────────────────
+
+  /** How big and how tough a fort of a given level is. L3 and L5 are the two growth spurts. */
+  private fortSize(level: number): { r: number; maxHp: number } {
+    const grows = (level >= 3 ? 1 : 0) + (level >= 5 ? 1 : 0);
+    return {
+      r: FORT_R + grows * FORT_GROW_R,
+      maxHp: FORT_BASE_HP + grows * FORT_GROW_HP,
+    };
+  }
+
+  /**
+   * A pillow with nowhere to land builds. If your own fort is already in front of you the
+   * pillow goes onto it — 25 HP back and a promotion — and otherwise a new one goes up.
+   */
+  private buildOrFeedFort(owner: Owner, angle: number): void {
+    const f = this.fighter(owner);
+    const fx = this.fx(owner);
+    const existing = this.fortOf(owner);
+
+    if (existing
+      && Phaser.Math.Distance.Between(f.x, f.y, existing.x, existing.y) < existing.r + PILLOW_REACH) {
+      const before = existing.level;
+      existing.level = Math.min(FORT_MAX_LEVEL, existing.level + 1);
+      const size = this.fortSize(existing.level);
+      existing.r = size.r;
+      existing.maxHp = size.maxHp;
+      existing.hp = Math.min(existing.maxHp, existing.hp + FORT_HEAL
+        + (existing.level > before ? size.maxHp - this.fortSize(before).maxHp : 0));
+      if (existing.level >= 4 && before < 4) existing.nextRamAt = this.now + 1200;
+      fx.feathers(existing.x, existing.y, 14, angle);
+      fx.ring(existing.x, existing.y, 10, existing.r * 2, DRM.pillow, 480, 4, 6);
+      Sfx.playAt('pillow', existing.x, { rate: 1.1, volume: 0.7 });
+      this.api.showFloatingText(existing.x, existing.y - existing.r - 16,
+        existing.level > before ? `🛏️ FORT LEVEL ${existing.level}` : `🛏️ +${FORT_HEAL} HP`,
+        '#bfd0ff');
+      return;
+    }
+
+    // A new fort, planted in front of you rather than under you — it is cover, and cover you
+    // are standing inside the moment you make it is cover you cannot retreat to.
+    const size = this.fortSize(1);
+    const x = Phaser.Math.Clamp(f.x + Math.cos(angle) * (PILLOW_REACH * 0.8),
+      this.left + size.r, this.right - size.r);
+    const y = Phaser.Math.Clamp(f.y + Math.sin(angle) * (PILLOW_REACH * 0.8),
+      this.top + size.r, this.bottom - size.r);
+    this.forts = this.forts.filter((x2) => x2.owner !== owner);
+    this.forts.push({
+      owner, x, y, r: size.r, hp: size.maxHp, maxHp: size.maxHp, level: 1,
+      nextRamAt: Infinity, cannonReadyAt: 0, cannonArmed: false, bornAt: this.now,
+    });
+    fx.feathers(x, y, 18, angle);
+    fx.ring(x, y, 8, size.r * 2, DRM.pillow, 520, 5, 7);
+    Sfx.playAt('pillow', x, { rate: 0.85, volume: 0.85 });
+    this.api.showFloatingText(x, y - size.r - 16, '🏰 PILLOW FORT', '#bfd0ff');
+  }
+
+  /** Space, on a level-5 fort. Loads the next click. */
+  private loadCannon(fort: Fort): void {
+    if (fort.cannonArmed || this.now < fort.cannonReadyAt) return;
+    fort.cannonArmed = true;
+    this.fx(fort.owner).stardust(fort.x, fort.y - 12, 12, 30, 700, 7);
+    Sfx.playAt('beam-charge', fort.x, { rate: 1.2, volume: 0.6 });
+    this.api.showFloatingText(fort.x, fort.y - fort.r - 20, '🔭 CANNON LOADED', '#c4b5fd');
+  }
+
+  private fireCannon(fort: Fort, tx: number, ty: number): void {
+    fort.cannonArmed = false;
+    fort.cannonReadyAt = this.now + CANNON_COOLDOWN_MS;
+    const ang = Math.atan2(ty - fort.y, tx - fort.x);
+    this.shells.push({
+      owner: fort.owner,
+      x: fort.x + Math.cos(ang) * 22,
+      y: fort.y + Math.sin(ang) * 22,
+      vx: Math.cos(ang) * CANNON_SPEED,
+      vy: Math.sin(ang) * CANNON_SPEED,
+      until: this.now + 2000,
+      seed: Math.random() * 999,
+    });
+    this.fx(fort.owner).ring(fort.x, fort.y, 8, 60, DRM.violet, 420, 4, 6);
+    Sfx.playAt('mortar-launch', fort.x, { rate: 0.9, volume: 0.8 });
+    this.api.showFloatingText(fort.x, fort.y - fort.r - 20, '🌌 COSMIC SHOT', '#8b5cf6');
+  }
+
+  /**
+   * The fort's own frame: it eats whatever the enemy fires into it, spits rams once it is
+   * angry enough, and falls over when its pillows run out.
+   */
+  private updateForts(time: number): void {
+    for (let i = this.forts.length - 1; i >= 0; i--) {
+      const fort = this.forts[i];
+
+      // ── Enemy fire ──
+      // Yours go straight through; theirs stop dead and are paid for out of the pillows.
+      // Snapshotted: `destroy()` removes the child from the live group array, and iterating
+      // that array while it shrinks silently skips every other shot.
+      for (const child of [...this.api.projectiles.getChildren()]) {
+        const proj = child as Projectile;
+        if (!proj.active || !proj.body) continue;
+        if (proj.isFromPlayer === (fort.owner === 'player')) continue;
+        if (Phaser.Math.Distance.Between(proj.x, proj.y, fort.x, fort.y) > fort.r) continue;
+        fort.hp -= Math.max(1, proj.damage);
+        this.fx(fort.owner).feathers(proj.x, proj.y, 5, Math.atan2(proj.y - fort.y, proj.x - fort.x));
+        proj.destroy();
+      }
+
+      if (fort.hp <= 0) {
+        this.fx(fort.owner).feathers(fort.x, fort.y, 22, Math.random() * Math.PI * 2);
+        this.fx(fort.owner).ring(fort.x, fort.y, 10, fort.r * 2.2, DRM.dread, 520, 5, 7);
+        this.api.showFloatingText(fort.x, fort.y - 20, '🏚️ FORT DOWN', '#ff3b6b');
+        this.forts.splice(i, 1);
+        continue;
+      }
+
+      // ── Rams (level 4) ──
+      if (fort.level >= 4 && time >= fort.nextRamAt) {
+        fort.nextRamAt = time + RAM_EVERY_MS;
+        this.rams.push({
+          owner: fort.owner, x: fort.x, y: fort.y, ang: 0,
+          until: time + RAM_LIFE_MS, hit: new Set(),
+        });
+        this.fx(fort.owner).feathers(fort.x, fort.y, 10, Math.random() * Math.PI * 2);
+        Sfx.playAt('roar', fort.x, { rate: 1.5, volume: 0.5 });
+        this.api.showFloatingText(fort.x, fort.y - fort.r - 16, '🐏 RAM!', '#f4f1e8');
+      }
+    }
+  }
+
+  /** A ram runs at the nearest enemy, hits once, and keeps going. */
+  private updateRams(time: number, dt: number): void {
+    for (let i = this.rams.length - 1; i >= 0; i--) {
+      const r = this.rams[i];
+      if (time >= r.until) {
+        this.fx(r.owner).feathers(r.x, r.y, 6, Math.random() * Math.PI * 2);
+        this.rams.splice(i, 1);
+        continue;
+      }
+
+      let target: Fighter | null = null;
+      let best = Infinity;
+      for (const t of this.targetsOf(r.owner)) {
+        if (r.hit.has(t)) continue;
+        const d = Phaser.Math.Distance.Between(r.x, r.y, t.x, t.y);
+        if (d >= best) continue;
+        best = d;
+        target = t;
+      }
+      if (target) {
+        const ang = Math.atan2(target.y - r.y, target.x - r.x);
+        r.ang = ang;
+        r.x += Math.cos(ang) * RAM_SPEED * dt;
+        r.y += Math.sin(ang) * RAM_SPEED * dt;
+        if (best <= RAM_HIT_R) {
+          r.hit.add(target);
+          this.strike(target, RAM_DAMAGE, 'dream:ram');
+          this.syncDamage(target);
+          this.api.spawnHitFlash(target.x, target.y, DRM.wool);
+          this.shove(target, ang, RAM_KNOCK);
+          this.fx(r.owner).feathers(target.x, target.y, 12, ang);
+          Sfx.playAt('hit-heavy', target.x, { rate: 0.9, volume: 0.7 });
+          this.api.showFloatingText(target.x, target.y - 44, `🐏 ${RAM_DAMAGE}`, '#f4f1e8');
+        }
+      } else {
+        // Nothing left to charge: it mills about outside the fort until its five seconds run out.
+        r.x += Math.cos(time / 400 + r.until) * RAM_SPEED * 0.3 * dt;
+        r.y += Math.sin(time / 400 + r.until) * RAM_SPEED * 0.3 * dt;
+      }
+      r.x = Phaser.Math.Clamp(r.x, this.left, this.right);
+      r.y = Phaser.Math.Clamp(r.y, this.top, this.bottom);
+    }
+  }
+
+  private updateShells(time: number, dt: number): void {
+    for (let i = this.shells.length - 1; i >= 0; i--) {
+      const sh = this.shells[i];
+      sh.x += sh.vx * dt;
+      sh.y += sh.vy * dt;
+      const out = sh.x < this.left - 20 || sh.x > this.right + 20
+        || sh.y < this.top - 20 || sh.y > this.bottom + 20;
+      if (time >= sh.until || out) {
+        this.fx(sh.owner).stardust(sh.x, sh.y, 6, 22, 460, 7);
+        this.shells.splice(i, 1);
+        continue;
+      }
+      const victim = this.targetsOf(sh.owner)
+        .find((t) => Phaser.Math.Distance.Between(sh.x, sh.y, t.x, t.y) <= CANNON_R);
+      if (!victim) continue;
+      this.strike(victim, CANNON_DAMAGE, 'dream:cannon');
+      this.syncDamage(victim);
+      this.record(sh.owner, 'cannonHits');
+      const st = this.state(victim);
+      st.drowsy = Math.min(SLEEP_MAX,
+        st.drowsy + meterGain(this.fighter(sh.owner), CANNON_SLEEP));
+      st.by = sh.owner;
+      this.checkSleepThreshold(victim, st, sh.owner);
+      this.api.spawnHitFlash(victim.x, victim.y, DRM.purple);
+      this.fx(sh.owner).ring(victim.x, victim.y, 10, 70, DRM.violet, 520, 5, 8);
+      this.api.showFloatingText(victim.x, victim.y - 46,
+        `🌌 ${CANNON_DAMAGE}  +${CANNON_SLEEP}%`, '#c4b5fd');
+      this.shells.splice(i, 1);
+    }
+  }
+
+  /**
+   * Knockback, played out as position. Both movement systems rewrite a fighter's velocity every
+   * frame, so a shove handed to the physics body is gone before it renders.
+   */
+  private shove(target: Fighter, ang: number, distance: number): void {
+    if (target.knockbackImmune) return;
+    const speed = distance / (SHOVE_MS / 1000);
+    this.shoves = this.shoves.filter((s) => s.target !== target);
+    this.shoves.push({
+      target, vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed, until: this.now + SHOVE_MS,
+    });
+  }
+
+  private updateShoves(dt: number): void {
+    if (!this.shoves.length) return;
+    const now = this.now;
+    for (const s of this.shoves) {
+      const t = s.target;
+      if (!t || !t.active) continue;
+      const left = Phaser.Math.Clamp((s.until - now) / SHOVE_MS, 0, 1);
+      t.setPosition(
+        Phaser.Math.Clamp(t.x + s.vx * dt * left * 2, this.left, this.right),
+        Phaser.Math.Clamp(t.y + s.vy * dt * left * 2, this.top, this.bottom),
+      );
+    }
+    this.shoves = this.shoves.filter((s) => s.until > now && s.target?.active);
   }
 
   /** R — Dreamcatcher. Three on the floor at once; the oldest is cut loose for a fourth. */
@@ -480,6 +1835,7 @@ export class DreamKit {
       bornAt: this.now,
       until: this.now + CATCHER_MS,
       dreams: 0,
+      good: 0,
       drainAccum: 0,
       draining: null,
     });
@@ -549,14 +1905,45 @@ export class DreamKit {
       if (this.isDream(owner)) this.updateSide(owner, time, delta);
     }
 
+    const dt = Math.min(0.05, delta / 1000);
     this.updateCatchers(time, delta);
+    this.updateThrown(dt);
+    this.updateForts(time);
+    this.updateRams(time, dt);
+    this.updateShells(time, dt);
+    this.updateTerrors(time);
     this.updateSleepers(time, delta);
+    this.updateShoves(dt);
+    // Before the multiplier pass, because a granted dream is one of the things it folds in.
+    this.updateDuel(time, delta);
+    this.updateWish(time, delta);
+    this.updateFighterMults();
+    this.seedMasteryStats();
     this.updateAvatars(delta, playerIs, npcIs);
     this.paintWorld(delta);
+    this.paintDuel();
     this.paintOverhead(playerIs);
     this.paintCursor(playerIs, delta);
     this.paintHud(playerIs);
     this.pushStatuses(playerIs);
+  }
+
+  /**
+   * The once-per-match mastery bookkeeping: the heal counter is hooked here rather than in each
+   * of the six places Dream hands health back, because `Fighter.onHeal` is the one place every
+   * one of them passes through — and ArenaScene owns that callback, so it is wrapped rather
+   * than claimed.
+   */
+  private seedMasteryStats(): void {
+    if (this.masteryStatsSeeded || this.api.elementId !== 'dream') return;
+    const p = this.api.player;
+    if (!p) return;
+    this.masteryStatsSeeded = true;
+    const prev = p.onHeal;
+    p.onHeal = (amount: number) => {
+      prev?.(amount);
+      this.record('player', 'healedHp', Math.round(amount));
+    };
   }
 
   private ensureLayers(): void {
@@ -580,6 +1967,17 @@ export class DreamKit {
     this.updatePendulum(s, f, owner, dt);
     this.updateRest(s, f, owner, delta);
     this.updateOasis(s, f, owner, time, delta);
+    this.updateGoodBuffs(owner, delta);
+  }
+
+  /**
+   * Pillow Fort (E+): what resting *inside* your own fort is worth on top of the passive.
+   * +2/s from level 2, +4/s from level 5 — the two levels the promotion ladder promises it at.
+   */
+  private fortRestBonus(owner: Owner, f: Fighter): number {
+    const fort = this.fortOf(owner);
+    if (!fort || !this.standingOnFort(f, fort)) return 0;
+    return (fort.level >= 2 ? FORT_REST_BONUS : 0) + (fort.level >= 5 ? FORT_REST_BONUS : 0);
   }
 
   /**
@@ -601,7 +1999,7 @@ export class DreamKit {
     while (s.restAccum >= REST_TICK_MS) {
       s.restAccum -= REST_TICK_MS;
       const before = f.hp;
-      f.heal(REST_HEAL);
+      f.heal(REST_HEAL + this.fortRestBonus(owner, f));
       const got = Math.round(f.hp - before);
       if (got > 0) {
         this.api.showFloatingText(f.x, f.y - 30, `💤 +${got}`, '#3fc7d6');
@@ -611,23 +2009,48 @@ export class DreamKit {
   }
 
   /**
-   * A driven pendulum with its pivot on the caster.
+   * A driven pendulum whose pivot is the caster's *hand*, and whose hand is dragged around by
+   * the cursor.
    *
    * θ is measured from straight down, positive toward +x, so with the pivot accelerating at
-   * (Ax, Ay) the equation of motion is θ'' = −[sinθ·(g − Ay) + Ax·cosθ]/L − damping·θ'.
-   * Walking left and right at the right cadence pumps it; standing still lets it die.
+   * (Ax, Ay) the equation of motion is θ'' = −[sinθ·(g − Ay) + Ax·cosθ]/L − damping·θ'. Circle
+   * the cursor around yourself and the hand traces the same circle at HAND_R, which is a
+   * genuine centripetal drive — and because the bob's own √(g/L) is about 4.85 rad/s, circling
+   * at roughly that rate is resonance and pumps it hard.
+   *
+   * On top of the physics the *spin rate itself* sets a floor on the field's strength, so
+   * "wind harder, sleep faster" is a promise rather than something you have to find the beat
+   * for. The physics is the feel; the floor is the contract.
    */
   private updatePendulum(s: Side, f: Fighter, owner: Owner, dt: number): void {
     if (!s.tranceOn) {
       this.swing[owner] = 0;
+      s.spin = 0;
       return;
     }
 
-    const vx = (f.x - s.prevX) / dt;
-    const vy = (f.y - s.prevY) / dt;
+    // ── How fast the cursor is going round ──
+    if (owner === 'npc') {
+      // No mouse to circle: the AI is handed a steady wind instead.
+      s.spin += (NPC_SPIN - s.spin) * Math.min(1, dt * 3);
+      s.curAng += s.spin * dt;
+    } else {
+      const ang = Math.atan2(this.lastAimY - f.y, this.lastAimX - f.x);
+      const rate = Phaser.Math.Angle.Wrap(ang - s.curAng) / dt;
+      s.curAng = ang;
+      // Sampled once a frame off a mouse, so it needs smoothing before it drives anything.
+      s.spin += (Phaser.Math.Clamp(rate, -18, 18) - s.spin) * Math.min(1, dt * 9);
+    }
+
+    // ── The hand, and the acceleration it is putting into the chain ──
+    const a = this.anchorOf(owner);
+    s.handX = a.x;
+    s.handY = a.y;
+    const vx = (a.x - s.prevX) / dt;
+    const vy = (a.y - s.prevY) / dt;
     const rawAx = Phaser.Math.Clamp((vx - s.prevVx) / dt, -PEND_MAX_DRIVE, PEND_MAX_DRIVE);
     const rawAy = Phaser.Math.Clamp((vy - s.prevVy) / dt, -PEND_MAX_DRIVE, PEND_MAX_DRIVE);
-    s.prevX = f.x; s.prevY = f.y;
+    s.prevX = a.x; s.prevY = a.y;
     s.prevVx = vx; s.prevVy = vy;
     // Position sampled once a frame differentiated twice is noisy; smooth before driving.
     s.smoothAx += (rawAx - s.smoothAx) * 0.3;
@@ -635,16 +2058,13 @@ export class DreamKit {
 
     const acc = -(Math.sin(s.theta) * (PEND_G - s.smoothAy) + s.smoothAx * Math.cos(s.theta)) / PEND_LEN
       - PEND_DAMP * s.omega;
-    s.omega += acc * dt;
+    s.omega = Phaser.Math.Clamp(s.omega + acc * dt, -OMEGA_MAX, OMEGA_MAX);
     s.theta = Phaser.Math.Angle.Wrap(s.theta + s.omega * dt);
 
-    // The AI has no hands on a keyboard, so it is allowed to swing the thing deliberately.
-    if (owner === 'npc' && Math.abs(s.omega) * PEND_LEN < TRANCE_MAX_TIP) {
-      s.omega += Math.sign(s.omega || 1) * NPC_PUMP * dt;
-    }
-
     const tip = Math.abs(s.omega) * PEND_LEN;
-    const heat = Phaser.Math.Clamp(tip / TRANCE_MAX_TIP, 0, 1);
+    const spinHeat = Phaser.Math.Clamp(
+      (Math.abs(s.spin) - SPIN_DEADZONE) / (SPIN_FULL - SPIN_DEADZONE), 0, 1);
+    const heat = Math.max(Phaser.Math.Clamp(tip / TRANCE_MAX_TIP, 0, 1), spinHeat);
     this.swing[owner] = heat;
 
     if (heat < TRANCE_MIN_SWING) return;
@@ -739,6 +2159,21 @@ export class DreamKit {
     }
     this.fx(owner).tear(s.portalX, s.portalY, PORTAL_RX, PORTAL_RY, true);
     this.api.showFloatingText(s.portalX, s.portalY - 40, '🏞️ OASIS', '#74d18c');
+
+    // Night Terrors (Q+): your rest is their nightmare, and only if they were already under.
+    if (this.up(owner, 'q')) this.beginTerror(owner);
+  }
+
+  /**
+   * Whether the doorway should be showing red — the tell that stepping through it is also
+   * going to do something to whoever is asleep out there.
+   */
+  private terrorReady(owner: Owner): boolean {
+    if (!this.up(owner, 'q')) return false;
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return false;
+    const victim = owner === 'player' ? this.api.getNearestEnemy(f.x, f.y) : this.api.player;
+    return this.alive(victim) && this.isAsleep(victim);
   }
 
   private exitOasis(s: Side, f: Fighter, owner: Owner, why: string): void {
@@ -765,12 +2200,17 @@ export class DreamKit {
           if (c.drainAccum >= DRAIN_MS) {
             c.drainAccum -= DRAIN_MS;
             c.dreams++;
+            // Good Dreams (R+): one in five comes out golden and is worth keeping.
+            const golden = this.up(c.owner, 'r') && Math.random() < GOOD_DREAM_CHANCE;
+            if (golden) c.good++;
             // Every dream torn out costs them time on everything they know how to do.
             for (const ab of sleeper.element.abilities) {
               sleeper.reduceCooldown(ab.id, -DREAM_COOLDOWN_PENALTY);
             }
-            this.fx(c.owner).stardust(sleeper.x, sleeper.y, 5, 20, 620, 7);
-            this.api.showFloatingText(sleeper.x, sleeper.y - 52, '💤 DREAM TAKEN  +2s CD', '#8b5cf6');
+            this.fx(c.owner).stardust(sleeper.x, sleeper.y, golden ? 9 : 5, golden ? 28 : 20, 620, 7);
+            this.api.showFloatingText(sleeper.x, sleeper.y - 52,
+              golden ? '✨ GOOD DREAM  +2s CD' : '💤 DREAM TAKEN  +2s CD',
+              golden ? '#ffd98a' : '#8b5cf6');
           }
         } else {
           c.drainAccum = 0;
@@ -782,17 +2222,185 @@ export class DreamKit {
       if (c.dreams > 0 && holder && holder.active && holder.hp > 0
         && Phaser.Math.Distance.Between(holder.x, holder.y, c.x, c.y) < PICKUP_RADIUS) {
         const healed = c.dreams * DREAM_HEAL;
+        const golden = c.good;
         c.dreams = 0;
+        c.good = 0;
         holder.heal(healed);
         this.fx(c.owner).ring(c.x, c.y, 6, 46, DRM.water, 420, 4, 6);
         this.fx(c.owner).stardust(holder.x, holder.y, 8, 24, 700, 7);
         this.api.showFloatingText(holder.x, holder.y - 44, `🌙 +${healed} HP`, '#3fc7d6');
+        for (let i = 0; i < golden; i++) this.grantGoodBuff(c.owner);
       }
     }
 
     const dead = this.catchers.filter((c) => time >= c.until);
     for (const c of dead) this.fx(c.owner).stardust(c.x, c.y, 6, 22, 620, 5);
     if (dead.length) this.catchers = this.catchers.filter((c) => time < c.until);
+  }
+
+  // ── Good Dreams (R+) ───────────────────────────────────────────────────────
+
+  /** One golden dream, cashed in. Rolled at pickup so the reward is a small surprise. */
+  private grantGoodBuff(owner: Owner): void {
+    const kinds: GoodBuffKind[] = ['swift', 'fierce', 'tough', 'mending'];
+    const kind = kinds[Math.floor(Math.random() * kinds.length)];
+    const s = this.side(owner);
+    s.buffs.push({ kind, until: this.now + GOOD_BUFF_MS });
+    const f = this.fighter(owner);
+    const def = GOOD_BUFFS[kind];
+    this.fx(owner).stardust(f.x, f.y, 10, 30, 800, 7);
+    if (owner === 'player') {
+      this.api.showFloatingText(f.x, f.y - 56, `${def.emoji} ${def.name.toUpperCase()}`, '#ffd98a');
+    }
+  }
+
+  private countBuff(owner: Owner, kind: GoodBuffKind): number {
+    return this.side(owner).buffs.filter((b) => b.kind === kind).length;
+  }
+
+  /**
+   * The buffs, applied every frame. Two of the four are pulled by ArenaScene (speed) or by the
+   * damage chain (`dreamIncomingMult`), so this only has to keep the timers honest and pay the
+   * regen — but the outgoing multiplier is *shared*, so that one is divided out rather than set.
+   */
+  private updateGoodBuffs(owner: Owner, delta: number): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (!f) return;
+    const before = s.buffs.length;
+    s.buffs = s.buffs.filter((b) => b.until > this.now);
+    if (s.buffs.length !== before && owner === 'player') {
+      this.api.showFloatingText(f.x, f.y - 40, '✨ a dream fades', '#8a8a8a');
+    }
+
+    if (!this.alive(f)) return;
+    const mend = this.countBuff(owner, 'mending');
+    if (mend > 0) {
+      s.mendAccum += delta;
+      while (s.mendAccum >= 1000) {
+        s.mendAccum -= 1000;
+        const hp0 = f.hp;
+        f.heal(2 * mend);
+        const got = Math.round(f.hp - hp0);
+        if (got > 0) this.api.showFloatingText(f.x, f.y - 26, `🌿 +${got}`, '#74d18c');
+      }
+    } else {
+      s.mendAccum = 0;
+    }
+  }
+
+  // ── Phobia (F+) ────────────────────────────────────────────────────────────
+
+  /**
+   * Everything this kit writes onto a Fighter's two damage multipliers, resolved in one pass so
+   * the three things that want them cannot overwrite each other.
+   *
+   * Phobia is per-*attack*, and `takeDamage` has no idea what hit it — so the current attack is
+   * resolved here, from the tag the kit is dealing under (its own damage) or from what the
+   * attacker last cast (everything else), and the stack count for *that* attack is what lands.
+   * Well Rested and Lucid come off the Good Dream ledger, and the corridor's exhaustion comes
+   * off the Night Terror ledger; incoming is Dream's own field and is written flat, outgoing is
+   * shared with Lust and the cards and is divided in.
+   */
+  private updateFighterMults(): void {
+    const seen = new Set<Fighter>();
+    const resolve = (f: Fighter): void => {
+      if (!f || seen.has(f)) return;
+      seen.add(f);
+      const st = this.sleep.get(f);
+      const owner = f === this.api.player ? 'player' : f === this.api.npc ? 'npc' : null;
+
+      // ── Incoming: their phobia of whatever is currently swinging, times their own armour ──
+      let incoming = 1;
+      if (st?.phobia.size) {
+        const stacks = st.phobia.get(this.wakerTag(st)) ?? 0;
+        incoming *= 1 + stacks * PHOBIA_PER_STACK;
+      }
+      if (owner && this.isDream(owner)) {
+        const tough = this.countBuff(owner, 'tough');
+        if (tough > 0) incoming *= Math.max(0.4, 1 - 0.15 * tough);
+      }
+      // Lifelong Dream's armour, folded in here rather than written on its own so it cannot
+      // stomp Phobia — the two are allowed to be true at once and to multiply.
+      if (f === this.api.player) incoming *= this.boonTotals().armor;
+      f.dreamIncomingMult = incoming;
+
+      // ── Outgoing: Lucid lifts it, the corridor drops it ──
+      let outgoing = 1;
+      if (owner && this.isDream(owner)) outgoing *= 1 + 0.15 * this.countBuff(owner, 'fierce');
+      if (st && st.exhaustedUntil > this.now) outgoing *= TERROR_EXHAUST_MULT;
+      if (f === this.api.player) outgoing *= this.boonTotals().damage;
+      this.applyOutgoing(f, outgoing);
+    };
+
+    resolve(this.api.player);
+    resolve(this.api.npc);
+    for (const f of [...this.sleep.keys()]) resolve(f);
+  }
+
+  // ── Night Terrors (Q+) ─────────────────────────────────────────────────────
+
+  /**
+   * Stepping through the doorway takes the sleeper somewhere too. They are held for the length
+   * of the cutscene — genuinely held, because a nightmare you can walk out of is a debuff — and
+   * then the specific thing that happened to them in it lands.
+   */
+  private beginTerror(owner: Owner): void {
+    const f = this.fighter(owner);
+    const victim = owner === 'player' ? this.api.getNearestEnemy(f.x, f.y) : this.api.player;
+    if (!this.alive(victim) || !this.isAsleep(victim)) return;
+    if (this.terrors.some((t) => t.victim === victim)) return;
+
+    const kind = Math.floor(Math.random() * 3) as 0 | 1 | 2;
+    this.terrors.push({ victim, by: owner, kind, endsAt: this.now + TERROR_HOLD_MS });
+    const st = this.state(victim);
+    // Held under for the whole of it: they do not get to wake up halfway down the corridor.
+    st.asleepUntil = Math.max(st.asleepUntil, this.now + TERROR_HOLD_MS + 200);
+    this.fx(owner).ring(victim.x, victim.y, 12, 90, DRM.dread, 620, 6, 8);
+    Sfx.playAt('nightmare', victim.x, { rate: 0.7, volume: 0.9 });
+    this.api.showFloatingText(victim.x, victim.y - 60,
+      ['🏃 THE CORRIDOR', '🕳️ THE FALL', '🐺 THE HORDE'][kind], '#ff3b6b');
+  }
+
+  private updateTerrors(time: number): void {
+    for (let i = this.terrors.length - 1; i >= 0; i--) {
+      const tr = this.terrors[i];
+      const v = tr.victim;
+      if (!this.alive(v)) { this.terrors.splice(i, 1); continue; }
+
+      if (time < tr.endsAt) {
+        // The cutscene. Nothing about it is optional for the person inside it.
+        this.body(v).setVelocity(0, 0);
+        v.earthStunnedUntil = Math.max(v.earthStunnedUntil, time + 140);
+        v.applyDisarm(160);
+        // Their own damage tally is kept in step, so nothing that lands during the nightmare
+        // counts as the thing that woke them out of it.
+        this.state(v).lastRaw = v.rawDamageTaken;
+        continue;
+      }
+
+      this.terrors.splice(i, 1);
+      const st = this.state(v);
+      const fx = this.fx(tr.by);
+      if (tr.kind === 0) {
+        st.exhaustedUntil = time + TERROR_EXHAUST_MS;
+        fx.stardust(v.x, v.y, 10, 30, 700, 7);
+        this.api.showFloatingText(v.x, v.y - 52, '😰 EXHAUSTED', '#ff3b6b');
+      } else if (tr.kind === 1) {
+        v.earthStunnedUntil = Math.max(v.earthStunnedUntil, time + TERROR_STUN_MS);
+        v.applyDisarm(TERROR_STUN_MS);
+        fx.ring(v.x, v.y, 10, 80, DRM.violet, 620, 6, 8);
+        this.api.showFloatingText(v.x, v.y - 52, '💥 THE IMPACT', '#8b5cf6');
+      } else {
+        st.bleedUntil = time + TERROR_BLEED_MS;
+        st.bleedAccum = 0;
+        st.bleedBy = tr.by;
+        fx.ring(v.x, v.y, 8, 60, DRM.dread, 520, 5, 7);
+        this.api.showFloatingText(v.x, v.y - 52, '🩸 BITTEN', '#ff3b6b');
+      }
+      // Waking up out of the nightmare is a wake like any other.
+      if (st.asleepUntil > time) st.asleepUntil = time;
+    }
   }
 
   /**
@@ -808,12 +2416,24 @@ export class DreamKit {
       // ── Woken by damage? (before the nightmare tick, so a real hit is never swallowed) ──
       this.syncDamage(f);
 
+      // ── Night Terrors: the horde's bite. (The corridor's exhaustion is a multiplier, and
+      // lands in `updateFighterMults` with everything else that writes one.) ──
+      if (st.bleedUntil > time) {
+        st.bleedAccum += delta;
+        while (st.bleedAccum >= TERROR_BLEED_TICK_MS) {
+          st.bleedAccum -= TERROR_BLEED_TICK_MS;
+          this.strike(f, TERROR_BLEED_DAMAGE, 'dream:nightmare');
+          st.lastRaw = f.rawDamageTaken;
+          this.fx(st.bleedBy).stardust(f.x, f.y, 3, 14, 400, 7);
+        }
+      }
+
       // ── Nightmare ──
       if (st.nightmareUntil > time) {
         st.nightmareAccum += delta;
         while (st.nightmareAccum >= NIGHTMARE_TICK_MS) {
           st.nightmareAccum -= NIGHTMARE_TICK_MS;
-          f.takeDamage(NIGHTMARE_TICK_DAMAGE);
+          this.strike(f, NIGHTMARE_TICK_DAMAGE, 'dream:nightmare');
           // A nightmare is not an alarm clock: its own damage must not wake its host, so the
           // tally is re-synced right here rather than left for the next frame to notice.
           st.lastRaw = f.rawDamageTaken;
@@ -825,6 +2445,11 @@ export class DreamKit {
 
       // ── Sleep upkeep ──
       if (st.asleepUntil > time) {
+        // Dream Duel: the sleeper's spirit is out and walking. They are still asleep — the
+        // meter, the wake rules and the nightmare all still apply — but the body they left
+        // behind is not what is being held still any more, and dodging is the only thing the
+        // duel leaves them. `updateDuel` owns their leash and their disarm instead.
+        if (this.duel && this.duel.victim === f) continue;
         this.body(f).setVelocity(0, 0);
         f.earthStunnedUntil = Math.max(f.earthStunnedUntil, time + 140);
         f.applyDisarm(160);
@@ -835,7 +2460,10 @@ export class DreamKit {
       // ── Drowsiness ──
       const gain = this.gained.get(f) ?? 0;
       if (gain > 0) {
-        st.drowsy = Math.min(SLEEP_MAX, st.drowsy + gain);
+        // Combo Breaker: the sleep belongs to whoever is putting them under, so it is *their*
+        // meter that is halved, not the sleeper's.
+        st.drowsy = Math.min(SLEEP_MAX,
+          st.drowsy + meterGain(st.by ? this.fighter(st.by) : null, gain));
         this.checkSleepThreshold(f, st, st.by);
       } else if (st.drowsy > 0) {
         st.drowsy = Math.max(0, st.drowsy - SLEEP_DECAY_PER_SEC * dt);
@@ -858,6 +2486,14 @@ export class DreamKit {
 
   private wake(f: Fighter, st: SleepState, jolt: number, why: 'damage' | 'natural'): void {
     const by = st.by;
+    // Phobia (F+): they learn to fear the exact thing that did this, and only that thing.
+    if (why === 'damage' && this.up(by, 'f')) {
+      const tag = this.wakerTag(st);
+      const stacks = (st.phobia.get(tag) ?? 0) + 1;
+      st.phobia.set(tag, stacks);
+      this.api.showFloatingText(f.x, f.y - 66,
+        `😱 PHOBIA ×${stacks} — ${this.tagLabel(tag)}`, '#ff3b6b');
+    }
     st.asleepUntil = 0;
     st.drowsy = 0;
     // Only lift the stun if it is the one sleep was renewing — something else may have a
@@ -897,6 +2533,7 @@ export class DreamKit {
     }
     st.asleepUntil = this.now + SLEEP_MS;
     st.by = by;
+    this.record(by, 'sleepsInduced');
     this.body(f).setVelocity(0, 0);
     this.fx(by).zzzPuff(f.x, f.y);
     this.fx(by).ring(f.x, f.y, 10, 70, DRM.purple, 620, 5, 7);
@@ -1032,6 +2669,58 @@ export class DreamKit {
       sg.strokeCircle(cx, cy, r);
     }
 
+    // ── Pillow forts, on the floor with the dreamcatchers ──
+    for (const fort of this.forts) {
+      const rise = Math.min(1, (time - fort.bornAt) / 280);
+      pillowFort(gg, this.col(fort.owner), fort.x, fort.y, fort.r * rise,
+        fort.level, Phaser.Math.Clamp(fort.hp / fort.maxHp, 0, 1), this.vizT, rise);
+      if (fort.level >= 5) {
+        const aim = fort.owner === 'player'
+          ? Math.atan2(this.lastAimY - fort.y, this.lastAimX - fort.x)
+          : Math.atan2(this.api.player.y - fort.y, this.api.player.x - fort.x);
+        cosmicCannon(ag, this.col(fort.owner), fort.x, fort.y - fort.r * 0.45, aim,
+          fort.cannonArmed ? 1 : 0, this.vizT, rise);
+      }
+      // The HP bar. A fort you cannot read the health of is a fort you cannot decide to defend.
+      const bw = fort.r * 1.6;
+      ag.fillStyle(this.col(fort.owner)(DRM.night), 0.8);
+      ag.fillRect(fort.x - bw / 2, fort.y + fort.r * 0.75, bw, 5);
+      ag.fillStyle(this.col(fort.owner)(fort.hp / fort.maxHp > 0.35 ? DRM.pillow : DRM.dread), 1);
+      ag.fillRect(fort.x - bw / 2, fort.y + fort.r * 0.75,
+        bw * Phaser.Math.Clamp(fort.hp / fort.maxHp, 0, 1), 5);
+    }
+
+    // ── Ram sheep, over the floor and under the fighters ──
+    for (const r of this.rams) {
+      const fade = Math.min(1, (r.until - time) / 400);
+      ag.fillStyle(this.col(r.owner)(DRM.night), fade * 0.25);
+      ag.fillEllipse(r.x, r.y + 12, 26, 9);
+      angryRam(ag, this.col(r.owner), r.x, r.y, 22, r.ang, this.vizT, fade);
+    }
+
+    // ── The thrown bob and the cannon's shells ──
+    for (const b of this.thrown) {
+      const ang = Math.atan2(b.vy, b.vx);
+      // A tail of chain links behind it, so the throw reads as a released pendulum.
+      for (let i = 1; i <= 4; i++) {
+        ag.fillStyle(this.col(b.owner)(DRM.pale), (1 - i / 5) * 0.5);
+        ag.fillCircle(b.x - Math.cos(ang) * i * 7, b.y - Math.sin(ang) * i * 7, 2.4 - i * 0.3);
+      }
+      pendulumBob(ag, this.col(b.owner), b.x, b.y, 9 + b.heat * 3, this.vizT, b.heat, 1);
+    }
+    for (const sh of this.shells) {
+      const ang = Math.atan2(sh.vy, sh.vx);
+      for (let i = 1; i <= 5; i++) {
+        star(ag, this.col(sh.owner), sh.x - Math.cos(ang) * i * 9, sh.y - Math.sin(ang) * i * 9,
+          4 - i * 0.5, (1 - i / 6) * 0.7, DRM.star, this.vizT * 3 + i);
+      }
+      ag.fillStyle(this.col(sh.owner)(DRM.violet), 0.4);
+      ag.fillCircle(sh.x, sh.y, 13);
+      ag.fillStyle(this.col(sh.owner)(DRM.deep), 0.9);
+      ag.fillCircle(sh.x, sh.y, 8);
+      star(ag, this.col(sh.owner), sh.x, sh.y, 8, 1, DRM.white, this.vizT * 4);
+    }
+
     // ── Pendulums, portals and the rest halo ──
     for (const owner of ['player', 'npc'] as Owner[]) {
       const s = this.side(owner);
@@ -1042,7 +2731,7 @@ export class DreamKit {
         if (hidden) {
           s.pendulum.update(delta, f?.x ?? 0, f?.y ?? 0, f?.x ?? 0, f?.y ?? 0, TRANCE_R_MIN, 0, 0);
         } else {
-          const a = this.anchorOf(f);
+          const a = this.anchorOf(owner);
           const heat = this.swing[owner];
           const radius = TRANCE_R_MIN + (TRANCE_R_MAX - TRANCE_R_MIN) * heat;
           s.pendulum.update(
@@ -1055,6 +2744,20 @@ export class DreamKit {
       if (s.portal) {
         const standing = f && Phaser.Math.Distance.Between(f.x, f.y, s.portalX, s.portalY) < PORTAL_ENTER_R * 1.6;
         s.portal.update(delta, s.portalX, s.portalY, PORTAL_RX, PORTAL_RY, s.portalOpen, standing ? 1 : 0);
+        // Night Terrors (Q+): the doorway goes red when there is somebody asleep to drag into
+        // it. Painted over the portal rather than built into it, so the tell is unmissable
+        // without the portal itself having to know about the upgrade.
+        if (s.portalOpen > 0.1 && this.terrorReady(owner)) {
+          const a = s.portalOpen;
+          for (let i = 0; i < 3; i++) {
+            ag.lineStyle(3 - i * 0.7, this.col(owner)(DRM.dread),
+              a * (0.75 - i * 0.18) * (0.6 + 0.4 * Math.sin(this.vizT * 5 - i)));
+            ag.strokeEllipse(s.portalX, s.portalY,
+              PORTAL_RX * 2 * a * (1 + i * 0.11), PORTAL_RY * 2 * a * (1 + i * 0.11));
+          }
+          ag.fillStyle(this.col(owner)(DRM.dreadDeep), a * 0.28);
+          ag.fillEllipse(s.portalX, s.portalY, PORTAL_RX * 1.7 * a, PORTAL_RY * 1.7 * a);
+        }
       }
     }
 
@@ -1064,6 +2767,67 @@ export class DreamKit {
       const inside = ps.oasisUntil > time;
       const pulse = inside ? Math.max(0, 1 - (ps.oasisHealAccum / OASIS_HEAL_TICK_MS)) : 0;
       ps.oasis.update(delta, ps.oasisGrow, this.api.width * 0.38, this.bottom - 74, pulse);
+    }
+  }
+
+  /**
+   * The duel: two abandoned bodies, two leashes, two threads, two spirits, and whatever the
+   * spirit has in the air. Painted on the overhead layer so it sits over the fighters — the
+   * spirits *are* the fighters, and a duel that renders underneath them would be invisible.
+   */
+  private paintDuel(): void {
+    const g = this.airGfx;
+    if (!g) return;
+    const d = this.duel;
+
+    // Live tears and bolts survive a duel ending by a frame or two, so they are painted
+    // whether or not there is still a duel to paint them inside.
+    for (const b of this.bolts) {
+      hauntBolt(g, this.pcol, b.x, b.y, Math.atan2(b.vy, b.vx), 9, this.vizT + b.seed);
+    }
+    for (const t of this.tears) {
+      for (const m of this.moonPositions(t)) {
+        tearMoon(g, this.pcol, m.x, m.y, TEAR_MOON_R, this.vizT);
+      }
+      spiritTearShape(g, this.pcol, t.x, t.y, TEAR_R, this.vizT);
+    }
+
+    if (!d) {
+      // The prompt: a duel that can be called says so, or nobody would ever find it.
+      if (this.duelCandidate() && this.now >= this.duelReadyAt) {
+        const p = this.api.player;
+        const pulse = 0.45 + 0.35 * Math.sin(this.vizT * 5);
+        g.lineStyle(2, this.pcol(DRM.spirit), pulse);
+        g.strokeCircle(p.x, p.y, 30 + Math.sin(this.vizT * 5) * 3);
+        for (let i = 0; i < 5; i++) {
+          const a = this.vizT * 1.4 + (i / 5) * Math.PI * 2;
+          star(g, this.pcol, p.x + Math.cos(a) * 36, p.y + Math.sin(a) * 36, 2.6, pulse, DRM.spirit, a);
+        }
+      }
+      return;
+    }
+
+    const p = this.api.player;
+    const v = d.victim;
+    const pairs: Array<[Fighter, number, number, boolean]> = [
+      [p, d.myAnchorX, d.myAnchorY, false],
+      [v, d.foeAnchorX, d.foeAnchorY, true],
+    ];
+    for (const [f, ax, ay, hostile] of pairs) {
+      if (!this.alive(f)) continue;
+      const press = Phaser.Math.Clamp(
+        Phaser.Math.Distance.Between(f.x, f.y, ax, ay) / DUEL_LEASH, 0, 1);
+      leashRing(g, this.pcol, ax, ay, DUEL_LEASH, this.vizT, press * press, 1, hostile);
+      // The body they stepped out of: slumped, faint, and still there.
+      g.fillStyle(this.pcol(DRM.night), 0.5);
+      g.fillEllipse(ax, ay + 16, 34, 12);
+      g.fillStyle(this.pcol(hostile ? DRM.hauntDeep : DRM.spiritDeep), 0.42);
+      g.fillEllipse(ax, ay + 4, 26, 30);
+      g.fillStyle(this.pcol(DRM.night), 0.35);
+      g.fillCircle(ax, ay - 9, 11);
+      spiritThread(g, this.pcol, ax, ay, f.x, f.y, DUEL_LEASH, this.vizT, 1, hostile);
+      spiritForm(g, this.pcol, f.x, f.y - 6, 22, this.vizT, 0.92, hostile,
+        f === p ? Math.atan2(this.lastAimY - f.y, this.lastAimX - f.x) : Math.atan2(p.y - f.y, p.x - f.x));
     }
   }
 
@@ -1131,6 +2895,43 @@ export class DreamKit {
         ekgTrace(g, this.col(st.nightmareBy), f.x, f.y - (ratio > 0.005 || asleep ? 78 : 62),
           46, 14, this.vizT * 0.55, 1);
       }
+    }
+
+    // Night Terrors: the bubble of somewhere else, over whoever is inside one.
+    for (const tr of this.terrors) {
+      if (!this.alive(tr.victim)) continue;
+      nightTerror(g, this.col(tr.by), tr.victim.x, tr.victim.y, tr.kind, this.vizT,
+        Phaser.Math.Clamp((tr.endsAt - time) / 400, 0, 1));
+    }
+
+    // Lifelong Dream: the counter while it is running, the crown once it has landed.
+    const w = this.wish;
+    const p = this.api.player;
+    if (w && this.alive(p)) {
+      if (!w.granted) {
+        const left = Math.max(0, w.dueAt - time);
+        wishCounter(g, this.pcol, p.x, p.y - 64, 15,
+          Phaser.Math.Clamp(left / WISH_MS, 0, 1), this.vizT,
+          Phaser.Math.Clamp((w.joltUntil - time) / WISH_JOLT_MS, 0, 1));
+        if (!this.wishLabel) {
+          this.wishLabel = this.api.scene.add.text(0, 0, '', {
+            fontSize: '11px',
+            fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+            color: '#ffd98a', stroke: '#05040f', strokeThickness: 3,
+          }).setOrigin(0.5).setDepth(17);
+        }
+        this.wishLabel.setVisible(true);
+        this.wishLabel.setPosition(p.x, p.y - 64);
+        this.wishLabel.setText((left / 1000).toFixed(1));
+        this.wishLabel.setColor(w.joltUntil > time ? '#ff3b6b' : '#ffd98a');
+      } else {
+        this.wishLabel?.setVisible(false);
+        const def = findElementDef(w.elementId);
+        dreamCrown(g, this.pcol, p.x, p.y - 38, 22, w.boons.length, this.vizT, 1,
+          def?.color ?? DRM.wish);
+      }
+    } else {
+      this.wishLabel?.setVisible(false);
     }
   }
 
@@ -1200,8 +3001,10 @@ export class DreamKit {
       if (Phaser.Math.Distance.Between(cx, cy, t.x, t.y) > CURSOR_HITBOX) continue;
       still.add(t);
       if (s.cursorInside.has(t)) continue;
-      t.takeDamage(CURSOR_DAMAGE);
+      this.strike(t, CURSOR_DAMAGE, 'dream:cursor');
+      this.attackTag = 'dream:cursor';
       this.syncDamage(t);
+      this.attackTag = null;
       struck = true;
       this.api.spawnHitFlash(t.x, t.y, DRM.pale);
       this.fx(owner).stardust(t.x, t.y, 4, 16, 420, 8);
@@ -1304,10 +3107,14 @@ export class DreamKit {
       }).setDepth(21).setScrollFactor(0);
     }
     this.hudLabel.setVisible(true);
+    const fort = this.fortOf('player');
+    const fortLine = fort
+      ? `   FORT L${fort.level} ${Math.max(0, Math.round(fort.hp))}`
+      : '';
     this.hudLabel.setText(
       s.tranceOn
-        ? `SWING ${Math.round(heat * 100)}%   DREAMS ${held}`
-        : `PENDULUM DOWN   DREAMS ${held}`,
+        ? `SPIN ${Math.round(heat * 100)}%   DREAMS ${held}${fortLine}`
+        : `PENDULUM DOWN — CLICK, THEN CIRCLE   DREAMS ${held}${fortLine}`,
     );
     this.hudLabel.setColor(s.tranceOn && heat > 0.6 ? '#8b5cf6' : '#d8e2ff');
   }
@@ -1321,8 +3128,70 @@ export class DreamKit {
 
     this.api.setStatusIndicator('dream-trance', playerIsDream && s.tranceOn ? {
       name: 'Trance', emoji: '🌀', color: DRM.purple,
-      description: 'A pendulum is swinging from your hand. Anything caught in its arc gets sleepy — the faster you swing it, the faster they go under.',
+      description: 'A pendulum is hanging off your hand, and your hand goes where the cursor does. Circle the cursor around yourself to wind it — the harder you spin, the wider the drowsy field and the faster anything in it goes under.',
       count: Math.round(this.swing.player * 100), suffix: '%', priority: 110,
+    } : null);
+
+    const fort = this.fortOf('player');
+    this.api.setStatusIndicator('dream-fort', playerIsDream && fort ? {
+      name: `Pillow Fort L${fort!.level}`, emoji: '🏰', color: DRM.pillow,
+      description: [
+        `${Math.max(0, Math.round(fort!.hp))} / ${fort!.maxHp} HP. Enemy shots stop dead in it; yours go straight through. Another pillow into it heals ${FORT_HEAL} and promotes it.`,
+        fort!.level >= 2 ? `Resting inside pays +${this.fortRestBonus('player', this.api.player) || FORT_REST_BONUS} HP/s on top of the passive.` : '',
+        fort!.level >= 4 ? 'A ram charges out of it every 12 seconds.' : '',
+        fort!.level >= 5
+          ? (fort!.cannonArmed
+            ? 'The cannon is loaded — your next click is the shot.'
+            : (time < fort!.cannonReadyAt
+              ? `The cannon is cooling: ${Math.ceil((fort!.cannonReadyAt - time) / 1000)}s.`
+              : 'Space while standing on it loads the cosmic cannon.'))
+          : '',
+      ].filter(Boolean).join(' '),
+      count: Math.max(0, Math.round(fort!.hp)), priority: 111,
+    } : null);
+
+    const buffs = s.buffs;
+    this.api.setStatusIndicator('dream-good', playerIsDream && buffs.length ? {
+      name: 'Good Dreams', emoji: '✨', color: DRM.sun,
+      description: (['swift', 'fierce', 'tough', 'mending'] as GoodBuffKind[])
+        .filter((k) => this.countBuff('player', k) > 0)
+        .map((k) => `${GOOD_BUFFS[k].emoji} ${GOOD_BUFFS[k].name} ×${this.countBuff('player', k)} — ${GOOD_BUFFS[k].blurb}`)
+        .join('. ') + '.',
+      count: buffs.length,
+      until: Math.max(...buffs.map((b) => b.until)), priority: 109,
+    } : null);
+
+    const myTerror = this.terrors.find((tr) => tr.victim === p);
+    this.api.setStatusIndicator('dream-terror', myTerror ? {
+      name: 'Night Terror', emoji: '😱', color: DRM.dread,
+      description: [
+        'Something has you, and you do not get to act your way out of it. When it lets go: 12 seconds of dealing a third less and moving a third slower.',
+        'Something has you, and you do not get to act your way out of it. When it lets go: 5 seconds stunned by the landing.',
+        'Something has you, and you do not get to act your way out of it. When it lets go: 5 damage a second for 10 seconds.',
+      ][myTerror.kind],
+      until: myTerror.endsAt, priority: 10,
+    } : null);
+
+    const myState = this.sleep.get(p);
+    this.api.setStatusIndicator('dream-exhausted', myState && myState.exhaustedUntil > time ? {
+      name: 'Exhausted', emoji: '😰', color: DRM.dread,
+      description: `Soaked through and out of breath. You deal ${Math.round((1 - TERROR_EXHAUST_MULT) * 100)}% less damage and move ${Math.round((1 - TERROR_EXHAUST_MULT) * 100)}% slower.`,
+      until: myState!.exhaustedUntil, priority: 11,
+    } : null);
+
+    this.api.setStatusIndicator('dream-bleed', myState && myState.bleedUntil > time ? {
+      name: 'Bitten', emoji: '🩸', color: DRM.dread,
+      description: `${TERROR_BLEED_DAMAGE} damage a second from a bite that happened in a dream.`,
+      until: myState!.bleedUntil, priority: 11,
+    } : null);
+
+    const phobias = myState?.phobia;
+    this.api.setStatusIndicator('dream-phobia', phobias && phobias.size ? {
+      name: 'Phobia', emoji: '😱', color: DRM.dreadDeep,
+      description: [...phobias.entries()]
+        .map(([tag, n]) => `${this.tagLabel(tag)}: +${Math.round(n * PHOBIA_PER_STACK * 100)}%`)
+        .join(', ') + ' — for the rest of the match.',
+      count: [...phobias.values()].reduce((a, b) => Math.max(a, b), 0), priority: 9,
     } : null);
 
     this.api.setStatusIndicator('dream-rest', playerIsDream && s.restSince > 0 ? {
@@ -1349,6 +3218,26 @@ export class DreamKit {
       count: Math.round(st!.drowsy), suffix: '%', priority: 13,
     } : null);
 
+    // ── Mastery ──
+    this.api.setStatusIndicator('dream-duel', this.duel ? {
+      name: 'Dream Duel', emoji: '👻', color: DRM.spirit,
+      description: `Your spirit is out and theirs is too. Nothing can hurt you and nothing can heal you, they cannot cast at all, and neither of you may go more than ${DUEL_LEASH}px from the body you left. Click haunts for ${HAUNT_DAMAGE}×${HAUNT_SHOTS}; E tears for ${TEAR_DAMAGE}.`,
+      until: this.duel.until, priority: 120,
+    } : null);
+
+    const w = this.wish;
+    this.api.setStatusIndicator('dream-wish', w && !w.granted ? {
+      name: 'Lifelong Dream', emoji: '🌠', color: DRM.wish,
+      description: `Dreaming of ${findElementDef(w.elementId)?.name ?? w.elementId}. Every hit you take puts ${WISH_HIT_PENALTY_MS / 1000} seconds back on the counter — when it reaches zero you are given every buff that element could ever have.`,
+      until: w.dueAt, priority: 119,
+    } : null);
+
+    this.api.setStatusIndicator('dream-granted', w && w.granted ? {
+      name: `Dream of ${findElementDef(w!.elementId)?.name ?? w!.elementId}`, emoji: '✨', color: DRM.wish,
+      description: w!.boons.map((b) => `${b.emoji} ${b.name} — ${b.blurb}`).join(' '),
+      count: w!.boons.length, priority: 118,
+    } : null);
+
     this.api.setStatusIndicator('dream-nightmare', st && st.nightmareUntil > time ? {
       name: 'Nightmare', emoji: '💔', color: DRM.dread,
       description: `${NIGHTMARE_TICK_DAMAGE} damage a second, and it will not wake you. Whatever does wake you while it lasts hits ${NIGHTMARE_WAKE_MULT}× as hard.`,
@@ -1358,15 +3247,72 @@ export class DreamKit {
 
   // ── Accessors read by ArenaScene / the NPC ─────────────────────────────────
 
+  /**
+   * Good Dreams' haste and the corridor's exhaustion, pulled by ArenaScene rather than pushed —
+   * DreamKit.update() runs long after the frame's movement has already resolved.
+   */
+  private speedMultFor(owner: Owner): number {
+    let mult = 1;
+    if (this.isDream(owner)) mult *= 1 + 0.12 * this.countBuff(owner, 'swift');
+    const st = this.sleep.get(this.fighter(owner));
+    if (st && st.exhaustedUntil > this.now) mult *= TERROR_EXHAUST_MULT;
+    // Lifelong Dream is the player's alone, and the picker holds them where they stand.
+    if (owner === 'player') {
+      mult *= this.boonTotals().speed;
+      if (this.picker?.isOpen()) mult = 0;
+    }
+    return mult;
+  }
+
+  getPlayerSpeedMult(): number { return this.speedMultFor('player'); }
+  getNpcSpeedMult(): number { return this.speedMultFor('npc'); }
+
+  /**
+   * Pillow Fort (E+): Space is the cannon's loader while you are standing on a level-5 fort,
+   * so ArenaScene's dodge block stands down — one press can never be both a load and a roll.
+   */
+  suppressesDodge(): boolean {
+    if (this.api.elementId !== 'dream') return false;
+    // Dream Duel: Space calls a duel, and a duel is not a roll. Also while one is running —
+    // a spirit that can dodge out of its own leash is not on a leash.
+    if (this.duel || this.canCallDuel()) return true;
+    const fort = this.fortOf('player');
+    return !!fort && fort.level >= FORT_MAX_LEVEL && this.standingOnFort(this.api.player, fort);
+  }
+
+  /** True while a Dream Duel is running — ArenaScene swaps the ability tray on this. */
+  isDuelling(): boolean { return !!this.duel; }
+
+  /**
+   * Whether the npc's AI must stand down because Dream has put it to sleep.
+   *
+   * Not the same question as `isAsleep`: a duel victim is asleep and *must still be able to
+   * move*, because dodging is the only thing the duel leaves them. ArenaScene reads this
+   * rather than `isAsleep` when it builds `NpcAiState.isLocked`.
+   */
+  locksNpcAi(): boolean {
+    const npc = this.api.npc;
+    if (!npc) return false;
+    if (this.duel && this.duel.victim === npc) return false;
+    return this.isAsleep(npc);
+  }
+
   /** True while this fighter is out cold. */
   isAsleep(f: Fighter): boolean {
     const st = this.sleep.get(f);
     return !!st && st.asleepUntil > this.now;
   }
 
-  /** True while the local player is asleep or away in the oasis — WASD is not part of either. */
+  /**
+   * True while the local player is asleep, away in the oasis, or standing in the Lifelong
+   * Dream picker — WASD is not part of any of the three, and in the picker's case those keys
+   * are letters being typed into a search box.
+   */
   isPlayerLocked(): boolean {
-    return this.isAsleep(this.api.player) || this.sides.player.oasisUntil > this.now;
+    return this.isAsleep(this.api.player)
+      || this.sides.player.oasisUntil > this.now
+      || !!this.picker?.isOpen()
+      || this.terrors.some((t) => t.victim === this.api.player);
   }
 
   /** True while a side is resting. Its own AI must not act, and nothing can reach it. */
@@ -1398,8 +3344,15 @@ export class DreamKit {
    * a cooldown nobody is waiting for.
    */
   getBarRatio(abilityId: string, time: number): number {
-    void time;
     if (abilityId === 'dream-trance' && this.sides.player.tranceOn) return 1;
+    if (abilityId === LIFELONG_ID) {
+      // Once the dream has come true the card is spent for the rest of the match, and a bar
+      // draining toward a cooldown nobody can spend would be a lie.
+      if (this.wish) return this.wish.granted ? 1 : 1 - Phaser.Math.Clamp(
+        (this.wish.dueAt - time) / WISH_MS, 0, 1);
+      return Phaser.Math.Clamp((time - this.lifelongAt) / LIFELONG_COOLDOWN_MS, 0, 1);
+    }
+    void time;
     return this.api.player.getCooldownRatio(abilityId);
   }
 }

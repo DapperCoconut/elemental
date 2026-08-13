@@ -22,12 +22,15 @@ const sound: ElementCodex = {
     {
       emoji: '🎼',
       name: 'The Metronome',
-      magic:
-        'A two-second meter appears over the ability bar the moment you cast anything, and a gold '
-        + 'window sits at the far end of it. Play your next ability inside that window and the '
-        + 'cast comes out *harmonized* — which for every ability in this element means something '
-        + 'different and always means something better. It restarts on every cast, so the element '
-        + 'is played as a rhythm rather than as a rotation.',
+      basics:
+        'Every cast restarts a 2-second beat with a 200ms gold window at the end of it, roughly a tenth '
+        + 'of the bar, and casting inside that window harmonizes the ability. A harmonized Click deals 15 '
+        + 'instead of 10. A harmonized E changes the record on the deck instead of just cutting — '
+        + 'Accelerando, then Bass, then Calm. A harmonized R is a bigger boombox, 205px instead of 150, '
+        + 'with twice the speakers and every buff banked inside it worth 1.5×. A harmonized F tolerates '
+        + 'one mistake on the bugle run, and spending that slip winds the rhythm bar up to 1.2× speed for '
+        + 'the rest of it. The beat restarts on every cast including a missed one, so a badly timed press '
+        + 'costs you the next window as well as the current one.',
       effects: [
         { tag: 'utility', label: 'The beat', detail: '2 seconds from any cast, with a 200ms gold window at the end of it. Roughly a tenth of the bar.' },
         { tag: 'damage', label: 'Harmonized Click', detail: '15 damage instead of 10.' },
@@ -45,12 +48,15 @@ const sound: ElementCodex = {
     {
       emoji: '📈',
       name: 'The Bank',
-      magic:
-        'Almost nothing this element gives you goes away. A second spent inside a boombox field is '
-        + 'a permanent percentage of attack speed. A note struck on the bugle bar is a permanent '
-        + 'percentage of move *and* attack speed. A fighter cut by a record pays into a bank that '
-        + 'lasts the match. None of it caps, none of it decays, and all of it is fuel for the '
-        + 'ultimate.',
+      basics:
+        'Percentages you bank never expire and nothing takes them back. The boombox pays +1% attack '
+        + 'speed per second stood in the field, kept when you leave, and ×1.5 if the box was harmonized. '
+        + 'The bugle pays +1% move speed and +1% attack speed per note struck, for the rest of the match. '
+        + 'With Sound System the record bank pays +3% move per fighter cut on green, +2% damage on red '
+        + 'and +1% damage resistance on blue, with resistance floored at 75% off so no run of blue is '
+        + 'immunity. And all of it is hype: Coda burns every percentage you are carrying at 1 hype per '
+        + 'percent, with tempo counting twice because it buffs two stats at once. 200 hype is a Coda '
+        + 'level.',
       effects: [
         { tag: 'buff', label: 'The boombox', detail: '+1% attack speed per second stood in the field, kept when you leave it. ×1.5 if the box was harmonized.' },
         { tag: 'buff', label: 'The bugle', detail: '+1% move speed and +1% attack speed per note struck, for the rest of the match.' },
@@ -67,10 +73,11 @@ const sound: ElementCodex = {
 
   abilities: {
     staccato: {
-      magic:
-        'You strike the instrument and a wedge of sound leaves it — a struck note, thrown flat '
-        + 'across the arena. It is the smallest number in the element and the only thing on a '
-        + 'one-second cooldown, and Coda scales it along with everything else.',
+      basics:
+        'A shockwave along your aim: 10 damage, or 15 harmonized, travelling 780 px/s out to 470px, '
+        + '28px thick and spreading about 0.1 radians as it goes. Coda scales it further — ×1.3 at level '
+        + '2 and ×1.6 at level 3, on top of the harmonize. 1s cooldown, which is exactly half the '
+        + 'metronome.',
       cast: 'Click, along the aim. 1s cooldown, which is also exactly half the metronome.',
       effects: [
         { tag: 'damage', label: 'The note', detail: '10 damage, or 15 harmonized.' },
@@ -78,10 +85,12 @@ const sound: ElementCodex = {
         { tag: 'buff', label: 'Coda scales it', detail: '×1.3 at Coda level 2 and ×1.6 at level 3, on top of the harmonize.' },
       ],
       upgrade: {
-        magic:
-          'Encore Streak makes keeping time something you can see. Every ability you land on the '
-          + 'beat adds one to a running count, and every point of it widens the shockwave. A long '
-          + 'clean run turns the struck note back into the wall it used to be.',
+        basics:
+          'Every consecutive harmonized cast widens the shockwave by 1%, with no ceiling — thirty in a '
+          + 'row is a 30% wider wave. Playing off the beat drops the whole streak to zero: a reset rather '
+          + 'than a decay. Nothing struck on the bugle rhythm bar or during a Solo can break it, so the two '
+          + 'rhythm minigames are not a liability, and Coda spends the streak for hype like every other '
+          + 'percentage you carry, a point apiece.',
         effects: [
           { tag: 'buff', label: 'The streak', detail: '+1% shockwave width per point, with no ceiling. Thirty consecutive harmonized casts is a 30% wider wave.', requiresUpgrade: 'click' },
           { tag: 'cost', label: 'Playing off the beat', detail: 'Drops the whole streak to zero. Not a decay — a reset.', requiresUpgrade: 'click' },
@@ -96,11 +105,11 @@ const sound: ElementCodex = {
     },
 
     'disc-dice': {
-      magic:
-        'A vinyl record is slung out around you and comes back, and everything inside a hundred '
-        + 'and thirty pixels is cut by it. Cutting somebody is worth speed. But the reason to '
-        + 'press E on the beat is not the damage — it is that a harmonized disc changes the record '
-        + 'on the deck, and the record is a permanent stance.',
+      basics:
+        'Slices everything within 130px of you for 15 damage, with no aim, and every fighter cut gives '
+        + '+15% move speed for 3 seconds, stacking to 6 — so a wave of husks is +90%. A harmonized cast '
+        + 'also changes the record on the deck, cycling Accelerando (green), Bass (red), Calm (blue). 5s '
+        + 'cooldown.',
       cast: 'E. Instant, no aim — the slice is a circle around you. 5s cooldown.',
       effects: [
         { tag: 'damage', label: 'The slice', detail: '15 damage to everything within 130px.' },
@@ -116,10 +125,11 @@ const sound: ElementCodex = {
         ],
       },
       upgrade: {
-        magic:
-          'Sound System puts a till on the deck. Every fighter a record cuts pays into a bank you '
-          + 'keep for the whole match, and which currency it pays in is whichever record happens '
-          + 'to be spinning when the disc lands.',
+        basics:
+          'The record you are playing turns cuts into permanent banked stats: green pays +3% move speed '
+          + 'per fighter cut, red +2% damage dealt, blue +1% damage resistance, floored at 75% off so no '
+          + 'run of blue ever makes you untouchable. All three burn for hype in Coda like everything else '
+          + 'you are carrying.',
         effects: [
           { tag: 'buff', label: 'Green pays speed', detail: '+3% move speed per fighter cut, permanently.', requiresUpgrade: 'e' },
           { tag: 'buff', label: 'Red pays damage', detail: '+2% damage dealt per fighter cut, permanently.', requiresUpgrade: 'e' },
@@ -134,11 +144,13 @@ const sound: ElementCodex = {
     },
 
     boombox: {
-      magic:
-        'A boombox is thrown to your cursor and stands there for eight seconds with a pink field '
-        + 'humming around it. Standing in the field is worth attack speed you keep forever, and '
-        + 'you move faster while you are in it. Every three seconds the box lets go — a hard pulse '
-        + 'that throws enemies out of the field and their bullets with them.',
+      basics:
+        'Drops a 150px field at the cursor — 205px if the cast was harmonized — that stands 8 seconds. '
+        + 'Every second you stand in it banks +1% attack speed permanently and uncapped, kept when you '
+        + 'walk out, and a harmonized box makes every buff picked up inside it worth 1.5×, so that '
+        + 'becomes 1.5% a second. While you are inside you also move 20% faster, for exactly as long as '
+        + 'you are in it. Every 3 seconds it shoves enemies inside 190px out of the field and pushes '
+        + 'their projectiles with them at 300 px/s. 15s cooldown.',
       cast: 'R, placed at the cursor. 15s cooldown.',
       effects: [
         { tag: 'area', label: 'The field', detail: '150px, or 205px if the cast was harmonized, alive for 8 seconds.' },
@@ -148,10 +160,10 @@ const sound: ElementCodex = {
         { tag: 'buff', label: 'Harmonized potency', detail: 'A harmonized box makes every buff picked up inside it worth 1.5× — so the banked attack speed is 1.5% a second rather than 1%.' },
       ],
       upgrade: {
-        magic:
-          'Jukebox grows a coin slot on the side of the box. Stand at it and press Space — Space '
-          + 'alone, so no dodge comes out — to feed it ten hype off the Coda ladder, and the box '
-          + 'gets louder for the rest of its life.',
+        basics:
+          'A coin dropped within 40px of the box, one per box, costs 10 hype straight off the Coda ladder '
+          + 'and swells the field by a third — 200px, or 273px on a harmonized box — for the rest of its 8 '
+          + 'seconds, with the pulse firing every 2 seconds instead of every 3.',
         effects: [
           { tag: 'resource', label: 'The coin', detail: '10 hype, taken straight off the Coda ladder. One coin per box, and you have to be within 40px of it.', requiresUpgrade: 'r' },
           { tag: 'area', label: 'What it buys', detail: 'The field swells by a third — 200px, or 273px on a harmonized box — for the rest of its 8 seconds.', requiresUpgrade: 'r' },
@@ -166,11 +178,14 @@ const sound: ElementCodex = {
     },
 
     bugle: {
-      magic:
-        'You put the violin down and take up a brass bugle, and a rhythm bar opens beneath you. '
-        + 'Notes come along it and every one you strike on time is worth a permanent percentage of '
-        + 'both your speeds. Miss one and the call is over. It is the highest-value thing in the '
-        + 'element and it requires you to stand there and play.',
+      basics:
+        'Opens a rhythm bar: notes travel at 470 px/s, spawning every 0.42–0.94 seconds, with a 42px '
+        + 'timing tolerance and a 0.4s grace at the start. Every note struck banks +1% move speed and +1% '
+        + 'attack speed permanently, with no cap and no decay — and a single dropped note ends the call '
+        + 'on the spot and starts the cooldown. A harmonized bugle tolerates one mistake, and spending '
+        + 'that slip winds the bar up to 1.2× speed for the rest of the run, so surviving a slip makes '
+        + 'everything after it harder. F again bows out and keeps everything you played for. 10s '
+        + 'cooldown, starting when the run ends.',
       cast: 'F opens the bar. F again bows out and keeps everything you played for. 10s cooldown, starting when the run ends.',
       effects: [
         { tag: 'buff', label: 'Every note', detail: '+1% move speed and +1% attack speed, banked permanently. No cap and no decay.' },
@@ -179,11 +194,11 @@ const sound: ElementCodex = {
         { tag: 'buff', label: 'Harmonized: one slip', detail: 'A harmonized bugle tolerates a single mistake — and spending it winds the bar up to 1.2× speed for the rest of the run, so surviving a slip makes everything after it harder.' },
       ],
       upgrade: {
-        magic:
-          'Perfect Pitch starts writing notes nobody is supposed to strike. A red note pays only '
-          + 'if you let it run off the end of the bar untouched — playing it is the mistake. A '
-          + 'green hold note has to be caught and carried the whole way. Both are uncommon, and '
-          + 'the bar starts leaning on them once your one harmonized slip has been spent.',
+        basics:
+          'Two special notes join the bar — 16% of notes normally, rising to 34% once a harmonized run '
+          + 'has spent its slip. 🔴 The red note is +1% damage if it runs off the end untouched, and '
+          + 'striking it counts as a mistake and ends the run. 🟢 The hold note is up to +3% attack speed, '
+          + 'paid across a 150px tail that has to be held for its whole length.',
         effects: [
           { tag: 'buff', label: '🔴 The red note', detail: '+1% damage if it runs off the end untouched. Striking it counts as a mistake and ends the run.', requiresUpgrade: 'f' },
           { tag: 'buff', label: '🟢 The hold note', detail: 'Up to +3% attack speed, paid across a 150px tail that has to be held for its whole length.', requiresUpgrade: 'f' },
@@ -198,12 +213,16 @@ const sound: ElementCodex = {
     },
 
     coda: {
-      magic:
-        'You take everything you have banked — every percentage of speed, of attack, of damage, of '
-        + 'resistance — and burn it. What comes back is hype, and hype is levels, and levels are a '
-        + 'bigger instrument. The violin becomes a guitar; the guitar becomes an electric guitar; '
-        + 'and at the top of the ladder Q stops being a button and becomes a rhythm bar where '
-        + 'every note you land throws a wall of music across the entire screen.',
+      basics:
+        'Burns every percentage you are carrying at 1 hype per point — tempo counting twice, because it '
+        + 'buffs two stats — and 200 hype is one level. Level 2 heals 150, turns the violin into a guitar '
+        + 'at ×1.3 on every damage number, makes all your stat boosts ×1.25 as strong, and doubles your '
+        + 'dash distance with trailing notes and +20% move speed for 3 seconds after it. Level 3 heals '
+        + '200, brings an electric guitar at ×1.6 damage and stat boosts at ×1.5, and turns Q into Solo: '
+        + 'a rhythm bar where every note landed throws a wall of music across the whole screen for 12 '
+        + 'damage, or 22 on the 18% that are accents. Levels are permanent, with no way back down the '
+        + 'ladder and no way to bank hype past the 200-point threshold. 1s cooldown while climbing; at '
+        + 'maximum, Solo costs 25 seconds.',
       cast: 'Q. 1s cooldown while you are climbing the ladder — a Coda level costs a second apiece. Once at maximum, Q is Solo and costs 25 seconds.',
       effects: [
         { tag: 'resource', label: 'The burn', detail: '1 hype per percentage point you are carrying, and tempo counts twice because it buffs two stats. 200 hype is one level.' },
@@ -214,11 +233,14 @@ const sound: ElementCodex = {
         { tag: 'utility', label: 'Levels are permanent', detail: 'There is no way back down the ladder, and no way to bank hype you have not spent past the 200-point threshold.' },
       ],
       upgrade: {
-        magic:
-          'Raise the Roof turns Q into a hold. Three seconds of it winds a mirror ball down out '
-          + 'of the ceiling and the arena becomes a lit dance floor. Every buff you were carrying '
-          + 'comes off you and goes onto your enemy for twelve seconds — and in exchange, the '
-          + 'burn pays double.',
+        basics:
+          'Holding Q for 3 seconds starts Party Mode instead: 12 seconds in which everything burned is '
+          + 'worth double hype, the fastest route up the ladder in the element — but every percentage you '
+          + 'were carrying is on them instead for the duration, which is a real handicap taken on purpose. '
+          + 'A mirror ball hangs above, and a click into it swings it on real physics rather than a fixed '
+          + 'arc, dealing 20 damage to anything it reaches. Afterwards Q sits out 15 seconds. At maximum '
+          + 'Coda, letting go of Q early is still your Solo — the hold is an alternative rather than a '
+          + 'replacement.',
         effects: [
           { tag: 'resource', label: 'Double hype', detail: 'Everything burned in Party Mode is worth ×2, which is the fastest route up the ladder in the element.', requiresUpgrade: 'q' },
           { tag: 'cost', label: 'They get your buffs', detail: 'For 12 seconds every percentage you were carrying is on them instead. It is a real handicap, taken on purpose.', requiresUpgrade: 'q' },
@@ -237,11 +259,11 @@ const sound: ElementCodex = {
 
   perks: {
     harmony: {
-      magic:
-        'Playing on the beat stops being purely a modifier and starts being an attack. Every '
-        + 'harmonized cast also lobs a brass resonator at your cursor — it flies out, sits there '
-        + 'for a beat, and then goes off. Landing one is worth a large, long buff, and they stack '
-        + 'four deep.',
+      basics:
+        'Every harmonized cast also drops a resonator at your cursor, at most one every 3 seconds, '
+        + 'which is one and a half metronome beats. It blasts 0.9 seconds later for 20 damage in a 100px '
+        + 'radius, and a hit gives +15% move speed and +15% attack speed for 20 seconds, stacking to 4 — '
+        + 'so +60% of each at full stacks.',
       cast: 'Automatic on any harmonized cast, aimed at the cursor. One resonator every 3 seconds.',
       effects: [
         { tag: 'damage', label: 'The blast', detail: '20 damage in a 100px radius, 0.9 seconds after it lands.' },

@@ -4,7 +4,7 @@ import { TOTAL_FIGHTS, TOTAL_CHALLENGES } from '../data/AbstractWorlds';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addBackdrop, addBackButton, addButton, addCardPlate, addTitle,
-  drawMeter, fillDiamond, fillHex, strokeHex,
+  drawMeter, fillDiamond, fillHex, strokeHex, IconName,
 } from '../ui';
 import { Music } from '../audio';
 
@@ -125,9 +125,9 @@ export class CampaignSlotSelectScene extends Phaser.Scene {
     const meterW = CARD_W - 56;
     const meterX = cx - meterW / 2;
 
-    const rows: Array<{ label: string; value: number; total: number; color: number }> = [
-      { label: '⚔  FIGHTS', value: summary.fights, total: TOTAL_FIGHTS, color: C.ember },
-      { label: '🏆  CHALLENGES', value: summary.challenges, total: TOTAL_CHALLENGES, color: C.gold },
+    const rows: Array<{ label: string; icon: IconName; value: number; total: number; color: number }> = [
+      { label: '⚔  FIGHTS', icon: 'sword' as IconName, value: summary.fights, total: TOTAL_FIGHTS, color: C.ember },
+      { label: '🏆  CHALLENGES', icon: 'trophy' as IconName, value: summary.challenges, total: TOTAL_CHALLENGES, color: C.gold },
     ];
 
     rows.forEach((row, i) => {

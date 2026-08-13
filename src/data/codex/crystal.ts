@@ -18,11 +18,12 @@ const crystal: ElementCodex = {
     {
       emoji: '🔺',
       name: 'Compounding Bounces',
-      magic:
-        'A shard does not lose energy off a facet — it gains it. Every crystal it touches re-cuts '
-        + 'the light a little tighter, so a shot that has been round a lattice of your own lances '
-        + 'arrives carrying several times what it left with. Nothing else in the game scales '
-        + 'without a cap.',
+      basics:
+        'The rule the whole element is built on: every bounce multiplies a shard\'s damage by 1.5, with '
+        + 'no cap — 15 → 23 → 34 → 51 → 76 → 114 and onward, as long as the geometry holds. Each bounce '
+        + 'also re-aims up to 30° toward the enemy, so a lance placed roughly right still sends the shot '
+        + 'at them. Passing through a Crystal Portal counts as a bounce and snaps the same way. Nothing '
+        + 'expires: a shard flies until it hits a fighter or leaves the world.',
       effects: [
         { tag: 'damage', label: 'The multiplier', detail: '×1.5 damage per bounce, with no limit. 15 → 23 → 34 → 51 → 76 → 114, and it keeps going as long as the geometry holds.' },
         { tag: 'utility', label: 'Auto-aim snap', detail: 'A bounce re-aims within 30° toward the enemy, so a lance placed roughly right still sends the shard at them.' },
@@ -38,11 +39,11 @@ const crystal: ElementCodex = {
 
   abilities: {
     'crystal-laser': {
-      magic:
-        'A kite of cut glass thrown flat, spinning, catching the light as it goes. On its own it is '
-        + 'the weakest click in the combined tier. What makes it the whole element is that it has no '
-        + 'idea when to stop: it keeps travelling until something with a health bar is in the way, '
-        + 'and everything else it touches only makes it worse.',
+      basics:
+        'A 15-damage shard fired at the cursor with a 26px hit radius, travelling 520 px/s indefinitely '
+        + '— it is consumed on a fighter and on nothing else. Every crystal it reflects off multiplies it '
+        + 'by 1.5 with a 30° snap toward the enemy, uncapped. 0.5s cooldown, which is why a lattice fills '
+        + 'with shards so fast.',
       cast: 'Click, aimed at the cursor. Instant.',
       effects: [
         { tag: 'damage', label: 'Impact', detail: '15 damage, before any bounce multiplier. It is consumed on a fighter and on nothing else.' },
@@ -51,10 +52,10 @@ const crystal: ElementCodex = {
         { tag: 'utility', label: 'Rate of fire', detail: '0.5s cooldown — two a second, and the reason a lattice fills with shards so quickly.' },
       ],
       upgrade: {
-        magic:
-          'Shredder mirrors the arena itself. The Crystal Realm is switched on permanently, which '
-          + 'means the four walls stop being the edge of the fight and start being another surface '
-          + 'to work off — one free rebound per shard, anywhere, without planting anything.',
+        basics:
+          'Every shard also gets one rebound off an arena wall, taking the same ×1.5. Once spent it is '
+          + 'gone until Atune refreshes it. There is nothing to switch on — buying it makes every wall a '
+          + 'mirror for the rest of the game.',
         effects: [
           { tag: 'damage', label: 'Wall bounce', detail: 'Every shard gets one rebound off an arena wall, applying the same ×1.5. Once spent it is gone until Atune refreshes it.', requiresUpgrade: 'click' },
           { tag: 'utility', label: 'Always on', detail: 'There is nothing to activate — buying it makes every wall a mirror for the rest of the game.', requiresUpgrade: 'click' },
@@ -66,11 +67,11 @@ const crystal: ElementCodex = {
     },
 
     'crystal-place': {
-      magic:
-        'A lance of clear crystal grown out of the floor at the angle you aimed it — not dropped, '
-        + 'grown. It has no health, it deals no damage, and it never expires. Its whole job is to be '
-        + 'a surface: your shards come off it hotter and re-aimed, and enemy shots that meet it are '
-        + 'turned away.',
+      basics:
+        'Plants a permanent 6×56px prism at the cursor, angled from you to the cursor. Your shards '
+        + 'bounce off it for ×1.5 and a 30° snap; enemy projectiles that meet it are turned away rather '
+        + 'than passing through. Six at once, and a seventh shatters the oldest. 2.5s cooldown, and an AI '
+        + 'Crystal is capped at 3 instead of 6.',
       cast: 'E at the cursor. The lance takes the angle from you to the cursor.',
       effects: [
         { tag: 'summon', label: 'The lance', detail: 'A 6×56px prism, permanent, standing at the cast angle. Up to 6 at once — planting a 7th shatters the oldest.' },
@@ -79,11 +80,10 @@ const crystal: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '2.5s cooldown. An AI Crystal is capped at 3 lances instead of 6.' },
       ],
       upgrade: {
-        magic:
-          'Moving Crystals unbolts the lattice. Lances no longer stand where you planted them — they '
-          + 'glide away from you at a steady crawl, so the room is always re-arranging itself. And a '
-          + 'shard that catches a *moving* mirror does not just bounce: the impact detonates along '
-          + 'the whole path it takes afterwards.',
+        basics:
+          'Lances now glide away from you at 134 px/s from your own position instead of appearing at the '
+          + 'cursor, and recasting E halts every moving one. A shard bouncing off a moving lance also sets '
+          + 'off 18-damage blasts in an 85px radius along its onward flight, on top of the usual ×1.5.',
         effects: [
           { tag: 'movement', label: 'Gliding', detail: 'Placed lances travel away from you at 134 px/s from your own position rather than appearing at the cursor. Recasting E halts every moving lance.', requiresUpgrade: 'e' },
           { tag: 'damage', label: 'Kinetic blasts', detail: 'A shard bouncing off a moving lance sets off 18-damage blasts in an 85px radius along its onward flight path, on top of the usual ×1.5.', requiresUpgrade: 'e' },
@@ -96,11 +96,12 @@ const crystal: ElementCodex = {
     },
 
     'crystal-atune': {
-      magic:
-        'Everything in the air stops. Every Diamond Shard on the screen — yours, theirs, bounced or '
-        + 'fresh — hangs still for two full seconds, and while they hang they all swing to point at '
-        + 'your cursor, so you are looking at exactly where the volley will go before it goes. Then '
-        + 'they all leave at once.',
+      basics:
+        'Freezes every shard on screen — yours and theirs — for 2 seconds, then launches the whole '
+        + 'salvo at your aim point. Frozen shards rotate to face the cursor so the direction is readable '
+        + 'before it fires, and each one gets its spent wall-bounce charge restored, though a shard can '
+        + 'only ever hold one. 7s cooldown, and it keeps re-aiming from your live cursor for the whole '
+        + 'hold.',
       cast: 'R. Instant, arena-wide, and it re-aims from your live cursor for the whole 2s hold.',
       effects: [
         { tag: 'control', label: 'The freeze', detail: 'Every shard on screen stops dead for 2s, then launches at your aim point. It catches enemy shards too.' },
@@ -109,11 +110,12 @@ const crystal: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '7s cooldown.' },
       ],
       upgrade: {
-        magic:
-          'Lattice Lace extends the freeze to the furniture. Your moving lances stop too, and they '
-          + 'come out of it changed — violet, longer, slower, and hunting. A lace that reaches an '
-          + 'enemy wraps around them and orbits for eight seconds before carrying on with whatever '
-          + 'it was doing.',
+        basics:
+          'Moving lances are caught in the freeze too and redirected at your aim point on release. '
+          + 'Attuned lances turn violet, grow 25% longer (56px to 70px) and slow to about 100 px/s, and the '
+          + 'first enemy one reaches is orbited at a 70px radius, 2.4 radians a second, for 8 seconds '
+          + 'before it carries on — once per lance. E stops halting attuned lances; pressing it summons '
+          + 'another instead.',
         effects: [
           { tag: 'control', label: 'Lances frozen too', detail: 'Every moving lance pauses for the same 2s and is redirected at your aim point on release.', requiresUpgrade: 'r' },
           { tag: 'buff', label: 'Attuned', detail: 'Attuned lances turn violet, grow 25% longer (56px → 70px) and travel at 75% speed — about 100 px/s.', requiresUpgrade: 'r' },
@@ -127,11 +129,13 @@ const crystal: ElementCodex = {
     },
 
     'crystal-portal': {
-      magic:
-        'Two gates anchored into the floor, labelled A and B, and everything that touches one comes '
-        + 'out of the other. It is transport for you, a damage multiplier for your shards, and a '
-        + 'trap for anybody who follows you through — the gate collapses on an enemy rather than '
-        + 'carrying them.',
+      basics:
+        'Places gate A on the first press and gate B on the second, a third replacing the older. '
+        + 'Touching either puts you at the other instantly, with no cost and no limit. Your shards pass '
+        + 'through and come out with ×1.5 and a fresh 30° snap, so a gate is a bounce that also moves the '
+        + 'shot across the map, and enemy projectiles entering are sent back at them with +50% damage. An '
+        + 'enemy who enters collapses the gate and is stunned for 2 seconds — they never get the '
+        + 'teleport. 5s cooldown.',
       cast: 'F at the cursor. The first press places A, the second places B; a third replaces the older of the two.',
       effects: [
         { tag: 'movement', label: 'Teleport', detail: 'Touching either gate puts you at the other one instantly. There is no cost and no limit on how often.' },
@@ -141,10 +145,7 @@ const crystal: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '5s cooldown.' },
       ],
       upgrade: {
-        magic:
-          'Portal Boost pays you for using your own network. Coming out of a gate you keep the '
-          + 'momentum of the jump for a few seconds, which turns the pair from a repositioning tool '
-          + 'into an actual movement loop.',
+        basics: 'Every teleport also grants +20% move speed for 3 seconds, refreshed on each jump.',
         effects: [
           { tag: 'buff', label: 'Exit speed', detail: '+20% move speed for 3s after every teleport, refreshed on each jump.', requiresUpgrade: 'f' },
         ],
@@ -156,11 +157,12 @@ const crystal: ElementCodex = {
     },
 
     'crystal-trick': {
-      magic:
-        'The caster refracts. Two mirages of you are pulled out of your own body on visible beams '
-        + 'of light, each with its own small health bar and its own facing pip, and each of them '
-        + 'fires whenever you do. They are real objects — they can be shot, and they die — but for '
-        + 'twelve seconds every click is three clicks.',
+      basics:
+        'Stands 2 mirages of 50 HP each 58px to either side of you for 12 seconds, following you and '
+        + 'positioned off your facing. Every shard you launch is duplicated from each of them at 6 damage '
+        + 'instead of 15 — and the copies bounce and compound exactly as yours do. Each clone carries a '
+        + '30px health bar and a white direction pip. 0.9s arm-raise, 50s cooldown, the longest in the '
+        + 'combined tier alongside Shadow\'s Black Hole.',
       cast: 'Q. Instant, with a 0.9s arm-raise. Clones are positioned relative to your facing and follow you.',
       effects: [
         { tag: 'summon', label: 'The mirages', detail: '2 clones at 50 HP each, standing 58px to either side of you, for 12s.' },
@@ -169,10 +171,10 @@ const crystal: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '50s cooldown — the longest in the combined tier alongside Shadow\'s Black Hole.' },
       ],
       upgrade: {
-        magic:
-          'Shield Clones re-forms the mirages from a flanking pair into a wedge in front of you. '
-          + 'There are three of them, they all stand between you and whatever you are looking at, and '
-          + 'their health bars are the first thing an incoming shot meets.',
+        basics:
+          'Three clones instead of two, and placed as cover rather than as an escort: one 50px directly '
+          + 'ahead and two 40px out to each side at 30px forward. That is 150 HP of clone between you and '
+          + 'the enemy instead of 100 HP standing beside you.',
         effects: [
           { tag: 'summon', label: 'Three, forward', detail: '3 clones instead of 2, positioned 50px directly ahead and 40px out to each side at 30px forward — a shield wall rather than an escort.', requiresUpgrade: 'q' },
           { tag: 'shield', label: 'Body blocking', detail: '150 HP of clone standing between you and the enemy instead of 100 HP standing beside you.', requiresUpgrade: 'q' },
@@ -186,11 +188,11 @@ const crystal: ElementCodex = {
 
   perks: {
     gateway: {
-      magic:
-        'Mirrors stop reflecting. Every lance you plant becomes a gateway instead — bigger, and a '
-        + 'thing light passes *through* rather than off. The damage multiplier survives the change, '
-        + 'so the lattice keeps compounding shots; what it stops doing is bending them, which makes '
-        + 'a straight line through several lances the strongest shot in the kit.',
+      basics:
+        'Lances become gateways: 9×84px instead of 6×56px, half again as wide and long and far harder '
+        + 'to miss. Shards travel through them instead of bouncing off, still taking the ×1.5, and gain '
+        + 'speed as well as damage on the way. They still glide like ordinary lances if you own Moving '
+        + 'Crystals.',
       effects: [
         { tag: 'area', label: 'Bigger lances', detail: '9×84px instead of 6×56px — 50% wider and 50% longer, so they are far harder to miss.' },
         { tag: 'damage', label: 'Pass-through', detail: 'Shards travel through a gateway rather than bouncing off it, and still take the ×1.5.' },
@@ -205,11 +207,10 @@ const crystal: ElementCodex = {
 
   mastery: {
     resonance: {
-      magic:
-        'Your own light stops being something to stay out of. A bounced shard that comes back and '
-        + 'hits you is not a mistake — it is absorbed, drunk back into the body, and for a fifth of '
-        + 'a second you move at three times your speed. It rewards standing inside your own lattice '
-        + 'rather than beside it.',
+      basics:
+        'One of your own shards reaching you within 20px is absorbed for ×3 move speed for 0.2 seconds, '
+        + 'announced with a ✨ RESONANCE pop-up. Only shards that have already bounced at least once count '
+        + '— a shot you just fired cannot pay out.',
       effects: [
         { tag: 'movement', label: 'The burst', detail: '×3 move speed for 0.2s every time one of your own shards reaches you.' },
         { tag: 'utility', label: 'Must have bounced', detail: 'Only shards that have already bounced at least once count, within 20px. A shard you just fired cannot pay out.' },
@@ -220,11 +221,12 @@ const crystal: ElementCodex = {
       ],
     },
     'crystal-shredder': {
-      magic:
-        'A chakram thrown flat at your cursor with twelve shards standing out of its rim, spinning '
-        + 'as it goes. It does not explode and it does not bounce — it grinds. Every shard that '
-        + 'touches something breaks off and is gone, so the disc is a magazine that empties by '
-        + 'contact rather than by time.',
+      basics:
+        'A bindable chakram thrown to the cursor at 260 px/s, spinning at 3.2 radians a second, that '
+        + 'parks where it arrives. It deals 2 damage per shard it carries, within 15px, consuming that '
+        + 'shard — 24 damage from a full 12. Recasting Atune throws an idle chakram back out at your '
+        + 'current cursor, so the disc is reusable while it still has shards, and with Trick of the Light '
+        + 'every clone throws a mini chakram of 4 shards as well, tripling the shredding. 14s cooldown.',
       cast: 'Bindable to E, R, F or Q. Flies to the cursor and stops there.',
       effects: [
         { tag: 'damage', label: 'Per shard', detail: '2 damage per shard, within 15px of it, and that shard is consumed. 12 shards is 24 damage if every one connects.' },

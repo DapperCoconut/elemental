@@ -5,7 +5,7 @@ import { Net, NetMsg, NetHuskState } from '../network/NetworkManager';
 import { Husk } from './Husk';
 import { InvasionKit, InvasionDifficultyDef, INVASION_DIFFICULTIES, WAVE_LABEL_Y, WAVE_BANNER_Y, formatWaveLabel, InvasionFx } from './InvasionKit';
 import { huskVariantFromIndex, huskVariantIndex } from './HuskVariants';
-import { Mansion, ROOM_META } from './Mansion';
+import { Mansion, ROOM_META, ROOM_COUNT } from './Mansion';
 
 /** Narrow surface the invasion co-op kit needs from ArenaScene. */
 export interface InvasionCoopArenaApi {
@@ -100,6 +100,8 @@ export class InvasionCoopKit {
   private remaining = 0;
   /** The room the OTHER player is standing in (from their state packets). */
   private remoteRoom = 0;
+  /** Last wave the guest has already shown a warning for — a split wave warns twice. */
+  private guestWarnedWave = -1;
   /** Guest-side mansion: layout, doors and minimap; HP fed from the host's snaps. */
   private guestMansion: Mansion | null = null;
   /** Guest-side cosmetic layer: orbitals/auras on replicas the host simulates. */
@@ -162,6 +164,15 @@ export class InvasionCoopKit {
     onRoomLost: (room: number) => {
       Net.send({ t: 'roomLost', room });
     },
+    onApocalypse: () => {
+      Net.send({ t: 'apoc' });
+    },
+    onTonicTaken: (slot: number) => {
+      Net.send({ t: 'tonic', slot });
+    },
+    onCorruption: (room: number, kind: 'seeded' | 'taken' | 'cleansed') => {
+      Net.send({ t: 'corrupt', room, kind });
+    },
   };
 
   constructor(private api: InvasionCoopArenaApi) {}
@@ -185,11 +196,15 @@ export class InvasionCoopKit {
     this.shards = 0;
     this.remaining = 0;
     this.remoteRoom = 0;
+    this.guestWarnedWave = -1;
 
     for (const rep of this.huskReplicas.values()) { this.api.removeEnemy(rep.husk); rep.husk.destroy(); }
     this.huskReplicas.clear();
     for (const s of this.ghostShots) s.gfx.destroy();
     this.ghostShots = [];
+
+    // Either side may reach the other's torch; one accessor serves both.
+    this.api.invasionKit.allyProbe = () => ({ fighter: this.api.npc, room: this.remoteRoom });
 
     // The guest walks its own copy of the mansion (layout and travel are
     // deterministic); only room HP/loss/target arrive from the host's snaps.
@@ -207,6 +222,19 @@ export class InvasionCoopKit {
       this.api.invasionKit.setGuestRoom(this.guestMansion.currentRoom);
       this.replicaFxG?.destroy();
       this.replicaFxG = this.api.scene.add.graphics().setDepth(3.5);
+      // The guest walks past the same table, shelf, goo and telescope the host
+      // does, so it owns local copies of all four. Tonics and the eye relay
+      // back rather than resolving locally — the shelf is shared.
+      this.api.invasionKit.guestRelay = {
+        onTonic: (slot) => Net.send({ t: 'tonic', slot }),
+        onApocalypse: () => Net.send({ t: 'apoc' }),
+        onSpend: (amount) => Net.send({ t: 'shardSpend', amount }),
+      };
+      this.api.invasionKit.guestMansionHook = (on) => this.guestMansion?.setApocalypse(on);
+      this.api.invasionKit.prepareGuestContents();
+    } else {
+      this.api.invasionKit.guestRelay = null;
+      this.api.invasionKit.guestMansionHook = null;
     }
 
     this.api.npc.netGhost = true;
@@ -249,6 +277,12 @@ export class InvasionCoopKit {
     this.guestMansion = null;
     this.replicaFxG?.destroy();
     this.replicaFxG = null;
+    if (this.api.invasionKit) {
+      this.api.invasionKit.allyProbe = null;
+      this.api.invasionKit.guestRelay = null;
+      this.api.invasionKit.guestMansionHook = null;
+      if (!this.isHost) this.api.invasionKit.destroyContents();
+    }
     this.destroyHud();
   }
 
@@ -274,13 +308,16 @@ export class InvasionCoopKit {
       this.updateGhostShots(delta);
       // Guest mansion: door travel, door pulses and the minimap husk counts.
       if (this.guestMansion) {
-        const counts = [0, 0, 0, 0, 0];
+        const counts = new Array<number>(ROOM_COUNT).fill(0);
         for (const rep of this.huskReplicas.values()) {
           if (rep.husk.active) counts[rep.husk.roomIndex] = (counts[rep.husk.roomIndex] ?? 0) + 1;
         }
         this.guestMansion.update(time, this.api.player, counts);
       }
       this.drawReplicaFx(time, delta);
+      // Props, torch and traps are the guest's own — only corruption and husks
+      // are the host's.
+      this.api.invasionKit.updateGuestContents(time, delta);
     }
 
     // The ally replica only shows when you're both in the same room.
@@ -361,6 +398,9 @@ export class InvasionCoopKit {
       shieldCharges: p.shieldCharges,
       downed: this.localDowned,
       room: this.myRoom(),
+      // Where our torch is pointing — in the apocalypse dark, the ally's beam
+      // cutting our fog is the only way to see where they are.
+      fa: p.facingAngle,
     });
   }
 
@@ -426,11 +466,16 @@ export class InvasionCoopKit {
     if (fx.rm !== undefined && fx.rm !== this.myRoom()) return;
     switch (fx.k) {
       case 'boom': {
-        const ring = scene.add.circle(fx.x, fx.y, fx.r, 0xff5522, 0.45).setDepth(6).setScale(0.25);
+        const ring = scene.add.circle(fx.x, fx.y, fx.r, fx.c ?? 0xff5522, 0.45).setDepth(6).setScale(0.25);
         scene.tweens.add({ targets: ring, scaleX: 1, scaleY: 1, alpha: 0, duration: 320, onComplete: () => ring.destroy() });
         scene.cameras.main.shake(160, 0.004);
         break;
       }
+      case 'warn':
+        // A boss telegraph. The host owns the blast; this is only the warning,
+        // and the guest has to see it or the fight is unplayable for them.
+        this.api.invasionKit.drawBossWarning(fx.x, fx.y, fx.r, fx.c, fx.ms, fx.ring, this.myRoom());
+        break;
       case 'heal': {
         const ring = scene.add.circle(fx.x, fx.y, fx.r, 0x66ff88, 0.18).setDepth(3).setScale(0.4);
         scene.tweens.add({ targets: ring, scaleX: 1, scaleY: 1, alpha: 0, duration: 500, onComplete: () => ring.destroy() });
@@ -440,7 +485,8 @@ export class InvasionCoopKit {
         this.api.invasionKit.drawLane(fx.x, fx.y, fx.x2, fx.y2, fx.c, fx.ms);
         break;
       case 'shot': {
-        const gfx = scene.add.circle(fx.x, fx.y, 7, 0x9944cc, 1).setDepth(7).setStrokeStyle(2, 0x220022, 0.8);
+        const gfx = scene.add.circle(fx.x, fx.y, fx.rr ?? 7, fx.c ?? 0x9944cc, 1)
+          .setDepth(7).setStrokeStyle(2, 0x220022, 0.8);
         this.ghostShots.push({ gfx, vx: fx.vx, vy: fx.vy, expiresAt: Date.now() + fx.ms, room: fx.rm ?? this.myRoom() });
         break;
       }
@@ -619,8 +665,19 @@ export class InvasionCoopKit {
     this.wave = msg.wave;
     this.shards = msg.shards;
     this.remaining = msg.remaining;
+    // The host already nets out anything either of us has spent on the sky.
+    this.api.invasionKit.setGuestShardTotal(msg.shards);
     if (msg.m && this.guestMansion) {
-      this.guestMansion.applyRemoteState(msg.m.hp, msg.m.lost, msg.m.target);
+      // The snap is the backstop for the 'apoc' message: a guest that joined
+      // late, or dropped the packet, still ends up in the same house.
+      if (msg.m.ap) this.api.invasionKit.beginApocalypse();
+      this.guestMansion.applyRemoteState(msg.m.hp, msg.m.lost, msg.m.target, msg.m.t2 ?? -1, !!msg.m.ap);
+      // The host owns corruption and the shared shelf; adopt both wholesale.
+      if (msg.m.co) {
+        const levels = this.api.invasionKit.applyRemoteCorruption(msg.m.co.map((v) => v / 255));
+        this.guestMansion.setCorruptionReadout(levels);
+      }
+      if (msg.m.tn !== undefined) this.api.invasionKit.applyRemoteTonics(msg.m.tn);
     }
     this.updateGuestHud();
 
@@ -703,6 +760,7 @@ export class InvasionCoopKit {
         this.allyDowned = msg.downed ?? false;
         this.api.npc.downed = this.allyDowned;
         this.remoteRoom = msg.room ?? 0;
+        if (msg.fa !== undefined) this.api.npc.facingAngle = msg.fa;
         if (this.isHost) this.api.invasionKit.setAllyRoom(this.remoteRoom);
         break;
       }
@@ -744,7 +802,16 @@ export class InvasionCoopKit {
         break;
       case 'waveWarn':
         if (!this.isHost) {
-          this.guestMansion?.setTarget(msg.room);
+          // An apocalypse wave can announce twice for one wave (two rooms at
+          // once); the second call fills in the mansion's secondary target
+          // rather than replacing the first.
+          if (this.guestWarnedWave === msg.wave && this.guestMansion) {
+            this.guestMansion.setTarget(this.guestMansion.targetRoom, msg.room);
+          } else {
+            this.guestWarnedWave = msg.wave;
+            this.guestMansion?.setTarget(msg.room);
+            this.api.invasionKit.onWaveBeganLocal();
+          }
           this.showGuestWarning(msg.wave, msg.room);
         }
         break;
@@ -753,6 +820,20 @@ export class InvasionCoopKit {
           this.api.invasionKit.showRoomLostBanner(msg.room);
           this.api.scene.cameras.main.shake(500, 0.008);
         }
+        break;
+      // Either player can open the eye; both houses fall in together.
+      case 'apoc':
+        this.api.invasionKit.beginApocalypse();
+        break;
+      // The shelf is shared. Whoever took the bottle, it is gone for both.
+      case 'tonic':
+        this.api.invasionKit.noteTonicTaken(msg.slot);
+        break;
+      case 'corrupt':
+        if (!this.isHost) this.api.invasionKit.showCorruptionBanner(msg.room, msg.kind);
+        break;
+      case 'shardSpend':
+        if (this.isHost) this.api.invasionKit.noteRemoteSpend(msg.amount);
         break;
       case 'allyBite':
         // A husk on the host's sim bit us — hostile, so it goes through the block.

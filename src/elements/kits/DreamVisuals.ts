@@ -63,6 +63,14 @@ export const DRM = {
   foam: 0xf2fbff,
   mist: 0xbfe8f5,
   sun: 0xffd98a,
+  /** Dream Duel — the ectoplasm a spirit is made of, and the red the haunting comes in. */
+  spirit: 0xe4f1ff,
+  spiritDeep: 0x7f9fd8,
+  haunt: 0xff2d4a,
+  hauntDeep: 0x6b0512,
+  /** Lifelong Dream — the counter over your head, and the gold it turns when it lands. */
+  wish: 0xffd98a,
+  wishDeep: 0x8a6a1f,
 };
 
 // ── Primitives ────────────────────────────────────────────────────────────
@@ -354,6 +362,210 @@ export function pillowShape(
   }
 }
 
+/**
+ * The Pillow Fort (E+). A ring of stacked pillows with a lit interior you can rest in, drawn
+ * larger and with more courses of masonry as it is promoted. The level has to be readable at a
+ * glance from across the arena, so it is told three ways at once: the footprint, the number of
+ * pillow courses, and a row of pips over the parapet.
+ */
+export function pillowFort(
+  g: Phaser.GameObjects.Graphics,
+  tint: DreamColorFn,
+  x: number, y: number, r: number,
+  level: number, hpRatio: number, t: number, alpha = 1,
+): void {
+  const breathe = 1 + Math.sin(t * 1.6) * 0.012;
+  const rr = r * breathe;
+
+  // The floor of the fort: somewhere soft, and lit, so "you can stand in this" is obvious.
+  g.fillStyle(tint(DRM.deep), alpha * 0.55);
+  g.fillEllipse(x, y, rr * 2, rr * 1.35);
+  g.fillStyle(tint(DRM.violet), alpha * 0.16);
+  g.fillEllipse(x, y, rr * 1.55, rr * 1.05);
+
+  // The wall: pillows laid end-on around the rim, one course per two levels.
+  const courses = 1 + Math.floor((level - 1) / 2);
+  const n = 9 + level;
+  for (let c = 0; c < courses; c++) {
+    const lift = c * 5.5;
+    for (let i = 0; i < n; i++) {
+      // Offset every other course so the joints do not line up into a stripe.
+      const a = ((i + (c % 2) * 0.5) / n) * Math.PI * 2 + t * 0.06;
+      const px = x + Math.cos(a) * rr;
+      const py = y + Math.sin(a) * rr * 0.66 - lift;
+      // Tangent, so each pillow lies along the wall rather than pointing at the middle.
+      pillowShape(g, tint, px, py, a + Math.PI / 2, rr * 0.52, rr * 0.3, alpha * (0.75 + c * 0.12));
+    }
+  }
+
+  // Damage: the wall darkens and the seams open as the HP falls.
+  if (hpRatio < 0.999) {
+    g.fillStyle(tint(DRM.night), alpha * (1 - hpRatio) * 0.42);
+    g.fillEllipse(x, y - (courses - 1) * 2.5, rr * 2.1, rr * 1.5);
+    g.lineStyle(1.4, tint(DRM.dread), alpha * (1 - hpRatio) * 0.7);
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2 + 0.4;
+      g.lineBetween(x + Math.cos(a) * rr * 0.5, y + Math.sin(a) * rr * 0.33,
+        x + Math.cos(a) * rr, y + Math.sin(a) * rr * 0.66);
+    }
+  }
+
+  // Level pips over the parapet, and a star on the fifth for the cannon.
+  const py0 = y - rr * 0.72 - courses * 5.5 - 8;
+  for (let i = 0; i < 5; i++) {
+    const px = x - 20 + i * 10;
+    if (i < level) {
+      g.fillStyle(tint(i === 4 ? DRM.star : DRM.pale), alpha * 0.95);
+      g.fillCircle(px, py0, 3);
+    } else {
+      g.lineStyle(1, tint(DRM.deep), alpha * 0.8);
+      g.strokeCircle(px, py0, 3);
+    }
+  }
+
+  // A slow drift of feathers over the top, so a fort at rest still looks alive.
+  for (let i = 0; i < 4; i++) {
+    const ph = (t * 0.35 + i / 4) % 1;
+    g.fillStyle(tint(DRM.white), alpha * (1 - ph) * 0.5);
+    g.fillEllipse(x + Math.sin(ph * 5 + i * 2) * rr * 0.8, y - rr * 0.5 - ph * 26,
+      3.4, 1.8);
+  }
+
+  // The healing aura, once the fort is worth resting in.
+  if (level >= 2) {
+    g.lineStyle(1.6, tint(DRM.water), alpha * (0.2 + 0.18 * Math.sin(t * 2.4)));
+    g.strokeEllipse(x, y, rr * 1.9, rr * 1.25);
+  }
+}
+
+/**
+ * The cosmic cannon a level-5 fort carries: a short starry barrel on a pillow carriage, aimed
+ * where the shot is going. `charge` is 0 while it is cooling and 1 once it is loaded.
+ */
+export function cosmicCannon(
+  g: Phaser.GameObjects.Graphics,
+  tint: DreamColorFn,
+  x: number, y: number, ang: number, charge: number, t: number, alpha = 1,
+): void {
+  const cos = Math.cos(ang), sin = Math.sin(ang);
+  // Carriage.
+  g.fillStyle(tint(DRM.pillowDeep), alpha);
+  g.fillEllipse(x, y + 3, 20, 10);
+  // Barrel: a tapered wedge with a piece of night sky inside it.
+  const w0 = 7, w1 = 5;
+  const bx = x + cos * 22, by = y + sin * 22;
+  g.fillStyle(tint(DRM.deep), alpha);
+  g.fillPoints([
+    new Phaser.Geom.Point(x - sin * w0, y + cos * w0),
+    new Phaser.Geom.Point(x + sin * w0, y - cos * w0),
+    new Phaser.Geom.Point(bx + sin * w1, by - cos * w1),
+    new Phaser.Geom.Point(bx - sin * w1, by + cos * w1),
+  ], true);
+  g.lineStyle(1.6, tint(DRM.violet), alpha * 0.9);
+  g.strokePoints([
+    new Phaser.Geom.Point(x - sin * w0, y + cos * w0),
+    new Phaser.Geom.Point(x + sin * w0, y - cos * w0),
+    new Phaser.Geom.Point(bx + sin * w1, by - cos * w1),
+    new Phaser.Geom.Point(bx - sin * w1, by + cos * w1),
+  ], true, true);
+  // Starfield down the barrel.
+  for (let i = 0; i < 5; i++) {
+    const f = (i + 0.5) / 5;
+    star(g, tint, x + cos * 22 * f, y + sin * 22 * f, 1.7, alpha * 0.8, DRM.star, t * 2 + i);
+  }
+  // The muzzle glow, only once it is loaded.
+  if (charge > 0.02) {
+    g.fillStyle(tint(DRM.purple), alpha * charge * 0.5);
+    g.fillCircle(bx, by, 8 + Math.sin(t * 8) * 2);
+    star(g, tint, bx, by, 7, alpha * charge, DRM.white, t * 3);
+  }
+}
+
+/**
+ * An angry ram out of the fort: `sheep` with its head down, horns on, and a plume of dust
+ * behind it. Drawn at `ang` so the charge reads as a direction rather than a wobble.
+ */
+export function angryRam(
+  g: Phaser.GameObjects.Graphics,
+  tint: DreamColorFn,
+  x: number, y: number, s: number, ang: number, t: number, alpha = 1,
+): void {
+  // Dust behind it, laid down first so the ram sits on top of its own trail.
+  for (let i = 0; i < 5; i++) {
+    const d = 8 + i * 7;
+    g.fillStyle(tint(DRM.woolShade), alpha * (0.35 - i * 0.06));
+    g.fillCircle(x - Math.cos(ang) * d, y - Math.sin(ang) * d + 4, 5 - i * 0.7);
+  }
+  // `sheep` faces left, so the body is flipped by drawing it offset along the charge line.
+  sheep(g, tint, x, y, s, alpha, t * 12, false);
+  // Horns: two curls at the muzzle end, which is where the damage comes from.
+  const hx = x - 0.62 * s;
+  const hy = y - 0.1 * s;
+  g.lineStyle(Math.max(1.2, 0.1 * s), tint(DRM.hoof), alpha);
+  for (const side of [-1, 1]) {
+    g.beginPath();
+    g.moveTo(hx + 0.06 * s, hy - 0.22 * s);
+    g.arc(hx - 0.06 * s, hy - 0.1 * s + side * 0.06 * s, 0.22 * s, -1.2, 2.2, false);
+    g.strokePath();
+  }
+  // Red eye, because it is not a paddock sheep any more.
+  g.fillStyle(tint(DRM.dread), alpha);
+  g.fillCircle(hx - 0.08 * s, hy - 0.02 * s, 0.1 * s);
+}
+
+/**
+ * The mark over somebody held in a Night Terror. Three different pictures, because the three
+ * nightmares have three different after-effects and the victim has to be able to tell which
+ * one they are about to wake up into.
+ */
+export function nightTerror(
+  g: Phaser.GameObjects.Graphics,
+  tint: DreamColorFn,
+  x: number, y: number, kind: 0 | 1 | 2, t: number, alpha = 1,
+): void {
+  // A bubble of somewhere else, sitting over the body.
+  const r = 30;
+  g.fillStyle(tint(DRM.night), alpha * 0.88);
+  g.fillCircle(x, y - 46, r);
+  g.lineStyle(2.4, tint(DRM.dread), alpha * (0.6 + 0.3 * Math.sin(t * 5)));
+  g.strokeCircle(x, y - 46, r);
+  const cy = y - 46;
+
+  if (kind === 0) {
+    // The corridor: receding door frames with two eyes at the far end of them.
+    for (let i = 0; i < 4; i++) {
+      const f = 1 - i / 4;
+      g.lineStyle(1.4, tint(DRM.dreadDeep), alpha * (0.4 + f * 0.5));
+      g.strokeRect(x - 15 * f, cy - 16 * f, 30 * f, 30 * f);
+    }
+    g.fillStyle(tint(DRM.dread), alpha * (0.6 + 0.4 * Math.sin(t * 9)));
+    g.fillCircle(x - 4, cy - 2, 2.4);
+    g.fillCircle(x + 4, cy - 2, 2.4);
+  } else if (kind === 1) {
+    // The pit: rings falling away, and a small figure dropping down them.
+    for (let i = 0; i < 5; i++) {
+      const f = ((t * 0.7 + i / 5) % 1);
+      g.lineStyle(1.6, tint(DRM.violet), alpha * (1 - f) * 0.8);
+      g.strokeEllipse(x, cy, (4 + f * 46), (2 + f * 22));
+    }
+    g.fillStyle(tint(DRM.pale), alpha * 0.9);
+    g.fillCircle(x, cy - 10 + ((t * 40) % 26), 3);
+  } else {
+    // The horde: a scatter of little eye-pairs closing on the middle.
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + t * 1.4;
+      const d = 20 - ((t * 12 + i * 4) % 16);
+      const ex = x + Math.cos(a) * d;
+      const ey = cy + Math.sin(a) * d * 0.7;
+      g.fillStyle(tint(DRM.dreadDeep), alpha * 0.85);
+      g.fillEllipse(ex, ey, 9, 6);
+      g.fillStyle(tint(DRM.dread), alpha);
+      g.fillCircle(ex - 1.8, ey, 1.4);
+      g.fillCircle(ex + 1.8, ey, 1.4);
+    }
+  }
+}
+
 /** A single drifting dream: a soft orb with a bright core and a wisp of tail. */
 export function dreamOrb(
   g: Phaser.GameObjects.Graphics,
@@ -401,6 +613,300 @@ export function sleepyZ(
   }
   const tipx = at(w / 2, -h / 2);
   star(g, tint, tipx.x, tipx.y, s * 0.3, alpha * 0.7, DRM.star);
+}
+
+// ── Dream Duel ────────────────────────────────────────────────────────────
+
+/**
+ * A spirit, standing out of its own body: a hooded wisp with two lights for eyes and a
+ * tattered hem that never quite reaches the floor.
+ *
+ * Drawn from the shoulders down as a tapering column of overlapping ellipses rather than a
+ * silhouette, because a wisp has to look like it is *made of* something rather than cut out
+ * of it — and the hem is sampled off a travelling sine so the bottom of it is always moving.
+ * `hostile` swaps the palette to the haunting red, for the spirit that is being shot at.
+ */
+export function spiritForm(
+  g: Phaser.GameObjects.Graphics,
+  tint: DreamColorFn,
+  x: number, y: number, s: number, t: number,
+  alpha = 1,
+  hostile = false,
+  facing = 0,
+): void {
+  const body = hostile ? DRM.haunt : DRM.spirit;
+  const deep = hostile ? DRM.hauntDeep : DRM.spiritDeep;
+  const bob = Math.sin(t * 2.1) * s * 0.08;
+  const cy = y + bob;
+
+  // The glow it sits inside.
+  g.fillStyle(tint(deep), alpha * 0.22);
+  g.fillCircle(x, cy, s * 1.25);
+  g.fillStyle(tint(body), alpha * 0.12);
+  g.fillCircle(x, cy, s * 0.95);
+
+  // The column: five ellipses from the hood down, each a little wider and a little fainter,
+  // and each swaying a little further than the one above it.
+  for (let i = 0; i < 5; i++) {
+    const f = i / 4;
+    const sway = Math.sin(t * 2.6 - f * 2.2) * s * 0.16 * f;
+    const w = s * (0.62 + f * 0.52);
+    const h = s * 0.42;
+    g.fillStyle(tint(i < 2 ? body : deep), alpha * (0.85 - f * 0.35));
+    g.fillEllipse(x + sway, cy - s * 0.45 + f * s * 1.1, w, h);
+  }
+
+  // The hem — six tatters sampled off a travelling wave, so it frays rather than ends.
+  const hemY = cy + s * 0.72;
+  for (let i = 0; i < 7; i++) {
+    const f = (i / 6) - 0.5;
+    const px = x + f * s * 1.15 + Math.sin(t * 2.6 - 1.1) * s * 0.16;
+    const drop = s * (0.18 + 0.22 * (0.5 + 0.5 * Math.sin(t * 3.4 + i * 1.7)));
+    g.fillStyle(tint(deep), alpha * 0.55);
+    g.fillTriangle(px - s * 0.1, hemY, px + s * 0.1, hemY, px, hemY + drop);
+  }
+
+  // The hood, and two lights in it.
+  g.fillStyle(tint(body), alpha * 0.95);
+  g.fillEllipse(x, cy - s * 0.62, s * 0.78, s * 0.72);
+  g.fillStyle(tint(DRM.night), alpha * 0.8);
+  g.fillEllipse(x, cy - s * 0.56, s * 0.56, s * 0.54);
+  const ex = Math.cos(facing) * s * 0.1;
+  const ey = Math.sin(facing) * s * 0.06;
+  for (const sgn of [-1, 1]) {
+    star(g, tint, x + sgn * s * 0.17 + ex, cy - s * 0.6 + ey, s * 0.16,
+      alpha * 0.95, hostile ? DRM.haunt : DRM.white, t * 2 + sgn);
+  }
+}
+
+/**
+ * The thread back to the body: a slack cord with a bead of light travelling down it, drawn
+ * with a sag proportional to how much slack there actually is. A spirit standing on top of
+ * its own body has a thread that hangs; one at the edge of its leash has a taut, humming one.
+ */
+export function spiritThread(
+  g: Phaser.GameObjects.Graphics,
+  tint: DreamColorFn,
+  bx: number, by: number, sx: number, sy: number,
+  leash: number, t: number,
+  alpha = 1,
+  hostile = false,
+): void {
+  const d = Math.hypot(sx - bx, sy - by);
+  const slack = Math.max(0, 1 - d / Math.max(1, leash));
+  const nx = -(sy - by), ny = sx - bx;
+  const len = Math.hypot(nx, ny) || 1;
+  const col = hostile ? DRM.haunt : DRM.spirit;
+  // Taut threads hum: the wobble frequency climbs as the slack runs out.
+  const hum = 1 + (1 - slack) * 4;
+
+  g.lineStyle(1.6, tint(col), alpha * (0.35 + 0.4 * (1 - slack)));
+  g.beginPath();
+  g.moveTo(bx, by);
+  const segs = 12;
+  for (let i = 1; i <= segs; i++) {
+    const f = i / segs;
+    const sag = Math.sin(f * Math.PI) * (10 + slack * 26);
+    const wob = Math.sin(t * 3 * hum + f * 7) * (2 + (1 - slack) * 3) * Math.sin(f * Math.PI);
+    g.lineTo(
+      bx + (sx - bx) * f + (nx / len) * wob,
+      by + (sy - by) * f + (ny / len) * wob + sag,
+    );
+  }
+  g.strokePath();
+
+  const p = (t * 0.6) % 1;
+  const sag = Math.sin(p * Math.PI) * (10 + slack * 26);
+  dreamOrb(g, tint, bx + (sx - bx) * p, by + (sy - by) * p + sag, 2.2, alpha * 0.9, t);
+}
+
+/**
+ * The leash: the circle a spirit may not leave. Painted as a dashed ring that tightens and
+ * brightens as the spirit approaches it, so the wall is felt before it is hit.
+ */
+export function leashRing(
+  g: Phaser.GameObjects.Graphics,
+  tint: DreamColorFn,
+  x: number, y: number, r: number, t: number,
+  press: number,
+  alpha = 1,
+  hostile = false,
+): void {
+  const col = hostile ? DRM.haunt : DRM.spirit;
+  const dashes = 30;
+  for (let i = 0; i < dashes; i++) {
+    const a0 = (i / dashes) * TAU + t * 0.35;
+    const a1 = a0 + (TAU / dashes) * 0.55;
+    g.lineStyle(1.4 + press * 2.2, tint(col), alpha * (0.24 + press * 0.6));
+    g.beginPath();
+    g.moveTo(x + Math.cos(a0) * r, y + Math.sin(a0) * r * 0.72);
+    g.lineTo(x + Math.cos(a1) * r, y + Math.sin(a1) * r * 0.72);
+    g.strokePath();
+  }
+  g.fillStyle(tint(hostile ? DRM.hauntDeep : DRM.deep), alpha * 0.06);
+  g.fillEllipse(x, y, r * 2, r * 1.44);
+}
+
+/**
+ * A Haunt bolt: a red splinter with a smeared tail and a black core, so it reads as
+ * something torn out of a person rather than a bullet.
+ */
+export function hauntBolt(
+  g: Phaser.GameObjects.Graphics,
+  tint: DreamColorFn,
+  x: number, y: number, angle: number, s: number, t: number,
+  alpha = 1,
+): void {
+  const cx = Math.cos(angle), cy = Math.sin(angle);
+  for (let i = 4; i >= 1; i--) {
+    g.fillStyle(tint(DRM.hauntDeep), alpha * 0.32 * (1 - i / 5));
+    g.fillCircle(x - cx * i * s * 0.62, y - cy * i * s * 0.62, s * (0.72 - i * 0.11));
+  }
+  g.fillStyle(tint(DRM.haunt), alpha * 0.4);
+  g.fillCircle(x, y, s * 1.5);
+  // The splinter itself: a long triangle down the line of travel with a notch behind it.
+  g.fillStyle(tint(DRM.haunt), alpha);
+  g.fillTriangle(
+    x + cx * s * 1.6, y + cy * s * 1.6,
+    x - cx * s * 0.9 - cy * s * 0.62, y - cy * s * 0.9 + cx * s * 0.62,
+    x - cx * s * 0.9 + cy * s * 0.62, y - cy * s * 0.9 - cx * s * 0.62,
+  );
+  g.fillStyle(tint(DRM.night), alpha * 0.85);
+  g.fillTriangle(
+    x + cx * s * 0.7, y + cy * s * 0.7,
+    x - cx * s * 0.4 - cy * s * 0.24, y - cy * s * 0.4 + cx * s * 0.24,
+    x - cx * s * 0.4 + cy * s * 0.24, y - cy * s * 0.4 - cx * s * 0.24,
+  );
+  star(g, tint, x, y, s * 0.6, alpha * 0.8, DRM.white, t * 6);
+}
+
+/**
+ * A Spirit Tear: an enormous slow white lens with a rip of night down the middle of it, plus
+ * the two smaller ones that go round it. The moons are drawn by the caller at their own
+ * positions — this is just the head.
+ */
+export function spiritTearShape(
+  g: Phaser.GameObjects.Graphics,
+  tint: DreamColorFn,
+  x: number, y: number, r: number, t: number,
+  alpha = 1,
+): void {
+  g.fillStyle(tint(DRM.spirit), alpha * 0.16);
+  g.fillCircle(x, y, r * 1.7);
+  g.fillStyle(tint(DRM.spiritDeep), alpha * 0.34);
+  g.fillCircle(x, y, r * 1.15);
+  g.fillStyle(tint(DRM.white), alpha * 0.85);
+  g.fillCircle(x, y, r);
+  // The rip: a tall lens of night, slowly rotating, which is what makes it a *tear*.
+  const spin = t * 0.7;
+  const pts: Phaser.Geom.Point[] = [];
+  for (let i = 0; i < 14; i++) {
+    const f = (i / 13) * Math.PI;
+    const w = Math.sin(f) * r * 0.32;
+    const h = -r * 0.8 + (i / 13) * r * 1.6;
+    pts.push(new Phaser.Geom.Point(
+      x + Math.cos(spin) * w - Math.sin(spin) * h,
+      y + Math.sin(spin) * w + Math.cos(spin) * h,
+    ));
+  }
+  for (let i = 13; i >= 0; i--) {
+    const f = (i / 13) * Math.PI;
+    const w = -Math.sin(f) * r * 0.32;
+    const h = -r * 0.8 + (i / 13) * r * 1.6;
+    pts.push(new Phaser.Geom.Point(
+      x + Math.cos(spin) * w - Math.sin(spin) * h,
+      y + Math.sin(spin) * w + Math.cos(spin) * h,
+    ));
+  }
+  g.fillStyle(tint(DRM.night), alpha * 0.9);
+  g.fillPoints(pts, true);
+  star(g, tint, x, y, r * 0.5, alpha * 0.9, DRM.white, t * 1.6);
+}
+
+/** One of the two moons orbiting a Spirit Tear. Smaller, and the same shape in miniature. */
+export function tearMoon(
+  g: Phaser.GameObjects.Graphics,
+  tint: DreamColorFn,
+  x: number, y: number, r: number, t: number,
+  alpha = 1,
+): void {
+  g.fillStyle(tint(DRM.spiritDeep), alpha * 0.3);
+  g.fillCircle(x, y, r * 1.6);
+  g.fillStyle(tint(DRM.white), alpha * 0.9);
+  g.fillCircle(x, y, r);
+  g.fillStyle(tint(DRM.night), alpha * 0.75);
+  g.fillEllipse(x, y, r * 0.5, r * 1.3);
+  star(g, tint, x, y, r * 0.8, alpha * 0.6, DRM.star, t * 3);
+}
+
+// ── Lifelong Dream ────────────────────────────────────────────────────────
+
+/**
+ * The wish counter over the dreamer's head: a ring that empties as the seconds go, the
+ * number in the middle of it, and the chosen element's emoji orbiting the whole thing.
+ *
+ * The ring is drawn *anticlockwise from the top* so it reads as a countdown rather than a
+ * charge, and it flashes gold whenever the number goes back up — which is the one thing the
+ * player has to be able to see happen.
+ */
+export function wishCounter(
+  g: Phaser.GameObjects.Graphics,
+  tint: DreamColorFn,
+  x: number, y: number, r: number,
+  fraction: number, t: number,
+  jolt: number,
+  alpha = 1,
+): void {
+  const col = jolt > 0 ? DRM.dread : DRM.wish;
+  g.fillStyle(tint(DRM.night), alpha * 0.8);
+  g.fillCircle(x, y, r + 3);
+  g.lineStyle(2, tint(DRM.wishDeep), alpha * 0.7);
+  g.strokeCircle(x, y, r);
+
+  const segs = 40;
+  const lit = Math.max(0, Math.min(segs, Math.round(segs * fraction)));
+  for (let i = 0; i < lit; i++) {
+    const a0 = -Math.PI / 2 - (i / segs) * TAU;
+    const a1 = a0 - (TAU / segs) * 0.7;
+    g.lineStyle(3.2 + jolt * 2, tint(col), alpha * (0.85 + jolt * 0.15));
+    g.beginPath();
+    g.moveTo(x + Math.cos(a0) * r, y + Math.sin(a0) * r);
+    g.lineTo(x + Math.cos(a1) * r, y + Math.sin(a1) * r);
+    g.strokePath();
+  }
+  // Four stars turning round it, faster the closer it gets.
+  for (let i = 0; i < 4; i++) {
+    const a = t * (1.2 + (1 - fraction) * 2.6) + (i / 4) * TAU;
+    star(g, tint, x + Math.cos(a) * (r + 7), y + Math.sin(a) * (r + 7),
+      2 + (1 - fraction) * 1.6, alpha * 0.8, DRM.star, a * 2);
+  }
+  if (jolt > 0) {
+    g.lineStyle(2, tint(DRM.dread), alpha * jolt);
+    g.strokeCircle(x, y, r + 6 + jolt * 8);
+  }
+}
+
+/**
+ * The halo a dream that has come true leaves on the dreamer: a slow crown of stars, one per
+ * boon, turning above the head for the rest of the match.
+ */
+export function dreamCrown(
+  g: Phaser.GameObjects.Graphics,
+  tint: DreamColorFn,
+  x: number, y: number, r: number, count: number, t: number,
+  alpha = 1,
+  color = DRM.wish,
+): void {
+  g.lineStyle(1.4, tint(color), alpha * (0.3 + 0.15 * Math.sin(t * 2)));
+  g.strokeEllipse(x, y, r * 2, r * 0.7);
+  for (let i = 0; i < count; i++) {
+    const a = t * 0.8 + (i / Math.max(1, count)) * TAU;
+    const px = x + Math.cos(a) * r;
+    const py = y + Math.sin(a) * r * 0.35;
+    // Behind the head on the far half of the orbit, so the crown reads as 3D.
+    const depth = 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(a));
+    star(g, tint, px, py, 3.2 * depth, alpha * depth, color, a * 2);
+  }
 }
 
 /**

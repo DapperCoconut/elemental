@@ -19,11 +19,15 @@ const electricity: ElementCodex = {
     {
       emoji: '⚡',
       name: 'Kinetic Power',
-      magic:
-        'The body is wired as a capacitor. Anything that hurts you is current you failed to earth, '
-        + 'and it stays in you: a counter climbs at the top of the screen and current visibly pools '
-        + 'under the character as it fills. Nothing in the kit generates it on purpose except Pain '
-        + 'Battery, which is the ability that admits what the passive actually is.',
+      basics:
+        'The kit\'s battery, charged by being hurt: every 1 damage you take from any source — a hit, a '
+        + 'burn tick, a wall, your own Pain Battery — is 1 kinetic power, with sparks flying off you on '
+        + 'every intake. It caps at 50, or 100 with Overclock, and overflow is lost. Holding 20 or more '
+        + 'makes every Electro Ball shock once for 4 in an 80px radius; at 50 or more it shocks twice, '
+        + '300ms apart, in 120px, and the bead is drawn 1.25× larger. Four abilities spend it: Electro '
+        + 'Dash\'s recast takes 15, Kinetic Discharge takes 20 and scales its damage off what is left, '
+        + 'Ball Lightning drains 25 a second while held, and Restart consumes the whole bar to set your '
+        + 'revive HP. The ⚡ counter above the arena reads current over cap.',
       effects: [
         { tag: 'resource', label: 'Charge on damage', detail: 'Every 1 damage you take adds 1 kinetic power, from any source — a hit, a burn tick, a wall, or your own Pain Battery. Sparks fly off you on every intake.' },
         { tag: 'resource', label: 'The cap', detail: '50 kinetic power, raised to 100 by the R+ Overclock upgrade. Overflow past the cap is simply lost.' },
@@ -41,12 +45,12 @@ const electricity: ElementCodex = {
 
   abilities: {
     'electro-ball': {
-      magic:
-        'A bead of live current shaped between the hands and thrown flat. It leaves a fork of recoil '
-        + 'behind at the throwing hand and sheds sparks out of its own back the whole way across, '
-        + 'which is what makes it read as travelling rather than sliding. Once the battery is up it '
-        + 'stops being a shot and starts being a delivery system: current jumps off it sideways at '
-        + 'anything it passes near, whether or not the bead itself connects.',
+      basics:
+        'A bead thrown at the cursor for 15 damage to the first fighter it touches, flying 520 px/s and '
+        + 'spawned 32px out so it clears your own body. While you hold 20 or more kinetic power it also '
+        + 'arcs once into an enemy within 80px for 4 — damage without touching them — and at 50 or more '
+        + 'it arcs twice, 300ms apart, out to 120px. Two shocks is the ceiling. 0.5s cooldown, and it is '
+        + 'the only electricity ability that spends no charge at all.',
       cast: 'Click, aimed at the cursor. No wind-up. Hold does nothing without the Click+ upgrade.',
       effects: [
         { tag: 'damage', label: 'Impact', detail: '15 damage to the first fighter it touches, and the bead is consumed.' },
@@ -56,11 +60,15 @@ const electricity: ElementCodex = {
         { tag: 'utility', label: 'Rate of fire', detail: '0.5s cooldown — the only electricity ability you can lean on continuously, and the one that spends no kinetic power at all.' },
       ],
       upgrade: {
-        magic:
-          'Ball Lightning turns the click into a dial. Hold it and the battery visibly empties into '
-          + 'your hands at a fixed rate; let go and whatever you poured out becomes a violet orb that '
-          + 'drifts off at walking pace and refuses to die on contact. It is the one thing this '
-          + 'element puts on the board and leaves there.',
+        basics:
+          'Holding Click drains 25 kinetic power a second to grow an orb: 25 drained is tier I, 50 tier '
+          + 'II, 75 tier III and 100 tier IV, and the top two only exist with the Overclock cap of 100. '
+          + 'Releasing under 200ms, or under 25 drained, just fires an ordinary bead. The orb drifts toward '
+          + 'the cursor direction at 55 px/s and lives 6 seconds without stopping, expiring or shrinking on '
+          + 'contact. It is 12/15/18/21px by tier, deals 18/28/40/55 damage within 14/19/24/29px on a '
+          + '1-second re-hit cooldown per enemy — anyone standing inside a tier IV is taking 55 a second — '
+          + 'and fires a 4-damage shock ring out to 80/100/120/140px every 1000ms at tier I, 500ms at tiers '
+          + 'II and III and 333ms at tier IV.',
         effects: [
           { tag: 'resource', label: 'Drain to charge', detail: 'Holding Click drains 25 kinetic power per second. A release under 200ms held, or under 25 drained, just fires an ordinary Electro Ball instead.', requiresUpgrade: 'click' },
           { tag: 'summon', label: 'Four tiers', detail: '25 drained → tier I, 50 → tier II, 75 → tier III, 100 → tier IV. Tiers III and IV need the R+ Overclock cap of 100 to exist at all.', requiresUpgrade: 'click' },
@@ -77,12 +85,12 @@ const electricity: ElementCodex = {
     },
 
     'electro-dash': {
-      magic:
-        'Not a dash — a discharge with a body attached. The caster stops existing at one end of a '
-        + 'lit corridor and starts existing at the other, with rungs of current snapping across the '
-        + 'gap behind them. Anything the corridor passed through is earthed on the way. The second '
-        + 'one is free of the cooldown and paid for out of the battery instead, which is what makes '
-        + 'this the element\'s escape and its opener at the same time.',
+      basics:
+        'A 215px blink toward the cursor, clamped 30px inside the walls. It is a hard reposition rather '
+        + 'than a slide, so nothing can body-block it, and it deals 15 damage to every enemy within 45px '
+        + 'of the whole line you crossed rather than just the endpoint. A second E inside 1.5 seconds is '
+        + 'a recast: one extra blink for 15 kinetic power and no cooldown, and only one — the window '
+        + 'closes after it is used. 1.5s cooldown otherwise, so a recast is always cheaper than waiting.',
       cast:
         'E, toward the cursor. Instant, no lock. A second E within 1.5s of the first is a recast and '
         + 'costs kinetic power rather than waiting on the cooldown.',
@@ -93,11 +101,12 @@ const electricity: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '1.5s cooldown on the first blink. The recast window is the same 1.5s, so a recast is always cheaper than waiting.' },
       ],
       upgrade: {
-        magic:
-          'Storm Cloud leaves weather where you landed. A boiling dark mass hangs over the arrival '
-          + 'point with current lit up inside it, its underside sagging and brightening as the next '
-          + 'strike winds up — and then it drops a bolt out of the sky. Four of them, if you leave it '
-          + 'alone.',
+        basics:
+          'Every dash leaves a storm cloud at the landing point for 8 seconds, and recasts spawn their '
+          + 'own, so a double blink leaves two. Each drops a sky bolt every 2 seconds for 18 damage to '
+          + 'anything within 70px — four strikes over its life if nobody walks out — and it visibly charges '
+          + 'across each window, lighting along its underside past 55% wound-up, so every strike is '
+          + 'announced about a second early.',
         effects: [
           { tag: 'summon', label: 'The cloud', detail: 'One cloud at the landing point per dash, lasting 8s. Recasts spawn their own, so a double blink leaves two.', requiresUpgrade: 'e' },
           { tag: 'damage', label: 'Strikes', detail: 'A sky bolt every 2s for 18 damage to anything within 70px of the cloud — 4 strikes over its life if nobody walks out.', requiresUpgrade: 'e' },
@@ -111,11 +120,12 @@ const electricity: ElementCodex = {
     },
 
     'kinetic-discharge': {
-      magic:
-        'The battery emptied at a point on the floor rather than through your hands. Earthing arms '
-        + 'whip out of the impact, two shock fronts run outward, and a full bar throws a strike down '
-        + 'out of the sky on top of it. The blast is physically built out of how charged you were — '
-        + 'more arms, more shrapnel, a longer burn and a harder camera shake at 100 than at 20.',
+      basics:
+        'Detonates at the cursor for half your current kinetic power to everything within 100px — 25 at '
+        + 'a full 50-bar. It costs 20 charge and refuses to cast below that, but the damage is read off '
+        + 'the bar before the 20 comes out, so you are paid for the full charge. Past 60% of the bar it '
+        + 'also calls a 260px sky strike onto the point, so a big discharge is visibly a different event '
+        + 'from a minimum one. 4s cooldown.',
       cast: 'R, placed at the cursor. Instant. Refuses to cast below 20 kinetic power.',
       effects: [
         { tag: 'damage', label: 'Detonation', detail: 'Half your current kinetic power as damage, to everything within 100px of the cursor. At a full 50-bar that is 25.' },
@@ -124,10 +134,12 @@ const electricity: ElementCodex = {
         { tag: 'utility', label: 'Charge tell', detail: 'Past 60% of the bar the blast also calls a 260px sky strike down onto the point, so a big discharge is visibly a different event from a minimum one.' },
       ],
       upgrade: {
-        magic:
-          'Overclock is the upgrade the rest of the kit is waiting on. It does not change what R does '
-          + 'so much as double the size of the thing R is spending — and past the halfway mark the '
-          + 'conversion rate itself gets better, so the last 50 points are worth more than the first.',
+        basics:
+          'The kinetic cap doubles from 50 to 100, and everything that reads the bar scales with it — '
+          + 'Restart\'s revive HP, Kinetic Shield, Ball Lightning\'s tiers. Above 50 charge the discharge '
+          + 'also converts better: 25 + 0.8 per point over 50 instead of a flat half, so a 100-point '
+          + 'discharge deals 65 rather than 50. It is also what unlocks Ball Lightning tiers III and IV, '
+          + 'which are gated on the cap rather than on the drain alone.',
         effects: [
           { tag: 'resource', label: 'Doubled cap', detail: 'Kinetic power cap goes from 50 to 100. Everything that reads the bar — Restart\'s revive HP, Kinetic Shield, Ball Lightning tiers — scales with it.', requiresUpgrade: 'r' },
           { tag: 'damage', label: 'Better conversion', detail: 'Above 50 kinetic the damage becomes 25 + 0.8 per point over 50, instead of a flat half. A 100-point discharge deals 65, not 50.', requiresUpgrade: 'r' },
@@ -141,12 +153,13 @@ const electricity: ElementCodex = {
     },
 
     'pain-battery': {
-      magic:
-        'The honest version of the whole element. The caster hauls their hands in against their chest '
-        + 'and starts tearing current out of their own body — sparks coming off them every quarter '
-        + 'second, an aura crushing tighter the longer it runs — and every point they spend on '
-        + 'themselves goes straight back into the bar, because damage is damage. Let go and three '
-        + 'quarters of everything they did to themselves comes back out as a ring.',
+      basics:
+        'Hold F to hurt yourself for charge: 5 damage every 0.25s — 20 HP a second, no cap and no '
+        + 'timer, with the first tick at 250ms so a tap costs nothing. Each 5 self-damage is 5 kinetic '
+        + 'power in, because the battery does not care where the wound came from, so 2.5 seconds fills an '
+        + 'empty 50-bar. Releasing fires 75% of everything you did to yourself at every enemy within '
+        + '120px: a 4-second hold is 80 self-damage and a 60-damage ring. No cooldown and no cast lock — '
+        + 'you can walk while charging, and the only limit is how much health you will convert.',
       cast: 'Hold F. No cooldown at all, and no cast lock — you can walk while charging. Release to fire.',
       effects: [
         { tag: 'cost', label: 'Self-damage', detail: '5 damage to yourself every 0.25s held — 20 HP per second, with no cap and no timer. The first tick lands at 250ms, so a tap costs nothing.' },
@@ -155,10 +168,12 @@ const electricity: ElementCodex = {
         { tag: 'utility', label: 'Free to hold', detail: '0s cooldown. The only limit on how often you do this is how much health you are prepared to convert.' },
       ],
       upgrade: {
-        magic:
-          'Jumpstart splits the key. A tap is now a separate ability — current thrown into the nearest '
-          + 'body and then straight back into your own — while holding still gives you the battery. It '
-          + 'is the only healing electricity has, and it is bolted onto the key that exists to hurt you.',
+        basics:
+          'A tap under 200ms becomes a jumpstart instead: 20 damage to the nearest enemy within 200px, '
+          + 'and 1 HP every 0.2s for 6 seconds — 5 a second, 30 in total. Nothing in range means no damage '
+          + 'but the heal still runs, and any damage taken cancels the regeneration outright with a "Regen '
+          + 'cancelled" notice, losing whatever was left. Holding F past 200ms is still the ordinary Pain '
+          + 'Battery at the same rates.',
         effects: [
           { tag: 'damage', label: 'Jumpstart hit', detail: 'A tap under 200ms deals 20 damage to the nearest enemy within 200px. Nothing in range means no damage, but the heal still runs.', requiresUpgrade: 'f' },
           { tag: 'heal', label: 'Regeneration', detail: '1 HP every 0.2s for 6 seconds — 5 HP/s, 30 HP in total.', requiresUpgrade: 'f' },
@@ -174,12 +189,13 @@ const electricity: ElementCodex = {
     },
 
     restart: {
-      magic:
-        'A refusal to finish dying. For five seconds the caster wears a full-body cage of current, '
-        + 'and while it is up a lethal hit does not kill them — it dumps the whole battery back into '
-        + 'the body instead. Current slams down out of the sky, earths out around them and they are '
-        + 'standing again with exactly as much health as they had charge. Get hit a lot, come back '
-        + 'bigger.',
+      basics:
+        'Five seconds of overcharge that does nothing defensive on its own — it only matters if a '
+        + 'killing blow lands inside the window, in which case you get back up at HP equal to your '
+        + 'current kinetic power, clamped between 1 and your maximum. A full 100-bar is 100 HP of a 400 '
+        + 'HP fighter. The revive empties the bar to 0 and ends the overcharge, so you come back at your '
+        + 'weakest with no charged shots and no discharge. 60s cooldown, roughly one guaranteed revive a '
+        + 'fight.',
       cast: 'Q. Instant, no lock. The 5s overcharge window starts immediately; the revive is what happens inside it.',
       effects: [
         { tag: 'buff', label: 'Overcharged', detail: '5 seconds of the overcharge cage. Nothing about it is defensive on its own — it only matters if you actually take lethal damage inside the window.' },
@@ -188,10 +204,12 @@ const electricity: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '60s cooldown — roughly one guaranteed revive per fight.' },
       ],
       upgrade: {
-        magic:
-          'Auto-Restart stops asking you to predict your own death. The cage is no longer something '
-          + 'you have to be wearing: as long as Q is off cooldown, dying fires it retroactively. The '
-          + 'price is that the automatic version brings you back at half strength.',
+        basics:
+          'Dying with Restart off cooldown and no overcharge up revives you anyway, at half your kinetic '
+          + 'power rounded down and clamped to at least 1. It still puts Restart on its whole 60-second '
+          + 'cooldown and still empties the bar, so the half-rate revive costs the same charge the '
+          + 'full-rate one would. Casting Q first and dying inside the 5-second window is still worth twice '
+          + 'as much — this is the safety net for the deaths you did not see coming.',
         effects: [
           { tag: 'heal', label: 'Automatic revive', detail: 'Dying with Restart off cooldown and no overcharge up revives you at half your kinetic power, rounded down, clamped to at least 1.', requiresUpgrade: 'q' },
           { tag: 'cost', label: 'Full cooldown', detail: 'The automatic version puts Restart on its whole 60s cooldown, exactly as if you had pressed Q.', requiresUpgrade: 'q' },
@@ -209,11 +227,13 @@ const electricity: ElementCodex = {
 
   perks: {
     phoenix: {
-      magic:
-        'Coming back online violently. The moment either revive fires, the yellow goes out and the '
-        + 'caster burns orange instead — five seconds of nothing being able to touch them, moving at '
-        + 'double speed, dropping guttering flames behind them like a trail. When it ends the flames '
-        + 'stay on the floor, and walking back over your own retreat is what heals you.',
+      basics:
+        'Fires automatically on any Restart revive, manual or automatic. Five seconds in which every '
+        + 'incoming hit is absorbed entirely rather than reduced, at ×2 move speed, restored exactly when '
+        + 'it ends. You drop a flame at your feet every second — five over the window — each lying there '
+        + 'for 30 seconds. They are inert while phoenix runs, so you cannot heal during the invincible '
+        + 'window; once it ends, stepping within 28px consumes one for 5 HP a second for 3 seconds, 15 HP '
+        + 'a flame and 75 if you collect all five. The trail is deliberately a debt you go back for.',
       cast: 'No key. Triggers automatically on any Restart revive, manual or Q+ automatic.',
       effects: [
         { tag: 'shield', label: 'Untouchable', detail: '5 seconds during which every incoming hit is absorbed entirely. Not reduced — absorbed.' },
@@ -231,11 +251,12 @@ const electricity: ElementCodex = {
 
   mastery: {
     'kinetic-shield': {
-      magic:
-        'The charge stops only being ammunition. A quiet standing field thickens around a mastered '
-        + 'electricity fighter as the bar climbs, and what it does is make the thing that fills the '
-        + 'bar hurt less — which is a genuinely strange feedback loop, since a fully charged fighter '
-        + 'both takes the least damage and gains the least charge.',
+      basics:
+        'Your charge is armour: +1% damage resistance for every 3% of the kinetic bar, so a full bar is '
+        + '33% off everything, rounded down. No key, no cooldown and no cost — it reads the bar live in '
+        + 'both directions, so spending charge lowers your resistance instantly. It reads percentage '
+        + 'rather than points, so it is 33% at a full bar whether the cap is 50 or 100; Overclock does '
+        + 'not weaken it, it just makes the top harder to reach.',
       effects: [
         { tag: 'shield', label: 'Charge as armour', detail: '+1% damage resistance for every 3% of your kinetic bar, so a full bar is 33% off everything. Rounded down, so 3% of the bar is the smallest step.' },
         { tag: 'utility', label: 'Always on', detail: 'No key, no cooldown, no cost. It reads the bar live and updates every frame, in both directions — spending charge lowers your resistance instantly.' },
@@ -246,11 +267,13 @@ const electricity: ElementCodex = {
       ],
     },
     'kinetic-bomb': {
-      magic:
-        'A caged charge pack thrown flat, tumbling with a live arc dragging behind it. It does not '
-        + 'explode on contact — it bites in, clamps four barbs into whoever it hit, and starts '
-        + 'counting. A ring around it closes as they take damage from anything at all, so ten '
-        + 'seconds later the payload has been paid for by the whole fight rather than by you.',
+      basics:
+        'A bindable bomb that replaces its slot\'s ability for the match. It flies 460 px/s until it '
+        + 'latches within 26px or leaves the arena, then sticks to that enemy for 10 seconds, riding 24px '
+        + 'above their head and following them everywhere. It detonates for 10 damage in a 150px radius '
+        + 'plus 1 more for every 3 damage the carrier took while wearing it, with the meter reading full '
+        + 'at 120 soaked. A carrier who dies while wearing it sets it off immediately at whatever it had '
+        + 'accumulated rather than wasting the payload. 14s cooldown.',
       cast:
         'Bindable to E, R, F or Q, replacing that slot\'s base ability entirely for the match. Fired '
         + 'toward the cursor, instant.',

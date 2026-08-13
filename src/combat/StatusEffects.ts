@@ -620,3 +620,39 @@ export function stretchAllEffects(
 export function isDebuff(desc: StatusDescriptor): boolean {
   return desc.priority < 100;
 }
+
+/**
+ * Strip every discrete debuff off a fighter, and report how many came off.
+ *
+ * Driven off the descriptor table rather than off a hand-written field list, so an effect added
+ * to the tray is cleansable the same day: every `timer` debuff with a `write` is expired, and the
+ * stack/flag debuffs that have no writer are zeroed by hand below.
+ *
+ * Deliberately does **not** touch the shared multiplier fields the `amount` debuffs read
+ * (`incomingDamageMultiplier`, `outgoingDamageMult`, `walkSpeedMult`, `cooldownMult`,
+ * `attackIntervalMult`). Those are co-owned: several of them are min-clamped and rewritten from
+ * scratch every frame by whichever kit owns the slow, and several carry buffs and kit bookkeeping
+ * on the same number — so clearing them here would either do nothing at all or quietly delete
+ * somebody else's effect. A slow whose source is still on the field genuinely survives a cleanse.
+ */
+export function clearDebuffs(f: Fighter): number {
+  let n = 0;
+  for (const desc of STATUS_DESCRIPTORS) {
+    if (!isDebuff(desc) || desc.kind !== 'timer' || !desc.write) continue;
+    if (desc.read(f) <= 0) continue;
+    desc.write(f, 0);
+    n++;
+  }
+  // The flags and counters behind the debuffs that are not timers.
+  if (f.bleeding) { f.bleeding = false; n++; }
+  if (f.magicChainBound) { f.magicChainBound = false; f.magicChainBoundEnd = 0; n++; }
+  if (f.vulnerableNextHit) { f.vulnerableNextHit = false; n++; }
+  if (f.aimOffsetBonusDeg > 0) { f.aimOffsetBonusDeg = 0; n++; }
+  if (f.frostStacks > 0) { f.frostStacks = 0; f.frostStackTimers.length = 0; n++; }
+  if (f.voidFrostStacks > 0) { f.voidFrostStacks = 0; f.voidFrostStackTimers.length = 0; n++; }
+  if (f.permafrostStacks > 0) { f.permafrostStacks = 0; n++; }
+  if (f.permavoidStacks > 0) { f.permavoidStacks = 0; n++; }
+  if (f.darkVulnStacks > 0) { f.darkVulnStacks = 0; n++; }
+  if (f.hopelessness > 0) { f.hopelessness = 0; n++; }
+  return n;
+}

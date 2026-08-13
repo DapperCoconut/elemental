@@ -86,7 +86,38 @@ export interface PreviewCtx {
    * element's default is never constructed. Every preview script gets skin support from this
    * without knowing skins exist.
    */
-  useAvatar(makeDefault: () => BaseAvatar): BaseAvatar;
+  useAvatar(makeDefault: () => BaseAvatar, o?: { manual?: boolean }): BaseAvatar;
+  /**
+   * Move the caster — body sprite and rig together — for the rest of the iteration.
+   *
+   * This is the **only** correct way to show an ability that displaces its caster (a dash, a
+   * charge, a launch, a car). The harness owns one caster position and drives the staged
+   * `elem-<id>` sprite and every non-manual avatar off it, so the sprite and the hands are
+   * physically incapable of parting company. A script that drives an avatar itself while the
+   * harness is also pinning it makes the hands spring toward two targets a frame and settle
+   * halfway between, which is what "floating hands" on this screen always was.
+   *
+   * Call it from `onFrame`/`at` with the position for that instant; it holds until changed.
+   */
+  moveCaster(x: number, y: number, o?: { alpha?: number; facing?: number }): void;
+  /**
+   * Carry the caster from where it stands to `to` over `ms`, starting now.
+   *
+   * The shorthand for every dash, lunge, leap, launch and teleport in the game — call it from
+   * the `ctx.at` that fires the ability and the character travels while the effect plays,
+   * which is what the ability looks like. A showcase that lights up a dash trail while the
+   * caster stands rooted at the mark documents an ability nobody has.
+   */
+  glideCaster(o: {
+    from?: { x: number; y: number };
+    to: { x: number; y: number };
+    ms: number;
+    /** `out` decelerates into the landing (dashes), `in` accelerates out of it (launches). */
+    ease?: 'linear' | 'out' | 'in';
+    onDone?: () => void;
+  }): void;
+  /** Where the caster is this frame — for effects that have to come off the moving body. */
+  casterAt(): { x: number; y: number };
   /** A stand-in enemy body at the target mark. Most offensive previews want one. */
   addDummy(): void;
   /**
@@ -156,6 +187,16 @@ export class AbilityPreviewBox {
   private frameTimers: Phaser.Time.TimerEvent[] = [];
   private frameHooks: ((dt: number, elapsed: number) => void)[] = [];
   private avatars: BaseAvatar[] = [];
+  /** Avatars a script declared it drives itself — the harness never touches them. */
+  private manualAvatars = new Set<BaseAvatar>();
+  /** Avatar → the loop time a script last drove it. See `watchForScriptDriving`. */
+  private scriptDriven = new Map<BaseAvatar, number>();
+  /** True only inside the harness's own avatar drive loop. */
+  private driving = false;
+  /** The one caster position. Body sprite and every non-manual rig are drawn from it. */
+  private caster = { x: 0, y: 0, alpha: 1, facing: 0 };
+  /** The staged `elem-<id>` sprite, so `moveCaster` carries it along with the rig. */
+  private casterBody: Phaser.GameObjects.Image | null = null;
   private updateHandler: (t: number, dt: number) => void;
   private elapsed = 0;
   private needsSort = false;
@@ -248,6 +289,7 @@ export class AbilityPreviewBox {
     // The caster stands a third in from the left on the floor line; the target faces it at
     // the same height, which is the framing every script can rely on.
     const cy = h * 0.78 - 22;
+    this.caster = { x: w * 0.26, y: cy, alpha: 1, facing: 0 };
     const ctx: PreviewCtx = {
       scene: this.scene,
       w, h,
@@ -263,17 +305,16 @@ export class AbilityPreviewBox {
         this.frameTimers.push(tm);
       },
       onFrame: (fn) => { this.frameHooks.push(fn); },
-      useAvatar: (makeDefault) => {
+      useAvatar: (makeDefault, o) => {
         // The arena fighter is an `elem-<id>` Sprite at depth 5 with the rig drawn around it at
         // 6 — hands, eyes and glow but no torso of its own. Without the sprite underneath, a
         // previewed caster is a pair of floating hands, which is the loudest way this screen
         // can look like a different game from the one it documents.
         const bodyTex = this.script.bodyTexture ?? this.opts.bodyTexture;
         if (bodyTex && this.scene.textures.exists(bodyTex)) {
-          const scale = this.script.scale ?? 1;
-          this.capture(() => {
+          this.casterBody = this.capture(() => {
             const body = this.scene.add
-              .image((this.opts.w / scale) * 0.26, (this.opts.h / scale) * 0.78 - 22, bodyTex)
+              .image(this.caster.x, this.caster.y, bodyTex)
               .setDepth(5);
             // A skin that draws a whole new silhouette repaints the ball of raw element
             // underneath it, so anything peeking past the new body still reads as the skin.
@@ -285,15 +326,67 @@ export class AbilityPreviewBox {
         // The skin's character if it replaces one, otherwise the element's own.
         const a = this.capture(() =>
           makeSkinAvatar(this.opts.skin?.id ?? null, this.scene) ?? makeDefault());
-        this.capture(() => a.captureInto((o) => this.adopt(o)));
+        this.capture(() => a.captureInto((o2) => this.adopt(o2)));
         this.avatars.push(a);
+        if (o?.manual) this.manualAvatars.add(a);
+        this.watchForScriptDriving(a);
         return a;
       },
+      moveCaster: (mx, my, o) => {
+        this.caster.x = mx;
+        this.caster.y = my;
+        if (o?.alpha !== undefined) this.caster.alpha = o.alpha;
+        if (o?.facing !== undefined) this.caster.facing = o.facing;
+      },
+      glideCaster: (o) => {
+        const from = o.from ?? { x: this.caster.x, y: this.caster.y };
+        const start = this.elapsed;
+        let done = false;
+        ctx.onFrame(() => {
+          if (done) return;
+          const t = Phaser.Math.Clamp((this.elapsed - start) / Math.max(1, o.ms), 0, 1);
+          const k = o.ease === 'out' ? 1 - (1 - t) * (1 - t)
+            : o.ease === 'in' ? t * t : t;
+          this.caster.x = from.x + (o.to.x - from.x) * k;
+          this.caster.y = from.y + (o.to.y - from.y) * k;
+          if (t >= 1) { done = true; o.onDone?.(); }
+        });
+      },
+      casterAt: () => ({ x: this.caster.x, y: this.caster.y }),
       addDummy: () => this.addDummy(ctx),
       fly: (o) => this.fly(ctx, o),
     };
 
     this.capture(() => this.script.run(ctx));
+  }
+
+  /**
+   * Notice when a script drives an avatar itself, and stop pinning that one.
+   *
+   * A rig's hands are a spring chasing a target position (`ARM_STIFFNESS` in `ElementVisuals`).
+   * A script that walks its caster across the box with its own `av.update(dt, x, y, …)` while
+   * this harness is *also* calling `update` at the fixed caster mark gives that spring two
+   * targets a frame; it settles roughly halfway between them, and the hands hang in open space
+   * a long way from the body. Nearly forty showcases were written that way.
+   *
+   * Rather than make every one of them remember a flag, the avatar tells us: any `update` that
+   * does not come from our own drive loop marks the rig as script-owned, and the harness leaves
+   * its position, facing and alpha alone while that keeps happening. The claim is deliberately
+   * a timestamp rather than a latch — a script that drives its caster once, for a single beat,
+   * hands the rig back afterwards instead of freezing it where it was dropped.
+   */
+  private watchForScriptDriving(a: BaseAvatar): void {
+    const inner = a.update.bind(a);
+    a.update = (dt: number, x: number, y: number, alpha: number): void => {
+      if (!this.driving) this.scriptDriven.set(a, this.elapsed);
+      inner(dt, x, y, alpha);
+    };
+  }
+
+  /** True while a script is actively driving this rig frame by frame. */
+  private isScriptDriven(a: BaseAvatar): boolean {
+    const last = this.scriptDriven.get(a);
+    return last !== undefined && this.elapsed - last < 250;
   }
 
   /** See `PreviewCtx.fly`. */
@@ -393,17 +486,26 @@ export class AbilityPreviewBox {
     // emit through that Fx during `update`, so this is the only place to catch them.
     if (this.avatars.length) {
       this.capture(() => {
-        const scale = this.script.scale ?? 1;
-        for (const a of this.avatars) {
-          a.setFacing(0);
-          // The setter early-outs when unchanged, so driving it every frame is what the
-          // element kits do too.
-          a.setMastered(!!this.opts.mastered);
-          a.update(deltaMs, (this.opts.w / scale) * 0.26, (this.opts.h / scale) * 0.78 - 22, 1);
+        if (this.casterBody) {
+          this.casterBody.setPosition(this.caster.x, this.caster.y).setAlpha(this.caster.alpha);
         }
+        this.driving = true;
+        for (const a of this.avatars) {
+          // The setter early-outs when unchanged, so driving it every frame is what the
+          // element kits do too. Mastery is the screen's business either way — a rig the
+          // script drives still has to wear the tell the player has switched on.
+          a.setMastered(!!this.opts.mastered);
+          if (this.manualAvatars.has(a) || this.isScriptDriven(a)) continue;
+          a.setFacing(this.caster.facing);
+          a.update(deltaMs, this.caster.x, this.caster.y, this.caster.alpha);
+        }
+        this.driving = false;
       });
     }
-    for (const fn of this.frameHooks) fn(deltaMs, this.elapsed);
+    // Frame hooks run inside a capture window too. A hook that drives an avatar, plays a
+    // gesture or builds an `Fx` on the spot would otherwise leak its art onto the scene root
+    // at world coordinates — outside the box, at full size, over the rest of the screen.
+    this.capture(() => { for (const fn of this.frameHooks) fn(deltaMs, this.elapsed); });
 
     // Child depths were set before the objects were reparented, so the container never got
     // flagged dirty; do it ourselves on the frames where something arrived.
@@ -418,6 +520,10 @@ export class AbilityPreviewBox {
     this.frameHooks = [];
     for (const a of this.avatars) a.destroy();
     this.avatars = [];
+    this.manualAvatars.clear();
+    this.scriptDriven.clear();
+    this.driving = false;
+    this.casterBody = null;
     this.container.removeAll(true);
   }
 

@@ -5,10 +5,11 @@ import type { CustomStatus } from './StatusHudKit';
 import { Sfx } from '../../audio';
 import {
   FOOD, FORAGEABLE, FORAGEABLE_PLUS, FoodKind, GLT, GluttonyAvatar, GluttonyColorFn, GluttonyFx,
-  charcoalLump, chefCleaver, cookRing, foodColor, gobbet as drawGobbet, grillHeat,
+  RAT_LARDER, charcoalLump, chefCleaver, cookRing, foodColor, gobbet as drawGobbet, grillHeat,
   grillRig, hungerBar, itemShape, jitter, kitchenKnife, mawBody, mawTentacle, prepSlot,
-  skewerShape, spatter, stewPot,
+  ratBody, ratHole, skewerShape, spatter, stewPot,
 } from './GluttonyVisuals';
+import { meterGain } from '../../combat/Meters';
 
 type Owner = 'player' | 'npc';
 export type GluttonyForm = 'chef' | 'butcher';
@@ -99,6 +100,9 @@ const AWAKEN_BONUS: Record<FoodKind, number> = {
   // Head Chef's four, priced the way the original four are: roughly a second per 5 HP the
   // maw would otherwise have had to earn. Leftovers are scraps and the maw knows it.
   berries: 1000, mint: 3000, pineapple: 6000, deathcap: 8000, leftovers: 1000,
+  // Chef's Friend's three, priced off the same table. A pie is worth more than its healing
+  // says because eating one is also a run speed, and the maw is buying the whole item.
+  bread: 6000, cheese: 4000, pie: 7000,
 };
 const AWAKEN_SPEED = 165;
 const AWAKEN_WHIP_MS = 1000;
@@ -152,6 +156,12 @@ const FOOD_BUFF: Partial<Record<FoodKind, { raw?: FoodBuff; cooked?: FoodBuff }>
     raw: { speed: 1.25, ms: 8000, label: '☠️ +25% SPEED', color: GLT.venom },
     cooked: { speed: 1.35, ms: 8000, label: '☠️ +35% SPEED', color: GLT.venom },
   },
+  // Chef's Friend's pie. The one entry whose raw and cooked halves are identical: what the oven
+  // adds to a pie is 30 more healing, and the run is the pie itself.
+  pie: {
+    raw: { speed: 1.20, ms: 8000, label: '🥧 +20% SPEED', color: GLT.pieCrust },
+    cooked: { speed: 1.20, ms: 8000, label: '🥧 +20% SPEED', color: GLT.pieCrust },
+  },
 };
 
 // ── R+: Pit Master ───────────────────────────────────────────────────────────
@@ -199,6 +209,54 @@ const SCREAM_MS = 5000;
 const SCREAM_DAMAGE = 35;
 const SCREAM_RADIUS = 240;
 const SCREAM_STUN_MS = 2000;
+
+// ── Mastery passive: Snacking ────────────────────────────────────────────────
+/** Health a second with nothing at all on the strip. */
+const SNACK_MIN_RATE = 1;
+/** …and with a strip worth {@link SNACK_FULL_POOL} of healing or more. */
+const SNACK_MAX_RATE = 9;
+const SNACK_FULL_POOL = 200;
+
+// ── Mastery ability: Chef's Friend ───────────────────────────────────────────
+const RAT_COOLDOWN_MS = 14000;
+/** Drawing radius of the hole in the wall. */
+const HOLE_R = 17;
+/** How close a thrown item has to land to go down the hole. */
+const HOLE_CATCH_R = 44;
+/** …and to go into the rat instead, once the rat is the one standing there. */
+const RAT_CATCH_R = 36;
+/** How long the rat is gone for while it turns something cooked into something else. */
+const HOLE_SWAP_MS = 1200;
+const RAT_FETCH_SPEED = 360;
+const RAT_ROAM_SPEED = 175;
+/** How close the rat has to get to pick a thing up or hand it over. */
+const RAT_REACH = 26;
+/** An errand that finds nothing where it was going gives up after this long. */
+const RAT_FETCH_MS = 6000;
+const RAT_SLASH_MS = 1100;
+const RAT_SLASH_DAMAGE = 12;
+const RAT_SLASH_REACH = 46;
+/** How far out the rat will break off a fight to go and collect something. */
+const RAT_ERRAND_RANGE = 280;
+const RAT_FEED_MAX = 4;
+const RAT_DAMAGE_PER_FEED = 0.25;
+const RAT_SPEED_PER_FEED = 0.15;
+/** What one mouthful buys it once butcher form is over. */
+const RAT_STAY_MS = 12000;
+/** A whistled sic doubles the next slash it lands. */
+const RAT_SIC_MULT = 2;
+const RAT_SIC_MS = 4000;
+/** How often the bot considers whistling, or throwing something at its own rat. */
+const NPC_RAT_CHECK_MS = 700;
+
+/**
+ * The eight ingredients "The Whole Larder" counts. Leftovers are a by-product of the Feast and
+ * the rat's own three cannot be reached without the mastery that the requirement unlocks, so
+ * neither belongs in a checklist you are asked to finish before you own any of it.
+ */
+const LARDER_KINDS: FoodKind[] = [
+  'mushroom', 'carrot', 'potato', 'meat', 'berries', 'mint', 'pineapple', 'deathcap',
+];
 
 // ── HUD ──────────────────────────────────────────────────────────────────────
 /** Screen space, top-left, clear of the centre health bar and the top-right status tray. */
@@ -342,6 +400,50 @@ interface Gobbet {
   vuln: boolean;
 }
 
+/**
+ * Chef's Friend. One of these per side, alive whether or not the enhancement is bound — a rat
+ * that is not paid for simply never comes up the hole, which keeps every read on it total rather
+ * than nullable.
+ */
+interface RatState {
+  /** What it is doing above ground, or null while it is at home in the hole. */
+  out: 'fetch' | 'roam' | null;
+  x: number;
+  y: number;
+  ang: number;
+  /** 0–1 ramp on the drawing's second face, so the butcher's rat grows rather than pops. */
+  mutate: number;
+  /** 0–1 how far up the hole the eyes have come. */
+  eyes: number;
+  /** What it is carrying home, or null. */
+  carry: InvItem | null;
+  /** The thing a fetch errand is walking towards, held by identity so an expiry cancels it. */
+  target: Drop | SkewerProj | null;
+  /** Mouthfuls it has been thrown, 0–{@link RAT_FEED_MAX}. */
+  feed: number;
+  /** Butcher form has ended, but a feeding bought it until this timestamp anyway. */
+  stayUntil: number;
+  nextSlashAt: number;
+  /** A whistled sic: the next slash it lands is doubled. */
+  sicUntil: number;
+  /** …and who it was set on, so the charge goes where the cursor pointed. */
+  sicTarget: Fighter | null;
+  /** An errand that has found nothing by here is abandoned. */
+  giveUpAt: number;
+  /** The whistle's own cooldown. The enhancement is not an ability, so the kit owns the clock. */
+  cdUntil: number;
+  /** `scene.time.now` at which something cooked, posted down the hole, comes back up as bread. */
+  swapAt: number;
+}
+
+function makeRat(): RatState {
+  return {
+    out: null, x: 0, y: 0, ang: Math.PI / 2, mutate: 0, eyes: 1, carry: null, target: null,
+    feed: 0, stayUntil: 0, nextSlashAt: 0, sicUntil: 0, sicTarget: null, giveUpAt: 0,
+    cdUntil: 0, swapAt: 0,
+  };
+}
+
 interface Side {
   owner: Owner;
   form: GluttonyForm;
@@ -430,6 +532,14 @@ export interface GluttonyArenaApi {
   setHudForm(form: GluttonyForm): void;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
+  /** Which mastery enhancement each side dropped over an E/R/F/Q slot, or null. */
+  masteryBindFor(slot: string): string | null;
+  npcMasteryBindFor(slot: string): string | null;
+  /** Mastery progress. Gated on the element by the adapter, so the kit records unconditionally. */
+  recordMasteryStat(key: string, amount: number): void;
+  /** …and read back, for the one requirement that is a checklist rather than a counter. */
+  getMasteryStat(key: string): number;
+  recordMasteryBestStat(key: string, value: number): void;
   /** Shop upgrades: the local player's equipped slots. */
   hasUpgrade(slot: string): boolean;
   /** …and the online opponent's, so their upgraded kitchen reproduces on this sim. */
@@ -504,6 +614,14 @@ export class GluttonyKit {
   private incomingTouched = new Set<Fighter>();
   /** The maw's grab and its scream. `earthStunnedUntil` is inert for a player, so we pin them. */
   private stunned = new Map<Fighter, number>();
+
+  // ── Mastery ──
+  /** Chef's Friend. One rat per side, whether or not either side has paid for one. */
+  private rats: Record<Owner, RatState> = { player: makeRat(), npc: makeRat() };
+  /** Snacking's fractional carry, so a 1.4/s regen is not silently rounded down to 1. */
+  private snackAccum: Record<Owner, number> = { player: 0, npc: 0 };
+  /** The bot has no key to whistle with, so the kit decides when it does. */
+  private npcRatCheckAt = 0;
 
   /** Latched each frame from `handleInput` — the player's real cursor. */
   private aimX = 0;
@@ -590,6 +708,58 @@ export class GluttonyKit {
   private up(owner: Owner, slot: string): boolean {
     if (!this.isGluttony(owner)) return false;
     return owner === 'player' ? this.api.hasUpgrade(slot) : this.api.hasNpcUpgrade(slot);
+  }
+
+  // ── Mastery: shared ────────────────────────────────────────────────────────
+
+  /** Whether Element Mastery is on for whichever side is asking, and they are the chef. */
+  private masteryOn(owner: Owner): boolean {
+    return this.isGluttony(owner)
+      && (owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
+  }
+
+  /**
+   * Which slot Chef's Friend was dropped on, or null. F is not scanned — `excludeSlots` refuses
+   * it, because F is the door between the two halves of the element in both directions and a
+   * mastery bound over it would delete the butcher form and the way back out of it at once.
+   */
+  private ratSlot(owner: Owner): 'e' | 'r' | 'q' | null {
+    if (!this.masteryOn(owner)) return null;
+    for (const s of ['e', 'r', 'q'] as const) {
+      const bind = owner === 'player' ? this.api.masteryBindFor(s) : this.api.npcMasteryBindFor(s);
+      if (bind === 'chefs-friend') return s;
+    }
+    return null;
+  }
+
+  /** True while this side actually owns a hole in the wall. */
+  private hasRat(owner: Owner): boolean {
+    return this.ratSlot(owner) !== null;
+  }
+
+  /** The player's key for a bound slot. */
+  private keyFor(slot: 'e' | 'r' | 'q'): Phaser.Input.Keyboard.Key {
+    return slot === 'e' ? this.api.eKey : slot === 'r' ? this.api.rKey : this.api.qKey;
+  }
+
+  /**
+   * Mastery progress. Only ever recorded for the player — the grind is the human's, not the
+   * bot's — and deliberately not gated on the mastery being *on*, since earning it is the point.
+   */
+  private record(owner: Owner, key: string, amount = 1): void {
+    if (owner === 'player') this.api.recordMasteryStat(key, amount);
+  }
+
+  /**
+   * "The Whole Larder". A checklist rather than a counter: one flag per ingredient, and the
+   * requirement itself is the number of flags standing, ratcheted so it can only ever go up.
+   */
+  private recordCookedKind(owner: Owner, kind: FoodKind): void {
+    if (owner !== 'player' || !LARDER_KINDS.includes(kind)) return;
+    this.api.recordMasteryStat(`larder_${kind}`, 1);
+    let n = 0;
+    for (const k of LARDER_KINDS) if (this.api.getMasteryStat(`larder_${k}`) > 0) n++;
+    this.api.recordMasteryBestStat('larderKinds', n);
   }
 
   /** Bristle Berries, applied at every damage site the kit owns. */
@@ -756,6 +926,9 @@ export class GluttonyKit {
     this.stunned.clear();
 
     this.sides = { player: makeSide('player'), npc: makeSide('npc') };
+    this.rats = { player: makeRat(), npc: makeRat() };
+    this.snackAccum = { player: 0, npc: 0 };
+    this.npcRatCheckAt = 0;
     this.cooking = [];
     this.rotting = [];
     this.superheatUntil = 0;
@@ -791,7 +964,7 @@ export class GluttonyKit {
     for (const id of ['glut-prep', 'glut-hot-knife', 'glut-butcher', 'glut-superheat',
       'glut-cooking', 'glut-pot', 'glut-maw', 'glut-burnt', 'glut-forage',
       'glut-berries', 'glut-mint', 'glut-deathcap', 'glut-haste', 'glut-ichor',
-      'glut-rotting', 'glut-vuln']) {
+      'glut-rotting', 'glut-vuln', 'glut-snacking', 'glut-rat']) {
       this.api.setStatusIndicator(id, null);
     }
 
@@ -828,18 +1001,24 @@ export class GluttonyKit {
     if (rightClicked) this.eatHeld('player');
 
     const ctx = this.api.buildPlayerContext(mouseX, mouseY);
+    // Mastery: whichever of E/R/Q the whistle was dropped on stops being its own ability — in
+    // *both* forms, because a Gluttony slot is two abilities and the mastery takes the slot.
+    const bound = this.ratSlot('player');
+    if (bound && Phaser.Input.Keyboard.JustDown(this.keyFor(bound))) {
+      this.tryChefsFriend('player', mouseX, mouseY);
+    }
     if (s.form === 'chef') {
       if (clicked) p.castAbility('glut-knife', ctx);
-      if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('glut-forage', ctx);
-      if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('glut-charcoal', ctx);
+      if (bound !== 'e' && Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('glut-forage', ctx);
+      if (bound !== 'r' && Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('glut-charcoal', ctx);
       if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('glut-butcher', ctx);
-      if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('glut-feast', ctx);
+      if (bound !== 'q' && Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('glut-feast', ctx);
     } else {
       if (clicked) p.castAbility('glut-cleave', ctx);
-      if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('glut-poach', ctx);
-      if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('glut-cannibalize', ctx);
+      if (bound !== 'e' && Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('glut-poach', ctx);
+      if (bound !== 'r' && Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('glut-cannibalize', ctx);
       if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('glut-return', ctx);
-      if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('glut-maw', ctx);
+      if (bound !== 'q' && Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('glut-maw', ctx);
     }
   }
 
@@ -932,7 +1111,7 @@ export class GluttonyKit {
     // The butcher's stomach is the clock. Eating is the only thing that puts time back on it.
     if (s.form === 'butcher') {
       const gain = FOOD[item.kind].hungerSec * 1000;
-      s.hunger = Math.min(HUNGER_MAX, s.hunger + gain);
+      s.hunger = Math.min(HUNGER_MAX, s.hunger + meterGain(f, gain));
       this.api.showFloatingText(f.x, f.y - 62, `🔴 +${FOOD[item.kind].hungerSec}s`, this.hex(GLT.blood));
       this.fx(owner).ring(f.x, f.y, 12, 46, GLT.blood, 380);
     }
@@ -1136,7 +1315,7 @@ export class GluttonyKit {
     // R upgrade, butcher half: an ichorous blade feeds the bar with what it cuts.
     if (ichor && dealt > 0) {
       const gain = Math.round(dealt * ICHOR_HUNGER_PER_DAMAGE);
-      s.hunger = Math.min(HUNGER_MAX, s.hunger + gain);
+      s.hunger = Math.min(HUNGER_MAX, s.hunger + meterGain(f, gain));
       this.api.showFloatingText(f.x, f.y - 72, `🩸 +${(gain / 1000).toFixed(1)}s`, this.hex(GLT.ichorLit));
     }
   }
@@ -1190,7 +1369,7 @@ export class GluttonyKit {
       return;
     }
     f.heal(BITE_HEAL);
-    s.hunger = Math.min(HUNGER_MAX, s.hunger + BITE_HUNGER_MS);
+    s.hunger = Math.min(HUNGER_MAX, s.hunger + meterGain(f, BITE_HUNGER_MS));
     this.mawFrenzyUntil = Math.max(this.mawFrenzyUntil, this.now + FRENZY_MS);
     this.api.showFloatingText(f.x, f.y - 50, `🔴 +${BITE_HEAL}  +3s`, this.hex(GLT.blood));
     this.fx(owner).ring(this.mawX, this.mawY, 20, 90, GLT.blood, 520);
@@ -1249,6 +1428,22 @@ export class GluttonyKit {
       this.api.showFloatingText(this.mawX, this.mawY - 84, '💀 IT HAS A FACE NOW', this.hex(GLT.bone));
     }
     Sfx.playAt('roar', this.mawX, { volume: 1, rate: 0.55 });
+  }
+
+  /**
+   * Ruin Mastery — Second Skin. The butcher is a whole second tray of five keys and a body that
+   * pays for damage out of a stomach instead of a health bar; `setForm(owner, 'chef')` is the
+   * kit's own way back, and it is the only thing that takes the absorber off safely.
+   *
+   * Deliberately no Murderous Intent refund: this is not walking back into the kitchen, it is
+   * being thrown out of it.
+   */
+  revertForms(f: Fighter): string[] {
+    const owner: Owner | null = f === this.api.player ? 'player'
+      : f === this.api.npc ? 'npc' : null;
+    if (!owner || this.side(owner).form !== 'butcher') return [];
+    this.setForm(owner, 'chef');
+    return ['Butcher'];
   }
 
   // ── Form ───────────────────────────────────────────────────────────────────
@@ -1362,6 +1557,7 @@ export class GluttonyKit {
       this.updateCollection(owner);
       this.updateIchor(owner, time);
       this.updateRipen(owner, time);
+      this.updateSnacking(owner, delta);
       if (owner === 'npc') this.updateNpcBrain(time);
     }
 
@@ -1372,6 +1568,7 @@ export class GluttonyKit {
     this.updateDrops(time);
     this.updateCoals(time, delta);
     this.updateSkewers(time, delta);
+    this.updateRats(time, delta);
     this.updateMaw(time, delta);
     this.updateGobbets(time, delta);
     this.updateTendrils(time, delta);
@@ -1672,6 +1869,10 @@ export class GluttonyKit {
       // First pass: it is food now, and walking over the grill will take it.
       if (c.stage === 0 && c.progress >= this.cookFull(c)) {
         c.stage = 1;
+        // Mastery — "Fifty Covers" and "The Whole Larder". The ring filling is what counts,
+        // whether or not anybody ever walks back to collect it.
+        this.record(c.owner, 'foodsCooked');
+        this.recordCookedKind(c.owner, c.kind);
         this.fx(c.owner).sizzle(pos.x, pos.y, 7, 20, 480);
         this.fx(c.owner).smoke(pos.x, pos.y, 3, 30, 0xa89a86, 800);
         this.api.showFloatingText(pos.x, pos.y - 26,
@@ -1743,6 +1944,8 @@ export class GluttonyKit {
         if (seared) dmg = Math.round(dmg * BURNT_KNIFE_MULT);
         k.hit.push(hit);
         hit.takeDamage(this.dmg(k.owner, dmg));
+        // Mastery — "Searing Service". A blade that came off the coals, and only that.
+        if (k.heated) this.record(k.owner, 'hotKnifeHits');
         this.api.spawnHitFlash(hit.x, hit.y, k.heated ? GLT.heat : GLT.steel);
         this.fx(k.owner).splat(hit.x, hit.y, 20, GLT.blood);
         if (k.heated) this.fx(k.owner).sizzle(hit.x, hit.y, 7, 22, 460);
@@ -1812,6 +2015,38 @@ export class GluttonyKit {
           this.drop(p.owner, p.item, p.x + (Math.random() - 0.5) * 60, p.y + 40);
         }
         continue;
+      }
+
+      // Chef's Friend. Checked after the two cookers on purpose: a rat that happens to be
+      // standing over the maw must not steal the rot rack out from under Head Chef.
+      if (this.hasRat(p.owner)) {
+        const rat = this.rats[p.owner];
+        if (rat.out === 'roam'
+          && Phaser.Math.Distance.Between(p.x, p.y, rat.x, rat.y) <= RAT_CATCH_R) {
+          this.foods.splice(i, 1);
+          this.feedRat(p.owner, p.item);
+          continue;
+        }
+        const hole = this.holePos(p.owner);
+        if (!rat.out && rat.swapAt <= time
+          && Phaser.Math.Distance.Between(p.x, p.y, hole.x, hole.y) <= HOLE_CATCH_R) {
+          // Cooked only. He is not an animal.
+          if (p.item.cooked && !p.item.rotten) {
+            this.foods.splice(i, 1);
+            rat.swapAt = time + HOLE_SWAP_MS;
+            this.fx(p.owner).crumbs(hole.x, hole.y + 14, foodColor(p.item.kind, true));
+            this.api.showFloatingText(hole.x, hole.y + 40,
+              `${FOOD[p.item.kind].emoji} TAKEN`, this.hex(GLT.ratFur));
+            Sfx.playAt('burrow', hole.x, { volume: 0.5, rate: 1.5 });
+            continue;
+          }
+          if (!p.item.rotten) {
+            this.foods.splice(i, 1);
+            this.drop(p.owner, p.item, hole.x + (Math.random() - 0.5) * 50, hole.y + 44);
+            this.api.showFloatingText(hole.x, hole.y + 40, '🐀 COOKED ONLY', this.hex(GLT.linenDark));
+            continue;
+          }
+        }
       }
 
       // A body stops it, and there is a joke in being hit with a raw potato — right up until
@@ -1988,6 +2223,7 @@ export class GluttonyKit {
         for (const t of this.targetsOf(owner)) {
           if (Phaser.Math.Distance.Between(this.mawX, this.mawY, t.x, t.y) > AWAKEN_WHIP_REACH) continue;
           t.takeDamage(this.mawDamage(owner, AWAKEN_WHIP_DAMAGE));
+          if (t.hp <= 0) this.record(owner, 'mawKills');
           this.api.spawnHitFlash(t.x, t.y, GLT.flesh);
           this.fx(owner).splat(t.x, t.y, 22, GLT.fleshDark);
           landed = true;
@@ -2067,6 +2303,7 @@ export class GluttonyKit {
         this.mawNextBiteAt = time + MAW_BITE_MS;
         const ba = Math.atan2(near.y - this.mawY, near.x - this.mawX);
         near.takeDamage(this.mawDamage(owner, MAW_BITE_DAMAGE));
+        if (near.hp <= 0) this.record(owner, 'mawKills');
         this.api.spawnHitFlash(near.x, near.y, GLT.tooth);
         this.fx(owner).bite(near.x, near.y, ba, 38);
         this.api.showFloatingText(near.x, near.y - 50, '🦷 BITTEN', this.hex(GLT.tooth));
@@ -2084,6 +2321,7 @@ export class GluttonyKit {
     for (const t of this.targetsOf(owner)) {
       if (Phaser.Math.Distance.Between(this.mawX, this.mawY, t.x, t.y) > SCREAM_RADIUS) continue;
       t.takeDamage(this.dmg(owner, SCREAM_DAMAGE));
+      if (t.hp <= 0) this.record(owner, 'mawKills');
       this.api.spawnHitFlash(t.x, t.y, GLT.bone);
       this.stun(t, SCREAM_STUN_MS, '💫 DEAFENED');
     }
@@ -2114,6 +2352,7 @@ export class GluttonyKit {
       }
       if (hit) {
         hit.takeDamage(b.damage);
+        if (hit.hp <= 0) this.record(b.owner, 'mawKills');
         this.api.spawnHitFlash(hit.x, hit.y, b.hot ? GLT.blood : GLT.meat);
         this.fx(b.owner).splat(hit.x, hit.y, 16, GLT.blood);
         if (b.vuln) {
@@ -2150,9 +2389,377 @@ export class GluttonyKit {
         || t.y <= this.top + TENDRIL_BAND || t.y >= this.bottom - TENDRIL_BAND;
       if (!inBand) continue;
       t.takeDamage(this.dmg(owner, TENDRIL_DAMAGE));
+      if (t.hp <= 0) this.record(owner, 'mawKills');
       this.api.spawnHitFlash(t.x, t.y, GLT.fleshDark);
       this.fx(owner).splat(t.x, t.y, 14, GLT.fleshDark);
     }
+  }
+
+  // ── Mastery: Chef's Friend ─────────────────────────────────────────────────
+
+  /**
+   * Where a side's hole is. Centred on the top wall, and only pushed off centre in the one case
+   * where it would otherwise be ambiguous: a Gluttony mirror in which both chefs own a rat.
+   */
+  private holePos(owner: Owner): { x: number; y: number } {
+    const both = this.hasRat('player') && this.hasRat('npc');
+    const off = both ? (owner === 'player' ? -110 : 110) : 0;
+    return { x: this.api.width / 2 + off, y: this.top + 6 };
+  }
+
+  /** Anything of this side's lying about that the rat is willing to carry home. */
+  private fetchableAt(owner: Owner, x: number, y: number, range: number): Drop | SkewerProj | null {
+    let best: Drop | SkewerProj | null = null;
+    let bestD = range;
+    for (const d of this.drops) {
+      if (d.owner !== owner) continue;
+      const dist = Phaser.Math.Distance.Between(x, y, d.x, d.y);
+      if (dist < bestD) { bestD = dist; best = d; }
+    }
+    for (const k of this.skewers) {
+      if (k.owner !== owner || k.state !== 'landed' || !k.meat) continue;
+      const dist = Phaser.Math.Distance.Between(x, y, k.x, k.y);
+      if (dist < bestD) { bestD = dist; best = k; }
+    }
+    return best;
+  }
+
+  /** Whether an errand's prize is still there to be collected. */
+  private fetchValid(owner: Owner, t: Drop | SkewerProj | null): boolean {
+    if (!t) return false;
+    if ('item' in t) return this.drops.includes(t) && t.owner === owner;
+    return this.skewers.includes(t) && t.owner === owner && t.state === 'landed' && t.meat;
+  }
+
+  /** Take the prize off the floor and put it in the rat's mouth. */
+  private ratGrab(owner: Owner, rat: RatState, t: Drop | SkewerProj): void {
+    if ('item' in t) {
+      const i = this.drops.indexOf(t);
+      if (i >= 0) this.drops.splice(i, 1);
+      rat.carry = t.item;
+    } else {
+      t.meat = false;
+      t.until = Math.min(t.until, this.now + 500);
+      rat.carry = { kind: 'meat', cooked: false };
+    }
+    rat.target = null;
+    rat.giveUpAt = this.now + RAT_FETCH_MS;
+    this.fx(owner).crumbs(rat.x, rat.y, foodColor(rat.carry.kind, rat.carry.cooked));
+    Sfx.playAt('ui-drop', rat.x, { volume: 0.45, rate: 1.5 });
+  }
+
+  /** The rat arrives with something. Onto the strip if there is room, at your feet if not. */
+  private ratDeliver(owner: Owner, rat: RatState): void {
+    const item = rat.carry;
+    if (!item) return;
+    rat.carry = null;
+    const f = this.fighter(owner);
+    if (!this.alive(f)) { this.drop(owner, item, rat.x, rat.y); return; }
+    if (!this.stow(owner, item)) this.drop(owner, item, f.x, f.y + 18);
+    this.api.showFloatingText(f.x, f.y - 50,
+      `🐀 ${this.itemLabel(item)}`, this.hex(foodColor(item.kind, item.cooked)));
+    this.fx(owner).crumbs(f.x, f.y + 6, foodColor(item.kind, item.cooked));
+    Sfx.playAt('ui-drop', f.x, { volume: 0.55, rate: 1.25 });
+  }
+
+  /** Something cooked went down the hole. What comes back up is one of the rat's own three. */
+  private popFromHole(owner: Owner): void {
+    const rat = this.rats[owner];
+    rat.swapAt = 0;
+    const hole = this.holePos(owner);
+    const kind = RAT_LARDER[Math.floor(Math.random() * RAT_LARDER.length)];
+    this.drop(owner, { kind, cooked: false }, hole.x, hole.y + 40);
+    this.fx(owner).crumbs(hole.x, hole.y + 24, FOOD[kind].color);
+    this.fx(owner).ring(hole.x, hole.y + 20, 6, 34, FOOD[kind].color, 460);
+    this.api.showFloatingText(hole.x, hole.y + 52,
+      `${FOOD[kind].emoji} ${FOOD[kind].label}`, this.hex(FOOD[kind].color));
+    Sfx.playAt('unlock', hole.x, { volume: 0.6, rate: 1.15 });
+  }
+
+  /** Throwing food at the rat rather than at the hole. It gets bigger. */
+  private feedRat(owner: Owner, item: InvItem): void {
+    const rat = this.rats[owner];
+    const before = rat.feed;
+    rat.feed = Math.min(RAT_FEED_MAX, rat.feed + 1);
+    rat.stayUntil = Math.max(rat.stayUntil, this.now + RAT_STAY_MS);
+    this.fx(owner).crumbs(rat.x, rat.y, foodColor(item.kind, item.cooked));
+    this.fx(owner).ring(rat.x, rat.y, 8, 40, GLT.ratMutant, 460);
+    this.api.showFloatingText(rat.x, rat.y - 32,
+      before < RAT_FEED_MAX ? `🐀 FED ${rat.feed}/${RAT_FEED_MAX}` : '🐀 FULL — 12s',
+      this.hex(GLT.stewLit));
+    Sfx.playAt('potion-drink', rat.x, { volume: 0.6, rate: 1.3 });
+  }
+
+  /**
+   * The whistle. Nothing here goes through `castAbility` — the enhancement is not in the
+   * element's ability list — so the refusals that gate every other key in the game have to be
+   * repeated by hand, or a disarm would stop mattering the moment the mastery was bound.
+   */
+  private tryChefsFriend(owner: Owner, tx: number, ty: number): boolean {
+    const f = this.fighter(owner);
+    if (!this.alive(f) || !this.hasRat(owner)) return false;
+    const rat = this.rats[owner];
+    const wall = Date.now();
+    if (wall < f.disarmedUntil || wall < f.chickenUntil || wall < f.silencedUntil) return false;
+    if (this.now < rat.cdUntil) return false;
+
+    // ── Butcher half: the rat is already out, so the whistle is a sic ──
+    if (rat.out === 'roam') {
+      const prey = this.targetsOf(owner)
+        .filter((t) => Phaser.Math.Distance.Between(tx, ty, t.x, t.y) <= 420)
+        .sort((p, q) => Phaser.Math.Distance.Between(tx, ty, p.x, p.y)
+          - Phaser.Math.Distance.Between(tx, ty, q.x, q.y))[0];
+      if (!prey) {
+        if (owner === 'player') {
+          this.api.showFloatingText(f.x, f.y - 48, '🐀 NOTHING TO SET IT ON', this.hex(GLT.linenDark));
+        }
+        return false;
+      }
+      rat.sicUntil = this.now + RAT_SIC_MS;
+      rat.sicTarget = prey;
+      rat.nextSlashAt = Math.min(rat.nextSlashAt, this.now + 150);
+      rat.cdUntil = this.now + RAT_COOLDOWN_MS;
+      // A sic drops whatever it was carrying — it is not a delivery run any more.
+      if (rat.carry) { this.drop(owner, rat.carry, rat.x, rat.y); rat.carry = null; }
+      this.fx(owner).ring(rat.x, rat.y, 8, 46, GLT.ratEye, 420);
+      this.api.showFloatingText(rat.x, rat.y - 34, '🐀 SIC', this.hex(GLT.ratEye));
+      Sfx.playAt('roar', rat.x, { volume: 0.65, rate: 1.9 });
+      return true;
+    }
+
+    // Already out on an errand, or busy down there with a swap.
+    if (rat.out === 'fetch' || rat.swapAt > this.now) return false;
+
+    // ── Kitchen half: a fetch, or a trade when there is nothing to fetch ──
+    const hole = this.holePos(owner);
+    rat.cdUntil = this.now + RAT_COOLDOWN_MS;
+    const prize = this.fetchableAt(owner, tx, ty, 100000);
+    if (prize) {
+      rat.out = 'fetch';
+      rat.x = hole.x;
+      rat.y = hole.y + HOLE_R;
+      rat.target = prize;
+      rat.carry = null;
+      rat.giveUpAt = this.now + RAT_FETCH_MS;
+      this.fx(owner).crumbs(hole.x, hole.y + HOLE_R, GLT.ratFur);
+      this.api.showFloatingText(hole.x, hole.y + 40, '🐀 FETCH', this.hex(GLT.ratFur));
+      Sfx.playAt('burrow', hole.x, { volume: 0.5, rate: 1.6 });
+      return true;
+    }
+    rat.swapAt = this.now + HOLE_SWAP_MS;
+    this.api.showFloatingText(hole.x, hole.y + 40, '🐀 NOTHING OUT THERE', this.hex(GLT.linenDark));
+    Sfx.playAt('burrow', hole.x, { volume: 0.45, rate: 1.4 });
+    return true;
+  }
+
+  /** The rat's one attack. Feeding it multiplies this; a whistle doubles the next one outright. */
+  private ratSlash(owner: Owner, rat: RatState, target: Fighter): void {
+    rat.nextSlashAt = this.now + RAT_SLASH_MS / (1 + rat.feed * RAT_SPEED_PER_FEED);
+    const sic = this.now < rat.sicUntil && (!rat.sicTarget || rat.sicTarget === target);
+    let amount = RAT_SLASH_DAMAGE * (1 + rat.feed * RAT_DAMAGE_PER_FEED);
+    if (sic) { amount *= RAT_SIC_MULT; rat.sicUntil = 0; rat.sicTarget = null; }
+    const dealt = this.dmg(owner, Math.max(1, Math.round(amount)));
+    target.takeDamage(dealt);
+    const ang = Math.atan2(target.y - rat.y, target.x - rat.x);
+    this.api.spawnHitFlash(target.x, target.y, GLT.ratMutant);
+    this.fx(owner).slashArc(rat.x, rat.y, ang, RAT_SLASH_REACH, GLT.ratEye);
+    this.fx(owner).splat(target.x, target.y, 16, GLT.blood);
+    if (sic) this.api.showFloatingText(target.x, target.y - 44, '🐀 SIC', this.hex(GLT.ratEye));
+    Sfx.playAt('slash', target.x, { volume: 0.55, rate: 1.6 });
+  }
+
+  private updateRats(time: number, delta: number): void {
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const rat = this.rats[owner];
+      if (!this.hasRat(owner)) {
+        // The enhancement was never bound, or the match is not this element's any more.
+        rat.out = null;
+        rat.carry = null;
+        rat.target = null;
+        rat.feed = 0;
+        rat.swapAt = 0;
+        continue;
+      }
+      this.updateRat(owner, rat, time, delta);
+    }
+    if (this.isGluttony('npc')) this.updateNpcMastery(time);
+  }
+
+  private updateRat(owner: Owner, rat: RatState, time: number, delta: number): void {
+    const hole = this.holePos(owner);
+    const f = this.fighter(owner);
+    const s = this.side(owner);
+    const dt = delta / 1000;
+
+    // The trade downstairs runs whether or not anybody is watching it.
+    if (rat.swapAt > 0 && time >= rat.swapAt) this.popFromHole(owner);
+
+    // Butcher form is what brings it out as itself; a feeding is what keeps it out afterwards.
+    const wantRoam = this.alive(f) && (s.form === 'butcher' || time < rat.stayUntil);
+    if (wantRoam && rat.out !== 'roam') {
+      rat.out = 'roam';
+      rat.x = hole.x;
+      rat.y = hole.y + HOLE_R;
+      rat.target = null;
+      rat.nextSlashAt = time + 600;
+      rat.swapAt = 0;
+      this.fx(owner).ring(hole.x, hole.y + HOLE_R, 8, 52, GLT.ratMutant, 560);
+      this.fx(owner).splat(hole.x, hole.y + HOLE_R, 20, GLT.ratMutantDark);
+      this.api.showFloatingText(hole.x, hole.y + 46, '🐀 IT COMES OUT', this.hex(GLT.ratMutant));
+      Sfx.playAt('roar', hole.x, { volume: 0.75, rate: 1.7 });
+    } else if (!wantRoam && rat.out === 'roam') {
+      // Not thrown out — walked home. Whatever it was carrying still gets delivered on the way.
+      rat.out = 'fetch';
+      rat.target = null;
+      rat.giveUpAt = time + RAT_FETCH_MS;
+      rat.sicUntil = 0;
+      rat.feed = 0;
+    }
+
+    // The drawing ramps rather than switching, in both directions.
+    rat.mutate = Phaser.Math.Clamp(
+      rat.mutate + (rat.out === 'roam' ? 1 : -1) * (delta / 500), 0, 1);
+    rat.eyes = Phaser.Math.Clamp(
+      rat.eyes + (rat.out || rat.swapAt > time ? -1 : 1) * (delta / 260), 0, 1);
+
+    if (!rat.out) return;
+
+    const move = (tx: number, ty: number, speed: number): number => {
+      const d = Phaser.Math.Distance.Between(rat.x, rat.y, tx, ty);
+      if (d > 1) {
+        const a = Math.atan2(ty - rat.y, tx - rat.x);
+        rat.ang = a;
+        const step = Math.min(d, speed * dt);
+        rat.x += Math.cos(a) * step;
+        rat.y += Math.sin(a) * step;
+      }
+      return d;
+    };
+    const speedMult = 1 + rat.feed * RAT_SPEED_PER_FEED;
+
+    if (rat.out === 'fetch') {
+      const speed = RAT_FETCH_SPEED * speedMult;
+      if (rat.carry && this.alive(f)) {
+        if (move(f.x, f.y, speed) <= RAT_REACH) this.ratDeliver(owner, rat);
+        return;
+      }
+      if (time >= rat.giveUpAt) {
+        // Gave up, or the cook it was walking to is dead. Whatever it had goes on the floor
+        // rather than out of the world — it was a real ingredient and somebody paid for it.
+        if (rat.carry) { this.drop(owner, rat.carry, rat.x, rat.y); rat.carry = null; }
+        rat.target = null;
+      }
+      if (this.fetchValid(owner, rat.target)) {
+        const t = rat.target as Drop | SkewerProj;
+        if (move(t.x, t.y, speed) <= RAT_REACH) this.ratGrab(owner, rat, t);
+        return;
+      }
+      rat.target = null;
+      // Nothing left to do above ground.
+      if (move(hole.x, hole.y + HOLE_R, speed) <= RAT_REACH) {
+        rat.out = null;
+        rat.feed = 0;
+        rat.sicUntil = 0;
+      }
+      return;
+    }
+
+    // ── Roaming, which is the whole butcher half of the enhancement ──
+    const speed = RAT_ROAM_SPEED * speedMult;
+    if (rat.carry) {
+      if (this.alive(f) && move(f.x, f.y, speed) <= RAT_REACH) this.ratDeliver(owner, rat);
+      return;
+    }
+    // A whistled rat has one job and it is not tidying up.
+    const sicked = time < rat.sicUntil && this.alive(rat.sicTarget) ? rat.sicTarget : null;
+    if (!sicked) {
+      // Between swings it tidies up: anything of yours on the floor nearby is collected first.
+      const errand = this.fetchableAt(owner, rat.x, rat.y, RAT_ERRAND_RANGE);
+      if (errand) {
+        if (move(errand.x, errand.y, speed) <= RAT_REACH) this.ratGrab(owner, rat, errand);
+        return;
+      }
+    }
+    const prey = sicked ?? this.enemyOf(owner);
+    if (!prey) {
+      if (this.alive(f)) move(f.x, f.y - 34, speed);
+      return;
+    }
+    const d = move(prey.x, prey.y, speed);
+    if (d <= RAT_SLASH_REACH && time >= rat.nextSlashAt) this.ratSlash(owner, rat, prey);
+  }
+
+  // ── Mastery: Snacking ──────────────────────────────────────────────────────
+
+  /** What the strip would be worth to this side if they ate all of it. */
+  private snackPool(owner: Owner): number {
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return 0;
+    let total = 0;
+    for (const item of this.side(owner).inv) total += Math.max(0, this.healValue(f, item));
+    return total;
+  }
+
+  /** Health a second, on a straight line from an empty strip to a full one. */
+  private snackRate(owner: Owner): number {
+    const ratio = Phaser.Math.Clamp(this.snackPool(owner) / SNACK_FULL_POOL, 0, 1);
+    return SNACK_MIN_RATE + (SNACK_MAX_RATE - SNACK_MIN_RATE) * ratio;
+  }
+
+  /**
+   * The regeneration itself. Accumulated in fractions and spent in whole points, because
+   * `Fighter.heal` rounds into the batched heal number and a 1.4/s trickle paid one frame at a
+   * time would otherwise be silently discarded.
+   */
+  private updateSnacking(owner: Owner, delta: number): void {
+    if (!this.masteryOn(owner)) { this.snackAccum[owner] = 0; return; }
+    const f = this.fighter(owner);
+    if (!this.alive(f) || f.hp >= f.maxHp) { this.snackAccum[owner] = 0; return; }
+    this.snackAccum[owner] += (this.snackRate(owner) * delta) / 1000;
+    const whole = Math.floor(this.snackAccum[owner]);
+    if (whole < 1) return;
+    this.snackAccum[owner] -= whole;
+    f.heal(whole);
+  }
+
+  // ── Mastery: the bot ───────────────────────────────────────────────────────
+
+  /**
+   * Everything the bot's rat does that has no key behind it. The bot never re-derives any of
+   * this — the kit owns the geometry — and the reads it makes here are the same ones the human's
+   * key press makes.
+   */
+  private updateNpcMastery(time: number): void {
+    if (!this.hasRat('npc') || time < this.npcRatCheckAt) return;
+    this.npcRatCheckAt = time + NPC_RAT_CHECK_MS;
+    const rat = this.rats.npc;
+    const s = this.sides.npc;
+    const f = this.api.npc;
+    if (!this.alive(f)) return;
+
+    // Roaming: feed it whatever is spare, because a fed rat outlives the transformation.
+    if (rat.out === 'roam') {
+      if (rat.feed < RAT_FEED_MAX && s.inv.length >= 3) {
+        const spare = [...s.inv].sort((a, b) => this.healValue(f, a) - this.healValue(f, b))[0];
+        if (spare) { this.throwFood('npc', spare, rat.x, rat.y); return; }
+      }
+      const prey = this.enemyOf('npc');
+      if (prey) this.tryChefsFriend('npc', prey.x, prey.y);
+      return;
+    }
+
+    // In the kitchen: post something cooked down the hole whenever the strip can spare it, and
+    // otherwise send the rat out after anything of its own it has left lying around.
+    if (!rat.out && rat.swapAt <= this.now) {
+      const spare = s.inv.filter((it) => it.cooked && !it.rotten);
+      if (spare.length >= 2) {
+        const hole = this.holePos('npc');
+        this.throwFood('npc', spare[0], hole.x, hole.y);
+        return;
+      }
+    }
+    const prize = this.fetchableAt('npc', f.x, f.y, 100000);
+    if (prize) this.tryChefsFriend('npc', prize.x, prize.y);
   }
 
   private updateStuns(): void {
@@ -2312,6 +2919,17 @@ export class GluttonyKit {
       const fade = Phaser.Math.Clamp((k.until - this.now) / 800, 0, 1);
       spatter(g, this.col(k.owner), k.x, k.y, 12, GLT.blood, 4, fade * 0.7);
     }
+
+    // Chef's Friend: the hole is cut into the wall, so it belongs under everything that walks.
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      if (!this.hasRat(owner)) continue;
+      const rat = this.rats[owner];
+      const hole = this.holePos(owner);
+      const pending = rat.swapAt > this.now
+        ? Phaser.Math.Clamp((rat.swapAt - this.now) / HOLE_SWAP_MS, 0, 1)
+        : 0;
+      ratHole(g, this.col(owner), hole.x, hole.y, HOLE_R, t, rat.eyes, pending, 1);
+    }
   }
 
   /**
@@ -2423,6 +3041,25 @@ export class GluttonyKit {
       if (!this.alive(f)) continue;
       const left = (s.potUntil - this.now) / FEAST_MS;
       stewPot(g, this.col(owner), f.x, f.y - 34, 17, t, 1 - left, 1);
+    }
+
+    // ── The rat, and whatever it is bringing back ──
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const rat = this.rats[owner];
+      if (!rat.out || !this.hasRat(owner)) continue;
+      const col = this.col(owner);
+      // The sic ring goes under it, so a whistled rat is readable from across the arena.
+      if (this.now < rat.sicUntil) {
+        g.lineStyle(1.6, col(GLT.ratEye), 0.35 + 0.25 * Math.sin(t * 9));
+        g.strokeCircle(rat.x, rat.y, 16 + 3 * Math.sin(t * 6));
+      }
+      g.fillStyle(col(0x000000), 0.28);
+      g.fillEllipse(rat.x, rat.y + 8, 22 + rat.mutate * 10, 7);
+      ratBody(g, col, rat.x, rat.y, rat.ang, 22, rat.mutate, rat.feed / RAT_FEED_MAX, t, 1);
+      if (rat.carry) {
+        itemShape(g, col, rat.x - Math.cos(rat.ang) * 14, rat.y - Math.sin(rat.ang) * 14 - 10,
+          rat.carry, 16, 1, t * 2);
+      }
     }
 
     // ── Burn marks on whoever is carrying one ──
@@ -2627,6 +3264,26 @@ export class GluttonyKit {
       until: this.mawAwakenUntil, priority: 94,
     } : null);
 
+    // ── Mastery ──
+    const snacking = playerIsGluttony && this.masteryOn('player');
+    this.api.setStatusIndicator('glut-snacking', snacking ? {
+      name: 'Snacking', emoji: '🍪', color: GLT.stewLit,
+      description: `A full larder is a slow heal. ${this.snackRate('player').toFixed(1)} health a second right now — ${Math.round(this.snackPool('player'))} of healing on the strip, and it runs from 1/s empty to 9/s at 200.`,
+      priority: 98,
+    } : null);
+
+    const rat = this.rats.player;
+    this.api.setStatusIndicator('glut-rat', playerIsGluttony && this.hasRat('player') && rat.out ? {
+      name: rat.out === 'roam' ? 'The Friend' : 'Fetching', emoji: '🐀',
+      color: rat.out === 'roam' ? GLT.ratMutant : GLT.ratFur,
+      description: rat.out === 'roam'
+        ? `Out and hunting. ${Math.round(RAT_SLASH_DAMAGE * (1 + rat.feed * RAT_DAMAGE_PER_FEED))} a slash at ${rat.feed}/${RAT_FEED_MAX} feeds, and it collects anything of yours it passes. Throw food at it to feed it — each mouthful buys 12 seconds of staying out after the transformation ends.`
+        : 'Out on an errand. It will bring back whatever it went for and put it straight on the strip.',
+      until: rat.out === 'roam' && rat.stayUntil > time && s.form !== 'butcher'
+        ? rat.stayUntil : undefined,
+      priority: 97,
+    } : null);
+
     // ── Victim side: the burn and the maw's mark can be on the player whoever is Gluttony. ──
     const burn = this.burnt.get(p);
     this.api.setStatusIndicator('glut-burnt', burn && burn > time ? {
@@ -2725,6 +3382,14 @@ export class GluttonyKit {
     if (abilityId === 'glut-poach'
       && this.skewers.some((k) => k.owner === 'player' && k.state === 'landed' && k.meat)) {
       return 1;
+    }
+    // The mastery is not an ability, so its card counts a clock the kit owns. A rat that is out
+    // reads as full: what you are waiting on is not the whistle, it is the rat coming home.
+    if (abilityId === 'chefs-friend') {
+      const rat = this.rats.player;
+      if (rat.out) return 1;
+      const left = rat.cdUntil - time;
+      return left <= 0 ? 1 : Phaser.Math.Clamp(1 - left / RAT_COOLDOWN_MS, 0, 1);
     }
     return p.getCooldownRatio(abilityId);
   }

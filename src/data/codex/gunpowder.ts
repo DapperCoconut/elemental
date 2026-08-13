@@ -18,11 +18,12 @@ const gunpowder: ElementCodex = {
     {
       emoji: '🔫',
       name: 'Three Muskets',
-      magic:
-        'You carry three, and each one you fire is thrown down behind you glowing red. It lies '
-        + 'there cooling for twelve seconds and then it is yours again if you go and stand on it. '
-        + 'Reloading is not a button — it is a walk back across ground you have already been '
-        + 'shooting over.',
+      basics:
+        'You carry 3 muskets and every Musket Shot spends one — a click with none left prints "Empty!" '
+        + 'and does nothing at all. The spent gun drops 68px directly behind you, hot and unusable, and '
+        + 'cools for 12 seconds before it can be picked back up; walking over a cooled musket returns it '
+        + 'to the count, and nothing else recovers ammunition. Weapons in the arsenal can speed that '
+        + 'cooling up or slow it down.',
       effects: [
         { tag: 'resource', label: 'Ammunition', detail: '3 muskets. A click with none left prints "Empty!" and does nothing at all.' },
         { tag: 'summon', label: 'Where they land', detail: 'The spent musket drops 68px directly behind the caster, hot and unusable.' },
@@ -37,11 +38,14 @@ const gunpowder: ElementCodex = {
     {
       emoji: '🎒',
       name: 'The Arsenal',
-      magic:
-        'A row of slots at the bottom of the screen, each one a gun you chose. Fire at Will '
-        + 'discharges every one of them in the same instant, so the ability is worth exactly what '
-        + 'the shopping was — and several of the guns carry a running cost for simply being in the '
-        + 'bag.',
+      basics:
+        'A bag of 3 weapon slots, raised to 6 by Expanded Arsenal, that fire together on Fire at Will '
+        + 'and also apply passives just for being carried: each Pistol cuts 10% off the Fire at Will '
+        + 'cooldown, each Rifle adds 25% Musket Shot damage, each RPG adds 20% to the cooldown, each '
+        + 'Freeze-Ray cools muskets 20% faster, each Flamethrower 20% slower and each Minigun 35% slower. '
+        + 'Right-clicking a slot removes that weapon — or, with Expanded Arsenal, marks it to misfire '
+        + 'once more on your next volley and then go. Arsenal Expansion offers 3 at random from 6 base '
+        + 'weapons, or from all 13 with Weapons Depot.',
       effects: [
         { tag: 'resource', label: 'Capacity', detail: '3 slots, raised to 6 by the R+ Expanded Arsenal upgrade.' },
         { tag: 'buff', label: 'Passive effects', detail: 'Pistol −10% Fire at Will cooldown per copy; Rifle +25% Musket Shot damage per copy; RPG +20% Fire at Will cooldown per copy; Freeze-Ray muskets cool 20% faster per copy; Flamethrower 20% slower, Minigun 35% slower.' },
@@ -57,11 +61,11 @@ const gunpowder: ElementCodex = {
 
   abilities: {
     'gunpowder-musket-shot': {
-      magic:
-        'A real musket: torn flame out of the muzzle, a hard crack, a cloud of smoke that hangs '
-        + 'long after the ball has gone, and the gun thrown away behind you because there is no '
-        + 'reloading it in this fight. The single biggest per-shot number in the element, and only '
-        + 'three of them before you have to go and collect.',
+      basics:
+        'Fires a ball at 900 px/s — the fastest projectile in the kit — for 35 damage, plus 25% per '
+        + 'Rifle you carry, so 43 with one, 52 with two and 61 with three. Each shot drops a musket 68px '
+        + 'behind you, hot for 12 seconds, so three shots leaves you unarmed. 0.35s cooldown, meaning all '
+        + 'three can be spent in about a second.',
       cast: 'Click, aimed at the cursor. Instant. Spends one musket.',
       effects: [
         { tag: 'damage', label: 'The ball', detail: '35 damage, +25% per Rifle in your arsenal — 43 with one, 52 with two, 61 with three.' },
@@ -70,10 +74,12 @@ const gunpowder: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '0.35s cooldown, so all three can be spent in about a second.' },
       ],
       upgrade: {
-        magic:
-          'Attached Bayonet turns the spent gun into a second weapon. It is not dropped — it is '
-          + 'thrown, blade first, at whatever you were aiming at, and where it lands it stays as a '
-          + 'stake in the floor that keeps cutting anybody who walks over it.',
+        basics:
+          'The musket is thrown as well as fired: 10 damage to anybody it passes through on its way to '
+          + 'the cursor at 640 px/s, with the ball still firing as normal alongside it, and 10 more to '
+          + 'anybody within 26px of the grounded bayonet on a 1-second cooldown for as long as it lies '
+          + 'there. It lands where you were aiming instead of behind you, so collecting your guns means '
+          + 'advancing rather than retreating.',
         effects: [
           { tag: 'damage', label: 'Thrown', detail: '10 damage to anybody it passes through on its way to the cursor, at 640 px/s. The musket ball still fires as normal alongside it.', requiresUpgrade: 'click' },
           { tag: 'damage', label: 'On the ground', detail: '10 damage to anybody within 26px of a grounded bayonet, on a 1-second internal cooldown, for as long as it lies there.', requiresUpgrade: 'click' },
@@ -87,10 +93,10 @@ const gunpowder: ElementCodex = {
     },
 
     'gunpowder-explosive-retreat': {
-      magic:
-        'A charge set off at arm\'s length and used as a door. The blast goes in front of you and '
-        + 'the recoil throws you the other way at speed, leaving a bank of smoke in the gap. You '
-        + 'are untouchable for the fifth of a second you are in the air.',
+      basics:
+        'Blasts 20 damage in a 45px radius 65px ahead of you and throws you 620 velocity directly '
+        + 'backwards, cut off after 220ms — and you are fully invincible and counted as dodging for that '
+        + 'whole flight. 7s cooldown, with a 130ms camera shake.',
       cast: 'E, aimed. The blast is 65px along the aim; you go the opposite way.',
       effects: [
         { tag: 'damage', label: 'The blast', detail: '20 damage in a 45px radius, 65px in front of you along the aim.' },
@@ -99,10 +105,10 @@ const gunpowder: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '7s cooldown, with a 130ms camera shake.' },
       ],
       upgrade: {
-        magic:
-          'Double Barrel sets off the second charge behind you as well. The retreat becomes a '
-          + 'pincer — anybody who was chasing you into the gap is blown out of it, and anybody in '
-          + 'front is still eating the front blast.',
+        basics:
+          'A second 20-damage blast in a 45px radius fires 65px behind you, where you are about to land, '
+          + 'throwing anybody caught 300 velocity further along your escape line. The 620 launch and the '
+          + '220ms of invincibility are unchanged — this is pure extra damage on the landing zone.',
         effects: [
           { tag: 'damage', label: 'Rear blast', detail: 'A second 20 damage in a 45px radius, 65px behind you — where you are about to land.', requiresUpgrade: 'e' },
           { tag: 'control', label: 'Rear knockback', detail: 'Anybody caught within 45px of the rear blast is thrown 300 velocity further along your escape line.', requiresUpgrade: 'e' },
@@ -112,10 +118,14 @@ const gunpowder: ElementCodex = {
     },
 
     'gunpowder-fire-at-will': {
-      magic:
-        'Every barrel you are carrying, at the same time, at the same point. The smoke and the '
-        + 'camera shake scale with how many guns are in the bag, and what it actually does depends '
-        + 'entirely on which ones you took.',
+      basics:
+        'Every weapon in your arsenal fires its own shot along the aim at once — three, or six with '
+        + 'Expanded Arsenal — so a volley is anything from 3 damage to well over 60 depending entirely on '
+        + 'what you took. Each Pistol refunds 10% of the 9-second cooldown as the volley fires (0.9s '
+        + 'apiece) and each RPG adds 20% (1.8s apiece). A Gunblade anywhere in the bag grants 20% damage '
+        + 'reduction for 2 seconds after every volley, and a Sniper only fires on every other volley, '
+        + 'though a freshly taken one fires immediately and then sits out the next. Refused with an empty '
+        + 'arsenal.',
       cast: 'R, aimed. Instant. Refuses with an empty arsenal.',
       effects: [
         { tag: 'damage', label: 'Everything at once', detail: 'Each of your up-to-3 weapons (6 with R+) fires its own shot along the aim simultaneously — anything from 3 damage to well over 60, entirely depending on what you took.' },
@@ -144,10 +154,11 @@ const gunpowder: ElementCodex = {
         ],
       },
       upgrade: {
-        magic:
-          'Expanded Arsenal doubles the bag and changes what throwing a gun away means. A discarded '
-          + 'weapon does not simply vanish — it misfires: it goes off one last time on the next '
-          + 'volley and only then leaves.',
+        basics:
+          'Arsenal capacity rises from 3 slots to 6, so a full volley is six weapons rather than three, '
+          + 'and right-clicking a slot now marks it to misfire — it fires one last time at full damage on '
+          + 'your next Fire at Will and is removed afterwards. Six slots also means six copies of whatever '
+          + 'running cost you took: three Miniguns is muskets cooling more than twice as slowly.',
         effects: [
           { tag: 'resource', label: 'Six slots', detail: 'Arsenal capacity rises from 3 to 6, so a full Fire at Will is six weapons rather than three.', requiresUpgrade: 'r' },
           { tag: 'damage', label: 'Misfire', detail: 'Right-clicking a slot marks it for removal instead of deleting it. It fires 1 last time on the next Fire at Will, at its full damage, and is removed afterwards.', requiresUpgrade: 'r' },
@@ -160,10 +171,12 @@ const gunpowder: ElementCodex = {
     },
 
     'gunpowder-arsenal-expansion': {
-      magic:
-        'The shop, opened mid-fight. Three guns are laid out and you take one. There is no cost and '
-        + 'almost no cooldown — the entire limitation is that the bag has a size and half the things '
-        + 'in it make some other part of your kit worse.',
+      basics:
+        'Opens a menu of 3 weapons drawn at random with no repeats, and picking one closes it. The base '
+        + 'pool is Pistol, AR, Shotgun, Rifle, Grenade Launcher and Machine Gun, with the seven exotics '
+        + 'added by Weapons Depot. With every slot occupied the cast is refused and the cooldown '
+        + 'refunded, so you must right-click a weapon out first. 1.5s cooldown, refunded on both the '
+        + 'refusal and the pick — the ability is effectively free.',
       cast: 'F. Opens a three-option menu; picking one closes it. Refuses outright with a full arsenal.',
       effects: [
         { tag: 'utility', label: 'The offer', detail: '3 weapons drawn at random from the pool, with no repeats within the offer.' },
@@ -172,11 +185,12 @@ const gunpowder: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '1.5s cooldown, refunded on both the refusal and the pick — the ability is effectively free.' },
       ],
       upgrade: {
-        magic:
-          'Weapons Depot opens the back room. Seven more guns join the pool, and every one of them '
-          + 'is stranger and more lopsided than anything in the base six — a flamethrower that '
-          + 'stops your muskets cooling, a minigun that roots you, a freeze ray that barely hurts '
-          + 'and stuns anyway.',
+        basics:
+          'Flamethrower, RPG, Minigun, Sniper, Ray-Gun, Freeze-Ray and Gunblade join the pool, taking it '
+          + 'from 6 possible weapons to 13. Every exotic carries a running cost for as long as it is in the '
+          + 'bag — slower musket cooling, a longer Fire at Will, a slow while firing, or a skipped volley — '
+          + 'and because the offer is drawn from all 13, a specific base weapon becomes markedly rarer to '
+          + 'be shown.',
         effects: [
           { tag: 'utility', label: 'Seven exotics', detail: 'Flamethrower, RPG, Minigun, Sniper, Ray-Gun, Freeze-Ray and Gunblade join the offer pool — 13 possible weapons instead of 6.', requiresUpgrade: 'f' },
           { tag: 'cost', label: 'Each with a drawback', detail: 'Every exotic carries a running cost while it is in the bag: slower musket cooling, a longer Fire at Will, a slow while firing, or a skipped volley.', requiresUpgrade: 'f' },
@@ -190,11 +204,13 @@ const gunpowder: ElementCodex = {
     },
 
     'gunpowder-blunderblast': {
-      magic:
-        'The bell of the blunderbuss opened wide and turned into a hoover. A silver cone hangs in '
-        + 'front of you for five seconds and swallows anything the other fighter has in the air '
-        + 'inside it. When the cone closes, the hoard stays loaded — and the next time you pull the '
-        + 'trigger you cough all of it back out in a fan, twice as hard as it arrived.',
+      basics:
+        'Opens a 180px, 30° cone that follows your cursor for 5 seconds while you keep moving and '
+        + 'shooting. Every enemy projectile inside it is destroyed and banked, up to 30, each remembering '
+        + 'the texture and damage of the shot it swallowed. Your next Musket Shot then fires the whole '
+        + 'hoard in a 30° fan at 200% of each bullet\'s original damage — costing no ammunition and '
+        + 'dropping no musket. 20s cooldown, and the hoard stays armed indefinitely once the cone closes, '
+        + 'so the shot is on your schedule.',
       cast: 'Q. The cone follows the cursor live for its whole 5 seconds; you keep moving and shooting.',
       effects: [
         { tag: 'shield', label: 'The cone', detail: '180px reach, a 30° cone, following your aim for 5 seconds. Enemy projectiles inside it are destroyed and banked.' },
@@ -203,10 +219,10 @@ const gunpowder: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '20s cooldown. The hoard stays armed indefinitely once the cone has closed — the shot is on your schedule.' },
       ],
       upgrade: {
-        magic:
-          'Vortex Cannon opens the bell wider and lights what comes back out. The cone is bigger in '
-          + 'every direction and the returned hoard is on fire — it burns whoever it hits and each '
-          + 'bullet bursts into flame where it lands.',
+        basics:
+          'The mouth grows to 240px across a 45° cone — most of the frontal arc — and returns fire at '
+          + '225% of the original damage instead of 200%. Every returned bullet also sets its target '
+          + 'burning for 3 seconds and bursts for 5 damage in a 55px fire area on impact.',
         effects: [
           { tag: 'area', label: 'A bigger mouth', detail: '240px reach and a 45° cone instead of 180px and 30° — most of the frontal arc.', requiresUpgrade: 'q' },
           { tag: 'damage', label: 'Hotter return', detail: '225% of the original damage per bullet instead of 200%.', requiresUpgrade: 'q' },
@@ -223,10 +239,11 @@ const gunpowder: ElementCodex = {
 
   perks: {
     corruption: {
-      magic:
-        'The powder has gone off. Every musket ball leaves rot in the wound, and every gun you '
-        + 'throw down festers where it lies — so the ground behind you stops being litter and '
-        + 'starts being a hazard.',
+      basics:
+        'Musket hits rot: 3 damage a second for 5 seconds, stacking up to 3 for 9 a second, with each '
+        + 'new hit refreshing the full duration as well as adding a stack. Your dropped hot muskets '
+        + 'fester too, poisoning any enemy who walks within 40px of one, once a second, for as long as it '
+        + 'is cooling.',
       effects: [
         { tag: 'dot', label: 'Rot', detail: '3 damage per second for 5 seconds from a musket hit, stacking up to 3 — 9 a second at full stacks.' },
         { tag: 'dot', label: 'Festering guns', detail: 'A dropped hot musket poisons any enemy who walks within 40px of it, once a second, for as long as it is cooling.' },
@@ -237,10 +254,11 @@ const gunpowder: ElementCodex = {
       ],
     },
     demon: {
-      magic:
-        'Something stands up behind you when you fire everything, and does it again. The echo is '
-        + 'hellfire rather than lead — the rounds curve after their target instead of flying '
-        + 'straight — and the closer you are to dying the more of it there is.',
+      basics:
+        'Every Fire at Will is echoed 0.6 seconds later at 60% damage as homing hellfire rounds — 24 '
+        + 'base damage each at 620 px/s, steering at 3.4 rad/s toward their target, living 2.6 seconds '
+        + 'and connecting within 22px. Below 35% HP the demon fires a third volley for free, on top of '
+        + 'the original and the echo.',
       cast: 'No key. Triggers automatically on every Fire at Will.',
       effects: [
         { tag: 'damage', label: 'The echo', detail: 'The whole volley repeated 0.6s later at 60% damage, as homing hellfire rounds — 24 base damage each at 620 px/s.' },
@@ -256,10 +274,12 @@ const gunpowder: ElementCodex = {
 
   mastery: {
     fireworks: {
-      magic:
-        'Scraping along the wall plants something on it. A second later it screams straight across '
-        + 'the arena at head height — and whether it finds somebody or not, it goes off. It is the '
-        + 'only reward in the game for fighting with your back to the edge.',
+      basics:
+        'Touching the arena edge plants a firework on the wall behind you, at most one every 0.5 '
+        + 'seconds and never within 48px of another. After a 1-second fuse it crosses the arena at 780 '
+        + 'px/s dealing 10 damage to anybody within 14px, then bursts for 10 more in a 74px area where it '
+        + 'stops — on impact, or against the far wall if it hits nothing — sparing whoever it ran into. '
+        + 'No key, no cooldown and no cost: it is a consequence of where you are standing.',
       effects: [
         { tag: 'summon', label: 'Planting', detail: 'Touching the arena edge plants a firework on the wall behind you, at most one every 0.5 seconds and never within 48px of another.' },
         { tag: 'damage', label: 'The run', detail: 'After a 1-second fuse it crosses the arena at 780 px/s, dealing 10 damage to anybody within 14px of it.' },
@@ -272,11 +292,12 @@ const gunpowder: ElementCodex = {
       ],
     },
     overload: {
-      magic:
-        'Every gun you have thrown away is still loaded. They swivel round on the floor, take aim '
-        + 'for two seconds with a red line each, and then all of them fire at once. What it costs '
-        + 'is your reload: they come back to full heat with three extra seconds on top, and they '
-        + 'come out scalding enough to burn you for standing on them.',
+      basics:
+        'A bindable volley fired from every musket lying on the floor at once, after a 2-second aim, '
+        + 'for 15 damage each — three spent muskets is 45. Every gun that fires is returned to full heat '
+        + 'plus 3 extra seconds, so it is 15 seconds before it can be collected, and standing within 30px '
+        + 'of one of your own overloaded muskets costs you 20 damage, at most once a second per musket. '
+        + '16s cooldown.',
       cast:
         'Bindable to E, R, F or Q, replacing that slot\'s base ability for the match. Fires from '
         + 'every musket on the floor at once.',

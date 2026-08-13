@@ -786,6 +786,104 @@ export function vesselHalo(
   g.fillEllipse(x, y, 46, 54);
 }
 
+/**
+ * Mastery — the mark of the vessel: a knot of the patron's own cosmic dark hanging over the body
+ * with a small copy of its eye set into it, tethered down by a thread of gold.
+ *
+ * Deliberately the *same two painters* the sky uses at a fifth of the size rather than a bespoke
+ * badge, because the whole passive is "you are carrying a piece of it now" — and it means the eye
+ * on the body reddens, opens and grows its ring of spikes on `wrath` in exactly the same frames
+ * the one in the ceiling does.
+ */
+export function vesselMark(
+  g: Phaser.GameObjects.Graphics,
+  tint: BindColorFn,
+  x: number, y: number, r: number, alpha: number,
+  { wrath = 0, t = 0, seed = 11 } = {},
+): void {
+  cosmicVeil(g, tint, x, y + r * 0.2, r * 5.2, r * 2.8, alpha * (0.42 + wrath * 0.2), t * 0.85, seed);
+  patronEye(g, tint, x, y, r, 0.36 + wrath * 0.4, alpha,
+    { wrath, drift: Math.sin(t * 1.1 + seed) * 0.8, t, brow: false });
+  // The tether. Without it the eye reads as escorting the body rather than being worn by it.
+  const col = wrath > 0.02 ? BND.wrath : BND.gold;
+  g.lineStyle(1.6, tint(col), alpha * 0.45);
+  g.lineBetween(x, y + r * 0.7, x + Math.sin(t * 1.6 + seed) * 2, y + r * 2.2);
+  if (wrath > 0.02) {
+    // Enraged: the knot bleeds red motes down onto the shoulders it is sitting on.
+    for (let i = 0; i < 5; i++) {
+      const u = ((t * 1.3 + jitter(seed, i)) % 1);
+      g.fillStyle(tint(i % 2 ? BND.wrath : BND.wrathDeep), alpha * (1 - u) * 0.7);
+      g.fillCircle(x + (jitter(seed, 20 + i) - 0.5) * r * 2.4, y + r * 0.6 + u * r * 2.6,
+        1.8 * (1 - u) + 0.5);
+    }
+  }
+}
+
+/**
+ * The vessel's own dagger: a stubby two-facet gold blade with the patron's eye set through the
+ * crossguard and a single chain link hanging off the pommel. Drawn point-first along `ang`, so one
+ * painter serves both the stab into your own chest and the little lunge the taken slot hands back.
+ */
+export function ritualDagger(
+  g: Phaser.GameObjects.Graphics,
+  tint: BindColorFn,
+  x: number, y: number, ang: number, alpha: number, scale = 1,
+): void {
+  const c = Math.cos(ang);
+  const s = Math.sin(ang);
+  const L = 17 * scale;
+  const W = 3.4 * scale;
+  const tipX = x + c * L;
+  const tipY = y + s * L;
+  // Two asymmetric facets sharing the spine, so the blade reads as carved rather than as a lozenge.
+  g.fillStyle(tint(BND.goldDeep), alpha);
+  g.fillTriangle(tipX, tipY, x - s * W, y + c * W, x - c * W, y - s * W);
+  g.fillStyle(tint(BND.gold), alpha);
+  g.fillTriangle(tipX, tipY, x + s * W * 0.8, y - c * W * 0.8, x - c * W, y - s * W);
+  g.fillStyle(tint(BND.goldLit), alpha * 0.9);
+  g.fillTriangle(tipX, tipY, x + s * W * 0.35, y - c * W * 0.35, x, y);
+  // Crossguard, and the eye set through it.
+  g.lineStyle(2.4 * scale, tint(BND.chain), alpha);
+  g.lineBetween(x - s * W * 2.3, y + c * W * 2.3, x + s * W * 2.3, y - c * W * 2.3);
+  g.fillStyle(tint(BND.void), alpha);
+  g.fillCircle(x, y, 2.7 * scale);
+  g.fillStyle(tint(BND.iris), alpha);
+  g.fillCircle(x, y, 1.9 * scale);
+  g.fillStyle(tint(BND.void), alpha);
+  g.fillEllipse(x, y, 0.8 * scale, 3.2 * scale);
+  // Grip and a chained pommel — everything this element holds is on a leash.
+  const gx = x - c * L * 0.62;
+  const gy = y - s * L * 0.62;
+  g.lineStyle(3.4 * scale, tint(BND.chainLit), alpha * 0.9);
+  g.lineBetween(x - c * W, y - s * W, gx, gy);
+  chainLink(g, tint, gx - c * 3.2 * scale, gy - s * 3.2 * scale, ang, alpha * 0.9, scale * 0.85, 0);
+}
+
+/**
+ * Pathetic Stab: the lunge, drawn as the wake behind the dagger rather than as the dagger. A thin
+ * gold smear down the run with a few shed motes off it — small on purpose. The ability is meant to
+ * look like the consolation prize it is.
+ */
+export function patheticLunge(
+  g: Phaser.GameObjects.Graphics,
+  tint: BindColorFn,
+  x0: number, y0: number, x1: number, y1: number, alpha: number, seed = 3,
+): void {
+  g.lineStyle(9, tint(BND.cosmicDeep), alpha * 0.22);
+  g.lineBetween(x0, y0, x1, y1);
+  g.lineStyle(3, tint(BND.goldDeep), alpha * 0.6);
+  g.lineBetween(x0, y0, x1, y1);
+  g.lineStyle(1.1, tint(BND.goldLit), alpha * 0.85);
+  g.lineBetween(x0, y0, x1, y1);
+  for (let i = 0; i < 4; i++) {
+    const u = jitter(seed, i);
+    const px = Phaser.Math.Linear(x0, x1, u);
+    const py = Phaser.Math.Linear(y0, y1, u);
+    g.fillStyle(tint(BND.gold), alpha * 0.5);
+    g.fillCircle(px + (jitter(seed, 10 + i) - 0.5) * 7, py + (jitter(seed, 20 + i) - 0.5) * 7, 1.7);
+  }
+}
+
 /** One link of chain, drawn as a ring squashed along its run. The avatar is made of these. */
 export function chainLink(
   g: Phaser.GameObjects.Graphics,
@@ -1018,6 +1116,72 @@ export class BindFx extends FxBase {
       arenaBinding(g, this.tint, x, y, corners, (1 - t) * 0.9, e, t * 8);
       g.lineStyle(4 * (1 - t) + 0.6, this.tint(BND.chainLit), (1 - t) * 0.8);
       g.strokeCircle(x, y, 20 + e * 38);
+    });
+  }
+
+  /**
+   * Mastery — Ritual Sacrifice: the vessel's dagger driven hilt-deep into its own chest, and gold
+   * coming out rather than red. The thrust is over in the first fifth of the animation; the rest
+   * of it is the patron's anger leaving the body as a ring of the stuff.
+   */
+  ritualStab(x: number, y: number, depth = 17): void {
+    const seed = Math.random() * 999;
+    this.anim(depth, 620, (g, t) => {
+      const k = Math.min(1, t * 5);
+      ritualDagger(g, this.tint, x + 3 - k * 3, y - 6 - (1 - k) * 26, Math.PI * 0.58,
+        (1 - t) * 0.95, 1.05);
+      // The offering leaving: a ring of gold opening off the wound, and motes going up.
+      if (t > 0.18) {
+        const u = (t - 0.18) / 0.82;
+        g.lineStyle(2.6 * (1 - u) + 0.4, this.tint(BND.gold), (1 - u) * 0.75);
+        g.strokeCircle(x, y - 2, 5 + u * 26);
+        g.lineStyle(1.2 * (1 - u) + 0.3, this.tint(BND.goldLit), (1 - u) * 0.6);
+        g.strokeCircle(x, y - 2, 3 + u * 17);
+        for (let i = 0; i < 8; i++) {
+          const a = jitter(seed, i) * TAU;
+          const d = u * (10 + jitter(seed, 10 + i) * 22);
+          g.fillStyle(this.tint(i % 3 ? BND.goldLit : BND.iris), (1 - u) * 0.8);
+          g.fillCircle(x + Math.cos(a) * d, y - 2 + Math.sin(a) * d * 0.7 - u * 16,
+            2.1 * (1 - u) + 0.5);
+        }
+      }
+    });
+  }
+
+  /** Mastery — Pathetic Stab landing: one small gold puncture, and nothing else. */
+  stabHit(x: number, y: number, ang: number, depth = 17): void {
+    this.anim(depth, 300, (g, t) => {
+      const e = easeOut(t);
+      ritualDagger(g, this.tint, x - Math.cos(ang) * (10 - e * 8), y - Math.sin(ang) * (10 - e * 8),
+        ang, (1 - t) * 0.9, 0.9);
+      g.lineStyle(2 * (1 - t) + 0.3, this.tint(BND.goldLit), (1 - t) * 0.8);
+      g.strokeCircle(x, y, 4 + e * 15);
+    });
+  }
+
+  /**
+   * Mastery — the enrage lighting: the mark on the body goes red, and the body goes with it. A
+   * red shell blowing outward through a shed layer of whatever was stuck to it.
+   */
+  vesselEnrage(x: number, y: number, depth = 17): void {
+    const seed = Math.random() * 999;
+    this.anim(depth, 720, (g, t) => {
+      const e = easeOut(t);
+      for (let i = 0; i < 3; i++) {
+        const u = Phaser.Math.Clamp(e * 1.2 - i * 0.16, 0, 1);
+        g.lineStyle(4 * (1 - u) + 0.6, this.tint(i % 2 ? BND.wrath : BND.wrathDeep), (1 - u) * 0.8);
+        g.strokeCircle(x, y, 14 + u * 62);
+      }
+      // The debuffs coming off, drawn as grey scraps thrown clear of the body.
+      for (let i = 0; i < 9; i++) {
+        const a = jitter(seed, i) * TAU;
+        const d = e * (22 + jitter(seed, 10 + i) * 40);
+        g.fillStyle(this.tint(i % 2 ? BND.chain : BND.cosmicDeep), (1 - t) * 0.7);
+        g.fillRect(x + Math.cos(a) * d - 2, y + Math.sin(a) * d * 0.8 - 2,
+          3.6 * (1 - t) + 0.8, 3.6 * (1 - t) + 0.8);
+      }
+      patronEye(g, this.tint, x, y - 30, 13 * (1 + e * 0.5), 1, (1 - t) * 0.9,
+        { wrath: 1, drift: Math.sin(t * 22), t: t * 6, brow: false });
     });
   }
 

@@ -229,6 +229,9 @@ export interface CastContext {
   dreamDreamcatcher: () => void;
   dreamNightmare: () => void;
   dreamOasis: () => void;
+  /** Dream Mastery — Dream Duel: the spirit's two keys, live only while a duel is running. */
+  dreamHaunt: (tx: number, ty: number) => void;
+  dreamSpiritTear: (tx: number, ty: number) => void;
   // Chalk (test element: cheat mode only for now)
   chalkWard: () => void;
   chalkExplosive: () => void;
@@ -239,7 +242,7 @@ export interface CastContext {
   magmaPlume: (tx: number, ty: number) => void;
   magmaVolcano: (tx: number, ty: number) => void;
   magmaBloat: () => void;
-  magmaFist: (tx: number, ty: number) => void;
+  magmaJet: (tx: number, ty: number) => void;
   magmaDragonKin: (tx: number, ty: number) => void;
   // Illusion (test element: cheat mode only for now)
   illusionCrackShot: (tx: number, ty: number) => void;

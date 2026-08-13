@@ -2,8 +2,8 @@ import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import {
-  GUM, GumAvatar, GumFx, bloatShell, drips, gripSplat, gumBubble, gumShell, oozeBlob,
-  slimeBeacon, slimePuddle, slimeShard, zipLine,
+  GUM, GumAvatar, GumFx, bloatShell, drips, gripSplat, gumBubble, gumShell, gummyArm, oobleckSlab,
+  oozeBlob, slimeBeacon, slimeling, slimePuddle, slimeShard, zipLine,
 } from '../../../elements/kits/GumVisuals';
 
 /**
@@ -1139,5 +1139,257 @@ export const theSmack: PreviewScript = {
 
     label(ctx, ctx.w * 0.5, ctx.h - 10,
       '32px, 520ms per target — about 29 damage a second from a hand you were moving anyway', GUM.oozeDeep);
+  },
+};
+
+// ── Mastery ───────────────────────────────────────────────────────────
+
+const SPLIT_COUNT = 3;
+const SPLIT_HP = 50;
+const LING_R = 12;
+const LING_ORBIT = 42;
+
+const SLAB_LEN = 132;
+const SLAB_THICK = 26;
+const SLAB_CATCH = 5;
+const SLAB_DISSOLVE_MS = 5000;
+const OOBLECK_EFFECT_MS = 12000;
+const OOBLECK_SLOW_FLOOR = 0.3;
+
+/**
+ * Slime Split.
+ *
+ * The one thing this loop has to sell is that the three bodies are *one character*: the arms
+ * converge on the same hand, the hand keeps working, and the pool is peeled from the back. So the
+ * script drives the hand exactly as every other Slime loop does and simply replaces the body with
+ * three of them — and then kills two of the three, in order, to show which end they come off.
+ */
+export const masterySplit: PreviewScript = {
+  duration: 9600,
+  scale: 0.9,
+  bodyTexture: '',
+  caption: 'Passive — the killing blow splits you into three 50 HP slimelings that share one hand',
+  run(ctx) {
+    const home: Mark = { x: ctx.w * 0.36, y: ctx.h * 0.58 };
+    const s = slime(ctx, home);
+    const foe: Mark = { x: ctx.w * 0.78, y: ctx.h * 0.44 };
+    dummy(ctx, foe);
+
+    // The pool, exactly as the kit derives it: slimeling `i` is whatever is left above i × 50.
+    let pool = 0;
+    let split = false;
+    const lings = Array.from({ length: SPLIT_COUNT }, (_, i) => ({
+      index: i,
+      x: home.x,
+      y: home.y,
+      seed: 11 + i * 7,
+      phase: (i / SPLIT_COUNT) * TAU,
+    }));
+    const hpOf = (i: number): number => Phaser.Math.Clamp(pool - i * SPLIT_HP, 0, SPLIT_HP);
+
+    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    const bar = ctx.adopt(ctx.scene.add.text(ctx.w * 0.5, 14, '', {
+      fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
+      color: hex(GUM.shine),
+    }).setOrigin(0.5).setDepth(19));
+
+    ctx.onFrame((dt, elapsed) => {
+      const t = elapsed / 1000;
+      ground.clear();
+      bar.setText(split ? `pool ${Math.round(pool)} / ${SPLIT_COUNT * SPLIT_HP}` : '');
+      if (!split) return;
+      for (const l of lings) {
+        const hp = hpOf(l.index) / SPLIT_HP;
+        if (hp <= 0) continue;
+        if (l.index === 0) { l.x = home.x; l.y = home.y; continue; }
+        const a = l.phase + t * 0.7;
+        const k = Math.min(1, 7.5 * (dt / 1000));
+        l.x += (home.x + Math.cos(a) * LING_ORBIT - l.x) * k;
+        l.y += (home.y + Math.sin(a) * LING_ORBIT * 0.72 - l.y) * k;
+        slimeling(ground, ctx.tint, l.x, l.y, LING_R, 0.95, t,
+          { seed: l.seed, hp, aim: Math.atan2(s.hand.y - l.y, s.hand.x - l.x) });
+        // Its share of the one hand.
+        gummyArm(ground, ctx.tint, l.x, l.y - 2, s.hand.x, s.hand.y, 4.6, 3.2, 0.8, t,
+          { stretch: 0.5, seed: l.seed });
+      }
+    });
+
+    // The hit that would have finished it.
+    ctx.at(1100, () => {
+      tick(ctx, home.x, home.y - 30, '1 HP', GUM.gum);
+    });
+    ctx.at(1700, () => {
+      split = true;
+      pool = SPLIT_COUNT * SPLIT_HP;
+      s.gav?.setRigScale(0.62);
+      s.fx.split(home.x, home.y);
+      ctx.scene.cameras.main.shake(360, 0.008);
+      tick(ctx, home.x, home.y - 56, '🟢 SLIME SPLIT', GUM.solidLit);
+      tick(ctx, home.x, home.y - 74, `${SPLIT_COUNT} × ${SPLIT_HP} HP`, GUM.oozeLit);
+    });
+
+    // The hand carries on working. That is the whole point of the passive.
+    ctx.onFrame((_dt, elapsed) => {
+      if (elapsed < 1700) { s.reach.x = home.x + 46; s.reach.y = home.y - 10; return; }
+      const t = (elapsed - 1700) / 1000;
+      s.reach.x = home.x + 110 + Math.cos(t * 1.6) * 70;
+      s.reach.y = home.y - 20 + Math.sin(t * 2.2) * 46;
+    });
+
+    // Peeled from the back: the hindmost one goes first, and the lead is last.
+    for (const [when, dmg] of [[3400, 50], [5600, 50]] as const) {
+      ctx.at(when, () => {
+        pool = Math.max(SPLIT_HP, pool - dmg);
+        const dead = lings.find((l) => hpOf(l.index) <= 0);
+        if (dead) s.fx.lingPop(dead.x, dead.y);
+        tick(ctx, home.x, home.y - 52, `🟢 ${lings.filter((l) => hpOf(l.index) > 0).length} LEFT`, GUM.oozeLit);
+      });
+    }
+    // …and a heal puts one back, because the three are read straight off the pool.
+    ctx.at(7400, () => {
+      pool = SPLIT_HP * 2;
+      s.fx.digest(home.x, home.y);
+      tick(ctx, home.x, home.y - 52, '🍽 +50 — ONE BACK', GUM.shine);
+    });
+
+    label(ctx, ctx.w * 0.5, ctx.h - 10,
+      `${SPLIT_COUNT} × ${SPLIT_HP} HP · damage comes off the hindmost first · one hand between them · once per match`,
+      GUM.oozeDeep);
+  },
+};
+
+/**
+ * Oobleck.
+ *
+ * Three beats, because the ability is three objects wearing one shape: the shield that eats
+ * shots, the doorway that costs something to walk through, and the wall Solidify makes of it.
+ */
+export const masteryOobleck: PreviewScript = {
+  duration: 11000,
+  scale: 0.9,
+  bodyTexture: '',
+  caption: 'A slab of half-set slime: shots stick in it, walkers are slowed harder and harder, and Q sets it into a wall',
+  run(ctx) {
+    const home: Mark = { x: ctx.w * 0.22, y: ctx.h * 0.6 };
+    const s = slime(ctx, home);
+    const foe: Mark = { x: ctx.w * 0.86, y: ctx.h * 0.44 };
+    dummy(ctx, foe);
+
+    const slab = {
+      x: home.x + 90, y: home.y - 10, ang: 0, on: false, hard: false, held: true,
+      stuck: [] as { along: number; across: number; seed: number; until: number }[],
+    };
+    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(15));
+    const meter = ctx.adopt(ctx.scene.add.text(ctx.w * 0.5, 14, '', {
+      fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
+      color: hex(GUM.oozeLit),
+    }).setOrigin(0.5).setDepth(19));
+
+    ctx.onFrame((_dt, elapsed) => {
+      const t = elapsed / 1000;
+      air.clear();
+      if (!slab.on) { meter.setText(''); return; }
+      if (slab.held) {
+        // Held: it hangs off the hand, turned across the line from the body to it.
+        slab.x = s.hand.x;
+        slab.y = s.hand.y;
+        slab.ang = Math.atan2(slab.y - home.y, slab.x - home.x) + Math.PI / 2;
+      }
+      for (let i = slab.stuck.length - 1; i >= 0; i--) {
+        if (elapsed >= slab.stuck[i].until) slab.stuck.splice(i, 1);
+      }
+      oobleckSlab(air, ctx.tint, slab.x, slab.y, slab.ang, SLAB_LEN, SLAB_THICK, 1, t, {
+        seed: 6, hard: slab.hard, held: slab.held,
+        stuck: slab.stuck.map((q) => ({
+          along: q.along, across: q.across, seed: q.seed,
+          life: Phaser.Math.Clamp((q.until - elapsed) / SLAB_DISSOLVE_MS, 0, 1),
+        })),
+      });
+      meter.setText(slab.hard ? 'WALL — every projectile, no limit' : `${slab.stuck.length} / ${SLAB_CATCH} stuck`);
+      meter.setColor(hex(slab.hard ? GUM.solidLit : GUM.oozeLit));
+    });
+
+    // 1 — summoned into the hand and carried out in front of the body.
+    ctx.at(700, () => {
+      slab.on = true;
+      s.gav?.setCarry(true);
+      s.av.play('raise');
+      s.fx.slabSet(slab.x, slab.y, slab.ang, SLAB_LEN);
+      tick(ctx, home.x, home.y - 52, '🛡 OOBLECK', GUM.oozeLit);
+    });
+    ctx.onFrame((_dt, elapsed) => {
+      if (elapsed < 700) { s.reach.x = home.x + 40; s.reach.y = home.y; return; }
+      if (elapsed > 5200) return;
+      const t = (elapsed - 700) / 1000;
+      s.reach.x = home.x + 96;
+      s.reach.y = home.y - 8 + Math.sin(t * 1.4) * 34;
+    });
+
+    // 2 — shots arriving and burying themselves in it.
+    for (const [when, off] of [[1500, -34], [2200, 4], [2900, 36], [3600, -12]] as const) {
+      ctx.at(when, () => {
+        ctx.fly({
+          texture: 'proj-fire', from: { x: foe.x, y: foe.y },
+          to: { x: slab.x, y: slab.y }, speed: 460,
+          onHit: () => {
+            slab.stuck.push({ along: off, across: 0, seed: when, until: when + 900 + SLAB_DISSOLVE_MS });
+            s.fx.stick(slab.x + Math.cos(slab.ang) * off, slab.y + Math.sin(slab.ang) * off);
+          },
+        });
+      });
+    }
+
+    // 3 — set down, and somebody walks through it.
+    ctx.at(5200, () => {
+      slab.held = false;
+      s.gav?.setCarry(false);
+      slab.x = ctx.w * 0.54;
+      slab.y = ctx.h * 0.5;
+      slab.ang = Math.PI / 2;
+      s.fx.slabSet(slab.x, slab.y, slab.ang, SLAB_LEN);
+      tick(ctx, slab.x, slab.y - 30, '🧱 SET DOWN', GUM.oozeDeep);
+    });
+    let oobleckFrom = 0;
+    ctx.at(6000, () => {
+      oobleckFrom = 6000;
+      s.fx.splat(slab.x, slab.y, 22, 5);
+      tick(ctx, slab.x, slab.y - 44, '🫧 OOBLECK · 12s', GUM.oozeLit);
+    });
+    ctx.onFrame((_dt, elapsed) => {
+      if (!oobleckFrom) return;
+      // The ramp: a walker gets slower the longer it has been on them, not while they stand in it.
+      const run = Phaser.Math.Clamp((elapsed - oobleckFrom) / OOBLECK_EFFECT_MS, 0, 1);
+      const k = 0.15 + 0.85 * run;
+      const spd = 1 - (1 - OOBLECK_SLOW_FLOOR) * k;
+      foe.x = Math.max(slab.x - 70, foe.x - 70 * spd * 0.016);
+      if (Math.random() < 0.06) {
+        tick(ctx, foe.x, foe.y - 20, `${Math.round(spd * 100)}%`, GUM.oozeDeep);
+      }
+    });
+
+    // 4 — Solidify sets it. The pane stops being a filter and becomes a wall.
+    ctx.at(8600, () => {
+      slab.hard = true;
+      s.av.play('raise');
+      s.fx.harden(slab.x, slab.y, 40);
+      s.fx.slabSet(slab.x, slab.y, slab.ang, SLAB_LEN, true);
+      ctx.scene.cameras.main.shake(200, 0.005);
+      tick(ctx, slab.x, slab.y - 34, '🧱 WALL', GUM.solidLit);
+    });
+    ctx.at(9400, () => {
+      ctx.fly({
+        texture: 'proj-fire', from: { x: foe.x, y: foe.y },
+        to: { x: slab.x, y: slab.y }, speed: 520,
+        onHit: () => {
+          slab.stuck.push({ along: 20, across: 0, seed: 99, until: 9400 + 400 + SLAB_DISSOLVE_MS });
+          s.fx.stick(slab.x, slab.y + 20);
+          tick(ctx, slab.x, slab.y - 50, 'NO LIMIT', GUM.solidLit);
+        },
+      });
+    });
+
+    label(ctx, ctx.w * 0.5, ctx.h - 10,
+      `${SLAB_LEN}×${SLAB_THICK}px · ${SLAB_CATCH} shots, each dissolving over ${SLAB_DISSOLVE_MS / 1000}s · walkers slowed to ${Math.round(OOBLECK_SLOW_FLOOR * 100)}% over ${OOBLECK_EFFECT_MS / 1000}s`,
+      GUM.oozeDeep);
   },
 };

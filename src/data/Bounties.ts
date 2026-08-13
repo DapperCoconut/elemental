@@ -35,7 +35,7 @@ export interface Bounty {
 
 interface BountyElement { id: string; name: string; emoji: string; color: number }
 
-/** Every element a bounty can name as the target. Excludes the training dummy. */
+/** Every element a bounty can name as the target. */
 const BOUNTY_ELEMENTS: BountyElement[] = [
   { id: 'fire',        name: 'Fire',        emoji: '🔥',  color: 0xff4400 },
   { id: 'water',       name: 'Water',       emoji: '💧',  color: 0x0088ff },

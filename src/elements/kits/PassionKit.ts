@@ -5,9 +5,10 @@ import type { CustomStatus } from './StatusHudKit';
 import { Sfx } from '../../audio';
 import {
   GarmentKind, PASSION_SKIN_TINT, PSN, PassionAvatar, PassionColorFn, PassionFx,
-  bed as drawBed, blush, censorBar, garment, heart, heartEyes, heartOutline, jitter, kissMark,
-  loveBar, rose as drawRose,
+  attractionRebound, attractionRing, bed as drawBed, blush, censorBar, garment, heart, heartEyes,
+  heartOutline, jitter, kissMark, loveBar, perfumeAura, perfumeCloud, rose as drawRose,
 } from './PassionVisuals';
+import { meterGain } from '../../combat/Meters';
 
 type Owner = 'player' | 'npc';
 
@@ -109,6 +110,32 @@ const SPARE_MS = 5000;
 /** Q, "Seduce" — everything love-related, for as long as the pose is up. */
 const SEDUCE_MULT = 1.5;
 
+// ── Mastery ──────────────────────────────────────────────────────────────────
+/**
+ * Attraction. The ring is deliberately wider than Flirt's reach and narrower than the arena:
+ * a caught enemy is never in the cone for free, but they are never out of the fight either.
+ */
+const ATTRACT_RADIUS = 260;
+/** A caught body pressed against the wall shows the shove for this long. */
+const REBOUND_MS = 240;
+const REBOUND_CAP = 20;
+
+/** Perfume — the cloud. */
+const PERFUME_COOLDOWN_MS = 18000;
+const PERFUME_MS = 6000;
+const PERFUME_RADIUS = 110;
+/** How far ahead of the caster the cloud can be placed. Aim at your own feet and it lands there. */
+const PERFUME_CAST_DIST = 150;
+const PERFUME_LOVE_PER_SEC = 12;
+/** Perfume — the dose you carry away. Every second stood in the cloud banks two of these. */
+const PERFUME_CHARGE_RATE = 2;
+const PERFUME_AURA_MAX_MS = 12000;
+const AURA_RADIUS = 96;
+const AURA_LOVE_PER_SEC = 10;
+const PERFUME_TEXT_INTERVAL_MS = 1000;
+/** The bot sprays once the target is inside this, aiming halfway so it stands in its own cloud. */
+const NPC_PERFUME_RANGE = 210;
+
 // ── World objects ────────────────────────────────────────────────────────────
 
 /** A heart bullet or a thrown rose. The two share every field but what they do on arrival. */
@@ -159,6 +186,30 @@ interface Cloth {
   settle: number;
   /** The end of the pose: it starts fading here and is gone `CLOTH_FADE_MS` later. */
   fadeAt: number;
+}
+
+/**
+ * A cloud of perfume hanging where it was sprayed. It never follows the caster — walking out of
+ * your own cloud is how the aura's clock starts running down, and that choice is the ability.
+ */
+interface Cloud {
+  owner: Owner;
+  x: number;
+  y: number;
+  bornAt: number;
+  diesAt: number;
+  /** Its own pop-up throttle: the cloud and the aura are two effects and say so separately. */
+  nextTextAt: number;
+  /** Fixes the lobes and the mist, so the shape breathes rather than boiling frame to frame. */
+  seed: number;
+}
+
+/** One frame of somebody being held against Attraction's boundary. */
+interface Rebound {
+  x: number;
+  y: number;
+  ang: number;
+  until: number;
 }
 
 /** A heart dropped on the floor by a Smooch dash. */
@@ -215,6 +266,19 @@ interface Side {
   spareUntil: number;
   /** One rose is worth one sparing. Cleared the next time a rose is taken. */
   spareUsedThisRose: boolean;
+  // Mastery passive — Attraction
+  /**
+   * Everyone who has been inside the ring at least once. The boundary only holds what walked
+   * into it: without this, an Invasion husk crossing the arena would be snapped onto the circle
+   * from the far wall, which is a net, not a room.
+   */
+  caught: Set<Fighter>;
+  // Mastery bindable — Perfume
+  /** Seeded to a full cooldown in the past, so the first cast of a match is not a wait. */
+  perfumeCastAt: number;
+  /** The dose on the caster's own body. Banked by standing in the cloud, spent in real time. */
+  auraUntil: number;
+  nextPerfumeTextAt: number;
   // Aim
   aimX: number;
   aimY: number;
@@ -230,6 +294,8 @@ function makeSide(owner: Owner): Side {
     makeoutUntil: 0, makeoutStartedAt: 0, makeoutTarget: null, makeoutKisses: 0,
     nextMakeoutKissAt: 0, makeoutX: 0, makeoutY: 0, makeoutAng: 0, makeoutBed: false,
     spareUntil: 0, spareUsedThisRose: false,
+    caught: new Set<Fighter>(),
+    perfumeCastAt: -PERFUME_COOLDOWN_MS, auraUntil: 0, nextPerfumeTextAt: 0,
     aimX: 0, aimY: 0,
   };
 }
@@ -269,6 +335,22 @@ export interface PassionArenaApi {
   hasNpcUpgrade(slot: string): boolean;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
+  /**
+   * Online 1v1. The opponent is a replica whose position belongs to their own sim, so Attraction
+   * refuses to write it here and lets the boundary hold them on the machine that owns them.
+   */
+  get isOnline(): boolean;
+  /**
+   * A boss fight. Bosses drive their own bodies through scripted set pieces, and a boundary
+   * that quietly hauls one back mid-teleport would read as the fight being broken rather than
+   * as the passive working — so Attraction draws its ring and holds nothing.
+   */
+  get bossFight(): boolean;
+  masteryBindFor(slot: string): string | null;
+  npcMasteryBindFor(slot: string): string | null;
+  recordMasteryStat(key: string, amount: number): void;
+  /** Perfume is cast off a private timer, so the peer's sim never sees it without this. */
+  broadcastMasteryCast(enhId: string): void;
 }
 
 // ── PassionKit ───────────────────────────────────────────────────────────────
@@ -300,6 +382,8 @@ export class PassionKit {
   private shots: Shot[] = [];
   private marks: Mark[] = [];
   private clothes: Cloth[] = [];
+  private clouds: Cloud[] = [];
+  private rebounds: Rebound[] = [];
   /** Last known heading for anyone without a cursor, so a stationary bot still faces somewhere. */
   private lastFacing = new Map<Fighter, number>();
   /** Both maps are keyed by Fighter, and an Invasion run retires hundreds of them. */
@@ -349,6 +433,23 @@ export class PassionKit {
     return owner === 'player'
       ? this.api.elementId === 'passion' && this.api.hasUpgrade(slot)
       : this.api.hasNpcUpgrade(slot);
+  }
+
+  /** Whether this side is fighting with Passion Mastery switched on. */
+  private masteryOn(owner: Owner): boolean {
+    return owner === 'player'
+      ? this.api.masteryActive && this.api.elementId === 'passion'
+      : this.api.npcMasteryActive && this.api.npcElementId === 'passion';
+  }
+
+  /** The slot Perfume is bound over for this side, or null when the side hasn't bound it. */
+  private perfumeSlot(owner: Owner): 'e' | 'r' | 'f' | 'q' | null {
+    if (!this.masteryOn(owner)) return null;
+    for (const s of ['e', 'r', 'f', 'q'] as const) {
+      const bind = owner === 'player' ? this.api.masteryBindFor(s) : this.api.npcMasteryBindFor(s);
+      if (bind === 'perfume') return s;
+    }
+    return null;
   }
 
   /** Everything this side is allowed to charm. */
@@ -452,8 +553,10 @@ export class PassionKit {
     const l = this.loveOf(victim);
     if (l.charmed) return;
 
+    // Ruin's Combo Breaker halves every meter in the game — the love bar included. It is the
+    // caster's meter even though it hangs over the victim, so it is the caster who is taxed.
     const mult = this.loveMult(owner, victim);
-    const applied = amount * mult;
+    const applied = meterGain(this.fighter(owner), amount * mult);
     l.cur = Math.min(l.max, l.cur + applied);
     const ratio = l.cur / l.max;
 
@@ -485,11 +588,19 @@ export class PassionKit {
    * Deliberately *not* wrapped in `asNonAllyDamage`: this originates from whoever is playing
    * Passion, which in co-op can be your ally, and their friendly fire has to stay blocked.
    */
-  private charm(owner: Owner, victim: Fighter): void {
+  private charm(owner: Owner, victim: Fighter, via?: 'makeout'): void {
     const l = this.loveOf(victim);
     if (l.charmed) return;
     l.charmed = true;
     l.cur = l.max;
+
+    // Mastery progress. Both of these are "which tool finished them", so they are read here
+    // rather than at the tool — a bar topped out by a stray Loveshot mid-pose still counts as
+    // the pose's, which is what the requirement is asking about.
+    if (owner === 'player') {
+      if (this.side(owner).poseUntil > this.now) this.api.recordMasteryStat('poseCharms', 1);
+      if (via === 'makeout') this.api.recordMasteryStat('makeoutCharms', 1);
+    }
 
     this.fx(owner).charm(victim.x, victim.y);
     this.api.showFloatingText(victim.x, victim.y - 56, '💘 CHARMED', this.hex(PSN.hot));
@@ -520,6 +631,8 @@ export class PassionKit {
     this.shots = [];
     this.marks = [];
     this.clothes = [];
+    this.clouds = [];
+    this.rebounds = [];
     this.vizT = 0;
 
     this.playerAvatar?.destroy(); this.playerAvatar = null;
@@ -546,16 +659,25 @@ export class PassionKit {
     const ctx = this.api.buildPlayerContext(mouseX, mouseY);
     const clicked = pointer.isDown && !this.api.pointerWasDown;
 
+    // Mastery: Perfume takes over whichever slot it was bound to. Read before the base keys,
+    // because `JustDown` consumes the flag — testing the bind afterwards eats the press.
+    const perf = this.perfumeSlot('player');
+    if (perf) {
+      const key = perf === 'e' ? this.api.eKey : perf === 'r' ? this.api.rKey
+        : perf === 'f' ? this.api.fKey : this.api.qKey;
+      if (Phaser.Input.Keyboard.JustDown(key)) this.tryCastPerfume('player', mouseX, mouseY);
+    }
+
     if (clicked) p.castAbility('passion-loveshot', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('passion-flirt', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('passion-smooch', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) {
+    if (perf !== 'e' && Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('passion-flirt', ctx);
+    if (perf !== 'r' && Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('passion-smooch', ctx);
+    if (perf !== 'f' && Phaser.Input.Keyboard.JustDown(this.api.fKey)) {
       // The throw is a recast, not a second cast: the rose has already paid the cooldown, and
       // routing it back through `castAbility` would strand it in your teeth for ten seconds.
       if (s.roseUntil > this.now) this.throwRose('player', mouseX, mouseY);
       else p.castAbility('passion-manipulate', ctx);
     }
-    if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('passion-exhibition', ctx);
+    if (perf !== 'q' && Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('passion-exhibition', ctx);
   }
 
   // ── Ability entry points (called from build*Context) ───────────────────────
@@ -767,11 +889,18 @@ export class PassionKit {
       this.updateRose(owner, time);
       this.updateSpare(owner, time);
       this.updatePose(owner, time, delta);
+      // After the two abilities that own the body outright, so neither is dragged off its
+      // anchor by a boundary the pair is standing on.
+      this.updateAttraction(owner, time);
+      this.updatePerfume(owner, time, delta);
     }
 
+    this.updateNpcPerfume(time);
     this.updateShots(time, delta);
+    this.updateClouds(time, delta);
     this.updateClothes(time, delta);
     this.updateMarks(time);
+    this.updateRebounds(time);
     this.updateStacks(time);
     this.prune(time);
     // Before the avatars: `updateAvatars` reads its `stripped` flag straight off the result.
@@ -945,7 +1074,7 @@ export class PassionKit {
     this.api.showFloatingText(target.x, target.y - 68, '💞 HEAD OVER HEELS', this.hex(PSN.gold));
     const l = this.loveOf(target);
     l.cur = l.max;
-    this.charm(owner, target);
+    this.charm(owner, target, 'makeout');
   }
 
   // ── Click upgrade: Show-off ────────────────────────────────────────────────
@@ -964,6 +1093,7 @@ export class PassionKit {
     s.hitStreak = 0;
     const l = this.loveOf(victim);
     l.impressedUntil = time + IMPRESSED_MS;
+    if (owner === 'player') this.api.recordMasteryStat('impressed', 1);
     this.fx(owner).heartRing(victim.x, victim.y, 8, 62, PSN.gold, 620);
     this.fx(owner).hearts(victim.x, victim.y, 8, 34, PSN.gold, 820);
     this.api.showFloatingText(victim.x, victim.y - 62, '😍 IMPRESSED', this.hex(PSN.gold));
@@ -1043,6 +1173,7 @@ export class PassionKit {
     if (f.rawDamageTaken > s.lastRaw) {
       s.lastRaw = f.rawDamageTaken;
       s.stacks.push(time + ROSE_STACK_MS);
+      if (owner === 'player') this.api.recordMasteryStat('roseHits', 1);
       this.fx(owner).petals(f.x, f.y - 6, 3);
       const e = this.api.getNearestEnemy(f.x, f.y);
       if (this.alive(e)) {
@@ -1086,6 +1217,200 @@ export class PassionKit {
         s.multOwned = false;
       }
     }
+  }
+
+  // ── Mastery passive: Attraction ────────────────────────────────────────────
+
+  /**
+   * The ring, and the rule it enforces.
+   *
+   * Only bodies that have *been* inside it are held by it. Without that latch the boundary
+   * would read as a net rather than as a room: an Invasion husk crossing the far side of the
+   * level would be snapped onto the circle from wherever it happened to be standing.
+   *
+   * Position is written outright rather than pushed with velocity, for the same reason Make-out
+   * writes it — this runs after movement, and a wall you can walk through if you lean on it hard
+   * enough is not a wall. The velocity that got them there is dropped with it, which costs
+   * nothing: both WASD and the AI rewrite velocity from scratch every frame, so the only motion
+   * this actually removes is the outward part they were not allowed to keep.
+   */
+  private updateAttraction(owner: Owner, time: number): void {
+    const s = this.side(owner);
+    if (!this.masteryOn(owner)) {
+      if (s.caught.size) s.caught.clear();
+      return;
+    }
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+
+    for (const t of this.targetsOf(owner)) {
+      // A boss drives its own body through scripted set pieces. The ring is drawn around it and
+      // holds nothing — and so does not get to claim it caught anything either.
+      if (this.api.bossFight && t === this.api.npc) continue;
+      const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
+      if (d <= ATTRACT_RADIUS) {
+        if (!s.caught.has(t)) {
+          s.caught.add(t);
+          this.fx(owner).heartRing(t.x, t.y, 8, 44, PSN.pink, 480);
+          this.api.showFloatingText(t.x, t.y - 44, '💞 CAUGHT', this.hex(PSN.hot));
+          Sfx.playAt('heartbeat', t.x, { volume: 0.5, rate: 1.3 });
+        }
+        continue;
+      }
+      if (!s.caught.has(t)) continue;
+      // Online the opponent is a replica: their body belongs to the sim they are playing on,
+      // and that sim is running this same passive against them. Drawing the wall is ours; the
+      // holding is theirs.
+      if (owner === 'player' && this.api.isOnline && t === this.api.npc) continue;
+      // Anything that already refuses to be moved keeps refusing — the ring is a shove like any
+      // other, and Unbreakable and Unstoppable both outrank it.
+      if (t.knockbackImmune || t.unstoppable) continue;
+
+      const a = Math.atan2(t.y - f.y, t.x - f.x);
+      const nx = f.x + Math.cos(a) * ATTRACT_RADIUS;
+      const ny = f.y + Math.sin(a) * ATTRACT_RADIUS;
+      t.setPosition(nx, ny);
+      this.body(t).reset(nx, ny);
+      if (this.rebounds.length < REBOUND_CAP) {
+        this.rebounds.push({ x: nx, y: ny, ang: a, until: time + REBOUND_MS });
+      }
+    }
+  }
+
+  // ── Mastery bindable: Perfume ──────────────────────────────────────────────
+
+  /** The bound key, or the bot's own decision. Answers whether the spray actually went out. */
+  private tryCastPerfume(owner: Owner, tx: number, ty: number): boolean {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return false;
+    if (this.now - s.perfumeCastAt < PERFUME_COOLDOWN_MS) return false;
+    s.perfumeCastAt = this.now;
+    this.castPerfume(owner, tx, ty);
+    // Cast off a private timer rather than through `castAbility`, so the peer only learns about
+    // it here.
+    if (owner === 'player') this.api.broadcastMasteryCast('perfume');
+    return true;
+  }
+
+  /** Online: the opponent sprayed on their machine, and it has to hang in the air on ours too. */
+  doNpcPerfume(tx: number, ty: number): void {
+    this.sides.npc.perfumeCastAt = this.now;
+    this.castPerfume('npc', tx, ty);
+  }
+
+  private castPerfume(owner: Owner, tx: number, ty: number): void {
+    const f = this.fighter(owner);
+    const s = this.side(owner);
+    s.aimX = tx;
+    s.aimY = ty;
+
+    // Placed along the aim, capped — aim at your own feet and the cloud lands on you, which is
+    // the whole of the "trap or coat" decision the ability is built around.
+    const ang = Math.atan2(ty - f.y, tx - f.x);
+    const reach = Math.min(PERFUME_CAST_DIST, Phaser.Math.Distance.Between(f.x, f.y, tx, ty));
+    const cx = Phaser.Math.Clamp(f.x + Math.cos(ang) * reach, this.left, this.right);
+    const cy = Phaser.Math.Clamp(f.y + Math.sin(ang) * reach, this.top, this.bottom);
+
+    this.clouds.push({
+      owner, x: cx, y: cy, bornAt: this.now, diesAt: this.now + PERFUME_MS,
+      nextTextAt: this.now + PERFUME_TEXT_INTERVAL_MS, seed: Math.random() * 999,
+    });
+
+    const av = this.avatar(owner);
+    av?.play('punch', ang);
+    const hand = av?.pistolTip();
+    this.fx(owner).spray(
+      hand && Number.isFinite(hand.x) ? hand.x : f.x + Math.cos(ang) * 18,
+      hand && Number.isFinite(hand.y) ? hand.y : f.y + Math.sin(ang) * 18,
+      ang, Math.max(30, reach),
+    );
+    this.fx(owner).hearts(cx, cy, 6, 40, PSN.blush, 780);
+    this.api.showFloatingText(f.x, f.y - 52, '🌸 PERFUME', this.hex(PSN.pink));
+    Sfx.playAt('whoosh', f.x, { volume: 0.55, rate: 1.6 });
+    Sfx.playAt('sparkle', cx, { volume: 0.5, rate: 0.9 });
+  }
+
+  /**
+   * The dose. Standing in your own cloud banks two seconds of aura for every one spent in it —
+   * and because the bank is spent in real time while it fills, a caster who never leaves the
+   * cloud gains a net second a second and walks out of a six-second cloud wearing up to twelve.
+   */
+  private updatePerfume(owner: Owner, time: number, delta: number): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+
+    const inCloud = this.clouds.some((c) => c.owner === owner
+      && Phaser.Math.Distance.Between(c.x, c.y, f.x, f.y) <= PERFUME_RADIUS);
+    if (inCloud) {
+      const banked = Math.max(s.auraUntil, time) + delta * PERFUME_CHARGE_RATE;
+      s.auraUntil = Math.min(time + PERFUME_AURA_MAX_MS, banked);
+    }
+
+    if (s.auraUntil <= time) return;
+    const dt = delta / 1000;
+    const say = time >= s.nextPerfumeTextAt;
+    for (const t of this.targetsOf(owner)) {
+      if (Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) > AURA_RADIUS) continue;
+      // Quote the figure before the tick goes in, so the number on screen is what the next
+      // second is actually worth.
+      const perSec = AURA_LOVE_PER_SEC * this.loveMult(owner, t);
+      this.addLove(owner, t, AURA_LOVE_PER_SEC * dt);
+      if (say) {
+        this.api.showFloatingText(t.x, t.y - 40, `+${Math.round(perSec)} 💐`,
+          this.hex(perSec > AURA_LOVE_PER_SEC + 0.01 ? PSN.gold : PSN.blush));
+      }
+    }
+    if (say) s.nextPerfumeTextAt = time + PERFUME_TEXT_INTERVAL_MS;
+  }
+
+  /** The clouds themselves: they age, they pay, and they never follow anybody. */
+  private updateClouds(time: number, delta: number): void {
+    const dt = delta / 1000;
+    for (let i = this.clouds.length - 1; i >= 0; i--) {
+      const c = this.clouds[i];
+      if (time >= c.diesAt) {
+        this.clouds.splice(i, 1);
+        continue;
+      }
+      const say = time >= c.nextTextAt;
+      for (const t of this.targetsOf(c.owner)) {
+        if (Phaser.Math.Distance.Between(c.x, c.y, t.x, t.y) > PERFUME_RADIUS) continue;
+        const perSec = PERFUME_LOVE_PER_SEC * this.loveMult(c.owner, t);
+        this.addLove(c.owner, t, PERFUME_LOVE_PER_SEC * dt);
+        if (say) {
+          this.api.showFloatingText(t.x, t.y - 34, `+${Math.round(perSec)} 🌸`,
+            this.hex(perSec > PERFUME_LOVE_PER_SEC + 0.01 ? PSN.gold : PSN.pink));
+        }
+      }
+      if (say) c.nextTextAt = time + PERFUME_TEXT_INTERVAL_MS;
+    }
+  }
+
+  /**
+   * The bot's spray.
+   *
+   * It lives here rather than in `doPassionAbilities` because enhancement ids are not in
+   * `element.abilities` — `castAbility('perfume')` would do nothing at all — so the kit is the
+   * only thing that can pull the trigger. What the AI *does* get is the synergy: the kit hands
+   * it the cloud's centre through `npcCloudPoint`, and the bot walks into its own cloud to bank
+   * the aura, which is the play the ability is built around.
+   *
+   * The point is chosen halfway to the target so that a single cast covers both of them: the
+   * enemy is charmed by the cloud while the bot is dosed by it.
+   */
+  private updateNpcPerfume(time: number): void {
+    // Online the npc is a remote player: their own client casts it and it arrives via replay.
+    if (this.api.isOnline) return;
+    if (!this.perfumeSlot('npc')) return;
+    const f = this.api.npc;
+    const target = this.api.player;
+    if (!this.alive(f) || !this.alive(target)) return;
+    if (time - this.sides.npc.perfumeCastAt < PERFUME_COOLDOWN_MS) return;
+    const d = Phaser.Math.Distance.Between(f.x, f.y, target.x, target.y);
+    if (d > NPC_PERFUME_RANGE) return;
+    this.tryCastPerfume('npc', (f.x + target.x) / 2, (f.y + target.y) / 2);
   }
 
   /**
@@ -1191,6 +1516,12 @@ export class PassionKit {
     this.nextPruneAt = time + 3000;
     for (const f of [...this.loves.keys()]) if (!f.active) this.loves.delete(f);
     for (const f of [...this.lastFacing.keys()]) if (!f.active) this.lastFacing.delete(f);
+    // Attraction's roll of who is inside the ring holds the same strong references.
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const caught = this.sides[owner].caught;
+      if (!caught.size) continue;
+      for (const f of [...caught]) if (!f.active) caught.delete(f);
+    }
   }
 
   /**
@@ -1239,6 +1570,12 @@ export class PassionKit {
   private updateMarks(time: number): void {
     for (let i = this.marks.length - 1; i >= 0; i--) {
       if (this.marks[i].until <= time) this.marks.splice(i, 1);
+    }
+  }
+
+  private updateRebounds(time: number): void {
+    for (let i = this.rebounds.length - 1; i >= 0; i--) {
+      if (this.rebounds[i].until <= time) this.rebounds.splice(i, 1);
     }
   }
 
@@ -1330,6 +1667,17 @@ export class PassionKit {
     if (!g) return;
     g.clear();
     const now = this.now;
+    const t = this.vizT;
+
+    // Attraction's boundary goes down under everything: it is the shape of the room the rest of
+    // the fight happens inside.
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      if (!this.masteryOn(owner)) continue;
+      const f = this.fighter(owner);
+      if (!this.alive(f)) continue;
+      attractionRing(g, this.col(owner), f.x, f.y, ATTRACT_RADIUS, t,
+        owner === 'player' ? 1 : 0.85, owner === 'player' ? 3 : 17);
+    }
 
     // The bed goes down first — everything else on this layer, and both fighters, stand on it.
     for (const owner of ['player', 'npc'] as Owner[]) {
@@ -1351,12 +1699,34 @@ export class PassionKit {
       if (!c.landed) continue;
       garment(g, this.col(c.owner), c.kind, c.x, c.y, c.ang, this.clothAlpha(c, now), 1, c.settle);
     }
+
+    // Perfume last on this layer, so the mist reads as hanging over the floor rather than
+    // painted onto it. Both ends fade: it blooms out over 300ms and thins out over the last 700.
+    for (const c of this.clouds) {
+      const rise = Phaser.Math.Clamp((now - c.bornAt) / 300, 0, 1);
+      const fade = Phaser.Math.Clamp((c.diesAt - now) / 700, 0, 1);
+      perfumeCloud(g, this.col(c.owner), c.x, c.y, PERFUME_RADIUS * (0.55 + rise * 0.45),
+        t, Math.min(rise, fade), c.seed);
+    }
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const s = this.side(owner);
+      const f = this.fighter(owner);
+      if (s.auraUntil <= now || !this.alive(f)) continue;
+      perfumeAura(g, this.col(owner), f.x, f.y, AURA_RADIUS, t,
+        Phaser.Math.Clamp((s.auraUntil - now) / 700, 0, 1));
+    }
   }
 
   private paintAir(): void {
     const g = this.airGfx;
     if (!g) return;
     g.clear();
+    // Somebody leaning on Attraction's boundary. Drawn up here rather than on the ring itself
+    // because the shove happens on a body, and it has to be legible over the top of one.
+    for (const r of this.rebounds) {
+      const left = Phaser.Math.Clamp((r.until - this.now) / REBOUND_MS, 0, 1);
+      attractionRebound(g, this.pcol, r.x, r.y, r.ang, left, left);
+    }
     // Garments still in flight pass in front of everything, so the strip is unmissable.
     for (const c of this.clothes) {
       if (c.landed) continue;
@@ -1575,6 +1945,23 @@ export class PassionKit {
       count: dates, priority: 58,
     } : null);
 
+    // ── Mastery ──
+    this.api.setStatusIndicator('passion-perfume', playerIsPassion && s.auraUntil > time ? {
+      name: 'Perfume', emoji: '💐', color: PSN.blush,
+      description: `You are wearing it. Everything within ${AURA_RADIUS}px of you is gaining `
+        + `${AURA_LOVE_PER_SEC} love a second. Stand in the cloud to bank more — every second in `
+        + 'it is worth two of this.',
+      until: s.auraUntil, priority: 104,
+    } : null);
+
+    const held = playerIsPassion && this.masteryOn('player') ? s.caught.size : 0;
+    this.api.setStatusIndicator('passion-attraction', held > 0 ? {
+      name: 'Attraction', emoji: '💞', color: PSN.hot,
+      description: `${held === 1 ? 'Somebody is' : `${held} of them are`} inside your ring and `
+        + 'cannot get back out of it. It moves with you — walking away only drags them along.',
+      count: held, priority: 102,
+    } : null);
+
     // ── Victim side: the player's own meter, when the bot is the one playing Passion. ──
     const l = this.api.npcElementId === 'passion' ? this.loves.get(p) : undefined;
     this.api.setStatusIndicator('passion-love', l ? {
@@ -1590,6 +1977,14 @@ export class PassionKit {
         + 'worth 1.5× until it wears off.',
       until: l!.impressedUntil, priority: 5,
     } : null);
+
+    this.api.setStatusIndicator('passion-attracted',
+      this.masteryOn('npc') && this.sides.npc.caught.has(p) ? {
+        name: 'Attracted', emoji: '💞', color: PSN.hot,
+        description: `You are inside their ring and cannot leave it. The boundary sits ${ATTRACT_RADIUS}px `
+          + 'out and follows them, so there is no distance to be made — kill them or be charmed.',
+        priority: 6,
+      } : null);
   }
 
   // ── Accessors read by ArenaScene / the NPC ─────────────────────────────────
@@ -1604,6 +1999,29 @@ export class PassionKit {
   }
 
   /**
+   * Where the bot's own cloud is, while it is still worth standing in — the one Passion synergy
+   * the movement half of the AI needs, since the aura is only ever banked by being inside it.
+   * Side-effect free: it reads the cloud list and nothing else.
+   */
+  /**
+   * The slot the bot gave up for Perfume, so its AI can stop casting what is no longer there.
+   * The kit is the only thing that knows: the bind lives on the scene, but whether Passion is
+   * even the element wearing it does not.
+   */
+  npcPerfumeSlot(): 'e' | 'r' | 'f' | 'q' | null {
+    return this.perfumeSlot('npc');
+  }
+
+  npcCloudPoint(): { x: number; y: number } | null {
+    if (!this.masteryOn('npc')) return null;
+    const s = this.sides.npc;
+    // Already fully dosed — there is nothing left to bank and the fight is worth more.
+    if (s.auraUntil - this.now >= PERFUME_AURA_MAX_MS - 500) return null;
+    const c = this.clouds.find((cl) => cl.owner === 'npc' && cl.diesAt > this.now + 200);
+    return c ? { x: c.x, y: c.y } : null;
+  }
+
+  /**
    * The HUD cards. The rose's fifteen seconds and the pose's five both outlast their own
    * cooldowns, so those two slots count the ability rather than the wait.
    */
@@ -1614,6 +2032,14 @@ export class PassionKit {
     }
     if (abilityId === 'passion-exhibition' && s.poseUntil > time) {
       return Phaser.Math.Clamp((s.poseUntil - time) / POSE_MS, 0, 1);
+    }
+    // Perfume counts its cloud down while one is hanging, then its own cooldown up afterwards —
+    // the same two-phase card the rose uses, for the same reason: the cloud outlives nothing but
+    // it is the thing the player is actually watching.
+    if (abilityId === 'perfume') {
+      const cloud = this.clouds.find((c) => c.owner === 'player' && c.diesAt > time);
+      if (cloud) return Phaser.Math.Clamp((cloud.diesAt - time) / PERFUME_MS, 0, 1);
+      return Phaser.Math.Clamp((time - s.perfumeCastAt) / PERFUME_COOLDOWN_MS, 0, 1);
     }
     return this.api.player.getCooldownRatio(abilityId);
   }

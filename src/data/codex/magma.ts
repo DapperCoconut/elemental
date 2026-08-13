@@ -3,9 +3,9 @@ import { ElementCodex } from '../AbilityCodex';
 /**
  * Magma — the only element that asks you to aim at your own summons.
  *
- * Verified against `src/elements/magma.ts` and `kits/MagmaKit.ts`. Magma has no shop upgrades, no
- * perks and no mastery enhancements; every figure below is a constant at the top of the kit, and
- * every charge figure is a call into the kit's single `feed` chokepoint.
+ * Verified against `src/elements/magma.ts` and `kits/MagmaKit.ts`. Every figure below is a
+ * constant at the top of the kit, and every charge figure is a call into the kit's single `feed`
+ * chokepoint.
  */
 const magma: ElementCodex = {
   identity:
@@ -21,12 +21,16 @@ const magma: ElementCodex = {
     {
       emoji: '🌡️',
       name: 'Pressure',
-      magic:
-        'A gauge floats over every vessel you own, and everything you do fills it. This is the '
-        + 'element: not a resource you collect off enemies but one you *build*, by spending your own '
-        + 'output on a rock on the floor instead of on the person trying to kill you. A vessel you '
-        + 'never hit is a slow trickle. A vessel you stand next to and beat on with the fist erupts '
-        + 'in seconds.',
+      basics:
+        'Volcanoes and eggs both run on a 0–100 pressure gauge that everything in the kit feeds. A pool '
+        + 'of yours sitting within 27px of a vessel is worth 16 a second, and a plumed pool lives 6 '
+        + 'seconds, so one lob parked on a volcano is 96. A thrown rock is 10 and is consumed doing it, '
+        + 'though a rock can never charge the vessel that spat it. The fist is 8 for a slap and 22 for a '
+        + 'punch, once per vessel per 500ms. A popped Bloat is 25 to everything of yours inside its 96px '
+        + 'burst, and a collapse is 40 to every other vessel inside the 150px blast — a dying volcano can '
+        + 'hatch an egg. Dragon breath is 25 a second to anything of yours in the fire. Each feed flashes '
+        + 'the vessel white with a spark per whole point, under a gauge 48px wide for a volcano and 62px '
+        + 'for an egg.',
       effects: [
         { tag: 'resource', label: 'Lava on it', detail: '16 pressure a second from any pool of yours sitting within 27px of the vessel — and a plumed pool lives 6 seconds, so one lob parked on a volcano is 96.' },
         { tag: 'resource', label: 'Rock into it', detail: '10 pressure per thrown rock, and the rock is consumed doing it. A rock can never charge the vessel that spat it.' },
@@ -45,12 +49,13 @@ const magma: ElementCodex = {
     {
       emoji: '🌋',
       name: 'Lava On The Floor',
-      magic:
-        'Pools of molten rock with a crust that skins over as they cool — and the skin is the '
-        + 'warning, because a pool that looks grey is nearly finished. They are lobbed rather than '
-        + 'placed: until one lands it is a glob in the air with a ring on the floor showing where it '
-        + 'is going, which is the only reason Plume is not an instant five-pool carpet under '
-        + 'somebody\'s feet.',
+      basics:
+        'A pool is 27px across, spends 0.26 seconds in the air before it lands, lives 6 seconds and '
+        + 'burns anything standing in it for 34 damage a second, accumulated fractionally and paid in '
+        + 'whole points. Overlap never stacks — burn is the maximum across every pool touching a body, so '
+        + 'five pools on one tile is a wider trap and not a hotter one — and stepping out discards '
+        + 'whatever part-tick you had rather than banking it. 44 pools may be on the field at once across '
+        + 'both sides, with the oldest dropped to make room.',
       effects: [
         { tag: 'dot', label: 'Standing in one', detail: '34 damage a second, accumulated fractionally and paid out in whole points.' },
         { tag: 'area', label: 'The pool', detail: '27px radius, 6 seconds of life, and 0.26 seconds in the air before it lands.' },
@@ -67,12 +72,13 @@ const magma: ElementCodex = {
 
   abilities: {
     'magma-plume': {
-      magic:
-        'Five globs of molten rock lobbed out in a fan in front of you, one every eighth of a '
-        + 'second, each arcing up and coming down inside a ring that tells whoever is standing there '
-        + 'to move. It is deliberately not a carpet: the throw takes about four tenths of a second '
-        + 'end to end, and the pools land staggered in distance so they cover ground rather than a '
-        + 'line. While hatched this button is not Plume at all — it is dragon breath.',
+      basics:
+        'Throws 5 pools over about 0.42 seconds, spread 0.62 radians either side of the aim (about 71°) '
+        + 'and landing 38–118px away, staggered randomly within that band so they cover an area rather '
+        + 'than an arc. Each burns for 34 damage a second within 27px for its 6-second life, and charges '
+        + 'any vessel it lands on at 16 pressure a second — up to 96 over one pool\'s life. A glob does '
+        + 'nothing for the 260ms it is flying and its landing ring grows as it falls, so it can be walked '
+        + 'out of. 2s cooldown.',
       cast: 'Click, on the press rather than held. Aimed at the cursor. 2s cooldown.',
       effects: [
         { tag: 'summon', label: 'The fan', detail: '5 pools thrown over about 0.42 seconds, spread 0.62 radians either side of the aim (about 71° in total).' },
@@ -89,12 +95,16 @@ const magma: ElementCodex = {
     },
 
     'magma-volcano': {
-      magic:
-        'A cone of black rock shoved up out of the arena floor with a lit mouth, and it works for '
-        + 'you whether you help it or not. Left alone it coughs a pool of lava out every two and a '
-        + 'half seconds. Fed, it speeds up, starts throwing chunks of rock, and at a hundred it goes '
-        + 'critical: five seconds of firing rock in every direction while the gauge screams, then '
-        + 'the whole cone comes down.',
+      basics:
+        'Plants a 30px cone at the cursor that stands 18 seconds, two per side, with a third cast '
+        + 'crumbling the oldest. It vents a pool every 2.6 seconds at zero pressure, tightening linearly '
+        + 'to every 0.7s at full, thrown 44–102px from the base. From 35 pressure it also throws rock: a '
+        + 'three-spoke burst every 1.5 seconds tightening to every 0.42s, each chunk 12 damage at 215 '
+        + 'px/s with a 22px catch and 2.6 seconds of life. At 100 it stops laddering and goes critical, '
+        + 'firing a rock every 130ms in a turning spiral for 5 seconds — a warning nobody can miss — then '
+        + 'collapses for 60 damage and a 120px shove to everything within 150px, hands 40 pressure to '
+        + 'every other vessel in the blast, and leaves 4 fresh pools scattered 30–100px around the '
+        + 'crater. 10s cooldown.',
       cast: 'E, placed at the cursor and clamped inside the arena. 10s cooldown. Two at a time — a third cast crumbles the oldest.',
       effects: [
         { tag: 'summon', label: 'The cone', detail: '30px across, 18 seconds of life, up to 2 standing per side.' },
@@ -115,11 +125,12 @@ const magma: ElementCodex = {
     },
 
     'magma-bloat': {
-      magic:
-        'You swell up, glowing gold at the seams and venting. For ten seconds you are carrying a '
-        + 'charge instead of a shield, and it is spent the instant anything touches you: the hit is '
-        + 'refused outright — all of it, whatever it was — and the pressure you were holding goes '
-        + 'off in a ring around your feet.',
+      basics:
+        'Refuses the next single instance of damage that reaches you entirely, at any size, with no cap '
+        + 'and no partial absorb — and bursts for 30 damage to everything within 96px plus a 90px shove, '
+        + 'handing 25 pressure to every vessel of yours inside the same radius. The window is 10 seconds '
+        + 'and expires quietly with a puff of smoke if nothing hits you, with no refund. 8s cooldown on a '
+        + '10s window, so it can very nearly be kept up permanently.',
       cast: 'R. Instant, no aim. 8s cooldown on a 10s window, so it can very nearly be kept up permanently.',
       effects: [
         { tag: 'shield', label: 'The block', detail: 'The next single instance of damage that reaches you is refused entirely, at any size. There is no cap and no partial absorb.' },
@@ -134,37 +145,37 @@ const magma: ElementCodex = {
       ],
     },
 
-    'magma-fist': {
-      magic:
-        'A giant fist of molten rock on the end of a lava arm, and it goes wherever your cursor '
-        + 'goes for eight seconds. It is not a button — it is a limb, and what it does depends '
-        + 'entirely on how you move it. Flick it sideways across somebody and it backhands them '
-        + 'across the arena; pull it back and drive it straight out along the arm and it punches for '
-        + 'more than twice as much. Bring it down on your own volcano and it is the best charger in '
-        + 'the kit.',
-      cast: 'F. The fist starts at your shoulder and is thrown out to the cursor rather than blinking into place. 8-second window, 15s cooldown.',
+    'magma-jet': {
+      basics:
+        'A held jet: 12 damage every 0.15s to everything within 175px and 0.42 radians of the cursor, '
+        + 'widening slightly with distance, while thrusting you 330 px/s directly away from the cursor — '
+        + 'written over your movement rather than added to it, so while the jet is open the jet is how '
+        + 'you move. It charges anything of yours in the fire at 26 pressure a second. There are 3 '
+        + 'seconds of fuel a cast, drawn down only while F is held, so a tap costs a tenth of a second; '
+        + 'the bar top-left is what is left. 12s cooldown.',
+      cast: 'F, held. Three seconds of fuel per cast, spent only while the key is down. 12s cooldown.',
       effects: [
-        { tag: 'utility', label: 'The limb', detail: '262px of reach, chasing the cursor with a hard follow so a flick survives the lerp. Speed is peak-held with a ~120ms decay, so a flick that peaks a frame before contact still counts.' },
-        { tag: 'damage', label: 'Slap', detail: '15 damage and a 190px shove *along the swing* — where the backhand was travelling, not away from you. Needs 520 px/s of fist speed moving across the arm.' },
-        { tag: 'damage', label: 'Punch', detail: '35 damage and a 70px shove straight down the arm. Needs 560 px/s and motion at least 55% aligned with the caster→fist axis.' },
-        { tag: 'resource', label: 'Charging', detail: '8 pressure per slap, 22 per punch, into any vessel of yours the fist lands on.' },
-        { tag: 'utility', label: 'The gate', detail: '500ms per target, and separately 500ms per vessel — one swing cannot machine-gun the same body.' },
-        { tag: 'utility', label: 'Spending the swing', detail: 'Anything it connects with zeroes the held speed, so a single sweep never lands twice off one flick.' },
+        { tag: 'dot', label: 'The cone', detail: '12 damage every 0.15s to everything within 175px and 0.42 radians of the cursor, widening slightly with distance the way a real cone does.' },
+        { tag: 'utility', label: 'The thrust', detail: '330 px/s directly away from the cursor, written over your movement rather than added to it — while the jet is open, the jet is how you move.' },
+        { tag: 'resource', label: 'Charging', detail: '26 pressure a second to anything of yours in the fire, measured at an 88px sphere halfway down the cone.' },
+        { tag: 'utility', label: 'The fuel', detail: '3 seconds total, drawn down only while F is held. A tap costs a tenth of a second; the bar top-left is what is left of it.' },
       ],
       notes: [
-        'The distinction is measured against the arm, not the screen: pushing *along* the arm is a punch, moving *across* it is a slap. Circling somebody at arm\'s length slaps; winding back and lunging punches.',
-        'A gold streak trails the fist while it is above about 364 px/s, which is the only cue that the swing is currently fast enough to land anything at all.',
-        'A punch into your own egg is 22 pressure every half second — roughly six seconds of nothing but punching to hatch one from empty, which is why the fist and the Q are cast together.',
-        'The 190px slap knock is the longest displacement in the kit and it is aimed by the direction of your flick, which makes it a positioning tool as much as a damage one.',
+        'Pointing it at your own volcano and holding is the fastest charge in the kit — and it walks you backwards out of the fight while you do it, which is usually where you wanted to be anyway.',
+        'A wall at your back is not an accident once you have Jet Slam: with F+ the impact brings a dozen rocks down around you.',
+        'The thrust is written straight onto the body after movement has resolved, so WASD does nothing while the jet is open. Aim is the steering.',
       ],
     },
 
     'magma-dragon-kin': {
-      magic:
-        'A purple-scaled egg laid on the arena floor with two hundred and fifty pressure to find, '
-        + 'and it will not fill itself — a volcano at least vents lava while you ignore it, and an '
-        + 'egg does nothing at all for forty seconds and then goes cold. Fill it and it splits open '
-        + 'and you are the dragon: harder to hurt, faster, and your click is a cone of purple fire.',
+      basics:
+        'Plants a 26px egg that needs 250 pressure to hatch and goes cold after 40 seconds with a "🥚 '
+        + 'WENT COLD", one per side, a second cast crumbling the first. Hatched, you get 20 seconds at '
+        + '×0.8 damage taken and ×1.2 move speed, and your click becomes Dragon Breath: a 0.9-second cone '
+        + 'dealing 14 damage every 180ms to everything within 210px and 0.44 radians of the aim. The '
+        + 'breath charges as well, at 25 pressure a second, so a dragon can fill the next volcano just by '
+        + 'breathing on it. A bar top-left counts the 20 seconds down, with a "🐉 SPENT" pop-up when it '
+        + 'lapses. 55s cooldown.',
       cast: 'Q, placed at the cursor and clamped inside the arena. A second cast crumbles the first egg. Ultimate, 55s cooldown.',
       effects: [
         { tag: 'summon', label: 'The egg', detail: '26px, 250 pressure to hatch, 40 seconds before it goes cold and prints "🥚 WENT COLD". One per side.' },
@@ -179,6 +190,63 @@ const magma: ElementCodex = {
         'Plume is gone for the whole 20 seconds. Dragon Breath shares the click slot outright.',
         'A collapsing volcano within 150px of the egg is 40 pressure in one hit, so the two summons are meant to be placed near each other.',
         'Ruin\'s Spikes of Ruin razes an egg like any other summon — and a razed egg never hatches, so the 55-second ultimate is simply gone.',
+      ],
+    },
+  },
+
+  mastery: {
+    'obsidian-coat': {
+      basics:
+        'A critical volcano will accept pressure up to 250 past its cap, with or without the '
+        + 'Supercritical upgrade — the mastery opens the same door, so the passive is playable on its '
+        + 'own. Standing inside the collapse when it lands coats you: the same 150px blast, widened by '
+        + '0.9px per point of overfill, so a fat cone is also an easier one to be caught by. The coat is '
+        + '15 seconds of ×1.10 damage dealt and ×0.92 taken at its thinnest, rising to ×1.45 and ×0.70 at '
+        + '250 overfill — stacking with Dragon Kin\'s ×0.8 and Dragon Scale\'s ×0.75 — and adds 1 extra '
+        + 'glob to Plume at the thinnest and 4 at the thickest, so 6 to 9 pools a cast instead of 5. A '
+        + 'second collapse refreshes the window and keeps the better of the two coats, so chaining thin '
+        + 'ones never builds a thick one.',
+      effects: [
+        { tag: 'resource', label: 'The gate', detail: 'A critical volcano accepts pressure up to 250 past its cap, with or without the Supercritical (E+) upgrade — the mastery opens the same door, so the passive is playable on its own.' },
+        { tag: 'area', label: 'Being caught', detail: 'You have to be inside the collapse when it lands — the same 150px blast, widened by 0.9px per point of overfill, so a fat cone is also an easier one to be standing in.' },
+        { tag: 'buff', label: 'Damage dealt', detail: '×1.10 at the thinnest coat, rising to ×1.45 at 250 overfill.' },
+        { tag: 'shield', label: 'Damage taken', detail: '×0.92 at the thinnest, down to ×0.70 at 250 overfill. Stacks with Dragon Kin\'s ×0.8 and Dragon Scale\'s ×0.75.' },
+        { tag: 'damage', label: 'The click', detail: '1 extra glob on Plume at the thinnest coat and 4 at the thickest — 6 to 9 pools per cast instead of 5, each still 34 a second.' },
+        { tag: 'utility', label: 'The window', detail: '15 seconds. A second collapse refreshes it and keeps the better of the two coats — chaining thin ones never builds a thick one.' },
+      ],
+      notes: [
+        'The coat is bought with the same currency as everything else in the kit: your own output, spent on a rock that was already going to explode. Overfilling a cone costs you five seconds of not attacking the person.',
+        'Magma Saw is the fastest way to fill one, at 30 pressure a second held against the cone — and it is a melee tool, so sawing your own volcano puts you exactly where you have to be when it goes.',
+        'Nothing about the collapse changes: it still does 60 + 0.7 per overfill to enemies, and it still does nothing at all to you. Standing in your own blast has never had a cost, and now it has a reward.',
+        'A cone razed by Ruin\'s Spikes of Ruin never collapses, so it never pays a coat either.',
+      ],
+    },
+    'magma-saw': {
+      basics:
+        'A bindable saw held 34px out along your cursor, revved by holding the key and started on '
+        + 'release — a tap runs 2.5 seconds, a full 1.6-second rev runs the full 8. It bites anything '
+        + 'within 42px for 1 damage every 0.05s, 20 a second, ramping +1 a bite every 2 seconds to 40, 60 '
+        + 'and a capped 80 a second. Held against a vessel of yours it charges at 30 pressure a second, '
+        + 'the fastest in the kit and the only thing that can push a critical cone past its cap. At 8 '
+        + 'seconds it detonates for 35 damage inside 150px to everyone including you, shoving them 240px '
+        + 'against 190px on you back down the line you were cutting, and hands 40 pressure to every '
+        + 'vessel in the blast. Pressing the key again at any point cuts the motor instantly with no '
+        + 'blast at all. 14s cooldown from the moment the saw starts.',
+      cast: 'The bound key, held to rev and released to cut — a tap runs 2.5 seconds, a full 1.6-second rev runs the full 8. Press again at any point to cut the motor. 14 second cooldown, from the moment the saw starts.',
+      effects: [
+        { tag: 'dot', label: 'The bite', detail: '1 damage every 0.05s — 20 a second — to anything within 42px of the blade, which floats 34px out from you along your cursor.' },
+        { tag: 'dot', label: 'The ramp', detail: '+1 per bite every 2 seconds it stays running: 20 a second, then 40, then 60, then 80, capped there.' },
+        { tag: 'resource', label: 'Charging', detail: '30 pressure a second into any vessel of yours the blade is held against — the fastest charge in the kit, and the only one that can push a critical cone past its cap.' },
+        { tag: 'damage', label: 'The detonation', detail: 'At 8 seconds: 35 damage inside 150px to everyone, you included, and a 240px shove on them against a 190px one on you, back down the line you were cutting.' },
+        { tag: 'utility', label: 'Cutting the motor', detail: 'Pressing the key again ends the saw instantly with no blast at all — available from the first frame to the last.' },
+        { tag: 'resource', label: 'The blast charges too', detail: '40 pressure to every vessel of yours inside the 150px it goes off in.' },
+      ],
+      notes: [
+        'Total damage on a saw ridden the whole way is 8 seconds of ramp — 40 + 80 + 120 + 160 = 400 into a body that never leaves the blade, plus the 35 at the end. Nobody stands there for eight seconds, which is why the ramp exists: the saw is asking you to chase.',
+        'A full rev and a cancelled motor is the strongest line in the kit, and a full rev you forget about is 35 damage and a knockback you gave yourself.',
+        'It takes over whichever slot you bind it to outright, including during Full Draconic — bind it over R and the dragon has no scale armour.',
+        'Held against your own critical volcano it is the Obsidian Coat engine: 30 a second of overfill, at a range that leaves you standing in the collapse.',
+        'The blast damage is self-inflicted, so it will not feed anything that pays out on damage the *opponent* dealt you.',
       ],
     },
   },

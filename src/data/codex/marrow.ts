@@ -22,12 +22,14 @@ const marrow: ElementCodex = {
     {
       emoji: '🦴',
       name: 'The Bone Bar',
-      magic:
-        'Five sockets, and each one holds exactly one cell. A macrophage is a wall that eats, a '
-        + 'neutrophil is a knife that is meant to die, and a T-cell is a medic that makes the '
-        + 'other two better. Nothing queues and nothing stacks: at five, the sixth cast is handed '
-        + 'straight back with its cooldown intact, so the last socket is the most expensive thing '
-        + 'you own.',
+      basics:
+        'Exactly 5 summons at once, drawn as five sockets — a sixth cast is refused with "🦴 BONE BAR '
+        + 'FULL" and costs no cooldown. The 5 mast cells Mastacre releases take no socket and are not '
+        + 'counted. Every cell can be shot down: any enemy shot that touches one deals at least 5 and is '
+        + 'consumed doing it, against 85 HP on a macrophage, 30 on a neutrophil, 50 on a T-cell and 50 on '
+        + 'a mast cell. Each filled socket draws its cell\'s own HP as a ring around it, so the bar '
+        + 'reports the state of the board without you having to look at it, and every cell dies the '
+        + 'moment its keeper goes down.',
       effects: [
         { tag: 'summon', label: 'The cap', detail: 'Exactly 5 summons at once. A sixth cast is refused with "🦴 BONE BAR FULL" and costs no cooldown.' },
         { tag: 'summon', label: 'Mast cells are exempt', detail: 'The 5 mast cells Mastacre releases take no socket at all and are not counted against the cap.' },
@@ -44,11 +46,13 @@ const marrow: ElementCodex = {
     {
       emoji: '🔥',
       name: 'Inflammation',
-      magic:
-        'A second bar under the bone, and it is the reason to walk into things. It fills when you '
-        + 'get hurt and while your macrophages are working, it drains constantly whatever you do, '
-        + 'and everything it is worth is proportional: at zero you are a slow pile of cells, and '
-        + 'at a hundred you are a fever with a standing army that heals itself.',
+      basics:
+        'A 0–100 bar that drains 2 a second at all times. You gain 5 for every 20 damage you take, '
+        + 'counted off the raw figure before any of your own mitigation, plus 2 a second for each live '
+        + 'macrophage — two of them out-earns the drain on their own — and 20 for every mast cell that '
+        + 'detonates, so all five is a full bar from empty. Scaled straight off the bar it heals up to 4 '
+        + 'HP a second on you and 3 a second on every cell you own, and grants up to +30% move speed to '
+        + 'you, your cells and your mast cells.',
       effects: [
         { tag: 'resource', label: 'The bar', detail: '0–100, draining 2 a second at all times.' },
         { tag: 'resource', label: 'Getting hurt', detail: '+5 for every 20 damage you take, counted off the raw figure before any of your own mitigation.' },
@@ -67,12 +71,14 @@ const marrow: ElementCodex = {
 
   abilities: {
     'marrow-antibody': {
-      magic:
-        'A single antibody flicked at the cursor. It hurts, and then it stops being a projectile '
-        + 'and becomes a permanent fixture on whoever it hit — ten of them will ring a body, they '
-        + 'never expire, and nothing shakes them off. What they are *for* is the board: every one '
-        + 'of them is a standing order to your cells to bite that body harder, so the click is how '
-        + 'you tell five summons which target matters.',
+      basics:
+        'An auto-firing click, 440ms between shots: a 9px round at 720 px/s with 1.4 seconds of life, '
+        + 'stopping on the first body for 12 damage — and sticking there. Up to 10 per body from one '
+        + 'caster, ringed around them at fixed slots, and they never fade: there is no expiry, no cleanse '
+        + 'and no dispel, and the only thing that removes one is the body being gone. Every antibody on a '
+        + 'body makes each of your cells\' bites on it 10% harder — +50% at five and +100% at a full ten, '
+        + 'on the macrophage\'s 15 and the neutrophil\'s 25 alike — and a macrophage biting a coated body '
+        + 'heals itself and you 2 more per antibody, so 5 bare, 15 at five and 25 at a full coat.',
       cast: 'Click, auto-firing while the button is held. 440ms between shots.',
       effects: [
         { tag: 'damage', label: 'The hit', detail: '12 damage to the first body it touches.' },
@@ -83,11 +89,13 @@ const marrow: ElementCodex = {
         { tag: 'utility', label: 'They never fade', detail: 'There is no expiry, no cleanse and no dispel. The only thing that removes one is the body it is stuck to being gone.' },
       ],
       upgrade: {
-        magic:
-          'B-Cascade. With a T-cell of any kind standing on the field the click stops being a '
-          + 'click: instead of flicking an antibody you push out a whole B-cell, a fat gold thing '
-          + 'wearing its antibodies on the outside, and it crawls off toward wherever you were '
-          + 'pointing and does not come back. It takes no socket. What it is for is the salvos.',
+        basics:
+          'While you own a T-cell or a killer T, Click builds a B-cell instead — the moment your last one '
+          + 'dies it is an antibody again. The B-cell has 45 HP at 46 px/s and lives 14 seconds, takes no '
+          + 'socket and cannot be razed off the board by anything that wipes summons. It deals 25 damage to '
+          + 'the first enemy it crawls into and is spent doing it, and fires 2 homing antibodies at the '
+          + 'nearest enemy every 3 seconds for 12 damage each, latching exactly like a thrown one, coat cap '
+          + 'included. The rate becomes a 5-second cooldown rather than the click\'s 440ms.',
         effects: [
           { tag: 'summon', label: 'The condition', detail: 'Only while you own a T-cell or a killer T. The moment your last one dies the click is an antibody again.', requiresUpgrade: 'click' },
           { tag: 'summon', label: 'The B-cell', detail: '45 HP, 46 px/s, 14 seconds of life. It takes no socket and cannot be razed off the board — nothing that wipes summons touches it.', requiresUpgrade: 'click' },
@@ -105,11 +113,14 @@ const marrow: ElementCodex = {
     },
 
     'marrow-macrosma': {
-      magic:
-        'A macrophage: the biggest, slowest, most patient thing in the kit. It walks at whoever '
-        + 'is nearest and opens a feeding cup on them, and every bite feeds you as well as itself. '
-        + 'It also eats *structures* — anything the enemy has summoned, built or planted goes down '
-        + 'its throat whole, and that is worth far more than the biting.',
+      basics:
+        'Summons an 85 HP macrophage at 76 px/s — the slowest thing either side will see all match. It '
+        + 'bites for 15 inside 30px every 1.1 seconds, +10% per antibody on the body it is eating, so 30 '
+        + 'through a full coat, and every bite feeds 5 HP to it and 5 to you plus 2 more each per '
+        + 'antibody, so 25 each through a full coat. Anything the other side has put on the floor inside '
+        + '46px is devoured outright — checked five times a second — for 25 HP to you and 25 to the cell '
+        + 'per object. It also pays +2 inflammation a second for as long as it lives, which alone beats '
+        + 'the bar\'s drain. Takes a socket, 9.5s cooldown.',
       cast: 'E, no aim. Takes a socket. 9.5s cooldown.',
       effects: [
         { tag: 'summon', label: 'The cell', detail: '85 HP and 76 px/s — the slowest thing either side will see all match.' },
@@ -119,10 +130,15 @@ const marrow: ElementCodex = {
         { tag: 'resource', label: 'Upkeep', detail: '+2 inflammation a second for as long as it is alive, which alone beats the bar\'s 2 a second drain.' },
       ],
       upgrade: {
-        magic:
-          'Cell Janitor. The macrophages come out red, and they are no longer only eating the '
-          + 'enemy — they are cleaning up after your own dead. Every cell of yours that dies is a '
-          + 'mess, and every mess makes every macrophage you own bigger.',
+        basics:
+          'Macrophages become janitors. Any other cell of yours dying instantly heals every macrophage '
+          + 'you own to a full 85 HP, with no cap on how often, and gives each one a permanent size to a '
+          + 'maximum of 5: +9% larger, +12% bite damage and +3px of reach per size, plus 2 more HP a bite '
+          + 'to the cell and to you, so a five-size janitor feeds 15 on a bare bite instead of 5 and 35 '
+          + 'through a full antibody coat. A spent neutrophil, a razed T-cell, a mast cell going off and a '
+          + 'cell killed by your own Autoimmunity all count — a mast detonation alone is 5 sizes in five '
+          + 'seconds. A janitor is red in the arena and red in its socket, the same red Autoimmunity paints '
+          + 'everything.',
         effects: [
           { tag: 'heal', label: 'The tidy-up', detail: 'Any other cell of yours dying heals every macrophage you own to a full 85 HP, instantly and with no cap on how often.', requiresUpgrade: 'e' },
           { tag: 'buff', label: 'The growth', detail: 'And gives each one a permanent size, to a maximum of 5: +9% larger, +12% bite damage and +3px reach per size.', requiresUpgrade: 'e' },
@@ -140,11 +156,12 @@ const marrow: ElementCodex = {
     },
 
     'marrow-neutralize': {
-      magic:
-        'A neutrophil. Fast, fragile, and it hits harder than anything else you own — but it has '
-        + 'thirty hit points and it is supposed to lose them. When it dies it turns inside out '
-        + 'into a web of spiked protein across a huge patch of floor, and that web is the real '
-        + 'ability.',
+      basics:
+        'Summons a 30 HP neutrophil at 168 px/s — twice the macrophage\'s speed and barely a third of '
+        + 'its health. It strikes for 25 inside 26px every 1.5 seconds, +10% per antibody on the body, so '
+        + '50 through a full coat. When it dies it leaves a 130px NET for 6 seconds: 5 damage a second '
+        + 'paid in ticks of 1.25 every 250ms, and a 45% slow on anybody standing in it who is not its '
+        + 'owner. Takes a socket, 8s cooldown.',
       cast: 'R, no aim. Takes a socket. 8s cooldown.',
       effects: [
         { tag: 'summon', label: 'The cell', detail: '30 HP and 168 px/s — twice the macrophage\'s speed and barely a third of its health.' },
@@ -154,11 +171,14 @@ const marrow: ElementCodex = {
         { tag: 'debuff', label: 'The slow', detail: '45% slower for as long as anything stands in it. It applies to anybody who is not the web\'s owner.' },
       ],
       upgrade: {
-        magic:
-          'Cytokine Storm. The neutrophil starts screaming chemically as well as stabbing: every '
-          + 'few seconds it sprays a shotgun of seven small proteins out along its own facing. '
-          + 'They are almost nothing at range and a great deal of it in somebody\'s face, and what '
-          + 'they leave behind is a mark that everything else you own is about to hit.',
+        basics:
+          'Neutrophils spray as well as strike: 7 cytokines every 2.6 seconds in a 46° cone along the '
+          + 'cell\'s facing, 4 damage each at 250 px/s with 0.62s of life — about 150px of reach. Every '
+          + 'pellet that lands stacks +10% damage taken on that body, up to +50%, for 4 seconds, with any '
+          + 'fresh pellet restarting the clock. The mark is on the body rather than the pellet, so your '
+          + 'macrophage bites, your killer T, your mast cells and your own shots all read it. It fires '
+          + 'where the cell is looking, so a neutrophil already in melee empties all seven into its target '
+          + 'while one standing off sprays past.',
         effects: [
           { tag: 'damage', label: 'The spray', detail: '7 cytokines every 2.6 seconds, 4 damage each, in a 46° cone along the cell\'s facing. 250 px/s and 0.62s of life — about 150px of reach.', requiresUpgrade: 'r' },
           { tag: 'debuff', label: 'The mark', detail: 'Every pellet that lands stacks +10% damage taken on that body, up to +50%, for 4 seconds. Any fresh pellet restarts the 4 seconds.', requiresUpgrade: 'r' },
@@ -175,12 +195,15 @@ const marrow: ElementCodex = {
     },
 
     'marrow-dendricles': {
-      magic:
-        'Five dendritic tentacles whipped at the cursor at short range, one after another, every '
-        + 'one of them going to the same point. On their own they are a small, close, five-part '
-        + 'poke. But land four of the five on the same body — which is a question of whether your '
-        + 'aim is still on them by the fifth — and the ability transforms: the next press is not a '
-        + 'strike at all, it is a T-cell.',
+      basics:
+        'Lashes 5 tentacles at the cursor out to 150px for 5 damage each, 25 if all of them land. The '
+        + 'tips sit 11px apart across the aim line — a flat offset rather than an angle, so the bundle is '
+        + 'just as tight at 150px as it is point-blank — and each catches anything within 26px of its own '
+        + 'tip. Landing 4 or more on one body arms the next cast as a T-cell, and it stays armed until '
+        + 'spent. A T-cell has 50 HP at 122 px/s and never attacks anything: it hands one of your other '
+        + 'cells +25% move speed and +50% damage, once each and permanently, and tops cells up for 25 HP '
+        + 'the first time and 60% of the last each time after — 25, 15, 9, 5, floor of 3 — once every 1.6 '
+        + 'seconds. 6.5s cooldown; armed, it is a summon and takes a socket.',
       cast: 'F, aimed at the cursor, 150px maximum reach. 6.5s cooldown. Armed, it is a summon and takes a socket.',
       effects: [
         { tag: 'damage', label: 'The lash', detail: '5 damage per tentacle, 5 tentacles — 25 if every one of them lands.' },
@@ -191,11 +214,14 @@ const marrow: ElementCodex = {
         { tag: 'heal', label: 'The top-up', detail: '25 HP the first time, then 60% of the last each time after — 25, 15, 9, 5, and a floor of 3. Once every 1.6 seconds.' },
       ],
       upgrade: {
-        magic:
-          'Killer T. The moment a T-cell lands, F is handed straight back to you for two and a '
-          + 'half seconds. Press it again inside that window and the medic you just made turns: '
-          + 'dark, spurred, full of red granzyme, and it walks past your wounded cells and goes '
-          + 'for the enemy instead.',
+        basics:
+          'Summoning a T-cell resets F\'s cooldown for 2.5 seconds, and letting that window lapse puts the '
+          + 'cooldown back exactly where it would have been. Spend it and the T-cell becomes a killer in '
+          + 'the same socket: 125 HP at 138 px/s, never buffing or healing anything again. It strikes for '
+          + '28 inside 62px — medium range rather than melee — every 1.25 seconds, reading the antibody '
+          + 'coat like every other cell, and every 5 seconds dashes 190px straight through its target for '
+          + '22 more, hitting everything within 30px of the line it took. It is still a cell, so your other '
+          + 'T-cells buff it normally: +25% speed, +50% damage, and top-ups on its 125 HP.',
         effects: [
           { tag: 'utility', label: 'The window', detail: 'Summoning a T-cell resets F\'s cooldown for 2.5 seconds. Let it lapse and the cooldown is put back exactly where it would have been.', requiresUpgrade: 'f' },
           { tag: 'summon', label: 'The killer', detail: '125 HP and 138 px/s, in the same socket the T-cell was in. It never buffs or heals anything again.', requiresUpgrade: 'f' },
@@ -214,12 +240,11 @@ const marrow: ElementCodex = {
     },
 
     'marrow-mastacre': {
-      magic:
-        'Five mast cells released at once. They take no sockets, they cannot be built around, and '
-        + 'they are not defenders — they are five fat bulbs full of granules that home in on '
-        + 'whoever is nearest, glow hotter and shake harder as their fuse runs down, and then all '
-        + 'go off. What survives is standing in a hundred and twenty five damage; what you get '
-        + 'back is the whole fever bar.',
+      basics:
+        'Releases 5 mast cells in a ring around you, 50 HP each at 108 px/s, costing no sockets. Each '
+        + 'detonates after a 5-second fuse for 25 damage inside 120px — 125 in total to anything all five '
+        + 'reach — and pays +20 inflammation, so all five is the whole bar from empty. Killing one early '
+        + 'simply detonates it where it stands, for full damage and full inflammation. 26s cooldown.',
       cast: 'Q, no aim. Costs no sockets. Ultimate, 26s cooldown.',
       effects: [
         { tag: 'summon', label: 'The swarm', detail: '5 cells, 50 HP each, 108 px/s, released in a ring around you.' },
@@ -228,11 +253,15 @@ const marrow: ElementCodex = {
         { tag: 'utility', label: 'The fuse', detail: '5 seconds. Killing one early simply detonates it where it stands, for full damage and full inflammation.' },
       ],
       upgrade: {
-        magic:
-          'Autoimmunity. Cast it at 50 inflammation or higher — enough that the five detonations '
-          + 'would be asking a bar that stops at 100 for 150 — and the overflow has nowhere to go '
-          + 'but into your own cells. Everything you own turns red and doubles, and stops being '
-          + 'able to tell the enemy, each other and you apart.',
+        basics:
+          'Cast Q at 50 inflammation or more and it goes autoimmune instead — below that nothing happens, '
+          + 'because 50 plus the 100 the five mast cells pay is the 150 the bar cannot hold. For 10 seconds '
+          + 'every cell, mast cell and B-cell you own deals double damage, moves 30% faster and attacks 30% '
+          + 'sooner, with inflammation pinned at a full 100 for the whole window, so it is 4 HP/s and +30% '
+          + 'speed throughout with no drain and no tally. The price is friendly fire: half of every strike '
+          + 'a red cell lands splashes onto your own body and onto any of your own cells inside the same '
+          + 'reach, a red mast cell blasts you for half of its 50, and a red cell that can find no living '
+          + 'enemy turns around and walks at you on purpose — bites, lunges and all.',
         effects: [
           { tag: 'resource', label: 'The trigger', detail: 'Cast Q at 50 inflammation or more. Nothing happens below that: 50 + the 100 the five mast cells pay is the 150 the bar cannot hold.', requiresUpgrade: 'q' },
           { tag: 'buff', label: 'The response', detail: '10 seconds. Every cell, mast cell and B-cell you own deals 2× damage, moves 30% faster and attacks 30% sooner.', requiresUpgrade: 'q' },

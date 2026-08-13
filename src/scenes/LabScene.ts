@@ -5,10 +5,11 @@ import { findRecipe } from '../data/Recipes';
 import { ABSTRACT_ELEMENT_IDS, ABSTRACT_ELEMENT_UNLOCK_MAP } from '../data/AbstractElements';
 import { findPerkRecipe, findQuadPerkRecipe, findPentaPerkRecipe, findAbstractTriplePerkRecipe, PerkDef, ALL_PERKS } from '../data/Perks';
 import { DIVINE_PERKS } from '../data/DivinePerks';
+import { findElementDef } from '../data/ElementRoster';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix, tintPlate,
   addBackdrop, addBackButton, addButton, addChip, addHeaderBar, addIconButton, addSectionLabel,
-  addTabs, addRowPlate, addWell, UiButton,
+  addTabs, addRowPlate, addWell, addModal, addElementCrest, UiButton,
   ALL_CORNERS, fillHex, strokeHex, fillDiamond, fillNotchedGradient, strokeNotched, drawGlow,
 } from '../ui';
 import { Music, Sfx } from '../audio';
@@ -21,7 +22,10 @@ const MODE_ACCENT: Record<'elements' | 'perks' | 'quad-perks' | 'penta-perks', n
   'penta-perks': 0xd946ef,
 };
 
-const BASE_ELEMENTS = [
+/** A forge ingredient. */
+interface LabElement { id: string; name: string; emoji: string; color: number }
+
+const BASE_ELEMENTS: LabElement[] = [
   { id: 'fire',  name: 'Fire',  emoji: '🔥', color: 0xff4400 },
   { id: 'water', name: 'Water', emoji: '💧', color: 0x0088ff },
   { id: 'life',  name: 'Life',  emoji: '🌿', color: 0x44cc44 },
@@ -29,7 +33,7 @@ const BASE_ELEMENTS = [
   { id: 'earth', name: 'Earth', emoji: '🪨', color: 0x887755 },
 ];
 
-const ALL_ABSTRACT_ELEMENTS = [
+const ALL_ABSTRACT_ELEMENTS: LabElement[] = [
   { id: 'electricity', name: 'Electricity', emoji: '⚡', color: 0xffee00 },
   { id: 'slime',       name: 'Acid',        emoji: '🟢', color: 0x66cc44 },
   { id: 'fate',        name: 'Fate',        emoji: '🃏', color: 0x88eecc },
@@ -402,11 +406,11 @@ export class LabScene extends Phaser.Scene {
 
   // ── Helpers ──────────────────────────────────────────────────
 
-  private getAvailableElements(): Array<{ id: string; name: string; emoji: string; color: number }> {
+  private getAvailableElements(): LabElement[] {
     return [...BASE_ELEMENTS, ...this.getUnlockedAbstractElements()];
   }
 
-  private getUnlockedAbstractElements(): Array<{ id: string; name: string; emoji: string; color: number }> {
+  private getUnlockedAbstractElements(): LabElement[] {
     const completed = PlayerData.getCompletedGauntlets();
     return ALL_ABSTRACT_ELEMENTS.filter((el) => {
       const needed = ABSTRACT_ELEMENT_UNLOCK_MAP[el.id];
@@ -529,11 +533,11 @@ export class LabScene extends Phaser.Scene {
   }
 
   private buildSlotVisual(
-    el: { emoji: string; name: string; color: number },
+    el: LabElement,
     x: number, y: number,
     slot: 1 | 2 | 3 | 4 | 5,
   ): Phaser.GameObjects.Container {
-    const isAbs = ABSTRACT_ELEMENT_IDS.includes((el as { id?: string }).id ?? '');
+    const isAbs = ABSTRACT_ELEMENT_IDS.includes(el.id);
     const g = this.add.graphics();
     drawGlow(g, -30, -30, 60, 60, el.color, 0.5, 4, 3, 14);
     fillHex(g, 0, 0, 31, mix(el.color, 0x000000, 0.5), 0.97);
@@ -623,7 +627,7 @@ export class LabScene extends Phaser.Scene {
       }
       PlayerData.unlockElement(recipe.result);
       this.refreshNuclei();
-      this.showDiscoveryPopup(recipe.resultEmoji, recipe.resultName);
+      this.showDiscoveryPopup(recipe.result, recipe.resultName, recipe.resultEmoji);
       return;
     }
 
@@ -646,7 +650,7 @@ export class LabScene extends Phaser.Scene {
 
     PlayerData.unlockElement(recipe.result);
     this.refreshNuclei();
-    this.showDiscoveryPopup(recipe.resultEmoji, recipe.resultName);
+    this.showDiscoveryPopup(recipe.result, recipe.resultName, recipe.resultEmoji);
   }
 
   private attemptPerkForge(): void {
@@ -747,88 +751,116 @@ export class LabScene extends Phaser.Scene {
     this.time.delayedCall(3000, () => { if (this.messageText.active) this.messageText.setText(''); });
   }
 
-  private showDiscoveryPopup(emoji: string, name: string): void {
+  /**
+   * The payoff moment for a fusion: the element you just made, standing in the frame.
+   *
+   * It used to be a bare rectangle with a sparkle emoji and the element's own emoji beside
+   * its name — the one screen in the game where a *picture* of the thing was the entire
+   * point, and it showed a sticker instead.
+   */
+  private showDiscoveryPopup(elementId: string, name: string, emoji: string): void {
     Sfx.play('unlock');
     const { width, height } = this.scale;
     const cx = width / 2;
-    const cy = height / 2;
+    const accent = findElementDef(elementId)?.color ?? C.arcane;
+    const objects: Phaser.GameObjects.GameObject[] = [];
 
-    const overlay = this.add.rectangle(cx, cy, width, height, 0x000000, 0.75).setDepth(50).setInteractive();
-    const card = this.add.rectangle(cx, cy, 360, 220, 0x110022, 1).setStrokeStyle(3, 0xcc88ff).setDepth(51);
-    const sparkle = this.add.text(cx, cy - 70, '✨', { fontSize: '36px' }).setOrigin(0.5).setDepth(52);
-    const title = this.add.text(cx, cy - 30, 'NEW ELEMENT DISCOVERED!', {
-      fontSize: '18px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffcc44',
-    }).setOrigin(0.5).setDepth(52);
-    const emojiText = this.add.text(cx, cy + 14, `${emoji}  ${name.toUpperCase()}`, {
-      fontSize: '28px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#cc88ff',
-    }).setOrigin(0.5).setDepth(52);
-    const hint = this.add.text(cx, cy + 56, 'Now available in Element Select!', {
-      fontSize: '12px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#aaaaaa',
-    }).setOrigin(0.5).setDepth(52);
-
-    const continueBtn = this.add.rectangle(cx, cy + 90, 140, 36, 0x440088, 1)
-      .setStrokeStyle(2, 0xcc88ff).setDepth(52).setInteractive({ useHandCursor: true });
-    const continueLbl = this.add.text(cx, cy + 90, 'CONTINUE', {
-      fontSize: '14px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#cc88ff',
-    }).setOrigin(0.5).setDepth(53);
-
-    continueBtn.on('pointerdown', () => {
-      [overlay, card, sparkle, title, emojiText, hint, continueBtn, continueLbl].forEach((o) => o.destroy());
-      this.slot1Id = null;
-      this.slot2Id = null;
-      if (this.slot1Visual) { this.slot1Visual.destroy(); this.slot1Visual = null; }
-      if (this.slot2Visual) { this.slot2Visual.destroy(); this.slot2Visual = null; }
+    const modal = addModal(this, {
+      w: 460, h: 344, accent, glow: 0.6,
+      title: '✨  NEW ELEMENT DISCOVERED',
+      depth: DEPTH.modal + 40,
     });
+    objects.push(modal.scrim, ...modal.objects);
 
-    this.tweens.add({ targets: card, scaleX: 1.03, scaleY: 1.03, yoyo: true, repeat: -1, duration: 600 });
+    const crest = addElementCrest(this, {
+      x: cx, y: modal.contentTop + 78, w: 172, h: 138,
+      elementId, name: `${emoji}  ${name}`, accent,
+      mastered: PlayerData.isMasteryEnabled(elementId),
+      depth: DEPTH.modal + 41, portraitScale: 0.78,
+    });
+    objects.push(...crest.objects);
+
+    objects.push(this.add.text(cx, modal.contentTop + 168, `${emoji}  ${name.toUpperCase()}`, {
+      fontSize: '28px', fontFamily: FONT_DISPLAY,
+      color: hex(mix(accent, 0xffffff, 0.6)), letterSpacing: 2,
+      stroke: hex(mix(accent, 0x000000, 0.8)), strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(DEPTH.modal + 42));
+
+    objects.push(this.add.text(cx, modal.contentTop + 196, 'Now available in Element Select', {
+      fontSize: '12px', fontFamily: FONT_UI, color: T.dim, letterSpacing: 1,
+    }).setOrigin(0.5).setDepth(DEPTH.modal + 42));
+
+    objects.push(addButton(this, {
+      x: cx, y: modal.bottom - 38, w: 180, h: 44,
+      label: 'CONTINUE', icon: '✔', accent, variant: 'solid', fontSize: 15,
+      depth: DEPTH.modal + 42,
+      onClick: () => {
+        for (const o of objects) o.destroy();
+        this.slot1Id = null;
+        this.slot2Id = null;
+        if (this.slot1Visual) { this.slot1Visual.destroy(); this.slot1Visual = null; }
+        if (this.slot2Visual) { this.slot2Visual.destroy(); this.slot2Visual = null; }
+      },
+    }).container);
   }
 
+  /** The same moment for a forged perk — a struck sigil rather than a character. */
   private showPerkDiscoveryPopup(perk: PerkDef): void {
+    Sfx.play('unlock');
     const { width, height } = this.scale;
     const cx = width / 2;
-    const cy = height / 2;
+    void height;
 
     const isPenta = perk.tier === 'penta';
     const isQuad = perk.tier === 'quad';
     const isAbstract = perk.tier === 'abstract-triple';
-    const cardColor = isPenta ? 0x220033 : (isQuad ? 0x221100 : (isAbstract ? 0x1a0033 : 0x001133));
-    const strokeColor = isPenta ? 0xcc44ff : (isQuad ? 0xffaa44 : (isAbstract ? 0xcc44ff : 0x44aaff));
-    const titleColor = isPenta ? '#cc88ff' : (isQuad ? '#ffaa44' : (isAbstract ? '#cc66ff' : '#44ccff'));
+    const accent = isPenta ? 0xcc44ff : isQuad ? 0xffaa44 : isAbstract ? 0xcc66ff : 0x44aaff;
+    const heading = isPenta ? 'PENTA PERK FORGED'
+      : isQuad ? 'QUAD PERK FORGED'
+      : isAbstract ? 'ABSTRACT PERK FORGED'
+      : 'NEW PERK FORGED';
 
-    const overlay = this.add.rectangle(cx, cy, width, height, 0x000000, 0.75).setDepth(50).setInteractive();
-    const card = this.add.rectangle(cx, cy, 380, 240, cardColor, 1).setStrokeStyle(3, strokeColor).setDepth(51);
-    const sparkle = this.add.text(cx, cy - 80, isPenta ? '🍄' : (isQuad ? '✦' : (isAbstract ? '✨' : '⚡')), { fontSize: '36px' }).setOrigin(0.5).setDepth(52);
-    const title = this.add.text(cx, cy - 38, isPenta ? 'PENTA PERK FORGED!' : (isQuad ? 'QUAD PERK FORGED!' : (isAbstract ? 'ABSTRACT PERK FORGED!' : 'NEW PERK FORGED!')), {
-      fontSize: '18px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: titleColor,
-    }).setOrigin(0.5).setDepth(52);
-    const emojiText = this.add.text(cx, cy + 8, `${perk.emoji}  ${perk.name.toUpperCase()}`, {
-      fontSize: '26px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffffff',
-    }).setOrigin(0.5).setDepth(52);
-    const desc = this.add.text(cx, cy + 48, perk.description, {
-      fontSize: '12px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#aaccff',
-      align: 'center', wordWrap: { width: 320 },
-    }).setOrigin(0.5).setDepth(52);
-    const hint = this.add.text(cx, cy + 78, `Equip on ${perk.elementId.toUpperCase()} in Element Select`, {
-      fontSize: '11px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#556688',
-    }).setOrigin(0.5).setDepth(52);
-
-    const continueBtn = this.add.rectangle(cx, cy + 104, 140, 36, isPenta ? 0x220033 : (isQuad ? 0x332200 : (isAbstract ? 0x1a0033 : 0x003366)), 1)
-      .setStrokeStyle(2, strokeColor).setDepth(52).setInteractive({ useHandCursor: true });
-    const continueLbl = this.add.text(cx, cy + 104, 'CONTINUE', {
-      fontSize: '14px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: titleColor,
-    }).setOrigin(0.5).setDepth(53);
-
-    continueBtn.on('pointerdown', () => {
-      [overlay, card, sparkle, title, emojiText, desc, hint, continueBtn, continueLbl].forEach((o) => o.destroy());
-      this.slot1Id = null; this.slot2Id = null; this.slot3Id = null; this.slot4Id = null; this.slot5Id = null;
-      if (this.slot1Visual) { this.slot1Visual.destroy(); this.slot1Visual = null; }
-      if (this.slot2Visual) { this.slot2Visual.destroy(); this.slot2Visual = null; }
-      if (this.slot3Visual) { this.slot3Visual.destroy(); this.slot3Visual = null; }
-      if (this.slot4Visual) { this.slot4Visual.destroy(); this.slot4Visual = null; }
-      if (this.slot5Visual) { this.slot5Visual.destroy(); this.slot5Visual = null; }
+    const objects: Phaser.GameObjects.GameObject[] = [];
+    const modal = addModal(this, {
+      w: 480, h: 342, accent, glow: 0.6,
+      title: `${perk.emoji}  ${heading}`,
+      depth: DEPTH.modal + 40,
     });
+    objects.push(modal.scrim, ...modal.objects);
 
-    this.tweens.add({ targets: card, scaleX: 1.03, scaleY: 1.03, yoyo: true, repeat: -1, duration: 600 });
+    objects.push(this.add.text(cx, modal.contentTop + 50, perk.emoji, { fontSize: '46px' })
+      .setOrigin(0.5).setDepth(DEPTH.modal + 42));
+
+    objects.push(this.add.text(cx, modal.contentTop + 104, perk.name.toUpperCase(), {
+      fontSize: '24px', fontFamily: FONT_DISPLAY,
+      color: hex(mix(accent, 0xffffff, 0.6)), letterSpacing: 1.5,
+      align: 'center', wordWrap: { width: 400 },
+    }).setOrigin(0.5).setDepth(DEPTH.modal + 42));
+
+    objects.push(this.add.text(cx, modal.contentTop + 134, perk.description, {
+      fontSize: '13px', fontFamily: FONT_UI, color: T.normal,
+      align: 'center', wordWrap: { width: 380 }, lineSpacing: 5,
+    }).setOrigin(0.5, 0).setDepth(DEPTH.modal + 42));
+
+    objects.push(this.add.text(cx, modal.bottom - 74, `Equip on ${perk.elementId.toUpperCase()} in Element Select`, {
+      fontSize: '11px', fontFamily: FONT_UI, color: T.faint, letterSpacing: 1,
+    }).setOrigin(0.5).setDepth(DEPTH.modal + 42));
+
+    objects.push(addButton(this, {
+      x: cx, y: modal.bottom - 36, w: 180, h: 42,
+      label: 'CONTINUE', icon: '✔', accent, variant: 'solid', fontSize: 15,
+      depth: DEPTH.modal + 42,
+      onClick: () => {
+        for (const o of objects) o.destroy();
+        this.slot1Id = null; this.slot2Id = null; this.slot3Id = null;
+        this.slot4Id = null; this.slot5Id = null;
+        if (this.slot1Visual) { this.slot1Visual.destroy(); this.slot1Visual = null; }
+        if (this.slot2Visual) { this.slot2Visual.destroy(); this.slot2Visual = null; }
+        if (this.slot3Visual) { this.slot3Visual.destroy(); this.slot3Visual = null; }
+        if (this.slot4Visual) { this.slot4Visual.destroy(); this.slot4Visual = null; }
+        if (this.slot5Visual) { this.slot5Visual.destroy(); this.slot5Visual = null; }
+      },
+    }).container);
   }
 
   private showPerkBook(): void {

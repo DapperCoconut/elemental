@@ -9,8 +9,9 @@ import { Sfx } from '../../audio';
 import {
   FOR, FortuneAvatar, FortuneColorFn, FortuneFx, auditMark, auditor, bouncyBolt, bulletShape,
   daggerShape, gildedAura, goldBeam, goldCone, grenadeShape, healPylon, midasBullet, muzzleOf,
-  pepperFlame, roombaShape, stall, turnstile,
+  passTier, pepperFlame, roombaShape, rustyCar, stall, turnstile,
 } from './FortuneVisuals';
+import { meterGain } from '../../combat/Meters';
 
 type Owner = 'player' | 'npc';
 
@@ -181,11 +182,59 @@ const ROOMBA_SPEED = 96;
 /** Per-victim immunity, or one roomba parked on somebody is a blender. */
 const ROOMBA_GATE_MS = 1400;
 
+// ── Mastery passive: the Battle Pass ─────────────────────────────────────────
+
+const PASS_TIERS = 30;
+const PASS_COST = 3;
+/** Every fifth tier is an item⁺ rather than a buff or an ordinary item off the shelf. */
+const PASS_PLUS_EVERY = 5;
+/** Roughly a third of the non-plus tiers. The rest are stat buffs, which is the point of it. */
+const PASS_ITEM_CHANCE = 0.32;
+const PASS_HP = 15;
+const PASS_PLATE = 25;
+
+// ── Mastery ability: Drive by Flex ───────────────────────────────────────────
+
+const CAR_ID = 'drive-by-flex';
+const CAR_COOLDOWN_MS = 24_000;
+/** Deliberately slow. Quick Tires and Speedster are the whole reason the GARAGE tab exists. */
+const CAR_SPEED = 155;
+const CAR_BOUNCES = 5;
+const CAR_RAM = 18;
+const CAR_RAM_SPIKED = 34;
+/** Per-victim immunity, so a car grinding along somebody is not a blender. */
+const CAR_RAM_GATE_MS = 900;
+const CAR_MOUNT_R = 54;
+/** Half-length of the shell. Used for the bounce inset and for the ram's reach. */
+const CAR_L = 27;
+const CAR_MAX_BUFFS = 3;
+const CAR_DEATH_DAMAGE = 30;
+const CAR_DEATH_R = 92;
+const SHRAPNEL_N = 16;
+const SHRAPNEL_DAMAGE = 8;
+const ROBO_EVERY_MS = 333;
+const ROBO_DAMAGE = 2;
+const ROBO_RANGE = 200;
+const TANK_EVERY_MS = 3000;
+const TANK_SHELL_DAMAGE = 15;
+const TANK_SHELL_R = 70;
+const TANK_RANGE = 165;
+/** What riding is worth: a faster reload and a faster trigger, and the Sunroof doubles down. */
+const RIDE_RELOAD = 0.6;
+const RIDE_RATE = 1.35;
+const RIDE_RELOAD_SUNROOF = 0.4;
+const RIDE_RATE_SUNROOF = 1.7;
+const SUNROOF_DAMAGE = 1.2;
+const GUNNER_AMMO = 5;
+const SPEEDSTER_TRAIL_MS = 80;
+
 // ── Shop tables ──────────────────────────────────────────────────────────────
 
-type Page = 'shop' | 'arms' | 'mods';
-const PAGES: Page[] = ['shop', 'arms', 'mods'];
-const PAGE_NAME: Record<Page, string> = { shop: 'GENERAL', arms: 'ARMS ☠', mods: 'MODS ☠' };
+type Page = 'shop' | 'arms' | 'mods' | 'garage';
+const PAGES: Page[] = ['shop', 'arms', 'mods', 'garage'];
+const PAGE_NAME: Record<Page, string> = {
+  shop: 'GENERAL', arms: 'ARMS ☠', mods: 'MODS ☠', garage: 'GARAGE 🚗',
+};
 /** The key printed against each row of the counter, in the order `numberKeys` registers them. */
 const ROW_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-'];
 
@@ -249,10 +298,115 @@ const MODS: ShopEntry[] = [
   { id: 'dualgrip', name: 'Dual Grip', emoji: '🤞', cost: 25, page: 'mods', needs: 'r', desc: 'Next gun you buy goes in your right hand.' },
 ];
 
-const CATALOGUE: Record<Page, ShopEntry[]> = { shop: GENERAL, arms: ARMS, mods: MODS };
+/**
+ * The GARAGE. A fourth tab that only exists with Fortune Mastery switched on, and only for the
+ * shopkeeper — it is not stock, it is a workshop, and the thing it works on is the car.
+ *
+ * Three of these at a time, ever. Tank alone is seven coins and rules out both of the other
+ * expensive ones, which is the whole build decision.
+ */
+const GARAGE: ShopEntry[] = [
+  { id: 'tires', name: 'Quick Tires', emoji: '🛞', cost: 1, page: 'garage', desc: 'The car drives 45% faster.' },
+  { id: 'spikes', name: 'Spiked Bumper', emoji: '🔱', cost: 2, page: 'garage', desc: `Ram damage ${CAR_RAM} → ${CAR_RAM_SPIKED}.` },
+  { id: 'chassis', name: 'Stronger Chassis', emoji: '🛡️', cost: 2, page: 'garage', desc: '+3 bounces before it goes up.' },
+  { id: 'suicide', name: 'Suicide Mission', emoji: '💣', cost: 2, page: 'garage', desc: `Death blast throws ${SHRAPNEL_N} shrapnel rounds.` },
+  { id: 'sunroof', name: 'Sunroof', emoji: '🌤️', cost: 3, page: 'garage', desc: 'Far bigger ride bonus, +20% damage aboard.' },
+  { id: 'gunner', name: 'Mounted Gunner', emoji: '🎖️', cost: 3, page: 'garage', desc: `+${GUNNER_AMMO} rounds in your gun while riding.` },
+  { id: 'robo', name: 'Robo-Gunner', emoji: '🤖', cost: 3, page: 'garage', desc: '3 shots a second, 2 dmg, 200px reach.' },
+  { id: 'speedster', name: 'Speedster', emoji: '🏁', cost: 5, page: 'garage', desc: 'Much faster, +10 bounces, burns a fire trail.' },
+  { id: 'tank', name: 'Tank', emoji: '🚜', cost: 7, page: 'garage', desc: 'Slow, +5 bounces, huge ram, 15 dmg shell every 3s.' },
+];
+
+const CATALOGUE: Record<Page, ShopEntry[]> = { shop: GENERAL, arms: ARMS, mods: MODS, garage: GARAGE };
 const ENTRY_BY_ID = new Map<string, ShopEntry>(
-  [...GENERAL, ...ARMS, ...MODS].map((e) => [e.id, e]),
+  [...GENERAL, ...ARMS, ...MODS, ...GARAGE].map((e) => [e.id, e]),
 );
+/** Everything the "buy one of everything" mastery requirement counts. The garage is not stock. */
+const CATALOGUE_SIZE = GENERAL.length + ARMS.length + MODS.length;
+
+// ── The battle pass ──────────────────────────────────────────────────────────
+
+/**
+ * A running total of everything the pass has handed over.
+ *
+ * One record rather than a list of flags because every buff on the ladder can be rolled twice —
+ * the pass is randomised, nothing is unique, and two Filed Triggers should genuinely be two
+ * Filed Triggers.
+ */
+interface Boons {
+  /** Multiplier on everything a gun does. */
+  damage: number;
+  /** Multiplier on how fast the action cycles. Higher is faster. */
+  rate: number;
+  /** Multiplier on reload time. Lower is faster. */
+  reload: number;
+  mag: number;
+  speed: number;
+  /** Multiplier on the coin rate — the passive mints this many times as fast. */
+  coin: number;
+  /** Added to the bank's 10%. */
+  interest: number;
+  /** Multiplier on the 10-second settlement drum. Lower settles sooner. */
+  settle: number;
+  /** Coins handed over every time a magazine comes back. */
+  scavenge: number;
+  pierce: boolean;
+}
+
+function makeBoons(): Boons {
+  return {
+    damage: 1, rate: 1, reload: 1, mag: 0, speed: 1, coin: 1,
+    interest: 0, settle: 1, scavenge: 0, pierce: false,
+  };
+}
+
+interface PassBuff {
+  id: string;
+  name: string;
+  emoji: string;
+  desc: string;
+  /** Folded into the running totals. */
+  boon?: (b: Boons) => void;
+  /** Anything that has to happen to a body rather than to a number. */
+  instant?: 'hp' | 'plate';
+}
+
+const PASS_BUFFS: PassBuff[] = [
+  { id: 'hollowtips', name: 'Hollowed Tips', emoji: '🔩', desc: '+12% weapon damage', boon: (b) => { b.damage *= 1.12; } },
+  { id: 'trigger', name: 'Filed Trigger', emoji: '⚡', desc: '+10% fire rate', boon: (b) => { b.rate *= 1.10; } },
+  { id: 'sling', name: 'Speed Sling', emoji: '🎽', desc: '−12% reload time', boon: (b) => { b.reload *= 0.88; } },
+  { id: 'pockets', name: 'Deep Pockets', emoji: '📦', desc: '+2 magazine', boon: (b) => { b.mag += 2; } },
+  { id: 'boots', name: 'Good Boots', emoji: '👟', desc: '+6% movement speed', boon: (b) => { b.speed *= 1.06; } },
+  { id: 'mint', name: 'Private Mint', emoji: '🪙', desc: '+10% coin rate', boon: (b) => { b.coin *= 1.10; } },
+  { id: 'dividend', name: 'Dividend', emoji: '💹', desc: '+3% capital gains', boon: (b) => { b.interest += 0.03; } },
+  { id: 'quarterly', name: 'Quarterly Results', emoji: '⏱️', desc: 'Investments settle 15% sooner', boon: (b) => { b.settle *= 0.85; } },
+  { id: 'scavenger', name: 'Scavenger', emoji: '♻️', desc: '+1 coin every reload', boon: (b) => { b.scavenge += 1; } },
+  { id: 'tracer', name: 'Tracer Rounds', emoji: '🎯', desc: 'Your bullets pierce', boon: (b) => { b.pierce = true; } },
+  { id: 'vitamins', name: 'Vitamins', emoji: '💊', desc: `+${PASS_HP} maximum health`, instant: 'hp' },
+  { id: 'plating', name: 'Cheap Plating', emoji: '🦺', desc: `+${PASS_PLATE} shield HP`, instant: 'plate' },
+];
+
+/** The public-shelf items that have a stronger version behind the fifth tier of the pass. */
+const PLUS_ITEMS = ['bandages', 'pepper', 'pouch', 'cureall', 'daggers', 'roomba', 'miracle'];
+
+const PLUS_DESC: Record<string, string> = {
+  bandages: 'Heal 55 HP.',
+  pepper: 'A hotter fire trail, for 12.5s.',
+  pouch: '12 hits, and the blast catches the body you hit too.',
+  cureall: 'Cleanse, heal 120, no new debuffs for 45s.',
+  daggers: '5 volleys of 12 daggers, 6 dmg each.',
+  roomba: 'A 45-damage machine, and it ignores the cap of 3.',
+  miracle: 'Double every good thing for 45s.',
+};
+
+interface PassReward {
+  kind: 'buff' | 'item' | 'plus';
+  /** Buff id, or the shop entry id for an item and an item⁺. */
+  id: string;
+  name: string;
+  emoji: string;
+  desc: string;
+}
 
 interface GunDef {
   damage: number;
@@ -346,6 +500,7 @@ interface Dagger {
   vx: number;
   vy: number;
   ang: number;
+  damage: number;
   diesAt: number;
   hit: Set<Fighter>;
 }
@@ -355,6 +510,8 @@ interface Volley {
   owner: Owner;
   at: number;
   ang: number;
+  /** Thrown off an Ornate Daggers⁺: twelve blades at six rather than eight at two. */
+  plus: boolean;
 }
 
 interface Flame {
@@ -364,6 +521,8 @@ interface Flame {
   seed: number;
   bornAt: number;
   diesAt: number;
+  /** Multiplier on the patch's damage. A Spicy Pepper⁺ burns hotter than the one on the shelf. */
+  power: number;
 }
 
 interface Roomba {
@@ -372,7 +531,31 @@ interface Roomba {
   y: number;
   ang: number;
   spin: number;
+  plus: boolean;
   gate: Map<Fighter, number>;
+}
+
+/**
+ * Drive by Flex. A rusted saloon that does not steer — it goes forward, comes off the walls like
+ * a DVD logo, and explodes when it runs out of bounces.
+ */
+interface Car {
+  owner: Owner;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  bounces: number;
+  /** What it started with, so the ability card can show how much car is left. */
+  maxBounces: number;
+  rider: boolean;
+  gate: Map<Fighter, number>;
+  nextRoboAt: number;
+  nextShellAt: number;
+  trailAt: number;
+  /** Where the roof gun is pointing, which is not where the car is going. */
+  turret: number;
+  seed: number;
 }
 
 interface Wall {
@@ -436,6 +619,11 @@ interface Hand {
   burstGap: number;
   /** Whether the burst in progress is an alt-fire, so the grips price it correctly. */
   burstAlt: boolean;
+  /**
+   * How long the reload in progress was actually going to take. The card counts *this* rather
+   * than the gun's own figure, because a Speed Sling and a car roof both shorten it.
+   */
+  reloadSpan: number;
 }
 
 function makeHand(gun: string | null): Hand {
@@ -444,6 +632,7 @@ function makeHand(gun: string | null): Hand {
     ammo: gun ? GUNS[gun].mag : 0,
     reloadUntil: 0, nextShotAt: 0,
     burstLeft: 0, burstAt: 0, burstAng: 0, burstSpread: 0.07, burstGap: 70, burstAlt: false,
+    reloadSpan: 1,
   };
 }
 
@@ -477,8 +666,12 @@ interface Side {
   effectBody: Fighter | null;
   pepperUntil: number;
   pepperDrop: number;
+  /** How hot the trail currently is. 1 off the shelf, more off a Spicy Pepper⁺. */
+  pepperPower: number;
   pouch: number;
   pouchGate: number;
+  /** An Explosives Pouch⁺ does not spare the body it went off on. */
+  pouchPlus: boolean;
   cureUntil: number;
   miracleUntil: number;
   miracleSnap: Map<string, number>;
@@ -504,6 +697,17 @@ interface Side {
   botBuyAt: number;
   /** Lifetime spend, purely so the stall's coin stack has something to shrink about. */
   spent: number;
+
+  // ── Mastery ──
+  /** Everything the battle pass has handed over so far, as one set of running totals. */
+  boons: Boons;
+  /** This match's ladder. Empty until it is rolled, which happens lazily on the first frame. */
+  pass: PassReward[];
+  /** How many tiers have been bought. The next reward is always `pass[passBought]`. */
+  passBought: number;
+  carBuffs: string[];
+  car: Car | null;
+  carCastAt: number;
 }
 
 function makeSide(owner: Owner): Side {
@@ -512,12 +716,17 @@ function makeSide(owner: Owner): Side {
     stockDealt: 0, stockTaken: 0,
     main: makeHand('pistol'), off: null, dualPending: false, attachments: [], lastShotAt: 0,
     spinFrom: 0,
-    effectBody: null, pepperUntil: 0, pepperDrop: 0, pouch: 0, pouchGate: 0, cureUntil: 0,
+    effectBody: null, pepperUntil: 0, pepperDrop: 0, pepperPower: 1, pouch: 0, pouchGate: 0,
+    pouchPlus: false, cureUntil: 0,
     miracleUntil: 0, miracleSnap: new Map(),
     chillyUntil: 0, chillyNext: 0, teleUntil: 0,
     wall: null, beam: null, shove: null, audit: null, airborneUntil: 0,
     unpaid: new Map(), bloodGate: 0,
     page: 'shop', aimX: 0, aimY: 0, botBuyAt: 0, spent: 0,
+    // The first match runs the constructor rather than `reset`, and readiness is measured off
+    // absolute scene time — so a zero here would lock the car for the first 24 seconds.
+    boons: makeBoons(), pass: [], passBought: 0, carBuffs: [], car: null,
+    carCastAt: -CAR_COOLDOWN_MS,
   };
 }
 
@@ -537,6 +746,8 @@ export interface FortuneArenaApi {
   get rKey(): Phaser.Input.Keyboard.Key;
   get fKey(): Phaser.Input.Keyboard.Key;
   get qKey(): Phaser.Input.Keyboard.Key;
+  /** Mounting the car is a Space press, and it has to be taken *before* the dodge sees it. */
+  get spaceKey(): Phaser.Input.Keyboard.Key;
   get pointerWasDown(): boolean;
   /** Alt-fire lives on the right button, and every alt-fire is edge-triggered off this. */
   get rightPointerWasDown(): boolean;
@@ -554,6 +765,16 @@ export interface FortuneArenaApi {
   setStatusIndicator(id: string, status: CustomStatus | null): void;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
+  /** Which mastery enhancement each side dropped over an E/R/F/Q slot, or null. */
+  masteryBindFor(slot: string): string | null;
+  npcMasteryBindFor(slot: string): string | null;
+  /** Mastery progress. Gated on the element by the adapter, so the kit records unconditionally. */
+  recordMasteryStat(key: string, amount: number): void;
+  /** …and the two the "one of everything" requirement needs, which has to read itself back. */
+  getMasteryStat(key: string): number;
+  recordMasteryBestStat(key: string, value: number): void;
+  /** The car is cast off a private timer, so online it needs a message of its own. */
+  broadcastMasteryCast(enhId: string): void;
   /** Shop upgrades: the local player's equipped slots. */
   hasUpgrade(slot: string): boolean;
   /** …and the online opponent's, so their upgraded tricks reproduce on this sim. */
@@ -581,6 +802,11 @@ export class FortuneKit {
   private shopTexts: Phaser.GameObjects.Text[] = [];
   /** Last colour pushed to each row. `setColor` re-renders the texture, so it is guarded. */
   private shopColors: string[] = [];
+  /** The battle pass ribbon across the top of the screen. Its own layer, above everything. */
+  private passGfx: Phaser.GameObjects.Graphics | null = null;
+  private passTexts: Phaser.GameObjects.Text[] = [];
+  /** Last style pushed to each ribbon row, guarded for the same reason `shopColors` is. */
+  private passColors: string[] = [];
   private vizT = 0;
 
   // ── Sim ──
@@ -605,12 +831,20 @@ export class FortuneKit {
   // ── Input ──
   private numberKeys: Phaser.Input.Keyboard.Key[] = [];
   private tabKey: Phaser.Input.Keyboard.Key | null = null;
+  private passKey: Phaser.Input.Keyboard.Key | null = null;
   private eDownAt = 0;
   private rDownAt = 0;
   private eHeldDone = false;
   private rHeldDone = false;
   private ePrev = false;
   private rPrev = false;
+  /**
+   * Space's own rising edge. `JustDown` is only called once this has already decided the press
+   * belongs to the car — calling it to *ask* would consume the flag and eat the dodge.
+   */
+  private spacePrev = false;
+  /** Whether the free pistol has been credited against the "buy one of everything" grind. */
+  private startNoted = false;
 
   constructor(api: FortuneArenaApi) {
     this.api = api;
@@ -637,6 +871,8 @@ export class FortuneKit {
     ];
     this.numberKeys = codes.map((c) => kb.addKey(c));
     this.tabKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.T);
+    // The pass is not the shop, so it is not on the counter's keys and does not need the counter.
+    this.passKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.B);
   }
 
   // ── Small helpers ──────────────────────────────────────────────────────────
@@ -675,13 +911,46 @@ export class FortuneKit {
     return owner === 'player' ? this.api.hasUpgrade(slot) : this.api.hasNpcUpgrade(slot);
   }
 
+  /** Whether that side is playing a mastered Fortune. */
+  private masteryOn(owner: Owner): boolean {
+    return this.isFortune(owner)
+      && (owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
+  }
+
+  /** Which slot Drive by Flex was dropped over, or null. Any of the four is a legal target. */
+  private carSlot(owner: Owner): 'e' | 'r' | 'f' | 'q' | null {
+    if (!this.masteryOn(owner)) return null;
+    for (const s of ['e', 'r', 'f', 'q'] as const) {
+      const bind = owner === 'player' ? this.api.masteryBindFor(s) : this.api.npcMasteryBindFor(s);
+      if (bind === CAR_ID) return s;
+    }
+    return null;
+  }
+
+  /**
+   * Mastery progress. Only ever the player's — the grind is the human's — and deliberately not
+   * gated on the mastery being switched on, since earning it is the whole point.
+   */
+  private record(owner: Owner, key: string, amount = 1): void {
+    if (owner === 'player') this.api.recordMasteryStat(key, amount);
+  }
+
   /**
    * What is actually on the shelf. The stock is the shopkeeper's — an enemy at a counter that
    * sells Tele-Cores can buy one, and pays the shopkeeper half of it for the privilege.
+   *
+   * The GARAGE is the exception: it is a workshop rather than stock, and it does not exist at
+   * all unless the shopkeeper is playing a mastered Fortune.
    */
   private catalogue(page: Page): ShopEntry[] {
     const shop = this.shopOwner;
+    if (page === 'garage' && !(shop && this.masteryOn(shop))) return [];
     return CATALOGUE[page].filter((e) => !e.needs || (!!shop && this.owns(shop, e.needs)));
+  }
+
+  /** The tabs the counter will actually cycle through, which is three until the car exists. */
+  private pagesFor(shop: Owner): Page[] {
+    return this.masteryOn(shop) ? PAGES : PAGES.filter((p) => p !== 'garage');
   }
 
   /** Which side, if any, owns the stall. There is only ever one shop in an arena. */
@@ -769,6 +1038,8 @@ export class FortuneKit {
     this.rHeldDone = false;
     this.ePrev = false;
     this.rPrev = false;
+    this.spacePrev = false;
+    this.startNoted = false;
 
     this.playerAvatar?.destroy(); this.playerAvatar = null;
     this.npcAvatar?.destroy(); this.npcAvatar = null;
@@ -778,6 +1049,10 @@ export class FortuneKit {
     for (const t of this.shopTexts) t.destroy();
     this.shopTexts = [];
     this.shopColors = [];
+    this.passGfx?.destroy(); this.passGfx = null;
+    for (const t of this.passTexts) t.destroy();
+    this.passTexts = [];
+    this.passColors = [];
   }
 
   // ── Input ──────────────────────────────────────────────────────────────────
@@ -807,14 +1082,68 @@ export class FortuneKit {
     // gun made of UI noise.
     if (pointer.isDown && this.canFireNow('player')) p.castAbility('fortune-fire', ctx);
     this.handleRightHand(pointer, mouseX, mouseY);
-    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('fortune-paywall', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('fortune-p2w', ctx);
+
+    // ── Mastery ──
+    // The pass is bought from anywhere, and Space is the car's — but only when the car is
+    // actually within reach, or the dodge would be eaten by an ability nobody is next to.
+    if (this.masteryOn('player')) {
+      if (this.passKey && Phaser.Input.Keyboard.JustDown(this.passKey)) this.buyPassTier('player');
+      this.handleRideInput();
+    }
+
+    const car = this.carSlot('player');
+    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) {
+      if (car === 'f') this.tryCar('player', mouseX, mouseY);
+      else p.castAbility('fortune-paywall', ctx);
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) {
+      if (car === 'q') this.tryCar('player', mouseX, mouseY);
+      else p.castAbility('fortune-p2w', ctx);
+    }
 
     // ── E and R are tap-to-deposit, hold-to-withdraw ──
     // The tap has to resolve on *release*, because until the key comes back up there is no way
-    // to know it was not a hold — so `castAbility` is deliberately not on JustDown here.
-    this.investKey(this.api.eKey, 'e', ctx);
-    this.investKey(this.api.rKey, 'r', ctx);
+    // to know it was not a hold — so `castAbility` is deliberately not on JustDown here. A slot
+    // the car is sitting on loses the tap-and-hold entirely and becomes an ordinary key.
+    if (car === 'e') {
+      if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) this.tryCar('player', mouseX, mouseY);
+    } else {
+      this.investKey(this.api.eKey, 'e', ctx);
+    }
+    if (car === 'r') {
+      if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) this.tryCar('player', mouseX, mouseY);
+    } else {
+      this.investKey(this.api.rKey, 'r', ctx);
+    }
+  }
+
+  /**
+   * Space, while a car of yours is out.
+   *
+   * Phaser's `JustDown` *consumes* the flag, and ArenaScene's dodge reads the same key a few
+   * hundred lines later — so the rising edge is tracked here by hand and `JustDown` is only
+   * called once this has already decided the press belongs to the car. Anywhere else, Space is
+   * still the dodge.
+   */
+  private handleRideInput(): void {
+    const key = this.api.spaceKey;
+    const s = this.sides.player;
+    const p = this.api.player;
+    const down = key.isDown;
+    const rising = down && !this.spacePrev;
+    this.spacePrev = down;
+    if (!rising) return;
+
+    const car = s.car;
+    if (!car) return;
+    if (car.rider) {
+      Phaser.Input.Keyboard.JustDown(key);
+      this.dismount('player');
+      return;
+    }
+    if (Phaser.Math.Distance.Between(p.x, p.y, car.x, car.y) > CAR_MOUNT_R) return;
+    Phaser.Input.Keyboard.JustDown(key);
+    this.mount('player');
   }
 
   /**
@@ -888,7 +1217,9 @@ export class FortuneKit {
     if (Phaser.Math.Distance.Between(p.x, p.y, this.stallX, this.stallY) > SHOP_RANGE) return;
 
     if (mine && this.tabKey && Phaser.Input.Keyboard.JustDown(this.tabKey)) {
-      s.page = PAGES[(PAGES.indexOf(s.page) + 1) % PAGES.length];
+      const pages = this.pagesFor(shop);
+      const at = pages.indexOf(s.page);
+      s.page = pages[(at + 1) % pages.length];
       Sfx.playAt('ui-tab', p.x, { volume: 0.6 });
     }
 
@@ -929,7 +1260,8 @@ export class FortuneKit {
 
     const ang = Math.atan2(ty - f.y, tx - f.x);
     // Priced off what is left once this round has gone, which is what `shoot` will see.
-    const accel = this.accelMult(this.side(owner), hand, hand.ammo - 1);
+    const s = this.side(owner);
+    const accel = this.accelMult(s, hand, hand.ammo - 1) * this.rateMult(s);
     hand.nextShotAt = this.now + gun.fireMs / accel;
     if (gun.burst && gun.burst > 1) {
       hand.burstLeft = Math.min(gun.burst, hand.ammo);
@@ -944,10 +1276,20 @@ export class FortuneKit {
     this.shoot(owner, ang, hand, { alt, aimX: tx, aimY: ty });
   }
 
+  /**
+   * Whether the base ability on `slot` has been replaced by the mastery car. Checked inside the
+   * do-methods rather than only at the key, because the npc reaches them through its context
+   * rather than through `handleInput`.
+   */
+  private carTook(owner: Owner, slot: 'e' | 'r' | 'f' | 'q'): boolean {
+    return this.carSlot(owner) === slot;
+  }
+
   /** E — put money in the bank. */
   doSafeInvest(owner: Owner): void {
     const f = this.fighter(owner);
     const s = this.side(owner);
+    if (this.carTook(owner, 'e')) { this.refund(f, 'fortune-safe'); return; }
     if (s.coins <= 0) {
       this.refund(f, 'fortune-safe');
       if (owner === 'player') this.api.showFloatingText(f.x, f.y - 44, '🏦 NOTHING TO DEPOSIT', this.hex(FOR.canvasShade));
@@ -965,6 +1307,7 @@ export class FortuneKit {
   doRiskyInvest(owner: Owner): void {
     const f = this.fighter(owner);
     const s = this.side(owner);
+    if (this.carTook(owner, 'r')) { this.refund(f, 'fortune-risky'); return; }
     if (s.coins <= 0) {
       this.refund(f, 'fortune-risky');
       if (owner === 'player') this.api.showFloatingText(f.x, f.y - 44, '📈 NOTHING TO INVEST', this.hex(FOR.canvasShade));
@@ -987,7 +1330,7 @@ export class FortuneKit {
   doPaywall(owner: Owner, tx: number, ty: number): void {
     void ty;
     const f = this.fighter(owner);
-    if (!this.alive(f)) { this.refund(f, 'fortune-paywall'); return; }
+    if (!this.alive(f) || this.carTook(owner, 'f')) { this.refund(f, 'fortune-paywall'); return; }
     const s = this.side(owner);
     const span = WALL_MS * (this.owns(owner, 'f') ? WALL_TAX_MULT : 1);
     s.wall = {
@@ -1012,7 +1355,7 @@ export class FortuneKit {
   /** Q — the golden beam. Refuses outright if the purse cannot pay for a single second of it. */
   doPayToWin(owner: Owner, tx: number, ty: number): void {
     const f = this.fighter(owner);
-    if (!this.alive(f)) { this.refund(f, 'fortune-p2w'); return; }
+    if (!this.alive(f) || this.carTook(owner, 'q')) { this.refund(f, 'fortune-p2w'); return; }
     const s = this.side(owner);
     if (s.beam) { this.refund(f, 'fortune-p2w'); return; }
     if (s.coins < BEAM_COINS_PER_SEC) {
@@ -1058,12 +1401,19 @@ export class FortuneKit {
     const def = hand.gun ? GUNS[hand.gun] : null;
     if (!def) return null;
     const has = (id: string): boolean => s.attachments.includes(id);
+    const riding = this.isRiding(s.owner);
     let damage = def.damage;
     if (has('hollow')) damage += 5;
     if (has('fiftycal')) damage += 10;
+    // The battle pass rides on top of the attachments rather than replacing them, and the
+    // Sunroof is the only part of the car that touches the gun's numbers.
+    damage *= s.boons.damage;
+    if (riding && this.hasCar(s, 'sunroof')) damage *= SUNROOF_DAMAGE;
     let mag = def.mag;
     if (has('biggermag')) mag += 3;
     if (has('drummag')) mag += 10;
+    mag += s.boons.mag;
+    if (riding && this.hasCar(s, 'gunner')) mag += GUNNER_AMMO;
     const scope = has('scope');
     return {
       def,
@@ -1071,10 +1421,28 @@ export class FortuneKit {
       mag,
       // A thrown shell is not a bullet and a scope does not make it fly twice as fast.
       speed: def.speed * (scope && !def.lobbed ? 2 : 1),
-      pierce: scope && !def.lobbed,
+      pierce: (scope || s.boons.pierce) && !def.lobbed,
       silencer: has('silencer'),
       prop: has('prop'),
     };
+  }
+
+  /**
+   * How fast the action is cycling, over and above Acceleration Gear. The pass's Filed Triggers
+   * and the car roof both live here, and both are multipliers on the *rate* rather than
+   * subtractions from the gap — so stacking them cannot produce a negative wait.
+   */
+  private rateMult(s: Side): number {
+    let m = s.boons.rate;
+    if (this.isRiding(s.owner)) m *= this.hasCar(s, 'sunroof') ? RIDE_RATE_SUNROOF : RIDE_RATE;
+    return m;
+  }
+
+  /** Multiplier on reload time. Lower is faster, and both sources of it are buys. */
+  private reloadMult(s: Side): number {
+    let m = s.boons.reload;
+    if (this.isRiding(s.owner)) m *= this.hasCar(s, 'sunroof') ? RIDE_RELOAD_SUNROOF : RIDE_RELOAD;
+    return m;
   }
 
   /**
@@ -1110,7 +1478,8 @@ export class FortuneKit {
     const s = this.side(owner);
     const kit = this.loadout(s, hand);
     if (!kit || this.now < hand.reloadUntil) return;
-    hand.reloadUntil = this.now + kit.def.reloadMs;
+    hand.reloadSpan = Math.max(60, kit.def.reloadMs * this.reloadMult(s));
+    hand.reloadUntil = this.now + hand.reloadSpan;
     hand.burstLeft = 0;
     const f = this.fighter(owner);
     if (this.alive(f)) {
@@ -1326,7 +1695,8 @@ export class FortuneKit {
     const ang = Math.atan2(ty - f.y, tx - f.x);
 
     hand.ammo = Math.max(0, hand.ammo - 1);
-    hand.nextShotAt = this.now + GUNS.revolver.fireMs / this.accelMult(s, hand, hand.ammo);
+    hand.nextShotAt = this.now
+      + GUNS.revolver.fireMs / (this.accelMult(s, hand, hand.ammo) * this.rateMult(s));
     s.lastShotAt = this.now;
     const av = this.avatar(owner);
     av?.play('punch', ang);
@@ -1504,14 +1874,16 @@ export class FortuneKit {
     s.spent += entry.cost;
     s.effectBody = body;
     this.applyItem(buyer, entry, body);
+    // The grind: one of everything on the three real pages, counted for good. The garage is a
+    // workshop rather than stock and it only exists once the mastery does, so it cannot count.
+    if (buyer === 'player' && entry.page !== 'garage') this.noteBought(entry.id);
 
     // Kickback. A Fortune user buying from their own stall is only moving money between
     // pockets, so it is skipped rather than paid to themselves.
     if (buyer !== shop && entry.cost > 0) {
       const cut = Math.floor(entry.cost * KICKBACK);
       if (cut > 0) {
-        const keeper = this.side(shop);
-        keeper.coins += cut;
+        this.earn(shop, cut);
         const kf = this.fighter(shop);
         if (this.alive(kf)) {
           this.fx(shop).coinBurst(kf.x, kf.y - 10, Math.min(6, cut), 26);
@@ -1534,39 +1906,57 @@ export class FortuneKit {
       if (s.attachments.includes(entry.id)) return false;
       return s.attachments.length < MAX_ATTACHMENTS;
     }
+    if (entry.page === 'garage') {
+      if (s.carBuffs.includes(entry.id)) return false;
+      return s.carBuffs.length < CAR_MAX_BUFFS;
+    }
     if (entry.id === 'roomba') return this.roombas.filter((r) => r.owner === buyer).length < ROOMBA_MAX;
     if (entry.id === 'pylon') return this.pylons.filter((p) => p.owner === buyer).length < PYLON_MAX;
     return true;
   }
 
-  private applyItem(buyer: Owner, entry: ShopEntry, body: Fighter): void {
+  /**
+   * Handing an item over.
+   *
+   * `plus` is the battle pass's fifth tier: the same item off the same shelf, bought by nobody,
+   * and simply better. Every branch that has a plus version reads the flag rather than there
+   * being a second table of items — an Ornate Daggers⁺ is the same three lines of code with
+   * bigger numbers in them, which is exactly what it should be.
+   */
+  private applyItem(buyer: Owner, entry: ShopEntry, body: Fighter, plus = false): void {
     const s = this.side(buyer);
     const miracle = this.now < s.miracleUntil ? 2 : 1;
 
     switch (entry.id) {
-      case 'bandages':
-        body.heal(20 * miracle);
-        this.api.showFloatingText(body.x, body.y - 30, `🩹 +${20 * miracle}`, this.hex(FOR.blood));
+      case 'bandages': {
+        const hp = (plus ? 55 : 20) * miracle;
+        body.heal(hp);
+        this.api.showFloatingText(body.x, body.y - 30, `🩹 +${hp}`, this.hex(FOR.blood));
         Sfx.playAt('heal', body.x, { volume: 0.7 });
         break;
+      }
       case 'pepper':
-        s.pepperUntil = this.now + PEPPER_MS * miracle;
+        s.pepperUntil = this.now + PEPPER_MS * (plus ? 2.5 : 1) * miracle;
+        if (plus) s.pepperPower = 1.8;
         Sfx.playAt('flame-burst', body.x, { volume: 0.6, rate: 1.3 });
         break;
       case 'pouch':
-        s.pouch += POUCH_CHARGES;
+        s.pouch += plus ? 12 : POUCH_CHARGES;
+        if (plus) s.pouchPlus = true;
         Sfx.playAt('trap-set', body.x, { volume: 0.7 });
         break;
       case 'cureall':
         this.cleanse(body);
-        body.heal(50 * miracle);
-        s.cureUntil = this.now + CURE_MS * miracle;
+        body.heal((plus ? 120 : 50) * miracle);
+        s.cureUntil = this.now + CURE_MS * (plus ? 2.25 : 1) * miracle;
         this.fx(buyer).cash(body.x, body.y, 40, 520, 12);
         Sfx.playAt('potion-drink', body.x, { volume: 0.8 });
         break;
       case 'daggers':
-        for (let i = 0; i < DAGGER_VOLLEYS; i++) {
-          this.volleys.push({ owner: buyer, at: this.now + i * DAGGER_GAP_MS, ang: this.aimAngle(buyer, body) });
+        for (let i = 0; i < (plus ? 5 : DAGGER_VOLLEYS); i++) {
+          this.volleys.push({
+            owner: buyer, at: this.now + i * DAGGER_GAP_MS, ang: this.aimAngle(buyer, body), plus,
+          });
         }
         break;
       case 'roomba':
@@ -1576,12 +1966,13 @@ export class FortuneKit {
           y: Phaser.Math.Clamp(body.y + 22, this.top + 20, this.bottom - 20),
           ang: this.aimAngle(buyer, body),
           spin: Math.random() * 6,
+          plus,
           gate: new Map(),
         });
         Sfx.playAt('robot-power', body.x, { volume: 0.8 });
         break;
       case 'miracle':
-        s.miracleUntil = this.now + MIRACLE_MS;
+        s.miracleUntil = this.now + MIRACLE_MS * (plus ? 2.25 : 1);
         seedEffectSnapshot(body, s.miracleSnap);
         Sfx.playAt('holy-chord', body.x, { volume: 0.85 });
         break;
@@ -1637,6 +2028,12 @@ export class FortuneKit {
             hand.ammo = Math.min(this.magSize(s, hand), hand.ammo + top);
           }
           Sfx.playAt('gear-turn', body.x, { volume: 0.7 });
+        } else if (entry.page === 'garage') {
+          // Bolted onto the car that is already out, not just the next one — everything the
+          // garage sells is re-read off `carBuffs` every frame for exactly this reason.
+          s.carBuffs.push(entry.id);
+          Sfx.playAt('anvil', body.x, { volume: 0.8, rate: 0.75 });
+          Sfx.playAt('gear-turn', body.x, { volume: 0.7, rate: 0.8 });
         }
         break;
     }
@@ -1686,6 +2083,14 @@ export class FortuneKit {
     this.vizT += delta / 1000;
     this.ensureLayers();
 
+    // The free pistol is a line of the catalogue you already own on the first frame, and the
+    // counter refuses to sell you one — so it is credited here rather than never.
+    if (!this.startNoted && this.isFortune('player')) {
+      this.startNoted = true;
+      this.noteBought('pistol');
+    }
+    for (const owner of BOTH) if (this.masteryOn(owner)) this.ensurePass(owner);
+
     this.updateEconomy(delta);
     this.updateInvestments(delta);
     this.updateBursts();
@@ -1699,6 +2104,8 @@ export class FortuneKit {
     this.updateWalls(delta);
     this.updateAudits(delta);
     this.updateBeams(delta);
+    this.updateCars(delta);
+    this.updateNpcCar();
     this.updateShoves(delta);
     this.updateAirborne();
     this.updateMarks();
@@ -1709,6 +2116,7 @@ export class FortuneKit {
     this.paintGround();
     this.paintAir();
     this.paintShop(shop);
+    this.paintPass();
     this.pushStatuses(shop);
     void time;
   }
@@ -1719,7 +2127,7 @@ export class FortuneKit {
       || this.flames.length > 0 || this.roombas.length > 0 || this.cured.size > 0
       || this.pylons.length > 0 || this.chilled.size > 0 || this.gilded.size > 0
       || BOTH.some((o) => !!this.sides[o].wall || !!this.sides[o].beam || !!this.sides[o].audit
-        || this.now < this.sides[o].airborneUntil);
+        || !!this.sides[o].car || this.now < this.sides[o].airborneUntil);
   }
 
   private ensureLayers(): void {
@@ -1760,14 +2168,22 @@ export class FortuneKit {
       if (free > 0) s.unpaid.delete(f);
       if (dealt <= 0) continue;
 
-      s.coinFrac += dealt * (this.now < (this.gilded.get(f) ?? 0) ? GILD_PAYOUT : 1);
+      // Ruin's Combo Breaker halves every meter in the game, and the purse is Fortune's. Taxed
+      // on the fraction rather than on the whole coins, so the shortfall carries instead of
+      // rounding itself away.
+      s.coinFrac += meterGain(this.fighter(earner),
+        dealt * (this.now < (this.gilded.get(f) ?? 0) ? GILD_PAYOUT : 1));
       s.stockDealt += dealt;
       this.side(this.other(earner)).stockTaken += dealt;
 
-      const coins = Math.floor(s.coinFrac / DAMAGE_PER_COIN);
+      // A Private Mint off the battle pass makes every wound worth proportionally more, which is
+      // taken off the price of a coin rather than added to the payout — same thing, but the
+      // remainder still carries.
+      const perCoin = DAMAGE_PER_COIN / s.boons.coin;
+      const coins = Math.floor(s.coinFrac / perCoin);
       if (coins > 0) {
-        s.coinFrac -= coins * DAMAGE_PER_COIN;
-        s.coins += coins;
+        s.coinFrac -= coins * perCoin;
+        this.earn(earner, coins);
         this.fx(earner).coinBurst(f.x, f.y - 6, Math.min(5, coins), 24);
       }
 
@@ -1779,8 +2195,43 @@ export class FortuneKit {
   }
 
   /**
+   * Coins into a purse, and the one place the "make 500 coins" grind is counted.
+   *
+   * Every source of income goes through here — wounds, commission, tolls and a settled
+   * investment — and a withdrawal deliberately does not, because that money was counted on the
+   * way in and counting it twice would halve the requirement.
+   */
+  private earn(owner: Owner, amount: number): void {
+    if (amount <= 0) return;
+    this.side(owner).coins += amount;
+    this.record(owner, 'coinsEarned', amount);
+  }
+
+  /**
+   * One more distinct line of the catalogue owned, ever.
+   *
+   * Persisted as a flag per item id and re-counted into the real requirement, the same ratchet
+   * Magic's wheel counters and Growth's ultimates use — a plain cumulative counter would let
+   * twenty Bandages finish a requirement that asks for one of everything.
+   */
+  private noteBought(id: string): void {
+    const key = `forItem_${id}`;
+    if (this.api.getMasteryStat(key) > 0) return;
+    this.api.recordMasteryBestStat(key, 1);
+    let owned = 0;
+    for (const e of ENTRY_BY_ID.values()) {
+      if (e.page === 'garage') continue;
+      if (this.api.getMasteryStat(`forItem_${e.id}`) > 0) owned++;
+    }
+    this.api.recordMasteryBestStat('catalogueOwned', owned);
+    this.api.showFloatingText(this.stallX, this.stallY - 74,
+      `🧾 ${owned}/${CATALOGUE_SIZE} CATALOGUE`, this.hex(FOR.canvasShade));
+  }
+
+  /**
    * The Explosives Pouch. The AOE deliberately spares the body that was hit — the item is a
    * cleave onto everything *else*, not a damage multiplier, which is why it is only three coins.
+   * An Explosives Pouch⁺ off the battle pass is the version that does not spare them.
    */
   private tryPouch(owner: Owner, victim: Fighter, damage: number): void {
     const s = this.side(owner);
@@ -1793,7 +2244,7 @@ export class FortuneKit {
     Sfx.playAt('explosion-small', victim.x, { volume: 0.8 });
     let struck = 0;
     for (const t of this.targetsOf(owner)) {
-      if (t === victim) continue;
+      if (t === victim && !s.pouchPlus) continue;
       if (Phaser.Math.Distance.Between(t.x, t.y, victim.x, victim.y) > POUCH_R) continue;
       t.takeDamage(damage);
       this.api.spawnHitFlash(t.x, t.y, FOR.blood);
@@ -1812,12 +2263,20 @@ export class FortuneKit {
       const f = this.fighter(owner);
       const miracle = this.now < s.miracleUntil ? 2 : 1;
 
+      // Quarterly Results shortens the drum for both vehicles at once, so a pass full of them
+      // is a genuinely different economy rather than a bigger one.
+      const settle = SETTLE_MS * s.boons.settle;
+
       if (s.bank > 0) {
         s.bankTimer += delta;
-        if (s.bankTimer >= SETTLE_MS) {
-          s.bankTimer -= SETTLE_MS;
-          const gain = Math.max(CAPITAL_FLOOR, Math.floor(s.bank * CAPITAL_GAINS * miracle));
+        if (s.bankTimer >= settle) {
+          s.bankTimer -= settle;
+          const rate = (CAPITAL_GAINS + s.boons.interest) * miracle;
+          const gain = Math.round(meterGain(f,
+            Math.max(CAPITAL_FLOOR, Math.floor(s.bank * rate))));
           s.bank += gain;
+          this.record(owner, 'coinsEarned', gain);
+          this.record(owner, 'investGains', gain);
           if (this.alive(f)) {
             this.fx(owner).coinBurst(f.x, f.y - 14, Math.min(5, gain), 22);
             this.api.showFloatingText(f.x, f.y - 60, `🏦 +${gain} CAPITAL GAINS`, this.hex(FOR.gold));
@@ -1830,8 +2289,8 @@ export class FortuneKit {
 
       if (s.stocks > 0) {
         s.stockTimer += delta;
-        if (s.stockTimer >= SETTLE_MS) {
-          s.stockTimer -= SETTLE_MS;
+        if (s.stockTimer >= settle) {
+          s.stockTimer -= settle;
           const good = s.stockDealt > RISK_DEAL_BAR;
           const bad = s.stockTaken > RISK_TAKE_BAR;
           s.stockDealt = 0;
@@ -1840,6 +2299,10 @@ export class FortuneKit {
           if (rate !== 0) {
             const delta2 = Math.max(1, Math.round(Math.abs(s.stocks * rate))) * Math.sign(rate);
             s.stocks = Math.max(0, s.stocks + delta2);
+            if (delta2 > 0) {
+              this.record(owner, 'coinsEarned', delta2);
+              this.record(owner, 'investGains', delta2);
+            }
             if (this.alive(f)) {
               const up = delta2 > 0;
               this.api.showFloatingText(f.x, f.y - 60,
@@ -1907,6 +2370,12 @@ export class FortuneKit {
           if (hand === s.main) this.avatar(owner)?.setGun(hand.gun);
           const f = this.fighter(owner);
           if (this.alive(f)) Sfx.playAt('ui-click', f.x, { volume: 0.5, rate: 0.8 });
+          // Scavenger. The battle pass pays for brass, so an empty magazine is worth something
+          // even when every round in it missed.
+          if (s.boons.scavenge > 0) {
+            this.earn(owner, s.boons.scavenge);
+            if (this.alive(f)) this.fx(owner).coinBurst(f.x, f.y - 8, s.boons.scavenge, 18, 520);
+          }
         }
       }
     }
@@ -2017,8 +2486,9 @@ export class FortuneKit {
       // Re-aimed at throw time rather than at purchase: three volleys over half a second
       // should follow a target that has moved, not spray where they used to be.
       const ang = this.aimAngle(v.owner, f);
-      for (let k = 0; k < DAGGER_PER_VOLLEY; k++) {
-        const a = ang + (k / (DAGGER_PER_VOLLEY - 1) - 0.5) * 2 * DAGGER_SPREAD;
+      const n = v.plus ? 12 : DAGGER_PER_VOLLEY;
+      for (let k = 0; k < n; k++) {
+        const a = ang + (k / (n - 1) - 0.5) * 2 * DAGGER_SPREAD;
         this.daggers.push({
           owner: v.owner,
           x: f.x + Math.cos(a) * 20,
@@ -2026,6 +2496,7 @@ export class FortuneKit {
           vx: Math.cos(a) * DAGGER_SPEED,
           vy: Math.sin(a) * DAGGER_SPEED,
           ang: a,
+          damage: v.plus ? 6 : DAGGER_DAMAGE,
           diesAt: this.now + 900,
           hit: new Set(),
         });
@@ -2046,7 +2517,7 @@ export class FortuneKit {
         if (d.hit.has(t)) continue;
         if (Phaser.Math.Distance.Between(d.x, d.y, t.x, t.y) > 12 + 12 * t.sizeMult) continue;
         d.hit.add(t);
-        t.takeDamage(DAGGER_DAMAGE);
+        t.takeDamage(d.damage);
         this.api.spawnHitFlash(t.x, t.y, FOR.steel);
         spent = true;
         break;
@@ -2070,7 +2541,7 @@ export class FortuneKit {
       s.pepperDrop = 0;
       this.flames.push({
         owner, x: f!.x, y: f!.y + 8, seed: Math.random() * 999,
-        bornAt: this.now, diesAt: this.now + PEPPER_LIFE_MS,
+        bornAt: this.now, diesAt: this.now + PEPPER_LIFE_MS, power: s.pepperPower,
       });
     }
 
@@ -2082,7 +2553,7 @@ export class FortuneKit {
         if (Phaser.Math.Distance.Between(fl.x, fl.y, t.x, t.y) > PEPPER_R + 8 * t.sizeMult) continue;
         // One patch's worth of dps, not the sum of every patch you are standing in — a doubled
         // back trail is a wider trap, not a hotter one.
-        t.takeDamage(PEPPER_DPS * dt * (1 / Math.max(1, this.overlapCount(fl.owner, t))));
+        t.takeDamage(PEPPER_DPS * fl.power * dt * (1 / Math.max(1, this.overlapCount(fl.owner, t))));
         t.burningUntil = Math.max(t.burningUntil, this.now + 900);
       }
     }
@@ -2114,19 +2585,21 @@ export class FortuneKit {
       const tx = best ? best.x : this.stallX + Math.cos(this.vizT * 0.7) * 90;
       const ty = best ? best.y : this.stallY + Math.sin(this.vizT * 0.9) * 60;
       const want = Math.atan2(ty - r.y, tx - r.x);
+      const speed = r.plus ? 150 : ROOMBA_SPEED;
       r.ang = Phaser.Math.Angle.RotateTo(r.ang, want, 3.2 * dt);
-      r.x = Phaser.Math.Clamp(r.x + Math.cos(r.ang) * ROOMBA_SPEED * dt, this.left + 12, this.right - 12);
-      r.y = Phaser.Math.Clamp(r.y + Math.sin(r.ang) * ROOMBA_SPEED * dt, this.top + 12, this.bottom - 12);
+      r.x = Phaser.Math.Clamp(r.x + Math.cos(r.ang) * speed * dt, this.left + 12, this.right - 12);
+      r.y = Phaser.Math.Clamp(r.y + Math.sin(r.ang) * speed * dt, this.top + 12, this.bottom - 12);
 
       for (const t of targets) {
         if (Phaser.Math.Distance.Between(r.x, r.y, t.x, t.y) > 20 + 12 * t.sizeMult) continue;
         const gate = r.gate.get(t) ?? 0;
         if (this.now < gate) continue;
         r.gate.set(t, this.now + ROOMBA_GATE_MS);
-        t.takeDamage(ROOMBA_DAMAGE);
+        t.takeDamage(r.plus ? 45 : ROOMBA_DAMAGE);
         this.api.spawnHitFlash(t.x, t.y, FOR.steel);
         this.fx(r.owner).impact(t.x, t.y, r.ang + Math.PI);
-        this.api.showFloatingText(t.x, t.y - 36, '🤖 DEATH MACHINE', this.hex(FOR.steel));
+        this.api.showFloatingText(t.x, t.y - 36,
+          r.plus ? '🤖 DEATH MACHINE+' : '🤖 DEATH MACHINE', this.hex(FOR.steel));
         Sfx.playAt('slash', t.x, { volume: 0.7, rate: 1.2 });
       }
     }
@@ -2318,13 +2791,12 @@ export class FortuneKit {
   private toll(owner: Owner, payer: Owner, amount: number, x: number, y: number, w: Wall,
     payerBody?: Fighter): void {
     const from = this.side(payer);
-    const to = this.side(owner);
     const paid = Math.min(amount, from.coins);
     w.flash = 1;
 
     if (paid > 0) {
       from.coins -= paid;
-      to.coins += paid;
+      this.earn(owner, paid);
       w.take += paid;
       this.fx(owner).coinBurst(x, y, Math.min(4, paid), 20, 560);
       this.api.showFloatingText(x, y - 18, `🎫 −${paid}`, this.hex(FOR.gold));
@@ -2441,7 +2913,12 @@ export class FortuneKit {
         // Recorded as what the meter actually saw rather than as what was asked for, so a hit
         // the target was invincible through does not cancel a real wound on the next frame.
         const landed = t.rawDamageTaken - before;
-        if (landed > 0) s.unpaid.set(t, (s.unpaid.get(t) ?? 0) + landed);
+        if (landed > 0) {
+          s.unpaid.set(t, (s.unpaid.get(t) ?? 0) + landed);
+          // The one damage figure in the element the grind counts separately, because it is the
+          // one you bought rather than fired.
+          this.record(owner, 'p2wDamage', landed);
+        }
         if (Math.random() < dt * 8) this.api.spawnHitFlash(t.x, t.y, FOR.goldLit);
       }
     }
@@ -2500,6 +2977,9 @@ export class FortuneKit {
       const sh = s.shove;
       if (!sh) continue;
       if (this.now >= sh.until) { s.shove = null; continue; }
+      // A rider is being carried by the car, which already wrote their position this frame. A
+      // recoil push on top of it would slide them off a roof they are still standing on.
+      if (this.isRiding(owner)) continue;
       const f = this.fighter(owner);
       if (!this.alive(f)) { s.shove = null; continue; }
       const k = Math.max(0, (sh.until - this.now) / 260);
@@ -2533,6 +3013,406 @@ export class FortuneKit {
         stretchNewEffects(f, wall, game, 2, s.miracleSnap, (d) => !isDebuff(d));
       }
     }
+  }
+
+  // ── Mastery passive: the Battle Pass ───────────────────────────────────────
+
+  /**
+   * Roll this match's ladder, once, lazily.
+   *
+   * Lazily because `reset()` runs before ArenaScene has finished deciding what the player is
+   * carrying, and the ladder reads the upgrade slots to know which items it is allowed to put on
+   * it — a pass rolled in `reset` would never stock a Tele-Core.
+   */
+  private ensurePass(owner: Owner): void {
+    const s = this.side(owner);
+    if (s.pass.length > 0) return;
+    const items = GENERAL.filter((e) => e.id !== 'donation'
+      && (!e.needs || this.owns(owner, e.needs)));
+
+    for (let i = 0; i < PASS_TIERS; i++) {
+      if ((i + 1) % PASS_PLUS_EVERY === 0) {
+        const id = PLUS_ITEMS[Math.floor(Math.random() * PLUS_ITEMS.length)];
+        const e = ENTRY_BY_ID.get(id);
+        if (e) {
+          s.pass.push({ kind: 'plus', id, name: `${e.name}+`, emoji: e.emoji, desc: PLUS_DESC[id] ?? e.desc });
+          continue;
+        }
+      }
+      if (items.length > 0 && Math.random() < PASS_ITEM_CHANCE) {
+        const e = items[Math.floor(Math.random() * items.length)];
+        s.pass.push({ kind: 'item', id: e.id, name: e.name, emoji: e.emoji, desc: e.desc });
+        continue;
+      }
+      const b = PASS_BUFFS[Math.floor(Math.random() * PASS_BUFFS.length)];
+      s.pass.push({ kind: 'buff', id: b.id, name: b.name, emoji: b.emoji, desc: b.desc });
+    }
+  }
+
+  /** Three coins for the next rung of the ladder. Strictly in order — that is the whole shape. */
+  private buyPassTier(owner: Owner): boolean {
+    if (!this.masteryOn(owner)) return false;
+    this.ensurePass(owner);
+    const s = this.side(owner);
+    const body = this.buyerFor(owner);
+    if (!body) return false;
+
+    if (s.passBought >= s.pass.length) {
+      if (owner === 'player') {
+        this.api.showFloatingText(body.x, body.y - 44, '🎟️ PASS COMPLETE', this.hex(FOR.goldLit));
+        Sfx.playAt('ui-denied', body.x, { volume: 0.6 });
+      }
+      return false;
+    }
+    if (s.coins < PASS_COST) {
+      if (owner === 'player') {
+        this.api.showFloatingText(body.x, body.y - 44, `💸 NEED ${PASS_COST - s.coins} MORE`, this.hex(FOR.blood));
+        Sfx.playAt('ui-denied', body.x, { volume: 0.7 });
+      }
+      return false;
+    }
+
+    s.coins -= PASS_COST;
+    s.spent += PASS_COST;
+    const reward = s.pass[s.passBought];
+    s.passBought++;
+    this.grantPassReward(owner, reward, body);
+
+    this.fx(owner).cash(body.x, body.y - 20, 34, 460, 20);
+    this.api.showFloatingText(body.x, body.y - 52,
+      `${reward.emoji} ${reward.name.toUpperCase()}`,
+      this.hex(reward.kind === 'plus' ? FOR.goldLit : FOR.gold));
+    Sfx.playAt(reward.kind === 'plus' ? 'jackpot' : 'ui-purchase', body.x, { volume: 0.85 });
+    return true;
+  }
+
+  /**
+   * What a tier actually hands over. A buff folds into the running totals (or is done to the
+   * body once, if it is health); an item and an item⁺ are the ordinary shop path with the flag
+   * set, which is why there is no second catalogue of stronger items anywhere in the file.
+   */
+  private grantPassReward(owner: Owner, reward: PassReward, body: Fighter): void {
+    const s = this.side(owner);
+    if (reward.kind === 'buff') {
+      const buff = PASS_BUFFS.find((b) => b.id === reward.id);
+      if (!buff) return;
+      buff.boon?.(s.boons);
+      if (buff.instant === 'hp') body.increaseMaxHp(PASS_HP);
+      if (buff.instant === 'plate') body.shieldHp += PASS_PLATE;
+      return;
+    }
+    const entry = ENTRY_BY_ID.get(reward.id);
+    if (!entry) return;
+    s.effectBody = body;
+    this.applyItem(owner, entry, body, reward.kind === 'plus');
+  }
+
+  // ── Mastery ability: Drive by Flex ─────────────────────────────────────────
+
+  private hasCar(s: Side, id: string): boolean { return s.carBuffs.includes(id); }
+
+  /** Whether that side is currently standing on their own roof. */
+  private isRiding(owner: Owner): boolean {
+    return !!this.sides[owner].car?.rider;
+  }
+
+  /**
+   * How fast the thing is going. Re-derived every frame rather than baked into the velocity, so
+   * a set of Quick Tires bought at the counter speeds up the car already out on the floor.
+   */
+  private carSpeed(s: Side): number {
+    let v = CAR_SPEED;
+    if (this.hasCar(s, 'tires')) v *= 1.45;
+    if (this.hasCar(s, 'speedster')) v *= 2.4;
+    if (this.hasCar(s, 'tank')) v *= 0.45;
+    return v;
+  }
+
+  private carBounces(s: Side): number {
+    let n = CAR_BOUNCES;
+    if (this.hasCar(s, 'chassis')) n += 3;
+    if (this.hasCar(s, 'speedster')) n += 10;
+    if (this.hasCar(s, 'tank')) n += 5;
+    return n;
+  }
+
+  private carRam(s: Side): number {
+    let d = this.hasCar(s, 'spikes') ? CAR_RAM_SPIKED : CAR_RAM;
+    if (this.hasCar(s, 'tank')) d *= 2.2;
+    return d;
+  }
+
+  /** The bound key. One car at a time, and the cooldown does not start until this one is gone. */
+  private tryCar(owner: Owner, tx: number, ty: number): boolean {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return false;
+    if (s.car) {
+      if (owner === 'player') {
+        this.api.showFloatingText(f.x, f.y - 46, '🚗 ALREADY DRIVING', this.hex(FOR.canvasShade));
+      }
+      return false;
+    }
+    if (this.now - s.carCastAt < CAR_COOLDOWN_MS) return false;
+    this.spawnCar(owner, Math.atan2(ty - f.y, tx - f.x));
+    if (owner === 'player') this.api.broadcastMasteryCast(CAR_ID);
+    return true;
+  }
+
+  private spawnCar(owner: Owner, ang: number): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    s.carCastAt = this.now;
+    const speed = this.carSpeed(s);
+    const bounces = this.carBounces(s);
+    s.car = {
+      owner,
+      x: Phaser.Math.Clamp(f.x + Math.cos(ang) * 44, this.left + CAR_L, this.right - CAR_L),
+      y: Phaser.Math.Clamp(f.y + Math.sin(ang) * 44, this.top + CAR_L, this.bottom - CAR_L),
+      vx: Math.cos(ang) * speed,
+      vy: Math.sin(ang) * speed,
+      bounces,
+      maxBounces: bounces,
+      rider: false,
+      gate: new Map(),
+      nextRoboAt: 0,
+      nextShellAt: this.now + TANK_EVERY_MS,
+      trailAt: 0,
+      turret: ang,
+      seed: Math.random() * 999,
+    };
+    this.avatar(owner)?.play('slam', ang);
+    this.fx(owner).rift(s.car.x, s.car.y + 8, 26);
+    if (owner === 'player') {
+      this.api.showFloatingText(f.x, f.y - 52, '🚗 DRIVE BY FLEX', this.hex(FOR.gold));
+    }
+    Sfx.playAt('stone-rise', s.car.x, { volume: 0.7, rate: 0.6 });
+    Sfx.playAt('robot-power', s.car.x, { volume: 0.8, rate: 0.55 });
+  }
+
+  /** Online: the opponent's car, spawned on this sim from their own cast. */
+  doNpcDriveBy(tx: number, ty: number): void {
+    const f = this.api.npc;
+    if (!this.alive(f) || this.sides.npc.car) return;
+    this.spawnCar('npc', Math.atan2(ty - f.y, tx - f.x));
+  }
+
+  private mount(owner: Owner): void {
+    const s = this.side(owner);
+    const car = s.car;
+    const f = this.fighter(owner);
+    if (!car || car.rider || !this.alive(f)) return;
+    car.rider = true;
+    // Mounted Gunner's rounds go in the moment you are on the roof, not on the next reload.
+    if (this.hasCar(s, 'gunner')) {
+      for (const hand of this.hands(s)) hand.ammo = Math.min(this.magSize(s, hand), hand.ammo + GUNNER_AMMO);
+    }
+    this.fx(owner).cash(car.x, car.y - 18, 26, 380, 12);
+    if (owner === 'player') this.api.showFloatingText(f.x, f.y - 50, '🚗 ABOARD', this.hex(FOR.goldLit));
+    Sfx.playAt('anvil', car.x, { volume: 0.6, rate: 1.4 });
+  }
+
+  /** Stepping off, or being thrown off by the thing going up underneath you. */
+  private dismount(owner: Owner, thrown = false): void {
+    const s = this.side(owner);
+    const car = s.car;
+    const f = this.fighter(owner);
+    if (!car || !car.rider) return;
+    car.rider = false;
+    // …and the Gunner's extra rounds go back with the roof they came off. `magSize` reads the
+    // ride, so this has to run *after* the flag is down.
+    for (const hand of this.hands(s)) hand.ammo = Math.min(this.magSize(s, hand), hand.ammo);
+    if (!this.alive(f)) return;
+    if (thrown) {
+      // Off the wreck rather than out of it — a driver is never hurt by their own car.
+      const ang = Math.atan2(f.y - car.y, f.x - car.x) || 0;
+      s.shove = { vx: Math.cos(ang) * 420, vy: Math.sin(ang) * 420, until: this.now + 260 };
+      if (owner === 'player') this.api.showFloatingText(f.x, f.y - 50, '🚗 THROWN CLEAR', this.hex(FOR.gold));
+    } else if (owner === 'player') {
+      this.api.showFloatingText(f.x, f.y - 50, '🚗 OFF', this.hex(FOR.canvasShade));
+    }
+    Sfx.playAt('whoosh', f.x, { volume: 0.6, rate: 1.2 });
+  }
+
+  /**
+   * The car, every frame.
+   *
+   * It does not steer, it does not chase and it does not stop. Everything the garage sells is
+   * read out of `carBuffs` here rather than folded into the object when it spawned, so a buff
+   * bought mid-drive applies to the car currently on the floor.
+   */
+  private updateCars(delta: number): void {
+    const dt = delta / 1000;
+    for (const owner of BOTH) {
+      const s = this.sides[owner];
+      const car = s.car;
+      if (!car) continue;
+      const f = this.fighter(owner);
+
+      // A driver who died is not a driver. The car carries on without them.
+      if (car.rider && !this.alive(f)) car.rider = false;
+
+      // Direction is kept; speed is re-read, so Quick Tires does not need a fresh car.
+      const speed = this.carSpeed(s);
+      const len = Math.hypot(car.vx, car.vy) || 1;
+      car.vx = (car.vx / len) * speed;
+      car.vy = (car.vy / len) * speed;
+      car.x += car.vx * dt;
+      car.y += car.vy * dt;
+
+      // The DVD logo. A corner is one bounce and not two, which is why the flag is shared.
+      let bounced = false;
+      if (car.x < this.left + CAR_L) { car.x = this.left + CAR_L; car.vx = Math.abs(car.vx); bounced = true; }
+      else if (car.x > this.right - CAR_L) { car.x = this.right - CAR_L; car.vx = -Math.abs(car.vx); bounced = true; }
+      if (car.y < this.top + CAR_L) { car.y = this.top + CAR_L; car.vy = Math.abs(car.vy); bounced = true; }
+      else if (car.y > this.bottom - CAR_L) { car.y = this.bottom - CAR_L; car.vy = -Math.abs(car.vy); bounced = true; }
+      if (bounced) {
+        car.bounces--;
+        this.fx(owner).impact(car.x, car.y, Math.atan2(car.vy, car.vx) + Math.PI, 260);
+        Sfx.playAt('anvil', car.x, { volume: 0.55, rate: 0.7 });
+        if (car.bounces <= 0) { this.wreckCar(owner); continue; }
+      }
+
+      // The rider is carried. Written here rather than to their velocity because ArenaScene
+      // rewrites that from WASD every frame, and this runs afterwards.
+      if (car.rider && this.alive(f)) {
+        f.setPosition(car.x, car.y);
+        this.body(f).reset(car.x, car.y);
+      }
+
+      // Speedster's fire trail, which is the ordinary Spicy Pepper patch with a different owner.
+      if (this.hasCar(s, 'speedster') && this.now >= car.trailAt) {
+        car.trailAt = this.now + SPEEDSTER_TRAIL_MS;
+        this.flames.push({
+          owner, x: car.x, y: car.y + 6, seed: Math.random() * 999,
+          bornAt: this.now, diesAt: this.now + PEPPER_LIFE_MS, power: 1,
+        });
+      }
+
+      // The ram.
+      const ram = this.carRam(s);
+      for (const t of this.targetsOf(owner)) {
+        if (Phaser.Math.Distance.Between(car.x, car.y, t.x, t.y) > CAR_L + 12 * t.sizeMult) continue;
+        const gate = car.gate.get(t) ?? 0;
+        if (this.now < gate) continue;
+        car.gate.set(t, this.now + CAR_RAM_GATE_MS);
+        t.takeDamage(ram);
+        this.api.spawnHitFlash(t.x, t.y, FOR.blood);
+        this.fx(owner).impact(t.x, t.y, Math.atan2(car.vy, car.vx), 280);
+        this.api.showFloatingText(t.x, t.y - 38, '🚗 RAMMED', this.hex(FOR.blood));
+        Sfx.playAt('anvil', t.x, { volume: 0.85, rate: 0.85 });
+      }
+
+      // The roof guns. Both of them pick the nearest body inside their own short reach, and the
+      // turret is drawn where they are looking rather than where the car is going.
+      const near = this.nearestTo(owner, car.x, car.y);
+      if (near.target) car.turret = Math.atan2(near.target.y - car.y, near.target.x - car.x);
+
+      if (this.hasCar(s, 'robo') && near.target && near.dist <= ROBO_RANGE && this.now >= car.nextRoboAt) {
+        car.nextRoboAt = this.now + ROBO_EVERY_MS;
+        this.addBullet(owner, {
+          kind: 'slug', x: car.x + Math.cos(car.turret) * 16, y: car.y + Math.sin(car.turret) * 16,
+          ang: car.turret, speed: 780, damage: ROBO_DAMAGE, size: 3.6, life: 600,
+        });
+        this.fx(owner).muzzle(car.x + Math.cos(car.turret) * 18, car.y + Math.sin(car.turret) * 18, car.turret, 0.6);
+        Sfx.playAt('musket', car.x, { volume: 0.3, rate: 2.1 });
+      }
+
+      if (this.hasCar(s, 'tank') && near.target && near.dist <= TANK_RANGE && this.now >= car.nextShellAt) {
+        car.nextShellAt = this.now + TANK_EVERY_MS;
+        this.addBullet(owner, {
+          kind: 'grenade', x: car.x + Math.cos(car.turret) * 22, y: car.y + Math.sin(car.turret) * 22,
+          ang: car.turret, speed: 340, damage: TANK_SHELL_DAMAGE, size: 8,
+          blast: TANK_SHELL_R, life: 2200,
+          toX: near.target.x, toY: near.target.y,
+        });
+        this.fx(owner).muzzle(car.x + Math.cos(car.turret) * 26, car.y + Math.sin(car.turret) * 26, car.turret, 1.6);
+        Sfx.playAt('shotgun', car.x, { volume: 0.85, rate: 0.6 });
+      }
+    }
+  }
+
+  /** Nearest thing `owner` is allowed to hurt, and how far off it is. */
+  private nearestTo(owner: Owner, x: number, y: number): { target: Fighter | null; dist: number } {
+    let best: Fighter | null = null;
+    let bestD = Infinity;
+    for (const t of this.targetsOf(owner)) {
+      const d = Phaser.Math.Distance.Between(x, y, t.x, t.y);
+      if (d < bestD) { bestD = d; best = t; }
+    }
+    return { target: best, dist: bestD };
+  }
+
+  /** The last bounce. Everything the car was is now in the air. */
+  private wreckCar(owner: Owner): void {
+    const s = this.side(owner);
+    const car = s.car;
+    if (!car) return;
+    const suicide = this.hasCar(s, 'suicide');
+
+    // The driver comes off before the car does, so `dismount` still has a car to read.
+    if (car.rider) this.dismount(owner, true);
+    s.car = null;
+    // The cooldown starts from the wreck rather than from the cast — a car that survived a long
+    // drive has already been paid for in the time it was out.
+    s.carCastAt = this.now;
+
+    this.fx(owner).wreck(car.x, car.y, CAR_DEATH_R * (suicide ? 1.25 : 1));
+    Sfx.playAt('explosion-big', car.x, { volume: 0.95, rate: suicide ? 0.72 : 0.95 });
+    for (const t of this.targetsOf(owner)) {
+      const d = Phaser.Math.Distance.Between(car.x, car.y, t.x, t.y);
+      if (d > CAR_DEATH_R) continue;
+      t.takeDamage(CAR_DEATH_DAMAGE * (1 - 0.4 * (d / CAR_DEATH_R)));
+      this.api.spawnHitFlash(t.x, t.y, FOR.blood);
+    }
+
+    if (suicide) {
+      for (let i = 0; i < SHRAPNEL_N; i++) {
+        const a = (i / SHRAPNEL_N) * TAU_LOCAL + Math.random() * 0.18;
+        this.addBullet(owner, {
+          kind: 'slug', x: car.x + Math.cos(a) * 12, y: car.y + Math.sin(a) * 12, ang: a,
+          speed: 620, damage: SHRAPNEL_DAMAGE, size: 4.2, life: 1100,
+        });
+      }
+      if (owner === 'player') {
+        this.api.showFloatingText(car.x, car.y - 46, '💣 SUICIDE MISSION', this.hex(FOR.blood));
+      }
+    }
+  }
+
+  /**
+   * The bot's car.
+   *
+   * Cast off the kit's own timer rather than through the AI, because the car is not an aiming
+   * decision — it is thrown at wherever the target happens to be and then stops being anybody's
+   * problem. Riding it, though, *is* a decision, and it is the kit's synergy: the whole value of
+   * the roof is a faster reload, so the bot climbs on when its magazine is gone and steps off the
+   * moment it is loaded again or the fight comes back into range.
+   */
+  private updateNpcCar(): void {
+    if (!this.carSlot('npc')) return;
+    const s = this.sides.npc;
+    const f = this.api.npc;
+    if (!this.alive(f)) return;
+    const near = this.nearestTo('npc', f.x, f.y);
+
+    if (!s.car) {
+      if (this.now - s.carCastAt < CAR_COOLDOWN_MS || !near.target) return;
+      this.tryCar('npc', near.target.x, near.target.y);
+      return;
+    }
+
+    const car = s.car;
+    const reloading = this.now < s.main.reloadUntil || s.main.ammo <= 0;
+    if (car.rider) {
+      // Off again as soon as the gun is back, or as soon as being carried would take it into a
+      // fight it cannot move out of.
+      if (!reloading || near.dist < 150) this.dismount('npc');
+      return;
+    }
+    if (!reloading || near.dist < 200) return;
+    if (Phaser.Math.Distance.Between(f.x, f.y, car.x, car.y) > CAR_MOUNT_R) return;
+    this.mount('npc');
   }
 
   // ── Bots ───────────────────────────────────────────────────────────────────
@@ -2594,6 +3474,20 @@ export class FortuneKit {
     if (f.hp < f.maxHp * 0.55) {
       const e = ENTRY_BY_ID.get('bandages');
       if (e && s.coins >= e.cost) { this.buy(owner, e); return; }
+    }
+    // The garage, if it has one. Cheapest-first, so three coins is three buffs rather than none —
+    // a bot that saved for a Tank would spend the whole match driving nothing.
+    if (this.masteryOn(owner) && s.carBuffs.length < CAR_MAX_BUFFS) {
+      for (const id of ['tires', 'spikes', 'chassis', 'suicide', 'robo', 'sunroof']) {
+        const e = ENTRY_BY_ID.get(id);
+        if (e && s.coins >= e.cost && this.canBuy(owner, e)) { this.buy(owner, e); return; }
+      }
+    }
+    // The pass. A bot has no ribbon to read, but three coins for a stat is a good trade whoever
+    // is deciding, so it climbs the ladder with anything it is not saving for a beam.
+    if (this.masteryOn(owner) && s.coins >= PASS_COST + 10) {
+      this.buyPassTier(owner);
+      return;
     }
     if (s.coins >= 8) {
       const e = ENTRY_BY_ID.get('roomba');
@@ -2722,6 +3616,27 @@ export class FortuneKit {
       const angry = this.targetsOf(r.owner).some(
         (t) => Phaser.Math.Distance.Between(r.x, r.y, t.x, t.y) < 90) ? 1 : 0;
       roombaShape(g, this.col(r.owner), r.x, r.y, r.ang, 1, { spin: r.spin, angry });
+    }
+
+    // The car. Every garage buff is bolted on somewhere you can see it, and the paint darkens
+    // as the bounces run out.
+    for (const owner of BOTH) {
+      const s = this.sides[owner];
+      const car = s.car;
+      if (!car) continue;
+      rustyCar(g, this.col(owner), car.x, car.y, Math.atan2(car.vy, car.vx), 1, {
+        t: this.vizT + car.seed,
+        wear: 1 - Phaser.Math.Clamp(car.bounces / Math.max(1, car.maxBounces), 0, 1),
+        rider: car.rider,
+        spikes: this.hasCar(s, 'spikes'),
+        tires: this.hasCar(s, 'tires'),
+        tank: this.hasCar(s, 'tank'),
+        speedster: this.hasCar(s, 'speedster'),
+        gunner: this.hasCar(s, 'gunner'),
+        robo: this.hasCar(s, 'robo'),
+        sunroof: this.hasCar(s, 'sunroof'),
+        turret: car.turret,
+      });
     }
 
     // Turnstiles, spaced down the arena with their phases offset so the wall reads as a row of
@@ -2879,6 +3794,82 @@ export class FortuneKit {
     this.shopTexts[i].setStyle({ fontSize: size, color, fontStyle: bold ? 'bold' : 'normal' });
   }
 
+  // ── The battle pass ribbon ─────────────────────────────────────────────────
+
+  /**
+   * The pass, across the top of the screen.
+   *
+   * Not a panel you open — it is simply there, all match, because the whole point of it is that
+   * it is the one place your money goes that does not require you to walk to the middle of the
+   * room. Thirty notches, one per tier, and the only text is what the next one is and what it
+   * costs: the ribbon carries the rest.
+   */
+  private paintPass(): void {
+    const { scene } = this.api;
+    const s = this.sides.player;
+    const on = this.masteryOn('player') && this.alive(this.api.player) && s.pass.length > 0;
+
+    if (!on) {
+      this.passGfx?.setVisible(false);
+      for (const t of this.passTexts) t.setVisible(false);
+      return;
+    }
+
+    if (!this.passGfx) this.passGfx = scene.add.graphics().setDepth(23);
+    while (this.passTexts.length < 2) {
+      this.passTexts.push(scene.add.text(0, 0, '', {
+        fontSize: '11px', fontFamily: 'Arial Black', color: '#ffffff',
+      }).setDepth(24));
+    }
+    const g = this.passGfx.setVisible(true);
+    g.clear();
+
+    // Threaded between the furniture that is already up there: the "YOU"/"ENEMY" labels sit at
+    // y=20 and the status tray's first row starts at y=60, so the ribbon takes the strip in
+    // between and the line about the next tier goes above it, between the two labels.
+    const pad = 90;
+    const y = 44;
+    const span = this.api.width - pad * 2;
+    const step = span / PASS_TIERS;
+    const w = Math.max(4, step - 4);
+
+    g.fillStyle(FOR.ink, 0.72);
+    g.fillRect(pad - 10, y - 14, span + 20, 28);
+    g.lineStyle(1.4, this.pcol(FOR.brass), 0.7);
+    g.strokeRect(pad - 10, y - 14, span + 20, 28);
+
+    for (let i = 0; i < PASS_TIERS; i++) {
+      const state = i < s.passBought ? 'owned' : i === s.passBought ? 'next' : 'locked';
+      passTier(g, this.pcol, pad + step * (i + 0.5), y, w, 14, 1, {
+        state, plus: (i + 1) % PASS_PLUS_EVERY === 0, t: this.vizT,
+      });
+    }
+
+    const next = s.pass[s.passBought];
+    const head = this.passTexts[0];
+    head.setVisible(true).setOrigin(0, 0.5).setPosition(this.api.width - pad + 14, y)
+      .setText(`🎟️ ${s.passBought}/${PASS_TIERS}`);
+    // `setStyle` rebuilds the text's canvas texture, so both rows are guarded the same way the
+    // counter's eleven are.
+    if (this.passColors[0] !== 'h') {
+      this.passColors[0] = 'h';
+      head.setStyle({ fontSize: '11px', fontFamily: 'Arial Black', color: this.hex(FOR.goldLit) });
+    }
+
+    const foot = this.passTexts[1];
+    foot.setVisible(true).setOrigin(0.5, 0.5).setPosition(this.api.width / 2, 20)
+      .setText(next
+        ? `[B] ${PASS_COST}🪙 — ${next.emoji} ${next.name}: ${next.desc}`
+        : 'PASS COMPLETE');
+    const tone = !next ? this.hex(FOR.goldLit)
+      : s.coins < PASS_COST ? '#b3202e'
+        : next.kind === 'plus' ? this.hex(FOR.goldLit) : this.hex(FOR.canvas);
+    if (this.passColors[1] !== tone) {
+      this.passColors[1] = tone;
+      foot.setStyle({ fontSize: '10px', fontFamily: 'Arial Black', color: tone });
+    }
+  }
+
   // ── Status tray ────────────────────────────────────────────────────────────
 
   private pushStatuses(shop: Owner | null): void {
@@ -3019,6 +4010,47 @@ export class FortuneKit {
       until: s.beam.endsAt, priority: 110,
     } : null);
 
+    // ── Mastery ──
+    const passOn = this.masteryOn('player');
+    this.api.setStatusIndicator('fortune-pass', passOn ? {
+      name: 'Battle Pass', emoji: '🎟️', color: FOR.goldLit,
+      description: `The ribbon across the top of the screen. Press B anywhere in the arena to buy the next tier for ${PASS_COST} coins — strictly in order. Most tiers are stat buffs that last the match and stack; some are free shop items; every fifth is an item⁺, a stronger version of something on the public shelf. The whole ladder is rolled fresh every match.`,
+      count: s.passBought, suffix: `/${PASS_TIERS}`, priority: 157,
+    } : null);
+
+    const buffLine = [
+      s.boons.damage !== 1 ? `damage ×${s.boons.damage.toFixed(2)}` : '',
+      s.boons.rate !== 1 ? `fire rate ×${s.boons.rate.toFixed(2)}` : '',
+      s.boons.reload !== 1 ? `reload ×${s.boons.reload.toFixed(2)}` : '',
+      s.boons.mag ? `+${s.boons.mag} magazine` : '',
+      s.boons.speed !== 1 ? `speed ×${s.boons.speed.toFixed(2)}` : '',
+      s.boons.coin !== 1 ? `coin rate ×${s.boons.coin.toFixed(2)}` : '',
+      s.boons.interest ? `+${Math.round(s.boons.interest * 100)}% interest` : '',
+      s.boons.settle !== 1 ? `settles ×${s.boons.settle.toFixed(2)}` : '',
+      s.boons.scavenge ? `+${s.boons.scavenge} coin per reload` : '',
+      s.boons.pierce ? 'bullets pierce' : '',
+    ].filter(Boolean).join(', ');
+    this.api.setStatusIndicator('fortune-boons', passOn && buffLine ? {
+      name: 'Pass Perks', emoji: '📈', color: FOR.brass,
+      description: `Everything the pass has handed you so far: ${buffLine}.`,
+      count: s.passBought, priority: 158,
+    } : null);
+
+    const car = s.car;
+    this.api.setStatusIndicator('fortune-car', car ? {
+      name: car.rider ? 'Riding' : 'Drive by Flex', emoji: '🚗', color: FOR.timberLit,
+      description: car.rider
+        ? `You are on the roof. ${this.hasCar(s, 'sunroof') ? '60% faster reload, 70% faster trigger and +20% damage' : '40% faster reload and a 35% faster trigger'}${this.hasCar(s, 'gunner') ? `, plus ${GUNNER_AMMO} extra rounds` : ''}. Space to step off. The car keeps driving either way.`
+        : `The car is out. It rams for ${Math.round(this.carRam(s))} and comes off the walls until it runs out of bounces, then it explodes. Press Space within ${CAR_MOUNT_R}px of it to climb on.`,
+      count: car.bounces, suffix: ' bounces', priority: 111,
+    } : null);
+
+    this.api.setStatusIndicator('fortune-garage', passOn && s.carBuffs.length > 0 ? {
+      name: 'Garage', emoji: '🔧', color: FOR.steel,
+      description: `Bolted onto the car: ${s.carBuffs.map((b) => ENTRY_BY_ID.get(b)?.name ?? b).join(', ')}. Three is the limit, and it is a limit for the whole match.`,
+      count: s.carBuffs.length, suffix: `/${CAR_MAX_BUFFS}`, priority: 159,
+    } : null);
+
     // The other side of the counter: what a Fortune npc is holding, so a player can see the
     // commission they are funding.
     const foe = this.sides.npc;
@@ -3042,8 +4074,14 @@ export class FortuneKit {
       return Phaser.Math.Clamp((s.beam.endsAt - time) / BEAM_MS, 0, 1);
     }
     if (abilityId === 'fortune-fire' && time < s.main.reloadUntil) {
-      const kit = this.loadout(s, s.main);
-      return kit ? Phaser.Math.Clamp((s.main.reloadUntil - time) / kit.def.reloadMs, 0, 1) : 0;
+      // Counted off the reload actually running, not the gun's catalogue figure — a Speed Sling
+      // and a car roof both shorten it.
+      return Phaser.Math.Clamp((s.main.reloadUntil - time) / Math.max(1, s.main.reloadSpan), 0, 1);
+    }
+    // A car on the floor counts its own bounces down; the cooldown only starts once it is gone.
+    if (abilityId === CAR_ID) {
+      if (s.car) return Phaser.Math.Clamp(s.car.bounces / Math.max(1, s.car.maxBounces), 0, 1);
+      return Phaser.Math.Clamp((time - s.carCastAt) / CAR_COOLDOWN_MS, 0, 1);
     }
     return p.getCooldownRatio(abilityId);
   }
@@ -3055,6 +4093,12 @@ export class FortuneKit {
   /** True while the beam is open — the npc must keep facing its target and stop dodging about. */
   isBeaming(owner: Owner): boolean { return !!this.sides[owner].beam; }
   hasWall(owner: Owner): boolean { return !!this.sides[owner].wall; }
+  /**
+   * Whether the mastery car has taken that side's bank key. Read by `doFortuneAbilities` so the
+   * bot never spends a turn on a cast the kit is going to refuse — a refused cast still stamps
+   * and voices itself.
+   */
+  bankTaken(owner: Owner): boolean { return this.carSlot(owner) === 'e'; }
   /**
    * Rounds the bot could actually put downrange this frame. Deliberately zero while the gun is
    * cycling as well as while it is reloading: a refused cast still stamps and voices itself, so
@@ -3081,11 +4125,11 @@ export class FortuneKit {
    */
   getPlayerSpeedMult(): number {
     const c = this.chilled.get(this.api.player);
-    return c && this.now < c.until ? c.mult : 1;
+    return (c && this.now < c.until ? c.mult : 1) * this.sides.player.boons.speed;
   }
 
   getNpcSpeedMult(): number {
     const c = this.chilled.get(this.api.npc);
-    return c && this.now < c.until ? c.mult : 1;
+    return (c && this.now < c.until ? c.mult : 1) * this.sides.npc.boons.speed;
   }
 }

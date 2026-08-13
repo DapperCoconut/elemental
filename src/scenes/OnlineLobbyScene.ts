@@ -8,6 +8,7 @@ import { allSelectableElements, findElementDef } from '../data/ElementRoster';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addBackdrop, addButton, addCardPlate, addPanel, addTitle, addWell, showToast, UiButton,
+  ALL_CORNERS, ElementPortrait, fillNotchedGradient, strokeNotched,
 } from '../ui';
 import { Music } from '../audio';
 
@@ -50,6 +51,13 @@ export class OnlineLobbyScene extends Phaser.Scene {
 
   // Room-phase widgets that get refreshed in place
   private oppPanelTexts: Phaser.GameObjects.Text[] = [];
+  /** The opponent's live portrait, rebuilt whenever they change element. */
+  private oppPortrait: ElementPortrait | null = null;
+  private oppPortraitId: string | null = null;
+  private oppWell: Phaser.GameObjects.Graphics | null = null;
+  /** The 💤 / ❔ stand-in shown while there is no opponent element to draw. */
+  private oppPlaceholder: Phaser.GameObjects.Text | null = null;
+  private oppWellXY: { x: number; y: number } = { x: 0, y: 0 };
   private myPerkLabel: Phaser.GameObjects.Text | null = null;
   private readyBtn: UiButton | null = null;
   private startBtn: UiButton | null = null;
@@ -122,6 +130,11 @@ export class OnlineLobbyScene extends Phaser.Scene {
     for (const o of this.phaseObjects) o.destroy();
     this.phaseObjects = [];
     this.oppPanelTexts = [];
+    this.oppPortrait?.destroy();
+    this.oppPortrait = null;
+    this.oppPlaceholder = null;
+    this.oppPortraitId = null;
+    this.oppWell = null;
     this.myPerkLabel = null;
     this.readyBtn = null;
     this.startBtn = null;
@@ -401,7 +414,11 @@ export class OnlineLobbyScene extends Phaser.Scene {
       color: hex(mix(C.arcane, 0xffffff, 0.5)), letterSpacing: 3,
     }).setOrigin(0.5);
 
-    const oppEmoji = this.addPhaseText(710, panelY + 150, '❔', { fontSize: '72px' }).setOrigin(0.5);
+    // The opponent's actual fighter, standing in a lit well — the same portrait the roster
+    // cards use. It was a 72px question mark before, which told you nothing about what you faced.
+    this.oppWellXY = { x: 710, y: panelY + 146 };
+    this.oppWell = this.add.graphics().setDepth(DEPTH.content);
+    this.phaseObjects.push(this.oppWell);
     const oppName = this.addPhaseText(710, panelY + 225, 'Choosing…', {
       fontSize: '22px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffffff',
     }).setOrigin(0.5);
@@ -411,7 +428,8 @@ export class OnlineLobbyScene extends Phaser.Scene {
     const oppReady = this.addPhaseText(710, panelY + panelH - 30, 'NOT READY', {
       fontSize: '18px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#886666',
     }).setOrigin(0.5);
-    this.oppPanelTexts = [oppEmoji, oppName, oppPerk, oppReady];
+    this.oppPanelTexts = [oppName, oppPerk, oppReady];
+    this.setOppPortrait(null, 'waiting');
 
     // ── Bottom bar: start / leave ───────────────────
     if (Net.isHost) {
@@ -518,17 +536,17 @@ export class OnlineLobbyScene extends Phaser.Scene {
     }
 
     // Opponent panel
-    const [oppEmoji, oppName, oppPerk, oppReady] = this.oppPanelTexts;
-    if (oppEmoji?.active) {
+    const [oppName, oppPerk, oppReady] = this.oppPanelTexts;
+    if (oppName?.active) {
       if (!this.oppInLobby) {
-        oppEmoji.setText('💤');
+        this.setOppPortrait(null, 'away');
         oppName.setText('Waiting for opponent…');
         oppPerk.setText('');
         oppReady.setText('AWAY').setColor('#886666');
       } else {
         const el = this.oppSel.elementId ? findElementDef(this.oppSel.elementId) : null;
-        oppEmoji.setText(el?.emoji ?? '❔');
-        oppName.setText(el ? el.name : 'Choosing…');
+        this.setOppPortrait(el?.id ?? null, 'waiting');
+        oppName.setText(el ? `${el.emoji}  ${el.name}` : 'Choosing…');
         const perk = this.oppSel.perkId ? getPerkById(this.oppSel.perkId) : null;
         oppPerk.setText(perk ? `${perk.emoji ?? ''} ${perk.name}`.trim() : 'No perk');
         if (this.oppSel.ready) {
@@ -716,6 +734,55 @@ export class OnlineLobbyScene extends Phaser.Scene {
   }
 
   /** Phase-scoped button — torn down with the rest of the phase. */
+  /**
+   * Show `elementId`'s live fighter in the opponent well, or a placeholder mark when there is
+   * nobody to show. Rebuilds only when the id actually changes — a portrait owns a scene
+   * update hook, and tearing one down every network tick would thrash the display list.
+   */
+  private setOppPortrait(elementId: string | null, state: 'waiting' | 'away'): void {
+    if (!this.oppWell) return;
+    if (elementId === this.oppPortraitId && elementId !== null) return;
+    if (elementId === null && this.oppPlaceholder) {
+      this.oppPlaceholder.setText(state === 'away' ? '💤' : '❔');
+      return;
+    }
+
+    this.oppPortrait?.destroy();
+    this.oppPortrait = null;
+    this.oppPlaceholder?.destroy();
+    this.oppPlaceholder = null;
+    this.oppPortraitId = elementId;
+
+    const { x, y } = this.oppWellXY;
+    const w = 190;
+    const h = 132;
+    const accent = (elementId ? findElementDef(elementId)?.color : null) ?? C.arcane;
+
+    this.oppWell.clear();
+    fillNotchedGradient(this.oppWell, x - w / 2, y - h / 2, w, h,
+      mix(C.void_, accent, elementId ? 0.12 : 0.03), C.void_, 1, 10, ALL_CORNERS, 14);
+    if (elementId) {
+      for (let k = 6; k >= 1; k--) {
+        this.oppWell.fillStyle(accent, 0.04);
+        this.oppWell.fillCircle(x, y + 8, 12 + k * 8);
+      }
+    }
+    strokeNotched(this.oppWell, x - w / 2, y - h / 2, w, h, accent, elementId ? 0.6 : 0.25, 1.5, 10, ALL_CORNERS);
+
+    if (!elementId) {
+      this.oppPlaceholder = this.add.text(x, y, state === 'away' ? '💤' : '❔', { fontSize: '64px' })
+        .setOrigin(0.5).setDepth(DEPTH.content + 1).setAlpha(0.75);
+      this.phaseObjects.push(this.oppPlaceholder);
+      return;
+    }
+
+    this.oppPortrait = new ElementPortrait(this, {
+      x, y, w: w - 16, h: h - 12,
+      elementId, mastered: false,
+      depth: DEPTH.content + 1, scale: 0.82,
+    });
+  }
+
   private makeButton(
     x: number, y: number, w: number, h: number,
     label: string, accent: number, onClick: () => void, icon?: string,

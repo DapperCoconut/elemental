@@ -199,9 +199,9 @@ export const barrelRollUpgraded: PreviewScript = {
   caption: 'Barrel Roll — ride it: 300 px/s steering 150°/s at the cursor, still a bomb underneath you',
   run(ctx) {
     const { fx } = stage(ctx, { noDummy: true });
-    // The rider is glued to the drum, so the script drives both from one position.
+    // The rider is glued to the drum, so the drum's position drives the caster — the real
+    // body and rig, not a stand-in circle. `moveCaster` is what keeps them one object.
     const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
-    const rider = ctx.adopt(ctx.scene.add.graphics().setDepth(6));
     const b = { x: ctx.cx, y: ctx.cy, ang: 0, roll: 0, dist: 0, lastDrop: 0, dust: 0 };
     ctx.onFrame((dt, elapsed) => {
       const s = dt / 1000;
@@ -227,10 +227,8 @@ export const barrelRollUpgraded: PreviewScript = {
       }
       g.clear(); g.setPosition(b.x, b.y); g.setRotation(b.ang);
       OilFx.drawBarrel(g, ctx.tint, b.roll, 1, true);
-      // The rider drawn on top, because the drum sits at depth 4 for exactly this reason.
-      rider.clear();
-      rider.fillStyle(ctx.tint(OIL.brown), 1); rider.fillCircle(b.x, b.y - 4, 15);
-      rider.fillStyle(ctx.tint(OIL.amber), 1); rider.fillCircle(b.x, b.y - 4, 11);
+      // The caster sits on top — the drum is at depth 4 for exactly this reason.
+      ctx.moveCaster(b.x, b.y - 4, { facing: b.ang });
     });
   },
 };
@@ -407,6 +405,9 @@ export const trainMorph: PreviewScript = {
       head.y += head.dy * 200 * (dt / 1000);
       hist.unshift({ x: head.x, y: head.y });
       if (hist.length > 300) hist.length = 300;
+      // You *are* the locomotive: the fighter rides inside the head and its rig is gone for
+      // the duration. Leaving it standing on the mark would put a second Oil player in shot.
+      ctx.moveCaster(head.x, head.y, { alpha: elapsed < 200 ? 1 : 0 });
       puddleAcc += dt;
       if (puddleAcc >= 2000) { puddleAcc -= 2000; puddle(ctx, { x: head.x, y: head.y, born: elapsed }); }
       g.clear();
@@ -458,6 +459,9 @@ export const trainMorphUpgraded: PreviewScript = {
       head.y += head.dy * 200 * (dt / 1000) * (overload ? 1.25 : 1);
       hist.unshift({ x: head.x, y: head.y });
       if (hist.length > 300) hist.length = 300;
+      // You *are* the locomotive: the fighter rides inside the head and its rig is gone for
+      // the duration. Leaving it standing on the mark would put a second Oil player in shot.
+      ctx.moveCaster(head.x, head.y, { alpha: elapsed < 200 ? 1 : 0 });
       // 1s instead of 2s, and every puddle lit as it lands.
       puddleAcc += dt;
       if (puddleAcc >= (overload ? 1000 : 2000)) {

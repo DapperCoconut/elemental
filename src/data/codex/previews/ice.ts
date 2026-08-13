@@ -259,17 +259,27 @@ export const skate: PreviewScript = {
   caption: 'F — a locked 220 px/s glide; a 32px plate every 80ms, each standing 5s',
   run(ctx) {
     const { fx } = stage(ctx, { noDummy: true });
-    // The rig is driven by the harness at the caster mark, so the ride is shown as the lane
-    // itself: plates cut at the real cadence, curving the way a 3 rad/s turn rate curves.
+    // The caster rides its own lane: the skater travels the same curve the blades are cutting,
+    // at the cadence they are cut, because a locked glide is the whole ability.
+    const lane = (t: number): { x: number; y: number } => ({
+      x: ctx.cx + 40 + t * (ctx.w - ctx.cx - 60),
+      y: ctx.cy + Math.sin(t * 2.6) * 34,
+    });
     ctx.at(300, () => {
       fx.wake(ctx.cx, ctx.cy, ctx.cx + 70, ctx.cy, 4);
       for (let i = 0; i < 26; i++) {
         const t = i / 25;
-        const px = ctx.cx + 40 + t * (ctx.w - ctx.cx - 60);
-        const py = ctx.cy + Math.sin(t * 2.6) * 34;
+        const { x: px, y: py } = lane(t);
         // 80ms between plates — the real rate the blades cut them.
         ctx.at(i * 80, () => rink(ctx, { x: px, y: py, r: 32, born: 380 + i * 80, life: 5000 }));
       }
+      ctx.onFrame((_dt, elapsed) => {
+        const t = Math.max(0, Math.min(1, (elapsed - 300) / 2000));
+        const p = lane(t);
+        const ahead = lane(Math.min(1, t + 0.02));
+        // Facing follows the lane, which is what steering by cursor looks like from outside.
+        ctx.moveCaster(p.x, p.y, { facing: Math.atan2(ahead.y - p.y, ahead.x - p.x) });
+      });
     });
   },
 };
@@ -291,6 +301,8 @@ export const skateUpgraded: PreviewScript = {
       // Then the ride out of it, with the speed boost reading as a widening wake.
       ctx.at(700, () => {
         av.play('dash', ctx.aim);
+        // ×1.2 out of the braced launch — the skater leaves the rink it just froze.
+        ctx.glideCaster({ to: { x: ctx.cx + 60 + 13 * 26, y: ctx.cy + 10 }, ms: 14 * 80 });
         for (let i = 0; i < 14; i++) {
           const px = ctx.cx + 60 + i * 26;
           ctx.at(i * 80, () => {

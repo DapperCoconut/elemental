@@ -5,11 +5,12 @@ import { UpgradeGate, isUpgradeUnlocked, upgradeGate } from '../data/UpgradeUnlo
 import { GAUNTLET_COST, GAUNTLET_HARD_COST } from '../data/GauntletData';
 import { ABSTRACT_ELEMENT_IDS, ABSTRACT_ELEMENT_UNLOCK_MAP, ABSTRACT_MIX_ELEMENT_IDS } from '../data/AbstractElements';
 import { allSelectableElements, findElementDef, VAULT_ELEMENTS } from '../data/ElementRoster';
+import { getElementProfile } from '../data/ElementProfiles';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix, tintPlate,
   addBackdrop, addBackButton, addButton, addChip, addHeaderBar, addModal, addPanel, addPagerButton,
   addSectionLabel, addCardPlate, addWell, fillDiamond, fillNotchedGradient, strokeNotched, ALL_CORNERS,
-  drawGlow, drawOrnateRule,
+  drawGlow, drawOrnateRule, drawKeyCap, addElementCrest,
 } from '../ui';
 import { Music, Sfx } from '../audio';
 
@@ -251,9 +252,9 @@ export class ShopScene extends Phaser.Scene {
 
     // One shared hint beats repeating a description on all 25 tiles. Only
     // drawn once a page actually has columns to click.
-    const columnsTop = header.bottom + 32;
+    const columnsTop = header.bottom + 28;
     const showClickHint = () => {
-      this.add.text(cx, header.bottom + 18, 'CLICK A SLOT TO SEE WHAT IT DOES', {
+      this.add.text(cx, header.bottom + 16, 'CLICK A SLOT TO SEE WHAT IT DOES', {
         fontSize: '9px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 2,
       }).setOrigin(0.5).setDepth(DEPTH.content);
     };
@@ -357,18 +358,22 @@ export class ShopScene extends Phaser.Scene {
     const cx = width / 2;
 
     const modal = addModal(this, {
-      w: 520, h: 292, accent: C.gold, glow: 0.6,
+      w: 520, h: 316, accent: C.gold, glow: 0.6,
       title: '🪛  YOU PICKED SOMETHING UP',
       onScrimClick: () => this.closeSlotDetail(),
     });
     this.detailObjects.push(modal.scrim, ...modal.objects);
 
-    this.detailObjects.push(this.add.text(cx, modal.contentTop + 34, 'A SCREWDRIVER', {
+    this.detailObjects.push(this.add.text(cx, modal.contentTop + 44, '🪛', {
+      fontSize: '44px',
+    }).setOrigin(0.5).setDepth(DEPTH.modalContent));
+
+    this.detailObjects.push(this.add.text(cx, modal.contentTop + 88, 'A SCREWDRIVER', {
       fontSize: '26px', fontFamily: FONT_DISPLAY,
       color: hex(mix(C.gold, 0xffffff, 0.6)), letterSpacing: 2,
     }).setOrigin(0.5).setDepth(DEPTH.modalContent));
 
-    this.detailObjects.push(this.add.text(cx, modal.contentTop + 78,
+    this.detailObjects.push(this.add.text(cx, modal.contentTop + 128,
       'Somebody bolted the difficulty plates down.\n\n'
       + 'They did not bolt them down very well.', {
       fontSize: '15px', fontFamily: FONT_UI, color: T.normal,
@@ -384,11 +389,11 @@ export class ShopScene extends Phaser.Scene {
   }
 
   private buildEmptyState(cx: number, cy: number, message: string, accent: number): void {
-    const panel = addPanel(this, { x: cx, y: cy, w: 520, h: 150, accent, glow: 0.25 });
-    this.add.text(cx, panel.top + 46, '⌀', {
+    const panel = addPanel(this, { x: cx, y: cy, w: 520, h: 168, accent, glow: 0.25 });
+    this.add.text(cx, panel.top + 50, '⌀', {
       fontSize: '30px', fontFamily: FONT_DISPLAY, color: hex(mix(accent, 0x000000, 0.3)),
     }).setOrigin(0.5).setDepth(DEPTH.content);
-    this.add.text(cx, panel.top + 96, message, {
+    this.add.text(cx, panel.top + 104, message, {
       fontSize: '14px', fontFamily: FONT_UI, color: T.dim, align: 'center', lineSpacing: 6,
     }).setOrigin(0.5).setDepth(DEPTH.content);
   }
@@ -401,34 +406,37 @@ export class ShopScene extends Phaser.Scene {
    */
   private buildColumns(width: number, top: number, elementIds: string[], currency: Currency): void {
     const colW = Math.floor(width / elementIds.length);
-    const crestH = 46;
-    const slotH = 80;
+    const crestH = 84;
+    const slotH = 68;
     const slotGap = 6;
+    const coinEmoji = currency === 'shards' ? '💎' : '🩸';
+    const coinAccent = currency === 'shards' ? C.gold : C.corrupt;
 
     elementIds.forEach((elementId, colIdx) => {
       const colCX = colIdx * colW + colW / 2;
-      // The two maps above win where they exist — a few shop crests deliberately differ from
-      // the roster's (`sand` here is Time, not the Sand element). Anything they never got an
-      // entry for falls back to the roster card rather than to a grey '?' plate.
+      // The colour map wins where it has an entry — a few shop crests deliberately differ
+      // from the roster's (`sand` here is Time, not the Sand element). Anything it never got
+      // an entry for falls back to the roster card rather than to a grey '?' plate.
       const rosterDef = findElementDef(elementId);
       const accent = ELEMENT_COLORS[elementId] ?? rosterDef?.color ?? C.steel;
       const emoji = ELEMENT_EMOJIS[elementId] ?? rosterDef?.emoji ?? '?';
       const upgrades = getElementUpgrades(elementId);
+      const profile = getElementProfile(elementId);
 
       // ── Element crest ────────────────────────────────────────
-      const crestG = this.add.graphics().setDepth(DEPTH.panel);
-      const cx0 = colCX - (colW - 10) / 2;
-      fillNotchedGradient(crestG, cx0, top, colW - 10, crestH,
-        tintPlate(accent, 0.4), mix(tintPlate(accent, 0.2), 0x000000, 0.4), 1, 10, ALL_CORNERS, 12);
-      strokeNotched(crestG, cx0, top, colW - 10, crestH, accent, 0.85, 2, 10, ALL_CORNERS);
-      crestG.fillStyle(accent, 0.9);
-      crestG.fillRect(cx0 + 10, top + crestH - 3, colW - 30, 3);
-
-      this.add.text(colCX, top + 15, emoji, { fontSize: '18px' }).setOrigin(0.5).setDepth(DEPTH.content);
-      this.add.text(colCX, top + 34, elementId.toUpperCase(), {
-        fontSize: '12px', fontFamily: FONT_DISPLAY,
-        color: hex(mix(accent, 0xffffff, 0.6)), letterSpacing: 2,
-      }).setOrigin(0.5).setDepth(DEPTH.content);
+      // The live fighter, exactly as the roster cards show it. The column used to be headed
+      // by an emoji and a lower-cased id, which told you nothing about whose kit you were
+      // shopping for.
+      addElementCrest(this, {
+        x: colCX, y: top + crestH / 2, w: colW - 12, h: crestH,
+        elementId,
+        name: `${emoji}  ${rosterDef?.name ?? elementId}`,
+        kicker: profile.archetype,
+        accent,
+        mastered: PlayerData.isMasteryEnabled(elementId),
+        depth: DEPTH.panel,
+        portraitScale: 0.5,
+      });
 
       // ── Slots ────────────────────────────────────────────────
       const firstSlotY = top + crestH + 8;
@@ -461,19 +469,19 @@ export class ShopScene extends Phaser.Scene {
         });
 
         const left = colCX - (colW - 14) / 2;
+        const topY = by - slotH / 2;
 
-        // Key cap, top-left of the plate.
-        const capG = this.add.graphics().setDepth(DEPTH.content);
-        fillNotchedGradient(capG, left + 7, by - slotH / 2 + 6, 30, 15,
-          mix(stateAccent, 0x000000, 0.55), mix(stateAccent, 0x000000, 0.78), 1, 4, ALL_CORNERS, 4);
-        strokeNotched(capG, left + 7, by - slotH / 2 + 6, 30, 15, stateAccent, 0.6, 1, 4, ALL_CORNERS);
-        this.add.text(left + 22, by - slotH / 2 + 14, SLOT_DISPLAY[slotIdx], {
+        // Moulded key cap, top-left of the plate. The state itself is spelled out on the
+        // strip along the bottom edge, so nothing needs repeating up here.
+        const chrome = this.add.graphics().setDepth(DEPTH.content);
+        drawKeyCap(chrome, left + 8, topY + 6, 32, 15, stateAccent, upgDef ? 1 : 0.5);
+        this.add.text(left + 24, topY + 13.5, SLOT_DISPLAY[slotIdx], {
           fontSize: '9px', fontFamily: FONT_DISPLAY,
           color: hex(mix(stateAccent, 0xffffff, 0.55)), letterSpacing: 1,
         }).setOrigin(0.5).setDepth(DEPTH.content + 1);
 
         if (!upgDef) {
-          this.add.text(colCX, by + 4, 'COMING SOON', {
+          this.add.text(colCX, by + 6, 'COMING SOON', {
             fontSize: '10px', fontFamily: FONT_DISPLAY, color: T.ghost, letterSpacing: 1.5,
           }).setOrigin(0.5).setDepth(DEPTH.content);
           return;
@@ -482,22 +490,24 @@ export class ShopScene extends Phaser.Scene {
         // Name only — what the upgrade *does* lives in the detail card, so a
         // full page of 25 slots stays scannable. A gated slot keeps its name so
         // the player can see what they are working toward.
-        this.add.text(colCX, by - 2, upgDef.name, {
+        this.add.text(colCX, by + 1, upgDef.name, {
           fontSize: '12px', fontFamily: FONT_DISPLAY,
           color: hex(mix(stateAccent, 0xffffff, gated ? 0.35 : 0.6)),
-          wordWrap: { width: colW - 30 }, align: 'center', lineSpacing: 2,
+          wordWrap: { width: colW - 32 }, align: 'center', lineSpacing: 2,
         }).setOrigin(0.5).setDepth(DEPTH.content);
 
+        // ── Price / status strip along the bottom edge ─────────
+        const stripY = by + slotH / 2 - 12;
         const statusStr = owned
           ? (active ? '● ACTIVE' : '○ SHELVED')
           : gated ? `🔒 ${gate!.stepLabel}`
-          : `${currency === 'shards' ? '💎' : '🩸'} ${price}`;
-        this.add.text(colCX, by + slotH / 2 - 11, statusStr, {
+          : `${coinEmoji} ${price}`;
+        this.add.text(colCX, stripY, statusStr, {
           fontSize: '10px', fontFamily: FONT_DISPLAY,
           color: owned
             ? (active ? T.good : T.bad)
             : gated ? T.faint
-            : hex(mix(currency === 'shards' ? C.gold : C.corrupt, 0xffffff, 0.3)),
+            : hex(mix(coinAccent, 0xffffff, 0.3)),
           letterSpacing: 1,
         }).setOrigin(0.5).setDepth(DEPTH.content);
 
@@ -508,25 +518,44 @@ export class ShopScene extends Phaser.Scene {
         hit.on('pointerout', () => plate.paint('idle'));
         hit.on('pointerdown', () => this.openSlotDetail({
           elementId, elementAccent: accent, emoji,
+          elementName: rosterDef?.name ?? elementId,
           slot, slotLabel: SLOT_DISPLAY[slotIdx],
           def: upgDef, price, currency, gate: gated ? gate : null,
         }));
       });
 
-      // Column footer: how much of this element's kit you own — and, for the
-      // unstable ten, how much of it the Corrupt Realm has handed over at all.
+      // Column footer: how much of this element's kit you own, drawn as a row of
+      // sockets — one per slot — plus the count.
       const ownedCount = SLOT_KEYS.filter((slot) => PlayerData.isUpgradeOwned(elementId, slot)).length;
       const definedCount = SLOT_KEYS.filter((slot) => upgrades.some((u) => u.slot === slot)).length;
       const earnedCount = SLOT_KEYS.filter((slot) => upgrades.some((u) => u.slot === slot)
         && isUpgradeUnlocked(elementId, slot)).length;
-      const footY = firstSlotY + SLOT_KEYS.length * (slotH + slotGap) + 8;
-      this.add.text(colCX, footY,
+      const footY = firstSlotY + SLOT_KEYS.length * (slotH + slotGap) + 10;
+
+      const footG = this.add.graphics().setDepth(DEPTH.content);
+      SLOT_KEYS.forEach((slot, i) => {
+        const px = colCX - 26 + i * 13;
+        const has = PlayerData.isUpgradeOwned(elementId, slot);
+        const defined = upgrades.some((u) => u.slot === slot);
+        if (has) fillDiamond(footG, px, footY, 4, mix(C.verdant, 0xffffff, 0.3), 0.95);
+        else {
+          footG.lineStyle(1, defined ? accent : C.line, defined ? 0.6 : 0.35);
+          fillDiamond(footG, px, footY, 3.4, C.void_, 0.9);
+          footG.beginPath();
+          footG.moveTo(px, footY - 3.4); footG.lineTo(px + 3.4, footY);
+          footG.lineTo(px, footY + 3.4); footG.lineTo(px - 3.4, footY);
+          footG.closePath(); footG.strokePath();
+        }
+      });
+      // The count sits under the pips rather than beside them: five columns of 192px
+      // cannot carry both on one line without the wider states running into the neighbour.
+      this.add.text(colCX, footY + 14,
         earnedCount < definedCount
-          ? `${ownedCount} / ${definedCount} OWNED   ·   ${definedCount - earnedCount} 🔒`
-          : `${ownedCount} / ${definedCount} OWNED`, {
+          ? `${ownedCount}/${definedCount} OWNED  ·  ${definedCount - earnedCount} 🔒`
+          : `${ownedCount}/${definedCount} OWNED`, {
         fontSize: '9px', fontFamily: FONT_DISPLAY,
         color: ownedCount === definedCount && definedCount > 0 ? T.good : T.faint,
-        letterSpacing: 2,
+        letterSpacing: 1.5,
       }).setOrigin(0.5).setDepth(DEPTH.content);
     });
   }
@@ -542,6 +571,7 @@ export class ShopScene extends Phaser.Scene {
     elementId: string;
     elementAccent: number;
     emoji: string;
+    elementName: string;
     slot: string;
     slotLabel: string;
     def: UpgradeDef;
@@ -568,28 +598,61 @@ export class ShopScene extends Phaser.Scene {
     const accent = owned ? (active ? C.verdant : C.blood) : gate ? C.steel : opts.elementAccent;
 
     const modal = addModal(this, {
-      w: 520, h: 330, accent, glow: 0.5,
-      title: `${opts.emoji}  ${elementId.toUpperCase()}   ·   [ ${opts.slotLabel} ]`,
+      w: 560, h: 380, accent, glow: 0.5,
+      title: `${opts.emoji}  ${opts.elementName.toUpperCase()}   ·   [ ${opts.slotLabel} ]`,
       onScrimClick: () => this.closeSlotDetail(),
     });
     this.detailObjects.push(modal.scrim, ...modal.objects);
 
-    this.detailObjects.push(this.add.text(cx, modal.contentTop + 34, def.name, {
-      fontSize: '24px', fontFamily: FONT_DISPLAY,
-      color: hex(mix(accent, 0xffffff, 0.65)), letterSpacing: 1,
-      wordWrap: { width: 460 }, align: 'center',
-    }).setOrigin(0.5).setDepth(DEPTH.modalContent));
+    // ── Left rail: the fighter this upgrade belongs to, wearing its key cap ──
+    const crest = addElementCrest(this, {
+      x: modal.left + 76, y: modal.contentTop + 66, w: 118, h: 104,
+      elementId, name: `${opts.emoji}  ${opts.elementName}`, accent: opts.elementAccent,
+      mastered: PlayerData.isMasteryEnabled(elementId),
+      depth: DEPTH.modal + 1, portraitScale: 0.6,
+    });
+    this.detailObjects.push(...crest.objects);
 
-    this.detailObjects.push(this.add.text(cx, modal.contentTop + 86, def.description, {
-      fontSize: '15px', fontFamily: FONT_UI, color: T.normal,
-      wordWrap: { width: 440 }, align: 'center', lineSpacing: 6,
-    }).setOrigin(0.5, 0).setDepth(DEPTH.modalContent));
+    const capG = this.add.graphics().setDepth(DEPTH.modalContent);
+    drawKeyCap(capG, modal.left + 44, modal.contentTop + 128, 64, 24, accent);
+    this.detailObjects.push(capG);
+    this.detailObjects.push(this.add.text(modal.left + 76, modal.contentTop + 140, opts.slotLabel, {
+      fontSize: '13px', fontFamily: FONT_DISPLAY,
+      color: hex(mix(accent, 0xffffff, 0.6)), letterSpacing: 2,
+    }).setOrigin(0.5).setDepth(DEPTH.modalContent + 1));
+
+    // ── Right: name, then what it actually does ──────────────────────────
+    const textL = modal.left + 156;
+    const textW = modal.right - textL - 26;
+
+    this.detailObjects.push(this.add.text(textL, modal.contentTop + 26, def.name, {
+      fontSize: '23px', fontFamily: FONT_DISPLAY,
+      color: hex(mix(accent, 0xffffff, 0.65)), letterSpacing: 1,
+      wordWrap: { width: textW },
+    }).setOrigin(0, 0).setDepth(DEPTH.modalContent));
+
+    const ruleG = this.add.graphics().setDepth(DEPTH.modalContent);
+    ruleG.lineStyle(1, accent, 0.4);
+    ruleG.beginPath();
+    ruleG.moveTo(textL, modal.contentTop + 60);
+    ruleG.lineTo(textL + textW, modal.contentTop + 60);
+    ruleG.strokePath();
+    fillDiamond(ruleG, textL, modal.contentTop + 60, 3, accent, 0.8);
+    this.detailObjects.push(ruleG);
+
+    // Some upgrade descriptions run to a paragraph; the card clamps rather than letting one
+    // walk down into the price ledger. Nothing is lost — the full text is in the ability codex.
+    this.detailObjects.push(this.add.text(textL, modal.contentTop + 74, def.description, {
+      fontSize: '14px', fontFamily: FONT_UI, color: T.normal,
+      wordWrap: { width: textW }, lineSpacing: 6, maxLines: 6,
+    }).setOrigin(0, 0).setDepth(DEPTH.modalContent));
 
     // Price / wallet ledger — only meaningful before you own the upgrade, and
     // only once the Corrupt Realm has actually handed the slot over.
-    const ledgerY = modal.bottom - 108;
+    const ledgerY = modal.bottom - 112;
+
     if (gate) {
-      this.detailObjects.push(addWell(this, cx, ledgerY, 400, 42, C.corrupt, DEPTH.modal + 1, 6));
+      this.detailObjects.push(addWell(this, cx, ledgerY, 420, 42, C.corrupt, DEPTH.modal + 1, 6));
       this.detailObjects.push(this.add.text(cx, ledgerY, `🔒  WIN  ${gate.stepLabel}  ·  ${gate.fightName}`, {
         fontSize: '14px', fontFamily: FONT_DISPLAY,
         color: hex(mix(C.corrupt, 0xffffff, 0.55)), letterSpacing: 1,
@@ -599,16 +662,20 @@ export class ShopScene extends Phaser.Scene {
         fontSize: '11px', fontFamily: FONT_UI, color: T.faint,
       }).setOrigin(0.5).setDepth(DEPTH.modalContent));
     } else if (!owned) {
-      this.detailObjects.push(addWell(this, cx, ledgerY, 320, 42, coinAccent, DEPTH.modal + 1, 6));
-      this.detailObjects.push(this.add.text(cx - 140, ledgerY, 'COST', {
+      this.detailObjects.push(addWell(this, cx, ledgerY, 400, 46, coinAccent, DEPTH.modal + 1, 6));
+      this.detailObjects.push(this.add.text(cx - 180, ledgerY - 9, 'COST', {
         fontSize: '9px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 2,
       }).setOrigin(0, 0.5).setDepth(DEPTH.modalContent));
-      this.detailObjects.push(this.add.text(cx - 100, ledgerY, `${coin} ${price}`, {
-        fontSize: '16px', fontFamily: FONT_DISPLAY, color: hex(mix(coinAccent, 0xffffff, 0.4)),
+      this.detailObjects.push(this.add.text(cx - 180, ledgerY + 8, `${coin} ${price}`, {
+        fontSize: '17px', fontFamily: FONT_DISPLAY, color: hex(mix(coinAccent, 0xffffff, 0.4)),
       }).setOrigin(0, 0.5).setDepth(DEPTH.modalContent));
-      this.detailObjects.push(this.add.text(cx + 140, ledgerY, `YOU HAVE  ${coin} ${wallet}`, {
-        fontSize: '12px', fontFamily: FONT_DISPLAY,
-        color: canAfford ? T.good : T.bad, letterSpacing: 0.5,
+
+      this.detailObjects.push(this.add.text(cx + 180, ledgerY - 9, 'IN POCKET', {
+        fontSize: '9px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 2,
+      }).setOrigin(1, 0.5).setDepth(DEPTH.modalContent));
+      this.detailObjects.push(this.add.text(cx + 180, ledgerY + 8, `${coin} ${wallet}`, {
+        fontSize: '17px', fontFamily: FONT_DISPLAY,
+        color: canAfford ? T.good : T.bad,
       }).setOrigin(1, 0.5).setDepth(DEPTH.modalContent));
     } else {
       this.detailObjects.push(this.add.text(cx, ledgerY, active ? '● ACTIVE THIS MATCH' : '○ SHELVED', {
@@ -860,7 +927,9 @@ export class ShopScene extends Phaser.Scene {
     const gauntletUnlocked = PlayerData.isGauntletUnlocked();
     const panelW = Math.min(660, width - 100);
 
-    addSectionLabel(this, { x: cx, y: top + 8, text: '⚗  LAB UPGRADES', accent: C.arcane, width: panelW });
+    addSectionLabel(this, {
+      x: cx, y: top + 8, text: '⚗  LAB UPGRADES', accent: C.arcane, width: panelW,
+    });
 
     let y = top + 34;
     const rowH = 62;
@@ -910,7 +979,9 @@ export class ShopScene extends Phaser.Scene {
 
     // ── Nucleus ──────────────────────────────────────────────────
     y += 12;
-    addSectionLabel(this, { x: cx, y, text: '⚛  ELEMENTAL NUCLEUS', accent: C.arcane, width: panelW });
+    addSectionLabel(this, {
+      x: cx, y, text: '⚛  ELEMENTAL NUCLEUS', accent: C.arcane, width: panelW,
+    });
     y += 24;
 
     addButton(this, {

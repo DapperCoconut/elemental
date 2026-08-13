@@ -227,6 +227,29 @@ export class FireKit {
   // ── Public accessors ──────────────────────────────────────────────────
 
   isFlameBodyActive(): boolean { return this.flameBodyActive; }
+
+  /**
+   * Ruin Mastery — Second Skin. Flame Body is a toggle rather than a timed buff, which makes it
+   * a form: the fighter *is* the fire until they say otherwise, and nothing else in the game
+   * turns it off for them.
+   *
+   * The two multipliers are handed back exactly as the F key hands them back, in the same
+   * order — the Flame Affinity branch owns both of them and the base branch owns neither, so
+   * only `enhancedFlameBody` may undo them or a plain toggle would be credited a doubling it
+   * never paid for.
+   */
+  revertForms(f: Fighter): string[] {
+    if (f !== this.arena.player || !this.flameBodyActive) return [];
+    if (this.enhancedFlameBody) {
+      this.arena.player.incomingDamageMultiplier = 1;
+      this.arena.player.cardOutgoingDamageMult /= 2;
+    }
+    this.flameBodyActive = false;
+    this.enhancedFlameBody = false;
+    this.flameBodyTickAccum = 0;
+    this.setFlameBodyWreath(false, 34, 1);
+    return ['Flame Body'];
+  }
   isEnhancedFlameBody(): boolean { return this.enhancedFlameBody; }
   isNpcFlameBodyActive(): boolean { return this.npcFlameBodyActive; }
   getAlcoholPuddles(): AlcoholPuddle[] { return this.alcoholPuddles; }

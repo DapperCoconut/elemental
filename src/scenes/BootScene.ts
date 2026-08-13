@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { HUSK_VARIANTS, huskTextureKey } from '../invasion/HuskVariants';
+import { HUSK_VARIANTS, CORRUPT_KIN, huskTextureKey } from '../invasion/HuskVariants';
 
 /** Scale a colour's channels toward black by `factor` (0–1). */
 function darken(color: number, factor: number): number {
@@ -1248,14 +1248,6 @@ export class BootScene extends Phaser.Scene {
     gfx.fillTriangle(3, 6, 3, 11, 20, 10);
     gfx.generateTexture('proj-light-triangle', 24, 20);
 
-    // Dummy element texture (grey circle with target crosshair stroke)
-    gfx.clear();
-    gfx.fillStyle(0x777777);
-    gfx.fillCircle(24, 24, 22);
-    gfx.lineStyle(3, 0xbbbbbb);
-    gfx.strokeCircle(24, 24, 22);
-    gfx.generateTexture('elem-dummy', 48, 48);
-
     // Magnet element texture: a dark iron body wearing the element's own emblem — a horseshoe
     // with a red north leg, a blue south leg and the field jumping the gap between them.
     // (magnet-rod, proj-nail, magnet-orb and magnet-wall used to live here. MagnetKit draws
@@ -2457,7 +2449,177 @@ export class BootScene extends Phaser.Scene {
       }
     };
 
+    /**
+     * The three tenth-wave bosses. Each gets its own silhouette rather than the
+     * branded-husk body, because you are meant to know which of the three walked
+     * in from across the room — and each reads its tier off the same three rungs
+     * the elemental husks use (inner ring at II, corona and crown at III).
+     */
+    const drawBoss = (kind: string, color: number, tier: number): void => {
+      const lit = lighten(color, 0.55);
+      const deep = darken(color, 0.6);
+
+      // Tier III burns a corona behind whichever of the three it is.
+      if (tier >= 3) {
+        gfx.fillStyle(lit, 0.35);
+        gfx.fillCircle(24, 24, 24);
+      }
+
+      if (kind === 'arbiter') {
+        // A magistrate in a black robe: ivory mantle at the shoulders, a gold
+        // band bound over the eyes, and the scales hung on its chest.
+        gfx.fillStyle(0x14110a, 1);
+        gfx.fillCircle(24, 24, 20);
+        gfx.lineStyle(3, color, 1);
+        gfx.strokeCircle(24, 24, 20);
+        // Mantle: two ivory lobes falling either side of the head.
+        gfx.fillStyle(0xe2dcc8, 1);
+        gfx.fillEllipse(9, 27, 13, 22);
+        gfx.fillEllipse(39, 27, 13, 22);
+        gfx.lineStyle(1.2, 0x9a927c, 1);
+        gfx.strokeEllipse(9, 27, 13, 22);
+        gfx.strokeEllipse(39, 27, 13, 22);
+        // The blindfold, with the slit of light under it.
+        gfx.fillStyle(color, 1);
+        gfx.fillRect(9, 15, 30, 8);
+        gfx.fillStyle(deep, 1);
+        gfx.fillRect(9, 21, 30, 2);
+        gfx.fillStyle(0xfff2c0, 1);
+        gfx.fillRect(15, 17.5, 4, 2);
+        gfx.fillRect(29, 17.5, 4, 2);
+        // Scales: a beam on a post with two hanging pans.
+        gfx.lineStyle(2, color, 1);
+        gfx.lineBetween(24, 28, 24, 34);
+        gfx.lineBetween(15, 30, 33, 30);
+        gfx.lineBetween(15, 30, 15, 34);
+        gfx.lineBetween(33, 30, 33, 34);
+        gfx.fillStyle(lit, 1);
+        gfx.fillEllipse(15, 35, 8, 3.5);
+        gfx.fillEllipse(33, 35, 8, 3.5);
+        if (tier >= 2) {
+          // A raised collar of gold plates.
+          gfx.fillStyle(lit, 1);
+          gfx.fillTriangle(12, 12, 18, 2, 22, 11);
+          gfx.fillTriangle(36, 12, 30, 2, 26, 11);
+          gfx.lineStyle(1.2, deep, 1);
+          gfx.strokeTriangle(12, 12, 18, 2, 22, 11);
+          gfx.strokeTriangle(36, 12, 30, 2, 26, 11);
+        }
+        if (tier >= 3) {
+          // A crown of nails driven straight through the band.
+          gfx.fillStyle(0xf2e2a0, 1);
+          for (const nx of [14, 20, 28, 34]) {
+            gfx.fillRect(nx - 1, 1, 2, 12);
+            gfx.fillRect(nx - 3, 0, 6, 3);
+          }
+        }
+        return;
+      }
+
+      if (kind === 'dreamer') {
+        // Something asleep and still coming for you: a soft body, closed eyes,
+        // a nightcap fallen over one side, and the sleep rising off it.
+        if (tier >= 3) {
+          // A crescent moon riding behind its head.
+          gfx.fillStyle(0xf2ecff, 0.6);
+          gfx.fillCircle(24, 22, 23);
+          gfx.fillStyle(0x0d0a1a, 1);
+          gfx.fillCircle(31, 19, 21);
+        }
+        gfx.fillStyle(color, 1);
+        gfx.fillCircle(24, 24, 20);
+        gfx.fillStyle(lighten(color, 0.3), 0.55);
+        gfx.fillCircle(19, 19, 11);
+        gfx.lineStyle(3, darken(color, 0.45), 1);
+        gfx.strokeCircle(24, 24, 20);
+        if (tier >= 2) {
+          gfx.lineStyle(2, lit, 0.9);
+          gfx.strokeCircle(24, 24, 16);
+        }
+        // Closed eyes: two lashes curving down.
+        gfx.lineStyle(2.4, 0x2a2050, 1);
+        gfx.beginPath();
+        gfx.arc(17, 21, 5, Math.PI * 0.15, Math.PI * 0.85, false);
+        gfx.strokePath();
+        gfx.beginPath();
+        gfx.arc(31, 21, 5, Math.PI * 0.15, Math.PI * 0.85, false);
+        gfx.strokePath();
+        // A slack, half-open mouth.
+        gfx.fillStyle(0x2a2050, 1);
+        gfx.fillEllipse(24, 32, 7, 5);
+        // The nightcap, slumped to the left with its pom hanging.
+        gfx.fillStyle(0x4a3a8a, 1);
+        gfx.fillTriangle(6, 14, 30, 8, 14, -2);
+        gfx.fillStyle(0xe8e2ff, 1);
+        gfx.fillRect(5, 10, 26, 5);
+        gfx.fillCircle(13, -2, 4);
+        gfx.lineStyle(1.2, 0x2a2050, 1);
+        gfx.strokeTriangle(6, 14, 30, 8, 14, -2);
+        // Sleep coming off it, in three sizes.
+        gfx.fillStyle(0xf2ecff, 0.95);
+        const zAt = (zx: number, zy: number, s: number): void => {
+          gfx.fillRect(zx, zy, s, s * 0.28);
+          gfx.fillRect(zx, zy + s * 0.72, s, s * 0.28);
+          gfx.fillTriangle(zx + s * 0.72, zy, zx + s, zy + s * 0.2, zx + s * 0.28, zy + s);
+        };
+        zAt(36, 4, 7);
+        zAt(41, 13, 5);
+        return;
+      }
+
+      // paradox — three of itself at once, none of them quite here, with the
+      // one solid nucleus they all agree on and rings running through it.
+      gfx.fillStyle(0xff5fd0, 0.4);
+      gfx.fillCircle(19, 26, 18);
+      gfx.fillStyle(0xffe86a, 0.32);
+      gfx.fillCircle(29, 22, 18);
+      gfx.fillStyle(color, 0.85);
+      gfx.fillCircle(24, 24, 19);
+      gfx.lineStyle(2.5, lit, 1);
+      gfx.strokeCircle(24, 24, 19);
+      // Faces from two of the three, offset — neither of them the real one.
+      gfx.fillStyle(0x06201f, 0.75);
+      gfx.fillCircle(16, 20, 3.4);
+      gfx.fillCircle(30, 20, 3.4);
+      gfx.fillStyle(0x06201f, 0.4);
+      gfx.fillCircle(19, 22, 3);
+      gfx.fillCircle(33, 22, 3);
+      // Orbital rings — one more per tier, each on its own tilt.
+      // Traced by hand rather than strokeEllipse + a canvas transform, so the
+      // baked texture never depends on transform state leaking between variants.
+      const rings = 1 + Math.min(2, tier - 1);
+      for (let i = 0; i < rings; i++) {
+        const rot = (i / 3) * Math.PI + 0.5;
+        gfx.lineStyle(1.8, lit, 0.85);
+        gfx.beginPath();
+        for (let s = 0; s <= 26; s++) {
+          const a = (s / 26) * Math.PI * 2;
+          const ex = Math.cos(a) * 21;
+          const ey = Math.sin(a) * 7.5;
+          const px = 24 + ex * Math.cos(rot) - ey * Math.sin(rot);
+          const py = 24 + ex * Math.sin(rot) + ey * Math.cos(rot);
+          if (s === 0) gfx.moveTo(px, py); else gfx.lineTo(px, py);
+        }
+        gfx.strokePath();
+      }
+      // The nucleus they all share.
+      gfx.fillStyle(0xffffff, 1);
+      gfx.fillCircle(24, 24, tier >= 3 ? 6 : 4.5);
+      gfx.fillStyle(color, 1);
+      gfx.fillCircle(24, 24, tier >= 3 ? 3.4 : 2.6);
+    };
+
     for (const variant of HUSK_VARIANTS) {
+      // The corrupt-kin is not a branded husk — it is what the corruption grows.
+      // Baked by hand below so it can wear its own face.
+      if (variant.id === 'corrupt-kin') continue;
+      // Nor are the three bosses: they get their own bodies, not a branded one.
+      if (variant.bossKind) {
+        drawBoss(variant.bossKind, variant.color, variant.tier ?? 1);
+        gfx.generateTexture(huskTextureKey(variant), 48, 48);
+        gfx.clear();
+        continue;
+      }
       const base = Phaser.Display.Color.IntegerToColor(variant.color);
       const dark = base.red * 0.299 + base.green * 0.587 + base.blue * 0.114 < 90;
       const outline = dark ? lighten(variant.color, 0.45) : darken(variant.color, 0.42);
@@ -2465,10 +2627,12 @@ export class BootScene extends Phaser.Scene {
       const feature = dark ? lighten(variant.color, 0.70) : darken(variant.color, 0.22);
       const tier = variant.tier ?? 1;
 
-      // Tier III wears a faint elemental corona behind the body.
+      // Tier III wears a bright elemental corona behind the body.
       if (tier >= 3) {
-        gfx.fillStyle(lighten(variant.color, 0.5), 0.28);
-        gfx.fillCircle(24, 24, 23.5);
+        gfx.fillStyle(lighten(variant.color, 0.5), 0.4);
+        gfx.fillCircle(24, 24, 24);
+        gfx.fillStyle(lighten(variant.color, 0.8), 0.3);
+        gfx.fillCircle(24, 24, 22);
       }
       gfx.fillStyle(variant.color, 1);
       gfx.fillCircle(24, 24, 20);
@@ -2476,23 +2640,32 @@ export class BootScene extends Phaser.Scene {
       gfx.strokeCircle(24, 24, 20);
       if (tier >= 2) {
         // A second, inner ring — the brand burning deeper.
-        gfx.lineStyle(1.5, outline, 0.8);
+        gfx.lineStyle(2, lighten(variant.color, dark ? 0.7 : 0.45), 0.9);
         gfx.strokeCircle(24, 24, 16);
       }
       gfx.fillStyle(blotch, 0.6);
       gfx.fillCircle(19, 18, 8); // decayed blotch
-      // Tier II grows horns; tier III wears a crooked crown over them.
+      // Tier II grows tall horns in the element's lit colour, dark-edged so
+      // they read against both the body and the arena floor; tier III wears a
+      // crooked gold crown between them.
       if (tier >= 2) {
-        gfx.fillStyle(outline, 1);
-        gfx.fillTriangle(11, 12, 16, 5, 18, 12);
-        gfx.fillTriangle(30, 12, 32, 5, 37, 12);
+        const hornFill = lighten(variant.color, dark ? 0.85 : 0.6);
+        const hornEdge = darken(variant.color, 0.55);
+        gfx.fillStyle(hornFill, 1);
+        gfx.fillTriangle(7, 15, 12, 0, 18, 10);
+        gfx.fillTriangle(41, 15, 36, 0, 30, 10);
+        gfx.lineStyle(1.5, hornEdge, 1);
+        gfx.strokeTriangle(7, 15, 12, 0, 18, 10);
+        gfx.strokeTriangle(41, 15, 36, 0, 30, 10);
       }
       if (tier >= 3) {
-        gfx.fillStyle(0xd8b23a, 1);
-        gfx.fillTriangle(18, 8, 20, 1, 22, 8);
-        gfx.fillTriangle(22, 8, 24, 0, 26, 8);
-        gfx.fillTriangle(26, 8, 28, 1, 30, 8);
-        gfx.fillRect(18, 7, 12, 3);
+        gfx.fillStyle(0xf2c53d, 1);
+        gfx.fillTriangle(15, 10, 18, 2, 21, 10);
+        gfx.fillTriangle(21, 10, 24, 0, 27, 10);
+        gfx.fillTriangle(27, 10, 30, 2, 33, 10);
+        gfx.fillRect(15, 9, 18, 4);
+        gfx.lineStyle(1.5, 0x6b4a12, 1);
+        gfx.strokeRect(15, 9, 18, 4);
       }
       // Eyes: vacant at tier 1, lit from within at tier 3.
       gfx.fillStyle(tier >= 3 ? 0x0e0e0e : feature, 1);
@@ -2512,6 +2685,75 @@ export class BootScene extends Phaser.Scene {
         drawHuskMarker(variant.marker, dark ? lighten(variant.color, 0.75) : lighten(variant.color, 0.45), darken(variant.color, 0.5));
       }
       gfx.generateTexture(huskTextureKey(variant), 48, 48);
+      gfx.clear();
+    }
+
+    // ── Corrupt-Kin — the apocalypse's own brood ─────────────────────
+    // A husk-shaped hole in the room: near-black tar body with a ragged, weeping
+    // edge, a single vast red iris where its face should be, a scatter of lesser
+    // eyes budding out of the tar, and four tendrils reaching off the shoulders.
+    {
+      // Ragged silhouette: the body outline wanders instead of holding a circle.
+      const lobes = 22;
+      const pts: Array<{ x: number; y: number }> = [];
+      for (let i = 0; i < lobes; i++) {
+        const a = (i / lobes) * Math.PI * 2;
+        // Deterministic wobble — no Math.random, so every session bakes the same brood.
+        const wob = 19 + Math.sin(a * 3 + 1.1) * 2.2 + Math.sin(a * 7) * 1.4;
+        pts.push({ x: 24 + Math.cos(a) * wob, y: 24 + Math.sin(a) * wob });
+      }
+      // Tendrils first, so the body sits on top of their roots.
+      gfx.lineStyle(3, 0x120610, 1);
+      for (const [a, len] of [[-2.5, 15], [-0.7, 13], [0.8, 14], [2.4, 12]] as const) {
+        let px = 24 + Math.cos(a) * 16;
+        let py = 24 + Math.sin(a) * 16;
+        for (let s = 1; s <= 3; s++) {
+          const na = a + Math.sin(s * 1.7) * 0.5;
+          const nx = px + Math.cos(na) * (len / 3);
+          const ny = py + Math.sin(na) * (len / 3);
+          gfx.lineBetween(px, py, nx, ny);
+          px = nx; py = ny;
+        }
+        gfx.fillStyle(0xcc1133, 1);
+        gfx.fillCircle(px, py, 1.6);
+      }
+      // Weeping halo, then the tar body.
+      gfx.fillStyle(0x3a0a20, 0.4);
+      gfx.fillCircle(24, 24, 23);
+      gfx.fillStyle(0x120610, 1);
+      gfx.fillPoints(pts, true, true);
+      gfx.lineStyle(2, 0x35102a, 1);
+      gfx.strokePoints(pts, true, true);
+      // Tar highlights running down the left shoulder.
+      gfx.fillStyle(0x2a0e22, 0.9);
+      gfx.fillEllipse(17, 18, 12, 9);
+      gfx.fillEllipse(14, 27, 7, 11);
+      // The great iris.
+      gfx.fillStyle(0xf2e6e6, 1);
+      gfx.fillEllipse(24, 23, 22, 16);
+      gfx.fillStyle(0xcc1133, 1);
+      gfx.fillCircle(24, 23, 7.5);
+      gfx.fillStyle(0xff4466, 1);
+      gfx.fillCircle(24, 23, 5);
+      gfx.fillStyle(0x0a0206, 1);
+      gfx.fillEllipse(24, 23, 3.4, 7);
+      gfx.fillStyle(0xffffff, 0.85);
+      gfx.fillCircle(21, 20, 1.6);
+      // Veins crawling out of the socket.
+      gfx.lineStyle(1, 0x8a1030, 0.85);
+      for (const a of [2.4, 3.5, 5.4, 0.5] as const) {
+        gfx.lineBetween(24 + Math.cos(a) * 11, 23 + Math.sin(a) * 8, 24 + Math.cos(a) * 17, 23 + Math.sin(a) * 13);
+      }
+      // Budding lesser eyes.
+      for (const [ex, ey, er] of [[13, 33, 3], [34, 32, 2.4], [24, 37, 2.6], [36, 18, 2]] as const) {
+        gfx.fillStyle(0xe8dcdc, 1);
+        gfx.fillCircle(ex, ey, er);
+        gfx.fillStyle(0xcc1133, 1);
+        gfx.fillCircle(ex, ey, er * 0.55);
+        gfx.fillStyle(0x0a0206, 1);
+        gfx.fillCircle(ex, ey, er * 0.24);
+      }
+      gfx.generateTexture(huskTextureKey(CORRUPT_KIN), 48, 48);
       gfx.clear();
     }
 

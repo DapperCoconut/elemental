@@ -23,12 +23,15 @@ const quantum: ElementCodex = {
     {
       emoji: '⚛️',
       name: 'Bonded',
-      magic:
-        'You are not borrowing another element\'s abilities; you are being that element. A collapse '
-        + 'rewrites the whole player side — the active element, the shop upgrades in play, the '
-        + 'mastery binds, the equipped skin and the ability tray all follow whichever half you are '
-        + 'wearing. And because both halves have always shared one body, nothing needs merging: '
-        + 'health, shields, cooldown timestamps and every status effect are common by construction.',
+      basics:
+        'Quantum is two elements on one body. The pair is chosen before the fight and researched one '
+        + 'bond at a time in the Entanglement Lab, and each half brings its own five abilities, its own '
+        + 'upgrades, its own mastery and its own skin. Health, shields, status effects and cooldown '
+        + 'timers are shared, so a swap changes what you can do and never what has been done to you. The '
+        + 'half you are not wearing keeps running: a fire pool keeps burning, a turret keeps firing, a '
+        + 'summon keeps hunting while you are off being the other element. Cooldown timestamps are per '
+        + 'ability id on one body, so a cooldown you started as one half is still running when you come '
+        + 'back to it.',
       effects: [
         { tag: 'utility', label: 'Two kits', detail: 'The pair is chosen before the fight and researched one bond at a time in the Entanglement Lab. Each half brings its own 5 abilities, its own upgrades, its own mastery and its own skin.' },
         { tag: 'utility', label: 'One body', detail: 'Health, shields, status effects and cooldown timers are shared. A swap changes what you can do, never what has been done to you.' },
@@ -44,11 +47,12 @@ const quantum: ElementCodex = {
     {
       emoji: '🔄',
       name: 'Collapse',
-      magic:
-        'There is no swap key. Your dodge is the swap — the dash still happens exactly as it would '
-        + 'for anybody else, and the body arrives as the other element. A ring snaps outward while '
-        + 'a counter-ring closes in, three orbit ticks turning with them, and the new element\'s '
-        + 'name is printed over your head.',
+      basics:
+        'Dodging is the swap. It advances the cycle by one and re-keys you instantly — two stops '
+        + 'normally, first element then second, or three with Third State: first, second, Quantum, then '
+        + 'back to first. The dash itself is unaffected, and the 380ms collapse ring is decoration; the '
+        + 're-key happens on the frame you dodge. Anything the half you just left put in the world stays '
+        + 'there and keeps working, because the collapse changes your kit and not the arena.',
       effects: [
         { tag: 'movement', label: 'On dodge', detail: 'Dodging advances the cycle by one and re-keys you instantly. The dash is unaffected.' },
         { tag: 'utility', label: 'The cycle', detail: 'Two stops normally — first element, second element — and three with Third State: first, second, Quantum, then back to first.' },
@@ -63,11 +67,12 @@ const quantum: ElementCodex = {
     {
       emoji: '💥',
       name: 'Quantum Instability',
-      magic:
-        'Carrying two kits is paid for one hit at a time. Every hit that actually lands on you '
-        + 'makes the body holding both halves a little less able to hold them, and that shows up as '
-        + 'plain vulnerability — nothing about it cares how large the hit was, only that there was '
-        + 'one.',
+      basics:
+        '1 point per hit taken, whatever the hit was worth, capped at 50 — and each point is 1% more '
+        + 'damage taken, so at the cap everything hits you half again as hard. It sheds 1 point every 2 '
+        + 'seconds, so a full 50 takes 100 seconds to clear on its own. A hit fully eaten by a shield '
+        + 'charge, a damage absorber or flat reduction adds nothing: the counter only sees damage that '
+        + 'got through.',
       effects: [
         { tag: 'debuff', label: 'Building it', detail: '1 point per hit taken, whatever the hit was worth, to a cap of 50.' },
         { tag: 'debuff', label: 'What it does', detail: 'One point is 1% more damage taken, one for one. At the 50 cap everything hits you half again as hard.' },
@@ -82,11 +87,11 @@ const quantum: ElementCodex = {
     {
       emoji: '⚠️',
       name: 'Torn Collapse',
-      magic:
-        'A body that is already coming apart does not enjoy being asked to be something else. Above '
-        + 'a certain amount of instability the collapse still works — it just takes a piece out of '
-        + 'you on the way through, which is what stops the bond from being a free reset every time '
-        + 'a matchup goes badly.',
+      basics:
+        'Collapsing at 40 instability or above costs you 25 damage. The swap itself always succeeds, '
+        + 'and the figure does not scale — it is a flat 25 at 40 and a flat 25 at the cap. It is booked '
+        + 'as self-damage, so it lands in online matches too rather than being filtered out by the damage '
+        + 'relay.',
       effects: [
         { tag: 'cost', label: 'The tear', detail: '25 damage to yourself for collapsing at 40 instability or above. The swap itself always succeeds.' },
         { tag: 'utility', label: 'Self-inflicted', detail: 'It is booked as self-damage, so it lands in online matches too rather than being filtered out by the damage relay.' },
@@ -101,13 +106,15 @@ const quantum: ElementCodex = {
 
   abilities: {
     'quantum-splicers': {
-      magic:
-        'You come apart into five blades and they never come back. While the third state is worn '
-        + 'the ring is simply there, turning slowly around you at arm\'s length and cutting anything '
-        + 'that walks into it. Holding the button drives the whole ring out to more than twice the '
-        + 'radius and three times the speed — it covers far more ground and passes far more often, '
-        + 'but the cut is the same cut. This is the only Click in the game that is a permanent '
-        + 'field rather than an attack.',
+      basics:
+        'Five permanent blades on a 48px orbit turning at 1.7 rad/s — a revolution every 3.7 seconds — '
+        + 'cutting for 8 damage, at most once per blade per target every 500ms, which is about 11 damage '
+        + 'a second at rest. Holding the click drives the ring out to 112px at 5.4 rad/s, a revolution '
+        + 'every 1.16 seconds and roughly 34 damage a second, easing out and back rather than snapping so '
+        + 'the button is readable. Each blade is 30px long and cuts from its tip, about 9px past the '
+        + 'orbit, so a wide ring reaches roughly 130px from your chest. The blades are your body rather '
+        + 'than a summon: leaving the third state takes them with it, and nothing that purges summons can '
+        + 'touch them. Each cast marks the ring wide for 1.15s against a 900ms cooldown.',
       cast: 'Click, held. No aim — the ring is centred on you. Each cast marks the ring wide for 1.15s against a 900ms cooldown, so holding keeps it out there and a tap lets it fall back in.',
       effects: [
         { tag: 'damage', label: 'The cut', detail: '8 damage per blade, at most once per blade per target every 500ms. Five blades sweeping means about 11 damage a second at rest and roughly 34 with the ring driven wide.' },
@@ -122,11 +129,17 @@ const quantum: ElementCodex = {
         'A wide ring is also a wall of your own blades to stand behind: anything that walks into you is being cut on the way in.',
       ],
       upgrade: {
-        magic:
-          'Third State is Quantum\'s only upgrade, and it is not really an upgrade to this ability — '
-          + 'it is what creates it. Your bond stops being a coin: the cycle grows a third stop, and '
-          + 'that stop is Quantum itself, wearing a kit of its own for the first time. Every one of '
-          + 'the five abilities splits something.',
+        basics:
+          'Adds a third stop to the collapse cycle — first element, second element, Quantum — and without '
+          + 'it this entire ability list is unreachable. The Quantum form\'s five keys are Atom Splicers on '
+          + 'Click (five permanent blades, 8 a cut, driven out to 112px and 5.4 rad/s while held), Ability '
+          + 'Split on E (the next ability you cast has its cooldown halved, and the charge survives a '
+          + 'collapse), Arena Split on R (a seam down the middle of the room for 15 seconds that the enemy '
+          + 'cannot cross and no shot from either side survives), Effect Split on F (every effect on you '
+          + 'halved in strength and stretched to 2.5× its remaining duration), and Quantum Parasite on Q (a '
+          + 'ten-bead worm that bites for 35 and becomes two worms every time anybody cuts it). It costs '
+          + '2000 shards and is filed under the Click slot, which is why the shop\'s other four Quantum '
+          + 'plates read COMING SOON.',
         effects: [
           { tag: 'utility', label: 'A third stop', detail: 'The dodge cycles first element → second element → Quantum → first element. Without it, this whole ability list is unreachable.' },
           { tag: 'damage', label: 'Atom Splicers', detail: 'Click: five permanent blades on a 48px orbit, 8 a cut, driven out to 112px and 5.4 rad/s while held.' },
@@ -140,11 +153,12 @@ const quantum: ElementCodex = {
     },
 
     'quantum-ability-split': {
-      magic:
-        'You take the next thing you are going to do and cut its recovery in half before you have '
-        + 'even done it. The charge does not sit on this kit — it is banked on your own body, which '
-        + 'is why it is still there after you have collapsed into something else entirely. Arm it '
-        + 'as Quantum, spend it on the other half of your bond.',
+      basics:
+        'The next ability you cast runs at ×0.5 of its own cooldown — a 30-second ultimate comes back '
+        + 'in 15. The charge is held on the fighter rather than the kit, so it crosses a bond swap '
+        + 'intact, and it is spent by the very next stamped cast whatever that is, announced with "⚛️ '
+        + 'Halved!" as it goes. Atom Splicers cannot spend it, so holding the mouse button while the '
+        + 'charge is up is safe. 11s cooldown.',
       cast: 'E. No aim, no channel. The charge waits until you cast something. 11s cooldown.',
       effects: [
         { tag: 'buff', label: 'The halving', detail: 'The next ability you cast runs at ×0.5 of its own cooldown — a 30-second ultimate comes back in 15.' },
@@ -160,11 +174,13 @@ const quantum: ElementCodex = {
     },
 
     'quantum-arena-split': {
-      magic:
-        'A standing wave comes up the middle of the room and stays there for fifteen seconds. It is '
-        + 'not a wall exactly — you walk through it as though it were not there — but the enemy '
-        + 'cannot, and neither can anything either of you shoots. Every projectile that touches the '
-        + 'seam is deleted in a flash of white, including your own.',
+      basics:
+        'Raises a seam down the exact middle of the arena, full height, 10px either side of the centre '
+        + 'line, for 15 seconds. Everyone you are fighting is held on whichever half they were standing '
+        + 'in at the cast, with their inward velocity zeroed at the line, and any projectile within 20px '
+        + 'of the seam is destroyed outright — the band is wider than the wall on purpose, so the fastest '
+        + 'shots in the game cannot tunnel through between two frames. You walk through freely; your '
+        + 'shots do not. Casting again replaces your own seam rather than raising a second. 24s cooldown.',
       cast: 'R. No aim — the seam is always the exact middle of the arena, full height. 24s cooldown, 15s of wall.',
       effects: [
         { tag: 'control', label: 'The seam', detail: '15 seconds, standing at the arena\'s centre line, 10px either side of it.' },
@@ -181,11 +197,16 @@ const quantum: ElementCodex = {
     },
 
     'quantum-effect-split': {
-      magic:
-        'Everything currently riding on you — every buff, every curse, every burn, every slow — is '
-        + 'cut along its own length. Half the strength, two and a half times the clock. It does not '
-        + 'discriminate, and it reaches whatever the other half of your bond left on you before you '
-        + 'collapsed, which is the only way anything in the game can edit an effect that way.',
+      basics:
+        'Rewrites everything on you on the frame you press it. Every timed effect has its remaining '
+        + 'duration multiplied by 2.5, buffs and debuffs alike from any element, and while the window '
+        + 'runs every damage multiplier on you is dragged halfway back to neutral — a ×1.5 vulnerability '
+        + 'becomes ×1.25 and a ×0.5 armour becomes ×0.75 — with the same halving applied to your net '
+        + 'move-speed multiplier, so a big slow and a big sprint are both cut in half. The window lasts '
+        + 'as long as the longest thing it stretched, with a floor of 4 seconds when there was nothing '
+        + 'timed to work on. Pressing it on a clean body is weak rather than wasted, since plenty of '
+        + 'multipliers are rewritten every frame by their own kit and carry no expiry, and those are '
+        + 'halved for the floor. 15s cooldown.',
       cast: 'F. No aim. Everything is rewritten on the frame you press it. 15s cooldown.',
       effects: [
         { tag: 'buff', label: 'The stretch', detail: 'Every timed effect on you has its remaining duration multiplied by 2.5 — buffs and debuffs alike, from any element.' },
@@ -202,13 +223,16 @@ const quantum: ElementCodex = {
     },
 
     'quantum-parasite': {
-      magic:
-        'Something tears out of the floor: ten beads of it, a mouth at the front and a tail at the '
-        + 'back, and it goes bouncing around the room biting. What makes it a Quantum ability is '
-        + 'what happens when somebody shoots it. The eight beads in the middle can be destroyed by '
-        + 'anybody\'s shots — and a destroyed bead does not kill the parasite, it makes two of them, '
-        + 'with the back half turning around and coming back at whoever cut it. The mouth and the '
-        + 'tail cannot be killed at all.',
+      basics:
+        'Throws a worm along the aim: 10 beads 18px apart, 11px across, running at 215 px/s and '
+        + 'reflecting off every arena wall for 15 seconds. The mouth bites for 35, at most once per '
+        + 'victim every 800ms. The 8 middle beads have 35 HP each and take damage from any projectile in '
+        + 'the arena whoever fired it, while the mouth and the tail swallow a shot whole and take nothing '
+        + '— and every cut multiplies it: the destroyed bead is spent and the body comes apart there, the '
+        + 'front half carrying on and the back half reversing with its old tail becoming a new mouth, '
+        + 'both inheriting the original 15-second clock. Eight cuttable beads means at most 9 parasites '
+        + 'from one press, each with its own 35-damage bite on its own gate. Two mouths that meet shove '
+        + 'each other apart and turn away rather than passing through. 26s cooldown.',
       cast: 'Q, thrown along the aim. Ultimate, 26s cooldown. It lives 15 seconds.',
       effects: [
         { tag: 'summon', label: 'The parasite', detail: '10 beads, 18px apart, 11px across, running at 215 px/s and reflecting off every arena wall.' },

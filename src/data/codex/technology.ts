@@ -21,11 +21,12 @@ const technology: ElementCodex = {
     {
       emoji: '📈',
       name: 'The Cruncher Streak',
-      magic:
-        'The click has no cooldown of its own and it is the only conventional attack in the kit. '
-        + 'Every triangle that lands makes the next one better in three separate ways, and every '
-        + 'one that misses makes it *faster* and worse. The element therefore has a running '
-        + 'state, and it is a state you can lose by being bad at aiming.',
+      basics:
+        'The gun rewards and punishes accuracy on the same meter. A hit is +5% shorter cooldown, +5% '
+        + 'damage and +5% projectile speed, stacking to +100% of each. A miss is +10% shorter cooldown '
+        + 'but −5% damage and −5% speed, never falling below the base figures. The base shot is 7.5 '
+        + 'damage at 420 px/s on a 500ms cooldown, out to 900px with a 26px hit radius, and the cooldown '
+        + 'floors at 150ms — so a very long miss streak is three shots a second of very weak triangles.',
       effects: [
         { tag: 'buff', label: 'A hit', detail: '+5% shorter cooldown, +5% damage and +5% projectile speed, stacking to +100% of each.' },
         { tag: 'cost', label: 'A miss', detail: '+10% shorter cooldown, but −5% damage and −5% speed. It never falls below the base figures.' },
@@ -41,11 +42,11 @@ const technology: ElementCodex = {
     {
       emoji: '🪟',
       name: 'Two Screens',
-      magic:
-        'The strangest thing this element does is render differently for the two players. Your '
-        + 'own popups are faint enough to see the arena through; on the enemy\'s screen they are '
-        + 'solid windows that hide whatever is behind them. It is the same object in the same '
-        + 'place — the only difference is who is looking at it.',
+      basics:
+        'Popups are rendered differently for each side. Yours are translucent: you can see through them '
+        + 'and stand under one for shelter, worth 25% damage resistance and invisibility while you are '
+        + 'underneath. Theirs are solid, 138×96 pixels each, and twelve of them is most of an arena the '
+        + 'enemy cannot see through.',
       effects: [
         { tag: 'utility', label: 'Your side', detail: 'Translucent. You can see through your own popups, and you can stand under one for shelter.' },
         { tag: 'debuff', label: 'Their side', detail: 'Solid, and 138×96 pixels each. Twelve of them is most of an arena the enemy cannot see through.' },
@@ -60,11 +61,12 @@ const technology: ElementCodex = {
 
   abilities: {
     'tech-cruncher': {
-      magic:
-        'A green triangle with a tail of falling ones and zeroes. It is small, it is fast, and it '
-        + 'does very little on its own — the point is that it changes you. Land it and every '
-        + 'number about the gun goes up; miss and the gun starts firing faster and hitting '
-        + 'softer.',
+      basics:
+        'Fires a triangle at the cursor: 7.5 damage to anything within 26px of it, at 420 px/s, out to '
+        + '900px of travel. Every hit adds +5% cooldown, damage and projectile speed to +100% of each, so '
+        + 'a fully wound gun is 15 damage at 840 px/s every 250ms; every miss adds +10% cooldown but '
+        + 'takes 5% off damage and speed, never past the base numbers. 0.5s cooldown at base, floored at '
+        + '0.15s.',
       cast: 'Click, aimed at the cursor. 0.5s cooldown at base, shortened by the streak in either direction, floored at 0.15s.',
       effects: [
         { tag: 'damage', label: 'The shot', detail: '7.5 damage at 420 px/s, hitting anything within 26px of it, out to 900px of travel.' },
@@ -72,10 +74,9 @@ const technology: ElementCodex = {
         { tag: 'cost', label: 'The miss stack', detail: '+10% cooldown but −5% damage and speed, never past the base numbers.' },
       ],
       upgrade: {
-        magic:
-          'Firewall rings the arena edge in an orange binary barrier, and it eats your mistakes. '
-          + 'The first three crunchers that would have missed are absorbed instead — no penalty, '
-          + 'they simply never happened — and then the wall has to rebuild itself.',
+        basics:
+          'Three misses are eaten with no stat penalty at all — the shot is not counted either way. After '
+          + 'the third absorb it takes 20 seconds to regenerate, and it is visibly gone for all of it.',
         effects: [
           { tag: 'shield', label: 'The absorbs', detail: '3 misses eaten, with no stat penalty at all. The shot is not counted either way.', requiresUpgrade: 'click' },
           { tag: 'utility', label: 'The rebuild', detail: '20 seconds to regenerate after the third absorb, and it is visibly gone for all of it.', requiresUpgrade: 'click' },
@@ -88,10 +89,12 @@ const technology: ElementCodex = {
     },
 
     'tech-ads': {
-      magic:
-        'Twelve popup windows scatter across the arena. To you they are ghosts you can see '
-        + 'through and hide under. To them they are solid rectangles blocking most of the screen, '
-        + 'and touching one is how you get a virus.',
+      basics:
+        'Scatters 12 popups across the whole arena, 138×96 pixels each, alive for 3 seconds. Standing '
+        + 'under one of yours is 25% damage resistance and invisibility, while an enemy who touches one '
+        + 'is infected for 5 seconds at 3 damage a second — and worse the faster they are moving, so '
+        + 'running from it makes it hurt more. Three seconds makes them a burst of cover rather than '
+        + 'terrain: everything about the ability has to happen inside that window. 8s cooldown.',
       cast: 'E. Instant, no aim — they are scattered across the whole arena. 8s cooldown.',
       effects: [
         { tag: 'area', label: 'The popups', detail: '12 windows at 138×96 pixels each, alive for 3 seconds.' },
@@ -100,10 +103,9 @@ const technology: ElementCodex = {
         { tag: 'utility', label: 'Three seconds', detail: 'They are a burst of cover rather than terrain. Everything about the ability has to happen inside those three seconds.' },
       ],
       upgrade: {
-        magic:
-          'Palware installs something. Alongside the popups, one of three pieces of malware is '
-          + 'summoned for twenty seconds — a goose, an assistant, or a screensaver that has '
-          + 'become hostile — and which one you get is not up to you.',
+        basics:
+          'Each cast also installs one random malware, alive 20 seconds, with a 20-second lockout before '
+          + 'another can be summoned. The six programs are listed below.',
         effects: [
           { tag: 'summon', label: 'The install', detail: 'One random malware per cast, alive 20 seconds, with a 20-second lockout before another can be summoned.', requiresUpgrade: 'e' },
         ],
@@ -123,11 +125,12 @@ const technology: ElementCodex = {
     },
 
     'tech-upload': {
-      magic:
-        'A cord is fired out of your hand toward the cursor and it never detaches from you — only '
-        + 'the head has a hitbox, so the length of cable trailing behind it is decoration. What '
-        + 'the head does on contact is the ability: whoever it touches is turned into a box, and '
-        + 'a box moves on a grid.',
+      basics:
+        'Fires a cable head at 620 px/s with a 22px hitbox. Whoever it catches is boxed for 6 seconds: '
+        + 'grid-only movement with no diagonals at all — they can still fight, they simply cannot move '
+        + 'like a person. A head that finds nothing parks at your cursor for 5 seconds, still attached to '
+        + 'you, and Web Drag can pick it up and move it. The trailing cable is entirely cosmetic; walking '
+        + 'through it does nothing. 12s cooldown.',
       cast: 'R, at the cursor. The head travels at 620 px/s with a 22px hitbox. 12s cooldown.',
       effects: [
         { tag: 'control', label: 'Boxed', detail: '6 seconds of grid-only movement with no diagonals at all. They can still fight; they simply cannot move like a person.' },
@@ -135,10 +138,10 @@ const technology: ElementCodex = {
         { tag: 'utility', label: 'Only the head', detail: 'The trailing cable is entirely cosmetic. Walking through the cable does nothing.' },
       ],
       upgrade: {
-        magic:
-          'Trojan Takeover keeps you wired in. For as long as the box lasts, your arrow keys are '
-          + 'their legs — they move continuously in whichever direction you are holding, still '
-          + 'without diagonals, and they can still shoot at you the whole time.',
+        basics:
+          'You drive them. Arrow keys steer the victim for the full 6 seconds, continuously rather than '
+          + 'stepped and still axis-locked. It is a movement takeover rather than a stun, so a driven enemy '
+          + 'is aiming at you the entire time you are walking them into something.',
         effects: [
           { tag: 'control', label: 'You are driving', detail: 'Arrow keys steer the victim for the full 6 seconds. Movement is continuous rather than stepped, and still axis-locked.', requiresUpgrade: 'r' },
           { tag: 'utility', label: 'They can still fight', detail: 'It is a movement takeover, not a stun. A driven enemy is aiming at you the entire time you are walking them into something.', requiresUpgrade: 'r' },
@@ -151,11 +154,11 @@ const technology: ElementCodex = {
     },
 
     'tech-webdrag': {
-      magic:
-        'Your cursor becomes a drag cursor. For six seconds anything the game will let you grab — '
-        + 'a person, one of your popups, the parked head of your own Upload cord — can be picked '
-        + 'up by holding click and dropped by letting go. It is the only ability in the game that '
-        + 'weaponises a mouse pointer.',
+      basics:
+        'Six seconds of drag mode: hold click on anything within 42px of the cursor to pick it up, move '
+        + 'the cursor, release to drop. There is no throw — it simply goes where you put it. You can drag '
+        + 'the enemy, your own popups, and your Upload cord\'s parked head. There is no way to extend the '
+        + 'window. 10s cooldown.',
       cast: 'F. 6 seconds of drag mode, grabbing anything within 42px of the cursor. 10s cooldown.',
       effects: [
         { tag: 'control', label: 'What you can drag', detail: 'The enemy, your own popups, and your Upload cord\'s parked head.' },
@@ -163,11 +166,12 @@ const technology: ElementCodex = {
         { tag: 'utility', label: 'The window', detail: '6 seconds, and there is no way to extend it.' },
       ],
       upgrade: {
-        magic:
-          'Surf the web! adds a prompt: would you like to surf the web? Yes opens a browser '
-          + 'window in the middle of the fight. You are sheltered for as long as it is open, and '
-          + 'inside it is an entire small economy — coins to click, a shop, a wheel of fortune, '
-          + 'and a door.',
+        basics:
+          'F becomes a browser window instead. You are protected for as long as the page is open, which '
+          + 'makes the whole minigame a defensive option as well as an economic one, and coins are clicked '
+          + 'out of the page to spend in the Grub-Shop — a bagel at 10, a mouse at 20, a factory at 35 — '
+          + 'with a Wheel of Fortune spin at 5. Taking The Door explodes the window and launches every coin '
+          + 'you were holding as a projectile at 1 damage each, 330 px/s.',
         effects: [
           { tag: 'shield', label: 'Sheltered', detail: 'You are protected for as long as the browser is open, which makes the whole minigame a defensive option as well as an economic one.', requiresUpgrade: 'f' },
           { tag: 'resource', label: 'Coins', detail: 'Clicked out of the page. They buy things from the Grub-Shop — a bagel at 10, a mouse at 20, a factory at 35 — and a Wheel of Fortune spin costs 5.', requiresUpgrade: 'f' },
@@ -182,11 +186,11 @@ const technology: ElementCodex = {
     },
 
     'tech-admin': {
-      magic:
-        'A console opens and challenges you to type a six-digit binary string. For eight seconds '
-        + 'you cannot be hurt and you cannot attack — you are typing. Every correct digit is an '
-        + 'Admin Point and every wrong one takes one away, and when the window closes the points '
-        + 'are cashed in cumulatively against a ladder of increasingly unreasonable privileges.',
+      basics:
+        'Eight seconds of typing during which you are fully invincible and completely unable to attack. '
+        + 'You are given a 6-digit binary string and score +1 per correct digit and −1 per wrong one, '
+        + 'starting from 0, and every tier you reached fires rather than just the top one — 50 points is '
+        + 'all five. 60s cooldown, the longest in the element by six times.',
       cast: 'Q, ultimate. 8 seconds of invincible, unable-to-attack typing. 60s cooldown — the longest in the element by six times.',
       effects: [
         { tag: 'shield', label: 'While it runs', detail: 'Fully invincible and completely unable to attack for the whole 8 seconds.' },
@@ -204,10 +208,10 @@ const technology: ElementCodex = {
         ],
       },
       upgrade: {
-        magic:
-          'Security Breach means the console is not secure either. Three or four times per use it '
-          + 'glitches out — the screen tears, "Git Haxxed!" is scrawled across it, and you are '
-          + 'handed five points you did not type.',
+        basics:
+          'The console comes up with 3–4 glitches in it, each worth +5 Admin Points, so 15 to 20 free '
+          + 'points on top of whatever you typed. Since a perfect 6-digit string is only 6 points on its '
+          + 'own, the breach is what actually gets the ladder into its upper tiers.',
         effects: [
           { tag: 'resource', label: 'The glitches', detail: '3–4 per console, +5 Admin Points each — so 15 to 20 free points on top of whatever you typed.', requiresUpgrade: 'q' },
           { tag: 'utility', label: 'What that buys', detail: 'A perfect 6-digit string is 6 points on its own. The breach is what actually gets the ladder into its upper tiers.', requiresUpgrade: 'q' },
@@ -223,11 +227,10 @@ const technology: ElementCodex = {
 
   perks: {
     adrenaline: {
-      magic:
-        'Landing a cruncher spikes something. Each hit is a stack of speed that runs for five '
-        + 'seconds, and at five stacks you are WIRED — the gun\'s own cooldown is halved on top '
-        + 'of everything the streak was already doing to it. Missing burns a stack, so the perk '
-        + 'has the same shape the element does.',
+      basics:
+        'Every Cruncher hit gives +10% move speed for 5 seconds, stacking to 5 for +50%, and at 5 '
+        + 'stacks WIRED halves the Cruncher cooldown on top of the streak\'s own reduction. A miss burns '
+        + 'one stack rather than the whole thing, so the perk decays about as fast as your aim does.',
       effects: [
         { tag: 'movement', label: 'The stacks', detail: '+10% move speed per Cruncher hit for 5 seconds, stacking to 5 — so +50%.' },
         { tag: 'buff', label: 'WIRED', detail: 'At 5 stacks the Cruncher cooldown is halved, multiplying with the streak\'s own reduction.' },
@@ -242,11 +245,11 @@ const technology: ElementCodex = {
 
   mastery: {
     vpn: {
-      magic:
-        'Your connection tunnels through a private route, and the route gets better the longer '
-        + 'you use it. Keep moving and you accelerate smoothly for five seconds with a binary '
-        + 'datastream growing longer, brighter and wider behind you. Stop for a single frame and '
-        + 'the tunnel drops and you start again from nothing.',
+      basics:
+        'Continuous movement ramps you smoothly up to +50% move speed over 5 seconds, and the entire '
+        + 'boost is lost the moment you stop — not decayed, lost, with no partial credit. A binary '
+        + 'datastream behind you grows from a short faint tail to a long bright one, so the boost is '
+        + 'readable off the art rather than off a bar.',
       effects: [
         { tag: 'movement', label: 'The ramp', detail: 'Smoothly up to +50% move speed over 5 seconds of continuous movement.' },
         { tag: 'cost', label: 'The drop', detail: 'The entire boost is lost the moment you stop, not decayed. There is no partial credit.' },
@@ -258,11 +261,13 @@ const technology: ElementCodex = {
       ],
     },
     'byte-bomb': {
-      magic:
-        'A packet with a fuse painted on its shell is lobbed at your cursor and starts counting '
-        + 'down from eight seconds. Clicking the bomb burns half a second off the timer, so a '
-        + 'fast enough mouse detonates it on your terms rather than its own. What it leaves '
-        + 'behind is not damage — it is Lag.',
+      basics:
+        'A bindable bomb thrown at the cursor at 780 px/s with an 8-second fuse, and clicking the bomb '
+        + 'itself burns half a second off it. It bursts for 10 damage in a 120px radius and lags whoever '
+        + 'it catches for 10 seconds: they are periodically snapped back to where they were standing a '
+        + 'second ago, they lock solid for a second at a time under a spinning loading circle every '
+        + '1.6–2.6 seconds, and their ability cooldowns stop ticking entirely for 3–4 seconds at a '
+        + 'stretch. 15s cooldown.',
       cast: 'The bound key throws it at the cursor at 780 px/s. Click the bomb to speed the fuse. 15s cooldown.',
       effects: [
         { tag: 'damage', label: 'The burst', detail: '10 damage in a 120px radius.' },

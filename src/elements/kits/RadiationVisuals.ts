@@ -799,6 +799,241 @@ export function doseTicks(
   }
 }
 
+// ── Mastery primitives ────────────────────────────────────────────────────
+
+/**
+ * Gamma Tether's post.
+ *
+ * The one piece of *equipment* in an element made of ordnance: a squat lead housing on three
+ * splayed legs, bolted to the floor, with a hazard band around its belly and a charge bar across
+ * the front that is the whole read on how long it has left. The emitter head on top spins while
+ * it is hunting and locks dead still the moment the chain catches — the only thing on the device
+ * that says whether it has a body on the other end.
+ *
+ * `charge` (0–1) is the bar. `latched` stops the head and lights the lamp.
+ */
+export function tetherAnchor(
+  g: Phaser.GameObjects.Graphics,
+  tint: RadiationColorFn,
+  x: number, y: number, alpha: number, t: number,
+  { charge = 1, latched = false, plant = 1 } = {},
+): void {
+  // `plant` runs the whole device down onto the floor over its first frames.
+  const drop = (1 - plant) * 26;
+  const py = y - drop;
+  const a = alpha * plant;
+
+  // Footprint, so the post reads as standing on the floor rather than floating over it.
+  g.fillStyle(tint(RAD.ink), alpha * 0.5);
+  g.fillEllipse(x, y + 12, 34, 11);
+
+  // Three legs, splayed forward-left, forward-right and back.
+  for (const [dx, dy] of [[-13, 12], [13, 12], [0, 15]] as const) {
+    g.lineStyle(4.4, tint(RAD.ink), a);
+    g.lineBetween(x, py + 1, x + dx, y + dy);
+    g.lineStyle(2.4, tint(RAD.lead), a);
+    g.lineBetween(x, py + 1, x + dx, y + dy);
+    g.fillStyle(tint(RAD.hazard), a * 0.8);
+    g.fillCircle(x + dx, y + dy, 1.7);
+  }
+
+  // Housing: a hard flat box with a lit top face.
+  g.fillStyle(tint(RAD.ink), a * 0.95);
+  g.fillRect(x - 11.5, py - 15.5, 23, 27);
+  g.fillStyle(tint(RAD.leadDeep), a);
+  g.fillRect(x - 10, py - 14, 20, 24);
+  g.fillStyle(tint(RAD.lead), a * 0.95);
+  g.fillRect(x - 10, py - 14, 12, 24);
+  g.fillStyle(tint(RAD.leadLit), a * 0.85);
+  g.fillRect(x - 8.6, py - 12.6, 17.2, 4.4);
+
+  // Hazard band across the belly, with the trefoil stamped on it.
+  g.fillStyle(tint(RAD.hazardDeep), a * 0.95);
+  g.fillRect(x - 10, py - 3.4, 20, 7);
+  g.fillStyle(tint(RAD.hazard), a);
+  g.fillRect(x - 10, py - 2.6, 20, 5);
+  trefoil(g, tint, x, py, 3.4, a * 0.85, { color: RAD.ink, phase: t * 0.4 });
+
+  // The charge bar. Drawn last on the front face so it is the first thing read, and it goes
+  // hazard-yellow under a fifth left rather than simply getting shorter.
+  const k = Phaser.Math.Clamp(charge, 0, 1);
+  g.fillStyle(tint(RAD.ink), a * 0.9);
+  g.fillRect(x - 8.4, py + 4.4, 16.8, 4.6);
+  g.fillStyle(tint(RAD.neonDeep), a * 0.8);
+  g.fillRect(x - 7.6, py + 5.1, 15.2, 3.2);
+  g.fillStyle(tint(k < 0.2 ? RAD.hazard : RAD.neon), a * (0.7 + 0.3 * Math.abs(Math.sin(t * (k < 0.2 ? 11 : 3)))));
+  g.fillRect(x - 7.6, py + 5.1, 15.2 * k, 3.2);
+
+  // Emitter head: a ring with three prongs, spinning while it hunts and stopped once it has
+  // somebody. The lamp in the middle is the lock light.
+  const spin = latched ? 0.4 : t * 3.4;
+  g.fillStyle(tint(RAD.leadDeep), a);
+  g.fillCircle(x, py - 17, 6.6);
+  g.lineStyle(1.6, tint(latched ? RAD.neonLit : RAD.seam), a * 0.9);
+  g.strokeCircle(x, py - 17, 5.2);
+  for (let i = 0; i < 3; i++) {
+    const ang = spin + (i / 3) * TAU;
+    g.lineStyle(2, tint(RAD.lead), a);
+    g.lineBetween(x + Math.cos(ang) * 4, py - 17 + Math.sin(ang) * 4,
+      x + Math.cos(ang) * 10, py - 17 + Math.sin(ang) * 10);
+    g.fillStyle(tint(latched ? RAD.neon : RAD.neonMid), a * 0.9);
+    g.fillCircle(x + Math.cos(ang) * 10, py - 17 + Math.sin(ang) * 10, 1.8);
+  }
+  const lamp = latched ? 0.6 + 0.4 * Math.abs(Math.sin(t * 7)) : 0.25 + 0.15 * Math.sin(t * 2);
+  g.fillStyle(tint(RAD.neon), a * lamp * 0.6);
+  g.fillCircle(x, py - 17, 4.4);
+  g.fillStyle(tint(RAD.core), a * lamp);
+  g.fillCircle(x, py - 17, 2);
+}
+
+/**
+ * The leash the post is allowed to pay out, drawn on the floor.
+ *
+ * A dashed ring rather than a solid one — a solid circle reads as a hazard and this one hurts
+ * nobody, it is simply the edge of where the victim is allowed to be. Tightens visibly as the
+ * chain goes taut, which is how the victim learns where the wall is.
+ */
+export function leashRing(
+  g: Phaser.GameObjects.Graphics,
+  tint: RadiationColorFn,
+  x: number, y: number, r: number, alpha: number, t: number, taut = 0,
+): void {
+  const segs = 40;
+  const spin = t * 0.5;
+  g.lineStyle(1.6 + taut * 1.4, tint(taut > 0.5 ? RAD.hazard : RAD.neonMid), alpha * (0.4 + taut * 0.5));
+  for (let i = 0; i < segs; i += 2) {
+    const a0 = spin + (i / segs) * TAU;
+    const a1 = spin + ((i + 1) / segs) * TAU;
+    g.beginPath();
+    g.arc(x, y, r, a0, a1, false);
+    g.strokePath();
+  }
+  g.fillStyle(tint(RAD.neonDeep), alpha * 0.07);
+  g.fillCircle(x, y, r);
+}
+
+/**
+ * The chain itself: live waste on a wire.
+ *
+ * Real links rather than a beam — a row of tilted ovals laid along the span with a hot filament
+ * threading through them, sagging while there is slack and pulling dead straight and bright the
+ * moment the victim reaches the end of it. `taut` (0–1) is the whole animation.
+ */
+export function gammaChain(
+  g: Phaser.GameObjects.Graphics,
+  tint: RadiationColorFn,
+  x0: number, y0: number, x1: number, y1: number, alpha: number, t: number, taut = 0,
+): void {
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const len = Math.max(1, Math.hypot(dx, dy));
+  const ang = Math.atan2(dy, dx);
+  // Slack hangs below the line; a taut chain has none at all.
+  const sag = (1 - taut) * Math.min(26, len * 0.16);
+  const n = Math.max(4, Math.round(len / 15));
+  const pt = (u: number): [number, number] => {
+    const bow = Math.sin(u * Math.PI) * sag;
+    return [x0 + dx * u, y0 + dy * u + bow];
+  };
+
+  // The filament, under the links, so the links read as riding on it.
+  g.lineStyle(4.4, tint(RAD.ink), alpha * 0.7);
+  g.beginPath();
+  g.moveTo(x0, y0);
+  for (let i = 1; i <= n; i++) { const [px, py] = pt(i / n); g.lineTo(px, py); }
+  g.strokePath();
+  g.lineStyle(1.6 + taut * 1.6, tint(taut > 0.5 ? RAD.neonLit : RAD.neonMid),
+    alpha * (0.55 + taut * 0.45) * (0.7 + 0.3 * Math.abs(Math.sin(t * 6 - len * 0.02))));
+  g.beginPath();
+  g.moveTo(x0, y0);
+  for (let i = 1; i <= n; i++) { const [px, py] = pt(i / n); g.lineTo(px, py); }
+  g.strokePath();
+
+  // Links, alternating their tilt so the chain reads as chain at a glance. Built from real
+  // points rather than a canvas rotation — every painter in this file draws in world space.
+  for (let i = 0; i < n; i++) {
+    const u = (i + 0.5) / n;
+    const [px, py] = pt(u);
+    const tilt = ang + (i % 2 ? 1.57 : 0);
+    const ca = Math.cos(tilt);
+    const sa = Math.sin(tilt);
+    const ring: Phaser.Geom.Point[] = [];
+    for (let k = 0; k < 8; k++) {
+      const a2 = (k / 8) * TAU;
+      const ex = Math.cos(a2) * 4.5;
+      const ey = Math.sin(a2) * 2.6;
+      ring.push(new Phaser.Geom.Point(px + ex * ca - ey * sa, py + ex * sa + ey * ca));
+    }
+    g.lineStyle(2.2, tint(RAD.lead), alpha * 0.95);
+    g.strokePoints(ring, true);
+  }
+
+  // Contamination running down the wire toward the victim, so it reads as feeding them.
+  for (let i = 0; i < 3; i++) {
+    const u = ((t * 0.55 + i / 3) % 1);
+    const [px, py] = pt(u);
+    g.fillStyle(tint(RAD.neonLit), alpha * 0.85);
+    g.fillCircle(px, py, 2.2 + taut * 1.2);
+  }
+}
+
+/**
+ * Sniper's Instinct's sight.
+ *
+ * A hairline of lead from the weapon hand to wherever the next tracer would actually stop, with
+ * range ticks along it and a reticle on the end. Deliberately thin and mostly dark: the ability
+ * it is describing does no damage, and a bright beam across the arena would read as one.
+ * `onBody` swaps the reticle from a hazard cross (this shot lands on nothing) to a green box.
+ */
+export function sightLine(
+  g: Phaser.GameObjects.Graphics,
+  tint: RadiationColorFn,
+  x0: number, y0: number, x1: number, y1: number, alpha: number, t: number, onBody = false,
+): void {
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const len = Math.max(1, Math.hypot(dx, dy));
+  const ux = dx / len;
+  const uy = dy / len;
+  const lead = onBody ? RAD.neon : RAD.hazard;
+
+  g.lineStyle(2.6, tint(RAD.ink), alpha * 0.35);
+  g.lineBetween(x0, y0, x1, y1);
+  g.lineStyle(1, tint(lead), alpha * 0.42);
+  g.lineBetween(x0, y0, x1, y1);
+
+  // Range ticks every 100px, so the line is a ruler as well as a pointer.
+  g.lineStyle(1, tint(RAD.seam), alpha * 0.5);
+  for (let d = 100; d < len; d += 100) {
+    const px = x0 + ux * d;
+    const py = y0 + uy * d;
+    g.lineBetween(px - uy * 3, py + ux * 3, px + uy * 3, py - ux * 3);
+  }
+  // One bead running out along the line at roughly the tracer's own speed, so the sight reads
+  // as measuring rather than as a laser sitting there.
+  const run = ((t * 1.35) % 1) * len;
+  g.fillStyle(tint(RAD.neonLit), alpha * 0.6);
+  g.fillCircle(x0 + ux * run, y0 + uy * run, 1.6);
+
+  // The reticle.
+  const pulse = 0.7 + 0.3 * Math.abs(Math.sin(t * 4));
+  g.lineStyle(1.4, tint(lead), alpha * pulse);
+  if (onBody) {
+    for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
+      g.lineBetween(x1 + sx * 9, y1 + sy * 9, x1 + sx * 9, y1 + sy * 4);
+      g.lineBetween(x1 + sx * 9, y1 + sy * 9, x1 + sx * 4, y1 + sy * 9);
+    }
+    g.fillStyle(tint(RAD.core), alpha * pulse * 0.9);
+    g.fillCircle(x1, y1, 1.6);
+    return;
+  }
+  g.strokeCircle(x1, y1, 5.5);
+  g.lineBetween(x1 - 8, y1, x1 - 2.5, y1);
+  g.lineBetween(x1 + 2.5, y1, x1 + 8, y1);
+  g.lineBetween(x1, y1 - 8, x1, y1 - 2.5);
+  g.lineBetween(x1, y1 + 2.5, x1, y1 + 8);
+}
+
 // ── Fx ────────────────────────────────────────────────────────────────────
 
 /** Radiation's one-shot effects. Everything sustained is painted per-frame by the kit instead. */
@@ -1056,6 +1291,52 @@ export class RadiationFx extends FxBase {
         g.lineBetween(x + nx - Math.cos(ang) * l, y + ny - Math.sin(ang) * l,
           x + nx + Math.cos(ang) * l, y + ny + Math.sin(ang) * l);
       }
+    });
+  }
+
+  /** Gamma Tether landing: the legs punching into the floor and the emitter spinning up. */
+  anchorDrop(x: number, y: number, depth = 17): void {
+    this.flashIn(x, y, 34, RAD.core, RAD.hazard, depth);
+    this.anim(depth, 380, (g, t) => {
+      const e = easeOut(t);
+      g.lineStyle(3 * (1 - t) + 0.6, this.tint(RAD.hazard), (1 - t) * 0.85);
+      g.strokeCircle(x, y + 10, 8 + e * 30);
+      // Dust kicked out sideways along the floor.
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * TAU;
+        g.fillStyle(this.tint(RAD.lead), (1 - t) * 0.8);
+        g.fillCircle(x + Math.cos(a) * e * 26, y + 10 + Math.sin(a) * e * 9, 2.4 * (1 - t) + 0.6);
+      }
+    });
+  }
+
+  /** The chain catching: a ring closing on the victim and the wire snapping straight. */
+  chainSnap(x0: number, y0: number, x1: number, y1: number, depth = 17): void {
+    this.flashIn(x1, y1, 30, RAD.neonLit, RAD.neon, depth);
+    this.anim(depth, 320, (g, t) => {
+      const e = easeOut(t);
+      g.lineStyle(4 * (1 - t) + 0.8, this.tint(RAD.neonLit), (1 - t) * 0.9);
+      g.lineBetween(x0, y0, x1, y1);
+      g.lineStyle(2.4 * (1 - t) + 0.5, this.tint(RAD.hazard), (1 - t) * 0.9);
+      g.strokeCircle(x1, y1, 30 - e * 16);
+      trefoil(g, this.tint, x1, y1, 9 + e * 8, (1 - t) * 0.7, { phase: t * 4, color: RAD.neonLit });
+    });
+  }
+
+  /** The tether letting go: the links falling off the wire. */
+  chainBreak(x: number, y: number, depth = 17): void {
+    const seed = Math.random() * 999;
+    this.anim(depth, 480, (g, t) => {
+      const e = easeOut(t);
+      for (let i = 0; i < 5; i++) {
+        const a = jitter(seed, i) * TAU;
+        const px = x + Math.cos(a) * e * (14 + jitter(seed, 20 + i) * 26);
+        const py = y + Math.sin(a) * e * 12 + t * t * 30;
+        g.lineStyle(2, this.tint(RAD.lead), (1 - t) * 0.9);
+        g.strokeCircle(px, py, 3.4);
+      }
+      g.lineStyle(2 * (1 - t) + 0.4, this.tint(RAD.neonDeep), (1 - t) * 0.7);
+      g.strokeCircle(x, y, 10 + e * 22);
     });
   }
 

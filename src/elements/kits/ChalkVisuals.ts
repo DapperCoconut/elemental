@@ -50,6 +50,14 @@ export const CHK = {
   crimson: 0xff3b6b,
   crimsonDeep: 0x8c1030,
   spark: 0xfff6d8,
+  /**
+   * Chalk Mastery — the grey of a smear that was never meant to be there. Deliberately the one
+   * colour in the palette with no hue at all: a smudge is read by its *legs*, not its colour,
+   * because it inherits the colour of whatever chalk it crawled off and has to stay legible
+   * against every one of the six.
+   */
+  smudge: 0x9aa0ab,
+  smudgeDeep: 0x474d58,
 };
 
 // ── Primitives ────────────────────────────────────────────────────────────
@@ -204,6 +212,71 @@ export function chalkStick(
   // Highlight down the spine.
   g.lineStyle(1, tint(0xffffff), alpha * 0.35);
   g.lineBetween(backX + nx * w * 0.4, backY + ny * w * 0.4, tipX + nx * w * 0.3, tipY + ny * w * 0.3);
+}
+
+/**
+ * The legs a smudge grows. Three pairs, each a two-bone limb with a knee that lifts on the
+ * off-beat of its neighbour — the whole reason a smear of chalk reads as *alive* rather than as
+ * a stain is that the legs are jointed and out of phase with each other.
+ *
+ * `gait` is a free-running phase in radians; `span` is how far the body is from the ground the
+ * legs plant on, so a long bar-shaped smudge gets legs spaced along its length and a round one
+ * gets them clustered.
+ */
+export function chalkLegs(
+  g: Phaser.GameObjects.Graphics,
+  tint: ChalkColorFn,
+  x: number, y: number, ang: number, span: number, reach: number,
+  gait: number, color: number, alpha: number, seed: number,
+): void {
+  const cx = Math.cos(ang);
+  const cy = Math.sin(ang);
+  const nx = -cy;
+  const ny = cx;
+  for (let i = 0; i < 6; i++) {
+    const side = i % 2 === 0 ? 1 : -1;
+    const along = (Math.floor(i / 2) - 1) * span;
+    const hipX = x + cx * along + nx * side * 2;
+    const hipY = y + cy * along + ny * side * 2;
+    // Out of phase across the body and across the pair, which is what makes it scuttle
+    // rather than paddle.
+    const ph = gait + i * 1.05 + grain(seed, i) * 0.7;
+    const lift = Math.sin(ph);
+    const swing = Math.cos(ph) * 0.42;
+    const kneeA = ang + side * (1.15 + swing);
+    const footA = ang + side * (1.5 + swing * 1.6);
+    const kneeX = hipX + Math.cos(kneeA) * reach * 0.62;
+    const kneeY = hipY + Math.sin(kneeA) * reach * 0.62 - Math.abs(lift) * 3.5;
+    const footX = hipX + Math.cos(footA) * reach;
+    const footY = hipY + Math.sin(footA) * reach + (lift > 0 ? -lift * 4 : 0);
+    chalkLine(g, tint, hipX, hipY, kneeX, kneeY, 1.7, color, alpha * 0.9, seed + i * 3);
+    chalkLine(g, tint, kneeX, kneeY, footX, footY, 1.4, color, alpha * 0.75, seed + i * 5);
+    // The foot leaves a scuff where it plants.
+    if (lift < -0.6) {
+      g.fillStyle(tint(CHK.dust), alpha * 0.25);
+      g.fillCircle(footX, footY, 1.6);
+    }
+  }
+}
+
+/** Two beady chalk eyes on the leading edge, looking wherever the thing is walking. */
+export function chalkEyes(
+  g: Phaser.GameObjects.Graphics,
+  tint: ChalkColorFn,
+  x: number, y: number, ang: number, spread: number, r: number, alpha: number,
+): void {
+  const cx = Math.cos(ang);
+  const cy = Math.sin(ang);
+  const nx = -cy;
+  const ny = cx;
+  for (const side of [1, -1]) {
+    const ex = x + cx * spread * 0.9 + nx * side * spread * 0.5;
+    const ey = y + cy * spread * 0.9 + ny * side * spread * 0.5;
+    g.fillStyle(tint(CHK.white), alpha * 0.95);
+    g.fillCircle(ex, ey, r);
+    g.fillStyle(tint(CHK.board), alpha);
+    g.fillCircle(ex + cx * r * 0.42, ey + cy * r * 0.42, r * 0.5);
+  }
 }
 
 // ── Fx ────────────────────────────────────────────────────────────────────

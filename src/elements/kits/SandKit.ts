@@ -5,9 +5,11 @@ import type { CustomStatus } from './StatusHudKit';
 import type { SummonPurgeTarget } from '../../combat/SummonPurge';
 import { Sfx } from '../../audio';
 import {
-  LIFT, SND, SandAvatar, SandColorFn, SandFx, crown, flintlock, goldOrb, grains, laneDivider,
-  lavaTide, pillar, poisonPatch, pyramidIdol, sandBeam, sandBridge,
+  LIFT, SND, SandAvatar, SandColorFn, SandFx, crown, cursedSlab, dustDevil, flameJet, flintlock,
+  fracture, glassGhost, glassShell, goldOrb, grains, laneDivider, lavaTide, miniIdol, pillar,
+  poisonPatch, pyramidIdol, sandBeam, sandBridge, sandVeil,
 } from './SandVisuals';
+import { meterStep } from '../../combat/Meters';
 
 type Owner = 'player' | 'npc';
 
@@ -93,10 +95,96 @@ const LAVA_START_Z = -70;
 const LAVA_RISE = 20;
 /** The bot walks a shade under full speed: a clean run beats it, a sloppy one does not. */
 const TRAIL_BOT_PACE = 0.9;
+
+// ── Dune Slicer (Click+) ─────────────────────────────────────────────────────
+/**
+ * The fractures are the one thing in the kit that hurts the person who made them, and the arming
+ * delay is the whole reason that is fair: two seconds is long enough to walk out of your own
+ * mess, and long enough that a fracture cannot be used as an instant trap on somebody's feet.
+ */
+const FRACTURE_ARM_MS = 2000;
+const FRACTURE_LIFE_MS = 9000;
+const FRACTURE_R = 30;
+const FRACTURE_DAMAGE = 15;
+const MAX_FRACTURES = 26;
+
+// ── Doomed Remains (E+) ──────────────────────────────────────────────────────
+const REMAINS_DAMAGE = 20;
+const REMAINS_RADIUS = 105;
+/** Gap between one pillar toppling and the next. They fall in the order you climbed them. */
+const REMAINS_STAGGER_MS = 130;
+
+// ── Sand Barrier (R+) ────────────────────────────────────────────────────────
+const BARRIER_MULT = 0.67;
+const BARRIER_GOLDEN_MULT = 0.5;
+
+// ── Dust Devil (F+) ──────────────────────────────────────────────────────────
+/**
+ * Apex is v²/2g = 213, against a standing jump's 82 and a Cursed Pyramid that tops out somewhere
+ * north of 400 — high enough to skip most of a course, never high enough to skip a whole one.
+ */
+const DEVIL_JUMP_V = 620;
+const DEVIL_R = 34;
+
+// ── Curse of the Challenger (Q+) ─────────────────────────────────────────────
+const CURSE_MS = 3000;
+const CURSE_COOLDOWN_MS = 8000;
+const CURSE_TICK_MS = 500;
+const CURSE_TICK_DAMAGE = 9;
 /** How long a bot gathers itself on a slab before hopping. The whole race is this number. */
 const TRAIL_BOT_DWELL_MS = 450;
 /** A dead man's switch. No trail outlives this, however badly both sides stall. */
 const TRAIL_MAX_MS = 40000;
+
+// ── Mastery passive: Unsatiable ──────────────────────────────────────────────
+/**
+ * The chain the whole passive is: one link per landing that was not the floor.
+ *
+ * Six percent a link against a ten-link cap takes the plain reload from 2000 to 800 and the
+ * golden one from 1000 to 400 — a Sand player who keeps moving between shots ends up firing
+ * more than twice as often as one who stands still, which is the same sentence the element's
+ * damage tiers already say and this simply says it again about rate of fire.
+ *
+ * Two things break the chain: falling to the floor off something, and standing on the floor.
+ * The second is not in the spirit of "without falling" so much as in the spirit of the element —
+ * a chain you could bank once and carry all match would be a flat buff, not a combo.
+ */
+const COMBO_MAX = 10;
+const COMBO_STEP = 0.06;
+const COMBO_LAPSE_MS = 5000;
+
+// ── Mastery: Tempered Temptation ─────────────────────────────────────────────
+const GLASS_MS = 16000;
+const GLASS_COOLDOWN_MS = 34000;
+/** Shots per pull while tempered, and while tempered with the golden orb on the barrel. */
+const GLASS_BURST = 3;
+const GLASS_BURST_GOLDEN = 5;
+const GLASS_BURST_GAP_MS = 90;
+const GLASS_SHOT_MULT = 0.5;
+/** How much narrower every slab of a tempered course gets. Landing grace covers the rest. */
+const GLASS_SLAB_SHRINK = 0.86;
+/** How many of a course's middle slabs turn to crumbling glass. */
+const CRUMBLE_CHANCE = 0.5;
+const CRUMBLE_STAND_MS = 2400;
+const CRUMBLE_RESPAWN_MS = 4000;
+/**
+ * The flamethrowers. Equal on and off, so the read is always the same length however long you
+ * have been looking at it, and the wind-up is generous enough that the jump is a decision
+ * rather than a reaction.
+ */
+const FLAME_ON_MS = 1500;
+const FLAME_OFF_MS = 1500;
+const FLAME_WARN_MS = 500;
+const FLAME_HALF_W = 19;
+const FLAME_DAMAGE = 13;
+const FLAME_TICK_MS = 400;
+/** How far under a jet's own height you can still be caught by it. Below that you are clear. */
+const FLAME_Z_REACH = 42;
+const MINI_IDOL_MAX = 4;
+const MINI_IDOL_DAMAGE = 5;
+const MINI_IDOL_SHOT_MS = 1500;
+const MINI_IDOL_R = 52;
+const MINI_IDOL_SPIN = 1.1;
 
 // ── Board ────────────────────────────────────────────────────────────────────
 
@@ -115,6 +203,88 @@ interface Platform {
   seed: number;
   /** Cursed Pyramid only: a slow patrol the platform rides between two points. */
   move: { x0: number; y0: number; x1: number; y1: number; period: number; phase: number } | null;
+  /** Curse of the Challenger (Q+): `scene.time.now` the curse on this slab lifts. 0 = clean. */
+  cursedUntil: number;
+  /** Who laid the curse — they are the one the tick damage is credited to. */
+  cursedBy: Owner;
+  /** Next tick of that curse. */
+  curseTickAt: number;
+  /** Tempered Temptation: this slab has been turned to glass. Cosmetic on its own. */
+  glass: boolean;
+  /** Tempered glass that will break under a standing weight. */
+  crumble: boolean;
+  /** `scene.time.now` somebody first stood on this crumbling slab, or 0 while it is empty. */
+  standSince: number;
+  /**
+   * When a crumbled slab comes back. Non-zero means it is *not on the board* — nothing may land
+   * on it and nothing may stand on it — even though it is still in `platforms`, because the
+   * course chain it belongs to has to keep its shape while one of its steps is away.
+   */
+  goneUntil: number;
+}
+
+/**
+ * A flamethrower laid across the gap between two consecutive slabs of a tempered course.
+ *
+ * Held as the *pair of slabs* rather than as a fixed segment, because a Cursed Pyramid's slabs
+ * slide: a jet baked to coordinates would drift off the gap it was meant to close within a
+ * second. `jetSpan` re-derives the nozzle, the reach and the height from the two ends every
+ * frame, which also gets "a jet whose far slab has crumbled away goes out" for free.
+ *
+ * It burns anything inside the band whose own height is within `FLAME_Z_REACH` under the jet —
+ * exactly the space a jump between those two slabs passes through. The floor underneath a
+ * course is safe; the jets are strung between the pillars, well over your head.
+ */
+interface FlameJet {
+  owner: Owner;
+  courseId: number;
+  from: Platform;
+  to: Platform;
+  /** Offset into the on/off cycle, so a course's jets do not all fire in lockstep. */
+  phase: number;
+  nextTickAt: number;
+  seed: number;
+}
+
+/**
+ * A mini idol: a shard of a Cursed Pyramid claimed by somebody made of glass, orbiting them for
+ * the rest of the match. It is the only thing in the kit with no expiry at all.
+ */
+interface MiniIdol {
+  owner: Owner;
+  /** Starting angle on the orbit. The live angle is this plus elapsed time. */
+  phase: number;
+  nextShotAt: number;
+}
+
+/**
+ * Dune Slicer (Click+): a split in the arena floor where a flintlock ball landed. It belongs to
+ * the shooter but it does not *care* about them — anybody on the floor over an armed one pays.
+ */
+interface Fracture {
+  owner: Owner;
+  x: number;
+  y: number;
+  r: number;
+  armedAt: number;
+  until: number;
+  seed: number;
+  /**
+   * Who is currently stood in it. A fracture bites on the frame you cross into it and then goes
+   * quiet, exactly like the Cursed Pyramid's poison, so walking over one costs 15 and standing
+   * on one costs 15.
+   */
+  inside: Set<Fighter>;
+}
+
+/** Dust Devil (F+): a bounce pad at the far end of a Sandwalk laid on open floor. */
+interface DustDevil {
+  owner: Owner;
+  x: number;
+  y: number;
+  r: number;
+  expiresAt: number;
+  seed: number;
 }
 
 interface Poison {
@@ -230,6 +400,16 @@ interface Side {
    * "have you *entered* one" is the question the bite asks — leaving and returning is two bites.
    */
   poisonIn: Poison | null;
+  /** Curse of the Challenger (Q+): earliest this side may curse another slab. */
+  curseReadyAt: number;
+  /** Unsatiable: consecutive landings that were not the floor. Capped at `COMBO_MAX` for the buff. */
+  combo: number;
+  /** `scene.time.now` this side last had both feet on the floor with nothing under them, or 0. */
+  floorSince: number;
+  /** Tempered Temptation: when the glass runs out. 0 = not tempered. */
+  glassUntil: number;
+  /** When the glass was last cast — the cooldown counts from here, not from when it ended. */
+  glassCastAt: number;
 }
 
 function makeSide(owner: Owner): Side {
@@ -238,6 +418,11 @@ function makeSide(owner: Owner): Side {
     onBridge: null, launchedFromPlatform: false, goldenUntil: 0, nextShotAt: 0,
     pyramidUntil: 0, pyramidX: 0, pyramidY: 0, pyramidNextShotAt: 0, pyramidPlatform: null,
     course: null, aimX: 0, aimY: 0, poisonNextTickAt: 0, poisonIn: null,
+    curseReadyAt: 0,
+    combo: 0, floorSince: 0,
+    // A first match runs the constructor rather than reset(), and readiness is measured against
+    // absolute `scene.time.now` — leaving this at 0 would lock the ability for its first 34s.
+    glassUntil: 0, glassCastAt: -GLASS_COOLDOWN_MS,
   };
 }
 
@@ -269,8 +454,19 @@ export interface SandArenaApi {
   showFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
   setStatusIndicator(id: string, status: CustomStatus | null): void;
+  /** Shop upgrades on the local player. */
+  hasUpgrade(slot: string): boolean;
+  /** Shop upgrades on the online opponent, replayed on this victim-side sim. */
+  hasNpcUpgrade(slot: string): boolean;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
+  /** Sand Mastery: the enhancement bound over an E/R/F/Q slot, for each side. */
+  masteryBindFor(slot: string): string | null;
+  npcMasteryBindFor(slot: string): string | null;
+  /** Online: tell the peer's sim that the local player cast a bindable mastery ability. */
+  broadcastMasteryCast(enhId: string): void;
+  /** Progress toward unlocking Sand Mastery. Recorded whether or not the mastery is on. */
+  recordMasteryStat(key: string, amount: number): void;
 }
 
 // ── SandKit ──────────────────────────────────────────────────────────────────
@@ -297,6 +493,16 @@ export class SandKit implements SummonPurgeTarget {
   private poisons: Poison[] = [];
   private bridges: Bridge[] = [];
   private beams: Beam[] = [];
+  private fractures: Fracture[] = [];
+  private devils: DustDevil[] = [];
+  private jets: FlameJet[] = [];
+  private miniIdols: MiniIdol[] = [];
+  /**
+   * Bumped every `reset()`. The Striker's burst is scheduled with `delayedCall`s, and a match
+   * that ends mid-burst must not have the rest of it land in the next one — every scheduled
+   * shot carries the epoch it was booked under and drops itself if that has moved on.
+   */
+  private burstEpoch = 0;
   private courseSeq = 0;
   /** One at a time, arena-wide: the Final Trail owns the whole room while it runs. */
   private trail: FinalTrail | null = null;
@@ -336,6 +542,16 @@ export class SandKit implements SummonPurgeTarget {
     return owner === 'player' ? this.api.elementId === 'dune' : this.api.npcElementId === 'dune';
   }
 
+  /** Shop upgrades, for whichever side is asking. */
+  private up(owner: Owner, slot: string): boolean {
+    return owner === 'player' ? this.api.hasUpgrade(slot) : this.api.hasNpcUpgrade(slot);
+  }
+
+  /** Both fighters the height sim can carry — a fracture does not care whose it is. */
+  private bothSides(): Fighter[] {
+    return [this.api.player, this.api.npc].filter((f) => this.alive(f));
+  }
+
   private avatar(owner: Owner): SandAvatar | null {
     return owner === 'player' ? this.playerAvatar : this.npcAvatar;
   }
@@ -354,10 +570,19 @@ export class SandKit implements SummonPurgeTarget {
     this.poisons = [];
     this.bridges = [];
     this.beams = [];
+    this.fractures = [];
+    this.devils = [];
+    this.jets = [];
+    this.miniIdols = [];
+    this.burstEpoch++;
     this.trail = null;
     this.courseSeq = 0;
     this.trailSeq = 0;
     this.vizT = 0;
+
+    // The barrier is parked on the Fighter, so it has to be handed back or the next match
+    // starts with a permanently armoured player.
+    for (const f of [this.api.player, this.api.npc]) if (f) f.duneIncomingMult = 1;
 
     this.playerAvatar?.destroy();
     this.npcAvatar?.destroy();
@@ -370,7 +595,31 @@ export class SandKit implements SummonPurgeTarget {
 
     for (const id of [
       'dune-height', 'dune-golden', 'dune-bridge', 'dune-pyramid', 'dune-course', 'dune-trail',
+      'dune-barrier', 'dune-devil', 'dune-combo', 'dune-glass', 'dune-idols',
     ]) this.api.setStatusIndicator(id, null);
+  }
+
+  // ── Mastery: is it on, and where is it bound ───────────────────────────────
+
+  /** Whether this side is a mastered Sand. Everything the mastery does hangs off this. */
+  private mastered(owner: Owner): boolean {
+    if (!this.isSand(owner)) return false;
+    return owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive;
+  }
+
+  /** The slot Tempered Temptation is bound over for this side, or null when it is not bound. */
+  private glassSlot(owner: Owner): 'e' | 'r' | 'f' | 'q' | null {
+    if (!this.mastered(owner)) return null;
+    for (const s of ['e', 'r', 'f', 'q'] as const) {
+      const bind = owner === 'player' ? this.api.masteryBindFor(s) : this.api.npcMasteryBindFor(s);
+      if (bind === 'tempered-temptation') return s;
+    }
+    return null;
+  }
+
+  /** Whether this side is currently made of glass. */
+  private glassOn(owner: Owner): boolean {
+    return this.mastered(owner) && this.now < this.sides[owner].glassUntil;
   }
 
   private ensureLayers(): void {
@@ -386,6 +635,8 @@ export class SandKit implements SummonPurgeTarget {
     let bestZ = -Infinity;
     for (const p of this.platforms) {
       if (p.owner !== owner) continue;
+      // A crumbled slab is off the board even though it is still in the chain.
+      if (p.goneUntil > this.now) continue;
       if (Phaser.Math.Distance.Between(x, y, p.x, p.y) > p.r) continue;
       // Only a platform at or below you can catch you, and of those the highest wins.
       if (p.z > z + grace) continue;
@@ -475,6 +726,9 @@ export class SandKit implements SummonPurgeTarget {
         if (s.onBridge !== deck.bridge && s.vz < -60) {
           this.fx(owner).puff(f.x, f.y + 14, 5, 11, 300, SND.stoneWarmLit);
           Sfx.playAt('land', f.x, { rate: 1.3, volume: 0.4 });
+          // Catching a deck out of the air is a link too — the passive counts landings that
+          // were not the floor, and a deck up in the air is emphatically not the floor.
+          if (deck.z > AIRBORNE_Z) this.addCombo(owner);
         }
         s.z = deck.z;
         s.vz = 0;
@@ -491,8 +745,9 @@ export class SandKit implements SummonPurgeTarget {
     // ── Standing ──
     if (s.standing) {
       const p = s.standing;
-      // Walked off the edge, or the platform under you was destroyed.
-      if (!this.platforms.includes(p) || Phaser.Math.Distance.Between(f.x, f.y, p.x, p.y) > p.r) {
+      // Walked off the edge, or the platform under you was destroyed — or, tempered, gave way.
+      if (!this.platforms.includes(p) || p.goneUntil > this.now
+        || Phaser.Math.Distance.Between(f.x, f.y, p.x, p.y) > p.r) {
         s.standing = null;
         s.fellFromCourse = p.courseId;
         s.vz = 0;
@@ -531,9 +786,29 @@ export class SandKit implements SummonPurgeTarget {
     if (s.z <= 0) {
       s.z = 0;
       s.vz = 0;
+      // Captured before the two flags below are cleared: this is what makes the landing a
+      // *fall* rather than the end of a hop off flat ground — you came down off something.
+      const wasFall = s.fellFromCourse >= 0 || s.launchedFromPlatform;
       s.launchedFromPlatform = false;
-      const punished = this.fallIsPunished(s);
+      // Dust Devil: a column of sand is a soft landing from any height, and then it throws you.
+      const devil = this.devilUnder(owner, f.x, f.y);
+      const punished = this.fallIsPunished(s) && !devil;
       s.fellFromCourse = -1;
+      // Unsatiable: the floor is what breaks the chain, whatever the fall cost.
+      if (wasFall && !devil) this.breakCombo(owner);
+      // Tempered Temptation: while you are glass, the floor is not a 20. It is the end of you.
+      // The devil still catches you — being caught is not landing.
+      if (wasFall && !devil && this.glassOn(owner)) { this.shatterFighter(owner); return; }
+      if (devil) {
+        if (prevZ > AIRBORNE_Z) {
+          this.fx(owner).puff(f.x, f.y + 10, 10, 22, 420, SND.stoneWarmLit);
+          if (owner === 'player') {
+            this.api.showFloatingText(f.x, f.y - 40, 'CAUGHT', this.hex(SND.stoneWarmLit));
+          }
+        }
+        this.launchOffDevil(owner, devil);
+        return;
+      }
       if (punished) {
         // The one price the courses charge. Falling *onto the floor* is the fall; landing on
         // another pillar, however ugly, is a landing.
@@ -563,6 +838,57 @@ export class SandKit implements SummonPurgeTarget {
     return !!c && c.id === s.fellFromCourse && !c.claimed;
   }
 
+  // ── Mastery passive: Unsatiable ────────────────────────────────────────────
+
+  /** Another landing that was not the floor. Only a mastered Sand keeps a chain at all. */
+  private addCombo(owner: Owner): void {
+    if (!this.mastered(owner)) return;
+    const s = this.side(owner);
+    // Ruin's Combo Breaker halves every meter in the game — the chain counter included, and
+    // carried so half the links land rather than half a link landing.
+    if (meterStep(this.fighter(owner), 'chain') <= 0) return;
+    s.combo++;
+    s.floorSince = 0;
+    // Announce the links that actually change the number: every one up to the cap, then silence.
+    if (owner === 'player' && s.combo <= COMBO_MAX) {
+      const f = this.fighter(owner);
+      this.api.showFloatingText(f.x, f.y - 54, `CHAIN ×${s.combo}`,
+        this.hex(s.combo >= COMBO_MAX ? SND.goldHot : SND.stoneWarmLit));
+      if (s.combo === COMBO_MAX) Sfx.playAt('reward-big', f.x, { rate: 1.35, volume: 0.5 });
+    }
+  }
+
+  private breakCombo(owner: Owner): void {
+    const s = this.side(owner);
+    if (s.combo === 0) return;
+    const had = s.combo;
+    s.combo = 0;
+    if (owner === 'player' && this.mastered(owner) && had > 1) {
+      const f = this.fighter(owner);
+      this.api.showFloatingText(f.x, f.y - 54, 'CHAIN LOST', this.hex(SND.expire));
+    }
+  }
+
+  /**
+   * The chain also lapses if you simply stand on the floor. A combo you could bank once and
+   * carry for the rest of the match would be a flat buff wearing a combo's clothes; this keeps
+   * "the reload is faster because you are moving" true in the present tense.
+   */
+  private updateCombo(owner: Owner): void {
+    const s = this.side(owner);
+    if (s.combo === 0) return;
+    const grounded = s.standing === null && s.onBridge === null && s.z <= AIRBORNE_Z;
+    if (!grounded) { s.floorSince = 0; return; }
+    if (s.floorSince === 0) { s.floorSince = this.now; return; }
+    if (this.now - s.floorSince >= COMBO_LAPSE_MS) this.breakCombo(owner);
+  }
+
+  /** How much of the reload the chain is currently taking off, 0–0.6. */
+  private comboCut(owner: Owner): number {
+    if (!this.mastered(owner)) return 0;
+    return Math.min(COMBO_MAX, this.side(owner).combo) * COMBO_STEP;
+  }
+
   private landOn(owner: Owner, p: Platform): void {
     const s = this.side(owner);
     const f = this.fighter(owner);
@@ -574,6 +900,7 @@ export class SandKit implements SummonPurgeTarget {
     s.launchedFromPlatform = false;
     this.fx(owner).puff(f.x, f.y + 14, 6, 13, 320, SND.stoneWarmLit);
     Sfx.playAt('land', f.x, { rate: 1.2, volume: 0.45 });
+    this.addCombo(owner);
 
     // A Final Trail slab belongs to a lane, not to a course — climbing one is progress toward
     // the crown, and standing on the crown's own slab is the win.
@@ -677,6 +1004,9 @@ export class SandKit implements SummonPurgeTarget {
       this.api.showFloatingText(f.x, f.y - 46,
         long ? 'CURSED PYRAMID' : 'SANDSTONE RUINS', this.hex(long ? SND.gold : SND.stoneWarmLit));
     }
+    // Raised by somebody made of glass, it comes out of the floor already tempered. Casting
+    // the ability is not the only way a course gets flames on it — being glass is.
+    if (this.glassOn(owner)) this.temperCourse(owner, c);
   }
 
   private addPlatform(
@@ -684,7 +1014,11 @@ export class SandKit implements SummonPurgeTarget {
     x: number, y: number, r: number, z: number,
     grey: boolean, goal: boolean, move: Platform['move'],
   ): void {
-    this.platforms.push({ owner, courseId, idx, x, y, r, z, grey, goal, seed: Math.random() * 999, move });
+    this.platforms.push({
+      owner, courseId, idx, x, y, r, z, grey, goal, seed: Math.random() * 999, move,
+      cursedUntil: 0, cursedBy: owner, curseTickAt: 0,
+      glass: false, crumble: false, standSince: 0, goneUntil: 0,
+    });
     this.fx(owner).rise(x, y, r, z, grey);
   }
 
@@ -699,6 +1033,7 @@ export class SandKit implements SummonPurgeTarget {
       this.platforms.splice(i, 1);
     }
     this.poisons = this.poisons.filter((p) => p.courseId !== c.id);
+    this.jets = this.jets.filter((j) => j.courseId !== c.id);
     this.side(owner).course = null;
     this.dropOrphanedRiders();
   }
@@ -708,6 +1043,19 @@ export class SandKit implements SummonPurgeTarget {
     c.claimed = true;
     const f = this.fighter(owner);
     const time = this.now;
+    // Doomed Remains: captured *before* the teardown below, in climbing order, so the pillars
+    // go off in the order you went up them rather than in whatever order the array happens
+    // to hold. The idol's slab is exempt — it is not coming down, it is standing up.
+    const doomed = this.up(owner, 'e')
+      ? this.platforms
+        .filter((p) => p.courseId === c.id && p !== goal)
+        .sort((a, b) => a.idx - b.idx)
+        .map((p) => ({ x: p.x, y: p.y }))
+      : [];
+
+    if (owner === 'player') {
+      this.api.recordMasteryStat(c.kind === 'ruins' ? 'ruinsClaimed' : 'pyramidsClaimed', 1);
+    }
 
     if (c.kind === 'ruins') {
       const s = this.side(owner);
@@ -718,6 +1066,7 @@ export class SandKit implements SummonPurgeTarget {
       if (owner === 'player') this.api.showFloatingText(f.x, f.y - 46, 'GOLDEN SAND', this.hex(SND.gold));
       // The course has paid out; it goes back into the floor rather than cluttering the arena.
       this.api.scene.time.delayedCall(140, () => { if (this.side(owner).course === c) this.clearCourse(owner, true); });
+      this.doomRemains(owner, doomed, 140);
       return;
     }
 
@@ -742,8 +1091,41 @@ export class SandKit implements SummonPurgeTarget {
       this.platforms.splice(i, 1);
     }
     this.poisons = this.poisons.filter((p) => p.courseId !== c.id);
+    this.jets = this.jets.filter((j) => j.courseId !== c.id);
     s.course = null;
     this.dropOrphanedRiders();
+    this.doomRemains(owner, doomed, 0);
+    // Tempered Temptation: a pyramid claimed while you are glass leaves a shard behind. The
+    // idol above expires in fifteen seconds; this one does not expire at all.
+    if (this.glassOn(owner)) this.spawnMiniIdol(owner);
+  }
+
+  // ── Doomed Remains (E+) ────────────────────────────────────────────────────
+
+  /**
+   * Every pillar of a finished course goes off where it stood, one after another. The stagger
+   * is the ability: nine blasts walking across the arena in the order you climbed them is a
+   * moving wall, and a single simultaneous detonation would just be one big circle.
+   */
+  private doomRemains(owner: Owner, spots: { x: number; y: number }[], delay: number): void {
+    if (!spots.length) return;
+    if (owner === 'player') {
+      const f = this.fighter(owner);
+      this.api.showFloatingText(f.x, f.y - 62, 'DOOMED REMAINS', this.hex(SND.lavaHot));
+    }
+    spots.forEach((spot, i) => {
+      this.api.scene.time.delayedCall(delay + i * REMAINS_STAGGER_MS, () => {
+        const fx = this.fx(owner);
+        fx.blast(spot.x, spot.y, REMAINS_RADIUS, SND.lava);
+        fx.puff(spot.x, spot.y, 12, 26, 520, SND.dark);
+        Sfx.playAt('stone-slam', spot.x, { rate: 0.85, volume: 0.55 });
+        for (const t of this.targetsOf(owner)) {
+          if (Phaser.Math.Distance.Between(spot.x, spot.y, t.x, t.y) > REMAINS_RADIUS) continue;
+          t.takeDamage(REMAINS_DAMAGE);
+          this.api.spawnHitFlash(t.x, t.y, SND.lavaHot);
+        }
+      });
+    });
   }
 
   /**
@@ -791,7 +1173,14 @@ export class SandKit implements SummonPurgeTarget {
   // ── Sand Striker ───────────────────────────────────────────────────────────
 
   private reloadMs(owner: Owner): number {
-    return this.now < this.side(owner).goldenUntil ? RELOAD_GOLDEN_MS : RELOAD_MS;
+    const base = this.now < this.side(owner).goldenUntil ? RELOAD_GOLDEN_MS : RELOAD_MS;
+    return base * (1 - this.comboCut(owner));
+  }
+
+  /** Tempered Temptation: how many balls come out per pull. One, unless you are glass. */
+  private burstCount(owner: Owner): number {
+    if (!this.glassOn(owner)) return 1;
+    return this.now < this.side(owner).goldenUntil ? GLASS_BURST_GOLDEN : GLASS_BURST;
   }
 
   /**
@@ -815,6 +1204,36 @@ export class SandKit implements SummonPurgeTarget {
     s.aimY = ty;
     if (this.now < s.nextShotAt) return;
     s.nextShotAt = this.now + this.reloadMs(owner);
+
+    const shots = this.burstCount(owner);
+    // A burst is worth the same as the single shot it replaced, spread over five: half damage
+    // apiece with three balls is 1.5×, with five it is 2.5× — which is what the golden orb is
+    // for. The rest of the burst tracks the cursor, so it is a stream and not a shotgun.
+    const mult = shots > 1 ? GLASS_SHOT_MULT : 1;
+    this.fireShot(owner, tx, ty, mult, true);
+    if (shots <= 1) return;
+    const epoch = this.burstEpoch;
+    for (let i = 1; i < shots; i++) {
+      this.api.scene.time.delayedCall(i * GLASS_BURST_GAP_MS, () => {
+        if (epoch !== this.burstEpoch) return;
+        const side = this.side(owner);
+        this.fireShot(owner, side.aimX, side.aimY, mult, false);
+      });
+    }
+  }
+
+  /**
+   * One ball out of the barrel. Split out of `doStriker` so a tempered burst is genuinely the
+   * same shot fired three or five times rather than a second implementation of the same gun.
+   *
+   * `first` is what carries the parts of a pull that must happen once however many balls it
+   * throws: the reload gate above, and Dune Slicer's crack in the floor — five fractures per
+   * click would empty the twenty-six-slot ring in five presses.
+   */
+  private fireShot(owner: Owner, tx: number, ty: number, mult: number, first: boolean): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
 
     const av = this.avatar(owner);
     // Two different angles, and conflating them is what makes a hitscan weapon "sometimes miss".
@@ -855,15 +1274,84 @@ export class SandKit implements SummonPurgeTarget {
       endY = my + Math.sin(ang) * bestT;
     }
     this.beams.push({ owner, x1: mx, y1: my, x2: endX, y2: endY, bornAt: this.now, golden, seed: Math.random() * 999 });
-    Sfx.playAt('musket', f.x, { rate: golden ? 1.15 : 0.95, volume: 0.75 });
+    Sfx.playAt('musket', f.x, { rate: (golden ? 1.15 : 0.95) * (mult < 1 ? 1.3 : 1), volume: 0.75 });
 
     if (hitFighter) {
-      const dmg = this.shotDamage(owner);
-      hitFighter.takeDamage(dmg);
+      const full = this.shotDamage(owner);
+      hitFighter.takeDamage(full * mult);
       this.api.spawnHitFlash(hitFighter.x, hitFighter.y, golden ? SND.gold : SND.sand);
       this.fx(owner).ping(endX, endY, 20, golden ? SND.gold : SND.sand);
+      // Sand Mastery: the top of the curve, and only the top of it — in the air, off something
+      // you built. A tempered burst still counts, because the tier is about where you fired
+      // from and the halving is about how many balls you got for it.
+      if (owner === 'player' && full >= SHOT_BASE + SHOT_BONUS_PLATFORM + SHOT_BONUS_AIR) {
+        this.api.recordMasteryStat('fullPowerShots', 1);
+      }
     } else {
       this.fx(owner).puff(endX, endY, 5, 9, 300);
+    }
+
+    // Dune Slicer: the ball splits the floor where it stopped.
+    if (first && this.up(owner, 'click')) this.addFracture(owner, endX, endY);
+  }
+
+  // ── Dune Slicer (Click+) ───────────────────────────────────────────────────
+
+  /**
+   * A fracture where a ball landed. Dormant for two seconds, then live for the rest of its
+   * life — and live means live for everybody, the shooter included. The only way past one is
+   * the way past everything else in this kit: be off the floor.
+   */
+  private addFracture(owner: Owner, x: number, y: number): void {
+    this.fractures.push({
+      owner,
+      x: Phaser.Math.Clamp(x, this.left, this.right),
+      y: Phaser.Math.Clamp(y, this.top, this.bottom),
+      r: FRACTURE_R,
+      armedAt: this.now + FRACTURE_ARM_MS,
+      until: this.now + FRACTURE_ARM_MS + FRACTURE_LIFE_MS,
+      seed: Math.random() * 999,
+      inside: new Set(),
+    });
+    while (this.fractures.length > MAX_FRACTURES) this.fractures.shift();
+    this.fx(owner).puff(x, y, 6, 14, 340, SND.shadow);
+  }
+
+  /**
+   * Fractures bite on the frame a body crosses into an armed one, exactly like the poison —
+   * so walking across one costs the same as standing in it, and neither is free.
+   */
+  private updateFractures(): void {
+    const time = this.now;
+    for (let i = this.fractures.length - 1; i >= 0; i--) {
+      const fr = this.fractures[i];
+      if (time >= fr.until) {
+        this.fx(fr.owner).puff(fr.x, fr.y, 5, 12, 380, SND.dark);
+        this.fractures.splice(i, 1);
+        continue;
+      }
+      if (time < fr.armedAt) continue;
+
+      const still = new Set<Fighter>();
+      for (const t of this.bothSides()) {
+        // Height is immunity. The Sand player who cut the floor can jump their own work.
+        const o = this.ownerOf(t);
+        const z = o ? this.sides[o].z : 0;
+        const airborne = o
+          ? (z > AIRBORNE_Z || this.sides[o].standing !== null || this.sides[o].onBridge !== null)
+          : false;
+        if (airborne) continue;
+        if (Phaser.Math.Distance.Between(fr.x, fr.y, t.x, t.y) > fr.r) continue;
+        still.add(t);
+        if (fr.inside.has(t)) continue;
+        // A shooter walking into their own crack is being careless, not being attacked.
+        t.takeDamage(FRACTURE_DAMAGE, { selfInflicted: o === fr.owner });
+        this.api.spawnHitFlash(t.x, t.y, SND.lavaHot);
+        this.fx(fr.owner).ping(t.x, t.y, 20, SND.lava);
+        Sfx.playAt('stone-slam', t.x, { rate: 1.35, volume: 0.5 });
+        if (o === 'player') this.api.showFloatingText(t.x, t.y - 40, 'FRACTURE', this.hex(SND.lava));
+      }
+      fr.inside = still;
     }
   }
 
@@ -939,11 +1427,24 @@ export class SandKit implements SummonPurgeTarget {
     });
     this.dropOrphanedRiders();
 
+    // Dust Devil: only the floor cast gets one. A bridge that already climbs somewhere does not
+    // need a launcher at the far end of it, and putting one on a pillar would let the deck and
+    // the devil compound into a jump nothing on the board can be balanced against.
+    this.devils = this.devils.filter((d) => d.owner !== owner);
+    if (!dest && this.up(owner, 'f')) {
+      this.devils.push({
+        owner, x: x2, y: y2, r: DEVIL_R,
+        expiresAt: this.now + BRIDGE_LIFE_MS, seed: Math.random() * 999,
+      });
+      this.fx(owner).puff(x2, y2, 10, 22, 520, SND.gold);
+    }
+
     this.avatar(owner)?.play('sweep', Math.atan2(y2 - y1, x2 - x1));
     this.fx(owner).puff((x1 + x2) / 2, (y1 + y2) / 2, 14, 26, 460, SND.stoneWarmLit);
     Sfx.playAt('stone-rise', f.x, { rate: 1.25, volume: 0.7 });
     if (owner === 'player') {
-      this.api.showFloatingText(f.x, f.y - 46, dest ? 'SANDWALK' : 'SAND CONVEYOR',
+      this.api.showFloatingText(f.x, f.y - 46,
+        dest ? 'SANDWALK' : (this.up(owner, 'f') ? 'DUST DEVIL' : 'SAND CONVEYOR'),
         this.hex(SND.stoneWarmLit));
     }
   }
@@ -959,6 +1460,46 @@ export class SandKit implements SummonPurgeTarget {
       dropped = true;
     }
     if (dropped) this.dropOrphanedRiders();
+  }
+
+  // ── Dust Devil (F+) ────────────────────────────────────────────────────────
+
+  /** The devil a side is standing over, or null. Only your own catches you. */
+  private devilUnder(owner: Owner, x: number, y: number): DustDevil | null {
+    for (const d of this.devils) {
+      if (d.owner !== owner) continue;
+      if (Phaser.Math.Distance.Between(x, y, d.x, d.y) <= d.r) return d;
+    }
+    return null;
+  }
+
+  /**
+   * The throw. Roughly two and a half times a standing jump's apex and much longer in the air,
+   * which is the point of the upgrade: a Sandwalk on open floor stops being a consolation cast
+   * and becomes the launcher you build the rest of the course around.
+   */
+  private launchOffDevil(owner: Owner, d: DustDevil): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    s.z = 1;
+    s.vz = DEVIL_JUMP_V;
+    s.standing = null;
+    s.onBridge = null;
+    s.fellFromCourse = -1;
+    s.launchedFromPlatform = false;
+    this.fx(owner).puff(d.x, d.y, 14, 30, 520, SND.stoneWarmLit);
+    Sfx.playAt('jump', f.x, { rate: 0.75, volume: 0.7 });
+    if (owner === 'player') this.api.showFloatingText(f.x, f.y - 46, 'DUST DEVIL', this.hex(SND.gold));
+  }
+
+  private updateDevils(): void {
+    const time = this.now;
+    for (let i = this.devils.length - 1; i >= 0; i--) {
+      const d = this.devils[i];
+      if (time < d.expiresAt) continue;
+      this.fx(d.owner).puff(d.x, d.y, 12, 26, 480, SND.deep);
+      this.devils.splice(i, 1);
+    }
   }
 
   /**
@@ -1039,11 +1580,18 @@ export class SandKit implements SummonPurgeTarget {
 
     // Clear the room. Half-built courses, decks and idols would all be cover somebody did not
     // earn inside a race, and a leftover slab in a lane is a step nobody generated.
+    //
+    // The glass goes with them, and that is a rule rather than a tidy-up: a lane is not a course
+    // you built, it is a race the ability puts *both* fighters into with its own price and its
+    // own guarantees. Salting it with flamethrowers a committed bot cannot read, and making the
+    // rival's every slip fatal, would turn a symmetrical bet into an execution.
     for (const o of ['player', 'npc'] as Owner[]) {
       this.clearCourse(o, true);
       this.sides[o].pyramidUntil = 0;
       this.sides[o].pyramidPlatform = null;
+      this.endGlass(o, 'THE RACE');
     }
+    this.jets = [];
     this.bridges = [];
     this.platforms = this.platforms.filter((p) => {
       this.fx(p.owner).collapse(p.x, p.y, p.z, p.r, p.grey);
@@ -1109,6 +1657,8 @@ export class SandKit implements SummonPurgeTarget {
       const p: Platform = {
         owner, courseId, idx: platforms.length, x: px, y: py, r, z: pz,
         grey: platforms.length === 0, goal, seed: Math.random() * 999, move,
+        cursedUntil: 0, cursedBy: owner, curseTickAt: 0,
+        glass: false, crumble: false, standSince: 0, goneUntil: 0,
       };
       platforms.push(p);
       this.platforms.push(p);
@@ -1181,6 +1731,7 @@ export class SandKit implements SummonPurgeTarget {
     this.fx(this.ownerOf(lane.fighter) ?? 'player').blast(lane.fighter.x, lane.fighter.y, 110, SND.goldHot);
     Sfx.playAt('reward-big', lane.fighter.x, { rate: 1, volume: 1 });
     this.api.showFloatingText(lane.fighter.x, lane.fighter.y - 52, 'CROWNED', this.hex(SND.gold));
+    if (lane.fighter === this.api.player) this.api.recordMasteryStat('trailWins', 1);
 
     for (const other of tr.lanes) {
       if (other === lane) continue;
@@ -1273,6 +1824,69 @@ export class SandKit implements SummonPurgeTarget {
       // floor with nothing under you. Both are the same 70.
       if (s.z <= tr.lavaZ) { this.loseTrail(lane, 'THE LAVA'); return; }
       if (!s.standing && !s.onBridge && s.z <= 0) { this.loseTrail(lane, 'FELL'); return; }
+    }
+  }
+
+  // ── Curse of the Challenger (Q+) ───────────────────────────────────────────
+
+  /**
+   * Reach across the lane divider and curse a slab under the cursor.
+   *
+   * The rival's lane only — a race you could sabotage your own half of is not one — and the
+   * slab has to be one you actually clicked, so this is an aimed ability rather than a free
+   * eight-second tax on whoever happens to be climbing.
+   */
+  private tryCurse(owner: Owner, tx: number, ty: number): void {
+    const tr = this.trail;
+    if (!tr || tr.endsAt !== null) return;
+    const s = this.side(owner);
+    const me = this.fighter(owner);
+    if (this.now < s.curseReadyAt) return;
+
+    const rival = tr.lanes.find((l) => l.fighter !== me);
+    if (!rival) return;
+
+    // Nearest slab in their lane to the cursor, within a generous grab radius of it.
+    let best: Platform | null = null;
+    let bestD = Infinity;
+    for (const p of rival.platforms) {
+      if (!this.platforms.includes(p)) continue;
+      const d = Phaser.Math.Distance.Between(tx, ty, p.x, p.y);
+      if (d > p.r + 26 || d >= bestD) continue;
+      bestD = d;
+      best = p;
+    }
+    if (!best) return;
+
+    s.curseReadyAt = this.now + CURSE_COOLDOWN_MS;
+    best.cursedUntil = this.now + CURSE_MS;
+    best.cursedBy = owner;
+    best.curseTickAt = this.now;
+    this.fx(owner).blast(best.x, best.y, 54, SND.maw);
+    Sfx.playAt('holy-chord', best.x, { rate: 0.45, volume: 0.7 });
+    if (owner === 'player') {
+      this.api.showFloatingText(best.x, best.y - 40, 'CURSED', '#c48bff');
+    }
+  }
+
+  /** The tick a cursed slab charges whoever is standing on it. */
+  private updateCurses(): void {
+    const time = this.now;
+    for (const p of this.platforms) {
+      if (p.cursedUntil <= time) continue;
+      for (const o of ['player', 'npc'] as Owner[]) {
+        const s = this.sides[o];
+        if (s.standing !== p) continue;
+        if (o === p.cursedBy) continue;
+        if (time < p.curseTickAt) continue;
+        p.curseTickAt = time + CURSE_TICK_MS;
+        const f = this.fighter(o);
+        if (!this.alive(f)) continue;
+        f.takeDamage(CURSE_TICK_DAMAGE);
+        this.api.spawnHitFlash(f.x, f.y, 0xc48bff);
+        this.fx(p.cursedBy).ping(f.x, f.y, 18, SND.maw);
+        if (o === 'player') this.api.showFloatingText(f.x, f.y - 44, 'CURSED', '#c48bff');
+      }
     }
   }
 
@@ -1437,14 +2051,33 @@ export class SandKit implements SummonPurgeTarget {
     // Sandwalk because a bridge is a legitimate line through a course.
     if (this.trail) {
       if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('dune-sandwalk', ctx());
+      // Curse of the Challenger: the one thing the click is allowed to do up here, and it is
+      // not a shot — it is a hand reaching across the divider onto their course.
+      if (this.up('player', 'q') && this.api.pointerWasDown) this.tryCurse('player', mouseX, mouseY);
       return;
     }
 
+    // Sand Mastery: whichever slot Tempered Temptation was dragged over answers to it instead
+    // of to the base ability. Its own cooldown is private (the enhancement id is not in
+    // `element.abilities`, so `castAbility` would find nothing to stamp), which is why the cast
+    // has to be broadcast by hand for the online sim.
+    const glassSlot = this.glassSlot('player');
+    const key = (slot: 'e' | 'r' | 'f' | 'q'): boolean => {
+      const k = slot === 'e' ? this.api.eKey : slot === 'r' ? this.api.rKey
+        : slot === 'f' ? this.api.fKey : this.api.qKey;
+      if (!Phaser.Input.Keyboard.JustDown(k)) return false;
+      if (glassSlot !== slot) return true;
+      // Only broadcast a press that actually landed — a refused cast replayed on the peer's sim
+      // would leave them tempered while we are not, and every fall after that would disagree.
+      if (this.tryGlass('player')) this.api.broadcastMasteryCast('tempered-temptation');
+      return false;
+    };
+
     if (this.api.pointerWasDown && time >= s.nextShotAt) p.castAbility('dune-striker', ctx());
-    if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('dune-ruins', ctx());
-    if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('dune-pyramid', ctx());
-    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('dune-sandwalk', ctx());
-    if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('dune-final-trail', ctx());
+    if (key('e')) p.castAbility('dune-ruins', ctx());
+    if (key('r')) p.castAbility('dune-pyramid', ctx());
+    if (key('f')) p.castAbility('dune-sandwalk', ctx());
+    if (key('q')) p.castAbility('dune-final-trail', ctx());
   }
 
   // ── NPC autopilot ──────────────────────────────────────────────────────────
@@ -1470,6 +2103,9 @@ export class SandKit implements SummonPurgeTarget {
     // it happens to be touching, which is nothing at all while it is in the air.
     const want = this.platforms.find((p) => p.courseId === c.id && p.idx === c.reached + 1);
     if (!want) return;
+    // Its next step is a tempered slab that is currently away. Wait for it rather than walking
+    // at the hole and throwing itself through — the slab is coming back in four seconds.
+    if (want.goneUntil > this.now) { this.body(f).setVelocity(0, 0); return; }
 
     const d = Phaser.Math.Distance.Between(f.x, f.y, want.x, want.y);
     const ang = Math.atan2(want.y - f.y, want.x - f.x);
@@ -1481,6 +2117,347 @@ export class SandKit implements SummonPurgeTarget {
     else if (grounded && d < 70) this.tryJump('npc');
   }
 
+  // ── Sand Barrier (R+) ──────────────────────────────────────────────────────
+
+  /**
+   * The veil, written onto the Fighter every frame off the state of the course rather than
+   * latched on a timer — the moment the course comes down the armour goes with it, which is
+   * what keeps "while parkouring" honest.
+   */
+  private barrierStrength(owner: Owner): number {
+    if (!this.isSand(owner) || !this.up(owner, 'r')) return 0;
+    const s = this.side(owner);
+    const golden = this.now < s.goldenUntil;
+    const c = s.course;
+    const onCourse = (!!c && !c.claimed) || this.trailInvolves(owner);
+    if (golden) return 1 - BARRIER_GOLDEN_MULT;
+    return onCourse ? 1 - BARRIER_MULT : 0;
+  }
+
+  private updateBarrier(): void {
+    for (const o of ['player', 'npc'] as Owner[]) {
+      const f = this.fighter(o);
+      if (!f) continue;
+      const k = this.barrierStrength(o);
+      f.duneIncomingMult = k > 0 ? 1 - k : 1;
+    }
+  }
+
+  // ── Mastery: Tempered Temptation ───────────────────────────────────────────
+
+  /**
+   * Temper, or temper back down.
+   *
+   * The re-cast is not a courtesy. Sixteen seconds during which a fall kills you is a long time
+   * to be locked into if the course you meant to run has already come down, so the ability that
+   * puts you in the state is also the one that takes you out of it — at no refund, because the
+   * cooldown counts from the cast rather than from the end.
+   */
+  private tryGlass(owner: Owner): boolean {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (!this.alive(f) || !this.mastered(owner)) return false;
+    if (this.glassOn(owner)) { this.endGlass(owner, 'TEMPERED DOWN'); return true; }
+    if (this.now - s.glassCastAt < GLASS_COOLDOWN_MS) return false;
+    s.glassCastAt = this.now;
+    s.glassUntil = this.now + GLASS_MS;
+
+    this.avatar(owner)?.play('flex');
+    this.fx(owner).shatter(f.x, f.y, 46, true);
+    Sfx.playAt('crystal-shatter', f.x, { rate: 0.7, volume: 0.9 });
+    Sfx.playAt('holy-chord', f.x, { rate: 1.4, volume: 0.6 });
+    if (owner === 'player') {
+      this.api.showFloatingText(f.x, f.y - 54, 'TEMPERED', this.hex(SND.glassLit));
+    }
+
+    // Every course standing on the board, whoever raised it — the desert turns to glass, not
+    // just your half of it. A course of theirs with flames on it is an attack; a course of
+    // yours with flames on it is the price of the burst.
+    this.temperAllCourses();
+    return true;
+  }
+
+  /**
+   * Ruin Mastery — Second Skin. Tempered Temptation does not buff the sand — it replaces what
+   * the sand *is*. A body made of glass fires differently, lands differently and tempers every
+   * course it raises, which is a form rather than a window. `endGlass` is the kit's own way out
+   * of it.
+   */
+  revertForms(f: Fighter): string[] {
+    const owner: Owner | null = f === this.api.player ? 'player'
+      : f === this.api.npc ? 'npc' : null;
+    if (!owner || this.sides[owner].glassUntil === 0) return [];
+    this.endGlass(owner, '🪟 SHATTERED OUT OF IT');
+    return ['Tempered'];
+  }
+
+  private endGlass(owner: Owner, reason: string): void {
+    const s = this.side(owner);
+    if (s.glassUntil === 0) return;
+    s.glassUntil = 0;
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    this.fx(owner).puff(f.x, f.y + 6, 12, 26, 460, SND.glass);
+    Sfx.playAt('crystal-shatter', f.x, { rate: 1.5, volume: 0.5 });
+    if (owner === 'player') this.api.showFloatingText(f.x, f.y - 50, reason, this.hex(SND.glass));
+  }
+
+  /** Every live course on the board goes to glass. */
+  private temperAllCourses(): void {
+    for (const o of ['player', 'npc'] as Owner[]) {
+      const c = this.sides[o].course;
+      if (c && !c.claimed) this.temperCourse(o, c);
+    }
+  }
+
+  /**
+   * One course, tempered.
+   *
+   * Three things happen to it and they are deliberately different kinds of cruel: every slab
+   * gets narrower (a landing you used to make comfortably you now have to mean), half of the
+   * middle ones become glass that gives way under a standing weight (you cannot wait anywhere),
+   * and a flamethrower opens across every gap (you cannot go whenever you like). None of them
+   * touches the *geometry* the generator guaranteed, so a tempered course is still clearable —
+   * it just stops forgiving anything.
+   *
+   * The starter block and the prize at the end are exempt from the crumbling. A course whose
+   * first step can vanish is not a course, and a goal that drops you as you take it would be
+   * taking the reward back with the same hand that gave it.
+   */
+  private temperCourse(owner: Owner, c: Course): void {
+    const mine = this.platforms.filter((p) => p.courseId === c.id).sort((a, b) => a.idx - b.idx);
+    if (!mine.length) return;
+
+    for (const p of mine) {
+      if (p.glass) continue;
+      p.glass = true;
+      p.r = Math.max(20, p.r * GLASS_SLAB_SHRINK);
+      if (!p.grey && !p.goal && p.idx > 0 && Math.random() < CRUMBLE_CHANCE) p.crumble = true;
+      this.fx(owner).shatter(p.x, p.y, p.r * 0.9);
+    }
+
+    // One jet per gap, each a beat out of phase with the last so a course is a rhythm to read
+    // rather than a single wall that opens and shuts.
+    this.jets = this.jets.filter((j) => j.courseId !== c.id);
+    for (let i = 0; i < mine.length - 1; i++) {
+      this.jets.push({
+        owner, courseId: c.id, from: mine[i], to: mine[i + 1],
+        phase: i * 620 + Math.random() * 200,
+        nextTickAt: 0, seed: Math.random() * 999,
+      });
+    }
+
+    Sfx.playAt('crystal-shatter', mine[0].x, { rate: 0.85, volume: 0.7 });
+    Sfx.playAt('flame-burst', mine[0].x, { rate: 0.7, volume: 0.6 });
+  }
+
+  /**
+   * A jet's live geometry, or null when it has nothing to burn between.
+   *
+   * The nozzle sits just off the lip of the near slab and the reach stops just short of the far
+   * one, so both ends of the gap are safe to stand on and only the air between them is not.
+   */
+  private jetSpan(j: FlameJet): { x1: number; y1: number; x2: number; y2: number; z: number } | null {
+    const a = j.from;
+    const b = j.to;
+    if (!this.platforms.includes(a) || !this.platforms.includes(b)) return null;
+    if (a.goneUntil > this.now || b.goneUntil > this.now) return null;
+    const d = Phaser.Math.Distance.Between(a.x, a.y, b.x, b.y);
+    const near = a.r + 6;
+    const far = d - b.r - 4;
+    if (far - near < 18) return null;
+    const ang = Math.atan2(b.y - a.y, b.x - a.x);
+    return {
+      x1: a.x + Math.cos(ang) * near, y1: a.y + Math.sin(ang) * near,
+      x2: a.x + Math.cos(ang) * far, y2: a.y + Math.sin(ang) * far,
+      z: Math.max(a.z, b.z),
+    };
+  }
+
+  /** 0 while a jet is out, 1 while it is burning. The wind-up is `jetWarm`. */
+  private jetOn(j: FlameJet): boolean {
+    return ((this.now + j.phase) % (FLAME_ON_MS + FLAME_OFF_MS)) < FLAME_ON_MS;
+  }
+
+  /** 0–1 through the last half-second before a jet lights. The tell you jump on. */
+  private jetWarm(j: FlameJet): number {
+    const cycle = FLAME_ON_MS + FLAME_OFF_MS;
+    const at = (this.now + j.phase) % cycle;
+    if (at < FLAME_ON_MS) return 0;
+    return Phaser.Math.Clamp((at - (cycle - FLAME_WARN_MS)) / FLAME_WARN_MS, 0, 1);
+  }
+
+  private updateJets(): void {
+    const time = this.now;
+    for (let i = this.jets.length - 1; i >= 0; i--) {
+      const j = this.jets[i];
+      // The course it belonged to is gone: so is it.
+      if (!this.platforms.includes(j.from) && !this.platforms.includes(j.to)) {
+        this.jets.splice(i, 1);
+        continue;
+      }
+      if (!this.jetOn(j)) continue;
+      const span = this.jetSpan(j);
+      if (!span) continue;
+      if (time < j.nextTickAt) continue;
+
+      const dx = span.x2 - span.x1;
+      const dy = span.y2 - span.y1;
+      const len2 = dx * dx + dy * dy;
+      if (len2 < 1) continue;
+
+      let bit = false;
+      for (const t of this.bothSides()) {
+        const o = this.ownerOf(t);
+        // The floor is under the flames, not in them — anything the height sim does not carry
+        // is on the floor by definition and is never caught.
+        const z = o ? this.sides[o].z : 0;
+        if (z < span.z - FLAME_Z_REACH) continue;
+        const k = Phaser.Math.Clamp(((t.x - span.x1) * dx + (t.y - span.y1) * dy) / len2, 0, 1);
+        const px = span.x1 + dx * k;
+        const py = span.y1 + dy * k;
+        if (Phaser.Math.Distance.Between(t.x, t.y, px, py) > FLAME_HALF_W + 8) continue;
+        bit = true;
+        // Your own course's flames are a cost you chose; somebody else's are an attack.
+        t.takeDamage(FLAME_DAMAGE, { selfInflicted: o === j.owner });
+        this.api.spawnHitFlash(t.x, t.y, SND.flameHot);
+        this.fx(j.owner).ping(t.x, t.y, 20, SND.flame);
+        if (o === 'player') this.api.showFloatingText(t.x, t.y - 40, 'SCORCHED', this.hex(SND.flame));
+      }
+      if (bit) {
+        j.nextTickAt = time + FLAME_TICK_MS;
+        Sfx.playAt('flame-burst', span.x1, { rate: 1.2, volume: 0.4 });
+      }
+    }
+  }
+
+  /**
+   * Tempered glass under a standing weight.
+   *
+   * The clock only runs while somebody is actually on the slab and resets the moment they leave,
+   * so a crumbling step is a *pace* rule rather than a timer: you may cross it as often as you
+   * like, you simply may not stop on it. It comes back four seconds later in the same place,
+   * because a course that permanently loses steps stops being clearable halfway through.
+   */
+  private updateCrumbles(): void {
+    const time = this.now;
+    let dropped = false;
+    for (const p of this.platforms) {
+      if (!p.crumble) continue;
+      if (p.goneUntil > 0 && time >= p.goneUntil) {
+        p.goneUntil = 0;
+        p.standSince = 0;
+        this.fx(p.owner).rise(p.x, p.y, p.r, p.z, false);
+        continue;
+      }
+      if (p.goneUntil > 0) continue;
+
+      const occupied = this.sides.player.standing === p || this.sides.npc.standing === p;
+      if (!occupied) { p.standSince = 0; continue; }
+      if (p.standSince === 0) { p.standSince = time; continue; }
+      if (time - p.standSince < CRUMBLE_STAND_MS) continue;
+
+      p.standSince = 0;
+      p.goneUntil = time + CRUMBLE_RESPAWN_MS;
+      this.fx(p.owner).shatter(p.x, p.y, p.r * 1.1);
+      Sfx.playAt('crystal-shatter', p.x, { rate: 0.95, volume: 0.75 });
+      for (const o of ['player', 'npc'] as Owner[]) {
+        if (this.sides[o].standing !== p) continue;
+        if (o === 'player') {
+          this.api.showFloatingText(p.x, p.y - 40, 'IT GAVE WAY', this.hex(SND.glassLit));
+        }
+      }
+      dropped = true;
+    }
+    // The rider is dropped by `updateHeight`'s own standing check next frame; this is only here
+    // so an idol standing on a slab that just went is not left hanging in the air.
+    if (dropped) this.dropOrphanedRiders();
+  }
+
+  // ── Mastery: mini idols ────────────────────────────────────────────────────
+
+  private spawnMiniIdol(owner: Owner): void {
+    const mine = this.miniIdols.filter((m) => m.owner === owner);
+    if (mine.length >= MINI_IDOL_MAX) return;
+    const f = this.fighter(owner);
+    // Spread the new one opposite whatever is already up, so a full ring stays a ring.
+    this.miniIdols.push({
+      owner, phase: (mine.length / MINI_IDOL_MAX) * TAU, nextShotAt: this.now + MINI_IDOL_SHOT_MS,
+    });
+    this.fx(owner).shatter(f.x, f.y, 40);
+    Sfx.playAt('holy-chord', f.x, { rate: 1.6, volume: 0.7 });
+    if (owner === 'player') {
+      this.api.showFloatingText(f.x, f.y - 60, `MINI IDOL ×${mine.length + 1}`, this.hex(SND.glassLit));
+    }
+  }
+
+  /** Where an idol is this frame. Elliptical, because the arena is seen from above. */
+  private miniIdolPos(m: MiniIdol): { x: number; y: number } {
+    const f = this.fighter(m.owner);
+    const a = m.phase + this.vizT * MINI_IDOL_SPIN;
+    return { x: f.x + Math.cos(a) * MINI_IDOL_R, y: f.y + Math.sin(a) * MINI_IDOL_R * 0.55 };
+  }
+
+  private updateMiniIdols(): void {
+    const time = this.now;
+    for (let i = this.miniIdols.length - 1; i >= 0; i--) {
+      const m = this.miniIdols[i];
+      const owner = this.fighter(m.owner);
+      // An idol orbits a body. With the body gone there is nothing for it to orbit.
+      if (!this.alive(owner)) { this.miniIdols.splice(i, 1); continue; }
+      if (time < m.nextShotAt) continue;
+
+      let best: Fighter | null = null;
+      let bestD = Infinity;
+      const at = this.miniIdolPos(m);
+      for (const t of this.targetsOf(m.owner)) {
+        const d = Phaser.Math.Distance.Between(at.x, at.y, t.x, t.y);
+        if (d < bestD) { bestD = d; best = t; }
+      }
+      if (!best) continue;
+
+      m.nextShotAt = time + MINI_IDOL_SHOT_MS;
+      this.beams.push({
+        owner: m.owner, x1: at.x, y1: at.y, x2: best.x, y2: best.y,
+        bornAt: time, golden: false, seed: Math.random() * 999,
+      });
+      best.takeDamage(MINI_IDOL_DAMAGE);
+      this.api.spawnHitFlash(best.x, best.y, SND.glassLit);
+      this.fx(m.owner).ping(best.x, best.y, 14, SND.glass);
+      Sfx.playAt('beam-fire', at.x, { rate: 1.6, volume: 0.32 });
+    }
+  }
+
+  /**
+   * The floor, while you are glass.
+   *
+   * Not a big number — the end. The whole ability is a wager that you can run a course you have
+   * just made worse without touching the ground, and this is the losing side of it.
+   */
+  private shatterFighter(owner: Owner): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    s.glassUntil = 0;
+    this.fx(owner).shatter(f.x, f.y, 70, true);
+    this.api.spawnHitFlash(f.x, f.y, SND.glassLit);
+    this.api.showFloatingText(f.x, f.y - 48, 'SHATTERED', this.hex(SND.glassLit));
+    Sfx.playAt('crystal-shatter', f.x, { rate: 0.5, volume: 1 });
+    // Self-inflicted: nobody did this to you. You tempered, and then you fell.
+    f.takeDamage(f.hp + f.shieldHp + 999, { selfInflicted: true });
+  }
+
+  /** Online replay: the remote Sand player tempered (or tempered back down). */
+  doNpcTemperedTemptation(): void {
+    this.tryGlass('npc');
+  }
+
+  /** 0–1 fill for the Tempered Temptation HUD card: the glass while it is up, then the cooldown. */
+  getGlassRatio(time: number): number {
+    const s = this.sides.player;
+    if (time < s.glassUntil) return Phaser.Math.Clamp((s.glassUntil - time) / GLASS_MS, 0, 1);
+    return Phaser.Math.Clamp((time - s.glassCastAt) / GLASS_COOLDOWN_MS, 0, 1);
+  }
+
   // ── Per-frame ──────────────────────────────────────────────────────────────
 
   update(time: number, delta: number): void {
@@ -1488,8 +2465,11 @@ export class SandKit implements SummonPurgeTarget {
     const npcIs = this.api.npcElementId === 'dune';
     // Everything this kit owns keeps running even when nobody is Sand any more — a deck still
     // standing after a stance swap has to finish its six seconds and clean itself up.
+    this.updateBarrier();
     if (!playerIs && !npcIs && !this.trail && this.platforms.length === 0
-      && this.bridges.length === 0 && this.beams.length === 0) {
+      && this.bridges.length === 0 && this.beams.length === 0
+      && this.fractures.length === 0 && this.devils.length === 0
+      && this.miniIdols.length === 0) {
       // Nothing of this element is left in the match. Tear the rig down rather than leaving a
       // sand character standing over whoever swapped out of it, and blank the layers once.
       this.updateAvatars(delta);
@@ -1501,8 +2481,12 @@ export class SandKit implements SummonPurgeTarget {
     this.ensureLayers();
     this.vizT += delta / 1000;
 
+    // Before the height sim: a slab that gives way this frame has to be off the board by the
+    // time anybody's standing check reads it, or the rider survives a step that is not there.
+    this.updateCrumbles();
     this.updateMovingPlatforms();
     this.updateBridges();
+    this.updateDevils();
     if (npcIs && !this.trail) this.driveNpc();
 
     for (const o of ['player', 'npc'] as Owner[]) {
@@ -1510,7 +2494,17 @@ export class SandKit implements SummonPurgeTarget {
       // time a fighter of another element has a height at all.
       if (!this.isSand(o) && !this.trailInvolves(o)) continue;
       this.updateHeight(o, delta);
+      this.updateCombo(o);
     }
+
+    // Sand Mastery. The glass runs out on its own clock, the flames burn whoever is between two
+    // pillars, and the idols keep firing whatever else is happening.
+    for (const o of ['player', 'npc'] as Owner[]) {
+      const s = this.sides[o];
+      if (s.glassUntil !== 0 && time >= s.glassUntil) this.endGlass(o, 'THE GLASS IS GONE');
+    }
+    this.updateJets();
+    this.updateMiniIdols();
 
     // After the height sim, so the lava and the fall checks read this frame's `z`, and after
     // ArenaScene's movement pass, so the conveyor is the last word on where anybody is going.
@@ -1518,7 +2512,17 @@ export class SandKit implements SummonPurgeTarget {
     this.applyBridgeMotion();
 
     this.updatePoison();
-    if (!this.trail) this.updatePyramids();
+    this.updateFractures();
+    if (this.trail) {
+      this.updateCurses();
+      // An npc Sand with the upgrade curses the slab its rival is actually standing on, which
+      // is the only target a mouse would ever have picked anyway.
+      if (this.up('npc', 'q') && this.sides.player.standing) {
+        this.tryCurse('npc', this.sides.player.standing.x, this.sides.player.standing.y);
+      }
+    } else {
+      this.updatePyramids();
+    }
 
     // Courses time out rather than living forever — an abandoned obby is cover, and cover this
     // element did not pay for.
@@ -1567,6 +2571,7 @@ export class SandKit implements SummonPurgeTarget {
       av.setFacing(Math.atan2(s.aimY - f.y, s.aimX - f.x));
       av.setElevation(s.z);
       av.setGolden(this.now < s.goldenUntil);
+      av.setTempered(this.glassOn(o));
       av.setMastered(o === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
       av.update(delta, f.x, f.y, f.alpha);
     }
@@ -1593,6 +2598,13 @@ export class SandKit implements SummonPurgeTarget {
 
     for (const p of this.poisons) poisonPatch(g, this.col(p.owner), p.x, p.y, p.r, t, 1, { seed: p.seed });
 
+    // Fractures, under everything else on the ground — they are *in* the floor.
+    for (const fr of this.fractures) {
+      const armed = Phaser.Math.Clamp((this.now - fr.armedAt) / 300, 0, 1);
+      const fade = Phaser.Math.Clamp((fr.until - this.now) / 700, 0, 1);
+      fracture(g, this.col(fr.owner), fr.x, fr.y, fr.r, armed, t, fade, { seed: fr.seed });
+    }
+
     for (const b of this.bridges) {
       const k = (b.expiresAt - this.now) / BRIDGE_LIFE_MS;
       sandBridge(g, this.col(b.owner), b.x1, b.y1, b.z1, b.x2, b.y2, b.z2, b.halfW, k, t, 1,
@@ -1602,11 +2614,69 @@ export class SandKit implements SummonPurgeTarget {
     // Tallest last, so a pillar in front of another one genuinely overlaps it.
     const ordered = [...this.platforms].sort((p1, p2) => p1.y - p2.y);
     for (const p of ordered) {
+      // A crumbled slab leaves its outline and the arc counting it back in — anything less and
+      // the course looks like it was generated with a hole in it.
+      if (p.goneUntil > this.now) {
+        glassGhost(g, this.col(p.owner), p.x, p.y, p.r, p.z,
+          1 - (p.goneUntil - this.now) / CRUMBLE_RESPAWN_MS, t, 1);
+        continue;
+      }
       const lit = (this.sides.player.standing === p || this.sides.npc.standing === p) ? 1 : 0;
-      pillar(g, this.col(p.owner), p.x, p.y, p.r, p.z, 1, { seed: p.seed, grey: p.grey, lit, t });
+      // How far through its two and a half seconds a slab somebody is standing on has got.
+      const crumble = p.crumble && p.standSince > 0
+        ? Phaser.Math.Clamp((this.now - p.standSince) / CRUMBLE_STAND_MS, 0, 1) : 0;
+      pillar(g, this.col(p.owner), p.x, p.y, p.r, p.z, 1,
+        { seed: p.seed, grey: p.grey, lit, t, glass: p.glass, crumble });
+      // The curse is painted over the top face, so a cursed slab is unmistakable from below.
+      if (p.cursedUntil > this.now) {
+        cursedSlab(g, this.col(p.owner), p.x, p.y, p.r,
+          t, Phaser.Math.Clamp((p.cursedUntil - this.now) / 400, 0, 1));
+      }
+    }
+
+    // Dust devils, over the deck they stand on.
+    for (const d of this.devils) {
+      const fade = Phaser.Math.Clamp((d.expiresAt - this.now) / 700, 0, 1);
+      dustDevil(g, this.col(d.owner), d.x, d.y, d.r, t, fade, { seed: d.seed });
+    }
+
+    // The Sand Barrier, whipping around whoever is wearing it.
+    for (const o of ['player', 'npc'] as Owner[]) {
+      const k = this.barrierStrength(o);
+      if (k <= 0) continue;
+      const f = this.fighter(o);
+      if (!this.alive(f)) continue;
+      // At the body, not at the shadow: height only ever moves shadows in this kit.
+      sandVeil(g, this.col(o), f.x, f.y, k, t, 1);
+    }
+
+    // The glass cage on a tempered fighter, behind the body like the veil above it.
+    for (const o of ['player', 'npc'] as Owner[]) {
+      if (!this.glassOn(o)) continue;
+      const f = this.fighter(o);
+      if (!this.alive(f)) continue;
+      // Fades up over the last second, so "the glass is nearly gone" is on the character.
+      const k = Phaser.Math.Clamp((this.sides[o].glassUntil - this.now) / 1000, 0.25, 1);
+      glassShell(g, this.col(o), f.x, f.y, k, t, 1);
     }
 
     // ── Air layer ──
+    // Flamethrowers over the tops of the pillars they are strung between — a jet drawn under a
+    // course would be hidden by the very gap it is closing.
+    for (const j of this.jets) {
+      const span = this.jetSpan(j);
+      if (!span) continue;
+      flameJet(a, this.col(j.owner), span.x1, span.y1, span.x2, span.y2,
+        FLAME_HALF_W, this.jetOn(j) ? 1 : 0, this.jetWarm(j), t, 1, { seed: j.seed });
+    }
+
+    // The idols on their orbit, each with the ring counting down to its next beam.
+    for (const m of this.miniIdols) {
+      const at = this.miniIdolPos(m);
+      miniIdol(a, this.col(m.owner), at.x, at.y, t, 1,
+        { charge: Phaser.Math.Clamp(1 - (m.nextShotAt - this.now) / MINI_IDOL_SHOT_MS, 0, 1) });
+    }
+
     // A crown on the last slab of each lane. Drawn before the course prizes so a trail slab is
     // never mistaken for an orb.
     for (const lane of this.trail?.lanes ?? []) {
@@ -1729,6 +2799,44 @@ export class SandKit implements SummonPurgeTarget {
       until: c0.expiresAt, count: Math.max(0, c0.total - 1 - c0.reached), priority: 121,
     } : null);
 
+    const barrier = this.barrierStrength('player');
+    this.api.setStatusIndicator('dune-barrier', barrier > 0 ? {
+      name: 'Sand Barrier', emoji: '🛡️', color: barrier > 0.4 ? SND.gold : SND.stoneWarmLit,
+      description: barrier > 0.4
+        ? 'The golden sand has thickened the veil. Everything that reaches you is halved for as long as the orb is on the barrel.'
+        : 'A veil of running sand while the course is standing. Everything that reaches you is cut by a third — and taking the golden orb takes it to half.',
+      count: Math.round(barrier * 100), suffix: '%', priority: 116,
+    } : null);
+
+    const devil = this.devils.find((d) => d.owner === 'player');
+    this.api.setStatusIndicator('dune-devil', isSand && devil ? {
+      name: 'Dust Devil', emoji: '🌪️', color: SND.gold,
+      description: 'A column of sand standing at the end of your conveyor. Land on it from any height and the fall is free; stand on it and it throws you most of the way up a course.',
+      until: devil.expiresAt, priority: 115,
+    } : null);
+
+    // ── Sand Mastery ──
+    const cut = this.comboCut('player');
+    this.api.setStatusIndicator('dune-combo', cut > 0 ? {
+      name: 'Unsatiable', emoji: '⛓️', color: s.combo >= COMBO_MAX ? SND.goldHot : SND.stoneWarmLit,
+      description: `${s.combo} landing${s.combo === 1 ? '' : 's'} in a row without touching the floor. The flintlock reloads ${Math.round(cut * 100)}% faster — ${(this.reloadMs('player') / 1000).toFixed(2)}s instead of ${(this.now < s.goldenUntil ? RELOAD_GOLDEN_MS : RELOAD_MS) / 1000}s. Falling breaks the chain, and so does standing on the floor for five seconds.`,
+      count: s.combo, priority: 120,
+    } : null);
+
+    const glass = this.glassOn('player');
+    this.api.setStatusIndicator('dune-glass', glass ? {
+      name: 'Tempered', emoji: '🔷', color: SND.glassLit,
+      description: `You are made of glass. The flintlock fires ${this.burstCount('player')} balls a pull for half each, every course on the board is burning and half its slabs give way under you — and a fall to the floor is not ${FALL_DAMAGE}, it is the end of you. Press the key again to temper back down.`,
+      until: s.glassUntil, priority: 126,
+    } : null);
+
+    const idols = this.miniIdols.filter((m) => m.owner === 'player').length;
+    this.api.setStatusIndicator('dune-idols', idols > 0 ? {
+      name: 'Mini Idols', emoji: '🔻', color: SND.glass,
+      description: `${idols} shard${idols === 1 ? '' : 's'} of a claimed pyramid on your orbit, each firing a ${MINI_IDOL_DAMAGE}-damage beam every ${MINI_IDOL_SHOT_MS / 1000} seconds at whoever is nearest. They do not expire — claim another pyramid while tempered for another one, up to ${MINI_IDOL_MAX}.`,
+      count: idols, priority: 114,
+    } : null);
+
     const lane = this.trail ? this.laneOf(this.api.player) : null;
     this.api.setStatusIndicator('dune-trail', lane ? {
       name: this.trail!.crownTaken === this.api.player ? 'Crowned' : 'Final Trail',
@@ -1775,6 +2883,7 @@ export class SandKit implements SummonPurgeTarget {
     const p = this.api.player;
     const s = this.sides.player;
 
+    if (abilityId === 'tempered-temptation') return this.getGlassRatio(time);
     if (abilityId === 'dune-striker') {
       const reload = this.reloadMs('player');
       return Phaser.Math.Clamp(1 - (s.nextShotAt - time) / reload, 0, 1);
@@ -1837,6 +2946,22 @@ export class SandKit implements SummonPurgeTarget {
       this.fx(b.owner).puff(mx, my, 16, 28, 480, SND.deep);
       this.bridges.splice(i, 1);
       this.dropOrphanedRiders();
+    }
+    for (let i = this.devils.length - 1; i >= 0; i--) {
+      const d = this.devils[i];
+      if (d.owner === exceptOwner || !near(d.x, d.y)) continue;
+      this.fx(d.owner).puff(d.x, d.y, 14, 26, 480, SND.deep);
+      this.devils.splice(i, 1);
+    }
+    // Mini idols are the one thing Sand puts on the board that never expires, so they had
+    // better be answerable. They are razed where they are *orbiting*, not where their owner is.
+    for (let i = this.miniIdols.length - 1; i >= 0; i--) {
+      const m = this.miniIdols[i];
+      if (m.owner === exceptOwner) continue;
+      const at = this.miniIdolPos(m);
+      if (!near(at.x, at.y)) continue;
+      this.fx(m.owner).shatter(at.x, at.y, 26);
+      this.miniIdols.splice(i, 1);
     }
     return razed;
   }

@@ -6,6 +6,7 @@ import { CustomStatus } from './StatusHudKit';
 import {
   ArmGesture, RUBBER, RubberAura, RubberAuraStyle, RubberAvatar, RubberColorFn, RubberFx,
 } from './RubberVisuals';
+import { meterGain } from '../../combat/Meters';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -2297,7 +2298,8 @@ export class RubberKit {
     const time = this.arena.scene.time.now;
     this.uberLastHitAt[owner] = time;
     const before = this.uber[owner];
-    this.uber[owner] = Math.min(UBER_MAX, before + UBER_GAIN_PER_HIT);
+    this.uber[owner] = Math.min(UBER_MAX,
+      before + meterGain(owner === 'player' ? this.arena.player : this.arena.npc, UBER_GAIN_PER_HIT));
     if (before < UBER_MAX && this.uber[owner] >= UBER_MAX) {
       const f = owner === 'player' ? this.arena.player : this.arena.npc;
       this.arena.showFloatingText(f.x, f.y - 52, '🪀 UBER-GEAR MAXED', '#ff88aa');

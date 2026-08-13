@@ -6,6 +6,7 @@ import { clearConsumedItems } from '../data/Items';
 import * as PlayerData from '../data/PlayerData';
 import { applyKonamiCheat } from '../data/CheatSave';
 import { getPerksForElement, getPerkById } from '../data/Perks';
+import { buildNpcLoadout } from '../data/NpcLoadout';
 import { INVASION_DIFFICULTIES, InvasionDifficultyId } from '../invasion/InvasionKit';
 import { Bounty, difficultyLabel } from '../data/Bounties';
 import { TagTeamState, freshKingTagTeam } from '../data/FightFormats';
@@ -30,7 +31,7 @@ import { Music, Sfx } from '../audio';
 const DIFF_COLORS = [0x22cc44, 0x88cc22, 0xddaa00, 0xee5500, 0xcc0022];
 
 // WWSSADADBA (Konami-style, using WASD mapping: W=Up S=Down A=Left D=Right then B A)
-const DUMMY_SEQUENCE = ['W','W','S','S','A','D','A','D','B','A'];
+const KONAMI_SEQUENCE = ['W','W','S','S','A','D','A','D','B','A'];
 
 /** How many elements a Tag Team side fields. */
 const TAG_TEAM_SIZE = 3;
@@ -186,12 +187,12 @@ export class MenuScene extends Phaser.Scene {
       }
     });
 
-    // Konami sequence listener (WWSSADADBA → unlock Dummy enemy)
+    // Konami sequence listener (WWSSADADBA → currencies, gauntlets, mutations)
     this.konamiBuffer = [];
     this.input.keyboard!.on('keydown', (evt: KeyboardEvent) => {
       this.konamiBuffer.push(evt.key.toUpperCase());
-      if (this.konamiBuffer.length > DUMMY_SEQUENCE.length) this.konamiBuffer.shift();
-      if (this.konamiBuffer.join('') === DUMMY_SEQUENCE.join('')) {
+      if (this.konamiBuffer.length > KONAMI_SEQUENCE.length) this.konamiBuffer.shift();
+      if (this.konamiBuffer.join('') === KONAMI_SEQUENCE.join('')) {
         // Shared with TitleScene so both entry points grant the same thing.
         applyKonamiCheat();
         this.renderPhase(width, height, cx);
@@ -321,7 +322,7 @@ export class MenuScene extends Phaser.Scene {
     }
 
     this.phaseObjects.push(...renderElementGrid(this, {
-      y: this.scale.height / 2 + 20,
+      y: this.scale.height / 2 + 52,
       page: this.elemPage,
       panels: this.panels,
       onPageChange: (pg) => { this.elemPage = pg; this.renderPhase(width, height, cx); },
@@ -341,16 +342,6 @@ export class MenuScene extends Phaser.Scene {
       showPerkDictionary: isPlayerPhase,
     }));
 
-    // Dummy enemy — shown only on enemy phase when unlocked via konami code
-    if (this.selectionPhase === 'enemy' && PlayerData.isDummyUnlocked()) {
-      const dBtn = addButton(this, {
-        x: cx, y: height / 2 + 130, w: 200, h: 34,
-        label: 'DUMMY MODE', icon: '🎯', fontSize: 13,
-        accent: C.steel, variant: 'quiet', cut: 8,
-        onClick: () => this.handleElementClick('dummy', width, height, cx),
-      });
-      this.phaseObjects.push(dBtn.container);
-    }
   }
 
   /**
@@ -662,12 +653,14 @@ export class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(DEPTH.content);
     this.phaseObjects.push(descText);
 
+    // HP and the shard payout are already printed on the plate — these say only
+    // what the plate cannot.
     const DIFF_DESCRIPTIONS = [
-      'Misses a lot • Low HP • Rarely uses specials',
-      'Occasional misses • Reduced HP • Some specials',
-      'Accurate • Full HP • All abilities • Dodges nearby shots',
-      'Very accurate • High HP • Active dodging',
-      'Perfect aim • Maximum HP • Aggressive dodge • Top speed',
+      'Misses often  ·  rarely casts',
+      'Some misses  ·  some casts',
+      'Accurate  ·  full kit  ·  dodges',
+      'Very accurate  ·  dodges actively',
+      'Perfect aim  ·  fastest  ·  never stops dodging',
     ];
 
     DIFFICULTY_PRESETS.forEach((diff, i) => {
@@ -716,6 +709,9 @@ export class MenuScene extends Phaser.Scene {
             starredMutations: [...starredMutationIds],
             playerPerk: PlayerData.getEquippedPerk(this.playerChoice ?? ''),
             npcPerk,
+            // Hard+ bots fight upgraded; Nightmare bots fight mastered. Computed here
+            // rather than in ArenaScene so only plain 1v1 launches carry a loadout.
+            npcLoadout: buildNpcLoadout(this.enemyChoice ?? '', diff.level),
           });
         });
 
@@ -974,6 +970,9 @@ export class MenuScene extends Phaser.Scene {
       starredMutations: [...starredMutationIds],
       playerPerk: PlayerData.getEquippedPerk(this.playerChoice ?? ''),
       npcPerk,
+      // A secret mode is still a solo 1v1 off the plate wall, so its rung buys the same
+      // loadout — except the practice dummy, which is a target, not an opponent.
+      npcLoadout: mode.id === 'dummy' ? undefined : buildNpcLoadout(this.enemyChoice ?? '', mode.difficultyLevel),
       secretMode: mode.id,
       ...extra,
     });
@@ -1098,10 +1097,19 @@ export class MenuScene extends Phaser.Scene {
 
     // ── Rewards panel (static background) ──
     const rPanelBg = addWell(this, RWD_CX, PANEL_TOP + PANEL_H / 2, RWD_W, PANEL_H, C.gold, 4);
-    const rPanelTitle = this.add.text(RWD_CX, PANEL_TOP + 12, 'REWARDS PREVIEW', {
+    const rPanelTitle = this.add.text(RWD_CX, PANEL_TOP + 12, 'REWARDS', {
       fontSize: '9px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 1.5,
     }).setOrigin(0.5).setDepth(5);
     this.phaseObjects.push(rPanelBg, rPanelTitle);
+
+    // One shared line under the list instead of a paragraph glued to every row.
+    // The rows carry a name and a multiplier; whatever you are pointing at
+    // explains itself down here, and the ℹ button is still there for the rest.
+    const hoverDesc = this.add.text(LIST_X + 4, PANEL_BOT + 12, '', {
+      fontSize: '10px', fontFamily: FONT_UI, color: T.ghost,
+      wordWrap: { width: LIST_W - 8 }, maxLines: 1,
+    }).setOrigin(0, 0.5).setDepth(6);
+    this.phaseObjects.push(hoverDesc);
 
     // ── Mutation list panel background ──
     const listPanelBg = addWell(this, LIST_X + LIST_W / 2, PANEL_TOP + PANEL_H / 2, LIST_W, PANEL_H, C.arcane, 4);
@@ -1117,7 +1125,7 @@ export class MenuScene extends Phaser.Scene {
     scrollContainer.setMask(mask);
     this.phaseObjects.push(maskGfx, scrollContainer);
 
-    const ROW_H = 58;
+    const ROW_H = 34;
     const ROW_W = LIST_W - 4;
 
     // Sort: unlocked first, locked last
@@ -1175,8 +1183,8 @@ export class MenuScene extends Phaser.Scene {
           scrollContainer.add(rowHit);
           this.mutationListObjects.push(rowHit);
           rowHit
-            .on('pointerover', () => row.paint(true))
-            .on('pointerout',  () => row.paint(false))
+            .on('pointerover', () => { row.paint(true); hoverDesc.setText(mut.shortDesc); })
+            .on('pointerout',  () => { row.paint(false); hoverDesc.setText(''); })
             .on('pointerdown', () => {
               if (equipped) {
                 activeMutationIds.delete(mut.id);
@@ -1190,28 +1198,29 @@ export class MenuScene extends Phaser.Scene {
           rowShapes.push(rowHit);
         }
 
-        // Emoji + name
+        // Emoji + name, on the row's centre line. The blurb that used to sit
+        // under it is now the single hover line beneath the whole list.
         const nameColor = unlocked ? '#ffffff' : '#555566';
         const prefix    = unlocked ? '' : '🔒 ';
-        const nameText = this.add.text(10, innerY + 12, `${prefix}${mut.emoji} ${mut.name}`, {
+        const nameText = this.add.text(10, innerY + ROW_H / 2 - 2, `${prefix}${mut.emoji} ${mut.name}`, {
           fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: nameColor,
-        }).setAlpha(alpha);
+        }).setOrigin(0, 0.5).setAlpha(alpha);
         scrollContainer.add(nameText);
         this.mutationListObjects.push(nameText);
 
-        // Short desc
-        const descColor = unlocked ? '#999999' : '#444455';
-        const descText = this.add.text(10, innerY + 32, mut.shortDesc, {
-          fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: descColor,
-          wordWrap: { width: ROW_W - 60 },
-        }).setAlpha(alpha);
-        scrollContainer.add(descText);
-        this.mutationListObjects.push(descText);
+        // What it is worth, as a number rather than a sentence.
+        const multText = this.add.text(ROW_W - 78, innerY + ROW_H / 2 - 2,
+          `×${(starred ? mut.rewardMult * STARRED_REWARD_MULT : mut.rewardMult).toFixed(2)}`, {
+          fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
+          color: starred ? '#ffeebb' : (unlocked ? '#8899bb' : '#444455'),
+        }).setOrigin(1, 0.5).setAlpha(alpha);
+        scrollContainer.add(multText);
+        this.mutationListObjects.push(multText);
 
         // Star button (unlocked, non-boss-only mutations only)
         if (unlocked && !mut.bossOnly) {
           const starX = ROW_W - 52;
-          const starCircle = this.add.circle(starX, innerY + ROW_H / 2 - 2, 14, starred ? 0x886600 : 0x333344, 1)
+          const starCircle = this.add.circle(starX, innerY + ROW_H / 2 - 2, 12, starred ? 0x886600 : 0x333344, 1)
             .setStrokeStyle(1, starred ? 0xffcc44 : 0x555566, 1)
             .setDepth(6).setInteractive({ useHandCursor: true });
           const starLabel = this.add.text(starX, innerY + ROW_H / 2 - 2, '★', {
@@ -1238,7 +1247,7 @@ export class MenuScene extends Phaser.Scene {
 
         // Info "i" button
         const iX = ROW_W - 22;
-        const iCircle = this.add.circle(iX, innerY + ROW_H / 2 - 2, 11, 0x222244, 0.9)
+        const iCircle = this.add.circle(iX, innerY + ROW_H / 2 - 2, 10, 0x222244, 0.9)
           .setStrokeStyle(1, 0x8888cc, 0.9).setDepth(6).setInteractive({ useHandCursor: true });
         const iLabel = this.add.text(iX, innerY + ROW_H / 2 - 2, 'i', {
           fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#aaaaff',
@@ -1293,27 +1302,24 @@ export class MenuScene extends Phaser.Scene {
     let innerY = panelTop + 30;
 
     if (equipped.length === 0) {
-      const empty = this.add.text(innerX, panelTop + panelH / 2, 'No mutations\nequipped', {
+      const empty = this.add.text(innerX, panelTop + panelH / 2, 'None equipped', {
         fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#666677', align: 'center',
       }).setOrigin(0.5).setDepth(6);
       this.rewardsPanelDynObjects.push(empty);
     } else {
+      // Emoji and multiplier on one line: the names are already spelled out in
+      // the list to the left, and repeating them here is what made this a wall.
       for (const id of equipped) {
         const def = getMutationDef(id);
         if (!def) continue;
         const isStarred = starredMutationIds.has(id);
         const mult = isStarred ? def.rewardMult * STARRED_REWARD_MULT : def.rewardMult;
-        const label = `${def.emoji}${isStarred ? '★' : ''} ${def.name}`;
-        const multStr = `×${mult.toFixed(2)}`;
         const rowColor = isStarred ? '#ffeebb' : '#ddddee';
-        const lText = this.add.text(innerX, innerY, label, {
-          fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: rowColor,
+        const lText = this.add.text(innerX, innerY, `${def.emoji}${isStarred ? '★' : ''}  ×${mult.toFixed(2)}`, {
+          fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: rowColor,
         }).setOrigin(0.5).setDepth(6);
-        const mText = this.add.text(innerX, innerY + 14, multStr, {
-          fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: rowColor,
-        }).setOrigin(0.5).setDepth(6);
-        this.rewardsPanelDynObjects.push(lText, mText);
-        innerY += 32;
+        this.rewardsPanelDynObjects.push(lText);
+        innerY += 18;
       }
 
       // Divider

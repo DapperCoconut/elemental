@@ -19,11 +19,13 @@ const creation: ElementCodex = {
     {
       emoji: '⚙️',
       name: 'The Nexus',
-      magic:
-        'A riveted brewing engine standing in the arena from the first second of the match, gears '
-        + 'counter-rotating around a caged core. It is not summoned and it cannot be moved. Shoot '
-        + 'charged bolts into it and they land on its shelf as glowing ingots; two of them and the '
-        + 'machine starts brewing.',
+      basics:
+        'The brewing machine both fighters share, though bolts, brews and bottles are keyed by owner so '
+        + 'you can never drink theirs. A Charged Bolt passing within 30px is swallowed instead of flying '
+        + 'on and its tier joins the shelf, which holds two; the second ingot starts a 5-second brew, and '
+        + 'bolts fired at it mid-brew bounce off and are wasted. The finished bottle rests on the '
+        + 'pedestal and is drunk instantly by walking within 46px. One brewed potion may sit waiting, or '
+        + 'two with Electro Bolt.',
       effects: [
         { tag: 'resource', label: 'Loading it', detail: 'A Charged Bolt passing within 30px of the Nexus is swallowed instead of flying on, and its tier joins the shelf. It holds 2 at a time.' },
         { tag: 'resource', label: 'Brewing', detail: 'The second ingot starts a 5 second brew. Bolts fired at it mid-brew bounce off and are wasted.' },
@@ -39,10 +41,13 @@ const creation: ElementCodex = {
     {
       emoji: '🧪',
       name: 'The Six Brews',
-      magic:
-        'Two ingots in, one bottle out, and which bottle is decided entirely by which two metals '
-        + 'you fed it. Copper is cheap and quick, gold is a full second of charging — and the '
-        + 'recipes are ordered so the strongest effects cost the most patience.',
+      basics:
+        'Two ingots make one bottle, and there are six combinations. Copper + copper is ⚔️ Buff: 25% '
+        + 'more damage for 20 seconds. Silver + silver is 💚 Heal: 3 HP a second for 20 seconds, paid a '
+        + 'third of a point at a time. Gold + gold is 🏆 Gold: for 90 seconds every effect you gain, good '
+        + 'or bad, lasts twice as long. Copper + silver is 🛡️ Protection: 25% less damage taken for 20 '
+        + 'seconds. Copper + gold is 👟 Speed: 50% faster for 20 seconds. Gold + silver is ⏱️ Reload: '
+        + 'cooldowns 25% faster for 20 seconds.',
       effects: [
         { tag: 'buff', label: '⚔️ Buff — copper + copper', detail: 'Deal 25% more damage for 20 seconds.' },
         { tag: 'heal', label: '💚 Heal — silver + silver', detail: 'Regenerate 3 HP a second for 20 seconds, paid a third of a point at a time.' },
@@ -61,12 +66,12 @@ const creation: ElementCodex = {
 
   abilities: {
     'dagger-spray': {
-      magic:
-        'A fan of forged blades held back until you let go of them. Hold the button and ghost '
-        + 'daggers line up around the aim, 30 degrees apart, each already pointed where it is going '
-        + 'to fly. On release they leave in a spread and then curve — every one of them bends toward '
-        + 'the cursor, meets there, and carries straight on past. They do not stop in a body; they go '
-        + 'through it.',
+      basics:
+        'Hold Click to fan the throw — one dagger immediately and another for every 0.6s held, capped '
+        + 'at 5 at 2.4 seconds — and release to fire. Each blade is 8 damage and can hit each fighter '
+        + 'once, so a full fan is 40 into one target. They fly 620 px/s, curving at up to 7 rad/s toward '
+        + 'the cursor until they are within 26px of it and then running straight for the arena edge, and '
+        + 'nothing consumes them but leaving the arena. 0.5s cooldown, paid on release.',
       cast: 'Hold Click to fan the throw, release to fire. Cooldown is paid on release.',
       effects: [
         { tag: 'damage', label: 'Per blade', detail: '8 damage, and each dagger can hit each fighter once — a full fan of 5 is 40 to one target.' },
@@ -76,10 +81,11 @@ const creation: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '0.5s cooldown.' },
       ],
       upgrade: {
-        magic:
-          'Blade Split makes your own walls part of the ammunition. A dagger crossing a Create block '
-          + 'cuts it clean in two along the line it was travelling — and both halves stand up with '
-          + 'the full health the original had.',
+        basics:
+          'A dagger passing within 20px of a block splits it — top and bottom if the blade was travelling '
+          + 'mostly horizontally, left and right otherwise — leaving a 6px kerf. Each half keeps the whole '
+          + 'original block\'s current HP, so cutting a 125 HP wall gives you two 125 HP walls. One dagger '
+          + 'can cut any number of different blocks but never the same block, or its own halves, twice.',
         effects: [
           { tag: 'utility', label: 'The cut', detail: 'A dagger within 20px of a block splits it top/bottom if it was travelling mostly horizontally, left/right otherwise, leaving a 6px kerf.', requiresUpgrade: 'click' },
           { tag: 'shield', label: 'Free health', detail: 'Each half keeps the whole original block\'s current HP. Cutting a 125 HP wall gives you two 125 HP walls.', requiresUpgrade: 'click' },
@@ -93,11 +99,12 @@ const creation: ElementCodex = {
     },
 
     'charged-bolt': {
-      magic:
-        'An ingot forged over your own head while you hold the key — copper, then silver, then gold, '
-        + 'each threshold announced by a hammer blow on the anvil — and then fired. It is a plain '
-        + 'slug of metal with one unusual property: the Nexus eats it. Half of what this key does '
-        + 'is shoot people, and the other half is feeding the machine.',
+      basics:
+        'Hold E to forge a tier and release to fire at the cursor: copper under 0.5s for 5 damage, '
+        + 'silver from 0.5 to 1s for 10, gold at 1 second or more for 15. The bolt flies 380 px/s and is '
+        + 'consumed by the first fighter within 18px — or, if it passes within 30px of the Nexus, loads '
+        + 'onto the shelf instead, where two tiers start the 5-second brew. 2s cooldown, so a gold bolt '
+        + 'costs a second of charge on top of it.',
       cast: 'Hold E to forge the tier, release to fire at the cursor. Cooldown is paid on release.',
       effects: [
         { tag: 'damage', label: 'Copper', detail: '5 damage — anything under 0.5s of charge.' },
@@ -108,11 +115,10 @@ const creation: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '2s cooldown, so a gold bolt costs 1s of charge on top of it.' },
       ],
       upgrade: {
-        magic:
-          'Electro Bolt is a fourth charge tier past gold that never leaves your hand. Hold long '
-          + 'enough and the ingot goes electric blue — and releasing it fires nothing at all. What it '
-          + 'does instead is reach across the arena and re-brew whatever the Nexus last made, from '
-          + 'nothing.',
+        basics:
+          'A fourth tier at 3 seconds of hold, two past gold. Releasing it fires no projectile at all: '
+          + 'the Nexus immediately produces another bottle of the last recipe it brewed, with no bolts and '
+          + 'no 5-second wait. The Nexus can also hold 2 finished potions at once instead of 1.',
         effects: [
           { tag: 'utility', label: 'Electro tier', detail: 'Reached at 3 seconds of hold — 2 seconds past gold.', requiresUpgrade: 'e' },
           { tag: 'resource', label: 'Instant re-brew', detail: 'Release fires no projectile. The Nexus immediately produces another bottle of the last recipe it brewed, with no bolts and no 5 second wait.', requiresUpgrade: 'e' },
@@ -126,10 +132,10 @@ const creation: ElementCodex = {
     },
 
     'wrench-plans': {
-      magic:
-        'A spanner thrown overhand, tumbling end over end. What it does on impact is almost '
-        + 'incidental — the real payload is that it stays jammed in their gear for five seconds, and '
-        + 'everything they try to cast for that window grinds against it and costs them blood.',
+      basics:
+        'A wrench thrown at the cursor at 640 px/s — the fastest thing Creation throws — for 20 damage '
+        + 'to the first fighter within 22px. It leaves them Wrenched for 5 seconds, so every ability they '
+        + 'use costs them 5 HP, with no cap on how many times that charges. 8s cooldown.',
       cast: 'R, thrown at the cursor. Instant.',
       effects: [
         { tag: 'damage', label: 'Impact', detail: '20 damage to the first fighter within 22px of it.' },
@@ -138,11 +144,21 @@ const creation: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '8s cooldown.' },
       ],
       upgrade: {
-        magic:
-          'Nexus Awakening arms the machine. A charged red core grows in the Nexus, and a wrench put '
-          + 'through that core makes the whole thing tear itself apart and stand up as a walker — '
-          + 'with whichever potions were sitting on the shelf welded on as arms. Climb in and it '
-          + 'takes every hit meant for you until it is scrap.',
+        basics:
+          'R now wakes a 100 HP mech standing dormant where the Nexus was, with a [R] BOARD prompt over '
+          + 'it; press R within 80px to climb in. Every point of damage aimed at you goes into the mech '
+          + 'instead for as long as it lives, and you keep all five of your abilities, though you move at '
+          + '75% speed. Waking it consumes every bottle and every loaded ingot on the pedestal and stops '
+          + 'the Nexus brewing until it is wrecked. Each potion it ate becomes an arm: 🪚 Chainsaw from '
+          + 'Buff cuts anything within 66px on its own, overheating after 5 seconds and venting for 3. 💊 '
+          + 'Med Core from Heal lobs 3 repair orbs around you every 8 seconds, each worth 15 mech HP and '
+          + 'lasting 20 seconds. 🦾 Grabber from Gold seizes anyone within 92px for 3 seconds on an '
+          + '8-second cooldown. 🛡️ Shield from Protection adds 25 max HP and blocks every 5th hit — every '
+          + '4th if Overclock is boosting it, every 3rd with two shield arms. 🚀 Barrage from Speed fires 3 '
+          + 'homing rockets every 8 seconds at 5 damage plus a small blast, steering at up to 5.5 rad/s. ⚙️ '
+          + 'Overclock from Reload adds 25% mech speed, supercharges the arm on the other side, and makes '
+          + 'everything you build come out steel-plated at double HP. A wrecked mech drops you back on foot '
+          + 'and the Nexus reassembles itself 4 seconds later.',
         effects: [
           { tag: 'summon', label: 'The mech', detail: '100 HP, standing dormant where the Nexus was with a [R] BOARD prompt over it. Press R within 80px to climb in.', requiresUpgrade: 'r' },
           { tag: 'shield', label: 'It takes the hits', detail: 'Every point of damage aimed at you goes into the mech instead, for as long as it lives. You keep all five of your abilities.', requiresUpgrade: 'r' },
@@ -166,11 +182,13 @@ const creation: ElementCodex = {
     },
 
     'creation-block': {
-      magic:
-        'A drafting frame pulled out of the air with the cursor, and then a wall standing where it '
-        + 'was — real planks with grain, bolted at the corners, with a health bar over it. It stops '
-        + 'movement, it swallows shots aimed at you, and yours go through it as though it were not '
-        + 'there.',
+      basics:
+        'Hold F, drag out a rectangle up to 200×200px and release to build a 125 HP wall — the ability '
+        + 'card still says 25, and it is 250 while an Overclock mech arm is running. Enemy projectiles '
+        + 'entering it are destroyed and subtract their own damage from its health, while your own shots '
+        + 'pass through untouched. It pushes both fighters out, including you, unless your Workshop is '
+        + 'up, in which case you walk over your own barriers freely. Anything under 12px on a side is '
+        + 'discarded. 3s cooldown, paid on release.',
       cast: 'Hold F and drag out a rectangle; release to build it. Anything under 12px on a side is discarded.',
       effects: [
         { tag: 'summon', label: 'The wall', detail: '125 HP, up to 200×200px. The ability card still says 25 HP; the kit builds it at 125, and at 250 while an Overclock mech arm is running.' },
@@ -179,10 +197,14 @@ const creation: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '3s cooldown, paid on release.' },
       ],
       upgrade: {
-        magic:
-          'Build Mode is a second element on the same five keys. F stops being an ability and becomes '
-          + 'a switch: press it and the ability cards rewrite themselves into a construction loadout '
-          + 'where you place, drag and eventually fire your own architecture at somebody.',
+        basics:
+          'F opens a Build Mode that re-cards every key until you press F again to leave. Click drags out '
+          + 'new walls, 2 seconds apart, or grabs any wall, pad or spike block you already own and drags it '
+          + 'anywhere. E launches everything you own: marching chevrons for 1.5 seconds, then the whole lot '
+          + 'flies at the cursor at 600 px/s for 2 seconds — walls hit for 20 and shatter, speed pads for '
+          + '12 plus a 20% slow for 3s, spike blocks for 25, on a 5s cooldown. R lays a permanent 60×20 pad '
+          + 'with 40 HP giving +25% speed for 3 seconds whenever you stand on it, on a 6s cooldown. Q '
+          + 'plants a 50×50 block with 50 HP dealing 5 damage every 0.3s within 22px, on a 20s cooldown.',
         effects: [
           { tag: 'utility', label: 'Click — build and rearrange', detail: 'Drag out new walls (2s between builds), or grab any wall, pad or spike block you already own and drag it anywhere.', requiresUpgrade: 'f' },
           { tag: 'damage', label: 'E — launch everything', detail: 'Marching chevrons appear over every structure you own for 1.5s, then they all fly at the cursor at 600 px/s for 2 seconds. Walls hit for 20 and shatter, speed pads for 12 plus a 20% slow for 3s, spike blocks for 25. 5s cooldown.', requiresUpgrade: 'f' },
@@ -200,11 +222,11 @@ const creation: ElementCodex = {
     },
 
     'maze-of-doom': {
-      magic:
-        'The arena becomes your shop floor. Boards are hammered down over the whole stage, sawdust '
-        + 'goes everywhere, and for thirty seconds you are the only person who belongs there — you '
-        + 'move faster, you walk over your own barriers as if they were furniture, and you leave '
-        + 'footprints stamped in the floor behind you.',
+      basics:
+        'Thirty seconds of home ground: +25% move speed throughout, and your own Create blocks stop '
+        + 'pushing you out while theirs still stop them. The whole arena gets a boarded overlay and you '
+        + 'stamp a sawdust footprint every 70ms as you walk. 45s cooldown, so it is up for 30 of every 45 '
+        + 'seconds at best.',
       cast: 'Q. Instant, no aim.',
       effects: [
         { tag: 'buff', label: 'Home ground', detail: '+25% move speed for the full 30 seconds.' },
@@ -213,11 +235,17 @@ const creation: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '45s cooldown, so it is up for 30 of every 45 seconds at best.' },
       ],
       upgrade: {
-        magic:
-          'Ultimate Invention bolts a control panel onto the Workshop. Three sliders appear top-left '
-          + '— Danger, Bias and Clutter — and a red timer under them. Every notch you push a slider '
-          + 'up makes the machine better and makes the timer run out sooner, and when it hits zero '
-          + 'the whole invention shuts down whether the Workshop has time left or not.',
+        basics:
+          'Q becomes a slider panel — Danger, Bias and Clutter — and the Workshop runs on an unstable '
+          + 'timer instead of a fixed 30 seconds: it starts at 30 and drains at 1 + 1.5× the sum of the '
+          + 'three sliders, so all three at maximum burns it at 5.5× and lasts about 5.5 real seconds. '
+          + 'Danger sends a spinning saw across the arena every 4s at zero and every 1.4s at maximum for 25 '
+          + 'damage to each enemy as it passes, plus a 5-nail volley from a random edge every 3.5s down to '
+          + 'every 1.3s at 10 damage a nail at 380 px/s. Bias gives up to +75% outgoing damage and +75% '
+          + 'move speed straight off the slider, and above halfway also heals you 3 HP a second. Clutter '
+          + 'builds up to 4 concentric rings of 46px crates, inset 24px and then every 52px, which destroy '
+          + 'enemy projectiles on contact and push the enemy out while you walk through freely — and never '
+          + 'sit on top of the Nexus, however high it is pushed.',
         effects: [
           { tag: 'cost', label: 'The unstable timer', detail: 'Starts at 30s and drains at 1 + 1.5× the sum of the three sliders. All three at maximum burns it at 5.5× — about 5.5 real seconds.', requiresUpgrade: 'q' },
           { tag: 'damage', label: 'Danger — saws', detail: 'A spinning saw crosses the arena every 4s at zero and every 1.4s at maximum, dealing 25 damage to each enemy once as it passes.', requiresUpgrade: 'q' },
@@ -239,11 +267,11 @@ const creation: ElementCodex = {
 
   perks: {
     automaton: {
-      magic:
-        'The Workshop builds its own staff. Three clockwork bots wind themselves up when the floor '
-        + 'goes down and then wander it, bouncing off the walls and off each other\'s business, '
-        + 'shoulder-charging anybody they happen to walk into. They are not smart and they are not '
-        + 'aimed; they are simply always somewhere.',
+      basics:
+        'Casting the Workshop also spawns 3 automatons, each lasting 10 seconds and wandering at 60 '
+        + 'px/s from random points at least 60px off the walls. Each deals 12 damage to anyone within '
+        + '24px on its own 0.5s cooldown, so three in the same place is 36 damage every half second. They '
+        + 'bounce off the arena edges and off your own maze walls rather than passing through them.',
       cast: 'Automatic — 3 of them spawn the moment the Workshop (Q) is cast.',
       effects: [
         { tag: 'summon', label: 'The bots', detail: '3 automatons, each lasting 10 seconds, wandering at 60 px/s from random points at least 60px off the walls.' },
@@ -258,10 +286,10 @@ const creation: ElementCodex = {
 
   mastery: {
     springboard: {
-      magic:
-        'A mastered artisan cannot stop building even while retreating. Every dash stamps a small '
-        + 'sprung pad into the floor where you landed, and the floor keeps it long enough that a '
-        + 'fighting retreat leaves a trail of them to run back along.',
+      basics:
+        'Every dash drops a 38×14px pad with 25 HP that fades after 10 seconds — unlike Build Mode '
+        + 'pads, which are permanent. Standing on any pad you own gives +25% speed for 3 seconds, '
+        + 'refreshed for as long as you stay on it.',
       cast: 'Passive. Every dash drops one where it ends.',
       effects: [
         { tag: 'summon', label: 'The pad', detail: '38×14px with 25 HP, fading after 10 seconds. Build-mode pads are permanent; these are not.' },
@@ -273,12 +301,16 @@ const creation: ElementCodex = {
       ],
     },
     'mortar-command': {
-      magic:
-        'The Nexus stops being a brewery and becomes artillery. Every bottle sitting on the shelf is '
-        + 'launched at the cursor in a lobbed arc, each trailing its own colour, and what lands is '
-        + 'the recipe read backwards — a Buff Potion makes them weaker, a Heal Potion corrodes them, '
-        + 'a Speed Potion leaves them wading. Gold is the exception; gold lands exactly as it is, '
-        + 'which is worse.',
+      basics:
+        'A bindable mortar — R, F or Q, never E, and in Build Mode the slot keeps its build ability. It '
+        + 'fires every potion of yours parked on the Nexus and consumes them, landing one 20-damage blast '
+        + 'in a 130px radius 480ms later however many shells went up. Each shell also hexes for 20 '
+        + 'seconds: Buff becomes 🩸 Weakened, 25% less damage dealt; Heal becomes 🧫 Corroding, 3 HP a '
+        + 'second; Protection becomes 🥀 Brittle, 25% more damage taken; Speed becomes 🐌 Leaden, half '
+        + 'move speed; Reload becomes ⛓️ Jammed, cooldowns 25% slower. Gold lands unchanged as 90 seconds '
+        + 'of doubling every effect they gain — including all five hexes above, if you have a second '
+        + 'shell to follow it with. With Electro Bolt that is a two-shell volley and two debuffs at once. '
+        + '14s cooldown, refused with nothing spent if no potion of yours is on the Nexus.',
       cast:
         'Bindable to R, F or Q — never E, and in Build Mode the slot keeps its build ability. '
         + 'Refused with nothing spent if no potion of yours is on the Nexus.',

@@ -1166,6 +1166,31 @@ export class LightKit {
     this.arena.showFloatingText(caster.x, caster.y - 30, "💫 SPEED 'O' LIGHT", '#fff4a8');
   }
 
+  /**
+   * Ruin Mastery — Second Skin. Speed 'O' Light is the form here: the fighter stops being a
+   * body at all — teleporting wall to wall, dodging everything — until the bounces run out.
+   * Ended the same way `stepSpeedOLight` ends it, so the borrowed dodge goes back.
+   *
+   * Car-mode is deliberately *not* reverted. It is held on the mouse button rather than cast,
+   * so breaking it would last exactly one frame and then fold the player straight back down.
+   */
+  revertForms(f: Fighter): string[] {
+    const owner: 'player' | 'npc' | null = f === this.arena.player ? 'player'
+      : f === this.arena.npc ? 'npc' : null;
+    if (!owner) return [];
+    const active = owner === 'player' ? this.speedOLightActive : this.npcSpeedOLightActive;
+    if (!active) return [];
+    f.dodgeChance = Math.max(0, f.dodgeChance - 1.0);
+    if (owner === 'player') {
+      this.speedOLightActive = false;
+      this.speedOLightBouncesLeft = 0;
+    } else {
+      this.npcSpeedOLightActive = false;
+      this.npcSpeedOLightBouncesLeft = 0;
+    }
+    return ["Speed 'O' Light"];
+  }
+
   private stepSpeedOLight(owner: 'player' | 'npc', time: number): void {
     const isPlayer = owner === 'player';
     const nextAt = isPlayer ? this.speedOLightNextBounceAt : this.npcSpeedOLightNextBounceAt;

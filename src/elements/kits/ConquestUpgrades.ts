@@ -1,5 +1,5 @@
 /**
- * Conquest's four upgrade trees, and every stat derived from them.
+ * Conquest's five upgrade trees, and every stat derived from them.
  *
  * Kept out of ConquestKit for one reason: the trees are read from three places that must never
  * disagree — the simulation, the upgrade menu that spends the Authority, and the NPC brain that
@@ -12,12 +12,13 @@
  *
  * **The third path of each tree is shop-gated.** It only exists at all once the matching
  * corrupt-shard upgrade is equipped (E+ for barracks, R+ for turret, F+ for barricade, Q+ for
- * the town center) — see `SHOP_SLOT` below. The tier numbers themselves are always carried
+ * the town center; the mastery's market borrows whichever slot it was bound over) — see
+ * `SHOP_SLOT` below. The tier numbers themselves are always carried
  * (including over the wire), because a tier past zero is proof enough that its owner has the
  * upgrade; the *unlock* only ever gates buying, never reading.
  */
 
-export type BuildKind = 'town' | 'barracks' | 'turret' | 'barricade';
+export type BuildKind = 'town' | 'barracks' | 'turret' | 'barricade' | 'market';
 
 /** Which of the three columns of a tree. */
 export type PathIdx = 0 | 1 | 2;
@@ -25,9 +26,15 @@ export type PathIdx = 0 | 1 | 2;
 /** Tiers bought on each of the three paths, 0–4. */
 export type Tiers = [number, number, number];
 
-/** The shop upgrade slot that unlocks each tree's third path. */
+/**
+ * The shop upgrade slot that unlocks each tree's third path.
+ *
+ * The market's is empty because it does not have one of its own: it is a mastery ability rather
+ * than a base key, so the slot that unlocks its BANKING column is whichever of E/R/F/Q the
+ * player dropped the Market on. `ConquestKit.pathUnlocked` is the one place that knows that.
+ */
 export const SHOP_SLOT: Record<BuildKind, string> = {
-  town: 'q', barracks: 'e', turret: 'r', barricade: 'f',
+  town: 'q', barracks: 'e', turret: 'r', barricade: 'f', market: '',
 };
 
 export interface UpgradeDef {
@@ -118,6 +125,28 @@ export const UPGRADES: Record<BuildKind, [UpgradeDef[], UpgradeDef[], UpgradeDef
       { name: 'Force Shield', desc: 'While you are linked to it you move 25% faster and hit 20% harder.', cost: 50 },
     ],
   ],
+  // Conquest Mastery. The only tree that spends money on money — and the only one whose third
+  // column is unlocked by the slot the ability was bound over rather than by a slot of its own.
+  market: [
+    [
+      { name: 'Economic boost', desc: '+1 Authority a second.', cost: 35 },
+      { name: 'Thrive', desc: '+1 more Authority a second.', cost: 50 },
+      { name: 'Market Revolution', desc: 'Every other market you own earns +1 Authority a second.', cost: 75 },
+      { name: 'Money Mania', desc: 'Every town centre you own pays double.', cost: 100 },
+    ],
+    [
+      { name: 'Cash out', desc: 'Pays every 0.8s instead of every second — a quarter more income.', cost: 25 },
+      { name: 'Warmongering', desc: 'Every 50 damage you deal pays 3 Authority.', cost: 35 },
+      { name: 'Blood money', desc: 'Turrets and soldiers near it hit up to 50% harder, on how much is banked.', cost: 45 },
+      { name: 'Loan Shark', desc: 'A LOAN button in this menu: 25 of your own health for 5 Authority.', cost: 50 },
+    ],
+    [
+      { name: 'Banking', desc: 'Up to +2 more Authority a second, on how much is lying around.', cost: 50 },
+      { name: 'Investing', desc: 'Your bank grows 10% every 5 seconds, up to 25 a time.', cost: 50 },
+      { name: 'Securities', desc: 'A vault in the stall instead: deposit up to 200, +25% every 5s, lost if it falls.', cost: 75 },
+      { name: 'Propaganda Central', desc: 'A PROPAGANDA button: 8s of paying for hits in Authority instead of health.', cost: 75 },
+    ],
+  ],
 };
 
 export const KIND_LABEL: Record<BuildKind, string> = {
@@ -125,10 +154,11 @@ export const KIND_LABEL: Record<BuildKind, string> = {
   barracks: 'BARRACKS',
   turret: 'TURRET',
   barricade: 'BARRICADE',
+  market: 'MARKET',
 };
 
 export const KIND_EMOJI: Record<BuildKind, string> = {
-  town: '🏛️', barracks: '⚔️', turret: '🔫', barricade: '🧱',
+  town: '🏛️', barracks: '⚔️', turret: '🔫', barricade: '🧱', market: '🏪',
 };
 
 /** What each path is *for*, shown as the column heading in the menu. */
@@ -137,11 +167,12 @@ export const PATH_LABEL: Record<BuildKind, [string, string, string]> = {
   barracks: ['NUMBERS', 'STRENGTH', 'SHADOW'],
   turret: ['POWER', 'SPEED', 'ORDNANCE'],
   barricade: ['DEFENCE', 'MEDICAL', 'BULWARK'],
+  market: ['ECONOMY', 'WAR', 'BANKING'],
 };
 
 /** Base placement costs, before any town center's Discounted. */
-export const BUILD_COST: Record<'barracks' | 'turret' | 'barricade', number> = {
-  barracks: 35, turret: 25, barricade: 10,
+export const BUILD_COST: Record<'barracks' | 'turret' | 'barricade' | 'market', number> = {
+  barracks: 35, turret: 25, barricade: 10, market: 30,
 };
 
 export const EXPANSION_COST = 150;
@@ -399,6 +430,100 @@ export function barricadeStats(t: Tiers, fortressHp: number): BarricadeStats {
     movable: t[2] >= 2,
     linkable: t[2] >= 3,
     forceShield: t[2] >= 4,
+  };
+}
+
+// ── Market (Conquest Mastery) ────────────────────────────────────────────────
+
+/** The stall itself. Deliberately the flimsiest thing on the board — it is a bank, not a wall. */
+export const MARKET_HP = 50;
+export const MARKET_INCOME = 1;
+/** Cash out: the same money on a 0.8s clock rather than a 1s one. */
+export const CASH_OUT_MULT = 1.25;
+/** Warmongering. */
+export const WARMONGER_PER = 50;
+export const WARMONGER_PAYS = 3;
+/** Blood money: how far the stall's patronage reaches, and how fast the bank buys damage. */
+export const BLOOD_RANGE = 128;
+export const BLOOD_PER = 50;
+export const BLOOD_STEP = 0.05;
+export const BLOOD_MAX = 0.5;
+/** Loan Shark. */
+export const LOAN_DAMAGE = 25;
+export const LOAN_PAYS = 5;
+/** Banking: the ceiling, and the bank size that reaches it. */
+export const BANKING_MAX = 2;
+export const BANKING_AT = 200;
+/**
+ * Investing and Securities share one five-second clock. The cap on Investing is the only
+ * number here that is not the player's: ten per cent of an uncapped bank compounds into
+ * unbounded Blood money and an unbounded Dictatorship pike inside a minute.
+ */
+export const INTEREST_MS = 5000;
+export const INVEST_RATE = 0.1;
+export const INVEST_CAP = 25;
+export const VAULT_RATE = 0.25;
+export const VAULT_MAX = 200;
+/** How much one press of the DEPOSIT button moves. */
+export const VAULT_STEP = 25;
+/** Propaganda Central. */
+export const PROPAGANDA_MS = 8000;
+export const PROPAGANDA_COOLDOWN_MS = 20000;
+/** Authority charged per point of damage taken — cheaper than health because it is harder to get. */
+export const PROPAGANDA_RATE = 0.6;
+/** What the rest of the window costs once the bank is dry. */
+export const PROPAGANDA_PENALTY = 2;
+
+/** Dictatorship: Authority per point of Banner Bash, and the ceiling. */
+export const DICTATORSHIP_PER = 10;
+export const DICTATORSHIP_MAX = 30;
+
+export interface MarketStats {
+  maxHp: number;
+  /** Authority a second this stall pays on its own, Cash out included. */
+  income: number;
+  /** Market Revolution: every *other* market of this owner earns one more a second. */
+  revolution: boolean;
+  /** Money Mania: this owner's town centres pay double. */
+  mania: boolean;
+  /** Warmongering: damage dealt pays out. */
+  warmonger: boolean;
+  /** Blood money: turrets and soldiers near this stall hit harder on the bank. */
+  bloodMoney: boolean;
+  /** Loan Shark: the menu grows a LOAN button. */
+  loans: boolean;
+  /** Banking: a second income that scales with what is lying around. */
+  banking: boolean;
+  /**
+   * Investing: the whole bank grows on the interest clock. False again at Securities — the two
+   * are the same tier line, and the vault is what replaces it.
+   */
+  investing: boolean;
+  /** Securities: this stall holds a vault of its own. */
+  securities: boolean;
+  /** Propaganda Central: the menu grows a PROPAGANDA button. */
+  propaganda: boolean;
+}
+
+export function marketStats(t: Tiers, fortressHp: number): MarketStats {
+  let income = MARKET_INCOME;
+  if (t[0] >= 1) income += 1;
+  if (t[0] >= 2) income += 1;
+  if (t[1] >= 1) income *= CASH_OUT_MULT;
+  return {
+    maxHp: MARKET_HP + fortressHp,
+    income,
+    revolution: t[0] >= 3,
+    mania: t[0] >= 4,
+    warmonger: t[1] >= 2,
+    bloodMoney: t[1] >= 3,
+    loans: t[1] >= 4,
+    banking: t[2] >= 1,
+    // Securities is the next tier up the same column, so a stall that has one has always bought
+    // the other — which is exactly what "cannot get this boost and the investing boost" means.
+    investing: t[2] === 2,
+    securities: t[2] >= 3,
+    propaganda: t[2] >= 4,
   };
 }
 

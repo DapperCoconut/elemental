@@ -21,7 +21,7 @@ import { Ability, CastContext } from './Ability';
 const trance: Ability = {
   id: 'dream-trance',
   name: 'Trance',
-  description: 'Hang a pendulum from your hand. Moving swings it, and the harder it swings the faster everything near you gets sleepy. 100% = asleep for 8s.',
+  description: 'Toggle a pendulum out of your hand. Circle your cursor around yourself to spin it up — the faster you wind it, the wider and hungrier the drowsy field gets. 100% = asleep for 8s.',
   displayKey: 'Click',
   cooldown: 800,
   cast(ctx: CastContext) { ctx.dreamTrance(); },
@@ -64,10 +64,39 @@ const oasis: Ability = {
   cast(ctx: CastContext) { ctx.dreamOasis(); },
 };
 
+// ── Dream Duel (Dream Mastery — Dream Duel) ─────────────────────
+//
+// Indices 5–6 are the spirit's two keys. They are never in the tray at the same time as the
+// five above it: the mastery's passive swaps the whole row out, exactly as Justice's stances
+// and Hunt's forms do, and `DreamKit.isDuelling()` is what decides which row is showing.
+// They live in `abilities` rather than in a private list so `castAbility` can find them, so
+// their cooldowns are real, and so the codex counts them.
+
+const duelHaunt: Ability = {
+  id: 'dream-haunt',
+  name: 'Haunt',
+  description: 'Three red bolts forward, half a second apart, 5 damage each. Only your spirit can throw them.',
+  displayKey: 'Click',
+  cooldown: 1800,
+  cast(ctx: CastContext) { ctx.dreamHaunt(ctx.targetX, ctx.targetY); },
+};
+
+const duelSpiritTear: Ability = {
+  id: 'dream-spirit-tear',
+  name: 'Spirit Tear',
+  description: 'A huge white tear that drifts forward, piercing everything for 10 — with two smaller ones orbiting it for 5 apiece.',
+  displayKey: 'E',
+  cooldown: 4000,
+  cast(ctx: CastContext) { ctx.dreamSpiritTear(ctx.targetX, ctx.targetY); },
+};
+
 export const dreamElement: Element = {
   id: 'dream',
   name: 'Dream',
   color: 0x9fb8ff,
   emoji: '🌙',
-  abilities: [trance, pillowFight, dreamcatcher, nightmare, oasis],
+  abilities: [
+    trance, pillowFight, dreamcatcher, nightmare, oasis,
+    duelHaunt, duelSpiritTear,
+  ],
 };

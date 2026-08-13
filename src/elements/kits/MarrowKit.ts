@@ -10,6 +10,7 @@ import {
   CELL_TINT, CellKind, MRW, MarrowAvatar, MarrowColorFn, MarrowFx, antibody, bcell, boneShaft,
   cellGlyph, cytokine, dendrite, killerT, macrophage, mastCell, netWeb, neutrophil, tcell,
 } from './MarrowVisuals';
+import { meterGain } from '../../combat/Meters';
 
 type Owner = 'player' | 'npc';
 
@@ -507,7 +508,9 @@ export class MarrowKit implements SummonPurgeTarget {
   private addInflammation(owner: Owner, amount: number): void {
     const s = this.side(owner);
     const before = s.inflammation;
-    s.inflammation = Phaser.Math.Clamp(s.inflammation + amount, 0, INFLAM_MAX);
+    // Ruin's Combo Breaker halves every meter in the game — inflammation included.
+    s.inflammation = Phaser.Math.Clamp(
+      s.inflammation + meterGain(this.fighter(owner), amount), 0, INFLAM_MAX);
     const gained = s.inflammation - before;
     if (gained < 4) return;
     const f = this.fighter(owner);
@@ -561,7 +564,10 @@ export class MarrowKit implements SummonPurgeTarget {
       // Macrophages keep the fever going all by themselves.
       const macros = this.mine(owner).filter((c) => c.kind === 'macrophage').length;
       const net = macros * INFLAM_PER_MACRO - INFLAM_DRAIN;
-      s.inflammation = Phaser.Math.Clamp(s.inflammation + net * dt, 0, INFLAM_MAX);
+      // Only the macrophages' half is a gain — the drain underneath it is the bar's own
+      // business, and halving that would turn Combo Breaker into a buff.
+      const swing = net > 0 ? meterGain(f, net) : net;
+      s.inflammation = Phaser.Math.Clamp(s.inflammation + swing * dt, 0, INFLAM_MAX);
 
       this.payInflammation(owner, dt);
     }

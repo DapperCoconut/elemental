@@ -47,6 +47,15 @@ export const DPT = {
   whale: 0x3f7a8c,
   flyer: 0x6fe3ff,
   cat: 0x9a7444,
+  /** The two catches only a hidden angler ever lands. */
+  lion: 0xe2703c,
+  lionRay: 0xffd9a0,
+  venom: 0x9be34a,
+  skele: 0xe8ecdf,
+  /** Release the Kraken. */
+  kraken: 0x6e3f8f,
+  krakenDeep: 0x2a1440,
+  beak: 0x181510,
   /**
    * Algae Trap's poisoned bloom. Only ever painted on the caster's own screen — everybody
    * else is shown `algae`, which is the entire ability.
@@ -63,13 +72,18 @@ export const DPT = {
 /**
  * Which fish is on the end of the line. Every one of these throws differently.
  *
- * The first five are the ordinary catch. The last five only come up on a baited line
+ * The first five are the ordinary catch. The next five only come up on a baited line
  * (the F upgrade), and each one is a whole ability rather than a variation on "a fish
  * flies at them" — which is why the silhouettes below diverge as hard as they do.
+ *
+ * The last two are Depths Mastery's, and only ever land on a line cast by an angler the
+ * water has already swallowed: the lionfish joins the common table and the skele-fish the
+ * rare one, and neither exists at all for anybody who can still be seen.
  */
 export type FishKind =
   | 'icefish' | 'barracuda' | 'pufferfish' | 'bombfish' | 'gulper'
-  | 'sawfish' | 'swordfish' | 'whaleshark' | 'flyingfish' | 'catfish';
+  | 'sawfish' | 'swordfish' | 'whaleshark' | 'flyingfish' | 'catfish'
+  | 'lionfish' | 'skelefish';
 
 export const FISH_LABEL: Record<FishKind, string> = {
   icefish: 'ICEFISH',
@@ -82,11 +96,14 @@ export const FISH_LABEL: Record<FishKind, string> = {
   whaleshark: 'WHALE SHARK',
   flyingfish: 'FLYING FISH',
   catfish: 'CATFISH',
+  lionfish: 'LIONFISH',
+  skelefish: 'SKELE-FISH',
 };
 
 export const FISH_EMOJI: Record<FishKind, string> = {
   icefish: '🧊', barracuda: '🗡️', pufferfish: '🐡', bombfish: '💣', gulper: '🐍',
   sawfish: '🔪', swordfish: '⚔️', whaleshark: '🐋', flyingfish: '🐬', catfish: '🐈',
+  lionfish: '🦂', skelefish: '💀',
 };
 
 export const FISH_COLOR: Record<FishKind, number> = {
@@ -100,6 +117,8 @@ export const FISH_COLOR: Record<FishKind, number> = {
   whaleshark: DPT.whale,
   flyingfish: DPT.flyer,
   catfish: DPT.cat,
+  lionfish: DPT.lion,
+  skelefish: DPT.skele,
 };
 
 /** How each fish is built. One table so a thrown fish and a held fish never disagree. */
@@ -125,6 +144,10 @@ export interface FishProfile {
   wings?: boolean;
   /** Barbels trailing off the snout. */
   whiskers?: boolean;
+  /** A fan of banded venomous rays standing off the back and flanks. The lionfish. */
+  rays?: boolean;
+  /** No flesh left: ribs, a spine and a hollow socket where the eye was. */
+  bones?: boolean;
 }
 
 export const FISH_PROFILE: Record<FishKind, FishProfile> = {
@@ -138,6 +161,8 @@ export const FISH_PROFILE: Record<FishKind, FishProfile> = {
   whaleshark: { depth: 0.46, tail: 0.28, teeth: false, spots: true },
   flyingfish: { depth: 0.4, tail: 0.3, teeth: false, wings: true, stripe: true },
   catfish: { depth: 0.62, tail: 0.22, teeth: false, whiskers: true },
+  lionfish: { depth: 0.66, tail: 0.26, teeth: false, stripe: true, rays: true },
+  skelefish: { depth: 0.5, tail: 0.3, teeth: true, bones: true },
 };
 
 /** The whale shark's remoras: too small for a profile of their own to read, so they share one. */
@@ -365,6 +390,64 @@ export function fishBody(
     }
   }
 
+  if (profile.rays) {
+    // Thirteen banded rays standing off the back and flanks, each a shaft with a pale bead of
+    // venom on the tip. It is the only fish in the element whose *outline* is a warning, so
+    // the rays are drawn long enough to double the silhouette.
+    for (let i = 0; i < 13; i++) {
+      const along = 0.34 - (i % 7) * 0.11;
+      const side = i < 7 ? -1 : 1;
+      const root = P(along * len, side * h * 0.55 + curve(along * len));
+      const lean = ang + side * (0.9 + (i % 3) * 0.16) + Math.sin(wiggle * 0.7 + i) * 0.1;
+      const reach = len * (0.5 + ((i * 7) % 5) * 0.07);
+      const tipX = root.x + Math.cos(lean) * reach;
+      const tipY = root.y + Math.sin(lean) * reach;
+      g.lineStyle(2.4, tint(DPT.lionRay), alpha * 0.85);
+      g.lineBetween(root.x, root.y, tipX, tipY);
+      // Two dark bands down each ray — the read that says "do not touch this".
+      g.lineStyle(2.6, tint(DPT.abyss), alpha * 0.7);
+      for (const s of [0.34, 0.68]) {
+        g.lineBetween(
+          root.x + (tipX - root.x) * s, root.y + (tipY - root.y) * s,
+          root.x + (tipX - root.x) * (s + 0.11), root.y + (tipY - root.y) * (s + 0.11),
+        );
+      }
+      g.fillStyle(tint(DPT.venom), alpha * 0.9);
+      g.fillCircle(tipX, tipY, 1.8 + Math.sin(wiggle * 2 + i) * 0.4);
+    }
+  }
+
+  if (profile.bones) {
+    // The flesh is gone. Ribs hang off a spine, and the fill above is left as the dark of the
+    // gap between them rather than a body — a fish drawn as the space it used to fill.
+    const spineA = P(0.44 * len, curve(0.44 * len));
+    const spineB = P(-0.44 * len, curve(-0.44 * len));
+    g.lineStyle(2.6, tint(DPT.abyss), alpha * 0.8);
+    g.lineBetween(spineA.x, spineA.y, spineB.x, spineB.y);
+    g.lineStyle(1.8, tint(DPT.bone), alpha * 0.95);
+    g.lineBetween(spineA.x, spineA.y, spineB.x, spineB.y);
+    for (let i = 0; i < 8; i++) {
+      const u = (0.36 - i * 0.095) * len;
+      const bow = h * (1 - Math.abs(i - 3.5) / 5.5);
+      for (const side of [-1, 1]) {
+        const a = P(u, side * h * 0.12 + curve(u));
+        const b = P(u - len * 0.05, side * bow * 0.92 + curve(u));
+        g.lineStyle(1.5, tint(DPT.bone), alpha * 0.9);
+        g.lineBetween(a.x, a.y, b.x, b.y);
+      }
+    }
+    // A hollow socket instead of an eye, and a jaw hanging open under it.
+    const skull = P(0.36 * len, -0.26 * h);
+    g.fillStyle(tint(DPT.abyss), alpha);
+    g.fillCircle(skull.x, skull.y, Math.max(2, len * 0.075));
+    g.lineStyle(1.3, tint(DPT.bone), alpha * 0.9);
+    g.strokeCircle(skull.x, skull.y, Math.max(2, len * 0.075));
+    const jawHang = Math.abs(Math.sin(wiggle * 0.9)) * 0.3;
+    g.lineStyle(1.6, tint(DPT.bone), alpha * 0.9);
+    g.lineBetween(P(0.5 * len, 0).x, P(0.5 * len, 0).y,
+      P(0.2 * len, h * (0.5 + jawHang)).x, P(0.2 * len, h * (0.5 + jawHang)).y);
+  }
+
   if (profile.fuse) {
     // A lit fuse curling off the back, sparking at the tip.
     const f0 = P(-0.1 * len, -1.0 * h);
@@ -379,7 +462,8 @@ export function fishBody(
     g.fillCircle(f2.x, f2.y, 5.5 + Math.abs(Math.sin(wiggle * 8)) * 3);
   }
 
-  // Eye last, so nothing paints over it.
+  // Eye last, so nothing paints over it. A skeleton has a socket instead, drawn above.
+  if (profile.bones) return;
   const eye = P(0.33 * len, -0.28 * h);
   g.fillStyle(tint(DPT.foam), alpha * 0.95);
   g.fillCircle(eye.x, eye.y, Math.max(1.4, len * 0.055));
@@ -428,6 +512,175 @@ export function piranha(
   }
   g.fillStyle(tint(DPT.foam), alpha);
   g.fillCircle(P(size * 0.45, -size * 0.22).x, P(size * 0.45, -size * 0.22).y, size * 0.16);
+}
+
+/**
+ * One of the lionfish's poison barbs, hanging in the water where it was shed.
+ *
+ * A shed ray rather than a dart: a hard shaft with the same two dark bands the living fish
+ * wears, a hooked barb near the point and a bead of venom on the tip that is the part that
+ * actually has to be visible from across the arena.
+ */
+export function poisonBarb(
+  g: Phaser.GameObjects.Graphics,
+  tint: DepthsColorFn,
+  x: number, y: number, ang: number, len: number, alpha: number, wig = 0,
+): void {
+  const ca = Math.cos(ang);
+  const sa = Math.sin(ang);
+  const P = (u: number, v: number) => pt(x, y, ca, sa, u, v);
+  const pulse = 0.75 + 0.25 * Math.sin(wig * 2.4);
+
+  // The venom's glow first, so the shaft sits on top of it.
+  g.fillStyle(tint(DPT.venom), alpha * 0.16);
+  g.fillCircle(P(len * 0.5, 0).x, P(len * 0.5, 0).y, len * 0.5 * pulse);
+
+  const tail = P(-len * 0.5, 0);
+  const tip = P(len * 0.5, 0);
+  g.lineStyle(3.4, tint(DPT.abyss), alpha * 0.6);
+  g.lineBetween(tail.x, tail.y + 1.4, tip.x, tip.y + 1.4);
+  g.lineStyle(2.6, tint(DPT.lionRay), alpha * 0.95);
+  g.lineBetween(tail.x, tail.y, tip.x, tip.y);
+  g.lineStyle(2.8, tint(DPT.abyss), alpha * 0.75);
+  for (const s of [-0.16, 0.1]) {
+    const a = P(len * s, 0);
+    const b = P(len * (s + 0.12), 0);
+    g.lineBetween(a.x, a.y, b.x, b.y);
+  }
+
+  // The hook: a single backward-facing barb, so it reads as a thing that stays in.
+  const hookRoot = P(len * 0.24, 0);
+  const hookTip = P(len * 0.02, len * 0.22);
+  g.lineStyle(1.8, tint(DPT.lionRay), alpha * 0.9);
+  g.lineBetween(hookRoot.x, hookRoot.y, hookTip.x, hookTip.y);
+
+  g.fillStyle(tint(DPT.venom), alpha);
+  g.fillCircle(tip.x, tip.y, 2.2 * pulse + 0.8);
+  g.fillStyle(tint(DPT.foam), alpha * 0.8);
+  g.fillCircle(tip.x - ca * 0.6, tip.y - sa * 0.6, 0.9);
+}
+
+/**
+ * One kraken arm, drawn from the mantle out to wherever its tip currently is.
+ *
+ * Built as a chain of tapering segments with suckers down the underside rather than a
+ * tapered line, because the whole tell of this ability is *reach* — an arm that has gone out
+ * and taken somebody has to look different from one that is still curled up at home, and the
+ * only way to show that at a glance is for the segments to visibly stretch apart.
+ */
+export function krakenArm(
+  g: Phaser.GameObjects.Graphics,
+  tint: DepthsColorFn,
+  x: number, y: number, tipX: number, tipY: number, t: number, alpha: number,
+  thickness: number, phase: number, grabbed: boolean,
+): void {
+  const segs = 9;
+  const dx = tipX - x;
+  const dy = tipY - y;
+  const ang = Math.atan2(dy, dx);
+  const nx = -Math.sin(ang);
+  const ny = Math.cos(ang);
+  // A curl that is deep while the arm is idle and pulled almost straight while it is holding
+  // something — the arm's own posture is the readout for whether it is spent.
+  const curl = (grabbed ? 0.16 : 0.62) * Math.hypot(dx, dy);
+
+  let px = x;
+  let py = y;
+  for (let i = 1; i <= segs; i++) {
+    const s = i / segs;
+    const wave = Math.sin(s * Math.PI) * Math.sin(t * 2.4 + phase) * curl * 0.4;
+    const cx = x + dx * s + nx * (Math.sin(s * Math.PI) * curl * 0.5 + wave);
+    const cy = y + dy * s + ny * (Math.sin(s * Math.PI) * curl * 0.5 + wave);
+    const w = thickness * (1 - s * 0.82);
+    g.lineStyle(w + 2.2, tint(DPT.krakenDeep), alpha * 0.8);
+    g.lineBetween(px, py, cx, cy);
+    g.lineStyle(w, tint(DPT.kraken), alpha * 0.95);
+    g.lineBetween(px, py, cx, cy);
+    // Suckers, alternating down the near edge.
+    if (i % 2 === 0) {
+      g.fillStyle(tint(DPT.foam), alpha * 0.4);
+      g.fillCircle(cx + nx * w * 0.35, cy + ny * w * 0.35, Math.max(0.9, w * 0.22));
+    }
+    px = cx;
+    py = cy;
+  }
+  if (grabbed) {
+    // The coil around whatever it caught.
+    g.lineStyle(thickness * 0.5, tint(DPT.kraken), alpha * 0.9);
+    for (let i = 0; i < 3; i++) {
+      g.strokeCircle(tipX, tipY, 12 + i * 5 + Math.sin(t * 6 + i) * 1.2);
+    }
+  }
+}
+
+/**
+ * The kraken's head: a mantle with two lamp eyes and, at the centre of it, the beak — two
+ * hooked halves of chitin with a ring of teeth behind them, opening and shutting on its own
+ * slow rhythm. The beak is the part the eye is meant to land on, so it is the only thing here
+ * drawn in a colour that is not underwater purple.
+ */
+export function krakenHead(
+  g: Phaser.GameObjects.Graphics,
+  tint: DepthsColorFn,
+  x: number, y: number, r: number, t: number, alpha: number, gape: number, seed = 0,
+): void {
+  // The mantle: a bulb sitting behind the beak, breathing on its own phase.
+  const breathe = 1 + Math.sin(t * 1.6 + seed) * 0.05;
+  g.fillStyle(tint(DPT.abyss), alpha * 0.5);
+  g.fillEllipse(x, y + r * 0.34, r * 2.5, r * 1.5);
+  g.fillStyle(tint(DPT.krakenDeep), alpha * 0.95);
+  g.fillEllipse(x, y - r * 0.12, r * 2.3 * breathe, r * 2.5 * breathe);
+  g.fillStyle(tint(DPT.kraken), alpha * 0.9);
+  g.fillEllipse(x, y - r * 0.2, r * 1.9 * breathe, r * 2.1 * breathe);
+  g.fillStyle(tint(DPT.foam), alpha * 0.1);
+  g.fillEllipse(x - r * 0.3, y - r * 0.8, r * 0.9, r * 0.7);
+
+  // Warts, so the mantle is not a smooth balloon.
+  g.fillStyle(tint(DPT.krakenDeep), alpha * 0.6);
+  for (let i = 0; i < 9; i++) {
+    const a = (i / 9) * TAU + seed;
+    const d = r * (0.5 + jitter(seed, i) * 0.7);
+    g.fillCircle(x + Math.cos(a) * d, y - r * 0.2 + Math.sin(a) * d * 0.9, 1.6 + jitter(seed, 20 + i) * 1.6);
+  }
+
+  // Two lamp eyes with slot pupils.
+  for (const side of [-1, 1]) {
+    const ex = x + side * r * 0.78;
+    const ey = y - r * 0.5;
+    g.fillStyle(tint(DPT.lure), alpha * 0.2);
+    g.fillCircle(ex, ey, r * 0.5);
+    g.fillStyle(tint(DPT.foam), alpha * 0.95);
+    g.fillEllipse(ex, ey, r * 0.56, r * 0.44);
+    g.fillStyle(tint(DPT.abyss), alpha);
+    g.fillRect(ex - r * 0.22, ey - r * 0.05, r * 0.44, r * 0.1);
+  }
+
+  // The beak. Two hooked halves, hinged apart on `gape`.
+  const open = r * (0.12 + gape * 0.42);
+  for (const side of [-1, 1]) {
+    const pts = [
+      new Phaser.Geom.Point(x, y + r * 0.28 + side * open),
+      new Phaser.Geom.Point(x - r * 0.46, y + r * 0.5 + side * open * 0.5),
+      new Phaser.Geom.Point(x + r * 0.5, y + r * 0.42 + side * open * 0.7),
+      new Phaser.Geom.Point(x + r * 0.16, y + r * 0.28 + side * open * 1.5),
+    ];
+    g.fillStyle(tint(DPT.abyss), alpha * 0.9);
+    g.fillPoints(pts, true);
+    g.fillStyle(tint(DPT.beak), alpha);
+    g.fillPoints(pts.map((p) => new Phaser.Geom.Point(p.x, p.y - side * 1.2)), true);
+  }
+  // The throat behind them, and the ring of teeth around it.
+  g.fillStyle(tint(DPT.abyss), alpha);
+  g.fillEllipse(x + r * 0.05, y + r * 0.36, r * 0.8, open * 1.7);
+  g.fillStyle(tint(DPT.bone), alpha * 0.95);
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * TAU;
+    const tx = x + r * 0.05 + Math.cos(a) * r * 0.34;
+    const ty = y + r * 0.36 + Math.sin(a) * open * 0.72;
+    g.fillTriangle(tx - 1.5, ty, tx + 1.5, ty, x + r * 0.05, y + r * 0.36);
+  }
+  g.lineStyle(1.4, tint(DPT.bone), alpha * 0.6);
+  g.strokeEllipse(x + r * 0.05, y + r * 0.36, r * 0.8, open * 1.7);
 }
 
 /**
@@ -798,6 +1051,19 @@ export class DepthsFx extends FxBase {
   }
 }
 
+/**
+ * A DepthsFx that draws nothing at all.
+ *
+ * Depths Mastery's passive takes the angler out of the water entirely, and a fade that left
+ * bubbles, bite arcs and splash crowns behind it would be a fade that told the enemy exactly
+ * where to aim. Every effect in `DepthsFx` — including `flashIn`, which the blast and the
+ * splash go through — is built on `FxBase.anim`, so silencing that one method silences all of
+ * them without a per-effect guard anywhere in the kit.
+ */
+export class QuietDepthsFx extends DepthsFx {
+  override anim(): void {}
+}
+
 // ── Avatar ────────────────────────────────────────────────────────────────
 
 const DEPTHS_AVATAR: AvatarSpec = {
@@ -824,6 +1090,12 @@ const DEPTHS_AVATAR: AvatarSpec = {
 export class DepthsAvatar extends BaseAvatar {
   /** 0–1 — how far the passive has faded the body out. The esca ignores this. */
   private hidden = 0;
+  /**
+   * 0–1 — Camo Fade, the mastery's own fade. Unlike `hidden` this one takes the esca with it:
+   * the anglerfish lure exists to be seen, and camouflage exists not to be, so the one thing
+   * the standing-still fade deliberately leaves lit is the first thing this puts out.
+   */
+  private camo = 0;
   /** The fish currently clamped in the jaw, if any. */
   private fish: FishKind | null = null;
   /** 0–1 fishing progress, drawn as a taut line running off the illicium. */
@@ -837,6 +1109,7 @@ export class DepthsAvatar extends BaseAvatar {
   }
 
   setHidden(v: number): void { this.hidden = Phaser.Math.Clamp(v, 0, 1); }
+  setCamo(v: number): void { this.camo = Phaser.Math.Clamp(v, 0, 1); }
   setFish(kind: FishKind | null): void { this.fish = kind; }
   setFishing(progress: number): void { this.fishing = Phaser.Math.Clamp(progress, 0, 1); }
 
@@ -844,10 +1117,13 @@ export class DepthsAvatar extends BaseAvatar {
    * The fade runs through the rig's own alpha, so the hands and eyes go with the body — but
    * never all the way to zero, because `BaseAvatar` stops painting its layers below 0.02 and
    * the esca is the one thing that has to still be there when everything else has gone.
+   *
+   * Camo Fade is applied to `baseAlpha` itself rather than alongside it, which is the whole
+   * difference between the two fades: the lure survives one and not the other.
    */
   update(delta: number, x: number, y: number, alpha: number): void {
-    this.baseAlpha = alpha;
-    super.update(delta, x, y, alpha * (1 - this.hidden * 0.94));
+    this.baseAlpha = alpha * (1 - this.camo);
+    super.update(delta, x, y, this.baseAlpha * (1 - this.hidden * 0.94));
   }
 
   protected applyMastery(on: boolean): void {
@@ -858,6 +1134,8 @@ export class DepthsAvatar extends BaseAvatar {
   }
 
   protected emitTrail(x: number, y: number): void {
+    // A trail of bubbles behind an invisible body is a dotted line pointing at it.
+    if (this.camo > 0.4) return;
     new DepthsFx(this.scene, this.tint).bubbles(x, y, 1, 5, DPT.foam, 420, 4);
   }
 

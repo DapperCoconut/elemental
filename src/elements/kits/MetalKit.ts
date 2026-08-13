@@ -8,6 +8,7 @@ import {
 } from './MetalVisuals';
 import { BaseAvatar } from './ElementVisuals';
 import { makeSkinAvatar } from './skins/SkinAvatars';
+import { meterGain } from '../../combat/Meters';
 
 // ── Metal type definitions ─────────────────────────────────────────────────
 //
@@ -1408,6 +1409,9 @@ export class MetalKit {
   }
 
   private addBlood(owner: 'player' | 'npc', amount: number): void {
+    // Ruin's Combo Breaker halves every meter in the game — the blood bar included. Wrapped at
+    // the top so the Blood Clottage overflow is taxed the same as the bar itself.
+    amount = meterGain(owner === 'player' ? this.arena.player : this.arena.npc, amount);
     // R+ Blood Clottage: blood gained past a full bar converts normal HP into
     // clotted HP (no extra health — the same health simply takes 50% less damage).
     if (owner === 'player' && this.arena.hasUpgrade('r')) {

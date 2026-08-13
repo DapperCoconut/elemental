@@ -147,10 +147,10 @@ export class QuantumLabScene extends Phaser.Scene {
 
   // ── Roster ─────────────────────────────────────────────────────────────────
 
-  /** Every element the player owns and could bond. Quantum itself and the dummy are out. */
+  /** Every element the player owns and could bond. Quantum itself and the King are out. */
   private bondableElements(): string[] {
     return Object.keys(ELEMENT_MAP).filter((id) => {
-      if (id === 'quantum' || id === 'dummy' || id === 'king') return false;
+      if (id === 'quantum' || id === 'king') return false;
       return PlayerData.isElementUnlocked(id) || ['fire', 'water', 'life', 'air', 'earth'].includes(id);
     });
   }

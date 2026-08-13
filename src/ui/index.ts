@@ -4,6 +4,8 @@
  */
 export * from './Theme';
 export * from './Shapes';
+export * from './Icons';
+export * from './Cards';
 export * from './ChestArt';
 export * from './Backdrop';
 export * from './Panel';
@@ -12,4 +14,5 @@ export * from './Slider';
 export * from './Text';
 export * from './BondPicker';
 export * from './ElementPanels';
+export * from './ElementPortrait';
 export * from './ElementSelectGrid';

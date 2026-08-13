@@ -19,11 +19,13 @@ const ice: ElementCodex = {
     {
       emoji: '❄️',
       name: 'Frost Stacks',
-      magic:
-        'Rime cracks across whatever your cold touches and stays there, counted off in a ❄️×N label '
-        + 'over their head. Each stack is a separate timer rather than one refreshing debuff, so a '
-        + 'target that has been chipped at over ten seconds is carrying stacks that expire one at a '
-        + 'time. Past two stacks the rime stops being cosmetic and starts leaving them open.',
+      basics:
+        'Ice\'s whole economy. Up to 5 stacks, each running its own 8-second timer and falling off '
+        + 'independently. Nothing happens at 1–2; 3 stacks make all damage taken ×1.20, 4 make it ×1.30, '
+        + '5 make it ×1.45, and that applies to every source of damage in the game rather than only '
+        + 'yours. Stacks come from Ice Spike hits (1 each), standing in an icy trail (1 every 1.2s, or '
+        + 'every 2s for the trail Skate lays) and every unfreeze (3 at once). A frozen target\'s timers '
+        + 'are held still, so a 3-second freeze costs them no frost.',
       effects: [
         { tag: 'debuff', label: 'The cap', detail: '5 stacks maximum. Each one lasts 8s on its own timer and falls off independently — the fifth stack expiring drops you back to four, not to zero.' },
         { tag: 'debuff', label: 'Vulnerability curve', detail: 'Nothing at 1–2 stacks. 3 stacks: all damage taken ×1.20. 4 stacks: ×1.30. 5 stacks: ×1.45. It applies to every source of damage in the game, not just yours.' },
@@ -38,10 +40,10 @@ const ice: ElementCodex = {
     {
       emoji: '🧊',
       name: 'Shatter the Shell',
-      magic:
-        'A frozen fighter is encased, not merely stopped, and the shell is brittle. Anything of yours '
-        + 'that connects with it breaks it open — which frees them, and buries three stacks of frost in '
-        + 'them on the way out. Freezing is therefore never the end of a combo, only the middle of one.',
+      basics:
+        'An Ice Spike or a Frozen Solid cone that lands on an already-frozen fighter ends the freeze '
+        + 'immediately and applies 3 frost stacks in one go. There is no way to shatter and keep the '
+        + 'lockdown — the trade is always 3 stacks for whatever was left of the 3 seconds.',
       effects: [
         { tag: 'debuff', label: 'Break bonus', detail: 'An Ice Spike or a Frozen Solid cone that hits an already-frozen fighter ends the freeze immediately and applies 3 frost stacks in one go.' },
         { tag: 'control', label: 'Cuts your own freeze short', detail: 'There is no way to shatter and keep the lockdown. The trade is always 3 stacks for whatever is left of the 3 seconds.' },
@@ -51,11 +53,11 @@ const ice: ElementCodex = {
 
   abilities: {
     'ice-spike': {
-      magic:
-        'A shard drawn out of the air at the palm and thrown flat. It is a bad projectile on purpose — '
-        + 'eight damage will not close a fight — but it does not stop at the first body, and every one '
-        + 'that lands screws another layer of rime into whatever it passed through. This is the ability '
-        + 'you spend most of the match holding down.',
+      basics:
+        '8 damage, the smallest click in the game, plus 1 frost stack — or 3 if it shatters a frozen '
+        + 'target instead. The shard is not consumed on contact, so it keeps travelling and can chain '
+        + 'through a line of enemies for a stack each. 520 px/s on a 0.6s cooldown, roughly 1.7 shots a '
+        + 'second held down.',
       cast: 'Click, aimed at the cursor. Instant, no lock. Launched from the caster centre with a frost flash off the casting hand.',
       effects: [
         { tag: 'damage', label: 'Impact', detail: '8 damage — the smallest click in the game.' },
@@ -64,11 +66,12 @@ const ice: ElementCodex = {
         { tag: 'utility', label: 'Flight', detail: '520 px/s, 0.6s cooldown. Roughly 1.7 shots a second held down.' },
       ],
       upgrade: {
-        magic:
-          'Slush Thrower turns the click into a two-stage weapon. The first press still throws the shard; '
-          + 'holding after it opens a nozzle and sprays half-frozen slush in a churning cone at your feet. '
-          + 'It barely hurts. What it does is refuse to let the ledger run down — everything it touches has '
-          + 'its whole frost timer wound back to full.',
+        basics:
+          'Click becomes a held spray instead of a shard: a 150px cone at about a 37° half-angle from the '
+          + 'cursor line, 2 damage every 200ms — 10 a second at point blank — and nothing outside the arc '
+          + 'is touched. It never adds a stack; it resets every stack already on a target back to a full 8 '
+          + 'seconds, so it stops the curve falling off rather than climbing it. Under Black Ice it '
+          + 'refreshes void frost timers the same way, keeping the detonation payload topped up.',
         effects: [
           { tag: 'damage', label: 'Spray tick', detail: '2 damage per tick, one tick every 200ms while held — 10 damage a second at point blank.', requiresUpgrade: 'click' },
           { tag: 'area', label: 'The cone', detail: '150px range and a ~37° half-angle from the cursor line. Nothing outside that arc is touched.', requiresUpgrade: 'click' },
@@ -83,11 +86,12 @@ const ice: ElementCodex = {
     },
 
     'frost-blast': {
-      magic:
-        'The cash-out. A flat beam of cold thrown along the aim line to the far wall, which does '
-        + 'absolutely nothing to anybody who is not already carrying frost — and tears anybody who is '
-        + 'apart, stack by stack, in one flash of shattering rime. The kit refuses to fire it at all if '
-        + 'there is nothing on the board worth spending, so a wasted press costs you no cooldown.',
+      basics:
+        'A hitscan beam 1200px along your aim, catching anything within 32px of the line and billing '
+        + 'every enemy separately. It deals 7.5 damage per frost stack on each target — 8 at one stack, '
+        + '38 at five — then strips every stack, dropping their vulnerability back to ×1.00 instantly, '
+        + 'and leaves them unable to take a new frost or void stack for 3 seconds. 8s cooldown, and it '
+        + 'silently refuses to cast if nobody is carrying stacks.',
       cast: 'E, along the aim line. Hitscan and instant. Silently does not cast if no enemy is carrying stacks.',
       effects: [
         { tag: 'damage', label: 'Per stack', detail: '7.5 damage for every frost stack on the target, rounded — 8 at one stack, 38 at five. It pierces: every enemy near the line is billed separately.' },
@@ -97,10 +101,10 @@ const ice: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '8s cooldown — the whole rhythm of the element is how many stacks you can bank inside eight seconds.' },
       ],
       upgrade: {
-        magic:
-          'Frost Linger stops the blast from scraping the target completely clean. A little of the cold '
-          + 'is left behind in the wound, so the next build starts partway up the curve instead of at '
-          + 'nothing — as long as you had built something worth leaving.',
+        basics:
+          'A full build is no longer spent to the last stack. Blasting at 5 leaves 2 behind, at 3 or 4 '
+          + 'leaves 1, and below 3 leaves nothing — the residuals keep their vulnerability, so you restart '
+          + 'two steps from ×1.45 instead of five.',
         effects: [
           { tag: 'debuff', label: 'Residual stacks', detail: 'Blasting a target at 5 stacks leaves 2 behind. At 3 or 4 stacks it leaves 1. Below 3 it leaves nothing — the upgrade only pays out on a full build.', requiresUpgrade: 'e' },
           { tag: 'debuff', label: 'Kept multiplier', detail: 'The residual stacks keep their vulnerability, so a 5-stack blast leaves them still at ×1.00 (2 stacks) but two steps from ×1.45 rather than five.', requiresUpgrade: 'e' },
@@ -113,10 +117,10 @@ const ice: ElementCodex = {
     },
 
     'block-up': {
-      magic:
-        'Plates of ice slam together around the caster into a standing shell. There is no timer and no '
-        + 'cost: you are simply half as fast and a quarter harder to hurt until you decide otherwise. It '
-        + 'is the least interesting button in the kit and the reason Ice survives being walked down.',
+      basics:
+        'A free toggle with no duration and no drain: incoming damage ×0.75 and move speed ×0.5 until '
+        + 'you flip it back. The reduction multiplies with your own frost vulnerability rather than '
+        + 'replacing it, so at 5 stacks of frost you sit on ×1.45 × 0.75 = ×1.09. 0.2s between flips.',
       cast: 'R to toggle on, R again to toggle off. 0.2s cooldown between flips — effectively free.',
       effects: [
         { tag: 'shield', label: 'Damage reduction', detail: 'All incoming damage ×0.75 while up. It multiplies with your frost vulnerability rather than replacing it — at 5 stacks of your own frost you are on ×1.45 × 0.75 = ×1.09.' },
@@ -124,11 +128,15 @@ const ice: ElementCodex = {
         { tag: 'utility', label: 'No duration', detail: 'It stays until you flip it. There is no drain, no cooldown to respect and no cap on how long it runs.' },
       ],
       upgrade: {
-        magic:
-          'Black Ice Morph is not an improvement to Block Up, it is a replacement of it — and it drops '
-          + 'the guard entirely. The armour comes back in a void palette, the caster starts taking *more* '
-          + 'damage, and every scrap of frost on the board is transmuted into something that eats the '
-          + 'target from the inside instead of leaving them open. Getting out of it costs blood.',
+        basics:
+          'Block Up becomes Black Ice, and the trade inverts: you take ×1.25 damage instead of ×0.75 but '
+          + 'lose the 50% speed penalty. Toggling on converts every enemy frost stack to void frost, which '
+          + 'deals 1 damage per second per stack and applies no vulnerability at all — a 5-stack target '
+          + 'bleeds 5 HP/s. Frost Blast against void frost stops paying 7.5 per stack and instead cashes in '
+          + 'every second of damage-over-time the stacks had left, up to 40 from five fresh ones. Toggling '
+          + 'off costs 15 self-damage, shrinks you 15% (floor 30% size), shakes the camera and converts '
+          + 'every void stack back to ordinary frost. The whole kit runs void while it is on: tinted '
+          + 'spikes, void trails, void rinks.',
         effects: [
           { tag: 'cost', label: 'Fragile, not armoured', detail: 'Incoming damage ×1.25 instead of ×0.75, on top of your own frost curve. The 50% move-speed penalty is gone.', requiresUpgrade: 'r' },
           { tag: 'dot', label: 'Void frost', detail: 'Toggling on converts every enemy frost stack into a void frost stack, carrying its remaining duration across. Void frost deals 1 damage per second per stack and applies no vulnerability at all — a 5-stack target bleeds 5 HP/s.', requiresUpgrade: 'r' },
@@ -145,12 +153,12 @@ const ice: ElementCodex = {
     },
 
     skate: {
-      magic:
-        'The caster drops into a skater\'s crouch and stops walking entirely. From that moment the arena '
-        + 'drives them: a constant glide that only steers, turning toward the cursor at a fixed rate no '
-        + 'matter how fast you flick it. Blades cut plates of ice into the floor behind you the whole '
-        + 'way, and those plates are the real ability — a lane of frost you can lay anywhere you are '
-        + 'willing to be for the next few seconds.',
+      basics:
+        'A locked 220 px/s glide in whatever direction you point, steered by the cursor only — WASD '
+        + 'does nothing and the turn rate is capped at 3 radians a second. You cut a 32px plate of ice '
+        + 'every 80ms, each standing 5 seconds, and anything standing on one has its velocity scaled by '
+        + '0.8 every frame (a hard 20% brake that never decays) and takes 1 frost stack every 2s. 3s '
+        + 'cooldown, counted from when you stop rather than when you start.',
       cast: 'F to enter skater mode; heading is set from the cursor at launch. F again to stop, which always works even mid-cooldown and starts the 3s cooldown from there.',
       effects: [
         { tag: 'movement', label: 'The glide', detail: 'A locked 220 px/s in whatever direction you are pointed. WASD does nothing — steering is the cursor only, and the turn rate is capped at 3 radians per second.' },
@@ -160,10 +168,11 @@ const ice: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '3s cooldown, measured from when you stop rather than when you start — a long ride is a long cooldown gap.' },
       ],
       upgrade: {
-        magic:
-          'Skater\'s Rush makes the lane yours as well as theirs. Your own ice stops being neutral ground '
-          + 'and starts pushing you along it, and launching a skate out of a braced or morphed stance '
-          + 'freezes the whole floor under you into a standing rink rather than a line.',
+        basics:
+          'Your own ice now pushes you: touching a plate you laid grants ×1.2 move speed for 3 seconds, '
+          + 'refreshed continuously while you stay on it. Launching a skate out of Block Up also freezes a '
+          + '120px rink under you for 5 seconds that lays a frost stack on everything inside every 2s — or '
+          + 'a smaller 60px void rink, on the same timings, if you launch it while morphed.',
         effects: [
           { tag: 'buff', label: 'Own-trail speed', detail: 'Touching any plate you laid grants ×1.2 move speed for 3s, refreshed continuously while you stay on your own ice.', requiresUpgrade: 'f' },
           { tag: 'summon', label: 'Skate out of Block Up', detail: 'Starting a skate while Block Up is on freezes a 120px rink under you for 5s that lays 1 frost stack on everything inside it every 2s.', requiresUpgrade: 'f' },
@@ -177,11 +186,11 @@ const ice: ElementCodex = {
     },
 
     'frozen-solid': {
-      magic:
-        'The ultimate is a shove rather than a flick: both arms thrust out and a wedge of the arena goes '
-        + 'white to the far wall. Anything standing in it is sealed inside a shell of ice and stops '
-        + 'existing for three seconds — no movement, no casting, no frost decay. It is the longest hard '
-        + 'lock in the starting tier, and the only one with unlimited range.',
+      basics:
+        'A 45° cone (±22.5° off your aim) that runs to the arena borders — distance is never a reason '
+        + 'it misses — and locks everything it catches for 3 full seconds, unable to move or cast, with '
+        + 'their frost timers held. A second cone onto an already-frozen target shatters them instead: '
+        + 'the freeze ends and 3 stacks land at once. 12s cooldown.',
       cast: 'Q, aimed at the cursor. Instant, with a 0.9s arm-raise animation that does not delay the effect.',
       effects: [
         { tag: 'control', label: 'Freeze', detail: '3s of total lockdown to everything in the cone. Frozen fighters cannot move or cast, and their frost timers are held for the duration.' },
@@ -190,9 +199,10 @@ const ice: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '12s cooldown — long enough that the 8s Frost Blast is the ability you build the rotation around, not this.' },
       ],
       upgrade: {
-        magic:
-          'Shatter Strike loads the shell. While a target is sealed, the ice is under tension, and the '
-          + 'first thing to reach them breaks it hard enough to add a quarter to its own damage.',
+        basics:
+          'The next projectile to land on a frozen target deals ×1.25, announced with a SHATTER! pop-up. '
+          + 'One hit only, and only while they are still frozen — if the 3 seconds run out first the charge '
+          + 'is wasted.',
         effects: [
           { tag: 'damage', label: 'Primed hit', detail: 'The next projectile to land on a Frozen Solid target deals ×1.25 damage, announced with a SHATTER! pop-up. One hit only — the priming is consumed.', requiresUpgrade: 'q' },
           { tag: 'cost', label: 'Expires with the freeze', detail: 'The priming only pays out while they are still frozen. If the 3s runs out first the charge is wasted.', requiresUpgrade: 'q' },
@@ -207,10 +217,12 @@ const ice: ElementCodex = {
 
   perks: {
     rink: {
-      magic:
-        'The skates were never the point — the surface was. Frozen Solid stops being a lockdown and '
-        + 'starts being groundskeeping: the whole cone glazes over into a standing rink that both '
-        + 'fighters have to skate across, and you are the only one wearing blades.',
+      basics:
+        'Frozen Solid tiles its cone with ice as well as freezing: 32 plates — 8 distance bands at 4 '
+        + 'angles — out to the full 1200px reach, standing 8 seconds and freezing outward from you rather '
+        + 'than appearing at once. Rink plates damp velocity by only 1.5% a frame instead of stopping '
+        + 'anyone, so both fighters slide on their own momentum. You get ×1.25 move speed on any of your '
+        + 'ice and a further ×1.25 for the 2 seconds after starting a Skate — the two multiply to ×1.56.',
       cast: 'Nothing to press. Frozen Solid tiles its cone with rink plates on top of its normal freeze.',
       effects: [
         { tag: 'summon', label: 'The rink', detail: 'Frozen Solid lays 32 plates through its cone — 8 distance bands at 4 angles each, out to the full 1200px reach — for 8s. They freeze outward from you rather than appearing at once.' },
@@ -223,10 +235,12 @@ const ice: ElementCodex = {
       ],
     },
     snow: {
-      magic:
-        'The divine perk, and the one that takes the ultimate away. Nothing freezes any more. The cone\'s '
-        + 'worth of cold is packed into a squat snow turret that stands where you pointed and works the '
-        + 'fight for you — but it arrives empty, and the only thing that loads it is you shooting it.',
+      basics:
+        'Q stops freezing anything at all and plants a turret instead. It stands 30 seconds with a '
+        + '460px range, tracking its mark and easing its barrel round, eats your Ice Spikes passing '
+        + 'within 30px as ammunition up to 5 rounds, and fires one snowball every 5s for 15 damage at 460 '
+        + 'px/s, each applying 1 frost stack and a 50% slow for 3 seconds. The 3s lockdown, the shatter '
+        + 'bonus and Shatter Strike\'s priming are all gone with it.',
       cast: 'Q plants a turret at the cursor. Frozen Solid no longer freezes anything at all.',
       effects: [
         { tag: 'summon', label: 'The turret', detail: 'Stands 30s with a 460px engagement range and an ammo counter over its head. It tracks its mark and eases its barrel around rather than snapping.' },
@@ -240,10 +254,11 @@ const ice: ElementCodex = {
 
   mastery: {
     'viral-frost': {
-      magic:
-        'The cold stops being something you apply and becomes something that spreads. Rime jumps between '
-        + 'bodies that touch, so a frosted enemy walking into a pack seeds the pack. It does nothing at '
-        + 'all in a duel and rewrites crowd fights entirely.',
+      basics:
+        'Frost becomes contagious: an enemy carrying frost or void frost passes 1 matching stack to any '
+        + 'other enemy within 40px, at most once per second each, so a tight pack fills up over several '
+        + 'seconds rather than instantly. A void carrier spreads void, a frosted one spreads frost, and '
+        + 'the spread respects the same immunity windows Frost Blast leaves behind.',
       effects: [
         { tag: 'debuff', label: 'Contact spread', detail: 'An enemy carrying frost or void frost passes 1 matching stack to any other enemy within 40px.' },
         { tag: 'utility', label: 'Catch rate', detail: 'Each enemy can only catch a spread stack once per second, so a tight pack fills up over several seconds rather than instantly.' },
@@ -254,11 +269,12 @@ const ice: ElementCodex = {
       ],
     },
     'icicle-impale': {
-      magic:
-        'A short, brutal charge that ends with a spike of ice driven through whoever you reached. The '
-        + 'icicle does not hurt them by itself — it just sits there, visible, keeping a count of the '
-        + 'punishment they take. Once they have taken enough it shatters outward and packs their body '
-        + 'with more frost than the rules normally allow.',
+      basics:
+        'A bindable 900 px/s charge for 150ms — about 135px — that impales the first enemy within 34px. '
+        + 'Once the impaled target has taken 50 more damage from any source the icicle bursts for 2 bonus '
+        + 'stacks, and those ignore the normal 5-stack ceiling up to a hard maximum of 7: 6 stacks is '
+        + '×1.60 damage taken and 7 is ×1.75, the highest vulnerability the game can produce. While the '
+        + 'icicle is live, every stack applied to that target lasts 10 seconds instead of 8. 6s cooldown.',
       cast: 'Bindable to E, R, F or Q. Dashes forward on cast; the first enemy the dash reaches is impaled.',
       effects: [
         { tag: 'movement', label: 'The charge', detail: '900 px/s for 150ms — about 135px of forward travel, connecting with anything within 34px.' },
@@ -273,11 +289,13 @@ const ice: ElementCodex = {
       ],
     },
     'curling-stone': {
-      magic:
-        'A slab of ice parked on the floor that does nothing until you shoot it. Every shot shoves it a '
-        + 'little and freezes another crust of rime onto it, and the rime is what makes it dangerous — a '
-        + 'loaded stone travels further, travels faster, and hits twice as hard as a bare one. It '
-        + 'bounces off walls and keeps going until it runs out of momentum.',
+      basics:
+        'A bindable 18px stone that stands 20 seconds with a 32px contact radius, bouncing off walls '
+        + 'and driven by your own shots. Each shot that reaches it shoves it and loads 1 frost stack, to '
+        + 'a maximum of 5. It slams for 30 damage at 0 stacks scaling +20% per stack to 60 at 5, pushes '
+        + '150 at 0 stacks and +62 per stack, and can only hit the same fighter once a second. Below 26 '
+        + 'px/s it counts as parked and is harmless. Crossing one of your own Skate trails accelerates it '
+        + '×3.2 and drops its drag to 0.4, so a trail laid ahead of it is a launch ramp. 25s cooldown.',
       cast: 'Bindable to E, R, F or Q. Summons a stone in front of you; your own shots and slush spray drive it.',
       effects: [
         { tag: 'summon', label: 'The stone', detail: 'An 18px slab standing 20s, with a 32px contact radius. It bounces off the arena walls and spins visibly as it rolls.' },

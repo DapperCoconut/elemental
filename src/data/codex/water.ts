@@ -12,10 +12,10 @@ const water: ElementCodex = {
 
   abilities: {
     'water-cut': {
-      magic:
-        'A blade of water drawn to a hair\'s edge and thrown flat. It carries almost no mass, which is '
-        + 'why it is the fastest and weakest projectile in the base game — but it also costs almost '
-        + 'nothing to throw, and the whole element is built on landing a great many small things.',
+      basics:
+        'A thin blade of water thrown at the cursor for 8 damage. It flies 620 px/s — the fastest of '
+        + 'the base click projectiles — is used up on the first fighter it touches, and returns every '
+        + '0.25s: four a second, twice fire\'s rate for 40% of the damage.',
       cast: 'Click, aimed at the cursor. Instant. The blade orients to its own travel.',
       effects: [
         { tag: 'damage', label: 'Slash', detail: '8 damage to the first fighter it touches.' },
@@ -23,10 +23,9 @@ const water: ElementCodex = {
         { tag: 'utility', label: 'Rate of fire', detail: '0.25s cooldown, four per second. Twice the rate of fire\'s click for 40% of the damage.' },
       ],
       upgrade: {
-        magic:
-          'Dehydration turns the stream of small cuts into an accumulating condition. Each pale shot '
-          + 'draws a little more water out of the target, and a target that has been drying out for a '
-          + 'while takes progressively more from everything you throw at them.',
+        basics:
+          'Every white shot now applies 2% dehydration, and dehydration pays you back: each 10% on a '
+          + 'target adds 5% to your damage against them, capped at +50% when they are fully dried out.',
         effects: [
           { tag: 'debuff', label: 'Dehydration stacks', detail: 'White shots apply 2% dehydration per hit.', requiresUpgrade: 'click' },
           { tag: 'buff', label: 'Damage scaling', detail: 'Every 10% dehydration grants +5% damage, to a cap of +50% at 100%.', requiresUpgrade: 'click' },
@@ -35,10 +34,10 @@ const water: ElementCodex = {
     },
 
     splash: {
-      magic:
-        'The caster opens a two-second downpour over the cursor and then walks it around. Water arrives '
-        + 'from above in a steady sequence of impacts rather than as one placed pool, so the shape of the '
-        + 'flooded ground is drawn by where the cursor went — this is painting, not placing.',
+      basics:
+        'Opens a 2-second rain window that drops a 36px pool at your live cursor every 0.15s — about 13 '
+        + 'pools a cast. Each pool lasts 1 second and deals 2 damage every 0.25s, 8 a second, to anyone '
+        + 'standing in it. 5s cooldown, counted from the start of the window.',
       cast: 'E. Opens a 2s window; pools drop at the live cursor position every 0.15s for as long as it runs.',
       effects: [
         { tag: 'area', label: 'Downpour', detail: '2s of rain, one pool every 0.15s — about 13 pools per cast, laid wherever the cursor is at that instant.' },
@@ -47,10 +46,10 @@ const water: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '5s cooldown from the start of the window.' },
       ],
       upgrade: {
-        magic:
-          'Tidal Pool holds the last of the downpour back. The final impact of the sequence lands as one '
-          + 'heavy body of water rather than another drip — a pool you can actually build a fight around, '
-          + 'instead of thirteen that evaporate behind you.',
+        basics:
+          'Only the last drop changes, and it changes a lot: it lands 54px across instead of 36 and '
+          + 'stands for 5 seconds instead of 1, so the cast leaves a real puddle behind rather than a '
+          + 'passing shower.',
         effects: [
           { tag: 'area', label: 'Final pool', detail: 'The last drop of the sequence lands at 54px instead of 36px — 1.5× wider.', requiresUpgrade: 'e' },
           { tag: 'area', label: 'Lasting', detail: 'That pool sticks for 5s instead of 1s, so it outlives the cast by a wide margin.', requiresUpgrade: 'e' },
@@ -63,10 +62,11 @@ const water: ElementCodex = {
     },
 
     geyser: {
-      magic:
-        'A spring broken open through the arena floor. A column punches up, the ground around it floods, '
-        + 'and the vent stays there as a piece of terrain — the only ability in the kit that helps you '
-        + 'rather than hurting them. It is a movement tool disguised as a fountain.',
+      basics:
+        'Opens a vent at the cursor that stands for 5 seconds and holds 2 charges of speed boost. '
+        + 'Standing in your own geyser draws one, with a 2-second gap enforced between draws, and the '
+        + 'height of the fountain shows how many are left. 12s cooldown — an ability you plan a fight '
+        + 'around.',
       cast: 'R, opened at the cursor. Instant; the vent then stands on its own.',
       effects: [
         { tag: 'buff', label: 'Speed vent', detail: 'Standing in your own geyser grants a speed boost. It holds 2 charges, and the fountain\'s height shows how many are left.' },
@@ -75,9 +75,10 @@ const water: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '12s cooldown — this is the ability you plan a fight around rather than spam.' },
       ],
       upgrade: {
-        magic:
-          'Boiling Geyser puts heat under the spring. The vent no longer only helps you — it scalds, and '
-          + 'the water you have been using as a road becomes a place the other fighter cannot follow you into.',
+        basics:
+          'The vent is now hot as well as fast: 10 damage every second to enemies standing in one of '
+          + 'yours. Boiling vents steam and glow pale, so the dangerous ones are readable from across the '
+          + 'arena.',
         effects: [
           { tag: 'dot', label: 'Scalding', detail: '10 damage every 1s to enemies standing in one of your geysers.', requiresUpgrade: 'r' },
           { tag: 'utility', label: 'Tell', detail: 'Boiling vents steam and glow pale, so the hot ones are readable across the arena.', requiresUpgrade: 'r' },
@@ -89,10 +90,11 @@ const water: ElementCodex = {
     },
 
     'pressure-dagger': {
-      magic:
-        'Water dragged in from all around the caster and compressed, held, and compressed further. The '
-        + 'blade visibly lengthens and darkens through each pressure tier while the key is down. Let go '
-        + 'early and it is a thrown knife; hold it to the top and it is a lance that goes through people.',
+      basics:
+        'Hold F to charge, release to throw a piercing lance at 700 px/s. 16 damage uncharged, ×1.5 at '
+        + 'one second of charge and ×2 at two, and it passes through bodies instead of stopping on the '
+        + 'first. 4s cooldown from the release, and the blade\'s length and colour show the tier you are '
+        + 'at.',
       cast: 'Hold F to charge, release to throw. The blade\'s length and colour track the tier you are at.',
       effects: [
         { tag: 'damage', label: 'Base throw', detail: '16 damage at tier 0, launched at 700 px/s.' },
@@ -102,10 +104,9 @@ const water: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '4s cooldown, counted from the release.' },
       ],
       upgrade: {
-        magic:
-          'Laminar Laceration is what a fully-pressurised cut actually does to a target: it does not just '
-          + 'wound them, it splits them into two separate things to aim at. For two seconds the enemy is '
-          + 'a pair of 1.5× hitboxes, and everything you throw is much harder to miss with.',
+        basics:
+          'A fully charged two-second dagger splits whoever it hits into two hitboxes at 1.5× size for 2 '
+          + 'seconds — a far easier target for everything else you throw at them.',
         effects: [
           { tag: 'debuff', label: 'Split hitbox', detail: 'A fully charged (2s) dagger splits the enemy into two 1.5× hitboxes for 2s.', requiresUpgrade: 'f' },
         ],
@@ -116,12 +117,11 @@ const water: ElementCodex = {
     },
 
     'pain-rain': {
-      magic:
-        'The caster hauls an entire storm up out of the ground beneath themselves — a spout, a crown of '
-        + 'water thrown wide, mist rolling off the front — and then two hundred separate drops come down '
-        + 'across the whole arena. There is nowhere in the room that is not being rained on. It is the '
-        + 'longest cooldown in the base game and the only fire-and-forget ultimate that keeps working '
-        + 'while you go and do something else.',
+      basics:
+        'The ultimate: 200 drops fall across the whole arena inside 0.8 seconds, each painting a 14px '
+        + 'shadow on the ground 50–800ms before it lands and then striking a 55px radius. Every single '
+        + 'drop is dodgeable, you keep full control while it falls, and the camera shakes 320ms as the '
+        + 'storm goes up. 50s cooldown, the longest of any base element ability.',
       cast: 'Q. Instant, arena-wide; you keep full control while the rain falls.',
       effects: [
         { tag: 'damage', label: 'The rain', detail: '200 individual drops fall across the arena, each landing as its own impact.' },
@@ -130,10 +130,9 @@ const water: ElementCodex = {
         { tag: 'utility', label: 'Screen impact', detail: '320ms camera shake as the storm is raised.' },
       ],
       upgrade: {
-        magic:
-          'Squall Splashes means a quarter of the storm hits hard enough to stay. The arena does not just '
-          + 'get rained on, it gets flooded — and the pools left behind are the good ones, the wide '
-          + 'five-second kind, scattered everywhere at once.',
+        basics:
+          'A quarter of the drops leave a 54px pool where they land, standing for 5 seconds and ticking '
+          + 'the usual 2 damage per 0.25s. The ultimate floods the arena instead of only passing over it.',
         effects: [
           { tag: 'area', label: 'Tidal splashes', detail: '25% of drops leave a 54px pool behind them, lasting 5s — the same pool the Tidal Pool upgrade produces.', requiresUpgrade: 'q' },
           { tag: 'dot', label: 'Flooded arena', detail: 'Those pools tick the standard 2 damage per 0.25s, so the ultimate leaves behind sustained area damage rather than a single burst.', requiresUpgrade: 'q' },
@@ -144,11 +143,11 @@ const water: ElementCodex = {
 
   perks: {
     stalagmite: {
-      magic:
-        'The downpour freezes on the way down. Splash stops laying pools and starts planting spikes '
-        + 'of hard water — no slow, no lingering tick, just something sharp standing in the ground. '
-        + 'And they are not only obstacles: your own water blades hitting one are caught and thrown '
-        + 'onward, so the spikes are a relay network you build across the arena.',
+      basics:
+        'Splash stops making puddles and makes stalagmites: heavy damage on contact in place of the '
+        + '2-per-0.25s tick, with no slow and no ground denial at all. Your own water clicks passing near '
+        + 'a spike are eaten and relaunched from it at 500 px/s for 7 damage — 11 from an upgraded final '
+        + 'spike.',
       cast: 'Passive. Changes what E produces.',
       effects: [
         { tag: 'damage', label: 'Spikes not pools', detail: 'Splash drops stalagmites instead of puddles — strong initial damage in place of the 2-per-0.25s tick.' },
@@ -159,20 +158,20 @@ const water: ElementCodex = {
   },
   mastery: {
     slipstream: {
-      magic:
-        'You stop walking through your own water and start being carried by it. Every pool the kit '
-        + 'makes becomes a road, which quietly turns the whole element from area denial into '
-        + 'mobility — the Splash you laid to slow them is now the Splash you travel on.',
+      basics:
+        'Standing in any of your own water makes you 25% faster. Base Splash pools, the E+ tidal pool '
+        + 'and the Q+ squall splashes all count.',
       effects: [
         { tag: 'buff', label: 'Wet ground', detail: '25% faster movement while standing in any of your own water.' },
         { tag: 'utility', label: 'What counts', detail: 'Base Splash pools, the E+ tidal pool, and Q+ Squall Splashes all qualify.' },
       ],
     },
     siphon: {
-      magic:
-        'A cone held open in front of you that pulls the water out of anything standing in it. It '
-        + 'does nothing on its own — no damage, no slow — it just dries people out, and a dried-out '
-        + 'target takes more from every single thing the rest of the kit throws.',
+      basics:
+        'A bindable cone — 190px long, 36° either side of your aim — that tracks your cursor for 3 '
+        + 'seconds and deals no damage at all. Everything inside takes 10% dehydration a second, up to '
+        + '30% from a full channel, which feeds the damage bonus on everything else you throw. 5s '
+        + 'cooldown.',
       cast: 'Bindable to E, R, F or Q. Opens a cone that tracks your aim for 3s.',
       effects: [
         { tag: 'debuff', label: 'Dehydration', detail: '10% dehydration per second to every enemy inside, for as long as they stay — up to 30% from one full channel.' },

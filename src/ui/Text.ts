@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix, tintPlate } from './Theme';
 import { ALL_CORNERS, drawGlow, drawOrnateRule, fillDiamond, fillNotchedGradient, strokeNotched } from './Shapes';
+import { drawIcon, IconName } from './Icons';
 import { Sfx } from '../audio';
 
 /**
@@ -66,30 +67,40 @@ export function addTitle(scene: Phaser.Scene, opts: {
 export function addSectionLabel(scene: Phaser.Scene, opts: {
   x: number; y: number; text: string; accent?: number; depth?: number;
   align?: 'center' | 'left'; width?: number;
+  /** Drawn glyph set just ahead of the heading. */
+  iconArt?: IconName;
 }): Phaser.GameObjects.Text {
   const accent = opts.accent ?? C.arcane;
   const depth = opts.depth ?? DEPTH.content;
   const centred = (opts.align ?? 'center') === 'center';
 
-  const label = scene.add.text(opts.x + (centred ? 0 : 14), opts.y, opts.text, {
+  const labelX = opts.x + (centred ? (opts.iconArt ? 11 : 0) : (opts.iconArt ? 34 : 14));
+  const label = scene.add.text(labelX, opts.y, opts.text, {
     fontSize: '14px', fontFamily: FONT_DISPLAY, color: hex(mix(accent, 0xffffff, 0.6)), letterSpacing: 3,
   }).setOrigin(centred ? 0.5 : 0, 0.5).setDepth(depth);
 
   const g = scene.add.graphics().setDepth(depth);
+  // The glyph sits inside the heading block, so the rules are struck from the block's real
+  // extent rather than from the text's — otherwise an icon punches through the left rule.
+  const blockL = centred ? label.x - label.width / 2 - (opts.iconArt ? 22 : 0) : opts.x;
+  const blockR = centred ? label.x + label.width / 2 : opts.x + 20 + label.width;
+
   if (centred) {
     const halfW = opts.width ? opts.width / 2 : label.width / 2 + 40;
     g.lineStyle(1, accent, 0.4);
-    g.beginPath(); g.moveTo(opts.x - halfW, opts.y); g.lineTo(opts.x - label.width / 2 - 12, opts.y); g.strokePath();
-    g.beginPath(); g.moveTo(opts.x + label.width / 2 + 12, opts.y); g.lineTo(opts.x + halfW, opts.y); g.strokePath();
+    g.beginPath(); g.moveTo(opts.x - halfW, opts.y); g.lineTo(blockL - 12, opts.y); g.strokePath();
+    g.beginPath(); g.moveTo(blockR + 12, opts.y); g.lineTo(opts.x + halfW, opts.y); g.strokePath();
     fillDiamond(g, opts.x - halfW, opts.y, 3, accent, 0.6);
     fillDiamond(g, opts.x + halfW, opts.y, 3, accent, 0.6);
+    if (opts.iconArt) drawIcon(g, opts.iconArt, blockL + 9, opts.y, 8, mix(accent, 0xffffff, 0.4));
   } else {
     g.fillStyle(accent, 0.9);
     g.fillRect(opts.x, opts.y - 7, 3, 14);
+    if (opts.iconArt) drawIcon(g, opts.iconArt, opts.x + 20, opts.y, 8, mix(accent, 0xffffff, 0.4));
     if (opts.width) {
       g.lineStyle(1, accent, 0.3);
       g.beginPath();
-      g.moveTo(opts.x + 20 + label.width, opts.y);
+      g.moveTo(blockR, opts.y);
       g.lineTo(opts.x + opts.width, opts.y);
       g.strokePath();
     }
@@ -103,7 +114,7 @@ export function addSectionLabel(scene: Phaser.Scene, opts: {
  * it against `x`, which is what the top-right HUD corners want.
  */
 export function addChip(scene: Phaser.Scene, opts: {
-  x: number; y: number; icon: string; value: string;
+  x: number; y: number; icon?: string; iconArt?: IconName; value: string;
   accent?: number; depth?: number; originX?: number; fontSize?: number;
   /** Extra caption under the value. */
   caption?: string;
@@ -117,8 +128,15 @@ export function addChip(scene: Phaser.Scene, opts: {
   const g = scene.add.graphics();
   container.add(g);
 
-  const icon = scene.add.text(0, opts.caption ? -5 : 0, opts.icon, { fontSize: `${fs}px` }).setOrigin(0, 0.5);
-  const value = scene.add.text(0, opts.caption ? -5 : 0, opts.value, {
+  const iconY = opts.caption ? -5 : 0;
+  // A drawn glyph has no text metrics, so it rides on a zero-alpha spacer of the width the
+  // layout needs and paints itself into the chip's own Graphics at layout time.
+  const artSize = fs * 0.5;
+  const icon = opts.iconArt
+    ? scene.add.text(0, iconY, '', { fontSize: `${fs}px` })
+        .setOrigin(0, 0.5).setAlpha(0).setFixedSize(artSize * 2 + 3, fs)
+    : scene.add.text(0, iconY, opts.icon ?? '', { fontSize: `${fs}px` }).setOrigin(0, 0.5);
+  const value = scene.add.text(0, iconY, opts.value, {
     fontSize: `${fs}px`, fontFamily: FONT_DISPLAY, color: hex(mix(accent, 0xffffff, 0.55)), letterSpacing: 1,
   }).setOrigin(0, 0.5);
   container.add([icon, value]);
@@ -150,6 +168,7 @@ export function addChip(scene: Phaser.Scene, opts: {
     strokeNotched(g, left, -h / 2, w, h, accent, 0.55, 1.5, h / 2.6, ALL_CORNERS);
     g.lineStyle(1, mix(accent, 0xffffff, 0.7), 0.25);
     g.beginPath(); g.moveTo(left + h / 2.6, -h / 2 + 1.5); g.lineTo(left + w - h / 2.6, -h / 2 + 1.5); g.strokePath();
+    if (opts.iconArt) drawIcon(g, opts.iconArt, left + padX + icon.width / 2, iconY, artSize, accent);
   };
   layout();
 

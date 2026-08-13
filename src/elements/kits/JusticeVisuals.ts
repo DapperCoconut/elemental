@@ -100,6 +100,166 @@ export function spearShape(
 }
 
 /**
+ * An axe: a stubby haft and a broad crescent bit swept off one side of it.
+ *
+ * Same contract as {@link spearShape} — drawn head-first from `(cx, cy)` along `angle`, so the
+ * caller positions the butt. The bit is deliberately off-axis: a spear is a line and an axe is
+ * a weight on the end of a stick, and the silhouette has to say which one you are holding.
+ */
+export function axeShape(
+  g: Phaser.GameObjects.Graphics,
+  tint: JusticeColorFn,
+  cx: number, cy: number,
+  angle: number, len: number,
+  alpha = 1,
+  scale = 1,
+): void {
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  const px = -sin, py = cos;
+  const at = (d: number, off = 0) => ({ x: cx + cos * d + px * off, y: cy + sin * d + py * off });
+
+  // Haft.
+  const haftW = 2.4 * scale;
+  const shaft = len * 0.74;
+  const a = at(0, -haftW), b = at(shaft, -haftW), c = at(shaft, haftW), d = at(0, haftW);
+  g.fillStyle(tint(JUS.bronze), alpha);
+  g.fillPoints([a, b, c, d].map((p) => new Phaser.Geom.Point(p.x, p.y)), true);
+  g.lineStyle(haftW * 0.5, tint(JUS.bright), alpha * 0.55);
+  const h0 = at(0, -haftW * 0.4), h1 = at(shaft, -haftW * 0.4);
+  g.lineBetween(h0.x, h0.y, h1.x, h1.y);
+
+  // Bit — a crescent hung off the head, drawn as a fan of quads so the edge curves.
+  const root = at(shaft - 3 * scale);
+  const segs = 7;
+  const reach = 13 * scale;
+  const drop = 15 * scale;
+  const pts: { x: number; y: number }[] = [];
+  for (let i = 0; i <= segs; i++) {
+    const f = i / segs;
+    // A quarter turn of edge, biting forward at the top and hanging back at the heel.
+    const sweep = -Math.PI * 0.42 + f * Math.PI * 0.84;
+    pts.push(at(shaft - 3 * scale + Math.cos(sweep) * drop, -reach - Math.sin(sweep) * 3 * scale));
+  }
+  g.fillStyle(tint(JUS.stone), alpha);
+  for (let i = 0; i < segs; i++) {
+    g.fillTriangle(root.x, root.y, pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y);
+  }
+  // Lit edge along the outside of the crescent, and a gilt cheek where it meets the haft.
+  g.lineStyle(2.2 * scale, tint(JUS.pale), alpha * 0.95);
+  for (let i = 0; i < segs; i++) g.lineBetween(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y);
+  g.fillStyle(tint(JUS.gold), alpha);
+  g.fillCircle(root.x, root.y, 3.4 * scale);
+  const butt = at(-2 * scale);
+  g.fillStyle(tint(JUS.gold), alpha * 0.9);
+  g.fillCircle(butt.x, butt.y, 2.4 * scale);
+}
+
+/**
+ * An angel bite: a scalloped chunk missing out of a body, with light pouring out of the wound.
+ *
+ * Drawn on the *rim* of the body at `angle`, because a bite is taken out of an edge — a notch
+ * in the middle of a circle reads as a hole, not as something torn away.
+ */
+export function angelBite(
+  g: Phaser.GameObjects.Graphics,
+  tint: JusticeColorFn,
+  x: number, y: number,
+  bodyR: number, angle: number,
+  t: number, alpha = 1,
+): void {
+  const bx = x + Math.cos(angle) * bodyR;
+  const by = y + Math.sin(angle) * bodyR;
+  const r = bodyR * 0.42;
+
+  // The missing chunk: void first, so whatever the body drew underneath is gone.
+  g.fillStyle(0x05040a, 0.85 * alpha);
+  g.fillCircle(bx, by, r);
+  // Teeth marks around the rim of the bite.
+  const teeth = 5;
+  for (let i = 0; i < teeth; i++) {
+    const a = angle + Math.PI + (i / (teeth - 1) - 0.5) * 2.1;
+    g.fillStyle(0x05040a, 0.85 * alpha);
+    g.fillCircle(bx + Math.cos(a) * r * 0.86, by + Math.sin(a) * r * 0.86, r * 0.34);
+  }
+  // Light coming out of it — a hot core and a fan of rays pointing away from the body.
+  const pulse = 0.72 + 0.28 * Math.sin(t * 8 + angle * 3);
+  g.fillStyle(tint(JUS.pale), 0.85 * alpha * pulse);
+  g.fillCircle(bx, by, r * 0.5);
+  g.fillStyle(tint(JUS.white), 0.95 * alpha * pulse);
+  g.fillCircle(bx, by, r * 0.24);
+  for (let i = -2; i <= 2; i++) {
+    const a = angle + i * 0.34;
+    const len = r * (2.4 + Math.sin(t * 6 + i) * 0.5);
+    g.fillStyle(tint(JUS.bright), 0.3 * alpha * pulse);
+    g.fillTriangle(
+      bx, by,
+      bx + Math.cos(a) * len - Math.sin(a) * r * 0.2, by + Math.sin(a) * len + Math.cos(a) * r * 0.2,
+      bx + Math.cos(a) * len + Math.sin(a) * r * 0.2, by + Math.sin(a) * len - Math.cos(a) * r * 0.2,
+    );
+  }
+}
+
+/**
+ * A row of electrified holy spikes standing off a wall.
+ *
+ * `(x, y)` is the midpoint of the wall face, `nx`/`ny` the inward normal the spikes point
+ * along, and `span` how much wall to cover. Every third spike carries an arc of charge across
+ * to its neighbour, which is the whole tell that touching them is going to cost something.
+ */
+export function holySpikes(
+  g: Phaser.GameObjects.Graphics,
+  tint: JusticeColorFn,
+  o: {
+    x: number; y: number; vertical: boolean; span: number;
+    nx: number; ny: number;
+    /** Seconds, for the charge arcs. */
+    t: number;
+    alpha?: number;
+  },
+): void {
+  const { x, y, vertical, span, nx, ny, t } = o;
+  const alpha = o.alpha ?? 1;
+  const step = 26;
+  const n = Math.max(2, Math.round(span / step));
+  const tips: { x: number; y: number }[] = [];
+
+  for (let i = 0; i <= n; i++) {
+    const f = i / n - 0.5;
+    const bx = vertical ? x : x + f * span;
+    const by = vertical ? y + f * span : y;
+    // Alternating lengths, so the row reads as iron teeth rather than a comb.
+    const len = (i % 2 === 0 ? 15 : 10) * (1 + 0.08 * Math.sin(t * 3 + i));
+    const half = 5.5;
+    const tipX = bx + nx * len;
+    const tipY = by + ny * len;
+    // Base is broad along the wall, tip is a point off it.
+    const px = vertical ? 0 : 1, py = vertical ? 1 : 0;
+    g.fillStyle(tint(JUS.stoneDark), 0.95 * alpha);
+    g.fillTriangle(bx - px * half, by - py * half, bx + px * half, by + py * half, tipX, tipY);
+    g.fillStyle(tint(JUS.stone), 0.9 * alpha);
+    g.fillTriangle(bx - px * half * 0.5, by - py * half * 0.5, bx + px * half * 0.3, by + py * half * 0.3, tipX, tipY);
+    g.fillStyle(tint(JUS.pale), (0.6 + 0.4 * Math.sin(t * 7 + i * 1.3)) * alpha);
+    g.fillCircle(tipX, tipY, 2.1);
+    tips.push({ x: tipX, y: tipY });
+  }
+
+  // Charge crawling between the tips — three live arcs at a time, walking along the row.
+  const lit = Math.floor(t * 6);
+  for (let k = 0; k < 3; k++) {
+    const i = (lit + k * Math.max(1, Math.floor(n / 3))) % n;
+    const a = tips[i], b = tips[i + 1];
+    if (!a || !b) continue;
+    const mx = (a.x + b.x) / 2 + (Math.random() - 0.5) * 6;
+    const my = (a.y + b.y) / 2 + (Math.random() - 0.5) * 6;
+    g.lineStyle(1.8, tint(JUS.willPale), 0.85 * alpha);
+    g.lineBetween(a.x, a.y, mx, my);
+    g.lineBetween(mx, my, b.x, b.y);
+    g.fillStyle(tint(JUS.white), 0.7 * alpha);
+    g.fillCircle(mx, my, 1.6);
+  }
+}
+
+/**
  * A run of interlocking chain links between two points. Alternating links are drawn
  * edge-on (a short bar) so the run reads as a twisted chain rather than a string of beads.
  */
@@ -262,6 +422,143 @@ export function willMeter(
   g.fillRect(x, y, w * ratio, h * 0.38);
   g.lineStyle(1, 0x05070f, 0.7);
   for (let i = 1; i < 4; i++) g.lineBetween(x + (w * i) / 4, y, x + (w * i) / 4, y + h);
+}
+
+// ── Combo Excelsius ───────────────────────────────────────────────────────
+
+/**
+ * The style meter: a slim bar with a hard-edged fill, a shear across both ends so it reads as
+ * something bolted onto the top of the screen rather than a progress bar, and a bank of ticks
+ * behind it. The letter beside it is Text, drawn by the kit — this is only the gauge.
+ *
+ * `heat` (0–1) is how recently style was scored, and drives the outer glow. `bleeding` shades
+ * the tail of the fill red so a rank that is about to be lost says so before it goes.
+ */
+export function styleMeter(
+  g: Phaser.GameObjects.Graphics,
+  tint: JusticeColorFn,
+  x: number, y: number, w: number, h: number,
+  ratio: number, color: number,
+  heat: number, bleeding: boolean, t: number,
+): void {
+  const shear = h * 0.6;
+  const plate = (px: number, py: number, pw: number, ph: number, fill: number, alpha: number) => {
+    g.fillStyle(fill, alpha);
+    g.fillPoints([
+      new Phaser.Geom.Point(px + shear, py),
+      new Phaser.Geom.Point(px + pw, py),
+      new Phaser.Geom.Point(px + pw - shear, py + ph),
+      new Phaser.Geom.Point(px, py + ph),
+    ], true);
+  };
+
+  if (heat > 0.01) {
+    plate(x - 4 - heat * 3, y - 4 - heat * 3, w + 8 + heat * 6, h + 8 + heat * 6,
+      tint(color), 0.18 * heat);
+  }
+  plate(x - 3, y - 3, w + 6, h + 6, 0x05070f, 0.88);
+  plate(x, y, w, h, tint(JUS.stoneDark), 0.9);
+
+  const fillW = Math.max(0, w * Phaser.Math.Clamp(ratio, 0, 1));
+  if (fillW > shear) {
+    plate(x, y, fillW, h, tint(color), 1);
+    // The lit rule along the top, so the fill has a direction.
+    plate(x, y, fillW, h * 0.36, tint(JUS.white), 0.35);
+    if (bleeding) {
+      const tail = Math.min(fillW - shear, h * 1.6);
+      plate(x + fillW - tail, y, tail, h, tint(JUS.damned), 0.55 + 0.25 * Math.sin(t * 12));
+    }
+  }
+
+  // Ticks every 20 style, so a reader can see how far off the next letter they are.
+  g.lineStyle(1, 0x05070f, 0.65);
+  for (let i = 1; i < 5; i++) {
+    const tx = x + (w * i) / 5;
+    g.lineBetween(tx + shear * (1 - (i / 5)) * 0, y, tx - shear, y + h);
+  }
+  g.lineStyle(1.5, tint(color), 0.75);
+  g.beginPath();
+  g.moveTo(x + shear, y);
+  g.lineTo(x + w, y);
+  g.lineTo(x + w - shear, y + h);
+  g.lineTo(x, y + h);
+  g.closePath();
+  g.strokePath();
+}
+
+// ── Vigilante Vengeance ───────────────────────────────────────────────────
+
+/**
+ * A body run through on the vengeance spear: the shaft going in one side and out the other,
+ * the victim held on it, and the boot coming up behind. Drawn as one gesture so the impale
+ * and the kick read as one motion rather than two effects that happened to overlap.
+ *
+ * `t` runs 0→1: the spear drives in over the first half and the boot lands on the second.
+ */
+export function impaleRig(
+  g: Phaser.GameObjects.Graphics,
+  tint: JusticeColorFn,
+  x: number, y: number, angle: number, t: number,
+  alpha = 1,
+): void {
+  const cx = Math.cos(angle), cy = Math.sin(angle);
+  const drive = Math.min(1, t / 0.5);
+  const kick = Math.max(0, (t - 0.5) / 0.5);
+
+  // The shaft, running through the body.
+  const back = -30 + drive * 10;
+  const front = 4 + drive * 44;
+  spearShape(g, tint, x + cx * back, y + cy * back, angle, front - back, alpha, 1);
+
+  // The wound: a spray of light out of the far side, brightest at the moment it goes through.
+  const burst = Math.max(0, 1 - Math.abs(drive - 0.85) * 5);
+  if (burst > 0) {
+    g.fillStyle(tint(JUS.white), alpha * burst * 0.8);
+    g.fillCircle(x + cx * 26, y + cy * 26, 10 + burst * 8);
+    for (let i = 0; i < 7; i++) {
+      const a = angle + (i / 7 - 0.5) * 1.5;
+      const d = 22 + burst * 30;
+      g.lineStyle(2 * burst, tint(JUS.bright), alpha * burst);
+      g.lineBetween(x + cx * 20, y + cy * 20, x + Math.cos(a) * d, y + Math.sin(a) * d);
+    }
+  }
+
+  // The boot, coming up the shaft from behind and driving them off it.
+  if (kick > 0) {
+    const bx = x - cx * (34 - kick * 40);
+    const by = y - cy * (34 - kick * 40);
+    g.fillStyle(tint(JUS.stoneDark), alpha);
+    g.fillEllipse(bx, by, 22, 15);
+    g.fillStyle(tint(JUS.gold), alpha * 0.9);
+    g.fillEllipse(bx + cx * 5, by + cy * 5, 13, 10);
+    // Impact lines behind it.
+    for (let i = 0; i < 5; i++) {
+      const a = angle + (i / 5 - 0.5) * 0.9;
+      g.lineStyle(2 * (1 - kick), tint(JUS.pale), alpha * (1 - kick) * 0.8);
+      g.lineBetween(bx, by, bx - Math.cos(a) * 26, by - Math.sin(a) * 26);
+    }
+  }
+}
+
+/**
+ * One spear of the flight barrage, falling. Its own function rather than {@link spearShape}
+ * because a falling spear is drawn point-down with a motion smear behind it and a lead shadow
+ * on the floor — none of which the held one has.
+ */
+export function barrageSpear(
+  g: Phaser.GameObjects.Graphics,
+  tint: JusticeColorFn,
+  x: number, y: number, angle: number, len: number,
+  alpha = 1,
+): void {
+  const cx = Math.cos(angle), cy = Math.sin(angle);
+  // Smear: three faint copies stacked back up the line of travel.
+  for (let i = 3; i >= 1; i--) {
+    g.lineStyle(1.6, tint(JUS.pale), alpha * 0.16 * (1 - i / 4));
+    g.lineBetween(x - cx * i * len * 0.5, y - cy * i * len * 0.5,
+      x - cx * (i - 1) * len * 0.5, y - cy * (i - 1) * len * 0.5);
+  }
+  spearShape(g, tint, x - cx * len, y - cy * len, angle, len, alpha, 0.8);
 }
 
 // ── Judgement Day ─────────────────────────────────────────────────────────
@@ -542,6 +839,99 @@ export class JusticeFx extends FxBase {
         x + Math.cos(angle) * (tipD - 22), y + Math.sin(angle) * (tipD - 22),
         x + Math.cos(angle) * tipD, y + Math.sin(angle) * tipD,
       );
+    });
+  }
+
+  /**
+   * An axe chopped down through the aim. Much faster than {@link thrust} and swung on an arc
+   * rather than punched along a line — Death from Above is a rhythm, and the eye has to be able
+   * to tell one swing from the next at ten a second.
+   */
+  axeChop(x: number, y: number, angle: number, reach: number, depth = 7): void {
+    // Over the top: starts a quarter turn back, lands a little past the aim.
+    const from = angle - 1.15, to = angle + 0.34;
+    this.anim(depth, 140, (g, t) => {
+      const p = easeOut(t);
+      const a = from + (to - from) * p;
+      const d = reach * (0.45 + p * 0.55);
+      axeShape(g, this.tint, x + Math.cos(a) * 8, y + Math.sin(a) * 8, a, d, 1 - t * 0.25, 0.95);
+      // Arc of torn air behind the bit.
+      g.lineStyle(4 * (1 - t), this.tint(JUS.pale), 0.55 * (1 - t));
+      g.beginPath();
+      g.arc(x, y, reach * 0.92, from, a);
+      g.strokePath();
+    });
+  }
+
+  /**
+   * The execution: a blade of holy light comes down through a body, the two halves slide
+   * apart, and both of them go off. Deliberately the loudest thing in the kit — it is the one
+   * effect that means somebody's match just ended.
+   */
+  execution(x: number, y: number, angle: number, depth = 13): void {
+    const px = -Math.sin(angle), py = Math.cos(angle);
+    const seeds = Array.from({ length: 18 }, () => {
+      const a = Math.random() * TAU;
+      return { a, v: 120 + Math.random() * 260, r: 1.6 + Math.random() * 3.4, side: Math.random() < 0.5 ? -1 : 1 };
+    });
+    this.anim(depth, 720, (g, t) => {
+      // ── The cut, first 25% ──
+      if (t < 0.3) {
+        const c = Math.min(1, t / 0.18);
+        const len = 240 * c;
+        const w = 9 * (1 - t / 0.3) + 2;
+        g.lineStyle(w * 2.4, this.tint(JUS.bright), 0.35 * (1 - t / 0.3));
+        g.lineBetween(x - px * len, y - py * len, x + px * len, y + py * len);
+        g.lineStyle(w, this.tint(JUS.white), 0.95 * (1 - t / 0.3));
+        g.lineBetween(x - px * len, y - py * len, x + px * len, y + py * len);
+      }
+
+      // ── The halves, sliding apart and coming open ──
+      const slide = easeOut(Math.min(1, t / 0.55)) * 30;
+      const open = Math.min(1, t / 0.55);
+      for (const side of [-1, 1]) {
+        const hx = x + Math.cos(angle) * side * slide;
+        const hy = y + Math.sin(angle) * side * slide;
+        const a = (1 - open) * 0.9;
+        if (a > 0.02) {
+          // A half-disc: the body, cut along the blade and pulled off its own centre line.
+          g.fillStyle(0x0d0b16, a);
+          g.beginPath();
+          g.arc(hx, hy, 17, angle + (side > 0 ? -Math.PI / 2 : Math.PI / 2), angle + (side > 0 ? Math.PI / 2 : Math.PI * 1.5));
+          g.closePath();
+          g.fillPath();
+          // The cut face glows — that is what the light got into.
+          g.lineStyle(3, this.tint(JUS.pale), a);
+          g.lineBetween(hx - px * 17, hy - py * 17, hx + px * 17, hy + py * 17);
+        }
+      }
+
+      // ── Both halves go off ──
+      if (t > 0.42) {
+        const b = (t - 0.42) / 0.58;
+        for (const side of [-1, 1]) {
+          const hx = x + Math.cos(angle) * side * 30;
+          const hy = y + Math.sin(angle) * side * 30;
+          g.fillStyle(this.tint(JUS.white), 0.55 * (1 - b));
+          g.fillCircle(hx, hy, 10 + 46 * easeOut(b));
+          g.lineStyle(5 * (1 - b), this.tint(JUS.gold), 0.85 * (1 - b));
+          g.strokeCircle(hx, hy, 14 + 66 * easeOut(b));
+        }
+        for (const s of seeds) {
+          const hx = x + Math.cos(angle) * s.side * 30;
+          const hy = y + Math.sin(angle) * s.side * 30;
+          const d = s.v * 0.62 * easeOut(b);
+          g.fillStyle(this.tint(b < 0.4 ? JUS.white : JUS.bright), 0.9 * (1 - b));
+          g.fillCircle(hx + Math.cos(s.a) * d, hy + Math.sin(s.a) * d + b * b * 40, s.r * (1 - b * 0.6));
+        }
+      }
+
+      // ── The pillar of light it all happened inside ──
+      const beam = t < 0.2 ? t / 0.2 : 1 - (t - 0.2) / 0.8;
+      g.fillStyle(this.tint(JUS.pale), 0.16 * beam);
+      g.fillRect(x - 34, y - 400, 68, 800);
+      g.fillStyle(this.tint(JUS.white), 0.3 * beam);
+      g.fillRect(x - 11, y - 400, 22, 800);
     });
   }
 

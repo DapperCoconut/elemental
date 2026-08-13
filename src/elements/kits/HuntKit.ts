@@ -1145,6 +1145,23 @@ export class HuntKit {
     if (owner === 'player') this.api.setHudForm('hybrid');
   }
 
+  /**
+   * Ruin Mastery — Second Skin. The beast and the hybrid are both forms in the strict sense:
+   * a different body, a different sprite and a different ability tray. `leaveBeast` is the
+   * kit's own exit for either of them, which also hands back the scale, the hitbox, the tint
+   * and the HUD tray, and starts the recharge — a Give In beast is *permanent* and this is the
+   * only thing in the game that ends it early.
+   */
+  revertForms(f: Fighter): string[] {
+    const owner: Owner | null = f === this.api.player ? 'player'
+      : f === this.api.npc ? 'npc' : null;
+    if (!owner) return [];
+    const form = this.side(owner).form;
+    if (form === 'human') return [];
+    this.leaveBeast(owner);
+    return [form === 'beast' ? 'Beast Form' : 'Hybrid Form'];
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // Bolts
   // ═══════════════════════════════════════════════════════════════════════════

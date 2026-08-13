@@ -4,8 +4,8 @@ import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import {
   FOOD, FoodKind, FoodStamp, GLT, GluttonyAvatar, GluttonyFx,
   charcoalLump, chefCleaver, cookRing, foodHeal, foodShape, gobbet as drawGobbet, grillHeat,
-  grillRig, hungerBar, itemShape, kitchenKnife, mawBody, mawTentacle, prepSlot, skewerShape,
-  spatter, stewPot,
+  grillRig, hungerBar, itemShape, kitchenKnife, mawBody, mawTentacle, prepSlot, ratBody, ratHole,
+  skewerShape, spatter, stewPot,
 } from '../../../elements/kits/GluttonyVisuals';
 
 /**
@@ -2249,5 +2249,271 @@ export const mawAwakeningUp: PreviewScript = {
     });
     ctx.at(15600, () => readout.setText('nothing to dodge and nothing to block. Only distance works.'));
     ctx.at(17600, () => readout.setText('a 5-second cycle and a 2-second stun is 40% of the awakening spent standing still'));
+  },
+};
+
+// ══ MASTERY — Snacking ════════════════════════════════════════════════
+
+/**
+ * The passive is a number rather than an object, so the loop is built round the two things that
+ * number is read off: the strip, and the health bar. A fake bar is drawn under the caster because
+ * the harness has no real one, and the strip is filled and emptied on script beats so the rate
+ * visibly climbs and then collapses when the Feast takes it all.
+ */
+export const masterySnacking: PreviewScript = {
+  duration: 19000,
+  scale: 0.9,
+  bodyTexture: '',
+  caption: 'Mastery passive — a regen read straight off the strip: 1/s empty, 9/s at 200 of healing',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const me = { x: ctx.w * 0.3, y: ctx.h * 0.64 };
+    const av = drivenCaster(ctx, () => ({ x: me.x, y: me.y, alpha: 1 }));
+    const rig = chef(av);
+    const readout = label(ctx, ctx.w * 0.5, 52, '#efb45e', 11);
+    const gauge = label(ctx, ctx.w * 0.5, ctx.h - 14, '#d6cfbe', 10);
+
+    const MAXHP = 400;
+    const s = { inv: [] as Item[], hp: 210, tick: 0 };
+    prepStrip(ctx, () => ({ inv: s.inv, held: null, heat: 0 }));
+
+    /** The pool the passive actually reads: what the strip would heal if it were all eaten. */
+    const pool = (): number => s.inv.reduce((n, it) => n + Math.max(0, foodHeal(it.kind, it.cooked)), 0);
+    const rate = (): number => 1 + 8 * Phaser.Math.Clamp(pool() / 200, 0, 1);
+
+    const bar = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    ctx.onFrame((delta) => {
+      // The regeneration itself, spent in whole points exactly as the kit spends it.
+      s.tick += (rate() * delta) / 1000;
+      const whole = Math.floor(s.tick);
+      if (whole >= 1 && s.hp < MAXHP) {
+        s.tick -= whole;
+        s.hp = Math.min(MAXHP, s.hp + whole);
+        float(ctx, me.x + 18, me.y - 30, `+${whole}`, '#8fe08a', 11);
+      }
+      bar.clear();
+      const bw = 108;
+      bar.fillStyle(ctx.tint(GLT.char), 0.9);
+      bar.fillRect(me.x - bw / 2, me.y - 46, bw, 8);
+      bar.fillStyle(ctx.tint(0x6fd06a), 1);
+      bar.fillRect(me.x - bw / 2, me.y - 46, bw * (s.hp / MAXHP), 8);
+      bar.lineStyle(1, ctx.tint(GLT.linenDark), 0.8);
+      bar.strokeRect(me.x - bw / 2, me.y - 46, bw, 8);
+      rig?.setFed(s.inv.length / 6);
+      gauge.setText(`strip worth ${pool()}   ·   ${rate().toFixed(1)} health a second   ·   ${Math.round(s.hp)}/${MAXHP}`);
+    });
+
+    ctx.at(400, () => readout.setText('an empty strip is 1 a second. It is not nothing, and it never stops.'));
+    ctx.at(3000, () => {
+      s.inv = [raw('carrot'), raw('carrot'), raw('mushroom')];
+      ctx.capture(() => fx.crumbs(me.x, me.y + 8, GLT.carrot));
+      readout.setText('three raw ingredients — 35 of healing on the strip, and the crawl picks up');
+    });
+    ctx.at(6200, () => {
+      s.inv = [cooked('potato'), cooked('meat'), cooked('mushroom'), cooked('potato')];
+      ctx.capture(() => fx.sizzle(me.x, me.y, 7, 20, 460));
+      readout.setText('cooking the same larder doubles the pool. 160 is most of the way to the ceiling.');
+    });
+    ctx.at(9400, () => {
+      s.inv = [cooked('potato'), cooked('meat'), cooked('meat'), cooked('potato'), cooked('mushroom'), cooked('pineapple')];
+      float(ctx, me.x, me.y - 62, '🍪 SNACKING', hex(GLT.stewLit), 12);
+      readout.setText('a full strip of cooked food is 9 a second — the cap, and it holds all match');
+    });
+    ctx.at(13000, () => {
+      s.inv = [];
+      ctx.capture(() => {
+        fx.ring(me.x, me.y, 14, 90, GLT.stew, 560);
+        fx.smoke(me.x, me.y - 26, 7, 60, 0xd8cfba, 1100);
+      });
+      float(ctx, me.x, me.y - 54, '🍲 FEAST', hex(GLT.stewLit), 13);
+      readout.setText('and here is the catch: Feast empties the strip, so it empties this with it');
+    });
+    ctx.at(15600, () => readout.setText('back to 1 a second until the larder is rebuilt. Snacking pays you for *not* eating.'));
+    ctx.at(17400, () => readout.setText('it runs in butcher form too — quietly mending the health bar you will go back to'));
+  },
+};
+
+// ══ MASTERY — Chef's Friend ═══════════════════════════════════════════
+
+/**
+ * Two halves in one loop, because the enhancement genuinely is two things: a trade window in the
+ * kitchen and a pet in the butcher form. The hole and the rat are the kit's own `ratHole` and
+ * `ratBody`, driven off a record shaped like the kit's `RatState` so the mutation ramp, the feed
+ * pips and the carried item all read the way they do in a match.
+ */
+export const masteryChefsFriend: PreviewScript = {
+  duration: 26000,
+  scale: 0.75,
+  bodyTexture: '',
+  caption: 'Mastery — a rat hole. Cooked food in, bread/cheese/pie out; in butcher form it comes out fighting',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const me = { x: ctx.w * 0.24, y: ctx.h * 0.72 };
+    const av = drivenCaster(ctx, () => ({ x: me.x, y: me.y, alpha: 1 }));
+    const rig = chef(av);
+    const foe = { x: ctx.w * 0.8, y: ctx.h * 0.52 };
+    dummyAt(ctx, foe);
+    const readout = label(ctx, ctx.w * 0.5, 56, '#c9a08a', 11);
+    const gauge = label(ctx, ctx.w * 0.5, ctx.h - 14, '#e0a8a0', 10);
+
+    const hole = { x: ctx.w * 0.5, y: 16 };
+    const s = {
+      inv: [cooked('potato'), cooked('carrot')] as Item[],
+      butcher: 0,
+      rat: {
+        out: null as null | 'fetch' | 'roam',
+        x: hole.x, y: hole.y + 17, ang: Math.PI / 2,
+        mutate: 0, eyes: 1, feed: 0, carry: null as Item | null,
+        tx: hole.x, ty: hole.y + 17, sic: false, dealt: 0,
+      },
+      swapUntil: -1,
+      floorDrop: null as { x: number; y: number; item: Item } | null,
+    };
+
+    prepStrip(ctx, () => ({ inv: s.inv, held: null, heat: 0, hunger: s.butcher > 0.5 ? 24000 : undefined }));
+
+    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    ctx.onFrame((delta, elapsed) => {
+      const t = elapsed / 1000;
+      const dt = delta / 1000;
+      ground.clear(); air.clear();
+      const r = s.rat;
+
+      r.mutate = Phaser.Math.Clamp(r.mutate + (r.out === 'roam' ? 1 : -1) * (delta / 500), 0, 1);
+      r.eyes = Phaser.Math.Clamp(
+        r.eyes + (r.out || s.swapUntil > elapsed ? -1 : 1) * (delta / 260), 0, 1);
+      rig?.setButcher(s.butcher);
+      rig?.setFed(s.inv.length / 6);
+
+      const pending = s.swapUntil > elapsed
+        ? Phaser.Math.Clamp((s.swapUntil - elapsed) / 1200, 0, 1) : 0;
+      ratHole(ground, ctx.tint, hole.x, hole.y, 17, t, r.eyes, pending, 1);
+
+      if (s.floorDrop) {
+        ground.fillStyle(ctx.tint(0x000000), 0.3);
+        ground.fillEllipse(s.floorDrop.x, s.floorDrop.y + 8, 22, 8);
+        itemShape(ground, ctx.tint, s.floorDrop.x, s.floorDrop.y, s.floorDrop.item, 24, 1, t * 1.6);
+      }
+
+      if (r.out) {
+        const d = Phaser.Math.Distance.Between(r.x, r.y, r.tx, r.ty);
+        if (d > 1) {
+          const a = Math.atan2(r.ty - r.y, r.tx - r.x);
+          r.ang = a;
+          const speed = (r.out === 'roam' ? 175 : 360) * (1 + r.feed * 0.15);
+          const step = Math.min(d, speed * dt);
+          r.x += Math.cos(a) * step;
+          r.y += Math.sin(a) * step;
+        }
+        if (r.sic) {
+          air.lineStyle(1.6, ctx.tint(GLT.ratEye), 0.35 + 0.25 * Math.sin(t * 9));
+          air.strokeCircle(r.x, r.y, 16 + 3 * Math.sin(t * 6));
+        }
+        air.fillStyle(ctx.tint(0x000000), 0.28);
+        air.fillEllipse(r.x, r.y + 8, 22 + r.mutate * 10, 7);
+        ratBody(air, ctx.tint, r.x, r.y, r.ang, 22, r.mutate, r.feed / 4, t, 1);
+        if (r.carry) {
+          itemShape(air, ctx.tint, r.x - Math.cos(r.ang) * 14, r.y - Math.sin(r.ang) * 14 - 10,
+            r.carry, 16, 1, t * 2);
+        }
+      }
+
+      gauge.setText(r.out === 'roam'
+        ? `slash ${Math.round(12 * (1 + r.feed * 0.25))}   ·   ${r.feed}/4 fed   ·   ${r.dealt} dealt`
+        : s.swapUntil > elapsed ? 'something is happening down there'
+          : r.out ? 'out on an errand' : 'two beady eyes, waiting for something cooked');
+    });
+
+    // ── The trade ──
+    ctx.at(500, () => readout.setText('a hole in the wall at the top of the arena, and two beady eyes in it'));
+    ctx.at(2400, () => {
+      s.inv = s.inv.slice(1);
+      s.swapUntil = 4000;
+      ctx.capture(() => fx.crumbs(hole.x, hole.y + 14, FOOD.potato.cookedColor));
+      float(ctx, hole.x, hole.y + 40, '🥔 TAKEN', hex(GLT.ratFur), 11);
+      readout.setText('throw something **cooked** at it and the rat takes it. Raw is refused.');
+    });
+    ctx.at(4100, () => {
+      s.floorDrop = { x: hole.x, y: hole.y + 56, item: raw('pie') };
+      ctx.capture(() => fx.ring(hole.x, hole.y + 20, 6, 34, GLT.pieCrust, 460));
+      float(ctx, hole.x, hole.y + 68, '🥧 PIE', hex(GLT.pieCrust), 12);
+      readout.setText('bread 30/60, cheese 25/45, or a pie — 30/60 and +20% speed for 8 seconds');
+    });
+    ctx.at(6400, () => {
+      s.rat.out = 'fetch';
+      s.rat.x = hole.x; s.rat.y = hole.y + 17;
+      s.rat.tx = s.floorDrop?.x ?? hole.x; s.rat.ty = s.floorDrop?.y ?? hole.y;
+      float(ctx, hole.x, hole.y + 40, '🐀 FETCH', hex(GLT.ratFur), 11);
+      readout.setText('the bound key is a whistle. In the kitchen it is a fetch: 360 px/s, straight at it.');
+    });
+    ctx.at(7600, () => {
+      s.rat.carry = s.floorDrop?.item ?? null;
+      s.floorDrop = null;
+      s.rat.tx = me.x; s.rat.ty = me.y;
+    });
+    ctx.at(9200, () => {
+      s.inv = [...s.inv, raw('pie')];
+      s.rat.carry = null;
+      s.rat.tx = hole.x; s.rat.ty = hole.y + 17;
+      float(ctx, me.x, me.y - 50, '🐀 🥧 PIE', hex(GLT.pieCrust), 12);
+      readout.setText('and it goes straight onto the strip. 14 second cooldown, and it never wastes a cast.');
+    });
+    ctx.at(10800, () => { s.rat.out = null; });
+
+    // ── The butcher's rat ──
+    ctx.at(11600, () => {
+      s.butcher = 1;
+      s.rat.out = 'roam';
+      s.rat.x = hole.x; s.rat.y = hole.y + 17;
+      s.rat.tx = foe.x; s.rat.ty = foe.y;
+      ctx.capture(() => {
+        fx.ring(hole.x, hole.y + 17, 8, 52, GLT.ratMutant, 560);
+        fx.splat(hole.x, hole.y + 17, 20, GLT.ratMutantDark);
+      });
+      float(ctx, hole.x, hole.y + 46, '🐀 IT COMES OUT', hex(GLT.ratMutant), 12);
+      readout.setText('put the whites down and the hole is not big enough for what comes out of it');
+    });
+    const slash = (at: number, mult: number, note?: string): void => ctx.at(at, () => {
+      const r = s.rat;
+      const dmg = Math.round(12 * (1 + r.feed * 0.25) * mult);
+      r.dealt += dmg;
+      r.sic = false;
+      ctx.capture(() => {
+        fx.slashArc(r.x, r.y, Math.atan2(foe.y - r.y, foe.x - r.x), 46, GLT.ratEye);
+        fx.splat(foe.x, foe.y, 16, GLT.blood);
+      });
+      float(ctx, foe.x, foe.y - 26, `${dmg}`, '#ffb3aa', mult > 1 ? 18 : 14);
+      if (mult > 1) float(ctx, foe.x, foe.y - 46, '🐀 SIC', hex(GLT.ratEye), 11);
+      if (note) readout.setText(note);
+    });
+    slash(14000, 1, '12 a slash, about once a second, and it does not need you to aim it');
+    slash(15200, 1);
+    ctx.at(16400, () => {
+      s.inv = s.inv.slice(1);
+      s.rat.feed = 2;
+      ctx.capture(() => fx.ring(s.rat.x, s.rat.y, 8, 40, GLT.ratMutant, 460));
+      float(ctx, s.rat.x, s.rat.y - 32, '🐀 FED 2/4', hex(GLT.stewLit), 12);
+      readout.setText('throw food at the rat instead and it eats it: +25% damage and +15% speed a mouthful');
+    });
+    slash(17800, 1, 'four feeds is 24 a slash every 0.7 seconds — and it is still collecting your drops');
+    ctx.at(19000, () => {
+      s.rat.feed = 4;
+      s.rat.sic = true;
+      float(ctx, s.rat.x, s.rat.y - 34, '🐀 SIC', hex(GLT.ratEye), 12);
+      readout.setText('in butcher form the whistle stops being a fetch and becomes a sic');
+    });
+    slash(20200, 2, 'the next slash it lands is doubled');
+    ctx.at(21600, () => {
+      s.butcher = 0;
+      float(ctx, me.x, me.y - 52, '👨‍🍳 BACK TO THE KITCHEN', hex(GLT.white), 11);
+      readout.setText('and this is what feeding it really bought: butcher form ends, and it stays');
+    });
+    slash(22800, 1, 'every mouthful is 12 more seconds out. A fed rat outlives the transformation.');
+    ctx.at(24200, () => {
+      s.rat.out = 'fetch';
+      s.rat.tx = hole.x; s.rat.ty = hole.y + 17;
+      readout.setText('then it walks back to the hole, and the eyes are there again');
+    });
   },
 };

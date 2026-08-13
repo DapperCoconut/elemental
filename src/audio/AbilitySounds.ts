@@ -249,6 +249,9 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'dream-dreamcatcher': ['dream-chime', 1.3, 0.9],
   'dream-nightmare': 'nightmare',
   'dream-oasis': ['holy-chord', 0.9, 1.1],
+  // The spirit's two keys. Both are a wail rather than a chime — a duel is a haunting.
+  'dream-haunt': ['ghost-wail', 1.35, 0.5],
+  'dream-spirit-tear': ['ghost-wail', 0.55, 0.9],
 
   // ── Chalk ──
   'chalk-ward': ['sand', 1.5, 0.7],
@@ -261,7 +264,7 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'magma-plume': ['sizzle', 0.85, 1.1],
   'magma-volcano': ['stone-rise', 0.8, 1.2],
   'magma-bloat': ['inferno', 0.85, 0.9],
-  'magma-fist': ['stone-slam', 0.8, 1.2],
+  'magma-jet': ['flame-burst', 0.85, 1.2],
   'magma-dragon-kin': ['roar', 0.8, 1.2],
 
   // ── Illusion ──
@@ -298,6 +301,8 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'fortune-risky': ['money', 0.7, 0.85],
   'fortune-paywall': ['gear-turn', 0.85, 0.95],
   'fortune-p2w': ['beam-charge', 0.95, 0.9],
+  // The car arriving. FortuneKit voices the engine and the wreck itself; this is the drop.
+  'drive-by-flex': ['stone-rise', 0.8, 0.6],
 
   // ── Marrow ──
   // Nothing here is a weapon being swung: four of the five are something wet being released,
@@ -483,10 +488,27 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'chaos-storm': ['chaos', 0.75, 1.2],
   'beastling': ['roar', 1.5, 0.75],
   'weep': 'ghost-wail',
-
-  // The training-dummy element casts nothing — explicitly silent so it doesn't
-  // fall through to the generic cast sound.
-  'dummy-noop': null,
+  'unsatiable': ['land', 1.4, 0.7],
+  'tempered-temptation': ['crystal-shatter', 0.7, 1.1],
+  'attraction': ['heartbeat', 0.7, 0.9],
+  'perfume': ['whoosh', 0.6, 1.6],
+  'obsidian-coat': ['crystal-shatter', 0.6, 0.7],
+  'magma-saw': ['engine', 0.7, 1.15],
+  'inevitability': ['clock-tick', 0.8, 1.15],
+  'delay-the-inevitable': ['clock-tick', 0.95, 0.42],
+  'chalk-smudge': ['claw', 0.5, 1.5],
+  'living-chalk': ['mutate', 0.85, 1.1],
+  'predictors-snare': ['teleport', 0.8, 1.2],
+  'utter-focus': ['status-curse', 0.9, 0.6],
+  'camo-fade': ['smoke', 0.7, 0.75],
+  'release-the-kraken': ['roar', 1.0, 0.45],
+  // The market goes up like the other three placements, a shade brighter — it is a stall rather
+  // than a wall.
+  market: ['stone-rise', 0.9, 1.15],
+  // Slime: a slab of half-set ooze coming out of the arm, and a body that came apart instead of
+  // dying. Both are the wettest, lowest sounds in the table on purpose.
+  oobleck: ['slime-splat', 0.55, 1.05],
+  'slime-split': ['slime-splat', 0.4, 1.1],
 };
 
 /**

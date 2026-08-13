@@ -3,8 +3,8 @@ import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import {
   ColiseumRing, FlamePillar, JUS, JusticeAvatar, JusticeFx, SeraphForm,
-  chainHead, chainRun, drawJudgeScene, judgeRig, padlock, spearShape, tranceBeams, wallSlab,
-  willMeter,
+  barrageSpear, chainHead, chainRun, drawJudgeScene, impaleRig, judgeRig, padlock, spearShape,
+  styleMeter, tranceBeams, wallSlab, willMeter,
 } from '../../../elements/kits/JusticeVisuals';
 
 /**
@@ -1046,5 +1046,213 @@ export const twoStances: PreviewScript = {
     });
     ctx.at(12000, () => readout.setText('the air is +33% speed and +20% damage taken; the floor is where the scales are'));
     ctx.at(14600, () => readout.setText('and the same blue bar pays for both, so the stance dance has a budget'));
+  },
+};
+
+// ══ MASTERY · Combo Excelsius ═════════════════════════════════════════
+
+/**
+ * The meter itself, climbing through four ranks off four real combos out of the table, then
+ * bleeding back down when the arrangements stop. Painted with the kit's own `styleMeter`.
+ */
+export const comboExcelsius: PreviewScript = {
+  duration: 15000,
+  scale: 0.9,
+  caption: 'Style is arrangement, not damage — six ranks, 100 each, bleeding the whole time',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const at = { x: ctx.cx, y: ctx.cy + 18, alpha: 1 };
+    const av = drivenCaster(ctx, () => at);
+    av.setFacing(ctx.aim);
+    const readout = ctx.adopt(ctx.scene.add.text(ctx.w * 0.5, ctx.h - 16, '', {
+      fontSize: '11px', fontFamily: 'Arial Black', color: '#f0d68a',
+    }).setOrigin(0.5).setDepth(23));
+
+    const ranks = [
+      { letter: 'D', name: 'DUTIFUL', color: 0x8a8f9c, text: '#b9bfcc', decay: 2 },
+      { letter: 'C', name: 'CORRECT', color: 0x6fb0e8, text: '#a8d4ff', decay: 3 },
+      { letter: 'B', name: 'BRUTAL', color: 0x5fd8a0, text: '#a8ffd8', decay: 4 },
+      { letter: 'A', name: 'ABSOLUTE', color: 0xf0d68a, text: '#ffeeb0', decay: 6 },
+      { letter: 'S', name: 'SOVEREIGN', color: 0xff8a3c, text: '#ffc48a', decay: 8 },
+    ];
+    const st = { points: 0, rank: 0, heat: 0 };
+
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(22));
+    const letter = ctx.adopt(ctx.scene.add.text(0, 0, 'D', {
+      fontSize: '22px', fontFamily: 'Arial Black', color: '#b9bfcc',
+    }).setOrigin(0, 0.5).setDepth(23));
+    const name = ctx.adopt(ctx.scene.add.text(0, 0, 'DUTIFUL', {
+      fontSize: '9px', fontFamily: 'Arial Black', color: '#8a8f9c',
+    }).setOrigin(1, 0).setDepth(23));
+
+    const score = (label: string, amount: number) => {
+      st.points += amount;
+      st.heat = 1;
+      while (st.points >= 100 && st.rank < ranks.length - 1) {
+        st.points -= 100;
+        st.rank++;
+        const r = ranks[st.rank];
+        ctx.capture(() => {
+          const t = ctx.adopt(ctx.scene.add.text(ctx.cx, 46, `${r.letter}  ${r.name}`, {
+            fontSize: '22px', fontFamily: 'Arial Black', color: r.text,
+          }).setOrigin(0.5).setDepth(24));
+          ctx.scene.tweens.add({ targets: t, y: 30, alpha: 0, duration: 1100 });
+        });
+      }
+      ctx.capture(() => {
+        const t = ctx.adopt(ctx.scene.add.text(ctx.w - 20, 74, `+${amount}  ${label}`, {
+          fontSize: '11px', fontFamily: 'Arial Black', color: ranks[st.rank].text,
+        }).setOrigin(1, 0).setDepth(24));
+        ctx.scene.tweens.add({ targets: t, y: 62, alpha: 0, duration: 1000 });
+      });
+    };
+
+    ctx.at(700, () => { score('COURT IS IN SESSION', 18); readout.setText('a ring raised round somebody — 18'); });
+    ctx.at(1900, () => { score('TRIAL BY FIRE', 30); readout.setText('a pillar raised inside that ring — 30'); });
+    ctx.at(3300, () => { score('OBJECTION', 6); readout.setText('a wall eating a shot aimed at you — 6'); });
+    ctx.at(4200, () => { score('COMPACTED', 22); readout.setText('rode a ripped wall the whole way — 22'); });
+    ctx.at(5400, () => { score('INTO THE BLAZE', 35); readout.setText('pushed into a pillar by that wall — 35'); });
+    ctx.at(6600, () => { score('EXECUTED', 40); readout.setText('three bites and a threshold — 40'); });
+    ctx.at(7900, () => { score('SHEER WILL', 45); readout.setText('survived on 1 health — 45'); });
+    ctx.at(9000, () => { score('LAST WORD', 50); readout.setText('a kill made under a tenth of your own health — 50'); });
+    ctx.at(10200, () => {
+      readout.setText('S — and Judgement Day stops weighing anybody');
+      fx.ring(at.x, at.y, 20, 130, JUS.flameCore, 700, 6, 8);
+      ctx.capture(() => {
+        const t = ctx.adopt(ctx.scene.add.text(ctx.cx, ctx.cy - 40, 'I AM BEYOND JUSTICE!', {
+          fontSize: '22px', fontFamily: 'Arial Black', color: '#ff3b5c',
+        }).setOrigin(0.5).setDepth(25));
+        ctx.scene.tweens.add({ targets: t, alpha: 0, duration: 1800, delay: 600 });
+      });
+    });
+    ctx.at(12200, () => readout.setText('and now it bleeds — 8 a second at S, and nothing is being arranged'));
+
+    ctx.onFrame((dt) => {
+      const r = ranks[st.rank];
+      st.heat = Math.max(0, st.heat - dt / 900);
+      st.points = Math.max(0, st.points - r.decay * (dt / 1000));
+      const w = 200, h = 11, x = ctx.w - w - 40, y = 16;
+      g.clear();
+      styleMeter(g, ctx.tint, x, y, w, h, st.points / 100, r.color,
+        st.heat, st.points < 18 && st.rank > 0, ctx.scene.time.now / 1000);
+      letter.setPosition(x + w + 8, y + h / 2).setText(r.letter).setColor(r.text)
+        .setScale(1 + st.heat * 0.18);
+      name.setPosition(x + w, y + h + 6).setText(r.name).setColor(r.text);
+    });
+  },
+};
+
+// ══ MASTERY · Vigilante Vengeance ═════════════════════════════════════
+
+/**
+ * The ground half, in full: the charge, the body run through, the boot, and the wall it ends
+ * against. The flight barrage is shown as a coda over the top of it.
+ */
+export const vigilanteVengeance: PreviewScript = {
+  duration: 15000,
+  scale: 0.82,
+  caption: 'Ground: dash, impale, kick them into whatever is behind them. Air: 200 spears at your cursor',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const at = { x: ctx.w * 0.16, y: ctx.cy, alpha: 1 };
+    const av = drivenCaster(ctx, () => at);
+    av.setFacing(0);
+    const foe = { x: ctx.w * 0.46, y: ctx.cy };
+    const wallX = ctx.w * 0.9;
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const readout = ctx.adopt(ctx.scene.add.text(ctx.w * 0.5, ctx.h - 16, '', {
+      fontSize: '11px', fontFamily: 'Arial Black', color: '#ffb26b',
+    }).setOrigin(0.5).setDepth(23));
+
+    const dummy = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    ctx.onFrame(() => {
+      dummy.clear();
+      dummy.fillStyle(0x2b2f3d, 1); dummy.fillCircle(foe.x, foe.y, 17);
+      dummy.fillStyle(0x3c4254, 1); dummy.fillCircle(foe.x, foe.y, 13);
+    });
+
+    let phase: 'idle' | 'dash' | 'impale' | 'launch' | 'done' = 'idle';
+    let phaseT = 0;
+    const spears: { x: number; y: number; born: number; dead: boolean }[] = [];
+
+    ctx.at(500, () => { phase = 'dash'; phaseT = 0; readout.setText('260px in 220ms, straight down the aim'); });
+    ctx.at(9000, () => {
+      readout.setText('in the air it is two hundred spears, tightest where you point');
+      for (let i = 0; i < 90; i++) {
+        const bell = (Math.random() + Math.random() - 1);
+        spears.push({
+          x: Phaser.Math.Clamp(ctx.w * 0.62 + bell * 70, 12, ctx.w - 12),
+          y: -20 - Math.random() * 90,
+          born: 9000 + (i / 90) * 2400 + Math.random() * 80,
+          dead: false,
+        });
+      }
+    });
+    ctx.at(12200, () => readout.setText('2 damage each — and open angel bites pull them in'));
+
+    ctx.onFrame((dt, elapsed) => {
+      phaseT += dt;
+      g.clear();
+      const t = elapsed / 1000;
+
+      if (phase === 'dash') {
+        const p = Math.min(1, phaseT / 220);
+        at.x = ctx.w * 0.16 + (ctx.w * 0.42 - ctx.w * 0.16) * p;
+        for (let i = 1; i <= 5; i++) {
+          g.fillStyle(ctx.tint(JUS.pale), 0.22 * (1 - i / 6));
+          g.fillCircle(at.x - i * 12, at.y, 16 - i * 2);
+        }
+        spearShape(g, ctx.tint, at.x, at.y, 0, 54, 1, 1.1);
+        if (p >= 1) {
+          phase = 'impale'; phaseT = 0;
+          ctx.capture(() => {
+            fx.flash(foe.x, foe.y, 46, 9);
+            const lbl = ctx.adopt(ctx.scene.add.text(foe.x, foe.y - 50, '🗡️ IMPALED', {
+              fontSize: '13px', fontFamily: 'Arial Black', color: '#fff3cf',
+            }).setOrigin(0.5).setDepth(24));
+            ctx.scene.tweens.add({ targets: lbl, y: foe.y - 72, alpha: 0, duration: 1100 });
+          });
+          readout.setText('45 for the run-through and the boot together');
+        }
+      } else if (phase === 'impale') {
+        foe.x = at.x + 42;
+        impaleRig(g, ctx.tint, foe.x, foe.y, 0, Math.min(0.5, phaseT / 640));
+        if (phaseT >= 320) {
+          phase = 'launch'; phaseT = 0;
+          readout.setText('900 px/s, and whatever is behind them decides the rest');
+        }
+      } else if (phase === 'launch') {
+        foe.x += 340 * (dt / 1000);
+        impaleRig(g, ctx.tint, foe.x, foe.y, 0, 0.5 + Math.min(0.5, phaseT / 500));
+        for (let i = 1; i <= 5; i++) {
+          g.fillStyle(ctx.tint(JUS.flame), 0.2 * (1 - i / 6));
+          g.fillCircle(foe.x - i * 14, foe.y, 14 - i * 2);
+        }
+        if (foe.x >= wallX) {
+          phase = 'done';
+          foe.x = wallX;
+          ctx.capture(() => {
+            fx.rubble(foe.x, foe.y, 18, 56);
+            fx.flash(foe.x, foe.y, 60, 9);
+            const lbl = ctx.adopt(ctx.scene.add.text(foe.x - 40, foe.y - 52, '💥 INTO THE WALL  +30', {
+              fontSize: '13px', fontFamily: 'Arial Black', color: '#e6e1d2',
+            }).setOrigin(0.5).setDepth(24));
+            ctx.scene.tweens.add({ targets: lbl, y: foe.y - 74, alpha: 0, duration: 1300 });
+          });
+          readout.setText('a wall is +30 and 2s stunned; a pillar sets them alight; a moving wall is +45');
+        }
+      }
+
+      // The arena edge they are being driven into.
+      g.fillStyle(ctx.tint(JUS.stoneDark), 0.85);
+      g.fillRect(wallX + 18, 0, 10, ctx.h);
+
+      for (const s of spears) {
+        if (s.dead || elapsed < s.born) continue;
+        s.y += 300 * (dt / 1000);
+        if (s.y > ctx.h + 20) { s.dead = true; continue; }
+        barrageSpear(g, ctx.tint, s.x, s.y, Math.PI / 2, 24);
+      }
+    });
   },
 };

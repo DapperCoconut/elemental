@@ -3,7 +3,8 @@ import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import {
   DPT, DepthsAvatar, DepthsFx, FISH_COLOR, FISH_EMOJI, FISH_PROFILE, FishKind, REMORA_PROFILE,
-  algaeOrb, bubbleColumn, darkPuddle, fishBody, oxygenBar, piranha as drawPiranha, sharkBody,
+  algaeOrb, bubbleColumn, darkPuddle, fishBody, krakenArm, krakenHead, oxygenBar,
+  piranha as drawPiranha, sharkBody,
 } from '../../../elements/kits/DepthsVisuals';
 
 /**
@@ -74,14 +75,24 @@ const SHARK_DPS = 8;
 const SHARK_FOLLOW_SPEED = 120;
 const SHARK_ALGAE_DAMAGE = 30;
 
+// Mastery, mirrored the same way.
+const CAMO_FULL_MS = 6000;
+const CAMO_BREAK_DAMAGE = 5;
+const KRAKEN_ARMS = 3;
+const KRAKEN_HEAD_R = 26;
+const KRAKEN_REACH = 132;
+const KRAKEN_GRAB_MS = 2000;
+
 /** Speeds and shapes for every fish a preview throws, straight out of `FISH_STATS`. */
 const FISH_SPEED: Partial<Record<FishKind, number>> = {
   icefish: 620, barracuda: 800, pufferfish: 400, bombfish: 540, gulper: 460,
   sawfish: 560, swordfish: 880, whaleshark: 150, flyingfish: 900, catfish: 420,
+  lionfish: 400, skelefish: 270,
 };
 const FISH_LEN: Partial<Record<FishKind, number>> = {
   icefish: 34, barracuda: 46, pufferfish: 34, bombfish: 32, gulper: 52,
   sawfish: 46, swordfish: 54, whaleshark: 100, flyingfish: 32, catfish: 42,
+  lionfish: 40, skelefish: 40,
 };
 
 interface Mark { x: number; y: number }
@@ -1016,6 +1027,186 @@ export const theAnglerfish: PreviewScript = {
 
     label(ctx, ctx.w * 0.5, ctx.h - 8,
       '450ms still → 1.4s fade → the bar goes at 85% · 56px standoff, 44px bite', DPT.trench);
+  },
+};
+
+// ── Mastery ───────────────────────────────────────────────────────────
+
+/**
+ * Camo Fade.
+ *
+ * The hard part of this loop is that the ability's whole payload is an *absence*, and an
+ * absence is not a thing a showcase can point at. So the box shows the three consequences
+ * instead: the enemy walks past a body that is no longer there, a bloom the angler crosses
+ * turns red behind them, and the fish in the jaw at the end is one that does not exist on
+ * either of the ordinary tables.
+ */
+export const masteryCamoFade: PreviewScript = {
+  duration: 9200,
+  scale: 0.85,
+  bodyTexture: '',
+  caption: 'Six seconds untouched and there is nothing left to see — and the bloom turns behind you',
+  run(ctx) {
+    const home: Mark = { x: ctx.w * 0.16, y: ctx.h * 0.6 };
+    let camo = 0;
+    const { fx, av, dav } = drivenCaster(ctx, () => home, { alpha: () => 1 - camo });
+    const foe: Mark = { x: ctx.w * 0.88, y: ctx.h * 0.34 };
+    dummy(ctx, foe);
+
+    // Two green orbs on the walk, so the spoiling is something the loop passes through rather
+    // than something it stops to demonstrate.
+    const orbs: Orb[] = [
+      { x: ctx.w * 0.46, y: ctx.h * 0.58, bad: false, seed: 21, gone: false },
+      { x: ctx.w * 0.66, y: ctx.h * 0.62, bad: false, seed: 44, gone: false },
+    ];
+    bloom(ctx, orbs);
+
+    ctx.onFrame((dt, elapsed) => {
+      // 6 seconds of not being hit, compressed to 3 so the payoff fits in the box.
+      const was = camo;
+      camo = Phaser.Math.Clamp(elapsed / (CAMO_FULL_MS / 2), 0, 1);
+      dav?.setCamo(camo);
+      if (was < 1 && camo >= 1) tick(ctx, home.x, home.y - 54, '🫥 GONE', DPT.trench);
+      if (elapsed < 900) return;
+      home.x = Math.min(ctx.w * 0.78, home.x + 78 * (dt / 1000));
+
+      // Every orb crossed while hidden heals and stays, poisoned.
+      if (camo < 1) return;
+      for (const a of orbs) {
+        if (a.bad || a.gone) continue;
+        if (Phaser.Math.Distance.Between(home.x, home.y, a.x, a.y) > ALGAE_R) continue;
+        a.bad = true;
+        tick(ctx, a.x, a.y - 22, `+${ALGAE_HEAL} · 🌿 SPOILED`, DPT.rot);
+      }
+    });
+
+    // The enemy walks its blind amble: it has nothing to aim at, so it stops fighting.
+    ctx.at(3400, () => tick(ctx, foe.x, foe.y - 40, '❓', DPT.foam));
+    ctx.onFrame((dt, elapsed) => {
+      if (elapsed < 3400) return;
+      foe.x += Math.sin(elapsed / 620) * 44 * (dt / 1000);
+      foe.y += Math.cos(elapsed / 810) * 40 * (dt / 1000);
+    });
+
+    // And the line lands one of the two catches that only exist on this side of the fade.
+    ctx.at(6600, () => {
+      dav?.setFish('lionfish');
+      fx.splash(home.x, home.y - 20, 34, DPT.lion);
+    });
+    ctx.at(6600, () => label(ctx, home.x, home.y - 62, 'a fish nobody visible can land', DPT.lion));
+
+    label(ctx, ctx.w * 0.5, ctx.h - 8,
+      `6s untouched · any single hit over ${CAMO_BREAK_DAMAGE} resets it · bots cannot aim at you`,
+      DPT.trench);
+  },
+};
+
+/**
+ * Release the Kraken.
+ *
+ * The loop has to show three separate facts in nine seconds: one arm holds for two seconds,
+ * the arms take turns rather than piling on, and a fish in the beak grows the stumps back. So
+ * it runs the full chain — grab, grab, grab, three stumps, feed — at the real durations, and
+ * the arm postures do the explaining: an arm that is holding is pulled almost straight, and a
+ * spent one is a short curl against the mantle.
+ */
+export const masteryReleaseTheKraken: PreviewScript = {
+  duration: 10000,
+  scale: 0.78,
+  caption: 'Three arms, 2 seconds each, one grip at a time — then a fish in the beak grows them back',
+  run(ctx) {
+    const { fx, av } = stageIt(ctx);
+    const kx = ctx.w * 0.56;
+    const ky = ctx.h * 0.56;
+    const foe: Mark = { x: ctx.w * 0.94, y: ctx.h * 0.5 };
+    dummy(ctx, foe);
+
+    interface PArm { state: 'ready' | 'holding' | 'spent'; until: number; rest: number; phase: number }
+    const arms: PArm[] = Array.from({ length: KRAKEN_ARMS }, (_, i) => ({
+      state: 'ready', until: 0, rest: (i / KRAKEN_ARMS) * Math.PI * 2 + 0.4, phase: i * 2.1,
+    }));
+    let up = false;
+    let gape = 0.3;
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(8));
+
+    ctx.at(400, () => {
+      up = true;
+      av.play('raise');
+      fx.ring(kx, ky, 16, 150, DPT.kraken, 620);
+      fx.bubbles(kx, ky, 14, 70, DPT.foam, 800, 9);
+      tick(ctx, kx, ky - 54, '🐙 THE KRAKEN', DPT.kraken);
+    });
+
+    ctx.onFrame((dt, elapsed) => {
+      g.clear();
+      air.clear();
+      if (!up) return;
+      const t = elapsed / 1000;
+      gape = Math.max(0.18 + 0.12 * Math.sin(elapsed / 260), gape - dt / 700);
+
+      // The target walks in and is then held where it stood — the arms never drag anybody.
+      const held = arms.find((a) => a.state === 'holding');
+      if (!held) {
+        const d = Phaser.Math.Distance.Between(foe.x, foe.y, kx, ky);
+        if (d > KRAKEN_REACH - 16) {
+          const step = Math.min(d, 120 * (dt / 1000));
+          foe.x += ((kx - foe.x) / d) * step;
+          foe.y += ((ky - foe.y) / d) * step;
+        }
+      }
+
+      for (const a of arms) {
+        if (a.state === 'holding' && elapsed >= a.until) {
+          // Spent, not recharging. Only a fish brings it back.
+          a.state = 'spent';
+          tick(ctx, kx, ky - 40, '🐙 ARM SPENT', DPT.krakenDeep);
+          continue;
+        }
+        if (a.state !== 'ready' || held) continue;
+        if (Phaser.Math.Distance.Between(foe.x, foe.y, kx, ky) > KRAKEN_REACH) continue;
+        a.state = 'holding';
+        a.until = elapsed + KRAKEN_GRAB_MS;
+        gape = 1;
+        fx.ring(foe.x, foe.y, 8, 44, DPT.kraken, 380);
+        tick(ctx, foe.x, foe.y - 46, '🐙 GRABBED · 2s', DPT.kraken);
+        break;
+      }
+
+      for (const a of arms) {
+        const grabbing = a.state === 'holding';
+        const spent = a.state === 'spent';
+        const reach = spent ? 26 : KRAKEN_REACH * 0.62;
+        const tx = grabbing ? foe.x : kx + Math.cos(a.rest) * reach;
+        const ty = grabbing ? foe.y : ky + Math.sin(a.rest) * reach;
+        krakenArm(g, ctx.tint, kx, ky, tx, ty, t, spent ? 0.55 : 1,
+          spent ? 5 : 9, a.phase, grabbing);
+      }
+      krakenHead(air, ctx.tint, kx, ky, KRAKEN_HEAD_R, t, 1, gape, 7);
+    });
+
+    // Six seconds of standing still is three arms, and three arms is three stumps.
+    ctx.at(7000, () => {
+      tick(ctx, kx, ky - 66, '🐙 6s TOTAL — ALL THREE SPENT', DPT.kraken);
+    });
+    // Aim the throw at the beak instead of at them, and every stump grows back at once.
+    ctx.at(7900, () => {
+      av.play('punch', 0);
+      fx.chomp(kx, ky + KRAKEN_HEAD_R * 0.4, Math.PI / 2, 30, FISH_COLOR.barracuda);
+      fx.bubbles(kx, ky, 8, 34, DPT.kraken, 560, 9);
+      gape = 1;
+      let regrown = 0;
+      for (const a of arms) {
+        if (a.state !== 'spent') continue;
+        a.state = 'ready';
+        regrown++;
+      }
+      tick(ctx, kx, ky - 48, `🐙 +${regrown} ARMS`, DPT.kraken);
+    });
+
+    label(ctx, ctx.w * 0.5, ctx.h - 8,
+      `${KRAKEN_REACH}px reach · 25s on the floor · 35s cooldown · feeding is a throw aimed at the beak`,
+      DPT.trench);
   },
 };
 

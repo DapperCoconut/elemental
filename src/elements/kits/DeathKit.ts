@@ -11,6 +11,7 @@ import {
   sheath, shuriken, slashArc, slicedBullet, stumps, styxBrand, tentacle, wallFace, wallScar,
   weaponCore,
 } from './DeathVisuals';
+import { meterStep } from '../../combat/Meters';
 
 type Owner = 'player' | 'npc';
 
@@ -102,6 +103,42 @@ const DEAL_TOLL = 50;
 /** What honouring it is worth, taken straight off the clock. */
 const DEAL_REWARD_MS = 10_000;
 
+// ── Mastery: Inevitability (passive) ─────────────────────────────────────────
+/**
+ * Fifty damage inside two seconds is not chip — it is somebody committing to killing him, and
+ * that is the only thing this passive answers. The window is *spent* when it fires, so the same
+ * burst cannot keep refreshing itself for as long as it is still inside the two seconds.
+ */
+const INEV_WINDOW_MS = 2000;
+const INEV_TRIGGER = 50;
+const INEV_MS = 5000;
+const INEV_DODGE = 0.33;
+const INEV_HASTE = 1.25;
+/** Health per second, for as long as it is up. */
+const INEV_REGEN = 5;
+
+// ── Mastery: Delay The Inevitable (bindable) ─────────────────────────────────
+const DELAY_MS = 8000;
+/** Straight onto the clock. The only thing in the element that makes the minute longer. */
+const DELAY_CLOCK_MS = 8000;
+const DELAY_DR = 0.5;
+const DELAY_HASTE = 1.5;
+const DELAY_DODGE = 0.25;
+const DELAY_REGEN = 5;
+/**
+ * Cooldowns run *longer* while the window is up. The eight seconds are a stall, and a stall that
+ * only ever helped would be free — this is the half of the price that is paid in tempo rather
+ * than in clock.
+ */
+const DELAY_COOLDOWN_MULT = 1.25;
+/** A Space dodge crosses three times the ground. Read by ArenaScene's `executeDodge`. */
+const DELAY_DASH_MULT = 3;
+const DELAY_COOLDOWN_MS = 26_000;
+const DELAY_ID = 'delay-the-inevitable';
+/** How hard the bot has to be taking it before the panic button is worth the eight seconds. */
+const NPC_DELAY_DAMAGE = 25;
+const NPC_DELAY_HP = 0.55;
+
 // ── Upgrade: Sheath (Click) ──────────────────────────────────────────────────
 /**
  * Three seconds of not swinging at anybody and the blade goes back in the saya. The next thing
@@ -147,10 +184,15 @@ const WALL_THICK = 15;
 const SCAR_MAX = 48;
 
 // ── Upgrade: Death by 1000 Cuts (F) ──────────────────────────────────────────
-const CUT_LIFE_MS = 5000;
-const CUT_EVERY_MS = 90;
-/** Minimum travel between two cuts, so standing still does not pile a hundred on one tile. */
-const CUT_MIN_MOVE = 11;
+/**
+ * The trail is laid by the Amputate dash and by nothing else. Walking around leaves nothing: the
+ * blade only opens the floor while it is actually out, and it is only out for those 230ms. That
+ * is what makes the upgrade a *use* of the key it is bought on rather than a passive he carries
+ * around — a corridor he chooses to carve, on the line he chose to dash down.
+ */
+const CUT_LIFE_MS = 20_000;
+/** Distance along the dash between two gashes, so one pass carves a corridor rather than a dot. */
+const CUT_STEP = 24;
 const CUT_LEN = 46;
 const CUT_R = 34;
 const CUT_SLOW = 0.25;
@@ -188,6 +230,16 @@ const PICK_Y = 0.3;
 const PICK_W = 300;
 const PICK_ROW = 26;
 const PICK_DEPTH = 46;
+/** Title band above the first row, and the strip under the last one carrying the hint. */
+const PICK_HEAD = 40;
+const PICK_FOOT = 30;
+/**
+ * How long the panel refuses to hear the key that opened it. One press of F must never be able
+ * to both open the menu and close it — whether that is a keyboard repeat, a double read, or the
+ * player simply holding the key a beat too long. The menu is the ability, and a menu that can
+ * shut before it has been read makes the whole slot unusable.
+ */
+const PICK_GRACE_MS = 260;
 
 // ── World objects ────────────────────────────────────────────────────────────
 
@@ -247,14 +299,22 @@ interface Dash {
   y1: number;
   startedAt: number;
   endsAt: number;
-  /** Chosen before the dash left, and the same limb comes off everything it passes through. */
-  limb: Limb;
   /** Drawn from a full sheath: everything it passes through is left bleeding out as well. */
   powered: boolean;
   /** Bodies already cut this dash, so one pass cannot take two limbs off one person. */
   hit: Set<Fighter>;
-  took: number;
+  /**
+   * Of those, the ones that still had a limb to give. The picker is opened over this list when
+   * the pass ends, and the one limb chosen comes off every body on it — a miss opens nothing.
+   */
+  caught: Fighter[];
   seed: number;
+  /**
+   * Where the last gash of the 1000 Cuts trail went. Lives on the dash rather than on the side
+   * because the trail is the dash — there is no such thing as a cut laid outside one.
+   */
+  cutX: number;
+  cutY: number;
 }
 
 /**
@@ -345,10 +405,13 @@ interface Side {
   hasteUntil: number;
   guardUntil: number;
   deal: Deal | null;
-  dodgeApplied: boolean;
+  /**
+   * Dodge chance this kit is currently lending the body. One number for three sources (the deal,
+   * the passive and the delay) because they overlap freely and each has to be able to come off
+   * without taking the other two — or the base dodge with them.
+   */
+  dodgeGiven: number;
   dash: Dash | null;
-  /** Chosen at the picker (player) or by the bot, and consumed by the next Amputate cast. */
-  nextLimb: Limb | null;
 
   // ── Sheath (Click upgrade) ──
   /** When he last drew. Three seconds of this not moving and the sheath fills. */
@@ -361,11 +424,6 @@ interface Side {
   /** Damage the blade has eaten this guard. A fifth of it becomes the wave's slow. */
   guardBlocked: number;
 
-  // ── Death by 1000 Cuts (F upgrade) ──
-  cutNextAt: number;
-  cutLastX: number;
-  cutLastY: number;
-
   // ── True Grimdark (Q upgrade) ──
   /** Damage instances the mask has left. Zero and it is off. */
   maskCharges: number;
@@ -377,16 +435,35 @@ interface Side {
   lastGrabX: number;
   lastGrabY: number;
   lastGrabAt: number;
+
+  // ── Mastery ──
+  /** Inevitability's five seconds. */
+  inevitableUntil: number;
+  /** Every hit taken inside the last two seconds, and the tally it is read for. */
+  hits: { at: number; amount: number }[];
+  /** `rawDamageTaken` as of last frame, so the window is fed by a subtraction. */
+  lastRaw: number;
+  /** Delay The Inevitable's eight seconds, and its own private cooldown. */
+  delayUntil: number;
+  delayCastAt: number;
+  /** Fractional health carried between frames, so 5/s is 5/s rather than 60 rounded up. */
+  regenAccum: number;
+  /** The bot's own re-check gate, so it is not asking the same question sixty times a second. */
+  npcDelayCheckAt: number;
 }
 
 function makeSide(owner: Owner): Side {
   return {
     owner, aimX: 0, aimY: 0, clockMs: MIDNIGHT_MS, clockSpent: false, lastToll: 999,
-    hasteUntil: 0, guardUntil: 0, deal: null, dodgeApplied: false, dash: null, nextLimb: null,
+    hasteUntil: 0, guardUntil: 0, deal: null, dodgeGiven: 0, dash: null,
     lastDrawAt: 0, sheathed: false, volley: null, guardPowered: false, guardBlocked: 0,
-    cutNextAt: 0, cutLastX: 0, cutLastY: 0,
     maskCharges: 0, maskOn: null, maskPrev: null, grabNextAt: 0,
     lastGrabX: 0, lastGrabY: 0, lastGrabAt: 0,
+    // Readiness is `scene.time.now - delayCastAt`, and `scene.time.now` is milliseconds since
+    // the *page* loaded — a match started inside the first 26 seconds of a session would find
+    // the ability on cooldown from a cast nobody made. Seeded one full cooldown in the past.
+    inevitableUntil: 0, hits: [], lastRaw: 0, delayUntil: 0, delayCastAt: -DELAY_COOLDOWN_MS,
+    regenAccum: 0, npcDelayCheckAt: 0,
   };
 }
 
@@ -429,6 +506,11 @@ export interface DeathArenaApi {
   setStatusIndicator(id: string, status: CustomStatus | null): void;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
+  /** Mastery: the enhancement bound over each of the player's slots this match. */
+  masteryBindFor(slot: string): string | null;
+  /** …and the opponent's, for a Nightmare bot or a remote player running the mastery. */
+  npcMasteryBindFor(slot: string): string | null;
+  recordMasteryStat(key: string, amount: number): void;
 }
 
 // ── DeathKit ─────────────────────────────────────────────────────────────────
@@ -455,6 +537,7 @@ export class DeathKit {
   private pickGfx: Phaser.GameObjects.Graphics | null = null;
   private pickTitle: Phaser.GameObjects.Text | null = null;
   private pickRows: Phaser.GameObjects.Text[] = [];
+  private pickHint: Phaser.GameObjects.Text | null = null;
   private vizT = 0;
 
   // ── Sim ──
@@ -478,8 +561,12 @@ export class DeathKit {
   private touched = new Set<Fighter>();
   /** True while *this* kit is the one holding the arena's dodge flag down. */
   private claimsDodge = false;
-  /** The limb picker is open and waiting on a number key. Player only — the bot just decides. */
+  /** The limb picker is open and waiting on an answer. Player only — the bot just decides. */
   private picking = false;
+  /** The bodies the landed pass caught. The chosen limb comes off every one of them. */
+  private pickCaught: Fighter[] = [];
+  /** When it opened, for the grace window that keeps the launching press from also closing it. */
+  private pickedAt = 0;
   private numberKeys: Phaser.Input.Keyboard.Key[] = [];
 
   // ── Upgrade state ──
@@ -549,6 +636,47 @@ export class DeathKit {
   private up(owner: Owner, slot: string): boolean {
     return owner === 'player' ? this.api.hasUpgrade(slot) : this.api.hasNpcUpgrade(slot);
   }
+
+  // ── Mastery helpers ────────────────────────────────────────────────────────
+
+  /** Whether Element Mastery is on for whichever side is asking. */
+  private masteryOn(owner: Owner): boolean {
+    return this.isDeath(owner)
+      && (owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
+  }
+
+  /**
+   * Which slot Delay The Inevitable was dropped on, or null. Q is not scanned — `excludeSlots`
+   * refuses it, because the Deal is the only thing in the kit that can give the eight seconds back.
+   */
+  private delaySlot(owner: Owner): 'e' | 'r' | 'f' | null {
+    if (!this.masteryOn(owner)) return null;
+    for (const s of ['e', 'r', 'f'] as const) {
+      const bind = owner === 'player' ? this.api.masteryBindFor(s) : this.api.npcMasteryBindFor(s);
+      if (bind === DELAY_ID) return s;
+    }
+    return null;
+  }
+
+  /** The player's key for a bound slot. */
+  private keyFor(slot: 'e' | 'r' | 'f'): Phaser.Input.Keyboard.Key {
+    return slot === 'e' ? this.api.eKey : slot === 'r' ? this.api.rKey : this.api.fKey;
+  }
+
+  /** Only ever recorded for the player: the grind is the human's, not the bot's. */
+  private record(owner: Owner, key: string, amount = 1): void {
+    if (owner === 'player') this.api.recordMasteryStat(key, amount);
+  }
+
+  /** Damage that side has taken inside the passive's two-second window. */
+  private windowDamage(owner: Owner): number {
+    let sum = 0;
+    for (const h of this.sides[owner].hits) sum += h.amount;
+    return sum;
+  }
+
+  private inevitable(owner: Owner): boolean { return this.now < this.sides[owner].inevitableUntil; }
+  private delaying(owner: Owner): boolean { return this.now < this.sides[owner].delayUntil; }
 
   /**
    * Death by 1000 Cuts: everything wrong with a body standing in the gashes is half again as
@@ -645,6 +773,28 @@ export class DeathKit {
     else if (this.claimsDodge) { this.claimsDodge = false; this.api.isDodging = false; }
   }
 
+  /**
+   * The three dodge bonuses the kit lends out, reconciled onto the body as one number. Resolved
+   * from state every frame rather than added at the cast site and subtracted at the end of it:
+   * the deal, the passive and the delay overlap in every combination, and `rollDodge` spends 0.2
+   * of the chance every time it saves him, so the total has to be both re-derived and topped up.
+   */
+  private syncDodgeBonus(owner: Owner): void {
+    const s = this.sides[owner];
+    const f = this.fighter(owner);
+    const want = this.alive(f) && this.isDeath(owner)
+      ? (s.deal?.phase === 'settled' ? DEAL_DODGE : 0)
+        + (this.inevitable(owner) ? INEV_DODGE : 0)
+        + (this.delaying(owner) ? DELAY_DODGE : 0)
+      : 0;
+    if (want !== s.dodgeGiven) {
+      if (f?.active) f.dodgeChance = Math.max(0, f.dodgeChance - s.dodgeGiven) + want;
+      s.dodgeGiven = want;
+    } else if (want > 0 && f?.active && f.dodgeChance < want) {
+      f.dodgeChance = want;
+    }
+  }
+
   /** Distance from a point to the katana's line segment. */
   private distToSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
     const dx = bx - ax;
@@ -667,7 +817,10 @@ export class DeathKit {
     for (const owner of BOTH) {
       const s = this.sides[owner];
       const f = this.fighter(owner);
-      if (s.dodgeApplied && f?.active) f.dodgeChance = Math.max(0, f.dodgeChance - DEAL_DODGE);
+      if (s.dodgeGiven > 0 && f?.active) f.dodgeChance = Math.max(0, f.dodgeChance - s.dodgeGiven);
+      // A window that was open when the match ended would otherwise leave the next one's
+      // cooldowns permanently a quarter longer.
+      if (f) f.deathDelayCooldownMult = 1;
       // The mask holds a `damageAbsorber` that would otherwise eat three hits in the next match.
       this.dropMask(owner);
     }
@@ -675,11 +828,19 @@ export class DeathKit {
     this.claimsDodge = false;
     this.api.isDodging = false;
     this.picking = false;
+    this.pickCaught = [];
+    this.pickedAt = 0;
 
     this.sides = { player: makeSide('player'), npc: makeSide('npc') };
     // `scene.time.now` keeps counting across match restarts, so the sheath is charged from the
     // moment this round opened rather than from the moment the scene did.
-    for (const owner of BOTH) this.sides[owner].lastDrawAt = this.now;
+    for (const owner of BOTH) {
+      this.sides[owner].lastDrawAt = this.now;
+      // The passive reads a difference, so it has to start from wherever the counter already is
+      // rather than from zero — a body that carried damage in would otherwise trigger on frame one.
+      const f = this.fighter(owner);
+      this.sides[owner].lastRaw = this.alive(f) ? f.rawDamageTaken : 0;
+    }
     this.shots = [];
     this.halves = [];
     this.afterimages = [];
@@ -705,6 +866,7 @@ export class DeathKit {
     this.hudCount?.destroy(); this.hudCount = null;
     this.pickGfx?.destroy(); this.pickGfx = null;
     this.pickTitle?.destroy(); this.pickTitle = null;
+    this.pickHint?.destroy(); this.pickHint = null;
     for (const r of this.pickRows) r.destroy();
     this.pickRows = [];
 
@@ -722,61 +884,126 @@ export class DeathKit {
     s.aimY = mouseY;
 
     const p = this.api.player;
-    if (!this.alive(p)) { this.picking = false; return; }
+    if (!this.alive(p)) { this.closePicker(); return; }
     // Mid-handshake the body is not his to drive and neither is the katana. The dash is the
     // same: it is a committed movement, and it is over in a fifth of a second.
     if (s.deal?.phase === 'shake' || s.dash) return;
 
     const ctx = this.api.buildPlayerContext(mouseX, mouseY);
+    // Mastery: whichever of E/R/F the delay was dropped on stops being its own ability, so that
+    // key is skipped below and pressed for the delay instead.
+    const delayed = this.delaySlot('player');
 
     // ── The limb picker ──
-    // F opens it; a number key spends it. The cooldown is not touched until the dash actually
-    // leaves, so opening the menu and changing your mind costs nothing.
-    const pickVictim = this.picking ? this.primaryVictim('player') : null;
-    // Whoever the menu was opened over has died in the meantime — there is nothing to choose.
-    if (this.picking && !this.alive(pickVictim)) this.picking = false;
+    // Nothing here opens it. It is opened by a dash that actually landed (`landDash`), and what
+    // is being spent by the time it is up is a cut that has already been made — so it stays open
+    // until it is answered. Nothing is on a timer, and only an explicit answer, an explicit
+    // back-out, or every caught body dying takes it down.
+    this.pickCaught = this.pickCaught.filter((t) => this.alive(t));
+    if (this.picking && this.pickCaught.length === 0) this.closePicker();
+
+    // A click the panel ate is a click at the menu, not a fan of shurikens at the wall behind it.
+    let clickTaken = false;
 
     if (this.picking) {
-      const gone = this.limbsGone(pickVictim as Fighter);
-      for (let i = 0; i < this.numberKeys.length; i++) {
-        if (!Phaser.Input.Keyboard.JustDown(this.numberKeys[i])) continue;
+      // The scene's keyboard plugin is rebuilt between runs; if the Keys were taken before that
+      // happened the menu would be unanswerable. Cheap to re-take, and only while one is open.
+      if (this.numberKeys.length === 0) this.setupKeys();
+
+      const gone = this.limbsGone(this.pickCaught[0]);
+      // One limb, off every body the pass caught — the same rule the dash always had, just
+      // resolved at the answer instead of at the cast.
+      const choose = (i: number): void => {
         const limb = LIMBS[i];
+        if (!limb) return;
         if (gone.has(limb)) {
           this.api.showFloatingText(p.x, p.y - 46, '🦴 ALREADY GONE', this.hex(DEA.pale));
-          continue;
+          return;
         }
-        s.nextLimb = limb;
-        this.picking = false;
-        // A refused cast (disarmed, dead, chickened) must not eat the choice.
-        if (!p.castAbility('death-amputate', ctx)) s.nextLimb = null;
+        for (const t of this.pickCaught) this.amputate('player', t, limb);
+        this.closePicker();
+      };
+
+      for (let i = 0; i < this.numberKeys.length; i++) {
+        if (Phaser.Input.Keyboard.JustDown(this.numberKeys[i])) choose(i);
       }
-      // F again closes it, so the key that opened the menu is also the key that backs out.
-      if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) this.picking = false;
-    } else if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) {
-      this.openPicker();
+
+      // ...and with the mouse, on the row itself. A menu with exactly one way in is a menu that
+      // is lost whenever that one way is busy.
+      if (this.picking && pointer.isDown && !this.api.pointerWasDown && this.overPicker(mouseX, mouseY)) {
+        clickTaken = true;
+        const row = this.pickRowAt(mouseX, mouseY);
+        if (row >= 0) choose(row);
+      }
+
+      // F walks away from the cut without taking anything — but never inside the grace window,
+      // so the press that launched the dash can never be the press that throws the menu away.
+      if (this.picking && this.now - this.pickedAt >= PICK_GRACE_MS
+        && Phaser.Input.Keyboard.JustDown(this.api.fKey)) {
+        this.api.showFloatingText(p.x, p.y - 46, '🗡️ LEFT IT', this.hex(DEA.pale));
+        this.closePicker();
+      }
+    } else if (delayed !== 'f' && Phaser.Input.Keyboard.JustDown(this.api.fKey)) {
+      // F is the dash, plainly. Whether it earns a menu is up to whether it hits anybody.
+      p.castAbility('death-amputate', ctx);
     }
 
-    if (pointer.isDown && !this.api.pointerWasDown) p.castAbility('death-styx', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('death-disarm', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('death-riposte', ctx);
+    if (pointer.isDown && !this.api.pointerWasDown && !clickTaken) p.castAbility('death-styx', ctx);
+    if (delayed !== 'e' && Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('death-disarm', ctx);
+    if (delayed !== 'r' && Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('death-riposte', ctx);
     if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('death-deal', ctx);
+    if (delayed && Phaser.Input.Keyboard.JustDown(this.keyFor(delayed))) this.tryDelay('player');
   }
 
-  /** F, when nothing is pending. Refuses early rather than opening a menu with no answers in it. */
-  private openPicker(): void {
+  /**
+   * Opened only by a dash that landed on somebody with a limb left, over the bodies it caught.
+   * There is nothing to refuse here: `landDash` has already established that the cut was made.
+   */
+  private openPicker(caught: Fighter[]): void {
     const p = this.api.player;
-    if (p.getCooldownRatio('death-amputate') < 1) return;
-    const victim = this.primaryVictim('player');
-    if (!this.alive(victim)) {
-      this.api.showFloatingText(p.x, p.y - 46, '🦴 NOBODY TO CUT', this.hex(DEA.pale));
-      return;
-    }
-    if (this.limbsGone(victim as Fighter).size >= AMP_MAX) {
-      this.api.showFloatingText(p.x, p.y - 46, '🦴 NOTHING LEFT TO TAKE', this.hex(DEA.pale));
-      return;
-    }
+    this.pickCaught = caught.slice();
     this.picking = true;
+    this.pickedAt = this.now;
+    // `JustDown` is a latch that stays set until somebody reads it, and these four keys are read
+    // *only* while a menu is open. A 1 pressed at any earlier point in the match would otherwise
+    // still be sitting there and would answer this menu on its very first frame.
+    for (const k of this.numberKeys) Phaser.Input.Keyboard.JustDown(k);
+    this.api.showFloatingText(p.x, p.y - 62, '🗡️ CUT LANDED — TAKE WHICH?', this.hex(DEA.edge));
     Sfx.playAt('clang', p.x, { volume: 0.45, rate: 1.5 });
+  }
+
+  private closePicker(): void {
+    this.picking = false;
+    this.pickCaught = [];
+  }
+
+  /**
+   * The panel's rect in the space `paintPicker` draws it in. Screen space: the panel is pinned
+   * with `setScrollFactor(0)`, and the pointer coordinates handed to `handleInput` are the
+   * arena's own — the same coordinates, since the arena camera does not scroll.
+   */
+  private pickerRect(): { x: number; y: number; w: number; h: number } {
+    return {
+      x: this.api.width / 2 - PICK_W / 2,
+      y: Math.round(this.api.height * PICK_Y),
+      w: PICK_W,
+      h: PICK_HEAD + PICK_ROW * LIMBS.length + PICK_FOOT,
+    };
+  }
+
+  private overPicker(x: number, y: number): boolean {
+    const r = this.pickerRect();
+    return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+  }
+
+  /** Which row a screen point is on, or −1. Rows are laid out by `paintPicker` to match. */
+  private pickRowAt(x: number, y: number): number {
+    const r = this.pickerRect();
+    if (x < r.x || x > r.x + r.w) return -1;
+    for (let i = 0; i < LIMBS.length; i++) {
+      if (Math.abs(y - (r.y + PICK_HEAD + i * PICK_ROW)) <= PICK_ROW / 2) return i;
+    }
+    return -1;
   }
 
   // ── Ability entry points (called from build*Context) ───────────────────────
@@ -929,7 +1156,10 @@ export class DeathKit {
       }
       // Full brand and a hand free: the weapon goes with the stun, and it does not come back
       // until they walk to it. Checked before the stacks are spent, since the brand is the cost.
-      if (stacks >= STYX_MAX && this.up(owner, 'e')) this.flingWeapon(owner, t, ang);
+      if (stacks >= STYX_MAX) {
+        this.record(owner, 'maxDisarms');
+        if (this.up(owner, 'e')) this.flingWeapon(owner, t, ang);
+      }
       this.marks[owner].delete(t);
       this.stun(t, ms);
       this.fx(owner).brand(t.x, t.y, 26, 10);
@@ -973,8 +1203,14 @@ export class DeathKit {
    * an ability with exactly two presses of consequence in it — and neither of them is undone by
    * healing, by a new round of the minute, or by anything else in the game.
    *
-   * The limb is chosen before the dash leaves (`nextLimb`), because "which one" is the entire
-   * decision: legs are how fast they close on you, arms are how often and how hard they swing.
+   * The limb is chosen *after* the pass, and only if the pass landed. A dash is a thing you can
+   * miss with, and a menu that comes up before the blade has touched anybody makes the miss free:
+   * you would be shopping for a limb you had not earned yet, then watching the dash sail past.
+   * So the order is blade first, choice second — see `landDash`.
+   *
+   * The cast never refuses for want of limbs. A body with nothing left to give is still worth
+   * charging through: the dash itself is a repositioning tool, it still opens Exsanguination out
+   * of a full sheath, and with Death by 1000 Cuts it still carves the floor on the way.
    */
   doAmputate(owner: Owner, tx: number, ty: number): void {
     const f = this.fighter(owner);
@@ -983,14 +1219,6 @@ export class DeathKit {
     s.aimX = tx;
     s.aimY = ty;
     if (s.deal?.phase === 'shake' || s.dash) { f.resetCooldown('death-amputate'); return; }
-
-    const limb = s.nextLimb ?? this.pickLimbFor(owner);
-    s.nextLimb = null;
-    if (!limb) {
-      f.resetCooldown('death-amputate');
-      this.api.showFloatingText(f.x, f.y - 46, '🦴 NOTHING LEFT TO TAKE', this.hex(DEA.pale));
-      return;
-    }
 
     const powered = this.drawBlade(owner);
     const ang = Math.atan2(ty - f.y, tx - f.x);
@@ -1003,27 +1231,30 @@ export class DeathKit {
       y1: Phaser.Math.Clamp(f.y + Math.sin(ang) * reach, this.top + 16, this.bottom - 16),
       startedAt: this.now,
       endsAt: this.now + AMP_MS,
-      limb,
       hit: new Set(),
-      took: 0,
+      caught: [],
       seed: Math.random() * 999,
+      cutX: f.x,
+      cutY: f.y,
     };
+    // Death by 1000 Cuts: the blade goes into the floor the moment it comes out, and the whole
+    // trail is laid by this one dash — see `updateDashes`.
+    this.layCut(owner, f.x, f.y, ang);
     if (owner === 'player') this.syncDodgeClaim();
 
     this.avatar(owner)?.play('sweep', ang);
     this.fx(owner).sweep(f.x, f.y, ang, 0.5, 90, 320, 10, DEA.blade);
-    this.api.showFloatingText(f.x, f.y - 46, `🗡️ ${LIMB_EMOJI[limb]} ${LIMB_LABEL[limb]}`, this.hex(DEA.blade));
+    this.api.showFloatingText(f.x, f.y - 46, '🗡️ AMPUTATE', this.hex(DEA.blade));
     Sfx.playAt('slash', f.x, { volume: 1, rate: 1.15 });
   }
 
-  /** The bot's choice, and the fallback if a cast somehow arrives with nothing queued. */
-  private pickLimbFor(owner: Owner): Limb | null {
-    const v = this.primaryVictim(owner) ?? this.api.getNearestEnemy(this.fighter(owner).x, this.fighter(owner).y);
-    if (!this.alive(v)) return null;
-    const gone = this.limbsGone(v as Fighter);
+  /**
+   * The bot's choice, made on the body the pass actually caught. Legs first: a body that cannot
+   * close the distance cannot beat the clock, which is the only thing the bot is playing for.
+   */
+  private pickLimbFor(victim: Fighter): Limb | null {
+    const gone = this.limbsGone(victim);
     if (gone.size >= AMP_MAX) return null;
-    // Legs first. A body that cannot close the distance cannot beat the clock, which is the
-    // only thing the bot is actually playing for.
     return LIMBS.slice().sort((a, b) => Number(isLeg(b)) - Number(isLeg(a))).find((l) => !gone.has(l)) ?? null;
   }
 
@@ -1050,6 +1281,8 @@ export class DeathKit {
       limb = alt;
     }
     set.add(limb);
+
+    this.record(owner, 'amputations');
 
     const { arms, legs } = this.limbCounts(victim);
     // Written once and left alone: an amputation is not a timer, and nothing hands it back
@@ -1094,24 +1327,65 @@ export class DeathKit {
       f.setPosition(x, y);
       this.body(f).reset(x, y);
 
+      // The trail follows the blade, and the blade is only out during this dash. Stepped by
+      // distance rather than by time so a short dash and a long one both leave a solid corridor
+      // instead of the long one leaving three dots.
+      if (Phaser.Math.Distance.Between(d.cutX, d.cutY, x, y) >= CUT_STEP) {
+        this.layCut(owner, x, y, Math.atan2(y - d.cutY, x - d.cutX));
+        d.cutX = x;
+        d.cutY = y;
+      }
+
       for (const t of this.targetsOf(owner)) {
         if (d.hit.has(t)) continue;
         if (Phaser.Math.Distance.Between(x, y, t.x, t.y) > AMP_HIT_R + 14 * t.sizeMult) continue;
         d.hit.add(t);
-        if (this.amputate(owner, t, d.limb)) d.took++;
+        this.api.spawnHitFlash(t.x, t.y, DEA.blade);
+        this.fx(owner).spark(t.x, t.y, Math.atan2(d.y1 - d.y0, d.x1 - d.x0));
         // Exsanguination is paid for by the *pass*, not by the limb: a body with nothing left
         // to take is still opened up by a blade going through it.
         if (d.powered) this.openBleed(owner, t);
+        // Nothing left to give: the blade still went through them, it just has nothing to carry
+        // away. That is a slash, not an amputation, and it opens no menu.
+        if (this.limbsGone(t).size >= AMP_MAX) {
+          this.api.showFloatingText(t.x, t.y - 44, '🗡️ SLASHED — NOTHING LEFT', this.hex(DEA.pale));
+          continue;
+        }
+        d.caught.push(t);
       }
 
       if (k < 1) continue;
+      // One last gash where he plants, so the corridor reaches the end of the line he drew
+      // rather than stopping a step short of it.
+      this.layCut(owner, x, y, Math.atan2(d.y1 - d.y0, d.x1 - d.x0));
       s.dash = null;
-      if (d.took === 0 && d.hit.size === 0) {
-        this.api.showFloatingText(f.x, f.y - 46, '🗡️ CUT NOTHING', this.hex(DEA.pale));
-      }
       this.fx(owner).soot(f.x, f.y, 6, 20, 460, 9);
+      this.landDash(owner, d);
     }
     this.syncDodgeClaim();
+  }
+
+  /**
+   * The pass is over. *Now* the limb is chosen — and only if there is a body on the other end of
+   * it with something to give. A miss is simply a miss: no menu, no cooldown back, nothing owed.
+   */
+  private landDash(owner: Owner, d: Dash): void {
+    const f = this.fighter(owner);
+    if (d.caught.length === 0) {
+      if (d.hit.size === 0 && this.alive(f)) {
+        this.api.showFloatingText(f.x, f.y - 46, '🗡️ CUT NOTHING', this.hex(DEA.pale));
+      }
+      return;
+    }
+
+    // The bot does not get a menu. It takes legs while there are legs, on the body it caught.
+    if (owner === 'npc') {
+      const limb = this.pickLimbFor(d.caught[0]);
+      if (limb) for (const t of d.caught) this.amputate(owner, t, limb);
+      return;
+    }
+
+    this.openPicker(d.caught);
   }
 
   /**
@@ -1200,6 +1474,10 @@ export class DeathKit {
     this.updateBleeds();
     this.updateShoves(delta);
     this.updateGrimdark();
+    // The mastery. Before the mirror, which reads the delay's damage cut, and before the speed
+    // accessors ArenaScene pulls this frame.
+    this.updateBoons(delta);
+    this.updateNpcMastery();
     // Before the mirror and before anything reads `amped`: standing in the gashes is what
     // decides how bad every other number in this kit is this frame.
     this.updateCuts();
@@ -1223,9 +1501,9 @@ export class DeathKit {
       || this.weapons.length > 0 || this.cuts.length > 0 || this.scars.length > 0
       || this.shoves.length > 0
       || BOTH.some((o) => this.marks[o].size > 0 || !!this.sides[o].deal
-        || !!this.sides[o].dash || this.sides[o].dodgeApplied || !!this.sides[o].volley
+        || !!this.sides[o].dash || this.sides[o].dodgeGiven > 0 || !!this.sides[o].volley
         || !!this.sides[o].maskOn || this.bleeds[o].size > 0 || this.dishonor[o].size > 0
-        || this.shocks[o].size > 0);
+        || this.shocks[o].size > 0 || this.inevitable(o) || this.delaying(o));
   }
 
   private ensureLayers(): void {
@@ -1248,7 +1526,6 @@ export class DeathKit {
       // parked somewhere and a dodge bonus to hand back, and `updateDeals` does that.
       s.guardUntil = 0;
       s.hasteUntil = 0;
-      s.nextLimb = null;
       s.sheathed = false;
       s.volley = null;
       s.guardPowered = false;
@@ -1353,6 +1630,9 @@ export class DeathKit {
   }
 
   private brand(owner: Owner, victim: Fighter): void {
+    // Ruin's Combo Breaker halves every meter in the game. A brand is a whole stack, so the
+    // halving is carried rather than rounded — every other river shot marks nobody.
+    if (meterStep(this.fighter(owner), 'styx') <= 0) return;
     const cur = this.markOn(owner, victim);
     const stacks = Math.min(STYX_MAX, (cur?.stacks ?? 0) + 1);
     this.marks[owner].set(victim, { stacks, until: this.now + STYX_MS });
@@ -1441,6 +1721,7 @@ export class DeathKit {
         // What that shot was worth, banked for the parting wave. Counted whether or not this
         // guard was powered — the tally is cheap and the flag decides if it is ever read.
         s.guardBlocked += Math.max(0, p.damage);
+        this.record(owner, 'riposteCuts');
         this.cleave(owner, p.x, p.y, inAng);
         p.destroy();
       }
@@ -1457,6 +1738,7 @@ export class DeathKit {
         // No velocity handle out here, so the incoming line is taken from the geometry: it was
         // on its way to the blade, which is all the cleave needs to know.
         s.guardBlocked += Math.max(0, rp.damage);
+        this.record(owner, 'riposteCuts');
         this.cleave(owner, px, py, Math.atan2(seg.ay - py, seg.ax - px));
         this.api.projectileRegistry.steal(rp);
       }
@@ -1527,9 +1809,8 @@ export class DeathKit {
         continue;
       }
 
-      // The dodge is a sustained 33%, not a charge: `rollDodge` spends 0.2 every time it saves
-      // him, so it is topped back up each frame for as long as the deal is running.
-      if (s.dodgeApplied && f.dodgeChance < DEAL_DODGE) f.dodgeChance = DEAL_DODGE;
+      // The dodge is a sustained 33%, not a charge — `syncDodgeBonus` tops it back up every
+      // frame, alongside whatever the mastery is lending on the same number.
       if (this.now < d.endsAt) continue;
 
       const taken = Math.max(0, f.rawDamageTaken - d.rawAt0);
@@ -1563,8 +1844,7 @@ export class DeathKit {
     // The clock on the bargain starts when he lets go of their hand, not when he arrived —
     // damage taken during the handshake itself is not part of the deal.
     d.rawAt0 = f.rawDamageTaken;
-    f.dodgeChance += DEAL_DODGE;
-    s.dodgeApplied = true;
+    this.syncDodgeBonus(owner);
     if (owner === 'player') this.syncDodgeClaim();
 
     this.avatar(owner)?.play('flex');
@@ -1580,10 +1860,7 @@ export class DeathKit {
     // The arms go back in with the bargain, whichever way it ended.
     this.dropMask(owner);
     if (owner === 'player') this.syncDodgeClaim();
-    if (s.dodgeApplied) {
-      if (f?.active) f.dodgeChance = Math.max(0, f.dodgeChance - DEAL_DODGE);
-      s.dodgeApplied = false;
-    }
+    this.syncDodgeBonus(owner);
     if (aborted || !this.alive(f)) return;
 
     if (!honoured) {
@@ -1595,10 +1872,158 @@ export class DeathKit {
 
     s.clockMs = Math.max(0, s.clockMs - DEAL_REWARD_MS);
     s.lastToll = 999;
+    this.record(owner, 'dealsHonoured');
     this.fx(owner).toll(f.x, f.y, 14, 150, 720, 11, DEA.gold);
     this.api.showFloatingText(f.x, f.y - 50, '🕛 DEAL HONOURED', this.hex(DEA.gold));
     this.api.showFloatingText(f.x, f.y - 32, '−10s TO MIDNIGHT', this.hex(DEA.blood));
     Sfx.playAt('clock-tick', f.x, { volume: 0.95, rate: 0.5 });
+  }
+
+  // ── Mastery ────────────────────────────────────────────────────────────────
+
+  /**
+   * Delay The Inevitable, from the bound key. Refuses rather than queues: the eight seconds are
+   * a state, and pressing the key inside them would only pay the clock twice for one window.
+   */
+  private tryDelay(owner: Owner): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    // The kit is already driving this body somewhere specific and has taken the keys off him.
+    if (s.deal?.phase === 'shake' || s.dash) return;
+    // The press does not go through `castAbility` — the enhancement is not in the element's
+    // ability list — so the two refusals that gate every other key have to be repeated here, or
+    // a Disarm stun and a weapon on the floor would both stop being worth anything.
+    const wall = Date.now();
+    if (wall < f.disarmedUntil || wall < f.chickenUntil || wall < f.silencedUntil) return;
+    if (this.delaying(owner)) {
+      if (owner === 'player') {
+        this.api.showFloatingText(f.x, f.y - 46, '🕰️ ALREADY DELAYING', this.hex(DEA.pale));
+      }
+      return;
+    }
+    if (this.now - s.delayCastAt < DELAY_COOLDOWN_MS) return;
+    this.beginDelay(owner);
+    // `triggerCooldown` is what puts it on the wire — online, the opponent replays it through
+    // `replayNpcMastery` — as well as what the ability card counts down from.
+    if (owner === 'player') f.triggerCooldown(DELAY_ID);
+  }
+
+  /**
+   * The window itself. Separate from the refusals above because an online replica has to be able
+   * to open the same eight seconds on a replica body that never pressed anything.
+   *
+   * The katana deliberately does not come out: `drawBlade` is not called, so this is the one cast
+   * in the element that leaves a filling sheath alone.
+   */
+  private beginDelay(owner: Owner): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    s.delayCastAt = this.now;
+    s.delayUntil = this.now + DELAY_MS;
+    // The price. The marks are all ahead of the hand again, so the tolls re-arm with it.
+    s.clockMs += DELAY_CLOCK_MS;
+    s.lastToll = 999;
+    f.deathDelayCooldownMult = DELAY_COOLDOWN_MULT;
+    this.syncDodgeBonus(owner);
+
+    const fx = this.fx(owner);
+    fx.toll(f.x, f.y, 12, 130, 760, 11, DEA.gold);
+    fx.soot(f.x, f.y, 8, 26, 620, 9);
+    this.avatar(owner)?.play('flex');
+    this.api.showFloatingText(f.x, f.y - 50, '🕰️ DELAY THE INEVITABLE', this.hex(DEA.gold));
+    this.api.showFloatingText(f.x, f.y - 32, `+${DELAY_CLOCK_MS / 1000}s TO MIDNIGHT`, this.hex(DEA.blood));
+    this.api.showFloatingText(f.x, f.y - 14, '−50% DAMAGE TAKEN · +50% SPEED', this.hex(DEA.bone));
+    Sfx.playAt('clock-tick', f.x, { volume: 0.95, rate: 0.42 });
+    Sfx.playAt('status-haste', f.x, { volume: 0.7, rate: 0.7 });
+  }
+
+  /** Online replay: the remote Death player pressed their bound key. */
+  doNpcDelay(): void {
+    this.beginDelay('npc');
+  }
+
+  /**
+   * Everything the mastery does per frame, for both sides: the two-second damage window that
+   * lights Inevitability, the regeneration both halves pay out, the cooldown penalty the delay
+   * charges, and the dodge reconciliation all three share.
+   *
+   * The window is fed whether or not the mastery is on — it costs a subtraction, and gating it
+   * would mean the first burst after a mid-match element swap read as zero.
+   */
+  private updateBoons(delta: number): void {
+    for (const owner of BOTH) {
+      const s = this.sides[owner];
+      const f = this.fighter(owner);
+      const on = this.masteryOn(owner);
+
+      if (!this.alive(f)) {
+        s.hits.length = 0;
+        s.inevitableUntil = 0;
+        s.delayUntil = 0;
+        this.syncDodgeBonus(owner);
+        continue;
+      }
+
+      // ── The window ──
+      const raw = f.rawDamageTaken;
+      const took = Math.max(0, raw - s.lastRaw);
+      s.lastRaw = raw;
+      if (took > 0) s.hits.push({ at: this.now, amount: took });
+      while (s.hits.length && this.now - s.hits[0].at > INEV_WINDOW_MS) s.hits.shift();
+
+      // ── Inevitability ──
+      // Spending the window is the whole reason this cannot chain: fifty damage buys five
+      // seconds once, and the next five have to be paid for with another fifty.
+      if (on && this.windowDamage(owner) >= INEV_TRIGGER) {
+        s.hits.length = 0;
+        const refresh = this.inevitable(owner);
+        s.inevitableUntil = this.now + INEV_MS;
+        this.fx(owner).toll(f.x, f.y, 14, 120, 640, 11, DEA.bone);
+        if (!refresh) this.fx(owner).soot(f.x, f.y, 10, 28, 700, 9);
+        this.api.showFloatingText(f.x, f.y - 48,
+          refresh ? '⏳ INEVITABILITY REFRESHED' : '⏳ INEVITABILITY', this.hex(DEA.bone));
+        if (!refresh) {
+          this.api.showFloatingText(f.x, f.y - 30, '+33% DODGE · +25% SPEED · 5 HP/s', this.hex(DEA.pale));
+        }
+        Sfx.playAt('clock-tick', f.x, { volume: 0.8, rate: 1.15 });
+      }
+      // Mastery switched off mid-match (Magic borrowing the element, a fresh round): the windows
+      // close rather than running on without anything able to have opened them.
+      if (!on) { s.inevitableUntil = 0; s.delayUntil = 0; }
+
+      // ── What the two of them pay out ──
+      const rate = (this.inevitable(owner) ? INEV_REGEN : 0) + (this.delaying(owner) ? DELAY_REGEN : 0);
+      if (rate > 0) {
+        s.regenAccum += rate * (delta / 1000);
+        const whole = Math.floor(s.regenAccum);
+        if (whole > 0) { s.regenAccum -= whole; f.heal(whole); }
+      } else {
+        s.regenAccum = 0;
+      }
+
+      f.deathDelayCooldownMult = this.delaying(owner) ? DELAY_COOLDOWN_MULT : 1;
+      this.syncDodgeBonus(owner);
+    }
+  }
+
+  /**
+   * The bot's half of the mastery. Delay is a panic button and nothing else — it costs the bot
+   * eight seconds of the only clock it is actually playing for, so it is spent when the fight is
+   * already going badly rather than on cooldown.
+   */
+  private updateNpcMastery(): void {
+    const s = this.sides.npc;
+    if (!this.delaySlot('npc')) return;
+    if (this.now < s.npcDelayCheckAt) return;
+    s.npcDelayCheckAt = this.now + 250;
+    const f = this.api.npc;
+    if (!this.alive(f)) return;
+    if (this.delaying('npc') || this.now - s.delayCastAt < DELAY_COOLDOWN_MS) return;
+    // Either somebody is committing to killing it, or somebody already has.
+    if (this.windowDamage('npc') < NPC_DELAY_DAMAGE && f.hp > f.maxHp * NPC_DELAY_HP) return;
+    this.tryDelay('npc');
   }
 
   // ── Sheath (Click upgrade) ─────────────────────────────────────────────────
@@ -1889,41 +2314,33 @@ export class DeathKit {
   // ── Death by 1000 Cuts (F upgrade) ─────────────────────────────────────────
 
   /**
-   * A blade dragged along behind him for the whole match. The gashes deal nothing at all —
-   * what standing in them does is make everything *else* that is wrong with you half again as
-   * bad, and take a quarter of your speed on top.
+   * One gash of the corridor the Amputate dash carves. The cuts deal nothing at all — what
+   * standing in them does is make everything *else* that is wrong with you half again as bad,
+   * and take a quarter of your speed on top.
    *
-   * Two halves: the trail is laid here, and `carved` is rebuilt from scratch every frame so the
-   * amplifier is a fact about where a body is standing rather than a status somebody applied.
+   * Called only from the dash (`doAmputate` and `updateDashes`). There is no passive trail: he
+   * does not drag the blade around behind him, he puts it through the floor on the line he
+   * chose to charge down, and it stays open there for twenty seconds.
+   */
+  private layCut(owner: Owner, x: number, y: number, along: number): void {
+    if (!this.isDeath(owner) || !this.up(owner, 'f')) return;
+    this.cuts.push({
+      owner,
+      x,
+      y,
+      // Across the path rather than along it: a slash he left, not a skidmark.
+      ang: along + Math.PI / 2 + (Math.random() - 0.5) * 0.7,
+      bornAt: this.now,
+      diesAt: this.now + CUT_LIFE_MS,
+      seed: Math.random() * 999,
+    });
+  }
+
+  /**
+   * `carved` is rebuilt from scratch every frame, so the amplifier is a fact about where a body
+   * is standing rather than a status somebody applied to it.
    */
   private updateCuts(): void {
-    for (const owner of BOTH) {
-      const s = this.sides[owner];
-      if (!this.isDeath(owner) || !this.up(owner, 'f')) continue;
-      const f = this.fighter(owner);
-      if (!this.alive(f)) continue;
-      // Nothing is dropped mid-handshake: he is not walking, he is standing there shaking a hand.
-      if (s.deal?.phase === 'shake') continue;
-      if (this.now < s.cutNextAt) continue;
-      const moved = Phaser.Math.Distance.Between(s.cutLastX, s.cutLastY, f.x, f.y);
-      if (moved < CUT_MIN_MOVE) continue;
-
-      const along = Math.atan2(f.y - s.cutLastY, f.x - s.cutLastX);
-      s.cutNextAt = this.now + CUT_EVERY_MS;
-      s.cutLastX = f.x;
-      s.cutLastY = f.y;
-      this.cuts.push({
-        owner,
-        x: f.x,
-        y: f.y,
-        // Across the path rather than along it: a slash he left, not a skidmark.
-        ang: along + Math.PI / 2 + (Math.random() - 0.5) * 0.7,
-        bornAt: this.now,
-        diesAt: this.now + CUT_LIFE_MS,
-        seed: Math.random() * 999,
-      });
-    }
-
     for (let i = this.cuts.length - 1; i >= 0; i--) {
       if (this.now >= this.cuts[i].diesAt) this.cuts.splice(i, 1);
     }
@@ -2098,6 +2515,10 @@ export class DeathKit {
         factor = Math.min(factor,
           (1 - styx) * AMP_ARM_DMG[this.limbCounts(t).arms] * (1 - bleed) * (1 - shame));
       }
+      // Delay The Inevitable is real armour rather than a cut to what they hit for, but it is
+      // worn on the same number — it is already the one field on this body that says "everything
+      // aimed at the reaper is worth less", and it multiplies with the four reasons above.
+      if (this.delaying(owner)) factor *= DELAY_DR;
       if (factor > 0.999) continue;
       f.deathIncomingMult = Math.max(0.1, factor);
       this.touched.add(f);
@@ -2133,7 +2554,8 @@ export class DeathKit {
       // outright — resolved from state here rather than at the cast site, or a Disarm mid-guard
       // would drop the blade for good.
       av.setHold(guarding ? 'brace' : null, ang);
-      av.setIntensity(this.now < s.hasteUntil || s.deal?.phase === 'settled' ? 1.35 : 1);
+      av.setIntensity(this.now < s.hasteUntil || s.deal?.phase === 'settled'
+        || this.inevitable(owner) || this.delaying(owner) ? 1.35 : 1);
       av.setMastered(owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
       av.update(delta, f.x, f.y, this.alive(f) ? 1 : 0);
     }
@@ -2352,6 +2774,39 @@ export class DeathKit {
       }
     }
 
+    // ── Mastery ──
+    // Two very different pictures on purpose. Inevitability is something happening *to* him — a
+    // ring of bone closing on the body with the sand running back up it — and the delay is
+    // something he is doing, so it is the clock itself, held out in front of him, unwinding.
+    for (const owner of BOTH) {
+      const s = this.sides[owner];
+      const f = this.fighter(owner);
+      if (!this.isDeath(owner) || !this.alive(f)) continue;
+      const tint = this.col(owner);
+
+      if (this.now < s.inevitableUntil) {
+        const k = Phaser.Math.Clamp((s.inevitableUntil - this.now) / INEV_MS, 0, 1);
+        const pulse = 0.5 + 0.5 * Math.sin(this.vizT * 7);
+        g.lineStyle(1.6 + pulse * 1.4, tint(DEA.bone), 0.2 + k * 0.4);
+        g.strokeCircle(f.x, f.y, 26 + pulse * 4);
+        for (let i = 0; i < 6; i++) {
+          const a = this.vizT * 1.5 + i * (Math.PI * 2 / 6);
+          const rise = (this.vizT * 0.7 + i * 0.17) % 1;
+          g.fillStyle(tint(DEA.pale), (1 - rise) * 0.6 * k);
+          g.fillCircle(f.x + Math.cos(a) * 23, f.y + 15 - rise * 36, 1.9 - rise);
+        }
+      }
+
+      if (this.now < s.delayUntil) {
+        const left = Phaser.Math.Clamp((s.delayUntil - this.now) / DELAY_MS, 0, 1);
+        // `frac` is *remaining* time and the wedge is what has been spent, so handing it `1 −
+        // left` shrinks the wedge as the window runs down: the hand walking backwards.
+        clockFace(g, tint, f.x, f.y - 34, 12, 1 - left, 0.95, { numerals: false, seed: 5 });
+        g.lineStyle(2.2, tint(DEA.gold), 0.25 + 0.25 * Math.sin(this.vizT * 4));
+        g.strokeCircle(f.x, f.y, 30 + Math.sin(this.vizT * 4) * 3);
+      }
+    }
+
     // ── The sheath ──
     // At his hip while the katana is away, filling from the throat out. Drawn for a Death npc
     // too: a powered swing you could not see coming would just be an unexplained knockback.
@@ -2436,6 +2891,12 @@ export class DeathKit {
     g.fillCircle(cx, cy, CLOCK_R + 9);
     clockFace(g, this.col(owner), cx, cy, CLOCK_R, frac, 1,
       { hostile: !mine || frac < 0.08, seed: 7 });
+    // Mastery: the eight seconds this dial was just given, ringed in gold around it — the number
+    // under the face went *up*, and that has never happened before in this element.
+    if (this.now < s.delayUntil) {
+      g.lineStyle(3, DEA.gold, 0.35 + 0.3 * Math.sin(this.vizT * 5));
+      g.strokeCircle(cx, cy, CLOCK_R + 6 + Math.sin(this.vizT * 5) * 1.5);
+    }
 
     this.hudTitle.setVisible(true).setPosition(cx, cy - CLOCK_R - 13)
       .setColor(this.hex(accent))
@@ -2452,25 +2913,35 @@ export class DeathKit {
    * on the row — because the decision is the ability and a player should never have to guess at
    * it. Rows for limbs already gone are struck through rather than removed, so the numbers stay
    * in the same place from one cast to the next.
+   *
+   * The geometry is `pickerRect`'s, and it has to stay that way: the rows are clickable, and the
+   * hit test is done against that rect rather than against these text objects.
    */
   private paintPicker(playerIs: boolean): void {
     const open = playerIs && this.picking;
     if (!open) {
       this.pickGfx?.setVisible(false);
       this.pickTitle?.setVisible(false);
+      this.pickHint?.setVisible(false);
       for (const r of this.pickRows) r.setVisible(false);
       return;
     }
 
     const { scene } = this.api;
+    const r = this.pickerRect();
     const cx = this.api.width / 2;
-    const top = Math.round(this.api.height * PICK_Y);
-    const h = PICK_ROW * LIMBS.length + 46;
+    const top = r.y;
+    const h = r.h;
 
     if (!this.pickGfx) this.pickGfx = scene.add.graphics().setDepth(PICK_DEPTH).setScrollFactor(0);
     if (!this.pickTitle) {
       this.pickTitle = scene.add.text(cx, top + 14, '', {
         fontSize: '13px', color: this.hex(DEA.blade), fontStyle: 'bold',
+      }).setOrigin(0.5).setDepth(PICK_DEPTH + 1).setScrollFactor(0);
+    }
+    if (!this.pickHint) {
+      this.pickHint = scene.add.text(cx, 0, '', {
+        fontSize: '11px', color: this.hex(DEA.pale),
       }).setOrigin(0.5).setDepth(PICK_DEPTH + 1).setScrollFactor(0);
     }
     while (this.pickRows.length < LIMBS.length) {
@@ -2479,9 +2950,12 @@ export class DeathKit {
       }).setOrigin(0, 0.5).setDepth(PICK_DEPTH + 1).setScrollFactor(0));
     }
 
-    const victim = this.primaryVictim('player');
+    // The body the pass actually caught — not whoever happens to be nearest. Everything on the
+    // panel is a statement about that body, because the cut has already been made in it.
+    const victim = this.pickCaught[0] ?? null;
     const gone = victim ? this.limbsGone(victim) : new Set<Limb>();
     const left = AMP_MAX - gone.size;
+    const also = this.pickCaught.length - 1;
 
     const g = this.pickGfx.setVisible(true);
     g.clear();
@@ -2494,24 +2968,38 @@ export class DeathKit {
     g.lineBetween(cx - PICK_W / 2 + 12, top + 27, cx + PICK_W / 2 - 12, top + 27);
 
     this.pickTitle.setVisible(true).setPosition(cx, top + 14)
-      .setText(`🗡️ AMPUTATE — ${left} LIMB${left === 1 ? '' : 'S'} LEFT TO TAKE`);
+      .setText(also > 0
+        ? `🗡️ CUT LANDED ON ${this.pickCaught.length} — TAKE WHICH?`
+        : `🗡️ CUT LANDED — ${left} LIMB${left === 1 ? '' : 'S'} LEFT TO TAKE`);
+
+    // The row the cursor is over, so a menu that can be clicked visibly says so.
+    const hovered = this.pickRowAt(this.sides.player.aimX, this.sides.player.aimY);
 
     for (let i = 0; i < LIMBS.length; i++) {
       const limb = LIMBS[i];
       const taken = gone.has(limb);
+      const rowY = top + PICK_HEAD + i * PICK_ROW;
       // What the *next* count of that kind would cost them.
       const { arms, legs } = victim ? this.limbCounts(victim) : { arms: 0, legs: 0 };
       const effect = isLeg(limb)
         ? `−${Math.round((1 - AMP_LEG_SPEED[Math.min(2, legs + 1)]) * 100)}% speed`
         : `+${Math.round((AMP_ARM_CD[Math.min(2, arms + 1)] - 1) * 100)}% cd · `
           + `−${Math.round((1 - AMP_ARM_DMG[Math.min(2, arms + 1)]) * 100)}% dmg`;
+      if (i === hovered && !taken) {
+        g.fillStyle(DEA.blade, 0.16);
+        g.fillRoundedRect(cx - PICK_W / 2 + 8, rowY - PICK_ROW / 2 + 1, PICK_W - 16, PICK_ROW - 2, 4);
+      }
       this.pickRows[i].setVisible(true)
-        .setPosition(cx - PICK_W / 2 + 14, top + 40 + i * PICK_ROW)
-        .setColor(taken ? this.hex(DEA.smoke) : '#e9e3d2')
+        .setPosition(cx - PICK_W / 2 + 14, rowY)
+        .setColor(taken ? this.hex(DEA.smoke) : i === hovered ? this.hex(DEA.edge) : '#e9e3d2')
         .setText(taken
           ? `[${i + 1}]  ${LIMB_EMOJI[limb]} ${LIMB_LABEL[limb]} — already gone`
           : `[${i + 1}]  ${LIMB_EMOJI[limb]} ${LIMB_LABEL[limb]} — ${effect}`);
     }
+
+    this.pickHint.setVisible(true)
+      .setPosition(cx, top + PICK_HEAD + LIMBS.length * PICK_ROW + 4)
+      .setText('press 1–4 or click a row  ·  F to leave it  ·  it waits for you');
   }
 
   // ── Status tray ────────────────────────────────────────────────────────────
@@ -2588,6 +3076,19 @@ export class DeathKit {
       until: s.guardUntil, priority: 116,
     } : null);
 
+    // ── Mastery ──
+    this.api.setStatusIndicator('death-inevitability', playerIs && this.inevitable('player') ? {
+      name: 'Inevitability', emoji: '⏳', color: DEA.bone,
+      description: `Fifty damage landed on you inside two seconds and the reaper stopped pretending to be a person: +${Math.round(INEV_DODGE * 100)}% dodge, +${Math.round((INEV_HASTE - 1) * 100)}% move speed and ${INEV_REGEN} health a second for 5 seconds. Another burst refreshes it rather than stacking with itself.`,
+      until: s.inevitableUntil, priority: 132,
+    } : null);
+
+    this.api.setStatusIndicator('death-delay', playerIs && this.delaying('player') ? {
+      name: 'Delaying', emoji: '🕰️', color: DEA.gold,
+      description: `Midnight is ${DELAY_CLOCK_MS / 1000} seconds further away, and you are spending them at ${Math.round((1 - DELAY_DR) * 100)}% damage taken, +${Math.round((DELAY_HASTE - 1) * 100)}% move speed, +${Math.round(DELAY_DODGE * 100)}% dodge, ${DELAY_REGEN} health a second and dodges that carry ${DELAY_DASH_MULT}× as far. Your own cooldowns run ${Math.round((DELAY_COOLDOWN_MULT - 1) * 100)}% slower until it ends.`,
+      until: s.delayUntil, priority: 133,
+    } : null);
+
     this.api.setStatusIndicator('death-haste', playerIs && this.now < s.hasteUntil ? {
       name: 'Quickened', emoji: '🌀', color: DEA.after,
       description: 'A landed Disarm has you moving 30% faster.',
@@ -2662,7 +3163,7 @@ export class DeathKit {
     // Standing in the cuts.
     this.api.setStatusIndicator('death-carved', this.carved.get(p) === 'npc' ? {
       name: 'Carved', emoji: '🗡️', color: DEA.blade,
-      description: 'You are standing in a trail of open cuts. 25% slower, and every negative effect on you is half again as strong for as long as you stay in them.',
+      description: 'You are standing in the corridor an Amputate dash carved. 25% slower, and every negative effect on you is half again as strong for as long as you stay in it. Walk out.',
       priority: 3,
     } : null);
 
@@ -2746,6 +3247,11 @@ export class DeathKit {
       const s = this.sides[owner];
       if (this.now < s.hasteUntil) mult *= DISARM_HASTE;
       if (s.deal?.phase === 'settled') mult *= DEAL_HASTE;
+      // The mastery's two. They stack with the Disarm quickening and with the deal, on purpose:
+      // a reaper who has just been hit for fifty and delayed on top of it is meant to be
+      // uncatchable for those few seconds.
+      if (this.inevitable(owner)) mult *= INEV_HASTE;
+      if (this.delaying(owner)) mult *= DELAY_HASTE;
       // Stood still for the handshake, or carried by the dash — the body is the kit's for
       // those frames and WASD must not add to it.
       if (s.deal?.phase === 'shake' || s.dash) mult = 0;
@@ -2765,6 +3271,23 @@ export class DeathKit {
   limbsTaken(f: Fighter): number { return this.limbsGone(f).size; }
   /** Seconds left on that side's doomsday clock. */
   clockSeconds(owner: Owner): number { return Math.ceil(this.sides[owner].clockMs / 1000); }
+
+  /**
+   * Mastery: how much further a Space dodge carries. Read by ArenaScene's `executeDodge`, the
+   * same way Sound's Coda lengthens the dash.
+   */
+  getDodgeLengthMult(): number {
+    return this.delaying('player') ? DELAY_DASH_MULT : 1;
+  }
+
+  /**
+   * Which of the bot's own slots the delay was dropped on, or undefined. Published into
+   * `NpcAiState` so `doDeathAbilities` stops pressing the ability that is no longer there — the
+   * kit casts the delay itself, so the AI only needs to know what it lost.
+   */
+  npcDelaySlot(): 'e' | 'r' | 'f' | undefined {
+    return this.delaySlot('npc') ?? undefined;
+  }
 
   /**
    * Where `f` has to walk to be able to cast again, or undefined when it is still holding its
@@ -2789,6 +3312,12 @@ export class DeathKit {
     if (abilityId === 'death-deal' && s.deal) {
       if (s.deal.phase === 'shake') return 0.1;
       return 0.1 + 0.9 * Phaser.Math.Clamp((s.deal.endsAt - time) / DEAL_MS, 0, 1);
+    }
+    // The mastery ability keeps its own timer — the card shows the eight seconds while they are
+    // running, and the 26 filling back up once they are not.
+    if (abilityId === DELAY_ID) {
+      if (time < s.delayUntil) return 0.1 + 0.9 * Phaser.Math.Clamp((s.delayUntil - time) / DELAY_MS, 0, 1);
+      return Phaser.Math.Clamp((time - s.delayCastAt) / DELAY_COOLDOWN_MS, 0, 1);
     }
     return p.getCooldownRatio(abilityId);
   }

@@ -952,6 +952,205 @@ export function pepperFlame(
   }
 }
 
+/**
+ * Drive by Flex. A rusted saloon seen from above, and every garage buff is bolted onto it
+ * somewhere you can see: the bumper grows teeth, the tyres fatten, the roof grows a turret or a
+ * cannon, and the whole shell goes from brown rust to riveted plate once it is a Tank.
+ *
+ * `wear` is how close the thing is to its last bounce — the paint darkens and the panels start
+ * hanging off, so a car about to go up looks like a car about to go up.
+ */
+export function rustyCar(
+  g: Phaser.GameObjects.Graphics,
+  tint: FortuneColorFn,
+  x: number, y: number, ang: number, alpha: number,
+  {
+    t = 0, dark = 1, wear = 0, rider = false, spikes = false, tires = false,
+    tank = false, speedster = false, gunner = false, robo = false, sunroof = false,
+    turret = 0,
+  } = {},
+): void {
+  const ca = Math.cos(ang);
+  const sa = Math.sin(ang);
+  const P = (u: number, v: number) => pt(x, y, ca, sa, u, v);
+  // A Tank is a wider, squarer thing than a saloon; everything else is the same shell.
+  const L = tank ? 30 : 27;
+  const W = tank ? 17 : 14;
+  // The rust wins as the bounces run out.
+  const shell = tank ? FOR.gunmetal : FOR.timber;
+  const body = shade(tint(shell), dark * (1 - wear * 0.35));
+
+  g.fillStyle(shade(tint(FOR.ink), dark), alpha * 0.45);
+  g.fillEllipse(x + 2, y + 9, L * 2.1, W * 1.5);
+
+  // Wheels first, so the body sits on them. Quick Tires makes them visibly fatter.
+  const tw = tires || speedster ? 7.4 : 5.6;
+  for (const su of [-1, 1]) {
+    for (const sv of [-1, 1]) {
+      const w = P(su * L * 0.62, sv * (W + 1.5));
+      g.fillStyle(shade(tint(FOR.ink), dark), alpha);
+      g.fillCircle(w.x, w.y, tw);
+      g.fillStyle(shade(tint(FOR.soot), dark), alpha * 0.9);
+      g.fillCircle(w.x, w.y, tw * 0.55);
+      // A hub that turns, so a stationary-looking car still reads as driving.
+      g.lineStyle(1.1, shade(tint(FOR.steel), dark), alpha * 0.7);
+      const hub = t * (speedster ? 26 : 13) + (su + sv);
+      g.lineBetween(w.x - Math.cos(hub) * tw * 0.45, w.y - Math.sin(hub) * tw * 0.45,
+        w.x + Math.cos(hub) * tw * 0.45, w.y + Math.sin(hub) * tw * 0.45);
+    }
+  }
+
+  // The shell: a blunt wedge, nose slightly narrower than the boot.
+  const hull = [P(L, -W * 0.72), P(L * 0.82, -W), P(-L * 0.94, -W), P(-L, -W * 0.6),
+    P(-L, W * 0.6), P(-L * 0.94, W), P(L * 0.82, W), P(L, W * 0.72)];
+  g.fillStyle(shade(tint(FOR.ink), dark), alpha * 0.85);
+  g.fillPoints(hull, true);
+  g.fillStyle(body, alpha);
+  g.fillPoints(hull.map((p) => new Phaser.Geom.Point(x + (p.x - x) * 0.93, y + (p.y - y) * 0.93)), true);
+
+  // Rust blooms. Deterministic off the wear, so they creep rather than crawl about.
+  for (let i = 0; i < 5; i++) {
+    const j = jitter(41 + i, i);
+    const rp = P((j * 2 - 1) * L * 0.7, (jitter(i, 9) * 2 - 1) * W * 0.7);
+    g.fillStyle(shade(tint(FOR.bloodDark), dark), alpha * (0.18 + wear * 0.45));
+    g.fillCircle(rp.x, rp.y, 2 + j * 2.6 + wear * 2);
+  }
+
+  // Cabin: a dark windscreen with a bar of glare across it, and the roof behind it.
+  const glass = [P(L * 0.44, -W * 0.72), P(-L * 0.1, -W * 0.78), P(-L * 0.1, W * 0.78), P(L * 0.44, W * 0.72)];
+  g.fillStyle(shade(tint(FOR.ink), dark), alpha * 0.92);
+  g.fillPoints(glass, true);
+  g.fillStyle(shade(tint(FOR.steel), dark), alpha * 0.28);
+  const gl0 = P(L * 0.4, -W * 0.5);
+  const gl1 = P(-L * 0.06, -W * 0.1);
+  g.lineStyle(2.2, shade(tint(FOR.canvas), dark), alpha * 0.3);
+  g.lineBetween(gl0.x, gl0.y, gl1.x, gl1.y);
+  g.fillStyle(shade(tint(shell), dark * 1.25), alpha);
+  g.fillPoints([P(-L * 0.14, -W * 0.8), P(-L * 0.76, -W * 0.78), P(-L * 0.76, W * 0.78), P(-L * 0.14, W * 0.8)], true);
+
+  // Headlights, always on, always pointing where it is about to go.
+  for (const sv of [-1, 1]) {
+    const h = P(L * 0.94, sv * W * 0.45);
+    g.fillStyle(shade(tint(FOR.hot), dark), alpha * 0.9);
+    g.fillCircle(h.x, h.y, 2.6);
+    g.fillStyle(shade(tint(FOR.goldLit), dark), alpha * 0.18);
+    g.fillCircle(h.x + ca * 6, h.y + sa * 6, 7);
+  }
+
+  // Spiked Bumper: real teeth off the nose, not a painted stripe.
+  if (spikes) {
+    g.fillStyle(shade(tint(FOR.steel), dark), alpha);
+    for (let i = -2; i <= 2; i++) {
+      const base = P(L * 0.98, i * W * 0.38);
+      const tipp = P(L * 1.32, i * W * 0.3);
+      const b0 = P(L * 0.98, i * W * 0.38 - 2.6);
+      const b1 = P(L * 0.98, i * W * 0.38 + 2.6);
+      g.fillPoints([b0, tipp, b1], true);
+      void base;
+    }
+  }
+
+  // Sunroof: a hole in the roof with light coming up out of it.
+  if (sunroof) {
+    const sr = P(-L * 0.42, 0);
+    g.fillStyle(shade(tint(FOR.ink), dark), alpha);
+    g.fillEllipse(sr.x, sr.y, W * 1.05, W * 0.8);
+    g.fillStyle(shade(tint(FOR.goldLit), dark), alpha * (0.35 + 0.25 * Math.sin(t * 5)));
+    g.fillEllipse(sr.x, sr.y, W * 0.72, W * 0.5);
+  }
+
+  // The rider, standing up out of the roof: shoulders, a head, and the shadow they cast on it.
+  if (rider) {
+    const r = P(-L * 0.34, 0);
+    g.fillStyle(shade(tint(FOR.ink), dark), alpha * 0.5);
+    g.fillEllipse(r.x + 2, r.y + 3, 17, 11);
+    g.fillStyle(shade(tint(FOR.blood), dark), alpha);
+    g.fillEllipse(r.x, r.y, 15, 10);
+    g.fillStyle(shade(tint(FOR.canvas), dark), alpha);
+    g.fillCircle(r.x, r.y - 1, 5.2);
+    g.fillStyle(shade(tint(FOR.gold), dark), alpha * 0.9);
+    g.fillCircle(r.x, r.y - 1, 3.2);
+  }
+
+  // Robo-Gunner / Tank: a turret on the roof, turned to `turret` rather than to travel.
+  if (robo || tank) {
+    const m = P(-L * 0.08, 0);
+    g.fillStyle(shade(tint(FOR.gunmetal), dark * 1.2), alpha);
+    g.fillCircle(m.x, m.y, tank ? 9 : 6.5);
+    g.fillStyle(shade(tint(FOR.soot), dark), alpha);
+    g.fillCircle(m.x, m.y, tank ? 6.5 : 4.6);
+    const bl = tank ? 30 : 17;
+    g.lineStyle(tank ? 5.2 : 3, shade(tint(FOR.steel), dark), alpha);
+    g.lineBetween(m.x, m.y, m.x + Math.cos(turret) * bl, m.y + Math.sin(turret) * bl);
+    if (tank) {
+      g.fillStyle(shade(tint(FOR.gunmetal), dark), alpha);
+      g.fillCircle(m.x + Math.cos(turret) * bl, m.y + Math.sin(turret) * bl, 3.4);
+    }
+  }
+
+  // Mounted Gunner: a belt of brass slung over the boot, so the extra rounds are visible.
+  if (gunner) {
+    for (let i = 0; i < 5; i++) {
+      const b = P(-L * 0.82, (i / 4 - 0.5) * W * 1.4);
+      g.fillStyle(shade(tint(FOR.brass), dark), alpha * 0.95);
+      g.fillEllipse(b.x, b.y, 4.6, 2.6);
+    }
+  }
+
+  // Speedster: exhaust flame off the back, and it is on fire because that is the point.
+  if (speedster) {
+    for (let i = 0; i < 3; i++) {
+      const e = P(-L * (1.05 + i * 0.22), Math.sin(t * 22 + i) * 3);
+      g.fillStyle(shade(tint(i === 0 ? FOR.hot : i === 1 ? FOR.gold : FOR.blood), dark),
+        alpha * (0.75 - i * 0.2));
+      g.fillCircle(e.x, e.y, 6 - i * 1.4);
+    }
+  }
+}
+
+/**
+ * One notch of the battle pass ribbon.
+ *
+ * Three states and three kinds, and the shape says which is which: a bought tier is a filled
+ * gold block, the next one pulses on its own clock, and everything past it is a flat empty slot.
+ * The `plus` tiers are drawn a head taller with a struck star on them — the ribbon should read
+ * as "five more and something good happens" without a legend.
+ */
+export function passTier(
+  g: Phaser.GameObjects.Graphics,
+  tint: FortuneColorFn,
+  x: number, y: number, w: number, h: number, alpha: number,
+  { state = 'locked' as 'owned' | 'next' | 'locked', plus = false, t = 0, dark = 1 } = {},
+): void {
+  const tall = plus ? h * 1.34 : h;
+  const pulse = state === 'next' ? 0.55 + 0.45 * Math.sin(t * 6) : 0;
+  const face = state === 'owned' ? (plus ? FOR.goldLit : FOR.gold)
+    : state === 'next' ? FOR.brass : FOR.soot;
+
+  g.fillStyle(shade(tint(FOR.ink), dark), alpha * 0.85);
+  g.fillRect(x - w / 2 - 1, y - tall / 2 - 1, w + 2, tall + 2);
+  g.fillStyle(shade(tint(face), dark * (state === 'next' ? 1 + pulse * 0.5 : 1)),
+    alpha * (state === 'locked' ? 0.55 : 0.95));
+  g.fillRect(x - w / 2, y - tall / 2, w, tall);
+
+  if (state !== 'locked') {
+    g.fillStyle(shade(tint(FOR.hot), dark), alpha * (state === 'owned' ? 0.35 : 0.2 + pulse * 0.5));
+    g.fillRect(x - w / 2, y - tall / 2, w, tall * 0.28);
+  }
+  if (plus) {
+    // A struck five-point star, the same device the coin carries, so the reward reads as money.
+    const r = Math.min(w, tall) * 0.34;
+    const pts: Phaser.Geom.Point[] = [];
+    for (let i = 0; i < 10; i++) {
+      const a = -Math.PI / 2 + (i / 10) * TAU;
+      const rr = i % 2 === 0 ? r : r * 0.44;
+      pts.push(new Phaser.Geom.Point(x + Math.cos(a) * rr, y + Math.sin(a) * rr));
+    }
+    g.fillStyle(shade(tint(state === 'locked' ? FOR.brass : FOR.ink), dark), alpha * 0.9);
+    g.fillPoints(pts, true);
+  }
+}
+
 // ── Fx ────────────────────────────────────────────────────────────────────
 
 export class FortuneFx extends FxBase {
@@ -1077,6 +1276,54 @@ export class FortuneFx extends FxBase {
         g.lineStyle(2 * (1 - t) + 0.5, shade(this.tint(i % 3 ? FOR.gold : FOR.contraband), dark), (1 - t) * 0.9);
         g.lineBetween(x + Math.cos(a) * d * 0.6, y + Math.sin(a) * d * 0.6,
           x + Math.cos(a) * d, y + Math.sin(a) * d);
+      }
+    });
+  }
+
+  /**
+   * The car going up. A fireball is not enough for a whole vehicle, so this is a fireball plus
+   * the vehicle: a dozen tumbling panels of rusted timber and gunmetal thrown flat and falling,
+   * and a pair of wheels that outlive the rest of it.
+   */
+  wreck(x: number, y: number, r: number, ms = 900, depth = 12, dark = 1): void {
+    const seed = Math.random() * 999;
+    this.flashIn(x, y, r * 0.6, FOR.hot, FOR.blood, depth);
+    this.anim(depth, ms, (g, t) => {
+      const e = easeOut(t);
+      g.lineStyle(9 * (1 - t) + 1.6, shade(this.tint(FOR.blood), dark), (1 - t) * 0.75);
+      g.strokeCircle(x, y, r * e);
+      g.fillStyle(shade(this.tint(FOR.soot), dark), (1 - t) * 0.55);
+      g.fillCircle(x, y, r * e * 0.72);
+      g.fillStyle(shade(this.tint(FOR.gold), dark), (1 - t) * (1 - t) * 0.8);
+      g.fillCircle(x, y, r * (1 - t) * 0.45);
+
+      for (let i = 0; i < 12; i++) {
+        const a = (i / 12) * TAU + jitter(seed, i);
+        const d = r * (0.7 + jitter(seed, 30 + i) * 0.9) * e;
+        const px = x + Math.cos(a) * d;
+        const py = y + Math.sin(a) * d + easeIn(t) * 26;
+        const spin = jitter(seed, 60 + i) * TAU + t * 14;
+        const w = 4 + jitter(seed, 90 + i) * 5;
+        const ca = Math.cos(spin);
+        const sa = Math.sin(spin);
+        g.fillStyle(shade(this.tint(i % 3 === 0 ? FOR.gunmetal : FOR.timber), dark), (1 - t) * 0.9);
+        g.fillPoints([
+          new Phaser.Geom.Point(px + ca * w - sa * 2, py + sa * w + ca * 2),
+          new Phaser.Geom.Point(px - ca * w - sa * 2, py - sa * w + ca * 2),
+          new Phaser.Geom.Point(px - ca * w + sa * 2, py - sa * w - ca * 2),
+          new Phaser.Geom.Point(px + ca * w + sa * 2, py + sa * w - ca * 2),
+        ], true);
+      }
+      // Two wheels, rolling out of the fire and going further than anything else.
+      for (const s of [-1, 1]) {
+        const a = seed + (s > 0 ? 0.6 : 2.7);
+        const px = x + Math.cos(a) * r * 1.35 * e;
+        const py = y + Math.sin(a) * r * 1.35 * e + easeIn(t) * 12;
+        g.fillStyle(shade(this.tint(FOR.ink), dark), (1 - t) * 0.9);
+        g.fillCircle(px, py, 6.5 * (1 - t * 0.4));
+        g.lineStyle(1.2, shade(this.tint(FOR.steel), dark), (1 - t) * 0.7);
+        g.lineBetween(px - Math.cos(t * 22) * 4, py - Math.sin(t * 22) * 4,
+          px + Math.cos(t * 22) * 4, py + Math.sin(t * 22) * 4);
       }
     });
   }

@@ -64,6 +64,16 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   public immortal = false;
   /**
+   * Justice (Indomitable Will, R+): health may not be driven below this value.
+   *
+   * Deliberately *not* `immortal` and not `isInvincible` — every hit lands, is computed in
+   * full, spends whatever it spends and shows the number it dealt; the last point of health
+   * simply refuses to go. The floor is only ever a clamp on a subtraction, never a top-up,
+   * so a body already below it is left where it is. Set to 0 by everything that isn't
+   * holding it, and cleared by the owning kit's `reset()`.
+   */
+  public minHpFloor = 0;
+  /**
    * Which side landed the most recent hit on this body — stamped at ArenaScene's
    * two damage chokepoints (projectile contact and owner-tagged AoE), which
    * between them carry effectively everything that hurts anyone.
@@ -138,6 +148,17 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   public ruinIncomingMult = 1;
   /**
+   * Ruin Mastery (Combo Breaker): 0.5 while a mastered Ruin is on the other side of the fight,
+   * and 1 otherwise. Every resource meter in the game — kinetic charge, fear, inflammation,
+   * love, hunger, anger, hype, Authority, DNA, blood, stress — multiplies whatever it was
+   * about to gain by this before banking it, through {@link meterGain}. Rewritten from scratch
+   * by RuinKit every frame, exactly like `ruinIncomingMult`.
+   *
+   * Deliberately only touches *gains*: a bar that drains on a timer drains at its own speed, so
+   * the passive makes meters slower to fill rather than shorter to hold.
+   */
+  public meterGainMult = 1;
+  /**
    * Quantum (Instability): 1 + one point per percent of instability, so a fighter sitting at the
    * 50% cap takes half again as much of everything. Its own field for the same reason Justice,
    * Magma, Conquest and Passion have theirs — and inside the mitigation product on purpose,
@@ -160,6 +181,16 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    * a save-backed player passive — an npc Paper has no save, so it never writes this at all.
    */
   public journalIncomingMult = 1;
+  /**
+   * Paper Mastery (Spirit of the Story): the open storybook's statline, and — like the journal
+   * above — two opposite things depending on who is wearing it. On the mastered Paper it is the
+   * Knight book's 20% armour; on everyone Paper is fighting it is the Alien book's 20% extra
+   * damage. Deliberately *not* folded into `journalIncomingMult`: that one is save-backed and
+   * player-only, while this is a live passive that an online Paper opponent has too, and the
+   * two would stomp each other the first time both sides of a match were Paper. PaperKit
+   * rewrites it from scratch every frame.
+   */
+  public paperIncomingMult = 1;
   /**
    * Psychic (Coma): 0.5 while this fighter is under. Its own field for the same reason Justice,
    * Magma and Death have theirs — PsychicKit rewrites it from scratch every frame, and
@@ -211,6 +242,24 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    * lands and again when it lifts, and sharing anyone else's would stomp their value.
    */
   public artifactIncomingMult = 1;
+  /**
+   * Dream (Phobia, F+): the permanent vulnerability a fighter builds up to the exact attack
+   * that keeps tearing them out of their sleep. Its own field for the reason every neighbour
+   * above has one — DreamKit rewrites it from scratch every frame off its phobia ledger, and
+   * sharing `incomingDamageMultiplier` would stomp whatever else wrote armour that tick.
+   */
+  public dreamIncomingMult = 1;
+  /**
+   * Sand (Sand Barrier, R+): the veil of sand a parkouring Sand player is wrapped in. Its own
+   * field for the same reason — SandKit rewrites it every frame off the state of the course.
+   */
+  public duneIncomingMult = 1;
+  /**
+   * Radiation Mastery (Sniper's Instinct): armour that is worth more the further the operative
+   * is standing from whoever he is shooting. Its own field for the same reason as every
+   * neighbour above — RadiationKit rewrites it from scratch every frame off the current range.
+   */
+  public radiationIncomingMult = 1;
   /**
    * Radiation (Irradiated): `Date.now()` epoch until which every point of healing aimed at this
    * fighter lands as damage instead — see `heal`. One field rather than a hook per healing
@@ -313,6 +362,29 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    * factor in there would be erased the first time any of them set it.
    */
   public amputationCooldownMult = 1;
+  /**
+   * Death Mastery (Delay The Inevitable): 1.25 for the eight seconds of the window, so the
+   * ability slows the caster's own kit down as well as the clock. Separate from
+   * `amputationCooldownMult` for the same reason that one is separate from `cooldownMult` — the
+   * two can be true at once and neither may overwrite the other.
+   */
+  public deathDelayCooldownMult = 1;
+  /**
+   * Dream Mastery (Lifelong Dream): the cooldown factor of whichever element's dream has come
+   * true on this body — Time halves everything, Technology takes a third off, and so on. Its
+   * own field for the same reason `deathDelayCooldownMult` is separate from
+   * `amputationCooldownMult`: `cooldownMult` is written *wholesale* by Timeless, Rebirth and
+   * Slime's Melt table, and a share folded in there would be erased the first time any of them
+   * fired. Written by DreamKit every frame and handed back by its `reset()`.
+   */
+  public dreamCooldownMult = 1;
+  /**
+   * Justice Mastery (Combo Excelsius): the cooldown reduction the current style rank is paying
+   * out — 1 at D, 0.68 at SS. Its own field for the same reason `dreamCooldownMult` is one:
+   * `cooldownMult` is written wholesale by Timeless, Rebirth and Slime's Melt table, and a
+   * share folded in there would be erased the first time any of them fired.
+   */
+  public justiceCooldownMult = 1;
   /**
    * Quantum (Ability Split): the factor the *next* ability stamped on this fighter carries into
    * its own cooldown, then reset to 1. Kept here rather than in QuantumCoreKit because the
@@ -463,6 +535,21 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   public oozeSizeMult = 1;
   /**
+   * Ruin Mastery (Second Skin): 0.8 for every layer this fighter has shed, and it never goes
+   * back up — five casts is 0.33× and that is the smallest anybody gets. A fourth independent
+   * size multiplier for the same reason `oozeSizeMult` is a third: Fate's slots own `sizeMult`,
+   * Illusion's folds own `shapeSizeMult`, Slime's swell owns `oozeSizeMult`, and any of the
+   * three landing after a shed would otherwise silently hand the layer back.
+   */
+  public ruinSizeMult = 1;
+  /**
+   * Dream Mastery (Lifelong Dream): the body a dream gives you — Growth's titanic frame, Ruin's
+   * shed one. A fifth independent size multiplier for the same reason `ruinSizeMult` is a
+   * fourth: the other four all have owners that rewrite them from their own state, and any of
+   * them landing after a dream would otherwise silently hand the new body back.
+   */
+  public dreamSizeMult = 1;
+  /**
    * Illusion Dance: projectiles pass straight through this fighter. Checked by ArenaScene's
    * two projectile-overlap handlers — the only place in the game where a shot decides whether
    * it has hit somebody. Everything that isn't a projectile (AoE, hitscan, contact, DOTs) is
@@ -542,6 +629,16 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public invertedControlsUntil = 0;
   /** Fate Mastery — Vulnerable curse: the next hit taken is doubled, then this clears. */
   public vulnerableNextHit = false;
+
+  /**
+   * Psychic Mastery — Utter Focus: WASD is buffered and applied this many milliseconds late.
+   *
+   * Only ever non-zero on the local player of the machine being *read*, and only online — a bot's
+   * route is already known exactly, so there is nothing to buy by holding its feet. PsychicKit
+   * owns the buffer itself; this field is only the flag ArenaScene's movement block reads to
+   * decide whether to route the frame's velocity through it.
+   */
+  public moveInputDelayMs = 0;
 
   /** Timestamp until which healing is suppressed (mutations). Date.now() based. */
   public healStopUntil = 0;
@@ -635,6 +732,14 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Growth Mastery — Carrier: permanent leftovers of a survived sickness. Never clears. */
   public sicknessCarrier = false;
 
+  /**
+   * Invasion — an aligned constellation's ward (The Bulwark). Its own field rather than a
+   * share of `incomingDamageMultiplier` for the same reason every other armour source has
+   * one: the observatory's buff lasts the whole run, and sharing the common field would
+   * stomp whatever else wrote armour that tick.
+   */
+  public starIncomingMult = 1;
+
   /** Metal Mastery — Natural Clot: flat amount subtracted from every incoming hit. Default 0. */
   public flatDamageReduction = 0;
   /** Metal Mastery — Steel Shield: incoming damage multiplier while the shield is up. Default 1. */
@@ -715,7 +820,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   applySizeMult(): void {
     // Folded shapes ride on top of whatever else is scaling this fighter, so any other
     // system calling this keeps the fold rather than quietly cancelling it.
-    const scale = this.sizeMult * this.shapeSizeMult * this.oozeSizeMult;
+    const scale = this.sizeMult * this.shapeSizeMult * this.oozeSizeMult * this.ruinSizeMult
+      * this.dreamSizeMult;
     this.setScale(scale);
     const baseRadius = 22;
     // `hitboxMult` deliberately misses `setScale` above: an X-rayed target is easier to hit
@@ -769,7 +875,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       // Tallied here: after the crit roll (a crit really is a bigger hit) but before every
       // mitigation multiplier on the line below, which is what "damage aimed at you" means.
       this.rawDamageTaken += amount;
-      let mitigation = this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.artifactIncomingMult * this.marrowIncomingMult * this.gluttonyIncomingMult * this.orderIncomingMult * this.fortuneIncomingMult * this.mapArmorMult * this.netDefenseMult;
+      let mitigation = this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.paperIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.artifactIncomingMult * this.marrowIncomingMult * this.gluttonyIncomingMult * this.orderIncomingMult * this.fortuneIncomingMult * this.dreamIncomingMult * this.duneIncomingMult * this.radiationIncomingMult * this.mapArmorMult * this.starIncomingMult * this.netDefenseMult;
       // Ruin's spikes turn armour inside out — 25% less damage taken comes back as 25% more.
       // Only a net *buff* is flipped; a fighter already taking extra damage is left alone.
       if (mitigation < 1 && this.scene.time.now < this.buffsInvertedUntil) mitigation = 2 - mitigation;
@@ -895,7 +1001,9 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     }
 
     // Practice target: the hit is fully resolved and reported, it just never sticks.
-    if (!this.immortal) this.hp = Math.max(0, this.hp - amount);
+    // `minHpFloor` is clamped to the current health first so it can only ever stop a fall,
+    // never raise one — a floor applied to somebody already under it must not revive them.
+    if (!this.immortal) this.hp = Math.max(Math.min(this.minHpFloor, this.hp), this.hp - amount);
     this.emit('damaged', amount);
     // A crit already announced itself above with its own, louder sound.
     if (amount > 0 && !isCrit) Sfx.hit(amount, this.x, this.isPlayerFighter);
@@ -985,7 +1093,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     // Divine perk Order: the other self-harm route — see `selfDamageImmune`.
     if (this.selfDamageImmune) { this.onSelfDamageBlocked?.(amount); return; }
     this.damageWasSelfInflicted = true;
-    if (!this.immortal) this.hp = Math.max(0, this.hp - amount);
+    if (!this.immortal) this.hp = Math.max(Math.min(this.minHpFloor, this.hp), this.hp - amount);
     this.emit('damaged', amount);
     // Quieter than a real hit: self-damage is usually a steady drip (Flame Body,
     // Pain Battery) and shouldn't compete with the fight for attention.
@@ -1080,7 +1188,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   private effectiveCooldown(ability: { cooldown: number; isUltimate?: boolean }): number {
     const ultimateExtra = ability.isUltimate ? this.ultimateCooldownMult : 1;
     return ability.cooldown * (this.cooldownMult || 1) * this.netCooldownMult
-      * this.amputationCooldownMult * ultimateExtra;
+      * this.amputationCooldownMult * this.deathDelayCooldownMult * this.dreamCooldownMult
+      * this.justiceCooldownMult * ultimateExtra;
   }
 
   /** As {@link effectiveCooldown}, including whatever split was banked when this id was stamped. */
@@ -1193,9 +1302,15 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     this.cooldowns.set(abilityId, 0);
   }
 
-  /** Every ability comes back at once (Air Mastery — Winds of Change). */
-  clearAllCooldowns(): void {
+  /**
+   * Every ability comes back at once (Air Mastery — Winds of Change). `exceptId` is the caster
+   * itself: a refresh that swept up its own stamp would be a free infinite recast, so the
+   * ability driving this always names itself and keeps the cooldown it just paid.
+   */
+  clearAllCooldowns(exceptId?: string): void {
+    const kept = exceptId !== undefined ? this.cooldowns.get(exceptId) : undefined;
     this.cooldowns.clear();
+    if (kept !== undefined) this.cooldowns.set(exceptId!, kept);
   }
 
   /**

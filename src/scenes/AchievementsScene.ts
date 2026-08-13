@@ -64,10 +64,12 @@ export class AchievementsScene extends Phaser.Scene {
     const COL_X = 60;
     let innerY = 8;
 
+    const TEXT_X = COL_X + 24;
+
     for (const ach of ACHIEVEMENTS) {
       const unlocked = PlayerData.isAchievementUnlocked(ach.id);
 
-      const descText = this.add.text(COL_X + 24, innerY + 34, ach.description, {
+      const descText = this.add.text(TEXT_X, innerY + 34, ach.description, {
         fontSize: '12px', fontFamily: FONT_UI,
         color: unlocked ? T.normal : T.faint,
         wordWrap: { width: COL_W - 56 }, lineSpacing: 3,
@@ -77,7 +79,7 @@ export class AchievementsScene extends Phaser.Scene {
       let rewardText: Phaser.GameObjects.Text | null = null;
       let rowH = 34 + descText.height + 16;
       if (reward) {
-        rewardText = this.add.text(COL_X + 24, innerY + 34 + descText.height + 8,
+        rewardText = this.add.text(TEXT_X, innerY + 34 + descText.height + 8,
           `🎁  ${reward.name}  ·  ${reward.elementId} skin`, {
             fontSize: '11px', fontFamily: FONT_DISPLAY,
             color: unlocked ? hex(mix(accent, 0xffffff, 0.45)) : T.ghost,
@@ -91,7 +93,7 @@ export class AchievementsScene extends Phaser.Scene {
         accent, muted: !unlocked, depth: DEPTH.panel,
       });
 
-      const nameText = this.add.text(COL_X + 24, innerY + 17, `${ach.emoji}   ${ach.name}`, {
+      const nameText = this.add.text(TEXT_X, innerY + 17, `${ach.emoji}   ${ach.name}`, {
         fontSize: '16px', fontFamily: FONT_DISPLAY,
         color: unlocked ? hex(mix(accent, 0xffffff, 0.6)) : T.faint,
         letterSpacing: 1,

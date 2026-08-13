@@ -137,6 +137,78 @@ export function drawCornerBrackets(
   g.beginPath(); g.moveTo(x, y + h - c); g.lineTo(x, y + h - c - len); g.strokePath();
 }
 
+// ── Leaning plates ────────────────────────────────────────────────────
+//
+// The element cards lean: the bottom edge sits `skew` px right of the top one. It is the
+// single most recognisable thing about that screen, so the geometry lives here rather than
+// in one scene — anything that wants to feel like a roster card can pick it up.
+
+/** The four corners of a leaning plate, clockwise from top-left. */
+export function slantPoints(
+  bx: number, by: number, hw: number, hh: number, skew: number,
+): Phaser.Geom.Point[] {
+  return [
+    new Phaser.Geom.Point(bx - hw - skew, by - hh),
+    new Phaser.Geom.Point(bx + hw - skew, by - hh),
+    new Phaser.Geom.Point(bx + hw + skew, by + hh),
+    new Phaser.Geom.Point(bx - hw + skew, by + hh),
+  ];
+}
+
+/** Horizontal shift of a leaning plate at `dy` px from its centre. */
+export function slantAt(dy: number, halfHeight: number, skew: number): number {
+  return (dy / halfHeight) * skew;
+}
+
+export function strokeSlant(
+  g: Phaser.GameObjects.Graphics, bx: number, by: number, hw: number, hh: number,
+  skew: number, color: number, alpha: number, thickness: number,
+): void {
+  const p = slantPoints(bx, by, hw, hh, skew);
+  g.lineStyle(thickness, color, alpha);
+  g.beginPath();
+  g.moveTo(p[0].x, p[0].y);
+  for (let i = 1; i < 4; i++) g.lineTo(p[i].x, p[i].y);
+  g.closePath();
+  g.strokePath();
+}
+
+export function fillSlant(
+  g: Phaser.GameObjects.Graphics, bx: number, by: number, hw: number, hh: number,
+  skew: number, color: number, alpha = 1,
+): void {
+  g.fillStyle(color, alpha);
+  g.fillPoints(slantPoints(bx, by, hw, hh, skew), true, true);
+}
+
+/**
+ * A vertical gradient inside a leaning plate, painted as a stack of quads.
+ *
+ * `Graphics.fillGradientStyle` is WebGL-only and does not follow an arbitrary path, and the
+ * horizontal-strip trick the notched plates use would stair-step down a slanted edge — so
+ * each row here is its own four-point quad with the exact slant at its top and bottom.
+ */
+export function fillSlantGradient(
+  g: Phaser.GameObjects.Graphics, bx: number, by: number, hw: number, hh: number,
+  skew: number, top: number, bottom: number, alpha: number, rows = 24,
+): void {
+  for (let i = 0; i < rows; i++) {
+    const t0 = i / rows;
+    const t1 = (i + 1) / rows;
+    const y0 = by - hh + hh * 2 * t0;
+    const y1 = by - hh + hh * 2 * t1;
+    const s0 = -skew + skew * 2 * t0;
+    const s1 = -skew + skew * 2 * t1;
+    g.fillStyle(mix(top, bottom, (t0 + t1) / 2), alpha);
+    g.fillPoints([
+      new Phaser.Geom.Point(bx - hw + s0, y0),
+      new Phaser.Geom.Point(bx + hw + s0, y0),
+      new Phaser.Geom.Point(bx + hw + s1, y1),
+      new Phaser.Geom.Point(bx - hw + s1, y1),
+    ], true, true);
+  }
+}
+
 /** A filled diamond — used as a rule ornament and list bullet. */
 export function fillDiamond(
   g: Phaser.GameObjects.Graphics,
@@ -149,6 +221,41 @@ export function fillDiamond(
     new Phaser.Geom.Point(cx, cy + r),
     new Phaser.Geom.Point(cx - r, cy),
   ], true, true);
+}
+
+/**
+ * A five-pointed star, point up. `r` is the outer radius; the waist sits at 0.42 of it,
+ * which is the classic rating-star proportion.
+ */
+export function starPath(cx: number, cy: number, r: number): Phaser.Geom.Point[] {
+  const pts: Phaser.Geom.Point[] = [];
+  for (let i = 0; i < 10; i++) {
+    const rad = i % 2 === 0 ? r : r * 0.42;
+    const a = (Math.PI / 5) * i - Math.PI / 2;
+    pts.push(new Phaser.Geom.Point(cx + Math.cos(a) * rad, cy + Math.sin(a) * rad));
+  }
+  return pts;
+}
+
+export function fillStar(
+  g: Phaser.GameObjects.Graphics, cx: number, cy: number, r: number,
+  color: number, alpha = 1,
+): void {
+  g.fillStyle(color, alpha);
+  g.fillPoints(starPath(cx, cy, r), true, true);
+}
+
+export function strokeStar(
+  g: Phaser.GameObjects.Graphics, cx: number, cy: number, r: number,
+  color: number, alpha = 1, thickness = 1,
+): void {
+  g.lineStyle(thickness, color, alpha);
+  const pts = starPath(cx, cy, r);
+  g.beginPath();
+  g.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+  g.closePath();
+  g.strokePath();
 }
 
 /** A pointy-top hexagon — icon buttons and world-map nodes. */

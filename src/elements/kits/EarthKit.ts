@@ -339,6 +339,21 @@ export class EarthKit {
   isRepairActive(): boolean { return this.earthRepairActive; }
   /** Titan Form (Q+): the player is the golem — rooted, hidden and untouchable. */
   isTitanActive(): boolean { return this.titanActive || this.titanLandingUntil > this.arena.scene.time.now; }
+
+  /**
+   * Ruin Mastery — Second Skin. The titan is the largest form in the game: a different body, a
+   * different ability bar and a player who isn't standing on the floor any more.
+   * `exitTitanForm` is the kit's own dismount — it crumbles the head and arms, restores the HP
+   * the form was holding, hands the real ability cards back and puts the shield on its timer.
+   *
+   * `erupt` is false: the Q self-destruct is a *choice*, and being torn out of the form is not
+   * allowed to hand out its carpet bombing as a consolation.
+   */
+  revertForms(f: Fighter): string[] {
+    if (f !== this.arena.player || !this.titanActive) return [];
+    this.exitTitanForm(this.arena.scene.time.now, false);
+    return ['Titan Form'];
+  }
   getNpcShieldHp(): number { return this.npcEarthShieldHp; }
   getNpcRocksActive(): boolean { return this.npcEarthRocks.length > 0; }
 

@@ -19,11 +19,16 @@ const light: ElementCodex = {
     {
       emoji: '🏎️',
       name: 'The Acceleration Meter',
-      magic:
-        'The bar under the health bars is the whole element. Point roughly where you are already '
-        + 'going and it climbs; cut a hard turn and it dumps. The lance out front changes colour as '
-        + 'it fills — pale gold at a crawl, red flat out — and grows a wake of after-images behind '
-        + 'it, so how dangerous a light player is right now is legible from across the arena.',
+      basics:
+        'Light is driven, not walked, and this is the throttle. Holding your heading within about 23° '
+        + 'of where the cursor asks builds +175 px/s² to a top speed of 620 — 1240 with Redline. '
+        + 'Cornering costs −3600 px/s² scaled by how sharp the turn is, floored at a 160 px/s coast, so a '
+        + 'full reversal empties the meter almost instantly. Steering itself tightens as you go: 2.6π '
+        + 'rad/s at a standstill down to 1.1π at top speed. The meter is also your damage: the lance '
+        + 'deals 6 + 100 × ratio², so half a bar is 31 and a full one 106, and Prism Ramp lances read the '
+        + 'same figure when they fire. Blink, Prism Ramp and Light Trick all grant the same boost — a '
+        + 'window with your speed floored at 207 px/s, a third of top — so they only accelerate you if '
+        + 'you were slower than that.',
       effects: [
         { tag: 'buff', label: 'Straightaway', detail: '+175 px/s² of speed while your heading is within 0.4 radians (about 23°) of where the cursor is asking you to go. Top speed 620 px/s, or 1240 with the Click+ Redline upgrade.' },
         { tag: 'cost', label: 'Cornering', detail: '−3600 px/s² scaled by how sharp the turn is, floored at a 160 px/s coast. A full 180° reversal empties the meter almost instantly.' },
@@ -40,12 +45,12 @@ const light: ElementCodex = {
 
   abilities: {
     'light-lance': {
-      magic:
-        'Hold the button and the character folds down to half size behind a spear of solid light. '
-        + 'From then on they do not walk — they drive, always moving, steering toward the cursor, '
-        + 'the lance stretching and reddening as the needle climbs and dragging three after-images '
-        + 'of itself back toward the body. Everything the element does is aimed at keeping that '
-        + 'spear hot.',
+      basics:
+        'Hold Click to drop into car mode: drawn at half scale and given a constant velocity along your '
+        + 'heading, unable to stop, with a 160 px/s floor. The lance tip sits 34px ahead and deals 6 + '
+        + '100 × (speed ratio)² to anything within 30px of it — 6 at a crawl, 106 at a full meter — on a '
+        + '250ms per-target cooldown, so driving through somebody at speed lands about four hits a '
+        + 'second. No cooldown at all; the only cost of standing up is that you stop accelerating.',
       cast: 'Hold Click to enter car mode; release to stand back up. No cooldown at all.',
       effects: [
         { tag: 'movement', label: 'Car mode', detail: 'The fighter is drawn at 0.5 scale and given a constant velocity along its heading. You cannot stop; the floor of the meter is a 160 px/s coast.' },
@@ -54,11 +59,11 @@ const light: ElementCodex = {
         { tag: 'utility', label: 'No cooldown', detail: 'Free to flick in and out of. The only cost of standing back up is that you stop accelerating.' },
       ],
       upgrade: {
-        magic:
-          'Redline doubles the road. The meter runs to twice the length, the lance goes somewhere '
-          + 'past red — and past three quarters the edges of the screen tint, which is the game '
-          + 'telling you that the walls have become lethal. It is the difference between driving '
-          + 'fast and driving badly.',
+        basics:
+          'Top speed doubles from 620 to 1240 px/s, and since the lance formula reads the ratio against '
+          + 'the new ceiling the top of the meter is still 106. Above 75% of the doubled bar the four '
+          + 'screen edges tint red, up to 0.4 alpha at full — and touching any arena wall while in that '
+          + 'danger zone deals 50 damage to you, shatters the lance and drops your speed to 0 outright.',
         effects: [
           { tag: 'buff', label: 'Doubled ceiling', detail: 'Top speed goes from 620 to 1240 px/s. The lance damage formula reads the ratio against the new ceiling, so the top of the meter is still 106.', requiresUpgrade: 'click' },
           { tag: 'utility', label: 'The danger zone', detail: 'Above 75% of the doubled meter the four screen edges tint red, fading up to 0.4 alpha at a full bar.', requiresUpgrade: 'click' },
@@ -72,11 +77,11 @@ const light: ElementCodex = {
     },
 
     blink: {
-      magic:
-        'Not a teleport — a heading change. The car snaps to face the cursor without shedding a '
-        + 'single unit of speed, leaves a burst of speed lines behind it, and keeps going. It is '
-        + 'the only way to take a genuinely hard corner in this element without paying for it, and '
-        + 'it comes in a magazine rather than on a cooldown.',
+      basics:
+        'Snaps your heading straight to the cursor with no speed lost — the one turn the meter does not '
+        + 'charge you for — plus 600ms with your speed floored at 207 px/s, so it is also a small push '
+        + 'out of a stall. Two charges, each refilling 5 seconds after it is spent, and it refuses to '
+        + 'fire while Speed \'O\' Light is running.',
       cast: 'E. Instant. Spends one charge; charges refill independently.',
       effects: [
         { tag: 'movement', label: 'Free corner', detail: 'Heading snaps straight to the cursor with no speed loss — the one turn the acceleration meter does not charge you for.' },
@@ -85,11 +90,13 @@ const light: ElementCodex = {
         { tag: 'cost', label: 'Not during Q', detail: 'Blink refuses to fire while Speed \'O\' Light is running.' },
       ],
       upgrade: {
-        magic:
-          'Steam Charge turns the free corner into a launch. Hold E and the car roots where it is, '
-          + 'eyes locked on the cursor, venting steam that reddens the longer you hold it — and '
-          + 'crucially the meter does not drain while you stand there. Let go and everything wound '
-          + 'in comes out as a heading change with a boost sized by the wait.',
+        basics:
+          'E becomes hold-and-release. Your velocity is zeroed while it is down but your acceleration is '
+          + 'preserved, so a charge is a pause rather than a reset, and the release grants a boost scaling '
+          + 'from 400ms at a tap to 1600ms at a full 2-second hold on top of the heading snap. The charge '
+          + 'is spent on the press, not the release, so starting one you never finish still costs it. Steam '
+          + 'vents every 130ms and reddens with the hold, so an opponent can read exactly how big the '
+          + 'launch will be.',
         effects: [
           { tag: 'cost', label: 'Rooted while held', detail: 'Velocity is zeroed for as long as E is down. Your acceleration is preserved rather than lost, so a charge is a pause, not a reset.', requiresUpgrade: 'e' },
           { tag: 'buff', label: 'Scaling boost', detail: 'Release grants a boost window that scales linearly from 400ms at a tap to 1600ms at a full 2s hold, on top of the heading snap.', requiresUpgrade: 'e' },
@@ -104,12 +111,13 @@ const light: ElementCodex = {
     },
 
     'prism-ramp': {
-      magic:
-        'A wedge of cut glass set down on the floor in front of you, with a spectrum sliding around '
-        + 'inside it. Drive over your own and the light goes in white and comes out in three '
-        + 'colours — a red, a green and a blue lance thrown down the ramp\'s heading — while the '
-        + 'car is kicked back up to speed. They are furniture: they never fade, and you can leave '
-        + 'five of them lying around as a course.',
+      basics:
+        'Plants a permanent ramp 56px ahead along your heading — or at the cursor if you are not '
+        + 'driving — triggered by anything within 34px. Driving over your own gives you 1.5 seconds of '
+        + 'speed floored at 207 px/s and fires 3 prism lances at 520 px/s in a 22°-spaced cone along the '
+        + 'ramp\'s heading, each dealing the same 6 + 100 × ratio² as the lance, read off your speed at '
+        + 'the moment of the trigger. Five ramps may exist and a sixth silently removes the oldest. 8s '
+        + 'cooldown, so a five-ramp course takes 32 seconds to lay.',
       cast: 'R, planted 56px ahead of you along your heading (or the cursor, if you are not driving).',
       effects: [
         { tag: 'summon', label: 'The ramp', detail: 'Permanent. Five may exist at once; planting a sixth silently removes the oldest. Triggered by anything coming within 34px.' },
@@ -118,11 +126,12 @@ const light: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '8s cooldown, so a five-ramp course takes 32 seconds to lay.' },
       ],
       upgrade: {
-        magic:
-          'Prism Drill is what happens when you feed the lance into the glass instead of riding over '
-          + 'it. Hold R as you cross your own ramp and the whole thing shatters, converting all of '
-          + 'your speed into a single spinning boring head that grinds forward at 900 px/s and pins '
-          + 'whoever it reaches in place. You come out of it standing still, on foot.',
+        basics:
+          'Driving into your own ramp no longer rides it: your speed is set to 0, car mode ends, the ramp '
+          + 'is destroyed and a drill is launched instead. It flies 900 px/s until it touches something and '
+          + 'then 90 px/s while it bites, lives 4 seconds with a 26px contact radius, deals 2 to 5 damage '
+          + 'scaling with the speed ratio you paid in, and re-applies a 0.5s stun every 0.5s for as long as '
+          + 'it is grinding — the target is held until the drill dies.',
         effects: [
           { tag: 'cost', label: 'Everything you had', detail: 'Your speed is set to 0, car mode ends, and the ramp is destroyed rather than being ridden.', requiresUpgrade: 'r' },
           { tag: 'damage', label: 'Drill damage', detail: '2 to 5 damage on contact, scaling linearly with the speed ratio you paid in.', requiresUpgrade: 'r' },
@@ -138,11 +147,10 @@ const light: ElementCodex = {
     },
 
     'light-trick': {
-      magic:
-        'A flick of the wrist that pops the light gathered around the body outward in a short ring. '
-        + 'It is the cheapest thing in the kit and it exists for one reason: connecting with it '
-        + 'pushes the needle back up, so a light player who has just been forced into a corner has '
-        + 'a way back onto the throttle that does not need a ramp.',
+      basics:
+        'A 5-damage burst of everything within 50px, in or out of car mode, with no lock. If it '
+        + 'actually hits something it also grants 1.2 seconds with your speed floored at 207 px/s; a '
+        + 'whiff grants nothing. 1s cooldown, the shortest in the kit after the lance itself.',
       cast: 'F. Instant, no lock, works in or out of car mode.',
       effects: [
         { tag: 'damage', label: 'The burst', detail: '5 damage to everything within 50px of you.' },
@@ -150,11 +158,11 @@ const light: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '1s cooldown, the shortest in the kit after the lance itself.' },
       ],
       upgrade: {
-        magic:
-          'Javelin Burst wires the trick into your course. If the 50px pop happens to catch a prism '
-          + 'ramp, that ramp does not fire its three-lance cone — it detonates into twelve javelins '
-          + 'thrown out in a full circle, and you get the ramp\'s boost and the trick\'s boost at '
-          + 'once without having driven over anything.',
+        basics:
+          'F now pops a ramp into twelve javelins: evenly spaced around a full circle at 480 px/s, 5 '
+          + 'damage each — 60 damage of coverage off a 1-second cooldown. The boost becomes the longer of '
+          + 'the two windows, 1.5 seconds rather than 1.2, and the ramp is not consumed, so the same one '
+          + 'can be popped again on the next cooldown.',
         effects: [
           { tag: 'damage', label: 'Twelve javelins', detail: '12 projectiles evenly spaced around a full circle at 480 px/s, 5 damage each — 60 damage of coverage from a 1s-cooldown ability.', requiresUpgrade: 'f' },
           { tag: 'buff', label: 'Both boosts', detail: 'The boost window becomes the longer of the two — 1.5s, the ramp figure — rather than the trick\'s 1.2s.', requiresUpgrade: 'f' },
@@ -168,11 +176,12 @@ const light: ElementCodex = {
     },
 
     'speed-o-light': {
-      magic:
-        'The body blows out into a flare and stops being in one place. For seven and a half seconds '
-        + 'the caster is somewhere on a wall, then somewhere else on a wall, sixteen times a second, '
-        + 'and the line between each pair of positions stays lit and stays lethal. Nothing can be '
-        + 'hit while it runs and everything in the middle of the arena is being cut through.',
+      basics:
+        '125 teleports to random points on the arena walls, one every 60ms — 7.5 seconds in total, with '
+        + 'no aim and no control. Each hop leaves a lit line for 900ms dealing 15 damage to anything '
+        + 'within 40px of it, once per target per streak, and you hold +100% dodge chance for the whole '
+        + 'duration, dropped the moment the last bounce lands. 45s cooldown, so one and maybe two in a '
+        + 'long fight.',
       cast: 'Q. No aim and no control — the destinations are random points on the arena walls.',
       effects: [
         { tag: 'movement', label: 'The bounces', detail: '125 teleports to random wall positions, one every 60ms — 7.5 seconds of it in total.' },
@@ -181,11 +190,11 @@ const light: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '45s cooldown — one, maybe two, in a long fight.' },
       ],
       upgrade: {
-        magic:
-          'Flare-Stream leaves some of the light behind. Every tenth hop burns its line permanently '
-          + 'into the floor as an orange beam, and those beams are a road: driving along one triples '
-          + 'how fast the meter fills. The ultimate stops being a burst of damage and becomes the '
-          + 'racetrack you spend the rest of the fight on.',
+        basics:
+          'Every 10th teleport leaves a beam behind — 12 across a full cast — each lasting 35 seconds, '
+          + 'with no cap on how many can exist. Standing within 40px of one of your own raises your '
+          + 'acceleration from 175 to 525 px/s². They do no damage and have no effect on enemies at all: '
+          + 'they are pure road surface.',
         effects: [
           { tag: 'summon', label: 'Beams laid', detail: 'Every 10th teleport leaves a beam — 12 of them over a full 125-bounce cast — each lasting 35s. There is no cap on how many can exist.', requiresUpgrade: 'q' },
           { tag: 'buff', label: 'Triple acceleration', detail: 'Standing within 40px of one of your own beams raises the acceleration rate from 175 to 525 px/s².', requiresUpgrade: 'q' },
@@ -202,11 +211,12 @@ const light: ElementCodex = {
 
   perks: {
     flicker: {
-      magic:
-        'The light does not leave when you do. Every heading snap leaves a hollow outline of the car '
-        + 'you were standing there, winding tighter for four tenths of a second, and then going off '
-        + 'where you used to be. And because the magazine is deeper and refills faster, you leave a '
-        + 'great many of them.',
+      basics:
+        'Rides on Blink, including the E+ Steam Charge press. Three charges instead of two, each '
+        + 'refilling in 3 seconds instead of 5 — twice the throughput — and every blink leaves an '
+        + 'afterimage that flares 0.4 seconds later for 12 damage inside 62px, centred on the spot you '
+        + 'left rather than the one you arrived at. The outline tightens and brightens across the whole '
+        + 'delay, so it is a mine that announces itself.',
       cast: 'No key of its own — it rides on Blink, including the E+ Steam Charge press.',
       effects: [
         { tag: 'resource', label: 'Deeper magazine', detail: '3 Blink charges instead of 2, each refilling in 3s instead of 5s — twice the throughput.' },
@@ -222,11 +232,11 @@ const light: ElementCodex = {
 
   mastery: {
     unstoppable: {
-      magic:
-        'The lance bites into the corner. A mastered light racer stops paying full price for a turn '
-        + 'and can hold the needle up through a whole course — and while they are at it, nothing in '
-        + 'the game is allowed to slow them down. Not a stun, not a freeze, not a root, not a slow. '
-        + 'The car simply does not accept being stopped.',
+      basics:
+        'Two always-on changes, in and out of car mode. Cornering costs 1260 px/s² instead of 3600 — '
+        + '35% of the usual, so hard turns bleed off less than half as much speed — and every stun, '
+        + 'freeze, root and slow applied to you is ignored outright, with your speed multiplier never '
+        + 'allowed below 1.',
       effects: [
         { tag: 'buff', label: 'Cornering', detail: 'The turn brake drops from 3600 to 1260 px/s² — 35% of the usual cost, so hard turns bleed off less than half as much speed.' },
         { tag: 'shield', label: 'Immovable', detail: 'Every stun, freeze, root and slow applied to you is ignored outright, and your speed multiplier is never allowed below 1.' },
@@ -238,11 +248,15 @@ const light: ElementCodex = {
       ],
     },
     'killer-kebab': {
-      magic:
-        'The lance goes gold and grows eight px longer, and for five seconds anything it touches is '
-        + 'not hit — it is threaded onto the spit. Riders hang off the shaft nose to tail, disarmed, '
-        + 'dragged wherever you drive, and the fight becomes a question of how much speed you can '
-        + 'bank before you take them into a wall.',
+      basics:
+        'A bindable 5-second window in which a lance contact impales instead of damaging: the lance '
+        + 'sits 44px out rather than 34 and wears a gold collar. Up to 3 riders at once are pinned at '
+        + '46px, 76px and 106px along your heading, position-locked to the shaft and disarmed '
+        + 'continuously while they are on it. Ramming any wall tears every rider off for 25 + 130 × '
+        + '(speed ratio)² each — 25 at a crawl, 155 at a full meter — plus 180 of knockback, and you take '
+        + 'no wall damage at all while anybody is on the lance, including the Redline crash, though the '
+        + 'slam still zeroes your speed. A rider that survives 12 seconds without a wall slides off '
+        + 'unharmed. 20s cooldown.',
       cast:
         'Bindable to E, R, F or Q, replacing that slot\'s base ability for the match. Instant; it '
         + 'enhances the lance rather than firing anything.',

@@ -17,10 +17,13 @@ const shadow: ElementCodex = {
     {
       emoji: '🕳️',
       name: 'Hopelessness',
-      magic:
-        'Despair, tracked as a number from 0 to 100. It is not damage and it does not tick — it '
-        + 'blunts. The afflicted visibly blackens as it climbs, weeping black motes that sink '
-        + 'instead of rising, and everything they throw at you lands softer for it.',
+      basics:
+        'A suppression meter carried by your victims. Every 2 points cuts their outgoing damage by 1%, '
+        + 'to a cap of 50% off at 100 points. It builds 3 a second while they stand in one of your shadow '
+        + 'pools plus flat lumps from nearly every ability — 10 from a tentacle or wall spike, 20 from a '
+        + 'snap trap — and always bleeds off at 1 a second, so leaving someone alone hands it all back in '
+        + 'a minute and a half. The victim darkens in proportion, is a pure silhouette at 100, and weeps '
+        + 'black ooze at a rate matching the count past 10 points.',
       effects: [
         { tag: 'debuff', label: 'Suppression', detail: 'Every 2 points of Hopelessness cuts the sufferer\'s outgoing damage by 1%, capped at 50% off at 100 points.' },
         { tag: 'resource', label: 'Build', detail: '3 points a second while standing in one of your shadow pools, plus flat lumps from almost every ability: 10 from a tentacle or wall spike, 20 from a snap trap.' },
@@ -35,10 +38,12 @@ const shadow: ElementCodex = {
     {
       emoji: '🌑',
       name: 'Shadow Pools',
-      magic:
-        'The dark you spill stays where it fell, welling up out of the floor rather than fading in, '
-        + 'and it is a two-way object: it feeds you and it eats them. Almost everything in the kit '
-        + 'exists to put more of these on the ground or to keep somebody standing in one.',
+      basics:
+        'The floor half of the kit. A pool is 36px across (plus a 14px forgiveness pad) and stands 6 '
+        + 'seconds, healing you 1.5 HP every 0.4s — 3.75 a second — while dealing enemies 2 every 0.4s, 5 '
+        + 'a second, on top of the 3 Hopelessness a second the passive adds. They come from every Dark '
+        + 'Drain bomb, from holding Click (one every 0.6s), from Void Singularity (one every 0.5s) and '
+        + 'from the Plume trap, which bursts into ten. The Void perk makes them bigger and longer.',
       effects: [
         { tag: 'heal', label: 'Yours to stand in', detail: '1.5 HP every 0.4s — 3.75 HP a second — while you are inside your own pool.' },
         { tag: 'dot', label: 'Theirs to avoid', detail: '2 damage every 0.4s — 5 a second — to any enemy inside it, plus the 3 Hopelessness a second the passive adds.' },
@@ -50,11 +55,11 @@ const shadow: ElementCodex = {
 
   abilities: {
     'dark-drain': {
-      magic:
-        'One button doing two unrelated jobs. Tapped, the caster throws a writhing orb of void that '
-        + 'accelerates as it goes, grows a tail of tendrils behind it, and implodes rather than '
-        + 'exploding. Held, they stop throwing and start pouring — hands out along the aim, laying '
-        + 'dark onto the ground at the cursor until you let go.',
+      basics:
+        'Tap Click for a bomb: 10 damage within 50px and, more importantly, a shadow pool at the impact '
+        + 'point. Hold it past 300ms and it becomes a pour instead, laying a pool at the cursor every '
+        + '0.6s for as long as you hold, with no cost and no cooldown gating it — only how long you can '
+        + 'stand still and aim. The tap has a 0.8s cooldown and each bomb shakes the camera 90ms.',
       cast: 'Click. Released under 300ms it is a tap and throws the bomb. Held past 300ms it becomes the pour, which continues for as long as the button is down.',
       effects: [
         { tag: 'damage', label: 'Bomb impact', detail: '10 damage to everything within 50px of where it lands. Small, and the pool it leaves is the actual payload.' },
@@ -64,10 +69,10 @@ const shadow: ElementCodex = {
         { tag: 'utility', label: 'Camera', detail: 'A 90ms shake on each bomb, so a detonation off screen still registers.' },
       ],
       upgrade: {
-        magic:
-          'Cloud Confusion makes standing in the dark a mistake rather than a cost. Long enough in a '
-          + 'pool and the enemy loses the thread — they keep swinging, but they stop being able to '
-          + 'decide where to go.',
+        basics:
+          'An enemy who stays in one of your pools for 3 continuous seconds is confused for 3 seconds: '
+          + 'their movement goes random. They can still cast and still attack — it takes their feet, not '
+          + 'their hands.',
         effects: [
           { tag: 'control', label: 'Confusion', detail: 'An enemy who has been in your pool for 3 continuous seconds is confused for 3s: their movement goes random. They can still cast and still attack.', requiresUpgrade: 'click' },
         ],
@@ -79,11 +84,10 @@ const shadow: ElementCodex = {
     },
 
     tentacle: {
-      magic:
-        'A limb lashes out of the caster\'s body along the aim. If there is anything close enough it '
-        + 'takes hold, and from that moment the tentacle is a leash — the victim is hauled toward '
-        + 'wherever your cursor goes, for three seconds, with no say in it. Reaching into empty air '
-        + 'instead is a whiff that closes in half a second.',
+      basics:
+        'A limb that reaches 100px along your aim and catches anything within 110px of you in any '
+        + 'direction, dealing 10 damage and 10 Hopelessness, then dragging the caught enemy toward your '
+        + 'cursor for 3 seconds. A miss retracts after 0.6s. 5s cooldown.',
       cast: 'E, aimed at the cursor. The limb reaches up to 100px toward the aim; anything within 110px of you is caught.',
       effects: [
         { tag: 'damage', label: 'Grab', detail: '10 damage on contact to every enemy within 110px, plus 10 Hopelessness.' },
@@ -92,11 +96,11 @@ const shadow: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '5s cooldown.' },
       ],
       upgrade: {
-        magic:
-          'Consume turns the leash into a mouth. Drag them all the way in — right onto your own body — '
-          + 'and the caster swallows them: a shroud of limbs closes over the pair and they simply stop '
-          + 'being able to act. Then you choose whether to keep grinding them or throw them across the '
-          + 'arena.',
+        basics:
+          'Dragging a leashed enemy within 22px of you swallows them for 3 seconds: they cannot move at '
+          + 'all and take 2 damage a second, 6 across the hold. Pressing E while somebody is consumed spits '
+          + 'them at the cursor at 800 velocity, ending it early. Owning this also lets the tentacle pick '
+          + 'up and reposition your own snap traps.',
         effects: [
           { tag: 'control', label: 'Swallowed', detail: 'Dragging a leashed enemy within 22px of you consumes them for 3s. They cannot move at all for the duration.', requiresUpgrade: 'e' },
           { tag: 'dot', label: 'Digestion', detail: '2 damage every second while consumed — 6 over the full hold.', requiresUpgrade: 'e' },
@@ -111,10 +115,11 @@ const shadow: ElementCodex = {
     },
 
     'snap-trap': {
-      magic:
-        'A set of jaws pushed into the floor at the caster\'s own feet — never at the cursor, which is '
-        + 'the whole design. You have to have been somewhere to have trapped it. The jaws quiver over '
-        + 'a pressure plate with a spark of charge breathing in the middle, and they bite once.',
+      basics:
+        'Plants a plate at your feet with no aiming and no wind-up. It stands 12 seconds or until '
+        + 'sprung, and whoever springs it takes 20 damage, 20 Hopelessness — the largest single lump in '
+        + 'the kit — and a 2-second stun. One bite only; the trap is spent when it fires. 5s cooldown, so '
+        + 'several can be alive at once.',
       cast: 'R, planted at your feet. No aiming and no wind-up.',
       effects: [
         { tag: 'damage', label: 'The bite', detail: '20 damage to whoever springs it, plus 20 Hopelessness — the largest single lump the kit applies.' },
@@ -123,10 +128,10 @@ const shadow: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '5s cooldown, so several can be alive at once.' },
       ],
       upgrade: {
-        magic:
-          'Trap Drag stops the trap being a decision you already made. The jaws are wider, and your '
-          + 'tentacle can pick them up — so a trap laid ten seconds ago in the wrong place can be '
-          + 'hauled under somebody\'s feet in the middle of a fight.',
+        basics:
+          'The trigger radius goes from 18px to 27px, half again as wide, and casting the tentacle near '
+          + 'one of your own traps hooks the trap instead of whiffing, holding it for the full 3 seconds so '
+          + 'you can carry it somewhere better.',
         effects: [
           { tag: 'area', label: 'Wider jaws', detail: 'Trigger radius goes from 18px to 27px — 50% larger.', requiresUpgrade: 'r' },
           { tag: 'utility', label: 'Draggable', detail: 'Casting the tentacle near one of your own traps hooks the trap instead of whiffing, and holds for the full 3s so you can reposition it.', requiresUpgrade: 'r' },
@@ -139,11 +144,13 @@ const shadow: ElementCodex = {
     },
 
     'tentacle-wall': {
-      magic:
-        'Eight spiked limbs pushed up out of the floor one at a time, each erupting beside the last. '
-        + 'They do not appear together — each one aims at wherever your cursor is at the instant it '
-        + 'comes up, so sweeping the mouse mid-cast bends the wall into a curve, a hook, or a ring '
-        + 'around somebody.',
+      basics:
+        'Eight limbs 34px apart that you steer as they grow: the first rises at the cast point and the '
+        + 'rest follow one every 55ms toward wherever your cursor is, so the whole ~440ms of growth is a '
+        + 'steering window. Contact within 28px of a limb deals 5 damage and 10 Hopelessness, gated to '
+        + 'one hit per target per second however many limbs they are touching — walking the length of a '
+        + 'wall is 5 a second, not 40. It stands 6 seconds from the moment the last limb rises. 12s '
+        + 'cooldown.',
       cast: 'F, steered live. The first limb rises at the cast point; the remaining seven follow one every 55ms toward the current cursor.',
       effects: [
         { tag: 'damage', label: 'Per spike', detail: '5 damage and 10 Hopelessness per contact, within 28px of a limb.' },
@@ -153,10 +160,10 @@ const shadow: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '12s cooldown.' },
       ],
       upgrade: {
-        magic:
-          'Watchers gives some of the limbs eyes. A watcher is darker than its neighbours, red-eyed, '
-          + 'and it stops being a spike — it lobs bolts at whoever the wall is watching, and those '
-          + 'bolts do no damage at all. What they do is multiply the despair already in the target.',
+        basics:
+          'Each of the 8 limbs has a 20% chance to grow eyes, so a wall averages one or two watchers and '
+          + 'sometimes none. A watcher lobs a bolt every 1.5s that does no damage at all — landing within '
+          + '44px of its mark, it multiplies that target\'s Hopelessness by 1.25×.',
         effects: [
           { tag: 'summon', label: 'Eyed limbs', detail: 'Each of the 8 limbs has a 20% chance to grow eyes — on average 1 to 2 per wall, and sometimes none.', requiresUpgrade: 'f' },
           { tag: 'debuff', label: 'Despair amplifier', detail: 'A watcher lobs a bolt every 1.5s. On landing within 44px of its mark it multiplies their Hopelessness by 1.25× — it does no damage whatsoever.', requiresUpgrade: 'f' },
@@ -169,11 +176,12 @@ const shadow: ElementCodex = {
     },
 
     'black-hole': {
-      magic:
-        'The ultimate. A singularity is gathered at the cursor — matter visibly falling inward along '
-        + 'spiralling arms — and for three seconds it owns the arena. It follows your live cursor the '
-        + 'entire time, and whatever is caught is driven toward it at a speed nothing in the game '
-        + 'outruns. It is the hardest displacement in the combined tier, and the longest cooldown.',
+      basics:
+        'The ultimate, and a pure positioning tool. After a 3-second arm-raise lock the hole follows '
+        + 'your mouse every frame for 3 seconds, overwriting the victim\'s velocity toward it at 550 no '
+        + 'matter what they were doing — no movement input survives it — so they can be walked anywhere '
+        + 'on the map. It crushes for 5 damage a second, 15 in total, which is almost incidental. 260ms '
+        + 'camera shake at birth, 220ms at the collapse. 35s cooldown, the longest in the combined tier.',
       cast: 'Q at the cursor. The caster is locked in a 3s arm-raise; the hole then tracks the pointer for its whole duration.',
       effects: [
         { tag: 'control', label: 'The pull', detail: 'The victim\'s velocity is overwritten toward the hole at 550 for the full 3s, whatever they were doing. It is a hard drag, not a force — no movement input survives it.' },
@@ -183,10 +191,10 @@ const shadow: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '35s cooldown — the longest in the combined tier.' },
       ],
       upgrade: {
-        magic:
-          'Void Singularity feeds the caster off the hole. It is bigger and hungrier, it lays a trail '
-          + 'of pools wherever you steer it, and while it runs you are healing faster than most '
-          + 'elements can damage you.',
+        basics:
+          'The hole now feeds you 15 HP a second — 45 across the full three — drops a shadow pool at the '
+          + 'cursor every 0.5s so six pools land exactly along the path you dragged them, and is drawn on a '
+          + '22px core instead of 17px, leaving a void pillar mark where it was cast.',
         effects: [
           { tag: 'heal', label: 'Feeding', detail: '15 HP per second while the hole is active — 45 across the full 3s.', requiresUpgrade: 'q' },
           { tag: 'summon', label: 'Pool trail', detail: 'A shadow pool is dropped at the cursor every 0.5s during the ultimate — six pools, laid exactly along the path you dragged them.', requiresUpgrade: 'q' },
@@ -202,11 +210,10 @@ const shadow: ElementCodex = {
 
   perks: {
     'void-shade': {
-      magic:
-        'The dark simply goes further. Nothing changes about how the pools work — they are just '
-        + 'wider and they last half again as long, which quietly makes every Hopelessness figure in '
-        + 'the kit bigger, because Hopelessness is paid by the second and pools are how you buy '
-        + 'seconds.',
+      basics:
+        'Pools become 43px instead of 36 — about 20% wider and 42% more floor — and stand 9 seconds '
+        + 'instead of 6. Since pools build 3 Hopelessness a second, that is directly more suppression: a '
+        + 'full stay is 27 points instead of 18.',
       effects: [
         { tag: 'area', label: 'Wider', detail: 'Pool radius 43px instead of 36 — about 20% more, and 42% more floor area.' },
         { tag: 'area', label: 'Longer', detail: 'Pools stand 9s instead of 6 — 50% longer.' },
@@ -217,11 +224,12 @@ const shadow: ElementCodex = {
       ],
     },
     plume: {
-      magic:
-        'Snap Traps stop biting. What you plant instead is a bare stake, useless on its own — and '
-        + 'then a second stake, which strings a black tripline between the two. The trap is no longer '
-        + 'a point on the floor, it is a line across it, and the enemy has to cross it rather than '
-        + 'step on it.',
+      basics:
+        'R plants stakes instead of traps, and every second stake strings a tripline back to the one '
+        + 'before it with a 🧵 STRUNG pop-up. Stakes stand 24 seconds — twice a snap trap — and are '
+        + 'completely inert until paired. Crossing a line costs 5 damage, 10 Hopelessness and a 50% slow '
+        + 'for 3 seconds, at most once every 1.5s per fighter. With Consume or Trap Drag the tentacle '
+        + 'hauls stakes around and the string follows.',
       cast: 'R plants a stake. Every second stake strings a tripline to the one before it, announced with a 🧵 STRUNG pop-up.',
       effects: [
         { tag: 'summon', label: 'Stakes', detail: 'Stakes stand 24s — twice as long as a snap trap — and are completely inert until paired.' },
@@ -235,10 +243,15 @@ const shadow: ElementCodex = {
       ],
     },
     death: {
-      magic:
-        'The divine perk. A trap bar appears above the arena and R stops meaning one thing — you pick '
-        + 'what gets planted before you plant it. The jaws are still there, but so are a charge, a '
-        + 'grasping limb, and a trap that comes apart into a field of dark.',
+      basics:
+        'Adds a four-tile trap bar above the arena; click a tile to select, R plants whichever is '
+        + 'chosen, and the selection persists. All four stand 12 seconds and count toward the Ensnared '
+        + 'mastery requirement. Jaws is the ordinary trap: 20 damage, 20 Hopelessness, 2s stun on an 18px '
+        + 'plate. Mine takes the whole area instead of one victim: 35 damage and 10 Hopelessness within '
+        + '92px, a 0.7s stun and a 220ms shake. Grabber seizes whoever springs it for 5 seconds and will '
+        + 'not let them stray more than 62px, plus 15 Hopelessness, on the widest plate of the four. '
+        + 'Plume bites for 20/20 with a 2s stun and then bursts into 10 shadow pools up to 78px around '
+        + 'it. An AI or online Shadow always plants the base jaws whatever you are carrying.',
       cast: 'Click a tile on the trap bar to select. R plants whichever is selected. Clicking the bar never counts as an attack.',
       effects: [
         { tag: 'utility', label: 'The bar', detail: 'Four tiles above the arena, built the first frame the perk is live and torn down if it is not. Selection persists until you change it. All four traps keep the 12s lifetime and still count toward the Ensnared mastery requirement.' },
@@ -253,10 +266,11 @@ const shadow: ElementCodex = {
 
   mastery: {
     'shared-suffering': {
-      magic:
-        'The despair stops being something you inflict and becomes something you leak. Every wound '
-        + 'you take is a broadcast: the damage lands on you, and a little of what it costs you is '
-        + 'paid by everybody on the other side.',
+      basics:
+        'Your own suffering is broadcast: for every 30 damage you take, 5 Hopelessness lands on every '
+        + 'enemy at once. The counter is cumulative, so one big hit and ten small ones count the same. A '
+        + '400 HP fighter taken to the wire has pulsed about thirteen times — 65 Hopelessness, a 32% cut '
+        + 'to everything aimed at them.',
       effects: [
         { tag: 'debuff', label: 'Pulse', detail: 'For every 30 damage you take, 5 Hopelessness is applied to every enemy at once. The counter is cumulative, so it does not care whether that was one big hit or ten small ones.' },
         { tag: 'utility', label: 'Scales with the fight', detail: 'A 400 HP fighter taken to the wire has broadcast roughly 13 pulses — 65 Hopelessness, or a 32% cut to everything aimed at them.' },
@@ -266,11 +280,11 @@ const shadow: ElementCodex = {
       ],
     },
     'shadow-beacon': {
-      magic:
-        'A mortar planted at your feet and a purple dot painted at your cursor. Neither does anything '
-        + 'on its own. The ability is the walk between them: every time you step back onto the mortar '
-        + 'it throws a shell at the dot, so the damage comes from moving through your own ground '
-        + 'rather than from pressing anything.',
+      basics:
+        'A bindable pair: one press drops a mortar at your feet and a target dot at the cursor, both '
+        + 'standing 20 seconds. Walking onto the mortar fires it — 20 damage and 10 Hopelessness within '
+        + '70px of the dot — with no per-shot cooldown at all, so the cadence is however fast you can run '
+        + 'laps back to it. 35s cooldown, so one beacon is live at a time.',
       cast: 'Bindable to E, R, F or Q. One press drops the mortar at your feet and the target dot at the cursor; after that it fires on contact, not on input.',
       effects: [
         { tag: 'damage', label: 'The shell', detail: '20 damage and 10 Hopelessness within 70px of the marked dot.' },

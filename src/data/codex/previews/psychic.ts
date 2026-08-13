@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import {
-  PSY, PsychicAvatar, PsychicFx, comaSwirl, destinyGhost, focusMark, foresightPath, keyChip,
-  lashPoints, migraineMark, mindSigil, psiWhip, stressCracks, thirdEye,
+  PSY, PsychicAvatar, PsychicFx, comaSwirl, destinyGhost, focusMandala, focusMark, foresightPath,
+  keyChip, lashPoints, migraineMark, mindSigil, psiWhip, snareRune, stressCracks, thirdEye,
 } from '../../../elements/kits/PsychicVisuals';
 
 /**
@@ -1006,5 +1006,234 @@ export const stress: PreviewScript = {
       readout.setText('all of it at once, as pierce — it skips mitigation and every absorb under it');
     });
     ctx.at(9800, () => readout.setText('so a psychic never lets it go off by accident: keep whipping and the fuse never lands'));
+  },
+};
+
+// ══ MASTERY — Predictor's Snare ═══════════════════════════════════════
+
+/**
+ * The monk arriving on the marker.
+ *
+ * The harness pins the caster rig to its own mark and will not let a script walk it, so the
+ * body that lands at the far end of the thread is drawn here instead — the destiny outline
+ * *filled in*, which is exactly what the passive does to it.
+ */
+function arrival(
+  g: Phaser.GameObjects.Graphics, tint: (c: number) => number,
+  x: number, y: number, alpha: number, t: number,
+): void {
+  g.fillStyle(tint(PSY.robeDeep), alpha * 0.85);
+  g.fillEllipse(x, y + 4, 24, 32);
+  g.lineStyle(2, tint(PSY.gold), alpha * 0.9);
+  g.strokeEllipse(x, y + 4, 24, 32);
+  g.fillStyle(tint(PSY.ink), alpha * 0.9);
+  g.fillEllipse(x, y - 4, 13, 11);
+  thirdEye(g, tint, x, y - 12, 6, 0.25 + 0.2 * Math.sin(t * 2.6), alpha, { glow: 0.9 });
+  g.fillStyle(tint(PSY.robeDeep), alpha * 0.35);
+  g.fillEllipse(x, y + 22, 22, 7);
+}
+
+export const masterySnare: PreviewScript = {
+  duration: 12000,
+  scale: 0.9,
+  caption: 'Mastery passive — Space puts you on the movement marker, and leaves a closed eye on it',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new PsychicAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    monk(av)?.setFocus(0.8);
+
+    const enemy = { x: ctx.w * 0.46, y: ctx.cy - 34 };
+    const vel = { x: 104, y: 30 };
+    dummyAt(ctx, enemy, 5);
+    const readout = label(ctx, ctx.w * 0.5, 12, hex(PSY.gold), 11);
+    const pool = { amount: 0, fuse: 0 };
+    stressReadout(ctx, enemy, () => pool);
+
+    /** Runes on the floor, exactly as the kit keeps them. */
+    const runes: { x: number; y: number; born: number; spent: boolean }[] = [];
+    /** Where the monk is standing after a snare dash, or null while he is on his own mark. */
+    let stood: { x: number; y: number } | null = null;
+    let marker = { x: enemy.x, y: enemy.y };
+
+    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(2));
+    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(15));
+    ctx.onFrame((dt, elapsed) => {
+      ground.clear(); air.clear();
+      const t = elapsed / 1000;
+      const s = dt / 1000;
+      enemy.x += vel.x * s; enemy.y += vel.y * s;
+      if (enemy.x > ctx.w - 70 || enemy.x < 70) vel.x *= -1;
+      if (enemy.y > ctx.h - 44 || enemy.y < 44) vel.y *= -1;
+
+      // The same 20 steps over 2 seconds the kit projects, damped 3% a step.
+      const pts = [{ x: enemy.x, y: enemy.y }];
+      let px = enemy.x, py = enemy.y, vx = vel.x, vy = vel.y;
+      for (let i = 0; i < 20; i++) {
+        px = Phaser.Math.Clamp(px + vx * 0.1, 32, ctx.w - 32);
+        py = Phaser.Math.Clamp(py + vy * 0.1, 32, ctx.h - 32);
+        vx *= 0.97; vy *= 0.97;
+        pts.push({ x: px, y: py });
+      }
+      foresightPath(ground, ctx.tint, pts, 0.95, t);
+      marker = pts[pts.length - 1];
+      destinyGhost(air, ctx.tint, marker.x, marker.y, 0.8, t);
+
+      // Runes, and the enemy walking into one.
+      for (const r of runes) {
+        if (r.spent) continue;
+        const life = Phaser.Math.Clamp((14 - (elapsed - r.born) / 1000) / 1.2, 0, 1);
+        snareRune(ground, ctx.tint, r.x, r.y, 20, 0.9 * life,
+          t + r.born, Phaser.Math.Clamp((elapsed - r.born) / 260, 0, 1));
+        if (elapsed - r.born < 260) continue;
+        if (Phaser.Math.Distance.Between(r.x, r.y, enemy.x, enemy.y) > 42) continue;
+        r.spent = true;
+        ctx.capture(() => fx.snareTrip(r.x, r.y));
+        pool.amount += 15;
+        pool.fuse = 1;
+        float(ctx, enemy.x, enemy.y - 46, '🧿 SNARED  +15', hex(PSY.gold), 12);
+      }
+      if (stood) arrival(air, ctx.tint, stood.x, stood.y, 1, t);
+    });
+
+    // The fuse under the pool, running for real.
+    ctx.onFrame((dt) => {
+      if (pool.amount < 0.5) return;
+      pool.fuse = Math.max(0, pool.fuse - (dt / 1000) / 10);
+    });
+
+    const dash = (at: number): void => ctx.at(at, () => {
+      const from = stood ?? { x: ctx.cx, y: ctx.cy };
+      const to = { x: marker.x, y: marker.y };
+      ctx.capture(() => fx.snare(from.x, from.y, to.x, to.y));
+      runes.push({ x: to.x, y: to.y, born: at, spent: false });
+      stood = to;
+      float(ctx, to.x, to.y - 54, '🧿 SNARE SET', hex(PSY.gold), 11);
+    });
+
+    ctx.at(400, () => readout.setText('the thread says where they will be standing in two seconds'));
+    dash(1800);
+    ctx.at(2200, () => readout.setText('Space — no travel at all. You are simply already there'));
+    ctx.at(3600, () => readout.setText('and a closed eye is left on the spot, lid down, for 14 seconds'));
+    dash(5200);
+    dash(7000);
+    ctx.at(7600, () => readout.setText('six of them at once, every one on ground they told you they were walking'));
+    ctx.at(9600, () => readout.setText('15 stress each, spent the moment it fires — a prediction cannot come true twice'));
+    ctx.at(11000, () => readout.setText('stand still and there is no marker, no teleport and no rune. That is the counter'));
+  },
+};
+
+// ══ MASTERY — Utter Focus ═════════════════════════════════════════════
+
+export const masteryUtterFocus: PreviewScript = {
+  duration: 13000,
+  scale: 0.82,
+  caption: 'Mastery — 8s with your eyes shut: five seconds ahead instead of two, and ×1.2 on every point',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new PsychicAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    monk(av)?.setFocus(1);
+
+    const enemy = { x: ctx.w * 0.5, y: ctx.cy - 26 };
+    const vel = { x: 86, y: 34 };
+    dummyAt(ctx, enemy, 5);
+    const readout = label(ctx, ctx.w * 0.5, 12, hex(PSY.gold), 11);
+    const pool = { amount: 0, fuse: 0 };
+    stressReadout(ctx, enemy, () => pool);
+    const queue: { key: string; big: boolean }[] = [];
+
+    /** The window, in ms, exactly as the kit keeps it. 0 while his eyes are open. */
+    const win = { left: 0 };
+    /** The horizon the whole passive is drawn at — two seconds, or five while focused. */
+    const horizon = (): number => (win.left > 0 ? 5 : 2);
+
+    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(2));
+    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(15));
+    ctx.onFrame((dt, elapsed) => {
+      ground.clear(); air.clear();
+      const t = elapsed / 1000;
+      const s = dt / 1000;
+      if (win.left > 0) win.left = Math.max(0, win.left - dt);
+
+      enemy.x += vel.x * s; enemy.y += vel.y * s;
+      if (enemy.x > ctx.w - 70 || enemy.x < 70) vel.x *= -1;
+      if (enemy.y > ctx.h - 44 || enemy.y < 44) vel.y *= -1;
+
+      // The step stays at 100ms whichever window is running, so a five-second thread is 50
+      // markers rather than 20 stretched ones — which is what the kit does too.
+      const steps = Math.round(horizon() * 10);
+      const pts = [{ x: enemy.x, y: enemy.y }];
+      let px = enemy.x, py = enemy.y, vx = vel.x, vy = vel.y;
+      for (let i = 0; i < steps; i++) {
+        px = Phaser.Math.Clamp(px + vx * 0.1, 32, ctx.w - 32);
+        py = Phaser.Math.Clamp(py + vy * 0.1, 32, ctx.h - 32);
+        vx *= 0.985; vy *= 0.985;
+        pts.push({ x: px, y: py });
+      }
+      foresightPath(ground, ctx.tint, pts, 0.95, t);
+      const end = pts[pts.length - 1];
+      destinyGhost(air, ctx.tint, end.x, end.y, 0.8, t);
+
+      if (win.left > 0) {
+        focusMandala(ground, ctx.tint, ctx.cx, ctx.cy, 52, win.left / 8000, t);
+      }
+    });
+
+    ctx.onFrame((dt) => {
+      if (pool.amount < 0.5) return;
+      pool.fuse = Math.max(0, pool.fuse - (dt / 1000) / 10);
+    });
+
+    queueBar(ctx, enemy, () => queue.slice(-3).map((e, i, arr) => ({
+      key: e.key, big: e.big, heat: i === arr.length - 1 ? 0.8 : 0.3,
+    })));
+
+    /** A press held for the whole window rather than for two seconds. */
+    const press = (at: number, key: string, big = false): void => {
+      ctx.at(at, () => { queue.push({ key, big }); });
+      ctx.at(at + 5000, () => { queue.shift(); });
+    };
+    /** A lash landing, with the multiplier applied exactly where the kit applies it. */
+    const lash = (at: number, base: number): void => ctx.at(at, () => {
+      const amt = win.left > 0 ? base * 1.2 : base;
+      pool.amount += amt;
+      pool.fuse = 1;
+      float(ctx, enemy.x + (Math.random() - 0.5) * 22, enemy.y - 34,
+        `+${Math.round(amt)}`, hex(PSY.stress), 12);
+    });
+
+    ctx.at(300, () => readout.setText('two seconds ahead: this is the ordinary thread'));
+    lash(700, 10);
+    ctx.at(1600, () => {
+      win.left = 8000;
+      monk(av)?.setBlind(true);
+      ctx.capture(() => fx.focus(ctx.cx, ctx.cy));
+      float(ctx, ctx.cx, ctx.cy - 54, '🧿 UTTER FOCUS', hex(PSY.gold), 13);
+      readout.setText('his eyes shut — and the thread runs five seconds forward instead of two');
+    });
+    press(2400, 'Click');
+    press(3000, 'R');
+    press(3600, 'Q', true);
+    lash(4200, 10);
+    ctx.at(4600, () => readout.setText('every press held the full five — long enough for Mind Control to pick the gold one'));
+    lash(5200, 10);
+    ctx.at(5800, () => readout.setText('and every point of it is worth ×1.2 while the eyes are shut'));
+    ctx.at(7000, () => {
+      win.left = Math.max(0, win.left - 500);
+      float(ctx, ctx.cx + 22, ctx.cy - 40, '−0.5s FOCUS', hex(PSY.stress), 11);
+      readout.setText('being hit is the price: half a second off the window, per hit');
+    });
+    ctx.at(7400, () => {
+      win.left = Math.max(0, win.left - 500);
+      float(ctx, ctx.cx + 22, ctx.cy - 40, '−0.5s FOCUS', hex(PSY.stress), 11);
+    });
+    ctx.at(9800, () => {
+      win.left = 0;
+      monk(av)?.setBlind(false);
+      float(ctx, ctx.cx, ctx.cy - 46, '👁️ EYES OPEN', hex(PSY.violetLit), 11);
+      readout.setText('online there is a third delay on top: their movement keys are held the same five seconds');
+    });
+    ctx.at(11600, () => readout.setText('which is the one time the thread over a real person is a fact, not an estimate'));
   },
 };

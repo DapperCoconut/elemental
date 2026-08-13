@@ -9,7 +9,6 @@ import { crystalElement } from './crystal';
 import { deathElement } from './death';
 import { depthsElement } from './depths';
 import { dreamElement } from './dream';
-import { dummyElement } from './dummy';
 import { earthElement } from './earth';
 import { echoElement } from './echo';
 import { electricityElement } from './electricity';
@@ -91,7 +90,6 @@ export const ELEMENT_MAP: Record<string, Element> = {
   echo: echoElement,
   subterfuge: subterfugeElement,
   quantum: quantumElement,
-  dummy: dummyElement,
   king: kingElement,
   // Rewards for the two endings of the Devourer fight. Their kits are not
   // written yet, so MenuScene lists them as unavailable — these entries exist

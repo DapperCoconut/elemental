@@ -21,12 +21,16 @@ const magic: ElementCodex = {
     {
       emoji: '📖',
       name: 'The Spell Wheel',
-      magic:
-        'Holding E or Q throws a five-wedge ring of light around your feet and the book over your '
-        + 'crown swells open. You choose by pointing at a wedge or arrowing across them, and the '
-        + 'spell is committed the moment you let the key go — but it does not happen yet. A count '
-        + 'appears over your head and runs for two seconds, and only when it reaches zero does the '
-        + 'spell land, at wherever your cursor is standing at that instant.',
+      basics:
+        'Both books are cast off a radial menu. Hold E for the Grimoire\'s five spells or Q for the '
+        + 'Necronomicon\'s five: the wheel is 130px across, centred on you and follows you if you walk. '
+        + 'Point the cursor at a wedge or step across them with ← and →, and the selected wedge grows '
+        + '10px and brightens. A release under 150ms with no arrow key pressed re-casts your last pick '
+        + 'from that book instead of whatever is highlighted, so a repeat cast costs one tap. Every wheel '
+        + 'spell fires 2 seconds after release at the live cursor position, with both fighters free to '
+        + 'move throughout, and the cooldown — 5s for the Grimoire, 30s for the Necronomicon — is stamped '
+        + 'when the spell fires rather than when you released, so a Grimoire cast is about 7 seconds '
+        + 'apart in practice.',
       effects: [
         { tag: 'utility', label: 'Opening it', detail: 'Hold E for the Grimoire\'s 5 spells or Q for the Necronomicon\'s 5. The wheel is 130px across and centred on you, and it follows you if you walk.' },
         { tag: 'utility', label: 'Choosing', detail: 'Point the cursor at a wedge, or step across them with ← and →. The selected wedge grows 10px and brightens.' },
@@ -42,12 +46,14 @@ const magic: ElementCodex = {
     {
       emoji: '☠️',
       name: 'Darkness',
-      magic:
-        'Once either book has been upgraded, a black bar sits under you with a skull and a number '
-        + 'on it. Every dark spell you cast fills it, and nothing but meditation empties it. At '
-        + 'three-quarters full the arena shakes and a ring goes out from you as a warning. At full '
-        + 'the corruption takes the whole caster: a violet detonation, a long shake, and your own '
-        + 'health set to zero.',
+      basics:
+        'A ☠ n/100 bar under you that only exists once you own Dark Grimoire or Dark Necronomicon. '
+        + 'Every dark Grimoire spell adds 25, every dark Necronomicon spell 50, a Wild Anchor blind '
+        + 'teleport 10, and Decay charges 25 for an E reset and 99 for a Q reset. At 100 you take damage '
+        + 'equal to your entire remaining health — an unconditional death, not a large hit — and crossing '
+        + '75 fires a 120px warning ring and a 180ms shake, once. The only way down is Wandering Mind: '
+        + 'each meditation orb absorbed removes 5 Darkness as well as healing 5 HP. The caster stains as '
+        + 'it climbs, the floor circle and the book\'s runes going violet to magenta past 40%.',
       effects: [
         { tag: 'resource', label: 'The bar', detail: 'A 60×6px readout under you reading ☠ n/100. It only exists once you own E+ Dark Grimoire or Q+ Dark Necronomicon.' },
         { tag: 'cost', label: 'What fills it', detail: 'Every dark Grimoire spell adds 25, every dark Necronomicon spell 50, and a Wild Anchor blind teleport 10. Decay charges 25 for an E reset and 99 for a Q reset.' },
@@ -65,11 +71,11 @@ const magic: ElementCodex = {
 
   abilities: {
     'magic-sparkle-shot': {
-      magic:
-        'A five-pointed star thrown underarm. It travels about a body-length and a half and then '
-        + 'simply stops in mid-air, hanging there and winding tighter for a full second before it '
-        + 'comes apart in a wide pink burst. Used as a bullet it is feeble; used as a mine dropped '
-        + 'where somebody is about to be, it is the best damage in the kit for the price.',
+      basics:
+        'A star fired at 450 px/s that stops dead after 180px and, one second later, detonates for 14 '
+        + 'damage in a 55px radius — with the arming visibly drawn, so a stopped sparkle is a one-second '
+        + 'warning to whoever is next to it. If it runs into somebody in flight it deals 6 instead and is '
+        + 'consumed, so the 14 never happens. 3s cooldown.',
       cast: 'Click, aimed at the cursor. Instant, 3s cooldown.',
       effects: [
         { tag: 'damage', label: 'Direct hit', detail: '6 damage if it runs into somebody in flight — and that consumes it, so the 14 never happens.' },
@@ -78,11 +84,12 @@ const magic: ElementCodex = {
         { tag: 'utility', label: 'Reading the fuse', detail: 'The star visibly winds up over that second — the arming is drawn, so a stopped sparkle is a one-second warning to whoever is next to it.' },
       ],
       upgrade: {
-        magic:
-          'Sparkle Trail sends two more stars up the same line, hanging 32 and 64 pixels behind '
-          + 'the leader like a tail. They never travel on their own — they are pinned to the '
-          + 'leader\'s wake, and when the leader goes off so do they, so the single point of '
-          + 'damage becomes a short bar of it laid across the ground.',
+        basics:
+          'Two more stars trail the leader, 32px and 64px back along its line of flight, bursting for 11 '
+          + 'damage each in a 45px radius. They deal no contact damage and cannot detonate on their own — '
+          + 'they go off in the same frame the leader does, wherever they happen to be. All told that is '
+          + 'one 55px circle and two 45px circles strung along about 165px of ground, for 36 damage if all '
+          + 'three connect.',
         effects: [
           { tag: 'damage', label: 'Two more bursts', detail: '11 damage each (75% of 14) in a 45px radius, one 32px and one 64px behind the leader along its line of flight.', requiresUpgrade: 'click' },
           { tag: 'utility', label: 'Tied to the leader', detail: 'The trailing pair deal no contact damage at all and cannot detonate on their own — they go off in the same frame the leader does, wherever they happen to be.', requiresUpgrade: 'click' },
@@ -96,12 +103,13 @@ const magic: ElementCodex = {
     },
 
     'magic-grimoire': {
-      magic:
-        'The lighter of the two books. Holding E opens a ring of five wedges — fire, rain, vine, '
-        + 'wind and stone — and whichever you release on is read out over the next two seconds and '
-        + 'lands where you are pointing. Nothing in the Grimoire is enormous; it is the book you '
-        + 'cast every five seconds, and the whole element is built on having one of these five in '
-        + 'the air at all times.',
+      basics:
+        'The five-spell wheel: Flame Burst, Storm Cloud, Virulent Thorns, Compression Blast and Gaia\'s '
+        + 'Guidance, each listed in full below. The biggest single hit is Virulent Thorns at 25 damage '
+        + 'two seconds after the vine lands, and the 2-second bind carrying it is worth more than the '
+        + 'number. 5s cooldown from the moment the spell fires, so about 7 seconds between one release '
+        + 'and the next cast landing, and a tap shorter than 150ms with no arrow key re-fires your last '
+        + 'pick without ever showing the wheel.',
       cast: 'Hold E to open the wheel, release to commit. The spell fires 2s later at the cursor. 5s cooldown, stamped on fire.',
       effects: [
         { tag: 'utility', label: 'Five spells', detail: 'Flame Burst, Storm Cloud, Virulent Thorns, Compression Blast and Gaia\'s Guidance — the full figures for each are below.' },
@@ -125,11 +133,17 @@ const magic: ElementCodex = {
         ],
       },
       upgrade: {
-        magic:
-          'Dark Grimoire puts a button in the middle of the wheel. Press it and all five wedges '
-          + 'turn black and rename themselves — every one of the five becomes a bigger, meaner '
-          + 'version of the same idea, and every one of them charges you 25 Darkness on the way '
-          + 'out. The toggle is sticky, so the wheel stays black until you press it again.',
+        basics:
+          'Adds a 24px toggle at the centre of the open wheel that swaps all five wedges for dark '
+          + 'versions and stays swapped between casts. Corrupt Flames is a 70px cursed cloud that lerps 10% '
+          + 'of the way to your cursor every frame for 5 seconds: 4 damage per 0.5s inside it, a 3s burn, '
+          + 'and cursed fire for a further 2 per 0.5s over 3s. Acid Cloud runs 8 seconds, pulsing to 90px '
+          + 'every 3s, each pulse adding a stack of +25% damage taken for 3 seconds — and the stacks add, '
+          + 'so two pulses is +50%. Draining Thorns is an instant 200px vine dealing 15 to the first '
+          + 'fighter within 22px of the line and healing you exactly 15. Recalling Gale is a ±45° cone '
+          + '200px deep for 18 damage on cast and then a 320-velocity pull toward you every frame for a '
+          + 'second. The price is +25 Darkness a cast, on a bar that kills you at 100 — four dark Grimoire '
+          + 'spells with no meditation in between is a suicide.',
         effects: [
           { tag: 'utility', label: 'The toggle', detail: 'A 24px button at the centre of the open wheel, only drawn once you own the upgrade. Clicking it swaps all 5 wedges and stays swapped between casts.', requiresUpgrade: 'e' },
           { tag: 'dot', label: 'Corrupt Flames', detail: 'A 70px cursed cloud that lerps 10% of the way to your cursor every frame for 5s: 4 damage per 0.5s inside it, a 3s burn, and cursed fire for a further 2 damage per 0.5s over 3s.', requiresUpgrade: 'e' },
@@ -148,12 +162,12 @@ const magic: ElementCodex = {
     },
 
     'magic-anchor': {
-      magic:
-        'A circle scratched into the floor where you are standing, and left there. Press R again '
-        + 'from anywhere on the map and you are simply gone from where you were and standing on '
-        + 'the mark, with a shockwave going out around you as you arrive. It is an escape, a '
-        + 'return trip and a point-blank hit in one button, and the whole cost is having to think '
-        + 'one press ahead.',
+      basics:
+        'The first press inscribes a rune circle at your feet, drawn on the floor and visible to both '
+        + 'fighters, which never expires. The second press recalls you to it instantly from any distance '
+        + '— no travel, no line of sight, nothing to interrupt — and deals 20 damage to everybody within '
+        + '120px of the mark with a 160ms camera shake. The 8s cooldown is only stamped on the recall; '
+        + 'planting is free and does not start the clock.',
       cast: 'R. First press plants the anchor at your feet; second press recalls you to it. 8s cooldown, stamped on the recall.',
       effects: [
         { tag: 'summon', label: 'The mark', detail: 'A rune circle inscribed at your position, drawn on the floor layer and visible to both fighters until you use it. It never expires.' },
@@ -162,11 +176,12 @@ const magic: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: 'The 8s cooldown is only stamped when you recall. Planting the mark is free and does not start the clock.' },
       ],
       upgrade: {
-        magic:
-          'Wild Anchor rewards you for arriving. Every recall now leaves you moving faster in a '
-          + 'pink haze — and if you hit R again inside a second and a half of landing, the magic '
-          + 'takes over and throws you somewhere entirely random on the map in a black one. It is '
-          + 'faster still, it costs Darkness, and it puts you somewhere neither of you chose.',
+        basics:
+          'Every recall now grants +25% move speed for 3 seconds with a pink aura, and pressing R again '
+          + 'within 1.5 seconds of one teleports you to a uniformly random point at least 60px from every '
+          + 'wall, with a departure and an arrival burst, for +50% move speed instead and a black aura. The '
+          + 'wild jump costs 10 Darkness and welds 2 extra seconds onto the anchor cooldown — 10 seconds '
+          + 'rather than 8 before you can plant again.',
         effects: [
           { tag: 'buff', label: 'Clean landing', detail: '+25% move speed for 3 seconds after every recall, with a pink aura.', requiresUpgrade: 'r' },
           { tag: 'movement', label: 'Wild re-cast', detail: 'Pressing R again within 1.5s of a recall teleports you to a uniformly random point at least 60px from every wall, with a departure and an arrival burst.', requiresUpgrade: 'r' },
@@ -181,12 +196,13 @@ const magic: ElementCodex = {
     },
 
     'magic-meditate': {
-      magic:
-        'You stop, cup both hands over an unseen page, and the arena starts sending you help. '
-        + 'Violet orbs come in off all four edges of the screen twice a second and drift toward '
-        + 'you; each one that reaches you is 5 health, and each one that clips the other fighter '
-        + 'on the way in hurts them instead and is gone. It is the only sustain in the element and '
-        + 'the only ability that punishes you for being found.',
+      basics:
+        'Channels healing orbs: one every 0.5s from a random screen edge, travelling at 200 px/s '
+        + 'straight at you and healing 5 on arrival within 24px. An orb that passes within 28px of an '
+        + 'enemy deals 8 damage and is consumed there, so a fighter standing between you and the edge is '
+        + 'eating your healing. The base channel pins you at zero velocity — you can still cast, click '
+        + 'and turn, you simply cannot walk — and any damage that lands ends it and costs a further 20 '
+        + 'health on top of the hit. 6s cooldown, stamped when the channel ends.',
       cast: 'F. The base channel roots you where you stand and does not end on its own.',
       effects: [
         { tag: 'heal', label: 'The orbs', detail: 'One orb every 0.5s from a random screen edge, travelling at 200 px/s straight at you. Reaching within 24px of you heals 5.' },
@@ -196,11 +212,12 @@ const magic: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '6s cooldown, stamped when the channel ends rather than when it starts.' },
       ],
       upgrade: {
-        magic:
-          'Wandering Mind takes the meditation off the floor. You keep the orbs and lose the root '
-          + '— you walk at a quarter speed trailing purple runes behind you, nothing can interrupt '
-          + 'you because there is no channel left to break, and every orb you swallow burns five '
-          + 'points of corruption out of you.',
+        basics:
+          'You walk at 25% speed instead of being rooted, leaving a rune mote behind you every 90ms, and '
+          + 'the damage absorber is never installed at all — a hit that lands costs you the hit and nothing '
+          + 'else, with no broken channel and no 20 health. Releasing F ends it cleanly, which is the only '
+          + 'deliberate way to stop, and each orb absorbed removes 5 Darkness as well as healing 5, so '
+          + 'twenty orbs undoes four dark Grimoire casts.',
         effects: [
           { tag: 'movement', label: 'Mobile channel', detail: 'You move at 25% of your normal speed instead of being rooted, leaving a rune mote behind you every 90ms.', requiresUpgrade: 'f' },
           { tag: 'shield', label: 'Uninterruptible', detail: 'The damage absorber is never installed, so a hit that lands costs you the hit and nothing else — no broken channel, no 20 health.', requiresUpgrade: 'f' },
@@ -216,12 +233,12 @@ const magic: ElementCodex = {
     },
 
     'magic-necronomicon': {
-      magic:
-        'The black book, and a thirty-second commitment. The same five-wedge wheel, the same '
-        + 'two-second aim, but every wedge is the Grimoire\'s idea taken to its end: ten fire '
-        + 'clouds instead of three, a downpour that keeps pulsing, a cage that pins the other '
-        + 'fighter to the middle of the arena by four chains, a tornado that hunts, and a ring of '
-        + 'stone that survives being hit.',
+      basics:
+        'The ultimate wheel: Flame Barrage, Final Drench, Thorn Prison, Tornado Blast and Gaia\'s Rage, '
+        + 'each listed in full below. The biggest single number is Thorn Prison at 35 damage on release '
+        + 'plus 3 a second for up to 5 seconds of imprisonment. 30s cooldown from the moment the spell '
+        + 'fires — one Necronomicon spell per half-minute of fight — and the same sub-150ms tap re-fires '
+        + 'your last pick without opening the wheel.',
       cast: 'Hold Q to open the wheel, release to commit. The spell fires 2s later at the cursor. 30s cooldown, stamped on fire.',
       effects: [
         { tag: 'utility', label: 'Five ultimates', detail: 'Flame Barrage, Final Drench, Thorn Prison, Tornado Blast and Gaia\'s Rage — full figures for each below.' },
@@ -245,12 +262,18 @@ const magic: ElementCodex = {
         ],
       },
       upgrade: {
-        magic:
-          'Dark Necronomicon puts the same centre button on the ultimate wheel, and the five black '
-          + 'spells behind it are the strongest things Magic can do — a lifesteal thread, a '
-          + 'stunning monument, three acid clouds at once. Each of them costs 50 Darkness, which '
-          + 'is half your life in one press: two dark ultimates without cleansing in between is '
-          + 'the end of the round.',
+        basics:
+          'The same 24px centre toggle, on the Q wheel, sticky between casts and independent of the '
+          + 'Grimoire\'s. Dark Barrage launches three 60px cursed clouds at 120 px/s across a 50° fan that '
+          + 'then home on your cursor for 4 seconds, each dealing 4 damage per 0.5s plus a 3s burn and '
+          + 'cursed fire at 2 per 0.5s. Acid Rain puts three 36px clouds at 100px around you for 8 seconds, '
+          + 'pulsing to 80px every 2s, each pulse another +25% damage-taken stack for 3 seconds — and three '
+          + 'clouds stack fast. Torture Trap is a 5-second thread dealing 3 a second and healing you 100% '
+          + 'of every point of damage that target takes, from you, from a hazard, from anything. Hurricane '
+          + 'Vacuum is 12 damage once in a ±45°, 220px cone, a 400-velocity pull for a second, and a '
+          + '10-second dark funnel doing 4 damage per 0.2s within 80px. The price is +50 Darkness a cast: '
+          + 'two dark ultimates is 100 and a guaranteed death unless meditation has cleaned the bar in '
+          + 'between.',
         effects: [
           { tag: 'utility', label: 'The toggle', detail: 'The same 24px centre button, on the Q wheel, only drawn once Q+ is owned. Sticky between casts and independent of the Grimoire\'s toggle.', requiresUpgrade: 'q' },
           { tag: 'dot', label: 'Dark Barrage', detail: 'Three 60px cursed clouds launched at 120 px/s across a 50° fan, then homing on your cursor for 4s: 4 damage per 0.5s each, a 3s burn and cursed fire at 2 damage per 0.5s.', requiresUpgrade: 'q' },
@@ -271,11 +294,18 @@ const magic: ElementCodex = {
 
   perks: {
     thunder: {
-      magic:
-        'Both books gain an arming stroke. The first press of E or Q no longer opens the wheel — '
-        + 'it calls something down out of the sky and holds it. The second press opens the wheel '
-        + 'as normal, and whatever you release on comes out with lightning welded into it: cast '
-        + 'twice, cast faster, or cast with a stun on the end.',
+      basics:
+        'The first press of E is a Lightning Call and the first Q an Apocalypse Call: an arming press '
+        + 'that casts nothing and still stamps the full cooldown, so a charged spell is one whole '
+        + 'cooldown slower to arrive. The next press of that key is the charged cast. Flame Burst and '
+        + 'Flame Barrage are cast twice in the same instant, 6 and 20 clouds stacked on the same lines. '
+        + 'Storm Cloud, Final Drench and dark Acid Cloud halve their pulse interval, and Acid Rain halves '
+        + 'all three of its clouds. A charged Virulent Thorns stuns the fighter it binds for 2 seconds, a '
+        + 'charged Draining Thorns stuns for 2 outright, and a charged Torture Trap runs 3 seconds '
+        + 'longer. Compression Blast, Tornado Blast, Recalling Gale and Hurricane Vacuum all add a 50% '
+        + 'slow for 3 seconds. A charged Gaia\'s Temple gains one extra orb and a charged Gaia\'s Monument '
+        + 'two, each bolted on with a lightning strike at 15 damage a contact. And a charged Necronomicon '
+        + 'cast immediately gives 15 of its 30 seconds back.',
       cast: 'No key of its own. The first E is Lightning Call, the first Q is Apocalypse Call; the next press of that key is the charged cast.',
       effects: [
         { tag: 'utility', label: 'Arming', detail: 'The arming press casts nothing and still stamps the full cooldown — 5s for the Grimoire, 30s for the Necronomicon — so a charged spell is one whole cooldown slower to arrive.' },
@@ -294,12 +324,12 @@ const magic: ElementCodex = {
       ],
     },
     decay: {
-      magic:
-        'A press that would have been refused becomes a bargain instead. Hitting E or Q while '
-        + 'that book is still cooling rots it forward through its own cooldown — sigils spin off '
-        + 'you, the key comes back ready, and the bill is paid in Darkness. The Grimoire is '
-        + 'cheap. The Necronomicon costs ninety-nine, one point short of the number that kills '
-        + 'you, and there is no check to stop you.',
+      basics:
+        'A press of E or Q that lands while that ability is cooling clears the cooldown instead of '
+        + 'doing nothing: 25 Darkness for the Grimoire, 99 for the Necronomicon. There is no '
+        + 'affordability check at all — from 1 Darkness or higher, a Necronomicon reset takes you to 100 '
+        + 'and kills you on the spot. The press that pays only refreshes the key; the next press is the '
+        + 'one that opens the wheel.',
       cast: 'No key. Triggers on a press of E or Q that lands while that ability is on cooldown.',
       effects: [
         { tag: 'utility', label: 'Grimoire reset', detail: 'E while the Grimoire is cooling clears its cooldown outright, for 25 Darkness.' },
@@ -317,11 +347,12 @@ const magic: ElementCodex = {
 
   mastery: {
     levitate: {
-      magic:
-        'The caster stops touching the floor. The summoning circle underfoot shrinks to a small '
-        + 'hovering shadow, the eyes go gold, and everything lying on the ground stops being your '
-        + 'problem — puddles, clouds, planted traps, anything that has settled somewhere and '
-        + 'stayed there simply cannot reach you any more. Anything still moving can.',
+      basics:
+        'Any damage whose source has not moved more than 1px in the last 3 seconds is refused outright '
+        + '— no damage, no status, nothing — and every puddle effect in the arena skips you entirely, '
+        + 'slow included. Projectiles, dashes, drags, orbiting stone and any hazard still travelling land '
+        + 'normally, and the 3-second clock resets the instant a source moves. No key, no cooldown, no '
+        + 'cost, applied every frame for as long as Magic Mastery is on.',
       effects: [
         { tag: 'shield', label: 'Stationary immunity', detail: 'Any damage whose source has not moved more than 1px in the last 3 seconds is refused outright — no damage, no status, nothing.' },
         { tag: 'shield', label: 'Puddles', detail: 'Every puddle effect in the arena skips a levitating fighter entirely, slow included.' },
@@ -334,11 +365,14 @@ const magic: ElementCodex = {
       ],
     },
     transmogrify: {
-      magic:
-        'A slow white bolt with a summoning circle folded into it. It crawls across the arena at '
-        + 'walking pace — the easiest thing in the element to dodge — and whoever it does land on '
-        + 'is a chicken. Not stunned: a chicken, wandering off in whatever direction it feels '
-        + 'like, unable to cast a single thing for eight seconds.',
+      basics:
+        'A bindable bolt travelling 130 px/s — slower than a walking fighter — connecting within 22px '
+        + 'and expiring at the arena edge. Whoever it hits becomes a chicken for 8 seconds: unable to '
+        + 'cast any ability at all, wandering at 60% speed in a direction that re-rolls every 0.4–0.9s, '
+        + 'sprite swapped outright and restored when it ends, with a gold circle and feathers on the way '
+        + 'in. The compensation is that their cooldowns run at half length throughout, so they come out '
+        + 'of it with everything ready. Binding it costs that slot\'s base ability for the whole match — '
+        + 'on Q, that means no Necronomicon at all. 12s cooldown.',
       cast:
         'Bindable to E, R, F or Q, replacing that slot\'s base ability for the match. Fired at the '
         + 'cursor, 12s cooldown.',

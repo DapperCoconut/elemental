@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import {
-  CHK, ChalkAvatar, ChalkFx, chalkBlob, chalkLine, grain,
+  CHK, ChalkAvatar, ChalkFx, chalkBlob, chalkEyes, chalkLegs, chalkLine, grain,
 } from '../../../elements/kits/ChalkVisuals';
 
 /**
@@ -68,6 +68,30 @@ const MP_TOUCH_R = 26;
 
 const DEBRIS_RADIUS = 56;
 const DEBRIS_MAX = 4;
+
+// Chalk Mastery.
+const SMUDGE_EVERY = 9;
+const SMUDGE_SPEED = 96;
+const SMUDGE_REACH = 24;
+const SMUDGE_DAMAGE = 8;
+const SMUDGE_BOOM_DAMAGE = 15;
+const SMUDGE_BOOM_RADIUS = 46;
+const SMUDGE_BODY_R = 7;
+const SMUDGE_BAR_HALF = 23;
+const SMUDGE_BAR_THICK = 7;
+const SMUDGE_GUARD_R = 64;
+const SMUDGE_GUARD_SPIN = 0.55;
+
+const LIVING_DRAW_MS = 3000;
+const LIVING_WAKE_MS = 900;
+const LIVING_CIRCLE_R = 74;
+const LIVING_HP = 35;
+const LIVING_DAMAGE = 15;
+const LIVING_SPEED = 92;
+const LIVING_BITE_MS = 1100;
+const LIVING_REACH = 30;
+const LIVING_TRI_DAMAGE = 10;
+const LIVING_SQUARE_HP = 20;
 
 // ── Staging ───────────────────────────────────────────────────────────
 
@@ -848,6 +872,296 @@ export const theDrawingWindow: PreviewScript = {
     ctx.at(2400, () => tick(ctx, ctx.w * 0.6, ctx.cy, '✋ PEN LIFTED', CHK.whiteDim));
     ctx.at(4600, () => cav?.setDrawing(false));
     label(ctx, ctx.cx, ctx.h - 12, 'one hand, one stick — a live window swallows every other key', CHK.whiteDim);
+  },
+};
+
+// ── Mastery ───────────────────────────────────────────────────────────
+
+/** One smear on legs, carrying exactly what `paintCrawlers` reads off a `Smudge`. */
+interface CSmudge {
+  x: number; y: number; ang: number; gait: number; orbit: number; seed: number;
+  color: number; guard: boolean; blocks: number; dead: boolean;
+}
+
+/**
+ * The passive's swarm, drawn the way the kit draws it — legs first, then the body, then eyes on
+ * the leading edge. Guards are the long bars and everything else is a blob.
+ */
+function crawlers(ctx: PreviewCtx, list: CSmudge[]): Phaser.GameObjects.Graphics {
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+  ctx.onFrame(() => {
+    g.clear();
+    for (const sm of list) {
+      if (sm.dead) continue;
+      if (sm.guard) {
+        chalkLegs(g, ctx.tint, sm.x, sm.y, sm.ang, SMUDGE_BAR_HALF * 0.55, 14, sm.gait, sm.color, 0.95, sm.seed);
+        const hx = Math.cos(sm.ang) * SMUDGE_BAR_HALF;
+        const hy = Math.sin(sm.ang) * SMUDGE_BAR_HALF;
+        chalkLine(g, ctx.tint, sm.x - hx, sm.y - hy, sm.x + hx, sm.y + hy,
+          SMUDGE_BAR_THICK, sm.color, 0.95, sm.seed);
+        chalkEyes(g, ctx.tint, sm.x, sm.y, sm.ang + Math.PI / 2, 7, 1.6, 0.95);
+        for (let b = 0; b < sm.blocks; b++) {
+          g.fillStyle(ctx.tint(CHK.dust), 0.8);
+          g.fillCircle(sm.x + Math.cos(sm.ang) * (b - 1) * 7 + Math.cos(sm.ang + Math.PI / 2) * 13,
+            sm.y + Math.sin(sm.ang) * (b - 1) * 7 + Math.sin(sm.ang + Math.PI / 2) * 13, 1.6);
+        }
+        continue;
+      }
+      chalkLegs(g, ctx.tint, sm.x, sm.y, sm.ang, 4.5, 12, sm.gait, sm.color, 0.95, sm.seed);
+      chalkBlob(g, ctx.tint, sm.x, sm.y, SMUDGE_BODY_R, sm.color, 0.95, sm.seed);
+      chalkEyes(g, ctx.tint, sm.x, sm.y, sm.ang, 6, 1.5, 0.95);
+    }
+  });
+  return g;
+}
+
+export const masteryChalkSmudge: PreviewScript = {
+  duration: 7200,
+  scale: 0.9,
+  caption: 'One smudge per 9 marks of chalk — white bites for 8, red bursts for 15, and shield chalk makes bars that eat shots',
+  run(ctx) {
+    const { fx, av, cav } = stage(ctx, { noDummy: true });
+    const foe = { x: ctx.w * 0.78, y: ctx.cy - 20 };
+    dummyAt(ctx, foe);
+
+    const marks: CMark[] = [];
+    floor(ctx, marks);
+    const list: CSmudge[] = [];
+    crawlers(ctx, list);
+
+    // A white run first, then a red one — the two colours whose smudges behave differently.
+    ctx.at(200, () => { av.play('punch'); cav?.setChalk(CHK.white); cav?.setDrawing(true); });
+    pen(ctx, marks, {
+      startMs: 200, endMs: 200 + WARD_DRAW_MS, color: CHK.white,
+      path: (t) => ({ x: ctx.w * 0.2 + t * ctx.w * 0.26, y: ctx.cy + 28 - Math.sin(t * 9) * 26 }),
+      onMark: (m, i) => {
+        if (m.linked) fx.lay(m.px, m.py, m.x, m.y, CHK.white);
+        // Paid for in line, exactly as the kit pays for it.
+        if ((i + 1) % SMUDGE_EVERY) return;
+        list.push({
+          x: m.x, y: m.y, ang: 0, gait: Math.random() * 6, orbit: 0, seed: i * 31.3,
+          color: CHK.white, guard: false, blocks: 0, dead: false,
+        });
+        fx.dust(m.x, m.y, 4, 12, 380, CHK.white);
+      },
+    });
+    ctx.at(200 + WARD_DRAW_MS, () => { cav?.setChalk(CHK.red); });
+    pen(ctx, marks, {
+      startMs: 200 + WARD_DRAW_MS, endMs: 200 + WARD_DRAW_MS + 1400, color: CHK.red,
+      path: (t) => ({ x: ctx.w * 0.2 + t * ctx.w * 0.26, y: ctx.cy - 34 + Math.sin(t * 9) * 22 }),
+      onMark: (m, i) => {
+        if (m.linked) fx.lay(m.px, m.py, m.x, m.y, CHK.red);
+        if ((i + 1) % SMUDGE_EVERY) return;
+        list.push({
+          x: m.x, y: m.y, ang: 0, gait: Math.random() * 6, orbit: 0, seed: 400 + i * 17.7,
+          color: CHK.red, guard: false, blocks: 0, dead: false,
+        });
+        fx.dust(m.x, m.y, 4, 12, 380, CHK.red);
+      },
+    });
+    ctx.at(200 + WARD_DRAW_MS + 1400, () => cav?.setDrawing(false));
+
+    // Two bars, patrolling the artist's own ring rather than hunting.
+    ctx.at(1600, () => {
+      for (let i = 0; i < 2; i++) {
+        list.push({
+          x: ctx.cx, y: ctx.cy, ang: 0, gait: Math.random() * 6, orbit: i * Math.PI, seed: 900 + i * 41,
+          color: CHK.white, guard: true, blocks: 3, dead: false,
+        });
+      }
+      tick(ctx, ctx.cx, ctx.cy - 52, '🕷️ SHIELD BARS', CHK.whiteDim);
+    });
+
+    // Everything walks. Biters walk at the body; bars walk their circle broadside-on.
+    ctx.onFrame((dt) => {
+      const s = dt / 1000;
+      for (const sm of list) {
+        if (sm.dead) continue;
+        sm.gait += s * (5.5 + SMUDGE_SPEED / 24);
+        if (sm.guard) {
+          sm.orbit += s * SMUDGE_GUARD_SPIN;
+          sm.x = Phaser.Math.Linear(sm.x, ctx.cx + Math.cos(sm.orbit) * SMUDGE_GUARD_R, Math.min(1, s * 6));
+          sm.y = Phaser.Math.Linear(sm.y, ctx.cy + Math.sin(sm.orbit) * SMUDGE_GUARD_R, Math.min(1, s * 6));
+          sm.ang = sm.orbit + Math.PI / 2;
+          continue;
+        }
+        sm.ang = Phaser.Math.Angle.RotateTo(sm.ang, Math.atan2(foe.y - sm.y, foe.x - sm.x), s * 7);
+        const d = Phaser.Math.Distance.Between(sm.x, sm.y, foe.x, foe.y);
+        if (d > SMUDGE_REACH) {
+          sm.x += Math.cos(sm.ang) * SMUDGE_SPEED * s;
+          sm.y += Math.sin(sm.ang) * SMUDGE_SPEED * s;
+          continue;
+        }
+        // Arrived. Red bursts and is spent; white bites once and is spent.
+        sm.dead = true;
+        if (sm.color === CHK.red) {
+          fx.boom(sm.x, sm.y, SMUDGE_BOOM_RADIUS, CHK.red);
+          tick(ctx, foe.x, foe.y - 30, `${SMUDGE_BOOM_DAMAGE}`, CHK.red);
+        } else {
+          fx.dust(sm.x, sm.y, 4, 15, 320, CHK.white);
+          tick(ctx, foe.x, foe.y - 30, `${SMUDGE_DAMAGE}`, CHK.white);
+        }
+      }
+    });
+
+    label(ctx, ctx.cx, ctx.h - 12,
+      'blue smudges never die · green ones follow you and heal · teal ×2.6 speed · crimson 25 damage', CHK.blue);
+  },
+};
+
+export const masteryLivingChalk: PreviewScript = {
+  duration: 9600,
+  scale: 0.9,
+  caption: 'Draw inside the circle for 3s — triangles are +10 damage, circles +34 speed, squares +20 health',
+  run(ctx) {
+    const { fx, av, cav } = stage(ctx, { noDummy: true });
+    const foe = { x: ctx.w * 0.86, y: ctx.cy };
+    dummyAt(ctx, foe);
+
+    const ring = { x: ctx.cx + 110, y: ctx.cy };
+    const marks: CMark[] = [];
+    const board = floor(ctx, marks);
+
+    // The circle, standing still on the floor where it opened.
+    let ringUntil = -1;
+    const ringGfx = ctx.adopt(ctx.scene.add.graphics().setDepth(7));
+    ctx.onFrame((_dt, elapsed) => {
+      ringGfx.clear();
+      if (ringUntil < 0 || elapsed > ringUntil) return;
+      const fade = Phaser.Math.Clamp((ringUntil - elapsed) / 260, 0, 1);
+      for (let i = 0; i < 22; i++) {
+        if (grain(i * 3.3, 1) > 0.82) continue;
+        const a0 = (i / 22) * Math.PI * 2 + elapsed / 2000;
+        const a1 = a0 + (Math.PI * 2 / 22) * 0.62;
+        ringGfx.lineStyle(2, ctx.tint(CHK.green), 0.5 * fade);
+        ringGfx.lineBetween(
+          ring.x + Math.cos(a0) * LIVING_CIRCLE_R, ring.y + Math.sin(a0) * LIVING_CIRCLE_R,
+          ring.x + Math.cos(a1) * LIVING_CIRCLE_R, ring.y + Math.sin(a1) * LIVING_CIRCLE_R,
+        );
+      }
+    });
+
+    ctx.at(200, () => {
+      av.play('raise');
+      cav?.setChalk(CHK.green);
+      cav?.setDrawing(true);
+      ringUntil = 200 + LIVING_DRAW_MS;
+      fx.ring(ring.x, ring.y, 8, LIVING_CIRCLE_R, CHK.green, 520);
+      tick(ctx, ctx.cx, ctx.cy - 50, '⭕ DRAW IT', CHK.green);
+    });
+
+    // A triangle, then a square — two closed loops, so two reads and two buffs.
+    const tri = (u: number): Mark => {
+      const k = u * 3;
+      const i = Math.floor(k);
+      const t = k - i;
+      const v = (n: number): Mark => ({
+        x: ring.x + Math.cos(-Math.PI / 2 + (n % 3) * (Math.PI * 2 / 3)) * 46,
+        y: ring.y + Math.sin(-Math.PI / 2 + (n % 3) * (Math.PI * 2 / 3)) * 46,
+      });
+      const a = v(i);
+      const b = v(i + 1);
+      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+    };
+    const sqr = (u: number): Mark => {
+      const k = u * 4;
+      const i = Math.floor(k);
+      const t = k - i;
+      const v = (n: number): Mark => ({
+        x: ring.x + Math.cos(-Math.PI / 4 + (n % 4) * (Math.PI / 2)) * 26,
+        y: ring.y + Math.sin(-Math.PI / 4 + (n % 4) * (Math.PI / 2)) * 26,
+      });
+      const a = v(i);
+      const b = v(i + 1);
+      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+    };
+    pen(ctx, marks, {
+      startMs: 200, endMs: 200 + LIVING_DRAW_MS * 0.52, color: CHK.green,
+      path: (t) => tri(Phaser.Math.Clamp(t, 0, 0.999)),
+      onMark: (m) => { if (m.linked) fx.lay(m.px, m.py, m.x, m.y, CHK.green); },
+    });
+    ctx.at(200 + LIVING_DRAW_MS * 0.56, () => {
+      cav?.setChalk(CHK.blue);
+      tick(ctx, ctx.cx, ctx.cy - 46, '🖍️ PERMA — TOUGHER', CHK.blue);
+    });
+    pen(ctx, marks, {
+      startMs: 200 + LIVING_DRAW_MS * 0.58, endMs: 200 + LIVING_DRAW_MS, color: CHK.blue,
+      path: (t) => sqr(Phaser.Math.Clamp(t, 0, 0.999)),
+      onMark: (m) => { if (m.linked) fx.lay(m.px, m.py, m.x, m.y, CHK.blue); },
+    });
+
+    // It stands up carrying exactly the marks that were on the floor a moment ago.
+    const body: CMark[] = [];
+    const beast = { x: ring.x, y: ring.y, ang: 0, gait: 0, hp: 0, maxHp: 0, alive: false, radius: 46 };
+    let biteAt = 0;
+    ctx.at(200 + LIVING_DRAW_MS, () => {
+      cav?.setDrawing(false);
+      body.push(...marks.map((m) => ({ ...m })));
+      marks.length = 0;
+      board.clear();
+      // One triangle and one square, read off the two closed loops above.
+      beast.maxHp = Math.round((LIVING_HP + LIVING_SQUARE_HP) * 1.5);
+      beast.hp = beast.maxHp;
+      beast.ang = Math.atan2(foe.y - ring.y, foe.x - ring.x);
+      fx.dust(ring.x, ring.y, 10, 40, 700, CHK.dust);
+      tick(ctx, ring.x, ring.y - 70, '△×1 ▢×1', CHK.teal);
+      tick(ctx, ring.x, ring.y - 52, `🕷️ ${beast.maxHp} HP · ${LIVING_DAMAGE + LIVING_TRI_DAMAGE} DMG`, CHK.green);
+    });
+    ctx.at(200 + LIVING_DRAW_MS + LIVING_WAKE_MS, () => {
+      beast.alive = true;
+      fx.ring(beast.x, beast.y, 10, 60, CHK.green, 620);
+    });
+
+    const beastGfx = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    ctx.onFrame((dt, elapsed) => {
+      const s = dt / 1000;
+      beastGfx.clear();
+      if (!body.length) return;
+      const waking = !beast.alive;
+      const rise = Phaser.Math.Clamp(1 - (200 + LIVING_DRAW_MS + LIVING_WAKE_MS - elapsed) / LIVING_WAKE_MS, 0, 1);
+      if (beast.alive) {
+        beast.gait += s * (4.5 + LIVING_SPEED / 30);
+        beast.ang = Phaser.Math.Angle.RotateTo(beast.ang, Math.atan2(foe.y - beast.y, foe.x - beast.x), s * 5);
+        const d = Phaser.Math.Distance.Between(beast.x, beast.y, foe.x, foe.y);
+        if (d > LIVING_REACH) {
+          beast.x += Math.cos(beast.ang) * LIVING_SPEED * s;
+          beast.y += Math.sin(beast.ang) * LIVING_SPEED * s;
+        } else if (elapsed >= biteAt) {
+          biteAt = elapsed + LIVING_BITE_MS;
+          fx.dust(beast.x, beast.y, 6, 20, 340, CHK.dust);
+          tick(ctx, foe.x, foe.y - 30, `${LIVING_DAMAGE + LIVING_TRI_DAMAGE}`, CHK.green);
+        }
+      }
+      const alpha = waking ? 0.45 + rise * 0.55 : 1;
+      const lift = waking ? rise * 6 : 6 + Math.sin(beast.gait) * 1.7;
+      const wob = waking ? (1 - rise) * Math.sin(elapsed / 22) * 3 : Math.sin(beast.gait * 0.9) * 1.3;
+      if (!waking) {
+        chalkLegs(beastGfx, ctx.tint, beast.x, beast.y, beast.ang, beast.radius * 0.45,
+          beast.radius * 0.8 + 6, beast.gait, CHK.dust, 0.85, 7);
+      }
+      // Carried in the pose it was drawn in — the legs do the facing, not the art.
+      for (const p of body) {
+        const x1 = beast.x + (p.x - ring.x) + wob;
+        const y1 = beast.y + (p.y - ring.y) - lift;
+        if (p.linked) {
+          chalkLine(beastGfx, ctx.tint, beast.x + (p.px - ring.x) + wob, beast.y + (p.py - ring.y) - lift,
+            x1, y1, 3, p.color, alpha, p.seed);
+        } else {
+          chalkBlob(beastGfx, ctx.tint, x1, y1, 2.6, p.color, alpha, p.seed);
+        }
+      }
+      chalkEyes(beastGfx, ctx.tint,
+        beast.x + Math.cos(beast.ang) * beast.radius * 0.5,
+        beast.y + Math.sin(beast.ang) * beast.radius * 0.5 - lift, beast.ang, 9, 2.2, alpha);
+      const w = 46;
+      beastGfx.fillStyle(ctx.tint(CHK.slate), 0.8);
+      beastGfx.fillRect(beast.x - w / 2, beast.y + beast.radius * 0.6 + 10, w, 3);
+      beastGfx.fillStyle(ctx.tint(CHK.green), 0.95);
+      beastGfx.fillRect(beast.x - w / 2, beast.y + beast.radius * 0.6 + 10, w, 3);
+    });
+
+    label(ctx, ctx.cx, ctx.h - 12,
+      'red chalk up to ×1.6 damage · blue up to ×2 health · white up to 45 shield', CHK.whiteDim);
   },
 };
 

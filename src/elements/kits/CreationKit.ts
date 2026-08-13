@@ -910,6 +910,25 @@ export class CreationKit {
     return true;
   }
 
+  /**
+   * Ruin Mastery — Second Skin. Being in the mech is a form: a different silhouette, a different
+   * speed, arms instead of hands, and every hit paid out of the machine rather than the pilot.
+   *
+   * Thrown out of it, not blown up in it — the mech itself is a *structure* and belongs to
+   * Spikes of Ruin, not to this. So the pilot is dismounted and the machine is left standing
+   * where it was, with its prompt back up so they can climb in again.
+   */
+  revertForms(f: Fighter): string[] {
+    const mech = this.creatMech;
+    if (f !== this.player || !mech?.mounted) return [];
+    mech.mounted = false;
+    if (this.player.damageAbsorber) this.player.damageAbsorber = null;
+    if (this.playerHold === 'ride') this.hold('player', null);
+    this.pfx.gearPulse(this.player.x, this.player.y, 40, 480, CREATION.brass, 7);
+    this.api.showFloatingText(this.player.x, this.player.y - 46, '🤖 THROWN CLEAR', '#ffaa44');
+    return ['Mech'];
+  }
+
   /** The mech comes apart; the Nexus starts rebuilding itself out of what is left. */
   private wreckMech(): void {
     const mech = this.creatMech;

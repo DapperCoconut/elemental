@@ -4,7 +4,7 @@ import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import {
   BOOK_TONE, BookId, PAP, PaperAvatar, PaperFx, arcaneSpike, burningScrap, chainRun,
   crucifixShape, flameSpirit, fortuneTeller, ghostBlade, ghostKnight, herbSeed, lightSlab,
-  lotusBloom, paperPlaneShape, pinwheelShape, portalTear, shurikenShape, targetRing,
+  lotusBloom, paperPlaneShape, paperShard, pinwheelShape, portalTear, shurikenShape, targetRing,
 } from '../../../elements/kits/PaperVisuals';
 
 /**
@@ -142,6 +142,25 @@ function drivenCaster(ctx: PreviewCtx, at: Mark, book: BookId = 0): Stage {
   const pav = av instanceof PaperAvatar ? av : null;
   pav?.setBook(book);
   ctx.onFrame((dt) => av.update(dt, at.x, at.y, 1));
+  return { fx, av, pav, at };
+}
+
+/**
+ * A driven caster that can be faded out entirely — used by Restructure, where the point of the
+ * ability is that there is no body there at all for five seconds.
+ */
+function drivenCasterFading(ctx: PreviewCtx, at: Mark, alpha: () => number, book: BookId = 0): Stage {
+  const fx = ctx.capture(() => new PaperFx(ctx.scene, ctx.tint).setSink(ctx.sink));
+  if (ctx.scene.textures.exists('elem-paper')) {
+    const body = ctx.adopt(ctx.scene.add.image(at.x, at.y, 'elem-paper').setDepth(5));
+    ctx.onFrame(() => body.setPosition(at.x, at.y).setAlpha(alpha()));
+  }
+  const av = ctx.useAvatar(() => new PaperAvatar(ctx.scene, ctx.tint));
+  av.setFacing(ctx.aim);
+  const pav = av instanceof PaperAvatar ? av : null;
+  pav?.setBook(book);
+  pav?.setMastered(true);
+  ctx.onFrame((dt) => av.update(dt, at.x, at.y, alpha()));
   return { fx, av, pav, at };
 }
 
@@ -1112,5 +1131,237 @@ export const theShelf: PreviewScript = {
 
     label(ctx, ctx.w * 0.5, ctx.h - 8,
       'cycling out of a half-fired laser drops the burst but still charges the 1.5s reload', PAP.crease);
+  },
+};
+
+// ── Mastery ───────────────────────────────────────────────────────────
+
+const STORY_RESIST = 0.8;
+const STORY_DAMAGE = 1.2;
+const STORY_SPEED = 1.25;
+const STORY_SLOW = 0.8;
+const STORY_REGEN = 3;
+
+const SHARD_COUNT = 14;
+const SHARD_DAMAGE = 5;
+const SHARD_SPEED = 590;
+const SHARD_LEN = 17;
+const SHARD_SCATTER_MS = 2300;
+const SHARD_RETURN_STAGGER_MS = 185;
+const SHARD_RETURN_SPEED = 640;
+const SHARD_ARRIVE_R = 18;
+const SHARD_GATE_MS = 500;
+const RESTRUCTURE_HP_COST = 25;
+
+/**
+ * The passive. Five stances behind one right-click, so the showcase is a stance carousel: the
+ * open cover, the line it buys, and the thing that line is doing drawn on the two bodies — a
+ * shield ring on the caster, a hotter hit on the dummy, a speed streak, a chain-slow, a bloom.
+ */
+export const masterySpirit: PreviewScript = {
+  duration: 15000,
+  scale: 0.9,
+  caption: 'Mastery passive — the open book is a statline as well as an attack, and right-click is a stance change',
+  run(ctx) {
+    let book: BookId = 0;
+    const s = stageIt(ctx, book);
+    bookBadge(ctx, () => book);
+    const foe: Mark = { x: ctx.w * 0.74, y: ctx.cy };
+    dummy(ctx, foe);
+
+    // The stance mark: painted on whoever is actually wearing that book's effect, which for two
+    // of the five is the other body entirely. That is the whole reading the passive needs.
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(16));
+    ctx.onFrame((_dt, elapsed) => {
+      const t = elapsed / 1000;
+      const tone = BOOK_TONE[book];
+      g.clear();
+      if (book === 0) {
+        // Armour: a hexagonal plate ring closed around the caster.
+        for (let i = 0; i < 6; i++) {
+          const a = (i / 6) * TAU + t * 0.4;
+          g.lineStyle(2.6, ctx.tint(tone.accent), 0.55 + 0.2 * Math.sin(t * 3 + i));
+          g.beginPath();
+          g.arc(ctx.cx, ctx.cy, 30, a, a + 0.68);
+          g.strokePath();
+        }
+      } else if (book === 1) {
+        // Amplified: the beam's colour building on the target rather than on the caster.
+        g.fillStyle(ctx.tint(tone.accent), 0.1 + 0.07 * Math.sin(t * 5));
+        g.fillCircle(foe.x, foe.y, 30);
+        g.lineStyle(2, ctx.tint(tone.accent), 0.7);
+        g.strokeCircle(foe.x, foe.y, 26 + Math.sin(t * 5) * 2);
+      } else if (book === 2) {
+        // Swift: speed lines off the caster's back.
+        for (let i = 0; i < 4; i++) {
+          const u = (t * 1.6 + i / 4) % 1;
+          g.lineStyle(2.2 * (1 - u) + 0.4, ctx.tint(tone.accent), (1 - u) * 0.7);
+          g.lineBetween(ctx.cx - 22 - u * 30, ctx.cy - 12 + i * 8, ctx.cx - 6 - u * 30, ctx.cy - 12 + i * 8);
+        }
+      } else if (book === 3) {
+        // Slowed them: the chain, on the other body, which is where this one lives.
+        chainRun(g, ctx.tint, foe.x, foe.y - 34, foe.x, foe.y + 14, 5, 0.85);
+        g.lineStyle(2, ctx.tint(tone.accent), 0.4 + 0.2 * Math.sin(t * 2));
+        g.strokeCircle(foe.x, foe.y, 24);
+      } else {
+        // Regenerating: petals lifting off the caster, once a second, forever.
+        for (let i = 0; i < 5; i++) {
+          const u = (t * 0.8 + i / 5) % 1;
+          g.fillStyle(ctx.tint(i % 2 ? PAP.leaf : PAP.petal), (1 - u) * 0.7);
+          g.fillCircle(ctx.cx + Math.sin(t * 2 + i * 1.7) * 16, ctx.cy + 16 - u * 46, 3 - u * 1.6);
+        }
+      }
+    });
+
+    const lines = [
+      `🛡️  ×${STORY_RESIST} DAMAGE TAKEN`,
+      `⚡  ×${STORY_DAMAGE} DAMAGE DEALT`,
+      `💨  +${Math.round((STORY_SPEED - 1) * 100)}% MOVE SPEED`,
+      `⛓️  ×${STORY_SLOW} THEIR SPEED, until you turn the page`,
+      `🌿  +${STORY_REGEN} HP / SECOND`,
+    ];
+    const colors = [PAP.spectre, PAP.beam, PAP.arcane, PAP.halo, PAP.leaf];
+
+    for (let i = 0; i < BOOK_TONE.length; i++) {
+      ctx.at(600 + i * 2700, () => {
+        const from = BOOK_TONE[book].cover;
+        book = i as BookId;
+        s.pav?.setBook(book);
+        s.fx.turnPage(ctx.cx, ctx.cy, from, BOOK_TONE[book].cover);
+        tick(ctx, ctx.cx, ctx.cy - 44,
+          `${BOOK_TONE[book].emoji} ${BOOK_TONE[book].name.toUpperCase()}`, BOOK_TONE[book].accent);
+        tick(ctx, ctx.cx, ctx.cy - 62, lines[i], colors[i]);
+      });
+      // The number each stance is actually worth, shown where it lands.
+      ctx.at(1500 + i * 2700, () => {
+        if (i === 0) tick(ctx, ctx.cx, ctx.cy - 20, `20 → ${Math.round(20 * STORY_RESIST)}`, PAP.spectre);
+        else if (i === 1) {
+          s.fx.splat(foe.x, foe.y, 18, PAP.beam);
+          tick(ctx, foe.x, foe.y - 18, `15 → ${Math.round(15 * STORY_DAMAGE)}`, PAP.beam);
+        } else if (i === 4) tick(ctx, ctx.cx, ctx.cy - 20, `+${STORY_REGEN}`, PAP.leaf);
+      });
+    }
+
+    label(ctx, ctx.w * 0.5, ctx.h - 8,
+      'Bible and Herbology need Larger Library — without it the ring is the first three', PAP.crease);
+  },
+};
+
+/**
+ * Restructure. The one thing this has to show is that the body is *gone* — so the caster is
+ * driven rather than staged, faded out on the tear, and the shards themselves are the only thing
+ * on screen until they come back and stack him up again.
+ */
+export const masteryRestructure: PreviewScript = {
+  duration: 16000,
+  scale: 0.9,
+  caption: 'Mastery — come apart into 14 bleeding shards: invisible, invincible, and rebuilt wherever you point',
+  run(ctx) {
+    const home: Mark = { x: ctx.w * 0.3, y: ctx.h * 0.66 };
+    const rebuild: Mark = { x: ctx.w * 0.72, y: ctx.h * 0.32 };
+    const foe: Mark = { x: ctx.w * 0.56, y: ctx.h * 0.54 };
+    const st = { torn: false, rebuilt: 0, alpha: 1, clock: 0, hp: 400 };
+    const s = drivenCasterFading(ctx, home, () => st.alpha);
+    dummy(ctx, foe);
+
+    interface Shard {
+      x: number; y: number; vx: number; vy: number; ang: number; spin: number;
+      seed: number; returnsAt: number; gate: number;
+    }
+    const shards: Shard[] = [];
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+
+    const hpText = ctx.adopt(ctx.scene.add.text(ctx.cx, 12, '', {
+      fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
+      color: hex(PAP.gilt), stroke: '#181409', strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(20));
+
+    ctx.at(900, () => {
+      st.torn = true;
+      st.alpha = 0;
+      st.hp -= RESTRUCTURE_HP_COST;
+      s.fx.shred(home.x, home.y, 18, 54, 620, 11, PAP.pulp);
+      s.fx.ripple(home.x, home.y, 12, 150, 480, 9, PAP.gilt);
+      tick(ctx, home.x, home.y - 50, '📜 RESTRUCTURE', PAP.gilt);
+      tick(ctx, home.x, home.y - 30, `📄 ${RESTRUCTURE_HP_COST} → WEAK`, PAP.crease);
+      const base = Math.random() * TAU;
+      for (let i = 0; i < SHARD_COUNT; i++) {
+        const a = base + (i / SHARD_COUNT) * TAU;
+        const speed = SHARD_SPEED * (0.8 + Math.random() * 0.45);
+        shards.push({
+          x: home.x + Math.cos(a) * 12, y: home.y + Math.sin(a) * 12,
+          vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
+          ang: a, spin: (Math.random() - 0.5) * 9, seed: Math.random() * 999,
+          returnsAt: st.clock + SHARD_SCATTER_MS + i * SHARD_RETURN_STAGGER_MS, gate: -9999,
+        });
+      }
+    });
+
+    ctx.onFrame((dt) => {
+      st.clock += dt;
+      const step = dt / 1000;
+      g.clear();
+      hpText.setText(st.torn
+        ? `🫥 INVISIBLE · INVINCIBLE     ·     ${st.rebuilt} / ${SHARD_COUNT} REBUILT`
+        : `${Math.round(st.hp)} / 400 HP`);
+
+      // The rebuild ring, and the pile of sheets stacking up inside it.
+      if (st.torn) {
+        const k = st.rebuilt / SHARD_COUNT;
+        home.x = Phaser.Math.Linear(home.x, rebuild.x, Math.min(1, step * 2.4 * (0.2 + k)));
+        home.y = Phaser.Math.Linear(home.y, rebuild.y, Math.min(1, step * 2.4 * (0.2 + k)));
+        g.lineStyle(1.6, ctx.tint(PAP.gilt), 0.3 + 0.1 * Math.sin(st.clock / 180));
+        g.strokeCircle(rebuild.x, rebuild.y, 20 + (1 - k) * 8);
+      }
+
+      for (let i = shards.length - 1; i >= 0; i--) {
+        const sh = shards[i];
+        const coming = st.clock >= sh.returnsAt;
+        if (coming) {
+          const dx = rebuild.x - sh.x;
+          const dy = rebuild.y - sh.y;
+          const d = Math.hypot(dx, dy) || 1;
+          sh.vx = Phaser.Math.Linear(sh.vx, (dx / d) * SHARD_RETURN_SPEED, Math.min(1, step * 7));
+          sh.vy = Phaser.Math.Linear(sh.vy, (dy / d) * SHARD_RETURN_SPEED, Math.min(1, step * 7));
+          if (d <= SHARD_ARRIVE_R) {
+            st.rebuilt++;
+            s.fx.shred(sh.x, sh.y, 2, 10, 260, 11, PAP.bright);
+            shards.splice(i, 1);
+            if (st.rebuilt >= SHARD_COUNT) {
+              st.torn = false;
+              st.alpha = 1;
+              home.x = rebuild.x;
+              home.y = rebuild.y;
+              s.fx.ripple(home.x, home.y, 10, 84, 420, 9, PAP.bright);
+              tick(ctx, home.x, home.y - 48, '📄 WHOLE AGAIN', PAP.gilt);
+            }
+            continue;
+          }
+        }
+        sh.x += sh.vx * step;
+        sh.y += sh.vy * step;
+        sh.spin += step * 0.6;
+        sh.ang = Math.atan2(sh.vy, sh.vx);
+        if (!coming) {
+          if (sh.x < 10) { sh.x = 10; sh.vx = Math.abs(sh.vx); }
+          if (sh.x > ctx.w - 10) { sh.x = ctx.w - 10; sh.vx = -Math.abs(sh.vx); }
+          if (sh.y < 22) { sh.y = 22; sh.vy = Math.abs(sh.vy); }
+          if (sh.y > ctx.h - 10) { sh.y = ctx.h - 10; sh.vy = -Math.abs(sh.vy); }
+        }
+        if (Phaser.Math.Distance.Between(sh.x, sh.y, foe.x, foe.y) <= 22
+            && st.clock - sh.gate >= SHARD_GATE_MS) {
+          sh.gate = st.clock;
+          s.fx.cut(foe.x, foe.y, 20, PAP.gilt);
+          tick(ctx, foe.x, foe.y - 16, `${SHARD_DAMAGE}  🩸`, PAP.blood);
+        }
+        const heat = coming ? 1 : Phaser.Math.Clamp(1 - (sh.returnsAt - st.clock) / 700, 0, 1) * 0.5;
+        paperShard(g, ctx.tint, sh.x, sh.y, sh.ang + sh.spin, SHARD_LEN, 1,
+          { accent: PAP.gilt, seed: sh.seed, home: heat });
+      }
+    });
+
+    label(ctx, ctx.w * 0.5, ctx.h - 8,
+      `each cut is ${SHARD_DAMAGE} and a 2s bleed at ${BLEED_FRACTION * 100}% of what they have left, once per shard per ${SHARD_GATE_MS / 1000}s`,
+      PAP.crease);
   },
 };

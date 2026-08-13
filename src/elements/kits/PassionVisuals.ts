@@ -634,6 +634,207 @@ export function loveBar(
   }
 }
 
+// ── Mastery ───────────────────────────────────────────────────────────────
+
+/**
+ * Attraction's boundary.
+ *
+ * The load-bearing part is the *outside*: a caught enemy has to be able to see, without being
+ * told, that the far side of the line is where they are not allowed to be. So the ring itself is
+ * a thin hard edge and everything beyond it is haze — a pink wall of scent and drifting hearts
+ * that thickens the further out it goes, the way a held breath looks. Inside the line is left
+ * completely clear, because that is the half of the arena the fight is actually happening in.
+ */
+export function attractionRing(
+  g: Phaser.GameObjects.Graphics,
+  tint: PassionColorFn,
+  x: number, y: number, r: number, t: number, alpha = 1, seed = 0,
+): void {
+  // The haze, drawn as rings stepping outward and fading — cheaper than a real gradient and it
+  // gives the wall a grain the eye can read movement in.
+  const bands = 7;
+  for (let i = 0; i < bands; i++) {
+    const rr = r + 2 + i * 4.2 + Math.sin(t * 1.6 + i * 0.7) * 1.2;
+    g.lineStyle(4.6, tint(i < 3 ? PSN.hot : PSN.pink), alpha * 0.13 * (1 - i / bands));
+    g.strokeCircle(x, y, rr);
+  }
+
+  // The edge itself: a bright hairline with a wine shadow just outside it, so the boundary reads
+  // as a surface rather than as a circle somebody drew.
+  g.lineStyle(2.4, tint(PSN.wine), alpha * 0.5);
+  g.strokeCircle(x, y, r + 2.2);
+  g.lineStyle(1.6, tint(PSN.hot), alpha * (0.6 + Math.abs(Math.sin(t * 2.2)) * 0.3));
+  g.strokeCircle(x, y, r);
+
+  // Hearts standing in the haze, orbiting slowly and bobbing in and out of the wall. Every one of
+  // them is deterministic off `seed`, so the wall looks the same from frame to frame rather than
+  // boiling.
+  const n = 22;
+  for (let i = 0; i < n; i++) {
+    const spin = t * (0.18 + jitter(seed, i) * 0.12) * (i % 2 ? 1 : -1);
+    const a = (i / n) * TAU + spin;
+    const drift = Math.sin(t * 1.3 + i * 1.7) * 5;
+    const rr = r + 7 + jitter(seed, i + 40) * 16 + drift;
+    const size = 4 + jitter(seed, i + 80) * 3.6;
+    const fade = 0.35 + Math.abs(Math.sin(t * 0.9 + i)) * 0.5;
+    heart(g, tint, x + Math.cos(a) * rr, y + Math.sin(a) * rr,
+      size, a + Math.PI / 2, i % 3 ? PSN.pink : PSN.blush, alpha * fade);
+  }
+
+  // Four inward chevrons on the boundary, turning with it — the "this way" of the whole passive.
+  for (let i = 0; i < 4; i++) {
+    const a = t * 0.34 + (i / 4) * TAU;
+    const ca = Math.cos(a);
+    const sa = Math.sin(a);
+    const P = (u: number, v: number) => pt(x + ca * r, y + sa * r, ca, sa, u, v);
+    g.lineStyle(2, tint(PSN.cream), alpha * 0.5);
+    g.beginPath();
+    g.moveTo(P(6, -7).x, P(6, -7).y);
+    g.lineTo(P(-2, 0).x, P(-2, 0).y);
+    g.lineTo(P(6, 7).x, P(6, 7).y);
+    g.strokePath();
+  }
+}
+
+/** The little shove a body gets when it tries to leave — a bloom of hearts against the wall. */
+export function attractionRebound(
+  g: Phaser.GameObjects.Graphics,
+  tint: PassionColorFn,
+  x: number, y: number, ang: number, strength: number, alpha = 1,
+): void {
+  const ca = Math.cos(ang);
+  const sa = Math.sin(ang);
+  const P = (u: number, v: number) => pt(x, y, ca, sa, u, v);
+  for (let i = 0; i < 3; i++) {
+    const off = 3 + i * 5;
+    g.lineStyle(2.6 - i * 0.6, tint(i ? PSN.pink : PSN.cream), alpha * strength * (0.6 - i * 0.15));
+    g.beginPath();
+    g.moveTo(P(off, -16 + i * 3).x, P(off, -16 + i * 3).y);
+    g.lineTo(P(off + 5, 0).x, P(off + 5, 0).y);
+    g.lineTo(P(off, 16 - i * 3).x, P(off, 16 - i * 3).y);
+    g.strokePath();
+  }
+}
+
+/**
+ * A cloud of perfume.
+ *
+ * Built out of lobes rather than one big circle: a single soft disc reads as an aura, and this is
+ * supposed to read as *stuff hanging in the air* that a fighter can walk into and out of. The
+ * lobes breathe on their own clocks so the silhouette never settles, and the mist speckle inside
+ * it is what sells the volume.
+ */
+export function perfumeCloud(
+  g: Phaser.GameObjects.Graphics,
+  tint: PassionColorFn,
+  x: number, y: number, r: number, t: number, alpha: number, seed: number,
+): void {
+  if (alpha <= 0.01) return;
+
+  // Lobes. Two rings of them: a wide outer skirt and a denser core.
+  for (const [count, dist, size, col, a] of [
+    [9, 0.62, 0.52, PSN.pink, 0.13],
+    [7, 0.34, 0.46, PSN.blush, 0.17],
+    [5, 0.14, 0.42, PSN.cream, 0.15],
+  ] as Array<[number, number, number, number, number]>) {
+    for (let i = 0; i < count; i++) {
+      const ang = (i / count) * TAU + jitter(seed, i + count) * TAU;
+      const breathe = 1 + Math.sin(t * 1.7 + i * 1.3 + jitter(seed, i) * 6) * 0.09;
+      const d = r * dist * (0.82 + jitter(seed, i + 20) * 0.36);
+      g.fillStyle(tint(col), alpha * a);
+      g.fillEllipse(x + Math.cos(ang) * d, y + Math.sin(ang) * d * 0.86,
+        r * size * 2 * breathe, r * size * 1.72 * breathe);
+    }
+  }
+
+  // Mist: fine motes turning slowly around the centre, drifting outward and back.
+  for (let i = 0; i < 26; i++) {
+    const a = jitter(seed, i + 100) * TAU + t * (0.25 + jitter(seed, i) * 0.3);
+    const ph = (t * 0.35 + jitter(seed, i + 140)) % 1;
+    const d = r * (0.2 + ph * 0.85);
+    g.fillStyle(tint(i % 4 ? PSN.cream : PSN.hot), alpha * (1 - ph) * 0.5);
+    g.fillCircle(x + Math.cos(a) * d, y + Math.sin(a) * d * 0.88, 1 + jitter(seed, i + 180) * 1.8);
+  }
+
+  // And the hearts coming up out of it, because a cloud with no hearts in it is a smoke bomb.
+  for (let i = 0; i < 5; i++) {
+    const ph = (t * 0.5 + i * 0.2 + jitter(seed, i + 220)) % 1;
+    const hx = x + Math.sin(t * 1.1 + i * 2.2) * r * 0.44 + (jitter(seed, i + 260) - 0.5) * r * 0.5;
+    const hy = y + r * 0.5 - ph * r * 1.5;
+    heart(g, tint, hx, hy, 4.6 + (1 - ph) * 2.6, Math.PI / 2, PSN.hot, alpha * (1 - ph) * 0.75);
+  }
+
+  // The boundary, so "am I standing in it" is never a guess.
+  g.lineStyle(1.4, tint(PSN.pink), alpha * 0.34);
+  g.strokeCircle(x, y, r);
+}
+
+/**
+ * The dose you carry away with you. Ribbons of scent wound around the wearer, plus the same mist
+ * as the cloud at a fraction of the density — it has to be obviously the *same substance*, just
+ * less of it, or the two halves of the ability read as two unrelated effects.
+ */
+export function perfumeAura(
+  g: Phaser.GameObjects.Graphics,
+  tint: PassionColorFn,
+  x: number, y: number, r: number, t: number, alpha: number,
+): void {
+  if (alpha <= 0.01) return;
+  g.fillStyle(tint(PSN.pink), alpha * 0.09);
+  g.fillEllipse(x, y + 4, r * 2, r * 1.62);
+
+  // Three ribbons at different tilts, each a squashed circle drawn as a chain of dashes.
+  for (let k = 0; k < 3; k++) {
+    const tilt = t * (0.5 + k * 0.22) + k * 1.1;
+    const rr = r * (0.55 + k * 0.2);
+    g.lineStyle(2.2 - k * 0.4, tint(k === 1 ? PSN.cream : PSN.blush), alpha * (0.45 - k * 0.08));
+    for (let i = 0; i < 14; i++) {
+      if (i % 2) continue;
+      const a0 = (i / 14) * TAU + tilt;
+      const a1 = ((i + 1) / 14) * TAU + tilt;
+      const sq = 0.42 + k * 0.12;
+      g.lineBetween(x + Math.cos(a0) * rr, y + 4 + Math.sin(a0) * rr * sq,
+        x + Math.cos(a1) * rr, y + 4 + Math.sin(a1) * rr * sq);
+    }
+  }
+
+  for (let i = 0; i < 10; i++) {
+    const ph = (t * 0.6 + i * 0.1) % 1;
+    const a = (i / 10) * TAU + t * 0.4;
+    const d = r * (0.3 + ph * 0.7);
+    g.fillStyle(tint(i % 3 ? PSN.cream : PSN.hot), alpha * (1 - ph) * 0.55);
+    g.fillCircle(x + Math.cos(a) * d, y + 2 + Math.sin(a) * d * 0.7 - ph * 10, 1.2 + (1 - ph) * 1.4);
+  }
+}
+
+/** The atomiser: a cut-glass bottle with a bulb, drawn in the caster's hand as they spray. */
+export function perfumeBottle(
+  g: Phaser.GameObjects.Graphics,
+  tint: PassionColorFn,
+  x: number, y: number, ang: number, alpha: number, squeeze = 0,
+): void {
+  const ca = Math.cos(ang);
+  const sa = Math.sin(ang);
+  const P = (u: number, v: number) => pt(x, y, ca, sa, u, v);
+  // Body — a flat-shouldered flask, shadow first then the glass over it.
+  g.fillStyle(tint(PSN.wine), alpha * 0.8);
+  g.fillPoints([P(-5, -6), P(4, -5), P(4, 5), P(-5, 6)], true);
+  g.fillStyle(tint(PSN.blush), alpha * 0.85);
+  g.fillPoints([P(-4, -5), P(3, -4), P(3, 4), P(-4, 5)], true);
+  // The liquid sitting in the bottom half of it.
+  g.fillStyle(tint(PSN.hot), alpha * 0.9);
+  g.fillPoints([P(-4, 1), P(3, 0.6), P(3, 4), P(-4, 5)], true);
+  // Neck, collar and nozzle.
+  g.fillStyle(tint(PSN.gold), alpha * 0.95);
+  g.fillPoints([P(3, -2), P(8, -1.6), P(8, 1.6), P(3, 2)], true);
+  // The rubber bulb behind it, squashed while it is being squeezed.
+  const bulb = 4.4 - squeeze * 1.4;
+  g.fillStyle(tint(PSN.ink), alpha * 0.7);
+  g.fillEllipse(P(-9, 0).x, P(-9, 0).y, bulb * 2.2, bulb * 2);
+  g.fillStyle(tint(PSN.cream), alpha * 0.3);
+  g.fillEllipse(P(-2.4, -2.4).x, P(-2.4, -2.4).y, 3.4, 2.2);
+}
+
 // ── Fx ────────────────────────────────────────────────────────────────────
 
 export class PassionFx extends FxBase {
@@ -739,6 +940,32 @@ export class PassionFx extends FxBase {
         g.fillStyle(this.tint(p.s % 2 ? PSN.deep : PSN.hot), (1 - t) * 0.9);
         g.fillEllipse(px, py, 6 * Math.abs(Math.cos(pa)) + 2, 4);
       }
+    });
+  }
+
+  /**
+   * The atomiser going off: the bottle in the hand, a fan of droplets leaving the nozzle, and the
+   * bloom they turn into as they cross to where the cloud is about to be.
+   */
+  spray(x: number, y: number, ang: number, reach: number): void {
+    const drops = Array.from({ length: 22 }, (_, i) => ({
+      a: ang + (jitter(i, 5) - 0.5) * 0.62,
+      d: 0.35 + jitter(i, 9) * 0.65,
+      r: 1.4 + jitter(i, 13) * 2.4,
+      s: jitter(i, 17),
+    }));
+    this.anim(9, 520, (g, t) => {
+      const e = easeOut(t);
+      const fade = 1 - t;
+      perfumeBottle(g, this.tint, x, y, ang, fade * 0.95, Math.min(1, t * 3));
+      for (const p of drops) {
+        const d = 10 + reach * p.d * e;
+        g.fillStyle(this.tint(p.s > 0.7 ? PSN.hot : PSN.cream), fade * 0.7);
+        g.fillCircle(x + Math.cos(p.a) * d, y + Math.sin(p.a) * d, p.r * (0.6 + e));
+      }
+      // The nozzle's own puff, right at the glass.
+      g.fillStyle(this.tint(PSN.blush), fade * 0.35);
+      g.fillCircle(x + Math.cos(ang) * 12, y + Math.sin(ang) * 12, 6 + e * 10);
     });
   }
 

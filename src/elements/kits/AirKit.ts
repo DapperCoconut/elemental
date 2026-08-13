@@ -4,6 +4,7 @@ import { Fighter } from '../../entities/Fighter';
 import { AIR, AirAvatar, AirColorFn, AirDraft, AirFx, ArmGesture, ArmHold } from './AirVisuals';
 import { BaseAvatar } from './ElementVisuals';
 import { makeSkinAvatar } from './skins/SkinAvatars';
+import { meterGain } from '../../combat/Meters';
 
 type Owner = 'player' | 'npc';
 
@@ -489,23 +490,10 @@ export class AirKit {
 
     const ctx = this.arena.buildPlayerContext(mouseX, mouseY);
 
-    if (pointer.isDown) p.castAbility('wind-splice', ctx);
-    // Spin Dance runs on kit-owned charges, so it never goes through `castAbility` — the
-    // ability's own cooldown would refuse the second charge the upgrade exists to grant.
-    if (Phaser.Input.Keyboard.JustDown(this.arena.eKey) && this.slotFree('e')) {
-      this.trySpin(mouseX, mouseY);
-    }
-    if (Phaser.Input.Keyboard.JustDown(this.arena.rKey) && this.slotFree('r')) {
-      p.castAbility('gale-glaive', ctx);
-    }
-    if (Phaser.Input.Keyboard.JustDown(this.arena.fKey) && this.slotFree('f')) {
-      p.castAbility('sky-grapple', ctx);
-    }
-    if (Phaser.Input.Keyboard.JustDown(this.arena.qKey) && this.slotFree('q')) {
-      p.castAbility('wind-breaker', ctx);
-    }
-
-    // Winds of Change, wherever the player bound it.
+    // Winds of Change, wherever the player bound it. It is read *first*, and every base branch
+    // below asks `slotFree` before it asks `JustDown`: `JustDown` consumes the key's
+    // just-pressed flag, so a base branch that tested the key first would swallow the press on
+    // the bound slot and then refuse the cast — leaving the mastery unpressable.
     const windsSlot = this.windsSlot();
     if (windsSlot) {
       const key = windsSlot === 'e' ? this.arena.eKey
@@ -513,6 +501,22 @@ export class AirKit {
           : windsSlot === 'q' ? this.arena.qKey
             : this.arena.fKey;
       if (Phaser.Input.Keyboard.JustDown(key)) this.tryWindsOfChange(time);
+    }
+
+    if (pointer.isDown) p.castAbility('wind-splice', ctx);
+    // Spin Dance runs on kit-owned charges, so it never goes through `castAbility` — the
+    // ability's own cooldown would refuse the second charge the upgrade exists to grant.
+    if (this.slotFree('e') && Phaser.Input.Keyboard.JustDown(this.arena.eKey)) {
+      this.trySpin(mouseX, mouseY);
+    }
+    if (this.slotFree('r') && Phaser.Input.Keyboard.JustDown(this.arena.rKey)) {
+      p.castAbility('gale-glaive', ctx);
+    }
+    if (this.slotFree('f') && Phaser.Input.Keyboard.JustDown(this.arena.fKey)) {
+      p.castAbility('sky-grapple', ctx);
+    }
+    if (this.slotFree('q') && Phaser.Input.Keyboard.JustDown(this.arena.qKey)) {
+      p.castAbility('wind-breaker', ctx);
     }
   }
 
@@ -618,7 +622,8 @@ export class AirKit {
     const s = this.sides.player;
     if (!this.arena.masteryActive) { s.momentum = 0; return; }
     if (!this.alive(this.arena.player)) return;
-    s.momentum = Math.min(MOMENTUM_MAX, s.momentum + MOMENTUM_PER_SEC * (delta / 1000));
+    s.momentum = Math.min(MOMENTUM_MAX,
+      s.momentum + meterGain(this.arena.player, MOMENTUM_PER_SEC * (delta / 1000)));
   }
 
   private tickCharges(delta: number): void {
@@ -1206,6 +1211,8 @@ export class AirKit {
   private tryWindsOfChange(time: number): void {
     const s = this.sides.player;
     if (time - s.windsLastCastAt < WINDS_COOLDOWN_MS) return;
+    // Stamped before the refresh runs, so the 25s clock is already ticking by the time
+    // anything comes off cooldown — Winds can never hand itself back.
     s.windsLastCastAt = time;
     this.doWindsOfChange('player');
     this.arena.broadcastMasteryCast('winds-of-change');
@@ -1215,7 +1222,9 @@ export class AirKit {
   doWindsOfChange(owner: Owner): void {
     const f = this.fighter(owner);
     if (!this.alive(f)) return;
-    f.clearAllCooldowns();
+    // Its own id is held back: the kit clock above is the real gate, and this keeps any
+    // stamp the online relay may have left from being wiped as well.
+    f.clearAllCooldowns('winds-of-change');
     this.sides[owner].spinCharges = this.maxSpinCharges(owner);
     this.avatar(owner)?.play('flex');
     this.fx(owner).petalBurst(f.x, f.y, 90, 16);

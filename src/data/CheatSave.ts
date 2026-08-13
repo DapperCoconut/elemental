@@ -37,11 +37,10 @@ const MAX_ITEM_STACK = 99;
 const CHEAT_SLOT = 0;
 
 /**
- * Registry entries that are not player elements: the training dummy, and the body the
- * Disgraced King fights in. Everything else in `ELEMENT_MAP` is something a cheat profile
- * is supposed to own.
+ * Registry entries that are not player elements: the body the Disgraced King fights in.
+ * Everything else in `ELEMENT_MAP` is something a cheat profile is supposed to own.
  */
-const NON_PLAYER_ELEMENT_IDS = new Set(['dummy', 'king']);
+const NON_PLAYER_ELEMENT_IDS = new Set(['king']);
 
 /**
  * Every element the profile should have, taken from the element registry rather than from
@@ -86,9 +85,8 @@ function maxOutCurrentProfile(): void {
   // that grants Justice; both divine elements are unlocked above regardless.
   PlayerData.markDevourerDefeated('kill');
 
-  // ── Mutations + secret enemy ───────────────────────────────────────
+  // ── Mutations ──────────────────────────────────────────────────────
   for (const m of MUTATIONS) PlayerData.unlockMutation(m.id);
-  PlayerData.unlockDummy();
 
   // ── Secret modes: screwdriver in hand, every plate already off ─────
   PlayerData.findScrewdriver();
@@ -268,7 +266,6 @@ export function verifyCheatSave(): string[] {
     want(PlayerData.isGauntletHardUnlocked(), 'hard gauntlet locked');
     want(PlayerData.isKingDefeated(), 'Disgraced King not felled');
     want(PlayerData.isDevourerDefeated(), 'Devourer not felled');
-    want(PlayerData.isDummyUnlocked(), 'training dummy locked');
     want(PlayerData.isScrewdriverFound(), 'screwdriver not found');
     for (const mode of SECRET_MODES) {
       want(PlayerData.isSecretModeUnlocked(mode.id), `secret mode ${mode.id} still bolted down`);
@@ -320,7 +317,6 @@ export function applyKonamiCheat(): { campaignSlot: boolean } {
   PlayerData.unlockGauntlet();
   for (const id of BASE_ELEMENTS) PlayerData.completeGauntlet(id);
 
-  PlayerData.unlockDummy();
   for (const m of MUTATIONS) PlayerData.unlockMutation(m.id);
 
   const campaignSlot = CP.getSlot(0) !== null;

@@ -1,20 +1,28 @@
 import Phaser from 'phaser';
-import { Husk, HuskWorld } from './Husk';
+import { Husk, HuskWorld, BossAoeOpts, BossShotOpts } from './Husk';
 import { Fighter } from '../entities/Fighter';
 import { Projectile } from '../combat/Projectile';
 import { HP_SCALE } from '../data/Balance';
 import { Sfx, Music } from '../audio';
-import { Mansion, ROOM_META, HALL_ROOM, ROOM_MAX_HP } from './Mansion';
+import { Mansion, ROOM_META, ROOM_COUNT, HALL_ROOM, ROOM_MAX_HP, CELLAR_ROOM } from './Mansion';
 import { HuskEffectEngine, EffectWorld } from './HuskEffects';
+import { RoomFeatures, RoomFeatureHooks } from './RoomFeatures';
+import { ApocalypseKit, ApocalypseWorld } from './Apocalypse';
+import { JournalBook } from './HuskJournal';
+import { Observatory } from './Constellations';
+import { RecordPlayer } from './RecordPlayer';
+import * as PlayerData from '../data/PlayerData';
 import {
   HuskVariantDef,
   BASIC_HUSK,
+  CORRUPT_KIN,
   InvasionTheme,
   getInvasionTheme,
   rollLightningVariant,
   rollBossVariant,
   isBossWave,
   huskVariantIndex,
+  getHuskVariant,
 } from './HuskVariants';
 
 /** Narrow surface the invasion kit needs from ArenaScene. */
@@ -54,6 +62,8 @@ export interface InvasionArenaApi {
   tryHitSilenceStalker(x: number, y: number, radius: number): boolean;
   /** Soul: a real husk died — feeds the player's corpse queue if they're playing Soul. */
   notifyHuskDefeated?(husk: Husk): void;
+  /** Where the local player is pointing — the apocalypse torch follows the cursor. */
+  aim(): { x: number; y: number };
 }
 
 const INTERMISSION_MS = 2600;
@@ -179,11 +189,13 @@ export type HuskStatus =
  * the effect happened in; the guest skips effects it isn't looking at.
  */
 export type InvasionFx =
-  | { k: 'boom'; x: number; y: number; r: number; rm?: number }
+  | { k: 'boom'; x: number; y: number; r: number; c?: number; rm?: number }
   | { k: 'lane'; x: number; y: number; x2: number; y2: number; c: number; ms: number; rm?: number }
   | { k: 'heal'; x: number; y: number; r: number; rm?: number }
-  | { k: 'shot'; x: number; y: number; vx: number; vy: number; ms: number; rm?: number }
+  | { k: 'shot'; x: number; y: number; vx: number; vy: number; ms: number; c?: number; rr?: number; rm?: number }
   | { k: 'possess'; x: number; y: number; rm?: number }
+  // A boss telegraph: the floor lighting up before it goes off.
+  | { k: 'warn'; x: number; y: number; r: number; c: number; ms: number; ring?: boolean; rm?: number }
   // Elemental lightning branding a fresh spawn.
   | { k: 'bolt'; x: number; y: number; c: number; rm?: number }
   // A ground zone (puddle / slick / lava / goo) appearing.
@@ -211,6 +223,12 @@ export interface InvasionCoopHooks {
   onWaveAnnounced: (wave: number, room: number) => void;
   /** A room fell — the guest seals it too. */
   onRoomLost: (room: number) => void;
+  /** The eye in the cellar was woken — the guest's mansion goes with it. */
+  onApocalypse: () => void;
+  /** A tonic left the shelf. The shelf is shared, so the guest must see it go. */
+  onTonicTaken: (slot: number) => void;
+  /** A room's corruption changed state — the guest shows the same banner. */
+  onCorruption: (room: number, kind: 'seeded' | 'taken' | 'cleansed') => void;
 }
 
 interface HuskShot {
@@ -222,6 +240,10 @@ interface HuskShot {
   room: number;
   /** Elemental flavour of the shooter (psychic orbs home, depths shots splash). */
   elementId?: string;
+  /** Bends toward whatever it can see (psychic orbs, the Dreamer's). */
+  homing?: boolean;
+  /** Contact radius; boss orbs are fatter than a spitter's gob. */
+  hitRadius?: number;
 }
 
 type WavePhase = 'idle' | 'warning' | 'active' | 'rest';
@@ -256,7 +278,11 @@ export class InvasionKit implements HuskWorld, EffectWorld {
   private nextHuskId = 1;
   private shots: HuskShot[] = [];
   private targetRoom = -1;
+  /** Apocalypse co-op: a second room under attack at the same time, or -1. */
+  private targetRoom2 = -1;
   private lastTargetRoom = -1;
+  /** Alternates which of the two targeted rooms the next spawn climbs into. */
+  private spawnFlip = false;
   private nextGnawTickAt = 0;
   private lastGnawWarnAt = 0;
   private ending = false;
@@ -276,6 +302,50 @@ export class InvasionKit implements HuskWorld, EffectWorld {
   /** Campaign world theme: kin-only lightning strikes and an element-tinted manor. */
   private theme: InvasionTheme | null = null;
 
+  // ── The mansion's own contents ────────────────────────────────────
+  /** Table, shelf, goo and telescope — the four things you can press E on. */
+  private features: RoomFeatures | null = null;
+  /** Everything the woken eye brings: dark, traps, infection, corruption. */
+  private apocalypse: ApocalypseKit | null = null;
+  /** The Study's bestiary. */
+  private journal: JournalBook | null = null;
+  /** The Observatory's constellation sky and the run's aligned buffs. */
+  private observatory: Observatory | null = null;
+  /** The cellar's gramophone — pay banked shards, skip the night forward. */
+  private record: RecordPlayer | null = null;
+  /** True once the needle has been moved. Locks the wave-8 achievement out. */
+  private wavesWereSkipped = false;
+  /**
+   * Bumped every reset(). Boss blasts land on a delayed call, and the scene's
+   * timers outlive a match restart — the epoch is what stops a gavel swung in
+   * one run from going off in the next.
+   */
+  private bossEpoch = 0;
+  /** Shards already spent on the sky, subtracted from the banked total. */
+  private shardsSpent = 0;
+  /**
+   * True on a co-op guest, which owns its own props, torch and traps but never a
+   * husk — so it must not advance corruption, and its prop use has to be relayed
+   * to the host rather than acted on locally.
+   */
+  private guestSide = false;
+  /**
+   * Co-op: where the other player is, from whichever side is asking. Set by
+   * InvasionCoopKit on both peers so the torch and the prop relay have one
+   * source instead of two half-working ones.
+   */
+  allyProbe: (() => { fighter: Fighter; room: number } | null) | null = null;
+  /** Co-op guest → host relay for props the guest used. Null on host and solo. */
+  guestRelay: {
+    onTonic(slot: number): void;
+    onApocalypse(): void;
+    onSpend(amount: number): void;
+  } | null = null;
+  /** Co-op guest: its mansion belongs to InvasionCoopKit — this unfolds that one. */
+  guestMansionHook: ((on: boolean) => void) | null = null;
+  /** Variant ids already in the saved journal — the localStorage write guard. */
+  private journalKnown = new Set<string>();
+
   private waveBanner: Phaser.GameObjects.Text | null = null;
   private waveLabel: Phaser.GameObjects.Text | null = null;
   private shardLabel: Phaser.GameObjects.Text | null = null;
@@ -285,8 +355,10 @@ export class InvasionKit implements HuskWorld, EffectWorld {
 
   constructor(private arena: InvasionArenaApi) {}
 
-  get shardsEarned(): number { return this.shards; }
+  /** Banked at the end of the run — what the sky took is already gone. */
+  get shardsEarned(): number { return Math.max(0, this.shards - this.shardsSpent); }
   get wavesCompleted(): number { return this.clearedWaves; }
+  get isApocalypse(): boolean { return !!this.apocalypse?.isActive; }
 
   reset(
     difficulty: InvasionDifficultyDef = INVASION_DIFFICULTIES[0],
@@ -315,6 +387,11 @@ export class InvasionKit implements HuskWorld, EffectWorld {
     this.allyRoom = 0;
     this.slowMult = 1;
     this.slowUntil = 0;
+    this.targetRoom2 = -1;
+    this.spawnFlip = false;
+    this.shardsSpent = 0;
+    this.wavesWereSkipped = false;
+    this.bossEpoch++;
     for (const s of this.shots) s.gfx.destroy();
     this.shots = [];
 
@@ -327,6 +404,8 @@ export class InvasionKit implements HuskWorld, EffectWorld {
     this.mansion.reset();
     if (!this.effects) this.effects = new HuskEffectEngine(this);
     this.effects.reset();
+
+    this.buildMansionContents();
 
     const { width } = scene.scale;
     this.waveBanner?.destroy();
@@ -366,6 +445,238 @@ export class InvasionKit implements HuskWorld, EffectWorld {
       .on('pointerdown', () => this.arena.endRun());
   }
 
+  /**
+   * Build (once) and reset the four props, the bestiary, the sky and the
+   * apocalypse. All four are lazy for the same reason the kit itself is: a
+   * co-op guest never calls reset(), and must not pay for a mansion it doesn't
+   * simulate — its own copies are built by InvasionCoopKit through
+   * `prepareGuestContents()` instead.
+   */
+  private buildMansionContents(): void {
+    const arena = this.arena;
+    this.journalKnown = new Set(PlayerData.getHuskJournal());
+    if (!this.journal) this.journal = new JournalBook(arena.scene);
+    if (!this.observatory) {
+      this.observatory = new Observatory(arena.scene, {
+        availableShards: () => this.shardsEarned,
+        spendShards: (n) => {
+          if (this.shardsEarned < n) return false;
+          this.shardsSpent += n;
+          // The purse is shared in co-op and the host banks it, so a guest's
+          // alignment has to be charged on the host's ledger too.
+          this.guestRelay?.onSpend(n);
+          return true;
+        },
+        get player() { return arena.player; },
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+      });
+    }
+    if (!this.apocalypse) {
+      const world: ApocalypseWorld = {
+        get scene() { return arena.scene; },
+        get player() { return arena.player; },
+        currentRoom: () => this.currentRoom(),
+        // Traps spring on the local player only, and never while they are
+        // downed or reading — neither is a state you can step off a plate from.
+        localTargets: (r) => (r === this.currentRoom() && !this.isOverlayOpen()
+          ? [arena.player, ...arena.plantTargets()].filter((f) => f.active && f.hp > 0 && !f.downed)
+          : []),
+        damageTarget: (t, a) => this.damageTargetInternal(t, a),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        livingHusks: () => this.livingHusks(),
+        huntableIn: (r) => this.targetsInRoomInternal(r).length > 0,
+        spawnCorruptKin: (x, y, room) => this.spawnChild(CORRUPT_KIN, x, y, room),
+        corruptibleRooms: () => {
+          const m = this.mansion;
+          return m ? [HALL_ROOM, ...m.standingRooms()] : [];
+        },
+        torchMult: () => this.observatory?.torchMult ?? 1,
+        aimAngle: () => {
+          const p = arena.player;
+          const a = arena.aim();
+          return Math.atan2(a.y - p.y, a.x - p.x);
+        },
+        allyTorch: () => {
+          const ally = this.allyProbe?.();
+          if (!ally || ally.room !== this.currentRoom() || !ally.fighter.active) return null;
+          return { x: ally.fighter.x, y: ally.fighter.y, angle: ally.fighter.facingAngle };
+        },
+        // Husks have exactly one owner, and corruption grows husks.
+        ownsCorruption: () => !this.guestSide,
+        onCorruptionEvent: (room, kind) => this.coopHooks?.onCorruption(room, kind),
+      };
+      this.apocalypse = new ApocalypseKit(world);
+    }
+    if (!this.record) {
+      this.record = new RecordPlayer({
+        get scene() { return arena.scene; },
+        currentWave: () => this.wave,
+        difficultyId: () => this.difficulty.id,
+        apocalypseActive: () => !!this.apocalypse?.isActive,
+        skipTo: (wave) => this.skipToWave(wave),
+        // Husks have one owner, and skipping a wave is a statement about husks.
+        readOnly: () => this.guestSide,
+      });
+    }
+    if (!this.features) {
+      const hooks: RoomFeatureHooks = {
+        get scene() { return arena.scene; },
+        get player() { return arena.player; },
+        currentRoom: () => this.currentRoom(),
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        openJournal: () => this.journal?.toggle(),
+        openTelescope: () => this.observatory?.toggle(),
+        openRecordPlayer: () => this.record?.toggle(),
+        drinkTonic: (slot) => this.drinkTonic(slot),
+        wakeTheEye: () => this.wakeTheEye(),
+        apocalypseActive: () => !!this.apocalypse?.isActive,
+        overlayOpen: () => this.isOverlayOpen(),
+        closeOverlays: () => {
+          this.journal?.close();
+          this.observatory?.close();
+          this.record?.close();
+        },
+      };
+      this.features = new RoomFeatures(hooks);
+    }
+
+    this.journal.close();
+    this.observatory.reset();
+    this.record.reset();
+    this.apocalypse.reset();
+    this.features.reset();
+  }
+
+  /**
+   * The E key, before the element gets a look at it. Returns true when a prop
+   * (or an open overlay) claimed the frame, so ArenaScene can skip ability input
+   * rather than casting into the wine racks.
+   */
+  handleInteractInput(eKey: Phaser.Input.Keyboard.Key, delta: number): boolean {
+    return this.features?.handleInput(eKey, delta) ?? false;
+  }
+
+  /** The journal, the telescope or the gramophone is up — nothing else should read input. */
+  isOverlayOpen(): boolean {
+    return !!this.journal?.isOpen || !!this.observatory?.isOpen || !!this.record?.isOpen;
+  }
+
+  /** Tear down everything with a display list presence (scene shutdown). */
+  destroyContents(): void {
+    this.journal?.destroy();
+    this.observatory?.destroy();
+    this.record?.destroy();
+    this.apocalypse?.destroy();
+    this.features?.destroy();
+  }
+
+  // ── The four props ────────────────────────────────────────────────
+
+  /**
+   * The tonics have been on that shelf a very long time. Whatever they were,
+   * they are now 15 points of harm and a bad afternoon — but there are still
+   * only three of them, and in co-op the whole team shares the shelf.
+   */
+  private drinkTonic(slot: number): void {
+    if (!this.features?.tonicsLeft[slot]) return;
+    this.features.consumeTonic(slot);
+    if (this.coopHooks) this.coopHooks.onTonicTaken(slot);
+    else this.guestRelay?.onTonic(slot);
+    const p = this.arena.player;
+    Sfx.play('potion-drink');
+    Sfx.play('status-poison');
+    Fighter.asNonAllyDamage(() => p.takeDamage(15));
+    this.arena.spawnHitFlash(p.x, p.y, 0x6a8a2a);
+    this.arena.showFloatingText(p.x, p.y - 54, '🤢 EXPIRED — IT WAS NOT A TONIC', '#88cc44');
+    this.arena.scene.cameras.main.shake(200, 0.004);
+  }
+
+  /**
+   * Five seconds of contact with the thing in the goo. The house answers.
+   * Also the guest's entry point (via the co-op kit) so both sides flip together.
+   */
+  private wakeTheEye(): void {
+    if (this.apocalypse?.isActive) return;
+    PlayerData.markApocalypseSeen();
+    this.beginApocalypse();
+    if (this.coopHooks) this.coopHooks.onApocalypse();
+    else this.guestRelay?.onApocalypse();
+  }
+
+  /**
+   * Flip the whole run over. Called on both sides of the wire: the mansion
+   * unfolds its corner wings and repaints as a ruin, and the apocalypse kit
+   * takes over the lighting.
+   */
+  beginApocalypse(): void {
+    if (this.apocalypse?.isActive) return;
+    this.mansion?.setApocalypse(true);
+    this.guestMansionHook?.(true);
+    this.apocalypse?.activate();
+  }
+
+  /**
+   * Co-op guest entry point. The guest never calls `reset()` (it simulates no
+   * husks), but it still walks the same house, so it needs its own props, book,
+   * sky and apocalypse layer. Everything built here is local-only: the tonics
+   * and the eye relay to the host, corruption arrives in snaps.
+   */
+  prepareGuestContents(): void {
+    this.guestSide = true;
+    this.buildMansionContents();
+  }
+
+  /** Guest-side per-frame tick for everything reset() would otherwise drive. */
+  updateGuestContents(time: number, delta: number): void {
+    this.features?.update(time);
+    this.record?.update(delta);
+    this.apocalypse?.update(time, delta);
+  }
+
+  /** Guest-side: the host's corruption readout, for the stain and the minimap. */
+  applyRemoteCorruption(levels: number[]): number[] {
+    this.apocalypse?.applyRemoteCorruption(levels);
+    return this.apocalypse?.corruptionLevels() ?? [];
+  }
+
+  /** Co-op guest: replay a corruption banner the host reported. */
+  showCorruptionBanner(room: number, kind: 'seeded' | 'taken' | 'cleansed'): void {
+    this.apocalypse?.showCorruptionBanner(room, kind);
+  }
+
+  /** Co-op guest: the host says this tonic is gone. */
+  applyRemoteTonics(mask: number): void {
+    this.features?.applyRemoteTonics(mask);
+  }
+
+  /** The other player took a bottle off the shared shelf. No damage — theirs. */
+  noteTonicTaken(slot: number): void {
+    this.features?.consumeTonic(slot);
+  }
+
+  /** Co-op host: the guest bought a constellation out of the shared purse. */
+  noteRemoteSpend(amount: number): void {
+    this.shardsSpent += Math.max(0, amount);
+  }
+
+  /**
+   * Co-op guest: the run's shard total lives in InvasionCoopKit (it arrives in
+   * snaps), so the telescope has to be told what the purse holds.
+   */
+  setGuestShardTotal(total: number): void {
+    if (!this.guestSide) return;
+    // The host's figure is already net of everything either of us has aligned —
+    // including the guest's own relayed spend — so the local tally is cleared
+    // rather than subtracted twice.
+    this.shards = total;
+    this.shardsSpent = 0;
+  }
+
+  /** Guest-side wave tick — the Kindled Torch's per-wave shield charge. */
+  onWaveBeganLocal(): void {
+    this.observatory?.onWaveBegan();
+  }
+
   update(time: number, delta: number): void {
     const player = this.arena.player;
     const alive = this.livingHusks();
@@ -384,7 +695,8 @@ export class InvasionKit implements HuskWorld, EffectWorld {
       mansion.setTarget(-1);
       this.coopHooks?.onWaveCleared(this.wave, bonus);
       // Achievement — Plants vs Zombies: hold the line to wave 8 with a garden.
-      if (this.wave >= PLANTS_VS_ZOMBIES_WAVE && this.arena.elementId === 'life') {
+      // Paying the gramophone to get there is not holding the line.
+      if (this.wave >= PLANTS_VS_ZOMBIES_WAVE && !this.wavesWereSkipped && this.arena.elementId === 'life') {
         this.arena.unlockAchievement('plants-vs-zombies');
       }
     }
@@ -401,12 +713,13 @@ export class InvasionKit implements HuskWorld, EffectWorld {
 
     // Trickle out this wave's spawns through the target room's windows.
     while (this.phase === 'active' && (this.pendingSpawns > 0 || this.pendingBoss) && time >= this.nextSpawnAt) {
-      if (this.targetRoom < 0) { this.pendingSpawns = 0; this.pendingBoss = null; break; }
+      if (this.targetRoom < 0 && this.targetRoom2 < 0) { this.pendingSpawns = 0; this.pendingBoss = null; break; }
+      if (this.targetRoom < 0) { this.targetRoom = this.targetRoom2; this.targetRoom2 = -1; }
       if (this.pendingBoss) {
         const boss = this.pendingBoss;
         this.pendingBoss = null;
-        this.spawnWaveHusk(boss);
-        this.announceBoss(boss);
+        const spawned = this.spawnWaveHusk(boss);
+        this.announceBoss(boss, !!spawned?.infected);
       } else {
         this.pendingSpawns--;
         const struck = rollLightningVariant(this.wave, this.difficulty.id, Math.random, this.theme);
@@ -427,15 +740,24 @@ export class InvasionKit implements HuskWorld, EffectWorld {
     this.updateShots(time, delta);
     this.tickRoomPressure(time, alive);
 
+    // The mansion's own contents: props first (they may open an overlay), then
+    // the apocalypse, which runs last so its dormancy stomp on the corrupt-kin
+    // wins over the husk AI that ran at the top of this frame.
+    this.features?.update(time);
+    this.record?.update(delta);
+    this.apocalypse?.update(time, delta);
+    if (this.apocalypse) mansion.setCorruptionReadout(this.apocalypse.corruptionLevels());
+
     // Mansion: door travel, door pulses, minimap (with live husk counts).
-    const counts = [0, 0, 0, 0, 0];
+    const counts = new Array<number>(ROOM_COUNT).fill(0);
     for (const h of alive) counts[h.roomIndex] = (counts[h.roomIndex] ?? 0) + 1;
     mansion.update(time, player, counts);
 
-    this.shardLabel?.setText(`🩸 ${this.shards}`);
+    this.shardLabel?.setText(`🩸 ${this.shardsEarned}`);
     this.remaining = alive.length + this.pendingSpawns + (this.pendingBoss ? 1 : 0);
     const roomName = this.targetRoom >= 0
       ? `${ROOM_META[this.targetRoom].emoji} ${ROOM_META[this.targetRoom].name}`
+        + (this.targetRoom2 >= 0 ? ` + ${ROOM_META[this.targetRoom2].emoji} ${ROOM_META[this.targetRoom2].name}` : '')
       : undefined;
     this.waveLabel?.setText(formatWaveLabel(this.wave, this.remaining, roomName));
   }
@@ -450,15 +772,34 @@ export class InvasionKit implements HuskWorld, EffectWorld {
     const candidates = [HALL_ROOM, ...standing];
     // Prefer somewhere new, so the defence keeps you moving through the house.
     const options = candidates.filter((r) => r !== this.lastTargetRoom);
-    const room = options[Math.floor(Math.random() * options.length)] ?? candidates[0];
+    // The first wave always comes up through the cellar — it is where the house
+    // is thinnest, and it puts you next to the record player on night one.
+    const room = waveNum === 1 && candidates.includes(CELLAR_ROOM)
+      ? CELLAR_ROOM
+      : options[Math.floor(Math.random() * options.length)] ?? candidates[0];
+
+    // Apocalypse co-op: from wave three on, the house sometimes comes at both of
+    // you at once and you have to split up. Solo runs never get this — one
+    // defender cannot be in two rooms, and losing a wing to arithmetic isn't a
+    // fight.
+    let second = -1;
+    if (this.coopHooks && this.apocalypse?.isActive && waveNum >= 3 && Math.random() < 0.45) {
+      const rest = candidates.filter((r) => r !== room);
+      second = rest[Math.floor(Math.random() * rest.length)] ?? -1;
+    }
 
     this.wave = waveNum;
     this.targetRoom = room;
+    this.targetRoom2 = second;
+    this.spawnFlip = false;
     this.lastTargetRoom = room;
     this.phase = 'warning';
-    this.phaseEndsAt = time + ROOM_WARNING_MS;
-    mansion.setTarget(room);
+    // The corner wings are a room further out, and you can no longer see across
+    // the floor to find them — the ruined house gives you longer to get there.
+    this.phaseEndsAt = time + (this.apocalypse?.isActive ? ROOM_WARNING_MS + 1800 : ROOM_WARNING_MS);
+    mansion.setTarget(room, second);
     this.coopHooks?.onWaveAnnounced(waveNum, room);
+    if (second >= 0) this.coopHooks?.onWaveAnnounced(waveNum, second);
 
     Sfx.play('countdown-go', { rate: Math.min(1.6, 0.9 + waveNum * 0.04) });
     Music.setIntensity(Math.min(1, 0.35 + waveNum * 0.05));
@@ -478,9 +819,13 @@ export class InvasionKit implements HuskWorld, EffectWorld {
 
   private beginWave(time: number): void {
     this.phase = 'active';
-    this.pendingSpawns = Math.round((4 + 3 * (this.wave - 1)) * (this.coopHooks?.spawnMultiplier ?? 1));
-    this.pendingBoss = isBossWave(this.wave) ? rollBossVariant(Math.random) : null;
+    // A split wave is bigger, but not twice as big — you are still two people.
+    const split = this.targetRoom2 >= 0 ? 1.5 : 1;
+    this.pendingSpawns = Math.round(
+      (4 + 3 * (this.wave - 1)) * (this.coopHooks?.spawnMultiplier ?? 1) * split);
+    this.pendingBoss = isBossWave(this.wave) ? rollBossVariant(Math.random, this.wave) : null;
     this.nextSpawnAt = time;
+    this.observatory?.onWaveBegan();
 
     if (!this.waveBanner) return;
     this.waveBanner.setText(`WAVE ${this.wave}`).setFontSize(28).setColor('#88cc44').setAlpha(1);
@@ -488,10 +833,74 @@ export class InvasionKit implements HuskWorld, EffectWorld {
     this.arena.scene.tweens.add({ targets: this.waveBanner, alpha: 0, delay: 1400, duration: 600 });
   }
 
-  private announceBoss(boss: HuskVariantDef): void {
-    const hex = `#${boss.color.toString(16).padStart(6, '0')}`;
-    this.showBossBanner(boss.name, hex);
-    this.coopHooks?.onBossSpawned(boss.name, hex);
+  private announceBoss(boss: HuskVariantDef, infected: boolean): void {
+    // An infected boss is announced as one: the eye goes on the banner and the
+    // name is read in the corruption's colour, so you know before it moves.
+    const hex = infected ? '#ff5577' : `#${boss.color.toString(16).padStart(6, '0')}`;
+    const name = `${boss.emoji ?? ''} ${infected ? `INFECTED ${boss.name}` : boss.name}`.trim();
+    this.showBossBanner(name, hex);
+    this.coopHooks?.onBossSpawned(name, hex);
+  }
+
+  /**
+   * The gramophone was paid. Everything the current wave still owes is called
+   * off and everything it already put on the floor walks back out — killed off
+   * the books, paying nothing and writing no journal entry, so a skip can never
+   * be a way to farm one. Then the counter is set so the *next* wave announced
+   * is `target`, and the run continues from a night that never happened.
+   *
+   * The corruption's own brood is deliberately left standing: corrupt-kin are
+   * not part of any wave, and clearing a room of them is supposed to cost you
+   * a fight rather than a coin.
+   */
+  private skipToWave(target: number): void {
+    const scene = this.arena.scene;
+    if (this.ending || target <= this.wave) return;
+    const from = this.wave;
+
+    this.pendingSpawns = 0;
+    this.pendingBoss = null;
+    for (const h of this.livingHusks()) {
+      if (h.variant.id === 'corrupt-kin') continue;
+      h.boss?.clear();
+      // Unbind any superposition first, so neither half is left pointing at the other.
+      if (h.possessing) { h.possessing.possessedBy = null; h.possessing = null; }
+      if (h.possessedBy) { h.possessedBy.possessing = null; h.possessedBy = null; }
+      h.noRewardKill = true;
+      this.effects?.unregister(h);
+      this.apocalypse?.forget(h);
+      this.arena.removeEnemy(h);
+      h.hideHealthBar();
+      h.setActive(false);
+      scene.tweens.add({
+        targets: h, alpha: 0, duration: 450,
+        onComplete: () => { if (h.scene) h.destroy(); },
+      });
+    }
+    for (const s of this.shots) s.gfx.destroy();
+    this.shots = [];
+
+    this.wavesWereSkipped = true;
+    this.wave = target - 1;
+    this.clearedWaves = Math.max(this.clearedWaves, target - 1);
+    this.remaining = 0;
+    this.targetRoom = -1;
+    this.targetRoom2 = -1;
+    this.mansion?.setTarget(-1);
+    this.phase = 'rest';
+    this.phaseEndsAt = scene.time.now + INTERMISSION_MS;
+
+    Sfx.play('boss-phase', { rate: 1.4 });
+    Music.setIntensity(Math.min(1, 0.35 + target * 0.05));
+    const player = this.arena.player;
+    this.arena.showFloatingText(player.x, player.y - 50,
+      `🎵 THE NIGHT SKIPS  —  WAVE ${from} → ${target}`, '#e8c88a');
+    if (this.waveBanner) {
+      this.waveBanner.setText(`🎵  THE NEEDLE JUMPS TO WAVE ${target}`)
+        .setFontSize(22).setColor('#e8c88a').setAlpha(1);
+      scene.tweens.killTweensOf(this.waveBanner);
+      scene.tweens.add({ targets: this.waveBanner, alpha: 0, delay: 1500, duration: 700 });
+    }
   }
 
   /** Also called on the guest side (via the co-op kit) so both players see it. */
@@ -656,18 +1065,39 @@ export class InvasionKit implements HuskWorld, EffectWorld {
     this.allyRoom = room;
   }
 
-  /** Elemental hazards (ice bites, oil slicks, gum trails) slowing the player. */
+  /**
+   * Everything the invasion does to how fast the player walks: elemental hazards
+   * (ice bites, oil slicks, gum trails) slowing them down, and the Swift Hare
+   * constellation speeding them up. Pulled by ArenaScene rather than pushed into
+   * `playerSpeedMult`, which a dozen kits already rewrite every frame.
+   */
   playerHazardSpeedMult(time: number): number {
-    return time < this.slowUntil ? this.slowMult : 1;
+    const slow = time < this.slowUntil ? this.slowMult : 1;
+    return slow * (this.observatory?.speedMult() ?? 1);
   }
 
-  /** Mansion snapshot for the co-op wire: room HPs, lost mask, target. */
-  mansionState(): { hp: number[]; lost: number; target: number } {
+  /** Mansion snapshot for the co-op wire: room HPs, lost mask, targets, ruin state. */
+  mansionState(): {
+    hp: number[]; lost: number; target: number; t2: number;
+    ap: boolean; co: number[]; tn: number;
+  } {
     const m = this.mansion;
-    if (!m) return { hp: [ROOM_MAX_HP, ROOM_MAX_HP, ROOM_MAX_HP, ROOM_MAX_HP], lost: 0, target: -1 };
+    const blank = new Array<number>(ROOM_COUNT - 1).fill(ROOM_MAX_HP);
+    if (!m) {
+      return { hp: blank, lost: 0, target: -1, t2: -1, ap: false, co: [], tn: 7 };
+    }
     let mask = 0;
-    for (let r = 1; r <= 4; r++) if (m.lost[r]) mask |= 1 << (r - 1);
-    return { hp: [m.hp[1], m.hp[2], m.hp[3], m.hp[4]], lost: mask, target: this.targetRoom };
+    for (let r = 1; r < ROOM_COUNT; r++) if (m.lost[r]) mask |= 1 << (r - 1);
+    return {
+      hp: blank.map((_, i) => m.hp[i + 1]),
+      lost: mask,
+      target: this.targetRoom,
+      t2: this.targetRoom2,
+      ap: m.isApocalypse,
+      // Quantised to a byte apiece: the guest only paints with this.
+      co: (this.apocalypse?.corruptionLevels() ?? []).map((v) => Math.round(v * 255)),
+      tn: this.features?.tonicMask() ?? 7,
+    };
   }
 
   /** Show/hide every husk (and its health bar) as the player changes rooms. */
@@ -684,11 +1114,19 @@ export class InvasionKit implements HuskWorld, EffectWorld {
 
   // ── Spawning ──────────────────────────────────────────────────────
 
-  private spawnWaveHusk(variant: HuskVariantDef, struck = false): void {
-    if (this.targetRoom < 0) return;
-    const pos = this.mansion!.windowSpawn(this.targetRoom, Math.random);
-    const husk = this.spawnHusk(variant, pos, this.targetRoom);
-    if (husk && struck) this.lightningFx(pos.x, pos.y, variant.color, this.targetRoom);
+  private spawnWaveHusk(variant: HuskVariantDef, struck = false): Husk | null {
+    // A split wave alternates between its two rooms, so neither is ever the
+    // "real" one you could safely camp.
+    let room = this.targetRoom;
+    if (this.targetRoom2 >= 0) {
+      this.spawnFlip = !this.spawnFlip;
+      room = this.spawnFlip ? this.targetRoom2 : this.targetRoom;
+    }
+    if (room < 0) return null;
+    const pos = this.mansion!.windowSpawn(room, Math.random);
+    const husk = this.spawnHusk(variant, pos, room);
+    if (husk && struck) this.lightningFx(pos.x, pos.y, variant.color, room);
+    return husk;
   }
 
   private spawnHusk(
@@ -719,6 +1157,17 @@ export class InvasionKit implements HuskWorld, EffectWorld {
     husk.once('defeated', () => this.onHuskKilled(husk));
     this.arena.addEnemy(husk);
     this.effects?.register(husk);
+    // Infection rides on top of the elemental brand rather than replacing it —
+    // an infected Magma Husk III is exactly as bad as it sounds. Corrupt-kin are
+    // already the corruption's own and are left alone. A boss is held to a
+    // higher bar: only a room the corruption has most of the way taken changes
+    // one, and when it does it gets a move it otherwise never has.
+    if (variant.id !== 'corrupt-kin' && this.apocalypse) {
+      const infect = variant.isBoss
+        ? this.apocalypse.shouldInfectBoss(room)
+        : this.apocalypse.shouldInfect(room);
+      if (infect) this.apocalypse.infect(husk, !!variant.isBoss);
+    }
 
     const inView = !this.mansion || this.mansion.currentRoom === room;
     if (!inView) {
@@ -774,7 +1223,10 @@ export class InvasionKit implements HuskWorld, EffectWorld {
   private onHuskKilled(husk: Husk): void {
     this.arena.removeEnemy(husk);
 
-    // A demon riding this husk is set loose rather than dying with it.
+    // Anything a boss had queued dies with it — a gavel must not land after
+    // the thing that swung it is gone.
+    husk.boss?.clear();
+    // A boss riding this husk is set loose rather than dying with it.
     husk.possessedBy?.releasePossession(this.arena.scene.time.now);
     // Cleaning up a demon mid-possession must not strand its victim's flag.
     if (husk.possessing) { husk.possessing.possessedBy = null; husk.possessing = null; }
@@ -782,12 +1234,31 @@ export class InvasionKit implements HuskWorld, EffectWorld {
     if (husk.variant.explodes) this.detonate(husk);
     this.effects?.onHuskDeath(husk);
     this.effects?.unregister(husk);
+    const wasInfected = !!this.apocalypse?.isInfected(husk);
+    this.apocalypse?.forget(husk);
+
+    // The journal writes itself, and only off your own kills. The in-memory set
+    // is checked first so the common case (a variant already in the book) never
+    // touches localStorage — this runs on every husk that dies.
+    if (!husk.noRewardKill && !this.journalKnown.has(husk.variant.id)) {
+      this.journalKnown.add(husk.variant.id);
+      if (PlayerData.recordHuskKill(husk.variant.id)) {
+        this.arena.showFloatingText(husk.x, husk.y - 46, '📓 NEW JOURNAL ENTRY', '#e4d7b4');
+      }
+    }
+    // The Leech: every kill is a sip.
+    const leech = this.observatory?.killHeal ?? 0;
+    if (leech > 0 && !husk.noRewardKill) this.arena.player.heal(leech);
 
     if (!husk.noRewardKill) {
       const base = 1 + Math.floor((this.wave - 1) / 3);
       // Fortune husks are walking purses — twice the shards if you can pin one.
       const gild = husk.variant.elementId === 'fortune' ? 2 : 1;
-      const reward = Math.round(base * this.difficulty.shardMult * (husk.variant.isBoss ? 10 : 1) * gild);
+      // Corrupt-kin pay well: cutting a corruption out is the point.
+      const kin = husk.variant.id === 'corrupt-kin' ? 4 : 1;
+      const reward = Math.round(
+        base * this.difficulty.shardMult * (husk.variant.isBoss ? 10 : 1) * gild * kin
+        * (wasInfected ? 1.5 : 1) * (this.observatory?.shardMult() ?? 1));
       this.shards += reward;
       if (husk.visible) this.arena.showFloatingText(husk.x, husk.y - 30, `+${reward} 🩸`, '#cc44ff');
       this.coopHooks?.onHuskDefeated(husk, reward);
@@ -851,7 +1322,9 @@ export class InvasionKit implements HuskWorld, EffectWorld {
   }
 
   currentRoom(): number {
-    return this.mansion?.currentRoom ?? 0;
+    if (this.mansion) return this.mansion.currentRoom;
+    // Guest side: the mansion belongs to InvasionCoopKit, which feeds us the room.
+    return this.guestRoom >= 0 ? this.guestRoom : 0;
   }
 
   showFloatingText(x: number, y: number, text: string, color: string): void {
@@ -897,6 +1370,7 @@ export class InvasionKit implements HuskWorld, EffectWorld {
       expiresAt: scene.time.now + SHOT_LIFETIME_MS,
       room: from.roomIndex,
       elementId,
+      homing: elementId === 'psychic',
     });
     this.coopHooks?.onFx({ k: 'shot', x: from.x, y: from.y, vx, vy, ms: SHOT_LIFETIME_MS, rm: from.roomIndex });
   }
@@ -1002,6 +1476,177 @@ export class InvasionKit implements HuskWorld, EffectWorld {
     this.coopHooks?.onFx({ k: 'possess', x: victim.x, y: victim.y, rm: victim.roomIndex });
   }
 
+  // ── HuskWorld: the boss half ─────────────────────────────────────
+  //
+  // Everything the three tenth-wave brains can do to the room. The brains own
+  // *when* and *where*; this owns the pixels, the damage and the co-op mirror.
+
+  /** Is this room the one the local player is looking at? */
+  private inView(room: number): boolean {
+    return !this.mansion || this.mansion.currentRoom === room;
+  }
+
+  bossSay(from: Husk, text: string, colorHex: string): void {
+    if (!from.visible || !this.inView(from.roomIndex)) return;
+    this.arena.showFloatingText(from.x, from.y - 58, text, colorHex);
+  }
+
+  /** A boss two rooms away is not something you should be able to hear. */
+  bossSfx(from: Husk, name: string): void {
+    if (!this.inView(from.roomIndex)) return;
+    Sfx.play(name);
+  }
+
+  bossWanderPoint(from: Husk): { x: number; y: number } {
+    const { width: W, height: H } = this.arena.scene.scale;
+    // Well inside the wall band, and never right on top of where it already is.
+    for (let tries = 0; tries < 8; tries++) {
+      const x = 90 + Math.random() * (W - 180);
+      const y = 130 + Math.random() * (H - 230);
+      if (Phaser.Math.Distance.Between(x, y, from.x, from.y) > 150) return { x, y };
+    }
+    return { x: W / 2, y: H / 2 };
+  }
+
+  bossBlink(from: Husk, x: number, y: number, color: number): void {
+    const room = from.roomIndex;
+    this.bossFlash(from.x, from.y, 34, color, room);
+    (from.body as Phaser.Physics.Arcade.Body | null)?.reset(x, y);
+    this.bossFlash(x, y, 34, color, room);
+  }
+
+  private bossFlash(x: number, y: number, r: number, color: number, room: number): void {
+    this.coopHooks?.onFx({ k: 'boom', x, y, r, c: color, rm: room });
+    if (!this.inView(room)) return;
+    const ring = this.arena.scene.add.circle(x, y, r, color, 0.5).setDepth(6).setScale(1.4);
+    this.arena.scene.tweens.add({
+      targets: ring, scaleX: 0.2, scaleY: 0.2, alpha: 0, duration: 240,
+      onComplete: () => ring.destroy(),
+    });
+  }
+
+  bossHit(from: Husk, target: Fighter, amount: number, color: number): void {
+    this.damageTargetInternal(target, amount);
+    if (this.inView(from.roomIndex)) this.arena.spawnHitFlash(target.x, target.y, color);
+  }
+
+  bossSlow(mult: number, ms: number): void {
+    this.slowPlayer(mult, ms);
+  }
+
+  bossZone(
+    from: Husk, x: number, y: number, radius: number, color: number,
+    ms: number, tickDamage: number, slowMult?: number,
+  ): void {
+    this.effects?.spawnZone(x, y, radius, color, from.roomIndex, ms, { tickDamage, slowMult });
+  }
+
+  bossShot(from: Husk, angle: number, o: BossShotOpts): void {
+    const scene = this.arena.scene;
+    const lifetime = o.lifetimeMs ?? SHOT_LIFETIME_MS;
+    const vx = Math.cos(angle) * o.speed;
+    const vy = Math.sin(angle) * o.speed;
+    const gfx = scene.add.circle(from.x, from.y, o.radius, o.color, 1)
+      .setDepth(7).setStrokeStyle(2, 0x0a0014, 0.85);
+    if (!this.inView(from.roomIndex)) gfx.setVisible(false);
+    this.shots.push({
+      gfx, vx, vy,
+      damage: o.damage,
+      expiresAt: scene.time.now + lifetime,
+      room: from.roomIndex,
+      homing: o.homing,
+      hitRadius: o.radius + 12,
+    });
+    this.coopHooks?.onFx({
+      k: 'shot', x: from.x, y: from.y, vx, vy, ms: lifetime,
+      c: o.color, rr: o.radius, rm: from.roomIndex,
+    });
+  }
+
+  bossSpawn(from: Husk, variantId: string, count: number): void {
+    const variant = getHuskVariant(variantId);
+    const room = from.roomIndex;
+    const alive = this.livingHusks().length;
+    const n = Math.min(count, MAX_LIVE_HUSKS - alive);
+    if (n <= 0) return;
+    const wb = (this.arena.scene as Phaser.Scene & { physics: Phaser.Physics.Arcade.ArcadePhysics }).physics.world.bounds;
+    for (let i = 0; i < n; i++) {
+      const ang = (Math.PI * 2 * i) / n + Math.random() * 0.5;
+      const d = 76 + Math.random() * 46;
+      this.spawnHusk(variant, {
+        x: Phaser.Math.Clamp(from.x + Math.cos(ang) * d, wb.x + 46, wb.right - 46),
+        y: Phaser.Math.Clamp(from.y + Math.sin(ang) * d, wb.y + 46, wb.bottom - 46),
+      }, room);
+    }
+  }
+
+  /**
+   * A telegraphed blast. The warning is drawn immediately and the damage lands
+   * when it finishes, so the only thing standing between you and it is having
+   * walked out — which is the entire fight against all three of them.
+   */
+  bossAoe(from: Husk, o: BossAoeOpts): void {
+    const room = from.roomIndex;
+    this.drawBossWarning(o.x, o.y, o.radius, o.color, o.warnMs, o.ring, room);
+    this.coopHooks?.onFx({
+      k: 'warn', x: o.x, y: o.y, r: o.radius, c: o.color, ms: o.warnMs, ring: o.ring, rm: room,
+    });
+    const epoch = this.bossEpoch;
+    this.arena.scene.time.delayedCall(o.warnMs, () => {
+      if (this.ending || epoch !== this.bossEpoch) return;
+      if (this.inView(room)) {
+        this.boomVisual(o.x, o.y, o.radius, o.color);
+        Sfx.play(o.radius > 200 ? 'explosion-medium' : 'explosion-small');
+      }
+      this.coopHooks?.onFx({ k: 'boom', x: o.x, y: o.y, r: o.radius, c: o.color, rm: room });
+      for (const t of this.targetsInRoomInternal(room)) {
+        if (!t.active || t.hp <= 0 || t.downed) continue;
+        if (Phaser.Math.Distance.Between(o.x, o.y, t.x, t.y) > o.radius) continue;
+        this.damageTargetInternal(t, o.damage);
+        if (o.slowMult !== undefined && o.slowMs) {
+          // Only the local player has legs this can take; an ally slows on their own sim.
+          if (t === this.arena.player) this.slowPlayer(o.slowMult, o.slowMs);
+        }
+      }
+    });
+  }
+
+  /** Also replayed on the co-op guest, which never simulates the blast itself. */
+  drawBossWarning(
+    x: number, y: number, radius: number, color: number, ms: number, ring: boolean | undefined, room: number,
+  ): void {
+    if (!this.inView(room)) return;
+    const scene = this.arena.scene;
+    if (ring) {
+      // Room-wide reads: a rim that sweeps outward to the edge it will reach.
+      const sweep = scene.add.circle(x, y, radius, color, 0)
+        .setDepth(3.4).setStrokeStyle(5, color, 0.9).setScale(0.12);
+      scene.tweens.add({
+        targets: sweep, scaleX: 1, scaleY: 1, duration: ms, ease: 'Quad.easeIn',
+        onComplete: () => sweep.destroy(),
+      });
+      const floor = scene.add.circle(x, y, radius, color, 0.1).setDepth(3.3);
+      scene.tweens.add({
+        targets: floor, alpha: { from: 0.05, to: 0.26 }, duration: ms,
+        onComplete: () => floor.destroy(),
+      });
+      return;
+    }
+    // Ground slams: a filled plate that darkens and a rim that closes in on it.
+    const plate = scene.add.circle(x, y, radius, color, 0.18).setDepth(3.3)
+      .setStrokeStyle(3, color, 0.85);
+    scene.tweens.add({
+      targets: plate, alpha: { from: 0.18, to: 0.5 }, duration: ms * 0.5, yoyo: true, repeat: 1,
+      onComplete: () => plate.destroy(),
+    });
+    const closing = scene.add.circle(x, y, radius, color, 0)
+      .setDepth(3.35).setStrokeStyle(4, 0xffffff, 0.55);
+    scene.tweens.add({
+      targets: closing, scaleX: 0.15, scaleY: 0.15, duration: ms, ease: 'Quad.easeIn',
+      onComplete: () => closing.destroy(),
+    });
+  }
+
   // ── Husk projectiles ─────────────────────────────────────────────
 
   private updateShots(time: number, delta: number): void {
@@ -1014,8 +1659,8 @@ export class InvasionKit implements HuskWorld, EffectWorld {
       const s = this.shots[i];
       const targets = this.targetsInRoomInternal(s.room);
 
-      // Psychic orbs bend toward the nearest thing they can see.
-      if (s.elementId === 'psychic' && targets.length > 0) {
+      // Homing orbs bend toward the nearest thing they can see.
+      if (s.homing && targets.length > 0) {
         const t = targets[0];
         const want = Math.atan2(t.y - s.gfx.y, t.x - s.gfx.x);
         const have = Math.atan2(s.vy, s.vx);
@@ -1032,8 +1677,9 @@ export class InvasionKit implements HuskWorld, EffectWorld {
       let done = time >= s.expiresAt
         || s.gfx.x < wb.x || s.gfx.x > wb.right || s.gfx.y < wb.y || s.gfx.y > wb.bottom;
 
+      const hitR = s.hitRadius ?? SHOT_HIT_RADIUS;
       // Blind-fire shots can clip a silence stalker — one hit kills it.
-      if (!done && s.room === current && this.arena.tryHitSilenceStalker(s.gfx.x, s.gfx.y, SHOT_HIT_RADIUS)) done = true;
+      if (!done && s.room === current && this.arena.tryHitSilenceStalker(s.gfx.x, s.gfx.y, hitR)) done = true;
 
       if (!done) {
         for (const t of targets) {
@@ -1041,7 +1687,7 @@ export class InvasionKit implements HuskWorld, EffectWorld {
           // Illusion Dance: a husk shot is a projectile like any other, so it passes through.
           if (t.projectilePhase) continue;
           if (Phaser.Math.Distance.Between(s.gfx.x, s.gfx.y, t.x, t.y)
-              <= SHOT_HIT_RADIUS + 22 * t.sizeMult * t.shapeSizeMult) {
+              <= hitR + 22 * t.sizeMult * t.shapeSizeMult) {
             this.damageTargetInternal(t, s.damage);
             done = true;
             break;

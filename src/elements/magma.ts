@@ -43,13 +43,13 @@ const bloat: Ability = {
   cast(ctx: CastContext) { ctx.magmaBloat(); },
 };
 
-const fist: Ability = {
-  id: 'magma-fist',
-  name: 'Magma Fist',
-  description: 'A giant fist on the end of your arm for 8s, wherever the cursor is. Flick it sideways across someone to slap them away for 15; drive it straight out at them to punch for 35.',
+const jet: Ability = {
+  id: 'magma-jet',
+  name: 'Magma Jet',
+  description: 'Hold F to open a jet of molten flame at your cursor. It burns everything in the cone for 12 every 0.15s and throws you backwards away from wherever you are pointing. Up to 3s of thrust, and it charges your vessels the whole way.',
   displayKey: 'F',
-  cooldown: 15000,
-  cast(ctx: CastContext) { ctx.magmaFist(ctx.targetX, ctx.targetY); },
+  cooldown: 12000,
+  cast(ctx: CastContext) { ctx.magmaJet(ctx.targetX, ctx.targetY); },
 };
 
 const dragonKin: Ability = {
@@ -67,5 +67,5 @@ export const magmaElement: Element = {
   name: 'Magma',
   color: 0xff5a1e,
   emoji: '🌋',
-  abilities: [plume, volcano, bloat, fist, dragonKin],
+  abilities: [plume, volcano, bloat, jet, dragonKin],
 };

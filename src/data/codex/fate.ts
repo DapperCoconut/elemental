@@ -21,11 +21,12 @@ const fate: ElementCodex = {
     {
       emoji: '🃏',
       name: 'The Hand',
-      magic:
-        'Six cards, fanned along the bottom of the screen, each with its own face, colour and '
-        + 'one-line description. One of them is highlighted at any time and that is the one the '
-        + 'click throws. The deck keeps dealing on its own — a card is drawn back into any empty '
-        + 'slot every five seconds — so an empty hand is a temporary state rather than a dead one.',
+      basics:
+        'You play from a hand of 6 cards, or 8 with Wonder Preserve, drawn at random from the pool, '
+        + 'with one card refilling into an empty slot automatically every 5 seconds. Click a card in the '
+        + 'fan or press 1–6 (1–8 upgraded) to highlight it; Preserve and Enchant both act on whatever is '
+        + 'highlighted. A card is spent when it is thrown, unless it was Preserved, in which case it '
+        + 'stays and the preservation is used up instead.',
       effects: [
         { tag: 'utility', label: 'The hand', detail: '6 cards, or 8 with Wonder Preserve. Drawn at random from the pool.' },
         { tag: 'utility', label: 'The refill', detail: '1 card back every 5 seconds into an empty slot, automatically.' },
@@ -40,11 +41,12 @@ const fate: ElementCodex = {
     {
       emoji: '🎴',
       name: 'The Deck',
-      magic:
-        'Ten card types to begin with, and eight more once New Cards! is bought — eighteen '
-        + 'completely unrelated abilities living in one draw pool. There is no cost difference '
-        + 'between them and no weighting except one: the Emperor is ten times rarer than anything '
-        + 'else, which makes drawing it the single luckiest thing that can happen to this element.',
+      basics:
+        'Ten cards are always in the pool: Laser, Burst, Barrier, Explosion, Infect, Coin, Heal, Buff, '
+        + 'Lightning and Slots. New Cards! adds eight more — Boomerang, Slash, Phase, Striker, Pulse, '
+        + 'Chill, Chain and Emperor — and the Emperor is 10× rarer than anything else in the pool, a '
+        + '12-shot volley and the reason to keep rerolling. Three of them are not attacks at all: Coin '
+        + 'reflects, Heal heals, Buff buffs, and Slots summons a machine.',
       effects: [
         { tag: 'utility', label: 'The base ten', detail: 'Laser, Burst, Barrier, Explosion, Infect, Coin, Heal, Buff, Lightning and Slots. Always in the pool.' },
         { tag: 'utility', label: 'The extra eight', detail: 'Boomerang, Slash, Phase, Striker, Pulse, Chill, Chain and Emperor — only with New Cards! equipped.' },
@@ -60,11 +62,10 @@ const fate: ElementCodex = {
 
   abilities: {
     'fate-card-throw': {
-      magic:
-        'You throw the highlighted card. What happens next is entirely a function of which card it '
-        + 'was — a hitscan laser, a ring of bullets, a snowball, a dash, a slot machine. The '
-        + 'animation, the colour and the sound all come from the card, so a Fate player and their '
-        + 'opponent both find out at the same moment.',
+      basics:
+        'Throws whichever card is highlighted at the cursor — one of 18 different effects, all listed '
+        + 'below. The modifiers ride the card rather than the throw: Enchant doubles it, Tarot quadruples '
+        + 'it, and Preserve stops it being spent. 0.35s cooldown, shared across every card.',
       cast: 'Click, at the cursor. 0.35s cooldown, shared across every card. The card is consumed unless it was Preserved.',
       effects: [
         { tag: 'utility', label: 'Whatever is highlighted', detail: 'One of 18 different effects. See the table below for every one of them.' },
@@ -94,10 +95,11 @@ const fate: ElementCodex = {
         ],
       },
       upgrade: {
-        magic:
-          'New Cards! is the biggest single content upgrade in the game: eight more card types '
-          + 'shuffled into the same pool, including the only 35-damage single shot in the deck and '
-          + 'the Emperor, which is rare enough to be an event.',
+        basics:
+          'Eight more card types join the same draw pool: Boomerang, Slash, Phase, Striker, Pulse, Chill, '
+          + 'Chain and Emperor. Striker alone is 35 damage in one card, more than double the base pool\'s '
+          + 'Laser — 70 enchanted and 140 greatly enchanted. The cost is consistency: eighteen types '
+          + 'instead of ten means any specific card is nearly half as likely to be drawn.',
         effects: [
           { tag: 'utility', label: 'Eight more types', detail: 'Boomerang, Slash, Phase, Striker, Pulse, Chill, Chain and Emperor, all in the same draw pool as the base ten.', requiresUpgrade: 'click' },
           { tag: 'damage', label: 'The new ceiling', detail: 'Striker is 35 damage in one card, more than double the base pool\'s Laser. Enchanted it is 70, and greatly enchanted 140.', requiresUpgrade: 'click' },
@@ -111,10 +113,11 @@ const fate: ElementCodex = {
     },
 
     'fate-reroll': {
-      magic:
-        'The whole hand is thrown away and six new ones are dealt in a riffle. It is the only '
-        + 'shuffle in the game, so when the cards riffle it can only mean one thing. Everything '
-        + 'that was on those cards — enchantments, preservations, curses — goes with them.',
+      basics:
+        'Discards every card and refills the hand to its full size in one action. Everything on them '
+        + 'goes with them — Preserved and Enchanted cards are discarded exactly like plain ones, so '
+        + 'rerolling after buffing a card throws the buff away. It also resets the five-second draw clock '
+        + 'to zero, so a reroll is strictly faster than waiting. 6s cooldown.',
       cast: 'E. Instant. 6s cooldown.',
       effects: [
         { tag: 'utility', label: 'A whole new hand', detail: 'Every card is discarded and the hand is refilled to its full size in one action.' },
@@ -122,10 +125,13 @@ const fate: ElementCodex = {
         { tag: 'utility', label: 'It resets the draw clock', detail: 'The five-second automatic refill starts again from zero, so a reroll is strictly faster than waiting.' },
       ],
       upgrade: {
-        magic:
-          'Force the Hand of Fate is the element\'s answer to its own randomness. At the start of '
-          + 'the match you pick one of five face cards, and it permanently narrows what the deck '
-          + 'is allowed to give you — four or five card types instead of eighteen.',
+        basics:
+          'The reroll draws from a chosen suit instead of the whole deck. 🤴 King is Heal, Buff, Barrier, '
+          + 'Phase and Emperor — the defensive hand, and the only one that can draw an Emperor. 👸 Queen is '
+          + 'Explosion, Lightning, Chill and Chain, everything with an area or a control attached. 🃏 Jack '
+          + 'is Boomerang, Slash, Burst and Pulse, close range and fast turnover. ♠️ Ace is Laser, Coin, '
+          + 'Infect and Striker, ranged and precise, and the only pool with the 35-damage Striker in it. 🎭 '
+          + 'Jester is no restriction at all — the full eighteen, for a player who would rather gamble.',
         effects: [
           { tag: 'utility', label: '🤴 King', detail: 'Heal, Buff, Barrier, Phase and Emperor. The defensive hand, and the only one that can draw an Emperor.', requiresUpgrade: 'e' },
           { tag: 'utility', label: '👸 Queen', detail: 'Explosion, Lightning, Chill and Chain. Everything with an area or a control attached.', requiresUpgrade: 'e' },
@@ -141,19 +147,19 @@ const fate: ElementCodex = {
     },
 
     'fate-preserve': {
-      magic:
-        'The highlighted card turns gold. The next time you throw it, it comes back — the card is '
-        + 'not spent, the preservation is. It is the closest this element gets to picking its own '
-        + 'ability: find a card you like, gild it, and throw it twice.',
+      basics:
+        'Gilds the highlighted card so that throwing it does not discard it: it stays in your hand and '
+        + 'the gold is consumed instead. Preserving strips any Enchant on the card — unless Wonder '
+        + 'Preserve is owned, in which case the two stack. 3s cooldown.',
       cast: 'R, on the highlighted card. 3s cooldown.',
       effects: [
         { tag: 'utility', label: 'One free throw', detail: 'The card stays in your hand instead of being discarded. The gold is consumed doing it.' },
         { tag: 'cost', label: 'It strips the enchantment', detail: 'Preserving a card removes any Enchant on it — unless Wonder Preserve is owned, in which case the two stack.' },
       ],
       upgrade: {
-        magic:
-          'Wonder Preserve fixes the ability\'s one bad interaction and makes the hand bigger at '
-          + 'the same time. A gilded card keeps its purple, and there are two more slots to gild.',
+        basics:
+          'Preserve no longer strips Enchant, so a card can be both: double damage and it survives being '
+          + 'thrown. The hand also grows from 6 cards to 8, selectable with 1–8.',
         effects: [
           { tag: 'utility', label: 'They stack', detail: 'Preserve no longer strips Enchant, so a card can be both — double damage and it survives being thrown.', requiresUpgrade: 'r' },
           { tag: 'utility', label: 'A bigger hand', detail: '8 cards instead of 6, selectable with 1–8.', requiresUpgrade: 'r' },
@@ -166,19 +172,23 @@ const fate: ElementCodex = {
     },
 
     'fate-enchant': {
-      magic:
-        'The highlighted card turns purple and its next use is worth double. With Wonder Enchant '
-        + 'it is also worth *more* — every card in the deck has its own second effect that only '
-        + 'exists while it is enchanted, and they are all different.',
+      basics:
+        'Doubles everything the highlighted card does, damage and count alike — a 20-damage Explosion '
+        + 'becomes 40, a 15-bullet Barrier becomes 30 bullets. It does not stack with Tarot: a greatly '
+        + 'enchanted card is already ×4 and refuses a plain Enchant outright rather than combining with '
+        + 'it. 4s cooldown.',
       cast: 'F, on the highlighted card. 4s cooldown.',
       effects: [
         { tag: 'buff', label: 'Double', detail: '×2 on everything the card does, damage and count alike. A 20-damage Explosion becomes 40; a 15-bullet Barrier becomes 30 bullets.' },
         { tag: 'utility', label: 'It does not stack with Tarot', detail: 'A greatly enchanted card is ×4 and refuses a plain Enchant outright rather than combining with it.' },
       ],
       upgrade: {
-        magic:
-          'Wonder Enchant gives every card its own second gift. The doubling is still there — this '
-          + 'is on top of it, and it is different for all eighteen.',
+        basics:
+          'Enchanting now changes what cards do as well as how much. Laser bounces off 3 walls, Explosion '
+          + 'doubles its radius, Chain gets longer range, Phase goes 1.5× further and Striker is 20% '
+          + 'larger. Burst gets 2 more bullets, Emperor 5 more, and Barrier doubles its bullets while '
+          + 'slowing them 300% into a standing wall. Slash adds a 50% slow for 5 seconds, Chill adds 3 '
+          + 'seconds to its slow, Pulse doubles its knockback and Infect doubles its duration.',
         effects: [
           { tag: 'utility', label: 'The reach ones', detail: 'Laser bounces off 3 walls, Explosion doubles its radius, Chain gets longer range, Phase goes 1.5× further, Striker is 20% larger.', requiresUpgrade: 'f' },
           { tag: 'utility', label: 'The count ones', detail: 'Burst gets 2 more bullets, Emperor gets 5 more, and Barrier doubles its bullets while slowing them 300% into a standing wall.', requiresUpgrade: 'f' },
@@ -192,10 +202,11 @@ const fate: ElementCodex = {
     },
 
     'fate-all-in': {
-      magic:
-        'A roulette wheel appears a hundred pixels from you and orbits wherever your cursor is '
-        + 'pointing while the ante gathers on your body. Three seconds later the ball drops. If '
-        + 'the enemy is inside the circle they take fifty. If they are not, you do.',
+      basics:
+        'Spins a wheel that orbits you at 100px and follows your cursor for the whole 3-second spin, so '
+        + 'it is aimed at the moment it lands rather than the moment it is cast. A win is 50 damage to '
+        + 'anything within 50px of the wheel plus a payout of cards and chips proportional to the stake; '
+        + 'a loss is 50 self-damage and the table swept — dead cards, no chips, no sparkle. 25s cooldown.',
       cast: 'Q, ultimate. The wheel orbits at 100px and follows the cursor for the whole spin. 25s cooldown.',
       effects: [
         { tag: 'damage', label: 'The win', detail: '50 damage to anything within 50px of the wheel when it resolves, with a payout of cards and chips proportional to the stake.' },
@@ -203,11 +214,11 @@ const fate: ElementCodex = {
         { tag: 'utility', label: 'The spin', detail: '3 seconds, and you can keep repositioning the wheel with the cursor for all of it. It is aimed at the moment it lands, not at the moment it is cast.' },
       ],
       upgrade: {
-        magic:
-          'Roulette Expert lets you size the bet. A draggable yellow marker appears on your own '
-          + 'health bar and whatever is above it is what is on the table — the gambled portion '
-          + 'turns yellow so you can see exactly what you are risking. And the wheel spins two '
-          + 'seconds longer.',
+        basics:
+          'A marker lets you set the wager anywhere on your health bar, starting at 50: a hit deals that '
+          + 'much and a miss takes that much. The orbit runs 5 seconds instead of 3, which is a great deal '
+          + 'more time to walk the wheel onto somebody. There is no partial payout and no way to call the '
+          + 'bet off once the wheel is spinning.',
         effects: [
           { tag: 'utility', label: 'The marker', detail: 'Sets the wager anywhere on your health bar, starting at 50. Hit deals that much; miss takes that much.', requiresUpgrade: 'q' },
           { tag: 'utility', label: 'Longer to aim', detail: '5 seconds of orbit instead of 3, which is a great deal more time to walk the wheel onto somebody.', requiresUpgrade: 'q' },
@@ -224,10 +235,11 @@ const fate: ElementCodex = {
 
   perks: {
     paper: {
-      magic:
-        'Right-click and five cards come out of the hand at once in a shotgun spread. What they '
-        + 'are worth is not what is printed on them — it is what the five of them make as a poker '
-        + 'hand. Five unrelated cards is one damage apiece. A royal flush is forty.',
+      basics:
+        'Right-click fires a five-card spread from the hand all at once, and the damage is the poker '
+        + 'hand it makes — per card, across all five: high card 1, pair 2, two pair 4, three of a kind 6, '
+        + 'straight 8, flush 10, full house 14, four of a kind 20, straight flush 30, royal flush 40. 2s '
+        + 'cooldown.',
       cast: 'Right-click. 2s cooldown.',
       effects: [
         { tag: 'damage', label: 'The scale', detail: 'High card 1, pair 2, two pair 4, three of a kind 6, straight 8, flush 10, full house 14, four of a kind 20, straight flush 30, royal flush 40 — per card, across all five.' },
@@ -242,10 +254,11 @@ const fate: ElementCodex = {
 
   mastery: {
     cycle: {
-      magic:
-        'A hand full of dead draws stops being a dead hand. Right-click a card to bin it, and '
-        + 'every third one you throw away the deck immediately deals you two fresh ones — so '
-        + 'churning is not just a way of losing cards, it is a way of gaining them.',
+      basics:
+        'Right-click any card in the hand to bin it, with no cooldown and no cost, and every third card '
+        + 'binned deals two fresh ones immediately rather than waiting for the 5-second refill. Three '
+        + 'binned for two dealt is a net loss of one card, bought instantly instead of over fifteen '
+        + 'seconds.',
       effects: [
         { tag: 'utility', label: 'Binning', detail: 'Right-click any card in the hand to discard it, with no cooldown and no cost.' },
         { tag: 'utility', label: 'The payout', detail: 'Every 3rd card binned deals 2 fresh ones immediately, rather than waiting for the 5-second refill.' },
@@ -257,11 +270,11 @@ const fate: ElementCodex = {
       ],
     },
     'tarot-of-fate': {
-      magic:
-        'The card your mouse is hovering becomes GREATLY ENCHANTED — four times a normal card, '
-        + 'overruling a plain Enchant entirely. And it picks up a curse, printed as a small emoji '
-        + 'along the bottom of the card, which fires the moment you play it. You can read exactly '
-        + 'what it is going to do to you before you throw it. You throw it anyway.',
+      basics:
+        'A bindable enchant worth ×4 on everything the card does. It replaces a plain Enchant rather '
+        + 'than multiplying with it, and it counts as enchanted for Wonder Enchant\'s second gifts. The '
+        + 'curse fires on the play rather than on the enchant, so a greatly enchanted card sitting in '
+        + 'your hand costs nothing at all — the nine possible curses are listed below. 20s cooldown.',
       cast: 'The bound key, on whichever card the cursor is hovering. 20s cooldown.',
       effects: [
         { tag: 'buff', label: 'Greatly enchanted', detail: '×4 on everything the card does. It replaces a plain Enchant rather than multiplying with it, and it counts as enchanted for Wonder Enchant\'s second gifts.' },

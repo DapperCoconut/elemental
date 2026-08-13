@@ -312,6 +312,99 @@ export function barricadeBody(
 }
 
 /**
+ * A market: a striped awning over a counter, with a coin sign hanging off the post.
+ *
+ * The silhouette rule again — it is the only building with a *scalloped* top edge, so a stall
+ * never reads as a barracks' pitched roof or a barricade's flat coping at a glance. Two things
+ * on it are live: a vault with money in it grows a strongbox on the counter with the coin
+ * stack rising out of it, and a stall running Propaganda wears a speaking-trumpet over the post.
+ */
+export function marketBody(
+  g: Phaser.GameObjects.Graphics,
+  tint: ConquestColorFn,
+  x: number, y: number, s: number,
+  color: number,
+  o: { vault: number; propaganda: boolean; t: number },
+  alpha: number,
+): void {
+  const w = s * 0.8;
+  const counterY = y + s * 0.2;
+  const awningY = y - s * 0.12;
+
+  // Posts.
+  g.lineStyle(2.2, tint(CNQ.timberDark), alpha);
+  g.lineBetween(x - w * 0.44, awningY, x - w * 0.44, counterY + s * 0.1);
+  g.lineBetween(x + w * 0.44, awningY, x + w * 0.44, counterY + s * 0.1);
+
+  // Counter: a plank with produce crates stacked behind it.
+  g.fillStyle(tint(CNQ.timber), alpha);
+  g.fillRect(x - w * 0.5, counterY - s * 0.05, w, s * 0.1);
+  g.lineStyle(1.1, tint(CNQ.timberDark), alpha * 0.85);
+  g.strokeRect(x - w * 0.5, counterY - s * 0.05, w, s * 0.1);
+  for (let i = 0; i < 3; i++) {
+    const cw = s * 0.15;
+    const cx = x - w * 0.3 + i * cw * 1.35;
+    g.fillStyle(tint(i % 2 === 0 ? CNQ.timberDark : CNQ.timber), alpha * 0.9);
+    g.fillRect(cx - cw / 2, counterY - s * 0.05 - cw * 0.72, cw, cw * 0.72);
+    g.lineStyle(0.9, tint(CNQ.timberDark), alpha * 0.7);
+    g.lineBetween(cx - cw / 2, counterY - s * 0.05 - cw * 0.36, cx + cw / 2, counterY - s * 0.05 - cw * 0.36);
+  }
+
+  // The awning: five scallops in the town colour, alternating with parchment stripes.
+  const bays = 5;
+  const bw = w * 1.06 / bays;
+  for (let i = 0; i < bays; i++) {
+    const bx = x - w * 0.53 + i * bw;
+    g.fillStyle(tint(i % 2 === 0 ? color : CNQ.parchment), alpha * (i % 2 === 0 ? 0.95 : 0.8));
+    g.fillRect(bx, awningY - s * 0.14, bw, s * 0.14);
+    // The scallop hanging under each bay. Drawn as a whole ellipse rather than a half — the top
+    // half lands inside the bay it belongs to, in the same colour, so only the bulge shows.
+    g.fillEllipse(bx + bw / 2, awningY, bw, bw * 0.9);
+  }
+  g.lineStyle(1.2, tint(CNQ.timberDark), alpha * 0.8);
+  g.lineBetween(x - w * 0.53, awningY - s * 0.14, x + w * 0.53, awningY - s * 0.14);
+
+  // The sign: a coin on a bracket, which is the whole read of "this building is money".
+  const sy = awningY - s * 0.26;
+  g.lineStyle(1.4, tint(CNQ.timberDark), alpha * 0.9);
+  g.lineBetween(x, awningY - s * 0.14, x, sy);
+  g.fillStyle(tint(CNQ.gold), alpha);
+  g.fillCircle(x, sy - s * 0.05, s * 0.09);
+  g.fillStyle(tint(CNQ.goldDeep), alpha * 0.9);
+  g.fillCircle(x, sy - s * 0.05, s * 0.05);
+
+  // Securities: a strongbox on the counter, with the stack standing as high as the vault is full.
+  if (o.vault > 0) {
+    const fill = Phaser.Math.Clamp(o.vault / 200, 0, 1);
+    const boxW = s * 0.26;
+    const boxY = counterY - s * 0.05;
+    g.fillStyle(tint(CNQ.ironDark), alpha);
+    g.fillRect(x + w * 0.12, boxY - s * 0.12, boxW, s * 0.12);
+    g.fillStyle(tint(CNQ.iron), alpha * 0.9);
+    g.fillRect(x + w * 0.12, boxY - s * 0.12, boxW, s * 0.03);
+    for (let i = 0; i < Math.max(1, Math.round(fill * 4)); i++) {
+      g.fillStyle(tint(CNQ.gold), alpha * 0.95);
+      g.fillEllipse(x + w * 0.12 + boxW / 2, boxY - s * 0.13 - i * s * 0.045, s * 0.16, s * 0.05);
+    }
+  }
+
+  // Propaganda Central: a speaking trumpet lashed to the post, calling on its own beat.
+  if (o.propaganda) {
+    const pulse = 0.6 + 0.4 * Math.sin(o.t * 6);
+    const hx = x - w * 0.44;
+    const hy = awningY - s * 0.08;
+    g.fillStyle(tint(CNQ.crimson), alpha);
+    g.fillTriangle(hx, hy, hx - s * 0.2, hy - s * 0.09, hx - s * 0.2, hy + s * 0.09);
+    g.fillStyle(tint(CNQ.gold), alpha * 0.9);
+    g.fillCircle(hx, hy, s * 0.03);
+    for (let i = 1; i <= 2; i++) {
+      g.lineStyle(1.4, tint(CNQ.crimson), alpha * pulse * (0.7 / i));
+      g.strokeCircle(hx - s * 0.2, hy, s * (0.1 + i * 0.09));
+    }
+  }
+}
+
+/**
  * One soldier. A body, a helmet, and a weapon held out along `ang` — small enough that five of
  * them fit in a 64px square without becoming a blob, which is the whole constraint.
  *
@@ -865,6 +958,55 @@ export class ConquestFx extends FxBase {
     });
   }
 
+  /**
+   * Propaganda Central opening. Concentric rings leaving the commander, in the crimson of the
+   * standard rather than the gold of the money — the point of the ability is that health has
+   * stopped being what you pay with, and it needs to read as an announcement, not a purchase.
+   */
+  propaganda(x: number, y: number, r: number, depth = 12): void {
+    this.anim(depth, 620, (g, t) => {
+      const e = easeOut(t);
+      for (let i = 0; i < 3; i++) {
+        const s = Phaser.Math.Clamp(e * 1.4 - i * 0.22, 0, 1);
+        if (s <= 0) continue;
+        g.lineStyle(3 * (1 - t) + 0.8, this.tint(i === 1 ? CNQ.gold : CNQ.crimson), (1 - t) * 0.8 * (1 - i * 0.22));
+        g.strokeCircle(x, y, r * s);
+      }
+      // A trumpet held out of the ring, so the rings have something to have come from.
+      g.fillStyle(this.tint(CNQ.crimson), (1 - t) * 0.9);
+      g.fillTriangle(x + 6, y - 10, x + 26 * (1 - t * 0.4), y - 20, x + 26 * (1 - t * 0.4), y - 2);
+    });
+  }
+
+  /** The vault taking money in, or paying it back out. Coins climbing into or out of a strongbox. */
+  vault(x: number, y: number, into: boolean, depth = 12): void {
+    const seed = Math.random() * 999;
+    this.anim(depth, 520, (g, t) => {
+      for (let i = 0; i < 5; i++) {
+        const p = Phaser.Math.Clamp(t * 1.5 - i * 0.1, 0, 1);
+        if (p <= 0) continue;
+        const s = into ? 1 - p : p;
+        const px = x + (jitter(seed, i) - 0.5) * 22;
+        const py = y - 26 * s;
+        g.fillStyle(this.tint(CNQ.gold), (1 - t) * 0.95);
+        g.fillEllipse(px, py, 6, 6 * Math.abs(Math.cos(p * 7 + i)));
+      }
+      g.lineStyle(2 * (1 - t), this.tint(CNQ.iron), (1 - t) * 0.7);
+      g.strokeRect(x - 9, y - 7, 18, 12);
+    });
+  }
+
+  /** Warmongering paying out — a coin knocked loose by a hit rather than earned by a clock. */
+  bounty(x: number, y: number, depth = 12): void {
+    this.anim(depth, 420, (g, t) => {
+      const e = easeOut(t);
+      g.fillStyle(this.tint(CNQ.gold), (1 - t) * 0.95);
+      g.fillEllipse(x, y - 22 * e, 7, 7 * Math.abs(Math.cos(t * 8)));
+      g.lineStyle(1.6 * (1 - t), this.tint(CNQ.blood), (1 - t) * 0.7);
+      g.strokeCircle(x, y, 6 + e * 14);
+    });
+  }
+
   /** The banner changing hands to another form — the old standard furling, the new one snapping out. */
   bannerSwap(x: number, y: number, color: number, depth = 12): void {
     this.anim(depth, 480, (g, t) => {
@@ -914,6 +1056,8 @@ export class ConquestAvatar extends BaseAvatar {
    * to be on — and the crest on the helm still carries the territory read either way.
    */
   private bannerColor = 0;
+  /** Conquest Mastery: a crown replaces the crest. Set from `applyMastery`, drawn in `drawExtras`. */
+  private crowned = false;
   private seed = Math.random() * 999;
 
   constructor(scene: Phaser.Scene, tint: ConquestColorFn, depth = 6) {
@@ -925,6 +1069,7 @@ export class ConquestAvatar extends BaseAvatar {
   setBanner(color: number): void { this.bannerColor = color; }
 
   protected applyMastery(on: boolean): void {
+    this.crowned = on;
     this.forEachHandLayer(0, (glow) => {
       glow.setRadius(on ? 15 : 12);
       glow.setAlpha(on ? 0.32 : 0.2);
@@ -985,6 +1130,21 @@ export class ConquestAvatar extends BaseAvatar {
       const cx = x - 5 + i * 2;
       const h = 7 - Math.abs(i - 2.5) * 1.4 + Math.sin(this.t * 4 + i) * 0.7;
       g.fillTriangle(cx - 1.2, hy - 6, cx + 1.2, hy - 6, cx, hy - 6 - h);
+    }
+    // Conquest Mastery: a gold circlet over the crest. A commander whose treasury is a weapon
+    // has stopped being a general and started being a monarch, and the tell is on the head.
+    if (this.crowned) {
+      const cw = 13;
+      const cy = hy - 8;
+      g.fillStyle(this.tint(CNQ.gold), alpha);
+      g.fillRect(x - cw / 2, cy, cw, 3);
+      for (let i = 0; i < 4; i++) {
+        const px = x - cw / 2 + 1.6 + i * ((cw - 3.2) / 3);
+        const h = i === 1 || i === 2 ? 6.5 : 4.5;
+        g.fillTriangle(px - 1.6, cy, px + 1.6, cy, px, cy - h);
+      }
+      g.fillStyle(this.tint(CNQ.blood), alpha * 0.9);
+      g.fillCircle(x, cy + 1.5, 1.5);
     }
     // Laurel once the empire has split.
     if (this.towns > 1) {

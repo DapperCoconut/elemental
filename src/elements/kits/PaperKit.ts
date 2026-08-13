@@ -6,12 +6,15 @@ import type { SummonPurgeTarget } from '../../combat/SummonPurge';
 import type { ProjectileRegistry } from '../../combat/ProjectileRegistry';
 import { Projectile } from '../../combat/Projectile';
 import { isDebuff, seedEffectSnapshot, stretchNewEffects } from '../../combat/StatusEffects';
-import { JournalBonuses, NO_JOURNAL_BONUSES, journalBonuses, journalElementName } from '../../data/PaperJournal';
+import {
+  JournalBonuses, NO_JOURNAL_BONUSES, journalBonuses, journalElementName,
+  journalTotalPossible, journalTotalUnlocked,
+} from '../../data/PaperJournal';
 import { Sfx } from '../../audio';
 import {
   BOOK_TONE, BookId, PAP, PaperAvatar, PaperColorFn, PaperFx, arcaneSpike, burningScrap,
   chainRun, crucifixShape, flameSpirit, fortuneTeller, ghostBlade, ghostKnight, herbSeed,
-  lightSlab, lotusBloom, paperPlaneShape, paperSheet, pinwheelShape, portalTear,
+  lightSlab, lotusBloom, paperPlaneShape, paperShard, paperSheet, pinwheelShape, portalTear,
   shurikenShape, targetRing,
 } from './PaperVisuals';
 
@@ -184,6 +187,47 @@ const TRAIL_LIFE_MS = 3000;
 const TRAIL_R = 28;
 const TRAIL_DAMAGE = 4;
 const TRAIL_TICK_MS = 500;
+
+// ── Mastery ──────────────────────────────────────────────────────────────────
+
+const RESTRUCTURE_ID = 'restructure';
+
+/**
+ * Spirit of the Story. One line per book, indexed exactly like `BOOK_TONE` — the passive is
+ * five numbers and no branching anywhere else in the kit, which is the only reason a stance
+ * change can be free and instant.
+ */
+/** 📗 Knight — what a mastered Paper takes instead. */
+const STORY_RESIST = 0.8;
+/** 📘 Alien — what everyone Paper is fighting takes instead. */
+const STORY_DAMAGE = 1.2;
+/** 📕 Fantasy. */
+const STORY_SPEED = 1.25;
+/** 📙 Bible — worn by the other side, and only ever taken off by turning the page. */
+const STORY_SLOW = 0.8;
+/** 📓 Herbology, per second. */
+const STORY_REGEN = 3;
+
+/** Restructure. The cooldown lives on a private timer — the bound slot still owns the real map. */
+const RESTRUCTURE_COOLDOWN_MS = 32000;
+/** Health taken off the bar and handed back as the grey layer that drains under you. */
+const RESTRUCTURE_HP_COST = 25;
+const SHARD_COUNT = 14;
+const SHARD_DAMAGE = 5;
+/** Half the pinwheel's four seconds, and otherwise the same bleed exactly. */
+const SHARD_BLEED_MS = 2000;
+const SHARD_SPEED = 590;
+const SHARD_LEN = 17;
+const SHARD_HIT_R = 13;
+/** How long the pieces are loose in the room before the first of them turns round. */
+const SHARD_SCATTER_MS = 2300;
+/** …and how long between each one after that, so the body comes back a piece at a time. */
+const SHARD_RETURN_STAGGER_MS = 185;
+const SHARD_RETURN_SPEED = 640;
+/** How close to the rebuild point a shard has to get before it counts as back on. */
+const SHARD_ARRIVE_R = 18;
+/** One shard may only cut the same body this often — a grinder, not one enormous hit. */
+const SHARD_GATE_MS = 500;
 
 // ── World objects ────────────────────────────────────────────────────────────
 
@@ -374,6 +418,26 @@ interface Trail {
   gate: Map<Fighter, number>;
 }
 
+/**
+ * Mastery — one piece of a caster who has come apart. Flying out while `now < returnsAt`, coming
+ * home after that; `home` latches the moment it is counted back onto the body and the piece is
+ * dropped from the list on the same frame.
+ */
+interface Shard {
+  owner: Owner;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  ang: number;
+  spin: number;
+  seed: number;
+  /** `scene.time.now` at which this piece turns round and starts coming back. */
+  returnsAt: number;
+  /** Per-victim re-cut clock: one shard cannot saw the same body every frame. */
+  gate: Map<Fighter, number>;
+}
+
 /** An active bleed, wherever it came from. */
 interface Bleed {
   owner: Owner;
@@ -393,6 +457,27 @@ interface Side {
   reloadUntil: number;
   /** The npc has no right mouse button, so it cycles on a timer instead. */
   nextBookAt: number;
+
+  // ── Mastery — Restructure ──
+  /** `scene.time.now` of the last tear. Initialised a full cooldown in the past — see `makeSide`. */
+  restructureAt: number;
+  /** True while the body is in pieces: invisible, invincible, and unable to press anything. */
+  torn: boolean;
+  /** How many pieces are back on, 0 → `SHARD_COUNT`. Drives both the rebuild and the HUD bar. */
+  rebuilt: number;
+  /** Where the body was standing when it came apart. */
+  tearX: number;
+  tearY: number;
+  /** Where the pieces are coming back together — the cursor, for the player. */
+  rebuildX: number;
+  rebuildY: number;
+  /** Latched, so `forceInvisible` and the health bar are handed back exactly once. */
+  tornForced: boolean;
+  /**
+   * Whether the body was *already* untouchable when it came apart — an opening-chest window, a
+   * boss intro. Handing `isInvincible` back to false unconditionally would cancel theirs.
+   */
+  tornWasInvincible: boolean;
 }
 
 /** What the status tray says about whichever book is open. Indexed by `BookId`. */
@@ -404,10 +489,31 @@ const BOOK_BLURB = [
   'Click sows 3 seeds. They heal you only if they reach a wall, and only as much as they dared: the closer one passes a body without touching it, the darker and richer it comes home. Q opens a lotus for 100 health.',
 ];
 
+/**
+ * Mastery — what Spirit of the Story is doing to you right now. Indexed exactly like
+ * `BOOK_BLURB` above, and for the same reason: a page turn changes both lines at once.
+ */
+const STORY_BLURB = [
+  'Armoured: 20% less damage taken while the Knight book is open.',
+  'Everything you do hits 20% harder while the Alien book is open.',
+  '25% more movement speed while the Fantasy book is open.',
+  'Everyone you are fighting is 20% slower, and stays that way until you turn the page.',
+  '3 health a second, for as long as the Herbology book is open.',
+];
+
+/** The one-word version of the same five, shouted over the character on every page turn. */
+const STORY_CALL = ['🛡️ ARMOURED', '⚡ AMPLIFIED', '💨 SWIFT', '⛓️ SLOWED THEM', '🌿 REGENERATING'];
+
 function makeSide(owner: Owner): Side {
   return {
     owner, book: 0, aimX: 0, aimY: 0,
     laserUntil: 0, nextLaserAt: 0, reloadUntil: 0, nextBookAt: 0,
+    // A full cooldown in the past, not zero: readiness is measured against the absolute
+    // `scene.time.now`, which does not restart with the scene — at 0 the very first match of a
+    // session would refuse the ability for its first 32 seconds.
+    restructureAt: -RESTRUCTURE_COOLDOWN_MS,
+    torn: false, rebuilt: 0,
+    tearX: 0, tearY: 0, rebuildX: 0, rebuildY: 0, tornForced: false, tornWasInvincible: false,
   };
 }
 
@@ -443,6 +549,18 @@ export interface PaperArenaApi {
   setStatusIndicator(id: string, status: CustomStatus | null): void;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
+  /** Which mastery enhancement the player dropped on a slot, so Restructure can take that key. */
+  masteryBindFor(slot: string): string | null;
+  /** …and the online opponent's, so their bound key is dead on this sim too. */
+  npcMasteryBindFor(slot: string): string | null;
+  /** Mastery progress. Recorded unconditionally; the adapter gates it on the element. */
+  recordMasteryStat(key: string, amount: number): void;
+  /** …and the ratchet form, for the Journal requirement, which is a level rather than a tally. */
+  recordMasteryBestStat(key: string, value: number): void;
+  /** Restructure runs on a private timer, so its cast has to reach the peer by hand. */
+  broadcastMasteryCast(enhId: string): void;
+  /** True in online PvP — the npc is a remote player who casts its own mastery abilities. */
+  get isOnline(): boolean;
   /** Shop upgrades: the local player's equipped slots. */
   hasUpgrade(slot: string): boolean;
   /** …and the online opponent's, so their upgraded books reproduce on this sim. */
@@ -485,6 +603,7 @@ export class PaperKit implements SummonPurgeTarget {
   private crosses: Cross[] = [];
   private lotuses: Lotus[] = [];
   private shoves: Shove[] = [];
+  private shards: Shard[] = [];
   private bleeds = new Map<Fighter, Bleed>();
   /** Everyone this kit has stunned, so it can hold their velocity at zero itself. */
   private stunned = new Map<Fighter, number>();
@@ -513,6 +632,18 @@ export class PaperKit implements SummonPurgeTarget {
    * Creation's Gold Potion uses to *lengthen* them, run with a multiplier below 1.
    */
   private shrugSnapshot = new Map<string, number>();
+
+  // ── Mastery ──
+  /** Everyone this kit has written `paperIncomingMult` onto — Spirit of the Story's two halves. */
+  private storyTouched = new Set<Fighter>();
+  /**
+   * Everyone the Bible book is currently slowing. Tracked rather than swept, because
+   * `walkSpeedMult` is a shared field: handing it back to 1 unconditionally every frame would
+   * quietly cancel a slow another element had put on the same body.
+   */
+  private slowed = new Set<Fighter>();
+  /** The Journal requirement is a level, not a tally, so it is read once per match rather than per frame. */
+  private journalPctRecorded = false;
 
   constructor(api: PaperArenaApi) {
     this.api = api;
@@ -562,6 +693,41 @@ export class PaperKit implements SummonPurgeTarget {
     return this.up(owner, 'click') ? BOOK_TONE.length : 3;
   }
 
+  // ── Mastery helpers ────────────────────────────────────────────────────────
+
+  /** Whether Element Mastery is on for whichever side is asking. */
+  private masteryOn(owner: Owner): boolean {
+    return owner === 'player' ? this.api.masteryActive
+      : this.api.npcMasteryActive && this.isPaper('npc');
+  }
+
+  /**
+   * Which slot Restructure was dropped on, or null. Q is not scanned — `excludeSlots` refuses it
+   * as a drop target, because the lotus is the only heal in the element and this ability's price
+   * is paid in health.
+   */
+  private restructureSlot(owner: Owner): 'e' | 'r' | 'f' | null {
+    if (!this.masteryOn(owner)) return null;
+    for (const s of ['e', 'r', 'f'] as const) {
+      const bind = owner === 'player' ? this.api.masteryBindFor(s) : this.api.npcMasteryBindFor(s);
+      if (bind === RESTRUCTURE_ID) return s;
+    }
+    return null;
+  }
+
+  /** True while that side is a scatter of paper: no body, no hands, nothing to aim at. */
+  private torn(owner: Owner): boolean {
+    return this.sides[owner].torn;
+  }
+
+  /**
+   * Mastery progress. Recorded unconditionally — the arena adapter gates it on the element, and
+   * the whole point of a requirement is that it is earned before the mastery is on.
+   */
+  private record(key: string, amount = 1): void {
+    this.api.recordMasteryStat(key, amount);
+  }
+
   /** Everything this side is allowed to hurt. */
   private targetsOf(owner: Owner): Fighter[] {
     const list = owner === 'player' ? this.api.enemies : [this.api.player];
@@ -606,6 +772,12 @@ export class PaperKit implements SummonPurgeTarget {
   reset(): void {
     for (const f of this.touched) f.journalIncomingMult = 1;
     this.touched.clear();
+    for (const f of this.storyTouched) f.paperIncomingMult = 1;
+    this.storyTouched.clear();
+    for (const f of this.slowed) if (f?.active) f.walkSpeedMult = 1;
+    this.slowed.clear();
+    // Whoever was in pieces gets their body back before the next match starts wearing it.
+    for (const owner of ['player', 'npc'] as Owner[]) this.reassemble(owner, false);
     for (const [f] of this.bleeds) {
       if (f?.active) f.bleeding = false;
     }
@@ -631,11 +803,13 @@ export class PaperKit implements SummonPurgeTarget {
     this.seeds = [];
     this.crosses = [];
     this.lotuses = [];
+    this.shards = [];
     this.vizT = 0;
 
     this.bonuses = NO_JOURNAL_BONUSES;
     this.bonusesFor = '';
     this.guardGranted = false;
+    this.journalPctRecorded = false;
     this.shrugSnapshot.clear();
 
     this.playerAvatar?.destroy(); this.playerAvatar = null;
@@ -655,18 +829,43 @@ export class PaperKit implements SummonPurgeTarget {
 
     const p = this.api.player;
     if (!this.alive(p)) return;
+
+    // Mastery — Restructure: in pieces there is nothing to press with. The cursor is still read
+    // above, because that is where the pieces are coming back to; every key is *drained* rather
+    // than ignored, or the whole tray would come out at once the frame the body finishes.
+    if (this.torn('player')) {
+      s.rebuildX = mouseX;
+      s.rebuildY = mouseY;
+      Phaser.Input.Keyboard.JustDown(this.api.eKey);
+      Phaser.Input.Keyboard.JustDown(this.api.rKey);
+      Phaser.Input.Keyboard.JustDown(this.api.fKey);
+      Phaser.Input.Keyboard.JustDown(this.api.qKey);
+      return;
+    }
+
     const ctx = this.api.buildPlayerContext(mouseX, mouseY);
+    const restructure = this.restructureSlot('player');
 
     // Right-click cycles the book. Free and instant on purpose: the cost of Storybook Summoning
     // is that only one of its three attacks is available at a time, not that switching is slow.
+    // With the mastery on it is also a stance change, and for the same reason it stays free.
     if (pointer.rightButtonDown() && !this.api.rightPointerWasDown) {
       this.cycleBook('player');
     }
 
     if (pointer.isDown && !this.api.pointerWasDown) p.castAbility('paper-storybook', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('paper-plane', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('paper-shuriken', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('paper-mache', ctx);
+    if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) {
+      if (restructure === 'e') this.tryRestructure('player');
+      else p.castAbility('paper-plane', ctx);
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) {
+      if (restructure === 'r') this.tryRestructure('player');
+      else p.castAbility('paper-shuriken', ctx);
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) {
+      if (restructure === 'f') this.tryRestructure('player');
+      else p.castAbility('paper-mache', ctx);
+    }
     if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('paper-climax', ctx);
 
     // The ride is read straight off the key rather than through an ability: "until you stop
@@ -694,6 +893,11 @@ export class PaperKit implements SummonPurgeTarget {
     this.avatar(owner)?.setBook(s.book);
     this.fx(owner).turnPage(f.x, f.y, from, tone.cover);
     this.api.showFloatingText(f.x, f.y - 46, `${tone.emoji} ${tone.name.toUpperCase()}`, this.hex(tone.accent));
+    // Mastered, a page turn is a stance change as well as a weapon swap — and the stance is the
+    // half you cannot see on the character, so it is the half that gets said out loud.
+    if (this.masteryOn(owner)) {
+      this.api.showFloatingText(f.x, f.y - 64, STORY_CALL[s.book], this.hex(PAP.gilt));
+    }
     Sfx.playAt('ui-page', f.x, { volume: 0.6, rate: 1 });
   }
 
@@ -937,6 +1141,19 @@ export class PaperKit implements SummonPurgeTarget {
     this.runClimax(owner, other as BookId, f, tx, ty);
   }
 
+  /**
+   * Mastery: was that the last page for them?
+   *
+   * Called immediately after every point of Climax damage the kit deals. Reading `hp` straight
+   * back is enough here because all three endings resolve their damage synchronously and none of
+   * them can hit the same body twice in one call — so a body that has crossed zero on this line
+   * was put there by the hit on the line above.
+   */
+  private noteClimaxKill(owner: Owner, t: Fighter): void {
+    if (owner !== 'player' || t.hp > 0 || t.immortal) return;
+    this.record('climaxKills');
+  }
+
   /** One book's ending, decoupled from whose turn it is so Open-Ended can fire a second. */
   private runClimax(owner: Owner, book: BookId, f: Fighter, tx: number, ty: number): void {
     switch (book) {
@@ -1056,6 +1273,330 @@ export class PaperKit implements SummonPurgeTarget {
     Sfx.playAt('bloom', f.x, { volume: 0.9, rate: 0.95 });
   }
 
+  // ── Mastery — Restructure ──────────────────────────────────────────────────
+
+  /**
+   * The bound key, or the bot's own decision. Answers whether the body actually came apart.
+   *
+   * Nothing here goes through `castAbility`: the ability lives on a private timer because the
+   * slot it is bound over still owns the real cooldown map, and stamping that would put the
+   * dead ability underneath on cooldown instead.
+   */
+  private tryRestructure(owner: Owner): boolean {
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return false;
+    const s = this.side(owner);
+    if (s.torn) return false;
+    if (this.now - s.restructureAt < RESTRUCTURE_COOLDOWN_MS) return false;
+
+    s.restructureAt = this.now;
+    this.castRestructure(owner);
+    // A private timer never reaches the peer on its own — see `broadcastMasteryCast`.
+    if (owner === 'player') this.api.broadcastMasteryCast(RESTRUCTURE_ID);
+    return true;
+  }
+
+  /** Online: the opponent tore themselves up on their machine, so they come apart here too. */
+  doNpcRestructure(tx: number, ty: number): void {
+    const s = this.sides.npc;
+    if (s.torn) return;
+    s.restructureAt = this.now;
+    s.aimX = tx;
+    s.aimY = ty;
+    this.castRestructure('npc');
+  }
+
+  /**
+   * Come apart.
+   *
+   * The fourteen pieces go out in a ring with the spread deliberately even rather than random —
+   * a scatter that clumps leaves half the arena safe, and the ability's whole promise is that
+   * there is paper everywhere. Each carries its own return clock, staggered, so the body comes
+   * back a piece at a time instead of snapping together.
+   */
+  private castRestructure(owner: Owner): void {
+    const f = this.fighter(owner);
+    const s = this.side(owner);
+    const tone = this.tone(owner);
+
+    // You cannot ride a plane in pieces, and a laser needs a hand to hold it.
+    for (const pl of [...this.planes]) if (pl.rider === f) this.dismount(pl, false);
+    s.laserUntil = 0;
+
+    s.torn = true;
+    s.rebuilt = 0;
+    s.tearX = f.x;
+    s.tearY = f.y;
+    s.rebuildX = s.aimX || f.x;
+    s.rebuildY = s.aimY || f.y;
+
+    // The price. Taken off the bar directly rather than through `applySelfDamage`: this is not a
+    // hit — it must not roll a crit, spend a shield, feed a reflect or count as damage taken —
+    // and the same 25 comes straight back as the grey layer. Never the last point of health.
+    const cost = Math.max(0, Math.min(RESTRUCTURE_HP_COST, Math.floor(f.hp) - 1));
+    if (cost > 0) {
+      f.hp -= cost;
+      f.weakHp += cost;
+      this.api.showFloatingText(f.x, f.y - 30, `📄 ${cost} → WEAK`, this.hex(PAP.crease));
+    }
+
+    const base = Math.random() * TAU;
+    for (let i = 0; i < SHARD_COUNT; i++) {
+      const a = base + (i / SHARD_COUNT) * TAU + (Math.random() - 0.5) * 0.22;
+      const speed = SHARD_SPEED * (0.8 + Math.random() * 0.45);
+      this.shards.push({
+        owner,
+        x: f.x + Math.cos(a) * 12,
+        y: f.y + Math.sin(a) * 12,
+        vx: Math.cos(a) * speed,
+        vy: Math.sin(a) * speed,
+        ang: a,
+        spin: (Math.random() - 0.5) * 9,
+        seed: Math.random() * 999,
+        returnsAt: this.now + SHARD_SCATTER_MS + i * SHARD_RETURN_STAGGER_MS,
+        gate: new Map<Fighter, number>(),
+      });
+    }
+
+    this.fx(owner).shred(f.x, f.y, 18, 54, 620, 11, PAP.pulp);
+    this.fx(owner).ripple(f.x, f.y, 12, 150, 480, 9, tone.accent);
+    this.api.showFloatingText(f.x, f.y - 52, '📜 RESTRUCTURE', this.hex(PAP.gilt));
+    Sfx.playAt('stretch', f.x, { volume: 0.9, rate: 0.75 });
+    Sfx.playAt('status-invisible', f.x, { volume: 0.7, rate: 1.1 });
+  }
+
+  /**
+   * The pieces, in the air and on the way home.
+   *
+   * A shard that is still scattering bounces off the walls and keeps its speed; one whose clock
+   * has come round steers hard at the rebuild point and is deleted the moment it reaches it,
+   * which is also the moment it counts back onto the body. Both states cut.
+   */
+  private updateShards(time: number, delta: number): void {
+    const dt = delta / 1000;
+    for (let i = this.shards.length - 1; i >= 0; i--) {
+      const sh = this.shards[i];
+      const s = this.side(sh.owner);
+      const coming = time >= sh.returnsAt;
+
+      if (coming) {
+        // Steered rather than teleported: the piece visibly turns round and comes back.
+        const dx = s.rebuildX - sh.x;
+        const dy = s.rebuildY - sh.y;
+        const d = Math.hypot(dx, dy) || 1;
+        sh.vx = Phaser.Math.Linear(sh.vx, (dx / d) * SHARD_RETURN_SPEED, Math.min(1, dt * 7));
+        sh.vy = Phaser.Math.Linear(sh.vy, (dy / d) * SHARD_RETURN_SPEED, Math.min(1, dt * 7));
+        if (d <= SHARD_ARRIVE_R) {
+          s.rebuilt++;
+          this.fx(sh.owner).shred(sh.x, sh.y, 2, 10, 260, 11, PAP.bright);
+          this.shards.splice(i, 1);
+          continue;
+        }
+      }
+
+      sh.x += sh.vx * dt;
+      sh.y += sh.vy * dt;
+      sh.spin += dt * 0.6;
+      sh.ang = Math.atan2(sh.vy, sh.vx);
+
+      // Only a scattering piece bounces. One on the way home cuts the corner instead, or a
+      // rebuild point tucked against a wall would leave the last shards rattling forever.
+      if (!coming) {
+        if (sh.x < this.left) { sh.x = this.left; sh.vx = Math.abs(sh.vx); }
+        if (sh.x > this.right) { sh.x = this.right; sh.vx = -Math.abs(sh.vx); }
+        if (sh.y < this.top) { sh.y = this.top; sh.vy = Math.abs(sh.vy); }
+        if (sh.y > this.bottom) { sh.y = this.bottom; sh.vy = -Math.abs(sh.vy); }
+      }
+
+      for (const t of this.targetsOf(sh.owner)) {
+        if (Phaser.Math.Distance.Between(sh.x, sh.y, t.x, t.y) > this.reach(t, SHARD_HIT_R)) continue;
+        if (time < (sh.gate.get(t) ?? 0)) continue;
+        sh.gate.set(t, time + SHARD_GATE_MS);
+        t.takeDamage(SHARD_DAMAGE);
+        this.api.spawnHitFlash(t.x, t.y, PAP.blood);
+        this.fx(sh.owner).cut(t.x, t.y, 20, PAP.gilt);
+        this.applyBleed(sh.owner, t, SHARD_BLEED_MS);
+        Sfx.playAt('slash', t.x, { volume: 0.45, rate: 1.5 });
+      }
+    }
+  }
+
+  /**
+   * The body while it is not there.
+   *
+   * Three things are held every frame rather than latched at the cast: invincibility, the alpha
+   * (`forceInvisible` on top, or `takeDamage`'s flash would paint a ghost back on), and the
+   * position. The position is the ability — the pieces are coming to the cursor, so the body
+   * slides from where it tore to where they are landing in step with how many are back, and it
+   * is stomped with `setPosition` + `body.reset()` for the same reason a plane's rider is: this
+   * kit's update runs after ArenaScene's movement, so the stomp wins the frame.
+   */
+  private updateRestructure(owner: Owner, playing: boolean): void {
+    const s = this.side(owner);
+    if (!s.torn) return;
+    const f = this.fighter(owner);
+
+    // Killed mid-tear, or the element is gone from under us: hand the body back as it is.
+    if (!this.alive(f) || !playing) { this.reassemble(owner, false); return; }
+
+    // A replica's body is placed by the network, so its pieces follow the body rather than the
+    // cast aim — otherwise they would converge on a point the opponent has long since left.
+    if (owner === 'npc' && this.api.isOnline) { s.rebuildX = f.x; s.rebuildY = f.y; }
+
+    if (!s.tornForced) {
+      s.tornForced = true;
+      s.tornWasInvincible = f.isInvincible;
+      f.forceInvisible = true;
+      f.setHealthBarVisible(false);
+    }
+    f.isInvincible = true;
+    // Re-asserted rather than latched: `takeDamage` and half a dozen kits write alpha on their
+    // own schedule, and any one of them would paint a ghost of the body back onto the floor.
+    f.setAlpha(0);
+
+    // Online, the opponent is a replica whose position arrives over the wire — they are running
+    // this same slide on their own machine, and stomping it here would only make the two sims
+    // disagree about where they are. Our own body is ours to place.
+    if (owner === 'player' || !this.api.isOnline) {
+      const k = Phaser.Math.Clamp(s.rebuilt / SHARD_COUNT, 0, 1);
+      const x = Phaser.Math.Clamp(Phaser.Math.Linear(s.tearX, s.rebuildX, k), this.left, this.right);
+      const y = Phaser.Math.Clamp(Phaser.Math.Linear(s.tearY, s.rebuildY, k), this.top, this.bottom);
+      f.setPosition(x, y);
+      this.body(f).reset(x, y);
+    }
+
+    if (s.rebuilt >= SHARD_COUNT) this.reassemble(owner, true);
+  }
+
+  /**
+   * Whole again. Also the single place the tear is unwound, so a death, a match end and a
+   * finished rebuild all hand back exactly the same three fields.
+   */
+  private reassemble(owner: Owner, announce: boolean): void {
+    const s = this.side(owner);
+    if (!s.torn) return;
+    s.torn = false;
+    s.rebuilt = 0;
+    for (let i = this.shards.length - 1; i >= 0; i--) {
+      if (this.shards[i].owner === owner) this.shards.splice(i, 1);
+    }
+    const f = this.fighter(owner);
+    const wasInvincible = s.tornWasInvincible;
+    if (s.tornForced) {
+      s.tornForced = false;
+      s.tornWasInvincible = false;
+      if (f?.active) {
+        f.forceInvisible = false;
+        f.setAlpha(1);
+        // Only a body that is still standing gets its bar back — the death path has already
+        // taken it away, and handing it back here would leave a full bar over a corpse.
+        if (this.alive(f)) f.setHealthBarVisible(true);
+      }
+    }
+    if (f?.active && !wasInvincible) f.isInvincible = false;
+    if (!announce || !this.alive(f)) return;
+    this.fx(owner).ripple(f.x, f.y, 10, 84, 420, 9, PAP.bright);
+    this.fx(owner).shred(f.x, f.y, 10, 26, 420, 11, PAP.pulp);
+    this.api.showFloatingText(f.x, f.y - 50, '📄 WHOLE AGAIN', this.hex(PAP.gilt));
+    Sfx.playAt('ui-page', f.x, { volume: 0.9, rate: 0.7 });
+  }
+
+  /**
+   * The bot's own hand on the ability.
+   *
+   * Kit-side rather than in `doPaperAbilities` for the reason Ruin's Second Skin is: the bind
+   * lives on the scene, and whether Paper is even the element wearing it does not. The rule is
+   * the one a player would use — it is the panic button, so it is spent when the fight has gone
+   * badly, and the rebuild point is put down beside whoever it is fighting so the bot comes back
+   * somewhere useful rather than in the corner it was cornered in.
+   */
+  private updateNpcRestructure(time: number): void {
+    // Online the npc is a remote player: their own client casts it and it arrives via replay.
+    if (this.api.isOnline) return;
+    if (!this.restructureSlot('npc')) return;
+    const s = this.sides.npc;
+    if (s.torn) return;
+    if (time - s.restructureAt < RESTRUCTURE_COOLDOWN_MS) return;
+    const f = this.api.npc;
+    if (!this.alive(f) || f.maxHp <= 0) return;
+    if (f.hp / f.maxHp > 0.45) return;
+
+    const mark = this.nearestTarget('npc', f.x, f.y);
+    if (mark) {
+      // Behind them, at knife range, facing back the way it came.
+      const a = Math.atan2(f.y - mark.y, f.x - mark.x) + Math.PI * 0.85;
+      s.aimX = Phaser.Math.Clamp(mark.x + Math.cos(a) * 150, this.left, this.right);
+      s.aimY = Phaser.Math.Clamp(mark.y + Math.sin(a) * 150, this.top, this.bottom);
+    }
+    this.tryRestructure('npc');
+  }
+
+  // ── Mastery — Spirit of the Story ──────────────────────────────────────────
+
+  /**
+   * The passive: five numbers, one per book, and nothing else anywhere in the kit.
+   *
+   * Rewritten from scratch every frame onto both sides, exactly like the Journal above and for
+   * the same reason — three of the five are worn by somebody who is not the caster, and a latched
+   * write would survive a page turn that was supposed to take it off. `paperIncomingMult` is
+   * Paper's own field so it can be swept unconditionally; `walkSpeedMult` is shared, so the
+   * Bible's slow is tracked in `slowed` and only ever handed back to a body this kit slowed.
+   */
+  private updateStory(delta: number): void {
+    for (const f of [...this.storyTouched]) {
+      f.paperIncomingMult = 1;
+      if (!this.alive(f)) this.storyTouched.delete(f);
+    }
+
+    let slowingAnyone = false;
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      if (!this.masteryOn(owner)) continue;
+      const f = this.fighter(owner);
+      if (!this.alive(f)) continue;
+      const book = this.sides[owner].book;
+
+      if (book === 0) {
+        f.paperIncomingMult *= STORY_RESIST;
+        this.storyTouched.add(f);
+      } else if (book === 1) {
+        for (const t of this.targetsOf(owner)) {
+          t.paperIncomingMult *= STORY_DAMAGE;
+          this.storyTouched.add(t);
+        }
+      } else if (book === 3) {
+        slowingAnyone = true;
+        for (const t of this.targetsOf(owner)) {
+          // The two 1v1 fighters take the slow through ArenaScene's pulled speed aggregate
+          // (`getPlayerSpeedMult`/`getNpcSpeedMult`); nothing reads `walkSpeedMult` for them.
+          // A husk is the other way round — the pull does not exist, and `walkSpeedMult` is
+          // exactly what its own `moveSpeed` multiplies by.
+          if (t === this.api.player || t === this.api.npc) continue;
+          if (t.walkSpeedMult > STORY_SLOW) { t.walkSpeedMult = STORY_SLOW; this.slowed.add(t); }
+        }
+      } else if (book === 4) {
+        f.heal(STORY_REGEN * (delta / 1000));
+      }
+    }
+
+    if (slowingAnyone) return;
+    for (const t of [...this.slowed]) {
+      this.slowed.delete(t);
+      // Only handed back if this kit is still the one holding it down — another element's
+      // heavier slow landing on the same body outlives the page turn that ends ours.
+      if (t?.active && Math.abs(t.walkSpeedMult - STORY_SLOW) < 0.001) t.walkSpeedMult = 1;
+    }
+  }
+
+  /** Fantasy's stride, on whichever side is holding that book. */
+  private storySelfSpeed(owner: Owner): number {
+    return this.masteryOn(owner) && this.sides[owner].book === 2 ? STORY_SPEED : 1;
+  }
+
+  /** The Bible's slow, as felt by whoever the holder is fighting. */
+  private storyEnemySpeed(owner: Owner): number {
+    return this.masteryOn(owner) && this.sides[owner].book === 3 ? STORY_SLOW : 1;
+  }
+
   // ── Update ─────────────────────────────────────────────────────────────────
 
   /**
@@ -1086,10 +1627,17 @@ export class PaperKit implements SummonPurgeTarget {
     this.updateSeeds(delta);
     this.updateCrosses(time);
     this.updateLotuses(time);
+    this.updateShards(time, delta);
     this.updateBleeds(time);
     this.updateStuns();
     this.updateShoves(delta / 1000);
     this.updateJournal(playerIs, delta);
+    this.updateStory(delta);
+    this.updateNpcRestructure(time);
+    // After the shards and after the shoves: whoever is in pieces has their body placed by this,
+    // and nothing else this frame may move it.
+    this.updateRestructure('player', playerIs);
+    this.updateRestructure('npc', npcIs);
     this.updateAvatars(delta, playerIs, npcIs);
 
     this.paintGround();
@@ -1103,8 +1651,10 @@ export class PaperKit implements SummonPurgeTarget {
       || this.shurikens.length > 0 || this.maches.length > 0 || this.charges.length > 0
       || this.bombs.length > 0 || this.spirits.length > 0 || this.trails.length > 0
       || this.slabs.length > 0 || this.seeds.length > 0 || this.crosses.length > 0
-      || this.lotuses.length > 0 || this.shoves.length > 0
-      || this.bleeds.size > 0 || this.touched.size > 0 || this.claimsDodge;
+      || this.lotuses.length > 0 || this.shoves.length > 0 || this.shards.length > 0
+      || this.sides.player.torn || this.sides.npc.torn
+      || this.bleeds.size > 0 || this.touched.size > 0 || this.storyTouched.size > 0
+      || this.slowed.size > 0 || this.claimsDodge;
   }
 
   private ensureLayers(): void {
@@ -1135,14 +1685,55 @@ export class PaperKit implements SummonPurgeTarget {
 
       // The npc has no right mouse button, so it turns the page on a timer. Slow enough that a
       // player can read which book is open off the character before it changes again.
-      if (owner === 'npc') {
+      if (owner === 'npc' && !s.torn) {
         if (s.nextBookAt === 0) s.nextBookAt = time + 9000;
-        else if (time >= s.nextBookAt) { this.cycleBook('npc'); s.nextBookAt = time + 9000 + Math.random() * 4000; }
+        else if (time >= s.nextBookAt) {
+          this.turnNpcPage(time);
+          s.nextBookAt = time + 9000 + Math.random() * 4000;
+        }
       }
 
       this.updateLaser(owner, time, f);
     }
     this.assertDodgeClaim();
+  }
+
+  /**
+   * The bot's page turn.
+   *
+   * Unmastered it is the plain ring, because the three books are three attacks and none of them
+   * is better to be holding than another. Mastered, the book is also a statline, so the bot
+   * *chooses*: hurt and it opens the Knight book for the armour or the Herbology book to heal
+   * back up, in front of somebody it cannot catch it takes the Fantasy stride, and otherwise it
+   * presses the advantage with the Alien book. This is the kit's own synergy — the mastery only
+   * pays if the page matches the situation — and it is decided here rather than in `doPaperAbilities`
+   * because the AI cannot see either the bind or which books the bot is even carrying.
+   */
+  private turnNpcPage(time: number): void {
+    void time;
+    const s = this.sides.npc;
+    const f = this.api.npc;
+    const n = this.bookCount('npc');
+    if (!this.masteryOn('npc') || !this.alive(f)) { this.cycleBook('npc'); return; }
+
+    const hurt = f.maxHp > 0 && f.hp / f.maxHp < 0.5;
+    const mark = this.nearestTarget('npc', f.x, f.y);
+    const far = !!mark && Phaser.Math.Distance.Between(f.x, f.y, mark.x, mark.y) > 380;
+
+    // Ordered by how much the situation is asking for: heal, then armour, then legs, then teeth.
+    // Every candidate is bounded by `bookCount`, so an unupgraded bot never reaches the last two.
+    const wants: BookId[] = hurt ? [4, 0, 1] : far ? [2, 1, 0] : [1, 3, 0];
+    const pick = wants.find((b) => b < n && b !== s.book);
+    if (pick === undefined) { this.cycleBook('npc'); return; }
+
+    const from = BOOK_TONE[s.book].cover;
+    s.book = pick;
+    s.laserUntil = 0;
+    const tone = BOOK_TONE[s.book];
+    this.avatar('npc')?.setBook(s.book);
+    this.fx('npc').turnPage(f.x, f.y, from, tone.cover);
+    this.api.showFloatingText(f.x, f.y - 46, `${tone.emoji} ${tone.name.toUpperCase()}`, this.hex(tone.accent));
+    Sfx.playAt('ui-page', f.x, { volume: 0.6, rate: 1 });
   }
 
   /**
@@ -1470,6 +2061,9 @@ export class PaperKit implements SummonPurgeTarget {
     this.api.spawnHitFlash(t.x, t.y, PAP.blood);
     this.fx(owner).splat(t.x, t.y, 24, PAP.blood);
     this.applyBleed(owner, t);
+    // Mastery: the requirement is the pinwheel's cuts specifically, so the plain shuriken —
+    // which is the same code path with half the wheel — deliberately does not count.
+    if (owner === 'player' && this.up('player', 'r')) this.record('pinwheelBleeds');
     Sfx.playAt('slash', t.x, { volume: 0.7, rate: 1.1 });
   }
 
@@ -1478,8 +2072,8 @@ export class PaperKit implements SummonPurgeTarget {
    * against a husk it is a rounding error and against a boss it is real, which is the right shape
    * for a debuff that is free damage attached to a hit you already landed.
    */
-  private applyBleed(owner: Owner, t: Fighter): void {
-    const until = this.now + BLEED_MS;
+  private applyBleed(owner: Owner, t: Fighter, ms = BLEED_MS): void {
+    const until = this.now + ms;
     const prev = this.bleeds.get(t);
     this.bleeds.set(t, {
       owner,
@@ -1627,6 +2221,7 @@ export class PaperKit implements SummonPurgeTarget {
           // One set for the whole wave: twelve riders are one attack, not twelve.
           c.hits.add(t);
           t.takeDamage(CHARGE_DAMAGE);
+          this.noteClimaxKill(c.owner, t);
           this.api.spawnHitFlash(t.x, t.y, PAP.spectre);
           this.fx(c.owner).cut(t.x, t.y, 46, PAP.spectre);
           this.api.showFloatingText(t.x, t.y - 44, '⚔️ RIDDEN DOWN', this.hex(PAP.spectre));
@@ -1657,6 +2252,7 @@ export class PaperKit implements SummonPurgeTarget {
       for (const t of this.targetsOf(b.owner)) {
         if (Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) > BOMB_R + 8 * t.sizeMult) continue;
         t.takeDamage(BOMB_DAMAGE);
+        this.noteClimaxKill(b.owner, t);
         this.api.spawnHitFlash(t.x, t.y, PAP.beam);
         this.stun(t, BOMB_STUN_MS);
       }
@@ -1724,6 +2320,7 @@ export class PaperKit implements SummonPurgeTarget {
         if (time < (tr.gate.get(t) ?? 0)) continue;
         tr.gate.set(t, time + TRAIL_TICK_MS);
         t.takeDamage(TRAIL_DAMAGE);
+        this.noteClimaxKill(tr.owner, t);
         this.api.spawnHitFlash(t.x, t.y, PAP.flame);
       }
       if (time < tr.diesAt) continue;
@@ -1930,6 +2527,7 @@ export class PaperKit implements SummonPurgeTarget {
     if (!this.guardGranted) {
       this.guardGranted = true;
       seedEffectSnapshot(p, this.shrugSnapshot);
+      this.recordJournalProgress();
       if (this.bonuses.guard > 0) {
         p.shieldHp += this.bonuses.guard;
         this.api.showFloatingText(p.x, p.y - 52, `📖 +${this.bonuses.guard} SHIELD`, this.hex(PAP.gilt));
@@ -1949,6 +2547,24 @@ export class PaperKit implements SummonPurgeTarget {
     } else {
       seedEffectSnapshot(p, this.shrugSnapshot);
     }
+  }
+
+  /**
+   * Mastery — how much of the book is written up, as a whole percent.
+   *
+   * A percentage rather than a count of entries on purpose: the Journal grows a row every time an
+   * element is added to the game, and a fixed target of "62 entries" would silently stop meaning
+   * a quarter the moment it did. Recorded as a *best* rather than a tally, because it is a level
+   * the save already holds rather than something that happens during a fight — and read exactly
+   * once per match, since `journalTotalUnlocked` parses the whole save once per element.
+   */
+  private recordJournalProgress(): void {
+    if (this.journalPctRecorded) return;
+    this.journalPctRecorded = true;
+    const possible = journalTotalPossible();
+    if (possible <= 0) return;
+    this.api.recordMasteryBestStat('journalPct',
+      Math.floor((journalTotalUnlocked() / possible) * 100));
   }
 
   // ── Avatars ────────────────────────────────────────────────────────────────
@@ -1981,8 +2597,9 @@ export class PaperKit implements SummonPurgeTarget {
       // Crumples as he runs out of health. Paper is the one element where "nearly dead" can be a
       // silhouette change rather than a health bar you have to look away to read.
       av.setCrumple(f.maxHp > 0 ? Phaser.Math.Clamp(1 - f.hp / f.maxHp, 0, 1) : 0);
-      av.setMastered(owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
-      av.update(delta, f.x, f.y, this.alive(f) ? 1 : 0);
+      av.setMastered(this.masteryOn(owner));
+      // In pieces there is nobody standing there — the shards on the air layer are the body.
+      av.update(delta, f.x, f.y, this.alive(f) && !this.torn(owner) ? 1 : 0);
     }
   }
 
@@ -2116,6 +2733,33 @@ export class PaperKit implements SummonPurgeTarget {
         { seed: sp.seed, vx: sp.vx, vy: sp.vy });
     }
 
+    // ── Mastery — a caster who has come apart, and the point they are coming back to ──
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const s = this.sides[owner];
+      if (!s.torn) continue;
+      const tone = BOOK_TONE[s.book];
+      const k = Phaser.Math.Clamp(s.rebuilt / SHARD_COUNT, 0, 1);
+      const bx = Phaser.Math.Linear(s.tearX, s.rebuildX, k);
+      const by = Phaser.Math.Linear(s.tearY, s.rebuildY, k);
+      // The half-built body: a low pile of sheets that grows a course at a time, and a ring of
+      // the book's colour marking where the rest of it is being told to land.
+      g.lineStyle(1.6, this.col(owner)(tone.accent), 0.28 + Math.sin(this.vizT * 5) * 0.08);
+      g.strokeCircle(bx, by, 20 + (1 - k) * 8);
+      for (let i = 0; i < s.rebuilt; i++) {
+        const a = (i / SHARD_COUNT) * TAU + this.vizT * 0.5;
+        paperSheet(g, this.col(owner), bx + Math.cos(a) * 7 * (1 - k), by - i * 1.4 + 8,
+          a, 22 * (0.5 + k * 0.5), 15, 0.85,
+          { color: i % 2 ? PAP.pulp : PAP.shade, seed: i * 7, curl: 0, drop: 1.5 });
+      }
+    }
+    for (const sh of this.shards) {
+      const s = this.sides[sh.owner];
+      const home = this.now >= sh.returnsAt ? 1 : Phaser.Math.Clamp(
+        1 - (sh.returnsAt - this.now) / 700, 0, 1) * 0.5;
+      paperShard(g, this.col(sh.owner), sh.x, sh.y, sh.ang + sh.spin, SHARD_LEN, 1,
+        { accent: BOOK_TONE[s.book].accent, seed: sh.seed, home });
+    }
+
     // ── The open book's page, floating over a laser burst ──
     for (const owner of ['player', 'npc'] as Owner[]) {
       const s = this.sides[owner];
@@ -2156,6 +2800,22 @@ export class PaperKit implements SummonPurgeTarget {
         + (b.footwork > 0 ? ` Moving ${Math.round(b.footwork * 100)}% faster.` : '')
         + (b.guard > 0 ? ` Started with ${b.guard} shield.` : ''),
       count: b.unlocked, priority: 154,
+    } : null);
+
+    // ── Mastery ──
+    const story = playerIs && this.api.masteryActive;
+    this.api.setStatusIndicator('paper-story', story ? {
+      name: 'Spirit of the Story', emoji: '📜', color: tone.accent,
+      description: `You are the ${tone.name} book. ${STORY_BLURB[s.book]}`
+        + ' Right-click to turn the page and become something else.',
+      priority: 153,
+    } : null);
+
+    this.api.setStatusIndicator('paper-torn', story && s.torn ? {
+      name: 'Restructuring', emoji: '📄', color: PAP.gilt,
+      description: `In pieces — invisible, invincible and unable to act. ${s.rebuilt} of ${SHARD_COUNT}`
+        + ' shards are back on; the rest are cutting their way to your cursor.',
+      count: SHARD_COUNT - s.rebuilt, priority: 6,
     } : null);
 
     this.api.setStatusIndicator('paper-riding', playerIs && this.planes.some((p) => p.rider === this.api.player) ? {
@@ -2200,9 +2860,25 @@ export class PaperKit implements SummonPurgeTarget {
 
   // ── Accessors read by ArenaScene / the NPC ─────────────────────────────────
 
-  /** The `footwork` journal entries. Pulled by ArenaScene's speed aggregate every frame. */
+  /**
+   * The `footwork` journal entries, plus both halves of the mastery's stance: the Fantasy book's
+   * stride on a mastered Paper player, and the Bible slow a mastered Paper *opponent* is holding
+   * them under. Pulled by ArenaScene's speed aggregate every frame — nothing reads
+   * `walkSpeedMult` for the two 1v1 fighters, so this is the only route to them.
+   */
   getPlayerSpeedMult(): number {
-    return this.api.elementId === 'paper' ? 1 + this.bonuses.footwork : 1;
+    const journal = this.api.elementId === 'paper' ? 1 + this.bonuses.footwork : 1;
+    return journal * this.storySelfSpeed('player') * this.storyEnemySpeed('npc');
+  }
+
+  /**
+   * The same two, the other way round — with one extra check the player side does not need. The
+   * npc slot is not always an enemy: in co-op it holds the ally, and slowing your own partner
+   * because you happened to be holding the Bible would be a bug rather than a stance.
+   */
+  getNpcSpeedMult(): number {
+    const hostile = this.api.enemies.includes(this.api.npc);
+    return this.storySelfSpeed('npc') * (hostile ? this.storyEnemySpeed('player') : 1);
   }
 
   /** Which book that side has open — the bot's branch selector, and the info panel's. */
@@ -2223,12 +2899,36 @@ export class PaperKit implements SummonPurgeTarget {
   }
 
   /**
+   * Mastery — the two things the AI has to be told, both side-effect-free.
+   *
+   * A torn Paper has nothing to aim at, so ArenaScene folds this into `targetInvisible` exactly
+   * as it does Silence's stealth and the Depths camouflage; and a torn *bot* has no hands, so its
+   * own rotation has to stand down rather than casting into a body that is not there.
+   */
+  isTorn(owner: Owner): boolean { return this.torn(owner); }
+
+  /**
+   * The slot the bot gave up for Restructure, so its AI stops casting what is no longer there.
+   * The kit is the only thing that knows: the bind lives on the scene, but whether Paper is even
+   * the element wearing it does not.
+   */
+  npcRestructureSlot(): 'e' | 'r' | 'f' | null {
+    return this.restructureSlot('npc');
+  }
+
+  /**
    * Ability tray fill. The click spends most of its life showing the Alien book's two clocks
    * rather than a cooldown, because that is the only thing gating it.
    */
   getBarRatio(abilityId: string, time: number): number {
     const p = this.api.player;
     const s = this.sides.player;
+    // Mastery: while the body is in pieces the card counts the rebuild rather than the cooldown,
+    // because the rebuild is the only thing the player can do anything about.
+    if (abilityId === RESTRUCTURE_ID) {
+      if (s.torn) return Phaser.Math.Clamp(s.rebuilt / SHARD_COUNT, 0, 1);
+      return Phaser.Math.Clamp((time - s.restructureAt) / RESTRUCTURE_COOLDOWN_MS, 0, 1);
+    }
     if (abilityId === 'paper-storybook') {
       if (time < s.laserUntil) return Phaser.Math.Clamp((s.laserUntil - time) / LASER_BURST_MS, 0, 1);
       if (time < s.reloadUntil) return 1 - Phaser.Math.Clamp((s.reloadUntil - time) / LASER_RELOAD_MS, 0, 1);

@@ -361,6 +361,168 @@ export function weakCone(
 }
 
 /**
+ * Reality Shift (mastery passive): one of the four doorways standing against the walls.
+ *
+ * Drawn as a freestanding arch rather than a hole in the floor, because the thing a player
+ * has to read at a glance is *which side of it they are about to walk through*. The interior
+ * is a stack of horizontal slices each slid a different way — the same shear the Veil uses,
+ * turned ninety degrees and run vertically, so the two read as the same magic.
+ *
+ * `charge` runs 0 → 1 as the owner approaches: the arch brightens and the slices speed up, so
+ * walking into one never happens by surprise.
+ */
+export function gateway(
+  g: Phaser.GameObjects.Graphics,
+  tint: IllusionColorFn,
+  x: number, y: number, inward: number,
+  halfW: number, halfH: number,
+  t: number, alpha: number, charge: number, seed: number,
+): void {
+  const ca = Math.cos(inward);
+  const sa = Math.sin(inward);
+  // The arch stands across the direction it faces: its width runs along the wall.
+  const wx = -sa;
+  const wy = ca;
+  const hot = 0.35 + charge * 0.65;
+
+  const corner = (u: number, v: number): Phaser.Geom.Point =>
+    new Phaser.Geom.Point(x + wx * u + ca * v, y + wy * u + sa * v);
+
+  // The dark mouth first, so every slice below sits inside something.
+  g.fillStyle(tint(ILL.voidDark), alpha * (0.55 + charge * 0.3));
+  g.fillPoints([corner(-halfW, -halfH), corner(halfW, -halfH), corner(halfW, halfH), corner(-halfW, halfH)], true);
+
+  // Sheared slices: the picture on the far side, arriving out of order.
+  const slices = 9;
+  for (let i = 0; i < slices; i++) {
+    const f = i / (slices - 1);
+    const u0 = -halfW + halfW * 2 * f;
+    const slide = Math.sin(t * (1.6 + charge * 2.4) + i * 1.9 + seed) * halfH * 0.55;
+    const thick = (halfW * 2) / slices;
+    const col = i % 3 === 0 ? ILL.magenta : i % 3 === 1 ? ILL.warp : ILL.cyan;
+    g.fillStyle(tint(col), alpha * (0.1 + 0.16 * hot) * (0.5 + jitter(seed, i) * 0.5));
+    g.fillPoints([
+      corner(u0, -halfH * 0.9 + slide), corner(u0 + thick * 0.82, -halfH * 0.9 + slide),
+      corner(u0 + thick * 0.82, halfH * 0.9 + slide * 0.4), corner(u0, halfH * 0.9 + slide * 0.4),
+    ], true);
+  }
+
+  // Rim. Two passes — a wide dim one and a thin hot one — like everything else here.
+  const rim = [corner(-halfW, -halfH), corner(halfW, -halfH), corner(halfW, halfH), corner(-halfW, halfH)];
+  g.lineStyle(5, tint(ILL.violetDim), alpha * 0.35 * hot);
+  g.strokePoints(rim, true, true);
+  g.lineStyle(2, tint(ILL.violet), alpha * 0.85 * hot);
+  g.strokePoints(rim, true, true);
+
+  // Corner ticks, so the exact edge of the walk-in is never in doubt.
+  const tick = Math.min(halfW, halfH) * 0.42;
+  g.lineStyle(2.4, tint(ILL.spark), alpha * hot);
+  for (const [su, sv] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) {
+    const c = corner(halfW * su, halfH * sv);
+    g.lineBetween(c.x, c.y, c.x - wx * tick * su, c.y - wy * tick * su);
+    g.lineBetween(c.x, c.y, c.x - ca * tick * sv, c.y - sa * tick * sv);
+  }
+
+  // The keystone: a small turning prism at the top of the arch, and a mask floating in the
+  // mouth once somebody is close enough for it to matter.
+  const key = corner(0, -halfH);
+  const spin = t * 1.7 + seed;
+  const kp: Phaser.Geom.Point[] = [];
+  for (let k = 0; k < 3; k++) {
+    const a = spin + (k / 3) * TAU;
+    kp.push(new Phaser.Geom.Point(key.x + Math.cos(a) * 6, key.y + Math.sin(a) * 6));
+  }
+  g.fillStyle(tint(ILL.cyan), alpha * 0.7 * hot);
+  g.fillPoints(kp, true);
+  if (charge > 0.02) harlequinMask(g, tint, x, y, 8 + charge * 3, alpha * charge * 0.8);
+}
+
+/**
+ * Masquerade (mastery bindable): the mask actually worn on the face, as opposed to the
+ * harlequin one the illusionist floats above their crown at all times.
+ *
+ * Deliberately a different object from that one — gold instead of violet, wide instead of
+ * tall, plumed, and held on a stick — because the wearer needs to be able to tell at a glance
+ * whether the thing is still on their face. Nobody else ever sees it drawn.
+ */
+export function masqueradeMask(
+  g: Phaser.GameObjects.Graphics,
+  tint: IllusionColorFn,
+  x: number, y: number, s: number, alpha: number, t: number,
+): void {
+  const gold = 0xffc94a;
+  const goldDeep = 0x9a6a12;
+  const sway = Math.sin(t * 2.1) * 0.06;
+
+  // Plumes first — behind the face, fanning out of the top corners.
+  for (let i = 0; i < 6; i++) {
+    const side = i % 2 === 0 ? -1 : 1;
+    const rank = Math.floor(i / 2);
+    const a = -Math.PI / 2 + side * (0.45 + rank * 0.3) + sway;
+    const len = s * (1.5 + rank * 0.42);
+    const bx = x + side * s * 0.62;
+    const by = y - s * 0.42;
+    g.lineStyle(2.6, tint(rank === 1 ? ILL.magenta : gold), alpha * (0.5 - rank * 0.1));
+    g.lineBetween(bx, by, bx + Math.cos(a) * len, by + Math.sin(a) * len);
+    // Barbs, so a plume reads as a feather rather than a wire.
+    for (let k = 1; k <= 3; k++) {
+      const f = k / 4;
+      const px = bx + Math.cos(a) * len * f;
+      const py = by + Math.sin(a) * len * f;
+      const spur = s * 0.22 * (1 - f);
+      g.lineStyle(1.2, tint(ILL.spark), alpha * 0.35);
+      g.lineBetween(px, py, px + Math.cos(a + 1.2) * spur, py + Math.sin(a + 1.2) * spur);
+      g.lineBetween(px, py, px + Math.cos(a - 1.2) * spur, py + Math.sin(a - 1.2) * spur);
+    }
+  }
+
+  // The face plate: a wide domino with a pinched bridge and two flared cheeks.
+  const plate = [
+    new Phaser.Geom.Point(x - s * 1.15, y - s * 0.5),
+    new Phaser.Geom.Point(x - s * 0.28, y - s * 0.62),
+    new Phaser.Geom.Point(x, y - s * 0.34),
+    new Phaser.Geom.Point(x + s * 0.28, y - s * 0.62),
+    new Phaser.Geom.Point(x + s * 1.15, y - s * 0.5),
+    new Phaser.Geom.Point(x + s * 1.0, y + s * 0.28),
+    new Phaser.Geom.Point(x + s * 0.3, y + s * 0.62),
+    new Phaser.Geom.Point(x, y + s * 0.34),
+    new Phaser.Geom.Point(x - s * 0.3, y + s * 0.62),
+    new Phaser.Geom.Point(x - s * 1.0, y + s * 0.28),
+  ];
+  g.fillStyle(tint(goldDeep), alpha * 0.95);
+  g.fillPoints(plate, true);
+  g.lineStyle(2, tint(gold), alpha);
+  g.strokePoints(plate, true, true);
+
+  // Filigree: three curls chased into the gold, moving just enough to catch the eye.
+  for (let i = 0; i < 3; i++) {
+    const f = (i - 1) * s * 0.55;
+    g.lineStyle(1.1, tint(ILL.spark), alpha * (0.4 + 0.2 * Math.sin(t * 3 + i)));
+    g.beginPath();
+    g.moveTo(x + f, y - s * 0.44);
+    g.lineTo(x + f + s * 0.16, y - s * 0.12);
+    g.lineTo(x + f - s * 0.12, y + s * 0.14);
+    g.strokePath();
+  }
+
+  // Eye holes — void, not colour, so the mask reads as something with nothing behind it.
+  for (const side of [-1, 1]) {
+    g.fillStyle(tint(ILL.voidDark), alpha);
+    g.fillEllipse(x + side * s * 0.52, y - s * 0.06, s * 0.56, s * 0.36);
+    g.lineStyle(1.4, tint(gold), alpha * 0.9);
+    g.strokeEllipse(x + side * s * 0.52, y - s * 0.06, s * 0.56, s * 0.36);
+    g.fillStyle(tint(ILL.magenta), alpha * 0.55);
+    g.fillCircle(x + side * s * 0.52, y - s * 0.06, s * 0.09);
+  }
+
+  // The stick, held down and out to one side.
+  g.lineStyle(2.4, tint(goldDeep), alpha * 0.9);
+  g.lineBetween(x + s * 1.0, y + s * 0.25, x + s * 1.35, y + s * 1.5);
+  g.fillStyle(tint(gold), alpha * 0.9);
+  g.fillCircle(x + s * 1.35, y + s * 1.5, 2.4);
+}
+
+/**
  * One Blade Dance dagger. A stage prop and a real knife at the same time: a solid violet
  * blade with its own lagging copy behind it, which is the element's whole visual grammar
  * applied to the one thing in the kit that is a straightforward stab.
@@ -581,6 +743,68 @@ export class IllusionFx extends FxBase {
       }
     });
   }
+
+  /**
+   * Somebody reaching for a face. Four fingers closing on the point from the outside, which is
+   * the whole of what a "click on them" looks like — there is no hand sprite in this game, so
+   * the gesture has to be readable purely as motion converging on one spot.
+   */
+  grab(x: number, y: number, color = ILL.spark, depth = 11): void {
+    const seed = Math.random() * 999;
+    this.anim(depth, 420, (g, t) => {
+      const close = easeOut(t);
+      for (let i = 0; i < 4; i++) {
+        const a = seed * 0.01 + (i / 4) * TAU + t * 0.5;
+        const outer = 46 * (1 - close * 0.78);
+        const inner = 14 * (1 - close * 0.4);
+        const bend = 0.5;
+        const mx = x + Math.cos(a + bend * 0.5) * (outer + inner) * 0.5;
+        const my = y + Math.sin(a + bend * 0.5) * (outer + inner) * 0.5;
+        g.lineStyle(3.4, this.tint(ILL.violetDim), (1 - t) * 0.45);
+        g.beginPath();
+        g.moveTo(x + Math.cos(a) * outer, y + Math.sin(a) * outer);
+        g.lineTo(mx, my);
+        g.lineTo(x + Math.cos(a + bend) * inner, y + Math.sin(a + bend) * inner);
+        g.strokePath();
+        g.fillStyle(this.tint(color), (1 - t) * 0.8);
+        g.fillCircle(x + Math.cos(a + bend) * inner, y + Math.sin(a + bend) * inner, 2.6);
+      }
+      g.lineStyle(1.6, this.tint(color), (1 - t) * 0.5);
+      g.strokeCircle(x, y, 46 * (1 - close * 0.78));
+    });
+  }
+
+  /**
+   * A mask coming off. Gold shrapnel and a face-shaped void left hanging for a beat — the one
+   * moment in the whole element where the trick is over and everybody can see it.
+   */
+  maskBreak(x: number, y: number, depth = 12): void {
+    const gold = 0xffc94a;
+    const bits = Array.from({ length: 11 }, (_, i) => ({
+      a: (i / 11) * TAU + Math.random() * 0.5,
+      v: 90 + Math.random() * 150,
+      spin: (Math.random() - 0.5) * 12,
+      r: 2.4 + Math.random() * 3.4,
+    }));
+    this.anim(depth, 620, (g, t) => {
+      const e = easeOut(t);
+      for (const b of bits) {
+        const d = b.v * e * 0.6;
+        const bx = x + Math.cos(b.a) * d;
+        const by = y + Math.sin(b.a) * d + 40 * t * t;
+        const sp = b.spin * t;
+        const pts: Phaser.Geom.Point[] = [];
+        for (let k = 0; k < 3; k++) {
+          const ang = sp + (k / 3) * TAU;
+          pts.push(new Phaser.Geom.Point(bx + Math.cos(ang) * b.r, by + Math.sin(ang) * b.r));
+        }
+        g.fillStyle(this.tint(gold), (1 - t) * 0.95);
+        g.fillPoints(pts, true);
+      }
+      // The hole it left.
+      if (t < 0.6) harlequinMask(g, this.tint, x, y, 11 * (1 + t), (1 - t / 0.6) * 0.6, gold);
+    });
+  }
 }
 
 // ── Avatar ────────────────────────────────────────────────────────────────
@@ -608,6 +832,8 @@ export class IllusionAvatar extends BaseAvatar {
   private splitTarget = 0;
   /** Extra copies granted while Illusion Dance is running. */
   private echoes = 2;
+  /** Masquerade: the gold mask is on the face. Set only on the local player's own avatar. */
+  private masqued = false;
   private seed = Math.random() * 999;
 
   constructor(scene: Phaser.Scene, tint: IllusionColorFn, depth = 6) {
@@ -619,6 +845,14 @@ export class IllusionAvatar extends BaseAvatar {
 
   /** How many afterimages trail the body. Dance pushes this up. */
   setEchoes(n: number): void { this.echoes = n; }
+
+  /**
+   * Masquerade (mastery): whether the gold mask is on the face right now.
+   *
+   * Only ever set true on the avatar belonging to the screen's own player. The whole ability
+   * is that the other side cannot see it, so a masked opponent's avatar is told nothing.
+   */
+  setMasquerade(on: boolean): void { this.masqued = on; }
 
   update(delta: number, x: number, y: number, alpha: number): void {
     this.split += (this.splitTarget - this.split) * Math.min(1, delta / 200);
@@ -687,6 +921,10 @@ export class IllusionAvatar extends BaseAvatar {
     // The mask itself, hovering at the crown and tilting with the aim.
     const bob = Math.sin(this.t * 2.4) * 2;
     harlequinMask(g, this.tint, x, y - 26 + bob, 9.5 + (this.mastered ? 2 : 0), alpha);
+
+    // Masquerade: the gold one, worn rather than floated — straight over the eyes, where the
+    // crown mask deliberately never sits, so the two can never be mistaken for each other.
+    if (this.masqued) masqueradeMask(g, this.tint, x, y - 4, 10, alpha, this.t);
 
     // A prism shard held in each hand, turning independently — the tell that the hands are
     // doing the refracting rather than throwing anything.

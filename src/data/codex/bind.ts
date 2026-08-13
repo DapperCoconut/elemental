@@ -3,9 +3,9 @@ import { ElementCodex } from '../AbilityCodex';
 /**
  * Bind — the element where every ability is a favour, and the favours are itemised.
  *
- * Verified against `src/elements/bind.ts`, `kits/BindKit.ts` and the five shop upgrades in
- * `data/Upgrades.ts`. Bind has no perks and no mastery enhancements; every figure below is a
- * constant at the top of the kit.
+ * Verified against `src/elements/bind.ts`, `kits/BindKit.ts`, the five shop upgrades in
+ * `data/Upgrades.ts` and the two mastery enhancements in `data/Mastery.ts`. Bind has no perks;
+ * every figure below is a constant at the top of the kit.
  */
 const bind: ElementCodex = {
   identity:
@@ -23,12 +23,15 @@ const bind: ElementCodex = {
     {
       emoji: '👁️',
       name: 'The Patron',
-      magic:
-        'A veil of cosmic dark hangs across the top of the arena with an eye the size of a car '
-        + 'set into it, gold-lidded with a purple iris, and a bar slung under it like a jaw with '
-        + 'five runs of chain swinging off it. The eye opens wider the angrier it gets. Every '
-        + 'attack in the kit comes out of it, which is why the bar is not a resource you spend — '
-        + 'it is a record of how much of its patience you have.',
+      basics:
+        'A 0–100 anger bar marked in quarters, drawn once per arena for whichever side is playing Bind. '
+        + 'Overheating the beam is a flat 20, a starved idol is 5 every second, every hit the ward eats '
+        + 'hands over half the raw figure, winding up Eviscerate is 4 a second and holding Over-rage is 7 '
+        + 'a second. It empties at 2 a second and nothing else in the element lowers it faster — there is '
+        + 'no dump, no cleanse and no way to trade damage for patience. Each convert takes 12% off anger '
+        + 'as it is gained, 36% at three, applied to the bill and never to the bar, so a debt already run '
+        + 'up stays run up. The eye\'s lid opens from about a quarter to nearly two-thirds as the bar '
+        + 'climbs, and the bar goes gold, then orange past 70, then a strobing red the frame it turns.',
       effects: [
         { tag: 'resource', label: 'The bar', detail: '0 to 100 anger, marked in quarters. It is drawn once per arena: yours if you are the Bind player, the bot\'s if it is, never both.' },
         { tag: 'resource', label: 'What fills it', detail: 'Overheating the beam is a flat 20. A starved idol is 5 every second. Every hit the ward eats hands over half of the raw figure. Winding up Eviscerate is 4 a second and holding Over-rage is 7 a second.' },
@@ -44,13 +47,16 @@ const bind: ElementCodex = {
     {
       emoji: '⛓️',
       name: 'The Turning',
-      magic:
-        'At 100 the screen shakes, flashes red, and the eye swings round. For five seconds it '
-        + 'runs the same routine the ultimate runs — shard volleys out of the sky, claw swipes, '
-        + 'three-line laser sprays, dark-light beams dropped on the floor — with one boolean '
-        + 'flipped, so every single one of them is aimed at the person who summoned it. Nothing '
-        + 'in the kit answers while it does. It is not a stun; you can still walk, and there is '
-        + 'nowhere in the arena to walk to.',
+      basics:
+        'At 100 anger the god turns on you for 5 seconds. It throws a 7-shard volley every 1.2s at 10 '
+        + 'each in a 67px scatter, a 24-damage claw swipe in a 96px circle every 2.1s, three 8-damage '
+        + 'lasers every 0.62s, and a 38-damage dark blast in a 122px circle every 3 seconds after a 0.9s '
+        + 'warning ring. All five of your abilities refuse for the whole window — they are the eye\'s '
+        + 'abilities and it is busy — though the cooldown of anything you press is handed straight back, '
+        + 'so being ignored does not also cost you the button. It goes through the normal damage path '
+        + 'rather than the self-damage one, so shields, absorbers and a standing Prophet\'s Protection are '
+        + 'all allowed to answer it, and a ward held in reserve is the real counterplay. The bar is set '
+        + 'to 0 the instant it turns, so surviving the five seconds hands you a completely clean sheet.',
       effects: [
         { tag: 'damage', label: 'What it throws at you', detail: 'A 7-shard volley every 1.2s at 10 each in a 67px scatter, a 24-damage claw swipe in a 96px circle every 2.1s, three 8-damage lasers every 0.62s, and a 38-damage dark blast in a 122px circle every 3s after a 0.9s warning ring.' },
         { tag: 'cost', label: 'Nothing answers', detail: 'All five abilities refuse for the whole 5 seconds — the abilities are the eye\'s, and it is busy. The cooldown of anything you press is handed straight back, so being ignored does not also cost you the button.' },
@@ -66,12 +72,15 @@ const bind: ElementCodex = {
 
   abilities: {
     'bind-summon': {
-      magic:
-        'You point, and a column of gold light falls out of the eye and lands on your cursor. It '
-        + 'is a line drawn from the hole in the sky down to wherever the mouse is, and it burns '
-        + 'the whole length of that line, not just the far end of it. A small bar appears over '
-        + 'your head and fills while it fires; the fuller it is the faster the light bites, and '
-        + 'the top of the bar has a red tick on it for a reason.',
+      basics:
+        'A held beam from the eye at the top of the arena down to your clamped cursor, burning '
+        + 'everything within 26px of the whole line rather than only the body at the aim point, for 7 '
+        + 'damage a tick. Ticks come every 460ms cold, ramping smoothly to every 120ms at full heat — '
+        + 'roughly 15 damage a second cold and 58 hot. Heat takes 3.2 seconds of continuous fire to fill '
+        + 'and 4.5 seconds of not firing to bleed off, and it only rises while the beam is actually '
+        + 'firing. Topping it out costs 20 anger, prints 🔥 OVERHEATED and cuts the beam, and Click is '
+        + 'refused for the entire 4.5 seconds it takes heat to reach zero — not until it drops below a '
+        + 'line, until there is none left. It says ✦ COOL the frame the last of it goes.',
       cast: 'Click, held. Each cast keeps the beam alive for 420ms and the ability re-casts on a 260ms cooldown, so a held button is one continuous beam and a bot spamming it produces the identical one.',
       effects: [
         { tag: 'damage', label: 'The burn', detail: '7 per tick to everything within 26px of the beam line — a segment running from the eye at the top of the arena down to the clamped cursor position, so a body standing anywhere under it is hit, not only the body at the aim point.' },
@@ -81,11 +90,13 @@ const bind: ElementCodex = {
         { tag: 'utility', label: 'The cool', detail: 'It says ✦ COOL the frame the last of the heat goes, which is the signal to start again.' },
       ],
       upgrade: {
-        magic:
-          'Over-rage removes the wall. Hold the button through the top of the bar and the beam '
-          + 'simply does not stop — no gap in the light, no refusal, permanently pinned at its '
-          + 'fastest bite. A ring of red boils around you while it runs and the price is charged '
-          + 'in blood and patience, by the second, with no ceiling on either.',
+        basics:
+          'Heat is pinned at maximum and the beam holds its 120ms tick — 58 damage a second — for as long '
+          + 'as you hold the button. It costs 2 HP a second, taken as self-damage in whole-point bites so '
+          + 'it lands as a stream of small hits, and 7 anger a second, flat: unlike everything else in the '
+          + 'kit that rate scales with nothing, and it will happily walk the bar to 100 and turn the god. '
+          + 'The one-off 20 for topping heat out is still paid the first time it reaches full — Over-rage '
+          + 'removes the stop, not the fine.',
         effects: [
           { tag: 'buff', label: 'It never stops', detail: 'Heat is pinned at maximum and the beam keeps its 120ms tick — 58 damage a second — for as long as the button is held.', requiresUpgrade: 'click' },
           { tag: 'cost', label: 'Blood', detail: '2 HP a second, taken from you as self-damage in whole-point bites so it lands as a stream of small hits rather than a per-frame trickle.', requiresUpgrade: 'click' },
@@ -101,11 +112,17 @@ const bind: ElementCodex = {
     },
 
     'bind-shards': {
-      magic:
-        'You throw a hand down and twenty-five wedges of gold come out of the eye in a stagger, '
-        + 'each with a small purple eye set into its face, all of them falling towards a scatter '
-        + 'of points around your cursor. They read as a downpour rather than a wall. Then the god '
-        + 'sends the bill, and the bill is permanent.',
+      basics:
+        'Calls 25 shards down from the eye at 10 damage each, bursting in a 34px radius where they '
+        + 'land, scattered across a 96px-radius disc around the cursor weighted evenly by area — so a '
+        + 'body standing in the middle realistically catches five or six of them, 50 to 60 damage rather '
+        + 'than 250. They fall at 720 px/s, fanned across 150px of the eye\'s width and staggered 26ms '
+        + 'apart so the barrage takes about 0.62s to launch, and a shard whose 2.6 seconds runs out '
+        + 'bursts wherever it happens to be. Every cast permanently applies one of three tithes, chosen '
+        + 'at random by the god and never by you: ×0.9 move speed, ×1.1 damage taken, or ×0.9 damage '
+        + 'dealt. They stack multiplicatively — four speed tithes is ×0.66 — and nothing in the game '
+        + 'removes one. The tithe is rolled when the barrage is thrown rather than when it lands, so a '
+        + 'barrage that hits nothing costs exactly as much as one that kills. 6.5s cooldown.',
       cast: 'E, aimed at the cursor. 6.5s cooldown. The shards leave the eye fanned across 150px of its width, staggered 26ms apart, so the full barrage takes about 0.62s to launch and each shard lives at most 2.6s.',
       effects: [
         { tag: 'damage', label: 'The barrage', detail: '25 shards at 10 damage each, bursting in a 34px radius where they land.' },
@@ -115,11 +132,14 @@ const bind: ElementCodex = {
         { tag: 'cost', label: 'Charged on the ask', detail: 'The tithe is rolled when the barrage is thrown, not when it lands, so a barrage that hits nothing at all costs exactly as much as one that kills.' },
       ],
       upgrade: {
-        magic:
-          'Eviscerate turns the key into a hold. A reticle appears on the floor under your cursor '
-          + 'and closes as you wind up, from a wide dinner-plate of a scatter down to a footprint '
-          + 'smaller than a single shard\'s blast — which puts all twenty-five of them into one '
-          + 'body. The god charges for the time you spend asking.',
+        basics:
+          'E becomes a wind-up: the 96px scatter closes to 18px over a 1.5-second hold, and at 18px every '
+          + 'shard is inside every other shard\'s 34px blast, so a full charge is the entire 250 damage on '
+          + 'one target. The hold costs 4 anger a second, billed as it accrues rather than on release, so a '
+          + 'charge you abandon halfway still cost 3. It fires on the release and lands where you finished '
+          + 'aiming rather than where you started, and the wind-up only begins once the cooldown is already '
+          + 'up. The floor reticle is drawn at the exact radius the shards will scatter across; a partial '
+          + 'charge announces ⛓ EVISCERATE with its percentage and a full one just says ⛓ EVISCERATE.',
         effects: [
           { tag: 'buff', label: 'The squeeze', detail: 'The 96px scatter closes to 18px over a 1.5s hold. At 18px every shard is inside every other shard\'s 34px blast, so a full charge is the entire 250 damage on one target.', requiresUpgrade: 'e' },
           { tag: 'cost', label: 'Winding up costs anger', detail: '4 a second for the whole hold, billed as it accrues rather than on release — a charge you abandon halfway still cost 3.', requiresUpgrade: 'e' },
@@ -135,12 +155,16 @@ const bind: ElementCodex = {
     },
 
     'bind-idol': {
-      magic:
-        'A gold statue with the patron\'s eye on its front is planted where you point, and a wide '
-        + 'ring of ground lights up around it. It is not a turret — it is a contract. Stand in '
-        + 'the ring and its bead of faith fills and it starts throwing shards at whoever you are '
-        + 'fighting. Walk away and it drains, and when it hits empty it stops asking politely and '
-        + 'starts billing the god for your absence.',
+      basics:
+        'Plants an idol at the cursor, clamped 40px inside the walls, holding up to 10 faith. It ticks '
+        + 'once a second: +1 while you stand within 118px, −1 while you do not. On every tick where it '
+        + 'has at least 1 whole faith it throws 5 shards at 6 damage each into a 58px scatter around a '
+        + 'live target — 30 damage a second while it is fed. The 118px ring is drawn on the floor under '
+        + 'everything and visibly starves as the faith drops. A tick at exactly 0 faith charges the '
+        + 'patron 5 anger, and keeps charging every second until you come back; 6 seconds of continuous '
+        + 'empty and the idol shatters itself. Left alone from full that is 10 seconds of drain and 6 '
+        + 'more of billing — 30 anger, and then no idol. 20s cooldown, and a second cast moves it, which '
+        + 'is the only way to abandon one without paying.',
       cast: 'R, planted at the cursor and clamped 40px inside the arena walls. 20s cooldown. A second cast moves it, which is the only way to abandon one without paying.',
       effects: [
         { tag: 'summon', label: 'The idol', detail: 'Holds up to 10 faith. It ticks once a second: +1 while you stand within 118px of it, −1 while you do not.' },
@@ -150,11 +174,15 @@ const bind: ElementCodex = {
         { tag: 'cost', label: 'Crumbling', detail: '6 seconds of continuous empty and the idol shatters itself. Left alone from full that is 10 seconds of drain and then 6 more of billing — 30 anger, and then no idol.' },
       ],
       upgrade: {
-        magic:
-          'Cult of the Broken God changes what the key is for. With an idol already standing, R '
-          + 'stops raising statues and starts finding people: a hooded figure walks in with the '
-          + 'patron\'s eye stitched onto the hood and a run of chain linking it to you. They have '
-          + 'one job, which is to stand in the ring so that you do not have to.',
+        basics:
+          'Up to 3 permanent converts. Nothing in the game damages, dispels or times one out, and the '
+          + 'only thing that ever removes one is the ultimate. Each convert inside the ring feeds exactly a '
+          + 'third of a faith per tick, so three cancel the −1 drain outright and the idol never needs you '
+          + 'again, two leave it bleeding a third a second and one two thirds. Each also takes 12% off all '
+          + 'anger gained — 36% at three, applied to the gain and never to the bar — and gives +10% move '
+          + 'speed, up to +30%, multiplied against the speed tithes rather than added to them. They move at '
+          + '190 px/s, milling within about 52px of their post so three never stack into one shape, and '
+          + 'they arrive at the idol rather than at you.',
         effects: [
           { tag: 'summon', label: 'The converts', detail: 'Up to 3, permanent. Nothing in the game damages, dispels or times one out — the only thing that ever removes one is the ultimate.', requiresUpgrade: 'r' },
           { tag: 'resource', label: 'Faith share', detail: 'Each convert inside the ring feeds exactly ⅓ of a faith per tick. Three of them cancel the −1 drain outright and the idol never needs you again; two leave it bleeding ⅓ a second; one leaves it bleeding ⅔.', requiresUpgrade: 'r' },
@@ -171,11 +199,15 @@ const bind: ElementCodex = {
     },
 
     'bind-protection': {
-      magic:
-        'Three gold hexagons close around you and hang there turning. They do not reduce damage '
-        + 'and they do not have a pool — each one eats an entire incoming instance and vanishes, '
-        + 'whether that instance was 4 points or 400. Nothing is destroyed by this, only moved: '
-        + 'half of everything they swallow is handed straight to the patron.',
+      basics:
+        'Three hexes, each intercepting one full instance of damage before any shield charge, shield '
+        + 'pool or clotted HP gets a look at it, nullifying the whole instance however large it was. Half '
+        + 'of the raw amount absorbed goes on the anger bar, so eating three 60-damage hits is 90 anger '
+        + 'and eating one 300-damage ultimate is 150 in a single frame. It prints ✦ WARDED with the '
+        + 'charges left on every block and ✦ WARD SPENT when the last hex goes, and whatever absorber you '
+        + 'were already wearing is stored and handed back when the ward ends, so nothing else on your '
+        + 'body is deleted by casting it. A second cast replaces the standing ward outright rather than '
+        + 'stacking. 16s cooldown.',
       cast: 'F. 16s cooldown. A second cast replaces the standing ward outright rather than stacking — three charges is the ability, not a ceiling.',
       effects: [
         { tag: 'shield', label: 'The hexes', detail: '3 charges. Each intercepts one full instance of damage before any shield charge, shield pool or clotted HP gets a look at it, and the whole instance is nullified however large it was.' },
@@ -184,10 +216,13 @@ const bind: ElementCodex = {
         { tag: 'utility', label: 'It gives the old absorber back', detail: 'Whatever absorber you were already wearing is stored and handed back when the ward ends, so nothing else on your body is deleted by casting it.' },
       ],
       upgrade: {
-        magic:
-          'Chosen Vessel makes the hexes work in both directions. A halo of rungs appears under '
-          + 'them, one per hex still standing, and while they stand you are faster and you hit '
-          + 'harder — and every hit they eat for you takes a rung back.',
+        basics:
+          'Each hex still standing is worth +15% move speed and +15% damage dealt: +45%/+45% on a fresh '
+          + 'ward, +30% at two, +15% at one, nothing once it is spent. The damage half rides the same '
+          + 'outgoing multiplier the ×0.9 damage tithes eat out of, written once per frame, so a vessel '
+          + 'carrying two damage tithes lands on exactly the figure both agreed to — ×0.81 × 1.45. The '
+          + 'speed stacks multiplicatively too, so three converts and a fresh ward is ×1.3 × ×1.45 on top '
+          + 'of whatever the speed tithes have taken.',
         effects: [
           { tag: 'buff', label: 'The rungs', detail: '+15% move speed and +15% damage dealt per hex still standing: +45%/+45% on a fresh ward, +30% at two, +15% at one, nothing once it is spent.', requiresUpgrade: 'f' },
           { tag: 'utility', label: 'It shares a writer with the tithe', detail: 'The damage half rides the same outgoing multiplier the ⅹ0.9 damage tithes eat out of, written once per frame, so a vessel carrying two damage tithes lands on exactly the figure both agreed to (×0.81 × 1.45).', requiresUpgrade: 'f' },
@@ -202,13 +237,20 @@ const bind: ElementCodex = {
     },
 
     'bind-treachery': {
-      magic:
-        'The eye opens all the way and the sky comes apart. For fifteen seconds it does everything '
-        + 'it knows how to do at once — volleys of shards, claw swipes out of nowhere, three-line '
-        + 'laser sprays, and slow beams of dark light dropped in circles across the floor. You do '
-        + 'none of it. Four chains come out of the corners of the arena, drag you into the exact '
-        + 'centre of the room and hold you there, and you cannot press a thing. The price is taken '
-        + 'on the way in, and the bill for the fifteen seconds is presented on the way out.',
+      basics:
+        'Fifteen seconds of open sky. You are dragged to the centre of the arena over about 130ms and '
+        + 'pinned there with velocity zeroed every frame, unable to cast anything — all four other slots '
+        + 'are dead and every keypress is drained rather than queued, so the whole fifteen seconds does '
+        + 'not come out at once when the chains fall off. Meanwhile the eye works: a 7-shard volley at 10 '
+        + 'each in a 67px scatter every 1.2s, a 24-damage claw swipe within 96px every 2.1s, three '
+        + '8-damage lasers every 0.62s, and every 3 seconds a marked circle that lands a 122px, 38-damage '
+        + 'blast 0.9s later with a camera shake. It costs a limb: one of Click, E, R or F is locked for '
+        + 'the rest of the match — nominally 15 minutes, longer than any match — and you choose which by '
+        + 'pressing it, while a bot picks at random. And the frame the sky closes, the anger bar is taken '
+        + 'straight to the top and the patron turns, so every ultimate is 15 seconds of open sky followed '
+        + 'immediately by 5 of it aimed at you. The prompt stalls 0.8s before it will accept an answer '
+        + 'and Click needs a full release and press after that, so holding the beam through it cannot '
+        + 'cost you the beam. 60s cooldown.',
       cast: 'Q, ultimate. Instant. 60s cooldown. A banner comes up asking which of your other four slots the god may have — it stalls for 0.8s before it will accept an answer, and Click needs a full release and press after that, so holding the beam through the prompt cannot cost you the beam.',
       effects: [
         { tag: 'damage', label: 'Shard volleys', detail: '7 shards at 10 damage each in a 67px scatter, every 1.2s — about 12 volleys across the ultimate.' },
@@ -221,12 +263,15 @@ const bind: ElementCodex = {
         { tag: 'cost', label: 'The closing bill', detail: 'The frame the sky closes, the anger bar is taken straight to the top and the patron turns — so every ultimate is 15 seconds of open sky followed immediately by 5 seconds of it aimed at you.' },
       ],
       upgrade: {
-        magic:
-          'Awakening is what the converts were for. Every hood in your cult comes off at once and '
-          + 'there is no head under any of them — a mass of open gold eyes. Awakened, they stop '
-          + 'worshipping and start taking orders from your cursor, and when the sky closes each '
-          + 'of them puts a shard of oblivion through its own chest for having been allowed to '
-          + 'see.',
+        basics:
+          'Your converts wake up and fight for the duration. Each throws 3 shards at 9 damage every '
+          + '1.6–2.2s into a 130px scatter — deliberately wider than your own barrage, because they are '
+          + 'converts and not marksmen — and every 2.9–3.8s one runs at 780 px/s straight through a target '
+          + 'for 18 damage, overshooting 120px past it, with the run swept rather than sampled so it cannot '
+          + 'skip a body and each body hit once per charge. An awakened convert homes on your mouse rather '
+          + 'than the faith ring and moves at 1.5× its hooded pace. Every convert that woke up stabs itself '
+          + 'the frame the ultimate ends; a cult that was never awakened, because you had no Q+, just keeps '
+          + 'standing in the ring.',
         effects: [
           { tag: 'damage', label: 'Their volleys', detail: 'Each awakened convert throws 3 shards at 9 damage every 1.6–2.2s, into a 130px scatter — deliberately wider than your own barrage, because they are converts and not marksmen.', requiresUpgrade: 'q' },
           { tag: 'damage', label: 'Their charge', detail: 'Every 2.9–3.8s one runs at 780 px/s straight through a target for 18 damage, overshooting 120px past it. The run is swept rather than sampled, so it cannot skip a body at that speed, and each body is hit once per charge.', requiresUpgrade: 'q' },
@@ -239,6 +284,68 @@ const bind: ElementCodex = {
         'A second ultimate costs a second slot. There are four to give, and once all four are gone the ultimate is genuinely free — a 60s cooldown makes that a five-ultimate match, which is unlikely but not impossible.',
         'Awakening is a hard choice against Cult of the Broken God: the converts are permanent and unkillable right up until you press Q, at which point every one of them is spent.',
         'A starving idol topping the bar out mid-ultimate ends the ultimate early — the patron turning cancels everything it was doing on your behalf, including this, and the converts still pay for having been woken.',
+      ],
+    },
+  },
+
+  mastery: {
+    'vessel-of-the-broken-god': {
+      basics:
+        'God of Treachery lights a 20-second window — the ultimate\'s own 15 plus the 5 of wrath that '
+        + 'closing the sky always causes — and the first 15 are spent chained to the middle of the floor, '
+        + 'so the tail is the half worth owning. While it runs you move 35% faster, take ×0.6 damage, and '
+        + 'have every discrete debuff on you stripped off every 0.25 seconds: burns, molten, scorch, oil '
+        + 'fire, poison, bleeds, sickness, freeze, chicken, disarm, silence, chains, skewer, wrench, '
+        + 'confusion, disorientation, hallucination, migraine, lag, panic, drink, unsteady aim, high '
+        + 'gravity, inverted controls, exposed, marked, purge, heal block, torture link, oil, frost and '
+        + 'void stacks including permafrost and permavoid, dark vulnerability and hopelessness. Every '
+        + 'Shards of Oblivion cast also throws 3 extra shards from your own body, 10 damage each in a '
+        + '34px blast, into a 42px scatter around the cursor. And the slot the ultimate takes is no '
+        + 'longer dead: it becomes Pathetic Stab, a 118px lunge at your cursor for 15 melee damage inside '
+        + '30px, swept along the run so it cannot skip a body, on a 1.8s cooldown.',
+      effects: [
+        { tag: 'damage', label: 'The vessel\'s own shards', detail: '3 extra oblivion shards on every Shards of Oblivion (E) cast, 10 damage each in a 34px blast, thrown from your body rather than from the eye into a 42px scatter around the cursor.' },
+        { tag: 'buff', label: 'Enraged — speed', detail: '+35% move speed for the whole window, pulled through the same multiplier the tithe and the cult are.' },
+        { tag: 'shield', label: 'Enraged — armour', detail: '×0.6 damage taken — 40% less — on the same rewritten-every-frame field the tithe\'s vulnerability uses, so four debts and a red eye multiply out honestly.' },
+        { tag: 'buff', label: 'Enraged — scoured clean', detail: 'Every discrete debuff on you is stripped off every 0.25s: burns, molten, scorch, oil fire, poison, bleeds, sickness, freeze, chicken, disarm, silence, chains, skewer, wrench, confusion, disorientation, hallucination, migraine, lag, panic, drink, unsteady aim, high gravity, inverted controls, exposed, marked, purge, heal block, torture link, oil, frost and void stacks (including permafrost and permavoid), dark vulnerability and hopelessness.' },
+        { tag: 'utility', label: 'The window', detail: '20 seconds, lit by God of Treachery (Q): the ultimate\'s own 15 plus the 5 of wrath that closing the sky always causes. The first 15 are spent chained to the middle of the floor, so the tail is the half worth owning.' },
+        { tag: 'damage', label: 'Pathetic Stab', detail: 'The slot the ultimate takes is no longer locked out — it becomes a 118px lunge at your cursor for 15 melee damage inside 30px, swept along the run so it cannot skip a body, on a 1.8 second cooldown.' },
+      ],
+      notes: [
+        'The enrage is the answer to the ultimate\'s guaranteed punishment rather than a reward on top of it. Five seconds of your own god using this kit on you, at 40% off and with nothing able to stick, is the difference between an ultimate you can afford and one you press when you are already winning.',
+        'A slow whose source is still standing on the field survives the scouring. Movement, cooldown and damage multipliers are co-owned by whichever kit is applying them and rewritten every frame, so the cleanse deliberately does not touch them — everything with its own expiry comes off, and a puddle you are standing in does not.',
+        'Pathetic Stab is not a replacement for the ability that was taken and is not meant to read as one. It is 15 damage; the four abilities it can replace are worth 250, a permanent turret, three charges of total immunity and a beam.',
+        'A second ultimate costs a second slot and hands back a second stab. Both keys route to the same lunge and share its cooldown, so two stab slots are two ways to press one ability.',
+        'The lunge writes your position directly rather than pushing on the velocity, for the same reason the corner chains do — it runs after the arena has already applied that frame\'s movement keys, so it wins instead of arguing with them.',
+        'It will not fire while the patron has turned, or while the chains have you. A vessel is still a vessel.',
+      ],
+    },
+    'ritual-sacrifice': {
+      basics:
+        'A bindable stab that takes 15 straight off the anger bar per press — against the bar\'s own 2 a '
+        + 'second decay, one stab is worth 7.5 seconds of waiting — for 25 self-inflicted damage, taken '
+        + 'through the self-damage path, so it bypasses invincibility and will not feed anything that '
+        + 'pays out on damage an opponent dealt you. It is refused at 25 health or less, because the god '
+        + 'does not accept an offering that finishes the job for it, and refused on a bar below 1 anger, '
+        + 'because there has to be something there to spend; both refusals are rate-limited to one pop-up '
+        + 'every 0.7s. It is also refused while the corner chains have you, for the 15 seconds of an open '
+        + 'sky, though a turned patron needs no refusal since turning emptied the bar on the way round. '
+        + 'No cooldown whatsoever — press it as many times in a row as you can afford. Cannot be bound '
+        + 'over Q.',
+      cast: 'The bound key, tapped. No cooldown whatsoever — press it as many times in a row as you can afford. Cannot be bound over Q.',
+      effects: [
+        { tag: 'resource', label: 'Anger removed', detail: '15 straight off the bar, per stab. The bar\'s own decay is 2 a second and nothing else in the element touches it, so one stab is worth 7.5 seconds of waiting.' },
+        { tag: 'cost', label: 'What it costs', detail: '25 self-inflicted damage, taken through the self-damage path — it bypasses invincibility and it will not feed anything that pays out on damage an opponent dealt you.' },
+        { tag: 'cost', label: 'The health floor', detail: 'Refused at 25 health or less. The god does not accept an offering that finishes the job for it.' },
+        { tag: 'utility', label: 'The calm refusal', detail: 'Refused on a bar below 1 anger — there has to be something there to spend. Both refusals are rate-limited to one pop-up every 0.7s so a held key does not spam the screen.' },
+        { tag: 'utility', label: 'Where it will not fire', detail: 'Refused while the corner chains have you, for the 15 seconds of an open sky. A turned patron needs no refusal: turning emptied the bar on the way round.' },
+      ],
+      notes: [
+        'This is the only anger dump in the element, which is what makes it the strongest of the two enhancements on paper and the more boring of the two to own. Every price the kit charges becomes payable: an overheated beam is 20 anger and two stabs, a starving idol is 5 a second and one, a ward that ate a 200-damage ultimate is 100 anger and seven.',
+        'At 400 max health, dumping a full bar from 100 to 0 is seven stabs — 175 health, or 44% of you. That is the trade the ability is: it does not remove the bookkeeping, it re-denominates it in HP.',
+        'Binding it costs you whichever base ability it lands on, and the three legal slots are the barrage, the idol and the ward. Over F it is at its most honest — the ward is the biggest single source of anger in the kit, so giving it up removes most of what the dagger exists to pay off.',
+        'It is barred from Q by `excludeSlots`, and not for balance: the ultimate is what lights the enrage and what creates the Pathetic Stab slot, so binding over it would delete two thirds of the passive as well.',
+        'Bots with the mastery on play it at 60 anger or more, once every 0.9s, and only while they are more than 90 health clear of the floor it refuses at.',
       ],
     },
   },

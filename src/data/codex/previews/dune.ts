@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import {
-  LIFT, SND, SandAvatar, SandFx, crown, goldOrb, grains, laneDivider, lavaTide, pillar,
-  poisonPatch, pyramidIdol, sandBeam, sandBridge,
+  LIFT, SND, SandAvatar, SandFx, crown, flameJet, glassGhost, glassShell, goldOrb, grains,
+  laneDivider, lavaTide, miniIdol, pillar, poisonPatch, pyramidIdol, sandBeam, sandBridge,
 } from '../../../elements/kits/SandVisuals';
 
 /**
@@ -30,6 +30,11 @@ const AIRBORNE_Z = 6;
 interface Plat {
   x: number; y: number; r: number; z: number; grey: boolean; goal: boolean; seed: number;
   move?: { x0: number; x1: number; period: number; phase: number };
+  /** Tempered Temptation: this slab has been turned to glass, and whether it will give way. */
+  glass?: boolean;
+  crumble?: boolean;
+  /** `elapsed` at which somebody first stood on it, for the crack that opens as it goes. */
+  standSince?: number;
 }
 interface Deck { x1: number; y1: number; z1: number; x2: number; y2: number; z2: number; born: number }
 
@@ -145,6 +150,11 @@ function world(
     idolAt?: () => { p: Plat; awake: boolean } | null;
     crowns?: () => { p: Plat; taken: boolean }[];
     lava?: () => number | null;
+    /** Tempered Temptation: how far through its 2.4s a slab under somebody's feet has got. */
+    crumbleK?: (p: Plat) => number;
+    /** Anything the mastery loops paint on top — jets, ghosts, idols, the glass shell. */
+    extras?: (ground: Phaser.GameObjects.Graphics, air: Phaser.GameObjects.Graphics,
+      t: number, elapsed: number) => void;
   },
 ): void {
   const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(2));
@@ -165,7 +175,10 @@ function world(
     const standing = o.lit?.() ?? null;
     for (const p of [...o.plats].sort((a, b) => a.y - b.y)) {
       pillar(ground, ctx.tint, p.x, p.y, p.r, p.z, 1,
-        { seed: p.seed, grey: p.grey, lit: p === standing ? 1 : 0, t });
+        {
+          seed: p.seed, grey: p.grey, lit: p === standing ? 1 : 0, t,
+          glass: !!p.glass, crumble: o.crumbleK?.(p) ?? 0,
+        });
     }
     for (const c of o.crowns?.() ?? []) crown(air, ctx.tint, c.p.x, c.p.y, t, 1, { taken: c.taken });
     const orb = o.orbAt?.();
@@ -179,6 +192,7 @@ function world(
     }
     grains(ground, ctx.tint, ctx.w / 2, ctx.h / 2, Math.max(ctx.w, ctx.h) / 2, 22, 0.1,
       { seed: 11, color: SND.deep, size: 2, drift: Math.sin(t * 0.6) * 30 });
+    o.extras?.(ground, air, t, elapsed);
   });
 }
 
@@ -774,5 +788,247 @@ export const coursesAndFalling: PreviewScript = {
     });
     ctx.at(8000, () => { jump(me); });
     ctx.at(10400, () => readout.setText('hopping off the floor, stepping off an orphaned slab, leaving a deck: none of those is a fall'));
+  },
+};
+
+// ══ MASTERY — Unsatiable ══════════════════════════════════════════════
+
+/**
+ * The passive is a number that only moves while the feet do, so the loop is a climb with the
+ * reload printed next to it: four slabs, four links, and the gauge falling from 2.00s to 1.52s
+ * — then the floor, and all of it gone at once.
+ */
+export const masteryUnsatiable: PreviewScript = {
+  duration: 15000,
+  scale: 0.82,
+  bodyTexture: '',
+  caption: 'Passive — every landing that is not the floor takes 6% off the reload, up to 60%',
+  run(ctx) {
+    const plats: Plat[] = [];
+    const chain = { n: 0 };
+    const me: Runner = { x: ctx.w * 0.14, y: ctx.h * 0.74, z: 0, vz: 0, on: null, deck: null };
+    world(ctx, { plats, lit: () => me.on });
+    const { fx } = runner(ctx, me);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#f0cd8e', 11);
+    const gauge = label(ctx, ctx.w * 0.5, ctx.h - 18, '#ffd54a', 10);
+
+    ctx.at(200, () => {
+      const walk: [number, number, number][] = [
+        [ctx.w * 0.30, ctx.h * 0.64, 58], [ctx.w * 0.45, ctx.h * 0.48, 104],
+        [ctx.w * 0.60, ctx.h * 0.60, 150], [ctx.w * 0.76, ctx.h * 0.44, 196],
+      ];
+      walk.forEach(([x, y, z], i) => {
+        const p: Plat = { x, y, r: i === 3 ? 36 : 29, z, grey: i === 0, goal: false, seed: i * 71 };
+        plats.push(p);
+        ctx.capture(() => fx.rise(x, y, p.r, z, p.grey));
+      });
+      readout.setText('the gun gets hungrier the longer your feet stay off the ground');
+    });
+
+    const climb = { i: 0, next: 800 };
+    ctx.onFrame((delta, elapsed) => {
+      const dt = delta / 1000;
+      const target = plats[climb.i];
+      // Walk at the next slab and hop as the gap closes — the kit's own npc rule.
+      if (target && elapsed > 800 && elapsed < 9600) {
+        walkTo(me, target.x, target.y, 200, dt);
+        const d = Phaser.Math.Distance.Between(me.x, me.y, target.x, target.y);
+        if (elapsed > climb.next && me.on !== target && d < 76 && d > 26) {
+          if (jump(me)) climb.next = elapsed + 900;
+        }
+      }
+      stepHeight(me, plats, [], dt, (p) => {
+        if (!p) {
+          // The floor. Whatever the fall itself cost, the chain is what it really took.
+          if (chain.n === 0) return;
+          chain.n = 0;
+          ctx.capture(() => fx.puff(me.x, me.y + 14, 12, 18, 460, SND.dark));
+          float(ctx, me.x, me.y - 54, 'CHAIN LOST', hex(SND.expire), 13);
+          readout.setText('falling breaks it — and so does five seconds standing still on the floor');
+          return;
+        }
+        const idx = plats.indexOf(p);
+        if (idx <= climb.i - 1) return;
+        climb.i = Math.min(plats.length - 1, idx + 1);
+        chain.n++;
+        float(ctx, me.x, me.y - 54, `CHAIN ×${chain.n}`, hex(SND.stoneWarmLit), 12);
+      });
+      const cut = Math.min(10, chain.n) * 0.06;
+      gauge.setText(`chain ×${chain.n}   ·   −${Math.round(cut * 100)}%   ·   reload ${(2 * (1 - cut)).toFixed(2)}s`);
+    });
+
+    ctx.at(4200, () => readout.setText('six percent a link, ten links deep — two seconds down to eight hundred milliseconds'));
+    ctx.at(7600, () => readout.setText('a Cursed Pyramid is nine slabs, so one clean climb caps it on its own'));
+    ctx.at(10000, () => { jump(me); });
+    ctx.at(12600, () => readout.setText('the Sand player who is moving is the one who is shooting'));
+  },
+};
+
+// ══ MASTERY — Tempered Temptation ═════════════════════════════════════
+
+/**
+ * The bindable has four separate things to show and they only make sense together, so the loop
+ * runs the whole bargain in order: a plain course, the temper, the flames opening across the
+ * gap, a slab giving way under a standing weight, the burst — and the floor.
+ */
+export const masteryTemperedTemptation: PreviewScript = {
+  duration: 19000,
+  scale: 0.78,
+  bodyTexture: '',
+  caption: 'F/Q — 16s of glass: every course burns, half its slabs give way, and a fall kills you',
+  run(ctx) {
+    const plats: Plat[] = [];
+    const beams: { x1: number; y1: number; x2: number; y2: number; born: number; golden: boolean }[] = [];
+    const jets: { from: Plat; to: Plat; phase: number; seed: number }[] = [];
+    const ghosts: { x: number; y: number; r: number; z: number; born: number }[] = [];
+    const idols: { phase: number; born: number }[] = [];
+    const glass = { from: -1 };
+    const me: Runner = { x: ctx.w * 0.13, y: ctx.h * 0.76, z: 0, vz: 0, on: null, deck: null };
+    const crumbleAt = { p: null as Plat | null };
+
+    world(ctx, {
+      plats, beams, lit: () => me.on,
+      crumbleK: (p) => (p.crumble && p.standSince ? Phaser.Math.Clamp((ctx.scene.time.now - p.standSince) / 2400, 0, 1) : 0),
+      extras: (ground, air, t, elapsed) => {
+        // The jets, over the tops of the pillars they are strung between.
+        for (const j of jets) {
+          const d = Phaser.Math.Distance.Between(j.from.x, j.from.y, j.to.x, j.to.y);
+          const near = j.from.r + 6;
+          const far = d - j.to.r - 4;
+          if (far - near < 18) continue;
+          const ang = Math.atan2(j.to.y - j.from.y, j.to.x - j.from.x);
+          // The kit's own 1.5s on / 1.5s off with a half-second wind-up on the nozzle.
+          const at = (elapsed + j.phase) % 3000;
+          const on = at < 1500 ? 1 : 0;
+          const warm = on ? 0 : Phaser.Math.Clamp((at - 2500) / 500, 0, 1);
+          flameJet(air, ctx.tint,
+            j.from.x + Math.cos(ang) * near, j.from.y + Math.sin(ang) * near,
+            j.from.x + Math.cos(ang) * far, j.from.y + Math.sin(ang) * far,
+            19, on, warm, t, 1, { seed: j.seed });
+        }
+        for (const g of ghosts) {
+          glassGhost(ground, ctx.tint, g.x, g.y, g.r, g.z,
+            Phaser.Math.Clamp((elapsed - g.born) / 4000, 0, 1), t, 1);
+        }
+        for (const i of idols) {
+          const a = i.phase + t * 1.1;
+          miniIdol(air, ctx.tint, me.x + Math.cos(a) * 52, me.y + Math.sin(a) * 52 * 0.55, t, 1,
+            { charge: ((elapsed - i.born) % 1500) / 1500 });
+        }
+        if (glass.from >= 0 && elapsed >= glass.from) glassShell(ground, ctx.tint, me.x, me.y, 1, t, 1);
+      },
+    });
+    const { fx, av } = runner(ctx, me);
+    const victim = { x: ctx.w * 0.86, y: ctx.h * 0.24 };
+    dummyAt(ctx, victim);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#e6fffb', 11);
+    const gauge = label(ctx, ctx.w * 0.5, ctx.h - 18, '#9fe4dc', 10);
+
+    ctx.at(200, () => {
+      const walk: [number, number, number][] = [
+        [ctx.w * 0.28, ctx.h * 0.68, 58], [ctx.w * 0.45, ctx.h * 0.52, 108],
+        [ctx.w * 0.62, ctx.h * 0.64, 156], [ctx.w * 0.78, ctx.h * 0.46, 204],
+      ];
+      walk.forEach(([x, y, z], i) => {
+        const p: Plat = { x, y, r: i === 3 ? 36 : 29, z, grey: i === 0, goal: false, seed: i * 37 };
+        plats.push(p);
+        ctx.capture(() => fx.rise(x, y, p.r, z, p.grey));
+      });
+      readout.setText('a plain course: four slabs, twenty for a fall, one ball a pull');
+    });
+
+    // ── The temper ──
+    ctx.at(3400, () => {
+      glass.from = 3400;
+      av?.setTempered(true);
+      ctx.capture(() => fx.shatter(me.x, me.y, 46, true));
+      float(ctx, me.x, me.y - 54, 'TEMPERED', hex(SND.glassLit), 14);
+      // Every slab narrows and goes to glass; the middle ones become the kind that gives way.
+      plats.forEach((p, i) => {
+        p.glass = true;
+        p.r = Math.max(20, p.r * 0.86);
+        if (i === 2) { p.crumble = true; crumbleAt.p = p; }
+        ctx.capture(() => fx.shatter(p.x, p.y, p.r * 0.9));
+      });
+      for (let i = 0; i < plats.length - 1; i++) {
+        jets.push({ from: plats[i], to: plats[i + 1], phase: i * 620, seed: i * 17 });
+      }
+      readout.setText('every course on the board goes with you — yours, theirs, all of it');
+    });
+    ctx.at(4600, () => readout.setText('one flamethrower per gap: 1.5s on, 1.5s off, and the nozzle glows before it lights'));
+
+    // ── The climb, and the slab that will not hold ──
+    const climb = { i: 0, next: 5400 };
+    ctx.onFrame((delta, elapsed) => {
+      const dt = delta / 1000;
+      const target = plats[climb.i];
+      if (target && elapsed > 5400 && elapsed < 14200) {
+        walkTo(me, target.x, target.y, 200, dt);
+        const d = Phaser.Math.Distance.Between(me.x, me.y, target.x, target.y);
+        if (elapsed > climb.next && me.on !== target && d < 76 && d > 26) {
+          if (jump(me)) climb.next = elapsed + 1000;
+        }
+      }
+      stepHeight(me, plats, [], dt, (p) => {
+        if (!p) return;
+        const idx = plats.indexOf(p);
+        if (idx > climb.i - 1) climb.i = Math.min(plats.length - 1, idx + 1);
+        if (p.crumble && !p.standSince) p.standSince = ctx.scene.time.now;
+      });
+
+      // Tempered glass holds for 2.4 seconds under a standing weight and then does not.
+      const c = crumbleAt.p;
+      if (c && c.standSince && ctx.scene.time.now - c.standSince > 2400) {
+        crumbleAt.p = null;
+        ctx.capture(() => fx.shatter(c.x, c.y, c.r * 1.1));
+        float(ctx, c.x, c.y - 40, 'IT GAVE WAY', hex(SND.glassLit), 12);
+        ghosts.push({ x: c.x, y: c.y, r: c.r, z: c.z, born: elapsed });
+        plats.splice(plats.indexOf(c), 1);
+        // It comes back four seconds later in the same place — a course that permanently
+        // loses steps stops being clearable halfway through.
+        ctx.scene.time.delayedCall(4000, () => {
+          ghosts.length = 0;
+          c.standSince = 0;
+          plats.push(c);
+          ctx.capture(() => fx.rise(c.x, c.y, c.r, c.z, false));
+        });
+      }
+
+      for (let i = beams.length - 1; i >= 0; i--) if (elapsed - beams[i].born > 220) beams.splice(i, 1);
+      const on = glass.from >= 0 && elapsed >= glass.from;
+      gauge.setText(on
+        ? `TEMPERED   ·   ${idols.length ? `${idols.length} mini idol   ·   ` : ''}3 balls a pull at half each   ·   a fall is not 20, it is the end of you`
+        : 'height ' + Math.round(me.z) + '   ·   one ball a pull   ·   a fall is 20');
+    });
+
+    // ── The burst ──
+    const burst = (at: number): void => ctx.at(at, () => {
+      for (let i = 0; i < 3; i++) {
+        ctx.scene.time.delayedCall(i * 90, () => {
+          beams.push({ x1: me.x + 14, y1: me.y - 2, x2: victim.x, y2: victim.y, born: ctx.scene.time.now, golden: false });
+          ctx.capture(() => fx.ping(victim.x, victim.y, 18, SND.sand));
+          float(ctx, victim.x + (i - 1) * 12, victim.y - 22, '22', '#ffb3aa', 13);
+        });
+      }
+    });
+    burst(8200);
+    ctx.at(8300, () => readout.setText('three balls a pull for half each — five while the golden orb is on the barrel'));
+    burst(11200);
+
+    // ── The permanent shard ──
+    ctx.at(12600, () => {
+      idols.push({ phase: 0, born: 12600 });
+      ctx.capture(() => fx.shatter(me.x, me.y, 40));
+      float(ctx, me.x, me.y - 60, 'MINI IDOL ×1', hex(SND.glassLit), 12);
+      readout.setText('a Cursed Pyramid claimed while tempered leaves a shard — 5 a beam, every 1.5s, for the rest of the match');
+    });
+
+    // ── And the floor ──
+    ctx.at(15200, () => { jump(me); });
+    ctx.at(16100, () => {
+      ctx.capture(() => fx.shatter(me.x, me.y, 70, true));
+      float(ctx, me.x, me.y - 48, 'SHATTERED', hex(SND.glassLit), 16);
+      readout.setText('that is the bargain: it is worth doing, and it is a bad idea');
+    });
   },
 };

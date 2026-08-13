@@ -3,7 +3,7 @@ import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import {
   FOR, FortuneAvatar, FortuneFx, auditMark, auditor, bloodCoin, bouncyBolt, bulletShape,
   daggerShape, gildedAura, goldBeam, goldCone, grenadeShape, gunShape, healPylon, midasBullet,
-  muzzleOf, pepperFlame, roombaShape, stall, turnstile,
+  muzzleOf, passTier, pepperFlame, roombaShape, rustyCar, stall, turnstile,
 } from '../../../elements/kits/FortuneVisuals';
 
 /**
@@ -1180,5 +1180,225 @@ export const theCatalogue: PreviewScript = {
 
     buy(13400, '🏺 THE MIRACLE', 12, '20 seconds in which every good thing is doubled — heals, durations, capital gains');
     buy(15200, '💝 DONATION', 20, 'thank you for your generous support');
+  },
+};
+
+// ══ MASTERY — Battle Pass ═════════════════════════════════════════════
+
+export const masteryBattlePass: PreviewScript = {
+  duration: 18000,
+  scale: 0.9,
+  caption: 'Mastery passive — thirty tiers, 3 coins each, in order. Every fifth one is an item⁺.',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const coins = { n: 24 };
+    purse(ctx, () => coins.n, { x: 22, y: 44 });
+    const readout = label(ctx, ctx.w * 0.5, ctx.h - 34, '#f0c33c', 11);
+    const nextLine = label(ctx, ctx.w * 0.5, ctx.h - 16, '#e6d8b8', 10);
+    // The running sheet, exactly as the status tray reads it back in-match.
+    const sheet = label(ctx, ctx.w - 16, 52, '#a8791e', 10).setOrigin(1, 0);
+
+    // The real ribbon, painted with the kit's own notch. Thirty tiers across the top, the
+    // bought ones struck gold, the next one pulsing, the fifths a head taller with a star.
+    const TIERS = 30;
+    const bought = { n: 0 };
+    const pad = 44;
+    const y = 20;
+    const span = ctx.w - pad * 2;
+    const step = span / TIERS;
+    const ribbon = ctx.adopt(ctx.scene.add.graphics().setDepth(22));
+    ctx.onFrame((_dt, elapsed) => {
+      ribbon.clear();
+      ribbon.fillStyle(FOR.ink, 0.72);
+      ribbon.fillRect(pad - 10, y - 14, span + 20, 28);
+      ribbon.lineStyle(1.4, ctx.tint(FOR.brass), 0.7);
+      ribbon.strokeRect(pad - 10, y - 14, span + 20, 28);
+      for (let i = 0; i < TIERS; i++) {
+        const state = i < bought.n ? 'owned' : i === bought.n ? 'next' : 'locked';
+        passTier(ribbon, ctx.tint, pad + step * (i + 0.5), y, Math.max(4, step - 4), 14, 1,
+          { state, plus: (i + 1) % 5 === 0, t: elapsed / 1000 });
+      }
+    });
+
+    // Whatever this run's ladder happens to be. Six rungs is one full run to a star.
+    const ladder = [
+      { emoji: '🔩', name: 'Hollowed Tips', desc: '+12% weapon damage', sheet: 'damage ×1.12' },
+      { emoji: '🎽', name: 'Speed Sling', desc: '−12% reload time', sheet: 'reload ×0.88' },
+      { emoji: '🩹', name: 'Bandages', desc: 'a free item off the public shelf', sheet: '' },
+      { emoji: '🪙', name: 'Private Mint', desc: '+10% coin rate', sheet: 'coin rate ×1.10' },
+      { emoji: '🧪', name: 'Cure-All+', desc: 'cleanse, heal 120, no new debuffs for 45s', sheet: '' },
+      { emoji: '⚡', name: 'Filed Trigger', desc: '+10% fire rate', sheet: 'fire rate ×1.10' },
+    ];
+    const gained: string[] = [];
+    const showNext = (): void => {
+      const r = ladder[bought.n];
+      nextLine.setText(r ? `[B]  3🪙  —  ${r.emoji} ${r.name}: ${r.desc}` : '[B]  3🪙  —  tier 7…');
+    };
+    showNext();
+
+    ctx.at(300, () => readout.setText('press B anywhere in the arena — you never have to walk to the stall'));
+
+    const take = (at: number, note: string): void => ctx.at(at, () => {
+      const r = ladder[bought.n];
+      if (!r) return;
+      const plus = (bought.n + 1) % 5 === 0;
+      coins.n -= 3;
+      bought.n++;
+      if (r.sheet) gained.push(r.sheet);
+      sheet.setText(gained.join('\n'));
+      av.play('raise', ctx.aim);
+      ctx.capture(() => fx.cash(ctx.cx, ctx.cy - 20, 34, 460, 20));
+      float(ctx, ctx.cx, ctx.cy - 52, `${r.emoji} ${r.name.toUpperCase()}`,
+        hex(plus ? FOR.goldLit : FOR.gold), plus ? 13 : 12);
+      if (plus) ctx.capture(() => fx.coinBurst(ctx.cx, ctx.cy - 14, 8, 40, 900));
+      readout.setText(note);
+      showNext();
+    });
+
+    take(1400, 'tier 1 — three coins, and the buffs stack with themselves all match');
+    take(3600, 'tier 2 — nothing on the ladder is unique. Two of these is genuinely −23% reload.');
+    take(5800, 'tier 3 — about a third of the rungs are free items. Never guns, never attachments.');
+    take(8000, 'tier 4 — the coin rate itself is on the pass, so the pass pays for the pass');
+    take(10400, 'tier 5 ⭐ — every fifth one is an item⁺: the shelf version, but simply better');
+    ctx.at(12200, () => readout.setText('Cure-All is 50 health and 20 seconds. Cure-All⁺ is 120 and 45.'));
+    take(14000, 'tier 6 — and on up to thirty. Ninety coins for a second character sheet.');
+    ctx.at(16200, () => readout.setText('the whole ladder is rolled fresh every single match'));
+  },
+};
+
+// ══ MASTERY — Drive by Flex ═══════════════════════════════════════════
+
+export const masteryDriveByFlex: PreviewScript = {
+  duration: 19000,
+  scale: 0.78,
+  caption: 'Mastery ability — it does not steer. It bounces, it rams, and on the last bounce it goes up.',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const victim = { x: ctx.cx + 250, y: ctx.cy - 30 };
+    dummyAt(ctx, victim);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#f0c33c', 11);
+    const gauge = label(ctx, ctx.w * 0.5, ctx.h - 16, '#b8c2cc', 10);
+
+    // The car, stepped exactly as `updateCars` steps it: constant speed, reflect off the inset,
+    // one bounce per frame however many walls it touched, and a wreck at zero.
+    const INSET = 27;
+    const car = {
+      alive: false, x: ctx.cx, y: ctx.cy, vx: 0, vy: 0,
+      bounces: 5, max: 5, rider: false, turret: 0, seed: 7, gate: 0,
+      buffs: { spikes: false, tires: false, robo: false, speedster: false, tank: false, sunroof: false, gunner: false },
+    };
+    const trail: { x: number; y: number; born: number; seed: number }[] = [];
+    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
+    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(11));
+
+    ctx.onFrame((delta, elapsed) => {
+      ground.clear(); air.clear();
+      const dt = delta / 1000;
+      const t = elapsed / 1000;
+
+      for (let i = trail.length - 1; i >= 0; i--) {
+        if (elapsed - trail[i].born > 2600) { trail.splice(i, 1); continue; }
+        pepperFlame(ground, ctx.tint, trail[i].x, trail[i].y, 16, 1, { t, seed: trail[i].seed });
+      }
+      if (!car.alive) return;
+
+      let speed = 155;
+      if (car.buffs.tires) speed *= 1.45;
+      if (car.buffs.speedster) speed *= 2.4;
+      if (car.buffs.tank) speed *= 0.45;
+      const len = Math.hypot(car.vx, car.vy) || 1;
+      car.vx = (car.vx / len) * speed;
+      car.vy = (car.vy / len) * speed;
+      car.x += car.vx * dt;
+      car.y += car.vy * dt;
+
+      let bounced = false;
+      if (car.x < INSET) { car.x = INSET; car.vx = Math.abs(car.vx); bounced = true; }
+      else if (car.x > ctx.w - INSET) { car.x = ctx.w - INSET; car.vx = -Math.abs(car.vx); bounced = true; }
+      if (car.y < INSET) { car.y = INSET; car.vy = Math.abs(car.vy); bounced = true; }
+      else if (car.y > ctx.h - INSET) { car.y = ctx.h - INSET; car.vy = -Math.abs(car.vy); bounced = true; }
+      if (bounced) {
+        car.bounces--;
+        ctx.capture(() => fx.impact(car.x, car.y, Math.atan2(car.vy, car.vx) + Math.PI, 260));
+        gauge.setText(`${car.bounces} bounces left`);
+        if (car.bounces <= 0) {
+          car.alive = false;
+          ctx.capture(() => fx.wreck(car.x, car.y, 92));
+          float(ctx, car.x, car.y - 46, '💥 30 IN 92px', '#ffb3aa', 13);
+          readout.setText('the fifth bounce is not optional — the car always ends this way');
+          return;
+        }
+      }
+
+      if (car.buffs.speedster && elapsed % 80 < delta) {
+        trail.push({ x: car.x, y: car.y + 6, born: elapsed, seed: elapsed % 999 });
+      }
+
+      // The ram, with the kit's own 0.9 second per-victim gate.
+      if (Phaser.Math.Distance.Between(car.x, car.y, victim.x, victim.y) < 27 + 12
+        && elapsed > car.gate) {
+        car.gate = elapsed + 900;
+        float(ctx, victim.x, victim.y - 24, car.buffs.spikes ? '34' : '18', '#ffb3aa', 15);
+        float(ctx, victim.x, victim.y - 44, '🚗 RAMMED', hex(FOR.blood), 11);
+        ctx.capture(() => fx.impact(victim.x, victim.y, Math.atan2(car.vy, car.vx), 280));
+      }
+
+      car.turret = Math.atan2(victim.y - car.y, victim.x - car.x);
+      rustyCar(air, ctx.tint, car.x, car.y, Math.atan2(car.vy, car.vx), 1, {
+        t: t + car.seed, wear: 1 - car.bounces / car.max, turret: car.turret,
+        rider: car.rider, ...car.buffs,
+      });
+    });
+
+    ctx.at(500, () => {
+      car.alive = true;
+      car.x = ctx.cx + 40; car.y = ctx.cy;
+      car.vx = Math.cos(ctx.aim) * 155; car.vy = Math.sin(ctx.aim - 0.5) * 155;
+      car.bounces = 5; car.max = 5;
+      av.play('slam', ctx.aim);
+      ctx.capture(() => fx.rift(car.x, car.y + 8, 26));
+      readout.setText('155 px/s, five bounces, 18 on the ram. It goes forward and nothing else.');
+      gauge.setText('5 bounces left');
+    });
+
+    ctx.at(3000, () => readout.setText('it comes off the walls like a DVD logo — a corner is one bounce, not two'));
+
+    ctx.at(5200, () => {
+      car.rider = true;
+      ctx.capture(() => fx.cash(car.x, car.y - 18, 26, 380, 12));
+      float(ctx, car.x, car.y - 40, '🚗 ABOARD', hex(FOR.goldLit), 12);
+      readout.setText('Space within 54px — 40% faster reload, 35% faster trigger, and no steering');
+    });
+    ctx.at(7400, () => { car.rider = false; float(ctx, car.x, car.y - 40, '🚗 OFF', '#bda98a', 11); });
+
+    // The garage, bolted on one at a time onto the car already out.
+    ctx.at(8400, () => {
+      car.buffs.spikes = true;
+      car.bounces = 6; car.max = 6;
+      float(ctx, ctx.cx, ctx.cy - 48, '🔱 SPIKED BUMPER  −2', hex(FOR.gold), 12);
+      readout.setText('the stall grows a GARAGE tab. Ram 18 → 34.');
+    });
+    ctx.at(10200, () => {
+      car.buffs.robo = true;
+      float(ctx, ctx.cx, ctx.cy - 48, '🤖 ROBO-GUNNER  −3', hex(FOR.gold), 12);
+      readout.setText('an automatic on the roof: 3 rounds a second at 2 damage, inside 200px');
+    });
+    ctx.onFrame((_dt, elapsed) => {
+      if (!car.alive || !car.buffs.robo) return;
+      if (elapsed % 333 >= 16) return;
+      if (Phaser.Math.Distance.Between(car.x, car.y, victim.x, victim.y) > 200) return;
+      ctx.capture(() => fx.muzzle(car.x + Math.cos(car.turret) * 18, car.y + Math.sin(car.turret) * 18, car.turret, 0.6));
+    });
+    ctx.at(12200, () => {
+      car.buffs.speedster = true;
+      car.bounces = 14; car.max = 14;
+      float(ctx, ctx.cx, ctx.cy - 48, '🏁 SPEEDSTER  −5', hex(FOR.goldLit), 13);
+      readout.setText('2.4× speed, ten more bounces, and it burns a fire trail behind it');
+    });
+    ctx.at(15600, () => readout.setText('three buffs is the whole build, for the whole match. Tank alone is seven coins.'));
   },
 };

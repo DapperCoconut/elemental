@@ -15,7 +15,12 @@ import Phaser from 'phaser';
  * (guest) drive it and feed the minimap.
  */
 
-export type RoomDir = 'n' | 's' | 'e' | 'w';
+export type RoomDir = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
+
+const DIAGONALS: RoomDir[] = ['ne', 'nw', 'se', 'sw'];
+export function isDiagonal(dir: RoomDir): boolean {
+  return DIAGONALS.includes(dir);
+}
 
 export interface RoomMeta {
   name: string;
@@ -23,19 +28,36 @@ export interface RoomMeta {
   /** Direction of the hall door that leads here (from the hall's point of view). */
   dirFromHall: RoomDir;
   accent: number;
+  /** Corner wings only exist once the cellar's eye has been woken. */
+  apocalypseOnly?: boolean;
 }
 
-/** Index 0 is the hall — targetable by waves like any room, but indestructible. */
+/**
+ * Index 0 is the hall — targetable by waves like any room, but indestructible.
+ * 1–4 are the wings off its four walls. 5–8 are the corner rooms that unfold
+ * out of the house in Apocalypse mode: they were never on any floor plan.
+ */
 export const ROOM_META: RoomMeta[] = [
   { name: 'GRAND HALL', emoji: '🕯️', dirFromHall: 'n', accent: 0xb08d4f },
   { name: 'KITCHEN', emoji: '🍳', dirFromHall: 'n', accent: 0xd9b26a },
   { name: 'CELLAR', emoji: '🛢️', dirFromHall: 's', accent: 0x7a5c38 },
   { name: 'STUDY', emoji: '📚', dirFromHall: 'e', accent: 0x9a5a34 },
   { name: 'OBSERVATORY', emoji: '🔭', dirFromHall: 'w', accent: 0x4f9a7a },
+  { name: 'THE WAITING ROOM', emoji: '🪑', dirFromHall: 'nw', accent: 0x6a5a70, apocalypseOnly: true },
+  { name: 'THE LONG CORRIDOR', emoji: '🚪', dirFromHall: 'ne', accent: 0x70604a, apocalypseOnly: true },
+  { name: 'THE POOL', emoji: '🌊', dirFromHall: 'sw', accent: 0x3a6a78, apocalypseOnly: true },
+  { name: 'THE NURSERY', emoji: '🧸', dirFromHall: 'se', accent: 0x7a4a58, apocalypseOnly: true },
 ];
 
 export const HALL_ROOM = 0;
+/** The cellar. Wave one always comes up through it, and the record player is down there. */
+export const CELLAR_ROOM = 2;
+/** The four original wings. */
 export const OUTER_ROOMS = [1, 2, 3, 4];
+/** The four corner rooms the corruption unfolds in Apocalypse mode. */
+export const CORNER_ROOMS = [5, 6, 7, 8];
+/** Every room index, hall included — array sizes on the wire are cut to this. */
+export const ROOM_COUNT = ROOM_META.length;
 export const ROOM_MAX_HP = 300;
 
 const WALL = 34;               // decorative wall thickness, px
@@ -44,7 +66,10 @@ const DOOR_TRIGGER = 46;       // how close the player must stand to travel
 const TRAVEL_COOLDOWN_MS = 700;
 const FADE_MS = 170;
 
-const OPPOSITE: Record<RoomDir, RoomDir> = { n: 's', s: 'n', e: 'w', w: 'e' };
+const OPPOSITE: Record<RoomDir, RoomDir> = {
+  n: 's', s: 'n', e: 'w', w: 'e',
+  ne: 'sw', sw: 'ne', nw: 'se', se: 'nw',
+};
 
 interface Door {
   dir: RoomDir;
@@ -64,6 +89,8 @@ export class Mansion {
   lost: boolean[] = [];
   currentRoom = HALL_ROOM;
   targetRoom = -1;
+  /** Co-op apocalypse: a second room under attack at the same time, or -1. */
+  targetRoom2 = -1;
 
   private floorG: Phaser.GameObjects.Graphics | null = null;
   private trimG: Phaser.GameObjects.Graphics | null = null;
@@ -76,10 +103,28 @@ export class Mansion {
   /** Campaign world hue the whole manor is washed toward; null = classic look. */
   private themeColor: number | null = null;
 
+  /**
+   * Apocalypse: the corner wings exist, and every room is repainted ruined and
+   * red. Owned here rather than by ApocalypseKit because it changes the layout
+   * (doors, windows, minimap) as much as the paint.
+   */
+  private apocalypse = false;
+
   // Minimap
   private mapG: Phaser.GameObjects.Graphics | null = null;
   private mapCounts: Phaser.GameObjects.Text[] = [];
   private mapSkull: Phaser.GameObjects.Text | null = null;
+  private mapSkull2: Phaser.GameObjects.Text | null = null;
+  /**
+   * Corruption level per room, 0–1, pushed in by ApocalypseKit each frame purely
+   * so the minimap can stain the right cells. The mansion never advances it.
+   */
+  private corruptionForMap: number[] = [];
+
+  /** ApocalypseKit (or a guest's snap) hands the minimap its corruption readout. */
+  setCorruptionReadout(levels: number[]): void {
+    this.corruptionForMap = levels;
+  }
 
   constructor(private scene: Phaser.Scene, private hooks: MansionHooks = {}) {}
 
@@ -89,6 +134,23 @@ export class Mansion {
   /** Set before reset(). A campaign invasion tints the manor toward its world's element. */
   setTheme(color: number | null): void {
     this.themeColor = color;
+  }
+
+  get isApocalypse(): boolean { return this.apocalypse; }
+
+  /**
+   * The eye in the cellar has opened. The corner wings unfold, every room is
+   * repainted as a ruin, and the four new rooms start at full health. Safe to
+   * call twice (the guest gets it from a snap, the host from the interaction).
+   */
+  setApocalypse(on: boolean): void {
+    if (this.apocalypse === on) return;
+    this.apocalypse = on;
+    if (on) {
+      for (const r of CORNER_ROOMS) { this.hp[r] = ROOM_MAX_HP; this.lost[r] = false; }
+    }
+    this.buildMinimap();
+    this.drawRoom();
   }
 
   /**
@@ -126,10 +188,12 @@ export class Mansion {
   }
 
   reset(): void {
-    this.hp = [Infinity, ROOM_MAX_HP, ROOM_MAX_HP, ROOM_MAX_HP, ROOM_MAX_HP];
-    this.lost = [false, false, false, false, false];
+    this.hp = ROOM_META.map((_, r) => (r === HALL_ROOM ? Infinity : ROOM_MAX_HP));
+    this.lost = ROOM_META.map(() => false);
     this.currentRoom = HALL_ROOM;
     this.targetRoom = -1;
+    this.targetRoom2 = -1;
+    this.apocalypse = false;
     this.travelBlockedUntil = 0;
     this.traveling = false;
 
@@ -166,26 +230,39 @@ export class Mansion {
     for (const t of this.mapCounts) t.destroy();
     this.mapCounts = [];
     this.mapSkull?.destroy(); this.mapSkull = null;
+    this.mapSkull2?.destroy(); this.mapSkull2 = null;
   }
 
   // ── Layout ────────────────────────────────────────────────────────
 
+  /** Where a door of direction `dir` sits on the current screen. */
+  private doorAt(dir: RoomDir): { x: number; y: number } {
+    const W = this.W, H = this.H;
+    const inset = WALL + 26;
+    switch (dir) {
+      case 'n':  return { x: W / 2, y: WALL + 8 };
+      case 's':  return { x: W / 2, y: H - WALL - 8 };
+      case 'e':  return { x: W - WALL - 8, y: H / 2 };
+      case 'w':  return { x: WALL + 8, y: H / 2 };
+      // The corner passages are cut through the corner itself, at 45°.
+      case 'ne': return { x: W - inset, y: inset };
+      case 'nw': return { x: inset, y: inset };
+      case 'se': return { x: W - inset, y: H - inset };
+      default:   return { x: inset, y: H - inset };
+    }
+  }
+
   /** Doors of a room, at world positions on the current screen. */
   doorsOf(room: number): Door[] {
-    const W = this.W, H = this.H;
-    const at = (dir: RoomDir): { x: number; y: number } => (
-      dir === 'n' ? { x: W / 2, y: WALL + 8 }
-        : dir === 's' ? { x: W / 2, y: H - WALL - 8 }
-          : dir === 'e' ? { x: W - WALL - 8, y: H / 2 }
-            : { x: WALL + 8, y: H / 2 });
     if (room === HALL_ROOM) {
-      return OUTER_ROOMS.map((r) => {
+      const reachable = this.apocalypse ? [...OUTER_ROOMS, ...CORNER_ROOMS] : OUTER_ROOMS;
+      return reachable.map((r) => {
         const dir = ROOM_META[r].dirFromHall;
-        return { dir, toRoom: r, ...at(dir) };
+        return { dir, toRoom: r, ...this.doorAt(dir) };
       });
     }
     const dir = OPPOSITE[ROOM_META[room].dirFromHall];
-    return [{ dir, toRoom: HALL_ROOM, ...at(dir) }];
+    return [{ dir, toRoom: HALL_ROOM, ...this.doorAt(dir) }];
   }
 
   /**
@@ -221,17 +298,28 @@ export class Mansion {
 
   // ── State ─────────────────────────────────────────────────────────
 
+  /** Every destructible room that currently exists — corner wings only in apocalypse. */
+  activeOuterRooms(): number[] {
+    return this.apocalypse ? [...OUTER_ROOMS, ...CORNER_ROOMS] : OUTER_ROOMS;
+  }
+
   /** Rooms a wave may still target. */
   standingRooms(): number[] {
-    return OUTER_ROOMS.filter((r) => !this.lost[r]);
+    return this.activeOuterRooms().filter((r) => !this.lost[r]);
   }
 
   allOuterRoomsLost(): boolean {
     return this.standingRooms().length === 0;
   }
 
-  setTarget(room: number): void {
+  setTarget(room: number, second = -1): void {
     this.targetRoom = room;
+    this.targetRoom2 = second;
+  }
+
+  /** True while a wave is pouring into `room` (either of the two possible targets). */
+  isTargeted(room: number): boolean {
+    return room >= 0 && (room === this.targetRoom || room === this.targetRoom2);
   }
 
   /**
@@ -244,20 +332,23 @@ export class Mansion {
     if (this.hp[room] > 0) return false;
     this.lost[room] = true;
     if (this.targetRoom === room) this.targetRoom = -1;
+    if (this.targetRoom2 === room) this.targetRoom2 = -1;
     if (this.currentRoom === room) this.drawRoom();
     return true;
   }
 
   /** Guest-side: adopt the host's authoritative room state. */
-  applyRemoteState(hp: number[], lostMask: number, target: number): void {
+  applyRemoteState(hp: number[], lostMask: number, target: number, target2 = -1, apocalypse = false): void {
+    if (apocalypse !== this.apocalypse) this.setApocalypse(apocalypse);
     let repaint = false;
-    for (const r of OUTER_ROOMS) {
+    for (const r of this.activeOuterRooms()) {
       const wasLost = this.lost[r];
       this.hp[r] = hp[r - 1] ?? this.hp[r];
       this.lost[r] = (lostMask & (1 << (r - 1))) !== 0;
       if (this.lost[r] !== wasLost && this.currentRoom === r) repaint = true;
     }
     this.targetRoom = target;
+    this.targetRoom2 = target2;
     if (repaint) this.drawRoom();
   }
 
@@ -293,8 +384,12 @@ export class Mansion {
     const arrival = this.doorsOf(dest).find((d) => d.toRoom === this.currentRoom)
       ?? this.doorsOf(dest)[0];
     const inset = 64;
-    const ax = arrival.x + (arrival.dir === 'w' ? inset : arrival.dir === 'e' ? -inset : 0);
-    const ay = arrival.y + (arrival.dir === 'n' ? inset : arrival.dir === 's' ? -inset : 0);
+    const west = arrival.dir === 'w' || arrival.dir === 'nw' || arrival.dir === 'sw';
+    const east = arrival.dir === 'e' || arrival.dir === 'ne' || arrival.dir === 'se';
+    const north = arrival.dir === 'n' || arrival.dir === 'ne' || arrival.dir === 'nw';
+    const south = arrival.dir === 's' || arrival.dir === 'se' || arrival.dir === 'sw';
+    const ax = arrival.x + (west ? inset : east ? -inset : 0);
+    const ay = arrival.y + (north ? inset : south ? -inset : 0);
 
     const fade = this.fadeRect;
     if (!fade) { this.traveling = false; return; }
@@ -331,17 +426,112 @@ export class Mansion {
       case 2: this.paintCellar(g, t); break;
       case 3: this.paintStudy(g, t); break;
       case 4: this.paintGreenhouse(g, t); break;
+      case 5: this.paintWaitingRoom(g, t); break;
+      case 6: this.paintCorridor(g, t); break;
+      case 7: this.paintPool(g, t); break;
+      case 8: this.paintNursery(g, t); break;
       default: this.paintHall(g, t); break;
     }
     this.paintWalls(t, room);
+    if (this.apocalypse) this.paintRuin(t, room);
     const meta = ROOM_META[room];
     this.roomLabel?.setText(
       this.lost[room] ? `${meta.emoji} ${meta.name} — ABANDONED` : `${meta.emoji} ${meta.name}`,
-    ).setColor(this.lost[room] ? '#aa5544' : '#d8c8a0');
+    ).setColor(this.lost[room] ? '#aa5544' : this.apocalypse ? '#e0a0a0' : '#d8c8a0');
     // An abandoned room is washed in a cold grey pall.
     if (this.lost[room]) {
       t.fillStyle(0x1a1d22, 0.45);
       t.fillRect(0, 0, this.W, this.H);
+    }
+  }
+
+  /**
+   * The apocalypse pass, laid over whatever the room already was: a red pall,
+   * fallen plaster, split boards, rubble heaps banked against the walls and
+   * long claw-drags across the floor. Deterministic per room, so a room looks
+   * the same every time you walk back into it.
+   */
+  private paintRuin(t: Phaser.GameObjects.Graphics, room: number): void {
+    const W = this.W, H = this.H;
+    // Deterministic pseudo-random stream, seeded off the room index.
+    let seed = room * 9973 + 12345;
+    const rnd = (): number => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed / 0x7fffffff;
+    };
+
+    // Everything under a dried-blood wash, brightest at the edges.
+    t.fillStyle(0x4a0a16, 0.2);
+    t.fillRect(0, 0, W, H);
+    t.fillStyle(0x2a0008, 0.22);
+    t.fillRect(0, 0, W, WALL + 60);
+    t.fillRect(0, H - WALL - 60, W, WALL + 60);
+
+    // Long drag marks — something was pulled out of this room.
+    t.lineStyle(2, 0x5a0e1c, 0.5);
+    for (let i = 0; i < 5; i++) {
+      const x0 = WALL + rnd() * (W - WALL * 2);
+      const y0 = WALL + rnd() * (H - WALL * 2);
+      const a = rnd() * Math.PI * 2;
+      const len = 60 + rnd() * 120;
+      for (const off of [-5, 0, 5]) {
+        t.lineBetween(
+          x0 + Math.cos(a + 1.57) * off, y0 + Math.sin(a + 1.57) * off,
+          x0 + Math.cos(a) * len + Math.cos(a + 1.57) * off,
+          y0 + Math.sin(a) * len + Math.sin(a + 1.57) * off,
+        );
+      }
+    }
+
+    // Rubble banked against the wall band: broken plaster and splintered lath.
+    for (let i = 0; i < 22; i++) {
+      const edge = Math.floor(rnd() * 4);
+      const along = WALL + rnd() * ((edge < 2 ? W : H) - WALL * 2);
+      const depth = WALL + rnd() * 34;
+      const cx = edge < 2 ? along : edge === 2 ? depth : W - depth;
+      const cy = edge === 0 ? depth : edge === 1 ? H - depth : along;
+      const rw = 8 + rnd() * 16;
+      t.fillStyle(0x2a2018, 1);
+      t.fillEllipse(cx, cy, rw, rw * 0.55);
+      t.fillStyle(0x3e3226, 1);
+      t.fillEllipse(cx - 2, cy - 2, rw * 0.6, rw * 0.34);
+    }
+
+    // Fallen beams, split and half-buried.
+    for (let i = 0; i < 4; i++) {
+      const bx = WALL + 40 + rnd() * (W - WALL * 2 - 80);
+      const by = WALL + 40 + rnd() * (H - WALL * 2 - 80);
+      const a = rnd() * Math.PI;
+      const len = 70 + rnd() * 90;
+      t.save();
+      t.translateCanvas(bx, by);
+      t.rotateCanvas(a);
+      t.fillStyle(0x000000, 0.35);
+      t.fillRect(-len / 2 + 4, -5, len, 16);
+      t.fillStyle(0x352616, 1);
+      t.fillRect(-len / 2, -8, len, 16);
+      t.lineStyle(1, 0x1c1109, 1);
+      t.strokeRect(-len / 2, -8, len, 16);
+      for (let s = -len / 2 + 12; s < len / 2; s += 22) t.lineBetween(s, -8, s, 8);
+      // Splintered end.
+      t.fillStyle(0x5a4128, 1);
+      t.fillTriangle(len / 2, -8, len / 2 + 12, -2, len / 2, 2);
+      t.fillTriangle(len / 2, 2, len / 2 + 8, 6, len / 2, 8);
+      t.restore();
+    }
+
+    // Cracks crawling up the walls, thinning as they climb.
+    for (let i = 0; i < 8; i++) {
+      let cx = rnd() * W;
+      let cy = rnd() < 0.5 ? 0 : H;
+      const toward = cy === 0 ? 1 : -1;
+      t.lineStyle(2, 0x140206, 0.85);
+      for (let s = 0; s < 5; s++) {
+        const nx = cx + (rnd() - 0.5) * 34;
+        const ny = cy + toward * (10 + rnd() * 16);
+        t.lineBetween(cx, cy, nx, ny);
+        cx = nx; cy = ny;
+      }
     }
   }
 
@@ -367,6 +557,24 @@ export class Mansion {
 
     // Doorways: carve the opening, lay a warm threshold and a stone arch.
     for (const [dir, door] of doorDirs) {
+      if (isDiagonal(dir)) {
+        // A corner passage: the wall is cut away on the 45° and the dark beyond
+        // it is shown as a wedge, with two splintered jambs framing the gap.
+        const sx = dir === 'ne' || dir === 'se' ? 1 : -1;
+        const sy = dir === 'se' || dir === 'sw' ? 1 : -1;
+        const ox = sx > 0 ? W : 0;
+        const oy = sy > 0 ? H : 0;
+        const reach = 78;
+        t.fillStyle(0x0a0308, 1);
+        t.fillTriangle(ox, oy - sy * reach, ox, oy, ox - sx * reach, oy);
+        t.fillStyle(0x5c0f22, 0.22);
+        t.fillCircle(door.x, door.y, 34);
+        t.lineStyle(4, 0x7a2a3a, 1);
+        t.lineBetween(ox, oy - sy * reach, ox - sx * reach, oy);
+        t.lineStyle(2, 0x3a1018, 1);
+        t.lineBetween(ox, oy - sy * (reach - 14), ox - sx * (reach - 14), oy);
+        continue;
+      }
       const horizontal = dir === 'n' || dir === 's';
       const dx = door.x, dy = dir === 'n' ? WALL / 2 : dir === 's' ? H - WALL / 2 : door.y;
       t.fillStyle(0x0c0804, 1);
@@ -821,6 +1029,296 @@ export class Mansion {
     }
   }
 
+  // ── The corner wings (apocalypse only) ────────────────────────────
+  //
+  // Four rooms that were never in the house. Each is built on one wrong note:
+  // a waiting room with no door out, a corridor that only goes on, a drained
+  // pool at the bottom of a room, a nursery of things that are watching.
+
+  /** THE WAITING ROOM — rows of chairs facing a wall, and a ticket you can't read. */
+  private paintWaitingRoom(g: Phaser.GameObjects.Graphics, t: Phaser.GameObjects.Graphics): void {
+    const W = this.W, H = this.H;
+    // Sickly institutional carpet, worn through in a path that leads nowhere.
+    g.fillStyle(0x2e2a34, 1);
+    g.fillRect(0, 0, W, H);
+    for (let x = 0; x < W; x += 8) {
+      g.fillStyle(x % 16 === 0 ? 0x322e3a : 0x2a2630, 1);
+      g.fillRect(x, 0, 8, H);
+    }
+    g.fillStyle(0x453d4a, 0.5);
+    g.fillEllipse(W * 0.5, H * 0.62, W * 0.34, H * 0.14);
+    g.fillStyle(0x211d28, 0.6);
+    g.fillEllipse(W * 0.5, H * 0.62, W * 0.24, H * 0.08);
+
+    // Six rows of chairs, all facing the blank far wall. One is turned around.
+    for (let row = 0; row < 4; row++) {
+      const cy = H * 0.3 + row * (H * 0.14);
+      for (let i = 0; i < 7; i++) {
+        const cx = W * 0.22 + i * (W * 0.095);
+        const flipped = row === 2 && i === 4;
+        t.fillStyle(0x000000, 0.3);
+        t.fillEllipse(cx, cy + 13, 24, 7);
+        t.fillStyle(0x4a3f52, 1);
+        t.fillRect(cx - 12, cy - 2, 24, 10);           // seat
+        t.fillStyle(flipped ? 0x6a2434 : 0x3a3040, 1);
+        t.fillRect(cx - 12, cy - (flipped ? 20 : 18), 24, flipped ? 18 : 16); // back
+        t.lineStyle(1, 0x241e2a, 1);
+        t.strokeRect(cx - 12, cy - 2, 24, 10);
+        t.lineBetween(cx - 9, cy + 8, cx - 9, cy + 14);
+        t.lineBetween(cx + 9, cy + 8, cx + 9, cy + 14);
+      }
+    }
+    // The counter with its shuttered window — closed, and always was.
+    t.fillStyle(0x241e2a, 1);
+    t.fillRect(W * 0.12, WALL + 6, W * 0.24, 40);
+    t.fillStyle(0x151018, 1);
+    t.fillRect(W * 0.14, WALL + 12, W * 0.2, 26);
+    t.lineStyle(2, 0x554a5e, 1);
+    for (let y = WALL + 14; y < WALL + 38; y += 5) t.lineBetween(W * 0.14, y, W * 0.34, y);
+    // NOW SERVING board — the number is a smear.
+    t.fillStyle(0x0e0a12, 1);
+    t.fillRect(W * 0.62, WALL + 10, 92, 44);
+    t.lineStyle(2, 0x6a2434, 1);
+    t.strokeRect(W * 0.62, WALL + 10, 92, 44);
+    t.fillStyle(0xcc2233, 0.85);
+    t.fillRect(W * 0.62 + 20, WALL + 24, 20, 18);
+    t.fillRect(W * 0.62 + 50, WALL + 24, 20, 18);
+    t.fillStyle(0x0e0a12, 1);
+    t.fillRect(W * 0.62 + 24, WALL + 28, 12, 10);
+    // A single dropped ticket.
+    t.fillStyle(0xd8d0c0, 0.9);
+    t.fillRect(W * 0.44, H * 0.82, 16, 10);
+    t.lineStyle(1, 0x8a8278, 1);
+    t.lineBetween(W * 0.44 + 3, H * 0.82 + 4, W * 0.44 + 13, H * 0.82 + 4);
+  }
+
+  /** THE LONG CORRIDOR — a hallway drawn in false perspective that never arrives. */
+  private paintCorridor(g: Phaser.GameObjects.Graphics, t: Phaser.GameObjects.Graphics): void {
+    const W = this.W, H = this.H;
+    const vx = W * 0.5, vy = H * 0.46;   // vanishing point
+    g.fillStyle(0x1a1610, 1);
+    g.fillRect(0, 0, W, H);
+    // Floor and ceiling planes converging on the point.
+    g.fillStyle(0x3a3024, 1);
+    g.fillTriangle(0, H, W, H, vx, vy);
+    g.fillStyle(0x241e16, 1);
+    g.fillTriangle(0, 0, W, 0, vx, vy);
+    g.fillStyle(0x2c261c, 1);
+    g.fillTriangle(0, 0, 0, H, vx, vy);
+    g.fillTriangle(W, 0, W, H, vx, vy);
+    // Receding floorboard seams.
+    g.lineStyle(1, 0x1a140e, 0.8);
+    for (let i = 1; i <= 12; i++) {
+      const k = Math.pow(i / 12, 2.2);
+      const y = vy + (H - vy) * k;
+      const spread = (y - vy) / (H - vy);
+      g.lineBetween(vx - spread * vx, y, vx + spread * (W - vx), y);
+    }
+    for (let i = -6; i <= 6; i++) {
+      g.lineBetween(vx, vy, vx + i * (W / 10), H);
+    }
+    // Doors down both walls, shrinking toward the point. All shut. One ajar,
+    // with nothing but black behind it.
+    for (let i = 1; i <= 6; i++) {
+      const k = Math.pow(i / 6, 1.7);
+      const y = vy + (H - vy) * k * 0.86;
+      const h = 26 + k * 150;
+      const inset = 10 + k * (W * 0.34);
+      for (const side of [-1, 1] as const) {
+        const x = vx + side * inset;
+        const wd = 10 + k * 34;
+        t.fillStyle(0x1c1610, 1);
+        t.fillRect(side < 0 ? x - wd : x, y - h, wd, h);
+        t.lineStyle(2, 0x5a4830, 0.9);
+        t.strokeRect(side < 0 ? x - wd : x, y - h, wd, h);
+        if (i === 4 && side === -1) {
+          t.fillStyle(0x000000, 1);
+          t.fillRect(x - wd, y - h, wd * 0.55, h);
+          t.fillStyle(0xcc2233, 0.5);
+          t.fillCircle(x - wd * 0.3, y - h * 0.55, 3);
+        } else {
+          t.fillStyle(0xc79b52, 0.8);
+          t.fillCircle(x + side * -wd * 0.22, y - h * 0.45, 1.5 + k * 2);
+        }
+      }
+    }
+    // Strip lights overhead, every other one dead.
+    for (let i = 1; i <= 5; i++) {
+      const k = Math.pow(i / 5, 1.8);
+      const y = vy - (vy - WALL) * k * 0.8;
+      const wd = 8 + k * 70;
+      const lit = i % 2 === 1;
+      t.fillStyle(lit ? 0xffeebb : 0x2a2620, lit ? 0.9 : 1);
+      t.fillRect(vx - wd / 2, y, wd, 3 + k * 5);
+      if (lit) {
+        t.fillStyle(0xffeebb, 0.06);
+        t.fillEllipse(vx, y + 40, wd * 3, 70);
+      }
+    }
+  }
+
+  /** THE POOL — drained, tiled, and far too deep. Something waits at the bottom. */
+  private paintPool(g: Phaser.GameObjects.Graphics, t: Phaser.GameObjects.Graphics): void {
+    const W = this.W, H = this.H;
+    // Wet white tile deck.
+    const tile = 34;
+    for (let x = 0; x < W; x += tile) {
+      for (let y = 0; y < H; y += tile) {
+        const even = ((x / tile) + (y / tile)) % 2 === 0;
+        g.fillStyle(even ? 0x9fb4b8 : 0x8ea3a8, 1);
+        g.fillRect(x, y, tile, tile);
+      }
+    }
+    g.lineStyle(1, 0x6a8086, 0.9);
+    for (let x = 0; x <= W; x += tile) g.lineBetween(x, 0, x, H);
+    for (let y = 0; y <= H; y += tile) g.lineBetween(0, y, W, y);
+    g.fillStyle(0xcfe4e8, 0.16);
+    g.fillEllipse(W * 0.2, H * 0.2, 120, 70);
+
+    // The basin: nested rims falling away into water too dark to read.
+    const px = W * 0.5, py = H * 0.54;
+    const rw = W * 0.34, rh = H * 0.3;
+    for (const [k, c] of [[1, 0x4a6a72], [0.86, 0x2e4e58], [0.7, 0x1c3640], [0.54, 0x0e2028]] as const) {
+      g.fillStyle(c, 1);
+      g.fillEllipse(px, py, rw * k, rh * k);
+    }
+    g.fillStyle(0x061218, 1);
+    g.fillEllipse(px, py + 6, rw * 0.38, rh * 0.34);
+    g.lineStyle(3, 0xd8e8ec, 0.7);
+    g.strokeEllipse(px, py, rw, rh);
+    g.lineStyle(1, 0x9fc4cc, 0.4);
+    g.strokeEllipse(px, py, rw * 0.86, rh * 0.86);
+    // A depth marker painted on the rim, in a number that keeps going.
+    t.fillStyle(0x123038, 1);
+    t.fillRect(px - 34, py - rh - 22, 68, 18);
+    t.fillStyle(0xd8e8ec, 0.9);
+    for (const dx of [-22, -8, 6, 20]) t.fillRect(px + dx, py - rh - 18, 8, 10);
+    // Ladder rails going down and not coming back.
+    t.lineStyle(3, 0xbfd4d8, 1);
+    t.lineBetween(px + rw * 0.5, py - rh * 0.5, px + rw * 0.6, py - rh * 0.05);
+    t.lineBetween(px + rw * 0.66, py - rh * 0.44, px + rw * 0.74, py);
+    for (let i = 0; i < 3; i++) {
+      const k = i / 3;
+      t.lineBetween(
+        px + rw * (0.5 + 0.1 * k), py - rh * (0.5 - 0.45 * k),
+        px + rw * (0.66 + 0.08 * k), py - rh * (0.44 - 0.44 * k),
+      );
+    }
+    // Wet footprints leading to the edge — and none leading away.
+    t.fillStyle(0x5a7a82, 0.55);
+    for (let i = 0; i < 6; i++) {
+      const k = i / 6;
+      const fx = W * 0.14 + k * (px - rw * 0.6 - W * 0.14);
+      const fy = H * 0.86 - k * (H * 0.86 - (py + rh * 0.5));
+      t.fillEllipse(fx, fy, 11, 16);
+      t.fillEllipse(fx + 16, fy - 10, 11, 16);
+    }
+    // Lifebuoy on the wall, its rope cut.
+    t.lineStyle(5, 0xd84a3a, 1);
+    t.strokeCircle(W * 0.86, H * 0.24, 20);
+    t.lineStyle(5, 0xf0f0f0, 1);
+    for (const a of [0.4, 2, 3.6, 5.2] as const) {
+      t.lineBetween(
+        W * 0.86 + Math.cos(a) * 17, H * 0.24 + Math.sin(a) * 17,
+        W * 0.86 + Math.cos(a + 0.5) * 17, H * 0.24 + Math.sin(a + 0.5) * 17,
+      );
+    }
+  }
+
+  /** THE NURSERY — small furniture, a mobile still turning, and too many eyes. */
+  private paintNursery(g: Phaser.GameObjects.Graphics, t: Phaser.GameObjects.Graphics): void {
+    const W = this.W, H = this.H;
+    // Faded pink-and-cream stripe wallpaper, peeling in sheets.
+    g.fillStyle(0x4a3138, 1);
+    g.fillRect(0, 0, W, H);
+    for (let x = 0; x < W; x += 44) {
+      g.fillStyle(0x553a42, 1);
+      g.fillRect(x, 0, 22, H);
+    }
+    g.fillStyle(0x2c1c22, 0.55);
+    g.fillEllipse(W * 0.7, H * 0.3, 190, 120);
+    g.fillEllipse(W * 0.24, H * 0.72, 150, 100);
+    // Peeled strips hanging down.
+    for (const px of [W * 0.18, W * 0.46, W * 0.78] as const) {
+      t.fillStyle(0x6a4a52, 1);
+      t.fillTriangle(px, WALL, px + 26, WALL, px + 12, WALL + 74);
+      t.lineStyle(1, 0x33222a, 1);
+      t.strokeTriangle(px, WALL, px + 26, WALL, px + 12, WALL + 74);
+    }
+
+    // The crib, slats bowed outward from the inside.
+    const cx = W * 0.3, cy = H * 0.55;
+    t.fillStyle(0x000000, 0.35);
+    t.fillEllipse(cx, cy + 42, 120, 20);
+    t.fillStyle(0x8a6a4a, 1);
+    t.fillRect(cx - 62, cy - 34, 124, 74);
+    t.fillStyle(0x2a1a16, 1);
+    t.fillRect(cx - 54, cy - 26, 108, 58);
+    t.lineStyle(4, 0xa8825c, 1);
+    for (let i = 0; i <= 8; i++) {
+      const sx = cx - 54 + i * 13.5;
+      const bow = Math.sin((i / 8) * Math.PI) * 8;
+      t.lineBetween(sx, cy - 30, sx + bow, cy + 36);
+    }
+    t.lineStyle(5, 0xa8825c, 1);
+    t.lineBetween(cx - 62, cy - 32, cx + 62, cy - 32);
+    t.lineBetween(cx - 62, cy + 38, cx + 62, cy + 38);
+    // Two eyes open in the dark inside it.
+    t.fillStyle(0xe8dcdc, 1);
+    t.fillEllipse(cx - 12, cy + 4, 11, 7);
+    t.fillEllipse(cx + 12, cy + 4, 11, 7);
+    t.fillStyle(0xcc1133, 1);
+    t.fillCircle(cx - 12, cy + 4, 3);
+    t.fillCircle(cx + 12, cy + 4, 3);
+
+    // The mobile above it, still turning, hung with small dark shapes.
+    const mx = cx, my = cy - 96;
+    t.lineStyle(2, 0x6a5a4a, 1);
+    t.lineBetween(mx, WALL, mx, my);
+    t.lineBetween(mx - 40, my, mx + 40, my);
+    t.lineBetween(mx - 20, my - 12, mx + 20, my + 12);
+    for (const [ox, oy] of [[-40, 20], [40, 16], [-20, -2], [22, 26]] as const) {
+      t.lineStyle(1, 0x6a5a4a, 1);
+      t.lineBetween(mx + ox, my, mx + ox, my + oy);
+      t.fillStyle(0x1a0e14, 1);
+      t.fillCircle(mx + ox, my + oy + 7, 8);
+      t.fillStyle(0xcc1133, 0.9);
+      t.fillCircle(mx + ox, my + oy + 7, 2.6);
+    }
+
+    // A rocking horse, mid-rock, with nothing on it.
+    const hx = W * 0.72, hy = H * 0.68;
+    t.fillStyle(0x000000, 0.3);
+    t.fillEllipse(hx, hy + 32, 90, 14);
+    t.lineStyle(6, 0x7a5a3a, 1);
+    t.beginPath();
+    t.arc(hx, hy - 10, 46, 0.35, Math.PI - 0.35, false);
+    t.strokePath();
+    t.fillStyle(0xa88a66, 1);
+    t.fillEllipse(hx, hy - 4, 66, 26);
+    t.fillEllipse(hx + 26, hy - 24, 26, 20);
+    t.fillStyle(0x4a3a28, 1);
+    t.fillTriangle(hx + 34, hy - 34, hx + 42, hy - 20, hx + 30, hy - 22);
+    t.fillStyle(0xcc1133, 1);
+    t.fillCircle(hx + 32, hy - 26, 2.4);
+    t.lineStyle(3, 0x7a5a3a, 1);
+    t.lineBetween(hx - 18, hy + 6, hx - 22, hy + 26);
+    t.lineBetween(hx + 16, hy + 6, hx + 20, hy + 26);
+
+    // Building blocks spelling most of a word.
+    for (let i = 0; i < 5; i++) {
+      const bx = W * 0.4 + i * 30;
+      const by = H * 0.88 - (i === 2 ? 26 : 0);
+      t.fillStyle([0x8a4a4a, 0x8a7a4a, 0x4a6a8a, 0x6a4a7a, 0x4a7a5a][i], 1);
+      t.fillRect(bx, by, 24, 24);
+      t.lineStyle(2, 0x2a1c22, 1);
+      t.strokeRect(bx, by, 24, 24);
+      t.fillStyle(0xe8dcd0, 0.9);
+      t.fillRect(bx + 8, by + 6, 4, 12);
+      if (i % 2 === 0) t.fillRect(bx + 12, by + 6, 6, 4);
+    }
+  }
+
   private drawDoorPulses(time: number): void {
     const g = this.doorPulseG;
     if (!g) return;
@@ -828,16 +1326,19 @@ export class Mansion {
     const pulse = 0.35 + Math.sin(time / 260) * 0.2;
     for (const door of this.doorsOf(this.currentRoom)) {
       const toLost = this.lost[door.toRoom];
-      // The door glowing hot is the one that leads toward the targeted room.
+      // The door glowing hot is the one that leads toward a targeted room.
       const leadsToTarget = this.targetRoom >= 0 && (
-        door.toRoom === this.targetRoom
-        || (this.currentRoom !== HALL_ROOM && door.toRoom === HALL_ROOM && this.targetRoom !== this.currentRoom));
-      const color = toLost ? 0x555a60 : leadsToTarget ? 0xff5544 : 0xc79b52;
+        this.isTargeted(door.toRoom)
+        || (this.currentRoom !== HALL_ROOM && door.toRoom === HALL_ROOM && !this.isTargeted(this.currentRoom)));
+      const color = toLost ? 0x555a60 : leadsToTarget ? 0xff5544 : this.apocalypse ? 0xa8503c : 0xc79b52;
       g.lineStyle(2, color, leadsToTarget ? pulse + 0.3 : pulse);
       g.strokeCircle(door.x, door.y, 24 + Math.sin(time / 260) * 3);
       if (leadsToTarget) {
         g.lineStyle(3, 0xff5544, 0.75);
-        const a = door.dir === 'n' ? -Math.PI / 2 : door.dir === 's' ? Math.PI / 2 : door.dir === 'e' ? 0 : Math.PI;
+        const a = door.dir === 'n' ? -Math.PI / 2 : door.dir === 's' ? Math.PI / 2
+          : door.dir === 'e' ? 0 : door.dir === 'w' ? Math.PI
+            : door.dir === 'ne' ? -Math.PI / 4 : door.dir === 'nw' ? -3 * Math.PI / 4
+              : door.dir === 'se' ? Math.PI / 4 : 3 * Math.PI / 4;
         const ax = door.x + Math.cos(a) * -46, ay = door.y + Math.sin(a) * -46;
         const tipX = door.x + Math.cos(a) * -30, tipY = door.y + Math.sin(a) * -30;
         g.lineBetween(ax, ay, tipX, tipY);
@@ -852,6 +1353,7 @@ export class Mansion {
   private mapCellRect(room: number): { x: number; y: number; w: number; h: number } {
     // Cross layout anchored top-left, below the LEAVE button — the top-right
     // corner belongs to the shard/difficulty labels and the status effect tray.
+    // In apocalypse the cross fills out into a full 3×3 as the corners unfold.
     const cw = 34, ch = 24, gap = 3;
     const cx = 16 + cw + gap;
     const cy = 92;
@@ -860,6 +1362,10 @@ export class Mansion {
       case 2: return { x: cx, y: cy + ch + gap, w: cw, h: ch };            // cellar — down
       case 3: return { x: cx + cw + gap, y: cy, w: cw, h: ch };            // study — right
       case 4: return { x: cx - cw - gap, y: cy, w: cw, h: ch };            // observatory — left
+      case 5: return { x: cx - cw - gap, y: cy - ch - gap, w: cw, h: ch }; // waiting room — up-left
+      case 6: return { x: cx + cw + gap, y: cy - ch - gap, w: cw, h: ch }; // corridor — up-right
+      case 7: return { x: cx - cw - gap, y: cy + ch + gap, w: cw, h: ch }; // pool — down-left
+      case 8: return { x: cx + cw + gap, y: cy + ch + gap, w: cw, h: ch }; // nursery — down-right
       default: return { x: cx, y: cy, w: cw, h: ch };                       // hall — centre
     }
   }
@@ -869,7 +1375,7 @@ export class Mansion {
     this.mapG = this.scene.add.graphics().setDepth(25);
     for (const t of this.mapCounts) t.destroy();
     this.mapCounts = [];
-    for (let r = 0; r < 5; r++) {
+    for (let r = 0; r < ROOM_COUNT; r++) {
       const c = this.mapCellRect(r);
       const txt = this.scene.add.text(c.x + c.w / 2, c.y + c.h / 2, '', {
         fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
@@ -880,17 +1386,26 @@ export class Mansion {
     this.mapSkull?.destroy();
     this.mapSkull = this.scene.add.text(0, 0, '🧟', { fontSize: '13px' })
       .setOrigin(0.5).setDepth(27).setVisible(false);
+    this.mapSkull2?.destroy();
+    this.mapSkull2 = this.scene.add.text(0, 0, '🧟', { fontSize: '13px' })
+      .setOrigin(0.5).setDepth(27).setVisible(false);
   }
 
   private updateMinimap(time: number, huskCounts: number[]): void {
     const g = this.mapG;
     if (!g) return;
     g.clear();
-    for (let r = 0; r < 5; r++) {
+    for (let r = 0; r < ROOM_COUNT; r++) {
+      // Corner cells don't exist until the eye opens.
+      if (ROOM_META[r].apocalypseOnly && !this.apocalypse) { this.mapCounts[r]?.setText(''); continue; }
       const c = this.mapCellRect(r);
-      const isTarget = r === this.targetRoom;
+      const isTarget = this.isTargeted(r);
       const flash = isTarget && Math.sin(time / 140) > 0;
-      const fill = this.lost[r] ? 0x33262a : flash ? 0x6a2020 : 0x1e2416;
+      const corrupt = (this.corruptionForMap[r] ?? 0) > 0.02;
+      const fill = this.lost[r] ? 0x33262a
+        : flash ? 0x6a2020
+          : corrupt ? 0x2a0a1e
+            : this.apocalypse ? 0x241618 : 0x1e2416;
       g.fillStyle(fill, 0.92);
       g.fillRect(c.x, c.y, c.w, c.h);
       const stroke = this.lost[r] ? 0x6a4a50 : r === this.currentRoom ? 0xd8c8a0 : isTarget ? 0xff5544 : 0x5a6a42;
@@ -913,6 +1428,19 @@ export class Mansion {
         g.fillStyle(0x88ff88, 1);
         g.fillCircle(c.x + 6, c.y + 6, 3);
       }
+      // Corruption creeps in from the cell's bottom-left as a black stain with
+      // an eye in it, so an infected room is legible without walking there.
+      const corr = this.corruptionForMap[r] ?? 0;
+      if (corr > 0.02 && !this.lost[r]) {
+        g.fillStyle(0x10000a, Math.min(0.85, 0.25 + corr * 0.6));
+        g.fillRect(c.x + 1, c.y + c.h - 1 - (c.h - 2) * corr, c.w - 2, (c.h - 2) * corr);
+        if (corr >= 0.999) {
+          g.fillStyle(0xcc1133, 0.55 + Math.sin(time / 180) * 0.25);
+          g.fillCircle(c.x + c.w / 2, c.y + c.h / 2, 4);
+          g.fillStyle(0x000000, 1);
+          g.fillCircle(c.x + c.w / 2, c.y + c.h / 2, 1.6);
+        }
+      }
       const count = huskCounts[r] ?? 0;
       this.mapCounts[r]?.setText(this.lost[r] ? '' : count > 0 ? String(count) : '');
     }
@@ -922,6 +1450,14 @@ export class Mansion {
         this.mapSkull.setVisible(true).setPosition(c.x + c.w - 7, c.y + 7);
       } else {
         this.mapSkull.setVisible(false);
+      }
+    }
+    if (this.mapSkull2) {
+      if (this.targetRoom2 >= 0) {
+        const c = this.mapCellRect(this.targetRoom2);
+        this.mapSkull2.setVisible(true).setPosition(c.x + c.w - 7, c.y + 7);
+      } else {
+        this.mapSkull2.setVisible(false);
       }
     }
   }

@@ -467,9 +467,96 @@ export function shrapnelShard(
   g.lineBetween(P(len * 0.6, 0).x, P(len * 0.6, 0).y, P(-len * 0.4, -w).x, P(-len * 0.4, -w).y);
 }
 
+/**
+ * A triangular plate of shed skin, in flight. Ruin Mastery's Second Skin throws twenty-five of
+ * them at once, so the read has to survive being one of a crowd: a hard three-cornered
+ * silhouette (nothing else in the element is a clean triangle), pale bone on the outer face
+ * because that is the side that was weathering, and raw red on the inner one because that side
+ * was attached to somebody a moment ago.
+ *
+ * `spin` tumbles it about its own centre, and the two faces are drawn as a fold along the
+ * spin axis so the plate reads as a flat thing turning over rather than a solid dart.
+ */
+export function skinShard(
+  g: Phaser.GameObjects.Graphics,
+  tint: RuinColorFn,
+  x: number, y: number, ang: number, size: number, alpha: number, spin: number, seed = 0,
+): void {
+  const ca = Math.cos(ang);
+  const sa = Math.sin(ang);
+  const P = (u: number, v: number) => pt(x, y, ca, sa, u, v);
+  // A plate seen edge-on is a line; seen flat it is the full triangle. That is the tumble.
+  const flat = 0.25 + Math.abs(Math.cos(spin)) * 0.75;
+  const nose = size * 0.95;
+  const back = -size * 0.5;
+  const half = size * 0.62 * flat;
+  // The fold runs nose-to-tail, so the two halves are the two faces of the same plate.
+  const tip = P(nose + (jitter(seed, 1) - 0.5) * size * 0.2, 0);
+  const tail = P(back, 0);
+  const wingA = P(back - jitter(seed, 2) * size * 0.25, -half);
+  const wingB = P(back - jitter(seed, 3) * size * 0.25, half);
+
+  // The streak of raw flesh it is trailing.
+  g.fillStyle(tint(RUI.blood), alpha * 0.22);
+  g.fillPoints([P(-size * 2.4, 0), P(back, -half * 0.5), P(back, half * 0.5)], true);
+
+  // Outer face: weathered bone. Inner face: what was underneath.
+  g.fillStyle(tint(RUI.bone), alpha * 0.92);
+  g.fillPoints([tip, wingA, tail], true);
+  g.fillStyle(tint(RUI.blood), alpha * 0.85);
+  g.fillPoints([tip, wingB, tail], true);
+  // The crease along the fold, and a dry rusted rim on the leading edge.
+  g.lineStyle(1.4, tint(RUI.rust), alpha * 0.8);
+  g.lineBetween(tip.x, tip.y, tail.x, tail.y);
+  g.lineStyle(1, tint(RUI.ash), alpha * 0.55);
+  g.strokePoints([tip, wingA, tail, wingB], true, true);
+}
+
 // ── Fx ────────────────────────────────────────────────────────────────────
 
 export class RuinFx extends FxBase {
+  /**
+   * A layer coming off. The caster's own outline, drawn as a ring of triangular plates that
+   * lifts away from the body and breaks apart — and, behind it, the smaller silhouette that was
+   * underneath, so the permanent shrink is legible on the frame it happens.
+   */
+  shed(x: number, y: number, r: number, ms = 620, depth = 11): void {
+    const seed = Math.random() * 999;
+    const plates = 25;
+    this.anim(depth, ms, (g, t) => {
+      const e = easeOut(t);
+      // What is left behind: a body one fifth smaller, fading up as the husk fades out.
+      g.lineStyle(2, this.tint(RUI.red), t * 0.7);
+      g.strokeCircle(x, y, r * 0.8);
+      for (let i = 0; i < plates; i++) {
+        const a = (i / plates) * TAU + jitter(seed, i) * 0.16;
+        const d = r * (0.9 + e * (1.1 + jitter(seed, 40 + i) * 0.9));
+        skinShard(g, this.tint, x + Math.cos(a) * d, y + Math.sin(a) * d,
+          a, r * 0.34, (1 - t) * 0.95, jitter(seed, 80 + i) * TAU + t * 7, seed + i);
+      }
+    });
+  }
+
+  /**
+   * Somebody has been dragged back into their own body. A cage of bone bars closing inward
+   * around them — the visual opposite of every transformation flourish in the game.
+   */
+  unform(x: number, y: number, r = 40, ms = 480, depth = 12): void {
+    const seed = Math.random() * 999;
+    this.anim(depth, ms, (g, t) => {
+      const e = 1 - easeOut(t);
+      for (let i = 0; i < 9; i++) {
+        const a = (i / 9) * TAU + jitter(seed, i) * 0.3;
+        const d = r * (0.4 + e * 1.5);
+        rustySpike(g, this.tint, x + Math.cos(a) * d, y + Math.sin(a) * d,
+          a + Math.PI, 18 + e * 10, 5, (1 - t) * 0.9,
+          { seed: seed + i, wear: 0.9, barbs: 1, color: RUI.bone });
+      }
+      g.lineStyle(2.5, this.tint(RUI.bright), (1 - t) * 0.6);
+      g.strokeCircle(x, y, r * (0.4 + e * 1.2));
+    });
+  }
+
   /** Something broke. Shards thrown off a point on straight lines, tumbling as they go. */
   shatter(x: number, y: number, count = 8, spread = 34, color = RUI.red, ms = 460, depth = 10): void {
     const seeds = Array.from({ length: count }, (_, i) => ({

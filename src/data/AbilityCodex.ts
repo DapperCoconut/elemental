@@ -6,9 +6,13 @@ import { LEGACY_PASSIVES } from './codex/legacy';
  * The Ability Codex — the long-form documentation behind the info (ℹ) screen.
  *
  * `Ability.description` is a one-liner because the in-match ability bar renders it under a
- * 90px key cap, and it cannot grow. This is the other half: for each ability, what kind of
- * magic it actually is, every numeric effect it produces, what its shop upgrade changes, and
+ * 90px key cap, and it cannot grow. This is the other half: for each ability, a plain summary
+ * of everything it does, every numeric effect it produces, what its shop upgrade changes, and
  * every outcome it can roll. The info screen reads nothing but this.
+ *
+ * The screen is built for two readers at once. `basics` answers "what does this key do?" in a
+ * few sentences that still leave nothing out; the effect rows underneath carry the figures for
+ * anyone who wants to know exactly how much and for how long.
  *
  * ## Adding an element
  *
@@ -63,33 +67,47 @@ export interface CodexEffect {
 
 export interface AbilityCodexEntry {
   /**
-   * The kind of magic: what the caster is physically doing and what the arena does back.
-   * Two to four sentences, written to match what the ability actually looks like on screen.
-   * Flavour, but flavour that teaches — it should leave a reader able to recognise the
-   * ability by sight.
+   * The basics: what the ability does, for somebody who wants the answer and not the essay.
+   *
+   * Two to four plain sentences that name **every** effect the ability has — the damage, the
+   * cost, the duration, the thing it leaves on the floor, the condition it refuses under. The
+   * effect rows below are the detail; this is the same content compressed to something a
+   * reader can take in at a glance and act on.
+   *
+   * It is a summary, not a teaser: an ability with five effects gets all five mentioned here.
+   * Numbers belong in the rows, but the headline figure usually belongs here too.
    */
-  magic: string;
+  basics: string;
   /** The input: tap or hold, what it aims at, what it locks, how long the wind-up runs. */
   cast: string;
   /** Every mechanical effect of the base ability. */
   effects: CodexEffect[];
   /** What the element's shop upgrade for this slot changes, in the same detail. */
   upgrade?: {
-    /** How the upgrade re-frames the ability, if it changes the fantasy and not just numbers. */
-    magic?: string;
+    /** The same quick overview for the upgraded form, when the upgrade changes what it does. */
+    basics?: string;
     effects: CodexEffect[];
   };
   /** Every outcome a random or selectable ability can produce. */
   variants?: AbilityVariantSet;
   /** Interactions that are not obvious from the effect list. Kept short and specific. */
   notes?: string[];
+  /**
+   * This ability's key has a shop upgrade behind it that does **not** reach it.
+   *
+   * The info screen matches upgrades to abilities by display key, which is right for every
+   * form-swapping element in the game bar one: Dream's spirit keys sit on Click and E, and
+   * Dream's Click and E upgrades belong to Trance and Pillow Fight. Without this the UPGRADED
+   * tab would offer a card that changes nothing about the ability being read.
+   */
+  noUpgrade?: boolean;
 }
 
 /** An always-on mechanic that is not bound to a key. */
 export interface PassiveCodexEntry {
   emoji: string;
   name: string;
-  magic: string;
+  basics: string;
   effects: CodexEffect[];
   notes?: string[];
   /**
@@ -108,7 +126,7 @@ export interface PassiveCodexEntry {
  * is the long form of `Ability.description`.
  */
 export interface SubjectCodexEntry {
-  magic: string;
+  basics: string;
   /** How it is used. Omit for anything permanently on. */
   cast?: string;
   effects: CodexEffect[];

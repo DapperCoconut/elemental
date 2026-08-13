@@ -4,8 +4,8 @@ import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import {
   BND, BindAvatar, BindFx,
   arenaBinding, chainLink, chainRun, cosmicVeil, cultistFigure, darkMark, eviscerateCharge,
-  faithRing, godBeam, hexWard, idolStatue, oblivionShard, overrageAura, patronEye, spreadReticle,
-  vesselHalo,
+  faithRing, godBeam, hexWard, idolStatue, oblivionShard, overrageAura, patheticLunge, patronEye,
+  ritualDagger, spreadReticle, vesselHalo, vesselMark,
 } from '../../../elements/kits/BindVisuals';
 
 /**
@@ -61,6 +61,9 @@ const CULT_FAITH_SHARE = 1 / 3;
 const WARD_CHARGES = 3;
 const WARD_ANGER_SHARE = 0.5;
 const VESSEL_STEP = 0.15;
+
+const RITUAL_ANGER = 15;
+const RITUAL_SELF_DAMAGE = 25;
 
 const AWAKE_VOLLEY_SHARDS = 7;
 const AWAKE_SWIPE_DAMAGE = 24;
@@ -1013,5 +1016,253 @@ export const theTurning: PreviewScript = {
     }
     ctx.at(6600, () => tick(ctx, home.x, home.y - 46, '⛓ IT IS CALM', BND.gold));
     label(ctx, ctx.w * 0.5, ctx.h - 8, 'the bar is zeroed the frame it turns — surviving it is a clean sheet', BND.goldDeep);
+  },
+};
+
+// ── Mastery ───────────────────────────────────────────────────────────
+
+/** A caption line the script rewrites as the loop moves through the passive's three clauses. */
+function readout(ctx: PreviewCtx): Phaser.GameObjects.Text {
+  return ctx.adopt(ctx.scene.add.text(ctx.w * 0.5, ctx.h - 9, '', {
+    fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
+    color: hex(BND.goldDeep), align: 'center',
+  }).setOrigin(0.5).setDepth(19));
+}
+
+/**
+ * Vessel Of The Broken God.
+ *
+ * Three clauses in one loop, in the order the passive is actually felt: the mark on the body and
+ * the extra shards it throws, then the enrage the ultimate lights, then the stab left in the hole
+ * where the god took a slot. The enrage's real window is 20 seconds — 15 of open sky plus the 5 of
+ * wrath that closing it always causes — and this compresses it, but it keeps the *shape*, because
+ * the shape is the whole argument for the passive: the useful half is the tail, after the chains
+ * come off and the god is pointed inward.
+ */
+export const masteryVessel: PreviewScript = {
+  duration: 17000,
+  scale: 0.9,
+  bodyTexture: '',
+  caption: 'Mastery passive — wear the patron\'s eye: 3 shards of your own on E, a 20s enrage on Q, and a stab where the slot it took used to be',
+  run(ctx) {
+    const s = sky(ctx);
+    const home: Mark = { x: ctx.w * 0.3, y: ctx.h * 0.68 };
+    const { av, bav } = drivenCaster(ctx, () => home);
+    const field = shardField(ctx, s.fx);
+    const foe: Mark = { x: ctx.w * 0.74, y: ctx.h * 0.44 };
+    dummy(ctx, foe);
+    const centre: Mark = { x: ctx.w * 0.5, y: ctx.h * 0.58 };
+    const corners: [number, number][] = [
+      [8, 22], [ctx.w - 8, 22], [ctx.w - 8, ctx.h - 8], [8, ctx.h - 8],
+    ];
+    const line = readout(ctx);
+
+    interface Lunge { x0: number; y0: number; tx: number; ty: number; ang: number; until: number; hit: boolean }
+    const st = { chained: false, rageUntil: -1, rageFrom: 0, lunge: null as Lunge | null };
+
+    // The mark, the enrage rings and the lunge, all on one layer over the body.
+    const worn = ctx.adopt(ctx.scene.add.graphics().setDepth(16));
+    ctx.onFrame((dt, elapsed) => {
+      const t = elapsed / 1000;
+      worn.clear();
+
+      if (st.chained) {
+        const k = Math.min(1, dt / 130);
+        home.x = Phaser.Math.Linear(home.x, centre.x, k);
+        home.y = Phaser.Math.Linear(home.y, centre.y, k);
+      }
+
+      // The lunge writes the position rather than pushing on a velocity, exactly as the kit does.
+      const lunge = st.lunge;
+      if (lunge) {
+        if (elapsed >= lunge.until) {
+          st.lunge = null;
+        } else {
+          const k = Math.min(1, dt / (150 * 0.55));
+          home.x = Phaser.Math.Linear(home.x, lunge.tx, k);
+          home.y = Phaser.Math.Linear(home.y, lunge.ty, k);
+          patheticLunge(worn, ctx.tint, lunge.x0, lunge.y0, home.x, home.y, 0.9);
+          ritualDagger(worn, ctx.tint, home.x + Math.cos(lunge.ang) * 21,
+            home.y + Math.sin(lunge.ang) * 21, lunge.ang, 0.95);
+          if (!lunge.hit && Phaser.Math.Distance.Between(home.x, home.y, foe.x, foe.y) <= 30) {
+            lunge.hit = true;
+            s.fx.stabHit(foe.x, foe.y, lunge.ang);
+            tick(ctx, foe.x, foe.y - 22, `${15}`, BND.goldLit);
+          }
+        }
+      }
+
+      const rage = elapsed < st.rageUntil ? 1 : 0;
+      vesselMark(worn, ctx.tint, home.x, home.y - 30, 11, 0.95, { wrath: rage, t, seed: 11 });
+      if (rage) {
+        const left = Phaser.Math.Clamp((st.rageUntil - elapsed) / (st.rageUntil - st.rageFrom), 0, 1);
+        for (let i = 0; i < 2; i++) {
+          const u = ((t * 1.1 + i / 2) % 1);
+          worn.lineStyle(2.4 * (1 - u) + 0.4, ctx.tint(i % 2 ? BND.wrath : BND.wrathDeep),
+            (1 - u) * 0.55 * (0.4 + left * 0.6));
+          worn.strokeCircle(home.x, home.y, 18 + u * 26);
+        }
+      }
+    });
+
+    ctx.at(200, () => line.setText('a knot of the patron\'s own veil, with a small copy of its eye set into it'));
+
+    // ── Clause one: the body throws too ──
+    for (let k = 0; k < 2; k++) {
+      ctx.at(1200 + k * 1900, () => {
+        av.play('slam', Math.atan2(foe.y - home.y, foe.x - home.x));
+        // The sky's twenty-five, thinned for the box, and then the three that are the passive.
+        field.volley({
+          from: s.eye, tx: foe.x, ty: foe.y, count: 12, damage: SHARD_DAMAGE,
+          spread: SHARD_SPREAD * 0.5,
+          onBurst: (x, y, damage) => {
+            if (Phaser.Math.Distance.Between(x, y, foe.x, foe.y) > 34) return;
+            tick(ctx, x, y - 12, `${damage}`, BND.gold);
+          },
+        });
+        field.volley({
+          from: { x: home.x, y: home.y - 6 }, tx: foe.x, ty: foe.y,
+          count: 3, damage: SHARD_DAMAGE, spread: 42 * 0.5,
+          onBurst: (x, y, damage) => {
+            if (Phaser.Math.Distance.Between(x, y, foe.x, foe.y) > 34) return;
+            tick(ctx, x, y - 12, `${damage}`, BND.goldLit);
+          },
+        });
+        tick(ctx, home.x, home.y - 56, '👁️ +3 SHARDS · FROM YOU', BND.goldLit);
+      });
+    }
+    ctx.at(1500, () => line.setText('E throws 3 more off your own body for 10 each — not out of the ceiling'));
+
+    // ── Clause two: the enrage ──
+    ctx.at(5200, () => {
+      st.chained = true;
+      st.rageFrom = 5200;
+      st.rageUntil = 15600;
+      av.play('raise');
+      bav?.setChannelling(true);
+      s.fx.wrath(s.eye.x, s.eye.y);
+      s.fx.chainDown(centre.x, centre.y, corners);
+      s.fx.vesselEnrage(home.x, home.y);
+      tick(ctx, home.x, home.y - 78, '👁️ THE VESSEL IS ENRAGED', BND.wrath);
+      tick(ctx, home.x, home.y - 60, '👁️ SHED 4 EFFECTS', BND.wrath);
+      line.setText('+35% speed  ·  −40% damage taken  ·  every debuff scoured off 4× a second');
+    });
+    runGod(ctx, s, field, { from: 5400, until: 10200, victim: () => foe, turned: false });
+
+    // The sky closing, which is the moment the enrage stops being decoration.
+    ctx.at(10400, () => {
+      st.chained = false;
+      bav?.setChannelling(false);
+      s.anger = ANGER_MAX;
+      tick(ctx, home.x, home.y - 62, '⛓ THE SKY CLOSES', BND.wrath);
+    });
+    ctx.at(10700, () => {
+      s.anger = 0;
+      s.wrathFor = 2600;
+      s.fx.wrath(s.eye.x, s.eye.y);
+      tick(ctx, home.x, home.y - 74, '⛓⛓ THE PATRON HAS TURNED ⛓⛓', BND.wrath);
+      line.setText('the chains come off and the god turns inward — this is the half the enrage is for');
+    });
+    runGod(ctx, s, field, { from: 10700, until: 13000, victim: () => home, turned: true });
+
+    // ── Clause three: what the taken slot became ──
+    ctx.at(13600, () => line.setText('and the slot the ultimate took is a 118px lunge for 15, every 1.8s'));
+    for (let k = 0; k < 2; k++) {
+      ctx.at(13800 + k * 1800, () => {
+        const ang = Math.atan2(foe.y - home.y, foe.x - home.x);
+        st.lunge = {
+          x0: home.x, y0: home.y, ang, until: 13800 + k * 1800 + 150, hit: false,
+          tx: Phaser.Math.Clamp(home.x + Math.cos(ang) * 118 * 0.6, 10, ctx.w - 10),
+          ty: Phaser.Math.Clamp(home.y + Math.sin(ang) * 118 * 0.6, 30, ctx.h - 10),
+        };
+        av.play('punch', ang);
+        tick(ctx, home.x, home.y - 46, '🗡 PATHETIC STAB', BND.gold);
+      });
+    }
+  },
+};
+
+/**
+ * Ritual Sacrifice.
+ *
+ * The bar is the only thing worth showing here, so the loop is really a graph: three of the kit's
+ * own bills stacked up, then the dagger paying them off 15 at a time with a health counter running
+ * down beside it — and then both refusals, because the two things the ability will not do are half
+ * of what it is.
+ */
+export const masteryRitual: PreviewScript = {
+  duration: 15000,
+  scale: 0.9,
+  caption: 'Mastery — 25 of your own health for 15 anger, no cooldown at all: the element\'s only way to buy patience back',
+  run(ctx) {
+    const s = sky(ctx);
+    const { av } = stageIt(ctx);
+    const home: Mark = { x: ctx.cx, y: ctx.cy };
+    const line = readout(ctx);
+    const state = { hp: 400 };
+
+    // The health counter, because the whole ability is a conversion rate between two numbers.
+    const hpText = ctx.adopt(ctx.scene.add.text(ctx.cx, ctx.cy + 34, '', {
+      fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
+      color: hex(BND.chainLit), stroke: '#0b0518', strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(20));
+    ctx.onFrame(() => {
+      hpText.setText(`${Math.round(state.hp)} / 400 HP     ·     ${Math.round(s.anger)} / 100 ANGER`);
+    });
+
+    // The bills, in the order a bad thirty seconds of Bind actually sends them.
+    const bills: Array<{ at: number; amount: number; why: string }> = [
+      { at: 700, amount: OVERHEAT_ANGER, why: 'OVERHEAT' },
+      { at: 1600, amount: 45, why: 'WARD · half of a 90' },
+      { at: 2500, amount: IDOL_STARVE_ANGER * 3, why: 'STARVED IDOL' },
+    ];
+    for (const b of bills) {
+      ctx.at(b.at, () => {
+        s.anger = Math.min(ANGER_MAX, s.anger + b.amount);
+        tick(ctx, home.x, home.y - 48, `+${b.amount} ANGER · ${b.why}`, BND.wrath);
+      });
+    }
+    ctx.at(300, () => line.setText('80 anger of bills, and 2 a second is the only thing that ever took any off'));
+
+    // The dagger, paid four times in a row because nothing stops you.
+    ctx.at(3600, () => line.setText('there is no cooldown — press it as many times as you can afford'));
+    for (let i = 0; i < 4; i++) {
+      ctx.at(3900 + i * 700, () => {
+        const before = s.anger;
+        s.anger = Math.max(0, s.anger - RITUAL_ANGER);
+        state.hp -= RITUAL_SELF_DAMAGE;
+        s.fx.ritualStab(home.x, home.y);
+        av.play('slam', Math.PI / 2);
+        tick(ctx, home.x, home.y - 64, `🗡 SACRIFICE · −${Math.round(before - s.anger)} ANGER`, BND.goldLit);
+        tick(ctx, home.x + 16, home.y - 30, `${RITUAL_SELF_DAMAGE}`, BND.wrath);
+      });
+    }
+    ctx.at(7000, () => line.setText('a full bar from 100 to 0 is seven stabs — 175 health, or 44% of you'));
+
+    // Refusal one: nothing to spend.
+    ctx.at(8600, () => {
+      s.anger = 0;
+      tick(ctx, home.x, home.y - 40, '⛓ IT IS ALREADY CALM', BND.wrath);
+      line.setText('refused on a calm patron — there has to be anger there to take off');
+    });
+
+    // Refusal two: the floor. The god does not accept an offering that finishes the job for it.
+    ctx.at(10600, () => {
+      s.anger = 60;
+      state.hp = 22;
+      tick(ctx, home.x, home.y - 48, '+60 ANGER · WARD', BND.wrath);
+    });
+    ctx.at(11600, () => {
+      tick(ctx, home.x, home.y - 40, '⛓ NOTHING LEFT TO GIVE', BND.wrath);
+      line.setText('and refused at 25 health or less — a sacrifice must not finish the job for it');
+    });
+    ctx.at(13200, () => {
+      // Which is exactly how a Bind player dies: the bar tops out with no way left to pay it down,
+      // and the bar is zeroed the frame it turns.
+      s.anger = 0;
+      s.wrathFor = 1700;
+      s.fx.wrath(s.eye.x, s.eye.y);
+      tick(ctx, home.x, home.y - 62, '⛓⛓ THE PATRON HAS TURNED ⛓⛓', BND.wrath);
+    });
   },
 };

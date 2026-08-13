@@ -32,6 +32,7 @@ import {
   growthEvolveUltimateCost,
   growthEvolveSellRefundFraction,
 } from '../../data/GrowthEvolve';
+import { meterGain } from '../../combat/Meters';
 
 type Owner = 'player' | 'npc';
 type CloneVariant = 'yellow' | 'blue' | 'red';
@@ -1421,6 +1422,25 @@ export class GrowthKit {
    * Exchange the player Fighter with a clone entity: positions, vitals, shield,
    * and the BodyState (upgrade tree, variant, chitin, banked charges).
    */
+  /**
+   * Ruin Mastery — Second Skin. Body Swap puts the player inside one of their own clones and
+   * leaves their real body walking around as one — a whole different statline, tint and
+   * evolution tree. Being shot back out of it is a swap like any other, so it goes through
+   * `swapBodies` rather than trying to unpick the two BodyStates by hand.
+   *
+   * The clone it swaps back with is whichever one is carrying the body that was never a clone's
+   * to begin with. If it has been killed since, there is nothing to go back to and the fold
+   * stands — the shard still landed and still hurt.
+   */
+  revertForms(f: Fighter): string[] {
+    if (f !== this.arena.player || !this.fighterBody.isCloneBody) return [];
+    const home = this.clones.find((c) => c.owner === 'player' && !c.body.isCloneBody);
+    if (!home) return [];
+    this.swapBodies(home);
+    this.arena.showFloatingText(f.x, f.y - 56, '🔀 PUT BACK', '#aaff66');
+    return ['Body Swap'];
+  }
+
   private swapBodies(clone: Clone, silent = false): void {
     const p = this.arena.player;
     const px = p.x, py = p.y;
@@ -2300,6 +2320,8 @@ export class GrowthKit {
       amount *= 2;
       this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 36, '🧬 MITOSIS', '#66ffcc');
     }
+    // Ruin's Combo Breaker halves every meter in the game — the DNA bar included.
+    amount = meterGain(owner === 'player' ? this.arena.player : this.arena.npc, amount);
     if (owner === 'player') this.playerDna = Math.min(DNA_CAP, this.playerDna + amount);
     else this.npcDna = Math.min(DNA_CAP, this.npcDna + amount);
   }

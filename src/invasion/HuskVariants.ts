@@ -13,8 +13,12 @@
  *   corrupt  — the seventeen cut out of the Corrupt Realm's lab and vault.
  *              MASOCHISTIC only, and the nastiest of the lot.
  *
- * Every tenth wave still spawns one of the three bosses on top of the wave.
- * Bosses are never rolled by the lightning.
+ * Every tenth wave still spawns one of the three bosses on top of the wave —
+ * and those are exactly the three elements the lightning cannot brand, because
+ * Justice, Dream and Quantum do not come through a window. They come as the
+ * Arbiter, the Dreamer and the Paradox, in three tiers of their own, and in a
+ * room the corruption has taken they come infected. Bosses are never rolled by
+ * the lightning.
  *
  * The def shape (HuskVariantDef) is shared with every other husk consumer —
  * the Disgraced King's court, the boss toolkit thralls, the Summoner mutation,
@@ -27,9 +31,11 @@ export type HuskBehavior =
   | 'ranged'   // keep distance, lob single shots
   | 'medic'    // keep distance, pulse-heal other husks
   | 'charger'  // telegraph a lane, then dash down it
-  | 'titan'    // slow melee boss that summons adds
-  | 'ranger'   // ranged boss alternating shotgun / burst
-  | 'demon';   // boss that possesses another husk
+  | 'titan'    // slow melee brute that summons adds (the Graveyard's, not a wave boss)
+  | 'boss';    // one of the three tenth-wave bosses, driven by BossBrain
+
+/** The three things the tenth wave sends. Their moves live in InvasionBosses.ts. */
+export type BossKind = 'arbiter' | 'dreamer' | 'paradox';
 
 export type HuskCategory = 'normal' | 'abstract' | 'corrupt';
 
@@ -81,6 +87,8 @@ export interface HuskVariantDef {
   emoji?: string;
   /** Killing this pays no shards (illusion decoys, echo splits). */
   noReward?: boolean;
+  /** Set on the nine boss defs — which of the three brains drives it. */
+  bossKind?: BossKind;
 }
 
 /** One elemental family — expanded into three tier defs by the generator below. */
@@ -212,9 +220,125 @@ export const DECOY_HUSK: HuskVariantDef = {
 };
 
 /**
- * Ordered basic-first, then every elemental def, then the decoy and the three
- * bosses. Indices into this array ride the co-op wire (`NetHuskState.v`), so
- * the order must stay identical on both peers of a protocol version.
+ * Corrupt-kin — what the corruption grows inside a room it has taken.
+ *
+ * Not a wave husk and not rollable: the corruption seeds them itself, and they
+ * sit motionless in the dark until something walks in. Then they charge. Kill
+ * every one standing in a room and the corruption there dies with them, which
+ * is the only way to clear it.
+ */
+export const CORRUPT_KIN: HuskVariantDef = {
+  id: 'corrupt-kin', name: 'Corrupt-Kin', color: 0x1a0a14, behavior: 'charger',
+  hpMult: 2.2, speedMult: 1.15, damageMult: 1.6, sizeMult: 1.08,
+  minWave: 999, weight: 0, weightRamp: 0, weightCap: 0,
+  marker: 'eye', quirk: 'lean', emoji: '👁️',
+};
+
+// ── The tenth wave ───────────────────────────────────────────────────
+
+/** One boss identity — expanded into three tier defs by the generator below. */
+interface BossFamily {
+  kind: BossKind;
+  name: string;
+  emoji: string;
+  color: number;
+  /** The element it wears. Nothing else in the game brands a husk with these three. */
+  elementId: string;
+  hp: number;
+  speed: number;
+  damage: number;
+  size: number;
+  preferredRange?: number;
+}
+
+export const BOSS_FAMILIES: BossFamily[] = [
+  {
+    kind: 'arbiter', name: 'THE ARBITER', emoji: '⚖️', color: 0xe8c24a, elementId: 'justice',
+    hp: 9, speed: 0.8, damage: 2, size: 1.45,
+  },
+  {
+    kind: 'dreamer', name: 'THE DREAMER', emoji: '🌙', color: 0x8f7cff, elementId: 'dream',
+    hp: 6.5, speed: 0.95, damage: 1.35, size: 1.35, preferredRange: 300,
+  },
+  {
+    kind: 'paradox', name: 'THE PARADOX', emoji: '⚛️', color: 0x3ad6c8, elementId: 'quantum',
+    hp: 5.5, speed: 1.2, damage: 1.6, size: 1.25,
+  },
+];
+
+/**
+ * Which boss tier the wave sends. Bosses only come on tenth waves, so the
+ * ladder is one tier per ten: the Arbiter you meet on wave 10 and the one you
+ * meet on wave 30 are the same thing three times over.
+ */
+export const BOSS_TIER_MIN_WAVE: Record<1 | 2 | 3, number> = { 1: 10, 2: 20, 3: 30 };
+
+const BOSS_TIER_HP = [1, 1.55, 2.3];
+const BOSS_TIER_DMG = [1, 1.25, 1.55];
+const BOSS_TIER_SPEED = [1, 1.06, 1.12];
+const BOSS_TIER_SIZE = [1, 1.1, 1.2];
+
+function makeBossDef(f: BossFamily, tier: 1 | 2 | 3): HuskVariantDef {
+  const t = tier - 1;
+  return {
+    id: `boss-${f.kind}-t${tier}`,
+    name: `${f.name}${TIER_SUFFIX[t]}`,
+    color: f.color,
+    hpMult: f.hp * BOSS_TIER_HP[t],
+    speedMult: f.speed * BOSS_TIER_SPEED[t],
+    damageMult: f.damage * BOSS_TIER_DMG[t],
+    sizeMult: f.size * BOSS_TIER_SIZE[t],
+    behavior: 'boss',
+    minWave: BOSS_TIER_MIN_WAVE[tier],
+    weight: 0,
+    weightRamp: 0,
+    weightCap: 0,
+    isBoss: true,
+    bossKind: f.kind,
+    elementId: f.elementId,
+    tier,
+    emoji: f.emoji,
+    preferredRange: f.preferredRange,
+  };
+}
+
+export const BOSS_HUSK_VARIANTS: HuskVariantDef[] =
+  BOSS_FAMILIES.flatMap((f) => ([1, 2, 3] as const).map((tier) => makeBossDef(f, tier)));
+
+/**
+ * What the bosses put on the field. None of these are rollable and none of them
+ * are bosses themselves — they exist so a boss has something to call for.
+ */
+export const BOSS_MINIONS: HuskVariantDef[] = [
+  {
+    // The Arbiter's court. Real husks, and they pay like real husks.
+    id: 'boss-bailiff', name: 'BAILIFF', color: 0xb99433, behavior: 'melee',
+    hpMult: 1.6, speedMult: 1.05, damageMult: 1.2, sizeMult: 1.05,
+    minWave: 999, weight: 0, weightRamp: 0, weightCap: 0,
+    elementId: 'justice', marker: 'hammer', quirk: 'bulk', emoji: '⚖️',
+  },
+  {
+    // Something the Dreamer is dreaming. It is not really here, so it pays nothing.
+    id: 'boss-wisp', name: 'NIGHT WISP', color: 0xb9a8ff, behavior: 'melee',
+    hpMult: 0.35, speedMult: 1.9, damageMult: 0.7, sizeMult: 0.8,
+    minWave: 999, weight: 0, weightRamp: 0, weightCap: 0,
+    elementId: 'dream', marker: 'crescent', quirk: 'lean', emoji: '🌙', noReward: true,
+  },
+  {
+    // An outcome the Paradox did not take. Also not really here.
+    id: 'boss-echo', name: 'ECHO', color: 0x7fe8de, behavior: 'ranged',
+    hpMult: 0.5, speedMult: 1.15, damageMult: 0.8, sizeMult: 0.9,
+    minWave: 999, weight: 0, weightRamp: 0, weightCap: 0, preferredRange: 260,
+    elementId: 'quantum', marker: 'orb', quirk: 'lean', emoji: '⚛️', noReward: true,
+  },
+];
+
+/**
+ * Ordered basic-first, then every elemental def, then the decoy, the Graveyard's
+ * titan, the nine boss defs, their minions and finally the corrupt-kin. Indices
+ * into this array ride the co-op wire (`NetHuskState.v`), so the order must stay
+ * identical on both peers of a protocol version — reorder it and the protocol
+ * version has to move with it.
  */
 export const HUSK_VARIANTS: HuskVariantDef[] = [
   {
@@ -225,23 +349,19 @@ export const HUSK_VARIANTS: HuskVariantDef[] = [
   ...ELEMENTAL_HUSK_VARIANTS,
   DECOY_HUSK,
 
-  // ── Bosses (never rolled by the lightning) ───────────────────────
+  // The Graveyard's titan. Never a wave boss — SecretMapKit raises it by id.
   {
     id: 'titan', name: 'TITAN', color: 0x141414, behavior: 'titan',
     hpMult: 10, speedMult: 0.1, damageMult: 2.5, sizeMult: 1.5,
-    minWave: 10, weight: 0, weightRamp: 0, weightCap: 0, isBoss: true,
+    minWave: 999, weight: 0, weightRamp: 0, weightCap: 0,
   },
-  {
-    id: 'ranger', name: 'RANGER', color: 0xf2f2f2, behavior: 'ranger',
-    hpMult: 4.5, speedMult: 1.1, damageMult: 0.9, sizeMult: 1.3,
-    minWave: 10, weight: 0, weightRamp: 0, weightCap: 0, isBoss: true,
-    preferredRange: 330,
-  },
-  {
-    id: 'demon', name: 'DEMON', color: 0x660011, behavior: 'demon',
-    hpMult: 4.5, speedMult: 1.15, damageMult: 1.5, sizeMult: 1.25,
-    minWave: 10, weight: 0, weightRamp: 0, weightCap: 0, isBoss: true,
-  },
+
+  // ── Bosses and their courts (never rolled by the lightning) ──────
+  ...BOSS_HUSK_VARIANTS,
+  ...BOSS_MINIONS,
+
+  // ── Apocalypse (never rolled by the lightning; the corruption spawns them) ──
+  CORRUPT_KIN,
 ];
 
 export const BASIC_HUSK = HUSK_VARIANTS[0];
@@ -271,7 +391,7 @@ export function huskVariantFromIndex(i: number): HuskVariantDef {
   return HUSK_VARIANTS[i] ?? BASIC_HUSK;
 }
 
-export const BOSS_VARIANTS = HUSK_VARIANTS.filter((v) => v.isBoss);
+export const BOSS_VARIANTS = BOSS_HUSK_VARIANTS;
 
 /** How much likelier the lightning is to strike on each invasion difficulty. */
 export const VARIANT_CHANCE_MULT: Record<string, number> = {
@@ -434,6 +554,16 @@ export function isBossWave(wave: number): boolean {
   return wave > 0 && wave % 10 === 0;
 }
 
-export function rollBossVariant(rand: () => number): HuskVariantDef {
-  return BOSS_VARIANTS[Math.floor(rand() * BOSS_VARIANTS.length)] ?? BOSS_VARIANTS[0];
+/** Which of the three tiers `wave` is far enough along to send. */
+export function bossTierForWave(wave: number): 1 | 2 | 3 {
+  if (wave >= BOSS_TIER_MIN_WAVE[3]) return 3;
+  if (wave >= BOSS_TIER_MIN_WAVE[2]) return 2;
+  return 1;
+}
+
+/** One of the three, at the tier this wave has earned. */
+export function rollBossVariant(rand: () => number, wave: number): HuskVariantDef {
+  const tier = bossTierForWave(wave);
+  const pool = BOSS_VARIANTS.filter((v) => v.tier === tier);
+  return pool[Math.floor(rand() * pool.length)] ?? pool[0];
 }

@@ -163,6 +163,9 @@ export const skyGrapple: PreviewScript = {
       ctx.at(200, () => {
         av.setHold('ride', ctx.aim);
         fx.slipstream(ctx.cx, ctx.cy, ctx.tx, ctx.ty);
+        // The whole ability is the flight. The caster rides the line at the hook's own pace
+        // and arrives on the target — standing still under a slipstream shows nothing.
+        ctx.glideCaster({ to: { x: ctx.tx - 34, y: ctx.ty }, ms: 420 });
         // Untouchable: the caster reads as displaced air rather than a body.
         fx.motes(ctx.cx, ctx.cy, 18, { speed: 260, life: 420, angle: ctx.aim, spread: 0.6 });
         ctx.at(420, () => {
@@ -187,6 +190,9 @@ export const skyGrappleUpgraded: PreviewScript = {
       ctx.at(200, () => {
         av.setHold('ride', ctx.aim);
         fx.slipstream(ctx.cx, ctx.cy, ctx.tx, ctx.ty);
+        // The whole ability is the flight. The caster rides the line at the hook's own pace
+        // and arrives on the target — standing still under a slipstream shows nothing.
+        ctx.glideCaster({ to: { x: ctx.tx - 34, y: ctx.ty }, ms: 420 });
         ctx.at(420, () => {
           av.setHold(null);
           fx.gustBurst(ctx.tx, ctx.ty, 60, { curls: 12 });

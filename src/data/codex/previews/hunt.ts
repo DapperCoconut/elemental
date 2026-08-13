@@ -531,6 +531,8 @@ export const pounce: PreviewScript = {
     dummy(ctx, land, ctx.ty);
     ctx.at(400, () => { hv?.play('dash', ctx.aim); hv?.snap(1); });
     ctx.at(620, () => {
+      // 215px in 0.22s: the beast crosses the gap, it does not stay behind its own leap.
+      ctx.glideCaster({ to: { x: land, y: ctx.cy }, ms: 220, ease: 'out' });
       fx.pounce(ctx.cx, ctx.cy, land, ctx.cy, 5, tones);
       fx.rake(land, ctx.cy, ctx.aim, 110, 4, 8, tones, 18);
       fx.ring(land, ctx.cy, 16, 88, tones.wound, 420, 3, 6);
@@ -550,6 +552,8 @@ export const pounceUpgraded: PreviewScript = {
     dummy(ctx, land + 30, ctx.ty);
     ctx.at(400, () => { hv?.play('dash', ctx.aim); hv?.snap(1); });
     ctx.at(620, () => {
+      // 215px in 0.22s: the beast crosses the gap, it does not stay behind its own leap.
+      ctx.glideCaster({ to: { x: land, y: ctx.cy }, ms: 220, ease: 'out' });
       fx.pounce(ctx.cx, ctx.cy, land, ctx.cy, 5, tones);
       fx.rake(land, ctx.cy, ctx.aim, 110, 4, 8, tones, 18);
       shout(ctx, land, ctx.ty - 50, '🔥 SEARING!', '#ff8833');
@@ -650,6 +654,8 @@ export const grapple: PreviewScript = {
     });
     ctx.at(500, () => {
       hv?.play('dash', ctx.aim); hv?.snap(1);
+      // 250px in 0.24s — the lunge is the reach, so the beast has to arrive on the victim.
+      ctx.glideCaster({ to: { x: caught - 34, y: ctx.cy }, ms: 240, ease: 'out' });
       fx.pounce(ctx.cx, ctx.cy, caught, ctx.cy, 5, tones);
     });
     ctx.at(740, () => {
@@ -699,7 +705,11 @@ export const grappleUpgraded: PreviewScript = {
       g.fillStyle(0x8e97ad, 0.9);
       g.fillCircle(foe.x - 5, foe.y - 4, 3.2); g.fillCircle(foe.x + 5, foe.y - 4, 3.2);
     });
-    ctx.at(400, () => { hv?.play('dash', ctx.aim); hv?.snap(1); fx.pounce(ctx.cx, ctx.cy, caught, ctx.cy, 5, tones); });
+    ctx.at(400, () => {
+      hv?.play('dash', ctx.aim); hv?.snap(1);
+      ctx.glideCaster({ to: { x: caught - 34, y: ctx.cy }, ms: 240, ease: 'out' });
+      fx.pounce(ctx.cx, ctx.cy, caught, ctx.cy, 5, tones);
+    });
     ctx.at(640, () => { phase = 'held'; fx.rake(caught, ctx.cy, ctx.aim, 50, 3, 8, tones); });
     ctx.at(1640, () => { phase = 'thrown'; hv?.play('slam', ctx.aim); });
   },
@@ -851,7 +861,8 @@ export const roll: PreviewScript = {
     ctx.at(500, () => {
       hv?.play('dash', ctx.aim);
       fx.smoke(ctx.cx, ctx.cy, 3, 18, 5);
-      // The tumble, drawn as the trail it leaves rather than by moving the caster mark.
+      // 215px over 0.3s, and the hybrid rides it — the tumble is the only escape the form has.
+      ctx.glideCaster({ to: { x: ctx.cx + 215, y: ctx.cy }, ms: 300, ease: 'out' });
       fx.pounce(ctx.cx, ctx.cy, ctx.cx + 215, ctx.cy, 5, SILVER_TONES);
       shout(ctx, ctx.cx + 215, ctx.cy - 34, '215px · 0.3s', '#ccddee');
     });
@@ -880,6 +891,8 @@ export const rollUpgraded: PreviewScript = {
       hv?.play('dash', ctx.aim);
       fx.smoke(ctx.cx, ctx.cy, 3, 18, 5);
       fx.ring(ctx.cx, ctx.cy, 8, 46, HUNT.silver, 300, 3, 7);
+      // Rolled straight through the shot: the immunity is only worth anything while moving.
+      ctx.glideCaster({ to: { x: ctx.cx + 215, y: ctx.cy }, ms: 300, ease: 'out' });
       shout(ctx, ctx.cx, ctx.cy - 40, '🌀 UNTOUCHABLE', '#aaddff');
     });
     ctx.at(800, () => shout(ctx, ctx.cx, ctx.cy - 24, 'IMMUNITY ENDS WITH THE ROLL', '#8899aa'));

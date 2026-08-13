@@ -3,7 +3,8 @@ import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import {
   ILL, IllusionAvatar, IllusionFx, ShapeKind,
-  fracture, harlequinMask, illusionDagger, phantomFigure, shapeBody, tesseract, warpPane, weakCone,
+  fracture, gateway, harlequinMask, illusionDagger, phantomFigure, shapeBody, tesseract,
+  warpPane, weakCone,
 } from '../../../elements/kits/IllusionVisuals';
 
 /**
@@ -700,6 +701,164 @@ export const danceUpgraded: PreviewScript = {
     });
     ctx.at(4400, () => hop(corners[2], false));
     ctx.at(7000, () => hop(corners[3], true));
+  },
+};
+
+// ── Mastery ───────────────────────────────────────────────────────────
+
+const GATE_HALF_W = 40;
+const GATE_HALF_H = 30;
+const GATE_R = 34;
+
+/** The four doorways, scaled onto the preview box's own walls rather than the arena's. */
+function gateSet(ctx: PreviewCtx): Array<{ x: number; y: number; inward: number }> {
+  const inset = 40;
+  return [
+    { x: ctx.w / 2, y: inset, inward: Math.PI / 2 },
+    { x: ctx.w / 2, y: ctx.h - inset, inward: -Math.PI / 2 },
+    { x: inset, y: ctx.h / 2, inward: 0 },
+    { x: ctx.w - inset, y: ctx.h / 2, inward: Math.PI },
+  ];
+}
+
+export const masteryRealityShift: PreviewScript = {
+  duration: 8600,
+  scale: 0.86,
+  bodyTexture: '',
+  caption: 'Four doors on the walls — walk into one, come out of another, and mid-Dance arrive throwing',
+  run(ctx) {
+    const gates = gateSet(ctx);
+    const here = { x: ctx.w * 0.5, y: ctx.h * 0.5, alpha: 1 };
+    const { fx, av } = drivenCaster(ctx, () => here);
+    const iav = av instanceof IllusionAvatar ? av : null;
+    const foe = { x: ctx.w * 0.72, y: ctx.h * 0.7 };
+    dummyAt(ctx, foe);
+
+    // The arches, brightening as the illusionist closes on them — the same charge the kit
+    // feeds `gateway`, so the "this is about to take you" read is identical in both places.
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
+    ctx.onFrame((_dt, elapsed) => {
+      g.clear();
+      gates.forEach((gate, i) => {
+        const d = Phaser.Math.Distance.Between(here.x, here.y, gate.x, gate.y);
+        const charge = Phaser.Math.Clamp(1 - (d - GATE_R) / 110, 0, 1);
+        gateway(g, ctx.tint, gate.x, gate.y, gate.inward, GATE_HALF_W, GATE_HALF_H,
+          elapsed / 1000, 0.95, charge, 31 + i * 17);
+      });
+    });
+
+    // The knives a mid-Dance trip throws, run on the same little integrator the Q+ loop uses.
+    interface Blade { x: number; y: number; vx: number; vy: number; ang: number; dead: boolean }
+    const blades: Blade[] = [];
+    const bg = ctx.adopt(ctx.scene.add.graphics().setDepth(11));
+    ctx.onFrame((dt) => {
+      const s = dt / 1000;
+      bg.clear();
+      for (const b of blades) {
+        if (b.dead) continue;
+        b.x += b.vx * s;
+        b.y += b.vy * s;
+        if (Phaser.Math.Distance.Between(b.x, b.y, foe.x, foe.y) <= 26) {
+          b.dead = true;
+          fx.stab(foe.x, foe.y, b.ang);
+          tick(ctx, foe.x, foe.y - 30, '15', ILL.violet);
+          continue;
+        }
+        if (b.x < 0 || b.x > ctx.w || b.y < 0 || b.y > ctx.h) { b.dead = true; continue; }
+        illusionDagger(bg, ctx.tint, b.x, b.y, b.ang, BLADE_SIZE, 1);
+      }
+    });
+
+    /** Walk in, come out somewhere else — and throw, if the Dance is running. */
+    const step = (from: number, to: number, dancing: boolean): void => {
+      const gate = gates[to];
+      here.x = gates[from].x;
+      here.y = gates[from].y;
+      fx.blinkOut(here.x, here.y, ILL.warp);
+      fx.ring(here.x, here.y, 8, GATE_HALF_W + 18, ILL.cyan, 380);
+      here.x = Phaser.Math.Clamp(gate.x + Math.cos(gate.inward) * 72, 30, ctx.w - 30);
+      here.y = Phaser.Math.Clamp(gate.y + Math.sin(gate.inward) * 72, 30, ctx.h - 30);
+      fx.blinkIn(here.x, here.y, ILL.magenta);
+      fx.ring(here.x, here.y, GATE_HALF_W + 18, 10, ILL.violet, 420);
+      av.play('dash');
+      iav?.setScattered(true);
+      tick(ctx, here.x, here.y - 44, '🚪 REALITY SHIFT', ILL.warp);
+      if (!dancing) return;
+      const base = Math.atan2(foe.y - here.y, foe.x - here.x);
+      for (let i = 0; i < BLADE_COUNT; i++) {
+        const ang = base + (i / (BLADE_COUNT - 1) - 0.5) * BLADE_SPREAD;
+        blades.push({
+          x: here.x + Math.cos(ang) * 24, y: here.y + Math.sin(ang) * 24,
+          vx: Math.cos(ang) * BLADE_SPEED, vy: Math.sin(ang) * BLADE_SPEED, ang, dead: false,
+        });
+      }
+      av.play('sweep', base);
+      fx.ring(here.x, here.y, 10, 62, ILL.magenta, 380);
+      tick(ctx, here.x, here.y - 66, '🗡️ + AN EXTRA ROUND', ILL.violet);
+    };
+
+    ctx.at(900, () => step(2, 3, false));
+    ctx.at(2600, () => step(3, 0, false));
+    // …and then the ultimate goes on, and every door becomes a knife rack.
+    ctx.at(4200, () => {
+      iav?.setEchoes(6);
+      iav?.setScattered(true);
+      fx.ring(here.x, here.y, 14, 130, ILL.violet, 620);
+      tick(ctx, here.x, here.y - 50, '🎭 ILLUSION DANCE', ILL.magenta);
+    });
+    ctx.at(5400, () => step(0, 1, true));
+    ctx.at(7200, () => step(1, 2, true));
+  },
+};
+
+export const masteryMasquerade: PreviewScript = {
+  duration: 9000,
+  scale: 0.9,
+  caption: '×1.5 damage they cannot see — the numbers still read 20 while they take 30, until somebody clicks it off',
+  run(ctx) {
+    const { fx, av } = stage(ctx, { noDummy: true });
+    const iav = av instanceof IllusionAvatar ? av : null;
+    const foe = { x: ctx.w * 0.72, y: ctx.cy };
+    dummyAt(ctx, foe);
+
+    let masked = false;
+    const shoot = (): void => {
+      const muzzle = { x: ctx.cx + 26, y: ctx.cy };
+      av.play('punch', ctx.aim);
+      fx.shards(muzzle.x, muzzle.y, 3, 16, ILL.crimson, 260, 6);
+      ctx.fly({
+        texture: 'proj-illusion-crack', from: muzzle, to: foe, speed: SHOT_SPEED,
+        onHit: () => {
+          fx.shards(foe.x, foe.y, 5, 22, ILL.crimson, 380, 9);
+          // The number they are shown never changes. What is actually coming off the bar,
+          // shown here in gold beside it, is the only thing the mask moves.
+          tick(ctx, foe.x, foe.y - 28, '20', ILL.crimson);
+          if (masked) tick(ctx, foe.x + 46, foe.y - 46, 'really 30', 0xffc94a);
+        },
+      });
+    };
+
+    ctx.at(500, () => shoot());
+    ctx.at(1900, () => {
+      masked = true;
+      iav?.setMasquerade(true);
+      fx.ring(ctx.cx, ctx.cy, 10, 48, 0xffc94a, 380);
+      tick(ctx, ctx.cx, ctx.cy - 52, '🎭 MASQUERADE', 0xffc94a);
+      ctx.at(500, () => tick(ctx, ctx.cx, ctx.cy - 70, 'they see none of this', ILL.ghost));
+    });
+    ctx.at(3200, () => shoot());
+    ctx.at(4600, () => shoot());
+    // And then they reach for the face, and find out the hard way that it was there.
+    ctx.at(6200, () => {
+      fx.grab(ctx.cx, ctx.cy);
+      ctx.at(320, () => {
+        masked = false;
+        iav?.setMasquerade(false);
+        fx.maskBreak(ctx.cx, ctx.cy - 4);
+        tick(ctx, ctx.cx, ctx.cy - 52, '🎭 UNMASKED', 0xffc94a);
+      });
+    });
+    ctx.at(7800, () => shoot());
   },
 };
 

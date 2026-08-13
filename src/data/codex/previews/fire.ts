@@ -75,6 +75,10 @@ export const flameDash: PreviewScript = {
       av.play('dash', ctx.aim);
       const ox = ctx.cx, oy = ctx.cy;
       fx.dashTrail(ox, oy, ox + 180, oy);
+      // 640 velocity over 180px is a bit under 0.3s of travel. The caster genuinely crosses
+      // the trail — the ability is a displacement, and a rooted character showing a lit dash
+      // lane documents something the player cannot do.
+      ctx.glideCaster({ to: { x: ox + 180, y: oy }, ms: 280, ease: 'out' });
       // The burst is at the origin — the whole point of the ability, so the preview
       // deliberately leaves the caster's mark behind and lights it up.
       fx.bloom(ox, oy, 88, 12);
@@ -95,6 +99,7 @@ export const flameDashUpgraded: PreviewScript = {
       const ox = ctx.cx, oy = ctx.cy;
       const dx = ox + 180, dy = oy;
       fx.dashTrail(ox, oy, dx, dy);
+      ctx.glideCaster({ to: { x: dx, y: dy }, ms: 280, ease: 'out' });
       // The origin burst still happens — Propulsion adds to it rather than replacing it.
       fx.bloom(ox, oy, 88, 12);
       fx.scorch(ox, oy, 46);

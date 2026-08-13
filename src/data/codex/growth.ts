@@ -18,10 +18,12 @@ const growth: ElementCodex = {
     {
       emoji: '🧬',
       name: 'DNA',
-      magic:
-        'Damage is not the point; damage is the currency. Every quarter of a fighter\'s worth of '
-        + 'harm you deal precipitates a strand of DNA onto the floor, and you have to go and pick '
-        + 'it up. Everything the element ever becomes is bought with these.',
+      basics:
+        'Growth\'s currency. One strand drops for every 25 damage you deal — 5% less per tier of '
+        + 'Enhanced Brain, down to 21.25 at three tiers — and lies where it fell, picked up within 26px '
+        + 'and rotting away after 8 seconds. You can hold 10 at most, so banking beyond that is throwing '
+        + 'income away. It buys Evolve tiers at 1, 2 and 3 DNA, ultimates at 6, and Auxiliary Growth at a '
+        + 'flat 8.',
       effects: [
         { tag: 'resource', label: 'Earning', detail: 'One DNA drops for every 25 damage you deal. Enhanced Brain shaves 5% off that threshold per tier — 21.25 damage at three tiers.' },
         { tag: 'resource', label: 'Collecting', detail: 'Strands lie where they fell, picked up within 26px, and rot away after 8s if you do not go for them.' },
@@ -36,10 +38,11 @@ const growth: ElementCodex = {
     {
       emoji: '🩸',
       name: 'Infection',
-      magic:
-        'Anything your Virus touches becomes a factory. The victim keeps fighting, but they are '
-        + 'shedding — coughing live virus onto the floor around them on a fixed cadence, and every '
-        + 'one of those is a mine that anybody but you can step on.',
+      basics:
+        'An infected fighter expels 3 floor viruses every 2 seconds for the 8 seconds it runs — 12 '
+        + 'mines from a single hit. Each deals 6 damage to an enemy within 16px and is then consumed, '
+        + 'lying there for 12 seconds if nobody steps on it. Floor viruses only ever damage the opposing '
+        + 'side, so the field an infected enemy scatters is yours to walk through.',
       effects: [
         { tag: 'dot', label: 'Shedding', detail: 'An infected fighter expels 3 floor viruses every 2s for the 8s the infection runs — 12 mines from one hit.' },
         { tag: 'damage', label: 'Floor viruses', detail: '6 damage to an enemy within 16px, then consumed. They lie there for 12s.' },
@@ -54,11 +57,12 @@ const growth: ElementCodex = {
 
   abilities: {
     'growth-click': {
-      magic:
-        'The cell pinches a bud off its own hand and flings it: a flagellated bacterium that swims '
-        + 'flat and straight, tail lashing behind it. It is the smallest opening attack of any '
-        + 'element and it never stops being the thing you press, because every Offensive tier in '
-        + 'the tree is bolted onto this one number.',
+      basics:
+        'A bacterium thrown at the cursor for 12 damage within 20px, consumed on contact. It flies 460 '
+        + 'px/s and dies after 2 seconds in the air, on a 0.75s cooldown. Almost every number here is '
+        + 'bought: Teeth adds +3 a tier and More Teeth +4, so a fully invested click is 33; Enhanced '
+        + 'Flagellum adds 20% speed and cuts 15% of the cooldown per tier, and System Efficiency another '
+        + '10%.',
       cast: 'Click, aimed at the cursor. Instant.',
       effects: [
         { tag: 'damage', label: 'Impact', detail: '12 damage within 20px. Consumed on contact.' },
@@ -67,10 +71,9 @@ const growth: ElementCodex = {
         { tag: 'buff', label: 'What upgrades it', detail: 'Teeth is +3 per tier and More Teeth is +4 per tier, so a fully invested click is 12 + 9 + 12 = 33 damage.' },
       ],
       upgrade: {
-        magic:
-          'Chemotaxis gives the bacterium a nose. A shot that would have skimmed past a body '
-          + 'detects the gradient, wriggles back onto course and takes it anyway — the difference '
-          + 'between a 20px hitbox and a 70px one.',
+        basics:
+          'A bacterium that comes within 70px of an enemy steers toward them at 6 radians of correction a '
+          + 'second. It only corrects — a shot fired at nothing still flies straight.',
         effects: [
           { tag: 'utility', label: 'Homing', detail: 'A bacterium within 70px of an enemy steers toward them at 6 radians of correction per second. It only corrects — a shot fired at nothing still flies straight.', requiresUpgrade: 'click' },
         ],
@@ -82,11 +85,18 @@ const growth: ElementCodex = {
     },
 
     'growth-evolve': {
-      magic:
-        'The one ability that is not an attack. Pressing it opens the genome: three columns of four '
-        + 'mutations, each buyable three times, and the caster goes grey and untouchable while they '
-        + 'read it. The invincibility is not a bonus — it is the reason the menu is safe to open, '
-        + 'and it is on a much longer leash than the key itself.',
+      basics:
+        'Opens the upgrade tree, and opening it turns you grey and completely invincible for up to 5 '
+        + 'seconds, ending early if you close it — with 20 seconds between protected windows, though you '
+        + 'may reopen unprotected any time. The tree is 3 paths of 4 tiers, each buyable to level 3 at 1, '
+        + '2 and 3 DNA. Offensive: Teeth +3 click damage a tier, Viral Spikes +2 virus and floor-virus '
+        + 'damage, More Teeth +4 click damage, Spiked Spores returning 2 damage a tier for every 20 your '
+        + 'spores soak. Defensive: Thick Flesh 10% resistance a tier, Digestive System 2 HP a tier per 20 '
+        + 'click damage dealt, Gut Bacteria +1 spore and +5 max HP/s growth a tier, Spiked Shell 5 '
+        + 'contact damage a tier every second. Efficiency: Enhanced Flagellum +20% bacterium speed and '
+        + '−15% click cooldown, System Efficiency −10% on all cooldowns, Enhanced Brain −5% DNA '
+        + 'threshold, Fast Evolution refunding 50/75/100% on right-click sales and knocking 1 DNA off row '
+        + '4–5 costs.',
       cast: 'E toggles the tree open and shut. The key itself has only a 0.2s cooldown; the protection it grants does not.',
       effects: [
         { tag: 'shield', label: 'Reading time', detail: 'Opening the tree turns you grey and completely invincible for up to 5s, ending early if you close it.' },
@@ -97,10 +107,12 @@ const growth: ElementCodex = {
         { tag: 'buff', label: 'Efficiency path', detail: 'Enhanced Flagellum +20% bacterium speed and −15% click cooldown/tier; System Efficiency −10% all cooldowns/tier; Enhanced Brain −5% DNA threshold/tier; Fast Evolution refunds 50/75/100% on right-click sales and knocks 1 DNA off row 4–5 costs.' },
       ],
       upgrade: {
-        magic:
-          'Ultimate Evolutions opens a fifth row under each column — one capstone per path, and you '
-          + 'may only ever own one of the three on a body in a match. It is the point where a Growth '
-          + 'build stops being a stat sheet and starts being a different element.',
+        basics:
+          'Unlocks one ultimate per body per match, at a flat 6 DNA — 5 with any Fast Evolution, 4 with '
+          + 'Apex, 3 with both — and only after that path\'s row-4 node is maxed. Claws replaces the click '
+          + 'inside 90px with a 35-damage swipe across a 120° arc. Chitin Shell is a 75 HP carapace that '
+          + 'regrows in full 15 seconds after every break, indefinitely. Sweating banks up to 3 charges '
+          + 'each of Virus and Spore Spray and collects DNA instantly from anywhere on the map.',
         effects: [
           { tag: 'utility', label: 'One per body', detail: 'Ultimates cost a flat 6 DNA (5 with any Fast Evolution, 4 with Apex, 3 with both), need that path\'s row-4 node maxed first, and only one can be owned per body per match.', requiresUpgrade: 'e' },
           { tag: 'damage', label: 'Claws (Offensive)', detail: 'Clicking within 90px swipes for 35 damage across a 120° arc instead of launching a bacterium.', requiresUpgrade: 'e' },
@@ -115,11 +127,11 @@ const growth: ElementCodex = {
     },
 
     'growth-virus': {
-      magic:
-        'A hard triangular capsid hurled overhead and driven down at the target. The impact damage '
-        + 'is almost beside the point: what it really does is convert a fighter into a dispenser, '
-        + 'so that for the next eight seconds the ground under them keeps filling with more of the '
-        + 'same.',
+      basics:
+        'An overhead slam that throws a spinning virus at the cursor: 10 damage within 20px, 430 px/s, '
+        + 'dead after 2 seconds. Whoever it hits is infected for 8 seconds and expels 3 floor viruses '
+        + 'every 2s — 12 mines at 6 damage each within 16px, lying there for 12 seconds. Viral Spikes '
+        + 'adds +2 a tier to both the impact and the mines. 8s cooldown.',
       cast: 'R, thrown at the cursor with an overhead slam. Instant.',
       effects: [
         { tag: 'damage', label: 'Impact', detail: '10 damage within 20px. Viral Spikes adds +2 per tier.' },
@@ -129,10 +141,9 @@ const growth: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '8s cooldown.' },
       ],
       upgrade: {
-        magic:
-          'Kind Strain says not everything a sick body sheds is hostile. Half of what an infected '
-          + 'enemy coughs up comes out green — a healthy strain nobody but you can pick up, which '
-          + 'turns their infection into your medicine cabinet.',
+        basics:
+          'Each expelled batch has a 50% chance to drop a green virus alongside it. Only you can collect '
+          + 'it, within 26px, and it is worth 30 HP.',
         effects: [
           { tag: 'heal', label: 'Green viruses', detail: '50% chance a green virus drops alongside each expelled batch. Only you can collect it, within 26px, for 30 HP.', requiresUpgrade: 'r' },
         ],
@@ -144,11 +155,12 @@ const growth: ElementCodex = {
     },
 
     'spore-spray': {
-      magic:
-        'Five living pods sprayed out one after another into a wall. They are not a shield on you — '
-        + 'they are bodies in the world with their own health, and they get *stronger* while they '
-        + 'stand there, thickening for five seconds before they finally rot. Nothing else in the '
-        + 'game builds cover that grows.',
+      basics:
+        'Sprays 5 spores toward the cursor, landing 130ms apart so the wall assembles rather than '
+        + 'appearing. Each starts at 50 HP and matures over 5 seconds, gaining 10 max HP and 10 HP a '
+        + 'second to reach 100, and blocks both projectiles and bodies out to 20px beyond its drawn '
+        + 'radius. Each lasts 10 seconds, with a hard cap of 24 in play. Gut Bacteria adds a spore per '
+        + 'tier to 8, and +5/s of growth. 15s cooldown, the longest non-ultimate in the kit.',
       cast: 'F, sprayed toward the cursor. Pods land 130ms apart, so the wall assembles rather than appearing.',
       effects: [
         { tag: 'summon', label: 'The wall', detail: '5 spores, each 50 HP at planting. Gut Bacteria adds +1 spore per tier, to 8.' },
@@ -158,10 +170,9 @@ const growth: ElementCodex = {
         { tag: 'utility', label: 'Availability', detail: '15s cooldown — the longest non-ultimate in the kit.' },
       ],
       upgrade: {
-        magic:
-          'Spore Cloud lets a fully grown pod reproduce. A wall that survives its own maturation '
-          + 'starts seeding neighbours, so cover you planted once can still be spreading half a '
-          + 'minute later.',
+        basics:
+          'A spore that reaches full maturity has a 25% chance to bud another beside it. The new pod '
+          + 'starts from scratch and can bud in turn, up to the 24-spore cap.',
         effects: [
           { tag: 'summon', label: 'Budding', detail: 'A spore that reaches full maturity has a 25% chance to bud another spore beside it. The new pod starts from scratch and can bud in turn, up to the 24-spore cap.', requiresUpgrade: 'f' },
         ],
@@ -174,11 +185,15 @@ const growth: ElementCodex = {
     },
 
     'auxiliary-growth': {
-      magic:
-        'The ultimate is a second self. A nest is planted at the cursor and fills — visibly, at a '
-        + 'fixed rate — until it hatches a whole other Growth fighter with its own health bar, its '
-        + 'own upgrade tree and its own AI. From then on SPACE is not a dodge; it is which of the '
-        + 'two bodies you are looking out of.',
+      basics:
+        'For 8 DNA — 200 damage of income — plants a 100 HP nest at the cursor that fills at 5 HP a '
+        + 'second and can be attacked while it incubates, then hatches a clone. The clone has 200 HP, '
+        + 'moves at 140 px/s and fights on its own: closing inside 400px, backing off inside 130px, '
+        + 'strafing at 55% speed, with a 0.9s click, an 8s virus and a 15s spore spray. SPACE swaps which '
+        + 'body you drive and the one you leave keeps fighting under AI. A clone carries its own separate '
+        + 'Evolve tree plus a node only it can buy — Physical Maturity, +50 max HP and HP a tier at a '
+        + 'flat 3 DNA, three tiers. A dead clone melts into a 46px puddle, and planting a new nest on '
+        + 'that puddle inherits its upgrades instead of starting fresh.',
       cast: 'Q at the cursor, costing 8 DNA. Nominally a 1s cooldown — the real gate is the DNA.',
       effects: [
         { tag: 'resource', label: 'Cost', detail: '8 DNA, which is 200 damage of income at the base threshold.' },
@@ -189,10 +204,9 @@ const growth: ElementCodex = {
         { tag: 'utility', label: 'Primordial soup', detail: 'A clone that dies melts into a 46px puddle. Planting a new nest on that puddle inherits the dead clone\'s upgrades rather than starting fresh.' },
       ],
       upgrade: {
-        magic:
-          'Mutation stops the clones being copies. Each one hatches with a visible strain — a colour '
-          + 'you can read at a glance — and that strain travels with the body, so switching into it '
-          + 'switches what you are as well as where you are.',
+        basics:
+          'The nest hatches a coloured strain, and the buff rides on the clone and on you while you are '
+          + 'wearing it: yellow is +25% move speed, blue is 25% damage reduction, red is +25% damage dealt.',
         effects: [
           { tag: 'buff', label: 'Yellow strain', detail: '+25% move speed, on the clone and on you while you are wearing it.', requiresUpgrade: 'q' },
           { tag: 'shield', label: 'Blue strain', detail: '25% damage reduction.', requiresUpgrade: 'q' },
@@ -208,10 +222,11 @@ const growth: ElementCodex = {
 
   perks: {
     virus: {
-      magic:
-        'The infection stops being an eight-second inconvenience and becomes an outbreak that keeps '
-        + 'itself alive. Hosts shed faster and for longer, and the things they shed are infectious '
-        + 'in their own right — so one Virus cast into a crowd never really finishes.',
+      basics:
+        'Infections become an outbreak: 12 seconds instead of 8, shedding 5 floor viruses every 1.4s '
+        + 'instead of 3 every 2s — roughly 43 viruses across a full infection against 12 — and any floor '
+        + 'virus that connects re-infects its victim for 3 seconds, so the plague seeds new hosts off its '
+        + 'own debris.',
       effects: [
         { tag: 'dot', label: 'Longer infection', detail: '12s instead of 8s.' },
         { tag: 'damage', label: 'Heavier shedding', detail: '5 floor viruses every 1.4s instead of 3 every 2s — roughly 43 viruses over a full infection instead of 12.' },
@@ -225,10 +240,15 @@ const growth: ElementCodex = {
 
   mastery: {
     'secret-upgrades': {
-      magic:
-        'Two mutations nobody planned for. Every time you load in, two entries from a hidden pool of '
-        + 'nine are unlocked in your Evolve menu — they are offers rather than grants, they cost more '
-        + 'than anything else in the tree, and once bought they cannot be sold back.',
+      basics:
+        'Two of nine secret nodes are rolled per load-in, at a flat 8 DNA each, single-tier and '
+        + 'unsellable. Brood splits your click into two bacteria 0.1 radians apart. Ruler lets you keep 2 '
+        + 'clones at once with SPACE cycling all your bodies. Viral Consumption makes a green virus grant '
+        + '+20% speed and damage for 3s. Mitosis gives DNA drops a 20% chance to pay out two. Crawling '
+        + 'Spores creep toward the enemy at 26 px/s, shoving each other apart at 90 px/s. Pandemic makes '
+        + 'floor viruses infect for 3s of their own. R Specialized is 25% smaller and faster; K '
+        + 'Specialized is 30% bigger with +50 max and current HP. Apex knocks 1 DNA off third tiers and 2 '
+        + 'off Ultimates — a 6 DNA ultimate becomes 4, or 3 alongside Fast Evolution.',
       effects: [
         { tag: 'resource', label: 'The offer', detail: '2 of the 9 rolled per load-in, at a flat 8 DNA each, single-tier and unsellable.' },
         { tag: 'damage', label: 'Brood', detail: 'Your click launches two bacteria instead of one, split 0.1 radians apart.' },
@@ -246,11 +266,20 @@ const growth: ElementCodex = {
       ],
     },
     'syringe-shot': {
-      magic:
-        'A needle rather than a microbe: small, extremely fast, and completely harmless on impact. '
-        + 'What it leaves is Sickness — a ten-second illness that does nothing dramatic on its own '
-        + 'and opens an entire second upgrade tree to make it dramatic. Binding this doubles the '
-        + 'size of the element.',
+      basics:
+        'A bindable syringe — R, F or Q, never E, because E is the tree — that deals no impact damage '
+        + 'at all and applies Sickness instead: 10 seconds at 2 damage a second, 20 baseline, on an 8s '
+        + 'cooldown. Equipping it adds a whole second tree to the Evolve screen on the same DNA wallet '
+        + 'and cost curve. Lethality: Deadly +1 damage/s a tier, Weakening +1% vulnerability a second a '
+        + 'tier, Brutal ticking 0.8s→0.6s→0.5s, Crippling +1 damage/s with every fifth tick hitting for '
+        + '+2 more a tier, and the ultimate Fatal killing any sick enemy at 10% health or less outright. '
+        + 'Transmission: Quick-Fire −1s cooldown a tier, Sneeze cone-infecting every 4s for 6s, Contact '
+        + 'infecting anyone they touch for 3s, Blood Spread leaving a sickening 5s blood puddle every 50 '
+        + 'damage they take, and the ultimate Syringe Shatter bursting syringes to spray half their '
+        + 'duration over nearby enemies. Severity: Remaining +2s a tier, Slowing 12% a tier, Weakening '
+        + '10% less damage dealt a tier, Compromising erupting 10% more of their damage onto other '
+        + 'enemies, and the ultimate Carrier keeping anyone who shakes it off as a permanent carrier at 1 '
+        + 'damage/s, 5% slower and 5% weaker.',
       cast: 'Bindable to R, F or Q — never E, because E is the tree. Fires straight ahead.',
       effects: [
         { tag: 'damage', label: 'No impact damage', detail: 'The syringe deals 0 on hit. All of its value is in the status it applies.' },
