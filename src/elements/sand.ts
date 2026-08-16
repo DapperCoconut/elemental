@@ -4,7 +4,7 @@ import { Ability, CastContext } from './Ability';
 const timeBarrage: Ability = {
   id: 'time-barrage',
   name: 'Quick Shot',
-  description: 'Fire a revolver-style shot at the cursor (250ms cadence). 6-bullet magazine; auto-reloads in 3s. Bullets shift yellow→red as they age, dealing 5→12 damage the longer they fly.',
+  description: 'Fire a revolver-style shot at the cursor (250ms cadence). 6-bullet magazine; auto-reloads in 3s. Bullets shift yellow→red as they age, dealing 12→15 damage over 2s. A fully aged round homes in on the enemy and coughs out a burst of low-damage shrapnel once a second.',
   displayKey: 'Click',
   cooldown: 0,
   cast(ctx: CastContext) { ctx.timeBarrage(ctx.targetX, ctx.targetY); },

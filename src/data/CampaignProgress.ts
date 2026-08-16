@@ -34,6 +34,8 @@ export interface CampaignSlot {
   migratedSubterfugeWorld?: boolean;
   /** Set once `migrateAmberWorld` has run on this slot — same rule, same reason. */
   migratedAmberWorld?: boolean;
+  /** Set once `migrateMarrowWorld` has run on this slot — same rule, same reason. */
+  migratedMarrowWorld?: boolean;
 }
 
 interface CampaignData {
@@ -97,7 +99,7 @@ function migrateSubterfugeWorld(slot: CampaignSlot): void {
 }
 
 /**
- * Amber's world became Marrow's — its fight nodes were `amber-fight-1..5`, its challenge
+ * Amber's world became Marrow's and then Cloth's — its fight nodes were `amber-fight-1..5`, its challenge
  * `amber-challenge`, its story beats `world-enter:amber` and friends, and its three shop items
  * `preserved-heart` / `amber-plate` / `sap-vial`. The element behind the world was replaced
  * outright, so a slot written before that has clears and stock filed under ids nothing looks up
@@ -113,11 +115,11 @@ function migrateSubterfugeWorld(slot: CampaignSlot): void {
  */
 function migrateAmberWorld(slot: CampaignSlot): void {
   const OLD = 'amber';
-  const NEW = 'marrow';
+  const NEW = 'cloth';
   const ITEMS: Record<string, string> = {
-    'preserved-heart': 'marrow-graft',
-    'amber-plate': 'callus-plate',
-    'sap-vial': 'febrile-vial',
+    'preserved-heart': 'scarf-weave',
+    'amber-plate': 'thimble-plate',
+    'sap-vial': 'needle-tin',
   };
 
   // Already been through it — see the same guard in `migrateSubterfugeWorld`.
@@ -165,6 +167,71 @@ function migrateAmberWorld(slot: CampaignSlot): void {
   }
 }
 
+/**
+ * Marrow's world became Cloth's. Marrow was replaced outright rather than reworked — different
+ * abilities, different upgrades, a different Sovereign — so a slot written before that has its
+ * clears filed under `marrow-fight-1..5` / `marrow-challenge`, its story beats under
+ * `world-enter:marrow` and friends, and its stock under the three Marrow item ids.
+ *
+ * Same shape as {@link migrateAmberWorld}, and the same reasoning about the stamp: `marrow` is
+ * not a live world id any more, so the evidence check below would catch a double-run on its own —
+ * but the stamp is what makes that reliable, so it ships from day one.
+ *
+ * **Once per slot, guarded by `migratedMarrowWorld`.**
+ */
+function migrateMarrowWorld(slot: CampaignSlot): void {
+  const OLD = 'marrow';
+  const NEW = 'cloth';
+  const ITEMS: Record<string, string> = {
+    'marrow-graft': 'scarf-weave',
+    'callus-plate': 'thimble-plate',
+    'febrile-vial': 'needle-tin',
+  };
+
+  // Already been through it — see the same guard in `migrateAmberWorld`.
+  if (NEW in (slot.fightsCompleted ?? {})
+    || slot.challengesCompleted?.includes(NEW)
+    || slot.gauntletsCompleted?.includes(NEW)) return;
+
+  const rename = (id: string): string => (id === OLD || id.startsWith(`${OLD}-`)
+    ? NEW + id.slice(OLD.length)
+    : id);
+
+  const oldFights = slot.fightsCompleted?.[OLD];
+  if (oldFights) {
+    const merged = new Set([...(slot.fightsCompleted[NEW] ?? []), ...oldFights.map(rename)]);
+    slot.fightsCompleted[NEW] = [...merged];
+    delete slot.fightsCompleted[OLD];
+  }
+
+  const worldLists: Array<string[] | undefined> = [
+    slot.challengesCompleted, slot.gauntletsCompleted,
+  ];
+  for (const list of worldLists) {
+    if (!list) continue;
+    const at = list.indexOf(OLD);
+    if (at < 0) continue;
+    if (list.includes(NEW)) list.splice(at, 1);
+    else list[at] = NEW;
+  }
+
+  if (slot.seenStoryBeats) {
+    slot.seenStoryBeats = [...new Set(slot.seenStoryBeats.map((id) => {
+      const colon = id.lastIndexOf(':');
+      return colon < 0 ? id : `${id.slice(0, colon + 1)}${rename(id.slice(colon + 1))}`;
+    }))];
+  }
+
+  if (slot.inventory) {
+    for (const [from, to] of Object.entries(ITEMS)) {
+      const held = slot.inventory[from];
+      if (!held) continue;
+      slot.inventory[to] = (slot.inventory[to] ?? 0) + held;
+      delete slot.inventory[from];
+    }
+  }
+}
+
 function load(): CampaignData {
   try {
     const raw = localStorage.getItem(campaignKey());
@@ -186,6 +253,13 @@ function load(): CampaignData {
         if (!slot.migratedAmberWorld) {
           migrateAmberWorld(slot);
           slot.migratedAmberWorld = true;
+          migrated = true;
+        }
+        // Ordered after Amber's on purpose: a very old slot goes amber -> cloth directly, and a
+        // recent one goes marrow -> cloth here. Neither path can run twice.
+        if (!slot.migratedMarrowWorld) {
+          migrateMarrowWorld(slot);
+          slot.migratedMarrowWorld = true;
           migrated = true;
         }
       }

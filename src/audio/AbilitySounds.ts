@@ -85,7 +85,7 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'black-hole': 'black-hole',
 
   // ── Soul ──
-  'soul-lantern-light': 'lantern',
+  'soul-siphon': 'lantern',
   'soul-arise': 'ghost-wail',
   'soul-grave': 'bone',
   'soul-death-whistle': 'whistle',
@@ -304,14 +304,15 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   // The car arriving. FortuneKit voices the engine and the wreck itself; this is the drop.
   'drive-by-flex': ['stone-rise', 0.8, 0.6],
 
-  // ── Marrow ──
+  // ── Cloth ──
   // Nothing here is a weapon being swung: four of the five are something wet being released,
   // so the set is a flick, two spawns, a whip and a swarm of fuses being lit.
-  'marrow-antibody': ['nail', 0.4, 1.5],
-  'marrow-macrosma': ['slime-splat', 0.85, 0.7],
-  'marrow-neutralize': ['spore', 0.85, 1.25],
-  'marrow-dendricles': ['whip', 0.9, 1.15],
-  'marrow-mastacre': ['bubble', 1.0, 0.75],
+  'cloth-pin': ['stab', 0.32, 1.85],
+  'cloth-longpin': ['nail', 0.7, 0.85],
+  'cloth-safety-line': ['nail', 0.6, 1.3],
+  'cloth-pin-cushion': ['stab', 0.7, 0.9],
+  'cloth-tapestry': ['whip', 0.5, 1.4],
+  'wretched-scarf': ['whip', 0.7, 0.8],
 
   // ── Psychic ──
   // Nothing in the kit is physical except the whip, so nothing else gets an impact: a
@@ -438,7 +439,7 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'kinetic-shield': ['shield-up', 1.15],
   'gravity-aura': ['black-hole', 1.6, 0.7],
   'strength-in-numbers': 'status-buff',
-  'passive-manipulation': 'curse-cast',
+  'reputation-repair': 'curse-cast',
   'cycle': 'card-shuffle',
   'mag-lev': 'magnet-pull',
   'syringe-shot': ['stab', 1.45, 0.9],
@@ -525,7 +526,7 @@ const ELEMENT_PITCH: Record<string, number> = {
   rubber: 1.05, silence: 0.75, technology: 1.3, plasma: 1.25,
   creation: 1.0, dream: 1.2, justice: 0.95, king: 0.6, chalk: 1.35, illusion: 1.15, conquest: 0.85,
   magma: 0.7, depths: 0.72, passion: 1.28, ruin: 0.7, dune: 0.76, paper: 1.18,
-  death: 0.6, fortune: 1.08, marrow: 0.92, psychic: 1.22,
+  death: 0.6, fortune: 1.08, cloth: 1.12, psychic: 1.22,
   radiation: 1.12, bind: 0.66, gum: 0.86, gluttony: 0.82,
 };
 

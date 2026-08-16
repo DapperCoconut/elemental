@@ -281,10 +281,10 @@ export const DREAM_BOONS: Record<string, DreamBoon[]> = {
     { emoji: '🪓', name: 'Shred', blurb: 'Everything you touch comes apart. 30% more damage.', damage: 1.3 },
     { emoji: '⛓️', name: 'Combo Breaker', blurb: 'Nothing anyone is building against you ever finishes. 20% less damage taken.', armor: 0.8 },
   ],
-  marrow: [
-    { emoji: '🦴', name: 'Bone Density', blurb: 'A skeleton built for this. 70 more health and 5 off every hit.', maxHp: 70, flatCut: 5 },
-    { emoji: '🩹', name: 'Neutralize', blurb: 'An immune system that never sleeps. 5 health a second and nothing sticks to you.', regen: 5, cleanse: true },
-    { emoji: '🧬', name: 'Cytokine Storm', blurb: 'Your blood is a weapon. 20% more damage.', damage: 1.2 },
+  cloth: [
+    { emoji: '🧣', name: 'Longer Scarf', blurb: 'More of you than there was. 70 more health and 5 off every hit.', maxHp: 70, flatCut: 5 },
+    { emoji: '🪡', name: 'Running Repair', blurb: 'Darned as fast as it is cut. 5 health a second and nothing sticks to you.', regen: 5, cleanse: true },
+    { emoji: '📌', name: 'Sharpened', blurb: 'Every pin filed to a point. 20% more damage.', damage: 1.2 },
   ],
   magma: [
     { emoji: '🌋', name: 'Molten Body', blurb: 'You are not solid and it is not comfortable to stand near. 13 damage a second on contact.', contact: 13 },

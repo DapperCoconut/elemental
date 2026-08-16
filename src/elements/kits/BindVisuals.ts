@@ -1253,7 +1253,22 @@ export class BindAvatar extends BaseAvatar {
     super.play(gesture, angle, duration);
   }
 
+  /**
+   * Mastery tell — the acolyte stops being the one who is bound. The halo above the cowl closes
+   * and grows the patron's own eye (drawn in `drawExtras`), the sternum lock hangs shattered
+   * (drawn in `drawBody`), and here the hands themselves take the change: a wide cosmic corona
+   * ringed in gold, and a relic glint big enough to read as something set rather than reflected.
+   */
   protected applyMastery(on: boolean): void {
+    this.setEyeWhite(on ? BND.irisLit : BND.goldLit);
+    this.forEachHandLayer(0, (halo) => {
+      halo.setRadius(on ? 17 : 13.5);
+      halo.setFillStyle(this.tint(on ? BND.cosmic : BND.cosmicDeep), on ? 0.4 : 0.32);
+    });
+    this.forEachHandLayer(1, (shell) => {
+      if (on) shell.setStrokeStyle(2, this.tint(BND.gold), 0.95);
+      else shell.setStrokeStyle();
+    });
     this.forEachHandLayer(2, (glint) => {
       glint.setRadius(on ? 4 : 2.8);
       glint.setAlpha(on ? 1 : 0.95);
@@ -1264,117 +1279,284 @@ export class BindAvatar extends BaseAvatar {
     new BindFx(this.scene, this.tint).mote(x, y);
   }
 
-  /** A shadow that is deeper than it should be, with the patron's colour bleeding through it. */
+  /**
+   * A shadow deeper than it should be with the patron's colour bleeding through it — and behind
+   * the figure, the two **tethers**: heavy chains running out of its back and down into the
+   * floor, where there is nothing for them to be anchored to.
+   *
+   * The tethers are painted here rather than in `drawExtras` because this layer is *under* the
+   * sprite: the body masks the root, so only the length that actually clears the silhouette
+   * shows, which is what makes them read as coming from behind rather than lying on the chest.
+   * They are also the strain readout — slack and swaying when the patron is patient, hauled
+   * straight and lifting the figure when it is not.
+   */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    void alpha;
     g.fillStyle(this.tint(BND.void), a * 0.6);
     g.fillEllipse(x, y + 17, 46, 15);
     g.fillStyle(this.tint(this.strain > 0.6 ? BND.wrathDeep : BND.cosmic), a * (0.18 + this.channel * 0.3));
     g.fillEllipse(x, y + 17, 32 + this.channel * 18, 11);
     g.fillStyle(this.tint(BND.gold), a * (0.06 + this.channel * 0.16));
     g.fillEllipse(x, y + 17, 16 + this.channel * 14, 6);
+
+    // ── Tethers ──
+    for (const side of [-1, 1] as const) {
+      const rootX = x + side * 7, rootY = y - 2;
+      // Taut chains are shorter and straighter; slack ones bow out and sway.
+      const reach = 30 - this.strain * 7;
+      const bow = (1 - this.strain) * (7 + Math.sin(this.t * 1.6 + side) * 2.5);
+      const endX = x + side * (17 + bow * 0.5);
+      const endY = y + reach;
+      const links = 6;
+      for (let i = 1; i <= links; i++) {
+        const u = i / links;
+        const lx = Phaser.Math.Linear(rootX, endX, u) + side * Math.sin(u * Math.PI) * bow;
+        const ly = Phaser.Math.Linear(rootY, endY, u);
+        const ang = Math.atan2(endY - rootY, endX - rootX) + (i % 2 ? 1.57 : 0);
+        chainLink(g, this.tint, lx, ly, ang, alpha * 0.85 * (1 - u * 0.25), 0.95, this.strain);
+      }
+      // The chain does not end in an anchor — it ends in cosmic, which is worse.
+      g.fillStyle(this.tint(BND.cosmicDeep), alpha * (0.4 + this.strain * 0.3));
+      g.fillEllipse(endX, endY + 1, 11, 4.4);
+      g.fillStyle(this.tint(BND.cosmic), alpha * (0.25 + this.strain * 0.3));
+      g.fillEllipse(endX, endY + 1, 6, 2.4);
+    }
   }
 
   /**
-   * The body: a hooded absence with a gold gorget at the throat, drawn dark enough that the
-   * chains over it are what the eye actually reads.
+   * The acolyte: a ragged robe under a deep cowl, cinched at the waist with rope, with a single
+   * heavy padlock hung at the sternum and an iron manacle closed round each wrist.
+   *
+   * The old rig wrapped four chain runs straight across the middle of the body — including
+   * across the face — and the result was mush at play zoom. The rule now is that **nothing
+   * crosses the face**: the cowl frames it from above, the collar closes it off below, and every
+   * chain on the character lives under the collar line where it has room to be read as a chain.
    */
   protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void a;
     const sway = Math.sin(this.t * 1.4) * 1.6 * (1 - this.strain * 0.6);
+    const lean = Math.cos(this.facing) * 2;
 
-    const shell: Phaser.Geom.Point[] = [
-      new Phaser.Geom.Point(x - 6, y - 19),
-      new Phaser.Geom.Point(x + 6, y - 19),
-      new Phaser.Geom.Point(x + 13, y - 4),
-      new Phaser.Geom.Point(x + 15 + sway * 0.4, y + 14),
-      new Phaser.Geom.Point(x - 15 + sway * 0.4, y + 14),
-      new Phaser.Geom.Point(x - 13, y - 4),
+    // ── Robe ──
+    // Shoulders at the collar line, falling to a torn hem well past the body.
+    const robe: Phaser.Geom.Point[] = [
+      new Phaser.Geom.Point(x - 11, y - 1),
+      new Phaser.Geom.Point(x + 11, y - 1),
+      new Phaser.Geom.Point(x + 16 + sway * 0.4, y + 16),
+      new Phaser.Geom.Point(x - 16 + sway * 0.4, y + 16),
     ];
     g.fillStyle(this.tint(BND.void), alpha);
-    g.fillPoints(shell.map((p) => new Phaser.Geom.Point(x + (p.x - x) * 1.12, y + (p.y - y) * 1.08)), true);
+    g.fillPoints(robe, true);
     g.fillStyle(this.tint(BND.cosmicDeep), alpha);
-    g.fillPoints(shell, true);
-    // A single cosmic highlight inside the shell, so the absence has depth rather than being flat.
-    g.fillStyle(this.tint(BND.cosmic), alpha * (0.35 + this.channel * 0.4));
-    g.fillEllipse(x - 3, y + 2 + Math.sin(this.t * 2.1) * 1.5, 13, 17);
+    g.fillPoints(robe.map((p) => new Phaser.Geom.Point(x + (p.x - x) * 0.9, y + (p.y - y) * 0.94)), true);
+    // A single cosmic highlight inside the robe, so the absence has depth rather than being flat.
+    g.fillStyle(this.tint(BND.cosmic), alpha * (0.28 + this.channel * 0.4));
+    g.fillEllipse(x - 3 + lean, y + 7 + Math.sin(this.t * 2.1) * 1.2, 12, 14);
 
-    // Gorget: a gold collar, the one relic it is allowed to keep.
+    // Torn hem: four tongues of cloth on their own phases, so the robe frays rather than ending.
+    for (let i = 0; i < 4; i++) {
+      const u = (i + 0.5) / 4;
+      const hx = x - 15 + u * 30 + sway * 0.4;
+      const drop = 5 + Math.sin(this.t * 2.2 + i * 1.7) * 2.4;
+      g.fillStyle(this.tint(BND.void), alpha * 0.95);
+      g.fillPoints([
+        new Phaser.Geom.Point(hx - 4, y + 14),
+        new Phaser.Geom.Point(hx + 4, y + 14),
+        new Phaser.Geom.Point(hx + 1 + sway * 0.3, y + 16 + drop),
+      ], true);
+    }
+
+    // ── Cowl ──
+    // A hood peak above the face with cosmic dark inside it. Rooted above the eyes and closed
+    // below them, so the face sits in a socket instead of floating on a disc.
+    const cowl: Phaser.Geom.Point[] = [
+      new Phaser.Geom.Point(x - 13, y + 1),
+      new Phaser.Geom.Point(x - 12, y - 10),
+      new Phaser.Geom.Point(x - 5 + lean, y - 19),
+      new Phaser.Geom.Point(x + 5 + lean, y - 19),
+      new Phaser.Geom.Point(x + 12, y - 10),
+      new Phaser.Geom.Point(x + 13, y + 1),
+    ];
+    g.fillStyle(this.tint(BND.void), alpha);
+    g.fillPoints(cowl, true);
+    g.fillStyle(this.tint(BND.cosmicDeep), alpha);
+    g.fillPoints(cowl.map((p) => new Phaser.Geom.Point(x + (p.x - x) * 0.88, y - 6 + (p.y - (y - 6)) * 0.9)), true);
+    // The opening: a dark socket the eyes look out of, lit from inside while the god is awake.
+    g.fillStyle(this.tint(BND.void), alpha);
+    g.fillEllipse(x + lean, y - 5, 17, 14);
+    g.fillStyle(this.tint(this.strain > 0.9 ? BND.wrathDeep : BND.cosmic),
+      alpha * (0.2 + this.channel * 0.45));
+    g.fillEllipse(x + lean, y - 5, 14, 11);
+
+    // ── Collar ──
+    // Gold, the one relic it is allowed to keep, and the line every chain hangs below.
     g.fillStyle(this.tint(BND.goldDeep), alpha);
-    g.fillRect(x - 10, y - 17, 20, 5.4);
+    g.fillPoints([
+      new Phaser.Geom.Point(x - 11, y - 1.4),
+      new Phaser.Geom.Point(x + 11, y - 1.4),
+      new Phaser.Geom.Point(x + 8, y + 4),
+      new Phaser.Geom.Point(x - 8, y + 4),
+    ], true);
     g.fillStyle(this.tint(BND.gold), alpha);
-    g.fillRect(x - 9, y - 16.4, 18, 3.4);
+    g.fillPoints([
+      new Phaser.Geom.Point(x - 9.4, y - 0.8),
+      new Phaser.Geom.Point(x + 9.4, y - 0.8),
+      new Phaser.Geom.Point(x + 7, y + 2.6),
+      new Phaser.Geom.Point(x - 7, y + 2.6),
+    ], true);
     g.fillStyle(this.tint(BND.iris), alpha * (0.5 + this.channel * 0.5));
-    g.fillCircle(x, y - 14.6, 2.2);
-  }
+    g.fillCircle(x, y + 1, 2);
 
-  /**
-   * The chains and the locks. Four runs at different angles wrapped around the torso, each drawn
-   * link by link so they can be pulled taut, plus a padlock hanging off two of them that swings
-   * on its own pendulum and rattles as the strain comes up.
-   */
-  protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    void a;
-    const rattle = this.strain * (Math.sin(this.t * 26) * 1.2);
-
-    // ── Chain runs ──
-    // Each run is a shallow arc across the body; tension flattens the arc and lifts the links.
-    const runs: [number, number, number][] = [
-      [-11, 0.42, 1],
-      [-3, -0.36, -1],
-      [5, 0.3, 1],
-      [12, -0.24, -1],
+    // ── Two chain runs, both under the collar ──
+    const rattle = this.strain * Math.sin(this.t * 26) * 1.1;
+    const runs: [number, number, number, number][] = [
+      // [start x, start y, end x, end y] — one across the chest, one round the waist.
+      [-13, 4.5, 13, 10.5],
+      [-14, 13, 14, 12],
     ];
     for (let r = 0; r < runs.length; r++) {
-      const [oy, tilt, dir] = runs[r];
-      const slack = (1 - this.strain) * 4;
-      const links = 7;
+      const [x0, y0, x1, y1] = runs[r];
+      const slack = (1 - this.strain) * 3.4;
+      const links = 6;
+      const ang = Math.atan2(y1 - y0, x1 - x0);
       for (let i = 0; i < links; i++) {
         const u = i / (links - 1);
-        const lx = x - 15 + u * 30;
-        const droop = Math.sin(u * Math.PI) * slack;
-        const ly = y + oy + tilt * (u - 0.5) * 22 + droop
-          + Math.sin(this.t * 2.6 * dir + u * 3 + r) * (0.8 + this.strain * 1.4);
-        chainLink(g, this.tint, lx, ly, tilt * 1.2 + rattle * 0.02, alpha * 0.95, 1, this.strain);
+        const lx = x + Phaser.Math.Linear(x0, x1, u);
+        const ly = y + Phaser.Math.Linear(y0, y1, u) + Math.sin(u * Math.PI) * slack
+          + Math.sin(this.t * 2.6 + u * 3 + r) * (0.5 + this.strain * 1.1);
+        chainLink(g, this.tint, lx, ly, ang + (i % 2 ? 1.57 : 0) + rattle * 0.02,
+          alpha * 0.95, 0.9, this.strain);
       }
     }
 
-    // ── Padlocks ──
-    // Two, on their own pendulums, hanging off the lower runs.
-    for (const [side, anchorY] of [[-1, 6], [1, 13]] as const) {
-      const swing = Math.sin(this.t * (2.2 + side * 0.4)) * (0.34 * (1 - this.strain * 0.5)) + rattle * 0.03;
-      const ax = x + side * 11;
-      const ay = y + anchorY;
-      const lx = ax + Math.sin(swing) * 13;
-      const ly = ay + Math.cos(swing) * 13;
-      g.lineStyle(1.6, this.tint(BND.chain), alpha * 0.9);
-      g.lineBetween(ax, ay, lx, ly);
+    // ── The lock ──
+    // One, at the sternum, on a short chain. Broken open once mastered: the shackle lifts clear
+    // and the body of the lock hangs off it by a corner.
+    const swing = Math.sin(this.t * 2.2) * (0.22 * (1 - this.strain * 0.5)) + rattle * 0.02;
+    const ax = x, ay = y + 5;
+    const lx = ax + Math.sin(swing) * 9, ly = ay + Math.cos(swing) * 9;
+    g.lineStyle(1.6, this.tint(BND.chain), alpha * 0.9);
+    g.lineBetween(ax, ay, lx, ly);
+    const open = this.mastered;
+    g.lineStyle(2.4, this.tint(BND.chainLit), alpha);
+    g.beginPath();
+    g.arc(lx, ly - 4, 3.8, Math.PI + (open ? 1.1 : 0), TAU + (open ? 0.3 : 0), false);
+    g.strokePath();
+    g.fillStyle(this.tint(BND.goldDeep), alpha);
+    g.fillRect(lx - 5, ly - 2, 10, 8.6);
+    g.fillStyle(this.tint(open ? BND.goldLit : BND.gold), alpha);
+    g.fillRect(lx - 4.2, ly - 1.3, 8.4, 7.2);
+    // The keyhole is an eye, because everything the patron makes has one.
+    g.fillStyle(this.tint(BND.void), alpha);
+    g.fillEllipse(lx, ly + 2.2, 5, 3.6);
+    g.fillStyle(this.tint(open ? BND.irisLit : BND.iris), alpha * (0.6 + this.channel * 0.4));
+    g.fillCircle(lx, ly + 2.2, 1.5);
 
-      // Broken open once mastered — the shackle lifts clear on one side.
-      const open = this.mastered && side < 0;
-      g.lineStyle(2.2, this.tint(BND.chainLit), alpha);
-      g.beginPath();
-      g.arc(lx, ly - 4, 3.6, Math.PI + (open ? 0.9 : 0), TAU + (open ? 0.2 : 0), false);
-      g.strokePath();
+    // ── Manacles ──
+    // An iron cuff closed round each wrist with a broken chain trailing back toward the body.
+    // Drawn on this layer so the cuff sits under the hand it is locked to, not over it.
+    for (let i = 0; i < 2; i++) {
+      const hx = this.armX[i], hy = this.armY[i];
+      // The rig lerps its hands in from the world origin on a fighter's first frame; a manacle
+      // and its trailing chain would streak across the arena for that one frame. Skip it.
+      if (Math.hypot(hx - x, hy - y) > 70) continue;
+      const toBody = Math.atan2(y - hy, x - hx);
+      const wx = hx + Math.cos(toBody) * 6.4, wy = hy + Math.sin(toBody) * 6.4;
+      g.lineStyle(3.2, this.tint(BND.void), alpha * 0.9);
+      g.strokeCircle(wx, wy, 4.6);
+      g.lineStyle(2, this.tint(this.strain > 0.5 ? BND.chainLit : BND.chain), alpha);
+      g.strokeCircle(wx, wy, 4.6);
       g.fillStyle(this.tint(BND.goldDeep), alpha);
-      g.fillRect(lx - 4.6, ly - 2, 9.2, 8);
-      g.fillStyle(this.tint(open ? BND.goldLit : BND.gold), alpha);
-      g.fillRect(lx - 3.8, ly - 1.3, 7.6, 6.6);
-      g.fillStyle(this.tint(BND.void), alpha);
-      g.fillCircle(lx, ly + 1.6, 1.5);
-      g.fillRect(lx - 0.6, ly + 1.6, 1.2, 3);
+      g.fillCircle(wx + Math.cos(toBody) * 4.6, wy + Math.sin(toBody) * 4.6, 1.8);
+      // Two links of snapped chain, hanging off the cuff toward the body.
+      for (let k = 1; k <= 2; k++) {
+        const d = 4.6 + k * 4.4;
+        chainLink(g, this.tint,
+          wx + Math.cos(toBody) * d, wy + Math.sin(toBody) * d + (1 - this.strain) * k * 1.2,
+          toBody + (k % 2 ? 1.57 : 0), alpha * 0.85, 0.75, this.strain);
+      }
+    }
+  }
+
+  /**
+   * Above the cowl, the patron's **broken halo**: a ring of thin gold spikes with one snapped
+   * clean off, tilted off-axis because nothing the patron wears is ever square to the thing
+   * wearing it. It tightens, tilts harder and runs red as the strain comes up, so a character
+   * about to be turned on is readable from across the arena without a single cast.
+   *
+   * Mastered, the ring closes — the missing spike grows back, the whole crown lifts, and the
+   * patron's own great eye opens in the middle of it.
+   */
+  protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    void a;
+    const crown = y - 24 - this.strain * 2 - (this.mastered ? 3 : 0);
+    const wrath = this.strain > 0.9 ? 1 : 0;
+    const hot = this.strain > 0.55;
+    // Off-axis by default; strain drags it further over.
+    const tilt = 0.16 + this.strain * 0.3 + Math.sin(this.t * 0.9) * 0.05;
+    const rx = 15 - this.strain * 2.5, ry = 5.5;
+
+    // The band itself.
+    g.lineStyle(2.2, this.tint(hot ? BND.wrathDeep : BND.goldDeep), alpha * 0.9);
+    const band: Phaser.Geom.Point[] = [];
+    for (let i = 0; i <= 24; i++) {
+      const p = (i / 24) * TAU;
+      const px = Math.cos(p) * rx, py = Math.sin(p) * ry;
+      band.push(new Phaser.Geom.Point(
+        x + px * Math.cos(tilt) - py * Math.sin(tilt),
+        crown + px * Math.sin(tilt) + py * Math.cos(tilt),
+      ));
+    }
+    g.beginPath();
+    g.moveTo(band[0].x, band[0].y);
+    for (let i = 1; i < band.length; i++) g.lineTo(band[i].x, band[i].y);
+    g.strokePath();
+    g.lineStyle(1.1, this.tint(hot ? BND.wrath : BND.gold), alpha * (0.7 + this.strain * 0.3));
+    g.beginPath();
+    g.moveTo(band[0].x, band[0].y);
+    for (let i = 1; i < band.length; i++) g.lineTo(band[i].x, band[i].y);
+    g.strokePath();
+
+    // Spikes. One of them is a stump unless the wearer has mastered the element.
+    const SPIKES = 7;
+    const BROKEN = 5;
+    for (let i = 0; i < SPIKES; i++) {
+      const p = (i / SPIKES) * TAU + this.t * 0.28;
+      const px = Math.cos(p) * rx, py = Math.sin(p) * ry;
+      const bx = x + px * Math.cos(tilt) - py * Math.sin(tilt);
+      const by = crown + px * Math.sin(tilt) + py * Math.cos(tilt);
+      const snapped = !this.mastered && i === BROKEN;
+      const len = snapped ? 3 : 8 + Math.sin(p) * 2.2 + this.strain * 2;
+      g.fillStyle(this.tint(hot ? BND.wrath : BND.gold), alpha * (snapped ? 0.55 : 0.95));
+      g.fillPoints([
+        new Phaser.Geom.Point(bx - 2, by + 1),
+        new Phaser.Geom.Point(bx + 2, by + 1),
+        new Phaser.Geom.Point(bx + (snapped ? 1.2 : 0), by - len),
+      ], true);
+      if (!snapped) {
+        g.fillStyle(this.tint(BND.goldLit), alpha * 0.6);
+        g.fillPoints([
+          new Phaser.Geom.Point(bx - 1, by + 0.5),
+          new Phaser.Geom.Point(bx + 0.2, by + 0.5),
+          new Phaser.Geom.Point(bx, by - len * 0.75),
+        ], true);
+      }
+    }
+
+    // Mastered: the patron's own eye, open in the middle of the closed crown.
+    if (this.mastered) {
+      patronEye(g, this.tint, x, crown - 3, 6.4, 1, alpha * 0.95,
+        { wrath, drift: Math.sin(this.t * 0.8), t: this.t, brow: true });
     }
 
     // ── The patron's attention ──
-    // While the god is acting through this body, a small ring of its own eyes orbits the crown.
+    // While the god is acting through this body, a ring of its own eyes orbits the crown.
     if (this.channel > 0.05) {
-      const crown = y - 20;
       for (let i = 0; i < 3; i++) {
         const ang = this.t * 1.5 + (i / 3) * TAU;
         patronEye(g, this.tint,
-          x + Math.cos(ang) * 17, crown + Math.sin(ang) * 6,
+          x + Math.cos(ang) * 19, crown - 4 + Math.sin(ang) * 7,
           4.4, 0.8, alpha * this.channel * 0.9,
-          { wrath: this.strain > 0.95 ? 1 : 0, drift: Math.sin(this.t + i), t: this.t, brow: false });
+          { wrath, drift: Math.sin(this.t + i), t: this.t, brow: false });
       }
     }
   }

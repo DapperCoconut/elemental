@@ -46,7 +46,7 @@ export const UNSTABLE_RECIPES: UnstableRecipe[] = [
   { bases: ['fire', 'life'],   result: 'depths',    resultName: 'Depths',    resultEmoji: '🐟', resultColor: 0x0e8f9c, echoOf: 'hunt',     echoName: 'Hunt',     echoEmoji: '🐺' },
   { bases: ['fire', 'air'],    result: 'psychic',   resultName: 'Psychic',   resultEmoji: '👁️', resultColor: 0x9b4dff, echoOf: 'shadow',   echoName: 'Shadow',   echoEmoji: '🌑' },
   { bases: ['fire', 'earth'],  result: 'ruin',      resultName: 'Ruin',      resultEmoji: '🧱', resultColor: 0xc4392c, echoOf: 'creation', echoName: 'Creation', echoEmoji: '⚒️' },
-  { bases: ['water', 'life'],  result: 'marrow',    resultName: 'Marrow',    resultEmoji: '🦴', resultColor: 0xd1435c, echoOf: 'growth',   echoName: 'Growth',   echoEmoji: '🦠' },
+  { bases: ['water', 'life'],  result: 'cloth',    resultName: 'Cloth',    resultEmoji: '🧣', resultColor: 0xd1435c, echoOf: 'growth',   echoName: 'Growth',   echoEmoji: '🦠' },
   { bases: ['water', 'air'],   result: 'magma',     resultName: 'Magma',     resultEmoji: '🌋', resultColor: 0xff5a1e, echoOf: 'ice',      echoName: 'Ice',      echoEmoji: '🧊' },
   { bases: ['water', 'earth'], result: 'chalk',     resultName: 'Chalk',     resultEmoji: '🖍️', resultColor: 0xf4f1e6, echoOf: 'crystal',  echoName: 'Crystal',  echoEmoji: '💎' },
   { bases: ['life', 'air'],    result: 'paper',     resultName: 'Paper',     resultEmoji: '📄', resultColor: 0xf2ead6, echoOf: 'soul',     echoName: 'Soul',     echoEmoji: '👻' },

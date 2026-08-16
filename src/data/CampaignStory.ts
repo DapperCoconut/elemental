@@ -450,8 +450,8 @@ const beats: StoryBeat[] = [
   { id: 'world-enter:gluttony', lines: [
     h('The Devouring Board. Gluttony was cast out for hunger, and then the Voice arrived — imagine the reunion. The kitchen floor spits grease. The menu is you.'),
   ] },
-  { id: 'world-enter:marrow', lines: [
-    h('The Inflamed Cavity. Marrow was exiled for defending too well — it read the whole realm as an infection and never called the response off. The floor is still swollen. It still bursts.'),
+  { id: 'world-enter:cloth', lines: [
+    h('The Torn Hall. Cloth was exiled for mending too well — it sewed the realm shut, doors and all, and never once asked whether a thing wanted closing. The floor is still full of needles. They still go off.'),
   ] },
   { id: 'world-enter:bind', lines: [
     h('The Gaol. Bind was exiled for holding on. The chains haul everything toward the centre on a cycle — including debts, grudges, and you.'),
@@ -533,13 +533,13 @@ const beats: StoryBeat[] = [
     s('The Devouring Board', '🍖', 0xffb07a, 'You took food off my table. Do you know how long since anyone DARED?'),
     s('The Devouring Board', '🍖', 0xffb07a, 'The thing downstairs eats and never sets a place. I set two. When the last door opens, sit down and we will eat IT.'),
   ] },
-  { id: 'boss-pre:marrow', lines: [
-    s('Sepsis', '🦴', 0xf5788c, 'You are a foreign body. Hold still. This will be thorough.'),
-    h('Marrow defended this realm to death and did not notice the difference. An abscess only swells before it bursts — that is the warning, not the wound. And the quarantine always leaves a gap.'),
+  { id: 'boss-pre:cloth', lines: [
+    s('Backstitch', '🧣', 0xf5788c, 'You have come loose. Hold still. I will put you back.'),
+    h('Cloth mended this realm shut and did not notice the difference. A knot only draws tight before it snaps — that is the warning, not the wound. And the hem always leaves one stitch out.'),
   ] },
-  { id: 'boss-post:marrow', lines: [
-    s('Sepsis', '🦴', 0xf5788c, 'Not an infection. Not an infection. I have been wrong for an age and I have been thorough about it.'),
-    s('Sepsis', '🦴', 0xf5788c, 'Then the thing beneath the worlds is the wound. When the last door opens I will finally have something worth swelling for.'),
+  { id: 'boss-post:cloth', lines: [
+    s('Backstitch', '🧣', 0xf5788c, 'Not a tear. Not a tear. I have been wrong for an age and I have been neat about it.'),
+    s('Backstitch', '🧣', 0xf5788c, 'Then the thing beneath the worlds is the tear. When the last door opens I will finally have something worth sewing.'),
   ] },
   { id: 'boss-pre:bind', lines: [
     s('The Gaoler', '⛓️', 0xffe9a0, 'Every cell in this realm has a name on it. Yours is fresh.'),

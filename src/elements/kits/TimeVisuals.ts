@@ -707,6 +707,89 @@ export class TimeFx extends FxBase {
   }
 
   /**
+   * The reload minigame, as a clock face rather than a bar.
+   *
+   * Both of Time's reloads are timing checks against a moving marker, and a bar buried the one
+   * thing that matters — how far the marker still has to travel — in a few pixels of horizontal
+   * space over the character's head. A dial gives the whole cycle a full 360°: the sweeping hand
+   * is the marker, the coloured arcs are the windows, and the gap between them is legible from
+   * across the arena. Nothing else in the kit is a bar either, so this also stops the reload
+   * reading as a health bar.
+   *
+   * `zones` are fractions of the same 0→1 progress the hand sweeps, each carrying its own state
+   * so a caught band goes green and a missed one goes red without the caller repainting anything.
+   */
+  static drawReloadDial(
+    g: Phaser.GameObjects.Graphics, tint: TimeColorFn, tones: TimeTones,
+    x: number, y: number, radius: number, progress: number, t: number,
+    zones: { start: number; end: number; state: 'pending' | 'hit' | 'missed' }[],
+    failed: boolean,
+  ): void {
+    const p = Phaser.Math.Clamp(progress, 0, 1);
+    const top = -Math.PI / 2;
+    const beat = 0.85 + 0.15 * Math.sin(t * 6);
+    const rim = failed ? TIME.heat : tones.lit;
+
+    // The face it is all drawn on, so the arcs are not floating over the arena floor.
+    g.fillStyle(tint(TIME.night), 0.55);
+    g.fillCircle(x, y + 1.5, radius * 1.06);
+    g.fillStyle(tint(failed ? 0x4a1a08 : tones.shell), 0.82);
+    g.fillCircle(x, y, radius);
+    g.lineStyle(2, tint(rim), 0.75 * beat);
+    g.strokeCircle(x, y, radius);
+
+    // Hour ticks around the bezel — the same twelve the rest of Time's art uses.
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * TAU;
+      const long = i % 3 === 0;
+      g.lineStyle(long ? 1.8 : 0.9, tint(rim), (long ? 0.65 : 0.35));
+      g.beginPath();
+      g.moveTo(x + Math.cos(a) * radius * (long ? 0.82 : 0.87), y + Math.sin(a) * radius * (long ? 0.82 : 0.87));
+      g.lineTo(x + Math.cos(a) * radius * 0.97, y + Math.sin(a) * radius * 0.97);
+      g.strokePath();
+    }
+
+    // The track the hand has already covered, laid in as a swept wedge.
+    if (p > 0.001) {
+      g.fillStyle(tint(failed ? TIME.heat : tones.body), 0.3);
+      g.beginPath();
+      g.moveTo(x, y);
+      g.arc(x, y, radius * 0.78, top, top + p * TAU, false);
+      g.closePath();
+      g.fillPath();
+    }
+
+    // The windows. A pending band pulses so it is obviously the thing to hit.
+    for (const z of zones) {
+      const a0 = top + Phaser.Math.Clamp(z.start, 0, 1) * TAU;
+      const a1 = top + Phaser.Math.Clamp(z.end, 0, 1) * TAU;
+      const color = z.state === 'hit' ? 0x44ff44 : z.state === 'missed' ? 0xff3333 : TIME.gold;
+      const alpha = z.state === 'pending' ? 0.7 + 0.3 * beat : 0.95;
+      g.fillStyle(tint(color), alpha);
+      g.beginPath();
+      g.arc(x, y, radius * 0.97, a0, a1, false);
+      g.arc(x, y, radius * 0.72, a1, a0, true);
+      g.closePath();
+      g.fillPath();
+      // A hard leading edge, so the exact moment the window opens is unambiguous.
+      g.lineStyle(1.6, tint(TIME.white), 0.7 * alpha);
+      g.beginPath();
+      g.moveTo(x + Math.cos(a0) * radius * 0.72, y + Math.sin(a0) * radius * 0.72);
+      g.lineTo(x + Math.cos(a0) * radius * 0.97, y + Math.sin(a0) * radius * 0.97);
+      g.strokePath();
+    }
+
+    // The hand: the marker you are timing against.
+    const hand = top + p * TAU;
+    g.fillStyle(tint(failed ? TIME.heat : TIME.white), 0.95);
+    timeHand(g, x, y, hand, radius * 0.9, radius * 0.055, 0.22);
+    g.fillStyle(tint(rim), 1);
+    g.fillCircle(x, y, radius * 0.13);
+    g.fillStyle(tint(TIME.white), 0.9);
+    g.fillCircle(x + Math.cos(hand) * radius * 0.9, y + Math.sin(hand) * radius * 0.9, radius * 0.09);
+  }
+
+  /**
    * The revolver cylinder swinging out while it reloads: six chambers, the loaded ones brass,
    * the spent ones dark, turning as rounds go in.
    */
@@ -949,8 +1032,8 @@ const TIME_AVATAR: AvatarSpec = {
 export class TimeAvatar extends BaseAvatar {
   private fx: TimeFx;
   private tones: TimeTones;
-  /** Passive Manipulation: 'rush' tips the hat forward and speeds the orbit; 'focus' settles it. */
-  private mode: 'rush' | 'focus' | null = null;
+  /** Reputation Repair: true while the rewind is charged, false while it is spent. Null when unmastered. */
+  private repairReady: boolean | null = null;
   /** Time is stopped — the whole rig goes cold and the hands stall. */
   private frozen = false;
 
@@ -964,8 +1047,8 @@ export class TimeAvatar extends BaseAvatar {
     }
   }
 
-  /** Mastery passive: which way the character's own clock is running. Null when unmastered. */
-  setMode(mode: 'rush' | 'focus' | null): void { this.mode = mode; }
+  /** Mastery passive: whether the rewind is charged and waiting. Null when unmastered. */
+  setRepairReady(ready: boolean | null): void { this.repairReady = ready; }
 
   /** Always Noon is up — the rig freezes over. */
   setFrozen(on: boolean): void {
@@ -1017,8 +1100,8 @@ export class TimeAvatar extends BaseAvatar {
       g.lineTo(x + Math.cos(ang) * 24 * this.intensity, y + 6 + Math.sin(ang) * 11 * this.intensity);
       g.strokePath();
     }
-    // 'rush' spins the shadow visibly faster than 'focus'; frozen stops it dead.
-    const rate = this.frozen ? 0 : this.mode === 'rush' ? 2.4 : this.mode === 'focus' ? 0.3 : 0.8;
+    // A charged rewind winds the sundial's shadow up; a spent one drags it. Frozen stops it dead.
+    const rate = this.frozen ? 0 : this.repairReady === true ? 2.2 : this.repairReady === false ? 0.3 : 0.8;
     const sweep = this.t * rate;
     g.fillStyle(this.tint(tones.hot), a * 0.5);
     timeHand(g, x, y + 6, sweep, 20 * this.intensity, 2, 0.2);
@@ -1032,8 +1115,8 @@ export class TimeAvatar extends BaseAvatar {
     const tones = this.activeTones();
     const rootY = y - 18;
     const scale = (this.mastered ? 1.22 : 1) * (0.94 + this.intensity * 0.06);
-    // A hat rides the head: it tips toward the aim, and 'rush' pulls it down over the eyes.
-    const tilt = Math.cos(this.facing) * 0.14 + (this.mode === 'rush' ? 0.1 : 0);
+    // A hat rides the head: it tips toward the aim, and a spent rewind pulls it down over the eyes.
+    const tilt = Math.cos(this.facing) * 0.14 + (this.repairReady === false ? 0.1 : 0);
     const brimW = 30 * scale;
     const brimY = rootY + 3;
 
@@ -1072,7 +1155,7 @@ export class TimeAvatar extends BaseAvatar {
       g.fillCircle(sx, sy, 1.5 * scale);
 
       // Three hands orbiting the crown, each turning on its own pivot.
-      const rate = this.frozen ? 0 : this.mode === 'rush' ? 2 : 1;
+      const rate = this.frozen ? 0 : this.repairReady === true ? 2 : 1;
       for (let i = 0; i < 3; i++) {
         const p = this.t * rate + (i / 3) * TAU;
         const cx = x + Math.cos(p) * 25;

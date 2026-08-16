@@ -49,6 +49,22 @@ export const GUNPOWDER = {
   chrome: 0xd8e0e8,
   /** BlunderBlast's silver vacuum. */
   silver: 0xcfd4da,
+  /**
+   * The regimentals. Gunpowder is a line-infantry musketeer out of the revolutionary era, so the
+   * character wears a uniform rather than a colour scheme: a blue coat with buff facings turned
+   * back over a linen waistcoat, pipeclayed white cross-belts, and a black felt tricorn with a
+   * cockade on the brim. These are the only cold-warm colours in the element and they are only
+   * ever allowed on the rig — never on an effect.
+   */
+  coatDeep: 0x101c38,
+  coat: 0x1d3364,
+  coatLit: 0x33518f,
+  buff: 0xcbb489,
+  linen: 0xe3dbc6,
+  belt: 0xf4efe2,
+  crimson: 0xa61f2c,
+  felt: 0x15121e,
+  feltLit: 0x2c2738,
 } as const;
 
 export interface Pt { x: number; y: number }
@@ -226,6 +242,177 @@ export function cartridge(
   if (!spent) {
     g.fillStyle(tint(GUNPOWDER.glow), alpha * 0.55);
     strokePts(g, [at(-size * 0.8, -size * 0.2), at(size * 0.3, -size * 0.2)]);
+  }
+}
+
+// ── Regimentals ───────────────────────────────────────────────────────────
+
+/**
+ * The tricorn: a black felt round hat with the brim cocked up on three sides, worn point-forward.
+ * Drawn as one silhouette rather than three separate flaps — at play zoom the read is the two
+ * horns and the notch between them, so that is what gets the geometry budget.
+ *
+ * `lean` shifts the whole hat along the aim so the character looks like it is leaning into the
+ * shot. `officer` swaps the front point for the fore-and-aft sweep of a bicorne and adds the
+ * lace edge and a plume socket — the mastered silhouette.
+ */
+export function tricorn(
+  g: Phaser.GameObjects.Graphics, tint: GunpowderColorFn,
+  cx: number, cy: number, lean: number, scale: number, alpha: number,
+  officer = false, t = 0,
+): void {
+  const s = scale;
+  const x = cx + lean;
+
+  // Crown: a low truncated dome sitting inside the brim.
+  g.fillStyle(tint(GUNPOWDER.felt), alpha);
+  fillPts(g, [
+    { x: x - 7.5 * s, y: cy + 1 * s },
+    { x: x - 6 * s, y: cy - 7.5 * s },
+    { x: x + 6 * s, y: cy - 7.5 * s },
+    { x: x + 7.5 * s, y: cy + 1 * s },
+  ]);
+  g.fillStyle(tint(GUNPOWDER.feltLit), alpha * 0.7);
+  fillPts(g, [
+    { x: x - 5.6 * s, y: cy - 1 * s },
+    { x: x - 4.6 * s, y: cy - 6.6 * s },
+    { x: x - 1.4 * s, y: cy - 6.9 * s },
+    { x: x - 2.4 * s, y: cy - 1 * s },
+  ]);
+
+  // Brim. Unmastered it comes to a point dead ahead with a horn cocked either side; the officer's
+  // bicorne loses the point and throws both horns out much further instead.
+  const horn = officer ? 21 * s : 15.5 * s;
+  const point = officer ? 4 * s : 11.5 * s;
+  const brim: Pt[] = [
+    { x: x - horn, y: cy + 2.4 * s },
+    { x: x - horn * 0.55, y: cy + 5.4 * s },
+    { x: x, y: cy + 2.2 * s + point * 0.34 },
+    { x: x + horn * 0.55, y: cy + 5.4 * s },
+    { x: x + horn, y: cy + 2.4 * s },
+    { x: x + horn * 0.62, y: cy + 0.6 * s },
+    { x: x + point * 0.5, y: cy - 1.2 * s },
+    { x: x, y: cy - (officer ? 2.2 : 4.4) * s },
+    { x: x - point * 0.5, y: cy - 1.2 * s },
+    { x: x - horn * 0.62, y: cy + 0.6 * s },
+  ];
+  g.fillStyle(tint(GUNPOWDER.felt), alpha);
+  fillPts(g, brim);
+  // Lace edging round the brim — gold for an officer, plain white tape for the ranks.
+  g.lineStyle(officer ? 1.9 : 1.2, tint(officer ? GUNPOWDER.brass : GUNPOWDER.belt), alpha * 0.9);
+  strokePts(g, brim, true);
+
+  // Cockade on the left horn: a black rosette pinned under a brass loop and button.
+  const kx = x - horn * 0.66, ky = cy + 1.4 * s;
+  g.fillStyle(tint(GUNPOWDER.void), alpha);
+  g.fillCircle(kx, ky, 3.1 * s);
+  g.fillStyle(tint(officer ? GUNPOWDER.buff : GUNPOWDER.crimson), alpha * 0.95);
+  g.fillCircle(kx, ky, 2 * s);
+  g.fillStyle(tint(GUNPOWDER.brass), alpha);
+  g.fillCircle(kx, ky, 0.95 * s);
+
+  if (!officer) return;
+
+  // Officer's plume, standing out of the cockade and drifting on its own slow loop.
+  const sway = Math.sin(t * 1.6) * 0.16;
+  for (let i = 0; i < 5; i++) {
+    const u = i / 4;
+    const ang = -Math.PI / 2 - 0.5 + u * 0.34 + sway;
+    const len = (13 + Math.sin(t * 2.2 + i) * 1.6) * s * (1 - Math.abs(u - 0.5) * 0.5);
+    g.fillStyle(tint(i < 3 ? GUNPOWDER.belt : GUNPOWDER.crimson), alpha * (0.9 - u * 0.15));
+    fillPts(g, [
+      { x: kx - 1.4 * s, y: ky },
+      { x: kx + Math.cos(ang) * len - 1.8 * s, y: ky + Math.sin(ang) * len },
+      { x: kx + Math.cos(ang) * len + 1.8 * s, y: ky + Math.sin(ang) * len * 0.94 },
+      { x: kx + 1.4 * s, y: ky },
+    ]);
+  }
+}
+
+/**
+ * One coat sleeve: a tapered blue cuff running from the shoulder out to a ball hand, with the
+ * turned-back facing at the wrist and a seam of piping down the top edge.
+ *
+ * Drawn on the *body* layer so it passes over the sprite but under the hand itself — a sleeve
+ * painted over the glove would swallow the hand it is supposed to be attached to.
+ */
+export function coatSleeve(
+  g: Phaser.GameObjects.Graphics, tint: GunpowderColorFn,
+  sx: number, sy: number, hx: number, hy: number, alpha: number, laced: boolean,
+): void {
+  const dx = hx - sx, dy = hy - sy;
+  const len = Math.hypot(dx, dy);
+  if (len < 1) return;
+  const ux = dx / len, uy = dy / len;
+  const px = -uy, py = ux;
+  // Shoulder is wide, wrist is narrow — the taper is the whole reason this reads as a sleeve.
+  const w0 = 5.4, w1 = 3.6;
+  // Pull the far end back so the cuff stops at the wrist instead of running through the glove.
+  const ex = sx + ux * (len - 3.4), ey = sy + uy * (len - 3.4);
+
+  g.fillStyle(tint(GUNPOWDER.coatDeep), alpha * 0.95);
+  fillPts(g, [
+    { x: sx + px * w0, y: sy + py * w0 },
+    { x: ex + px * w1, y: ey + py * w1 },
+    { x: ex - px * w1, y: ey - py * w1 },
+    { x: sx - px * w0, y: sy - py * w0 },
+  ]);
+  g.fillStyle(tint(GUNPOWDER.coat), alpha * 0.95);
+  fillPts(g, [
+    { x: sx + px * (w0 - 1.1), y: sy + py * (w0 - 1.1) },
+    { x: ex + px * (w1 - 0.9), y: ey + py * (w1 - 0.9) },
+    { x: ex - px * (w1 - 1.6), y: ey - py * (w1 - 1.6) },
+    { x: sx - px * (w0 - 1.8), y: sy - py * (w0 - 1.8) },
+  ]);
+  // Lit piping along the upper seam.
+  g.lineStyle(1, tint(GUNPOWDER.coatLit), alpha * 0.8);
+  strokePts(g, [{ x: sx + px * (w0 - 1), y: sy + py * (w0 - 1) }, { x: ex + px * (w1 - 0.8), y: ey + py * (w1 - 0.8) }]);
+
+  // Turned-back cuff in the facing colour, with a button on it once the wearer is an officer.
+  const cx0 = sx + ux * (len - 8), cy0 = sy + uy * (len - 8);
+  g.fillStyle(tint(GUNPOWDER.buff), alpha);
+  fillPts(g, [
+    { x: cx0 + px * (w1 + 1.5), y: cy0 + py * (w1 + 1.5) },
+    { x: ex + px * (w1 + 0.9), y: ey + py * (w1 + 0.9) },
+    { x: ex - px * (w1 + 0.9), y: ey - py * (w1 + 0.9) },
+    { x: cx0 - px * (w1 + 1.5), y: cy0 - py * (w1 + 1.5) },
+  ]);
+  if (laced) {
+    g.lineStyle(1.2, tint(GUNPOWDER.brass), alpha * 0.95);
+    strokePts(g, [
+      { x: cx0 + px * (w1 + 1.3), y: cy0 + py * (w1 + 1.3) },
+      { x: cx0 - px * (w1 + 1.3), y: cy0 - py * (w1 + 1.3) },
+    ]);
+    g.fillStyle(tint(GUNPOWDER.brass), alpha);
+    g.fillCircle(cx0 + px * 1.2, cy0 + py * 1.2, 1.2);
+  }
+}
+
+/** A gold epaulette: the bullion fringe that turns a private into an officer. */
+export function epaulette(
+  g: Phaser.GameObjects.Graphics, tint: GunpowderColorFn,
+  cx: number, cy: number, side: number, alpha: number, t: number,
+): void {
+  g.fillStyle(tint(GUNPOWDER.brass), alpha);
+  fillPts(g, [
+    { x: cx - 4.4, y: cy - 2.6 },
+    { x: cx + side * 5.2, y: cy - 3.4 },
+    { x: cx + side * 5.6, y: cy + 1.4 },
+    { x: cx - 4.4, y: cy + 1.8 },
+  ]);
+  g.fillStyle(tint(GUNPOWDER.gold), alpha * 0.9);
+  fillPts(g, [
+    { x: cx - 3.4, y: cy - 1.9 },
+    { x: cx + side * 4.2, y: cy - 2.5 },
+    { x: cx + side * 4.4, y: cy - 0.6 },
+    { x: cx - 3.4, y: cy - 0.2 },
+  ]);
+  // Bullion strands, swinging a little out of phase with each other.
+  g.lineStyle(1, tint(GUNPOWDER.brass), alpha * 0.9);
+  for (let i = 0; i < 4; i++) {
+    const fx = cx + side * (1.4 + i * 1.3);
+    const swing = Math.sin(t * 2.4 + i * 0.8) * 1.1;
+    strokePts(g, [{ x: fx, y: cy + 1.4 }, { x: fx + swing, y: cy + 6.4 }]);
   }
 }
 
@@ -845,27 +1032,42 @@ export class GunpowderAura {
 
 // ── GunpowderAvatar ───────────────────────────────────────────────────────
 
-/** Concentric discs of one iron-bomb hand, outermost first. */
+/**
+ * Concentric discs of one hand, outermost first. A musketeer's hands are pipeclayed white gloves
+ * with a dark coat cuff behind them — the ember halo underneath is the powder they never quite
+ * wash off, and it is also the only reason a white glove reads against a bright floor.
+ */
 const GUNPOWDER_AVATAR: AvatarSpec = {
   hands: [
     { r: 11, color: GUNPOWDER.ember, alpha: 0.2 },
-    { r: 7.4, color: GUNPOWDER.void, alpha: 1 },
-    { r: 4.6, color: GUNPOWDER.char, alpha: 1 },
-    { r: 1.7, color: GUNPOWDER.brass, alpha: 1, ox: -2, oy: -2.1 },
+    { r: 7.6, color: GUNPOWDER.coatDeep, alpha: 1 },
+    { r: 5.6, color: GUNPOWDER.linen, alpha: 1 },
+    { r: 1.7, color: GUNPOWDER.white, alpha: 1, ox: -2, oy: -2.1 },
   ],
   eyeWhite: GUNPOWDER.gold,
   eyePupil: GUNPOWDER.void,
-  // Iron bombs: heavy, with a lot of follow-through.
+  // A loaded musket is heavy, and the hands carrying it have a lot of follow-through.
   squash: { div: 16, x: 0.46, y: 0.26 },
 };
 
 /**
- * The gunpowder character rig: two hands that are cast-iron powder bombs with lit fuses, a pair
- * of eyes, a bandolier of cartridges worn over the crown, and — the whole idea — an actual
- * musket held out in the lead fist whenever there is ammo left to fire.
+ * The gunpowder character rig: a revolutionary-era line musketeer.
  *
- * The carried musket and the bandolier both read the live ammo count, so a fighter who has shot
- * themselves dry is visibly empty-handed before the HUD says so.
+ * The whole silhouette is uniform. A black felt **tricorn** cocked point-forward sits on the
+ * crown with a cockade on the left horn; below the face is a **regimental coat** — buff lapels
+ * turned back off a linen waistcoat, two rows of brass buttons, a split skirt — crossed by two
+ * pipeclayed **cross-belts** meeting at a brass plate, with the cartridge box riding one hip.
+ * Tapered blue **sleeves** run from the shoulders out to white-gloved ball hands, and a
+ * ribbon-tied **queue** hangs out from behind the head.
+ *
+ * Two things on the rig are live readouts rather than decoration. The **cartridge loops** on the
+ * shoulder belt empty left-to-right as the fighter shoots, so a musketeer who has run themselves
+ * dry looks it before the HUD says so; and the **musket** is carried at the ready along the aim
+ * while there is a charge left, then shouldered butt-down the moment there is not.
+ *
+ * Mastery promotes the private to an officer: the tricorn becomes a plumed bicorne, gold bullion
+ * epaulettes land on both shoulders, a gorget hangs at the throat, the cuffs take gold lace, and
+ * the musket fixes its bayonet. Every one of those is a change to the outline, not a tint.
  */
 export class GunpowderAvatar extends BaseAvatar {
   private fx: GunpowderFx;
@@ -888,17 +1090,35 @@ export class GunpowderAvatar extends BaseAvatar {
   }
 
   /**
-   * Mastery tell — Fireworks, made visible: the eyes go ember-white, the powder bombs grow a
-   * wider blast corona with a hot rim, and a rack of firework tubes rides the crown throwing
-   * sparks (drawn in drawExtras). Shape changes, not brighter tints.
+   * Mastery tell — the field commission. The eyes go ember-white, the gloves grow a wider powder
+   * corona ringed in gold lace, and (in the layers below) the tricorn becomes a plumed bicorne,
+   * epaulettes land on the shoulders and a gorget hangs at the throat. Outline changes first.
    */
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? GUNPOWDER.glow : GUNPOWDER.gold);
     this.forEachHandLayer(0, (glow) => glow.setRadius(on ? 14.5 : 11));
     this.forEachHandLayer(1, (shell) => {
-      if (on) shell.setStrokeStyle(2, this.tint(GUNPOWDER.ember), 0.95);
+      if (on) shell.setStrokeStyle(2, this.tint(GUNPOWDER.brass), 0.95);
       else shell.setStrokeStyle();
     });
+  }
+
+  /** Where one coat sleeve leaves the body, given the hand it has to reach. */
+  private shoulderFor(i: number, x: number, y: number): Pt {
+    const ang = Math.atan2(this.armY[i] - y, this.armX[i] - x);
+    return { x: x + Math.cos(ang) * 9, y: y + 2 + Math.sin(ang) * 5.5 };
+  }
+
+  /**
+   * Whether hand `i` is close enough to the body to hang hardware off it.
+   *
+   * The rig lerps its hands toward their pose from wherever they were last, and on the very
+   * first frame of a fighter's life that is the world origin — so anything drawn *between* the
+   * body and a hand (a sleeve, the musket) would streak across the arena for one frame. Anything
+   * further out than a hand can legitimately reach is that transient, and gets skipped.
+   */
+  private handSettled(i: number, x: number, y: number): boolean {
+    return Math.hypot(this.armX[i] - x, this.armY[i] - y) < 70;
   }
 
   /** Fast-moving hands trail powder smoke. */
@@ -917,8 +1137,15 @@ export class GunpowderAvatar extends BaseAvatar {
     };
   }
 
-  /** Scorched ground underfoot, with spent smoke still drifting off it. */
-  protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
+  /**
+   * Scorched ground underfoot with spent smoke drifting off it, plus the queue — the tied
+   * ponytail — hanging out from behind the head.
+   *
+   * The queue is painted here rather than in `drawExtras` on purpose: this layer is *under* the
+   * sprite, so the disc masks the root and only the length that actually clears the body shows.
+   * That is what sells it as hair coming from behind rather than a stripe pasted on the front.
+   */
+  protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     const k = this.intensity;
     g.fillStyle(this.tint(GUNPOWDER.soot), a * 0.24 * k);
     g.fillEllipse(x, y + 8, 54 * k, 22 * k);
@@ -929,60 +1156,245 @@ export class GunpowderAvatar extends BaseAvatar {
       smokePuff(g, this.tint, x + Math.sin(this.t * 1.3 + i * 3) * 14, y + 6 - p * 18,
         5 + p * 8, i * 2.9, GUNPOWDER.smoke, a * 0.16 * (1 - p));
     }
+
+    // ── The queue ──
+    // Rooted at the back of the skull and swinging out behind, away from wherever the aim is.
+    const back = this.facing + Math.PI;
+    const sway = Math.sin(this.t * 2.1) * 0.2;
+    const rx = x + Math.cos(back) * 6, ry = y - 6;
+    const tipAng = back + 0.45 + sway;
+    const len = this.mastered ? 30 : 26;
+    const tipX = rx + Math.cos(tipAng) * len, tipY = ry + Math.sin(tipAng) * len * 0.8 + 12;
+    const midX = (rx + tipX) / 2 - Math.cos(back) * 3, midY = (ry + tipY) / 2;
+    g.fillStyle(this.tint(GUNPOWDER.felt), alpha * 0.95);
+    fillPts(g, [
+      { x: rx - 5, y: ry - 4 },
+      { x: rx + 5, y: ry - 2 },
+      { x: midX + 3.6, y: midY },
+      { x: tipX + 1.4, y: tipY },
+      { x: tipX - 1.4, y: tipY - 1 },
+      { x: midX - 3.6, y: midY - 2 },
+    ]);
+    // Black ribbon binding the tail a third of the way down.
+    g.lineStyle(3, this.tint(GUNPOWDER.void), alpha);
+    strokePts(g, [
+      { x: midX - 4, y: midY - 3 },
+      { x: midX + 4, y: midY + 1 },
+    ]);
+    g.fillStyle(this.tint(this.mastered ? GUNPOWDER.brass : GUNPOWDER.belt), alpha * 0.9);
+    g.fillCircle(midX, midY - 1, 1.8);
   }
 
   /**
-   * The carried musket, the bandolier over the crown, and — once mastered — a rack of firework
-   * tubes. Rooted above the head so nothing covers the face, and drawn over the sprite so the
-   * hardware reads instead of hiding behind the body.
+   * The regimentals: sleeves, coat, waistcoat, cross-belts and the cartridge box. Painted on the
+   * body layer — over the sprite, under the gloves and the eyes — so the character wears the
+   * uniform instead of standing behind it.
    */
-  protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    // ── The musket in the lead fist ──
-    if (this.ammo > 0) {
-      // Whichever hand is furthest along the aim is the one doing the shooting.
-      const lead = Math.cos(this.facing) * (this.armX[1] - x) + Math.sin(this.facing) * (this.armY[1] - y)
-        >= Math.cos(this.facing) * (this.armX[0] - x) + Math.sin(this.facing) * (this.armY[0] - y) ? 1 : 0;
-      const hx = this.armX[lead], hy = this.armY[lead];
-      if (hx !== 0 || hy !== 0) {
-        const aim = Math.atan2(hy - y, hx - x);
-        const len = 34 * this.intensity;
-        musket(g, this.tint, hx + Math.cos(aim) * len * 0.28, hy + Math.sin(aim) * len * 0.28,
-          aim, len, 0, alpha * 0.98);
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    void a;
+    const sway = Math.sin(this.t * 1.5) * 1.2;
+    const lean = Math.cos(this.facing) * 1.6;
+
+    // ── Sleeves ──
+    // First, so the coat body closes over the shoulder seam.
+    for (let i = 0; i < 2; i++) {
+      if (!this.handSettled(i, x, y)) continue;
+      const s = this.shoulderFor(i, x, y);
+      coatSleeve(g, this.tint, s.x, s.y, this.armX[i], this.armY[i], alpha, this.mastered);
+    }
+
+    // ── Coat body ──
+    // A split skirt: two tails that swing on opposite phases so walking reads at the hem.
+    const skirt: Pt[] = [
+      { x: x - 10, y: y + 1 },
+      { x: x + 10, y: y + 1 },
+      { x: x + 14 + sway * 0.4, y: y + 17 },
+      { x: x + 4 + sway * 0.7, y: y + 19 },
+      { x: x, y: y + 13 },
+      { x: x - 4 - sway * 0.7, y: y + 19 },
+      { x: x - 14 + sway * 0.4, y: y + 17 },
+    ];
+    g.fillStyle(this.tint(GUNPOWDER.coatDeep), alpha);
+    fillPts(g, skirt);
+    g.fillStyle(this.tint(GUNPOWDER.coat), alpha);
+    fillPts(g, skirt.map((p) => ({ x: x + (p.x - x) * 0.88, y: y + (p.y - y) * 0.93 })));
+
+    // ── Waistcoat ──
+    // The linen V between the lapels: the one light shape on the torso, so the eye lands centre.
+    g.fillStyle(this.tint(GUNPOWDER.linen), alpha);
+    fillPts(g, [
+      { x: x - 5.4 + lean, y: y + 1 },
+      { x: x + 5.4 + lean, y: y + 1 },
+      { x: x + 4.2 + lean, y: y + 14 },
+      { x: x - 4.2 + lean, y: y + 14 },
+    ]);
+    g.lineStyle(1, this.tint(GUNPOWDER.buff), alpha * 0.7);
+    strokePts(g, [{ x: x + lean, y: y + 2 }, { x: x + lean, y: y + 13 }]);
+
+    // ── Lapels turned back in the facing colour ──
+    for (const side of [-1, 1] as const) {
+      g.fillStyle(this.tint(GUNPOWDER.buff), alpha);
+      fillPts(g, [
+        { x: x + side * 4.6 + lean, y: y + 0.5 },
+        { x: x + side * 11, y: y + 2 },
+        { x: x + side * 9, y: y + 12 },
+        { x: x + side * 4.2 + lean, y: y + 11 },
+      ]);
+      g.fillStyle(this.tint(GUNPOWDER.coatLit), alpha * 0.35);
+      fillPts(g, [
+        { x: x + side * 5.6 + lean, y: y + 1.6 },
+        { x: x + side * 9.6, y: y + 2.8 },
+        { x: x + side * 8.4, y: y + 7 },
+        { x: x + side * 5.4 + lean, y: y + 6.4 },
+      ]);
+      // Two rows of brass buttons down the coat front.
+      for (let i = 0; i < 3; i++) {
+        g.fillStyle(this.tint(GUNPOWDER.brass), alpha);
+        g.fillCircle(x + side * 6.6 + lean * 0.6, y + 3.4 + i * 3.6, 1.35);
+        g.fillStyle(this.tint(GUNPOWDER.gold), alpha * 0.8);
+        g.fillCircle(x + side * 6.9 + lean * 0.6, y + 3.1 + i * 3.6, 0.6);
       }
     }
 
-    // ── The bandolier over the crown ──
-    const rootY = y - 20;
-    for (let i = 0; i < this.maxAmmo + 2; i++) {
-      const u = i / (this.maxAmmo + 1);
-      const ang = Math.PI * (1.12 + u * 0.76);
-      const px = x + Math.cos(ang) * 22;
-      const py = rootY + 6 + Math.sin(ang) * 12;
-      cartridge(g, this.tint, px, py, ang + Math.PI / 2, 4.4, i >= this.ammo, alpha * 0.95);
-    }
-    g.lineStyle(2.4, this.tint(GUNPOWDER.stock), alpha * 0.9);
-    const strap: Pt[] = [];
-    for (let i = 0; i <= 10; i++) {
-      const ang = Math.PI * (1.08 + (i / 10) * 0.84);
-      strap.push({ x: x + Math.cos(ang) * 25, y: rootY + 6 + Math.sin(ang) * 14 });
-    }
-    strokePts(g, strap);
+    // ── Neck stock ──
+    // A black leather band with a linen ruffle over it, right under the face.
+    g.fillStyle(this.tint(GUNPOWDER.void), alpha);
+    fillPts(g, [
+      { x: x - 6.4, y: y - 1.6 },
+      { x: x + 6.4, y: y - 1.6 },
+      { x: x + 5.4, y: y + 2 },
+      { x: x - 5.4, y: y + 2 },
+    ]);
+    g.fillStyle(this.tint(GUNPOWDER.belt), alpha * 0.95);
+    g.fillEllipse(x + lean * 0.5, y + 1.4, 7.6, 3.4);
 
-    // ── Mastery: a rack of firework tubes on the crown, wicks lit ──
+    // ── Cross-belts ──
+    // Two pipeclayed straps over opposite shoulders, meeting at a brass plate on the sternum.
+    for (const side of [-1, 1] as const) {
+      g.fillStyle(this.tint(GUNPOWDER.belt), alpha * 0.92);
+      fillPts(g, [
+        { x: x + side * 12.4, y: y + 1.4 },
+        { x: x + side * 8.6, y: y + 0.6 },
+        { x: x - side * 8.6, y: y + 15 },
+        { x: x - side * 12, y: y + 14.4 },
+      ]);
+      g.lineStyle(0.9, this.tint(GUNPOWDER.ash), alpha * 0.45);
+      strokePts(g, [{ x: x + side * 8.8, y: y + 0.9 }, { x: x - side * 12.2, y: y + 14.6 }]);
+    }
+    // Belt plate at the crossing — a brass oval, the regiment's badge.
+    g.fillStyle(this.tint(GUNPOWDER.brass), alpha);
+    g.fillEllipse(x, y + 7.8, 8.6, 6.4);
+    g.fillStyle(this.tint(GUNPOWDER.gold), alpha * 0.85);
+    g.fillEllipse(x, y + 7.4, 6.2, 4.2);
+    g.fillStyle(this.tint(GUNPOWDER.void), alpha * 0.8);
+    g.fillCircle(x, y + 7.6, 1.6);
+
+    // ── Cartridge loops ──
+    // The live ammo readout, worn on the belt where it would actually be. Loops empty
+    // left-to-right, so a dry musketeer is visibly out of charges.
+    const loops = Math.max(1, this.maxAmmo);
+    for (let i = 0; i < loops; i++) {
+      const u = loops === 1 ? 0.5 : i / (loops - 1);
+      const bx = x - 9.4 + u * 18.8;
+      const by = y + 3.6 + Math.abs(u - 0.5) * 2.4;
+      cartridge(g, this.tint, bx, by, Math.PI / 2 + (u - 0.5) * 0.5, 3.4, i >= this.ammo, alpha * 0.95);
+    }
+
+    // ── Cartridge box on the hip ──
+    g.fillStyle(this.tint(GUNPOWDER.void), alpha);
+    fillPts(g, [
+      { x: x + 8.6, y: y + 12 },
+      { x: x + 16, y: y + 11 },
+      { x: x + 16.6, y: y + 17.4 },
+      { x: x + 9, y: y + 18.4 },
+    ]);
+    g.fillStyle(this.tint(GUNPOWDER.char), alpha);
+    fillPts(g, [
+      { x: x + 9.4, y: y + 12.6 },
+      { x: x + 15.2, y: y + 11.8 },
+      { x: x + 15.4, y: y + 14.4 },
+      { x: x + 9.6, y: y + 15.2 },
+    ]);
+    g.fillStyle(this.tint(this.ammo > 0 ? GUNPOWDER.brass : GUNPOWDER.ash), alpha);
+    g.fillCircle(x + 12.6, y + 16, 1.5);
+
+    // ── Officer's gorget and epaulettes ──
     if (this.mastered) {
-      for (let i = -1; i <= 1; i++) {
-        const ang = -Math.PI / 2 + i * 0.42 + Math.sin(this.t * 1.4 + i) * 0.06;
-        const bx = x + i * 9;
-        const by = rootY - 2;
-        GunpowderFx.drawFireworkTube(g, this.tint, bx, by, Math.cos(ang), Math.sin(ang),
+      // Crescent at the throat, hung on two ribbons.
+      g.fillStyle(this.tint(GUNPOWDER.brass), alpha);
+      fillPts(g, [
+        { x: x - 6.6, y: y - 1.4 },
+        { x: x, y: y + 3.4 },
+        { x: x + 6.6, y: y - 1.4 },
+        { x: x + 4.6, y: y - 0.6 },
+        { x: x, y: y + 1.6 },
+        { x: x - 4.6, y: y - 0.6 },
+      ]);
+      g.fillStyle(this.tint(GUNPOWDER.gold), alpha * 0.8);
+      fillPts(g, [
+        { x: x - 4.4, y: y - 0.9 },
+        { x: x, y: y + 1.8 },
+        { x: x + 4.4, y: y - 0.9 },
+        { x: x + 3.2, y: y - 0.5 },
+        { x: x, y: y + 0.8 },
+        { x: x - 3.2, y: y - 0.5 },
+      ]);
+      for (const side of [-1, 1] as const) {
+        epaulette(g, this.tint, x + side * 10.5, y + 1.5, side, alpha, this.t);
+      }
+    }
+  }
+
+  /**
+   * The hat and the weapon — the two things that have to read from across the arena.
+   *
+   * Drawn over the sprite so the hardware sits in front of the body rather than peeking around
+   * it, and the tricorn is rooted at the crown so its brim frames the face from above without
+   * ever covering the eyes.
+   */
+  protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    void a;
+
+    // ── The musket ──
+    // Loaded, it is carried at the ready along the aim in the leading fist. Empty, it goes to the
+    // shoulder butt-down — the character never stands there weaponless, the posture just changes.
+    const fx = Math.cos(this.facing), fy = Math.sin(this.facing);
+    const lead = fx * (this.armX[1] - x) + fy * (this.armY[1] - y)
+      >= fx * (this.armX[0] - x) + fy * (this.armY[0] - y) ? 1 : 0;
+    const hx = this.armX[lead], hy = this.armY[lead];
+    if (this.handSettled(lead, x, y)) {
+      const len = 36 * this.intensity;
+      if (this.ammo > 0) {
+        const aim = Math.atan2(hy - y, hx - x);
+        musket(g, this.tint, hx + Math.cos(aim) * len * 0.26, hy + Math.sin(aim) * len * 0.26,
+          aim, len, 0, alpha * 0.98, this.mastered);
+      } else {
+        // Shouldered: butt low and behind, muzzle high and forward, riding the trailing side.
+        const shoulderAng = -Math.PI / 2 - fx * 0.5;
+        const bx = x - fx * 7, by = y - 3;
+        musket(g, this.tint, bx + Math.cos(shoulderAng) * len * 0.16, by + Math.sin(shoulderAng) * len * 0.16,
+          shoulderAng, len, 0, alpha * 0.9, this.mastered);
+      }
+    }
+
+    // ── The tricorn ──
+    const lean = fx * 2.2;
+    tricorn(g, this.tint, x, y - 14, lean, 1 + (this.intensity - 1) * 0.3, alpha, this.mastered, this.t);
+
+    // ── Mastery: firework tubes racked behind the bicorne, wicks lit ──
+    if (this.mastered) {
+      const rootY = y - 22;
+      for (const i of [-1, 1] as const) {
+        const ang = -Math.PI / 2 + i * 0.5 + Math.sin(this.t * 1.4 + i) * 0.06;
+        GunpowderFx.drawFireworkTube(g, this.tint, x + i * 12 - lean, rootY,
+          Math.cos(ang), Math.sin(ang),
           0.35 + 0.35 * Math.abs(Math.sin(this.t * 1.1 + i)), this.accent, this.t);
       }
       for (let i = 0; i < 2; i++) {
         const p = (this.t * 0.7 + i / 2) % 1;
-        smokePuff(g, this.tint, x + Math.sin(this.t * 1.9 + i * 2) * 10, rootY - 20 - p * 20,
+        smokePuff(g, this.tint, x + Math.sin(this.t * 1.9 + i * 2) * 10, rootY - 18 - p * 20,
           4 + p * 8, i * 3.3, GUNPOWDER.smoke, alpha * 0.22 * (1 - p));
       }
     }
-    void a;
   }
 }

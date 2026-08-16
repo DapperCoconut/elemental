@@ -82,7 +82,7 @@ const MOVEMENT_PROFILES: Record<string, MovementProfile> = {
   paper:       { archetype: 'skirmisher', range: [160, 300], retreatHp: 0.28 },
   death:       { archetype: 'brawler',    range: [70, 170],  retreatHp: 0.15 },
   fortune:     { archetype: 'zoner',      range: [240, 400], retreatHp: 0.32 },
-  marrow:      { archetype: 'brawler',    range: [90, 200],  retreatHp: 0.18 },
+  cloth:      { archetype: 'brawler',    range: [90, 200],  retreatHp: 0.18 },
   psychic:     { archetype: 'zoner',      range: [240, 400], retreatHp: 0.32 },
   radiation:   { archetype: 'skirmisher', range: [150, 290], retreatHp: 0.28 },
   bind:        { archetype: 'summoner',   range: [220, 380], retreatHp: 0.30 },
@@ -188,6 +188,8 @@ export interface NpcAiState {
   npcSoulCorpseCount?: number;
   npcSoulAmalgamCount?: number;
   npcSoulGraveCount?: number;
+  /** Soul: where the npc's nearest drainable grave zombie is standing, if any (SoulKit-owned). */
+  npcSoulDrainPoint?: { x: number; y: number } | null;
   npcHuntBeastForm?: boolean;
   npcHuntTrailActive?: boolean;
   /** Blast is charge-gated inside HuntKit; its ability cooldown says nothing about that. */
@@ -435,15 +437,19 @@ export interface NpcAiState {
    */
   npcFortuneNoBank?: boolean;
 
-  // Marrow
-  /** Occupied sockets on the bone bar, 0–5. A sixth cell is refused outright. */
-  npcMarrowCells?: number;
-  /** Mast cells still on their fuse — a second Mastacre on top of a live one is wasted. */
-  npcMarrowMasts?: number;
-  /** The fever, 0–100. High enough and the bot is happy to trade hits. */
-  npcMarrowInflammation?: number;
-  /** Dendricles has transformed: F is a T-cell summon, not a strike. */
-  npcMarrowTcellArmed?: boolean;
+  // Cloth
+  /** A long pin is in a body or a wall: E is now the reel-in, not a throw. */
+  npcClothPinPlanted?: boolean;
+  /** A safety anchor is down: R is now the bail-out, not a placement. */
+  npcClothAnchored?: boolean;
+  /** 0–1 of the 75 damage that fires the safety line by itself. */
+  npcClothAnchorPressure?: number;
+  /** 0–1 toward the grapple spin. Near 1, staying in click range is worth more than anything. */
+  npcClothCombo?: number;
+  /** Pinned HP in the pool right now — the thorns only pay while there is some. */
+  npcClothPinned?: number;
+  /** Something is webbed: it cannot move, so this is the free-damage window. */
+  npcClothWebbed?: boolean;
 
   // Psychic
   /** Abilities currently sitting in the target's delayed-cast queue — the E/R decision. */
@@ -552,6 +558,20 @@ export interface NpcAiState {
    * casts the spray itself, since enhancement ids are not in `element.abilities`.
    */
   npcPassionPerfumeSlot?: string;
+
+  /**
+   * Sound: milliseconds until this bot's harmonize window opens — `0` while it is open, and
+   * `Infinity` once the beat has gone past or the meter was never started. Every cast restarts
+   * the metronome, so a cast thrown a quarter-second early does not merely miss the bonus, it
+   * moves the next window as well. The kit owns the timing; this is a read of it.
+   */
+  npcSoundHarmonizeIn?: number;
+  /**
+   * Sound Mastery: the slot Compose was bound over. The kit presses the composition itself
+   * (enhancement ids are not in `element.abilities`), so all the rotation has to do is stop
+   * asking for the ability that is no longer under that key.
+   */
+  npcSoundComposeSlot?: string;
 
   /**
    * Conquest: the square the bot is walking to in order to place its next building. Every
@@ -1175,8 +1195,8 @@ export class NpcOpponent extends Fighter {
     if (this.element.id === 'fortune') {
       return this.doFortuneAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
-    if (this.element.id === 'marrow') {
-      return this.doMarrowAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    if (this.element.id === 'cloth') {
+      return this.doClothAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
     if (this.element.id === 'psychic') {
       return this.doPsychicAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
@@ -1641,18 +1661,19 @@ export class NpcOpponent extends Fighter {
   }
 
   /**
-   * Marrow. There is no aiming decision in the whole element — the cells walk themselves — so
-   * the only thing worth being clever about is the bone bar. Five sockets, and the sixth cast
-   * is refused and refunded rather than queued, which means a bot that spams E ends up with
-   * five macrophages and no way to make a neutrophil. The order below is therefore a
-   * composition: keep one macrophage up for the inflammation upkeep, spend the rest on
-   * neutrophils (which are meant to die and leave webs), and save the last socket for the
-   * T-cell whenever Dendricles has actually transformed.
+   * Cloth.
    *
-   * Mastacre is exempt from the cap and is simply the biggest button it owns, so it goes off
-   * whenever anything is close enough for five homing bombs to reach.
+   * The element is four two-press combos stacked on each other, and a bot that treats the five
+   * keys as five independent buttons plays none of them. Every branch below is therefore a
+   * *second* press: reel the pin it already threw, bail out on the anchor it already set, stay
+   * glued while the pin counter is nearly full, and keep swinging while somebody is webbed.
+   * The kit publishes all four of those states on `aiState` — the AI never re-derives geometry
+   * the kit already owns.
+   *
+   * The one genuinely independent decision is Pin Cushion: pins are only worth having while
+   * something is close enough to be hurt by the thorns coming back off them.
    */
-  private doMarrowAbilities(
+  private doClothAbilities(
     target: Fighter,
     buildContext: (tX: number, tY: number) => CastContext,
     time: number,
@@ -1664,50 +1685,63 @@ export class NpcOpponent extends Fighter {
   ): string | null {
     void target;
     void time;
-    void hpRatio;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-    const cells = aiState.npcMarrowCells ?? 0;
-    const full = cells >= 5;
 
-    // ── Q ──
-    // Five mast cells that home and then detonate. They cost no socket, so the only question is
-    // whether it is worth spending: in range it is 125 damage, and out of range it is still a
-    // full fever bar — which is why a bot whose inflammation has run dry casts it anyway.
-    const fever = aiState.npcMarrowInflammation ?? 0;
-    if (!skipSpecials && (aiState.npcMarrowMasts ?? 0) === 0 && (dist < 520 || fever < 30)) {
-      if (this.castAbility('marrow-mastacre', buildContext(aimX, aimY))) return 'marrow-mastacre';
+    // ── Combo: the reel home ──
+    // A planted pin is worth far more as a recall than as the 15 it already dealt: arriving on a
+    // pinned body is another 10, a long knockback, and — with E+ — a web. Taken first, and taken
+    // whether or not this tick would have skipped a special.
+    if (aiState.npcClothPinPlanted && dist > 90) {
+      if (this.castAbility('cloth-longpin', buildContext(aimX, aimY))) return 'cloth-longpin';
     }
 
-    // ── F ──
-    // Armed, it is a T-cell and worth a socket. Unarmed it is a short-range strike that is only
-    // worth pressing in somebody's face, where all five tentacles land and arm the next one.
-    if (aiState.npcMarrowTcellArmed) {
-      if (!full && this.castAbility('marrow-dendricles', buildContext(aimX, aimY))) return 'marrow-dendricles';
-    } else if (dist < 150) {
-      if (this.castAbility('marrow-dendricles', buildContext(aimX, aimY))) return 'marrow-dendricles';
+    // ── Combo: bail before the line bails for you ──
+    // The anchor fires itself at 75 damage. Going early is the difference between choosing to
+    // leave and being dragged off mid-fight, so the bot spends it once it is hurt or once the
+    // tally is nearly full.
+    if (aiState.npcClothAnchored && ((aiState.npcClothAnchorPressure ?? 0) > 0.7 || hpRatio < 0.4)) {
+      if (this.castAbility('cloth-safety-line', buildContext(aimX, aimY))) return 'cloth-safety-line';
     }
 
-    if (full) return null;
-
-    // ── E ──
-    // The first socket always goes to a macrophage: it is the only thing in the kit that keeps
-    // the fever up on its own, and everything else in the element scales off that bar.
-    if (cells === 0) {
-      if (this.castAbility('marrow-macrosma', buildContext(aimX, aimY))) return 'marrow-macrosma';
+    // ── Combo: finish the pin count ──
+    // Nearly at the grapple spin. Nothing else is worth a press — the spin parks it inside its
+    // own reach for most of a second, which is more stabs than any other button buys.
+    const combo = aiState.npcClothCombo ?? 0;
+    if (combo > 0.5 && dist < 96) {
+      if (this.castAbility('cloth-pin', buildContext(aimX, aimY))) return 'cloth-pin';
     }
 
-    // ── R ──
-    // Cheap, fast, hits hardest, and leaves a web where it falls. The bot's default spend.
+    // ── Combo: a webbed target cannot leave ──
+    // Free damage window. Stab, and keep stabbing.
+    if (aiState.npcClothWebbed && dist < 110) {
+      if (this.castAbility('cloth-pin', buildContext(aimX, aimY))) return 'cloth-pin';
+    }
+
+    // ── R ── set the anchor while it is safe to, so it exists when it is not.
+    if (!aiState.npcClothAnchored && !skipSpecials && hpRatio > 0.5) {
+      if (this.castAbility('cloth-safety-line', buildContext(aimX, aimY))) return 'cloth-safety-line';
+    }
+
+    // ── F ── pins are a liability at range and an engine in melee, because the thorns only
+    // pay while somebody is close enough to catch them.
+    if ((aiState.npcClothPinned ?? 0) < 30 && dist < 220 && hpRatio > 0.35) {
+      if (this.castAbility('cloth-pin-cushion', buildContext(aimX, aimY))) return 'cloth-pin-cushion';
+    }
+
+    // ── Q ── the loom only pays off over a whole match, so it is spent the moment it is up.
     if (!skipSpecials) {
-      if (this.castAbility('marrow-neutralize', buildContext(aimX, aimY))) return 'marrow-neutralize';
+      if (this.castAbility('cloth-tapestry', buildContext(aimX, aimY))) return 'cloth-tapestry';
     }
-    if (this.castAbility('marrow-macrosma', buildContext(aimX, aimY))) return 'marrow-macrosma';
 
-    // ── Click ──
-    // Nothing else was ready. An antibody is 12 damage and a permanent mark, and it is the only
-    // thing in the kit the bot can do at range every half second.
-    if (dist < 620) {
-      if (this.castAbility('marrow-antibody', buildContext(aimX, aimY))) return 'marrow-antibody';
+    // ── E ── the throw. Worth it at any range: a wall pin is a free repositioning tool and a
+    // body pin is 15 plus the combo above.
+    if (!aiState.npcClothPinPlanted && dist > 120 && !skipSpecials) {
+      if (this.castAbility('cloth-longpin', buildContext(aimX, aimY))) return 'cloth-longpin';
+    }
+
+    // ── Click ── the default, and the whole reason to be in somebody's face.
+    if (dist < 110) {
+      if (this.castAbility('cloth-pin', buildContext(aimX, aimY))) return 'cloth-pin';
     }
     return null;
   }
@@ -2599,7 +2633,6 @@ export class NpcOpponent extends Fighter {
     aimY: number,
     aiState: NpcAiState,
   ): string | null {
-    void aiState;
     void aimX;
     void aimY;
     const SOUND_HIT_CHANCES = [0.20, 0.35, 0.50, 0.65, 0.80];
@@ -2614,17 +2647,41 @@ export class NpcOpponent extends Fighter {
 
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
+    // ── The kit's own synergy: play it on the beat ──
+    // A harmonized E is the only way the deck ever changes record, a harmonized R is a golden
+    // boombox worth 1.5× everything banked inside it, and a harmonized F buys a slip on the
+    // bugle run. Every one of those is worth far more than the half-second of waiting it costs,
+    // and because *any* cast restarts the metronome, throwing one early also moves the next
+    // window — so a bot that fires the instant a cooldown is up can never harmonize at all.
+    const beatIn = aiState.npcSoundHarmonizeIn ?? Number.POSITIVE_INFINITY;
+    const inWindow = beatIn === 0;
+    // Sharper opponents keep better time; a Novice barely waits at all.
+    const patience = 90 * this.difficulty.level;
+    if (!skipSpecials && beatIn > 0 && beatIn <= patience) return null;
+
+    // Compose (mastery) took one of the four keys, and the kit presses that one itself.
+    const taken = aiState.npcSoundComposeSlot;
+    const free = (slot: string) => taken !== slot;
+
     if (!skipSpecials) {
+      // On the beat the three stance abilities outrank the ultimate, because harmonizing is the
+      // only thing that changes the record and the only thing that makes a box golden.
+      if (inWindow) {
+        if (dist < 130 && free('e')
+          && this.castAbility('disc-dice', buildContext(target.x, target.y))) return 'disc-dice';
+        if (free('r') && this.castAbility('boombox', buildContext(this.x, this.y))) return 'boombox';
+        if (free('f') && this.castAbility('bugle', buildContext(target.x, target.y))) return 'bugle';
+      }
       // Coda — cash the banked buffs in for a level whenever the ultimate is up.
-      if (this.castAbility('coda', buildContext(target.x, target.y))) return 'coda';
+      if (free('q') && this.castAbility('coda', buildContext(target.x, target.y))) return 'coda';
       // Bugle — tempo, and its cooldown is short enough to keep topped up.
-      if (this.castAbility('bugle', buildContext(target.x, target.y))) return 'bugle';
+      if (free('f') && this.castAbility('bugle', buildContext(target.x, target.y))) return 'bugle';
       // Disc Dice — only worth slinging when the player is inside the cut.
-      if (dist < 130) {
+      if (dist < 130 && free('e')) {
         if (this.castAbility('disc-dice', buildContext(target.x, target.y))) return 'disc-dice';
       }
       // Boombox — dropped underfoot, so it is a self-buff first and a shove second.
-      if (this.castAbility('boombox', buildContext(this.x, this.y))) return 'boombox';
+      if (free('r') && this.castAbility('boombox', buildContext(this.x, this.y))) return 'boombox';
     }
 
     // Default: strike the violin.
@@ -3146,8 +3203,15 @@ export class NpcOpponent extends Fighter {
       }
     }
 
-    // Default: Lantern Light toward the target when close enough to matter.
-    if (dist < 260 && this.castAbility('soul-lantern-light', buildContext(sharpX, sharpY))) return 'soul-lantern-light';
+    // Synergy — a grave zombie is a corpse waiting to happen, and Siphon is the only thing that
+    // turns one into the other. Feed the queue first whenever it is running dry; the kit tells us
+    // where the nearest drainable body is standing.
+    const drainPoint = aiState.npcSoulDrainPoint;
+    if (drainPoint && corpses < 2
+      && this.castAbility('soul-siphon', buildContext(drainPoint.x, drainPoint.y))) return 'soul-siphon';
+
+    // Default: throw a siphon cord onto the target when it is inside the cord's own leash.
+    if (dist < 320 && this.castAbility('soul-siphon', buildContext(sharpX, sharpY))) return 'soul-siphon';
 
     return null;
   }
@@ -3599,36 +3663,28 @@ export class NpcOpponent extends Fighter {
     const skip = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     if (!skip) {
-      // F: Meditate when low HP and safe distance
-      if (hpRatio < 0.30 && !aiState.magicMeditating && dist > 200) {
-        if (this.castAbility('magic-meditate', buildContext(aimX, aimY))) {
-          aiState.magicMeditating = true;
-          return 'magic-meditate';
-        }
+      // Q first, and at any range: a familiar fights on its own for 18 seconds off the longest
+      // cooldown in the kit, so the worst thing this bot can do is sit on it. MagicKit picks
+      // which of the five suits the fight and refuses to double up on one it already has out.
+      if (this.castAbility('magic-necronomicon', buildContext(aimX, aimY))) return 'magic-necronomicon';
+
+      // F: Dupe. The kit owns the geometry — it finds its own densest patch of conjurations and
+      // centres the field there — so all this has to decide is that there is something out to
+      // copy at all. Early in a fight there is not, and the 15 Darkness is not worth spending.
+      if (aiState.magicMeditating && this.castAbility('magic-meditate', buildContext(aimX, aimY))) {
+        return 'magic-meditate';
       }
 
-      // R: Place anchor when player closes in; recall if already placed
-      if (dist < 150) {
-        if (aiState.magicAnchorPlaced) {
-          if (this.castAbility('magic-anchor', buildContext(aimX, aimY))) {
-            aiState.magicAnchorPlaced = false;
-            return 'magic-anchor';
-          }
-        } else {
-          if (this.castAbility('magic-anchor', buildContext(aimX, aimY))) {
-            aiState.magicAnchorPlaced = true;
-            return 'magic-anchor';
-          }
-        }
-      }
+      // R: mark them. The crosshair pays for itself off the Sparkle Shots this bot is throwing
+      // anyway, and MagicKit cashes it in at four tallies or just before it lapses.
+      if (dist < 420 && this.castAbility('magic-anchor', buildContext(aimX, aimY))) return 'magic-anchor';
 
-      // Q: Necronomicon at long range (NPC context picks a random sub-ability)
-      if (dist >= 300 && Math.random() < 0.30) {
-        if (this.castAbility('magic-necronomicon', buildContext(aimX, aimY))) return 'magic-necronomicon';
+      // E: the rotation. The kit reads the range and its own pools before choosing a wedge.
+      if (Math.random() < 0.5) {
+        if (this.castAbility('magic-grimoire', buildContext(aimX, aimY))) return 'magic-grimoire';
       }
-
-      // E: Grimoire at mid range (NPC context picks a random sub-ability)
-      if (dist >= 150 && dist < 400 && Math.random() < 0.40) {
+      // Cornered and hurt: a Ward between us is worth the press even off-rotation.
+      if (hpRatio < 0.35 && dist < 160) {
         if (this.castAbility('magic-grimoire', buildContext(aimX, aimY))) return 'magic-grimoire';
       }
     }

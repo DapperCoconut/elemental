@@ -41,11 +41,13 @@ interface TimePuddle {
   lifeMs: number;
 }
 
-interface PosSnapshot { x: number; y: number; t: number; }
+interface PosSnapshot { x: number; y: number; t: number; hp: number; }
 
 interface RevolverBullet {
   proj: Projectile; spawnAt: number;
   baseDmg: number; maxDmg: number; rampMs: number;
+  /** Time since this round's last shrapnel cough. Only ticks once it is fully aged. */
+  shrapnelAccum: number;
 }
 
 interface RifleBeam {
@@ -68,7 +70,6 @@ export interface TimeArenaApi {
   readonly rKey: Phaser.Input.Keyboard.Key;
   readonly fKey: Phaser.Input.Keyboard.Key;
   readonly qKey: Phaser.Input.Keyboard.Key;
-  readonly spaceKey: Phaser.Input.Keyboard.Key;
   readonly nukeChanneling: boolean;
   /** Aim point the player's rig faces — ArenaScene already tracks the cursor. */
   readonly aimX: number;
@@ -95,10 +96,37 @@ export interface TimeArenaApi {
   setStatusIndicator(id: string, status: CustomStatus | null): void;
 }
 
-// ── Mastery: Passive Manipulation (focus/rush) ────────────────────────────────
-const RUSH_FACTOR = 1.5;   // rush: the world runs 1.5x faster
-const FOCUS_FACTOR = 0.5;  // focus: the world runs at half speed
-const MODE_SWITCH_CD_MS = 5000;
+// ── Click: the ageing round ───────────────────────────────────────────────────
+const BULLET_BASE_DMG = 12;
+const BULLET_MAX_DMG = 15;
+const BULLET_RAMP_MS = 2000;
+/** Long enough that a fully-aged round gets real time to hunt and shed shrapnel. */
+const BULLET_LIFE_MS = 5000;
+/** How hard a fully-aged round can turn, in radians per second. */
+const BULLET_HOMING_TURN = 2.6;
+const SHRAPNEL_INTERVAL_MS = 1000;
+const SHRAPNEL_COUNT = 5;
+const SHRAPNEL_DMG = 3;
+const SHRAPNEL_SPEED = 210;
+const SHRAPNEL_LIFE_MS = 420;
+
+/** Click+'s perfect band, as a fraction of the reload cycle the dial's hand sweeps. */
+const PERFECT_ZONE: [number, number] = [0.45, 0.55];
+/** Q+'s three bands, in the same units. */
+const RIFLE_ZONES: { start: number; end: number }[] = [
+  { start: 0.10, end: 0.25 },
+  { start: 0.42, end: 0.57 },
+  { start: 0.72, end: 0.87 },
+];
+
+// ── Mastery: Reputation Repair ────────────────────────────────────────────────
+/** Damage inside REPAIR_WINDOW_MS that trips the rewind. */
+const REPAIR_THRESHOLD = 75;
+const REPAIR_WINDOW_MS = 2000;
+/** How far back the rewind reaches. The position history keeps 4s, so this always resolves. */
+const REPAIR_REWIND_MS = 3000;
+const REPAIR_COOLDOWN_MS = 20000;
+const REPAIR_PUDDLES = 6;
 
 // ── Mastery: Time Bomb ────────────────────────────────────────────────────────
 const BOMB_SPEED = 430;
@@ -166,12 +194,10 @@ export class TimeKit {
   private playerChamberAngle = 0;
   private playerRevolverBullets: RevolverBullet[] = [];
   private playerPointerWasDown = false;
-  private playerReloadFailed = false;   // true after a miss-click during reload (bars go red)
-  // Click+ reload bar UI
-  private playerReloadBarBg: Phaser.GameObjects.Rectangle | null = null;
-  private playerReloadBarFill: Phaser.GameObjects.Rectangle | null = null;
-  private playerReloadPerfectZone: Phaser.GameObjects.Rectangle | null = null;
-  private playerReloadIndicator: Phaser.GameObjects.Rectangle | null = null;
+  private playerReloadFailed = false;   // true after a miss-click during reload (the dial goes red)
+  /** Click+ reload minigame — one repainted clock face, drawn beside the swung-out cylinder. */
+  private playerReloadDial: Phaser.GameObjects.Graphics | null = null;
+  private playerReloadDialT = 0;
 
   // ── NPC revolver ──────────────────────────────────────────────────
   private npcAmmo = 6;
@@ -273,21 +299,19 @@ export class TimeKit {
   private rifleReloadStart = 0;
   private readonly rifleReloadDuration = 1500;
   private rifleReloadBarsHit: [boolean, boolean, boolean] = [false, false, false];
-  private rifleReloadBarBg: Phaser.GameObjects.Rectangle | null = null;
-  private rifleReloadBarFill: Phaser.GameObjects.Rectangle | null = null;
-  private rifleReloadZones: Phaser.GameObjects.Rectangle[] = [];
-  private rifleReloadIndicator: Phaser.GameObjects.Rectangle | null = null;
+  /** Q+ reload minigame — the same clock face, with three windows around it instead of one. */
+  private rifleReloadDial: Phaser.GameObjects.Graphics | null = null;
+  private rifleReloadDialT = 0;
 
   // ── NPC Q ─────────────────────────────────────────────────────────
   private npcTimelessActive = false;
   private npcTimelessEnd = 0;
   private npcTimelessCharge = 0;
 
-  // ── Mastery: Passive Manipulation + Time Bomb ─────────────────────────
-  private timeMode: 'rush' | 'focus' = 'focus';
-  private lastModeSwitchAt = -MODE_SWITCH_CD_MS;
-  private prevSpaceDown = false;
-  private timeScaleApplied = false;
+  // ── Mastery: Reputation Repair + Time Bomb ────────────────────────────
+  /** Damage the player has taken recently, so the 2 second window can be summed each frame. */
+  private repairHits: { at: number; amount: number }[] = [];
+  private repairLastFiredAt = -REPAIR_COOLDOWN_MS;
   /** One bomb per side at a time — a second cast is always an arm or a detonation. */
   private bombs: { player: TimeBomb | null; npc: TimeBomb | null } = { player: null, npc: null };
   private bombLastCastAt = -BOMB_COOLDOWN_MS;
@@ -361,10 +385,8 @@ export class TimeKit {
     this.playerReloadFailed = false; this.playerReloadDuration = 3000; this.playerChamberAngle = 0;
     this.playerChamberSprite?.destroy(); this.playerChamberSprite = null;
     this.playerRevolverBullets = []; this.playerPointerWasDown = false;
-    this.playerReloadBarBg?.destroy(); this.playerReloadBarBg = null;
-    this.playerReloadBarFill?.destroy(); this.playerReloadBarFill = null;
-    this.playerReloadPerfectZone?.destroy(); this.playerReloadPerfectZone = null;
-    this.playerReloadIndicator?.destroy(); this.playerReloadIndicator = null;
+    this.playerReloadDial?.destroy(); this.playerReloadDial = null;
+    this.playerReloadDialT = 0;
 
     this.npcAmmo = 6; this.npcLastShotAt = -99999; this.npcReloading = false;
     this.npcChamberAngle = 0;
@@ -431,29 +453,19 @@ export class TimeKit {
     this.rifleBeams = [];
     this.rifleReloading = false; this.rifleReloadStart = 0;
     this.rifleReloadBarsHit = [false, false, false];
-    this.destroyRifleReloadBar();
+    this.destroyRifleReloadDial();
 
     this.npcTimelessActive = false; this.npcTimelessCharge = 0;
     if (npc.cooldownMult < 0.01) npc.cooldownMult = 1;
 
-    // Mastery — Passive Manipulation + Time Bomb
-    this.timeMode = 'focus';
-    this.lastModeSwitchAt = -MODE_SWITCH_CD_MS;
-    this.prevSpaceDown = false;
-    this.restoreTimeScale();
+    // Mastery — Reputation Repair + Time Bomb
+    this.repairHits = [];
+    this.repairLastFiredAt = -REPAIR_COOLDOWN_MS;
+    this.arena.setStatusIndicator('time-repair', null);
     for (const owner of ['player', 'npc'] as const) this.discardBomb(owner);
     this.bombLastCastAt = -BOMB_COOLDOWN_MS;
     this.arena.setStatusIndicator('time-bomb', null);
     player.walkSpeedMult = 1;
-  }
-
-  private restoreTimeScale(): void {
-    const scene = this.arena.scene as Phaser.Scene & {
-      physics: Phaser.Physics.Arcade.ArcadePhysics; tweens: Phaser.Tweens.TweenManager;
-    };
-    if (scene.physics?.world) scene.physics.world.timeScale = 1;
-    scene.tweens.timeScale = 1;
-    this.timeScaleApplied = false;
   }
 
   // ── handleInput ───────────────────────────────────────────────────
@@ -464,12 +476,8 @@ export class TimeKit {
     const pointerJustDown = pointer.isDown && !this.playerPointerWasDown;
     this.playerPointerWasDown = pointer.isDown;
 
-    // ── Mastery — Passive Manipulation: dash (Space) flips focus/rush ────
-    // Rising-edge on isDown (NOT JustDown) so we don't consume the flag the generic dodge reads.
+    // Reputation Repair is a passive with no key of its own — it watches the damage ledger.
     const bombSlot = this.arena.masteryActive ? this.bombSlot() : null;
-    const spaceDown = this.arena.spaceKey.isDown;
-    if (this.arena.masteryActive && spaceDown && !this.prevSpaceDown) this.switchTimeMode(time);
-    this.prevSpaceDown = spaceDown;
     // Time Bomb takes over its bound slot (throw, arm, then detonate).
     if (bombSlot && Phaser.Input.Keyboard.JustDown(this.keyFor(bombSlot))) this.tryCastBomb(time, mouseX, mouseY);
     /** True when this slot still belongs to Time's own ability rather than the mastery one. */
@@ -553,19 +561,19 @@ export class TimeKit {
     this.posHistoryAccum += delta;
     while (this.posHistoryAccum >= 100) {
       this.posHistoryAccum -= 100;
-      this.npcPosHistory.push({ x: this.arena.npc.x, y: this.arena.npc.y, t: time });
-      this.playerPosHistory.push({ x: this.arena.player.x, y: this.arena.player.y, t: time });
+      this.npcPosHistory.push({ x: this.arena.npc.x, y: this.arena.npc.y, t: time, hp: this.arena.npc.hp });
+      this.playerPosHistory.push({ x: this.arena.player.x, y: this.arena.player.y, t: time, hp: this.arena.player.hp });
       while (this.npcPosHistory.length > 40) this.npcPosHistory.shift();
       while (this.playerPosHistory.length > 40) this.playerPosHistory.shift();
     }
 
-    // Mastery — Passive Manipulation time-scale + Time Bombs (both owners).
-    this.updatePassiveManipulation();
+    // Mastery — Reputation Repair's damage ledger + Time Bombs (both owners).
+    this.updateReputationRepair(time);
     this.updateTimeBombs(time, delta);
 
     if (isPlayer) {
       this.updatePlayerRevolver(time, delta);
-      this.updateBulletRamp(this.playerRevolverBullets, time);
+      this.updateBulletRamp('player', this.playerRevolverBullets, time, delta);
       this.updatePlayerLasso(time, delta);
       this.updatePlayerRemain(time, delta);
       this.updateFrozenField(time, delta);
@@ -577,7 +585,7 @@ export class TimeKit {
 
     if (isNpc) {
       this.updateNpcRevolver(time, delta);
-      this.updateBulletRamp(this.npcRevolverBullets, time);
+      this.updateBulletRamp('npc', this.npcRevolverBullets, time, delta);
       this.updateNpcLasso(time, delta);
       this.updateNpcRemain(time, delta);
       this.updateNpcBountyAura(time, delta);
@@ -610,7 +618,7 @@ export class TimeKit {
       if (!this.playerAvatar) this.playerAvatar = new TimeAvatar(scene, this.pcol, NOON_TONES);
       const av = this.playerAvatar;
       av.setFacing(Math.atan2(this.arena.aimY - player.y, this.arena.aimX - player.x));
-      av.setMode(this.arena.masteryActive ? this.timeMode : null);
+      av.setRepairReady(this.arena.masteryActive ? this.isRepairReady(scene.time.now) : null);
       av.setFrozen(this.timelessActive);
       av.setIntensity(this.timelessActive ? 1.4 : this.playerSpeedAuraActive ? 1.25 : 1);
       av.setMastered(this.arena.masteryActive);
@@ -640,6 +648,7 @@ export class TimeKit {
     const { player, scene } = this.arena;
     if (!this.playerReloading) {
       this.playerChamberSprite?.destroy(); this.playerChamberSprite = null;
+      this.playerReloadDial?.destroy(); this.playerReloadDial = null;
       return;
     }
     const progress = Math.min(1, (time - this.playerReloadStart) / this.playerReloadDuration);
@@ -652,11 +661,18 @@ export class TimeKit {
     this.playerChamberSprite.clear();
     TimeFx.drawCylinder(this.playerChamberSprite, this.pcol, NOON_TONES, cx, cy, 9,
       this.playerChamberAngle * 2, Math.floor(progress * 6));
-    if (this.arena.hasUpgrade('click')) this.drawReloadBar(time, player.x, player.y);
+    if (this.arena.hasUpgrade('click')) this.drawReloadDial(time, delta, player.x, player.y);
     if (progress >= 1) this.completeReload('player');
   }
 
-  private updateBulletRamp(bullets: RevolverBullet[], time: number): void {
+  /**
+   * Rounds age in flight from 12 to 15 damage, and the last state of that ramp is a different
+   * bullet entirely: a fully-aged round stops flying straight and starts hunting, coughing a
+   * ring of shrapnel out of itself once a second. That is the whole reason to let a shot travel
+   * rather than pressing the muzzle to somebody — the ramp is small, but what it turns into is not.
+   */
+  private updateBulletRamp(owner: 'player' | 'npc', bullets: RevolverBullet[], time: number, delta: number): void {
+    const foe = owner === 'player' ? this.arena.npc : this.arena.player;
     for (let i = bullets.length - 1; i >= 0; i--) {
       const b = bullets[i];
       if (!b.proj.active) { bullets.splice(i, 1); continue; }
@@ -664,7 +680,46 @@ export class TimeKit {
       const dmg = Math.round(b.baseDmg + (b.maxDmg - b.baseDmg) * t);
       (b.proj as unknown as { damage: number }).damage = dmg;
       b.proj.setTint(Phaser.Display.Color.GetColor(0xff, lerpN(0xee, 0x22, t), lerpN(0x44, 0x11, t)));
+      if (t < 1) continue;
+
+      // Fully aged: it turns toward whoever it was fired at, at a bounded rate, so it can be
+      // outmanoeuvred but not simply walked away from.
+      const body = b.proj.body as Phaser.Physics.Arcade.Body;
+      if (foe.active && foe.hp > 0) {
+        const speed = Math.hypot(body.velocity.x, body.velocity.y) || 380;
+        const cur = Math.atan2(body.velocity.y, body.velocity.x);
+        const want = Math.atan2(foe.y - b.proj.y, foe.x - b.proj.x);
+        const turn = Phaser.Math.Clamp(
+          Phaser.Math.Angle.Wrap(want - cur), -BULLET_HOMING_TURN * (delta / 1000), BULLET_HOMING_TURN * (delta / 1000),
+        );
+        const next = cur + turn;
+        body.setVelocity(Math.cos(next) * speed, Math.sin(next) * speed);
+      }
+
+      b.shrapnelAccum += delta;
+      while (b.shrapnelAccum >= SHRAPNEL_INTERVAL_MS) {
+        b.shrapnelAccum -= SHRAPNEL_INTERVAL_MS;
+        this.spitShrapnel(owner, b.proj.x, b.proj.y, Math.atan2(body.velocity.y, body.velocity.x));
+      }
     }
+  }
+
+  /** The ring of splinters a ripe round sheds — cheap on its own, punishing to stand next to. */
+  private spitShrapnel(owner: 'player' | 'npc', x: number, y: number, heading: number): void {
+    const { scene, projectiles } = this.arena;
+    for (let i = 0; i < SHRAPNEL_COUNT; i++) {
+      // Thrown backwards off the round rather than forwards, so it seeds the lane behind it.
+      const a = heading + Math.PI + (i / SHRAPNEL_COUNT - 0.5) * 2.4;
+      const frag = new Projectile(scene, x, y, 'proj-time-bullet', SHRAPNEL_DMG, owner === 'player');
+      projectiles.add(frag);
+      frag.setScale(0.45).setTint(TIME.powder);
+      frag.launch(Math.cos(a) * SHRAPNEL_SPEED, Math.sin(a) * SHRAPNEL_SPEED);
+      scene.time.delayedCall(SHRAPNEL_LIFE_MS, () => {
+        if (frag.active) { frag.setActive(false).setVisible(false); (frag.body as Phaser.Physics.Arcade.Body).stop(); }
+      });
+    }
+    this.fx(owner).hands(x, y, 3, { speed: 90, size: 2, life: 300, depth: 7, fall: 8, tones: HEAT_TONES });
+    this.fx(owner).flash(x, y, 9, 7, HEAT_TONES);
   }
 
   private updatePlayerLasso(time: number, delta: number): void {
@@ -856,12 +911,10 @@ export class TimeKit {
     }
     // Keep NPC frozen
     (npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-    // Bullet ramp continues during time-stop
-    this.updateBulletRamp(this.playerRevolverBullets, time);
 
     // Q+: rifle reload minigame tick
     if (this.rifleReloading) {
-      this.drawRifleReloadBar(time, this.arena.player.x, this.arena.player.y);
+      this.drawRifleReloadDial(time, delta, this.arena.player.x, this.arena.player.y);
       if (time - this.rifleReloadStart >= this.rifleReloadDuration) {
         const allHit = this.rifleReloadBarsHit[0] && this.rifleReloadBarsHit[1] && this.rifleReloadBarsHit[2];
         this.completeRifleReload(allHit);
@@ -871,7 +924,7 @@ export class TimeKit {
     if (time >= this.timelessEnd) {
       this.timelessActive = false;
       this.arena.setStatusIndicator('timeless', null);
-      if (this.rifleReloading) { this.rifleReloading = false; this.destroyRifleReloadBar(); }
+      if (this.rifleReloading) { this.rifleReloading = false; this.destroyRifleReloadDial(); }
       for (const [p, v] of this.timelessFrozenProjs) if (p.active) (p.body as Phaser.Physics.Arcade.Body).setVelocity(v.vx, v.vy);
       this.timelessFrozenProjs.clear();
       (npc.body as Phaser.Physics.Arcade.Body).setVelocity(this.timelessFrozenNpcVelX, this.timelessFrozenNpcVelY);
@@ -1199,6 +1252,8 @@ export class TimeKit {
     if (amount <= 0) return;
     // Victim = player and player is Time → enemy accrues bounty on the player
     if (victim === 'player' && this.arena.elementId === 'sand') {
+      // Mastery — Reputation Repair reads the same hits the bounty does.
+      if (this.arena.masteryActive) this.repairHits.push({ at: this.arena.scene.time.now, amount });
       const prev = Math.floor(this.playerBountyFloat);
       this.playerBountyFloat += amount / 5.0;
       this.playerBountyAccum = this.playerBountyFloat;
@@ -1280,17 +1335,21 @@ export class TimeKit {
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     const dx = tx - caster.x, dy = ty - caster.y;
     const len = Math.sqrt(dx * dx + dy * dy) || 1;
-    const bullet = new Projectile(scene, caster.x, caster.y, 'proj-time-bullet', 5, owner === 'player');
+    const bullet = new Projectile(scene, caster.x, caster.y, 'proj-time-bullet', BULLET_BASE_DMG, owner === 'player');
     projectiles.add(bullet);
     bullet.launch((dx / len) * 380, (dy / len) * 380);
-    scene.time.delayedCall(2500, () => {
+    scene.time.delayedCall(BULLET_LIFE_MS, () => {
       if (bullet.active) { bullet.setActive(false).setVisible(false); (bullet.body as Phaser.Physics.Arcade.Body).stop(); }
     });
     // Recoil at the barrel, brass out the side.
     const ang = Math.atan2(dy, dx);
     this.avatar(owner)?.play('punch', ang);
     this.fx(owner).muzzleFire(caster.x + Math.cos(ang) * 18, caster.y + Math.sin(ang) * 18, ang, 1, 9, HEAT_TONES);
-    const entry: RevolverBullet = { proj: bullet, spawnAt: time, baseDmg: 5, maxDmg: 12, rampMs: 2000 };
+    const entry: RevolverBullet = {
+      proj: bullet, spawnAt: time,
+      baseDmg: BULLET_BASE_DMG, maxDmg: BULLET_MAX_DMG, rampMs: BULLET_RAMP_MS,
+      shrapnelAccum: 0,
+    };
     if (owner === 'player') {
       this.playerRevolverBullets.push(entry);
       this.playerLastShotAt = time;
@@ -1313,45 +1372,36 @@ export class TimeKit {
   private completeReload(owner: 'player' | 'npc'): void {
     if (owner === 'player') {
       this.playerAmmo = 6; this.playerReloading = false; this.playerReloadFailed = false;
-      this.playerReloadBarBg?.destroy(); this.playerReloadBarBg = null;
-      this.playerReloadBarFill?.destroy(); this.playerReloadBarFill = null;
-      this.playerReloadPerfectZone?.destroy(); this.playerReloadPerfectZone = null;
-      this.playerReloadIndicator?.destroy(); this.playerReloadIndicator = null;
+      this.playerReloadDial?.destroy(); this.playerReloadDial = null;
     } else {
       this.npcAmmo = 6; this.npcReloading = false;
     }
   }
 
-  private drawReloadBar(time: number, px: number, py: number): void {
-    const barW = 50, barH = 7, barX = px - barW / 2, barY = py - 50;
+  /**
+   * Click+'s perfect-reload window, drawn as a clock face above the character: one gold arc at
+   * 45–55% of the cycle and a hand sweeping onto it. A forfeited window turns the whole dial
+   * red and drops the arc, so a failed reload is unmistakable without reading any text.
+   */
+  private drawReloadDial(time: number, delta: number, px: number, py: number): void {
     const progress = Math.min(1, (time - this.playerReloadStart) / this.playerReloadDuration);
     const { scene } = this.arena;
     const failed = this.playerReloadFailed;
-
-    const bgColor = failed ? 0x882222 : 0x44aa44;
-    const fillColor = failed ? 0xff3333 : 0x88ff88;
-    if (!this.playerReloadBarBg) this.playerReloadBarBg = scene.add.rectangle(px, barY, barW, barH, bgColor, 0.85).setDepth(14);
-    this.playerReloadBarBg.setFillStyle(bgColor, 0.85).setPosition(px, barY);
-
-    if (!this.playerReloadBarFill) this.playerReloadBarFill = scene.add.rectangle(barX, barY, 0, barH, fillColor, 0.5).setDepth(15).setOrigin(0, 0.5);
-    this.playerReloadBarFill.setFillStyle(fillColor, 0.5).setPosition(barX, barY).setSize(progress * barW, barH);
-
-    if (!failed) {
-      const pzStart = barX + barW * 0.45, pzW = barW * 0.1;
-      if (!this.playerReloadPerfectZone) this.playerReloadPerfectZone = scene.add.rectangle(pzStart + pzW / 2, barY, pzW, barH, 0xffff00, 0.9).setDepth(16);
-      this.playerReloadPerfectZone.setPosition(pzStart + pzW / 2, barY).setVisible(true);
-    } else {
-      this.playerReloadPerfectZone?.setVisible(false);
-    }
-
-    if (!this.playerReloadIndicator) this.playerReloadIndicator = scene.add.rectangle(0, barY, 3, barH + 2, 0xff2222, 1).setDepth(17);
-    this.playerReloadIndicator.setPosition(barX + progress * barW, barY);
+    if (!this.playerReloadDial) this.playerReloadDial = scene.add.graphics().setDepth(15);
+    this.playerReloadDialT += delta / 1000;
+    const g = this.playerReloadDial;
+    g.clear();
+    TimeFx.drawReloadDial(
+      g, this.pcol, NOON_TONES, px, py - 52, 17, progress, this.playerReloadDialT,
+      failed ? [] : [{ start: PERFECT_ZONE[0], end: PERFECT_ZONE[1], state: 'pending' }],
+      failed,
+    );
   }
 
   private isInPerfectZone(time: number): boolean {
     if (this.playerReloadFailed) return false;
     const progress = Math.min(1, (time - this.playerReloadStart) / this.playerReloadDuration);
-    return progress >= 0.45 && progress <= 0.55;
+    return progress >= PERFECT_ZONE[0] && progress <= PERFECT_ZONE[1];
   }
 
   private perfectReloadFire(tx: number, ty: number, time: number): void {
@@ -1368,6 +1418,7 @@ export class TimeKit {
         (chamber.body as Phaser.Physics.Arcade.Body).stop();
       }
     });
+    this.playerReloadDial?.destroy(); this.playerReloadDial = null;
     this.playerChamberSprite?.destroy(); this.playerChamberSprite = null;
     this.completeReload('player');
     // A perfect reload flings the whole loaded cylinder downrange.
@@ -1435,13 +1486,8 @@ export class TimeKit {
     if (!this.rifleReloading) return;
     if (time - this.rifleReloadStart < 200) return;
     const progress = (time - this.rifleReloadStart) / this.rifleReloadDuration;
-    const zones = [
-      { start: 0.10, end: 0.25 },
-      { start: 0.42, end: 0.57 },
-      { start: 0.72, end: 0.87 },
-    ];
     for (let i = 0; i < 3; i++) {
-      if (!this.rifleReloadBarsHit[i] && progress >= zones[i].start && progress <= zones[i].end) {
+      if (!this.rifleReloadBarsHit[i] && progress >= RIFLE_ZONES[i].start && progress <= RIFLE_ZONES[i].end) {
         this.rifleReloadBarsHit[i] = true;
         this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 42, `✓ ${i + 1}/3`, '#44ff44');
         return;
@@ -1449,57 +1495,37 @@ export class TimeKit {
     }
   }
 
-  private drawRifleReloadBar(time: number, px: number, py: number): void {
-    const barW = 66, barH = 8, barX = px - barW / 2, barY = py - 55;
+  /**
+   * The same clock face as the revolver's, carrying all three windows at once — which is the
+   * point of the shape here. On a bar the third band was always the one you were still walking
+   * toward; on a dial you can see the hand's whole route round the three of them, in frozen
+   * blue so it never reads as the gold revolver reload.
+   */
+  private drawRifleReloadDial(time: number, delta: number, px: number, py: number): void {
     const progress = Math.min(1, (time - this.rifleReloadStart) / this.rifleReloadDuration);
     const { scene } = this.arena;
-    const zoneData = [
-      { start: 0.10, end: 0.25 },
-      { start: 0.42, end: 0.57 },
-      { start: 0.72, end: 0.87 },
-    ];
-
-    if (!this.rifleReloadBarBg) {
-      this.rifleReloadBarBg = scene.add.rectangle(px, barY, barW, barH, 0x335544, 0.85).setDepth(14);
-    }
-    this.rifleReloadBarBg.setPosition(px, barY);
-
-    if (!this.rifleReloadBarFill) {
-      this.rifleReloadBarFill = scene.add.rectangle(barX, barY, 0, barH, 0x88ffaa, 0.5).setDepth(15).setOrigin(0, 0.5);
-    }
-    this.rifleReloadBarFill.setPosition(barX, barY).setSize(progress * barW, barH);
-
-    while (this.rifleReloadZones.length < 3) {
-      this.rifleReloadZones.push(scene.add.rectangle(0, barY, 0, barH, 0xffff00, 0.9).setDepth(16));
-    }
-    for (let i = 0; i < 3; i++) {
-      const z = this.rifleReloadZones[i];
-      const zd = zoneData[i];
-      const zX = barX + barW * zd.start;
-      const zW = barW * (zd.end - zd.start);
-      let color = 0xffff00;
-      if (this.rifleReloadBarsHit[i]) color = 0x44ff44;
-      else if (progress > zd.end) color = 0xff3333;
-      z.setFillStyle(color, 0.9).setPosition(zX + zW / 2, barY).setSize(zW, barH);
-    }
-
-    if (!this.rifleReloadIndicator) {
-      this.rifleReloadIndicator = scene.add.rectangle(0, barY, 3, barH + 2, 0xff2222, 1).setDepth(17);
-    }
-    this.rifleReloadIndicator.setPosition(barX + progress * barW, barY);
+    if (!this.rifleReloadDial) this.rifleReloadDial = scene.add.graphics().setDepth(15);
+    this.rifleReloadDialT += delta / 1000;
+    const g = this.rifleReloadDial;
+    g.clear();
+    TimeFx.drawReloadDial(
+      g, this.pcol, FROZEN_TONES, px, py - 56, 20, progress, this.rifleReloadDialT,
+      RIFLE_ZONES.map((z, i) => ({
+        start: z.start, end: z.end,
+        state: this.rifleReloadBarsHit[i] ? 'hit' : progress > z.end ? 'missed' : 'pending',
+      })),
+      false,
+    );
   }
 
-  private destroyRifleReloadBar(): void {
-    this.rifleReloadBarBg?.destroy(); this.rifleReloadBarBg = null;
-    this.rifleReloadBarFill?.destroy(); this.rifleReloadBarFill = null;
-    for (const z of this.rifleReloadZones) z.destroy();
-    this.rifleReloadZones = [];
-    this.rifleReloadIndicator?.destroy(); this.rifleReloadIndicator = null;
+  private destroyRifleReloadDial(): void {
+    this.rifleReloadDial?.destroy(); this.rifleReloadDial = null;
+    this.rifleReloadDialT = 0;
   }
 
   private completeRifleReload(success: boolean): void {
     this.rifleReloading = false;
-    this.destroyRifleReloadBar();
+    this.destroyRifleReloadDial();
     if (success) {
       this.rifleShotsRemaining = 3;
       this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 36, 'RELOADED! ×3', '#ffdd44');
@@ -1561,40 +1587,76 @@ export class TimeKit {
     return best;
   }
 
-  // ── Mastery — Passive Manipulation (focus / rush) ─────────────────────
+  // ── Mastery — Reputation Repair ───────────────────────────────────────
+  //
+  // A gunslinger's reputation is only worth what the last exchange did to it, and this one
+  // refuses to let a bad exchange stand. Take more than 75 damage inside two seconds and the
+  // last three seconds are simply taken back: your health and your position both revert to the
+  // snapshot the kit was already keeping for Lasso, and the ground you were dragged through
+  // comes up as time puddles. It cannot be aimed and it cannot be held — it fires on the
+  // ledger, which makes the counterplay chipping you down rather than opening on you.
 
-  getTimeMode(): 'rush' | 'focus' { return this.timeMode; }
-
-  private switchTimeMode(time: number): void {
-    if (time - this.lastModeSwitchAt < MODE_SWITCH_CD_MS) return;
-    this.lastModeSwitchAt = time;
-    this.timeMode = this.timeMode === 'rush' ? 'focus' : 'rush';
-    const rush = this.timeMode === 'rush';
-    const { player } = this.arena;
-    // The rig carries the mode from here on; this is just the moment it flips over.
-    this.playerAvatar?.play('flex');
-    this.pfx.bloom(player.x, player.y, 34, 8, 5, rush ? HEAT_TONES : FROZEN_TONES);
-    this.pfx.ring(player.x, player.y, 10, 70, rush ? TIME.powder : TIME.frost, 420, 4, 5);
-    this.arena.showFloatingText(player.x, player.y - 44,
-      rush ? '⏩ RUSH' : '⏪ FOCUS', rush ? '#ff8844' : '#44aaff');
+  /** True while the rewind is charged. Drives the rig's tell and the status tray. */
+  private isRepairReady(time: number): boolean {
+    return time - this.repairLastFiredAt >= REPAIR_COOLDOWN_MS;
   }
 
-  private updatePassiveManipulation(): void {
-    const scene = this.arena.scene as Phaser.Scene & {
-      physics: Phaser.Physics.Arcade.ArcadePhysics; tweens: Phaser.Tweens.TweenManager;
-    };
-    if (!this.arena.masteryActive) {
-      if (this.timeScaleApplied) this.restoreTimeScale();
+  private updateReputationRepair(time: number): void {
+    if (!this.arena.masteryActive || this.arena.elementId !== 'sand') {
+      if (this.repairHits.length) this.repairHits = [];
       return;
     }
-    const factor = this.timeMode === 'rush' ? RUSH_FACTOR : FOCUS_FACTOR;
-    // Scale motion (bodies + projectiles) and visual tweens only. We deliberately do NOT
-    // scale scene.time — kits mix loop-time and scene.time.now assuming they match, so
-    // warping the Clock would drift ramps/expiries codebase-wide.
-    // Arcade world.timeScale is a divisor (2 = half speed), so invert the factor.
-    if (scene.physics?.world) scene.physics.world.timeScale = 1 / factor;
-    scene.tweens.timeScale = factor;
-    this.timeScaleApplied = true;
+    // Only the last two seconds of the ledger can ever add up to a trigger.
+    const cutoff = time - REPAIR_WINDOW_MS;
+    while (this.repairHits.length && this.repairHits[0].at < cutoff) this.repairHits.shift();
+
+    if (!this.isRepairReady(time)) {
+      this.arena.setStatusIndicator('time-repair', {
+        name: 'Reputation Repair', emoji: '⏪', color: TIME.frost, priority: 107,
+        until: this.repairLastFiredAt + REPAIR_COOLDOWN_MS,
+        description: 'Your rewind has been spent. Once it recovers, the next 75 damage inside two seconds is undone.',
+      });
+      return;
+    }
+    this.arena.setStatusIndicator('time-repair', {
+      name: 'Reputation Repair', emoji: '⏪', color: TIME.gold, priority: 107,
+      count: Math.round(this.repairHits.reduce((s, h) => s + h.amount, 0)), suffix: `/${REPAIR_THRESHOLD}`,
+      description: 'Take more than 75 damage inside two seconds and the last three seconds are undone — health, position and all.',
+    });
+
+    const total = this.repairHits.reduce((s, h) => s + h.amount, 0);
+    if (total > REPAIR_THRESHOLD) this.fireReputationRepair(time);
+  }
+
+  private fireReputationRepair(time: number): void {
+    const { player, scene } = this.arena;
+    if (this.playerPosHistory.length === 0) return;
+    const snap = this.bestSnapshot(this.playerPosHistory, time - REPAIR_REWIND_MS);
+    const fromX = player.x, fromY = player.y;
+
+    this.repairLastFiredAt = time;
+    this.repairHits = [];
+
+    // Health first, so the bar is already right when the body lands.
+    if (snap.hp > player.hp) player.heal(Math.round(snap.hp - player.hp));
+    player.setPosition(snap.x, snap.y);
+    (player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+
+    // The ground you are being pulled back through comes up as puddles, so a rewind leaves
+    // the field slowed behind it rather than just relocating you.
+    for (let i = 0; i <= REPAIR_PUDDLES; i++) {
+      const p = i / REPAIR_PUDDLES;
+      this.spawnTimePuddle(fromX + (snap.x - fromX) * p, fromY + (snap.y - fromY) * p, 'player');
+    }
+
+    this.playerAvatar?.play('raise');
+    this.pfx.rewind(fromX, fromY, snap.x, snap.y, 6, FROZEN_TONES);
+    this.pfx.sunstop(snap.x, snap.y, 110, 12, FROZEN_TONES);
+    this.pfx.ring(snap.x, snap.y, 12, 96, TIME.frost, 480, 4.5, 7);
+    this.pfx.hands(snap.x, snap.y, 8, { speed: 150, size: 3, life: 620, depth: 8, tones: FROZEN_TONES });
+    scene.cameras.main.shake(200, 0.005);
+    this.arena.showFloatingText(snap.x, snap.y - 48, '⏪ REPUTATION REPAIR', '#88aaff');
+    this.arena.showFloatingText(snap.x, snap.y - 32, '−3s', '#ccddff');
   }
 
   // ── Mastery — Time Bomb ───────────────────────────────────────────────
@@ -1707,11 +1769,7 @@ export class TimeKit {
       b.t += delta / 1000;
 
       if (b.phase === 'flight') {
-        // Your own bomb rides the world clock your passive is running, like everything else
-        // you throw. The peer's mode isn't synced, so theirs flies at face value.
-        const scale = owner === 'player' && this.arena.masteryActive
-          ? (this.timeMode === 'rush' ? RUSH_FACTOR : FOCUS_FACTOR) : 1;
-        const step = (delta / 1000) * scale;
+        const step = delta / 1000;
         b.x += b.vx * step; b.y += b.vy * step;
         b.travelled += Math.hypot(b.vx, b.vy) * step;
 

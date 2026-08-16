@@ -11,11 +11,13 @@ import { ElementCodex } from '../AbilityCodex';
  */
 const magic: ElementCodex = {
   identity:
-    'A caster with no medium of its own. Magic borrows fire, rain, thorns, wind and stone out of '
-    + 'two books — a five-spell Grimoire on E and a five-spell Necronomicon on Q — and every cast '
-    + 'is a two-part act: pick a wedge off a wheel, then aim for two full seconds while the spell '
-    + 'gathers. Buy either book\'s upgrade and a black version of all five spells appears behind a '
-    + 'toggle, stronger in every case and paid for in Darkness, which at 100 kills you outright.',
+    'A caster with no medium of its own. Magic borrows fire, water, thorns, wind and stone out of '
+    + 'two books — five spells on E and five familiars on Q — and leaves the results lying around '
+    + 'the arena. Nothing it conjures is meant to be used once: Dupe copies whatever of yours is '
+    + 'standing in a field, the Crosshair pays out only if you keep hitting the same target, and '
+    + 'buying a book\'s upgrade puts a Dark Magic button at the hub of that wheel, and a corrupted '
+    + 'version of all five spells behind it — stronger in every case and charged in Darkness, which '
+    + 'at 100 kills you outright.',
 
   passives: [
     {
@@ -23,48 +25,44 @@ const magic: ElementCodex = {
       name: 'The Spell Wheel',
       basics:
         'Both books are cast off a radial menu. Hold E for the Grimoire\'s five spells or Q for the '
-        + 'Necronomicon\'s five: the wheel is 130px across, centred on you and follows you if you walk. '
-        + 'Point the cursor at a wedge or step across them with ← and →, and the selected wedge grows '
-        + '10px and brightens. A release under 150ms with no arrow key pressed re-casts your last pick '
-        + 'from that book instead of whatever is highlighted, so a repeat cast costs one tap. Every wheel '
-        + 'spell fires 2 seconds after release at the live cursor position, with both fighters free to '
-        + 'move throughout, and the cooldown — 5s for the Grimoire, 30s for the Necronomicon — is stamped '
-        + 'when the spell fires rather than when you released, so a Grimoire cast is about 7 seconds '
-        + 'apart in practice.',
+        + 'Necronomicon\'s five familiars: the wheel is 130px across, centred on you and follows you if '
+        + 'you walk. Point the cursor at a wedge or step across them with ← and →, and the selected '
+        + 'wedge grows 10px and brightens. A release under 150ms with no arrow key pressed re-casts '
+        + 'your last pick from that book instead of whatever is highlighted, so a repeat cast costs one '
+        + 'tap. Every wheel spell fires 2 seconds after release at the live cursor position, with both '
+        + 'fighters free to move throughout, and the cooldown — 5s for the Grimoire, 30s for the '
+        + 'Necronomicon — is stamped when the spell fires rather than when you released, so a Grimoire '
+        + 'cast is about 7 seconds apart in practice.',
       effects: [
-        { tag: 'utility', label: 'Opening it', detail: 'Hold E for the Grimoire\'s 5 spells or Q for the Necronomicon\'s 5. The wheel is 130px across and centred on you, and it follows you if you walk.' },
+        { tag: 'utility', label: 'Opening it', detail: 'Hold E for the Grimoire\'s 5 spells or Q for the Necronomicon\'s 5 familiars. The wheel is 130px across and centred on you, and it follows you if you walk.' },
         { tag: 'utility', label: 'Choosing', detail: 'Point the cursor at a wedge, or step across them with ← and →. The selected wedge grows 10px and brightens.' },
         { tag: 'utility', label: 'The quick tap', detail: 'A release under 150ms with no arrow key pressed re-casts your last pick from that book instead of whatever is highlighted — a repeat cast costs one tap.' },
         { tag: 'cost', label: 'The two-second aim', detail: 'Every wheel spell fires 2 seconds after release, at the live cursor position. You keep moving and shooting through it; so does the other fighter.' },
         { tag: 'utility', label: 'When the cooldown starts', detail: 'The Grimoire\'s 5s and the Necronomicon\'s 30s are stamped when the spell fires, not when you released — so a Grimoire cast is 7 seconds apart in practice.' },
+        { tag: 'utility', label: 'The Dark Magic button', detail: 'Buying the E or Q upgrade puts a button at the wheel\'s hub. Clicking it flips that wheel to its corrupted five in place — labels, colours and what release will cast — and the mode sticks between casts.' },
       ],
       notes: [
-        'Nothing about the wheel locks you: you can walk, click and be hit while it is open and while the count runs.',
-        'The NPC has no wheel. It picks by range and health — close in it takes the knockback spell, far out the cloud, low on health the stone — and it never sees a dark spell.',
+        'The wheel is drawn on top of everything, but the fight does not pause while it is open — you can be killed choosing a spell.',
       ],
     },
     {
-      emoji: '☠️',
+      emoji: '☠',
       name: 'Darkness',
       basics:
-        'A ☠ n/100 bar under you that only exists once you own Dark Grimoire or Dark Necronomicon. '
-        + 'Every dark Grimoire spell adds 25, every dark Necronomicon spell 50, a Wild Anchor blind '
-        + 'teleport 10, and Decay charges 25 for an E reset and 99 for a Q reset. At 100 you take damage '
-        + 'equal to your entire remaining health — an unconditional death, not a large hit — and crossing '
-        + '75 fires a 120px warning ring and a 180ms shake, once. The only way down is Wandering Mind: '
-        + 'each meditation orb absorbed removes 5 Darkness as well as healing 5 HP. The caster stains as '
-        + 'it climbs, the floor circle and the book\'s runes going violet to magenta past 40%.',
+        'A bar under the caster that only ever climbs, and it only exists once a corrupted book is '
+        + 'bought and its Dark Magic button switched on. Every corrupted Grimoire spell charges 25 and '
+        + 'every corrupted summon charges 50; the Decay divine perk '
+        + 'charges 25 or 99 to buy a cooldown back. At 100 the corruption takes you and you die on the '
+        + 'spot, at full health, with no save. The bar turns violet at 40 and red at 75, and the arena '
+        + 'shakes once as it crosses 75. Only F+ Corrupted Data ever brings it back down.',
       effects: [
-        { tag: 'resource', label: 'The bar', detail: 'A 60×6px readout under you reading ☠ n/100. It only exists once you own E+ Dark Grimoire or Q+ Dark Necronomicon.' },
-        { tag: 'cost', label: 'What fills it', detail: 'Every dark Grimoire spell adds 25, every dark Necronomicon spell 50, and a Wild Anchor blind teleport 10. Decay charges 25 for an E reset and 99 for a Q reset.' },
-        { tag: 'cost', label: 'The ceiling', detail: 'At 100 you take damage equal to your entire remaining health — an unconditional death, not a large hit.' },
-        { tag: 'utility', label: 'The warning', detail: 'Crossing 75 fires a 120px ring off you and a 180ms camera shake, once.' },
-        { tag: 'heal', label: 'Cleaning it off', detail: 'With F+ Wandering Mind each meditation orb you absorb removes 5 Darkness as well as healing 5 HP. That is the only way down.' },
-        { tag: 'utility', label: 'The tell', detail: 'The caster stains as it climbs — the floor circle and the book\'s runes go from violet to magenta past 40%, and a darkness aura rides at the bar\'s own fill level.' },
+        { tag: 'resource', label: 'What charges it', detail: 'Every corrupted Grimoire spell charges 25 and every greater summon charges 50. The Decay divine perk charges 25 for a Grimoire reset and 99 for a Necronomicon one.' },
+        { tag: 'cost', label: 'At 100', detail: 'You die on the spot, at full health, with no save and no shield check. The bar is a countdown, not a cost you can be too poor to pay.' },
+        { tag: 'utility', label: 'Reading it', detail: 'The bar appears under the caster once the E or Q upgrade is owned, whether Dark Magic is on or not. Violet at 40, red at 75, and the camera shakes once as it crosses 75.' },
+        { tag: 'resource', label: 'Coming back down', detail: 'Only F+ Corrupted Data sheds it — 20 per pickup. Dupe itself is free, so with F+ owned the F cooldown is the whole sustain loop. Without it, every point charged is permanent for the match.' },
       ],
       notes: [
-        'Generating 500 Darkness across your career is the mastery\'s Soul Harvester requirement, so the meter is something the element wants you to run hot.',
-        'Nothing decays it on a timer. A bar left at 90 is still at 90 next round of casting.',
+        'Ruin\'s Combo Breaker halves every meter in the game, and Darkness is one of them — which is one of the few times having your bar cut is a favour.',
       ],
     },
   ],
@@ -72,222 +70,179 @@ const magic: ElementCodex = {
   abilities: {
     'magic-sparkle-shot': {
       basics:
-        'A star fired at 450 px/s that stops dead after 180px and, one second later, detonates for 14 '
-        + 'damage in a 55px radius — with the arming visibly drawn, so a stopped sparkle is a one-second '
-        + 'warning to whoever is next to it. If it runs into somebody in flight it deals 6 instead and is '
-        + 'consumed, so the 14 never happens. 3s cooldown.',
-      cast: 'Click, aimed at the cursor. Instant, 3s cooldown.',
+        'A star fired at the cursor at 450 px/s that stops after 180px and hangs there. One second '
+        + 'later it bursts for 14 damage in a 55px radius; a direct hit on the way out is 6. The burst '
+        + 'is also what feeds a Crosshair — every sparkle that goes off on the marked fighter adds a '
+        + 'tally to it. 3s cooldown.',
+      cast: 'Click, aimed at the cursor.',
       effects: [
-        { tag: 'damage', label: 'Direct hit', detail: '6 damage if it runs into somebody in flight — and that consumes it, so the 14 never happens.' },
-        { tag: 'utility', label: 'Flight', detail: '450 px/s, stopping dead once it has covered 180px from where you stood.' },
-        { tag: 'damage', label: 'The burst', detail: 'After 1 second stationary it detonates for 14 damage in a 55px radius, to anybody standing in it.' },
-        { tag: 'utility', label: 'Reading the fuse', detail: 'The star visibly winds up over that second — the arming is drawn, so a stopped sparkle is a one-second warning to whoever is next to it.' },
+        { tag: 'damage', label: 'The burst', detail: '14 damage in a 55px radius, 1 second after the star comes to rest.' },
+        { tag: 'damage', label: 'Direct hit', detail: '6 damage to anything the star runs into on its way out.' },
+        { tag: 'utility', label: 'The flight', detail: '450 px/s, stopping after 180px — it will not reach across the arena.' },
+        { tag: 'resource', label: 'It feeds the Crosshair', detail: 'A burst that catches the marked fighter adds one tally to the Crosshair, up to 5.' },
       ],
       upgrade: {
         basics:
-          'Two more stars trail the leader, 32px and 64px back along its line of flight, bursting for 11 '
-          + 'damage each in a 45px radius. They deal no contact damage and cannot detonate on their own — '
-          + 'they go off in the same frame the leader does, wherever they happen to be. All told that is '
-          + 'one 55px circle and two 45px circles strung along about 165px of ground, for 36 damage if all '
-          + 'three connect.',
+          'Two more sparkles fly in a line 32px and 64px behind the leader, holding formation the whole '
+          + 'way. They burst for 75% damage — about 11 each — and they burst when the leader does, so a '
+          + 'clean shot is three overlapping bursts instead of one.',
         effects: [
-          { tag: 'damage', label: 'Two more bursts', detail: '11 damage each (75% of 14) in a 45px radius, one 32px and one 64px behind the leader along its line of flight.', requiresUpgrade: 'click' },
-          { tag: 'utility', label: 'Tied to the leader', detail: 'The trailing pair deal no contact damage at all and cannot detonate on their own — they go off in the same frame the leader does, wherever they happen to be.', requiresUpgrade: 'click' },
-          { tag: 'area', label: 'Total footprint', detail: 'One 55px circle and two 45px circles strung 64px back along the aim — roughly a 165px line of ground covered for 36 damage if all three connect.', requiresUpgrade: 'click' },
+          { tag: 'damage', label: 'Two trailers', detail: 'Extra sparkles 32px and 64px behind the leader, bursting for 75% damage — about 11 each.', requiresUpgrade: 'click' },
+          { tag: 'utility', label: 'They follow', detail: 'The trailers hold formation behind the leader for the whole flight and burst when it does.', requiresUpgrade: 'click' },
         ],
       },
       notes: [
-        'A direct hit is worth 6 and a miss is worth 14 — the ability pays you for aiming at the floor in front of somebody rather than at them.',
-        'The star you see is painted by the kit, not the sprite; the sprite is invisible and only there so the arena can register the 6-damage collision.',
+        'Trailer bursts feed the Crosshair too, so a Sparkle Trail shot on a marked enemy can add up to three tallies at once.',
       ],
     },
 
     'magic-grimoire': {
       basics:
-        'The five-spell wheel: Flame Burst, Storm Cloud, Virulent Thorns, Compression Blast and Gaia\'s '
-        + 'Guidance, each listed in full below. The biggest single hit is Virulent Thorns at 25 damage '
-        + 'two seconds after the vine lands, and the 2-second bind carrying it is worth more than the '
-        + 'number. 5s cooldown from the moment the spell fires, so about 7 seconds between one release '
-        + 'and the next cast landing, and a tap shorter than 150ms with no arrow key re-fires your last '
-        + 'pick without ever showing the wheel.',
-      cast: 'Hold E to open the wheel, release to commit. The spell fires 2s later at the cursor. 5s cooldown, stamped on fire.',
+        'The five-spell book. Flare crawls a burning orb to the cursor; Splash lays a slowing pool; '
+        + 'Spur throws three burs; Gust dashes you forward and drags whatever it catches back to where '
+        + 'you cast from; Ward hangs five stones on an orbit that eat projectiles. Every one of them '
+        + 'leaves something on the field that Dupe can copy, which is the point of the book. 5s '
+        + 'cooldown, stamped when the spell fires.',
+      cast: 'Hold E to open the wheel, choose a wedge, release. The spell fires 2 seconds later at the live cursor.',
       effects: [
-        { tag: 'utility', label: 'Five spells', detail: 'Flame Burst, Storm Cloud, Virulent Thorns, Compression Blast and Gaia\'s Guidance — the full figures for each are below.' },
-        { tag: 'damage', label: 'Best single hit', detail: 'Virulent Thorns, at 25 damage 2 seconds after the vine lands — and the 2s bind that carries it is worth more than the number.' },
-        { tag: 'utility', label: 'Availability', detail: '5s cooldown from the moment the spell fires, so about 7s between one release and the next cast landing.' },
-        { tag: 'utility', label: 'Repeat casting', detail: 'A tap shorter than 150ms with no arrow key re-fires your last pick without ever showing the wheel.' },
+        { tag: 'dot', label: '🔥 Flare', detail: 'A burning orb crawling to the cursor at 110 px/s for 4.5s. 3 damage every 0.5s to anything within 34px of it, and a 3s burn on each tick.' },
+        { tag: 'control', label: '🌊 Splash', detail: 'A 90px pool at the cursor for 6s: a 35% slow while you stand in it, and 3 damage a second.' },
+        { tag: 'damage', label: '🌿 Spur', detail: 'Three burs in a 26° spread at 620 px/s, 5 damage each.' },
+        { tag: 'movement', label: '💨 Gust', detail: 'You dash up to 240px at the cursor. Anything within 96px of that corridor takes 6 and is hauled back to the spot you cast from at 340 px/s for 1.3s.' },
+        { tag: 'shield', label: '🪨 Ward', detail: 'Five stones orbiting you for 8s: 10 damage on contact, and they delete hostile projectiles that touch them.' },
       ],
-      variants: {
-        label: 'The Grimoire\'s five wedges — the black five replace them entirely while Dark Magic is toggled on (E+)',
-        variants: [
-          { emoji: '🔥', name: 'Flame Burst', description: 'Three fire clouds thrown at −25°, 0° and +25°, each 35px across. They coast out at 250 px/s and slow to a stop, live 3 seconds, and burn anybody inside for 2 damage every 0.25s — 8 a second per cloud — while refreshing a 2-second burn.' },
-          { emoji: '🌧️', name: 'Storm Cloud', description: 'A raincloud parked 80px along your aim for 6 seconds. It lets go exactly once, 3 seconds in: no damage at all, but everybody within 110px is slowed by half for 1.5 seconds.' },
-          { emoji: '🌿', name: 'Virulent Thorns', description: 'A vine dart at 650 px/s that deals nothing on impact and instead binds whoever it hits for 2 seconds — no movement, no abilities. If they are still bound when it expires, the vine bursts for 25 damage.' },
-          { emoji: '💨', name: 'Compression Blast', description: 'A wall of air detonated 70px in front of you: 8 damage in a 90px radius and 650 of velocity thrown radially outward, plus a short camera shake. Anybody knockback-immune takes the damage and does not move.' },
-          { emoji: '🪨', name: "Gaia's Guidance", description: 'Three conjured stones take up a 56px orbit around you for 5 seconds. Each deals 10 damage on contact (at most once every 0.3s) and each also swats one enemy projectile out of the air — but any single use shatters it, so the set is three interactions long.' },
-          { emoji: '🖤', name: 'Corrupt Flames', description: 'A single 70px cloud of black fire that follows your cursor for 5 seconds, ticking 4 damage every 0.5s, refreshing a 3-second burn, and laying cursed fire that costs a further 2 damage every 0.5s for 3s. +25 Darkness.', requiresUpgrade: 'e' },
-          { emoji: '🖤', name: 'Acid Cloud', description: 'A 40px green cloud 80px along the aim for 8 seconds, pulsing out to 90px every 3 seconds. The pulses deal no damage — each one stacks a 3-second mark that raises all damage that target takes by 25%. +25 Darkness.', requiresUpgrade: 'e' },
-          { emoji: '🖤', name: 'Draining Thorns', description: 'An instant vine arm out to 200px along the cursor, 22px thick. Anybody on the line takes 15 damage and you are healed 15 — no travel time, no projectile to dodge. +25 Darkness.', requiresUpgrade: 'e' },
-          { emoji: '🖤', name: 'Recalling Gale', description: 'A 90° cone 200px deep that deals 18 damage once, then drags everybody inside it toward you at 320 velocity for a full second. +25 Darkness.', requiresUpgrade: 'e' },
-          { emoji: '🖤', name: "Gaia's Temple", description: 'A small temple raised at the cursor with three stones orbiting its 56px ring for 10 seconds. Contact is 15 damage (once every 0.4s per stone) and an 80% slow for 1 second; the stones also eat enemy projectiles. +25 Darkness.', requiresUpgrade: 'e' },
-        ],
-      },
       upgrade: {
         basics:
-          'Adds a 24px toggle at the centre of the open wheel that swaps all five wedges for dark '
-          + 'versions and stays swapped between casts. Corrupt Flames is a 70px cursed cloud that lerps 10% '
-          + 'of the way to your cursor every frame for 5 seconds: 4 damage per 0.5s inside it, a 3s burn, '
-          + 'and cursed fire for a further 2 per 0.5s over 3s. Acid Cloud runs 8 seconds, pulsing to 90px '
-          + 'every 3s, each pulse adding a stack of +25% damage taken for 3 seconds — and the stacks add, '
-          + 'so two pulses is +50%. Draining Thorns is an instant 200px vine dealing 15 to the first '
-          + 'fighter within 22px of the line and healing you exactly 15. Recalling Gale is a ±45° cone '
-          + '200px deep for 18 damage on cast and then a 320-velocity pull toward you every frame for a '
-          + 'second. The price is +25 Darkness a cast, on a bar that kills you at 100 — four dark Grimoire '
-          + 'spells with no meditation in between is a suicide.',
+          'A Dark Magic button appears at the Grimoire\'s hub, and a corrupted version of each of the '
+          + 'five behind it. Flare halves its speed again and burns inside '
+          + 'a 70px dark aura that damages continuously, with a shadow burn worth 4 a tick instead of the '
+          + 'ordinary one. Splash turns putrid: 130px, 6 damage a second, a 70% slow, and no dash, blink '
+          + 'or dodge roll while you stand in it. Spur burs stick for 2 seconds and stack — five at once '
+          + 'pins the victim for 3 seconds and then tears free for 12. Gust lays an 8-second electricity '
+          + 'trail along the dash that shocks whatever it is hauling for 4 every 0.3s, and gives you 25% '
+          + 'move speed to walk on. Ward lasts 25% longer and hangs a linked rock wall at 92px that stops '
+          + 'enemies but not projectiles, shedding links that fly for 10 and a shove as it dies. Every '
+          + 'one of the five charges 25 Darkness on cast — and none of it is forced, because the plain '
+          + 'five are still one click away at the hub.',
         effects: [
-          { tag: 'utility', label: 'The toggle', detail: 'A 24px button at the centre of the open wheel, only drawn once you own the upgrade. Clicking it swaps all 5 wedges and stays swapped between casts.', requiresUpgrade: 'e' },
-          { tag: 'dot', label: 'Corrupt Flames', detail: 'A 70px cursed cloud that lerps 10% of the way to your cursor every frame for 5s: 4 damage per 0.5s inside it, a 3s burn, and cursed fire for a further 2 damage per 0.5s over 3s.', requiresUpgrade: 'e' },
-          { tag: 'debuff', label: 'Acid Cloud', detail: 'An 8s cloud pulsing to 90px every 3s. Each pulse adds one stack of +25% damage taken for 3 seconds, and the stacks add — two pulses is +50%.', requiresUpgrade: 'e' },
-          { tag: 'heal', label: 'Draining Thorns', detail: 'An instant 200px vine: 15 damage to the first fighter within 22px of the line, and exactly 15 healed back to you.', requiresUpgrade: 'e' },
-          { tag: 'control', label: 'Recalling Gale', detail: 'A ±45° cone 200px deep: 18 damage once on cast, then a 320-velocity pull toward you every frame for 1 second.', requiresUpgrade: 'e' },
-          { tag: 'summon', label: "Gaia's Temple", detail: 'A fixed 10s temple at the cursor with 3 stones on a 56px orbit: 15 damage per contact and an 80% slow for 1s, and each stone blocks one projectile before it shatters.', requiresUpgrade: 'e' },
-          { tag: 'cost', label: 'The price', detail: '+25 Darkness per dark cast, on a bar that kills you at 100 — four dark Grimoire spells with nothing spent on meditation is a suicide.', requiresUpgrade: 'e' },
+          { tag: 'dot', label: 'Flare+ aura', detail: 'Half speed again — 55 px/s — inside a 70px dark aura dealing 3 damage every 0.4s to anything in it. The burn it applies becomes a shadow burn worth 4 a tick.', requiresUpgrade: 'e' },
+          { tag: 'control', label: 'Splash+ is putrid', detail: '130px, 6 damage a second, and a 70% slow. Dashes, blinks and the Space dodge are all refused while you stand in it.', requiresUpgrade: 'e' },
+          { tag: 'control', label: 'Spur+ sticks', detail: 'Burs stay in for 2 seconds and stack. Five at once pins the victim in place for 3 seconds, and tearing free costs them another 12.', requiresUpgrade: 'e' },
+          { tag: 'area', label: 'Gust+ trail', detail: 'An 8-second electricity trail along the dash path. It deals 4 every 0.3s to anyone being hauled down it — and it is one of the things Dupe copies.', requiresUpgrade: 'e' },
+          { tag: 'buff', label: 'Gust+ road', detail: 'Standing on your own trail is +25% move speed.', requiresUpgrade: 'e' },
+          { tag: 'shield', label: 'Ward+ wall', detail: '10s instead of 8, and a linked rock wall at 92px. It blocks enemy movement and lets projectiles straight through — the exact inverse of the stones inside it.', requiresUpgrade: 'e' },
+          { tag: 'damage', label: 'Ward+ shrapnel', detail: 'Over the last 3 seconds the links tear free one at a time and fly outward at 420 px/s for 10 damage and a hard shove. Whatever is left launches at once when the Ward dies.', requiresUpgrade: 'e' },
+          { tag: 'cost', label: 'What each cast charges', detail: '25 Darkness per corrupted spell — four casts from empty is death. Switching Dark Magic back off at the hub costs nothing and stops the bleeding immediately.', requiresUpgrade: 'e' },
         ],
       },
       notes: [
-        'The Acid Cloud\'s pop-up reads "⛈️ ACID −25%", which is backwards: the stack raises the damage that target takes by 25%, it does not reduce anything.',
-        'Casting every Grimoire spell 10 times each is the mastery\'s Grimoire Adept requirement — it counts the wedge index, so a dark cast counts toward the same wedge as its light twin.',
-        'Storm Cloud lives 6 seconds but only ever pulses once, because its second pulse would fall outside its own lifetime.',
+        'Casting Ward again replaces the one you have — there is only ever one per side.',
+        'With E+ alone and no F+, Dark Magic is a four-cast clock — which is exactly why it is a toggle. F+ Corrupted Data is what lets you leave it on.',
+        'Gust moves you through the same gate every dash in the game uses, so High Gravity and a Splash+ pool both stop it dead while the rest of the spell still fires.',
+        'Splash+ is the only thing in the kit that turns off the dodge roll, which is what makes Spur+ worth casting into it.',
       ],
     },
 
     'magic-anchor': {
       basics:
-        'The first press inscribes a rune circle at your feet, drawn on the floor and visible to both '
-        + 'fighters, which never expires. The second press recalls you to it instantly from any distance '
-        + '— no travel, no line of sight, nothing to interrupt — and deals 20 damage to everybody within '
-        + '120px of the mark with a 160ms camera shake. The 8s cooldown is only stamped on the recall; '
-        + 'planting is free and does not start the clock.',
-      cast: 'R. First press plants the anchor at your feet; second press recalls you to it. 8s cooldown, stamped on the recall.',
+        'Paints a crosshair on the nearest enemy for 6 seconds. It does nothing by itself: every '
+        + 'Sparkle Shot burst that catches them adds a tally, up to five, and right-click cashes the '
+        + 'whole thing in for 8 damage a tally in a 110px burst — 40 at full. Let the 6 seconds lapse '
+        + 'and you get nothing at all. 8s cooldown.',
+      cast: 'R to place it on the nearest enemy. Right-click to fire it.',
       effects: [
-        { tag: 'summon', label: 'The mark', detail: 'A rune circle inscribed at your position, drawn on the floor layer and visible to both fighters until you use it. It never expires.' },
-        { tag: 'movement', label: 'The recall', detail: 'An instant reposition to the mark from any distance — no travel, no line of sight, nothing to interrupt it.' },
-        { tag: 'damage', label: 'Arrival', detail: '20 damage to everybody within 120px of the anchor, with a 160ms camera shake.' },
-        { tag: 'utility', label: 'Availability', detail: 'The 8s cooldown is only stamped when you recall. Planting the mark is free and does not start the clock.' },
+        { tag: 'debuff', label: 'The mark', detail: 'Painted on the nearest enemy for 6 seconds. Re-casting R moves it rather than placing a second.' },
+        { tag: 'resource', label: 'Tallies', detail: 'Every Sparkle Shot burst that catches the marked fighter adds one, up to 5. The reticle tightens and a pip fills for each.' },
+        { tag: 'damage', label: 'Cashing in', detail: 'Right-click for 8 damage per tally in a 110px burst — 40 at five.' },
+        { tag: 'cost', label: 'Letting it lapse', detail: 'Nothing. The tallies were never damage, only a promise of it.' },
       ],
       upgrade: {
         basics:
-          'Every recall now grants +25% move speed for 3 seconds with a pink aura, and pressing R again '
-          + 'within 1.5 seconds of one teleports you to a uniformly random point at least 60px from every '
-          + 'wall, with a departure and an arrival burst, for +50% move speed instead and a black aura. The '
-          + 'wild jump costs 10 Darkness and welds 2 extra seconds onto the anchor cooldown — 10 seconds '
-          + 'rather than 8 before you can plant again.',
+          'Right-clicking a crosshair with no tallies on it stops being a wasted mark. It fires one heavy '
+          + 'magic missile at the target instead — 430 px/s, 15 damage in a 95px burst where it lands — '
+          + 'and drops the crosshair on the spot, so the 8-second cooldown starts immediately.',
         effects: [
-          { tag: 'buff', label: 'Clean landing', detail: '+25% move speed for 3 seconds after every recall, with a pink aura.', requiresUpgrade: 'r' },
-          { tag: 'movement', label: 'Wild re-cast', detail: 'Pressing R again within 1.5s of a recall teleports you to a uniformly random point at least 60px from every wall, with a departure and an arrival burst.', requiresUpgrade: 'r' },
-          { tag: 'buff', label: 'Wild speed', detail: '+50% move speed for 3 seconds instead, with a black aura.', requiresUpgrade: 'r' },
-          { tag: 'cost', label: 'What it costs', detail: '+10 Darkness, and 2 extra seconds welded onto the anchor cooldown — 10s rather than 8s before you can plant again.', requiresUpgrade: 'r' },
+          { tag: 'damage', label: 'The shortcut round', detail: 'A missile at 430 px/s bursting for 15 in 95px on the first fighter it reaches.', requiresUpgrade: 'r' },
+          { tag: 'utility', label: 'It clears the mark', detail: 'The crosshair is dropped the instant the missile launches, so the cooldown starts straight away rather than after the full 6 seconds.', requiresUpgrade: 'r' },
         ],
       },
       notes: [
-        'The wild re-cast is only offered when you have no anchor down, i.e. in the window straight after a recall. Planting a fresh mark closes it immediately.',
-        'The blind teleport deals no damage at all — it is pure escape, and it can just as easily put you next to the other fighter.',
+        'It marks the *nearest* enemy, not the one under your cursor — in a horde that is not always the one you wanted.',
+        'An AI Magic has no right mouse button: it fires at four tallies, or in the last half-second before the mark lapses.',
       ],
     },
 
     'magic-meditate': {
       basics:
-        'Channels healing orbs: one every 0.5s from a random screen edge, travelling at 200 px/s '
-        + 'straight at you and healing 5 on arrival within 24px. An orb that passes within 28px of an '
-        + 'enemy deals 8 damage and is consumed there, so a fighter standing between you and the edge is '
-        + 'eating your healing. The base channel pins you at zero velocity — you can still cast, click '
-        + 'and turn, you simply cannot walk — and any damage that lands ends it and costs a further 20 '
-        + 'health on top of the hit. 6s cooldown, stamped when the channel ends.',
-      cast: 'F. The base channel roots you where you stand and does not end on its own.',
+        'Opens a 140px duplication field at your cursor. Every one of your own conjurations standing '
+        + 'inside it comes out twice — Flares, pools, storm clouds, funnels, Gust trails, burs, and the '
+        + 'stones of a Ward you are standing in. Copies are the same tier as their originals and land '
+        + 'with a small random offset. The cast is free: Darkness is charged by the corrupted spells, '
+        + 'not by copying them. 6s cooldown.',
+      cast: 'F, centred on the cursor. Instant.',
       effects: [
-        { tag: 'heal', label: 'The orbs', detail: 'One orb every 0.5s from a random screen edge, travelling at 200 px/s straight at you. Reaching within 24px of you heals 5.' },
-        { tag: 'damage', label: 'Orbs as weapons', detail: 'An orb that passes within 28px of an enemy deals 8 damage and is consumed there — a fighter standing between you and the edge is eating your healing.' },
-        { tag: 'cost', label: 'Rooted', detail: 'The base channel pins you at zero velocity for as long as it runs. You can still cast, click and turn — you simply cannot walk.' },
-        { tag: 'cost', label: 'Interrupted', detail: 'Any damage that lands ends the channel and costs you a further 20 health on top of the hit itself.' },
-        { tag: 'utility', label: 'Availability', detail: '6s cooldown, stamped when the channel ends rather than when it starts.' },
+        { tag: 'summon', label: 'What it copies', detail: 'Anything of yours inside the 140px field: Flares, Splash pools, Gust trails, stuck burs, familiars and their leavings, and the stones of a Ward you are standing in.' },
+        { tag: 'utility', label: 'The copies', detail: 'Same tier, same remaining lifetime, offset by up to 23px so a doubled object reads as two.' },
+        { tag: 'control', label: 'It can finish a clutch', detail: 'Burs copy onto the same victim, so duping four Spur+ burs makes five — and five is the 3-second pin.' },
+        { tag: 'resource', label: 'It is free', detail: 'No Darkness, no health, no resource of any kind — only the 6 second cooldown. Copying a corrupted spell does not charge you a second time for it.' },
       ],
       upgrade: {
         basics:
-          'You walk at 25% speed instead of being rooted, leaving a rune mote behind you every 90ms, and '
-          + 'the damage absorber is never installed at all — a hit that lands costs you the hit and nothing '
-          + 'else, with no broken channel and no 20 health. Releasing F ends it cleanly, which is the only '
-          + 'deliberate way to stop, and each orb absorbed removes 5 Darkness as well as healing 5, so '
-          + 'twenty orbs undoes four dark Grimoire casts.',
+          'An enemy caught in the field is copied too, and comes out wrong. Each one sheds a glitching '
+          + 'lookalike of you onto the floor for 14 seconds; walk over it and 20 Darkness comes off the '
+          + 'bar. It is the only thing in the element that reduces Darkness at all, which turns the F '
+          + 'cooldown into the kit\'s whole sustain loop — a free cast that pays 20 back off a bar only '
+          + 'the corrupted spells ever fill.',
         effects: [
-          { tag: 'movement', label: 'Mobile channel', detail: 'You move at 25% of your normal speed instead of being rooted, leaving a rune mote behind you every 90ms.', requiresUpgrade: 'f' },
-          { tag: 'shield', label: 'Uninterruptible', detail: 'The damage absorber is never installed, so a hit that lands costs you the hit and nothing else — no broken channel, no 20 health.', requiresUpgrade: 'f' },
-          { tag: 'utility', label: 'Ends on release', detail: 'Letting go of F ends it cleanly, which is the only way to stop meditating on purpose.', requiresUpgrade: 'f' },
-          { tag: 'resource', label: 'Cleansing', detail: 'Each orb absorbed removes 5 Darkness as well as healing 5 — 20 orbs undoes four dark Grimoire casts.', requiresUpgrade: 'f' },
+          { tag: 'resource', label: 'Corrupted data', detail: 'An enemy inside the field drops a glitched copy of you that lasts 14s. Walking over it sheds 20 Darkness.', requiresUpgrade: 'f' },
+          { tag: 'utility', label: 'The only way down', detail: 'Nothing else in the kit reduces Darkness. Without this upgrade every point charged is permanent for the match.', requiresUpgrade: 'f' },
         ],
       },
       notes: [
-        'The base channel has no duration and no release check: once it starts, the only thing that ends it is taking damage — and that costs 20. F+ is what makes the ability voluntary.',
-        'Healing 200 HP through the orbs is the mastery\'s Inner Peace requirement, and F+ is by far the safest way to get there.',
-        'The NPC\'s version is a plain 3-second channel that ends on its own.',
+        'The field is centred on the cursor, not on you — you can copy a Flare halfway across the arena without walking to it.',
+        'A corrupted spell charges its 25 or 50 Darkness once, on cast. The copy Dupe makes of it is free, which is the cheapest damage in the element.',
       ],
     },
 
     'magic-necronomicon': {
       basics:
-        'The ultimate wheel: Flame Barrage, Final Drench, Thorn Prison, Tornado Blast and Gaia\'s Rage, '
-        + 'each listed in full below. The biggest single number is Thorn Prison at 35 damage on release '
-        + 'plus 3 a second for up to 5 seconds of imprisonment. 30s cooldown from the moment the spell '
-        + 'fires — one Necronomicon spell per half-minute of fight — and the same sub-150ms tap re-fires '
-        + 'your last pick without opening the wheel.',
-      cast: 'Hold Q to open the wheel, release to commit. The spell fires 2s later at the cursor. 30s cooldown, stamped on fire.',
+        'Calls one base element up as a familiar for 18 seconds. It has health, it can be shot down, '
+        + 'and it fights on its own — you only choose which one and when. It hangs off you until you '
+        + 'are more than 150px apart, then drifts at whoever you are fighting. Fire and Water throw; '
+        + 'Life, Wind and Earth have to close. 30s cooldown.',
+      cast: 'Hold Q to open the wheel, choose a familiar, release. It arrives 2 seconds later.',
       effects: [
-        { tag: 'utility', label: 'Five ultimates', detail: 'Flame Barrage, Final Drench, Thorn Prison, Tornado Blast and Gaia\'s Rage — full figures for each below.' },
-        { tag: 'damage', label: 'Biggest single number', detail: 'Thorn Prison, at 35 damage on release plus 3 a second for up to 5 seconds of total imprisonment.' },
-        { tag: 'utility', label: 'Availability', detail: '30s cooldown from the moment the spell fires — one Necronomicon spell per half-minute of fight.' },
-        { tag: 'utility', label: 'Repeat casting', detail: 'The same sub-150ms tap re-fires your last Necronomicon pick without opening the wheel.' },
+        { tag: 'summon', label: '🔥 Fire', detail: '45 HP. A fire bolt every 1.3s at up to 420px: 8 damage and a 2s burn.' },
+        { tag: 'summon', label: '🌊 Water', detail: '50 HP. A dart every 1.5s at up to 420px: 6 damage and a 1.2s slow.' },
+        { tag: 'summon', label: '🌿 Life', detail: '60 HP. A thorn lash every 1.2s within 96px for 7 — the warden has to come to you.' },
+        { tag: 'summon', label: '💨 Wind', detail: '40 HP and the fastest of them. A shove every 1.1s within 110px: 5 damage and a hard knockback.' },
+        { tag: 'summon', label: '🪨 Earth', detail: '80 HP and the slowest. A slam every 1.6s within 78px for 12 — the hardest ordinary hit of the five.' },
+        { tag: 'cost', label: 'They can die', detail: 'A familiar is a body on the field. Hostile projectiles hit it for their full damage and it bursts when it runs out.' },
       ],
-      variants: {
-        label: 'The Necronomicon\'s five wedges — the black five replace them entirely while Dark Magic is toggled on (Q+)',
-        variants: [
-          { emoji: '🌋', name: 'Flame Barrage', description: 'Ten fire clouds fanned across 70° at 200–260 px/s, each 40px across and living 6 seconds. Anybody inside one takes 3 damage every 0.2s — 15 a second per cloud, and the fan overlaps — while a 4-second burn is refreshed on them.' },
-          { emoji: '🌊', name: 'Final Drench', description: 'A storm parked 80px along your aim for 12 seconds. It lets go every 3 seconds out to 130px: 12 damage and a 50% slow for 1.5s each time, three times over.' },
-          { emoji: '🌿', name: 'Thorn Prison', description: 'A heavy dark vine at 380 px/s. Whoever it hits is pinned to the spot it landed and chained to all four corners of the arena for 5 seconds, taking 3 damage a second. Their own shots can cut the chains — 15 damage each — but the cage deals 35 damage when it ends either way.' },
-          { emoji: '🌪️', name: 'Tornado Blast', description: '10 damage and 700 of knockback in a 90px burst 70px ahead of you, then a funnel that stays for 10 seconds. It roams at 150 px/s, re-picking a direction every 0.4–0.8s and heading for the enemy 40% of the time, and every 0.2s deals 4 damage and throws anybody within 80px away at 450.' },
-          { emoji: '🪨', name: "Gaia's Rage", description: 'Five heavy stones on a 64px orbit around you for 12 seconds, 20 damage a contact. These ones crack rather than shatter — each survives its first hit or block and only breaks on the second, so the set is ten interactions long.' },
-          { emoji: '🖤', name: 'Dark Barrage', description: 'Three 60px cursed clouds thrown at −25°, 0° and +25° that then chase your cursor for 4 seconds, ticking 4 damage every 0.5s with a 3-second burn and cursed fire on top. +50 Darkness.', requiresUpgrade: 'q' },
-          { emoji: '🖤', name: 'Acid Rain', description: 'Three green clouds planted 100px around you at even thirds, each lasting 8 seconds and pulsing out to 80px every 2 seconds. Every pulse stacks another 3-second +25% damage-taken mark. +50 Darkness.', requiresUpgrade: 'q' },
-          { emoji: '🖤', name: 'Torture Trap', description: 'An instant 200px vine. On a hit it threads a 5-second lifesteal link: 3 damage a second down the thread, and every point of damage that target takes from any source at all is healed straight back to you. +50 Darkness.', requiresUpgrade: 'q' },
-          { emoji: '🖤', name: 'Hurricane Vacuum', description: 'A ±45° cone 220px deep dealing 12 damage once, then dragging everybody in it toward you at 400 velocity for a second — followed by an ash-black funnel for 10 seconds. +50 Darkness.', requiresUpgrade: 'q' },
-          { emoji: '🖤', name: "Gaia's Monument", description: 'A monument raised at the cursor with five heavy stones on an 80px orbit for 15 seconds. Contact is 20 damage and a 1-second stun, and each stone cracks before it breaks. +50 Darkness.', requiresUpgrade: 'q' },
-        ],
-      },
       upgrade: {
         basics:
-          'The same 24px centre toggle, on the Q wheel, sticky between casts and independent of the '
-          + 'Grimoire\'s. Dark Barrage launches three 60px cursed clouds at 120 px/s across a 50° fan that '
-          + 'then home on your cursor for 4 seconds, each dealing 4 damage per 0.5s plus a 3s burn and '
-          + 'cursed fire at 2 per 0.5s. Acid Rain puts three 36px clouds at 100px around you for 8 seconds, '
-          + 'pulsing to 80px every 2s, each pulse another +25% damage-taken stack for 3 seconds — and three '
-          + 'clouds stack fast. Torture Trap is a 5-second thread dealing 3 a second and healing you 100% '
-          + 'of every point of damage that target takes, from you, from a hazard, from anything. Hurricane '
-          + 'Vacuum is 12 damage once in a ±45°, 220px cone, a 400-velocity pull for a second, and a '
-          + '10-second dark funnel doing 4 damage per 0.2s within 80px. The price is +50 Darkness a cast: '
-          + 'two dark ultimates is 100 and a guaranteed death unless meditation has cleaned the bar in '
-          + 'between.',
+          'A Dark Magic button appears at the Necronomicon\'s hub. With it on, familiars arrive '
+          + 'corrupted: 40% more HP, a darker body under a rune halo, and a signature move '
+          + 'on a long clock on top of the ordinary attack. Fire drops a bomb that detonates as a cross of '
+          + 'four 200px fire pillars for 18. Water floods the whole arena for 4 seconds, slowing foes 20%. '
+          + 'Life fires a barrage of 18 roots, 3 damage and a 1.5s root each. Wind raises an 8-second '
+          + 'hurricane — and the eye of it is the best square on the board for its own caster. Earth opens '
+          + 'five holes in the floor that swallow whoever steps in, including you. Every greater summon '
+          + 'charges 50 Darkness on cast, and the plain five are still one click away at the hub.',
         effects: [
-          { tag: 'utility', label: 'The toggle', detail: 'The same 24px centre button, on the Q wheel, only drawn once Q+ is owned. Sticky between casts and independent of the Grimoire\'s toggle.', requiresUpgrade: 'q' },
-          { tag: 'dot', label: 'Dark Barrage', detail: 'Three 60px cursed clouds launched at 120 px/s across a 50° fan, then homing on your cursor for 4s: 4 damage per 0.5s each, a 3s burn and cursed fire at 2 damage per 0.5s.', requiresUpgrade: 'q' },
-          { tag: 'debuff', label: 'Acid Rain', detail: 'Three 36px clouds at 100px around you for 8s, pulsing to 80px every 2s. Each pulse is another +25% damage-taken stack for 3s, and three clouds stack fast.', requiresUpgrade: 'q' },
-          { tag: 'heal', label: 'Torture Trap', detail: 'A 5-second thread: 3 damage a second, and 100% of every point of damage that target takes — from you, from a hazard, from anything — healed to you.', requiresUpgrade: 'q' },
-          { tag: 'control', label: 'Hurricane Vacuum', detail: '12 damage once in a ±45°, 220px cone, a 400-velocity pull for 1 second, and a 10-second dark funnel doing 4 damage per 0.2s within 80px.', requiresUpgrade: 'q' },
-          { tag: 'summon', label: "Gaia's Monument", detail: 'Five 13px stones on an 80px orbit at the cursor for 15s: 20 damage and a 1-second stun per contact, twice per stone before it breaks.', requiresUpgrade: 'q' },
-          { tag: 'cost', label: 'The price', detail: '+50 Darkness per dark ultimate. Two of them is 100 and a guaranteed death unless meditation has cleaned the bar in between.', requiresUpgrade: 'q' },
+          { tag: 'damage', label: 'Fire+ cross bomb', detail: 'Every 7s: a bomb on the target that arms after 0.9s and detonates as a cross of four 200px pillars, 26px wide. 18 damage and a 3s burn. The diagonals are safe.', requiresUpgrade: 'q' },
+          { tag: 'control', label: 'Water+ flood', detail: 'Every 8s the whole arena goes under for 4 seconds: a 20% slow on foes with nowhere to stand it out.', requiresUpgrade: 'q' },
+          { tag: 'control', label: 'Life+ root barrage', detail: 'Every 9s: 18 roots scattered within 150px of the target, each arming on its own timer for 3 damage and a 1.5s root.', requiresUpgrade: 'q' },
+          { tag: 'buff', label: 'Wind+ eye of the storm', detail: 'Every 10s an 8-second hurricane. Standing within 58px of its centre runs your cooldowns 70% faster and makes everything take 30% more damage.', requiresUpgrade: 'q' },
+          { tag: 'cost', label: 'Earth+ cracks', detail: 'Every 9s, five 34px holes open in the floor for 9 seconds. Stepping in one is 20 damage, a second underground, and a trip back to the centre of the arena — and it catches you exactly as readily as the enemy.', requiresUpgrade: 'q' },
+          { tag: 'buff', label: 'Tougher bodies', detail: 'Every upgraded familiar has 40% more HP: Fire 63, Water 70, Life 84, Wind 56, Earth 112.', requiresUpgrade: 'q' },
+          { tag: 'cost', label: 'What each cast charges', detail: '50 Darkness a summon — half the bar. Two from empty is the limit before F+ has to pay some back, or before you switch the hub off and call a plain familiar instead.', requiresUpgrade: 'q' },
         ],
       },
       notes: [
-        'Thorn Prison deals its 35 damage whether the captive breaks out or serves the full five seconds — cutting all four chains buys the time back, not the hit.',
-        'Hurricane Vacuum\'s funnel does not actually pull. The initial cone does, then the funnel reverts to the ordinary tornado behaviour and throws people away from it; the kit says as much in a comment.',
-        'Casting all five Necronomicon spells at least once is the mastery\'s Apocalypse Scholar requirement — one full round of the wheel across your whole career.',
+        'Familiars are ordinary conjured objects, so Dupe copies them — including their tier and their signature clock.',
+        'Levitate is the only thing that keeps a Magic caster out of their own Earth+ cracks.',
+        'Ruin\'s Spikes of Ruin razes familiars along with Wards and funnels.',
       ],
     },
   },
@@ -295,41 +250,32 @@ const magic: ElementCodex = {
   perks: {
     thunder: {
       basics:
-        'The first press of E is a Lightning Call and the first Q an Apocalypse Call: an arming press '
-        + 'that casts nothing and still stamps the full cooldown, so a charged spell is one whole '
-        + 'cooldown slower to arrive. The next press of that key is the charged cast. Flame Burst and '
-        + 'Flame Barrage are cast twice in the same instant, 6 and 20 clouds stacked on the same lines. '
-        + 'Storm Cloud, Final Drench and dark Acid Cloud halve their pulse interval, and Acid Rain halves '
-        + 'all three of its clouds. A charged Virulent Thorns stuns the fighter it binds for 2 seconds, a '
-        + 'charged Draining Thorns stuns for 2 outright, and a charged Torture Trap runs 3 seconds '
-        + 'longer. Compression Blast, Tornado Blast, Recalling Gale and Hurricane Vacuum all add a 50% '
-        + 'slow for 3 seconds. A charged Gaia\'s Temple gains one extra orb and a charged Gaia\'s Monument '
-        + 'two, each bolted on with a lightning strike at 15 damage a contact. And a charged Necronomicon '
-        + 'cast immediately gives 15 of its 30 seconds back.',
-      cast: 'No key of its own. The first E is Lightning Call, the first Q is Apocalypse Call; the next press of that key is the charged cast.',
+        'The first press of E or Q calls lightning down and arms the book instead of opening the wheel, '
+        + 'costing that press and stamping the cooldown. The next cast off that book comes out charged, '
+        + 'and what "charged" means is different for each spell: a second Flare, a pool 35% wider doing '
+        + 'double damage, a second volley of burs, a 1.2s stun on everyone a Gust is hauling, two extra '
+        + 'stones on a Ward — and off the Necronomicon, a second familiar of the same kind.',
+      cast: 'No key of its own. The first E or Q press of the fight arms; the next one casts.',
       effects: [
-        { tag: 'utility', label: 'Arming', detail: 'The arming press casts nothing and still stamps the full cooldown — 5s for the Grimoire, 30s for the Necronomicon — so a charged spell is one whole cooldown slower to arrive.' },
-        { tag: 'damage', label: 'Charged fire', detail: 'Flame Burst and Flame Barrage are cast twice in the same instant — 6 clouds and 20 clouds respectively, stacked on the same lines.' },
-        { tag: 'utility', label: 'Charged weather', detail: 'Storm Cloud, Final Drench and the dark Acid Cloud have their pulse interval halved, so a 3-second downpour becomes 1.5 — Acid Rain halves all three of its clouds.' },
-        { tag: 'control', label: 'Charged vine', detail: 'A charged Virulent Thorns also stuns the fighter it binds for 2 seconds on impact; a charged Draining Thorns stuns for 2s outright; a charged Torture Trap runs 3 seconds longer.' },
-        { tag: 'control', label: 'Charged wind', detail: 'Compression Blast, Tornado Blast, Recalling Gale and Hurricane Vacuum all add a 50% slow for 3 seconds on top of their own effect.' },
-        { tag: 'summon', label: 'Charged stone', detail: 'A charged Gaia\'s Temple gains 1 extra orb and a charged Gaia\'s Monument gains 2, each bolted on with a lightning strike at 15 damage a contact.' },
-        { tag: 'buff', label: 'Apocalypse discount', detail: 'A charged Necronomicon cast immediately gives 15 seconds of its own 30-second cooldown back.' },
+        { tag: 'utility', label: 'Arming', detail: 'The first press of E or Q calls a bolt down and arms that book. It costs the press and stamps the cooldown — nothing is cast.' },
+        { tag: 'damage', label: 'Charged Flare', detail: 'A second Flare on the same line — 2 orbs, so 6 damage every 0.5s to anything caught between them.' },
+        { tag: 'damage', label: 'Charged Splash', detail: 'The pool comes up 35% wider and ticks for double.' },
+        { tag: 'damage', label: 'Charged Spur', detail: 'A second 3-bur volley — 6 burs for 30 damage, and with Spur+ that is a 5-bur clutch out of one cast.' },
+        { tag: 'control', label: 'Charged Gust', detail: 'Everyone the gust caught is stunned for 1.2s on top of the haul.' },
+        { tag: 'shield', label: 'Charged Ward', detail: 'Two extra stones bolted onto the orbit at 15 damage each.' },
+        { tag: 'summon', label: 'Charged Necronomicon', detail: 'A second familiar of the same kind, and 15 seconds off the 30-second cooldown.' },
       ],
       notes: [
-        'A charged Gaia\'s Guidance is 4 stones instead of 3, still 10 damage and 5 seconds.',
-        'A charged Gaia\'s Rage is a downgrade: instead of 5 stones at 20 damage for 12 seconds it builds 5 at 12 damage on a tighter 56px orbit for 8 seconds. The charge makes that wedge strictly worse.',
-        'Thorn Prison has no charged behaviour at all — the charge is spent for nothing if you release on it.',
-        'The perk\'s ingredients are electricity, acid and light.',
+        'The charge is stored per book. Arming E does nothing for Q.',
       ],
     },
     decay: {
       basics:
-        'A press of E or Q that lands while that ability is cooling clears the cooldown instead of '
-        + 'doing nothing: 25 Darkness for the Grimoire, 99 for the Necronomicon. There is no '
-        + 'affordability check at all — from 1 Darkness or higher, a Necronomicon reset takes you to 100 '
-        + 'and kills you on the spot. The press that pays only refreshes the key; the next press is the '
-        + 'one that opens the wheel.',
+        'A press on E or Q that lands while that book is still cooling hands the cooldown straight back, '
+        + 'paid for in Darkness — 25 for the Grimoire, 99 for the Necronomicon. There is no affordability '
+        + 'check at all: from 1 Darkness or higher, a Necronomicon reset takes you to 100 and kills you '
+        + 'on the spot. The press that pays only refreshes the key; the next press is the one that opens '
+        + 'the wheel.',
       cast: 'No key. Triggers on a press of E or Q that lands while that ability is on cooldown.',
       effects: [
         { tag: 'utility', label: 'Grimoire reset', detail: 'E while the Grimoire is cooling clears its cooldown outright, for 25 Darkness.' },
@@ -339,12 +285,11 @@ const magic: ElementCodex = {
       ],
       notes: [
         'The reset is paid after the readout is drawn, so the "DECAY — READY" text lands before the corruption does — including on the press that kills you.',
-        'It works without either book upgrade: Decay generates Darkness on a caster who has no other way of making it, and no way at all of cleansing it unless F+ is owned.',
+        'Decay stacks on top of whatever the corrupted books are already charging, so a Decay caster has two taps on the same bar and only F+ to drain it.',
         'The perk\'s ingredients are life and acid.',
       ],
     },
   },
-
   mastery: {
     levitate: {
       basics:

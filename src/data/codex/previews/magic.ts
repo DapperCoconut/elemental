@@ -12,17 +12,17 @@ import {
 /**
  * Magic's showcases.
  *
- * Almost nothing in this element is a sprite: clouds, funnels, orbiting stone, sparkles, heal
- * orbs, prison chains and the lifesteal thread are all plain data repainted every frame into two
- * Graphics layers. So these loops keep their own little arrays and call exactly the painters the
- * kit calls — `MagicFx.drawFlameCloud`, `drawStormCloud`, `drawSparkle`, `drawHealOrb`,
- * `drawAnchor`, `drawPrisonChain`, `drawLifeLink`, `drawChickenBolt`, `runeOrb` and `vineLash` —
- * plus `MagicFx.drawWheel`, which was pulled out of the kit so the showcase can open the same
- * five-wedge ring the arena does.
+ * Almost nothing in this element is a sprite: Flares, pools, burs, spark trails, ward links,
+ * crosshairs, corrupted data and the familiars themselves are all plain data repainted every
+ * frame into two Graphics layers. So these loops keep their own little arrays and call exactly
+ * the painters the kit calls — `MagicFx.drawFlameCloud`, `drawPuddle`, `drawBur`, `drawSummon`,
+ * `drawSummonBolt`, `drawCrosshair`, `drawMagicMissile`, `drawCorruptData`, `drawGroundCrack`,
+ * `drawSparkle`, `drawChickenBolt`, `runeOrb` and `vineLash` — plus `MagicFx.drawWheel`, which
+ * was pulled out of the kit so the showcase can open the same five-wedge ring the arena does,
+ * Dark Magic hub button and all.
  *
- * The two thrown vines are real projectile sprites (`proj-thorn-vine`, `proj-thorn-vine-dark`),
- * so those fly through `ctx.fly` at their real px/s. The Sparkle Shot's sprite is deliberately
- * invisible in the arena — the kit paints the star — so it is mirrored, not flown.
+ * The Sparkle Shot's sprite is deliberately invisible in the arena — the kit paints the star —
+ * so it is mirrored here, not flown.
  *
  * Containment: anything built inside `ctx.at` / `ctx.onFrame` goes through `ctx.capture` /
  * `ctx.adopt`; `MagicFx` instances carry a sticky sink and need no help.
@@ -189,9 +189,8 @@ function flameLayer(ctx: PreviewCtx, clouds: Cloud[]): void {
 /**
  * Cloud ticks, printed only while a cloud is genuinely covering the target.
  *
- * Flame Burst's clouds decelerate at 0.93 a frame from 250, so they travel about 60px and no
- * further — a loop that printed a figure over a distant dummy would be documenting a reach the
- * ability does not have.
+ * A cloud decelerates at 0.93 a frame, so it travels about 60px and no further — a loop that
+ * printed a figure over a distant dummy would be documenting a reach the ability does not have.
  */
 function cloudTicks(
   ctx: PreviewCtx, clouds: Cloud[], target: { x: number; y: number },
@@ -347,6 +346,60 @@ export const sparkleShotUpgraded: PreviewScript = {
   },
 };
 
+// ══ Shared world layers for the reworked kit ══════════════════════════
+
+interface Pool { x: number; y: number; radius: number; born: number; life: number; putrid: boolean; seed: number }
+
+/** Splash pools on the floor, painted with the kit's own painter. */
+function poolLayer(ctx: PreviewCtx, pools: Pool[]): void {
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
+  ctx.onFrame((_dt, elapsed) => {
+    g.clear();
+    for (let i = pools.length - 1; i >= 0; i--) {
+      const p = pools[i];
+      if (elapsed - p.born >= p.life) { pools.splice(i, 1); continue; }
+      const fade = Phaser.Math.Clamp((p.life - (elapsed - p.born)) / 800, 0, 1);
+      MagicFx.drawPuddle(g, ctx.tint, p.x, p.y, p.radius, p.putrid, p.seed,
+        elapsed / 1000, 0.45 + 0.5 * fade);
+    }
+  });
+}
+
+interface StuckBur { ox: number; oy: number; spin: number }
+
+/** Burs riding on a victim, offset from their centre exactly as the kit stores them. */
+function burLayer(ctx: PreviewCtx, burs: StuckBur[], on: { x: number; y: number }): void {
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+  ctx.onFrame((dt) => {
+    g.clear();
+    for (const b of burs) {
+      b.spin += dt * 0.002;
+      MagicFx.drawBur(g, ctx.tint, on.x + b.ox, on.y + b.oy, b.spin, 1);
+    }
+  });
+}
+
+interface Fam { kind: string; x: number; y: number; bob: number; seed: number; plus: boolean; hp: number }
+
+/** Familiars, drifting at a target the way the kit's station-keeping does. */
+function famLayer(ctx: PreviewCtx, fams: Fam[], goal: { x: number; y: number }): void {
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+  ctx.onFrame((dt, elapsed) => {
+    g.clear();
+    for (const f of fams) {
+      f.bob += dt * 0.005;
+      const a = Math.atan2(goal.y - f.y, goal.x - f.x);
+      const d = Phaser.Math.Distance.Between(f.x, f.y, goal.x, goal.y);
+      if (d > 78) {
+        f.x += Math.cos(a) * 120 * (dt / 1000);
+        f.y += Math.sin(a) * 120 * (dt / 1000);
+      }
+      MagicFx.drawSummon(g, ctx.tint, f.kind, f.x, f.y, f.bob, f.plus, f.seed,
+        elapsed / 1000, f.hp, 1);
+    }
+  });
+}
+
 // ══ E — Grimoire ══════════════════════════════════════════════════════
 
 export const grimoire: PreviewScript = {
@@ -357,42 +410,40 @@ export const grimoire: PreviewScript = {
   run(ctx) {
     const at = { x: ctx.w * 0.30, y: ctx.h * 0.52 };
     const { fx, av } = drivenCaster(ctx, at);
-    // Close in: Flame Burst's clouds coast about 60px before they stop, and the loop should not
-    // imply otherwise.
-    const victim = { x: at.x + 120, y: at.y };
+    const victim = { x: at.x + 150, y: at.y - 10 };
     dummyAt(ctx, victim);
     const st: WheelState = { open: false, selected: 0, dark: false };
     wheelLayer(ctx, at, { labels: GRIMOIRE_LABELS, colors: GRIMOIRE_COLORS }, null, st);
     const readout = label(ctx, ctx.w * 0.5, 14, '#cc99ff', 13);
-    const clouds: Cloud[] = [];
-    flameLayer(ctx, clouds);
-    cloudTicks(ctx, clouds, victim, 250, '2', '#ffaa44');
+    const pools: Pool[] = [];
+    poolLayer(ctx, pools);
     const orbs: Orb[] = [];
     orbitLayer(ctx, at, orbs, 56);
 
-    ctx.at(300, () => { st.open = true; readout.setText('holding E — five wedges'); });
-    ctx.at(1000, () => { st.selected = 1; });
-    ctx.at(1500, () => { st.selected = 0; readout.setText('← / → across the wedges'); });
+    ctx.at(300, () => { st.open = true; readout.setText('holding E — five spells'); });
+    ctx.at(1000, () => { st.selected = 2; });
+    ctx.at(1500, () => { st.selected = 1; readout.setText('← / → across the wedges'); });
     ctx.at(2100, () => {
       st.open = false;
       av.play('sweep', ctx.aim);
       readout.setText('released — 2s to aim');
     });
     aimCountdown(ctx, at, 2100, () => {
-      // Flame Burst: three clouds at −25°, 0° and +25°, coasting out at 250 and slowing to a stop.
-      fx.ring(at.x, at.y, 8, 54, MAGIC.ember, 420, 9, 2.6);
-      for (const deg of [-25, 0, 25]) {
-        const a = Phaser.Math.DegToRad(deg);
-        clouds.push({
-          seed: Math.random() * 10, x: at.x, y: at.y,
-          vx: Math.cos(a) * 250, vy: Math.sin(a) * 250,
-          radius: 35, born: 4100, life: 3000, cursed: false,
-        });
-      }
-      readout.setText('🔥 Flame Burst — 2 damage every 0.25s, 3s of cloud');
+      // Splash: a 90px pool at the cursor, 6s of 35% slow and 3 damage a second.
+      fx.ring(victim.x, victim.y, 10, 90, MAGIC.storm, 560, 8, 3);
+      pools.push({
+        x: victim.x, y: victim.y, radius: 90,
+        born: 4100, life: 6000, putrid: false, seed: Math.random() * 10,
+      });
+      ctx.capture(() => float(ctx, victim.x, victim.y - 30, '🌊 Splash', '#66aaff', 12));
+      readout.setText('🌊 90px pool, 6s — 35% slow and 3 damage a second');
     });
+    for (const d of [4700, 5700, 6700]) {
+      ctx.at(d, () => ctx.capture(() =>
+        float(ctx, victim.x + (Math.random() - 0.5) * 22, victim.y - 24, '3', '#66aaff', 12)));
+    }
 
-    // Then the repeat trick: a tap too short to open the wheel re-fires the last pick.
+    // The repeat trick: a tap too short to open the wheel re-fires the last pick.
     ctx.at(7600, () => {
       st.selected = 4;
       readout.setText('tap E under 150ms — no wheel, last pick again');
@@ -400,31 +451,30 @@ export const grimoire: PreviewScript = {
     });
     aimCountdown(ctx, at, 7700, () => {
       fx.ring(at.x, at.y, 8, 68, MAGIC.stone, 520, 8, 2.6);
-      for (let i = 0; i < 3; i++) {
-        orbs.push({ angle: (i / 3) * Math.PI * 2, radius: 9, cracked: false, dead: false });
+      for (let i = 0; i < 5; i++) {
+        orbs.push({ angle: (i / 5) * Math.PI * 2, radius: 10, cracked: false, dead: false });
         ctx.capture(() => fx.sigils(
-          at.x + Math.cos((i / 3) * Math.PI * 2) * 56, at.y + Math.sin((i / 3) * Math.PI * 2) * 56,
+          at.x + Math.cos((i / 5) * Math.PI * 2) * 56, at.y + Math.sin((i / 5) * Math.PI * 2) * 56,
           3, { speed: 70, size: 6, life: 400, color: MAGIC.sand, points: 4 },
         ));
       }
-      ctx.capture(() => float(ctx, at.x, at.y - 30, '🪨 Gaia\'s Guidance', '#aa7733', 12));
-      readout.setText('🪨 3 stones, 10 damage a contact, 5s');
+      ctx.capture(() => float(ctx, at.x, at.y - 30, '🪨 Ward', '#cc9944', 12));
+      readout.setText('🪨 5 stones, 10 damage a contact, and they eat hostile shots');
     });
   },
 };
 
 export const grimoireUpgraded: PreviewScript = {
-  duration: 12000,
+  duration: 13000,
   scale: 0.8,
   bodyTexture: '',
-  caption: 'Dark Grimoire — the hub button blackens all five wedges; every dark cast is +25 Darkness',
+  caption: 'Corrupted Grimoire — the hub button blackens all five wedges; every dark cast is +25 Darkness',
   run(ctx) {
     const at = { x: ctx.w * 0.30, y: ctx.h * 0.52 };
     const { fx, av } = drivenCaster(ctx, at);
-    const cursor = { x: at.x + 250, y: at.y - 30 };
-    const victim = { x: at.x + 250, y: at.y - 10 };
+    const victim = { x: at.x + 150, y: at.y - 10 };
     dummyAt(ctx, victim);
-    const st: WheelState = { open: false, selected: 0, dark: false };
+    const st: WheelState = { open: false, selected: 1, dark: false };
     wheelLayer(ctx, at,
       { labels: GRIMOIRE_LABELS, colors: GRIMOIRE_COLORS },
       { labels: DARK_GRIMOIRE_LABELS, colors: DARK_GRIMOIRE_COLORS }, st);
@@ -432,261 +482,278 @@ export const grimoireUpgraded: PreviewScript = {
     darknessBar(ctx, at, () => darkness);
     aura(ctx, 'darkness', at, 28, () => ({ on: darkness > 1, intensity: darkness / 100 }));
     const readout = label(ctx, ctx.w * 0.5, 14, '#cc66ff', 13);
-    const clouds: Cloud[] = [];
-    flameLayer(ctx, clouds);
-    cloudTicks(ctx, clouds, victim, 500, '4', '#ff5500');
+    const pools: Pool[] = [];
+    poolLayer(ctx, pools);
+    const burs: StuckBur[] = [];
+    burLayer(ctx, burs, victim);
 
     ctx.at(300, () => { st.open = true; readout.setText('the hub button only exists with E+'); });
-    ctx.at(1400, () => {
+    ctx.at(1300, () => {
       st.dark = true;
-      ctx.capture(() => fx.ring(at.x, at.y, 6, 34, MAGIC.magenta, 400, 33, 2.4));
-      readout.setText('toggled — all five wedges are black now');
+      ctx.capture(() => fx.ring(at.x, at.y, 6, 44, MAGIC.magenta, 400, 33, 2.4));
+      ctx.capture(() => float(ctx, at.x, at.y - 44, '🖤 DARK MAGIC ON', '#cc44ff', 12));
+      readout.setText('toggled — all five wedges are black now, and it sticks between casts');
     });
-    ctx.at(2400, () => {
-      st.open = false;
-      av.play('sweep', ctx.aim);
-      readout.setText('released — 2s to aim');
-    });
-    aimCountdown(ctx, at, 2400, () => {
+    ctx.at(2200, () => { st.open = false; av.play('sweep', ctx.aim); readout.setText('released — 2s to aim'); });
+    aimCountdown(ctx, at, 2200, () => {
       darkness += 25;
-      fx.ring(at.x, at.y, 8, 70, MAGIC.corrupt, 520, 9, 3);
-      clouds.push({
-        seed: Math.random() * 10, x: at.x, y: at.y, vx: 0, vy: 0,
-        radius: 70, born: 4400, life: 5000, cursed: true, follow: cursor,
+      fx.ring(victim.x, victim.y, 10, 130, MAGIC.acid, 560, 8, 3);
+      pools.push({
+        x: victim.x, y: victim.y, radius: 130,
+        born: 4200, life: 8000, putrid: true, seed: Math.random() * 10,
       });
-      ctx.capture(() => float(ctx, at.x, at.y - 34, '🔥 Corrupt Flames', '#ff4400', 12));
+      ctx.capture(() => float(ctx, victim.x, victim.y - 30, '🌊 Splash+', '#66cc55', 12));
       ctx.capture(() => float(ctx, at.x, at.y - 50, '+25 ☠', '#880088', 12));
-      readout.setText('🖤 70px cloud chasing your cursor for 5s');
+      readout.setText('🖤 putrid: 130px, 70% slow, 6 damage a second — and no dash out of it');
     });
-    // It follows the pointer, so the loop walks the pointer.
-    ctx.onFrame((_dt, elapsed) => {
-      if (elapsed < 4400) return;
-      cursor.x = at.x + 250 + Math.cos(elapsed / 700) * 120;
-      cursor.y = at.y - 30 + Math.sin(elapsed / 500) * 46;
+    ctx.at(5000, () => ctx.capture(() =>
+      float(ctx, victim.x, victim.y - 44, '⛔ NO DASH', '#66cc55', 12)));
+
+    // Second cast: Spur+, and the fifth bur knitting into a pin.
+    ctx.at(6600, () => { st.selected = 2; av.play('sweep', ctx.aim); readout.setText('🌿 Spur+ — three burs, and they stick'); });
+    aimCountdown(ctx, at, 6600, () => {
+      darkness += 25;
+      ctx.capture(() => float(ctx, at.x, at.y - 50, '+25 ☠', '#880088', 12));
+      for (let i = 0; i < 3; i++) {
+        const a = Math.random() * Math.PI * 2, d = 6 + Math.random() * 12;
+        burs.push({ ox: Math.cos(a) * d, oy: Math.sin(a) * d, spin: Math.random() * Math.PI });
+      }
+      ctx.capture(() => float(ctx, victim.x, victim.y - 30, '🌿 3/5', '#66dd77', 12));
+      readout.setText('🌿 burs stay in for 2s and stack');
     });
-    for (const d of [5400, 7400]) {
-      ctx.at(d, () => {
-        if (!clouds.length) return;
-        ctx.capture(() => float(ctx, victim.x + 30, victim.y - 42, '🔥 burn + cursed 2', '#882200', 9));
-      });
-    }
-    ctx.at(10200, () => readout.setText('four of these with no meditation is 100 ☠ — a death'));
+    ctx.at(9600, () => {
+      for (let i = 0; i < 2; i++) {
+        const a = Math.random() * Math.PI * 2, d = 6 + Math.random() * 12;
+        burs.push({ ox: Math.cos(a) * d, oy: Math.sin(a) * d, spin: Math.random() * Math.PI });
+      }
+      ctx.capture(() => float(ctx, victim.x, victim.y - 30, '🌿 5/5', '#66dd77', 12));
+    });
+    ctx.at(9900, () => {
+      burs.length = 0;
+      fx.boom(victim.x, victim.y, 62, { color: MAGIC.vine, sigils: 10, rings: 2, duration: 480 });
+      ctx.capture(() => float(ctx, victim.x, victim.y - 44, '🌿 PINNED — 3s', '#33ff66', 12));
+      readout.setText('🌿 five at once pins them for 3s…');
+    });
+    ctx.at(11600, () => {
+      fx.boom(victim.x, victim.y, 56, { color: MAGIC.leaf, sigils: 9, rings: 2, duration: 460 });
+      ctx.capture(() => float(ctx, victim.x, victim.y - 30, '🌿 TORN FREE -12', '#44ff66', 12));
+      readout.setText('…and tearing free costs them another 12');
+    });
   },
 };
 
-// ══ R — Magic Anchor ══════════════════════════════════════════════════
+// ══ R — Crosshair ═════════════════════════════════════════════════════
 
-/** Both anchor loops plant, walk away and recall; R+ adds the speed windows and the wild jump. */
-function anchorScript(wild: boolean): PreviewScript {
+function crosshairScript(shortcut: boolean): PreviewScript {
   return {
-    duration: wild ? 10000 : 8000,
-    scale: 0.62,
+    duration: shortcut ? 8000 : 11000,
+    scale: 0.82,
     bodyTexture: '',
-    caption: wild
-      ? 'Wild Anchor — +25% for 3s on a clean recall, or press R again within 1.5s for a blind jump at +50%'
-      : 'R — plant the mark, walk anywhere, come back for 20 damage in 120px',
+    caption: shortcut
+      ? 'Magic Shortcut — right-click with no tallies fires a 15-damage missile and drops the mark'
+      : 'R — mark them, feed it Sparkle Shots, right-click for 8 damage a tally',
     run(ctx) {
-      const at = { x: ctx.w * 0.24, y: ctx.cy };
+      const at = { x: ctx.w * 0.26, y: ctx.cy };
       const { fx, av } = drivenCaster(ctx, at);
-      const mark = { x: at.x, y: at.y, live: false };
-      const victim = { x: at.x + 70, y: at.y + 30 };
+      const victim = { x: ctx.w * 0.72, y: ctx.cy - 12 };
       dummyAt(ctx, victim);
-      const g = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
-      ctx.onFrame((_dt, elapsed) => {
+      const mark = { live: false, marks: 0, spin: 0 };
+      const missile = { x: 0, y: 0, live: false };
+      const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+      const readout = label(ctx, ctx.w * 0.5, 12, '#cc88ff', 12);
+
+      ctx.onFrame((dt, elapsed) => {
         g.clear();
-        if (mark.live) MagicFx.drawAnchor(g, ctx.tint, mark.x, mark.y, elapsed / 1000);
+        mark.spin += dt * 0.0016;
+        if (mark.live) {
+          MagicFx.drawCrosshair(g, ctx.tint, victim.x, victim.y, mark.marks, mark.spin, 1);
+        }
+        if (missile.live) {
+          missile.x += 430 * (dt / 1000);
+          MagicFx.drawMagicMissile(g, ctx.tint, missile.x, missile.y, 0, elapsed / 1000);
+          if (missile.x >= victim.x - 18) {
+            missile.live = false;
+            ctx.capture(() => {
+              fx.boom(victim.x, victim.y, 95, { color: MAGIC.purple, sigils: 11, rings: 2, duration: 520 });
+              float(ctx, victim.x, victim.y - 28, '✦ 15', '#bb88ff', 13);
+            });
+            readout.setText('15 damage in a 95px burst — and the mark is already gone');
+          }
+        }
       });
-      const readout = label(ctx, ctx.w * 0.5, 12, '#bb88ff', 11);
-      let boost = 0;      // 0 none, 1.25 pink, 1.5 black
-      let boostUntil = -1;
-      let darkness = 0;
-      if (wild) {
-        darknessBar(ctx, at, () => darkness);
-        aura(ctx, 'boost', at, 26, () => ({
-          on: boostUntil > 0, intensity: boost > 1.3 ? 1 : 0,
-        }));
+
+      ctx.at(500, () => {
+        av.play('slam', ctx.aim);
+        mark.live = true;
+        ctx.capture(() => {
+          fx.ring(victim.x, victim.y, 60, 22, MAGIC.orchid, 420, 9, 2.6);
+          float(ctx, victim.x, victim.y - 34, '✛ MARKED', '#cc88ff', 12);
+        });
+        readout.setText('R marks the nearest enemy for 6 seconds');
+      });
+
+      if (shortcut) {
+        ctx.at(2400, () => {
+          readout.setText('right-click with the crosshair still empty…');
+        });
+        ctx.at(3400, () => {
+          mark.live = false;
+          missile.x = at.x; missile.y = at.y; missile.live = true;
+          av.play('punch', ctx.aim);
+          ctx.capture(() => {
+            fx.flash(at.x, at.y, 26, 10, MAGIC.orchid);
+            float(ctx, at.x, at.y - 34, '✦ MAGIC SHORTCUT', '#cc88ff', 12);
+          });
+          readout.setText('✦ one heavy missile at 430 px/s instead of a wasted mark');
+        });
+        ctx.at(6200, () => readout.setText('without R+, an empty crosshair pays nothing at all'));
+        return;
       }
 
-      ctx.at(400, () => {
-        av.play('slam');
-        mark.live = true;
-        fx.ring(at.x, at.y, 4, 26, MAGIC.orchid, 460, 8, 2.4);
-        fx.motes(at.x, at.y, 6, { speed: 50, size: 2.2, life: 560 });
-        readout.setText('mark planted — no cooldown for this half');
-      });
-      // Walk off, then come back through the floor.
-      ctx.onFrame((dt, elapsed) => {
-        if (elapsed > 700 && elapsed < 3200) at.x += 150 * (dt / 1000);
-        if (boostUntil > 0 && elapsed > boostUntil) { boostUntil = -1; boost = 0; }
-        if (boostUntil > 0) at.x += 80 * boost * (dt / 1000);
-      });
-      ctx.at(3400, () => {
-        av.play('slam');
-        fx.sigils(at.x, at.y, 6, { speed: 130, size: 7, life: 420, color: MAGIC.purple });
-        at.x = mark.x; at.y = mark.y;
-        mark.live = false;
-        fx.boom(mark.x, mark.y, 120, { color: MAGIC.purple, sigils: 12, rings: 3, duration: 560 });
-        float(ctx, mark.x, mark.y - 30, '⚓ RECALL', '#bb88ff', 12);
-        float(ctx, victim.x, victim.y - 26, '20', '#bb88ff', 15);
-        readout.setText(wild ? '+25% speed for 3s — and 1.5s to re-press R' : '20 damage to everything within 120px');
-        if (wild) { boost = 1.25; boostUntil = 6400; }
-      });
-      if (wild) {
-        ctx.at(4600, () => {
-          darkness += 10;
-          fx.boom(at.x, at.y, 60, { color: MAGIC.wildVoid, sigils: 8, rings: 2, mark: false });
-          at.x = ctx.w * 0.72; at.y = ctx.cy - 40;
-          fx.boom(at.x, at.y, 76, { color: MAGIC.magenta, sigils: 10, rings: 2, duration: 520 });
-          float(ctx, at.x, at.y - 30, '🌑 WILD ANCHOR!', '#9900cc', 12);
-          float(ctx, at.x, at.y - 48, '+10 ☠', '#880088', 11);
-          boost = 1.5; boostUntil = 7600;
-          readout.setText('somewhere random, +50% for 3s, and 2s more cooldown');
+      // Three sparkle bursts, each adding a tally.
+      let n = 0;
+      for (const d of [1800, 3200, 4600]) {
+        ctx.at(d, () => {
+          n++;
+          av.play('punch', ctx.aim);
+          ctx.capture(() => {
+            fx.boom(victim.x, victim.y, 55, { color: MAGIC.blush, sigils: 8, rings: 2, duration: 440 });
+            float(ctx, victim.x, victim.y - 20, '✨ 14', '#ff99ff', 12);
+          });
+          mark.marks = n;
+          ctx.capture(() => float(ctx, victim.x, victim.y - 46, `✛ ${n}/5`, '#ff99ff', 12));
+          readout.setText(`every Sparkle Shot burst on them is a tally — ${n} of 5`);
         });
-        ctx.at(8000, () => readout.setText('the blind jump deals nothing — it can land you next to them'));
       }
+      ctx.at(6400, () => readout.setText('right-click to cash it in…'));
+      ctx.at(7200, () => {
+        const dmg = mark.marks * 8;
+        mark.live = false;
+        av.play('slam', ctx.aim);
+        ctx.capture(() => {
+          fx.boom(victim.x, victim.y, 110, { color: MAGIC.blush, sigils: 12, rings: 3, duration: 560 });
+          float(ctx, victim.x, victim.y - 34, `✛ 3× — ${dmg}!`, '#ff88ff', 14);
+        });
+        readout.setText('8 damage a tally in 110px — 40 at five');
+      });
+      ctx.at(9400, () => readout.setText('let the 6 seconds lapse instead and you get nothing'));
     },
   };
 }
 
-export const magicAnchor = anchorScript(false);
-export const magicAnchorUpgraded = anchorScript(true);
+export const magicAnchor = crosshairScript(false);
+export const magicAnchorUpgraded = crosshairScript(true);
 
-// ══ F — Meditate ══════════════════════════════════════════════════════
-
-interface HealOrb { x: number; y: number; vx: number; vy: number; dead: boolean }
-
-function orbLayer(ctx: PreviewCtx, orbs: HealOrb[]): void {
-  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
-  ctx.onFrame((dt, elapsed) => {
-    g.clear();
-    for (const o of orbs) {
-      if (o.dead) continue;
-      o.x += o.vx * (dt / 1000); o.y += o.vy * (dt / 1000);
-      MagicFx.drawHealOrb(g, ctx.tint, o.x, o.y, Math.atan2(o.vy, o.vx), elapsed / 1000);
-    }
-  });
-}
-
-/** An orb launched off a random edge of the box at the kit's own 200 px/s. */
-function spawnOrb(ctx: PreviewCtx, orbs: HealOrb[], to: { x: number; y: number }): void {
-  const edge = Math.floor(Math.random() * 4);
-  const x = edge === 0 || edge === 1 ? Math.random() * ctx.w : edge === 2 ? 0 : ctx.w;
-  const y = edge === 0 ? 0 : edge === 1 ? ctx.h : Math.random() * ctx.h;
-  const a = Math.atan2(to.y - y, to.x - x);
-  orbs.push({ x, y, vx: Math.cos(a) * 200, vy: Math.sin(a) * 200, dead: false });
-}
+// ══ F — Dupe ══════════════════════════════════════════════════════════
 
 export const meditate: PreviewScript = {
-  duration: 9000,
-  scale: 0.9,
+  duration: 10000,
+  scale: 0.82,
   bodyTexture: '',
-  caption: 'F — an orb every 0.5s off the edges: 5 healed to you, 8 to anybody it clips on the way',
+  caption: 'F — everything of yours inside the 140px field comes out twice, for free',
   run(ctx) {
-    const at = { x: ctx.w * 0.5, y: ctx.cy };
+    const at = { x: ctx.w * 0.24, y: ctx.cy };
     const { fx, av } = drivenCaster(ctx, at);
-    const victim = { x: at.x + 150, y: at.y - 20 };
-    dummyAt(ctx, victim);
-    const orbs: HealOrb[] = [];
-    orbLayer(ctx, orbs);
-    let channelling = false;
-    aura(ctx, 'meditate', at, 30, () => ({ on: channelling, intensity: 1 }));
-    const readout = label(ctx, ctx.w * 0.5, 12, '#cc99ff', 11);
-    let healed = 0;
+    const field = { x: ctx.w * 0.62, y: ctx.cy };
+    const readout = label(ctx, ctx.w * 0.5, 12, '#cc88ff', 12);
+    const pools: Pool[] = [];
+    poolLayer(ctx, pools);
+    const clouds: Cloud[] = [];
+    flameLayer(ctx, clouds);
+    const ring = ctx.adopt(ctx.scene.add.graphics().setDepth(2));
+    let showField = 0;
+    ctx.onFrame((_dt, elapsed) => {
+      ring.clear();
+      if (elapsed >= showField && showField > 0) {
+        ring.lineStyle(2, 0xcc88ff, 0.5 + 0.3 * Math.sin(elapsed / 160));
+        ring.strokeCircle(field.x, field.y, 140);
+      }
+    });
 
     ctx.at(300, () => {
-      channelling = true;
-      av.play('flex');
-      av.setHold?.('brace', 0);
-      fx.ring(at.x, at.y, 40, 8, MAGIC.orchid, 520, 8, 2.4);
-      float(ctx, at.x, at.y - 34, '🧘 Meditate', '#cc99ff', 12);
-      readout.setText('rooted — WASD does nothing while it runs');
+      pools.push({ x: field.x - 40, y: field.y + 20, radius: 90, born: 300, life: 9000, putrid: false, seed: 1.4 });
+      clouds.push({
+        seed: 3.2, x: field.x + 40, y: field.y - 30, vx: 0, vy: 0,
+        radius: 34, born: 300, life: 9000, cursed: false,
+      });
+      readout.setText('a Splash pool and a Flare already on the field');
+      showField = 1;
     });
-    for (let i = 0; i < 9; i++) ctx.at(600 + i * 500, () => { if (channelling) spawnOrb(ctx, orbs, at); });
-
-    ctx.onFrame(() => {
-      for (const o of orbs) {
-        if (o.dead) continue;
-        if (Phaser.Math.Distance.Between(o.x, o.y, victim.x, victim.y) <= 28) {
-          o.dead = true;
-          ctx.capture(() => {
-            fx.ring(o.x, o.y, 4, 30, MAGIC.lilac, 300, 9, 2);
-            float(ctx, victim.x, victim.y - 24, '8', '#cc99ff', 13);
-          });
-          continue;
-        }
-        if (Phaser.Math.Distance.Between(o.x, o.y, at.x, at.y) <= 24) {
-          o.dead = true;
-          healed += 5;
-          ctx.capture(() => {
-            fx.sigils(o.x, o.y, 4, { speed: 40, size: 5, life: 380, color: MAGIC.lilac });
-            float(ctx, at.x, at.y - 28, '+5 ✨', '#cc99ff', 12);
-          });
-        }
-      }
-      readout.setText(channelling ? `channelling — ${healed} healed` : readout.text);
+    ctx.at(2200, () => {
+      av.play('flex', ctx.aim);
+      ctx.capture(() => {
+        fx.ring(field.x, field.y, 12, 140, MAGIC.magenta, 620, 8, 3.2);
+        fx.conjure(field.x, field.y, 84, 420, { color: MAGIC.orchid });
+      });
+      readout.setText('F opens a 140px field at the cursor');
     });
-
-    // And the way it ends, because nothing else ends it.
-    ctx.at(6600, () => {
-      channelling = false;
-      av.setHold?.(null, 0);
-      fx.boom(at.x, at.y, 56, { color: MAGIC.blood, sigils: 9, rings: 2, duration: 420, mark: false });
-      float(ctx, at.x, at.y - 30, '⛔ Interrupted! -20', '#ff4444', 12);
-      readout.setText('a hit ends it — and costs 20 on top of the hit');
+    ctx.at(2900, () => {
+      pools.push({ x: field.x - 40 + 22, y: field.y + 20 - 18, radius: 90, born: 2900, life: 6400, putrid: false, seed: 7.1 });
+      clouds.push({
+        seed: 8.5, x: field.x + 40 + 18, y: field.y - 30 + 20, vx: 0, vy: 0,
+        radius: 34, born: 2900, life: 6400, cursed: false,
+      });
+      ctx.capture(() => {
+        fx.sigils(field.x, field.y, 8, { speed: 210, size: 8, life: 560, color: MAGIC.orchid });
+        float(ctx, field.x, field.y - 34, '⧉ DUPED ×2', '#cc88ff', 13);
+      });
+      readout.setText('both come out twice, at the same tier, offset a little');
     });
+    ctx.at(5600, () => readout.setText('it costs no Darkness — the corrupted spells pay for themselves'));
+    ctx.at(7800, () => readout.setText('burs copy onto the same victim, so a Dupe can finish a 5-bur pin'));
   },
 };
 
 export const meditateUpgraded: PreviewScript = {
-  duration: 9000,
-  scale: 0.9,
+  duration: 11000,
+  scale: 0.82,
   bodyTexture: '',
-  caption: 'Wandering Mind — walk at 25% speed, nothing interrupts you, and each orb burns off 5 Darkness',
+  caption: 'Corrupted Data — an enemy caught in the field sheds a glitched copy of you worth 20 Darkness',
   run(ctx) {
     const at = { x: ctx.w * 0.22, y: ctx.cy };
     const { fx, av } = drivenCaster(ctx, at);
-    const orbs: HealOrb[] = [];
-    orbLayer(ctx, orbs);
-    let channelling = false;
-    let darkness = 45;
+    const victim = { x: ctx.w * 0.64, y: ctx.cy - 6 };
+    dummyAt(ctx, victim);
+    let darkness = 75;
     darknessBar(ctx, at, () => darkness);
-    aura(ctx, 'meditate', at, 30, () => ({ on: channelling, intensity: 1 }));
     aura(ctx, 'darkness', at, 28, () => ({ on: darkness > 1, intensity: darkness / 100 }));
-    const readout = label(ctx, ctx.w * 0.5, 12, '#cc99ff', 11);
-    let nextTrail = 0;
+    const readout = label(ctx, ctx.w * 0.5, 12, '#cc66ff', 12);
+    const drops: { x: number; y: number; seed: number }[] = [];
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    ctx.onFrame((_dt, elapsed) => {
+      g.clear();
+      for (const d of drops) MagicFx.drawCorruptData(g, ctx.tint, d.x, d.y, d.seed, elapsed / 1000, 1);
+    });
 
-    ctx.at(300, () => {
-      channelling = true;
-      av.play('flex');
-      av.setHold?.('brace', 0);
-      fx.ring(at.x, at.y, 40, 8, MAGIC.orchid, 520, 8, 2.4);
-      readout.setText('moving at a quarter speed, uninterruptible');
+    ctx.at(400, () => readout.setText('75 Darkness — three more corrupted casts and it kills you'));
+    ctx.at(2000, () => {
+      av.play('flex', ctx.aim);
+      ctx.capture(() => {
+        fx.ring(victim.x, victim.y, 12, 140, MAGIC.magenta, 620, 8, 3.2);
+        fx.flash(victim.x, victim.y, 26, 10, MAGIC.magenta);
+        float(ctx, victim.x, victim.y - 34, '⧉ CORRUPTED', '#ff66ff', 12);
+      });
+      drops.push({ x: victim.x - 30, y: victim.y + 24, seed: 2.7 });
+      readout.setText('an enemy inside the field is copied too — badly');
     });
+    ctx.at(4200, () => readout.setText('what drops is you, glitching, for 14 seconds'));
+    // Walk the caster onto it.
+    ctx.at(5400, () => readout.setText('walk over it…'));
     ctx.onFrame((dt, elapsed) => {
-      if (!channelling) return;
-      at.x += 55 * (dt / 1000);
-      if (elapsed >= nextTrail) {
-        nextTrail = elapsed + 90;
-        ctx.capture(() => fx.motes(at.x, at.y + 8, 2, {
-          speed: 18, size: 2.6, life: 620, color: MAGIC.purple, drift: -6, depth: 4,
-        }));
-      }
-      for (const o of orbs) {
-        if (o.dead || Phaser.Math.Distance.Between(o.x, o.y, at.x, at.y) > 24) continue;
-        o.dead = true;
-        darkness = Math.max(0, darkness - 5);
-        ctx.capture(() => {
-          fx.sigils(o.x, o.y, 4, { speed: 40, size: 5, life: 380, color: MAGIC.lilac });
-          float(ctx, at.x, at.y - 28, '+5 ✨', '#cc99ff', 12);
-          float(ctx, at.x, at.y - 44, '-5 ☠', '#aa55ff', 11);
-        });
-      }
-    });
-    for (let i = 0; i < 12; i++) ctx.at(600 + i * 500, () => { if (channelling) spawnOrb(ctx, orbs, at); });
-    ctx.at(7400, () => {
-      channelling = false;
-      av.setHold?.(null, 0);
-      readout.setText('release F to stop — the only voluntary way out');
+      if (elapsed < 5400 || drops.length === 0) return;
+      const d = drops[0];
+      const a = Math.atan2(d.y - at.y, d.x - at.x);
+      at.x += Math.cos(a) * 150 * (dt / 1000);
+      at.y += Math.sin(a) * 150 * (dt / 1000);
+      if (Phaser.Math.Distance.Between(at.x, at.y, d.x, d.y) > 26) return;
+      drops.length = 0;
+      darkness = Math.max(0, darkness - 20);
+      ctx.capture(() => {
+        fx.ring(at.x, at.y, 8, 52, MAGIC.orchid, 460, 9, 2.6);
+        fx.sigils(at.x, at.y, 7, { speed: 130, size: 7, life: 460, color: MAGIC.magenta });
+        float(ctx, at.x, at.y - 34, '⧉ -20 ☠', '#cc88ff', 13);
+      });
+      readout.setText('-20 ☠ — the only thing in the element that takes any back off');
     });
   },
 };
@@ -694,139 +761,144 @@ export const meditateUpgraded: PreviewScript = {
 // ══ Q — Necronomicon ══════════════════════════════════════════════════
 
 export const necronomicon: PreviewScript = {
-  duration: 13000,
-  scale: 0.8,
+  duration: 12000,
+  scale: 0.78,
   bodyTexture: '',
-  caption: 'Q — the same wheel, thirty seconds apart; Thorn Prison chains them to the spot for 5s',
+  caption: 'Q — call one base element up as a familiar; it fights on its own for 18s and can be killed',
   run(ctx) {
-    const at = { x: ctx.w * 0.24, y: ctx.h * 0.52 };
+    const at = { x: ctx.w * 0.26, y: ctx.h * 0.55 };
     const { fx, av } = drivenCaster(ctx, at);
-    const victim = { x: at.x + 380, y: at.y };
+    const victim = { x: ctx.w * 0.76, y: ctx.h * 0.42 };
     dummyAt(ctx, victim);
     const st: WheelState = { open: false, selected: 0, dark: false };
     wheelLayer(ctx, at, { labels: NECRO_LABELS, colors: NECRO_COLORS }, null, st);
-    const readout = label(ctx, ctx.w * 0.5, 14, '#88ff99', 13);
-    const chains: number[] = [15, 15, 15, 15];
-    let caged = false;
-    const pad = 32;
-    const corners: [number, number][] = [
-      [pad, pad], [ctx.w - pad, pad], [pad, ctx.h - pad], [ctx.w - pad, ctx.h - pad],
-    ];
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
-    ctx.onFrame((_dt, elapsed) => {
-      g.clear();
-      if (!caged) return;
-      for (let c = 0; c < 4; c++) {
-        if (chains[c] <= 0) continue;
-        MagicFx.drawPrisonChain(g, ctx.tint, corners[c][0], corners[c][1], victim.x, victim.y,
-          Phaser.Math.Clamp(chains[c] / 15, 0, 1), elapsed / 1000);
+    const readout = label(ctx, ctx.w * 0.5, 14, '#cc99ff', 13);
+    const fams: Fam[] = [];
+    famLayer(ctx, fams, victim);
+    const bolts: { x: number; y: number; vx: number; vy: number }[] = [];
+    const bg = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    ctx.onFrame((dt, elapsed) => {
+      bg.clear();
+      for (let i = bolts.length - 1; i >= 0; i--) {
+        const b = bolts[i];
+        b.x += b.vx * (dt / 1000); b.y += b.vy * (dt / 1000);
+        if (Phaser.Math.Distance.Between(b.x, b.y, victim.x, victim.y) <= 22) {
+          bolts.splice(i, 1);
+          ctx.capture(() => {
+            fx.boom(victim.x, victim.y, 34, { color: MAGIC.ember, sigils: 4, rings: 1, duration: 300, mark: false });
+            float(ctx, victim.x, victim.y - 24, '8 🔥', '#ff8844', 11);
+          });
+          continue;
+        }
+        MagicFx.drawSummonBolt(bg, ctx.tint, 'fire', b.x, b.y, Math.atan2(b.vy, b.vx), elapsed / 1000);
       }
     });
 
-    ctx.at(300, () => { st.open = true; readout.setText('holding Q — five ultimates'); });
-    ctx.at(1100, () => { st.selected = 2; readout.setText('🌿 Thorn Prison'); });
-    ctx.at(2000, () => { st.open = false; av.play('raise', ctx.aim); readout.setText('released — 2s to aim'); });
-    aimCountdown(ctx, at, 2000, () => {
-      fx.sigils(at.x, at.y, 5, { speed: 100, angle: ctx.aim, spread: 0.5, size: 7, life: 420, color: MAGIC.darkVine, points: 4 });
-      // The heavy vine is a real projectile sprite, so it flies at its own 380 px/s.
-      ctx.fly({
-        texture: 'proj-thorn-vine-dark',
-        from: { x: at.x, y: at.y }, to: { x: victim.x, y: victim.y }, speed: 380,
-        onHit: () => {
-          caged = true;
-          ctx.capture(() => {
-            fx.boom(victim.x, victim.y, 64, { color: MAGIC.vine, sigils: 9, rings: 2, duration: 480 });
-            float(ctx, victim.x, victim.y - 28, '🌿 IMPRISONED', '#33ff66', 12);
-          });
-          readout.setText('pinned to the spot — 3 damage a second, 5s');
-        },
+    ctx.at(300, () => { st.open = true; readout.setText('holding Q — one wedge per base element'); });
+    ctx.at(1200, () => { st.selected = 4; });
+    ctx.at(1700, () => { st.selected = 0; readout.setText('← / → across the five'); });
+    ctx.at(2300, () => { st.open = false; av.play('raise', ctx.aim); readout.setText('released — 2s to aim'); });
+    aimCountdown(ctx, at, 2300, () => {
+      ctx.capture(() => {
+        fx.conjure(at.x + 54, at.y, 46, 460, { color: MAGIC.orchid });
+        fx.ring(at.x + 54, at.y, 8, 60, MAGIC.orchid, 560, 8, 3);
+        float(ctx, at.x, at.y - 34, '🔥 SUMMON', '#ff8844', 13);
       });
+      fams.push({ kind: 'fire', x: at.x + 54, y: at.y, bob: 0, seed: 2.1, plus: false, hp: 1 });
+      readout.setText('🔥 45 HP, 18 seconds — it hangs off you and drifts at whoever you fight');
     });
-    // Their own shots cut the chains, 15 HP each.
-    for (let i = 0; i < 3; i++) {
-      ctx.at(6200 + i * 800, () => {
-        if (!caged) return;
-        chains[i] = 0;
-        ctx.capture(() => {
-          fx.boom(corners[i][0], corners[i][1], 44, { color: MAGIC.vine, sigils: 6, rings: 1, duration: 380, mark: false });
-          float(ctx, victim.x, victim.y - 24, '3', '#33ff66', 11);
-        });
-        readout.setText(`${3 - i} chains left — their own shots cut them, 15 HP each`);
+    for (const d of [5600, 6900, 8200, 9500]) {
+      ctx.at(d, () => {
+        const f = fams[0];
+        if (!f) return;
+        const a = Math.atan2(victim.y - f.y, victim.x - f.x);
+        bolts.push({ x: f.x, y: f.y, vx: Math.cos(a) * 340, vy: Math.sin(a) * 340 });
       });
     }
-    ctx.at(9200, () => {
-      caged = false;
-      chains[3] = 0;
-      fx.boom(victim.x, victim.y, 78, { color: MAGIC.vine, sigils: 11, rings: 2, duration: 520 });
-      float(ctx, victim.x, victim.y - 44, '🌿 FREED!', '#33ff66', 12);
-      float(ctx, victim.x, victim.y - 24, '35', '#33ff66', 15);
-      readout.setText('35 either way — breaking out buys time, not the hit');
-    });
+    ctx.at(6000, () => readout.setText('a fire bolt every 1.3s: 8 damage and a 2s burn'));
+    ctx.at(9000, () => readout.setText('hostile shots hit it for full — a familiar is a body, not a decoration'));
   },
 };
 
 export const necronomiconUpgraded: PreviewScript = {
-  duration: 13000,
-  scale: 0.8,
+  duration: 14000,
+  scale: 0.78,
   bodyTexture: '',
-  caption: 'Dark Necronomicon — Torture Trap threads them for 5s: 3/s, and everything they take heals you',
+  caption: 'Greater Summons — the hub button blackens the wheel; every corrupted summon is +50 Darkness',
   run(ctx) {
-    const at = { x: ctx.w * 0.24, y: ctx.h * 0.52 };
+    const at = { x: ctx.w * 0.24, y: ctx.h * 0.58 };
     const { fx, av } = drivenCaster(ctx, at);
-    const victim = { x: at.x + 300, y: at.y - 20 };
+    const victim = { x: ctx.w * 0.70, y: ctx.h * 0.40 };
     dummyAt(ctx, victim);
-    const st: WheelState = { open: false, selected: 0, dark: false };
+    const st: WheelState = { open: false, selected: 4, dark: false };
     wheelLayer(ctx, at,
       { labels: NECRO_LABELS, colors: NECRO_COLORS },
       { labels: DARK_NECRO_LABELS, colors: DARK_NECRO_COLORS }, st);
-    let darkness = 20;
+    let darkness = 0;
     darknessBar(ctx, at, () => darkness);
     aura(ctx, 'darkness', at, 28, () => ({ on: darkness > 1, intensity: darkness / 100 }));
-    const readout = label(ctx, ctx.w * 0.5, 14, '#ff5566', 13);
-    let linked = false;
-    const lashes: { x1: number; y1: number; x2: number; y2: number; hit: boolean; until: number }[] = [];
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const readout = label(ctx, ctx.w * 0.5, 14, '#cc66ff', 13);
+    const fams: Fam[] = [];
+    famLayer(ctx, fams, victim);
+    const cracks: { x: number; y: number; born: number; seed: number }[] = [];
+    const cg = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
     ctx.onFrame((_dt, elapsed) => {
-      g.clear();
-      for (let i = lashes.length - 1; i >= 0; i--) {
-        const v = lashes[i];
-        if (elapsed >= v.until) { lashes.splice(i, 1); continue; }
-        vineLash(g, ctx.tint, v.x1, v.y1, v.x2, v.y2, elapsed / 1000,
-          v.hit ? MAGIC.leaf : MAGIC.darkVine, MAGIC.vine,
-          Phaser.Math.Clamp((v.until - elapsed) / 200, 0, 1), 4);
+      cg.clear();
+      for (const c of cracks) {
+        MagicFx.drawGroundCrack(cg, ctx.tint, c.x, c.y, 34, c.seed, elapsed / 1000,
+          Phaser.Math.Clamp((elapsed - c.born - 800) / 500, 0, 1), 1);
       }
-      if (linked) MagicFx.drawLifeLink(g, ctx.tint, at.x, at.y, victim.x, victim.y, elapsed / 1000);
     });
 
-    ctx.at(300, () => { st.open = true; readout.setText('holding Q'); });
-    ctx.at(1100, () => { st.dark = true; readout.setText('hub button — the black five, at 50 ☠ each'); });
-    ctx.at(1900, () => { st.selected = 2; });
-    ctx.at(2500, () => { st.open = false; av.play('raise', ctx.aim); readout.setText('released — 2s to aim'); });
-    aimCountdown(ctx, at, 2500, () => {
-      darkness += 50;
-      linked = true;
-      lashes.push({ x1: at.x, y1: at.y, x2: victim.x, y2: victim.y, hit: true, until: 4800 });
-      fx.boom(victim.x, victim.y, 50, { color: MAGIC.blood, sigils: 7, rings: 1, duration: 420, mark: false });
-      ctx.capture(() => {
-        float(ctx, victim.x, victim.y - 28, '🌿 LINKED', '#ff2222', 12);
-        float(ctx, at.x, at.y - 50, '+50 ☠', '#880088', 12);
-      });
-      readout.setText('an instant 200px vine — no travel time to dodge');
+    ctx.at(300, () => { st.open = true; readout.setText('the hub button only exists with Q+'); });
+    ctx.at(1300, () => {
+      st.dark = true;
+      ctx.capture(() => fx.ring(at.x, at.y, 6, 44, MAGIC.magenta, 400, 33, 2.4));
+      ctx.capture(() => float(ctx, at.x, at.y - 44, '🖤 DARK MAGIC ON', '#cc44ff', 12));
+      readout.setText('toggled — and the plain five are still one click away');
     });
-    for (let i = 1; i <= 5; i++) {
-      ctx.at(4500 + i * 1000, () => {
-        if (!linked) return;
-        ctx.capture(() => {
-          float(ctx, victim.x, victim.y - 24, '3', '#ff2222', 12);
-          float(ctx, at.x, at.y - 28, '+3 ❤', '#44ff66', 11);
-        });
-        readout.setText('3 a second down the thread — and every point they take anywhere comes back to you');
+    ctx.at(2300, () => { st.open = false; av.play('raise', ctx.aim); readout.setText('released — 2s to aim'); });
+    aimCountdown(ctx, at, 2300, () => {
+      darkness += 50;
+      ctx.capture(() => {
+        fx.conjure(at.x + 54, at.y, 46, 460, { color: MAGIC.orchid });
+        fx.ring(at.x + 54, at.y, 8, 60, MAGIC.magenta, 560, 8, 3);
+        float(ctx, at.x, at.y - 34, '🪨 GREATER SUMMON', '#cc9944', 13);
+        float(ctx, at.x, at.y - 52, '+50 ☠', '#880088', 12);
       });
-    }
-    ctx.at(10000, () => { linked = false; readout.setText('5 seconds, then it lets go'); });
+      fams.push({ kind: 'earth', x: at.x + 54, y: at.y, bob: 0, seed: 5.5, plus: true, hp: 1 });
+      readout.setText('🪨 112 HP, a rune halo — and a signature move on a 9 second clock');
+    });
+    ctx.at(6600, () => {
+      for (let i = 0; i < 5; i++) {
+        cracks.push({
+          x: ctx.w * (0.32 + 0.13 * i), y: ctx.h * (0.3 + 0.42 * ((i * 7) % 3) / 2),
+          born: 6600, seed: Math.random() * 10,
+        });
+      }
+      ctx.capture(() => float(ctx, ctx.w * 0.5, 40, '🪨 THE FLOOR OPENS', '#cc9944', 13));
+      readout.setText('five holes for 9 seconds — and they do not care whose side you are on');
+    });
+    ctx.at(9200, () => {
+      const c = cracks[2];
+      if (!c) return;
+      victim.x = c.x; victim.y = c.y;
+      ctx.capture(() => {
+        fx.boom(c.x, c.y, 54, { color: MAGIC.ash, sigils: 8, rings: 2, duration: 460, mark: false });
+        float(ctx, c.x, c.y - 30, '🪨 FELL IN — 20', '#cc9944', 13);
+      });
+      readout.setText('20 damage, a second underground, then back at the centre of the arena');
+    });
+    ctx.at(10400, () => {
+      victim.x = ctx.w * 0.5; victim.y = ctx.h * 0.5;
+      ctx.capture(() => {
+        fx.boom(victim.x, victim.y, 60, { color: MAGIC.stone, sigils: 8, rings: 2, duration: 440 });
+        float(ctx, victim.x, victim.y - 34, '🪨 back up', '#cc9944', 12);
+      });
+    });
+    ctx.at(12200, () => readout.setText('Levitate is the only thing that keeps the conjurer out of their own holes'));
   },
 };
-
 // ══ Passives ══════════════════════════════════════════════════════════
 
 export const passiveTheSpellWheel: PreviewScript = {
@@ -920,10 +992,10 @@ export const passiveDarkness: PreviewScript = {
     });
 
     charge(700, 25, 'dark Grimoire spell');
-    charge(2600, 10, 'Wild Anchor blind jump');
+    charge(2600, 25, 'dark Grimoire spell');
     charge(4400, 25, 'dark Grimoire spell');
     charge(6200, 50, 'dark ultimate');
-    ctx.at(8200, () => readout.setText('nothing decays it — only F+ meditation orbs take it back off'));
+    ctx.at(8200, () => readout.setText('nothing decays it — only F+ corrupted data takes any back off'));
   },
 };
 
@@ -959,7 +1031,7 @@ export const perkThunder: PreviewScript = {
     ctx.at(3400, () => { st.open = false; av.play('sweep', ctx.aim); });
     aimCountdown(ctx, at, 3400, () => {
       fx.ring(at.x, at.y, 8, 54, MAGIC.ember, 420, 9, 2.6);
-      // Charged Flame Burst is the spell cast twice in the same instant — six clouds, not three.
+      // A charged Flare is the spell cast twice in the same instant — two orbs, not one.
       for (const pass of [0, 1]) {
         for (const deg of [-25, 0, 25]) {
           const a = Phaser.Math.DegToRad(deg + (pass ? 4 : -4));
@@ -971,9 +1043,9 @@ export const perkThunder: PreviewScript = {
         }
       }
       float(ctx, at.x, at.y - 38, '⚡ CHARGED!', '#ffee44', 12);
-      readout.setText('🔥 Flame Burst cast twice — six clouds down the same lines');
+      readout.setText('🔥 Flare cast twice — two orbs crawling down the same line');
     });
-    ctx.at(8600, () => readout.setText('weather halves its pulse, vines stun, wind slows, stone gains an orb'));
+    ctx.at(8600, () => readout.setText('Splash doubles and widens, Spur throws a second volley, Gust stuns, Ward gains two stones'));
   },
 };
 

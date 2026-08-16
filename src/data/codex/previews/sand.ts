@@ -144,8 +144,8 @@ function steppedBullet(
 // ══ CLICK — Quick Shot ════════════════════════════════════════════════
 
 export const quickShot: PreviewScript = {
-  duration: 5800,
-  caption: 'Click — six rounds at 250ms, each ageing 5 → 12 damage in flight, then a 3s reload',
+  duration: 6600,
+  caption: 'Click — rounds age 12 → 15 over 2s, then start hunting and shedding shrapnel',
   run(ctx) {
     const { fx, av } = stage(ctx);
     const reach = Math.hypot(ctx.tx - ctx.cx, ctx.ty - ctx.cy) - 20;
@@ -165,8 +165,8 @@ export const quickShot: PreviewScript = {
           to: { x: ctx.tx, y: ctx.ty },
           speed: 380,
           onHit: () => {
-            // The ramp is 5 → 12 over 2s of flight, so a shot at this range is worth this much.
-            const dmg = Math.round(5 + 7 * Phaser.Math.Clamp(flightMs / 2000, 0, 1));
+            // The ramp is 12 → 15 over 2s of flight, so a shot at this range is worth this much.
+            const dmg = Math.round(12 + 3 * Phaser.Math.Clamp(flightMs / 2000, 0, 1));
             fx.flash(ctx.tx, ctx.ty, 12, 8, HEAT_TONES);
             float(ctx, ctx.tx, ctx.ty - 24, String(dmg), '#ffbb66');
           },
@@ -191,13 +191,46 @@ export const quickShot: PreviewScript = {
       ammo.setText('●●●●●●');
       float(ctx, ctx.cx, ctx.cy - 52, 'LOADED', '#ffee88');
     });
+
+    // One round left alive past its ramp, so the second half of the ability is on screen:
+    // it turns onto the mark and starts coughing splinters out behind itself.
+    const ripe: Mark = { x: ctx.cx + 30, y: ctx.cy + 46 };
+    const chase = ctx.adopt(ctx.scene.add.image(ripe.x, ripe.y, 'proj-time-bullet').setDepth(6).setVisible(false));
+    let heading = -0.9;
+    ctx.at(reloadAt + 3200, () => float(ctx, ripe.x, ripe.y - 22, 'FULLY AGED — 15', '#ff4422'));
+    ctx.onFrame((dt, elapsed) => {
+      if (elapsed < reloadAt + 3200) return;
+      chase.setVisible(true).setTint(0xff2211);
+      const want = Math.atan2(ctx.ty - ripe.y, ctx.tx - ripe.x);
+      const turn = Phaser.Math.Clamp(Phaser.Math.Angle.Wrap(want - heading), -2.6 * (dt / 1000), 2.6 * (dt / 1000));
+      heading += turn;
+      ripe.x += Math.cos(heading) * 380 * (dt / 1000);
+      ripe.y += Math.sin(heading) * 380 * (dt / 1000);
+      chase.setPosition(ripe.x, ripe.y).setRotation(heading);
+    });
+    for (const at of [reloadAt + 3400, reloadAt + 4400]) {
+      ctx.at(at, () => {
+        for (let i = 0; i < 5; i++) {
+          const a = heading + Math.PI + (i / 5 - 0.5) * 2.4;
+          ctx.fly({
+            texture: 'proj-time-bullet',
+            from: { x: ripe.x, y: ripe.y },
+            to: { x: ripe.x + Math.cos(a) * 90, y: ripe.y + Math.sin(a) * 90 },
+            speed: 210,
+          });
+        }
+        fx.hands(ripe.x, ripe.y, 3, { speed: 90, size: 2, life: 300, depth: 7, fall: 8, tones: HEAT_TONES });
+        fx.flash(ripe.x, ripe.y, 9, 7, HEAT_TONES);
+        float(ctx, ripe.x, ripe.y - 20, 'shrapnel 3×5', '#ff8822');
+      });
+    }
   },
 };
 
 export const quickShotUpgraded: PreviewScript = {
   duration: 5600,
   scale: 0.78,
-  caption: 'Perfect Reload — catch the yellow band for an instant reload and the whole cylinder thrown',
+  caption: 'Perfect Reload — catch the gold window on the dial for an instant reload and the cylinder thrown',
   run(ctx) {
     const { fx, av } = stage(ctx, { noDummy: true });
     // The chamber always flies 600px before its fuse ends, whatever the cursor was on — so the
@@ -206,23 +239,15 @@ export const quickShotUpgraded: PreviewScript = {
     movingDummy(ctx, mark);
 
     const start = 300;
-    const barW = 50, barH = 7, barY = ctx.cy - 50;
-    const barX = ctx.cx - barW / 2;
-    const bar = ctx.adopt(ctx.scene.add.graphics().setDepth(15));
+    const dial = ctx.adopt(ctx.scene.add.graphics().setDepth(15));
     let reloading = true;
     ctx.onFrame((_dt, elapsed) => {
-      bar.clear();
+      dial.clear();
       if (!reloading || elapsed < start) return;
       const p = Phaser.Math.Clamp((elapsed - start) / 3000, 0, 1);
-      bar.fillStyle(0x44aa44, 0.85);
-      bar.fillRect(barX, barY - barH / 2, barW, barH);
-      bar.fillStyle(0x88ff88, 0.5);
-      bar.fillRect(barX, barY - barH / 2, barW * p, barH);
-      // The perfect band: 45% to 55% of the 3 seconds.
-      bar.fillStyle(0xffff00, 0.9);
-      bar.fillRect(barX + barW * 0.45, barY - barH / 2, barW * 0.1, barH);
-      bar.fillStyle(0xff2222, 1);
-      bar.fillRect(barX + barW * p - 1.5, barY - barH / 2 - 1, 3, barH + 2);
+      // One window, at 45–55% of the sweep — the same 300ms the kit checks against.
+      TimeFx.drawReloadDial(dial, ctx.tint, NOON_TONES, ctx.cx, ctx.cy - 52, 17, p, elapsed / 1000,
+        [{ start: 0.45, end: 0.55, state: 'pending' }], false);
     });
 
     // Dead centre of the band, 1.5s in.
@@ -661,28 +686,21 @@ function alwaysNoonScript(withReload: boolean): PreviewScript {
       fire(2300, 0.02, 0);
 
       if (withReload) {
-        // 1.5s of bar, three bands at 10–25%, 42–57% and 72–87%.
+        // 1.5s of sweep, three windows at 10–25%, 42–57% and 72–87% of the dial.
         const rStart = 2300;
-        const barW = 66, barH = 8, barY = ctx.cy - 55;
-        const barX = ctx.cx - barW / 2;
         const zones = [[0.10, 0.25], [0.42, 0.57], [0.72, 0.87]];
         const hit = [false, false, false];
-        const bar = ctx.adopt(ctx.scene.add.graphics().setDepth(15));
+        const dial = ctx.adopt(ctx.scene.add.graphics().setDepth(15));
         let reloading = false;
         ctx.onFrame((_dt, elapsed) => {
-          bar.clear();
+          dial.clear();
           if (!reloading) return;
           const p = Phaser.Math.Clamp((elapsed - rStart) / 1500, 0, 1);
-          bar.fillStyle(0x335544, 0.85);
-          bar.fillRect(barX, barY - barH / 2, barW, barH);
-          bar.fillStyle(0x88ffaa, 0.5);
-          bar.fillRect(barX, barY - barH / 2, barW * p, barH);
-          zones.forEach((z, i) => {
-            bar.fillStyle(hit[i] ? 0x44ff44 : p > z[1] ? 0xff3333 : 0xffff00, 0.9);
-            bar.fillRect(barX + barW * z[0], barY - barH / 2, barW * (z[1] - z[0]), barH);
-          });
-          bar.fillStyle(0xff2222, 1);
-          bar.fillRect(barX + barW * p - 1.5, barY - barH / 2 - 1, 3, barH + 2);
+          TimeFx.drawReloadDial(dial, ctx.tint, FROZEN_TONES, ctx.cx, ctx.cy - 56, 20, p, elapsed / 1000,
+            zones.map((z, i) => ({
+              start: z[0], end: z[1],
+              state: hit[i] ? 'hit' : p > z[1] ? 'missed' : 'pending',
+            })), false);
         });
         ctx.at(rStart, () => { reloading = true; float(ctx, ctx.cx, ctx.cy - 36, 'Reloading…', '#88ffaa'); });
         [[0.17, 0], [0.50, 1], [0.79, 2]].forEach(([f, i]) => {
@@ -859,40 +877,58 @@ export const perkPurge: PreviewScript = {
 
 // ══ MASTERY ═══════════════════════════════════════════════════════════
 
-export const masteryPassiveManipulation: PreviewScript = {
-  duration: 6400,
-  caption: 'Mastery passive — Focus runs the whole arena at ×0.5, Rush at ×1.5. Space flips it, 5s cooldown',
+export const masteryReputationRepair: PreviewScript = {
+  duration: 7200,
+  caption: 'Mastery passive — over 75 damage in 2 seconds and the last 3 seconds are simply taken back',
   run(ctx) {
     const { fx, av, tv } = stage(ctx, { noDummy: true });
     const mark: Mark = { x: ctx.tx, y: ctx.ty };
     movingDummy(ctx, mark);
-    const mode = label(ctx, ctx.cx, ctx.cy - 54, '#88aaff');
-    mode.setText('⏪ FOCUS ×0.5');
-    tv?.setMode('focus');
+    tv?.setRepairReady(true);
 
-    let factor = 0.5;
-    // Both fighters and every projectile are on the same dial — this is not a personal buff.
-    ctx.onFrame((dt) => {
-      mark.x -= 70 * factor * (dt / 1000);
-      if (mark.x < ctx.cx + 90) mark.x = ctx.tx;
+    // Where you were three seconds ago, and the ledger the passive is actually watching.
+    const anchor: Mark = { x: ctx.cx, y: ctx.cy };
+    const me: Mark = { x: ctx.cx, y: ctx.cy };
+    const ledger = label(ctx, ctx.cx, ctx.cy - 54, '#ffee88');
+    ledger.setText('0 / 75');
+    let taken = 0;
+
+    // The rig walks itself out of position while it is being shot — that is what gets undone.
+    ctx.onFrame((dt, elapsed) => {
+      if (elapsed > 400 && elapsed < 3600) me.x += 46 * (dt / 1000);
+      av.update(dt, me.x, me.y, 1);
+      ledger.setPosition(me.x, me.y - 54);
     });
-    for (let i = 0; i < 6; i++) {
-      steppedBullet(ctx, {
-        from: { x: ctx.cx + 30, y: ctx.cy - 20 + i * 8 }, angle: 0, born: 300 + i * 900,
-        scale: () => factor,
+
+    // Three hits inside two seconds: 26 + 26 + 26 is 78, and the third one trips it.
+    [1600, 2400, 3200].forEach((at, i) => {
+      ctx.at(at, () => {
+        taken += 26;
+        fx.flash(me.x, me.y, 15, 8, HEAT_TONES);
+        float(ctx, me.x, me.y - 26, '−26', '#ff9c9c');
+        ledger.setText(`${taken} / 75`).setColor(i === 2 ? '#ff4422' : '#ffee88');
       });
-    }
-
-    ctx.at(3000, () => {
-      factor = 1.5;
-      tv?.setMode('rush');
-      mode.setText('⏩ RUSH ×1.5').setColor('#ff8844');
-      av.play('flex');
-      fx.bloom(ctx.cx, ctx.cy, 34, 8, 5, HEAT_TONES);
-      fx.ring(ctx.cx, ctx.cy, 10, 70, TIME.powder, 420, 4, 5);
-      float(ctx, ctx.cx, ctx.cy - 44, '⏩ RUSH', '#ff8844');
     });
-    ctx.at(3700, () => float(ctx, mark.x, mark.y - 34, 'they speed up too', '#ffb3aa'));
+
+    ctx.at(3260, () => {
+      av.play('raise');
+      fx.rewind(me.x, me.y, anchor.x, anchor.y, 6, FROZEN_TONES);
+      // Seven puddles laid along the line you are hauled back through.
+      for (let i = 0; i <= 6; i++) {
+        const p = i / 6;
+        puddle(ctx, { x: me.x + (anchor.x - me.x) * p, y: me.y + (anchor.y - me.y) * p, born: 3260 + i * 40 });
+      }
+      me.x = anchor.x; me.y = anchor.y;
+      fx.sunstop(anchor.x, anchor.y, 110, 12, FROZEN_TONES);
+      fx.ring(anchor.x, anchor.y, 12, 96, TIME.frost, 480, 4.5, 7);
+      fx.hands(anchor.x, anchor.y, 8, { speed: 150, size: 3, life: 620, depth: 8, tones: FROZEN_TONES });
+      ledger.setText('0 / 75').setColor('#ffee88');
+      float(ctx, anchor.x, anchor.y - 48, '⏪ REPUTATION REPAIR', '#88aaff');
+      float(ctx, anchor.x, anchor.y - 32, '−3s', '#ccddff');
+      tv?.setRepairReady(false);
+    });
+    ctx.at(3900, () => float(ctx, anchor.x, anchor.y - 66, 'health and position restored', '#a6f0c2'));
+    ctx.at(4900, () => float(ctx, anchor.x, anchor.y - 50, 'recovering — 20s', '#8a8ab0'));
   },
 };
 

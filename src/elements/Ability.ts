@@ -93,7 +93,7 @@ export interface CastContext {
   placeCrystalPortal: (tx: number, ty: number) => void;
   activateCrystalTrick: () => void;
   // Soul
-  soulLanternTick: (tx: number, ty: number) => void;
+  soulSiphon: (tx: number, ty: number) => void;
   soulArise: () => void;
   soulGrave: (tx: number, ty: number) => void;
   soulDeathWhistle: (tx: number, ty: number) => void;
@@ -290,12 +290,12 @@ export interface CastContext {
   fortuneRiskyInvest: () => void;
   fortunePaywall: (tx: number, ty: number) => void;
   fortunePayToWin: (tx: number, ty: number) => void;
-  // Marrow (test element: cheat mode only for now)
-  marrowAntibody: (tx: number, ty: number) => void;
-  marrowMacrosma: () => void;
-  marrowNeutralize: () => void;
-  marrowDendricles: (tx: number, ty: number) => void;
-  marrowMastacre: () => void;
+  // Cloth (test element: cheat mode only for now)
+  clothPin: (tx: number, ty: number) => void;
+  clothLongpin: (tx: number, ty: number) => void;
+  clothSafetyLine: () => void;
+  clothPinCushion: () => void;
+  clothTapestry: () => void;
   // Death (test element: cheat mode only for now)
   deathStyxShot: (tx: number, ty: number) => void;
   deathDisarm: (tx: number, ty: number) => void;

@@ -28,7 +28,7 @@ import * as radiation from './radiation';
 import * as magma from './magma';
 import * as dune from './dune';
 import * as fortune from './fortune';
-import * as marrow from './marrow';
+import * as cloth from './cloth';
 import * as justice from './justice';
 import * as gluttony from './gluttony';
 import * as quantum from './quantum';
@@ -191,8 +191,8 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'crystal:crystal-trick:up': crystal.crystalTrickUpgraded,
 
   // ── Soul ──
-  'soul:soul-lantern-light': soul.lanternLight,
-  'soul:soul-lantern-light:up': soul.lanternLightUpgraded,
+  'soul:soul-siphon': soul.siphon,
+  'soul:soul-siphon:up': soul.siphonUpgraded,
   'soul:soul-arise': soul.arise,
   'soul:soul-arise:up': soul.ariseUpgraded,
   'soul:soul-grave': soul.graveAbility,
@@ -427,17 +427,19 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'fortune:fortune-p2w': fortune.payToWin,
   'fortune:fortune-p2w:up': fortune.payToWinUpgraded,
 
-  // ── Marrow ──
-  'marrow:marrow-antibody': marrow.antiBodyBlast,
-  'marrow:marrow-antibody:up': marrow.antiBodyBlastUpgraded,
-  'marrow:marrow-macrosma': marrow.macrosma,
-  'marrow:marrow-macrosma:up': marrow.macrosmaUpgraded,
-  'marrow:marrow-neutralize': marrow.neutralize,
-  'marrow:marrow-neutralize:up': marrow.neutralizeUpgraded,
-  'marrow:marrow-dendricles': marrow.dendricles,
-  'marrow:marrow-dendricles:up': marrow.dendriclesUpgraded,
-  'marrow:marrow-mastacre': marrow.mastacre,
-  'marrow:marrow-mastacre:up': marrow.mastacreUpgraded,
+  // ── Cloth ──
+  'cloth:cloth-pin': cloth.pin,
+  'cloth:cloth-pin:up': cloth.pinUpgraded,
+  'cloth:cloth-longpin': cloth.longpin,
+  'cloth:cloth-longpin:up': cloth.longpinUpgraded,
+  'cloth:cloth-safety-line': cloth.safetyLine,
+  'cloth:cloth-safety-line:up': cloth.safetyLineUpgraded,
+  'cloth:cloth-pin-cushion': cloth.pinCushion,
+  'cloth:cloth-pin-cushion:up': cloth.pinCushionUpgraded,
+  'cloth:cloth-tapestry': cloth.tapestry,
+  'cloth:cloth-tapestry:up': cloth.tapestryUpgraded,
+  'cloth:mastery:outfit-change': cloth.outfitChange,
+  'cloth:mastery:wretched-scarf': cloth.wretchedScarf,
 
   // ── Justice ── (ground five, then the flight five)
   'justice:justice-stab': justice.stab,
@@ -700,6 +702,7 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'growth:passive:dna': growth.passiveDna,
   'growth:passive:infection': growth.passiveInfection,
   'crystal:passive:compounding-bounces': crystal.passiveBounces,
+  'soul:passive:three-bodies': soul.passiveThreeBodies,
   'soul:passive:the-corpse-queue': soul.passiveCorpseQueue,
   'soul:passive:amalgams': soul.passiveAmalgams,
   'hunt:passive:buried-bolts': hunt.passiveBuriedBolts,
@@ -743,8 +746,8 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'fortune:passive:the-catalogue': fortune.theCatalogue,
   'fortune:mastery:battle-pass': fortune.masteryBattlePass,
   'fortune:mastery:drive-by-flex': fortune.masteryDriveByFlex,
-  'marrow:passive:the-bone-bar': marrow.theBoneBar,
-  'marrow:passive:inflammation': marrow.inflammation,
+  'cloth:passive:the-scarf': cloth.theScarf,
+  'cloth:passive:the-tapestry': cloth.theTapestry,
   'justice:passive:willpower': justice.willpower,
   'justice:passive:two-stances': justice.twoStances,
   'gluttony:passive:the-larder': gluttony.theLarder,
@@ -807,6 +810,8 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'fate:passive:the-deck': fate.theDeck,
   'sound:passive:the-metronome': sound.theMetronome,
   'sound:passive:the-bank': sound.theBank,
+  'sound:mastery:audience-participation': sound.audienceParticipation,
+  'sound:mastery:compose': sound.compose,
   'technology:passive:the-cruncher-streak': technology.theCruncherStreak,
   'technology:passive:two-screens': technology.twoScreens,
   'conquest:passive:the-board': conquest.theBoard,
@@ -884,7 +889,7 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'soul:mastery:grave-mistake': soul.masteryGraveMistake,
   'hunt:mastery:weak-points': hunt.masteryWeakPoints,
   'hunt:mastery:beastling': hunt.masteryBeastling,
-  'sand:mastery:passive-manipulation': sand.masteryPassiveManipulation,
+  'sand:mastery:reputation-repair': sand.masteryReputationRepair,
   'sand:mastery:time-bomb': sand.masteryTimeBomb,
   'gravity:mastery:gravity-aura': gravity.masteryGravityAura,
   'gravity:mastery:starfall': gravity.masteryStarfall,

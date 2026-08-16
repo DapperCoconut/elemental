@@ -105,6 +105,10 @@ const NPC_MASTERY_BINDS: Record<string, { enhId: string; slot: MasterySlot }> = 
   // a distance and hands the tracer chain a target that cannot dodge. R is refused by
   // `excludeSlots`, and the F and the Q are the two the bot already wins with.
   radiation: { enhId: 'gamma-tether', slot: 'e' },
+  // Cloth gives up R. The bot's whole safety-line play is a two-press combo it already runs
+  // well, but Wretched Scarf is the one button that rewards being caught out — and E is the
+  // reel, which every other branch of its rotation is built around.
+  cloth: { enhId: 'wretched-scarf', slot: 'r' },
   // Slime gives up Oozorbtion. The slab is the same trade made continuous — one swallowed shot
   // versus a pane that keeps five of them out of the air — and it does not ask the bot to guess
   // *when* it is about to be shot at, which is the whole skill of the F. It also hands the

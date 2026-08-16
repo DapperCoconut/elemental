@@ -862,3 +862,256 @@ export const perkHarmony: PreviewScript = {
       SOUND.violet);
   },
 };
+
+// ── Mastery — Audience Participation ──────────────────────────────────
+
+const AUDIENCE_HYPE_PER_SEC = 2;
+const AUDIENCE_BURST_DMG = 50;
+const AUDIENCE_BURST_WINDOW_MS = 5000;
+const AUDIENCE_WILD_MS = 5000;
+const AUDIENCE_WILD_MULT = 2;
+const AUDIENCE_BAND = 52;
+
+/**
+ * The crowd, mirrored off the kit's own painter. The showcase is the *reaction* rather than the
+ * shape, so the only thing that matters here is that the pit is visibly calm and then visibly
+ * not — hence one `wild` flag driving bob height, arm swing and wand brightness together.
+ */
+function crowd(ctx: PreviewCtx, wild: () => boolean): void {
+  const wands = [SOUND.magenta, SOUND.gold, SOUND.mint, SOUND.flow, SOUND.neon, SOUND.glint];
+  const count = Math.max(10, Math.round(ctx.w / 22));
+  const people = Array.from({ length: count }, (_, i) => ({
+    x: ((i + 0.5) / count) * ctx.w + (Math.random() - 0.5) * 14,
+    row: i % 3,
+    scale: 0.8 + Math.random() * 0.3,
+    phase: Math.random() * Math.PI * 2,
+    wand: wands[i % wands.length],
+    hand: Math.random() < 0.5 ? -1 : 1,
+  }));
+
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(15));
+  ctx.onFrame((_dt, elapsed) => {
+    const t = elapsed / 1000;
+    const up = wild();
+    g.clear();
+    g.fillStyle(ctx.tint(SOUND.shade), 0.42);
+    g.fillRect(0, ctx.h - AUDIENCE_BAND, ctx.w, AUDIENCE_BAND);
+    g.fillStyle(ctx.tint(up ? SOUND.gold : SOUND.plum), up ? 0.16 : 0.09);
+    g.fillRect(0, ctx.h - AUDIENCE_BAND, ctx.w, 5);
+
+    for (let row = 2; row >= 0; row--) {
+      for (const p of people) {
+        if (p.row !== row) continue;
+        const s = p.scale * (1 - row * 0.12);
+        const bob = -Math.abs(Math.sin(t * (up ? 7.5 : 2.1) + p.phase)) * (up ? 11 : 2.4) * s;
+        const headY = ctx.h - 17 - row * 11 + bob;
+        const shoulderY = headY + 11 * s;
+        g.fillStyle(ctx.tint(SOUND.shade), 1);
+        g.fillEllipse(p.x, shoulderY + 12 * s, 26 * s, 30 * s);
+        g.fillCircle(p.x, headY, 7.4 * s);
+        g.fillStyle(ctx.tint(up ? SOUND.gold : SOUND.violet), up ? 0.34 : 0.18);
+        g.fillCircle(p.x - 2.2 * s, headY - 2.4 * s, 2.6 * s);
+        for (const side of [-1, 1] as const) {
+          const swing = Math.sin(t * (up ? 9.5 : 2.9) + p.phase + (side > 0 ? 1.1 : 0)) * (up ? 0.85 : 0.4);
+          const ang = -Math.PI / 2 + side * 0.34 + swing;
+          const sx = p.x + side * 8 * s;
+          const len = (up ? 21 : 17) * s;
+          const hx = sx + Math.cos(ang) * len;
+          const hy = shoulderY + Math.sin(ang) * len;
+          g.lineStyle(3.4 * s, ctx.tint(SOUND.shade), 1);
+          g.beginPath();
+          g.moveTo(sx, shoulderY);
+          g.lineTo(hx, hy);
+          g.strokePath();
+          if (side !== p.hand) continue;
+          const wx = hx + Math.cos(ang) * 9 * s;
+          const wy = hy + Math.sin(ang) * 9 * s;
+          g.lineStyle(2.2 * s, ctx.tint(p.wand), up ? 0.95 : 0.7);
+          g.beginPath();
+          g.moveTo(hx, hy);
+          g.lineTo(wx, wy);
+          g.strokePath();
+          g.fillStyle(ctx.tint(p.wand), (up ? 0.28 : 0.16) * (0.7 + 0.3 * Math.sin(t * 6 + p.phase)));
+          g.fillCircle(wx, wy, (up ? 7 : 5) * s);
+          g.fillStyle(ctx.tint(SOUND.white), up ? 1 : 0.8);
+          g.fillCircle(wx, wy, 1.7 * s);
+        }
+      }
+    }
+  });
+}
+
+export const audienceParticipation: PreviewScript = {
+  duration: 10000,
+  scale: 0.9,
+  caption: 'A crowd that pays you 2 hype a second — and 4 the moment you give them a reason',
+  run(ctx) {
+    const s = stageIt(ctx);
+    const foe: Mark = { x: ctx.w * 0.76, y: ctx.h * 0.34 };
+    dummy(ctx, foe);
+
+    let wildUntil = -1;
+    let hype = 0;
+    crowd(ctx, () => wildUntil > 0);
+    ctx.onFrame((dt, elapsed) => {
+      if (wildUntil > 0 && elapsed > wildUntil) wildUntil = -1;
+      hype += (dt / 1000) * AUDIENCE_HYPE_PER_SEC * (wildUntil > 0 ? AUDIENCE_WILD_MULT : 1);
+    });
+    bank(ctx, () => (wildUntil > 0
+      ? `🙌 ${AUDIENCE_HYPE_PER_SEC * AUDIENCE_WILD_MULT}/s  ·  ${Math.floor(hype)} hype`
+      : `👏 ${AUDIENCE_HYPE_PER_SEC}/s  ·  ${Math.floor(hype)} hype`));
+
+    // Nothing happens for the first three seconds except the crowd quietly paying out. Then a
+    // burst crosses fifty inside the window and the room comes off its feet.
+    const burst = [3400, 3800, 4200];
+    burst.forEach((at, i) => {
+      ctx.at(at, () => {
+        s.av.play('punch', ctx.aim);
+        s.fx.waveBurst(ctx.cx, ctx.cy, ctx.aim, 1.1, 9, SOUND.magenta);
+        s.fx.boom(foe.x, foe.y, 32, {});
+        tick(ctx, foe.x, foe.y - 16, `${[18, 16, 20][i]}`, SOUND.magenta);
+        if (i < burst.length - 1) return;
+        wildUntil = at + AUDIENCE_WILD_MS;
+        s.fx.sparkle(ctx.w / 2, ctx.h - 34, 14, ctx.w * 0.45, 16, SOUND.gold);
+        s.fx.notes(ctx.w / 2, ctx.h - 34, 9,
+          { speed: 190, angle: -Math.PI / 2, spread: 0.9, color: SOUND.gold, depth: 16, rise: 60 });
+        tick(ctx, ctx.cx, ctx.cy - 44, '🙌 THE CROWD GOES WILD', SOUND.gold);
+      });
+    });
+
+    label(ctx, ctx.w * 0.5, ctx.h - AUDIENCE_BAND - 10,
+      `${AUDIENCE_BURST_DMG} damage inside ${AUDIENCE_BURST_WINDOW_MS / 1000}s · double hype for ${AUDIENCE_WILD_MS / 1000}s · the window re-arms`,
+      SOUND.violet);
+  },
+};
+
+// ── Mastery — Compose ─────────────────────────────────────────────────
+
+const COMPOSE_WRITE_MS = 3000;
+const COMPOSE_NOTE_SPACING = 30;
+const COMPOSE_NOTE_DMG = 3;
+const COMPOSE_STAFF_GAP = 5;
+const COMPOSE_HOP_MS = 420;
+const COMPOSE_HOP_RISE = 26;
+const COMPOSE_FLY_SPEED = 540;
+const COMPOSE_STAGGER_MS = 55;
+
+export const compose: PreviewScript = {
+  duration: 9500,
+  scale: 0.9,
+  caption: 'Write for 3 seconds — every 30px of stave is a note, and then the whole bar goes hunting',
+  run(ctx) {
+    const foe: Mark = { x: ctx.w * 0.84, y: ctx.h * 0.24 };
+    dummy(ctx, foe);
+    const home: Mark = { x: ctx.w * 0.24, y: ctx.h * 0.66 };
+    const s = drivenCaster(ctx, home);
+
+    interface Note { ax: number; ay: number; x: number; y: number; step: number; flags: number; launchAt: number; hunting: boolean; dead: boolean }
+    const pts: Mark[] = [{ x: home.x, y: home.y }];
+    const notes: Note[] = [];
+    let since = 0;
+    let playedAt = -1;
+    const START = 700;
+
+    bank(ctx, () => (playedAt < 0
+      ? `${notes.length} notes written  ·  one every ${COMPOSE_NOTE_SPACING}px`
+      : `${notes.length} notes still flying  ·  ${COMPOSE_NOTE_DMG} damage apiece`));
+
+    // The pen: a wide loop the caster walks over the three seconds, so the stave is a shape
+    // rather than a straight line and the five lines visibly bend with it.
+    ctx.onFrame((_dt, elapsed) => {
+      if (elapsed < START || elapsed > START + COMPOSE_WRITE_MS) return;
+      const k = (elapsed - START) / COMPOSE_WRITE_MS;
+      const a = -Math.PI * 0.85 + k * Math.PI * 1.75;
+      home.x = ctx.w * 0.5 + Math.cos(a) * ctx.w * 0.26;
+      home.y = ctx.h * 0.5 + Math.sin(a) * ctx.h * 0.24;
+      const last = pts[pts.length - 1];
+      const d = Phaser.Math.Distance.Between(last.x, last.y, home.x, home.y);
+      if (d < 3) return;
+      const ang = Math.atan2(home.y - last.y, home.x - last.x);
+      pts.push({ x: home.x, y: home.y });
+      since += d;
+      while (since >= COMPOSE_NOTE_SPACING) {
+        since -= COMPOSE_NOTE_SPACING;
+        const step = Phaser.Math.Between(-4, 4);
+        const off = step * (COMPOSE_STAFF_GAP / 2);
+        const nx = home.x + Math.cos(ang + Math.PI / 2) * off;
+        const ny = home.y + Math.sin(ang + Math.PI / 2) * off;
+        notes.push({
+          ax: nx, ay: ny, x: nx, y: ny, step,
+          flags: notes.length % 3 === 0 ? 2 : 1,
+          launchAt: 0, hunting: false, dead: false,
+        });
+      }
+    });
+
+    ctx.at(START, () => {
+      s.av.play('raise', -Math.PI / 2, 520);
+      s.fx.ripple(home.x, home.y, 10, 60, SOUND.brassHi, 420, 4, 7, 4);
+      tick(ctx, home.x, home.y - 44, '🎼 COMPOSE — WRITE!', SOUND.brassHi);
+    });
+    ctx.at(START + COMPOSE_WRITE_MS, () => {
+      playedAt = START + COMPOSE_WRITE_MS;
+      notes.forEach((n, i) => { n.launchAt = playedAt + i * COMPOSE_STAGGER_MS; });
+      s.av.play('sweep', -Math.PI / 2, 520);
+      s.fx.ripple(home.x, home.y, 12, 90, SOUND.gold, 480, 5, 7, 9);
+      tick(ctx, home.x, home.y - 44,
+        `🎼 ${notes.length} NOTES · ${notes.length * COMPOSE_NOTE_DMG} DAMAGE`, SOUND.gold);
+    });
+
+    // One painter for the stave on the floor and the bar coming off it.
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    ctx.onFrame((dt, elapsed) => {
+      g.clear();
+      if (pts.length >= 2) {
+        const fade = playedAt < 0 ? 1 : Phaser.Math.Clamp(1 - (elapsed - playedAt) / 2600, 0.15, 1);
+        for (let line = -2; line <= 2; line++) {
+          const off = line * COMPOSE_STAFF_GAP;
+          g.lineStyle(line === 0 ? 1.7 : 1.1,
+            ctx.tint(line === 0 ? SOUND.brassHi : SOUND.brass),
+            (line === 0 ? 0.9 : 0.5) * fade);
+          g.beginPath();
+          for (let i = 0; i < pts.length; i++) {
+            const a = pts[Math.max(0, i - 1)];
+            const b = pts[Math.min(pts.length - 1, i + 1)];
+            const ang = Math.atan2(b.y - a.y, b.x - a.x) + Math.PI / 2;
+            const px = pts[i].x + Math.cos(ang) * off;
+            const py = pts[i].y + Math.sin(ang) * off;
+            if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
+          }
+          g.strokePath();
+        }
+      }
+
+      for (const n of notes) {
+        if (n.dead) continue;
+        const airborne = playedAt >= 0 && elapsed >= n.launchAt;
+        if (airborne) {
+          const age = elapsed - n.launchAt;
+          if (!n.hunting) {
+            const k = Phaser.Math.Clamp(age / COMPOSE_HOP_MS, 0, 1);
+            n.x = n.ax;
+            n.y = n.ay - Math.sin(k * Math.PI * 0.85) * COMPOSE_HOP_RISE;
+            if (k >= 1) n.hunting = true;
+          } else {
+            const ang = Math.atan2(foe.y - n.y, foe.x - n.x);
+            n.x += Math.cos(ang) * COMPOSE_FLY_SPEED * dt / 1000;
+            n.y += Math.sin(ang) * COMPOSE_FLY_SPEED * dt / 1000;
+            if (Phaser.Math.Distance.Between(n.x, n.y, foe.x, foe.y) <= 20) {
+              n.dead = true;
+              s.fx.boom(foe.x, foe.y, 24, { mark: false, notes: 1, duration: 260 });
+              tick(ctx, foe.x + (Math.random() - 0.5) * 20, foe.y - 14, `${COMPOSE_NOTE_DMG}`, SOUND.brassHi);
+              continue;
+            }
+          }
+        }
+        const lean = airborne ? Math.sin(elapsed / 200 + n.step) * 0.3 : 0;
+        musicNoteLayered(g, ctx.tint, n.x, n.y, 5.4, lean,
+          n.hunting ? SOUND.gold : SOUND.brassHi, 1, { flags: n.flags, stemDown: n.step > 0 });
+      }
+    });
+
+    label(ctx, ctx.w * 0.5, ctx.h - 8,
+      'stand still and you write nothing · move speed is the whole ability', SOUND.violet);
+  },
+};

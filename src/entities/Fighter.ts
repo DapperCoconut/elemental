@@ -40,6 +40,12 @@ export interface DamageOpts {
    */
   netApplied?: boolean;
   /**
+   * This hit arrived as an area blast rather than as a shot or a swing. Set centrally by
+   * ArenaScene's `dealAoeDamage`, so every kit that routes its explosions through it gets the
+   * flag for free. Read by Cloth's Casual Hoodie outfit and nothing else so far.
+   */
+  aoe?: boolean;
+  /**
    * Damage a fighter inflicts on itself through the normal (shielded) pipeline. Exempt
    * from the online damage gate: the opponent's sim has no copy of it to relay, so
    * blocking it would simply delete the ability's cost.
@@ -214,17 +220,42 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   public illusionIncomingMult = 1;
   /**
-   * Marrow (Cytokine Storm, R+): the vulnerability a neutrophil's cytokine pellets stack onto
-   * whatever they hit. Its own field for the reason Justice, Illusion and Sound have theirs —
-   * MarrowKit rewrites it from scratch every frame off its own stack table, and sharing
-   * `incomingDamageMultiplier` would stomp whatever else wrote armour that tick.
+   * Cloth: the tailor's own armour, folded into one number — Survive III's 20% off the top, the
+   * Heavy Coat outfit, and Wretched Scarf's total negation. Its own field for the reason
+   * Justice, Illusion and Sound have theirs: ClothKit rewrites it from scratch every frame off
+   * its own state, and sharing `incomingDamageMultiplier` would stomp whatever else wrote
+   * armour that tick.
    */
-  public marrowIncomingMult = 1;
+  public clothIncomingMult = 1;
+  /**
+   * Cloth mastery, Casual Hoodie: 20% off anything that arrives as an area blast or a piercing
+   * shot. Separate from `clothIncomingMult` because it is conditional on the hit rather than on
+   * the wearer — see the `aoe` and `pierce` flags on {@link DamageOpts}.
+   */
+  public clothAoeMult = 1;
+  /**
+   * Cloth (Pin Cushion, F): health the tailor has stabbed through with pins. Spent before
+   * normal HP like weak HP, but at {@link pinnedVulnMult} rate — it is *worse* health, not a
+   * shield — and whatever it eats is reported to {@link onPinnedAbsorb} so the kit can throw a
+   * share of it back at the attacker.
+   */
+  public pinnedHp = 0;
+  /** How fast Pinned HP burns relative to the damage it is soaking. Thorns III drops it to 1. */
+  public pinnedVulnMult = 1.25;
+  /** Called with the Pinned HP actually consumed by a hit. Wired by ClothKit for thorns. */
+  public onPinnedAbsorb: ((spent: number) => void) | null = null;
+  /**
+   * Cloth's Thick Skin artwork: incoming hits stop counting as piercing, so every absorb layer
+   * — invincibility, the absorber, shields, weak HP, clotted HP and Pinned HP — gets to see them.
+   */
+  public pierceImmune = false;
+  /** Cloth's Quick artworks, multiplied into every cooldown the tailor pays. */
+  public clothCooldownMult = 1;
   /**
    * Gluttony (Head Chef, E+ and Murderous Intent, F+): the kitchen's two food-and-teeth
    * multipliers folded into one field — a winter mint's 20% resistance on the cook, and the
    * 15% vulnerability the maw's cone of bullets stacks onto whatever it hits. Its own field
-   * for the reason Justice, Illusion and Marrow have theirs: GluttonyKit rewrites it from
+   * for the reason Justice, Illusion and Cloth have theirs: GluttonyKit rewrites it from
    * scratch every frame off its own timers, and sharing `incomingDamageMultiplier` would
    * stomp whatever else wrote armour that tick.
    */
@@ -260,6 +291,13 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    * neighbour above — RadiationKit rewrites it from scratch every frame off the current range.
    */
   public radiationIncomingMult = 1;
+
+  /**
+   * Magic — the Wind summon's hurricane. Everything the storm can reach takes more while the
+   * conjurer is standing in its eye, which is the deal that ability makes: the safest square on
+   * the board is the middle of your own disaster.
+   */
+  public magicIncomingMult = 1;
   /**
    * Radiation (Irradiated): `Date.now()` epoch until which every point of healing aimed at this
    * fighter lands as damage instead — see `heal`. One field rather than a hook per healing
@@ -724,6 +762,14 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public highGravityUntil = 0;
 
   /**
+   * Magic — Splash+: mobility refused until this `scene.time.now` timestamp. Deliberately *not*
+   * High Gravity, which also clamps speed multipliers back to 1 — a putrid pool is a heavy slow
+   * you cannot dash out of, so clamping would undo the slow that is the point of standing in it.
+   * Gates the Space dodge and `dashCaster`; ordinary walking is untouched.
+   */
+  public mobilityBlockedUntil = 0;
+
+  /**
    * Growth Mastery — Syringe Shot: sick until this `scene.time.now` timestamp. Deliberately a
    * single field: every sickness upgrade (extra ticks, vulnerability, slows, weakening, spread)
    * rides on this one effect rather than adding its own status box.
@@ -854,7 +900,10 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     this.damageWasSelfInflicted = false;
     if (this.levitating && opts?.source && opts.sourceX !== undefined && opts.sourceY !== undefined
         && isStationaryFor(opts.source, opts.sourceX, opts.sourceY, 3000)) return;
-    if (!opts?.pierce && this.isInvincible) return;
+    // Cloth's Thick Skin artwork revokes the pierce flag outright, so every absorb layer below
+    // gets to see the hit. Resolved once here rather than at each layer so they cannot disagree.
+    const pierce = !!opts?.pierce && !this.pierceImmune;
+    if (!pierce && this.isInvincible) return;
 
     let isCrit = false;
     if (opts?.netApplied) {
@@ -875,7 +924,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       // Tallied here: after the crit roll (a crit really is a bigger hit) but before every
       // mitigation multiplier on the line below, which is what "damage aimed at you" means.
       this.rawDamageTaken += amount;
-      let mitigation = this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.paperIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.artifactIncomingMult * this.marrowIncomingMult * this.gluttonyIncomingMult * this.orderIncomingMult * this.fortuneIncomingMult * this.dreamIncomingMult * this.duneIncomingMult * this.radiationIncomingMult * this.mapArmorMult * this.starIncomingMult * this.netDefenseMult;
+      let mitigation = this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.paperIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.artifactIncomingMult * this.clothIncomingMult * this.gluttonyIncomingMult * this.orderIncomingMult * this.fortuneIncomingMult * this.dreamIncomingMult * this.duneIncomingMult * this.radiationIncomingMult * this.magicIncomingMult * this.mapArmorMult * this.starIncomingMult * this.netDefenseMult;
       // Ruin's spikes turn armour inside out — 25% less damage taken comes back as 25% more.
       // Only a net *buff* is flipped; a fighter already taking extra damage is left alone.
       if (mitigation < 1 && this.scene.time.now < this.buffsInvertedUntil) mitigation = 2 - mitigation;
@@ -883,6 +932,9 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       // whatever the product came out as is dragged halfway back to neutral. Applied after the
       // Ruin flip so a split armour buff is still a buff when the spikes turn it over.
       if (this.scene.time.now < this.effectSplitUntil) mitigation = 1 + (mitigation - 1) * 0.5;
+      // Casual Hoodie is conditional on how the hit arrived, so it sits outside the product
+      // above rather than inside it — an ordinary shot must not pick it up.
+      if (opts?.aoe || opts?.pierce) mitigation *= this.clothAoeMult;
       amount = Math.round(amount * mitigation * this.ruinIncomingMult);
       if (this.darkVulnStacks > 0) amount = Math.round(amount * (1 + 0.25 * this.darkVulnStacks));
       // Fire Mastery — Heatwave: exposed amplifies the next hit, then is consumed.
@@ -933,9 +985,9 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       return;
     }
 
-    if (!opts?.pierce && this.damageAbsorber && this.damageAbsorber(amount)) return;
+    if (!pierce && this.damageAbsorber && this.damageAbsorber(amount)) return;
 
-    if (!opts?.pierce && this.shieldCharges > 0) {
+    if (!pierce && this.shieldCharges > 0) {
       this.shieldCharges--;
       // A charge blocking a hit rings; the layers below (shield HP, weak HP,
       // clotted HP) only soak it, so they get the duller absorb thud instead.
@@ -951,7 +1003,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       return;
     }
 
-    if (!opts?.pierce && this.shieldHp > 0) {
+    if (!pierce && this.shieldHp > 0) {
       const absorbed = Math.min(this.shieldHp, amount);
       this.shieldHp -= absorbed;
       amount -= absorbed;
@@ -968,7 +1020,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     }
 
     // Weak HP: a gray bonus layer that soaks damage like shield HP.
-    if (!opts?.pierce && this.weakHp > 0) {
+    if (!pierce && this.weakHp > 0) {
       const absorbed = Math.min(this.weakHp, amount);
       this.weakHp -= absorbed;
       amount -= absorbed;
@@ -985,11 +1037,34 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
 
     // Metal R+ (Blood Clottage): clotted HP is spent before normal HP and soaks
     // damage at half rate — 50 incoming removes 25 clotted and deals 25 through.
-    if (!opts?.pierce && this.clottedHp > 0) {
+    if (!pierce && this.clottedHp > 0) {
       const clotAbsorb = Math.min(this.clottedHp, amount / 2);
       this.clottedHp = Math.max(0, this.clottedHp - clotAbsorb);
       amount = Math.max(0, amount - clotAbsorb * 2);
       if (clotAbsorb > 0) Sfx.playAt('shield-absorb', this.x, { rate: 0.8, volume: 0.85 });
+      if (amount === 0) {
+        this.emit('damaged', 0);
+        if (!this.forceInvisible) {
+          this.setAlpha(0.7);
+          this.scene.time.delayedCall(200, () => { if (this.active) this.setAlpha(this.forceInvisible ? 0 : 1); });
+        }
+        return;
+      }
+    }
+
+    // Cloth F (Pin Cushion): Pinned HP is spent before normal HP, and spent *faster* than the
+    // damage it soaks — 10 through the pins costs 12.5 of them at the default 1.25 rate. That is
+    // the whole trade: the pool is worse health, bought back by the share of it thrown at the
+    // attacker in `onPinnedAbsorb`.
+    if (!pierce && this.pinnedHp > 0) {
+      const rate = Math.max(1, this.pinnedVulnMult);
+      const spent = Math.min(this.pinnedHp, amount * rate);
+      this.pinnedHp -= spent;
+      amount = Math.max(0, amount - spent / rate);
+      if (spent > 0) {
+        Sfx.playAt('shield-absorb', this.x, { rate: 0.95, volume: 0.75 });
+        this.onPinnedAbsorb?.(spent);
+      }
       if (amount === 0) {
         this.emit('damaged', 0);
         if (!this.forceInvisible) {
@@ -1189,7 +1264,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     const ultimateExtra = ability.isUltimate ? this.ultimateCooldownMult : 1;
     return ability.cooldown * (this.cooldownMult || 1) * this.netCooldownMult
       * this.amputationCooldownMult * this.deathDelayCooldownMult * this.dreamCooldownMult
-      * this.justiceCooldownMult * ultimateExtra;
+      * this.justiceCooldownMult * this.clothCooldownMult * ultimateExtra;
   }
 
   /** As {@link effectiveCooldown}, including whatever split was banked when this id was stamped. */

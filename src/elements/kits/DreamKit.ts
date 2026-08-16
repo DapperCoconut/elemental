@@ -63,13 +63,34 @@ const SPIN_FULL = 8.4;
 /** Cap on the bob's angular rate, so a hard wind never turns it into a strobing blur. */
 const OMEGA_MAX = 8;
 const TRANCE_R_MIN = 92;
-const TRANCE_R_MAX = 176;
+/** The reach at a full wind. It grew with the gain — a hard-won swing should also be wider. */
+const TRANCE_R_MAX = 210;
 /**
- * Sleepiness per second at a full-strength swing. Deliberately a third of what it
- * used to be: a full swing used to fill the meter in about three seconds, which made
- * every other key in the kit a formality. Winding is now the long part of the plan.
+ * Sleepiness per second at a full-strength swing, and the curve it is paid on.
+ *
+ * The exponent is the whole shape of the ability. At 2.0 a half-wound pendulum pays a quarter of
+ * a full one rather than four tenths, so the top of the meter is worth far more than the middle
+ * and the reward for holding a hard wind is a cliff rather than a slope. The gain went up with
+ * it: a full swing is now materially better than the old one, and everything below about 70% is
+ * worse. Winding badly is meant to be close to pointless.
  */
-const TRANCE_GAIN = 11.3;
+const TRANCE_GAIN = 26;
+const TRANCE_CURVE = 2.0;
+
+/**
+ * How the wind becomes swing.
+ *
+ * The pendulum used to read as hot the instant the cursor moved fast, which made "charged" a
+ * state you flicked into. It is now a stored charge that fills while you wind well and drains
+ * when you do not: about three seconds of good circling to reach full, where it used to be about
+ * one. `CHARGE_FILL` is charge per second at a perfect wind, and it is scaled by the quality of
+ * the wind, so a mediocre circle both fills slower *and* stops lower.
+ *
+ * Draining stops at whatever the current wind supports rather than at zero, so easing off costs
+ * you the top of the bar and not the whole thing.
+ */
+const CHARGE_FILL = 0.34;
+const CHARGE_DRAIN = 0.55;
 /** Below this the pendulum is just hanging there, and hanging is not hypnotism. */
 const TRANCE_MIN_SWING = 0.06;
 /**
@@ -427,6 +448,12 @@ interface Side {
   prevX: number; prevY: number;
   prevVx: number; prevVy: number;
   smoothAx: number; smoothAy: number;
+  /**
+   * The stored swing, 0–1. The wind no longer *is* the heat — it fills this, and this is what
+   * every reader downstream sees. Kept on the Side rather than recomputed so it can survive a
+   * moment of bad circling instead of collapsing the instant the cursor wobbles.
+   */
+  charge: number;
   /** Last frame's cursor bearing from the body, and the smoothed rate it is turning at. */
   curAng: number;
   spin: number;
@@ -481,7 +508,7 @@ function makeSide(owner: Owner): Side {
     theta: 0.0001, omega: 0,
     prevX: 0, prevY: 0, prevVx: 0, prevVy: 0,
     smoothAx: 0, smoothAy: 0,
-    curAng: 0, spin: 0, handX: 0, handY: 0,
+    charge: 0, curAng: 0, spin: 0, handX: 0, handY: 0,
     pendulum: null,
     portalX: 0, portalY: 0, portalUntil: 0, portalOpen: 0, portal: null,
     oasisUntil: 0, oasisHealAccum: 0, oasisHealed: 0, oasisGrow: 0, oasis: null,
@@ -2026,6 +2053,10 @@ export class DreamKit {
     if (!s.tranceOn) {
       this.swing[owner] = 0;
       s.spin = 0;
+      // Putting the pendulum away spends the charge. Knocked Out still throws at whatever was
+      // stored on the frame you toggled — what you cannot do is bank a wind, walk about with the
+      // pendulum down, and bring it back out still hot.
+      s.charge = 0;
       return;
     }
 
@@ -2064,13 +2095,18 @@ export class DreamKit {
     const tip = Math.abs(s.omega) * PEND_LEN;
     const spinHeat = Phaser.Math.Clamp(
       (Math.abs(s.spin) - SPIN_DEADZONE) / (SPIN_FULL - SPIN_DEADZONE), 0, 1);
-    const heat = Math.max(Phaser.Math.Clamp(tip / TRANCE_MAX_TIP, 0, 1), spinHeat);
+    // How good this frame's wind is. It is no longer the swing itself — it is what the swing is
+    // filling toward, and the ceiling it will drain back to the moment the winding gets lazy.
+    const drive = Math.max(Phaser.Math.Clamp(tip / TRANCE_MAX_TIP, 0, 1), spinHeat);
+    if (drive > s.charge) s.charge = Math.min(drive, s.charge + CHARGE_FILL * drive * dt);
+    else s.charge = Math.max(drive, s.charge - CHARGE_DRAIN * dt);
+    const heat = s.charge;
     this.swing[owner] = heat;
 
     if (heat < TRANCE_MIN_SWING) return;
     const radius = TRANCE_R_MIN + (TRANCE_R_MAX - TRANCE_R_MIN) * heat;
-    // Faster than linear, so a lazy swing is a nuisance and a hard one is a threat.
-    const gain = TRANCE_GAIN * Math.pow(heat, 1.25) * dt;
+    // Well faster than linear: a lazy swing is close to nothing and a full one is the threat.
+    const gain = TRANCE_GAIN * Math.pow(heat, TRANCE_CURVE) * dt;
     for (const t of this.targetsOf(owner)) {
       if (Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) > radius) continue;
       this.gained.set(t, (this.gained.get(t) ?? 0) + gain);

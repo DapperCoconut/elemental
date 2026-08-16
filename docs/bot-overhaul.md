@@ -160,6 +160,50 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   untouched** — the kit was already owner-aware via `up(owner, slot)`, but the base rotation has
   not been rewritten and the movement profile has not been retuned.
 
+- **Cloth (2026-08-16), built to the contract rather than retrofitted.** Cloth replaced Marrow
+  outright, so `doClothAbilities` was written against the synergy contract from the first line
+  instead of being rewritten into it. The element is four two-press combos and nothing else, and
+  every one of them is a kit-published `NpcAiState` field the AI never re-derives:
+  `npcClothPinPlanted` (a long pin is in a body or a wall, so E is the reel and not a throw),
+  `npcClothAnchored` + `npcClothAnchorPressure` (an anchor is down and here is how close the
+  75-damage auto-trigger is, so the bot leaves on its own terms rather than being dragged),
+  `npcClothCombo` (0–1 toward the Click+ grapple spin — near 1 nothing is worth pressing except
+  another pin) and `npcClothWebbed` (E+ has somebody held, which is the free-damage window).
+  `npcClothPinned` gates F, because the thorns only pay while something is close enough to catch
+  them. The right-click artworks are **not** in the rotation at all: the bot has no mouse, so
+  `ClothKit.npcRightClick` drives whichever one it drafted off a single condition each, and the
+  draft itself is kit-side (`npcDraft` takes the biggest card that fits, since a bot cannot plan a
+  loom). `NPC_MASTERY_BINDS.cloth` gives up **R** — the safety-line combo is the one the rotation
+  runs best without help, and Wretched Scarf is the only button in the game that rewards being
+  caught out. **Steps 1 and 5 are untouched**: the movement profile has not been retuned, and a
+  short-reach element that wants to live inside 62px probably needs its own.
+
+- **Soul (2026-08-16), step 4 only, forced by the Click rework.** Lantern Light became **Siphon**
+  (`soul-siphon`), which changed the bot's default from "spray pools at the target" to "throw a
+  cord onto one specific body", and that made the element's real loop reachable by an AI for the
+  first time: a grave zombie is a corpse waiting to happen, and Siphon is the only thing that
+  turns one into the other. `SoulKit.npcDrainPoint()` publishes where the npc's nearest drainable
+  grave zombie is standing (side-effect-free, leash-checked at 330px) as `npcSoulDrainPoint`, and
+  `doSoulAbilities` reads it **before** its fallback cord-on-the-player whenever the corpse queue
+  is under 2 — so the bot actually feeds itself instead of standing in a graveyard it never
+  harvests. Possession (Click+) is deliberately player-only: `doSiphon` gates the take-over on
+  `owner === 'player'`, because riding a body is a control scheme rather than a cast and there is
+  nothing for a routine to press. **Steps 1, 2, 3 and 5 are untouched** — the kit is still
+  player-only on the shop upgrades (Cruel Offering's decay clouds and the graveyard tiers both
+  check bare `hasUpgrade`), Soul's mastery is passive-only as noted at the top of this file, and
+  the movement profile has not been retuned.
+
+- **Time (2026-08-16), no bot work — recorded so the next batch does not trip on it.** Time's
+  mastery passive changed from **Passive Manipulation** to **Reputation Repair**
+  (`reputation-repair`), which removes the only thing in the game that scaled
+  `physics.world.timeScale` — every AI timing assumption that used to be silently wrong inside a
+  Focus/Rush arena is now simply right. The new passive is player-only and keyless: it fires off
+  `TimeKit`'s damage ledger, so there is nothing for `doTimeAbilities` to press and no
+  `NPC_MASTERY_BINDS.sand` slot to give up. Click also changed underneath the bot — rounds now
+  ramp 12 → 15, and a fully aged one homes and sheds shrapnel — so the npc's automatic revolver
+  (driven in `TimeKit.updateNpcRevolver`, not in the routine) is meaningfully stronger at range
+  than it was, and the movement profile is now tuned for the wrong ability. Retune it in the batch.
+
 ## Gotchas (learned the hard way — read before each batch)
 
 - **The reaction tick shrinks per-frame random gates ~10×.** Old routines rolled

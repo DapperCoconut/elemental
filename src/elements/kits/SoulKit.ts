@@ -30,6 +30,11 @@ export interface SoulArenaApi {
   readonly rKey: Phaser.Input.Keyboard.Key;
   readonly fKey: Phaser.Input.Keyboard.Key;
   readonly qKey: Phaser.Input.Keyboard.Key;
+  /** Possession drives the ridden amalgam off the same four keys the caster walks on. */
+  readonly wKey: Phaser.Input.Keyboard.Key;
+  readonly aKey: Phaser.Input.Keyboard.Key;
+  readonly sKey: Phaser.Input.Keyboard.Key;
+  readonly dKey: Phaser.Input.Keyboard.Key;
   readonly elementId: string;
   readonly npcElementId: string;
   readonly isInvasion: boolean;
@@ -69,8 +74,21 @@ const SOUL_SCREECH_COOLDOWN_MS = 12000;
 
 // ── World-object types ───────────────────────────────────────────────────────
 
-interface SoulPuddle {
-  /** Repainted every frame — a pool of grave-light with wisps standing out of it. */
+/** A live siphon cord. `mend` lines feed an amalgam; `drain` lines empty anything else. */
+interface SiphonLine {
+  owner: Owner;
+  kind: 'drain' | 'mend';
+  target: Fighter;
+  /** Repainted every frame — a taut cord with spirit crawling along it. */
+  gfx: Phaser.GameObjects.Graphics;
+  tickAccum: number;
+  /** Own clock, so three cords off one hand don't pulse in lockstep. */
+  t: number;
+}
+
+/** Restless Ground (E+): the rot a fallen zombie leaves behind it. */
+interface DecayCloud {
+  /** Repainted every frame — turning lobes of bile with bone flecks drifting up out of them. */
   sprite: Phaser.GameObjects.Graphics;
   x: number;
   y: number;
@@ -78,7 +96,7 @@ interface SoulPuddle {
   owner: Owner;
   expiresAt: number;
   tickAccum: number;
-  /** Own clock, so neighbouring pools ripple out of phase. */
+  /** Own clock, so overlapping clouds churn out of phase. */
   t: number;
 }
 
@@ -91,8 +109,8 @@ interface Grave {
   y: number;
   owner: Owner;
   nextSpawnAt: number;
-  /** Cruel Offering (E+): enhanced graves spawn Angered Zombies instead of plain ones. */
-  enhanced: boolean;
+  /** 1 = a plot, 2 and 3 = a graveyard. Sets the tier of everything it raises (R+). */
+  tier: 1 | 2 | 3;
 }
 
 interface GraveZombie {
@@ -179,11 +197,46 @@ interface SoulShot {
 // ── Tuning ────────────────────────────────────────────────────────────────────
 
 const CORPSE_CAP_BASE = 5;
-const LANTERN_PUDDLE_RADIUS = 14;
-const LANTERN_PUDDLE_LIFETIME_MS = 2500;
-const LANTERN_DPS = 5;
-const LANTERN_HPS = 3;
-const LANTERN_TICK_MS = 1000;
+
+// ── Click: Siphon ──────────────────────────────────────────────────────
+const SIPHON_MAX_LINES = 3;
+/** The leash. A cord stretched past this snaps on its own. */
+const SIPHON_RANGE = 330;
+/** How near the cursor something has to be to catch a cord. */
+const SIPHON_GRAB_RADIUS = 72;
+const SIPHON_TICK_MS = 500;
+const SIPHON_DRAIN_PER_TICK = 2;
+const SIPHON_HEAL_PER_TICK = 4;
+
+// ── Click+: Possession ───────────────────────────────────────────────
+const POSSESS_DURATION_MS = 12000;
+/** Runs from the moment you are put back in your own body, however that happened. */
+const POSSESS_COOLDOWN_MS = 30000;
+const POSSESS_BITE_CD_MS = 650;
+const POSSESS_SPECIAL_CD_MS = 4000;
+const POSSESS_CHARGE_MS = 400;
+const POSSESS_CHARGE_SPEED_MULT = 3;
+
+// ── E+: Cloud of Decay ──────────────────────────────────────────────
+const DECAY_RADIUS = 84;
+const DECAY_LIFETIME_MS = 6000;
+const DECAY_TICK_MS = 1000;
+const DECAY_DPS = 6;
+const DECAY_HPS = 6;
+const DECAY_SLOW_MULT = 0.7;
+
+// ── R+: graveyards ──────────────────────────────────────────────────
+/** How near an existing plot a fresh R has to land to raise it a tier instead of adding a stone. */
+const GRAVEYARD_RADIUS = 90;
+const GRAVE_MAX_TIER = 3;
+
+/**
+ * The hard ceiling on how many bodies one side can have standing at once — grave zombies and
+ * Amalgams share it, which is the whole tension: a zombie you have not drained yet is a slot
+ * your Amalgam cannot use. Graves quietly hold their next spawn while the field is full rather
+ * than queueing them up, and Arise refuses without spending the corpse.
+ */
+const SOUL_HUSK_CAP = 3;
 
 const GRAVE_SPAWN_INTERVAL_MS = 5000;
 const GRAVE_ZOMBIE_HP = 20;
@@ -191,8 +244,6 @@ const GRAVE_ZOMBIE_SPEED = 70;
 const GRAVE_ZOMBIE_BITE_DMG = 5;
 const GRAVE_ZOMBIE_BITE_CD_MS = 1200;
 
-const CRUEL_OFFERING_RADIUS = 70;
-const VARIANT_ZOMBIE_CHANCE = 0.35;
 /**
  * Every rollable elemental variant, all three tiers — a grave zombie can come
  * up wearing any element the invasion lightning knows. Decoys and other
@@ -207,6 +258,13 @@ const RECRUITABLE_VARIANTS: HuskVariantDef[] = HUSK_VARIANTS.filter((v) => (
   && v.id !== 'basic'
   && !v.noReward
 ));
+/** Tier buckets, so a graveyard can raise exactly the tier it has been built up to. */
+const VARIANTS_BY_TIER: Record<1 | 2 | 3, HuskVariantDef[]> = {
+  1: RECRUITABLE_VARIANTS.filter((v) => (v.tier ?? 1) === 1),
+  2: RECRUITABLE_VARIANTS.filter((v) => v.tier === 2),
+  3: RECRUITABLE_VARIANTS.filter((v) => v.tier === 3),
+};
+
 const ANGERED_HP_MULT = 2;
 const ANGERED_SPEED_MULT = 1.25;
 
@@ -306,12 +364,29 @@ export class SoulKit {
   /** Last aim point, cached in handleInput so the per-frame avatar update can face it. */
   private aimX = 0;
   private aimY = 0;
-  /** Timestamp the lantern was last ticked, per side — drives the sustained spray pose. */
-  private lanternHeldUntil: Record<Owner, number> = { player: 0, npc: 0 };
+  /** Timestamp a cord was last opened, per side — drives the sustained reaching pose. */
+  private siphonHeldUntil: Record<Owner, number> = { player: 0, npc: 0 };
   /** Call of the Void: the HP fraction this side's next whistle will claim at. Per-owner. */
   private voidThreshold: Record<Owner, number> = { player: VOID_CALL_BASE, npc: VOID_CALL_BASE };
 
-  private puddles: SoulPuddle[] = [];
+  private siphons: SiphonLine[] = [];
+  private decayClouds: DecayCloud[] = [];
+  /** Click+ Possession — the amalgam the caster is currently riding, and its own clocks. */
+  private possessed: Amalgam | null = null;
+  private possessNextBiteAt = 0;
+  private possessNextSpecialAt = 0;
+  private possessChargeUntil = 0;
+  private possessEndsAt = 0;
+  /** When the caster was last put back in their own body — the 30s cooldown runs from here. */
+  private possessLastEndedAt = -POSSESS_COOLDOWN_MS;
+  private possessOpen = 0;
+  private possessFlower: Phaser.GameObjects.Graphics | null = null;
+  private possessT = 0;
+  /** Screen-space panel naming whatever you are currently wearing. Player side only. */
+  private possessHudPanel: Phaser.GameObjects.Graphics | null = null;
+  private possessHudName: Phaser.GameObjects.Text | null = null;
+  private possessHudKeys: Phaser.GameObjects.Text | null = null;
+  private playerPointerWasDown = false;
   private graves: Grave[] = [];
   private graveZombies: GraveZombie[] = [];
   private amalgams: Amalgam[] = [];
@@ -329,6 +404,8 @@ export class SoulKit {
   private soulScreechLastCastAt = -SOUL_SCREECH_COOLDOWN_MS;
   private corpseQueue: Record<Owner, Corpse[]> = { player: [], npc: [] };
   private hudIcons: Phaser.GameObjects.Image[] = [];
+  /** `2/3` beside the corpse queue — a cap you cannot see is a cap you cannot play around. */
+  private hudBodyCount: Phaser.GameObjects.Text | null = null;
 
   /** Shared HuskWorld for every zombie/amalgam SoulKit owns — resolves target/owner by pool lookup. */
   private huskWorld: HuskWorld = {
@@ -363,11 +440,28 @@ export class SoulKit {
     if (this.masteryShroud) { this.masteryShroud.destroy(); this.masteryShroud = null; }
     this.aimX = 0;
     this.aimY = 0;
-    this.lanternHeldUntil = { player: 0, npc: 0 };
+    this.siphonHeldUntil = { player: 0, npc: 0 };
     this.voidThreshold = { player: VOID_CALL_BASE, npc: VOID_CALL_BASE };
 
-    for (const p of this.puddles) p.sprite.destroy();
-    this.puddles = [];
+    for (const s of this.siphons) s.gfx.destroy();
+    this.siphons = [];
+    for (const c of this.decayClouds) c.sprite.destroy();
+    this.decayClouds = [];
+    // Possession — the caster gets their body back whatever state the match ended in.
+    this.possessed = null;
+    this.possessNextBiteAt = 0;
+    this.possessNextSpecialAt = 0;
+    this.possessChargeUntil = 0;
+    this.possessEndsAt = 0;
+    this.possessLastEndedAt = -POSSESS_COOLDOWN_MS;
+    this.possessOpen = 0;
+    this.possessT = 0;
+    this.possessFlower?.destroy(); this.possessFlower = null;
+    this.possessHudPanel?.destroy(); this.possessHudPanel = null;
+    this.possessHudName?.destroy(); this.possessHudName = null;
+    this.possessHudKeys?.destroy(); this.possessHudKeys = null;
+    this.playerPointerWasDown = false;
+    if (this.arena.player.damageAbsorber) this.arena.player.damageAbsorber = null;
     for (const g of this.graves) { g.sprite.destroy(); g.aura.destroy(); }
     this.graves = [];
     for (const gz of this.graveZombies) {
@@ -398,6 +492,7 @@ export class SoulKit {
     this.corpseQueue = { player: [], npc: [] };
     for (const t of this.hudIcons) t.destroy();
     this.hudIcons = [];
+    this.hudBodyCount?.destroy(); this.hudBodyCount = null;
     this.arena.player.incomingDamageMultiplier = this.arena.player.incomingDamageMultiplier === WARD_MULT ? 1 : this.arena.player.incomingDamageMultiplier;
     this.arena.npc.incomingDamageMultiplier = this.arena.npc.incomingDamageMultiplier === WARD_MULT ? 1 : this.arena.npc.incomingDamageMultiplier;
   }
@@ -412,6 +507,36 @@ export class SoulKit {
 
   graveCount(owner: Owner): number { return this.graves.filter((g) => g.owner === owner).length; }
 
+  /**
+   * Live bodies on one side: grave zombies and Amalgams together, measured against
+   * `SOUL_HUSK_CAP`. Everything that raises something checks this first.
+   */
+  huskCount(owner: Owner): number {
+    let n = 0;
+    for (const gz of this.graveZombies) if (gz.owner === owner && gz.husk.active && gz.husk.hp > 0) n++;
+    for (const a of this.amalgams) if (a.owner === owner && a.husk.active && a.husk.hp > 0) n++;
+    return n;
+  }
+
+  siphonCount(owner: Owner): number { return this.siphons.filter((s) => s.owner === owner).length; }
+
+  /**
+   * Bot synergy — the kit's own loop, published for the AI: a grave zombie is a corpse waiting
+   * to happen, and Siphon is the only thing that turns one into the other. This returns where
+   * the npc's nearest drainable zombie is standing, or null. Side-effect free.
+   */
+  npcDrainPoint(): { x: number; y: number } | null {
+    const { npc } = this.arena;
+    let best: Husk | null = null;
+    let bestD = SIPHON_RANGE;
+    for (const gz of this.graveZombies) {
+      if (gz.owner !== 'npc' || !gz.husk.active || gz.husk.hp <= 0) continue;
+      const d = Phaser.Math.Distance.Between(npc.x, npc.y, gz.husk.x, gz.husk.y);
+      if (d <= bestD) { bestD = d; best = gz.husk; }
+    }
+    return best ? { x: best.x, y: best.y } : null;
+  }
+
   /** Invasion: a real husk died — feed it into the player's corpse queue. */
   onRealHuskKilled(husk: Husk): void {
     this.pushCorpse('player', { maxHp: husk.maxHp, variant: husk.variant.id !== 'basic' ? husk.variant : undefined });
@@ -420,25 +545,38 @@ export class SoulKit {
   // ── Input ────────────────────────────────────────────────────────────
 
   handleInput(time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
-    void time;
     const { player, eKey, rKey, fKey, qKey } = this.arena;
     // `update` has no pointer, so the aim the rig faces is cached here.
     this.aimX = mouseX;
     this.aimY = mouseY;
+    const pointerJustDown = pointer.isDown && !this.playerPointerWasDown;
+    this.playerPointerWasDown = pointer.isDown;
     if (!player.active || player.hp <= 0) return;
     const ctx = () => this.arena.buildPlayerContext(mouseX, mouseY);
 
+    // ── Click+ Possession: while riding, Click bites and E is the amalgam's own move ──
+    // The caster's own R, F and Q still answer — the body is open, not asleep — but E belongs
+    // to whatever you are wearing for as long as it lives, ahead of everything including a
+    // mastery bound to that key. JustDown consumes the flag, so this ordering is the whole
+    // arbitration: whoever reads E first owns the press.
+    const riding = this.possessed;
+
     // ── Mastery — Grave Mistake takes over its bound slot ────────────────
     const graveSlot = this.arena.masteryActive ? this.graveMistakeSlot() : null;
-    if (graveSlot) {
+    if (graveSlot && !(riding && graveSlot === 'e')) {
       const gk = graveSlot === 'e' ? eKey : graveSlot === 'r' ? rKey : graveSlot === 'f' ? fKey : qKey;
       if (Phaser.Input.Keyboard.JustDown(gk)) this.tryCastGraveMistake(time, mouseX, mouseY);
     }
 
-    // Click: Lantern Light — held down, rate-limited by the ability's own short cooldown.
-    if (pointer.isDown) player.castAbility('soul-lantern-light', ctx());
+    if (riding) {
+      if (pointerJustDown) this.possessBite(time);
+      if (Phaser.Input.Keyboard.JustDown(eKey)) this.possessSpecial(time);
+    } else {
+      // Click: Siphon — one cord per press, caught on whatever is nearest the cursor.
+      if (pointerJustDown) player.castAbility('soul-siphon', ctx());
+      if (graveSlot !== 'e' && Phaser.Input.Keyboard.JustDown(eKey)) player.castAbility('soul-arise', ctx());
+    }
 
-    if (graveSlot !== 'e' && Phaser.Input.Keyboard.JustDown(eKey)) player.castAbility('soul-arise', ctx());
     if (graveSlot !== 'r' && Phaser.Input.Keyboard.JustDown(rKey)) player.castAbility('soul-grave', ctx());
     if (graveSlot !== 'f' && Phaser.Input.Keyboard.JustDown(fKey)) player.castAbility('soul-death-whistle', ctx());
     if (graveSlot !== 'q' && Phaser.Input.Keyboard.JustDown(qKey)) player.castAbility('soul-hells-torment', ctx());
@@ -448,7 +586,10 @@ export class SoulKit {
 
   update(time: number, delta: number): void {
     this.updateAvatars(time, delta);
-    this.updatePuddles(time, delta);
+    this.updateSiphons(time, delta);
+    this.updateDecayClouds(time, delta);
+    this.updatePossession(time, delta);
+    this.updatePossessHud(time);
     this.updateGraves(time, delta);
     this.updateGraveZombies(time, delta);
     this.updateAmalgams(time, delta);
@@ -478,8 +619,8 @@ export class SoulKit {
       const aimY = this.aimY || player.y;
       const aim = Math.atan2(aimY - player.y, aimX - player.x);
       this.playerAvatar.setFacing(aim);
-      // Holding the lantern down is a sustained pose, not a string of jabs.
-      this.playerAvatar.setHold(time < this.lanternHeldUntil.player ? 'spray' : null, aim);
+      // A cord being held open is a sustained pose, not a string of jabs.
+      this.playerAvatar.setHold(time < this.siphonHeldUntil.player ? 'spray' : null, aim);
       // A caster surrounded by their own dead is the character at full stretch.
       const host = this.amalgamCount('player');
       this.playerAvatar.setIntensity(host >= 3 ? 1.4 : host >= 1 ? 1.15 : 1);
@@ -505,7 +646,7 @@ export class SoulKit {
       if (!this.npcAvatar) this.npcAvatar = new SoulAvatar(scene, this.ncol, NPC_TONES);
       const aim = Math.atan2(player.y - npc.y, player.x - npc.x);
       this.npcAvatar.setFacing(aim);
-      this.npcAvatar.setHold(time < this.lanternHeldUntil.npc ? 'spray' : null, aim);
+      this.npcAvatar.setHold(time < this.siphonHeldUntil.npc ? 'spray' : null, aim);
       this.npcAvatar.setIntensity(this.amalgamCount('npc') >= 2 ? 1.3 : 1);
       this.npcAvatar.setMastered(this.arena.npcMasteryActive);
       this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
@@ -517,44 +658,145 @@ export class SoulKit {
 
   // ── Cast entry points (from CastContext) ────────────────────────────
 
-  doLanternTick(tx: number, ty: number, owner: Owner): void {
+  /**
+   * Siphon (Click). One press opens one cord onto whatever is nearest the cursor. A cord on
+   * anything hostile — the other fighter, an invasion husk, the loose alpha, or one of your own
+   * grave zombies — empties it a little at a time; a cord on one of your amalgams feeds it
+   * instead, and anything above its maximum becomes shield HP without needing the upgrade.
+   *
+   * Three cords is the ceiling, and they may all land on the same thing. A fourth press recycles
+   * the oldest rather than being refused, because the cords have no duration of their own and a
+   * refusal would leave you stuck holding three lines onto something already dead in the water.
+   */
+  doSiphon(tx: number, ty: number, owner: Owner): void {
     const caster = this.fighterOf(owner);
     const scene = this.arena.scene;
-    // Held down, so the pose is sustained: the window outlives one 150ms tick.
-    this.lanternHeldUntil[owner] = scene.time.now + 320;
-    this.spawnLanternTrail(caster.x, caster.y, tx, ty, owner);
+    const fx = this.fx(owner);
+    this.siphonHeldUntil[owner] = scene.time.now + 320;
 
-    const spr = scene.add.graphics().setDepth(2);
-    this.puddles.push({
-      sprite: spr, x: tx, y: ty, radius: LANTERN_PUDDLE_RADIUS, owner,
-      expiresAt: scene.time.now + LANTERN_PUDDLE_LIFETIME_MS, tickAccum: 0,
-      t: Math.random() * 10,
+    // Nearest valid anchor to the cursor, inside the grab radius.
+    let best: { f: Fighter; kind: 'drain' | 'mend' } | null = null;
+    let bestD = SIPHON_GRAB_RADIUS;
+    for (const c of this.siphonCandidates(owner)) {
+      const d = Phaser.Math.Distance.Between(tx, ty, c.f.x, c.f.y);
+      if (d <= bestD) { bestD = d; best = c; }
+    }
+    if (!best) {
+      // The gesture still fires on empty air — reaching for a spirit that isn't there.
+      this.avatar(owner)?.play('raise', Math.atan2(ty - caster.y, tx - caster.x), 320);
+      return;
+    }
+    if (Phaser.Math.Distance.Between(caster.x, caster.y, best.f.x, best.f.y) > SIPHON_RANGE) {
+      if (owner === 'player') this.arena.showFloatingText(caster.x, caster.y - 40, 'TOO FAR', '#775588');
+      return;
+    }
+
+    const mine = this.siphons.filter((s) => s.owner === owner);
+    if (mine.length >= SIPHON_MAX_LINES) this.releaseSiphon(mine[0]);
+
+    const tones = best.kind === 'drain' ? ROT_TONES : tonesFor(owner);
+    this.siphons.push({
+      owner, kind: best.kind, target: best.f,
+      gfx: scene.add.graphics().setDepth(6),
+      tickAccum: 0, t: Math.random() * 6,
     });
+    this.avatar(owner)?.play('punch', Math.atan2(best.f.y - caster.y, best.f.x - caster.x));
+    fx.tether(caster.x, caster.y, best.f.x, best.f.y, 320, 6, tones);
+    fx.muzzleWisp(caster.x, caster.y, Math.atan2(best.f.y - caster.y, best.f.x - caster.x), 0.9, 6, tones);
+    fx.ring(best.f.x, best.f.y, 20, 6, tones.glow, 320, 2.5, 6);
+
+    // Click+ Possession: three mend cords on the same amalgam and you climb into it.
+    if (owner === 'player' && best.kind === 'mend' && this.arena.hasUpgrade('click') && !this.possessed) {
+      const rec = this.amalgams.find((a) => a.husk === best!.f);
+      const full = rec && this.siphons.filter((s) => s.owner === 'player' && s.target === best!.f).length >= SIPHON_MAX_LINES;
+      if (full) {
+        const now = scene.time.now;
+        const readyAt = this.possessLastEndedAt + POSSESS_COOLDOWN_MS;
+        if (now >= readyAt) this.beginPossession(rec!);
+        else {
+          this.arena.showFloatingText(caster.x, caster.y - 44,
+            `🌸 ${Math.ceil((readyAt - now) / 1000)}s`, '#775588');
+        }
+      }
+    }
+  }
+
+  /** Everything a cord can be thrown onto this frame, tagged with what the cord would do. */
+  private siphonCandidates(owner: Owner): { f: Fighter; kind: 'drain' | 'mend' }[] {
+    const out: { f: Fighter; kind: 'drain' | 'mend' }[] = [];
+    for (const f of this.foesOf(owner)) out.push({ f, kind: 'drain' });
+    // Your own grave zombies are hostile bodies: draining them is how the corpse queue is fed.
+    for (const gz of this.graveZombies) {
+      if (gz.owner === owner && gz.husk.active && gz.husk.hp > 0) out.push({ f: gz.husk, kind: 'drain' });
+    }
+    for (const rec of this.amalgams) {
+      if (rec.owner === owner && rec.husk.active && rec.husk.hp > 0) out.push({ f: rec.husk, kind: 'mend' });
+    }
+    return out;
+  }
+
+  private releaseSiphon(line: SiphonLine): void {
+    const idx = this.siphons.indexOf(line);
+    if (idx !== -1) this.siphons.splice(idx, 1);
+    line.gfx.destroy();
+  }
+
+  private updateSiphons(time: number, delta: number): void {
+    for (let i = this.siphons.length - 1; i >= 0; i--) {
+      const s = this.siphons[i];
+      const caster = this.fighterOf(s.owner);
+      const target = s.target;
+      if (!caster.active || !target.active || target.hp <= 0) { this.releaseSiphon(s); continue; }
+
+      const dist = Phaser.Math.Distance.Between(caster.x, caster.y, target.x, target.y);
+      if (dist > SIPHON_RANGE) {
+        // Snapped. The spirit that was in the cord comes apart where it broke.
+        this.fx(s.owner).wisps((caster.x + target.x) / 2, (caster.y + target.y) / 2, 5, {
+          speed: 90, size: 2.6, life: 420, rise: -20, depth: 6,
+          tones: s.kind === 'drain' ? ROT_TONES : tonesFor(s.owner),
+        });
+        if (s.owner === 'player') this.arena.showFloatingText(target.x, target.y - 30, 'SNAPPED', '#775588');
+        this.releaseSiphon(s);
+        continue;
+      }
+
+      s.t += delta / 1000;
+      s.gfx.clear();
+      SoulFx.drawSiphon(
+        s.gfx, this.col(s.owner), s.kind === 'drain' ? ROT_TONES : tonesFor(s.owner),
+        caster.x, caster.y, target.x, target.y, s.t, s.kind === 'drain',
+        Phaser.Math.Clamp(dist / SIPHON_RANGE, 0, 1),
+      );
+
+      s.tickAccum += delta;
+      while (s.tickAccum >= SIPHON_TICK_MS) {
+        s.tickAccum -= SIPHON_TICK_MS;
+        if (s.kind === 'drain') {
+          target.takeDamage(SIPHON_DRAIN_PER_TICK);
+          this.arena.spawnHitFlash(target.x, target.y, 0x33cc44);
+        } else {
+          this.healAllyWithOverheal(target, SIPHON_HEAL_PER_TICK);
+        }
+      }
+    }
   }
 
   doArise(owner: Owner): void {
     const caster = this.fighterOf(owner);
     const fx = this.fx(owner);
     const tones = tonesFor(owner);
-    if (owner === 'player' && this.arena.hasUpgrade('e')) {
-      const grave = this.graves.find((g) => g.owner === owner && !g.enhanced
-        && Phaser.Math.Distance.Between(caster.x, caster.y, g.x, g.y) <= CRUEL_OFFERING_RADIUS);
-      if (grave) {
-        grave.enhanced = true;
-        grave.sprite.setTint(0xff4444);
-        // Blood poured into the plot: the grave-light turns over to red on the spot.
-        this.avatar(owner)?.play('slam', Math.atan2(grave.y - caster.y, grave.x - caster.x));
-        fx.bloom(grave.x, grave.y, 30, 9, 4, ANGERED_TONES);
-        fx.wisps(grave.x, grave.y, 8, { speed: 90, size: 3, life: 620, rise: -40, depth: 6, tones: ANGERED_TONES });
-        fx.ring(grave.x, grave.y, 8, 54, SOUL.blood, 420, 4, 5);
-        this.arena.showFloatingText(grave.x, grave.y - 30, '🩸 GRAVE ENHANCED', '#ff3333');
-        return;
-      }
-    }
     const queue = this.corpseQueue[owner];
     if (queue.length === 0) {
       // The gesture still fires on an empty queue — reaching into a grave and finding nothing.
       this.avatar(owner)?.play('raise', undefined, 420);
+      return;
+    }
+    // The field is full. The corpse is not spent, so this costs nothing but the cooldown.
+    if (this.huskCount(owner) >= SOUL_HUSK_CAP) {
+      this.avatar(owner)?.play('raise', undefined, 420);
+      if (owner === 'player') {
+        this.arena.showFloatingText(caster.x, caster.y - 44, `🪦 ${SOUL_HUSK_CAP} BODIES ALREADY`, '#775588');
+      }
       return;
     }
     const corpse = queue.shift()!;
@@ -572,16 +814,44 @@ export class SoulKit {
     const tones = tonesFor(owner);
     // A headstone is driven into the ground, so the arms slam it home.
     this.avatar(owner)?.play('slam', Math.atan2(y - caster.y, x - caster.x));
+
+    // Restless Ground (R+): a stone driven in beside an existing plot doesn't make a second
+    // plot — it makes the first one bigger. Two more presses turn a grave into a tier 3
+    // graveyard, and the tier is exactly the variant tier everything it raises comes up at.
+    if (owner === 'player' && this.arena.hasUpgrade('r')) {
+      const near = this.graves.find((g) => g.owner === owner && g.tier < GRAVE_MAX_TIER
+        && Phaser.Math.Distance.Between(x, y, g.x, g.y) <= GRAVEYARD_RADIUS);
+      if (near) {
+        near.tier = (near.tier + 1) as 1 | 2 | 3;
+        this.applyGraveTint(near);
+        const gt = near.tier === 3 ? ANGERED_TONES : tones;
+        fx.bloom(near.x, near.y, 30 + near.tier * 6, 10, 4, gt);
+        fx.wisps(near.x, near.y, 8, { speed: 90, size: 3, life: 620, rise: -44, depth: 6, tones: gt });
+        fx.ring(near.x, near.y, 8, 46 + near.tier * 12, gt.glow, 460, 4, 5);
+        fx.motes(near.x, near.y, 5, 28, 5, gt);
+        this.arena.showFloatingText(near.x, near.y - 30,
+          `🪦 GRAVEYARD — TIER ${near.tier}`, near.tier === 3 ? '#ff3333' : '#ccaaff');
+        return;
+      }
+    }
+
     const sprite = scene.add.image(x, y, 'soul-grave').setDepth(3);
     this.graves.push({
       sprite, aura: scene.add.graphics().setDepth(2), auraT: Math.random() * 10,
-      x, y, owner, nextSpawnAt: scene.time.now + GRAVE_SPAWN_INTERVAL_MS, enhanced: false,
+      x, y, owner, nextSpawnAt: scene.time.now + GRAVE_SPAWN_INTERVAL_MS, tier: 1,
     });
     fx.stain(x, y + 20, 26, 1, tones);
     fx.bloom(x, y + 6, 26, 8, 4, tones);
     fx.ring(x, y + 14, 6, 44, tones.glow, 420, 3.5, 4);
     fx.motes(x, y, 4, 22, 5, tones);
     this.arena.showFloatingText(x, y - 26, '🪦 GRAVE PLACED', '#ccaaff');
+  }
+
+  /** A graveyard's stone reddens as it is built up, so its tier reads off the field. */
+  private applyGraveTint(g: Grave): void {
+    if (g.tier >= 3) g.sprite.setTint(0xff4444);
+    else if (g.tier === 2) g.sprite.setTint(0xffaa55);
+    else g.sprite.clearTint();
   }
 
   doDeathWhistle(tx: number, ty: number, owner: Owner): void {
@@ -595,6 +865,8 @@ export class SoulKit {
 
     let count = 0;
     for (const rec of this.amalgams) {
+      // The one you are riding answers to you, not to the whistle.
+      if (this.possessed === rec) continue;
       if (rec.owner === owner && rec.husk.active && rec.husk.hp > 0) {
         rec.waypoint = { x: tx, y: ty };
         // The thread each amalgam is being hauled along, so the recall reads at a glance.
@@ -824,6 +1096,7 @@ export class SoulKit {
       if (!husk.active || husk.hp <= 0) {
         rec.body.collapse();
         rec.shroud?.destroy();
+        if (this.possessed === rec) this.endPossession('the amalgam fell');
         this.amalgams.splice(i, 1);
         continue;
       }
@@ -835,7 +1108,10 @@ export class SoulKit {
 
       // The creature itself, repainted from scratch every frame.
       const vel = (husk.body as Phaser.Physics.Arcade.Body).velocity;
-      const hunted = this.nearestOf(this.amalgamTargets(rec.owner), husk.x, husk.y);
+      // A ridden body faces what *you* could bite, not what its AI would have picked.
+      const hunted = this.nearestOf(
+        this.possessed === rec ? this.possessTargets(rec) : this.amalgamTargets(rec.owner), husk.x, husk.y,
+      );
       rec.body.update(delta, {
         x: husk.x, y: husk.y, vx: vel.x, vy: vel.y,
         alpha: husk.alpha,
@@ -888,6 +1164,10 @@ export class SoulKit {
         } else {
           body.setVelocity((dx / dist) * husk.speed, (dy / dist) * husk.speed);
         }
+      } else if (this.possessed === rec) {
+        // You are steering it. Its own AI stays out of the way; `updatePossession` owns the
+        // velocity, and the bite is a key rather than a proximity check.
+        rec.nextDashAt = time + AMALGAM_DASH_INTERVAL_MAX_MS;
       } else {
         const targets = this.amalgamTargets(rec.owner);
         husk.update(targets, time, delta);
@@ -984,9 +1264,13 @@ export class SoulKit {
     rec.body.collapse();
     rec.shroud?.destroy();
     rec.shroud = null;
+    // Possession lasts exactly as long as the thing you are wearing.
+    if (this.possessed === rec) this.endPossession('the amalgam fell');
 
     const husk = rec.husk;
     const fx = this.fx(rec.owner);
+    // Cruel Offering (E+): every one of your risen leaves its rot where it fell.
+    if (rec.owner === 'player' && this.arena.hasUpgrade('e')) this.spawnDecayCloud(rec.owner, husk.x, husk.y);
 
     if (rec.burning) {
       const radius = rec.inflamed ? INFLAMED_DEATH_AOE_RADIUS : TORMENT_DEATH_AOE_RADIUS;
@@ -1188,6 +1472,11 @@ export class SoulKit {
     this.spawnFriendlyAlpha();
   }
 
+  /**
+   * The Alpha you beat, joining you. Deliberately exempt from `SOUL_HUSK_CAP`: it is the payout
+   * for killing a 200 HP horror rather than something you can raise on demand, and it replaced a
+   * body that was already on the field.
+   */
   private spawnFriendlyAlpha(): void {
     const scene = this.arena.scene;
     const caster = this.arena.player;
@@ -1302,14 +1591,18 @@ export class SoulKit {
     for (const g of this.graves) {
       g.auraT += delta / 1000;
       // The plot exhales while it works on the next one, and the light swells as it gets close.
-      const tones = g.enhanced ? ANGERED_TONES : tonesFor(g.owner);
+      const tones = g.tier >= 3 ? ANGERED_TONES : tonesFor(g.owner);
       const ready = 1 - Phaser.Math.Clamp((g.nextSpawnAt - time) / GRAVE_SPAWN_INTERVAL_MS, 0, 1);
       const gfx = g.aura;
       gfx.clear();
-      SoulFx.drawPuddle(gfx, this.col(g.owner), tones, g.x, g.y + 20, 13 + ready * 7, g.auraT, 0.35 + ready * 0.45);
+      // A graveyard's plot is wider than a single grave's, so a built-up one is obvious.
+      SoulFx.drawPuddle(gfx, this.col(g.owner), tones, g.x, g.y + 20,
+        (13 + ready * 7) * (1 + (g.tier - 1) * 0.35), g.auraT, 0.35 + ready * 0.45);
       if (time >= g.nextSpawnAt) {
+        // The clock keeps running while the field is full, so a capped-out grave does not bank
+        // up a backlog that all arrives the instant a slot opens.
         g.nextSpawnAt = time + GRAVE_SPAWN_INTERVAL_MS;
-        this.spawnGraveZombie(g);
+        if (this.huskCount(g.owner) < SOUL_HUSK_CAP) this.spawnGraveZombie(g);
       }
     }
   }
@@ -1320,11 +1613,15 @@ export class SoulKit {
     const ox = grave.x + Math.cos(ang) * 20;
     const oy = grave.y + Math.sin(ang) * 20;
 
+    // Base R raises plain bodies and nothing else. Restless Ground (R+) makes every one of them
+    // an elemental variant, at exactly the tier the plot has been built up to.
     let variant: HuskVariantDef = BASIC_HUSK;
-    if (grave.owner === 'player' && this.arena.hasUpgrade('r') && Math.random() < VARIANT_ZOMBIE_CHANCE) {
-      variant = RECRUITABLE_VARIANTS[Math.floor(Math.random() * RECRUITABLE_VARIANTS.length)];
+    if (grave.owner === 'player' && this.arena.hasUpgrade('r')) {
+      const pool = VARIANTS_BY_TIER[grave.tier].length ? VARIANTS_BY_TIER[grave.tier] : RECRUITABLE_VARIANTS;
+      variant = pool[Math.floor(Math.random() * pool.length)];
     }
-    const angered = grave.enhanced;
+    // The top of the graveyard ladder raises them angry as well as branded.
+    const angered = grave.tier >= 3;
     const hpMult = variant.hpMult * (angered ? ANGERED_HP_MULT : 1);
     const speedMult = variant.speedMult * (angered ? ANGERED_SPEED_MULT : 1);
     const hp = Math.max(1, Math.round(GRAVE_ZOMBIE_HP * hpMult));
@@ -1376,6 +1673,9 @@ export class SoulKit {
     const tones = rec.angered ? ANGERED_TONES : tonesFor(rec.owner);
     this.fx(rec.owner).wisps(husk.x, husk.y, 6, { speed: 60, size: 2.8, life: 700, rise: -48, depth: 6, tones });
     this.fx(rec.owner).stain(husk.x, husk.y, 18, 1, tones);
+
+    // Cruel Offering (E+): whatever you raise leaves its rot behind when it falls.
+    if (rec.owner === 'player' && this.arena.hasUpgrade('e')) this.spawnDecayCloud(rec.owner, husk.x, husk.y);
 
     husk.hideHealthBar();
     this.arena.scene.tweens.add({
@@ -1475,57 +1775,335 @@ export class SoulKit {
     this.pfx.tether(x1, y1, x2, y2, durationMs, 6, ROT_TONES);
   }
 
-  // ── Lantern puddles ──────────────────────────────────────────────────
+  // ── Clouds of decay (E+) ─────────────────────────────────────────────
 
-  private spawnLanternTrail(sx: number, sy: number, tx: number, ty: number, owner: Owner): void {
-    this.fx(owner).lanternArc(sx, sy, tx, ty, 6, tonesFor(owner));
+  private spawnDecayCloud(owner: Owner, x: number, y: number): void {
+    const scene = this.arena.scene;
+    this.decayClouds.push({
+      sprite: scene.add.graphics().setDepth(2),
+      x, y, radius: DECAY_RADIUS, owner,
+      expiresAt: scene.time.now + DECAY_LIFETIME_MS, tickAccum: 0,
+      t: Math.random() * 10,
+    });
+    this.fx(owner).wisps(x, y, 7, { speed: 70, size: 3.2, life: 700, rise: -30, depth: 6, tones: ROT_TONES });
+    this.fx(owner).ring(x, y, 8, DECAY_RADIUS, SOUL.rot, 520, 3.5, 4);
+    this.arena.showFloatingText(x, y - 22, '☠️ DECAY', '#66cc55');
   }
 
-  /** Heals an amalgam; with Click+ (`overheal`), any healing above its max HP becomes shield HP (capped at max HP). */
-  private healAmalgam(husk: Husk, amount: number, overheal: boolean): void {
-    const before = husk.hp;
-    husk.heal(amount);
-    if (!overheal) return;
-    const overflow = amount - (husk.hp - before);
-    if (overflow > 0) husk.shieldHp = Math.min(husk.maxHp, husk.shieldHp + overflow);
-  }
+  /**
+   * Rot burns whatever is standing in it and feeds whatever you raised. The damage and healing
+   * tick here; the slow is pulled, not pushed — `getPlayerSpeedMult`/`getNpcSpeedMult` read the
+   * clouds live so nothing has to be un-applied when a cloud expires under somebody's feet.
+   */
+  private updateDecayClouds(time: number, delta: number): void {
+    for (let i = this.decayClouds.length - 1; i >= 0; i--) {
+      const c = this.decayClouds[i];
+      if (time >= c.expiresAt) { c.sprite.destroy(); this.decayClouds.splice(i, 1); continue; }
 
-  private updatePuddles(time: number, delta: number): void {
-    for (let i = this.puddles.length - 1; i >= 0; i--) {
-      const p = this.puddles[i];
-      if (time >= p.expiresAt) { p.sprite.destroy(); this.puddles.splice(i, 1); continue; }
+      c.t += delta / 1000;
+      const life = Phaser.Math.Clamp((c.expiresAt - time) / DECAY_LIFETIME_MS, 0, 1);
+      c.sprite.clear();
+      SoulFx.drawDecay(c.sprite, this.col(c.owner), c.x, c.y, c.radius, c.t, 0.4 + life * 0.6);
 
-      // The pool ripples on its own clock and thins out as its life runs down.
-      p.t += delta / 1000;
-      const life = Phaser.Math.Clamp((p.expiresAt - time) / LANTERN_PUDDLE_LIFETIME_MS, 0, 1);
-      p.sprite.clear();
-      SoulFx.drawPuddle(p.sprite, this.col(p.owner), tonesFor(p.owner), p.x, p.y, p.radius, p.t, 0.35 + life * 0.6);
+      // Hostile husks the kit owns are slowed directly; the fighter pair is handled by the
+      // speed-mult accessors, which is the only path that reaches them.
+      for (const gz of this.graveZombies) {
+        if (gz.owner !== c.owner || !gz.husk.active || gz.husk.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(c.x, c.y, gz.husk.x, gz.husk.y) <= c.radius) gz.husk.walkSpeedMult = DECAY_SLOW_MULT;
+      }
 
-      p.tickAccum += delta;
-      if (p.tickAccum < LANTERN_TICK_MS) continue;
-      p.tickAccum -= LANTERN_TICK_MS;
+      c.tickAccum += delta;
+      if (c.tickAccum < DECAY_TICK_MS) continue;
+      c.tickAccum -= DECAY_TICK_MS;
 
-      for (const f of this.foesOf(p.owner)) {
-        if (Phaser.Math.Distance.Between(p.x, p.y, f.x, f.y) <= p.radius + 18) {
-          f.takeDamage(LANTERN_DPS);
-          this.arena.spawnHitFlash(f.x, f.y, 0x9955ee);
+      for (const f of this.foesOf(c.owner)) {
+        if (Phaser.Math.Distance.Between(c.x, c.y, f.x, f.y) <= c.radius) {
+          f.takeDamage(DECAY_DPS);
+          this.arena.spawnHitFlash(f.x, f.y, 0x33cc44);
         }
       }
       for (const gz of this.graveZombies) {
-        if (gz.husk.active && gz.husk.hp > 0 && Phaser.Math.Distance.Between(p.x, p.y, gz.husk.x, gz.husk.y) <= p.radius + 18) {
-          gz.husk.takeDamage(LANTERN_DPS);
-        }
+        if (gz.owner !== c.owner || !gz.husk.active || gz.husk.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(c.x, c.y, gz.husk.x, gz.husk.y) <= c.radius) gz.husk.takeDamage(DECAY_DPS);
       }
-      const casterFighter = this.fighterOf(p.owner);
-      if (casterFighter.active && Phaser.Math.Distance.Between(p.x, p.y, casterFighter.x, casterFighter.y) <= p.radius + 18) {
-        casterFighter.heal(LANTERN_HPS);
-      }
-      const overheal = p.owner === 'player' && this.arena.hasUpgrade('click');
       for (const rec of this.amalgams) {
-        if (rec.owner === p.owner && rec.husk.active && rec.husk.hp > 0
-          && Phaser.Math.Distance.Between(p.x, p.y, rec.husk.x, rec.husk.y) <= p.radius + 18) {
-          this.healAmalgam(rec.husk, LANTERN_HPS, overheal);
+        if (rec.owner !== c.owner || !rec.husk.active || rec.husk.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(c.x, c.y, rec.husk.x, rec.husk.y) <= c.radius) {
+          this.healAllyWithOverheal(rec.husk, DECAY_HPS);
         }
+      }
+    }
+    // Anything that walked back out of a cloud gets its stride back.
+    for (const gz of this.graveZombies) {
+      if (gz.husk.walkSpeedMult !== 1 && !this.inDecay(gz.owner, gz.husk.x, gz.husk.y)) gz.husk.walkSpeedMult = 1;
+    }
+  }
+
+  private inDecay(owner: Owner, x: number, y: number): boolean {
+    return this.decayClouds.some((c) => c.owner === owner
+      && Phaser.Math.Distance.Between(c.x, c.y, x, y) <= c.radius);
+  }
+
+  /** Pulled by ArenaScene: a cloud the NPC's soul user left slows the player. */
+  getPlayerSpeedMult(): number {
+    const { player } = this.arena;
+    return this.inDecay('npc', player.x, player.y) ? DECAY_SLOW_MULT : 1;
+  }
+
+  /** Pulled by ArenaScene: a cloud the player's soul user left slows the NPC. */
+  getNpcSpeedMult(): number {
+    const { npc } = this.arena;
+    return this.inDecay('player', npc.x, npc.y) ? DECAY_SLOW_MULT : 1;
+  }
+
+  // ── Click+ Possession ────────────────────────────────────────────────
+  //
+  // Three heal cords on one amalgam and the caster stops being a person: the body opens like a
+  // flower and nothing can reach what is no longer in it, while everything you press goes to the
+  // thing you are wearing. The trade is that the amalgam's health bar is now your clock — the
+  // moment it dies you are standing back in the middle of the fight at whatever HP you left.
+
+  /**
+   * What a ridden body may bite. Its own AI only ever cared about the opposing fighter, but a
+   * player driving it is standing in a field full of the dead — so every grave zombie on the
+   * board (yours are how the corpse queue is fed) and the other side's risen are fair game too.
+   */
+  private possessTargets(rec: Amalgam): Fighter[] {
+    const out = this.amalgamTargets(rec.owner);
+    for (const gz of this.graveZombies) {
+      if (gz.husk.active && gz.husk.hp > 0 && !out.includes(gz.husk)) out.push(gz.husk);
+    }
+    for (const a of this.amalgams) {
+      if (a !== rec && a.owner !== rec.owner && a.husk.active && a.husk.hp > 0) out.push(a.husk);
+    }
+    return out;
+  }
+
+  /** The label E carries while riding — the variant's own move, named. */
+  private possessSpecialName(rec: Amalgam): string {
+    switch (rec.variant.behavior) {
+      case 'ranged': return 'SPIT';
+      case 'medic': return 'PULSE';
+      default: return 'LUNGE';
+    }
+  }
+
+  private beginPossession(rec: Amalgam): void {
+    const { player } = this.arena;
+    this.possessed = rec;
+    rec.waypoint = null;
+    this.possessOpen = 0;
+    this.possessT = 0;
+    this.possessNextBiteAt = 0;
+    this.possessNextSpecialAt = 0;
+    this.possessChargeUntil = 0;
+    this.possessEndsAt = this.arena.scene.time.now + POSSESS_DURATION_MS;
+    // Invincible: the absorber intercepts ahead of every shield, and swallows it whole.
+    player.damageAbsorber = () => true;
+    (player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+
+    this.playerAvatar?.play('raise', undefined, 700);
+    this.pfx.bloom(player.x, player.y, 54, 14, 6, SPIRIT_TONES);
+    this.pfx.ring(player.x, player.y, 10, 110, SOUL.orchid, 620, 5, 6);
+    this.pfx.soulRise(player.x, player.y, 90, 800, 7, SPIRIT_TONES);
+    this.pfx.tether(player.x, player.y, rec.husk.x, rec.husk.y, 620, 7, SPIRIT_TONES);
+    this.pfx.shriek(rec.husk.x, rec.husk.y, 110, 640, 8, SPIRIT_TONES);
+    this.arena.scene.cameras.main.shake(200, 0.005);
+    this.arena.showFloatingText(player.x, player.y - 50, '🌸 POSSESSION — 12s', '#cc99ff');
+    this.arena.showFloatingText(rec.husk.x, rec.husk.y - 46, 'YOU ARE IT NOW', '#eeddff');
+  }
+
+  private endPossession(reason: string): void {
+    const { player } = this.arena;
+    this.possessed = null;
+    this.possessLastEndedAt = this.arena.scene.time.now;
+    this.possessEndsAt = 0;
+    this.possessOpen = 0;
+    this.possessFlower?.destroy(); this.possessFlower = null;
+    player.damageAbsorber = null;
+    this.pfx.wisps(player.x, player.y, 12, {
+      speed: 120, size: 3, life: 640, rise: -50, depth: 7, tones: SPIRIT_TONES,
+    });
+    this.pfx.ring(player.x, player.y, 90, 8, SOUL.orchid, 520, 4, 6);
+    this.arena.showFloatingText(player.x, player.y - 50, `🌸 ${reason.toUpperCase()}`, '#9977bb');
+    // The cords that opened it are spent with it.
+    for (const s of [...this.siphons]) if (s.owner === 'player' && s.kind === 'mend') this.releaseSiphon(s);
+  }
+
+  /**
+   * The ride itself. The caster's body is pinned and painted open; the amalgam takes WASD
+   * straight off the same keys, so possession never needs a second control scheme.
+   */
+  private updatePossession(time: number, delta: number): void {
+    const { player, scene } = this.arena;
+    const rec = this.possessed;
+    if (!rec) return;
+    if (!rec.husk.active || rec.husk.hp <= 0) { this.endPossession('the amalgam fell'); return; }
+    if (!player.active || player.hp <= 0) { this.endPossession('possession broken'); return; }
+    // Twelve seconds is the whole ride, whatever state the body is in when it runs out.
+    if (time >= this.possessEndsAt) { this.endPossession('possession spent'); return; }
+
+    this.possessT += delta / 1000;
+    this.possessOpen = Math.min(1, this.possessOpen + delta / 420);
+
+    // The caster is not there to be moved.
+    (player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+    if (!this.possessFlower) this.possessFlower = scene.add.graphics().setDepth(7);
+    this.possessFlower.clear();
+    SoulFx.drawFlower(this.possessFlower, this.pcol, SPIRIT_TONES,
+      player.x, player.y, 30, this.possessT, this.possessOpen, 1);
+
+    // WASD drives the husk. A charge started by E overrides it until it runs out.
+    const body = rec.husk.body as Phaser.Physics.Arcade.Body;
+    if (time < this.possessChargeUntil) return;
+    const dx = (this.arena.dKey.isDown ? 1 : 0) - (this.arena.aKey.isDown ? 1 : 0);
+    const dy = (this.arena.sKey.isDown ? 1 : 0) - (this.arena.wKey.isDown ? 1 : 0);
+    if (dx === 0 && dy === 0) { body.setVelocity(0, 0); return; }
+    const len = Math.hypot(dx, dy);
+    const speed = rec.husk.speed * rec.husk.walkSpeedMult;
+    body.setVelocity((dx / len) * speed, (dy / len) * speed);
+  }
+
+  /**
+   * The possession readout: a screen-space plate under the corpse queue naming the body you are
+   * wearing, its health, how much of the twelve seconds is left, and what the three keys now do.
+   * While it is spent the same plate becomes the recovery clock, so the slot never goes blank and
+   * you always know whether the third cord is going to do anything.
+   *
+   * Depth 21/22 — above the corpse-queue icons at 20, below anything a cast raises.
+   */
+  private updatePossessHud(time: number): void {
+    const { scene, elementId } = this.arena;
+    if (elementId !== 'soul' || !this.arena.hasUpgrade('click')) {
+      if (this.possessHudPanel) {
+        this.possessHudPanel.destroy(); this.possessHudPanel = null;
+        this.possessHudName?.destroy(); this.possessHudName = null;
+        this.possessHudKeys?.destroy(); this.possessHudKeys = null;
+      }
+      return;
+    }
+    const cx = scene.scale.width / 2;
+    const y = HUD_Y + 30;
+    const w = 190, h = 34;
+
+    if (!this.possessHudPanel) {
+      this.possessHudPanel = scene.add.graphics().setDepth(21).setScrollFactor(0);
+      this.possessHudName = scene.add.text(cx, y - 7, '', {
+        fontSize: '11px', fontFamily: 'Arial Black', color: '#eeddff',
+      }).setOrigin(0.5).setDepth(22).setScrollFactor(0);
+      this.possessHudKeys = scene.add.text(cx, y + 8, '', {
+        fontSize: '9px', fontFamily: 'Arial', color: '#9977bb',
+      }).setOrigin(0.5).setDepth(22).setScrollFactor(0);
+    }
+    const g = this.possessHudPanel;
+    const name = this.possessHudName!;
+    const keys = this.possessHudKeys!;
+    g.clear();
+
+    const rec = this.possessed;
+    const ready = time - this.possessLastEndedAt >= POSSESS_COOLDOWN_MS;
+
+    // The plate. Lilac while you are riding, dead grey while it recovers.
+    g.fillStyle(0x0b0d16, 0.86);
+    g.fillRoundedRect(cx - w / 2, y - h / 2, w, h, 6);
+    g.lineStyle(1.4, this.pcol(rec ? SOUL.orchid : ready ? SOUL.grape : SOUL.stone), rec ? 0.95 : 0.5);
+    g.strokeRoundedRect(cx - w / 2, y - h / 2, w, h, 6);
+
+    if (!rec) {
+      name.setText(ready ? '🌸 POSSESSION READY' : `🌸 RECOVERING — ${Math.ceil((this.possessLastEndedAt + POSSESS_COOLDOWN_MS - time) / 1000)}s`)
+        .setColor(ready ? '#cc99ff' : '#775588');
+      keys.setText(ready ? 'three heal cords on one amalgam' : '');
+      if (!ready) {
+        // The recovery bar fills left to right along the bottom of the plate.
+        const p = Phaser.Math.Clamp((time - this.possessLastEndedAt) / POSSESS_COOLDOWN_MS, 0, 1);
+        g.fillStyle(this.pcol(SOUL.grape), 0.7);
+        g.fillRoundedRect(cx - w / 2 + 3, y + h / 2 - 6, (w - 6) * p, 3, 1.5);
+      }
+      return;
+    }
+
+    const husk = rec.husk;
+    const label = rec.inflamed ? '🔥 THE INFLAMED'
+      : rec.isAlpha ? '☠️ ALPHA AMALGAM'
+        : rec.variant.id !== 'basic' ? `${rec.variant.emoji ?? '🧟'} ${rec.variant.name.toUpperCase()}`
+          : '🧟 AMALGAM';
+    name.setText(`🌸 ${label}`).setColor(rec.angered ? '#ff7777' : '#eeddff');
+    keys.setText(`WASD move · CLICK bite ${rec.baseBiteDamage} · E ${this.possessSpecialName(rec)}`);
+
+    // Two stacked readouts: the body's health (with its shield laid over it) and the ride's clock.
+    const barW = w - 12;
+    const hpFrac = Phaser.Math.Clamp(husk.hp / Math.max(1, husk.maxHp), 0, 1);
+    const shFrac = Phaser.Math.Clamp(husk.shieldHp / Math.max(1, husk.maxHp), 0, 1);
+    g.fillStyle(0x2a1230, 0.9);
+    g.fillRoundedRect(cx - barW / 2, y + h / 2 - 9, barW, 4, 2);
+    g.fillStyle(0x44ff88, 0.95);
+    g.fillRoundedRect(cx - barW / 2, y + h / 2 - 9, barW * hpFrac, 4, 2);
+    if (shFrac > 0) {
+      g.fillStyle(this.pcol(SOUL.lilac), 0.9);
+      g.fillRoundedRect(cx - barW / 2, y + h / 2 - 9, barW * shFrac, 4, 2);
+    }
+    const left = Phaser.Math.Clamp((this.possessEndsAt - time) / POSSESS_DURATION_MS, 0, 1);
+    g.fillStyle(0x2a1230, 0.9);
+    g.fillRoundedRect(cx - barW / 2, y + h / 2 - 4, barW, 3, 1.5);
+    g.fillStyle(this.pcol(left < 0.25 ? SOUL.blood : SOUL.orchid), 0.95);
+    g.fillRoundedRect(cx - barW / 2, y + h / 2 - 4, barW * left, 3, 1.5);
+  }
+
+  private possessBite(time: number): void {
+    const rec = this.possessed;
+    if (!rec || time < this.possessNextBiteAt) return;
+    this.possessNextBiteAt = time + POSSESS_BITE_CD_MS;
+    const husk = rec.husk;
+    const dmg = this.effectiveDamage(rec, rec.baseBiteDamage, time);
+    const target = this.nearestOf(this.possessTargets(rec), husk.x, husk.y);
+    const aim = target ? Math.atan2(target.y - husk.y, target.x - husk.x) : 0;
+    // The lunge reads on the drawn body via the sprite's scale pop, the same as an AI bite.
+    this.arena.scene.tweens.add({
+      targets: husk, scaleX: husk.sizeMult * 1.25, scaleY: husk.sizeMult * 1.25,
+      yoyo: true, duration: 110,
+    });
+    this.fx(rec.owner).muzzleWisp(husk.x + Math.cos(aim) * 14, husk.y + Math.sin(aim) * 14, aim, 1, 7, this.amalgamTones(rec));
+    if (target && Phaser.Math.Distance.Between(husk.x, husk.y, target.x, target.y) <= AMALGAM_MELEE_RANGE + 8) {
+      target.takeDamage(dmg);
+      this.arena.spawnHitFlash(target.x, target.y, 0x9944cc);
+      this.arena.recordMasteryStat('amalgamDamage', dmg);
+    }
+  }
+
+  /**
+   * E while riding: whatever this body could already do on its own. A spitter spits, a medic
+   * pulses, and everything else throws itself forward — the same three moves the AI has, just
+   * on your timing instead of its own.
+   */
+  private possessSpecial(time: number): void {
+    const rec = this.possessed;
+    if (!rec || time < this.possessNextSpecialAt) return;
+    this.possessNextSpecialAt = time + POSSESS_SPECIAL_CD_MS;
+    const husk = rec.husk;
+    const target = this.nearestOf(this.possessTargets(rec), husk.x, husk.y);
+    const aimX = target ? target.x : this.aimX;
+    const aimY = target ? target.y : this.aimY;
+
+    switch (rec.variant.behavior) {
+      case 'ranged':
+        this.doFireShot(husk, aimX, aimY, this.effectiveDamage(rec, rec.baseBiteDamage, time));
+        this.arena.showFloatingText(husk.x, husk.y - 34, '🤮 SPIT', '#88ee99');
+        break;
+      case 'medic':
+        this.doHealNearby(husk, 165, 0.12);
+        this.arena.showFloatingText(husk.x, husk.y - 34, '💜 PULSE', '#cc99ff');
+        break;
+      default: {
+        const ang = Math.atan2(aimY - husk.y, aimX - husk.x);
+        const speed = husk.speed * husk.walkSpeedMult * POSSESS_CHARGE_SPEED_MULT;
+        (husk.body as Phaser.Physics.Arcade.Body).setVelocity(Math.cos(ang) * speed, Math.sin(ang) * speed);
+        this.possessChargeUntil = time + POSSESS_CHARGE_MS;
+        this.fx(rec.owner).wisps(husk.x, husk.y, 6, {
+          speed: 90, angle: ang + Math.PI, spread: 0.8, size: 3,
+          life: 420, rise: -16, depth: 5, tones: this.amalgamTones(rec),
+        });
+        this.arena.showFloatingText(husk.x, husk.y - 34, '💨 LUNGE', '#eeddff');
+        break;
       }
     }
   }
@@ -1613,6 +2191,9 @@ export class SoulKit {
         .setOrigin(0.5).setDepth(20).setScale(0.42).setAlpha(0.25);
       this.hudIcons.push(img);
     }
+    this.hudBodyCount = scene.add.text(cx + (cap - 1) * 13 + 24, HUD_Y, '', {
+      fontSize: '11px', fontFamily: 'Arial Black', color: '#9977bb',
+    }).setOrigin(0, 0.5).setDepth(20);
   }
 
   private updateHud(): void {
@@ -1631,6 +2212,10 @@ export class SoulKit {
       else if (corpse.angered) icon.setTint(0xff4444);
       else icon.clearTint();
     }
+    // Bodies standing, against the cap — turns red at the ceiling, which is when Arise refuses.
+    const bodies = this.huskCount('player');
+    this.hudBodyCount?.setText(`🧟 ${bodies}/${SOUL_HUSK_CAP}`)
+      .setColor(bodies >= SOUL_HUSK_CAP ? '#ff7777' : '#9977bb');
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────

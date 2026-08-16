@@ -28,7 +28,7 @@ import radiation from './radiation';
 import magma from './magma';
 import dune from './dune';
 import fortune from './fortune';
-import marrow from './marrow';
+import cloth from './cloth';
 import justice from './justice';
 import gluttony from './gluttony';
 import quantum from './quantum';
@@ -87,7 +87,7 @@ export const CODEX: Record<string, ElementCodex> = {
   magma,
   dune,
   fortune,
-  marrow,
+  cloth,
   justice,
   gluttony,
   quantum,

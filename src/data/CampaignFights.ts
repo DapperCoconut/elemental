@@ -355,13 +355,13 @@ export const CAMPAIGN_FIGHTS: Record<string, CampaignFightDef> = {
   'gluttony-fight-5':   { enemyElementId: 'gluttony', difficulty: 5, name: 'Seconds',          taunt: 'The realm was the first plate. You are the garnish.',     mutations: ['parasitic', 'molten'], starredMutations: ['parasitic'] },
   'gluttony-challenge': { enemyElementId: 'gluttony', difficulty: 5, name: 'The Devouring Board', taunt: 'A feast is only a war you eat.',                       mutations: ['summoner', 'parasitic'] },
 
-  // ── Marrow (Tier 2, Death) ────────────────────────────────────────
-  'marrow-fight-1':   { enemyElementId: 'marrow',  difficulty: 5, name: 'First Responders',  taunt: 'Something came in. Everything in here is already walking toward it.' },
-  'marrow-fight-2':   { enemyElementId: 'growth',  difficulty: 5, name: 'Culture',           taunt: 'You are being grown so that you can be answered.',            mutations: ['parasitic'] },
-  'marrow-fight-3':   { enemyElementId: 'life',    difficulty: 5, name: 'Autoimmune',        taunt: 'It stopped telling us apart a long time ago.',               mutations: ['order'] },
-  'marrow-fight-4':   { enemyElementId: 'crystal', difficulty: 5, name: 'Running A Fever',   taunt: 'Stay warm. It only hurts you.',                              mutations: ['encroach'],           starredMutations: ['encroach'], format: { kind: 'survival', seconds: 75 } },
-  'marrow-fight-5':   { enemyElementId: 'marrow',  difficulty: 5, name: 'Swelling',          taunt: 'The Sovereigns I answered do not complain any more.',        mutations: ['summoner', 'titanic'], starredMutations: ['summoner'] },
-  'marrow-challenge': { enemyElementId: 'marrow',  difficulty: 5, name: 'Sepsis',            taunt: 'You are a foreign body. Hold still. This will be thorough.', mutations: ['empyreon', 'apprehension'] },
+  // ── Cloth (Tier 2, Death) ────────────────────────────────────────
+  'cloth-fight-1':   { enemyElementId: 'cloth',  difficulty: 5, name: 'Loose Ends',        taunt: 'You are frayed. Stand still and I will see to it.' },
+  'cloth-fight-2':   { enemyElementId: 'growth',  difficulty: 5, name: 'The Patch',         taunt: 'Something was grafted over the hole. It has opinions about the hole.', mutations: ['parasitic'] },
+  'cloth-fight-3':   { enemyElementId: 'life',    difficulty: 5, name: 'Sewn In',           taunt: 'It was mended into the wall a long time ago. It has not forgiven that.', mutations: ['order'] },
+  'cloth-fight-4':   { enemyElementId: 'crystal', difficulty: 5, name: 'Drawn Tight',       taunt: 'Do not pull. It only tightens.',                             mutations: ['encroach'],           starredMutations: ['encroach'], format: { kind: 'survival', seconds: 75 } },
+  'cloth-fight-5':   { enemyElementId: 'cloth',  difficulty: 5, name: 'Whole Bolt',        taunt: 'The Sovereigns I mended do not come apart any more.',        mutations: ['summoner', 'titanic'], starredMutations: ['summoner'] },
+  'cloth-challenge': { enemyElementId: 'cloth',  difficulty: 5, name: 'Backstitch',        taunt: 'You have come loose. Hold still. I will put you back.',      mutations: ['empyreon', 'apprehension'] },
 
   // ── Bind (Tier 2, Death) ──────────────────────────────────────────
   'bind-fight-1':   { enemyElementId: 'bind',        difficulty: 5, name: 'The First Link',   taunt: 'One chain is a threat. Two is a habit. I have thousands.' },

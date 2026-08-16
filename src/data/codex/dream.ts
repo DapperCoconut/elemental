@@ -81,23 +81,27 @@ const dream: ElementCodex = {
     'dream-trance': {
       basics:
         'A toggle that hangs a 68px pendulum on your hands — real physics under 1600 of gravity with '
-        + '0.7 damping, driven by your own acceleration, so standing still lets it die out. A swinging '
-        + 'bob makes enemies sleepy at up to 11.3 a second at full swing, scaled by strength to the power '
-        + '1.25, across a field that widens from 92px at the faintest useful swing to 176px at full tip '
-        + 'speed. Below 6% of full tip speed the field is off entirely — a hanging pendulum is not '
-        + 'hypnotism. Winding somebody from empty to 100 at a full swing takes about 9 seconds, so the '
-        + 'meter is a plan rather than an opener. 0.8s between toggles.',
+        + '0.7 damping, driven by your own acceleration, so standing still lets it die out. The swing is '
+        + 'a charge, not a reading: circling well fills it at about a third of a bar a second, so a full '
+        + 'wind is roughly three seconds of sustained circling rather than a state you flick into, and '
+        + 'easing off drains it back down to whatever your current circling supports. A full swing makes '
+        + 'enemies sleepy at up to 26 a second, scaled by strength squared, across a field that widens '
+        + 'from 92px to 210px. Squared is the whole shape of it: half wound pays a quarter, so the top '
+        + 'of the bar is worth far more than the middle. Below 6% the field is off entirely — a hanging '
+        + 'pendulum is not hypnotism. 0.8s between toggles.',
       cast: 'Click. A toggle — the pendulum stays out until you click again to still it. 0.8s between toggles.',
       effects: [
         { tag: 'summon', label: 'The pendulum', detail: 'A 68px string on your hands under 1600 of gravity with 0.7 damping, driven by your own acceleration. Standing still lets it die out.' },
-        { tag: 'debuff', label: 'Making them sleepy', detail: 'Up to 11.3 sleepiness a second at a full swing, scaled by swing strength to the power 1.25 — so a lazy swing is a nuisance and a hard one is a threat.' },
-        { tag: 'area', label: 'The field', detail: '92px at the faintest useful swing, widening to 176px at full tip speed (380 px/s at the bob).' },
+        { tag: 'resource', label: 'Charging the swing', detail: 'Circling fills the swing at up to about 0.34 of a full bar a second, scaled by how good the circle is — roughly 3 seconds of sustained winding to reach full. Stopping drains it at 0.55 a second, but only back down to what your current circling supports.' },
+        { tag: 'debuff', label: 'Making them sleepy', detail: 'Up to 26 sleepiness a second at a full swing, scaled by swing strength squared — half wound is a quarter of the rate, so the last third of the bar is most of the ability.' },
+        { tag: 'area', label: 'The field', detail: '92px at the faintest useful swing, widening to 210px at a full charge.' },
         { tag: 'utility', label: 'Too slow to count', detail: 'Below 6% of full tip speed the field is off entirely — a hanging pendulum is not hypnotism.' },
-        { tag: 'control', label: 'What it builds to', detail: '100 sleepiness puts them out for 8 seconds. From empty at a full swing that is about 9 seconds of winding — the meter is a plan, not an opener.' },
+        { tag: 'control', label: 'What it builds to', detail: '100 sleepiness puts them out for 8 seconds. About 3 seconds to charge the swing and then about 4 more at full to fill their meter — the plan is longer at the front and much faster once it lands.' },
       ],
       notes: [
         'A Dream NPC cannot feather a keyboard, so its swing is topped up directly at 2.4 a second — it still takes a couple of seconds to get going from a standstill.',
         'Trance is the only thing that fills the meter. Everything else in the kit either multiplies it or spends it.',
+        'Toggling the pendulum off spends the charge outright — you cannot bank a wind between toggles and throw it later.',
         'It costs nothing to leave up, but it only works while you are walking, which is exactly when Rest is paying you nothing.',
       ],
     },

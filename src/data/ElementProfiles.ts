@@ -229,10 +229,10 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
     blurb: 'Rust their kit shut. Locks, rot and skewers that take abilities off the board for good.',
     complexity: 4,
   },
-  marrow: {
-    archetype: 'Immune System',
-    blurb: 'An immune response as a weapon — antibodies, white cells, and a bone bar paying for all of it.',
-    complexity: 4,
+  cloth: {
+    archetype: 'Tailor',
+    blurb: 'Your health bar is a scarf, and the scarf is the hitbox. Build the rest of your kit out of tetrominoes.',
+    complexity: 5,
   },
   magma: {
     archetype: 'Dragon',

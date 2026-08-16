@@ -459,41 +459,6 @@ export class SoulFx extends FxBase {
   }
 
   /**
-   * The lantern arc: a spark thrown from the caster to the cursor along a slack, wavering cord
-   * of spirit light, with a bloom where it lands. Replaces the old straight line + dot.
-   */
-  lanternArc(x1: number, y1: number, x2: number, y2: number, depth = 6, tones: SoulTones = SPIRIT_TONES): void {
-    const dx = x2 - x1, dy = y2 - y1;
-    const dist = Math.hypot(dx, dy) || 1;
-    const angle = Math.atan2(dy, dx);
-    const sagSign = Math.random() < 0.5 ? 1 : -1;
-    const sag = Math.min(26, dist * 0.16) * sagSign;
-    const steps = Phaser.Math.Clamp(Math.round(dist / 12), 4, 26);
-    const wave = Math.random() * TAU;
-
-    this.anim(depth, 220, (g, t) => {
-      const fade = 1 - easeIn(t);
-      const px = -Math.sin(angle), py = Math.cos(angle);
-      g.lineStyle(2.6 * fade, this.tint(tones.glow), 0.55 * fade);
-      g.beginPath();
-      for (let i = 0; i <= steps; i++) {
-        const f = i / steps;
-        // Slack cord: a parabola across the span with a live ripple riding it.
-        const off = sag * Math.sin(f * Math.PI) + Math.sin(f * 7 + wave + t * 9) * 3.5;
-        const cx = x1 + dx * f + px * off, cy = y1 + dy * f + py * off;
-        if (i === 0) g.moveTo(cx, cy); else g.lineTo(cx, cy);
-      }
-      g.strokePath();
-      // The spark itself, running the cord.
-      const f = Math.min(1, t * 1.6);
-      const off = sag * Math.sin(f * Math.PI);
-      const sx = x1 + dx * f + px * off, sy = y1 + dy * f + py * off;
-      soulWispLayered(g, this.tint, tones, sx, sy, angle + Math.PI, 16 * fade, 3.4 * fade, 0.9 * fade,
-        wave + t * 10, { tatters: 1 });
-    });
-  }
-
-  /**
    * Something being pulled up out of the ground: a column of wisps rising through a widening
    * mouth, with dirt-dark lobes shouldered aside at the base. Arise and the graves use it.
    */
@@ -797,6 +762,125 @@ export class SoulFx extends FxBase {
     const off = Math.sin(f * Math.PI) * 9 + Math.sin(f * 8 + t * 3) * 2.5;
     g.fillStyle(tint(tones.spark), 0.3 + strength * 0.5);
     g.fillCircle(x1 + dx * f + px * off, y1 + dy * f + py * off, 2.2);
+  }
+
+  /**
+   * A siphon line: the cord Soul's click opens between the caster and whatever is on the far
+   * end of it. Drawn as a taut double strand with beads of spirit crawling along it, always
+   * *toward* the caster on a drain and *away* from them on a mend, so which way the line is
+   * running is readable without reading its colour — and colour carries it too, rot green for
+   * something being emptied and the owner's own shades for something being fed.
+   */
+  static drawSiphon(
+    g: Phaser.GameObjects.Graphics, tint: SoulColorFn, tones: SoulTones,
+    x1: number, y1: number, x2: number, y2: number, t: number, drain: boolean, strain: number,
+  ): void {
+    const dx = x2 - x1, dy = y2 - y1;
+    const dist = Math.hypot(dx, dy) || 1;
+    const px = -dy / dist, py = dx / dist;
+    const steps = Phaser.Math.Clamp(Math.round(dist / 12), 4, 30);
+    // A cord under load pulls straight; a slack one sags. `strain` is how close it is to snapping.
+    const sag = (1 - strain) * 12;
+
+    const strand = (offset: number, width: number, color: number, alpha: number): void => {
+      g.lineStyle(width, tint(color), alpha);
+      g.beginPath();
+      for (let i = 0; i <= steps; i++) {
+        const f = i / steps;
+        const o = offset + Math.sin(f * Math.PI) * sag + Math.sin(f * 9 - t * 6) * (1.6 + strain * 2);
+        const cx = x1 + dx * f + px * o, cy = y1 + dy * f + py * o;
+        if (i === 0) g.moveTo(cx, cy); else g.lineTo(cx, cy);
+      }
+      g.strokePath();
+    };
+
+    strand(0, 5 + strain * 2, tones.shroud, 0.3);
+    strand(-1.4, 2.2, tones.body, 0.75);
+    strand(1.4, 1.4, tones.core, 0.6);
+
+    // The beads. Four of them, evenly spaced, running the way the spirit is actually going.
+    for (let k = 0; k < 4; k++) {
+      const raw = (t * 0.75 + k / 4) % 1;
+      const f = drain ? 1 - raw : raw;
+      const o = Math.sin(f * Math.PI) * sag + Math.sin(f * 9 - t * 6) * 1.8;
+      const bx = x1 + dx * f + px * o, by = y1 + dy * f + py * o;
+      g.fillStyle(tint(tones.glow), 0.5);
+      g.fillCircle(bx, by, 3.4);
+      g.fillStyle(tint(tones.spark), 0.95);
+      g.fillCircle(bx, by, 1.7);
+    }
+
+    // The anchor where it bites into the far end.
+    g.lineStyle(1.6, tint(tones.core), 0.8);
+    g.strokeCircle(x2, y2, 7 + Math.sin(t * 5) * 1.2);
+    g.fillStyle(tint(tones.glow), 0.35);
+    g.fillCircle(x2, y2, 4.5);
+  }
+
+  /**
+   * A cloud of decay: the rot a zombie leaves where it fell. Layered smoke lobes turning on
+   * their own axes, bone-flecked, with a ragged perimeter so it reads as a volume rather than
+   * a circle painted on the floor.
+   */
+  static drawDecay(
+    g: Phaser.GameObjects.Graphics, tint: SoulColorFn,
+    x: number, y: number, radius: number, t: number, alpha: number,
+  ): void {
+    g.fillStyle(tint(SOUL.bile), 0.2 * alpha);
+    g.fillCircle(x, y, radius);
+    for (let i = 0; i < 7; i++) {
+      const a = (i / 7) * TAU + t * 0.35;
+      const r = radius * (0.42 + 0.16 * Math.sin(t * 1.4 + i * 2));
+      const lx = x + Math.cos(a) * radius * 0.44;
+      const ly = y + Math.sin(a) * radius * 0.44;
+      g.fillStyle(tint(i % 2 ? SOUL.rot : 0x228833), 0.16 * alpha);
+      g.fillCircle(lx, ly, r);
+    }
+    // The ragged rim.
+    g.lineStyle(1.6, tint(SOUL.rot), 0.4 * alpha);
+    g.beginPath();
+    for (let i = 0; i <= 30; i++) {
+      const a = (i / 30) * TAU;
+      const r = radius * (0.94 + 0.07 * Math.sin(a * 5 + t * 2));
+      const cx = x + Math.cos(a) * r, cy = y + Math.sin(a) * r;
+      if (i === 0) g.moveTo(cx, cy); else g.lineTo(cx, cy);
+    }
+    g.strokePath();
+    // Flecks of what is left of the body, drifting up out of it.
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * TAU + t * 1.1;
+      const f = ((t * 0.5 + i / 6) % 1);
+      const r = radius * (0.2 + f * 0.7);
+      g.fillStyle(tint(SOUL.bone), (1 - f) * 0.55 * alpha);
+      g.fillCircle(x + Math.cos(a) * r, y + Math.sin(a) * r - f * 8, 1.6);
+    }
+  }
+
+  /**
+   * Possession: the caster opened up. Six petals of spirit hinged back off the body and held
+   * there, with the emptied husk of the character glowing between them — nothing can reach what
+   * is no longer inside. `open` runs 0 → 1 so the bloom can be animated on the way in.
+   */
+  static drawFlower(
+    g: Phaser.GameObjects.Graphics, tint: SoulColorFn, tones: SoulTones,
+    x: number, y: number, radius: number, t: number, open: number, alpha: number,
+  ): void {
+    const o = Phaser.Math.Clamp(open, 0, 1);
+    g.fillStyle(tint(tones.shroud), 0.3 * alpha * o);
+    g.fillCircle(x, y, radius * 1.25);
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * TAU + t * 0.35;
+      const reach = radius * (0.5 + o * 0.9) * (1 + 0.07 * Math.sin(t * 3 + i));
+      // Each petal is a wisp hinged at the body and bent outward.
+      soulWispLayered(
+        g, tint, tones, x, y, a, reach, radius * 0.3 * (0.5 + o * 0.6),
+        0.7 * alpha, t * 3 + i, { tatters: 2, beads: true },
+      );
+    }
+    g.fillStyle(tint(tones.core), 0.5 * alpha * (0.7 + 0.3 * Math.sin(t * 4)));
+    g.fillCircle(x, y, radius * 0.45);
+    g.fillStyle(tint(tones.spark), 0.85 * alpha);
+    g.fillCircle(x, y, radius * 0.2);
   }
 }
 

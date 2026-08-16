@@ -105,7 +105,7 @@ export const WORLD_GIMMICKS: Record<string, WorldGimmick> = {
              spec: { arch: 'hill', radius: 96, moveEveryMs: 11000, color: 0xc23a2e } },
   gluttony:{ name: 'Grease Fire',     blurb: 'The kitchen floor spits burning fat on a cycle.',
              spec: { arch: 'vents', count: 5, intervalMs: 4600, radius: 56, damage: 14, color: 0xd8452f } },
-  marrow:  { name: 'Abscesses',       blurb: 'The floor swells in pockets and then bursts.',
+  cloth:  { name: 'Loose Needles',   blurb: 'The floor is a pincushion, and it goes off in patches.',
              spec: { arch: 'vents', count: 5, intervalMs: 4200, radius: 58, damage: 12, color: 0xd1435c } },
   bind:    { name: 'The Short Leash', blurb: 'The chains haul everything toward the centre on a cycle.',
              spec: { arch: 'pulse', intervalMs: 7600, strength: 135, durationMs: 2100, inward: true, color: 0xe0b743 } },

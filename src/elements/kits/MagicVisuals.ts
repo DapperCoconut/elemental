@@ -779,6 +779,43 @@ export class MagicFx extends FxBase {
     sigilStarLayered(g, tint, x, y, t * 3, size * (1 + armed * 0.35), size * 0.34, MAGIC.blush, glow + 0.25, 5, true);
   }
 
+  /**
+   * F+ corrupted data: a copy of the caster that did not come out right.
+   *
+   * It has to read as *the player, wrong* rather than as a generic pickup, so it is built from a
+   * plain humanoid silhouette and then broken — a colour split into two offset ghosts, scanlines
+   * that slide, and the occasional dropped frame that eats a band out of the middle of it.
+   */
+  static drawCorruptData(
+    g: Phaser.GameObjects.Graphics, tint: MagicColorFn,
+    x: number, y: number, seed: number, t: number, alpha: number,
+  ): void {
+    const a = alpha * (0.72 + 0.28 * Math.sin(seed * 7 + t * 19));
+    g.fillStyle(tint(MAGIC.ink), a * 0.4);
+    g.fillEllipse(x, y + 15, 26, 8);
+    const figure = (dx: number, col: number, aa: number): void => {
+      g.fillStyle(tint(col), aa);
+      g.fillCircle(x + dx, y - 9, 6.4);
+      fillPts(g, [
+        { x: x + dx - 7, y: y - 2 }, { x: x + dx + 7, y: y - 2 },
+        { x: x + dx + 5, y: y + 13 }, { x: x + dx - 5, y: y + 13 },
+      ]);
+    };
+    figure(-2.6, MAGIC.storm, a * 0.5);
+    figure(2.6, MAGIC.blush, a * 0.5);
+    figure(0, MAGIC.purple, a);
+    for (let i = 0; i < 5; i++) {
+      const off = Math.sin(seed * 3 + i * 2.7 + Math.floor(t * 9)) * 7;
+      g.fillStyle(tint(i % 2 ? MAGIC.orchid : MAGIC.magenta), a * 0.75);
+      g.fillRect(x - 8 + off, y - 12 + i * 5.5, 16, 1.8);
+    }
+    if (Math.sin(seed + t * 5.5) > 0.72) {
+      g.fillStyle(tint(MAGIC.ink), a * 0.85);
+      g.fillRect(x - 10, y - 6 + Math.sin(seed * 2 + t) * 6, 20, 3.4);
+    }
+    sigilStarLayered(g, tint, x, y - 21, t * 3, 5, 1.8, MAGIC.magenta, a * 0.9, 4, false);
+  }
+
   /** A Meditate heal orb drifting in off the arena edge. */
   static drawHealOrb(
     g: Phaser.GameObjects.Graphics, tint: MagicColorFn,
@@ -793,16 +830,62 @@ export class MagicFx extends FxBase {
     sigilStarLayered(g, tint, x, y, t * 2.4, 9, 3.4, MAGIC.lilac, 0.95, 6, true);
   }
 
-  /** The Magic Anchor marker, waiting to be recalled to. */
-  static drawAnchor(
+  /**
+   * The R crosshair sitting on whoever is marked, and the tally it has run up.
+   *
+   * The count is drawn as pips around the reticle rather than as a number, because it has to be
+   * read at a glance in a fight — and the ring tightens and brightens as the pips fill, so "this
+   * is worth firing now" is legible without counting anything.
+   */
+  static drawCrosshair(
     g: Phaser.GameObjects.Graphics, tint: MagicColorFn,
-    x: number, y: number, t: number,
+    x: number, y: number, marks: number, spin: number, alpha: number,
   ): void {
-    const pulse = 0.6 + 0.4 * Math.sin(t * 2.4);
-    g.fillStyle(tint(MAGIC.purple), 0.14 * pulse);
-    g.fillCircle(x, y, 26);
-    arcaneRing(g, tint, x, y, 17, t * 0.9, MAGIC.orchid, 0.45 + 0.3 * pulse, 2, 5);
-    sigilStarLayered(g, tint, x, y, -t * 1.4, 8, 3, MAGIC.orchid, 0.55 + 0.3 * pulse, 6, false);
+    const k = marks / 5;
+    const r = 30 - k * 7;
+    g.fillStyle(tint(MAGIC.purple), alpha * (0.06 + 0.1 * k));
+    g.fillCircle(x, y, r * 1.25);
+    arcaneRing(g, tint, x, y, r, spin, MAGIC.orchid, alpha * (0.55 + 0.35 * k), 1.8, 4, false);
+    // The reticle: four ticks with a gap at the centre, so the victim stays visible inside it.
+    for (let i = 0; i < 4; i++) {
+      const a = spin * 0.4 + (i / 4) * TAU;
+      g.lineStyle(2.2, tint(MAGIC.blush), alpha * (0.7 + 0.3 * k));
+      strokePts(g, [
+        { x: x + Math.cos(a) * r * 0.45, y: y + Math.sin(a) * r * 0.45 },
+        { x: x + Math.cos(a) * r * 1.2, y: y + Math.sin(a) * r * 1.2 },
+      ]);
+    }
+    // One pip per tally, filling clockwise from the top.
+    for (let i = 0; i < 5; i++) {
+      const a = -Math.PI / 2 + (i / 5) * TAU;
+      const px = x + Math.cos(a) * (r + 9), py = y + Math.sin(a) * (r + 9);
+      if (i < marks) {
+        sigilStarLayered(g, tint, px, py, spin * 2 + i, 5, 1.8, MAGIC.blush, alpha, 4, false);
+      } else {
+        g.lineStyle(1.4, tint(MAGIC.violet), alpha * 0.55);
+        g.strokeCircle(px, py, 3);
+      }
+    }
+  }
+
+  /** The R+ shortcut round: a heavy shell of packed sigils with a wake behind it. */
+  static drawMagicMissile(
+    g: Phaser.GameObjects.Graphics, tint: MagicColorFn,
+    x: number, y: number, angle: number, t: number,
+  ): void {
+    for (let i = 4; i >= 1; i--) {
+      g.fillStyle(tint(MAGIC.purple), 0.1 * (5 - i));
+      g.fillCircle(x - Math.cos(angle) * i * 9, y - Math.sin(angle) * i * 9, 9 - i * 1.2);
+    }
+    const at = frame(x, y, angle);
+    // A blunt shell rather than a dart — this one is meant to look like it lands heavily.
+    g.fillStyle(tint(MAGIC.ink), 0.5);
+    fillPts(g, [at(15, 1.6), at(-9, 9.6), at(-13, 1.6), at(-9, -6.4)]);
+    g.fillStyle(tint(MAGIC.violet), 0.95);
+    fillPts(g, [at(14, 0), at(-10, 8), at(-14, 0), at(-10, -8)]);
+    g.fillStyle(tint(MAGIC.orchid), 0.9);
+    fillPts(g, [at(14, 0), at(-2, 4), at(-6, 0), at(-2, -4)]);
+    sigilStarLayered(g, tint, x, y, t * 7, 9, 3.2, MAGIC.blush, 0.95, 5, true);
   }
 
   /** The Transmogrify bolt: a feathered mote of raw transformation. */
@@ -819,6 +902,422 @@ export class MagicFx extends FxBase {
     sigilStarLayered(g, tint, x, y, t * 6, 11, 3.6, MAGIC.white, 0.98, 5, true);
     g.fillStyle(tint(MAGIC.gold), 0.9);
     g.fillCircle(x, y, 3);
+  }
+
+  /**
+   * A Splash pool. The plain one is clear water with a rune floating in it; the putrid one is a
+   * green-black slick that bubbles, and it wears a ring of inward chevrons — the one visual
+   * promise the spell makes is "you are not dashing out of this", so it has to be readable from
+   * across the arena.
+   */
+  static drawPuddle(
+    g: Phaser.GameObjects.Graphics, tint: MagicColorFn,
+    x: number, y: number, radius: number, putrid: boolean, seed: number, t: number, alpha: number,
+  ): void {
+    const body = putrid ? 0x1e3320 : MAGIC.deepSea;
+    const rim = putrid ? MAGIC.acid : MAGIC.stormHi;
+    const lobe = (r: number, phase: number, col: number, a: number): void => {
+      const pts: Pt[] = [];
+      for (let i = 0; i < 22; i++) {
+        const ang = (i / 22) * TAU;
+        // The edge of a pool never sits still, but it wanders far more slowly than a cloud boils.
+        const wob = 0.88 + 0.14 * Math.sin(seed + ang * 3 + t * 0.9 + phase);
+        pts.push({ x: x + Math.cos(ang) * r * wob, y: y + Math.sin(ang) * r * wob * 0.52 });
+      }
+      g.fillStyle(tint(col), a);
+      fillPts(g, pts);
+    };
+    lobe(radius * 1.04, 0.6, MAGIC.ink, alpha * 0.35);
+    lobe(radius, 0, body, alpha * 0.72);
+    lobe(radius * 0.62, 1.9, rim, alpha * 0.28);
+    // Surface: a couple of travelling ripples.
+    for (let i = 0; i < 2; i++) {
+      const p = ((t * 0.5 + i / 2) % 1);
+      g.lineStyle(1.6, tint(rim), alpha * 0.5 * (1 - p));
+      g.strokeEllipse(x, y, radius * 2 * p, radius * 1.04 * p);
+    }
+    if (putrid) {
+      // Bubbles rising and popping.
+      for (let i = 0; i < 6; i++) {
+        const p = ((t * 0.8 + i / 6) % 1);
+        const bx = x + Math.sin(seed * 3 + i * 2.4) * radius * 0.7;
+        const by = y + Math.cos(seed + i * 1.7) * radius * 0.32;
+        g.fillStyle(tint(MAGIC.acid), alpha * 0.6 * (1 - p));
+        g.fillCircle(bx, by - p * 6, 1.5 + p * 3);
+      }
+      // Chevrons pointing inward: the pool keeps what it catches.
+      for (let i = 0; i < 12; i++) {
+        const a = (i / 12) * TAU + t * 0.3;
+        const at = frame(x + Math.cos(a) * radius * 0.94, y + Math.sin(a) * radius * 0.94 * 0.52, a);
+        g.lineStyle(2, tint(MAGIC.acid), alpha * 0.75);
+        strokePts(g, [at(5, -5), at(-2, 0), at(5, 5)]);
+      }
+    }
+    sigilStarLayered(g, tint, x, y, t * 0.8, radius * 0.24, radius * 0.09, rim, alpha * 0.8, 6, false);
+  }
+
+  /** One stuck Spur bur: a barbed seed-head with a ring of hooks. */
+  static drawBur(
+    g: Phaser.GameObjects.Graphics, tint: MagicColorFn,
+    x: number, y: number, spin: number, alpha: number,
+  ): void {
+    g.fillStyle(tint(MAGIC.ink), alpha * 0.4);
+    g.fillCircle(x + 0.8, y + 1.2, 5.4);
+    // Hooks first, so the body sits on top of their roots.
+    for (let i = 0; i < 9; i++) {
+      const a = spin + (i / 9) * TAU;
+      const at = frame(x, y, a);
+      g.lineStyle(1.5, tint(MAGIC.darkVine), alpha);
+      strokePts(g, [at(3, 0), at(8.5, 0), at(9.5, 1.8)]);
+    }
+    g.fillStyle(tint(MAGIC.vine), alpha);
+    g.fillCircle(x, y, 4.6);
+    g.fillStyle(tint(MAGIC.leaf), alpha * 0.8);
+    g.fillCircle(x - 1.2, y - 1.4, 2.2);
+  }
+
+  /**
+   * The Gust+ trail: a live wire lying on the floor where the dash went. Two offset jagged runs
+   * plus a soft glow, so it reads as current rather than as a drawn line.
+   */
+  static drawSparkTrail(
+    g: Phaser.GameObjects.Graphics, tint: MagicColorFn,
+    pts: readonly Pt[], seed: number, t: number, alpha: number,
+  ): void {
+    if (pts.length < 2) return;
+    g.lineStyle(11, tint(MAGIC.thunder), alpha * 0.12);
+    strokePts(g, pts as Pt[]);
+    g.lineStyle(4, tint(MAGIC.thunder), alpha * 0.35);
+    strokePts(g, pts as Pt[]);
+    for (let pass = 0; pass < 2; pass++) {
+      const jag: Pt[] = [];
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = pts[i], b = pts[i + 1];
+        const nx = -(b.y - a.y), ny = b.x - a.x;
+        const len = Math.hypot(nx, ny) || 1;
+        for (let s = 0; s < 3; s++) {
+          const u = s / 3;
+          const k = Math.sin(seed + pass * 2.3 + (i * 3 + s) * 1.9 + t * 14) * 6;
+          jag.push({
+            x: a.x + (b.x - a.x) * u + (nx / len) * k,
+            y: a.y + (b.y - a.y) * u + (ny / len) * k,
+          });
+        }
+      }
+      jag.push(pts[pts.length - 1]);
+      g.lineStyle(pass === 0 ? 2.4 : 1.2, tint(pass === 0 ? MAGIC.thunder : MAGIC.white), alpha * (pass === 0 ? 0.9 : 0.8));
+      strokePts(g, jag);
+    }
+    // Charge beads running the length of it.
+    for (let i = 0; i < 3; i++) {
+      const p = ((t * 0.7 + i / 3) % 1) * (pts.length - 1);
+      const k = Math.floor(p);
+      const u = p - k;
+      const a = pts[Math.min(k, pts.length - 2)], b = pts[Math.min(k + 1, pts.length - 1)];
+      sigilStarLayered(g, tint, a.x + (b.x - a.x) * u, a.y + (b.y - a.y) * u,
+        t * 8 + i, 5, 1.8, MAGIC.thunderHi, alpha * 0.9, 4, false);
+    }
+  }
+
+  /**
+   * One Ward+ link: a rectangular slab of rune-cut rock. Standing links are joined to their
+   * neighbours by a short chain; a freed one has torn its chain off and is tumbling.
+   */
+  static drawWardLink(
+    g: Phaser.GameObjects.Graphics, tint: MagicColorFn,
+    x: number, y: number, spin: number, free: boolean, alpha: number,
+  ): void {
+    const at = frame(x, y, spin + Math.PI / 2);
+    const w = 13, h = 7;
+    const box = (dx: number, dy: number, col: number, a: number): void => {
+      g.fillStyle(tint(col), a);
+      fillPts(g, [at(-w + dx, -h + dy), at(w + dx, -h + dy), at(w + dx, h + dy), at(-w + dx, h + dy)]);
+    };
+    box(1, 1.6, MAGIC.ink, alpha * 0.45);
+    box(0, 0, free ? MAGIC.granite : MAGIC.rock, alpha);
+    // Lit top edge and a rune cut across the face.
+    g.fillStyle(tint(MAGIC.sand), alpha * 0.45);
+    fillPts(g, [at(-w, -h), at(w, -h), at(w * 0.8, -h * 0.35), at(-w * 0.8, -h * 0.35)]);
+    g.lineStyle(1.4, tint(MAGIC.stone), alpha * 0.9);
+    strokePts(g, [at(-w, -h), at(w, -h), at(w, h), at(-w, h)], true);
+    sigilStarLayered(g, tint, x, y, spin * 1.6, 4.2, 1.5, MAGIC.orchid, alpha * 0.7, 4, false);
+    if (!free) {
+      // The chain to the next link round the ring.
+      g.lineStyle(2, tint(MAGIC.brass), alpha * 0.8);
+      strokePts(g, [at(w, 0), at(w + 6, 0)]);
+      strokePts(g, [at(-w, 0), at(-w - 6, 0)]);
+    } else {
+      g.lineStyle(1.6, tint(MAGIC.granite), alpha * 0.4);
+      strokePts(g, [at(-w * 1.9, 0), at(-w, 0)]);
+    }
+  }
+
+  /**
+   * A conjured familiar.
+   *
+   * Five different silhouettes rather than five recolours of one blob: an imp, a droplet, a
+   * seed-pod, a whirl and a squat golem. What ties them together is that all five are drawn
+   * standing *on a summoning circle* — they are called, not native — and all five carry the
+   * sigil somewhere on them. The upgraded body gets a corrupt halo and a darker palette, so
+   * "that one has a signature move" reads at a glance.
+   */
+  static drawSummon(
+    g: Phaser.GameObjects.Graphics, tint: MagicColorFn, kind: string,
+    x: number, y: number, bob: number, plus: boolean, seed: number, t: number,
+    health: number, alpha: number,
+  ): void {
+    const S = plus ? 1.28 : 1;
+    const yy = y + Math.sin(bob) * 3;
+    // The circle it stands on, and (upgraded) the corrupt halo over it.
+    arcaneRing(g, tint, x, y + 12 * S, 15 * S, t * 0.9, plus ? MAGIC.magenta : MAGIC.orchid,
+      alpha * 0.5, 1.6, 5, false);
+    if (plus) {
+      g.fillStyle(tint(MAGIC.magenta), alpha * 0.12);
+      g.fillCircle(x, yy, 22 * S);
+      arcaneRing(g, tint, x, yy - 20 * S, 8, -t * 2.2, MAGIC.magenta, alpha * 0.7, 1.4, 4, false);
+    }
+    g.fillStyle(tint(MAGIC.ink), alpha * 0.35);
+    g.fillEllipse(x, y + 14 * S, 22 * S, 7 * S);
+
+    const eyes = (dx: number, ey: number, col: number): void => {
+      g.fillStyle(tint(col), alpha);
+      g.fillCircle(x - dx, ey, 1.8 * S);
+      g.fillCircle(x + dx, ey, 1.8 * S);
+    };
+
+    switch (kind) {
+      case 'fire': {
+        // A teardrop of flame with two horn flicks — an ember imp.
+        const body = plus ? MAGIC.cursed : MAGIC.flameRed;
+        const rim = plus ? MAGIC.corrupt : MAGIC.ember;
+        const lick = (r: number, col: number, a: number, ph: number): void => {
+          const pts: Pt[] = [];
+          for (let i = 0; i < 16; i++) {
+            const ang = (i / 16) * TAU;
+            const flick = 1 + 0.3 * Math.max(0, -Math.sin(ang)) * Math.sin(seed + ang * 3 + t * 7 + ph);
+            pts.push({ x: x + Math.cos(ang) * r * flick, y: yy + Math.sin(ang) * r * flick * 1.25 - r * 0.3 });
+          }
+          g.fillStyle(tint(col), a);
+          fillPts(g, pts);
+        };
+        lick(11 * S, body, alpha, 0);
+        lick(6.5 * S, rim, alpha * 0.9, 1.7);
+        for (const side of [-1, 1]) {
+          g.fillStyle(tint(rim), alpha);
+          fillPts(g, [
+            { x: x + side * 7 * S, y: yy - 9 * S },
+            { x: x + side * 12 * S, y: yy - 19 * S },
+            { x: x + side * 5 * S, y: yy - 11 * S },
+          ]);
+        }
+        eyes(4 * S, yy - 4 * S, MAGIC.gold);
+        break;
+      }
+      case 'water': {
+        // A droplet, point up, with ripple rings shed off its base.
+        const body = plus ? MAGIC.deepSea : MAGIC.seaMid;
+        g.fillStyle(tint(body), alpha * 0.95);
+        fillPts(g, [
+          { x, y: yy - 17 * S },
+          { x: x + 10 * S, y: yy + 2 * S },
+          { x: x + 6 * S, y: yy + 11 * S },
+          { x: x - 6 * S, y: yy + 11 * S },
+          { x: x - 10 * S, y: yy + 2 * S },
+        ]);
+        g.fillStyle(tint(MAGIC.stormHi), alpha * 0.5);
+        g.fillEllipse(x - 3 * S, yy - 2 * S, 6 * S, 9 * S);
+        for (let i = 0; i < 2; i++) {
+          const p = ((t * 0.9 + i / 2) % 1);
+          g.lineStyle(1.4, tint(MAGIC.stormHi), alpha * 0.55 * (1 - p));
+          g.strokeEllipse(x, y + 12 * S, 26 * S * p, 8 * S * p);
+        }
+        eyes(3.5 * S, yy + 1 * S, MAGIC.white);
+        break;
+      }
+      case 'life': {
+        // A seed-pod with a pair of leaves — the only familiar that has to walk up to you.
+        const body = plus ? MAGIC.darkVine : MAGIC.vine;
+        g.fillStyle(tint(body), alpha);
+        g.fillEllipse(x, yy + 1 * S, 20 * S, 24 * S);
+        g.fillStyle(tint(MAGIC.leaf), alpha * 0.55);
+        g.fillEllipse(x - 3 * S, yy - 5 * S, 9 * S, 11 * S);
+        for (const side of [-1, 1]) {
+          const a = side * (0.9 + Math.sin(t * 2 + seed) * 0.12);
+          const at = frame(x, yy - 9 * S, -Math.PI / 2 + a);
+          g.fillStyle(tint(MAGIC.leaf), alpha);
+          fillPts(g, [at(0, 0), at(13 * S, -5 * S), at(15 * S, 0), at(13 * S, 5 * S)]);
+        }
+        eyes(4 * S, yy, MAGIC.ink);
+        break;
+      }
+      case 'wind': {
+        // No body at all — three nested whirls with a face implied in the middle.
+        for (let i = 3; i >= 1; i--) {
+          const r = 6 * S * i;
+          const spiral: Pt[] = [];
+          for (let k = 0; k <= 22; k++) {
+            const u = k / 22;
+            const ang = t * (2.4 + i * 0.6) + u * TAU * 1.3 + seed;
+            spiral.push({ x: x + Math.cos(ang) * r * u, y: yy + Math.sin(ang) * r * u * 0.82 });
+          }
+          g.lineStyle(2.2, tint(plus ? MAGIC.ash : MAGIC.gust), alpha * (0.35 + 0.2 * i));
+          strokePts(g, spiral);
+        }
+        g.fillStyle(tint(plus ? MAGIC.wind : MAGIC.gust), alpha * 0.35);
+        g.fillCircle(x, yy, 9 * S);
+        eyes(4 * S, yy - 1 * S, MAGIC.white);
+        break;
+      }
+      default: {
+        // Earth: a squat golem, all shoulders. Slowest thing on the field and it looks it.
+        const body = plus ? MAGIC.rock : MAGIC.stone;
+        g.fillStyle(tint(body), alpha);
+        fillPts(g, [
+          { x: x - 13 * S, y: yy - 4 * S }, { x: x - 9 * S, y: yy - 13 * S },
+          { x: x + 9 * S, y: yy - 13 * S }, { x: x + 13 * S, y: yy - 4 * S },
+          { x: x + 10 * S, y: yy + 12 * S }, { x: x - 10 * S, y: yy + 12 * S },
+        ]);
+        g.fillStyle(tint(MAGIC.sand), alpha * 0.45);
+        fillPts(g, [
+          { x: x - 9 * S, y: yy - 13 * S }, { x: x + 9 * S, y: yy - 13 * S },
+          { x: x + 7 * S, y: yy - 7 * S }, { x: x - 7 * S, y: yy - 7 * S },
+        ]);
+        g.lineStyle(1.5, tint(MAGIC.granite), alpha * 0.8);
+        strokePts(g, [{ x: x - 6 * S, y: yy + 2 * S }, { x: x + 2 * S, y: yy + 5 * S }]);
+        eyes(4.5 * S, yy - 5 * S, MAGIC.gold);
+        break;
+      }
+    }
+
+    sigilStarLayered(g, tint, x, yy + 6 * S, t * 2, 4 * S, 1.5 * S,
+      plus ? MAGIC.magenta : MAGIC.orchid, alpha * 0.8, 4, false);
+    // Health, as an arc rather than a bar — a bar over a 20px sprite is unreadable.
+    if (health < 0.999) {
+      g.lineStyle(2.4, tint(MAGIC.ink), alpha * 0.5);
+      g.beginPath();
+      g.arc(x, yy, 17 * S, -Math.PI, 0, false);
+      g.strokePath();
+      g.lineStyle(2, tint(health > 0.4 ? MAGIC.leaf : MAGIC.blood), alpha);
+      g.beginPath();
+      g.arc(x, yy, 17 * S, -Math.PI, -Math.PI + Math.PI * health, false);
+      g.strokePath();
+    }
+  }
+
+  /** A familiar's ordinary shot — an ember or a bead of water, both wearing a sigil. */
+  static drawSummonBolt(
+    g: Phaser.GameObjects.Graphics, tint: MagicColorFn, kind: string,
+    x: number, y: number, angle: number, t: number,
+  ): void {
+    const fire = kind === 'fire';
+    const col = fire ? MAGIC.ember : MAGIC.stormHi;
+    for (let i = 3; i >= 1; i--) {
+      g.fillStyle(tint(col), 0.1 * (4 - i));
+      g.fillCircle(x - Math.cos(angle) * i * 7, y - Math.sin(angle) * i * 7, 7 - i * 1.3);
+    }
+    g.fillStyle(tint(fire ? MAGIC.flameRed : MAGIC.seaMid), 0.9);
+    g.fillCircle(x, y, 6);
+    sigilStarLayered(g, tint, x, y, t * 6, 7, 2.4, col, 0.95, 4, false);
+  }
+
+  /** Fire+'s bomb before it goes off: the cross it is about to become, drawn as a warning. */
+  static drawCrossBomb(
+    g: Phaser.GameObjects.Graphics, tint: MagicColorFn,
+    x: number, y: number, arm: number, half: number, charge: number,
+  ): void {
+    const a = 0.14 + 0.4 * charge * charge;
+    g.fillStyle(tint(MAGIC.flameRed), a * 0.5);
+    g.fillRect(x - arm, y - half, arm * 2, half * 2);
+    g.fillRect(x - half, y - arm, half * 2, arm * 2);
+    g.lineStyle(2, tint(MAGIC.ember), a * 1.6);
+    g.strokeRect(x - arm, y - half, arm * 2, half * 2);
+    g.strokeRect(x - half, y - arm, half * 2, arm * 2);
+    // The bomb itself, winding tighter as the fuse runs out.
+    g.fillStyle(tint(MAGIC.flameHi), 0.5 + 0.5 * charge);
+    g.fillCircle(x, y, 9 + 7 * charge);
+    sigilStarLayered(g, tint, x, y, charge * 22, 14, 5, MAGIC.gold, 0.6 + 0.4 * charge, 5, true);
+  }
+
+  /** One Life+ root: a tell shrinking on the floor, then the spike that comes out of it. */
+  static drawRootSpike(
+    g: Phaser.GameObjects.Graphics, tint: MagicColorFn,
+    x: number, y: number, seed: number, t: number,
+    fired: boolean, charge: number, fade: number,
+  ): void {
+    if (!fired) {
+      g.lineStyle(1.8, tint(MAGIC.leaf), 0.35 + 0.45 * charge);
+      g.strokeCircle(x, y, 30 * (1 - charge * 0.62));
+      return;
+    }
+    const a = 0.35 + 0.6 * fade;
+    for (let i = 0; i < 3; i++) {
+      const ang = seed + (i / 3) * TAU;
+      const at = frame(x, y, ang - Math.PI / 2);
+      g.fillStyle(tint(MAGIC.darkVine), a);
+      fillPts(g, [at(-4, 0), at(0, -26 - i * 4), at(4, 0)]);
+      g.fillStyle(tint(MAGIC.vine), a * 0.7);
+      fillPts(g, [at(-1.6, 0), at(0, -22 - i * 4), at(1.6, 0)]);
+    }
+    sigilStarLayered(g, tint, x, y, t * 2, 6, 2.2, MAGIC.leaf, a * 0.8, 4, false);
+  }
+
+  /** Earth+'s hole in the floor: a ragged black gap with rubble around its lip. */
+  static drawGroundCrack(
+    g: Phaser.GameObjects.Graphics, tint: MagicColorFn,
+    x: number, y: number, radius: number, seed: number, t: number, open: number, fade: number,
+  ): void {
+    const a = (0.4 + 0.6 * fade) * (0.3 + 0.7 * open);
+    const r = radius * (0.3 + 0.7 * open);
+    const pts: Pt[] = [];
+    for (let i = 0; i < 13; i++) {
+      const ang = (i / 13) * TAU;
+      // A jagged, fixed rim — a hole in stone is not a circle.
+      const k = 0.7 + 0.45 * Math.abs(Math.sin(seed + i * 2.399));
+      pts.push({ x: x + Math.cos(ang) * r * k, y: y + Math.sin(ang) * r * k * 0.62 });
+    }
+    g.fillStyle(tint(MAGIC.granite), a * 0.55);
+    fillPts(g, pts.map(p => ({ x: x + (p.x - x) * 1.22, y: y + (p.y - y) * 1.22 })));
+    g.fillStyle(0x000000, a * 0.92);
+    fillPts(g, pts);
+    g.lineStyle(2, tint(MAGIC.stone), a);
+    strokePts(g, pts, true);
+    // Fissures running away from the lip.
+    for (let i = 0; i < 5; i++) {
+      const ang = seed * 2 + (i / 5) * TAU;
+      g.lineStyle(1.6, tint(MAGIC.ash), a * 0.7);
+      strokePts(g, [
+        { x: x + Math.cos(ang) * r * 1.1, y: y + Math.sin(ang) * r * 0.68 },
+        { x: x + Math.cos(ang) * r * 1.7, y: y + Math.sin(ang) * r * 1.06 },
+      ]);
+    }
+    sigilStarLayered(g, tint, x, y, -t * 0.8, r * 0.3, r * 0.11, MAGIC.orchid, a * 0.5, 6, false);
+  }
+
+  /** Water+'s flood: the whole floor goes under, with a sheet of moving surface over it. */
+  static drawFlood(
+    g: Phaser.GameObjects.Graphics, tint: MagicColorFn,
+    w: number, h: number, t: number, alpha: number,
+  ): void {
+    g.fillStyle(tint(MAGIC.deepSea), alpha * 0.26);
+    g.fillRect(0, 0, w, h);
+    // Long shallow swells crossing the arena, so the sheet reads as water and not as a filter.
+    for (let i = 0; i < 7; i++) {
+      const y = ((t * 26 + i * (h / 7)) % (h + 40)) - 20;
+      const wave: Pt[] = [];
+      for (let k = 0; k <= 16; k++) {
+        const u = k / 16;
+        wave.push({ x: u * w, y: y + Math.sin(u * 7 + t * 2.4 + i) * 6 });
+      }
+      g.lineStyle(2, tint(MAGIC.stormHi), alpha * 0.28);
+      strokePts(g, wave);
+    }
+    for (let i = 0; i < 5; i++) {
+      const p = ((t * 0.5 + i / 5) % 1);
+      const cx = (Math.sin(i * 12.9898) * 0.5 + 0.5) * w;
+      const cy = (Math.sin(i * 78.233) * 0.5 + 0.5) * h;
+      g.lineStyle(1.6, tint(MAGIC.storm), alpha * 0.4 * (1 - p));
+      g.strokeEllipse(cx, cy, 90 * p, 34 * p);
+    }
   }
 
   /** One Thorn Prison chain: a vine running from a corner to whoever is pinned. */

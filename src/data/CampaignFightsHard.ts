@@ -63,7 +63,7 @@ export const CAMPAIGN_FIGHTS_HARD: Record<string, CampaignFightDef> = {
   // ── Ice ───────────────────────────────────────────────────────────
   'ice-fight-1':   { enemyElementId: 'dune',    difficulty: 4, name: 'First Frost, Buried', taunt: 'Frozen once, buried once. The echo kept the grains.' },
   'ice-fight-2':   { enemyElementId: 'depths',  difficulty: 5, name: 'Under The Shelf',  taunt: 'The glacier\'s underside has been busy.',          mutations: ['encroach'] },
-  'ice-fight-3':   { enemyElementId: 'marrow',   difficulty: 5, name: 'The Slow Freeze',  taunt: 'Ice preserves. So do I. Permanently.',             mutations: ['order'], starredMutations: ['order'] },
+  'ice-fight-3':   { enemyElementId: 'cloth',   difficulty: 5, name: 'The Slow Freeze',  taunt: 'Ice holds a shape. So does a good seam.',          mutations: ['order'], starredMutations: ['order'] },
   'ice-fight-4':   { enemyElementId: 'silence', difficulty: 5, name: 'Whiteout Total',   taunt: 'This time the snow does not stop between waves.',  mutations: ['abyss'], format: { kind: 'survival', seconds: 90 } },
   'ice-fight-5':   { enemyElementId: 'ice',     difficulty: 5, name: 'Winter\'s Second Coming', taunt: 'Nothing thawed. Everything waited.',         mutations: ['apprehension', 'wither'] },
 
@@ -76,7 +76,7 @@ export const CAMPAIGN_FIGHTS_HARD: Record<string, CampaignFightDef> = {
 
   // ── Crystal ───────────────────────────────────────────────────────
   'crystal-fight-1':   { enemyElementId: 'dune',   difficulty: 4, name: 'Geode, Buried', taunt: 'You opened the geode. The echo poured the desert into it.' },
-  'crystal-fight-2':   { enemyElementId: 'marrow',  difficulty: 5, name: 'Pressure, Preserved', taunt: 'Squeezed properly this time. And kept.',      mutations: ['encroach'] },
+  'crystal-fight-2':   { enemyElementId: 'cloth',  difficulty: 5, name: 'Pressure, Stitched',  taunt: 'Squeezed properly this time. And hemmed.',   mutations: ['encroach'] },
   'crystal-fight-3':   { enemyElementId: 'light',  difficulty: 5, name: 'Total Refraction', taunt: 'Every facet aims at you now. All of them.',      mutations: ['order'], starredMutations: ['order'] },
   'crystal-fight-4':   { enemyElementId: 'psychic', difficulty: 5, name: 'The Resonant Mind', taunt: 'The lattice learned to think between tellings.', mutations: ['phantom'] },
   'crystal-fight-5':   { enemyElementId: 'crystal', difficulty: 5, name: 'The Prism Throne, Restrung', taunt: 'Light bent for you once. It holds a grudge about it.', mutations: ['empyreon', 'phantom'] },
@@ -118,7 +118,7 @@ export const CAMPAIGN_FIGHTS_HARD: Record<string, CampaignFightDef> = {
 
   // ── Time (world id `sand`) ────────────────────────────────────────
   'sand-fight-1':   { enemyElementId: 'echo',    difficulty: 4, name: 'The Hourglass, Turned', taunt: 'This is the same minute you already won. Feel it fighting back.' },
-  'sand-fight-2':   { enemyElementId: 'marrow',   difficulty: 5, name: 'Countdown, Preserved', taunt: 'Tock.',                                        mutations: ['order'] },
+  'sand-fight-2':   { enemyElementId: 'cloth',   difficulty: 5, name: 'Countdown, Stitched',  taunt: 'Tock.',                                        mutations: ['order'] },
   'sand-fight-3':   { enemyElementId: 'fate',    difficulty: 5, name: 'Dilation, Dealt', taunt: 'I moved twice while you blinked. Then I drew cards.', mutations: ['honor'] },
   'sand-fight-4':   { enemyElementId: 'death',   difficulty: 5, name: 'Rewind To Midnight', taunt: 'We have done this before. You die at the end.',   mutations: ['phantom'], starredMutations: ['phantom'], format: { kind: 'survival', seconds: 75 } },
   'sand-fight-5':   { enemyElementId: 'sand',    difficulty: 5, name: 'The Minute, Endless', taunt: 'I will outlast you by definition. The echo agrees.', mutations: ['apprehension', 'order'] },
@@ -247,7 +247,7 @@ export const CAMPAIGN_FIGHTS_HARD: Record<string, CampaignFightDef> = {
 
   // ── Death ─────────────────────────────────────────────────────────
   'death-fight-1':   { enemyElementId: 'soul',   difficulty: 5, name: 'Rites, Repeated', taunt: 'You were early last time. You are late now, and the difference is billable.' },
-  'death-fight-2':   { enemyElementId: 'marrow',  difficulty: 5, name: 'Preserved In State', taunt: 'Two ways to stop a thing. We have decided to combine them.', mutations: ['order'], starredMutations: ['order'] },
+  'death-fight-2':   { enemyElementId: 'cloth',  difficulty: 5, name: 'Sewn Shut',         taunt: 'Two ways to stop a thing. We have decided to combine them.', mutations: ['order'], starredMutations: ['order'] },
   'death-fight-3':   { enemyElementId: 'death',  difficulty: 5, name: 'The Second Interment', taunt: 'I buried the Sovereigns. I have started on the visitors.', mutations: ['wither'] },
   'death-fight-4':   { enemyElementId: 'bind',   difficulty: 5, name: 'The Long Vigil', taunt: 'Nobody leaves the wake. It is rude and the doors are chained.', mutations: ['abyss'], format: { kind: 'survival', seconds: 92 } },
   'death-fight-5':   { enemyElementId: 'death',  difficulty: 5, name: 'The Parish Full', taunt: 'Every plot dug, every measurement kept. Yours was always going to fit.', mutations: ['summoner', 'phantom'], starredMutations: ['summoner'] },
@@ -273,12 +273,12 @@ export const CAMPAIGN_FIGHTS_HARD: Record<string, CampaignFightDef> = {
   'gluttony-fight-4':   { enemyElementId: 'gluttony', difficulty: 5, name: 'The Board Set For Two', taunt: 'I set two places. You have been the second course all evening.', mutations: ['titanic'], starredMutations: ['titanic'], format: { kind: 'survival', seconds: 86 } },
   'gluttony-fight-5':   { enemyElementId: 'gluttony', difficulty: 5, name: 'The Devouring Board, Cleared', taunt: 'A feast is only a war you eat. I am RAVENOUS and it is still early.', mutations: ['summoner', 'parasitic'] },
 
-  // ── Marrow ────────────────────────────────────────────────────────
-  'marrow-fight-1':   { enemyElementId: 'ice',    difficulty: 5, name: 'Bringing The Fever Down', taunt: 'The cavity called in a second opinion. It cools what I cannot burn out.' },
-  'marrow-fight-2':   { enemyElementId: 'marrow', difficulty: 5, name: 'Second Exposure', taunt: 'It has seen you once. It will not be slow about it twice.', mutations: ['order'], starredMutations: ['order'] },
-  'marrow-fight-3':   { enemyElementId: 'hunt',   difficulty: 5, name: 'The Response Runs', taunt: 'Everything sent out to find you has forgotten it was sent.', mutations: ['summoner'] },
-  'marrow-fight-4':   { enemyElementId: 'bind',   difficulty: 5, name: 'Quarantine Order', taunt: 'Containment and custody. It was always the same department.', mutations: ['pain'], starredMutations: ['pain'] },
-  'marrow-fight-5':   { enemyElementId: 'marrow', difficulty: 5, name: 'Sepsis, Systemic', taunt: 'Hold still. HOLD STILL. It is in the blood now and so are you.', mutations: ['apprehension', 'titanic'], starredMutations: ['apprehension'] },
+  // ── Cloth ────────────────────────────────────────────────────────
+  'cloth-fight-1':   { enemyElementId: 'ice',    difficulty: 5, name: 'Setting The Seam',   taunt: 'The hall called in a second pair of hands. It holds what I cannot hem.' },
+  'cloth-fight-2':   { enemyElementId: 'cloth', difficulty: 5, name: 'Double Stitch',   taunt: 'It has sewn you once. It will not be slow about it twice.', mutations: ['order'], starredMutations: ['order'] },
+  'cloth-fight-3':   { enemyElementId: 'hunt',   difficulty: 5, name: 'The Thread Runs',  taunt: 'Everything sent out to find you has forgotten it was sent.', mutations: ['summoner'] },
+  'cloth-fight-4':   { enemyElementId: 'bind',   difficulty: 5, name: 'Bound And Hemmed', taunt: 'Holding and mending. It was always the same department.',    mutations: ['pain'], starredMutations: ['pain'] },
+  'cloth-fight-5':   { enemyElementId: 'cloth', difficulty: 5, name: 'Backstitch, Whole Cloth', taunt: 'Hold still. HOLD STILL. It is the whole bolt now and so are you.', mutations: ['apprehension', 'titanic'], starredMutations: ['apprehension'] },
 
   // ── Bind ──────────────────────────────────────────────────────────
   'bind-fight-1':   { enemyElementId: 'metal',  difficulty: 5, name: 'New Chain, Old Ring', taunt: 'The gaol replaced everything you broke and shortened it a little.' },

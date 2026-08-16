@@ -4,7 +4,7 @@ import { Fighter } from '../entities/Fighter';
  * The contract behind Ruin Mastery's Combo Breaker.
  *
  * A great many elements run on a bar rather than on cooldowns — Electricity's kinetic charge,
- * Silence's terror, Marrow's inflammation, Passion's love, Gluttony's hunger, Bind's anger,
+ * Silence's terror, Passion's love, Gluttony's hunger, Bind's anger,
  * Sound's hype, Conquest's Authority, Growth's DNA, Metal's blood, Psychic's stress. Combo
  * Breaker halves how fast every one of them fills, which is only possible if the halving lives
  * at the moment the number goes *up* rather than inside thirty different kits' idea of a bar.

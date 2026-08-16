@@ -13,7 +13,7 @@ const sparkleShot: Ability = {
 const grimoire: Ability = {
   id: 'magic-grimoire',
   name: 'Grimoire',
-  description: 'Hold to open a 5-ability wheel. ← / → to select, release to cast. (1: Flame Burst, 2: Storm Cloud, 3: Virulent Thorns, 4: Compression Blast, 5: Gaia\'s Guidance)',
+  description: 'Hold to open a 5-spell wheel. ← / → to select, release to cast. (1: Flare — a slow burning orb; 2: Splash — a slowing pool; 3: Spur — three burs; 4: Gust — dash, and drag whoever it catches back to the cast point; 5: Ward — orbiting stones that eat projectiles)',
   displayKey: 'E',
   cooldown: 5000,
   cast(ctx) { ctx.magicOpenGrimoire(); },
@@ -21,8 +21,8 @@ const grimoire: Ability = {
 
 const magicAnchor: Ability = {
   id: 'magic-anchor',
-  name: 'Magic Anchor',
-  description: 'First cast places a faint anchor marker at your position. Second cast teleports you back to it with an AOE shockwave (20 damage, 120px radius).',
+  name: 'Crosshair',
+  description: 'Paint a crosshair on the nearest enemy for 6s. Every Sparkle Shot that goes off on them adds a tally, up to 5. Right-click to cash it in: 8 damage per tally in a 110px burst. Let it lapse and you get nothing.',
   displayKey: 'R',
   cooldown: 8000,
   cast(ctx) { ctx.magicAnchorToggle(ctx.targetX, ctx.targetY); },
@@ -30,8 +30,8 @@ const magicAnchor: Ability = {
 
 const meditate: Ability = {
   id: 'magic-meditate',
-  name: 'Meditate',
-  description: 'Hold to stand still and summon purple orbs from screen edges every 0.5s. Orbs heal you 5 HP and deal 8 damage to enemies they pass through. Taking damage interrupts the channel (costs 20 HP).',
+  name: 'Dupe',
+  description: 'Open a 140px duplication field at your cursor. Every one of your own conjurations standing inside it — Flares, pools, burs, Gust trails, Ward stones, summons — comes out twice. Free: Darkness is charged by the corrupted spells, not by copying them.',
   displayKey: 'F',
   cooldown: 6000,
   cast(ctx) { ctx.magicMeditateBegin(); },
@@ -40,7 +40,7 @@ const meditate: Ability = {
 const necronomicon: Ability = {
   id: 'magic-necronomicon',
   name: 'Necronomicon',
-  description: 'Hold to open a powerful 5-ability wheel. ← / → to select, release to cast. (1: Flame Barrage, 2: Final Drench, 3: Thorn Prison, 4: Tornado Blast, 5: Gaia\'s Rage)',
+  description: 'Hold to open a 5-summon wheel. ← / → to select, release to call. The familiar fights on its own for 18s and can be killed. (1: Fire — fire bolts; 2: Water — slowing darts; 3: Life — a thorn warden that closes to melee; 4: Wind — knocks enemies away; 5: Earth — a slow golem that hits hardest)',
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 30000,

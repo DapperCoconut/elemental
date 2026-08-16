@@ -161,7 +161,7 @@ export const HUSK_FAMILIES: HuskFamily[] = [
   { elementId: 'paper', name: 'Paper', emoji: '📄', color: 0xf2ead6, category: 'corrupt', behavior: 'ranged', marker: 'page', quirk: 'lean', hp: 0.5, speed: 1.45, damage: 0.8, size: 0.9, preferredRange: 310 },
   { elementId: 'death', name: 'Death', emoji: '⚰️', color: 0x4a4468, category: 'corrupt', behavior: 'melee', marker: 'skull', quirk: 'horns', hp: 1.2, speed: 1, damage: 1.5 },
   { elementId: 'fortune', name: 'Fortune', emoji: '🪙', color: 0xd8a531, category: 'corrupt', behavior: 'melee', marker: 'coin', quirk: 'lean', hp: 0.9, speed: 1.3, damage: 0.9 },
-  { elementId: 'marrow', name: 'Marrow', emoji: '🦴', color: 0xd1435c, category: 'corrupt', behavior: 'melee', marker: 'bone', quirk: 'bulk', hp: 1.2, speed: 0.95, damage: 1.1 },
+  { elementId: 'cloth', name: 'Cloth', emoji: '🧣', color: 0xd1435c, category: 'corrupt', behavior: 'melee', marker: 'banner', quirk: 'lean', hp: 0.9, speed: 1.15, damage: 1.05 },
   { elementId: 'psychic', name: 'Psychic', emoji: '👁️', color: 0x9b4dff, category: 'corrupt', behavior: 'ranged', marker: 'eye', quirk: 'halo', hp: 1, speed: 0.95, damage: 0.85, preferredRange: 330 },
   { elementId: 'radiation', name: 'Radiation', emoji: '☢️', color: 0x7cff3d, category: 'corrupt', behavior: 'melee', marker: 'rad', quirk: 'gut', hp: 1.15, speed: 0.9, damage: 1 },
   { elementId: 'bind', name: 'Bind', emoji: '⛓️', color: 0xe0b743, category: 'corrupt', behavior: 'melee', marker: 'chain', quirk: 'horns', hp: 1.2, speed: 0.9, damage: 1 },
@@ -478,7 +478,7 @@ export const ELEMENT_KIN: Record<string, string[]> = {
   // Base + combined worlds
   fire: ['fire', 'magma', 'oil', 'gunpowder', 'plasma'],
   water: ['water', 'ice', 'depths', 'slime'],
-  life: ['life', 'growth', 'passion', 'marrow'],
+  life: ['life', 'growth', 'passion', 'slime'],
   air: ['air', 'sound', 'echo', 'paper'],
   earth: ['earth', 'crystal', 'metal', 'dune', 'ruin', 'magma'],
   oil: ['oil', 'fire', 'gunpowder', 'slime', 'gum'],
@@ -487,7 +487,7 @@ export const ELEMENT_KIN: Record<string, string[]> = {
   growth: ['growth', 'life', 'slime', 'gum', 'gluttony'],
   crystal: ['crystal', 'earth', 'ice', 'light'],
   soul: ['soul', 'shadow', 'death', 'psychic'],
-  hunt: ['hunt', 'gluttony', 'marrow', 'death'],
+  hunt: ['hunt', 'gluttony', 'shadow', 'death'],
   sand: ['sand', 'gravity', 'fate', 'psychic'],           // the Time world
   gravity: ['gravity', 'magnet', 'sand', 'plasma'],
   creation: ['creation', 'metal', 'technology', 'magic', 'chalk'],
@@ -516,15 +516,15 @@ export const ELEMENT_KIN: Record<string, string[]> = {
   dune: ['dune', 'earth', 'sand', 'ruin'],                // the Sand world
   conquest: ['conquest', 'ruin', 'metal', 'bind'],
   passion: ['passion', 'life', 'fire', 'soul'],
-  paper: ['paper', 'chalk', 'air', 'illusion'],
-  death: ['death', 'soul', 'shadow', 'marrow', 'gunpowder'],
+  paper: ['paper', 'chalk', 'air', 'illusion', 'cloth'],
+  death: ['death', 'soul', 'shadow', 'cloth', 'gunpowder'],
   fortune: ['fortune', 'fate', 'subterfuge', 'conquest'],
-  marrow: ['marrow', 'death', 'hunt', 'gluttony'],
+  cloth: ['cloth', 'paper', 'bind', 'creation', 'subterfuge'],
   psychic: ['psychic', 'soul', 'illusion', 'magic', 'fate'],
   radiation: ['radiation', 'plasma', 'slime', 'technology'],
-  bind: ['bind', 'metal', 'conquest', 'gravity'],
+  bind: ['bind', 'metal', 'conquest', 'gravity', 'cloth'],
   gum: ['gum', 'slime', 'rubber', 'growth', 'gluttony'],
-  gluttony: ['gluttony', 'hunt', 'gum', 'marrow', 'growth'],
+  gluttony: ['gluttony', 'hunt', 'gum', 'depths', 'growth'],
 };
 
 export interface InvasionTheme {

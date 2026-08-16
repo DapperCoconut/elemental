@@ -1462,6 +1462,135 @@ export class DroneArrayLattice {
   }
 }
 
+// ── Machinery ─────────────────────────────────────────────────────────────
+
+/**
+ * A hydraulic hose arm: a run of ribbed rubber segments between two chromed collars, sagging
+ * under its own weight between the shoulder and the hand it feeds.
+ *
+ * Drawn on the *body* layer so it passes over the sprite but under the ball hand — a hose painted
+ * over the fist would swallow the thing it is plumbed into.
+ */
+export function hoseArm(
+  g: Phaser.GameObjects.Graphics, tint: OilColorFn,
+  sx: number, sy: number, hx: number, hy: number, alpha: number, armoured: boolean,
+): void {
+  const dx = hx - sx, dy = hy - sy;
+  const len = Math.hypot(dx, dy);
+  if (len < 1) return;
+  const ux = dx / len, uy = dy / len;
+  const px = -uy, py = ux;
+  // Stop short of the fist so the last collar reads as a coupling, not a sleeve.
+  const run = Math.max(4, len - 4);
+  const segs = Phaser.Math.Clamp(Math.round(run / 6), 2, 6);
+  // Gravity sag, deepest at the middle of the run.
+  const sag = Math.min(5, run * 0.14);
+
+  const pt = (u: number, off: number): { x: number; y: number } => ({
+    x: sx + ux * run * u + px * off,
+    y: sy + uy * run * u + py * off + Math.sin(u * Math.PI) * sag,
+  });
+
+  // Casing.
+  g.lineStyle(armoured ? 7.4 : 6.4, tint(OIL.tar), alpha * 0.95);
+  const spine: { x: number; y: number }[] = [];
+  for (let i = 0; i <= 8; i++) spine.push(pt(i / 8, 0));
+  g.beginPath();
+  g.moveTo(spine[0].x, spine[0].y);
+  for (let i = 1; i < spine.length; i++) g.lineTo(spine[i].x, spine[i].y);
+  g.strokePath();
+  g.lineStyle(armoured ? 4.6 : 3.8, tint(OIL.crude), alpha * 0.95);
+  g.beginPath();
+  g.moveTo(spine[0].x, spine[0].y);
+  for (let i = 1; i < spine.length; i++) g.lineTo(spine[i].x, spine[i].y);
+  g.strokePath();
+  // Specular film along the upper edge — the one thing that says rubber-with-oil-on-it.
+  g.lineStyle(1.2, tint(OIL.violet), alpha * 0.4);
+  g.beginPath();
+  const top = spine.map((p) => ({ x: p.x + px * 1.8, y: p.y + py * 1.8 }));
+  g.moveTo(top[0].x, top[0].y);
+  for (let i = 1; i < top.length; i++) g.lineTo(top[i].x, top[i].y);
+  g.strokePath();
+
+  // Ribbed collars along the run, plus a heavier chromed coupling at each end.
+  for (let i = 1; i < segs; i++) {
+    const p = pt(i / segs, 0);
+    g.lineStyle(armoured ? 2 : 1.6, tint(OIL.steel), alpha * 0.85);
+    g.lineBetween(p.x + px * 3.4, p.y + py * 3.4, p.x - px * 3.4, p.y - py * 3.4);
+  }
+  for (const u of [0, 1]) {
+    const p = pt(u, 0);
+    g.fillStyle(tint(armoured ? OIL.chrome : OIL.steel), alpha);
+    g.fillCircle(p.x, p.y, armoured ? 4 : 3.4);
+    g.fillStyle(tint(OIL.tar), alpha * 0.8);
+    g.fillCircle(p.x, p.y, armoured ? 2 : 1.7);
+  }
+}
+
+/**
+ * A pressure gauge: a brass bezel over a pale dial with a needle swept by `value` (0–1) across
+ * the bottom three-quarters of the face, and a red arc over the last fifth. The single readable
+ * instrument on the character — everything else on the torso is plumbing.
+ */
+export function pressureGauge(
+  g: Phaser.GameObjects.Graphics, tint: OilColorFn,
+  cx: number, cy: number, r: number, value: number, alpha: number, lit: boolean,
+): void {
+  g.fillStyle(tint(OIL.tar), alpha);
+  g.fillCircle(cx, cy, r + 1.4);
+  g.fillStyle(tint(lit ? OIL.chrome : OIL.steel), alpha);
+  g.fillCircle(cx, cy, r + 0.7);
+  g.fillStyle(tint(lit ? OIL.gold : OIL.brown), alpha);
+  g.fillCircle(cx, cy, r);
+  g.fillStyle(tint(OIL.sludge), alpha * 0.35);
+  g.fillCircle(cx - r * 0.25, cy - r * 0.25, r * 0.62);
+
+  // Redline over the top fifth of the sweep.
+  const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25;
+  g.lineStyle(1.5, tint(OIL.ember), alpha * 0.9);
+  g.beginPath();
+  g.arc(cx, cy, r * 0.78, a1 - (a1 - a0) * 0.2, a1, false);
+  g.strokePath();
+  // Tick marks.
+  g.lineStyle(0.8, tint(OIL.tar), alpha * 0.7);
+  for (let i = 0; i <= 4; i++) {
+    const ta = a0 + (a1 - a0) * (i / 4);
+    g.lineBetween(
+      cx + Math.cos(ta) * r * 0.55, cy + Math.sin(ta) * r * 0.55,
+      cx + Math.cos(ta) * r * 0.85, cy + Math.sin(ta) * r * 0.85,
+    );
+  }
+  // Needle.
+  const na = a0 + (a1 - a0) * Phaser.Math.Clamp(value, 0, 1);
+  g.lineStyle(1.6, tint(OIL.tar), alpha);
+  g.lineBetween(cx, cy, cx + Math.cos(na) * r * 0.82, cy + Math.sin(na) * r * 0.82);
+  g.fillStyle(tint(OIL.chrome), alpha);
+  g.fillCircle(cx, cy, 1.3);
+  // Glass glint, always up-left, so the dial reads as covered rather than open.
+  g.fillStyle(tint(OIL.white), alpha * 0.22);
+  g.fillEllipse(cx - r * 0.3, cy - r * 0.36, r * 0.8, r * 0.42);
+}
+
+/** A valve handwheel seen face-on: a rim, four spokes and a hub nut. */
+export function valveWheel(
+  g: Phaser.GameObjects.Graphics, tint: OilColorFn,
+  cx: number, cy: number, r: number, spin: number, alpha: number,
+): void {
+  g.lineStyle(2.4, tint(OIL.rust), alpha);
+  g.strokeCircle(cx, cy, r);
+  g.lineStyle(1.2, tint(OIL.amber), alpha * 0.7);
+  g.strokeCircle(cx, cy, r - 1);
+  g.lineStyle(1.6, tint(OIL.rust), alpha * 0.95);
+  for (let i = 0; i < 4; i++) {
+    const a = spin + (i / 4) * Math.PI * 2;
+    g.lineBetween(cx, cy, cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+  }
+  g.fillStyle(tint(OIL.steel), alpha);
+  g.fillCircle(cx, cy, r * 0.34);
+  g.fillStyle(tint(OIL.chrome), alpha * 0.8);
+  g.fillCircle(cx - 0.5, cy - 0.5, r * 0.18);
+}
+
 // ── OilAvatar ─────────────────────────────────────────────────────────────
 
 /** Concentric discs of one crude-and-chrome ball hand, outermost first. */
@@ -1481,10 +1610,18 @@ const OIL_AVATAR: AvatarSpec = {
 };
 
 /**
- * The oil character rig: two globs of crude for hands, a pair of amber lamp eyes, and a
- * wellhead standing on the crown with crude bubbling out of it and running down both sides.
- * The hands, eyes and gestures come from BaseAvatar; what oil adds is the pooled shadow
- * beneath, the wellhead above, and the locomotive it turns into once mastered.
+ * The oil character rig: a machine that runs on crude and knows it.
+ *
+ * The torso is a **riveted drum** — banded, dented, with an iridescent slick crawling across the
+ * plate and a **pressure gauge** on the chest whose needle climbs with the character's own
+ * intensity, over a **valve handwheel** that turns while the gauge is high. **Hydraulic hose
+ * arms** run from the shoulder couplings out to the crude ball hands, sagging under their own
+ * weight. Above the face, a dented **steel hard hat** with a lamp, and standing out of it a
+ * **wellhead** with crude boiling up and running down both sides of the head.
+ *
+ * Mastery turns the wellhead into a **locomotive**: twin smokestacks where the spout was, a
+ * boiler band across the chest, armoured hoses, bolts orbiting the crown, and a gauge that sits
+ * in the redline permanently.
  */
 export class OilAvatar extends BaseAvatar {
   private fx: OilFx;
@@ -1492,6 +1629,21 @@ export class OilAvatar extends BaseAvatar {
   constructor(scene: Phaser.Scene, tint: OilColorFn, depth = 6) {
     super(scene, tint, depth, OIL_AVATAR);
     this.fx = new OilFx(scene, tint);
+  }
+
+  /** Where one hose leaves the drum, given the hand it has to reach. */
+  private shoulderFor(i: number, x: number, y: number): { x: number; y: number } {
+    const ang = Math.atan2(this.armY[i] - y, this.armX[i] - x);
+    return { x: x + Math.cos(ang) * 10, y: y + 2 + Math.sin(ang) * 6 };
+  }
+
+  /**
+   * Whether hand `i` is close enough to the body to plumb a hose to it. The rig lerps its hands
+   * from wherever they were last, and on a fighter's first frame that is the world origin — so a
+   * hose drawn between body and hand would streak across the arena once. Skip that frame.
+   */
+  private handSettled(i: number, x: number, y: number): boolean {
+    return Math.hypot(this.armX[i] - x, this.armY[i] - y) < 70;
   }
 
   /**
@@ -1531,6 +1683,94 @@ export class OilAvatar extends BaseAvatar {
   }
 
   /**
+   * The drum torso: hose arms, banded plate, the slick crawling over it, and the instruments.
+   * Painted on the body layer — over the sprite, under the hands and the eyes — so the character
+   * is the machine rather than standing in front of one.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    void a;
+    const k = this.intensity;
+    // Pressure: idle sits low and breathing, a stance buff pins it near the redline.
+    const psi = Phaser.Math.Clamp((k - 1) * 1.6 + 0.28 + Math.sin(this.t * 1.7) * 0.06
+      + (this.mastered ? 0.42 : 0), 0, 1);
+
+    // ── Hose arms ──
+    // First, so the drum plate closes over the shoulder couplings.
+    for (let i = 0; i < 2; i++) {
+      if (!this.handSettled(i, x, y)) continue;
+      const s = this.shoulderFor(i, x, y);
+      hoseArm(g, this.tint, s.x, s.y, this.armX[i], this.armY[i], alpha, this.mastered);
+    }
+
+    // ── Drum plate ──
+    // A barrel, not a box: the sides bow out and the base is wider than the shoulders.
+    const drum: Phaser.Geom.Point[] = [
+      new Phaser.Geom.Point(x - 11, y + 0.5),
+      new Phaser.Geom.Point(x + 11, y + 0.5),
+      new Phaser.Geom.Point(x + 15, y + 9),
+      new Phaser.Geom.Point(x + 13, y + 18),
+      new Phaser.Geom.Point(x - 13, y + 18),
+      new Phaser.Geom.Point(x - 15, y + 9),
+    ];
+    g.fillStyle(this.tint(OIL.tar), alpha);
+    g.fillPoints(drum, true);
+    g.fillStyle(this.tint(OIL.crude), alpha);
+    g.fillPoints(drum.map((p) => new Phaser.Geom.Point(x + (p.x - x) * 0.9, y + (p.y - y) * 0.94)), true);
+    // Lit plate down the left, so a near-black barrel still has a form.
+    g.fillStyle(this.tint(OIL.sludge), alpha * 0.8);
+    g.fillPoints([
+      new Phaser.Geom.Point(x - 10, y + 1.4),
+      new Phaser.Geom.Point(x - 4, y + 1.4),
+      new Phaser.Geom.Point(x - 5.5, y + 16.6),
+      new Phaser.Geom.Point(x - 11.6, y + 16.6),
+    ], true);
+
+    // ── Iridescent slick ──
+    // A band of film crawling across the plate on a slow loop — the reason the drum reads as wet.
+    const slick = (this.t * 0.24) % 1;
+    for (let i = 0; i < 3; i++) {
+      const u = (slick + i / 3) % 1;
+      const sy = y + 2 + u * 14;
+      g.fillStyle(this.tint(i % 2 === 0 ? OIL.violet : OIL.teal), alpha * 0.16 * (1 - Math.abs(u - 0.5)));
+      g.fillEllipse(x + Math.sin(this.t * 0.9 + i * 2) * 3, sy, 22 - u * 5, 3.4);
+    }
+
+    // ── Bands and rivets ──
+    for (const [by, half] of [[y + 3.4, 13.6], [y + 15.2, 13]] as const) {
+      g.fillStyle(this.tint(OIL.steel), alpha * 0.95);
+      g.fillRect(x - half, by - 1.6, half * 2, 3.2);
+      g.fillStyle(this.tint(OIL.chrome), alpha * 0.55);
+      g.fillRect(x - half, by - 1.6, half * 2, 1.1);
+      for (let i = 0; i < 5; i++) {
+        const rx = x - half + 2.4 + (i / 4) * (half * 2 - 4.8);
+        g.fillStyle(this.tint(OIL.chrome), alpha * 0.85);
+        g.fillCircle(rx, by, 0.9);
+      }
+    }
+
+    // ── Instruments ──
+    // Gauge high on the chest, handwheel below it turning faster the more pressure is behind it.
+    valveWheel(g, this.tint, x + 6.5, y + 12.6, 4.6, this.t * (0.6 + psi * 3.4), alpha * 0.95);
+    pressureGauge(g, this.tint, x - 5.4, y + 9.6, 5.2, psi, alpha, this.mastered);
+    // Feed pipe from the gauge down into the wheel's stem.
+    g.lineStyle(2, this.tint(OIL.steel), alpha * 0.8);
+    g.lineBetween(x - 5.4, y + 15, x + 2, y + 12.6);
+
+    // ── Mastery: boiler band and a bleed valve venting steam ──
+    if (this.mastered) {
+      g.fillStyle(this.tint(OIL.rust), alpha * 0.9);
+      g.fillRect(x - 14, y + 8.6, 28, 2);
+      g.fillStyle(this.tint(OIL.gold), alpha * (0.4 + 0.3 * Math.sin(this.t * 6)));
+      g.fillRect(x - 14, y + 8.6, 28, 0.9);
+      for (let i = 0; i < 2; i++) {
+        const p = (this.t * 1.4 + i / 2) % 1;
+        g.fillStyle(this.tint(OIL.chrome), alpha * 0.22 * (1 - p));
+        g.fillCircle(x + 13 + p * 10, y + 6 - p * 8, 2 + p * 5);
+      }
+    }
+  }
+
+  /**
    * The crown rig. Unmastered: a steel wellhead with crude welling out of it and two ropes of
    * oil running down either side, pinching off into drips. Mastered: twin locomotive stacks
    * standing where the spout was, each smoking, with bolts orbiting the head.
@@ -1540,6 +1780,57 @@ export class OilAvatar extends BaseAvatar {
    */
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     const rootY = y - 18;
+    const lean = Math.cos(this.facing) * 2;
+
+    // ── Hard hat ──
+    // A dented steel shell with a brim over the eyes and a lamp on the front. Always present:
+    // it is what turns the top of the disc into a head, and its brim frames the face from above
+    // the way the wellhead alone never did.
+    g.fillStyle(this.tint(OIL.tar), alpha);
+    g.fillPoints([
+      new Phaser.Geom.Point(x - 15 + lean, rootY + 6),
+      new Phaser.Geom.Point(x - 12 + lean, rootY - 1),
+      new Phaser.Geom.Point(x + 12 + lean, rootY - 1),
+      new Phaser.Geom.Point(x + 15 + lean, rootY + 6),
+      new Phaser.Geom.Point(x + 11 + lean, rootY + 8),
+      new Phaser.Geom.Point(x - 11 + lean, rootY + 8),
+    ], true);
+    g.fillStyle(this.tint(this.mastered ? OIL.rust : OIL.steel), alpha);
+    g.fillPoints([
+      new Phaser.Geom.Point(x - 12.6 + lean, rootY + 5.4),
+      new Phaser.Geom.Point(x - 10 + lean, rootY - 0.2),
+      new Phaser.Geom.Point(x + 10 + lean, rootY - 0.2),
+      new Phaser.Geom.Point(x + 12.6 + lean, rootY + 5.4),
+    ], true);
+    // Ridge down the crown and a specular along the left of it.
+    g.fillStyle(this.tint(OIL.chrome), alpha * 0.5);
+    g.fillRect(x - 1.4 + lean, rootY - 0.6, 2.8, 6);
+    g.fillStyle(this.tint(OIL.chrome), alpha * 0.3);
+    g.fillPoints([
+      new Phaser.Geom.Point(x - 9.4 + lean, rootY + 4.6),
+      new Phaser.Geom.Point(x - 7.6 + lean, rootY + 0.4),
+      new Phaser.Geom.Point(x - 4.6 + lean, rootY + 0.4),
+      new Phaser.Geom.Point(x - 6.6 + lean, rootY + 4.6),
+    ], true);
+    // Brim over the brow.
+    g.fillStyle(this.tint(OIL.tar), alpha);
+    g.fillEllipse(x + lean, rootY + 7, 30, 5);
+    g.fillStyle(this.tint(OIL.sludge), alpha * 0.9);
+    g.fillEllipse(x + lean, rootY + 6.4, 27, 3.4);
+    // Lamp, throwing a short cone the way the character is looking.
+    const lx = x + lean + Math.cos(this.facing) * 3;
+    g.fillStyle(this.tint(OIL.steel), alpha);
+    g.fillCircle(lx, rootY + 3.4, 3);
+    g.fillStyle(this.tint(OIL.gold), alpha * (0.75 + 0.25 * Math.sin(this.t * 3)));
+    g.fillCircle(lx, rootY + 3.4, 1.9);
+    g.fillStyle(this.tint(OIL.white), alpha * 0.8);
+    g.fillCircle(lx - 0.6, rootY + 2.8, 0.8);
+    g.fillStyle(this.tint(OIL.gold), alpha * 0.1);
+    g.fillPoints([
+      new Phaser.Geom.Point(lx, rootY + 3.4),
+      new Phaser.Geom.Point(lx + Math.cos(this.facing - 0.35) * 26, rootY + 3.4 + Math.sin(this.facing - 0.35) * 26),
+      new Phaser.Geom.Point(lx + Math.cos(this.facing + 0.35) * 26, rootY + 3.4 + Math.sin(this.facing + 0.35) * 26),
+    ], true);
 
     if (!this.mastered) {
       // Wellhead: a short steel neck with a flange, crude boiling out of the top.

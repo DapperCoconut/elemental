@@ -21,7 +21,7 @@ import { Ability, CastContext } from './Ability';
 const trance: Ability = {
   id: 'dream-trance',
   name: 'Trance',
-  description: 'Toggle a pendulum out of your hand. Circle your cursor around yourself to spin it up — the faster you wind it, the wider and hungrier the drowsy field gets. 100% = asleep for 8s.',
+  description: 'Toggle a pendulum out of your hand. Circle your cursor around yourself to charge it — about 3 seconds of sustained winding to reach a full swing, and it drains back if you get lazy. The drowsy field scales on swing squared, so the top of the bar is worth far more than the middle: 26 sleepiness a second out to 210px at full. 100% = asleep for 8s.',
   displayKey: 'Click',
   cooldown: 800,
   cast(ctx: CastContext) { ctx.dreamTrance(); },

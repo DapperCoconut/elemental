@@ -69,7 +69,7 @@ const HUSK_TRICKS: Record<string, string> = {
   paper: 'Very fast, very thin, and always at range. One good hit ends it.',
   death: 'Drinks what it takes. Every bite it lands is a bite it heals.',
   fortune: 'Slips out of the way of about a third of your hits — and pays double when pinned.',
-  marrow: 'Grows with every bite it lands. Do not let it eat.',
+  cloth: 'Winds its scarf tighter with every bite — smaller and faster each time. Kill it early or not at all.',
   psychic: 'Its orbs turn to follow you. Running is not an answer; cover is.',
   radiation: 'Everything inside a wide ring around it is being cooked, bite or no bite.',
   bind: 'Throws a chain and shackles you where you stand for a second or so.',

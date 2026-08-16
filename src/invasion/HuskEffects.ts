@@ -209,15 +209,17 @@ export class HuskEffectEngine {
         this.world.showFloatingText(husk.x, husk.y - 30, `⚰️ +${drink}`, '#8a80b0');
         break;
       }
-      case 'marrow': {
+      case 'cloth': {
+        // The scarf winds tighter with every wrap: a smaller, quicker target that mends off the
+        // bite. The inverse of every other feeder in the list, and deliberately so — Cloth's
+        // whole conceit is that less of it is harder to hit.
         if (st.feedStacks < MAX_FEED_STACKS) {
           st.feedStacks++;
-          husk.setMaxHp(Math.round(husk.maxHp * 1.08));
-          husk.sizeMult *= 1.04;
+          husk.sizeMult = Math.max(0.62, husk.sizeMult * 0.95);
           husk.applySizeMult();
         }
-        husk.heal(Math.round(husk.biteDamage * 2));
-        this.world.showFloatingText(husk.x, husk.y - 30, '🦴 FED', '#ff8a9a');
+        husk.heal(Math.round(husk.biteDamage * 1.5));
+        this.world.showFloatingText(husk.x, husk.y - 30, '🧣 WOUND TIGHTER', '#f5788c');
         break;
       }
       case 'rubber': {

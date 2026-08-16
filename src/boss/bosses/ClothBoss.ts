@@ -3,27 +3,28 @@ import { SignatureMove, WorldBossDef } from '../framework/BossDefs';
 import { BossToolkit } from '../framework/BossToolkit';
 
 /**
- * Sepsis — Sovereign of Marrow, which defended the realm so thoroughly that it
- * defended the realm to death. Canon with the marrow challenge, 'Sepsis' ("You
- * are a foreign body. Hold still. This will be thorough.").
+ * Backstitch — Sovereign of Cloth, which mended the realm so thoroughly that it
+ * sewed it shut. Canon with the cloth challenge, 'Backstitch' ("You have come
+ * loose. Hold still. I will put you back").
  *
- * Every move here is an immune response that has stopped asking whether it is
- * needed: an abscess that swells before it bursts, a wave of white cells sent
- * to a place you were, and a quarantine membrane closing in with one gap left
- * in it. The pattern the world teaches is that the *swelling* is the warning
- * and the burst is the wound — the same beat as the element's own mast cells.
+ * Every move here is a repair that has stopped asking whether it was wanted: a
+ * knot that draws tight under the floor before it snaps, a run of needles sent
+ * to a seam you were standing on, and a hem closing in from every wall with a
+ * single stitch left out of it. The pattern the world teaches is that the
+ * *drawing tight* is the warning and the snap is the wound — the same beat as
+ * the element's own safety line pulling straight before it fires.
  */
 
-const MARROW = 0xd1435c;
-const MARROW_LIT = 0xf5788c;
-const MARROW_DARK = 0x2a1219;
+const CLOTH = 0xd1435c;
+const CLOTH_LIT = 0xf5788c;
+const CLOTH_DARK = 0x2a1219;
 const BONE = 0xf1e7d0;
 
-// ── Signature: The Response ──────────────────────────────────────────
-// Abscesses swell under the floor. While one is filling it merely holds you —
-// a hot, sticky patch that costs speed. When it bursts, it costs blood.
+// ── Signature: Loose Threads ─────────────────────────────────────────
+// Knots draw tight under the floor. While one is pulling it merely holds you —
+// a snarl of thread round the ankles that costs speed. When it snaps, it cuts.
 
-const theResponse = (tk: BossToolkit): SignatureMove => {
+const looseThreads = (tk: BossToolkit): SignatureMove => {
   interface Boil { x: number; y: number; r: number; burstsAt: number; burst: boolean; lastTick: number }
   let boils: Boil[] = [];
   return {
@@ -53,7 +54,7 @@ const theResponse = (tk: BossToolkit): SignatureMove => {
             tk.slowPlayer(0.42, 1600);
             tk.host.showFloatingText(p.x, p.y - 40, 'LANCED', '#f5788c');
           }
-          tk.boom(q.x, q.y, q.r, MARROW_LIT);
+          tk.boom(q.x, q.y, q.r, CLOTH_LIT);
         } else if (!q.burst && inside && time - q.lastTick > 500) {
           // Wading through something hot and half-set: it costs speed long
           // before it costs health.
@@ -69,18 +70,18 @@ const theResponse = (tk: BossToolkit): SignatureMove => {
         const t = Phaser.Math.Clamp(1 - (q.burstsAt - time) / 2600, 0, 1);
         if (q.burst) {
           // Lanced: a raw crater with a bone-white rim of dead cells.
-          g.fillStyle(MARROW_DARK, 0.55);
+          g.fillStyle(CLOTH_DARK, 0.55);
           g.fillCircle(q.x, q.y, q.r);
           g.lineStyle(3, BONE, 0.45);
           g.strokeCircle(q.x, q.y, q.r);
           continue;
         }
         // Filling: the skin tightens and the colour climbs toward the burst.
-        g.fillStyle(MARROW_DARK, 0.3 + t * 0.22);
+        g.fillStyle(CLOTH_DARK, 0.3 + t * 0.22);
         g.fillCircle(q.x, q.y, q.r);
-        g.fillStyle(MARROW, 0.18 + t * 0.36);
+        g.fillStyle(CLOTH, 0.18 + t * 0.36);
         g.fillCircle(q.x, q.y, q.r * (0.5 + t * 0.5));
-        g.lineStyle(1 + t * 4, MARROW_LIT, 0.3 + t * 0.55);
+        g.lineStyle(1 + t * 4, CLOTH_LIT, 0.3 + t * 0.55);
         g.strokeCircle(q.x, q.y, q.r);
         // Pressure heads pushing up under the surface, faster as it fills.
         for (let i = 0; i < 4; i++) {
@@ -95,11 +96,11 @@ const theResponse = (tk: BossToolkit): SignatureMove => {
   };
 };
 
-// ── Signature: The Swarm ─────────────────────────────────────────────
+// ── Signature: The Needlework ────────────────────────────────────────
 // Cells are dispatched down lit lanes toward where you were when the order
 // went out. They do not re-aim. Nothing in an immune response re-aims.
 
-const theSwarm = (tk: BossToolkit): SignatureMove => {
+const theNeedlework = (tk: BossToolkit): SignatureMove => {
   interface Cell { x: number; y: number; vx: number; kind: number; lastHitAt: number; seed: number }
   let cells: Cell[] = [];
   return {
@@ -140,57 +141,61 @@ const theSwarm = (tk: BossToolkit): SignatureMove => {
       for (const c of cells) {
         const dir = Math.sign(c.vx);
         const squirm = Math.sin(time / 90 + c.x / 30) * 3;
-        // A cell crossing a body leaves a serum trail behind it.
+        // Every one of them drags its own thread, so the run reads as sewing rather than as
+        // a wave of blobs.
         for (let i = 1; i <= 3; i++) {
-          g.fillStyle(MARROW, 0.14 / i);
-          g.fillEllipse(c.x - dir * i * 22, c.y + squirm * 0.5, 44, 30);
+          g.lineStyle(3 / i, CLOTH, 0.4 / i);
+          g.lineBetween(
+            c.x - dir * (i - 1) * 26, c.y + squirm * 0.5,
+            c.x - dir * i * 26, c.y + squirm * 0.5 + Math.sin(time / 110 + i) * 6,
+          );
         }
-        // The membrane: a lumpy blob, never a clean circle.
-        g.fillStyle(MARROW_DARK, 0.95);
+        // The bolt of cloth each one is wrapped in — lumpy, never a clean circle.
+        g.fillStyle(CLOTH_DARK, 0.95);
         for (let i = 0; i < 7; i++) {
           const a = (i / 7) * Math.PI * 2 + time / 700;
-          const rr = 22 + Math.sin(a * 3 + c.seed) * 5;
-          g.fillCircle(c.x + Math.cos(a) * rr * 0.5, c.y + squirm * 0.4 + Math.sin(a) * rr * 0.4, 13);
+          const rr = 20 + Math.sin(a * 3 + c.seed) * 5;
+          g.fillCircle(c.x + Math.cos(a) * rr * 0.5, c.y + squirm * 0.4 + Math.sin(a) * rr * 0.4, 11);
         }
-        g.fillStyle(MARROW, 0.9);
-        g.fillEllipse(c.x, c.y + squirm * 0.4, 40, 27);
+        g.fillStyle(CLOTH, 0.9);
+        g.fillEllipse(c.x, c.y + squirm * 0.4, 36, 25);
 
         if (c.kind === 0) {
-          // A macrophage: pseudopods out front and a kidney nucleus.
-          g.fillStyle(MARROW, 0.9);
-          for (const s of [-1, 0, 1]) {
-            g.fillEllipse(c.x + dir * 26, c.y + s * 12 + squirm, 18, 9);
-          }
-          g.fillStyle(MARROW_DARK, 0.9);
-          g.fillEllipse(c.x - dir * 4, c.y + squirm, 19, 15);
-          g.fillStyle(MARROW, 0.85);
-          g.fillEllipse(c.x + dir * 2, c.y + 4 + squirm, 9, 7);
+          // A darning needle: one long shaft out front, with an eye at the back of it.
+          g.lineStyle(5, BONE, 0.95);
+          g.lineBetween(c.x - dir * 10, c.y + squirm, c.x + dir * 34, c.y + squirm);
+          g.lineStyle(2, 0xffffff, 0.9);
+          g.lineBetween(c.x - dir * 8, c.y + squirm - 1.5, c.x + dir * 30, c.y + squirm - 1.5);
+          g.lineStyle(2.4, BONE, 0.9);
+          g.strokeCircle(c.x - dir * 14, c.y + squirm, 5);
         } else if (c.kind === 1) {
-          // A neutrophil: granules, and a nucleus in three lobes.
-          for (let i = 0; i < 9; i++) {
-            const a = i * 2.1 + c.seed;
-            g.fillStyle(BONE, 0.55);
-            g.fillCircle(c.x + Math.cos(a) * 13, c.y + Math.sin(a) * 9 + squirm, 2.6);
-          }
-          for (let i = 0; i < 3; i++) {
-            const a = time / 900 + (i / 3) * Math.PI * 2;
-            g.fillStyle(MARROW_DARK, 0.95);
-            g.fillCircle(c.x + Math.cos(a) * 8, c.y + Math.sin(a) * 6 + squirm, 6);
+          // A spool: flanges top and bottom with the thread wound between them.
+          g.fillStyle(BONE, 0.9);
+          g.fillRoundedRect(c.x - 13, c.y - 13 + squirm, 26, 4, 2);
+          g.fillRoundedRect(c.x - 13, c.y + 9 + squirm, 26, 4, 2);
+          for (let i = 0; i < 4; i++) {
+            g.lineStyle(3, i % 2 ? CLOTH_LIT : CLOTH_DARK, 0.95);
+            g.lineBetween(c.x - 11, c.y - 6 + i * 5 + squirm, c.x + 11, c.y - 6 + i * 5 + squirm);
           }
         } else {
-          // A mast cell: packed edge to edge, and already glowing.
-          for (let i = 0; i < 14; i++) {
+          // A pincushion: packed edge to edge with heads, and already bristling.
+          for (let i = 0; i < 12; i++) {
             const a = i * 1.7 + c.seed;
-            const d = 4 + (i % 4) * 4;
-            g.fillStyle(i % 3 === 0 ? 0xff3b3b : MARROW_LIT, 0.85);
-            g.fillCircle(c.x + Math.cos(a) * d, c.y + Math.sin(a) * d * 0.7 + squirm, 3.2);
+            const d = 5 + (i % 4) * 4;
+            g.lineStyle(2, BONE, 0.85);
+            g.lineBetween(
+              c.x + Math.cos(a) * d * 0.4, c.y + Math.sin(a) * d * 0.3 + squirm,
+              c.x + Math.cos(a) * (d + 11), c.y + Math.sin(a) * (d + 8) + squirm,
+            );
+            g.fillStyle(i % 3 === 0 ? 0xffd98a : CLOTH_LIT, 0.9);
+            g.fillCircle(c.x + Math.cos(a) * (d + 12), c.y + Math.sin(a) * (d + 9) + squirm, 2.6);
           }
         }
-        // Two cilia trailing behind, out of step by design.
-        g.lineStyle(3, MARROW_DARK, 0.8);
+        // Two loose threads trailing behind, out of step by design.
+        g.lineStyle(2.4, CLOTH_DARK, 0.8);
         for (let i = 0; i < 2; i++) {
           const ph = Math.sin(time / 80 + i * 2.2) * 9;
-          g.lineBetween(c.x - dir * 20, c.y - 6 + i * 12, c.x - dir * 34, c.y - 6 + i * 12 + ph);
+          g.lineBetween(c.x - dir * 18, c.y - 6 + i * 12, c.x - dir * 34, c.y - 6 + i * 12 + ph);
         }
       }
     },
@@ -198,12 +203,12 @@ const theSwarm = (tk: BossToolkit): SignatureMove => {
   };
 };
 
-// ── Signature: Quarantine ────────────────────────────────────────────
+// ── Signature: The Hem ───────────────────────────────────────────────
 // A membrane of spiked protein comes down around you and starts closing.
 // There is always a gap, it is always on one side, and it is open until it
 // is not.
 
-const quarantine = (tk: BossToolkit): SignatureMove => {
+const theHem = (tk: BossToolkit): SignatureMove => {
   let active = false;
   let cx = 0;
   let cy = 0;
@@ -231,7 +236,7 @@ const quarantine = (tk: BossToolkit): SignatureMove => {
         const p = tk.player;
         const inside = Math.abs(p.x - cx) < END_HALF + 10 && Math.abs(p.y - cy) < END_HALF + 10;
         tk.sfx('explosion-small');
-        tk.boom(cx, cy, END_HALF + 30, MARROW_LIT);
+        tk.boom(cx, cy, END_HALF + 30, CLOTH_LIT);
         if (inside && p.active) {
           tk.hitPlayer(40, p.x, p.y);
           tk.slowPlayer(0.45, 1800);
@@ -262,9 +267,9 @@ const quarantine = (tk: BossToolkit): SignatureMove => {
     drawGround(g, time) {
       if (!active) return;
       const t = Phaser.Math.Clamp(1 - (closesAt - time) / CLOSE_MS, 0, 1);
-      g.fillStyle(MARROW, 0.05 + t * 0.11);
+      g.fillStyle(CLOTH, 0.05 + t * 0.11);
       g.fillRect(cx - half, cy - half, half * 2, half * 2);
-      g.lineStyle(2, MARROW_LIT, 0.25 + t * 0.35);
+      g.lineStyle(2, CLOTH_LIT, 0.25 + t * 0.35);
       g.strokeRect(cx - half, cy - half, half * 2, half * 2);
       // Web strung corner to corner inside the cordon, tightening with it.
       g.lineStyle(1, 0xd9e86b, 0.12 + t * 0.22);
@@ -285,7 +290,7 @@ const quarantine = (tk: BossToolkit): SignatureMove => {
       ];
       /** One wall segment: a band of mesh with barbs along its inner edge. */
       const band = (x: number, y: number, w: number, h: number): void => {
-        g.fillStyle(MARROW_DARK, 0.5 + t * 0.3);
+        g.fillStyle(CLOTH_DARK, 0.5 + t * 0.3);
         g.fillRect(x, y, w, h);
         g.fillStyle(0xd9e86b, 0.3 + t * 0.4);
         g.fillRect(x + 1, y + 1, Math.max(0, w - 2), Math.max(0, h - 2));
@@ -317,29 +322,29 @@ const quarantine = (tk: BossToolkit): SignatureMove => {
   };
 };
 
-export const MARROW_BOSS: WorldBossDef = {
-  worldId: 'marrow',
-  name: 'Sepsis',
-  title: 'Sovereign of Marrow, the Response That Never Ended',
-  color: MARROW,
-  colorLit: MARROW_LIT,
-  colorDark: MARROW_DARK,
+export const CLOTH_BOSS: WorldBossDef = {
+  worldId: 'cloth',
+  name: 'Backstitch',
+  title: 'Sovereign of Cloth, the Mend That Never Held',
+  color: CLOTH,
+  colorLit: CLOTH_LIT,
+  colorDark: CLOTH_DARK,
   accent: BONE,
   bodyR: 29,
 
-  intro: ['You are a foreign body. Hold still. This will be thorough.'],
+  intro: ['You have come loose. Hold still. I will put you back.'],
   banter: [
-    'I was made to answer what did not belong. Then I stopped being able to tell.',
-    'The Voice came through the cavity and I raised no fever at all. That is the only thing that has ever got past me.',
-    'Swelling is not damage. Swelling is care. Ask anything I have ever cared for.',
-    'You are warm. Good. That means it is working.',
+    'I was made to mend what tore. Then I stopped waiting for anything to tear.',
+    'The Voice came through a seam I had sewn twice. That is the only thing that has ever got out.',
+    'A stitch is not a wound. A stitch is care. Ask anything I have ever cared for.',
+    'You are unravelling beautifully. Hold still.',
   ],
-  defeatLine: 'THE RESPONSE SUBSIDES',
+  defeatLine: 'THE SEAM GIVES',
 
   phases: [
     {
-      name: 'The Inflamed Cavity',
-      line: 'Something came in. Everything in here is already walking toward you.',
+      name: 'The Torn Hall',
+      line: 'Something came through. Every needle in here is already pointed at you.',
       hp: 430,
       cycle: [
         'sig:response', 'volley', 'sig:quarantine', 'hazard',
@@ -352,8 +357,8 @@ export const MARROW_BOSS: WorldBossDef = {
       holdDist: 300,
     },
     {
-      name: 'Acute Response',
-      line: 'Escalating. I have never once escalated and been wrong. I have never once checked.',
+      name: 'Double Stitch',
+      line: 'Twice over, then. I have never once sewn twice and been wrong. I have never once looked.',
       hp: 490,
       cycle: [
         'sig:quarantine', 'sig:response', 'sig:swarm', 'barrage',
@@ -368,10 +373,10 @@ export const MARROW_BOSS: WorldBossDef = {
   ],
 
   hard: {
-    introLine: 'IT IS IN THE BLOOD NOW',
+    introLine: 'THE WHOLE BOLT NOW',
     extraPhase: {
-      name: 'Systemic',
-      line: 'Seventeen worlds of infection and not one I could clear. So: all of you. At once. HOLD STILL.',
+      name: 'Whole Cloth',
+      line: 'Seventeen worlds of tearing and not one seam that held. So: all of you. At once. HOLD STILL.',
       hp: 400,
       cycle: [
         'sig:quarantine', 'sig:swarm', 'sig:response', 'sanctuary',
@@ -386,22 +391,22 @@ export const MARROW_BOSS: WorldBossDef = {
   },
 
   signatures: {
-    response: theResponse,
-    swarm: theSwarm,
-    quarantine,
+    response: looseThreads,
+    swarm: theNeedlework,
+    quarantine: theHem,
   },
 
   drawArena(g, W, H) {
     g.fillStyle(0x120709, 0.55);
     g.fillRect(0, 0, W, H);
-    // A cavity: ribs closing in from both walls, and marrow pooling at the
-    // bottom of each one.
+    // A torn hall: bolts of cloth hanging from both walls, with the loose warp
+    // pooling at the foot of each one.
     for (const side of [0, 1]) {
       const x = side === 0 ? 30 : W - 30;
       const dir = side === 0 ? 1 : -1;
       for (let i = 0; i < 5; i++) {
         const y = 130 + i * 100;
-        g.lineStyle(13, MARROW_DARK, 0.85);
+        g.lineStyle(13, CLOTH_DARK, 0.85);
         g.beginPath();
         g.moveTo(x, y - 40);
         g.lineTo(x + dir * 46, y + 6);
@@ -413,7 +418,7 @@ export const MARROW_BOSS: WorldBossDef = {
         g.lineTo(x + dir * 46, y + 6);
         g.lineTo(x + dir * 30, y + 62);
         g.strokePath();
-        g.fillStyle(MARROW, 0.12);
+        g.fillStyle(CLOTH, 0.12);
         g.fillEllipse(x + dir * 26, y + 10, 26, 42);
       }
     }
@@ -424,9 +429,9 @@ export const MARROW_BOSS: WorldBossDef = {
       const y0 = 120 + ((i * 251) % (H - 200));
       g.lineBetween(x0, y0, x0 + 90 - ((i * 37) % 160), y0 + 40 - ((i * 53) % 90));
     }
-    // Warm pools where the marrow has come through.
+    // Pools of loose thread where the weave has come apart.
     for (let i = 0; i < 5; i++) {
-      g.fillStyle(MARROW_LIT, 0.045);
+      g.fillStyle(CLOTH_LIT, 0.045);
       g.fillEllipse(120 + i * ((W - 240) / 4), H * 0.55, 130, 90);
     }
   },
@@ -441,22 +446,22 @@ export const MARROW_BOSS: WorldBossDef = {
     const swell = Math.sin(t / 620) * 2.6;
 
     // The body: a ribcage hinged wide open with the cavity burning inside it.
-    g.fillStyle(MARROW_DARK, 0.95);
+    g.fillStyle(CLOTH_DARK, 0.95);
     g.fillEllipse(s.x, s.y + 4, 62 + swell, 84 + swell);
-    g.fillStyle(MARROW, 0.55 + s.castGlow * 0.3);
+    g.fillStyle(CLOTH, 0.55 + s.castGlow * 0.3);
     g.fillEllipse(s.x, s.y + 2, 34 + swell, 56 + swell);
     g.fillStyle(0xff3b3b, 0.35 + s.castGlow * 0.4);
     g.fillEllipse(s.x, s.y, 20 + swell, 36 + swell);
     g.fillStyle(BONE, 0.3 + Math.sin(t / 200) * 0.1);
     g.fillEllipse(s.x - 3, s.y - 8, 9, 15);
 
-    // Ribs: four pairs, hauled outward, brighter where the marrow shows through.
+    // Hanging bolts: four pairs, pulled outward, brighter where the warp shows through.
     for (let i = 0; i < 4; i++) {
       const ry = s.y - 26 + i * 18;
       const span = 26 + i * 5;
       const hinge = 0.5 + Math.sin(t / 700 + i) * 0.08;
       for (const sd of [-1, 1]) {
-        g.lineStyle(7, MARROW_DARK, 0.95);
+        g.lineStyle(7, CLOTH_DARK, 0.95);
         g.beginPath();
         g.moveTo(s.x + sd * 5, ry);
         g.lineTo(s.x + sd * span * 0.72, ry + hinge * 12);
@@ -475,14 +480,14 @@ export const MARROW_BOSS: WorldBossDef = {
     // far one hangs open, trailing serum.
     const hx = s.x + dirX * 42;
     const hy = s.y + 2 - s.castGlow * 12 + swell;
-    g.fillStyle(MARROW_DARK, 0.95);
+    g.fillStyle(CLOTH_DARK, 0.95);
     g.fillCircle(hx, hy, 11);
     for (let i = 0; i < 5; i++) {
       const a = t / 320 + (i / 5) * Math.PI * 2;
-      g.fillStyle(i % 2 ? MARROW_LIT : BONE, 0.75 + s.castGlow * 0.25);
+      g.fillStyle(i % 2 ? CLOTH_LIT : BONE, 0.75 + s.castGlow * 0.25);
       g.fillCircle(hx + Math.cos(a) * (7 + s.castGlow * 6), hy + Math.sin(a) * (7 + s.castGlow * 6), 3.2);
     }
-    g.fillStyle(MARROW_DARK, 0.95);
+    g.fillStyle(CLOTH_DARK, 0.95);
     g.fillCircle(s.x - dirX * 40, s.y + 18 - swell, 9);
     g.fillStyle(BONE, 0.35);
     g.fillCircle(s.x - dirX * 40, s.y + 18 - swell, 5);
@@ -493,20 +498,20 @@ export const MARROW_BOSS: WorldBossDef = {
     g.fillEllipse(s.x, hy0, 34, 32);
     g.fillStyle(BONE, 0.95);
     g.fillRoundedRect(s.x - 10, hy0 + 12, 20, 13, 4);
-    g.fillStyle(MARROW_DARK, 0.75);
+    g.fillStyle(CLOTH_DARK, 0.75);
     g.fillRect(s.x - 8, hy0 + 17, 16, 3);
     // Sockets, with the fever burning behind them.
     for (const side of [-1, 1]) {
       const ex = s.x + side * 9 + dirX * 3;
-      g.fillStyle(MARROW_DARK, 1);
+      g.fillStyle(CLOTH_DARK, 1);
       g.fillEllipse(ex, hy0 - 2, 12, 13);
       g.fillStyle(s.hurt ? 0xffffff : 0xff3b3b, 0.85 + s.castGlow * 0.15);
       g.fillCircle(ex + dirX * 1.5, hy0 - 1, 3.6 + s.castGlow * 1.6);
-      g.fillStyle(MARROW_LIT, 0.4);
+      g.fillStyle(CLOTH_LIT, 0.4);
       g.fillCircle(ex + dirX * 1.5, hy0 - 1, 6 + s.castGlow * 2);
     }
     // Suture lines across the cranium.
-    g.lineStyle(1.4, MARROW_DARK, 0.5);
+    g.lineStyle(1.4, CLOTH_DARK, 0.5);
     g.lineBetween(s.x, hy0 - 16, s.x, hy0 - 6);
     g.lineBetween(s.x - 12, hy0 - 10, s.x + 12, hy0 - 9);
 
@@ -516,9 +521,9 @@ export const MARROW_BOSS: WorldBossDef = {
         const a = t / 900 + (i * Math.PI * 2) / 5;
         const px = s.x + Math.cos(a) * 62;
         const py = s.y + Math.sin(a) * 38;
-        g.fillStyle(MARROW_DARK, 0.6);
+        g.fillStyle(CLOTH_DARK, 0.6);
         g.fillCircle(px, py, 8);
-        g.fillStyle(MARROW_LIT, 0.45);
+        g.fillStyle(CLOTH_LIT, 0.45);
         g.fillCircle(px, py, 5.5);
       }
     }

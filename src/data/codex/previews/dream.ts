@@ -90,7 +90,7 @@ function overhead(
  */
 function pendulum(
   ctx: PreviewCtx, at: { x: number; y: number },
-  st: { on: boolean; theta: number; omega: number; heat: number },
+  st: { on: boolean; theta: number; omega: number; heat: number; charge: number },
 ): void {
   const LEN = 68, G = 1600, DAMP = 0.7;
   const p = ctx.capture(() => new TrancePendulum(ctx.scene, ctx.tint));
@@ -100,6 +100,7 @@ function pendulum(
     if (dt <= 0) return;
     if (!st.on) {
       st.heat = 0;
+      st.charge = 0;
       ctx.capture(() => p.update(delta, at.x, at.y, at.x, at.y, 92, 0, 0));
       return;
     }
@@ -110,8 +111,13 @@ function pendulum(
     const acc = -(Math.sin(st.theta) * G + smoothAx * Math.cos(st.theta)) / LEN - DAMP * st.omega;
     st.omega += acc * dt;
     st.theta = Phaser.Math.Angle.Wrap(st.theta + st.omega * dt);
-    st.heat = Phaser.Math.Clamp((Math.abs(st.omega) * LEN) / 380, 0, 1);
-    const radius = 92 + (176 - 92) * st.heat;
+    // The wind is what the swing fills toward, not the swing itself — 0.34 a second up, 0.55
+    // down, and the drain stops at whatever the current wind still supports.
+    const drive = Phaser.Math.Clamp((Math.abs(st.omega) * LEN) / 380, 0, 1);
+    if (drive > st.charge) st.charge = Math.min(drive, st.charge + 0.34 * drive * dt);
+    else st.charge = Math.max(drive, st.charge - 0.55 * dt);
+    st.heat = st.charge;
+    const radius = 92 + (210 - 92) * st.heat;
     ctx.capture(() => p.update(
       delta, at.x, at.y + 4,
       at.x + Math.sin(st.theta) * LEN, at.y + 4 + Math.cos(st.theta) * LEN,
@@ -126,13 +132,13 @@ export const trance: PreviewScript = {
   duration: 15000,
   scale: 0.9,
   bodyTexture: '',
-  caption: 'Click — your own pacing pumps the pendulum; a full swing is 11.3 sleepiness a second out to 176px',
+  caption: 'Click — your pacing charges the pendulum over about 3s; a full swing is 26 sleepiness a second out to 210px',
   run(ctx) {
     const at = { x: ctx.w * 0.34, y: ctx.cy };
     const { fx, av } = drivenCaster(ctx, at);
     const victim = { x: ctx.w * 0.62, y: ctx.cy };
     dummyAt(ctx, victim);
-    const st = { on: false, theta: 0.55, omega: 0, heat: 0 };
+    const st = { on: false, theta: 0.55, omega: 0, heat: 0, charge: 0 };
     pendulum(ctx, at, st);
     const sleep = { drowsy: 0, asleep: false, nightmare: false };
     overhead(ctx, victim, () => sleep);
@@ -150,14 +156,14 @@ export const trance: PreviewScript = {
     ctx.onFrame((dt, elapsed) => {
       if (elapsed > 700 && elapsed < 13000) at.x = home + Math.sin((elapsed - 700) / 260) * 46;
       if (!st.on || sleep.asleep) return;
-      const radius = 92 + (176 - 92) * st.heat;
+      const radius = 92 + (210 - 92) * st.heat;
       const inRange = Phaser.Math.Distance.Between(at.x, at.y, victim.x, victim.y) <= radius;
       if (st.heat >= 0.06 && inRange) {
-        sleep.drowsy = Math.min(100, sleep.drowsy + 11.3 * Math.pow(st.heat, 1.25) * (dt / 1000));
+        sleep.drowsy = Math.min(100, sleep.drowsy + 26 * Math.pow(st.heat, 2) * (dt / 1000));
       } else {
         sleep.drowsy = Math.max(0, sleep.drowsy - 6 * (dt / 1000));
       }
-      readout.setText(`swing ${Math.round(st.heat * 100)}%   —   reach ${Math.round(radius)}px   —   ${Math.round(sleep.drowsy)}/100`);
+      readout.setText(`charge ${Math.round(st.heat * 100)}%   —   reach ${Math.round(radius)}px   —   ${Math.round(sleep.drowsy)}/100`);
       if (sleep.drowsy >= 100) {
         sleep.asleep = true;
         ctx.capture(() => {
@@ -168,13 +174,12 @@ export const trance: PreviewScript = {
         readout.setText('asleep for 8 seconds — no movement, no abilities');
       }
     });
-    // The meter deliberately does not top out inside the window: from empty, a
-    // hard wind is the better part of ten seconds, and the preview should say so
-    // rather than compress it into a beat that reads as instant.
+    // Charging is the slow part now and the payout is the fast part, so the loop shows the bar
+    // crawling for the first few seconds and then running once the swing is actually full.
     ctx.at(13200, () => {
       st.on = false;
       float(ctx, at.x, at.y - 40, 'Pendulum stilled', '#9fb8ff', 11);
-      readout.setText('about 9 seconds of hard winding from empty puts them under — and standing still kills the swing');
+      readout.setText('~3s to charge the swing, then ~4s to put them under — and easing off drains the charge back');
     });
   },
 };
@@ -461,11 +466,11 @@ export const passiveSleepiness: PreviewScript = {
     const readout = label(ctx, ctx.w * 0.5, 12, '#8b5cf6', 11);
     let filling = false;
 
-    ctx.at(400, () => { filling = true; readout.setText('a full swing is 11.3 a second'); });
+    ctx.at(400, () => { filling = true; readout.setText('a full swing is 26 a second'); });
     ctx.onFrame((dt) => {
       if (sleep.asleep) return;
       sleep.drowsy = Phaser.Math.Clamp(
-        sleep.drowsy + (filling ? 11.3 : -6) * (dt / 1000), 0, 100);
+        sleep.drowsy + (filling ? 26 : -6) * (dt / 1000), 0, 100);
       if (!sleep.asleep) readout.setText(filling
         ? `${Math.round(sleep.drowsy)}/100`
         : `${Math.round(sleep.drowsy)}/100 — bleeding off at 6 a second`);

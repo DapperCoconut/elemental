@@ -11,7 +11,7 @@ import { ElementCodex } from '../AbilityCodex';
 const sand: ElementCodex = {
   identity:
     'A revolver, a rope and a clock that only you are allowed to wind. Time has no burst worth the '
-    + 'name — its bullets open at 5 damage — and instead wins by making the other fighter pay for '
+    + 'name — its bullets open at 12 damage and only reach 15 — and instead wins by making the other fighter pay for '
     + 'every exchange twice: once when you rewind them out of the position they earned, and once '
     + 'when the beating they gave you comes back as a bounty you cash in on their cooldowns. '
     + 'Everything in the kit is a delay: absorbed damage arrives late, warped enemies arrive early, '
@@ -49,7 +49,7 @@ const sand: ElementCodex = {
         { tag: 'control', label: 'Slow', detail: '28px radius; the opposing fighter moves at ×0.75 while inside one of yours. Multiple puddles do not stack — being in any of them is one 25% slow.' },
         { tag: 'area', label: 'Lifetime', detail: '5 seconds each, fading over the last of it as the face dims.' },
         { tag: 'resource', label: 'Charges the ultimate', detail: 'Standing in your own puddle adds Time Energy in real time — 1000ms of charge per second stood in it.' },
-        { tag: 'summon', label: 'Where they come from', detail: 'One every 200ms along a Lasso rewind (roughly 5 per drag), and one per 10 damage Remain absorbs.' },
+        { tag: 'summon', label: 'Where they come from', detail: 'One every 200ms along a Lasso rewind (roughly 5 per drag), one per 10 damage Remain absorbs, and seven along the line of a Reputation Repair rewind.' },
       ],
     },
     {
@@ -73,37 +73,45 @@ const sand: ElementCodex = {
   abilities: {
     'time-barrage': {
       basics:
-        'A held revolver that fires one round every 250ms at the cursor. Rounds age in flight: 5 damage '
-        + 'at the muzzle climbing to 12 over 2 seconds, recomputed every frame, with the sprite tinting '
-        + 'yellow to red so you can read a bullet\'s worth off its colour — and they self-destruct after '
-        + '2.5s, so the last half second of flight is the only stretch paying the full 12. They travel '
-        + '380 px/s. The magazine is 6, the sixth shot starts the 3-second reload automatically, and you '
-        + 'cannot reload early: the cylinder swings out beside you and fills a chamber at a time.',
+        'A held revolver that fires one round every 250ms at the cursor. Rounds age in flight: 12 damage '
+        + 'at the muzzle climbing to 15 over 2 seconds, recomputed every frame, with the sprite tinting '
+        + 'yellow to red so you can read a bullet\'s worth off its colour. The damage ramp is small; what '
+        + 'the round turns into at the end of it is not. A fully aged bullet stops flying straight and '
+        + 'starts hunting the enemy at up to 2.6 rad/s, and coughs a ring of five 3-damage splinters out '
+        + 'behind itself once a second. They travel 380 px/s and live 5 seconds, so a ripe round is on '
+        + 'the field for three of them. The magazine is 6, the sixth shot starts the 3-second reload '
+        + 'automatically, and you cannot reload early: the cylinder swings out beside you and fills a '
+        + 'chamber at a time.',
       cast: 'Hold Click. It fires continuously while the pointer is down, one round per 250ms, aimed at the cursor.',
       effects: [
-        { tag: 'damage', label: 'Ageing round', detail: 'Spawns at 5 damage and ramps to 12 over 2 seconds of flight, recomputed every frame. The sprite tints yellow → red across the same 2s so you can read a bullet\'s worth off its colour.' },
-        { tag: 'utility', label: 'Flight', detail: '380 px/s in a straight line. It self-destructs after 2.5s, so the last half second of its life is the only stretch that pays the full 12.' },
+        { tag: 'damage', label: 'Ageing round', detail: 'Spawns at 12 damage and ramps to 15 over 2 seconds of flight, recomputed every frame. The sprite tints yellow → red across the same 2s so you can read a bullet\'s worth off its colour.' },
+        { tag: 'control', label: 'It starts hunting', detail: 'At full age the round turns toward the enemy at up to 2.6 radians a second. Bounded, so it can be outmanoeuvred — but not simply walked away from.' },
+        { tag: 'damage', label: 'Shrapnel', detail: 'A fully aged round coughs five splinters out behind itself every second: 3 damage each, 210 px/s, gone after 420ms. It seeds the lane it just came down.' },
+        { tag: 'utility', label: 'Flight', detail: '380 px/s. It self-destructs after 5 seconds, so a round that survives its 2 second ramp spends three more on the field as a homing shrapnel source.' },
         { tag: 'resource', label: 'Magazine', detail: '6 rounds. The sixth shot starts the reload automatically; you cannot reload early or by choice.' },
         { tag: 'cost', label: 'Reload', detail: '3 seconds with no shooting at all, shown as a revolver cylinder swung out beside you filling one chamber at a time.' },
         { tag: 'utility', label: 'Rate of fire', detail: '250ms between shots — 24 rounds a minute of actual uptime once the reload is counted.' },
       ],
       upgrade: {
         basics:
-          'A reload bar appears, with a perfect band at 45–55% of the 3 seconds — a 300ms window between '
-          + '1.35s and 1.65s. A click inside it refills all six chambers instantly and launches the old '
+          'A clock face appears above you — a 17px dial with a hand sweeping one full turn over the '
+          + 'reload and a gold window covering 45–55% of it, a 300ms band between 1.35s and 1.65s. A click '
+          + 'while the hand is inside the window refills all six chambers instantly and launches the old '
           + 'cylinder as a projectile: 300 px/s with a 2-second fuse for 30 damage in a 40px radius and a '
-          + '160ms shake. A click outside the band after the first 200ms paints the bar red and forfeits '
-          + 'the window; the reload runs its full 3 seconds and there is no second attempt.',
+          + '160ms shake. A click outside the window after the first 200ms turns the whole dial red and '
+          + 'drops the window; the reload runs its full 3 seconds and there is no second attempt.',
         effects: [
-          { tag: 'utility', label: 'The bar', detail: 'Only drawn while you own this upgrade. The perfect band sits at 45–55% of the 3s reload — a 300ms window, 1.35s to 1.65s in.', requiresUpgrade: 'click' },
-          { tag: 'buff', label: 'Instant reload', detail: 'A click inside the band refills all 6 chambers on the spot and ends the reload.', requiresUpgrade: 'click' },
+          { tag: 'utility', label: 'The dial', detail: 'Only drawn while you own this upgrade. A 17px clock face above your head, hand sweeping one full turn over the 3s reload, with the gold window at 45–55% — a 300ms band, 1.35s to 1.65s in.', requiresUpgrade: 'click' },
+          { tag: 'buff', label: 'Instant reload', detail: 'A click while the hand is inside the window refills all 6 chambers on the spot and ends the reload.', requiresUpgrade: 'click' },
           { tag: 'damage', label: 'Thrown cylinder', detail: 'The same click launches a chamber projectile at 300 px/s with a 2 second fuse: 30 damage in a 40px radius, with a 160ms camera shake.', requiresUpgrade: 'click' },
-          { tag: 'cost', label: 'One attempt', detail: 'A click outside the band (after the first 200ms) paints the bar red and forfeits the window — the reload runs its full 3s and no second try is allowed.', requiresUpgrade: 'click' },
+          { tag: 'cost', label: 'One attempt', detail: 'A click outside the window (after the first 200ms) turns the dial red and drops the window entirely — the reload runs its full 3s and no second try is allowed.', requiresUpgrade: 'click' },
         ],
       },
       notes: [
         'A chamber that hits the enemy directly is consumed for its own 0 damage; the 30 damage blast only fires when the 2 second fuse runs out. It is a mine thrown at their feet, not a shell aimed at their chest.',
         'Clicks in the first 200ms of a reload are ignored entirely — neither a perfect nor a failure.',
+        'Shrapnel is a real projectile on your side of the field, so it can be shot down, frozen by your own Frozen Field, and sped up or slowed by whichever aura it is passing through.',
+        'The homing turn is applied to the round\'s velocity, not its position, so a ripe bullet keeps its 380 px/s and simply arcs. Circling it tightly is the counterplay; running from it is not.',
         'Every perfect reload counts toward the Quickdraw requirement of Time Mastery (50 needed), which is why that requirement is unreachable without this upgrade.',
         'Bounty Hunter (F+) cuts the reload to 1.5s while its aura is up, which also halves the perfect window in real time.',
       ],
@@ -239,15 +247,17 @@ const sand: ElementCodex = {
       upgrade: {
         basics:
           'After the third shot a reload minigame starts by itself — the shop card says you press Q, but '
-          + 'the kit opens it for you. It runs 1.5 seconds with three bands at 10–25%, 42–57% and 72–87%; '
-          + 'click while the marker is inside each. Caught bands turn green, missed ones red, and only all '
-          + 'three reloads the full 3 shots — anything less gives nothing back. It runs on the same '
-          + '5-second clock as the stop and is abandoned unfinished if time resumes mid-bar.',
+          + 'the kit opens it for you. A frozen-blue clock face opens above you, larger than the '
+          + 'revolver\'s and carrying three windows at once, at 10–25%, 42–57% and 72–87% of one sweep. '
+          + 'It runs 1.5 seconds; click while the hand is inside each window. Caught windows turn green, '
+          + 'missed ones red, and only all three reloads the full 3 shots — anything less gives nothing '
+          + 'back. It runs on the same 5-second clock as the stop and is abandoned unfinished if time '
+          + 'resumes mid-sweep.',
         effects: [
           { tag: 'utility', label: 'When it starts', detail: 'Automatically, the instant the third shot is fired — the shop card describes pressing Q to begin it, but the kit starts it for you.', requiresUpgrade: 'q' },
-          { tag: 'utility', label: 'The minigame', detail: '1.5 seconds long (the card says 1). Three bands at 10–25%, 42–57% and 72–87% of the bar; click while the marker is inside each one. Bands you have caught turn green, ones you missed turn red.', requiresUpgrade: 'q' },
+          { tag: 'utility', label: 'The minigame', detail: '1.5 seconds long (the card says 1). A 20px frozen-blue dial with three windows at 10–25%, 42–57% and 72–87% of the sweep; click while the hand is inside each one. Windows you have caught turn green, ones you missed turn red.', requiresUpgrade: 'q' },
           { tag: 'buff', label: 'Payoff', detail: 'All three caught reloads the full 3 shots. Anything less is a failed reload and gives nothing back.', requiresUpgrade: 'q' },
-          { tag: 'cost', label: 'It costs stopped time', detail: 'The reload runs on the same 5 second clock as the stop, and is abandoned unfinished if time resumes mid-bar.', requiresUpgrade: 'q' },
+          { tag: 'cost', label: 'It costs stopped time', detail: 'The reload runs on the same 5 second clock as the stop, and is abandoned unfinished if time resumes mid-sweep.', requiresUpgrade: 'q' },
         ],
       },
       notes: [
@@ -255,7 +265,7 @@ const sand: ElementCodex = {
         'The in-match status tray says your cooldowns are free during the stop; the kit does not actually change your cooldown multiplier. The NPC version of this ability does (its multiplier goes to 0.001), and it only runs 3 seconds rather than 5.',
         'Because the enemy cannot move while frozen, the beams resolving "where they are on resume" is the same as where they were when you fired — the shot is only wasted if they were never on the line.',
         'Rifle hits count toward the Sharpshooter requirement of Time Mastery (10 needed).',
-        'Clicks in the first 200ms of a rifle reload are ignored, the same forgiveness the revolver bar has.',
+        'Clicks in the first 200ms of a rifle reload are ignored, the same forgiveness the revolver dial has. Both reloads use the same clock face on purpose — gold for the revolver, frozen blue for the rifle — so the shape is learned once.',
       ],
     },
   },
@@ -283,24 +293,27 @@ const sand: ElementCodex = {
   },
 
   mastery: {
-    'passive-manipulation': {
+    'reputation-repair': {
       basics:
-        'Always on, starting in Focus, with Space flipping between two world speeds on a 5-second '
-        + 'switch cooldown — the dash itself still happens. Focus runs the world at 0.5×, Rush at 1.5×, '
-        + 'and in both cases it is both fighters and every projectile in the air. It scales physics '
-        + 'bodies, projectiles and visual tweens only: ability cooldowns, burn ticks and every other '
-        + 'timer run on the real clock and are deliberately untouched.',
-      cast: 'Passive, always on, starting in Focus. Dash (Space) flips between the two; the dash itself still happens.',
+        'Always on, and it has no key. The kit keeps a running ledger of every hit you take; the '
+        + 'moment more than 75 damage lands inside a two second window, the last three seconds are '
+        + 'taken back. Your health returns to the figure it read three seconds ago and your body is put '
+        + 'back where it stood, using the same 100ms position history the Lasso rewinds enemies with. '
+        + 'Seven time puddles are laid along the line you were hauled back through, so the ground you '
+        + 'just lost is slowed behind you. 20 second recovery, and the tray shows the ledger filling '
+        + 'toward 75 while it is charged.',
+      cast: 'Passive, always on. It fires on the damage ledger — it cannot be aimed, held or triggered by choice.',
       effects: [
-        { tag: 'utility', label: 'Focus', detail: 'The world runs at 0.5×. Both fighters move at half speed and every projectile in the air flies at half speed.' },
-        { tag: 'utility', label: 'Rush', detail: 'The world runs at 1.5×. Both fighters and every projectile move half again as fast.' },
-        { tag: 'utility', label: 'Switching', detail: 'Space flips the mode with a 5 second cooldown on switching. The flip is instant and free otherwise.' },
-        { tag: 'utility', label: 'What it scales', detail: 'Physics bodies, projectiles and visual tweens. Ability cooldowns, burn ticks and every other timer run on the real clock and are untouched — deliberately, because kits mix loop time and scene time.' },
+        { tag: 'heal', label: 'Health reverts', detail: 'Your HP is restored to the value recorded 3 seconds ago. It only ever heals — a rewind never takes health off you, even if you were lower then.' },
+        { tag: 'utility', label: 'Position reverts', detail: 'You are placed at the position you occupied three seconds ago and your velocity is zeroed, read from the same 100ms/40-sample history the Lasso uses.' },
+        { tag: 'summon', label: 'Puddles in your wake', detail: 'Seven time puddles are laid evenly along the line from where you were to where you land — five seconds each of 25% slow that also charge your Time Energy.' },
+        { tag: 'utility', label: 'The trigger', detail: 'More than 75 damage inside a rolling 2 second window. Chip damage never trips it; one big exchange always does.' },
+        { tag: 'cost', label: 'Availability', detail: '20 second recovery. The status tray shows the running 2-second total while it is charged and the recovery clock while it is spent, and the character\'s sundial shadow winds up or drags to match.' },
       ],
       notes: [
-        'It is symmetrical. Focus does not slow them relative to you; it slows the whole arena, which favours the fighter whose damage does not depend on landing fast shots.',
-        'Focus makes your ageing revolver rounds spend far longer in the air, so they arrive nearer their 12 damage ceiling — the ramp is on the real clock while the flight is not.',
-        'Your own Time Bomb flies on the mode you are in. An online opponent\'s bomb does not — their mode is not synced, so theirs travels at face value.',
+        'It fires on the ledger, not on your health, so it can trigger at full HP — and it is not a death save: a single hit larger than your remaining health kills you before the window ever sums.',
+        'The rewind moves you, not them. Landing back three seconds ago usually means landing back in the position you were shooting comfortably from, which is the real payoff.',
+        'The puddle trail is laid on the way back, so a rewind out of a bad position also leaves a slowing lane between you and whoever pushed you into it.',
       ],
     },
     'time-bomb': {

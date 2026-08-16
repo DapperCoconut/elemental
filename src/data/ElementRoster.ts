@@ -54,7 +54,7 @@ import { conquestElement } from '../elements/conquest';
 import { passionElement } from '../elements/passion';
 import { deathElement } from '../elements/death';
 import { fortuneElement } from '../elements/fortune';
-import { marrowElement } from '../elements/marrow';
+import { clothElement } from '../elements/cloth';
 import { psychicElement } from '../elements/psychic';
 import { radiationElement } from '../elements/radiation';
 import { bindElement } from '../elements/bind';
@@ -101,7 +101,7 @@ export const ELEMENT_DATA_MAP: Record<string, Element> = {
   paper: paperElement,
   death: deathElement,
   fortune: fortuneElement,
-  marrow: marrowElement,
+  cloth: clothElement,
   psychic: psychicElement,
   radiation: radiationElement,
   bind: bindElement,
@@ -282,7 +282,7 @@ export const UNSTABLE_ELEMENTS: ElementDef[] = [
   { id: 'depths', name: 'Depths', emoji: '🐟', color: 0x0e8f9c, available: true },
   { id: 'psychic', name: 'Psychic', emoji: '👁️', color: 0x9b4dff, available: true },
   { id: 'ruin', name: 'Ruin', emoji: '🧱', color: 0xc4392c, available: true },
-  { id: 'marrow', name: 'Marrow', emoji: '🦴', color: 0xd1435c, available: true },
+  { id: 'cloth', name: 'Cloth', emoji: '🧣', color: 0xd1435c, available: true },
   { id: 'magma', name: 'Magma', emoji: '🌋', color: 0xff5a1e, available: true },
   { id: 'chalk', name: 'Chalk', emoji: '🖍️', color: 0xf4f1e6, available: true },
   { id: 'paper', name: 'Paper', emoji: '📄', color: 0xf2ead6, available: true },

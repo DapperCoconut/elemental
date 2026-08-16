@@ -585,7 +585,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       {
         id: 'strength-in-numbers',
         name: 'Strength in Numbers',
-        description: 'Passive: your amalgams are linked by faint grey threads. Every other amalgam on the field grants each of them 5% damage resistance, up to a 75% cap — a big enough horde is nearly unkillable.',
+        description: 'Passive: your amalgams are linked by faint grey threads. Every other amalgam on the field grants each of them 5% damage resistance — 10% each with all three slots filled with amalgams rather than with grave zombies you have not drained yet.',
       },
       {
         id: 'grave-mistake',
@@ -629,9 +629,9 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
     ],
     enhancements: [
       {
-        id: 'passive-manipulation',
-        name: 'Passive Manipulation',
-        description: 'Passive: you are always in either Rush or Focus. Rush speeds the whole world up 50% — everyone moves and every projectile flies faster; Focus slows it all to half speed. Dash (Space) to flip between them, with a 5 second cooldown on switching.',
+        id: 'reputation-repair',
+        name: 'Reputation Repair',
+        description: 'Passive: a bad exchange does not get to stand. Take more than 75 damage inside two seconds and you are moved backwards in time three seconds automatically — your health and your position both revert to what they were, and the ground you are hauled back through comes up as time puddles. 20 second recovery, and it cannot be aimed or held: it fires on the ledger.',
       },
       {
         id: 'time-bomb',
@@ -882,10 +882,10 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
     enhancedColor: 0xddaa00,
     requirements: [
       {
-        key: 'meditateHealed',
-        label: 'Inner Peace',
-        howTo: 'Heal HP with Meditate (F) orbs',
-        target: 200,
+        key: 'dupeCopies',
+        label: 'Second Draft',
+        howTo: 'Copy your own conjurations with Dupe (F)',
+        target: 120,
       },
       {
         key: 'grimoireAllSpellsUsed',
@@ -897,7 +897,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       {
         key: 'darkEnergyGained',
         label: 'Soul Harvester',
-        howTo: 'Generate dark energy by casting dark-mode Grimoire, Necronomicon, or Wild Anchor spells',
+        howTo: 'Generate dark energy by casting corrupted spells — E+ charges 25, Q+ charges 50',
         target: 500,
       },
       {
@@ -1870,6 +1870,53 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       },
     ],
   },
+  cloth: {
+    elementId: 'cloth',
+    name: 'Cloth Mastery',
+    enhancedEmoji: '🪡',
+    enhancedColor: 0xffd98a,
+    requirements: [
+      {
+        key: 'pinnedDamage',
+        label: 'Bleeding Both Ways',
+        howTo: 'Deal damage while you have Pinned HP in you — every point counts, whatever dealt it, as long as the cushion (F) is holding something at the time',
+        target: 100,
+      },
+      {
+        key: 'tapestryPieces',
+        label: 'A Working Loom',
+        howTo: 'Get three artworks onto one tapestry — a single match that reaches three sewn pieces completes this permanently',
+        target: 3,
+        isBest: true,
+      },
+      {
+        key: 'webDamage',
+        label: 'Held Still',
+        howTo: 'Deal damage to somebody wrapped in one of your cloth webs (needs the E+ corrupt upgrade)',
+        target: 200,
+      },
+      {
+        key: 'safetyRetreats',
+        label: 'Always Roped In',
+        howTo: 'Get hauled back to a Safety Line anchor (R) — the recast and the automatic 75-damage trigger both count',
+        target: 25,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'outfit-change',
+        name: 'Outfit Change',
+        description: 'Passive, bound to **Space**, and it is a wardrobe rather than a buff.\n\nOne press sheds whatever you are wearing in a spray of panels and leaves you standing in the next thing. There are four, and they cycle in order:\n\n**🤵 Black Suit** — every hit that reaches you lands for **3 less**, flat, before anything else. It is the one you start the match in and it is quietly the best against a swarm, because it is subtracted from each hit rather than from the total.\n\n**🧥 Heavy Coat** — **10% less damage** from every source. No conditions, no exceptions, and the only one of the four that is never wrong.\n\n**👘 Thin Silks** — every negative status on you runs **33% shorter**. Stuns, slows, burns, freezes, roots, silences: all of them. Against a control element it is worth more than any amount of armour.\n\n**🧢 Casual Hoodie** — **20% less** from anything that arrives as an area blast or a piercing shot. Against a normal shot it does nothing at all; against an ultimate it is the largest number on this list.\n\nSwapping costs nothing but the moment it takes, so the real skill is reading what is about to be thrown at you and being in the right thing when it lands.',
+      },
+      {
+        id: 'wretched-scarf',
+        name: 'Wretched Scarf',
+        bindable: true,
+        hudDescription: 'Wrap up for 3s: nothing gets through, then all of it comes back out as one blast',
+        description: 'The tailor pulls the whole scarf in and winds it round themselves until there is nothing left but a tight cocoon about the size of anybody else\'s body.\n\nTwo things happen at once. The scarf **stops being a hitbox** — for three seconds you are a small circle like every other element on the roster, which against a shot-heavy opponent is most of what the ability is for. And every point of damage that does still reach you is **negated outright**: not absorbed, not reduced, simply refused.\n\nNone of it is forgiven, though. It is counted. When the three seconds run out the wool unwinds in one motion and **90% of everything that was thrown at you comes back out as a blast** in a wide radius around where you are standing — so the correct answer to somebody dumping an ultimate into it is to be standing on top of them when it opens.\n\nIt is the only defensive cooldown in the game that gets stronger the harder it is punished, and the only one that is a bad idea to use on nothing. 18 second cooldown.',
+      },
+    ],
+  },
   radiation: {
     elementId: 'radiation',
     name: 'Radiation Mastery',
@@ -2243,6 +2290,54 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         bindable: true,
         hudDescription: 'On the ground: dash, impale, and kick them off the spear — into a wall, a pillar or a moving slab for far more. In the air: 200 spears down from the top of the screen, clustered at your cursor',
         description: 'One ability with two entirely separate halves, because Justice has two entirely separate stances.\n\n**On the ground it is a dash.** You go forward, and if you catch somebody you **run them through** — the spear goes in, they come off the floor, and then you put a boot on them and **kick them off it**. They travel. 45 damage for the impalement and the kick together, and then wherever they land decides the rest:\n\n• **Into a wall** — 30 more and 2 seconds stunned against it.\n• **Into a Coliseum wall** — the same. Your own ring counts, and a ring is much easier to aim at than the edge of the map.\n• **Into a Pillar of Flame** — 30 more, and they are set alight on the way through.\n• **Into a wall you ripped out and are still driving across the arena** — 45 more, a 3-second stun, and they are carried the rest of the way by it. This is the good one.\n\nEvery one of those is a **combo the style meter knows the name of**.\n\n**In the air it is a barrage.** You go up, the sky goes dark, and **200 spears** come down. Each one is worth **2**, which is nothing on its own and 400 if every one of them lands — they will not, because they fall in a spread. The spread is **tightest at your cursor**, so where you point is where the weight of it goes.\n\nAnd it aims itself, a little: **spears near a body carrying an angel bite bend toward it**, and the more bites are open the harder they bend. One bite is a nudge. Three is a funnel.\n\n**28 second cooldown**, both halves.',
+      },
+    ],
+  },
+  sound: {
+    elementId: 'sound',
+    name: 'Sound Mastery',
+    enhancedEmoji: '🎤',
+    enhancedColor: 0xff2299,
+    requirements: [
+      {
+        key: 'harmonizedCasts',
+        label: 'On The Beat',
+        howTo: 'Land an ability inside the metronome\'s gold window. Any of the five counts, and the streak does not have to hold — a hundred harmonized casts is a hundred harmonized casts',
+        target: 100,
+      },
+      {
+        key: 'bugleNotes',
+        label: 'A Hundred Notes',
+        howTo: 'Strike a note on the bugle rhythm bar (F). Hold notes count as they are caught',
+        target: 100,
+      },
+      {
+        key: 'codaLevel',
+        label: 'Turn It Up',
+        howTo: 'Reach Coda level 3 — the electric guitar — in a single match. One match that gets there completes this permanently',
+        target: 3,
+        isBest: true,
+      },
+      {
+        key: 'bugleRun',
+        label: 'Flawless Twenty',
+        howTo: 'Land 20 notes in a row inside one bugle call without dropping one. A single clean run completes this permanently',
+        target: 20,
+        isBest: true,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'audience-participation',
+        name: 'Audience Participation',
+        description: 'Passive: **you have an audience.**\n\nA crowd of shadows stands along the front of the stage for the whole match — heads bobbing, arms up, small wands waving in the dark. They are silhouettes and they are not in the fight: nothing can hit them and they cannot hit anything.\n\nWhat they do is **listen**, and listening pays. The crowd generates **2 hype a second**, for free, forever. Sound has always had to earn its hype by banking percentages and then burning them; this is the first hype in the element that arrives on its own, and over a long match it is worth a Coda level by itself.\n\nAnd they can be **played to**. Deal **50 damage inside any 5 second window** and the room goes up: the shadows jump, the wands go wild, and hype pays **double — 4 a second — for 5 seconds**. The window is rolling, so a burst that lands 50 keeps the crowd on their feet for as long as you keep giving them a reason.\n\nThey do not care how you did it. A Solo that walls the room, a mirror ball through somebody, a record cutting through a wave of husks — 50 is 50.',
+      },
+      {
+        id: 'compose',
+        name: 'Compose',
+        bindable: true,
+        hudDescription: 'Write for 3 seconds — a staff unrolls behind you and a note lands on it every 30px you cover. Then the whole bar hops off and goes hunting, 3 damage a note',
+        description: 'Press it and you start **writing**.\n\nFor **3 seconds** a five-line staff unrolls on the floor behind you, following exactly where you walk, and a note is engraved onto it **every 30px of stave you lay down**. The notes sit on the line, pitched up and down as the bar goes, and they are pure decoration until the writing stops.\n\nWhen the 3 seconds are up, **the composition plays**. Every note on the staff hops off the line, hangs for a beat, and then goes for the nearest enemy — **3 damage each**, one small burst apiece, released in a stream rather than all at once.\n\n**The staff is the ability.** Three damage a note is nothing; a bar with forty notes on it is not. And the only thing that decides how many notes there are is **how far you got** in those three seconds:\n\n• Stand still and you write **nothing**. A staff with no length has no notes on it, and the ability does literally zero.\n• Walk it and you get a respectable bar.\n• Wearing everything this element banks — a Coda ladder, a bugle run, a green record, a boombox field — you cover **twice the ground**, and the bar is twice as long.\n\nThat is the whole design: Sound spends the entire match buying move speed and then never has anything to spend it on. This is what it is for. **Up to 64 notes**, which is 192 damage from a key that asks you to run in a circle.\n\n**18 second cooldown.**',
       },
     ],
   },

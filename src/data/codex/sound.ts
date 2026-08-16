@@ -4,8 +4,8 @@ import { ElementCodex } from '../AbilityCodex';
  * Sound — a concert soloist with a metronome running.
  *
  * Verified against `src/elements/sound.ts`, `kits/SoundKit.ts`, the five shop upgrades in
- * `data/Upgrades.ts` and the Harmony perk in `data/Perks.ts`. Sound has no mastery enhancements;
- * every figure below is a constant at the top of the kit.
+ * `data/Upgrades.ts`, the Harmony perk in `data/Perks.ts` and the two mastery enhancements in
+ * `data/Mastery.ts`. Every figure below is a constant at the top of the kit.
  */
 const sound: ElementCodex = {
   identity:
@@ -253,6 +253,60 @@ const sound: ElementCodex = {
         'The ladder is the whole element. Everything else in the kit is a way of accumulating percentages that Q will eventually eat.',
         'Tempo counting double is why the bugle is the best hype generator: every note is +1% to two stats and therefore 2 hype.',
         'Party Mode handing your buffs to the enemy for twelve seconds is the single riskiest thing this element does, and doubling the burn is what pays for it.',
+      ],
+    },
+  },
+
+  mastery: {
+    'audience-participation': {
+      basics:
+        'A crowd of shadows stands along the front of the stage for the whole match — three rows '
+        + 'of silhouettes in the bottom 52px, heads bobbing, arms up, wands waving. They have no '
+        + 'hitbox and cannot be targeted. What they do is generate 2 hype a second, continuously '
+        + 'and for free, which is the first hype in this element that does not have to be banked '
+        + 'as a percentage and burned. Deal 50 damage inside any rolling 5 second window and the '
+        + 'room comes up: hype doubles to 4 a second for 5 seconds, the shadows jump and the '
+        + 'wands go bright. The window re-arms every time it triggers, so a fight that keeps '
+        + 'paying keeps them on their feet indefinitely.',
+      cast: 'Passive — no key. The crowd is there from the first frame of the match.',
+      effects: [
+        { tag: 'resource', label: 'The standing rate', detail: '2 hype a second, continuously, for the whole match. Roughly 100 hype every 50 seconds — half a Coda level for nothing.' },
+        { tag: 'resource', label: 'The room comes up', detail: '50 damage inside a rolling 5 second window doubles the rate to 4 hype a second for 5 seconds.' },
+        { tag: 'utility', label: 'It re-arms', detail: 'Every trigger clears the window and restarts the 5 seconds, so a sustained burst holds the crowd up for as long as it lasts.' },
+        { tag: 'utility', label: 'It counts every hit', detail: 'Damage to any enemy counts, from any source — a Solo wall, the mirror ball, a record cutting a wave of husks. 50 is 50.' },
+        { tag: 'utility', label: 'They are scenery', detail: 'No hitbox, no health, no targeting. Nothing in the game can hit the audience and the audience hits nothing.' },
+      ],
+      notes: [
+        'This is the answer to Sound\'s slow start: the ladder now climbs on its own while you are still banking percentages for the first Coda.',
+        'The hype goes through the same meter as everything else, so Ruin\'s Combo Breaker halves it exactly as it halves a burn.',
+        'The crowd is drawn in front of the fighters and behind the ability bar, so the bottom of the arena reads as a pit rather than as playable floor.',
+      ],
+    },
+    compose: {
+      basics:
+        'Press it and a five-line stave unrolls on the floor behind you for 3 seconds, following '
+        + 'exactly where you walk, engraving one note every 30px of stave — up to 64. When the 3 '
+        + 'seconds are up the whole bar plays: each note hops off the line, hangs for 420ms, then '
+        + 'homes at 540 px/s to the nearest enemy for 3 damage, released 55ms apart so it arrives '
+        + 'as a stream. Damage scales with Coda like everything else this element throws. The '
+        + 'number of notes is decided by nothing except distance covered — stand still and the '
+        + 'ability does literally zero; run a full lap wearing the element\'s banked speed and it '
+        + 'is 64 notes and 192 damage. 18s cooldown, and it refuses to start while you are stood '
+        + 'on the bugle or Solo bar, where you cannot move.',
+      cast: 'The bound key. No aim — the stave is written from your own feet. 18s cooldown.',
+      effects: [
+        { tag: 'summon', label: 'The stave', detail: 'A five-line staff, 5px between lines, unrolled along your own path for 3 seconds. It fades off the floor 900ms after the bar plays.' },
+        { tag: 'resource', label: 'One note per 30px', detail: 'Engraved as you cover ground, up to a ceiling of 64 notes. Standing still writes nothing at all.' },
+        { tag: 'damage', label: 'What a note is worth', detail: '3 damage, scaled by Coda — ×1.3 at level 2 and ×1.6 at level 3. A full 64-note bar is 192 before Coda and 307 at level 3.' },
+        { tag: 'utility', label: 'The downbeat', detail: 'Each note hops off the line for 420ms, then homes at 540 px/s to the nearest live enemy. They leave 55ms apart, so a full bar takes about 3.5 seconds to empty.' },
+        { tag: 'utility', label: 'They give up', detail: 'A note with nothing to chase, or one still hunting 4 seconds after it launched, drifts off instead of hanging around.' },
+        { tag: 'cost', label: 'Not from the bar', detail: 'It refuses to start while you are stood on the bugle or Solo rhythm bar — you cannot move up there, so there would be nothing to write on.' },
+      ],
+      notes: [
+        'This is what Sound\'s move speed was always for. The element banks stride off the green record, the bugle, the boombox field and Coda\'s dash and then has nothing to spend it on; here the distance you cover in three seconds *is* the damage.',
+        'Three damage a note reads as nothing and is meant to. The ability is the stave, not the note.',
+        'The bar plays wherever you are by then — you are free to move the whole time the notes are flying, and they home rather than firing along the stave.',
+        'Whichever of E/R/F/Q you bind it over is gone for the match, so binding it on Q gives up the Coda ladder entirely. F is the usual home: the bugle is the one key you can afford to lose once tempo is already banked.',
       ],
     },
   },

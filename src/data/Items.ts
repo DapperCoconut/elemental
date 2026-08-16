@@ -701,17 +701,17 @@ export const ITEMS: ItemDef[] = [
     effect: { dodgeChance: 0.2, speedMult: 1.18,
       behaviors: [{ trigger: 'onHitTaken', chance: 0.25, cooldownSec: 4, action: 'tempHaste', mult: 1.45, durationMs: 1700 }] } },
 
-  // ══ Marrow ════════════════════════════════════════════════════════
-  { id: 'marrow-graft', name: 'Marrow Graft', emoji: '🩸', elementId: 'marrow', priceSparks: 36,
-    flavor: 'Somebody else\'s blood, and it has not been told it changed hands.',
+  // ══ Cloth ════════════════════════════════════════════════════════
+  { id: 'scarf-weave', name: 'Second Scarf', emoji: '🧣', elementId: 'cloth', priceSparks: 36,
+    flavor: 'Wound over the first one. Twice as much of you to catch, twice as much to cut through.',
     effect: { maxHp: 110,
       behaviors: [{ trigger: 'onLowHp', thresholdFrac: 0.3, action: 'shieldCharge', amount: 3 }] } },
-  { id: 'callus-plate', name: 'Callus Plate', emoji: '🦴', elementId: 'marrow', priceSparks: 34,
-    flavor: 'Bone that healed wrong. Thicker than bone that healed right.',
+  { id: 'thimble-plate', name: 'Thimble Plate', emoji: '🪡', elementId: 'cloth', priceSparks: 34,
+    flavor: 'Brass, dented all over, and it has stopped a great deal more than needles.',
     effect: { shieldHp: 130,
       behaviors: [{ trigger: 'onHitTaken', chance: 0.2, cooldownSec: 5, action: 'slowEnemy', mult: 0.5, durationMs: 2400 }] } },
-  { id: 'febrile-vial', name: 'Fever Draught', emoji: '🌡️', elementId: 'marrow', priceSparks: 33,
-    flavor: 'Everything moves a beat slower once the room is this warm.',
+  { id: 'needle-tin', name: 'Tin Of Needles', emoji: '📌', elementId: 'cloth', priceSparks: 33,
+    flavor: 'Kept loose on purpose. Anything that reaches in for you finds all of them at once.',
     effect: { enemySpeedMult: 0.78,
       behaviors: [{ trigger: 'onHitDealt', chance: 0.18, cooldownSec: 3, action: 'slowEnemy', mult: 0.55, durationMs: 2000 }] } },
 

@@ -4,6 +4,7 @@ import { Projectile } from '../../combat/Projectile';
 import { CastContext } from '../Ability';
 import {
   ArmGesture, SOUND, SoundAura, SoundAvatar, SoundColorFn, SoundFx, SoundInstrument, TrackNoteKind,
+  musicNoteLayered,
 } from './SoundVisuals';
 import { CustomStatus } from './StatusHudKit';
 import { meterGain } from '../../combat/Meters';
@@ -32,9 +33,18 @@ export interface SoundArenaApi {
   buildPlayerContext(x: number, y: number): CastContext;
   /** `(owner, base) => displayed` — the owner's skin, or the identity. */
   soundColor(owner: 'player' | 'npc', base: number): number;
-  // ── Mastery (no Sound mastery is defined yet; this only drives the avatar's tell) ──
+  // ── Mastery ──
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
+  masteryBindFor(slot: string): string | null;
+  npcMasteryBindFor(slot: string): string | null;
+  /** Cumulative counter toward a Sound Mastery requirement. Recorded whether or not it is on. */
+  recordMasteryStat(key: string, amount: number): void;
+  /** "Best single instance" counter — the ratchet keeps the higher of the two. */
+  recordMasteryBestStat(key: string, value: number): void;
+  /** Compose is cast off a private timer, so the peer only learns about it here. */
+  broadcastMasteryCast(enhId: string): void;
+  get isOnline(): boolean;
 }
 
 // ── The metronome ─────────────────────────────────────────────────────────
@@ -219,6 +229,43 @@ const BALL_SPIN_MAX = 4;
 const BALL_SWING_MIN = 0.8;
 const BALL_HIT_COOLDOWN = 700;
 
+// ── Mastery passive: Audience Participation ───────────────────────────────
+
+/** The crowd's standing rate. The first hype in this element that nobody has to earn. */
+const AUDIENCE_HYPE_PER_SEC = 2;
+/** Deal this much inside the rolling window and the room comes off its feet. */
+const AUDIENCE_BURST_DMG = 50;
+const AUDIENCE_BURST_WINDOW_MS = 5000;
+const AUDIENCE_WILD_MS = 5000;
+const AUDIENCE_WILD_MULT = 2;
+/** How many silhouettes stand along the front of the stage, and how deep the crowd runs. */
+const AUDIENCE_COUNT = 26;
+const AUDIENCE_ROWS = 3;
+/** Height of the band the crowd occupies, measured up from the bottom edge. */
+const AUDIENCE_BAND = 52;
+
+// ── Mastery bindable: Compose ─────────────────────────────────────────────
+
+const COMPOSE_ID = 'compose';
+/** How long the staff unrolls behind you. */
+const COMPOSE_WRITE_MS = 3000;
+/** One note per this many pixels of stave. Standing still writes nothing, which is the point. */
+const COMPOSE_NOTE_SPACING = 30;
+const COMPOSE_NOTE_DMG = 3;
+/** A ceiling, so a fully buffed lap cannot write a bar the renderer chokes on. */
+const COMPOSE_MAX_NOTES = 64;
+const COMPOSE_COOLDOWN_MS = 18000;
+/** Distance between the five lines of the stave. */
+const COMPOSE_STAFF_GAP = 5;
+/** The hop: a note comes off the line before it goes hunting. */
+const COMPOSE_HOP_MS = 420;
+const COMPOSE_HOP_RISE = 26;
+const COMPOSE_FLY_SPEED = 540;
+/** Notes leave in a stream rather than a volley, this far apart. */
+const COMPOSE_STAGGER_MS = 55;
+/** How long the emptied stave stays on the floor before it fades out. */
+const COMPOSE_STAFF_FADE_MS = 900;
+
 // ── Bass perk (water + sound) ─────────────────────────────────────────────
 
 const BASS_CHARGE_COUNT = 5;
@@ -332,6 +379,45 @@ interface DiscoBall {
   hitAt: Map<Fighter, number>;
   /** Set when the party is over: the rope winds back in and the ball is dropped. */
   leaving: boolean;
+}
+
+/** One engraved note sitting on a staff, and then coming off it. */
+interface ComposeNote {
+  /** Where on the stave it was written — the anchor the hop leaves from. */
+  ax: number;
+  ay: number;
+  /** Live position once it is in the air. */
+  x: number;
+  y: number;
+  /** Pitch, in half-gaps off the centre line. Decides where it sits and which way the stem goes. */
+  step: number;
+  /** Flags on the stem, purely so a bar does not read as sixty identical shapes. */
+  flags: number;
+  /** Scene time this note hops off the line. Notes leave in a stream, not a volley. */
+  launchAt: number;
+  /** Set once the hop is over and it is hunting. */
+  hunting: boolean;
+  target: Fighter | null;
+}
+
+/**
+ * A composition being written, and then played. One per owner: pressing the key again while a
+ * bar is still on the floor throws the old one away, so there is never more than one stave.
+ */
+interface Composition {
+  owner: 'player' | 'npc';
+  /** The stave itself — the caster's own path, sampled. */
+  pts: { x: number; y: number }[];
+  notes: ComposeNote[];
+  writeUntil: number;
+  /** Stave laid down since the last note was engraved. */
+  sinceNote: number;
+  /** Total length written, for the readout. */
+  written: number;
+  /** Set at the end of the writing window, when the bar hops off and starts hunting. */
+  played: boolean;
+  /** When the empty stave finishes fading off the floor. */
+  goneAt: number;
 }
 
 /** Every ability drives an arm gesture, on the NPC rig as well as the player's. */
@@ -481,6 +567,26 @@ export class SoundKit {
   private partyGift = { move: 0, atk: 0, dmg: 0, until: 0 };
   private partyDmgApplied = 1;
 
+  // ── Mastery: Audience Participation ──────────────────────────────────
+  /** The crowd's own layer, in front of the fighters and behind the HUD. */
+  private crowdGfx: Phaser.GameObjects.Graphics | null = null;
+  /** Fixed per match so the same shadow is always the same height in the same place. */
+  private crowd: {
+    x: number; row: number; scale: number; phase: number; wand: number; hand: number;
+  }[] = [];
+  /** Fractional hype the crowd has generated but not yet handed over as whole points. */
+  private audienceAccum = 0;
+  /** The rolling damage window the crowd is watching, and when they last came off their feet. */
+  private audienceHits: { at: number; dmg: number }[] = [];
+  private audienceWildUntil = 0;
+  /** Enemies whose `damaged` event the crowd is already listening to. */
+  private audienceWatch = new WeakSet<Fighter>();
+
+  // ── Mastery: Compose ─────────────────────────────────────────────────
+  private comps: Composition[] = [];
+  private composeAt = -COMPOSE_COOLDOWN_MS;
+  private npcComposeAt = -COMPOSE_COOLDOWN_MS;
+
   // ── Bass perk ────────────────────────────────────────────────────────
   private bassCharges: BassCharge[] = [];
 
@@ -533,6 +639,18 @@ export class SoundKit {
       this.partyGfx = this.arena.scene.add.graphics().setDepth(2);
     }
     return this.partyGfx;
+  }
+
+  /**
+   * The audience. Depth 15 puts the crowd in front of the fighters — they are stood between you
+   * and the room, which is the whole reading — but under the HUD strip at 20, so the ability bar
+   * is never obscured by somebody's arm.
+   */
+  private crowdLayer(): Phaser.GameObjects.Graphics {
+    if (!this.crowdGfx || !this.crowdGfx.active) {
+      this.crowdGfx = this.arena.scene.add.graphics().setDepth(15);
+    }
+    return this.crowdGfx;
   }
 
   /** The performance set. Under the fighters, over the floor. */
@@ -635,6 +753,7 @@ export class SoundKit {
     if (this.airGfx) { this.airGfx.destroy(); this.airGfx = null; }
     if (this.stageGfx) { this.stageGfx.destroy(); this.stageGfx = null; }
     if (this.partyGfx) { this.partyGfx.destroy(); this.partyGfx = null; }
+    if (this.crowdGfx) { this.crowdGfx.destroy(); this.crowdGfx = null; }
     if (this.hudGfx) { this.hudGfx.destroy(); this.hudGfx = null; }
     if (this.discLabel) { this.discLabel.destroy(); this.discLabel = null; }
     if (this.buffLabel) { this.buffLabel.destroy(); this.buffLabel = null; }
@@ -707,6 +826,20 @@ export class SoundKit {
     this.partyGift = { move: 0, atk: 0, dmg: 0, until: 0 };
     this.partyDmgApplied = 1;
 
+    // The crowd is seeded once a match so a given shadow keeps its height and its wand. It is
+    // built here rather than lazily so the front row is identical every frame it is painted.
+    this.crowd = [];
+    this.audienceAccum = 0;
+    this.audienceHits = [];
+    this.audienceWildUntil = 0;
+    this.audienceWatch = new WeakSet<Fighter>();
+
+    this.comps = [];
+    // `scene.time.now` runs from the moment the game booted, not from the match, so a plain 0
+    // would leave Compose on cooldown for its first eighteen seconds of every first match.
+    this.composeAt = -COMPOSE_COOLDOWN_MS;
+    this.npcComposeAt = -COMPOSE_COOLDOWN_MS;
+
     this.bassCharges = [];
 
     this.harmonyGrenade = null;
@@ -738,6 +871,9 @@ export class SoundKit {
     if (owner === 'player') {
       if (harmonized) this.clickStreak++;
       else if (!this.perfMode) this.clickStreak = 0;
+      // Mastery progress. Recorded unconditionally — this is how the unlock is earned, so it
+      // has to accrue long before there is a mastery to switch on.
+      if (harmonized) this.arena.recordMasteryStat('harmonizedCasts', 1);
     }
     return harmonized;
   }
@@ -786,31 +922,42 @@ export class SoundKit {
     // ── R+ Jukebox: Space at the box, paid for out of the hype bar ─────
     if (this.arena.hasUpgrade('r')) this.tryJukebox(time);
 
+    // ── Mastery: Compose. Read before the four keys below, because whichever one it was
+    //    dropped on is no longer the ability underneath it — and each slot guard has to come
+    //    *before* its JustDown, since reading a JustDown is what consumes it.
+    const cSlot = this.composeSlot();
+    if (cSlot) {
+      const cKey = cSlot === 'e' ? eKey : cSlot === 'r' ? rKey : cSlot === 'f' ? fKey : qKey;
+      if (Phaser.Input.Keyboard.JustDown(cKey)) this.tryCompose('player', time);
+    }
+
     // ── Click: Staccato ────────────────────────────────────────────────
     if (clickJustDown && player.castAbility('staccato', this.arena.buildPlayerContext(mouseX, mouseY))) {
       this.playStaccato(time, mouseX, mouseY);
     }
 
     // ── E: Disc Dice ───────────────────────────────────────────────────
-    if (Phaser.Input.Keyboard.JustDown(eKey)
+    if (cSlot !== 'e' && Phaser.Input.Keyboard.JustDown(eKey)
       && player.castAbility('disc-dice', this.arena.buildPlayerContext(mouseX, mouseY))) {
       this.playDiscDice(time, mouseX, mouseY);
     }
 
     // ── R: Boombox ─────────────────────────────────────────────────────
-    if (Phaser.Input.Keyboard.JustDown(rKey)
+    if (cSlot !== 'r' && Phaser.Input.Keyboard.JustDown(rKey)
       && player.castAbility('boombox', this.arena.buildPlayerContext(mouseX, mouseY))) {
       this.playBoombox(time, mouseX, mouseY);
     }
 
     // ── F: Bugle ───────────────────────────────────────────────────────
-    if (Phaser.Input.Keyboard.JustDown(fKey)
+    if (cSlot !== 'f' && Phaser.Input.Keyboard.JustDown(fKey)
       && player.castAbility('bugle', this.arena.buildPlayerContext(mouseX, mouseY))) {
       this.playBugle(time, mouseX, mouseY);
     }
 
     // ── Q: Coda — or, once it is maxed, Solo. Q+ turns the key into a hold ──
-    if (this.arena.hasUpgrade('q')) {
+    if (cSlot === 'q') {
+      // Q is Compose's now. Raise the Roof reads the key as a hold, so it must not run at all.
+    } else if (this.arena.hasUpgrade('q')) {
       this.handleRaiseTheRoof(time, mouseX, mouseY);
     } else if (Phaser.Input.Keyboard.JustDown(qKey)
       && player.castAbility('coda', this.arena.buildPlayerContext(mouseX, mouseY))) {
@@ -1274,6 +1421,7 @@ export class SoundKit {
       if (note.holding) return;
       note.holding = true;
       this.perfStreak++;
+      this.recordBugleNote();
       this.bowT = 0;
       this.pfx.waveBurst(this.arena.player.x, this.arena.player.y - 6, -Math.PI / 2, 1, 10, SOUND.mint, 0.9);
       this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 56, '🎵 HOLD IT', '#9cffcc');
@@ -1285,7 +1433,17 @@ export class SoundKit {
     this.perfStreak++;
     this.bowT = 0;
     if (this.perfMode === 'solo') this.playSoloWall(note.accent);
-    else this.landBugleNote();
+    else { this.recordBugleNote(); this.landBugleNote(); }
+  }
+
+  /**
+   * Mastery progress off the bugle bar: the hundred-note counter, and the longest clean run.
+   * A Solo's notes are not bugle notes, so this is only ever called from the brass bar.
+   */
+  private recordBugleNote(): void {
+    if (this.perfMode !== 'bugle') return;
+    this.arena.recordMasteryStat('bugleNotes', 1);
+    this.arena.recordMasteryBestStat('bugleRun', this.perfStreak);
   }
 
   /** A landed bugle note: a flat percent onto both stats, worth more inside a harmonized box. */
@@ -1491,6 +1649,7 @@ export class SoundKit {
     const lv = this.codaLevel;
     const heal = CODA_HEAL[lv];
     if (heal > 0) player.heal(heal);
+    this.arena.recordMasteryBestStat('codaLevel', lv);
 
     const col = lv >= 3 ? SOUND.neon : SOUND.gold;
     this.pfx.boom(player.x, player.y, lv >= 3 ? 170 : 130, { color: col, petals: 12, notes: 10 });
@@ -1753,14 +1912,17 @@ export class SoundKit {
     this.updateWaves(delta);
     this.updateBoomboxes(time, delta);
     this.updateBassCharges(time);
-    // Both of these outlive whoever started them, so they tick outside the per-side blocks.
+    // These outlive whoever started them, so they tick outside the per-side blocks.
     this.updatePartyGift(time, delta);
     this.updateBall(time, delta);
+    this.updateCompositions(time, delta);
     if (isPlayerSound) this.updatePlayer(time, delta);
     if (isNpcSound) this.updateNpc(time, delta);
     this.paintWorld(time);
     this.updateAvatars(time, delta, isPlayerSound, isNpcSound);
     if (isPlayerSound) {
+      this.updateAudience(time, delta);
+      this.paintCrowd(time);
       this.paintHud(time);
       this.pushStatuses(time);
     }
@@ -1831,6 +1993,8 @@ export class SoundKit {
         this.nfx.ripple(player.x, player.y, 8, 40, SOUND.flow, 320, 3, 8, 8);
       }
     }
+
+    this.updateNpcMastery(time);
   }
 
   /**
@@ -1838,8 +2002,10 @@ export class SoundKit {
    * shockwaves and the resonator in the air, and the stage under the performer.
    */
   private paintWorld(time: number): void {
-    const anyGround = this.boomboxes.length > 0 || this.bassCharges.length > 0;
-    const anyAir = this.waves.length > 0 || this.harmonyGrenade !== null || this.ball !== null;
+    const anyGround = this.boomboxes.length > 0 || this.bassCharges.length > 0
+      || this.comps.length > 0;
+    const anyAir = this.waves.length > 0 || this.harmonyGrenade !== null || this.ball !== null
+      || this.comps.length > 0;
 
     // ── PARTY MODE's deck, under everything ──
     if (this.partyUntil > time) {
@@ -1887,6 +2053,10 @@ export class SoundKit {
           Phaser.Math.Clamp(b.rope / 40, 0, 1));
       }
     }
+
+    // The staves lie on the floor and the notes come off them into the air, so a composition
+    // paints across both layers. Both were cleared above — `comps` forces each block to run.
+    if (this.comps.length > 0) this.paintCompositions(this.ground(), this.air(), time);
 
     if (this.perfMode) {
       const g = this.stage();
@@ -2300,6 +2470,32 @@ export class SoundKit {
       count: streak,
     } : null);
 
+    // ── Mastery: the room ─────────────────────────────────────────────
+    const wild = time < this.audienceWildUntil;
+    this.arena.setStatusIndicator('sound-audience', this.arena.masteryActive ? {
+      name: wild ? 'CROWD GONE WILD' : 'Audience',
+      emoji: wild ? '🙌' : '👏',
+      color: this.pcol(wild ? SOUND.gold : SOUND.violet), priority: 133,
+      description: wild
+        ? `They are off their feet: ${AUDIENCE_HYPE_PER_SEC * AUDIENCE_WILD_MULT} hype a second `
+          + `instead of ${AUDIENCE_HYPE_PER_SEC}. Another ${AUDIENCE_BURST_DMG} damage inside `
+          + `${AUDIENCE_BURST_WINDOW_MS / 1000} seconds keeps them there.`
+        : `${AUDIENCE_HYPE_PER_SEC} hype a second, for nothing. Deal ${AUDIENCE_BURST_DMG} damage `
+          + `inside ${AUDIENCE_BURST_WINDOW_MS / 1000} seconds and the room comes up — double hype `
+          + `for ${AUDIENCE_WILD_MS / 1000} seconds.`,
+      ...(wild ? { until: this.audienceWildUntil } : {}),
+    } : null);
+
+    // ── Mastery: a bar being written ──────────────────────────────────
+    const writing = this.comps.find((c) => c.owner === 'player' && !c.played);
+    this.arena.setStatusIndicator('sound-compose', writing ? {
+      name: 'Composing', emoji: '🎼', color: this.pcol(SOUND.brassHi), priority: 134,
+      description: `A stave is unrolling behind you — one note every ${COMPOSE_NOTE_SPACING}px of `
+        + `it, up to ${COMPOSE_MAX_NOTES}, and ${COMPOSE_NOTE_DMG} damage a note when the bar `
+        + 'plays. Cover ground: standing still writes nothing.',
+      until: writing.writeUntil, count: writing.notes.length,
+    } : null);
+
     // ── PARTY MODE ────────────────────────────────────────────────────
     this.arena.setStatusIndicator('sound-party', time < this.partyUntil ? {
       name: 'PARTY MODE', emoji: '🪩', color: this.pcol(SOUND.mirrorLit), priority: 131,
@@ -2508,6 +2704,441 @@ export class SoundKit {
     this.harmonyUntil = time + HARMONY_BUFF_MS;
     this.pfx.sparkle(player.x, player.y, 9, 34, 10, SOUND.gold);
     this.arena.showFloatingText(ex, ey - 30, `🌟 HARMONY ×${this.harmonyStacks}`, '#ffeecc');
+  }
+
+  // ── Mastery passive: Audience Participation ───────────────────────────
+
+  /**
+   * The crowd, seeded once a match. A given shadow keeps its height, its place in the room and
+   * the colour of its wand for the whole fight — a crowd rebuilt every frame reads as static.
+   */
+  private seedCrowd(): void {
+    if (this.crowd.length) return;
+    const W = this.arena.width;
+    const wands = [SOUND.magenta, SOUND.gold, SOUND.mint, SOUND.flow, SOUND.neon, SOUND.glint];
+    for (let i = 0; i < AUDIENCE_COUNT; i++) {
+      this.crowd.push({
+        x: ((i + 0.5) / AUDIENCE_COUNT) * W + (Math.random() - 0.5) * 16,
+        row: i % AUDIENCE_ROWS,
+        scale: 0.84 + Math.random() * 0.34,
+        phase: Math.random() * Math.PI * 2,
+        wand: wands[i % wands.length],
+        hand: Math.random() < 0.5 ? -1 : 1,
+      });
+    }
+  }
+
+  /**
+   * The standing rate, and the rolling damage window that doubles it. Hype is banked as a
+   * fraction and handed over in whole points, so the ladder never shows a decimal.
+   */
+  private updateAudience(time: number, delta: number): void {
+    if (!this.arena.masteryActive) return;
+    this.seedCrowd();
+
+    // The crowd hears a burst wherever it came from, so the ear is on the victims rather than
+    // on any one ability of this kit's. One listener per enemy, for the life of that enemy.
+    for (const t of this.arena.enemies) {
+      if (!t?.active || this.audienceWatch.has(t)) continue;
+      this.audienceWatch.add(t);
+      t.on('damaged', (amount: number) => this.hearDamage(amount));
+    }
+
+    const wild = time < this.audienceWildUntil;
+    this.audienceAccum += (delta / 1000) * AUDIENCE_HYPE_PER_SEC * (wild ? AUDIENCE_WILD_MULT : 1);
+    if (this.audienceAccum < 1) return;
+    const whole = Math.floor(this.audienceAccum);
+    this.audienceAccum -= whole;
+    this.gainHype(whole);
+  }
+
+  /**
+   * A hit landed. Fifty inside five seconds brings the room off its feet — and because the
+   * window is rolling and re-arms on every trigger, a fight that keeps paying keeps them up.
+   */
+  private hearDamage(amount: number): void {
+    if (amount <= 0 || !this.arena.masteryActive) return;
+    const now = this.arena.scene.time.now;
+    this.audienceHits.push({ at: now, dmg: amount });
+    while (this.audienceHits.length && now - this.audienceHits[0].at > AUDIENCE_BURST_WINDOW_MS) {
+      this.audienceHits.shift();
+    }
+    const sum = this.audienceHits.reduce((s, e) => s + e.dmg, 0);
+    if (sum < AUDIENCE_BURST_DMG) return;
+
+    const wasWild = now < this.audienceWildUntil;
+    this.audienceHits = [];
+    this.audienceWildUntil = now + AUDIENCE_WILD_MS;
+    if (wasWild) return;
+
+    const { player } = this.arena;
+    const H = this.arena.height;
+    const W = this.arena.width;
+    this.pfx.notes(W / 2, H - 34, 10,
+      { speed: 200, angle: -Math.PI / 2, spread: 0.9, color: SOUND.gold, depth: 16, size: 7, rise: 60 });
+    this.pfx.sparkle(W / 2, H - 30, 14, W * 0.45, 16, SOUND.gold);
+    this.arena.scene.cameras.main.shake(220, 0.004);
+    this.arena.showFloatingText(player.x, player.y - 74, '🙌 THE CROWD GOES WILD', '#ffdd44');
+  }
+
+  /**
+   * The crowd itself: silhouettes along the front of the stage, arms up, wands going. They are
+   * scenery — nothing here has a hitbox, and nothing here is ever a target.
+   */
+  private paintCrowd(time: number): void {
+    if (!this.arena.masteryActive) {
+      if (this.crowdGfx?.active) this.crowdGfx.clear();
+      return;
+    }
+    const g = this.crowdLayer();
+    g.clear();
+    const W = this.arena.width;
+    const H = this.arena.height;
+    const wild = time < this.audienceWildUntil;
+    const t = this.vizT;
+    const col = this.pcol;
+
+    // The pit: a wash of shadow the crowd stands in, so the heads read as a mass rather than
+    // as a row of loose shapes floating over the floor.
+    g.fillStyle(col(SOUND.shade), 0.42);
+    g.fillRect(0, H - AUDIENCE_BAND, W, AUDIENCE_BAND);
+    g.fillStyle(col(wild ? SOUND.gold : SOUND.plum), wild ? 0.16 : 0.09);
+    g.fillRect(0, H - AUDIENCE_BAND, W, 5);
+
+    // Back rows first, so the front of the crowd overlaps the rows behind it.
+    for (let row = AUDIENCE_ROWS - 1; row >= 0; row--) {
+      for (const p of this.crowd) {
+        if (p.row !== row) continue;
+        const s = p.scale * (1 - row * 0.12);
+        const bob = -Math.abs(Math.sin(t * (wild ? 7.5 : 2.1) + p.phase))
+          * (wild ? 11 : 2.4) * s;
+        const headY = H - 17 - row * 11 + bob;
+        const shoulderY = headY + 11 * s;
+
+        // Torso and head — near-black against the stage, with the faintest rim off the lights.
+        g.fillStyle(col(SOUND.shade), 1);
+        g.fillEllipse(p.x, shoulderY + 12 * s, 26 * s, 30 * s);
+        g.fillCircle(p.x, headY, 7.4 * s);
+        g.fillStyle(col(wild ? SOUND.gold : SOUND.violet), wild ? 0.34 : 0.18);
+        g.fillCircle(p.x - 2.2 * s, headY - 2.4 * s, 2.6 * s);
+
+        // Two arms, thrown up and waving out of phase with each other.
+        for (const side of [-1, 1] as const) {
+          const swing = Math.sin(t * (wild ? 9.5 : 2.9) + p.phase + (side > 0 ? 1.1 : 0))
+            * (wild ? 0.85 : 0.4);
+          const ang = -Math.PI / 2 + side * 0.34 + swing;
+          const sx = p.x + side * 8 * s;
+          const len = (wild ? 21 : 17) * s;
+          const hx = sx + Math.cos(ang) * len;
+          const hy = shoulderY + Math.sin(ang) * len;
+          g.lineStyle(3.4 * s, col(SOUND.shade), 1);
+          g.beginPath();
+          g.moveTo(sx, shoulderY);
+          g.lineTo(hx, hy);
+          g.strokePath();
+
+          // The wand: a short glow stick in one hand, brighter when the room is up.
+          if (side !== p.hand) continue;
+          const wx = hx + Math.cos(ang) * 9 * s;
+          const wy = hy + Math.sin(ang) * 9 * s;
+          g.lineStyle(2.2 * s, col(p.wand), wild ? 0.95 : 0.7);
+          g.beginPath();
+          g.moveTo(hx, hy);
+          g.lineTo(wx, wy);
+          g.strokePath();
+          g.fillStyle(col(p.wand), (wild ? 0.28 : 0.16) * (0.7 + 0.3 * Math.sin(t * 6 + p.phase)));
+          g.fillCircle(wx, wy, (wild ? 7 : 5) * s);
+          g.fillStyle(col(SOUND.white), wild ? 1 : 0.8);
+          g.fillCircle(wx, wy, 1.7 * s);
+        }
+      }
+    }
+  }
+
+  // ── Mastery bindable: Compose ─────────────────────────────────────────
+
+  /** Which of E/R/F/Q Compose was dropped on, or null. */
+  private composeSlot(): 'e' | 'r' | 'f' | 'q' | null {
+    if (!this.arena.masteryActive) return null;
+    for (const s of ['e', 'r', 'f', 'q'] as const) {
+      if (this.arena.masteryBindFor(s) === COMPOSE_ID) return s;
+    }
+    return null;
+  }
+
+  /** The same question for the opponent, so their bot stops casting the ability underneath it. */
+  npcComposeSlot(): 'e' | 'r' | 'f' | 'q' | null {
+    if (!this.arena.npcMasteryActive) return null;
+    for (const s of ['e', 'r', 'f', 'q'] as const) {
+      if (this.arena.npcMasteryBindFor(s) === COMPOSE_ID) return s;
+    }
+    return null;
+  }
+
+  /**
+   * The card under the bound key. While a bar is being written it counts the three seconds of
+   * the writing window; the rest of the time it counts the private cooldown, which is the only
+   * clock this ability has — enhancement ids never reach `Fighter`'s cooldown map.
+   */
+  getBarRatio(abilityId: string, time: number): number {
+    if (abilityId !== COMPOSE_ID) return 1;
+    const c = this.comps.find((x) => x.owner === 'player' && !x.played);
+    if (c) return Phaser.Math.Clamp((c.writeUntil - time) / COMPOSE_WRITE_MS, 0, 1);
+    return Phaser.Math.Clamp((time - this.composeAt) / COMPOSE_COOLDOWN_MS, 0, 1);
+  }
+
+  /** The press. Answers whether a bar actually started. */
+  private tryCompose(owner: 'player' | 'npc', time: number): boolean {
+    const f = owner === 'player' ? this.arena.player : this.arena.npc;
+    if (!f?.active || f.hp <= 0) return false;
+    const at = owner === 'player' ? this.composeAt : this.npcComposeAt;
+    if (time - at < COMPOSE_COOLDOWN_MS) return false;
+    // On the bar you cannot move, and a stave with no length has nothing written on it.
+    if (owner === 'player' && this.perfMode) return false;
+
+    if (owner === 'player') this.composeAt = time; else this.npcComposeAt = time;
+    this.startComposition(owner, time);
+    // Cast off a private timer rather than through `castAbility`, so the peer only learns
+    // about it here.
+    if (owner === 'player' && this.arena.isOnline) this.arena.broadcastMasteryCast(COMPOSE_ID);
+    return true;
+  }
+
+  /** Online: the opponent started writing on their machine, so a stave unrolls on ours too. */
+  doNpcCompose(): void {
+    const time = this.arena.scene.time.now;
+    this.npcComposeAt = time;
+    this.startComposition('npc', time);
+  }
+
+  private startComposition(owner: 'player' | 'npc', time: number): void {
+    const f = owner === 'player' ? this.arena.player : this.arena.npc;
+    // One bar per owner. Pressing again throws the old stave away rather than stacking staves.
+    this.comps = this.comps.filter((c) => c.owner !== owner);
+    this.comps.push({
+      owner,
+      pts: [{ x: f.x, y: f.y }],
+      notes: [],
+      writeUntil: time + COMPOSE_WRITE_MS,
+      sinceNote: 0,
+      written: 0,
+      played: false,
+      goneAt: 0,
+    });
+
+    const fx = this.fx(owner);
+    this.avatar(owner)?.play('raise', -Math.PI / 2, 520);
+    fx.ripple(f.x, f.y, 10, 60, SOUND.brassHi, 420, 4, 7, 4);
+    fx.notes(f.x, f.y - 10, 4, { speed: 130, color: SOUND.brass, depth: 9 });
+    if (owner === 'player') {
+      this.arena.showFloatingText(f.x, f.y - 58, '🎼 COMPOSE — WRITE!', '#ffe9a8');
+    }
+  }
+
+  /** The direction the stave is running at point `i`, so the five lines can be offset off it. */
+  private staffAngle(pts: { x: number; y: number }[], i: number): number {
+    const a = pts[Math.max(0, i - 1)];
+    const b = pts[Math.min(pts.length - 1, i + 1)];
+    if (a === b) return 0;
+    return Math.atan2(b.y - a.y, b.x - a.x);
+  }
+
+  /** One note engraved onto the stave at the pen, pitched off the centre line. */
+  private engraveNote(c: Composition, x: number, y: number, ang: number): void {
+    // Pitch, in half-gaps off the middle line. A bar that walks up and down reads as music;
+    // a bar of identical notes reads as a fence.
+    const step = Phaser.Math.Between(-4, 4);
+    const off = step * (COMPOSE_STAFF_GAP / 2);
+    const px = x + Math.cos(ang + Math.PI / 2) * off;
+    const py = y + Math.sin(ang + Math.PI / 2) * off;
+    c.notes.push({
+      ax: px, ay: py, x: px, y: py,
+      step,
+      flags: c.notes.length % 3 === 0 ? 2 : 1,
+      launchAt: 0,
+      hunting: false,
+      target: null,
+    });
+  }
+
+  private updateCompositions(time: number, delta: number): void {
+    const dt = Math.min(delta, 50) / 1000;
+    for (let i = this.comps.length - 1; i >= 0; i--) {
+      const c = this.comps[i];
+
+      // ── Writing: the stave follows the caster's own feet ──
+      if (!c.played && time < c.writeUntil) {
+        const f = c.owner === 'player' ? this.arena.player : this.arena.npc;
+        if (!f?.active || f.hp <= 0) { c.writeUntil = time; continue; }
+        const last = c.pts[c.pts.length - 1];
+        const d = Phaser.Math.Distance.Between(last.x, last.y, f.x, f.y);
+        if (d < 3) continue;
+        c.pts.push({ x: f.x, y: f.y });
+        c.written += d;
+        const ang = Math.atan2(f.y - last.y, f.x - last.x);
+        if (c.notes.length >= COMPOSE_MAX_NOTES) { c.sinceNote = 0; continue; }
+        c.sinceNote += d;
+        while (c.sinceNote >= COMPOSE_NOTE_SPACING && c.notes.length < COMPOSE_MAX_NOTES) {
+          c.sinceNote -= COMPOSE_NOTE_SPACING;
+          this.engraveNote(c, f.x, f.y, ang);
+          this.fx(c.owner).sparkle(f.x, f.y, 2, 12, 9, SOUND.brassHi);
+        }
+        continue;
+      }
+
+      // ── The downbeat: the whole bar comes off the line and goes hunting ──
+      if (!c.played) { this.playComposition(c, time); continue; }
+
+      // ── The notes in the air ──
+      for (let j = c.notes.length - 1; j >= 0; j--) {
+        const n = c.notes[j];
+        if (time < n.launchAt) continue;
+        const age = time - n.launchAt;
+
+        if (!n.hunting) {
+          // The hop: off the line, up, and hanging for a beat before it commits.
+          const k = Phaser.Math.Clamp(age / COMPOSE_HOP_MS, 0, 1);
+          n.x = n.ax;
+          n.y = n.ay - Math.sin(k * Math.PI * 0.85) * COMPOSE_HOP_RISE;
+          if (k < 1) continue;
+          n.hunting = true;
+          n.target = this.nearestFoe(c.owner, n.x, n.y);
+          if (!n.target) {
+            this.fx(c.owner).notes(n.x, n.y, 1, { speed: 90, color: SOUND.brass, depth: 10 });
+            c.notes.splice(j, 1);
+          }
+          continue;
+        }
+
+        // Nothing left to chase, or it has been chasing far too long — let it go.
+        if (!n.target?.active || n.target.hp <= 0) n.target = this.nearestFoe(c.owner, n.x, n.y);
+        if (!n.target || age > COMPOSE_HOP_MS + 4000) {
+          this.fx(c.owner).notes(n.x, n.y, 1, { speed: 90, color: SOUND.brass, depth: 10 });
+          c.notes.splice(j, 1);
+          continue;
+        }
+
+        const ang = Math.atan2(n.target.y - n.y, n.target.x - n.x);
+        n.x += Math.cos(ang) * COMPOSE_FLY_SPEED * dt;
+        n.y += Math.sin(ang) * COMPOSE_FLY_SPEED * dt;
+        if (Phaser.Math.Distance.Between(n.x, n.y, n.target.x, n.target.y) > 20) continue;
+
+        const hx = n.target.x, hy = n.target.y;
+        n.target.takeDamage(Math.round(COMPOSE_NOTE_DMG * this.damageMult(c.owner)));
+        this.fx(c.owner).boom(hx, hy, 26,
+          { color: SOUND.brassHi, mark: false, notes: 1, duration: 260 });
+        c.notes.splice(j, 1);
+      }
+
+      if (c.notes.length === 0 && time >= c.goneAt) this.comps.splice(i, 1);
+    }
+  }
+
+  /** The nearest live thing this composition is allowed to go for. */
+  private nearestFoe(owner: 'player' | 'npc', x: number, y: number): Fighter | null {
+    const targets = owner === 'player' ? this.arena.enemies : [this.arena.player];
+    let best: Fighter | null = null;
+    let bestD = Infinity;
+    for (const t of targets) {
+      if (!t?.active || t.hp <= 0) continue;
+      const d = Phaser.Math.Distance.Between(x, y, t.x, t.y);
+      if (d >= bestD) continue;
+      bestD = d;
+      best = t;
+    }
+    return best;
+  }
+
+  private playComposition(c: Composition, time: number): void {
+    c.played = true;
+    const n = c.notes.length;
+    c.goneAt = time + COMPOSE_STAFF_FADE_MS + n * COMPOSE_STAGGER_MS;
+    c.notes.forEach((note, i) => { note.launchAt = time + i * COMPOSE_STAGGER_MS; });
+
+    const f = c.owner === 'player' ? this.arena.player : this.arena.npc;
+    const fx = this.fx(c.owner);
+    this.avatar(c.owner)?.play('sweep', -Math.PI / 2, 520);
+    if (n === 0) {
+      if (c.owner === 'player') {
+        this.arena.showFloatingText(f.x, f.y - 58, '🎼 A BLANK BAR', '#997788');
+      }
+      return;
+    }
+    fx.ripple(f.x, f.y, 12, 90, SOUND.gold, 480, 5, 7, 9);
+    fx.sparkle(f.x, f.y, 9, 40, 10, SOUND.brassHi);
+    this.arena.scene.cameras.main.shake(180, 0.004);
+    if (c.owner !== 'player') return;
+    this.arena.showFloatingText(f.x, f.y - 58,
+      `🎼 ${n} NOTES · ${n * COMPOSE_NOTE_DMG} DAMAGE`, '#ffdd44');
+  }
+
+  /** The stave on the floor, and every note still sitting on it or flying off it. */
+  private paintCompositions(ground: Phaser.GameObjects.Graphics,
+    air: Phaser.GameObjects.Graphics, time: number): void {
+    for (const c of this.comps) {
+      const col = this.col(c.owner);
+      const fade = c.played
+        ? Phaser.Math.Clamp((c.goneAt - time) / COMPOSE_STAFF_FADE_MS, 0, 1)
+        : 1;
+
+      // ── The five lines, run down the caster's own path ──
+      if (fade > 0.01 && c.pts.length >= 2) {
+        for (let line = -2; line <= 2; line++) {
+          const off = line * COMPOSE_STAFF_GAP;
+          ground.lineStyle(line === 0 ? 1.7 : 1.1,
+            col(line === 0 ? SOUND.brassHi : SOUND.brass),
+            (line === 0 ? 0.9 : 0.5) * fade);
+          ground.beginPath();
+          for (let i = 0; i < c.pts.length; i++) {
+            const p = c.pts[i];
+            const a = this.staffAngle(c.pts, i) + Math.PI / 2;
+            const px = p.x + Math.cos(a) * off;
+            const py = p.y + Math.sin(a) * off;
+            if (i === 0) ground.moveTo(px, py); else ground.lineTo(px, py);
+          }
+          ground.strokePath();
+        }
+        // The pen: a glow at the head of the stave while it is still being written.
+        if (!c.played) {
+          const head = c.pts[c.pts.length - 1];
+          ground.fillStyle(col(SOUND.gold), 0.3 + 0.2 * Math.sin(this.vizT * 9));
+          ground.fillCircle(head.x, head.y, 7);
+        }
+      }
+
+      // ── The notes ──
+      for (const n of c.notes) {
+        const airborne = c.played && time >= n.launchAt;
+        const lean = airborne ? Math.sin(this.vizT * 5 + n.step) * 0.3 : 0;
+        const bob = airborne ? 0 : Math.sin(this.vizT * 3 + n.step * 1.4) * 1.2;
+        const g = airborne ? air : ground;
+        musicNoteLayered(g, col, n.x, n.y + bob, 5.4, lean,
+          n.hunting ? SOUND.gold : SOUND.brassHi, (airborne ? 1 : 0.95) * Math.max(fade, 0.35),
+          { flags: n.flags, stemDown: n.step > 0 });
+      }
+    }
+  }
+
+  /**
+   * The bot's half. Compose is pressed kit-side because enhancement ids are not in
+   * `element.abilities` and so can never come back out of `castAbility` — and it is only ever
+   * pressed for a local bot, since a remote opponent presses their own and it arrives replayed.
+   */
+  private updateNpcMastery(time: number): void {
+    if (this.arena.isOnline || !this.npcComposeSlot()) return;
+    this.tryCompose('npc', time);
+  }
+
+  /**
+   * The metronome, published for the bot: milliseconds until the opponent's harmonize window
+   * opens, `0` while it is open, and `Infinity` once the beat has gone past. Side-effect-free —
+   * the kit owns the timing and the AI never re-derives it.
+   */
+  npcHarmonizeIn(time: number): number {
+    if (this.npcMetroAt <= 0) return Number.POSITIVE_INFINITY;
+    const at = this.npcMetroAt + BEAT_MS;
+    if (time > at + HARMONY_WINDOW) return Number.POSITIVE_INFINITY;
+    return Math.max(0, (at - HARMONY_WINDOW) - time);
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────

@@ -1,19 +1,19 @@
 import { Element } from './Element';
 import { Ability, CastContext } from './Ability';
 
-const soulLanternLight: Ability = {
-  id: 'soul-lantern-light',
-  name: 'Lantern Light',
-  description: 'Hold Click to trail a spark toward the cursor, dropping tiny purple puddles. Puddles burn enemies (and your own grave zombies) for 5 dmg/s and heal you + your Amalgams for 3 hp/s.',
+const soulSiphon: Ability = {
+  id: 'soul-siphon',
+  name: 'Siphon',
+  description: 'Click on something to open a purple cord between it and you. A cord on an enemy (or one of your own grave zombies) drains 4 dmg/s out of it; a cord on one of your Amalgams feeds it 8 hp/s instead, and healing above its maximum becomes shield HP. Three cords at once, on three targets or all on one. They snap past 330px.',
   displayKey: 'Click',
-  cooldown: 150,
-  cast(ctx: CastContext) { ctx.soulLanternTick(ctx.targetX, ctx.targetY); },
+  cooldown: 400,
+  cast(ctx: CastContext) { ctx.soulSiphon(ctx.targetX, ctx.targetY); },
 };
 
 const soulArise: Ability = {
   id: 'soul-arise',
   name: 'Arise!',
-  description: 'Pop the newest corpse from your 5-slot queue and raise it as an Amalgam that fights at your side. Does nothing if the queue is empty. 3s CD.',
+  description: 'Pop the newest corpse from your 5-slot queue and raise it as an Amalgam that fights at your side. Does nothing if the queue is empty, and refuses without spending the corpse while you already have 3 bodies standing — grave zombies and Amalgams share that cap. 3s CD.',
   displayKey: 'E',
   cooldown: 3000,
   cast(ctx: CastContext) { ctx.soulArise(); },
@@ -22,7 +22,7 @@ const soulArise: Ability = {
 const soulGrave: Ability = {
   id: 'soul-grave',
   name: 'Grave',
-  description: 'Plant a headstone at the cursor. Every 5s it spits out a weak zombie that hunts YOU — burn your own zombies down with Lantern Light puddles to feed the corpse queue. Graves never expire and are never capped, so don\'t plant too many.',
+  description: 'Plant a headstone at the cursor. Every 5s it spits out a weak, ordinary zombie that hunts YOU — drain your own zombies down with Siphon to feed the corpse queue. A grave holds its spawn while you already have 3 bodies standing. Graves never expire and are never capped, so don\'t plant too many.',
   displayKey: 'R',
   cooldown: 500,
   cast(ctx: CastContext) { ctx.soulGrave(ctx.targetX, ctx.targetY); },
@@ -52,5 +52,5 @@ export const soulElement: Element = {
   name: 'Soul',
   color: 0xccaaff,
   emoji: '👻',
-  abilities: [soulLanternLight, soulArise, soulGrave, soulDeathWhistle, soulHellsTorment],
+  abilities: [soulSiphon, soulArise, soulGrave, soulDeathWhistle, soulHellsTorment],
 };

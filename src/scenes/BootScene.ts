@@ -335,11 +335,17 @@ export class BootScene extends Phaser.Scene {
     gfx.moveTo(6, 28); gfx.lineTo(42, 28);
     gfx.moveTo(6, 35); gfx.lineTo(42, 35);
     gfx.strokePath();
-    // Hazard stripe down the middle of the drum.
+    // Hazard stripes, banded across the drum rather than straight down it. The rig paints a hard
+    // hat over the crown and a drum torso over the belly, so the band left showing is the face —
+    // keep that strip clean plate and the character has somewhere to have a face.
     gfx.fillStyle(0xffaa00, 0.9);
-    gfx.fillRect(20, 4, 8, 40);
+    gfx.fillRect(9, 4, 30, 7);
+    gfx.fillRect(9, 37, 30, 7);
     gfx.fillStyle(0x07050a, 0.9);
-    for (let i = 0; i < 5; i++) gfx.fillRect(20, 6 + i * 8, 8, 3.5);
+    for (let i = 0; i < 5; i++) {
+      gfx.fillRect(10 + i * 6, 4, 3, 7);
+      gfx.fillRect(12 + i * 6, 37, 3, 7);
+    }
     // Iridescent film, then a hard specular pip on the high shoulder.
     gfx.fillStyle(0x7a4fd0, 0.4);
     gfx.fillEllipse(17, 15, 20, 9);
@@ -1351,41 +1357,58 @@ export class BootScene extends Phaser.Scene {
     gfx.fillEllipse(16, 14, 10, 5);
     gfx.generateTexture('elem-metal', 48, 48);
 
-    // Gunpowder element texture — a powder keg seen end-on: soot body, brass bands, a violet
-    // skull glow and a lit fuse burning at the top.
+    // Gunpowder element texture — a powder keg seen end-on, repainted into the regimentals the
+    // musketeer rig wears: felt-dark staves, brass hoops, a violet charge glowing inside, and a
+    // lit fuse out of the bung. The rim is coat blue rather than orchid so the disc harmonises
+    // with the uniform drawn over it instead of ringing it in a clashing colour.
     gfx.clear();
-    gfx.fillStyle(0x140a1c, 1);
+    gfx.fillStyle(0x101c38, 1);
     gfx.fillCircle(24, 24, 22);
-    gfx.fillStyle(0x440066, 1);
+    gfx.fillStyle(0x15121e, 1);
     gfx.fillCircle(24, 24, 19);
-    gfx.fillStyle(0x241428, 1);
-    gfx.fillCircle(24, 24, 16);
+    // Barrel staves, lit from the upper left.
+    for (let i = 0; i < 8; i++) {
+      const a0 = (i / 8) * Math.PI * 2;
+      const a1 = ((i + 1) / 8) * Math.PI * 2;
+      const lit = Math.cos(a0 + Math.PI * 0.75) * 0.5 + 0.5;
+      gfx.fillStyle(i % 2 === 0 ? 0x241428 : 0x2c2738, 0.55 + lit * 0.45);
+      gfx.beginPath();
+      gfx.moveTo(24, 24);
+      gfx.arc(24, 24, 18.5, a0, a1, false);
+      gfx.closePath();
+      gfx.fillPath();
+    }
     // Brass hoops round the keg.
     gfx.lineStyle(2.5, 0xd9a441, 1);
     gfx.strokeCircle(24, 24, 15);
-    gfx.strokeCircle(24, 24, 9);
-    // Charge grains packed inside.
+    gfx.lineStyle(2, 0x8a6a24, 1);
+    gfx.strokeCircle(24, 24, 9.5);
+    // The charge packed inside, glowing violet through the bung head.
+    gfx.fillStyle(0x440066, 1);
+    gfx.fillCircle(24, 24, 8.6);
     gfx.fillStyle(0x6a2088, 1);
     for (let i = 0; i < 7; i++) {
       const a = (i / 7) * Math.PI * 2 + 0.3;
-      gfx.fillCircle(24 + Math.cos(a) * 12, 24 + Math.sin(a) * 12, 2.2);
+      gfx.fillCircle(24 + Math.cos(a) * 4.6, 24 + Math.sin(a) * 4.6, 1.9);
     }
+    gfx.fillStyle(0xcc44ff, 0.5);
+    gfx.fillCircle(24, 24, 3.2);
     // Fuse out of the bung, burning.
     gfx.lineStyle(2.4, 0x5c4326, 1);
     gfx.beginPath();
-    gfx.moveTo(24, 12);
-    gfx.lineTo(28, 7);
-    gfx.lineTo(33, 8);
+    gfx.moveTo(24, 14);
+    gfx.lineTo(28, 8);
+    gfx.lineTo(33, 8.5);
     gfx.strokePath();
     gfx.fillStyle(0xff7722, 1);
-    gfx.fillCircle(33.5, 8, 3.4);
+    gfx.fillCircle(33.5, 8.5, 3.2);
     gfx.fillStyle(0xffcc55, 1);
-    gfx.fillCircle(33.5, 8, 2);
+    gfx.fillCircle(33.5, 8.5, 1.9);
     gfx.fillStyle(0xffffff, 1);
-    gfx.fillCircle(33.5, 8, 0.9);
-    gfx.lineStyle(3, 0xcc44ff, 1);
+    gfx.fillCircle(33.5, 8.5, 0.9);
+    gfx.lineStyle(3, 0x33518f, 1);
     gfx.strokeCircle(24, 24, 21.5);
-    gfx.fillStyle(0xffffff, 0.35);
+    gfx.fillStyle(0xffffff, 0.28);
     gfx.fillEllipse(16, 15, 9, 5);
     gfx.generateTexture('elem-gunpowder', 48, 48);
     gfx.clear();
@@ -1510,26 +1533,112 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('elem-magic', 48, 48);
     gfx.clear();
 
-    // fx-chicken — Magic Mastery Transmogrify: white circle body, yellow beak, two white wings
-    gfx.fillStyle(0xffffff, 1);
-    gfx.fillCircle(24, 24, 22);
-    gfx.lineStyle(3, 0xdddddd, 1);
-    gfx.strokeCircle(24, 24, 22);
-    gfx.fillStyle(0xffffff, 1);
-    gfx.fillEllipse(12, 16, 12, 8);
-    gfx.fillEllipse(36, 16, 12, 8);
-    gfx.lineStyle(2, 0xcccccc, 0.9);
-    gfx.strokeEllipse(12, 16, 12, 8);
-    gfx.strokeEllipse(36, 16, 12, 8);
-    gfx.fillStyle(0xffcc00, 1);
-    gfx.beginPath();
-    gfx.moveTo(24, 26);
-    gfx.lineTo(31, 30);
-    gfx.lineTo(24, 34);
-    gfx.closePath();
-    gfx.fillPath();
-    gfx.generateTexture('fx-chicken', 48, 48);
-    gfx.clear();
+    // fx-chicken — Magic Mastery Transmogrify. A proper hen in three-quarter view facing right:
+    // tail plumes, a scalloped wing, comb and wattle, scaly legs. The lilac rim is the tell that
+    // this is somebody who *was* a fighter a moment ago, not scenery.
+    {
+      const CH = {
+        shade: 0xc9c4bb,   // underside / the side the light misses
+        body: 0xfaf7ef,    // the hen herself
+        lit: 0xffffff,     // top face
+        outline: 0x8b8478,
+        comb: 0xdd3322,
+        combLit: 0xff5f4a,
+        beak: 0xf0a020,
+        beakLit: 0xffc844,
+        leg: 0xe89020,
+        eye: 0x241426,
+        rim: 0xcc99ff,
+      };
+      // Tail — three plumes sweeping up and back, drawn first so the body overlaps their roots.
+      for (const [i, [tx, ty, tw, th, rot]] of ([
+        [9, 20, 17, 7, -0.85], [6, 25, 19, 7, -0.42], [7, 31, 16, 6, -0.05],
+      ] as const).entries()) {
+        gfx.fillStyle(i === 1 ? CH.lit : CH.shade, 1);
+        gfx.save();
+        gfx.translateCanvas(tx, ty);
+        gfx.rotateCanvas(rot);
+        gfx.fillEllipse(0, 0, tw, th);
+        gfx.lineStyle(1.4, CH.outline, 0.8);
+        gfx.strokeEllipse(0, 0, tw, th);
+        gfx.restore();
+      }
+      // Legs — scaly shanks with three toes each, behind the body.
+      gfx.lineStyle(2.6, CH.leg, 1);
+      for (const lx of [19, 26]) {
+        gfx.beginPath();
+        gfx.moveTo(lx, 36); gfx.lineTo(lx - 1, 43);
+        gfx.strokePath();
+        gfx.lineStyle(2, CH.leg, 1);
+        for (const toe of [-4, 0, 4]) {
+          gfx.beginPath();
+          gfx.moveTo(lx - 1, 43); gfx.lineTo(lx - 1 + toe, 46);
+          gfx.strokePath();
+        }
+        gfx.lineStyle(2.6, CH.leg, 1);
+      }
+      // Body — plump egg, shaded underneath and lit along the back.
+      gfx.fillStyle(CH.shade, 1);
+      gfx.fillEllipse(21, 30, 32, 26);
+      gfx.fillStyle(CH.body, 1);
+      gfx.fillEllipse(21, 28, 31, 24);
+      gfx.fillStyle(CH.lit, 0.85);
+      gfx.fillEllipse(21, 24, 24, 13);
+      gfx.lineStyle(1.6, CH.outline, 0.85);
+      gfx.strokeEllipse(21, 28, 31, 24);
+      // Wing — three overlapping feather scallops, the covert above them.
+      gfx.fillStyle(CH.lit, 1);
+      gfx.fillEllipse(20, 26, 18, 11);
+      gfx.lineStyle(1.4, CH.outline, 0.7);
+      gfx.strokeEllipse(20, 26, 18, 11);
+      gfx.fillStyle(CH.shade, 0.9);
+      for (const fx2 of [14, 19, 24]) {
+        gfx.fillCircle(fx2, 30, 4);
+      }
+      gfx.lineStyle(1.2, CH.outline, 0.6);
+      for (const fx2 of [14, 19, 24]) {
+        gfx.strokeCircle(fx2, 30, 4);
+      }
+      // Neck and head.
+      gfx.fillStyle(CH.body, 1);
+      gfx.fillEllipse(33, 20, 15, 17);
+      gfx.fillStyle(CH.lit, 0.9);
+      gfx.fillEllipse(33, 17, 11, 9);
+      gfx.lineStyle(1.5, CH.outline, 0.85);
+      gfx.strokeEllipse(33, 20, 15, 17);
+      // Comb — three fleshy points along the crown.
+      gfx.fillStyle(CH.comb, 1);
+      gfx.fillCircle(29, 11, 3.4);
+      gfx.fillCircle(33, 9, 3.8);
+      gfx.fillCircle(37, 11, 3.2);
+      gfx.fillStyle(CH.combLit, 0.75);
+      gfx.fillCircle(32, 8, 2);
+      // Wattle under the chin.
+      gfx.fillStyle(CH.comb, 1);
+      gfx.fillEllipse(38, 27, 5, 7);
+      // Beak — upper and lower mandible, slightly parted.
+      gfx.fillStyle(CH.beak, 1);
+      gfx.beginPath();
+      gfx.moveTo(39, 19); gfx.lineTo(47, 21); gfx.lineTo(39, 23);
+      gfx.closePath();
+      gfx.fillPath();
+      gfx.fillStyle(CH.beakLit, 1);
+      gfx.beginPath();
+      gfx.moveTo(39, 19); gfx.lineTo(46, 20.6); gfx.lineTo(39, 21);
+      gfx.closePath();
+      gfx.fillPath();
+      // Eye — dark bead with a glint.
+      gfx.fillStyle(CH.eye, 1);
+      gfx.fillCircle(36, 17, 2.6);
+      gfx.fillStyle(0xffffff, 0.9);
+      gfx.fillCircle(36.9, 16.1, 0.9);
+      // The spell still clinging to her.
+      gfx.lineStyle(1.6, CH.rim, 0.45);
+      gfx.strokeEllipse(21, 28, 33, 26);
+      gfx.strokeEllipse(33, 20, 17, 19);
+      gfx.generateTexture('fx-chicken', 48, 48);
+      gfx.clear();
+    }
 
     // proj-magic-missile — small purple streak with bright tip
     gfx.fillStyle(0x9944ff, 1);
@@ -3739,6 +3848,13 @@ export class BootScene extends Phaser.Scene {
     gfx.fillTriangle(33.4, 20.6, 36.6, 20.6, 35, 25);
     gfx.fillCircle(35.5, 30, 1.5);
     gfx.generateTexture('elem-gluttony', 48, 48);
+    gfx.clear();
+
+    // A deliberately empty 48×48 body, for the elements whose avatar paints its own torso.
+    // Magma's dragon and Cloth's bobbin both draw a whole character over the fighter sprite, so
+    // there is nothing for a sprite underneath to be — but `ELEMENT_TEXTURES` has to hand
+    // ArenaScene *something*, and what it used to hand them was `elem-fire`.
+    gfx.generateTexture('elem-bodyless', 48, 48);
     gfx.clear();
 
     // Soul — grave headstone: a weathered, chipped slab leaning slightly, with a carved cross

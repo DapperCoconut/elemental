@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import {
-  SoulFx, SOUL, SoulAvatar, SoulAmalgamBody, SPIRIT_TONES, TORMENT_TONES, ANGERED_TONES,
+  SoulFx, SOUL, SoulAvatar, SoulAmalgamBody, SPIRIT_TONES, TORMENT_TONES, ANGERED_TONES, ROT_TONES,
   AmalgamBodyState,
 } from '../../../elements/kits/SoulVisuals';
 
@@ -49,16 +49,31 @@ function amalgam(
   return a;
 }
 
-/** A lantern pool, painted the way the kit repaints its own. */
-function pool(ctx: PreviewCtx, o: { x: number; y: number; born: number }): void {
+/** A siphon cord between the caster and a moving anchor, painted the way the kit repaints its own. */
+function cord(
+  ctx: PreviewCtx,
+  o: { to: () => { x: number; y: number }; born: number; drain: boolean; until?: number },
+): void {
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(6));
+  ctx.onFrame((_dt, elapsed) => {
+    g.clear();
+    if (elapsed < o.born || (o.until !== undefined && elapsed > o.until)) return;
+    const p = o.to();
+    const dist = Phaser.Math.Distance.Between(ctx.cx, ctx.cy, p.x, p.y);
+    SoulFx.drawSiphon(g, ctx.tint, o.drain ? ROT_TONES : SPIRIT_TONES,
+      ctx.cx, ctx.cy, p.x, p.y, elapsed / 1000, o.drain,
+      Phaser.Math.Clamp(dist / 330, 0, 1));
+  });
+}
+
+/** A cloud of decay, painted the way the kit repaints its own. */
+function decay(ctx: PreviewCtx, o: { x: number; y: number; born: number }): void {
   const g = ctx.adopt(ctx.scene.add.graphics().setDepth(2));
   ctx.onFrame((_dt, elapsed) => {
     const age = elapsed - o.born;
     g.clear();
-    if (age < 0 || age > 2500) return;
-    const left = 2500 - age;
-    SoulFx.drawPuddle(g, ctx.tint, SPIRIT_TONES, o.x, o.y, 14, elapsed / 1000,
-      left < 500 ? left / 500 : 1);
+    if (age < 0 || age > 6000) return;
+    SoulFx.drawDecay(g, ctx.tint, o.x, o.y, 84, elapsed / 1000, 0.4 + (1 - age / 6000) * 0.6);
   });
 }
 
@@ -105,71 +120,173 @@ function corpseQueue(ctx: PreviewCtx, read: () => number): void {
 
 // ══ ABILITIES ═════════════════════════════════════════════════════════
 
-export const lanternLight: PreviewScript = {
-  duration: 5200,
-  caption: 'Click — pools that burn enemies 5 dmg/s and heal you and your Amalgams 3 HP/s',
+export const siphon: PreviewScript = {
+  duration: 6000,
+  caption: 'Click — three cords at once: 4 dmg/s out of anything hostile, 8 HP/s into your own',
   run(ctx) {
     const { fx, av } = stage(ctx);
-    const ally = amalgam(ctx, { x: ctx.cx + 70, y: ctx.cy + 40 });
-    // The spark trailed toward the cursor, dribbling pools the whole way.
+    const ally = amalgam(ctx, { x: ctx.cx + 90, y: ctx.cy + 60 });
+    const mark = { x: ctx.tx, y: ctx.ty };
     av.setHold('spray', ctx.aim);
-    for (let i = 0; i < 12; i++) {
-      ctx.at(200 + i * 240, () => {
-        const t = i / 11;
-        const px = ctx.cx + 40 + t * (ctx.tx - ctx.cx - 20);
-        const py = ctx.cy + Math.sin(t * 3) * 26;
-        pool(ctx, { x: px, y: py, born: 200 + i * 240 });
-        fx.lanternArc(ctx.cx + 20, ctx.cy, px, py, 6, SPIRIT_TONES);
-      });
-    }
-    // The two halves of the same pool, side by side.
-    for (let i = 1; i <= 4; i++) {
-      ctx.at(i * 1000, () => {
-        const hurt = ctx.adopt(ctx.scene.add.text(ctx.tx, ctx.ty - 24, '−5', {
-          fontSize: '11px', fontFamily: 'Arial', color: '#ff9c9c',
+
+    // Two drains onto the enemy and one mend onto the amalgam — the ceiling, split.
+    ctx.at(400, () => {
+      fx.muzzleWisp(ctx.cx, ctx.cy, ctx.aim, 0.9, 6, ROT_TONES);
+      fx.ring(mark.x, mark.y, 20, 6, ROT_TONES.glow, 320, 2.5, 6);
+      cord(ctx, { to: () => mark, born: 400, drain: true });
+    });
+    ctx.at(1000, () => {
+      fx.muzzleWisp(ctx.cx, ctx.cy, ctx.aim, 0.9, 6, ROT_TONES);
+      cord(ctx, { to: () => ({ x: mark.x, y: mark.y - 14 }), born: 1000, drain: true });
+    });
+    ctx.at(1600, () => {
+      fx.muzzleWisp(ctx.cx, ctx.cy, Math.atan2(ally.y - ctx.cy, ally.x - ctx.cx), 0.9, 6, SPIRIT_TONES);
+      fx.ring(ally.x, ally.y, 20, 6, SPIRIT_TONES.glow, 320, 2.5, 6);
+      cord(ctx, { to: () => ally, born: 1600, drain: false });
+    });
+
+    // The enemy drifting out to the leash, and the cords letting go when it gets there.
+    ctx.onFrame((dt, elapsed) => { if (elapsed > 3600) mark.x += 150 * (dt / 1000); });
+
+    // Half-second ticks on both halves of the ability.
+    for (let i = 1; i <= 6; i++) {
+      ctx.at(400 + i * 500, () => {
+        const drains = 400 + i * 500 >= 1000 ? 2 : 1;
+        const hurt = ctx.adopt(ctx.scene.add.text(mark.x, mark.y - 24, `−${2 * drains}`, {
+          fontSize: '11px', fontFamily: 'Arial', color: '#88ee99',
         }).setOrigin(0.5).setDepth(12));
         ctx.scene.tweens.add({ targets: hurt, y: hurt.y - 16, alpha: 0, duration: 800 });
-        const heal = ctx.adopt(ctx.scene.add.text(ally.x, ally.y - 26, '+3', {
+        if (400 + i * 500 < 1600) return;
+        const heal = ctx.adopt(ctx.scene.add.text(ally.x, ally.y - 26, '+4', {
           fontSize: '11px', fontFamily: 'Arial', color: '#66ff99',
         }).setOrigin(0.5).setDepth(12));
         ctx.scene.tweens.add({ targets: heal, y: heal.y - 16, alpha: 0, duration: 800 });
       });
     }
+
+    ctx.at(5000, () => {
+      fx.wisps((ctx.cx + mark.x) / 2, (ctx.cy + mark.y) / 2, 5, {
+        speed: 90, size: 2.6, life: 420, rise: -20, depth: 6, tones: ROT_TONES,
+      });
+      const t = ctx.adopt(ctx.scene.add.text(mark.x, mark.y - 30, 'SNAPPED — 330px', {
+        fontSize: '11px', fontFamily: 'Arial Black', color: '#9977bb',
+      }).setOrigin(0.5).setDepth(12));
+      ctx.scene.tweens.add({ targets: t, y: t.y - 12, alpha: 0, duration: 1400 });
+    });
   },
 };
 
-export const lanternLightUpgraded: PreviewScript = {
-  duration: 5000,
-  caption: 'Soul Lantern — a full-HP Amalgam banks the overflow as shield, to 200% total',
+export const siphonUpgraded: PreviewScript = {
+  duration: 7600,
+  scale: 0.9,
+  caption: 'Possession — 12s riding an Amalgam, your body open and untouchable, then a 30s recovery',
   run(ctx) {
     const { fx, av } = stage(ctx, { noDummy: true });
-    const ally = amalgam(ctx, { x: ctx.cx + 120, y: ctx.cy });
-    av.setHold('spray', ctx.aim);
-    // The bar: health full, and then a second, brighter layer stacking on top of it.
-    let shield = 0;
-    const bar = ctx.adopt(ctx.scene.add.graphics().setDepth(11));
-    ctx.onFrame(() => {
-      bar.clear();
-      bar.fillStyle(0x0b0d16, 0.9);
-      bar.fillRoundedRect(ally.x - 26, ally.y - 40, 52, 8, 4);
-      bar.fillStyle(0x44ff88, 1);
-      bar.fillRoundedRect(ally.x - 25, ally.y - 39, 50, 6, 3);
-      bar.fillStyle(ctx.tint(SOUL.lilac), 0.95);
-      bar.fillRoundedRect(ally.x - 25, ally.y - 39, 50 * shield, 6, 3);
+    const ally = amalgam(ctx, { x: ctx.cx + 130, y: ctx.cy + 20 });
+    const mark = { x: ctx.tx + 60, y: ctx.ty };
+
+    // Three mend cords onto the same body — that is the whole unlock condition.
+    [500, 1000, 1500].forEach((at, i) => ctx.at(at, () => {
+      fx.muzzleWisp(ctx.cx, ctx.cy, Math.atan2(ally.y - ctx.cy, ally.x - ctx.cx), 0.9, 6, SPIRIT_TONES);
+      cord(ctx, { to: () => ({ x: ally.x, y: ally.y - 12 + i * 12 }), born: at, drain: false, until: 2100 });
+      const t = ctx.adopt(ctx.scene.add.text(ally.x, ally.y - 34, `💜 ${i + 1}/3`, {
+        fontSize: '11px', fontFamily: 'Arial Black', color: '#cc99ff',
+      }).setOrigin(0.5).setDepth(12));
+      ctx.scene.tweens.add({ targets: t, y: t.y - 12, alpha: 0, duration: 900 });
+    }));
+
+    // The caster opens, and stays open, for the rest of the run.
+    let open = 0;
+    const flower = ctx.adopt(ctx.scene.add.graphics().setDepth(7));
+    ctx.onFrame((dt, elapsed) => {
+      flower.clear();
+      if (elapsed < 2000) return;
+      open = Math.min(1, open + dt / 420);
+      SoulFx.drawFlower(flower, ctx.tint, SPIRIT_TONES, ctx.cx, ctx.cy, 30, elapsed / 1000, open, 1);
     });
-    for (let i = 0; i < 10; i++) {
-      ctx.at(300 + i * 420, () => {
-        pool(ctx, { x: ally.x, y: ally.y, born: 300 + i * 420 });
-        fx.lanternArc(ctx.cx + 20, ctx.cy, ally.x, ally.y, 6, SPIRIT_TONES);
-        shield = Math.min(1, shield + 0.11);
-        fx.motes(ally.x, ally.y, 3, 22, 7, SPIRIT_TONES);
-      });
-    }
-    ctx.at(4600, () => {
-      const t = ctx.adopt(ctx.scene.add.text(ally.x, ally.y - 54, '🛡️ 200% TOTAL', {
-        fontSize: '11px', fontFamily: 'Arial Black', color: '#ccaaff',
+    ctx.at(2000, () => {
+      av.play('raise', undefined, 700);
+      fx.bloom(ctx.cx, ctx.cy, 54, 14, 6, SPIRIT_TONES);
+      fx.ring(ctx.cx, ctx.cy, 10, 110, SOUL.orchid, 620, 5, 6);
+      fx.soulRise(ctx.cx, ctx.cy, 90, 800, 7, SPIRIT_TONES);
+      fx.tether(ctx.cx, ctx.cy, ally.x, ally.y, 620, 7, SPIRIT_TONES);
+      fx.shriek(ally.x, ally.y, 110, 640, 8, SPIRIT_TONES);
+      const t = ctx.adopt(ctx.scene.add.text(ctx.cx, ctx.cy - 50, '🌸 POSSESSION — 12s', {
+        fontSize: '12px', fontFamily: 'Arial Black', color: '#cc99ff',
+      }).setOrigin(0.5).setDepth(12));
+      ctx.scene.tweens.add({ targets: t, y: t.y - 14, alpha: 0, duration: 1600 });
+    });
+
+    // The plate the kit draws under the corpse queue: what you are wearing, and the clock on it.
+    const plate = ctx.adopt(ctx.scene.add.graphics().setDepth(11));
+    const plateName = ctx.adopt(ctx.scene.add.text(ctx.cx, 24, '', {
+      fontSize: '11px', fontFamily: 'Arial Black', color: '#eeddff',
+    }).setOrigin(0.5).setDepth(12));
+    const plateKeys = ctx.adopt(ctx.scene.add.text(ctx.cx, 39, '', {
+      fontSize: '9px', fontFamily: 'Arial', color: '#9977bb',
+    }).setOrigin(0.5).setDepth(12));
+    ctx.onFrame((_dt, elapsed) => {
+      plate.clear();
+      if (elapsed < 2000) { plateName.setText(''); plateKeys.setText(''); return; }
+      const w = 190, h = 34, y = 31;
+      // 12 seconds compressed to the run's own remaining time, so the bar reads as a countdown.
+      const left = Phaser.Math.Clamp(1 - (elapsed - 2000) / 5400, 0, 1);
+      plate.fillStyle(0x0b0d16, 0.86);
+      plate.fillRoundedRect(ctx.cx - w / 2, y - h / 2, w, h, 6);
+      plate.lineStyle(1.4, ctx.tint(SOUL.orchid), 0.95);
+      plate.strokeRoundedRect(ctx.cx - w / 2, y - h / 2, w, h, 6);
+      plate.fillStyle(0x2a1230, 0.9);
+      plate.fillRoundedRect(ctx.cx - (w - 12) / 2, y + h / 2 - 9, w - 12, 4, 2);
+      plate.fillStyle(0x44ff88, 0.95);
+      plate.fillRoundedRect(ctx.cx - (w - 12) / 2, y + h / 2 - 9, w - 12, 4, 2);
+      plate.fillStyle(0x2a1230, 0.9);
+      plate.fillRoundedRect(ctx.cx - (w - 12) / 2, y + h / 2 - 4, w - 12, 3, 1.5);
+      plate.fillStyle(ctx.tint(left < 0.25 ? SOUL.blood : SOUL.orchid), 0.95);
+      plate.fillRoundedRect(ctx.cx - (w - 12) / 2, y + h / 2 - 4, (w - 12) * left, 3, 1.5);
+      plateName.setText('🌸 🧟 AMALGAM');
+      plateKeys.setText('WASD move · CLICK bite 8 · E LUNGE');
+    });
+
+    // WASD drives the amalgam onto the mark, and Click bites with it.
+    ctx.onFrame((dt, elapsed) => {
+      if (elapsed < 2400) return;
+      const ang = Math.atan2(mark.y - ally.y, mark.x - ally.x);
+      if (Phaser.Math.Distance.Between(ally.x, ally.y, mark.x, mark.y) > 46) {
+        ally.vx = Math.cos(ang) * 115; ally.vy = Math.sin(ang) * 115;
+        ally.x += ally.vx * (dt / 1000); ally.y += ally.vy * (dt / 1000);
+      } else { ally.vx = 0; ally.vy = 0; }
+    });
+    [4200, 4900, 5600].forEach((at) => ctx.at(at, () => {
+      const ang = Math.atan2(mark.y - ally.y, mark.x - ally.x);
+      fx.muzzleWisp(ally.x + Math.cos(ang) * 14, ally.y + Math.sin(ang) * 14, ang, 1, 7, SPIRIT_TONES);
+      const t = ctx.adopt(ctx.scene.add.text(mark.x, mark.y - 24, '−8', {
+        fontSize: '11px', fontFamily: 'Arial', color: '#ff9c9c',
+      }).setOrigin(0.5).setDepth(12));
+      ctx.scene.tweens.add({ targets: t, y: t.y - 16, alpha: 0, duration: 800 });
+    }));
+
+    // Everything aimed at the open body is simply gone.
+    [3200, 4600].forEach((at) => ctx.at(at, () => {
+      fx.flash(ctx.cx, ctx.cy, 16, 8, SPIRIT_TONES);
+      const t = ctx.adopt(ctx.scene.add.text(ctx.cx, ctx.cy - 34, 'UNTOUCHABLE', {
+        fontSize: '11px', fontFamily: 'Arial Black', color: '#eeddff',
+      }).setOrigin(0.5).setDepth(12));
+      ctx.scene.tweens.add({ targets: t, y: t.y - 12, alpha: 0, duration: 1200 });
+    }));
+
+    // And the clock running out puts you back whether the body survived or not.
+    ctx.at(6600, () => {
+      open = 0;
+      fx.wisps(ctx.cx, ctx.cy, 12, { speed: 120, size: 3, life: 640, rise: -50, depth: 7, tones: SPIRIT_TONES });
+      fx.ring(ctx.cx, ctx.cy, 90, 8, SOUL.orchid, 520, 4, 6);
+      const t = ctx.adopt(ctx.scene.add.text(ctx.cx, ctx.cy - 50, '🌸 POSSESSION SPENT', {
+        fontSize: '11px', fontFamily: 'Arial Black', color: '#9977bb',
       }).setOrigin(0.5).setDepth(12));
       ctx.scene.tweens.add({ targets: t, y: t.y - 12, alpha: 0, duration: 1400 });
+      const c = ctx.adopt(ctx.scene.add.text(ctx.cx, ctx.cy - 34, 'recovering — 30s', {
+        fontSize: '10px', fontFamily: 'Arial', color: '#775588',
+      }).setOrigin(0.5).setDepth(12));
+      ctx.scene.tweens.add({ targets: c, y: c.y - 10, alpha: 0, duration: 1400 });
     });
   },
 };
@@ -201,48 +318,70 @@ export const arise: PreviewScript = {
 };
 
 export const ariseUpgraded: PreviewScript = {
-  duration: 5200,
-  caption: 'Cruel Offering — cast beside a grave to enhance it: Angered Zombies at ×2 HP, ×1.25 speed',
+  duration: 6400,
+  scale: 0.9,
+  caption: 'Cruel Offering — everything you raise leaves rot where it falls: 6 dmg/s and a 30% slow, 6 HP/s to your own',
   run(ctx) {
     const { fx, av } = stage(ctx, { noDummy: true });
-    const gx = ctx.cx + 90, gy = ctx.cy - 10;
-    grave(ctx, { x: gx, y: gy, born: 200 });
-    // The 70px offering radius, which is what decides whether E feeds or spends.
-    const ring = ctx.adopt(ctx.scene.add.graphics().setDepth(2));
-    ctx.onFrame((_dt, elapsed) => {
-      ring.clear();
-      if (elapsed < 200) return;
-      ring.lineStyle(1.5, ctx.tint(SOUL.blood), 0.25 + 0.12 * Math.sin(elapsed / 260));
-      ring.strokeCircle(gx, gy, 70);
-    });
-    ctx.at(1000, () => {
-      av.play('raise', ctx.aim, 500);
-      fx.ring(gx, gy, 8, 70, SOUL.blood, 520, 4, 4);
-      fx.wisps(gx, gy, 8, { speed: 120, life: 620, depth: 6 });
-      const t = ctx.adopt(ctx.scene.add.text(gx, gy - 40, '🩸 ENHANCED', {
-        fontSize: '11px', fontFamily: 'Arial Black', color: '#ff2222',
+    const fallX = ctx.cx + 130, fallY = ctx.cy - 10;
+
+    // One of yours goes down, and the rot it leaves is the whole upgrade.
+    const dying = amalgam(ctx, { x: fallX, y: fallY });
+    let dead = false;
+    ctx.onFrame((_dt, elapsed) => { if (elapsed > 900) dead = true; void dead; });
+    ctx.at(900, () => {
+      av.play('raise', ctx.aim, 420);
+      dying.x = -999;
+      fx.wisps(fallX, fallY, 7, { speed: 70, size: 3.2, life: 700, rise: -30, depth: 6, tones: ROT_TONES });
+      fx.ring(fallX, fallY, 8, 84, SOUL.rot, 520, 3.5, 4);
+      decay(ctx, { x: fallX, y: fallY, born: 900 });
+      const t = ctx.adopt(ctx.scene.add.text(fallX, fallY - 30, '☠️ DECAY', {
+        fontSize: '11px', fontFamily: 'Arial Black', color: '#66cc55',
       }).setOrigin(0.5).setDepth(12));
-      ctx.scene.tweens.add({ targets: t, y: t.y - 12, alpha: 0, duration: 1600 });
+      ctx.scene.tweens.add({ targets: t, y: t.y - 12, alpha: 0, duration: 1400 });
     });
-    // And what the enhanced grave produces: red-eyed, twice the health.
-    [2000, 3600].forEach((at, i) => ctx.at(at, () => {
-      const x = gx + 40 + i * 30, y = gy + 26;
-      fx.soulRise(x, y, 50, 560, 5, ANGERED_TONES);
-      const a = amalgam(ctx, { x, y, born: at + 200 });
-      a.st.angered = true;
-      const aura = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
-      ctx.onFrame((_dt, elapsed) => {
-        aura.clear();
-        if (elapsed < at + 200) return;
-        SoulFx.drawAngeredAura(aura, ctx.tint, a.x, a.y, 24, elapsed / 1000);
+
+    // An enemy walks into it and is both burned and slowed while it stands there.
+    const foe = { x: fallX + 210, y: fallY + 10 };
+    const foeG = ctx.adopt(ctx.scene.add.graphics().setDepth(5));
+    ctx.onFrame((dt, elapsed) => {
+      foeG.clear();
+      if (elapsed < 900) return;
+      const inside = Phaser.Math.Distance.Between(foe.x, foe.y, fallX, fallY) <= 84;
+      foe.x -= 70 * (inside ? 0.7 : 1) * (dt / 1000);
+      foeG.fillStyle(0x99333a, 0.95);
+      foeG.fillCircle(foe.x, foe.y, 13);
+      foeG.fillStyle(0xffffff, 0.85);
+      foeG.fillCircle(foe.x - 4, foe.y - 3, 2.4);
+      foeG.fillCircle(foe.x + 4, foe.y - 3, 2.4);
+    });
+    let slowShown = false;
+    ctx.onFrame((_dt, elapsed) => {
+      if (slowShown || elapsed < 900) return;
+      if (Phaser.Math.Distance.Between(foe.x, foe.y, fallX, fallY) > 84) return;
+      slowShown = true;
+      const t = ctx.adopt(ctx.scene.add.text(foe.x, foe.y - 30, '−30% SPEED', {
+        fontSize: '11px', fontFamily: 'Arial Black', color: '#88ee99',
+      }).setOrigin(0.5).setDepth(12));
+      ctx.scene.tweens.add({ targets: t, y: t.y - 12, alpha: 0, duration: 1200 });
+    });
+
+    // And one of yours standing in the same rot is fed by it.
+    const ally = amalgam(ctx, { x: fallX - 40, y: fallY + 30 });
+    for (let i = 1; i <= 5; i++) {
+      ctx.at(900 + i * 1000, () => {
+        if (Phaser.Math.Distance.Between(foe.x, foe.y, fallX, fallY) <= 84) {
+          const hurt = ctx.adopt(ctx.scene.add.text(foe.x, foe.y - 22, '−6', {
+            fontSize: '11px', fontFamily: 'Arial', color: '#ff9c9c',
+          }).setOrigin(0.5).setDepth(12));
+          ctx.scene.tweens.add({ targets: hurt, y: hurt.y - 16, alpha: 0, duration: 800 });
+        }
+        const heal = ctx.adopt(ctx.scene.add.text(ally.x, ally.y - 26, '+6', {
+          fontSize: '11px', fontFamily: 'Arial', color: '#66ff99',
+        }).setOrigin(0.5).setDepth(12));
+        ctx.scene.tweens.add({ targets: heal, y: heal.y - 16, alpha: 0, duration: 800 });
       });
-      ctx.onFrame((dt, elapsed) => {
-        if (elapsed < at + 200) return;
-        // ×1.25 speed, so they visibly close faster than a plain shambler.
-        a.vx = -70 * 1.25; a.vy = 0;
-        a.x += a.vx * (dt / 1000) * 0.5;
-      });
-    }));
+    }
   },
 };
 
@@ -267,11 +406,9 @@ export const graveAbility: PreviewScript = {
         z.vx = Math.cos(ang) * 70; z.vy = Math.sin(ang) * 70;
         z.x += z.vx * (dt / 1000); z.y += z.vy * (dt / 1000);
       });
-      // The lantern lane it has to walk through to reach you.
-      for (let p = 0; p < 4; p++) {
-        ctx.at(p * 320, () => pool(ctx, { x: gx - 30 - p * 26, y: gy + 16 + p * 4, born: at + p * 320 }));
-      }
-      ctx.at(1700, () => {
+      // The cord it is drained dry on, on the way in.
+      cord(ctx, { to: () => z, born: at + 300, drain: true, until: at + 1700 });
+      ctx.at(at + 1700, () => {
         dead = true;
         queued = Math.min(5, queued + 1);
         fx.wispBloom(z.x, z.y, 36, 520, 6, SPIRIT_TONES);
@@ -284,23 +421,62 @@ export const graveAbility: PreviewScript = {
 };
 
 export const graveUpgraded: PreviewScript = {
-  duration: 5600,
+  duration: 7200,
   scale: 0.9,
-  caption: 'Restless Ground — 35% chance of an Invasion variant: kill it, raise it, keep its abilities',
+  caption: 'Restless Ground — always a variant, and R beside your own plot builds it up to a tier 3 graveyard',
   run(ctx) {
     const { fx, av } = stage(ctx, { noDummy: true });
     const gx = ctx.cx + 140, gy = ctx.cy - 20;
     ctx.at(200, () => { av.play('slam', ctx.aim); grave(ctx, { x: gx, y: gy, born: 200 }); });
-    const names = ['⚡ SPEEDSTER', '🛡️ TANK', '💥 BLASTER'];
-    const cols = ['#ffee44', '#88aacc', '#ff6622'];
-    names.forEach((n, i) => ctx.at(900 + i * 1400, () => {
-      const x = gx - 40 - i * 40, y = gy + 30 + (i % 2 ? 20 : -14);
-      fx.soulRise(x, y, 46, 520, 5, SPIRIT_TONES);
-      amalgam(ctx, { x, y, size: 16 + i * 2, born: 900 + i * 1400 });
-      const t = ctx.adopt(ctx.scene.add.text(x, y - 32, n, {
+
+    // The 90px build radius — what decides whether R plants a stone or raises the plot.
+    let tier = 1;
+    const ring = ctx.adopt(ctx.scene.add.graphics().setDepth(2));
+    ctx.onFrame((_dt, elapsed) => {
+      ring.clear();
+      if (elapsed < 200) return;
+      const col = tier >= 3 ? SOUL.blood : tier === 2 ? SOUL.cinder : SOUL.orchid;
+      ring.lineStyle(1.5, ctx.tint(col), 0.25 + 0.12 * Math.sin(elapsed / 260));
+      ring.strokeCircle(gx, gy, 90);
+      SoulFx.drawPuddle(ring, ctx.tint, tier >= 3 ? ANGERED_TONES : SPIRIT_TONES,
+        gx, gy + 20, 18 * (1 + (tier - 1) * 0.35), elapsed / 1000, 0.6);
+    });
+
+    // Two more presses, two more tiers.
+    [1100, 2400].forEach((at) => ctx.at(at, () => {
+      tier += 1;
+      const tones = tier >= 3 ? ANGERED_TONES : SPIRIT_TONES;
+      av.play('slam', ctx.aim);
+      fx.bloom(gx, gy, 30 + tier * 6, 10, 4, tones);
+      fx.ring(gx, gy, 8, 46 + tier * 12, tones.glow, 460, 4, 5);
+      fx.wisps(gx, gy, 8, { speed: 90, size: 3, life: 620, rise: -44, depth: 6, tones });
+      const t = ctx.adopt(ctx.scene.add.text(gx, gy - 42, `🪦 GRAVEYARD — TIER ${tier}`, {
+        fontSize: '11px', fontFamily: 'Arial Black', color: tier >= 3 ? '#ff3333' : '#ccaaff',
+      }).setOrigin(0.5).setDepth(12));
+      ctx.scene.tweens.add({ targets: t, y: t.y - 12, alpha: 0, duration: 1600 });
+    }));
+
+    // What each tier raises — and the tier 3 one comes up Angered as well as branded.
+    const names = ['⚡ TIER 1 VARIANT', '🛡️ TIER 2 VARIANT', '🩸 TIER 3 — ANGERED'];
+    const cols = ['#ccaaff', '#ffaa55', '#ff3333'];
+    [700, 1900, 3300].forEach((at, i) => ctx.at(at, () => {
+      const x = gx - 50 - i * 44, y = gy + 34 + (i % 2 ? 22 : -16);
+      const angered = i === 2;
+      fx.soulRise(x, y, 46 + i * 6, 520, 5, angered ? ANGERED_TONES : SPIRIT_TONES);
+      const a = amalgam(ctx, { x, y, size: 15 + i * 3, born: at });
+      a.st.angered = angered;
+      if (angered) {
+        const aura = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+        ctx.onFrame((_dt, elapsed) => {
+          aura.clear();
+          if (elapsed < at) return;
+          SoulFx.drawAngeredAura(aura, ctx.tint, a.x, a.y, 26, elapsed / 1000);
+        });
+      }
+      const t = ctx.adopt(ctx.scene.add.text(x, y - 34, names[i], {
         fontSize: '10px', fontFamily: 'Arial Black', color: cols[i],
       }).setOrigin(0.5).setDepth(12));
-      ctx.scene.tweens.add({ targets: t, y: t.y - 10, alpha: 0, duration: 2200 });
+      ctx.scene.tweens.add({ targets: t, y: t.y - 10, alpha: 0, duration: 2400 });
     }));
   },
 };
@@ -481,6 +657,77 @@ export const hellsTormentUpgraded: PreviewScript = {
 };
 
 // ══ PASSIVES ══════════════════════════════════════════════════════════
+
+export const passiveThreeBodies: PreviewScript = {
+  duration: 6600,
+  scale: 0.9,
+  caption: 'Passive — 3 bodies a side, grave zombies and Amalgams sharing the ceiling',
+  run(ctx) {
+    const { fx, av } = stage(ctx, { noDummy: true });
+    const gx = ctx.cx + 170, gy = ctx.cy - 30;
+    grave(ctx, { x: gx, y: gy, born: 200 });
+
+    // The count beside the queue, red at the ceiling — the same readout the HUD draws.
+    const live: { a: PreviewAmalgam; dead: boolean }[] = [];
+    const count = ctx.adopt(ctx.scene.add.text(ctx.cx, 24, '', {
+      fontSize: '12px', fontFamily: 'Arial Black', color: '#9977bb',
+    }).setOrigin(0.5).setDepth(12));
+    const alive = (): number => live.filter((e) => !e.dead).length;
+    ctx.onFrame(() => {
+      count.setText(`🧟 ${alive()}/3`).setColor(alive() >= 3 ? '#ff7777' : '#9977bb');
+    });
+
+    // Two zombies out of the plot, then one Amalgam raised — that is the ceiling.
+    const raise = (at: number, x: number, y: number, tones = SPIRIT_TONES): void => ctx.at(at, () => {
+      fx.soulRise(x, y, 46, 520, 5, tones);
+      const a = amalgam(ctx, { x, y, size: 15, born: at });
+      const e = { a, dead: false };
+      live.push(e);
+      ctx.onFrame((dt, elapsed) => {
+        if (elapsed < at || e.dead) return;
+        const ang = Math.atan2(ctx.cy - a.y, ctx.cx - a.x);
+        a.vx = Math.cos(ang) * 60; a.vy = Math.sin(ang) * 60;
+        a.x += a.vx * (dt / 1000); a.y += a.vy * (dt / 1000);
+      });
+    });
+    raise(600, gx - 10, gy + 20);
+    raise(1600, gx + 10, gy + 30);
+    ctx.at(2400, () => { av.play('raise', ctx.aim, 500); });
+    raise(2600, ctx.cx + 80, ctx.cy + 50);
+
+    // A fourth press at the cap is simply refused, and the corpse stays where it was.
+    ctx.at(3400, () => {
+      av.play('raise', ctx.aim, 420);
+      const t = ctx.adopt(ctx.scene.add.text(ctx.cx, ctx.cy - 44, '🪦 3 BODIES ALREADY', {
+        fontSize: '11px', fontFamily: 'Arial Black', color: '#775588',
+      }).setOrigin(0.5).setDepth(12));
+      ctx.scene.tweens.add({ targets: t, y: t.y - 12, alpha: 0, duration: 1600 });
+    });
+    ctx.at(4000, () => {
+      const t = ctx.adopt(ctx.scene.add.text(ctx.cx, ctx.cy - 60, 'the corpse is not spent', {
+        fontSize: '10px', fontFamily: 'Arial', color: '#9977bb',
+      }).setOrigin(0.5).setDepth(12));
+      ctx.scene.tweens.add({ targets: t, y: t.y - 10, alpha: 0, duration: 1600 });
+    });
+
+    // Draining one open makes the room — which is the whole point of the shared ceiling.
+    ctx.at(4600, () => {
+      const e = live[0];
+      cord(ctx, { to: () => e.a, born: 4600, drain: true, until: 5400 });
+    });
+    ctx.at(5400, () => {
+      const e = live[0];
+      e.dead = true;
+      fx.wispBloom(e.a.x, e.a.y, 36, 520, 6, SPIRIT_TONES);
+      fx.wisps(e.a.x, e.a.y, 6, { speed: 110, life: 620, depth: 6 });
+      e.a.x = -999;
+      const t = ctx.adopt(ctx.scene.add.text(ctx.cx, ctx.cy - 44, 'A SLOT OPENS', {
+        fontSize: '11px', fontFamily: 'Arial Black', color: '#a6f0c2',
+      }).setOrigin(0.5).setDepth(12));
+      ctx.scene.tweens.add({ targets: t, y: t.y - 12, alpha: 0, duration: 1400 });
+    });
+  },
+};
 
 export const passiveCorpseQueue: PreviewScript = {
   duration: 5600,
