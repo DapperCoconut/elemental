@@ -255,6 +255,19 @@ export const DIVINE_PERKS: PerkDef[] = [
     elementId: 'metal',
   },
   {
+    // The last cell in the 5×5 grid. Life and sound are both things Silence has spent its
+    // whole kit refusing, so the perk is built as a trade rather than a gift: the watchers
+    // get a voice, and the voice is what gives you away.
+    id: 'hymn',
+    name: 'Hymn',
+    emoji: '🎼',
+    color: 0x88ddaa,
+    description: 'Your watchers learn to breathe. Each one hums a ring that drags anything inside it slowly toward the eye, and six seconds of an enemy held in a hum matures that watcher on the spot. But the song carries: while an enemy stands in one of your hums you bleed stealth instead of banking it.',
+    ingredients: ['life', 'sound'],
+    tier: 'divine',
+    elementId: 'silence',
+  },
+  {
     id: 'call-of-the-void',
     name: 'Call of the Void',
     emoji: '🕳️',

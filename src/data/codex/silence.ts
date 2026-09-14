@@ -254,6 +254,26 @@ const silence: ElementCodex = {
   },
 
   perks: {
+    hymn: {
+      basics:
+        'Every watcher you own sings a 140px ring. Anything hostile inside one is dragged toward the '
+        + 'eye at 44 px/s — a steering nudge, not a grab, and an unstoppable fighter ignores it '
+        + 'outright. A watcher that holds an enemy inside its hum for a cumulative 6 seconds matures on '
+        + 'the spot instead of waiting out its 35. The price is the noise: while any enemy stands in any '
+        + 'of your hums your stealth drains at the normal 10 a second even if you are stood in the fog.',
+      cast: 'Passive. Every watcher hums from the moment it is planted.',
+      effects: [
+        { tag: 'area', label: 'The hum', detail: '140px ring around each watcher you own.' },
+        { tag: 'utility', label: 'The pull', detail: 'Anything hostile inside is dragged toward the eye at 44 px/s. Unstoppable fighters are immune.' },
+        { tag: 'buff', label: 'Early ripening', detail: '6 cumulative seconds of an enemy held inside a hum matures that watcher instantly, against its normal 35 seconds.' },
+        { tag: 'cost', label: 'The song carries', detail: 'While any enemy stands in any of your hums, stealth drains at 10 a second instead of banking — the fog stops paying.' },
+      ],
+      notes: [
+        'Ritual on a matured watcher makes a Grabber, so this perk is really a Grabber accelerator: it turns 35 seconds of waiting into 6 seconds of pinning someone near an eye.',
+        'Three watchers is three overlapping rings, and the drain does not stack — one enemy in one hum costs exactly as much as one in all three.',
+        'It fights the base kit on purpose. Silence banks stealth by hiding; this perk pays for its tempo by refusing to let you bank while the plan is working.',
+      ],
+    },
     torture: {
       basics:
         'The Ritual beam racks its victim: 4 damage a second for 6 seconds — 24 in all, against the '

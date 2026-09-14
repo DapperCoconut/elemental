@@ -31,6 +31,7 @@ const STATUS_SOUNDS: Record<string, string> = {
   oily: 'status-debuff', fragile: 'status-debuff', weakened: 'status-debuff',
   shrunk: 'status-debuff', grown: 'status-buff',
   invincible: 'status-invincible', levitating: 'status-invincible',
+  'in-menu': 'shield-up',
   unbreakable: 'status-invincible', unstoppable: 'status-invincible',
   'shield-charge': 'shield-up', 'shield-hp': 'shield-up', absorbing: 'shield-up',
   armored: 'shield-up', clotted: 'shield-up', 'weak-hp': 'shield-up',

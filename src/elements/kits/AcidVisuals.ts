@@ -581,6 +581,72 @@ export class AcidFx extends FxBase {
   }
 
   /**
+   * Electrolysis (perk): the discharge between two pools. Built as three passes over one
+   * deterministic jag — a wide caustic halo, the green body, then a near-white core — so the
+   * bolt reads as something with heat in the middle rather than a drawn polyline. The jag is
+   * re-derived from `t` every frame, which is what makes it crackle instead of sit still.
+   */
+  static drawElectroArc(
+    g: Phaser.GameObjects.Graphics, tint: AcidColorFn,
+    x1: number, y1: number, x2: number, y2: number,
+    t: number, seed: number, surge: boolean, alpha: number,
+  ): void {
+    const dx = x2 - x1, dy = y2 - y1;
+    const len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len, uy = dy / len;
+    // Perpendicular, for the sideways kick at each joint.
+    const px = -uy, py = ux;
+    const segs = Math.max(6, Math.round(len / 26));
+    const swing = (surge ? 16 : 10);
+
+    // One jag, sampled once and reused by all three passes so they stay registered.
+    const pts: { x: number; y: number }[] = [];
+    for (let i = 0; i <= segs; i++) {
+      const f = i / segs;
+      // Pinned at both ends — the current is leaving one pool and arriving at the other.
+      const taper = Math.sin(f * Math.PI);
+      const n = Math.sin(f * 11 + t * 27 + seed) * 0.6 + Math.sin(f * 23 - t * 41 + seed * 2.3) * 0.4;
+      const off = n * swing * taper;
+      pts.push({ x: x1 + ux * len * f + px * off, y: y1 + uy * len * f + py * off });
+    }
+
+    const trace = (width: number, color: number, a: number) => {
+      g.lineStyle(width, tint(color), a * alpha);
+      g.beginPath();
+      g.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+      g.strokePath();
+    };
+    trace(surge ? 11 : 7, ACID.moss, 0.28);
+    trace(surge ? 6 : 4, surge ? ACID.caustic : ACID.neon, 0.75);
+    trace(surge ? 2.6 : 1.6, ACID.glow, 0.95);
+
+    // Forks: short dead-end branches off the joints, which is most of what sells a bolt.
+    const forks = surge ? 5 : 3;
+    for (let i = 0; i < forks; i++) {
+      const idx = 1 + Math.floor(((Math.sin(seed * 3.1 + i * 2.7 + Math.floor(t * 30) * 0.37) + 1) / 2) * (segs - 2));
+      const from = pts[Math.min(idx, pts.length - 2)];
+      const ang = Math.atan2(uy, ux) + (i % 2 === 0 ? 1 : -1) * (0.7 + (i * 0.21) % 0.6);
+      const fl = (surge ? 26 : 17) * (0.55 + ((i * 0.37) % 0.45));
+      const mid = { x: from.x + Math.cos(ang) * fl * 0.55, y: from.y + Math.sin(ang) * fl * 0.55 };
+      g.lineStyle(surge ? 2.4 : 1.5, tint(ACID.caustic), 0.6 * alpha);
+      g.beginPath();
+      g.moveTo(from.x, from.y);
+      g.lineTo(mid.x + px * fl * 0.18, mid.y + py * fl * 0.18);
+      g.lineTo(from.x + Math.cos(ang) * fl, from.y + Math.sin(ang) * fl);
+      g.strokePath();
+    }
+
+    // Both terminals boil where the current is being torn out of the liquid.
+    for (const e of [{ x: x1, y: y1 }, { x: x2, y: y2 }]) {
+      g.fillStyle(tint(ACID.glow), 0.5 * alpha);
+      g.fillCircle(e.x, e.y, surge ? 9 : 6);
+      g.fillStyle(tint(ACID.white), 0.75 * alpha);
+      g.fillCircle(e.x, e.y, surge ? 4 : 2.6);
+    }
+  }
+
+  /**
    * A melt puddle: a pool dyed with the melting victim's own element colour, with the buffs it
    * carries glinting on its surface. Reads as "something of theirs is lying here", which is
    * exactly what it is.

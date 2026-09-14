@@ -7,6 +7,15 @@ import {
   NPC_TONES, STING_TONES, VILE_TONES,
 } from './AcidVisuals';
 
+/** Distance from a point to a line segment — the arc's hit lane is a capsule around one. */
+function distToSegment(px: number, py: number, x1: number, y1: number, x2: number, y2: number): number {
+  const dx = x2 - x1, dy = y2 - y1;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq < 1) return Phaser.Math.Distance.Between(px, py, x1, y1);
+  const t = Phaser.Math.Clamp(((px - x1) * dx + (py - y1) * dy) / lenSq, 0, 1);
+  return Phaser.Math.Distance.Between(px, py, x1 + dx * t, y1 + dy * t);
+}
+
 // ── Interfaces ────────────────────────────────────────────────────────────
 
 /**
@@ -43,6 +52,30 @@ interface MurkToad {
   restUntil: number;
   facing: number;
 }
+
+/**
+ * Electrolysis (perk): one discharge between two pools. Held as data and repainted from the
+ * clock like everything else acid puts on the floor — the bolt has to re-jag every frame or it
+ * reads as a drawn line rather than a current.
+ */
+interface ElectroArc {
+  x1: number; y1: number;
+  x2: number; y2: number;
+  bornAt: number;
+  surge: boolean;
+  seed: number;
+}
+
+const ELECTRO_INTERVAL_MS = 1400;
+const ELECTRO_MAX_SPAN = 220;
+const ELECTRO_LANE_HALF_W = 20;
+const ELECTRO_DAMAGE = 12;
+const ELECTRO_SURGE_CHANCE = 0.2;
+const ELECTRO_SURGE_MULT = 3;
+const ELECTRO_ARC_MS = 260;
+/** The jolt: a hard, short slow rather than a stun, so it never fully takes control away. */
+const ELECTRO_JOLT_MS = 450;
+const ELECTRO_JOLT_SPEED_MULT = 0.45;
 
 const TOAD_HOP_MS = 480;
 const TOAD_REST_MS = 340;
@@ -270,6 +303,11 @@ export class SlimeKit {
   private burrowed = false;
   /** Murk (divine perk): the toad left on the surface while burrowed. Null whenever you aren't. */
   private murkToad: MurkToad | null = null;
+
+  /** Electrolysis (perk): live discharges, the next-arc clock, and who is currently jolted. */
+  private electroArcs: ElectroArc[] = [];
+  private electroNextAt = 0;
+  private electroJolted = new Map<Fighter, number>();
   private purgeHpStripped: WeakSet<Fighter> = new WeakSet();
 
   private acidRainActiveUntil = 0;
@@ -358,6 +396,11 @@ export class SlimeKit {
       this.arena.player.setAlpha(1);
     }
     this.purgeHpStripped = new WeakSet();
+    // Electrolysis: hand every jolted body its speed back before dropping the ledger.
+    for (const f of this.electroJolted.keys()) if (f.active) f.walkSpeedMult = 1;
+    this.electroArcs = [];
+    this.electroNextAt = 0;
+    this.electroJolted = new Map();
     this.acidRainActiveUntil = 0;
     this.acidRainTickAccum = 0;
     this.acidRainDropAccum = 0;
@@ -454,6 +497,97 @@ export class SlimeKit {
   }
 
   /** Mastery — count an enemy killed by acid ("melt"), once per target. */
+  // ── Electrolysis (abstract-triple perk) ───────────────────────────────
+
+  /**
+   * The pool field is the circuit. Every beat one random pair close enough to conduct shorts
+   * across the gap between them — random rather than nearest, so a wide field keeps throwing
+   * current somewhere new instead of settling on its two tightest pools. The surge roll is
+   * what fate is paying for.
+   */
+  private updateElectrolysis(time: number): void {
+    for (let i = this.electroArcs.length - 1; i >= 0; i--) {
+      if (time - this.electroArcs[i].bornAt >= ELECTRO_ARC_MS) this.electroArcs.splice(i, 1);
+    }
+
+    // Jolts are re-applied every frame and written back on lapse — walkSpeedMult has no
+    // stacking discipline of its own, so the ledger is the only thing keeping this honest.
+    for (const [f, until] of this.electroJolted) {
+      if (!f.active || time >= until) {
+        if (f.active) f.walkSpeedMult = 1;
+        this.electroJolted.delete(f);
+      } else {
+        f.walkSpeedMult = Math.min(f.walkSpeedMult, ELECTRO_JOLT_SPEED_MULT);
+      }
+    }
+
+    if (!this.arena.hasPerk('player', 'electrolysis')) return;
+    // Nothing to conduct through yet: hold the clock so the first pair arcs immediately.
+    if (this.acidPools.length < 2) { this.electroNextAt = time; return; }
+    if (time < this.electroNextAt) return;
+    this.electroNextAt = time + ELECTRO_INTERVAL_MS;
+
+    const pair = this.pickConductingPair(null);
+    if (!pair) return;
+    const surge = Math.random() < ELECTRO_SURGE_CHANCE;
+    this.fireElectroArc(pair[0], pair[1], time, surge);
+
+    // A surge does not stop at the far pool — it looks for somewhere else to go.
+    if (surge) {
+      const onward = this.pickConductingPair(pair[1], pair[0]);
+      if (onward) this.fireElectroArc(onward[0], onward[1], time, true);
+    }
+  }
+
+  /**
+   * A random pool pair within conducting range. `from` fixes one end (the surge's chain step)
+   * and `avoid` keeps that chain from bouncing straight back where it came from.
+   */
+  private pickConductingPair(from: AcidPool | null, avoid?: AcidPool): [AcidPool, AcidPool] | null {
+    const options: [AcidPool, AcidPool][] = [];
+    for (const a of (from ? [from] : this.acidPools)) {
+      for (const b of this.acidPools) {
+        if (b === a || b === avoid) continue;
+        const d = Phaser.Math.Distance.Between(a.x, a.y, b.x, b.y);
+        if (d > ELECTRO_MAX_SPAN || d < 1) continue;
+        options.push([a, b]);
+      }
+    }
+    if (options.length === 0) return null;
+    return options[Phaser.Math.Between(0, options.length - 1)];
+  }
+
+  private fireElectroArc(a: AcidPool, b: AcidPool, time: number, surge: boolean): void {
+    this.electroArcs.push({
+      x1: a.x, y1: a.y, x2: b.x, y2: b.y,
+      bornAt: time, surge, seed: Math.random() * Math.PI * 2,
+    });
+    const dmg = ELECTRO_DAMAGE * (surge ? ELECTRO_SURGE_MULT : 1);
+    let hit = false;
+    for (const t of this.arena.enemies) {
+      if (!t.active || t.hp <= 0) continue;
+      if (distToSegment(t.x, t.y, a.x, a.y, b.x, b.y) > ELECTRO_LANE_HALF_W) continue;
+      t.takeDamage(dmg, { source: a, sourceX: a.x, sourceY: a.y });
+      this.electroJolted.set(t, time + ELECTRO_JOLT_MS);
+      this.arena.spawnHitFlash(t.x, t.y, surge ? ACID.glow : ACID.caustic);
+      this.noteAcidHit(t);
+      // Current going through a body throws the liquid off it.
+      this.pfx.fizz(t.x, t.y, surge ? 8 : 5, 26, 8, VILE_TONES);
+      this.pfx.droplets(t.x, t.y, surge ? 6 : 3, {
+        speed: 130, size: 2.6, life: 380, depth: 8, tones: VILE_TONES,
+      });
+      hit = true;
+    }
+    // Both terminals boil whether or not the line found anybody.
+    this.pfx.fizz(a.x, a.y, surge ? 7 : 4, a.radius * 0.7, 5, VILE_TONES);
+    this.pfx.fizz(b.x, b.y, surge ? 7 : 4, b.radius * 0.7, 5, VILE_TONES);
+    if (surge) {
+      this.arena.showFloatingText((a.x + b.x) / 2, (a.y + b.y) / 2 - 26, '⚡ SURGE', '#ccff88');
+    } else if (hit) {
+      this.arena.showFloatingText((a.x + b.x) / 2, (a.y + b.y) / 2 - 26, '⚡ ARC', '#aaff44');
+    }
+  }
+
   private noteAcidHit(t: Fighter): void {
     if (t.hp <= 0 && !this.meltKillCounted.has(t)) {
       this.meltKillCounted.add(t);
@@ -883,6 +1017,10 @@ export class SlimeKit {
       }
     }
 
+    // Electrolysis: run before the burrow check, so a jolt landing this frame is already on
+    // the books when anything downstream reads walkSpeedMult.
+    this.updateElectrolysis(time);
+
     // Murk: the toad hops on its own clock, before the auto-surface check below — the pool it
     // just dribbled can be the one that keeps a burrowed player under.
     this.updateMurkToad(time);
@@ -1128,6 +1266,11 @@ export class SlimeKit {
     }
     for (const mp of this.meltPuddles) {
       AcidFx.drawMeltPuddle(g, this.pcol, mp.x, mp.y, mp.radius, mp.color, t, mp.seed, mp.buffs.length);
+    }
+    // Over the pools it is jumping between, under the toad.
+    for (const arc of this.electroArcs) {
+      const life = Phaser.Math.Clamp(1 - (time - arc.bornAt) / ELECTRO_ARC_MS, 0, 1);
+      AcidFx.drawElectroArc(g, this.pcol, arc.x1, arc.y1, arc.x2, arc.y2, t, arc.seed, arc.surge, life);
     }
     // Above its own pools, so the toad never disappears into the one it just made.
     this.drawMurkToad(g, time);

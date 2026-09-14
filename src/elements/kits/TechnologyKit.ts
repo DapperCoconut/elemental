@@ -507,7 +507,8 @@ export class TechnologyKit {
   // ── Public accessors ──────────────────────────────────────────────────
 
   isPlayerSheltered(): boolean {
-    if (this.browserOpen) return true;
+    // The browser window is deliberately NOT shelter any more: browsing is a menu, so the
+    // Fighter menu guard cuts hits to 5% instead of the ad shelter hiding you outright.
     return this.ads.some((ad) => ad.owner === 'player' && this.rectContains(ad, this.arena.player.x, this.arena.player.y));
   }
 
@@ -2325,6 +2326,9 @@ export class TechnologyKit {
 
   private updateBrowser(time: number, delta: number): void {
     void time;
+    // The browser window is a menu: while it is open, incoming damage lands at 5%
+    // (Fighter.menuGuards) — it no longer counts as ad shelter.
+    this.arena.player.setMenuGuard('tech-browser', this.browserOpen);
     if (!this.browserOpen) return;
     if (this.browserFactory) {
       this.browserCoinAccum += delta;
@@ -2373,9 +2377,10 @@ export class TechnologyKit {
     }
 
     const fighter = owner === 'player' ? this.arena.player : this.arena.npc;
-    fighter.isInvincible = true;
+    // The console is a menu, not a bunker: hits land at 5% for the 8 seconds of typing
+    // (Fighter.menuGuards) instead of the old outright invincibility. Cleared in closeAdmin.
+    fighter.setMenuGuard('tech-admin', true);
     fighter.applyDisarm(ADMIN_WINDOW_MS);
-    this.arena.scene.time.delayedCall(ADMIN_WINDOW_MS, () => { if (fighter.active) fighter.isInvincible = false; });
 
     const { width: SW, height: SH } = this.arena.scene.scale;
     st.box = this.arena.scene.add.rectangle(SW / 2, SH / 2, SW, SH, 0x220011, 0.85).setStrokeStyle(2, 0xff4444).setDepth(25).setScrollFactor(0);
@@ -2404,6 +2409,7 @@ export class TechnologyKit {
   private closeAdmin(owner: Owner): void {
     const st = this.admin[owner];
     st.active = false;
+    (owner === 'player' ? this.arena.player : this.arena.npc).setMenuGuard('tech-admin', false);
     if (st.keyListener) { window.removeEventListener('keydown', st.keyListener); st.keyListener = null; }
     st.box?.destroy(); st.box = null;
     st.text?.destroy(); st.text = null;

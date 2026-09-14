@@ -86,9 +86,9 @@ const growth: ElementCodex = {
 
     'growth-evolve': {
       basics:
-        'Opens the upgrade tree, and opening it turns you grey and completely invincible for up to 5 '
-        + 'seconds, ending early if you close it — with 20 seconds between protected windows, though you '
-        + 'may reopen unprotected any time. The tree is 3 paths of 4 tiers, each buyable to level 3 at 1, '
+        'Opens the upgrade tree. While it is open you are in a menu, and the menu rule applies: every '
+        + 'hit that reaches you lands at 5% of its damage instead of being blocked — browsing is cheap, '
+        + 'not free, and it never runs out. The tree is 3 paths of 4 tiers, each buyable to level 3 at 1, '
         + '2 and 3 DNA. Offensive: Teeth +3 click damage a tier, Viral Spikes +2 virus and floor-virus '
         + 'damage, More Teeth +4 click damage, Spiked Spores returning 2 damage a tier for every 20 your '
         + 'spores soak. Defensive: Thick Flesh 10% resistance a tier, Digestive System 2 HP a tier per 20 '
@@ -97,10 +97,9 @@ const growth: ElementCodex = {
         + '−15% click cooldown, System Efficiency −10% on all cooldowns, Enhanced Brain −5% DNA '
         + 'threshold, Fast Evolution refunding 50/75/100% on right-click sales and knocking 1 DNA off row '
         + '4–5 costs.',
-      cast: 'E toggles the tree open and shut. The key itself has only a 0.2s cooldown; the protection it grants does not.',
+      cast: 'E toggles the tree open and shut, with only a 0.2s cooldown on the key.',
       effects: [
-        { tag: 'shield', label: 'Reading time', detail: 'Opening the tree turns you grey and completely invincible for up to 5s, ending early if you close it.' },
-        { tag: 'cost', label: 'Protection cooldown', detail: '20s between invincibility windows. Opening the tree again inside that is legal — you simply do it unprotected.' },
+        { tag: 'shield', label: 'Reading time', detail: 'While the tree is open you count as in a menu: incoming damage lands at 5% instead of being blocked. No duration cap, no cooldown — but the chip damage never stops.' },
         { tag: 'utility', label: 'The tree', detail: '3 paths (Offensive, Defensive, Efficiency) × 4 tiers, each buyable to level 3. 1 DNA for the first level, 2 for the second, 3 for the third.' },
         { tag: 'buff', label: 'Offensive path', detail: 'Teeth +3 click damage/tier; Viral Spikes +2 virus and +2 floor-virus damage/tier; More Teeth +4 click damage/tier; Spiked Spores returns 2 damage/tier for every 20 your spores soak.' },
         { tag: 'shield', label: 'Defensive path', detail: 'Thick Flesh 10% damage resistance/tier; Digestive System heals 2 HP/tier per 20 click damage dealt; Gut Bacteria +1 spore/tier and +5 max HP/s growth/tier; Spiked Shell 5 contact damage/tier every second.' },

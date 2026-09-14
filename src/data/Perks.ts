@@ -99,11 +99,14 @@ export const ALL_PERKS: ElementPerks[] = [
     elementId: 'creation',
     perks: [
       {
+        // Automaton was written for Maze of Doom, which the Nexus rework deleted. The Workshop
+        // is the Q it left behind, and a floor being hammered down is a better excuse for
+        // machines walking off it than a maze ever was.
         id: 'automaton',
         name: 'Automaton',
         emoji: '🤖',
         color: 0x8833cc,
-        description: 'Maze summons 3 automatons that wander and deal contact damage (0.5s cooldown per automaton).',
+        description: 'The Workshop builds its own staff: 3 automatons march off the new floor and patrol it for 20s, ramming for 12 (0.5s per automaton). They repair on your nexus and wind down when the workshop does.',
         ingredients: ['fire', 'life', 'earth'],
         tier: 'triple',
         elementId: 'creation',
@@ -279,6 +282,23 @@ export const ALL_PERKS: ElementPerks[] = [
     ],
   },
   {
+    // Acid's pool field is already a conductor looking for a reason to be one; electricity
+    // supplies the current and fate decides which way it jumps.
+    elementId: 'slime',
+    perks: [
+      {
+        id: 'electrolysis',
+        name: 'Electrolysis',
+        emoji: '⚡',
+        color: 0xaaff44,
+        description: 'Your acid is an electrolyte. Every 1.4s a current arcs between two of your pools sitting within 220px of each other — 12 damage and a hard jolt to anything the line crosses. One arc in five surges: triple damage, and it jumps on to a third pool.',
+        ingredients: ['electricity', 'slime', 'fate'],
+        tier: 'abstract-triple',
+        elementId: 'slime',
+      },
+    ],
+  },
+  {
     elementId: 'silence',
     perks: [
       {
@@ -370,7 +390,9 @@ export const ALL_PERKS: ElementPerks[] = [
         name: 'Gateway',
         emoji: '🌀',
         color: 0xaaeeff,
-        description: "Mirrors become Gateways: 50% longer, lasers pass through instead of bouncing (still deal double damage), and Barrage shards get +speed and +damage when passing through. Upgraded mirrors still move.",
+        // "Mirrors" and "Barrage" are pre-rework names: the lattice is Place Crystal's lances
+        // and the projectile is the Diamond Shard.
+        description: "Your crystal lances become Gateways: 50% taller and wider, and shards pass straight through them — gaining speed and damage — instead of bouncing off. Moving Crystals still applies.",
         ingredients: ['fire', 'water', 'life', 'earth'],
         tier: 'quad',
         elementId: 'crystal',

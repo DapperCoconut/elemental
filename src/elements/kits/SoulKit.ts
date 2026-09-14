@@ -493,8 +493,10 @@ export class SoulKit {
     for (const t of this.hudIcons) t.destroy();
     this.hudIcons = [];
     this.hudBodyCount?.destroy(); this.hudBodyCount = null;
-    this.arena.player.incomingDamageMultiplier = this.arena.player.incomingDamageMultiplier === WARD_MULT ? 1 : this.arena.player.incomingDamageMultiplier;
-    this.arena.npc.incomingDamageMultiplier = this.arena.npc.incomingDamageMultiplier === WARD_MULT ? 1 : this.arena.npc.incomingDamageMultiplier;
+    // Ward owns its own multiplier now, so the reset is unconditional rather than the old
+    // "clear it only if the value still looks like mine" guess against a shared field.
+    this.arena.player.wardIncomingMult = 1;
+    this.arena.npc.wardIncomingMult = 1;
   }
 
   // ── Public accessors ───────────────────────────────────────────────────
@@ -2170,12 +2172,10 @@ export class SoulKit {
       const hasWard = this.arena.hasPerk(owner, 'ward');
       const nearby = hasWard ? this.amalgams.filter((r) => r.owner === owner && r.husk.active && r.husk.hp > 0
         && Phaser.Math.Distance.Between(fighter.x, fighter.y, r.husk.x, r.husk.y) <= WARD_RADIUS).length : 0;
-      const shouldReduce = hasWard && nearby >= WARD_MIN_AMALGAMS;
-      if (shouldReduce) {
-        if (fighter.incomingDamageMultiplier > WARD_MULT) fighter.incomingDamageMultiplier = WARD_MULT;
-      } else if (fighter.incomingDamageMultiplier === WARD_MULT) {
-        fighter.incomingDamageMultiplier = 1;
-      }
+      // Written to Ward's own multiplier rather than the shared one: `incomingDamageMultiplier`
+      // has nine other raw writers, and the Order mutation reassigns it every frame, which
+      // used to cancel this perk outright in any fight running it.
+      fighter.wardIncomingMult = hasWard && nearby >= WARD_MIN_AMALGAMS ? WARD_MULT : 1;
     }
   }
 

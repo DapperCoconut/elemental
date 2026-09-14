@@ -3663,20 +3663,21 @@ export class NpcOpponent extends Fighter {
     const skip = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     if (!skip) {
-      // Q first, and at any range: a familiar fights on its own for 18 seconds off the longest
-      // cooldown in the kit, so the worst thing this bot can do is sit on it. MagicKit picks
-      // which of the five suits the fight and refuses to double up on one it already has out.
+      // Q first, and at any range: an elemental assists from the top of the screen for 8
+      // seconds off the longest cooldown in the kit, so the worst thing this bot can do is sit
+      // on it. MagicKit picks which of the five suits the fight and refuses to double up on
+      // one it already has out.
       if (this.castAbility('magic-necronomicon', buildContext(aimX, aimY))) return 'magic-necronomicon';
 
-      // F: Dupe. The kit owns the geometry — it finds its own densest patch of conjurations and
-      // centres the field there — so all this has to decide is that there is something out to
-      // copy at all. Early in a fight there is not, and the 15 Darkness is not worth spending.
+      // F: Duplication. The kit owns the geometry — it records the densest patch of its own
+      // conjurations and reads the scroll out on the spot — so all this has to decide is that
+      // there is something out worth copying at all. Early in a fight there is not.
       if (aiState.magicMeditating && this.castAbility('magic-meditate', buildContext(aimX, aimY))) {
         return 'magic-meditate';
       }
 
-      // R: mark them. The crosshair pays for itself off the Sparkle Shots this bot is throwing
-      // anyway, and MagicKit cashes it in at four tallies or just before it lapses.
+      // R: mark them. MagicKit auto-clicks the crosshair for a bot, so casting it is the whole
+      // decision — missiles only pay while the target is in reasonable reach.
       if (dist < 420 && this.castAbility('magic-anchor', buildContext(aimX, aimY))) return 'magic-anchor';
 
       // E: the rotation. The kit reads the range and its own pools before choosing a wedge.

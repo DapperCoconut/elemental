@@ -301,7 +301,7 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     description: 'Taking extra damage from every source.',
     read: (f) => {
       const mult = f.incomingDamageMultiplier * f.gauntletDamageTakenMult * f.cardDamageTakenMult
-        * f.empoweredIncomingMult * f.fortuneIncomingMult;
+        * f.empoweredIncomingMult * f.fortuneIncomingMult * f.mutationIncomingMult;
       return mult > 1.001 ? Math.round((mult - 1) * 100) : 0;
     },
     suffix: '%',
@@ -348,6 +348,11 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     id: 'invincible', name: 'Invincible', emoji: '✨', color: 0xffff88, priority: 100, kind: 'flag',
     description: 'Immune to all incoming damage right now.',
     read: (f) => (f.isInvincible ? 1 : 0),
+  },
+  {
+    id: 'in-menu', name: 'In Menu', emoji: '📋', color: 0xddcc88, priority: 99, kind: 'flag',
+    description: 'Browsing an in-match menu — incoming damage is cut to 5% while it is open.',
+    read: (f) => (f.inMenuUi ? 1 : 0),
   },
   {
     id: 'shield-charge', name: 'Shield', emoji: '🛡️', color: 0x66aaff, priority: 101, kind: 'stack',

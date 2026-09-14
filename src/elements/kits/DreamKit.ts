@@ -632,8 +632,6 @@ export class DreamKit {
   private tears: Tear[] = [];
   /** Lifelong Dream: the element picker overlay, built lazily on the first press. */
   private picker: DreamElementPicker | null = null;
-  /** What the picker took from the player while it was open, to hand back on close. */
-  private pickerWasInvincible = false;
   private wish: Wish | null = null;
   private lifelongAt = -LIFELONG_COOLDOWN_MS;
   /** Accumulators for the boons that pay out per second. */
@@ -1225,15 +1223,13 @@ export class DreamKit {
       this.picker = new DreamElementPicker(this.api.scene, this.pcol, (id) => this.beginWish(id));
     }
     // Standing in a menu in the middle of a fight would otherwise simply be a death sentence,
-    // and the choice is the ability. Latched so a Stealthy mutation survives the menu.
-    this.pickerWasInvincible = this.api.player.isInvincible;
-    this.api.player.isInvincible = true;
+    // and the choice is the ability. The menu guard cuts incoming damage to 5% while it is
+    // open (synced every frame in updateWish) — distracted, not untouchable.
     this.picker.show();
   }
 
   private beginWish(elementId: string): void {
     const p = this.api.player;
-    p.isInvincible = this.pickerWasInvincible;
     const def = findElementDef(elementId);
     this.wish = {
       elementId,
@@ -1256,6 +1252,8 @@ export class DreamKit {
   /** The counter, the +2s, and the moment it lands. */
   private updateWish(time: number, delta: number): void {
     this.picker?.update(delta);
+    // While the picker menu is up, incoming damage lands at 5% (Fighter.menuGuards).
+    this.api.player.setMenuGuard('dream-picker', !!this.picker?.isOpen());
     const w = this.wish;
     if (!w) return;
     const p = this.api.player;

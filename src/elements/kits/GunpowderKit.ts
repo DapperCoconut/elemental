@@ -668,6 +668,9 @@ export class GunpowderKit {
 
   update(time: number, delta: number): void {
     this.vizT += delta / 1000;
+    // The arsenal picker is a menu: while it is up, incoming damage lands at 5%
+    // (Fighter.menuGuards). Player-only — the npc picks without a menu.
+    this.arena.player.setMenuGuard('gunpowder-arsenal', this.menuOpen);
     this.mirrorNpcCast();
     this.updateMuskets(time, delta);
     this.updateRots(time);

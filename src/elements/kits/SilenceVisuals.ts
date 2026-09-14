@@ -743,6 +743,63 @@ export class SilenceFx extends FxBase {
     }
   }
 
+  /**
+   * Hymn (perk): the ring a watcher is singing. Three breathing staves rather than a drawn
+   * circle — the radius pulses on a slow lung cycle and the notes ride outward along it, so
+   * the thing reads as sound leaving the eye rather than as an aura sitting on it.
+   */
+  static drawHymnRing(
+    g: Phaser.GameObjects.Graphics, tint: SilenceColorFn,
+    x: number, y: number, radius: number, t: number, seed: number, holding: boolean, ripeness: number,
+  ): void {
+    const breath = 1 + Math.sin(t * 1.5 + seed) * 0.035;
+    const base = holding ? 0.5 : 0.26;
+    for (let ring = 0; ring < 3; ring++) {
+      // Each stave lags the one inside it, so the ring visibly travels outward.
+      const phase = (t * 0.42 + ring / 3) % 1;
+      const r = radius * breath * (0.55 + phase * 0.45);
+      const a = base * (1 - phase) * (0.6 + 0.4 * Math.sin(t * 2 + ring));
+      if (a <= 0.02) continue;
+      g.lineStyle(ring === 0 ? 2.2 : 1.3, tint(holding ? SILENCE.lilac : SILENCE.amethyst), a);
+      g.beginPath();
+      const segs = 34;
+      for (let i = 0; i <= segs; i++) {
+        const ang = (i % segs) / segs * TAU;
+        // A sung ring is not round — it wobbles on the harmonics it is carrying.
+        const wob = 1 + 0.035 * Math.sin(ang * 6 + t * 3 + seed) + 0.02 * Math.sin(ang * 11 - t * 2);
+        const px = x + Math.cos(ang) * r * wob, py = y + Math.sin(ang) * r * wob * 0.92;
+        if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
+      }
+      g.closePath();
+      g.strokePath();
+    }
+
+    // Notes drifting out along the song. More of them, and warmer, once it has something.
+    const notes = holding ? 5 : 3;
+    for (let i = 0; i < notes; i++) {
+      const p = (t * 0.5 + i / notes) % 1;
+      const ang = seed * 2.3 + i * (TAU / notes) + p * 0.7;
+      const nr = radius * (0.3 + p * 0.72);
+      const na = (1 - p) * (holding ? 0.85 : 0.5);
+      const nx = x + Math.cos(ang) * nr, ny = y + Math.sin(ang) * nr * 0.92 - p * 8;
+      g.fillStyle(tint(holding ? SILENCE.gore : SILENCE.lilac), na);
+      g.fillCircle(nx, ny, 2.6);
+      g.lineStyle(1.3, tint(holding ? SILENCE.gore : SILENCE.lilac), na * 0.9);
+      g.beginPath();
+      g.moveTo(nx + 2.4, ny);
+      g.lineTo(nx + 2.4, ny - 8);
+      g.strokePath();
+    }
+
+    // The ripening tally: a short arc closing around the eye as the hum banks its six seconds.
+    if (ripeness > 0 && ripeness < 1) {
+      g.lineStyle(2.4, tint(SILENCE.gore), 0.8);
+      g.beginPath();
+      g.arc(x, y, 19, -Math.PI / 2, -Math.PI / 2 + TAU * ripeness);
+      g.strokePath();
+    }
+  }
+
   /** The grabber: a squatting mass of eyes with an arm it has not thrown yet. */
   static drawGrabber(
     g: Phaser.GameObjects.Graphics, tint: SilenceColorFn,

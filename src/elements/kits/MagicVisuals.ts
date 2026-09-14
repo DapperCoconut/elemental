@@ -1028,7 +1028,7 @@ export class MagicFx extends FxBase {
     x: number, y: number, spin: number, free: boolean, alpha: number,
   ): void {
     const at = frame(x, y, spin + Math.PI / 2);
-    const w = 13, h = 7;
+    const w = 16, h = 8.5;
     const box = (dx: number, dy: number, col: number, a: number): void => {
       g.fillStyle(tint(col), a);
       fillPts(g, [at(-w + dx, -h + dy), at(w + dx, -h + dy), at(w + dx, h + dy), at(-w + dx, h + dy)]);
@@ -1041,14 +1041,153 @@ export class MagicFx extends FxBase {
     g.lineStyle(1.4, tint(MAGIC.stone), alpha * 0.9);
     strokePts(g, [at(-w, -h), at(w, -h), at(w, h), at(-w, h)], true);
     sigilStarLayered(g, tint, x, y, spin * 1.6, 4.2, 1.5, MAGIC.orchid, alpha * 0.7, 4, false);
-    if (!free) {
-      // The chain to the next link round the ring.
-      g.lineStyle(2, tint(MAGIC.brass), alpha * 0.8);
-      strokePts(g, [at(w, 0), at(w + 6, 0)]);
-      strokePts(g, [at(-w, 0), at(-w - 6, 0)]);
-    } else {
+    if (free) {
+      // The chain it tore off, trailing behind the tumble.
       g.lineStyle(1.6, tint(MAGIC.granite), alpha * 0.4);
       strokePts(g, [at(-w * 1.9, 0), at(-w, 0)]);
+    }
+  }
+
+  /**
+   * The chain joining two *standing* Ward+ links. Drawn under the slabs, sagging a little at
+   * the midpoint, with beads along it — the wall has to read as rocks chained into one
+   * barrier, not as sixteen pebbles that happen to share a circle.
+   */
+  static drawWardChain(
+    g: Phaser.GameObjects.Graphics, tint: MagicColorFn,
+    x1: number, y1: number, x2: number, y2: number, alpha: number,
+  ): void {
+    const mx = (x1 + x2) / 2, my = (y1 + y2) / 2 + 3;
+    g.lineStyle(2.2, tint(MAGIC.brass), alpha * 0.85);
+    strokePts(g, [{ x: x1, y: y1 }, { x: mx, y: my }, { x: x2, y: y2 }]);
+    g.fillStyle(tint(MAGIC.brass), alpha);
+    for (const u of [0.28, 0.5, 0.72]) {
+      const bx = x1 + (x2 - x1) * u;
+      const by = y1 + (y2 - y1) * u + 3 * Math.sin(Math.PI * u);
+      g.fillCircle(bx, by, 1.7);
+    }
+  }
+
+  /**
+   * The Ward circle: a rune-edged ring of standing stones with the floor faintly lit inside.
+   * Occupied, the centre carries a turning sigil — the circle visibly *working* on somebody.
+   */
+  static drawWardZone(
+    g: Phaser.GameObjects.Graphics, tint: MagicColorFn,
+    x: number, y: number, radius: number, seed: number, t: number, alpha: number, occupied: boolean,
+  ): void {
+    g.fillStyle(tint(MAGIC.sand), alpha * (occupied ? 0.13 : 0.07));
+    g.fillCircle(x, y, radius);
+    arcaneRing(g, tint, x, y, radius, t * 0.5, MAGIC.stone, alpha * 0.85, 2.2, 8, false);
+    arcaneRing(g, tint, x, y, radius * 0.55, -t * 0.7, MAGIC.sand, alpha * 0.5, 1.4, 5, false);
+    // Standing stones around the rim, each breathing a little out of phase.
+    for (let i = 0; i < 6; i++) {
+      const a = seed + (i / 6) * TAU;
+      const px = x + Math.cos(a) * (radius - 8);
+      const py = y + Math.sin(a) * (radius - 8);
+      const lift = Math.sin(t * 2 + i * 1.9) * 1.5;
+      g.fillStyle(tint(MAGIC.ink), alpha * 0.35);
+      g.fillRect(px - 3, py - 4, 6, 8);
+      g.fillStyle(tint(MAGIC.stone), alpha * 0.95);
+      g.fillRect(px - 3, py - 7 - lift, 6, 12);
+      g.fillStyle(tint(MAGIC.sand), alpha * 0.6);
+      g.fillRect(px - 1.6, py - 5 - lift, 3.2, 4);
+    }
+    if (occupied) {
+      g.fillStyle(tint(MAGIC.sand), alpha * 0.8);
+      sigilStar(g, x, y, t * 1.4, 11, 4, 6);
+    }
+  }
+
+  /**
+   * The Duplication scroll: rolled parchment with the recording glowing through it, and a
+   * sigil floating over it so "this is a magical pickup" reads from across the arena. It bobs
+   * on the floor and sits still in the hand.
+   */
+  static drawScroll(
+    g: Phaser.GameObjects.Graphics, tint: MagicColorFn,
+    x: number, y: number, seed: number, t: number, alpha: number, held: boolean,
+  ): void {
+    const bob = held ? 0 : Math.sin(t * 2 + seed) * 2;
+    const yy = y + bob;
+    g.fillStyle(tint(MAGIC.orchid), alpha * (held ? 0.22 : 0.14));
+    g.fillCircle(x, yy, held ? 24 : 17);
+    // Parchment body between two rolled ends.
+    g.fillStyle(tint(MAGIC.ink), alpha * 0.4);
+    g.fillRect(x - 12, yy - 3.4, 24, 10);
+    g.fillStyle(tint(MAGIC.parchment), alpha * 0.95);
+    g.fillRect(x - 12, yy - 5, 24, 10);
+    g.fillStyle(tint(MAGIC.brass), alpha);
+    g.fillCircle(x - 12, yy, 5.5);
+    g.fillCircle(x + 12, yy, 5.5);
+    g.fillStyle(tint(MAGIC.leather), alpha * 0.9);
+    g.fillCircle(x - 12, yy, 2.4);
+    g.fillCircle(x + 12, yy, 2.4);
+    // The spell showing through the paper.
+    g.lineStyle(1.2, tint(MAGIC.magenta), alpha * 0.8);
+    for (let i = 0; i < 3; i++) g.lineBetween(x - 7, yy - 2.4 + i * 2.4, x + 7, yy - 2.4 + i * 2.4);
+    g.fillStyle(tint(MAGIC.orchid), alpha * (0.55 + 0.3 * Math.sin(t * 3 + seed)));
+    sigilStar(g, x, yy - 14, t * 1.8, 5, 1.8, 4);
+  }
+
+  /**
+   * The fire elemental's pillar: a tightening ember ring while it arms, then a boiling column
+   * of stacked flame lobes once it is lit, hottest at the base.
+   */
+  static drawFirePillar(
+    g: Phaser.GameObjects.Graphics, tint: MagicColorFn,
+    x: number, y: number, seed: number, t: number, armed01: number, lit: boolean, fade: number,
+  ): void {
+    if (!lit) {
+      arcaneRing(g, tint, x, y, 34 - 10 * armed01, t * 1.6, MAGIC.ember, 0.3 + 0.55 * armed01, 1.8, 6, false);
+      g.fillStyle(tint(MAGIC.ember), 0.08 + 0.18 * armed01);
+      g.fillCircle(x, y, 30);
+      return;
+    }
+    for (let i = 0; i < 5; i++) {
+      const u = i / 5;
+      const w = (24 - 15 * u) * (0.82 + 0.18 * Math.sin(t * 9 + seed + i * 1.3));
+      const yy = y - u * 58;
+      g.fillStyle(tint(i < 2 ? MAGIC.flameRed : i < 4 ? MAGIC.ember : MAGIC.emberHi), fade * (0.8 - 0.1 * i));
+      g.fillEllipse(x + Math.sin(t * 7 + i * 1.7 + seed) * 3, yy, w * 2, 26);
+    }
+    g.fillStyle(tint(MAGIC.white), fade * 0.45);
+    g.fillEllipse(x, y - 8, 10, 15);
+    g.fillStyle(tint(MAGIC.emberHi), fade * 0.8);
+    sigilStar(g, x, y - 62, t * 4, 6, 2.2, 4);
+  }
+
+  /**
+   * The water elemental's wave: a curling crest perpendicular to its travel, foam beading the
+   * lip, trailing fainter arcs behind — a moving wall of water, not a bullet.
+   */
+  static drawWave(
+    g: Phaser.GameObjects.Graphics, tint: MagicColorFn,
+    x: number, y: number, angle: number, seed: number, t: number, alpha: number,
+  ): void {
+    const px = Math.cos(angle + Math.PI / 2), py = Math.sin(angle + Math.PI / 2);
+    for (let i = 0; i < 3; i++) {
+      const back = i * 8;
+      const bx = x - Math.cos(angle) * back, by = y - Math.sin(angle) * back;
+      const pts: Pt[] = [];
+      for (let j = -8; j <= 8; j++) {
+        const u = j / 8;
+        const bulge = (1 - u * u) * 6;
+        const wob = Math.sin(u * 6 + t * 8 + seed) * 3;
+        pts.push({
+          x: bx + px * u * 44 + Math.cos(angle) * (wob + bulge - i * 2),
+          y: by + py * u * 44 + Math.sin(angle) * (wob + bulge - i * 2),
+        });
+      }
+      g.lineStyle(4.5 - i * 1.2, tint(i === 0 ? MAGIC.stormHi : MAGIC.storm), alpha * (0.9 - i * 0.25));
+      strokePts(g, pts);
+    }
+    for (let j = 0; j < 5; j++) {
+      const u = (j / 4) * 2 - 1;
+      g.fillStyle(tint(MAGIC.white), alpha * (0.4 + 0.3 * Math.sin(t * 10 + j * 2)));
+      g.fillCircle(
+        x + px * u * 38 + Math.cos(angle) * 6,
+        y + py * u * 38 + Math.sin(angle) * 6 + Math.sin(t * 10 + j) * 2, 2.2);
     }
   }
 

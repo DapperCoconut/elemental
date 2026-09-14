@@ -102,6 +102,15 @@ const RITUAL_DELAY_MS = 1000;
 const RITUAL_DMG = 25;
 const RITUAL_SILENCE_MS = 20000;
 
+// Hymn (divine perk): the watchers get a voice, and the voice is the price of it.
+const HYMN_RADIUS = 140;
+/** Slow enough to be a nuisance rather than a grab — it steers, it does not capture. */
+const HYMN_PULL_PER_S = 44;
+/** Cumulative time an enemy must be held inside one hum before that watcher ripens. */
+const HYMN_MATURE_MS = 6000;
+/** What a betrayed stealth pool does instead of filling: it drains at the normal rate. */
+const HYMN_BETRAYAL_DRAIN_MULT = 1;
+
 // Torture perk: the ritual stops being an execution and becomes a rack.
 const TORTURE_MS = 6000;
 const TORTURE_TICK_MS = 1000;
@@ -317,6 +326,11 @@ interface Stalker {
   nextTurnAt: number;
   /** A pending ritual holds the seeker still so the 1s strike can land on it. */
   pinnedUntil: number;
+  /**
+   * Hymn (divine perk): milliseconds this watcher has held an enemy inside its hum. At
+   * HYMN_MATURE_MS it matures on the spot and the counter stops mattering.
+   */
+  hymnHeldMs: number;
 }
 
 interface VultureCarry {
@@ -614,6 +628,8 @@ export class SilenceKit {
 
   // Passive state (indexed by owner)
   private stealth: Record<Owner, number> = { player: 0, npc: 0 };
+  /** Hymn (perk): whether the player's tray is currently showing the betrayal warning. */
+  private hymnBetraying = false;
   private playerIsSilence = false;
   private npcIsSilence = false;
 
@@ -774,6 +790,8 @@ export class SilenceKit {
     this.weepUnwatched = false;
     this.arena.setStatusIndicator('silence-weep', null);
     this.arena.setStatusIndicator('silence-awakened', null);
+    this.arena.setStatusIndicator('silence-hymn', null);
+    this.hymnBetraying = false;
     this.endStriker('player', true);
     this.endStriker('npc', true);
     this.endRunChase(false, true);
@@ -1274,7 +1292,7 @@ export class SilenceKit {
       hitFlashUntil: 0,
       bornAt: scene.time.now,
       nextPulseAt: scene.time.now + STALKER_PULSE_MS,
-      kind: 'watcher', hitsLeft: 1, heading: 0, nextTurnAt: 0, pinnedUntil: 0,
+      kind: 'watcher', hitsLeft: 1, heading: 0, nextTurnAt: 0, pinnedUntil: 0, hymnHeldMs: 0,
     });
     // It does not appear — it *opens*, out of a knot of fog that was already there.
     const fx = this.fx(owner);
@@ -2450,6 +2468,13 @@ export class SilenceKit {
       // A young watcher is only fully open to whoever planted it; everyone else sees a squint.
       const ownerSees = s.owner === 'player' ? this.playerIsSilence : this.npcIsSilence;
       const flash = time < s.hitFlashUntil;
+      // Hymn (perk): the song goes down first, so the eye sits inside its own ring.
+      if (this.arena.hasPerk(s.owner, 'hymn')) {
+        const holding = this.foesOf(s.owner).some((f) => f.active && f.hp > 0
+          && Phaser.Math.Distance.Between(f.x, f.y, s.x, s.y) <= HYMN_RADIUS);
+        SilenceFx.drawHymnRing(g, this.col(s.owner), s.x, s.y, HYMN_RADIUS, t, s.seed, holding,
+          maturity >= 1 ? 0 : Phaser.Math.Clamp(s.hymnHeldMs / HYMN_MATURE_MS, 0, 1));
+      }
       SilenceFx.drawWatcher(g, flash ? () => SILENCE.white : this.col(s.owner),
         s.x, s.y, maturity, s.kind === 'seeker', t + s.seed, 1, ownerSees);
     }
@@ -2894,6 +2919,23 @@ export class SilenceKit {
     const f = this.fighterOf(owner);
     if (!f.active || f.hp <= 0) return;
     const stalkerCount = this.stalkersAlive(owner);
+    // Hymn (perk): while the song is giving your position away the fog stops banking, however
+    // deep in it you are. Checked before the fog branch so it overrides it outright.
+    const betrayed = this.hymnBetrayed(owner);
+    if (owner === 'player' && betrayed !== this.hymnBetraying) {
+      this.hymnBetraying = betrayed;
+      this.arena.setStatusIndicator('silence-hymn', betrayed ? {
+        name: 'Hymn',
+        emoji: '🎼',
+        color: 0x88ddaa,
+        description: 'Something is standing inside one of your hums and can hear exactly where you are. Stealth drains instead of banking, fog or no fog.',
+        priority: 117,
+      } : null);
+    }
+    if (betrayed) {
+      this.stealth[owner] = Math.max(0, this.stealth[owner] - STEALTH_DRAIN_PER_S * HYMN_BETRAYAL_DRAIN_MULT * dt);
+      return;
+    }
     if (this.isInFog(f.x, f.y)) {
       // Mastery: a corrupted copy of the enemy walking around costs you the fog entirely.
       if (this.corrupts.some((c) => c.owner === owner)) return;
@@ -2979,6 +3021,9 @@ export class SilenceKit {
         this.checkGazeCone(s.x, s.y, s.heading, s.owner);
       }
 
+      // Hymn (perk): the watcher breathes, and what it drags in it also ripens on.
+      this.updateHymn(s, time, dt);
+
       // The reminder pulse on everyone's screen: the eye snaps wide open, stares, and shuts.
       if (time >= s.nextPulseAt) {
         s.nextPulseAt = time + STALKER_PULSE_MS;
@@ -2999,6 +3044,69 @@ export class SilenceKit {
         }
       }
     }
+  }
+
+  // ── Hymn (divine perk) ─────────────────────────────────────────────
+
+  /**
+   * One watcher's hum. It drags anything hostile inside the ring a little closer each frame
+   * and banks the time it manages to hold them; six seconds of that and the watcher is ripe
+   * without ever having waited out its own clock — which is the whole point, because a ripe
+   * watcher is what Ritual turns into a Grabber.
+   *
+   * The pull is *added* to the victim's velocity rather than assigned over it. A `setVelocity`
+   * here would be a capture — the grabber's drag is allowed to do that, a passive hum is not —
+   * and a `body.reset` would pin them outright. Adding leaves them walking wherever they were
+   * walking, just bent a little toward the eye.
+   */
+  private updateHymn(s: Stalker, time: number, dt: number): void {
+    if (!this.arena.hasPerk(s.owner, 'hymn')) return;
+    const ripe = time - s.bornAt >= STALKER_MATURE_MS;
+    let holding = false;
+
+    for (const foe of this.foesOf(s.owner)) {
+      if (!foe.active || foe.hp <= 0) continue;
+      // A net ghost's own machine owns its position; shoving it here would fight that sim.
+      if (foe === this.arena.npc && foe.netGhost) continue;
+      const d = Phaser.Math.Distance.Between(foe.x, foe.y, s.x, s.y);
+      if (d > HYMN_RADIUS || d < 4) continue;
+      holding = true;
+      if (foe.unstoppable) continue;
+      const body = foe.body as Phaser.Physics.Arcade.Body | null;
+      if (!body) continue;
+      body.velocity.x += ((s.x - foe.x) / d) * HYMN_PULL_PER_S;
+      body.velocity.y += ((s.y - foe.y) / d) * HYMN_PULL_PER_S;
+    }
+
+    if (!holding || ripe) return;
+    s.hymnHeldMs += dt * 1000;
+    if (s.hymnHeldMs < HYMN_MATURE_MS) return;
+    // Ripened early: shove the birthday back far enough that every maturity read agrees,
+    // including the bot's own matured-watcher scan.
+    s.bornAt = time - STALKER_MATURE_MS;
+    const fx = this.fx(s.owner);
+    fx.watchPulse(s.x, s.y, 26, SILENCE.gore, DEPTH_EYE, 700);
+    fx.motes(s.x, s.y, 8, { speed: 80, size: 4, life: 620, depth: DEPTH_STALKER, color: SILENCE.lilac });
+    if (s.owner === 'player') {
+      this.arena.showFloatingText(s.x, s.y - 24, '🎼 RIPENED', '#88ddaa');
+    }
+  }
+
+  /**
+   * Hymn's cost: an enemy standing in any of your hums can hear exactly where you are, so the
+   * fog stops paying. Read by updateStealth rather than applied there, because the drain rule
+   * belongs with the meter and the geometry belongs here.
+   */
+  private hymnBetrayed(owner: Owner): boolean {
+    if (!this.arena.hasPerk(owner, 'hymn')) return false;
+    for (const s of this.stalkers) {
+      if (s.owner !== owner) continue;
+      for (const foe of this.foesOf(owner)) {
+        if (!foe.active || foe.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(foe.x, foe.y, s.x, s.y) <= HYMN_RADIUS) return true;
+      }
+    }
+    return false;
   }
 
   /** One hit landed on a stalker/seeker: seekers flash and soak, watchers die outright. */

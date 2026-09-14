@@ -679,6 +679,9 @@ export class InvasionKit implements HuskWorld, EffectWorld {
 
   update(time: number, delta: number): void {
     const player = this.arena.player;
+    // The journal, the telescope and the record player are full-screen menus:
+    // while one is open, incoming damage lands at 5% (Fighter.menuGuards).
+    player.setMenuGuard('invasion-overlay', this.isOverlayOpen());
     const alive = this.livingHusks();
     const mansion = this.mansion;
     if (!mansion) return;

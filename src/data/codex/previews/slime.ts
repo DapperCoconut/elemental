@@ -723,3 +723,60 @@ export const masteryBreakdown: PreviewScript = {
     });
   },
 };
+
+// ══ PERK — Electrolysis ═══════════════════════════════════════════════
+
+/**
+ * Three pools inside conducting range, arcing on the kit's own 1.4s clock. The surge on the
+ * third beat is scripted rather than rolled — a 20% chance would leave most viewings of this
+ * loop never showing the half of the perk that matters.
+ */
+export const perkElectrolysis: PreviewScript = {
+  duration: 6200,
+  caption: 'Perk — the pool field is a circuit: 12 damage a beat between random pools, 36 on a surge',
+  run(ctx) {
+    const { fx } = stage(ctx, { noDummy: true });
+    const a: Pool = { x: ctx.cx - 40, y: ctx.cy - 46, radius: 40, hot: false, seed: seeded() };
+    const b: Pool = { x: ctx.cx + 96, y: ctx.cy + 6, radius: 46, hot: false, seed: seeded() };
+    const c: Pool = { x: ctx.cx + 30, y: ctx.cy + 84, radius: 38, hot: false, seed: seeded() };
+    poolLayer(ctx, [a, b, c]);
+    dummy(ctx, ctx.cx + 30, ctx.cy - 16);
+
+    // The arcs, repainted from the clock through the kit's own painter.
+    const arcs: { x1: number; y1: number; x2: number; y2: number; born: number; surge: boolean; seed: number }[] = [];
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(6));
+    ctx.onFrame((_dt, elapsed) => {
+      g.clear();
+      for (let i = arcs.length - 1; i >= 0; i--) {
+        const life = 1 - (elapsed - arcs[i].born) / 260;
+        if (life <= 0) { arcs.splice(i, 1); continue; }
+        AcidFx.drawElectroArc(g, ctx.tint, arcs[i].x1, arcs[i].y1, arcs[i].x2, arcs[i].y2,
+          elapsed / 1000, arcs[i].seed, arcs[i].surge, life);
+      }
+    });
+
+    const arc = (at: number, from: Pool, to: Pool, surge: boolean, damage: string | null): void => {
+      ctx.at(at, () => {
+        arcs.push({ x1: from.x, y1: from.y, x2: to.x, y2: to.y, born: at, surge, seed: seeded() });
+        fx.fizz(from.x, from.y, surge ? 7 : 4, from.radius * 0.7, 5, VILE_TONES);
+        fx.fizz(to.x, to.y, surge ? 7 : 4, to.radius * 0.7, 5, VILE_TONES);
+        if (damage) {
+          float(ctx, ctx.cx + 30, ctx.cy - 34, damage, surge ? '#ccff88' : '#aaff44', surge ? 15 : 12);
+          fx.droplets(ctx.cx + 30, ctx.cy - 16, surge ? 6 : 3,
+            { speed: 130, size: 2.6, life: 380, depth: 8, tones: VILE_TONES });
+          float(ctx, ctx.cx + 30, ctx.cy + 4, '⚡ 45% SPEED', '#88ff33', 10);
+        }
+      });
+    };
+    // Beat one crosses the dummy, beat two misses it entirely, beat three surges and chains.
+    arc(700, a, b, false, '12');
+    arc(2100, b, c, false, null);
+    arc(3500, a, b, true, '36');
+    ctx.at(3500, () => float(ctx, ctx.cx + 30, ctx.cy - 62, '⚡ SURGE', '#ccff88', 14));
+    arc(3560, b, c, true, null);
+    arc(4900, c, a, false, null);
+
+    const cap = label(ctx, ctx.cx, 14, '#aaff44', 10);
+    cap.setText('220px conducting range · a random eligible pair every 1.4s');
+  },
+};

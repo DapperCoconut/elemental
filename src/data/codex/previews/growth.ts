@@ -189,7 +189,7 @@ export const growthClickUpgraded: PreviewScript = {
 
 export const growthEvolve: PreviewScript = {
   duration: 5400,
-  caption: 'E — the genome opens and you go grey and untouchable for 5s, once every 20s',
+  caption: 'E — the genome opens; while you browse, hits reach you at 5% of their damage',
   run(ctx) {
     const { fx, av } = stage(ctx);
     // The tree itself: three columns of four, drawn as the screen draws them.
@@ -217,19 +217,8 @@ export const growthEvolve: PreviewScript = {
     ctx.at(400, () => {
       open = true;
       av.play('flex');
-      // Grey and invincible: the tell is on the caster, not on the menu.
       fx.bloomBody(ctx.cx, ctx.cy, 40, 520, 6, CULTURE_TONES);
-      const grey = ctx.adopt(ctx.scene.add.graphics().setDepth(7));
-      ctx.onFrame((_dt, elapsed) => {
-        const t = Phaser.Math.Clamp((elapsed - 400) / 5000, 0, 1);
-        grey.clear();
-        if (t >= 1) return;
-        grey.fillStyle(0x888888, 0.5);
-        grey.fillCircle(ctx.cx, ctx.cy, 22);
-        grey.lineStyle(2, 0xbbbbbb, 0.5 * (1 - t));
-        grey.strokeCircle(ctx.cx, ctx.cy, 26 + 4 * t);
-      });
-      // Tiers bought while the clock runs — 1 DNA, then 2, then 3.
+      // Tiers bought while the tree is open — 1 DNA, then 2, then 3.
       [900, 1800, 2700, 3600].forEach((at, i) => ctx.at(at - 400, () => {
         bought[i % 3] += 1;
         fx.ring(ctx.tx - 40 + (i % 3) * 40, ctx.cy, 4, 22, cols[i % 3], 320, 2, 11);

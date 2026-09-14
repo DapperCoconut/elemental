@@ -39,6 +39,7 @@ import { plasmaElement } from './plasma';
 import { psychicElement } from './psychic';
 import { quantumElement } from './quantum';
 import { radiationElement } from './radiation';
+import { realityElement } from './reality';
 import { rubberElement } from './rubber';
 import { ruinElement } from './ruin';
 import { sandElement } from './sand';
@@ -91,6 +92,7 @@ export const ELEMENT_MAP: Record<string, Element> = {
   subterfuge: subterfugeElement,
   quantum: quantumElement,
   king: kingElement,
+  reality: realityElement,
   // Rewards for the two endings of the Devourer fight. Their kits are not
   // written yet, so MenuScene lists them as unavailable — these entries exist
   // so the info panel and any future wiring have a real Element to read.

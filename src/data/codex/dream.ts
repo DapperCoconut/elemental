@@ -276,8 +276,9 @@ const dream: ElementCodex = {
     },
     'lifelong-dream': {
       basics:
-        'Opens a picker of 48 elements plus a Random row, holding you in place and untouchable while it '
-        + 'is open — the fight does not stop, but nothing can reach you in the menu. You have 10 seconds '
+        'Opens a picker of 48 elements plus a Random row, holding you in place while it is open — the '
+        + 'fight does not stop, and the menu rule applies: hits reach you at 5% of their damage while '
+        + 'you browse, so a long browse is chip damage, not safety. You have 10 seconds '
         + 'to choose, and every hit you take puts 2 more back on the clock with no ceiling, so somebody '
         + 'landing on you every second can hold it open indefinitely. Choosing grants two to four boons '
         + 'depending on the element: damage, armour, speed and cooldown multiply together, while health, '
@@ -289,7 +290,7 @@ const dream: ElementCodex = {
         + 'random, and it picks for you after 12 seconds. 40s cooldown and one dream a match.',
       cast: 'The bound key. Opens the picker; type to filter, ENTER takes the top row, ESC dreams at random. It picks for you after 12 seconds. 40s cooldown, and one dream a match.',
       effects: [
-        { tag: 'utility', label: 'The picker', detail: '48 elements plus a Random row. You are held in place and untouchable while it is open — the fight does not stop, but nothing can reach you in the menu.' },
+        { tag: 'utility', label: 'The picker', detail: '48 elements plus a Random row. You are held in place while it is open — the fight does not stop, and hits land on you at 5% of their damage while you browse.' },
         { tag: 'resource', label: 'The counter', detail: '10 seconds. Every hit you take puts 2 more back on it, with no ceiling — somebody landing on you every second can hold it open indefinitely.' },
         { tag: 'buff', label: 'What lands', detail: 'Two to four boons, depending on the element. Damage, armour, speed and cooldown multiply together; health, shields and charges are handed over once.' },
         { tag: 'buff', label: 'The extremes', detail: 'Fire is 8/s contact burn, immunity to every tick in the game and +15% crit. Earth is a 25-damage hard cap, an 80 shield and an unshovable body. Justice cannot be taken below 1 health. Light cannot be stunned at all.' },

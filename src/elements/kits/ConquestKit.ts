@@ -338,9 +338,9 @@ interface Side {
   propagandaAt: number;
   propagandaBroke: boolean;
   /**
-   * Pressed, but not yet started. The button lives in a menu that *freezes the match*, and the
-   * clock this kit runs on is the arena's — so the eight seconds are armed on the first live
-   * frame after the menu closes rather than while the game is standing still.
+   * Pressed, but not yet started. The button lives in the upgrade modal, and the eight
+   * seconds are armed on the first frame after the menu closes — paying for the window
+   * while you are still reading the menu it was bought from would waste most of it.
    */
   propagandaPending: boolean;
   /** A *remote* opponent's window, as their snapshot last reported it. Drawing only. */
@@ -1152,6 +1152,10 @@ export class ConquestKit implements ConquestMenuHost {
   private tickPropaganda(owner: Owner): void {
     const side = this.side(owner);
     if (side.propagandaPending) {
+      // The arena keeps running under the upgrade modal now, so "the first live frame" has
+      // to mean the first frame after the menu closes — arming mid-read would waste the
+      // window on someone who cannot act yet.
+      if (owner === 'player' && this.menuTarget) return;
       side.propagandaPending = false;
       side.propagandaAt = this.now;
       side.propagandaUntil = this.now + PROPAGANDA_MS;
@@ -1629,6 +1633,9 @@ export class ConquestKit implements ConquestMenuHost {
   private destroyBuilding(b: Building): void {
     const i = this.buildings.indexOf(b);
     if (i >= 0) this.buildings.splice(i, 1);
+    // The arena keeps running under the upgrade modal, so the building whose menu is open
+    // can die mid-read. Null the target: ConquestMenuScene polls the model and closes.
+    if (this.menuTarget === b) this.menuTarget = null;
     this.fx(b.owner).rubble(b.x, b.y, CELL);
     this.api.showFloatingText(b.x, b.y - 30, `${KIND_LABEL[b.kind]} DOWN`, this.hex(CNQ.blood));
     // Securities. Everything in the vault dies with the stall — that is the whole risk the
@@ -2180,6 +2187,9 @@ export class ConquestKit implements ConquestMenuHost {
   handleInput(time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
     if (this.api.elementId !== 'conquest') return;
     void time;
+    // The upgrade modal runs over a live arena now. Its clicks are the modal's business —
+    // without this, a buy button press would also land on the board underneath it.
+    if (this.menuTarget) return;
     this.aimX = mouseX;
     this.aimY = mouseY;
 
@@ -3292,6 +3302,10 @@ export class ConquestKit implements ConquestMenuHost {
     this.vizT += dt;
     this.ensureLayers();
     if (!this.seeded) this.seed();
+
+    // The upgrade modal runs over a live arena: while it is open, incoming damage lands
+    // at 5% (Fighter.menuGuards). Only the player ever opens the modal.
+    this.api.player.setMenuGuard('conquest-menu', this.menuTarget !== null);
 
     if (playerIs) {
       this.tickEconomy('player', dt);

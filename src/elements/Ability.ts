@@ -141,7 +141,7 @@ export interface CastContext {
   creationBolt: (tx: number, ty: number, tier: 'copper' | 'silver' | 'gold') => void;
   creationWrench: (tx: number, ty: number) => void;
   creationBlock: (x: number, y: number, w: number, h: number) => void;
-  creationMaze: () => void;
+  creationWorkshop: () => void;
   // Fate (alt-life)
   fateThrowCard: (tx: number, ty: number) => void;
   fateReroll: () => void;

@@ -18,7 +18,8 @@ import { MUTATIONS, getBossMutationIds } from '../data/Mutations';
 import { getWorldTier, isAbstractWorld, isCorruptWorld, ELEMENT_DISPLAY } from '../data/CampaignFights';
 import { getEffectiveFightDef } from '../data/CampaignFightsHard';
 import { CORRUPT_WORLDS } from '../data/CorruptWorlds';
-import { TagTeamState, isPledgeFight } from '../data/FightFormats';
+import { TagTeamState, isPledgeFight, freshRealityTagTeam } from '../data/FightFormats';
+import { allSelectableElements } from '../data/ElementRoster';
 import { getWorldBossDef } from '../boss/bosses';
 import { Music } from '../audio';
 
@@ -39,6 +40,11 @@ export class CampaignElementSelectScene extends Phaser.Scene {
   private campaignStarredMutations: string[] = [];
   /** Mid-run tag-team state — set when re-picking after a death. */
   private tagTeam: TagTeamState | null = null;
+  /**
+   * Reality dungeon entry / chapel re-pick. When set, every campaign field in
+   * the payload is furniture: the pick launches the dungeon or the boss.
+   */
+  private reality: { kind: 'trials' | 'boss' } | null = null;
 
   /** Accent for the pager, taken from the world this fight belongs to. */
   private accent = C.ember;
@@ -55,7 +61,9 @@ export class CampaignElementSelectScene extends Phaser.Scene {
     worldId: string; nodeId: string; isChallenge: boolean; kind: string;
     slotIdx: 0 | 1 | 2; hardMode: boolean; enemyElementId: string; difficulty: number;
     mutations?: string[]; starredMutations?: string[]; tagTeam?: TagTeamState;
+    reality?: { kind: 'trials' | 'boss' };
   }): void {
+    this.reality = data.reality ?? null;
     this.tagTeam = data.tagTeam ?? null;
     this.worldId = data.worldId;
     this.nodeId = data.nodeId;
@@ -76,7 +84,7 @@ export class CampaignElementSelectScene extends Phaser.Scene {
     const cx = this.scale.width / 2;
     const world = getAnyWorld(this.worldId);
 
-    const accent = world?.color ?? C.ember;
+    const accent = this.reality ? 0x2b4fd8 : (world?.color ?? C.ember);
     addBackdrop(this, { accent, variant: 'lattice', motes: 18 });
 
     const enemyDef = this.findElement(this.enemyElementId);
@@ -96,10 +104,23 @@ export class CampaignElementSelectScene extends Phaser.Scene {
         + (burned ? `   ·   ${pledge ? 'FALLEN' : 'BURNED'}: ${burned}` : '');
     }
 
+    let title = pledge ? 'A SOVEREIGN ANSWERS' : (this.tagTeam ? 'TAG IN' : 'CHOOSE YOUR ELEMENT');
+    if (this.reality) {
+      // Past the crack, the campaign words stop fitting.
+      title = this.tagTeam?.usedElements.length ? 'ANOTHER VESSEL' : 'CHOOSE YOUR VESSEL';
+      vsLine = this.reality.kind === 'trials'
+        ? 'THE CRACK IN THE WORLD   ·   FIVE TRIALS WAIT BELOW'
+        : `◈ ${this.tagTeam?.pledgesLeft ?? 0} VESSELS IN RESERVE`
+          + (this.tagTeam?.usedElements.length
+            ? `   ·   LOST: ${this.tagTeam.usedElements
+              .map((id) => this.findElement(id)?.emoji ?? id).join(' ')}`
+            : '');
+    }
+
     addTitle(this, {
       // The pledge picker is only ever reached by dying, so it never reads "choose".
       x: cx, y: 62, size: 34, accent,
-      text: pledge ? 'A SOVEREIGN ANSWERS' : (this.tagTeam ? 'TAG IN' : 'CHOOSE YOUR ELEMENT'),
+      text: title,
       subtitle: vsLine,
     });
 
@@ -157,6 +178,42 @@ export class CampaignElementSelectScene extends Phaser.Scene {
     }
 
     this.scene.stop('CampaignWorldScene');
+
+    // Reality: the pick either walks into the trials or takes the next life
+    // in the chapel. Nothing campaign-shaped applies.
+    if (this.reality) {
+      if (this.reality.kind === 'trials') {
+        // The fifth trial mirrors whatever has killed this save the most; the
+        // roster test keeps a dead id from being asked to fight. No history
+        // yet → any real element will do.
+        const isRealBot = (id: string) =>
+          id !== 'quantum' && findElementDef(id) !== undefined;
+        const pool = allSelectableElements().filter((e) => isRealBot(e.id));
+        const mirror = PlayerData.mostDiedToElement(isRealBot)
+          ?? pool[Math.floor(Math.random() * pool.length)]?.id ?? 'fire';
+        // The npc walks in as the inert `reality` element and only takes the
+        // mirror's shape in the fifth room — otherwise an enemy like Fortune
+        // stands its shop up over the whole dungeon. Difficulty 3 is Hard.
+        this.scene.start('ArenaScene', {
+          elementId,
+          enemyElementId: 'reality',
+          difficulty: 3,
+          reality: { kind: 'trials', roomIdx: 0, mirrorId: mirror },
+          playerPerk: PlayerData.getEquippedPerk(elementId),
+        });
+      } else {
+        const tag = this.tagTeam ?? freshRealityTagTeam(allSelectableElements().length);
+        this.scene.start('ArenaScene', {
+          elementId,
+          enemyElementId: 'reality',
+          difficulty: 5,
+          reality: { kind: 'boss' },
+          tagTeam: tag,
+          playerPerk: PlayerData.getEquippedPerk(elementId),
+        });
+      }
+      return;
+    }
 
     if (this.kind === 'gauntlet') {
       this.launchCampaignGauntlet(elementId);
@@ -293,6 +350,11 @@ export class CampaignElementSelectScene extends Phaser.Scene {
   }
 
   private goBack(): void {
+    // The dungeon door is on the title screen, so back goes home.
+    if (this.reality) {
+      this.scene.start('TitleScene');
+      return;
+    }
     this.scene.start('CampaignFightMenuScene', {
       worldId: this.worldId,
       nodeId: this.nodeId,

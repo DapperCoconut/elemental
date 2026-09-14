@@ -109,10 +109,6 @@ const SWEAT_MAX_CHARGES = 3;
 const CONTACT_RADIUS_PAD = 24;
 const CONTACT_TICK_MS = 1000;
 
-const EVOLVE_INVINCIBLE_DURATION = 5000;
-const EVOLVE_INVINCIBLE_COOLDOWN = 20000;
-const EVOLVE_INVINCIBLE_TINT = 0x888888;
-
 const BASE_COOLDOWNS: Record<string, number> = {
   'growth-click': 750,
   'growth-virus': 8000,
@@ -487,10 +483,6 @@ export class GrowthKit {
   /** Guards Compromising from chaining off its own eruption damage. */
   private compromiseBusy = false;
 
-  private evolveInvincibleActive = false;
-  private evolveInvincibleEndsAt = 0;
-  private evolveInvincibleCooldownUntil = 0;
-
   private npcDnaBarGfx: Phaser.GameObjects.Graphics | null = null;
   private dnaHudBarBg: Phaser.GameObjects.Rectangle | null = null;
   private dnaHudBarFill: Phaser.GameObjects.Rectangle | null = null;
@@ -610,7 +602,6 @@ export class GrowthKit {
 
     this.closeEvolve();
     this.evolveRightWasDown = false;
-    this.evolveInvincibleCooldownUntil = 0;
 
     if (this.npcDnaBarGfx) { this.npcDnaBarGfx.destroy(); this.npcDnaBarGfx = null; }
     if (this.dnaHudBarBg) { this.dnaHudBarBg.destroy(); this.dnaHudBarBg = null; }
@@ -1263,7 +1254,8 @@ export class GrowthKit {
     this.updateSickness(time, delta);
     this.updateBloodPuddles(time);
     this.updateEmesis(time, delta);
-    if (this.evolveInvincibleActive && time >= this.evolveInvincibleEndsAt) this.endEvolveInvincibility();
+    // The open tree is a menu: while it is up, incoming damage lands at 5% (Fighter.menuGuards).
+    this.arena.player.setMenuGuard('growth-evolve', this.evolveOpen);
     this.drawDnaBar();
     this.drawDnaHudBar();
     this.drawChargePips();
@@ -1331,7 +1323,6 @@ export class GrowthKit {
     } else {
       this.evolveOpen = true;
       this.renderEvolve();
-      this.tryActivateEvolveInvincibility();
     }
   }
 
@@ -1487,7 +1478,6 @@ export class GrowthKit {
   }
 
   private applyFighterTint(): void {
-    if (this.evolveInvincibleActive) return; // gray tint wins until it ends
     const p = this.arena.player;
     const b = this.fighterBody;
     if (this.lvl(b, 'chitin-shell') > 0 && b.chitinUp) p.setTint(CHITIN_TINT);
@@ -2681,34 +2671,8 @@ export class GrowthKit {
 
   // ── Evolve tree: buy / sell / UI ─────────────────────────────────────
 
-  private tryActivateEvolveInvincibility(): void {
-    const { player, scene } = this.arena;
-    const now = scene.time.now;
-    if (now < this.evolveInvincibleCooldownUntil) return;
-    this.evolveInvincibleActive = true;
-    this.evolveInvincibleEndsAt = now + EVOLVE_INVINCIBLE_DURATION;
-    this.evolveInvincibleCooldownUntil = now + EVOLVE_INVINCIBLE_COOLDOWN;
-    player.isInvincible = true;
-    player.setTint(EVOLVE_INVINCIBLE_TINT);
-    // The body goes dormant: a shell of pods folds inward over it.
-    this.playerAvatar?.play('flex');
-    this.pfx.bloom(player.x, player.y, 40, 11, 4, CULTURE_TONES);
-    this.pfx.channelIncubate(player.x, player.y, 48, EVOLVE_INVINCIBLE_DURATION,
-      () => (player.active ? { x: player.x, y: player.y } : null), 3, CULTURE_TONES);
-    this.arena.showFloatingText(player.x, player.y - 40, '🛡 Invincible', '#cccccc');
-  }
-
-  private endEvolveInvincibility(): void {
-    if (!this.evolveInvincibleActive) return;
-    this.evolveInvincibleActive = false;
-    this.arena.player.isInvincible = false;
-    this.arena.player.clearTint();
-    this.applyFighterTint();
-  }
-
   private closeEvolve(): void {
     this.evolveOpen = false;
-    this.endEvolveInvincibility();
     if (this.evolveGfx) { this.evolveGfx.destroy(); this.evolveGfx = null; }
     for (const l of this.evolveLabels) l.destroy();
     this.evolveLabels = [];

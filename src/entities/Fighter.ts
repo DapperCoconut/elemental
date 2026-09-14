@@ -60,6 +60,16 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public element: Element;
   public isInvincible = false;
   /**
+   * In-match menu UIs this fighter currently has open (evolve tree, tapestry draft,
+   * upgrade modal…), keyed so overlapping UIs cannot stomp each other's close.
+   *
+   * While any is open, incoming damage is cut to 5% in `takeDamage` — the standard
+   * "you are in a menu" protection that replaced the old outright menu invincibility.
+   * Kits sync their key every frame from their own open flag, so every close path
+   * (buy, cancel, timeout, match end) clears it without needing its own call site.
+   */
+  private menuGuards = new Set<string>();
+  /**
    * Dummy mode: this body cannot run out of health.
    *
    * Deliberately *not* `isInvincible` — the whole point of a practice target is
@@ -299,6 +309,17 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   public magicIncomingMult = 1;
   /**
+   * Mutations (see `src/mutations/MutationKit.ts`): a Duel's tripled stakes, a Bulwark's plate,
+   * a Feast-fattened opponent, a Fragile player's glass-cannon trade and a Warden's second
+   * phase, folded into one field and rewritten from scratch by MutationKit every frame.
+   *
+   * Its own field for the reason every neighbour above has one — and pointedly *not* a share of
+   * `incomingDamageMultiplier`, which the older inline mutations (Molten, Order) already assign
+   * to outright. Two mutations writing the same field would silently cancel each other, which
+   * is exactly what stacking mutations must never do.
+   */
+  public mutationIncomingMult = 1;
+  /**
    * Radiation (Irradiated): `Date.now()` epoch until which every point of healing aimed at this
    * fighter lands as damage instead — see `heal`. One field rather than a hook per healing
    * source, because `heal()` is the single place every heal in the game passes through.
@@ -350,6 +371,14 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public selfDamageImmune = false;
   /** Divine perk Order: 1.25 — the price of that immunity is that everyone *else* hits harder. */
   public orderIncomingMult = 1;
+  /**
+   * Soul's Ward perk: 0.7 while two or more of your amalgams are standing near you.
+   *
+   * It used to assign `incomingDamageMultiplier` directly, which has nine other raw writers —
+   * the Order mutation reassigns it every frame, so Ward silently did nothing in those fights.
+   * A field of its own is the house pattern for exactly this reason.
+   */
+  public wardIncomingMult = 1;
   /** Invoked with the amount whenever `selfDamageImmune` swallows a hit, so the kit can draw the tell. */
   public onSelfDamageBlocked: ((amount: number) => void) | null = null;
   /** Creation Buff Potion: 1.25 while whoever is damaging this fighter is potion-empowered (victim-side stand-in for "deals 25% more"). */
@@ -857,6 +886,17 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     this.setDepth(5);
   }
 
+  /** Declare an in-match menu UI open or closed on this fighter. Idempotent — safe to sync every frame. */
+  setMenuGuard(key: string, open: boolean): void {
+    if (open) this.menuGuards.add(key);
+    else this.menuGuards.delete(key);
+  }
+
+  /** True while any in-match menu UI is open on this fighter (incoming damage is cut to 5%). */
+  get inMenuUi(): boolean {
+    return this.menuGuards.size > 0;
+  }
+
   /** Called by the attacker (or damage source) just before takeDamage to supply crit context for this hit. */
   setIncomingCritContext(chance: number, mult: number): void {
     this.incomingCritCtx = { chance, mult };
@@ -924,7 +964,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       // Tallied here: after the crit roll (a crit really is a bigger hit) but before every
       // mitigation multiplier on the line below, which is what "damage aimed at you" means.
       this.rawDamageTaken += amount;
-      let mitigation = this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.paperIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.artifactIncomingMult * this.clothIncomingMult * this.gluttonyIncomingMult * this.orderIncomingMult * this.fortuneIncomingMult * this.dreamIncomingMult * this.duneIncomingMult * this.radiationIncomingMult * this.magicIncomingMult * this.mapArmorMult * this.starIncomingMult * this.netDefenseMult;
+      let mitigation = this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.paperIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.artifactIncomingMult * this.clothIncomingMult * this.gluttonyIncomingMult * this.orderIncomingMult * this.wardIncomingMult * this.fortuneIncomingMult * this.dreamIncomingMult * this.duneIncomingMult * this.radiationIncomingMult * this.magicIncomingMult * this.mutationIncomingMult * this.mapArmorMult * this.starIncomingMult * this.netDefenseMult;
       // Ruin's spikes turn armour inside out — 25% less damage taken comes back as 25% more.
       // Only a net *buff* is flipped; a fighter already taking extra damage is left alone.
       if (mitigation < 1 && this.scene.time.now < this.buffsInvertedUntil) mitigation = 2 - mitigation;
@@ -962,6 +1002,12 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
         ? Math.min(this.hardDamageCap, this.netDamageCap)
         : Math.max(this.hardDamageCap, this.netDamageCap);
       if (damageCap > 0) amount = Math.min(amount, damageCap);
+    }
+    // In a menu you are distracted, not absent: hits land at 5% instead of being blocked
+    // outright. Applied to relayed (netApplied) hits too — only the victim's sim knows a
+    // menu is open. Pierce ignored the old menu invincibility, so it skips the cut as well.
+    if (!pierce && this.menuGuards.size > 0 && amount > 0) {
+      amount = Math.max(1, Math.round(amount * 0.05));
     }
     this.lastIncomingDamage = amount;
     if (isCrit) {

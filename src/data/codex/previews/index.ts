@@ -861,6 +861,7 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'fate:perk:paper': fate.perkPaper,
   'sound:perk:harmony': sound.perkHarmony,
   'technology:perk:adrenaline': technology.perkAdrenaline,
+  'silence:perk:hymn': silence.perkHymn,
   'silence:perk:torture': silence.perkTorture,
 
   // ── Mastery ──
@@ -897,6 +898,7 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'creation:mastery:mortar-command': creation.masteryMortarCommand,
   'electricity:mastery:kinetic-shield': electricity.masteryKineticShield,
   'electricity:mastery:kinetic-bomb': electricity.masteryKineticBomb,
+  'slime:perk:electrolysis': slime.perkElectrolysis,
   'slime:mastery:acid-walker': slime.masteryAcidWalker,
   'slime:mastery:breakdown': slime.masteryBreakdown,
   'light:mastery:unstoppable': light.masteryUnstoppable,

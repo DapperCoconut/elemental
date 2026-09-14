@@ -167,13 +167,13 @@ const technology: ElementCodex = {
       ],
       upgrade: {
         basics:
-          'F becomes a browser window instead. You are protected for as long as the page is open, which '
-          + 'makes the whole minigame a defensive option as well as an economic one, and coins are clicked '
+          'F becomes a browser window instead. Browsing counts as being in a menu — hits reach you at '
+          + '5% of their damage while the page is open, so it still blunts a burst without being a wall, and coins are clicked '
           + 'out of the page to spend in the Grub-Shop — a bagel at 10, a mouse at 20, a factory at 35 — '
           + 'with a Wheel of Fortune spin at 5. Taking The Door explodes the window and launches every coin '
           + 'you were holding as a projectile at 1 damage each, 330 px/s.',
         effects: [
-          { tag: 'shield', label: 'Sheltered', detail: 'You are protected for as long as the browser is open, which makes the whole minigame a defensive option as well as an economic one.', requiresUpgrade: 'f' },
+          { tag: 'shield', label: 'In a menu', detail: 'While the browser is open, incoming damage lands at 5% — the standard menu rule, so browsing blunts a burst without being outright protection.', requiresUpgrade: 'f' },
           { tag: 'resource', label: 'Coins', detail: 'Clicked out of the page. They buy things from the Grub-Shop — a bagel at 10, a mouse at 20, a factory at 35 — and a Wheel of Fortune spin costs 5.', requiresUpgrade: 'f' },
           { tag: 'damage', label: 'The Door', detail: 'Taking it explodes the window and launches every coin you were holding as a projectile — 1 damage each at 330 px/s.', requiresUpgrade: 'f' },
         ],
@@ -181,19 +181,20 @@ const technology: ElementCodex = {
       notes: [
         'Dragging the enemy is the headline, but dragging your own parked cord head is the more reliable play: it lets a missed Upload be walked onto somebody.',
         'The mastery requirement Coin Farmer is 500 coins collected inside the browser, so the minigame is trained rather than skipped.',
-        'Being sheltered while the browser is open means opening it is a legitimate answer to an incoming ultimate.',
+        'The 5% menu rate while the browser is open means opening it is still a reasonable answer to an incoming ultimate — you eat a twentieth of it.',
       ],
     },
 
     'tech-admin': {
       basics:
-        'Eight seconds of typing during which you are fully invincible and completely unable to attack. '
+        'Eight seconds of typing during which you are completely unable to attack, and the console counts '
+        + 'as a menu — hits reach you at 5% of their damage for the whole window. '
         + 'You are given a 6-digit binary string and score +1 per correct digit and −1 per wrong one, '
         + 'starting from 0, and every tier you reached fires rather than just the top one — 50 points is '
         + 'all five. 60s cooldown, the longest in the element by six times.',
-      cast: 'Q, ultimate. 8 seconds of invincible, unable-to-attack typing. 60s cooldown — the longest in the element by six times.',
+      cast: 'Q, ultimate. 8 seconds of unable-to-attack typing at the menu damage rate. 60s cooldown — the longest in the element by six times.',
       effects: [
-        { tag: 'shield', label: 'While it runs', detail: 'Fully invincible and completely unable to attack for the whole 8 seconds.' },
+        { tag: 'shield', label: 'While it runs', detail: 'Completely unable to attack for the whole 8 seconds, and the console counts as a menu: incoming damage lands at 5%.' },
         { tag: 'resource', label: 'The points', detail: 'A 6-digit binary string. +1 per correct digit, −1 per wrong one, starting from 0.' },
         { tag: 'utility', label: 'Cashed cumulatively', detail: 'Every tier you reached fires, not just the top one — 50 points is all five.' },
       ],

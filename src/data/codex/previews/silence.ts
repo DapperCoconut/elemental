@@ -56,6 +56,9 @@ const GRABBER_DMG = 50;
 const GRABBER_CD_PENALTY = 1.2;
 const TORTURE_BASE_DPS = 4;
 const TORTURE_MS = 6000;
+const HYMN_RADIUS = 140;
+const HYMN_PULL_PER_S = 44;
+const HYMN_MATURE_MS = 6000;
 
 const FEAST_RADIUS = 110;
 const FEAST_DURATION_MS = 8000;
@@ -995,6 +998,57 @@ export const perkTorture: PreviewScript = {
 
     label(ctx, ctx.w * 0.5, ctx.h - 8,
       `${TORTURE_BASE_DPS}/s for ${TORTURE_MS / 1000}s, +2/s a stack to 3 — 48 damage and 26 seconds of lockout`,
+      SILENCE.violet);
+  },
+};
+
+// ── Perk — Hymn ───────────────────────────────────────────────────────
+
+/**
+ * One watcher, singing. The foe is walked in from the right on its own line and the hum's pull
+ * is added on top, so the drag reads as a bend in their path rather than a teleport — which is
+ * exactly what 44 px/s feels like against a walking fighter.
+ */
+export const perkHymn: PreviewScript = {
+  duration: 8600,
+  scale: 0.9,
+  caption: 'Perk — a 140px hum drags them in, and 6s of holding ripens the watcher on the spot',
+  run(ctx) {
+    const s = stageIt(ctx);
+    const eye: Mark = { x: ctx.w * 0.42, y: ctx.h * 0.52 };
+    const foe: Mark = { x: ctx.w - 26, y: ctx.h * 0.52 };
+    victim(ctx, foe, { facing: () => Math.PI });
+
+    let heldMs = 0;
+    let ripe = false;
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+
+    ctx.onFrame((dt, elapsed) => {
+      // They walk in of their own accord until they are inside, then the song does the rest.
+      if (foe.x > ctx.w * 0.63) foe.x -= 46 * dt;
+      const d = Phaser.Math.Distance.Between(foe.x, foe.y, eye.x, eye.y);
+      const holding = d <= HYMN_RADIUS && d > 4;
+      if (holding && !ripe) {
+        foe.x += ((eye.x - foe.x) / d) * HYMN_PULL_PER_S * dt;
+        foe.y += ((eye.y - foe.y) / d) * HYMN_PULL_PER_S * dt;
+        heldMs += dt * 1000;
+        if (heldMs >= HYMN_MATURE_MS) {
+          ripe = true;
+          s.fx.watchPulse(eye.x, eye.y, 26, SILENCE.gore, 7, 700);
+          tick(ctx, eye.x, eye.y - 30, '🎼 RIPENED', SILENCE.lilac);
+        }
+      }
+      g.clear();
+      SilenceFx.drawHymnRing(g, ctx.tint, eye.x, eye.y, HYMN_RADIUS, elapsed / 1000, 1.4,
+        holding, ripe ? 0 : Phaser.Math.Clamp(heldMs / HYMN_MATURE_MS, 0, 1));
+      SilenceFx.drawWatcher(g, ctx.tint, eye.x, eye.y, ripe ? 1 : 0.2, false, elapsed / 1000, 1, true);
+    });
+
+    // The cost, called out the moment the song actually has hold of somebody.
+    ctx.at(2600, () => tick(ctx, ctx.cx, 30, '🔇 stealth draining — they can hear you', SILENCE.orchid));
+
+    label(ctx, ctx.w * 0.5, ctx.h - 8,
+      '140px hum · 44 px/s pull · 6s held ripens it against its normal 35s',
       SILENCE.violet);
   },
 };

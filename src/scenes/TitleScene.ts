@@ -1,6 +1,9 @@
 import Phaser from 'phaser';
 import * as PlayerData from '../data/PlayerData';
 import * as Cheats from '../data/Cheats';
+import { anyAmalgamFelled } from '../data/CampaignProgress';
+import { drawCrack } from '../reality/RealityArt';
+import { REALITY_BLUE, CRACK_RED } from '../reality/RealityTypes';
 import { createCheatSave, verifyCheatSave, applyKonamiCheat } from '../data/CheatSave';
 import { GAUNTLET_COST } from '../data/GauntletData';
 import {
@@ -53,9 +56,10 @@ export class TitleScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(DEPTH.content);
 
     // ── Navigation cards ────────────────────────────────────────────
-    // A row of dossiers, the same shape the element roster uses: glyph in a lit well,
-    // name, archetype line, one line of what it is, and the prompt. The old grid was six
-    // wide plates whose only picture was an emoji nailed to the left edge.
+    // A row of dossiers built like the element roster's — glyph in a lit well, name,
+    // archetype line, one line of what it is, and the prompt — but squared off rather than
+    // leaning. The old grid was six wide plates whose only picture was an emoji nailed to
+    // the left edge.
     const gauntletUnlocked = PlayerData.isGauntletUnlocked();
     const tiles: Array<{
       label: string; kicker: string; blurb: string; icon: IconName; status: string;
@@ -116,6 +120,9 @@ export class TitleScene extends Phaser.Scene {
       addFeatureCard(this, {
         x: startX + i * (cardW + cardGap),
         y: cardY, w: cardW, h: cardH,
+        // Upright rectangles here rather than the roster's leaning plates: the
+        // main menu is a fixed rank of destinations, not a roster to scroll.
+        skew: 0,
         accent: tile.accent,
         icon: tile.icon,
         title: tile.label,
@@ -180,6 +187,8 @@ export class TitleScene extends Phaser.Scene {
       fontSize: '11px', fontFamily: FONT_UI, color: T.ghost, letterSpacing: 1,
     }).setOrigin(0.5).setDepth(DEPTH.content);
 
+    this.buildRealityCrack(height);
+
     // Konami code: WWSSADADBA → currencies + gauntlets + secret unlocks
     const KONAMI = ['W', 'W', 'S', 'S', 'A', 'D', 'A', 'D', 'B', 'A'];
     let konamiIdx = 0;
@@ -203,6 +212,53 @@ export class TitleScene extends Phaser.Scene {
 
     // Cheat-mode toggle, bottom right — only once the logo has been unlocked
     if (Cheats.isUnlocked()) this.buildCheatToggle(width, height);
+  }
+
+  // ── The crack in the world ──────────────────────────────────────────
+
+  /**
+   * Bottom-left: a fissure that appears once the Disgraced King is down, widens
+   * as Dream and Justice come home, and opens outright when the campaign is
+   * finished. What waits behind it lives in `src/reality/`. After the fight is
+   * won it stays — small, and the wrong color — and clicking it fights again.
+   */
+  private buildRealityCrack(height: number): void {
+    if (!PlayerData.isKingDefeated()) return;
+
+    const ax = 26;
+    const ay = height - 30;
+    const defeated = PlayerData.isRealityDefeated();
+    const open = !defeated && anyAmalgamFelled();
+    const divines = (PlayerData.isElementUnlocked('dream') ? 1 : 0)
+      + (PlayerData.isElementUnlocked('justice') ? 1 : 0);
+    const size = defeated ? 20 : open ? 92 : 26 + divines * 16;
+    const color = defeated ? CRACK_RED : REALITY_BLUE;
+
+    const g = this.add.graphics().setDepth(DEPTH.content + 1);
+    drawCrack(g, ax, ay, size, color);
+    this.tweens.add({
+      targets: g, alpha: { from: 0.75, to: 1 },
+      duration: defeated ? 700 : 1600, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+    });
+
+    if (!open && !defeated) return;
+
+    const reach = defeated ? 44 : size;
+    const zone = this.add.zone(ax + reach * 0.35, ay - reach * 0.35, reach * 1.6, reach * 1.6)
+      .setInteractive({ useHandCursor: true });
+    zone.on('pointerdown', () => {
+      // Through the glass: white-out, then the dungeon (or the chapel, once
+      // the fountain holds a place there). A finished fight can be refought.
+      this.input.enabled = false;
+      this.cameras.main.fadeOut(900, 255, 255, 255);
+      this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+        this.scene.start('CampaignElementSelectScene', {
+          reality: { kind: PlayerData.isRealityFountainLit() ? 'boss' : 'trials' },
+          worldId: 'fire', nodeId: 'reality', isChallenge: false, kind: 'fight',
+          slotIdx: 0, hardMode: false, enemyElementId: 'reality', difficulty: 5,
+        });
+      });
+    });
   }
 
   // ── Emblem ──────────────────────────────────────────────────────────

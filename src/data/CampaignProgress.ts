@@ -607,6 +607,15 @@ export function isAmalgamFelled(idx: 0 | 1 | 2): boolean {
   return isChallengeCompleted(idx, AMALGAM_WORLD_ID);
 }
 
+/**
+ * True once any slot has felled the Amalgam. The Reality crack on the title
+ * screen reads this — the title screen has no active slot, and finishing the
+ * campaign anywhere is what tears the world open.
+ */
+export function anyAmalgamFelled(): boolean {
+  return ([0, 1, 2] as const).some((idx) => isAmalgamFelled(idx));
+}
+
 // ── Story beats ──────────────────────────────────────────────────────
 
 export function hasSeenStoryBeat(idx: 0 | 1 | 2, beatId: string): boolean {

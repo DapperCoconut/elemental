@@ -595,7 +595,7 @@ function dragLoop(ctx: PreviewCtx, opts: { surf: boolean }): void {
       win.fillCircle(cx - 1.4, cy - 1.4, 2);
     }
     winText.setVisible(true).setPosition(ctx.w / 2, ctx.h / 2 + bh / 2 - 12)
-      .setText(`🪙 ${coins}     SHELTERED WHILE OPEN     🚪 the Door`);
+      .setText(`🪙 ${coins}     HITS LAND AT 5% WHILE OPEN     🚪 the Door`);
   });
 
   ctx.at(1400, () => {
@@ -637,7 +637,7 @@ export const webDrag: PreviewScript = {
 export const webDragUpgraded: PreviewScript = {
   duration: 8000,
   scale: 0.9,
-  caption: 'Surf the web! — a browser opens mid-fight, you are sheltered inside it, and there is a Door',
+  caption: 'Surf the web! — a browser opens mid-fight, hits reach you at 5% inside it, and there is a Door',
   run(ctx) { dragLoop(ctx, { surf: true }); },
 };
 
@@ -677,7 +677,7 @@ function adminLoop(ctx: PreviewCtx, opts: { breach: boolean }): void {
     s.av.play('raise');
     s.fx.ring(ctx.cx, ctx.cy, 10, 70, TECH.cyan, 480, D_WORLD, 4);
     tick(ctx, ctx.cx, ctx.cy - 40, `⌨️ ADMIN CONSOLE · ${ADMIN_WINDOW_MS / 1000}s`, TECH.cyan);
-    tick(ctx, ctx.cx, ctx.cy - 58, 'INVINCIBLE · CANNOT ATTACK', TECH.ice);
+    tick(ctx, ctx.cx, ctx.cy - 58, 'HITS LAND AT 5% · CANNOT ATTACK', TECH.ice);
   });
   for (let i = 0; i < ADMIN_STRING_LEN; i++) {
     ctx.at(900 + i * 320, () => {
@@ -720,7 +720,7 @@ function adminLoop(ctx: PreviewCtx, opts: { breach: boolean }): void {
 export const admin: PreviewScript = {
   duration: 9000,
   scale: 0.9,
-  caption: 'Q — eight invincible seconds typing binary, then cash the points in cumulatively',
+  caption: 'Q — eight seconds typing binary at the 5% menu rate, then cash the points in cumulatively',
   run(ctx) { adminLoop(ctx, { breach: false }); },
 };
 

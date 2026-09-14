@@ -12,10 +12,16 @@ import { CampaignFormatKit, CampaignFormatArenaApi } from '../elements/kits/Camp
 import { GimmickKit, GimmickArenaApi } from '../elements/kits/GimmickKit';
 import { SecretMapKit, SecretMapArenaApi } from '../elements/kits/SecretMapKit';
 import { SummonerKit, SummonerArenaApi } from '../elements/kits/SummonerKit';
+import { MutationKit, MutationArenaApi } from '../mutations/MutationKit';
+import { paintLegacyMutations, LegacyMutationState } from '../mutations/LegacyMutationArt';
 import { DuoKit, DuoArenaApi } from '../elements/kits/DuoKit';
 import { SecretTagState } from '../data/SecretModes';
 import { setProgressLocked } from '../data/ProgressLock';
-import { TagTeamState, isPledgeFight } from '../data/FightFormats';
+import { TagTeamState, isPledgeFight, freshRealityTagTeam } from '../data/FightFormats';
+import { RealityRunPayload } from '../reality/RealityTypes';
+import { RealityDungeonKit, RealityDungeonArenaApi } from '../reality/RealityDungeonKit';
+import { RealityBossKit, RealityBossArenaApi } from '../reality/RealityBossKit';
+import { allSelectableElements, findElementDef } from '../data/ElementRoster';
 import { getEffectiveFightDef } from '../data/CampaignFightsHard';
 import { Projectile } from '../combat/Projectile';
 import { OnlineKit, OnlineArenaApi } from '../network/OnlineKit';
@@ -369,6 +375,10 @@ export class ArenaScene extends Phaser.Scene {
   /** A campaign world's Sovereign (mode 'worldboss') — the world id doubles as the boss id. */
   private worldBossId: string | null = null;
   private worldBossKit: WorldBossKit | null = null;
+  /** The Reality dungeon/boss mode — null everywhere else. See src/reality/. */
+  private reality: RealityRunPayload | null = null;
+  private realityDungeonKit: RealityDungeonKit | null = null;
+  private realityBossKit: RealityBossKit | null = null;
   /** Campaign fight formats (horde/survival/flood) — see CampaignFormatKit. */
   private formatKit: CampaignFormatKit | null = null;
   /** The campaign world's standing arena rule — see GimmickKit. */
@@ -563,6 +573,14 @@ export class ArenaScene extends Phaser.Scene {
   private archfiendFirePoolAccum = 0;
   /** Summoner boss mutation — owns the whole risen horde (see SummonerKit). */
   private summonerKit!: SummonerKit;
+  /**
+   * The twenty later mutations, and the repaint layer for the originals. Everything
+   * about them — rules, world objects and art — lives in src/mutations/; the scene
+   * only arms them, ticks them, and pulls their speed multipliers.
+   */
+  private mutationKit!: MutationKit;
+  private legacyMutationGfx: Phaser.GameObjects.Graphics | null = null;
+  private legacyMutationTopGfx: Phaser.GameObjects.Graphics | null = null;
   // Nuclear mutation state
   private nuclearStartedAt = 0;
   private nuclearDurationMs = 0;
@@ -910,7 +928,7 @@ export class ArenaScene extends Phaser.Scene {
     super({ key: 'ArenaScene' });
   }
 
-  create(data: { elementId: string; enemyElementId?: string; difficulty?: number; mutations?: string[]; starredMutations?: string[]; mode?: string; invasionDifficulty?: string; gauntlet?: import('../data/GauntletData').GauntletState; playerPerk?: string | null; npcPerk?: string | null; npcLoadout?: import('../data/NpcLoadout').NpcLoadout; campaign?: { slot: 0 | 1 | 2; worldId: string; fightId: string; isChallenge: boolean; hardMode?: boolean }; quantumBond?: [string, string]; npcQuantumBond?: [string, string]; hpMult?: number; npcOutgoingDamageMult?: number; bounty?: { key: string; reward: number }; bossHard?: boolean; bossId?: string; tagTeam?: TagTeamState; secretMode?: string; secretMap?: string; duoEnemyElementId?: string; secretTag?: SecretTagState; stabilize?: { result: string }; online?: { isHost: boolean; npcUpgrades?: string[]; npcMasteryBinds?: Record<string, string>; npcMasteryOn?: boolean; npcSkin?: string | null } }): void {
+  create(data: { elementId: string; enemyElementId?: string; difficulty?: number; mutations?: string[]; starredMutations?: string[]; mode?: string; invasionDifficulty?: string; gauntlet?: import('../data/GauntletData').GauntletState; playerPerk?: string | null; npcPerk?: string | null; npcLoadout?: import('../data/NpcLoadout').NpcLoadout; campaign?: { slot: 0 | 1 | 2; worldId: string; fightId: string; isChallenge: boolean; hardMode?: boolean }; quantumBond?: [string, string]; npcQuantumBond?: [string, string]; hpMult?: number; npcOutgoingDamageMult?: number; bounty?: { key: string; reward: number }; bossHard?: boolean; bossId?: string; tagTeam?: TagTeamState; secretMode?: string; secretMap?: string; duoEnemyElementId?: string; secretTag?: SecretTagState; stabilize?: { result: string }; reality?: RealityRunPayload; online?: { isHost: boolean; npcUpgrades?: string[]; npcMasteryBinds?: Record<string, string>; npcMasteryOn?: boolean; npcSkin?: string | null } }): void {
     this.selectedElementId = data.elementId ?? 'fire';
     // ── Secret modes ────────────────────────────────────────────────
     this.secretMode = data.secretMode ?? null;
@@ -939,6 +957,7 @@ export class ArenaScene extends Phaser.Scene {
     this.isBossFight = data.mode === 'boss';
     this.isBossHard = this.isBossFight && data.bossHard === true;
     this.worldBossId = data.mode === 'worldboss' ? (data.bossId ?? null) : null;
+    this.reality = data.reality ?? null;
     this.tagTeam = data.tagTeam ?? null;
     this.bootData = data as unknown as Record<string, unknown>;
     this.bossOutcome = null;
@@ -1886,6 +1905,34 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     this.soundKit.reset(isSoundMatch);
+
+    // The later mutations. Built once, reset every match like every other kit —
+    // it decides for itself whether any of the twenty it owns are actually on.
+    if (!this.mutationKit) {
+      const arena = this;
+      const mutApi: MutationArenaApi = {
+        get scene() { return arena as Phaser.Scene; },
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get gameEnded() { return arena.gameEnded; },
+        addEnemy: (f) => { arena.enemies.push(f); arena.enemyGroup.add(f, true); },
+        removeEnemy: (f) => {
+          arena.enemies = arena.enemies.filter((e) => e !== f);
+          arena.enemyGroup.remove(f, false, false);
+        },
+        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
+        setStatusIndicator: (id, st) => arena.setStatusIndicator(id, st),
+      };
+      this.mutationKit = new MutationKit(mutApi);
+    }
+    this.mutationKit.reset();
+    // Two layers the original mutations' art is repainted onto each frame — see
+    // src/mutations/LegacyMutationArt.ts for why they stopped being flat shapes.
+    // Under the fighters (the enemy rides the dinosaur), and over them (the ball).
+    this.legacyMutationGfx = this.add.graphics().setDepth(4);
+    this.legacyMutationTopGfx = this.add.graphics().setDepth(9);
 
     this.mutations = new Set();
     this.starredMutations = new Set();
@@ -3437,6 +3484,8 @@ export class ArenaScene extends Phaser.Scene {
     } else if (this.isBossFight) {
       // The Disgraced King fights in his own throne room — DisgracedKingKit
       // paints it. Drawing the default grid here would sit on top of it.
+    } else if (this.reality) {
+      // The dungeon and the chapel are painted by their kits, same rule.
     } else {
       this.add.rectangle(cx, cy, W, H, 0x0d0d1a);
       this.add.rectangle(cx, cy, W - pad * 2, H - pad * 2, 0x181828);
@@ -3496,8 +3545,10 @@ export class ArenaScene extends Phaser.Scene {
     this.starredMutations = new Set(data.starredMutations ?? []);
 
     // The boss owns its own body outright (HP, position, invincibility windows),
-    // so mutations must not touch it.
-    if (!this.isInvasion && !this.isBossFight && !this.worldBossId) {
+    // so mutations must not touch it. Reality's trials keep the normal path —
+    // their room-five duel is a standard expert bot — but the chapel body is
+    // kit-owned like every other boss.
+    if (!this.isInvasion && !this.isBossFight && !this.worldBossId && this.reality?.kind !== 'boss') {
       if (this.dummyPractice) {
         // The practice range: a real element, immortal in the literal sense
         // rather than the "very large number" sense.
@@ -3661,9 +3712,10 @@ export class ArenaScene extends Phaser.Scene {
             // Solo / co-op host: full on-hit pipeline, same as hitting the 1v1 npc.
             this.applyProjectileToEnemy(proj, target);
           }
-        } else if (this.bossKit?.ownsEnemy(target)) {
-          // Boss-owned hitboxes (the King's destructible dark orbs). Without this
-          // the fall-through below would send the shot into the boss instead.
+        } else if (this.bossKit?.ownsEnemy(target) || this.realityBossKit?.ownsEnemy(target)) {
+          // Boss-owned hitboxes (the King's destructible dark orbs, Chaos in
+          // Reality's split phase). Without this the fall-through below would
+          // send the shot into the boss instead.
           this.applyProjectileToEnemy(proj, target);
         } else if (this.duoKit.owns(target) || this.secretMapKit.ownsBody(target)) {
           // Duo's second opponent and the Graveyard's risen have bodies of their
@@ -3801,8 +3853,26 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── Defeat + damage events ────────────────────────────────────
     this.player.once('defeated', () => {
+      // Reality's mirror: every real loss is filed under the element that dealt
+      // it. Only roster elements count — husk waves, kings and dungeon hazards
+      // have no one element to blame (`findElementDef` is the roster test).
+      if (!this.isInvasion && !this.isBossFight && !this.reality
+          && findElementDef(this.npcSelectedElementId)) {
+        PlayerData.recordDeathToElement(this.npcSelectedElementId);
+      }
       // Invasion co-op: dying doesn't end the run — InvasionCoopKit handles downed/revive.
       if (this.isInvasion && this.isOnline) return;
+      // Reality: trials restart at the first room; the chapel burns an element
+      // and re-picks — unless the kit owns this death (the scripted opening).
+      if (this.reality) {
+        if (this.reality.kind === 'trials') {
+          this.realityTrialsFailed();
+        } else {
+          if (this.realityBossKit?.interceptPlayerDeath()) return;
+          this.realityTagSwapOut(true);
+        }
+        return;
+      }
       // The King is a tag team too, but it is not a campaign fight — it is
       // loaded out at the door, so it goes back there rather than to the
       // campaign's element picker.
@@ -3918,10 +3988,21 @@ export class ArenaScene extends Phaser.Scene {
       this.metalKit.onDamageDealt('npc', amount);
     });
 
+    // Reality decides for itself what an npc death means: the trials' fifth
+    // room opens its door, and a chapel body down is a phase, not the fight.
+    // `.on`, not `.once` — `defeated` fires on every hit at 0 HP and the boss
+    // body dies once per phase; the kit is idempotent about both.
+    if (this.reality) {
+      this.npc.on('defeated', () => {
+        if (this.reality!.kind === 'trials') this.realityDungeonKit?.onDuelWon();
+        else this.realityBossKit?.onBodyDefeated();
+      });
+    }
+
     // Invasion husks manage their own defeat handlers in the InvasionKit; skip here.
     // Bosses also skip it — their first "death" is only the end of a phase, so
     // the boss kit decides when the fight is actually over (bossVictory()).
-    if (!this.isInvasion && !this.isBossFight && !this.worldBossId) {
+    if (!this.isInvasion && !this.isBossFight && !this.worldBossId && !this.reality) {
       this.npc.once('defeated', () => {
         // Tag-team: this was one head of the hydra, not the bout.
         if (this.tagTeam && this.tagTeam.index + 1 < this.tagTeam.enemies.length) {
@@ -4049,6 +4130,9 @@ export class ArenaScene extends Phaser.Scene {
     // Pause menu: Esc opens PauseMenuScene overlay.
     // Online: pausing would desync the peers, so ESC-ESC forfeits instead.
     kb.on('keydown-ESC', () => {
+      // The Conquest modal owns this press (its own handler closes it) — otherwise the
+      // same ESC would also pause, or worse, arm the online forfeit prompt.
+      if (this.scene.isActive('ConquestMenuScene')) return;
       if (this.isOnline) {
         if (this.gameEnded) return;
         if (this.time.now < this.onlineForfeitArmedUntil) {
@@ -4244,6 +4328,69 @@ export class ArenaScene extends Phaser.Scene {
       }
     }
 
+    // ── Reality setup ──────────────────────────────────────────────
+    // The dungeon's trials in one kit, the chapel fight in the other — both in
+    // the boss mould: constructed once, reset every match, updated last.
+    if (this.reality) {
+      const arena = this;
+      if (this.reality.kind === 'trials') {
+        if (!this.realityDungeonKit) {
+          const api: RealityDungeonArenaApi = {
+            get scene() { return arena as Phaser.Scene; },
+            get player() { return arena.player; },
+            get npc() { return arena.npc; },
+            get width() { return arena.scale.width; },
+            get height() { return arena.scale.height; },
+            spaceDown: () => arena.spaceKey.isDown,
+            addEnemy: (f) => { arena.enemies.push(f); arena.enemyGroup.add(f, true); },
+            removeEnemy: (f) => {
+              arena.enemies = arena.enemies.filter((e) => e !== f);
+              arena.enemyGroup.remove(f, false, false);
+            },
+            showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+            spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+            setPointerLatched: (latched) => { arena.pointerInputLatched = latched; },
+            restartTrials: () => arena.realityTrialsFailed(),
+            enterBoss: () => arena.realityEnterBoss(),
+            leave: () => arena.realityLeave(),
+            setNpcElement: (id) => {
+              // Same machinery as a Quantum bond swap, plus the body texture —
+              // the kits re-derive "is the npc X" from npcElement every frame.
+              arena.applyNpcElement(id);
+              arena.npc.setTexture(ELEMENT_TEXTURES[id] ?? 'elem-water');
+            },
+          };
+          this.realityDungeonKit = new RealityDungeonKit(api);
+        }
+        this.realityDungeonKit.reset(this.reality.roomIdx ?? 0, this.reality.mirrorId ?? null);
+      } else {
+        if (!this.realityBossKit) {
+          const api: RealityBossArenaApi = {
+            get scene() { return arena as Phaser.Scene; },
+            get player() { return arena.player; },
+            get npc() { return arena.npc; },
+            get width() { return arena.scale.width; },
+            get height() { return arena.scale.height; },
+            addEnemy: (f) => { arena.enemies.push(f); arena.enemyGroup.add(f, true); },
+            removeEnemy: (f) => {
+              arena.enemies = arena.enemies.filter((e) => e !== f);
+              arena.enemyGroup.remove(f, false, false);
+            },
+            showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+            spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+            setPointerLatched: (latched) => { arena.pointerInputLatched = latched; },
+            elementId: () => arena.selectedElementId,
+            elementColor: () => arena.playerElement.color,
+            fakeDeathRepick: () => arena.realityTagSwapOut(false),
+            bossVictory: () => arena.endGame(true),
+            leave: () => arena.realityLeave(),
+          };
+          this.realityBossKit = new RealityBossKit(api);
+        }
+        this.realityBossKit.reset(this.tagTeam ?? null);
+      }
+    }
+
     // ── Standing arena rules: formats, gimmicks, secret modes ──────
     // Formats come off the fight def; the gimmick is the world's standing rule
     // and also runs under boss fights. Invasion and gauntlet nodes get neither
@@ -4351,10 +4498,12 @@ export class ArenaScene extends Phaser.Scene {
 
       // A tag-team enemy carries its wounds across the player's element swap. A boss does
       // too, but through its own kit — its HP is a per-phase pool, not one bar.
-      if (this.tagTeam?.enemyHp != null && !this.worldBossId && !this.isBossFight) {
+      if (this.tagTeam?.enemyHp != null && !this.worldBossId && !this.isBossFight && !this.reality) {
         this.npc.hp = Math.max(1, Math.min(this.npc.maxHp, this.tagTeam.enemyHp));
       }
-      if (isPledgeFight(this.tagTeam)) {
+      // Reality's roster-wide lives get their own standing readout from the
+      // kit — fifty pips is a smear, not a display.
+      if (isPledgeFight(this.tagTeam) && !this.reality) {
         // Every burned element cost exactly one pledge, so the two numbers rebuild the
         // original count without carrying it around.
         const left = this.tagTeam!.pledgesLeft ?? 0;
@@ -4377,7 +4526,7 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── Arena labels ───────────────────────────────────────────────
-    if (!this.isInvasion && !this.isBossFight && !this.worldBossId) {
+    if (!this.isInvasion && !this.isBossFight && !this.worldBossId && !this.reality) {
       this.add.text(180, 20, `${this.playerElement.emoji} YOU`, {
         fontSize: '14px', color: '#ffffff',
       }).setOrigin(0.5).setDepth(20);
@@ -5494,7 +5643,7 @@ export class ArenaScene extends Phaser.Scene {
         this.creationKit.spawnWrench(this.player.x, this.player.y, tx, ty, 'player');
       },
       creationBlock: (x, y, w, h) => { this.creationKit.spawnBlocker(x, y, w, h, 'player'); },
-      creationMaze: () => { this.creationKit.spawnMaze('player'); },
+      creationWorkshop: () => { this.creationKit.spawnWorkshop('player'); },
       // Fate
       fateThrowCard: (tx, ty) => this.fateKit.doThrowCard(tx, ty, 'player'),
       fateReroll: () => this.fateKit.doReroll('player'),
@@ -5839,7 +5988,7 @@ export class ArenaScene extends Phaser.Scene {
         this.creationKit.spawnWrench(this.npc.x, this.npc.y, tx, ty, 'npc');
       },
       creationBlock: (x, y, w, h) => { this.creationKit.spawnBlocker(x, y, w, h, 'npc'); },
-      creationMaze: () => { this.creationKit.spawnMaze('npc'); },
+      creationWorkshop: () => { this.creationKit.spawnWorkshop('npc'); },
       // Fate
       fateThrowCard: (tx, ty) => this.fateKit.doThrowCard(tx, ty, 'npc'),
       fateReroll: () => this.fateKit.doReroll('npc'),
@@ -6143,7 +6292,7 @@ export class ArenaScene extends Phaser.Scene {
       creationBolt: () => {},
       creationWrench: () => {},
       creationBlock: () => {},
-      creationMaze: () => {},
+      creationWorkshop: () => {},
       // Fate (raid stubs)
       fateThrowCard: () => {},
       fateReroll: () => {},
@@ -6534,6 +6683,62 @@ export class ArenaScene extends Phaser.Scene {
     return null;
   }
 
+  /**
+   * A flat snapshot of everything the original mutations have standing on the
+   * floor, for the repaint pass in src/mutations/LegacyMutationArt.ts. The
+   * placeholder primitives those systems still own are hidden at spawn — they
+   * remain the state and the hitbox, they just stopped being the picture.
+   */
+  private legacyMutationState(): LegacyMutationState {
+    const arena = this;
+    return {
+      has: (id) => arena.mutations.has(id),
+      starred: (id) => arena.starredMutations.has(id),
+      get npc() {
+        return { x: arena.npc.x, y: arena.npc.y, scale: arena.npc.scaleX, active: arena.npc.active };
+      },
+      get titanicShields() {
+        return arena.titanicShields.map((s) => ({ x: s.sprite.x, y: s.sprite.y }));
+      },
+      get amberDino() {
+        const d = arena.amberDino;
+        if (!d) return null;
+        return {
+          x: d.sprite.x, y: d.sprite.y,
+          facing: Math.atan2(arena.player.y - d.sprite.y, arena.player.x - d.sprite.x),
+          hp01: Math.max(0, d.hp / Math.max(1, d.maxHp)),
+        };
+      },
+      get tridents() {
+        return arena.archfiendTridents.map((t) => ({
+          x: t.sprite.x, y: t.sprite.y, angle: t.sprite.rotation, stuck: t.stuck,
+        }));
+      },
+      get clotTree() {
+        const c = arena.clotTree;
+        if (!c) return null;
+        return { x: c.x, y: c.y, hp01: Math.max(0, c.hitbox.hp / Math.max(1, c.hitbox.maxHp)) };
+      },
+      get tinker() {
+        return arena.tinkerBuildings.map((b) => ({
+          x: b.x, y: b.y, kind: b.kind, hp01: Math.max(0, b.hp / Math.max(1, b.maxHp)),
+        }));
+      },
+      get mines() {
+        return arena.encroachMines.map((m) => ({ x: m.x, y: m.y, armed: m.armed }));
+      },
+      get golf() {
+        const b = arena.golfBall;
+        if (!b || !b.sprite.active) return null;
+        return {
+          x: b.sprite.x, y: b.sprite.y, r: b.radius,
+          speed: Math.hypot(b.vx, b.vy),
+          dark: arena.starredMutations.has('golf'),
+        };
+      },
+    };
+  }
+
   private applyMutationsToNpc(): void {
     if (this.mutations.has('molten')) {
       const starred = this.starredMutations.has('molten');
@@ -6565,8 +6770,10 @@ export class ArenaScene extends Phaser.Scene {
       this.npc.speed = Math.round(this.npc.speed * (starred ? 0.25 : 0.5));
       const count = starred ? 2 : 1;
       for (let i = 0; i < count; i++) {
+        // Invisible: it stays the position and the projectile-eating radius, and
+        // LegacyMutationArt paints the aegis on top of it every frame.
         const spr = this.add.circle(this.npc.x, this.npc.y, 18, 0x88aaff, 0.85)
-          .setDepth(6).setStrokeStyle(2, 0xffffff, 0.5);
+          .setDepth(6).setStrokeStyle(2, 0xffffff, 0.5).setVisible(false);
         this.titanicShields.push({ sprite: spr });
       }
     }
@@ -6681,10 +6888,12 @@ export class ArenaScene extends Phaser.Scene {
       const starred = this.starredMutations.has('amber');
       const maxHp = starred ? 100 : 50;
       const speed = starred ? 240 : 160;
+      // Both are hidden: the ring and the body are still the mount's position and
+      // its 22px reach, but the dinosaur itself is painted by LegacyMutationArt.
       this.amberMountRing = this.add.circle(this.npc.x, this.npc.y, 32, 0x33cc55, 0)
-        .setStrokeStyle(3, 0x33cc55, 0.9).setDepth(6);
+        .setStrokeStyle(3, 0x33cc55, 0.9).setDepth(6).setVisible(false);
       const sprite = this.add.circle(this.npc.x, this.npc.y + 14, 22, 0x2a8a3a, 0.9)
-        .setStrokeStyle(2, 0x114d20).setDepth(5);
+        .setStrokeStyle(2, 0x114d20).setDepth(5).setVisible(false);
       const hpBg = this.add.rectangle(this.npc.x, this.npc.y + 38, 44, 5, 0x440000).setDepth(7);
       const hpBar = this.add.rectangle(this.npc.x - 22, this.npc.y + 38, 44, 5, 0x33cc55)
         .setOrigin(0, 0.5).setDepth(8);
@@ -6726,6 +6935,9 @@ export class ArenaScene extends Phaser.Scene {
       this.npc.damageAbsorber = (_amt) => true;
       this.spawnGolfBall(this.starredMutations.has('golf'));
     }
+    // Everything added after the original seventeen lives in MutationKit; it picks
+    // out the ids it owns and ignores the rest.
+    this.mutationKit.apply(this.mutations, this.starredMutations);
   }
 
   private updateMutationEffects(time: number, delta: number): void {
@@ -7063,8 +7275,9 @@ export class ArenaScene extends Phaser.Scene {
           const speed = 320;
           const vx = Math.cos(angle) * speed;
           const vy = Math.sin(angle) * speed;
+          // Invisible carrier: position and rotation only — the trident is painted.
           const spr = this.add.rectangle(this.npc.x, this.npc.y, 28, 8, 0xcc4422, 1)
-            .setDepth(5).setRotation(angle);
+            .setDepth(5).setRotation(angle).setVisible(false);
           this.archfiendTridents.push({ sprite: spr, vx, vy, stuck: false, returnsAt: time + 3000 });
         }
         this.showFloatingText(this.npc.x, this.npc.y - 50, '🔱 TRIDENTS', '#ff4422');
@@ -7356,8 +7569,9 @@ export class ArenaScene extends Phaser.Scene {
       : kind === 'dispenser' || kind === 'dispenser+' ? 0x44aaff
       : 0xff4488;
 
+    // Hidden chassis — the machine itself is painted by LegacyMutationArt.
     const sprite = this.add.rectangle(x, y, 28, 28, color, 0.9)
-      .setStrokeStyle(2, stroke, 1).setDepth(4);
+      .setStrokeStyle(2, stroke, 1).setDepth(4).setVisible(false);
     const hpBg = this.add.rectangle(x, y - 20, barW, 4, 0x333333, 0.8).setDepth(5);
     const hpBar = this.add.rectangle(x - barW / 2, y - 20, barW, 4, stroke, 0.9).setDepth(6).setOrigin(0, 0.5);
     const hpLabel = this.add.text(x, y - 28, this.tinkerBuildingLabel(kind), {
@@ -7399,9 +7613,10 @@ export class ArenaScene extends Phaser.Scene {
 
   private spawnClotTree(x: number, y: number, maxHp: number): void {
     const barW = 50;
-    const trunk = this.add.rectangle(x, y + 10, 12, 38, 0x661111, 1).setDepth(5);
+    // Trunk and canopy are hidden carriers — LegacyMutationArt paints the tree.
+    const trunk = this.add.rectangle(x, y + 10, 12, 38, 0x661111, 1).setDepth(5).setVisible(false);
     const canopy = this.add.circle(x, y - 18, 26, 0xaa0033, 0.95)
-      .setStrokeStyle(2, 0xff2255, 0.9).setDepth(6);
+      .setStrokeStyle(2, 0xff2255, 0.9).setDepth(6).setVisible(false);
     const hpBg = this.add.rectangle(x, y - 54, barW, 6, 0x330011, 0.9).setDepth(7);
     const hpBar = this.add.rectangle(x - barW / 2, y - 54, barW, 6, 0xff2244, 0.95)
       .setOrigin(0, 0.5).setDepth(8);
@@ -7586,9 +7801,11 @@ export class ArenaScene extends Phaser.Scene {
       )
     );
 
+    // Hidden carriers. The mine is repainted at the same near-nothing alpha, so
+    // it is exactly as hard to spot as it always was — just no longer a smudge.
     const sprite = this.add.circle(x, y, 28, 0x553300, 0.12).setDepth(3)
-      .setStrokeStyle(1, 0x886600, 0.15);
-    const inner = this.add.circle(x, y, 8, 0x885500, 0.12).setDepth(4);
+      .setStrokeStyle(1, 0x886600, 0.15).setVisible(false);
+    const inner = this.add.circle(x, y, 8, 0x885500, 0.12).setDepth(4).setVisible(false);
     this.encroachMines.push({ sprite, inner, x, y, armed: true });
   }
 
@@ -8261,6 +8478,7 @@ export class ArenaScene extends Phaser.Scene {
   endCoopRun(wavesCompleted: number, shardsEarned: number): void {
     if (this.gameEnded) return;
     this.gameEnded = true;
+    if (this.scene.isActive('ConquestMenuScene')) this.scene.stop('ConquestMenuScene');
     this.invasionCoopKit?.onMatchEnded();
     Music.stop(0.5);
     Sfx.play('defeat');
@@ -8387,6 +8605,98 @@ export class ArenaScene extends Phaser.Scene {
         mode: 'boss',
         hard: this.isBossHard,
         tagTeam: carried,
+      });
+    });
+  }
+
+  // ── Reality (the crack behind the title screen) ────────────────────
+
+  /** A trial killed the run: same element, back to the first room. */
+  private realityTrialsFailed(): void {
+    if (this.gameEnded) return;
+    this.gameEnded = true;
+    Music.stop(0.5);
+    Sfx.play('defeat');
+    this.cameras.main.flash(350, 40, 60, 160);
+    this.showFloatingText(this.scale.width / 2, this.scale.height / 2 - 40,
+      '⌫ THE DUNGEON REJECTS YOU', '#9fc2ff');
+    this.time.delayedCall(1500, () => {
+      this.scene.restart({
+        ...this.bootData,
+        reality: { kind: 'trials', roomIdx: 0, mirrorId: this.reality?.mirrorId },
+      });
+    });
+  }
+
+  /**
+   * The LEAVE button, trials or chapel: no defeat screen, no reward — the
+   * fountain flag is the only thing a walk-out keeps.
+   */
+  private realityLeave(): void {
+    if (this.gameEnded) return;
+    this.gameEnded = true;
+    Music.stop(0.4);
+    this.cameras.main.fadeOut(450, 0, 0, 0);
+    this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+      this.scene.start('TitleScene');
+    });
+  }
+
+  /** Through the fountain's arch: the chapel, with the whole roster as lives. */
+  private realityEnterBoss(): void {
+    this.gameEnded = true;
+    const rosterSize = allSelectableElements().length;
+    this.scene.start('ArenaScene', {
+      elementId: this.selectedElementId,
+      enemyElementId: 'reality',
+      difficulty: 5,
+      reality: { kind: 'boss' },
+      tagTeam: freshRealityTagTeam(rosterSize),
+      playerPerk: PlayerData.getEquippedPerk(this.selectedElementId),
+    });
+  }
+
+  /**
+   * A fall in the chapel. `burnLife` is the difference between a real death
+   * (element burned, pledge spent) and the scripted opening kill (the fake
+   * death screen's re-pick, which costs nothing). Out of lives, the attempt
+   * ends and the fountain holds the player's place for the next one.
+   */
+  private realityTagSwapOut(burnLife: boolean): void {
+    if (this.gameEnded || !this.tagTeam) return;
+    const left = this.tagTeam.pledgesLeft ?? 0;
+    if (burnLife && left <= 0) {
+      this.endGame(false);
+      return;
+    }
+
+    this.gameEnded = true;
+    Music.stop(0.5);
+    if (burnLife) {
+      Sfx.play('defeat');
+      this.cameras.main.flash(350, 120, 40, 60);
+      this.showFloatingText(this.scale.width / 2, this.scale.height / 2 - 40,
+        '◈ ANOTHER VESSEL ANSWERS', '#8ad2ff');
+    }
+
+    // Read the fight's state now — it keeps running under the defeat sting.
+    const carried: TagTeamState = {
+      ...this.tagTeam,
+      enemyHp: null,
+      usedElements: burnLife
+        ? [...this.tagTeam.usedElements, this.selectedElementId]
+        : this.tagTeam.usedElements,
+      pledgesLeft: burnLife ? left - 1 : left,
+      realityResume: this.realityBossKit?.getResumeState() ?? this.tagTeam.realityResume ?? null,
+    };
+    this.time.delayedCall(burnLife ? 1500 : 200, () => {
+      this.scene.start('CampaignElementSelectScene', {
+        reality: { kind: 'boss' },
+        tagTeam: carried,
+        // Campaign furniture the scene's init expects; the reality flag
+        // overrides everything it would drive.
+        worldId: 'fire', nodeId: 'reality', isChallenge: false, kind: 'fight',
+        slotIdx: 0, hardMode: false, enemyElementId: 'reality', difficulty: 5,
       });
     });
   }
@@ -8581,6 +8891,9 @@ export class ArenaScene extends Phaser.Scene {
   private endGame(playerWon: boolean): void {
     if (this.gameEnded) return;
     this.gameEnded = true;
+    // The Conquest upgrade modal runs over the live arena; the arena ending must take
+    // the menu down with it, or it would sit over the results screen forever.
+    if (this.scene.isActive('ConquestMenuScene')) this.scene.stop('ConquestMenuScene');
     if (this.isOnline) this.onlineKit?.onMatchEnded();
 
     // The fight music drops out under the sting so the result lands cleanly.
@@ -8718,22 +9031,24 @@ export class ArenaScene extends Phaser.Scene {
   private openPauseMenu(): void {
     if (this.gameEnded) return;
     if (this.scene.isPaused()) return;
+    // ESC while the Conquest modal is up belongs to that modal (it closes it) — opening the
+    // pause menu on the same press would freeze the arena underneath a half-closed shop.
+    if (this.scene.isActive('ConquestMenuScene')) return;
     this.pausedAt = Date.now();
     this.scene.launch('PauseMenuScene', { parentSceneKey: this.scene.key });
     this.scene.pause();
   }
 
   /**
-   * Conquest's building upgrade menu. Freezes the match exactly the way the pause menu does —
-   * same `pausedAt` stamp, so the RESUME handler shifts every cooldown forward by however long
-   * the player spent reading a four-tier tree.
+   * Conquest's building upgrade menu. It no longer pauses the match: the arena keeps running
+   * underneath the modal, the player is held still, and the Fighter menu guard cuts incoming
+   * damage to 5% while they read a four-tier tree. Reading time now costs real time.
    */
   private openConquestMenu(): void {
     if (this.gameEnded) return;
     if (this.scene.isPaused()) return;
-    this.pausedAt = Date.now();
+    if (this.scene.isActive('ConquestMenuScene')) return;
     this.scene.launch('ConquestMenuScene', { parentSceneKey: this.scene.key, host: this.conquestKit });
-    this.scene.pause();
   }
 
   /**
@@ -9134,6 +9449,13 @@ export class ArenaScene extends Phaser.Scene {
       pointer.buttons &= ~1;
     }
 
+    // Conquest's upgrade modal runs over the live arena — mask the pointer so a
+    // buy-button click can't also land on the board (or fire an ability) beneath it.
+    if (this.scene.isActive('ConquestMenuScene')) {
+      pointer.isDown = false;
+      pointer.buttons &= ~1;
+    }
+
     // Online: broadcast our state and interpolate the remote replica
     if (this.isOnline) this.onlineKit?.update();
 
@@ -9426,6 +9748,11 @@ export class ArenaScene extends Phaser.Scene {
       this.npcSpeedMult *= this.shadowKit.getNpcSpeedMult(time);
       this.playerSpeedMult *= this.shadowKit.getPlayerSpeedMult(time);
     }
+    // Mutations: Frostbite's freeze, Quicksand's drag, a Duel's haste, an Anchor face on the
+    // roulette wheel and the Warden's chains. Pulled for the same reason Fortune is — the kit
+    // updates long after this block has resolved the frame's movement.
+    this.playerSpeedMult *= this.mutationKit.getPlayerSpeedMult();
+    this.npcSpeedMult *= this.mutationKit.getNpcSpeedMult();
     // Fortune: the Chilly Pepper's ring and the auditor's rifle. Pulled for the same reason
     // Justice is — FortuneKit.update() runs long after movement has resolved — and unconditional
     // because a slow the shopkeeper put on somebody outlives him being the one holding the stall.
@@ -9577,6 +9904,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── Disgraced King: cleaves and grasping hands leave you wading ───
     if (this.isBossFight && this.bossKit) this.playerSpeedMult *= this.bossKit.getPlayerSpeedMult();
+    if (this.reality?.kind === 'boss' && this.realityBossKit) this.playerSpeedMult *= this.realityBossKit.getPlayerSpeedMult();
     // ── World Sovereigns hold their slows the same way ────────────────
     if (this.worldBossId && this.worldBossKit) this.playerSpeedMult *= this.worldBossKit.getPlayerSpeedMult();
 
@@ -9759,6 +10087,10 @@ export class ArenaScene extends Phaser.Scene {
       : false;
     // The journal and the telescope are full-screen: they also hold you still.
     if (this.isInvasion && this.invasionKit?.isOverlayOpen()) playerBody.setVelocity(0, 0);
+
+    // Conquest's upgrade modal runs over the live arena: it holds you still too, and the
+    // Fighter menu guard cuts incoming damage to 5% while you read.
+    if (this.scene.isActive('ConquestMenuScene')) playerBody.setVelocity(0, 0);
 
     // ── Player abilities ─────────────────────────────────────────
     const playerCtx = this.buildPlayerContext(mouseX, mouseY);
@@ -10071,6 +10403,7 @@ export class ArenaScene extends Phaser.Scene {
     // Dream's Space is the cosmic cannon's loader while it is standing on a level-5 Pillow Fort,
     // and for the same reason: one press must never be both a load and a roll.
     if (this.elementId !== 'dune' && !this.sandKit.isTrailActive() && !this.dreamKit.suppressesDodge()
+      && !(this.reality?.kind === 'trials' && this.realityDungeonKit?.claimsSpace())
       && Phaser.Input.Keyboard.JustDown(this.spaceKey) && !this.dodgeOnCooldown && !this.isDodging && !this.nukeChanneling && !this.cardSluggishDisableDodge && !this.silenceKit.isPlayerControlLost() && time >= this.player.highGravityUntil
       && time >= this.player.mobilityBlockedUntil) {
       let dx = (this.dKey.isDown ? 1 : 0) - (this.aKey.isDown ? 1 : 0);
@@ -10351,7 +10684,7 @@ export class ArenaScene extends Phaser.Scene {
       // body and every attack it makes.
       // The practice range is the other body that never decides for itself: the
       // player drives it, and `O` is the only thing that hands it back its kit.
-      : (this.isInvasion || this.isBossFight || !!this.worldBossId || (this.dummyPractice && !this.dummyAttacksOn) || this.shadowKit.isConsumeActive() || this.time.now < this.shadowKit.getNpcThrowUntil()) ? null : (this.npc as NpcOpponent).doAI(
+      : (this.isInvasion || this.isBossFight || !!this.worldBossId || this.reality?.kind === 'boss' || (this.reality?.kind === 'trials' && this.realityDungeonKit?.npcDormant() === true) || (this.dummyPractice && !this.dummyAttacksOn) || this.shadowKit.isConsumeActive() || this.time.now < this.shadowKit.getNpcThrowUntil()) ? null : (this.npc as NpcOpponent).doAI(
         npcTarget,
         (tx: number, ty: number) => this.buildNpcContext(tx, ty),
         time,
@@ -10527,6 +10860,17 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── Mutation effects per-frame ───────────────────────────────
     this.updateMutationEffects(time, delta);
+    // The later twenty, plus the repaint pass that gives the originals real art.
+    this.mutationKit.update(time, delta);
+    if (this.legacyMutationGfx && this.legacyMutationTopGfx) {
+      this.legacyMutationGfx.clear();
+      this.legacyMutationTopGfx.clear();
+      if (this.mutations.size > 0) {
+        paintLegacyMutations(
+          this.legacyMutationGfx, this.legacyMutationTopGfx, this.legacyMutationState(), time,
+        );
+      }
+    }
 
     // ── Item effects per-frame ────────────────────────────────────
     this.itemsKit?.update(delta);
@@ -11006,6 +11350,11 @@ export class ArenaScene extends Phaser.Scene {
     // grapple, a pull) is corrected before the frame is drawn.
     if (this.isBossFight) this.bossKit?.update(time, delta);
     if (this.worldBossId) this.worldBossKit?.update(time, delta);
+    // Reality runs last for the boss-kit reason: its bodies are placed by the
+    // kit, so anything that dragged them earlier in the frame is corrected
+    // before draw.
+    if (this.reality?.kind === 'trials') this.realityDungeonKit?.update(time, delta);
+    if (this.reality?.kind === 'boss') this.realityBossKit?.update(time, delta);
     if (!this.gameEnded) {
       this.formatKit?.update(time, delta);
       this.gimmickKit?.update(time, delta);

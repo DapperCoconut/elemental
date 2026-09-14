@@ -71,6 +71,28 @@ export interface TagTeamState {
    * the set piece it had already spent.
    */
   bossResume?: { phaseIdx: number; hp: number; setPieceUsed?: boolean } | null;
+  /**
+   * Reality only. Five phases and, in one of them, two bodies — `bossResume`'s
+   * single `{phaseIdx, hp}` cannot carry that, and widening it would drag every
+   * King and Sovereign code path along. A parallel slot keeps them untouched.
+   */
+  realityResume?: RealityResumeState | null;
+}
+
+/** Where the Reality fight stands when an element falls and the next one walks in. */
+export interface RealityResumeState {
+  phase: 'scripted' | 'prime' | 'split' | 'survivor' | 'final' | 'laststand';
+  /** Reality's own pool — the prime/final/laststand body, or the survivor twin's. */
+  hpMain: number;
+  /** Split phase only. */
+  hpChaos?: number;
+  hpOrder?: number;
+  /** Set the moment the first twin dies; decides the survivor and, later, the shard. */
+  killOrder?: 'chaos-first' | 'order-first';
+  /** The scripted 999 beam and its fake death screen have already run — never replay them. */
+  fakeDeathDone: boolean;
+  /** "You should have given up by now" has been said. */
+  saidCuriousLine: boolean;
 }
 
 /** True for the Amalgam's lives system — one foe, several elements. */
@@ -95,6 +117,23 @@ export function freshKingTagTeam(): TagTeamState {
     usedElements: [],
     pledgesLeft: KING_TAG_SWITCHES,
     bossResume: null,
+  };
+}
+
+/**
+ * A fresh run at Reality. The whole unlocked roster is the bench: every element
+ * is one life and fights at most once, so a save with the full game open walks
+ * in with up to ~50 lives — and needs them.
+ */
+export function freshRealityTagTeam(unlockedCount: number): TagTeamState {
+  return {
+    enemies: ['reality'],
+    index: 0,
+    enemyHp: null,
+    usedElements: [],
+    pledgesLeft: Math.max(0, unlockedCount - 1),
+    bossResume: null,
+    realityResume: null,
   };
 }
 

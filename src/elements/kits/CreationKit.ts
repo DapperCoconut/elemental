@@ -126,7 +126,8 @@ export interface CreationBlocker {
   hpBg: Phaser.GameObjects.Rectangle;
 }
 
-export interface CreationMazeWall {
+/** Ultimate Invention clutter: a crate ring box. Walk-through for its owner, solid for the foe. */
+export interface CreationCrate {
   rect: Phaser.GameObjects.Graphics;
   x: number;
   y: number;
@@ -228,8 +229,9 @@ export interface CreationMedOrb {
 }
 
 /**
- * Automaton perk: a wandering clockwork bot spawned by the Workshop that bounces off walls
- * and shoulder-charges whoever it runs into.
+ * Automaton perk: a clockwork bot the Workshop turns out, which patrols the floor it was
+ * built on and shoulder-charges whoever it runs into. It runs on a wind-up, so crossing the
+ * nexus tops it back up — that is the only way to keep one past its first twenty seconds.
  */
 export interface CreationAutomaton {
   gfx: Phaser.GameObjects.Graphics;
@@ -239,8 +241,19 @@ export interface CreationAutomaton {
   t: number;
   expireAt: number;
   meleeCooldownUntil: number;
+  /** Re-servicing is a one-per-visit thing, not a per-frame refill. */
+  serviceReadyAt: number;
   owner: 'player' | 'npc';
 }
+
+/** Automaton perk tuning. */
+const AUTOMATON_COUNT = 3;
+const AUTOMATON_LIFETIME_MS = 20000;
+const AUTOMATON_SPEED = 60;
+const AUTOMATON_DAMAGE = 12;
+const AUTOMATON_MELEE_CD_MS = 500;
+const AUTOMATON_SERVICE_MS = 8000;
+const AUTOMATON_SERVICE_RADIUS = 34;
 
 // ── R: Wrench in your Plans ───────────────────────────────────────────────
 
@@ -448,7 +461,6 @@ export class CreationKit {
   private creatWrenches: CreationWrench[] = [];
   // Persistent world objects
   private creatBlockers: CreationBlocker[] = [];
-  private creatMazeWalls: CreationMazeWall[] = [];
   private creatSaws: CreationSaw[] = [];
   private creatNails: CreationNail[] = [];
   // Stun applied by Ultimate Invention hazards
@@ -474,7 +486,7 @@ export class CreationKit {
   private creatSawAccum = 0;
   private creatNailAccum = 0;
   private creatBiasHealAccum = 0;
-  private creatClutterBoxes: CreationMazeWall[] = [];
+  private creatClutterBoxes: CreationCrate[] = [];
   private creatClutterLevel = -1;
 
   // Creation upgrades
@@ -577,8 +589,6 @@ export class CreationKit {
   private get player(): Fighter { return this.api.player; }
   private get npc(): Fighter { return this.api.npc; }
 
-  /** Maze walls are shared with the Automaton perk (reflection + spawn placement). */
-  get mazeWalls(): CreationMazeWall[] { return this.creatMazeWalls; }
 
   reset(): void {
     // Visuals — every GameObject dies with the old scene run, so rebuild lazily in update().
@@ -621,8 +631,6 @@ export class CreationKit {
     this.wrenchedSides.clear();
     for (const bl of this.creatBlockers) { bl.rect.destroy(); bl.hpBar.destroy(); bl.hpBg.destroy(); }
     this.creatBlockers = [];
-    for (const w of this.creatMazeWalls) w.rect.destroy();
-    this.creatMazeWalls = [];
     for (const s of this.creatSaws) s.sprite.destroy();
     this.creatSaws = [];
     for (const n of this.creatNails) n.sprite.destroy();
@@ -1020,7 +1028,7 @@ export class CreationKit {
   }
 
   // Q — Workshop: the "maze" ctx name is legacy; it now builds a 30s wooden workshop.
-  spawnMaze(owner: 'player' | 'npc'): void {
+  spawnWorkshop(owner: 'player' | 'npc'): void {
     const time = this.scene.time.now;
     const W = this.api.width, H = this.api.height;
     this.creatWorkshopEnd = time + 30000;
@@ -1833,33 +1841,33 @@ export class CreationKit {
   // ── Automaton perk ───────────────────────────────────────────────
 
   /** Workshop + the Automaton perk: wind up three bots and let them loose on the floor. */
+  /**
+   * The Workshop's staff. They march out of the caster rather than materialising around the
+   * arena — the floor was just hammered down under his feet, and the machines walking off it
+   * is the whole read. Their clock is capped by the workshop's own, so the floor never
+   * outlives its staff or the other way round.
+   */
   private spawnAutomatons(owner: 'player' | 'npc', count: number): void {
     const W = this.api.width, H = this.api.height;
-    const expireAt = this.scene.time.now + 10000;
+    const now = this.scene.time.now;
+    const expireAt = Math.min(now + AUTOMATON_LIFETIME_MS, this.creatWorkshopEnd);
+    const caster = owner === 'player' ? this.player : this.npc;
     for (let i = 0; i < count; i++) {
-      let ax = 0, ay = 0;
-      for (let attempt = 0; attempt < 30; attempt++) {
-        ax = 60 + Math.random() * (W - 120);
-        ay = 60 + Math.random() * (H - 120);
-        // Avoid maze wall overlap (simple bounding box check)
-        let blocked = false;
-        for (const wall of this.creatMazeWalls) {
-          if (wall.owner === owner && Math.abs(ax - wall.x) < wall.w / 2 + 20 && Math.abs(ay - wall.y) < wall.h / 2 + 20) {
-            blocked = true; break;
-          }
-        }
-        if (!blocked) break;
-      }
-      const angle = Math.random() * Math.PI * 2;
-      const speed = 60;
+      // Fanned evenly off the caster so three do not walk the same line.
+      const angle = (i / count) * Math.PI * 2 + Math.random() * 0.6;
+      const ax = Phaser.Math.Clamp(caster.x + Math.cos(angle) * 46, 20, W - 20);
+      const ay = Phaser.Math.Clamp(caster.y + Math.sin(angle) * 46, 20, H - 20);
       const gfx = this.add.graphics().setDepth(5);
       gfx.setPosition(ax, ay);
       this.automatons.push({
         gfx, x: ax, y: ay, t: Math.random() * 6,
-        vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
-        expireAt, meleeCooldownUntil: 0, owner,
+        vx: Math.cos(angle) * AUTOMATON_SPEED, vy: Math.sin(angle) * AUTOMATON_SPEED,
+        expireAt, meleeCooldownUntil: 0, serviceReadyAt: 0, owner,
       });
       this.fx(owner).gearPulse(ax, ay, 20, 420, CREATION.brass, 6);
+    }
+    if (owner === 'player') {
+      this.api.showFloatingText(caster.x, caster.y - 56, `🤖 ${count} AUTOMATONS`, '#c9a0ff');
     }
   }
 
@@ -1877,20 +1885,19 @@ export class CreationKit {
       a.t += delta / 1000;
       a.x += a.vx * (delta / 1000);
       a.y += a.vy * (delta / 1000);
-      // Reflect off maze walls
-      for (const wall of this.creatMazeWalls) {
-        if (wall.owner !== a.owner) continue;
-        const closestX = Math.max(wall.x - wall.w / 2, Math.min(a.x, wall.x + wall.w / 2));
-        const closestY = Math.max(wall.y - wall.h / 2, Math.min(a.y, wall.y + wall.h / 2));
-        const distSq = (a.x - closestX) ** 2 + (a.y - closestY) ** 2;
-        if (distSq < 14 * 14) {
-          if (Math.abs(a.x - closestX) < Math.abs(a.y - closestY)) a.vy *= -1; else a.vx *= -1;
-          break;
-        }
-      }
       // Bounce off arena edges
       if (a.x < 20 || a.x > W - 20) { a.vx *= -1; a.x = Math.max(20, Math.min(W - 20, a.x)); }
       if (a.y < 20 || a.y > H - 20) { a.vy *= -1; a.y = Math.max(20, Math.min(H - 20, a.y)); }
+
+      // Serviced at the nexus: a bot that wanders across the core gets wound back up. Only
+      // the player has a nexus, so this is the one part of the perk the bot cannot use.
+      if (a.owner === 'player' && this.nexusRig && time >= a.serviceReadyAt
+          && Phaser.Math.Distance.Between(a.x, a.y, this.nexusX, this.nexusY) <= AUTOMATON_SERVICE_RADIUS) {
+        a.serviceReadyAt = time + AUTOMATON_SERVICE_MS;
+        a.expireAt = Math.min(time + AUTOMATON_LIFETIME_MS, this.creatWorkshopEnd);
+        this.fx(a.owner).gearPulse(a.x, a.y, 26, 380, CREATION.gold, 6);
+        this.api.showFloatingText(a.x, a.y - 24, '🔧 WOUND UP', '#d9a066');
+      }
       drawAutomaton(a.gfx, this.col(a.owner), a.t);
       a.gfx.setPosition(a.x, a.y);
       // Contact damage
@@ -1898,8 +1905,8 @@ export class CreationKit {
       if (enemy && enemy.active && enemy.hp > 0 && time >= a.meleeCooldownUntil) {
         const ddx = a.x - enemy.x, ddy = a.y - enemy.y;
         if (ddx * ddx + ddy * ddy < 24 * 24) {
-          a.meleeCooldownUntil = time + 500;
-          enemy.takeDamage(12);
+          a.meleeCooldownUntil = time + AUTOMATON_MELEE_CD_MS;
+          enemy.takeDamage(AUTOMATON_DAMAGE);
           this.api.spawnHitFlash(a.x, a.y, CREATION.nexus);
           this.fx(a.owner).sparks(a.x, a.y, 6,
             { angle: Math.atan2(-ddy, -ddx), spread: 0.9, speed: 150, size: 2.2, life: 380, depth: 6 });
@@ -2936,51 +2943,6 @@ export class CreationKit {
         }
       }
     }
-    // Maze walls
-    const casterBody = (this.api.elementId === 'creation' ? this.player : this.npc).body as Phaser.Physics.Arcade.Body;
-    for (let mi = this.creatMazeWalls.length - 1; mi >= 0; mi--) {
-      const mw = this.creatMazeWalls[mi];
-      // Absorb enemy projectiles
-      const mwEnemyIsPlayer = mw.owner !== 'player';
-      for (const proj of allProj) {
-        if (!proj.active) continue;
-        const isEnemyProj = mw.owner === 'player' ? !proj.isFromPlayer : proj.isFromPlayer;
-        if (!isEnemyProj) continue;
-        if (Math.abs(proj.x - mw.x) <= mw.w / 2 && Math.abs(proj.y - mw.y) <= mw.h / 2) {
-          proj.setActive(false).setVisible(false);
-          (proj.body as Phaser.Physics.Arcade.Body).stop();
-        }
-      }
-      // Spiked walls: tick damage BEFORE pushout (while enemy is still potentially in range)
-      if (mw.spiked) {
-        mw.spikeAccum = (mw.spikeAccum ?? 0) + delta;
-        if (mw.spikeAccum >= 500) {
-          mw.spikeAccum -= 500;
-          const spikeTarget = mwEnemyIsPlayer ? this.player : this.npc;
-          if (Math.abs(spikeTarget.x - mw.x) <= mw.w / 2 + 30 && Math.abs(spikeTarget.y - mw.y) <= mw.h / 2 + 30) {
-            spikeTarget.takeDamage(8);
-            this.api.spawnHitFlash(spikeTarget.x, spikeTarget.y, CREATION.rust);
-            this.fx(mw.owner).sparks(spikeTarget.x, spikeTarget.y, 4, { speed: 90, size: 1.8, life: 320, depth: 7 });
-          }
-        }
-      }
-      // Push non-caster fighter out
-      const nonCasterBody = mwEnemyIsPlayer
-        ? (this.player.body as Phaser.Physics.Arcade.Body)
-        : (this.npc.body as Phaser.Physics.Arcade.Body);
-      if (nonCasterBody !== casterBody) {
-        this.api.pushFighterOutOfRect(nonCasterBody, mw.x, mw.y, mw.w, mw.h);
-      } else {
-        // If somehow same, push npc
-        this.api.pushFighterOutOfRect(this.npc.body as Phaser.Physics.Arcade.Body, mw.x, mw.y, mw.w, mw.h);
-      }
-      // Expiry
-      if (time >= mw.expireAt) {
-        mw.rect.destroy();
-        this.creatMazeWalls.splice(mi, 1);
-      }
-    }
-
     if (this.api.elementId === 'creation') {
       // Mastery — Springboard: drop a pad wherever the dash ended.
       this.updateSpringboard(time);
@@ -3173,7 +3135,6 @@ export class CreationKit {
       razed++;
     }
     dropRects(this.creatBlockers);
-    dropRects(this.creatMazeWalls);
     dropRects(this.creatClutterBoxes);
     dropRects(this.creatSpeedPads);
     dropRects(this.creatSpikedBlocks);

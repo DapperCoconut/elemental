@@ -59,7 +59,7 @@ const mazeOfDoom: Ability = {
   isUltimate: true,
   cooldown: 45000,
   cast(ctx: CastContext) {
-    ctx.creationMaze();
+    ctx.creationWorkshop();
   },
 };
 

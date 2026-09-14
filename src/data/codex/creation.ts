@@ -257,7 +257,7 @@ const creation: ElementCodex = {
         ],
       },
       notes: [
-        'The shop card for this upgrade is stale: it describes Maze of Doom spawning 36 walls with invincible spiked blocks. That ability no longer exists — Q is the Workshop, and the upgrade is the slider panel described above.',
+        'This upgrade used to be Enhanced Maze, back when Q was Maze of Doom. That ability is gone; the shop card now names the slider panel described above.',
         'The saws and nails are yours and only ever hit the other side, so Danger is pure profit apart from the timer it burns.',
         'The panel is screen-space and draggable with the mouse; dragging a slider does not fire Dagger Spray.',
         'Kills made while your Workshop is up count toward Creation Mastery\'s Home Advantage requirement (5 needed).',
@@ -268,18 +268,21 @@ const creation: ElementCodex = {
   perks: {
     automaton: {
       basics:
-        'Casting the Workshop also spawns 3 automatons, each lasting 10 seconds and wandering at 60 '
-        + 'px/s from random points at least 60px off the walls. Each deals 12 damage to anyone within '
-        + '24px on its own 0.5s cooldown, so three in the same place is 36 damage every half second. They '
-        + 'bounce off the arena edges and off your own maze walls rather than passing through them.',
-      cast: 'Automatic — 3 of them spawn the moment the Workshop (Q) is cast.',
+        'Casting the Workshop marches 3 automatons out of you, fanned evenly around your feet. Each '
+        + 'runs for 20 seconds — or until the Workshop\'s own 30 runs out, whichever comes first — '
+        + 'wandering at 60 px/s and bouncing off the arena edges. Each deals 12 damage to anyone within '
+        + '24px on its own 0.5s cooldown, so three in the same place is 36 damage every half second. One '
+        + 'that wanders within 34px of your Nexus is wound back up to a fresh 20 seconds.',
+      cast: 'Automatic — 3 of them march out the moment the Workshop (Q) is cast.',
       effects: [
-        { tag: 'summon', label: 'The bots', detail: '3 automatons, each lasting 10 seconds, wandering at 60 px/s from random points at least 60px off the walls.' },
+        { tag: 'summon', label: 'The bots', detail: '3 automatons fanned around you, each running 20 seconds and wandering at 60 px/s.' },
         { tag: 'damage', label: 'Contact', detail: '12 damage to anyone within 24px, with a 0.5 second cooldown per bot — three bots in the same place is 36 damage every half second.' },
-        { tag: 'utility', label: 'Bouncing', detail: 'They reflect off the arena edges and off your own maze walls rather than passing through them.' },
+        { tag: 'utility', label: 'Servicing', detail: 'Passing within 34px of your Nexus resets that bot to a fresh 20 seconds, at most once every 8 seconds per bot.' },
+        { tag: 'cost', label: 'They die with the floor', detail: 'No automaton can outlive the Workshop that built it, however recently it was wound up.' },
       ],
       notes: [
-        'They run for 10 seconds out of the Workshop\'s 30, so they are an opening flourish rather than a standing threat.',
+        'This perk used to hang off Maze of Doom. That ability is gone; the Workshop is the Q it left behind, and the bots now march off the floor it hammers down.',
+        'They wander rather than hunt, so the Nexus servicing is the only steering you get — a bot that happens to patrol near the core outlasts the rest by a wide margin.',
       ],
     },
   },

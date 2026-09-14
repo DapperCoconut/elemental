@@ -2236,6 +2236,13 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         howTo: 'Land a cosmic cannon shell on an entity. The cannon is the crown of a level-5 Pillow Fort, so this needs the E⁺ upgrade and a fort fed five times',
         target: 50,
       },
+      {
+        key: 'realityShard',
+        label: 'The Dreamer\'s Shard',
+        howTo: 'Somewhere behind a crack in the world, a creator waits at a piano. End what he began — and when he splits himself in two, put the burning half down first. What is left will be a dream',
+        target: 1,
+        isBest: true,
+      },
     ],
     enhancements: [
       {
@@ -2274,6 +2281,13 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         key: 'lastStandKills',
         label: 'The Last Word',
         howTo: 'Land the killing blow while you are sitting on exactly 1 health — Indomitable Will is the only thing in the kit that will put you there and leave you there. One is enough, and it completes permanently',
+        target: 1,
+        isBest: true,
+      },
+      {
+        key: 'realityShard',
+        label: 'The Verdict\'s Shard',
+        howTo: 'Somewhere behind a crack in the world, a creator waits at a piano. End what he began — and when he splits himself in two, put the golden half down first. What is left will be justice',
         target: 1,
         isBest: true,
       },

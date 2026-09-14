@@ -228,6 +228,30 @@ const slime: ElementCodex = {
     },
   },
 
+  perks: {
+    electrolysis: {
+      basics:
+        'Your pool field becomes a circuit. Every 1.4 seconds a current arcs between two of your '
+        + 'pools sitting within 220px of each other, chosen at random rather than nearest, dealing 12 '
+        + 'damage to anything within 20px of the line and jolting it to 45% move speed for 0.45 '
+        + 'seconds. One arc in five surges: 36 damage instead of 12, and it immediately jumps on from '
+        + 'the far pool to a third one, which can catch someone twice in the same beat.',
+      cast: 'Passive. It starts arcing the moment you have two pools close enough to conduct.',
+      effects: [
+        { tag: 'damage', label: 'The arc', detail: '12 damage to anything within 20px of the line between the two pools, every 1.4 seconds.' },
+        { tag: 'debuff', label: 'The jolt', detail: 'Anything the current crosses is dropped to 45% move speed for 0.45 seconds.' },
+        { tag: 'damage', label: 'Surge', detail: 'A 20% chance per arc: 36 damage instead of 12, and it chains on to a third pool for a second line.' },
+        { tag: 'area', label: 'Conducting range', detail: '220px between pool centres. Anything further apart will not short across.' },
+      ],
+      notes: [
+        'The pair is picked at random from every eligible pair, so a wide field keeps throwing current somewhere new instead of settling on its two tightest pools — coverage is the stat this perk scales on, exactly like Breakdown.',
+        'Vile Spray drops three pools in a line at 110/180/250px, so a single cast already leaves two pairs inside conducting range.',
+        'Spray Spread (E+) buds pools 20–50px off their parents, which is deep inside conducting range — the two are the strongest pairing this element has.',
+        'The arcs fire whether or not anyone is standing in them; the damage is entirely a function of making the enemy cross your own floor.',
+      ],
+    },
+  },
+
   mastery: {
     'acid-walker': {
       basics:

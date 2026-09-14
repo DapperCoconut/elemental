@@ -85,6 +85,9 @@ const SAFETY_SPEED_MS = 5000;
 const SAFETY_SPEED_BONUS = 0.2;
 const SAFETY_PINNED_PER_SEC = 5;
 
+/** Cloth's permanent baseline movement bonus. */
+const CLOTH_BASE_SPEED_BONUS = 0.5;
+
 // ── Pin Cushion (F) ──────────────────────────────────────────────────────────
 const CUSHION_CONVERT = 50;
 /** F+ — every hit taken sprays this many pins back out. */
@@ -1808,6 +1811,9 @@ export class ClothKit implements SummonPurgeTarget {
     this.updateRightClick(delta);
     this.updateWretched();
     this.updateDraft();
+    // The draft eats the mouse while it is open, so it is a menu: incoming damage lands at
+    // 5% while the player is picking (Fighter.menuGuards). The npc's draft is data-only.
+    this.api.player.setMenuGuard('cloth-draft', !!this.draft && this.draft.owner === 'player');
     this.npcRightClick();
     this.flushMasteryStats();
 
@@ -2283,7 +2289,8 @@ export class ClothKit implements SummonPurgeTarget {
   private speedMult(owner: Owner): number {
     if (!this.isCloth(owner)) return 1;
     const s = this.side(owner);
-    let m = s.fx.speedMult;
+    // Cloth is a fast element: permanent baseline speed boost.
+    let m = s.fx.speedMult * (1 + CLOTH_BASE_SPEED_BONUS);
     if (this.now < s.safetySpeedUntil) m *= 1 + SAFETY_SPEED_BONUS;
     // Re-Knit and the grapple spin both take the legs away entirely.
     if (this.now < s.knitUntil) m = 0;

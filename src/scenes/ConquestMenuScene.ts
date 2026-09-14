@@ -10,14 +10,14 @@ const LAYOUT = {
 } as const;
 
 /**
- * The building upgrade menu — Conquest's one piece of UI, and the only place in the game where
- * a match stops for a shop.
+ * The building upgrade menu — Conquest's one piece of UI.
  *
- * It runs as a scene over a paused ArenaScene rather than as an overlay inside it, for the same
- * reason PauseMenuScene does: pausing the arena stops its clock, and ArenaScene already shifts
- * every `Date.now()` cooldown forward by the pause on RESUME. A two-path four-tier menu is not
- * readable while somebody is shooting at you, and buying the wrong tier is unrecoverable —
- * BTD6's path rule means a misclick can permanently cap the other half of the building.
+ * It runs as a scene over a *live* ArenaScene: the match does not stop for a shop any more.
+ * While it is up the player is held still, ConquestKit ignores board input, and the Fighter
+ * menu guard cuts incoming damage to 5% — reading a four-tier tree costs real time and a
+ * little health instead of being a free timeout. Buying the wrong tier is still unrecoverable
+ * (BTD6's path rule means a misclick can permanently cap the other half of the building), so
+ * the modal itself is unchanged; only the world around it keeps moving.
  *
  * Everything it knows comes from one flat `ConquestMenuModel` snapshot, re-pulled after every
  * purchase. The scene never touches a building.
@@ -27,6 +27,8 @@ export class ConquestMenuScene extends Phaser.Scene {
   private host!: ConquestMenuHost;
   /** Rebuilt wholesale after each purchase — a tier change moves every row. */
   private content: Phaser.GameObjects.GameObject[] = [];
+  /** Last Authority figure rendered, so the live-arena poll only rebuilds on a change. */
+  private lastAuthority = -1;
 
   constructor() {
     super({ key: 'ConquestMenuScene' });
@@ -67,6 +69,22 @@ export class ConquestMenuScene extends Phaser.Scene {
     this.render(cx, cy);
   }
 
+  /**
+   * The arena keeps running underneath, so the menu can go stale while it is read: Authority
+   * keeps accruing, and the building itself can be knocked down. Poll the host — a vanished
+   * model closes the menu, a changed Authority figure re-renders it (throttled to the change,
+   * so the rebuild stays as rare as it was when it only followed purchases).
+   */
+  update(): void {
+    if (!this.host) return;
+    const model = this.host.getMenuModel();
+    if (!model) { this.close(); return; }
+    if (model.authority !== this.lastAuthority) {
+      this.lastAuthority = model.authority;
+      this.render(this.scale.width / 2, this.scale.height / 2);
+    }
+  }
+
   /** Tears down and rebuilds the two columns. Cheap enough — it only runs on a purchase. */
   private render(cx: number, cy: number): void {
     for (const o of this.content) o.destroy();
@@ -74,6 +92,7 @@ export class ConquestMenuScene extends Phaser.Scene {
 
     const model = this.host.getMenuModel();
     if (!model) { this.close(); return; }
+    this.lastAuthority = model.authority;
 
     // ── Header line: what this building is worth right now ──
     const stat = model.destructible
@@ -242,7 +261,8 @@ export class ConquestMenuScene extends Phaser.Scene {
 
   private close(): void {
     this.host?.closeUpgradeMenu();
-    this.scene.resume(this.parentSceneKey);
+    // The arena was never paused — it kept running under the modal — so there is
+    // nothing to resume; the guard against a stale key is in ArenaScene's opener.
     this.scene.stop();
   }
 }

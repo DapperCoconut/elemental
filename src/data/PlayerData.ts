@@ -77,6 +77,21 @@ interface SaveData {
    * a win grants the element, a loss consumes the forge.
    */
   pendingUnstable: PendingUnstableForge | null;
+  /**
+   * All-time tally of player deaths by the enemy element that dealt them.
+   * Feeds the Reality dungeon's fifth trial — a mirror of whatever has killed
+   * this save the most. Only real roster elements are filed here; husks, kings
+   * and dungeon hazards have no single element to blame.
+   */
+  deathsByElement: Record<string, number>;
+  /** True once the fountain past the fifth trial has been touched — future dungeon entries skip to the chapel. */
+  realityFountainLit: boolean;
+  /** True once the piano monologue has played to the end. Later attempts open on a single line. */
+  realityIntroSeen: boolean;
+  /** True once Reality has been put down. Shrinks the crack and turns it red. */
+  realityDefeated: boolean;
+  /** Which twin died first on the winning run. Decides whose mastery the shard completes. */
+  realityKillOrder: '' | 'chaos-first' | 'order-first';
 }
 
 /** A forge waiting on its three-on-three. */
@@ -199,6 +214,11 @@ function load(): SaveData {
         screwsRemoved: parsed.screwsRemoved ?? {},
         secretModesUnlocked: parsed.secretModesUnlocked ?? [],
         pendingUnstable: parsed.pendingUnstable ?? null,
+        deathsByElement: parsed.deathsByElement ?? {},
+        realityFountainLit: parsed.realityFountainLit ?? false,
+        realityIntroSeen: parsed.realityIntroSeen ?? false,
+        realityDefeated: parsed.realityDefeated ?? false,
+        realityKillOrder: parsed.realityKillOrder ?? '',
       };
       if (!d.migratedSubterfugeId) {
         migrateSubterfugeId(d);
@@ -219,7 +239,7 @@ function load(): SaveData {
     // corrupted save — start fresh
   }
   // A save that never existed has nothing to migrate — born already stamped.
-  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], labLevel: 0, corruptShards: 0, huskJournal: [], apocalypseSeen: false, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {}, achievements: [], equippedSkins: {}, divineNuclei: 0, kingDefeated: false, devourerDefeated: false, devourerChoice: '', bountyRerollOffset: 0, completedBountyKeys: [], passionQTaps: 0, passionQCensored: false, paperJournal: {}, quantumBond: [], quantumResearched: [], quantumResearching: '', quantumQuestProgress: {}, migratedSubterfugeId: true, screwdriverFound: false, screwdriverPage: -1, screwsRemoved: {}, secretModesUnlocked: [], pendingUnstable: null };
+  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], labLevel: 0, corruptShards: 0, huskJournal: [], apocalypseSeen: false, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {}, achievements: [], equippedSkins: {}, divineNuclei: 0, kingDefeated: false, devourerDefeated: false, devourerChoice: '', bountyRerollOffset: 0, completedBountyKeys: [], passionQTaps: 0, passionQCensored: false, paperJournal: {}, quantumBond: [], quantumResearched: [], quantumResearching: '', quantumQuestProgress: {}, migratedSubterfugeId: true, screwdriverFound: false, screwdriverPage: -1, screwsRemoved: {}, secretModesUnlocked: [], pendingUnstable: null, deathsByElement: {}, realityFountainLit: false, realityIntroSeen: false, realityDefeated: false, realityKillOrder: '' };
 }
 
 function save(data: SaveData): void {
@@ -755,6 +775,86 @@ export function markDevourerDefeated(choice: 'spare' | 'kill'): boolean {
   const first = !data.devourerDefeated;
   data.devourerDefeated = true;
   if (!data.devourerChoice) data.devourerChoice = choice;
+  save(data);
+  return first;
+}
+
+// ── Reality (the crack behind the title screen) ──────────────────────
+
+/**
+ * Files one player death under the element that dealt it. ArenaScene calls this
+ * from the player's `defeated` handler; it is the only writer. Practice fights
+ * are locked out the same way every other tally is.
+ */
+export function recordDeathToElement(elementId: string): void {
+  if (isProgressLocked()) return;
+  const data = load();
+  data.deathsByElement = {
+    ...data.deathsByElement,
+    [elementId]: (data.deathsByElement[elementId] ?? 0) + 1,
+  };
+  save(data);
+}
+
+/**
+ * The element this save has died to the most. `isValid` is the caller's roster
+ * test (PlayerData cannot import ElementRoster — the import runs the other
+ * way), so a renamed or deleted element can never be asked to fight. Null when
+ * nothing valid has a single kill on record.
+ */
+export function mostDiedToElement(isValid: (id: string) => boolean): string | null {
+  const tally = load().deathsByElement;
+  let best: string | null = null;
+  let bestCount = 0;
+  for (const id of Object.keys(tally)) {
+    if (!isValid(id)) continue;
+    const n = tally[id] ?? 0;
+    if (n > bestCount) { best = id; bestCount = n; }
+  }
+  return best;
+}
+
+export function isRealityFountainLit(): boolean {
+  return load().realityFountainLit;
+}
+
+export function lightRealityFountain(): void {
+  const data = load();
+  if (data.realityFountainLit) return;
+  data.realityFountainLit = true;
+  save(data);
+}
+
+export function isRealityIntroSeen(): boolean {
+  return load().realityIntroSeen;
+}
+
+export function markRealityIntroSeen(): void {
+  const data = load();
+  if (data.realityIntroSeen) return;
+  data.realityIntroSeen = true;
+  save(data);
+}
+
+export function isRealityDefeated(): boolean {
+  return load().realityDefeated;
+}
+
+export function getRealityKillOrder(): '' | 'chaos-first' | 'order-first' {
+  const o = load().realityKillOrder;
+  return o === 'chaos-first' || o === 'order-first' ? o : '';
+}
+
+/**
+ * Records the kill. Returns true only on the first one, so the outro can pay
+ * the shard once. The kill order is only written that first time — the canon
+ * run is the run that actually ended it.
+ */
+export function markRealityDefeated(order: 'chaos-first' | 'order-first'): boolean {
+  const data = load();
+  const first = !data.realityDefeated;
+  data.realityDefeated = true;
+  if (!data.realityKillOrder) data.realityKillOrder = order;
   save(data);
   return first;
 }

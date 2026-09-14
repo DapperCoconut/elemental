@@ -70,7 +70,6 @@ interface FlameCloud {
   seed: number;
   x: number; y: number;
   vx: number; vy: number;
-  stopped: boolean;
   expireAt: number;
   tickAccum: number;
   radius: number;
@@ -78,9 +77,13 @@ interface FlameCloud {
   tickInterval: number;
   burnDuration: number;
   owner: 'player' | 'npc';
-  followCursor?: boolean; // lerp toward mouse each frame instead of decelerating
-  cursedFire?: boolean;   // apply cursed fire effect on tick hits
-  steady?: boolean;       // Flare: hold the launch speed instead of coasting to a stop
+  /** Steers after the caster's cursor (the enemy stands in for it on a bot's Flare). */
+  homing: boolean;
+  /** Net angle swept around the cursor. One full lap (±2π) cuts the homing for good. */
+  orbitAccum: number;
+  prevAngle: number;
+  speed: number;
+  cursedFire?: boolean;   // Flare+: the burn it applies is the shadow DOT
   aura?: boolean;         // Flare+: paint (and damage through) the dark shell around it
 }
 
@@ -126,6 +129,8 @@ interface Tornado {
   expireAt: number;
   nextDirAt: number;
   tickAccum: number;
+  /** Damage per 200ms contact tick — the wind elemental's minis hit far harder than a hurricane. */
+  tickDmg: number;
   owner: 'player' | 'npc';
 }
 
@@ -198,7 +203,18 @@ interface MagicPuddle {
   owner: 'player' | 'npc';
 }
 
-/** One Spur bur, either still in flight or stuck in somebody. */
+/** One Spur barb lying on the floor, waiting to be stepped on. */
+interface SpurBarb {
+  x: number; y: number;
+  seed: number;
+  spin: number;
+  expireAt: number;
+  /** Spur+ barbs also stick a bur into whoever trod on them, feeding the 5-bur pin. */
+  sticky: boolean;
+  owner: 'player' | 'npc';
+}
+
+/** One Spur+ bur stuck in somebody, counting toward the 5-bur pin. */
 interface Bur {
   x: number; y: number;
   vx: number; vy: number;
@@ -232,6 +248,10 @@ interface Summon {
   plus: boolean;
   seed: number;
   bob: number;
+  /** Patrol velocity along the top of the screen — the elementals assist from the gallery. */
+  pvx: number;
+  /** Alternates the elemental between its two assist behaviours. */
+  alt: boolean;
   owner: 'player' | 'npc';
 }
 
@@ -279,22 +299,24 @@ interface FallenFighter {
 }
 
 /**
- * The R mark. A crosshair is a *bill you run up* — every Sparkle Shot that lands on the marked
- * fighter adds a tally to it, and right-click cashes the lot in at once. Letting it lapse pays
- * nothing, so the spell is a commitment to keep hitting the same target.
+ * The R mark. A crosshair is a *machine you crank*: while it sits on the marked fighter, every
+ * click on them conjures one small homing missile. Three seconds is the whole window, so the
+ * spell rewards clicking as fast as the hand allows.
  */
 interface Crosshair {
   target: Fighter;
-  marks: number;
+  /** Missiles bought so far — painted as pips so the reticle shows the spell working. */
+  clicks: number;
   expireAt: number;
   spin: number;
   owner: 'player' | 'npc';
 }
 
-/** The R+ shortcut round: one big missile fired instead of cashing an empty crosshair. */
+/** A Magic Missile in flight: small, homing, and worth exactly 2 damage. */
 interface MagicMissile {
   x: number; y: number;
   vx: number; vy: number;
+  target: Fighter;
   owner: 'player' | 'npc';
 }
 
@@ -327,18 +349,95 @@ interface WardLink {
   spin: number;
 }
 
-/** The Ward: orbiting stones, and (upgraded) the linked wall standing outside them. */
-interface WardRing {
-  orbs: RockOrb[];
+/**
+ * The Ward: a standing circle that armours its caster while they hold their ground in it —
+ * +3 shield HP a second and a 25% damage cut, both of them loans that leaving claws back.
+ * Ward+ stands the linked wall on the circle's edge.
+ */
+interface WardZone {
+  x: number; y: number;
+  radius: number;
+  seed: number;
+  expireAt: number;
   /** Empty on a plain Ward — the wall is what the upgrade buys. */
   links: WardLink[];
-  orbitR: number;
-  wallR: number;
-  bornAt: number;
-  expireAt: number;
   /** When links start tearing free and flying off. */
   sheddingAt: number;
   nextShedAt: number;
+  plus: boolean;
+  owner: 'player' | 'npc';
+}
+
+/** What one F cast recorded: a kind tag, the offset from the square's centre, life left, data. */
+interface ScrollItem {
+  kind: 'flame' | 'puddle' | 'barb' | 'tornado' | 'trail' | 'summon' | 'ward';
+  dx: number; dy: number;
+  remaining: number;
+  payload: any;
+}
+
+/** The Duplication scroll on the floor: everything the square recorded, waiting to be dropped. */
+interface Scroll {
+  x: number; y: number;
+  items: ScrollItem[];
+  expireAt: number;
+  seed: number;
+  owner: 'player' | 'npc';
+}
+
+/** The purple flash over the square F just recorded. */
+interface CaptureFlash {
+  x: number; y: number;
+  half: number;
+  expireAt: number;
+  owner: 'player' | 'npc';
+}
+
+/** Fire elemental — a column of flame telegraphed on the floor, then lit. */
+interface FirePillar {
+  x: number; y: number;
+  armAt: number;
+  expireAt: number;
+  fired: boolean;
+  seed: number;
+  owner: 'player' | 'npc';
+}
+
+/** Wind elemental — a strike telegraphed on the floor, then a bolt out of a clear sky. */
+interface LightningStroke {
+  x: number; y: number;
+  strikeAt: number;
+  owner: 'player' | 'npc';
+}
+
+/** Earth elemental — a straight run of linked slabs, solid to the enemy and their shots only. */
+interface EarthWall {
+  x1: number; y1: number;
+  x2: number; y2: number;
+  expireAt: number;
+  owner: 'player' | 'npc';
+}
+
+/** Life elemental — a mote of green light homing back to the caster with health in it. */
+interface HealOrb {
+  x: number; y: number;
+  vx: number; vy: number;
+  owner: 'player' | 'npc';
+}
+
+/** Water elemental — a travelling wave front that carries whoever it hits toward the wall. */
+interface Wave {
+  x: number; y: number;
+  vx: number; vy: number;
+  seed: number;
+  owner: 'player' | 'npc';
+}
+
+/** Somebody wave-carried, and owed a slam if the wall arrives before the ride ends. */
+interface WaveSlam {
+  target: Fighter;
+  vx: number; vy: number;
+  until: number;
   owner: 'player' | 'npc';
 }
 
@@ -434,15 +533,21 @@ export class MagicKit {
   private aimCountdownEnd = 0;
   private aimCountdownFired = false;
 
-  // ── R Crosshair ───────────────────────────────────────────────────────────
+  // ── R Crosshair / Magic Missiles ──────────────────────────────────────────
   /** At most one per side; the array keeps both without a pair of mirrored fields. */
   private crosshairs: Crosshair[] = [];
   private missiles: MagicMissile[] = [];
-  /** Edge detector for the right mouse button — the crosshair's trigger. */
-  private rightHeld = false;
+  /** Edge detector for the left mouse button — missiles and scroll grabs are per-click. */
+  private leftHeld = false;
+  /** The bot has no mouse: its crosshair clicks itself on this clock. */
+  private npcNextMissileAt = 0;
 
-  // ── F Dupe ────────────────────────────────────────────────────────────────
-  /** F+ leavings: glitched copies of the caster shed by an enemy caught in a Dupe. */
+  // ── F Duplication ─────────────────────────────────────────────────────────
+  private scrolls: Scroll[] = [];
+  private captureFlashes: CaptureFlash[] = [];
+  /** The scroll currently on the player's cursor, if any. */
+  private dragScroll: Scroll | null = null;
+  /** F+ leavings: glitched copies of the caster shed by an enemy caught in the square. */
   private corruptData: { x: number; y: number; expireAt: number; seed: number }[] = [];
 
   // ── Chain bind (player bound by NPC's vine) ───────────────────────────────
@@ -474,6 +579,7 @@ export class MagicKit {
   private npcPuddleSlow = 1;
 
   // ── E3 Spur ───────────────────────────────────────────────────────────────
+  private spurBarbs: SpurBarb[] = [];
   private burs: Bur[] = [];
   /** Victims mid-stun from a 5-bur clutch, and the payload owed when it lets go. */
   private burStuns: { target: Fighter; releaseAt: number; owner: 'player' | 'npc' }[] = [];
@@ -485,11 +591,22 @@ export class MagicKit {
   private playerTrailBoost = false;
 
   // ── E5 Ward ───────────────────────────────────────────────────────────────
-  private wards: WardRing[] = [];
+  private wardZones: WardZone[] = [];
+  /** Shield HP this side's zones have granted and not yet clawed back, plus the fractional drip. */
+  private wardShieldGranted = { player: 0, npc: 0 };
+  private wardShieldAccum = { player: 0, npc: 0 };
+  /** Resolved once per frame — feeds the resistance multiplier and the enter/leave book-keeping. */
+  private wardInside = { player: false, npc: false };
 
   // ── Q Summons ─────────────────────────────────────────────────────────────
   private summons: Summon[] = [];
   private summonBolts: SummonBolt[] = [];
+  private firePillars: FirePillar[] = [];
+  private lightningStrokes: LightningStroke[] = [];
+  private earthWalls: EarthWall[] = [];
+  private healOrbs: HealOrb[] = [];
+  private waves: Wave[] = [];
+  private waveSlams: WaveSlam[] = [];
   private crossBombs: CrossBomb[] = [];
   private rootSpikes: RootSpike[] = [];
   private groundCracks: GroundCrack[] = [];
@@ -691,8 +808,12 @@ export class MagicKit {
 
     this.crosshairs = [];
     this.missiles = [];
-    this.rightHeld = false;
+    this.leftHeld = false;
+    this.npcNextMissileAt = 0;
 
+    this.scrolls = [];
+    this.captureFlashes = [];
+    this.dragScroll = null;
     this.corruptData = [];
 
     this.playerBound = false; this.playerBoundEnd = 0;
@@ -710,15 +831,25 @@ export class MagicKit {
 
     this.puddles = [];
     this.playerPuddleSlow = 1; this.npcPuddleSlow = 1;
+    this.spurBarbs = [];
     this.burs = [];
     this.burStuns = [];
     this.sparkTrails = [];
     this.gustHauls = [];
     this.playerTrailBoost = false;
-    this.wards = [];
+    this.wardZones = [];
+    this.wardShieldGranted = { player: 0, npc: 0 };
+    this.wardShieldAccum = { player: 0, npc: 0 };
+    this.wardInside = { player: false, npc: false };
 
     this.summons = [];
     this.summonBolts = [];
+    this.firePillars = [];
+    this.lightningStrokes = [];
+    this.earthWalls = [];
+    this.healOrbs = [];
+    this.waves = [];
+    this.waveSlams = [];
     this.crossBombs = [];
     this.rootSpikes = [];
     this.groundCracks = [];
@@ -832,66 +963,31 @@ export class MagicKit {
   }
 
   /**
-   * Wards: the orbiting stones, the linked wall outside them, and the wall coming apart.
+   * Wards: the standing circle, the Ward+ wall on its edge, and the wall coming apart.
    *
-   * The two halves are deliberately opposite. Stones eat *projectiles* and are transparent to
-   * people; links stop *people* and are transparent to projectiles. Neither is a full defence, so
-   * the spell is a read on which kind of trouble you are in.
+   * The buff is a loan, not a gift: +3 shield HP a second and a 25% damage cut while the caster
+   * holds their ground inside, and stepping out — or outliving the circle — hands back whatever
+   * shield damage has not already spent. The Ward+ wall is solid to people and open to bullets,
+   * so an upgraded Ward also decides who is allowed to share the circle.
    */
   private _updateWards(time: number, delta: number, W: number, H: number): void {
-    for (let wi = this.wards.length - 1; wi >= 0; wi--) {
-      const w = this.wards[wi];
-      const caster = this.fighter(w.owner);
+    for (let wi = this.wardZones.length - 1; wi >= 0; wi--) {
+      const w = this.wardZones[wi];
       const enemies = w.owner === 'player' ? this.api.enemies : [this.api.player];
       const expired = time >= w.expireAt;
 
-      if (expired && w.orbs.length > 0) {
-        for (const o of w.orbs) this.shatterRock(w.owner, o.x, o.y);
-        w.orbs.length = 0;
-      }
       if (expired) {
         // Whatever the shed timer did not get to goes all at once when the ward dies.
         for (const l of w.links) {
           if (l.free) continue;
           l.free = true;
-          const a = Math.atan2(l.y - caster.y, l.x - caster.x);
+          const a = Math.atan2(l.y - w.y, l.x - w.x);
           l.vx = Math.cos(a) * 420; l.vy = Math.sin(a) * 420;
         }
-      }
-      if (expired && !w.links.some(l => l.free)) { this.wards.splice(wi, 1); continue; }
-
-      // ── The orbiting stones ──
-      for (let ri = w.orbs.length - 1; ri >= 0; ri--) {
-        const orb = w.orbs[ri];
-        orb.angle += 0.0026 * delta;
-        orb.x = caster.x + Math.cos(orb.angle) * w.orbitR;
-        orb.y = caster.y + Math.sin(orb.angle) * w.orbitR;
-        if (time - orb.lastHitAt >= 320) {
-          for (const e of enemies) {
-            if (!e.active || e.hp <= 0) continue;
-            if (Phaser.Math.Distance.Between(orb.x, orb.y, e.x, e.y) > 22) continue;
-            e.takeDamage(orb.dmg);
-            this.api.spawnHitFlash(e.x, e.y, MAGIC.sand);
-            orb.lastHitAt = time;
-            if (orb.canCrack && !orb.cracked) orb.cracked = true;
-            else { this.shatterRock(w.owner, orb.x, orb.y); w.orbs.splice(ri, 1); }
-            break;
-          }
-        }
-        if (ri >= w.orbs.length) continue;
-        const projs = this.api.projectiles.getMatching('active', true) as Phaser.GameObjects.Image[];
-        for (const p of projs) {
-          const pAny = p as any;
-          const hostile = w.owner === 'player' ? !pAny.isFromPlayer : pAny.isFromPlayer;
-          if (!hostile) continue;
-          if (Phaser.Math.Distance.Between(orb.x, orb.y, p.x, p.y) > 18) continue;
-          p.setActive(false).setVisible(false);
-          (pAny.body as Phaser.Physics.Arcade.Body)?.stop();
-          orb.lastHitAt = time;
-          this.fx(w.owner).flash(p.x, p.y, 12, 10, MAGIC.granite);
-          if (orb.canCrack && !orb.cracked) orb.cracked = true;
-          else { this.shatterRock(w.owner, orb.x, orb.y); w.orbs.splice(ri, 1); }
-          break;
+        if (!w.links.some(l => l.free)) {
+          this.fx(w.owner).motes(w.x, w.y, 7, { speed: 60, size: 2.4, life: 700, color: MAGIC.sand, drift: -20 });
+          this.wardZones.splice(wi, 1);
+          continue;
         }
       }
 
@@ -901,7 +997,7 @@ export class MagicKit {
         if (standing.length > 0) {
           const l = standing[Math.floor(Math.random() * standing.length)];
           l.free = true;
-          const a = Math.atan2(l.y - caster.y, l.x - caster.x);
+          const a = Math.atan2(l.y - w.y, l.x - w.x);
           l.vx = Math.cos(a) * 420; l.vy = Math.sin(a) * 420;
           this.fx(w.owner).sigils(l.x, l.y, 3, { speed: 90, size: 6, life: 360, color: MAGIC.granite, points: 4 });
         }
@@ -909,13 +1005,7 @@ export class MagicKit {
       }
       for (let li = w.links.length - 1; li >= 0; li--) {
         const l = w.links[li];
-        if (!l.free) {
-          l.angle += 0.0008 * delta;
-          l.x = caster.x + Math.cos(l.angle) * w.wallR;
-          l.y = caster.y + Math.sin(l.angle) * w.wallR;
-          l.spin = l.angle;
-          continue;
-        }
+        if (!l.free) continue; // standing links hold their station — the circle does not move
         l.x += l.vx * (delta / 1000);
         l.y += l.vy * (delta / 1000);
         l.spin += delta * 0.006;
@@ -935,19 +1025,52 @@ export class MagicKit {
           break;
         }
       }
+      if (expired && w.links.length === 0) { this.wardZones.splice(wi, 1); continue; }
 
       // The wall is solid to people. Anyone straddling it gets put back on the side they came in
       // from — bullets pass through untouched, which is the trade the upgrade makes.
       if (!expired) {
+        const wallR = w.radius + 16;
         for (const e of enemies) {
           if (!e.active || e.hp <= 0) continue;
-          const d = Phaser.Math.Distance.Between(caster.x, caster.y, e.x, e.y);
-          if (Math.abs(d - w.wallR) > 15) continue;
+          const d = Phaser.Math.Distance.Between(w.x, w.y, e.x, e.y);
+          if (Math.abs(d - wallR) > 15) continue;
           if (!w.links.some(l => !l.free && Phaser.Math.Distance.Between(l.x, l.y, e.x, e.y) <= 34)) continue;
-          const a = Math.atan2(e.y - caster.y, e.x - caster.x);
-          const target = d >= w.wallR ? w.wallR + 16 : w.wallR - 16;
-          e.setPosition(caster.x + Math.cos(a) * target, caster.y + Math.sin(a) * target);
+          const a = Math.atan2(e.y - w.y, e.x - w.x);
+          const target = d >= wallR ? wallR + 16 : wallR - 16;
+          e.setPosition(w.x + Math.cos(a) * target, w.y + Math.sin(a) * target);
         }
+      }
+    }
+
+    // ── The buff, resolved once per side so overlapping or duped circles cannot stack ──
+    for (const owner of ['player', 'npc'] as const) {
+      const f = this.fighter(owner);
+      const inside = f.active && f.hp > 0 && this.wardZones.some(z =>
+        z.owner === owner && time < z.expireAt
+        && Phaser.Math.Distance.Between(z.x, z.y, f.x, f.y) <= z.radius);
+      if (inside) {
+        if (!this.wardInside[owner]) {
+          this.wardInside[owner] = true;
+          this.api.showFloatingText(f.x, f.y - 34, '🪨 WARDED', '#cc9944');
+        }
+        this.wardShieldAccum[owner] += delta * (3 / 1000);
+        const whole = Math.floor(this.wardShieldAccum[owner]);
+        if (whole > 0) {
+          this.wardShieldAccum[owner] -= whole;
+          f.shieldHp += whole;
+          this.wardShieldGranted[owner] += whole;
+        }
+      } else if (this.wardInside[owner]) {
+        this.wardInside[owner] = false;
+        this.wardShieldAccum[owner] = 0;
+        // The circle takes its stone back — only what damage has not already spent.
+        const back = Math.min(f.shieldHp, this.wardShieldGranted[owner]);
+        if (back > 0) {
+          f.shieldHp -= back;
+          this.api.showFloatingText(f.x, f.y - 34, `🪨 -${Math.round(back)} ward`, '#997744');
+        }
+        this.wardShieldGranted[owner] = 0;
       }
     }
   }
@@ -1058,20 +1181,42 @@ export class MagicKit {
     }
 
     const ptr = this.api.scene.input.activePointer;
-    // Click — Sparkle Shot
-    if (ptr.leftButtonDown()) {
-      this.api.player.castAbility('magic-sparkle-shot', this._buildPlayerCtx(mouseX, mouseY));
-    }
+    const leftDown = ptr.leftButtonDown();
+    const leftJust = leftDown && !this.leftHeld;
+    this.leftHeld = leftDown;
 
-    // Right-click — cash the crosshair in. Edge-detected: holding the button must not empty a
-    // crosshair the moment it is placed.
-    if (ptr.rightButtonDown()) {
-      if (!this.rightHeld) {
-        this.rightHeld = true;
-        this.fireCrosshair('player');
+    // A held Duplication scroll owns the mouse: it rides the cursor while the button is down
+    // and is consumed where the button comes up. No sparkles fire out of the hand carrying it.
+    if (this.dragScroll) {
+      if (this.scrolls.indexOf(this.dragScroll) < 0) {
+        this.dragScroll = null; // fizzled mid-drag
+      } else if (leftDown) {
+        this.dragScroll.x = mouseX;
+        this.dragScroll.y = mouseY;
+      } else {
+        this.consumeScroll(this.dragScroll);
+        this.dragScroll = null;
       }
     } else {
-      this.rightHeld = false;
+      if (leftJust) {
+        const grab = this.scrolls.find(s =>
+          s.owner === 'player' && Phaser.Math.Distance.Between(s.x, s.y, mouseX, mouseY) <= 30);
+        if (grab) {
+          this.dragScroll = grab;
+          this.pfx.sigils(grab.x, grab.y, 4, { speed: 60, size: 5, life: 340, color: MAGIC.orchid, points: 4 });
+        } else {
+          // The R crosshair: every click on the marked enemy buys a missile.
+          const c = this.crosshairFor('player');
+          if (c && c.target.active && c.target.hp > 0
+            && Phaser.Math.Distance.Between(mouseX, mouseY, c.target.x, c.target.y) <= 52) {
+            this.fireMissiles('player');
+          }
+        }
+      }
+      // Click — Sparkle Shot
+      if (leftDown && !this.dragScroll) {
+        this.api.player.castAbility('magic-sparkle-shot', this._buildPlayerCtx(mouseX, mouseY));
+      }
     }
 
     // Magic Mastery — Transmogrify may be bound over any of E/R/F/Q, suppressing that slot's base ability.
@@ -1170,24 +1315,23 @@ export class MagicKit {
     // ── Magic Mastery — Transmogrify projectiles ────────────────────
     this.updateTransmogrifyProjectiles(delta, W, H);
 
-    // ── R Crosshair + the R+ shortcut round ─────────────────────────
+    // ── R Crosshair + the missiles it has bought ─────────────────────
     this.updateMissiles(delta, W, H);
     for (let i = this.crosshairs.length - 1; i >= 0; i--) {
       const c = this.crosshairs[i];
       c.spin += delta * 0.0016;
       if (!c.target.active || c.target.hp <= 0) { this.crosshairs.splice(i, 1); continue; }
       if (time >= c.expireAt) {
-        // Letting it lapse pays nothing — the marks were never damage, only a promise of it.
         this.fx(c.owner).motes(c.target.x, c.target.y, 5, {
           speed: 40, size: 2.2, life: 560, color: MAGIC.orchid, drift: -20,
         });
         this.crosshairs.splice(i, 1);
         continue;
       }
-      // The bot does not have a right mouse button: it cashes in on a full clip, or on the last
-      // moment it still can.
-      if (c.owner === 'npc' && (c.marks >= 4 || (c.marks > 0 && c.expireAt - time <= 500))) {
-        this.fireCrosshair('npc');
+      // The bot does not have a mouse: its crosshair clicks itself on a steady clock.
+      if (c.owner === 'npc' && time >= this.npcNextMissileAt) {
+        this.npcNextMissileAt = time + 340;
+        this.fireMissiles('npc');
       }
     }
 
@@ -1225,6 +1369,19 @@ export class MagicKit {
       this.api.showFloatingText(p.x, p.y - 34, `⧉ -${Math.round(shed)} ☠`, '#cc88ff');
     }
 
+    // ── F Duplication scrolls waiting on the floor ────────────────────
+    for (let i = this.captureFlashes.length - 1; i >= 0; i--) {
+      if (time >= this.captureFlashes[i].expireAt) this.captureFlashes.splice(i, 1);
+    }
+    for (let i = this.scrolls.length - 1; i >= 0; i--) {
+      const s = this.scrolls[i];
+      if (time < s.expireAt) continue;
+      // An unread scroll fades — the recording was never the damage, only the chance of it.
+      this.fx(s.owner).motes(s.x, s.y, 6, { speed: 50, size: 2.4, life: 640, color: MAGIC.orchid, drift: -20 });
+      this.api.showFloatingText(s.x, s.y - 24, '📜 faded', '#775588');
+      this.scrolls.splice(i, 1);
+    }
+
     // ── Sparkle shots ─────────────────────────────────────────────────
     // First: update leader positions and track which leaders have exploded
     const explodedLeaders = new Set<string>();
@@ -1247,7 +1404,6 @@ export class MagicKit {
             s.exploded = true;
             const dmg = Math.round(14 * (s.damageMult ?? 0.75));
             this.api.dealAoeDamageFromOwner(s.proj.x, s.proj.y, 45, dmg, s.owner);
-            this.addCrosshairMark(s.owner, s.proj.x, s.proj.y, 45);
             this.fx(s.owner).boom(s.proj.x, s.proj.y, 45, {
               color: MAGIC.blush, sigils: 5, rings: 1, duration: 340, mark: false,
             });
@@ -1278,7 +1434,6 @@ export class MagicKit {
           s.exploded = true;
           if (s.id) explodedLeaders.add(s.id);
           this.api.dealAoeDamageFromOwner(s.proj.x, s.proj.y, 55, 14, s.owner);
-          this.addCrosshairMark(s.owner, s.proj.x, s.proj.y, 55);
           this.fx(s.owner).boom(s.proj.x, s.proj.y, 58, {
             color: MAGIC.blush, sigils: 8, rings: 2, duration: 440,
           });
@@ -1291,7 +1446,7 @@ export class MagicKit {
       }
     }
 
-    // ── Flame clouds ──────────────────────────────────────────────────
+    // ── Flares ────────────────────────────────────────────────────────
     const ptr = this.api.scene.input.activePointer;
     for (let i = this.flameClouds.length - 1; i >= 0; i--) {
       const c = this.flameClouds[i];
@@ -1302,42 +1457,74 @@ export class MagicKit {
         this.flameClouds.splice(i, 1);
         continue;
       }
-      if (c.followCursor) {
-        // Dark flame cloud: lerp toward cursor
-        c.x += (ptr.worldX - c.x) * 0.10;
-        c.y += (ptr.worldY - c.y) * 0.10;
-      } else if (c.steady) {
-        // A Flare does not coast to a stop — it crawls the whole way at the speed it left at.
-        c.x += c.vx * (delta / 1000);
-        c.y += c.vy * (delta / 1000);
-      } else if (!c.stopped) {
-        c.vx *= 0.93;
-        c.vy *= 0.93;
-        c.x += c.vx * (delta / 1000);
-        c.y += c.vy * (delta / 1000);
-        if (Math.abs(c.vx) < 2 && Math.abs(c.vy) < 2) c.stopped = true;
+      // The cursor is the leash — the enemy stands in for it on a bot's Flare.
+      const tx = c.owner === 'player' ? ptr.worldX : this.api.player.x;
+      const ty = c.owner === 'player' ? ptr.worldY : this.api.player.y;
+      if (c.homing) {
+        const want = Math.atan2(ty - c.y, tx - c.x);
+        let heading = Math.atan2(c.vy, c.vx);
+        const turn = 4.2 * (delta / 1000);
+        heading += Phaser.Math.Clamp(Phaser.Math.Angle.Wrap(want - heading), -turn, turn);
+        c.vx = Math.cos(heading) * c.speed;
+        c.vy = Math.sin(heading) * c.speed;
+        // The lap counter: the bearing from cursor to orb, accumulated. One net full circle
+        // means it has orbited the cursor once — after that it flies straight forever.
+        const bearing = Math.atan2(c.y - ty, c.x - tx);
+        c.orbitAccum += Phaser.Math.Angle.Wrap(bearing - c.prevAngle);
+        c.prevAngle = bearing;
+        if (Math.abs(c.orbitAccum) >= Math.PI * 2) {
+          c.homing = false;
+          this.fx(c.owner).sigils(c.x, c.y, 3, {
+            speed: 70, size: 5, life: 360, color: c.cursedFire ? MAGIC.corrupt : MAGIC.emberHi, points: 4,
+          });
+          this.api.showFloatingText(c.x, c.y - 22, '🔥 loose!', '#ff8844');
+        }
       }
-      // Tick damage + burn
-      const targets = (c.owner === 'player' ? this.api.enemies : [this.api.player])
-        .filter(t => t.active && t.hp > 0 && Phaser.Math.Distance.Between(c.x, c.y, t.x, t.y) <= c.radius);
-      if (targets.length > 0) {
-        c.tickAccum += delta;
-        while (c.tickAccum >= c.tickInterval) {
-          for (const t of targets) {
-            t.takeDamage(c.tickDmg, { source: c, sourceX: c.x, sourceY: c.y });
-            this.api.spawnHitFlash(t.x, t.y, c.cursedFire ? MAGIC.cursed : MAGIC.ember);
-            this.fx(c.owner).sigils(t.x, t.y, 2, {
-              speed: 90, size: 5, life: 340, color: c.cursedFire ? MAGIC.corrupt : MAGIC.emberHi, points: 4,
-            });
-            t.burningUntil = Math.max(t.burningUntil, time + c.burnDuration);
-            if (c.cursedFire && c.owner === 'player') {
-              this.npcCursedFireUntil = Math.max(this.npcCursedFireUntil, time + 3000);
+      c.x += c.vx * (delta / 1000);
+      c.y += c.vy * (delta / 1000);
+      if (c.x < -70 || c.x > W + 70 || c.y < -70 || c.y > H + 70) {
+        this.flameClouds.splice(i, 1);
+        continue;
+      }
+      if (c.aura) {
+        // Flare+ is a travelling no-go zone: tick damage, and the shadow DOT for a burn.
+        const targets = (c.owner === 'player' ? this.api.enemies : [this.api.player])
+          .filter(t => t.active && t.hp > 0 && Phaser.Math.Distance.Between(c.x, c.y, t.x, t.y) <= c.radius);
+        if (targets.length > 0) {
+          c.tickAccum += delta;
+          while (c.tickAccum >= c.tickInterval) {
+            for (const t of targets) {
+              t.takeDamage(c.tickDmg, { source: c, sourceX: c.x, sourceY: c.y });
+              this.api.spawnHitFlash(t.x, t.y, MAGIC.cursed);
+              this.fx(c.owner).sigils(t.x, t.y, 2, {
+                speed: 90, size: 5, life: 340, color: MAGIC.corrupt, points: 4,
+              });
+              // Flare+ replaces the ordinary burn outright with the shadow DOT — cursed fire
+              // is what you are on fire *with*, not something on top of it.
+              if (c.owner === 'player') {
+                this.npcCursedFireUntil = Math.max(this.npcCursedFireUntil, time + 3000);
+              } else {
+                t.burningUntil = Math.max(t.burningUntil, time + c.burnDuration);
+              }
             }
+            c.tickAccum -= c.tickInterval;
           }
-          c.tickAccum -= c.tickInterval;
+        } else {
+          c.tickAccum = 0;
         }
       } else {
-        c.tickAccum = 0;
+        // The base Flare is a projectile: 15 damage and fire to the first thing it touches.
+        for (const t of (c.owner === 'player' ? this.api.enemies : [this.api.player])) {
+          if (!t.active || t.hp <= 0) continue;
+          if (Phaser.Math.Distance.Between(c.x, c.y, t.x, t.y) > c.radius + 14) continue;
+          t.takeDamage(15, { source: c, sourceX: c.x, sourceY: c.y });
+          t.burningUntil = Math.max(t.burningUntil, time + c.burnDuration);
+          this.api.spawnHitFlash(t.x, t.y, MAGIC.ember);
+          this.fx(c.owner).boom(c.x, c.y, 44, { color: MAGIC.ember, sigils: 7, rings: 1, duration: 420 });
+          this.api.showFloatingText(t.x, t.y - 30, '🔥 BURNED', '#ff8844');
+          this.flameClouds.splice(i, 1);
+          break;
+        }
       }
     }
 
@@ -1407,7 +1594,8 @@ export class MagicKit {
         // Re-stamped every frame with a short window, so it lapses the moment they are out.
         if (p.putrid) t.mobilityBlockedUntil = Math.max(t.mobilityBlockedUntil, time + 180);
       }
-      if (victims.length === 0) { p.tickAccum = 0; continue; }
+      // The water elemental's pools slow without biting — no zero-damage hit spam.
+      if (victims.length === 0 || p.tickDmg <= 0) { p.tickAccum = 0; continue; }
       p.tickAccum += delta;
       while (p.tickAccum >= 500) {
         p.tickAccum -= 500;
@@ -1418,7 +1606,43 @@ export class MagicKit {
       }
     }
 
-    // ── E3 Spur burs ──────────────────────────────────────────────────
+    // ── E3 Spur barbs on the floor ────────────────────────────────────
+    for (let i = this.spurBarbs.length - 1; i >= 0; i--) {
+      const b = this.spurBarbs[i];
+      if (time >= b.expireAt) {
+        this.fx(b.owner).motes(b.x, b.y, 2, { speed: 30, size: 2, life: 480, color: MAGIC.leaf, drift: -12 });
+        this.spurBarbs.splice(i, 1);
+        continue;
+      }
+      let trodden = false;
+      for (const t of (b.owner === 'player' ? this.api.enemies : [this.api.player])) {
+        if (!t.active || t.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) > 18) continue;
+        trodden = true;
+        t.takeDamage(3);
+        this.api.spawnHitFlash(t.x, t.y, MAGIC.leaf);
+        if (b.owner === 'player') this.npcStormSlowUntil = Math.max(this.npcStormSlowUntil, time + 1500);
+        else this.playerStormSlowUntil = Math.max(this.playerStormSlowUntil, time + 1500);
+        this.api.showFloatingText(t.x, t.y - 26, '🌿 SLOWED', '#66dd77');
+        if (b.sticky) {
+          // A Spur+ barb rides along: the trodden bur counts toward the 5-bur pin.
+          const a2 = Math.random() * Math.PI * 2;
+          const d2 = 6 + Math.random() * 12;
+          this.burs.push({
+            x: t.x, y: t.y, vx: 0, vy: 0, stuck: t,
+            ox: Math.cos(a2) * d2, oy: Math.sin(a2) * d2,
+            spin: Math.random() * Math.PI, expireAt: time + 2000, sticky: true, owner: b.owner,
+          });
+          const worn = this.burs.filter(bb => bb.stuck === t && bb.owner === b.owner).length;
+          if (worn < 5) this.api.showFloatingText(t.x, t.y - 40, `🌿 ${worn}/5`, '#66dd77');
+          this.checkBurClutch(t, b.owner);
+        }
+        break;
+      }
+      if (trodden) this.spurBarbs.splice(i, 1);
+    }
+
+    // ── E3 Spur+ burs riding their victims ────────────────────────────
     for (let i = this.burs.length - 1; i >= 0; i--) {
       const b = this.burs[i];
       if (time >= b.expireAt || !b.stuck || !b.stuck.active || b.stuck.hp <= 0) {
@@ -1486,6 +1710,16 @@ export class MagicKit {
 
     // ── Q Summons and everything their signatures left behind ─────────
     this._updateSummons(time, delta, W, H);
+
+    // ── One writer for the kit's incoming-damage multiplier ───────────
+    // Two sources, resolved together so neither stomps the other: your own Ward circle
+    // (25% off while you stand in it) and the Wind+ hurricane eye (30% extra on everything).
+    this.api.player.magicIncomingMult = this.wardInside.player ? 0.75 : 1;
+    for (const e of this.api.enemies) {
+      let m = this.hurricaneEye ? 1.3 : 1;
+      if (e === this.api.npc && this.wardInside.npc) m *= 0.75;
+      e.magicIncomingMult = m;
+    }
 
     // ── Rock orbs ─────────────────────────────────────────────────────
     for (const owner of ['player', 'npc'] as const) {
@@ -1595,9 +1829,9 @@ export class MagicKit {
       if (t.tickAccum >= 200) {
         t.tickAccum -= 200;
         const targets = (t.owner === 'player' ? this.api.enemies : [this.api.player])
-          .filter(e => e.active && e.hp > 0 && Phaser.Math.Distance.Between(t.x, t.y, e.x, e.y) <= 80);
+          .filter(e => e.active && e.hp > 0 && Phaser.Math.Distance.Between(t.x, t.y, e.x, e.y) <= t.radius + 28);
         for (const e of targets) {
-          e.takeDamage(4);
+          e.takeDamage(t.tickDmg);
           this.api.spawnHitFlash(e.x, e.y, MAGIC.wind);
           this.fx(t.owner).sigils(e.x, e.y, 2, {
             speed: 130, angle: Math.atan2(e.y - t.y, e.x - t.x), spread: 0.6,
@@ -1913,6 +2147,20 @@ export class MagicKit {
       const fade = Phaser.Math.Clamp((p.expireAt - time) / 800, 0, 1);
       MagicFx.drawPuddle(g0, this.col(p.owner), p.x, p.y, p.radius, p.putrid, p.seed, t, 0.45 + 0.5 * fade);
     }
+    for (const z of this.wardZones) {
+      if (time >= z.expireAt) continue;
+      const fade = Phaser.Math.Clamp((z.expireAt - time) / 900, 0, 1);
+      MagicFx.drawWardZone(g0, this.col(z.owner), z.x, z.y, z.radius, z.seed, t,
+        0.45 + 0.55 * fade, this.wardInside[z.owner]);
+    }
+    for (const b of this.spurBarbs) {
+      MagicFx.drawBur(g0, this.col(b.owner), b.x, b.y, b.spin + t * 0.3,
+        Phaser.Math.Clamp((b.expireAt - time) / 700, 0, 1) * 0.9);
+    }
+    for (const l of this.lightningStrokes) {
+      const u = Phaser.Math.Clamp(1 - (l.strikeAt - time) / 500, 0, 1);
+      arcaneRing(g0, this.col(l.owner), l.x, l.y, 40 - 18 * u, t * 2, MAGIC.thunder, 0.25 + 0.6 * u, 2, 6, false);
+    }
     for (const tr of this.sparkTrails) {
       const fade = Phaser.Math.Clamp((tr.expireAt - time) / 1200, 0, 1);
       MagicFx.drawSparkTrail(g0, this.col(tr.owner), tr.pts, tr.seed, t, 0.3 + 0.65 * fade);
@@ -1971,21 +2219,65 @@ export class MagicKit {
       }
       MagicFx.drawFlameCloud(g, this.col(c.owner), c.x, c.y, c.radius, !!c.cursedFire, c.seed, t, alpha);
     }
-    for (const w of this.wards) {
+    for (const w of this.wardZones) {
       const fade = Phaser.Math.Clamp((w.expireAt - time) / 900, 0, 1);
-      for (const orb of w.orbs) {
-        runeOrb(g, this.col(w.owner), orb.x, orb.y, orb.radius, orb.angle * 2,
-          orb.cracked ? MAGIC.granite : MAGIC.stone, orb.cracked ? MAGIC.gust : MAGIC.sand,
-          0.4 + 0.6 * fade, orb.cracked);
+      // Chains first, slabs over them: consecutive standing links are physically joined.
+      // Once shedding has eaten a gap wider than two stations the chain across it is gone too.
+      const standing = w.links.filter(l => !l.free).sort((a, b) => a.angle - b.angle);
+      if (standing.length >= 2) {
+        const station = (Math.PI * 2) / 16;
+        for (let i = 0; i < standing.length; i++) {
+          const a = standing[i], b = standing[(i + 1) % standing.length];
+          const gap = ((b.angle - a.angle) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+          if (gap > station * 1.6) continue;
+          MagicFx.drawWardChain(g, this.col(w.owner), a.x, a.y, b.x, b.y, 0.45 + 0.55 * fade);
+        }
       }
       for (const l of w.links) {
         MagicFx.drawWardLink(g, this.col(w.owner), l.x, l.y, l.spin, l.free,
           l.free ? 1 : 0.45 + 0.55 * fade);
       }
     }
+    for (const w of this.earthWalls) {
+      const fade = Phaser.Math.Clamp((w.expireAt - time) / 700, 0, 1);
+      const segs = 5;
+      const at = (u: number): { x: number; y: number } =>
+        ({ x: w.x1 + (w.x2 - w.x1) * u, y: w.y1 + (w.y2 - w.y1) * u });
+      for (let i = 0; i < segs - 1; i++) {
+        const a = at((i + 0.5) / segs), b = at((i + 1.5) / segs);
+        MagicFx.drawWardChain(g, this.col(w.owner), a.x, a.y, b.x, b.y, 0.45 + 0.55 * fade);
+      }
+      const wallSpin = Math.atan2(w.y2 - w.y1, w.x2 - w.x1) - Math.PI / 2;
+      for (let i = 0; i < segs; i++) {
+        const p = at((i + 0.5) / segs);
+        MagicFx.drawWardLink(g, this.col(w.owner), p.x, p.y, wallSpin, false, 0.5 + 0.5 * fade);
+      }
+    }
     for (const b of this.burs) {
       MagicFx.drawBur(g, this.col(b.owner), b.x, b.y, b.spin,
         Phaser.Math.Clamp((b.expireAt - time) / 400, 0, 1));
+    }
+    for (const p of this.firePillars) {
+      const armed01 = Phaser.Math.Clamp(1 - (p.armAt - time) / 700, 0, 1);
+      MagicFx.drawFirePillar(g, this.col(p.owner), p.x, p.y, p.seed, t, armed01, p.fired,
+        Phaser.Math.Clamp((p.expireAt - time) / 600, 0, 1));
+    }
+    for (const w of this.waves) {
+      MagicFx.drawWave(g, this.col(w.owner), w.x, w.y, Math.atan2(w.vy, w.vx), w.seed, t, 0.9);
+    }
+    for (const o of this.healOrbs) {
+      MagicFx.drawHealOrb(g, this.col(o.owner), o.x, o.y, Math.atan2(o.vy, o.vx), t);
+    }
+    for (const s of this.scrolls) {
+      MagicFx.drawScroll(g, this.col(s.owner), s.x, s.y, s.seed, t,
+        Phaser.Math.Clamp((s.expireAt - time) / 1200, 0.35, 1), s === this.dragScroll);
+    }
+    for (const cf of this.captureFlashes) {
+      const u = Phaser.Math.Clamp((cf.expireAt - time) / 450, 0, 1);
+      g.fillStyle(this.col(cf.owner)(MAGIC.magenta), 0.26 * u);
+      g.fillRect(cf.x - cf.half, cf.y - cf.half, cf.half * 2, cf.half * 2);
+      g.lineStyle(2.5, this.col(cf.owner)(MAGIC.orchid), 0.9 * u);
+      g.strokeRect(cf.x - cf.half, cf.y - cf.half, cf.half * 2, cf.half * 2);
     }
     for (const b of this.summonBolts) {
       MagicFx.drawSummonBolt(g, this.col(b.owner), b.kind, b.x, b.y, Math.atan2(b.vy, b.vx), t);
@@ -2034,7 +2326,7 @@ export class MagicKit {
       MagicFx.drawChickenBolt(g, this.col(p.owner), p.x, p.y, Math.atan2(p.vy, p.vx), t);
     }
     for (const c of this.crosshairs) {
-      MagicFx.drawCrosshair(g, this.col(c.owner), c.target.x, c.target.y, c.marks, c.spin,
+      MagicFx.drawCrosshair(g, this.col(c.owner), c.target.x, c.target.y, Math.min(5, c.clicks), c.spin,
         Phaser.Math.Clamp((c.expireAt - time) / 700, 0.35, 1));
     }
     for (const m of this.missiles) {
@@ -2267,18 +2559,12 @@ export class MagicKit {
         break;
       case 4: {
         this.doWard(owner);
-        const w = this.wards[this.wards.length - 1];
+        const w = this.wardZones[this.wardZones.length - 1];
         if (thunderCharged && w) {
-          for (let i = 0; i < 2; i++) {
-            const angle = Math.random() * Math.PI * 2;
-            w.orbs.push({
-              angle, radius: 12,
-              x: caster.x + Math.cos(angle) * w.orbitR,
-              y: caster.y + Math.sin(angle) * w.orbitR,
-              cracked: false, lastHitAt: 0, canCrack: false, dmg: 15, owner,
-            });
-            this.fx(owner).bolt(caster.x + Math.cos(angle) * w.orbitR, caster.y + Math.sin(angle) * w.orbitR, 90, 12, MAGIC.thunder);
-          }
+          // A charged circle is simply a bigger promise: wider, and four seconds longer.
+          w.radius = Math.round(w.radius * 1.25);
+          w.expireAt += 4000;
+          this.fx(owner).bolt(w.x, w.y, 110, 12, MAGIC.thunder);
         }
         break;
       }
@@ -2323,8 +2609,8 @@ export class MagicKit {
     const hauling = this.gustHauls.some(h => h.owner === 'npc' && h.target === player);
     let pick: number;
     if (inMyPool || hauling) {
-      // Somebody who cannot dash, or who is being dragged along a fixed line, is exactly who a
-      // three-bur spread was written for.
+      // Somebody slowed in a pool, or being hauled back to where this bot stands, is about to
+      // walk on whatever is scattered at its feet — which is exactly what a barb carpet is for.
       pick = 2;
     } else if (dist > 330) {
       pick = 3; // Gust — nothing else in the book reaches, and it brings them to us.
@@ -2349,17 +2635,18 @@ export class MagicKit {
     }
     const dist = Phaser.Math.Distance.Between(this.api.player.x, this.api.player.y, this.api.npc.x, this.api.npc.y);
     const hpRatio = this.api.npc.hp / this.api.npc.maxHp;
-    // Which familiar suits the fight it is actually in: a bodyguard when hurt, a brawler up
-    // close, a shooter at range. Never one it already has out — two of the same is a waste of
-    // the longest cooldown in the kit.
+    // Which elemental suits the fight it is actually in: Life heals and Earth armours when
+    // hurt, Earth's walls and Water's waves buy space up close, Fire and Wind pour on damage
+    // at range. Never one it already has out — two of the same is a waste of the longest
+    // cooldown in the kit.
     const has = (k: SummonKind): boolean => this.summons.some(s => s.owner === 'npc' && s.kind === k);
     const order: SummonKind[] = hpRatio < 0.35
-      ? ['earth', 'life', 'water', 'wind', 'fire']
+      ? ['life', 'earth', 'water', 'wind', 'fire']
       : dist < 160
-        ? ['wind', 'earth', 'life', 'fire', 'water']
+        ? ['earth', 'water', 'wind', 'fire', 'life']
         : dist > 340
-          ? ['fire', 'water', 'earth', 'life', 'wind']
-          : ['life', 'fire', 'water', 'earth', 'wind'];
+          ? ['fire', 'wind', 'water', 'life', 'earth']
+          : ['wind', 'fire', 'water', 'earth', 'life'];
     const kinds: SummonKind[] = ['fire', 'water', 'life', 'wind', 'earth'];
     const chosen = order.find(k => !has(k)) ?? order[0];
     const pick = kinds.indexOf(chosen);
@@ -2459,9 +2746,10 @@ export class MagicKit {
   }
 
   /**
-   * R. Paints a crosshair on the nearest enemy for six seconds. Kept under the old ability id and
-   * the old method name so ArenaScene's context, the cooldown bar and the online replay all keep
-   * working untouched.
+   * R — Magic Missiles. Paints a crosshair on the nearest enemy for three seconds; while it
+   * holds, every click on them conjures a homing missile. Kept under the old ability id and
+   * the old method name so ArenaScene's context, the cooldown bar and the online replay all
+   * keep working untouched.
    */
   doAnchorToggle(owner: 'player' | 'npc'): void {
     const caster = this.fighter(owner);
@@ -2478,90 +2766,64 @@ export class MagicKit {
     for (let i = this.crosshairs.length - 1; i >= 0; i--) {
       if (this.crosshairs[i].owner === owner) this.crosshairs.splice(i, 1);
     }
-    this.crosshairs.push({ target, marks: 0, expireAt: now + 6000, spin: 0, owner });
+    this.crosshairs.push({ target, clicks: 0, expireAt: now + 3000, spin: 0, owner });
+    if (owner === 'npc') this.npcNextMissileAt = now + 400;
     this.gesture(owner, 'magic-anchor');
     const fx = this.fx(owner);
     fx.ring(target.x, target.y, 60, 22, MAGIC.orchid, 420, 9, 2.6);
     fx.sigils(target.x, target.y, 6, { speed: 90, size: 6, life: 400, color: MAGIC.orchid });
-    this.api.showFloatingText(target.x, target.y - 34, '✛ MARKED', '#cc88ff');
+    this.api.showFloatingText(target.x, target.y - 34,
+      owner === 'player' ? '✛ MARKED — CLICK THEM' : '✛ MARKED', '#cc88ff');
   }
 
   /**
-   * A Sparkle Shot went off on top of somebody. If they are wearing this side's crosshair it
-   * gains a tally — capped at five, because the detonation is meant to be a payoff you can plan
-   * around rather than an unbounded stack.
+   * One click on the marked enemy: a missile (two with R+) slips out of the caster's hand and
+   * hunts them down. 2 damage each — the spell is worth exactly as fast as you can click.
    */
-  private addCrosshairMark(owner: 'player' | 'npc', x: number, y: number, radius: number): void {
+  private fireMissiles(owner: 'player' | 'npc'): void {
     const c = this.crosshairFor(owner);
     if (!c || !c.target.active || c.target.hp <= 0) return;
-    if (Phaser.Math.Distance.Between(x, y, c.target.x, c.target.y) > radius) return;
-    if (c.marks >= 5) return;
-    c.marks++;
-    this.fx(owner).sigils(c.target.x, c.target.y, 3, {
-      speed: 60, size: 6, life: 360, color: MAGIC.blush, points: 4,
-    });
-    this.api.showFloatingText(c.target.x, c.target.y - 46, `✛ ${c.marks}/5`, '#ff99ff');
-  }
-
-  /**
-   * Right-click: cash the crosshair in.
-   *
-   * With tallies on it that is 8 damage each in a wide burst. With none — and only once R+ is
-   * bought — it is instead the shortcut: one heavy missile launched at them and the mark dropped
-   * on the spot, which turns a wasted mark into an opener rather than a punishment.
-   */
-  private fireCrosshair(owner: 'player' | 'npc'): void {
-    const c = this.crosshairFor(owner);
-    if (!c) return;
     const caster = this.fighter(owner);
-    const idx = this.crosshairs.indexOf(c);
-    const fx = this.fx(owner);
-
-    if (c.marks === 0) {
-      if (!(owner === 'player' && this.api.hasUpgrade('r'))) return;
-      const angle = Math.atan2(c.target.y - caster.y, c.target.x - caster.x);
+    const count = owner === 'player' && this.api.hasUpgrade('r') ? 2 : 1;
+    const aim = Math.atan2(c.target.y - caster.y, c.target.x - caster.x);
+    for (let i = 0; i < count; i++) {
+      // Launched off-line so the volley visibly curls back onto the target.
+      const a = aim + (Math.random() - 0.5) * 1.6;
       this.missiles.push({
-        x: caster.x, y: caster.y,
-        vx: Math.cos(angle) * 430, vy: Math.sin(angle) * 430,
-        owner,
+        x: caster.x + Math.cos(a) * 14, y: caster.y + Math.sin(a) * 14,
+        vx: Math.cos(a) * 480, vy: Math.sin(a) * 480,
+        target: c.target, owner,
       });
-      this.crosshairs.splice(idx, 1);
-      this.gesture(owner, 'magic-sparkle-shot', angle);
-      fx.flash(caster.x, caster.y, 26, 10, MAGIC.orchid);
-      fx.sigils(caster.x, caster.y, 6, { speed: 140, angle, spread: 0.4, size: 8, life: 420, color: MAGIC.purple });
-      this.api.showFloatingText(caster.x, caster.y - 34, '✦ MAGIC SHORTCUT', '#cc88ff');
-      return;
     }
-
-    const dmg = c.marks * 8;
-    const tx = c.target.x, ty = c.target.y;
-    this.crosshairs.splice(idx, 1);
-    this.gesture(owner, 'magic-anchor');
-    this.api.dealAoeDamageFromOwner(tx, ty, 110, dmg, owner);
-    fx.boom(tx, ty, 110, { color: MAGIC.blush, sigils: 12, rings: 3, duration: 560 });
-    this.api.scene.cameras.main.shake(170, 0.005);
-    this.api.showFloatingText(tx, ty - 34, `✛ ${c.marks}× — ${dmg}!`, '#ff88ff');
+    c.clicks += count;
+    this.gesture(owner, 'magic-sparkle-shot', aim);
+    this.fx(owner).sigils(caster.x, caster.y, 2, {
+      speed: 90, angle: aim, spread: 0.5, size: 5, life: 300, color: MAGIC.orchid, points: 4,
+    });
   }
 
-  /** The R+ shortcut round in flight: one heavy shell that bursts on whoever it reaches. */
+  /** Magic Missiles in flight: small, homing hard, 2 damage on arrival. */
   private updateMissiles(delta: number, W: number, H: number): void {
     for (let i = this.missiles.length - 1; i >= 0; i--) {
       const m = this.missiles[i];
-      m.x += m.vx * (delta / 1000);
-      m.y += m.vy * (delta / 1000);
-      if (m.x < -20 || m.x > W + 20 || m.y < -20 || m.y > H + 20) {
+      if (!m.target.active || m.target.hp <= 0
+        || m.x < -40 || m.x > W + 40 || m.y < -40 || m.y > H + 40) {
         this.missiles.splice(i, 1);
         continue;
       }
-      const targets = m.owner === 'player' ? this.api.enemies : [this.api.player];
-      const hit = targets.some(t => t.active && t.hp > 0
-        && Phaser.Math.Distance.Between(m.x, m.y, t.x, t.y) <= 24);
-      if (!hit) continue;
+      const want = Math.atan2(m.target.y - m.y, m.target.x - m.x);
+      let heading = Math.atan2(m.vy, m.vx);
+      const turn = 9 * (delta / 1000);
+      heading += Phaser.Math.Clamp(Phaser.Math.Angle.Wrap(want - heading), -turn, turn);
+      m.vx = Math.cos(heading) * 480;
+      m.vy = Math.sin(heading) * 480;
+      m.x += m.vx * (delta / 1000);
+      m.y += m.vy * (delta / 1000);
+      if (Phaser.Math.Distance.Between(m.x, m.y, m.target.x, m.target.y) > 20) continue;
       this.missiles.splice(i, 1);
-      this.api.dealAoeDamageFromOwner(m.x, m.y, 95, 15, m.owner);
-      this.fx(m.owner).boom(m.x, m.y, 95, { color: MAGIC.purple, sigils: 11, rings: 2, duration: 520 });
-      this.api.scene.cameras.main.shake(150, 0.004);
-      this.api.showFloatingText(m.x, m.y - 28, '✦ 15', '#bb88ff');
+      m.target.takeDamage(2);
+      this.api.spawnHitFlash(m.target.x, m.target.y, MAGIC.orchid);
+      this.fx(m.owner).sigils(m.x, m.y, 3, { speed: 80, size: 5, life: 320, color: MAGIC.blush, points: 4 });
     }
   }
 
@@ -2669,18 +2931,19 @@ export class MagicKit {
   // ── F: Dupe ───────────────────────────────────────────────────────────────
 
   /**
-   * Bot synergy — where a Dupe would actually pay, and how much.
+   * Bot synergy — where a Duplication capture would actually pay, and how much.
    *
    * Side-effect free, as every AI read has to be: it counts this side's own conjurations around
-   * each candidate centre and hands back the densest one. `count` is what the AI weighs against
-   * the 15 Darkness the cast will charge.
+   * each candidate centre and hands back the densest one. `count` is what the AI weighs before
+   * spending the cast at all.
    */
   npcDupePoint(): { x: number; y: number; count: number } | null {
-    const R = 140;
+    const R = 110;
     const pts: { x: number; y: number }[] = [];
     for (const c of this.flameClouds) if (c.owner === 'npc') pts.push(c);
     for (const p of this.puddles) if (p.owner === 'npc') pts.push(p);
-    for (const b of this.burs) if (b.owner === 'npc' && b.stuck) pts.push(b);
+    for (const b of this.spurBarbs) if (b.owner === 'npc') pts.push(b);
+    for (const w of this.wardZones) if (w.owner === 'npc') pts.push(w);
     for (const s of this.summons) if (s.owner === 'npc') pts.push(s);
     for (const tr of this.sparkTrails) {
       if (tr.owner === 'npc' && tr.pts.length > 0) pts.push(tr.pts[Math.floor(tr.pts.length / 2)]);
@@ -2712,109 +2975,183 @@ export class MagicKit {
   }
 
   /**
-   * F. Everything of *yours* standing inside the field comes out twice.
+   * F — Duplication. A square of the arena at the cursor is *recorded*: everything of yours
+   * standing in it is written into a scroll that drops where the square was. The scroll is then
+   * a thing in the world — drag it with the mouse and let go to read it out, and everything it
+   * captured is conjured again around the drop point, offsets intact.
    *
    * Kept under the old ability id and method name so ArenaScene's context, the cooldown bar and
-   * the online replay need no changes. Copying is deliberately indiscriminate: a Dupe over a
-   * Flare doubles the Flare, over a pool doubles the pool, over four burs on one enemy finishes
-   * the clutch — which is the whole reason the rest of the kit leaves things lying around.
-   *
-   * It is free. Darkness is charged by the corrupted spells, not by copying them — which is what
-   * makes Dupe the pressure valve rather than another tap on the bar, once F+ is bought.
+   * the online replay need no changes. It is free: Darkness is charged by the corrupted spells,
+   * not by copying them — which is what makes F the pressure valve once F+ is bought.
    */
   doMeditateBegin(owner: 'player' | 'npc'): void {
     const now = this.api.scene.sys.game.loop.now;
     const caster = this.fighter(owner);
     // The bot does not aim a cursor. The kit picks its centre for it — the densest patch of its
-    // own conjurations, falling back to the enemy so an empty Dupe still lands somewhere useful
-    // for F+. Geometry stays owner-side; the AI only decides *when*.
+    // own conjurations, falling back to the enemy so an empty capture still lands somewhere
+    // useful for F+. Geometry stays owner-side; the AI only decides *when*.
     const npcAt = owner === 'npc' ? this.npcDupePoint() : null;
     const cx = owner === 'player' ? (this.lastAimX || caster.x) : (npcAt?.x ?? this.api.player.x);
     const cy = owner === 'player' ? (this.lastAimY || caster.y) : (npcAt?.y ?? this.api.player.y);
-    const R = 140;
-    const inside = (x: number, y: number): boolean => Phaser.Math.Distance.Between(cx, cy, x, y) <= R;
-    const jit = (): number => (Math.random() - 0.5) * 46;
+    const HALF = 110;
+    const inside = (x: number, y: number): boolean =>
+      Math.abs(x - cx) <= HALF && Math.abs(y - cy) <= HALF;
     const fx = this.fx(owner);
-    let copied = 0;
 
     this.gesture(owner, 'magic-meditate');
-    fx.ring(cx, cy, 12, R, MAGIC.magenta, 620, 8, 3.2);
-    fx.conjure(cx, cy, R * 0.6, 420, { color: MAGIC.orchid });
+    this.captureFlashes.push({ x: cx, y: cy, half: HALF, expireAt: now + 450, owner });
+    fx.ring(cx, cy, 12, HALF, MAGIC.magenta, 620, 8, 3.2);
+    fx.conjure(cx, cy, HALF * 0.6, 420, { color: MAGIC.orchid });
 
-    for (const c of [...this.flameClouds]) {
-      if (c.owner !== owner || !inside(c.x, c.y)) continue;
-      this.flameClouds.push({ ...c, x: c.x + jit(), y: c.y + jit(), seed: Math.random() * 10, tickAccum: 0 });
-      copied++;
+    const items: ScrollItem[] = [];
+    const rec = (kind: ScrollItem['kind'], x: number, y: number, remaining: number, payload: any): void => {
+      items.push({ kind, dx: x - cx, dy: y - cy, remaining, payload });
+    };
+    for (const c of this.flameClouds) {
+      if (c.owner === owner && inside(c.x, c.y)) rec('flame', c.x, c.y, c.expireAt - now, { ...c });
     }
-    for (const p of [...this.puddles]) {
-      if (p.owner !== owner || !inside(p.x, p.y)) continue;
-      this.puddles.push({ ...p, x: p.x + jit(), y: p.y + jit(), seed: Math.random() * 10, tickAccum: 0 });
-      copied++;
+    for (const p of this.puddles) {
+      if (p.owner === owner && inside(p.x, p.y)) rec('puddle', p.x, p.y, p.expireAt - now, { ...p });
     }
-    for (const c of [...this.stormClouds]) {
-      if (c.owner !== owner || !inside(c.x, c.y)) continue;
-      this.stormClouds.push({ ...c, x: c.x + jit(), y: c.y + jit(), seed: Math.random() * 10 });
-      copied++;
+    for (const b of this.spurBarbs) {
+      if (b.owner === owner && inside(b.x, b.y)) rec('barb', b.x, b.y, b.expireAt - now, { sticky: b.sticky });
     }
-    for (const t of [...this.tornadoes]) {
-      if (t.owner !== owner || !inside(t.x, t.y)) continue;
-      this.tornadoes.push({ ...t, x: t.x + jit(), y: t.y + jit(), seed: Math.random() * 10, tickAccum: 0 });
-      copied++;
+    for (const tor of this.tornadoes) {
+      if (tor.owner === owner && inside(tor.x, tor.y)) rec('tornado', tor.x, tor.y, tor.expireAt - now, { ...tor });
     }
-    for (const tr of [...this.sparkTrails]) {
+    for (const tr of this.sparkTrails) {
       if (tr.owner !== owner || !tr.pts.some(pt => inside(pt.x, pt.y))) continue;
-      const dx = jit(), dy = jit();
-      this.sparkTrails.push({
-        pts: tr.pts.map(pt => ({ x: pt.x + dx, y: pt.y + dy })),
-        expireAt: tr.expireAt, seed: Math.random() * 10, owner,
-      });
-      copied++;
+      rec('trail', cx, cy, tr.expireAt - now,
+        { pts: tr.pts.map(pt => ({ x: pt.x - cx, y: pt.y - cy })) });
     }
-    // Burs copy onto the same victim, so a Dupe can finish a clutch the spread could not.
-    const burVictims = new Set<Fighter>();
-    for (const b of [...this.burs]) {
-      if (b.owner !== owner || !b.stuck || !inside(b.x, b.y)) continue;
-      const a = Math.random() * Math.PI * 2;
-      const d = 6 + Math.random() * 12;
-      this.burs.push({ ...b, ox: Math.cos(a) * d, oy: Math.sin(a) * d, spin: Math.random() * Math.PI });
-      burVictims.add(b.stuck);
-      copied++;
-    }
-    for (const v of burVictims) this.checkBurClutch(v, owner);
-    // A Ward is anchored on its caster rather than on a spot, so what a Dupe doubles is its stone.
-    for (const w of this.wards) {
-      if (w.owner !== owner || !inside(caster.x, caster.y)) continue;
-      const add = w.orbs.length;
-      for (let i = 0; i < add; i++) {
-        const angle = Math.random() * Math.PI * 2;
-        w.orbs.push({
-          angle, radius: 10,
-          x: caster.x + Math.cos(angle) * w.orbitR,
-          y: caster.y + Math.sin(angle) * w.orbitR,
-          cracked: false, lastHitAt: 0, canCrack: false, dmg: 10, owner,
-        });
+    // An elemental in the square is written down whole — `plus` is baked in, so the copy keeps
+    // its tier and its signature move.
+    for (const s of this.summons) {
+      if (s.owner === owner && inside(s.x, s.y)) {
+        rec('summon', s.x, s.y, s.expireAt - now, { kind: s.kind, plus: s.plus, hp: s.hp, maxHp: s.maxHp });
       }
-      copied += add;
+    }
+    for (const w of this.wardZones) {
+      if (w.owner === owner && inside(w.x, w.y)) {
+        rec('ward', w.x, w.y, w.expireAt - now, { radius: w.radius, plus: w.plus });
+      }
     }
 
-    if (copied > 0) {
-      fx.sigils(cx, cy, Math.min(14, 4 + copied), { speed: R * 1.5, size: 8, life: 560, color: MAGIC.orchid });
-      this.api.showFloatingText(cx, cy - 34, `⧉ DUPED ×${copied}`, '#cc88ff');
-      if (owner === 'player') this.api.recordMasteryStat('dupeCopies', copied);
-    } else {
-      this.api.showFloatingText(cx, cy - 34, '⧉ nothing to copy', '#775588');
-    }
-
-    // F+: an enemy caught in the field is copied too, badly. What comes out is not a fighter —
+    // F+: an enemy caught in the square is recorded too, badly. What comes out is not a fighter —
     // it is the leftover data, and it is worth something to whoever walks over it.
     if (owner === 'player' && this.api.hasUpgrade('f')) {
       for (const e of this.api.enemies) {
         if (!e.active || e.hp <= 0 || !inside(e.x, e.y)) continue;
-        this.corruptData.push({ x: e.x + jit(), y: e.y + jit(), expireAt: now + 14000, seed: Math.random() * 10 });
+        this.corruptData.push({
+          x: e.x + (Math.random() - 0.5) * 46, y: e.y + (Math.random() - 0.5) * 46,
+          expireAt: now + 14000, seed: Math.random() * 10,
+        });
         fx.flash(e.x, e.y, 26, 10, MAGIC.magenta);
         this.api.showFloatingText(e.x, e.y - 34, '⧉ CORRUPTED', '#ff66ff');
       }
     }
+
+    if (items.length === 0) {
+      this.api.showFloatingText(cx, cy - 34, '⧉ nothing recorded', '#775588');
+      return;
+    }
+    if (owner === 'npc') {
+      // A bot has no hand to drag with: its scroll is read the moment it is written.
+      this.consumeItems(items, cx, cy, owner);
+      return;
+    }
+    this.scrolls.push({ x: cx, y: cy, items, expireAt: now + 20000, seed: Math.random() * 10, owner });
+    this.api.showFloatingText(cx, cy - 34, `📜 RECORDED ×${items.length} — drag me`, '#cc88ff');
+  }
+
+  /** Drop the scroll: strike it from the world and conjure what it recorded around the point. */
+  private consumeScroll(s: Scroll): void {
+    const i = this.scrolls.indexOf(s);
+    if (i >= 0) this.scrolls.splice(i, 1);
+    this.consumeItems(s.items, s.x, s.y, s.owner);
+  }
+
+  /** Read a recording out at (nx, ny): every captured object comes back, offsets intact. */
+  private consumeItems(items: ScrollItem[], nx: number, ny: number, owner: 'player' | 'npc'): void {
+    const now = this.api.scene.sys.game.loop.now;
+    const fx = this.fx(owner);
+    const W = this.api.getSceneWidth();
+    const H = this.api.getSceneHeight();
+    for (const it of items) {
+      const x = Phaser.Math.Clamp(nx + it.dx, 16, W - 16);
+      const y = Phaser.Math.Clamp(ny + it.dy, 16, H - 16);
+      // Whatever life the original had left at recording time is what the copy gets.
+      const life = Math.max(600, it.remaining);
+      const seed = Math.random() * 10;
+      switch (it.kind) {
+        case 'flame':
+          this.flameClouds.push({
+            ...it.payload, x, y, seed, expireAt: now + life, tickAccum: 0,
+            orbitAccum: 0, prevAngle: Math.atan2(y - this.lastAimY, x - this.lastAimX),
+          });
+          break;
+        case 'puddle':
+          this.puddles.push({ ...it.payload, x, y, seed, expireAt: now + life, tickAccum: 0 });
+          break;
+        case 'barb':
+          this.spurBarbs.push({
+            x, y, seed, spin: Math.random() * Math.PI * 2,
+            expireAt: now + life, sticky: it.payload.sticky, owner,
+          });
+          break;
+        case 'tornado':
+          this.tornadoes.push({
+            ...it.payload, x, y, seed, expireAt: now + life, nextDirAt: now, tickAccum: 0,
+          });
+          break;
+        case 'trail':
+          this.sparkTrails.push({
+            pts: it.payload.pts.map((pt: { x: number; y: number }) => ({ x: nx + pt.x, y: ny + pt.y })),
+            expireAt: now + life, seed, owner,
+          });
+          break;
+        case 'summon': {
+          const st = MagicKit.SUMMON_STATS[it.payload.kind as SummonKind];
+          this.summons.push({
+            kind: it.payload.kind, x, y,
+            hp: it.payload.hp, maxHp: it.payload.maxHp,
+            expireAt: now + life,
+            // Clocks are nudged so the pair don't fire the same move on the same frame.
+            nextActAt: now + 400 + Math.random() * 500,
+            nextBigAt: now + st.big * 0.5 + Math.random() * 1200,
+            plus: it.payload.plus, seed, bob: Math.random() * Math.PI * 2,
+            pvx: (Math.random() < 0.5 ? -1 : 1) * 150, alt: false,
+            owner,
+          });
+          break;
+        }
+        case 'ward': {
+          const links: WardLink[] = [];
+          if (it.payload.plus) {
+            const wallR = it.payload.radius + 16;
+            for (let li = 0; li < 16; li++) {
+              const angle = (li / 16) * Math.PI * 2;
+              links.push({
+                angle,
+                x: x + Math.cos(angle) * wallR, y: y + Math.sin(angle) * wallR,
+                vx: 0, vy: 0, free: false, hit: false, spin: angle,
+              });
+            }
+          }
+          this.wardZones.push({
+            x, y, radius: it.payload.radius, seed, expireAt: now + life,
+            links, sheddingAt: now + life - (it.payload.plus ? 3000 : 0),
+            nextShedAt: now + life - (it.payload.plus ? 3000 : 0),
+            plus: it.payload.plus, owner,
+          });
+          break;
+        }
+      }
+    }
+    fx.boom(nx, ny, 90, { color: MAGIC.orchid, sigils: 12, rings: 2, duration: 520 });
+    fx.sigils(nx, ny, Math.min(14, 4 + items.length), { speed: 160, size: 8, life: 560, color: MAGIC.orchid });
+    this.api.showFloatingText(nx, ny - 34, `⧉ DUPED ×${items.length}`, '#cc88ff');
+    if (owner === 'player') this.api.recordMasteryStat('dupeCopies', items.length);
   }
 
   /**
@@ -2835,19 +3172,19 @@ export class MagicKit {
   // ── E1: Flare ─────────────────────────────────────────────────────────────
 
   /**
-   * A single burning orb that crawls to the cursor and keeps crawling — Flare is the slowest
-   * projectile Magic owns, and dodging it is meant to be trivial. What you buy with that is a
-   * lane it will not leave.
+   * A slow burning orb on a leash: it steers after the cursor, so the caster drives it — until
+   * it has lapped the cursor once, at which point the leash snaps and it flies straight forever.
+   * 15 damage and a burn to the first thing it touches.
    *
-   * Flare+ halves the speed again and wraps the orb in a dark aura that damages continuously,
-   * so the upgraded version stops being a projectile at all and becomes a slow-moving no-go zone.
+   * Flare+ halves the speed and wraps the orb in a dark aura that damages continuously, so the
+   * upgraded version stops being a projectile at all and becomes a steerable no-go zone.
    */
   doFlare(tx: number, ty: number, owner: 'player' | 'npc'): void {
     const caster = this.fighter(owner);
     const angle = Math.atan2(ty - caster.y, tx - caster.x);
     const now = this.api.scene.sys.game.loop.now;
     const plus = this.enhanced('e', owner);
-    const speed = plus ? 55 : 110;
+    const speed = plus ? 60 : 120;
     this.gesture(owner, 'magic-grimoire', angle);
     const fx = this.fx(owner);
     fx.ring(caster.x, caster.y, 8, plus ? 74 : 54, plus ? MAGIC.cursed : MAGIC.ember, 460, 9, 2.8);
@@ -2855,15 +3192,17 @@ export class MagicKit {
       seed: Math.random() * 10,
       x: caster.x, y: caster.y,
       vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
-      stopped: false,
-      steady: true,
-      expireAt: now + (plus ? 6000 : 4500),
+      expireAt: now + (plus ? 7000 : 6000),
       tickAccum: 0,
-      radius: plus ? 70 : 34,
-      tickDmg: plus ? 3 : 3,
-      tickInterval: plus ? 400 : 500,
+      radius: plus ? 70 : 24,
+      tickDmg: 3,
+      tickInterval: 400,
       burnDuration: plus ? 4000 : 3000,
       owner,
+      homing: true,
+      orbitAccum: 0,
+      prevAngle: Math.atan2(caster.y - ty, caster.x - tx),
+      speed,
       cursedFire: plus,
       aura: plus,
     });
@@ -2875,14 +3214,15 @@ export class MagicKit {
   // ── E2: Splash ────────────────────────────────────────────────────────────
 
   /**
-   * A pool on the floor at the cursor. Plain Splash is a soft slow you walk out of; Splash+ turns
-   * the water putrid and takes the walking-out away — dashes, blinks and the dodge roll are all
-   * refused while you stand in it, which is the whole reason the radius grew as well.
+   * A pool on the floor at the cursor — Flame Burst gone to water: a third of the bite, twice
+   * the floor, and it outstays everything else in the book. Plain Splash is a soft slow you walk
+   * out of; Splash+ turns the water putrid and takes the walking-out away — dashes, blinks and
+   * the dodge roll are all refused while you stand in it.
    */
   doSplash(tx: number, ty: number, owner: 'player' | 'npc'): void {
     const now = this.api.scene.sys.game.loop.now;
     const plus = this.enhanced('e', owner);
-    const radius = plus ? 130 : 90;
+    const radius = plus ? 150 : 120;
     this.gesture(owner, 'magic-grimoire', Math.atan2(ty - this.fighter(owner).y, tx - this.fighter(owner).x));
     const fx = this.fx(owner);
     fx.ring(tx, ty, 10, radius, plus ? MAGIC.acid : MAGIC.storm, 560, 8, 3);
@@ -2893,10 +3233,10 @@ export class MagicKit {
       seed: Math.random() * 10,
       x: tx, y: ty,
       radius,
-      expireAt: now + (plus ? 8000 : 6000),
+      expireAt: now + (plus ? 16000 : 14000),
       tickAccum: 0,
       tickDmg: plus ? 6 : 3,
-      slowMult: plus ? 0.3 : 0.65,
+      slowMult: plus ? 0.3 : 0.6,
       putrid: plus,
       owner,
     });
@@ -2908,63 +3248,48 @@ export class MagicKit {
   // ── E3: Spur ──────────────────────────────────────────────────────────────
 
   /**
-   * Three burs in a tight spread. Plain ones hit and drop. Spur+ burs *stick* for two seconds,
-   * and a victim wearing five at once is pinned for three — which means the spell is a counter
-   * you build over several casts rather than one you land.
+   * Fifteen barbs scattered on the floor around the caster. Each one is trivial — small damage
+   * and a slow to whoever steps on it — but together they are a carpet, and the rest of the book
+   * (Gust hauls, Splash pools) exists to make people walk on carpets. Spur+ barbs also stick a
+   * bur into the victim for two seconds: five worn at once still knits into the 3s pin.
    */
   doSpur(tx: number, ty: number, owner: 'player' | 'npc'): void {
     const caster = this.fighter(owner);
-    const baseAngle = Math.atan2(ty - caster.y, tx - caster.x);
+    const now = this.api.scene.sys.game.loop.now;
     const plus = this.enhanced('e', owner);
+    const baseAngle = Math.atan2(ty - caster.y, tx - caster.x);
+    const W = this.api.getSceneWidth();
+    const H = this.api.getSceneHeight();
     this.gesture(owner, 'magic-grimoire', baseAngle);
-    for (const deg of [-13, 0, 13]) {
-      const angle = baseAngle + Phaser.Math.DegToRad(deg);
-      const proj = this.api.projectiles.get(caster.x, caster.y, 'proj-thorn-vine') as any;
-      if (!proj) continue;
-      proj.setActive(true).setVisible(true).setDepth(6);
-      proj.isFromPlayer = (owner === 'player');
-      proj.damage = 5;
-      proj.isMagicThornVine = true;
-      proj.thornVineOwner = owner;
-      (proj.body as Phaser.Physics.Arcade.Body).setVelocity(Math.cos(angle) * 620, Math.sin(angle) * 620);
+    for (let i = 0; i < 15; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const d = 30 + Math.random() * 130;
+      this.spurBarbs.push({
+        x: Phaser.Math.Clamp(caster.x + Math.cos(a) * d, 16, W - 16),
+        y: Phaser.Math.Clamp(caster.y + Math.sin(a) * d, 16, H - 16),
+        seed: Math.random() * 10,
+        spin: Math.random() * Math.PI * 2,
+        expireAt: now + 10000,
+        sticky: plus,
+        owner,
+      });
     }
-    this.fx(owner).sigils(caster.x, caster.y, 5, {
-      speed: 100, angle: baseAngle, spread: 0.4, size: 6, life: 380,
-      color: plus ? MAGIC.darkVine : MAGIC.leaf, points: 4,
+    this.fx(owner).sigils(caster.x, caster.y, 8, {
+      speed: 150, size: 6, life: 420, color: plus ? MAGIC.darkVine : MAGIC.leaf, points: 4,
     });
+    this.api.showFloatingText(caster.x, caster.y - 34, plus ? '🌿 Spur+' : '🌿 Spur', '#44ff66');
     if (plus) this.addDarkness(DARK_GRIMOIRE_COST);
   }
 
   /**
-   * A bur landed. ArenaScene has already paid out the projectile's 5 damage; what happens here is
-   * the sticking, and the clutch check that turns five of them into a pin.
+   * Legacy shim: Spur no longer throws thorn-vine projectiles, but ArenaScene still carries the
+   * collision call sites. If one ever fires, treat it as a barb being trodden on.
    */
   onThornVineHit(target: Fighter, owner: 'player' | 'npc'): void {
-    const now = this.api.scene.sys.game.loop.now;
-    const plus = this.enhanced('e', owner);
-    const fx = this.fx(owner);
-    fx.sigils(target.x, target.y, 3, {
-      speed: 80, size: 5, life: 340, color: plus ? MAGIC.darkVine : MAGIC.leaf, points: 4,
+    this.api.spawnHitFlash(target.x, target.y, MAGIC.leaf);
+    this.fx(owner).sigils(target.x, target.y, 3, {
+      speed: 80, size: 5, life: 340, color: MAGIC.leaf, points: 4,
     });
-    if (!plus) {
-      this.api.spawnHitFlash(target.x, target.y, MAGIC.leaf);
-      return;
-    }
-    const a = Math.random() * Math.PI * 2;
-    const d = 6 + Math.random() * 12;
-    this.burs.push({
-      x: target.x, y: target.y,
-      vx: 0, vy: 0,
-      stuck: target,
-      ox: Math.cos(a) * d, oy: Math.sin(a) * d,
-      spin: Math.random() * Math.PI,
-      expireAt: now + 2000,
-      sticky: true,
-      owner,
-    });
-    const worn = this.burs.filter(b => b.stuck === target && b.owner === owner).length;
-    if (worn < 5) this.api.showFloatingText(target.x, target.y - 30, `🌿 ${worn}/5`, '#66dd77');
-    this.checkBurClutch(target, owner);
   }
 
   // ── E4: Gust ──────────────────────────────────────────────────────────────
@@ -3020,6 +3345,24 @@ export class MagicKit {
       }
       this.sparkTrails.push({ pts, expireAt: now + 8000, seed: Math.random() * 10, owner });
     }
+
+    // The landing. When the dash is spent, the air it dragged along arrives all at once —
+    // a hard burst around wherever the caster ended up, and everyone near it thrown out of it.
+    this.api.scene.time.delayedCall(430, () => {
+      if (!caster.active || caster.hp <= 0) return;
+      const lx = caster.x, ly = caster.y;
+      this.api.dealAoeDamageFromOwner(lx, ly, 100, 15, owner);
+      for (const t of (owner === 'player' ? this.api.enemies : [this.api.player])) {
+        if (!t.active || t.hp <= 0 || t.knockbackImmune) continue;
+        if (Phaser.Math.Distance.Between(lx, ly, t.x, t.y) > 100) continue;
+        const a2 = Math.atan2(t.y - ly, t.x - lx);
+        (t.body as Phaser.Physics.Arcade.Body).setVelocity(Math.cos(a2) * 720, Math.sin(a2) * 720);
+        this.api.showFloatingText(t.x, t.y - 26, '💨 THROWN', '#dddddd');
+      }
+      fx.boom(lx, ly, 100, { color: plus ? MAGIC.thunderHi : MAGIC.gust, sigils: 10, rings: 2, duration: 480 });
+      this.api.scene.cameras.main.shake(140, 0.004);
+    });
+
     this.api.showFloatingText(castX, castY - 34, plus ? '💨 Gust+' : '💨 Gust',
       plus ? '#ffee88' : '#cccccc');
     if (plus) this.addDarkness(DARK_GRIMOIRE_COST);
@@ -3028,38 +3371,30 @@ export class MagicKit {
   // ── E5: Ward ──────────────────────────────────────────────────────────────
 
   /**
-   * Stones on an orbit around you: contact damage, and they eat projectiles.
+   * A standing circle laid down at the caster's feet: +3 shield HP a second and a 25% damage
+   * cut while they hold their ground inside it, for eight seconds. Both are loans — leaving the
+   * circle (or outliving it) claws the unspent shield back — so the spell is a commitment to
+   * fight *here*, not a stat.
    *
-   * Ward+ hangs a linked wall of rectangular rock outside that orbit. The wall is *solid to
-   * people and open to bullets* — the exact inverse of the stones inside it — so an upgraded Ward
-   * keeps a melee enemy off you while doing nothing at all about a shooter. As it dies the links
-   * tear loose one at a time and fly, which is the only part of the spell that reaches out.
+   * Ward+ stands a linked wall of rectangular rock on the circle's edge. The wall is *solid to
+   * people and open to bullets*, so an upgraded Ward keeps a melee enemy out of the circle while
+   * doing nothing at all about a shooter. As it dies the links tear loose one at a time and fly.
    */
   doWard(owner: 'player' | 'npc'): void {
     const caster = this.fighter(owner);
     const now = this.api.scene.sys.game.loop.now;
     const plus = this.enhanced('e', owner);
     const life = plus ? 10000 : 8000;
-    const orbitR = 56;
-    const wallR = 92;
+    const radius = plus ? 120 : 110;
 
     // One Ward at a time per side — a second cast replaces the first.
-    for (let i = this.wards.length - 1; i >= 0; i--) {
-      if (this.wards[i].owner === owner) this.wards.splice(i, 1);
+    for (let i = this.wardZones.length - 1; i >= 0; i--) {
+      if (this.wardZones[i].owner === owner) this.wardZones.splice(i, 1);
     }
 
-    const orbs: RockOrb[] = [];
-    for (let i = 0; i < 5; i++) {
-      const angle = (i / 5) * Math.PI * 2;
-      orbs.push({
-        angle, radius: 10,
-        x: caster.x + Math.cos(angle) * orbitR,
-        y: caster.y + Math.sin(angle) * orbitR,
-        cracked: false, lastHitAt: 0, canCrack: plus, dmg: 10, owner,
-      });
-    }
     const links: WardLink[] = [];
     if (plus) {
+      const wallR = radius + 16;
       for (let i = 0; i < 16; i++) {
         const angle = (i / 16) * Math.PI * 2;
         links.push({
@@ -3071,18 +3406,21 @@ export class MagicKit {
         });
       }
     }
-    this.wards.push({
-      orbs, links, orbitR, wallR,
-      bornAt: now,
+    this.wardZones.push({
+      x: caster.x, y: caster.y,
+      radius,
+      seed: Math.random() * 10,
       expireAt: now + life,
+      links,
       sheddingAt: now + life - (plus ? 3000 : 0),
       nextShedAt: now + life - (plus ? 3000 : 0),
+      plus,
       owner,
     });
 
     const fx = this.fx(owner);
-    fx.ring(caster.x, caster.y, 8, plus ? wallR + 10 : orbitR + 12, MAGIC.stone, 560, 8, 2.8);
-    for (const o of orbs) fx.sigils(o.x, o.y, 3, { speed: 70, size: 6, life: 400, color: MAGIC.sand, points: 4 });
+    fx.ring(caster.x, caster.y, 8, radius + (plus ? 26 : 10), MAGIC.stone, 560, 8, 2.8);
+    fx.sigils(caster.x, caster.y, 8, { speed: radius * 1.2, size: 6, life: 440, color: MAGIC.sand, points: 4 });
     this.api.showFloatingText(caster.x, caster.y - 30, plus ? '🪨 Ward+' : '🪨 Ward', '#cc9944');
     if (plus) this.addDarkness(DARK_GRIMOIRE_COST);
   }
@@ -3111,19 +3449,22 @@ export class MagicKit {
   // ── Q: Summons ────────────────────────────────────────────────────────────
 
   private static readonly SUMMON_STATS: Record<SummonKind, { hp: number; act: number; big: number; emoji: string; color: string }> = {
-    fire:  { hp: 45, act: 1300, big: 7000,  emoji: '🔥', color: '#ff8844' },
-    water: { hp: 50, act: 1500, big: 8000,  emoji: '🌊', color: '#66aaff' },
-    life:  { hp: 60, act: 1200, big: 9000,  emoji: '🌿', color: '#66dd77' },
-    wind:  { hp: 40, act: 1100, big: 10000, emoji: '💨', color: '#dddddd' },
-    earth: { hp: 80, act: 1600, big: 9000,  emoji: '🪨', color: '#cc9944' },
+    fire:  { hp: 45, act: 1100, big: 7000,  emoji: '🔥', color: '#ff8844' },
+    water: { hp: 50, act: 1600, big: 8000,  emoji: '🌊', color: '#66aaff' },
+    life:  { hp: 60, act: 1300, big: 9000,  emoji: '🌿', color: '#66dd77' },
+    wind:  { hp: 40, act: 1900, big: 10000, emoji: '💨', color: '#dddddd' },
+    earth: { hp: 80, act: 2000, big: 9000,  emoji: '🪨', color: '#cc9944' },
   };
 
   /**
-   * Q. Calls one base element up as a familiar that fights on its own for 18 seconds.
+   * Q. Calls one base element up as an elemental that assists from the gallery: it climbs to
+   * the top of the screen and paces left-right there for its eight seconds, throwing its help
+   * down into the fight — each kind in its own two ways (see `summonAttack`).
    *
-   * Upgraded familiars keep the same ordinary attack and gain a signature move on a long clock —
-   * so Q+ does not make them shoot faster, it makes them occasionally do something the plain
-   * book has no answer to at all. They are ordinary conjured objects, so Dupe copies them.
+   * Upgraded elementals keep the same assists and gain a signature move on a long clock — so Q+
+   * does not make them act faster, it makes them occasionally do something the plain book has
+   * no answer to at all. They are ordinary conjured objects, so the Duplication scroll records
+   * them.
    */
   doSummon(kind: SummonKind, tx: number, ty: number, owner: 'player' | 'npc'): void {
     const caster = this.fighter(owner);
@@ -3138,10 +3479,12 @@ export class MagicKit {
     this.summons.push({
       kind, x: sx, y: sy,
       hp, maxHp: hp,
-      expireAt: now + 18000,
-      nextActAt: now + 600,
+      expireAt: now + 8000,
+      nextActAt: now + 700,
       nextBigAt: now + st.big * 0.5,
       plus, seed: Math.random() * 10, bob: Math.random() * Math.PI * 2,
+      pvx: (Math.random() < 0.5 ? -1 : 1) * 150,
+      alt: false,
       owner,
     });
 
@@ -3166,61 +3509,116 @@ export class MagicKit {
     this.fx(s.owner).boom(s.x, s.y, 56, { color: MAGIC.violet, sigils: 9, rings: 2, duration: 460 });
   }
 
+  /**
+   * The assists. Each elemental alternates between its two ways of helping — a thrown attack
+   * and a placed one — so every kind reads as a *worker* up there rather than as a turret.
+   */
   private summonAttack(s: Summon, time: number): void {
+    const caster = this.fighter(s.owner);
     const enemies = (s.owner === 'player' ? this.api.enemies : [this.api.player])
       .filter(t => t.active && t.hp > 0);
-    if (enemies.length === 0) return;
-    let target = enemies[0];
+    let target: Fighter | null = null;
     for (const t of enemies) {
-      if (Phaser.Math.Distance.Between(s.x, s.y, t.x, t.y)
+      if (!target || Phaser.Math.Distance.Between(s.x, s.y, t.x, t.y)
         < Phaser.Math.Distance.Between(s.x, s.y, target.x, target.y)) target = t;
     }
-    const d = Phaser.Math.Distance.Between(s.x, s.y, target.x, target.y);
-    const angle = Math.atan2(target.y - s.y, target.x - s.x);
     const fx = this.fx(s.owner);
+    s.alt = !s.alt;
 
     switch (s.kind) {
-      case 'fire':
+      case 'fire': {
+        if (!target) return;
+        const angle = Math.atan2(target.y - s.y, target.x - s.x);
+        if (s.alt) {
+          // A burst of bolts in a cone.
+          for (const off of [-0.22, -0.11, 0, 0.11, 0.22]) {
+            this.summonBolts.push({
+              kind: 'fire', x: s.x, y: s.y,
+              vx: Math.cos(angle + off) * 360, vy: Math.sin(angle + off) * 360,
+              owner: s.owner,
+            });
+          }
+          fx.sigils(s.x, s.y, 3, { speed: 90, angle, spread: 0.5, size: 5, life: 320, color: MAGIC.ember, points: 4 });
+        } else {
+          // A pillar of fire lit under their feet.
+          this.firePillars.push({
+            x: target.x, y: target.y,
+            armAt: time + 700, expireAt: time + 1900, fired: false,
+            seed: Math.random() * 10, owner: s.owner,
+          });
+          this.api.showFloatingText(target.x, target.y - 36, '🔥 PILLAR', '#ff8844');
+        }
+        break;
+      }
       case 'water': {
-        if (d > 420) return;
-        const speed = s.kind === 'fire' ? 340 : 300;
-        this.summonBolts.push({
-          kind: s.kind, x: s.x, y: s.y,
-          vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
-          owner: s.owner,
-        });
-        fx.sigils(s.x, s.y, 2, {
-          speed: 70, angle, spread: 0.4, size: 5, life: 300,
-          color: s.kind === 'fire' ? MAGIC.ember : MAGIC.stormHi, points: 4,
-        });
+        if (!target) return;
+        if (s.alt) {
+          // A wave sent down at them — whoever it catches rides it toward the wall.
+          const angle = Math.atan2(target.y - s.y, target.x - s.x);
+          this.waves.push({
+            x: s.x, y: s.y,
+            vx: Math.cos(angle) * 260, vy: Math.sin(angle) * 260,
+            seed: Math.random() * 10, owner: s.owner,
+          });
+        } else {
+          // A slowing pool poured out under them. It slows; it does not bite.
+          this.puddles.push({
+            seed: Math.random() * 10, x: target.x, y: target.y, radius: 70,
+            expireAt: time + 4000, tickAccum: 0, tickDmg: 0, slowMult: 0.6,
+            putrid: false, owner: s.owner,
+          });
+        }
         break;
       }
       case 'life': {
-        // A warden does not throw. It reaches, and what it reaches sticks for a moment.
-        if (d > 96) return;
-        target.takeDamage(7);
-        this.api.spawnHitFlash(target.x, target.y, MAGIC.leaf);
-        this.vineFlashes.push({ x1: s.x, y1: s.y, x2: target.x, y2: target.y, hit: true, expireAt: time + 240 });
+        if (s.alt || !target) {
+          // A mote of green light sent home with health in it.
+          this.healOrbs.push({ x: s.x, y: s.y, vx: 0, vy: 240, owner: s.owner });
+        } else {
+          // A vine dart that slows what it sticks.
+          const angle = Math.atan2(target.y - s.y, target.x - s.x);
+          this.summonBolts.push({
+            kind: 'life', x: s.x, y: s.y,
+            vx: Math.cos(angle) * 330, vy: Math.sin(angle) * 330,
+            owner: s.owner,
+          });
+        }
         break;
       }
       case 'wind': {
-        if (d > 110) return;
-        target.takeDamage(5);
-        this.api.spawnHitFlash(target.x, target.y, MAGIC.gust);
-        if (!target.knockbackImmune) {
-          (target.body as Phaser.Physics.Arcade.Body).setVelocity(
-            Math.cos(angle) * 420, Math.sin(angle) * 420,
-          );
+        if (!target) return;
+        if (s.alt) {
+          // A mini tornado dropped into the pit — huge damage, and it bounces on its own.
+          this.tornadoes.push({
+            seed: Math.random() * 10, radius: 44, dark: false,
+            x: s.x, y: s.y, vx: 0, vy: 260,
+            expireAt: time + 3500, nextDirAt: time + 400, tickAccum: 0, tickDmg: 9,
+            owner: s.owner,
+          });
+          this.api.showFloatingText(s.x, s.y + 20, '💨 TWISTER', '#dddddd');
+        } else {
+          this.lightningStrokes.push({ x: target.x, y: target.y, strikeAt: time + 500, owner: s.owner });
         }
-        fx.gust(s.x, s.y, angle, 110, Math.PI / 5, { color: MAGIC.gust, duration: 380 });
         break;
       }
       case 'earth': {
-        if (d > 78) return;
-        target.takeDamage(12);
-        this.api.spawnHitFlash(target.x, target.y, MAGIC.sand);
-        fx.boom(target.x, target.y, 52, { color: MAGIC.stone, sigils: 6, rings: 1, duration: 380, mark: false });
-        this.api.scene.cameras.main.shake(110, 0.003);
+        if (s.alt && target) {
+          // A wall thrown across the line between its caster and the enemy.
+          const mx = (caster.x + target.x) / 2, my = (caster.y + target.y) / 2;
+          const a = Math.atan2(target.y - caster.y, target.x - caster.x) + Math.PI / 2;
+          const half = 70;
+          this.earthWalls.push({
+            x1: mx - Math.cos(a) * half, y1: my - Math.sin(a) * half,
+            x2: mx + Math.cos(a) * half, y2: my + Math.sin(a) * half,
+            expireAt: time + 4000, owner: s.owner,
+          });
+          this.api.showFloatingText(mx, my - 24, '🪨 WALL', '#cc9944');
+        } else {
+          // Stone pressed into its caster's guard.
+          caster.shieldHp += 8;
+          fx.flash(caster.x, caster.y, 24, 10, MAGIC.sand);
+          this.api.showFloatingText(caster.x, caster.y - 34, '🪨 +8 shield', '#cc9944');
+        }
         break;
       }
     }
@@ -3275,7 +3673,7 @@ export class MagicKit {
         this.tornadoes.push({
           seed: Math.random() * 10, radius: 52, dark: false,
           x: target.x, y: target.y, vx: 0, vy: 0,
-          expireAt: time + 8000, nextDirAt: time, tickAccum: 0, owner: s.owner,
+          expireAt: time + 8000, nextDirAt: time, tickAccum: 0, tickDmg: 4, owner: s.owner,
         });
         this.api.scene.cameras.main.shake(260, 0.006);
         this.api.showFloatingText(target.x, target.y - 40, '💨 HURRICANE — stand in the eye', '#eeeeee');
@@ -3314,21 +3712,20 @@ export class MagicKit {
         this.summons.splice(i, 1);
         continue;
       }
-      const caster = this.fighter(s.owner);
-      const enemies = (s.owner === 'player' ? this.api.enemies : [this.api.player])
-        .filter(t => t.active && t.hp > 0);
       s.bob += delta * 0.005;
 
-      // Station-keeping: hang off the caster, but drift at whoever they are fighting.
-      const homeD = Phaser.Math.Distance.Between(s.x, s.y, caster.x, caster.y);
-      let ax: number, ay: number;
-      if (homeD > 150) { ax = caster.x; ay = caster.y; }
-      else if (enemies.length > 0) { ax = enemies[0].x; ay = enemies[0].y; }
-      else { ax = caster.x; ay = caster.y; }
-      const a = Math.atan2(ay - s.y, ax - s.x);
-      const speed = s.kind === 'earth' ? 90 : s.kind === 'wind' ? 165 : 130;
-      s.x += Math.cos(a) * speed * (delta / 1000);
-      s.y += Math.sin(a) * speed * (delta / 1000);
+      // The gallery. An elemental climbs to the top of the screen and paces left-right there
+      // for its eight seconds — it never wades into the pit, it throws its help down into it.
+      const TOP_Y = 46;
+      if (s.y > TOP_Y + 8) {
+        s.y -= 300 * (delta / 1000);
+        s.x += s.pvx * 0.3 * (delta / 1000);
+      } else {
+        s.y = TOP_Y + Math.sin(s.bob) * 6;
+        s.x += s.pvx * (delta / 1000);
+        if (s.x < 40) { s.x = 40; s.pvx = Math.abs(s.pvx); }
+        if (s.x > W - 40) { s.x = W - 40; s.pvx = -Math.abs(s.pvx); }
+      }
       s.x = Phaser.Math.Clamp(s.x, 14, W - 14);
       s.y = Phaser.Math.Clamp(s.y, 14, H - 14);
 
@@ -3373,17 +3770,148 @@ export class MagicKit {
           t.burningUntil = Math.max(t.burningUntil, time + 2000);
           this.api.spawnHitFlash(t.x, t.y, MAGIC.ember);
         } else {
-          t.takeDamage(6);
-          this.api.spawnHitFlash(t.x, t.y, MAGIC.stormHi);
-          if (b.owner === 'player') this.npcStormSlowUntil = Math.max(this.npcStormSlowUntil, time + 1200);
-          else this.playerStormSlowUntil = Math.max(this.playerStormSlowUntil, time + 1200);
+          // Life's vine dart: a light hit, and legs that stop working properly.
+          t.takeDamage(4);
+          this.api.spawnHitFlash(t.x, t.y, MAGIC.leaf);
+          if (b.owner === 'player') this.npcStormSlowUntil = Math.max(this.npcStormSlowUntil, time + 1500);
+          else this.playerStormSlowUntil = Math.max(this.playerStormSlowUntil, time + 1500);
+          this.api.showFloatingText(t.x, t.y - 26, '🌿 SLOWED', '#66dd77');
         }
         this.fx(b.owner).boom(b.x, b.y, 34, {
-          color: b.kind === 'fire' ? MAGIC.ember : MAGIC.storm, sigils: 4, rings: 1, duration: 300, mark: false,
+          color: b.kind === 'fire' ? MAGIC.ember : MAGIC.vine, sigils: 4, rings: 1, duration: 300, mark: false,
         });
         break;
       }
       if (landed) this.summonBolts.splice(i, 1);
+    }
+
+    // ── Fire elemental: pillars of flame ──
+    for (let i = this.firePillars.length - 1; i >= 0; i--) {
+      const p = this.firePillars[i];
+      if (time >= p.expireAt) { this.firePillars.splice(i, 1); continue; }
+      if (p.fired || time < p.armAt) continue;
+      p.fired = true;
+      for (const t of (p.owner === 'player' ? this.api.enemies : [this.api.player])) {
+        if (!t.active || t.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) > 36) continue;
+        t.takeDamage(12);
+        t.burningUntil = Math.max(t.burningUntil, time + 2000);
+        this.api.spawnHitFlash(t.x, t.y, MAGIC.ember);
+        this.api.showFloatingText(t.x, t.y - 30, '🔥 -12', '#ff8844');
+      }
+      this.fx(p.owner).flash(p.x, p.y, 30, 10, MAGIC.flameHi);
+    }
+
+    // ── Wind elemental: lightning strokes ──
+    for (let i = this.lightningStrokes.length - 1; i >= 0; i--) {
+      const l = this.lightningStrokes[i];
+      if (time < l.strikeAt) continue;
+      const fx = this.fx(l.owner);
+      fx.bolt(l.x, l.y, 150, 12, MAGIC.thunder);
+      fx.flash(l.x, l.y, 34, 11, MAGIC.thunderHi);
+      for (const t of (l.owner === 'player' ? this.api.enemies : [this.api.player])) {
+        if (!t.active || t.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(l.x, l.y, t.x, t.y) > 44) continue;
+        t.takeDamage(12);
+        this.api.spawnHitFlash(t.x, t.y, MAGIC.thunder);
+        this.api.showFloatingText(t.x, t.y - 30, '⚡ -12', '#ffee44');
+      }
+      this.api.scene.cameras.main.shake(120, 0.003);
+      this.lightningStrokes.splice(i, 1);
+    }
+
+    // ── Earth elemental: walls, solid only to the other side ──
+    for (let i = this.earthWalls.length - 1; i >= 0; i--) {
+      const w = this.earthWalls[i];
+      if (time >= w.expireAt) {
+        this.fx(w.owner).motes((w.x1 + w.x2) / 2, (w.y1 + w.y2) / 2, 6,
+          { speed: 50, size: 2.4, life: 600, color: MAGIC.stone, drift: -14 });
+        this.earthWalls.splice(i, 1);
+        continue;
+      }
+      for (const e of (w.owner === 'player' ? this.api.enemies : [this.api.player])) {
+        if (!e.active || e.hp <= 0) continue;
+        const d = this._pointToSegDist(e.x, e.y, w.x1, w.y1, w.x2, w.y2);
+        if (d > 20) continue;
+        // Put them back out on their own side of the stone.
+        const wx = w.x2 - w.x1, wy = w.y2 - w.y1;
+        const len = Math.hypot(wx, wy) || 1;
+        let nx = -wy / len, ny = wx / len;
+        const mx = (w.x1 + w.x2) / 2, my = (w.y1 + w.y2) / 2;
+        if ((e.x - mx) * nx + (e.y - my) * ny < 0) { nx = -nx; ny = -ny; }
+        e.setPosition(e.x + nx * (22 - d), e.y + ny * (22 - d));
+      }
+      const wallProjs = this.api.projectiles.getMatching('active', true) as Phaser.GameObjects.Image[];
+      for (const p of wallProjs) {
+        const pAny = p as any;
+        const hostile = w.owner === 'player' ? !pAny.isFromPlayer : pAny.isFromPlayer;
+        if (!hostile) continue;
+        if (this._pointToSegDist(p.x, p.y, w.x1, w.y1, w.x2, w.y2) > 14) continue;
+        p.setActive(false).setVisible(false);
+        (pAny.body as Phaser.Physics.Arcade.Body)?.stop();
+        this.fx(w.owner).flash(p.x, p.y, 12, 10, MAGIC.granite);
+      }
+    }
+
+    // ── Life elemental: heal orbs homing back to the caster ──
+    for (let i = this.healOrbs.length - 1; i >= 0; i--) {
+      const o = this.healOrbs[i];
+      const caster = this.fighter(o.owner);
+      if (!caster.active || caster.hp <= 0) { this.healOrbs.splice(i, 1); continue; }
+      const want = Math.atan2(caster.y - o.y, caster.x - o.x);
+      let heading = Math.atan2(o.vy, o.vx);
+      const turn = 7 * (delta / 1000);
+      heading += Phaser.Math.Clamp(Phaser.Math.Angle.Wrap(want - heading), -turn, turn);
+      o.vx = Math.cos(heading) * 240;
+      o.vy = Math.sin(heading) * 240;
+      o.x += o.vx * (delta / 1000);
+      o.y += o.vy * (delta / 1000);
+      if (Phaser.Math.Distance.Between(o.x, o.y, caster.x, caster.y) > 22) continue;
+      this.healOrbs.splice(i, 1);
+      caster.heal(6);
+      this.fx(o.owner).motes(caster.x, caster.y, 6, { speed: 60, size: 2.6, life: 600, color: MAGIC.leaf, drift: -24 });
+      this.api.showFloatingText(caster.x, caster.y - 34, '🌿 +6', '#66dd77');
+    }
+
+    // ── Water elemental: waves, and the wall waiting at the end of the ride ──
+    for (let i = this.waves.length - 1; i >= 0; i--) {
+      const w = this.waves[i];
+      w.x += w.vx * (delta / 1000);
+      w.y += w.vy * (delta / 1000);
+      if (w.x < -30 || w.x > W + 30 || w.y < -30 || w.y > H + 30) {
+        this.fx(w.owner).motes(Phaser.Math.Clamp(w.x, 10, W - 10), Phaser.Math.Clamp(w.y, 10, H - 10),
+          6, { speed: 60, size: 2.4, life: 520, color: MAGIC.stormHi, drift: -10 });
+        this.waves.splice(i, 1);
+        continue;
+      }
+      const wlen = Math.hypot(w.vx, w.vy) || 1;
+      for (const t of (w.owner === 'player' ? this.api.enemies : [this.api.player])) {
+        if (!t.active || t.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(w.x, w.y, t.x, t.y) > 46) continue;
+        if (this.waveSlams.some(ws => ws.target === t)) continue;
+        t.takeDamage(4);
+        this.api.spawnHitFlash(t.x, t.y, MAGIC.stormHi);
+        this.waveSlams.push({
+          target: t,
+          vx: (w.vx / wlen) * 620, vy: (w.vy / wlen) * 620,
+          until: time + 800, owner: w.owner,
+        });
+        this.api.showFloatingText(t.x, t.y - 30, '🌊 SWEPT', '#66aaff');
+      }
+    }
+    for (let i = this.waveSlams.length - 1; i >= 0; i--) {
+      const ws = this.waveSlams[i];
+      const t = ws.target;
+      if (time >= ws.until || !t.active || t.hp <= 0) { this.waveSlams.splice(i, 1); continue; }
+      // Re-asserted every frame, exactly like a Gust haul — the ride is not optional.
+      (t.body as Phaser.Physics.Arcade.Body).setVelocity(ws.vx, ws.vy);
+      if (t.x > 30 && t.x < W - 30 && t.y > 30 && t.y < H - 30) continue;
+      // The wall arrived first.
+      this.waveSlams.splice(i, 1);
+      t.takeDamage(10);
+      this.api.spawnHitFlash(t.x, t.y, MAGIC.storm);
+      this.fx(ws.owner).boom(t.x, t.y, 46, { color: MAGIC.storm, sigils: 6, rings: 1, duration: 380, mark: false });
+      this.api.showFloatingText(t.x, t.y - 30, '🌊 SLAMMED', '#66aaff');
     }
 
     // ── Fire+ cross bombs ──
@@ -3422,7 +3950,7 @@ export class MagicKit {
         if (!t.active || t.hp <= 0) continue;
         if (Phaser.Math.Distance.Between(r.x, r.y, t.x, t.y) > 30) continue;
         t.takeDamage(3);
-        t.earthStunnedUntil = Math.max(t.earthStunnedUntil, time + 1500);
+        t.earthStunnedUntil = Math.max(t.earthStunnedUntil, time + 2500);
         this.api.spawnHitFlash(t.x, t.y, MAGIC.leaf);
         this.api.showFloatingText(t.x, t.y - 34, '🌿 ROOTED', '#66dd77');
       }
@@ -3472,11 +4000,10 @@ export class MagicKit {
       this.hurricaneEye = t;
       break;
     }
-    for (const e of this.api.enemies) e.magicIncomingMult = 1;
     if (this.hurricaneEye) {
-      // Cooldowns run down faster and everything the storm can reach takes 30% more.
+      // Cooldowns run down faster; the 30% damage bonus is applied by update()'s single
+      // incoming-mult writer, alongside the Ward circle's cut.
       this.api.player.reduceCooldowns(delta * 0.7);
-      for (const e of this.api.enemies) e.magicIncomingMult = 1.3;
     }
   }
 
@@ -3514,13 +4041,11 @@ export class MagicKit {
       this.summons.splice(i, 1);
       razed++;
     }
-    // Wards are conjured stone with no health of their own, so razing one is splicing it — but
-    // the wall is anchored on the caster, not on a point, so the caster is what gets measured.
-    for (let i = this.wards.length - 1; i >= 0; i--) {
-      const w = this.wards[i];
-      const caster = this.fighter(w.owner);
-      if (w.owner === exceptOwner || !near(caster.x, caster.y)) continue;
-      this.wards.splice(i, 1);
+    // Ward circles are conjured stone with no health of their own — razing one is splicing it.
+    for (let i = this.wardZones.length - 1; i >= 0; i--) {
+      const w = this.wardZones[i];
+      if (w.owner === exceptOwner || !near(w.x, w.y)) continue;
+      this.wardZones.splice(i, 1);
       razed++;
     }
     return razed;
