@@ -239,7 +239,6 @@ export const GLUTTONY_BOSS: WorldBossDef = {
   colorLit: MEAT_LIT,
   colorDark: MEAT_DARK,
   accent: CHINA,
-  bodyR: 35,
 
   intro: ['A feast is only a war you eat. Sit down. You are early, and you are also the starter.'],
   banter: [
@@ -262,8 +261,6 @@ export const GLUTTONY_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-rune', 'h-snipe'],
       restMs: 1060,
       harassMs: 3100,
-      moveSpeed: 42,
-      holdDist: 290,
     },
     {
       name: 'The Table Itself',
@@ -276,8 +273,6 @@ export const GLUTTONY_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-rune', 'h-mines', 'h-snipe'],
       restMs: 900,
       harassMs: 2600,
-      moveSpeed: 54,
-      holdDist: 265,
     },
   ],
 
@@ -294,8 +289,6 @@ export const GLUTTONY_BOSS: WorldBossDef = {
       harass: ['h-rune', 'h-flak', 'h-mines', 'h-orbs'],
       restMs: 700,
       harassMs: 2100,
-      moveSpeed: 64,
-      holdDist: 245,
     },
   },
 
@@ -338,83 +331,10 @@ export const GLUTTONY_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.45);
-    g.fillEllipse(s.x, s.y + 52, 120, 20);
-
-    const dirX = Math.cos(s.facing);
-    // It is chewing. It is always chewing.
-    const chew = Math.abs(Math.sin(t / 220)) * 6;
-    const bulge = Math.sin(t / 700) * 3;
-
-    // The body: a mound under a tablecloth that has given up being a cloth.
-    g.fillStyle(MEAT_DARK, 1);
-    g.fillEllipse(s.x, s.y + 12, 100 + bulge, 82 + bulge);
-    g.fillStyle(MEAT, 1);
-    g.fillEllipse(s.x, s.y + 14, 88 + bulge, 72 + bulge);
-    // Cloth folds, and the stains that outrank them.
-    g.fillStyle(CHINA, 0.16);
-    g.fillEllipse(s.x, s.y + 34, 92, 40);
-    for (let i = 0; i < 5; i++) {
-      g.fillStyle(MEAT_DARK, 0.3);
-      g.fillEllipse(s.x - 34 + i * 17, s.y + 40 + Math.sin(i) * 5, 12, 7);
-    }
-    // The bib. Somebody tied it on optimistically, long ago.
-    g.fillStyle(CHINA, 0.8);
-    g.fillTriangle(s.x - 22, s.y - 16, s.x + 22, s.y - 16, s.x, s.y + 26);
-    g.fillStyle(MEAT_DARK, 0.35);
-    g.fillEllipse(s.x, s.y + 8, 22, 12);
-
-    // The mouth: most of the front of it, hinged too far back.
-    const my = s.y - 6;
-    g.fillStyle(0x1a0604, 1);
-    g.fillEllipse(s.x + dirX * 4, my + chew * 0.5, 66, 26 + chew * 2.2 + s.castGlow * 10);
-    // Teeth, upper and lower, none of them matching.
-    for (let i = 0; i < 9; i++) {
-      const tx = s.x - 30 + i * 7.5 + dirX * 4;
-      const h = 7 + ((i * 5) % 4);
-      g.fillStyle(CHINA, 0.95);
-      g.fillTriangle(tx - 3, my - 13 + chew * 0.5, tx + 3, my - 13 + chew * 0.5, tx, my - 13 + h + chew * 0.5);
-      g.fillTriangle(tx - 3, my + 13 + chew * 1.7, tx + 3, my + 13 + chew * 1.7, tx, my + 13 - h + chew * 1.7);
-    }
-    // Tongue, restless.
-    g.fillStyle(0xff6a8a, 0.9);
-    g.fillEllipse(s.x + dirX * 8 + Math.sin(t / 300) * 6, my + 6 + chew, 30, 9);
-
-    // Cutlery hands — a fork and a knife, held wrong, used constantly.
-    const lift = s.castGlow * 14;
-    const fx = s.x - dirX * 58;
-    g.fillStyle(0xd8cfc0, 1);
-    g.fillRect(fx - 3, s.y - 26 - lift, 6, 46);
-    for (let i = 0; i < 4; i++) g.fillRect(fx - 9 + i * 5, s.y - 46 - lift, 3, 22);
-    const kx = s.x + dirX * 58;
-    g.fillStyle(0xd8cfc0, 1);
-    g.fillRect(kx - 3, s.y - 20 - lift, 6, 40);
-    g.fillTriangle(kx - 8, s.y - 20 - lift, kx + 8, s.y - 24 - lift, kx, s.y - 54 - lift);
-    g.fillStyle(MEAT_LIT, 0.5);
-    g.fillCircle(kx + 2, s.y - 46 - lift, 2);
-
-    // Eyes: several, small, none of them on the same schedule.
-    const eyes: [number, number, number][] = [[-38, -34, 6], [-16, -44, 5], [14, -42, 5], [36, -30, 6]];
-    for (const [ox, oy, r] of eyes) {
-      const blink = Math.sin(t / 500 + ox) > 0.92 ? 0.2 : 1;
-      g.fillStyle(CHINA, 0.9 * blink);
-      g.fillCircle(s.x + ox + dirX * 2, s.y + oy, r);
-      g.fillStyle(s.hurt ? 0xffffff : MEAT_DARK, blink);
-      g.fillCircle(s.x + ox + dirX * 4, s.y + oy, r * 0.5);
-    }
-    if (s.enraged) {
-      // It has started drooling on the schedule rather than off it.
-      for (let i = 0; i < 4; i++) {
-        const ph = ((t + i * 380) % 1500) / 1500;
-        g.fillStyle(MEAT_LIT, (1 - ph) * 0.3);
-        g.fillCircle(s.x - 24 + i * 16 + dirX * 4, my + 20 + ph * 40, 3 - ph);
-      }
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.2);
-      g.fillCircle(s.x, s.y, 68);
-    }
-  },
+  look: { crest: 'stack', pattern: 'scales', hands: 'claw', torsoR: 40, eyes: 3, mouth: 'maw' },
+  phaseStyles: [
+    { movement: 'hover', gimmick: 'none' },
+    { movement: 'stalk', gimmick: 'stalkers', tint: 'sick' },
+    { movement: 'rush', gimmick: 'shrink', tint: 'blood', look: { crest: 'tendrils', arms: 4, torsoR: 44 } },
+  ],
 };

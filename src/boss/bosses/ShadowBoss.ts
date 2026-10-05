@@ -183,7 +183,6 @@ export const SHADOW_BOSS: WorldBossDef = {
   colorLit: MURK_LIT,
   colorDark: MURK_DARK,
   accent: WOUND,
-  bodyR: 28,
 
   intro: ['Do not look for me. Just wait. I am better at both.'],
   banter: [
@@ -206,8 +205,6 @@ export const SHADOW_BOSS: WorldBossDef = {
       harass: ['h-rune', 'h-orbs', 'h-snipe'],
       restMs: 1060,
       harassMs: 3100,
-      moveSpeed: 70,
-      holdDist: 290,
     },
     {
       name: 'Deeper In',
@@ -220,8 +217,6 @@ export const SHADOW_BOSS: WorldBossDef = {
       harass: ['h-rune', 'h-orbs', 'h-lane', 'h-snipe'],
       restMs: 910,
       harassMs: 2600,
-      moveSpeed: 85,
-      holdDist: 260,
     },
   ],
 
@@ -238,8 +233,6 @@ export const SHADOW_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-rune', 'h-lane', 'h-flak'],
       restMs: 710,
       harassMs: 2150,
-      moveSpeed: 100,
-      holdDist: 240,
     },
   },
 
@@ -270,62 +263,10 @@ export const SHADOW_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    // No hard shadow — it IS one. A pooled base instead.
-    g.fillStyle(MURK_DARK, 0.8);
-    g.fillEllipse(s.x, s.y + 42, 90, 16);
-
-    // The column of it: layered smoke triangles, taller than a fighter,
-    // constantly re-forming.
-    for (let i = 0; i < 6; i++) {
-      const wob = Math.sin(t / 210 + i * 1.7) * (4 + i);
-      const w = 44 - i * 5;
-      const yTop = s.y + 34 - i * 16;
-      g.fillStyle(i % 2 === 0 ? MURK_DARK : 0x140a20, 0.92 - i * 0.06);
-      g.fillTriangle(
-        s.x - w / 2 + wob, yTop,
-        s.x + w / 2 + wob, yTop,
-        s.x + wob * 1.4, yTop - 22,
-      );
-    }
-
-    // Long reaching arms — too long, ending in finger-wisps.
-    for (const side of [-1, 1]) {
-      const aa = s.facing + side * 0.7;
-      const reach = 52 + s.castGlow * 16;
-      const hx = s.x + Math.cos(aa) * reach;
-      const hy = s.y - 6 + Math.sin(aa) * reach * 0.6;
-      g.lineStyle(7, MURK_DARK, 0.9);
-      g.lineBetween(s.x + side * 10, s.y - 14, hx, hy);
-      for (let f = 0; f < 3; f++) {
-        const fa = aa + (f - 1) * 0.4 + Math.sin(t / 180 + f) * 0.1;
-        g.lineStyle(2.5, MURK_DARK, 0.85);
-        g.lineBetween(hx, hy, hx + Math.cos(fa) * 14, hy + Math.sin(fa) * 14);
-      }
-    }
-
-    // The face: nothing but eyes, hung at the wrong height.
-    const hy0 = s.y - 44 + Math.sin(t / 500) * 3;
-    const eye = s.hurt ? 0xffffff : s.enraged ? WOUND : MURK_LIT;
-    const ex = Math.cos(s.facing) * 4;
-    for (const side of [-1, 1]) {
-      g.fillStyle(eye, 0.95);
-      g.fillEllipse(s.x + side * 8 + ex, hy0 + side * 2, 7, s.enraged ? 9 : 5);
-      g.fillStyle(0xffffff, 0.6);
-      g.fillCircle(s.x + side * 8 + ex - 1, hy0 + side * 2 - 1, 1.3);
-    }
-    // Motes bleeding off it.
-    for (let i = 0; i < 5; i++) {
-      const ph = ((t + i * 700) % 1600) / 1600;
-      g.fillStyle(MURK, (1 - ph) * 0.5);
-      g.fillCircle(
-        s.x + Math.sin(i * 37) * 30, s.y + 20 - ph * 80, 2.5 + (1 - ph) * 2,
-      );
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.18);
-      g.fillCircle(s.x, s.y, 56);
-    }
-  },
+  look: { crest: 'tendrils', pattern: 'static', aura: 'smoke', hands: 'claw', torsoR: 34, eyes: 3, mouth: 'maw' },
+  phaseStyles: [
+    { movement: 'blink', gimmick: 'gloom' },
+    { movement: 'blink', gimmick: 'gloom', tint: 'void', look: { arms: 4 } },
+    { movement: 'rush', gimmick: 'stalkers', tint: 'blood', look: { eyes: 1, crest: 'mane' } },
+  ],
 };

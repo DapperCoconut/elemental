@@ -192,7 +192,6 @@ export const ELECTRICITY_BOSS: WorldBossDef = {
   colorLit: VOLT_LIT,
   colorDark: VOLT_DARK,
   accent: ION,
-  bodyR: 28,
 
   intro: ['The sky signed a contract with me. You are in breach of the sky.'],
   banter: [
@@ -215,8 +214,6 @@ export const ELECTRICITY_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-lane', 'h-snipe'],
       restMs: 1050,
       harassMs: 3100,
-      moveSpeed: 70,
-      holdDist: 280,
     },
     {
       name: 'The Verdict',
@@ -229,8 +226,6 @@ export const ELECTRICITY_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-lane', 'h-orbs', 'h-snipe'],
       restMs: 900,
       harassMs: 2600,
-      moveSpeed: 85,
-      holdDist: 250,
     },
   ],
 
@@ -247,8 +242,6 @@ export const ELECTRICITY_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-orbs', 'h-lane', 'h-rune'],
       restMs: 700,
       harassMs: 2100,
-      moveSpeed: 100,
-      holdDist: 230,
     },
   },
 
@@ -276,65 +269,10 @@ export const ELECTRICITY_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    // No shadow: the crown floats on its own weather.
-    // The cloud: overlapping storm lobes.
-    for (let i = 0; i < 5; i++) {
-      const a = (Math.PI * 2 * i) / 5 + t / 2600;
-      const r = 14 + (i % 2) * 6;
-      g.fillStyle(i % 2 === 0 ? 0x3a3a4a : 0x2a2a38, 1);
-      g.fillCircle(s.x + Math.cos(a) * 22, s.y + 6 + Math.sin(a) * 10, r + 8);
-    }
-    g.fillStyle(0x32323e, 1);
-    g.fillEllipse(s.x, s.y + 4, 62, 34);
-
-    // Rain-static falling out of the cloud.
-    for (let i = 0; i < 6; i++) {
-      const ph = ((t + i * 300) % 900) / 900;
-      g.lineStyle(1, ION, (1 - ph) * 0.5);
-      const rx = s.x - 24 + i * 10;
-      g.lineBetween(rx, s.y + 18 + ph * 22, rx - 2, s.y + 24 + ph * 22);
-    }
-
-    // The crown riding the cloud: five bolt-prongs of living lightning.
-    const flick = Math.floor(t / 90) % 3;
-    for (let i = 0; i < 5; i++) {
-      const px = s.x - 24 + i * 12;
-      const ph = 16 + (i === 2 ? 8 : (i % 2) * 4) + (flick === i % 3 ? 3 : 0);
-      g.lineStyle(3, VOLT, 0.95);
-      g.lineBetween(px, s.y - 12, px + 3, s.y - 12 - ph * 0.5);
-      g.lineBetween(px + 3, s.y - 12 - ph * 0.5, px - 2, s.y - 12 - ph);
-      g.fillStyle(VOLT_LIT, 0.9);
-      g.fillCircle(px - 2, s.y - 12 - ph, 1.8);
-    }
-    // Band of the crown.
-    g.fillStyle(VOLT, 0.85 + s.castGlow * 0.15);
-    g.fillRect(s.x - 28, s.y - 14, 56, 5);
-
-    // Eyes in the cloud: two slits of charge.
-    const eye = s.hurt ? 0xffffff : s.enraged ? 0xffb04a : VOLT_LIT;
-    const ex = Math.cos(s.facing) * 4;
-    for (const side of [-1, 1]) {
-      g.fillStyle(eye, 1);
-      g.fillRect(s.x + side * 10 + ex - 4, s.y + 1, 8, 2.5 + (s.enraged ? 1.5 : 0));
-    }
-    // Grounding bolt beneath, when casting.
-    if (s.castGlow > 0.3) {
-      g.lineStyle(2, VOLT, (s.castGlow - 0.3) * 1.2);
-      let ly = s.y + 22;
-      let lx = s.x;
-      for (let sIdx = 0; sIdx < 3; sIdx++) {
-        const nx = lx + Phaser.Math.Between(-8, 8);
-        const ny = ly + 9;
-        g.lineBetween(lx, ly, nx, ny);
-        lx = nx;
-        ly = ny;
-      }
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.22);
-      g.fillCircle(s.x, s.y, 50);
-    }
-  },
+  look: { crest: 'crown', pattern: 'static', aura: 'sparks', hands: 'orb', torsoR: 34, mouth: 'grate' },
+  phaseStyles: [
+    { movement: 'hover', gimmick: 'none' },
+    { movement: 'orbit', gimmick: 'tremor', tint: 'gold' },
+    { movement: 'blink', gimmick: 'wards', tint: 'pale', look: { crest: 'blades' } },
+  ],
 };

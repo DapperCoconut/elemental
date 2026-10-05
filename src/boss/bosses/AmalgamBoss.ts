@@ -312,7 +312,6 @@ export const AMALGAM_BOSS: WorldBossDef = {
   colorLit: FLESH_LIT,
   colorDark: FLESH_DARK,
   accent: SUTURE,
-  bodyR: 36,
   damageMult: 0.92,
 
   intro: [
@@ -340,8 +339,6 @@ export const AMALGAM_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-orbs', 'h-snipe'],
       restMs: 1000,
       harassMs: 3000,
-      moveSpeed: 54,
-      holdDist: 300,
     },
     {
       name: 'The Whole Court',
@@ -354,8 +351,6 @@ export const AMALGAM_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-orbs', 'h-lane', 'h-rune'],
       restMs: 880,
       harassMs: 2500,
-      moveSpeed: 66,
-      holdDist: 275,
     },
     {
       name: 'The Voice Beneath',
@@ -368,8 +363,6 @@ export const AMALGAM_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-rune', 'h-flak', 'h-lane'],
       restMs: 800,
       harassMs: 2300,
-      moveSpeed: 76,
-      holdDist: 255,
     },
   ],
 
@@ -387,8 +380,6 @@ export const AMALGAM_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-rune', 'h-lane', 'h-mines'],
       restMs: 660,
       harassMs: 2000,
-      moveSpeed: 88,
-      holdDist: 235,
     },
   },
 
@@ -436,130 +427,56 @@ export const AMALGAM_BOSS: WorldBossDef = {
     g.fillEllipse(cx, cy, 190, 130);
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.5);
-    g.fillEllipse(s.x, s.y + 54, 132, 22);
+  look: { crest: 'tendrils', pattern: 'static', aura: 'glitch', hands: 'claw', torsoR: 42, eyes: 3, arms: 4, mouth: 'stitch' },
 
-    const dirX = Math.cos(s.facing);
-    const heave = Math.sin(t / 430) * 4;
-
-    // A mass with too many donors: overlapping lobes, each a different colour
-    // borrowed off a Sovereign, held together at the seams.
-    const lobes: [number, number, number, number][] = [
-      [-34, 2, 34, 0xc4392c], [30, -6, 30, 0x4a4468], [2, 26, 32, 0x46b93f],
-      [-14, -28, 26, 0xd8a531], [22, 24, 24, 0x0e8f9c], [-30, 30, 22, 0x9b4dff],
-    ];
-    for (let i = 0; i < lobes.length; i++) {
-      const [ox, oy, r, col] = lobes[i];
-      const pulse = Math.sin(t / (380 + i * 60) + i) * 3;
-      g.fillStyle(FLESH_DARK, 1);
-      g.fillCircle(s.x + ox, s.y + oy + heave * 0.4, r + 4 + pulse);
-      g.fillStyle(col, 0.55);
-      g.fillCircle(s.x + ox, s.y + oy + heave * 0.4, r + pulse);
-      g.fillStyle(FLESH, 0.4);
-      g.fillCircle(s.x + ox, s.y + oy + heave * 0.4, r * 0.6 + pulse);
+  /**
+   * The one thing the shared rig cannot say about this body: what it is made
+   * of. Every Sovereign in the registry rides it as a shard in its own colour,
+   * sutured on, and the seams between them are drawn in thread.
+   */
+  drawDecor(g, s) {
+    const defs = getAllWorldBossDefs();
+    const R = s.radius;
+    // The court it ate, orbiting the body one shard per throne.
+    for (let i = 0; i < defs.length; i++) {
+      const a = (Math.PI * 2 * i) / defs.length + s.t / 5200;
+      const wob = Math.sin(s.t / 700 + i * 1.7) * 5;
+      const r = R * 1.95 + wob;
+      const x = s.x + Math.cos(a) * r;
+      const y = s.y + Math.sin(a) * r * 0.78;
+      // The far half rides behind the body, so the ring reads as a ring.
+      const near = Math.sin(a) > 0;
+      const size = (near ? 3.4 : 2.2) * (s.enraged ? 1.3 : 1);
+      g.fillStyle(defs[i].colorLit, near ? 0.9 : 0.4);
+      g.fillCircle(x, y, size);
     }
-    // The sutures. Every seam between two donors, stitched by something that
-    // had no idea what it was making.
-    for (let i = 0; i < lobes.length; i++) {
-      const [ox, oy] = lobes[i];
-      const [px, py] = lobes[(i + 1) % lobes.length];
-      const mx = s.x + (ox + px) / 2;
-      const my = s.y + (oy + py) / 2 + heave * 0.4;
-      const a = Math.atan2(py - oy, px - ox);
-      g.lineStyle(2, SUTURE, 0.75);
-      for (let k = -3; k <= 3; k++) {
-        const sx = mx + Math.cos(a) * k * 9;
-        const sy = my + Math.sin(a) * k * 9;
-        g.lineBetween(sx - Math.sin(a) * 7, sy + Math.cos(a) * 7, sx + Math.sin(a) * 7, sy - Math.cos(a) * 7);
-      }
-    }
-
-    // Arms it did not grow: a chain, a blade, a hand, a stalk of coral. They
-    // move on separate clocks because they are separate arguments.
-    const limbs: [number, number, number][] = [[-1, 18, 0], [1, 26, 1], [-1, -14, 2], [1, -6, 3]];
-    for (const [side, oy, kind] of limbs) {
-      const sway = Math.sin(t / (380 + kind * 90) + kind) * 9;
-      const ax = s.x + side * (56 + Math.abs(sway) * 0.4);
-      const ay = s.y + oy + sway * 0.5;
-      if (kind === 0) {
-        for (let i = 1; i <= 4; i++) {
-          g.lineStyle(3, i % 2 ? 0xe0b743 : 0x8a5a2a, 0.9);
-          g.strokeEllipse(ax + side * i * 11, ay + i * 4, 11, 7);
-        }
-      } else if (kind === 1) {
-        g.fillStyle(0xb8b2a4, 1);
-        g.fillTriangle(ax, ay - 8, ax + side * 42, ay - 2, ax, ay + 8);
-        g.lineStyle(1.5, FLESH_LIT, 0.6);
-        g.lineBetween(ax, ay - 4, ax + side * 38, ay - 1);
-      } else if (kind === 2) {
-        g.fillStyle(0xd8b898, 1);
-        g.fillCircle(ax + side * 22, ay, 11);
-        for (let f = 0; f < 4; f++) {
-          g.lineStyle(4, 0xd8b898, 1);
-          g.lineBetween(ax + side * 26, ay - 6 + f * 4, ax + side * 40, ay - 10 + f * 6 + sway * 0.3);
-        }
-      } else {
-        g.fillStyle(0xff8ac4, 0.9);
-        for (let i = 0; i < 5; i++) {
-          g.fillCircle(ax + side * i * 9, ay - i * 5 + Math.sin(t / 300 + i) * 3, 8 - i);
-        }
-      }
-    }
-
-    // Faces. Not one — several, surfacing and sinking, each briefly recognisable
-    // as somebody you have already put down.
-    const donors = [0xffb347, 0x7ce8f0, 0xb9a9e8, 0xffd27a, 0xd8b0ff, 0xb8ff9a, 0xffe08a];
+    // Sutures: the seams where one Sovereign was sewn onto the next.
     for (let i = 0; i < 4; i++) {
-      const ph = ((t + i * 1700) % 6800) / 6800;
-      const surface = Math.sin(ph * Math.PI);
-      if (surface < 0.15) continue;
-      const a = i * 1.7 + t / 2600;
-      const fx = s.x + Math.cos(a) * 26 + dirX * 4;
-      const fy = s.y + Math.sin(a) * 22 - 6;
-      const col = donors[(i + Math.floor(t / 6800)) % donors.length];
-      g.fillStyle(col, surface * 0.5);
-      g.fillEllipse(fx, fy, 26 * surface, 30 * surface);
-      g.fillStyle(FLESH_DARK, surface * 0.9);
-      g.fillCircle(fx - 6 * surface, fy - 3, 3 * surface);
-      g.fillCircle(fx + 6 * surface, fy - 3, 3 * surface);
-      g.lineStyle(2, FLESH_DARK, surface * 0.7);
-      g.lineBetween(fx - 6 * surface, fy + 9 * surface, fx + 6 * surface, fy + 9 * surface);
-    }
-
-    // The Voice's own eye, dead centre, which never sinks and never blinks.
-    const ey = s.y - 4;
-    g.fillStyle(FLESH_DARK, 1);
-    g.fillCircle(s.x + dirX * 3, ey, 20 + s.castGlow * 4);
-    g.fillStyle(s.hurt ? 0xffffff : FLESH_LIT, 0.9);
-    g.fillCircle(s.x + dirX * 5, ey, 12 + s.castGlow * 4);
-    g.fillStyle(0x000000, 1);
-    g.fillEllipse(s.x + dirX * 6, ey, 6, 15);
-    g.lineStyle(2, SUTURE, 0.5);
-    g.strokeCircle(s.x + dirX * 3, ey, 22 + s.castGlow * 4);
-    // Mouths along the underside, all of them mid-sentence.
-    for (let i = 0; i < 5; i++) {
-      const mx = s.x - 40 + i * 20;
-      const open = Math.abs(Math.sin(t / (200 + i * 70) + i)) * 6;
-      g.fillStyle(0x000000, 0.85);
-      g.fillEllipse(mx, s.y + 46 + heave * 0.4, 13, 4 + open);
-      g.fillStyle(SUTURE, 0.6);
-      for (let k = 0; k < 3; k++) g.fillCircle(mx - 4 + k * 4, s.y + 44 + heave * 0.4, 1.2);
-    }
-
-    if (s.enraged) {
-      // The last phase: the seams are giving, and the light behind them is not
-      // the colour of anything that was stitched in.
-      for (let i = 0; i < 5; i++) {
-        const a = t / 900 + (Math.PI * 2 * i) / 5;
-        g.lineStyle(3, 0xff2a4a, 0.25 + Math.sin(t / 130 + i) * 0.15);
-        g.lineBetween(s.x, s.y, s.x + Math.cos(a) * 74, s.y + Math.sin(a) * 74);
+      const a = (Math.PI / 4) * i + 0.3;
+      const dx = Math.cos(a) * (R - 6);
+      const dy = Math.sin(a) * (R - 6);
+      g.lineStyle(1.4, SUTURE, 0.5);
+      g.lineBetween(s.x - dx, s.y - dy, s.x + dx, s.y + dy);
+      for (let k = -3; k <= 3; k++) {
+        const px = s.x + (dx * k) / 4;
+        const py = s.y + (dy * k) / 4;
+        g.lineStyle(1.8, SUTURE, 0.75);
+        g.lineBetween(px - Math.sin(a) * 5, py + Math.cos(a) * 5,
+          px + Math.sin(a) * 5, py - Math.cos(a) * 5);
       }
     }
+    // Hurt: the stitches strain and the thing under them shows through.
     if (s.hurt) {
-      g.fillStyle(0xffffff, 0.2);
-      g.fillCircle(s.x, s.y, 74);
+      for (const h of s.hands) {
+        g.fillStyle(FLESH_LIT, 0.5);
+        g.fillCircle(h.x, h.y, 9);
+      }
     }
   },
+  phaseStyles: [
+    { movement: 'stalk', gimmick: 'none' },
+    { movement: 'orbit', gimmick: 'stalkers', tint: 'void' },
+    { movement: 'blink', gimmick: 'wards', tint: 'pale', look: { pattern: 'facets' } },
+    { movement: 'rush', gimmick: 'shrink', tint: 'blood', look: { crest: 'blades', torsoR: 46 } },
+  ],
 };

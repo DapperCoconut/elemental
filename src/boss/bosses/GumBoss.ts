@@ -218,7 +218,6 @@ export const GUM_BOSS: WorldBossDef = {
   colorLit: OOZE_LIT,
   colorDark: OOZE_DARK,
   accent: PINK,
-  bodyR: 34,
 
   intro: ['The realm fell into me. It is still falling. Do not take it personally; nothing gets out, and nothing ever has.'],
   banter: [
@@ -241,8 +240,6 @@ export const GUM_BOSS: WorldBossDef = {
       harass: ['h-rune', 'h-flak', 'h-snipe'],
       restMs: 1060,
       harassMs: 3100,
-      moveSpeed: 40,
-      holdDist: 285,
     },
     {
       name: 'Engulfment',
@@ -255,8 +252,6 @@ export const GUM_BOSS: WorldBossDef = {
       harass: ['h-rune', 'h-flak', 'h-mines', 'h-snipe'],
       restMs: 910,
       harassMs: 2600,
-      moveSpeed: 50,
-      holdDist: 260,
     },
   ],
 
@@ -273,8 +268,6 @@ export const GUM_BOSS: WorldBossDef = {
       harass: ['h-mines', 'h-rune', 'h-flak', 'h-lane'],
       restMs: 720,
       harassMs: 2100,
-      moveSpeed: 60,
-      holdDist: 240,
     },
   },
 
@@ -313,88 +306,10 @@ export const GUM_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.35);
-    g.fillEllipse(s.x, s.y + 52, 122, 20);
-
-    const dirX = Math.cos(s.facing);
-    // The silhouette is never twice the same: a ring of lumps, each breathing
-    // on its own clock, so it reads as a fluid rather than a creature.
-    const R = 50;
-    g.fillStyle(OOZE_DARK, 0.95);
-    for (let i = 0; i < 12; i++) {
-      const a = (Math.PI * 2 * i) / 12;
-      const wob = Math.sin(t / 340 + i * 1.3) * 7 + s.castGlow * 6;
-      g.fillCircle(s.x + Math.cos(a) * (R * 0.55), s.y + 10 + Math.sin(a) * (R * 0.5), R * 0.55 + wob * 0.4);
-    }
-    g.fillStyle(OOZE, 0.95);
-    for (let i = 0; i < 12; i++) {
-      const a = (Math.PI * 2 * i) / 12 + 0.26;
-      const wob = Math.sin(t / 300 + i) * 6;
-      g.fillCircle(s.x + Math.cos(a) * (R * 0.48), s.y + 10 + Math.sin(a) * (R * 0.44), R * 0.48 + wob * 0.4);
-    }
-    // A lighter core, where the light gets through more of it.
-    g.fillStyle(OOZE_LIT, 0.28);
-    g.fillEllipse(s.x - 8, s.y + 2, 46, 34);
-    // Things it has not finished with, suspended inside.
-    const junk: [number, number, number][] = [[-24, 20, 6], [16, 26, 5], [4, -6, 7], [-14, 34, 4]];
-    for (let i = 0; i < junk.length; i++) {
-      const [ox, oy, r] = junk[i];
-      const bob = Math.sin(t / 700 + i * 2) * 4;
-      g.fillStyle(0x6a5a3a, 0.65);
-      g.fillRect(s.x + ox - r, s.y + oy + bob - r, r * 2, r * 2);
-      g.lineStyle(1, OOZE_LIT, 0.3);
-      g.strokeRect(s.x + ox - r, s.y + oy + bob - r, r * 2, r * 2);
-    }
-    // Drips, permanently leaving and never actually going.
-    for (let i = 0; i < 5; i++) {
-      const ph = ((t + i * 380) % 1600) / 1600;
-      g.fillStyle(OOZE, (1 - ph) * 0.6);
-      g.fillCircle(s.x - 40 + i * 20, s.y + 48 + ph * 26, 4 - ph * 2);
-    }
-    // Pseudopods, reaching out and thinking better of it.
-    for (const side of [-1, 1]) {
-      const reach = 30 + Math.abs(Math.sin(t / 620 + side)) * 26 + s.castGlow * 20;
-      const ax = s.x + side * reach;
-      const ay = s.y + 14 + Math.sin(t / 500 + side) * 10;
-      g.fillStyle(OOZE, 0.9);
-      g.fillCircle(ax, ay, 15);
-      g.fillCircle(s.x + side * (reach * 0.6), s.y + 12, 19);
-      g.fillStyle(OOZE_LIT, 0.25);
-      g.fillCircle(ax - 4, ay - 4, 7);
-    }
-
-    // The face: eyes that float wherever they like, and a grin that is a seam.
-    const eye = s.hurt ? 0xffffff : OOZE_DARK;
-    const drift = Math.sin(t / 800) * 6;
-    for (const side of [-1, 1]) {
-      const ex = s.x + side * 17 + dirX * 4 + drift * side * 0.4;
-      const ey = s.y - 14 + Math.cos(t / 900 + side) * 4;
-      g.fillStyle(0xf0ffe8, 0.95);
-      g.fillCircle(ex, ey, 11);
-      g.fillStyle(eye, 1);
-      g.fillCircle(ex + dirX * 3, ey + 1, 5 + s.castGlow);
-      g.fillStyle(0xffffff, 0.6);
-      g.fillCircle(ex + dirX * 3 - 2, ey - 2, 1.8);
-    }
-    g.lineStyle(3, OOZE_DARK, 0.8);
-    g.beginPath();
-    g.arc(s.x + dirX * 4, s.y + 2, 22, 0.35, Math.PI - 0.35, false);
-    g.strokePath();
-    // Strings between the lips of it, because of course there are.
-    for (let i = 0; i < 4; i++) {
-      const px = s.x - 14 + i * 10 + dirX * 4;
-      g.lineStyle(1.5, OOZE_LIT, 0.4);
-      g.lineBetween(px, s.y + 14, px + Math.sin(t / 300 + i) * 3, s.y + 24);
-    }
-    if (s.enraged) {
-      g.fillStyle(PINK, 0.07 + Math.sin(t / 200) * 0.03);
-      g.fillCircle(s.x, s.y + 8, 96);
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.2);
-      g.fillCircle(s.x, s.y, 66);
-    }
-  },
+  look: { crest: 'none', pattern: 'drip', aura: 'bubbles', hands: 'wisp', torsoR: 38, eyes: 3, mouth: 'maw' },
+  phaseStyles: [
+    { movement: 'hover', gimmick: 'none' },
+    { movement: 'stalk', gimmick: 'stalkers', tint: 'sick' },
+    { movement: 'rush', gimmick: 'shrink', tint: 'sick', look: { crest: 'tendrils', torsoR: 44, arms: 4 } },
+  ],
 };

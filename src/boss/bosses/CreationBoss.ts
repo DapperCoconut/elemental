@@ -182,7 +182,6 @@ export const CREATION_BOSS: WorldBossDef = {
   colorLit: FORGE_LIT,
   colorDark: FORGE_DARK,
   accent: BLUEPRINT,
-  bodyR: 28,
 
   intro: ['I drew this room. And your exit. One of those drawings is finished.'],
   banter: [
@@ -205,8 +204,6 @@ export const CREATION_BOSS: WorldBossDef = {
       harass: ['h-lane', 'h-mines', 'h-snipe'],
       restMs: 1100,
       harassMs: 3300,
-      moveSpeed: 30,
-      holdDist: 300,
     },
     {
       name: 'The Build',
@@ -219,8 +216,6 @@ export const CREATION_BOSS: WorldBossDef = {
       harass: ['h-lane', 'h-mines', 'h-flak', 'h-snipe'],
       restMs: 950,
       harassMs: 2800,
-      moveSpeed: 40,
-      holdDist: 280,
     },
   ],
 
@@ -237,8 +232,6 @@ export const CREATION_BOSS: WorldBossDef = {
       harass: ['h-lane', 'h-mines', 'h-rune', 'h-flak'],
       restMs: 740,
       harassMs: 2300,
-      moveSpeed: 50,
-      holdDist: 260,
     },
   },
 
@@ -266,86 +259,10 @@ export const CREATION_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.4);
-    g.fillEllipse(s.x, s.y + 46, 96, 16);
-
-    // The floating drafting table before him, tilted toward the player.
-    const dirX = Math.cos(s.facing);
-    const tblX = s.x + dirX * 30;
-    const tblY = s.y + 16 + Math.sin(t / 800) * 2;
-    g.fillStyle(FORGE_DARK, 1);
-    g.fillRect(tblX - 26, tblY - 8, 52, 16);
-    g.fillStyle(BLUEPRINT, s.castGlow > 0.2 ? 0.5 : 0.25);
-    g.fillRect(tblX - 22, tblY - 5, 44, 10);
-    // Plan lines on the table.
-    g.lineStyle(1, 0xffffff, 0.4);
-    g.lineBetween(tblX - 16, tblY - 2, tblX + 8, tblY - 2);
-    g.lineBetween(tblX - 10, tblY + 2, tblX + 16, tblY + 2);
-
-    // The robe-and-apron body.
-    g.fillStyle(FORGE_DARK, 1);
-    g.fillEllipse(s.x, s.y + 6, 52, 58);
-    g.fillStyle(FORGE, 1);
-    g.fillEllipse(s.x - 2, s.y + 4, 42, 48);
-    g.fillStyle(0x4a3018, 1);
-    g.fillRect(s.x - 14, s.y - 4, 28, 34); // apron
-    g.lineStyle(1.5, FORGE_LIT, 0.5);
-    g.lineBetween(s.x - 14, s.y + 6, s.x + 14, s.y + 6);
-
-    // Arms: hammer hand and compass hand.
-    for (const side of [-1, 1]) {
-      const aa = s.facing + side * 0.85;
-      const hx = s.x + Math.cos(aa) * 42;
-      const hy = s.y + Math.sin(aa) * 28;
-      g.fillStyle(FORGE_DARK, 1);
-      g.fillCircle(hx, hy, 9);
-      if (side === 1) {
-        // The hammer, raised with cast glow.
-        const lift = s.castGlow * 18;
-        g.lineStyle(4, 0x4a3018, 1);
-        g.lineBetween(hx, hy, hx + 6, hy - 18 - lift);
-        g.fillStyle(0x8a8a92, 1);
-        g.fillRect(hx - 2, hy - 28 - lift, 16, 10);
-        g.fillStyle(0xc8c8d0, 0.6);
-        g.fillRect(hx - 2, hy - 28 - lift, 16, 3);
-      } else {
-        // The compass, points down like a dowsing rod.
-        g.lineStyle(2.5, 0xc8c8d0, 1);
-        g.lineBetween(hx, hy, hx - 5, hy + 16);
-        g.lineBetween(hx, hy, hx + 5, hy + 16);
-        g.fillStyle(FORGE_LIT, 0.9);
-        g.fillCircle(hx, hy - 2, 2.5);
-      }
-    }
-
-    // Head: hooded, with a gear halo turning behind it.
-    const hy0 = s.y - 34;
-    const spin = t / 1600;
-    g.lineStyle(3, FORGE_LIT, 0.5);
-    for (let i = 0; i < 8; i++) {
-      const a = spin + (Math.PI * 2 * i) / 8;
-      g.lineBetween(
-        s.x + Math.cos(a) * 22, hy0 + Math.sin(a) * 22,
-        s.x + Math.cos(a) * 27, hy0 + Math.sin(a) * 27,
-      );
-    }
-    g.lineStyle(2, FORGE_LIT, 0.4);
-    g.strokeCircle(s.x, hy0, 22);
-    g.fillStyle(FORGE_DARK, 1);
-    g.fillEllipse(s.x, hy0, 26, 24);
-    g.fillStyle(0x140c04, 1);
-    g.fillEllipse(s.x + dirX * 2, hy0 + 2, 18, 15);
-    const eye = s.hurt ? 0xffffff : s.enraged ? 0xffa04a : BLUEPRINT;
-    const ex = Math.cos(s.facing) * 3;
-    for (const side of [-1, 1]) {
-      g.fillStyle(eye, 1);
-      g.fillCircle(s.x + side * 5 + ex, hy0 + 1, 2.6);
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.22);
-      g.fillCircle(s.x, s.y, 54);
-    }
-  },
+  look: { crest: 'stack', pattern: 'grid', aura: 'sparks', hands: 'gauntlet', torsoR: 34, mouth: 'line' },
+  phaseStyles: [
+    { movement: 'anchor', gimmick: 'none' },
+    { movement: 'hover', gimmick: 'wards', tint: 'gold' },
+    { movement: 'stalk', gimmick: 'tremor', tint: 'pale', look: { crest: 'crown', arms: 4 } },
+  ],
 };

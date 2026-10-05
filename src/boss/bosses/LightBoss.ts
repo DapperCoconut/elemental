@@ -156,7 +156,6 @@ export const LIGHT_BOSS: WorldBossDef = {
   colorLit: SUN_LIT,
   colorDark: SUN_DARK,
   accent: CORONA,
-  bodyR: 30,
 
   intro: ['Look up. That was your mistake. It is also the entire proceeding.'],
   banter: [
@@ -179,8 +178,6 @@ export const LIGHT_BOSS: WorldBossDef = {
       harass: ['h-lane', 'h-flak', 'h-snipe'],
       restMs: 1050,
       harassMs: 3100,
-      moveSpeed: 65,
-      holdDist: 290,
     },
     {
       name: 'High Noon',
@@ -193,8 +190,6 @@ export const LIGHT_BOSS: WorldBossDef = {
       harass: ['h-lane', 'h-flak', 'h-orbs', 'h-snipe'],
       restMs: 900,
       harassMs: 2600,
-      moveSpeed: 80,
-      holdDist: 260,
     },
   ],
 
@@ -211,8 +206,6 @@ export const LIGHT_BOSS: WorldBossDef = {
       harass: ['h-lane', 'h-orbs', 'h-flak', 'h-rune'],
       restMs: 700,
       harassMs: 2100,
-      moveSpeed: 95,
-      holdDist: 240,
     },
   },
 
@@ -243,51 +236,10 @@ export const LIGHT_BOSS: WorldBossDef = {
     g.lineBetween(cx, cy, cx + 24, cy - 30);
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    // No shadow. Obviously.
-    // Corona spikes, breathing; longer when enraged.
-    const spikes = 12;
-    for (let i = 0; i < spikes; i++) {
-      const a = (Math.PI * 2 * i) / spikes + t / 3200;
-      const len = (i % 2 === 0 ? 22 : 13) * (s.enraged ? 1.35 : 1) + Math.sin(t / 240 + i) * 3 + s.castGlow * 8;
-      g.fillStyle(i % 2 === 0 ? CORONA : SUN, 0.8);
-      g.fillTriangle(
-        s.x + Math.cos(a - 0.12) * 30, s.y + Math.sin(a - 0.12) * 30,
-        s.x + Math.cos(a + 0.12) * 30, s.y + Math.sin(a + 0.12) * 30,
-        s.x + Math.cos(a) * (30 + len), s.y + Math.sin(a) * (30 + len),
-      );
-    }
-    // Prominence loop: one arc of fire leaping off the limb.
-    const loopA = t / 1800;
-    g.lineStyle(2.5, CORONA, 0.7);
-    g.beginPath();
-    g.arc(s.x + Math.cos(loopA) * 30, s.y + Math.sin(loopA) * 30, 12, loopA - 1.2, loopA + 1.9, false);
-    g.strokePath();
-
-    // The disc: layered heat.
-    g.fillStyle(SUN, 1);
-    g.fillCircle(s.x, s.y, 30);
-    g.fillStyle(0xffe08a, 1);
-    g.fillCircle(s.x - 3, s.y - 3, 24);
-    g.fillStyle(SUN_LIT, 0.9);
-    g.fillCircle(s.x - 5, s.y - 5, 14);
-    // Sunspot face: two spots and a judicial line of a mouth.
-    const ex = Math.cos(s.facing) * 5;
-    const ey = Math.sin(s.facing) * 4;
-    const eye = s.hurt ? 0xffffff : s.enraged ? 0xcc3a10 : SUN_DARK;
-    for (const side of [-1, 1]) {
-      g.fillStyle(eye, 0.95);
-      g.fillEllipse(s.x + side * 9 + ex, s.y - 4 + ey, 6, s.enraged ? 7 : 5);
-    }
-    g.lineStyle(2, SUN_DARK, 0.8);
-    g.lineBetween(s.x - 6 + ex, s.y + 9 + ey, s.x + 6 + ex, s.y + 9 + ey);
-    // Heat shimmer ring.
-    g.lineStyle(1, SUN_LIT, 0.25 + Math.sin(t / 180) * 0.1);
-    g.strokeCircle(s.x, s.y, 36 + Math.sin(t / 300) * 2);
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.3);
-      g.fillCircle(s.x, s.y, 44);
-    }
-  },
+  look: { crest: 'halo', pattern: 'facets', aura: 'sparks', hands: 'orb', torsoR: 35, mouth: 'line' },
+  phaseStyles: [
+    { movement: 'anchor', gimmick: 'none' },
+    { movement: 'orbit', gimmick: 'wards', tint: 'gold' },
+    { movement: 'blink', gimmick: 'gloom', tint: 'void', look: { crest: 'veil', eyes: 1 } },
+  ],
 };

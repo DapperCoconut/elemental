@@ -232,7 +232,6 @@ export const RADIATION_BOSS: WorldBossDef = {
   colorLit: RAD_LIT,
   colorDark: RAD_DARK,
   accent: HAZARD,
-  bodyR: 30,
 
   intro: ['My kingdom decays at a fixed rate. Guests decay faster. Do stay — I am so rarely visited twice.'],
   banter: [
@@ -255,8 +254,6 @@ export const RADIATION_BOSS: WorldBossDef = {
       harass: ['h-rune', 'h-snipe', 'h-flak'],
       restMs: 1040,
       harassMs: 3100,
-      moveSpeed: 50,
-      holdDist: 300,
     },
     {
       name: 'Criticality',
@@ -269,8 +266,6 @@ export const RADIATION_BOSS: WorldBossDef = {
       harass: ['h-rune', 'h-snipe', 'h-mines', 'h-flak'],
       restMs: 890,
       harassMs: 2600,
-      moveSpeed: 60,
-      holdDist: 275,
     },
   ],
 
@@ -287,8 +282,6 @@ export const RADIATION_BOSS: WorldBossDef = {
       harass: ['h-mines', 'h-rune', 'h-snipe', 'h-lane'],
       restMs: 710,
       harassMs: 2100,
-      moveSpeed: 70,
-      holdDist: 255,
     },
   },
 
@@ -337,98 +330,10 @@ export const RADIATION_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.35);
-    g.fillEllipse(s.x, s.y + 48, 92, 16);
-
-    const dirX = Math.cos(s.facing);
-    const hum = Math.sin(t / 240) * 2;
-
-    // A hazard suit with something far too bright inside it.
-    g.fillStyle(RAD_DARK, 1);
-    g.fillRoundedRect(s.x - 30, s.y - 26, 60, 72, 14);
-    g.fillStyle(0x4a5a2a, 1);
-    g.fillRoundedRect(s.x - 25, s.y - 21, 50, 62, 11);
-    // Hazard flashes across the chest.
-    for (let i = 0; i < 3; i++) {
-      g.fillStyle(i % 2 === 0 ? HAZARD : RAD_DARK, 0.7);
-      g.fillRect(s.x - 24, s.y - 16 + i * 9, 48, 5);
-    }
-    // The core: visible through a lead window, and it is not well.
-    g.fillStyle(0x0a0a0a, 1);
-    g.fillCircle(s.x, s.y + 10, 16);
-    const core = 0.55 + Math.sin(t / 130) * 0.2 + s.castGlow * 0.4;
-    g.fillStyle(RAD, core);
-    g.fillCircle(s.x, s.y + 10, 12 + hum);
-    g.fillStyle(RAD_LIT, core);
-    g.fillCircle(s.x, s.y + 10, 6 + hum * 0.5);
-    g.lineStyle(2, HAZARD, 0.6);
-    g.strokeCircle(s.x, s.y + 10, 17);
-    // Particles leaving it, constantly, in every direction.
-    for (let i = 0; i < 7; i++) {
-      const ph = ((t + i * 260) % 1300) / 1300;
-      const a = i * 0.9 + t / 1600;
-      g.fillStyle(RAD, (1 - ph) * 0.5);
-      g.fillCircle(s.x + Math.cos(a) * (18 + ph * 52), s.y + 10 + Math.sin(a) * (18 + ph * 44), 2.4 - ph);
-    }
-
-    // Arms: heavy gloves, one holding the counter that never stops clicking.
-    g.fillStyle(0x4a5a2a, 1);
-    g.fillCircle(s.x - dirX * 36, s.y + 14, 9);
-    g.fillCircle(s.x + dirX * 36, s.y + 6 - s.castGlow * 10, 9);
-    const cx2 = s.x + dirX * 42;
-    const cy2 = s.y + 22;
-    g.fillStyle(0x2a3a1a, 1);
-    g.fillRoundedRect(cx2 - 7, cy2 - 9, 14, 20, 3);
-    g.fillStyle(RAD_LIT, 0.5 + Math.abs(Math.sin(t / 90)) * 0.5);
-    g.fillRect(cx2 - 4, cy2 - 6, 8, 6);
-    g.lineStyle(1.5, 0x8a9a7a, 0.9);
-    g.lineBetween(cx2, cy2 + 11, cx2 + dirX * 10, cy2 + 22);
-
-    // Head: a full hood with a leaded visor, and two lights behind it.
-    const hy = s.y - 46;
-    g.fillStyle(0x2a3a1a, 1);
-    g.fillEllipse(s.x, hy, 40, 40);
-    g.fillStyle(0x0a1206, 1);
-    g.fillRoundedRect(s.x - 15 + dirX * 3, hy - 8, 30, 18, 6);
-    g.fillStyle(RAD, 0.14);
-    g.fillRoundedRect(s.x - 15 + dirX * 3, hy - 8, 30, 18, 6);
-    const eye = s.hurt ? 0xffffff : RAD_LIT;
-    for (const side of [-1, 1]) {
-      g.fillStyle(eye, 0.85 + s.castGlow * 0.15);
-      g.fillCircle(s.x + side * 8 + dirX * 5, hy + 1, 3.4 + s.castGlow);
-      g.fillStyle(RAD, 0.3);
-      g.fillCircle(s.x + side * 8 + dirX * 5, hy + 1, 8);
-    }
-    // Filter canister, breathing out something that glitters.
-    g.fillStyle(0x4a5a2a, 1);
-    g.fillCircle(s.x + dirX * 18, hy + 14, 8);
-    for (let i = 0; i < 3; i++) {
-      const ph = ((t + i * 400) % 1200) / 1200;
-      g.fillStyle(RAD, (1 - ph) * 0.3);
-      g.fillCircle(s.x + dirX * (24 + ph * 20), hy + 16 + ph * 8, 2 + ph * 3);
-    }
-    // The crown of the court: three trefoil blades, slowly turning.
-    for (let i = 0; i < 3; i++) {
-      const a = t / 1400 + (Math.PI * 2 * i) / 3;
-      g.fillStyle(HAZARD, 0.55 + s.castGlow * 0.3);
-      g.fillTriangle(
-        s.x + Math.cos(a) * 24, hy - 22 + Math.sin(a) * 8,
-        s.x + Math.cos(a + 0.5) * 40, hy - 26 + Math.sin(a + 0.5) * 12,
-        s.x + Math.cos(a - 0.5) * 40, hy - 26 + Math.sin(a - 0.5) * 12,
-      );
-    }
-    if (s.enraged) {
-      for (let i = 0; i < 3; i++) {
-        const rr = 60 + ((t / 5 + i * 50) % 140);
-        g.lineStyle(2, RAD, Math.max(0, 0.22 - (rr - 60) / 620));
-        g.strokeCircle(s.x, s.y, rr);
-      }
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.2);
-      g.fillCircle(s.x, s.y, 58);
-    }
-  },
+  look: { crest: 'halo', pattern: 'rings', aura: 'sparks', hands: 'orb', torsoR: 35, eyes: 3, mouth: 'grate' },
+  phaseStyles: [
+    { movement: 'hover', gimmick: 'none' },
+    { movement: 'orbit', gimmick: 'wards', tint: 'sick' },
+    { movement: 'anchor', gimmick: 'shrink', tint: 'sick', look: { crest: 'blades', pattern: 'static' } },
+  ],
 };

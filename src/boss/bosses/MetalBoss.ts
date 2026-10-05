@@ -178,7 +178,6 @@ export const METAL_BOSS: WorldBossDef = {
   colorLit: STEEL_LIT,
   colorDark: STEEL_DARK,
   accent: BRASS,
-  bodyR: 30,
 
   intro: ['One of me was always enough. Now count.'],
   banter: [
@@ -201,8 +200,6 @@ export const METAL_BOSS: WorldBossDef = {
       harass: ['h-snipe', 'h-flak', 'h-mines'],
       restMs: 1040,
       harassMs: 3050,
-      moveSpeed: 45,
-      holdDist: 270,
     },
     {
       name: 'The March',
@@ -215,8 +212,6 @@ export const METAL_BOSS: WorldBossDef = {
       harass: ['h-snipe', 'h-flak', 'h-mines', 'h-lane'],
       restMs: 890,
       harassMs: 2550,
-      moveSpeed: 55,
-      holdDist: 250,
     },
   ],
 
@@ -233,8 +228,6 @@ export const METAL_BOSS: WorldBossDef = {
       harass: ['h-mines', 'h-flak', 'h-snipe', 'h-rune'],
       restMs: 690,
       harassMs: 2050,
-      moveSpeed: 70,
-      holdDist: 230,
     },
   },
 
@@ -259,72 +252,10 @@ export const METAL_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.4);
-    g.fillEllipse(s.x, s.y + 48, 96, 17);
-
-    // The legion behind: two echo silhouettes, out of step on purpose.
-    for (const [off, alpha] of [[18, 0.35], [34, 0.18]] as const) {
-      const sway = Math.sin(t / 700 + off) * 2;
-      g.fillStyle(STEEL_DARK, alpha);
-      g.fillEllipse(s.x - off + sway, s.y + 6 - off * 0.3, 44, 54);
-      g.fillEllipse(s.x - off + sway, s.y - 30 - off * 0.3, 22, 20);
-    }
-
-    const dirX = Math.cos(s.facing);
-    // Tower shield on the off side — most of the silhouette.
-    const shX = s.x - dirX * 24;
-    g.fillStyle(STEEL_DARK, 1);
-    g.fillRoundedRect(shX - 14, s.y - 34, 28, 76, 8);
-    g.fillStyle(STEEL, 1);
-    g.fillRoundedRect(shX - 10, s.y - 30, 20, 68, 6);
-    g.fillStyle(BRASS, 0.85);
-    g.fillCircle(shX, s.y + 2, 5);
-    g.lineStyle(1.5, STEEL_LIT, 0.6);
-    g.lineBetween(shX - 10, s.y - 14, shX + 10, s.y - 14);
-    g.lineBetween(shX - 10, s.y + 18, shX + 10, s.y + 18);
-
-    // Cuirass torso.
-    g.fillStyle(STEEL_DARK, 1);
-    g.fillEllipse(s.x + dirX * 4, s.y + 2, 46, 52);
-    g.fillStyle(STEEL, 1);
-    g.fillEllipse(s.x + dirX * 2, s.y - 2, 36, 40);
-    g.fillStyle(STEEL_LIT, 0.4);
-    g.fillEllipse(s.x - 4, s.y - 12, 20, 14);
-
-    // Sword arm: a great sabre, raised with the cast.
-    const lift = s.castGlow * 30;
-    const swX = s.x + dirX * 30;
-    const swY = s.y - 6 - lift * 0.4;
-    g.lineStyle(5, STEEL_DARK, 1);
-    g.lineBetween(s.x + dirX * 12, s.y - 6, swX, swY);
-    g.lineStyle(4, STEEL_LIT, 1);
-    g.lineBetween(swX, swY, swX + dirX * 26, swY - 22 - lift);
-    g.lineStyle(2, 0xffffff, 0.6);
-    g.lineBetween(swX + dirX * 4, swY - 4, swX + dirX * 24, swY - 20 - lift);
-    g.fillStyle(BRASS, 1);
-    g.fillRect(swX - 4, swY - 4, 8, 8);
-
-    // Great helm with a brass plume.
-    const hy0 = s.y - 36;
-    g.fillStyle(STEEL_DARK, 1);
-    g.fillEllipse(s.x + dirX * 2, hy0, 26, 24);
-    g.fillStyle(STEEL, 1);
-    g.fillEllipse(s.x + dirX * 2, hy0 - 2, 20, 17);
-    // Visor slit.
-    const eye = s.hurt ? 0xffffff : s.enraged ? 0xff7a4a : BRASS;
-    g.fillStyle(eye, 0.95);
-    g.fillRect(s.x + dirX * 2 - 8, hy0 - 1, 16, 3);
-    // Plume, streaming with movement.
-    for (let i = 0; i < 4; i++) {
-      const wob = Math.sin(t / 200 + i) * 3;
-      g.fillStyle(i % 2 === 0 ? 0xcc3a3a : 0xa82a2a, 0.9);
-      g.fillEllipse(s.x - dirX * (6 + i * 7) + wob, hy0 - 16 - i * 2, 10, 6);
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.22);
-      g.fillCircle(s.x, s.y, 54);
-    }
-  },
+  look: { crest: 'crown', pattern: 'plates', aura: 'sparks', hands: 'gauntlet', torsoR: 37, mouth: 'grate' },
+  phaseStyles: [
+    { movement: 'stalk', gimmick: 'none' },
+    { movement: 'stalk', gimmick: 'stalkers' },
+    { movement: 'rush', gimmick: 'shrink', tint: 'hot', look: { crest: 'blades', arms: 4 } },
+  ],
 };

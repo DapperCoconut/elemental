@@ -237,7 +237,6 @@ export const CONQUEST_BOSS: WorldBossDef = {
   colorLit: WAR_LIT,
   colorDark: WAR_DARK,
   accent: GOLD,
-  bodyR: 33,
 
   intro: ['I lost one war in my life. I am wearing what won. Shall we discuss terms, or ground?'],
   banter: [
@@ -260,8 +259,6 @@ export const CONQUEST_BOSS: WorldBossDef = {
       harass: ['h-lane', 'h-flak', 'h-snipe'],
       restMs: 1050,
       harassMs: 3100,
-      moveSpeed: 48,
-      holdDist: 300,
     },
     {
       name: 'Total War',
@@ -274,8 +271,6 @@ export const CONQUEST_BOSS: WorldBossDef = {
       harass: ['h-lane', 'h-snipe', 'h-flak', 'h-mines'],
       restMs: 900,
       harassMs: 2600,
-      moveSpeed: 60,
-      holdDist: 270,
     },
   ],
 
@@ -292,8 +287,6 @@ export const CONQUEST_BOSS: WorldBossDef = {
       harass: ['h-lane', 'h-mines', 'h-snipe', 'h-flak'],
       restMs: 710,
       harassMs: 2100,
-      moveSpeed: 70,
-      holdDist: 250,
     },
   },
 
@@ -338,93 +331,10 @@ export const CONQUEST_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.42);
-    g.fillEllipse(s.x, s.y + 50, 106, 18);
-
-    const dirX = Math.cos(s.facing);
-    const breathe = Math.sin(t / 620) * 1.5;
-
-    // Plate: pauldrons wider than the wearer, a tabard, a war-belt.
-    g.fillStyle(0x4a4038, 1);
-    g.fillRoundedRect(s.x - 40, s.y - 26 + breathe, 80, 70, 12);
-    g.fillStyle(0x5e5248, 1);
-    g.fillRoundedRect(s.x - 33, s.y - 20 + breathe, 66, 58, 10);
-    for (const side of [-1, 1]) {
-      g.fillStyle(0x6a5c50, 1);
-      g.fillEllipse(s.x + side * 42, s.y - 14 + breathe, 30, 26);
-      g.fillStyle(GOLD, 0.5);
-      g.fillEllipse(s.x + side * 42, s.y - 20 + breathe, 22, 10);
-    }
-    // Tabard, in the colour it took from somebody.
-    g.fillStyle(WAR, 0.95);
-    g.fillRect(s.x - 13, s.y - 18 + breathe, 26, 60);
-    g.fillStyle(GOLD, 0.85);
-    g.fillCircle(s.x, s.y + 4 + breathe, 9);
-    g.fillStyle(WAR_DARK, 0.9);
-    g.fillCircle(s.x, s.y + 4 + breathe, 4);
-    g.fillStyle(0x3a2a1c, 1);
-    g.fillRect(s.x - 34, s.y + 30 + breathe, 68, 10);
-    g.fillStyle(GOLD, 0.8);
-    g.fillRect(s.x - 8, s.y + 29 + breathe, 16, 12);
-
-    // Hands: the standard in one, the sword grounded in the other.
-    const bx = s.x - dirX * 44;
-    g.lineStyle(4, 0x6a4a2a, 1);
-    g.lineBetween(bx, s.y + 40, bx - 4, s.y - 70);
-    g.fillStyle(GOLD, 1);
-    g.fillTriangle(bx - 8, s.y - 70, bx, s.y - 70, bx - 4, s.y - 84);
-    const wave = Math.sin(t / 200) * 5;
-    g.fillStyle(WAR, 0.95);
-    g.beginPath();
-    g.moveTo(bx - 4, s.y - 66);
-    g.lineTo(bx + 40, s.y - 58 + wave);
-    g.lineTo(bx + 30, s.y - 42);
-    g.lineTo(bx + 40, s.y - 26 + wave);
-    g.lineTo(bx - 4, s.y - 32);
-    g.closePath();
-    g.fillPath();
-    g.fillStyle(0x8a7a68, 1);
-    g.fillCircle(bx, s.y + 22, 8);
-
-    const sx = s.x + dirX * 44;
-    g.fillStyle(0x8a7a68, 1);
-    g.fillCircle(sx, s.y + 10 - s.castGlow * 12, 8);
-    g.lineStyle(6, 0xb8b2a4, 1);
-    g.lineBetween(sx, s.y + 14 - s.castGlow * 12, sx + dirX * 8, s.y + 54);
-    g.lineStyle(2, GOLD, 0.6 + s.castGlow * 0.4);
-    g.lineBetween(sx, s.y + 14 - s.castGlow * 12, sx + dirX * 8, s.y + 54);
-
-    // Helm: a full visor with a crest, and two coals behind the slit.
-    const hy = s.y - 48 + breathe;
-    g.fillStyle(0x5e5248, 1);
-    g.fillRoundedRect(s.x - 17, hy - 20, 34, 40, 9);
-    g.fillStyle(0x3a332c, 1);
-    g.fillRect(s.x - 17, hy - 4, 34, 8);
-    const eye = s.hurt ? 0xffffff : WAR_LIT;
-    g.fillStyle(eye, 0.9 + s.castGlow * 0.1);
-    g.fillCircle(s.x - 7 + dirX * 3, hy, 2.6 + s.castGlow);
-    g.fillCircle(s.x + 7 + dirX * 3, hy, 2.6 + s.castGlow);
-    // Breath through the visor slots when it is angry.
-    if (s.enraged) {
-      for (let i = 0; i < 3; i++) {
-        const ph = ((t + i * 400) % 1200) / 1200;
-        g.fillStyle(WAR_LIT, (1 - ph) * 0.18);
-        g.fillCircle(s.x + dirX * (16 + ph * 26), hy + 8, 3 + ph * 5);
-      }
-    }
-    // The crest: horsehair, taken from a horse that also lost.
-    g.fillStyle(WAR, 0.95);
-    for (let i = 0; i < 9; i++) {
-      const h = 20 - Math.abs(i - 4) * 2.5;
-      g.fillRect(s.x - 2, hy - 22 - h, 4, h);
-    }
-    g.fillStyle(GOLD, 0.9);
-    g.fillRect(s.x - 3, hy - 24, 6, 5);
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.2);
-      g.fillCircle(s.x, s.y, 60);
-    }
-  },
+  look: { crest: 'crown', pattern: 'plates', aura: 'chains', hands: 'blade', torsoR: 37, mouth: 'grate' },
+  phaseStyles: [
+    { movement: 'anchor', gimmick: 'none' },
+    { movement: 'stalk', gimmick: 'stalkers', tint: 'gold' },
+    { movement: 'rush', gimmick: 'shrink', tint: 'blood', look: { crest: 'blades', arms: 4 } },
+  ],
 };

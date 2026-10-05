@@ -170,7 +170,6 @@ export const TECHNOLOGY_BOSS: WorldBossDef = {
   colorLit: CHROME_LIT,
   colorDark: CHROME_DARK,
   accent: ALERT,
-  bodyR: 32,
 
   intro: ['One instance was never the plan. Loading the plan. The plan is instances.'],
   banter: [
@@ -193,8 +192,6 @@ export const TECHNOLOGY_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-lane', 'h-mines'],
       restMs: 1040,
       harassMs: 3050,
-      moveSpeed: 40,
-      holdDist: 290,
     },
     {
       name: 'Load Balancing',
@@ -207,8 +204,6 @@ export const TECHNOLOGY_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-lane', 'h-mines', 'h-orbs'],
       restMs: 890,
       harassMs: 2550,
-      moveSpeed: 50,
-      holdDist: 260,
     },
   ],
 
@@ -225,8 +220,6 @@ export const TECHNOLOGY_BOSS: WorldBossDef = {
       harass: ['h-lane', 'h-flak', 'h-orbs', 'h-rune'],
       restMs: 690,
       harassMs: 2050,
-      moveSpeed: 60,
-      holdDist: 240,
     },
   },
 
@@ -259,73 +252,10 @@ export const TECHNOLOGY_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.4);
-    g.fillEllipse(s.x, s.y + 50, 96, 16);
-
-    // Drone bits orbiting the monolith.
-    for (let i = 0; i < 4; i++) {
-      const a = t / 900 + (Math.PI * 2 * i) / 4;
-      const bx = s.x + Math.cos(a) * 52;
-      const by = s.y + Math.sin(a) * 34;
-      g.fillStyle(CHROME_DARK, 1);
-      g.fillRect(bx - 5, by - 3, 10, 6);
-      g.fillStyle(CHROME, 0.9);
-      g.fillCircle(bx, by, 1.8);
-    }
-
-    // The monolith: a standing slab, chamfered, humming.
-    g.fillStyle(0x0e1a16, 1);
-    g.fillRoundedRect(s.x - 26, s.y - 44, 52, 92, 6);
-    g.fillStyle(CHROME_DARK, 1);
-    g.fillRoundedRect(s.x - 21, s.y - 39, 42, 82, 5);
-    g.lineStyle(1, CHROME, 0.35);
-    g.strokeRoundedRect(s.x - 26, s.y - 44, 52, 92, 6);
-    // Status stack: blinking service lights.
-    for (let i = 0; i < 4; i++) {
-      const on = Math.floor(t / 260 + i * 0.7) % 3 !== 0;
-      g.fillStyle(on ? CHROME : 0x143028, on ? 0.9 : 0.5);
-      g.fillRect(s.x - 15, s.y + 8 + i * 8, 8, 4);
-      g.fillStyle(on ? CHROME_LIT : 0x143028, 0.7);
-      g.fillRect(s.x - 4, s.y + 8 + i * 8, 18, 4);
-    }
-    // Antenna, with a busy tip.
-    g.lineStyle(2, CHROME, 1);
-    g.lineBetween(s.x + 16, s.y - 44, s.x + 22, s.y - 62);
-    g.fillStyle(s.castGlow > 0.3 ? ALERT : CHROME_LIT, 0.9);
-    g.fillCircle(s.x + 22, s.y - 64, 2.5 + s.castGlow * 1.5);
-
-    // The face: a pixel display that composes expressions from squares.
-    const fx = s.x;
-    const fy = s.y - 22;
-    g.fillStyle(0x04100c, 1);
-    g.fillRoundedRect(fx - 16, fy - 12, 32, 24, 3);
-    const eye = s.hurt ? 0xffffff : s.enraged ? ALERT : CHROME_LIT;
-    const ex = Math.round(Math.cos(s.facing)) * 3;
-    // Eyes: 2x2 pixel clusters that track in whole pixels.
-    for (const side of [-1, 1]) {
-      for (let py = 0; py < 2; py++) {
-        for (let pxl = 0; pxl < 2; pxl++) {
-          g.fillStyle(eye, 0.95);
-          g.fillRect(fx + side * 8 + ex - 3 + pxl * 3, fy - 7 + py * 3, 2.4, 2.4);
-        }
-      }
-    }
-    // Mouth: a scrolling data row; flat bar when enraged.
-    if (s.enraged) {
-      g.fillStyle(ALERT, 0.9);
-      g.fillRect(fx - 9, fy + 5, 18, 3);
-    } else {
-      for (let i = 0; i < 5; i++) {
-        const on = Math.floor(t / 160 + i) % 2 === 0;
-        g.fillStyle(CHROME, on ? 0.85 : 0.25);
-        g.fillRect(fx - 9 + i * 4, fy + 5, 2.6, 3);
-      }
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.2);
-      g.fillCircle(s.x, s.y, 56);
-    }
-  },
+  look: { crest: 'antennae', pattern: 'grid', aura: 'glitch', hands: 'gauntlet', torsoR: 35, eyes: 3 },
+  phaseStyles: [
+    { movement: 'anchor', gimmick: 'none' },
+    { movement: 'hover', gimmick: 'stalkers' },
+    { movement: 'blink', gimmick: 'wards', tint: 'sick', look: { pattern: 'static', eyes: 1 } },
+  ],
 };

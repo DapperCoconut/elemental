@@ -126,7 +126,6 @@ export const CRYSTAL_BOSS: WorldBossDef = {
   colorLit: FACET_LIT,
   colorDark: FACET_DARK,
   accent: REFRACT,
-  bodyR: 30,
 
   intro: ['Light bends for me. You will too — the knees, at least.'],
   banter: [
@@ -208,81 +207,10 @@ export const CRYSTAL_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.35);
-    g.fillEllipse(s.x, s.y + 50, 110, 18);
-
-    // The throne: a fan of great shards behind the seated figure.
-    for (let i = 0; i < 5; i++) {
-      const a = -Math.PI / 2 + (i - 2) * 0.42;
-      const len = 56 - Math.abs(i - 2) * 10;
-      const bx = s.x + Math.cos(a) * 14;
-      const by = s.y + 16 + Math.sin(a) * 8;
-      g.fillStyle(i % 2 === 0 ? FACET_DARK : 0x24385c, 1);
-      g.fillTriangle(
-        bx - 9, by, bx + 9, by,
-        bx + Math.cos(a) * len, by + Math.sin(a) * len,
-      );
-      g.lineStyle(1, FACET, 0.5);
-      g.lineBetween(bx, by, bx + Math.cos(a) * len * 0.9, by + Math.sin(a) * len * 0.9);
-    }
-
-    // The seated figure: a diamond torso over a plinth.
-    g.fillStyle(FACET_DARK, 1);
-    g.fillRect(s.x - 26, s.y + 30, 52, 16); // plinth
-    g.fillStyle(FACET, 0.9);
-    g.fillTriangle(s.x - 20, s.y + 18, s.x + 20, s.y + 18, s.x, s.y - 22);
-    g.fillTriangle(s.x - 20, s.y + 18, s.x + 20, s.y + 18, s.x, s.y + 34);
-    g.fillStyle(FACET_LIT, 0.35);
-    g.fillTriangle(s.x - 12, s.y + 14, s.x, s.y + 14, s.x - 2, s.y - 10);
-    // The heart-light in the torso — pink refraction when casting.
-    g.fillStyle(s.castGlow > 0.2 ? REFRACT : FACET_LIT, 0.5 + s.castGlow * 0.5);
-    g.fillCircle(s.x, s.y + 8, 6 + s.castGlow * 3);
-
-    // Shard arms hovering unattached at the sides, angling at the player.
-    for (const side of [-1, 1]) {
-      const aa = s.facing + side * 0.75;
-      const hx = s.x + Math.cos(aa) * (44 + s.castGlow * 10);
-      const hy = s.y + Math.sin(aa) * 30;
-      g.fillStyle(FACET, 0.95);
-      g.fillTriangle(
-        hx + Math.cos(s.facing) * 12, hy + Math.sin(s.facing) * 12,
-        hx + Math.cos(s.facing + 2.5) * 7, hy + Math.sin(s.facing + 2.5) * 7,
-        hx + Math.cos(s.facing - 2.5) * 7, hy + Math.sin(s.facing - 2.5) * 7,
-      );
-      g.fillStyle(FACET_LIT, 0.5);
-      g.fillCircle(hx, hy, 2.5);
-    }
-
-    // Head: a floating prism above the torso, slowly turning.
-    const hy0 = s.y - 40 + Math.sin(t / 700) * 3;
-    const spin = t / 1100;
-    g.fillStyle(FACET_DARK, 1);
-    g.fillTriangle(
-      s.x + Math.cos(spin) * 14, hy0 + Math.sin(spin) * 6,
-      s.x + Math.cos(spin + 2.1) * 14, hy0 + Math.sin(spin + 2.1) * 6,
-      s.x + Math.cos(spin + 4.2) * 14, hy0 + Math.sin(spin + 4.2) * 6,
-    );
-    g.fillStyle(FACET, 0.9);
-    g.fillTriangle(
-      s.x + Math.cos(spin) * 10, hy0 - 4 + Math.sin(spin) * 4,
-      s.x + Math.cos(spin + 2.1) * 10, hy0 - 4 + Math.sin(spin + 2.1) * 4,
-      s.x + Math.cos(spin + 4.2) * 10, hy0 - 4 + Math.sin(spin + 4.2) * 4,
-    );
-    // The single refracted eye.
-    const eye = s.hurt ? 0xffffff : s.enraged ? REFRACT : FACET_LIT;
-    g.fillStyle(eye, 1);
-    g.fillCircle(s.x + Math.cos(s.facing) * 4, hy0 + Math.sin(s.facing) * 3, 4);
-    // Glints thrown off the crown.
-    for (let i = 0; i < 3; i++) {
-      const ga = spin * 2 + (Math.PI * 2 * i) / 3;
-      g.fillStyle(REFRACT, 0.6);
-      g.fillCircle(s.x + Math.cos(ga) * 22, hy0 - 6 + Math.sin(ga) * 8, 1.5);
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.25);
-      g.fillCircle(s.x, s.y, 55);
-    }
-  },
+  look: { crest: 'spires', pattern: 'facets', aura: 'sparks', hands: 'orb', torsoR: 36, eyes: 3 },
+  phaseStyles: [
+    { movement: 'anchor', gimmick: 'none' },
+    { movement: 'hover', gimmick: 'wards', tint: 'pale' },
+    { movement: 'orbit', gimmick: 'tremor', tint: 'gold', look: { crest: 'blades', hands: 'blade' } },
+  ],
 };

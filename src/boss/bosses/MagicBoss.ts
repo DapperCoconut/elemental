@@ -216,7 +216,6 @@ export const MAGIC_BOSS: WorldBossDef = {
   colorLit: ARCANE_LIT,
   colorDark: ARCANE_DARK,
   accent: RUNE,
-  bodyR: 28,
 
   intro: ['Every school. All at once. Do keep notes — there will be an assessment.'],
   banter: [
@@ -239,8 +238,6 @@ export const MAGIC_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-rune', 'h-flak'],
       restMs: 1040,
       harassMs: 3050,
-      moveSpeed: 55,
-      holdDist: 290,
     },
     {
       name: 'The Restricted Section',
@@ -253,8 +250,6 @@ export const MAGIC_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-rune', 'h-lane', 'h-flak'],
       restMs: 890,
       harassMs: 2550,
-      moveSpeed: 65,
-      holdDist: 260,
     },
   ],
 
@@ -271,8 +266,6 @@ export const MAGIC_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-rune', 'h-lane', 'h-flak'],
       restMs: 690,
       harassMs: 2050,
-      moveSpeed: 80,
-      holdDist: 240,
     },
   },
 
@@ -305,78 +298,10 @@ export const MAGIC_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.35);
-    g.fillEllipse(s.x, s.y + 44, 84, 15);
-
-    // The robe: deep arcane, hem dissolving into drifting glyphs.
-    g.fillStyle(ARCANE_DARK, 1);
-    g.fillTriangle(s.x - 26, s.y + 42, s.x + 26, s.y + 42, s.x, s.y - 28);
-    g.fillStyle(0x2e1450, 1);
-    g.fillTriangle(s.x - 18, s.y + 38, s.x + 18, s.y + 38, s.x, s.y - 20);
-    for (let i = 0; i < 3; i++) {
-      const ph = ((t + i * 500) % 1500) / 1500;
-      g.lineStyle(1.2, RUNE, (1 - ph) * 0.6);
-      const gx = s.x - 14 + i * 14;
-      const gy = s.y + 40 - ph * 24;
-      g.lineBetween(gx - 3, gy, gx + 3, gy);
-      g.lineBetween(gx, gy - 3, gx, gy + 3);
-    }
-
-    // The staff: taller than he is, orb burning with the cast.
-    const dirX = Math.cos(s.facing);
-    const sx = s.x + dirX * 24;
-    g.lineStyle(3.5, 0x4a3018, 1);
-    g.lineBetween(sx, s.y + 40, sx + dirX * 4, s.y - 52);
-    g.lineStyle(2, ARCANE, 0.8);
-    g.beginPath();
-    g.arc(sx + dirX * 4, s.y - 58, 7, 0.6, Math.PI * 2 - 0.6, false);
-    g.strokePath();
-    g.fillStyle(s.castGlow > 0.2 ? RUNE : ARCANE_LIT, 0.6 + s.castGlow * 0.4);
-    g.fillCircle(sx + dirX * 4, s.y - 58, 4 + s.castGlow * 2.5);
-
-    // Off hand: an open palm with a page hovering over it.
-    const px = s.x - dirX * 26;
-    g.fillStyle(ARCANE_DARK, 1);
-    g.fillCircle(px, s.y - 2, 6);
-    g.fillStyle(0xf2ead6, 0.9);
-    const flutter = Math.sin(t / 280) * 0.14;
-    g.save();
-    g.translateCanvas(px, s.y - 16 + Math.sin(t / 340) * 3);
-    g.rotateCanvas(flutter);
-    g.fillRect(-5, -7, 10, 14);
-    g.restore();
-
-    // The beard: a cascade of tiny stars.
-    const hy0 = s.y - 32;
-    for (let i = 0; i < 6; i++) {
-      const bx = s.x - 6 + (i % 3) * 6;
-      const by = hy0 + 12 + Math.floor(i / 3) * 7 + Math.sin(t / 420 + i) * 1.5;
-      g.fillStyle(i % 2 === 0 ? ARCANE_LIT : 0xffffff, 0.8);
-      g.fillCircle(bx, by, 1.6);
-    }
-
-    // Head + the hat: tall, bent at the tip, banded with runes.
-    g.fillStyle(0xe8d6c8, 0.95);
-    g.fillEllipse(s.x, hy0, 18, 16);
-    const eye = s.hurt ? 0xffffff : s.enraged ? RUNE : ARCANE_DARK;
-    for (const side of [-1, 1]) {
-      g.fillStyle(eye, 1);
-      g.fillCircle(s.x + side * 4 + dirX * 2, hy0 - 1, 1.8);
-    }
-    g.fillStyle(ARCANE_DARK, 1);
-    g.fillTriangle(s.x - 16, hy0 - 8, s.x + 16, hy0 - 8, s.x + 4, hy0 - 44);
-    g.fillTriangle(s.x + 2, hy0 - 38, s.x + 6, hy0 - 44, s.x + 16, hy0 - 36);
-    g.fillStyle(ARCANE, 1);
-    g.fillRect(s.x - 15, hy0 - 12, 30, 4);
-    for (let i = 0; i < 3; i++) {
-      g.fillStyle(RUNE, 0.7 + Math.sin(t / 300 + i * 2) * 0.3);
-      g.fillCircle(s.x - 8 + i * 8, hy0 - 10, 1.4);
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.2);
-      g.fillCircle(s.x, s.y, 50);
-    }
-  },
+  look: { crest: 'stack', pattern: 'runes', aura: 'sparks', hands: 'orb', torsoR: 34, mouth: 'line' },
+  phaseStyles: [
+    { movement: 'hover', gimmick: 'none' },
+    { movement: 'blink', gimmick: 'wards', tint: 'gold' },
+    { movement: 'blink', gimmick: 'tremor', tint: 'void', look: { crest: 'halo', arms: 4 } },
+  ],
 };

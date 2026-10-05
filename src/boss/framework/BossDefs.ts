@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
-import type { BossToolkit } from './BossToolkit';
+import type { BossPalette, BossToolkit } from './BossToolkit';
+import type { BossGesture, BossHold, BossLook } from './BossRig';
 
 /**
  * World-boss definitions.
@@ -9,7 +10,8 @@ import type { BossToolkit } from './BossToolkit';
  * of him is not a plan. Instead the machinery he proved out (telegraphed move
  * cycle, independent harass track, phase machine, npc-slot body) lives once in
  * `WorldBossKit`, and each boss is a `WorldBossDef`: numbers, lines, a palette,
- * a hand-drawn body, and two or three fully bespoke *signature* moves.
+ * a `BossLook` the shared rig wears, and two or three fully bespoke *signature*
+ * moves.
  *
  * Signatures are the part of a boss that is genuinely its own. They are kept on
  * the def (not in a global registry) so The Amalgam — the finale that fights
@@ -79,6 +81,20 @@ export interface LibTuning {
 export interface SignatureMove {
   /** How long the boss is considered busy after `cast`. */
   durationMs: number;
+  /**
+   * Wind-up before `cast` fires, overriding the framework's default beat. The
+   * Sovereign plants, the rig charges and the move's name goes up over its head
+   * for this long — nothing a Sovereign throws arrives unannounced.
+   */
+  windupMs?: number;
+  /** What the rig does on release. Defaults to a two-handed thrust. */
+  gesture?: BossGesture;
+  /** A pose held for the duration instead of a one-shot gesture. */
+  hold?: BossHold;
+  /** The move drives the body itself — the movement AI stands down while it runs. */
+  locksBody?: boolean;
+  /** Shown over the Sovereign's head during the wind-up. */
+  tell?: string;
   cast(time: number): void;
   update?(time: number, dt: number): void;
   /** Under the fighters — telegraphs and floor. */
@@ -93,7 +109,11 @@ export type SignatureFactory = (tk: BossToolkit) => SignatureMove;
 
 // ── Body drawing ─────────────────────────────────────────────────────
 
-/** Everything a def's `drawBody` gets to pose with. */
+/**
+ * Everything a def's optional `drawDecor` gets to work with. The rig has
+ * already painted the body, hands, face and crest at this point; decor is the
+ * flourish that only this Sovereign has.
+ */
 export interface BossBodyState {
   x: number;
   y: number;
@@ -109,6 +129,63 @@ export interface BossBodyState {
   facing: number;
   /** 0–1, rises while a move is being cast. */
   castGlow: number;
+  /** The body radius the rig drew with. */
+  radius: number;
+  /** This phase's palette — already tinted by the phase style. */
+  palette: BossPalette;
+  /** This phase's resolved look. */
+  look: BossLook;
+  /** Live hand positions, index 0–1 (0–3 on a four-armed Sovereign). */
+  hands: { x: number; y: number }[];
+}
+
+// ── Phase styling ────────────────────────────────────────────────────
+
+/**
+ * How the body carries itself for a phase. A Sovereign that hovers in phase one
+ * and stalks you in phase two is a different fight in the same arena, which is
+ * most of what makes a phase feel like a phase.
+ */
+export type BossMovement =
+  /** Rooted. It does not need to come to you. */
+  | 'anchor'
+  /** Slow float, holding its preferred range. */
+  | 'hover'
+  /** Walks a wide arc, closing whenever you give it room. */
+  | 'stalk'
+  /** Fast circling at a fixed radius — always moving, never closing. */
+  | 'orbit'
+  /** Closes to arm's reach, then kicks away again. */
+  | 'rush'
+  /** Vanishes and reappears elsewhere on a clock. */
+  | 'blink';
+
+/**
+ * A standing arena rule for one phase, over and above the move cycle. Each is
+ * implemented once in WorldBossKit, so any Sovereign can be handed one.
+ */
+export type BossGimmick =
+  | 'none'
+  /** The room goes dark; you see a radius around yourself and nothing else. */
+  | 'gloom'
+  /** A burning rim closes inward, taking the arena a metre at a time. */
+  | 'shrink'
+  /** A steady trickle of thralls, never more than a few at once. */
+  | 'stalkers'
+  /** The floor heaves on a clock — a shockwave from a corner, every few seconds. */
+  | 'tremor'
+  /** Three wards orbit the body and blunt its damage. Run through one to pop it. */
+  | 'wards';
+
+/** A palette shift applied over the def's own colours for one phase. */
+export type BossTint = 'none' | 'hot' | 'cold' | 'pale' | 'void' | 'sick' | 'gold' | 'blood';
+
+export interface BossPhaseStyle {
+  movement?: BossMovement;
+  gimmick?: BossGimmick;
+  /** Layered over the def's look for this phase — a crest that grows teeth. */
+  look?: Partial<BossLook>;
+  tint?: BossTint;
 }
 
 // ── The def ──────────────────────────────────────────────────────────
@@ -126,12 +203,18 @@ export interface WorldBossPhase {
   /** Defaults to restMs × 0.55 — under half health the beat tightens. */
   restEnragedMs?: number;
   harassMs: number;
-  /** Body drift speed in px/s. 0 (default) roots the boss in a hover. */
+  /**
+   * Legacy drift speed in px/s, honoured only when the phase has no `movement`
+   * style. Movement profiles supersede it — a Sovereign's footwork is now part
+   * of its phase, not a single number.
+   */
   moveSpeed?: number;
-  /** Distance the body tries to keep from the player while drifting. */
+  /** Preferred stand-off distance, same legacy caveat as `moveSpeed`. */
   holdDist?: number;
-  /** Hitbox radius override for this phase. */
+  /** Hitbox radius override for this phase. Defaults to the phase look's `torsoR`. */
   bodyR?: number;
+  /** Overrides `def.phaseStyles[idx]` for this one phase. */
+  style?: BossPhaseStyle;
 }
 
 export interface WorldBossHard {
@@ -163,7 +246,10 @@ export interface WorldBossDef {
   colorDark: number;
   accent: number;
 
-  /** Hitbox radius. Defaults to 26 — a touch over a normal fighter's 22. */
+  /**
+   * Hitbox radius override. Normally left alone: the hitbox is derived from the
+   * look's `torsoR` so that what you can hit is exactly what you can see.
+   */
   bodyR?: number;
   /** One knob over every point of damage this fight deals. Default 1. */
   damageMult?: number;
@@ -185,7 +271,22 @@ export interface WorldBossDef {
   tuning?: Partial<Record<LibMoveId, LibTuning>>;
   signatures: Record<string, SignatureFactory>;
 
-  drawBody(g: Phaser.GameObjects.Graphics, s: BossBodyState): void;
+  /**
+   * The Sovereign's silhouette, as data. The shared rig — round body, floating
+   * hands, tracking eyes, exactly the player's own build — paints it, so a def
+   * no longer owns a hundred lines of drawing that drift out of sync with the
+   * fight it belongs to.
+   */
+  look: BossLook;
+  /**
+   * Index-aligned with `phases` (the hard-mode extra phase takes the slot after
+   * the last). Missing entries fall back to an escalation derived from the
+   * phase index.
+   */
+  phaseStyles?: BossPhaseStyle[];
+
+  /** Optional flourish painted over the rig — the one thing only this Sovereign has. */
+  drawDecor?(g: Phaser.GameObjects.Graphics, s: BossBodyState): void;
   /** Optional bespoke floor, painted once under the whole fight. */
   drawArena?(g: Phaser.GameObjects.Graphics, W: number, H: number): void;
 }

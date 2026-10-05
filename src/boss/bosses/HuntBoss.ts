@@ -166,7 +166,6 @@ export const HUNT_BOSS: WorldBossDef = {
   colorLit: PELT_LIT,
   colorDark: PELT_DARK,
   accent: BONE,
-  bodyR: 28,
 
   intro: ['Something hunts the hunters. Introductions are unnecessary — I know you already.'],
   banter: [
@@ -189,8 +188,6 @@ export const HUNT_BOSS: WorldBossDef = {
       harass: ['h-snipe', 'h-flak', 'h-mines'],
       restMs: 1050,
       harassMs: 3100,
-      moveSpeed: 120,
-      holdDist: 300,
     },
     {
       name: 'Red In Tooth',
@@ -203,8 +200,6 @@ export const HUNT_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-mines', 'h-snipe', 'h-lane'],
       restMs: 900,
       harassMs: 2600,
-      moveSpeed: 140,
-      holdDist: 260,
     },
   ],
 
@@ -221,8 +216,6 @@ export const HUNT_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-mines', 'h-lane', 'h-orbs'],
       restMs: 700,
       harassMs: 2150,
-      moveSpeed: 160,
-      holdDist: 240,
     },
   },
 
@@ -254,83 +247,10 @@ export const HUNT_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    const dirX = Math.cos(s.facing);
-    const lean = s.castGlow * 8;
-    g.fillStyle(0x000000, 0.4);
-    g.fillEllipse(s.x, s.y + 40, 104, 16);
-
-    // Haunches and tail — the low, coiled silhouette of a runner at rest.
-    g.fillStyle(PELT_DARK, 1);
-    g.fillEllipse(s.x - dirX * 24, s.y + 16, 52, 38);
-    const tailWag = Math.sin(t / 300) * 8;
-    g.lineStyle(6, PELT_DARK, 1);
-    g.lineBetween(s.x - dirX * 44, s.y + 12, s.x - dirX * 66, s.y + 2 + tailWag);
-    // Chest and shoulders, leaning toward the player when casting.
-    g.fillStyle(PELT, 1);
-    g.fillEllipse(s.x + dirX * (8 + lean), s.y + 4, 54, 42);
-    g.fillStyle(PELT_LIT, 0.3);
-    g.fillEllipse(s.x + dirX * (8 + lean), s.y - 8, 38, 18);
-    // Forelegs planted, claws out.
-    for (const side of [-1, 1]) {
-      const lx = s.x + dirX * (22 + lean) + side * 14;
-      g.lineStyle(6, PELT_DARK, 1);
-      g.lineBetween(lx, s.y + 14, lx + dirX * 4, s.y + 38);
-      g.fillStyle(BONE, 0.9);
-      for (let c = 0; c < 3; c++) {
-        g.fillTriangle(
-          lx + dirX * 4 - 4 + c * 4, s.y + 38,
-          lx + dirX * 4 - 2 + c * 4, s.y + 38,
-          lx + dirX * 4 - 3 + c * 4 + dirX * 3, s.y + 44,
-        );
-      }
-    }
-
-    // The head: a wolfish skull-face under swept antlers.
-    const hx = s.x + dirX * (34 + lean);
-    const hy0 = s.y - 22;
-    g.fillStyle(PELT_DARK, 1);
-    g.fillEllipse(hx, hy0, 34, 26);
-    // Muzzle, toward the player.
-    g.fillStyle(PELT, 1);
-    g.fillTriangle(hx, hy0 - 8, hx, hy0 + 10, hx + dirX * 22, hy0 + 4);
-    // Bared teeth when enraged.
-    if (s.enraged || s.castGlow > 0.4) {
-      g.fillStyle(BONE, 0.95);
-      for (let c = 0; c < 3; c++) {
-        g.fillTriangle(
-          hx + dirX * (8 + c * 5), hy0 + 5,
-          hx + dirX * (11 + c * 5), hy0 + 5,
-          hx + dirX * (9.5 + c * 5), hy0 + 10,
-        );
-      }
-    }
-    // Ears pinned back.
-    for (const side of [-1, 1]) {
-      g.fillStyle(PELT_DARK, 1);
-      g.fillTriangle(
-        hx - dirX * 8, hy0 - 8 + side * 3,
-        hx - dirX * 4, hy0 - 12 + side * 2,
-        hx - dirX * 20, hy0 - 16 + side * 5,
-      );
-    }
-    // Antlers: bone crowns swept back off the skull.
-    for (const side of [-1, 1]) {
-      g.lineStyle(3.5, BONE, 0.95);
-      const ax = hx - dirX * 6;
-      g.lineBetween(ax, hy0 - 10, ax - dirX * 12 + side * 4, hy0 - 26);
-      g.lineBetween(ax - dirX * 12 + side * 4, hy0 - 26, ax - dirX * 20 + side * 10, hy0 - 32);
-      g.lineBetween(ax - dirX * 10 + side * 2, hy0 - 22, ax - dirX * 4 + side * 8, hy0 - 30);
-    }
-    // Eyes: hunter's lamps.
-    const eye = s.hurt ? 0xffffff : s.enraged ? 0xff5030 : PELT_LIT;
-    g.fillStyle(eye, 1);
-    g.fillEllipse(hx + dirX * 2, hy0 - 4, 6, 4);
-    g.fillEllipse(hx - dirX * 8, hy0 - 5, 5, 3.5);
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.22);
-      g.fillCircle(s.x, s.y, 56);
-    }
-  },
+  look: { crest: 'horns', pattern: 'scales', aura: 'dust', hands: 'claw', torsoR: 33, mouth: 'grin' },
+  phaseStyles: [
+    { movement: 'stalk', gimmick: 'none' },
+    { movement: 'rush', gimmick: 'stalkers' },
+    { movement: 'rush', gimmick: 'gloom', tint: 'blood', look: { crest: 'mane', eyes: 3 } },
+  ],
 };

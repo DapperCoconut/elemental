@@ -227,7 +227,6 @@ export const PSYCHIC_BOSS: WorldBossDef = {
   colorLit: MIND_LIT,
   colorDark: MIND_DARK,
   accent: NERVE,
-  bodyR: 30,
 
   intro: ['One of us is imagining the other. Care to check? I already have. Twice.'],
   banter: [
@@ -250,8 +249,6 @@ export const PSYCHIC_BOSS: WorldBossDef = {
       harass: ['h-rune', 'h-orbs', 'h-flak'],
       restMs: 1040,
       harassMs: 3100,
-      moveSpeed: 56,
-      holdDist: 300,
     },
     {
       name: 'The Broadcast',
@@ -264,8 +261,6 @@ export const PSYCHIC_BOSS: WorldBossDef = {
       harass: ['h-rune', 'h-orbs', 'h-lane', 'h-flak'],
       restMs: 890,
       harassMs: 2550,
-      moveSpeed: 68,
-      holdDist: 275,
     },
   ],
 
@@ -282,8 +277,6 @@ export const PSYCHIC_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-rune', 'h-lane', 'h-flak'],
       restMs: 700,
       harassMs: 2100,
-      moveSpeed: 78,
-      holdDist: 255,
     },
   },
 
@@ -319,79 +312,10 @@ export const PSYCHIC_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.35);
-    g.fillEllipse(s.x, s.y + 48, 92, 16);
-
-    const dirX = Math.cos(s.facing);
-    const think = Math.sin(t / 500) * 2;
-
-    // A small body carrying an enormous head, which is the entire joke.
-    g.fillStyle(MIND_DARK, 1);
-    g.fillRoundedRect(s.x - 17, s.y + 4, 34, 44, 9);
-    g.fillStyle(0x3a2058, 1);
-    g.fillRoundedRect(s.x - 13, s.y + 8, 26, 36, 7);
-    // Frail little arms, which it barely uses.
-    g.lineStyle(4, 0x3a2058, 1);
-    g.lineBetween(s.x - 15, s.y + 14, s.x - 30 - s.castGlow * 6, s.y + 30);
-    g.lineBetween(s.x + 15, s.y + 14, s.x + 30 + s.castGlow * 6, s.y + 30);
-    g.fillStyle(0x8a6ab8, 1);
-    g.fillCircle(s.x - 31 - s.castGlow * 6, s.y + 32, 5);
-    g.fillCircle(s.x + 31 + s.castGlow * 6, s.y + 32, 5);
-
-    // The head: exposed, folded, faintly luminous, and always working.
-    const hy = s.y - 26 + think;
-    g.fillStyle(MIND_DARK, 1);
-    g.fillEllipse(s.x, hy, 84, 74);
-    g.fillStyle(MIND, 0.9);
-    g.fillEllipse(s.x, hy, 76, 66);
-    // Folds, drawn as nested arcs so it reads as a brain and not a balloon.
-    g.lineStyle(3, MIND_LIT, 0.55);
-    for (let i = 0; i < 6; i++) {
-      const a0 = (Math.PI * 2 * i) / 6 + t / 3000;
-      g.beginPath();
-      g.arc(s.x + Math.cos(a0) * 22, hy + Math.sin(a0) * 18, 16, a0, a0 + Math.PI * 1.5, false);
-      g.strokePath();
-    }
-    g.lineStyle(2, MIND_DARK, 0.6);
-    g.lineBetween(s.x, hy - 34, s.x, hy + 32);
-    // Synapses. They go faster when it is about to do something.
-    for (let i = 0; i < 8; i++) {
-      const a0 = t / (240 - s.castGlow * 120) + i * 0.8;
-      const rr = 20 + ((i * 7) % 22);
-      g.fillStyle(NERVE, 0.35 + Math.sin(t / 70 + i) * 0.3 + s.castGlow * 0.3);
-      g.fillCircle(s.x + Math.cos(a0) * rr, hy + Math.sin(a0) * rr * 0.85, 2.5);
-    }
-
-    // The eyes: three of them, and the third is the one that is looking at you.
-    const eye = s.hurt ? 0xffffff : NERVE;
-    for (const side of [-1, 1]) {
-      g.fillStyle(0xf0e4ff, 0.9);
-      g.fillEllipse(s.x + side * 18 + dirX * 3, hy + 20, 15, 11);
-      g.fillStyle(MIND_DARK, 1);
-      g.fillCircle(s.x + side * 18 + dirX * 5, hy + 20, 4.5);
-      g.fillStyle(eye, 0.8);
-      g.fillCircle(s.x + side * 18 + dirX * 5, hy + 20, 2);
-    }
-    const blink = Math.sin(t / 1700) > 0.9 ? 0.15 : 1;
-    g.fillStyle(0xf0e4ff, 0.95 * blink);
-    g.fillEllipse(s.x + dirX * 3, hy - 6, 22, 16 * blink);
-    g.fillStyle(MIND_DARK, blink);
-    g.fillCircle(s.x + dirX * 6, hy - 6, 7 * blink);
-    g.fillStyle(eye, 0.9 * blink);
-    g.fillCircle(s.x + dirX * 6, hy - 6, 3.4 * blink + s.castGlow);
-    if (s.enraged) {
-      // It has stopped keeping its thinking to itself.
-      for (let i = 0; i < 3; i++) {
-        const r = 70 + ((t / 6 + i * 40) % 120);
-        g.lineStyle(2, MIND_LIT, Math.max(0, 0.25 - (r - 70) / 480));
-        g.strokeCircle(s.x, hy, r);
-      }
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.2);
-      g.fillCircle(s.x, s.y, 62);
-    }
-  },
+  look: { crest: 'antennae', pattern: 'rings', aura: 'glitch', hands: 'orb', torsoR: 36, eyes: 3 },
+  phaseStyles: [
+    { movement: 'anchor', gimmick: 'none' },
+    { movement: 'blink', gimmick: 'gloom', tint: 'void' },
+    { movement: 'blink', gimmick: 'wards', tint: 'sick', look: { crest: 'tendrils', eyes: 1 } },
+  ],
 };

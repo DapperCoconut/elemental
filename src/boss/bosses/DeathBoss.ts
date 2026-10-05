@@ -234,7 +234,6 @@ export const DEATH_BOSS: WorldBossDef = {
   colorLit: GRAVE_LIT,
   colorDark: GRAVE_DARK,
   accent: BONE,
-  bodyR: 28,
 
   intro: ['I buried the Sovereigns myself. I kept the measurements. Yours took no time at all.'],
   banter: [
@@ -257,8 +256,6 @@ export const DEATH_BOSS: WorldBossDef = {
       harass: ['h-rune', 'h-orbs', 'h-snipe'],
       restMs: 1080,
       harassMs: 3150,
-      moveSpeed: 46,
-      holdDist: 300,
     },
     {
       name: 'The Interment',
@@ -271,8 +268,6 @@ export const DEATH_BOSS: WorldBossDef = {
       harass: ['h-rune', 'h-orbs', 'h-lane', 'h-snipe'],
       restMs: 920,
       harassMs: 2600,
-      moveSpeed: 56,
-      holdDist: 275,
     },
   ],
 
@@ -289,8 +284,6 @@ export const DEATH_BOSS: WorldBossDef = {
       harass: ['h-rune', 'h-orbs', 'h-lane', 'h-mines'],
       restMs: 720,
       harassMs: 2150,
-      moveSpeed: 66,
-      holdDist: 255,
     },
   },
 
@@ -323,95 +316,10 @@ export const DEATH_BOSS: WorldBossDef = {
     g.fillRect(W / 2 - 82, 96, 164, 12);
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.4);
-    g.fillEllipse(s.x, s.y + 48, 86, 16);
-
-    const dirX = Math.cos(s.facing);
-    const sway = Math.sin(t / 900) * 2;
-
-    // A very tall coat that reaches the ground and keeps going.
-    g.fillStyle(GRAVE_DARK, 1);
-    g.beginPath();
-    g.moveTo(s.x - 22 + sway, s.y - 26);
-    g.lineTo(s.x + 22 + sway, s.y - 26);
-    g.lineTo(s.x + 32, s.y + 48);
-    g.lineTo(s.x - 32, s.y + 48);
-    g.closePath();
-    g.fillPath();
-    g.fillStyle(GRAVE, 0.55);
-    g.beginPath();
-    g.moveTo(s.x - 8 + sway, s.y - 26);
-    g.lineTo(s.x + 8 + sway, s.y - 26);
-    g.lineTo(s.x + 12, s.y + 46);
-    g.lineTo(s.x - 12, s.y + 46);
-    g.closePath();
-    g.fillPath();
-    // The hem never quite settles.
-    for (let i = 0; i < 6; i++) {
-      const ph = ((t + i * 300) % 1800) / 1800;
-      g.fillStyle(GRAVE, (1 - ph) * 0.2);
-      g.fillCircle(s.x - 30 + i * 12, s.y + 46 + ph * 8, 4);
-    }
-
-    // Hands: the shovel, and the lantern with the pale flame in it.
-    const shx = s.x - dirX * 30;
-    g.fillStyle(BONE, 0.95);
-    g.fillCircle(shx, s.y + 8, 6);
-    g.lineStyle(4, 0x4a3420, 1);
-    g.lineBetween(shx, s.y + 2, shx - dirX * 6, s.y + 52);
-    g.fillStyle(0x8a8f96, 1);
-    g.fillTriangle(shx - dirX * 6 - 9, s.y + 46, shx - dirX * 6 + 9, s.y + 46, shx - dirX * 6, s.y + 62);
-
-    const lx = s.x + dirX * 30;
-    const ly = s.y + 4 - s.castGlow * 8;
-    g.fillStyle(BONE, 0.95);
-    g.fillCircle(lx, ly - 8, 6);
-    g.lineStyle(2, 0x8a8f96, 1);
-    g.lineBetween(lx, ly - 6, lx, ly + 6);
-    g.fillStyle(0x2a2438, 1);
-    g.fillRoundedRect(lx - 9, ly + 6, 18, 22, 4);
-    const flame = 0.6 + Math.sin(t / 160) * 0.2 + s.castGlow * 0.4;
-    g.fillStyle(GRAVE_LIT, flame);
-    g.fillCircle(lx, ly + 17, 5 + s.castGlow * 3);
-    g.fillStyle(0xffffff, flame * 0.5);
-    g.fillCircle(lx, ly + 17, 2);
-
-    // Head: a skull under a very old top hat, and the eyes are the lantern's.
-    const hy = s.y - 44;
-    g.fillStyle(BONE, 0.95);
-    g.fillEllipse(s.x + sway, hy, 26, 28);
-    g.fillStyle(0xb8b2a0, 0.8);
-    g.fillEllipse(s.x + sway, hy + 10, 18, 10);
-    // Jaw line.
-    g.lineStyle(1.5, 0x9a9484, 0.9);
-    g.lineBetween(s.x - 9 + sway, hy + 8, s.x + 9 + sway, hy + 8);
-    // Sockets.
-    const eye = s.hurt ? 0xffffff : GRAVE_LIT;
-    for (const side of [-1, 1]) {
-      g.fillStyle(GRAVE_DARK, 1);
-      g.fillEllipse(s.x + side * 7 + sway, hy - 3, 9, 10);
-      g.fillStyle(eye, 0.85 + s.castGlow * 0.15);
-      g.fillCircle(s.x + side * 7 + dirX * 2 + sway, hy - 2, 2.6 + s.castGlow);
-    }
-    // The hat, with the mourning band.
-    g.fillStyle(0x0e0a16, 1);
-    g.fillEllipse(s.x + sway, hy - 15, 42, 9);
-    g.fillRect(s.x - 14 + sway, hy - 44, 28, 30);
-    g.fillStyle(GRAVE, 0.7);
-    g.fillRect(s.x - 14 + sway, hy - 22, 28, 5);
-    if (s.enraged) {
-      // When it quickens, the parish arrives to watch.
-      for (let i = 0; i < 3; i++) {
-        const a = t / 800 + (i * Math.PI * 2) / 3;
-        g.fillStyle(GRAVE_LIT, 0.25);
-        g.fillCircle(s.x + Math.cos(a) * 52, s.y + Math.sin(a) * 20 - 10, 6);
-      }
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.2);
-      g.fillCircle(s.x, s.y, 52);
-    }
-  },
+  look: { crest: 'veil', pattern: 'runes', aura: 'smoke', hands: 'wisp', torsoR: 35 },
+  phaseStyles: [
+    { movement: 'hover', gimmick: 'none' },
+    { movement: 'blink', gimmick: 'gloom', tint: 'void' },
+    { movement: 'anchor', gimmick: 'stalkers', tint: 'pale', look: { crest: 'halo', eyes: 3 } },
+  ],
 };

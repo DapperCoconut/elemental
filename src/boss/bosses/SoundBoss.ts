@@ -149,7 +149,6 @@ export const SOUND_BOSS: WorldBossDef = {
   colorLit: ROSE_LIT,
   colorDark: ROSE_DARK,
   accent: CHIME,
-  bodyR: 28,
 
   intro: ['Everything ends on a note. Yours is in this programme. Near the back.'],
   banter: [
@@ -172,8 +171,6 @@ export const SOUND_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-lane', 'h-orbs'],
       restMs: 1050,
       harassMs: 3100,
-      moveSpeed: 60,
-      holdDist: 280,
     },
     {
       name: 'The Movement',
@@ -186,8 +183,6 @@ export const SOUND_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-orbs', 'h-lane', 'h-snipe'],
       restMs: 900,
       harassMs: 2600,
-      moveSpeed: 75,
-      holdDist: 250,
     },
   ],
 
@@ -204,8 +199,6 @@ export const SOUND_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-flak', 'h-lane', 'h-rune'],
       restMs: 700,
       harassMs: 2100,
-      moveSpeed: 90,
-      holdDist: 230,
     },
   },
 
@@ -233,72 +226,10 @@ export const SOUND_BOSS: WorldBossDef = {
     g.fillEllipse(W / 2, 96, W * 0.9, 70);
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.35);
-    g.fillEllipse(s.x, s.y + 44, 84, 15);
-
-    // The coat: long tails, flaring with the tempo.
-    const flare = Math.sin(t / 340) * 3 + s.castGlow * 6;
-    g.fillStyle(ROSE_DARK, 1);
-    g.fillTriangle(s.x - 24 - flare, s.y + 42, s.x + 24 + flare, s.y + 42, s.x, s.y - 26);
-    g.fillStyle(0x4a1038, 1);
-    g.fillTriangle(s.x - 16, s.y + 36, s.x + 16, s.y + 36, s.x, s.y - 20);
-    // Shirt and buttons.
-    g.fillStyle(0xf2ead6, 0.95);
-    g.fillTriangle(s.x - 6, s.y - 18, s.x + 6, s.y - 18, s.x, s.y + 4);
-    for (let i = 0; i < 3; i++) {
-      g.fillStyle(ROSE_DARK, 1);
-      g.fillCircle(s.x, s.y - 12 + i * 7, 1.3);
-    }
-
-    // Sound-wave arcs rolling off the shoulders, keyed to the beat.
-    for (const side of [-1, 1]) {
-      for (let i = 0; i < 2; i++) {
-        const ph = ((t / 700 + i / 2) % 1);
-        g.lineStyle(1.5, CHIME, (1 - ph) * 0.5);
-        g.beginPath();
-        g.arc(s.x + side * 24, s.y - 12, 10 + ph * 22, side === 1 ? -0.8 : Math.PI - 0.8, side === 1 ? 0.8 : Math.PI + 0.8, false);
-        g.strokePath();
-      }
-    }
-
-    // Arms: the baton hand rises with the cast; the off hand shapes the phrase.
-    const dirX = Math.cos(s.facing);
-    const batonLift = s.castGlow * 26 + Math.sin(t / 260) * 3;
-    const bx = s.x + dirX * 28;
-    const by = s.y - 16 - batonLift;
-    g.lineStyle(4, ROSE_DARK, 1);
-    g.lineBetween(s.x + dirX * 10, s.y - 12, bx, by);
-    g.lineStyle(2, 0xf2ead6, 1);
-    g.lineBetween(bx, by, bx + dirX * 16, by - 10);
-    g.fillStyle(ROSE_LIT, 0.9);
-    g.fillCircle(bx + dirX * 16, by - 10, 2);
-    // Off hand, palm up.
-    g.fillStyle(ROSE_DARK, 1);
-    g.fillCircle(s.x - dirX * 26, s.y - 4 + Math.sin(t / 400) * 4, 6);
-
-    // Head: swept hair, closed eyes — it conducts by ear.
-    const hy0 = s.y - 36;
-    g.fillStyle(0xe8d6c8, 0.95);
-    g.fillEllipse(s.x, hy0, 22, 20);
-    g.fillStyle(ROSE_DARK, 1);
-    g.fillEllipse(s.x - dirX * 3, hy0 - 7, 24, 10);
-    g.fillTriangle(s.x - dirX * 12, hy0 - 8, s.x - dirX * 4, hy0 - 12, s.x - dirX * 16, hy0 + 4);
-    const eye = s.hurt ? 0xffffff : s.enraged ? ROSE : ROSE_DARK;
-    const ex = dirX * 2;
-    for (const side of [-1, 1]) {
-      if (s.enraged || s.hurt) {
-        g.fillStyle(eye, 1);
-        g.fillCircle(s.x + side * 5 + ex, hy0, 2.2);
-      } else {
-        g.lineStyle(1.5, ROSE_DARK, 0.9);
-        g.lineBetween(s.x + side * 7 + ex, hy0, s.x + side * 3 + ex, hy0 + 1);
-      }
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.22);
-      g.fillCircle(s.x, s.y, 50);
-    }
-  },
+  look: { crest: 'plume', pattern: 'rings', aura: 'sparks', hands: 'wisp', torsoR: 35, mouth: 'maw' },
+  phaseStyles: [
+    { movement: 'hover', gimmick: 'none' },
+    { movement: 'orbit', gimmick: 'tremor', tint: 'gold', look: { crest: 'crown' } },
+    { movement: 'rush', gimmick: 'shrink', tint: 'blood', look: { crest: 'blades', arms: 4 } },
+  ],
 };

@@ -261,7 +261,6 @@ export const RUIN_BOSS: WorldBossDef = {
   colorLit: RUIN_LIT,
   colorDark: RUIN_DARK,
   accent: MORTAR,
-  bodyR: 31,
 
   intro: ['Every wall I ever raised, I was also aiming. You are standing in the last room with a roof.'],
   banter: [
@@ -284,8 +283,6 @@ export const RUIN_BOSS: WorldBossDef = {
       harass: ['h-snipe', 'h-flak', 'h-mines'],
       restMs: 1060,
       harassMs: 3100,
-      moveSpeed: 44,
-      holdDist: 300,
     },
     {
       name: 'Nothing Left Standing',
@@ -298,8 +295,6 @@ export const RUIN_BOSS: WorldBossDef = {
       harass: ['h-snipe', 'h-mines', 'h-lane', 'h-flak'],
       restMs: 900,
       harassMs: 2600,
-      moveSpeed: 56,
-      holdDist: 270,
     },
   ],
 
@@ -316,8 +311,6 @@ export const RUIN_BOSS: WorldBossDef = {
       harass: ['h-mines', 'h-snipe', 'h-lane', 'h-rune'],
       restMs: 700,
       harassMs: 2100,
-      moveSpeed: 66,
-      holdDist: 250,
     },
   },
 
@@ -354,83 +347,10 @@ export const RUIN_BOSS: WorldBossDef = {
     g.fillRect(0, 96, W, 26);
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.4);
-    g.fillEllipse(s.x, s.y + 48, 108, 19);
-
-    const shake = s.hurt ? Phaser.Math.Between(-2, 2) : 0;
-    const bx = s.x + shake;
-
-    // The body: a heap of masonry that decided to stand up. Blocks stacked
-    // slightly wrong, mortar bleeding light where the Voice got in.
-    const blocks: [number, number, number, number][] = [
-      [-36, 14, 72, 26], [-30, -10, 60, 24], [-24, -32, 48, 22],
-    ];
-    for (let i = 0; i < blocks.length; i++) {
-      const [ox, oy, w, h] = blocks[i];
-      const drift = Math.sin(t / 700 + i) * 2;
-      g.fillStyle(i % 2 === 0 ? RUIN : 0xa32d24, 1);
-      g.fillRect(bx + ox + drift, s.y + oy, w, h);
-      g.lineStyle(1.5, RUIN_DARK, 0.9);
-      g.strokeRect(bx + ox + drift, s.y + oy, w, h);
-      g.lineStyle(1, MORTAR, 0.25);
-      g.lineBetween(bx + ox + drift, s.y + oy + h / 2, bx + ox + drift + w, s.y + oy + h / 2);
-    }
-    // Mortar seams glowing from underneath — the Voice's residue.
-    const glow = 0.25 + s.castGlow * 0.5 + (s.enraged ? 0.2 : 0);
-    g.lineStyle(2, RUIN_LIT, glow);
-    g.lineBetween(bx - 30, s.y + 12, bx + 30, s.y + 12);
-    g.lineBetween(bx - 24, s.y - 12, bx + 24, s.y - 12);
-
-    // Arms: two hanging chains with hooks, always faintly swinging.
-    const dirX = Math.cos(s.facing);
-    for (const side of [-1, 1]) {
-      const ax = bx + side * 40;
-      const sway = Math.sin(t / 420 + side) * 5;
-      for (let i = 1; i <= 5; i++) {
-        g.fillStyle(0x8a7f74, 0.85);
-        g.fillCircle(ax + sway * (i / 5), s.y - 6 + i * 9, 3);
-      }
-      g.fillStyle(0x5a504a, 1);
-      g.fillCircle(ax + sway, s.y + 42, 6);
-    }
-
-    // The crown: a ring of broken bricks that never sat straight.
-    const cy = s.y - 46;
-    for (let i = 0; i < 7; i++) {
-      const a = -Math.PI + (Math.PI * i) / 6;
-      const wob = Math.sin(t / 500 + i * 1.3) * 1.5;
-      const px = bx + Math.cos(a) * 30;
-      const py = cy + Math.sin(a) * 12 + wob;
-      g.fillStyle(MORTAR, 0.85);
-      g.fillRect(px - 5, py - 12, 10, 14);
-      g.lineStyle(1, RUIN_DARK, 0.7);
-      g.strokeRect(px - 5, py - 12, 10, 14);
-    }
-    g.lineStyle(3, MORTAR, 0.7);
-    g.strokeEllipse(bx, cy + 2, 62, 22);
-
-    // The face: a gap in the stonework with two coals set back inside it.
-    g.fillStyle(0x120504, 1);
-    g.fillRoundedRect(bx - 20, s.y - 30, 40, 18, 5);
-    const eyeGlow = s.hurt ? 0xffffff : RUIN_LIT;
-    for (const side of [-1, 1]) {
-      const ex = bx + side * 9 + dirX * 3;
-      g.fillStyle(eyeGlow, 0.9);
-      g.fillCircle(ex, s.y - 21, 3.4 + s.castGlow * 1.6);
-      g.fillStyle(0xffe0c0, 0.5);
-      g.fillCircle(ex, s.y - 21, 1.5);
-    }
-    // Dust falling off it, permanently.
-    for (let i = 0; i < 5; i++) {
-      const ph = ((t + i * 420) % 1500) / 1500;
-      g.fillStyle(MORTAR, (1 - ph) * 0.3);
-      g.fillCircle(bx - 30 + i * 15 + Math.sin(t / 300 + i) * 4, s.y - 40 + ph * 80, 1.6);
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.2);
-      g.fillCircle(s.x, s.y, 58);
-    }
-  },
+  look: { crest: 'crown', pattern: 'cracks', aura: 'dust', hands: 'gauntlet', torsoR: 38, mouth: 'grate' },
+  phaseStyles: [
+    { movement: 'stalk', gimmick: 'none' },
+    { movement: 'rush', gimmick: 'tremor', tint: 'void' },
+    { movement: 'rush', gimmick: 'shrink', tint: 'blood', look: { crest: 'blades', arms: 4 } },
+  ],
 };

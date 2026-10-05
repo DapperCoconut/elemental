@@ -5,7 +5,8 @@ import { BossToolkit } from '../framework/BossToolkit';
 /**
  * The Archfiend — Sovereign of the First Flame. Fire world's boss, and the
  * reference implementation for the whole Sovereign line: two phases, a hard-mode
- * third, three bespoke signatures, and a body drawn from scratch.
+ * third, three bespoke signatures, and a horned, cracked, flame-mantled look
+ * for the shared rig to wear.
  *
  * Canon: the fire challenge was always "The Archfiend's Hearth" — this is the
  * thing the hearth belonged to. In hard mode the corruption has finished with
@@ -17,9 +18,6 @@ const EMBER = 0xff5a1e;
 const EMBER_LIT = 0xffb347;
 const EMBER_DARK = 0x651b06;
 const GOLD = 0xffe08a;
-// The Cold Hearth (hard-mode phase three).
-const COLD = 0x5aa8ff;
-const COLD_LIT = 0xa8d4ff;
 
 // ── Signature: Hearthfall ────────────────────────────────────────────
 // The crown of embers is thrown up and comes down as meteors in a spiral
@@ -194,7 +192,7 @@ const pyreRing = (tk: BossToolkit): SignatureMove => {
   };
 };
 
-// ── The body ─────────────────────────────────────────────────────────
+// ── The def ──────────────────────────────────────────────────────────
 
 export const FIRE_BOSS: WorldBossDef = {
   worldId: 'fire',
@@ -204,7 +202,6 @@ export const FIRE_BOSS: WorldBossDef = {
   colorLit: EMBER_LIT,
   colorDark: EMBER_DARK,
   accent: GOLD,
-  bodyR: 28,
   // Tier-0 boss: the first Sovereign anyone meets. Normal mode pulls its punch.
   damageMult: 0.85,
 
@@ -241,8 +238,6 @@ export const FIRE_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-orbs', 'h-rune', 'h-snipe'],
       restMs: 980,
       harassMs: 2800,
-      moveSpeed: 60,
-      holdDist: 260,
     },
   ],
 
@@ -259,8 +254,6 @@ export const FIRE_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-flak', 'h-rune', 'h-lane'],
       restMs: 760,
       harassMs: 2300,
-      moveSpeed: 85,
-      holdDist: 230,
     },
   },
 
@@ -305,101 +298,38 @@ export const FIRE_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const cold = s.hard && s.phaseIdx >= 2;
-    const main = cold ? COLD : EMBER;
-    const lit = cold ? COLD_LIT : EMBER_LIT;
-    const dark = cold ? 0x11253d : EMBER_DARK;
-    const crown = cold ? COLD_LIT : GOLD;
-    const t = s.t;
-    const flare = s.enraged ? 1.25 : 1;
+  look: { crest: 'horns', pattern: 'cracks', aura: 'flame', hands: 'gauntlet', torsoR: 36, mouth: 'grate' },
 
-    // Ground shadow.
-    g.fillStyle(0x000000, 0.4);
-    g.fillEllipse(s.x, s.y + 46, 74, 16);
-
-    // Mantle of flame — a skirt of licking triangles, always moving.
-    for (let i = 0; i < 10; i++) {
-      const a = Math.PI * (0.12 + (0.76 * i) / 9);
-      const wob = Math.sin(t / 130 + i * 1.7) * 6;
-      const len = (26 + (i % 3) * 9 + wob) * flare;
-      const bx = s.x + Math.cos(a + Math.PI) * 34 * Math.sin(a);
-      const by = s.y + 24;
-      g.fillStyle(i % 2 === 0 ? main : dark, 0.85);
-      g.fillTriangle(bx - 7, by, bx + 7, by, bx + wob * 0.4, by + len);
-    }
-
-    // Torso: a dark core seamed with ember cracks.
-    g.fillStyle(dark, 1);
-    g.fillCircle(s.x, s.y + 6, 30);
-    g.fillStyle(0x1c0a04, 1);
-    g.fillCircle(s.x, s.y + 4, 24);
-    for (let i = 0; i < 4; i++) {
-      const a = -0.9 + i * 0.62;
-      g.lineStyle(2, lit, 0.6 + Math.sin(t / 210 + i) * 0.3);
-      g.lineBetween(
-        s.x + Math.cos(a) * 8, s.y + 4 + Math.sin(a) * 8,
-        s.x + Math.cos(a) * 21, s.y + 4 + Math.sin(a) * 21,
-      );
-    }
-
-    // Arms: two ember fists, tracking the player. Cast glow heats them white.
-    for (const side of [-1, 1]) {
-      const reach = 40 + s.castGlow * 10;
-      const aa = s.facing + side * 0.85;
-      const hx = s.x + Math.cos(aa) * reach;
-      const hy = s.y + 8 + Math.sin(aa) * reach * 0.7;
-      g.fillStyle(dark, 1);
-      g.fillCircle(hx, hy, 11);
-      g.fillStyle(main, 0.5 + s.castGlow * 0.5);
-      g.fillCircle(hx, hy, 8);
-      if (s.castGlow > 0.3) {
-        g.fillStyle(0xffffff, (s.castGlow - 0.3) * 0.9);
-        g.fillCircle(hx, hy, 4);
-      }
-    }
-
-    // Head: a horned skull-lantern.
-    const hy0 = s.y - 26;
-    g.fillStyle(dark, 1);
-    g.fillEllipse(s.x, hy0, 34, 28);
-    g.fillStyle(0x120602, 1);
-    g.fillEllipse(s.x, hy0 + 1, 26, 21);
-    // Horns — two swept crescents.
-    for (const side of [-1, 1]) {
-      g.lineStyle(5, dark, 1);
-      g.beginPath();
-      g.arc(s.x + side * 22, hy0 - 4, 16, side === 1 ? Math.PI * 1.15 : Math.PI * 1.55,
-        side === 1 ? Math.PI * 1.85 : Math.PI * 0.25 + Math.PI * 2, false);
-      g.strokePath();
-      g.fillStyle(lit, 0.9);
-      g.fillCircle(s.x + side * 30, hy0 - 17, 2.2);
-    }
-    // Eyes track the player. Hurt flashes them white.
-    const ex = Math.cos(s.facing) * 3.5;
-    const ey = Math.sin(s.facing) * 2.5;
-    for (const side of [-1, 1]) {
-      g.fillStyle(s.hurt ? 0xffffff : lit, 1);
-      g.fillEllipse(s.x + side * 7 + ex, hy0 + ey, 6, s.enraged ? 8 : 5);
-    }
-    // The mouth: a grate of light.
-    g.fillStyle(main, 0.8 + s.castGlow * 0.2);
-    g.fillRect(s.x - 8, hy0 + 8, 16, 3);
-
-    // The crown: five small flames riding above the horns.
+  /**
+   * The crown of embers — the thing Hearthfall throws into the air. It rides
+   * above the horns the rest of the time, and it is the one piece of the
+   * Archfiend the shared look vocabulary has no word for.
+   */
+  drawDecor(g, s) {
+    const crown = s.hard && s.phaseIdx >= 2 ? s.palette.lit : GOLD;
+    const top = s.y - s.radius - 18;
     for (let i = 0; i < 5; i++) {
-      const a = -Math.PI * 0.8 + (Math.PI * 0.6 * i) / 4;
-      const fx = s.x + Math.cos(a) * 24;
-      const fy = hy0 - 12 + Math.sin(a) * 8;
-      const h = (7 + Math.sin(t / 120 + i * 2.3) * 3) * flare;
+      const a = -Math.PI * 0.78 + (Math.PI * 0.56 * i) / 4;
+      const fx = s.x + Math.cos(a) * (s.radius * 0.8);
+      const fy = top + Math.sin(a) * 9;
+      const h = (8 + Math.sin(s.t / 120 + i * 2.3) * 3.5) * (s.enraged ? 1.35 : 1);
       g.fillStyle(crown, 0.95);
       g.fillTriangle(fx - 3, fy, fx + 3, fy, fx, fy - h);
+      g.fillStyle(0xffffff, 0.55);
+      g.fillCircle(fx, fy - h * 0.45, 1.2);
     }
-
-    // Hurt wash.
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.28);
-      g.fillCircle(s.x, s.y, 44);
+    // Embers shedding off the fists while it is winding something up.
+    if (s.castGlow > 0.25) {
+      for (const h of s.hands) {
+        const ph = (s.t % 500) / 500;
+        g.fillStyle(crown, (1 - ph) * s.castGlow);
+        g.fillCircle(h.x + Math.sin(s.t / 90) * 4, h.y - ph * 22, 2.6);
+      }
     }
   },
+  phaseStyles: [
+    { movement: 'hover', gimmick: 'none' },
+    { movement: 'stalk', gimmick: 'shrink', tint: 'hot', look: { crest: 'mane' } },
+    { movement: 'rush', gimmick: 'tremor', tint: 'cold', look: { crest: 'blades', aura: 'frost', hands: 'claw' } },
+  ],
 };

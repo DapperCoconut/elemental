@@ -102,7 +102,6 @@ export const EARTH_BOSS: WorldBossDef = {
   colorLit: STONE_LIT,
   colorDark: STONE_DARK,
   accent: GOLDVEIN,
-  bodyR: 36,
   damageMult: 0.9,
 
   intro: ['Mountains do not negotiate. Sit down.'],
@@ -182,69 +181,10 @@ export const EARTH_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    // Ground shadow — he has considerable ground to shadow.
-    g.fillStyle(0x000000, 0.45);
-    g.fillEllipse(s.x, s.y + 52, 130, 22);
-
-    // Fists first, so the torso overlaps their inner edge.
-    for (const side of [-1, 1]) {
-      const raise = s.castGlow * 26;
-      const fx = s.x + side * (58 + s.castGlow * 8);
-      const fy = s.y + 30 - raise + Math.sin(t / 700 + side) * 3;
-      g.fillStyle(STONE_DARK, 1);
-      g.fillCircle(fx, fy, 22);
-      g.fillStyle(STONE, 1);
-      g.fillCircle(fx - side * 3, fy - 4, 17);
-      g.lineStyle(2, STONE_DARK, 0.9);
-      g.lineBetween(fx - 10, fy - 2, fx + 10, fy - 5);
-      if (s.castGlow > 0.4) {
-        g.fillStyle(GOLDVEIN, (s.castGlow - 0.4) * 0.8);
-        g.fillCircle(fx, fy, 8);
-      }
-    }
-
-    // Torso: a stacked cairn of slabs.
-    g.fillStyle(STONE_DARK, 1);
-    g.fillEllipse(s.x, s.y + 18, 96, 62);
-    g.fillStyle(STONE, 1);
-    g.fillEllipse(s.x - 4, s.y + 12, 80, 50);
-    g.fillStyle(STONE_LIT, 0.35);
-    g.fillEllipse(s.x - 12, s.y + 2, 44, 22);
-    // Gold veins — brighter as he loses ground.
-    const veinGlow = 0.35 + (1 - s.hpRatio) * 0.5;
-    g.lineStyle(2, GOLDVEIN, veinGlow);
-    g.lineBetween(s.x - 26, s.y + 30, s.x - 10, s.y + 6);
-    g.lineBetween(s.x - 10, s.y + 6, s.x - 18, s.y - 8);
-    g.lineBetween(s.x + 14, s.y + 28, s.x + 24, s.y + 2);
-
-    // Head: a small crag with a heavy brow, dwarfed by the shoulders.
-    const hy0 = s.y - 30;
-    g.fillStyle(STONE_DARK, 1);
-    g.fillEllipse(s.x, hy0, 40, 30);
-    g.fillStyle(STONE, 1);
-    g.fillEllipse(s.x, hy0 + 2, 32, 22);
-    g.fillStyle(STONE_DARK, 1);
-    g.fillRect(s.x - 17, hy0 - 8, 34, 7); // brow
-    const eye = s.hurt ? 0xffffff : s.enraged ? 0xffa04a : GOLDVEIN;
-    const ex = Math.cos(s.facing) * 3;
-    for (const side of [-1, 1]) {
-      g.fillStyle(eye, 1);
-      g.fillRect(s.x + side * 8 + ex - 3, hy0 - 1, 6, 3.5);
-    }
-    // The crown: jagged peaks with snowcaps.
-    for (let i = 0; i < 5; i++) {
-      const px = s.x - 20 + i * 10;
-      const ph = 10 + (i % 2 === 0 ? 6 : 0) + (i === 2 ? 5 : 0);
-      g.fillStyle(STONE_DARK, 1);
-      g.fillTriangle(px - 5, hy0 - 12, px + 5, hy0 - 12, px, hy0 - 12 - ph);
-      g.fillStyle(0xf0ede6, 0.9);
-      g.fillTriangle(px - 2, hy0 - 12 - ph + 4, px + 2, hy0 - 12 - ph + 4, px, hy0 - 12 - ph);
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.22);
-      g.fillCircle(s.x, s.y, 62);
-    }
-  },
+  look: { crest: 'spires', pattern: 'plates', aura: 'dust', hands: 'gauntlet', torsoR: 40, mouth: 'line' },
+  phaseStyles: [
+    { movement: 'anchor', gimmick: 'none' },
+    { movement: 'stalk', gimmick: 'tremor', look: { crest: 'crown' } },
+    { movement: 'rush', gimmick: 'shrink', tint: 'void', look: { crest: 'blades', arms: 4 } },
+  ],
 };

@@ -259,8 +259,6 @@ export const ILLUSION_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-orbs', 'h-rune'],
       restMs: 1020,
       harassMs: 3000,
-      moveSpeed: 62,
-      holdDist: 280,
     },
     {
       name: 'Act Two: The House Lights',
@@ -273,8 +271,6 @@ export const ILLUSION_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-orbs', 'h-lane', 'h-snipe'],
       restMs: 880,
       harassMs: 2550,
-      moveSpeed: 74,
-      holdDist: 255,
     },
   ],
 
@@ -291,8 +287,6 @@ export const ILLUSION_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-flak', 'h-rune', 'h-lane'],
       restMs: 700,
       harassMs: 2100,
-      moveSpeed: 86,
-      holdDist: 235,
     },
   },
 
@@ -332,79 +326,10 @@ export const ILLUSION_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.35);
-    g.fillEllipse(s.x, s.y + 46, 84, 15);
-
-    const dirX = Math.cos(s.facing);
-    // Velvet body, cut like a stage curtain and never quite still.
-    g.fillStyle(0x5a1478, 1);
-    g.beginPath();
-    g.moveTo(s.x - 26, s.y - 24);
-    g.lineTo(s.x + 26, s.y - 24);
-    g.lineTo(s.x + 34, s.y + 46);
-    g.lineTo(s.x - 34, s.y + 46);
-    g.closePath();
-    g.fillPath();
-    for (let i = 0; i < 5; i++) {
-      const fx = s.x - 26 + i * 13;
-      g.lineStyle(2, 0x8a2aa8, 0.7);
-      g.lineBetween(fx + Math.sin(t / 400 + i) * 2, s.y - 22, fx + Math.sin(t / 400 + i + 1) * 4, s.y + 44);
-    }
-    g.fillStyle(FOOTLIGHT, 0.5);
-    g.fillRect(s.x - 28, s.y - 26, 56, 4);
-
-    // Hands: white gloves, one presenting, one holding the spare mask.
-    const present = Math.sin(t / 500) * 6;
-    g.fillStyle(0xf4ecff, 0.95);
-    g.fillCircle(s.x + dirX * 34, s.y + 6 + present - s.castGlow * 10, 7);
-    g.fillCircle(s.x - dirX * 34, s.y + 14 - present, 7);
-
-    // The mask it is wearing — comedy, unless it is losing, in which case the
-    // other one, and the swap is instant and unremarked.
-    const hy = s.y - 40;
-    const tragic = s.hurt || s.hpRatio < 0.34;
-    g.fillStyle(0xf0e4ff, 0.97);
-    g.fillEllipse(s.x + dirX * 2, hy, 34, 40);
-    g.fillStyle(STAGE, 0.25);
-    g.fillEllipse(s.x + dirX * 2, hy + 6, 26, 24);
-    // Eyeholes: empty, and the empty is the point.
-    for (const side of [-1, 1]) {
-      g.fillStyle(STAGE_DARK, 1);
-      g.fillEllipse(s.x + side * 9 + dirX * 3, hy - 6, 11, tragic ? 9 : 12);
-      g.fillStyle(s.hurt ? 0xffffff : STAGE_LIT, 0.75 + s.castGlow * 0.25);
-      g.fillCircle(s.x + side * 9 + dirX * 5, hy - 6, 2.4 + s.castGlow);
-    }
-    // The mouth does the acting.
-    g.lineStyle(3, STAGE_DARK, 0.95);
-    if (tragic) {
-      g.beginPath();
-      g.arc(s.x + dirX * 2, hy + 20, 11, Math.PI, 0, false);
-      g.strokePath();
-    } else {
-      g.beginPath();
-      g.arc(s.x + dirX * 2, hy + 8, 11, 0, Math.PI, false);
-      g.strokePath();
-    }
-    // The spare masks orbit, waiting to be needed.
-    for (let i = 0; i < 2; i++) {
-      const a = t / 900 + (i * Math.PI * 2) / 2;
-      const ox = s.x + Math.cos(a) * 54;
-      const oy = s.y - 20 + Math.sin(a) * 16;
-      g.fillStyle(0xf0e4ff, 0.28 + Math.sin(t / 200 + i) * 0.1);
-      g.fillEllipse(ox, oy, 16, 19);
-      g.fillStyle(STAGE_DARK, 0.35);
-      g.fillCircle(ox - 4, oy - 3, 2);
-      g.fillCircle(ox + 4, oy - 3, 2);
-    }
-    if (s.enraged) {
-      g.lineStyle(2, FOOTLIGHT, 0.3 + Math.sin(t / 140) * 0.15);
-      g.strokeCircle(s.x, s.y, 62);
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.2);
-      g.fillCircle(s.x, s.y, 52);
-    }
-  },
+  look: { crest: 'plume', pattern: 'facets', aura: 'glitch', hands: 'wisp', torsoR: 34, mouth: 'grin' },
+  phaseStyles: [
+    { movement: 'hover', gimmick: 'none' },
+    { movement: 'blink', gimmick: 'wards', tint: 'pale' },
+    { movement: 'blink', gimmick: 'gloom', tint: 'void', look: { crest: 'veil', arms: 4 } },
+  ],
 };

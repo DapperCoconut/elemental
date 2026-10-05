@@ -273,7 +273,6 @@ export const CHALK_BOSS: WorldBossDef = {
   colorLit: CHALK_LIT,
   colorDark: BOARD,
   accent: BLUE,
-  bodyR: 27,
 
   intro: ['You are a rough sketch. I am the fair copy. Hold the pose; this will not take long.'],
   banter: [
@@ -296,8 +295,6 @@ export const CHALK_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-snipe', 'h-orbs'],
       restMs: 1030,
       harassMs: 3050,
-      moveSpeed: 60,
-      holdDist: 290,
     },
     {
       name: 'The Fair Copy',
@@ -310,8 +307,6 @@ export const CHALK_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-snipe', 'h-lane', 'h-rune'],
       restMs: 880,
       harassMs: 2550,
-      moveSpeed: 72,
-      holdDist: 265,
     },
   ],
 
@@ -328,8 +323,6 @@ export const CHALK_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-rune', 'h-snipe', 'h-lane'],
       restMs: 700,
       harassMs: 2100,
-      moveSpeed: 82,
-      holdDist: 245,
     },
   },
 
@@ -367,85 +360,10 @@ export const CHALK_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.25);
-    g.fillEllipse(s.x, s.y + 44, 76, 13);
-
-    const dirX = Math.cos(s.facing);
-    // Everything about it is drawn, and the drawing is never quite still.
-    const j = () => Math.sin(t / 60 + Math.random() * 6) * 1.2;
-
-    // Body: an outline figure, filled with nothing at all.
-    g.lineStyle(3.5, CHALK, 0.95);
-    g.strokeRoundedRect(s.x - 22 + j(), s.y - 24, 44, 66, 10);
-    g.fillStyle(BOARD, 0.5);
-    g.fillRoundedRect(s.x - 20, s.y - 22, 40, 62, 9);
-    // Cross-hatching where a shadow would be, in the wrong direction.
-    g.lineStyle(1.5, CHALK, 0.3);
-    for (let i = 0; i < 6; i++) {
-      g.lineBetween(s.x - 18, s.y - 16 + i * 10, s.x - 4, s.y - 26 + i * 10);
-    }
-    // A smock, in coloured chalk, because it is fond of colour.
-    g.lineStyle(3, BLUE, 0.8);
-    g.lineBetween(s.x - 20, s.y - 8, s.x + 20, s.y - 8);
-    g.lineStyle(3, ROSE, 0.7);
-    g.lineBetween(s.x - 18, s.y + 16, s.x + 18, s.y + 16);
-
-    // Hands: a stick of chalk held like a chisel, and one permanently dusty.
-    const cx2 = s.x + dirX * 32;
-    const cy2 = s.y + 2 - s.castGlow * 12;
-    g.lineStyle(3, CHALK, 0.95);
-    g.strokeCircle(cx2, cy2, 6);
-    g.lineStyle(6, s.castGlow > 0.3 ? ROSE : CHALK_LIT, 0.95);
-    g.lineBetween(cx2 + dirX * 4, cy2 + 2, cx2 + dirX * 20, cy2 + 14);
-    for (let i = 0; i < 4; i++) {
-      const ph = ((t + i * 300) % 1000) / 1000;
-      g.fillStyle(CHALK, (1 - ph) * 0.35);
-      g.fillCircle(cx2 + dirX * 22, cy2 + 16 + ph * 20, 1.4);
-    }
-    g.lineStyle(3, CHALK, 0.95);
-    g.strokeCircle(s.x - dirX * 32, s.y + 16, 6);
-
-    // Head: a circle, two dots, and a mouth that is redrawn every few seconds.
-    const hy = s.y - 42;
-    g.lineStyle(3.5, CHALK, 0.95);
-    g.strokeCircle(s.x + j() * 0.5, hy, 20);
-    g.fillStyle(BOARD, 0.55);
-    g.fillCircle(s.x, hy, 18);
-    const eye = s.hurt ? ROSE : CHALK_LIT;
-    for (const side of [-1, 1]) {
-      g.fillStyle(eye, 0.95);
-      g.fillCircle(s.x + side * 7 + dirX * 3, hy - 4, 2.8 + s.castGlow);
-    }
-    g.lineStyle(2.5, CHALK_LIT, 0.9);
-    const mood = Math.floor(t / 2000) % 3;
-    if (mood === 0) g.lineBetween(s.x - 7, hy + 8, s.x + 7, hy + 8);
-    else if (mood === 1) {
-      g.beginPath();
-      g.arc(s.x, hy + 4, 8, 0.2, Math.PI - 0.2, false);
-      g.strokePath();
-    } else {
-      g.beginPath();
-      g.arc(s.x, hy + 14, 8, Math.PI + 0.2, -0.2, false);
-      g.strokePath();
-    }
-    // A halo of colour sticks it keeps within reach.
-    for (let i = 0; i < 4; i++) {
-      const a = t / 800 + (i * Math.PI) / 2;
-      const col = [CHALK, BLUE, ROSE, 0xfff3a0][i];
-      const ox = s.x + Math.cos(a) * 50;
-      const oy = s.y - 20 + Math.sin(a) * 20;
-      g.lineStyle(5, col, 0.5);
-      g.lineBetween(ox - 5, oy - 4, ox + 5, oy + 4);
-    }
-    if (s.enraged) {
-      g.lineStyle(2, ROSE, 0.3 + Math.sin(t / 120) * 0.15);
-      g.strokeCircle(s.x, s.y, 62);
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.22);
-      g.fillCircle(s.x, s.y, 50);
-    }
-  },
+  look: { crest: 'none', pattern: 'grid', aura: 'dust', hands: 'ball', torsoR: 34, mouth: 'grin' },
+  phaseStyles: [
+    { movement: 'hover', gimmick: 'none' },
+    { movement: 'stalk', gimmick: 'wards', tint: 'pale' },
+    { movement: 'blink', gimmick: 'tremor', tint: 'void', look: { crest: 'blades', pattern: 'static' } },
+  ],
 };

@@ -241,7 +241,6 @@ export const MAGMA_BOSS: WorldBossDef = {
   colorLit: MAGMA_LIT,
   colorDark: MAGMA_DARK,
   accent: BASALT,
-  bodyR: 33,
 
   intro: ['The realm cracked open and I was what leaked out. Mind the plates. They have opinions.'],
   banter: [
@@ -264,8 +263,6 @@ export const MAGMA_BOSS: WorldBossDef = {
       harass: ['h-snipe', 'h-rune', 'h-flak'],
       restMs: 1050,
       harassMs: 3100,
-      moveSpeed: 46,
-      holdDist: 290,
     },
     {
       name: 'Full Eruption',
@@ -278,8 +275,6 @@ export const MAGMA_BOSS: WorldBossDef = {
       harass: ['h-snipe', 'h-rune', 'h-mines', 'h-flak'],
       restMs: 900,
       harassMs: 2600,
-      moveSpeed: 58,
-      holdDist: 265,
     },
   ],
 
@@ -296,8 +291,6 @@ export const MAGMA_BOSS: WorldBossDef = {
       harass: ['h-mines', 'h-snipe', 'h-rune', 'h-lane'],
       restMs: 710,
       harassMs: 2100,
-      moveSpeed: 68,
-      holdDist: 245,
     },
   },
 
@@ -347,87 +340,10 @@ export const MAGMA_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.4);
-    g.fillEllipse(s.x, s.y + 50, 110, 19);
-
-    const dirX = Math.cos(s.facing);
-    const swell = Math.sin(t / 520) * 3 + s.castGlow * 5;
-
-    // A body of cooling crust with the furnace showing through every seam.
-    g.fillStyle(MAGMA_DARK, 1);
-    g.fillCircle(s.x, s.y + 6, 48 + swell);
-    g.fillStyle(BASALT, 1);
-    g.fillCircle(s.x, s.y + 6, 44 + swell);
-    // Crust plates, laid on like scales, each with a lit edge.
-    for (let i = 0; i < 9; i++) {
-      const a = (Math.PI * 2 * i) / 9 + Math.sin(t / 900) * 0.1;
-      const px = s.x + Math.cos(a) * 26;
-      const py = s.y + 6 + Math.sin(a) * 26;
-      g.fillStyle(0x241c18, 1);
-      g.fillCircle(px, py, 15);
-      g.lineStyle(2, MAGMA, 0.5 + Math.sin(t / 300 + i) * 0.25 + s.castGlow * 0.3);
-      g.strokeCircle(px, py, 15);
-    }
-    // The seams: the actual heat, brightening with the cast.
-    const glow = 0.4 + s.castGlow * 0.5 + (s.enraged ? 0.2 : 0);
-    for (let i = 0; i < 7; i++) {
-      const a = (Math.PI * 2 * i) / 7 + t / 4000;
-      g.lineStyle(3, MAGMA_LIT, glow);
-      g.lineBetween(s.x, s.y + 6, s.x + Math.cos(a) * (44 + swell), s.y + 6 + Math.sin(a) * (44 + swell));
-    }
-
-    // Arms: two arms of running rock, dripping continually.
-    for (const side of [-1, 1]) {
-      const ax = s.x + side * 52;
-      const drop = Math.sin(t / 400 + side) * 6;
-      g.fillStyle(BASALT, 1);
-      g.fillCircle(ax, s.y + 16 + drop, 16);
-      g.fillStyle(MAGMA, 0.6 + s.castGlow * 0.4);
-      g.fillCircle(ax, s.y + 16 + drop, 9);
-      for (let i = 0; i < 3; i++) {
-        const ph = ((t + i * 400 + side * 200) % 1300) / 1300;
-        g.fillStyle(MAGMA_LIT, (1 - ph) * 0.6);
-        g.fillCircle(ax, s.y + 28 + drop + ph * 24, 3 - ph * 1.5);
-      }
-    }
-
-    // The crown: a ring of basalt spikes, lit from beneath.
-    const cy = s.y - 44;
-    for (let i = 0; i < 7; i++) {
-      const a = -Math.PI + (Math.PI * i) / 6;
-      const px = s.x + Math.cos(a) * 34;
-      const py = cy + Math.sin(a) * 12;
-      const h = 16 + (i % 2) * 8;
-      g.fillStyle(BASALT, 1);
-      g.fillTriangle(px - 6, py, px + 6, py, px, py - h);
-      g.fillStyle(MAGMA, 0.45 + Math.sin(t / 260 + i) * 0.2);
-      g.fillTriangle(px - 3, py, px + 3, py, px, py - h * 0.6);
-    }
-
-    // The face: a fissure across the crust with a furnace behind it.
-    const fy = s.y - 12;
-    g.fillStyle(0x000000, 0.85);
-    g.fillEllipse(s.x + dirX * 3, fy, 40, 12);
-    g.fillStyle(MAGMA_LIT, 0.5 + s.castGlow * 0.4);
-    g.fillEllipse(s.x + dirX * 3, fy, 34, 7);
-    const eye = s.hurt ? 0xffffff : MAGMA_LIT;
-    for (const side of [-1, 1]) {
-      g.fillStyle(MAGMA_DARK, 1);
-      g.fillEllipse(s.x + side * 15 + dirX * 3, s.y - 28, 14, 11);
-      g.fillStyle(eye, 0.9 + s.castGlow * 0.1);
-      g.fillCircle(s.x + side * 15 + dirX * 5, s.y - 28, 4 + s.castGlow * 2);
-    }
-    // Fume, permanently.
-    for (let i = 0; i < 5; i++) {
-      const ph = ((t + i * 360) % 1800) / 1800;
-      g.fillStyle(0x8a8078, (1 - ph) * 0.18);
-      g.fillCircle(s.x - 26 + i * 13 + Math.sin(t / 400 + i) * 6, s.y - 60 - ph * 46, 4 + ph * 9);
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.2);
-      g.fillCircle(s.x, s.y, 62);
-    }
-  },
+  look: { crest: 'crown', pattern: 'cracks', aura: 'flame', hands: 'claw', torsoR: 38, mouth: 'maw' },
+  phaseStyles: [
+    { movement: 'stalk', gimmick: 'none' },
+    { movement: 'anchor', gimmick: 'shrink', tint: 'hot' },
+    { movement: 'rush', gimmick: 'tremor', tint: 'hot', look: { crest: 'mane', arms: 4 } },
+  ],
 };

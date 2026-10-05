@@ -379,6 +379,12 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    * A field of its own is the house pattern for exactly this reason.
    */
   public wardIncomingMult = 1;
+  /**
+   * World-boss wards. Owned solely by WorldBossKit's `wards` phase gimmick, which is why it
+   * is not folded into `wardIncomingMult` — Soul rewrites that one every frame on both
+   * fighters, and the two would clobber each other on a Soul-versus-Sovereign fight.
+   */
+  public bossWardIncomingMult = 1;
   /** Invoked with the amount whenever `selfDamageImmune` swallows a hit, so the kit can draw the tell. */
   public onSelfDamageBlocked: ((amount: number) => void) | null = null;
   /** Creation Buff Potion: 1.25 while whoever is damaging this fighter is potion-empowered (victim-side stand-in for "deals 25% more"). */
@@ -964,7 +970,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       // Tallied here: after the crit roll (a crit really is a bigger hit) but before every
       // mitigation multiplier on the line below, which is what "damage aimed at you" means.
       this.rawDamageTaken += amount;
-      let mitigation = this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.paperIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.artifactIncomingMult * this.clothIncomingMult * this.gluttonyIncomingMult * this.orderIncomingMult * this.wardIncomingMult * this.fortuneIncomingMult * this.dreamIncomingMult * this.duneIncomingMult * this.radiationIncomingMult * this.magicIncomingMult * this.mutationIncomingMult * this.mapArmorMult * this.starIncomingMult * this.netDefenseMult;
+      let mitigation = this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.paperIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.artifactIncomingMult * this.clothIncomingMult * this.gluttonyIncomingMult * this.orderIncomingMult * this.wardIncomingMult * this.bossWardIncomingMult * this.fortuneIncomingMult * this.dreamIncomingMult * this.duneIncomingMult * this.radiationIncomingMult * this.magicIncomingMult * this.mutationIncomingMult * this.mapArmorMult * this.starIncomingMult * this.netDefenseMult;
       // Ruin's spikes turn armour inside out — 25% less damage taken comes back as 25% more.
       // Only a net *buff* is flipped; a fighter already taking extra damage is left alone.
       if (mitigation < 1 && this.scene.time.now < this.buffsInvertedUntil) mitigation = 2 - mitigation;

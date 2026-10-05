@@ -120,7 +120,6 @@ export const PLASMA_BOSS: WorldBossDef = {
   colorLit: PLASMA_LIT,
   colorDark: PLASMA_DARK,
   accent: PINCH,
-  bodyR: 30,
 
   intro: ['I stopped having a shape. It was holding me back. Yours is holding you back.'],
   banter: [
@@ -143,8 +142,6 @@ export const PLASMA_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-orbs', 'h-lane'],
       restMs: 1040,
       harassMs: 3050,
-      moveSpeed: 90,
-      holdDist: 270,
     },
     {
       name: 'The Pinch',
@@ -157,8 +154,6 @@ export const PLASMA_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-orbs', 'h-lane', 'h-rune'],
       restMs: 890,
       harassMs: 2550,
-      moveSpeed: 105,
-      holdDist: 240,
     },
   ],
 
@@ -175,8 +170,6 @@ export const PLASMA_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-flak', 'h-rune', 'h-lane'],
       restMs: 690,
       harassMs: 2050,
-      moveSpeed: 120,
-      holdDist: 220,
     },
   },
 
@@ -206,57 +199,10 @@ export const PLASMA_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    // No shadow, no ground. A lava-lamp of a body: lobes that never agree.
-    const lobes = 5;
-    for (let i = 0; i < lobes; i++) {
-      const a = t / (500 + i * 90) + (Math.PI * 2 * i) / lobes;
-      const r = 12 + ((i * 7) % 10) + Math.sin(t / 260 + i * 2.4) * 5;
-      const dist = 12 + Math.sin(t / 340 + i * 1.7) * 8 + s.castGlow * 6;
-      g.fillStyle(i % 2 === 0 ? PLASMA : PLASMA_DARK, 0.85);
-      g.fillCircle(s.x + Math.cos(a) * dist, s.y + Math.sin(a) * dist * 0.8, r + 6);
-    }
-    // The bright core, off-centre and drifting.
-    const coreA = t / 800;
-    const cx = s.x + Math.cos(coreA) * 7;
-    const cy = s.y + Math.sin(coreA) * 5;
-    g.fillStyle(PLASMA_LIT, 0.95);
-    g.fillCircle(cx, cy, 13 + s.castGlow * 4);
-    g.fillStyle(0xffffff, 0.85);
-    g.fillCircle(cx - 3, cy - 3, 5);
-
-    // Arc filaments crawling on the surface.
-    const flick = Math.floor(t / 110);
-    for (let i = 0; i < 3; i++) {
-      const seed = flick * 13 + i * 71;
-      const a0 = ((seed * 379) % 628) / 100;
-      g.lineStyle(1.5, PINCH, 0.8);
-      let lx = s.x + Math.cos(a0) * 24;
-      let ly = s.y + Math.sin(a0) * 20;
-      for (let k = 0; k < 3; k++) {
-        const nx = lx + (((seed + k * 17) % 13) - 6) * 2.2;
-        const ny = ly + (((seed + k * 29) % 11) - 5) * 2.2;
-        g.lineBetween(lx, ly, nx, ny);
-        lx = nx;
-        ly = ny;
-      }
-    }
-
-    // A face, when it remembers to have one: two drifting eye-motes.
-    const remember = Math.sin(t / 1900) > -0.3;
-    if (remember) {
-      const ex = Math.cos(s.facing) * 6;
-      const ey = Math.sin(s.facing) * 4;
-      const eye = s.hurt ? 0xffffff : s.enraged ? PINCH : 0xffffff;
-      for (const side of [-1, 1]) {
-        g.fillStyle(eye, 0.9);
-        g.fillCircle(s.x + side * 8 + ex + Math.sin(t / 400 + side) * 2, s.y - 4 + ey, 3);
-      }
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.25);
-      g.fillCircle(s.x, s.y, 50);
-    }
-  },
+  look: { crest: 'orbs', pattern: 'swirl', aura: 'flame', hands: 'wisp', torsoR: 34, eyes: 1 },
+  phaseStyles: [
+    { movement: 'orbit', gimmick: 'none' },
+    { movement: 'orbit', gimmick: 'tremor', tint: 'hot' },
+    { movement: 'blink', gimmick: 'shrink', tint: 'pale', look: { crest: 'halo', arms: 4 } },
+  ],
 };

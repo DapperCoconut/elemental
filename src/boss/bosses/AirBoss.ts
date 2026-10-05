@@ -162,7 +162,6 @@ export const AIR_BOSS: WorldBossDef = {
   colorLit: SKY_LIT,
   colorDark: SKY_DARK,
   accent: GALE,
-  bodyR: 26,
   damageMult: 0.9,
 
   intro: ['There is no wind in here. That should frighten you.'],
@@ -186,8 +185,6 @@ export const AIR_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-snipe', 'h-lane'],
       restMs: 1080,
       harassMs: 3200,
-      moveSpeed: 85,
-      holdDist: 270,
     },
     {
       name: 'The Eye Narrows',
@@ -200,8 +197,6 @@ export const AIR_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-orbs', 'h-lane', 'h-snipe'],
       restMs: 930,
       harassMs: 2700,
-      moveSpeed: 105,
-      holdDist: 240,
     },
   ],
 
@@ -218,8 +213,6 @@ export const AIR_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-flak', 'h-lane', 'h-rune'],
       restMs: 720,
       harassMs: 2200,
-      moveSpeed: 125,
-      holdDist: 220,
     },
   },
 
@@ -246,48 +239,10 @@ export const AIR_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    // No shadow — the Eye does not touch the ground.
-    // Swirling storm shell: three counter-rotating arcs.
-    for (let i = 0; i < 3; i++) {
-      const dir = i % 2 === 0 ? 1 : -1;
-      const r = 34 + i * 9;
-      g.lineStyle(4 - i, i === 0 ? SKY_LIT : SKY, 0.7 - i * 0.15);
-      g.beginPath();
-      g.arc(s.x, s.y, r, (t / 400) * dir + i * 2, (t / 400) * dir + i * 2 + Math.PI * 1.4, false);
-      g.strokePath();
-    }
-    // Feather wisps shed off the shell.
-    for (let i = 0; i < 6; i++) {
-      const a = t / 500 + (Math.PI * 2 * i) / 6;
-      const r = 52 + Math.sin(t / 220 + i * 2) * 8;
-      g.fillStyle(GALE, 0.4);
-      g.fillEllipse(s.x + Math.cos(a) * r, s.y + Math.sin(a) * r, 10, 3);
-    }
-    // The eye itself: a great iris that tracks the player.
-    g.fillStyle(SKY_DARK, 1);
-    g.fillEllipse(s.x, s.y, 42, 30);
-    g.fillStyle(0x0a1220, 1);
-    g.fillEllipse(s.x, s.y, 34, 23);
-    const ex = Math.cos(s.facing) * 7;
-    const ey = Math.sin(s.facing) * 5;
-    const iris = s.hurt ? 0xffffff : s.enraged ? 0xffd27a : SKY_LIT;
-    g.fillStyle(iris, 1);
-    g.fillCircle(s.x + ex, s.y + ey, 10 + s.castGlow * 3);
-    g.fillStyle(0x0a1220, 1);
-    g.fillCircle(s.x + ex, s.y + ey, 4.5 - s.castGlow * 1.5);
-    g.fillStyle(0xffffff, 0.85);
-    g.fillCircle(s.x + ex - 3, s.y + ey - 3, 1.8);
-    // Lids narrow when enraged.
-    if (s.enraged) {
-      g.fillStyle(SKY_DARK, 1);
-      g.fillEllipse(s.x, s.y - 13, 40, 8);
-      g.fillEllipse(s.x, s.y + 13, 40, 8);
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.22);
-      g.fillCircle(s.x, s.y, 50);
-    }
-  },
+  look: { crest: 'halo', pattern: 'swirl', aura: 'dust', hands: 'wisp', torsoR: 32, eyes: 1 },
+  phaseStyles: [
+    { movement: 'orbit', gimmick: 'none' },
+    { movement: 'orbit', gimmick: 'tremor', tint: 'pale' },
+    { movement: 'blink', gimmick: 'gloom', tint: 'void', look: { eyes: 3, crest: 'tendrils' } },
+  ],
 };

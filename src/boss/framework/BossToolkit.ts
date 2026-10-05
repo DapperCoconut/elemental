@@ -70,6 +70,7 @@ interface TBullet {
 interface TLane {
   x: number; y: number; angle: number;
   halfW: number; firesAt: number; endsAt: number; damage: number; dealt: boolean;
+  bornAt: number;
 }
 interface TZone {
   x: number; y: number; radius: number; firesAt: number; damage: number;
@@ -125,8 +126,18 @@ export class BossToolkit {
   private playerSlowMult = 1;
   private playerSlowUntil = 0;
 
-  /** The one knob over every point of damage — def scale × hard scale. */
+  /** The one knob over every point of damage — def scale × hard scale × lethality. */
   damageScale = 1;
+
+  /**
+   * Multiplies every warning a hazard gives before it bites.
+   *
+   * Sovereign attacks hit far harder than they used to; the trade is that they
+   * announce themselves for longer. Applied here, at the spawners, so a def's
+   * `warnMs` tuning and a signature's hand-rolled numbers are both stretched by
+   * the same amount and nothing can opt out of being readable.
+   */
+  telegraphScale = 1;
 
   /**
    * Bumped by `clearHazards`. Multi-beat moves (a spiral's emitter, a barrage's
@@ -160,7 +171,8 @@ export class BossToolkit {
 
   constructor(
     public readonly host: BossToolkitHost,
-    public readonly palette: BossPalette,
+    /** Reassigned at every phase change — a phase tint repaints every live hazard. */
+    public palette: BossPalette,
     public readonly hard: boolean,
   ) {}
 
@@ -259,12 +271,16 @@ export class BossToolkit {
     });
   }
 
+  /** Stretch a warning by the fight's telegraph scale. */
+  warn(ms: number): number { return ms * this.telegraphScale; }
+
   /** A telegraphed beam through (x, y) at `angle`, spanning the whole field. */
   spawnLane(o: { x: number; y: number; angle: number; halfW: number; warnMs: number; fireMs?: number; damage: number }): void {
+    const warnMs = this.warn(o.warnMs);
     this.lanesPool.push({
       x: o.x, y: o.y, angle: o.angle, halfW: o.halfW,
-      firesAt: this.now + o.warnMs, endsAt: this.now + o.warnMs + (o.fireMs ?? 380),
-      damage: o.damage, dealt: false,
+      firesAt: this.now + warnMs, endsAt: this.now + warnMs + (o.fireMs ?? 380),
+      damage: o.damage, dealt: false, bornAt: this.now,
     });
   }
 
@@ -274,7 +290,7 @@ export class BossToolkit {
   }): void {
     this.zones.push({
       x: this.clampX(o.x), y: this.clampY(o.y), radius: o.radius,
-      firesAt: this.now + o.warnMs, damage: o.damage, dealt: false,
+      firesAt: this.now + this.warn(o.warnMs), damage: o.damage, dealt: false,
       slowMult: o.slowMult, slowMs: o.slowMs, fall: o.fall, bornAt: this.now,
       poolMs: o.poolMs, poolDamage: o.poolDamage,
     });
@@ -301,7 +317,7 @@ export class BossToolkit {
     if (!best) return;
     this.safeBlasts.push({
       x: best.x, y: best.y, safeR: o.safeR,
-      firesAt: this.now + o.warnMs, damage: o.damage, dealt: false, bornAt: this.now,
+      firesAt: this.now + this.warn(o.warnMs), damage: o.damage, dealt: false, bornAt: this.now,
     });
   }
 
@@ -332,7 +348,7 @@ export class BossToolkit {
   spawnMine(o: { x: number; y: number; armMs?: number; lifeMs?: number; blastR?: number; damage: number }): void {
     this.minesPool.push({
       x: this.clampX(o.x), y: this.clampY(o.y),
-      armedAt: this.now + (o.armMs ?? 1100), dieAt: this.now + (o.lifeMs ?? 15000),
+      armedAt: this.now + this.warn(o.armMs ?? 1100), dieAt: this.now + (o.lifeMs ?? 15000),
       spent: false, blastR: o.blastR ?? 86, damage: o.damage,
     });
   }
@@ -346,9 +362,10 @@ export class BossToolkit {
     ox: number; oy: number; a0: number; a1: number;
     warnMs: number; travelMs: number; halfW: number; damage: number; length?: number;
   }): void {
+    const sweepWarn = this.warn(o.warnMs);
     this.sweeps.push({
       ox: o.ox, oy: o.oy, a0: o.a0, a1: o.a1,
-      startsAt: this.now + o.warnMs, endsAt: this.now + o.warnMs + o.travelMs,
+      startsAt: this.now + sweepWarn, endsAt: this.now + sweepWarn + o.travelMs,
       halfW: o.halfW, length: o.length ?? Math.hypot(this.W, this.H),
       damage: o.damage, lastHitAt: 0,
     });
@@ -363,10 +380,11 @@ export class BossToolkit {
 
   /** The boss body itself, down a telegraphed lane. */
   spawnCharge(o: { toX: number; toY: number; warnMs: number; travelMs: number; halfW: number; damage: number }): void {
+    const chargeWarn = this.warn(o.warnMs);
     this.charges.push({
       fromX: this.bossX, fromY: this.bossY,
       toX: this.clampX(o.toX, 90), toY: this.clampY(o.toY, 90),
-      startsAt: this.now + o.warnMs, arrivesAt: this.now + o.warnMs + o.travelMs,
+      startsAt: this.now + chargeWarn, arrivesAt: this.now + chargeWarn + o.travelMs,
       halfW: o.halfW, damage: o.damage, dealt: false,
     });
   }
@@ -592,16 +610,41 @@ export class BossToolkit {
       g.strokeCircle(pool.x, pool.y, pool.radius * (0.86 + Math.sin(time / 300) * 0.06));
     }
 
+    // Zones read as a clock: a sweep hand closes round the rim, the fill climbs
+    // to meet it, and the last fifth of the wind-up strobes. A Sovereign's
+    // strike hurts enough now that the warning has to be unmissable.
     for (const z of this.zones) {
       const charge = Phaser.Math.Clamp(1 - (z.firesAt - time) / Math.max(1, z.firesAt - z.bornAt), 0, 1);
-      g.lineStyle(2, P.lit, 0.3 + charge * 0.55);
-      g.strokeCircle(z.x, z.y, z.radius);
-      g.fillStyle(P.main, 0.08 + charge * 0.2);
+      const imminent = charge > 0.8;
+      g.fillStyle(P.dark, 0.16 + charge * 0.14);
+      g.fillCircle(z.x, z.y, z.radius);
+      g.fillStyle(P.main, 0.1 + charge * 0.34);
       g.fillCircle(z.x, z.y, z.radius * charge);
+      g.lineStyle(2.5, P.lit, 0.4 + charge * 0.5);
+      g.strokeCircle(z.x, z.y, z.radius);
+      // Sweep hand.
+      const sweepA = -Math.PI / 2 + charge * Math.PI * 2;
+      g.lineStyle(2, P.accent, 0.75);
+      g.lineBetween(z.x, z.y, z.x + Math.cos(sweepA) * z.radius, z.y + Math.sin(sweepA) * z.radius);
+      // Crosshair ticks, so the centre is legible even under a busy floor.
+      g.lineStyle(1.5, P.lit, 0.45);
+      for (let i = 0; i < 4; i++) {
+        const a = (Math.PI / 2) * i;
+        g.lineBetween(
+          z.x + Math.cos(a) * (z.radius - 8), z.y + Math.sin(a) * (z.radius - 8),
+          z.x + Math.cos(a) * (z.radius + 6), z.y + Math.sin(a) * (z.radius + 6),
+        );
+      }
+      if (imminent && Math.floor(time / 90) % 2 === 0) {
+        g.lineStyle(4, 0xffffff, 0.65);
+        g.strokeCircle(z.x, z.y, z.radius + 3);
+      }
       if (z.fall) {
-        const h = (1 - charge) * 160;
+        const h = (1 - charge) * 190;
         g.fillStyle(P.lit, 0.9);
-        g.fillCircle(z.x, z.y - h - 8, 4.5);
+        g.fillCircle(z.x, z.y - h - 8, 5.5);
+        g.lineStyle(2, P.lit, 0.35);
+        g.lineBetween(z.x, z.y - h - 8, z.x, z.y - h + 26);
       }
     }
 
@@ -622,10 +665,37 @@ export class BossToolkit {
       const dx = Math.cos(l.angle) * 1400;
       const dy = Math.sin(l.angle) * 1400;
       if (!live) {
-        g.lineStyle(2, P.lit, 0.55);
+        const charge = Phaser.Math.Clamp(1 - (l.firesAt - time) / Math.max(1, l.firesAt - l.bornAt), 0, 1);
+        // The corridor fills in from its edges, with chevrons running down it.
+        g.lineStyle(l.halfW * 2, P.dark, 0.18);
         g.lineBetween(l.x - dx, l.y - dy, l.x + dx, l.y + dy);
-        g.lineStyle(l.halfW * 2, P.main, 0.1);
+        g.lineStyle(l.halfW * 2 * charge, P.main, 0.3);
         g.lineBetween(l.x - dx, l.y - dy, l.x + dx, l.y + dy);
+        g.lineStyle(2, P.lit, 0.65);
+        for (const sgn of [-1, 1]) {
+          const ox = -Math.sin(l.angle) * l.halfW * sgn;
+          const oy = Math.cos(l.angle) * l.halfW * sgn;
+          g.lineBetween(l.x + ox - dx, l.y + oy - dy, l.x + ox + dx, l.y + oy + dy);
+        }
+        const flow = (time / 5) % 90;
+        for (let k = -9; k <= 9; k++) {
+          const d = k * 90 + flow;
+          const cx = l.x + Math.cos(l.angle) * d;
+          const cy = l.y + Math.sin(l.angle) * d;
+          g.lineStyle(2.5, P.accent, 0.5);
+          g.lineBetween(
+            cx - Math.cos(l.angle) * 10 - Math.sin(l.angle) * l.halfW * 0.6,
+            cy - Math.sin(l.angle) * 10 + Math.cos(l.angle) * l.halfW * 0.6,
+            cx, cy);
+          g.lineBetween(
+            cx - Math.cos(l.angle) * 10 + Math.sin(l.angle) * l.halfW * 0.6,
+            cy - Math.sin(l.angle) * 10 - Math.cos(l.angle) * l.halfW * 0.6,
+            cx, cy);
+        }
+        if (charge > 0.82 && Math.floor(time / 80) % 2 === 0) {
+          g.lineStyle(l.halfW * 2, 0xffffff, 0.16);
+          g.lineBetween(l.x - dx, l.y - dy, l.x + dx, l.y + dy);
+        }
       } else {
         g.lineStyle(l.halfW * 2, P.lit, 0.75);
         g.lineBetween(l.x - dx, l.y - dy, l.x + dx, l.y + dy);
@@ -637,10 +707,25 @@ export class BossToolkit {
     for (const m of this.minesPool) {
       const armed = time >= m.armedAt;
       const blink = armed && Math.floor(time / 240) % 2 === 0;
-      g.fillStyle(armed ? P.lit : P.dark, armed ? 0.9 : 0.6);
-      g.fillCircle(m.x, m.y, 7);
-      g.lineStyle(1.5, blink ? 0xffffff : P.main, armed ? 0.9 : 0.4);
-      g.strokeCircle(m.x, m.y, 11 + Math.sin(time / 200) * 1.5);
+      // Armed mines show the ground they own, not just the charge sitting on it.
+      if (armed) {
+        g.fillStyle(P.main, 0.09);
+        g.fillCircle(m.x, m.y, MINE_TRIGGER_R);
+        g.lineStyle(1.5, P.lit, 0.4 + (blink ? 0.3 : 0));
+        g.strokeCircle(m.x, m.y, MINE_TRIGGER_R);
+      }
+      g.fillStyle(armed ? P.lit : P.dark, armed ? 0.95 : 0.65);
+      g.fillCircle(m.x, m.y, 8);
+      g.fillStyle(blink ? 0xffffff : P.dark, 0.9);
+      g.fillCircle(m.x, m.y, 3.4);
+      g.lineStyle(2, blink ? 0xffffff : P.main, armed ? 0.9 : 0.4);
+      g.strokeCircle(m.x, m.y, 12 + Math.sin(time / 200) * 1.8);
+      for (let i = 0; i < 4; i++) {
+        const a = (Math.PI / 2) * i + time / 900;
+        g.lineStyle(2, armed ? P.accent : P.dark, 0.7);
+        g.lineBetween(m.x + Math.cos(a) * 8, m.y + Math.sin(a) * 8,
+          m.x + Math.cos(a) * 14, m.y + Math.sin(a) * 14);
+      }
     }
 
     for (const r of this.rings) {
@@ -653,10 +738,17 @@ export class BossToolkit {
 
     for (const c of this.charges) {
       if (time >= c.startsAt) continue;
-      g.lineStyle(2, P.lit, 0.6);
+      const a = Math.atan2(c.toY - c.fromY, c.toX - c.fromX);
+      g.lineStyle(c.halfW * 2, P.main, 0.16);
       g.lineBetween(c.fromX, c.fromY, c.toX, c.toY);
-      g.lineStyle(c.halfW * 2, P.main, 0.1);
-      g.lineBetween(c.fromX, c.fromY, c.toX, c.toY);
+      g.lineStyle(2.5, P.lit, 0.7);
+      for (const sgn of [-1, 1]) {
+        const ox = -Math.sin(a) * c.halfW * sgn;
+        const oy = Math.cos(a) * c.halfW * sgn;
+        g.lineBetween(c.fromX + ox, c.fromY + oy, c.toX + ox, c.toY + oy);
+      }
+      g.lineStyle(2, P.accent, 0.6);
+      g.strokeCircle(c.toX, c.toY, c.halfW * (1 + Math.sin(time / 130) * 0.08));
     }
 
     for (const s of this.sweeps) {
@@ -666,8 +758,18 @@ export class BossToolkit {
       const ex = s.ox + Math.cos(a) * s.length;
       const ey = s.oy + Math.sin(a) * s.length;
       if (warming) {
-        g.lineStyle(2, P.lit, 0.5);
+        // The whole swing is shown, not just where it starts — the half of the
+        // hall that is about to be unsafe is the thing worth knowing.
+        g.fillStyle(P.main, 0.09);
+        g.beginPath();
+        g.moveTo(s.ox, s.oy);
+        g.arc(s.ox, s.oy, s.length, Math.min(s.a0, s.a1), Math.max(s.a0, s.a1), false);
+        g.closePath();
+        g.fillPath();
+        g.lineStyle(3, P.lit, 0.7);
         g.lineBetween(s.ox, s.oy, s.ox + Math.cos(s.a0) * s.length, s.oy + Math.sin(s.a0) * s.length);
+        g.lineStyle(1.5, P.accent, 0.4);
+        g.lineBetween(s.ox, s.oy, s.ox + Math.cos(s.a1) * s.length, s.oy + Math.sin(s.a1) * s.length);
       } else if (time <= s.endsAt) {
         g.lineStyle(s.halfW * 2, P.main, 0.5);
         g.lineBetween(s.ox, s.oy, ex, ey);

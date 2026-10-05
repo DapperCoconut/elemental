@@ -224,7 +224,6 @@ export const PASSION_BOSS: WorldBossDef = {
   colorLit: ROSE_LIT,
   colorDark: ROSE_DARK,
   accent: GOLD,
-  bodyR: 28,
 
   intro: ['I will cherish the memory of this. You will not have one. Isn\'t that romantic?'],
   banter: [
@@ -247,8 +246,6 @@ export const PASSION_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-flak', 'h-rune'],
       restMs: 1030,
       harassMs: 3050,
-      moveSpeed: 66,
-      holdDist: 280,
     },
     {
       name: 'The Quarrel',
@@ -261,8 +258,6 @@ export const PASSION_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-flak', 'h-lane', 'h-rune'],
       restMs: 880,
       harassMs: 2550,
-      moveSpeed: 78,
-      holdDist: 255,
     },
   ],
 
@@ -279,8 +274,6 @@ export const PASSION_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-rune', 'h-flak', 'h-lane'],
       restMs: 700,
       harassMs: 2100,
-      moveSpeed: 88,
-      holdDist: 235,
     },
   },
 
@@ -320,100 +313,10 @@ export const PASSION_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.35);
-    g.fillEllipse(s.x, s.y + 46, 88, 16);
-
-    const dirX = Math.cos(s.facing);
-    // A pulse that runs through everything, on the court's own beat.
-    const beat = Math.pow(Math.max(0, Math.sin(t / 360)), 6);
-
-    // A gown that is mostly petals, moving as if there were a draught.
-    for (let layer = 3; layer >= 1; layer--) {
-      const w = 30 + layer * 12;
-      g.fillStyle(layer === 3 ? ROSE_DARK : layer === 2 ? 0x8a1a4a : ROSE, 0.92);
-      g.beginPath();
-      g.moveTo(s.x - w * 0.4, s.y - 20);
-      g.lineTo(s.x + w * 0.4, s.y - 20);
-      g.lineTo(s.x + w, s.y + 46);
-      g.lineTo(s.x - w, s.y + 46);
-      g.closePath();
-      g.fillPath();
-      // Petal scallops along the hem.
-      for (let i = 0; i < 6; i++) {
-        g.fillCircle(s.x - w + (i * 2 * w) / 5, s.y + 46 + Math.sin(t / 300 + i + layer) * 3, w * 0.16);
-      }
-    }
-    g.fillStyle(GOLD, 0.6);
-    g.fillRect(s.x - 15, s.y - 20, 30, 4);
-
-    // The chest cavity: open, and there is a heart in it that everyone can see.
-    g.fillStyle(ROSE_DARK, 1);
-    g.fillCircle(s.x, s.y - 2, 17);
-    drawHeart(g, s.x, s.y - 2, 12 + beat * 3 + s.castGlow * 3, s.hurt ? 0xffffff : ROSE_LIT, 0.95);
-    g.lineStyle(1.5, GOLD, 0.5);
-    g.strokeCircle(s.x, s.y - 2, 18 + beat * 2);
-    // Threads out of it, trailing to nobody in particular.
-    for (let i = 0; i < 4; i++) {
-      const a = t / 1100 + (i * Math.PI) / 2;
-      g.lineStyle(1.5, ROSE, 0.35);
-      g.lineBetween(s.x, s.y - 2, s.x + Math.cos(a) * 46, s.y - 2 + Math.sin(a) * 34);
-      g.fillStyle(ROSE, 0.4);
-      g.fillCircle(s.x + Math.cos(a) * 46, s.y - 2 + Math.sin(a) * 34, 2.5);
-    }
-
-    // Hands: one offered, palm up, always; one holding a rose by the thorns.
-    const offer = Math.sin(t / 700) * 4;
-    g.fillStyle(0xf0d0d8, 0.95);
-    g.fillCircle(s.x + dirX * 36, s.y + 8 + offer - s.castGlow * 10, 7);
-    const rx = s.x - dirX * 34;
-    const ry = s.y + 4 - offer;
-    g.fillStyle(0xf0d0d8, 0.95);
-    g.fillCircle(rx, ry, 7);
-    g.lineStyle(2, 0x3a6a3a, 0.9);
-    g.lineBetween(rx, ry - 4, rx - dirX * 4, ry - 26);
-    for (let p = 3; p >= 1; p--) {
-      g.fillStyle(p === 3 ? ROSE_DARK : p === 2 ? ROSE : ROSE_LIT, 0.95);
-      g.fillCircle(rx - dirX * 4, ry - 30, 2.5 + p * 2);
-    }
-
-    // Head: a fine, sharp face, and eyes that have been crying stylishly.
-    const hy = s.y - 40;
-    g.fillStyle(0xf0d0d8, 0.96);
-    g.fillEllipse(s.x + dirX * 2, hy, 30, 34);
-    // Hair, heavy, with a rose set in it.
-    g.fillStyle(0x2a0812, 1);
-    g.fillEllipse(s.x, hy - 12, 36, 22);
-    g.fillEllipse(s.x - 18, hy + 6, 12, 30);
-    g.fillEllipse(s.x + 18, hy + 6, 12, 30);
-    g.fillStyle(ROSE, 0.95);
-    g.fillCircle(s.x - 16, hy - 16, 6);
-    g.fillStyle(ROSE_DARK, 0.9);
-    g.fillCircle(s.x - 16, hy - 16, 3);
-    const eye = s.hurt ? 0xffffff : ROSE_DARK;
-    for (const side of [-1, 1]) {
-      g.fillStyle(0xffffff, 0.9);
-      g.fillEllipse(s.x + side * 8 + dirX * 3, hy - 2, 10, 7);
-      g.fillStyle(eye, 1);
-      g.fillCircle(s.x + side * 8 + dirX * 5, hy - 2, 3.2);
-      g.fillStyle(GOLD, 0.7);
-      g.fillCircle(s.x + side * 8 + dirX * 5, hy - 3, 1.2);
-      // A single, extremely well-judged tear.
-      const ph = ((t + side * 900) % 2600) / 2600;
-      if (ph < 0.5) {
-        g.fillStyle(ROSE_LIT, (0.5 - ph) * 1.2);
-        g.fillCircle(s.x + side * 8 + dirX * 4, hy + 4 + ph * 34, 1.8);
-      }
-    }
-    g.fillStyle(ROSE, 0.9);
-    g.fillEllipse(s.x + dirX * 3, hy + 14, 9, 5);
-    if (s.enraged) {
-      drawHeart(g, s.x, s.y, 70 + beat * 8, ROSE, 0.07);
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.22);
-      g.fillCircle(s.x, s.y, 54);
-    }
-  },
+  look: { crest: 'crown', pattern: 'swirl', aura: 'petals', hands: 'ball', torsoR: 34, mouth: 'grin' },
+  phaseStyles: [
+    { movement: 'hover', gimmick: 'none' },
+    { movement: 'orbit', gimmick: 'stalkers', tint: 'blood' },
+    { movement: 'rush', gimmick: 'shrink', tint: 'blood', look: { crest: 'blades', hands: 'claw' } },
+  ],
 };

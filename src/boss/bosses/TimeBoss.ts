@@ -170,7 +170,6 @@ export const TIME_BOSS: WorldBossDef = {
   colorLit: SAND_LIT,
   colorDark: SAND_DARK,
   accent: CLOCK,
-  bodyR: 28,
 
   intro: ['I will outlast you by definition. Comfortable? This takes a minute. The same one, repeatedly.'],
   banter: [
@@ -193,8 +192,6 @@ export const TIME_BOSS: WorldBossDef = {
       harass: ['h-rune', 'h-flak', 'h-snipe'],
       restMs: 1080,
       harassMs: 3200,
-      moveSpeed: 55,
-      holdDist: 280,
     },
     {
       name: 'The Second Pass',
@@ -207,8 +204,6 @@ export const TIME_BOSS: WorldBossDef = {
       harass: ['h-rune', 'h-orbs', 'h-flak', 'h-snipe'],
       restMs: 930,
       harassMs: 2700,
-      moveSpeed: 65,
-      holdDist: 250,
     },
   ],
 
@@ -225,8 +220,6 @@ export const TIME_BOSS: WorldBossDef = {
       harass: ['h-rune', 'h-orbs', 'h-lane', 'h-flak'],
       restMs: 720,
       harassMs: 2200,
-      moveSpeed: 80,
-      holdDist: 230,
     },
   },
 
@@ -255,74 +248,10 @@ export const TIME_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.35);
-    g.fillEllipse(s.x, s.y + 46, 88, 16);
-
-    // The robed base — a drift of sand it stands in, or is.
-    g.fillStyle(SAND_DARK, 1);
-    g.fillTriangle(s.x - 30, s.y + 44, s.x + 30, s.y + 44, s.x, s.y + 2);
-    g.fillStyle(SAND, 0.7);
-    g.fillTriangle(s.x - 20, s.y + 42, s.x + 20, s.y + 42, s.x, s.y + 10);
-
-    // The hourglass torso: two glass bulbs, sand pouring between.
-    const pour = (t % 1200) / 1200;
-    // Frame.
-    g.lineStyle(3, SAND_DARK, 1);
-    g.lineBetween(s.x - 20, s.y - 34, s.x + 20, s.y - 34);
-    g.lineBetween(s.x - 20, s.y + 6, s.x + 20, s.y + 6);
-    g.lineBetween(s.x - 18, s.y - 34, s.x - 4, s.y - 14);
-    g.lineBetween(s.x + 18, s.y - 34, s.x + 4, s.y - 14);
-    g.lineBetween(s.x - 4, s.y - 14, s.x - 18, s.y + 6);
-    g.lineBetween(s.x + 4, s.y - 14, s.x + 18, s.y + 6);
-    // Glass sheen.
-    g.fillStyle(CLOCK, 0.1);
-    g.fillTriangle(s.x - 16, s.y - 32, s.x + 16, s.y - 32, s.x, s.y - 14);
-    g.fillTriangle(s.x - 16, s.y + 4, s.x + 16, s.y + 4, s.x, s.y - 14);
-    // Sand: upper reservoir shrinks with hp, stream, lower pile.
-    const upper = 4 + s.hpRatio * 8;
-    g.fillStyle(SAND_LIT, 0.9);
-    g.fillTriangle(s.x - upper, s.y - 32, s.x + upper, s.y - 32, s.x, s.y - 32 + upper * 1.4);
-    g.lineStyle(1.5, SAND_LIT, 0.9);
-    g.lineBetween(s.x, s.y - 14, s.x, s.y - 14 + pour * 16);
-    g.fillStyle(SAND_LIT, 0.9);
-    g.fillTriangle(s.x - 10, s.y + 4, s.x + 10, s.y + 4, s.x, s.y - 4);
-
-    // Arms: thin brass hands — literal clock hands — tracking the player.
-    for (const side of [-1, 1]) {
-      const aa = s.facing + side * 0.7 + s.castGlow * side * 0.2;
-      g.lineStyle(3, SAND_DARK, 1);
-      g.lineBetween(s.x + side * 14, s.y - 16, s.x + Math.cos(aa) * 44, s.y - 10 + Math.sin(aa) * 30);
-      g.fillStyle(CLOCK, 0.9);
-      g.fillTriangle(
-        s.x + Math.cos(aa) * 44 - 3, s.y - 10 + Math.sin(aa) * 30 - 3,
-        s.x + Math.cos(aa) * 44 + 3, s.y - 10 + Math.sin(aa) * 30 - 3,
-        s.x + Math.cos(aa) * 50, s.y - 10 + Math.sin(aa) * 34,
-      );
-    }
-
-    // The head: a clock face with hands that run wrong.
-    const hy0 = s.y - 48;
-    g.fillStyle(SAND_DARK, 1);
-    g.fillCircle(s.x, hy0, 16);
-    g.fillStyle(0xf2ead0, 0.95);
-    g.fillCircle(s.x, hy0, 13);
-    for (let i = 0; i < 12; i += 3) {
-      const a = (Math.PI * 2 * i) / 12 - Math.PI / 2;
-      g.fillStyle(SAND_DARK, 0.9);
-      g.fillCircle(s.x + Math.cos(a) * 10, hy0 + Math.sin(a) * 10, 1);
-    }
-    // Hands: the minute hand spins backwards; the hour hand points at YOU.
-    const minA = -t / 400;
-    g.lineStyle(2, SAND_DARK, 1);
-    g.lineBetween(s.x, hy0, s.x + Math.cos(minA) * 10, hy0 + Math.sin(minA) * 10);
-    const eye = s.hurt ? 0xff4030 : s.enraged ? 0xcc3020 : SAND_DARK;
-    g.lineStyle(2.5, eye, 1);
-    g.lineBetween(s.x, hy0, s.x + Math.cos(s.facing) * 7, hy0 + Math.sin(s.facing) * 7);
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.22);
-      g.fillCircle(s.x, s.y, 52);
-    }
-  },
+  look: { crest: 'halo', pattern: 'rings', aura: 'dust', hands: 'orb', torsoR: 35 },
+  phaseStyles: [
+    { movement: 'hover', gimmick: 'none' },
+    { movement: 'blink', gimmick: 'wards', tint: 'gold' },
+    { movement: 'blink', gimmick: 'gloom', tint: 'pale', look: { crest: 'orbs', eyes: 3 } },
+  ],
 };

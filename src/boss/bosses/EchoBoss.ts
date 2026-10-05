@@ -160,7 +160,6 @@ export const ECHO_BOSS: WorldBossDef = {
   colorLit: CHIRP_LIT,
   colorDark: CAVE_DARK,
   accent: SONAR,
-  bodyR: 30,
 
   intro: ['Follow the sound. I made it for you. I make ALL the sounds here.'],
   banter: [
@@ -183,8 +182,6 @@ export const ECHO_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-flak', 'h-rune'],
       restMs: 1040,
       harassMs: 3050,
-      moveSpeed: 60,
-      holdDist: 280,
     },
     {
       name: 'The Deep Gallery',
@@ -197,8 +194,6 @@ export const ECHO_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-flak', 'h-rune', 'h-lane'],
       restMs: 890,
       harassMs: 2550,
-      moveSpeed: 75,
-      holdDist: 250,
     },
   ],
 
@@ -215,8 +210,6 @@ export const ECHO_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-rune', 'h-lane', 'h-flak'],
       restMs: 690,
       harassMs: 2050,
-      moveSpeed: 90,
-      holdDist: 230,
     },
   },
 
@@ -244,65 +237,10 @@ export const ECHO_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    // It hangs from the dark: no ground shadow, a rock stem above instead.
-    g.fillStyle(CAVE_DARK, 1);
-    g.fillTriangle(s.x - 16, s.y - 58, s.x + 16, s.y - 58, s.x, s.y - 30);
-
-    // Folded wing membranes around a crystal core.
-    for (const side of [-1, 1]) {
-      const flap = Math.sin(t / 480 + side) * 0.1 + s.castGlow * 0.3;
-      g.fillStyle(0x1e1e40, 1);
-      g.fillTriangle(
-        s.x + side * 6, s.y - 26,
-        s.x + side * (38 + flap * 20), s.y - 8,
-        s.x + side * 14, s.y + 26,
-      );
-      g.lineStyle(1.5, CHIRP, 0.4);
-      g.lineBetween(s.x + side * 8, s.y - 18, s.x + side * (32 + flap * 16), s.y - 6);
-    }
-
-    // The core: a faceted crystal heart that rings when it casts.
-    g.fillStyle(CAVE_DARK, 1);
-    g.fillEllipse(s.x, s.y - 4, 34, 44);
-    g.fillStyle(0x262650, 1);
-    g.fillEllipse(s.x, s.y - 4, 26, 34);
-    g.fillStyle(SONAR, 0.35 + s.castGlow * 0.55);
-    g.fillEllipse(s.x, s.y - 2, 12, 18);
-
-    // Great sonar ears, swivelled toward the player.
-    const dirX = Math.cos(s.facing);
-    for (const side of [-1, 1]) {
-      const lean = side * 0.3 + dirX * 0.2;
-      g.fillStyle(0x1e1e40, 1);
-      g.fillTriangle(
-        s.x + side * 10, s.y - 28,
-        s.x + side * (24 + lean * 8), s.y - 52,
-        s.x + side * 4, s.y - 38,
-      );
-      g.lineStyle(1, CHIRP_LIT, 0.5);
-      g.lineBetween(s.x + side * 12, s.y - 34, s.x + side * (20 + lean * 6), s.y - 46);
-    }
-
-    // Eyes: wide sonar dishes. Blind, and better for it.
-    const eye = s.hurt ? 0xffffff : s.enraged ? SONAR : CHIRP_LIT;
-    const ex = dirX * 3;
-    for (const side of [-1, 1]) {
-      g.lineStyle(1.5, eye, 0.9);
-      g.strokeCircle(s.x + side * 7 + ex, s.y - 14, 4.5);
-      g.fillStyle(eye, 0.8);
-      g.fillCircle(s.x + side * 7 + ex, s.y - 14, 1.6);
-    }
-    // Its voice, visible: ripple arcs off the core on a slow beat.
-    for (let i = 0; i < 2; i++) {
-      const ph = ((t / 1100 + i / 2) % 1);
-      g.lineStyle(1.5, SONAR, (1 - ph) * 0.4);
-      g.strokeCircle(s.x, s.y - 2, 20 + ph * 34);
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.2);
-      g.fillCircle(s.x, s.y, 52);
-    }
-  },
+  look: { crest: 'none', pattern: 'rings', aura: 'smoke', hands: 'wisp', torsoR: 36, eyes: 3, mouth: 'maw' },
+  phaseStyles: [
+    { movement: 'anchor', gimmick: 'gloom' },
+    { movement: 'blink', gimmick: 'gloom', tint: 'void' },
+    { movement: 'blink', gimmick: 'wards', tint: 'pale', look: { crest: 'tendrils' } },
+  ],
 };

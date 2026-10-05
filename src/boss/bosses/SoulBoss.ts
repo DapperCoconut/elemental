@@ -192,7 +192,6 @@ export const SOUL_BOSS: WorldBossDef = {
   colorLit: SHROUD_LIT,
   colorDark: SHROUD_DARK,
   accent: LANTERN,
-  bodyR: 28,
 
   intro: ['Everyone pays. Some pay twice. You look like a twice.'],
   banter: [
@@ -215,8 +214,6 @@ export const SOUL_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-rune', 'h-snipe'],
       restMs: 1080,
       harassMs: 3200,
-      moveSpeed: 60,
-      holdDist: 280,
     },
     {
       name: 'The Far Bank',
@@ -229,8 +226,6 @@ export const SOUL_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-rune', 'h-flak', 'h-snipe'],
       restMs: 930,
       harassMs: 2700,
-      moveSpeed: 75,
-      holdDist: 250,
     },
   ],
 
@@ -247,8 +242,6 @@ export const SOUL_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-rune', 'h-lane', 'h-flak'],
       restMs: 730,
       harassMs: 2250,
-      moveSpeed: 90,
-      holdDist: 230,
     },
   },
 
@@ -275,63 +268,10 @@ export const SOUL_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    const dirX = Math.cos(s.facing);
-    const bob = Math.sin(t / 600) * 3;
-
-    // The skiff beneath him — a sliver of dark hull.
-    g.fillStyle(0x000000, 0.35);
-    g.fillEllipse(s.x, s.y + 46, 96, 12);
-    g.fillStyle(SHROUD_DARK, 1);
-    g.fillEllipse(s.x, s.y + 38 + bob, 84, 12);
-    g.lineStyle(2, SHROUD, 0.4);
-    g.lineBetween(s.x - 40, s.y + 34 + bob, s.x + 40, s.y + 34 + bob);
-
-    // The robe: a hooded column that frays to nothing above the hull.
-    g.fillStyle(SHROUD_DARK, 1);
-    g.fillTriangle(s.x - 24, s.y + 36 + bob, s.x + 24, s.y + 36 + bob, s.x, s.y - 34 + bob);
-    g.fillStyle(0x18102a, 1);
-    g.fillTriangle(s.x - 16, s.y + 32 + bob, s.x + 16, s.y + 32 + bob, s.x, s.y - 26 + bob);
-    // Fraying hem wisps.
-    for (let i = 0; i < 4; i++) {
-      const wx = s.x - 18 + i * 12;
-      const wob = Math.sin(t / 240 + i * 2.1) * 3;
-      g.fillStyle(SHROUD, 0.25);
-      g.fillCircle(wx + wob, s.y + 30 + bob + (i % 2) * 4, 4);
-    }
-
-    // The pole, held to one side, lantern swinging at its head.
-    const px = s.x + dirX * 26;
-    const sway = Math.sin(t / 500) * 5 + s.castGlow * 6;
-    g.lineStyle(3, 0x4a3a5c, 1);
-    g.lineBetween(px, s.y + 42 + bob, px - dirX * 10 + sway * 0.3, s.y - 52 + bob);
-    const lx = px - dirX * 10 + sway;
-    const ly = s.y - 46 + bob;
-    g.lineStyle(1.5, SHROUD_DARK, 1);
-    g.lineBetween(px - dirX * 10 + sway * 0.3, s.y - 52 + bob, lx, ly);
-    g.fillStyle(LANTERN, 0.18);
-    g.fillCircle(lx, ly + 8, 13);
-    g.lineStyle(1.5, SHROUD_DARK, 1);
-    g.strokeRoundedRect(lx - 5, ly + 2, 10, 13, 3);
-    g.fillStyle(LANTERN, 0.55 + s.castGlow * 0.45);
-    g.fillCircle(lx, ly + 8, 3.5 + s.castGlow * 1.5);
-
-    // The hood: empty, save the fare-lights.
-    const hy0 = s.y - 30 + bob;
-    g.fillStyle(SHROUD_DARK, 1);
-    g.fillEllipse(s.x, hy0, 28, 24);
-    g.fillStyle(0x080512, 1);
-    g.fillEllipse(s.x + dirX * 2, hy0 + 2, 19, 16);
-    const eye = s.hurt ? 0xffffff : s.enraged ? 0xffd27a : LANTERN;
-    const ex = Math.cos(s.facing) * 3;
-    for (const side of [-1, 1]) {
-      g.fillStyle(eye, 1);
-      g.fillCircle(s.x + side * 5 + ex, hy0 + 1, 2.6);
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.22);
-      g.fillCircle(s.x, s.y, 52);
-    }
-  },
+  look: { crest: 'veil', pattern: 'runes', aura: 'smoke', hands: 'wisp', torsoR: 35, eyes: 1 },
+  phaseStyles: [
+    { movement: 'hover', gimmick: 'none' },
+    { movement: 'blink', gimmick: 'gloom', tint: 'void' },
+    { movement: 'blink', gimmick: 'stalkers', tint: 'pale', look: { crest: 'halo', eyes: 3 } },
+  ],
 };

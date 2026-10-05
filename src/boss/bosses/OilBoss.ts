@@ -188,7 +188,6 @@ export const OIL_BOSS: WorldBossDef = {
   colorLit: OIL_LIT,
   colorDark: OIL_DARK,
   accent: FLAME,
-  bodyR: 34,
 
   intro: ['Everything you love is fuel. Shall we itemise?'],
   banter: [
@@ -265,60 +264,10 @@ export const OIL_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    // Ground shadow + concrete footing.
-    g.fillStyle(0x000000, 0.45);
-    g.fillEllipse(s.x, s.y + 52, 120, 20);
-    g.fillStyle(0x2a2420, 1);
-    g.fillRect(s.x - 46, s.y + 40, 92, 12);
-
-    // A-frame tower legs.
-    g.lineStyle(8, OIL_DARK, 1);
-    g.lineBetween(s.x - 38, s.y + 46, s.x - 6, s.y - 40);
-    g.lineBetween(s.x + 38, s.y + 46, s.x + 6, s.y - 40);
-    g.lineStyle(4, OIL, 1);
-    g.lineBetween(s.x - 28, s.y + 18, s.x + 28, s.y + 18);
-    g.lineBetween(s.x - 18, s.y - 10, s.x + 18, s.y - 10);
-    // Rivet glints.
-    for (const [rx, ry] of [[-28, 18], [28, 18], [-18, -10], [18, -10]] as const) {
-      g.fillStyle(OIL_LIT, 0.8);
-      g.fillCircle(s.x + rx, s.y + ry, 2);
-    }
-
-    // The pump head: a horse-head beam that nods — hard, when casting.
-    const nod = Math.sin(t / 460) * 0.12 + s.castGlow * 0.4;
-    const hx = s.x + Math.cos(s.facing) * 6;
-    const beamA = (s.facing > -Math.PI / 2 && s.facing < Math.PI / 2 ? 0 : Math.PI) + nod * (s.facing > -Math.PI / 2 && s.facing < Math.PI / 2 ? 1 : -1);
-    const headX = hx + Math.cos(beamA) * 44;
-    const headY = s.y - 44 + Math.sin(beamA) * 20;
-    g.lineStyle(9, OIL_DARK, 1);
-    g.lineBetween(hx - Math.cos(beamA) * 30, s.y - 44 - Math.sin(beamA) * 12, headX, headY);
-    // Counterweight.
-    g.fillStyle(OIL, 1);
-    g.fillCircle(hx - Math.cos(beamA) * 34, s.y - 44 - Math.sin(beamA) * 14, 12);
-    // The horse head itself.
-    g.fillStyle(OIL_DARK, 1);
-    g.fillRoundedRect(headX - 10, headY - 16, 22, 30, 5);
-    // Eyes: two amber lamps on the head, tracking.
-    const eye = s.hurt ? 0xffffff : s.enraged ? FLAME : OIL_LIT;
-    g.fillStyle(eye, 1);
-    g.fillCircle(headX - 2, headY - 6, 3.4);
-    g.fillCircle(headX + 7, headY - 6, 3.4);
-    // Crude dripping off the head when casting.
-    if (s.castGlow > 0.2) {
-      const drip = (t % 500) / 500;
-      g.fillStyle(OIL_DARK, 0.9);
-      g.fillCircle(headX + 2, headY + 14 + drip * 26, 3.5);
-    }
-    // Warning lamp at the crown blinks while enraged.
-    if (s.enraged && Math.floor(t / 300) % 2 === 0) {
-      g.fillStyle(FLAME, 0.95);
-      g.fillCircle(s.x, s.y - 62, 4);
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.2);
-      g.fillCircle(s.x, s.y, 60);
-    }
-  },
+  look: { crest: 'stack', pattern: 'drip', aura: 'smoke', hands: 'ball', torsoR: 36, eyes: 2 },
+  phaseStyles: [
+    { movement: 'hover', gimmick: 'none' },
+    { movement: 'stalk', gimmick: 'stalkers', tint: 'void' },
+    { movement: 'rush', gimmick: 'shrink', tint: 'hot', look: { aura: 'flame', crest: 'mane' } },
+  ],
 };

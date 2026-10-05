@@ -236,7 +236,6 @@ export const DEPTHS_BOSS: WorldBossDef = {
   colorLit: DEEP_LIT,
   colorDark: DEEP_DARK,
   accent: LURE,
-  bodyR: 32,
 
   intro: ['Crowns sink. Mine simply arrived first. Everything the surface let go of is down here, and now so are you.'],
   banter: [
@@ -259,8 +258,6 @@ export const DEPTHS_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-rune', 'h-snipe'],
       restMs: 1050,
       harassMs: 3100,
-      moveSpeed: 48,
-      holdDist: 295,
     },
     {
       name: 'Full Fathom',
@@ -273,8 +270,6 @@ export const DEPTHS_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-rune', 'h-lane', 'h-snipe'],
       restMs: 900,
       harassMs: 2600,
-      moveSpeed: 58,
-      holdDist: 270,
     },
   ],
 
@@ -291,8 +286,6 @@ export const DEPTHS_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-rune', 'h-mines', 'h-lane'],
       restMs: 710,
       harassMs: 2100,
-      moveSpeed: 68,
-      holdDist: 250,
     },
   },
 
@@ -340,90 +333,10 @@ export const DEPTHS_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.4);
-    g.fillEllipse(s.x, s.y + 50, 116, 19);
-
-    const dirX = Math.cos(s.facing);
-    const drift = Math.sin(t / 900) * 4;
-
-    // A mass of dark water with a crowned skull somewhere in the middle.
-    g.fillStyle(DEEP_DARK, 1);
-    g.fillEllipse(s.x, s.y + 8 + drift, 104, 88);
-    g.fillStyle(0x0a3038, 0.95);
-    g.fillEllipse(s.x, s.y + 8 + drift, 92, 76);
-    // Bioluminescent stripes down the flanks.
-    for (let i = 0; i < 5; i++) {
-      const a = -0.8 + i * 0.4;
-      g.lineStyle(3, DEEP_LIT, 0.3 + Math.sin(t / 300 + i) * 0.2 + s.castGlow * 0.3);
-      g.beginPath();
-      g.arc(s.x, s.y + 8 + drift, 34 + i * 8, a, a + 0.9, false);
-      g.strokePath();
-    }
-    // Tendrils, hanging and swaying, because everything down here does.
-    for (let i = 0; i < 6; i++) {
-      const bx = s.x - 44 + i * 18;
-      g.lineStyle(3, 0x0a3038, 0.9);
-      g.beginPath();
-      g.moveTo(bx, s.y + 40 + drift);
-      for (let k = 1; k <= 4; k++) {
-        g.lineTo(bx + Math.sin(t / 420 + i + k) * (k * 3), s.y + 40 + drift + k * 12);
-      }
-      g.strokePath();
-      g.fillStyle(DEEP_LIT, 0.4);
-      g.fillCircle(bx + Math.sin(t / 420 + i + 4) * 12, s.y + 90 + drift, 2.5);
-    }
-
-    // The jaw: it is most of the front, and it never fully closes.
-    const chew = Math.abs(Math.sin(t / 500)) * 5;
-    g.fillStyle(0x02090e, 1);
-    g.fillEllipse(s.x + dirX * 6, s.y + 14 + drift, 64, 22 + chew + s.castGlow * 8);
-    for (let i = 0; i < 11; i++) {
-      const tx = s.x - 30 + i * 6 + dirX * 6;
-      g.fillStyle(0xf0e8d0, 0.9);
-      g.fillTriangle(tx - 2.5, s.y + 4 + drift, tx + 2.5, s.y + 4 + drift, tx, s.y + 13 + drift);
-      g.fillTriangle(tx - 2.5, s.y + 24 + chew + drift, tx + 2.5, s.y + 24 + chew + drift, tx, s.y + 15 + chew + drift);
-    }
-
-    // Eyes: enormous, pale, adapted to a dark nobody else has ever seen.
-    const eye = s.hurt ? 0xffffff : DEEP_LIT;
-    for (const side of [-1, 1]) {
-      g.fillStyle(0xd8f0f4, 0.85);
-      g.fillCircle(s.x + side * 26 + dirX * 4, s.y - 22 + drift, 13);
-      g.fillStyle(0x02090e, 1);
-      g.fillCircle(s.x + side * 26 + dirX * 7, s.y - 22 + drift, 6);
-      g.fillStyle(eye, 0.6 + s.castGlow * 0.4);
-      g.fillCircle(s.x + side * 26 + dirX * 7, s.y - 22 + drift, 2.4);
-    }
-    // The lure: its own light, out on a stalk, and it never stops moving.
-    const stalkX = s.x + Math.sin(t / 700) * 26;
-    const stalkY = s.y - 74 + Math.cos(t / 900) * 8 + drift;
-    g.lineStyle(3, 0x0a3038, 0.95);
-    g.beginPath();
-    g.moveTo(s.x, s.y - 40 + drift);
-    g.lineTo(s.x + (stalkX - s.x) * 0.5, s.y - 62 + drift);
-    g.lineTo(stalkX, stalkY);
-    g.strokePath();
-    g.fillStyle(LURE, 0.18 + s.castGlow * 0.2);
-    g.fillCircle(stalkX, stalkY, 20);
-    g.fillStyle(LURE, 0.95);
-    g.fillCircle(stalkX, stalkY, 6 + s.castGlow * 2);
-
-    // The crown, corroded, still on.
-    const cy = s.y - 44 + drift;
-    for (let i = 0; i < 6; i++) {
-      const a = -Math.PI + (Math.PI * i) / 5;
-      const px = s.x + Math.cos(a) * 34;
-      const py = cy + Math.sin(a) * 11;
-      g.fillStyle(0x8a7a4a, 0.75);
-      g.fillTriangle(px - 5, py, px + 5, py, px, py - 13);
-    }
-    g.lineStyle(3, 0x8a7a4a, 0.7);
-    g.strokeEllipse(s.x, cy + 2, 66, 22);
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.2);
-      g.fillCircle(s.x, s.y, 66);
-    }
-  },
+  look: { crest: 'tendrils', pattern: 'scales', aura: 'bubbles', hands: 'claw', torsoR: 38, eyes: 1, mouth: 'maw' },
+  phaseStyles: [
+    { movement: 'hover', gimmick: 'gloom' },
+    { movement: 'stalk', gimmick: 'gloom', tint: 'void' },
+    { movement: 'rush', gimmick: 'shrink', tint: 'cold', look: { crest: 'mane', arms: 4, eyes: 3 } },
+  ],
 };

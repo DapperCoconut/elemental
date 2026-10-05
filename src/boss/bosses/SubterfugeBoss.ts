@@ -189,7 +189,6 @@ export const SUBTERFUGE_BOSS: WorldBossDef = {
   colorLit: CRIME_LIT,
   colorDark: CRIME_DARK,
   accent: MONEY,
-  bodyR: 30,
 
   intro: ['You were hired to lose. The cheque cleared this morning. Professional courtesy says: lie down.'],
   banter: [
@@ -212,8 +211,6 @@ export const SUBTERFUGE_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-orbs', 'h-snipe'],
       restMs: 1040,
       harassMs: 3050,
-      moveSpeed: 50,
-      holdDist: 290,
     },
     {
       name: 'The Escalation',
@@ -226,8 +223,6 @@ export const SUBTERFUGE_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-orbs', 'h-lane', 'h-snipe'],
       restMs: 890,
       harassMs: 2550,
-      moveSpeed: 60,
-      holdDist: 260,
     },
   ],
 
@@ -244,8 +239,6 @@ export const SUBTERFUGE_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-flak', 'h-lane', 'h-rune'],
       restMs: 690,
       harassMs: 2050,
-      moveSpeed: 70,
-      holdDist: 240,
     },
   },
 
@@ -276,72 +269,10 @@ export const SUBTERFUGE_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.4);
-    g.fillEllipse(s.x, s.y + 46, 100, 17);
-
-    // The suit: shoulders like a doorframe.
-    g.fillStyle(CRIME_DARK, 1);
-    g.fillRoundedRect(s.x - 34, s.y - 24, 68, 64, 10);
-    g.fillStyle(0x3a1218, 1);
-    g.fillRoundedRect(s.x - 28, s.y - 20, 56, 56, 8);
-    // Pinstripes.
-    g.lineStyle(1, CRIME_LIT, 0.2);
-    for (let i = 0; i < 6; i++) {
-      g.lineBetween(s.x - 24 + i * 10, s.y - 20, s.x - 26 + i * 10, s.y + 36);
-    }
-    // Shirt, tie, and the pocket square that has seen things.
-    g.fillStyle(0xf2ead6, 0.95);
-    g.fillTriangle(s.x - 8, s.y - 20, s.x + 8, s.y - 20, s.x, s.y + 4);
-    g.fillStyle(CRIME, 1);
-    g.fillTriangle(s.x - 3, s.y - 18, s.x + 3, s.y - 18, s.x, s.y + 2);
-    g.fillStyle(MONEY, 0.9);
-    g.fillTriangle(s.x - 22, s.y - 14, s.x - 14, s.y - 14, s.x - 18, s.y - 8);
-
-    // Hands: one drums the ledger, one holds the cigar.
-    const dirX = Math.cos(s.facing);
-    const drum = Math.abs(Math.sin(t / 190)) * 3;
-    g.fillStyle(0xd8b898, 1);
-    g.fillCircle(s.x - dirX * 30, s.y + 22 - drum, 7);
-    const cigX = s.x + dirX * 32;
-    const cigY = s.y + 6 - s.castGlow * 10;
-    g.fillCircle(cigX, cigY, 7);
-    g.lineStyle(3, 0x4a2a14, 1);
-    g.lineBetween(cigX, cigY - 2, cigX + dirX * 12, cigY - 6);
-    g.fillStyle(0xff6a3a, 0.95);
-    g.fillCircle(cigX + dirX * 13, cigY - 6, 2 + Math.sin(t / 150) * 0.8 + s.castGlow);
-    // Smoke, curling up and away.
-    for (let i = 0; i < 3; i++) {
-      const ph = ((t + i * 500) % 1600) / 1600;
-      g.fillStyle(0x8a8a92, (1 - ph) * 0.25);
-      g.fillCircle(cigX + dirX * 14 + Math.sin(t / 300 + i) * 5, cigY - 10 - ph * 26, 2.5 + ph * 3.5);
-    }
-    // The pinky ring. Non-negotiable.
-    g.fillStyle(MONEY, 1);
-    g.fillCircle(s.x - dirX * 34, s.y + 22 - drum, 2);
-
-    // Head: jaw, five o'clock shadow, and the fedora doing all the work.
-    const hy0 = s.y - 34;
-    g.fillStyle(0xd8b898, 0.95);
-    g.fillEllipse(s.x, hy0, 24, 22);
-    g.fillStyle(0xb89878, 0.5);
-    g.fillEllipse(s.x, hy0 + 7, 20, 9);
-    // The brim shadows everything above the jaw.
-    g.fillStyle(CRIME_DARK, 1);
-    g.fillEllipse(s.x + dirX * 2, hy0 - 4, 34, 10);
-    g.fillStyle(0x1e0a0e, 1);
-    g.fillRoundedRect(s.x - 13 + dirX * 2, hy0 - 22, 26, 16, 5);
-    g.fillStyle(CRIME, 0.8);
-    g.fillRect(s.x - 13 + dirX * 2, hy0 - 12, 26, 4);
-    // Under the brim: one gold glint of an eye. Two, if you really upset him.
-    const eye = s.hurt ? 0xffffff : MONEY;
-    g.fillStyle(eye, 0.95);
-    g.fillCircle(s.x + dirX * 6, hy0 - 1, 2);
-    if (s.enraged || s.hurt) g.fillCircle(s.x - 6 + dirX * 4, hy0 - 1, 2);
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.2);
-      g.fillCircle(s.x, s.y, 54);
-    }
-  },
+  look: { crest: 'none', pattern: 'weave', aura: 'smoke', hands: 'ball', torsoR: 34, mouth: 'line' },
+  phaseStyles: [
+    { movement: 'hover', gimmick: 'none' },
+    { movement: 'blink', gimmick: 'stalkers', tint: 'void' },
+    { movement: 'rush', gimmick: 'gloom', tint: 'blood', look: { crest: 'horns', hands: 'claw' } },
+  ],
 };

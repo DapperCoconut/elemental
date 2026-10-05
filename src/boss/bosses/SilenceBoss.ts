@@ -178,7 +178,6 @@ export const SILENCE_BOSS: WorldBossDef = {
   colorLit: HUSH_LIT,
   colorDark: HUSH_DARK,
   accent: STRING,
-  bodyR: 28,
 
   intro: ['Your hands were never yours. Watch them agree with me.'],
   banter: [
@@ -201,8 +200,6 @@ export const SILENCE_BOSS: WorldBossDef = {
       harass: ['h-rune', 'h-orbs', 'h-snipe'],
       restMs: 1040,
       harassMs: 3050,
-      moveSpeed: 55,
-      holdDist: 290,
     },
     {
       name: 'The Second Act',
@@ -215,8 +212,6 @@ export const SILENCE_BOSS: WorldBossDef = {
       harass: ['h-rune', 'h-orbs', 'h-lane', 'h-snipe'],
       restMs: 890,
       harassMs: 2550,
-      moveSpeed: 70,
-      holdDist: 260,
     },
   ],
 
@@ -233,8 +228,6 @@ export const SILENCE_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-rune', 'h-lane', 'h-flak'],
       restMs: 690,
       harassMs: 2050,
-      moveSpeed: 85,
-      holdDist: 240,
     },
   },
 
@@ -264,70 +257,10 @@ export const SILENCE_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    // Strings up into the dark — it is held, or it is holding. Unclear. Fine.
-    for (const off of [-14, 0, 14]) {
-      g.lineStyle(1, STRING, 0.45);
-      g.lineBetween(s.x + off, s.y - 40, s.x + off * 2.5, 90);
-    }
-
-    // The crossbar it works from, tilting with intent.
-    const tilt = Math.cos(s.facing) * 0.15 + Math.sin(t / 900) * 0.05;
-    g.save();
-    g.translateCanvas(s.x, s.y - 52);
-    g.rotateCanvas(tilt);
-    g.lineStyle(3.5, 0x4a3a2a, 1);
-    g.lineBetween(-26, 0, 26, 0);
-    g.lineBetween(0, -10, 0, 10);
-    g.restore();
-
-    // The hooded body: narrow, hanging, sleeves far too long.
-    g.fillStyle(HUSH_DARK, 1);
-    g.fillEllipse(s.x, s.y - 6, 34, 52);
-    g.fillStyle(0x1c1228, 1);
-    g.fillEllipse(s.x, s.y - 8, 26, 42);
-    // The long fingers: four working strings each, always moving.
-    const dirX = Math.cos(s.facing);
-    for (const side of [-1, 1]) {
-      const hx = s.x + side * 26 + dirX * 4;
-      const hy = s.y + 4 + Math.sin(t / 380 + side) * 4;
-      g.fillStyle(HUSH_DARK, 1);
-      g.fillEllipse(hx, hy, 10, 8);
-      for (let f = 0; f < 4; f++) {
-        const fa = Math.PI / 2 + (f - 1.5) * 0.28 + Math.sin(t / 220 + f + side) * 0.12;
-        g.lineStyle(1.5, HUSH_LIT, 0.85);
-        g.lineBetween(hx, hy, hx + Math.cos(fa) * 14, hy + Math.sin(fa) * 14);
-        // Working strings falling from the fingertips.
-        g.lineStyle(0.8, STRING, 0.4 + s.castGlow * 0.4);
-        g.lineBetween(
-          hx + Math.cos(fa) * 14, hy + Math.sin(fa) * 14,
-          hx + Math.cos(fa) * 14 + side * 4, hy + 44 + Math.sin(t / 300 + f) * 6,
-        );
-      }
-    }
-
-    // The mask: white, serene, wrong.
-    const hy0 = s.y - 30;
-    g.fillStyle(0xe8e2d8, 0.95);
-    g.fillEllipse(s.x + dirX * 2, hy0, 20, 24);
-    const eye = s.hurt ? 0xffffff : s.enraged ? STRING : HUSH_DARK;
-    for (const side of [-1, 1]) {
-      // Painted-on eyes: closed arcs, unless it is angry, in which case open.
-      if (s.enraged || s.hurt) {
-        g.fillStyle(eye, 1);
-        g.fillEllipse(s.x + side * 5 + dirX * 2, hy0 - 2, 4, 5);
-      } else {
-        g.lineStyle(1.2, HUSH_DARK, 0.9);
-        g.beginPath();
-        g.arc(s.x + side * 5 + dirX * 2, hy0 - 2, 3, 0.3, Math.PI - 0.3, false);
-        g.strokePath();
-      }
-    }
-    // No mouth. Obviously.
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.2);
-      g.fillCircle(s.x, s.y, 50);
-    }
-  },
+  look: { crest: 'veil', pattern: 'weave', aura: 'chains', hands: 'claw', torsoR: 34, mouth: 'stitch' },
+  phaseStyles: [
+    { movement: 'hover', gimmick: 'none' },
+    { movement: 'anchor', gimmick: 'stalkers', tint: 'void' },
+    { movement: 'blink', gimmick: 'gloom', tint: 'pale', look: { crest: 'tendrils', arms: 4 } },
+  ],
 };

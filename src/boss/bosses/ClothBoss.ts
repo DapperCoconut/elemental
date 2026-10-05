@@ -330,7 +330,6 @@ export const CLOTH_BOSS: WorldBossDef = {
   colorLit: CLOTH_LIT,
   colorDark: CLOTH_DARK,
   accent: BONE,
-  bodyR: 29,
 
   intro: ['You have come loose. Hold still. I will put you back.'],
   banter: [
@@ -353,8 +352,6 @@ export const CLOTH_BOSS: WorldBossDef = {
       harass: ['h-rune', 'h-orbs', 'h-snipe'],
       restMs: 1050,
       harassMs: 3100,
-      moveSpeed: 40,
-      holdDist: 300,
     },
     {
       name: 'Double Stitch',
@@ -367,8 +364,6 @@ export const CLOTH_BOSS: WorldBossDef = {
       harass: ['h-rune', 'h-orbs', 'h-mines', 'h-snipe'],
       restMs: 900,
       harassMs: 2600,
-      moveSpeed: 50,
-      holdDist: 275,
     },
   ],
 
@@ -385,8 +380,6 @@ export const CLOTH_BOSS: WorldBossDef = {
       harass: ['h-rune', 'h-mines', 'h-orbs', 'h-lane'],
       restMs: 710,
       harassMs: 2100,
-      moveSpeed: 60,
-      holdDist: 250,
     },
   },
 
@@ -436,100 +429,10 @@ export const CLOTH_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.4);
-    g.fillEllipse(s.x, s.y + 46, 92, 17);
-
-    const dirX = Math.cos(s.facing);
-    // A slow, feverish swell — the whole body breathes like something inflamed.
-    const swell = Math.sin(t / 620) * 2.6;
-
-    // The body: a ribcage hinged wide open with the cavity burning inside it.
-    g.fillStyle(CLOTH_DARK, 0.95);
-    g.fillEllipse(s.x, s.y + 4, 62 + swell, 84 + swell);
-    g.fillStyle(CLOTH, 0.55 + s.castGlow * 0.3);
-    g.fillEllipse(s.x, s.y + 2, 34 + swell, 56 + swell);
-    g.fillStyle(0xff3b3b, 0.35 + s.castGlow * 0.4);
-    g.fillEllipse(s.x, s.y, 20 + swell, 36 + swell);
-    g.fillStyle(BONE, 0.3 + Math.sin(t / 200) * 0.1);
-    g.fillEllipse(s.x - 3, s.y - 8, 9, 15);
-
-    // Hanging bolts: four pairs, pulled outward, brighter where the warp shows through.
-    for (let i = 0; i < 4; i++) {
-      const ry = s.y - 26 + i * 18;
-      const span = 26 + i * 5;
-      const hinge = 0.5 + Math.sin(t / 700 + i) * 0.08;
-      for (const sd of [-1, 1]) {
-        g.lineStyle(7, CLOTH_DARK, 0.95);
-        g.beginPath();
-        g.moveTo(s.x + sd * 5, ry);
-        g.lineTo(s.x + sd * span * 0.72, ry + hinge * 12);
-        g.lineTo(s.x + sd * span, ry + hinge * 28);
-        g.strokePath();
-        g.lineStyle(4, BONE, 0.92);
-        g.beginPath();
-        g.moveTo(s.x + sd * 5, ry - 1);
-        g.lineTo(s.x + sd * span * 0.72, ry + hinge * 12 - 1);
-        g.lineTo(s.x + sd * span, ry + hinge * 28 - 1);
-        g.strokePath();
-      }
-    }
-
-    // Hands: the near one is a fistful of cells it is about to let go of; the
-    // far one hangs open, trailing serum.
-    const hx = s.x + dirX * 42;
-    const hy = s.y + 2 - s.castGlow * 12 + swell;
-    g.fillStyle(CLOTH_DARK, 0.95);
-    g.fillCircle(hx, hy, 11);
-    for (let i = 0; i < 5; i++) {
-      const a = t / 320 + (i / 5) * Math.PI * 2;
-      g.fillStyle(i % 2 ? CLOTH_LIT : BONE, 0.75 + s.castGlow * 0.25);
-      g.fillCircle(hx + Math.cos(a) * (7 + s.castGlow * 6), hy + Math.sin(a) * (7 + s.castGlow * 6), 3.2);
-    }
-    g.fillStyle(CLOTH_DARK, 0.95);
-    g.fillCircle(s.x - dirX * 40, s.y + 18 - swell, 9);
-    g.fillStyle(BONE, 0.35);
-    g.fillCircle(s.x - dirX * 40, s.y + 18 - swell, 5);
-
-    // Head: a skull, fever-lit from inside, with the jaw hanging slightly open.
-    const hy0 = s.y - 52 + swell * 0.5;
-    g.fillStyle(BONE, 0.95);
-    g.fillEllipse(s.x, hy0, 34, 32);
-    g.fillStyle(BONE, 0.95);
-    g.fillRoundedRect(s.x - 10, hy0 + 12, 20, 13, 4);
-    g.fillStyle(CLOTH_DARK, 0.75);
-    g.fillRect(s.x - 8, hy0 + 17, 16, 3);
-    // Sockets, with the fever burning behind them.
-    for (const side of [-1, 1]) {
-      const ex = s.x + side * 9 + dirX * 3;
-      g.fillStyle(CLOTH_DARK, 1);
-      g.fillEllipse(ex, hy0 - 2, 12, 13);
-      g.fillStyle(s.hurt ? 0xffffff : 0xff3b3b, 0.85 + s.castGlow * 0.15);
-      g.fillCircle(ex + dirX * 1.5, hy0 - 1, 3.6 + s.castGlow * 1.6);
-      g.fillStyle(CLOTH_LIT, 0.4);
-      g.fillCircle(ex + dirX * 1.5, hy0 - 1, 6 + s.castGlow * 2);
-    }
-    // Suture lines across the cranium.
-    g.lineStyle(1.4, CLOTH_DARK, 0.5);
-    g.lineBetween(s.x, hy0 - 16, s.x, hy0 - 6);
-    g.lineBetween(s.x - 12, hy0 - 10, s.x + 12, hy0 - 9);
-
-    if (s.enraged) {
-      // It has stopped waiting to be asked, and the cells are already out.
-      for (let i = 0; i < 5; i++) {
-        const a = t / 900 + (i * Math.PI * 2) / 5;
-        const px = s.x + Math.cos(a) * 62;
-        const py = s.y + Math.sin(a) * 38;
-        g.fillStyle(CLOTH_DARK, 0.6);
-        g.fillCircle(px, py, 8);
-        g.fillStyle(CLOTH_LIT, 0.45);
-        g.fillCircle(px, py, 5.5);
-      }
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.2);
-      g.fillCircle(s.x, s.y, 56);
-    }
-  },
+  look: { crest: 'veil', pattern: 'weave', hands: 'ball', torsoR: 34, mouth: 'stitch' },
+  phaseStyles: [
+    { movement: 'hover', gimmick: 'none' },
+    { movement: 'stalk', gimmick: 'wards', tint: 'pale' },
+    { movement: 'blink', gimmick: 'gloom', tint: 'void', look: { crest: 'tendrils', arms: 4 } },
+  ],
 };

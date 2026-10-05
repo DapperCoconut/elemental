@@ -174,7 +174,6 @@ export const RUBBER_BOSS: WorldBossDef = {
   colorLit: GUM_LIT,
   colorDark: GUM_DARK,
   accent: SPRING,
-  bodyR: 32,
 
   intro: ["There's more of me than there is of you. Elastically speaking, there's more of me than anything."],
   banter: [
@@ -197,8 +196,6 @@ export const RUBBER_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-orbs', 'h-snipe'],
       restMs: 1040,
       harassMs: 3050,
-      moveSpeed: 95,
-      holdDist: 280,
     },
     {
       name: 'Full Tension',
@@ -211,8 +208,6 @@ export const RUBBER_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-orbs', 'h-lane', 'h-snipe'],
       restMs: 890,
       harassMs: 2550,
-      moveSpeed: 110,
-      holdDist: 250,
     },
   ],
 
@@ -229,8 +224,6 @@ export const RUBBER_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-flak', 'h-lane', 'h-rune'],
       restMs: 690,
       harassMs: 2050,
-      moveSpeed: 130,
-      holdDist: 230,
     },
   },
 
@@ -259,76 +252,10 @@ export const RUBBER_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.35);
-    g.fillEllipse(s.x, s.y + 44, 90, 15);
-
-    // Squash-and-stretch: the whole body breathes like it just landed.
-    const squash = 1 + Math.sin(t / 280) * 0.06 + s.castGlow * 0.1;
-
-    // Satellite gears, counter-rotating.
-    for (const [ox, oy, r, dir] of [[-40, -20, 9, 1], [42, 8, 7, -1]] as const) {
-      const spin = (t / 200) * dir;
-      g.fillStyle(GUM_DARK, 0.9);
-      g.fillCircle(s.x + ox, s.y + oy, r);
-      for (let i = 0; i < 6; i++) {
-        const a = spin + (Math.PI * 2 * i) / 6;
-        g.fillCircle(s.x + ox + Math.cos(a) * r, s.y + oy + Math.sin(a) * r, 2.5);
-      }
-      g.fillStyle(SPRING, 0.7);
-      g.fillCircle(s.x + ox, s.y + oy, 2);
-    }
-
-    // The great gear: rim of teeth, rubber tyre, grinning hub.
-    const R = 30 * squash;
-    const spin = t / 400;
-    for (let i = 0; i < 10; i++) {
-      const a = spin + (Math.PI * 2 * i) / 10;
-      g.fillStyle(GUM_DARK, 1);
-      g.fillRoundedRect(
-        s.x + Math.cos(a) * R - 5, s.y + Math.sin(a) * (R / squash) - 5, 10, 10, 3,
-      );
-    }
-    g.fillStyle(GUM_DARK, 1);
-    g.fillEllipse(s.x, s.y, R * 2, (R / squash) * 2);
-    g.fillStyle(GUM, 1);
-    g.fillEllipse(s.x, s.y, R * 1.7, (R / squash) * 1.7);
-    g.fillStyle(GUM_LIT, 0.4);
-    g.fillEllipse(s.x - 6, s.y - 8, R * 0.9, R * 0.5);
-    // Hub bolts.
-    for (let i = 0; i < 4; i++) {
-      const a = spin / 2 + (Math.PI * 2 * i) / 4;
-      g.fillStyle(SPRING, 0.85);
-      g.fillCircle(s.x + Math.cos(a) * 14, s.y + Math.sin(a) * 12, 2.5);
-    }
-
-    // The face: huge grin, springy eyes on short stalks.
-    const ex = Math.cos(s.facing) * 4;
-    const eyeBounce = Math.sin(t / 180) * 2;
-    const eye = s.hurt ? 0xffffff : s.enraged ? SPRING : 0xffffff;
-    for (const side of [-1, 1]) {
-      g.lineStyle(2, GUM_DARK, 1);
-      g.lineBetween(s.x + side * 8, s.y - 6, s.x + side * 9 + ex, s.y - 14 - eyeBounce);
-      g.fillStyle(eye, 1);
-      g.fillCircle(s.x + side * 9 + ex, s.y - 16 - eyeBounce, 4.5);
-      g.fillStyle(GUM_DARK, 1);
-      g.fillCircle(s.x + side * 9 + ex + Math.cos(s.facing) * 1.5, s.y - 16 - eyeBounce, 2);
-    }
-    g.lineStyle(2.5, GUM_DARK, 1);
-    g.beginPath();
-    g.arc(s.x + ex * 0.5, s.y + 4, s.enraged ? 11 : 9, 0.2, Math.PI - 0.2, false);
-    g.strokePath();
-    if (s.enraged) {
-      // Teeth in the grin. It was cuter without them.
-      g.fillStyle(0xffffff, 0.9);
-      for (let i = 0; i < 3; i++) {
-        g.fillRect(s.x - 6 + i * 5 + ex * 0.5, s.y + 10, 3, 4);
-      }
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.22);
-      g.fillCircle(s.x, s.y, 52);
-    }
-  },
+  look: { crest: 'antennae', pattern: 'rings', hands: 'ball', torsoR: 34, mouth: 'grin' },
+  phaseStyles: [
+    { movement: 'rush', gimmick: 'none' },
+    { movement: 'rush', gimmick: 'tremor' },
+    { movement: 'blink', gimmick: 'stalkers', tint: 'sick', look: { crest: 'blades', arms: 4 } },
+  ],
 };

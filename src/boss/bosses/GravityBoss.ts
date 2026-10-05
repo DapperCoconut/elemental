@@ -159,7 +159,6 @@ export const GRAVITY_BOSS: WorldBossDef = {
   colorLit: VOID_LIT,
   colorDark: VOID_DARK,
   accent: ACCRETION,
-  bodyR: 30,
 
   intro: ['Nothing leaves. Attendance, at least, will be perfect.'],
   banter: [
@@ -182,8 +181,6 @@ export const GRAVITY_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-flak', 'h-rune'],
       restMs: 1080,
       harassMs: 3200,
-      moveSpeed: 50,
-      holdDist: 290,
     },
     {
       name: 'Event Horizon',
@@ -196,8 +193,6 @@ export const GRAVITY_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-flak', 'h-rune', 'h-lane'],
       restMs: 930,
       harassMs: 2700,
-      moveSpeed: 60,
-      holdDist: 260,
     },
   ],
 
@@ -214,8 +209,6 @@ export const GRAVITY_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-rune', 'h-lane', 'h-flak'],
       restMs: 720,
       harassMs: 2200,
-      moveSpeed: 75,
-      holdDist: 240,
     },
   },
 
@@ -242,44 +235,10 @@ export const GRAVITY_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    // Lensing arcs — light bending around the sphere.
-    for (let i = 0; i < 3; i++) {
-      const r = 40 + i * 10;
-      g.lineStyle(1.5, VOID_LIT, 0.3 - i * 0.07);
-      g.beginPath();
-      g.arc(s.x, s.y, r, Math.PI * 0.9 + Math.sin(t / 900) * 0.2, Math.PI * 1.9, false);
-      g.strokePath();
-    }
-    // The accretion ring: an ellipse of hot dust, back half behind the sphere.
-    const ringTilt = 0.35;
-    g.lineStyle(4, ACCRETION, 0.55 + s.castGlow * 0.35);
-    g.strokeEllipse(s.x, s.y, 112, 112 * ringTilt);
-    for (let i = 0; i < 7; i++) {
-      const a = t / 500 + (Math.PI * 2 * i) / 7;
-      g.fillStyle(i % 2 === 0 ? ACCRETION : 0xff9a4a, 0.8);
-      g.fillCircle(s.x + Math.cos(a) * 56, s.y + Math.sin(a) * 56 * ringTilt, 2.2);
-    }
-
-    // The sphere: absolute dark with a thin photon rim.
-    g.fillStyle(0x000000, 1);
-    g.fillCircle(s.x, s.y, 27 + s.castGlow * 3);
-    g.lineStyle(2, s.enraged ? 0xff8a5a : VOID_LIT, 0.9);
-    g.strokeCircle(s.x, s.y, 27 + s.castGlow * 3);
-
-    // Two pinprick "eyes": infalling stars, always sliding toward the middle.
-    const ex = Math.cos(s.facing) * 6;
-    const ey = Math.sin(s.facing) * 4;
-    const eye = s.hurt ? 0xffffff : s.enraged ? 0xffb08a : 0xffffff;
-    const drift = (t % 1000) / 1000;
-    for (const side of [-1, 1]) {
-      g.fillStyle(eye, 0.9 - drift * 0.3);
-      g.fillCircle(s.x + ex + side * (9 - drift * 3), s.y + ey - 2, 1.8);
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.2);
-      g.fillCircle(s.x, s.y, 48);
-    }
-  },
+  look: { crest: 'orbs', pattern: 'rings', aura: 'dust', hands: 'orb', torsoR: 33, eyes: 1 },
+  phaseStyles: [
+    { movement: 'anchor', gimmick: 'none' },
+    { movement: 'orbit', gimmick: 'shrink', tint: 'void' },
+    { movement: 'blink', gimmick: 'tremor', tint: 'void', look: { crest: 'halo', eyes: 3 } },
+  ],
 };

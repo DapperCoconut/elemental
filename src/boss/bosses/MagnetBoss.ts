@@ -191,7 +191,6 @@ export const MAGNET_BOSS: WorldBossDef = {
   colorLit: POLE_LIT,
   colorDark: IRON_DARK,
   accent: POLE_BLUE,
-  bodyR: 30,
 
   intro: ['North is wherever I say. Today, north is me. Come north.'],
   banter: [
@@ -214,8 +213,6 @@ export const MAGNET_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-orbs', 'h-mines'],
       restMs: 1040,
       harassMs: 3050,
-      moveSpeed: 55,
-      holdDist: 280,
     },
     {
       name: 'Full Field',
@@ -228,8 +225,6 @@ export const MAGNET_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-orbs', 'h-mines', 'h-lane'],
       restMs: 890,
       harassMs: 2550,
-      moveSpeed: 65,
-      holdDist: 250,
     },
   ],
 
@@ -246,8 +241,6 @@ export const MAGNET_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-flak', 'h-mines', 'h-rune'],
       restMs: 690,
       harassMs: 2050,
-      moveSpeed: 80,
-      holdDist: 230,
     },
   },
 
@@ -277,57 +270,10 @@ export const MAGNET_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    // Iron filings orbiting in two shells.
-    for (let i = 0; i < 10; i++) {
-      const a = t / 800 + (Math.PI * 2 * i) / 10;
-      const r = 44 + (i % 2) * 10;
-      g.lineStyle(1.5, 0x8a8a92, 0.6);
-      const fx = s.x + Math.cos(a) * r;
-      const fy = s.y + Math.sin(a) * r * 0.8;
-      g.lineBetween(fx, fy, fx + Math.cos(a + Math.PI / 2) * 5, fy + Math.sin(a + Math.PI / 2) * 5);
-    }
-
-    // The horseshoe: a great U, poles down, tipped toward the player.
-    const lean = Math.cos(s.facing) * 6;
-    // Arch.
-    g.lineStyle(20, IRON_DARK, 1);
-    g.beginPath();
-    g.arc(s.x + lean * 0.3, s.y - 8, 26, Math.PI, Math.PI * 2, false);
-    g.strokePath();
-    g.lineStyle(14, POLE_RED, 1);
-    g.beginPath();
-    g.arc(s.x + lean * 0.3, s.y - 8, 26, Math.PI, Math.PI * 1.5, false);
-    g.strokePath();
-    g.lineStyle(14, POLE_BLUE, 1);
-    g.beginPath();
-    g.arc(s.x + lean * 0.3, s.y - 8, 26, Math.PI * 1.5, Math.PI * 2, false);
-    g.strokePath();
-    // Legs.
-    g.fillStyle(POLE_RED, 1);
-    g.fillRect(s.x - 36 + lean, s.y - 10, 18, 34);
-    g.fillStyle(POLE_BLUE, 1);
-    g.fillRect(s.x + 18 + lean, s.y - 10, 18, 34);
-    // Pole tips: pale caps that flare when casting.
-    for (const [x0, col] of [[s.x - 36 + lean, POLE_LIT], [s.x + 18 + lean, 0xa8c8ff]] as const) {
-      g.fillStyle(0xe8e8f0, 1);
-      g.fillRect(x0, s.y + 18, 18, 9);
-      if (s.castGlow > 0.25) {
-        g.fillStyle(col, (s.castGlow - 0.25) * 0.9);
-        g.fillEllipse(x0 + 9, s.y + 30, 20, 8);
-      }
-    }
-    // Eyes on the arch: two rivet-lights.
-    const eye = s.hurt ? 0xffffff : s.enraged ? 0xffd27a : 0xf2f2f6;
-    const ex = Math.cos(s.facing) * 3;
-    for (const side of [-1, 1]) {
-      g.fillStyle(eye, 1);
-      g.fillCircle(s.x + side * 9 + ex + lean * 0.3, s.y - 22, 3);
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.22);
-      g.fillCircle(s.x, s.y, 54);
-    }
-  },
+  look: { crest: 'antennae', pattern: 'rings', aura: 'sparks', hands: 'orb', torsoR: 34 },
+  phaseStyles: [
+    { movement: 'anchor', gimmick: 'none' },
+    { movement: 'orbit', gimmick: 'tremor' },
+    { movement: 'blink', gimmick: 'wards', tint: 'cold', look: { crest: 'orbs', eyes: 3 } },
+  ],
 };

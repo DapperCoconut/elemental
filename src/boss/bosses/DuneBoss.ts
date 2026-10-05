@@ -217,7 +217,6 @@ export const DUNE_BOSS: WorldBossDef = {
   colorLit: SAND_LIT,
   colorDark: SAND_DARK,
   accent: GOLD,
-  bodyR: 28,
 
   intro: ['I kept a picture of the realm before it fell. You are standing in it. Please do not drink anything.'],
   banter: [
@@ -240,8 +239,6 @@ export const DUNE_BOSS: WorldBossDef = {
       harass: ['h-snipe', 'h-flak', 'h-orbs'],
       restMs: 1030,
       harassMs: 3050,
-      moveSpeed: 58,
-      holdDist: 300,
     },
     {
       name: 'The True Picture',
@@ -254,8 +251,6 @@ export const DUNE_BOSS: WorldBossDef = {
       harass: ['h-snipe', 'h-flak', 'h-lane', 'h-orbs'],
       restMs: 880,
       harassMs: 2550,
-      moveSpeed: 70,
-      holdDist: 275,
     },
   ],
 
@@ -272,8 +267,6 @@ export const DUNE_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-snipe', 'h-lane', 'h-rune'],
       restMs: 700,
       harassMs: 2100,
-      moveSpeed: 80,
-      holdDist: 250,
     },
   },
 
@@ -313,85 +306,10 @@ export const DUNE_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.28);
-    g.fillEllipse(s.x, s.y + 46, 84, 15);
-
-    const dirX = Math.cos(s.facing);
-    // A figure of packed sand held in three slabs, with the haze visible through it.
-    const facets: [number, number, number, number][] = [
-      [-26, -20, 26, 18], [-20, 0, 22, 26], [-14, 24, 16, 22],
-    ];
-    for (let i = 0; i < facets.length; i++) {
-      const [ox, oy, w, h] = facets[i];
-      g.fillStyle(SAND, 0.42 - i * 0.05);
-      g.fillRoundedRect(s.x + ox, s.y + oy, w, h, 5);
-      g.lineStyle(1.5, SAND_LIT, 0.55);
-      g.strokeRoundedRect(s.x + ox, s.y + oy, w, h, 5);
-      // Grain running down the slab, drifting independently of anything else here.
-      g.fillStyle(GOLD, 0.16 + Math.sin(t / 400 + i) * 0.08);
-      g.fillRect(s.x + ox + 4, s.y + oy + 3, 5, h - 8);
-    }
-    // Strata it has already survived, thin and permanent.
-    g.lineStyle(1, SAND_DARK, 0.5);
-    g.lineBetween(s.x - 18, s.y - 14, s.x + 4, s.y + 8);
-    g.lineBetween(s.x + 4, s.y + 8, s.x - 4, s.y + 30);
-    g.lineBetween(s.x + 4, s.y + 8, s.x + 18, s.y + 2);
-
-    // Hands: two floating slabs, held like tools, angled to catch the sun.
-    for (const side of [-1, 1]) {
-      const hx = s.x + side * 38;
-      const hy = s.y + 6 + Math.sin(t / 500 + side) * 5 - s.castGlow * 10;
-      const ang = t / 700 * side;
-      g.fillStyle(SAND_LIT, 0.4);
-      g.fillTriangle(
-        hx + Math.cos(ang) * 14, hy + Math.sin(ang) * 14,
-        hx + Math.cos(ang + 2.1) * 14, hy + Math.sin(ang + 2.1) * 14,
-        hx + Math.cos(ang + 4.2) * 14, hy + Math.sin(ang + 4.2) * 14,
-      );
-      g.lineStyle(1.5, GOLD, 0.6);
-      g.strokeCircle(hx, hy, 12);
-    }
-
-    // Head: an oval of standing haze, showing something that is not this room.
-    const hy0 = s.y - 42;
-    g.fillStyle(GOLD, 0.22);
-    g.fillEllipse(s.x + dirX * 2, hy0, 34, 40);
-    g.lineStyle(2.5, SAND_LIT, 0.75);
-    g.strokeEllipse(s.x + dirX * 2, hy0, 34, 40);
-    // The picture in the face — a horizon, receding.
-    for (let i = 0; i < 3; i++) {
-      g.lineStyle(1, SAND_LIT, 0.2 - i * 0.05);
-      g.lineBetween(s.x - 14 + dirX * 2, hy0 - 8 + i * 9, s.x + 14 + dirX * 2, hy0 - 8 + i * 9);
-    }
-    const eye = s.hurt ? 0xffffff : GOLD;
-    for (const side of [-1, 1]) {
-      g.fillStyle(eye, 0.85 + s.castGlow * 0.15);
-      g.fillEllipse(s.x + side * 8 + dirX * 4, hy0 - 3, 5, 8);
-    }
-    g.lineStyle(2, SAND_LIT, 0.55);
-    g.lineBetween(s.x - 7 + dirX * 2, hy0 + 15, s.x + 7 + dirX * 2, hy0 + 15);
-    // Grains in slow orbit, each holding a scrap of somewhere else.
-    for (let i = 0; i < 5; i++) {
-      const a = t / 1100 + (i * Math.PI * 2) / 5;
-      const ox = s.x + Math.cos(a) * 58;
-      const oy = s.y - 12 + Math.sin(a) * 26;
-      g.fillStyle(SAND, 0.45);
-      g.fillTriangle(ox - 6, oy + 6, ox + 5, oy + 4, ox, oy - 8);
-      g.lineStyle(1, GOLD, 0.5);
-      g.lineBetween(ox - 4, oy + 3, ox + 2, oy - 4);
-    }
-    if (s.enraged) {
-      g.lineStyle(1.5, GOLD, 0.25 + Math.sin(t / 110) * 0.15);
-      for (let i = 0; i < 6; i++) {
-        const a = (Math.PI * 2 * i) / 6 + t / 1800;
-        g.lineBetween(s.x, s.y, s.x + Math.cos(a) * 70, s.y + Math.sin(a) * 70);
-      }
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.28);
-      g.fillCircle(s.x, s.y, 52);
-    }
-  },
+  look: { crest: 'veil', pattern: 'drip', aura: 'dust', hands: 'wisp', torsoR: 35, eyes: 3 },
+  phaseStyles: [
+    { movement: 'blink', gimmick: 'none' },
+    { movement: 'blink', gimmick: 'gloom', tint: 'gold' },
+    { movement: 'anchor', gimmick: 'shrink', tint: 'hot', look: { pattern: 'facets', crest: 'spires' } },
+  ],
 };

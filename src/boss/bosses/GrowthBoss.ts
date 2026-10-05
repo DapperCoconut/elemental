@@ -143,7 +143,6 @@ export const GROWTH_BOSS: WorldBossDef = {
   colorLit: CELL_LIT,
   colorDark: CELL_DARK,
   accent: PLAGUE,
-  bodyR: 30,
 
   intro: ['You will be the next colony. Try to be a hospitable one.'],
   banter: [
@@ -166,8 +165,6 @@ export const GROWTH_BOSS: WorldBossDef = {
       harass: ['h-rune', 'h-flak', 'h-snipe'],
       restMs: 1080,
       harassMs: 3200,
-      moveSpeed: 50,
-      holdDist: 270,
     },
     {
       name: 'Full Bloom',
@@ -180,8 +177,6 @@ export const GROWTH_BOSS: WorldBossDef = {
       harass: ['h-rune', 'h-orbs', 'h-flak', 'h-snipe'],
       restMs: 930,
       harassMs: 2700,
-      moveSpeed: 65,
-      holdDist: 240,
     },
   ],
 
@@ -198,8 +193,6 @@ export const GROWTH_BOSS: WorldBossDef = {
       harass: ['h-rune', 'h-orbs', 'h-lane', 'h-flak'],
       restMs: 730,
       harassMs: 2250,
-      moveSpeed: 80,
-      holdDist: 220,
     },
   },
 
@@ -229,62 +222,10 @@ export const GROWTH_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.35);
-    g.fillEllipse(s.x, s.y + 42, 100, 18);
-
-    // Satellite blobs, breathing out of phase with the mother cell.
-    for (let i = 0; i < 5; i++) {
-      const a = (Math.PI * 2 * i) / 5 + t / 2400;
-      const wob = Math.sin(t / 240 + i * 2.1) * 4;
-      const bx = s.x + Math.cos(a) * (40 + wob);
-      const by = s.y + Math.sin(a) * (30 + wob) * 0.8;
-      const r = 11 + (i % 3) * 3 + s.castGlow * 3;
-      g.fillStyle(CELL_DARK, 0.9);
-      g.fillCircle(bx, by, r + 2);
-      g.fillStyle(CELL, 0.95);
-      g.fillCircle(bx, by, r);
-      g.fillStyle(CELL_LIT, 0.5);
-      g.fillCircle(bx - r * 0.25, by - r * 0.3, r * 0.4);
-    }
-
-    // The mother cell: membrane, cytoplasm, nucleus that watches.
-    const squish = 1 + Math.sin(t / 300) * 0.05 + s.castGlow * 0.08;
-    g.fillStyle(CELL_DARK, 1);
-    g.fillEllipse(s.x, s.y, 72 * squish, 60 / squish);
-    g.fillStyle(CELL, 0.95);
-    g.fillEllipse(s.x, s.y, 62 * squish, 50 / squish);
-    // Organelles drifting.
-    for (let i = 0; i < 4; i++) {
-      const a = t / 1600 + (Math.PI * 2 * i) / 4;
-      g.fillStyle(CELL_DARK, 0.5);
-      g.fillEllipse(s.x + Math.cos(a) * 18, s.y + Math.sin(a) * 12, 8, 5);
-    }
-    // Cilia fringe, wiggling.
-    for (let i = 0; i < 14; i++) {
-      const a = (Math.PI * 2 * i) / 14;
-      const wig = Math.sin(t / 120 + i * 1.8) * 0.25;
-      const x0 = s.x + Math.cos(a) * 34 * squish;
-      const y0 = s.y + Math.sin(a) * 27 / squish;
-      g.lineStyle(1.5, CELL_LIT, 0.6);
-      g.lineBetween(x0, y0, x0 + Math.cos(a + wig) * 8, y0 + Math.sin(a + wig) * 8);
-    }
-
-    // The nucleus: one great eye-organelle tracking the player. Infection-pink
-    // when enraged — the colony is running a fever.
-    const ex = Math.cos(s.facing) * 6;
-    const ey = Math.sin(s.facing) * 4;
-    g.fillStyle(CELL_DARK, 1);
-    g.fillEllipse(s.x + ex, s.y + ey, 26, 22);
-    const iris = s.hurt ? 0xffffff : s.enraged ? PLAGUE : CELL_LIT;
-    g.fillStyle(iris, 1);
-    g.fillCircle(s.x + ex, s.y + ey, 8 + s.castGlow * 2);
-    g.fillStyle(0x102006, 1);
-    g.fillCircle(s.x + ex + Math.cos(s.facing) * 2, s.y + ey + Math.sin(s.facing) * 2, 3.5);
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.22);
-      g.fillCircle(s.x, s.y, 55);
-    }
-  },
+  look: { crest: 'tendrils', pattern: 'scales', aura: 'petals', hands: 'claw', torsoR: 35, mouth: 'maw' },
+  phaseStyles: [
+    { movement: 'stalk', gimmick: 'none' },
+    { movement: 'stalk', gimmick: 'stalkers', tint: 'sick' },
+    { movement: 'rush', gimmick: 'gloom', tint: 'sick', look: { crest: 'mane', arms: 4 } },
+  ],
 };

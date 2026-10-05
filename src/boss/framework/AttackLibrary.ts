@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { BossToolkit } from './BossToolkit';
 import { HarassId, LibMoveId, LibTuning } from './BossDefs';
+import { BossGesture, BossHold } from './BossRig';
 
 /**
  * The shared attack vocabulary. Every implementation returns how long the boss
@@ -15,6 +16,46 @@ import { HarassId, LibMoveId, LibTuning } from './BossDefs';
  */
 
 export type LibCast = (tk: BossToolkit, time: number, p: LibTuning) => number;
+
+/**
+ * How a move is *performed*, as opposed to what it spawns.
+ *
+ * Every move now opens with a wind-up: the Sovereign plants, the rig takes a
+ * pose, its name goes up over the body and a charge ring closes under it. Only
+ * then does the cast fire. That beat is the whole reason the moves themselves
+ * could be made so much deadlier — a Sovereign's attack should be survivable
+ * because you read it, not because it was weak.
+ */
+export interface LibStyle {
+  /** Fired on release. */
+  gesture?: BossGesture;
+  /** Held for the duration instead — channels, streams, beams. */
+  hold?: BossHold;
+  /** Overrides the framework's default wind-up beat. */
+  windupMs?: number;
+  /** Printed over the Sovereign's head while it winds up. */
+  tell: string;
+  /** The move drives the body; the movement AI stands down while it runs. */
+  locksBody?: boolean;
+}
+
+export const LIB_STYLE: Record<LibMoveId, LibStyle> = {
+  volley: { gesture: 'punch', tell: 'VOLLEY', windupMs: 620 },
+  radial: { gesture: 'clap', tell: 'BURST' },
+  spiral: { hold: 'conduct', tell: 'SPIRAL', windupMs: 1000 },
+  stream: { hold: 'spray', tell: 'STREAM', windupMs: 760 },
+  barrage: { gesture: 'raise', tell: 'BARRAGE', windupMs: 1100 },
+  minefield: { gesture: 'flex', tell: 'MINEFIELD' },
+  quake: { gesture: 'slam', tell: 'QUAKE', windupMs: 1150 },
+  lanes: { gesture: 'sweep', tell: 'CROSSFIRE', windupMs: 1000 },
+  sweep: { hold: 'reach', tell: 'SWEEP', windupMs: 1000 },
+  slamchain: { gesture: 'slam', tell: 'SLAMS' },
+  sanctuary: { gesture: 'raise', tell: 'ONE SAFE PLACE', windupMs: 1300 },
+  homing: { gesture: 'point', tell: 'SEEKERS' },
+  summon: { gesture: 'raise', tell: 'THRALLS', windupMs: 950 },
+  hazard: { gesture: 'sweep', tell: 'SPILL' },
+  charge: { hold: 'brace', tell: 'CHARGE', windupMs: 900, locksBody: true },
+};
 
 const lead = (tk: BossToolkit, ms: number): { x: number; y: number } => {
   const p = tk.player;
@@ -191,7 +232,7 @@ export const LIB_MOVES: Record<LibMoveId, LibCast> = {
         });
       });
     }
-    return count * 460 + warnMs;
+    return count * 460 + tk.warn(warnMs);
   },
 
   /** A beam pinned to the body, swept across the player's half of the hall. */
@@ -208,7 +249,7 @@ export const LIB_MOVES: Record<LibMoveId, LibCast> = {
       a0: centre - half * dir, a1: centre + half * dir,
       warnMs: p.warnMs ?? 900, travelMs, halfW, damage,
     });
-    return (p.warnMs ?? 900) + travelMs;
+    return tk.warn(p.warnMs ?? 900) + travelMs;
   },
 
   /** Slams that lead the player's movement — running straight is punished. */
@@ -233,7 +274,7 @@ export const LIB_MOVES: Record<LibMoveId, LibCast> = {
     tk.sfx('judgement');
     const warnMs = p.warnMs ?? 2600;
     tk.spawnSanctuary({ warnMs, damage: p.damage ?? 55, safeR: p.radius ?? 132 });
-    return warnMs + 400;
+    return tk.warn(warnMs) + 400;
   },
 
   /** Steerable orbs — low enough turn rate to be out-manoeuvred. */
@@ -297,7 +338,7 @@ export const LIB_MOVES: Record<LibMoveId, LibCast> = {
       warnMs: p.warnMs ?? 850, travelMs: p.durationMs ?? 340,
       halfW: p.halfW ?? 42, damage: p.damage ?? 30,
     });
-    return (p.warnMs ?? 850) + (p.durationMs ?? 340) + 300;
+    return tk.warn(p.warnMs ?? 850) + (p.durationMs ?? 340) + 300;
   },
 };
 

@@ -245,7 +245,6 @@ export const BIND_BOSS: WorldBossDef = {
   colorLit: IRON_LIT,
   colorDark: IRON_DARK,
   accent: RUST,
-  bodyR: 30,
 
   intro: ['Every cell in this realm has a name on it. Yours is fresh. The paint is still tacky.'],
   banter: [
@@ -268,8 +267,6 @@ export const BIND_BOSS: WorldBossDef = {
       harass: ['h-lane', 'h-rune', 'h-orbs'],
       restMs: 1050,
       harassMs: 3100,
-      moveSpeed: 44,
-      holdDist: 290,
     },
     {
       name: 'The Long Sentence',
@@ -282,8 +279,6 @@ export const BIND_BOSS: WorldBossDef = {
       harass: ['h-lane', 'h-mines', 'h-rune', 'h-orbs'],
       restMs: 900,
       harassMs: 2600,
-      moveSpeed: 54,
-      holdDist: 265,
     },
   ],
 
@@ -300,8 +295,6 @@ export const BIND_BOSS: WorldBossDef = {
       harass: ['h-mines', 'h-lane', 'h-rune', 'h-orbs'],
       restMs: 710,
       harassMs: 2100,
-      moveSpeed: 64,
-      holdDist: 245,
     },
   },
 
@@ -342,85 +335,10 @@ export const BIND_BOSS: WorldBossDef = {
     g.fillRect(0, 96, W, 22);
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.42);
-    g.fillEllipse(s.x, s.y + 48, 96, 17);
-
-    const dirX = Math.cos(s.facing);
-    const breathe = Math.sin(t / 700) * 1.5;
-
-    // The body is a lock: a great iron drum with a keyway down the front, wound
-    // about with the chains it has never once put down.
-    g.fillStyle(IRON_DARK, 1);
-    g.fillRoundedRect(s.x - 34, s.y - 28 + breathe, 68, 74, 14);
-    g.fillStyle(RUST, 1);
-    g.fillRoundedRect(s.x - 29, s.y - 23 + breathe, 58, 64, 11);
-    g.fillStyle(IRON, 0.85);
-    g.fillRoundedRect(s.x - 22, s.y - 16 + breathe, 44, 50, 9);
-    // The keyway — lit from behind when it is about to do something.
-    g.fillStyle(IRON_DARK, 1);
-    g.fillCircle(s.x, s.y + 2 + breathe, 10);
-    g.fillTriangle(s.x - 6, s.y + 6 + breathe, s.x + 6, s.y + 6 + breathe, s.x, s.y + 28 + breathe);
-    g.fillStyle(IRON_LIT, 0.3 + s.castGlow * 0.6);
-    g.fillCircle(s.x, s.y + 2 + breathe, 5);
-    // Chains wound about the drum.
-    for (let i = 0; i < 3; i++) {
-      const y = s.y - 12 + i * 20 + breathe;
-      for (let k = 0; k < 7; k++) {
-        g.lineStyle(2.5, k % 2 === 0 ? IRON : RUST, 0.75);
-        g.strokeEllipse(s.x - 30 + k * 10, y + Math.sin(k + i) * 2, 11, 7);
-      }
-    }
-
-    // Arms: chains ending in a ring and a great key, both always swinging.
-    for (const side of [-1, 1]) {
-      const ax = s.x + side * 40;
-      const sway = Math.sin(t / 380 + side * 2) * 6;
-      for (let i = 1; i <= 5; i++) {
-        g.lineStyle(3, i % 2 === 0 ? IRON : RUST, 0.85);
-        g.strokeEllipse(ax + sway * (i / 5), s.y - 10 + i * 10, 10, 7);
-      }
-      if (side === 1) {
-        g.lineStyle(5, IRON_LIT, 0.9);
-        g.strokeCircle(ax + sway, s.y + 52, 10);
-      } else {
-        g.fillStyle(IRON_LIT, 0.9);
-        g.fillRect(ax + sway - 3, s.y + 40, 6, 22);
-        g.fillRect(ax + sway - 3, s.y + 56, 12, 4);
-        g.fillRect(ax + sway - 3, s.y + 50, 9, 4);
-        g.lineStyle(3, IRON_LIT, 0.9);
-        g.strokeCircle(ax + sway, s.y + 36, 7);
-      }
-    }
-
-    // Head: a hood with a padlock where a face is customary.
-    const hy = s.y - 48 + breathe;
-    g.fillStyle(0x1a1408, 1);
-    g.beginPath();
-    g.moveTo(s.x - 22, hy + 16);
-    g.lineTo(s.x - 14, hy - 18);
-    g.lineTo(s.x + 14, hy - 18);
-    g.lineTo(s.x + 22, hy + 16);
-    g.closePath();
-    g.fillPath();
-    g.fillStyle(IRON, 0.95);
-    g.fillRoundedRect(s.x - 11 + dirX * 3, hy - 8, 22, 20, 4);
-    g.lineStyle(3.5, IRON, 0.95);
-    g.beginPath();
-    g.arc(s.x + dirX * 3, hy - 10, 7, Math.PI, 0, false);
-    g.strokePath();
-    const eye = s.hurt ? 0xffffff : IRON_LIT;
-    g.fillStyle(eye, 0.9);
-    g.fillCircle(s.x + dirX * 3, hy + 1, 3 + s.castGlow);
-    g.fillTriangle(s.x - 2 + dirX * 3, hy + 3, s.x + 2 + dirX * 3, hy + 3, s.x + dirX * 3, hy + 9);
-    if (s.enraged) {
-      g.lineStyle(2, IRON_LIT, 0.25 + Math.sin(t / 130) * 0.15);
-      g.strokeCircle(s.x, s.y, 66);
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.2);
-      g.fillCircle(s.x, s.y, 56);
-    }
-  },
+  look: { crest: 'horns', pattern: 'plates', aura: 'chains', hands: 'gauntlet', torsoR: 36, mouth: 'grate' },
+  phaseStyles: [
+    { movement: 'anchor', gimmick: 'none' },
+    { movement: 'hover', gimmick: 'wards', tint: 'void' },
+    { movement: 'stalk', gimmick: 'shrink', tint: 'blood', look: { crest: 'blades', arms: 4 } },
+  ],
 };

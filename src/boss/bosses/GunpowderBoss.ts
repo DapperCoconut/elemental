@@ -173,7 +173,6 @@ export const GUNPOWDER_BOSS: WorldBossDef = {
   colorLit: POWDER_LIT,
   colorDark: POWDER_DARK,
   accent: FLASH,
-  bodyR: 32,
 
   intro: ['One last volley. Make it count. I always make it count.'],
   banter: [
@@ -196,8 +195,6 @@ export const GUNPOWDER_BOSS: WorldBossDef = {
       harass: ['h-snipe', 'h-mines', 'h-flak'],
       restMs: 1040,
       harassMs: 3050,
-      moveSpeed: 40,
-      holdDist: 290,
     },
     {
       name: 'The Barrage',
@@ -210,8 +207,6 @@ export const GUNPOWDER_BOSS: WorldBossDef = {
       harass: ['h-snipe', 'h-mines', 'h-flak', 'h-lane'],
       restMs: 890,
       harassMs: 2550,
-      moveSpeed: 50,
-      holdDist: 260,
     },
   ],
 
@@ -228,8 +223,6 @@ export const GUNPOWDER_BOSS: WorldBossDef = {
       harass: ['h-mines', 'h-snipe', 'h-flak', 'h-rune'],
       restMs: 690,
       harassMs: 2050,
-      moveSpeed: 60,
-      holdDist: 240,
     },
   },
 
@@ -264,78 +257,10 @@ export const GUNPOWDER_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.4);
-    g.fillEllipse(s.x, s.y + 48, 110, 18);
-
-    // The carriage: two great wheels and a timber trail.
-    const dirX = Math.cos(s.facing) >= 0 ? 1 : -1;
-    for (const wx of [-24, 20]) {
-      const spin = t / 900;
-      g.fillStyle(0x3a2a14, 1);
-      g.fillCircle(s.x + wx, s.y + 30, 17);
-      g.fillStyle(0x241a0c, 1);
-      g.fillCircle(s.x + wx, s.y + 30, 12);
-      for (let i = 0; i < 4; i++) {
-        const a = spin + (Math.PI * i) / 2;
-        g.lineStyle(2.5, 0x4a3018, 1);
-        g.lineBetween(
-          s.x + wx - Math.cos(a) * 11, s.y + 30 - Math.sin(a) * 11,
-          s.x + wx + Math.cos(a) * 11, s.y + 30 + Math.sin(a) * 11,
-        );
-      }
-    }
-
-    // The barrel: elevated toward the player, recoiling with the cast.
-    const elev = -0.35 * dirX;
-    const recoil = s.castGlow * 8;
-    g.save();
-    g.translateCanvas(s.x - dirX * recoil, s.y + 8);
-    g.rotateCanvas(dirX > 0 ? elev : Math.PI - elev);
-    g.fillStyle(0x2e2e36, 1);
-    g.fillRoundedRect(-16, -11, 62, 22, 8);
-    g.fillStyle(0x44444e, 1);
-    g.fillRoundedRect(-16, -11, 62, 8, 6);
-    // Muzzle ring and bore.
-    g.fillStyle(0x1c1c22, 1);
-    g.fillRect(42, -11, 6, 22);
-    g.fillStyle(s.castGlow > 0.4 ? FLASH : 0x0a0a0e, 1);
-    g.fillCircle(46, 0, 6);
-    g.restore();
-
-    // Powder keg rider — the Sovereign itself: a little revenant gunner
-    // perched on the breech, match in hand.
-    const gx = s.x - dirX * 26;
-    const gy = s.y - 18;
-    g.fillStyle(POWDER_DARK, 1);
-    g.fillEllipse(gx, gy, 20, 24);
-    g.fillStyle(0x1a1026, 1);
-    g.fillEllipse(gx, gy - 14, 16, 13);
-    const eye = s.hurt ? 0xffffff : s.enraged ? FLASH : POWDER_LIT;
-    for (const side of [-1, 1]) {
-      g.fillStyle(eye, 1);
-      g.fillCircle(gx + side * 4 + dirX * 2, gy - 15, 2.2);
-    }
-    // The linstock: a long match, always lit, angrier when enraged.
-    const matchA = -0.6 * dirX + Math.sin(t / 300) * 0.08;
-    const mx = gx + Math.cos(matchA) * 26 * dirX;
-    const my = gy - 4 + Math.sin(matchA) * 26;
-    g.lineStyle(2.5, 0x4a3018, 1);
-    g.lineBetween(gx + dirX * 6, gy - 2, mx, my);
-    g.fillStyle(FLASH, 0.95);
-    g.fillCircle(mx, my, 3 + (s.enraged ? 1.5 : 0) + Math.sin(t / 90) * 1);
-    g.fillStyle(POWDER_LIT, 0.5);
-    g.fillCircle(mx, my, 7);
-    // Smoke curling off the match.
-    for (let i = 0; i < 2; i++) {
-      const ph = ((t + i * 600) % 1300) / 1300;
-      g.fillStyle(0x8a8a92, (1 - ph) * 0.3);
-      g.fillCircle(mx + Math.sin(t / 240 + i) * 4, my - 8 - ph * 20, 2.5 + ph * 3);
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.22);
-      g.fillCircle(s.x, s.y, 58);
-    }
-  },
+  look: { crest: 'stack', pattern: 'plates', aura: 'smoke', hands: 'gauntlet', torsoR: 36, mouth: 'grate' },
+  phaseStyles: [
+    { movement: 'hover', gimmick: 'none' },
+    { movement: 'stalk', gimmick: 'tremor', tint: 'hot' },
+    { movement: 'anchor', gimmick: 'shrink', tint: 'blood', look: { crest: 'blades', aura: 'flame' } },
+  ],
 };

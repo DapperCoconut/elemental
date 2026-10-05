@@ -235,7 +235,6 @@ export const FORTUNE_BOSS: WorldBossDef = {
   colorLit: COIN_LIT,
   colorDark: COIN_DARK,
   accent: FELT,
-  bodyR: 29,
 
   intro: ['The house always wins. I bought the house. Then I bought the street. Sit down and lose politely.'],
   banter: [
@@ -258,8 +257,6 @@ export const FORTUNE_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-rune', 'h-orbs'],
       restMs: 1040,
       harassMs: 3100,
-      moveSpeed: 52,
-      holdDist: 290,
     },
     {
       name: 'The Margin Call',
@@ -272,8 +269,6 @@ export const FORTUNE_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-rune', 'h-mines', 'h-orbs'],
       restMs: 890,
       harassMs: 2600,
-      moveSpeed: 62,
-      holdDist: 265,
     },
   ],
 
@@ -290,8 +285,6 @@ export const FORTUNE_BOSS: WorldBossDef = {
       harass: ['h-mines', 'h-flak', 'h-rune', 'h-lane'],
       restMs: 710,
       harassMs: 2100,
-      moveSpeed: 72,
-      holdDist: 245,
     },
   },
 
@@ -324,97 +317,10 @@ export const FORTUNE_BOSS: WorldBossDef = {
     for (let i = 0; i < 12; i++) g.fillRect(70 + i * ((W - 140) / 11), 104, 3, 18);
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.4);
-    g.fillEllipse(s.x, s.y + 46, 92, 17);
-
-    const dirX = Math.cos(s.facing);
-    // A clerk's frame under a very expensive coat.
-    g.fillStyle(COIN_DARK, 1);
-    g.fillRoundedRect(s.x - 30, s.y - 24, 60, 68, 10);
-    g.fillStyle(0x4a3a12, 1);
-    g.fillRoundedRect(s.x - 25, s.y - 20, 50, 60, 8);
-    // Waistcoat, in the house colours, with a watch chain across it.
-    g.fillStyle(FELT, 0.95);
-    g.fillRect(s.x - 13, s.y - 18, 26, 48);
-    g.lineStyle(2, COIN_LIT, 0.9);
-    g.beginPath();
-    g.arc(s.x, s.y - 2, 14, 0.3, Math.PI - 0.3, false);
-    g.strokePath();
-    g.fillStyle(COIN_LIT, 1);
-    g.fillCircle(s.x + 12, s.y - 4, 4);
-    // Coins stacked on its shoulders like epaulettes, because of course.
-    for (const side of [-1, 1]) {
-      for (let i = 0; i < 4; i++) {
-        g.fillStyle(i % 2 === 0 ? COIN : COIN_LIT, 0.9);
-        g.fillEllipse(s.x + side * 30, s.y - 22 - i * 5, 20, 8);
-      }
-    }
-
-    // Hands: one riffling a stack, one holding the ledger open at your page.
-    const riffle = Math.abs(Math.sin(t / 130)) * 5;
-    g.fillStyle(0xd8b898, 1);
-    g.fillCircle(s.x + dirX * 34, s.y + 8 - s.castGlow * 10, 7);
-    for (let i = 0; i < 5; i++) {
-      g.fillStyle(COIN, 0.9);
-      g.fillEllipse(s.x + dirX * 34, s.y + 18 - i * 4 - (i === 4 ? riffle : 0), 17, 6);
-    }
-    g.fillStyle(0xd8b898, 1);
-    g.fillCircle(s.x - dirX * 34, s.y + 12, 7);
-    g.fillStyle(0x6a1a12, 1);
-    g.fillRect(s.x - dirX * 34 - 16, s.y + 14, 32, 22);
-    g.fillStyle(0xf2ead6, 0.9);
-    g.fillRect(s.x - dirX * 34 - 13, s.y + 17, 26, 16);
-    for (let i = 0; i < 3; i++) {
-      g.lineStyle(1, COIN_DARK, 0.6);
-      g.lineBetween(s.x - dirX * 34 - 10, s.y + 21 + i * 4, s.x - dirX * 34 + 8, s.y + 21 + i * 4);
-    }
-
-    // Head: a green eyeshade, a monocle, and an expression of pure arithmetic.
-    const hy = s.y - 44;
-    g.fillStyle(0xd8b898, 0.97);
-    g.fillEllipse(s.x + dirX * 2, hy, 28, 30);
-    g.fillStyle(0x2a2418, 1);
-    g.fillEllipse(s.x, hy - 20, 30, 12);
-    g.fillStyle(FELT, 0.95);
-    g.beginPath();
-    g.arc(s.x + dirX * 2, hy - 8, 18, Math.PI, 0, false);
-    g.fillPath();
-    g.fillStyle(FELT, 0.8);
-    g.fillRect(s.x - 18 + dirX * 2, hy - 10, 36, 6);
-    const eye = s.hurt ? 0xffffff : COIN_DARK;
-    g.fillStyle(0xffffff, 0.9);
-    g.fillEllipse(s.x - 8 + dirX * 3, hy - 1, 9, 7);
-    g.fillStyle(eye, 1);
-    g.fillCircle(s.x - 8 + dirX * 5, hy - 1, 3);
-    // The monocle: gold rim, chain, and a glint that arrives on its own clock.
-    g.lineStyle(2.5, COIN_LIT, 0.95);
-    g.strokeCircle(s.x + 9 + dirX * 3, hy - 1, 9);
-    g.fillStyle(0xffffff, 0.22 + Math.max(0, Math.sin(t / 900)) * 0.4);
-    g.fillCircle(s.x + 9 + dirX * 3, hy - 1, 8);
-    g.fillStyle(eye, 1);
-    g.fillCircle(s.x + 9 + dirX * 5, hy - 1, 3);
-    g.lineStyle(1, COIN_LIT, 0.6);
-    g.lineBetween(s.x + 18 + dirX * 3, hy + 2, s.x + 22, hy + 22);
-    g.lineStyle(2, COIN_DARK, 0.6);
-    g.lineBetween(s.x - 6 + dirX * 2, hy + 14, s.x + 6 + dirX * 2, hy + 12);
-    // Coins orbiting, counted and re-counted.
-    for (let i = 0; i < 4; i++) {
-      const a = t / 950 + (i * Math.PI) / 2;
-      g.fillStyle(COIN_LIT, 0.45 + Math.sin(t / 200 + i) * 0.15);
-      g.fillEllipse(s.x + Math.cos(a) * 56, s.y - 16 + Math.sin(a) * 24, 11, 7);
-    }
-    if (s.enraged) {
-      for (let i = 0; i < 6; i++) {
-        const ph = ((t + i * 260) % 1600) / 1600;
-        g.fillStyle(COIN, (1 - ph) * 0.4);
-        g.fillEllipse(s.x - 40 + i * 16, s.y - 60 - ph * 40, 9, 5);
-      }
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.2);
-      g.fillCircle(s.x, s.y, 54);
-    }
-  },
+  look: { crest: 'stack', pattern: 'gears', aura: 'coins', hands: 'gauntlet', torsoR: 35, mouth: 'line' },
+  phaseStyles: [
+    { movement: 'hover', gimmick: 'none' },
+    { movement: 'hover', gimmick: 'wards', tint: 'gold' },
+    { movement: 'rush', gimmick: 'shrink', tint: 'blood', look: { crest: 'blades', aura: 'chains' } },
+  ],
 };

@@ -188,7 +188,6 @@ export const ICE_BOSS: WorldBossDef = {
   colorLit: ICE_LIT,
   colorDark: ICE_DARK,
   accent: RIME,
-  bodyR: 28,
 
   intro: ['Nothing thaws. Nothing ever needed to.'],
   banter: [
@@ -211,8 +210,6 @@ export const ICE_BOSS: WorldBossDef = {
       harass: ['h-snipe', 'h-flak', 'h-rune'],
       restMs: 1100,
       harassMs: 3300,
-      moveSpeed: 40,
-      holdDist: 280,
     },
     {
       name: 'The Deep Cold',
@@ -225,8 +222,6 @@ export const ICE_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-orbs', 'h-rune', 'h-snipe'],
       restMs: 940,
       harassMs: 2800,
-      moveSpeed: 55,
-      holdDist: 250,
     },
   ],
 
@@ -243,8 +238,6 @@ export const ICE_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-flak', 'h-rune', 'h-lane'],
       restMs: 740,
       harassMs: 2300,
-      moveSpeed: 70,
-      holdDist: 230,
     },
   },
 
@@ -273,67 +266,10 @@ export const ICE_BOSS: WorldBossDef = {
     g.lineBetween(W * 0.7, H * 0.35, W * 0.62, H * 0.75);
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.35);
-    g.fillEllipse(s.x, s.y + 48, 90, 16);
-
-    // The robe: a long angular sweep of ice, widening to the floor.
-    g.fillStyle(ICE_DARK, 1);
-    g.fillTriangle(s.x - 34, s.y + 46, s.x + 34, s.y + 46, s.x, s.y - 34);
-    g.fillStyle(ICE, 0.85);
-    g.fillTriangle(s.x - 24, s.y + 44, s.x + 24, s.y + 44, s.x, s.y - 26);
-    // Facet lines.
-    g.lineStyle(1.5, ICE_LIT, 0.5);
-    g.lineBetween(s.x - 12, s.y + 40, s.x - 2, s.y - 10);
-    g.lineBetween(s.x + 14, s.y + 42, s.x + 4, s.y - 4);
-
-    // Arms: sleeves ending in claw-shards, tracking the player.
-    for (const side of [-1, 1]) {
-      const aa = s.facing + side * 0.8;
-      const hx = s.x + Math.cos(aa) * (40 + s.castGlow * 8);
-      const hy = s.y + 2 + Math.sin(aa) * 26;
-      g.fillStyle(ICE_DARK, 1);
-      g.fillTriangle(s.x + side * 12, s.y - 10, hx - 6, hy + 6, hx + 6, hy - 6);
-      g.fillStyle(ICE_LIT, 0.9);
-      for (let f = 0; f < 3; f++) {
-        const fa = aa + (f - 1) * 0.3;
-        g.fillTriangle(
-          hx - 3, hy - 3, hx + 3, hy + 3,
-          hx + Math.cos(fa) * (11 + s.castGlow * 5), hy + Math.sin(fa) * (11 + s.castGlow * 5),
-        );
-      }
-    }
-
-    // Head: a hooded hollow with cold light inside.
-    const hy0 = s.y - 40;
-    g.fillStyle(ICE_DARK, 1);
-    g.fillEllipse(s.x, hy0, 30, 26);
-    g.fillStyle(0x08141f, 1);
-    g.fillEllipse(s.x, hy0 + 2, 22, 18);
-    const eye = s.hurt ? 0xffffff : s.enraged ? 0xa8d8ff : ICE_LIT;
-    const ex = Math.cos(s.facing) * 3;
-    for (const side of [-1, 1]) {
-      g.fillStyle(eye, 1);
-      g.fillEllipse(s.x + side * 6 + ex, hy0 + 1, 4.5, s.enraged ? 7 : 5);
-    }
-    // Breath mist, drifting.
-    const mist = (t % 1400) / 1400;
-    g.fillStyle(RIME, (1 - mist) * 0.35);
-    g.fillCircle(s.x + ex * 3, hy0 + 12 + mist * 18, 5 + mist * 6);
-
-    // The crown: five clear spires.
-    for (let i = 0; i < 5; i++) {
-      const px = s.x - 16 + i * 8;
-      const ph = 12 + (i === 2 ? 8 : (i % 2) * 4);
-      g.fillStyle(ICE_LIT, 0.9);
-      g.fillTriangle(px - 3, hy0 - 12, px + 3, hy0 - 12, px, hy0 - 12 - ph);
-      g.fillStyle(0xffffff, 0.5);
-      g.fillCircle(px, hy0 - 12 - ph + 3, 1.2);
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.25);
-      g.fillCircle(s.x, s.y, 52);
-    }
-  },
+  look: { crest: 'spires', pattern: 'facets', aura: 'frost', hands: 'blade', torsoR: 36, mouth: 'line' },
+  phaseStyles: [
+    { movement: 'hover', gimmick: 'none' },
+    { movement: 'anchor', gimmick: 'shrink', tint: 'pale', look: { crest: 'crown' } },
+    { movement: 'stalk', gimmick: 'gloom', tint: 'cold', look: { crest: 'blades', eyes: 3 } },
+  ],
 };

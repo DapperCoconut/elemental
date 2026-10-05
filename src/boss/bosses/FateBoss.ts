@@ -162,7 +162,6 @@ export const FATE_BOSS: WorldBossDef = {
   colorLit: FELT_LIT,
   colorDark: FELT_DARK,
   accent: GOLD,
-  bodyR: 28,
 
   intro: ['The house does not lose. It merely waits. Take a seat — the wait is over.'],
   banter: [
@@ -185,8 +184,6 @@ export const FATE_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-rune', 'h-orbs'],
       restMs: 1050,
       harassMs: 3100,
-      moveSpeed: 60,
-      holdDist: 290,
     },
     {
       name: 'The House Edge',
@@ -199,8 +196,6 @@ export const FATE_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-orbs', 'h-rune', 'h-snipe'],
       restMs: 900,
       harassMs: 2600,
-      moveSpeed: 70,
-      holdDist: 260,
     },
   ],
 
@@ -217,8 +212,6 @@ export const FATE_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-flak', 'h-rune', 'h-lane'],
       restMs: 700,
       harassMs: 2100,
-      moveSpeed: 85,
-      holdDist: 240,
     },
   },
 
@@ -247,71 +240,10 @@ export const FATE_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    g.fillStyle(0x000000, 0.35);
-    g.fillEllipse(s.x, s.y + 44, 84, 15);
-
-    // The tailcoat: sharp shoulders, tapering to nothing — the house has no legs.
-    g.fillStyle(FELT_DARK, 1);
-    g.fillTriangle(s.x - 30, s.y - 16, s.x + 30, s.y - 16, s.x, s.y + 42);
-    g.fillStyle(0x114438, 1);
-    g.fillTriangle(s.x - 22, s.y - 14, s.x + 22, s.y - 14, s.x, s.y + 32);
-    // Shirt front and bowtie.
-    g.fillStyle(0xf2ead6, 0.95);
-    g.fillTriangle(s.x - 7, s.y - 14, s.x + 7, s.y - 14, s.x, s.y + 6);
-    g.fillStyle(0xcc3a4a, 1);
-    g.fillTriangle(s.x - 6, s.y - 15, s.x, s.y - 12, s.x - 1, s.y - 18);
-    g.fillTriangle(s.x + 6, s.y - 15, s.x, s.y - 12, s.x + 1, s.y - 18);
-
-    // The fan of cards, held out toward the player. Spreads with cast glow.
-    const dirX = Math.cos(s.facing);
-    const hx = s.x + dirX * 34;
-    const hy = s.y + 2;
-    const spread = 0.28 + s.castGlow * 0.3;
-    for (let i = 0; i < 5; i++) {
-      const a = s.facing + (i - 2) * spread;
-      g.save();
-      g.translateCanvas(hx + Math.cos(a) * 10, hy + Math.sin(a) * 10);
-      g.rotateCanvas(a + Math.PI / 2);
-      g.fillStyle(0xf2ead6, 0.95);
-      g.fillRoundedRect(-6, -18, 12, 22, 2);
-      g.lineStyle(1, FELT_DARK, 0.8);
-      g.strokeRoundedRect(-6, -18, 12, 22, 2);
-      if (i === 2) {
-        g.fillStyle(0xcc3a4a, 0.9);
-        g.fillCircle(0, -8, 2.5);
-      }
-      g.restore();
-    }
-    // Other hand: a chip, flipped and caught on a loop.
-    const flip = (t % 1300) / 1300;
-    const chipY = s.y - 2 - Math.sin(flip * Math.PI) * 22;
-    g.fillStyle(GOLD, 0.95);
-    g.fillEllipse(s.x - dirX * 30, chipY, 11, 11 * Math.abs(Math.cos(flip * Math.PI * 2)) + 2);
-
-    // Head: green visor over a face that is mostly smile.
-    const hy0 = s.y - 32;
-    g.fillStyle(0x1c1410, 1);
-    g.fillEllipse(s.x, hy0, 26, 24);
-    g.fillStyle(FELT, 0.9);
-    g.fillEllipse(s.x, hy0 - 8, 28, 10); // visor
-    g.lineStyle(1, FELT_LIT, 0.5);
-    g.strokeEllipse(s.x, hy0 - 8, 28, 10);
-    const eye = s.hurt ? 0xffffff : s.enraged ? GOLD : FELT_LIT;
-    const ex = dirX * 3;
-    for (const side of [-1, 1]) {
-      g.fillStyle(eye, 1);
-      g.fillCircle(s.x + side * 6 + ex, hy0 - 1, 2.4);
-    }
-    // The smile: wider when enraged. The house is having a lovely night.
-    g.lineStyle(1.5, FELT_LIT, 0.9);
-    g.beginPath();
-    g.arc(s.x + ex, hy0 + 4, s.enraged ? 8 : 6, 0.25, Math.PI - 0.25, false);
-    g.strokePath();
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.22);
-      g.fillCircle(s.x, s.y, 50);
-    }
-  },
+  look: { crest: 'stack', pattern: 'runes', aura: 'coins', hands: 'ball', torsoR: 33, mouth: 'grin' },
+  phaseStyles: [
+    { movement: 'hover', gimmick: 'none' },
+    { movement: 'hover', gimmick: 'wards', tint: 'gold' },
+    { movement: 'blink', gimmick: 'tremor', tint: 'blood', look: { crest: 'crown', hands: 'blade' } },
+  ],
 };

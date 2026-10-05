@@ -182,7 +182,6 @@ export const WATER_BOSS: WorldBossDef = {
   colorLit: SEA_LIT,
   colorDark: SEA_DARK,
   accent: FOAM,
-  bodyR: 30,
   damageMult: 0.9,
 
   intro: ['The deep has been waiting a long time. It is done waiting.'],
@@ -206,8 +205,6 @@ export const WATER_BOSS: WorldBossDef = {
       harass: ['h-snipe', 'h-flak', 'h-orbs'],
       restMs: 1100,
       harassMs: 3200,
-      moveSpeed: 55,
-      holdDist: 270,
     },
     {
       name: 'The Deep Breaks',
@@ -220,8 +217,6 @@ export const WATER_BOSS: WorldBossDef = {
       harass: ['h-flak', 'h-orbs', 'h-rune', 'h-snipe'],
       restMs: 950,
       harassMs: 2800,
-      moveSpeed: 75,
-      holdDist: 240,
     },
   ],
 
@@ -238,8 +233,6 @@ export const WATER_BOSS: WorldBossDef = {
       harass: ['h-orbs', 'h-flak', 'h-lane', 'h-rune'],
       restMs: 740,
       harassMs: 2300,
-      moveSpeed: 95,
-      holdDist: 220,
     },
   },
 
@@ -271,69 +264,10 @@ export const WATER_BOSS: WorldBossDef = {
     }
   },
 
-  drawBody(g, s) {
-    const t = s.t;
-    // The serpent: a head at (x, y) with a body coiling behind it along a
-    // living sine, always facing the player.
-    const dirX = Math.cos(s.facing);
-    const dirY = Math.sin(s.facing);
-    // Ground shadow under the coil.
-    g.fillStyle(0x000000, 0.35);
-    g.fillEllipse(s.x - dirX * 30, s.y + 44, 120, 16);
-
-    // Body segments, tail-first so the head draws on top.
-    for (let i = 7; i >= 1; i--) {
-      const back = i * 26;
-      const sway = Math.sin(t / 260 - i * 0.9) * (10 + i * 2);
-      const bx = s.x - dirX * back - dirY * sway;
-      const by = s.y - dirY * back + dirX * sway * 0.6 + Math.sin(t / 300 + i) * 3;
-      const r = 20 - i * 1.7;
-      g.fillStyle(i % 2 === 0 ? SEA : SEA_DARK, 1);
-      g.fillCircle(bx, by, r);
-      g.fillStyle(SEA_LIT, 0.35);
-      g.fillCircle(bx, by - r * 0.4, r * 0.5);
-      // Dorsal fin ridge.
-      if (i % 2 === 1 && i < 6) {
-        g.fillStyle(FOAM, 0.8);
-        g.fillTriangle(bx - 4, by - r, bx + 4, by - r, bx, by - r - 9 - Math.sin(t / 200 + i) * 2);
-      }
-    }
-
-    // Head.
-    g.fillStyle(SEA_DARK, 1);
-    g.fillEllipse(s.x, s.y, 44, 34);
-    g.fillStyle(SEA, 1);
-    g.fillEllipse(s.x + dirX * 4, s.y + dirY * 4 - 3, 34, 24);
-    // Jaw — opens with cast glow.
-    const jaw = 4 + s.castGlow * 10;
-    g.fillStyle(SEA_DARK, 1);
-    g.fillTriangle(
-      s.x + dirX * 16, s.y + dirY * 16,
-      s.x + dirX * 30 - dirY * 6, s.y + dirY * 30 + dirX * 6 + jaw,
-      s.x + dirX * 30 + dirY * 6, s.y + dirY * 30 - dirX * 6 + jaw,
-    );
-    if (s.castGlow > 0.3) {
-      g.fillStyle(FOAM, (s.castGlow - 0.3) * 0.9);
-      g.fillCircle(s.x + dirX * 24, s.y + dirY * 24, 6);
-    }
-    // Fins swept back off the skull.
-    for (const side of [-1, 1]) {
-      g.fillStyle(SEA, 0.9);
-      g.fillTriangle(
-        s.x - dirY * side * 14, s.y + dirX * side * 10,
-        s.x - dirX * 18 - dirY * side * 30, s.y - dirY * 14 + dirX * side * 22,
-        s.x - dirX * 26 - dirY * side * 12, s.y - dirY * 20 + dirX * side * 9,
-      );
-    }
-    // Eyes — hot foam-white, red-tinged when enraged.
-    const eye = s.hurt ? 0xffffff : s.enraged ? 0xffb0a0 : FOAM;
-    for (const side of [-1, 1]) {
-      g.fillStyle(eye, 1);
-      g.fillEllipse(s.x + dirX * 8 - dirY * side * 9, s.y + dirY * 8 + dirX * side * 7, 6, 4.5);
-    }
-    if (s.hurt) {
-      g.fillStyle(0xffffff, 0.25);
-      g.fillCircle(s.x, s.y, 46);
-    }
-  },
+  look: { crest: 'tendrils', pattern: 'scales', aura: 'bubbles', hands: 'claw', torsoR: 38, eyes: 3, mouth: 'maw' },
+  phaseStyles: [
+    { movement: 'hover', gimmick: 'none' },
+    { movement: 'orbit', gimmick: 'shrink', tint: 'cold' },
+    { movement: 'rush', gimmick: 'gloom', tint: 'void', look: { crest: 'mane', hands: 'blade' } },
+  ],
 };
