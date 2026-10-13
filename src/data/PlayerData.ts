@@ -92,6 +92,8 @@ interface SaveData {
   realityDefeated: boolean;
   /** Which twin died first on the winning run. Decides whose mastery the shard completes. */
   realityKillOrder: '' | 'chaos-first' | 'order-first';
+  /** Stronghold (tower defense): furthest wave cleared, per difficulty id. */
+  strongholdBest: Record<string, number>;
 }
 
 /** A forge waiting on its three-on-three. */
@@ -219,6 +221,7 @@ function load(): SaveData {
         realityIntroSeen: parsed.realityIntroSeen ?? false,
         realityDefeated: parsed.realityDefeated ?? false,
         realityKillOrder: parsed.realityKillOrder ?? '',
+        strongholdBest: parsed.strongholdBest ?? {},
       };
       if (!d.migratedSubterfugeId) {
         migrateSubterfugeId(d);
@@ -239,7 +242,7 @@ function load(): SaveData {
     // corrupted save — start fresh
   }
   // A save that never existed has nothing to migrate — born already stamped.
-  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], labLevel: 0, corruptShards: 0, huskJournal: [], apocalypseSeen: false, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {}, achievements: [], equippedSkins: {}, divineNuclei: 0, kingDefeated: false, devourerDefeated: false, devourerChoice: '', bountyRerollOffset: 0, completedBountyKeys: [], passionQTaps: 0, passionQCensored: false, paperJournal: {}, quantumBond: [], quantumResearched: [], quantumResearching: '', quantumQuestProgress: {}, migratedSubterfugeId: true, screwdriverFound: false, screwdriverPage: -1, screwsRemoved: {}, secretModesUnlocked: [], pendingUnstable: null, deathsByElement: {}, realityFountainLit: false, realityIntroSeen: false, realityDefeated: false, realityKillOrder: '' };
+  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], labLevel: 0, corruptShards: 0, huskJournal: [], apocalypseSeen: false, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {}, achievements: [], equippedSkins: {}, divineNuclei: 0, kingDefeated: false, devourerDefeated: false, devourerChoice: '', bountyRerollOffset: 0, completedBountyKeys: [], passionQTaps: 0, passionQCensored: false, paperJournal: {}, quantumBond: [], quantumResearched: [], quantumResearching: '', quantumQuestProgress: {}, migratedSubterfugeId: true, screwdriverFound: false, screwdriverPage: -1, screwsRemoved: {}, secretModesUnlocked: [], pendingUnstable: null, deathsByElement: {}, realityFountainLit: false, realityIntroSeen: false, realityDefeated: false, realityKillOrder: '', strongholdBest: {} };
 }
 
 function save(data: SaveData): void {
@@ -1058,4 +1061,21 @@ export function completeBondResearch(key: string): void {
   if (!data.quantumResearched.includes(key)) data.quantumResearched.push(key);
   if (data.quantumResearching === key) data.quantumResearching = '';
   save(data);
+}
+
+// ── Stronghold ───────────────────────────────────────────────────────
+
+/** Furthest wave cleared in Stronghold on this difficulty. */
+export function getStrongholdBest(difficultyId: string): number {
+  return load().strongholdBest[difficultyId] ?? 0;
+}
+
+/** Records a Stronghold run. Returns true when it is a new record for the difficulty. */
+export function recordStrongholdBest(difficultyId: string, wavesCleared: number): boolean {
+  const data = load();
+  const prev = data.strongholdBest[difficultyId] ?? 0;
+  if (wavesCleared <= prev) return false;
+  data.strongholdBest = { ...data.strongholdBest, [difficultyId]: wavesCleared };
+  save(data);
+  return true;
 }

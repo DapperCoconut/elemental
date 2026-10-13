@@ -95,6 +95,8 @@ import { HuntFx } from '../elements/kits/HuntVisuals';
 import { JusticeKit, JusticeArenaApi, JusticeForm } from '../elements/kits/JusticeKit';
 import { DreamKit, DreamArenaApi } from '../elements/kits/DreamKit';
 import { ChalkKit, ChalkArenaApi } from '../elements/kits/ChalkKit';
+import { WaxKit, WaxArenaApi } from '../elements/kits/WaxKit';
+import { ClayKit, ClayArenaApi } from '../elements/kits/ClayKit';
 import { MagmaKit, MagmaArenaApi } from '../elements/kits/MagmaKit';
 import { IllusionKit, IllusionArenaApi } from '../elements/kits/IllusionKit';
 import { DepthsKit, DepthsArenaApi } from '../elements/kits/DepthsKit';
@@ -321,6 +323,8 @@ const ELEMENT_TEXTURES: Record<string, string> = {
   justice: 'elem-justice',
   dream: 'elem-dream',
   chalk: 'elem-chalk',
+  wax: 'elem-wax',
+  clay: 'elem-clay',
   illusion: 'elem-illusion',
   depths: 'elem-depths',
   conquest: 'elem-conquest',
@@ -652,6 +656,10 @@ export class ArenaScene extends Phaser.Scene {
 
   /** Chalk (test element) — managed by ChalkKit. Drawing windows, the chalk on the floor and the shield. */
   private chalkKit!: ChalkKit;
+  /** Wax (test element) — managed by WaxKit. The foil, the bees, the candles, hives and bombs. */
+  private waxKit!: WaxKit;
+  /** Clay (test element) — managed by ClayKit. The golem, the drawn shield, the wall run and the fused body. */
+  private clayKit!: ClayKit;
   /** Magma (test element) — managed by MagmaKit. Lava, pressure vessels, the fist and the dragon. */
   private magmaKit!: MagmaKit;
   /** Illusion (test element) — managed by IllusionKit. Panes, folds, corner-hops and the crack. */
@@ -890,6 +898,7 @@ export class ArenaScene extends Phaser.Scene {
   private ruinMasteryOn = false;
   private radiationMasteryOn = false;
   private clothMasteryOn = false;
+  private clayMasteryOn = false;
   private gumMasteryOn = false;
   private gluttonyMasteryOn = false;
   private paperMasteryOn = false;
@@ -1397,6 +1406,7 @@ export class ArenaScene extends Phaser.Scene {
     this.ruinMasteryOn = PlayerData.isMasteryEnabled('ruin');
     this.radiationMasteryOn = PlayerData.isMasteryEnabled('radiation');
     this.clothMasteryOn = PlayerData.isMasteryEnabled('cloth');
+    this.clayMasteryOn = PlayerData.isMasteryEnabled('clay');
     this.gumMasteryOn = PlayerData.isMasteryEnabled('gum');
     this.paperMasteryOn = PlayerData.isMasteryEnabled('paper');
     this.fortuneMasteryOn = PlayerData.isMasteryEnabled('fortune');
@@ -1807,6 +1817,7 @@ export class ArenaScene extends Phaser.Scene {
         get isDodging() { return arena.isDodging; },
         set isDodging(v: boolean) { arena.isDodging = v; },
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
@@ -2327,6 +2338,78 @@ export class ArenaScene extends Phaser.Scene {
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
       };
       this.chalkKit = new ChalkKit(chalkApi);
+    }
+
+    // ── Wax kit (test element) ────────────────────────────────
+    if (this.waxKit) {
+      this.waxKit.reset();
+    } else {
+      const arena = this;
+      const waxApi: WaxArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
+        get pointerWasDown() { return arena.pointerWasDown; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get npcAutonomous() { return !arena.isOnline; },
+        get width() { return arena.scale.width; },
+        get height() { return arena.scale.height; },
+        waxColor: (owner, base) => arena.skinsKit.waxColor(owner, base),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
+        broadcastSpecialCast: (id) => arena.broadcastMasteryCast(id),
+      };
+      this.waxKit = new WaxKit(waxApi);
+    }
+
+    // ── Clay kit (test element) ───────────────────────────────
+    if (this.clayKit) {
+      this.clayKit.reset();
+    } else {
+      const arena = this;
+      const clayApi: ClayArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.enemies; },
+        get projectiles() { return arena.projectiles; },
+        get projectileRegistry() { return arena.techProjReg; },
+        get eKey() { return arena.eKey; },
+        get rKey() { return arena.rKey; },
+        get fKey() { return arena.fKey; },
+        get qKey() { return arena.qKey; },
+        get pointerWasDown() { return arena.pointerWasDown; },
+        get elementId() { return arena.elementId; },
+        get npcElementId() { return arena.npcElement.id; },
+        get npcAutonomous() { return !arena.isOnline; },
+        get width() { return arena.scale.width; },
+        get height() { return arena.scale.height; },
+        clayColor: (owner, base) => arena.skinsKit.clayColor(owner, base),
+        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
+        purgeDebuffs: (f) => arena.purgeDebuffs(f),
+        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
+        get masteryActive() { return arena.clayMasteryOn && arena.elementId === 'clay'; },
+        get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'clay'; },
+        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
+        recordMasteryStat: (key, amount) => {
+          if (arena.elementId === 'clay') PlayerData.addMasteryStat('clay', key, amount);
+        },
+        broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
+      };
+      this.clayKit = new ClayKit(clayApi);
     }
 
     // ── Magma kit (test element) ──────────────────────────────
@@ -3288,7 +3371,7 @@ export class ArenaScene extends Phaser.Scene {
           });
           return true;
         },
-        earthGolem: (owner) => foreign(() => arena.earthKit.spawnEarthGolem(owner === 'player')),
+        earthBiomeBuilder: (owner) => foreign(() => arena.earthKit.castForeignBiomeBuilder(owner)),
         oilTrain: (owner) => foreign(() => arena.oilKit.doStartTrainMorph(owner)),
         iceFrozenSolidNoFrost: (owner, tx, ty) => foreign(() => {
           if (owner === 'player') arena.iceKit.doFireFrozenSolid(tx, ty, true);
@@ -4728,6 +4811,22 @@ export class ArenaScene extends Phaser.Scene {
       // Fortune Mastery — Drive by Flex. The aim is the direction the car sets off in, and it
       // never steers again, so one message is the whole of it: the replica bounces its own way
       // round this arena from the same heading.
+      // Wax — the three presses that bypass the cooldown: strapping the bombs on, and the two
+      // kinds of detonation. The replica's own bombs are what go off, so no aim crosses the wire.
+      // Clay Mastery — only the fact of it crosses the wire. What the opponent drew is three
+      // seconds of their mouse, so the replica wakes the bot's own star.
+      case 'give-life':
+        if (this.npcElement.id === 'clay') this.clayKit.doNpcGiveLife(tx, ty);
+        break;
+      case 'wax-rule-beetanica':
+        if (this.npcElement.id === 'wax') this.waxKit.doNpcRuleBeetanica();
+        break;
+      case 'wax-detonate':
+        if (this.npcElement.id === 'wax') this.waxKit.doNpcDetonate(false);
+        break;
+      case 'wax-detonate-self':
+        if (this.npcElement.id === 'wax') this.waxKit.doNpcDetonate(true);
+        break;
       case 'drive-by-flex':
         if (this.npcElement.id === 'fortune') this.fortuneKit.doNpcDriveBy(tx, ty);
         break;
@@ -4895,6 +4994,17 @@ export class ArenaScene extends Phaser.Scene {
     const startX = W / 2 - totalWidth / 2 + cardW / 2;
 
     const fillColors: Record<string, number> = {
+      'clay-slam':           0x9a5c32,
+      'clay-rupture':        0xc38352,
+      'clay-clot':           0x4e9cff,
+      'clay-slink':          0x704128,
+      'clay-fuse':           0xe0a36d,
+      'give-life':           0x9fd0ff,
+      'wax-stinger-strikes': 0xffefad,
+      'wax-swarm':           0xd99518,
+      'wax-candle-mount':    0xf2c85b,
+      'wax-hive-hearth':     0xe5a92f,
+      'wax-sticky-bombs':    0x8d641c,
       'chalk-ward':        0xf4f1e6,
       'chalk-explosive':   0xff5f4a,
       'chalk-perma':       0x5aa9ff,
@@ -5726,6 +5836,16 @@ export class ArenaScene extends Phaser.Scene {
       dreamOasis: () => this.dreamKit.doOasis('player'),
       dreamHaunt: (tx, ty) => this.dreamKit.doHaunt(tx, ty),
       dreamSpiritTear: (tx, ty) => this.dreamKit.doSpiritTear(tx, ty),
+      waxStingerStrikes: (tx, ty) => this.waxKit.doStingerStrikes('player', tx, ty),
+      waxSwarm: (tx, ty) => this.waxKit.doSwarm('player', tx, ty),
+      waxCandleMount: (tx, ty) => this.waxKit.doCandleMount('player', tx, ty),
+      waxHiveHearth: (tx, ty) => this.waxKit.doHiveHearth('player', tx, ty),
+      waxStickyBombs: (tx, ty) => this.waxKit.doStickyBombs('player', tx, ty),
+      claySlam: () => this.clayKit.doSlam('player'),
+      clayRupture: () => this.clayKit.doRupture('player'),
+      clayClot: () => this.clayKit.doClot('player'),
+      claySlink: (tx, ty) => this.clayKit.doSlink('player', tx, ty),
+      clayFuse: () => this.clayKit.doFuse('player'),
       chalkWard: () => this.chalkKit.doWard('player'),
       chalkExplosive: () => this.chalkKit.doExplosive('player'),
       chalkPerma: () => this.chalkKit.doPerma('player'),
@@ -6073,6 +6193,16 @@ export class ArenaScene extends Phaser.Scene {
       // it on with, so the spirit's two keys have no npc arm.
       dreamHaunt: () => {},
       dreamSpiritTear: () => {},
+      waxStingerStrikes: (tx, ty) => this.waxKit.doStingerStrikes('npc', tx, ty),
+      waxSwarm: (tx, ty) => this.waxKit.doSwarm('npc', tx, ty),
+      waxCandleMount: (tx, ty) => this.waxKit.doCandleMount('npc', tx, ty),
+      waxHiveHearth: (tx, ty) => this.waxKit.doHiveHearth('npc', tx, ty),
+      waxStickyBombs: (tx, ty) => this.waxKit.doStickyBombs('npc', tx, ty),
+      claySlam: () => this.clayKit.doSlam('npc'),
+      clayRupture: () => this.clayKit.doRupture('npc'),
+      clayClot: () => this.clayKit.doClot('npc'),
+      claySlink: (tx, ty) => this.clayKit.doSlink('npc', tx, ty),
+      clayFuse: () => this.clayKit.doFuse('npc'),
       chalkWard: () => this.chalkKit.doWard('npc'),
       chalkExplosive: () => this.chalkKit.doExplosive('npc'),
       chalkPerma: () => this.chalkKit.doPerma('npc'),
@@ -6373,6 +6503,16 @@ export class ArenaScene extends Phaser.Scene {
       dreamOasis: () => {},
       dreamHaunt: () => {},
       dreamSpiritTear: () => {},
+      waxStingerStrikes: () => {},
+      waxSwarm: () => {},
+      waxCandleMount: () => {},
+      waxHiveHearth: () => {},
+      waxStickyBombs: () => {},
+      claySlam: () => {},
+      clayRupture: () => {},
+      clayClot: () => {},
+      claySlink: () => {},
+      clayFuse: () => {},
       chalkWard: () => {},
       chalkExplosive: () => {},
       chalkPerma: () => {},
@@ -6582,6 +6722,8 @@ export class ArenaScene extends Phaser.Scene {
     const playerBody = this.player.body as Phaser.Physics.Arcade.Body;
     const mouseX = this.input.activePointer.worldX;
     const mouseY = this.input.activePointer.worldY;
+    // Clay Mastery — Bedrock: a fused Space is a leap to the cursor ending in a stunning crash.
+    const bedrockLeap = this.elementId === 'clay' && this.clayKit.startBedrockLeap('player', mouseX, mouseY);
 
     // Psychic Mastery — Predictor's Snare: the dash stops being a dash. The kit puts the body
     // on the enemy's movement marker itself and leaves a closed eye there, and refuses (leaving
@@ -6600,7 +6742,9 @@ export class ArenaScene extends Phaser.Scene {
 
     // Card — Psycho: teleport to cursor; Card — Technique: extended dash length.
     // Fortune's Tele-Core (E+) is the same move bought off a shelf, so it rides the same branch.
-    if (snared) {
+    if (bedrockLeap) {
+      playerBody.stop();
+    } else if (snared) {
       // Already standing on the marker — there is no direction left to honour.
     } else if (this.cardPsychoActive || this.fortuneKit.isTeleportDash()) {
       const { width, height } = this.scale;
@@ -6641,7 +6785,10 @@ export class ArenaScene extends Phaser.Scene {
         this.isDodging = false;
       }
     });
-    if (!bypassCooldown) this.time.delayedCall(Math.round(1000 * this.cardDodgeCdMult), () => { this.dodgeOnCooldown = false; });
+    if (!bypassCooldown) {
+      const clayCd = this.elementId === 'clay' ? this.clayKit.getDodgeCooldownMult('player') : 1;
+      this.time.delayedCall(Math.round(1000 * this.cardDodgeCdMult * clayCd), () => { this.dodgeOnCooldown = false; });
+    }
   }
 
   /**
@@ -9646,6 +9793,7 @@ export class ArenaScene extends Phaser.Scene {
       this.playerSpeedMult = 1;
       if (this.earthKit.isRepairActive()) this.playerSpeedMult *= 0.2;
       if (this.earthKit.isTitanActive()) this.playerSpeedMult = 0; // Q+ Titan Form: you are the golem, rooted
+      if (this.earthKit.isBiomeRiteActive()) this.playerSpeedMult = 0; // Q Biome Builder: on the dais, choosing
       if (this.hasPerk('player', 'obsidian')) this.playerSpeedMult *= 0.85;
     } else if (this.elementId === 'crystal') {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
@@ -9792,6 +9940,19 @@ export class ArenaScene extends Phaser.Scene {
     if (this.elementId === 'dream' || this.npcElement.id === 'dream') {
       this.playerSpeedMult *= this.dreamKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.dreamKit.getNpcSpeedMult();
+    }
+    // Earth: Symbiosis' Ocean haste on its owner, and an enemy Ice quarter's slow on whoever
+    // is standing in it. Pulled for the same reason — and kept alive past the Earth check
+    // because Dark Treachery can leave weather behind with no Earth in the match.
+    if (this.elementId === 'earth' || this.npcElement.id === 'earth' || this.earthKit.hasActiveBiomeWorld()) {
+      this.playerSpeedMult *= this.earthKit.getPlayerBiomeSpeedMult();
+      this.npcSpeedMult *= this.earthKit.getNpcBiomeSpeedMult();
+    }
+    // Clay: the fused body's haste on whoever is wearing it, and a slip puddle's slow on whoever
+    // is standing in one. Pulled for the same reason — ClayKit.update() runs after movement.
+    if (this.elementId === 'clay' || this.npcElement.id === 'clay') {
+      this.playerSpeedMult *= this.clayKit.getPlayerSpeedMult();
+      this.npcSpeedMult *= this.clayKit.getNpcSpeedMult();
     }
     // Magma: Dragon Kin's haste, on whoever is currently hatched. Pulled for the same reason.
     if (this.elementId === 'magma' || this.npcElement.id === 'magma') {
@@ -10198,6 +10359,10 @@ export class ArenaScene extends Phaser.Scene {
       this.justiceKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'dream') {
       this.dreamKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'wax') {
+      this.waxKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'clay') {
+      this.clayKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'chalk') {
       this.chalkKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'magma') {
@@ -10404,7 +10569,10 @@ export class ArenaScene extends Phaser.Scene {
     // and for the same reason: one press must never be both a load and a roll.
     if (this.elementId !== 'dune' && !this.sandKit.isTrailActive() && !this.dreamKit.suppressesDodge()
       && !(this.reality?.kind === 'trials' && this.realityDungeonKit?.claimsSpace())
-      && Phaser.Input.Keyboard.JustDown(this.spaceKey) && !this.dodgeOnCooldown && !this.isDodging && !this.nukeChanneling && !this.cardSluggishDisableDodge && !this.silenceKit.isPlayerControlLost() && time >= this.player.highGravityUntil
+      && Phaser.Input.Keyboard.JustDown(this.spaceKey)
+      // Clay's Slipstream (F+) banks dashes: a stored charge is the gate rather than the cooldown.
+      && ((this.elementId === 'clay' && this.hasUpgrade('f')) ? this.clayKit.hasSlipstreamCharge('player') : !this.dodgeOnCooldown)
+      && !this.isDodging && !this.clayKit.isLeaping('player') && !this.nukeChanneling && !this.cardSluggishDisableDodge && !this.silenceKit.isPlayerControlLost() && time >= this.player.highGravityUntil
       && time >= this.player.mobilityBlockedUntil) {
       let dx = (this.dKey.isDown ? 1 : 0) - (this.aKey.isDown ? 1 : 0);
       let dy = (this.sKey.isDown ? 1 : 0) - (this.wKey.isDown ? 1 : 0);
@@ -10417,7 +10585,7 @@ export class ArenaScene extends Phaser.Scene {
         dx /= len;
         dy /= len;
       }
-      this.executeDodge(dx, dy);
+      this.executeDodge(dx, dy, this.clayKit.consumeSlipstreamCharge('player'));
     }
 
     // ── Echo Q+ Hypersense: auto-dodge incoming attacks during the 4s reveal ──
@@ -10445,6 +10613,13 @@ export class ArenaScene extends Phaser.Scene {
       airWindDodge: this.airKit.getWindDodge('npc'),
       earthShieldHp: this.earthKit.getNpcShieldHp(),
       npcEarthRocksActive: this.earthKit.getNpcRocksActive(),
+      // Biome Builder: the target standing on the bot's own mountain turns a Quake into a rockfall,
+      // a spike inside the plate's reach turns a Bash into a 30-damage shot, and Symbiosis is
+      // only ever paid for standing in the weather — three synergies the kit computes owner-side.
+      npcEarthBiomes: this.earthKit.getNpcBiomeCount(),
+      earthMountainQuakePoint: this.earthKit.npcMountainQuakePoint() ?? undefined,
+      npcEarthSpikeReady: this.earthKit.npcSpikeReady(),
+      earthBiomePoint: this.earthKit.npcBiomePoint() ?? undefined,
       oilDroneCount: this.oilKit.getNpcDroneCount(),
       shadowPlayerSnared: this.shadowKit.isPlayerSnared(time),
       playerFrostStacks: this.iceKit.getPlayerFrostStacks(),
@@ -10501,6 +10676,31 @@ export class ArenaScene extends Phaser.Scene {
       npcDreamCatchers: this.dreamKit.getCatcherCount('npc'),
       // Consumes the pacing gate, so this is only ever read once a frame.
       npcDreamMayCatch: this.npcElement.id === 'dream' && this.dreamKit.canPlaceCatcher('npc', time),
+      // Wax: the whole kit is an economy of things it placed — candles to stand in, hives to
+      // feed and cash in, bombs that want a second press. Every one of those is a synergy the
+      // kit computes owner-side; see `NpcAiState`.
+      // Clay: a golem on the target is a Slam that lands, shots in the air are a Clot worth
+      // drawing, a nearly-spent fused body is a split worth six shards a layer — see `NpcAiState`.
+      npcClayFused: this.clayKit.isFused('npc'),
+      npcClayFusing: this.clayKit.isFusing('npc'),
+      npcClayFuseHits: this.clayKit.fuseHitsLeft('npc'),
+      npcClaySlinking: this.clayKit.isSlinking('npc'),
+      npcClaySlinkBursts: this.clayKit.slinkBurstsLeft('npc'),
+      npcClayShieldPieces: this.clayKit.shieldPieces('npc'),
+      npcClayGolemOnTarget: this.clayKit.golemOnTarget('npc'),
+      npcClayShotsIncoming: this.clayKit.shotsIncoming('npc'),
+      npcClayGiveLifeSlot: this.clayKit.npcGiveLifeSlot() ?? undefined,
+      npcWaxCandles: this.waxKit.candleCount('npc'),
+      npcWaxInCandle: this.waxKit.inCandle('npc'),
+      waxCandlePoint: this.waxKit.candlePoint('npc') ?? undefined,
+      npcWaxHives: this.waxKit.hiveCount('npc'),
+      waxHiveFeedPoint: this.waxKit.hiveFeedPoint('npc') ?? undefined,
+      waxHiveRedeemPoint: this.waxKit.hiveRedeemPoint('npc') ?? undefined,
+      npcWaxBombsOut: this.waxKit.bombsOut('npc'),
+      npcWaxBombLaneBlocked: this.waxKit.bombLaneBlocked('npc'),
+      npcWaxSelfBombs: this.waxKit.hasStrappedBombs('npc'),
+      npcWaxTargetPoisoned: this.waxKit.targetPoisoned('npc'),
+      npcWaxRangedClick: this.hasNpcUpgrade('click'),
       npcChalkDrawing: this.chalkKit.isDrawing('npc'),
       npcChalkShieldHp: this.chalkKit.getShieldHp('npc'),
       npcChalkMasterpiece: this.chalkKit.isMasterpieceActive('npc'),
@@ -10717,8 +10917,9 @@ export class ArenaScene extends Phaser.Scene {
     this.secretMapKit.update(time, delta);
 
 
-    // Earth and Light kit updates (after npcCastId is known)
-    if (this.elementId === 'earth' || this.npcElement.id === 'earth') {
+    // Earth and Light kit updates (after npcCastId is known). A borrowed Biome Builder can leave
+    // its quarters behind with no Earth in the match, so the weather keeps the kit awake.
+    if (this.elementId === 'earth' || this.npcElement.id === 'earth' || this.earthKit.hasActiveBiomeWorld()) {
       this.earthKit.update(time, delta);
     }
     if (this.elementId === 'light' || this.npcElement.id === 'light') {
@@ -10958,6 +11159,10 @@ export class ArenaScene extends Phaser.Scene {
     if (this.elementId === 'dream' || this.npcElement.id === 'dream') {
       this.dreamKit.update(time, delta);
     }
+    // Wax's bees, candles and bombs outlive a mid-match element swap, so the kit early-outs itself.
+    this.waxKit.update(time, delta);
+    // Clay's shards and creatures likewise; the kit early-outs itself.
+    this.clayKit.update(time, delta);
     if (this.elementId === 'chalk' || this.npcElement.id === 'chalk') {
       this.chalkKit.update(time, delta);
     }
@@ -11195,6 +11400,8 @@ export class ArenaScene extends Phaser.Scene {
         entry.fill.setSize(entry.maxWidth * this.growthKit.getSyringeCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'smoke-break') {
         entry.fill.setSize(entry.maxWidth * this.subterfugeKit.getSmokeBreakCooldownRatio(time), entry.fill.height);
+      } else if (entry.abilityId === 'give-life') {
+        entry.fill.setSize(entry.maxWidth * this.clayKit.getGiveLifeCooldownRatio('player'), entry.fill.height);
       } else if (entry.abilityId === 'beastling') {
         entry.fill.setSize(entry.maxWidth * this.huntKit.getBeastlingCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'oobleck') {
@@ -11589,7 +11796,7 @@ export class ArenaScene extends Phaser.Scene {
       this.conquestKit, this.soulKit, this.subterfugeKit, this.creationKit, this.huntKit,
       this.growthKit, this.oilKit, this.crystalKit, this.silenceKit, this.shadowKit,
       this.magicKit, this.soundKit, this.magmaKit, this.lifeKit, this.techKit, this.illusionKit,
-      this.paperKit, this.sandKit, this.quantumCoreKit, this.clothKit, this.chalkKit,
+      this.paperKit, this.sandKit, this.quantumCoreKit, this.clothKit, this.chalkKit, this.waxKit, this.clayKit,
       this.depthsKit,
     ];
     let razed = 0;
@@ -11612,7 +11819,7 @@ export class ArenaScene extends Phaser.Scene {
     // they built (Sound's performance bar, Chalk's Masterpiece, Death's sheath, Bind's wrath,
     // Rubber's uber, Depths' megalodon) are deliberately absent: none of those is a body.
     const kits: FormRevertTarget[] = [
-      this.huntKit, this.justiceKit, this.gluttonyKit, this.earthKit, this.fireKit,
+      this.huntKit, this.justiceKit, this.gluttonyKit, this.earthKit, this.fireKit, this.clayKit,
       this.magnetKit, this.slimeKit, this.lightKit, this.silenceKit, this.magicKit,
       this.sandKit, this.gumKit, this.creationKit, this.growthKit, this.illusionKit,
     ];

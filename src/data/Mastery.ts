@@ -1870,6 +1870,32 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       },
     ],
   },
+  clay: {
+    elementId: 'clay',
+    name: 'Clay Mastery',
+    enhancedEmoji: '🗿',
+    enhancedColor: 0x1f1b1a,
+    requirements: [
+      { key: 'golemAbsorbed', label: 'Damage Sponge', howTo: 'Have your golem swallow 250 damage worth of shots', target: 250 },
+      { key: 'shardHits', label: 'Shredder', howTo: 'Hit enemies with 100 clay shards — Rupture, barrages, splits and upgrade shards all count', target: 100 },
+      { key: 'clotBlocks', label: 'Clay Bulwark', howTo: 'Stop 25 shots with a Clay Clot (R)', target: 25 },
+      { key: 'fusionKills', label: 'Annihilator', howTo: 'Kill 5 enemies while fused with your golem (Q)', target: 5 },
+    ],
+    enhancements: [
+      {
+        id: 'bedrock',
+        name: 'Bedrock',
+        description: 'Passive: your golem is fired to black bedrock. Standing within 175px of it you take 20% less damage — and since Fuse keeps the golem on you, the fused body has it too.\n\nWhile fused, Space is no longer a dash: you leap to the cursor over 0.6s and come down in a bedrock crash — a 150px Slam that stuns everyone it hits for 2s. The crash recharges three times slower than a dash; Slipstream still banks three of them.',
+      },
+      {
+        id: 'give-life',
+        name: 'Give Life',
+        bindable: true,
+        hudDescription: 'Draw a clay creature in the circle ahead; it wakes and hunts for 12s',
+        description: 'A blue circle opens 112px ahead of you and for 3 seconds the cursor may draw inside it. When the clay runs out or the time does, the drawing stands up and goes looking for someone: 12 seconds of life, a bite every 0.7s.\n\nWhat you drew is what it is. The sharper the stroke\'s corners, the harder it bites — 7 for a smooth loop up to 22 for a jagged star. The rounder and more closed the shape, the faster it runs — 120px/s for a scribble up to 270 for a clean ring. Shots that hit it wear away only the clay around where they land; it dies when too little is left.\n\n6 second cooldown.',
+      },
+    ],
+  },
   cloth: {
     elementId: 'cloth',
     name: 'Cloth Mastery',

@@ -2,6 +2,9 @@ import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import { EarthFx, EARTH, EarthAvatar, StoneShield } from '../../../elements/kits/EarthVisuals';
+import {
+  BIOME_INFO, EarthBiome, drawBiomeFloor, drawBiomeGlyph, drawBiomeLive, drawRiteDais, drawSeedStone, drawSpike,
+} from '../../../elements/kits/EarthBiomeVisuals';
 
 function stage(ctx: PreviewCtx): { fx: EarthFx; av: BaseAvatar } {
   const fx = ctx.capture(() => new EarthFx(ctx.scene, ctx.tint).setSink(ctx.sink));
@@ -280,6 +283,122 @@ export const quakeUpgraded: PreviewScript = {
         }
       });
       ctx.at(1100, () => { fx.dust(ctx.w - 30, ctx.cy - 34, 6, 40, 6); fx.dust(30, ctx.cy + 52, 6, 40, 6); });
+    });
+  },
+};
+
+/** The box's own four quarters, split around the caster so the stones hang where they do in play. */
+function quarters(ctx: PreviewCtx): Phaser.Geom.Rectangle[] {
+  const cx = ctx.cx, cy = ctx.cy - 20;
+  return [
+    new Phaser.Geom.Rectangle(0, 0, cx, cy),
+    new Phaser.Geom.Rectangle(cx, 0, ctx.w - cx, cy),
+    new Phaser.Geom.Rectangle(0, cy, cx, ctx.h - cy),
+    new Phaser.Geom.Rectangle(cx, cy, ctx.w - cx, ctx.h - cy),
+  ];
+}
+
+export const biomeBuilder: PreviewScript = {
+  duration: 6200,
+  scale: 0.72,
+  caption: 'Q — untouchable at the centre; click a seed stone and its quarter becomes that biome for 20s',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    const cx = ctx.cx, cy = ctx.cy;
+    const kinds: EarthBiome[] = ['lava', 'ice', 'jungle', 'mountain'];
+    const offs: Array<[number, number]> = [[-96, -68], [96, -68], [-96, 68], [96, 68]];
+    const rects = quarters(ctx);
+    const floors = ctx.adopt(ctx.scene.add.graphics().setDepth(1));
+    const live = ctx.adopt(ctx.scene.add.graphics().setDepth(2));
+    const rite = ctx.adopt(ctx.scene.add.graphics().setDepth(10));
+    const down: boolean[] = [false, false, false, false];
+    const seeds = [11, 23, 37, 41];
+    av.play('raise', -Math.PI / 2, 2600);
+    ctx.at(300, () => {
+      fx.impact(cx, cy + 6, 60, { shards: 8, dust: 3, crater: false, depth: 8 });
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        fx.pillar(cx + Math.cos(a) * 56, cy + 8 + Math.sin(a) * 22, 9, 30, 9);
+      }
+    });
+    // Two stones are chosen; the other two crumble when the window closes.
+    const slam = (i: number) => {
+      down[i] = true;
+      drawBiomeFloor(floors, ctx.tint, kinds[i], rects[i], seeds[i]);
+      fx.impact(cx + offs[i][0], cy + offs[i][1] + 10, 52, { shards: 9, dust: 2, depth: 8, duration: 420 });
+      fx.ring(cx + offs[i][0], cy + offs[i][1] + 10, 14, 120, BIOME_INFO[kinds[i]].color, 520, 6, 9);
+      av.play('slam', -Math.PI / 2, 380);
+    };
+    ctx.at(1500, () => slam(0));
+    ctx.at(2500, () => slam(3));
+    ctx.at(3400, () => {
+      for (const i of [1, 2]) {
+        if (down[i]) continue;
+        fx.debris(cx + offs[i][0], cy + offs[i][1] - 6, 7, { speed: 90, life: 520, fall: 40, depth: 9 });
+      }
+    });
+    // Spikes grow on the mountain quarter once it lands.
+    const spikes = Array.from({ length: 5 }, (_, i) => ({
+      x: rects[3].x + 30 + ((i * 53) % Math.max(1, rects[3].width - 60)),
+      y: rects[3].y + 36 + ((i * 29) % Math.max(1, rects[3].height - 56)), h: 30 + (i % 3) * 7,
+    }));
+    ctx.onFrame((_dt, elapsed) => {
+      const t = elapsed / 1000;
+      live.clear(); rite.clear();
+      for (let i = 0; i < 4; i++) {
+        if (down[i]) {
+          drawBiomeLive(live, ctx.tint, kinds[i], rects[i], t + seeds[i], seeds[i], 1);
+          const gx = rects[i].centerX < cx ? rects[i].x + 22 : rects[i].right - 22;
+          const gy = rects[i].centerY < cy ? rects[i].y + 22 : rects[i].bottom - 22;
+          live.fillStyle(ctx.tint(EARTH.crevice), 0.45);
+          live.fillCircle(gx, gy, 15);
+          drawBiomeGlyph(live, ctx.tint, kinds[i], gx, gy, 9, 0.9, t);
+        }
+      }
+      if (down[3]) for (const s of spikes) drawSpike(live, ctx.tint, s.x, s.y, s.h, s.x, Phaser.Math.Clamp((elapsed - 2600) / 300, 0, 1), 1);
+      const riteOn = elapsed > 300 && elapsed < 3400;
+      if (!riteOn) return;
+      drawRiteDais(rite, ctx.tint, cx, cy, t, Phaser.Math.Clamp((elapsed - 300) / 320, 0, 1), 1 - (elapsed - 300) / 3100, 1);
+      for (let i = 0; i < 4; i++) {
+        if (down[i]) continue;
+        const picked = (i === 0 && elapsed > 1300) || (i === 3 && elapsed > 2300);
+        drawSeedStone(rite, ctx.tint, kinds[i], cx + offs[i][0], cy + offs[i][1], t, seeds[i],
+          Phaser.Math.Clamp((elapsed - 600 - i * 70) / 260, 0, 1), picked, 1);
+      }
+    });
+  },
+};
+
+export const biomeBuilderUpgraded: PreviewScript = {
+  duration: 5200,
+  scale: 0.72,
+  caption: 'Symbiosis — your own weather blesses you: Lava +20% damage, Ice −20% taken, Jungle +5/s, Ocean +20% speed, Mountain shield ×1.25',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    const rects = quarters(ctx);
+    const kinds: EarthBiome[] = ['lava', 'ice', 'jungle', 'ocean'];
+    const floors = ctx.adopt(ctx.scene.add.graphics().setDepth(1));
+    const live = ctx.adopt(ctx.scene.add.graphics().setDepth(2));
+    kinds.forEach((k, i) => drawBiomeFloor(floors, ctx.tint, k, rects[i], 50 + i * 9));
+    const bless = (i: number) => {
+      const r = rects[i];
+      const at = ctx.casterAt();
+      const info = BIOME_INFO[kinds[i]];
+      const label = ctx.adopt(ctx.scene.add.text(at.x, at.y - 44, info.blessing.toUpperCase(), {
+        fontSize: '12px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: info.text, stroke: '#140d08', strokeThickness: 3,
+      }).setOrigin(0.5).setDepth(14));
+      ctx.scene.tweens.add({ targets: label, y: at.y - 70, alpha: 0, duration: 1000, onComplete: () => label.destroy() });
+      fx.ring(r.centerX, r.centerY, 10, 60, info.color, 500, 4, 8);
+    };
+    // The caster walks a lap through all four quarters, blessed in each.
+    const stops = rects.map((r) => ({ x: r.centerX, y: r.centerY + 10 }));
+    ctx.at(200, () => { ctx.glideCaster({ to: stops[0], ms: 600, ease: 'out', onDone: () => bless(0) }); av.play('dash', Math.PI); });
+    ctx.at(1400, () => { ctx.glideCaster({ to: stops[1], ms: 600, ease: 'out', onDone: () => bless(1) }); av.play('dash', 0); });
+    ctx.at(2600, () => { ctx.glideCaster({ to: stops[3], ms: 600, ease: 'out', onDone: () => bless(3) }); av.play('dash', Math.PI / 2); });
+    ctx.at(3800, () => { ctx.glideCaster({ to: stops[2], ms: 600, ease: 'out', onDone: () => bless(2) }); av.play('dash', Math.PI); });
+    ctx.onFrame((_dt, elapsed) => {
+      live.clear();
+      kinds.forEach((k, i) => drawBiomeLive(live, ctx.tint, k, rects[i], elapsed / 1000 + i, 50 + i * 9, 1));
     });
   },
 };

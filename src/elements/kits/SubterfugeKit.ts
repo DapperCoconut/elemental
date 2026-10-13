@@ -33,7 +33,7 @@ export interface SubterfugeArenaApi {
   // ── Dark Treachery routing ──
   /** Cast the given element's Q through the owner's regular CastContext. Returns false if the element has no ultimate. */
   castForeignQ(elementId: string, owner: 'player' | 'npc'): boolean;
-  earthGolem(owner: 'player' | 'npc'): void;
+  earthBiomeBuilder(owner: 'player' | 'npc'): void;
   oilTrain(owner: 'player' | 'npc'): void;
   iceFrozenSolidNoFrost(owner: 'player' | 'npc', tx: number, ty: number): void;
   timeAlwaysNoonForced(owner: 'player' | 'npc'): void;
@@ -1756,7 +1756,7 @@ export class SubterfugeKit {
         break;
 
       // ── Kit-routed copies ──
-      case 'earth': api.earthGolem(owner); break;
+      case 'earth': api.earthBiomeBuilder(owner); break;
       case 'oil': api.oilTrain(owner); break;
       case 'ice': {
         const target = owner === 'player' ? api.npc : api.player;

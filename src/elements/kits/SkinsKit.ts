@@ -105,6 +105,8 @@ export class SkinsKit {
   justiceColor(owner: Owner, base: number): number { return this.remap(owner, base); }
   dreamColor(owner: Owner, base: number): number { return this.remap(owner, base); }
   chalkColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  waxColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  clayColor(owner: Owner, base: number): number { return this.remap(owner, base); }
   magmaColor(owner: Owner, base: number): number { return this.remap(owner, base); }
   illusionColor(owner: Owner, base: number): number { return this.remap(owner, base); }
   depthsColor(owner: Owner, base: number): number { return this.remap(owner, base); }

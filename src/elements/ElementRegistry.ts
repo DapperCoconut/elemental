@@ -3,6 +3,7 @@ import { airElement } from './air';
 import { clothElement } from './cloth';
 import { bindElement } from './bind';
 import { chalkElement } from './chalk';
+import { clayElement } from './clay';
 import { conquestElement } from './conquest';
 import { creationElement } from './creation';
 import { crystalElement } from './crystal';
@@ -30,6 +31,7 @@ import { lifeElement } from './life';
 import { lightElement } from './light';
 import { magicElement } from './magic';
 import { magmaElement } from './magma';
+import { waxElement } from './wax';
 import { magnetElement } from './magnet';
 import { metalElement } from './metal';
 import { oilElement } from './oil';
@@ -102,6 +104,9 @@ export const ELEMENT_MAP: Record<string, Element> = {
   // the Vault's mimic chests — see `ElementRoster.VAULT_ELEMENTS`.
   chalk: chalkElement,
   magma: magmaElement,
+  // Test elements — playable only on a cheat profile, see `ElementRoster.TEST_ELEMENTS`.
+  wax: waxElement,
+  clay: clayElement,
   illusion: illusionElement,
   depths: depthsElement,
   conquest: conquestElement,

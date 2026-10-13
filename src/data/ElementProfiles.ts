@@ -51,9 +51,9 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
     complexity: 2,
   },
   earth: {
-    archetype: 'Bulwark',
-    blurb: 'Charge the shield, launch the rocks, raise a golem. Slow, heavy, and very hard to move.',
-    complexity: 2,
+    archetype: 'Worldshaper',
+    blurb: 'Charge the shield, launch the rocks, then carve the arena into four climates of your choosing.',
+    complexity: 3,
   },
 
   // ── Combined ────────────────────────────────────────────────────────
@@ -242,6 +242,16 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
   chalk: {
     archetype: 'Artist',
     blurb: 'Draw with the cursor. What you scribble is the ability — its shape, its length, all of it.',
+    complexity: 5,
+  },
+  wax: {
+    archetype: 'Apiarist',
+    blurb: 'Fence with a wax foil, loose the swarm, and feed every bee you fire into a hive that pays it back fivefold.',
+    complexity: 4,
+  },
+  clay: {
+    archetype: 'Shaper',
+    blurb: 'Fight through an immortal golem on your cursor, sculpt a shield by hand, run the walls, then fuse into eight layers of clay.',
     complexity: 5,
   },
   paper: {

@@ -48,6 +48,7 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'rock-dance': 'rock-throw',
   'quake': 'quake',
   'golem-ritual': 'golem-ritual',
+  'biome-builder': ['golem-ritual', 0.8, 1.1],
 
   // ── Life ──
   'petal-shotgun': 'petal-burst',
@@ -266,6 +267,21 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'magma-bloat': ['inferno', 0.85, 0.9],
   'magma-jet': ['flame-burst', 0.85, 1.2],
   'magma-dragon-kin': ['roar', 0.8, 1.2],
+
+  // ── Wax ──
+  'wax-stinger-strikes': ['spear-throw', 1.35, 0.75],
+  'wax-swarm': ['whoosh', 1.65, 0.7],
+  'wax-candle-mount': ['holy-chord', 1.5, 0.65],
+  'wax-hive-hearth': ['stone-rise', 1.35, 0.7],
+  'wax-sticky-bombs': ['grenade-launch', 1.25, 0.75],
+
+  // ── Clay ──
+  'clay-slam': ['stone-slam', 0.82, 0.95],
+  'clay-rupture': ['rock-throw', 1.12, 0.95],
+  'clay-clot': ['shield-up', 0.72, 0.85],
+  'clay-slink': ['sand', 0.7, 0.9],
+  'clay-fuse': ['mutate', 0.78, 1.05],
+  'give-life': ['craft-complete', 0.72, 0.9],
 
   // ── Illusion ──
   'illusion-crack-shot': ['crossbow', 1.25, 0.85],
@@ -525,7 +541,7 @@ const ELEMENT_PITCH: Record<string, number> = {
   fate: 1.2, magic: 1.1, growth: 0.92, gunpowder: 0.8, hunt: 0.85,
   rubber: 1.05, silence: 0.75, technology: 1.3, plasma: 1.25,
   creation: 1.0, dream: 1.2, justice: 0.95, king: 0.6, chalk: 1.35, illusion: 1.15, conquest: 0.85,
-  magma: 0.7, depths: 0.72, passion: 1.28, ruin: 0.7, dune: 0.76, paper: 1.18,
+  magma: 0.7, wax: 1.3, clay: 0.88, depths: 0.72, passion: 1.28, ruin: 0.7, dune: 0.76, paper: 1.18,
   death: 0.6, fortune: 1.08, cloth: 1.12, psychic: 1.22,
   radiation: 1.12, bind: 0.66, gum: 0.86, gluttony: 0.82,
 };

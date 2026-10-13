@@ -195,6 +195,20 @@ export class Husk extends Fighter {
     if (this.active && this.hp > 0 && !this.possessing) this.keepOnScreen();
   }
 
+  /**
+   * Stronghold drives husks along a road itself rather than through `update`'s AI, but it
+   * still wants the burn/toxic ticks and the common CC reads. Returns the walk-speed
+   * multiplier the status fields currently impose: 0 while hard-CC'd, otherwise the frost
+   * slow stacked with the walk/purge/effect multipliers.
+   */
+  tickStatus(time: number, delta: number): number {
+    if (!this.active || this.hp <= 0) return 0;
+    this.tickDots(time, delta);
+    if (!this.active || this.hp <= 0) return 0;
+    if (this.frozenUntil > time || this.earthStunnedUntil > time || this.skeweredUntil > time) return 0;
+    return this.moveSpeed / Math.max(0.0001, this.speed);
+  }
+
   private updateAi(targets: Fighter[], time: number, delta: number): void {
     if (!this.active || this.hp <= 0) return;
     this.tickDots(time, delta);

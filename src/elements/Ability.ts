@@ -233,6 +233,18 @@ export interface CastContext {
   dreamHaunt: (tx: number, ty: number) => void;
   dreamSpiritTear: (tx: number, ty: number) => void;
   // Chalk (test element: cheat mode only for now)
+  // Wax (test element: cheat mode only for now)
+  waxStingerStrikes: (tx: number, ty: number) => void;
+  waxSwarm: (tx: number, ty: number) => void;
+  waxCandleMount: (tx: number, ty: number) => void;
+  waxHiveHearth: (tx: number, ty: number) => void;
+  waxStickyBombs: (tx: number, ty: number) => void;
+  // Clay (test element: cheat mode only for now)
+  claySlam: () => void;
+  clayRupture: () => void;
+  clayClot: () => void;
+  claySlink: (tx: number, ty: number) => void;
+  clayFuse: () => void;
   chalkWard: () => void;
   chalkExplosive: () => void;
   chalkPerma: () => void;

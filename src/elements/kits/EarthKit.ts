@@ -6,6 +6,15 @@ import {
   ArmGesture, ArmHold, EARTH, EarthAura, EarthAvatar, EarthColorFn, EarthFx, EarthGather,
   ErosionAura, StoneGolem, StoneShield, stoneChunkLayered,
 } from './EarthVisuals';
+import { BiomeWorld, BiomeWorldApi } from './EarthBiomes';
+
+/**
+ * Golem Ritual and Titan Form were Earth's Q and Q+ until Biome Builder replaced them. Their
+ * code is kept whole — golem spawn, golem AI, the titan's five keys and its world effects —
+ * but nothing reaches it while this is false. Flip it and the two old Q paths come back exactly
+ * as they were, for whatever ability reuses them later.
+ */
+const LEGACY_GOLEM_Q: boolean = false;
 
 // ── Earth Mastery constants ─────────────────────────────────────────────
 
@@ -39,6 +48,7 @@ const NPC_GESTURES: Record<string, ArmGesture> = {
   'rock-dance': 'flex',
   'quake': 'slam',
   'golem-ritual': 'raise',
+  'biome-builder': 'raise',
 };
 
 interface TitanArm {
@@ -130,6 +140,7 @@ export interface EarthArenaApi {
   readonly abilityBars: Array<{ lbl?: Phaser.GameObjects.Text; desc?: Phaser.GameObjects.Text }>;
   isDodging: boolean;
   hasUpgrade(slot: string): boolean;
+  hasNpcUpgrade(slot: string): boolean;
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
@@ -325,12 +336,37 @@ export class EarthKit {
   // ── Earth Mastery: Dust Screen ──────────────────────────────────────────
   private dustScreenLastCastAt = -Infinity;
 
+  /** Biome Builder — the Q. Owns the rite, the four quarters and everything they drop. */
+  private readonly biomes: BiomeWorld;
+
   constructor(private arena: EarthArenaApi) {
     // Built here rather than as field initialisers so they see the injected arena.
     this.pcol = (base) => arena.earthColor('player', base);
     this.ncol = (base) => arena.earthColor('npc', base);
     this.pfx = new EarthFx(arena.scene, this.pcol);
     this.nfx = new EarthFx(arena.scene, this.ncol);
+    const kit = this;
+    const biomeApi: BiomeWorldApi = {
+      get scene() { return arena.scene; },
+      get player() { return arena.player; },
+      get npc() { return arena.npc; },
+      get enemies() { return arena.enemies; },
+      get width() { return arena.width; },
+      get height() { return arena.height; },
+      fx: (owner) => (owner === 'player' ? kit.pfx : kit.nfx),
+      tint: (owner) => (owner === 'player' ? kit.pcol : kit.ncol),
+      isEarth: (owner) => (owner === 'player' ? arena.elementId === 'earth' : arena.npcElementId === 'earth'),
+      hasSymbiosis: (owner) => (owner === 'player' ? arena.hasUpgrade('q') : arena.hasNpcUpgrade('q')),
+      spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+      onRiteStart: (owner) => kit.onBiomeRiteStart(owner),
+      onSlam: (owner, kind) => {
+        void kind;
+        const av = owner === 'player' ? kit.playerAvatar : kit.npcAvatar;
+        av?.play('slam', -Math.PI / 2, 380);
+      },
+      heal: (owner, amount) => (owner === 'player' ? arena.player : arena.npc).heal(amount),
+    };
+    this.biomes = new BiomeWorld(biomeApi);
   }
 
   // ── Public accessors for cross-cutting arena state ─────────────────────
@@ -339,6 +375,46 @@ export class EarthKit {
   isRepairActive(): boolean { return this.earthRepairActive; }
   /** Titan Form (Q+): the player is the golem — rooted, hidden and untouchable. */
   isTitanActive(): boolean { return this.titanActive || this.titanLandingUntil > this.arena.scene.time.now; }
+  /** Biome Builder: the player stands on the dais choosing — rooted and untouchable. */
+  isBiomeRiteActive(): boolean { return this.biomes.isRiteActive('player'); }
+  /** A borrowed Biome Builder can leave weather behind with no Earth in the match; keep ticking. */
+  hasActiveBiomeWorld(): boolean { return this.biomes.hasActiveWorld(); }
+  /** Symbiosis' Ocean haste and an enemy's Ice slow, pulled by ArenaScene after movement resolves. */
+  getPlayerBiomeSpeedMult(): number { return this.biomes.speedMult('player'); }
+  getNpcBiomeSpeedMult(): number { return this.biomes.speedMult('npc'); }
+  /** Dark Treachery's copy: four random quarters on the spot, no rite. */
+  castForeignBiomeBuilder(owner: 'player' | 'npc'): void { this.biomes.castForeign(owner, this.arena.scene.time.now); }
+  // Bot synergies — see `NpcAiState`.
+  npcMountainQuakePoint(): { x: number; y: number } | null { return this.biomes.npcMountainQuakePoint(); }
+  npcSpikeReady(): boolean { return this.biomes.npcSpikeReady(this.npcEarthShieldAngle); }
+  npcBiomePoint(): { x: number; y: number } | null { return this.biomes.npcBiomePoint(); }
+  getNpcBiomeCount(): number { return this.biomes.zoneCount('npc'); }
+
+  /** Symbiosis — Lava: the owner's own blows hit a fifth harder while they stand in it. */
+  private damageFor(owner: 'player' | 'npc', base: number): number {
+    const m = this.biomes.damageMult(owner);
+    return m === 1 ? base : Math.max(1, Math.round(base * m));
+  }
+
+  /** The rite takes the body: any held input is dropped so nothing discharges when it ends. */
+  private onBiomeRiteStart(owner: 'player' | 'npc'): void {
+    if (owner === 'player') {
+      this.earthBashActive = false;
+      this.earthBashCharging = false;
+      this.earthBashChargeRatio = 0;
+      this.earthSplinterHolding = false;
+      this.earthSplinterReady = false;
+      this.arena.player.chargeRatio = 0;
+      this.earthShieldSprite?.setCharge(0);
+      this.earthShieldSprite?.setSplinter(0);
+      this.setPlayerHold(null);
+      this.arena.isDodging = false;
+      this.playPlayerGesture('raise', -Math.PI / 2, 5000);
+    } else {
+      this.npcEarthBashActive = false;
+      this.npcAvatar?.play('raise', -Math.PI / 2, 1400);
+    }
+  }
 
   /**
    * Ruin Mastery — Second Skin. The titan is the largest form in the game: a different body, a
@@ -350,9 +426,15 @@ export class EarthKit {
    * allowed to hand out its carpet bombing as a consolation.
    */
   revertForms(f: Fighter): string[] {
-    if (f !== this.arena.player || !this.titanActive) return [];
-    this.exitTitanForm(this.arena.scene.time.now, false);
-    return ['Titan Form'];
+    const out: string[] = [];
+    const now = this.arena.scene.time.now;
+    const owner = f === this.arena.player ? 'player' : f === this.arena.npc ? 'npc' : null;
+    if (owner && this.biomes.endRite(owner, now)) out.push('Biome Builder');
+    if (f === this.arena.player && this.titanActive) {
+      this.exitTitanForm(now, false);
+      out.push('Titan Form');
+    }
+    return out;
   }
   getNpcShieldHp(): number { return this.npcEarthShieldHp; }
   getNpcRocksActive(): boolean { return this.npcEarthRocks.length > 0; }
@@ -490,6 +572,7 @@ export class EarthKit {
     this.npcEarthGolemFaultWall = null;
     this.npcEarthGolemHpLabel = null;
     this.dustScreenLastCastAt = -Infinity;
+    this.biomes.reset();
   }
 
   // ── Per-frame update ─────────────────────────────────────────────────
@@ -508,10 +591,16 @@ export class EarthKit {
 
     this.updateAvatars(time, delta);
     this.updateSplinterShards(time, delta);
+    this.biomes.update(time, delta);
 
     // ── Player earth ──────────────────────────────────────────────
     if (this.arena.elementId === 'earth') {
       const playerBody = player.body as Phaser.Physics.Arcade.Body;
+
+      // Symbiosis — Mountain: the rebuild clock runs a fifth faster while standing in it.
+      if (this.earthShieldBroken && this.earthShieldRespawnAt > time) {
+        this.earthShieldRespawnAt -= delta * (this.biomes.shieldRegenMult('player') - 1);
+      }
 
       // Lazy-spawn initial shield (HP starts at 75 from reset() but sprite doesn't exist yet)
       if (this.earthShieldHp > 0 && !this.playerShieldBuilt() && !this.earthShieldBroken && !this.earthGolemActive && !this.titanActive) {
@@ -621,11 +710,11 @@ export class EarthKit {
                 this.earthBashHitDealt = true;
                 const shielded = this.earthShieldHp > 0;
                 if (shielded) {
-                  t.takeDamage(this.earthBashShieldDmg);
+                  t.takeDamage(this.damageFor('player', this.earthBashShieldDmg));
                   this.arena.spawnHitFlash(t.x, t.y, EARTH.clay);
                   this.arena.showFloatingText(t.x, t.y - 20, `🛡 BASH ${this.earthBashShieldDmg}`, '#ccaa66');
                 } else {
-                  t.takeDamage(this.earthBashStabDmg);
+                  t.takeDamage(this.damageFor('player', this.earthBashStabDmg));
                   this.arena.spawnHitFlash(t.x, t.y, EARTH.clay);
                   this.arena.showFloatingText(t.x, t.y - 20, `🗡 STAB ${this.earthBashStabDmg}`, '#aa8844');
                 }
@@ -672,7 +761,7 @@ export class EarthKit {
             if (!t.active || t.hp <= 0) continue;
             const d = Phaser.Math.Distance.Between(rock.sprite.x, rock.sprite.y, t.x, t.y);
             if (d < 22) {
-              t.takeDamage(8);
+              t.takeDamage(this.damageFor('player', 8));
               this.arena.spawnHitFlash(t.x, t.y, lavaRocks ? EARTH.ember : EARTH.clay);
               this.arena.showFloatingText(t.x, t.y - 20, '🪨 8', '#aa8844');
               // A glancing blow: chips off the rock, not a full detonation.
@@ -719,7 +808,7 @@ export class EarthKit {
           const d = Phaser.Math.Distance.Between(lr.sprite.x, lr.sprite.y, t.x, t.y);
           if (d < 28) {
             const launchDmg = lavaRocks ? 60 : 40;
-            t.takeDamage(launchDmg);
+            t.takeDamage(this.damageFor('player', launchDmg));
             this.arena.spawnHitFlash(t.x, t.y, lavaRocks ? EARTH.ember : EARTH.clay);
             this.arena.showFloatingText(t.x, t.y - 20, lavaRocks ? `🔥 LAVA HIT ${launchDmg}` : `🪨 LAUNCH STUN ${launchDmg}`, '#ffcc44');
             t.earthStunnedUntil = Math.max(t.earthStunnedUntil, time + 3000);
@@ -765,7 +854,7 @@ export class EarthKit {
           t.lavaRockBurnAccum += delta;
           if (t.lavaRockBurnAccum >= 500) {
             t.lavaRockBurnAccum -= 500;
-            t.takeDamage(2);
+            t.takeDamage(this.damageFor('player', 2));
             this.arena.spawnHitFlash(t.x, t.y, EARTH.ember);
             // A continuous tell, so the burn is readable on the victim between ticks.
             this.pfx.grit(t.x, t.y - 6, 2, {
@@ -796,7 +885,7 @@ export class EarthKit {
             if (!t.active || t.hp <= 0) continue;
             const d = Phaser.Math.Distance.Between(this.earthQuakeX, this.earthQuakeY, t.x, t.y);
             if (d < quakeRadius && time > (this.earthQuakeStunUntil ?? 0) && Math.random() < 0.35) {
-              t.takeDamage(tripDmg, { source: this.earthQuakeSprite, sourceX: this.earthQuakeX, sourceY: this.earthQuakeY });
+              t.takeDamage(this.damageFor('player', tripDmg), { source: this.earthQuakeSprite, sourceX: this.earthQuakeX, sourceY: this.earthQuakeY });
               this.arena.spawnHitFlash(t.x, t.y, this.earthQuakeMagmified ? EARTH.ember : EARTH.clay);
               this.arena.showFloatingText(t.x, t.y - 20, this.earthQuakeMagmified ? `🌋 MAGMA ${tripDmg}` : `⚡ TRIP ${tripDmg}`, '#ccaa66');
               // Tripped: a plate kicks up under their feet and dumps them off it.
@@ -866,7 +955,7 @@ export class EarthKit {
           if (!t.active || t.hp <= 0) continue;
           const wd = Phaser.Math.Distance.Between(wave.sprite.x, wave.sprite.y, t.x, t.y);
           if (wd < waveHitRadius) {
-            t.takeDamage(waveDamage);
+            t.takeDamage(this.damageFor(waveOwner, waveDamage));
             this.arena.spawnHitFlash(t.x, t.y, EARTH.dust);
             this.pfx.impact(t.x, t.y, 52, { shards: 7, dust: 1, crater: false, depth: 7, duration: 340 });
             const tb = t.body as Phaser.Physics.Arcade.Body;
@@ -982,11 +1071,11 @@ export class EarthKit {
             this.npcEarthBashHitDealt = true;
             const shielded = this.npcEarthShieldHp > 0;
             if (shielded) {
-              player.takeDamage(this.npcEarthBashShieldDmg);
+              player.takeDamage(this.damageFor('npc', this.npcEarthBashShieldDmg));
               this.arena.spawnHitFlash(player.x, player.y, EARTH.clay);
               this.arena.showFloatingText(player.x, player.y - 20, `🛡 BASH ${this.npcEarthBashShieldDmg}`, '#ccaa66');
             } else {
-              player.takeDamage(this.npcEarthBashStabDmg);
+              player.takeDamage(this.damageFor('npc', this.npcEarthBashStabDmg));
               this.arena.spawnHitFlash(player.x, player.y, EARTH.clay);
               this.arena.showFloatingText(player.x, player.y - 20, `🗡 STAB ${this.npcEarthBashStabDmg}`, '#aa8844');
             }
@@ -1019,7 +1108,7 @@ export class EarthKit {
         if (time >= rock.hitCdUntil) {
           const d = Phaser.Math.Distance.Between(rock.sprite.x, rock.sprite.y, player.x, player.y);
           if (d < 22) {
-            player.takeDamage(8);
+            player.takeDamage(this.damageFor('npc', 8));
             this.arena.spawnHitFlash(player.x, player.y, EARTH.clay);
             this.arena.showFloatingText(player.x, player.y - 20, '🪨 8', '#aa8844');
             this.nfx.debris(rock.sprite.x, rock.sprite.y, 4,
@@ -1046,7 +1135,7 @@ export class EarthKit {
         const hitWall = lr.sprite.x < 20 || lr.sprite.x > W - 20 || lr.sprite.y < 20 || lr.sprite.y > H - 20;
         const expired = time - lr.spawnedAt > 1200;
         if (d < 28) {
-          player.takeDamage(40);
+          player.takeDamage(this.damageFor('npc', 40));
           this.arena.spawnHitFlash(player.x, player.y, EARTH.clay);
           this.arena.showFloatingText(player.x, player.y - 20, '🪨 LAUNCH STUN 40', '#ffcc44');
           this.playerEarthStunnedUntil = Math.max(this.playerEarthStunnedUntil, time + 3000);
@@ -1072,7 +1161,7 @@ export class EarthKit {
           this.npcEarthQuakeTickAccum -= 750;
           const d = Phaser.Math.Distance.Between(this.npcEarthQuakeX, this.npcEarthQuakeY, player.x, player.y);
           if (d < 80 && time > (this.npcEarthQuakeStunUntil ?? 0) && Math.random() < 0.35) {
-            player.takeDamage(5, { source: this.npcEarthQuakeSprite, sourceX: this.npcEarthQuakeX, sourceY: this.npcEarthQuakeY });
+            player.takeDamage(this.damageFor('npc', 5), { source: this.npcEarthQuakeSprite, sourceX: this.npcEarthQuakeX, sourceY: this.npcEarthQuakeY });
             this.arena.spawnHitFlash(player.x, player.y, EARTH.clay);
             this.arena.showFloatingText(player.x, player.y - 20, '⚡ TRIP 5', '#ccaa66');
             this.nfx.pillar(player.x, player.y + 6, 12, 24, 7);
@@ -1098,8 +1187,10 @@ export class EarthKit {
       // React to npcCastId for earth abilities (signals from doEarthAbilities)
       this.handleNpcCastId(this.arena.npcCastId);
       if (this.arena.npcCastId === 'bash') {
-        // Launch a rock if shield is active and one is within ±45° of shield angle
-        let npcLaunchedRock = false;
+        // A mountain spike inside the plate's reach is the shot; otherwise launch a rock if the
+        // shield is active and one is within ±45° of shield angle.
+        let npcLaunchedRock = this.biomes.tryLaunchSpike('npc', this.npcEarthShieldAngle, time);
+        if (npcLaunchedRock) this.npcAvatar?.play('punch', this.npcEarthShieldAngle);
         if (this.npcEarthShieldHp > 0 && this.npcEarthRocks.length > 0) {
           for (let i = this.npcEarthRocks.length - 1; i >= 0; i--) {
             const rock = this.npcEarthRocks[i];
@@ -1139,6 +1230,7 @@ export class EarthKit {
         this.npcEarthQuakeTickAccum = 0;
         this.arena.showFloatingText(qx, qy, '⛰ QUAKE', '#ccaa66');
         this.quakeOpeningBurst(this.nfx, qx, qy, 80, false);
+        this.biomes.onQuake('npc', qx, qy, 5000, time);
       }
       if (this.arena.npcCastId === 'repair') {
         this.npcEarthRepairActive = true;
@@ -1146,10 +1238,17 @@ export class EarthKit {
         this.npcEarthRepairEnd = time + 3000;
         this.arena.showFloatingText(npc.x, npc.y - 30, '🔧 REPAIR', '#ccaa66');
       }
-      if (this.arena.npcCastId === 'golem-ritual') {
+      if (this.arena.npcCastId === 'golem-ritual' && LEGACY_GOLEM_Q) {
         if (this.npcEarthShieldHp > 0 && !this.npcEarthGolemActive) {
           this.spawnEarthGolem(false);
         }
+      }
+      if (this.arena.npcCastId === 'biome-builder') {
+        this.biomes.startRite('npc', time);
+      }
+      // Symbiosis — Mountain, for a bot that owns the upgrade.
+      if (this.npcEarthShieldBroken && this.npcEarthShieldRespawnAt > time) {
+        this.npcEarthShieldRespawnAt -= delta * (this.biomes.shieldRegenMult('npc') - 1);
       }
     }
 
@@ -1176,8 +1275,12 @@ export class EarthKit {
         this.arena.showFloatingText(ptr2.worldX, ptr2.worldY, hasTectonic ? '⛰ TECTONIC QUAKE' : '⛰ QUAKE', '#ccaa66');
         this.playPlayerGesture('slam', Math.atan2(ptr2.worldY - player.y, ptr2.worldX - player.x));
         this.quakeOpeningBurst(this.pfx, ptr2.worldX, ptr2.worldY, qRadius, hasTectonic);
+        this.biomes.onQuake('player', ptr2.worldX, ptr2.worldY, qDuration, time);
       }
-      if (this.playerEarthCastId === 'golem-ritual') {
+      if (this.playerEarthCastId === 'biome-builder') {
+        this.biomes.startRite('player', time);
+      }
+      if (this.playerEarthCastId === 'golem-ritual' && LEGACY_GOLEM_Q) {
         if (this.earthShieldHp > 0 && !this.earthGolemActive) {
           // Click+: only removes front shield, keeps back shield
           if (this.arena.hasUpgrade('click') && this.earthBackShieldHp > 0) {
@@ -1343,7 +1446,7 @@ export class EarthKit {
 
       const hit = npc.active && npc.hp > 0 && Phaser.Math.Distance.Between(s.x, s.y, npc.x, npc.y) < 28;
       if (hit) {
-        npc.takeDamage(20);
+        npc.takeDamage(this.damageFor('player', 20));
         this.arena.spawnHitFlash(npc.x, npc.y, s.colour);
         this.arena.showFloatingText(npc.x, npc.y - 20, '🛡 SHARD 20', '#cccccc');
         if (npc.hp <= 0) this.arena.recordMasteryStat('splinterKills', 1);
@@ -2332,11 +2435,14 @@ export class EarthKit {
       player.damageAbsorber = (amount: number) => {
         if (erosion) {
           if (this.earthShieldHp <= 0) return false;
-          const absorbed = Math.min(this.earthShieldHp, amount);
+          // Symbiosis — Mountain: the plate takes a hit at four-fifths of its cost.
+          const strength = this.biomes.shieldStrength('player');
+          const absorbed = Math.min(this.earthShieldHp, amount / strength);
           this.earthShieldHp -= absorbed;
-          this.arena.recordMasteryStat('shieldBlocked', absorbed);
+          const blocked = Math.min(amount, absorbed * strength);
+          this.arena.recordMasteryStat('shieldBlocked', blocked);
           if (this.earthShieldHp <= 0) this.breakEarthShield(true);
-          const remaining = amount - absorbed;
+          const remaining = amount - blocked;
           if (remaining > 0) {
             player.hp = Math.max(0, player.hp - remaining);
             if (player.hp <= 0) player.emit('defeated');
@@ -2353,11 +2459,14 @@ export class EarthKit {
 
         if (fromFront && this.earthShieldHp > 0) {
           // Front shield absorbs frontal hit
-          const absorbed = Math.min(this.earthShieldHp, amount);
+          // Symbiosis — Mountain: the plate takes a hit at four-fifths of its cost.
+          const strength = this.biomes.shieldStrength('player');
+          const absorbed = Math.min(this.earthShieldHp, amount / strength);
           this.earthShieldHp -= absorbed;
-          this.arena.recordMasteryStat('shieldBlocked', absorbed);
+          const blocked = Math.min(amount, absorbed * strength);
+          this.arena.recordMasteryStat('shieldBlocked', blocked);
           if (this.earthShieldHp <= 0) this.breakEarthShield(true);
-          const remaining = amount - absorbed;
+          const remaining = amount - blocked;
           if (remaining > 0) {
             player.hp = Math.max(0, player.hp - remaining);
             if (player.hp <= 0) player.emit('defeated');
@@ -2365,14 +2474,16 @@ export class EarthKit {
           return true;
         } else if (!fromFront && hasDual && this.earthBackShieldHp > 0) {
           // Back shield absorbs rear hit
-          const absorbed = Math.min(this.earthBackShieldHp, amount);
+          const strength = this.biomes.shieldStrength('player');
+          const absorbed = Math.min(this.earthBackShieldHp, amount / strength);
           this.earthBackShieldHp -= absorbed;
-          this.arena.recordMasteryStat('shieldBlocked', absorbed);
+          const blocked = Math.min(amount, absorbed * strength);
+          this.arena.recordMasteryStat('shieldBlocked', blocked);
           if (this.earthBackShieldHp <= 0) {
             if (this.earthBackShieldSprite) { this.earthBackShieldSprite.destroy(); this.earthBackShieldSprite = null; }
             if (this.earthBackShieldLabel) { this.earthBackShieldLabel.destroy(); this.earthBackShieldLabel = null; }
           }
-          const remaining = amount - absorbed;
+          const remaining = amount - blocked;
           if (remaining > 0) {
             player.hp = Math.max(0, player.hp - remaining);
             if (player.hp <= 0) player.emit('defeated');
@@ -2584,16 +2695,17 @@ export class EarthKit {
 
   private earthAbsorbShieldDamage(isPlayer: boolean, amount: number, fromX: number, fromY: number): number {
     if (!this.earthShieldBlocks(isPlayer, fromX, fromY)) return amount;
+    const strength = this.biomes.shieldStrength(isPlayer ? 'player' : 'npc');
     if (isPlayer) {
-      const absorbed = Math.min(this.earthShieldHp, amount);
+      const absorbed = Math.min(this.earthShieldHp, amount / strength);
       this.earthShieldHp -= absorbed;
       if (this.earthShieldHp <= 0) this.breakEarthShield(true);
-      return amount - absorbed;
+      return amount - Math.min(amount, absorbed * strength);
     } else {
-      const absorbed = Math.min(this.npcEarthShieldHp, amount);
+      const absorbed = Math.min(this.npcEarthShieldHp, amount / strength);
       this.npcEarthShieldHp -= absorbed;
       if (this.npcEarthShieldHp <= 0) this.breakEarthShield(false);
-      return amount - absorbed;
+      return amount - Math.min(amount, absorbed * strength);
     }
   }
 
@@ -2956,6 +3068,10 @@ export class EarthKit {
     // Still being flung back into the arena after an eruption: no input yet.
     if (this.titanLandingUntil > time) return;
 
+    // ── Biome Builder — the rite owns the mouse and the Q key while the stones are offered ──
+    if (this.biomes.handleInput(time, pointer, this.arena.pointerWasDown, mouseX, mouseY,
+      Phaser.Input.Keyboard.JustDown(this.arena.qKey))) return;
+
     // ── Earth Mastery — Dust Screen takes over whichever slot it's bound to ──
     const dustScreenSlot = this.arena.masteryActive ? this.dustScreenSlot() : null;
     if (dustScreenSlot) {
@@ -2969,7 +3085,8 @@ export class EarthKit {
     }
 
     // ── Q+ Titan Form hold charge (tap Q still casts the plain Golem Ritual) ──
-    if (dustScreenSlot !== 'q' && this.arena.hasUpgrade('q')) {
+    // Dormant: Q is Biome Builder now and Q+ is Symbiosis. See `LEGACY_GOLEM_Q`.
+    if (LEGACY_GOLEM_Q && dustScreenSlot !== 'q' && this.arena.hasUpgrade('q')) {
       if (this.arena.qKey.isDown && !this.earthTitanChargeHolding && !this.earthGolemActive && !this.titanActive) {
         this.earthTitanChargeHolding = true;
         this.earthTitanChargeStart = time;
@@ -3006,9 +3123,11 @@ export class EarthKit {
 
     if (clickJustDown && !this.earthBashActive && !this.earthBashCharging) {
       if (Date.now() >= player.disarmedUntil && player.getCooldownRatio('bash') >= 1) {
-        let didLaunch = false;
+        // A mountain spike in front of the plate is a shot before any orbiting rock is.
+        let didLaunch = this.biomes.tryLaunchSpike('player', Math.atan2(mouseY - player.y, mouseX - player.x), time);
+        if (didLaunch) this.playPlayerGesture('punch');
         // Click+ back shield cannot launch rocks — only front shield can
-        if (this.earthShieldHp > 0 && this.earthRocks.length > 0) {
+        if (!didLaunch && this.earthShieldHp > 0 && this.earthRocks.length > 0) {
           for (let i = this.earthRocks.length - 1; i >= 0; i--) {
             const rock = this.earthRocks[i];
             const rockAng = Math.atan2(rock.sprite.y - player.y, rock.sprite.x - player.x);
@@ -3089,7 +3208,7 @@ export class EarthKit {
           const aoeDmg = Math.round(totalHp / 3);
           const dist = Phaser.Math.Distance.Between(player.x, player.y, this.arena.npc.x, this.arena.npc.y);
           if (dist < 120) {
-            this.arena.npc.takeDamage(aoeDmg);
+            this.arena.npc.takeDamage(this.damageFor('player', aoeDmg));
             this.arena.spawnHitFlash(this.arena.npc.x, this.arena.npc.y, EARTH.ember);
             this.arena.showFloatingText(this.arena.npc.x, this.arena.npc.y - 20, `💥 SPLINTER ${aoeDmg}`, '#ff4444');
             if (this.arena.npc.hp <= 0) this.arena.recordMasteryStat('splinterKills', 1);
@@ -3153,8 +3272,15 @@ export class EarthKit {
       }
     }
 
-    // Q: Golem Ritual (Q+ uses hold mechanic above; base Q is instant)
-    if (dustScreenSlot !== 'q' && !this.arena.hasUpgrade('q') && Phaser.Input.Keyboard.JustDown(this.arena.qKey)) {
+    // Q: Biome Builder. Symbiosis (Q+) changes what the quarters pay, not how they are cast.
+    if (dustScreenSlot !== 'q' && !LEGACY_GOLEM_Q && Phaser.Input.Keyboard.JustDown(this.arena.qKey)) {
+      if (player.castAbility('biome-builder', playerCtx)) {
+        this.playerEarthCastId = 'biome-builder';
+      }
+    }
+
+    // Q: Golem Ritual (Q+ uses hold mechanic above; base Q is instant). Dormant — see `LEGACY_GOLEM_Q`.
+    if (LEGACY_GOLEM_Q && dustScreenSlot !== 'q' && !this.arena.hasUpgrade('q') && Phaser.Input.Keyboard.JustDown(this.arena.qKey)) {
       if (this.earthShieldHp > 0 && !this.earthGolemActive) {
         if (player.castAbility('golem-ritual', playerCtx)) {
           this.playerEarthCastId = 'golem-ritual';

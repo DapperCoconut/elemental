@@ -109,6 +109,11 @@ const NPC_MASTERY_BINDS: Record<string, { enhId: string; slot: MasterySlot }> = 
   // well, but Wretched Scarf is the one button that rewards being caught out — and E is the
   // reel, which every other branch of its rotation is built around.
   cloth: { enhId: 'wretched-scarf', slot: 'r' },
+  // Clay gives up Slink. The wall run is the one ability a movement state machine plays worst —
+  // its whole value is choosing when to drop off, which a bot does on a timer — while the
+  // creature Give Life wakes is a summon the bot plays perfectly by standing still. The golem,
+  // the shield and the fuse all survive.
+  clay: { enhId: 'give-life', slot: 'f' },
   // Slime gives up Oozorbtion. The slab is the same trade made continuous — one swallowed shot
   // versus a pane that keeps five of them out of the air — and it does not ask the bot to guess
   // *when* it is about to be shot at, which is the whole skill of the F. It also hands the

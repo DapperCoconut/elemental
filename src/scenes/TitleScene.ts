@@ -67,7 +67,7 @@ export class TitleScene extends Phaser.Scene {
     }> = [
       {
         label: 'PLAY', kicker: 'Duel', icon: 'sword', accent: C.verdant,
-        blurb: 'One element against another. Pick your rival and settle it.',
+        blurb: 'One element against another. Settle it.',
         status: '▶  FIGHT',
         // Explicit {} (not omitted) — Phaser only overwrites scene data when the
         // argument is truthy, so omitting it here would leak a stale
@@ -76,25 +76,31 @@ export class TitleScene extends Phaser.Scene {
       },
       {
         label: 'CAMPAIGN', kicker: 'Journey', icon: 'map', accent: C.ember,
-        blurb: 'Forty-seven Sovereigns across the worlds, and whatever waits past them.',
+        blurb: 'Forty-seven Sovereigns, world by world.',
         status: '▶  TRAVEL',
         action: () => this.scene.start('CampaignSlotSelectScene'),
       },
       {
         label: 'INVASION', kicker: 'Siege', icon: 'husk', accent: C.corrupt,
-        blurb: 'Hold the mansion. The husks keep coming and they keep learning.',
+        blurb: 'Hold the mansion against the husks.',
         status: '▶  HOLD',
         action: () => this.scene.start('MenuScene', { mode: 'invasion' }),
       },
       {
+        label: 'STRONGHOLD', kicker: 'Defense', icon: 'castle', accent: 0x60a5fa,
+        blurb: 'Your elements as towers. Hold the road.',
+        status: '▶  BUILD',
+        action: () => this.scene.start('StrongholdSetupScene'),
+      },
+      {
         label: 'SHOP', kicker: 'Trade', icon: 'shard', accent: C.frost,
-        blurb: 'Turn shards into ability upgrades, one slot at a time.',
+        blurb: 'Turn shards into ability upgrades.',
         status: '▶  BROWSE',
         action: () => this.scene.start('ShopScene'),
       },
       {
         label: 'LAB', kicker: 'Forge', icon: 'flask', accent: C.arcane,
-        blurb: 'Fuse two elements into a third. Forge perks out of the rest.',
+        blurb: 'Fuse elements. Forge perks.',
         status: '▶  ENTER',
         action: () => this.scene.start('LabScene'),
       },
@@ -102,16 +108,18 @@ export class TitleScene extends Phaser.Scene {
         label: 'GAUNTLETS', kicker: 'Trial', icon: gauntletUnlocked ? 'trophy' : 'lock',
         accent: C.gold,
         blurb: gauntletUnlocked
-          ? 'Six fights, one life, no second chances between them.'
-          : `Sealed until you buy the key in the Shop — ${GAUNTLET_COST} shards.`,
+          ? 'Six fights, one life, no second chances.'
+          : `Sealed until you buy the key — ${GAUNTLET_COST} shards.`,
         status: gauntletUnlocked ? '▶  RUN IT' : 'LOCKED',
         action: gauntletUnlocked ? () => this.scene.start('GauntletSelectScene') : null,
       },
     ];
 
-    const cardW = 148;
+    // Seven destinations in one rank: the plates slimmed from 148 to 128 so the row still
+    // clears both edges with a margin.
+    const cardW = 128;
     const cardH = 186;
-    const cardGap = 10;
+    const cardGap = 7;
     const gridW = tiles.length * cardW + (tiles.length - 1) * cardGap;
     const startX = cx - gridW / 2 + cardW / 2;
     const cardY = 344;

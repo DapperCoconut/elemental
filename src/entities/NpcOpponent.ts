@@ -72,6 +72,8 @@ const MOVEMENT_PROFILES: Record<string, MovementProfile> = {
   justice:     { archetype: 'skirmisher', range: [140, 280], retreatHp: 0.25 },
   dream:       { archetype: 'assassin',   range: [100, 240], retreatHp: 0.25 },
   chalk:       { archetype: 'zoner',      range: [240, 400], retreatHp: 0.32 },
+  wax:         { archetype: 'brawler',    range: [100, 180], retreatHp: 0.30 },
+  clay:        { archetype: 'skirmisher', range: [140, 300], retreatHp: 0.24 },
   magma:       { archetype: 'summoner',   range: [220, 380], retreatHp: 0.30 },
   illusion:    { archetype: 'zoner',      range: [220, 380], retreatHp: 0.30 },
   depths:      { archetype: 'skirmisher', range: [160, 300], retreatHp: 0.28 },
@@ -177,6 +179,26 @@ export interface NpcAiState {
   /** Air: wind dodge the NPC has banked — high enough and it can afford to dance in close. */
   airWindDodge: number;
   earthShieldHp: number;
+  /** Biome Builder quarters the bot currently has standing. */
+  npcEarthBiomes?: number;
+  /**
+   * Biome Builder: the target is standing on the bot's own Mountain quarter. A Quake cast there
+   * does its ordinary work *and* brings the ceiling down for its whole duration — the only way
+   * the rockfall is ever triggered, so it outranks every other cast while it is live.
+   */
+  earthMountainQuakePoint?: { x: number; y: number };
+  /**
+   * Biome Builder: a Mountain spike sits inside the plate's launch reach along the shield's
+   * facing. The kit turns the next Bash into a 30-damage spike shot — a bot that does not press
+   * Click now walks past free ammunition.
+   */
+  npcEarthSpikeReady?: boolean;
+  /**
+   * Symbiosis (Q+): the nearest of the bot's own quarters when it is standing outside all of
+   * them. The blessings are only ever paid for standing in the weather, so the kit hands the
+   * point over rather than hoping the fight drifts into it.
+   */
+  earthBiomePoint?: { x: number; y: number };
   npcEarthRocksActive?: boolean;
   oilDroneCount?: number;
   shadowPlayerSnared?: boolean;
@@ -259,6 +281,58 @@ export interface NpcAiState {
   npcDreamCatchers?: number;
   /** True once the pacing gate will let another dreamcatcher be dropped. */
   npcDreamMayCatch?: boolean;
+  // Clay
+  npcClayFused?: boolean;
+  npcClayFusing?: boolean;
+  npcClayFuseHits?: number;
+  npcClaySlinking?: boolean;
+  npcClaySlinkBursts?: number;
+  npcClayShieldPieces?: number;
+  /**
+   * Clay synergy: the golem stands on the target. The golem walks to the enemy on its own, so
+   * a Slam pressed while this is true lands — pressed otherwise it slams empty floor.
+   */
+  npcClayGolemOnTarget?: boolean;
+  /**
+   * Clay synergy: hostile shots within 260px of the bot. A Clot drawn now will meet them, and
+   * with Protector every one it meets is three shards back.
+   */
+  npcClayShotsIncoming?: number;
+  /**
+   * Clay Mastery: the slot Give Life was bound over. The kit casts the enhancement itself off
+   * its own timer; the AI only has to stop spending a key that no longer belongs to it.
+   */
+  npcClayGiveLifeSlot?: string;
+  // Wax
+  /** Candles the bot has planted, and whether it is standing in one's light right now. */
+  npcWaxCandles?: number;
+  npcWaxInCandle?: boolean;
+  /**
+   * Wax synergy: an own candle the bot is not standing in. The light is 15% armour and 2s
+   * on every bee it looses, so it steers there between casts (soft seek, like Passion's cloud).
+   */
+  waxCandlePoint?: { x: number; y: number };
+  npcWaxHives?: number;
+  /**
+   * Wax synergy: an own hive with empty cells inside Swarm range. Bees fired *through* it are
+   * stored, and five come back for each — so Swarm is aimed at the hive, not the target.
+   */
+  waxHiveFeedPoint?: { x: number; y: number };
+  /**
+   * Wax synergy: an own hive worth cashing in (three cells, or enough honey). The kit redeems
+   * it the moment the bot arrives; the AI only has to walk there.
+   */
+  waxHiveRedeemPoint?: { x: number; y: number };
+  /** Bombs in flight or stuck — Q is a detonation, which the kit presses, not a launch. */
+  npcWaxBombsOut?: number;
+  /** An own hive still filling sits in the lane to the target: a bomb now would cash it in early. */
+  npcWaxBombLaneBlocked?: boolean;
+  /** Rule Beetanica is strapped on: stop kiting and carry the payload into blast range. */
+  npcWaxSelfBombs?: boolean;
+  /** The target is poisoned: every bee bites for one more, so the swarm is worth most now. */
+  npcWaxTargetPoisoned?: boolean;
+  /** Click+ is ranged, so the foil may be pressed outside its melee reach. */
+  npcWaxRangedClick?: boolean;
   // Chalk
   /** A drawing window is already open — starting a second one would throw the first away. */
   npcChalkDrawing?: boolean;
@@ -1024,6 +1098,39 @@ export class NpcOpponent extends Fighter {
       }
     }
 
+    // ── Earth: going to stand in its own weather ──────────────────
+    // Same soft shape as the perfume walk: Symbiosis only pays inside a quarter the bot raised,
+    // so it steers there while outside and leaves the movement state alone once it arrives.
+    if (aiState.earthBiomePoint) {
+      const seek = aiState.earthBiomePoint;
+      const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
+      if (d > 60) {
+        const a = Phaser.Math.Angle.Between(this.x, this.y, seek.x, seek.y);
+        body.setVelocity(Math.cos(a) * this.speed, Math.sin(a) * this.speed);
+      }
+    }
+
+    // ── Wax: the hive to cash in, the candle to stand in, the payload to carry ──
+    // Same soft shape as the perfume walk above. A hive worth redeeming outranks the candle,
+    // and strapped bombs outrank both: a bot wearing eight bombs has one job.
+    if (this.element.id === 'wax') {
+      // The candle is only worth walking back to when the bot needs the armour — otherwise the
+      // pull back into the light would fight the chase every time it stepped out to fence.
+      const hurt = this.hp / this.maxHp < 0.6;
+      const seek = aiState.npcWaxSelfBombs ? { x: target.x, y: target.y }
+        : aiState.waxHiveRedeemPoint ?? (hurt ? aiState.waxCandlePoint : undefined);
+      if (seek) {
+        const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
+        const stop = aiState.npcWaxSelfBombs ? 110 : 60;
+        if (d > stop) {
+          const a = Phaser.Math.Angle.Between(this.x, this.y, seek.x, seek.y);
+          body.setVelocity(Math.cos(a) * this.speed, Math.sin(a) * this.speed);
+        } else if (aiState.npcWaxSelfBombs) {
+          body.setVelocity(0, 0);
+        }
+      }
+    }
+
     // ── Magma: standing in its own supercritical collapse ────────
     // Same soft shape as the perfume walk above, and for the same reason: the coat is worth
     // walking into, not worth abandoning the fight for. Inside the blast it goes back to
@@ -1161,6 +1268,12 @@ export class NpcOpponent extends Fighter {
     }
     if (this.element.id === 'dream') {
       return this.doDreamAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    if (this.element.id === 'wax') {
+      return this.doWaxAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    if (this.element.id === 'clay') {
+      return this.doClayAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
     if (this.element.id === 'chalk') {
       return this.doChalkAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
@@ -2322,6 +2435,151 @@ export class NpcOpponent extends Fighter {
    * the ward is free and constant, the fuse is worth laying at range, the blue line goes
    * down once and stays, and the shield and the Masterpiece are held for trouble.
    */
+  /**
+   * Wax. The kit is an economy: candles make bees live longer, hives turn bees into more bees,
+   * bombs cash both in. So the rotation is build first (a candle at its feet, a hive between
+   * them), feed the hive with Swarm, walk back to it when it is worth something, and spend the
+   * bombs on a target that is already soft. The kit presses the two keys a bot cannot — the
+   * detonation and the redemption — on its own clocks.
+   */
+  private doWaxAbilities(
+    target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    _time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+  ): string | null {
+    void hpRatio;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const ranged = !!aiState.npcWaxRangedClick;
+    const inReach = dist < 200;
+
+    // ── Synergy: feed the hive ──
+    // Bees fired through an own hive with room are stored and come back five to one. The
+    // hive sits between the fighters, so most of a cone fired at it reaches the target anyway.
+    if (aiState.waxHiveFeedPoint) {
+      const h = aiState.waxHiveFeedPoint;
+      if (this.castAbility('wax-swarm', buildContext(h.x, h.y))) return 'wax-swarm';
+    }
+
+    // ── Synergy: a poisoned target is a softer target ──
+    // Every bee bites for one more against poison, and the vulnerability stacks with each bee.
+    if (aiState.npcWaxTargetPoisoned && dist < 420) {
+      if (this.castAbility('wax-swarm', buildContext(this.leadX, this.leadY))) return 'wax-swarm';
+    }
+
+    // Strapped bombs: nothing else is worth a press until they go off (the kit detonates).
+    if (aiState.npcWaxSelfBombs) return null;
+
+    if (!skipSpecials) {
+      // A candle at its own feet once the fight is close enough that it will be fought in the
+      // light: armour now, and longer bees later. Planted far away it would only pull the bot
+      // out of the fight.
+      if (!aiState.npcWaxInCandle && (aiState.npcWaxCandles ?? 0) < 2 && dist < 260) {
+        if (this.castAbility('wax-candle-mount', buildContext(this.x, this.y))) return 'wax-candle-mount';
+      }
+      // A hive between the fighters, where the next Swarm will pass through it.
+      if ((aiState.npcWaxHives ?? 0) === 0 && dist > 120) {
+        const f = Math.min(0.45, 150 / Math.max(1, dist));
+        if (this.castAbility('wax-hive-hearth', buildContext(this.x + (target.x - this.x) * f, this.y + (target.y - this.y) * f))) return 'wax-hive-hearth';
+      }
+      // Bombs want a lane short enough to stick.
+      if ((aiState.npcWaxBombsOut ?? 0) === 0 && dist < 380 && !aiState.npcWaxBombLaneBlocked) {
+        if (this.castAbility('wax-sticky-bombs', buildContext(this.leadX, this.leadY))) return 'wax-sticky-bombs';
+      }
+      if (dist < 430) {
+        if (this.castAbility('wax-swarm', buildContext(this.leadX, this.leadY))) return 'wax-swarm';
+      }
+    }
+
+    // The foil: in reach, or at any range with the dart upgrade.
+    if (inReach || (ranged && dist < 600)) {
+      if (this.castAbility('wax-stinger-strikes', buildContext(aimX, aimY))) return 'wax-stinger-strikes';
+    }
+    return null;
+  }
+
+  /**
+   * Clay. The golem is the weapon and it walks to the target by itself, so the rotation is
+   * mostly about *when*: Slam when the golem is standing on someone, Clot when shots are in
+   * the air, Slink to cross a big gap and spend three barrages, Fuse when the fight has gone
+   * wrong (or very right). The kit presses the two keys a bot has no finger for — the split
+   * and the drop off the wall — on its own clocks.
+   */
+  private doClayAbilities(
+    target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    _time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+  ): string | null {
+    void target;
+    if (aiState.npcClayFusing) return null;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const gone = aiState.npcClayGiveLifeSlot;
+
+    // ── Synergy: shots in the air ──
+    // A clot drawn into incoming fire stops it, and with Protector throws it back as shards.
+    if ((aiState.npcClayShotsIncoming ?? 0) >= 2 && (aiState.npcClayShieldPieces ?? 0) < 8 && gone !== 'r') {
+      if (this.castAbility('clay-clot', buildContext(aimX, aimY))) return 'clay-clot';
+    }
+
+    // ── Synergy: the golem is standing on them ──
+    if (aiState.npcClayGolemOnTarget) {
+      if (this.castAbility('clay-slam', buildContext(aimX, aimY))) return 'clay-slam';
+    }
+
+    if (aiState.npcClayFused) {
+      // Fused: everything comes from the body, so close the gap with the dash and keep swinging.
+      if (!skipSpecials && dist > 170 && gone !== 'f') {
+        if (this.castAbility('clay-slink', buildContext(aimX, aimY))) return 'clay-slink';
+      }
+      if (dist < 360 && gone !== 'e') {
+        if (this.castAbility('clay-rupture', buildContext(aimX, aimY))) return 'clay-rupture';
+      }
+      if (dist < 150) {
+        if (this.castAbility('clay-slam', buildContext(aimX, aimY))) return 'clay-slam';
+      }
+      return null;
+    }
+
+    if (aiState.npcClaySlinking) {
+      // On the wall the click is the barrage; the kit drops it off once the three are spent.
+      if ((aiState.npcClaySlinkBursts ?? 0) > 0) {
+        if (this.castAbility('clay-slam', buildContext(aimX, aimY))) return 'clay-slam';
+      }
+      return null;
+    }
+
+    if (!skipSpecials) {
+      // Fuse is the answer to losing, and the way to finish winning.
+      if (gone !== 'q' && (hpRatio < 0.45 || (hpRatio > 0.7 && target.hp / target.maxHp < 0.35))) {
+        if (this.castAbility('clay-fuse', buildContext(aimX, aimY))) return 'clay-fuse';
+      }
+      // A shield before the trouble arrives, while it is cheap to draw.
+      if (gone !== 'r' && (aiState.npcClayShieldPieces ?? 0) === 0 && (dist < 320 || hpRatio < 0.7)) {
+        if (this.castAbility('clay-clot', buildContext(aimX, aimY))) return 'clay-clot';
+      }
+      // A big gap is what the wall run is for.
+      if (gone !== 'f' && dist > 300) {
+        if (this.castAbility('clay-slink', buildContext(aimX, aimY))) return 'clay-slink';
+      }
+      if (gone !== 'e' && dist < 360) {
+        if (this.castAbility('clay-rupture', buildContext(aimX, aimY))) return 'clay-rupture';
+      }
+    }
+    if (dist < 420) {
+      if (this.castAbility('clay-slam', buildContext(aimX, aimY))) return 'clay-slam';
+    }
+    return null;
+  }
+
   private doChalkAbilities(
     target: Fighter,
     buildContext: (tX: number, tY: number) => CastContext,
@@ -2900,15 +3158,30 @@ export class NpcOpponent extends Fighter {
     _aimY: number,
     aiState: NpcAiState,
   ): string | null {
-    // NPC Earth AI delegates heavy logic to ArenaScene; just signal which ability to use.
-    // ArenaScene reads the returned id and executes the actual effect in updateEarthKit().
+    // NPC Earth AI delegates heavy logic to EarthKit; it only signals which ability to use and
+    // the kit reacts to the returned id.
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
     const hasShield = aiState.earthShieldHp > 0;
 
+    // ── Synergy: a Quake on its own mountain is a rockfall ──
+    // The ceiling only ever comes down for a Quake cast on a Mountain quarter the bot raised,
+    // and the target is standing on one right now. Taken first, skip roll or not.
+    if (aiState.earthMountainQuakePoint) {
+      const p = aiState.earthMountainQuakePoint;
+      if (this.castAbility('quake', buildContext(p.x, p.y))) return 'quake';
+    }
+
+    // ── Synergy: a spike in front of the plate is a shot ──
+    // The kit turns this Bash into a launched spike; at any range it beats a melee swing.
+    if (aiState.npcEarthSpikeReady) {
+      if (this.castAbility('bash', buildContext(target.x, target.y))) return 'bash';
+    }
+
     if (!skipSpecials) {
-      // 1. Golem Ritual — when shield is up and HP is low
-      if (hasShield && hpRatio < 0.6) {
-        if (this.castAbility('golem-ritual', buildContext(target.x, target.y))) return 'golem-ritual';
+      // 1. Biome Builder — reshape the room once the fight is actually underway, so the twenty
+      //    seconds of weather land on a fight rather than on an opening stand-off.
+      if ((aiState.npcEarthBiomes ?? 0) === 0 && (hpRatio < 0.85 || dist < 260)) {
+        if (this.castAbility('biome-builder', buildContext(target.x, target.y))) return 'biome-builder';
       }
       // 2. Quake — medium range
       if (dist < 250) {

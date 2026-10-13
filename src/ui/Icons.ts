@@ -24,7 +24,7 @@ export type IconName =
   | 'shard' | 'corrupt' | 'nucleus' | 'key' | 'coin' | 'ticket'
   // ── Destinations ──
   | 'sword' | 'map' | 'husk' | 'flask' | 'trophy' | 'globe' | 'bag' | 'book'
-  | 'chest' | 'crown' | 'door' | 'anvil' | 'portal' | 'target'
+  | 'chest' | 'crown' | 'door' | 'anvil' | 'portal' | 'target' | 'castle'
   // ── State ──
   | 'lock' | 'unlock' | 'check' | 'cross' | 'active' | 'shelved' | 'star'
   | 'gift' | 'warning' | 'plus' | 'minus' | 'question' | 'skull'
@@ -999,6 +999,25 @@ export function drawIcon(
       line(g, ...at(0.68, 0.28), ...at(0.68, -0.94), color, alpha, w);
       // Beam.
       fillPoly(g, [at(-0.1, -0.78), at(0.68, -0.94), at(0.68, -0.62), at(-0.1, -0.46)], lit(color), alpha);
+      break;
+    }
+
+    case 'castle': {
+      // A keep: two towers with crenellations flanking a gate, banner on the left tower.
+      const body: Pt[] = [at(-0.86, 0.9), at(-0.86, -0.3), at(-0.5, -0.3), at(-0.5, 0.05), at(0.5, 0.05), at(0.5, -0.3), at(0.86, -0.3), at(0.86, 0.9)];
+      fillPoly(g, body, dark(color), alpha);
+      strokePoly(g, body, color, alpha, w);
+      // Crenellations.
+      for (const sx of [-1, 1]) {
+        fillPoly(g, [at(sx * 0.86, -0.3), at(sx * 0.86, -0.55), at(sx * 0.72, -0.55), at(sx * 0.72, -0.3)], color, alpha);
+        fillPoly(g, [at(sx * 0.64, -0.3), at(sx * 0.64, -0.55), at(sx * 0.5, -0.55), at(sx * 0.5, -0.3)], color, alpha);
+      }
+      // Gate.
+      fillPoly(g, [at(-0.2, 0.9), at(-0.2, 0.42), at(0, 0.3), at(0.2, 0.42), at(0.2, 0.9)], deep(color), alpha);
+      strokePoly(g, [at(-0.2, 0.9), at(-0.2, 0.42), at(0, 0.3), at(0.2, 0.42), at(0.2, 0.9)], color, alpha, t, false);
+      // Banner pole and pennant.
+      line(g, ...at(-0.68, -0.55), ...at(-0.68, -0.95), color, alpha, t);
+      fillPoly(g, [at(-0.68, -0.95), at(-0.3, -0.85), at(-0.68, -0.72)], hot(color), alpha);
       break;
     }
 

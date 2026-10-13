@@ -3181,6 +3181,61 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('elem-chalk', 48, 48);
     gfx.clear();
 
+    // Wax — a beeswax body: a pale candle-wax disc with a comb of cells pressed into the lower
+    // half, a melted lip at the crown and two drips running off it. The rig paints the wick,
+    // the flame and the hands; this is only what the fighter is *made of*.
+    gfx.fillStyle(0x8d641c, 1);
+    gfx.fillCircle(24, 24, 22);
+    gfx.fillStyle(0xf2c85b, 1);
+    gfx.fillCircle(24, 23, 20);
+    gfx.fillStyle(0xffefad, 0.9);
+    gfx.fillEllipse(18, 15, 14, 9);
+    // Comb pressed into the lower half: six hex cells, honey in two of them.
+    const hexAt = (cx: number, cy: number, r: number) => {
+      const pts: Phaser.Geom.Point[] = [];
+      for (let i = 0; i < 6; i++) {
+        const a = Math.PI / 6 + (i / 6) * Math.PI * 2;
+        pts.push(new Phaser.Geom.Point(cx + Math.cos(a) * r, cy + Math.sin(a) * r));
+      }
+      gfx.fillPoints(pts, true);
+    };
+    const cells: Array<[number, number, boolean]> = [[16, 29, false], [24, 29, true], [32, 29, false], [20, 36, true], [28, 36, false]];
+    for (const [cx, cy, honey] of cells) {
+      gfx.fillStyle(0x8d641c, 0.85);
+      hexAt(cx, cy, 4.3);
+      gfx.fillStyle(honey ? 0xd99518 : 0xe6bd4e, 1);
+      hexAt(cx, cy, 3.1);
+    }
+    // The melted lip and two drips, the thing that says wax rather than cheese.
+    gfx.fillStyle(0xffefad, 0.95);
+    gfx.fillEllipse(24, 6, 26, 7);
+    gfx.fillRoundedRect(13, 6, 5, 12, 2);
+    gfx.fillRoundedRect(31, 6, 4, 9, 2);
+    gfx.fillCircle(15.5, 18, 2.6);
+    gfx.fillCircle(33, 15, 2.2);
+    gfx.generateTexture('elem-wax', 48, 48);
+    gfx.clear();
+
+    // Clay — a thumbed lump of wet potter's clay: an irregular earthen body with finger
+    // grooves pressed across it, a wet highlight, and a darker rim where it has dried. The
+    // golem (drawn by the kit) is the same material at twice the size.
+    gfx.fillStyle(0x57321f, 1);
+    gfx.fillCircle(24, 25, 22);
+    gfx.fillStyle(0x9a5c32, 1);
+    gfx.fillCircle(23, 23, 19.5);
+    gfx.fillCircle(31, 28, 12);
+    gfx.fillCircle(14, 27, 10);
+    gfx.fillStyle(0x704128, 0.9);
+    for (const [gx, gy, gw] of [[12, 30, 20], [16, 36, 18], [26, 14, 12]] as Array<[number, number, number]>) {
+      gfx.fillRoundedRect(gx, gy, gw, 3, 1.5);
+    }
+    gfx.fillStyle(0xc38352, 0.85);
+    gfx.fillEllipse(18, 14, 13, 8);
+    gfx.fillStyle(0xf3d7ae, 0.7);
+    gfx.fillEllipse(16, 12, 5, 3);
+    gfx.generateTexture('elem-clay', 48, 48);
+    gfx.clear();
+
     // Illusion — a harlequin mask with a second, misregistered copy of itself sliding out
     // from behind it. IllusionKit paints the character rig over the top per-frame, so the
     // sprite only has to read as "Illusion" on the element cards.

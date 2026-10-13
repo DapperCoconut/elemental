@@ -26,6 +26,8 @@ import dream from './dream';
 import psychic from './psychic';
 import radiation from './radiation';
 import magma from './magma';
+import wax from './wax';
+import clay from './clay';
 import dune from './dune';
 import fortune from './fortune';
 import cloth from './cloth';
@@ -85,6 +87,8 @@ export const CODEX: Record<string, ElementCodex> = {
   psychic,
   radiation,
   magma,
+  wax,
+  clay,
   dune,
   fortune,
   cloth,

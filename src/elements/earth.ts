@@ -37,7 +37,11 @@ const quake: Ability = {
   cast(ctx) { void ctx; }, // Handled in EarthKit
 };
 
-const golemRitual: Ability = {
+/**
+ * The old Q. Not in the loadout any more — Biome Builder took the key — but kept whole, with
+ * its kit code behind `LEGACY_GOLEM_Q` in EarthKit, for the ability that will reuse it.
+ */
+export const golemRitualAbility: Ability = {
   id: 'golem-ritual',
   name: 'Golem Ritual',
   description: 'Sacrifice shield to summon a Golem (150 HP, 15s). 50% of your damage redirected to it',
@@ -47,10 +51,20 @@ const golemRitual: Ability = {
   cast(ctx) { void ctx; }, // Handled in EarthKit
 };
 
+const biomeBuilder: Ability = {
+  id: 'biome-builder',
+  name: 'Biome Builder',
+  description: 'Stand untouchable at the arena\'s heart and raise up to 4 biomes, one per quarter, for 20s',
+  displayKey: 'Q',
+  isUltimate: true,
+  cooldown: 60000,
+  cast(ctx) { void ctx; }, // Handled in EarthKit
+};
+
 export const earthElement: Element = {
   id: 'earth',
   name: 'Earth',
   color: 0x887755,
   emoji: '🪨',
-  abilities: [bash, repair, rockDance, quake, golemRitual],
+  abilities: [bash, repair, rockDance, quake, biomeBuilder],
 };

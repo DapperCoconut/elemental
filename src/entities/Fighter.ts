@@ -113,6 +113,12 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   public isPlayerFighter = false;
   public incomingDamageMultiplier = 1;
+  /**
+   * Earth Q+ — Symbiosis: 0.8 while an Earth user stands in their own Ice biome. Its own field
+   * for the reason Justice and Conquest have theirs — EarthKit rewrites it from scratch every
+   * frame, and sharing `incomingDamageMultiplier` would stomp whatever else wrote armour that tick.
+   */
+  public earthBiomeIncomingMult = 1;
   /** Subterfuge Bribe: 0.75 while this fighter's attacker is bribed (victim-side stand-in for "deals 25% less"). */
   public bribeIncomingMult = 1;
   /**
@@ -135,6 +141,14 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    * else had written armour that tick.
    */
   public magmaIncomingMult = 1;
+  /**
+   * Wax: candlelight armour multiplied by bee, poison and sticky-bomb vulnerability. WaxKit
+   * rewrites the whole product from scratch every frame — on both fighters and every husk —
+   * so an unlimited number of attached bees can stack without borrowing another kit's field.
+   */
+  public waxIncomingMult = 1;
+  /** Clay Mastery — Bedrock: 0.8 while the fighter stands within 175px of its own golem. Rewritten every frame by ClayKit. */
+  public clayIncomingMult = 1;
   /**
    * Conquest: 0.5 while this fighter is standing on a square it owns. Rewritten from scratch
    * by ConquestKit every frame for the same reason Justice and Magma have their own fields —
@@ -487,6 +501,12 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public effectSplitUntil = 0;
   /** If set, called with the damage amount before shields; return true to absorb the hit entirely. */
   public damageAbsorber: ((amount: number) => boolean) | null = null;
+  /**
+   * Clay's Fuse: a hit counter rather than a health pool. Runs before invincibility, pierce and
+   * every multiplier because the fused body counts *attacks* — a needle and a meteor each wear
+   * away exactly one of its layers — and `damageAbsorber` never sees a piercing hit at all.
+   */
+  public fuseHitAbsorber: ((amount: number, opts?: DamageOpts) => boolean) | null = null;
   /** Gauntlet boost: multiplies all incoming damage (stacks with incomingDamageMultiplier). Default 1. */
   public gauntletDamageTakenMult = 1;
   /** When true, skip alpha flash in takeDamage/applySelfDamage and keep alpha at 0 (Stealthy mutation). */
@@ -622,6 +642,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    * them landing after a dream would otherwise silently hand the new body back.
    */
   public dreamSizeMult = 1;
+  /** Clay's Fuse: the bigger body. Its own factor so no other size system can erase it. */
+  public claySizeMult = 1;
   /**
    * Illusion Dance: projectiles pass straight through this fighter. Checked by ArenaScene's
    * two projectile-overlap handlers — the only place in the game where a shot decides whether
@@ -913,7 +935,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     // Folded shapes ride on top of whatever else is scaling this fighter, so any other
     // system calling this keeps the fold rather than quietly cancelling it.
     const scale = this.sizeMult * this.shapeSizeMult * this.oozeSizeMult * this.ruinSizeMult
-      * this.dreamSizeMult;
+      * this.dreamSizeMult * this.claySizeMult;
     this.setScale(scale);
     const baseRadius = 22;
     // `hitboxMult` deliberately misses `setScale` above: an X-rayed target is easier to hit
@@ -942,6 +964,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     if (this.netAuthoritativeDamage && !opts?.netApplied && !opts?.selfInflicted) return;
     // Divine perk Order: self-inflicted costs are refused outright.
     if (opts?.selfInflicted && this.selfDamageImmune) { this.onSelfDamageBlocked?.(amount); return; }
+    // Clay's Fuse counts the hit and eats it whole — see `fuseHitAbsorber`.
+    if (amount > 0 && !opts?.selfInflicted && this.fuseHitAbsorber?.(amount, opts)) return;
     // Magic Mastery — Levitate: immune to damage from a source that hasn't moved in 3s.
     this.damageWasSelfInflicted = false;
     if (this.levitating && opts?.source && opts.sourceX !== undefined && opts.sourceY !== undefined
@@ -970,7 +994,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       // Tallied here: after the crit roll (a crit really is a bigger hit) but before every
       // mitigation multiplier on the line below, which is what "damage aimed at you" means.
       this.rawDamageTaken += amount;
-      let mitigation = this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.paperIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.artifactIncomingMult * this.clothIncomingMult * this.gluttonyIncomingMult * this.orderIncomingMult * this.wardIncomingMult * this.bossWardIncomingMult * this.fortuneIncomingMult * this.dreamIncomingMult * this.duneIncomingMult * this.radiationIncomingMult * this.magicIncomingMult * this.mutationIncomingMult * this.mapArmorMult * this.starIncomingMult * this.netDefenseMult;
+      let mitigation = this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.waxIncomingMult * this.clayIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.paperIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.artifactIncomingMult * this.clothIncomingMult * this.gluttonyIncomingMult * this.orderIncomingMult * this.wardIncomingMult * this.bossWardIncomingMult * this.fortuneIncomingMult * this.dreamIncomingMult * this.duneIncomingMult * this.radiationIncomingMult * this.magicIncomingMult * this.mutationIncomingMult * this.mapArmorMult * this.starIncomingMult * this.earthBiomeIncomingMult * this.netDefenseMult;
       // Ruin's spikes turn armour inside out — 25% less damage taken comes back as 25% more.
       // Only a net *buff* is flipped; a fighter already taking extra damage is left alone.
       if (mitigation < 1 && this.scene.time.now < this.buffsInvertedUntil) mitigation = 2 - mitigation;

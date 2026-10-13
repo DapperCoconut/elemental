@@ -26,6 +26,8 @@ import * as dream from './dream';
 import * as psychic from './psychic';
 import * as radiation from './radiation';
 import * as magma from './magma';
+import * as wax from './wax';
+import * as clay from './clay';
 import * as dune from './dune';
 import * as fortune from './fortune';
 import * as cloth from './cloth';
@@ -127,6 +129,8 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'earth:rock-dance:up': earth.rockDanceUpgraded,
   'earth:quake': earth.quake,
   'earth:quake:up': earth.quakeUpgraded,
+  'earth:biome-builder': earth.biomeBuilder,
+  'earth:biome-builder:up': earth.biomeBuilderUpgraded,
   'earth:golem-ritual': earth.golemRitual,
   'earth:golem-ritual:up': earth.golemRitualUpgraded,
 
@@ -407,6 +411,34 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'magma:magma-bloat': magma.bloat,
   'magma:magma-jet': magma.jet,
   'magma:magma-dragon-kin': magma.dragonKin,
+
+  // ── Wax ──
+  'wax:wax-stinger-strikes': wax.stingerStrikes,
+  'wax:wax-stinger-strikes:up': wax.stingerStrikesUpgraded,
+  'wax:wax-swarm': wax.swarmLoop,
+  'wax:wax-swarm:up': wax.swarmUpgraded,
+  'wax:wax-candle-mount': wax.candleMount,
+  'wax:wax-candle-mount:up': wax.candleMountUpgraded,
+  'wax:wax-hive-hearth': wax.hiveHearth,
+  'wax:wax-hive-hearth:up': wax.hiveHearthUpgraded,
+  'wax:wax-sticky-bombs': wax.stickyBombs,
+  'wax:wax-sticky-bombs:up': wax.stickyBombsUpgraded,
+  'wax:passive:wax-works': wax.waxWorks,
+
+  // ── Clay ──
+  'clay:clay-slam': clay.slam,
+  'clay:clay-slam:up': clay.slamUpgraded,
+  'clay:clay-rupture': clay.rupture,
+  'clay:clay-rupture:up': clay.ruptureUpgraded,
+  'clay:clay-clot': clay.clot,
+  'clay:clay-clot:up': clay.clotUpgraded,
+  'clay:clay-slink': clay.slink,
+  'clay:clay-slink:up': clay.slinkUpgraded,
+  'clay:clay-fuse': clay.fuse,
+  'clay:clay-fuse:up': clay.fuseUpgraded,
+  'clay:passive:gooey-golem': clay.gooeyGolem,
+  'clay:mastery:bedrock': clay.bedrock,
+  'clay:mastery:give-life': clay.giveLife,
 
   // ── Sand (dune) ──
   'dune:dune-striker': dune.striker,

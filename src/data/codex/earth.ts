@@ -7,7 +7,7 @@ import { ElementCodex } from '../AbilityCodex';
 const earth: ElementCodex = {
   identity:
     'Geomancy played as siege equipment. Earth carries a physical shield with its own health bar, '
-    + 'orbits rocks it can fire off that shield, and converts all of it into a titan at the end. It is '
+    + 'orbits rocks it can fire off that shield, and ends by carving the arena itself into four climates. It is '
     + 'the only base element whose defence is an object in the world rather than a number on the caster.',
 
   passives: [
@@ -114,6 +114,46 @@ const earth: ElementCodex = {
           { tag: 'damage', label: 'Tsunami waves', detail: 'Spawns 2 tsunami waves from random arena edges, each dealing 35 damage plus a push.', requiresUpgrade: 'f' },
         ],
       },
+    },
+
+    'biome-builder': {
+      basics:
+        'You are drawn to the heart of the arena and stand untouchable on a dais for up to 5 seconds while '
+        + 'four seed stones hang around you, one over each quarter of the floor. Click a stone and it slams down: '
+        + 'that quarter becomes the biome carved on it for 20 seconds. Lava burns anyone else standing in it, Ice '
+        + 'halves their speed, the Ocean drags them toward you, the Jungle drops apples only you may eat, and the '
+        + 'Mountain grows spikes you can launch with Click or rain down with Quake. Four of the five are offered '
+        + 'each cast; press Q again to finish early.',
+      cast: 'Q. Up to 5s of choosing at the arena centre, then 20s of weather. 60s cooldown.',
+      effects: [
+        { tag: 'shield', label: 'The dais', detail: 'Drawn to the arena centre over 0.3s and immune to all damage for the whole rite — up to 5s, or until Q is pressed again or all four stones are down.' },
+        { tag: 'utility', label: 'Four seed stones', detail: 'A random 4 of the 5 biomes, one stone per quarter (NW, NE, SW, SE). Clicking one raises that quarter; stones never picked crumble when the rite ends.' },
+        { tag: 'dot', label: 'Lava', detail: 'Enemies standing in it take 3 damage every 0.5s (6 a second) for as long as they stay.' },
+        { tag: 'debuff', label: 'Ice', detail: 'Enemies standing in it move at 50% speed.' },
+        { tag: 'heal', label: 'Jungle', detail: 'An apple falls somewhere in the quarter every 2.4–3.6s. Walking over one heals you 25; an enemy stepping on one squashes it.' },
+        { tag: 'control', label: 'Ocean', detail: 'Enemies standing in it are dragged toward you at 70px a second (knockback-immune fighters excepted).' },
+        { tag: 'damage', label: 'Mountain', detail: '9 stone spikes grow across the quarter. Touching one deals 8 damage, once per spike every 0.85s per fighter.' },
+        { tag: 'damage', label: 'Mountain — launch', detail: 'Click with a spike inside 125px and within 42° of the shield\'s facing fires it as a 30-damage shot at 520px/s, instead of a Bash.' },
+        { tag: 'damage', label: 'Mountain — rockfall', detail: 'A Quake cast on (or from inside) your own Mountain quarter also drops a stalactite every 0.38–0.62s for the Quake\'s whole duration: 14 damage within 36px, each one marked on the floor before it lands.' },
+        { tag: 'area', label: 'Twenty seconds', detail: 'Every quarter lasts 20s from the moment its stone lands, fading over the last 2, and takes its spikes and apples with it.' },
+      ],
+      upgrade: {
+        basics:
+          'Symbiosis pays you for standing in your own weather. In your Lava you deal 20% more damage; in your Ice '
+          + 'you take 20% less; in your Jungle you heal 5 a second; in your Ocean you move 20% faster; on your '
+          + 'Mountain the shield blocks 25% more per point and rebuilds 20% faster. Nothing changes about the cast.',
+        effects: [
+          { tag: 'buff', label: 'Lava — fury', detail: 'All damage from your own abilities is multiplied by 1.2 while you stand in your Lava quarter.', requiresUpgrade: 'q' },
+          { tag: 'shield', label: 'Ice — rime', detail: 'All incoming damage is multiplied by 0.8 while you stand in your Ice quarter.', requiresUpgrade: 'q' },
+          { tag: 'heal', label: 'Jungle — sap', detail: '1 health every 0.2s (5 a second) while you stand in your Jungle quarter — on top of the apples.', requiresUpgrade: 'q' },
+          { tag: 'movement', label: 'Ocean — current', detail: 'Move speed ×1.2 while you stand in your Ocean quarter.', requiresUpgrade: 'q' },
+          { tag: 'shield', label: 'Mountain — bedrock', detail: 'Every point of shield absorbs 1.25 damage, and a broken shield\'s rebuild clock runs 20% faster, while you stand on your Mountain quarter.', requiresUpgrade: 'q' },
+        ],
+      },
+      notes: [
+        'The quarters are hazards for your enemies only — you may stand in your own Lava all day.',
+        'A Biome Builder borrowed by Subterfuge\'s Dark Treachery raises four random quarters on the spot with no rite.',
+      ],
     },
 
     'golem-ritual': {

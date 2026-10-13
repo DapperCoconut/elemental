@@ -45,6 +45,8 @@ import { justiceElement } from '../elements/justice';
 import { dreamElement } from '../elements/dream';
 import { chalkElement } from '../elements/chalk';
 import { magmaElement } from '../elements/magma';
+import { waxElement } from '../elements/wax';
+import { clayElement } from '../elements/clay';
 import { illusionElement } from '../elements/illusion';
 import { depthsElement } from '../elements/depths';
 import { ruinElement } from '../elements/ruin';
@@ -92,6 +94,8 @@ export const ELEMENT_DATA_MAP: Record<string, Element> = {
   dream: dreamElement,
   chalk: chalkElement,
   magma: magmaElement,
+  wax: waxElement,
+  clay: clayElement,
   illusion: illusionElement,
   depths: depthsElement,
   ruin: ruinElement,
@@ -290,6 +294,18 @@ export const UNSTABLE_ELEMENTS: ElementDef[] = [
   { id: 'dune', name: 'Sand', emoji: '🏜️', color: 0xe8c87a, available: true },
 ];
 
+/**
+ * Elements with no obtainment yet. They exist to be played and tuned, so they are handed to a
+ * cheat profile by the mode alone and are invisible to every unlock system in the game — no
+ * recipe, no chest, no Lab tier. When one earns a real obtainment, move its row into whichever
+ * roster it belongs to; nothing else needs to change, since every selection screen reads this
+ * file. Campaign worlds for them still exist: a Sovereign is an opponent, not a pick.
+ */
+export const TEST_ELEMENTS: ElementDef[] = [
+  { id: 'wax', name: 'Wax', emoji: '🕯️', color: 0xf2c85b, available: true },
+  { id: 'clay', name: 'Clay', emoji: '🏺', color: 0x9a5c32, available: true },
+];
+
 /** Abstract combined elements — created by fusing two abstract elements in a Lvl 1+ Lab. */
 export const ABSTRACT_COMBINED_ELEMENTS: ElementDef[] = [
   { id: 'magnet', name: 'Magnet', emoji: '🧲', color: 0xcc2244, available: true },
@@ -328,9 +344,11 @@ export function unlockedExtraElements(): ElementDef[] {
   // Cut out of the Vault's mimic chests. A real save flag like the unstable ten, with cheat
   // mode short-circuiting it for the reason given on `unlockedFinaleElements`.
   const unlockedVault = VAULT_ELEMENTS.filter((e) => isCheatMode() || PlayerData.isElementUnlocked(e.id));
+  // No obtainment at all — the cheat profile is the only save that may pick these.
+  const unlockedTest = isCheatMode() ? TEST_ELEMENTS : [];
   return [
     ...unlockedCombined, ...unlockedAbstract, ...unlockedAbstractCombined, ...unlockedDivine,
-    ...unlockedFinale, ...unlockedUnstable, ...unlockedVault,
+    ...unlockedFinale, ...unlockedUnstable, ...unlockedVault, ...unlockedTest,
   ];
 }
 
@@ -351,5 +369,6 @@ export function findElementDef(id: string): ElementDef | undefined {
     ?? DIVINE_ELEMENTS.find((e) => e.id === id)
     ?? FINALE_ELEMENTS.find((e) => e.id === id)
     ?? UNSTABLE_ELEMENTS.find((e) => e.id === id)
-    ?? VAULT_ELEMENTS.find((e) => e.id === id);
+    ?? VAULT_ELEMENTS.find((e) => e.id === id)
+    ?? TEST_ELEMENTS.find((e) => e.id === id);
 }

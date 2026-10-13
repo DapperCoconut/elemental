@@ -5,6 +5,8 @@ import { AcidAvatar } from './AcidVisuals';
 import { AirAvatar } from './AirVisuals';
 import { BindAvatar } from './BindVisuals';
 import { ChalkAvatar } from './ChalkVisuals';
+import { WaxAvatar } from './WaxVisuals';
+import { ClayAvatar } from './ClayVisuals';
 import { ConquestAvatar } from './ConquestVisuals';
 import { CreationAvatar } from './CreationVisuals';
 import { CrystalAvatar } from './CrystalVisuals';
@@ -114,6 +116,8 @@ const ELEMENT_AVATARS: Record<string, ElementAvatarFactory> = {
   cloth: (s, t) => new ClothAvatar(s, t),
   magma: (s, t) => new MagmaAvatar(s, t),
   chalk: (s, t) => new ChalkAvatar(s, t),
+  wax: (s, t) => new WaxAvatar(s, t),
+  clay: (s, t) => new ClayAvatar(s, t),
   paper: (s, t) => new PaperAvatar(s, t),
   bind: (s, t) => new BindAvatar(s, t),
   dune: (s, t) => new SandAvatar(s, t),
