@@ -90,6 +90,13 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   public minHpFloor = 0;
   /**
+   * Cloth Mastery (Bleed Stop): how much more damage this body may take before every further
+   * point is refused. -1 is "no budget". Clamped after every mitigation and the menu cut, and
+   * applied to relayed (`netApplied`) hits as well, so the victim's sim is the one that honours
+   * it online. Cleared by the owning kit when its window closes and by its `reset()`.
+   */
+  public damageBudget = -1;
+  /**
    * Which side landed the most recent hit on this body — stamped at ArenaScene's
    * two damage chokepoints (projectile contact and owner-tagged AoE), which
    * between them carry effectively everything that hurts anyone.
@@ -163,12 +170,21 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   public passionIncomingMult = 1;
   /**
-   * Fortune (Tax Evasion, F+): 1.2 for the 8 seconds after the auditor's rifle lands, and 1
-   * every other frame of the game. Its own field for the same reason Justice, Magma, Conquest
-   * and Passion have theirs — FortuneKit rewrites it from scratch every frame, and sharing
+   * Gold (element id `fortune`), Advance's Gilded Hide: 0.93 per pick on the alchemist, 1 on
+   * everybody else. Its own field for the same reason Justice, Magma, Conquest and Passion have
+   * theirs — FortuneKit rewrites it from scratch every frame, and sharing
    * `incomingDamageMultiplier` would stomp whatever else had written armour that tick.
    */
   public fortuneIncomingMult = 1;
+  /**
+   * Gold's Heart of Gold: scene time the gold heart stops, and how full of stress it is (0–1;
+   * a full heart is a heart attack). Fields rather than kit state so the status tray and the
+   * online status mirror carry them — FortuneKit treats them as the truth.
+   */
+  public goldHeartUntil = 0;
+  public goldHeartStress = 0;
+  /** Gold's Midas Curse: scene time the curse lifts. Mirrored online like the heart. */
+  public midasUntil = 0;
   /**
    * Ruin (Unstoppable Decay): 1.1^stacks of rot on this fighter, times 0.9^stacks carried by
    * whoever is hitting it — the victim-side stand-in for "the decayed deal less", since
@@ -237,20 +253,27 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   public bindIncomingMult = 1;
   /**
-   * Illusion's two upgrade vulnerabilities, folded into one field and rewritten from scratch
-   * by IllusionKit every frame — Justice's arrangement, and for Justice's reason. A Phantom's
-   * blast marks a body for 1.2 and Mind-Boggle's turning weak point is worth 1.5 while the
-   * illusionist is standing on that side of it, and the two are allowed to multiply.
+   * Illusion's damage bonuses, folded into one field and rewritten from scratch by IllusionKit
+   * every frame — Justice's arrangement, and for Justice's reason. A Phantom's blast marks a
+   * body for 1.2, the Masquerade mask is worth 1.5 and Re-Trick's surprise 1.25, and all three
+   * are allowed to multiply.
    */
   public illusionIncomingMult = 1;
   /**
    * Cloth: the tailor's own armour, folded into one number — Survive III's 20% off the top, the
-   * Heavy Coat outfit, and Wretched Scarf's total negation. Its own field for the reason
+   * and the Heavy Coat outfit. Its own field for the reason
    * Justice, Illusion and Sound have theirs: ClothKit rewrites it from scratch every frame off
    * its own state, and sharing `incomingDamageMultiplier` would stomp whatever else wrote
    * armour that tick.
    */
   public clothIncomingMult = 1;
+  /**
+   * Marrow (Cytokine Storm, R+): the vulnerability a neutrophil's cytokine pellets stack onto
+   * whatever they hit. Its own field for the reason Justice, Illusion and Sound have theirs —
+   * MarrowKit rewrites it from scratch every frame off its own stack table, and sharing
+   * `incomingDamageMultiplier` would stomp whatever else wrote armour that tick.
+   */
+  public marrowIncomingMult = 1;
   /**
    * Cloth mastery, Casual Hoodie: 20% off anything that arrives as an area blast or a piercing
    * shot. Separate from `clothIncomingMult` because it is conditional on the hit rather than on
@@ -276,21 +299,52 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Cloth's Quick artworks, multiplied into every cooldown the tailor pays. */
   public clothCooldownMult = 1;
   /**
-   * Gluttony (Head Chef, E+ and Murderous Intent, F+): the kitchen's two food-and-teeth
-   * multipliers folded into one field — a winter mint's 20% resistance on the cook, and the
-   * 15% vulnerability the maw's cone of bullets stacks onto whatever it hits. Its own field
-   * for the reason Justice, Illusion and Cloth have theirs: GluttonyKit rewrites it from
-   * scratch every frame off its own timers, and sharing `incomingDamageMultiplier` would
-   * stomp whatever else wrote armour that tick.
+   * Harvest (element id `gluttony`, Reaping Hour): the permanent 15%-a-hit vulnerability the
+   * scythe leaves on everything it cuts, compounded. Its own field for the reason Justice,
+   * Illusion and Cloth have theirs: GluttonyKit rewrites it from scratch every frame off its own
+   * per-body stack count, and sharing `incomingDamageMultiplier` would stomp whatever else wrote
+   * armour that tick.
    */
   public gluttonyIncomingMult = 1;
   /**
-   * Sound (Sound System, E+): the armour banked by cutting people with the blue record. Its own
-   * field for the reason Justice, Magma and Illusion have theirs — SoundKit rewrites it from
-   * scratch every frame, and sharing `incomingDamageMultiplier` would stomp whatever else wrote
-   * armour that tick. Floored well above zero so a long match cannot make anyone untouchable.
+   * Harvest: how far the rot has got into this body, 0–100. Written by GluttonyKit on whoever
+   * stands on the scarecrow's mold, bites into its Corrupt HP, or is bitten while it is half rot;
+   * read back by its lifesteal, the crows and the scythe's execute line. A plain field so the
+   * status tray and the online mirror pick it up — the attacker's sim decides it.
+   */
+  public harvestCorruption = 0;
+  /**
+   * Devotion: faith poured into this body by the priest (id `passion`). Nothing lowers it; at the
+   * cap (200 in a duel) the body is converted. A plain field so the status tray and the online
+   * mirror carry it — only the attacker's sim ever raises it.
+   */
+  public devotionFaith = 0;
+  /**
+   * Harvest: Corrupt HP, a purple layer spent after weak HP and before clotted HP. Whatever it
+   * soaks is reported to {@link onCorruptAbsorb} so the kit can rot whoever did the soaking.
+   */
+  public corruptHp = 0;
+  public onCorruptAbsorb: ((spent: number, opts?: DamageOpts) => void) | null = null;
+  /**
+   * Sound (the Smooth soul song): 20% damage resistance while it plays. Its own field for the
+   * reason Justice, Magma and Illusion have theirs — SoundKit rewrites it from scratch every
+   * frame, and sharing `incomingDamageMultiplier` would stomp whatever else wrote armour that tick.
    */
   public soundIncomingMult = 1;
+  /**
+   * Sound (Fermata): Out of Tune, `Date.now()`-based. While it runs a quarter of this fighter's
+   * ability presses misfire inside `castAbility` — the cooldown is spent, nothing happens. Husks
+   * roll the same chance on their bites and shots. `lastTuneMissAt` stamps the latest misfire so
+   * SoundKit can call it out over the victim's head.
+   */
+  public outOfTuneUntil = 0;
+  public lastTuneMissAt = 0;
+  /**
+   * A generic hard stun, `Date.now()`-based (Sound's Fermata detonation). The writer also
+   * disarms; whichever kit wrote it holds the body still post-movement. Mirrored online as
+   * `stunned` so the victim's own sim freezes them too.
+   */
+  public stunnedUntil = 0;
   /**
    * Vault artifacts (Rime Brand): vulnerability written by `ArtifactsKit`. Its own field for
    * the same reason as every neighbour above — the kit rewrites it outright when a freeze
@@ -310,9 +364,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   public duneIncomingMult = 1;
   /**
-   * Radiation Mastery (Sniper's Instinct): armour that is worth more the further the operative
-   * is standing from whoever he is shooting. Its own field for the same reason as every
-   * neighbour above — RadiationKit rewrites it from scratch every frame off the current range.
+   * Radiation's slot in the mitigation product. Nothing writes it since the 2026-10-15 rework
+   * retired the mastery that did (Sniper's Instinct); kept so the owed replacement has a home.
    */
   public radiationIncomingMult = 1;
 
@@ -342,8 +395,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Invoked with the amount whenever an irradiated heal turns into a hit, so a kit can draw it. */
   public onHealInverted: ((amount: number) => void) | null = null;
   /**
-   * Radiation (X-Ray Vision): a multiplier on the *physics body only*, leaving the sprite the
-   * size it looks. Its own field rather than a share of `sizeMult` because the two mean
+   * A multiplier on the *physics body only*, leaving the sprite the size it looks (Cloth's
+   * scarf; first added for Radiation's retired X-Ray Vision). Its own field rather than a share of `sizeMult` because the two mean
    * different things — a target lit up by an X-ray is easier to hit without becoming bigger —
    * and because Fate's slots and Illusion's folds must still own `sizeMult`/`shapeSizeMult`
    * without either of them silently handing a swollen hitbox back.
@@ -613,10 +666,10 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Visual/physics size multiplier applied by Fate Slots. Default 1. */
   public sizeMult = 1;
   /**
-   * Illusion Tesseract: a second, independent size multiplier for a fighter that has been
-   * folded into a square, star or rhombus. Its own field rather than a share of `sizeMult`
-   * because the two have different owners — Fate rewrites `sizeMult` from its own state, and
-   * a slots roll landing mid-fold would otherwise silently hand the shape back.
+   * Illusion Guise: a second, independent size multiplier (0.2 while the illusionist hides
+   * behind their clone). Its own field rather than a share of `sizeMult` because the two have
+   * different owners — Fate rewrites `sizeMult` from its own state, and a slots roll landing
+   * mid-Guise would otherwise silently hand the illusionist their full size back.
    */
   public shapeSizeMult = 1;
   /**
@@ -747,8 +800,36 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public panickedUntil = 0;
   /** Grabber perma-debuff: scales husk bite/attack cadence (>1 = slower). Fighters also get cooldownMult scaled. */
   public attackIntervalMult = 1;
-  /** Radians. Players: aim direction; bots/husks: movement direction. Drives backstab checks + facing-eye HUD. */
+  /** Radians. Players: aim direction; bots/husks: movement direction. Drives backstab checks + back-shadow HUD. */
   public facingAngle = 0;
+  /**
+   * Stalked (Silence F): facing turns slowly instead of snapping, and every cast is aimed down
+   * that facing (ArenaScene.scatterAim) rather than at the cursor. Date.now() based.
+   */
+  public stalkedUntil = 0;
+  /**
+   * Despress (Silence F+): each stack is 10% slower movement and strips 10 points of whatever
+   * damage resistance this fighter has (never past neutral). Date.now() based.
+   */
+  public despressUntil = 0;
+  public despressStacks = 0;
+
+  /** Add Despress stacks; a lapsed status starts counting from zero again. */
+  addDespress(stacks: number, ms: number): void {
+    const now = Date.now();
+    this.despressStacks = Math.min(10, (now < this.despressUntil ? this.despressStacks : 0) + stacks);
+    this.despressUntil = Math.max(this.despressUntil, now + ms);
+  }
+
+  /** Live Despress stack count (0 once it has lapsed). */
+  activeDespressStacks(): number {
+    return Date.now() < this.despressUntil ? this.despressStacks : 0;
+  }
+
+  /** Movement factor from Despress, for every mover (player, bot, husk). */
+  despressSlowMult(): number {
+    return Math.max(0.2, 1 - 0.1 * this.activeDespressStacks());
+  }
   /**
    * Silence Mastery — Puppetmaster: someone else is steering this body until this
    * `scene.time.now` timestamp. Its own AI must yield entirely — no movement, no
@@ -765,6 +846,12 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public chickenUntil = 0;
   // Magic Mastery — Levitate passive: immune to static ground hazards (puddles, etc.)
   public levitating = false;
+  /**
+   * Tempest — Flight: this body is off the floor. Melee swings (the generic `dealMeleeDamage`
+   * chokepoints) skip it; floor hazards skip it through `levitating`, which TempestKit sets
+   * alongside. Shots and area blasts still land. Written every frame by the kit.
+   */
+  public airborne = false;
 
   // Oil E+ Oily status
   public oilyUntil = 0;
@@ -932,8 +1019,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
 
   /** Update visual scale and physics body to match sizeMult. Call after changing sizeMult. */
   applySizeMult(): void {
-    // Folded shapes ride on top of whatever else is scaling this fighter, so any other
-    // system calling this keeps the fold rather than quietly cancelling it.
+    // Every kit's size field rides on top of the others, so any system calling this keeps
+    // a Guise, a swell or a shrink rather than quietly cancelling it.
     const scale = this.sizeMult * this.shapeSizeMult * this.oozeSizeMult * this.ruinSizeMult
       * this.dreamSizeMult * this.claySizeMult;
     this.setScale(scale);
@@ -994,7 +1081,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       // Tallied here: after the crit roll (a crit really is a bigger hit) but before every
       // mitigation multiplier on the line below, which is what "damage aimed at you" means.
       this.rawDamageTaken += amount;
-      let mitigation = this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.waxIncomingMult * this.clayIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.paperIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.artifactIncomingMult * this.clothIncomingMult * this.gluttonyIncomingMult * this.orderIncomingMult * this.wardIncomingMult * this.bossWardIncomingMult * this.fortuneIncomingMult * this.dreamIncomingMult * this.duneIncomingMult * this.radiationIncomingMult * this.magicIncomingMult * this.mutationIncomingMult * this.mapArmorMult * this.starIncomingMult * this.earthBiomeIncomingMult * this.netDefenseMult;
+      let mitigation = this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.waxIncomingMult * this.clayIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.paperIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.artifactIncomingMult * this.clothIncomingMult * this.marrowIncomingMult * this.gluttonyIncomingMult * this.orderIncomingMult * this.wardIncomingMult * this.bossWardIncomingMult * this.fortuneIncomingMult * this.dreamIncomingMult * this.duneIncomingMult * this.radiationIncomingMult * this.magicIncomingMult * this.mutationIncomingMult * this.mapArmorMult * this.starIncomingMult * this.earthBiomeIncomingMult * this.netDefenseMult;
       // Ruin's spikes turn armour inside out — 25% less damage taken comes back as 25% more.
       // Only a net *buff* is flipped; a fighter already taking extra damage is left alone.
       if (mitigation < 1 && this.scene.time.now < this.buffsInvertedUntil) mitigation = 2 - mitigation;
@@ -1002,6 +1089,10 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       // whatever the product came out as is dragged halfway back to neutral. Applied after the
       // Ruin flip so a split armour buff is still a buff when the spikes turn it over.
       if (this.scene.time.now < this.effectSplitUntil) mitigation = 1 + (mitigation - 1) * 0.5;
+      // Silence's Despress strips resistance a point at a time, but only resistance: it lifts a
+      // reduction back toward neutral and never turns into a vulnerability of its own.
+      const despress = this.activeDespressStacks();
+      if (despress > 0 && mitigation < 1) mitigation = Math.min(1, mitigation + 0.1 * despress);
       // Casual Hoodie is conditional on how the hit arrived, so it sits outside the product
       // above rather than inside it — an ordinary shot must not pick it up.
       if (opts?.aoe || opts?.pierce) mitigation *= this.clothAoeMult;
@@ -1038,6 +1129,10 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     // menu is open. Pierce ignored the old menu invincibility, so it skips the cut as well.
     if (!pierce && this.menuGuards.size > 0 && amount > 0) {
       amount = Math.max(1, Math.round(amount * 0.05));
+    }
+    if (this.damageBudget >= 0 && amount > 0) {
+      amount = Math.min(amount, Math.floor(this.damageBudget));
+      this.damageBudget = Math.max(0, this.damageBudget - amount);
     }
     this.lastIncomingDamage = amount;
     if (isCrit) {
@@ -1101,6 +1196,25 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       this.weakHp -= absorbed;
       amount -= absorbed;
       if (absorbed > 0) Sfx.playAt('shield-absorb', this.x, { rate: 1.25, volume: 0.8 });
+      if (amount === 0) {
+        this.emit('damaged', 0);
+        if (!this.forceInvisible) {
+          this.setAlpha(0.7);
+          this.scene.time.delayedCall(200, () => { if (this.active) this.setAlpha(this.forceInvisible ? 0 : 1); });
+        }
+        return;
+      }
+    }
+
+    // Harvest: Corrupt HP soaks like weak HP, and tells the kit who it was soaking.
+    if (!pierce && this.corruptHp > 0) {
+      const absorbed = Math.min(this.corruptHp, amount);
+      this.corruptHp -= absorbed;
+      amount -= absorbed;
+      if (absorbed > 0) {
+        Sfx.playAt('shield-absorb', this.x, { rate: 0.7, volume: 0.8 });
+        this.onCorruptAbsorb?.(absorbed, opts);
+      }
       if (amount === 0) {
         this.emit('damaged', 0);
         if (!this.forceInvisible) {
@@ -1287,6 +1401,15 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     if (now < this.silencedUntil && ability.displayKey !== 'Click') return false;
     if (now < (this.lockouts.get(abilityId)?.until ?? 0)) return false;
     if (now - (this.cooldowns.get(abilityId) ?? 0) < this.storedCooldown(abilityId, ability)) return false;
+
+    // Sound — Out of Tune: a quarter of presses misfire. The cooldown is paid, nothing is cast,
+    // nothing is announced or relayed.
+    if (now < this.outOfTuneUntil && Math.random() < 0.25) {
+      this.cooldowns.set(abilityId, now);
+      this.cooldownScales.set(abilityId, 1);
+      this.lastTuneMissAt = now;
+      return false;
+    }
 
     // Psychic (Opened Eyes): the press is real — it commits the cooldown here and now — but
     // the ability itself is handed to the kit to resolve two seconds later. Everything the
@@ -1503,7 +1626,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     super.preUpdate(time, delta);
     // Weak HP decays steadily at 3/s.
     if (this.weakHp > 0) this.weakHp = Math.max(0, this.weakHp - 3 * (delta / 1000));
-    this.healthBar.update(this.x, this.y, this.hp, this.shieldHp, this.chargeRatio, this.clottedHp, this.weakHp, this.chargeColor);
+    this.healthBar.update(this.x, this.y, this.hp, this.shieldHp, this.chargeRatio, this.clottedHp, this.weakHp, this.chargeColor, this.corruptHp);
   }
 
   destroy(fromScene?: boolean): void {

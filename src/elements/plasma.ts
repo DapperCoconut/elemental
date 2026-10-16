@@ -22,7 +22,7 @@ const unstableArena: Ability = {
 const plasmaCurrent: Ability = {
   id: 'plasma-current',
   name: 'Plasma Current',
-  description: 'Launch 2 parallel orbs with an electric chain between them (2 dmg/0.1s to enemies in chain). Hold R to widen the gap. Hitting an orb deals 10 damage and triggers a chain explosion.',
+  description: 'Launch 2 parallel orbs with an electric chain between them (2 dmg/0.1s to enemies in chain). Hold R to widen the gap. Hitting an orb deals 10 damage and triggers a chain explosion. Recast R to stop the current where it is.',
   displayKey: 'R',
   cooldown: 8000,
   cast(ctx) { ctx.plasmaCurrentLaunch(ctx.targetX, ctx.targetY); },

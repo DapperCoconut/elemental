@@ -1,6 +1,8 @@
 import { Element } from './Element';
 import { airElement } from './air';
 import { clothElement } from './cloth';
+import { marrowElement } from './marrow';
+import { tempestElement } from './tempest';
 import { bindElement } from './bind';
 import { chalkElement } from './chalk';
 import { clayElement } from './clay';
@@ -117,6 +119,8 @@ export const ELEMENT_MAP: Record<string, Element> = {
   death: deathElement,
   fortune: fortuneElement,
   cloth: clothElement,
+  marrow: marrowElement,
+  tempest: tempestElement,
   psychic: psychicElement,
   radiation: radiationElement,
   bind: bindElement,

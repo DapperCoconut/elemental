@@ -86,7 +86,7 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'black-hole': 'black-hole',
 
   // ── Soul ──
-  'soul-siphon': 'lantern',
+  'soul-lantern': 'lantern',
   'soul-arise': 'ghost-wail',
   'soul-grave': 'bone',
   'soul-death-whistle': 'whistle',
@@ -121,11 +121,11 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'lunar-landing': 'moon-landing',
 
   // ── Sound ──
-  'staccato': ['drum-hit', 1.3],
-  'disc-dice': ['sonic-pulse', 1.15, 0.9],
-  'boombox': ['sonic-pulse', 1.5, 0.65],
-  'bugle': ['train-horn', 1.6, 0.75],
-  'coda': 'guitar-solo',
+  'baton': ['drum-hit', 1.6, 0.45],
+  'crescendo': ['sonic-pulse', 1.3, 0.7],
+  'fermata': ['drum-hit', 0.7, 0.9],
+  'hum': ['sonic-pulse', 1.7, 0.5],
+  'call-of-the-void': ['train-horn', 1.6, 0.75],
 
   // ── Echo (element id `echo`) ──
   'echo-shot': 'echo-ping',
@@ -156,11 +156,11 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'train-morph': 'train-horn',
 
   // ── Magnet ──
-  'mag-pulse': ['magnet-pull', 1.35, 0.9],
-  'nail-implant': 'nail',
-  'magnetize': 'magnet-pull',
-  'protect': 'shield-up',
-  'atom-smasher': ['explosion-large', 1.1],
+  'magnet-coin': ['money', 1.6, 0.5],
+  'magnet-repulse': ['magnet-pull', 0.75, 1],
+  'magnet-nail': 'nail',
+  'magnet-spike': ['magnet-pull', 1.2, 0.8],
+  'magnet-mecha': ['electric-charge', 0.6],
 
   // ── Fate ──
   'fate-card-throw': 'card-throw',
@@ -265,8 +265,8 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'magma-plume': ['sizzle', 0.85, 1.1],
   'magma-volcano': ['stone-rise', 0.8, 1.2],
   'magma-bloat': ['inferno', 0.85, 0.9],
-  'magma-jet': ['flame-burst', 0.85, 1.2],
-  'magma-dragon-kin': ['roar', 0.8, 1.2],
+  'magma-blunder': ['flame-burst', 0.85, 1.2],
+  'magma-mutiny': ['roar', 0.8, 0.9],
 
   // ── Wax ──
   'wax-stinger-strikes': ['spear-throw', 1.35, 0.75],
@@ -287,7 +287,7 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'illusion-crack-shot': ['crossbow', 1.25, 0.85],
   'illusion-veil': ['prism', 0.85, 1.05],
   'illusion-relocate': 'blink',
-  'illusion-tesseract': ['portal', 1.2, 0.9],
+  'illusion-guise': ['portal', 1.4, 0.8],
   'illusion-dance': ['teleport', 0.8, 1.15],
 
   // ── Sand (element id `dune`) ──
@@ -309,17 +309,29 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'paper-mache': ['trap-set', 0.85, 1.05],
   'paper-climax': ['spellbook', 1.0, 0.75],
 
-  // ── Fortune ──
-  // The trigger pull is voiced by the kit per weapon, so Click stays deliberately quiet here;
-  // the rest of the set is a till, a ticker, a turnstile and a very expensive laser.
-  'fortune-fire': ['ui-click', 0.25, 1.6],
-  'fortune-safe': ['money', 0.7, 1.15],
-  'fortune-risky': ['money', 0.7, 0.85],
-  'fortune-paywall': ['gear-turn', 0.85, 0.95],
-  'fortune-p2w': ['beam-charge', 0.95, 0.9],
-  // The car arriving. FortuneKit voices the engine and the wreck itself; this is the drop.
-  'drive-by-flex': ['stone-rise', 0.8, 0.6],
+  // ── Gold (id `fortune`) ──
+  // A rustle of grass, a till for the purse, a thrown sack, the cane's thrust and a great bell.
+  'fortune-fray': ['whoosh', 0.35, 1.7],
+  'fortune-advance': ['money', 0.7, 1.15],
+  'fortune-plume': ['whoosh', 0.6, 0.85],
+  'fortune-heart': ['hit-heavy', 0.55, 1.3],
+  'fortune-midas': ['beam-charge', 0.95, 0.7],
 
+  // ── Tempest ──
+  'tempest-gale': ['gust', 1.3, 0.75],
+  'tempest-kick': ['whoosh', 1.1, 0.9],
+  'tempest-front': ['tornado', 0.9, 0.65],
+  'tempest-updraft': ['gust', 0.7, 0.9],
+  'tempest-forecast': ['grapple', 0.8, 1.0],
+
+  // ── Marrow ──
+  // Nothing here is a weapon being swung: four of the five are something wet being released,
+  // so the set is a flick, two spawns, a whip and a swarm of fuses being lit.
+  'marrow-antibody': ['nail', 0.4, 1.5],
+  'marrow-macrosma': ['slime-splat', 0.85, 0.7],
+  'marrow-neutralize': ['spore', 0.85, 1.25],
+  'marrow-dendricles': ['whip', 0.9, 1.15],
+  'marrow-mastacre': ['bubble', 1.0, 0.75],
   // ── Cloth ──
   // Nothing here is a weapon being swung: four of the five are something wet being released,
   // so the set is a flick, two spawns, a whip and a swarm of fuses being lit.
@@ -328,7 +340,7 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'cloth-safety-line': ['nail', 0.6, 1.3],
   'cloth-pin-cushion': ['stab', 0.7, 0.9],
   'cloth-tapestry': ['whip', 0.5, 1.4],
-  'wretched-scarf': ['whip', 0.7, 0.8],
+  'bleed-stop': ['whip', 0.65, 1.25],
 
   // ── Psychic ──
   // Nothing in the kit is physical except the whip, so nothing else gets an impact: a
@@ -344,9 +356,9 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   // The click plants a device rather than firing a weapon, so it gets a nail rather than a
   // gunshot — the railgun's own report is played by the kit when the third tracer confirms.
   'radiation-railgun': ['nail', 1.1, 0.7],
+  'radiation-barrage': ['sonic-pulse', 1.3, 0.7],
+  'radiation-bunker': ['stone-rise', 0.8, 0.95],
   'radiation-baton': ['flail-swing', 0.85, 1.0],
-  'radiation-xray': ['sonic-pulse', 0.75, 0.85],
-  'radiation-waste': ['grenade-throw', 0.8, 0.95],
   'radiation-extermination': ['reload', 0.85, 1.1],
 
   // ── Bind ──
@@ -375,19 +387,14 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'quantum-effect-split': ['stretch', 0.75, 0.9],
   'quantum-parasite': ['beast-transform', 0.6, 1.0],
 
-  // ── Gluttony ──
-  // The chef's row is kitchen noises and the butcher's row is the same actions gone wrong: the
-  // knife throw becomes a slash, the skewer becomes a stab, and the pot becomes a roar.
-  'glut-knife': ['whoosh', 1.35, 0.7],
-  'glut-forage': ['vine-grow', 1.1, 0.6],
-  'glut-charcoal': ['rock-throw', 0.85, 0.8],
-  'glut-butcher': ['beast-transform', 0.7, 1.0],
-  'glut-feast': ['craft-complete', 0.8, 0.9],
-  'glut-cleave': ['slash', 0.95, 0.9],
-  'glut-poach': ['spear-throw', 1.05, 0.9],
-  'glut-cannibalize': ['claw', 0.75, 1.0],
-  'glut-return': ['ui-toggle-off', 1.0, 0.7],
-  'glut-maw': ['roar', 0.5, 1.25],
+  // ── Harvest (id `gluttony`) ──
+  // Silent here: GluttonyKit voices every cast itself, at the moment it actually happens (the
+  // scythe's wind-up and swing are two sounds a third of a second apart).
+  'harvest-sickle': null,
+  'harvest-sow': null,
+  'harvest-frenzy': null,
+  'harvest-consume': null,
+  'harvest-reap': null,
 
   // ── Death ──
   // Four of the five deal no damage, so none of them gets an impact sound — they get a drain,
@@ -413,13 +420,12 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'depths-angler': ['splash', 1.2, 0.75],
   'depths-megalodon': ['roar', 0.55, 1.25],
 
-  // ── Passion ──
-  'passion-loveshot': ['musket', 1.4, 0.6],
-  'passion-flirt': ['whistle', 1.15, 0.9],
-  // The cast is the dash; the kiss itself gets its own sound when it actually lands.
-  'passion-smooch': ['dash', 1.15, 0.85],
-  'passion-manipulate': ['thorn', 1.2, 0.85],
-  'passion-exhibition': ['reward-big', 1.1, 0.9],
+  // ── Devotion (id `passion`) ──
+  'passion-sermon': ['incantation', 1.3, 0.55],
+  'passion-holy-water': ['potion-drink', 1.2, 0.7],
+  'passion-grenade': ['grenade-throw', 1.0, 0.85],
+  'passion-crucifix': ['holy-chord', 1.1, 0.8],
+  'passion-ascendance': ['judgement', 0.85, 1.0],
 
   // ── Conquest ──
   'conquest-banner': ['stab', 0.9, 1.1],
@@ -457,7 +463,6 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'strength-in-numbers': 'status-buff',
   'reputation-repair': 'curse-cast',
   'cycle': 'card-shuffle',
-  'mag-lev': 'magnet-pull',
   'syringe-shot': ['stab', 1.45, 0.9],
   'acid-walker': 'sizzle',
   'natural-clot': 'status-regen',
@@ -490,7 +495,6 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'grave-mistake': 'bone',
   'time-bomb': ['explosion-medium', 0.9, 1.05],
   'tarot-of-fate': 'jackpot',
-  'metal-detector': ['magnet-pull', 1.2, 0.9],
   'secret-upgrades': 'mutate',
   'breakdown': 'glitch',
   'steel-shield': ['shield-up', 0.85, 1.1],
@@ -507,8 +511,6 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'weep': 'ghost-wail',
   'unsatiable': ['land', 1.4, 0.7],
   'tempered-temptation': ['crystal-shatter', 0.7, 1.1],
-  'attraction': ['heartbeat', 0.7, 0.9],
-  'perfume': ['whoosh', 0.6, 1.6],
   'obsidian-coat': ['crystal-shatter', 0.6, 0.7],
   'magma-saw': ['engine', 0.7, 1.15],
   'inevitability': ['clock-tick', 0.8, 1.15],
@@ -542,7 +544,7 @@ const ELEMENT_PITCH: Record<string, number> = {
   rubber: 1.05, silence: 0.75, technology: 1.3, plasma: 1.25,
   creation: 1.0, dream: 1.2, justice: 0.95, king: 0.6, chalk: 1.35, illusion: 1.15, conquest: 0.85,
   magma: 0.7, wax: 1.3, clay: 0.88, depths: 0.72, passion: 1.28, ruin: 0.7, dune: 0.76, paper: 1.18,
-  death: 0.6, fortune: 1.08, cloth: 1.12, psychic: 1.22,
+  death: 0.6, fortune: 1.08, cloth: 1.12, marrow: 0.92, tempest: 1.15, psychic: 1.22,
   radiation: 1.12, bind: 0.66, gum: 0.86, gluttony: 0.82,
 };
 

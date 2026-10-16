@@ -285,7 +285,7 @@ const shadow: ElementCodex = {
         + 'standing 20 seconds. Walking onto the mortar fires it — 20 damage and 10 Hopelessness within '
         + '70px of the dot — with no per-shot cooldown at all, so the cadence is however fast you can run '
         + 'laps back to it. 35s cooldown, so one beacon is live at a time.',
-      cast: 'Bindable to E, R, F or Q. One press drops the mortar at your feet and the target dot at the cursor; after that it fires on contact, not on input.',
+      cast: 'Bindable to R, F or Q. One press drops the mortar at your feet and the target dot at the cursor; after that it fires on contact, not on input.',
       effects: [
         { tag: 'damage', label: 'The shell', detail: '20 damage and 10 Hopelessness within 70px of the marked dot.' },
         { tag: 'utility', label: 'Firing it', detail: 'Every time you walk onto the mortar it launches. There is no per-shot cooldown — the cadence is however fast you can run laps back to it.' },

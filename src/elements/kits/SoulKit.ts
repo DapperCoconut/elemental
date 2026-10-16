@@ -5,7 +5,7 @@ import { BASIC_HUSK, HUSK_VARIANTS, HuskVariantDef, huskTextureKey } from '../..
 import { Projectile } from '../../combat/Projectile';
 import { CastContext } from '../Ability';
 import {
-  ANGERED_TONES, NPC_TONES, ROT_TONES, SOUL, SPIRIT_TONES, SoulAmalgamBody,
+  ANGERED_TONES, GOLD_TONES, NPC_TONES, ROT_TONES, SOUL, SPIRIT_TONES, SoulAmalgamBody,
   SoulAvatar, SoulColorFn, SoulFx, SoulShroud, SoulTones, TORMENT_TONES, tonesFor,
 } from './SoulVisuals';
 
@@ -30,17 +30,16 @@ export interface SoulArenaApi {
   readonly rKey: Phaser.Input.Keyboard.Key;
   readonly fKey: Phaser.Input.Keyboard.Key;
   readonly qKey: Phaser.Input.Keyboard.Key;
-  /** Possession drives the ridden amalgam off the same four keys the caster walks on. */
-  readonly wKey: Phaser.Input.Keyboard.Key;
-  readonly aKey: Phaser.Input.Keyboard.Key;
-  readonly sKey: Phaser.Input.Keyboard.Key;
-  readonly dKey: Phaser.Input.Keyboard.Key;
   readonly elementId: string;
   readonly npcElementId: string;
   readonly isInvasion: boolean;
   readonly width: number;
   readonly height: number;
   hasUpgrade(slot: string): boolean;
+  /** The npc side's upgrades (bot loadout or online peer) — Soul Lord is mirrored on both sides. */
+  hasNpcUpgrade(slot: string): boolean;
+  /** Online: relays a non-cooldown press (the beam release) to the peer. */
+  broadcastMasteryCast(id: string): void;
   /** Skins: maps a soul visual color through the owner's skin. */
   soulColor(owner: Owner, base: number): number;
   hasPerk(owner: Owner, perkId: string): boolean;
@@ -74,15 +73,48 @@ const SOUL_SCREECH_COOLDOWN_MS = 12000;
 
 // ── World-object types ───────────────────────────────────────────────────────
 
-/** A live siphon cord. `mend` lines feed an amalgam; `drain` lines empty anything else. */
-interface SiphonLine {
+/** A Lantern of the Damned wisp, or one of the shards a Soul Lord wisp bursts into. */
+interface LanternBolt {
   owner: Owner;
-  kind: 'drain' | 'mend';
-  target: Fighter;
-  /** Repainted every frame — a taut cord with spirit crawling along it. */
+  /** Repainted every frame — a flame of spirit with a face in its head. */
   gfx: Phaser.GameObjects.Graphics;
+  x: number;
+  y: number;
+  angle: number;
+  speed: number;
+  /** Still bending toward the cursor. Cleared for good on arrival or once it would turn back. */
+  seeking: boolean;
+  seekX: number;
+  seekY: number;
+  /** Track the live cursor (the local player) rather than a fixed point (bot, online peer). */
+  live: boolean;
+  /** Fraction of the lantern's damage it carries — 1 for a wisp, less for a shard. */
+  frac: number;
+  small: boolean;
+  /** A shard never re-hits the thing its parent burst on. */
+  ignore: Fighter | null;
+  bornAt: number;
+  expiresAt: number;
+  t: number;
+}
+
+/** A fired soul beam, fading out. Damage is dealt the instant it fires. */
+interface BeamFlash {
+  owner: Owner;
+  gfx: Phaser.GameObjects.Graphics;
+  x1: number; y1: number; x2: number; y2: number;
+  width: number;
+  bornAt: number;
+  t: number;
+}
+
+/** Soul Lord 10: a bleeding soul aura the beam leaves on what it hit. */
+interface Hemorrhage {
+  owner: Owner;
+  target: Fighter;
+  gfx: Phaser.GameObjects.Graphics;
+  until: number;
   tickAccum: number;
-  /** Own clock, so three cords off one hand don't pulse in lockstep. */
   t: number;
 }
 
@@ -197,25 +229,74 @@ interface SoulShot {
 // ── Tuning ────────────────────────────────────────────────────────────────────
 
 const CORPSE_CAP_BASE = 5;
+/** Plain corpses a soul user starts every match with. */
+const STARTING_CORPSES = 2;
 
-// ── Click: Siphon ──────────────────────────────────────────────────────
-const SIPHON_MAX_LINES = 3;
-/** The leash. A cord stretched past this snaps on its own. */
-const SIPHON_RANGE = 330;
-/** How near the cursor something has to be to catch a cord. */
-const SIPHON_GRAB_RADIUS = 72;
-const SIPHON_TICK_MS = 500;
-const SIPHON_DRAIN_PER_TICK = 2;
-const SIPHON_HEAL_PER_TICK = 4;
+// ── Click: Lantern of the Damned ─────────────────────────────────
+const LANTERN_SPEED = 330;
+const LANTERN_RADIUS = 7;
+const LANTERN_HIT_RADIUS = 22;
+const LANTERN_DAMAGE = 8;
+/** How hard a wisp can bend toward the cursor, in rad/s. */
+const LANTERN_TURN_RATE = 7;
+const LANTERN_ARRIVE_RADIUS = 14;
+/** Once the cursor is this far off its heading it would have to circle back — it flies on. */
+const LANTERN_GIVE_UP_ANGLE = Math.PI * 0.55;
+const LANTERN_SEEK_MAX_MS = 1400;
+const LANTERN_LIFETIME_MS = 2600;
+/** +5% lantern-family damage per kill this match, capped at +200%. */
+const LANTERN_KILL_BONUS = 0.05;
+const LANTERN_KILL_BONUS_CAP = 2;
+/** How far a bot will reach for its own grave zombie with the lantern. */
+const NPC_LANTERN_RANGE = 360;
 
-// ── Click+: Possession ───────────────────────────────────────────────
-const POSSESS_DURATION_MS = 12000;
-/** Runs from the moment you are put back in your own body, however that happened. */
-const POSSESS_COOLDOWN_MS = 30000;
-const POSSESS_BITE_CD_MS = 650;
-const POSSESS_SPECIAL_CD_MS = 4000;
-const POSSESS_CHARGE_MS = 400;
-const POSSESS_CHARGE_SPEED_MULT = 3;
+// ── Right click: Soul Beam ───────────────────────────────────────────
+const BEAM_CHARGE_MS = 1200;
+const BEAM_CHARGE_ASCENDED_MS = 600;
+/** Released below this much charge, the beam fizzles without firing or going on cooldown. */
+const BEAM_MIN_CHARGE = 0.15;
+const BEAM_LENGTH = 460;
+const BEAM_MIN_WIDTH = 10;
+const BEAM_MAX_WIDTH = 22;
+const BEAM_MIN_DMG = 6;
+const BEAM_MAX_DMG = 22;
+const BEAM_COOLDOWN_MS = 1500;
+const BEAM_FADE_MS = 280;
+
+// ── Click+: Soul Lord ─────────────────────────────────────────────────
+const LORD_SPLIT_KILLS = 5;
+const LORD_HEMO_KILLS = 10;
+const LORD_ORB_KILLS = 15;
+const LORD_ASCEND_KILLS = 25;
+const SPLIT_COUNT = 3;
+const SPLIT_SPEED = 300;
+const SPLIT_LIFETIME_MS = 550;
+const SPLIT_DMG_FRAC = 0.4;
+const HEMO_MS = 4000;
+const HEMO_RADIUS = 80;
+const HEMO_TICK_MS = 500;
+/** Per tick to everything else inside the aura (scaled by kills), and to the bearer. */
+const HEMO_SPLASH = 3;
+const HEMO_BLEED = 1;
+const ORB_COUNT = 3;
+const ORB_RADIUS = 48;
+const ORB_SIZE = 7;
+const ORB_DAMAGE = 5;
+const ORB_HIT_CD_MS = 600;
+/** rad/s at 15 kills, +0.12 per kill beyond, capped. */
+const ORB_SPIN_BASE = 2.4;
+const ORB_SPIN_PER_KILL = 0.12;
+const ORB_SPIN_MAX = 7;
+const HOMING_RANGE = 280;
+const HOMING_TURN_RATE = 5;
+
+/** Distance from a point to a segment — the beam's hit test. */
+function distToSegment(px: number, py: number, x1: number, y1: number, x2: number, y2: number): number {
+  const dx = x2 - x1, dy = y2 - y1;
+  const len2 = dx * dx + dy * dy || 1;
+  const f = Phaser.Math.Clamp(((px - x1) * dx + (py - y1) * dy) / len2, 0, 1);
+  return Math.hypot(px - (x1 + dx * f), py - (y1 + dy * f));
+}
 
 // ── E+: Cloud of Decay ──────────────────────────────────────────────
 const DECAY_RADIUS = 84;
@@ -338,16 +419,15 @@ const HUD_Y = 52;
 // ── SoulKit ───────────────────────────────────────────────────────────────────
 
 /**
- * Soul remaster: Lantern Light puddles, a 5-slot corpse queue fed by Grave
- * zombies (and real Invasion husk kills), Amalgam allies raised from that
- * queue, Death Whistle recalls + heals them, and Hell's Torment burns them
- * out in a blaze of embers. Amalgams and grave zombies are plain `Husk`
- * instances SoulKit owns and ticks manually — never added to `arena.enemies`.
+ * Soul: Lantern of the Damned wisps and a charged soul beam (Click / right click) that grow
+ * stronger with every zombie they kill, a 5-slot corpse queue fed by Grave zombies (and real
+ * Invasion husk kills), Amalgam allies raised from that queue, Death Whistle recalls + heals
+ * them, and Hell's Torment burns them out in a blaze of embers. Amalgams and grave zombies are
+ * plain `Husk` instances SoulKit owns and ticks manually — never added to `arena.enemies`.
  *
- * Upgrades layer on: overheal shields (Click+), grave enhancement into
- * Angered Zombies (E+), Invasion-variant recruitment via a friendly/hostile
- * `HuskWorld` (R+), a temporary speed+damage buff off Death Whistle (F+),
- * and a burnt "Inflamed" amalgam tier reborn from Hell's Torment kills (Q).
+ * Upgrades layer on: Soul Lord kill milestones (Click+), decay clouds (E+), graveyard tiers
+ * (R+), a temporary speed+damage buff off Death Whistle (F+), and a burnt "Inflamed" amalgam
+ * tier reborn from Hell's Torment kills (Q+).
  */
 export class SoulKit {
   // ── Visuals ───────────────────────────────────────────────────────────
@@ -364,29 +444,27 @@ export class SoulKit {
   /** Last aim point, cached in handleInput so the per-frame avatar update can face it. */
   private aimX = 0;
   private aimY = 0;
-  /** Timestamp a cord was last opened, per side — drives the sustained reaching pose. */
-  private siphonHeldUntil: Record<Owner, number> = { player: 0, npc: 0 };
   /** Call of the Void: the HP fraction this side's next whistle will claim at. Per-owner. */
   private voidThreshold: Record<Owner, number> = { player: VOID_CALL_BASE, npc: VOID_CALL_BASE };
 
-  private siphons: SiphonLine[] = [];
-  private decayClouds: DecayCloud[] = [];
-  /** Click+ Possession — the amalgam the caster is currently riding, and its own clocks. */
-  private possessed: Amalgam | null = null;
-  private possessNextBiteAt = 0;
-  private possessNextSpecialAt = 0;
-  private possessChargeUntil = 0;
-  private possessEndsAt = 0;
-  /** When the caster was last put back in their own body — the 30s cooldown runs from here. */
-  private possessLastEndedAt = -POSSESS_COOLDOWN_MS;
-  private possessOpen = 0;
-  private possessFlower: Phaser.GameObjects.Graphics | null = null;
-  private possessT = 0;
-  /** Screen-space panel naming whatever you are currently wearing. Player side only. */
-  private possessHudPanel: Phaser.GameObjects.Graphics | null = null;
-  private possessHudName: Phaser.GameObjects.Text | null = null;
-  private possessHudKeys: Phaser.GameObjects.Text | null = null;
+  // ── Click: Lantern of the Damned + Soul Beam, Click+ Soul Lord ─────
+  private bolts: LanternBolt[] = [];
+  private beams: BeamFlash[] = [];
+  private hemorrhages: Hemorrhage[] = [];
+  /** Zombies the lantern family has killed this match, per side. */
+  private kills: Record<Owner, number> = { player: 0, npc: 0 };
+  private ascended: Record<Owner, boolean> = { player: false, npc: false };
+  /** A beam being charged. The player aims it live; a bot's is locked to the point it chose. */
+  private beamCharge: Record<Owner, { startedAt: number; tx: number; ty: number } | null> = { player: null, npc: null };
+  private beamReadyAt: Record<Owner, number> = { player: 0, npc: 0 };
+  private beamChargeGfx: Record<Owner, Phaser.GameObjects.Graphics | null> = { player: null, npc: null };
+  private orbGfx: Record<Owner, Phaser.GameObjects.Graphics | null> = { player: null, npc: null };
+  private orbAngle: Record<Owner, number> = { player: 0, npc: 0 };
+  /** Per-target re-hit clock for the orbs. */
+  private orbHitAt: Record<Owner, Map<Fighter, number>> = { player: new Map(), npc: new Map() };
   private playerPointerWasDown = false;
+  private playerRightWasDown = false;
+  private decayClouds: DecayCloud[] = [];
   private graves: Grave[] = [];
   private graveZombies: GraveZombie[] = [];
   private amalgams: Amalgam[] = [];
@@ -406,6 +484,8 @@ export class SoulKit {
   private hudIcons: Phaser.GameObjects.Image[] = [];
   /** `2/3` beside the corpse queue — a cap you cannot see is a cap you cannot play around. */
   private hudBodyCount: Phaser.GameObjects.Text | null = null;
+  /** Lantern kills, and with Soul Lord the next milestone — left of the corpse queue. */
+  private hudKills: Phaser.GameObjects.Text | null = null;
 
   /** Shared HuskWorld for every zombie/amalgam SoulKit owns — resolves target/owner by pool lookup. */
   private huskWorld: HuskWorld = {
@@ -422,6 +502,8 @@ export class SoulKit {
     this.ncol = (base) => arena.soulColor('npc', base);
     this.pfx = new SoulFx(arena.scene, this.pcol);
     this.nfx = new SoulFx(arena.scene, this.ncol);
+    // The first match after load never sees reset(), so seed it here too.
+    this.seedStartingCorpses();
   }
 
   /** Colour mapper for a side. */
@@ -440,28 +522,28 @@ export class SoulKit {
     if (this.masteryShroud) { this.masteryShroud.destroy(); this.masteryShroud = null; }
     this.aimX = 0;
     this.aimY = 0;
-    this.siphonHeldUntil = { player: 0, npc: 0 };
     this.voidThreshold = { player: VOID_CALL_BASE, npc: VOID_CALL_BASE };
 
-    for (const s of this.siphons) s.gfx.destroy();
-    this.siphons = [];
+    for (const b of this.bolts) b.gfx.destroy();
+    this.bolts = [];
+    for (const b of this.beams) b.gfx.destroy();
+    this.beams = [];
+    for (const h of this.hemorrhages) h.gfx.destroy();
+    this.hemorrhages = [];
+    this.kills = { player: 0, npc: 0 };
+    this.ascended = { player: false, npc: false };
+    this.beamCharge = { player: null, npc: null };
+    this.beamReadyAt = { player: 0, npc: 0 };
+    for (const o of ['player', 'npc'] as Owner[]) {
+      this.beamChargeGfx[o]?.destroy(); this.beamChargeGfx[o] = null;
+      this.orbGfx[o]?.destroy(); this.orbGfx[o] = null;
+    }
+    this.orbAngle = { player: 0, npc: 0 };
+    this.orbHitAt = { player: new Map(), npc: new Map() };
+    this.playerPointerWasDown = false;
+    this.playerRightWasDown = false;
     for (const c of this.decayClouds) c.sprite.destroy();
     this.decayClouds = [];
-    // Possession — the caster gets their body back whatever state the match ended in.
-    this.possessed = null;
-    this.possessNextBiteAt = 0;
-    this.possessNextSpecialAt = 0;
-    this.possessChargeUntil = 0;
-    this.possessEndsAt = 0;
-    this.possessLastEndedAt = -POSSESS_COOLDOWN_MS;
-    this.possessOpen = 0;
-    this.possessT = 0;
-    this.possessFlower?.destroy(); this.possessFlower = null;
-    this.possessHudPanel?.destroy(); this.possessHudPanel = null;
-    this.possessHudName?.destroy(); this.possessHudName = null;
-    this.possessHudKeys?.destroy(); this.possessHudKeys = null;
-    this.playerPointerWasDown = false;
-    if (this.arena.player.damageAbsorber) this.arena.player.damageAbsorber = null;
     for (const g of this.graves) { g.sprite.destroy(); g.aura.destroy(); }
     this.graves = [];
     for (const gz of this.graveZombies) {
@@ -490,9 +572,11 @@ export class SoulKit {
     this.soulAntiHealUntil = 0;
     this.soulScreechLastCastAt = -SOUL_SCREECH_COOLDOWN_MS;
     this.corpseQueue = { player: [], npc: [] };
+    this.seedStartingCorpses();
     for (const t of this.hudIcons) t.destroy();
     this.hudIcons = [];
     this.hudBodyCount?.destroy(); this.hudBodyCount = null;
+    this.hudKills?.destroy(); this.hudKills = null;
     // Ward owns its own multiplier now, so the reset is unconditional rather than the old
     // "clear it only if the value still looks like mine" guess against a shared field.
     this.arena.player.wardIncomingMult = 1;
@@ -520,25 +604,6 @@ export class SoulKit {
     return n;
   }
 
-  siphonCount(owner: Owner): number { return this.siphons.filter((s) => s.owner === owner).length; }
-
-  /**
-   * Bot synergy — the kit's own loop, published for the AI: a grave zombie is a corpse waiting
-   * to happen, and Siphon is the only thing that turns one into the other. This returns where
-   * the npc's nearest drainable zombie is standing, or null. Side-effect free.
-   */
-  npcDrainPoint(): { x: number; y: number } | null {
-    const { npc } = this.arena;
-    let best: Husk | null = null;
-    let bestD = SIPHON_RANGE;
-    for (const gz of this.graveZombies) {
-      if (gz.owner !== 'npc' || !gz.husk.active || gz.husk.hp <= 0) continue;
-      const d = Phaser.Math.Distance.Between(npc.x, npc.y, gz.husk.x, gz.husk.y);
-      if (d <= bestD) { bestD = d; best = gz.husk; }
-    }
-    return best ? { x: best.x, y: best.y } : null;
-  }
-
   /** Invasion: a real husk died — feed it into the player's corpse queue. */
   onRealHuskKilled(husk: Husk): void {
     this.pushCorpse('player', { maxHp: husk.maxHp, variant: husk.variant.id !== 'basic' ? husk.variant : undefined });
@@ -551,34 +616,39 @@ export class SoulKit {
     // `update` has no pointer, so the aim the rig faces is cached here.
     this.aimX = mouseX;
     this.aimY = mouseY;
-    const pointerJustDown = pointer.isDown && !this.playerPointerWasDown;
-    this.playerPointerWasDown = pointer.isDown;
-    if (!player.active || player.hp <= 0) return;
+    const leftDown = pointer.leftButtonDown();
+    const rightDown = pointer.rightButtonDown();
+    const leftJustDown = leftDown && !this.playerPointerWasDown;
+    const rightJustDown = rightDown && !this.playerRightWasDown;
+    const rightReleased = !rightDown && this.playerRightWasDown;
+    this.playerPointerWasDown = leftDown;
+    this.playerRightWasDown = rightDown;
+    if (!player.active || player.hp <= 0) { this.beamCharge.player = null; return; }
     const ctx = () => this.arena.buildPlayerContext(mouseX, mouseY);
-
-    // ── Click+ Possession: while riding, Click bites and E is the amalgam's own move ──
-    // The caster's own R, F and Q still answer — the body is open, not asleep — but E belongs
-    // to whatever you are wearing for as long as it lives, ahead of everything including a
-    // mastery bound to that key. JustDown consumes the flag, so this ordering is the whole
-    // arbitration: whoever reads E first owns the press.
-    const riding = this.possessed;
 
     // ── Mastery — Grave Mistake takes over its bound slot ────────────────
     const graveSlot = this.arena.masteryActive ? this.graveMistakeSlot() : null;
-    if (graveSlot && !(riding && graveSlot === 'e')) {
+    if (graveSlot) {
       const gk = graveSlot === 'e' ? eKey : graveSlot === 'r' ? rKey : graveSlot === 'f' ? fKey : qKey;
       if (Phaser.Input.Keyboard.JustDown(gk)) this.tryCastGraveMistake(time, mouseX, mouseY);
     }
 
-    if (riding) {
-      if (pointerJustDown) this.possessBite(time);
-      if (Phaser.Input.Keyboard.JustDown(eKey)) this.possessSpecial(time);
-    } else {
-      // Click: Siphon — one cord per press, caught on whatever is nearest the cursor.
-      if (pointerJustDown) player.castAbility('soul-siphon', ctx());
-      if (graveSlot !== 'e' && Phaser.Input.Keyboard.JustDown(eKey)) player.castAbility('soul-arise', ctx());
+    // Click: Lantern of the Damned — one wisp per press.
+    if (leftJustDown) player.castAbility('soul-lantern', ctx());
+    // Right click: hold to charge the soul beam, release to fire it along the cursor.
+    if (rightJustDown && !this.beamCharge.player && time >= this.beamReadyAt.player) {
+      this.beamCharge.player = { startedAt: time, tx: mouseX, ty: mouseY };
+    }
+    if (rightReleased && this.beamCharge.player) {
+      const charge = this.beamChargeFrac('player', time);
+      this.beamCharge.player = null;
+      if (charge >= BEAM_MIN_CHARGE) {
+        this.fireBeam('player', mouseX, mouseY, charge);
+        this.arena.broadcastMasteryCast(`soul-beam:${Math.round(charge * 100)}`);
+      }
     }
 
+    if (graveSlot !== 'e' && Phaser.Input.Keyboard.JustDown(eKey)) player.castAbility('soul-arise', ctx());
     if (graveSlot !== 'r' && Phaser.Input.Keyboard.JustDown(rKey)) player.castAbility('soul-grave', ctx());
     if (graveSlot !== 'f' && Phaser.Input.Keyboard.JustDown(fKey)) player.castAbility('soul-death-whistle', ctx());
     if (graveSlot !== 'q' && Phaser.Input.Keyboard.JustDown(qKey)) player.castAbility('soul-hells-torment', ctx());
@@ -588,10 +658,11 @@ export class SoulKit {
 
   update(time: number, delta: number): void {
     this.updateAvatars(time, delta);
-    this.updateSiphons(time, delta);
+    this.updateLanterns(time, delta);
+    this.updateBeams(time, delta);
+    this.updateHemorrhages(time, delta);
+    this.updateSoulOrbs(time, delta);
     this.updateDecayClouds(time, delta);
-    this.updatePossession(time, delta);
-    this.updatePossessHud(time);
     this.updateGraves(time, delta);
     this.updateGraveZombies(time, delta);
     this.updateAmalgams(time, delta);
@@ -621,8 +692,9 @@ export class SoulKit {
       const aimY = this.aimY || player.y;
       const aim = Math.atan2(aimY - player.y, aimX - player.x);
       this.playerAvatar.setFacing(aim);
-      // A cord being held open is a sustained pose, not a string of jabs.
-      this.playerAvatar.setHold(time < this.siphonHeldUntil.player ? 'spray' : null, aim);
+      // A beam being charged is a sustained pose, not a string of jabs.
+      this.playerAvatar.setHold(this.beamCharge.player ? 'charge' : null, aim);
+      this.playerAvatar.setAscended(this.ascended.player);
       // A caster surrounded by their own dead is the character at full stretch.
       const host = this.amalgamCount('player');
       this.playerAvatar.setIntensity(host >= 3 ? 1.4 : host >= 1 ? 1.15 : 1);
@@ -630,8 +702,9 @@ export class SoulKit {
       this.playerAvatar.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
 
       if (this.arena.masteryActive) {
-        if (!this.masteryShroud) this.masteryShroud = new SoulShroud(scene, this.pcol, SPIRIT_TONES, 42, 0.7, 2, 7);
+        if (!this.masteryShroud) this.masteryShroud = new SoulShroud(scene, this.pcol, this.tonesOf('player'), 42, 0.7, 2, 7);
         // The veil thickens with the crowd, which is exactly what the passive scales on.
+        this.masteryShroud.setTones(this.tonesOf('player'));
         this.masteryShroud.setIntensity(0.6 + Math.min(1, host / 5) * 0.7);
         this.masteryShroud.update(delta, player.x, player.y, player.alpha);
       } else if (this.masteryShroud) {
@@ -648,7 +721,8 @@ export class SoulKit {
       if (!this.npcAvatar) this.npcAvatar = new SoulAvatar(scene, this.ncol, NPC_TONES);
       const aim = Math.atan2(player.y - npc.y, player.x - npc.x);
       this.npcAvatar.setFacing(aim);
-      this.npcAvatar.setHold(time < this.siphonHeldUntil.npc ? 'spray' : null, aim);
+      this.npcAvatar.setHold(this.beamCharge.npc ? 'charge' : null, aim);
+      this.npcAvatar.setAscended(this.ascended.npc);
       this.npcAvatar.setIntensity(this.amalgamCount('npc') >= 2 ? 1.3 : 1);
       this.npcAvatar.setMastered(this.arena.npcMasteryActive);
       this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
@@ -660,133 +734,400 @@ export class SoulKit {
 
   // ── Cast entry points (from CastContext) ────────────────────────────
 
-  /**
-   * Siphon (Click). One press opens one cord onto whatever is nearest the cursor. A cord on
-   * anything hostile — the other fighter, an invasion husk, the loose alpha, or one of your own
-   * grave zombies — empties it a little at a time; a cord on one of your amalgams feeds it
-   * instead, and anything above its maximum becomes shield HP without needing the upgrade.
-   *
-   * Three cords is the ceiling, and they may all land on the same thing. A fourth press recycles
-   * the oldest rather than being refused, because the cords have no duration of their own and a
-   * refusal would leave you stuck holding three lines onto something already dead in the water.
-   */
-  doSiphon(tx: number, ty: number, owner: Owner): void {
-    const caster = this.fighterOf(owner);
-    const scene = this.arena.scene;
-    const fx = this.fx(owner);
-    this.siphonHeldUntil[owner] = scene.time.now + 320;
+  // ── Click: Lantern of the Damned ─────────────────────────────────────
+  //
+  // Left click throws a flaming wisp that chases the cursor until it reaches it — it may bend
+  // toward a moving cursor, but never turn back on itself, so it cannot circle the mouse — and
+  // then flies on in a straight line. Right click is held to charge a piercing soul beam. Both
+  // scale with the zombies the lantern family has killed this match, and Click+ (Soul Lord)
+  // unlocks a new power at 5, 10, 15 and 25 of those kills.
 
-    // Nearest valid anchor to the cursor, inside the grab radius.
-    let best: { f: Fighter; kind: 'drain' | 'mend' } | null = null;
-    let bestD = SIPHON_GRAB_RADIUS;
-    for (const c of this.siphonCandidates(owner)) {
-      const d = Phaser.Math.Distance.Between(tx, ty, c.f.x, c.f.y);
-      if (d <= bestD) { bestD = d; best = c; }
-    }
-    if (!best) {
-      // The gesture still fires on empty air — reaching for a spirit that isn't there.
-      this.avatar(owner)?.play('raise', Math.atan2(ty - caster.y, tx - caster.x), 320);
-      return;
-    }
-    if (Phaser.Math.Distance.Between(caster.x, caster.y, best.f.x, best.f.y) > SIPHON_RANGE) {
-      if (owner === 'player') this.arena.showFloatingText(caster.x, caster.y - 40, 'TOO FAR', '#775588');
-      return;
-    }
-
-    const mine = this.siphons.filter((s) => s.owner === owner);
-    if (mine.length >= SIPHON_MAX_LINES) this.releaseSiphon(mine[0]);
-
-    const tones = best.kind === 'drain' ? ROT_TONES : tonesFor(owner);
-    this.siphons.push({
-      owner, kind: best.kind, target: best.f,
-      gfx: scene.add.graphics().setDepth(6),
-      tickAccum: 0, t: Math.random() * 6,
-    });
-    this.avatar(owner)?.play('punch', Math.atan2(best.f.y - caster.y, best.f.x - caster.x));
-    fx.tether(caster.x, caster.y, best.f.x, best.f.y, 320, 6, tones);
-    fx.muzzleWisp(caster.x, caster.y, Math.atan2(best.f.y - caster.y, best.f.x - caster.x), 0.9, 6, tones);
-    fx.ring(best.f.x, best.f.y, 20, 6, tones.glow, 320, 2.5, 6);
-
-    // Click+ Possession: three mend cords on the same amalgam and you climb into it.
-    if (owner === 'player' && best.kind === 'mend' && this.arena.hasUpgrade('click') && !this.possessed) {
-      const rec = this.amalgams.find((a) => a.husk === best!.f);
-      const full = rec && this.siphons.filter((s) => s.owner === 'player' && s.target === best!.f).length >= SIPHON_MAX_LINES;
-      if (full) {
-        const now = scene.time.now;
-        const readyAt = this.possessLastEndedAt + POSSESS_COOLDOWN_MS;
-        if (now >= readyAt) this.beginPossession(rec!);
-        else {
-          this.arena.showFloatingText(caster.x, caster.y - 44,
-            `🌸 ${Math.ceil((readyAt - now) / 1000)}s`, '#775588');
-        }
-      }
-    }
-  }
-
-  /** Everything a cord can be thrown onto this frame, tagged with what the cord would do. */
-  private siphonCandidates(owner: Owner): { f: Fighter; kind: 'drain' | 'mend' }[] {
-    const out: { f: Fighter; kind: 'drain' | 'mend' }[] = [];
-    for (const f of this.foesOf(owner)) out.push({ f, kind: 'drain' });
-    // Your own grave zombies are hostile bodies: draining them is how the corpse queue is fed.
+  /** Everything a lantern, beam, aura or orb of this side can hurt — foes, and the dead. */
+  private lanternTargets(owner: Owner): Fighter[] {
+    const out = this.foesOf(owner);
     for (const gz of this.graveZombies) {
-      if (gz.owner === owner && gz.husk.active && gz.husk.hp > 0) out.push({ f: gz.husk, kind: 'drain' });
+      if (gz.husk.active && gz.husk.hp > 0 && !out.includes(gz.husk)) out.push(gz.husk);
     }
-    for (const rec of this.amalgams) {
-      if (rec.owner === owner && rec.husk.active && rec.husk.hp > 0) out.push({ f: rec.husk, kind: 'mend' });
+    for (const a of this.amalgams) {
+      if (a.owner !== owner && a.husk.active && a.husk.hp > 0) out.push(a.husk);
     }
     return out;
   }
 
-  private releaseSiphon(line: SiphonLine): void {
-    const idx = this.siphons.indexOf(line);
-    if (idx !== -1) this.siphons.splice(idx, 1);
-    line.gfx.destroy();
+  /** Damage multiplier from this match's kills: +5% each, up to ×3. */
+  private killMult(owner: Owner): number {
+    return 1 + Math.min(LANTERN_KILL_BONUS_CAP, this.kills[owner] * LANTERN_KILL_BONUS);
   }
 
-  private updateSiphons(time: number, delta: number): void {
-    for (let i = this.siphons.length - 1; i >= 0; i--) {
-      const s = this.siphons[i];
-      const caster = this.fighterOf(s.owner);
-      const target = s.target;
-      if (!caster.active || !target.active || target.hp <= 0) { this.releaseSiphon(s); continue; }
+  /** Soul Lord (Click+) is owned by this side. */
+  private lordActive(owner: Owner): boolean {
+    return owner === 'player' ? this.arena.hasUpgrade('click') : this.arena.hasNpcUpgrade('click');
+  }
 
-      const dist = Phaser.Math.Distance.Between(caster.x, caster.y, target.x, target.y);
-      if (dist > SIPHON_RANGE) {
-        // Snapped. The spirit that was in the cord comes apart where it broke.
-        this.fx(s.owner).wisps((caster.x + target.x) / 2, (caster.y + target.y) / 2, 5, {
-          speed: 90, size: 2.6, life: 420, rise: -20, depth: 6,
-          tones: s.kind === 'drain' ? ROT_TONES : tonesFor(s.owner),
-        });
-        if (s.owner === 'player') this.arena.showFloatingText(target.x, target.y - 30, 'SNAPPED', '#775588');
-        this.releaseSiphon(s);
-        continue;
+  /** A Soul Lord tier is unlocked: the upgrade is owned and enough zombies have died to it. */
+  private lordTier(owner: Owner, kills: number): boolean {
+    return this.lordActive(owner) && this.kills[owner] >= kills;
+  }
+
+  /** The owner's soul colours — gold once Soul Lord has ascended them. */
+  private tonesOf(owner: Owner): SoulTones {
+    return this.ascended[owner] ? GOLD_TONES : tonesFor(owner);
+  }
+
+  /** Kills on the lantern family this match. */
+  killCount(owner: Owner): number { return this.kills[owner]; }
+
+  /**
+   * One hit from any lantern-family source. Damage goes through the target's own `takeDamage`
+   * (and its own damage number); a zombie that dies to it is a kill for the owner.
+   */
+  private soulStrike(owner: Owner, target: Fighter, dmg: number): void {
+    if (!target.active || target.hp <= 0 || dmg <= 0) return;
+    target.takeDamage(dmg);
+    this.arena.spawnHitFlash(target.x, target.y, this.tonesOf(owner).glow);
+    if (target.hp <= 0 && target instanceof Husk) this.creditKill(owner, target.x, target.y);
+  }
+
+  private creditKill(owner: Owner, x: number, y: number): void {
+    this.kills[owner]++;
+    const k = this.kills[owner];
+    const caster = this.fighterOf(owner);
+    const tones = this.tonesOf(owner);
+    // The freed soul streaks back into the lantern.
+    this.fx(owner).tether(x, y, caster.x, caster.y, 360, 7, tones);
+    this.arena.showFloatingText(x, y - 26, `☠ ${k}`, owner === 'player' ? '#ddbbff' : '#aa88cc');
+    if (!this.lordActive(owner)) return;
+    const unlock: Record<number, string> = {
+      [LORD_SPLIT_KILLS]: '🏮 SOUL LORD — lanterns split',
+      [LORD_HEMO_KILLS]: '🩸 SOUL LORD — beam hemorrhages',
+      [LORD_ORB_KILLS]: '🔮 SOUL LORD — soul orbs',
+    };
+    if (unlock[k]) {
+      this.arena.showFloatingText(caster.x, caster.y - 52, unlock[k], '#eeddff');
+      this.fx(owner).ring(caster.x, caster.y, 14, 70, tones.glow, 520, 4, 7);
+    }
+    if (k === LORD_ASCEND_KILLS) this.ascend(owner);
+  }
+
+  /** 25 kills with Soul Lord: everything turns gold and the caster becomes an angelic figure. */
+  private ascend(owner: Owner): void {
+    if (this.ascended[owner]) return;
+    this.ascended[owner] = true;
+    const caster = this.fighterOf(owner);
+    const fx = this.fx(owner);
+    this.avatar(owner)?.setAscended(true);
+    this.avatar(owner)?.play('raise', undefined, 700);
+    fx.bloom(caster.x, caster.y, 60, 14, 6, GOLD_TONES);
+    fx.ring(caster.x, caster.y, 12, 140, SOUL.sun, 700, 6, 7);
+    fx.soulRise(caster.x, caster.y, 110, 900, 7, GOLD_TONES);
+    fx.flash(caster.x, caster.y, 46, 8, GOLD_TONES);
+    if (owner === 'player') this.arena.scene.cameras.main.shake(220, 0.006);
+    this.arena.showFloatingText(caster.x, caster.y - 60, '✨ SOUL LORD ASCENDED ✨', '#ffe07a');
+  }
+
+  doLantern(tx: number, ty: number, owner: Owner): void {
+    const caster = this.fighterOf(owner);
+    const scene = this.arena.scene;
+    const ang = Math.atan2(ty - caster.y, tx - caster.x);
+    const x = caster.x + Math.cos(ang) * 18;
+    const y = caster.y + Math.sin(ang) * 18;
+    const now = scene.time.now;
+    this.bolts.push({
+      owner, gfx: scene.add.graphics().setDepth(7), x, y, angle: ang, speed: LANTERN_SPEED,
+      seeking: true, seekX: tx, seekY: ty,
+      // The local player's wisp follows the live cursor; a bot's or a peer's goes to the point.
+      live: owner === 'player', frac: 1, small: false, ignore: null,
+      bornAt: now, expiresAt: now + LANTERN_LIFETIME_MS, t: Math.random() * 6,
+    });
+    this.avatar(owner)?.play('punch', ang);
+    this.fx(owner).muzzleWisp(x, y, ang, 1, 7, this.tonesOf(owner));
+  }
+
+  private spawnShards(b: LanternBolt, hit: Fighter | null): void {
+    const scene = this.arena.scene;
+    const now = scene.time.now;
+    // Random rotation, equal spacing.
+    const base = Math.random() * Math.PI * 2;
+    for (let i = 0; i < SPLIT_COUNT; i++) {
+      this.bolts.push({
+        owner: b.owner, gfx: scene.add.graphics().setDepth(7), x: b.x, y: b.y,
+        angle: base + (i / SPLIT_COUNT) * Math.PI * 2, speed: SPLIT_SPEED,
+        seeking: false, seekX: 0, seekY: 0, live: false, frac: SPLIT_DMG_FRAC, small: true, ignore: hit,
+        bornAt: now, expiresAt: now + SPLIT_LIFETIME_MS, t: Math.random() * 6,
+      });
+    }
+  }
+
+  private removeBolt(i: number, burst: boolean): void {
+    const b = this.bolts[i];
+    if (burst) {
+      this.fx(b.owner).wisps(b.x, b.y, b.small ? 2 : 5, {
+        speed: 70, size: b.small ? 1.8 : 2.6, life: 380, rise: -22, depth: 7, tones: this.tonesOf(b.owner),
+      });
+    }
+    b.gfx.destroy();
+    this.bolts.splice(i, 1);
+  }
+
+  private updateLanterns(time: number, delta: number): void {
+    if (this.bolts.length === 0) return;
+    const dt = delta / 1000;
+    const W = this.arena.width, H = this.arena.height;
+    const targets: Record<Owner, Fighter[] | null> = { player: null, npc: null };
+    const targetsOf = (o: Owner): Fighter[] => (targets[o] ??= this.lanternTargets(o));
+
+    for (let i = this.bolts.length - 1; i >= 0; i--) {
+      const b = this.bolts[i];
+      if (time >= b.expiresAt) { this.removeBolt(i, true); continue; }
+      b.t += dt;
+
+      if (b.seeking) {
+        if (b.live) { b.seekX = this.aimX; b.seekY = this.aimY; }
+        const want = Math.atan2(b.seekY - b.y, b.seekX - b.x);
+        const off = Math.abs(Phaser.Math.Angle.Wrap(want - b.angle));
+        // Arrived, or the cursor is now behind it: from here on it only flies straight.
+        if (Phaser.Math.Distance.Between(b.x, b.y, b.seekX, b.seekY) <= LANTERN_ARRIVE_RADIUS
+          || off > LANTERN_GIVE_UP_ANGLE || time - b.bornAt > LANTERN_SEEK_MAX_MS) {
+          b.seeking = false;
+        } else {
+          b.angle = Phaser.Math.Angle.RotateTo(b.angle, want, LANTERN_TURN_RATE * dt);
+        }
+      } else if (this.lordTier(b.owner, LORD_ASCEND_KILLS)) {
+        // Ascended: once free of the cursor, every wisp hunts the nearest thing it can hurt.
+        let best: Fighter | null = null;
+        let bestD = HOMING_RANGE;
+        for (const t of targetsOf(b.owner)) {
+          if (t === b.ignore) continue;
+          const d = Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y);
+          if (d < bestD) { bestD = d; best = t; }
+        }
+        if (best) b.angle = Phaser.Math.Angle.RotateTo(b.angle, Math.atan2(best.y - b.y, best.x - b.x), HOMING_TURN_RATE * dt);
       }
 
-      s.t += delta / 1000;
-      s.gfx.clear();
-      SoulFx.drawSiphon(
-        s.gfx, this.col(s.owner), s.kind === 'drain' ? ROT_TONES : tonesFor(s.owner),
-        caster.x, caster.y, target.x, target.y, s.t, s.kind === 'drain',
-        Phaser.Math.Clamp(dist / SIPHON_RANGE, 0, 1),
-      );
+      b.x += Math.cos(b.angle) * b.speed * dt;
+      b.y += Math.sin(b.angle) * b.speed * dt;
+      if (b.x < -20 || b.x > W + 20 || b.y < -20 || b.y > H + 20) { this.removeBolt(i, false); continue; }
 
-      s.tickAccum += delta;
-      while (s.tickAccum >= SIPHON_TICK_MS) {
-        s.tickAccum -= SIPHON_TICK_MS;
-        if (s.kind === 'drain') {
-          target.takeDamage(SIPHON_DRAIN_PER_TICK);
-          this.arena.spawnHitFlash(target.x, target.y, 0x33cc44);
-        } else {
-          this.healAllyWithOverheal(target, SIPHON_HEAL_PER_TICK);
+      b.gfx.clear();
+      SoulFx.drawLantern(b.gfx, this.col(b.owner), this.tonesOf(b.owner), b.x, b.y, b.angle,
+        b.small ? LANTERN_RADIUS * 0.55 : LANTERN_RADIUS, b.t, b.small);
+
+      const reach = b.small ? LANTERN_HIT_RADIUS * 0.7 : LANTERN_HIT_RADIUS;
+      for (const t of targetsOf(b.owner)) {
+        if (t === b.ignore || !t.active || t.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) > reach) continue;
+        this.soulStrike(b.owner, t, Math.max(1, Math.round(LANTERN_DAMAGE * b.frac * this.killMult(b.owner))));
+        this.fx(b.owner).flash(b.x, b.y, b.small ? 10 : 18, 7, this.tonesOf(b.owner));
+        // Soul Lord 5: a full wisp bursts into smaller ones on impact.
+        if (!b.small && this.lordTier(b.owner, LORD_SPLIT_KILLS)) this.spawnShards(b, t);
+        this.removeBolt(i, true);
+        break;
+      }
+    }
+  }
+
+  /** How full a side's beam charge is, 0 → 1. */
+  private beamChargeFrac(owner: Owner, time: number): number {
+    const c = this.beamCharge[owner];
+    if (!c) return 0;
+    const full = this.lordTier(owner, LORD_ASCEND_KILLS) ? BEAM_CHARGE_ASCENDED_MS : BEAM_CHARGE_MS;
+    return Phaser.Math.Clamp((time - c.startedAt) / full, 0, 1);
+  }
+
+  /**
+   * Bot entry (`ctx.soulBeam`): start charging at a fixed point. The kit fires it itself when the
+   * charge is full, so the wind-up is as visible — and as dodgeable — as the player's.
+   */
+  doBeamCharge(tx: number, ty: number, owner: Owner): void {
+    const now = this.arena.scene.time.now;
+    if (this.beamCharge[owner] || now < this.beamReadyAt[owner]) return;
+    this.beamCharge[owner] = { startedAt: now, tx, ty };
+  }
+
+  /** Online: the peer released a beam. The charge rides in the relay id (`soul-beam:<0-100>`). */
+  replayBeam(relayId: string, tx: number, ty: number): void {
+    const pct = Number(relayId.split(':')[1] ?? 100);
+    this.beamCharge.npc = null;
+    this.fireBeam('npc', tx, ty, Phaser.Math.Clamp((Number.isFinite(pct) ? pct : 100) / 100, 0, 1));
+  }
+
+  private fireBeam(owner: Owner, tx: number, ty: number, charge: number): void {
+    const caster = this.fighterOf(owner);
+    const scene = this.arena.scene;
+    const ang = Math.atan2(ty - caster.y, tx - caster.x);
+    const x1 = caster.x + Math.cos(ang) * 16, y1 = caster.y + Math.sin(ang) * 16;
+    const x2 = caster.x + Math.cos(ang) * BEAM_LENGTH, y2 = caster.y + Math.sin(ang) * BEAM_LENGTH;
+    const width = BEAM_MIN_WIDTH + (BEAM_MAX_WIDTH - BEAM_MIN_WIDTH) * charge;
+    const dmg = Math.round((BEAM_MIN_DMG + (BEAM_MAX_DMG - BEAM_MIN_DMG) * charge) * this.killMult(owner));
+    const hemo = this.lordTier(owner, LORD_HEMO_KILLS);
+
+    // Pierces: everything along the line takes the full hit.
+    for (const t of this.lanternTargets(owner)) {
+      if (distToSegment(t.x, t.y, x1, y1, x2, y2) > width / 2 + 16) continue;
+      this.soulStrike(owner, t, dmg);
+      if (hemo && t.active && t.hp > 0) this.applyHemorrhage(owner, t);
+    }
+
+    this.beams.push({
+      owner, gfx: scene.add.graphics().setDepth(7), x1, y1, x2, y2, width,
+      bornAt: scene.time.now, t: Math.random() * 6,
+    });
+    this.beamReadyAt[owner] = scene.time.now + BEAM_COOLDOWN_MS;
+    const tones = this.tonesOf(owner);
+    this.avatar(owner)?.play('punch', ang, 260);
+    this.fx(owner).flash(x1, y1, 16 + charge * 12, 8, tones);
+    this.fx(owner).muzzleWisp(x1, y1, ang, 1 + charge * 0.6, 7, tones);
+    if (owner === 'player' && charge > 0.8) scene.cameras.main.shake(110, 0.004);
+  }
+
+  private updateBeams(time: number, delta: number): void {
+    const dt = delta / 1000;
+    for (let i = this.beams.length - 1; i >= 0; i--) {
+      const b = this.beams[i];
+      const life = 1 - (time - b.bornAt) / BEAM_FADE_MS;
+      if (life <= 0) { b.gfx.destroy(); this.beams.splice(i, 1); continue; }
+      b.t += dt;
+      b.gfx.clear();
+      SoulFx.drawBeam(b.gfx, this.col(b.owner), this.tonesOf(b.owner), b.x1, b.y1, b.x2, b.y2, b.width, life, b.t);
+    }
+
+    // The charge in hand: drawn for whoever is holding one; a bot's fires itself when full.
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const c = this.beamCharge[owner];
+      const caster = this.fighterOf(owner);
+      if (c && (!caster.active || caster.hp <= 0)) this.beamCharge[owner] = null;
+      if (!this.beamCharge[owner]) {
+        if (this.beamChargeGfx[owner]) { this.beamChargeGfx[owner]!.destroy(); this.beamChargeGfx[owner] = null; }
+        continue;
+      }
+      const frac = this.beamChargeFrac(owner, time);
+      const ax = owner === 'player' ? this.aimX : c!.tx;
+      const ay = owner === 'player' ? this.aimY : c!.ty;
+      const ang = Math.atan2(ay - caster.y, ax - caster.x);
+      const g = this.beamChargeGfx[owner] ??= this.arena.scene.add.graphics().setDepth(7);
+      g.clear();
+      SoulFx.drawBeamCharge(g, this.col(owner), this.tonesOf(owner),
+        caster.x + Math.cos(ang) * 20, caster.y + Math.sin(ang) * 20, ang, BEAM_LENGTH - 20, frac, time / 1000);
+      if (owner === 'npc' && frac >= 1) {
+        this.beamCharge.npc = null;
+        this.fireBeam('npc', c!.tx, c!.ty, 1);
+      }
+    }
+  }
+
+  /** Soul Lord 10: the beam leaves a bleeding soul aura on what it hit. */
+  private applyHemorrhage(owner: Owner, target: Fighter): void {
+    const now = this.arena.scene.time.now;
+    const existing = this.hemorrhages.find((h) => h.owner === owner && h.target === target);
+    if (existing) { existing.until = now + HEMO_MS; return; }
+    this.hemorrhages.push({
+      owner, target, gfx: this.arena.scene.add.graphics().setDepth(4),
+      until: now + HEMO_MS, tickAccum: 0, t: Math.random() * 6,
+    });
+    this.arena.showFloatingText(target.x, target.y - 40, '🩸 HEMORRHAGE', '#ff7799');
+  }
+
+  private updateHemorrhages(time: number, delta: number): void {
+    for (let i = this.hemorrhages.length - 1; i >= 0; i--) {
+      const h = this.hemorrhages[i];
+      const t = h.target;
+      if (time >= h.until || !t.active || t.hp <= 0) { h.gfx.destroy(); this.hemorrhages.splice(i, 1); continue; }
+      h.t += delta / 1000;
+      h.gfx.clear();
+      SoulFx.drawHemorrhage(h.gfx, this.col(h.owner), this.tonesOf(h.owner), t.x, t.y, HEMO_RADIUS, h.t, (h.until - time) / HEMO_MS);
+      h.tickAccum += delta;
+      while (h.tickAccum >= HEMO_TICK_MS) {
+        h.tickAccum -= HEMO_TICK_MS;
+        const mult = this.killMult(h.owner);
+        // Everything else inside the aura is hurt by it; the bearer bleeds a little too.
+        for (const other of this.lanternTargets(h.owner)) {
+          if (other === t || Phaser.Math.Distance.Between(t.x, t.y, other.x, other.y) > HEMO_RADIUS) continue;
+          this.soulStrike(h.owner, other, Math.round(HEMO_SPLASH * mult));
+        }
+        this.soulStrike(h.owner, t, HEMO_BLEED);
+        if (!t.active || t.hp <= 0) break;
+      }
+    }
+  }
+
+  /** Soul Lord 15: three orbs circling the caster, spinning faster with every kill. */
+  private updateSoulOrbs(time: number, delta: number): void {
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const caster = this.fighterOf(owner);
+      const isSoul = owner === 'player' ? this.arena.elementId === 'soul' : this.arena.npcElementId === 'soul';
+      const on = isSoul && caster.active && caster.hp > 0 && this.lordTier(owner, LORD_ORB_KILLS);
+      if (!on) {
+        if (this.orbGfx[owner]) { this.orbGfx[owner]!.destroy(); this.orbGfx[owner] = null; }
+        continue;
+      }
+      const spin = Math.min(ORB_SPIN_MAX, ORB_SPIN_BASE + (this.kills[owner] - LORD_ORB_KILLS) * ORB_SPIN_PER_KILL);
+      this.orbAngle[owner] += spin * delta / 1000;
+      const g = this.orbGfx[owner] ??= this.arena.scene.add.graphics().setDepth(7);
+      g.clear();
+      const tones = this.tonesOf(owner);
+      const targets = this.lanternTargets(owner);
+      const hitAt = this.orbHitAt[owner];
+      const dmg = Math.round(ORB_DAMAGE * this.killMult(owner));
+      for (let i = 0; i < ORB_COUNT; i++) {
+        const a = this.orbAngle[owner] + (i / ORB_COUNT) * Math.PI * 2;
+        const ox = caster.x + Math.cos(a) * ORB_RADIUS;
+        const oy = caster.y + Math.sin(a) * ORB_RADIUS;
+        SoulFx.drawSoulOrb(g, this.col(owner), tones, ox, oy, a + Math.PI / 2, ORB_SIZE, time / 1000 + i);
+        for (const t of targets) {
+          if (Phaser.Math.Distance.Between(ox, oy, t.x, t.y) > ORB_SIZE + 16) continue;
+          if (time < (hitAt.get(t) ?? 0)) continue;
+          hitAt.set(t, time + ORB_HIT_CD_MS);
+          this.soulStrike(owner, t, dmg);
         }
       }
     }
+  }
+
+  /**
+   * Bot synergy — the npc's own grave zombies are both its kill count and its corpse queue, so
+   * the bot lanterns the nearest one in range. Returns where it stands, or null. Side-effect free.
+   */
+  npcLanternTarget(): { x: number; y: number } | null {
+    const { npc } = this.arena;
+    let best: Husk | null = null;
+    let bestD = NPC_LANTERN_RANGE;
+    for (const gz of this.graveZombies) {
+      if (gz.owner !== 'npc' || !gz.husk.active || gz.husk.hp <= 0) continue;
+      const d = Phaser.Math.Distance.Between(npc.x, npc.y, gz.husk.x, gz.husk.y);
+      if (d <= bestD) { bestD = d; best = gz.husk; }
+    }
+    return best ? { x: best.x, y: best.y } : null;
+  }
+
+  /**
+   * Bot synergy — a beam is worth charging when it is ready and at least two things it can hurt
+   * stand on one line from the npc, or when Soul Lord 10 would hemorrhage the opponent standing
+   * next to its own risen. Returns the aim point, or null. Side-effect free.
+   */
+  npcBeamAim(): { x: number; y: number } | null {
+    const { npc } = this.arena;
+    const now = this.arena.scene.time.now;
+    if (this.beamCharge.npc || now < this.beamReadyAt.npc || !npc.active) return null;
+    const targets = this.lanternTargets('npc').filter((t) => Phaser.Math.Distance.Between(npc.x, npc.y, t.x, t.y) <= BEAM_LENGTH - 30);
+    let best: Fighter | null = null;
+    let bestCount = 0;
+    for (const aim of targets) {
+      const ang = Math.atan2(aim.y - npc.y, aim.x - npc.x);
+      const x2 = npc.x + Math.cos(ang) * BEAM_LENGTH, y2 = npc.y + Math.sin(ang) * BEAM_LENGTH;
+      let n = 0;
+      for (const t of targets) if (distToSegment(t.x, t.y, npc.x, npc.y, x2, y2) <= BEAM_MAX_WIDTH / 2 + 16) n++;
+      if (n > bestCount) { bestCount = n; best = aim; }
+    }
+    if (!best) return null;
+    const hemoSetup = this.lordTier('npc', LORD_HEMO_KILLS) && !(best instanceof Husk)
+      && targets.some((t) => t !== best && Phaser.Math.Distance.Between(best!.x, best!.y, t.x, t.y) <= HEMO_RADIUS);
+    return bestCount >= 2 || hemoSetup ? { x: best.x, y: best.y } : null;
   }
 
   doArise(owner: Owner): void {
     const caster = this.fighterOf(owner);
     const fx = this.fx(owner);
-    const tones = tonesFor(owner);
+    const tones = this.tonesOf(owner);
     const queue = this.corpseQueue[owner];
     if (queue.length === 0) {
       // The gesture still fires on an empty queue — reaching into a grave and finding nothing.
@@ -813,7 +1154,7 @@ export class SoulKit {
     const x = Phaser.Math.Clamp(tx, 20, this.arena.width - 20);
     const y = Phaser.Math.Clamp(ty, 20, this.arena.height - 20);
     const fx = this.fx(owner);
-    const tones = tonesFor(owner);
+    const tones = this.tonesOf(owner);
     // A headstone is driven into the ground, so the arms slam it home.
     this.avatar(owner)?.play('slam', Math.atan2(y - caster.y, x - caster.x));
 
@@ -859,7 +1200,7 @@ export class SoulKit {
   doDeathWhistle(tx: number, ty: number, owner: Owner): void {
     const caster = this.fighterOf(owner);
     const fx = this.fx(owner);
-    const tones = tonesFor(owner);
+    const tones = this.tonesOf(owner);
     // Hands cupped to the mouth, then flung apart with the sound.
     this.avatar(owner)?.play('clap', Math.atan2(ty - caster.y, tx - caster.x));
     fx.shriek(tx, ty, 96, 640, 8, tones);
@@ -867,8 +1208,6 @@ export class SoulKit {
 
     let count = 0;
     for (const rec of this.amalgams) {
-      // The one you are riding answers to you, not to the whistle.
-      if (this.possessed === rec) continue;
       if (rec.owner === owner && rec.husk.active && rec.husk.hp > 0) {
         rec.waypoint = { x: tx, y: ty };
         // The thread each amalgam is being hauled along, so the recall reads at a glance.
@@ -892,7 +1231,7 @@ export class SoulKit {
   private answerTheCall(tx: number, ty: number, owner: Owner): void {
     const caster = this.fighterOf(owner);
     const fx = this.fx(owner);
-    const tones = tonesFor(owner);
+    const tones = this.tonesOf(owner);
     const threshold = this.voidThreshold[owner];
     let claimed = 0;
 
@@ -957,6 +1296,15 @@ export class SoulKit {
     return CORPSE_CAP_BASE;
   }
 
+  /** A soul user walks in with two plain corpses already queued, so the first Arise is ready. */
+  private seedStartingCorpses(): void {
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const isSoul = owner === 'player' ? this.arena.elementId === 'soul' : this.arena.npcElementId === 'soul';
+      if (!isSoul) continue;
+      for (let i = 0; i < STARTING_CORPSES; i++) this.pushCorpse(owner, { maxHp: GRAVE_ZOMBIE_HP });
+    }
+  }
+
   private pushCorpse(owner: Owner, corpse: Corpse): void {
     const queue = this.corpseQueue[owner];
     queue.unshift({ ...corpse, maxHp: Math.max(1, Math.round(corpse.maxHp)) });
@@ -970,7 +1318,7 @@ export class SoulKit {
   private amalgamTones(rec: Amalgam): SoulTones {
     if (rec.inflamed || rec.burning) return TORMENT_TONES;
     if (rec.angered) return ANGERED_TONES;
-    return tonesFor(rec.owner);
+    return this.tonesOf(rec.owner);
   }
 
   /**
@@ -1098,7 +1446,6 @@ export class SoulKit {
       if (!husk.active || husk.hp <= 0) {
         rec.body.collapse();
         rec.shroud?.destroy();
-        if (this.possessed === rec) this.endPossession('the amalgam fell');
         this.amalgams.splice(i, 1);
         continue;
       }
@@ -1110,10 +1457,7 @@ export class SoulKit {
 
       // The creature itself, repainted from scratch every frame.
       const vel = (husk.body as Phaser.Physics.Arcade.Body).velocity;
-      // A ridden body faces what *you* could bite, not what its AI would have picked.
-      const hunted = this.nearestOf(
-        this.possessed === rec ? this.possessTargets(rec) : this.amalgamTargets(rec.owner), husk.x, husk.y,
-      );
+      const hunted = this.nearestOf(this.amalgamTargets(rec.owner), husk.x, husk.y);
       rec.body.update(delta, {
         x: husk.x, y: husk.y, vx: vel.x, vy: vel.y,
         alpha: husk.alpha,
@@ -1166,10 +1510,6 @@ export class SoulKit {
         } else {
           body.setVelocity((dx / dist) * husk.speed, (dy / dist) * husk.speed);
         }
-      } else if (this.possessed === rec) {
-        // You are steering it. Its own AI stays out of the way; `updatePossession` owns the
-        // velocity, and the bite is a key rather than a proximity check.
-        rec.nextDashAt = time + AMALGAM_DASH_INTERVAL_MAX_MS;
       } else {
         const targets = this.amalgamTargets(rec.owner);
         husk.update(targets, time, delta);
@@ -1266,8 +1606,6 @@ export class SoulKit {
     rec.body.collapse();
     rec.shroud?.destroy();
     rec.shroud = null;
-    // Possession lasts exactly as long as the thing you are wearing.
-    if (this.possessed === rec) this.endPossession('the amalgam fell');
 
     const husk = rec.husk;
     const fx = this.fx(rec.owner);
@@ -1307,7 +1645,7 @@ export class SoulKit {
       this.arena.showFloatingText(husk.x, husk.y - 30, '💥 IMMOLATED', '#ff6622');
     } else {
       // Even a quiet death gives the spirit back: it comes apart into wisps and drifts off.
-      const tones = tonesFor(rec.owner);
+      const tones = this.tonesOf(rec.owner);
       fx.wisps(husk.x, husk.y, 7, { speed: 70, size: 3, life: 720, rise: -46, depth: 6, tones });
       fx.stain(husk.x, husk.y, 22, 1, tones);
     }
@@ -1352,7 +1690,7 @@ export class SoulKit {
     const t = this.arena.scene.time.now / 1000;
     for (let i = 0; i < mine.length; i++) {
       for (let j = i + 1; j < mine.length; j++) {
-        SoulFx.drawBond(g, this.pcol, SPIRIT_TONES,
+        SoulFx.drawBond(g, this.pcol, this.tonesOf('player'),
           mine[i].husk.x, mine[i].husk.y, mine[j].husk.x, mine[j].husk.y, t + i + j, strength);
       }
     }
@@ -1464,7 +1802,7 @@ export class SoulKit {
     if (husk) {
       // Everything it was made of gets loose at once.
       this.pfx.immolate(husk.x, husk.y, 110, { tones: ANGERED_TONES, wisps: 22, motes: 8, duration: 760 });
-      this.pfx.shriek(husk.x, husk.y, 160, 820, 8, SPIRIT_TONES);
+      this.pfx.shriek(husk.x, husk.y, 160, 820, 8, this.tonesOf('player'));
       this.arena.scene.cameras.main.shake(360, 0.009);
     }
     this.alphaBody?.collapse(); this.alphaBody = null;
@@ -1490,8 +1828,8 @@ export class SoulKit {
       target.takeDamage(dmg);
       this.arena.recordMasteryStat('amalgamDamage', dmg);
     };
-    this.pfx.soulRise(ox, oy + 8, 76, 780, 5, SPIRIT_TONES);
-    this.pfx.bloom(ox, oy, 40, 11, 5, SPIRIT_TONES);
+    this.pfx.soulRise(ox, oy + 8, 76, 780, 5, this.tonesOf('player'));
+    this.pfx.bloom(ox, oy, 40, 11, 5, this.tonesOf('player'));
     const now = scene.time.now;
     const rec: Amalgam = {
       husk, owner: 'player', waypoint: null, burning: false,
@@ -1537,11 +1875,11 @@ export class SoulKit {
     // 25 AoE damage to enemies around you.
     this.dealSoulAoe(player.x, player.y, SOUL_SCREECH_RADIUS, SOUL_SCREECH_DAMAGE, 'player');
     this.playerAvatar?.play('flex');
-    this.pfx.shriek(player.x, player.y, SOUL_SCREECH_RADIUS, 700, 9, SPIRIT_TONES);
+    this.pfx.shriek(player.x, player.y, SOUL_SCREECH_RADIUS, 700, 9, this.tonesOf('player'));
     this.pfx.wisps(player.x, player.y, 14, {
-      speed: SOUL_SCREECH_RADIUS * 1.6, size: 3.4, life: 640, rise: -50, depth: 8, tones: SPIRIT_TONES,
+      speed: SOUL_SCREECH_RADIUS * 1.6, size: 3.4, life: 640, rise: -50, depth: 8, tones: this.tonesOf('player'),
     });
-    this.pfx.motes(player.x, player.y, 7, SOUL_SCREECH_RADIUS * 0.8, 7, SPIRIT_TONES);
+    this.pfx.motes(player.x, player.y, 7, SOUL_SCREECH_RADIUS * 0.8, 7, this.tonesOf('player'));
     scene.cameras.main.shake(180, 0.005);
     // Heal nearby allies for 50% of the HP you're missing this round; overheal becomes weak HP.
     const missing = Math.max(0, player.maxHp - player.hp);
@@ -1593,7 +1931,7 @@ export class SoulKit {
     for (const g of this.graves) {
       g.auraT += delta / 1000;
       // The plot exhales while it works on the next one, and the light swells as it gets close.
-      const tones = g.tier >= 3 ? ANGERED_TONES : tonesFor(g.owner);
+      const tones = g.tier >= 3 ? ANGERED_TONES : this.tonesOf(g.owner);
       const ready = 1 - Phaser.Math.Clamp((g.nextSpawnAt - time) / GRAVE_SPAWN_INTERVAL_MS, 0, 1);
       const gfx = g.aura;
       gfx.clear();
@@ -1640,7 +1978,7 @@ export class SoulKit {
     this.graveZombies.push(rec);
     // Clawing its way out: the plot opens and the thing is standing in the column of light.
     const fx = this.fx(grave.owner);
-    fx.soulRise(ox, oy + 8, angered ? 54 : 40, 560, 4, angered ? ANGERED_TONES : tonesFor(grave.owner));
+    fx.soulRise(ox, oy + 8, angered ? 54 : 40, 560, 4, angered ? ANGERED_TONES : this.tonesOf(grave.owner));
   }
 
   private updateGraveZombies(time: number, delta: number): void {
@@ -1672,7 +2010,7 @@ export class SoulKit {
 
     // Burning one of your own zombies down is how the corpse queue is fed, so the spirit
     // visibly comes loose and drifts back toward the caster's side of the fight.
-    const tones = rec.angered ? ANGERED_TONES : tonesFor(rec.owner);
+    const tones = rec.angered ? ANGERED_TONES : this.tonesOf(rec.owner);
     this.fx(rec.owner).wisps(husk.x, husk.y, 6, { speed: 60, size: 2.8, life: 700, rise: -48, depth: 6, tones });
     this.fx(rec.owner).stain(husk.x, husk.y, 18, 1, tones);
 
@@ -1706,7 +2044,7 @@ export class SoulKit {
     const vx = Math.cos(ang) * SOUL_SHOT_SPEED;
     const vy = Math.sin(ang) * SOUL_SHOT_SPEED;
     // Bile from a hostile spitter, the owner's own shades from a recruited one.
-    const tones = zRec ? ROT_TONES : tonesFor(owner);
+    const tones = zRec ? ROT_TONES : this.tonesOf(owner);
     this.fx(owner).muzzleWisp(from.x + Math.cos(ang) * 14, from.y + Math.sin(ang) * 14, ang, 0.9, 7, tones);
     this.soulShots.push({
       gfx: scene.add.graphics().setDepth(7), x: from.x, y: from.y, vx, vy, damage, owner,
@@ -1756,7 +2094,7 @@ export class SoulKit {
     if (!owner) return;
 
     const fx = this.fx(owner);
-    const tones = tonesFor(owner);
+    const tones = this.tonesOf(owner);
     fx.ring(source.x, source.y, radius * 0.25, radius, tones.core, 500, 3.5, 3);
     fx.motes(source.x, source.y, 5, radius * 0.7, 4, tones);
 
@@ -1858,258 +2196,6 @@ export class SoulKit {
     return this.inDecay('player', npc.x, npc.y) ? DECAY_SLOW_MULT : 1;
   }
 
-  // ── Click+ Possession ────────────────────────────────────────────────
-  //
-  // Three heal cords on one amalgam and the caster stops being a person: the body opens like a
-  // flower and nothing can reach what is no longer in it, while everything you press goes to the
-  // thing you are wearing. The trade is that the amalgam's health bar is now your clock — the
-  // moment it dies you are standing back in the middle of the fight at whatever HP you left.
-
-  /**
-   * What a ridden body may bite. Its own AI only ever cared about the opposing fighter, but a
-   * player driving it is standing in a field full of the dead — so every grave zombie on the
-   * board (yours are how the corpse queue is fed) and the other side's risen are fair game too.
-   */
-  private possessTargets(rec: Amalgam): Fighter[] {
-    const out = this.amalgamTargets(rec.owner);
-    for (const gz of this.graveZombies) {
-      if (gz.husk.active && gz.husk.hp > 0 && !out.includes(gz.husk)) out.push(gz.husk);
-    }
-    for (const a of this.amalgams) {
-      if (a !== rec && a.owner !== rec.owner && a.husk.active && a.husk.hp > 0) out.push(a.husk);
-    }
-    return out;
-  }
-
-  /** The label E carries while riding — the variant's own move, named. */
-  private possessSpecialName(rec: Amalgam): string {
-    switch (rec.variant.behavior) {
-      case 'ranged': return 'SPIT';
-      case 'medic': return 'PULSE';
-      default: return 'LUNGE';
-    }
-  }
-
-  private beginPossession(rec: Amalgam): void {
-    const { player } = this.arena;
-    this.possessed = rec;
-    rec.waypoint = null;
-    this.possessOpen = 0;
-    this.possessT = 0;
-    this.possessNextBiteAt = 0;
-    this.possessNextSpecialAt = 0;
-    this.possessChargeUntil = 0;
-    this.possessEndsAt = this.arena.scene.time.now + POSSESS_DURATION_MS;
-    // Invincible: the absorber intercepts ahead of every shield, and swallows it whole.
-    player.damageAbsorber = () => true;
-    (player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-
-    this.playerAvatar?.play('raise', undefined, 700);
-    this.pfx.bloom(player.x, player.y, 54, 14, 6, SPIRIT_TONES);
-    this.pfx.ring(player.x, player.y, 10, 110, SOUL.orchid, 620, 5, 6);
-    this.pfx.soulRise(player.x, player.y, 90, 800, 7, SPIRIT_TONES);
-    this.pfx.tether(player.x, player.y, rec.husk.x, rec.husk.y, 620, 7, SPIRIT_TONES);
-    this.pfx.shriek(rec.husk.x, rec.husk.y, 110, 640, 8, SPIRIT_TONES);
-    this.arena.scene.cameras.main.shake(200, 0.005);
-    this.arena.showFloatingText(player.x, player.y - 50, '🌸 POSSESSION — 12s', '#cc99ff');
-    this.arena.showFloatingText(rec.husk.x, rec.husk.y - 46, 'YOU ARE IT NOW', '#eeddff');
-  }
-
-  private endPossession(reason: string): void {
-    const { player } = this.arena;
-    this.possessed = null;
-    this.possessLastEndedAt = this.arena.scene.time.now;
-    this.possessEndsAt = 0;
-    this.possessOpen = 0;
-    this.possessFlower?.destroy(); this.possessFlower = null;
-    player.damageAbsorber = null;
-    this.pfx.wisps(player.x, player.y, 12, {
-      speed: 120, size: 3, life: 640, rise: -50, depth: 7, tones: SPIRIT_TONES,
-    });
-    this.pfx.ring(player.x, player.y, 90, 8, SOUL.orchid, 520, 4, 6);
-    this.arena.showFloatingText(player.x, player.y - 50, `🌸 ${reason.toUpperCase()}`, '#9977bb');
-    // The cords that opened it are spent with it.
-    for (const s of [...this.siphons]) if (s.owner === 'player' && s.kind === 'mend') this.releaseSiphon(s);
-  }
-
-  /**
-   * The ride itself. The caster's body is pinned and painted open; the amalgam takes WASD
-   * straight off the same keys, so possession never needs a second control scheme.
-   */
-  private updatePossession(time: number, delta: number): void {
-    const { player, scene } = this.arena;
-    const rec = this.possessed;
-    if (!rec) return;
-    if (!rec.husk.active || rec.husk.hp <= 0) { this.endPossession('the amalgam fell'); return; }
-    if (!player.active || player.hp <= 0) { this.endPossession('possession broken'); return; }
-    // Twelve seconds is the whole ride, whatever state the body is in when it runs out.
-    if (time >= this.possessEndsAt) { this.endPossession('possession spent'); return; }
-
-    this.possessT += delta / 1000;
-    this.possessOpen = Math.min(1, this.possessOpen + delta / 420);
-
-    // The caster is not there to be moved.
-    (player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-    if (!this.possessFlower) this.possessFlower = scene.add.graphics().setDepth(7);
-    this.possessFlower.clear();
-    SoulFx.drawFlower(this.possessFlower, this.pcol, SPIRIT_TONES,
-      player.x, player.y, 30, this.possessT, this.possessOpen, 1);
-
-    // WASD drives the husk. A charge started by E overrides it until it runs out.
-    const body = rec.husk.body as Phaser.Physics.Arcade.Body;
-    if (time < this.possessChargeUntil) return;
-    const dx = (this.arena.dKey.isDown ? 1 : 0) - (this.arena.aKey.isDown ? 1 : 0);
-    const dy = (this.arena.sKey.isDown ? 1 : 0) - (this.arena.wKey.isDown ? 1 : 0);
-    if (dx === 0 && dy === 0) { body.setVelocity(0, 0); return; }
-    const len = Math.hypot(dx, dy);
-    const speed = rec.husk.speed * rec.husk.walkSpeedMult;
-    body.setVelocity((dx / len) * speed, (dy / len) * speed);
-  }
-
-  /**
-   * The possession readout: a screen-space plate under the corpse queue naming the body you are
-   * wearing, its health, how much of the twelve seconds is left, and what the three keys now do.
-   * While it is spent the same plate becomes the recovery clock, so the slot never goes blank and
-   * you always know whether the third cord is going to do anything.
-   *
-   * Depth 21/22 — above the corpse-queue icons at 20, below anything a cast raises.
-   */
-  private updatePossessHud(time: number): void {
-    const { scene, elementId } = this.arena;
-    if (elementId !== 'soul' || !this.arena.hasUpgrade('click')) {
-      if (this.possessHudPanel) {
-        this.possessHudPanel.destroy(); this.possessHudPanel = null;
-        this.possessHudName?.destroy(); this.possessHudName = null;
-        this.possessHudKeys?.destroy(); this.possessHudKeys = null;
-      }
-      return;
-    }
-    const cx = scene.scale.width / 2;
-    const y = HUD_Y + 30;
-    const w = 190, h = 34;
-
-    if (!this.possessHudPanel) {
-      this.possessHudPanel = scene.add.graphics().setDepth(21).setScrollFactor(0);
-      this.possessHudName = scene.add.text(cx, y - 7, '', {
-        fontSize: '11px', fontFamily: 'Arial Black', color: '#eeddff',
-      }).setOrigin(0.5).setDepth(22).setScrollFactor(0);
-      this.possessHudKeys = scene.add.text(cx, y + 8, '', {
-        fontSize: '9px', fontFamily: 'Arial', color: '#9977bb',
-      }).setOrigin(0.5).setDepth(22).setScrollFactor(0);
-    }
-    const g = this.possessHudPanel;
-    const name = this.possessHudName!;
-    const keys = this.possessHudKeys!;
-    g.clear();
-
-    const rec = this.possessed;
-    const ready = time - this.possessLastEndedAt >= POSSESS_COOLDOWN_MS;
-
-    // The plate. Lilac while you are riding, dead grey while it recovers.
-    g.fillStyle(0x0b0d16, 0.86);
-    g.fillRoundedRect(cx - w / 2, y - h / 2, w, h, 6);
-    g.lineStyle(1.4, this.pcol(rec ? SOUL.orchid : ready ? SOUL.grape : SOUL.stone), rec ? 0.95 : 0.5);
-    g.strokeRoundedRect(cx - w / 2, y - h / 2, w, h, 6);
-
-    if (!rec) {
-      name.setText(ready ? '🌸 POSSESSION READY' : `🌸 RECOVERING — ${Math.ceil((this.possessLastEndedAt + POSSESS_COOLDOWN_MS - time) / 1000)}s`)
-        .setColor(ready ? '#cc99ff' : '#775588');
-      keys.setText(ready ? 'three heal cords on one amalgam' : '');
-      if (!ready) {
-        // The recovery bar fills left to right along the bottom of the plate.
-        const p = Phaser.Math.Clamp((time - this.possessLastEndedAt) / POSSESS_COOLDOWN_MS, 0, 1);
-        g.fillStyle(this.pcol(SOUL.grape), 0.7);
-        g.fillRoundedRect(cx - w / 2 + 3, y + h / 2 - 6, (w - 6) * p, 3, 1.5);
-      }
-      return;
-    }
-
-    const husk = rec.husk;
-    const label = rec.inflamed ? '🔥 THE INFLAMED'
-      : rec.isAlpha ? '☠️ ALPHA AMALGAM'
-        : rec.variant.id !== 'basic' ? `${rec.variant.emoji ?? '🧟'} ${rec.variant.name.toUpperCase()}`
-          : '🧟 AMALGAM';
-    name.setText(`🌸 ${label}`).setColor(rec.angered ? '#ff7777' : '#eeddff');
-    keys.setText(`WASD move · CLICK bite ${rec.baseBiteDamage} · E ${this.possessSpecialName(rec)}`);
-
-    // Two stacked readouts: the body's health (with its shield laid over it) and the ride's clock.
-    const barW = w - 12;
-    const hpFrac = Phaser.Math.Clamp(husk.hp / Math.max(1, husk.maxHp), 0, 1);
-    const shFrac = Phaser.Math.Clamp(husk.shieldHp / Math.max(1, husk.maxHp), 0, 1);
-    g.fillStyle(0x2a1230, 0.9);
-    g.fillRoundedRect(cx - barW / 2, y + h / 2 - 9, barW, 4, 2);
-    g.fillStyle(0x44ff88, 0.95);
-    g.fillRoundedRect(cx - barW / 2, y + h / 2 - 9, barW * hpFrac, 4, 2);
-    if (shFrac > 0) {
-      g.fillStyle(this.pcol(SOUL.lilac), 0.9);
-      g.fillRoundedRect(cx - barW / 2, y + h / 2 - 9, barW * shFrac, 4, 2);
-    }
-    const left = Phaser.Math.Clamp((this.possessEndsAt - time) / POSSESS_DURATION_MS, 0, 1);
-    g.fillStyle(0x2a1230, 0.9);
-    g.fillRoundedRect(cx - barW / 2, y + h / 2 - 4, barW, 3, 1.5);
-    g.fillStyle(this.pcol(left < 0.25 ? SOUL.blood : SOUL.orchid), 0.95);
-    g.fillRoundedRect(cx - barW / 2, y + h / 2 - 4, barW * left, 3, 1.5);
-  }
-
-  private possessBite(time: number): void {
-    const rec = this.possessed;
-    if (!rec || time < this.possessNextBiteAt) return;
-    this.possessNextBiteAt = time + POSSESS_BITE_CD_MS;
-    const husk = rec.husk;
-    const dmg = this.effectiveDamage(rec, rec.baseBiteDamage, time);
-    const target = this.nearestOf(this.possessTargets(rec), husk.x, husk.y);
-    const aim = target ? Math.atan2(target.y - husk.y, target.x - husk.x) : 0;
-    // The lunge reads on the drawn body via the sprite's scale pop, the same as an AI bite.
-    this.arena.scene.tweens.add({
-      targets: husk, scaleX: husk.sizeMult * 1.25, scaleY: husk.sizeMult * 1.25,
-      yoyo: true, duration: 110,
-    });
-    this.fx(rec.owner).muzzleWisp(husk.x + Math.cos(aim) * 14, husk.y + Math.sin(aim) * 14, aim, 1, 7, this.amalgamTones(rec));
-    if (target && Phaser.Math.Distance.Between(husk.x, husk.y, target.x, target.y) <= AMALGAM_MELEE_RANGE + 8) {
-      target.takeDamage(dmg);
-      this.arena.spawnHitFlash(target.x, target.y, 0x9944cc);
-      this.arena.recordMasteryStat('amalgamDamage', dmg);
-    }
-  }
-
-  /**
-   * E while riding: whatever this body could already do on its own. A spitter spits, a medic
-   * pulses, and everything else throws itself forward — the same three moves the AI has, just
-   * on your timing instead of its own.
-   */
-  private possessSpecial(time: number): void {
-    const rec = this.possessed;
-    if (!rec || time < this.possessNextSpecialAt) return;
-    this.possessNextSpecialAt = time + POSSESS_SPECIAL_CD_MS;
-    const husk = rec.husk;
-    const target = this.nearestOf(this.possessTargets(rec), husk.x, husk.y);
-    const aimX = target ? target.x : this.aimX;
-    const aimY = target ? target.y : this.aimY;
-
-    switch (rec.variant.behavior) {
-      case 'ranged':
-        this.doFireShot(husk, aimX, aimY, this.effectiveDamage(rec, rec.baseBiteDamage, time));
-        this.arena.showFloatingText(husk.x, husk.y - 34, '🤮 SPIT', '#88ee99');
-        break;
-      case 'medic':
-        this.doHealNearby(husk, 165, 0.12);
-        this.arena.showFloatingText(husk.x, husk.y - 34, '💜 PULSE', '#cc99ff');
-        break;
-      default: {
-        const ang = Math.atan2(aimY - husk.y, aimX - husk.x);
-        const speed = husk.speed * husk.walkSpeedMult * POSSESS_CHARGE_SPEED_MULT;
-        (husk.body as Phaser.Physics.Arcade.Body).setVelocity(Math.cos(ang) * speed, Math.sin(ang) * speed);
-        this.possessChargeUntil = time + POSSESS_CHARGE_MS;
-        this.fx(rec.owner).wisps(husk.x, husk.y, 6, {
-          speed: 90, angle: ang + Math.PI, spread: 0.8, size: 3,
-          life: 420, rise: -16, depth: 5, tones: this.amalgamTones(rec),
-        });
-        this.arena.showFloatingText(husk.x, husk.y - 34, '💨 LUNGE', '#eeddff');
-        break;
-      }
-    }
-  }
-
   // ── Embers (Hell's Torment) ──────────────────────────────────────────
 
   private emitEmbers(owner: Owner, x: number, y: number, count: number, big: boolean): void {
@@ -2194,6 +2280,9 @@ export class SoulKit {
     this.hudBodyCount = scene.add.text(cx + (cap - 1) * 13 + 24, HUD_Y, '', {
       fontSize: '11px', fontFamily: 'Arial Black', color: '#9977bb',
     }).setOrigin(0, 0.5).setDepth(20);
+    this.hudKills = scene.add.text(cx - (cap - 1) * 13 - 24, HUD_Y, '', {
+      fontSize: '11px', fontFamily: 'Arial Black', color: '#ccaaff',
+    }).setOrigin(1, 0.5).setDepth(20);
   }
 
   private updateHud(): void {
@@ -2216,6 +2305,14 @@ export class SoulKit {
     const bodies = this.huskCount('player');
     this.hudBodyCount?.setText(`🧟 ${bodies}/${SOUL_HUSK_CAP}`)
       .setColor(bodies >= SOUL_HUSK_CAP ? '#ff7777' : '#9977bb');
+    // Kills, and — with Soul Lord — how many more until the next power.
+    const k = this.kills.player;
+    let label = `☠ ${k}`;
+    if (this.lordActive('player')) {
+      const next = [LORD_SPLIT_KILLS, LORD_HEMO_KILLS, LORD_ORB_KILLS, LORD_ASCEND_KILLS].find((n) => n > k);
+      label += next ? ` → ${next}` : ' ✨';
+    }
+    this.hudKills?.setText(label).setColor(this.ascended.player ? '#ffe07a' : '#ccaaff');
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────
@@ -2284,7 +2381,7 @@ export class SoulKit {
     for (let i = this.graves.length - 1; i >= 0; i--) {
       const g = this.graves[i];
       if (g.owner === exceptOwner || !near(g.x, g.y)) continue;
-      this.fx(g.owner).stain(g.x, g.y, 20, 1, tonesFor(g.owner));
+      this.fx(g.owner).stain(g.x, g.y, 20, 1, this.tonesOf(g.owner));
       g.sprite.destroy();
       g.aura.destroy();
       this.graves.splice(i, 1);

@@ -127,8 +127,8 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
     complexity: 3,
   },
   sound: {
-    archetype: 'Performer',
-    blurb: 'Play to the rhythm bar, stack hype, and let the boombox carry the rest of your rotation.',
+    archetype: 'Drum Major',
+    blurb: 'Keep time to spin the baton, slam them out of tune, and close on a bugle solo.',
     complexity: 4,
   },
   light: {
@@ -139,9 +139,9 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
 
   // ── Abstract combined ───────────────────────────────────────────────
   magnet: {
-    archetype: 'Puller',
-    blurb: 'Rods, nails and pulses. Nothing you throw stays where it lands, including their body.',
-    complexity: 3,
+    archetype: 'Scrapper',
+    blurb: 'Flip coins, nail them, drop spikes — then Repulse it all at once. Ends in a mech.',
+    complexity: 4,
   },
   metal: {
     archetype: 'Bleeder',
@@ -210,8 +210,8 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
 
   // ── Unstable ────────────────────────────────────────────────────────
   radiation: {
-    archetype: 'Contaminant',
-    blurb: 'Irradiate everything on a ladder of stacks, then leash them to a post and let it climb.',
+    archetype: 'Sniper',
+    blurb: 'Tag a body three times for a railgun, hold a closing sight on them, and duck into lead.',
     complexity: 4,
   },
   depths: {
@@ -220,13 +220,23 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
     complexity: 4,
   },
   psychic: {
-    archetype: 'Precognitive',
-    blurb: 'Every cast is announced before it happens, theirs included. You play two seconds ahead.',
+    archetype: 'Grandmaster',
+    blurb: 'Stand chess pieces whose auras armour, hasten and empower you, then slide them through foes. You see their moves two seconds early.',
     complexity: 5,
   },
   ruin: {
     archetype: 'Disabler',
     blurb: 'Rust their kit shut. Locks, rot and skewers that take abilities off the board for good.',
+    complexity: 4,
+  },
+  tempest: {
+    archetype: 'Storm Acrobat',
+    blurb: 'A knockback brawler that can leave the floor. Ride the currents, slam your own fronts, and make every wall a weapon.',
+    complexity: 5,
+  },
+  marrow: {
+    archetype: 'Immune System',
+    blurb: 'An immune response as a weapon — antibodies, white cells, and a bone bar paying for all of it.',
     complexity: 4,
   },
   cloth: {
@@ -235,8 +245,8 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
     complexity: 5,
   },
   magma: {
-    archetype: 'Dragon',
-    blurb: 'Feed the pressure, hatch the egg, become the dragon. Overfill it and the pressure feeds on you.',
+    archetype: 'Buccaneer',
+    blurb: 'Feed the volcano with your own attacks, fire the blunderbuss and ride the recoil, and let the cursed pendant raise your ship.',
     complexity: 4,
   },
   chalk: {
@@ -283,8 +293,8 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
     complexity: 5,
   },
   passion: {
-    archetype: 'Charmer',
-    blurb: 'Fill their love bar until they cannot bring themselves to swing at you any more.',
+    archetype: 'Priest',
+    blurb: 'Deals no damage at all. Fill them with 200 faith and they are converted on the spot.',
     complexity: 3,
   },
   death: {
@@ -292,9 +302,10 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
     blurb: 'Disarm, riposte, amputate. A fencer’s kit built entirely out of their mistakes.',
     complexity: 4,
   },
+  // `fortune` is Gold — the alchemist replaced the shopkeeper and kept the id.
   fortune: {
-    archetype: 'Tycoon',
-    blurb: 'Money is health. Invest it, gamble it, paywall the fight, and buy the win outright.',
+    archetype: 'Alchemist',
+    blurb: 'Turn grass, blood and floor into gold, then spend it ten at a time on making yourself stronger.',
     complexity: 4,
   },
   // `gum` is Slime — Acid holds the `slime` id.
@@ -304,9 +315,9 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
     complexity: 3,
   },
   gluttony: {
-    archetype: 'Chef',
-    blurb: 'Cook at the grill as the chef, then drop the apron and butcher on a thirty-second clock.',
-    complexity: 5,
+    archetype: 'Reaper',
+    blurb: 'Sow a spreading purple mold, rot whoever stands in it, and reap the corrupted with a scythe.',
+    complexity: 4,
   },
 };
 

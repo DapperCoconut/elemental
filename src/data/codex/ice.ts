@@ -268,26 +268,6 @@ const ice: ElementCodex = {
         'Passive — no bind and no key. In a one-on-one match it never fires; it is entirely an Invasion and world-boss enhancement.',
       ],
     },
-    'icicle-impale': {
-      basics:
-        'A bindable 900 px/s charge for 150ms — about 135px — that impales the first enemy within 34px. '
-        + 'Once the impaled target has taken 50 more damage from any source the icicle bursts for 2 bonus '
-        + 'stacks, and those ignore the normal 5-stack ceiling up to a hard maximum of 7: 6 stacks is '
-        + '×1.60 damage taken and 7 is ×1.75, the highest vulnerability the game can produce. While the '
-        + 'icicle is live, every stack applied to that target lasts 10 seconds instead of 8. 6s cooldown.',
-      cast: 'Bindable to E, R, F or Q. Dashes forward on cast; the first enemy the dash reaches is impaled.',
-      effects: [
-        { tag: 'movement', label: 'The charge', detail: '900 px/s for 150ms — about 135px of forward travel, connecting with anything within 34px.' },
-        { tag: 'debuff', label: 'Shatter payload', detail: 'Once the impaled target has taken 50 more damage from any source, the icicle bursts for 2 bonus frost stacks (or void frost, if you are morphed).' },
-        { tag: 'debuff', label: 'Past the cap', detail: 'Those bonus stacks ignore the normal 5-stack ceiling, up to a hard maximum of 7. 6 stacks is ×1.60 damage taken, 7 is ×1.75 — the highest vulnerability the game can produce.' },
-        { tag: 'debuff', label: 'Slower decay', detail: 'While the icicle is live, every frost or void stack applied to that target lasts 10s instead of 8.' },
-        { tag: 'utility', label: 'Availability', detail: '6s cooldown, independent of the slot it is bound over.' },
-      ],
-      notes: [
-        'On a void build the bonus stacks are void frost, so 7 stacks is 7 damage a second rather than a vulnerability multiplier.',
-        'Only one enemy per dash is impaled — the charge stops looking after the first connection.',
-      ],
-    },
     'curling-stone': {
       basics:
         'A bindable 18px stone that stands 20 seconds with a 32px contact radius, bouncing off walls '
@@ -295,8 +275,13 @@ const ice: ElementCodex = {
         + 'a maximum of 5. It slams for 30 damage at 0 stacks scaling +20% per stack to 60 at 5, pushes '
         + '150 at 0 stacks and +62 per stack, and can only hit the same fighter once a second. Below 26 '
         + 'px/s it counts as parked and is harmless. Crossing one of your own Skate trails accelerates it '
-        + '×3.2 and drops its drag to 0.4, so a trail laid ahead of it is a launch ramp. 25s cooldown.',
-      cast: 'Bindable to E, R, F or Q. Summons a stone in front of you; your own shots and slush spray drive it.',
+        + '×3.2 and drops its drag to 0.4, so a trail laid ahead of it is a launch ramp. 25s cooldown.\n\n'
+        + 'The same slot casts Icicle Impale while you are in Black Ice: a 900 px/s charge for 150ms — '
+        + 'about 135px — that impales the first enemy within 34px. Once the impaled target has taken 50 '
+        + 'more damage the icicle bursts for 2 bonus stacks that ignore the 5-stack ceiling up to a hard '
+        + 'maximum of 7, and while it is live every stack on them lasts 10 seconds instead of 8. 6s cooldown. '
+        + 'The two keep separate cooldowns, and the card renames itself when you change form.',
+      cast: 'Bindable to R, F or Q. Normal form summons a stone in front of you; Black Ice dashes and impales the first enemy hit.',
       effects: [
         { tag: 'summon', label: 'The stone', detail: 'An 18px slab standing 20s, with a 32px contact radius. It bounces off the arena walls and spins visibly as it rolls.' },
         { tag: 'resource', label: 'Loading it', detail: 'Each of your shots that reaches the stone shoves it and adds 1 frost stack, up to 5. Void frost counts identically. A piercing spike only counts once per shot.' },
@@ -305,6 +290,10 @@ const ice: ElementCodex = {
         { tag: 'utility', label: 'Parked is harmless', detail: 'Below 26 px/s the stone counts as stopped: it deals no damage and takes no chips. It is a hazard only while moving.' },
         { tag: 'movement', label: 'On your own ice', detail: 'A stone that crosses one of your Skate trails accelerates by ×3.2 and its drag drops to 0.4 — a trail laid ahead of the stone is a launch ramp.' },
         { tag: 'utility', label: 'Availability', detail: '25s cooldown, so there is rarely more than one stone in play.' },
+        { tag: 'movement', label: 'Black Ice: Icicle Impale', detail: 'In Black Ice the slot dashes instead — 900 px/s for 150ms, impaling the first enemy within 34px.' },
+        { tag: 'debuff', label: 'Shatter payload', detail: 'Once the impaled target has taken 50 more damage, the icicle bursts for 2 bonus void frost stacks, past the 5-stack cap up to 7.' },
+        { tag: 'debuff', label: 'Slower decay', detail: 'While the icicle is live, every frost or void stack applied to that target lasts 10s instead of 8.' },
+        { tag: 'utility', label: 'Two cooldowns', detail: 'Curling Stone (25s) and Icicle Impale (6s) cool down separately; the card shows whichever your form will cast.' },
       ],
       notes: [
         'Slush Thrower nudges the stone too, which is the cheapest way to keep it rolling without spending spike cooldowns.',

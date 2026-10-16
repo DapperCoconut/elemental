@@ -59,6 +59,11 @@ interface PlasmaArenaZone {
   expiresAt: number;
 }
 
+/** R+ volt sockets live exactly this long. */
+const VOLT_POINT_MS = 12000;
+/** Minimum gap between two relays through the same pair of sockets. */
+const VOLT_RELAY_COOLDOWN_MS = 500;
+
 interface PlasmaCurrentOrb {
   ax: number; ay: number;
   bx: number; by: number;
@@ -69,6 +74,8 @@ interface PlasmaCurrentOrb {
   active: boolean;
   expiresAt: number;
   stopped: boolean;
+  /** Recast R: the current halts where it is and holds there until it expires. */
+  halted?: boolean;
 }
 
 interface PlasmaBlade {
@@ -105,6 +112,8 @@ interface PlasmaVoltPoint {
   expiresAt: number;
   paired?: { x: number; y: number };
   pairedRef?: PlasmaVoltPoint;
+  /** Relays through this pair are refused until then. */
+  relayReadyAt?: number;
 }
 
 /** A pending Plasma Burst AoE that detonates at (x, y) once `fireAt` is reached. */
@@ -255,6 +264,8 @@ export class PlasmaKit {
 
   // ── Player R-hold state ───────────────────────────────────────────
   private plasmaRHolding = false;
+  /** Set by a recast that halted a current; no new wind-up starts until R is let go. */
+  private plasmaRStopLatch = false;
   private plasmaRHeldSince = 0;
   /** Where the two orbs would launch from if R were released right now, or null. */
   private plasmaRPreview: { ax: number; ay: number; bx: number; by: number; ratio: number } | null = null;
@@ -363,6 +374,7 @@ export class PlasmaKit {
     this.plasmaPermanentOrbs = [];
 
     this.plasmaRHolding = false;
+    this.plasmaRStopLatch = false;
     this.plasmaRHeldSince = 0;
     this.plasmaRPreview = null;
 
@@ -448,22 +460,14 @@ export class PlasmaKit {
     // R: Plasma Current — hold to widen gap, release to fire. The whole hold/release
     // dance is gated on `rFree` so the mastery ability can own the slot outright.
     const rFree = orbitalSlot !== 'r';
-    // Solar perk: if R just pressed and there's an active unstopped player current, stop it instead
-    if (rFree && Phaser.Input.Keyboard.JustDown(rKey) && this.arena.hasPerk('player', 'solar')) {
-      const activeCurrents = this.plasmaCurrentOrbs.filter(o => o.owner === 'player' && o.active && !o.stopped);
-      if (activeCurrents.length > 0) {
-        const now = this.arena.scene.time.now;
-        for (const orb of activeCurrents) {
-          orb.vax = 0; orb.vay = 0;
-          orb.vbx = 0; orb.vby = 0;
-          orb.stopped = true;
-          orb.expiresAt = now + 20000;
-        }
-        this.arena.showFloatingText(player.x, player.y - 40, '⏸ STOPPED', '#cc44ff');
-        return; // Don't start a new current
-      }
+    // Recast R while a current is in flight: it stops moving forward and holds where it is
+    // (Solar perk: and later bursts at both ends). Relayed so the peer's sim halts it too.
+    if (rFree && Phaser.Input.Keyboard.JustDown(rKey) && !this.plasmaRHolding && this.haltCurrents('player')) {
+      this.plasmaRStopLatch = true;
+      this.arena.broadcastMasteryCast('plasma-current-halt');
     }
-    if (rFree && rKey.isDown && !this.plasmaRHolding) {
+    if (!rKey.isDown) this.plasmaRStopLatch = false;
+    if (rFree && rKey.isDown && !this.plasmaRHolding && !this.plasmaRStopLatch) {
       if (player.getCooldownRatio('plasma-current') >= 1) {
         this.plasmaRHolding = true;
         this.plasmaRHeldSince = time;
@@ -826,7 +830,8 @@ export class PlasmaKit {
     // ── Volt Points ───────────────────────────────────────────────
     for (let i = this.plasmaVoltPoints.length - 1; i >= 0; i--) {
       const vp = this.plasmaVoltPoints[i];
-      if (time > vp.expiresAt || vp.charges <= 0) this.plasmaVoltPoints.splice(i, 1);
+      // Sockets last their full 12s — relays no longer wear them out early.
+      if (time > vp.expiresAt) this.plasmaVoltPoints.splice(i, 1);
     }
 
     // ── Plasma Burst click blasts (staggered 0.2s apart) ──────────
@@ -940,7 +945,8 @@ export class PlasmaKit {
         PlasmaFx.drawCurrent(g, this.col(o.owner), o.ax, o.ay, o.bx, o.by, o.stopped, t);
       }
       for (const vp of this.plasmaVoltPoints) {
-        PlasmaFx.drawVoltPoint(g, this.col(vp.owner), vp.x, vp.y, vp.charges, t);
+        PlasmaFx.drawVoltPoint(g, this.col(vp.owner), vp.x, vp.y,
+          Math.ceil(3 * (vp.expiresAt - this.arena.scene.time.now) / VOLT_POINT_MS), t);
       }
       for (const b of this.plasmaBlades) {
         PlasmaFx.drawBlade(g, this.col(b.owner), b.x, b.y, Math.atan2(b.vy, b.vx) + t * 9, t);
@@ -1131,6 +1137,28 @@ export class PlasmaKit {
     fx.discharge(tx, ty, radius * 0.9, 8, PLASMA.orchid, 400, 7);
     this.arena.showFloatingText(tx, ty - radius - 16, '⚠️ Unstable Arena!', '#aa22ff');
   }
+
+  /**
+   * Halt every one of `owner`'s currents still travelling. Returns false when none were, so the
+   * press falls through to a normal cast. Solar keeps its old stop: 20s held, then both ends burst.
+   */
+  private haltCurrents(owner: 'player' | 'npc'): boolean {
+    const moving = this.plasmaCurrentOrbs.filter(o => o.owner === owner && o.active && !o.stopped && !o.halted);
+    if (moving.length === 0) return false;
+    const solar = this.arena.hasPerk(owner, 'solar');
+    const now = this.arena.scene.time.now;
+    for (const orb of moving) {
+      orb.vax = 0; orb.vay = 0;
+      orb.vbx = 0; orb.vby = 0;
+      if (solar) { orb.stopped = true; orb.expiresAt = now + 20000; } else orb.halted = true;
+    }
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    this.arena.showFloatingText(caster.x, caster.y - 40, '⏸ STOPPED', '#cc44ff');
+    return true;
+  }
+
+  /** Online replay: the remote plasma player recast R to halt their current. */
+  doNpcHaltCurrents(): void { this.haltCurrents('npc'); }
 
   doPlasmaCurrentLaunch(tx: number, ty: number, owner: 'player' | 'npc'): void {
     this.doPlasmaCurrentLaunchWithSpread(tx, ty, 60, owner);
@@ -1594,7 +1622,7 @@ export class PlasmaKit {
     const bx = caster.x - perpX * spread, by = caster.y - perpY * spread;
 
     const now = scene.time ? scene.time.now : 0;
-    const expiresAt = now + 10000;
+    const expiresAt = now + VOLT_POINT_MS;
     const voltA: PlasmaVoltPoint = { x: ax, y: ay, owner, charges: 3, expiresAt, paired: { x: bx, y: by } };
     const voltB: PlasmaVoltPoint = { x: bx, y: by, owner, charges: 3, expiresAt, paired: { x: ax, y: ay } };
     voltA.pairedRef = voltB;
@@ -1640,10 +1668,13 @@ export class PlasmaKit {
     const triggerRadius = 60;
     for (const vp of this.plasmaVoltPoints) {
       if (vp.owner !== owner) continue;
-      if (vp.charges <= 0) continue;
+      const now = this.arena.scene.time.now;
+      if (now < (vp.relayReadyAt ?? 0)) continue;
       const d = Phaser.Math.Distance.Between(hitX, hitY, vp.x, vp.y);
       if (d <= triggerRadius) {
-        vp.charges--;
+        // A short recharge per pair stands in for the old 3-relay cap, so a socket can live its
+        // whole 12s without a blade storm machine-gunning relays through it.
+        vp.relayReadyAt = now + VOLT_RELAY_COOLDOWN_MS;
         const pairedVp = vp.pairedRef;
         const toX = pairedVp?.x ?? (vp.x + (Math.random() - 0.5) * 80);
         const toY = pairedVp?.y ?? (vp.y + (Math.random() - 0.5) * 80);
@@ -1655,7 +1686,7 @@ export class PlasmaKit {
           this.arena.showFloatingText(target.x, target.y - 36, '⚡ VOLT RELAY', '#dd66ff');
           if (owner === 'player') this.arena.recordMasteryStat('voltRelays', 1);
         }
-        if (pairedVp) pairedVp.charges--;
+        if (pairedVp) pairedVp.relayReadyAt = vp.relayReadyAt;
         break;
       }
     }

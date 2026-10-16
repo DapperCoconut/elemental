@@ -4,7 +4,7 @@ import { Ability } from './Ability';
 const cardThrow: Ability = {
   id: 'fate-card-throw',
   name: 'Card Throw',
-  description: 'Throw your highlighted card. You hold up to 6 cards, drawn randomly — click one (or press 1-6) to highlight it.',
+  description: 'Throw your highlighted card. You hold up to 6 cards, drawn randomly — click one (or press 1-6) to highlight it. Each card survives 3 throws, tearing a little more each time, before it is shredded.',
   displayKey: 'Click',
   cooldown: 350,
   cast(ctx) { ctx.fateThrowCard(ctx.targetX, ctx.targetY); },
@@ -22,7 +22,7 @@ const reroll: Ability = {
 const preserve: Ability = {
   id: 'fate-preserve',
   name: 'Preserve',
-  description: 'Your highlighted card turns yellow. The next time you throw it, it stays in your hand instead of being used up.',
+  description: 'Gild your highlighted card: it gains 3 more uses before it is shredded.',
   displayKey: 'R',
   cooldown: 3000,
   cast(ctx) { ctx.fatePreserve(); },

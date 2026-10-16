@@ -25,13 +25,13 @@ const fate: ElementCodex = {
         'You play from a hand of 6 cards, or 8 with Wonder Preserve, drawn at random from the pool, '
         + 'with one card refilling into an empty slot automatically every 5 seconds. Click a card in the '
         + 'fan or press 1–6 (1–8 upgraded) to highlight it; Preserve and Enchant both act on whatever is '
-        + 'highlighted. A card is spent when it is thrown, unless it was Preserved, in which case it '
-        + 'stays and the preservation is used up instead.',
+        + 'highlighted. Every card is a real playing card that survives 3 throws, tearing a little more '
+        + 'each time, and is shredded on the last one. Preserve gives it 3 more.',
       effects: [
         { tag: 'utility', label: 'The hand', detail: '6 cards, or 8 with Wonder Preserve. Drawn at random from the pool.' },
         { tag: 'utility', label: 'The refill', detail: '1 card back every 5 seconds into an empty slot, automatically.' },
         { tag: 'utility', label: 'Choosing one', detail: 'Click a card in the fan, or press 1–6 (1–8 upgraded), to highlight it. Preserve and Enchant both act on the highlighted card.' },
-        { tag: 'utility', label: 'A card is spent when thrown', detail: 'Unless it was Preserved, in which case it stays and the preservation is used up instead.' },
+        { tag: 'utility', label: 'Three throws a card', detail: 'Each card can be thrown 3 times before it is shredded. The pips along its foot count what is left, and it frays, rips and stains as it wears. Preserve adds 3 more.' },
       ],
       notes: [
         'A reroll resets the five-second refill clock, so the fastest way back to a full hand is always E rather than waiting.',
@@ -65,11 +65,11 @@ const fate: ElementCodex = {
       basics:
         'Throws whichever card is highlighted at the cursor — one of 18 different effects, all listed '
         + 'below. The modifiers ride the card rather than the throw: Enchant doubles it, Tarot quadruples '
-        + 'it, and Preserve stops it being spent. 0.35s cooldown, shared across every card.',
-      cast: 'Click, at the cursor. 0.35s cooldown, shared across every card. The card is consumed unless it was Preserved.',
+        + 'it, and Preserve adds 3 more throws to it. Every card lasts 3 throws. 0.35s cooldown, shared across every card.',
+      cast: 'Click, at the cursor. 0.35s cooldown, shared across every card. Each throw uses up one of the card\'s 3 uses.',
       effects: [
         { tag: 'utility', label: 'Whatever is highlighted', detail: 'One of 18 different effects. See the table below for every one of them.' },
-        { tag: 'utility', label: 'The modifiers ride the card', detail: 'Enchant doubles it, Tarot quadruples it, and Preserve stops it being spent — all three are properties of the card rather than of the throw.' },
+        { tag: 'utility', label: 'The modifiers ride the card', detail: 'Enchant doubles it, Tarot quadruples it, and Preserve adds 3 uses — all three are properties of the card rather than of the throw.' },
       ],
       variants: {
         label: 'The eighteen cards',
@@ -148,20 +148,20 @@ const fate: ElementCodex = {
 
     'fate-preserve': {
       basics:
-        'Gilds the highlighted card so that throwing it does not discard it: it stays in your hand and '
-        + 'the gold is consumed instead. Preserving strips any Enchant on the card — unless Wonder '
-        + 'Preserve is owned, in which case the two stack. 3s cooldown.',
+        'Gilds the highlighted card and gives it 3 more uses before it is shredded. The gilt lasts until '
+        + 'its next throw, which still consumes Enchant as normal — unless Wonder Preserve is owned, in '
+        + 'which case that throw keeps it. 3s cooldown.',
       cast: 'R, on the highlighted card. 3s cooldown.',
       effects: [
-        { tag: 'utility', label: 'One free throw', detail: 'The card stays in your hand instead of being discarded. The gold is consumed doing it.' },
-        { tag: 'cost', label: 'It strips the enchantment', detail: 'Preserving a card removes any Enchant on it — unless Wonder Preserve is owned, in which case the two stack.' },
+        { tag: 'utility', label: '+3 uses', detail: 'The card gains 3 more throws before it is shredded. Stacks — preserve it again for 3 more.' },
+        { tag: 'cost', label: 'Enchant still burns off', detail: 'The next throw consumes any Enchant as usual — unless Wonder Preserve is owned, in which case that throw keeps it.' },
       ],
       upgrade: {
         basics:
-          'Preserve no longer strips Enchant, so a card can be both: double damage and it survives being '
-          + 'thrown. The hand also grows from 6 cards to 8, selectable with 1–8.',
+          'The first throw after a Preserve keeps the card\'s Enchant, so a gilded card can be thrown '
+          + 'double-strength twice running. The hand also grows from 6 cards to 8, selectable with 1–8.',
         effects: [
-          { tag: 'utility', label: 'They stack', detail: 'Preserve no longer strips Enchant, so a card can be both — double damage and it survives being thrown.', requiresUpgrade: 'r' },
+          { tag: 'utility', label: 'They stack', detail: 'The first throw after a Preserve keeps the card\'s Enchant.', requiresUpgrade: 'r' },
           { tag: 'utility', label: 'A bigger hand', detail: '8 cards instead of 6, selectable with 1–8.', requiresUpgrade: 'r' },
         ],
       },

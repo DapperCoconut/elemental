@@ -203,9 +203,9 @@ export const DREAM_BOONS: Record<string, DreamBoon[]> = {
 
   // ── Abstract combined ──────────────────────────────────────────────────────
   magnet: [
-    { emoji: '🧲', name: 'Protect', blurb: 'An orb of held iron between you and the room. 90 shield health.', shield: 90 },
-    { emoji: '🔩', name: 'Nail Implant', blurb: 'There is metal under your skin and it is pointed outward. 30% of what you take goes back.', thorns: 0.3 },
-    { emoji: '🛹', name: 'Mag-Lev', blurb: 'You are riding a board that does not touch the ground. 20% faster and nothing pushes you.', speed: 1.2, knockbackImmune: true },
+    { emoji: '🔩', name: 'Orbiting Scrap', blurb: 'A ring of torn plate turns around you. 90 shield health.', shield: 90 },
+    { emoji: '📌', name: 'Nail Implant', blurb: 'There is metal under your skin and it is pointed outward. 30% of what you take goes back.', thorns: 0.3 },
+    { emoji: '🧲', name: 'Repulse', blurb: 'The field pushes back before anything else can. 20% faster and nothing pushes you.', speed: 1.2, knockbackImmune: true },
   ],
   metal: [
     { emoji: '⚙️', name: 'Natural Clot', blurb: 'You stop bleeding before the wound finishes opening. 6 off every incoming hit.', flatCut: 6 },
@@ -263,7 +263,7 @@ export const DREAM_BOONS: Record<string, DreamBoon[]> = {
   // ── Unstable ───────────────────────────────────────────────────────────────
   radiation: [
     { emoji: '☢️', name: 'Irradiated', blurb: 'Standing near you is a diagnosis. 12 damage a second on contact.', contact: 12 },
-    { emoji: '🔭', name: "Sniper's Instinct", blurb: 'You are always the wrong distance away for them. 20% less damage taken.', armor: 0.8 },
+    { emoji: '🛡️', name: 'Fallout Bunker', blurb: 'There is always a ring of lead between you and them. 20% less damage taken.', armor: 0.8 },
     { emoji: '☣️', name: 'Gamma', blurb: 'Everything you throw is hot. 25% more damage.', damage: 1.25 },
   ],
   depths: [
@@ -273,13 +273,23 @@ export const DREAM_BOONS: Record<string, DreamBoon[]> = {
   ],
   psychic: [
     { emoji: '👁️', name: 'Opened Eyes', blurb: 'You already know what is coming. A third of everything aimed at you misses.', dodge: 0.33 },
-    { emoji: '🧠', name: 'Coma', blurb: 'Half of you is somewhere the fight cannot reach. 30% less damage taken.', armor: 0.7 },
-    { emoji: '🌀', name: 'Utter Focus', blurb: 'Nothing is late any more. 30% off every cooldown.', cooldown: 0.7 },
+    { emoji: '✝️', name: "Bishop's Grace", blurb: 'Heavenly light falls wherever you stand. 30% less damage taken.', armor: 0.7 },
+    { emoji: '♛', name: 'Queen', blurb: 'Every piece on the board answers to you. 30% off every cooldown.', cooldown: 0.7 },
   ],
   ruin: [
     { emoji: '🧱', name: 'Second Skin', blurb: 'You have shed most of yourself. A third smaller, and much harder to land on.', size: 0.67, dodge: 0.2 },
     { emoji: '🪓', name: 'Shred', blurb: 'Everything you touch comes apart. 30% more damage.', damage: 1.3 },
     { emoji: '⛓️', name: 'Combo Breaker', blurb: 'Nothing anyone is building against you ever finishes. 20% less damage taken.', armor: 0.8 },
+  ],
+  tempest: [
+    { emoji: '🌪️', name: 'Low Pressure', blurb: 'The air thins around you. 20% less damage taken and nothing shoves you.', armor: 0.8, knockbackImmune: true },
+    { emoji: '💨', name: 'Tailwind', blurb: 'Everything you throw has the wind behind it. 25% more damage.', damage: 1.25 },
+    { emoji: '🪁', name: 'Light as Air', blurb: 'A quarter smaller and hard to catch. 20% dodge.', size: 0.75, dodge: 0.2 },
+  ],
+  marrow: [
+    { emoji: '🦴', name: 'Bone Density', blurb: 'A skeleton built for this. 70 more health and 5 off every hit.', maxHp: 70, flatCut: 5 },
+    { emoji: '🩹', name: 'Neutralize', blurb: 'An immune system that never sleeps. 5 health a second and nothing sticks to you.', regen: 5, cleanse: true },
+    { emoji: '🧬', name: 'Cytokine Storm', blurb: 'Your blood is a weapon. 20% more damage.', damage: 1.2 },
   ],
   cloth: [
     { emoji: '🧣', name: 'Longer Scarf', blurb: 'More of you than there was. 70 more health and 5 off every hit.', maxHp: 70, flatCut: 5 },
@@ -288,7 +298,7 @@ export const DREAM_BOONS: Record<string, DreamBoon[]> = {
   ],
   magma: [
     { emoji: '🌋', name: 'Molten Body', blurb: 'You are not solid and it is not comfortable to stand near. 13 damage a second on contact.', contact: 13 },
-    { emoji: '🐉', name: 'Dragon Kin', blurb: 'Something old is wearing you. 20% less damage taken and 20% more dealt.', armor: 0.8, damage: 1.2 },
+    { emoji: '🏴‍☠️', name: 'Pirate King', blurb: 'The crew answers to you. 20% less damage taken and 20% more dealt.', armor: 0.8, damage: 1.2 },
     { emoji: '🪨', name: 'Cooled Crust', blurb: 'A rind of black rock. 6 off every incoming hit and nothing shoves you.', flatCut: 6, knockbackImmune: true },
   ],
   chalk: [
@@ -328,9 +338,9 @@ export const DREAM_BOONS: Record<string, DreamBoon[]> = {
     { emoji: '⚔️', name: 'Barracks', blurb: 'You are never outnumbered. 20% more damage.', damage: 1.2 },
   ],
   passion: [
-    { emoji: '🌹', name: 'The Rose', blurb: 'It takes every hit before you do. 25% less damage taken.', armor: 0.75 },
-    { emoji: '💘', name: 'Love', blurb: 'The bar is full and it never empties. 30% more damage.', damage: 1.3 },
-    { emoji: '💋', name: 'Perfume', blurb: 'Nobody wants to hurt you very much. 20% faster and 2 health a second.', speed: 1.2, regen: 2 },
+    { emoji: '💧', name: 'Holy Water', blurb: 'Blessed and steaming. 25% less damage taken.', armor: 0.75 },
+    { emoji: '🙏', name: 'Faith', blurb: 'It never wavers and it never empties. 30% more damage.', damage: 1.3 },
+    { emoji: '🔥', name: 'Chariot', blurb: 'Carried along by something holy. 20% faster and 2 health a second.', speed: 1.2, regen: 2 },
   ],
   death: [
     { emoji: '⚰️', name: 'Sheathed', blurb: 'The blade is always full and always ready. 35% of your hits land double.', crit: 0.35 },
@@ -338,14 +348,14 @@ export const DREAM_BOONS: Record<string, DreamBoon[]> = {
     { emoji: '🕰️', name: 'The Deal', blurb: 'You have already agreed the terms. 25% more damage and a fifth of it comes back.', damage: 1.25, lifesteal: 0.2 },
   ],
   fortune: [
-    { emoji: '🪙', name: 'Interest', blurb: 'Everything you own is paying you. 3 health a second.', regen: 3 },
-    { emoji: '🎟️', name: 'Battle Pass', blurb: 'Thirty tiers, all of them bought. 25% more damage and 15% faster.', damage: 1.25, speed: 1.15 },
-    { emoji: '🔫', name: 'Death Machine', blurb: 'The expensive gun, and you did not pay for it. 30% of your hits land double.', crit: 0.3 },
+    { emoji: '✨', name: 'Gold Plume', blurb: 'You are always standing in your own dust. 3 health a second.', regen: 3 },
+    { emoji: '⬆️', name: 'Advance', blurb: 'Every card, picked. 25% more damage and 15% faster.', damage: 1.25, speed: 1.15 },
+    { emoji: '👑', name: 'Midas', blurb: 'Everything you touch turns to gold. 30% of your hits land double.', crit: 0.3 },
   ],
   gluttony: [
-    { emoji: '🍖', name: 'Snacking', blurb: 'There is always something in a pocket and it is always going in. 6 health a second.', regen: 6 },
-    { emoji: '🥩', name: 'Feast', blurb: 'A larder you never have to spend. 80 more health.', maxHp: 80 },
-    { emoji: '🔪', name: 'Butcher', blurb: 'Everything in front of you is a cut. 25% more damage.', damage: 1.25 },
+    { emoji: '🫀', name: 'Corrupt Heart', blurb: 'A heart of rot beats in your chest. 6 health a second.', regen: 6 },
+    { emoji: '🌾', name: 'Reaping Hour', blurb: 'Everything in front of you is ready to be cut. 25% more damage.', damage: 1.25 },
+    { emoji: '🐦‍⬛', name: 'Murder of Crows', blurb: 'The crows carry you. 20% faster.', speed: 1.2 },
   ],
 };
 

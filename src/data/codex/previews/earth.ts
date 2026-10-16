@@ -301,7 +301,7 @@ function quarters(ctx: PreviewCtx): Phaser.Geom.Rectangle[] {
 export const biomeBuilder: PreviewScript = {
   duration: 6200,
   scale: 0.72,
-  caption: 'Q — untouchable at the centre; click a seed stone and its quarter becomes that biome for 20s',
+  caption: 'Q — untouchable at the centre; each click on a seed stone fills a quarter with its biome for 20s, repeats allowed',
   run(ctx) {
     const { fx, av } = stage(ctx);
     const cx = ctx.cx, cy = ctx.cy;

@@ -4,7 +4,7 @@ import { Fighter } from '../entities/Fighter';
  * The contract behind Ruin Mastery's Second Skin.
  *
  * A shard from the shed layer doesn't only hurt — it strips whoever it hits back down to the
- * body they started the match in. Hunt's beast, Justice's flight, Gluttony's butcher, Earth's
+ * body they started the match in. Hunt's beast, Justice's flight, Earth's
  * titan, Fire's flame body, Magnet's board, Acid's burrow, Light's car: every one of them is a
  * *form*, a state the fighter chose to leave their base kit for, and every one of them ends the
  * moment a shard lands.

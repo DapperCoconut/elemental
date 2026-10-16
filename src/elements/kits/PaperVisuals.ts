@@ -1153,24 +1153,22 @@ const PAPER_AVATAR: AvatarSpec = {
 };
 
 /**
- * Paper himself: a figure folded out of a few sheets, wearing a newspaper hat, holding an open
- * storybook in front of him.
+ * Paper himself: a plain orb of cream pulp (the baked `elem-paper`) wearing a folded newspaper
+ * hat. The hat is the whole costume, and its ribbon carries the open book's colour, so a
+ * right-click cycle is legible from across the arena without a HUD — the ribbon flashes as the
+ * page turns, and the ability art takes its accent from the same table.
  *
- * The book is the whole character. `setBook` swaps its cover colour and the ribbon on the hat at
- * the same time, so a right-click cycle is legible from across the arena without a HUD — and the
- * ability art takes its accent from the same table, so the element visibly changes colour three
- * ways as you play it.
- *
- * Mastered folds a second, taller peak into the hat and gilds the book's edge.
+ * Low health crumples the hat (it sags and skews), for a read at a glance. Mastery enhances
+ * the hat rather than adding to it: a taller fold, a gilt brim, a glowing ribbon, wider pulp
+ * coronas on the hands and a brighter under-glow.
  */
 export class PaperAvatar extends BaseAvatar {
   private book: BookId = 0;
   /** Page-turn animation: 1 the instant a book changes, decaying to 0. */
   private flip = 0;
-  /** Ability tell: brightens the creases for a beat after every cast. */
+  /** Ability tell: brightens the ribbon for a beat after every cast. */
   private flare = 0;
-  private seed = Math.random() * 999;
-  /** 0–1 — how crumpled the body is. Driven by low health, for a read at a glance. */
+  /** 0–1 — how crumpled the hat is. Driven by low health, for a read at a glance. */
   private crumple = 0;
 
   constructor(scene: Phaser.Scene, tint: PaperColorFn, depth = 6) {
@@ -1200,9 +1198,14 @@ export class PaperAvatar extends BaseAvatar {
   }
 
   protected applyMastery(on: boolean): void {
+    this.setEyeWhite(on ? PAP.halo : PAP.bright);
     this.forEachHandLayer(0, (glow) => {
-      glow.setRadius(on ? 14 : 11);
-      glow.setAlpha(on ? 0.48 : 0.3);
+      glow.setRadius(on ? 14.5 : 11);
+      glow.setAlpha(on ? 0.5 : 0.3);
+    });
+    this.forEachHandLayer(1, (shell) => {
+      if (on) shell.setStrokeStyle(1.6, this.tint(PAP.gilt), 0.95);
+      else shell.setStrokeStyle();
     });
   }
 
@@ -1210,91 +1213,49 @@ export class PaperAvatar extends BaseAvatar {
     new PaperFx(this.scene, this.tint).shred(x, y, 2, 7, 380, 4);
   }
 
-  /** A plain drop shadow, because paper is opaque — plus a faint wash of the open book's colour. */
+  /** A soft wash of the open book's colour, so the cream body lifts off the floor. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void alpha;
-    g.fillStyle(this.tint(PAP.drop), a * 0.36);
-    g.fillEllipse(x + 3, y + 17, 40, 15);
-    g.fillStyle(this.tint(this.tone.accent), a * (0.1 + this.flare * 0.12));
-    g.fillEllipse(x, y + 15, 52, 18);
+    const k = this.intensity * (this.mastered ? 1.15 : 1);
+    g.fillStyle(this.tint(this.tone.accent), a * ((this.mastered ? 0.2 : 0.12) + this.flare * 0.1) * k);
+    g.fillCircle(x, y, 28 * k);
   }
 
-  /** The torso: three overlapping sheets, crumpling inward as health drops. */
-  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    void a;
-    const crush = 1 - this.crumple * 0.28;
-    for (let i = 0; i < 3; i++) {
-      const lean = (i - 1) * 0.22 + Math.sin(this.t * 0.8 + i) * 0.05 + this.crumple * (i - 1) * 0.5;
-      paperSheet(g, this.tint, x, y + 1 + (i - 1) * 1.6, Math.PI / 2 + lean,
-        30 * crush, 24 * crush, alpha * (0.8 + i * 0.07),
-        { color: i === 1 ? PAP.pulp : PAP.shade, seed: this.seed + i * 5, curl: i === 2 ? 1 : 0, drop: i === 0 ? 3 : 0 });
-    }
-    // Ruled lines across the front sheet, brighter for a beat after every cast.
-    g.lineStyle(1, this.tint(PAP.ink), alpha * (0.16 + this.flare * 0.3));
-    for (let i = 0; i < 4; i++) {
-      const ly = y - 8 + i * 5.5;
-      g.lineBetween(x - 11, ly, x + 10 - jitter(this.seed, i) * 6, ly);
-    }
-  }
-
+  /** The newspaper hat, rooted at the crown, leaning with the aim. */
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void a;
     const tone = this.tone;
-    const heat = 0.5 + this.flare * 0.5;
-    const crown = y - 17;
+    const m = this.mastered;
+    const heat = 0.6 + this.flare * 0.4;
+    const crown = y - 16;
+    const sag = this.crumple;
+    const lean = Math.cos(this.facing) * 2.6 + sag * 3;
+    const w = m ? 18 : 16;
+    const h = (m ? 17 : 15) * (1 - sag * 0.3);
+    const P = (px: number, py: number) => new Phaser.Geom.Point(x + lean + px, crown + py);
 
-    // ── The newspaper hat ──
-    // Two folded peaks and a brim, leaning with the aim. Mastered adds a third, taller peak.
-    const lean = Math.cos(this.facing) * 2.6;
-    const w = this.mastered ? 17 : 14;
-    const h = this.mastered ? 15 : 12;
     g.fillStyle(this.tint(PAP.drop), alpha * 0.3);
-    g.fillPoints([
-      new Phaser.Geom.Point(x + lean - w - 1, crown + 3),
-      new Phaser.Geom.Point(x + lean + w + 1, crown + 3),
-      new Phaser.Geom.Point(x + lean, crown - h + 2),
-    ], true);
+    g.fillPoints([P(-w - 1, 3), P(w + 1, 3), P(0, -h + 2)], true);
     g.fillStyle(this.tint(PAP.pulp), alpha);
-    g.fillPoints([
-      new Phaser.Geom.Point(x + lean - w, crown + 1),
-      new Phaser.Geom.Point(x + lean + w, crown + 1),
-      new Phaser.Geom.Point(x + lean + w * 0.2, crown - h),
-    ], true);
+    g.fillPoints([P(-w, 1), P(w, 1), P(w * 0.2, -h)], true);
+    // The shaded half of the fold.
     g.fillStyle(this.tint(PAP.shade), alpha);
-    g.fillPoints([
-      new Phaser.Geom.Point(x + lean - w, crown + 1),
-      new Phaser.Geom.Point(x + lean + w * 0.2, crown - h),
-      new Phaser.Geom.Point(x + lean - w * 0.5, crown - h * 0.72),
-    ], true);
-    if (this.mastered) {
-      g.fillStyle(this.tint(PAP.bright), alpha * 0.95);
-      g.fillPoints([
-        new Phaser.Geom.Point(x + lean - w * 0.7, crown - h * 0.4),
-        new Phaser.Geom.Point(x + lean + w * 0.1, crown - h * 1.5),
-        new Phaser.Geom.Point(x + lean + w * 0.5, crown - h * 0.5),
-      ], true);
+    g.fillPoints([P(-w, 1), P(w * 0.2, -h), P(-w * 0.5, -h * 0.72)], true);
+    // Crumpled: a creased dent across the fold.
+    if (sag > 0.2) {
+      g.lineStyle(1, this.tint(PAP.crease), alpha * sag);
+      g.lineBetween(x + lean - w * 0.4, crown - h * 0.3, x + lean + w * 0.3, crown - h * 0.55);
     }
-    // The brim, and the ribbon in the open book's colour.
-    g.lineStyle(2.4, this.tint(PAP.crease), alpha * 0.9);
+    // The brim — gilded once mastered.
+    g.lineStyle(m ? 2.8 : 2.4, this.tint(m ? PAP.gilt : PAP.crease), alpha * 0.95);
     g.lineBetween(x + lean - w, crown + 1, x + lean + w, crown + 1);
-    g.lineStyle(2.6, this.tint(tone.accent), alpha * heat);
-    g.lineBetween(x + lean - w * 0.85, crown - 1.6, x + lean + w * 0.6, crown - 3.4);
-
-    // ── The open storybook, held out front along the aim ──
-    // Rides on the same spring the hands do, so it swings when he casts rather than being pinned
-    // to the body — and it flips edge-on for a beat when the book is cycled.
-    const bx = x + Math.cos(this.facing) * 20;
-    const by = y + Math.sin(this.facing) * 12 + 4;
-    const flipW = 1 - this.flip * 0.85;
-    storybookShape(g, this.tint, bx, by, Math.sin(this.facing) * 0.4, 13 * flipW, alpha, {
-      cover: tone.cover, accent: tone.accent, open: 1 - this.flip * 0.6, seed: this.seed, drop: 3,
-    });
-    if (this.mastered) {
-      g.lineStyle(1.6, this.tint(PAP.gilt), alpha * 0.9);
-      g.strokeCircle(bx, by, 17);
+    // The ribbon in the open book's colour; it squeezes thin while the page turns.
+    const rib = 2.8 * (1 - this.flip * 0.6);
+    if (m) {
+      g.lineStyle(rib + 3, this.tint(tone.accent), alpha * 0.25 * heat);
+      g.lineBetween(x + lean - w * 0.85, crown - 1.6, x + lean + w * 0.6, crown - 3.4);
     }
-    // The book's own light on the page, pulsing with the flare.
-    g.fillStyle(this.tint(tone.accent), alpha * (0.15 + heat * 0.22));
-    g.fillEllipse(bx, by - 4, 22 * flipW, 10);
+    g.lineStyle(rib, this.tint(this.flip > 0.5 ? PAP.bright : tone.accent), alpha * heat);
+    g.lineBetween(x + lean - w * 0.85, crown - 1.6, x + lean + w * 0.6, crown - 3.4);
   }
 }

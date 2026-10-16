@@ -118,7 +118,7 @@ this.[element]Kit.update(dt);
 
 - The **kit** computes each opportunity owner-side and publishes it as an `NpcAiState` field (a cast position or a "combo is live" flag). The kit owns the geometry and upgrade checks; the AI never re-derives either. Reads must be side-effect-free.
 - `do[Element]Abilities` checks opportunity fields **first**, before its generic rotation.
-- When implementing an element's bot, enumerate the kit's synergies ("X enables Y") and wire each through this pattern. A bot that never plays its kit's synergies is an incomplete implementation. Canonical examples: `npcSilenceMatureStalker`, `npcSilenceSacrificeStab`, `npcMagmaChargeTarget`, `gluttonyGrillPoint`.
+- When implementing an element's bot, enumerate the kit's synergies ("X enables Y") and wire each through this pattern. A bot that never plays its kit's synergies is an incomplete implementation. Canonical examples: `npcSilenceMatureStalker`, `npcSilenceSacrificeStab`, `npcMagmaChargeTarget`, `npcHarvestHeartAim`.
 
 The bot-overhaul roadmap (per-element batch checklist, remaining elements, and hard-won gotchas like reaction-tick probability retuning) lives in `docs/bot-overhaul.md` — read it before any bot/AI work, and keep it current as batches land.
 

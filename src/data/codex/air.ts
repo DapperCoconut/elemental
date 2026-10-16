@@ -206,7 +206,7 @@ const air: ElementCodex = {
         'A bindable reset: every ability comes off cooldown at once, Spin Dance refills all of its '
         + 'charges — both, with Expert Dancer — and you bank +20 wind dodge on top of whatever you had '
         + 'already earned. 25s cooldown.',
-      cast: 'Bindable to E, R, F or Q.',
+      cast: 'Bindable to R, F or Q.',
       effects: [
         { tag: 'buff', label: 'Full reset', detail: 'Every ability comes off cooldown at once.' },
         { tag: 'resource', label: 'Refilled spins', detail: 'Spin Dance refills all of its charges — both of them with Expert Dancer.' },

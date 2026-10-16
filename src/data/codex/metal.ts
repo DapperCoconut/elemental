@@ -275,7 +275,7 @@ const metal: ElementCodex = {
         + 'between you and the source. Cast while Clot Armor is active it comes out red, and every shot '
         + 'it blocks fires a full 5-shard burst at 10 damage each — 8 with Exsanguinate. 8s cooldown.',
       cast:
-        'Bindable to E, R, F or Q, replacing that slot\'s base ability for the match. Plants 46px '
+        'Bindable to R, F or Q, replacing that slot\'s base ability for the match. Plants 46px '
         + 'ahead of you along the aim and follows the cursor while it stands.',
       effects: [
         { tag: 'resource', label: 'Cost', detail: '25 blood — a quarter of a full bar. Refuses to cast below that.' },

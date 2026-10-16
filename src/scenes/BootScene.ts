@@ -18,6 +18,51 @@ function lighten(color: number, t: number): number {
   return Phaser.Display.Color.GetColor(ch(c.red), ch(c.green), ch(c.blue));
 }
 
+/**
+ * The classic element body, as Fire/Water/Ice wear it: one hue, banded dark rim → light core
+ * pooling low, a rim light along the crown and a single specular glint. Paints into the 48×48
+ * canvas at radius 22 (the physics body) — call `generateTexture` after.
+ *
+ * This is the *base*. An element's identity belongs in the rig's accessories on top of it,
+ * not printed onto the orb — a patterned body plus a costume plus props is what turned the
+ * roster into clutter.
+ */
+export interface OrbTones {
+  /** Outermost ring — the darkest shade of the hue. */
+  rim: number;
+  shell: number;
+  body: number;
+  mid: number;
+  /** The light pooled low in the orb. */
+  core: number;
+  /** Rim light along the crown. */
+  light: number;
+  /** Specular glint; defaults to white. */
+  glint?: number;
+}
+
+export function bakeOrb(gfx: Phaser.GameObjects.Graphics, t: OrbTones): void {
+  gfx.clear();
+  gfx.fillStyle(t.rim, 1);
+  gfx.fillCircle(24, 24, 22);
+  gfx.fillStyle(t.shell, 1);
+  gfx.fillCircle(24, 24, 19.5);
+  gfx.fillStyle(t.body, 1);
+  gfx.fillCircle(24, 25, 16);
+  gfx.fillStyle(t.mid, 1);
+  gfx.fillCircle(24, 26.5, 12);
+  gfx.fillStyle(t.core, 0.85);
+  gfx.fillEllipse(24, 31, 16, 8);
+  gfx.lineStyle(2.5, t.light, 0.9);
+  gfx.strokeCircle(24, 24, 21);
+  gfx.lineStyle(2, t.light, 0.55);
+  gfx.beginPath();
+  gfx.arc(24, 24, 18.5, Math.PI * 1.15, Math.PI * 1.85);
+  gfx.strokePath();
+  gfx.fillStyle(t.glint ?? 0xffffff, 0.85);
+  gfx.fillEllipse(17.5, 16, 8, 5);
+}
+
 export class BootScene extends Phaser.Scene {
   constructor() {
     super({ key: 'BootScene' });
@@ -98,39 +143,9 @@ export class BootScene extends Phaser.Scene {
     gfx.fillCircle(28.5, 30, 1.7);
     gfx.generateTexture('elem-water', 48, 48);
 
-    // Air element texture — a ball of compressed air: storm-dark rim, a body that pales
-    // toward the middle where the pressure is highest, three sheared bands curling across
-    // the face, and a hard specular glint. Radius stays 22 to match the physics body.
-    gfx.clear();
-    gfx.fillStyle(0x24303c, 1);
-    gfx.fillCircle(24, 24, 22);
-    gfx.fillStyle(0x445668, 1);
-    gfx.fillCircle(24, 24, 20);
-    gfx.fillStyle(0x6688aa, 1);
-    gfx.fillCircle(24, 25, 17);
-    gfx.fillStyle(0x88aacc, 1);
-    gfx.fillCircle(24, 26, 13);
-    // Compressed heart, brightest where the air is packed tightest.
-    gfx.fillStyle(0xaaddff, 1);
-    gfx.fillEllipse(24, 28, 19, 11);
-    gfx.fillStyle(0xccddff, 0.85);
-    gfx.fillEllipse(24, 30, 12, 6);
-    // Shear bands curling across the face — the tell that the whole thing is turning.
-    gfx.lineStyle(2.2, 0xe4f2ff, 0.5);
-    for (let i = 0; i < 3; i++) {
-      gfx.beginPath();
-      gfx.arc(24, 24 + i * 3 - 3, 9 + i * 4, Math.PI * 0.15, Math.PI * 0.85);
-      gfx.strokePath();
-    }
-    // Rim light along the top edge sells the sphere.
-    gfx.lineStyle(2.5, 0x88aacc, 0.9);
-    gfx.strokeCircle(24, 24, 21);
-    gfx.lineStyle(2, 0xe4f2ff, 0.6);
-    gfx.beginPath();
-    gfx.arc(24, 24, 19, Math.PI * 1.12, Math.PI * 1.88);
-    gfx.strokePath();
-    gfx.fillStyle(0xffffff, 0.9);
-    gfx.fillEllipse(17.5, 16, 9, 5.5);
+    // Air element texture — a plain pale-sky orb in Air's palette (slate → steel → sky → mist).
+    // No shear bands printed on it: the fan crest AirAvatar wears is the dancer.
+    bakeOrb(gfx, { rim: 0x445668, shell: 0x6688aa, body: 0x88aacc, mid: 0xaaddff, core: 0xccddff, light: 0xe4f2ff, glint: 0xffffff });
     gfx.generateTexture('elem-air', 48, 48);
 
     // Life element texture — a seed pod swollen with sap: bark rim, deep green flesh, a
@@ -285,76 +300,14 @@ export class BootScene extends Phaser.Scene {
     gfx.fillCircle(13, 5.6, 1.2);
     gfx.generateTexture('proj-pressure-dagger', 18, 14);
 
-    // Earth element texture — a boulder rather than a brown disc: dark shell, stone body,
-    // stacked strata bands, and one lit facet up-and-left where the light falls. Every point
-    // stays inside radius 23.5 of (24,24); Fighter hardcodes a radius-22 body in 48×48.
-    gfx.clear();
-    gfx.fillStyle(0x342b20);
-    gfx.fillCircle(24, 24, 22);
-    gfx.fillStyle(0x5b4c39);
-    gfx.fillCircle(24, 24, 20);
-    // Strata: two bands of lighter rock cutting across the body.
-    gfx.fillStyle(0x6d5c45);
-    gfx.fillTriangle(5, 20, 43, 14, 43, 24);
-    gfx.fillTriangle(5, 20, 43, 24, 6, 28);
-    gfx.fillStyle(0x887755);
-    gfx.fillTriangle(8, 32, 40, 30, 38, 38);
-    gfx.fillTriangle(8, 32, 38, 38, 12, 39);
-    // Lit facet: a flat plane catching the light off the top-left shoulder.
-    gfx.fillStyle(0xa8926c);
-    gfx.fillTriangle(10, 17, 26, 8, 33, 17);
-    gfx.fillTriangle(10, 17, 33, 17, 17, 23);
-    // Crevices, and a hard specular pip on the high edge.
-    gfx.lineStyle(2, 0x1c1409, 0.85);
-    gfx.beginPath();
-    gfx.moveTo(17, 23); gfx.lineTo(24, 30); gfx.lineTo(20, 40);
-    gfx.moveTo(24, 30); gfx.lineTo(36, 33);
-    gfx.strokePath();
-    gfx.lineStyle(2, 0xccaa66, 0.8);
-    gfx.beginPath();
-    gfx.moveTo(11, 18); gfx.lineTo(26, 9.5);
-    gfx.strokePath();
-    gfx.fillStyle(0xe3d2a8, 0.95);
-    gfx.fillCircle(20, 14, 2.2);
+    // Earth element texture — a plain clay-brown orb in Earth's palette (umber → clay → sand).
+    // No strata or cracks printed on it: the standing-stone crown EarthAvatar wears is the rock.
+    bakeOrb(gfx, { rim: 0x342b20, shell: 0x5b4c39, body: 0x6d5c45, mid: 0x887755, core: 0xa8926c, light: 0xccaa66, glint: 0xe3d2a8 });
     gfx.generateTexture('elem-earth', 48, 48);
 
-    // Oil element texture: a steel drum end-on — crude body, chrome hoop bands, a hazard
-    // stripe and the interference film sitting on the surface. Everything stays inside the
-    // radius-23.5 the Fighter body assumes.
-    gfx.clear();
-    gfx.fillStyle(0x1a1108);
-    gfx.fillCircle(24, 24, 22);
-    // Hoop bands running across the drum, kept as chords inside the radius-22 body.
-    gfx.fillStyle(0x2b1c0c);
-    gfx.fillRect(6, 13, 36, 7);
-    gfx.fillRect(6, 28, 36, 7);
-    gfx.lineStyle(2, 0x6b7480, 0.85);
-    gfx.beginPath();
-    gfx.moveTo(6, 13); gfx.lineTo(42, 13);
-    gfx.moveTo(6, 20); gfx.lineTo(42, 20);
-    gfx.moveTo(6, 28); gfx.lineTo(42, 28);
-    gfx.moveTo(6, 35); gfx.lineTo(42, 35);
-    gfx.strokePath();
-    // Hazard stripes, banded across the drum rather than straight down it. The rig paints a hard
-    // hat over the crown and a drum torso over the belly, so the band left showing is the face —
-    // keep that strip clean plate and the character has somewhere to have a face.
-    gfx.fillStyle(0xffaa00, 0.9);
-    gfx.fillRect(9, 4, 30, 7);
-    gfx.fillRect(9, 37, 30, 7);
-    gfx.fillStyle(0x07050a, 0.9);
-    for (let i = 0; i < 5; i++) {
-      gfx.fillRect(10 + i * 6, 4, 3, 7);
-      gfx.fillRect(12 + i * 6, 37, 3, 7);
-    }
-    // Iridescent film, then a hard specular pip on the high shoulder.
-    gfx.fillStyle(0x7a4fd0, 0.4);
-    gfx.fillEllipse(17, 15, 20, 9);
-    gfx.fillStyle(0x2fd6c0, 0.35);
-    gfx.fillEllipse(15, 13, 12, 5);
-    gfx.fillStyle(0xb8c4d0, 0.9);
-    gfx.fillCircle(15, 13, 2.4);
-    gfx.lineStyle(3, 0x8a4f14);
-    gfx.strokeCircle(24, 24, 22);
+    // Oil element texture: a glossy orb of crude — tar rim to a warm brown core, an amber rim
+    // light, and a pale teal glint for the interference film on the surface.
+    bakeOrb(gfx, { rim: 0x07050a, shell: 0x140d08, body: 0x2b1c0c, mid: 0x3d2812, core: 0x5a3a12, light: 0xc47a2a, glint: 0xa8ece2 });
     gfx.generateTexture('elem-oil', 48, 48);
 
     // Oil drone laser bolt: gold body drawn out along its flight, white-hot core.
@@ -607,210 +560,29 @@ export class BootScene extends Phaser.Scene {
     gfx.fillCircle(3.6, 3.6, 1);
     gfx.generateTexture('proj-soul-bolt', 10, 10);
 
-    // Hunt element texture — the hunter's head under a fur-lined hood. This one is a face, not
-    // a pattern: HuntAvatar paints the eyes, the hood peak and the crossbow over the top of it,
-    // so what the texture has to supply is the skin the features sit on and a hood shadow deep
-    // enough that the lit gear reads against it. Radius stays 22 to match the physics body.
-    gfx.clear();
-    // Hood: dark leather all the way to the rim, with a ragged fur edge bitten out of the top.
-    gfx.fillStyle(0x2a1208);
-    gfx.fillCircle(24, 24, 22);
-    for (let i = 0; i < 14; i++) {
-      const a = -Math.PI - 0.2 + (i / 13) * (Math.PI + 0.4);
-      gfx.fillStyle(i % 2 === 0 ? 0x452213 : 0x2a1208);
-      gfx.fillCircle(24 + Math.cos(a) * 19.5, 24 + Math.sin(a) * 19.5, 3.4);
-    }
-    gfx.fillStyle(0x3d1a0e);
-    gfx.fillCircle(24, 25, 19);
-    // Face: weathered skin, brightest across the brow where the light falls.
-    gfx.fillStyle(0x8a5433);
-    gfx.fillEllipse(24, 24, 27, 30);
-    gfx.fillStyle(0xa4693f);
-    gfx.fillEllipse(23.5, 21, 23, 20);
-    // Hood shadow across the upper face — the reason the eyes read as lit from below.
-    gfx.fillStyle(0x1e0d05, 0.55);
-    gfx.beginPath();
-    gfx.moveTo(9, 20); gfx.lineTo(39, 20); gfx.lineTo(37, 11); gfx.lineTo(11, 11);
-    gfx.closePath();
-    gfx.fillPath();
-    // Stubble along the jaw, and one scar down the cheek.
-    gfx.fillStyle(0x3d2416, 0.5);
-    gfx.fillEllipse(24, 33, 21, 10);
-    gfx.lineStyle(1.4, 0x6b2412, 0.85);
-    gfx.lineBetween(31, 19, 34, 30);
-    // Rim light down the hood's leading edge.
-    gfx.lineStyle(2.5, 0xcc4400, 0.85);
-    gfx.strokeCircle(24, 24, 22);
-    gfx.lineStyle(1.6, 0xffaa44, 0.45);
-    gfx.beginPath();
-    gfx.arc(24, 24, 20, Math.PI * 1.1, Math.PI * 1.8);
-    gfx.strokePath();
+    // Hunt element texture — human form: a plain gunpowder-ember orb (HUNTER_TONES). The hood
+    // HuntAvatar wears on the crown is the hunter; the body only says "hunt" by its colour.
+    bakeOrb(gfx, { rim: 0x3d1a0e, shell: 0x7a2c06, body: 0xa83a02, mid: 0xcc4400, core: 0xff6600, light: 0xffaa44, glint: 0xffe0b0 });
     gfx.generateTexture('elem-hunt', 48, 48);
 
-    // Hunt beast form — matted fur with a skull under it. No hood, no skin: the whole disc is
-    // the animal's face, so the avatar's muzzle and jaws have fur to grow out of.
-    gfx.clear();
-    gfx.fillStyle(0x2c0606);
-    gfx.fillCircle(24, 24, 22);
-    // Fur: two rings of tufts, the outer one darker, angled so the coat has a direction.
-    for (let ring = 0; ring < 2; ring++) {
-      const r = 20 - ring * 5;
-      const n = 16 - ring * 4;
-      for (let i = 0; i < n; i++) {
-        const a = (i / n) * Math.PI * 2 + ring * 0.4;
-        gfx.fillStyle(ring === 0 ? 0x452213 : 0x5e3018, 0.95);
-        gfx.fillTriangle(
-          24 + Math.cos(a - 0.16) * (r - 4), 24 + Math.sin(a - 0.16) * (r - 4),
-          24 + Math.cos(a + 0.3) * (r + 2.5), 24 + Math.sin(a + 0.3) * (r + 2.5),
-          24 + Math.cos(a + 0.16) * (r - 4), 24 + Math.sin(a + 0.16) * (r - 4),
-        );
-      }
-    }
-    gfx.fillStyle(0x5e3018);
-    gfx.fillCircle(24, 24, 16);
-    // Face mask: a paler blaze running down the middle, which is where the muzzle lands.
-    gfx.fillStyle(0x8b0000, 0.45);
-    gfx.fillEllipse(24, 26, 18, 24);
-    gfx.fillStyle(0x7a4222);
-    gfx.fillEllipse(24, 27, 13, 20);
-    // Sunken sockets, so the rig's eyes sit in a hollow instead of on a flat disc.
-    gfx.fillStyle(0x1a0a06, 0.7);
-    gfx.fillEllipse(17, 20, 12, 9);
-    gfx.fillEllipse(31, 20, 12, 9);
-    gfx.lineStyle(2.5, 0xcc1111, 0.9);
-    gfx.strokeCircle(24, 24, 22);
+    // Hunt beast form — a plain blood-red orb (BEAST_TONES); the wolf ears on the crown are the
+    // beast.
+    bakeOrb(gfx, { rim: 0x2c0606, shell: 0x5a0808, body: 0x8b0000, mid: 0xa80c0c, core: 0xcc1111, light: 0xff2222, glint: 0xffd0c8 });
     gfx.generateTexture('elem-hunt-beast', 48, 48);
 
-    // Hunt hybrid form — caught halfway. Skin and hood on one side, fur and silver on the other,
-    // split straight down the middle so the two halves argue with each other.
-    gfx.clear();
-    gfx.fillStyle(0x2b0c06);
-    gfx.fillCircle(24, 24, 22);
-    // Left: the man. Hood, skin, hood shadow.
-    gfx.fillStyle(0x3d1a0e);
-    gfx.slice(24, 24, 21, Math.PI / 2, Math.PI * 1.5, false);
-    gfx.fillPath();
-    gfx.fillStyle(0x8a5433);
-    gfx.slice(24, 24, 15.5, Math.PI / 2, Math.PI * 1.5, false);
-    gfx.fillPath();
-    // Right: the animal. Fur tufts breaking the rim, red under-hide.
-    gfx.fillStyle(0x452213);
-    gfx.slice(24, 24, 21, Math.PI * 1.5, Math.PI / 2, false);
-    gfx.fillPath();
-    for (let i = 0; i < 8; i++) {
-      const a = -Math.PI / 2 + (i / 7) * Math.PI;
-      gfx.fillStyle(i % 2 === 0 ? 0x5e3018 : 0x8b0000, 0.95);
-      gfx.fillTriangle(
-        24 + Math.cos(a - 0.18) * 15, 24 + Math.sin(a - 0.18) * 15,
-        24 + Math.cos(a + 0.24) * 23, 24 + Math.sin(a + 0.24) * 23,
-        24 + Math.cos(a + 0.18) * 15, 24 + Math.sin(a + 0.18) * 15,
-      );
-    }
-    gfx.fillStyle(0x7a4222);
-    gfx.slice(24, 24, 15.5, Math.PI * 1.5, Math.PI / 2, false);
-    gfx.fillPath();
-    // The seam, torn rather than cut.
-    gfx.lineStyle(2.2, 0xcc1111, 0.9);
-    gfx.beginPath();
-    gfx.moveTo(24, 3);
-    gfx.lineTo(21, 14); gfx.lineTo(26, 24); gfx.lineTo(21.5, 34); gfx.lineTo(24, 45);
-    gfx.strokePath();
-    // Silver gorget across the throat — the hunter's kit, still on.
-    gfx.fillStyle(0x9aa0ab);
-    gfx.fillEllipse(24, 36, 30, 11);
-    gfx.fillStyle(0xf2f4ff, 0.55);
-    gfx.fillEllipse(24, 34.5, 24, 4);
-    gfx.lineStyle(3.5, 0xdddde6);
-    gfx.strokeCircle(24, 24, 22);
+    // Hunt hybrid form — a plain monster-hunter-silver orb (SILVER_TONES); half-grown wolf ears
+    // on the crown say he is caught between the two.
+    bakeOrb(gfx, { rim: 0x2e3238, shell: 0x4f555e, body: 0x6f767f, mid: 0x9aa0ab, core: 0xc4c8d2, light: 0xdddde6, glint: 0xffffff });
     gfx.generateTexture('elem-hunt-hybrid', 48, 48);
 
-    // Gravity element texture — a well seen from above: an accretion disc of spiral arms
-    // falling into a black core, with the photon ring bent around it.
-    gfx.clear();
-    gfx.fillStyle(0x1a0a2e);
-    gfx.fillCircle(24, 24, 22);
-    gfx.fillStyle(0x2d1155);
-    gfx.fillCircle(24, 24, 19);
-    // Four arms spiralling in, drawn as tapering wedges.
-    for (let k = 0; k < 4; k++) {
-      const base = (k / 4) * Math.PI * 2;
-      for (const [shade, w] of [[0x5511aa, 4.6], [0xaa44ff, 2.6], [0xccbbee, 1.1]] as const) {
-        gfx.lineStyle(w, shade, 0.95);
-        gfx.beginPath();
-        for (let i = 0; i <= 10; i++) {
-          const f = i / 10;
-          const r = 18 - f * 12;
-          const a = base + f * 1.5;
-          const px = 24 + Math.cos(a) * r, py = 24 + Math.sin(a) * r;
-          if (i === 0) gfx.moveTo(px, py); else gfx.lineTo(px, py);
-        }
-        gfx.strokePath();
-      }
-    }
-    // Event horizon, then the lensed ring standing off it.
-    gfx.fillStyle(0x0a0614);
-    gfx.fillCircle(24, 24, 6.5);
-    gfx.lineStyle(2, 0xe8dcff, 0.95);
-    gfx.strokeCircle(24, 24, 8.4);
-    gfx.lineStyle(1, 0xaa44ff, 0.6);
-    gfx.strokeCircle(24, 24, 10.6);
-    gfx.lineStyle(2.5, 0xaa55ee, 0.9);
-    gfx.strokeCircle(24, 24, 22);
+    // Gravity element texture: a plain violet orb — abyss rim to an amethyst core. The ringed
+    // planet look comes from the ring GravityAvatar orbits over the crown, not the body.
+    bakeOrb(gfx, { rim: 0x1a0a2e, shell: 0x2d1155, body: 0x5511aa, mid: 0x7030c0, core: 0x8844cc, light: 0xaa55ee, glint: 0xe8dcff });
     gfx.generateTexture('elem-gravity', 48, 48);
 
-    // Creation element texture — a smith's gear seen head-on: an iron rim with square teeth,
-    // a bronze web with four riveted spokes, and a pink Nexus core burning in the bore.
-    gfx.clear();
-    gfx.fillStyle(0x2a1206);
-    gfx.fillCircle(24, 24, 22);
-    // Teeth around the rim.
-    for (let i = 0; i < 10; i++) {
-      const a = (i / 10) * Math.PI * 2;
-      const c = Math.cos(a), s = Math.sin(a);
-      const p = -s, q = c;
-      gfx.fillStyle(0x8a4a1c);
-      gfx.fillPoints([
-        { x: 24 + c * 15 + p * 4.6, y: 24 + s * 15 + q * 4.6 },
-        { x: 24 + c * 22.6 + p * 3.2, y: 24 + s * 22.6 + q * 3.2 },
-        { x: 24 + c * 22.6 - p * 3.2, y: 24 + s * 22.6 - q * 3.2 },
-        { x: 24 + c * 15 - p * 4.6, y: 24 + s * 15 - q * 4.6 },
-      ], true);
-    }
-    gfx.fillStyle(0x4a2c14);
-    gfx.fillCircle(24, 24, 18);
-    gfx.fillStyle(0x8a4a1c);
-    gfx.fillCircle(24, 24, 15.5);
-    // Lit upper bevel — the whole disc reads flat without it.
-    gfx.fillStyle(0xcc6622);
-    gfx.slice(24, 24, 15.5, Math.PI * 1.15, Math.PI * 1.95);
-    gfx.fillPath();
-    gfx.fillStyle(0x2a1206);
-    gfx.fillCircle(24, 24, 11.5);
-    // Four spokes with a rivet at the hub end of each.
-    for (let i = 0; i < 4; i++) {
-      const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
-      const c = Math.cos(a), s = Math.sin(a);
-      gfx.fillStyle(0xffaa44);
-      gfx.fillPoints([
-        { x: 24 + c * 4 - s * 2.6, y: 24 + s * 4 + c * 2.6 },
-        { x: 24 + c * 13 - s * 1.8, y: 24 + s * 13 + c * 1.8 },
-        { x: 24 + c * 13 + s * 1.8, y: 24 + s * 13 - c * 1.8 },
-        { x: 24 + c * 4 + s * 2.6, y: 24 + s * 4 - c * 2.6 },
-      ], true);
-      gfx.fillStyle(0x2a1206);
-      gfx.fillCircle(24 + c * 11, 24 + s * 11, 1.9);
-      gfx.fillStyle(0xffee99);
-      gfx.fillCircle(24 + c * 11 - 0.5, 24 + s * 11 - 0.5, 0.9);
-    }
-    // Nexus core in the bore, with its specular glint.
-    gfx.fillStyle(0xff3399);
-    gfx.fillCircle(24, 24, 6);
-    gfx.fillStyle(0xff88cc);
-    gfx.fillCircle(24, 24, 3.6);
-    gfx.fillStyle(0xffffff);
-    gfx.fillCircle(22.8, 22.8, 1.6);
-    gfx.lineStyle(2, 0xcc6622, 0.9);
-    gfx.strokeCircle(24, 24, 22);
+    // Creation element texture: a plain forged-copper orb — soot rim to an ember core. The
+    // smith's gear turns over the crown in CreationAvatar; the body only says "creation".
+    bakeOrb(gfx, { rim: 0x2a1206, shell: 0x4a2c14, body: 0x8a4a1c, mid: 0xa8551f, core: 0xcc6622, light: 0xee8833, glint: 0xffee99 });
     gfx.generateTexture('elem-creation', 48, 48);
 
     // Creation bolts: a forged slug per tier — dark jacket, tier metal, driving band, glint.
@@ -859,38 +631,9 @@ export class BootScene extends Phaser.Scene {
     gfx.fillCircle(3, 5.2, 1.8);
     gfx.generateTexture('proj-creation-scythe', 16, 10);
 
-    // Time element texture — a pocket-watch face: brass bezel, hour ticks, and the two hands
-    // locked at high noon over a sun-bleached dial.
-    gfx.clear();
-    gfx.fillStyle(0x5a3a18);
-    gfx.fillCircle(24, 24, 22);
-    gfx.fillStyle(0xb8862b);
-    gfx.fillCircle(24, 24, 19.5);
-    gfx.fillStyle(0xffdd44);
-    gfx.fillCircle(23.5, 23.5, 16.5);
-    gfx.fillStyle(0xffee88);
-    gfx.fillCircle(22, 22, 13);
-    // Hour ticks: four long, eight short.
-    for (let i = 0; i < 12; i++) {
-      const a = (i / 12) * Math.PI * 2;
-      const long = i % 3 === 0;
-      gfx.lineStyle(long ? 2.4 : 1.2, 0x5a3a18, 0.9);
-      gfx.beginPath();
-      gfx.moveTo(24 + Math.cos(a) * (long ? 11 : 13), 24 + Math.sin(a) * (long ? 11 : 13));
-      gfx.lineTo(24 + Math.cos(a) * 15.5, 24 + Math.sin(a) * 15.5);
-      gfx.strokePath();
-    }
-    // Both hands straight up: noon.
-    gfx.lineStyle(3, 0x2a1c0a, 1);
-    gfx.beginPath(); gfx.moveTo(24, 26); gfx.lineTo(24, 12); gfx.strokePath();
-    gfx.lineStyle(1.8, 0x2a1c0a, 1);
-    gfx.beginPath(); gfx.moveTo(24, 26); gfx.lineTo(24, 15); gfx.strokePath();
-    gfx.fillStyle(0x5a3a18); gfx.fillCircle(24, 24, 2.6);
-    gfx.fillStyle(0xfff6c8); gfx.fillCircle(24, 24, 1.1);
-    gfx.fillStyle(0xfff6c8, 0.5);
-    gfx.fillCircle(17, 17, 4.5);
-    gfx.lineStyle(2.5, 0xffee88, 0.9);
-    gfx.strokeCircle(24, 24, 22);
+    // Time element texture: a plain orb of polished brass — leather-dark rim to a noon-gold core.
+    // The gunslinger's hat (TimeAvatar) carries the character; the body only says "time".
+    bakeOrb(gfx, { rim: 0x3a2610, shell: 0x5a3a18, body: 0xb8862b, mid: 0xd9a838, core: 0xffdd44, light: 0xffee88, glint: 0xfff6c8 });
     gfx.generateTexture('elem-sand', 48, 48);
 
     // Time Warp orb — the lasso's honda: a brass loop with the rope's braid on it.
@@ -1123,61 +866,9 @@ export class BootScene extends Phaser.Scene {
     gfx.fillCircle(6.4, 5.8, 1.7);
     gfx.generateTexture('proj-purge', 18, 18);
 
-    // Fate element body: a hand held over green felt. Layered felt → mint body → a fan of three
-    // cards laid across the face, each with its own suit, and one hard specular where the light
-    // catches the topmost card.
-    gfx.clear();
-    gfx.fillStyle(0x0d3b2e);
-    gfx.fillCircle(24, 24, 22);
-    gfx.fillStyle(0x2a8870);
-    gfx.fillCircle(24, 24, 19.5);
-    gfx.fillStyle(0x44bb99);
-    gfx.fillCircle(24, 24, 16);
-    gfx.fillStyle(0x88eecc, 0.9);
-    gfx.fillCircle(22, 21, 11);
-    // A fan of three cards across the middle, each rotated a little further than the last.
-    const fanCard = (cx: number, cy: number, rot: number, face: number) => {
-      const cos = Math.cos(rot), sin = Math.sin(rot);
-      const quad = (hw: number, hh: number, col: number, a: number) => {
-        gfx.fillStyle(col, a);
-        gfx.beginPath();
-        const pts: Array<[number, number]> = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]];
-        pts.forEach(([lx, ly], i) => {
-          const px = cx + lx * cos - ly * sin;
-          const py = cy + lx * sin + ly * cos;
-          if (i === 0) gfx.moveTo(px, py); else gfx.lineTo(px, py);
-        });
-        gfx.closePath();
-        gfx.fillPath();
-      };
-      quad(6, 8.5, 0x191922, 1);
-      quad(4.8, 7.2, face, 1);
-      quad(1.6, 6.4, 0xfffdf4, 0.35);
-    };
-    fanCard(16, 27, -0.5, 0xf2eddd);
-    fanCard(24, 25, 0, 0xf2eddd);
-    fanCard(32, 27, 0.5, 0xf2eddd);
-    // Suit pips on the three faces — the read that says "cards" rather than "tiles".
-    gfx.fillStyle(0xcc2233, 1);
-    gfx.fillTriangle(16, 24, 18, 27, 16, 30);
-    gfx.fillTriangle(16, 24, 14, 27, 16, 30);
-    gfx.fillStyle(0x14141c, 1);
-    gfx.fillCircle(22.6, 25.6, 1.7);
-    gfx.fillCircle(25.4, 25.6, 1.7);
-    gfx.fillTriangle(23, 26.8, 25, 26.8, 24, 29.4);
-    gfx.fillStyle(0xcc2233, 1);
-    gfx.fillCircle(30.8, 25.6, 1.7);
-    gfx.fillCircle(33.2, 25.6, 1.7);
-    gfx.fillTriangle(30, 26, 34, 26, 32, 29.6);
-    // A gold chip tucked behind the fan, and the specular on the top card.
-    gfx.fillStyle(0xffcc44, 1);
-    gfx.fillCircle(34, 17, 4.4);
-    gfx.fillStyle(0xfffdf4, 0.85);
-    gfx.fillCircle(34, 17, 2);
-    gfx.fillStyle(0xffffff, 0.95);
-    gfx.fillCircle(18, 15, 2.4);
-    gfx.lineStyle(3, 0x88eecc);
-    gfx.strokeCircle(24, 24, 22);
+    // Fate element body: a plain jade orb — felt-green rim to a mint core. The fan of cards is
+    // worn over the crown by FateAvatar; nothing is printed on the body.
+    bakeOrb(gfx, { rim: 0x0d3b2e, shell: 0x1d6652, body: 0x2a8870, mid: 0x44bb99, core: 0x66d4b2, light: 0x88eecc, glint: 0xfffdf4 });
     gfx.generateTexture('elem-fate', 48, 48);
 
     // Fate card projectile: a real card in miniature — dark edge, bone stock, a gilt border and
@@ -1196,51 +887,47 @@ export class BootScene extends Phaser.Scene {
     gfx.fillRect(1.4, 1.4, 1.8, 11.2);
     gfx.generateTexture('proj-fate-card', 10, 14);
 
-    // Sound element texture: a dark plum body under a magenta rim, with three wavefronts
-    // rolling off a bright core — the element's own primitive, stamped on its icon.
-    gfx.clear();
-    gfx.fillStyle(0x66225c, 1);
-    gfx.fillCircle(24, 24, 22);
-    gfx.fillStyle(0x1a0616, 1);
-    gfx.fillCircle(24, 25, 19);
-    gfx.lineStyle(3, 0xff66cc, 1);
-    gfx.strokeCircle(24, 24, 21.5);
-    // Wavefronts, widening as they leave the core.
-    for (let i = 0; i < 3; i++) {
-      gfx.lineStyle(3 - i * 0.6, i === 0 ? 0xffcdee : 0xff99dd, 0.95 - i * 0.22);
-      gfx.beginPath();
-      gfx.arc(15, 24, 6 + i * 5.5, -0.85, 0.85);
-      gfx.strokePath();
-    }
-    // Emitter core + specular glint.
-    gfx.fillStyle(0xff66cc, 1);
-    gfx.fillCircle(14, 24, 5);
-    gfx.fillStyle(0xfff4fb, 1);
-    gfx.fillCircle(14, 24, 2.4);
-    gfx.fillStyle(0xffffff, 0.55);
-    gfx.fillEllipse(18, 14, 9, 5);
+    // Sound element texture: a plain orb in the drum major's deep maroon, with a rose rim light.
+    // The character is told by the shako the rig wears and the baton out on the field.
+    bakeOrb(gfx, { rim: 0x1e040a, shell: 0x3a0812, body: 0x5c1020, mid: 0x7a1a2e, core: 0x9e2a42, light: 0xd06a80, glint: 0xffe8ee });
     gfx.generateTexture('elem-sound', 48, 48);
 
-    // Light element texture: a pale gold body with a prism shard cut through it, fringing red
-    // one side and blue the other — the element's chromatic split, stamped on its icon.
+    // Light element texture: a star. A pale gold body shading into a white-hot core, with a
+    // four-point starburst standing out of it and a smaller diagonal one behind, so the icon
+    // reads as something shining rather than a coloured bead. Nothing exceeds radius 23.5.
     gfx.clear();
     gfx.fillStyle(0x14110a, 1);
     gfx.fillCircle(24, 24, 22);
-    gfx.fillStyle(0xfff4a8, 1);
-    gfx.fillCircle(24, 24, 19);
+    gfx.fillStyle(0xffaa22, 1);
+    gfx.fillCircle(24, 24, 20);
     gfx.fillStyle(0xffdd44, 1);
-    gfx.fillCircle(26, 27, 15);
-    // The shard, with its two fringes.
-    gfx.fillStyle(0xff3355, 0.85);
-    gfx.fillTriangle(9, 33, 36, 9, 22, 36);
-    gfx.fillStyle(0x3399ff, 0.85);
-    gfx.fillTriangle(13, 39, 40, 15, 26, 42);
+    gfx.fillCircle(24, 24, 16.5);
+    gfx.fillStyle(0xfff4a8, 1);
+    gfx.fillCircle(23, 23, 12);
+    gfx.fillStyle(0xffffcc, 1);
+    gfx.fillCircle(22, 22, 7.5);
+    // Diagonal rays, behind the main burst and shorter.
+    gfx.fillStyle(0xfff4a8, 0.85);
+    for (let i = 0; i < 4; i++) {
+      const a = Math.PI / 4 + (i * Math.PI) / 2;
+      const c = Math.cos(a), s = Math.sin(a);
+      gfx.fillTriangle(24 + c * 15, 24 + s * 15, 24 - s * 2.4, 24 + c * 2.4, 24 + s * 2.4, 24 - c * 2.4);
+    }
+    // The main burst: four long points, white with a gold edge.
+    for (let i = 0; i < 4; i++) {
+      const a = (i * Math.PI) / 2;
+      const c = Math.cos(a), s = Math.sin(a);
+      gfx.fillStyle(0xffdd44, 1);
+      gfx.fillTriangle(24 + c * 21, 24 + s * 21, 24 - s * 3.6, 24 + c * 3.6, 24 + s * 3.6, 24 - c * 3.6);
+      gfx.fillStyle(0xffffff, 1);
+      gfx.fillTriangle(24 + c * 19, 24 + s * 19, 24 - s * 1.8, 24 + c * 1.8, 24 + s * 1.8, 24 - c * 1.8);
+    }
     gfx.fillStyle(0xffffff, 1);
-    gfx.fillTriangle(11, 36, 38, 12, 24, 39);
-    gfx.lineStyle(3, 0xffffff, 1);
+    gfx.fillCircle(23, 23, 4.5);
+    gfx.lineStyle(2.4, 0xfff4a8, 1);
     gfx.strokeCircle(24, 24, 21.5);
-    gfx.fillStyle(0xffffff, 0.6);
-    gfx.fillEllipse(17, 14, 11, 6);
+    gfx.fillStyle(0xffffff, 0.55);
+    gfx.fillEllipse(17, 14, 10, 5);
     gfx.generateTexture('elem-light', 48, 48);
 
     // Prism lance projectile: a cut shard with a lit shoulder. Kept near-white — the kit tints
@@ -1254,41 +941,11 @@ export class BootScene extends Phaser.Scene {
     gfx.fillTriangle(3, 6, 3, 11, 20, 10);
     gfx.generateTexture('proj-light-triangle', 24, 20);
 
-    // Magnet element texture: a dark iron body wearing the element's own emblem — a horseshoe
-    // with a red north leg, a blue south leg and the field jumping the gap between them.
+    // Magnet element texture: a plain orb of the element's crimson (MAGNET.red). The horseshoe
+    // the rig wears on its crown and the red/blue pole hands carry the magnet; the body is clean.
     // (magnet-rod, proj-nail, magnet-orb and magnet-wall used to live here. MagnetKit draws
     // every one of those itself now, and nothing referenced the textures, so they are gone.)
-    gfx.clear();
-    gfx.fillStyle(0x333a4a, 1);
-    gfx.fillCircle(24, 24, 22);
-    gfx.fillStyle(0x14161f, 1);
-    gfx.fillCircle(24, 25, 19);
-    // Yoke.
-    gfx.lineStyle(7, 0x99aacc, 1);
-    gfx.beginPath();
-    gfx.arc(24, 24, 11, Math.PI, 0);
-    gfx.strokePath();
-    // Legs, coloured by pole.
-    gfx.fillStyle(0x99aacc, 1);
-    gfx.fillRect(9.5, 24, 7, 6);
-    gfx.fillRect(31.5, 24, 7, 6);
-    gfx.fillStyle(0xcc2244, 1);
-    gfx.fillRect(9.5, 29, 7, 9);
-    gfx.fillStyle(0x3399ff, 1);
-    gfx.fillRect(31.5, 29, 7, 9);
-    // The field jumping the gap.
-    gfx.lineStyle(2, 0xff4488, 0.9);
-    gfx.beginPath();
-    gfx.arc(24, 38, 11, Math.PI, 0, true);
-    gfx.strokePath();
-    gfx.lineStyle(1.4, 0x88ccff, 0.7);
-    gfx.beginPath();
-    gfx.arc(24, 38, 17, Math.PI, 0, true);
-    gfx.strokePath();
-    gfx.lineStyle(3, 0xff3366, 1);
-    gfx.strokeCircle(24, 24, 21.5);
-    gfx.fillStyle(0xffffff, 0.5);
-    gfx.fillEllipse(17, 13, 10, 5);
+    bakeOrb(gfx, { rim: 0x2e0810, shell: 0x76132a, body: 0x8c1832, mid: 0xa01c3a, core: 0xbb2442, light: 0xff4488, glint: 0xff99bb });
     gfx.generateTexture('elem-magnet', 48, 48);
 
     // Plasma element texture — a bead of caged lightning: violet shell, magenta body, a
@@ -1320,96 +977,15 @@ export class BootScene extends Phaser.Scene {
     gfx.fillEllipse(17, 14, 11, 6);
     gfx.generateTexture('elem-plasma', 48, 48);
 
-    // Metal element texture — a blood-wet steel disc: dark iron rim, a honed bevel across the
-    // top face, a crossed pair of blade shards and blood pooled in the lower half.
-    gfx.clear();
-    gfx.fillStyle(0x2b2228, 1);
-    gfx.fillCircle(24, 24, 22);
-    gfx.fillStyle(0x5c6672, 1);
-    gfx.fillCircle(24, 24, 19.5);
-    gfx.fillStyle(0x8fa0b0, 1);
-    gfx.fillCircle(24, 24, 16);
-    // Blood pooled in the bottom of the dish.
-    gfx.fillStyle(0x990018, 1);
-    gfx.slice(24, 24, 16, 0.18, Math.PI - 0.18, false);
-    gfx.fillPath();
-    gfx.fillStyle(0xcc0022, 0.75);
-    gfx.fillEllipse(24, 30, 22, 7);
-    // Two crossed blade shards, honed edges catching the light.
-    for (const dir of [-1, 1]) {
-      gfx.fillStyle(0xc9d6e2, 1);
-      gfx.beginPath();
-      gfx.moveTo(24 - dir * 11, 33);
-      gfx.lineTo(24 + dir * 3, 33);
-      gfx.lineTo(24 + dir * 11, 13);
-      gfx.lineTo(24 + dir * 6, 12);
-      gfx.closePath();
-      gfx.fillPath();
-      gfx.lineStyle(1.4, 0xffffff, 0.9);
-      gfx.beginPath();
-      gfx.moveTo(24 + dir * 2, 32);
-      gfx.lineTo(24 + dir * 10, 14);
-      gfx.strokePath();
-    }
-    gfx.lineStyle(3, 0xd9b25a, 1);
-    gfx.strokeCircle(24, 24, 21.5);
-    gfx.fillStyle(0xffffff, 0.4);
-    gfx.fillEllipse(16, 14, 10, 5);
+    // Metal element texture — a plain orb of forged steel (METAL.iron → steel → chrome). The
+    // blade crest the rig wears on its crown says "edges"; the body is clean polished plate.
+    bakeOrb(gfx, { rim: 0x1c2026, shell: 0x3e4650, body: 0x5c6672, mid: 0x75828f, core: 0x8fa0b0, light: 0xc9d6e2 });
     gfx.generateTexture('elem-metal', 48, 48);
 
-    // Gunpowder element texture — a powder keg seen end-on, repainted into the regimentals the
-    // musketeer rig wears: felt-dark staves, brass hoops, a violet charge glowing inside, and a
-    // lit fuse out of the bung. The rim is coat blue rather than orchid so the disc harmonises
-    // with the uniform drawn over it instead of ringing it in a clashing colour.
-    gfx.clear();
-    gfx.fillStyle(0x101c38, 1);
-    gfx.fillCircle(24, 24, 22);
-    gfx.fillStyle(0x15121e, 1);
-    gfx.fillCircle(24, 24, 19);
-    // Barrel staves, lit from the upper left.
-    for (let i = 0; i < 8; i++) {
-      const a0 = (i / 8) * Math.PI * 2;
-      const a1 = ((i + 1) / 8) * Math.PI * 2;
-      const lit = Math.cos(a0 + Math.PI * 0.75) * 0.5 + 0.5;
-      gfx.fillStyle(i % 2 === 0 ? 0x241428 : 0x2c2738, 0.55 + lit * 0.45);
-      gfx.beginPath();
-      gfx.moveTo(24, 24);
-      gfx.arc(24, 24, 18.5, a0, a1, false);
-      gfx.closePath();
-      gfx.fillPath();
-    }
-    // Brass hoops round the keg.
-    gfx.lineStyle(2.5, 0xd9a441, 1);
-    gfx.strokeCircle(24, 24, 15);
-    gfx.lineStyle(2, 0x8a6a24, 1);
-    gfx.strokeCircle(24, 24, 9.5);
-    // The charge packed inside, glowing violet through the bung head.
-    gfx.fillStyle(0x440066, 1);
-    gfx.fillCircle(24, 24, 8.6);
-    gfx.fillStyle(0x6a2088, 1);
-    for (let i = 0; i < 7; i++) {
-      const a = (i / 7) * Math.PI * 2 + 0.3;
-      gfx.fillCircle(24 + Math.cos(a) * 4.6, 24 + Math.sin(a) * 4.6, 1.9);
-    }
-    gfx.fillStyle(0xcc44ff, 0.5);
-    gfx.fillCircle(24, 24, 3.2);
-    // Fuse out of the bung, burning.
-    gfx.lineStyle(2.4, 0x5c4326, 1);
-    gfx.beginPath();
-    gfx.moveTo(24, 14);
-    gfx.lineTo(28, 8);
-    gfx.lineTo(33, 8.5);
-    gfx.strokePath();
-    gfx.fillStyle(0xff7722, 1);
-    gfx.fillCircle(33.5, 8.5, 3.2);
-    gfx.fillStyle(0xffcc55, 1);
-    gfx.fillCircle(33.5, 8.5, 1.9);
-    gfx.fillStyle(0xffffff, 1);
-    gfx.fillCircle(33.5, 8.5, 0.9);
-    gfx.lineStyle(3, 0x33518f, 1);
-    gfx.strokeCircle(24, 24, 21.5);
-    gfx.fillStyle(0xffffff, 0.28);
-    gfx.fillEllipse(16, 15, 9, 5);
+    // Gunpowder element texture — a plain orb of charged powder in the element's funeral
+    // violet (GUNPOWDER.void → plum → violet), an orchid rim light. The musketeer is told by
+    // the shako the rig wears on top, not by anything printed on the body.
+    bakeOrb(gfx, { rim: 0x140a1c, shell: 0x2a0c40, body: 0x440066, mid: 0x5a1880, core: 0x8a3ab0, light: 0xcc44ff, glint: 0xe0a8ff });
     gfx.generateTexture('elem-gunpowder', 48, 48);
     gfx.clear();
 
@@ -1462,74 +1038,20 @@ export class BootScene extends Phaser.Scene {
     gfx.strokeCircle(8, 8, 8);
     gfx.generateTexture('proj-metal-taser', 16, 16);
 
-    // Rubber element texture — a glossy gum ball wearing a stretched band across its face.
-    // Everything stays inside radius 23.5 of (24, 24); Fighter hardcodes a 22px body here.
-    gfx.clear();
-    gfx.fillStyle(0x992233, 1);
-    gfx.fillCircle(24, 24, 22);
-    gfx.fillStyle(0xff5577, 1);
-    gfx.fillCircle(24, 22, 20);
-    // Occluded underside, so it reads as a sphere rather than as a disc.
-    gfx.fillStyle(0x330011, 0.28);
-    gfx.fillEllipse(24, 35, 34, 12);
-    // The band: two crossed straps, thinner where they stretch over the curve.
-    gfx.lineStyle(5, 0xffaacc, 1);
-    gfx.strokeEllipse(24, 24, 30, 16);
-    gfx.lineStyle(3, 0x992233, 0.7);
-    gfx.strokeEllipse(24, 24, 30, 16);
-    gfx.lineStyle(4, 0xffddee, 0.95);
-    gfx.strokeEllipse(24, 24, 15, 30);
-    // Hard specular blob, upper-left.
-    gfx.fillStyle(0xffffff, 0.85);
-    gfx.fillEllipse(17, 15, 13, 8);
-    gfx.fillStyle(0xffffff, 0.5);
-    gfx.fillEllipse(31, 33, 7, 4);
-    gfx.lineStyle(3, 0xffaacc, 1);
-    gfx.strokeCircle(24, 24, 22);
+    // Rubber element texture — a plain glossy gum ball in the element's pink (RUBBER.maroon →
+    // rose → blush). The spring on the rig's crown is the character; the body only says "rubber".
+    bakeOrb(gfx, {
+      rim: 0x5a1022, shell: 0x992233, body: 0xcc3355, mid: 0xff5577,
+      core: 0xff77aa, light: 0xffaacc, glint: 0xffffff,
+    });
     gfx.generateTexture('elem-rubber', 48, 48);
     gfx.clear();
 
     // ── Magic element (abstract combined: slime + light) ─────────────────────
 
-    // elem-magic — an open grimoire on a summoning circle, in violet.
-    // Everything stays inside radius 23.5 of (24, 24); Fighter hardcodes a 22px body here.
-    gfx.fillStyle(0x1a0a2e, 1);
-    gfx.fillCircle(24, 24, 22);
-    gfx.fillStyle(0x552288, 1);
-    gfx.fillCircle(24, 24, 18);
-    // The summoning circle: a ring plus eight tick marks.
-    gfx.lineStyle(1.5, 0xcc88ff, 0.85);
-    gfx.strokeCircle(24, 24, 15);
-    for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI * 2;
-      gfx.beginPath();
-      gfx.moveTo(24 + Math.cos(a) * 13, 24 + Math.sin(a) * 13);
-      gfx.lineTo(24 + Math.cos(a) * 17.5, 24 + Math.sin(a) * 17.5);
-      gfx.strokePath();
-    }
-    // The book: a dark cover with two parchment spreads curving off a central spine.
-    gfx.fillStyle(0x3a1e50, 1);
-    gfx.fillTriangle(24, 12, 6, 26, 24, 36);
-    gfx.fillTriangle(24, 12, 42, 26, 24, 36);
-    gfx.fillStyle(0xf0e2c8, 1);
-    gfx.fillTriangle(23, 15, 9, 26, 23, 33);
-    gfx.fillTriangle(25, 15, 39, 26, 25, 33);
-    // Lines of text, shortening toward the outer edge.
-    gfx.lineStyle(1, 0x552288, 0.8);
-    for (let l = 0; l < 3; l++) {
-      const ly = 20 + l * 4;
-      gfx.beginPath(); gfx.moveTo(21, ly); gfx.lineTo(13 + l * 2, ly + 1); gfx.strokePath();
-      gfx.beginPath(); gfx.moveTo(27, ly); gfx.lineTo(35 - l * 2, ly + 1); gfx.strokePath();
-    }
-    // Spine, clasp and a specular glint on the cover.
-    gfx.lineStyle(1.6, 0xddaa00, 1);
-    gfx.beginPath(); gfx.moveTo(24, 13); gfx.lineTo(24, 35); gfx.strokePath();
-    gfx.fillStyle(0xffdd44, 1);
-    gfx.fillCircle(24, 36, 2.2);
-    gfx.fillStyle(0xffffff, 0.22);
-    gfx.fillEllipse(16, 12, 12, 5);
-    gfx.lineStyle(3, 0x9944ff, 1);
-    gfx.strokeCircle(24, 24, 22);
+    // elem-magic — a plain arcane orb in one violet hue: ink rim to an orchid core, a purple
+    // rim light. The wizard hat (MagicAvatar.drawExtras) carries the character.
+    bakeOrb(gfx, { rim: 0x1a0a2e, shell: 0x2e1250, body: 0x552288, mid: 0x6e30b0, core: 0x9944ff, light: 0xcc88ff, glint: 0xf0dcff });
     gfx.generateTexture('elem-magic', 48, 48);
     gfx.clear();
 
@@ -1822,46 +1344,10 @@ export class BootScene extends Phaser.Scene {
 
     // ── Technology element (abstract combined: sound + light) ─────────────────
 
-    // elem-technology — 48×48 menu icon: a CRT monitor in a dark bezel with code on the
-    // screen, a scanline sweep, and a chomping Cruncher eating its way across the display.
-    gfx.fillStyle(0x0a1218, 1);
-    gfx.fillCircle(24, 24, 22);
-    gfx.lineStyle(3, 0x44ccaa, 1);
-    gfx.strokeCircle(24, 24, 22);
-    // Stand.
-    gfx.fillStyle(0x2f2f4a, 1);
-    gfx.fillRect(21, 36, 6, 5);
-    gfx.fillRect(15, 40, 18, 3);
-    // Bezel and glass.
-    gfx.fillStyle(0x2f2f4a, 1);
-    gfx.fillRect(7, 10, 34, 26);
-    gfx.fillStyle(0x061a12, 1);
-    gfx.fillRect(10, 13, 28, 20);
-    // Rows of code, indented like real source.
-    gfx.fillStyle(0x33ff88, 1);
-    const techRows = [[12, 10], [15, 7], [15, 5], [12, 13], [12, 8]];
-    for (let r = 0; r < techRows.length; r++) {
-      gfx.fillRect(techRows[r][0], 15 + r * 3.4, techRows[r][1], 2);
-    }
-    // The scanline, and a diagonal glare across the glass.
-    gfx.fillStyle(0x88ffee, 0.55);
-    gfx.fillRect(10, 25, 28, 1.4);
-    gfx.fillStyle(0xffffff, 0.09);
-    gfx.beginPath();
-    gfx.moveTo(10, 33); gfx.lineTo(21, 13); gfx.lineTo(28, 13); gfx.lineTo(17, 33);
-    gfx.closePath(); gfx.fillPath();
-    // The Cruncher, mid-chomp, eating across the screen.
-    gfx.fillStyle(0x33ff88, 1);
-    gfx.beginPath();
-    gfx.moveTo(30, 23);
-    gfx.arc(30, 23, 7, 0.62, Math.PI * 2 - 0.62, false);
-    gfx.closePath();
-    gfx.fillPath();
-    gfx.fillStyle(0x0a1218, 1);
-    gfx.fillCircle(29, 20, 1.5);
-    // Power LED on the bezel.
-    gfx.fillStyle(0xffdd66, 1);
-    gfx.fillCircle(37, 34.5, 1.4);
+    // elem-technology — a plain orb of screen-light in one teal hue: a near-black bezel rim to
+    // a mint core, with a phosphor rim light. The antenna (TechnologyAvatar.drawExtras) carries
+    // the character.
+    bakeOrb(gfx, { rim: 0x061a16, shell: 0x0d3a32, body: 0x17645a, mid: 0x23887a, core: 0x44ccaa, light: 0x88ffee, glint: 0xe0fff8 });
     gfx.generateTexture('elem-technology', 48, 48);
     gfx.clear();
 
@@ -1870,88 +1356,23 @@ export class BootScene extends Phaser.Scene {
 
     // ── Echo element (abstract combined: fate + light) ───────────────────────
 
-    // elem-echo — a bat's face in the dark: pale membrane crest, ear points, watching eyes.
-    // Everything stays inside radius 23.5 of (24, 24); Fighter hardcodes a 22px body here.
-    gfx.fillStyle(0x0a0a16, 1);
-    gfx.fillCircle(24, 24, 22);
-    // Membrane crests sweeping back off each shoulder — the chirp shape, baked flat.
-    gfx.fillStyle(0x3b3566, 1);
-    gfx.fillTriangle(24, 12, 6, 26, 24, 30);
-    gfx.fillTriangle(24, 12, 42, 26, 24, 30);
-    gfx.fillStyle(0x5a63a0, 1);
-    gfx.fillTriangle(24, 15, 11, 26, 24, 28);
-    gfx.fillTriangle(24, 15, 37, 26, 24, 28);
-    // Ear points.
-    gfx.fillStyle(0x221133, 1);
-    gfx.fillTriangle(17, 14, 13, 3, 22, 10);
-    gfx.fillTriangle(31, 14, 35, 3, 26, 10);
-    // Eyes.
-    gfx.fillStyle(0xe8ecff, 1);
-    gfx.fillCircle(19, 21, 4);
-    gfx.fillCircle(29, 21, 4);
-    gfx.fillStyle(0x221133, 1);
-    gfx.fillCircle(19.8, 21.4, 1.9);
-    gfx.fillCircle(29.8, 21.4, 1.9);
-    gfx.fillStyle(0xffffff, 0.9);
-    gfx.fillCircle(18.2, 19.8, 1.1);
-    gfx.fillCircle(28.2, 19.8, 1.1);
-    // Rim and one specular glint.
-    gfx.lineStyle(3, 0xccccff, 1);
-    gfx.strokeCircle(24, 24, 22);
-    gfx.fillStyle(0xffffff, 0.28);
-    gfx.fillEllipse(17, 12, 13, 6);
+    // elem-echo — a plain dusk-indigo orb (ECHO.umbra → dusk → slate) with a lilac rim light so
+    // it still separates from the dark it lives in. The bat ears on the rig are the character.
+    bakeOrb(gfx, {
+      rim: 0x141228, shell: 0x221f44, body: 0x3b3566, mid: 0x4a4f8a,
+      core: 0x5a63a0, light: 0xccccff, glint: 0xe8ecff,
+    });
     gfx.generateTexture('elem-echo', 48, 48);
     gfx.clear();
 
     // ── Subterfuge element (abstract combined: slime + fate; id 'subterfuge') ───
 
-    // elem-subterfuge — 48×48 menu icon: a man in a hat, a banknote fanned out of the band,
-    // shades, a red tie and a lit cigarette. Everything Subterfuge does is somewhere in here.
-    gfx.fillStyle(0x0a0a0a, 1);
-    gfx.fillCircle(24, 24, 22);
-    gfx.lineStyle(3, 0xcc2233, 1);
-    gfx.strokeCircle(24, 24, 22);
-    // Shoulders: a trapezoid, so the silhouette reads as a suit rather than as a disc.
-    gfx.fillStyle(0x1a1a1a, 1);
-    gfx.fillTriangle(4, 46, 13, 27, 35, 27);
-    gfx.fillTriangle(4, 46, 35, 27, 44, 46);
-    gfx.fillStyle(0x2b2226, 1);
-    gfx.fillTriangle(15, 27, 24, 42, 21, 27);
-    gfx.fillTriangle(33, 27, 24, 42, 27, 27);
-    // Collar and tie.
-    gfx.fillStyle(0xe8e2d0, 1);
-    gfx.fillTriangle(24, 32, 18, 26, 30, 26);
-    gfx.fillStyle(0xcc2233, 1);
-    gfx.fillTriangle(24, 31, 21, 35, 27, 35);
-    gfx.fillTriangle(24, 46, 21, 35, 27, 35);
-    // Head, shades and the glint off one lens.
-    gfx.fillStyle(0x3d3238, 1);
-    gfx.fillCircle(24, 21, 10);
-    gfx.fillStyle(0x0a0a0a, 1);
-    gfx.fillRect(15, 18, 18, 5);
-    gfx.fillStyle(0xff3344, 0.85);
-    gfx.fillCircle(28, 20.5, 1.6);
-    // The hat: brim, dented crown, gold band.
-    gfx.fillStyle(0x0a0a0a, 1);
-    gfx.fillEllipse(24, 13, 34, 8);
-    gfx.fillTriangle(16, 13, 18, 3, 24, 5);
-    gfx.fillTriangle(32, 13, 30, 3, 24, 5);
-    gfx.fillRect(16, 10, 16, 3);
-    gfx.fillStyle(0xffdd33, 1);
-    gfx.fillRect(16, 10, 16, 2.4);
-    // A banknote tucked in the band: paper, crimson print, gold seal.
-    gfx.fillStyle(0xe8e2d0, 1);
-    gfx.fillTriangle(28, 10, 41, 3, 43, 8);
-    gfx.fillTriangle(28, 10, 43, 8, 31, 14);
-    gfx.lineStyle(1, 0xcc2233, 0.9);
-    gfx.lineBetween(30, 10, 40, 5.5);
-    gfx.fillStyle(0xffdd33, 1);
-    gfx.fillCircle(35, 8, 1.7);
-    // The cigarette, ember out.
-    gfx.fillStyle(0xe8e2d0, 1);
-    gfx.fillRect(9, 24, 9, 2.6);
-    gfx.fillStyle(0xff5522, 1);
-    gfx.fillCircle(8.4, 25.3, 1.7);
+    // elem-subterfuge — 48×48: a plain crimson orb, dark wine rim to a scarlet heart. The house
+    // colour is the whole body; the suit and the money live in the rig's fedora, not here.
+    bakeOrb(gfx, {
+      rim: 0x2a080c, shell: 0x55141c, body: 0x8a1824, mid: 0xb01e2c,
+      core: 0xdd3344, light: 0xff6670, glint: 0xffd6da,
+    });
     gfx.generateTexture('elem-subterfuge', 48, 48);
     gfx.clear();
 
@@ -2082,37 +1503,10 @@ export class BootScene extends Phaser.Scene {
     // grabbers, vultures, teeth, effigies, kin — is drawn per frame by SilenceVisuals, so
     // it can blink, chew, sag and track you rather than sitting there as a stamp.
 
-    // elem-silence — 48×48 menu icon: a knot of fog with an eye opening inside it and two
-    // fingers curling in from the rim.
-    for (let i = 4; i >= 0; i--) {
-      gfx.fillStyle(i % 2 === 0 ? 0x05000a : 0x1a0022, 0.55 + i * 0.09);
-      const a = i * 1.9;
-      gfx.fillCircle(24 + Math.cos(a) * (4 - i), 24 + Math.sin(a) * (4 - i) * 0.7, 22 - i * 1.4);
-    }
-    gfx.lineStyle(2, 0x442255, 1);
-    gfx.strokeCircle(24, 24, 22);
-    // Two fingers reaching in over the rim, knuckle first.
-    for (const side of [-1, 1]) {
-      gfx.fillStyle(0x0a0010, 1);
-      gfx.fillCircle(24 + side * 15, 12, 3.4);
-      gfx.fillCircle(24 + side * 11, 19, 2.8);
-      gfx.lineStyle(4.4, 0x0a0010, 1);
-      gfx.lineBetween(24 + side * 18, 8, 24 + side * 15, 12);
-      gfx.lineBetween(24 + side * 15, 12, 24 + side * 11, 19);
-      gfx.fillStyle(0xddddcc, 1);
-      gfx.fillTriangle(24 + side * 11, 21.5, 24 + side * 9.5, 17, 24 + side * 8, 21);
-    }
-    // The eye: socket, sclera, iris, pupil, glint.
-    gfx.fillStyle(0x05000a, 1);
-    gfx.fillEllipse(24, 26, 26, 15);
-    gfx.fillStyle(0xddddee, 1);
-    gfx.fillEllipse(24, 26, 21, 11);
-    gfx.fillStyle(0x8844cc, 1);
-    gfx.fillCircle(24, 26, 4.6);
-    gfx.fillStyle(0x05000a, 1);
-    gfx.fillCircle(24, 26, 2.2);
-    gfx.fillStyle(0xffffff, 0.9);
-    gfx.fillCircle(22.4, 24.6, 1.3);
+    // elem-silence — a plain orb of dark fog in one plum hue: near-black rim to an amethyst
+    // core, with an orchid rim light. The eye-stalk (SilenceAvatar.drawExtras) carries the
+    // character.
+    bakeOrb(gfx, { rim: 0x05000a, shell: 0x1a0022, body: 0x2a1038, mid: 0x3a1850, core: 0x6622aa, light: 0x8844cc, glint: 0xcc99ff });
     gfx.generateTexture('elem-silence', 48, 48);
     gfx.clear();
 
@@ -2321,6 +1715,11 @@ export class BootScene extends Phaser.Scene {
           gfx.fillCircle(mx - 2, my, 3);
           gfx.fillCircle(mx + 2, my + 2, 2.4);
           gfx.fillCircle(mx + 1, my - 3, 1.8);
+          break;
+        case 'cross':
+          gfx.fillStyle(mc, 1);
+          gfx.fillRect(mx - 1.2, my - 5, 2.4, 10);
+          gfx.fillRect(mx - 4, my - 2.6, 8, 2.4);
           break;
         case 'crescent':
           gfx.fillStyle(mc, 1);
@@ -3151,33 +2550,9 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('elem-dream', 48, 48);
     gfx.clear();
 
-    // Chalk — a slate with three sticks laid on it and a scribble already drawn. ChalkKit
-    // paints the character rig over the top of this per-frame, so the sprite only has to
-    // read as "Chalk" on the element cards.
-    gfx.fillStyle(0x2a3336, 1);
-    gfx.fillRoundedRect(4, 8, 40, 32, 3);
-    gfx.lineStyle(2, 0x14181b, 1);
-    gfx.strokeRoundedRect(4, 8, 40, 32, 3);
-    // A half-rubbed-out scribble across the board.
-    gfx.lineStyle(2, 0xf4f1e6, 0.85);
-    gfx.beginPath();
-    gfx.moveTo(9, 30);
-    gfx.lineTo(16, 18);
-    gfx.lineTo(23, 30);
-    gfx.lineTo(30, 16);
-    gfx.lineTo(37, 27);
-    gfx.strokePath();
-    gfx.fillStyle(0xe8e2d0, 0.35);
-    for (const [dx, dy] of [[12, 25], [20, 22], [27, 26], [34, 20]]) gfx.fillCircle(dx, dy, 1.4);
-    // Three sticks along the chalk rail: white, red, blue.
-    for (const [sx, col] of [[11, 0xf4f1e6], [22, 0xff5f4a], [33, 0x5aa9ff]] as [number, number][]) {
-      gfx.fillStyle(0x14181b, 0.7);
-      gfx.fillRoundedRect(sx - 4, 37, 9, 5, 2);
-      gfx.fillStyle(col, 1);
-      gfx.fillRoundedRect(sx - 5, 36, 9, 5, 2);
-      gfx.fillStyle(0xffffff, 0.4);
-      gfx.fillRect(sx - 4, 37, 7, 1.2);
-    }
+    // Chalk — a plain slate orb with a chalk-dust rim light: the blackboard is the body's
+    // colour, not a picture printed on it. The stick in the rig's hand says "chalk".
+    bakeOrb(gfx, { rim: 0x14181b, shell: 0x1e2629, body: 0x2a3336, mid: 0x34403f, core: 0x46534f, light: 0xcfc9b8, glint: 0xf4f1e6 });
     gfx.generateTexture('elem-chalk', 48, 48);
     gfx.clear();
 
@@ -3216,23 +2591,9 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('elem-wax', 48, 48);
     gfx.clear();
 
-    // Clay — a thumbed lump of wet potter's clay: an irregular earthen body with finger
-    // grooves pressed across it, a wet highlight, and a darker rim where it has dried. The
-    // golem (drawn by the kit) is the same material at twice the size.
-    gfx.fillStyle(0x57321f, 1);
-    gfx.fillCircle(24, 25, 22);
-    gfx.fillStyle(0x9a5c32, 1);
-    gfx.fillCircle(23, 23, 19.5);
-    gfx.fillCircle(31, 28, 12);
-    gfx.fillCircle(14, 27, 10);
-    gfx.fillStyle(0x704128, 0.9);
-    for (const [gx, gy, gw] of [[12, 30, 20], [16, 36, 18], [26, 14, 12]] as Array<[number, number, number]>) {
-      gfx.fillRoundedRect(gx, gy, gw, 3, 1.5);
-    }
-    gfx.fillStyle(0xc38352, 0.85);
-    gfx.fillEllipse(18, 14, 13, 8);
-    gfx.fillStyle(0xf3d7ae, 0.7);
-    gfx.fillEllipse(16, 12, 5, 3);
+    // Clay — a plain orb of wet potter's clay, umber rim to a warm core. The dollop on the
+    // crown (ClayAvatar) is the costume; the golem the kit draws is the same material.
+    bakeOrb(gfx, { rim: 0x3d2316, shell: 0x57321f, body: 0x9a5c32, mid: 0xb9743f, core: 0xc38352, light: 0xd99a63, glint: 0xf3d7ae });
     gfx.generateTexture('elem-clay', 48, 48);
     gfx.clear();
 
@@ -3289,375 +2650,52 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('proj-illusion-crack', 20, 10);
     gfx.clear();
 
-    // The three fold-shapes a Tesseract turns a fighter into. Same 48×48 frame as every
-    // fighter texture, so `setTexture` alone swaps a body without disturbing its scale —
-    // IllusionKit adds the 30% on top through `shapeSizeMult`.
-    const foldShapes: Array<[string, Phaser.Geom.Point[]]> = [
-      ['illusion-shape-square', [
-        new Phaser.Geom.Point(6, 6), new Phaser.Geom.Point(42, 6),
-        new Phaser.Geom.Point(42, 42), new Phaser.Geom.Point(6, 42),
-      ]],
-      ['illusion-shape-rhombus', [
-        new Phaser.Geom.Point(24, 2), new Phaser.Geom.Point(38, 24),
-        new Phaser.Geom.Point(24, 46), new Phaser.Geom.Point(10, 24),
-      ]],
-      ['illusion-shape-star', Array.from({ length: 10 }, (_, i) => {
-        const a = -Math.PI / 2 + (i / 10) * Math.PI * 2;
-        const r = i % 2 === 0 ? 23 : 10;
-        return new Phaser.Geom.Point(24 + Math.cos(a) * r, 24 + Math.sin(a) * r);
-      })],
-    ];
-    for (const [key, pts] of foldShapes) {
-      gfx.fillStyle(0x2a1147, 1);
-      gfx.fillPoints(pts, true);
-      gfx.lineStyle(3, 0xb45cff, 1);
-      gfx.strokePoints(pts, true, true);
-      gfx.lineStyle(1.4, 0x4de8ff, 0.8);
-      gfx.strokePoints(pts.map((p) => new Phaser.Geom.Point(
-        24 + (p.x - 24) * 0.66, 24 + (p.y - 24) * 0.66,
-      )), true, true);
-      gfx.generateTexture(key, 48, 48);
-      gfx.clear();
-    }
-
-    // Depths — a lure hanging in black water: the esca glowing on the end of its rod, with the
-    // outline of the thing holding it barely readable behind. DepthsKit paints the character
-    // rig over the top per-frame, so the sprite only has to read as "Depths" on element cards.
-    gfx.fillStyle(0x04141d, 1);
-    gfx.fillCircle(24, 24, 23);
-    gfx.fillStyle(0x0a2b3a, 1);
-    gfx.fillCircle(24, 30, 18);
-    // The jaw: an underbite of teeth across the lower half.
-    gfx.fillStyle(0xf2f7f2, 0.9);
-    for (let i = 0; i < 6; i++) {
-      const tx = 12 + i * 4.2;
-      gfx.fillTriangle(tx, 30, tx + 3, 30, tx + 1.5, 36);
-      gfx.fillTriangle(tx + 1, 41, tx + 4, 41, tx + 2.5, 34);
-    }
-    // Two small eyes set high and wide.
-    gfx.fillStyle(0xd8f6ff, 0.9);
-    gfx.fillCircle(17, 25, 2.6);
-    gfx.fillCircle(31, 25, 2.6);
-    gfx.fillStyle(0x04141d, 1);
-    gfx.fillCircle(17, 25, 1.2);
-    gfx.fillCircle(31, 25, 1.2);
-    // The illicium arcing forward off the crown, and the esca burning on its tip.
-    gfx.lineStyle(2.2, 0x0a2b3a, 1);
-    gfx.beginPath();
-    gfx.moveTo(24, 15); gfx.lineTo(30, 7); gfx.lineTo(36, 8);
-    gfx.strokePath();
-    gfx.fillStyle(0x7ac64b, 0.35);
-    gfx.fillCircle(38, 9, 8);
-    gfx.fillStyle(0x7ac64b, 0.8);
-    gfx.fillCircle(38, 9, 4.5);
-    gfx.fillStyle(0xc8ffa4, 1);
-    gfx.fillCircle(38, 9, 2.4);
-    // Bubbles rising off the flank.
-    gfx.lineStyle(1.2, 0xd8f6ff, 0.55);
-    gfx.strokeCircle(9, 20, 2.4);
-    gfx.strokeCircle(7, 13, 1.5);
+    // Depths — a plain orb of deep-sea teal (the DPT teal ladder). The anglerfish lure is the
+    // rig's accessory, not part of the body.
+    bakeOrb(gfx, { rim: 0x062633, shell: 0x0a3e4e, body: 0x0e6f7c, mid: 0x0e8f9c, core: 0x3fd8e8, light: 0x7fe6f0, glint: 0xd8f6ff });
     gfx.generateTexture('elem-depths', 48, 48);
     gfx.clear();
 
-    // Conquest — a claimed square with a keep on it: the territory wash and its border, the
-    // stepped town center, and the standard flying over the whole thing. ConquestKit paints the
-    // character rig over the top per-frame, so the sprite only has to read on element cards.
-    gfx.fillStyle(0xc23a2e, 0.16);
-    gfx.fillRect(3, 3, 42, 42);
-    gfx.lineStyle(2.4, 0xd83a3a, 0.9);
-    gfx.strokeRect(3, 3, 42, 42);
-    gfx.lineStyle(1, 0xd83a3a, 0.3);
-    gfx.strokeRect(7, 7, 34, 34);
-    // Three receding tiers of the keep.
-    for (let i = 0; i < 3; i++) {
-      const w = 30 - i * 7;
-      const y = 38 - i * 7;
-      gfx.fillStyle(i % 2 === 0 ? 0xb8b2a4 : 0x5d574c, 1);
-      gfx.fillRect(24 - w / 2, y - 7, w, 7);
-      gfx.lineStyle(1, 0x3a3630, 0.8);
-      gfx.strokeRect(24 - w / 2, y - 7, w, 7);
-    }
-    // Dome and standard.
-    gfx.fillStyle(0xd83a3a, 1);
-    gfx.beginPath();
-    gfx.arc(24, 17, 6, Math.PI, Math.PI * 2, false);
-    gfx.closePath();
-    gfx.fillPath();
-    gfx.lineStyle(2, 0x3d2817, 1);
-    gfx.lineBetween(24, 16, 24, 5);
-    gfx.fillStyle(0xd83a3a, 1);
-    gfx.fillTriangle(24, 5, 38, 9, 24, 13);
-    gfx.fillStyle(0xe8c23a, 1);
-    gfx.fillCircle(24, 4, 2.2);
+    // Conquest — a plain crimson orb in the banner red; the standard planted on the crown is
+    // painted by ConquestAvatar, so the body itself stays one hue.
+    bakeOrb(gfx, { rim: 0x3a0d09, shell: 0x5e1610, body: 0x8c2219, mid: 0xb02f24, core: 0xd8483a, light: 0xff8a6a, glint: 0xffd8cc });
     gfx.generateTexture('elem-conquest', 48, 48);
     gfx.clear();
 
-    // Passion — a heart with the pink revolver laid across it, and a fedora brim over the top.
-    // PassionKit paints the character rig per-frame, so the sprite only has to read on a card.
-    const psnHeart = (cx: number, cy: number, size: number, color: number, alpha: number) => {
-      const pts: Phaser.Geom.Point[] = [];
-      for (let i = 0; i < 26; i++) {
-        const t = (i / 26) * Math.PI * 2;
-        const hu = 16 * Math.sin(t) ** 3;
-        const hv = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
-        pts.push(new Phaser.Geom.Point(cx + (hu / 17) * size, cy + (hv / 17) * size));
-      }
-      gfx.fillStyle(color, alpha);
-      gfx.fillPoints(pts, true);
-    };
-    psnHeart(24, 24, 21, 0x7a1338, 1);
-    psnHeart(24, 22, 18, 0xff2f7d, 1);
-    gfx.fillStyle(0xffe3ef, 0.55);
-    gfx.fillEllipse(17, 15, 8, 5);
-    // The revolver laid across it, muzzle to the right.
-    gfx.fillStyle(0x2a0a1c, 1);
-    gfx.fillPoints([new Phaser.Geom.Point(16, 27), new Phaser.Geom.Point(11, 36),
-      new Phaser.Geom.Point(16, 37), new Phaser.Geom.Point(21, 28)], true);
-    gfx.fillStyle(0xc21e5b, 1);
-    gfx.fillPoints([new Phaser.Geom.Point(15, 23), new Phaser.Geom.Point(38, 24),
-      new Phaser.Geom.Point(38, 29), new Phaser.Geom.Point(15, 29)], true);
-    gfx.fillStyle(0xff5fa2, 1);
-    gfx.fillCircle(22, 26, 4);
-    gfx.fillStyle(0x2a0a1c, 1);
-    gfx.fillCircle(22, 26, 1.4);
-    gfx.fillStyle(0xf7d774, 1);
-    gfx.fillCircle(38.5, 26.5, 1.6);
-    // Fedora brim across the top lobes.
-    gfx.fillStyle(0x2a0a1c, 1);
-    gfx.fillEllipse(24, 11, 34, 8);
-    gfx.fillStyle(0xc21e5b, 1);
-    gfx.fillPoints([new Phaser.Geom.Point(15, 10), new Phaser.Geom.Point(17, 3),
-      new Phaser.Geom.Point(31, 3), new Phaser.Geom.Point(33, 10)], true);
-    gfx.fillStyle(0x101014, 1);
-    gfx.fillRect(15, 7, 18, 3);
+    // Devotion (id `passion`) — a plain light-gold orb. The mitre is PassionAvatar's to draw, so
+    // nothing about the hat is baked in here.
+    bakeOrb(gfx, { rim: 0x4a3810, shell: 0x8a6a22, body: 0xc9a540, mid: 0xe2c463, core: 0xf5e08a, light: 0xfff2b8, glint: 0xfffcf0 });
     gfx.generateTexture('elem-passion', 48, 48);
     gfx.clear();
 
-    // Ruin — a cracked red slab with a rusted spike driven through it. RuinKit paints the
-    // character rig per-frame, so the sprite only has to read as "Ruin" on element cards:
-    // something solid, broken, and impaled.
-    gfx.fillStyle(0x140a09, 1);
-    gfx.fillPoints([new Phaser.Geom.Point(9, 8), new Phaser.Geom.Point(40, 6),
-      new Phaser.Geom.Point(43, 40), new Phaser.Geom.Point(7, 42)], true);
-    gfx.fillStyle(0xc4392c, 1);
-    gfx.fillPoints([new Phaser.Geom.Point(11, 10), new Phaser.Geom.Point(38, 8),
-      new Phaser.Geom.Point(40, 38), new Phaser.Geom.Point(9, 39)], true);
-    // A bite out of the top-right corner: nothing Ruin owns has an intact edge.
-    gfx.fillStyle(0x140a09, 1);
-    gfx.fillPoints([new Phaser.Geom.Point(33, 8), new Phaser.Geom.Point(40, 8),
-      new Phaser.Geom.Point(40, 17)], true);
-    // The crack: one fork running the height of the slab.
-    gfx.lineStyle(2.6, 0x140a09, 1);
-    gfx.lineBetween(20, 9, 24, 20);
-    gfx.lineBetween(24, 20, 19, 29);
-    gfx.lineBetween(19, 29, 23, 39);
-    gfx.lineStyle(1.6, 0x140a09, 1);
-    gfx.lineBetween(24, 20, 33, 24);
-    gfx.lineBetween(19, 29, 11, 31);
-    // The spike, driven diagonally through the whole thing.
-    gfx.fillStyle(0x3a2422, 1);
-    gfx.fillPoints([new Phaser.Geom.Point(45, 45), new Phaser.Geom.Point(6, 12),
-      new Phaser.Geom.Point(3, 18)], true);
-    gfx.fillStyle(0x6b524a, 1);
-    gfx.fillPoints([new Phaser.Geom.Point(43, 44), new Phaser.Geom.Point(5, 13),
-      new Phaser.Geom.Point(3, 17)], true);
-    gfx.fillStyle(0xa4552a, 1);
-    gfx.fillPoints([new Phaser.Geom.Point(24, 27), new Phaser.Geom.Point(5, 13),
-      new Phaser.Geom.Point(3, 17)], true);
-    // One barb raked back off the shaft.
-    gfx.fillStyle(0x6b524a, 1);
-    gfx.fillPoints([new Phaser.Geom.Point(30, 32), new Phaser.Geom.Point(36, 27),
-      new Phaser.Geom.Point(33, 34)], true);
-    gfx.fillStyle(0xe6d8cf, 0.9);
-    gfx.fillCircle(4, 15, 1.6);
+    // Ruin — a plain dry brick-red orb (the RUI red ladder). The crown of rusted spikes and the
+    // empty socket are RuinAvatar's accessories, not part of the body.
+    bakeOrb(gfx, { rim: 0x2a0c08, shell: 0x5a1812, body: 0x8f1f18, mid: 0xc4392c, core: 0xe05a44, light: 0xff6a4d, glint: 0xffd8cc });
     gfx.generateTexture('elem-ruin', 48, 48);
     gfx.clear();
 
-    // Sand (element id `dune`) — a dune with a stepped pillar rising out of it. SandKit paints
-    // the character rig per-frame, so the sprite only has to carry the two ideas the element is
-    // actually about: loose sand, and something built on it that you are meant to climb.
-    gfx.fillStyle(0x8f6b38, 1);
-    gfx.fillCircle(24, 24, 21);
-    // The dune itself: a slip face across the lower two thirds, lit from up-left.
-    gfx.fillStyle(0xc9a05a, 1);
-    gfx.fillPoints([
-      new Phaser.Geom.Point(3, 30), new Phaser.Geom.Point(16, 20), new Phaser.Geom.Point(26, 27),
-      new Phaser.Geom.Point(45, 22), new Phaser.Geom.Point(45, 45), new Phaser.Geom.Point(3, 45),
-    ], true);
-    gfx.fillStyle(0xe8c87a, 1);
-    gfx.fillPoints([
-      new Phaser.Geom.Point(3, 30), new Phaser.Geom.Point(16, 20), new Phaser.Geom.Point(26, 27),
-      new Phaser.Geom.Point(24, 31), new Phaser.Geom.Point(14, 26), new Phaser.Geom.Point(3, 34),
-    ], true);
-    // Three stacked blocks stepping up out of the crest — the obby, in miniature.
-    const STEPS: [number, number, number][] = [[30, 30, 0x8d8b86], [34, 24, 0xd9ab63], [38, 18, 0xd9ab63]];
-    for (const [sx, sy, col] of STEPS) {
-      gfx.fillStyle(0x3a2a18, 0.55);
-      gfx.fillRect(sx - 6, sy + 3, 12, 9);
-      gfx.fillStyle(col, 1);
-      gfx.fillRect(sx - 6, sy - 3, 12, 7);
-      gfx.fillStyle(col === 0x8d8b86 ? 0xb6b3ad : 0xf0cd8e, 1);
-      gfx.fillRect(sx - 6, sy - 3, 12, 2.4);
-    }
-    // The golden orb waiting on the top block.
-    gfx.fillStyle(0xffd54a, 0.35);
-    gfx.fillCircle(38, 11, 6);
-    gfx.fillStyle(0xffd54a, 1);
-    gfx.fillCircle(38, 11, 3.4);
-    gfx.fillStyle(0xfff3bc, 1);
-    gfx.fillCircle(37, 10, 1.5);
-    // Grain lifting off the crest, which is the one thing that says "sand" and not "stone".
-    gfx.fillStyle(0xf0cd8e, 0.85);
-    for (let i = 0; i < 9; i++) {
-      const a = (i / 9) * Math.PI * 2;
-      gfx.fillRect(13 + Math.cos(a * 3.1) * 8, 18 + Math.sin(a * 2.3) * 6, 1.6, 1.6);
-    }
+    // Sand (element id `dune`) — a plain orb of packed dune, umber rim to sun-bleached core.
+    // SandAvatar repaints the same orb per-frame (so it can swell with height and fuse to glass);
+    // this bake is what the element cards show. The straw hat on the rig says the rest.
+    bakeOrb(gfx, { rim: 0x6e5028, shell: 0x8f6b38, body: 0xc9a05a, mid: 0xd9b46c, core: 0xe8c87a, light: 0xf0cd8e, glint: 0xfff3d6 });
     gfx.generateTexture('elem-dune', 48, 48);
     gfx.clear();
 
-    // Paper — an open storybook with a paper plane taking off out of it. PaperKit paints the
-    // character rig per-frame, so the sprite only has to carry the two ideas the element is
-    // built on: a book you read from, and something folded that flies.
-    gfx.fillStyle(0x241f14, 0.4);
-    gfx.fillEllipse(25, 40, 34, 8);
-    // The two tented pages, spine highest.
-    gfx.fillStyle(0xd6cbac, 1);
-    gfx.fillPoints([
-      new Phaser.Geom.Point(24, 24), new Phaser.Geom.Point(5, 28),
-      new Phaser.Geom.Point(6, 39), new Phaser.Geom.Point(24, 36),
-    ], true);
-    gfx.fillStyle(0xf2ead6, 1);
-    gfx.fillPoints([
-      new Phaser.Geom.Point(24, 24), new Phaser.Geom.Point(43, 28),
-      new Phaser.Geom.Point(42, 39), new Phaser.Geom.Point(24, 36),
-    ], true);
-    // Four lines of "text" a side, at a size where they read as prose rather than as stripes.
-    gfx.lineStyle(1, 0x241f14, 0.35);
-    for (let i = 0; i < 4; i++) {
-      gfx.lineBetween(9, 30 + i * 2.4, 20 - i, 29.4 + i * 2.4);
-      gfx.lineBetween(28 + i, 29.4 + i * 2.4, 39, 30 + i * 2.4);
-    }
-    // Hard cover under the pages, and the spine.
-    gfx.fillStyle(0x2f7d55, 1);
-    gfx.fillPoints([
-      new Phaser.Geom.Point(4, 38), new Phaser.Geom.Point(44, 38),
-      new Phaser.Geom.Point(42, 43), new Phaser.Geom.Point(6, 43),
-    ], true);
-    gfx.lineStyle(2, 0x6ef0a8, 0.9);
-    gfx.lineBetween(24, 23, 24, 36);
-    // The plane lifting off the right-hand page: two wings and a keel, banking away.
-    gfx.fillStyle(0xd6cbac, 1);
-    gfx.fillPoints([
-      new Phaser.Geom.Point(42, 6), new Phaser.Geom.Point(24, 17), new Phaser.Geom.Point(31, 17),
-    ], true);
-    gfx.fillStyle(0xf2ead6, 1);
-    gfx.fillPoints([
-      new Phaser.Geom.Point(42, 6), new Phaser.Geom.Point(31, 22), new Phaser.Geom.Point(32, 15),
-    ], true);
-    gfx.fillStyle(0xfffaf0, 1);
-    gfx.fillPoints([
-      new Phaser.Geom.Point(42, 6), new Phaser.Geom.Point(30, 18), new Phaser.Geom.Point(33, 18),
-    ], true);
-    gfx.lineStyle(1, 0xa8996f, 0.9);
-    gfx.lineBetween(42, 6, 29, 19);
+    // Paper — a plain orb of cream pulp, crease-tan rim to bright-sheet core. The folded
+    // newspaper hat the rig wears is what says "paper"; the body is just its stock.
+    bakeOrb(gfx, { rim: 0x8a7c56, shell: 0xb3a47c, body: 0xd6cbac, mid: 0xe6dcc0, core: 0xf2ead6, light: 0xfffaf0, glint: 0xffffff });
     gfx.generateTexture('elem-paper', 48, 48);
     gfx.clear();
 
-    // Death — a katana standing point-down through a clock face reading a minute to twelve.
-    // DeathKit paints the character rig per-frame, so the sprite only has to carry the two
-    // objects the element is: the blade, and the thing counting down behind it.
-    gfx.fillStyle(0x07060d, 0.5);
-    gfx.fillEllipse(24, 43, 26, 7);
-    // Clock: dark case, brass bezel, and the elapsed wedge already most of the way round.
-    gfx.fillStyle(0x07060d, 1);
-    gfx.fillCircle(24, 25, 16);
-    gfx.fillStyle(0x171227, 1);
-    gfx.fillCircle(24, 25, 14.5);
-    gfx.fillStyle(0xc42a3a, 0.3);
-    gfx.slice(24, 25, 14, -Math.PI / 2, Math.PI * 1.4, false);
-    gfx.fillPath();
-    gfx.lineStyle(2, 0xd9b23a, 0.95);
-    gfx.strokeCircle(24, 25, 15.5);
-    // Twelve marks, the quarters long.
-    for (let i = 0; i < 12; i++) {
-      const a = -Math.PI / 2 + (i / 12) * Math.PI * 2;
-      const long = i % 3 === 0;
-      gfx.lineStyle(long ? 1.8 : 1, long ? 0xe9e3d2 : 0xb0a992, long ? 0.9 : 0.45);
-      gfx.lineBetween(
-        24 + Math.cos(a) * (long ? 9.5 : 11), 25 + Math.sin(a) * (long ? 9.5 : 11),
-        24 + Math.cos(a) * 13, 25 + Math.sin(a) * 13,
-      );
-    }
-    // Both hands closing on twelve — a minute to midnight, which is the whole element.
-    gfx.lineStyle(2.6, 0xe9e3d2, 0.95);
-    gfx.lineBetween(24, 25, 24 - 3, 25 - 6.5);
-    gfx.lineStyle(1.6, 0xc42a3a, 1);
-    gfx.lineBetween(24, 25, 24 + 2, 25 - 10.5);
-    gfx.fillStyle(0xd9b23a, 1);
-    gfx.fillCircle(24, 25, 2);
-    // The katana driven down through it: hilt above, blade out below the case.
-    gfx.lineStyle(4.4, 0x07060d, 1);
-    gfx.lineBetween(35, 3, 12, 45);
-    gfx.lineStyle(2.4, 0xd6dde8, 1);
-    gfx.lineBetween(31, 10, 12, 45);
-    gfx.lineStyle(1, 0xffffff, 0.8);
-    gfx.lineBetween(32, 10, 13.5, 44);
-    // Tsuba across the join, then the wrapped grip running up to the cap.
-    gfx.fillStyle(0x8a6a20, 1);
-    gfx.fillEllipse(32, 9, 9, 4);
-    gfx.lineStyle(4, 0x171227, 1);
-    gfx.lineBetween(34, 5, 38, -2);
-    gfx.lineStyle(1, 0xb0a992, 0.6);
-    gfx.lineBetween(33, 8, 37, 5);
-    gfx.lineBetween(35, 4, 39, 1);
+    // Death — a plain shroud-violet orb, void rim to a smoky core with a bone glint. The hood
+    // and the katana are DeathAvatar's; the body is just the dark he is made of.
+    bakeOrb(gfx, { rim: 0x07060d, shell: 0x171227, body: 0x2a2242, mid: 0x3a3158, core: 0x554c78, light: 0x8a80b8, glint: 0xe9e3d2 });
     gfx.generateTexture('elem-death', 48, 48);
     gfx.clear();
 
-    // Fortune — a blood coin standing on edge in front of a crossed revolver. The coin is the
-    // legal half of the element and the gun is the half behind the second tab, so the icon shows
-    // both and lets the coin win: it is drawn last, dead centre, and it is the brightest thing.
-    // Revolver, angled up-left behind the coin.
-    gfx.fillStyle(0x3a4048, 1);
-    gfx.fillRect(6, 26, 22, 7);
-    gfx.fillRect(26, 27, 15, 5);
-    gfx.fillStyle(0x3b2a1d, 1);
-    gfx.fillPoints([
-      new Phaser.Geom.Point(9, 33), new Phaser.Geom.Point(17, 33),
-      new Phaser.Geom.Point(14, 45), new Phaser.Geom.Point(4, 43),
-    ], true);
-    gfx.fillStyle(0xb8c2cc, 1);
-    gfx.fillCircle(21, 29, 5.6);
-    gfx.fillStyle(0x140f0a, 1);
-    for (let i = 0; i < 5; i++) {
-      const a = (i / 5) * Math.PI * 2;
-      gfx.fillCircle(21 + Math.cos(a) * 3, 29 + Math.sin(a) * 3, 1.2);
-    }
-    // Blood coin: gold rim, milled edge, dark red face, struck skull.
-    gfx.fillStyle(0xa8791e, 1);
-    gfx.fillCircle(25, 20, 16);
-    gfx.fillStyle(0xf0c33c, 1);
-    gfx.fillCircle(25, 20, 14.6);
-    for (let i = 0; i < 16; i++) {
-      const a = (i / 16) * Math.PI * 2;
-      gfx.lineStyle(1.6, 0xa8791e, 0.9);
-      gfx.lineBetween(25 + Math.cos(a) * 12.6, 20 + Math.sin(a) * 12.6,
-        25 + Math.cos(a) * 14.8, 20 + Math.sin(a) * 14.8);
-    }
-    gfx.fillStyle(0xb3202e, 1);
-    gfx.fillCircle(25, 20, 11);
-    gfx.fillStyle(0x6d1119, 1);
-    gfx.fillCircle(26, 21, 10);
-    gfx.fillStyle(0xf0c33c, 1);
-    gfx.fillEllipse(25, 17, 13, 11);
-    gfx.fillRect(21, 21, 8, 5);
-    gfx.fillStyle(0x6d1119, 1);
-    gfx.fillCircle(21.5, 16, 2.4);
-    gfx.fillCircle(28.5, 16, 2.4);
-    gfx.fillRect(24, 21, 2, 4);
-    gfx.lineStyle(2, 0xfff0a8, 0.75);
-    gfx.beginPath();
-    gfx.arc(25, 20, 14, -2.5, -0.8, false);
-    gfx.strokePath();
+    // Fortune — a plain gold orb, brass rim to a bright minted core. The dealer's visor and the
+    // gun in hand are FortuneAvatar's; the body is just the money.
+    bakeOrb(gfx, { rim: 0x4a3008, shell: 0x7a5512, body: 0xa8791e, mid: 0xd4a02e, core: 0xf0c33c, light: 0xfff0a8, glint: 0xfffbe6 });
     gfx.generateTexture('elem-fortune', 48, 48);
     gfx.clear();
 
@@ -3702,124 +2740,21 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('elem-amber', 48, 48);
     gfx.clear();
 
-    // Psychic — the opened third eye: a violet almond with a gold iris and a slit pupil, ringed
-    // by lashes that read as rays. Deliberately the only symmetrical element icon in the set,
-    // because the whole character is about stillness.
-    gfx.fillStyle(0x140b26, 0.5);
-    gfx.fillCircle(24, 24, 22);
-    // Rays first, so the lids overlap them at the corners.
-    gfx.lineStyle(1.8, 0x6b2fb8, 0.95);
-    for (let i = 0; i < 12; i++) {
-      const a = (i / 12) * Math.PI * 2;
-      const inner = i % 2 ? 15 : 17;
-      gfx.lineBetween(
-        24 + Math.cos(a) * inner, 24 + Math.sin(a) * inner,
-        24 + Math.cos(a) * 22, 24 + Math.sin(a) * 22,
-      );
-    }
-    // The almond, sampled as two parabolas so it comes to a point at both corners.
-    const lid: Phaser.Geom.Point[] = [];
-    for (let i = 0; i <= 14; i++) {
-      const u = -1 + (i / 14) * 2;
-      lid.push(new Phaser.Geom.Point(24 + u * 20, 24 - (1 - u * u) * 13));
-    }
-    for (let i = 14; i >= 0; i--) {
-      const u = -1 + (i / 14) * 2;
-      lid.push(new Phaser.Geom.Point(24 + u * 20, 24 + (1 - u * u) * 13));
-    }
-    gfx.fillStyle(0x3d1b6b, 1);
-    gfx.fillPoints(lid.map((p) => new Phaser.Geom.Point(24 + (p.x - 24) * 1.1, 24 + (p.y - 24) * 1.14)), true);
-    gfx.fillStyle(0xead6ff, 1);
-    gfx.fillPoints(lid, true);
-    // Iris, slit pupil, glint.
-    gfx.fillStyle(0xc98b1a, 1);
-    gfx.fillCircle(24, 24, 10);
-    gfx.fillStyle(0xffd166, 1);
-    gfx.fillCircle(24, 24, 8);
-    gfx.fillStyle(0x9b4dff, 1);
-    gfx.fillCircle(24, 24, 5.2);
-    gfx.fillStyle(0x140b26, 1);
-    gfx.fillEllipse(24, 24, 4, 17);
-    gfx.fillStyle(0xead6ff, 0.9);
-    gfx.fillCircle(20, 20, 2.4);
+    // Psychic — a plain polished-ebony orb (the PSY board ladder), lit in silver. The ivory
+    // king's crown with the third eye in its band is the rig's accessory, not part of the body.
+    bakeOrb(gfx, { rim: 0x050506, shell: 0x141417, body: 0x1f1f24, mid: 0x2b2b32, core: 0x45454e, light: 0xa9a9b3, glint: 0xf7f3e8 });
     gfx.generateTexture('elem-psychic', 48, 48);
     gfx.clear();
 
-    // Radiation — the trefoil stamped into a lead plate. The blades are cut as real sectors
-    // rather than triangles so the inner arc survives at icon size, and the plate behind them
-    // is deliberately dull: the only bright thing on the badge is the hazard itself.
-    gfx.fillStyle(0x0b0614, 1);
-    gfx.fillCircle(24, 24, 22);
-    gfx.fillStyle(0x1c1030, 1);
-    gfx.fillCircle(24, 24, 20);
-    gfx.fillStyle(0x33194f, 1);
-    gfx.fillCircle(23, 23, 17);
-    // Rivets around the rim — a plate, not a sticker.
-    gfx.fillStyle(0x512b78, 1);
-    for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI * 2 + 0.4;
-      gfx.fillCircle(24 + Math.cos(a) * 19, 24 + Math.sin(a) * 19, 1.6);
-    }
-    for (const [rr, color] of [[15, 0x1f5a10], [14, 0x7cff3d]] as const) {
-      gfx.fillStyle(color, 1);
-      for (let b = 0; b < 3; b++) {
-        const mid = (b / 3) * Math.PI * 2 - Math.PI / 2;
-        const blade: Phaser.Geom.Point[] = [];
-        for (let i = 0; i <= 8; i++) {
-          const a = mid - 0.52 + (i / 8) * 1.04;
-          blade.push(new Phaser.Geom.Point(24 + Math.cos(a) * rr, 24 + Math.sin(a) * rr));
-        }
-        for (let i = 8; i >= 0; i--) {
-          const a = mid - 0.52 + (i / 8) * 1.04;
-          blade.push(new Phaser.Geom.Point(24 + Math.cos(a) * rr * 0.28, 24 + Math.sin(a) * rr * 0.28));
-        }
-        gfx.fillPoints(blade, true);
-      }
-      gfx.fillCircle(24, 24, rr * 0.19);
-    }
-    gfx.fillStyle(0xc2ff8f, 0.9);
-    gfx.fillCircle(21, 21, 2);
+    // Radiation — a plain orb of contained neon green (the RAD neon ladder). The trefoil and the
+    // lead live on the rig's hazmat helmet, not on the body.
+    bakeOrb(gfx, { rim: 0x0f2e08, shell: 0x1f5a10, body: 0x3f9e18, mid: 0x5cc82a, core: 0x9dff6a, light: 0xc2ff8f, glint: 0xeeffdc });
     gfx.generateTexture('elem-radiation', 48, 48);
     gfx.clear();
 
-    // Bind — a padlock with the patron's eye where the keyhole should be, hanging in a hole in
-    // the sky. Cosmic first, then the gold body over it, so the relic reads as sitting *on*
-    // something formless rather than floating on the background.
-    gfx.fillStyle(0x080415, 1);
-    gfx.fillCircle(24, 24, 22);
-    gfx.fillStyle(0x180c3a, 1);
-    gfx.fillCircle(22, 22, 18);
-    gfx.fillStyle(0x3a1f7a, 0.85);
-    gfx.fillCircle(20, 20, 12);
-    gfx.fillStyle(0x6f3fd0, 0.5);
-    gfx.fillCircle(18, 18, 6);
-    // Shackle.
-    gfx.lineStyle(4.4, 0x5d5866, 1);
-    gfx.beginPath();
-    gfx.arc(24, 17, 8.5, Math.PI, Math.PI * 2, false);
-    gfx.strokePath();
-    gfx.lineStyle(2, 0xa9a2b8, 1);
-    gfx.beginPath();
-    gfx.arc(23, 16.5, 8.5, Math.PI, Math.PI * 2, false);
-    gfx.strokePath();
-    // Body.
-    gfx.fillStyle(0x6d4a0c, 1);
-    gfx.fillRect(10, 17, 28, 21);
-    gfx.fillStyle(0xe0b743, 1);
-    gfx.fillRect(11.5, 18.5, 25, 18);
-    gfx.fillStyle(0xffe49b, 1);
-    gfx.fillRect(13, 20, 9, 15);
-    // The eye, where the keyhole goes.
-    gfx.fillStyle(0x080415, 1);
-    gfx.fillEllipse(24, 27, 17, 12);
-    gfx.fillStyle(0xffe49b, 1);
-    gfx.fillEllipse(24, 27, 15, 10);
-    gfx.fillStyle(0x8a3fe0, 1);
-    gfx.fillCircle(24, 27, 4.6);
-    gfx.fillStyle(0x080415, 1);
-    gfx.fillEllipse(24, 27, 2, 8);
-    gfx.fillStyle(0xc79bff, 1);
-    gfx.fillCircle(22, 25.4, 1.4);
+    // Bind — a plain orb of the patron's cosmic violet, void rim to lit core with an aether rim
+    // light. The broken gold halo the rig wears over it is the relic; the body is the dark.
+    bakeOrb(gfx, { rim: 0x080415, shell: 0x180c3a, body: 0x2a1660, mid: 0x3a1f7a, core: 0x6f3fd0, light: 0xb894ff, glint: 0xd8c4ff });
     gfx.generateTexture('elem-bind', 48, 48);
     gfx.clear();
 
@@ -3868,48 +2803,26 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('elem-gum', 48, 48);
     gfx.clear();
 
-    // Gluttony — a chef's toque over a knife, with one drop of blood on the blade. The hat has
-    // to be tall and pleated or it reads as a cloud, and the knife has to cross it diagonally so
-    // the two silhouettes never merge into one blob at icon size.
-    gfx.fillStyle(0x1a1218, 0.5);
-    gfx.fillEllipse(24, 44, 28, 7);
-    // The blade, running lower-left to upper-right behind the hat.
-    gfx.fillStyle(0x5d6873, 1);
-    gfx.fillTriangle(9, 41, 15, 44, 41, 15);
-    gfx.fillStyle(0xd6dee6, 1);
-    gfx.fillTriangle(11, 40, 15, 42.5, 39, 16);
-    gfx.lineStyle(1.2, 0xffffff, 0.85);
-    gfx.lineBetween(13, 39, 38, 17);
-    // Handle and bolster at the low end.
-    gfx.fillStyle(0x94a1ad, 1);
-    gfx.fillTriangle(9, 41, 15, 44, 12, 46);
-    gfx.fillStyle(0x2a2930, 1);
-    gfx.fillTriangle(4, 44, 12, 47, 9, 41);
-    // Toque: band, then a pleated crown sitting on it.
-    gfx.fillStyle(0xd6cfbe, 1);
-    gfx.fillRect(11, 26, 24, 6);
-    gfx.fillStyle(0xf6f2e8, 1);
-    gfx.fillEllipse(23, 19, 27, 17);
-    gfx.fillEllipse(15, 15, 13, 12);
-    gfx.fillEllipse(31, 15, 13, 12);
-    gfx.fillEllipse(23, 12, 14, 12);
-    gfx.lineStyle(1, 0xb8b0a0, 0.8);
-    gfx.lineBetween(17, 26, 16, 13);
-    gfx.lineBetween(23, 26, 23, 11);
-    gfx.lineBetween(29, 26, 30, 13);
-    // The blood: one drop on the edge, and one that has already fallen.
-    gfx.fillStyle(0xa81f2b, 1);
-    gfx.fillCircle(35, 20, 2.4);
-    gfx.fillTriangle(33.4, 20.6, 36.6, 20.6, 35, 25);
-    gfx.fillCircle(35.5, 30, 1.5);
+    // Harvest (id `gluttony`) — a plain orb of dark burlap (HAR.sack): the scarecrow's sack head.
+    // The knot, the grin and the scythe are the rig's, not printed on the body.
+    bakeOrb(gfx, { rim: 0x0c0806, shell: 0x1a140f, body: 0x2a2119, mid: 0x372b20, core: 0x46382a, light: 0x6a5741, glint: 0xb8a58a });
     gfx.generateTexture('elem-gluttony', 48, 48);
     gfx.clear();
 
     // A deliberately empty 48×48 body, for the elements whose avatar paints its own torso.
-    // Magma's dragon and Cloth's bobbin both draw a whole character over the fighter sprite, so
-    // there is nothing for a sprite underneath to be — but `ELEMENT_TEXTURES` has to hand
-    // ArenaScene *something*, and what it used to hand them was `elem-fire`.
+    // Cloth's bobbin and Marrow draw a whole character over the fighter sprite, so there is
+    // nothing for a sprite underneath to be — but `ELEMENT_TEXTURES` has to hand ArenaScene
+    // *something*, and what it used to hand them was `elem-fire`.
     gfx.generateTexture('elem-bodyless', 48, 48);
+    gfx.clear();
+
+    // Magma — a plain molten orb in the element's orange (MAG.magma → lava → white). The pirate
+    // lives in the rig's tricorn and eye patch; the body only has to say "lava".
+    bakeOrb(gfx, {
+      rim: 0x6e1606, shell: 0xa82a0c, body: 0xd9431a, mid: 0xff5a1e,
+      core: 0xff8b22, light: 0xffc44a, glint: 0xfff0c0,
+    });
+    gfx.generateTexture('elem-magma', 48, 48);
     gfx.clear();
 
     // Soul — grave headstone: a weathered, chipped slab leaning slightly, with a carved cross

@@ -1,1117 +1,455 @@
 import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
-import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import {
-  SOUND, SoundAvatar, SoundFx, musicNoteLayered, waveRibbonLayered,
+  SOUND, SONG_COLORS, SONG_NAMES, SONG_ORDER, SONG_PALE, SoundAvatar, SoundFx, musicNote, musicNoteLayered,
 } from '../../../elements/kits/SoundVisuals';
 
 /**
- * Sound's showcases.
+ * Sound's showcases (the 2026-10-15 marching-band rework).
  *
- * The metronome is the element, so it is in every loop: a two-second bar with a gold window at
- * the far end of it, and a cast landing inside that window coming out harmonized. A Sound
- * preview without the meter running documents a pink projectile element with unusually good
- * numbers, which is exactly the wrong idea.
+ * The baton, the stage, the trail and the Out of Tune line are all Graphics painted per frame by
+ * the static painters in `SoundVisuals`, so these loops keep a tiny copy of the same state, step it
+ * with the kit's numbers and paint it with the same functions. Nothing here fires a sprite, so
+ * `ctx.fly` is unused throughout.
  *
- * The other thing every script has to show is that the buffs **stay**. Percentages banked off a
- * boombox or a bugle run never expire, so the loops carry a running total rather than a timer.
- *
- * Sound puts no sprite in the world: shockwaves, records, the boombox and its field, the rhythm
- * bar and the mirror ball are all Graphics repainted per frame out of `SoundVisuals`, so
- * `ctx.fly` is useless throughout.
- *
- * Containment: `ctx.at` and `ctx.onFrame` run outside the harness's capture window, so anything
- * built inside one goes through `ctx.adopt`. `SoundFx` carries a sticky sink.
+ * Containment: anything built inside `ctx.at` / `ctx.onFrame` goes through `ctx.adopt`; `SoundFx`
+ * carries a sticky sink.
  */
 
-// ── The kit's constants, mirrored ─────────────────────────────────────
+// ── Kit numbers the loops replay ────────────────────────────────────────
+const BEAT_MS = 1100;
+const WINDOW_MS = 380;
+const BATON_RANGE = 170;
+const BATON_DMG = 3;
+const BATON_DMG_SPIN = 9;
+const SPIN_PER_HIT = 0.13;
+const DANCE_MS = 2000;
+const WAVE_RADIUS = 180;
+const SOLO_SCROLL = 0.32;
 
-const BEAT_MS = 2000;
-const HARMONY_WINDOW = 200;
+const hex = (c: number): string => `#${c.toString(16).padStart(6, '0')}`;
 
-const STACCATO_DMG = 10;
-const STACCATO_HARM_DMG = 15;
-const WAVE_SPEED = 780;
-const WAVE_RANGE = 470;
-const WAVE_SPREAD = 0.1;
-const WAVE_THICK = 28;
-const STREAK_SIZE_PER = 0.01;
+// ── Staging ───────────────────────────────────────────────────────────
 
-const DISC_RADIUS = 130;
-const DISC_DMG = 15;
-const DISC_SPEED_PER_HIT = 0.15;
-const DISC_BANK_MOVE = 0.03;
-const DISC_BANK_DMG = 0.02;
-const DISC_BANK_RES = 0.01;
-
-const BOOMBOX_MS = 8000;
-const BOOMBOX_RADIUS = 150;
-const BOOMBOX_RADIUS_GOLD = 205;
-const BOOMBOX_ATK_PER_SEC = 0.01;
-const BOOMBOX_MOVE_BONUS = 0.20;
-const BOOMBOX_PULSE_MS = 3000;
-const BOOMBOX_SHOVE_DIST = 190;
-const BOOMBOX_POTENCY = 1.5;
-const JUKEBOX_HYPE_COST = 10;
-const JUKEBOX_RADIUS_MULT = 1.33;
-const JUKEBOX_PULSE_MS = 2000;
-
-const BUGLE_NOTE_GAIN = 0.01;
-const BUGLE_SLIP_SPEEDUP = 1.2;
-const PERF_NOTE_SPEED = 470;
-const PERF_TOLERANCE = 42;
-const RED_NOTE_DMG = 0.01;
-const HOLD_NOTE_ATK = 0.03;
-
-const CODA_PER_LEVEL = 200;
-const CODA_HEAL = [0, 0, 150, 200];
-const CODA_BOOST_MULT = [1, 1, 1.25, 1.5];
-const CODA_DAMAGE_MULT = [1, 1, 1.3, 1.6];
-const SOLO_NOTE_DMG = 12;
-const SOLO_ACCENT_DMG = 22;
-const PARTY_HOLD_MS = 3000;
-const PARTY_MS = 12000;
-const PARTY_HYPE_MULT = 2;
-const BALL_SWING_DMG = 20;
-
-const HARMONY_FUSE_MS = 900;
-const HARMONY_RADIUS = 100;
-const HARMONY_DAMAGE = 20;
-const HARMONY_BONUS_PER_STACK = 0.15;
-const HARMONY_MAX_STACKS = 4;
-const HARMONY_BUFF_MS = 20000;
-
-interface Mark { x: number; y: number }
-
-function hex(color: number): string {
-  return `#${color.toString(16).padStart(6, '0')}`;
-}
-
-// ── Shared staging ────────────────────────────────────────────────────
-
-interface Stage { fx: SoundFx; av: BaseAvatar; sav: SoundAvatar | null; at: Mark }
-
-function stageIt(ctx: PreviewCtx): Stage {
+function stage(ctx: PreviewCtx): { fx: SoundFx; av: SoundAvatar } {
   const fx = ctx.capture(() => new SoundFx(ctx.scene, ctx.tint).setSink(ctx.sink));
-  const av = ctx.useAvatar(() => new SoundAvatar(ctx.scene, ctx.tint));
+  const av = ctx.useAvatar(() => new SoundAvatar(ctx.scene, ctx.tint, 'player')) as SoundAvatar;
   av.setFacing(ctx.aim);
-  return { fx, av, sav: av instanceof SoundAvatar ? av : null, at: { x: ctx.cx, y: ctx.cy } };
+  return { fx, av };
 }
 
-function drivenCaster(ctx: PreviewCtx, at: Mark): Stage {
-  const fx = ctx.capture(() => new SoundFx(ctx.scene, ctx.tint).setSink(ctx.sink));
-  if (ctx.scene.textures.exists('elem-sound')) {
-    const body = ctx.adopt(ctx.scene.add.image(at.x, at.y, 'elem-sound').setDepth(5));
-    ctx.onFrame(() => body.setPosition(at.x, at.y));
-  }
-  const av = ctx.useAvatar(() => new SoundAvatar(ctx.scene, ctx.tint));
-  av.setFacing(ctx.aim);
-  ctx.onFrame((dt) => av.update(dt, at.x, at.y, 1));
-  return { fx, av, sav: av instanceof SoundAvatar ? av : null, at };
+function dummyAt(ctx: PreviewCtx, at: { x: number; y: number }): void {
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+  ctx.onFrame(() => {
+    g.clear();
+    g.fillStyle(0x2b2f3d, 1); g.fillCircle(at.x, at.y, 17);
+    g.fillStyle(0x3c4254, 1); g.fillCircle(at.x, at.y, 13);
+    g.fillStyle(0x8e97ad, 0.9); g.fillCircle(at.x - 5, at.y - 4, 3.2); g.fillCircle(at.x + 5, at.y - 4, 3.2);
+  });
 }
 
-function tick(ctx: PreviewCtx, x: number, y: number, text: string, color: number): void {
+function float(ctx: PreviewCtx, x: number, y: number, text: string, color: string, size = 11): void {
   const t = ctx.adopt(ctx.scene.add.text(x, y, text, {
-    fontSize: '11px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
-    color: hex(color), stroke: '#0d030b', strokeThickness: 3,
-  }).setOrigin(0.5).setDepth(22));
-  const y0 = y;
-  let age = 0;
-  ctx.onFrame((dt) => {
-    age += dt;
-    t.setY(y0 - (age / 760) * 20);
-    t.setAlpha(Phaser.Math.Clamp(1 - age / 760, 0, 1));
+    fontSize: `${size}px`, fontFamily: 'Arial Black', color, stroke: '#0b0306', strokeThickness: 3,
+  }).setOrigin(0.5).setDepth(19));
+  ctx.scene.tweens.add({ targets: t, y: y - 16, alpha: 0, duration: 900 });
+}
+
+/** A miniature of the kit's baton: chases `aim` on the 170px leash, spinning at `spin`. */
+interface Baton { x: number; y: number; rot: number; spin: number; aim: { x: number; y: number }; hidden: boolean; song: number }
+
+function batonLayer(ctx: PreviewCtx, b: Baton, victim: { x: number; y: number } | null, onHit?: (dmg: number) => void): void {
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+  let lastHit = -1000;
+  ctx.onFrame((dt, elapsed) => {
+    const c = ctx.casterAt();
+    let tx = b.aim.x, ty = b.aim.y;
+    const dx = tx - c.x, dy = ty - c.y, d = Math.hypot(dx, dy);
+    if (d > BATON_RANGE) { tx = c.x + dx / d * BATON_RANGE; ty = c.y + dy / d * BATON_RANGE; }
+    const speed = 280 + 640 * b.spin;
+    const ex = tx - b.x, ey = ty - b.y, ed = Math.hypot(ex, ey), step = speed * dt / 1000;
+    if (ed <= step) { b.x = tx; b.y = ty; } else { b.x += ex / ed * step; b.y += ey / ed * step; }
+    b.rot += (3 + 25 * b.spin) * dt / 1000;
+    g.clear();
+    if (!b.hidden) SoundFx.drawBaton(g, ctx.tint, b.x, b.y, b.rot, b.spin, elapsed / 1000, 1, b.song);
+    if (victim && !b.hidden && Phaser.Math.Distance.Between(b.x, b.y, victim.x, victim.y) < 40 && elapsed - lastHit > 300) {
+      lastHit = elapsed;
+      onHit?.(Math.round(BATON_DMG + BATON_DMG_SPIN * b.spin));
+    }
   });
 }
 
-function label(ctx: PreviewCtx, x: number, y: number, text: string, color: number): void {
-  ctx.adopt(ctx.scene.add.text(x, y, text, {
-    fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
-    color: hex(color), align: 'center',
-  }).setOrigin(0.5).setDepth(21));
-}
-
-function dummy(ctx: PreviewCtx, at: Mark): void {
-  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(5));
-  ctx.onFrame(() => {
+/** The beat bar, drawn along the top of the box; `onBeat` is the loop's "click". */
+function beatBar(ctx: PreviewCtx, hits: (beat: number) => boolean, onClick: (hit: boolean) => void): void {
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(18));
+  const barW = 220, barX = ctx.cx - barW / 2, y = 22;
+  let lastBeat = -1;
+  let flash = 0;
+  let bad = 0;
+  ctx.onFrame((dt, elapsed) => {
+    const idx = Math.floor(elapsed / BEAT_MS);
+    const phase = elapsed - idx * BEAT_MS;
+    // Click a little inside the window when the script says this beat is played, early when not.
+    const clickAt = hits(idx) ? BEAT_MS - WINDOW_MS * 0.5 : BEAT_MS * 0.4;
+    if (idx !== lastBeat && phase >= clickAt) {
+      lastBeat = idx;
+      const ok = hits(idx);
+      if (ok) flash = 1; else bad = 1;
+      onClick(ok);
+    }
+    flash = Math.max(0, flash - dt / 300);
+    bad = Math.max(0, bad - dt / 300);
     g.clear();
-    g.fillStyle(0x2b2f3d, 1);
-    g.fillCircle(at.x, at.y, 17);
-    g.fillStyle(0x3c4254, 1);
-    g.fillCircle(at.x, at.y, 13);
-    g.fillStyle(0x8e97ad, 0.9);
-    g.fillCircle(at.x - 5, at.y - 4, 3.2);
-    g.fillCircle(at.x + 5, at.y - 4, 3.2);
-    g.fillStyle(0x11131b, 1);
-    g.fillCircle(at.x - 5.6, at.y - 4, 1.6);
-    g.fillCircle(at.x + 4.4, at.y - 4, 1.6);
-  });
-}
-
-/**
- * The metronome meter — a two-second bar with the gold window at the far end. Returns a `beat`
- * function the script calls to restart it, and a `harmonized` test the loops use to decide
- * whether the cast that just went out was on time.
- */
-function metronome(ctx: PreviewCtx): { start(at: number): void; harmonized(at: number): boolean } {
-  let from = -9999;
-  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(19));
-  const w = () => Math.min(ctx.w - 40, 220);
-  ctx.onFrame((_dt, elapsed) => {
-    g.clear();
-    if (from < 0) return;
-    const k = (elapsed - from) / BEAT_MS;
-    if (k > 1.2) return;
-    const bw = w();
-    const x = ctx.w / 2 - bw / 2;
-    const y = 14;
     g.fillStyle(ctx.tint(SOUND.shade), 0.9);
-    g.fillRect(x - 1, y - 1, bw + 2, 8);
-    g.fillStyle(ctx.tint(SOUND.plum), 0.9);
-    g.fillRect(x, y, bw, 6);
-    // The gold window, at the far end and about a tenth of the bar.
-    const gw = bw * (HARMONY_WINDOW / BEAT_MS);
-    g.fillStyle(ctx.tint(SOUND.gold), 0.85);
-    g.fillRect(x + bw - gw, y, gw, 6);
-    g.fillStyle(ctx.tint(SOUND.rose), 1);
-    g.fillRect(x, y, bw * Phaser.Math.Clamp(k, 0, 1), 6);
-    g.fillStyle(ctx.tint(SOUND.white), 1);
-    g.fillRect(x + bw * Phaser.Math.Clamp(k, 0, 1) - 1, y - 2, 2, 10);
-  });
-  return {
-    start(at) { from = at; },
-    harmonized(at) { return from >= 0 && at - from >= BEAT_MS - HARMONY_WINDOW && at - from <= BEAT_MS; },
-  };
-}
-
-/** The banked percentages — the readout every loop in this file needs. */
-function bank(ctx: PreviewCtx, read: () => string): void {
-  const t = ctx.adopt(ctx.scene.add.text(ctx.w * 0.5, 28, '', {
-    fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
-    color: hex(SOUND.mintPale),
-  }).setOrigin(0.5).setDepth(21));
-  ctx.onFrame(() => t.setText(read()));
-}
-
-/** One struck note, flying flat across the arena as the kit's own shockwave painter draws it. */
-function shockwave(
-  ctx: PreviewCtx, s: Stage, from: Mark, foe: Mark, o: { harm: boolean; streak: number },
-): void {
-  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
-  const ang = Math.atan2(foe.y - from.y, foe.x - from.x);
-  const p = { x: from.x, y: from.y };
-  let run = 0;
-  let hit = false;
-  const width = 1 + o.streak * STREAK_SIZE_PER;
-  ctx.onFrame((dt, elapsed) => {
-    g.clear();
-    if (run >= WAVE_RANGE) return;
-    const step = (WAVE_SPEED * dt) / 1000;
-    run += step;
-    p.x += Math.cos(ang) * step;
-    p.y += Math.sin(ang) * step;
-    SoundFx.drawShockwave(g, ctx.tint, p.x, p.y, ang,
-      26 * width, WAVE_SPREAD + run / WAVE_RANGE * 0.2, WAVE_THICK * width,
-      elapsed / 1000, o.harm ? SOUND.gold : SOUND.magenta, 1);
-    if (hit || Phaser.Math.Distance.Between(p.x, p.y, foe.x, foe.y) > 24) return;
-    hit = true;
-    s.fx.boom(foe.x, foe.y, 34, {});
-    tick(ctx, foe.x, foe.y - 16, `${o.harm ? STACCATO_HARM_DMG : STACCATO_DMG}`,
-      o.harm ? SOUND.gold : SOUND.magenta);
+    g.fillRoundedRect(barX - 6, y - 11, barW + 12, 22, 5);
+    g.fillStyle(ctx.tint(SOUND.night), 1);
+    g.fillRoundedRect(barX, y - 7, barW, 14, 4);
+    const winX = barX + barW * (1 - WINDOW_MS / BEAT_MS);
+    g.fillStyle(ctx.tint(SOUND.gold), phase >= BEAT_MS - WINDOW_MS ? 0.55 + flash * 0.4 : 0.22);
+    g.fillRoundedRect(winX, y - 7, barX + barW - winX, 14, 4);
+    if (bad > 0) { g.fillStyle(ctx.tint(SOUND.sour), 0.35 * bad); g.fillRoundedRect(barX, y - 7, barW, 14, 4); }
+    g.lineStyle(1, ctx.tint(SOUND.maroonHi), 0.9);
+    g.strokeRoundedRect(barX, y - 7, barW, 14, 4);
+    g.fillStyle(ctx.tint(SOUND.ivory), 1);
+    musicNote(g, barX + 6 + (barW - 12) * (phase / BEAT_MS), y + 3, 5, -0.15, { flags: 1 });
   });
 }
 
-// ── Click — Staccato ──────────────────────────────────────────────────
+// ══ Click — Baton ══════════════════════════════════════════════════════
 
-function staccatoLoop(ctx: PreviewCtx, opts: { streak: boolean }): void {
-  const s = stageIt(ctx);
-  const foe: Mark = { x: ctx.w * 0.82, y: ctx.h * 0.52 };
-  dummy(ctx, foe);
-  const metro = metronome(ctx);
-  let streak = 0;
-  if (opts.streak) bank(ctx, () => `encore streak ${streak}  ·  wave +${streak}% wider`);
-
-  // Casts on the beat, then one deliberately off it.
-  const beats = [400, 400 + BEAT_MS, 400 + BEAT_MS * 2, 400 + BEAT_MS * 2 + 900];
-  beats.forEach((at, i) => {
-    ctx.at(at, () => {
-      const harm = metro.harmonized(at);
-      metro.start(at);
-      s.av.play('punch', ctx.aim);
-      s.fx.waveBurst(ctx.cx, ctx.cy, ctx.aim, harm ? 1.2 : 1, 9,
-        harm ? SOUND.gold : SOUND.magenta);
-      shockwave(ctx, s, { x: ctx.cx, y: ctx.cy }, foe, { harm, streak });
-      if (i === 0) return;
-      if (harm) {
-        streak++;
-        tick(ctx, ctx.cx, ctx.cy - 40, '🎵 HARMONIZED', SOUND.gold);
-        if (opts.streak) tick(ctx, ctx.cx, ctx.cy - 58, `ENCORE ×${streak}`, SOUND.amber);
-        return;
-      }
-      s.fx.discord(ctx.cx, ctx.cy, 9);
-      tick(ctx, ctx.cx, ctx.cy - 40, 'OFF THE BEAT', SOUND.crimson);
-      if (!opts.streak) return;
-      streak = 0;
-      tick(ctx, ctx.cx, ctx.cy - 58, 'STREAK LOST', SOUND.crimson);
-    });
-  });
-
-  label(ctx, ctx.w * 0.5, ctx.h - 8,
-    opts.streak ? `+${STREAK_SIZE_PER * 100}% wave width per point, uncapped — and one off-beat cast resets it`
-      : `${STACCATO_DMG} → ${STACCATO_HARM_DMG} on the beat · ${WAVE_SPEED} px/s out to ${WAVE_RANGE}px`,
-    SOUND.violet);
-}
-
-export const staccato: PreviewScript = {
-  duration: 6400,
-  scale: 0.9,
-  caption: 'Click — 10 damage, or 15 if the cast lands inside the metronome\'s gold window',
-  run(ctx) { staccatoLoop(ctx, { streak: false }); },
-};
-
-export const staccatoUpgraded: PreviewScript = {
-  duration: 6400,
-  scale: 0.9,
-  caption: 'Encore Streak — every harmonized cast widens the wave 1%, and one slip resets the lot',
-  run(ctx) { staccatoLoop(ctx, { streak: true }); },
-};
-
-// ── E — Disc Dice ─────────────────────────────────────────────────────
-
-const RECORDS = [
-  { name: 'ACCELERANDO', color: SOUND.mint, blurb: '+20% speed · cooldowns 25% faster', bank: `+${DISC_BANK_MOVE * 100}% move` },
-  { name: 'BASS', color: SOUND.crimson, blurb: '×1.2 damage', bank: `+${DISC_BANK_DMG * 100}% damage` },
-  { name: 'CALM', color: SOUND.flow, blurb: '2 HP a second', bank: `+${DISC_BANK_RES * 100}% resistance` },
-];
-
-function discLoop(ctx: PreviewCtx, opts: { system: boolean }): void {
-  const s = stageIt(ctx);
-  const foes: Mark[] = [
-    { x: ctx.cx + 70, y: ctx.cy - 30 },
-    { x: ctx.cx - 60, y: ctx.cy + 40 },
-    { x: ctx.cx + 30, y: ctx.cy + 60 },
-  ];
-  for (const f of foes) dummy(ctx, f);
-  const metro = metronome(ctx);
-  let record = 0;
-  let banked = [0, 0, 0];
-  let speed = 0;
-  bank(ctx, () => (opts.system
-    ? `bank  +${(banked[0] * DISC_BANK_MOVE * 100).toFixed(0)}% move · +${(banked[1] * DISC_BANK_DMG * 100).toFixed(0)}% dmg · +${(banked[2] * DISC_BANK_RES * 100).toFixed(0)}% res`
-    : `+${Math.round(speed * 100)}% move speed · 3s`));
-
-  // The record on the deck, spinning under the caster.
-  const deck = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
-  ctx.onFrame((_dt, elapsed) => {
-    deck.clear();
-    SoundFx.drawRecord(deck, ctx.tint, ctx.cx, ctx.cy + 22, 20, elapsed / 260, RECORDS[record].color, 0.9);
-  });
-  const deckLabel = ctx.adopt(ctx.scene.add.text(ctx.cx, ctx.cy + 48, '', {
-    fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
-  }).setOrigin(0.5).setDepth(21));
-  ctx.onFrame(() => {
-    deckLabel.setText(`${RECORDS[record].name} — ${RECORDS[record].blurb}`);
-    deckLabel.setColor(hex(RECORDS[record].color));
-  });
-
-  const cast = (at: number, harm: boolean): void => {
-    ctx.at(at, () => {
-      metro.start(at);
-      s.av.play('sweep', 0);
-      s.fx.discSlice(ctx.cx, ctx.cy, DISC_RADIUS, RECORDS[record].color, 8);
-      s.fx.ringMark(ctx.cx, ctx.cy, DISC_RADIUS, 2, RECORDS[record].color);
-      let cut = 0;
-      for (const f of foes) {
-        if (Phaser.Math.Distance.Between(f.x, f.y, ctx.cx, ctx.cy) > DISC_RADIUS) continue;
-        cut++;
-        tick(ctx, f.x + (Math.random() - 0.5) * 16, f.y - 14, `${DISC_DMG}`, RECORDS[record].color);
-      }
-      speed = Math.min(6, cut) * DISC_SPEED_PER_HIT;
-      if (opts.system) {
-        banked = banked.map((b, i) => (i === record ? b + cut : b));
-        tick(ctx, ctx.cx, ctx.cy - 52, `🏦 ${cut} × ${RECORDS[record].bank}`, RECORDS[record].color);
-      } else {
-        tick(ctx, ctx.cx, ctx.cy - 52, `+${Math.round(speed * 100)}% SPEED · 3s`, SOUND.mintPale);
-      }
-      if (!harm) return;
-      record = (record + 1) % RECORDS.length;
-      s.fx.sparkle(ctx.cx, ctx.cy, 8, 30, 10, SOUND.gold);
-      tick(ctx, ctx.cx, ctx.cy - 34, `🎵 ${RECORDS[record].name}`, RECORDS[record].color);
-    });
-  };
-
-  cast(500, false);
-  cast(500 + BEAT_MS, true);
-  cast(500 + BEAT_MS * 2, true);
-  cast(500 + BEAT_MS * 3, true);
-
-  label(ctx, ctx.w * 0.5, ctx.h - 8,
-    opts.system ? 'every fighter cut pays into a bank you keep all match · resistance floored at 75% off'
-      : `${DISC_DMG} inside ${DISC_RADIUS}px · +${DISC_SPEED_PER_HIT * 100}% speed per fighter cut, 6 max`,
-    SOUND.violet);
-}
-
-export const discDice: PreviewScript = {
-  duration: 8600,
-  scale: 0.9,
-  caption: 'E — a record slung around you for 15. Harmonized, it changes what is on the deck',
-  run(ctx) { discLoop(ctx, { system: false }); },
-};
-
-export const discDiceUpgraded: PreviewScript = {
-  duration: 8600,
-  scale: 0.9,
-  caption: 'Sound System — every fighter a record cuts pays into a bank for the rest of the match',
-  run(ctx) { discLoop(ctx, { system: true }); },
-};
-
-// ── R — Boombox ───────────────────────────────────────────────────────
-
-function boomboxLoop(ctx: PreviewCtx, opts: { jukebox: boolean }): void {
-  const home: Mark = { x: ctx.w * 0.3, y: ctx.h * 0.66 };
-  const s = drivenCaster(ctx, home);
-  const foe: Mark = { x: ctx.w * 0.62, y: ctx.h * 0.4 };
-  dummy(ctx, foe);
-  const metro = metronome(ctx);
-
-  const box: Mark = { x: ctx.w * 0.58, y: ctx.h * 0.5 };
-  let live = -1;
-  let golden = true;
-  let coined = false;
-  let atk = 0;
-  let nextPulse = 0;
-  let hype = 60;
-  bank(ctx, () => `+${(atk * 100).toFixed(0)}% attack speed banked  ·  hype ${Math.round(hype)}`);
-
-  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
-  const air = ctx.adopt(ctx.scene.add.graphics().setDepth(8));
-  ctx.onFrame((dt, elapsed) => {
-    const t = elapsed / 1000;
-    g.clear();
-    air.clear();
-    if (live < 0 || elapsed - live > BOOMBOX_MS) return;
-    const r = (golden ? BOOMBOX_RADIUS_GOLD : BOOMBOX_RADIUS) * (coined ? JUKEBOX_RADIUS_MULT : 1) * 0.5;
-    SoundFx.drawBoomboxField(g, ctx.tint, box.x, box.y, r, t, golden, 1,
-      Phaser.Math.Clamp((elapsed - nextPulse + (coined ? JUKEBOX_PULSE_MS : BOOMBOX_PULSE_MS)) / 600, 0, 1));
-    SoundFx.drawBoombox(air, ctx.tint, box.x, box.y, t, golden, 1, 0);
-
-    // Standing in it banks attack speed, permanently, at 1% a second — ×1.5 if it was gold.
-    const inside = Phaser.Math.Distance.Between(home.x, home.y, box.x, box.y) <= r;
-    if (inside) atk += BOOMBOX_ATK_PER_SEC * (golden ? BOOMBOX_POTENCY : 1) * (dt / 1000);
-
-    if (elapsed < nextPulse) return;
-    nextPulse = elapsed + (coined ? JUKEBOX_PULSE_MS : BOOMBOX_PULSE_MS);
-    s.fx.bounceWave(box.x, box.y, r, SOUND.magenta, 8);
-    if (Phaser.Math.Distance.Between(foe.x, foe.y, box.x, box.y) > r) return;
-    // The pulse throws enemies out of the field, and their bullets with them.
-    const a = Math.atan2(foe.y - box.y, foe.x - box.x);
-    foe.x = Phaser.Math.Clamp(foe.x + Math.cos(a) * BOOMBOX_SHOVE_DIST * 0.5, 12, ctx.w - 12);
-    foe.y = Phaser.Math.Clamp(foe.y + Math.sin(a) * BOOMBOX_SHOVE_DIST * 0.5, 12, ctx.h - 12);
-    tick(ctx, foe.x, foe.y - 26, '💥 BOUNCED OUT', SOUND.magenta);
-  });
-
-  ctx.at(300, () => metro.start(300));
-  ctx.at(300 + BEAT_MS, () => {
-    const at = 300 + BEAT_MS;
-    golden = metro.harmonized(at);
-    metro.start(at);
-    live = at;
-    nextPulse = at + (coined ? JUKEBOX_PULSE_MS : BOOMBOX_PULSE_MS);
-    s.av.play('punch', Math.atan2(box.y - home.y, box.x - home.x));
-    s.fx.ripple(box.x, box.y, 10, 90, golden ? SOUND.gold : SOUND.magenta, 480, 5, 6);
-    tick(ctx, home.x, home.y - 40, golden ? '🎵 HARMONIZED BOX' : '🔊 BOOMBOX', golden ? SOUND.gold : SOUND.magenta);
-    if (golden) tick(ctx, box.x, box.y - 40, `${BOOMBOX_RADIUS_GOLD}px · BUFFS ×${BOOMBOX_POTENCY}`, SOUND.gold);
-  });
-
-  // Walk into the field and stand there — the whole ability is the standing.
-  ctx.onFrame((dt, elapsed) => {
-    if (elapsed < 300 + BEAT_MS + 200) return;
-    const d = Phaser.Math.Distance.Between(home.x, home.y, box.x, box.y);
-    if (d <= 26) return;
-    const step = Math.min(d, 150 * (1 + BOOMBOX_MOVE_BONUS) * (dt / 1000));
-    home.x += ((box.x - home.x) / d) * step;
-    home.y += ((box.y - home.y) / d) * step;
-  });
-
-  if (opts.jukebox) {
-    ctx.at(4600, () => {
-      coined = true;
-      hype -= JUKEBOX_HYPE_COST;
-      s.fx.sparkle(box.x, box.y, 12, 40, 10, SOUND.gold);
-      tick(ctx, box.x, box.y - 40, `🪙 −${JUKEBOX_HYPE_COST} HYPE`, SOUND.gold);
-      tick(ctx, box.x, box.y - 58, `+33% FIELD · PULSE EVERY ${JUKEBOX_PULSE_MS / 1000}s`, SOUND.amber);
-    });
-  }
-
-  label(ctx, ctx.w * 0.5, ctx.h - 8,
-    opts.jukebox ? 'press Space at the box — Space alone, so no dodge comes out · one coin per box'
-      : `+${BOOMBOX_ATK_PER_SEC * 100}% attack speed a second, kept forever · +${BOOMBOX_MOVE_BONUS * 100}% move while inside`,
-    SOUND.violet);
-}
-
-export const boombox: PreviewScript = {
+export const baton: PreviewScript = {
   duration: 9000,
   scale: 0.9,
-  bodyTexture: '',
-  caption: 'R — eight seconds of a field that banks attack speed you never lose, and pulses enemies out',
-  run(ctx) { boomboxLoop(ctx, { jukebox: false }); },
+  caption: 'Click on the metronome\'s notes to spin the baton up — it chases the cursor 170px out and hits for 3, up to 12 at full spin',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    const target = { x: ctx.cx + 150, y: ctx.cy + 10 };
+    dummyAt(ctx, target);
+    const b: Baton = { x: ctx.cx + 40, y: ctx.cy, rot: 0, spin: 0, aim: { x: target.x, y: target.y }, hidden: false, song: SOUND.staccato };
+    batonLayer(ctx, b, target, (dmg) => {
+      fx.waveBurst(target.x, target.y, 0, 0.5 + b.spin * 0.6, 9, b.spin > 0.6 ? SOUND.gold : SOUND.maroonPale);
+      float(ctx, target.x, target.y - 26, `${dmg}`, hex(b.spin > 0.6 ? SOUND.goldHi : SOUND.maroonPale), 11);
+    });
+    beatBar(ctx, (i) => i !== 3, (ok) => {
+      b.spin = ok ? Math.min(1, b.spin + SPIN_PER_HIT * 1.6) : Math.max(0, b.spin - 0.08);
+      if (ok) fx.batonFlourish(b.x, b.y - 10); else fx.batonFumble(b.x, b.y - 10);
+      av.play('punch', Math.atan2(b.y - ctx.cy, b.x - ctx.cx), 200);
+    });
+    // The cursor drifts around the dummy, so the baton sweeps through it.
+    ctx.onFrame((_dt, el) => {
+      b.aim.x = target.x + Math.cos(el / 600) * 40;
+      b.aim.y = target.y + Math.sin(el / 600) * 30;
+      av.setHold('reach', Math.atan2(b.y - ctx.cy, b.x - ctx.cx));
+    });
+  },
 };
 
-export const boomboxUpgraded: PreviewScript = {
-  duration: 9000,
+// ══ E — Crescendo ══════════════════════════════════════════════════════
+
+export const crescendo: PreviewScript = {
+  duration: 5200,
   scale: 0.9,
-  bodyTexture: '',
-  caption: 'Jukebox — feed it 10 hype and the field swells a third and pulses every 2 seconds',
-  run(ctx) { boomboxLoop(ctx, { jukebox: true }); },
+  caption: 'E — dance for 2s, speeding up to 2.4×, a stave of music trailing behind; then a wave hits everything within 180px for 30',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    const target = { x: ctx.cx + 230, y: ctx.cy };
+    dummyAt(ctx, target);
+    const from = { x: ctx.cx - 200, y: ctx.cy + 20 };
+    ctx.moveCaster(from.x, from.y);
+    const trail: { x: number; y: number; at: number }[] = [];
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
+    let dancing = false;
+    let start = 0;
+    ctx.onFrame((_dt, el) => {
+      g.clear();
+      const c = ctx.casterAt();
+      if (dancing) {
+        const last = trail[trail.length - 1];
+        if (!last || Math.hypot(c.x - last.x, c.y - last.y) > 10) trail.push({ x: c.x, y: c.y + 8, at: el });
+        av.setDance(Phaser.Math.Clamp((el - start) / DANCE_MS, 0.3, 1));
+      } else av.setDance(0);
+      while (trail.length && el - trail[0].at > 1300) trail.shift();
+      SoundFx.drawMusicTrail(g, ctx.tint, trail, el, 1300, SOUND.staccato);
+    });
+    ctx.at(300, () => {
+      dancing = true;
+      start = 300;
+      av.play('raise', undefined, 500);
+      av.setHold('ride');
+      float(ctx, from.x, from.y - 50, '♪ CRESCENDO', hex(SOUND.goldHi));
+      // An ease-in glide is the acceleration: slow off the mark, fast at the end.
+      ctx.glideCaster({ to: { x: target.x - 90, y: ctx.cy - 10 }, ms: DANCE_MS, ease: 'in' });
+    });
+    ctx.at(300 + DANCE_MS, () => {
+      dancing = false;
+      av.setHold(null);
+      const c = ctx.casterAt();
+      fx.musicWave(c.x, c.y, WAVE_RADIUS, SOUND.staccato);
+      av.play('flex', undefined, 420);
+      ctx.at(200, () => float(ctx, target.x, target.y - 30, '30', hex(SOUND.goldHi), 13));
+    });
+  },
 };
 
-// ── F — Bugle ─────────────────────────────────────────────────────────
+// ══ R — Fermata ════════════════════════════════════════════════════════
 
-interface TrackNote { x: number; kind: 'note' | 'red' | 'hold'; hit: boolean; missed: boolean }
+export const fermata: PreviewScript = {
+  duration: 7000,
+  scale: 0.9,
+  caption: 'R — dash to the baton and slam it at the cursor: 20 and Out of Tune for 8s (25% of abilities misfire). R again: detonate for 25 and a 0.5s stun',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    const target = { x: ctx.cx + 220, y: ctx.cy };
+    dummyAt(ctx, target);
+    ctx.moveCaster(ctx.cx - 160, ctx.cy);
+    const b: Baton = { x: ctx.cx + 20, y: ctx.cy + 10, rot: 0, spin: 0.5, aim: { x: ctx.cx + 20, y: ctx.cy + 10 }, hidden: false, song: SOUND.staccato };
+    batonLayer(ctx, b, null);
+    let tunedUntil = -1;
+    const tune = ctx.adopt(ctx.scene.add.graphics().setDepth(10));
+    ctx.onFrame((_dt, el) => {
+      tune.clear();
+      if (el < tunedUntil) SoundFx.drawOutOfTune(tune, ctx.tint, target.x, target.y, el / 1000, 1);
+    });
+    ctx.at(500, () => {
+      const c = ctx.casterAt();
+      fx.dashTrail(c.x, c.y, b.x, b.y, SOUND.maroonHi, 12, 4);
+      ctx.glideCaster({ to: { x: b.x - 4, y: b.y }, ms: 170, ease: 'out' });
+    });
+    ctx.at(700, () => {
+      const c = ctx.casterAt();
+      const ang = Math.atan2(target.y - c.y, target.x - c.x);
+      const ix = c.x + Math.cos(ang) * 26, iy = c.y + Math.sin(ang) * 26;
+      av.play('slam', ang, 380);
+      fx.slam(ix, iy, ang, 130, 40, SOUND.maroonHi);
+      b.x = ix; b.y = iy; b.aim = { x: ix + 40, y: iy };
+      tunedUntil = 4800;
+      float(ctx, target.x, target.y - 30, '20', hex(SOUND.maroonPale), 12);
+      float(ctx, target.x, target.y - 50, '♭ OUT OF TUNE', hex(SOUND.sour));
+    });
+    ctx.at(2100, () => { fx.misfire(target.x, target.y); float(ctx, target.x, target.y - 50, '♭ MISFIRE', hex(SOUND.sour)); });
+    ctx.at(3400, () => {
+      tunedUntil = -1;
+      av.play('clap', undefined, 360);
+      fx.sprout(target.x, target.y - 4, SOUND.gold);
+      float(ctx, target.x, target.y - 32, '25', hex(SOUND.goldHi), 13);
+      float(ctx, target.x, target.y - 54, '♪ RESOLVED — STUNNED', hex(SOUND.goldHi));
+    });
+  },
+};
 
-function bugleLoop(ctx: PreviewCtx, opts: { pitch: boolean }): void {
-  const s = stageIt(ctx);
-  s.sav?.setInstrument('bugle');
-  const metro = metronome(ctx);
-  let tempo = 0;
-  let dmg = 0;
-  let atk = 0;
-  let slipUsed = false;
-  let speedMult = 1;
-  bank(ctx, () => `+${Math.round(tempo * 100)}% move & attack`
-    + (opts.pitch ? `  ·  +${Math.round(dmg * 100)}% damage  ·  +${Math.round(atk * 100)}% attack` : ''));
+// ══ F — Hum ════════════════════════════════════════════════════════════
 
-  const notes: TrackNote[] = [];
-  const barY = ctx.h * 0.74;
-  const hitX = ctx.w * 0.28;
-  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
-  let spawnAt = 0;
-  let running = false;
-
-  ctx.onFrame((dt, elapsed) => {
-    const t = elapsed / 1000;
-    const step = dt / 1000;
-    g.clear();
-    if (!running) return;
-
-    // The bar itself, and the strike line the notes have to reach.
-    g.fillStyle(ctx.tint(SOUND.shade), 0.85);
-    g.fillRect(12, barY - 14, ctx.w - 24, 28);
-    g.lineStyle(2, ctx.tint(SOUND.gold), 0.8);
-    g.lineBetween(hitX, barY - 14, hitX, barY + 14);
-
-    if (elapsed >= spawnAt) {
-      spawnAt = elapsed + Phaser.Math.Between(420, 940) / speedMult;
-      const roll = Math.random();
-      const fancy = opts.pitch && roll < (slipUsed ? 0.34 : 0.16);
-      notes.push({
-        x: ctx.w - 20,
-        kind: fancy ? (Math.random() < 0.5 ? 'red' : 'hold') : 'note',
-        hit: false, missed: false,
+export const hum: PreviewScript = {
+  duration: 6000,
+  scale: 0.9,
+  caption: 'F — change the soul song. Staccato (red) +20% damage · Melody (blue) +25% speed, 20% shorter cooldowns · Smooth (green) 20% resistance, 3 HP/s',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    let idx = 0;
+    const path: { x: number; y: number }[] = [];
+    av.setSong(SONG_COLORS.staccato, SONG_PALE.staccato);
+    ctx.onFrame((_dt, el) => {
+      const c = ctx.casterAt();
+      const last = path[0];
+      if (!last || Math.hypot(c.x - last.x, c.y - last.y) > 4) { path.unshift({ x: c.x, y: c.y }); if (path.length > 40) path.pop(); }
+      g.clear();
+      const want = [22, 38, 54];
+      let acc = 0, wi = 0, prev = { x: c.x, y: c.y };
+      const pts: { x: number; y: number }[] = [];
+      for (const p of path) {
+        acc += Math.hypot(p.x - prev.x, p.y - prev.y); prev = p;
+        while (wi < 3 && acc >= want[wi]) { pts.push(p); wi++; }
+        if (wi >= 3) break;
+      }
+      const song = SONG_ORDER[idx];
+      pts.forEach((p, i) => musicNoteLayered(g, ctx.tint, p.x, p.y - 14 + Math.sin(el / 250 + i) * 3, 5 - i * 0.6, 0, SONG_COLORS[song], 0.9 - i * 0.18, { flags: i % 2 ? 2 : 1 }));
+    });
+    // Walk a loop so the notes have somewhere to follow.
+    ctx.onFrame((_dt, el) => {
+      ctx.moveCaster(ctx.cx + Math.cos(el / 700) * 150, ctx.cy + Math.sin(el / 700) * 40);
+    });
+    for (const [at, i] of [[800, 1], [2800, 2], [4800, 0]] as const) {
+      ctx.at(at, () => {
+        idx = i;
+        const song = SONG_ORDER[i];
+        av.setSong(SONG_COLORS[song], SONG_PALE[song]);
+        av.play('flex', undefined, 360);
+        const c = ctx.casterAt();
+        fx.ripple(c.x, c.y, 10, 40, SONG_COLORS[song], 360, 3, 7, 7);
+        fx.notes(c.x, c.y - 16, 6, { speed: 90, size: 7, color: SONG_COLORS[song], rise: 40, angle: -Math.PI / 2, spread: 1.2 });
+        float(ctx, c.x, c.y - 52, `♪ ${SONG_NAMES[song]}`, hex(SONG_COLORS[song]));
       });
     }
+  },
+};
 
-    for (let i = notes.length - 1; i >= 0; i--) {
-      const n = notes[i];
-      n.x -= PERF_NOTE_SPEED * speedMult * step * 0.55;
-      if (n.x < hitX - PERF_TOLERANCE * 0.6) {
-        // A red note pays for being *let go* — playing it is the mistake.
-        if (n.kind === 'red' && !n.hit) {
-          dmg += RED_NOTE_DMG;
-          tick(ctx, hitX, barY - 26, `🔴 +${RED_NOTE_DMG * 100}% DAMAGE`, SOUND.crimson);
-        } else if (!n.hit && !n.missed) {
-          n.missed = true;
-          if (!slipUsed) {
-            slipUsed = true;
-            speedMult = BUGLE_SLIP_SPEEDUP;
-            s.fx.discord(ctx.cx, ctx.cy, 9);
-            tick(ctx, ctx.cx, ctx.cy - 40, '🎵 ONE SLIP SPENT · BAR ×1.2', SOUND.amber);
-          } else {
-            running = false;
-            s.fx.discord(ctx.cx, ctx.cy, 9);
-            tick(ctx, ctx.cx, ctx.cy - 40, 'DROPPED — THE CALL IS OVER', SOUND.crimson);
-          }
-        }
-        notes.splice(i, 1);
-        continue;
-      }
-      SoundFx.drawTrackNote(g, ctx.tint, 30,
-        n.kind === 'red' ? SOUND.crimson : n.kind === 'hold' ? SOUND.mint : SOUND.magenta,
-        false, t, n.kind, n.kind === 'hold' ? 150 * 0.5 : 0, 0);
-      // Painted at its position along the bar.
-      g.fillStyle(ctx.tint(n.kind === 'red' ? SOUND.crimson : n.kind === 'hold' ? SOUND.mint : SOUND.magenta), 1);
-      g.fillCircle(n.x, barY, n.kind === 'hold' ? 7 : 5.5);
-      if (n.kind === 'hold') {
-        g.fillStyle(ctx.tint(SOUND.mint), 0.4);
-        g.fillRect(n.x, barY - 4, 150 * 0.5, 8);
-      }
-    }
-  });
+// ══ Q — Call of the Void ═══════════════════════════════════════════════
 
-  ctx.at(400, () => {
-    running = true;
-    spawnAt = 400;
-    metro.start(400);
-    s.av.play('raise');
-    tick(ctx, ctx.cx, ctx.cy - 40, '🎺 TAKE THE STAGE', SOUND.brassHi);
-    tick(ctx, ctx.cx, ctx.cy - 58, 'HARMONIZED — ONE SLIP ALLOWED', SOUND.gold);
-  });
-
-  // The notes being struck on time.
-  ctx.onFrame((_dt, elapsed) => {
-    if (!running || elapsed < 500) return;
-    for (const n of notes) {
-      if (n.hit || n.missed || Math.abs(n.x - hitX) > PERF_TOLERANCE * 0.5) continue;
-      // A red note is deliberately left alone; everything else is played.
-      if (n.kind === 'red') continue;
-      n.hit = true;
-      s.fx.sparkle(hitX, barY, 5, 18, 10, SOUND.gold);
-      if (n.kind === 'hold') {
-        atk += HOLD_NOTE_ATK;
-        tick(ctx, hitX, barY - 26, `🟢 +${HOLD_NOTE_ATK * 100}% ATTACK`, SOUND.mint);
-      } else {
-        tempo += BUGLE_NOTE_GAIN;
-        tick(ctx, hitX, barY - 26, `+${BUGLE_NOTE_GAIN * 100}% BOTH`, SOUND.brassHi);
-      }
-    }
-  });
-
-  label(ctx, ctx.w * 0.5, ctx.h - 8,
-    opts.pitch ? 'a red note pays only if you let it run off · a green hold has to be carried the whole tail'
-      : 'every note is +1% move AND +1% attack, banked permanently — and one miss ends the run',
-    SOUND.violet);
-}
-
-export const bugle: PreviewScript = {
+export const callOfTheVoid: PreviewScript = {
   duration: 9000,
   scale: 0.9,
-  caption: 'F — a rhythm bar where every note is a permanent percentage of both your speeds',
-  run(ctx) { bugleLoop(ctx, { pitch: false }); },
-};
-
-export const bugleUpgraded: PreviewScript = {
-  duration: 10000,
-  scale: 0.9,
-  caption: 'Perfect Pitch — red notes pay for being missed, green holds pay for being carried',
-  run(ctx) { bugleLoop(ctx, { pitch: true }); },
-};
-
-// ── Q — Coda! ─────────────────────────────────────────────────────────
-
-function codaLoop(ctx: PreviewCtx, opts: { party: boolean }): void {
-  const s = stageIt(ctx);
-  const foe: Mark = { x: ctx.w * 0.78, y: ctx.h * 0.36 };
-  dummy(ctx, foe);
-  let level = 1;
-  let hype = 0;
-  let carried = 260;
-  bank(ctx, () => `carried ${Math.round(carried)}%  ·  hype ${Math.round(hype)} / ${CODA_PER_LEVEL}  ·  CODA ${level}`);
-
-  const stage = ctx.adopt(ctx.scene.add.graphics().setDepth(2));
-  ctx.onFrame((_dt, elapsed) => {
-    stage.clear();
-    if (level < 2) return;
-    SoundFx.drawStage(stage, ctx.tint, ctx.cx, ctx.cy + 26, 90, elapsed / 1000, 0.7);
-  });
-
-  const burn = (at: number, mult: number): void => {
-    ctx.at(at, () => {
-      const gained = Math.round(carried * mult);
-      hype += gained;
-      s.fx.sparkle(ctx.cx, ctx.cy, 14, 40, 10, SOUND.gold);
-      tick(ctx, ctx.cx, ctx.cy - 40, `🔥 BURNED ${Math.round(carried)}% → ${gained} HYPE`, SOUND.gold);
-      carried = 0;
-      if (hype < CODA_PER_LEVEL * (level)) return;
-      hype -= CODA_PER_LEVEL;
-      level++;
-      s.sav?.setInstrument(level >= 3 ? 'electric' : 'guitar');
-      s.fx.boom(ctx.cx, ctx.cy, 80, {});
-      ctx.scene.cameras.main.shake(200, 0.005);
-      tick(ctx, ctx.cx, ctx.cy - 58, `🎸 CODA ${level}`, SOUND.neon);
-      tick(ctx, ctx.cx, ctx.cy - 76,
-        `+${CODA_HEAL[level]} HP · ×${CODA_DAMAGE_MULT[level]} DAMAGE · BOOSTS ×${CODA_BOOST_MULT[level]}`,
-        SOUND.amber);
-    });
-  };
-
-  if (!opts.party) {
-    burn(700, 1);
-    ctx.at(2200, () => { carried = 210; });
-    burn(3400, 1);
-    ctx.at(5000, () => {
-      // At maximum, Q stops being a button and becomes a rhythm bar.
-      tick(ctx, ctx.cx, ctx.cy - 40, '🎸 SOLO', SOUND.neon);
-      for (let i = 0; i < 4; i++) {
-        ctx.at(i * 500, () => {
-          const accent = i === 2;
-          s.fx.musicWall(ctx.cx, ctx.cy, ctx.w, accent ? SOUND.gold : SOUND.neon, 9);
-          tick(ctx, foe.x, foe.y - 14, `${accent ? SOLO_ACCENT_DMG : SOLO_NOTE_DMG}`,
-            accent ? SOUND.gold : SOUND.neon);
-        });
+  caption: 'Q — a 15s bugle solo, untouchable on stage: pick the line with W/S, click on the bar. 15 a note, wherever the enemy is; slurs are held',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    const target = { x: ctx.cx + 240, y: ctx.cy + 20 };
+    dummyAt(ctx, target);
+    const sx = ctx.cx - 220, sy = ctx.cy + 20;
+    ctx.moveCaster(sx, sy, { facing: 0 });
+    const st = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    const hud = ctx.adopt(ctx.scene.add.graphics().setDepth(18));
+    // A short chart: quarters, eighths, then a slur that moves line.
+    const notes = [
+      { at: 900, lane: 1, flags: 0, len: 0, to: 1 }, { at: 1500, lane: 1, flags: 0, len: 0, to: 1 },
+      { at: 2100, lane: 0, flags: 0, len: 0, to: 0 }, { at: 2700, lane: 1, flags: 1, len: 0, to: 1 },
+      { at: 3030, lane: 2, flags: 1, len: 0, to: 2 }, { at: 3360, lane: 2, flags: 1, len: 0, to: 2 },
+      { at: 3900, lane: 1, flags: 0, len: 800, to: 0 }, { at: 5200, lane: 0, flags: 2, len: 0, to: 0 },
+      { at: 5375, lane: 1, flags: 2, len: 0, to: 1 }, { at: 5550, lane: 2, flags: 2, len: 0, to: 2 },
+      { at: 5725, lane: 1, flags: 2, len: 0, to: 1 }, { at: 6300, lane: 1, flags: 0, len: 900, to: 2 },
+    ];
+    const done = new Set<number>();
+    let lane = 1;
+    av.setInstrument('bugle');
+    av.setHold('brace', 0);
+    fx.fanfare(sx, sy);
+    ctx.onFrame((_dt, el) => {
+      st.clear();
+      SoundFx.drawStage(st, ctx.tint, sx, sy + 16, el / 1000);
+      ctx.moveCaster(sx, sy, { facing: 0 });
+      // The player's line follows the chart, switching a beat early like a person would.
+      const next = notes.find((n) => el < n.at + n.len + 60);
+      if (next) lane = el > next.at + next.len * 0.5 ? next.to : next.lane;
+      hud.clear();
+      const left = ctx.cx - 260, top = 6, w = 520, h = 70, gap = 18, mid = top + h / 2;
+      const ly = (i: number) => mid + (i - 1) * gap;
+      const hitX = left + 50;
+      hud.fillStyle(ctx.tint(SOUND.shade), 0.85); hud.fillRoundedRect(left, top, w, h, 8);
+      hud.lineStyle(1.6, ctx.tint(SOUND.gold), 0.9); hud.strokeRoundedRect(left, top, w, h, 8);
+      hud.fillStyle(ctx.tint(SOUND.gold), 0.12); hud.fillRect(left + 6, ly(lane) - gap / 2 + 2, w - 12, gap - 4);
+      for (let i = 0; i < 3; i++) {
+        hud.lineStyle(i === lane ? 2 : 1.2, ctx.tint(i === lane ? SOUND.goldHi : SOUND.maroonPale), 0.8);
+        hud.lineBetween(left + 10, ly(i), left + w - 10, ly(i));
       }
+      hud.lineStyle(2.4, ctx.tint(SOUND.goldHi), 0.95); hud.lineBetween(hitX, top + 6, hitX, top + h - 6);
+      notes.forEach((n, i) => {
+        const x = hitX + (n.at - el) * SOLO_SCROLL;
+        const tx = hitX + (n.at + n.len - el) * SOLO_SCROLL;
+        if (x > left + w + 10 || (n.len === 0 && x < left + 4) || tx < left + 4) return;
+        const hit = done.has(i);
+        const c = hit ? SOUND.goldHi : n.len > 0 ? SOUND.melodyPale : SOUND.ivory;
+        if (n.len > 0) {
+          const mx = hitX + (n.at + n.len * 0.5 - el) * SOLO_SCROLL;
+          hud.fillStyle(ctx.tint(c), 0.5);
+          hud.fillRect(Math.max(left + 6, x), ly(n.lane) - 3, Math.max(0, Math.min(mx, left + w - 10) - Math.max(left + 6, x)), 6);
+          if (mx < left + w - 10) hud.fillRect(Math.max(left + 6, mx), ly(n.to) - 3, Math.max(0, Math.min(tx, left + w - 10) - Math.max(left + 6, mx)), 6);
+        }
+        if (x >= left + 4) { hud.fillStyle(ctx.tint(c), hit ? 0.35 : 1); musicNote(hud, x, ly(n.lane), 6, -0.25, { flags: n.flags, stemDown: n.lane === 0 }); }
+        if (!hit && el >= n.at + n.len) {
+          done.add(i);
+          fx.noteShot(sx + 50, sy - 2, target.x, target.y, n.len > 0 ? SOUND.goldHi : SOUND.staccato, n.len > 0);
+          ctx.at(300, () => float(ctx, target.x, target.y - 28, n.len > 0 ? '15 +15' : '15', hex(SOUND.goldHi), 12));
+        }
+      });
     });
-    label(ctx, ctx.w * 0.5, ctx.h - 8,
-      `${CODA_PER_LEVEL} hype a level · tempo counts twice · Solo throws a wall of music across the whole screen`,
-      SOUND.violet);
-    return;
-  }
-
-  // Raise the Roof: three seconds of holding, then twelve of party.
-  let ballFrom = -1;
-  const ball = ctx.adopt(ctx.scene.add.graphics().setDepth(10));
-  const floor = ctx.adopt(ctx.scene.add.graphics().setDepth(1));
-  ctx.onFrame((_dt, elapsed) => {
-    const t = elapsed / 1000;
-    ball.clear();
-    floor.clear();
-    if (ballFrom < 0 || elapsed - ballFrom > PARTY_MS) return;
-    SoundFx.drawDanceFloor(floor, ctx.tint, ctx.w, ctx.h, t, 0.5);
-    const sway = Math.sin(t * 1.6) * 0.5;
-    SoundFx.drawDiscoBall(ball, ctx.tint, ctx.w * 0.5, 0,
-      ctx.w * 0.5 + Math.sin(t * 1.6) * 40, ctx.h * 0.3, 22, t, sway, 1);
-  });
-
-  ctx.at(400, () => tick(ctx, ctx.cx, ctx.cy - 40, `⏳ HOLD ${PARTY_HOLD_MS / 1000}s`, SOUND.amber));
-  ctx.at(400 + PARTY_HOLD_MS, () => {
-    ballFrom = 400 + PARTY_HOLD_MS;
-    s.av.play('raise');
-    ctx.scene.cameras.main.shake(240, 0.005);
-    tick(ctx, ctx.cx, ctx.cy - 40, '🪩 PARTY MODE', SOUND.neon);
-    tick(ctx, foe.x, foe.y - 34, `ALL YOUR BUFFS · ${PARTY_MS / 1000}s`, SOUND.crimson);
-  });
-  burn(400 + PARTY_HOLD_MS + 400, PARTY_HYPE_MULT);
-  ctx.at(400 + PARTY_HOLD_MS + 1600, () => {
-    s.fx.waveLance(ctx.w * 0.5, ctx.h * 0.3, foe.x, foe.y, SOUND.mirrorLit, 8, 10);
-    tick(ctx, foe.x, foe.y - 16, `${BALL_SWING_DMG}`, SOUND.mirrorLit);
-    tick(ctx, ctx.w * 0.5, ctx.h * 0.3 - 26, 'SWUNG', SOUND.glint);
-  });
-
-  label(ctx, ctx.w * 0.5, ctx.h - 8,
-    `the burn pays ×${PARTY_HYPE_MULT} — and every buff you were carrying is on them for ${PARTY_MS / 1000}s`,
-    SOUND.violet);
-}
-
-export const coda: PreviewScript = {
-  duration: 8000,
-  scale: 0.9,
-  caption: 'Q — burn every percentage you carry for hype, and climb to a bigger instrument',
-  run(ctx) { codaLoop(ctx, { party: false }); },
+  },
 };
 
-export const codaUpgraded: PreviewScript = {
-  duration: 8600,
-  scale: 0.9,
-  caption: 'Raise the Roof — hold for a mirror ball, hand them all your buffs, and burn at double',
-  run(ctx) { codaLoop(ctx, { party: true }); },
-};
-
-// ── Passives ──────────────────────────────────────────────────────────
+// ══ Passives ═══════════════════════════════════════════════════════════
 
 export const theMetronome: PreviewScript = {
-  duration: 9000,
+  duration: 8000,
   scale: 0.9,
-  caption: 'Two seconds, a gold window at the end of it, and a cast that lands inside is harmonized',
+  caption: 'The metronome never stops: a note crosses the bar every 1.1s. Click inside the gold third to spin up; an early click or a dropped beat spins it down',
   run(ctx) {
-    const s = stageIt(ctx);
-    const foe: Mark = { x: ctx.w * 0.82, y: ctx.h * 0.5 };
-    dummy(ctx, foe);
-    const metro = metronome(ctx);
-
-    // On, on, off, on — so both outcomes are in frame.
-    const casts = [400, 400 + BEAT_MS, 400 + BEAT_MS * 2, 400 + BEAT_MS * 2 + 800, 400 + BEAT_MS * 3 + 800];
-    casts.forEach((at, i) => {
-      ctx.at(at, () => {
-        const harm = i > 0 && metro.harmonized(at);
-        metro.start(at);
-        s.av.play('punch', ctx.aim);
-        s.fx.waveBurst(ctx.cx, ctx.cy, ctx.aim, harm ? 1.2 : 1, 9, harm ? SOUND.gold : SOUND.magenta);
-        shockwave(ctx, s, { x: ctx.cx, y: ctx.cy }, foe, { harm, streak: 0 });
-        if (i === 0) return;
-        if (harm) {
-          s.fx.sparkle(ctx.cx, ctx.cy, 8, 28, 10, SOUND.gold);
-          tick(ctx, ctx.cx, ctx.cy - 40, `🎵 HARMONIZED · ${STACCATO_HARM_DMG}`, SOUND.gold);
-        } else {
-          s.fx.discord(ctx.cx, ctx.cy, 9);
-          tick(ctx, ctx.cx, ctx.cy - 40, `OFF THE BEAT · ${STACCATO_DMG}`, SOUND.crimson);
-        }
-      });
+    const { fx, av } = stage(ctx);
+    const b: Baton = { x: ctx.cx + 60, y: ctx.cy, rot: 0, spin: 0, aim: { x: ctx.cx + 110, y: ctx.cy - 10 }, hidden: false, song: SOUND.staccato };
+    batonLayer(ctx, b, null);
+    beatBar(ctx, (i) => i % 4 !== 3, (ok) => {
+      b.spin = ok ? Math.min(1, b.spin + SPIN_PER_HIT * 1.5) : Math.max(0, b.spin - 0.08);
+      if (ok) { fx.batonFlourish(b.x, b.y - 10); float(ctx, b.x, b.y - 36, `SPIN ${Math.round(b.spin * 100)}%`, hex(SOUND.goldHi), 10); }
+      else { fx.batonFumble(b.x, b.y - 10); float(ctx, b.x, b.y - 36, 'FUMBLE', hex(SOUND.sour), 10); }
     });
-
-    // The metronome itself, ticking beside the caster.
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(8));
-    ctx.onFrame((_dt, elapsed) => {
-      g.clear();
-      const beat = (elapsed % BEAT_MS) / BEAT_MS;
-      SoundFx.drawMetronome(g, ctx.tint, ctx.cx - 46, ctx.cy + 8, 0.7,
-        Math.sin(beat * Math.PI * 2) * 0.5, beat, 0.9);
+    ctx.onFrame((_dt, el) => {
+      b.aim.x = ctx.cx + 110 + Math.cos(el / 900) * 30;
+      av.setHold('reach', Math.atan2(b.y - ctx.cy, b.x - ctx.cx));
     });
-
-    label(ctx, ctx.w * 0.5, ctx.h - 8,
-      `${HARMONY_WINDOW}ms of gold inside a ${BEAT_MS / 1000}s bar · every cast restarts it, hit or miss`,
-      SOUND.violet);
   },
 };
 
-export const theBank: PreviewScript = {
-  duration: 9000,
+export const outOfTune: PreviewScript = {
+  duration: 5200,
   scale: 0.9,
-  caption: 'Nothing this element gives you goes away — and Coda eats every point of it',
+  caption: 'Out of Tune: a discordant line through the victim. A quarter of their abilities misfire — the cooldown is spent and nothing happens',
   run(ctx) {
-    const s = stageIt(ctx);
-    let move = 0;
-    let atk = 0;
-    let dmg = 0;
-    let hype = 0;
-    bank(ctx, () => `+${Math.round(move * 100)}% move · +${Math.round(atk * 100)}% attack · +${Math.round(dmg * 100)}% damage`);
-
-    const total = ctx.adopt(ctx.scene.add.text(ctx.w * 0.5, ctx.h - 26, '', {
-      fontSize: '11px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
-      color: hex(SOUND.gold),
-    }).setOrigin(0.5).setDepth(21));
-    ctx.onFrame(() => {
-      // Tempo counts twice, because it buffs two stats.
-      const tempo = Math.min(move, atk);
-      const points = Math.round(tempo * 200 + (move - tempo) * 100 + (atk - tempo) * 100 + dmg * 100);
-      total.setText(hype > 0 ? `🔥 ${hype} hype` : `worth ${points} hype  —  tempo counts twice`);
-    });
-
-    const rows: Array<{ at: number; text: string; color: number; apply: () => void }> = [
-      { at: 600, text: '🔊 8s in a boombox', color: SOUND.magenta, apply: () => { atk += 0.08; } },
-      { at: 2000, text: '🎺 12 bugle notes', color: SOUND.brassHi, apply: () => { move += 0.12; atk += 0.12; } },
-      { at: 3400, text: '💿 4 fighters cut on red', color: SOUND.crimson, apply: () => { dmg += 0.08; } },
-      { at: 4800, text: '🎺 9 more notes', color: SOUND.brassHi, apply: () => { move += 0.09; atk += 0.09; } },
-    ];
-    for (const r of rows) {
-      ctx.at(r.at, () => {
-        r.apply();
-        s.fx.notes(ctx.cx, ctx.cy - 10, 5, { depth: 10, color: r.color, rise: 40 });
-        tick(ctx, ctx.cx, ctx.cy - 40, r.text, r.color);
-      });
+    const { fx } = stage(ctx);
+    const target = { x: ctx.cx + 140, y: ctx.cy };
+    dummyAt(ctx, target);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(10));
+    ctx.onFrame((_dt, el) => { g.clear(); SoundFx.drawOutOfTune(g, ctx.tint, target.x, target.y, el / 1000, 1); });
+    for (const at of [900, 2600, 4100]) {
+      ctx.at(at, () => { fx.misfire(target.x, target.y); float(ctx, target.x, target.y - 50, '♭ MISFIRE', hex(SOUND.sour)); });
     }
-    ctx.at(6600, () => {
-      const tempo = Math.min(move, atk);
-      hype = Math.round(tempo * 200 + (move - tempo) * 100 + (atk - tempo) * 100 + dmg * 100);
-      move = 0;
-      atk = 0;
-      dmg = 0;
-      s.fx.sparkle(ctx.cx, ctx.cy, 16, 44, 10, SOUND.gold);
-      s.fx.boom(ctx.cx, ctx.cy, 70, {});
-      tick(ctx, ctx.cx, ctx.cy - 40, `🔥 CODA — ${hype} HYPE`, SOUND.gold);
-      tick(ctx, ctx.cx, ctx.cy - 58, `${CODA_PER_LEVEL} is a level`, SOUND.amber);
-    });
-
-    label(ctx, ctx.w * 0.5, ctx.h - 8,
-      'no cap, no decay, and the only thing that spends them is you', SOUND.violet);
   },
 };
 
-// ── Perk — Harmony ────────────────────────────────────────────────────
+// ══ Perks ══════════════════════════════════════════════════════════════
 
 export const perkHarmony: PreviewScript = {
-  duration: 9000,
+  duration: 6000,
   scale: 0.9,
-  caption: 'Every harmonized cast also lobs a resonator — and landing one is +15% to both speeds',
+  caption: 'Harmony — every 8th beat in a row lobs a resonator at the baton: 20 in 100px, and +15% move and attack speed for 20s per hit (to 4)',
   run(ctx) {
-    const s = stageIt(ctx);
-    const foe: Mark = { x: ctx.w * 0.76, y: ctx.h * 0.42 };
-    dummy(ctx, foe);
-    const metro = metronome(ctx);
-    let stacks = 0;
-    bank(ctx, () => `harmony ×${stacks}  ·  +${Math.round(stacks * HARMONY_BONUS_PER_STACK * 100)}% move & attack  ·  ${HARMONY_BUFF_MS / 1000}s`);
-
-    interface Res { x: number; y: number; born: number; gone: boolean }
-    const shots: Res[] = [];
+    const { fx } = stage(ctx);
+    const target = { x: ctx.cx + 170, y: ctx.cy };
+    dummyAt(ctx, target);
     const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
-    ctx.onFrame((_dt, elapsed) => {
-      const t = elapsed / 1000;
+    const gren = { x: ctx.cx, y: ctx.cy, live: false, fuseAt: 0 };
+    ctx.onFrame((_dt, el) => {
       g.clear();
-      for (const r of shots) {
-        if (r.gone) continue;
-        const age = elapsed - r.born;
-        if (age >= HARMONY_FUSE_MS) {
-          r.gone = true;
-          s.fx.boom(r.x, r.y, HARMONY_RADIUS * 0.5, {});
-          if (Phaser.Math.Distance.Between(r.x, r.y, foe.x, foe.y) <= HARMONY_RADIUS * 0.5) {
-            tick(ctx, foe.x, foe.y - 14, `${HARMONY_DAMAGE}`, SOUND.brassHi);
-            stacks = Math.min(HARMONY_MAX_STACKS, stacks + 1);
-            tick(ctx, ctx.cx, ctx.cy - 40,
-              `🎶 ×${stacks} · +${Math.round(stacks * HARMONY_BONUS_PER_STACK * 100)}%`, SOUND.gold);
-          }
+      if (gren.live) SoundFx.drawGrenade(g, ctx.tint, gren.x, gren.y, el / 1000, gren.fuseAt > 0 ? Phaser.Math.Clamp(1 - (gren.fuseAt - el) / 900, 0, 1) : 0);
+    });
+    ctx.at(600, () => {
+      float(ctx, ctx.cx, ctx.cy - 50, '×8', hex(SOUND.goldHi));
+      gren.live = true;
+      ctx.scene.tweens.add({ targets: gren, x: target.x, y: target.y, duration: 380, onComplete: () => { gren.fuseAt = 980 + 900; } });
+    });
+    ctx.at(1900, () => {
+      gren.live = false;
+      fx.boom(target.x, target.y, 100, { color: SOUND.gold, petals: 9, notes: 6 });
+      float(ctx, target.x, target.y - 30, '20', hex(SOUND.goldHi), 13);
+      float(ctx, ctx.cx, ctx.cy - 50, '🌟 HARMONY ×1', hex(SOUND.goldHi));
+    });
+  },
+};
+
+export const perkBass: PreviewScript = {
+  duration: 5000,
+  scale: 0.9,
+  caption: 'Bass — a Fermata slam while Staccato plays lays 5 water charges down the line; each goes off for 10',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    const target = { x: ctx.cx + 150, y: ctx.cy };
+    dummyAt(ctx, target);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
+    const charges: { x: number; y: number; at: number; boom: number }[] = [];
+    ctx.onFrame((_dt, el) => {
+      g.clear();
+      for (let i = charges.length - 1; i >= 0; i--) {
+        const c = charges[i];
+        if (el >= c.boom) {
+          charges.splice(i, 1);
+          fx.boom(c.x, c.y, 48, { color: SOUND.aqua, petals: 7, notes: 3, duration: 380 });
+          if (Math.abs(c.x - target.x) < 50) float(ctx, target.x, target.y - 30, '10', hex(SOUND.foam), 12);
           continue;
         }
-        SoundFx.drawGrenade(g, ctx.tint, r.x, r.y, t, 1 - age / HARMONY_FUSE_MS, 1);
+        SoundFx.drawBassCharge(g, ctx.tint, c.x, c.y, el / 1000, Phaser.Math.Clamp((c.boom - el) / (c.boom - c.at), 0, 1));
       }
     });
-
-    // One resonator every three seconds, thrown on the beat.
-    const casts = [400, 400 + BEAT_MS, 400 + BEAT_MS * 2, 400 + BEAT_MS * 3];
-    casts.forEach((at, i) => {
-      ctx.at(at, () => {
-        const harm = i > 0 && metro.harmonized(at);
-        metro.start(at);
-        s.av.play('punch', ctx.aim);
-        s.fx.waveBurst(ctx.cx, ctx.cy, ctx.aim, 1, 9, harm ? SOUND.gold : SOUND.magenta);
-        if (!harm) return;
-        shots.push({ x: foe.x + (Math.random() - 0.5) * 26, y: foe.y + (Math.random() - 0.5) * 20, born: at, gone: false });
-        tick(ctx, ctx.cx, ctx.cy - 58, '🎶 RESONATOR', SOUND.brass);
-      });
+    ctx.at(600, () => {
+      const ix = ctx.cx + 26, iy = ctx.cy;
+      av.play('slam', 0, 380);
+      fx.slam(ix, iy, 0, 130, 40, SOUND.maroonHi);
+      for (let i = 0; i < 5; i++) charges.push({ x: ix + 97 + (i - 2) * 52, y: iy, at: 600, boom: 600 + 480 + i * 80 });
     });
-
-    label(ctx, ctx.w * 0.5, ctx.h - 8,
-      `${HARMONY_DAMAGE} in ${HARMONY_RADIUS}px after a ${HARMONY_FUSE_MS / 1000}s fuse · one every 3s · 4 stacks`,
-      SOUND.violet);
-  },
-};
-
-// ── Mastery — Audience Participation ──────────────────────────────────
-
-const AUDIENCE_HYPE_PER_SEC = 2;
-const AUDIENCE_BURST_DMG = 50;
-const AUDIENCE_BURST_WINDOW_MS = 5000;
-const AUDIENCE_WILD_MS = 5000;
-const AUDIENCE_WILD_MULT = 2;
-const AUDIENCE_BAND = 52;
-
-/**
- * The crowd, mirrored off the kit's own painter. The showcase is the *reaction* rather than the
- * shape, so the only thing that matters here is that the pit is visibly calm and then visibly
- * not — hence one `wild` flag driving bob height, arm swing and wand brightness together.
- */
-function crowd(ctx: PreviewCtx, wild: () => boolean): void {
-  const wands = [SOUND.magenta, SOUND.gold, SOUND.mint, SOUND.flow, SOUND.neon, SOUND.glint];
-  const count = Math.max(10, Math.round(ctx.w / 22));
-  const people = Array.from({ length: count }, (_, i) => ({
-    x: ((i + 0.5) / count) * ctx.w + (Math.random() - 0.5) * 14,
-    row: i % 3,
-    scale: 0.8 + Math.random() * 0.3,
-    phase: Math.random() * Math.PI * 2,
-    wand: wands[i % wands.length],
-    hand: Math.random() < 0.5 ? -1 : 1,
-  }));
-
-  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(15));
-  ctx.onFrame((_dt, elapsed) => {
-    const t = elapsed / 1000;
-    const up = wild();
-    g.clear();
-    g.fillStyle(ctx.tint(SOUND.shade), 0.42);
-    g.fillRect(0, ctx.h - AUDIENCE_BAND, ctx.w, AUDIENCE_BAND);
-    g.fillStyle(ctx.tint(up ? SOUND.gold : SOUND.plum), up ? 0.16 : 0.09);
-    g.fillRect(0, ctx.h - AUDIENCE_BAND, ctx.w, 5);
-
-    for (let row = 2; row >= 0; row--) {
-      for (const p of people) {
-        if (p.row !== row) continue;
-        const s = p.scale * (1 - row * 0.12);
-        const bob = -Math.abs(Math.sin(t * (up ? 7.5 : 2.1) + p.phase)) * (up ? 11 : 2.4) * s;
-        const headY = ctx.h - 17 - row * 11 + bob;
-        const shoulderY = headY + 11 * s;
-        g.fillStyle(ctx.tint(SOUND.shade), 1);
-        g.fillEllipse(p.x, shoulderY + 12 * s, 26 * s, 30 * s);
-        g.fillCircle(p.x, headY, 7.4 * s);
-        g.fillStyle(ctx.tint(up ? SOUND.gold : SOUND.violet), up ? 0.34 : 0.18);
-        g.fillCircle(p.x - 2.2 * s, headY - 2.4 * s, 2.6 * s);
-        for (const side of [-1, 1] as const) {
-          const swing = Math.sin(t * (up ? 9.5 : 2.9) + p.phase + (side > 0 ? 1.1 : 0)) * (up ? 0.85 : 0.4);
-          const ang = -Math.PI / 2 + side * 0.34 + swing;
-          const sx = p.x + side * 8 * s;
-          const len = (up ? 21 : 17) * s;
-          const hx = sx + Math.cos(ang) * len;
-          const hy = shoulderY + Math.sin(ang) * len;
-          g.lineStyle(3.4 * s, ctx.tint(SOUND.shade), 1);
-          g.beginPath();
-          g.moveTo(sx, shoulderY);
-          g.lineTo(hx, hy);
-          g.strokePath();
-          if (side !== p.hand) continue;
-          const wx = hx + Math.cos(ang) * 9 * s;
-          const wy = hy + Math.sin(ang) * 9 * s;
-          g.lineStyle(2.2 * s, ctx.tint(p.wand), up ? 0.95 : 0.7);
-          g.beginPath();
-          g.moveTo(hx, hy);
-          g.lineTo(wx, wy);
-          g.strokePath();
-          g.fillStyle(ctx.tint(p.wand), (up ? 0.28 : 0.16) * (0.7 + 0.3 * Math.sin(t * 6 + p.phase)));
-          g.fillCircle(wx, wy, (up ? 7 : 5) * s);
-          g.fillStyle(ctx.tint(SOUND.white), up ? 1 : 0.8);
-          g.fillCircle(wx, wy, 1.7 * s);
-        }
-      }
-    }
-  });
-}
-
-export const audienceParticipation: PreviewScript = {
-  duration: 10000,
-  scale: 0.9,
-  caption: 'A crowd that pays you 2 hype a second — and 4 the moment you give them a reason',
-  run(ctx) {
-    const s = stageIt(ctx);
-    const foe: Mark = { x: ctx.w * 0.76, y: ctx.h * 0.34 };
-    dummy(ctx, foe);
-
-    let wildUntil = -1;
-    let hype = 0;
-    crowd(ctx, () => wildUntil > 0);
-    ctx.onFrame((dt, elapsed) => {
-      if (wildUntil > 0 && elapsed > wildUntil) wildUntil = -1;
-      hype += (dt / 1000) * AUDIENCE_HYPE_PER_SEC * (wildUntil > 0 ? AUDIENCE_WILD_MULT : 1);
-    });
-    bank(ctx, () => (wildUntil > 0
-      ? `🙌 ${AUDIENCE_HYPE_PER_SEC * AUDIENCE_WILD_MULT}/s  ·  ${Math.floor(hype)} hype`
-      : `👏 ${AUDIENCE_HYPE_PER_SEC}/s  ·  ${Math.floor(hype)} hype`));
-
-    // Nothing happens for the first three seconds except the crowd quietly paying out. Then a
-    // burst crosses fifty inside the window and the room comes off its feet.
-    const burst = [3400, 3800, 4200];
-    burst.forEach((at, i) => {
-      ctx.at(at, () => {
-        s.av.play('punch', ctx.aim);
-        s.fx.waveBurst(ctx.cx, ctx.cy, ctx.aim, 1.1, 9, SOUND.magenta);
-        s.fx.boom(foe.x, foe.y, 32, {});
-        tick(ctx, foe.x, foe.y - 16, `${[18, 16, 20][i]}`, SOUND.magenta);
-        if (i < burst.length - 1) return;
-        wildUntil = at + AUDIENCE_WILD_MS;
-        s.fx.sparkle(ctx.w / 2, ctx.h - 34, 14, ctx.w * 0.45, 16, SOUND.gold);
-        s.fx.notes(ctx.w / 2, ctx.h - 34, 9,
-          { speed: 190, angle: -Math.PI / 2, spread: 0.9, color: SOUND.gold, depth: 16, rise: 60 });
-        tick(ctx, ctx.cx, ctx.cy - 44, '🙌 THE CROWD GOES WILD', SOUND.gold);
-      });
-    });
-
-    label(ctx, ctx.w * 0.5, ctx.h - AUDIENCE_BAND - 10,
-      `${AUDIENCE_BURST_DMG} damage inside ${AUDIENCE_BURST_WINDOW_MS / 1000}s · double hype for ${AUDIENCE_WILD_MS / 1000}s · the window re-arms`,
-      SOUND.violet);
-  },
-};
-
-// ── Mastery — Compose ─────────────────────────────────────────────────
-
-const COMPOSE_WRITE_MS = 3000;
-const COMPOSE_NOTE_SPACING = 30;
-const COMPOSE_NOTE_DMG = 3;
-const COMPOSE_STAFF_GAP = 5;
-const COMPOSE_HOP_MS = 420;
-const COMPOSE_HOP_RISE = 26;
-const COMPOSE_FLY_SPEED = 540;
-const COMPOSE_STAGGER_MS = 55;
-
-export const compose: PreviewScript = {
-  duration: 9500,
-  scale: 0.9,
-  caption: 'Write for 3 seconds — every 30px of stave is a note, and then the whole bar goes hunting',
-  run(ctx) {
-    const foe: Mark = { x: ctx.w * 0.84, y: ctx.h * 0.24 };
-    dummy(ctx, foe);
-    const home: Mark = { x: ctx.w * 0.24, y: ctx.h * 0.66 };
-    const s = drivenCaster(ctx, home);
-
-    interface Note { ax: number; ay: number; x: number; y: number; step: number; flags: number; launchAt: number; hunting: boolean; dead: boolean }
-    const pts: Mark[] = [{ x: home.x, y: home.y }];
-    const notes: Note[] = [];
-    let since = 0;
-    let playedAt = -1;
-    const START = 700;
-
-    bank(ctx, () => (playedAt < 0
-      ? `${notes.length} notes written  ·  one every ${COMPOSE_NOTE_SPACING}px`
-      : `${notes.length} notes still flying  ·  ${COMPOSE_NOTE_DMG} damage apiece`));
-
-    // The pen: a wide loop the caster walks over the three seconds, so the stave is a shape
-    // rather than a straight line and the five lines visibly bend with it.
-    ctx.onFrame((_dt, elapsed) => {
-      if (elapsed < START || elapsed > START + COMPOSE_WRITE_MS) return;
-      const k = (elapsed - START) / COMPOSE_WRITE_MS;
-      const a = -Math.PI * 0.85 + k * Math.PI * 1.75;
-      home.x = ctx.w * 0.5 + Math.cos(a) * ctx.w * 0.26;
-      home.y = ctx.h * 0.5 + Math.sin(a) * ctx.h * 0.24;
-      const last = pts[pts.length - 1];
-      const d = Phaser.Math.Distance.Between(last.x, last.y, home.x, home.y);
-      if (d < 3) return;
-      const ang = Math.atan2(home.y - last.y, home.x - last.x);
-      pts.push({ x: home.x, y: home.y });
-      since += d;
-      while (since >= COMPOSE_NOTE_SPACING) {
-        since -= COMPOSE_NOTE_SPACING;
-        const step = Phaser.Math.Between(-4, 4);
-        const off = step * (COMPOSE_STAFF_GAP / 2);
-        const nx = home.x + Math.cos(ang + Math.PI / 2) * off;
-        const ny = home.y + Math.sin(ang + Math.PI / 2) * off;
-        notes.push({
-          ax: nx, ay: ny, x: nx, y: ny, step,
-          flags: notes.length % 3 === 0 ? 2 : 1,
-          launchAt: 0, hunting: false, dead: false,
-        });
-      }
-    });
-
-    ctx.at(START, () => {
-      s.av.play('raise', -Math.PI / 2, 520);
-      s.fx.ripple(home.x, home.y, 10, 60, SOUND.brassHi, 420, 4, 7, 4);
-      tick(ctx, home.x, home.y - 44, '🎼 COMPOSE — WRITE!', SOUND.brassHi);
-    });
-    ctx.at(START + COMPOSE_WRITE_MS, () => {
-      playedAt = START + COMPOSE_WRITE_MS;
-      notes.forEach((n, i) => { n.launchAt = playedAt + i * COMPOSE_STAGGER_MS; });
-      s.av.play('sweep', -Math.PI / 2, 520);
-      s.fx.ripple(home.x, home.y, 12, 90, SOUND.gold, 480, 5, 7, 9);
-      tick(ctx, home.x, home.y - 44,
-        `🎼 ${notes.length} NOTES · ${notes.length * COMPOSE_NOTE_DMG} DAMAGE`, SOUND.gold);
-    });
-
-    // One painter for the stave on the floor and the bar coming off it.
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
-    ctx.onFrame((dt, elapsed) => {
-      g.clear();
-      if (pts.length >= 2) {
-        const fade = playedAt < 0 ? 1 : Phaser.Math.Clamp(1 - (elapsed - playedAt) / 2600, 0.15, 1);
-        for (let line = -2; line <= 2; line++) {
-          const off = line * COMPOSE_STAFF_GAP;
-          g.lineStyle(line === 0 ? 1.7 : 1.1,
-            ctx.tint(line === 0 ? SOUND.brassHi : SOUND.brass),
-            (line === 0 ? 0.9 : 0.5) * fade);
-          g.beginPath();
-          for (let i = 0; i < pts.length; i++) {
-            const a = pts[Math.max(0, i - 1)];
-            const b = pts[Math.min(pts.length - 1, i + 1)];
-            const ang = Math.atan2(b.y - a.y, b.x - a.x) + Math.PI / 2;
-            const px = pts[i].x + Math.cos(ang) * off;
-            const py = pts[i].y + Math.sin(ang) * off;
-            if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
-          }
-          g.strokePath();
-        }
-      }
-
-      for (const n of notes) {
-        if (n.dead) continue;
-        const airborne = playedAt >= 0 && elapsed >= n.launchAt;
-        if (airborne) {
-          const age = elapsed - n.launchAt;
-          if (!n.hunting) {
-            const k = Phaser.Math.Clamp(age / COMPOSE_HOP_MS, 0, 1);
-            n.x = n.ax;
-            n.y = n.ay - Math.sin(k * Math.PI * 0.85) * COMPOSE_HOP_RISE;
-            if (k >= 1) n.hunting = true;
-          } else {
-            const ang = Math.atan2(foe.y - n.y, foe.x - n.x);
-            n.x += Math.cos(ang) * COMPOSE_FLY_SPEED * dt / 1000;
-            n.y += Math.sin(ang) * COMPOSE_FLY_SPEED * dt / 1000;
-            if (Phaser.Math.Distance.Between(n.x, n.y, foe.x, foe.y) <= 20) {
-              n.dead = true;
-              s.fx.boom(foe.x, foe.y, 24, { mark: false, notes: 1, duration: 260 });
-              tick(ctx, foe.x + (Math.random() - 0.5) * 20, foe.y - 14, `${COMPOSE_NOTE_DMG}`, SOUND.brassHi);
-              continue;
-            }
-          }
-        }
-        const lean = airborne ? Math.sin(elapsed / 200 + n.step) * 0.3 : 0;
-        musicNoteLayered(g, ctx.tint, n.x, n.y, 5.4, lean,
-          n.hunting ? SOUND.gold : SOUND.brassHi, 1, { flags: n.flags, stemDown: n.step > 0 });
-      }
-    });
-
-    label(ctx, ctx.w * 0.5, ctx.h - 8,
-      'stand still and you write nothing · move speed is the whole ability', SOUND.violet);
   },
 };

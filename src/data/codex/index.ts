@@ -31,6 +31,8 @@ import clay from './clay';
 import dune from './dune';
 import fortune from './fortune';
 import cloth from './cloth';
+import marrow from './marrow';
+import tempest from './tempest';
 import justice from './justice';
 import gluttony from './gluttony';
 import quantum from './quantum';
@@ -92,6 +94,8 @@ export const CODEX: Record<string, ElementCodex> = {
   dune,
   fortune,
   cloth,
+  marrow,
+  tempest,
   justice,
   gluttony,
   quantum,

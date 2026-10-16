@@ -209,6 +209,17 @@ export class HuskEffectEngine {
         this.world.showFloatingText(husk.x, husk.y - 30, `⚰️ +${drink}`, '#8a80b0');
         break;
       }
+      case 'marrow': {
+        if (st.feedStacks < MAX_FEED_STACKS) {
+          st.feedStacks++;
+          husk.setMaxHp(Math.round(husk.maxHp * 1.08));
+          husk.sizeMult *= 1.04;
+          husk.applySizeMult();
+        }
+        husk.heal(Math.round(husk.biteDamage * 2));
+        this.world.showFloatingText(husk.x, husk.y - 30, '🦴 FED', '#ff8a9a');
+        break;
+      }
       case 'cloth': {
         // The scarf winds tighter with every wrap: a smaller, quicker target that mends off the
         // bite. The inverse of every other feeder in the list, and deliberately so — Cloth's
@@ -240,7 +251,7 @@ export class HuskEffectEngine {
     const room = this.world.roomOf(husk);
     const now = this.world.scene.time.now;
 
-    // Gluttons in the room feed on any corpse that drops near them.
+    // Harvest husks in the room bite into any corpse that drops near them.
     for (const other of this.world.livingHusks()) {
       const ost = this.states.get(other);
       if (!ost || ost.elementId !== 'gluttony' || other === husk) continue;

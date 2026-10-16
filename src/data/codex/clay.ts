@@ -148,7 +148,7 @@ const clay: ElementCodex = {
         + 'runs out or the time does, the drawing stands up on four legs and hunts for 12 seconds, biting '
         + 'every 0.7s. Sharp corners make it bite harder (7 up to 22); a round closed loop makes it run '
         + 'faster (120 up to 270px/s). Shots wear away only the clay they strike.',
-      cast: 'Bindable to E, R, F or Q. 3s of drawing. 6s cooldown.',
+      cast: 'Bindable to R, F or Q. 3s of drawing. 6s cooldown.',
       effects: [
         { tag: 'summon', label: 'The creature', detail: '12s of life, a bite every 0.7s, chasing the nearest enemy. Needs at least 4 beads of clay to wake.' },
         { tag: 'damage', label: 'Sharp is strong', detail: 'Damage 7–22 by how much the stroke turns at its corners.' },

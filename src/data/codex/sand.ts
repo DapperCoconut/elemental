@@ -328,7 +328,7 @@ const sand: ElementCodex = {
         + 'cooldown from the throw, one bomb per side, and while yours is live the bound key belongs to '
         + 'the bomb.',
       cast:
-        'Bindable to E, R, F or Q, and it takes that slot over from Time\'s own ability. Three presses: '
+        'Bindable to R, F or Q, and it takes that slot over from Time\'s own ability. Three presses: '
         + 'throw, arm, detonate.',
       effects: [
         { tag: 'damage', label: 'Ripening', detail: '10 damage the moment it sticks, climbing linearly to 50 damage after 30 seconds on the victim. The number is drawn live in their status tray.' },

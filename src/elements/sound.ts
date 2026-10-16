@@ -2,64 +2,65 @@ import { Element } from './Element';
 import { Ability } from './Ability';
 
 /**
- * Sound is a concert soloist. Every ability restarts a two-second metronome; an ability
- * played *on* the next beat comes out harmonized and hits harder. Nothing else about the
- * element is a resource — the only thing being managed is your timing.
+ * Sound is a drum major. A metronome runs the whole match; clicking on its notes spins the baton
+ * faster, and the baton — always out, always chasing the cursor on a short leash — is the click
+ * attack. Everything else is band business: a dance that ends in a wave, a slam that puts the
+ * enemy out of tune, three soul songs to march to, and a bugle solo for the ultimate.
  *
- * All five are resolved in SoundKit; the casts here exist so the cooldown, the ability bar
- * and the online relay all run through Fighter.castAbility like every other element.
+ * All five resolve in SoundKit through `ctx.soundCast`, so the cooldown, the ability bar, the bot
+ * and the online replay all run through Fighter.castAbility like every other element.
  */
 
-const staccato: Ability = {
-  id: 'staccato',
-  name: 'Staccato',
-  description: 'PASSIVE — Metronome: every ability you use starts a 2 second meter above the ability bar. Play your next ability inside the gold window at the far end of it and that cast comes out harmonized, which is what every line below means by the word.\n\nStrike the instrument and throw a sound shockwave forward for 10 damage — 15 harmonized. Coda scales every number this element hits with.',
+const baton: Ability = {
+  id: 'baton',
+  name: 'Baton',
+  description: 'PASSIVE — Metronome: a beat bar plays above the ability bar for the whole match. Click while its note is inside the gold window to spin your baton faster; miss the note and the spin drops.\n\nYour baton is always out. It chases your cursor, but never further than 170px from you, and it hits anything it touches — 3 damage a hit at a standstill, up to 12 at full spin.',
   displayKey: 'Click',
-  cooldown: 1000,
-  cast(ctx) { void ctx; }, // Resolved in SoundKit
+  cooldown: 120,
+  cast(ctx) { ctx.soundCast('baton', ctx.targetX, ctx.targetY); },
 };
 
-const discDice: Ability = {
-  id: 'disc-dice',
-  name: 'Disc Dice',
-  description: 'Sling a record out around you, slicing everything within 130px for 15 damage and taking +15% move speed for 3s per fighter cut. Harmonized: change the record on the deck — Accelerando (green) → Bass (red) → Calm (blue).',
+const crescendo: Ability = {
+  id: 'crescendo',
+  name: 'Crescendo',
+  description: 'Start dancing. For 2 seconds you speed up hard — up to 2.4× move speed — leaving a trail of music behind you. When the 2 seconds are up you let out a wave of music: 30 damage to every enemy within 180px.',
   displayKey: 'E',
-  cooldown: 5000,
-  cast(ctx) { void ctx; }, // Resolved in SoundKit
+  cooldown: 8000,
+  cast(ctx) { ctx.soundCast('crescendo', ctx.targetX, ctx.targetY); },
 };
 
-const boombox: Ability = {
-  id: 'boombox',
-  name: 'Boombox',
-  description: 'Launch a boombox to your cursor, where it stands for 8 seconds throwing a pink field around itself. Standing in the field banks you +1% attack speed every second — no cap, no decay, and it stays with you when you walk out — and gives +20% move speed for as long as you are inside it. Every 3 seconds the box lets go: enemies caught in the field are bounced out of it, and so are their projectiles. Harmonized: a bigger box with twice the speakers, and every buff you pick up inside it is worth 1.5×.',
+const fermata: Ability = {
+  id: 'fermata',
+  name: 'Fermata',
+  description: 'Dash to your baton, grab it and slam it down toward the cursor: 20 damage, and everything hit is Out of Tune for 8 seconds — a quarter of its abilities misfire, cooldown spent and nothing cast. Press R again while anyone is Out of Tune to detonate it: 25 damage and a 0.5 second stun to each of them. The detonation is free.',
   displayKey: 'R',
-  cooldown: 15000,
-  cast(ctx) { void ctx; }, // Resolved in SoundKit
+  cooldown: 9000,
+  cast(ctx) { ctx.soundCast('fermata', ctx.targetX, ctx.targetY); },
 };
 
-const bugle: Ability = {
-  id: 'bugle',
-  name: 'Bugle',
-  description: 'Swap the instrument for a brass bugle and take the stage. A rhythm bar runs beneath you and every note you strike is worth +1% move AND attack speed — banked permanently, with no cap and no decay. Drop a single note and the call is over and the cooldown starts. Press F again to bow out and keep what you played for. Harmonized: you are allowed one mistake, but spending it winds the bar up to 1.2× speed for the rest of the run.',
+const hum: Ability = {
+  id: 'hum',
+  name: 'Hum',
+  description: 'Change your Soul Song. The song you are humming follows you in its colour as you walk.\n\nStaccato (red): +20% damage, and your baton travels faster and loses its spin more slowly.\nMelody (blue): +25% move speed and 20% shorter cooldowns.\nSmooth (green): 20% damage resistance and 3 HP a second.',
   displayKey: 'F',
-  cooldown: 10000,
-  cast(ctx) { void ctx; }, // Resolved in SoundKit
+  cooldown: 2500,
+  cast(ctx) { ctx.soundCast('hum', ctx.targetX, ctx.targetY); },
 };
 
-const coda: Ability = {
-  id: 'coda',
-  name: 'Coda!',
-  description: 'Burn every stat boost you are carrying for hype — a point per percent, and tempo counts twice because it buffs two stats. Every 200 hype is a level.\n\nLEVEL 2: heal 150 HP, trade the violin for a guitar that hits harder, all your stat boosts become 1.25× as strong, and your dash goes twice as far, trails notes and leaves you 20% faster for 3 seconds.\n\nLEVEL 3 (max): heal 200 HP, trade up to an electric guitar that hits harder still, stat boosts go to 1.5×, and Q becomes Solo — a rhythm bar where every note you land throws a wall of music across the whole screen. Climbing the ladder costs a second apiece; Solo is a true ultimate and costs 25.',
+const callOfTheVoid: Ability = {
+  id: 'call-of-the-void',
+  name: 'Call of the Void',
+  description: 'Take the stage with a bugle for a 15 second solo. You cannot move and you cannot be hurt. A three-line staff scrolls across the screen: move between the lines with W/S or the arrow keys, and click as each note reaches the bar. Every note hit deals 15 damage to the enemy, wherever they are. The solo starts with quarter notes and builds to eighths, runs and slurred notes you have to hold the click through — some slurs change line halfway. Press Q to bow out early. The cooldown starts when the solo ends.',
   displayKey: 'Q',
   isUltimate: true,
-  cooldown: 1000,
-  cast(ctx) { void ctx; }, // Resolved in SoundKit
+  cooldown: 30000,
+  cast(ctx) { ctx.soundCast('call-of-the-void', ctx.targetX, ctx.targetY); },
 };
 
 export const soundElement: Element = {
   id: 'sound',
   name: 'Sound',
-  color: 0xff66cc,
+  color: 0x8a1c33,
   emoji: '🔊',
-  abilities: [staccato, discDice, boombox, bugle, coda],
+  abilities: [baton, crescendo, fermata, hum, callOfTheVoid],
 };

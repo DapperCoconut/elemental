@@ -1025,9 +1025,13 @@ const TIME_AVATAR: AvatarSpec = {
 };
 
 /**
- * The time character rig: two brass fists, a pair of eyes, and a wide-brim hat sitting over the
- * crown. The hands, eyes and gestures come from BaseAvatar; what time adds is the hat, the
- * sundial light pooling underfoot, and the mode tell for the mastery passive.
+ * The time character rig: a plain orb of polished brass (the baked `elem-sand` texture), two
+ * brass fists, a pair of eyes, and the gunslinger's wide-brim hat over the crown. The hat is the
+ * only costume — the body alone says "time".
+ *
+ * Mastery enhances what is already there rather than adding to it: the hat grows taller with a
+ * gilded band and a lit crown edge, the eyes go white, the fists gain a wider corona and a hard
+ * rim, and the under-glow brightens.
  */
 export class TimeAvatar extends BaseAvatar {
   private fx: TimeFx;
@@ -1062,10 +1066,8 @@ export class TimeAvatar extends BaseAvatar {
   private activeTones(): TimeTones { return this.frozen ? FROZEN_TONES : this.tones; }
 
   /**
-   * Mastery tell — a permanent, readable upgrade to the character itself, so a mastered time
-   * user is identifiable at a glance before they cast anything: white eyes, a wide brass corona
-   * and hard rim on each fist, a taller hat with a sheriff's star on the band, and three clock
-   * hands orbiting the crown. Shape changes, not just brighter tints.
+   * Mastery tell — white eyes and a wide corona with a hard rim on each fist; `drawExtras`
+   * enlarges and gilds the hat. Shape changes, not just a tint — a tint alone vanishes at play zoom.
    */
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? TIME.white : TIME.pale);
@@ -1084,40 +1086,34 @@ export class TimeAvatar extends BaseAvatar {
     this.fx.hands(x, y, 1, { speed: 12, size: 1.8, life: 560, fall: 14, depth: 5, tones: this.activeTones() });
   }
 
-  /** A sundial pooling under the character, its gnomon shadow sweeping with the hour. */
+  /**
+   * A soft brass light pooled under the character. The Reputation Repair charge reads in its
+   * pulse: a charged rewind breathes quickly, a spent one barely stirs; frozen time holds still.
+   */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
     const tones = this.activeTones();
-    g.fillStyle(this.tint(tones.shell), a * 0.26 * this.intensity);
-    g.fillEllipse(x, y + 7, 52 * this.intensity, 24 * this.intensity);
-    g.fillStyle(this.tint(tones.body), a * 0.18 * this.intensity);
-    g.fillEllipse(x, y + 6, 36 * this.intensity, 16 * this.intensity);
-    // Hour ticks under the feet, plus the hand sweeping them.
-    for (let i = 0; i < 12; i++) {
-      const ang = (i / 12) * TAU;
-      g.lineStyle(i % 3 === 0 ? 1.8 : 0.9, this.tint(tones.lit), a * 0.4);
-      g.beginPath();
-      g.moveTo(x + Math.cos(ang) * 19 * this.intensity, y + 6 + Math.sin(ang) * 9 * this.intensity);
-      g.lineTo(x + Math.cos(ang) * 24 * this.intensity, y + 6 + Math.sin(ang) * 11 * this.intensity);
-      g.strokePath();
-    }
-    // A charged rewind winds the sundial's shadow up; a spent one drags it. Frozen stops it dead.
-    const rate = this.frozen ? 0 : this.repairReady === true ? 2.2 : this.repairReady === false ? 0.3 : 0.8;
-    const sweep = this.t * rate;
-    g.fillStyle(this.tint(tones.hot), a * 0.5);
-    timeHand(g, x, y + 6, sweep, 20 * this.intensity, 2, 0.2);
+    const k = this.intensity * (this.mastered ? 1.15 : 1);
+    const rate = this.frozen ? 0 : this.repairReady === true ? 4 : this.repairReady === false ? 0.6 : 1.6;
+    const pulse = 1 + 0.08 * Math.sin(this.t * rate);
+    g.fillStyle(this.tint(tones.body), a * (this.mastered ? 0.3 : 0.22) * k);
+    g.fillCircle(x, y, 28 * k * pulse);
+    g.fillStyle(this.tint(tones.shell), a * 0.2 * k);
+    g.fillEllipse(x, y + 8, 36 * k, 14 * k);
   }
 
   /**
    * The hat: a wide brim with a crowned crease and a band. Rooted at the crown so it never
-   * covers the face, and drawn over the sprite so its lit edge shows.
+   * covers the face, and drawn over the sprite so its lit edge shows. Mastered, it stands taller
+   * and its band and crown edge are gilded.
    */
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     const tones = this.activeTones();
+    const m = this.mastered;
     const rootY = y - 18;
-    const scale = (this.mastered ? 1.22 : 1) * (0.94 + this.intensity * 0.06);
+    const scale = (m ? 1.15 : 1) * (0.94 + this.intensity * 0.06);
     // A hat rides the head: it tips toward the aim, and a spent rewind pulls it down over the eyes.
     const tilt = Math.cos(this.facing) * 0.14 + (this.repairReady === false ? 0.1 : 0);
-    const brimW = 30 * scale;
+    const brimW = 26 * scale;
     const brimY = rootY + 3;
 
     // Brim — an ellipse with the far edge turned up, so it reads as felt rather than a disc.
@@ -1125,44 +1121,27 @@ export class TimeAvatar extends BaseAvatar {
     g.fillEllipse(x + tilt * 8, brimY + 2, brimW * 2.05, 11 * scale);
     g.fillStyle(this.tint(tones.shell), 0.98 * alpha);
     g.fillEllipse(x + tilt * 8, brimY, brimW * 2, 10.5 * scale);
-    g.fillStyle(this.tint(tones.body), 0.5 * alpha);
+    g.fillStyle(this.tint(TIME.night), 0.4 * alpha);
     g.fillEllipse(x + tilt * 8, brimY - 1.6 * scale, brimW * 1.7, 6.5 * scale);
+    if (m) {
+      g.lineStyle(1.4, this.tint(tones.lit), 0.85 * alpha);
+      g.strokeEllipse(x + tilt * 8, brimY, brimW * 2, 10.5 * scale);
+    }
 
     // Crown, creased down the middle.
-    const crownH = (13 + (this.mastered ? 4 : 0)) * scale;
+    const crownH = (13 + (m ? 3 : 0)) * scale;
+    const cx = x + tilt * 6;
     g.fillStyle(this.tint(tones.shell), 0.98 * alpha);
-    g.fillRoundedRect(x + tilt * 6 - 11 * scale, brimY - crownH, 22 * scale, crownH, 5 * scale);
+    g.fillRoundedRect(cx - 11 * scale, brimY - crownH, 22 * scale, crownH, 5 * scale);
     g.fillStyle(this.tint(TIME.night), 0.55 * alpha);
-    g.fillRect(x + tilt * 6 - 1.4 * scale, brimY - crownH + 2, 2.8 * scale, crownH - 4);
-    // Hat band, and the light along the crown's top edge.
-    g.fillStyle(this.tint(tones.body), 0.95 * alpha);
-    g.fillRect(x + tilt * 6 - 11 * scale, brimY - 5 * scale, 22 * scale, 3.4 * scale);
-    g.lineStyle(1.4, this.tint(tones.lit), 0.6 * a);
+    g.fillRect(cx - 1.4 * scale, brimY - crownH + 2, 2.8 * scale, crownH - 4);
+    // Hat band — gilded once mastered — and the light along the crown's top edge.
+    g.fillStyle(this.tint(m ? tones.lit : tones.body), 0.95 * alpha);
+    g.fillRect(cx - 11 * scale, brimY - 5 * scale, 22 * scale, (m ? 4 : 3.4) * scale);
+    g.lineStyle(m ? 2 : 1.4, this.tint(m ? tones.hot : tones.lit), (m ? 0.9 : 0.6) * a);
     g.beginPath();
-    g.moveTo(x + tilt * 6 - 9 * scale, brimY - crownH + 2);
-    g.lineTo(x + tilt * 6 + 9 * scale, brimY - crownH + 2);
+    g.moveTo(cx - 9 * scale, brimY - crownH + 2);
+    g.lineTo(cx + 9 * scale, brimY - crownH + 2);
     g.strokePath();
-
-    if (this.mastered) {
-      // A sheriff's star pinned to the band — five points cut out of one pivot.
-      const sx = x + tilt * 6 + 7 * scale, sy = brimY - 3.4 * scale;
-      g.fillStyle(this.tint(TIME.pale), 0.95 * alpha);
-      for (let i = 0; i < 5; i++) {
-        const ang = -Math.PI / 2 + (i / 5) * TAU;
-        timeHand(g, sx, sy, ang, 4.6 * scale, 1.3 * scale, 0.1);
-      }
-      g.fillStyle(this.tint(tones.lit), 0.9 * alpha);
-      g.fillCircle(sx, sy, 1.5 * scale);
-
-      // Three hands orbiting the crown, each turning on its own pivot.
-      const rate = this.frozen ? 0 : this.repairReady === true ? 2 : 1;
-      for (let i = 0; i < 3; i++) {
-        const p = this.t * rate + (i / 3) * TAU;
-        const cx = x + Math.cos(p) * 25;
-        const cy = y - 33 + Math.sin(p) * 7;
-        timeHandLayered(g, this.tint, tones, cx, cy, this.t * rate * 1.7 + i * 2,
-          12, 2.2, alpha * 0.9, { edge: false });
-      }
-    }
   }
 }

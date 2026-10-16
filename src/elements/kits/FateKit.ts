@@ -5,7 +5,7 @@ import type { CastContext } from '../Ability';
 import { TAU } from './ElementVisuals';
 import {
   ArmGesture, CardTones, FATE, FateAura, FateAvatar, FateColorFn, FateFx,
-  HOUSE_TONES, NPC_TONES, Suit, TAROT_TONES, fateCardLayered, suitGlyph, tonesFor,
+  HOUSE_TONES, NPC_TONES, Suit, TAROT_TONES, fateCardLayered, fatePlayingCard, suitGlyph, suitInk, tonesFor,
 } from './FateVisuals';
 // Ash (divine perk) burns discarded cards — real fire, so it borrows fire's own painter
 // rather than approximating one out of the card palette.
@@ -132,6 +132,11 @@ const BIG_HAND_THRESHOLD = 50;
 /** How long a card's damage keeps counting toward Big Hand after it is played. */
 const LEDGER_WINDOW_MS = 10000;
 
+/** Throws a fresh card survives before it is shredded to nothing. */
+export const CARD_USES = 3;
+/** Throws a Preserve adds to the highlighted card. */
+export const PRESERVE_USES = 3;
+
 const BASE_HAND_SIZE = 6;
 const UPGRADED_HAND_SIZE = 8; // R+ "Wonder Preserve"
 const DRAW_INTERVAL_MS = 5000;
@@ -143,6 +148,13 @@ const HB_OFFSET_Y = -38;
 
 interface FateCard {
   type: FateCardType;
+  /** Throws left before the card is destroyed. Starts at CARD_USES; Preserve adds PRESERVE_USES. */
+  uses: number;
+  /** Throws made with it so far — drives how shredded the card art is. */
+  wear: number;
+  /** Fixed per card so its tears stay put frame to frame instead of shimmering. */
+  seed: number;
+  /** Freshly preserved: gilds the card until its next throw (and lets Wonder Preserve keep Enchant). */
   preserved: boolean;
   enchanted: boolean;
   /** Fate Mastery — Tarot of Fate: 4x power, overrules `enchanted`, always paired with a curse. */
@@ -317,12 +329,28 @@ const CARD_GESTURES: Record<FateCardType, ArmGesture> = {
 };
 
 /** Suit printed on each card's art, so a type always shows the same pip. */
-const CARD_SUITS: Record<FateCardType, Suit> = {
+export const CARD_SUITS: Record<FateCardType, Suit> = {
   laser: 'diamond', burst: 'diamond', barrier: 'club', explosion: 'diamond', infect: 'club',
   coin: 'heart', heal: 'heart', buff: 'heart', lightning: 'spade', slots: 'club',
   boomerang: 'club', slash: 'spade', phase: 'diamond', striker: 'spade',
   pulse: 'club', chill: 'diamond', chain: 'spade', emperor: 'heart',
 };
+
+/** The index printed in each card's corners — one rank per type, so a card reads like a real one. */
+export const CARD_RANKS: Record<FateCardType, string> = {
+  laser: 'A', burst: '2', barrier: '3', explosion: '4', infect: '5',
+  coin: '6', heal: '7', buff: '8', lightning: '9', slots: '10',
+  boomerang: 'J', slash: 'J', phase: 'Q', striker: 'Q',
+  pulse: 'K', chill: 'K', chain: 'A', emperor: 'K',
+};
+
+// Hand bar geometry: poker-card proportions.
+const CARD_W = 46;
+const CARD_H = 64;
+const CARD_GAP = 8;
+// Clears ArenaScene's player health bar (centred at y=18, 24 tall, plus its housing and glow),
+// which shares the top-centre of the screen with the hand.
+const BAR_Y = 80;
 
 export class FateKit {
   // ── Visuals ───────────────────────────────────────────────────────
@@ -400,11 +428,19 @@ export class FateKit {
 
   // ── UI: card selection bar ─────────────────────────────────────────
   private barSlots: {
-    bg: Phaser.GameObjects.Rectangle;
+    /** Click/hover target — the card itself moves and scales, the hit box doesn't. */
+    hit: Phaser.GameObjects.Zone;
+    card: Phaser.GameObjects.Container;
+    paper: Phaser.GameObjects.Graphics;
+    rankTop: Phaser.GameObjects.Text;
+    rankBottom: Phaser.GameObjects.Text;
     icon: Phaser.GameObjects.Text;
-    name: Phaser.GameObjects.Text;
     curse: Phaser.GameObjects.Text;
+    /** Everything the paint depends on — the paper is only redrawn when this changes. */
+    key: string;
   }[] = [];
+  /** Name + uses of the highlighted card, under the fan. */
+  private barLabel: Phaser.GameObjects.Text | null = null;
   private barBounds = { x1: 0, y1: 0, x2: 0, y2: 0 };
   private numberKeys: Phaser.Input.Keyboard.Key[] = [];
   /** Slot the mouse is currently over — Tarot of Fate enchants whatever card sits here. */
@@ -609,79 +645,111 @@ export class FateKit {
     // Mastery "Fortune Teller": every card that lands in the player's hand counts,
     // which is why a Reroll is worth a whole hand's worth of progress at once.
     if (owner === 'player') this.arena.recordMasteryStat('cardsDrawn', 1);
-    return { type: pick, preserved: false, enchanted: false, greatEnchanted: false, curse: null };
+    return {
+      type: pick, uses: CARD_USES, wear: 0, seed: Math.floor(Math.random() * 0x7fffffff),
+      preserved: false, enchanted: false, greatEnchanted: false, curse: null,
+    };
   }
 
   // ── Card selection bar (mirrors Life's seed bar) ──────────────────
 
   private teardownBar(): void {
-    for (const s of this.barSlots) { s.bg.destroy(); s.icon.destroy(); s.name.destroy(); s.curse.destroy(); }
+    for (const s of this.barSlots) { s.hit.destroy(); s.card.destroy(); }
     this.barSlots = [];
+    this.barLabel?.destroy();
+    this.barLabel = null;
     this.barBounds = { x1: 0, y1: 0, x2: 0, y2: 0 };
   }
 
   private buildBar(): void {
     const scene = this.arena.scene;
     const n = this.playerHandSize;
-    const slotW = 60;
-    const gap = 8;
-    const total = n * slotW + (n - 1) * gap;
-    const startX = scene.scale.width / 2 - total / 2 + slotW / 2;
-    const y = 46;
+    const total = n * CARD_W + (n - 1) * CARD_GAP;
+    const startX = scene.scale.width / 2 - total / 2 + CARD_W / 2;
+    const y = BAR_Y;
     this.barBounds = {
-      x1: startX - slotW / 2, y1: y - 36,
-      x2: startX - slotW / 2 + total, y2: y + 36,
+      x1: startX - CARD_W / 2, y1: y - CARD_H / 2 - 4,
+      x2: startX - CARD_W / 2 + total, y2: y + CARD_H / 2 + 10,
     };
 
+    const rankStyle = { fontSize: '11px', fontFamily: 'Georgia, serif', fontStyle: 'bold' };
     for (let i = 0; i < n; i++) {
-      const x = startX + i * (slotW + gap);
-      const bg = scene.add.rectangle(x, y, slotW, 58, 0x141420, 0.85)
-        .setStrokeStyle(2, 0x88eecc, 0.7)
-        .setDepth(200)
+      const x = startX + i * (CARD_W + CARD_GAP);
+      const hit = scene.add.zone(x, y, CARD_W, CARD_H)
+        .setDepth(202)
         .setScrollFactor(0)
         .setInteractive({ useHandCursor: true });
-      const icon = scene.add.text(x, y - 12, '', { fontSize: '20px' })
-        .setOrigin(0.5).setDepth(201).setScrollFactor(0);
-      const name = scene.add.text(x, y + 8, '', { fontSize: '8px', color: '#bbddcc' })
-        .setOrigin(0.5).setDepth(201).setScrollFactor(0);
-      // Bottom line: the Tarot curse riding on this card, when it has one.
-      const curse = scene.add.text(x, y + 21, '', { fontSize: '10px' })
-        .setOrigin(0.5).setDepth(201).setScrollFactor(0);
-      bg.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      const paper = scene.add.graphics();
+      const rankTop = scene.add.text(-CARD_W / 2 + 7, -CARD_H / 2 + 9, '', rankStyle).setOrigin(0.5);
+      const rankBottom = scene.add.text(CARD_W / 2 - 7, CARD_H / 2 - 9, '', rankStyle).setOrigin(0.5).setAngle(180);
+      const icon = scene.add.text(0, 0, '', { fontSize: '18px' }).setOrigin(0.5);
+      // Top-right: the Tarot curse riding on this card, when it has one.
+      const curse = scene.add.text(CARD_W / 2 - 8, -CARD_H / 2 + 9, '', { fontSize: '10px' }).setOrigin(0.5);
+      const card = scene.add.container(x, y, [paper, rankTop, rankBottom, icon, curse])
+        .setDepth(200)
+        .setScrollFactor(0, 0, true);
+      hit.on('pointerdown', (p: Phaser.Input.Pointer) => {
         // Mastery "Cycle": right-click bins the card instead of selecting it.
         if (p.rightButtonDown()) { this.tryCycleDelete(i); return; }
         if (i < this.playerHand.length) this.playerSelected = i;
       });
-      bg.on('pointerover', () => { this.hoveredSlot = i; });
-      bg.on('pointerout', () => { if (this.hoveredSlot === i) this.hoveredSlot = -1; });
-      this.barSlots.push({ bg, icon, name, curse });
+      hit.on('pointerover', () => { this.hoveredSlot = i; });
+      hit.on('pointerout', () => { if (this.hoveredSlot === i) this.hoveredSlot = -1; });
+      this.barSlots.push({ hit, card, paper, rankTop, rankBottom, icon, curse, key: '' });
     }
+    this.barLabel = scene.add.text(scene.scale.width / 2, y + CARD_H / 2 + 22, '', {
+      fontSize: '10px', fontFamily: 'Georgia, serif', color: '#f2eddd',
+      stroke: '#0d0d14', strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(201).setScrollFactor(0);
   }
 
   private refreshBar(): void {
     for (let i = 0; i < this.barSlots.length; i++) {
       const slot = this.barSlots[i];
       const card = this.playerHand[i];
-      if (!card) {
-        slot.bg.setVisible(false); slot.icon.setVisible(false);
-        slot.name.setVisible(false); slot.curse.setVisible(false);
-        continue;
-      }
-      slot.bg.setVisible(true); slot.icon.setVisible(true); slot.name.setVisible(true);
+      if (!card) { slot.card.setVisible(false); slot.key = ''; continue; }
+      slot.card.setVisible(true);
       const def = DEF_BY_TYPE.get(card.type)!;
       const isSel = i === this.playerSelected;
-      const borderColor = card.greatEnchanted ? 0xff33cc
-        : card.enchanted ? 0xaa44ff
-        : card.preserved ? 0xffee44
-        : def.color;
-      slot.bg.setFillStyle(isSel ? 0x2a2a44 : 0x141420, isSel ? 0.95 : 0.85);
-      slot.bg.setStrokeStyle(card.greatEnchanted ? 4 : isSel ? 3 : 2, borderColor, 1);
-      slot.bg.setScale(isSel ? 1.15 : 1);
-      slot.icon.setText(def.emoji).setScale(isSel ? 1.2 : 1);
-      slot.name.setText(card.greatEnchanted ? `${def.name} ×4` : def.name);
-      slot.name.setColor(card.greatEnchanted ? '#ff88dd' : isSel ? '#ffffff' : '#88aa99');
+      const hover = i === this.hoveredSlot;
+      // The highlighted card is pulled out of the fan toward the arena.
+      slot.card.setScale(isSel ? 1.12 : hover ? 1.05 : 1);
+      slot.card.y = BAR_Y + (isSel ? 7 : hover ? 3 : 0);
+
+      const key = `${card.type}|${card.uses}|${card.wear}|${card.seed}|${card.preserved}|${card.enchanted}|${card.greatEnchanted}|${card.curse}|${isSel}`;
+      if (key === slot.key) continue;
+      slot.key = key;
+
+      const suit = CARD_SUITS[card.type];
+      const border = card.greatEnchanted ? FATE.great
+        : card.enchanted ? FATE.enchant
+        : card.preserved ? FATE.gold
+        : FATE.ash;
+      slot.paper.clear();
+      const dmg = fatePlayingCard(slot.paper, {
+        w: CARD_W, h: CARD_H, suit, face: def.color, border,
+        borderWidth: card.greatEnchanted ? 3 : (card.enchanted || card.preserved) ? 2.5 : 1.4,
+        wear: card.wear, seed: card.seed, selected: isSel, uses: card.uses,
+      });
+      const ink = suitInk(suit) === FATE.blood ? '#cc2233' : '#14141c';
+      const rank = CARD_RANKS[card.type];
+      slot.rankTop.setText(rank).setColor(ink).setVisible(!dmg.topLeftGone);
+      slot.rankBottom.setText(rank).setColor(ink).setVisible(!dmg.bottomRightGone);
+      // Worn cards fade: the art is the last thing to go.
+      slot.icon.setText(def.emoji).setAlpha(Math.max(0.45, 1 - card.wear * 0.08));
       const curseDef = card.curse ? CURSE_BY_ID.get(card.curse) : undefined;
       slot.curse.setVisible(!!curseDef).setText(curseDef?.emoji ?? '');
+    }
+
+    if (this.barLabel) {
+      const card = this.playerHand[this.playerSelected];
+      if (!card) { this.barLabel.setVisible(false); return; }
+      const def = DEF_BY_TYPE.get(card.type)!;
+      const tag = card.greatEnchanted ? ' ×4' : card.enchanted ? ' ×2' : '';
+      const uses = card.uses === 1 ? 'last use' : `${card.uses} uses`;
+      this.barLabel.setVisible(true)
+        .setText(`${def.name}${tag} · ${uses}`)
+        .setColor(card.greatEnchanted ? '#ff88dd' : card.uses === 1 ? '#ff9a7a' : '#f2eddd');
     }
   }
 
@@ -1345,15 +1413,18 @@ export class FateKit {
     const curse = card.curse;
     if (card.enchanted && !keepEnchant) card.enchanted = false;
     if (card.greatEnchanted && !keepEnchant) { card.greatEnchanted = false; card.curse = null; }
+    card.preserved = false;
+    card.uses -= 1;
+    card.wear += 1;
     let survivor: FateCard | null = null;
-    if (card.preserved) {
-      card.preserved = false;
+    if (card.uses > 0) {
       survivor = card;
     } else {
       hand.splice(idx, 1);
       if (owner === 'player' && this.playerSelected >= hand.length) {
         this.playerSelected = Math.max(0, hand.length - 1);
       }
+      this.paintCardShredded(card, owner);
     }
 
     // The curse fires once the hand has settled, so Immolating/Purging see the real hand.
@@ -1385,12 +1456,28 @@ export class FateKit {
     const idx = owner === 'player' ? this.playerSelected : this.pickNpcIndex(hand);
     if (idx < 0 || idx >= hand.length) return;
     hand[idx].preserved = true;
-    if (owner === 'player') this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 36, '✨ Preserved!', '#ffee44');
+    hand[idx].uses += PRESERVE_USES;
+    if (owner === 'player') {
+      this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 36, `✨ Preserved! +${PRESERVE_USES} uses`, '#ffee44');
+    }
     // Sealing a card: a gilt ring closing inward and a scatter of gold.
     const caster = this.casterOf(owner);
     this.avatar(owner)?.play('flex');
     this.fx(owner).ring(caster.x, caster.y, 50, 16, FATE.gold, 400, 4, 5);
     this.fx(owner).sparkle(caster.x, caster.y - 10, 9, 30, 10, FATE.gold);
+  }
+
+  /** A card's last throw tears it apart: scraps of it flutter off the caster's hand. */
+  private paintCardShredded(card: FateCard, owner: 'player' | 'npc'): void {
+    const def = DEF_BY_TYPE.get(card.type)!;
+    const caster = this.casterOf(owner);
+    const hand = this.avatar(owner)?.castHand() ?? { x: caster.x, y: caster.y };
+    this.fx(owner).cards(hand.x, hand.y, 7, {
+      size: 5, speed: 90, life: 700, fall: 30, face: def.color, tones: this.tones(owner),
+    });
+    if (owner === 'player') {
+      this.arena.showFloatingText(caster.x, caster.y - 52, `💔 ${def.name} shredded`, '#ff9a7a');
+    }
   }
 
   doEnchant(owner: 'player' | 'npc'): void {

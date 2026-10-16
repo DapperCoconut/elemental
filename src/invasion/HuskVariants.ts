@@ -49,7 +49,7 @@ export type HuskMarker =
   | 'bolt' | 'flask' | 'card' | 'note' | 'star' | 'magnet' | 'gear' | 'orb'
   | 'skull' | 'ball' | 'book' | 'mask' | 'scribble' | 'banner' | 'heart'
   | 'coin' | 'bone' | 'eye' | 'rad' | 'chain' | 'meat' | 'echo' | 'dagger'
-  | 'wave' | 'brick' | 'page' | 'pit';
+  | 'wave' | 'brick' | 'page' | 'pit' | 'cross';
 
 export interface HuskVariantDef {
   id: string;
@@ -136,7 +136,7 @@ export const HUSK_FAMILIES: HuskFamily[] = [
   { elementId: 'electricity', name: 'Electric', emoji: '⚡', color: 0xffee00, category: 'abstract', behavior: 'ranged', marker: 'bolt', quirk: 'lean', hp: 0.85, speed: 1.15, damage: 0.7, preferredRange: 260 },
   { elementId: 'slime', name: 'Acid', emoji: '🟢', color: 0x66cc44, category: 'abstract', behavior: 'melee', marker: 'flask', quirk: 'sac', hp: 1.05, speed: 0.95, damage: 0.9 },
   { elementId: 'fate', name: 'Fate', emoji: '🃏', color: 0x88eecc, category: 'abstract', behavior: 'melee', marker: 'card', quirk: 'lean', hp: 0.95, speed: 1.05, damage: 1 },
-  { elementId: 'sound', name: 'Sound', emoji: '🔊', color: 0xff66cc, category: 'abstract', behavior: 'ranged', marker: 'note', quirk: 'sac', hp: 0.9, speed: 1, damage: 0.65, preferredRange: 300 },
+  { elementId: 'sound', name: 'Sound', emoji: '🔊', color: 0x8a1c33, category: 'abstract', behavior: 'ranged', marker: 'note', quirk: 'sac', hp: 0.9, speed: 1, damage: 0.65, preferredRange: 300 },
   { elementId: 'light', name: 'Light', emoji: '✨', color: 0xfff4a8, category: 'abstract', behavior: 'charger', marker: 'star', quirk: 'lean', hp: 1.2, speed: 1.05, damage: 1.4 },
   { elementId: 'magnet', name: 'Magnet', emoji: '🧲', color: 0xcc2244, category: 'abstract', behavior: 'melee', marker: 'magnet', quirk: 'horns', hp: 1.1, speed: 0.9, damage: 0.9 },
   { elementId: 'metal', name: 'Metal', emoji: '⚙️', color: 0x8899aa, category: 'abstract', behavior: 'melee', marker: 'gear', quirk: 'bulk', hp: 2.2, speed: 0.55, damage: 1.3, size: 1.2 },
@@ -157,16 +157,17 @@ export const HUSK_FAMILIES: HuskFamily[] = [
   { elementId: 'ruin', name: 'Ruin', emoji: '🧱', color: 0xc4392c, category: 'corrupt', behavior: 'melee', marker: 'brick', quirk: 'horns', hp: 1.4, speed: 0.8, damage: 1.1 },
   { elementId: 'dune', name: 'Sand', emoji: '🏜️', color: 0xe8c87a, category: 'corrupt', behavior: 'melee', marker: 'pit', quirk: 'lean', hp: 1, speed: 1, damage: 1 },
   { elementId: 'conquest', name: 'Conquest', emoji: '🏰', color: 0xc23a2e, category: 'corrupt', behavior: 'melee', marker: 'banner', quirk: 'horns', hp: 1.3, speed: 0.9, damage: 1.1 },
-  { elementId: 'passion', name: 'Passion', emoji: '💘', color: 0xff5fa2, category: 'corrupt', behavior: 'melee', marker: 'heart', quirk: 'halo', hp: 1, speed: 1.05, damage: 0.9 },
+  { elementId: 'passion', name: 'Devotion', emoji: '🙏', color: 0xf5e08a, category: 'corrupt', behavior: 'melee', marker: 'cross', quirk: 'halo', hp: 1, speed: 1.05, damage: 0.9 },
   { elementId: 'paper', name: 'Paper', emoji: '📄', color: 0xf2ead6, category: 'corrupt', behavior: 'ranged', marker: 'page', quirk: 'lean', hp: 0.5, speed: 1.45, damage: 0.8, size: 0.9, preferredRange: 310 },
   { elementId: 'death', name: 'Death', emoji: '⚰️', color: 0x4a4468, category: 'corrupt', behavior: 'melee', marker: 'skull', quirk: 'horns', hp: 1.2, speed: 1, damage: 1.5 },
-  { elementId: 'fortune', name: 'Fortune', emoji: '🪙', color: 0xd8a531, category: 'corrupt', behavior: 'melee', marker: 'coin', quirk: 'lean', hp: 0.9, speed: 1.3, damage: 0.9 },
+  { elementId: 'fortune', name: 'Gold', emoji: '🪙', color: 0xd8a531, category: 'corrupt', behavior: 'melee', marker: 'coin', quirk: 'lean', hp: 0.9, speed: 1.3, damage: 0.9 },
+  { elementId: 'marrow', name: 'Marrow', emoji: '🦴', color: 0xb8323f, category: 'corrupt', behavior: 'melee', marker: 'bone', quirk: 'bulk', hp: 1.2, speed: 0.95, damage: 1.1 },
   { elementId: 'cloth', name: 'Cloth', emoji: '🧣', color: 0xd1435c, category: 'corrupt', behavior: 'melee', marker: 'banner', quirk: 'lean', hp: 0.9, speed: 1.15, damage: 1.05 },
-  { elementId: 'psychic', name: 'Psychic', emoji: '👁️', color: 0x9b4dff, category: 'corrupt', behavior: 'ranged', marker: 'eye', quirk: 'halo', hp: 1, speed: 0.95, damage: 0.85, preferredRange: 330 },
+  { elementId: 'psychic', name: 'Psychic', emoji: '👁️', color: 0xe8e4d8, category: 'corrupt', behavior: 'ranged', marker: 'eye', quirk: 'halo', hp: 1, speed: 0.95, damage: 0.85, preferredRange: 330 },
   { elementId: 'radiation', name: 'Radiation', emoji: '☢️', color: 0x7cff3d, category: 'corrupt', behavior: 'melee', marker: 'rad', quirk: 'gut', hp: 1.15, speed: 0.9, damage: 1 },
   { elementId: 'bind', name: 'Bind', emoji: '⛓️', color: 0xe0b743, category: 'corrupt', behavior: 'melee', marker: 'chain', quirk: 'horns', hp: 1.2, speed: 0.9, damage: 1 },
   { elementId: 'gum', name: 'Slime', emoji: '🫠', color: 0x46b93f, category: 'corrupt', behavior: 'melee', marker: 'slick', quirk: 'bulk', hp: 1.6, speed: 0.8, damage: 1, size: 1.12 },
-  { elementId: 'gluttony', name: 'Gluttony', emoji: '🍖', color: 0xd8452f, category: 'corrupt', behavior: 'melee', marker: 'meat', quirk: 'bulk', hp: 1.4, speed: 0.85, damage: 1.2, size: 1.1 },
+  { elementId: 'gluttony', name: 'Harvest', emoji: '🌾', color: 0x6a2c91, category: 'corrupt', behavior: 'melee', marker: 'meat', quirk: 'bulk', hp: 1.4, speed: 0.85, damage: 1.2, size: 1.1 },
 ];
 
 /** Wave a tier first appears on. */
@@ -487,7 +488,7 @@ export const ELEMENT_KIN: Record<string, string[]> = {
   growth: ['growth', 'life', 'slime', 'gum', 'gluttony'],
   crystal: ['crystal', 'earth', 'ice', 'light'],
   soul: ['soul', 'shadow', 'death', 'psychic'],
-  hunt: ['hunt', 'gluttony', 'shadow', 'death'],
+  hunt: ['hunt', 'gluttony', 'shadow', 'death', 'marrow'],
   sand: ['sand', 'gravity', 'fate', 'psychic'],           // the Time world
   gravity: ['gravity', 'magnet', 'sand', 'plasma'],
   creation: ['creation', 'metal', 'technology', 'magic', 'chalk'],
@@ -515,16 +516,17 @@ export const ELEMENT_KIN: Record<string, string[]> = {
   ruin: ['ruin', 'earth', 'dune', 'death', 'conquest'],
   dune: ['dune', 'earth', 'sand', 'ruin'],                // the Sand world
   conquest: ['conquest', 'ruin', 'metal', 'bind'],
-  passion: ['passion', 'life', 'fire', 'soul'],
+  passion: ['passion', 'light', 'life', 'soul'],
   paper: ['paper', 'chalk', 'air', 'illusion', 'cloth'],
-  death: ['death', 'soul', 'shadow', 'cloth', 'gunpowder'],
+  death: ['death', 'soul', 'shadow', 'cloth', 'gunpowder', 'marrow'],
   fortune: ['fortune', 'fate', 'subterfuge', 'conquest'],
   cloth: ['cloth', 'paper', 'bind', 'creation', 'subterfuge'],
+  marrow: ['marrow', 'death', 'hunt', 'gluttony'],
   psychic: ['psychic', 'soul', 'illusion', 'magic', 'fate'],
   radiation: ['radiation', 'plasma', 'slime', 'technology'],
   bind: ['bind', 'metal', 'conquest', 'gravity', 'cloth'],
   gum: ['gum', 'slime', 'rubber', 'growth', 'gluttony'],
-  gluttony: ['gluttony', 'hunt', 'gum', 'depths', 'growth'],
+  gluttony: ['gluttony', 'hunt', 'gum', 'depths', 'growth', 'marrow'],
 };
 
 export interface InvasionTheme {

@@ -132,20 +132,20 @@ const plasma: ElementCodex = {
         { tag: 'dot', label: 'The chain', detail: '2 damage every 0.1s — 20 a second — to anything within 18px of the line between the beads.' },
         { tag: 'damage', label: 'Hitting a bead', detail: 'Touching either bead (within 20px) deals 10 damage and collapses the whole current.' },
         { tag: 'damage', label: 'Chain collapse', detail: 'The collapse detonates for 10 damage in a 70px radius at the midpoint — on you as well, if you are standing there.' },
+        { tag: 'utility', label: 'Stop', detail: 'Press R again while it is flying and the current stops where it is, holding there for the rest of its 5 seconds.' },
         { tag: 'utility', label: 'Availability', detail: '8s cooldown, spent on release.' },
       ],
       upgrade: {
         basics:
           'Holding R past 2.5 seconds plants two sockets 96px either side of you instead — anything '
-          + 'shorter still fires an ordinary current. They last 10 seconds and carry 3 relay charges each, '
-          + 'shown as pips: any plasma damage within 60px of a volt fires a bolt to its partner, and '
-          + 'anything within 100px of that partner takes 8. Both ends spend a charge per relay, so the pair '
-          + 'is worth exactly 3 relays before it burns out.',
+          + 'shorter still fires an ordinary current. They last exactly 12 seconds, their pips counting '
+          + 'down the time left: any plasma damage within 60px of a volt fires a bolt to its partner, and '
+          + 'anything within 100px of that partner takes 8. A pair can relay at most once every 0.5s.',
         effects: [
           { tag: 'cost', label: 'The hold', detail: 'Hold R past 2.5s. Anything shorter still fires an ordinary current at the usual width.', requiresUpgrade: 'r' },
-          { tag: 'summon', label: 'Two sockets', detail: 'Planted 96px either side of you, lasting 10 seconds, with 3 relay charges each shown as pips.', requiresUpgrade: 'r' },
-          { tag: 'damage', label: 'The relay', detail: 'Any plasma damage within 60px of a volt fires a bolt to its partner; anything within 100px of that partner takes 8. Both volts spend a charge per relay.', requiresUpgrade: 'r' },
-          { tag: 'utility', label: 'Three relays', detail: 'Because both ends spend a charge each time, the pair is worth exactly 3 relays before it burns out.', requiresUpgrade: 'r' },
+          { tag: 'summon', label: 'Two sockets', detail: 'Planted 96px either side of you, lasting exactly 12 seconds; the pips count down the time left.', requiresUpgrade: 'r' },
+          { tag: 'damage', label: 'The relay', detail: 'Any plasma damage within 60px of a volt fires a bolt to its partner; anything within 100px of that partner takes 8.', requiresUpgrade: 'r' },
+          { tag: 'utility', label: 'Relay recharge', detail: 'Relays never wear the sockets out; a pair just needs 0.5s between two relays.', requiresUpgrade: 'r' },
         ],
       },
       notes: [
@@ -229,8 +229,8 @@ const plasma: ElementCodex = {
   perks: {
     solar: {
       basics:
-        'R cast while one of your currents is alive and moving stops that current instead of launching '
-        + 'a new one, freezing it in place with a fresh 20-second lifetime. It keeps its 2-per-0.1s chain '
+        'Recasting R already stops a moving current where it is; with Solar the stopped current is also '
+        + 'given a fresh 20-second lifetime. It keeps its 2-per-0.1s chain '
         + 'damage for all of it, so a frozen wire across a doorway is a genuine wall, and when the 20 '
         + 'seconds run out it explodes at both beads for 15 damage in a 60px radius each. Where two of '
         + 'your beams overlap, a plasma puddle spawns near the intersection every 0.5s, each lasting a '
@@ -276,7 +276,7 @@ const plasma: ElementCodex = {
         + 'for 20 damage on a 1.2s per-target cooldown. 20s cooldown, counted from the summon rather than '
         + 'the detonation.',
       cast:
-        'Bindable to E, R, F or Q, replacing that slot\'s base ability for the match. Summoned onto '
+        'Bindable to R, F or Q, replacing that slot\'s base ability for the match. Summoned onto '
         + 'its ring instantly.',
       effects: [
         { tag: 'summon', label: 'The ring', detail: 'Starts at 190px and orbits at 2.5 rad/s. That opening radius is also the furthest out it can ever be pushed back.' },

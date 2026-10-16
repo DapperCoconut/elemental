@@ -966,34 +966,32 @@ export class SubterfugeAura {
 
 // ── SubterfugeAvatar ──────────────────────────────────────────────────────
 
-/** Concentric discs of one gloved hand, outermost first. */
+/** Concentric discs of one hand, outermost first — plain crimson balls to match the orb. */
 const SUB_AVATAR: AvatarSpec = {
   hands: [
-    { r: 11, color: SUB.ink, alpha: 0.28 },
-    { r: 7.4, color: SUB.charcoal, alpha: 1 },
-    { r: 4.6, color: SUB.slate, alpha: 1 },
-    { r: 1.9, color: SUB.blood, alpha: 1, ox: -2.1, oy: -2.3 },
+    { r: 11, color: SUB.crimson, alpha: 0.22 },
+    { r: 7.4, color: SUB.wine, alpha: 1 },
+    { r: 4.8, color: SUB.crimson, alpha: 1 },
+    { r: 1.9, color: SUB.scarlet, alpha: 1, ox: -2.1, oy: -2.3 },
   ],
   eyeWhite: SUB.paper,
   eyePupil: SUB.ink,
-  // Heavy leather gloves: they swing hard and smear a lot.
+  // Heavy swings: they smear a lot.
   squash: { div: 13, x: 0.55, y: 0.3 },
 };
 
 /**
- * The Subterfuge character rig: two gloved fists, a pair of tracking eyes, and a fedora with
- * the week's takings fanned out of the hatband — plus a cigarette that is always lit.
+ * The Subterfuge character rig: a plain crimson orb, two ball hands, tracking eyes, and one
+ * accessory — a black fedora with a band in the house colour. The cigarette only appears while
+ * Smoke Break is actually lit (setCigarette), so it is a status, not a costume.
  *
- * The hat is the idea. Nothing else in this kit throws elements around; it pays people to do
- * things. So what has to read on the character is *money and a suit* — a figure who is
- * visibly carrying more cash than he can fit anywhere sensible, before he has cast anything.
+ * The fedora is the whole idea: one hat says "made man" faster than a suit, a tie and a wallet
+ * ever did, and it leaves the body clear so the colour alone says which element this is.
  */
 export class SubterfugeAvatar extends BaseAvatar {
   private fx: SubterfugeFx;
   /** Crimson for the player, wine for the NPC, so two Subterfuge fighters never blur together. */
   private accent: number;
-  /** Wallet fraction, 0–1 — how many notes are actually in the hatband. */
-  private wallet = 1;
   /** Cigarette burn, 0–1, or -1 when nothing is lit. */
   private cig = -1;
 
@@ -1003,23 +1001,24 @@ export class SubterfugeAvatar extends BaseAvatar {
     this.accent = owner === 'player' ? SUB.blood : SUB.wine;
   }
 
-  /** How full the wallet is, 0–1. Notes leave the hatband as it empties. */
-  setWallet(v: number): void { this.wallet = Phaser.Math.Clamp(v, 0, 1); }
+  /**
+   * How full the wallet is, 0–1. Kept for the kit's API; the rig no longer wears its cash —
+   * the money shows up in the effects instead.
+   */
+  setWallet(v: number): void { void v; }
   /** Burn remaining on the lit cigarette, 0–1; -1 for none. */
   setCigarette(v: number): void { this.cig = v; }
 
   /**
-   * Mastery tell — Big Pockets and Smoke Break, made visible: the fists gain gold knuckle
-   * rings, the eyes go gold, and (in drawExtras) the hat gains a wider brim and a second row
-   * of notes, a briefcase rides at the hip, and a cigarette stays lit whether or not Smoke
-   * Break is running. Shape changes, not brighter tints — a tint alone vanishes in play.
+   * Mastery tell — the same fedora, made richer: the brim widens, the band turns gold and
+   * throws a halo, the eyes go gold and the hands' corona swells. Nothing new is added; the
+   * hat simply looks like it belongs to the boss now.
    */
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? SUB.gold : SUB.paper);
-    this.forEachHandLayer(0, (glow) => glow.setRadius(on ? 15 : 11));
-    this.forEachHandLayer(1, (shell) => {
-      if (on) shell.setStrokeStyle(2.4, this.tint(SUB.gold), 0.95);
-      else shell.setStrokeStyle();
+    this.forEachHandLayer(0, (glow) => {
+      glow.setRadius(on ? 15 : 11);
+      glow.setFillStyle(this.tint(on ? SUB.gold : SUB.crimson), on ? 0.26 : 0.22);
     });
   }
 
@@ -1039,57 +1038,33 @@ export class SubterfugeAvatar extends BaseAvatar {
     };
   }
 
-  /** The pool of light a man in a suit stands in, and his shadow. */
+  /** A soft red under-glow, a little hotter once mastered. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
     const k = this.intensity;
-    g.fillStyle(this.tint(SUB.ink), a * 0.4);
-    g.fillEllipse(x, y + 12, 50 * k, 17 * k);
-    g.fillStyle(this.tint(this.accent), a * 0.12 * k);
+    g.fillStyle(this.tint(this.accent), a * (this.mastered ? 0.2 : 0.12) * k);
     g.fillCircle(x, y, 25 * k);
-    if (this.mastered) {
-      // Big Pockets: notes lie scattered round his feet because he cannot hold them all.
-      for (let i = 0; i < 4; i++) {
-        const ang = this.t * 0.3 + (i / 4) * TAU;
-        banknoteLayered(g, this.tint,
-          x + Math.cos(ang) * 30, y + 14 + Math.sin(ang) * 9,
-          ang * 2, 13, 4.4, a * 0.5, 0.15, SUB.gold);
-      }
-    }
   }
 
   /**
-   * The knuckle rings, and the crown: a fedora with banknotes fanned out of the hatband, a lit
-   * cigarette off one side, and — once mastered — a briefcase riding at the hip.
-   *
-   * Rooted above the head so it never covers the face, and drawn over the sprite so the hat and
-   * the cash actually read instead of only the dark crown clearing the body.
+   * The fedora, rooted at the crown so it never covers the face, plus the cigarette while one
+   * is actually lit.
    */
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     const tint = this.tint;
-
-    // ── Knuckle rings on each fist ──
-    if (this.mastered) {
-      for (let i = 0; i < 2; i++) {
-        const hx = this.armX[i], hy = this.armY[i];
-        if (hx === 0 && hy === 0) continue;
-        const out = Math.atan2(hy - y, hx - x);
-        for (let d = -1; d <= 1; d++) {
-          const ang = out + d * 0.55;
-          g.fillStyle(tint(SUB.gold), alpha * 0.95);
-          g.fillCircle(hx + Math.cos(ang) * 5.4, hy + Math.sin(ang) * 5.4, 2);
-        }
-      }
-    }
+    const m = this.mastered;
 
     // ── The hat ──
     const bob = Math.sin(this.t * 1.9) * 1.8;
     const rootY = y - 19 + bob;
-    const brim = (this.mastered ? 30 : 24) * this.intensity;
+    const brim = (m ? 19 : 16) * this.intensity;
     const crown = 13 * this.intensity;
-    // Brim first, tilted toward the aim so the hat has a front.
     const tilt = Math.cos(this.facing) * 0.12;
-    g.fillStyle(tint(SUB.ink), alpha * 0.45);
-    g.fillEllipse(x + 1, rootY + 3.5, brim * 2.05, brim * 0.5);
+    if (m) {
+      // The band's halo — the hat glows like it is worth something.
+      g.fillStyle(tint(SUB.gold), alpha * (0.16 + 0.06 * Math.sin(this.t * 2.4)));
+      g.fillEllipse(x, rootY - 3, crown * 2.6, crown * 1.4);
+    }
+    // Brim, tilted toward the aim so the hat has a front.
     g.fillStyle(tint(SUB.charcoal), alpha);
     g.fillEllipse(x + Math.cos(this.facing) * 3, rootY + 2, brim * 2, brim * 0.46);
     // Crown, with a dent down the middle.
@@ -1099,56 +1074,21 @@ export class SubterfugeAvatar extends BaseAvatar {
       { x: x, y: rootY - crown * 0.82 + tilt * 8 },
       { x: x + crown * 0.55, y: rootY - crown + tilt * 8 }, { x: x + crown * 0.72, y: rootY + 2 },
     ]);
-    // Hatband in the house colour.
-    g.fillStyle(tint(this.mastered ? SUB.gold : this.accent), alpha);
-    g.fillRect(x - crown * 0.7, rootY - 4, crown * 1.4, 3.4);
+    // Hatband: house colour, gilded once mastered.
+    g.fillStyle(tint(m ? SUB.gold : this.accent), alpha);
+    g.fillRect(x - crown * 0.7, rootY - 4, crown * 1.4, m ? 4 : 3.4);
 
-    // ── The takings, fanned out of the band ──
-    const rows = this.mastered ? 2 : 1;
-    const per = 3;
-    for (let row = 0; row < rows; row++) {
-      for (let i = 0; i < per; i++) {
-        // Notes leave from the outside in as the wallet empties.
-        const idx = row * per + i;
-        if (idx >= Math.ceil(this.wallet * rows * per + 0.001)) continue;
-        const lean = (i - (per - 1) / 2) * 0.42 + Math.sin(this.t * 1.6 + idx) * 0.06;
-        const ang = -Math.PI / 2 + lean;
-        const d = 9 + row * 6;
-        banknoteLayered(g, tint,
-          x + Math.cos(ang) * d, rootY - 3 + Math.sin(ang) * d,
-          ang + Math.PI / 2, 15, 5.2, alpha * 0.95, 0.12, this.mastered ? SUB.gold : this.accent);
-      }
-    }
-
-    // ── The cigarette ──
-    const burn = this.cig >= 0 ? this.cig : this.mastered ? 0.7 + 0.3 * Math.sin(this.t * 0.4) : -1;
-    if (burn >= 0) {
+    // ── The cigarette, only while Smoke Break has one lit ──
+    if (this.cig >= 0) {
       const side = Math.cos(this.facing) < 0 ? -1 : 1;
       const cx = x + side * 9;
       const cy = y - 1;
-      cigaretteShape(g, tint, cx, cy, side > 0 ? 0.18 : Math.PI - 0.18, 14, burn, this.t, alpha);
-      // A ribbon of smoke rising off it and bending away.
-      for (let i = 0; i < 4; i++) {
-        const p = (this.t * 0.55 + i / 4) % 1;
-        smokeBank(g, cx + side * 8 + Math.sin(this.t * 2 + i) * 5 * p, cy - 4 - p * 24,
-          2.6 + p * 6, i * 1.9, this.t, tint(SUB.ash), alpha * 0.45 * (1 - p), 4);
+      cigaretteShape(g, tint, cx, cy, side > 0 ? 0.18 : Math.PI - 0.18, 14, this.cig, this.t, alpha);
+      for (let i = 0; i < 3; i++) {
+        const p = (this.t * 0.55 + i / 3) % 1;
+        smokeBank(g, cx + side * 8 + Math.sin(this.t * 2 + i) * 5 * p, cy - 4 - p * 22,
+          2.4 + p * 5, i * 1.9, this.t, tint(SUB.ash), alpha * 0.4 * (1 - p), 4);
       }
-    }
-
-    // ── Mastery: the briefcase ──
-    if (this.mastered) {
-      const side = Math.cos(this.facing) < 0 ? 1 : -1;
-      const bx = x + side * 26;
-      const by = y + 6 + Math.sin(this.t * 2.3) * 2;
-      g.fillStyle(tint(SUB.ink), alpha * 0.4);
-      g.fillEllipse(bx, by + 12, 22, 6);
-      g.fillStyle(tint(SUB.wood), alpha);
-      g.fillRect(bx - 10, by - 7, 20, 14);
-      g.lineStyle(1.4, tint(SUB.brass), alpha);
-      strokePts(g, [{ x: bx - 10, y: by }, { x: bx + 10, y: by }]);
-      g.fillStyle(tint(SUB.brass), alpha);
-      g.fillRect(bx - 2.4, by - 2, 5, 4);
-      strokePts(g, [{ x: bx - 5, y: by - 7 }, { x: bx - 5, y: by - 12 }, { x: bx + 5, y: by - 12 }, { x: bx + 5, y: by - 7 }]);
     }
     void a;
   }

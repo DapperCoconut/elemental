@@ -2,77 +2,75 @@ import { Element } from './Element';
 import { Ability, CastContext } from './Ability';
 
 /**
- * Passion — a test element, reachable only from a cheat-mode save for now.
+ * Devotion — a holy priest. (The element id is still `passion`, the charmer it replaced, so every
+ * save, unlock and skin keeps working.)
  *
- * Every other element in the game wins by taking an enemy's health away. Passion barely touches
- * it. What it fills instead is a second bar over their head, the same size as the health they
- * started the match with, and the instant that bar is full they are charmed and gone — no
- * matter how much they healed, shielded or clotted on the way. Nothing lowers it. There is no
- * cleanse, no decay and no way to trade damage back into it.
- *
- * The consequence is an element that cannot be raced. A Passion user losing the health fight is
- * still winning the only fight that ends the match, and the counterplay is not to out-heal it —
- * it is to kill them before the meter tops out, or to stop looking at them while they pose.
+ * Devotion never deals damage. Everything it does instead fills a second bar over the enemy's
+ * head — **faith** — and the instant that bar reaches 200 they are converted and gone, however
+ * much health, shield or armour they had left. Nothing lowers faith. The bar also works against
+ * its owner on the way up: at a quarter it starts filling on its own, at half the believer's
+ * blows soften against the priest, and at three quarters they are drawn toward the holy water
+ * and every sermon lands harder.
  *
  * Every `cast` here is a one-line delegate; the whole simulation lives in PassionKit.
  */
 
-const loveshot: Ability = {
-  id: 'passion-loveshot',
-  name: 'Loveshot',
-  description: 'Fire a heart from your pistol for 12 damage and 15 love. It hits harder the more '
-    + 'love is already in them — +2 damage for every 80 on the bar.',
+const sermon: Ability = {
+  id: 'passion-sermon',
+  name: 'Sermon',
+  description: 'Launch a barrage of 4 Greek letters, each worth 3 faith. Hold to preach longer: a '
+    + 'full 1.4s sermon looses 12 letters worth 6 faith each.',
   displayKey: 'Click',
-  cooldown: 550,
-  cast(ctx: CastContext) { ctx.passionLoveshot(ctx.targetX, ctx.targetY); },
+  cooldown: 480,
+  cast(ctx: CastContext) { ctx.passionSermon(ctx.targetX, ctx.targetY); },
 };
 
-const flirt: Ability = {
-  id: 'passion-flirt',
-  name: 'Flirt',
-  description: 'A wide cone in front of you. Anyone caught in it gains 30 love — 35 past a '
-    + 'quarter, 40 past half, 45 past three quarters. No damage at all.',
+const holyWater: Ability = {
+  id: 'passion-holy-water',
+  name: 'Holy Water',
+  description: 'Stores 2 bottles (one refills every 7s). Lob one at the cursor: it shatters into a '
+    + 'boiling puddle for 8s, worth 9 faith a second to anyone standing in it.',
   displayKey: 'E',
-  cooldown: 8000,
-  cast(ctx: CastContext) { ctx.passionFlirt(ctx.targetX, ctx.targetY); },
+  cooldown: 350,
+  cast(ctx: CastContext) { ctx.passionHolyWater(ctx.targetX, ctx.targetY); },
 };
 
-const smooch: Ability = {
-  id: 'passion-smooch',
-  name: 'Smooch',
-  description: 'Dash forward and kiss whoever you run into. Only lands on someone already at 50% '
-    + 'love or more; when it does, they gain 30 love plus another 15% of the bar they were on.',
+const grenade: Ability = {
+  id: 'passion-grenade',
+  name: 'Holy Hand Grenade',
+  description: 'Throw a holy hand grenade at the cursor. It bounces around for 3 seconds, then '
+    + 'bursts for 45 faith on everything within 130px.',
   displayKey: 'R',
-  cooldown: 8000,
-  cast(ctx: CastContext) { ctx.passionSmooch(ctx.targetX, ctx.targetY); },
-};
-
-const manipulate: Ability = {
-  id: 'passion-manipulate',
-  name: 'Manipulate',
-  description: 'Take a rose in your teeth for 15s. Every hit landed on you while you hold it '
-    + 'costs the attacker 5% of their damage for 5s, stacking without limit. Recast to throw the '
-    + 'rose: 20 love on a hit, up to 60 the closer you are to death.',
-  displayKey: 'F',
   cooldown: 10000,
-  cast(ctx: CastContext) { ctx.passionManipulate(ctx.targetX, ctx.targetY); },
+  cast(ctx: CastContext) { ctx.passionGrenade(ctx.targetX, ctx.targetY); },
 };
 
-const exhibition: Ability = {
-  id: 'passion-exhibition',
-  name: 'Exhibition',
-  description: 'Pose for the cameras for 5s. Anyone facing you gains 15 love a second — look '
-    + 'away and it stops.',
+const crucifix: Ability = {
+  id: 'passion-crucifix',
+  name: 'Mount Crucifix',
+  description: 'Plant a crucifix at the cursor. Enemies cannot set foot inside its 90px holy aura, '
+    + 'and every projectile they fire into it gives them 1 faith. It stands until you plant another.',
+  displayKey: 'F',
+  cooldown: 8000,
+  cast(ctx: CastContext) { ctx.passionCrucifix(ctx.targetX, ctx.targetY); },
+};
+
+const ascendance: Ability = {
+  id: 'passion-ascendance',
+  name: 'Ascendance',
+  description: 'Mark a line across the arena where you stand. After 3s a flaming chariot thunders '
+    + 'along it for 60 faith to everyone it hits. Caught in it yourself? It carries you off, and '
+    + '2s later you crash down at the cursor for 80 faith in a 120px blast.',
   displayKey: 'Q',
   isUltimate: true,
-  cooldown: 45000,
-  cast(ctx: CastContext) { ctx.passionExhibition(); },
+  cooldown: 40000,
+  cast(ctx: CastContext) { ctx.passionAscendance(ctx.targetX, ctx.targetY); },
 };
 
 export const passionElement: Element = {
   id: 'passion',
-  name: 'Passion',
-  color: 0xff5fa2,
-  emoji: '💘',
-  abilities: [loveshot, flirt, smooch, manipulate, exhibition],
+  name: 'Devotion',
+  color: 0xf5e08a,
+  emoji: '🙏',
+  abilities: [sermon, holyWater, grenade, crucifix, ascendance],
 };

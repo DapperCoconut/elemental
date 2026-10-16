@@ -1621,25 +1621,27 @@ const MAGIC_AVATAR: AvatarSpec = {
     { r: 4.8, color: MAGIC.orchid, alpha: 1 },
     { r: 2, color: MAGIC.white, alpha: 1, ox: -2.2, oy: -2.4 },
   ],
-  eyeWhite: MAGIC.lilac,
+  eyeWhite: MAGIC.white,
   eyePupil: MAGIC.ink,
   // Weightless hands — they float rather than swing, so they lag long and smear little.
   squash: { div: 15, x: 0.4, y: 0.22 },
 };
 
 /**
- * The magic character rig: two rune-lit hands, a pair of tracking eyes, and an open grimoire
- * hovering over the crown with its pages turning and runes rising out of it.
+ * The magic character rig: a plain violet orb with two rune-lit ball hands and tracking eyes,
+ * wearing a **wizard's hat** — a tall ink-indigo cone with a crooked tip and a coloured band.
  *
- * The book is the idea. Magic has no medium of its own — it borrows fire, water, stone and wind —
- * so what must read as *magic* is the act of reading a spell out of something, and a fighter that
- * visibly carries an open book is that, before it has cast anything.
+ * Magic has no medium of its own (it borrows fire, water, stone and wind), so the hat is what
+ * says "spellcaster" before anything is cast; the body colour alone says magic.
+ *
+ * Mastery enhances the hat rather than adding to it: it grows, the band gilds, the tip lights
+ * with a glowing star point, the eyes go gold and the hand coronas widen.
  */
 export class MagicAvatar extends BaseAvatar {
   private fx: MagicFx;
   /** Violet for the player, gold for the NPC, so two magic fighters never blur together. */
   private accent: number;
-  /** How dark the caster has gone, 0–1 — bleeds into the book and the floor circle. */
+  /** How dark the caster has gone, 0–1 — stains the hat band and the under-glow. */
   private corruption = 0;
 
   constructor(scene: Phaser.Scene, tint: MagicColorFn, owner: 'player' | 'npc' = 'player', depth = 6) {
@@ -1648,17 +1650,16 @@ export class MagicAvatar extends BaseAvatar {
     this.accent = owner === 'player' ? MAGIC.orchid : MAGIC.gold;
   }
 
-  /** Darkness meter, 0–1. Stains the book, the runes and the floor circle as it climbs. */
+  /** Darkness meter, 0–1. Stains the hat band and the under-glow as it climbs. */
   setCorruption(v: number): void { this.corruption = Phaser.Math.Clamp(v, 0, 1); }
 
   /**
-   * Mastery tell — Levitate, made visible: the hands gain a wide corona, the eyes go gold, and
-   * (in drawExtras) a second tome joins the first, the book's rune halo doubles, and the shadow
-   * underfoot shrinks because the caster is no longer standing on it. Shape changes, not brighter
-   * tints — a tint alone vanishes at gameplay zoom.
+   * Mastery tell: gold eyes, a wide corona and gold collar on each hand; `drawExtras` grows and
+   * gilds the hat and lights its tip. Shape changes, not just a tint — a tint alone vanishes at
+   * gameplay zoom.
    */
   protected applyMastery(on: boolean): void {
-    this.setEyeWhite(on ? MAGIC.gold : MAGIC.lilac);
+    this.setEyeWhite(on ? MAGIC.gold : MAGIC.white);
     this.forEachHandLayer(0, (glow) => glow.setRadius(on ? 17 : 12.5));
     this.forEachHandLayer(1, (shell) => {
       if (on) shell.setStrokeStyle(2, this.tint(MAGIC.gold), 0.95);
@@ -1682,110 +1683,61 @@ export class MagicAvatar extends BaseAvatar {
     };
   }
 
-  /**
-   * A summoning circle on the floor, turning slowly under the caster — and shrinking to a small
-   * hovering shadow once Levitate lifts them off it.
-   */
+  /** A soft arcane under-glow — magenta once corruption sets in, stronger when mastered. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
-    const k = this.intensity;
-    const lift = this.mastered ? 0.55 : 1;
-    g.fillStyle(this.tint(MAGIC.ink), a * 0.26 * lift);
-    g.fillEllipse(x, y + (this.mastered ? 16 : 9), 50 * k * lift, 18 * k * lift);
-    const col = this.corruption > 0.4 ? MAGIC.magenta : this.accent;
-    g.fillStyle(this.tint(col), a * 0.12 * k);
-    g.fillCircle(x, y, 26 * k);
-    arcaneRing(g, this.tint, x, y + 6, 30 * k, this.t * 0.5, col, a * 0.5, 1.8, 6);
-    if (this.mastered) {
-      // Levitating: a second, wider circle the caster is riding on.
-      arcaneRing(g, this.tint, x, y + 10, 42 * k, -this.t * 0.35, MAGIC.gold, a * 0.4, 1.4, 8, false);
-    }
+    const k = this.intensity * (this.mastered ? 1.15 : 1);
+    const col = this.corruption > 0.4 ? MAGIC.magenta : MAGIC.purple;
+    g.fillStyle(this.tint(col), a * (this.mastered ? 0.3 : 0.22) * k);
+    g.fillCircle(x, y, 28 * k);
   }
 
   /**
-   * Runes cupped in each hand, and the crown: an open grimoire floating above the head, its pages
-   * turning, with sigils lifting off the spread and orbiting.
-   *
-   * Rooted above the head so it never covers the face, and drawn over the sprite so the book reads
-   * instead of only its dark spine clearing the body.
+   * The wizard's hat, rooted at the crown (`y - 18`) so its brim stops above the eyes. The cone
+   * leans with the facing and its tip droops and sways; drawn over the sprite so the brim sits on
+   * the body rather than peeking around it.
    */
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    const tint = this.tint;
-    const corrupt = this.corruption > 0.4;
-    const pageCol = corrupt ? MAGIC.voidInk : MAGIC.parchment;
-    const inkCol = corrupt ? MAGIC.magenta : MAGIC.violet;
-
-    // ── Runes cupped over each hand ──
-    for (let i = 0; i < 2; i++) {
-      const hx = this.armX[i], hy = this.armY[i];
-      if (hx === 0 && hy === 0) continue;
-      sigilStarLayered(g, tint, hx, hy - 2, this.t * (i === 0 ? 2.2 : -2.2),
-        9 * this.intensity, 3.2, this.mastered ? MAGIC.gold : this.accent, alpha * 0.9, 5, false);
-    }
-
-    // ── The grimoire ──
-    const bob = Math.sin(this.t * 1.9) * 2.4;
-    const rootY = y - 20 + bob;
-    const tilt = Math.sin(this.t * 1.3) * 0.12;
-    this.drawBook(g, x, rootY, 15 * this.intensity, tilt, pageCol, inkCol, alpha);
-
-    // Sigils lifting off the open spread.
-    const halo = this.mastered ? 6 : 3;
-    for (let i = 0; i < halo; i++) {
-      const p = (this.t * 0.7 + i / halo) % 1;
-      const ox = ((i % 3) - 1) * 9;
-      sigilStarLayered(g, tint, x + ox + Math.sin(this.t * 2 + i) * 4, rootY - 6 - p * 20,
-        this.t * 4 + i, 5 * (1 - p * 0.5), 1.8,
-        this.mastered ? MAGIC.gold : this.accent, alpha * 0.9 * (1 - p), 5, false);
-    }
-
-    // ── Mastery: a second tome, and a rune halo turning round the head ──
-    if (this.mastered) {
-      this.drawBook(g, x - 20, rootY + 8, 9, -tilt * 1.6, pageCol, MAGIC.brass, alpha * 0.9);
-      for (let i = 0; i < 5; i++) {
-        const ang = this.t * 1.2 + (i / 5) * TAU;
-        sigilStarLayered(g, tint, x + Math.cos(ang) * 27, rootY - 4 + Math.sin(ang) * 9,
-          ang * 2, 6, 2.2, MAGIC.gold, alpha * 0.9, 6, false);
-      }
-    }
     void a;
-  }
+    const m = this.mastered;
+    const s = m ? 1.2 : 1.1;
+    const rootY = y - 16;
+    const lean = Math.cos(this.facing) * 2;
+    const sway = Math.sin(this.t * 1.8) * 1.5;
+    const bend = Math.cos(this.facing) >= 0 ? 1 : -1;
+    const P = (px: number, py: number) => new Phaser.Geom.Point(x + lean + px * s, rootY + py * s);
+    const bandCol = this.corruption > 0.4 ? MAGIC.magenta : m ? MAGIC.gold : this.accent;
 
-  /** One open book: two page spreads meeting at a spine, with a cover behind them. */
-  private drawBook(
-    g: Phaser.GameObjects.Graphics, x: number, y: number, size: number, tilt: number,
-    pageCol: number, inkCol: number, alpha: number,
-  ): void {
-    const at = frame(x, y, tilt);
-    // Cover, behind and slightly larger than the pages.
+    // Brim: a dark outline under the felt, so the hat separates from the violet body.
+    g.fillStyle(this.tint(MAGIC.ink), alpha);
+    g.fillEllipse(x + lean, rootY + 2 * s, 34 * s, 9 * s);
     g.fillStyle(this.tint(MAGIC.leather), alpha);
-    fillPts(g, [at(-size * 1.15, -size * 0.1), at(0, size * 0.28), at(size * 1.15, -size * 0.1), at(0, size * 0.62)]);
-    // The two page spreads, each curving up off the spine.
-    for (const side of [-1, 1]) {
-      const spread: Pt[] = [];
-      for (let i = 0; i <= 8; i++) {
-        const u = i / 8;
-        spread.push(at(side * u * size, -Math.sin(u * Math.PI * 0.8) * size * 0.36));
-      }
-      for (let i = 8; i >= 0; i--) {
-        const u = i / 8;
-        spread.push(at(side * u * size, size * 0.34 - Math.sin(u * Math.PI * 0.8) * size * 0.16));
-      }
-      g.fillStyle(this.tint(pageCol), alpha * 0.95);
-      fillPts(g, spread);
-      g.lineStyle(1, this.tint(MAGIC.brass), alpha * 0.7);
-      strokePts(g, spread, true);
-      // Lines of text, shortening toward the outer edge.
-      for (let l = 0; l < 3; l++) {
-        const ly = -size * 0.12 + l * size * 0.14;
-        g.lineStyle(1, this.tint(inkCol), alpha * 0.55);
-        strokePts(g, [at(side * size * 0.18, ly), at(side * size * (0.82 - l * 0.12), ly - size * 0.06)]);
-      }
+    g.fillEllipse(x + lean, rootY + 1.4 * s, 31 * s, 7 * s);
+
+    // Cone: kept squat with its tip flopped over sideways toward the facing, so the whole hat
+    // stays below the health bar instead of poking up behind it.
+    const tipX = bend * 12 + sway, tipY = -11 + Math.abs(sway) * 0.4;
+    g.fillStyle(this.tint(MAGIC.ink), alpha);
+    g.fillPoints([P(-11, 2), P(-7.5, -7), P(-2 + bend * 2, -13), P(tipX, tipY), P(bend * 4.5, -9.5), P(7.5, -6.5), P(11, 2)], true);
+    g.fillStyle(this.tint(MAGIC.leather), alpha);
+    g.fillPoints([P(-9.6, 1), P(-6.4, -6.6), P(-1.6 + bend * 2, -11.6), P(tipX - bend * 1.2, tipY + 0.6), P(bend * 4.2, -8.4), P(6.4, -6), P(9.6, 1)], true);
+    // A sheen down the lit side so the cone reads as rounded felt.
+    g.lineStyle(1.2, this.tint(MAGIC.orchid), alpha * 0.35);
+    g.lineBetween(x + lean - 6 * s, rootY - 1 * s, x + lean - 3 * s, rootY - 8.5 * s);
+
+    // Band round the base of the cone.
+    g.fillStyle(this.tint(bandCol), alpha * 0.95);
+    g.fillPoints([P(-9.4, -0.6), P(-8.2, -4), P(8.2, -4), P(9.4, -0.6)], true);
+
+    // Tip: a pale point that becomes a lit star in mastery.
+    const tp = P(tipX, tipY);
+    if (m) {
+      g.fillStyle(this.tint(MAGIC.gold), alpha * (0.25 + 0.12 * Math.sin(this.t * 4)));
+      g.fillCircle(tp.x, tp.y, 6);
+      g.fillStyle(this.tint(MAGIC.gold), alpha);
+      sigilStar(g, tp.x, tp.y, this.t * 2, 4.5, 1.6, 4);
+    } else {
+      g.fillStyle(this.tint(MAGIC.lilac), alpha * 0.9);
+      g.fillCircle(tp.x, tp.y, 1.6);
     }
-    // Spine and its clasp.
-    g.lineStyle(2, this.tint(MAGIC.brass), alpha);
-    strokePts(g, [at(0, -size * 0.06), at(0, size * 0.36)]);
-    g.fillStyle(this.tint(MAGIC.gold), alpha);
-    const clasp = at(0, size * 0.44);
-    g.fillCircle(clasp.x, clasp.y, size * 0.11);
   }
 }

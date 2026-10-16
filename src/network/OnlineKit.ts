@@ -23,7 +23,7 @@ export interface OnlineArenaApi {
   onTechMsg(msg: NetTechMsg): void;
   /** Silence upgrades: remote silence event (positions already un-mirrored). */
   onSilenceMsg(msg: NetSilenceMsg): void;
-  /** Illusion: the opponent's sim folded us into a shape — apply it to our own fighter. */
+  /** Illusion: blink, mask, grab and the Guise clone (positions already un-mirrored). */
   onIllusionMsg(msg: NetIllusionMsg): void;
   /** Psychic: either half of the foreknowledge relay — their queue, or their hands on ours. */
   onPsychicMsg(msg: NetPsychicMsg): void;
@@ -302,7 +302,13 @@ export class OnlineKit {
         * p.potionArmorMult * p.smokeIncomingMult * p.cardDamageTakenMult
         // Quantum instability is a self-granted *vulnerability* rather than armour, but it
         // travels for exactly the same reason: the peer's replica of us has no copy of it.
-        * p.quantumIncomingMult * 1000) / 1000,
+        * p.quantumIncomingMult
+        // Gold's Gilded Hide (Advance), likewise self-granted.
+        * p.fortuneIncomingMult
+        // Devotion's 50%-faith softening is armour on the priest, decided on the priest's sim.
+        * p.passionIncomingMult
+        // Sound's Smooth soul song, likewise self-granted.
+        * p.soundIncomingMult * 1000) / 1000,
       fr: p.flatDamageReduction,
       dc: p.hardDamageCap,
     });
@@ -484,12 +490,24 @@ export class OnlineKit {
         }
         break;
       case 'ill':
-        // Carries no coordinates — a fold happens to a body, not to a place.
-        this.api.onIllusionMsg(msg);
+        // The clone, the swap and a dagger's throw carry positions, which mirror like every
+        // other coordinate. The mask and the grab carry none.
+        if (msg.k === 'clone' || msg.k === 'retrick' || msg.k === 'blink') {
+          this.api.onIllusionMsg({ ...msg, x: this.mirrorX(msg.x) });
+        } else {
+          this.api.onIllusionMsg(msg);
+        }
         break;
       case 'psy':
-        // No coordinates either: a queue, a cancellation and two states of mind.
-        this.api.onPsychicMsg(msg);
+        // Piece moves, queen slides and the Utter Focus route carry positions, which mirror
+        // like every other coordinate. The queue and the focus heartbeat carry none.
+        if (msg.k === 'move' || msg.k === 'qmove') {
+          this.api.onPsychicMsg({ ...msg, x: this.mirrorX(msg.x) });
+        } else if (msg.k === 'route') {
+          this.api.onPsychicMsg({ ...msg, pts: msg.pts.map((v, i) => (i % 2 === 0 ? this.mirrorX(v) : v)) });
+        } else {
+          this.api.onPsychicMsg(msg);
+        }
         break;
       default:
         break;

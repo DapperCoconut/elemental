@@ -299,7 +299,7 @@ const gunpowder: ElementCodex = {
         + 'of one of your own overloaded muskets costs you 20 damage, at most once a second per musket. '
         + '16s cooldown.',
       cast:
-        'Bindable to E, R, F or Q, replacing that slot\'s base ability for the match. Fires from '
+        'Bindable to R, F or Q, replacing that slot\'s base ability for the match. Fires from '
         + 'every musket on the floor at once.',
       effects: [
         { tag: 'damage', label: 'The volley', detail: '15 damage per musket lying on the floor, all fired simultaneously after a 2-second aim. Three spent muskets is 45.' },

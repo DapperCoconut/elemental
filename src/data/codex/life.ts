@@ -177,7 +177,7 @@ const life: ElementCodex = {
         + 'Lily: heal 10% of all damage you deal. Nightcap: poison puddles bloom around you every second. '
         + 'Pitcher: your petals slow 15% for 2s. Cotton: +25% move speed. 15s cooldown, and with a '
         + 'five-plant cap on a 5s plant timer it costs 5 seconds of gardening.',
-      cast: 'Bindable to E, R, F or Q. Destroys the plant under the cursor, or the nearest one.',
+      cast: 'Bindable to R, F or Q. Destroys the plant under the cursor, or the nearest one.',
       effects: [
         { tag: 'buff', label: 'Sunflower', detail: '+2 petal shotgun damage for 20s.' },
         { tag: 'buff', label: 'Rose', detail: 'Enemies take 5 damage for every 20 damage you take, for 20s.' },

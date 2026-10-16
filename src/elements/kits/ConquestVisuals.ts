@@ -1028,9 +1028,10 @@ export class ConquestFx extends FxBase {
 
 const CONQUEST_AVATAR: AvatarSpec = {
   hands: [
-    { r: 12, color: CNQ.crimson, alpha: 0.2 },
-    { r: 7, color: CNQ.iron, alpha: 0.95 },
-    { r: 2.6, color: CNQ.gold, alpha: 0.95, ox: -1.6, oy: -1.6 },
+    { r: 10, color: CNQ.crimson, alpha: 0.22 },
+    { r: 6.8, color: CNQ.crimson, alpha: 0.98 },
+    { r: 3.4, color: CNQ.banner, alpha: 0.9 },
+    { r: 1.8, color: CNQ.parchment, alpha: 0.85, ox: -1.8, oy: -1.8 },
   ],
   eyeWhite: CNQ.parchment,
   eyePupil: 0x1a1206,
@@ -1038,26 +1039,27 @@ const CONQUEST_AVATAR: AvatarSpec = {
 };
 
 /**
- * The commander: a helmeted figure in a banner-coloured surcoat with a standard planted over
- * one shoulder. Two things on the rig are live readouts rather than decoration — the pennant
- * takes the colour of the town centre you are currently standing in (so you can see the
- * territory bonus without looking at the floor), and a laurel appears on the helm once you own
- * more than one town.
+ * The commander: a plain crimson orb (the baked `elem-conquest`) with a **standard planted on
+ * its crown** — the one accessory, and the one place the rig's live readouts live. The cloth
+ * takes Banner Bearer's chosen form colour if owned, else the colour of the town you are
+ * standing in (so the territory bonus reads without looking at the floor), else banner red.
+ * Owning more than one town adds a gold bar across the cloth: the empire has split.
+ *
+ * Mastery enhances the standard rather than adding to it: a taller pole, a bigger cloth with
+ * gilded edging, a glowing gold finial, gold eyes and wider gold hand coronas.
  */
 export class ConquestAvatar extends BaseAvatar {
   /** The colour of whichever territory the commander is standing on, or 0 for neutral ground. */
   private standing = 0;
-  /** How many town centers this commander has — drives the laurel. */
+  /** How many town centers this commander has — more than one gilds a bar across the cloth. */
   private towns = 1;
   /**
    * Banner Bearer's chosen standard, or 0 before the upgrade is owned. It outranks the standing
-   * colour on the shoulder banner specifically: once a player can *choose* a form, which form
-   * they are carrying matters more moment to moment than which of their own squares they happen
-   * to be on — and the crest on the helm still carries the territory read either way.
+   * colour on the cloth: once a player can *choose* a form, which form they are carrying
+   * matters more moment to moment than which of their own squares they happen to be on — the
+   * ground ring in `drawGlow` still carries the territory read either way.
    */
   private bannerColor = 0;
-  /** Conquest Mastery: a crown replaces the crest. Set from `applyMastery`, drawn in `drawExtras`. */
-  private crowned = false;
   private seed = Math.random() * 999;
 
   constructor(scene: Phaser.Scene, tint: ConquestColorFn, depth = 6) {
@@ -1069,10 +1071,10 @@ export class ConquestAvatar extends BaseAvatar {
   setBanner(color: number): void { this.bannerColor = color; }
 
   protected applyMastery(on: boolean): void {
-    this.crowned = on;
+    this.setEyeWhite(on ? CNQ.gold : CNQ.parchment);
     this.forEachHandLayer(0, (glow) => {
-      glow.setRadius(on ? 15 : 12);
-      glow.setAlpha(on ? 0.32 : 0.2);
+      glow.setRadius(on ? 13.5 : 10);
+      glow.setFillStyle(this.tint(on ? CNQ.gold : CNQ.crimson), on ? 0.3 : 0.22);
     });
   }
 
@@ -1082,111 +1084,63 @@ export class ConquestAvatar extends BaseAvatar {
 
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void alpha;
-    // A held-ground ring: solid while standing on your own land, faint off it.
-    const owned = this.standing !== 0;
-    g.fillStyle(this.tint(0x000000), a * 0.3);
-    g.fillEllipse(x, y + 14, 46, 16);
-    if (owned) {
-      g.fillStyle(this.tint(this.standing), a * 0.16);
-      g.fillEllipse(x, y + 13, 62 + Math.sin(this.t * 2.4) * 4, 22);
-      g.lineStyle(1.6, this.tint(this.standing), a * 0.4);
-      g.strokeEllipse(x, y + 13, 60, 21);
-    }
-    g.fillStyle(this.tint(CNQ.crimson), a * 0.12);
-    g.fillEllipse(x, y + 12, 50, 18);
-  }
-
-  /** A surcoat over mail, split down the middle in the commander's own colours. */
-  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    void a;
-    g.fillStyle(this.tint(CNQ.ironDark), alpha * 0.85);
-    g.fillRect(x - 11, y + 1, 22, 15);
-    g.fillStyle(this.tint(CNQ.crimson), alpha * 0.95);
-    g.fillRect(x - 9, y + 2, 18, 13);
-    g.fillStyle(this.tint(CNQ.gold), alpha * 0.9);
-    g.fillRect(x - 1.4, y + 2, 2.8, 13);
-    // Mail links catching the light along the shoulders.
-    g.fillStyle(this.tint(CNQ.iron), alpha * 0.5);
-    for (let i = 0; i < 5; i++) {
-      g.fillCircle(x - 9 + i * 4.5, y + 1.5, 1.3);
+    const k = this.intensity * (this.mastered ? 1.15 : 1);
+    g.fillStyle(this.tint(this.mastered ? CNQ.gold : CNQ.crimson), a * (this.mastered ? 0.24 : 0.2) * k);
+    g.fillCircle(x, y, 28 * k);
+    // A held-ground ring: only while standing on your own land — a readout, kept faint.
+    if (this.standing !== 0) {
+      g.lineStyle(1.4, this.tint(this.standing), a * 0.35);
+      g.strokeEllipse(x, y + 14, 54 + Math.sin(this.t * 2.4) * 3, 18);
     }
   }
 
+  /**
+   * The standard, planted at the crown's shoulder and flown out to the side — the health bar
+   * sits right over the crown, so a pole straight up would fly its cloth behind the bar.
+   */
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void a;
-    // ── The helm ──
-    const hy = y - 14;
-    g.fillStyle(this.tint(CNQ.iron), alpha * 0.95);
-    g.beginPath();
-    g.arc(x, hy + 3, 11, Math.PI, TAU, false);
-    g.closePath();
-    g.fillPath();
-    g.lineStyle(1.4, this.tint(CNQ.ironDark), alpha * 0.9);
-    g.lineBetween(x - 11, hy + 3, x + 11, hy + 3);
-    // Crest, in the standing colour when there is one — the territory readout on the character.
-    const crest = this.standing || CNQ.crimson;
-    g.fillStyle(this.tint(crest), alpha * 0.95);
-    for (let i = 0; i < 6; i++) {
-      const cx = x - 5 + i * 2;
-      const h = 7 - Math.abs(i - 2.5) * 1.4 + Math.sin(this.t * 4 + i) * 0.7;
-      g.fillTriangle(cx - 1.2, hy - 6, cx + 1.2, hy - 6, cx, hy - 6 - h);
-    }
-    // Conquest Mastery: a gold circlet over the crest. A commander whose treasury is a weapon
-    // has stopped being a general and started being a monarch, and the tell is on the head.
-    if (this.crowned) {
-      const cw = 13;
-      const cy = hy - 8;
-      g.fillStyle(this.tint(CNQ.gold), alpha);
-      g.fillRect(x - cw / 2, cy, cw, 3);
-      for (let i = 0; i < 4; i++) {
-        const px = x - cw / 2 + 1.6 + i * ((cw - 3.2) / 3);
-        const h = i === 1 || i === 2 ? 6.5 : 4.5;
-        g.fillTriangle(px - 1.6, cy, px + 1.6, cy, px, cy - h);
-      }
-      g.fillStyle(this.tint(CNQ.blood), alpha * 0.9);
-      g.fillCircle(x, cy + 1.5, 1.5);
-    }
-    // Laurel once the empire has split.
-    if (this.towns > 1) {
-      g.lineStyle(1.6, this.tint(CNQ.gold), alpha * 0.9);
-      for (let s = -1; s <= 1; s += 2) {
-        for (let i = 0; i < 4; i++) {
-          const ang = Math.PI + s * (0.5 + i * 0.34);
-          g.lineBetween(
-            x + Math.cos(ang) * 12, hy + 3 + Math.sin(ang) * 11,
-            x + Math.cos(ang) * 16, hy + 3 + Math.sin(ang) * 14,
-          );
-        }
-      }
-    }
+    const m = this.mastered;
+    const s = m ? 1.15 : 1;
+    const rootX = x + 7;
+    const rootY = y - 15;
+    const poleTop = y - 28;
+    const px = rootX + 3 + Math.cos(this.facing) * 1;
 
-    // ── The standard over the shoulder ──
-    const px = x + 15;
-    const poleTop = y - 44;
-    g.lineStyle(2.6, this.tint(CNQ.timberDark), alpha * 0.95);
-    g.lineBetween(px, y + 10, px, poleTop);
-    g.fillStyle(this.tint(CNQ.gold), alpha);
-    g.fillCircle(px, poleTop - 3, 3);
-    // The banner itself, rippling on its own phase.
-    const bw = 22, bh = 26;
+    // Pole, gilded in mastery.
+    g.lineStyle(2.4, this.tint(m ? CNQ.gold : CNQ.timber), alpha * 0.95);
+    g.lineBetween(rootX, rootY, px, poleTop);
+
+    // The cloth, rippling on its own phase, with a swallowtail notch at the fly.
+    const bw = 15 * s, bh = 10 * s;
+    const wave = (u: number) => Math.sin(this.t * 3 + u * 3 + this.seed) * 1.8 * u;
+    const top: Phaser.Geom.Point[] = [];
+    const bottom: Phaser.Geom.Point[] = [];
+    for (let i = 0; i <= 6; i++) {
+      const u = i / 6;
+      top.push(new Phaser.Geom.Point(px + bw * u, poleTop + 1 + wave(u)));
+      const notch = i === 6 ? -bh * 0.3 : 0;
+      bottom.push(new Phaser.Geom.Point(px + bw * u, poleTop + 1 + bh + notch + wave(u)));
+    }
     const cloth = this.bannerColor || this.standing || CNQ.banner;
     g.fillStyle(this.tint(cloth), alpha * 0.95);
-    g.beginPath();
-    g.moveTo(px, poleTop);
-    for (let i = 0; i <= 6; i++) {
-      const s = i / 6;
-      g.lineTo(px + bw * s, poleTop + Math.sin(this.t * 3 + s * 3 + this.seed) * 2.6 * s);
+    g.fillPoints([...top, ...bottom.reverse()], true);
+    if (m) {
+      g.lineStyle(1.3, this.tint(CNQ.gold), alpha * 0.95);
+      g.strokePoints([...top, ...bottom], true);
     }
-    for (let i = 6; i >= 0; i--) {
-      const s = i / 6;
-      const notch = i === 6 ? -bh * 0.22 : 0;
-      g.lineTo(px + bw * s, poleTop + bh + notch + Math.sin(this.t * 3 + s * 3 + this.seed) * 2.6 * s);
+    // More than one town: a gold bar across the cloth.
+    if (this.towns > 1) {
+      g.lineStyle(1.8, this.tint(CNQ.gold), alpha * 0.9);
+      g.lineBetween(px + 1, poleTop + 1 + bh * 0.5 + wave(0.1), px + bw * 0.7, poleTop + 1 + bh * 0.5 + wave(0.7));
     }
-    g.closePath();
-    g.fillPath();
-    // Device on the banner: a bar and a boss, so it reads as heraldry and not a rag.
-    g.fillStyle(this.tint(CNQ.gold), alpha * 0.85);
-    g.fillRect(px + 3, poleTop + bh * 0.4, bw * 0.7, 2.6);
-    g.fillCircle(px + bw * 0.45, poleTop + bh * 0.24, 3);
+
+    // Finial — glows once mastered.
+    if (m) {
+      g.fillStyle(this.tint(CNQ.gold), alpha * (0.25 + 0.1 * Math.sin(this.t * 4)));
+      g.fillCircle(px, poleTop - 2, 6);
+    }
+    g.fillStyle(this.tint(CNQ.gold), alpha);
+    g.fillCircle(px, poleTop - 2, m ? 3 : 2.4);
   }
 }

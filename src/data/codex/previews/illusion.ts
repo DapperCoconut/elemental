@@ -2,17 +2,17 @@ import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import {
-  ILL, IllusionAvatar, IllusionFx, ShapeKind,
-  fracture, gateway, harlequinMask, illusionDagger, phantomFigure, shapeBody, tesseract,
-  warpPane, weakCone,
+  ILL, IllusionAvatar, IllusionFx,
+  gateway, illusionDagger, phantomFigure, warpPane,
 } from '../../../elements/kits/IllusionVisuals';
 
 /**
  * Illusion's showcases.
  *
  * The element throws exactly one sprite — `proj-illusion-crack` — and paints everything else
- * per frame out of `IllusionVisuals`: the pane, the cube, the fold, the understudy, the seam
- * and the daggers are all repainted Graphics with no world object behind them. So these loops
+ * per frame out of `IllusionVisuals`: the pane, the understudy and the daggers are all
+ * repainted Graphics with no world object behind them. Guise's clone is the element's own body
+ * sprite and rig, staged twice. So these loops
  * fly the real bullet through `ctx.fly` and drive the kit's own painters with the kit's own
  * constants for the rest, which keeps one implementation of every shape rather than two.
  *
@@ -29,20 +29,15 @@ const VEIL_HALF_THICK = 13;
 const VEIL_DEFLECT = Math.PI / 6;
 const DUP_SPREAD = Math.PI / 7;
 const VEIL_STANDOFF = 78;
-const TESS_SPEED = 430;
-const TESS_SIZE = 21;
-const SHAPE_SIZE_MULT = 1.3;
-const BOGGLE_HALF = Math.PI / 12;
-const BOGGLE_REACH = 52;
-const BOGGLE_SPIN = 0.85;
+const GUISE_SIZE = 0.2;
+const GUISE_SELF_ALPHA = 0.38;
+const GUISE_PAYOUT = 0.2;
 const BLADE_COUNT = 10;
 const BLADE_SPEED = 660;
 const BLADE_SPREAD = Math.PI / 3;
 const BLADE_SIZE = 13;
 const PHANTOM_FUSE_MS = 1000;
 const PHANTOM_RADIUS = 100;
-
-const SHAPE_KINDS: ShapeKind[] = ['square', 'star', 'rhombus'];
 
 // ── Staging ───────────────────────────────────────────────────────────
 
@@ -444,132 +439,156 @@ export const relocateUpgraded: PreviewScript = {
   },
 };
 
-// ── F — Tesseract ─────────────────────────────────────────────────────
+// ── F — Guise ─────────────────────────────────────────────────────────
 
-/** A folded body, painted exactly as `paintAir` paints one: shape, seam, mask. */
-function foldedBody(
-  ctx: PreviewCtx, at: Mark, read: () => { kind: ShapeKind; spin: number; alpha: number },
-  weak?: () => number | null,
-): void {
-  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
-  ctx.onFrame((_dt, elapsed) => {
-    g.clear();
-    const s = read();
-    if (s.alpha <= 0.02) return;
-    shapeBody(g, ctx.tint, s.kind, at.x, at.y, 27 * SHAPE_SIZE_MULT, s.spin, s.alpha * 0.85);
-    const a = s.spin * 2.2;
-    fracture(g, ctx.tint, at.x + Math.cos(a) * 30, at.y + Math.sin(a) * 30,
-      at.x - Math.cos(a) * 30, at.y - Math.sin(a) * 30, 1.4, ILL.cyan, s.alpha * 0.4,
-      s.spin * 10, 1.2);
-    harlequinMask(g, ctx.tint, at.x, at.y - 2, 7, s.alpha * 0.55, ILL.cyan);
-    const w = weak?.();
-    if (w !== null && w !== undefined) {
-      weakCone(g, ctx.tint, at.x, at.y, w, BOGGLE_HALF, BOGGLE_REACH, s.alpha, elapsed / 1000);
-    }
-  });
-}
-
-/** The cube in flight, wake and all — the one thing in the game only its thrower can see. */
-function flyCube(ctx: PreviewCtx, from: Mark, ang: number, until: () => boolean): void {
-  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
-  const p = { x: from.x, y: from.y };
-  let spin = 0;
+/**
+ * One fighter as the arena draws it: the element's body sprite with the real rig standing on it.
+ * Guise needs two of them — the shrunken, ghosted real one and the full-size clone.
+ */
+function figure(
+  ctx: PreviewCtx, read: () => { x: number; y: number; alpha: number; size: number }, facing: () => number,
+): IllusionAvatar {
+  const body = ctx.scene.textures.exists('elem-illusion')
+    ? ctx.adopt(ctx.scene.add.image(ctx.cx, ctx.cy, 'elem-illusion').setDepth(5))
+    : null;
+  const av = ctx.capture(() => new IllusionAvatar(ctx.scene, ctx.tint));
+  ctx.adopt(av as unknown as Phaser.GameObjects.GameObject);
   ctx.onFrame((dt) => {
-    g.clear();
-    if (until()) return;
-    const s = dt / 1000;
-    p.x += Math.cos(ang) * TESS_SPEED * s;
-    p.y += Math.sin(ang) * TESS_SPEED * s;
-    spin += s * 3.4;
-    for (let i = 2; i >= 1; i--) {
-      tesseract(g, ctx.tint, p.x - Math.cos(ang) * i * 11, p.y - Math.sin(ang) * i * 11,
-        TESS_SIZE * (1 - i * 0.14), spin - i * 0.5, 0.24 / i);
-    }
-    tesseract(g, ctx.tint, p.x, p.y, TESS_SIZE, spin, 1);
+    const s = read();
+    body?.setPosition(s.x, s.y).setAlpha(s.alpha).setScale(s.size);
+    av.setRigScale(s.size);
+    av.setFacing(facing());
+    av.update(dt, s.x, s.y, s.alpha);
   });
+  return av;
 }
 
-export const tesseract4d: PreviewScript = {
-  duration: 5200,
-  scale: 0.9,
-  caption: 'F — 430 px/s, 20 on impact, then 8s folded at ×1.3 size. Only you ever see the cube',
-  run(ctx) {
-    const { fx } = stage(ctx, { noDummy: true });
-    const foe = { x: ctx.tx, y: ctx.ty };
-    let folded = false;
-    dummyAt(ctx, foe, { alpha: () => (folded ? 0 : 1) });
+/**
+ * The staging both Guise loops share: the illusionist shrinks and ghosts, a clone walks off on a
+ * looping path, and a dummy fires 20s at the clone, which stops every one and banks it.
+ */
+function guiseStage(ctx: PreviewCtx, retrick: boolean): void {
+  const fx = ctx.capture(() => new IllusionFx(ctx.scene, ctx.tint).setSink(ctx.sink));
+  const foe = { x: ctx.w * 0.84, y: ctx.cy - 10 };
+  dummyAt(ctx, foe);
 
-    const muzzle = { x: ctx.cx + 26, y: ctx.cy };
-    const flightMs = (Phaser.Math.Distance.Between(muzzle.x, muzzle.y, foe.x, foe.y) / TESS_SPEED) * 1000;
-    let landed = false;
-    ctx.at(400, () => {
-      fx.ring(ctx.cx, ctx.cy, 10, 54, ILL.cyan, 380);
-      tick(ctx, ctx.cx, ctx.cy - 46, '⬛ TESSERACT', ILL.cyan);
-      flyCube(ctx, muzzle, ctx.aim, () => landed);
+  const real = { x: ctx.w * 0.22, y: ctx.cy + 20, alpha: 1, size: 1 };
+  const clone = { x: real.x, y: real.y, alpha: 0, size: 1 };
+  let guised = false;
+  let stored = 0;
+  let t = 0;
+  figure(ctx, () => real, () => Math.atan2(foe.y - real.y, foe.x - real.x));
+  figure(ctx, () => clone, () => Math.atan2(foe.y - clone.y, foe.x - clone.x));
+
+  const bank = ctx.adopt(ctx.scene.add.text(ctx.w * 0.5, 12, '', {
+    fontSize: '12px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
+    color: hex(ILL.violet), stroke: '#08060f', strokeThickness: 3,
+  }).setOrigin(0.5, 0).setDepth(20));
+
+  // Enemy bolts, aimed at the clone because the clone is all there is to aim at.
+  const bolts: Array<{ x: number; y: number; vx: number; vy: number }> = [];
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(7));
+
+  ctx.at(500, () => {
+    guised = true;
+    stored = 0;
+    clone.alpha = 1;
+    real.alpha = GUISE_SELF_ALPHA;
+    real.size = GUISE_SIZE;
+    fx.ring(real.x, real.y, 8, 46, ILL.violet, 360);
+    fx.shards(real.x, real.y, 6, 26, ILL.magenta, 360, 6);
+    tick(ctx, real.x, real.y - 44, '🎭 GUISE', ILL.magenta);
+  });
+  for (let i = 0; i < 4; i++) {
+    ctx.at(900 + i * 520, () => {
+      if (!guised) return;
+      const ang = Math.atan2(clone.y - foe.y, clone.x - foe.x);
+      bolts.push({ x: foe.x, y: foe.y, vx: Math.cos(ang) * 520, vy: Math.sin(ang) * 520 });
     });
+  }
 
-    const fold = { kind: SHAPE_KINDS[0], spin: 0.4, alpha: 0 };
-    ctx.onFrame((dt) => { if (folded) fold.spin += (dt / 1000) * 1.3; });
-    foldedBody(ctx, foe, () => fold);
-
-    ctx.at(400 + flightMs, () => {
-      landed = true;
-      folded = true;
-      fold.alpha = 1;
-      fx.fold(foe.x, foe.y, ILL.cyan);
-      tick(ctx, foe.x, foe.y - 34, '20', ILL.crimson);
-      ctx.at(420, () => tick(ctx, foe.x, foe.y - 44, '⬛ SQUARE · ×1.3', ILL.cyan));
-    });
-  },
-};
-
-export const tesseractUpgraded: PreviewScript = {
-  duration: 8400,
-  scale: 0.9,
-  caption: 'Mind-Boggle — a 30° seam turning at 0.85 rad/s. Stand in it and everything you land is ×1.5',
-  run(ctx) {
-    const { fx, av } = stage(ctx, { noDummy: true });
-    const foe = { x: ctx.tx, y: ctx.ty };
-    let folded = false;
-    dummyAt(ctx, foe, { alpha: () => (folded ? 0 : 1) });
-
-    const fold = { kind: SHAPE_KINDS[1], spin: 0.2, alpha: 0 };
-    // The seam turns on its own clock, slower than the shape it is cut into.
-    let weakAng = Math.PI * 0.75;
-    ctx.onFrame((dt) => {
-      if (!folded) return;
-      fold.spin += (dt / 1000) * 1.3;
-      weakAng += (dt / 1000) * BOGGLE_SPIN;
-    });
-    foldedBody(ctx, foe, () => fold, () => (folded ? weakAng : null));
-
-    ctx.at(300, () => {
-      folded = true;
-      fold.alpha = 1;
-      fx.fold(foe.x, foe.y, ILL.cyan);
-      tick(ctx, foe.x, foe.y - 40, '🎯 MIND-BOGGLE', ILL.crimson);
-    });
-
-    // The test is the angle from the folded body to the attacker, at the moment damage lands.
-    const muzzle = { x: ctx.cx + 26, y: ctx.cy };
-    for (let i = 0; i < 6; i++) {
-      ctx.at(1300 + i * 1150, () => {
-        av.play('punch', ctx.aim);
+  const end = (swap: boolean): void => {
+    if (!guised) return;
+    guised = false;
+    const pay = Math.round(stored * GUISE_PAYOUT);
+    if (swap) {
+      // Re-Trick: arrive in the clone's place. Nothing marks it but your own blink-in.
+      fx.blinkIn(clone.x, clone.y, ILL.magenta);
+      real.x = clone.x;
+      real.y = clone.y;
+      tick(ctx, real.x, real.y - 44, '🃏 RE-TRICK · +25%', ILL.crimson);
+    } else {
+      fx.shards(clone.x, clone.y, 10, 34, ILL.violet, 460, 8);
+      fx.blinkOut(clone.x, clone.y, ILL.violet);
+    }
+    fx.crackBeam(clone.x, clone.y, foe.x, foe.y, ILL.violet);
+    tick(ctx, foe.x, foe.y - 34, `${pay}`, ILL.violet);
+    clone.alpha = 0;
+    real.alpha = 1;
+    real.size = 1;
+  };
+  ctx.at(retrick ? 2900 : 3500, () => end(retrick));
+  if (retrick) {
+    // The 25% on the next few bullets out of the clone's old spot.
+    for (let i = 0; i < 3; i++) {
+      ctx.at(3500 + i * 600, () => {
         ctx.fly({
-          texture: 'proj-illusion-crack', from: muzzle, to: foe, speed: SHOT_SPEED,
-          onHit: () => {
-            const toSrc = Math.atan2(ctx.cy - foe.y, ctx.cx - foe.x);
-            const inside = Math.abs(Phaser.Math.Angle.Wrap(toSrc - weakAng)) <= BOGGLE_HALF;
-            fx.shards(foe.x, foe.y, 5, 22, ILL.crimson, 380, 10);
-            tick(ctx, foe.x, foe.y - 34, inside ? '30  ×1.5' : '20', inside ? ILL.spark : ILL.crimson);
-          },
+          texture: 'proj-illusion-crack', from: { x: real.x + 20, y: real.y }, to: foe, speed: SHOT_SPEED,
+          onHit: () => tick(ctx, foe.x, foe.y - 34, '25', ILL.spark),
         });
       });
     }
-  },
+  }
+
+  ctx.onFrame((dt) => {
+    const sec = dt / 1000;
+    t += sec;
+    if (guised) {
+      // The clone walks a slow figure-eight, the way a player's cursor wanders.
+      clone.x += (ctx.w * 0.48 + Math.sin(t * 1.4) * 70 - clone.x) * Math.min(1, sec * 3);
+      clone.y += (ctx.cy + Math.sin(t * 2.8) * 40 - clone.y) * Math.min(1, sec * 3);
+      // The real one slips off the other way, quick and small.
+      real.y += (ctx.cy + 70 - real.y) * Math.min(1, sec * 2);
+    } else {
+      clone.x = real.x;
+      clone.y = real.y;
+    }
+    g.clear();
+    for (let i = bolts.length - 1; i >= 0; i--) {
+      const b = bolts[i];
+      b.x += b.vx * sec;
+      b.y += b.vy * sec;
+      g.fillStyle(0xff9a3c, 1);
+      g.fillCircle(b.x, b.y, 5);
+      g.fillStyle(0xffe2a8, 1);
+      g.fillCircle(b.x, b.y, 2.4);
+      const hit = guised && Phaser.Math.Distance.Between(b.x, b.y, clone.x, clone.y) < 22;
+      if (hit) {
+        stored += 20;
+        fx.shards(b.x, b.y, 4, 16, ILL.violet, 300, 6);
+        tick(ctx, clone.x, clone.y - 34, 'BANKED 20', ILL.violet);
+      }
+      if (hit || b.x < -20 || b.x > ctx.w + 20) bolts.splice(i, 1);
+    }
+    bank.setText(guised ? `🎭  clone has banked ${stored}` : '');
+  });
+}
+
+export const guise: PreviewScript = {
+  duration: 5200,
+  scale: 0.9,
+  bodyTexture: '',
+  caption: 'F — 80% smaller, 35% faster and invisible for 3s. The clone takes the fire, and pays back 20% of it when it fades',
+  run(ctx) { guiseStage(ctx, false); },
 };
 
-// ── Q — Illusion Dance ────────────────────────────────────────────────
+export const guiseUpgraded: PreviewScript = {
+  duration: 6000,
+  scale: 0.9,
+  bodyTexture: '',
+  caption: 'Re-Trick — press F again to swap into the clone. +25% damage for 10s, and nothing on their screen shows the swap',
+  run(ctx) { guiseStage(ctx, true); },
+};
 
 export const dance: PreviewScript = {
   duration: 9600,
@@ -877,37 +896,10 @@ export const neverQuiteThere: PreviewScript = {
   },
 };
 
-export const folded: PreviewScript = {
-  duration: 7200,
-  scale: 0.95,
-  caption: 'Square, star or rhombus — one of the three at random, ×1.3 size and hitbox, for 8s',
-  run(ctx) {
-    const fx = ctx.capture(() => new IllusionFx(ctx.scene, ctx.tint).setSink(ctx.sink));
-    const foe = { x: ctx.w * 0.62, y: ctx.cy };
-    let folded2 = false;
-    dummyAt(ctx, foe, { alpha: () => (folded2 ? 0 : 1) });
-    // The body they had before, held at its real size beside the fold, so "30% more to hit"
-    // is something the eye can check rather than a number to take on trust.
-    const ghost = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
-    ctx.onFrame(() => {
-      ghost.clear();
-      if (!folded2) return;
-      ghost.lineStyle(1.2, ctx.tint(ILL.ghost), 0.4);
-      ghost.strokeCircle(foe.x, foe.y, 27);
-    });
-
-    const fold = { kind: SHAPE_KINDS[0], spin: 0.3, alpha: 0 };
-    ctx.onFrame((dt) => { if (folded2) fold.spin += (dt / 1000) * 1.3; });
-    foldedBody(ctx, foe, () => fold);
-
-    for (let i = 0; i < 3; i++) {
-      ctx.at(400 + i * 2200, () => {
-        folded2 = true;
-        fold.kind = SHAPE_KINDS[i];
-        fold.alpha = 1;
-        fx.fold(foe.x, foe.y, ILL.cyan);
-        tick(ctx, foe.x, foe.y - 46, `⬛ ${SHAPE_KINDS[i].toUpperCase()}`, ILL.cyan);
-      });
-    }
-  },
+export const theClone: PreviewScript = {
+  duration: 5200,
+  scale: 0.9,
+  bodyTexture: '',
+  caption: 'Full size, its own rig, a live health bar — and it cannot die. It only remembers',
+  run(ctx) { guiseStage(ctx, false); },
 };

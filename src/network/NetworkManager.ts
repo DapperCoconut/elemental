@@ -4,7 +4,7 @@ import type { NetStatusEntry } from './NetStatusSync';
 import type { NetConquestSnap } from '../elements/kits/ConquestKit';
 
 /** Bump when the wire protocol or gameplay sync changes incompatibly. */
-export const NET_PROTOCOL_VERSION = 28;
+export const NET_PROTOCOL_VERSION = 33;
 
 /** Lobby selection payload exchanged while both players pick loadouts. */
 export interface NetSelection {
@@ -64,16 +64,16 @@ export type NetSilenceMsg =
   | { t: 'sil'; k: 'puppet-move'; vx: number; vy: number; fa: number };
 
 /**
- * Illusion events the cast relay can't carry.
- *
- * A Tesseract is deliberately invisible on the victim's screen, so their sim's replay of the
- * cast produces nothing at all — there is no local copy of the cube to hit them. The fold is
- * therefore resolved entirely on the attacker's sim and shipped over as a finished result.
+ * Illusion events the cast relay can't carry — things only one sim knows (where the cursor is,
+ * what is under a mask) or positions that belong to the other side's state stream.
  */
 export type NetIllusionMsg =
-  // Attacker → victim: you have been folded into this shape for this long. The victim wears
-  // it (bigger body, bigger hitbox) and spends the duration looking at an inverted screen.
-  | { t: 'ill'; k: 'shape'; s: 'square' | 'star' | 'rhombus'; ms: number }
+  // Illusionist → victim, 20 Hz while a Guise is up: the clone is here. The cast relay already
+  // shrank and hid the illusionist on the victim's sim; only the illusionist knows their cursor.
+  | { t: 'ill'; k: 'clone'; x: number; y: number }
+  // Illusionist → victim: F+ Re-Trick — I swapped into the clone, which stood here. The victim
+  // ends the Guise silently, so the body they were chasing simply becomes real.
+  | { t: 'ill'; k: 'retrick'; x: number; y: number }
   // Attacker → victim: a Blade Dance dagger found you, and you are now over there. Sent
   // rather than resolved locally because a replica's position belongs to the peer's state
   // stream — moving our copy would simply be undone by their next packet.
@@ -96,27 +96,21 @@ export type NetIllusionMsg =
  * psychic to draw. Everything else here is the ordinary attacker → victim direction.
  */
 export type NetPsychicMsg =
-  // Victim → psychic (≈6 Hz, on change): the keys sitting in my delayed-cast queue, next last.
-  | { t: 'psy'; k: 'queue'; keys: string[] }
-  // Psychic → victim: Mind Control took the front of that queue. Drop it and pay for it again.
-  | { t: 'psy'; k: 'cancel' }
-  // Psychic → victim: Migraine. Scatter your own aim for `ms`.
-  | { t: 'psy'; k: 'scatter'; ms: number }
-  // Psychic → victim: Coma. Held still and disarmed for `ms`. The half-damage half of the
-  // ability is resolved on the psychic's own replica, so it is deliberately not sent.
-  | { t: 'psy'; k: 'coma'; ms: number }
-  // Psychic → victim: Whip Snap (Click+) caught the end of your route. Put yourself there.
-  // Sent rather than applied because a replica's position is streamed from the machine that
-  // owns it — moving the copy here would be undone by the next position packet.
-  | { t: 'psy'; k: 'snap'; x: number; y: number }
+  // Victim → psychic (≈6 Hz, on change + heartbeat): the abilities sitting in my delayed-cast
+  // queue, soonest first, with how many ms each has left.
+  | { t: 'psy'; k: 'queue'; ids: string[]; ms: number[] }
+  // Psychic → victim: one of my pieces moved. Spawns ride the ordinary cast relay, so both sims
+  // number each owner's pieces in the same order and `id` is that serial.
+  | { t: 'psy'; k: 'move'; id: number; x: number; y: number }
+  // Psychic → victim: as the queen, I slid to here. My body is streamed; this is so the slide's
+  // hits and landing are drawn on your side too.
+  | { t: 'psy'; k: 'qmove'; x: number; y: number }
   // Psychic → victim (mastery, ≈2 Hz while it runs): Utter Focus. `ms` is how much of the window
-  // is *left* rather than how long it was, because every hit the psychic takes shortens it —
-  // a heartbeat carrying the remainder is self-correcting where a one-shot duration would drift.
+  // is *left* rather than how long it was, because every hit the psychic takes shortens it.
   // 0 ends it. The victim's own sim is what actually holds their casts and their movement keys.
   | { t: 'psy'; k: 'utter'; ms: number }
   // Victim → psychic (≈6 Hz while focused): where my buffered movement keys are actually going
-  // to take me, as a flat [x0,y0,x1,y1,…]. Only sent under Utter Focus — outside it a replica's
-  // route is unknowable from over here and falls back to dead reckoning.
+  // to take me, as a flat [x0,y0,x1,y1,…].
   | { t: 'psy'; k: 'route'; pts: number[] };
 
 /**

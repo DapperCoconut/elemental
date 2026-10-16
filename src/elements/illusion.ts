@@ -7,7 +7,7 @@ import { Ability, CastContext } from './Ability';
  * Every other element asks where the enemy is. Illusion asks where the enemy *thinks* things
  * are, and then spends its whole kit making that answer wrong: a bullet that pays out even
  * when it misses, a pane of space that bends whatever crosses it, two different ways of not
- * being where you were a moment ago, and a projectile the person it is aimed at cannot see.
+ * being where you were a moment ago, and a clone that draws the fire while you are not there at all.
  *
  * The consequence is an element with almost no sustained pressure and enormous positional
  * control — it wins by making the opponent's aim, not their health bar, the thing that runs out.
@@ -42,13 +42,13 @@ const relocate: Ability = {
   cast(ctx: CastContext) { ctx.illusionRelocate(); },
 };
 
-const tesseract: Ability = {
-  id: 'illusion-tesseract',
-  name: 'Tesseract',
-  description: 'Throw a 4D cube that only you can see. 20 damage, then it folds them into a square, star or rhombus for 8s — 30% bigger, and 30% easier to hit.',
+const guise: Ability = {
+  id: 'illusion-guise',
+  name: 'Guise',
+  description: 'For 3s you are 80% smaller, 35% faster and invisible, and a full-size clone follows your cursor — bots go after it automatically. It cannot die, but it remembers every hit, and when it fades 20% of that is dealt to the enemy. While it is out everything you throw is invisible too, Veils included.',
   displayKey: 'F',
   cooldown: 12000,
-  cast(ctx: CastContext) { ctx.illusionTesseract(ctx.targetX, ctx.targetY); },
+  cast(ctx: CastContext) { ctx.illusionGuise(ctx.targetX, ctx.targetY); },
 };
 
 const dance: Ability = {
@@ -66,5 +66,5 @@ export const illusionElement: Element = {
   name: 'Illusion',
   color: 0xb45cff,
   emoji: '🎭',
-  abilities: [crackShot, veil, relocate, tesseract, dance],
+  abilities: [crackShot, veil, relocate, guise, dance],
 };

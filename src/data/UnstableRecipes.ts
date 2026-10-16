@@ -44,7 +44,7 @@ export interface UnstableRecipe {
 export const UNSTABLE_RECIPES: UnstableRecipe[] = [
   { bases: ['fire', 'water'],  result: 'radiation', resultName: 'Radiation', resultEmoji: '☢️', resultColor: 0x7cff3d, echoOf: 'oil',      echoName: 'Oil',      echoEmoji: '🛢️' },
   { bases: ['fire', 'life'],   result: 'depths',    resultName: 'Depths',    resultEmoji: '🐟', resultColor: 0x0e8f9c, echoOf: 'hunt',     echoName: 'Hunt',     echoEmoji: '🐺' },
-  { bases: ['fire', 'air'],    result: 'psychic',   resultName: 'Psychic',   resultEmoji: '👁️', resultColor: 0x9b4dff, echoOf: 'shadow',   echoName: 'Shadow',   echoEmoji: '🌑' },
+  { bases: ['fire', 'air'],    result: 'psychic',   resultName: 'Psychic',   resultEmoji: '👁️', resultColor: 0xe8e4d8, echoOf: 'shadow',   echoName: 'Shadow',   echoEmoji: '🌑' },
   { bases: ['fire', 'earth'],  result: 'ruin',      resultName: 'Ruin',      resultEmoji: '🧱', resultColor: 0xc4392c, echoOf: 'creation', echoName: 'Creation', echoEmoji: '⚒️' },
   { bases: ['water', 'life'],  result: 'cloth',    resultName: 'Cloth',    resultEmoji: '🧣', resultColor: 0xd1435c, echoOf: 'growth',   echoName: 'Growth',   echoEmoji: '🦠' },
   { bases: ['water', 'air'],   result: 'magma',     resultName: 'Magma',     resultEmoji: '🌋', resultColor: 0xff5a1e, echoOf: 'ice',      echoName: 'Ice',      echoEmoji: '🧊' },

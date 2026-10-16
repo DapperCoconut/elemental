@@ -10,9 +10,9 @@ import { AvatarSpec, BaseAvatar, ColorFn, FxBase, TAU, easeOut } from './Element
  * dull red mouth; a volcano at full pressure is a lattice of glowing fissures with barely any
  * rock left between them. Nothing here uses a bar to say that — the crust says it.
  *
- * Two palettes live in this file rather than one. Magma proper runs orange-through-white, and
- * the hatched dragon runs violet-through-lilac, because Dragon Kin has to be legible across
- * the arena as "that is no longer the same character". They deliberately share no hues.
+ * One palette, orange-through-white, with a second, smaller one for the pirate's kit: the dark
+ * felt and crimson of the coat and sash, and the cursed red of Molten Mutiny's pendant, which
+ * is the only red in the file and has to read as *not lava* from across the arena.
  */
 
 export type MagmaColorFn = ColorFn;
@@ -33,12 +33,19 @@ export const MAG = {
   ember: 0xff7733,
   scorch: 0x120a0b,
 
-  /** Dragon Kin. Nothing above is allowed near these five. */
-  scale: 0x8a3fd6,
-  scaleDeep: 0x4a1d80,
-  scaleLit: 0xc07dff,
-  membrane: 0x63289e,
-  breath: 0xd8a0ff,
+  /**
+   * The pirate's kit. Magma walks as a crusted buccaneer in a tricorn and sash, and sails a
+   * ship made of the same rock — these are for the rig, the ship and the spirits, never for
+   * a lava effect.
+   */
+  coat: 0x241316,
+  coatLit: 0x3b1f22,
+  sash: 0xb8261f,
+  bone: 0xe6dac4,
+
+  /** Molten Mutiny's pendant. A cursed, bloody red that is deliberately not a lava colour. */
+  pendant: 0xc4101c,
+  pendantLit: 0xff3b4a,
 };
 
 // ── Primitives ────────────────────────────────────────────────────────────
@@ -244,81 +251,6 @@ export function volcanoCone(
 }
 
 /**
- * The dragon egg. Same pressure vessel as the volcano, but it answers by *cracking* rather
- * than erupting — the shell fractures further with every hit and what shows through the gaps
- * is already dragon-coloured, so the payoff is telegraphed the whole way up.
- */
-export function dragonEgg(
-  g: Phaser.GameObjects.Graphics,
-  tint: MagmaColorFn,
-  x: number, y: number, r: number, p: number, t: number, seed: number,
-): void {
-  // Heartbeat — faster and stronger the fuller it is. Everything below rides on it.
-  const beat = 1 + Math.sin(t * (2 + p * 9)) * (0.02 + p * 0.05);
-  const rw = r * 0.78 * beat;
-  const rh = r * beat;
-
-  g.fillStyle(tint(MAG.scale), 0.08 + p * 0.22);
-  g.fillEllipse(x, y, rw * 3.2, rh * 2.6);
-  g.fillStyle(tint(MAG.scorch), 0.45);
-  g.fillEllipse(x, y + rh * 0.9, rw * 2.3, rh * 0.5);
-
-  // Shell — an ovoid, narrower at the top.
-  const steps = 22;
-  const pts: Phaser.Geom.Point[] = [];
-  for (let i = 0; i < steps; i++) {
-    const a = (i / steps) * TAU - Math.PI / 2;
-    const taper = 0.78 + 0.22 * (1 + Math.sin(a)) * 0.5;
-    pts.push(new Phaser.Geom.Point(x + Math.cos(a) * rw * taper, y + Math.sin(a) * rh));
-  }
-  // What is inside, painted first so every crack below simply fails to cover it.
-  g.fillStyle(tint(MAG.scaleLit), 0.85 + p * 0.15);
-  g.fillPoints(pts, true);
-  g.fillStyle(tint(MAG.crust), 1);
-  g.fillPoints(pts.map((pt) => new Phaser.Geom.Point(x + (pt.x - x) * 0.97, y + (pt.y - y) * 0.97)), true);
-
-  // Shell plating: rows of overlapping scutes.
-  for (let row = 0; row < 4; row++) {
-    const ry = y - rh * 0.66 + row * rh * 0.44;
-    const width = rw * (0.5 + Math.sin((row + 0.6) / 4 * Math.PI) * 0.62);
-    const n = 3 + row;
-    for (let i = 0; i < n; i++) {
-      const px = x - width + (i / (n - 1)) * width * 2;
-      g.fillStyle(tint(row % 2 ? MAG.crustDeep : MAG.basalt), 0.9);
-      g.fillEllipse(px, ry, rw * 0.34, rh * 0.2);
-    }
-  }
-
-  // Cracks. Each is a fixed lightning path from the crown; `p` decides how far down it has run.
-  const cracks = 6;
-  for (let i = 0; i < cracks; i++) {
-    const at = 0.06 + (i / cracks) * 0.66;
-    if (p < at) continue;
-    const grown = Math.min(1, (p - at) / 0.26);
-    let px = x + (noise(seed, i) - 0.5) * rw * 0.5;
-    let py = y - rh * 0.85;
-    const segs = 6;
-    for (let s = 1; s <= segs; s++) {
-      const f = (s / segs) * grown;
-      const nx = px + (noise(seed, i * 11 + s) - 0.5) * rw * 0.55;
-      const ny = y - rh * 0.85 + rh * 1.7 * f;
-      g.lineStyle(2.6 - f, tint(MAG.scaleDeep), 0.9 * grown);
-      g.lineBetween(px, py, nx, ny);
-      g.lineStyle(1.2, tint(MAG.scaleLit), grown * (0.55 + 0.45 * Math.sin(t * 7 + i * 2)));
-      g.lineBetween(px, py, nx, ny);
-      px = nx;
-      py = ny;
-    }
-  }
-
-  // A cold highlight so the shell reads as a hard surface.
-  g.lineStyle(1.4, tint(MAG.ash), 0.35);
-  g.beginPath();
-  g.arc(x, y, rw * 0.82, -2.5, -1.5);
-  g.strokePath();
-}
-
-/**
  * The pressure readout: a horizontal thermometer. Bulb on the left, graduated tube running
  * right, mercury in lava. Drawn in world space above whatever it belongs to.
  */
@@ -494,8 +426,8 @@ export function magmaFist(
 }
 
 /**
- * A cone of fire, drawn as tongues rather than a wedge. Used for Dragon Breath — `hot` and
- * `cool` are passed in so the same shape serves the orange and the violet version.
+ * A cone of fire, drawn as tongues rather than a wedge. Blunder-Boil's blast — `hot` and
+ * `cool` are passed in so the same shape serves a plain cone and a pressurised one.
  */
 export function breathCone(
   g: Phaser.GameObjects.Graphics,
@@ -572,44 +504,6 @@ export function mortarShell(
     g.fillStyle(tint(i < 2 ? MAG.lava : MAG.smoke), alpha * (0.5 - i * 0.1));
     g.fillCircle(p.x, p.y, 4.5 - i * 0.7);
   }
-}
-
-/**
- * Full Draconic's scale armour (Q+): overlapping plates clamped over the dragon, turning
- * slowly. Distinct from the hatched glow underneath it, because four seconds of immunity has
- * to be readable from across the arena.
- */
-export function scaleArmor(
-  g: Phaser.GameObjects.Graphics,
-  tint: MagmaColorFn,
-  x: number, y: number, t: number, alpha = 1,
-): void {
-  const r = 30;
-  g.fillStyle(tint(MAG.membrane), alpha * 0.2);
-  g.fillCircle(x, y, r + 4);
-  // Two rings of plates, counter-turning, each plate a rounded wedge pointing outward.
-  for (let ring = 0; ring < 2; ring++) {
-    const n = 9 + ring * 3;
-    const rr = r * (0.68 + ring * 0.32);
-    const spin = t * (ring === 0 ? 0.9 : -0.6);
-    for (let i = 0; i < n; i++) {
-      const a = spin + (i / n) * Math.PI * 2;
-      const cx = x + Math.cos(a) * rr;
-      const cy = y + Math.sin(a) * rr * 0.86;
-      const w = 7 - ring * 1.4;
-      g.fillStyle(tint(ring === 0 ? MAG.scaleDeep : MAG.scale), alpha * 0.9);
-      g.fillPoints([
-        new Phaser.Geom.Point(cx + Math.cos(a) * w, cy + Math.sin(a) * w),
-        new Phaser.Geom.Point(cx + Math.cos(a + 2.2) * w * 0.8, cy + Math.sin(a + 2.2) * w * 0.8),
-        new Phaser.Geom.Point(cx + Math.cos(a - 2.2) * w * 0.8, cy + Math.sin(a - 2.2) * w * 0.8),
-      ], true);
-      g.fillStyle(tint(MAG.scaleLit), alpha * 0.5);
-      g.fillCircle(cx + Math.cos(a) * w * 0.35, cy + Math.sin(a) * w * 0.35, 1.4);
-    }
-  }
-  // A bright rim that pulses, so the four seconds are visibly counting.
-  g.lineStyle(2.2, tint(MAG.scaleLit), alpha * (0.5 + 0.35 * Math.sin(t * 6)));
-  g.strokeCircle(x, y, r + 4);
 }
 
 /**
@@ -717,6 +611,288 @@ export function magmaSaw(
     g.lineStyle(2 + warn * 2, tint(MAG.magma), alpha * (0.4 + 0.6 * Math.abs(Math.sin(t * 26))));
     g.strokeCircle(ox, oy, 34 - warn * 16);
   }
+}
+
+/**
+ * The flaming pirate ship Molten Mutiny awakens. Drawn in two passes so the kit can put the
+ * hull *under* the fighters (the captain stands on the deck) and the masts, sails and flag
+ * *over* them: `layer` picks which. Everything is laid out in hull coordinates — `u` forward
+ * along `heading`, `v` to starboard — and the ship is cooled rock like everything else the
+ * element owns: basalt planks with the melt in the seams, a lava wake, and sails that are
+ * nothing but fire hung off a yard. `hp` (0–1) is how much of the hull is left; as it falls
+ * the seams open and the glow comes through harder.
+ */
+export function pirateShip(
+  g: Phaser.GameObjects.Graphics,
+  tint: MagmaColorFn,
+  x: number, y: number, heading: number, t: number, hp: number, seed: number,
+  layer: 'hull' | 'rig', alpha = 1,
+): void {
+  const c = Math.cos(heading), s = Math.sin(heading);
+  const at = (u: number, v: number) => new Phaser.Geom.Point(x + c * u - s * v, y + s * u + c * v);
+  const damage = 1 - Phaser.Math.Clamp(hp, 0, 1);
+
+  if (layer === 'hull') {
+    // Lava wake, trailing off the stern — the ship is afloat on what it is made of.
+    for (let i = 0; i < 5; i++) {
+      const p = at(-50 - i * 11, Math.sin(t * 3 + i) * (3 + i));
+      g.fillStyle(tint(i < 2 ? MAG.lava : MAG.magma), alpha * (0.34 - i * 0.06));
+      g.fillEllipse(p.x, p.y, 20 - i * 2.4, 10 - i);
+    }
+    // Shadow under the keel.
+    g.fillStyle(tint(MAG.scorch), alpha * 0.45);
+    const sh = at(-2, 4);
+    g.fillEllipse(sh.x, sh.y, 96, 40);
+
+    // Hull outline: a long shallow boat, pointed at the bow, square at the stern.
+    const hull = [
+      at(-46, -12), at(-47, 0), at(-46, 12), at(-24, 17), at(18, 15), at(40, 8), at(50, 0),
+      at(40, -8), at(18, -15), at(-24, -17),
+    ];
+    g.fillStyle(tint(MAG.basalt), alpha);
+    g.fillPoints(hull, true);
+    // Deck, set in a little from the gunwale.
+    const deck = hull.map((p) => new Phaser.Geom.Point(x + (p.x - x) * 0.86, y + (p.y - y) * 0.86));
+    g.fillStyle(tint(MAG.crustDeep), alpha);
+    g.fillPoints(deck, true);
+    g.fillStyle(tint(MAG.crust), alpha * 0.55);
+    g.fillPoints(deck.map((p) => new Phaser.Geom.Point(x + (p.x - x) * 0.7, y + (p.y - y) * 0.7)), true);
+
+    // Planking: seams across the deck, lit from below. More of them glow as the hull fails.
+    for (let i = 0; i < 9; i++) {
+      const u = -36 + i * 9;
+      const half = 11 * (1 - Math.abs(u + 2) / 60);
+      const open = noise(seed, i) < 0.35 + damage * 0.6;
+      const a = at(u, -half), b = at(u, half);
+      g.lineStyle(1.1, tint(open ? MAG.magma : MAG.smoke), alpha * (open ? 0.55 + 0.3 * Math.sin(t * 4 + i) : 0.6));
+      g.lineBetween(a.x, a.y, b.x, b.y);
+    }
+    // The keel line, molten the whole way — where the ship meets the lava it floats on.
+    g.lineStyle(2, tint(MAG.magma), alpha * (0.5 + damage * 0.4));
+    g.strokePoints(hull, true);
+
+    // Gun ports: three a side, brass-ringed, bores dark until the broadside lights them.
+    for (let i = 0; i < 3; i++) {
+      for (const side of [-1, 1]) {
+        const p = at(-22 + i * 18, side * 13.5);
+        g.fillStyle(tint(MAG.basalt), alpha);
+        g.fillCircle(p.x, p.y, 3.4);
+        g.lineStyle(1.3, tint(MAG.gold), alpha * 0.95);
+        g.strokeCircle(p.x, p.y, 3.4);
+        g.fillStyle(tint(MAG.ember), alpha * (0.3 + 0.3 * Math.sin(t * 5 + i + side)));
+        g.fillCircle(p.x, p.y, 1.4);
+      }
+    }
+    // Stern castle and the bowsprit.
+    g.fillStyle(tint(MAG.coat), alpha);
+    g.fillPoints([at(-44, -9), at(-30, -11), at(-30, 11), at(-44, 9)], true);
+    g.lineStyle(1, tint(MAG.gold), alpha * 0.7);
+    g.lineBetween(at(-44, -9).x, at(-44, -9).y, at(-30, -11).x, at(-30, -11).y);
+    g.lineBetween(at(-44, 9).x, at(-44, 9).y, at(-30, 11).x, at(-30, 11).y);
+    g.lineStyle(2.4, tint(MAG.crustDeep), alpha);
+    const b0 = at(46, 0), b1 = at(66, -3);
+    g.lineBetween(b0.x, b0.y, b1.x, b1.y);
+    g.fillStyle(tint(MAG.lava), alpha * 0.9);
+    g.fillCircle(b1.x, b1.y, 2.2);
+    return;
+  }
+
+  // ── Rigging: masts fore and aft, clear of the deck's centre where the captain stands ──
+  const masts: Array<[number, number]> = [[-26, 30], [22, 36]];
+  for (let m = 0; m < masts.length; m++) {
+    const [u, h] = masts[m];
+    const foot = at(u, 0);
+    const top = { x: foot.x, y: foot.y - h };
+    // Yard, across the top third.
+    const yardY = foot.y - h * 0.78;
+    const yardW = 20 + m * 4;
+    g.lineStyle(2.6, tint(MAG.crustDeep), alpha);
+    g.lineBetween(foot.x, foot.y, top.x, top.y);
+    g.lineStyle(1.8, tint(MAG.crustDeep), alpha);
+    g.lineBetween(foot.x - yardW, yardY, foot.x + yardW, yardY);
+    // The sail: a sheet of flame hung from the yard, torn at the foot, lit from inside.
+    const hem = yardY + h * 0.55;
+    const sail: Phaser.Geom.Point[] = [new Phaser.Geom.Point(foot.x - yardW + 2, yardY + 1)];
+    for (let i = 0; i <= 6; i++) {
+      const f = i / 6;
+      const sx = foot.x - yardW + 2 + f * (yardW * 2 - 4);
+      const tear = Math.sin(t * 6 + i * 1.7 + seed) * 3 + noise(seed, 20 + i + m * 7) * 6;
+      sail.push(new Phaser.Geom.Point(sx, hem - tear));
+    }
+    sail.push(new Phaser.Geom.Point(foot.x + yardW - 2, yardY + 1));
+    g.fillStyle(tint(MAG.coat), alpha * 0.92);
+    g.fillPoints(sail, true);
+    g.fillStyle(tint(MAG.magma), alpha * 0.5);
+    g.fillPoints(sail.map((p) => new Phaser.Geom.Point(foot.x + (p.x - foot.x) * 0.72, yardY + (p.y - yardY) * 0.85)), true);
+    g.fillStyle(tint(MAG.lava), alpha * 0.5);
+    g.fillPoints(sail.map((p) => new Phaser.Geom.Point(foot.x + (p.x - foot.x) * 0.42, yardY + (p.y - yardY) * 0.7)), true);
+    // Tongues licking up off the sail.
+    for (let i = 0; i < 6; i++) {
+      const f = noise(seed, 40 + i + m * 9);
+      const ph = (t * 1.8 + f) % 1;
+      const fx0 = foot.x - yardW + 4 + f * (yardW * 2 - 8);
+      const fy0 = hem - 4 - ph * 22;
+      g.fillStyle(tint(ph < 0.35 ? MAG.white : ph < 0.7 ? MAG.gold : MAG.magma), alpha * (1 - ph) * 0.75);
+      g.fillCircle(fx0 + Math.sin(ph * 9 + i) * 3, fy0, (4.5 - ph * 3) * (0.7 + f * 0.5));
+    }
+    // Mast truck.
+    g.fillStyle(tint(MAG.gold), alpha);
+    g.fillCircle(top.x, top.y, 1.8);
+  }
+
+  // The colours, off the main mast: a black flag with a skull on it, streaming aft.
+  const main = at(22, 0);
+  const fx0 = main.x, fy0 = main.y - 36;
+  const stream = -c;
+  const wave = Math.sin(t * 7) * 2;
+  g.fillStyle(tint(MAG.basalt), alpha);
+  g.fillPoints([
+    new Phaser.Geom.Point(fx0, fy0),
+    new Phaser.Geom.Point(fx0 + stream * 18, fy0 + 1 + wave),
+    new Phaser.Geom.Point(fx0 + stream * 18, fy0 + 9 + wave),
+    new Phaser.Geom.Point(fx0, fy0 + 9),
+  ], true);
+  g.lineStyle(1, tint(MAG.magma), alpha * 0.6);
+  g.strokePoints([
+    new Phaser.Geom.Point(fx0, fy0),
+    new Phaser.Geom.Point(fx0 + stream * 18, fy0 + 1 + wave),
+    new Phaser.Geom.Point(fx0 + stream * 18, fy0 + 9 + wave),
+    new Phaser.Geom.Point(fx0, fy0 + 9),
+  ], true);
+  const skx = fx0 + stream * 9, sky = fy0 + 4.6 + wave * 0.5;
+  g.fillStyle(tint(MAG.bone), alpha);
+  g.fillCircle(skx, sky, 2.2);
+  g.fillRect(skx - 1.4, sky + 1.4, 2.8, 1.2);
+  g.fillStyle(tint(MAG.basalt), alpha);
+  g.fillCircle(skx - 0.8, sky - 0.3, 0.6);
+  g.fillCircle(skx + 0.8, sky - 0.3, 0.6);
+
+  // Stern lantern.
+  const lan = at(-44, 0);
+  g.fillStyle(tint(MAG.gold), alpha * (0.5 + 0.3 * Math.sin(t * 5)));
+  g.fillCircle(lan.x, lan.y - 14, 4);
+  g.fillStyle(tint(MAG.white), alpha * 0.9);
+  g.fillCircle(lan.x, lan.y - 14, 1.6);
+  g.lineStyle(1.4, tint(MAG.crustDeep), alpha);
+  g.lineBetween(lan.x, lan.y, lan.x, lan.y - 10);
+}
+
+/**
+ * A cannonball: cooled rock fired hot, so it is a basalt sphere with the melt showing in two
+ * cracks and a short tail of embers behind it along `ang`.
+ */
+export function cannonball(
+  g: Phaser.GameObjects.Graphics,
+  tint: MagmaColorFn,
+  x: number, y: number, ang: number, spin: number, seed: number, alpha = 1,
+): void {
+  const c = Math.cos(ang), s = Math.sin(ang);
+  for (let i = 1; i <= 4; i++) {
+    g.fillStyle(tint(i < 2 ? MAG.lava : i < 3 ? MAG.magma : MAG.smoke), alpha * (0.5 - i * 0.1));
+    g.fillCircle(x - c * i * 6, y - s * i * 6, 5 - i * 0.8);
+  }
+  g.fillStyle(tint(MAG.magma), alpha * 0.3);
+  g.fillCircle(x, y, 9);
+  g.fillStyle(tint(MAG.basalt), alpha);
+  g.fillCircle(x, y, 6.2);
+  for (let i = 0; i < 2; i++) {
+    const a = spin + i * 2.3 + noise(seed, i) * 0.8;
+    g.lineStyle(1.3, tint(MAG.lava), alpha * 0.9);
+    g.lineBetween(x + Math.cos(a) * 1.5, y + Math.sin(a) * 1.5, x + Math.cos(a) * 5.4, y + Math.sin(a) * 5.4);
+  }
+  g.fillStyle(tint(MAG.white), alpha * 0.8);
+  g.fillCircle(x - 1.6, y - 1.8, 1.4);
+}
+
+/**
+ * A pirate spirit (Pirate King, Q+): a crewman made of flame, hanging in the air. A wisp
+ * tapering down to nothing, a tricorn, two ember eyes and a cutlass held out along `facing`.
+ * `hp` (0–1) is how much of him is left — he burns down rather than fades, so he gets smaller
+ * and bluer-white at the core as he goes. `dash` (0–1) is how far through a lunge he is,
+ * which streams the wisp out behind him.
+ */
+export function pirateSpirit(
+  g: Phaser.GameObjects.Graphics,
+  tint: MagmaColorFn,
+  x: number, y: number, facing: number, t: number, seed: number, hp: number, dash: number,
+  alpha = 1,
+): void {
+  const size = 0.7 + hp * 0.5;
+  const c = Math.cos(facing), s = Math.sin(facing);
+  // Shadow on the ground under him — the one thing that says he is floating.
+  g.fillStyle(tint(MAG.scorch), alpha * 0.35);
+  g.fillEllipse(x, y + 26, 22 * size, 7 * size);
+
+  // The wisp: three nested flame shapes, tail streaming back along the dash.
+  const tailX = -c * (10 + dash * 26), tailY = 14 * size - s * dash * 20;
+  const passes: Array<[number, number]> = [[1, MAG.magma], [0.7, MAG.lava], [0.4, MAG.white]];
+  for (const [k, color] of passes) {
+    const w = 9 * size * k;
+    const flick = Math.sin(t * 11 + seed) * 1.5 * k;
+    g.fillStyle(tint(color), alpha * (color === MAG.white ? 0.8 : 0.72));
+    g.fillPoints([
+      new Phaser.Geom.Point(x - w, y + 2 + flick),
+      new Phaser.Geom.Point(x - w * 0.8, y - 9 * size * k),
+      new Phaser.Geom.Point(x, y - 12 * size * k),
+      new Phaser.Geom.Point(x + w * 0.8, y - 9 * size * k),
+      new Phaser.Geom.Point(x + w, y + 2 - flick),
+      new Phaser.Geom.Point(x + tailX * k * 0.5, y + tailY * k),
+      new Phaser.Geom.Point(x + tailX * k, y + tailY * k * 1.3),
+    ], true);
+  }
+  // Embers coming off him.
+  for (let i = 0; i < 3; i++) {
+    const ph = (t * 1.6 + noise(seed, i)) % 1;
+    g.fillStyle(tint(MAG.ember), alpha * (1 - ph) * 0.8);
+    g.fillCircle(x + Math.sin(ph * 7 + i) * 6, y - 8 - ph * 18, 1.6 * (1 - ph * 0.5));
+  }
+
+  // Eyes: two coals.
+  const ex = x + c * 2.5, ey = y - 5 * size;
+  g.fillStyle(tint(MAG.basalt), alpha * 0.9);
+  g.fillCircle(ex - 3.4, ey, 2);
+  g.fillCircle(ex + 3.4, ey, 2);
+  g.fillStyle(tint(MAG.white), alpha);
+  g.fillCircle(ex - 3.4, ey, 1);
+  g.fillCircle(ex + 3.4, ey, 1);
+
+  // Tricorn, sitting on the flame.
+  const hy = y - 12 * size;
+  g.fillStyle(tint(MAG.basalt), alpha);
+  g.fillPoints([
+    new Phaser.Geom.Point(x - 11, hy + 2), new Phaser.Geom.Point(x - 5, hy - 1),
+    new Phaser.Geom.Point(x, hy - 3), new Phaser.Geom.Point(x + 5, hy - 1),
+    new Phaser.Geom.Point(x + 11, hy + 2), new Phaser.Geom.Point(x + 4, hy + 4),
+    new Phaser.Geom.Point(x - 4, hy + 4),
+  ], true);
+  g.fillPoints([
+    new Phaser.Geom.Point(x - 5, hy), new Phaser.Geom.Point(x - 4, hy - 6),
+    new Phaser.Geom.Point(x + 4, hy - 6), new Phaser.Geom.Point(x + 5, hy),
+  ], true);
+  g.lineStyle(1, tint(MAG.magma), alpha * 0.6);
+  g.lineBetween(x - 11, hy + 2, x - 4, hy + 4);
+  g.lineBetween(x + 11, hy + 2, x + 4, hy + 4);
+  g.fillStyle(tint(MAG.bone), alpha * 0.9);
+  g.fillCircle(x, hy - 2.6, 1.3);
+
+  // Cutlass, out along the facing — a flame given an edge.
+  const hx = x + c * 9, hy2 = y - 1 + s * 9;
+  const len = 16 + dash * 6;
+  const px = -s, py = c;
+  g.fillStyle(tint(MAG.basalt), alpha * 0.9);
+  g.fillPoints([
+    new Phaser.Geom.Point(hx + px * 1.6, hy2 + py * 1.6),
+    new Phaser.Geom.Point(hx + c * (len - 4) + px * 2.6, hy2 + s * (len - 4) + py * 2.6),
+    new Phaser.Geom.Point(hx + c * len, hy2 + s * len),
+    new Phaser.Geom.Point(hx + c * (len - 2) - px, hy2 + s * (len - 2) - py),
+    new Phaser.Geom.Point(hx - px, hy2 - py),
+  ], true);
+  g.lineStyle(1, tint(MAG.lava), alpha * 0.9);
+  g.lineBetween(hx + px * 1.8, hy2 + py * 1.8, hx + c * (len - 3) + px * 2.6, hy2 + s * (len - 3) + py * 2.6);
+  g.lineStyle(1.6, tint(MAG.gold), alpha);
+  g.beginPath();
+  g.arc(hx, hy2, 3, facing + Math.PI / 2, facing + Math.PI * 1.5, false);
+  g.strokePath();
 }
 
 /**
@@ -927,226 +1103,226 @@ const MAGMA_AVATAR: AvatarSpec = {
     { r: 8, color: MAG.lava, alpha: 0.95 },
     { r: 3, color: MAG.white, alpha: 0.9, ox: -1.8, oy: -1.8 },
   ],
-  eyeWhite: MAG.gold,
+  eyeWhite: MAG.white,
   eyePupil: MAG.basalt,
   squash: { div: 15, x: 0.42, y: 0.22 },
 };
 
 /**
- * The magma-walker: a crusted thing that leaves scorch marks where it stands and sheds embers
- * when it runs. Two forms — the default basalt one, and the purple dragon Dragon Kin hatches
- * into, which replaces the torso outright, grows wings and horns, and turns every hand and eye
- * violet. Nothing subtle: the enhanced window is twenty seconds long and has to be obvious to
- * whoever is on the other end of it.
+ * The magma pirate.
+ *
+ * The body is the plain molten `elem-magma` orb the arena stages under the rig. The pirate is
+ * said by one thing on top of it — a basalt tricorn going soft in the heat, skull on the crown,
+ * drips off its horns — plus an eye patch as the single secondary touch. The hands are plain
+ * lava balls. Mastered he is the captain, but nothing new appears: the tricorn's brim turns to
+ * gilded lace with a lava glow under it, the skull's eyes burn, the hand coronas widen and the
+ * eye whites go gold.
+ *
+ * `drawBody` paints only what sits *on* the sphere under the eyes — Molten Mutiny's pendant,
+ * which is a gameplay tell — and `drawExtras` paints the patch and the hat over them.
  */
 export class MagmaAvatar extends BaseAvatar {
-  private dragon = false;
-  /** 0–1 — eases the transformation so the wings unfold rather than appearing. */
-  private morph = 0;
-  /** 0–1 — how hard the character is currently venting (casting, breathing). */
+  /** 0–1 — how hard the character is currently venting (casting, firing). */
   private vent = 0;
   private ventTarget = 0;
-  private scorchSeed = Math.random() * 999;
-  private wing = 0;
+  /** 0–1 — eases in while the pirate is at the helm of his ship. */
+  private helm = 0;
+  private atHelm = false;
+  /** Molten Mutiny's pendant: -1 while it is not worn, else its 0–1 charge. */
+  private pendant = -1;
 
   constructor(scene: Phaser.Scene, tint: MagmaColorFn, depth = 6) {
     super(scene, tint, depth, MAGMA_AVATAR);
   }
 
-  /** Enter or leave the hatched dragon form. */
-  setDragon(on: boolean): void {
-    if (on === this.dragon) return;
-    this.dragon = on;
-    this.forEachHandLayer(0, (glow) => glow.setFillStyle(this.tint(on ? MAG.scale : MAG.magma), on ? 0.3 : 0.26));
-    this.forEachHandLayer(1, (core) => core.setFillStyle(this.tint(on ? MAG.scaleLit : MAG.lava), 0.95));
-    this.setEyeWhite(on ? MAG.scaleLit : MAG.gold);
-  }
-
-  /** True while something molten is being pushed out — hands glow, plumes lift off the crown. */
+  /** True while something molten is being pushed out — hands glow, embers lift off the crown. */
   setVenting(on: boolean): void { this.ventTarget = on ? 1 : 0; }
 
+  /** At the helm: the pirate stands taller and the hands come up to the wheel. */
+  setHelm(on: boolean): void { this.atHelm = on; }
+
+  /** The cursed pendant on the chest, or -1 to take it off. `power` is 0–1. */
+  setPendant(power: number): void { this.pendant = power; }
+
   update(delta: number, x: number, y: number, alpha: number): void {
-    const dt = delta / 1000;
     this.vent += (this.ventTarget - this.vent) * Math.min(1, delta / 150);
-    this.morph += ((this.dragon ? 1 : 0) - this.morph) * Math.min(1, delta / 260);
-    this.wing += dt * (this.intensity > 1 ? 7 : 4.2);
+    this.helm += ((this.atHelm ? 1 : 0) - this.helm) * Math.min(1, delta / 220);
     super.update(delta, x, y, alpha);
   }
 
+  /** Captain's commission: wider, gold-ringed hand coronas and gold eyes; the hat gilds below. */
   protected applyMastery(on: boolean): void {
     this.forEachHandLayer(0, (glow) => {
-      glow.setRadius(on ? 16 : 13);
-      glow.setAlpha(on ? 0.38 : 0.26);
+      glow.setRadius(on ? 17 : 13);
+      glow.setAlpha(on ? 0.4 : 0.26);
     });
+    this.forEachHandLayer(1, (core) => {
+      if (on) core.setStrokeStyle(1.8, this.tint(MAG.gold), 0.95);
+      else core.setStrokeStyle();
+    });
+    this.setEyeWhite(on ? MAG.gold : MAG.white);
   }
 
   protected emitTrail(x: number, y: number): void {
-    new MagmaFx(this.scene, this.tint).ember(x, y, 1, 5, 520, this.dragon ? MAG.scaleLit : MAG.ember);
+    new MagmaFx(this.scene, this.tint).ember(x, y, 1, 5, 520, MAG.ember);
+  }
+
+  /** 0–1 slow sag — how far gone the melt is this moment. Drives the drips and the brim droop. */
+  private melt(): number { return 0.5 + 0.5 * Math.sin(this.t * 0.9); }
+
+  /** Where the eye on `side` (-1 left, +1 right) sits this frame — mirrors BaseAvatar's placement. */
+  private eyeAt(side: number, x: number, y: number): { x: number; y: number } {
+    const bob = Math.sin(this.t * 2.6) * 1.1;
+    return {
+      x: x + side * 7.2 + Math.cos(this.facing) * 2.4,
+      y: y - 4 + Math.sin(this.facing) * 2.0 + bob,
+    };
+  }
+
+  /**
+   * A lava drip: a tapered run of melt that pinches off into a falling drop. `p` is the phase
+   * (0–1): the run lengthens through the first two thirds, then the drop detaches and falls.
+   */
+  private drip(g: Phaser.GameObjects.Graphics, x: number, y: number, len: number, w: number, p: number, alpha: number): void {
+    const run = Math.min(1, p / 0.66) * len;
+    g.fillStyle(this.tint(MAG.magma), alpha * 0.95);
+    g.fillTriangle(x - w, y, x + w, y, x, y + run);
+    g.fillStyle(this.tint(MAG.lava), alpha * 0.8);
+    g.fillTriangle(x - w * 0.5, y, x + w * 0.5, y, x, y + run * 0.8);
+    // The bead at the end of the run, then the drop it becomes.
+    const beadY = p < 0.66 ? y + run : y + len + (p - 0.66) / 0.34 * 26;
+    g.fillStyle(this.tint(MAG.lava), alpha * (p < 0.66 ? 0.95 : 0.9 * (1 - (p - 0.66) / 0.34)));
+    g.fillCircle(x, beadY, w * 0.75);
+    g.fillStyle(this.tint(MAG.white), alpha * 0.7);
+    g.fillCircle(x - w * 0.25, beadY - w * 0.3, w * 0.28);
   }
 
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void alpha;
-    const hot = this.morph > 0.5 ? MAG.scale : MAG.magma;
-    // Scorched ground, brighter while venting.
-    g.fillStyle(this.tint(MAG.scorch), a * 0.4);
-    g.fillEllipse(x, y + 13, 48, 17);
-    g.fillStyle(this.tint(hot), a * (0.1 + this.vent * 0.2));
-    g.fillEllipse(x, y + 13, 40 + this.vent * 16, 14 + this.vent * 6);
-    // Fissures crawling out from underfoot — the ground can't take the heat.
-    for (let i = 0; i < 6; i++) {
-      const ang = (i / 6) * TAU + this.t * 0.1;
-      const d = 14 + noise(this.scorchSeed, i) * 12;
-      const sx = x + Math.cos(ang) * d;
-      const sy = y + 13 + Math.sin(ang) * d * 0.4;
-      g.lineStyle(1.8, this.tint(hot), a * (0.16 + this.vent * 0.34));
-      g.lineBetween(x, y + 13, sx, sy);
-    }
+    // A soft heat pool underfoot, brighter while venting and once mastered. Fades while he is
+    // aboard — the deck is under him.
+    const ground = 1 - this.helm;
+    const boost = this.mastered ? 0.08 : 0;
+    g.fillStyle(this.tint(MAG.magma), a * (0.1 + boost + this.vent * 0.2) * (0.4 + ground * 0.6));
+    g.fillEllipse(x, y + 14, 40 + this.vent * 14, 13 + this.vent * 5);
   }
 
-  /**
-   * The dragon torso. Painted over the fighter sprite but under the eyes, so the rig's own
-   * face still sits on top of the snout drawn here — which is exactly the read wanted: a
-   * dragon's head with the character's eyes in it.
-   */
+  /** Only Molten Mutiny's pendant sits on the sphere — it is a gameplay tell, not costume. */
   protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void a;
-    if (this.morph < 0.02) return;
-    const m = this.morph;
-    const A = alpha * m;
-
-    // Tail, laid out behind whichever way the character is facing.
-    const back = this.facing + Math.PI;
-    let tx = x + Math.cos(back) * 12;
-    let ty = y + Math.sin(back) * 12 + 6;
-    for (let i = 0; i < 5; i++) {
-      const f = i / 5;
-      const sway = Math.sin(this.t * 3.4 - i * 0.7) * (3 + i * 2.2);
-      const nx = x + Math.cos(back) * (12 + i * 9) + Math.cos(back + Math.PI / 2) * sway;
-      const ny = y + Math.sin(back) * (12 + i * 9) + Math.sin(back + Math.PI / 2) * sway + 6;
-      g.lineStyle((9 - f * 7) * m, this.tint(MAG.scaleDeep), A);
-      g.lineBetween(tx, ty, nx, ny);
-      tx = nx;
-      ty = ny;
-    }
-    // Tail tip — a spade.
-    g.fillStyle(this.tint(MAG.membrane), A);
-    g.fillTriangle(tx, ty - 5 * m, tx + Math.cos(back) * 11 * m, ty + Math.sin(back) * 11 * m, tx, ty + 5 * m);
-
-    // Torso: a scaled barrel with a paler belly.
-    g.fillStyle(this.tint(MAG.scaleDeep), A);
-    g.fillEllipse(x, y + 1, 34 * m, 36 * m);
-    g.fillStyle(this.tint(MAG.scale), A);
-    g.fillEllipse(x, y + 2, 29 * m, 31 * m);
-    g.fillStyle(this.tint(MAG.membrane), A * 0.85);
-    g.fillEllipse(x + Math.cos(this.facing) * 4, y + 7, 17 * m, 15 * m);
-
-    // Scale rows. Staggered so it never looks like a grid.
-    for (let row = 0; row < 4; row++) {
-      const ry = y - 8 + row * 7;
-      const n = 4 - (row % 2);
-      const wide = 11 * m * (1 - Math.abs(row - 1.4) * 0.12);
-      for (let i = 0; i < n; i++) {
-        const px = x + ((i - (n - 1) / 2) / Math.max(1, (n - 1) / 2)) * wide;
-        g.fillStyle(this.tint(row % 2 ? MAG.scaleLit : MAG.scale), A * 0.55);
-        g.fillEllipse(px, ry, 7 * m, 4.4 * m);
-      }
-    }
-
-    // Snout, along the aim. Sized off the rig's 14px eye spacing so the face stays a face.
-    const c = Math.cos(this.facing);
-    const s = Math.sin(this.facing);
-    const jaw = 0.5 + 0.5 * Math.sin(this.t * 5) * this.vent;
-    const snout = 15 * m;
-    g.fillStyle(this.tint(MAG.scale), A);
+    if (this.pendant < 0) return;
+    const A = alpha;
+    const lean = Math.cos(this.facing) * 1.5;
+    const p = this.pendant;
+    g.lineStyle(1.3, this.tint(MAG.gold), A * 0.9);
+    g.beginPath();
+    g.arc(x + lean * 0.5, y - 6, 11, Math.PI * 0.12, Math.PI * 0.88, false);
+    g.strokePath();
+    const gx = x + lean * 0.5, gy = y + 6.5;
+    // The gem: a faceted red stone, lit from inside by whatever it has taken so far.
+    g.fillStyle(this.tint(MAG.pendant), A * (0.2 + p * 0.5));
+    g.fillCircle(gx, gy, 6 + p * 5);
+    g.fillStyle(this.tint(MAG.basalt), A);
     g.fillPoints([
-      new Phaser.Geom.Point(x - s * 8 * m, y - 3 + c * 8 * m),
-      new Phaser.Geom.Point(x + c * snout - s * 3.6 * m, y - 2 + s * snout + c * 3.6 * m),
-      new Phaser.Geom.Point(x + c * snout + s * 3.6 * m, y - 2 + s * snout - c * 3.6 * m),
-      new Phaser.Geom.Point(x + s * 8 * m, y - 3 - c * 8 * m),
+      new Phaser.Geom.Point(gx, gy - 5), new Phaser.Geom.Point(gx + 4, gy - 1.5),
+      new Phaser.Geom.Point(gx + 2.6, gy + 4), new Phaser.Geom.Point(gx - 2.6, gy + 4),
+      new Phaser.Geom.Point(gx - 4, gy - 1.5),
     ], true);
-    // Lower jaw, hinging open while it breathes.
-    g.fillStyle(this.tint(MAG.scaleDeep), A);
+    g.fillStyle(this.tint(p > 0.75 ? MAG.pendantLit : MAG.pendant), A * (0.55 + p * 0.45 + 0.1 * Math.sin(this.t * (3 + p * 9))));
     g.fillPoints([
-      new Phaser.Geom.Point(x - s * 6 * m, y + 1 + c * 6 * m),
-      new Phaser.Geom.Point(x + c * snout * 0.9 - s * 2.6 * m, y + 1 + jaw * 4 * m + s * snout * 0.9),
-      new Phaser.Geom.Point(x + c * snout * 0.9 + s * 2.6 * m, y + 1 + jaw * 4 * m + s * snout * 0.9),
-      new Phaser.Geom.Point(x + s * 6 * m, y + 1 - c * 6 * m),
+      new Phaser.Geom.Point(gx, gy - 3.6), new Phaser.Geom.Point(gx + 2.8, gy - 1),
+      new Phaser.Geom.Point(gx + 1.8, gy + 2.8), new Phaser.Geom.Point(gx - 1.8, gy + 2.8),
+      new Phaser.Geom.Point(gx - 2.8, gy - 1),
     ], true);
-    // Nostril, and the light of whatever is in its throat.
-    g.fillStyle(this.tint(MAG.scaleDeep), A);
-    g.fillCircle(x + c * snout * 0.86 - s * 2 * m, y - 2 + s * snout * 0.86 + c * 2 * m, 1.4 * m);
-    g.fillStyle(this.tint(MAG.breath), A * (0.3 + this.vent * 0.7));
-    g.fillCircle(x + c * snout * 0.5, y + s * snout * 0.5, 3.4 * m * (0.6 + this.vent * 0.6));
+    g.fillStyle(this.tint(MAG.white), A * (0.3 + p * 0.6));
+    g.fillCircle(gx - 1, gy - 1.2, 0.9 + p * 0.8);
   }
 
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void a;
-    const m = this.morph;
+    const A = alpha;
+    const m = this.melt();
+    const lean = Math.cos(this.facing) * 2.2;
+    const gilt = this.mastered;
 
-    if (m > 0.02) {
-      // Wings, rooted at the shoulders and swept up and back so they never cross the face.
-      const beat = Math.sin(this.wing) * 0.34 + 0.5;
-      for (let side = -1; side <= 1; side += 2) {
-        const rootX = x + side * 12;
-        const rootY = y - 6;
-        const spread = (34 + beat * 16) * m;
-        const rise = (30 + beat * 14) * m;
-        const tipX = rootX + side * spread;
-        const tipY = rootY - rise;
-        // Membrane: three panels hung off the leading edge.
-        for (let f = 0; f < 3; f++) {
-          const k = (f + 1) / 3;
-          g.fillStyle(this.tint(MAG.membrane), alpha * m * (0.5 - f * 0.08));
-          g.fillTriangle(
-            rootX, rootY,
-            rootX + side * spread * k, rootY - rise * k,
-            rootX + side * spread * k * 0.72, rootY - rise * k * 0.24 + 12 * k,
-          );
-        }
-        // Leading edge and finger struts.
-        g.lineStyle(2.6 * m, this.tint(MAG.scaleDeep), alpha * m);
-        g.lineBetween(rootX, rootY, tipX, tipY);
-        for (let f = 1; f <= 3; f++) {
-          const k = f / 3;
-          g.lineStyle(1.4 * m, this.tint(MAG.scale), alpha * m * 0.8);
-          g.lineBetween(rootX + side * spread * k, rootY - rise * k,
-            rootX + side * spread * k * 0.72, rootY - rise * k * 0.24 + 12 * k);
-        }
-      }
+    // ── Eye patch over the left eye — the one secondary touch ──
+    const eye = this.eyeAt(-1, x, y);
+    g.lineStyle(1.6, this.tint(MAG.basalt), A);
+    g.lineBetween(eye.x + 4, eye.y - 3, x + 13 + lean, y - 11);
+    g.fillStyle(this.tint(MAG.basalt), A);
+    g.fillCircle(eye.x, eye.y, 5.2);
 
-      // Horns, swept back off the crown.
-      for (let side = -1; side <= 1; side += 2) {
-        let hx = x + side * 6;
-        let hy = y - 15;
-        for (let i = 0; i < 3; i++) {
-          const nx2 = hx + side * (3 + i * 2.2) * m;
-          const ny2 = hy - (5 - i) * m;
-          g.lineStyle((4.5 - i * 1.2) * m, this.tint(i < 2 ? MAG.scaleDeep : MAG.scaleLit), alpha * m);
-          g.lineBetween(hx, hy, nx2, ny2);
-          hx = nx2;
-          hy = ny2;
-        }
-      }
+    // ── The tricorn: going soft in the heat, sitting on the crown of the sphere ──
+    // Mastered, the same hat is bigger, its brim gilded and glowing from beneath.
+    const s = gilt ? 1.22 : 1.1;
+    const cy = y - 17;
+    const hx = x + lean;
+    const droop = (1.5 + m * 3) * s;
+    const horn = 15 * s;
+    if (gilt) {
+      // Lava light pooling under the brim.
+      g.fillStyle(this.tint(MAG.lava), A * (0.22 + 0.08 * Math.sin(this.t * 3)));
+      g.fillEllipse(hx, cy + 3, horn * 2.4, 13);
     }
+    // Crown first, so the brim lies over its base. Crust-brown felt, not black, so it reads.
+    const crown = [
+      new Phaser.Geom.Point(hx - 8 * s, cy + 1),
+      new Phaser.Geom.Point(hx - (6.5 + m) * s, cy - (8 - m * 1.5) * s),
+      new Phaser.Geom.Point(hx + (6.5 + m) * s, cy - (8 - m * 1.5) * s),
+      new Phaser.Geom.Point(hx + 8 * s, cy + 1),
+    ];
+    g.fillStyle(this.tint(MAG.crustDeep), A);
+    g.fillPoints(crown, true);
+    g.lineStyle(gilt ? 2 : 1.4, this.tint(gilt ? MAG.gold : MAG.magma), A * (gilt ? 0.95 : 0.75));
+    g.strokePoints(crown, true);
+    // A lit panel down the felt so the hat reads against a dark floor, and a hat band of melt.
+    g.fillStyle(this.tint(MAG.ash), A * 0.55);
+    g.fillPoints([
+      new Phaser.Geom.Point(hx - 6 * s, cy - 0.5),
+      new Phaser.Geom.Point(hx - 5 * s, cy - (7 - m * 1.5) * s),
+      new Phaser.Geom.Point(hx - 1.5 * s, cy - (7.4 - m * 1.5) * s),
+      new Phaser.Geom.Point(hx - 2.5 * s, cy - 0.5),
+    ], true);
+    g.lineStyle(2, this.tint(gilt ? MAG.gold : MAG.lava), A * (gilt ? 0.95 : 0.8));
+    g.lineBetween(hx - 7.6 * s, cy - 0.6, hx + 7.6 * s, cy - 0.6);
+    // Brim: the three horns sag under their own melt.
+    const brim = [
+      new Phaser.Geom.Point(hx - horn, cy + 2 + droop),
+      new Phaser.Geom.Point(hx - horn * 0.55, cy + 5.4 * s),
+      new Phaser.Geom.Point(hx, cy + 6 * s + droop * 0.5),
+      new Phaser.Geom.Point(hx + horn * 0.55, cy + 5.4 * s),
+      new Phaser.Geom.Point(hx + horn, cy + 2 + droop),
+      new Phaser.Geom.Point(hx + horn * 0.62, cy + 0.6),
+      new Phaser.Geom.Point(hx + 5.5 * s, cy - 1.2),
+      new Phaser.Geom.Point(hx, cy - (4.4 - m) * s),
+      new Phaser.Geom.Point(hx - 5.5 * s, cy - 1.2),
+      new Phaser.Geom.Point(hx - horn * 0.62, cy + 0.6),
+    ];
+    g.fillStyle(this.tint(MAG.crustDeep), A);
+    g.fillPoints(brim, true);
+    // Edge: molten where the hat is going, gold lace once the wearer is a captain.
+    g.lineStyle(gilt ? 2.4 : 1.6, this.tint(gilt ? MAG.gold : MAG.magma), A * (gilt ? 1 : 0.75 + m * 0.2));
+    g.strokePoints(brim, true);
+    // Drips off both horns.
+    this.drip(g, hx - horn + 1, cy + 2.4 + droop, 4 + m * 5, 1.5, (this.t * 0.5) % 1, A);
+    this.drip(g, hx + horn - 1, cy + 2.4 + droop, 4 + m * 5, 1.5, (this.t * 0.5 + 0.45) % 1, A);
 
-    // Crusted pauldrons riding on the hands — the same plating as everything else the element
-    // puts on the field, so the character is visibly made of its own material.
-    for (let i = 0; i < 2; i++) {
-      const hx = this.armX[i];
-      const hy = this.armY[i];
-      const ang = Math.atan2(hy - y, hx - x);
-      crustPlate(g, this.tint, hx - Math.cos(ang) * 4, hy - Math.sin(ang) * 4,
-        7 + this.vent * 2, ang + this.t * 0.4, i * 37 + 11,
-        m > 0.5 ? MAG.scaleDeep : MAG.crustDeep, alpha * 0.9);
-    }
+    // Skull on the crown — its sockets burn once mastered.
+    const ex = hx, ey = cy - 3.4 * s;
+    g.fillStyle(this.tint(MAG.bone), A);
+    g.fillCircle(ex, ey - 0.6, 3);
+    g.fillRect(ex - 2, ey + 1, 4, 2);
+    g.fillStyle(this.tint(gilt ? MAG.lava : MAG.basalt), A);
+    g.fillCircle(ex - 1.2, ey - 1, 0.9);
+    g.fillCircle(ex + 1.2, ey - 1, 0.9);
 
-    // Vent plume off the crown.
+    // Vent embers off the crown while casting.
     if (this.vent > 0.08) {
       for (let i = 0; i < 4; i++) {
         const ph = (this.t * 2 + i * 0.25) % 1;
         const px = x + Math.sin(ph * 5 + i) * (5 + i * 2.5);
-        const py = y - 20 - ph * 22;
-        g.fillStyle(this.tint(m > 0.5 ? MAG.scaleLit : MAG.ember), alpha * this.vent * 0.5 * (1 - ph));
+        const py = y - 28 - ph * 22;
+        g.fillStyle(this.tint(MAG.ember), A * this.vent * 0.5 * (1 - ph));
         g.fillCircle(px, py, 2.2 * (1 - ph * 0.4));
       }
     }

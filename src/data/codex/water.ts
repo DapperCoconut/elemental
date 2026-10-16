@@ -172,7 +172,7 @@ const water: ElementCodex = {
         + 'seconds and deals no damage at all. Everything inside takes 10% dehydration a second, up to '
         + '30% from a full channel, which feeds the damage bonus on everything else you throw. 5s '
         + 'cooldown.',
-      cast: 'Bindable to E, R, F or Q. Opens a cone that tracks your aim for 3s.',
+      cast: 'Bindable to R, F or Q. Opens a cone that tracks your aim for 3s.',
       effects: [
         { tag: 'debuff', label: 'Dehydration', detail: '10% dehydration per second to every enemy inside, for as long as they stay — up to 30% from one full channel.' },
         { tag: 'area', label: 'The cone', detail: '190px of range, 36° either side of the aim line, 3s duration, tracking your cursor the whole time.' },

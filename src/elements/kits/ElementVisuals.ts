@@ -195,8 +195,8 @@ export abstract class BaseAvatar {
    *
    * Every layer here is drawn in world coordinates off the `(x, y)` handed to `update`, so this
    * cannot be a `setScale` on the objects alone — the graphics layers are scaled *and* offset so
-   * that `(x, y)` stays put and everything around it shrinks toward it. Added for Radiation's
-   * Final Vision, which shrinks the operative rather than swelling the target; a kit that shrinks
+   * that `(x, y)` stays put and everything around it shrinks toward it. First added for
+   * Radiation's (since retired) Final Vision; a kit that shrinks
    * a fighter's `sizeMult` should set this to the same factor or the sprite and the rig part ways.
    */
   private rigScale = 1;

@@ -44,6 +44,12 @@ export const SOUL = {
   /** Headstones and bone. */
   bone: 0xd8ccb8,
   stone: 0x776688,
+  /** Soul Lord at 25 kills — the ascended, angelic gold. */
+  umber: 0x5a3a08,
+  bronze: 0xa8701a,
+  gold: 0xf2b833,
+  sun: 0xffe07a,
+  halo: 0xfff6cc,
 } as const;
 
 /** One coherent set of shades. `shroud → body → glow → core` runs dark to bright. */
@@ -74,6 +80,11 @@ export const ANGERED_TONES: SoulTones = {
 /** Alpha bile — the anti-heal cone and recruited spitter shots. */
 export const ROT_TONES: SoulTones = {
   shroud: SOUL.bile, body: 0x228833, glow: SOUL.rot, core: 0x88ee99, spark: SOUL.white,
+};
+
+/** Soul Lord ascended (25 kills): every soul ability burns gold instead of violet. */
+export const GOLD_TONES: SoulTones = {
+  shroud: SOUL.umber, body: SOUL.bronze, glow: SOUL.gold, core: SOUL.sun, spark: SOUL.halo,
 };
 
 export const tonesFor = (owner: 'player' | 'npc'): SoulTones =>
@@ -765,59 +776,6 @@ export class SoulFx extends FxBase {
   }
 
   /**
-   * A siphon line: the cord Soul's click opens between the caster and whatever is on the far
-   * end of it. Drawn as a taut double strand with beads of spirit crawling along it, always
-   * *toward* the caster on a drain and *away* from them on a mend, so which way the line is
-   * running is readable without reading its colour — and colour carries it too, rot green for
-   * something being emptied and the owner's own shades for something being fed.
-   */
-  static drawSiphon(
-    g: Phaser.GameObjects.Graphics, tint: SoulColorFn, tones: SoulTones,
-    x1: number, y1: number, x2: number, y2: number, t: number, drain: boolean, strain: number,
-  ): void {
-    const dx = x2 - x1, dy = y2 - y1;
-    const dist = Math.hypot(dx, dy) || 1;
-    const px = -dy / dist, py = dx / dist;
-    const steps = Phaser.Math.Clamp(Math.round(dist / 12), 4, 30);
-    // A cord under load pulls straight; a slack one sags. `strain` is how close it is to snapping.
-    const sag = (1 - strain) * 12;
-
-    const strand = (offset: number, width: number, color: number, alpha: number): void => {
-      g.lineStyle(width, tint(color), alpha);
-      g.beginPath();
-      for (let i = 0; i <= steps; i++) {
-        const f = i / steps;
-        const o = offset + Math.sin(f * Math.PI) * sag + Math.sin(f * 9 - t * 6) * (1.6 + strain * 2);
-        const cx = x1 + dx * f + px * o, cy = y1 + dy * f + py * o;
-        if (i === 0) g.moveTo(cx, cy); else g.lineTo(cx, cy);
-      }
-      g.strokePath();
-    };
-
-    strand(0, 5 + strain * 2, tones.shroud, 0.3);
-    strand(-1.4, 2.2, tones.body, 0.75);
-    strand(1.4, 1.4, tones.core, 0.6);
-
-    // The beads. Four of them, evenly spaced, running the way the spirit is actually going.
-    for (let k = 0; k < 4; k++) {
-      const raw = (t * 0.75 + k / 4) % 1;
-      const f = drain ? 1 - raw : raw;
-      const o = Math.sin(f * Math.PI) * sag + Math.sin(f * 9 - t * 6) * 1.8;
-      const bx = x1 + dx * f + px * o, by = y1 + dy * f + py * o;
-      g.fillStyle(tint(tones.glow), 0.5);
-      g.fillCircle(bx, by, 3.4);
-      g.fillStyle(tint(tones.spark), 0.95);
-      g.fillCircle(bx, by, 1.7);
-    }
-
-    // The anchor where it bites into the far end.
-    g.lineStyle(1.6, tint(tones.core), 0.8);
-    g.strokeCircle(x2, y2, 7 + Math.sin(t * 5) * 1.2);
-    g.fillStyle(tint(tones.glow), 0.35);
-    g.fillCircle(x2, y2, 4.5);
-  }
-
-  /**
    * A cloud of decay: the rot a zombie leaves where it fell. Layered smoke lobes turning on
    * their own axes, bone-flecked, with a ragged perimeter so it reads as a volume rather than
    * a circle painted on the floor.
@@ -857,30 +815,139 @@ export class SoulFx extends FxBase {
   }
 
   /**
-   * Possession: the caster opened up. Six petals of spirit hinged back off the body and held
-   * there, with the emptied husk of the character glowing between them — nothing can reach what
-   * is no longer inside. `open` runs 0 → 1 so the bloom can be animated on the way in.
+   * A Lantern of the Damned wisp: a flame of spirit with a little screaming face in its head,
+   * licking backwards along its travel. `small` is a split shard — the same shape, no face.
    */
-  static drawFlower(
+  static drawLantern(
     g: Phaser.GameObjects.Graphics, tint: SoulColorFn, tones: SoulTones,
-    x: number, y: number, radius: number, t: number, open: number, alpha: number,
+    x: number, y: number, angle: number, radius: number, t: number, small = false,
   ): void {
-    const o = Phaser.Math.Clamp(open, 0, 1);
-    g.fillStyle(tint(tones.shroud), 0.3 * alpha * o);
-    g.fillCircle(x, y, radius * 1.25);
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * TAU + t * 0.35;
-      const reach = radius * (0.5 + o * 0.9) * (1 + 0.07 * Math.sin(t * 3 + i));
-      // Each petal is a wisp hinged at the body and bent outward.
-      soulWispLayered(
-        g, tint, tones, x, y, a, reach, radius * 0.3 * (0.5 + o * 0.6),
-        0.7 * alpha, t * 3 + i, { tatters: 2, beads: true },
-      );
+    const flick = 1 + 0.12 * Math.sin(t * 22);
+    // Halo, then the flame tail streaming behind, then the bright head.
+    g.fillStyle(tint(tones.glow), 0.22);
+    g.fillCircle(x, y, radius * 2.1 * flick);
+    soulWispLayered(g, tint, tones, x, y, angle + Math.PI, radius * (small ? 3 : 4.2) * flick, radius * 1.05, 0.9, t * 14, { tatters: small ? 0 : 2 });
+    // Two side tongues so it reads as fire, not a comet.
+    if (!small) {
+      g.fillStyle(tint(tones.glow), 0.7);
+      for (const s of [-1, 1]) {
+        soulWisp(g, x, y, angle + Math.PI + s * 0.55, radius * 2.2 * flick, radius * 0.45, t * 16 + s, 0.6);
+      }
     }
-    g.fillStyle(tint(tones.core), 0.5 * alpha * (0.7 + 0.3 * Math.sin(t * 4)));
-    g.fillCircle(x, y, radius * 0.45);
-    g.fillStyle(tint(tones.spark), 0.85 * alpha);
-    g.fillCircle(x, y, radius * 0.2);
+    g.fillStyle(tint(tones.body), 1);
+    g.fillCircle(x, y, radius);
+    g.fillStyle(tint(tones.core), 1);
+    g.fillCircle(x, y, radius * 0.72);
+    g.fillStyle(tint(tones.spark), 0.95);
+    g.fillCircle(x - radius * 0.22, y - radius * 0.25, radius * 0.32);
+    if (!small) {
+      // The damned soul inside: two dark eyes and a gasping mouth, facing its travel.
+      const fx = Math.cos(angle) * radius * 0.18, fy = Math.sin(angle) * radius * 0.18;
+      g.fillStyle(tint(SOUL.void), 0.85);
+      g.fillCircle(x + fx - radius * 0.28, y + fy - radius * 0.12, radius * 0.14);
+      g.fillCircle(x + fx + radius * 0.28, y + fy - radius * 0.12, radius * 0.14);
+      g.fillEllipse(x + fx, y + fy + radius * 0.28, radius * 0.24, radius * (0.22 + 0.1 * Math.sin(t * 9)));
+    }
+  }
+
+  /**
+   * The soul beam charging in the caster's hand: rings of spirit spiralling in onto a point, and
+   * a thin sight line out along the aim that firms up as the charge fills.
+   */
+  static drawBeamCharge(
+    g: Phaser.GameObjects.Graphics, tint: SoulColorFn, tones: SoulTones,
+    x: number, y: number, angle: number, length: number, charge: number, t: number,
+  ): void {
+    const c = Phaser.Math.Clamp(charge, 0, 1);
+    const ex = x + Math.cos(angle) * length, ey = y + Math.sin(angle) * length;
+    g.lineStyle(1 + c * 2, tint(tones.glow), 0.12 + c * 0.3);
+    g.lineBetween(x, y, ex, ey);
+    for (let i = 0; i < 5; i++) {
+      const f = ((t * 1.6 + i / 5) % 1);
+      const r = 26 * (1 - f) + 4;
+      const a = i * 1.3 + t * 5;
+      g.fillStyle(tint(tones.core), 0.6 * f);
+      g.fillCircle(x + Math.cos(a) * r, y + Math.sin(a) * r, 1.8 + c * 1.4);
+    }
+    g.fillStyle(tint(tones.glow), 0.35 + c * 0.25);
+    g.fillCircle(x, y, 5 + c * 8);
+    g.fillStyle(tint(tones.spark), 0.9);
+    g.fillCircle(x, y, 2 + c * 4);
+    if (c >= 1) {
+      g.lineStyle(1.6, tint(tones.spark), 0.5 + 0.4 * Math.sin(t * 18));
+      g.strokeCircle(x, y, 15);
+    }
+  }
+
+  /**
+   * The soul beam itself: a straight shaft of spirit, a hot white core inside a wide soft band,
+   * with wisps peeling off its length. `life` runs 1 → 0 as it fades.
+   */
+  static drawBeam(
+    g: Phaser.GameObjects.Graphics, tint: SoulColorFn, tones: SoulTones,
+    x1: number, y1: number, x2: number, y2: number, width: number, life: number, t: number,
+  ): void {
+    const w = width * (0.4 + 0.6 * life);
+    g.lineStyle(w * 2.2, tint(tones.shroud), 0.25 * life);
+    g.lineBetween(x1, y1, x2, y2);
+    g.lineStyle(w * 1.4, tint(tones.glow), 0.55 * life);
+    g.lineBetween(x1, y1, x2, y2);
+    g.lineStyle(w * 0.7, tint(tones.core), 0.9 * life);
+    g.lineBetween(x1, y1, x2, y2);
+    g.lineStyle(Math.max(1, w * 0.25), tint(tones.spark), life);
+    g.lineBetween(x1, y1, x2, y2);
+    const ang = Math.atan2(y2 - y1, x2 - x1);
+    const len = Math.hypot(x2 - x1, y2 - y1);
+    g.fillStyle(tint(tones.glow), 0.5 * life);
+    for (let i = 0; i < 6; i++) {
+      const f = (i + 0.5) / 6;
+      const side = i % 2 ? 1 : -1;
+      soulWisp(g, x1 + Math.cos(ang) * len * f, y1 + Math.sin(ang) * len * f,
+        ang + side * 1.9, w * 1.4, w * 0.3, t * 10 + i, 0.8);
+    }
+    g.fillStyle(tint(tones.spark), 0.8 * life);
+    g.fillCircle(x2, y2, w * 0.8);
+  }
+
+  /**
+   * Hemorrhage: the soul aura a beam leaves on what it hit — a bleeding ring of spirit that
+   * drips, and hurts everything else standing in it.
+   */
+  static drawHemorrhage(
+    g: Phaser.GameObjects.Graphics, tint: SoulColorFn, tones: SoulTones,
+    x: number, y: number, radius: number, t: number, life: number,
+  ): void {
+    const a = Math.min(1, life * 3);
+    g.fillStyle(tint(tones.body), 0.1 * a);
+    g.fillCircle(x, y, radius);
+    g.lineStyle(2, tint(tones.glow), 0.55 * a);
+    g.strokeCircle(x, y, radius * (0.96 + 0.04 * Math.sin(t * 6)));
+    g.fillStyle(tint(tones.glow), 0.45 * a);
+    for (let i = 0; i < 6; i++) {
+      const ang = (i / 6) * TAU + t * 1.2;
+      soulWisp(g, x + Math.cos(ang) * radius * 0.92, y + Math.sin(ang) * radius * 0.92,
+        ang, radius * 0.3, 2.4, t * 8 + i, 0.7);
+    }
+    // Drips of spirit running off the bearer.
+    for (let i = 0; i < 4; i++) {
+      const f = (t * 0.9 + i / 4) % 1;
+      g.fillStyle(tint(SOUL.blood), (1 - f) * 0.7 * a);
+      g.fillCircle(x + (i - 1.5) * 7, y + 6 + f * 18, 2.2 * (1 - f * 0.5));
+    }
+  }
+
+  /** A Soul Lord orbiting orb: a bright bead of spirit with a short comet tail behind it. */
+  static drawSoulOrb(
+    g: Phaser.GameObjects.Graphics, tint: SoulColorFn, tones: SoulTones,
+    x: number, y: number, travel: number, radius: number, t: number,
+  ): void {
+    g.fillStyle(tint(tones.glow), 0.25);
+    g.fillCircle(x, y, radius * 1.9);
+    soulWispLayered(g, tint, tones, x, y, travel + Math.PI, radius * 2.6, radius * 0.8, 0.75, t * 10, { tatters: 0, beads: false });
+    g.fillStyle(tint(tones.core), 1);
+    g.fillCircle(x, y, radius);
+    g.fillStyle(tint(tones.spark), 1);
+    g.fillCircle(x - radius * 0.3, y - radius * 0.3, radius * 0.4);
   }
 }
 
@@ -964,10 +1031,10 @@ export type AmalgamQuirk = 'bulk' | 'lean' | 'sac' | 'halo' | 'horns' | 'gut';
 export interface AmalgamBodySpec {
   /** Body radius in px — 18 for a plain amalgam, scaled by the husk's `sizeMult`. */
   size: number;
-  /** A recruited variant's own colour, bled into the lower flesh. */
+  /** A recruited variant's own colour, worn as a patch on the belly. */
   fleshColor?: number;
   quirk?: AmalgamQuirk;
-  /** Alpha amalgam: a heavier mass with more heads, more arms and thicker seams. */
+  /** Alpha amalgam: a heavier mass with more heads, more arms and a second seam. */
   alpha?: boolean;
   depth?: number;
 }
@@ -1002,26 +1069,23 @@ interface Lobe {
   oy: number;
   r: number;
   phase: number;
-  /** Breath amplitude as a fraction of `r`. */
-  wob: number;
-  /** Lower lobes take the variant's flesh colour; upper ones stay spirit. */
-  lower: boolean;
-  /** Blaster gut: lit from inside and pulsing. */
+  /** Blaster gut / spitter sac: lit from inside and pulsing. */
   lit?: boolean;
 }
 
-/** A spare arm. Two segments, a clawed hand, and its own place in the walk cycle. */
+/** An arm: two segments and a small clawed hand, on its own place in the walk cycle. */
 interface Limb {
-  ang: number;
+  side: -1 | 1;
+  /** Shoulder height in body units. */
+  oy: number;
   len: number;
   thick: number;
   phase: number;
-  /** Drawn behind the mass, in shroud tones — the depth cue that gives the thing bulk. */
+  /** Drawn behind the mass in shroud tones — only the alpha grows these. */
   back: boolean;
-  claws: number;
 }
 
-/** A head — the main one, or one of the spares budding off a shoulder. */
+/** A head — the main one, or the smaller one budding off a shoulder. */
 interface Head {
   ox: number;
   oy: number;
@@ -1030,19 +1094,12 @@ interface Head {
   main: boolean;
 }
 
-/** A seam knitting one lobe to the torso. */
+/** The stitch line holding the mass together: a gentle curve with cross-stitches along it. */
 interface Seam {
-  from: Lobe;
-  to: Lobe;
-  sutures: number;
-}
-
-/** Bone that didn't get covered back over. */
-interface Spur {
-  ox: number;
-  oy: number;
-  ang: number;
-  len: number;
+  x1: number; y1: number;
+  cx: number; cy: number;
+  x2: number; y2: number;
+  stitches: number;
 }
 
 const rnd = (a: number, b: number): number => a + Math.random() * (b - a);
@@ -1050,18 +1107,19 @@ const rnd = (a: number, b: number): number => a + Math.random() * (b - a);
 /**
  * The body of a raised amalgam, repainted from scratch every frame.
  *
- * An amalgam is several corpses sewn into one thing, so it is drawn as a *mass* rather than a
- * disc: a torso with shoulder humps and haunches that each breathe on their own phase, seams of
- * bone suture hauling every junction together, spare arms sprouting where arms have no business
- * being, and the heads of everyone it was made of — one where a head belongs and the rest budding
- * off the shoulders, all of them screaming.
+ * Several corpses sewn into one thing — but drawn as ONE clean silhouette: the lobes are filled
+ * flat in a single tone over a single dark outline, so they merge into one shape instead of a
+ * pile of shaded discs. On that shape sit exactly the things that read at gameplay zoom: a main
+ * skull, at most one (alpha: two) smaller head budding off a shoulder, a pair of arms, and one
+ * clean stitched seam. Variant colour is a belly patch, and every state (burning, angered,
+ * lunging) is a single layer on top rather than more clutter.
  *
  * The kit owns the state (tier, burn, buff, lunge) and hands it in each frame. The *structure* is
  * rolled once in the constructor, so no two amalgams in a horde share a silhouette.
  */
 export class SoulAmalgamBody {
   private g: Phaser.GameObjects.Graphics;
-  /** Ground pool, kept separate because one Graphics can only hold one depth. */
+  /** Ground shadow, kept separate because one Graphics can only hold one depth. */
   private under: Phaser.GameObjects.Graphics;
   private t = 0;
   /** Shamble phase, advanced by how fast it is actually moving — a still amalgam idles. */
@@ -1070,7 +1128,6 @@ export class SoulAmalgamBody {
   private limbs: Limb[] = [];
   private heads: Head[] = [];
   private seams: Seam[] = [];
-  private spurs: Spur[] = [];
   /** Lagged lean and smear, so a change of direction reads as weight shifting. */
   private leanX = 0;
   private smear = 0;
@@ -1089,65 +1146,47 @@ export class SoulAmalgamBody {
     this.build();
   }
 
-  /** Rolls the creature: which bodies it is made of, where their heads and arms ended up. */
+  /** Rolls the creature: a torso, two shoulders, its heads, its arms and its seam. */
   private build(): void {
     const big = !!this.spec.alpha;
     const lean = this.spec.quirk === 'lean';
-    const lobe = (ox: number, oy: number, r: number, lower: boolean, lit = false): Lobe => ({
-      ox, oy, r, lower, lit, phase: Math.random() * TAU, wob: rnd(0.04, 0.1),
+    const lobe = (ox: number, oy: number, r: number, lit = false): Lobe => ({ ox, oy, r, lit, phase: Math.random() * TAU });
+
+    // Torso and two shoulders: near-symmetric, so the silhouette reads as a body, not a heap.
+    this.lobes.push(lobe(0, 0.1, lean ? 0.8 : 0.92));
+    const sh = big ? 0.6 : rnd(0.46, 0.52);
+    const lift = rnd(0.28, 0.36);
+    this.lobes.push(lobe(-0.56, -lift, sh));
+    this.lobes.push(lobe(0.56, -lift + rnd(-0.05, 0.05), sh * rnd(0.9, 1.05)));
+    if (this.spec.quirk === 'bulk' || big) {
+      this.lobes.push(lobe(-0.5, 0.48, 0.46));
+      this.lobes.push(lobe(0.5, 0.48, 0.46));
+    }
+    if (this.spec.quirk === 'gut') this.lobes.push(lobe(0, 0.42, 0.5, true));
+    if (this.spec.quirk === 'sac') this.lobes.push(lobe(-0.72, -0.62, 0.3, true));
+
+    // Heads: one where a head belongs; a smaller one on a shoulder half the time (alpha: both).
+    this.heads.push({ ox: 0, oy: -0.92, r: big ? 0.52 : 0.46, phase: Math.random() * TAU, main: true });
+    const sides: (-1 | 1)[] = big ? [-1, 1] : Math.random() < 0.5 ? [Math.random() < 0.5 ? -1 : 1] : [];
+    for (const s of sides) {
+      this.heads.push({ ox: s * 0.66, oy: -0.66, r: 0.26, phase: Math.random() * TAU, main: false });
+    }
+
+    // One pair of arms; the alpha grows a second pair behind the mass.
+    const arm = (side: -1 | 1, back: boolean): Limb => ({
+      side, back,
+      oy: back ? -0.15 : 0.02,
+      len: lean ? 1.25 : 1.05,
+      thick: lean ? 0.11 : 0.15,
+      phase: Math.random() * TAU,
     });
+    this.limbs.push(arm(-1, false), arm(1, false));
+    if (big) this.limbs.push(arm(-1, true), arm(1, true));
 
-    // Torso, then the bodies pressed onto it. Every offset is in units of `size`.
-    const torso = lobe(0, 0.06, lean ? 0.78 : 0.9, false);
-    this.lobes.push(torso);
-    const shoulderR = big ? rnd(0.56, 0.66) : rnd(0.42, 0.54);
-    this.lobes.push(lobe(-rnd(0.48, 0.62), -rnd(0.28, 0.42), shoulderR, false));
-    this.lobes.push(lobe(rnd(0.48, 0.62), -rnd(0.28, 0.42), shoulderR * rnd(0.85, 1.1), false));
-    this.lobes.push(lobe(-rnd(0.3, 0.46), rnd(0.42, 0.56), rnd(0.34, 0.46), true));
-    this.lobes.push(lobe(rnd(0.3, 0.46), rnd(0.42, 0.56), rnd(0.34, 0.46), true));
-    if (big || Math.random() < 0.55) this.lobes.push(lobe(rnd(-0.24, 0.24), -rnd(0.55, 0.7), rnd(0.3, 0.4), false));
-    if (this.spec.quirk === 'bulk') {
-      this.lobes.push(lobe(-rnd(0.6, 0.8), rnd(0.1, 0.3), rnd(0.4, 0.5), true));
-      this.lobes.push(lobe(rnd(0.6, 0.8), rnd(0.1, 0.3), rnd(0.4, 0.5), true));
-    }
-    if (this.spec.quirk === 'gut') this.lobes.push(lobe(rnd(-0.1, 0.1), rnd(0.3, 0.4), rnd(0.52, 0.62), true, true));
-    if (this.spec.quirk === 'sac') this.lobes.push(lobe(-rnd(0.65, 0.8), -rnd(0.5, 0.65), rnd(0.3, 0.38), false, true));
-
-    // Every lobe but the torso is stitched onto it.
-    for (let i = 1; i < this.lobes.length; i++) {
-      this.seams.push({ from: torso, to: this.lobes[i], sutures: Math.round(rnd(3, 5)) });
-    }
-
-    // Heads: one where a head belongs, the rest budding off the upper mass.
-    this.heads.push({ ox: rnd(-0.1, 0.1), oy: -rnd(0.88, 1.0), r: big ? 0.5 : rnd(0.4, 0.47), phase: Math.random() * TAU, main: true });
-    const extras = big ? 3 : Math.random() < 0.45 ? 2 : 1;
-    for (let i = 0; i < extras; i++) {
-      const side = i % 2 === 0 ? -1 : 1;
-      this.heads.push({
-        ox: side * rnd(0.45, 0.78), oy: -rnd(0.4, 0.78),
-        r: rnd(0.19, 0.28), phase: Math.random() * TAU, main: false,
-      });
-    }
-
-    // Arms. Half hang behind the mass so the silhouette has depth.
-    const count = big ? Math.round(rnd(5, 6)) : Math.round(rnd(3, 4));
-    for (let i = 0; i < count; i++) {
-      const side = i % 2 === 0 ? -1 : 1;
-      this.limbs.push({
-        ang: side < 0 ? Math.PI - rnd(-0.35, 0.85) : rnd(-0.35, 0.85),
-        len: lean ? rnd(1.2, 1.55) : rnd(0.88, 1.35),
-        thick: lean ? rnd(0.1, 0.14) : rnd(0.13, 0.2),
-        phase: Math.random() * TAU,
-        back: i >= count - Math.max(1, Math.floor(count / 2)),
-        claws: Math.round(rnd(2, 4)),
-      });
-    }
-
-    // Bone that never got covered back over.
-    for (let i = 0; i < Math.round(rnd(2, 4)); i++) {
-      const a = rnd(0, TAU);
-      this.spurs.push({ ox: Math.cos(a) * rnd(0.4, 0.8), oy: Math.sin(a) * rnd(0.3, 0.6), ang: a, len: rnd(0.2, 0.36) });
-    }
+    // The seam: one clean curve across the chest, mirrored at random so a horde varies.
+    const flip = Math.random() < 0.5 ? -1 : 1;
+    this.seams.push({ x1: -0.62 * flip, y1: -0.22, cx: 0, cy: 0.1, x2: 0.5 * flip, y2: 0.62, stitches: 4 });
+    if (big) this.seams.push({ x1: 0.66 * flip, y1: -0.3, cx: 0.35 * flip, cy: -0.05, x2: 0.12 * flip, y2: 0.35, stitches: 3 });
   }
 
   update(delta: number, st: AmalgamBodyState): void {
@@ -1162,7 +1201,7 @@ export class SoulAmalgamBody {
 
     const k = Math.min(1, 7 * dt);
     this.leanX += (Phaser.Math.Clamp(st.vx / 150, -1, 1) - this.leanX) * k;
-    this.smear += (((st.dashing ? 0.26 : 0) + spd01 * 0.1) - this.smear) * k;
+    this.smear += (((st.dashing ? 0.24 : 0) + spd01 * 0.06) - this.smear) * k;
 
     this.last = st;
     this.paint(st, 1, 1, 0);
@@ -1174,19 +1213,19 @@ export class SoulAmalgamBody {
    * goes through it, so the creature deforms as one piece.
    */
   private mapper(st: AmalgamBodyState, S: number, sink: number): (ox: number, oy: number) => [number, number] {
-    const bob = Math.sin(this.walk * TAU * 2) * S * 0.05 + sink;
+    const bob = Math.sin(this.walk * TAU * 2) * S * 0.04 + sink;
     const cos = Math.cos(this.travel);
     const sin = Math.sin(this.travel);
     const smear = this.smear;
     const lean = this.leanX;
     return (ox, oy) => {
-      let px = ox * S + lean * Math.max(0, 0.4 - oy) * S * 0.55;
+      let px = ox * S + lean * Math.max(0, 0.4 - oy) * S * 0.45;
       let py = oy * S;
       if (smear > 0.002) {
         const along = px * cos + py * sin;
         const across = -px * sin + py * cos;
         const a2 = along * (1 + smear);
-        const c2 = across * (1 - smear * 0.55);
+        const c2 = across * (1 - smear * 0.5);
         px = a2 * cos - c2 * sin;
         py = a2 * sin + c2 * cos;
       }
@@ -1202,352 +1241,275 @@ export class SoulAmalgamBody {
     const a = st.alpha * alphaMult;
     if (a <= 0.02) return;
     const S = this.spec.size * st.pop * sizeScale;
-    const tones = st.tones;
     const tx = this.mapper(st, S, sink);
 
-    this.drawGround(u, st, S, a, tx);
+    // Ground: one soft shadow and a faint pool of the owner's light. Nothing else down there.
+    const [gx, gy] = tx(0, 0.98);
+    u.fillStyle(this.tint(SOUL.void), a * 0.32);
+    u.fillEllipse(gx, gy + S * 0.1, S * 2.0, S * 0.6);
+    u.fillStyle(this.tint(st.tones.body), a * 0.14);
+    u.fillEllipse(gx, gy + S * 0.04, S * 1.3, S * 0.4);
+
+    if (st.dashing) this.drawSmear(g, st, S, a, tx);
     for (const l of this.limbs) if (l.back) this.drawLimb(g, st, l, S, a, tx);
     this.drawMass(g, st, S, a, tx);
     this.drawSeams(g, st, S, a, tx);
-    this.drawSpurs(g, S, a, tx);
-    // Leaked spirit off the crown, under the heads so the faces stay the read.
-    for (let i = 0; i < 3; i++) {
-      const [wx, wy] = tx((i - 1) * 0.24, -0.95);
-      soulWispLayered(
-        g, this.tint, tones, wx, wy,
-        -Math.PI / 2 + Math.sin(this.t * 1.7 + i * 2) * 0.4,
-        S * (0.5 + 0.18 * Math.sin(this.t * 2.6 + i)), S * 0.12, a * 0.5,
-        this.t * 4 + i * 2, { tatters: 1, beads: false },
-      );
-    }
-    for (const h of this.heads) this.drawHead(g, st, h, S, a, tx);
+    // Heads back-to-front: the shoulder heads sit under the main skull's outline.
+    for (const h of this.heads) if (!h.main) this.drawHead(g, st, h, S, a, tx);
+    for (const h of this.heads) if (h.main) this.drawHead(g, st, h, S, a, tx);
     for (const l of this.limbs) if (!l.back) this.drawLimb(g, st, l, S, a, tx);
     if (st.angered) this.drawAngeredRim(g, S, a, tx);
-    if (st.dashing) this.drawSmear(g, st, S, a, tx);
-    if (this.spec.alpha) SoulFx.drawAlphaCrown(g, this.tint, tones, ...tx(0, -0.1), S * 0.95, this.t, !!st.angered);
+    if (this.spec.alpha) SoulFx.drawAlphaCrown(g, this.tint, st.tones, ...tx(0, -0.1), S * 0.95, this.t, !!st.angered);
   }
 
-  /** Grave-light pooling under it, with wisps standing out of the floor. */
-  private drawGround(
-    u: Phaser.GameObjects.Graphics, st: AmalgamBodyState, S: number, a: number,
-    tx: (ox: number, oy: number) => [number, number],
-  ): void {
-    const [gx, gy] = tx(0, 0.95);
-    u.fillStyle(this.tint(SOUL.void), a * 0.34);
-    u.fillEllipse(gx, gy + S * 0.12, S * 2.1, S * 0.72);
-    u.fillStyle(this.tint(st.tones.shroud), a * 0.3);
-    u.fillEllipse(gx, gy + S * 0.06, S * 1.6, S * 0.55);
-    u.fillStyle(this.tint(st.tones.body), a * 0.16);
-    u.fillEllipse(gx, gy, S * 1.05, S * 0.34);
-    for (let i = 0; i < 3; i++) {
-      soulWispLayered(
-        u, this.tint, st.tones, gx + (i - 1) * S * 0.5, gy,
-        -Math.PI / 2 + Math.sin(this.t * 0.9 + i * 1.4) * 0.45,
-        S * (0.3 + 0.12 * Math.sin(this.t * 2.2 + i)), S * 0.1, a * 0.32,
-        this.t * 3.5 + i * 1.7, { tatters: 0, beads: false },
-      );
-    }
+  private lobeR(l: Lobe, S: number): number {
+    return l.r * S * (1 + 0.04 * Math.sin(this.t * 2.2 + l.phase));
   }
 
-  /** The mass itself: a shroud halo behind every lobe, then the flesh, then rim light. */
+  /**
+   * The mass: one dark outline under every lobe, then every lobe filled flat in one tone so they
+   * fuse into a single silhouette. Shading is one highlight and one shadow for the whole shape.
+   */
   private drawMass(
     g: Phaser.GameObjects.Graphics, st: AmalgamBodyState, S: number, a: number,
     tx: (ox: number, oy: number) => [number, number],
   ): void {
     const tones = st.tones;
-    const flesh = this.spec.fleshColor;
-    const rOf = (l: Lobe): number => l.r * S * (1 + l.wob * Math.sin(this.t * 2.2 + l.phase));
-
-    // Halo pass first for every lobe, so no lobe's halo paints over a neighbour's body.
-    g.fillStyle(this.tint(tones.shroud), a * 0.85);
+    const rim = Math.max(1.5, S * 0.1);
+    g.fillStyle(this.tint(tones.shroud), a);
     for (const l of this.lobes) {
       const [cx, cy] = tx(l.ox, l.oy);
-      g.fillCircle(cx, cy + rOf(l) * 0.06, rOf(l) * 1.12);
+      g.fillCircle(cx, cy, this.lobeR(l, S) + rim);
+    }
+    g.fillStyle(this.tint(tones.body), a);
+    for (const l of this.lobes) {
+      const [cx, cy] = tx(l.ox, l.oy);
+      g.fillCircle(cx, cy, this.lobeR(l, S));
+    }
+    const torso = this.lobes[0];
+    const [tcx, tcy] = tx(torso.ox, torso.oy);
+    const tr = this.lobeR(torso, S);
+    // One shadow under the belly, one highlight across the chest.
+    g.fillStyle(this.tint(tones.shroud), a * 0.35);
+    g.fillEllipse(tcx, tcy + tr * 0.55, tr * 1.5, tr * 0.6);
+    g.fillStyle(this.tint(tones.glow), a * 0.3);
+    g.fillEllipse(tcx - tr * 0.2, tcy - tr * 0.35, tr * 1.0, tr * 0.55);
+    // A recruited variant keeps its own colour as a clean patch on the belly.
+    if (this.spec.fleshColor !== undefined) {
+      g.fillStyle(this.tint(this.spec.fleshColor), a * 0.55);
+      g.fillEllipse(tcx, tcy + tr * 0.32, tr * 0.95, tr * 0.62);
+      g.lineStyle(Math.max(1, S * 0.05), this.tint(tones.shroud), a * 0.6);
+      g.strokeEllipse(tcx, tcy + tr * 0.32, tr * 0.95, tr * 0.62);
     }
     for (const l of this.lobes) {
-      const r = rOf(l);
+      if (!l.lit) continue;
       const [cx, cy] = tx(l.ox, l.oy);
-      g.fillStyle(this.tint(tones.body), a * 0.95);
-      g.fillCircle(cx, cy, r);
-      // A recruited variant keeps its own colour in the meat it brought with it.
-      if (flesh && l.lower) {
-        g.fillStyle(this.tint(flesh), a * 0.34);
-        g.fillCircle(cx, cy + r * 0.18, r * 0.76);
-      }
-      // Underside shade, then a rim light up-left: two circles is enough to round a disc off.
-      g.fillStyle(this.tint(SOUL.void), a * 0.16);
-      g.fillCircle(cx + r * 0.24, cy + r * 0.3, r * 0.55);
-      g.fillStyle(this.tint(tones.glow), a * 0.2);
-      g.fillCircle(cx - r * 0.22, cy - r * 0.28, r * 0.6);
-      // Blaster gut / spitter sac: lit from inside and swelling.
-      if (l.lit) {
-        const heat = 0.5 + 0.5 * Math.sin(this.t * 4 + l.phase);
-        g.fillStyle(this.tint(tones.core), a * (0.3 + 0.3 * heat));
-        g.fillCircle(cx, cy, r * (0.55 + 0.1 * heat));
-        g.lineStyle(1.4, this.tint(tones.spark), a * 0.6);
-        g.strokeCircle(cx, cy, r * 0.78);
-      }
+      const r = this.lobeR(l, S);
+      const heat = 0.5 + 0.5 * Math.sin(this.t * 4 + l.phase);
+      g.fillStyle(this.tint(tones.core), a * (0.35 + 0.3 * heat));
+      g.fillCircle(cx, cy, r * (0.55 + 0.1 * heat));
+      g.fillStyle(this.tint(tones.spark), a * 0.6);
+      g.fillCircle(cx, cy, r * 0.22);
     }
   }
 
+  /** Point on a seam's quadratic curve at `f`. */
+  private seamAt(s: Seam, f: number): [number, number] {
+    const m = 1 - f;
+    return [m * m * s.x1 + 2 * m * f * s.cx + f * f * s.x2, m * m * s.y1 + 2 * m * f * s.cy + f * f * s.y2];
+  }
+
   /**
-   * The stitching. Each seam runs from the torso into the lobe it is holding on, with bone
-   * sutures crossing it and a frayed thread end where the surgeon gave up. A burning or Inflamed
-   * amalgam has its seams split open, glowing from the inside.
+   * The stitching: one smooth seam with neat cross-stitches. A burning or Inflamed amalgam has
+   * it split open, glowing from inside — and vents heat from the shoulders.
    */
   private drawSeams(
     g: Phaser.GameObjects.Graphics, st: AmalgamBodyState, S: number, a: number,
     tx: (ox: number, oy: number) => [number, number],
   ): void {
-    const tones = st.tones;
     const hot = st.burning || st.inflamed;
-    for (let si = 0; si < this.seams.length; si++) {
-      const s = this.seams[si];
-      // The seam sits on the junction: from just inside the torso to just inside the lobe.
-      const dx = s.to.ox - s.from.ox;
-      const dy = s.to.oy - s.from.oy;
-      const len = Math.hypot(dx, dy) || 1;
-      const nx = dx / len;
-      const ny = dy / len;
-      const [x1, y1] = tx(s.from.ox + nx * s.from.r * 0.45, s.from.oy + ny * s.from.r * 0.45);
-      const [x2, y2] = tx(s.to.ox - nx * s.to.r * 0.2, s.to.oy - ny * s.to.r * 0.2);
-
-      g.lineStyle(Math.max(1, S * 0.11), this.tint(tones.shroud), a * 0.85);
-      g.lineBetween(x1, y1, x2, y2);
-      if (hot) {
-        const heat = 0.55 + 0.45 * Math.sin(this.t * 6 + si * 1.7);
-        g.lineStyle(Math.max(1, S * 0.07), this.tint(SOUL.scar), a * 0.9);
-        g.lineBetween(x1, y1, x2, y2);
-        g.lineStyle(Math.max(0.8, S * 0.035), this.tint(SOUL.flame), a * (0.4 + 0.5 * heat));
-        g.lineBetween(x1, y1, x2, y2);
-      }
-      // Sutures crossing it, each nodding on its own phase.
-      const px = -ny;
-      const py = nx;
-      for (let i = 0; i < s.sutures; i++) {
-        const f = (i + 0.5) / s.sutures;
-        const cx = x1 + (x2 - x1) * f;
-        const cy = y1 + (y2 - y1) * f;
-        const w = S * 0.16 * (1 + 0.14 * Math.sin(this.t * 3 + i + si));
-        g.lineStyle(Math.max(0.8, S * 0.055), this.tint(SOUL.bone), a * 0.9);
-        g.lineBetween(cx - px * w, cy - py * w, cx + px * w, cy + py * w);
-        if (hot) {
-          g.fillStyle(this.tint(SOUL.cinder), a * 0.7 * (0.4 + 0.6 * Math.sin(this.t * 7 + i * 2)));
-          g.fillCircle(cx, cy, S * 0.045);
-        }
-      }
-      // One thread end left hanging off the seam.
-      if (si % 2 === 0) {
-        soulWispLayered(
-          g, this.tint, hot ? TORMENT_TONES : tones, x2, y2,
-          Math.atan2(y2 - y1, x2 - x1) + 0.6, S * 0.3, S * 0.05, a * 0.55,
-          this.t * 5 + si, { tatters: 0, beads: false },
-        );
+    for (const s of this.seams) {
+      const pts: [number, number][] = [];
+      for (let i = 0; i <= 10; i++) pts.push(tx(...this.seamAt(s, i / 10)));
+      const line = (w: number, color: number, alpha: number): void => {
+        g.lineStyle(w, this.tint(color), alpha);
+        g.beginPath();
+        g.moveTo(pts[0][0], pts[0][1]);
+        for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]);
+        g.strokePath();
+      };
+      line(Math.max(1.2, S * 0.08), st.tones.shroud, a * 0.9);
+      if (hot) line(Math.max(1, S * 0.05), SOUL.flame, a * (0.55 + 0.4 * Math.sin(this.t * 6)));
+      // Cross-stitches, perpendicular to the seam.
+      for (let i = 0; i < s.stitches; i++) {
+        const f = (i + 0.5) / s.stitches;
+        const [ax, ay] = this.seamAt(s, f - 0.02);
+        const [bx, by] = this.seamAt(s, f + 0.02);
+        const d = Math.hypot(bx - ax, by - ay) || 1;
+        const nx = -(by - ay) / d * 0.13;
+        const ny = (bx - ax) / d * 0.13;
+        const [mx, my] = this.seamAt(s, f);
+        const [p1x, p1y] = tx(mx - nx, my - ny);
+        const [p2x, p2y] = tx(mx + nx, my + ny);
+        g.lineStyle(Math.max(1, S * 0.055), this.tint(hot ? SOUL.cinder : SOUL.bone), a * 0.95);
+        g.lineBetween(p1x, p1y, p2x, p2y);
       }
     }
-    // Inflamed vents heat off the shoulders even when nothing is burning it.
-    if (st.inflamed) {
+    if (st.inflamed || st.burning) {
       for (const s of [-1, 1]) {
-        const [vx, vy] = tx(s * 0.5, -0.5);
+        const [vx, vy] = tx(s * 0.55, -0.62);
         soulWispLayered(
-          g, this.tint, TORMENT_TONES, vx, vy, -Math.PI / 2 + s * 0.35,
-          S * (0.55 + 0.2 * Math.sin(this.t * 3 + s)), S * 0.13, a * 0.6,
-          this.t * 6 + s, { tatters: 1, beads: false },
+          g, this.tint, TORMENT_TONES, vx, vy, -Math.PI / 2 + s * 0.3,
+          S * (0.45 + 0.15 * Math.sin(this.t * 3 + s)), S * 0.11, a * 0.65,
+          this.t * 6 + s, { tatters: 0, beads: false },
         );
       }
-    }
-  }
-
-  /** Rib shards and bone spurs pushing out through the flesh. */
-  private drawSpurs(
-    g: Phaser.GameObjects.Graphics, S: number, a: number,
-    tx: (ox: number, oy: number) => [number, number],
-  ): void {
-    for (const s of this.spurs) {
-      const [bx, by] = tx(s.ox, s.oy);
-      const len = s.len * S;
-      const tipX = bx + Math.cos(s.ang) * len;
-      const tipY = by + Math.sin(s.ang) * len;
-      const w = len * 0.28;
-      const px = -Math.sin(s.ang) * w;
-      const py = Math.cos(s.ang) * w;
-      g.fillStyle(this.tint(SOUL.bone), a * 0.9);
-      g.beginPath();
-      g.moveTo(bx + px, by + py);
-      g.lineTo(tipX, tipY);
-      g.lineTo(bx - px, by - py);
-      g.closePath();
-      g.fillPath();
-      g.fillStyle(this.tint(SOUL.stone), a * 0.5);
-      g.fillCircle(bx, by, w * 0.8);
     }
   }
 
   /**
-   * A head: skull dome, sunken sockets with pips that track whatever it is hunting, and a jaw
-   * that hangs open and works. The spare heads are the same drawing at a third the size — a
-   * shoulder growing a face is the whole point of the creature.
+   * A head: a clean skull — outline, dome, two sockets whose pips track the prey, and a mouth that
+   * works. The shoulder heads are the same drawing, smaller.
    */
   private drawHead(
     g: Phaser.GameObjects.Graphics, st: AmalgamBodyState, h: Head, S: number, a: number,
     tx: (ox: number, oy: number) => [number, number],
   ): void {
     const tones = st.tones;
-    const bob = Math.sin(this.walk * TAU + h.phase) * (h.main ? 0.03 : 0.06);
+    const bob = Math.sin(this.walk * TAU + h.phase) * (h.main ? 0.03 : 0.05);
     const [x, y] = tx(h.ox, h.oy + bob);
     const r = h.r * S;
-    // Wide open while lunging or burning; otherwise a slack, working jaw.
-    const scream = st.dashing || st.burning ? 0.85 : 0.35;
-    const jaw = scream + (1 - scream) * Math.max(0, Math.sin(this.t * (h.main ? 3.4 : 5) + h.phase));
+    const jaw = st.dashing || st.burning ? 1 : 0.45 + 0.35 * Math.max(0, Math.sin(this.t * (h.main ? 3.2 : 4.6) + h.phase));
 
-    g.fillStyle(this.tint(tones.shroud), a * 0.9);
-    g.fillCircle(x, y, r * 1.14);
+    g.fillStyle(this.tint(tones.shroud), a);
+    g.fillCircle(x, y, r + Math.max(1.5, S * 0.1));
     g.fillStyle(this.tint(tones.body), a);
     g.fillCircle(x, y, r);
     g.fillStyle(this.tint(tones.glow), a * 0.3);
-    g.fillCircle(x - r * 0.24, y - r * 0.3, r * 0.55);
+    g.fillEllipse(x - r * 0.2, y - r * 0.38, r * 1.1, r * 0.6);
 
-    // The mouth: a dark socket with bone teeth across the top of it.
-    const my = y + r * 0.5;
-    g.fillStyle(this.tint(SOUL.void), a * 0.92);
-    g.fillEllipse(x, my, r * 0.95, r * 0.85 * jaw);
-    const teeth = h.main ? 4 : 3;
-    g.fillStyle(this.tint(SOUL.bone), a * 0.9);
-    for (let i = 0; i < teeth; i++) {
-      const f = (i + 0.5) / teeth;
-      g.fillRect(x - r * 0.45 + r * 0.9 * f - r * 0.05, my - r * 0.42 * jaw, r * 0.1, r * 0.3 * jaw);
+    // Mouth: one dark slot with three bone teeth along its top edge.
+    const my = y + r * 0.48;
+    g.fillStyle(this.tint(SOUL.void), a * 0.9);
+    g.fillEllipse(x, my, r * 0.8, r * 0.5 * jaw);
+    g.fillStyle(this.tint(SOUL.bone), a * 0.95);
+    for (let i = 0; i < 3; i++) {
+      g.fillRect(x - r * 0.28 + i * r * 0.22, my - r * 0.24 * jaw, r * 0.12, r * 0.18 * jaw);
     }
 
-    // Sockets and the pips burning in them, offset toward whatever it is hunting.
-    const ex = Math.cos(this.eyeAng) * r * 0.13;
-    const ey = Math.sin(this.eyeAng) * r * 0.13;
-    // Blink: a shared clock offset per head, so a crowd of faces never blinks in unison.
-    const blinkPhase = (this.t * 0.42 + h.phase) % 1;
-    const lid = blinkPhase > 0.94 ? 0.12 : 1;
+    // Sockets, with pips shifted toward the prey. Blinks on a per-head clock.
+    const ex = Math.cos(this.eyeAng) * r * 0.1;
+    const ey = Math.sin(this.eyeAng) * r * 0.1;
+    const lid = (this.t * 0.42 + h.phase) % 1 > 0.95 ? 0.15 : 1;
+    const flare = st.dashing ? 1.3 : 1;
     for (const s of [-1, 1]) {
-      const sx = x + s * r * 0.37;
-      const sy = y - r * 0.16;
-      g.fillStyle(this.tint(SOUL.void), a * 0.9);
-      g.fillCircle(sx, sy, r * 0.26);
-      const flare = st.dashing ? 1.35 : 1;
-      g.fillStyle(this.tint(tones.glow), a * 0.55 * lid);
-      g.fillCircle(sx + ex, sy + ey, r * 0.2 * flare * lid);
-      g.fillStyle(this.tint(tones.spark), a * 0.95 * lid);
-      g.fillCircle(sx + ex, sy + ey, r * 0.1 * flare * lid);
+      const sx = x + s * r * 0.36;
+      const sy = y - r * 0.08;
+      g.fillStyle(this.tint(SOUL.void), a * 0.95);
+      g.fillEllipse(sx, sy, r * 0.5, r * 0.46);
+      g.fillStyle(this.tint(tones.core), a * lid);
+      g.fillCircle(sx + ex, sy + ey, r * 0.15 * flare * lid);
+      g.fillStyle(this.tint(tones.spark), a * lid);
+      g.fillCircle(sx + ex - r * 0.04, sy + ey - r * 0.04, r * 0.06 * flare * lid);
     }
 
     if (h.main && this.spec.quirk === 'horns') {
       for (const s of [-1, 1]) {
-        g.fillStyle(this.tint(SOUL.bone), a * 0.95);
+        g.fillStyle(this.tint(SOUL.bone), a);
         g.beginPath();
-        g.moveTo(x + s * r * 0.6, y - r * 0.55);
-        g.lineTo(x + s * r * 1.05, y - r * 1.5);
-        g.lineTo(x + s * r * 0.28, y - r * 0.85);
+        g.moveTo(x + s * r * 0.55, y - r * 0.6);
+        g.lineTo(x + s * r * 0.95, y - r * 1.45);
+        g.lineTo(x + s * r * 0.25, y - r * 0.88);
         g.closePath();
         g.fillPath();
       }
     }
     if (h.main && this.spec.quirk === 'halo') {
-      for (let i = 0; i < 6; i++) {
-        const ang = this.t * 0.8 + (i / 6) * TAU;
-        g.fillStyle(this.tint(SOUL.bone), a * 0.85);
-        g.fillCircle(x + Math.cos(ang) * r * 1.25, y - r * 1.15 + Math.sin(ang) * r * 0.3, r * 0.11);
-      }
+      g.lineStyle(Math.max(1.2, r * 0.14), this.tint(SOUL.bone), a * 0.9);
+      g.strokeEllipse(x, y - r * 1.25, r * 1.5, r * 0.42);
     }
   }
 
-  /** A spare arm: two tapered segments, a knuckle at each joint, and a clawed hand. */
+  /** An arm: two tapered segments, rounded joints and a small three-clawed hand. */
   private drawLimb(
     g: Phaser.GameObjects.Graphics, st: AmalgamBodyState, l: Limb, S: number, a: number,
     tx: (ox: number, oy: number) => [number, number],
   ): void {
     const tones = st.tones;
-    const swing = Math.sin(this.walk * TAU + l.phase) * (0.2 + 0.32 * Math.min(1, Math.hypot(st.vx, st.vy) / 160));
-    // Front arms half-reach toward whatever it is hunting; back arms just swing.
-    let upper = l.ang + swing * 0.7;
-    if (!l.back) upper = Phaser.Math.Angle.RotateTo(upper, this.eyeAng, 0.3);
-    const fore = upper + (0.5 + swing * 0.6) * (l.ang > Math.PI / 2 || l.ang < -Math.PI / 2 ? -1 : 1);
+    const moving = Math.min(1, Math.hypot(st.vx, st.vy) / 160);
+    const swing = Math.sin(this.walk * TAU + l.phase) * (0.18 + 0.28 * moving);
+    // Arms hang down-and-out; front arms reach a little toward the prey.
+    const rest = l.side < 0 ? Math.PI * 0.68 : Math.PI * 0.32;
+    let upper = rest + swing * l.side;
+    if (!l.back) upper = Phaser.Math.Angle.RotateTo(upper, this.eyeAng, 0.25);
+    const fore = upper + 0.45 * -l.side;
 
-    const rx = Math.cos(l.ang) * 0.74;
-    const ry = Math.sin(l.ang) * 0.5 + 0.05;
-    const exU = rx + Math.cos(upper) * l.len * 0.55;
-    const eyU = ry + Math.sin(upper) * l.len * 0.55;
-    const hxU = exU + Math.cos(fore) * l.len * 0.5;
-    const hyU = eyU + Math.sin(fore) * l.len * 0.5;
+    const rx = l.side * 0.78;
+    const ry = l.oy;
+    const ex = rx + Math.cos(upper) * l.len * 0.5;
+    const ey = ry + Math.sin(upper) * l.len * 0.5;
+    const hx = ex + Math.cos(fore) * l.len * 0.48;
+    const hy = ey + Math.sin(fore) * l.len * 0.48;
     const [x0, y0] = tx(rx, ry);
-    const [x1, y1] = tx(exU, eyU);
-    const [x2, y2] = tx(hxU, hyU);
+    const [x1, y1] = tx(ex, ey);
+    const [x2, y2] = tx(hx, hy);
 
-    const col = l.back ? tones.shroud : tones.body;
     const w = l.thick * S;
-    g.lineStyle(w * 1.9, this.tint(col), a * 0.95);
+    const outline = this.tint(tones.shroud);
+    const fill = this.tint(l.back ? tones.shroud : tones.body);
+    // Outline first, then the fill — the same two-pass trick as the mass, so the arm is clean.
+    g.lineStyle(w * 2 + 3, outline, a);
     g.lineBetween(x0, y0, x1, y1);
-    g.lineStyle(w * 1.5, this.tint(col), a * 0.95);
     g.lineBetween(x1, y1, x2, y2);
-    g.fillStyle(this.tint(col), a * 0.95);
-    g.fillCircle(x0, y0, w * 1.1);
-    g.fillCircle(x1, y1, w * 0.95);
-    g.fillCircle(x2, y2, w * 1.05);
-    if (!l.back) {
-      g.lineStyle(w * 0.55, this.tint(tones.glow), a * 0.5);
-      g.lineBetween(x1, y1, x2, y2);
-      g.fillStyle(this.tint(tones.glow), a * 0.4);
-      g.fillCircle(x2, y2, w * 0.6);
-    }
-    // Claws, fanned off the hand along the forearm.
-    for (let i = 0; i < l.claws; i++) {
-      const ang = fore + (i - (l.claws - 1) / 2) * 0.42;
-      const tipX = x2 + Math.cos(ang) * w * 1.9;
-      const tipY = y2 + Math.sin(ang) * w * 1.9;
-      const px = -Math.sin(ang) * w * 0.22;
-      const py = Math.cos(ang) * w * 0.22;
-      g.fillStyle(this.tint(SOUL.bone), a * 0.9);
+    g.fillStyle(outline, a);
+    g.fillCircle(x1, y1, w + 1.5);
+    g.fillCircle(x2, y2, w * 1.25 + 1.5);
+    g.lineStyle(w * 2, fill, a);
+    g.lineBetween(x0, y0, x1, y1);
+    g.lineStyle(w * 1.7, fill, a);
+    g.lineBetween(x1, y1, x2, y2);
+    g.fillStyle(fill, a);
+    g.fillCircle(x1, y1, w);
+    g.fillCircle(x2, y2, w * 1.25);
+    // Claws: three small bone hooks off the hand.
+    g.fillStyle(this.tint(SOUL.bone), a * 0.95);
+    for (let i = -1; i <= 1; i++) {
+      const ang = fore + i * 0.45;
+      const bx = x2 + Math.cos(ang) * w * 1.1;
+      const by = y2 + Math.sin(ang) * w * 1.1;
+      const px = -Math.sin(ang) * w * 0.25;
+      const py = Math.cos(ang) * w * 0.25;
       g.beginPath();
-      g.moveTo(x2 + px, y2 + py);
-      g.lineTo(tipX, tipY);
-      g.lineTo(x2 - px, y2 - py);
+      g.moveTo(bx + px, by + py);
+      g.lineTo(bx + Math.cos(ang) * w * 0.9, by + Math.sin(ang) * w * 0.9);
+      g.lineTo(bx - px, by - py);
       g.closePath();
       g.fillPath();
     }
   }
 
-  /** Angered tier: a boiling red rim that never quite settles into a circle. */
+  /** Angered tier: one clean red rim around the whole mass, pulsing. */
   private drawAngeredRim(
     g: Phaser.GameObjects.Graphics, S: number, a: number,
     tx: (ox: number, oy: number) => [number, number],
   ): void {
-    const segs = 18;
-    g.lineStyle(Math.max(1.2, S * 0.09), this.tint(SOUL.blood), a * 0.55);
-    g.beginPath();
-    for (let i = 0; i <= segs; i++) {
-      const ang = ((i % segs) / segs) * TAU;
-      const rr = 1.2 + 0.11 * Math.sin(this.t * 6 + i * 2.1);
-      const [px, py] = tx(Math.cos(ang) * rr, Math.sin(ang) * rr * 0.85 - 0.05);
-      if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
-    }
-    g.strokePath();
-    for (let i = 0; i < 3; i++) {
-      const ang = this.t * 1.5 + (i / 3) * TAU;
-      const [px, py] = tx(Math.cos(ang) * 1.1, Math.sin(ang) * 0.9);
-      soulWispLayered(
-        g, this.tint, ANGERED_TONES, px, py, ang, S * 0.5, S * 0.12, a * 0.5,
-        this.t * 7 + i, { tatters: 0, beads: false },
-      );
-    }
+    const pulse = 0.5 + 0.5 * Math.sin(this.t * 6);
+    const [cx, cy] = tx(0, -0.15);
+    g.lineStyle(Math.max(1.5, S * 0.1), this.tint(SOUL.blood), a * (0.45 + 0.3 * pulse));
+    g.strokeEllipse(cx, cy, S * (2.6 + 0.12 * pulse), S * (2.5 + 0.12 * pulse));
   }
 
-  /** Mid-lunge: torn spirit streaming out of the back of the mass. */
+  /** Mid-lunge: two clean streamers of spirit trailing off the back of the mass. */
   private drawSmear(
     g: Phaser.GameObjects.Graphics, st: AmalgamBodyState, S: number, a: number,
     tx: (ox: number, oy: number) => [number, number],
   ): void {
     const back = this.travel + Math.PI;
-    for (let i = 0; i < 4; i++) {
-      const off = (i - 1.5) * 0.35;
-      const [px, py] = tx(Math.cos(back) * 0.7 - Math.sin(back) * off, Math.sin(back) * 0.55 + Math.cos(back) * off);
+    for (const off of [-0.35, 0.35]) {
+      const [px, py] = tx(Math.cos(back) * 0.6 - Math.sin(back) * off, Math.sin(back) * 0.5 + Math.cos(back) * off);
       soulWispLayered(
-        g, this.tint, st.tones, px, py, back, S * (0.9 + 0.25 * Math.sin(this.t * 9 + i)), S * 0.17, a * 0.6,
-        this.t * 10 + i, { tatters: 1, beads: false },
+        g, this.tint, st.tones, px, py, back, S * (0.9 + 0.2 * Math.sin(this.t * 9 + off)), S * 0.16, a * 0.5,
+        this.t * 10 + off, { tatters: 0, beads: false },
       );
     }
   }
@@ -1600,15 +1562,39 @@ const SOUL_AVATAR: AvatarSpec = {
 export class SoulAvatar extends BaseAvatar {
   private fx: SoulFx;
   private tones: SoulTones;
+  private readonly baseTones: SoulTones;
+  /** Soul Lord at 25 kills: a golden, haloed, winged figure. */
+  private ascended = false;
+  /** 0 → 1 over the transformation, so the wings unfold rather than pop in. */
+  private ascendT = 0;
 
   constructor(scene: Phaser.Scene, tint: SoulColorFn, tones: SoulTones = SPIRIT_TONES, depth = 6) {
     super(scene, tint, depth, SOUL_AVATAR);
     this.fx = new SoulFx(scene, tint);
     this.tones = tones;
-    if (tones !== SPIRIT_TONES) {
-      this.forEachHandLayer(1, (shell) => shell.setFillStyle(this.tint(tones.glow), 0.85));
-      this.forEachHandLayer(2, (core) => core.setFillStyle(this.tint(tones.core), 1));
-    }
+    this.baseTones = tones;
+    if (tones !== SPIRIT_TONES) this.paintHands(tones);
+  }
+
+  private paintHands(tones: SoulTones): void {
+    this.forEachHandLayer(1, (shell) => shell.setFillStyle(this.tint(tones.glow), 0.85));
+    this.forEachHandLayer(2, (core) => core.setFillStyle(this.tint(tones.core), 1));
+  }
+
+  /**
+   * Soul Lord ascension: the whole character turns gold — hands, eyes, the body under them —
+   * the torn cowl becomes a halo and a pair of feathered wings unfolds behind it.
+   */
+  setAscended(on: boolean): void {
+    if (on === this.ascended) return;
+    this.ascended = on;
+    this.tones = on ? GOLD_TONES : this.baseTones;
+    this.paintHands(this.tones);
+    this.forEachHandLayer(3, (spark) => spark.setFillStyle(this.tint(on ? SOUL.halo : SOUL.pale), 1));
+    // Re-run the mastery tell against the new tones: it owns the outer halo and the eye white.
+    this.applyMastery(this.mastered);
+    this.forEachHandLayer(0, (halo) => { if (on) halo.setFillStyle(this.tint(SOUL.gold), 0.32); });
+    if (!on) this.ascendT = 0;
   }
 
   /**
@@ -1636,6 +1622,10 @@ export class SoulAvatar extends BaseAvatar {
 
   /** Grave-light pooling under the character, with wisps standing out of the floor. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
+    if (this.ascended) {
+      this.ascendT = Math.min(1, this.ascendT + 0.02);
+      this.drawWings(g, x, y, a);
+    }
     g.fillStyle(this.tint(this.tones.shroud), a * 0.3 * this.intensity);
     g.fillEllipse(x, y + 7, 54 * this.intensity, 26 * this.intensity);
     g.fillStyle(this.tint(this.tones.body), a * 0.22 * this.intensity);
@@ -1656,7 +1646,69 @@ export class SoulAvatar extends BaseAvatar {
    * peeling away. Rooted at y - 18 so it never covers the face, and drawn over the sprite so its
    * lit edges show rather than only the dark tips clearing the body.
    */
+  /**
+   * Ascended wings: two fans of long gold feathers behind the body, beating slowly. Drawn on the
+   * glow layer, under the sprite, so the body sits in front of them.
+   */
+  private drawWings(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
+    const open = easeOut(this.ascendT);
+    const beat = Math.sin(this.t * 2.4) * 0.12;
+    for (const side of [-1, 1]) {
+      for (let i = 0; i < 5; i++) {
+        // Feathers fan from up-and-out (i=0) to out-and-down (i=4).
+        const spread = (-0.95 + i * 0.32 + beat) * open;
+        const ang = side < 0 ? Math.PI - spread : spread;
+        const len = (34 - i * 3.5) * open;
+        const rx = x + side * 8, ry = y - 4;
+        const tipX = rx + Math.cos(ang) * len, tipY = ry + Math.sin(ang) * len;
+        const px = -Math.sin(ang) * 4.6, py = Math.cos(ang) * 4.6;
+        g.fillStyle(this.tint(SOUL.bronze), a * 0.9);
+        g.beginPath();
+        g.moveTo(rx + px * 1.2, ry + py * 1.2);
+        g.lineTo(tipX, tipY);
+        g.lineTo(rx - px * 1.2, ry - py * 1.2);
+        g.closePath();
+        g.fillPath();
+        g.fillStyle(this.tint(i % 2 ? SOUL.gold : SOUL.sun), a);
+        g.beginPath();
+        g.moveTo(rx + px * 0.7, ry + py * 0.7);
+        g.lineTo(rx + Math.cos(ang) * len * 0.94, ry + Math.sin(ang) * len * 0.94);
+        g.lineTo(rx - px * 0.7, ry - py * 0.7);
+        g.closePath();
+        g.fillPath();
+      }
+    }
+  }
+
+  /** Ascended: a gold body over the sprite, under the eyes — the whole character turns golden. */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    void a;
+    if (!this.ascended) return;
+    const k = this.ascendT;
+    g.fillStyle(this.tint(SOUL.bronze), alpha * k);
+    g.fillCircle(x, y, 21);
+    g.fillStyle(this.tint(SOUL.gold), alpha * k);
+    g.fillCircle(x, y, 19);
+    g.fillStyle(this.tint(SOUL.sun), alpha * 0.85 * k);
+    g.fillCircle(x - 2, y - 3, 13);
+    g.fillStyle(this.tint(SOUL.halo), alpha * 0.8 * k);
+    g.fillEllipse(x - 6.5, y - 8.5, 8, 5);
+    g.lineStyle(1.6, this.tint(SOUL.halo), alpha * 0.7 * k);
+    g.strokeCircle(x, y, 20.5);
+  }
+
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    if (this.ascended) {
+      // The cowl is gone: a bright halo floats above the crown instead.
+      const hy = y - 30 + Math.sin(this.t * 2) * 1.5;
+      g.lineStyle(6, this.tint(SOUL.gold), alpha * 0.35);
+      g.strokeEllipse(x, hy, 30, 9);
+      g.lineStyle(3, this.tint(SOUL.sun), alpha);
+      g.strokeEllipse(x, hy, 26, 7);
+      g.lineStyle(1.2, this.tint(SOUL.halo), alpha);
+      g.strokeEllipse(x, hy - 0.5, 24, 6);
+      return;
+    }
     const rootY = y - 18;
     const count = this.mastered ? 5 : 3;
     const scale = this.mastered ? 1.32 : 1;

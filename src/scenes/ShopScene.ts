@@ -38,7 +38,7 @@ const ELEMENT_COLORS: Record<string, number> = {
   magnet:      0xcc2244,
   metal:       0xaabbcc,
   plasma:      0xdd66ff,
-  passion:     0xff5fa2,
+  passion:     0xf5e08a,
   chalk:       0xf4f1e6,
   wax:         0xf2c85b,
   clay:        0x9a5c32,
@@ -51,7 +51,7 @@ const ELEMENT_COLORS: Record<string, number> = {
   gum:         0x46b93f,
   bind:        0xe0b743,
   radiation:   0x7cff3d,
-  psychic:     0x9b4dff,
+  psychic:     0xe8e4d8,
 };
 
 const ELEMENT_EMOJIS: Record<string, string> = {
@@ -78,7 +78,7 @@ const ELEMENT_EMOJIS: Record<string, string> = {
   magnet:      '🧲',
   metal:       '⚙️',
   plasma:      '🔮',
-  passion:     '💘',
+  passion:     '🙏',
   chalk:       '🖍️',
   wax:         '🕯️',
   clay:        '🏺',

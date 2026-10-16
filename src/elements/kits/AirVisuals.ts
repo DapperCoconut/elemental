@@ -115,70 +115,6 @@ export function windCurlLayered(
 }
 
 /**
- * A folding dance fan, drawn from its pivot outward: the leaf as a scalloped sector, the ribs
- * fanning across it, and a feathered fringe along the outer edge. `spread` is the half-angle
- * the leaf is opened to — a fan snapped shut is the same shape at a hair's width, which is how
- * the dancer's idle differs from her strike.
- *
- * Deliberately not a plain arc: the scallops between the ribs and the fringe past them are the
- * whole reason it reads as a fan rather than as a pie slice.
- */
-export function fanLeaf(
-  g: Phaser.GameObjects.Graphics,
-  tint: AirColorFn,
-  cx: number, cy: number,
-  angle: number, radius: number, spread: number,
-  alpha: number,
-  ribs = 7,
-): void {
-  const inner = radius * 0.2;
-  // Leaf: scalloped between every pair of ribs, so the outer edge dips instead of running flat.
-  g.fillStyle(tint(AIR.frost), alpha * 0.72);
-  g.beginPath();
-  g.moveTo(cx + Math.cos(angle - spread) * inner, cy + Math.sin(angle - spread) * inner);
-  const SEG = ribs * 4;
-  for (let i = 0; i <= SEG; i++) {
-    const f = i / SEG;
-    const a = angle - spread + f * spread * 2;
-    // One scallop per rib gap: the edge sags between ribs and is pulled taut on them.
-    const dip = 1 - 0.09 * Math.pow(Math.sin(f * ribs * Math.PI), 2);
-    g.lineTo(cx + Math.cos(a) * radius * dip, cy + Math.sin(a) * radius * dip);
-  }
-  g.lineTo(cx + Math.cos(angle + spread) * inner, cy + Math.sin(angle + spread) * inner);
-  g.closePath();
-  g.fillPath();
-
-  // Ribs, running from the pivot past the leaf edge and finishing in a bead.
-  for (let i = 0; i < ribs; i++) {
-    const a = angle - spread + (i / (ribs - 1)) * spread * 2;
-    g.lineStyle(1.7, tint(AIR.wood), alpha * 0.9);
-    g.beginPath();
-    g.moveTo(cx + Math.cos(a) * inner * 0.4, cy + Math.sin(a) * inner * 0.4);
-    g.lineTo(cx + Math.cos(a) * radius * 1.04, cy + Math.sin(a) * radius * 1.04);
-    g.strokePath();
-    g.fillStyle(tint(AIR.woodDark), alpha * 0.85);
-    g.fillCircle(cx + Math.cos(a) * radius * 1.04, cy + Math.sin(a) * radius * 1.04, 1.5);
-  }
-
-  // Fringe: short feathers hung off the outer edge, alternating sides of each rib gap.
-  for (let i = 0; i < ribs - 1; i++) {
-    const a = angle - spread + ((i + 0.5) / (ribs - 1)) * spread * 2;
-    g.fillStyle(tint(AIR.mist), alpha * 0.55);
-    windCurl(
-      g,
-      cx + Math.cos(a) * radius * 0.95, cy + Math.sin(a) * radius * 0.95,
-      a, radius * 0.3, radius * 0.055, (i % 2 ? 1 : -1) * 1.4,
-    );
-  }
-
-  // Pivot rivet, so the leaf visibly hangs off something.
-  g.fillStyle(tint(AIR.woodDark), alpha);
-  g.fillCircle(cx, cy, 2.6);
-  g.fillStyle(tint(AIR.white), alpha * 0.8);
-  g.fillCircle(cx - 0.7, cy - 0.7, 1.1);
-}
-
-/**
  * A single feather: a tapered shaft with barbs combed off both sides, the vane fullest a third
  * of the way up and split at the tip. Air's fluff — what the dancer sheds, and what a landed
  * strike scatters.
@@ -1126,16 +1062,13 @@ export class AirDraft {
 
 // ── AirAvatar ─────────────────────────────────────────────────────────────
 
-/**
- * The dancer's hands are small — they are wrists holding something, not the feature. Almost
- * all of the visual weight sits in the fans painted over them in `drawExtras`.
- */
+/** Plain pale-sky ball hands: a soft steel halo, the sky shell, a mist core and one glint. */
 const AIR_AVATAR: AvatarSpec = {
   hands: [
-    { r: 6.2, color: AIR.steel, alpha: 0.24 },
-    { r: 4.2, color: AIR.sky, alpha: 0.8 },
-    { r: 2.4, color: AIR.mist, alpha: 1 },
-    { r: 1.1, color: AIR.white, alpha: 0.95, ox: -1.2, oy: -1.2 },
+    { r: 9, color: AIR.steel, alpha: 0.24 },
+    { r: 6.4, color: AIR.sky, alpha: 0.9 },
+    { r: 3.6, color: AIR.mist, alpha: 1 },
+    { r: 1.6, color: AIR.white, alpha: 0.95, ox: -1.8, oy: -1.8 },
   ],
   eyeWhite: AIR.mist,
   eyePupil: AIR.void,
@@ -1144,19 +1077,17 @@ const AIR_AVATAR: AvatarSpec = {
 };
 
 /**
- * The wind dancer: a feathered figure turning on the spot with a folding fan gripped in each
- * hand. The fans are the whole character — every ability she has is one of them opening,
- * sweeping or leaving her grip — so they are drawn over the sprite at the live hand positions
- * and angled along the arm, which makes them read as held rather than as decoration orbiting
- * her.
+ * The wind dancer: a plain pale-sky orb (the baked `elem-air`), the shared eyes, two plain ball
+ * hands, and ONE accessory — a folding fan worn upright at the crown like a crest. The fan is
+ * still the dancer's tell: `setFanSpread` snaps the crest open when an ability fires and lets it
+ * fold back at idle, so the kit's open/shut cue survives without a fan in each hand.
  *
- * Her plumage is the second read: a feathered skirt in `drawBody` that flares with her turn,
- * and two trailing tail feathers behind the crown. Mastery lengthens the plumes, gilds the
- * fan ribs and puts blossom in the air around her.
+ * Mastery enhances the crest rather than adding to it: a bigger fan with gilded ribs and a soft
+ * glow behind it, white eyes, wider coronas on the hands and a stronger under-glow.
  */
 export class AirAvatar extends BaseAvatar {
   private fx: AirFx;
-  /** How wide the fans are held open, 0–1. Driven by `setFanSpread` while an ability runs. */
+  /** How wide the fan crest is held open, 0–1. Driven by `setFanSpread` while an ability runs. */
   private fanOpen = 1;
   private fanOpenTarget = 1;
 
@@ -1166,23 +1097,19 @@ export class AirAvatar extends BaseAvatar {
   }
 
   /**
-   * Snap the fans open or shut. The kit calls this so a strike visibly opens them and the walk
-   * back to idle closes them again, instead of the fans sitting at one width all match.
+   * Snap the fan open or shut. The kit calls this so a strike visibly opens it and the walk
+   * back to idle folds it again, instead of the fan sitting at one width all match.
    */
   setFanSpread(open: number): void {
     this.fanOpenTarget = Phaser.Math.Clamp(open, 0.08, 1);
   }
 
-  /**
-   * Mastery tell — the dancer comes into her plumage: white eyes, gilded fan ribs (through the
-   * wider hand halo the fan colour keys off), and longer tail feathers with blossom caught in
-   * them. Silhouette changes, not just tint, so a mastered dancer reads across the arena.
-   */
+  /** Mastery tell: white eyes and a wider cyan corona with a frost rim on each hand. */
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? AIR.white : AIR.mist);
     this.forEachHandLayer(0, (halo) => {
-      halo.setRadius(on ? 8.6 : 6.2);
-      halo.setFillStyle(this.tint(on ? AIR.cyan : AIR.steel), on ? 0.3 : 0.24);
+      halo.setRadius(on ? 12 : 9);
+      halo.setFillStyle(this.tint(on ? AIR.cyan : AIR.steel), on ? 0.32 : 0.24);
     });
     this.forEachHandLayer(1, (shell) => {
       if (on) shell.setStrokeStyle(1.4, this.tint(AIR.frost), 0.9);
@@ -1196,103 +1123,74 @@ export class AirAvatar extends BaseAvatar {
     else this.fx.motes(x, y, 1, { speed: 26, size: 2.2, life: 440, swirl: 1.8, depth: 5 });
   }
 
-  /** Pressure wash under the fighter, plus the grit her turning keeps shoving out. */
+  /** A soft pressure wash under the fighter; brighter once mastered. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
-    g.fillStyle(this.tint(AIR.steel), a * 0.22 * this.intensity);
-    g.fillEllipse(x, y + 6, 62 * this.intensity, 30 * this.intensity);
-    g.fillStyle(this.tint(AIR.sky), a * 0.12 * this.intensity);
-    g.fillEllipse(x, y + 9, 40 * this.intensity, 16 * this.intensity);
-    g.lineStyle(1.6, this.tint(AIR.mist), a * 0.3 * this.intensity);
-    g.strokeEllipse(x, y + 12, 46 + Math.sin(this.t * 3) * 6, 15);
+    const k = this.intensity * (this.mastered ? 1.15 : 1);
+    g.fillStyle(this.tint(this.mastered ? AIR.cyan : AIR.sky), a * (this.mastered ? 0.26 : 0.2) * k);
+    g.fillCircle(x, y, 28 * k);
+    g.fillStyle(this.tint(AIR.steel), a * 0.16 * k);
+    g.fillEllipse(x, y + 8, 36 * k, 14 * k);
   }
 
   /**
-   * The feathered skirt, drawn over the sprite but under the face: a ring of down hung off the
-   * waist, each layer swinging a beat behind the one above it so the hem lags her turn. This is
-   * what makes her a dancer rather than a ball of wind with props.
-   */
-  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    const sway = Math.sin(this.t * 2.6) * 0.22;
-    const flare = 1 + (this.intensity - 1) * 0.6;
-
-    // Three tiers of down, widest at the hem, each rotated further off the last.
-    const tiers = [
-      { r: 12, drop: 4, count: 9, len: 13, col: AIR.storm, al: 0.5 },
-      { r: 15, drop: 9, count: 11, len: 16, col: AIR.steel, al: 0.62 },
-      { r: 17, drop: 14, count: 13, len: 19, col: AIR.frost, al: 0.7 },
-    ];
-    for (let ti = 0; ti < tiers.length; ti++) {
-      const tier = tiers[ti];
-      const lag = sway * (1 + ti * 0.55);
-      for (let i = 0; i < tier.count; i++) {
-        const ang = (i / tier.count) * TAU + lag + this.t * 0.35;
-        const px = x + Math.cos(ang) * tier.r * flare;
-        const py = y + tier.drop + Math.sin(ang) * tier.r * 0.34 * flare;
-        // Down hangs: every plume points down-and-out, splayed by how far round it sits.
-        const hang = Math.PI * 0.5 + Math.cos(ang) * 0.7;
-        g.fillStyle(this.tint(tier.col), alpha * tier.al * (0.6 + 0.4 * Math.sin(ang)));
-        windCurl(g, px, py, hang, tier.len * flare, 3.6, Math.cos(ang) * 1.2);
-      }
-    }
-
-    // Bodice: a compact core so the skirt has something to hang from.
-    g.fillStyle(this.tint(AIR.slate), a * 0.5);
-    g.fillEllipse(x, y + 2, 22, 26);
-    g.fillStyle(this.tint(AIR.storm), a * 0.45);
-    g.fillEllipse(x, y - 1, 16, 19);
-    g.lineStyle(1.4, this.tint(AIR.mist), a * 0.45);
-    g.strokeEllipse(x, y + 2, 22, 26);
-  }
-
-  /**
-   * The fans in her hands, the crown plumes, and the tail. Fans are painted at the live arm
-   * positions and swung along the arm's own outward angle, so a gesture that throws a hand
-   * forward throws the fan with it.
+   * The fan crest, pivoting just above the crown (`y - 16`) and opening upward, so it never
+   * covers the eyes. A plain leaf and ribs — no fringe or beads — and a slight sway with the
+   * dance. Mastered: bigger, gilded ribs, and a glow behind the leaf.
    */
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    const m = this.mastered ? 1.3 : 1;
-
-    // Fan spread eases toward its target so an ability opening them is a movement, not a jump.
+    void a;
+    const m = this.mastered;
+    // Spread eases toward its target so an ability opening the fan is a movement, not a jump.
     this.fanOpen += (this.fanOpenTarget - this.fanOpen) * 0.18;
-    const spread = (0.24 + this.fanOpen * 0.72) * 0.9;
+    const spread = 0.3 + this.fanOpen * 0.55;
+    const r = (m ? 19 : 15.5) * this.intensity;
+    const cx = x + Math.cos(this.facing) * 1.5;
+    const cy = y - 15;
+    const up = -Math.PI / 2 + Math.sin(this.t * 2.4) * 0.1;
+    const ribs = 6;
+    const inner = r * 0.18;
 
-    for (let i = 0; i < 2; i++) {
-      const hx = this.armX[i], hy = this.armY[i];
-      if (hx === 0 && hy === 0) continue;
-      // The fan points the way the arm does; when the arm is tucked in it falls back to facing.
-      const out = Math.hypot(hx - x, hy - y) > 4 ? Math.atan2(hy - y, hx - x) : this.facing;
-      // Wrist flick: the two fans counter-rotate slightly so they never look pasted on.
-      const wrist = Math.sin(this.t * 3.4 + i * Math.PI) * 0.18;
-      fanLeaf(g, this.tint, hx, hy, out + wrist, 17 * m * this.intensity, spread, alpha * 0.95, 7);
+    if (m) {
+      g.fillStyle(this.tint(AIR.bolt), alpha * (0.2 + 0.08 * Math.sin(this.t * 3)));
+      g.beginPath();
+      g.moveTo(cx, cy);
+      g.arc(cx, cy, r * 1.22, up - spread - 0.08, up + spread + 0.08);
+      g.closePath();
+      g.fillPath();
     }
 
-    // Crown: two long tail feathers streaming back off the head, plus a short brow pair.
-    const back = this.facing + Math.PI;
-    for (const s of [1, -1]) {
-      const ang = back + s * 0.32 + Math.sin(this.t * 2.2 + s) * 0.12;
-      feather(
-        g, this.tint, x + Math.cos(back) * 6, y - 16,
-        ang, (26 + (this.mastered ? 12 : 0)) * this.intensity, 5.4 * m,
-        alpha * 0.85, this.mastered ? AIR.white : AIR.frost,
+    // Leaf: scalloped between ribs so it reads as pleated paper, not a pie slice.
+    g.fillStyle(this.tint(AIR.mist), alpha * 0.92);
+    g.beginPath();
+    g.moveTo(cx + Math.cos(up - spread) * inner, cy + Math.sin(up - spread) * inner);
+    const SEG = ribs * 4;
+    for (let i = 0; i <= SEG; i++) {
+      const f = i / SEG;
+      const ang = up - spread + f * spread * 2;
+      const dip = 1 - 0.08 * Math.pow(Math.sin(f * (ribs - 1) * Math.PI), 2);
+      g.lineTo(cx + Math.cos(ang) * r * dip, cy + Math.sin(ang) * r * dip);
+    }
+    g.lineTo(cx + Math.cos(up + spread) * inner, cy + Math.sin(up + spread) * inner);
+    g.closePath();
+    g.fillPath();
+    // One sky band along the leaf's edge so it separates from the pale body underneath.
+    g.lineStyle(1.4, this.tint(AIR.steel), alpha * 0.7);
+    g.beginPath();
+    g.arc(cx, cy, r * 0.94, up - spread, up + spread);
+    g.strokePath();
+
+    // Ribs, gilded once mastered.
+    const rib = m ? AIR.bolt : AIR.wood;
+    for (let i = 0; i < ribs; i++) {
+      const ang = up - spread + (i / (ribs - 1)) * spread * 2;
+      g.lineStyle(m ? 1.8 : 1.4, this.tint(rib), alpha * 0.9);
+      g.lineBetween(
+        cx + Math.cos(ang) * inner * 0.4, cy + Math.sin(ang) * inner * 0.4,
+        cx + Math.cos(ang) * r, cy + Math.sin(ang) * r,
       );
     }
-    for (const s of [1, -1]) {
-      const ang = -Math.PI / 2 + s * 0.55 + Math.sin(this.t * 3 + s * 2) * 0.16;
-      feather(g, this.tint, x + s * 5, y - 18, ang, 15 * m, 3.4, alpha * 0.7, AIR.mist);
-    }
-
-    // Mastery: blossom caught in her wake, circling the crown on a flat orbit.
-    if (this.mastered) {
-      for (let i = 0; i < 5; i++) {
-        const p = this.t * 2.2 + (i / 5) * TAU;
-        const cx = x + Math.cos(p) * 24;
-        const oy = y - 30 + Math.sin(p) * 6.5;
-        const tan = Math.atan2(Math.cos(p) * 6.5, -Math.sin(p) * 24);
-        g.fillStyle(this.tint(AIR.blossom), alpha * 0.85);
-        windCurl(g, cx, oy, tan, 10, 3.4, 2.1);
-        g.fillStyle(this.tint(AIR.white), alpha * 0.9);
-        g.fillCircle(cx, oy, 1.3);
-      }
-    }
+    // Pivot rivet.
+    g.fillStyle(this.tint(m ? AIR.charge : AIR.woodDark), alpha);
+    g.fillCircle(cx, cy, 2.4);
   }
 }

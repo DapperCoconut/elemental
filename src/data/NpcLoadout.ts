@@ -28,19 +28,19 @@ export interface NpcLoadout {
  * suicide button. Nightmare Sand still gets the mastered look and Unsatiable's chain.
  */
 const NPC_MASTERY_BINDS: Record<string, { enhId: string; slot: MasterySlot }> = {
-  fire: { enhId: 'heatwave', slot: 'e' },
+  fire: { enhId: 'heatwave', slot: 'f' },
   water: { enhId: 'siphon', slot: 'f' },
   air: { enhId: 'winds-of-change', slot: 'f' },
   oil: { enhId: 'turret', slot: 'f' },
   life: { enhId: 'reap', slot: 'f' },
   earth: { enhId: 'dust-screen', slot: 'f' },
   shadow: { enhId: 'shadow-beacon', slot: 'f' },
-  ice: { enhId: 'icicle-impale', slot: 'r' },
+  ice: { enhId: 'curling-stone', slot: 'r' },
   crystal: { enhId: 'crystal-shredder', slot: 'f' },
   electricity: { enhId: 'kinetic-bomb', slot: 'f' },
   gravity: { enhId: 'starfall', slot: 'f' },
-  sand: { enhId: 'time-bomb', slot: 'e' },
-  magnet: { enhId: 'mag-lev', slot: 'f' },
+  sand: { enhId: 'time-bomb', slot: 'f' },
+  // Magnet has no mastery since its 2026-10-15 scrap rework, so nothing to bind.
   growth: { enhId: 'syringe-shot', slot: 'f' },
   slime: { enhId: 'breakdown', slot: 'f' },
   metal: { enhId: 'steel-shield', slot: 'f' },
@@ -48,19 +48,16 @@ const NPC_MASTERY_BINDS: Record<string, { enhId: string; slot: MasterySlot }> = 
   creation: { enhId: 'mortar-command', slot: 'f' },
   rubber: { enhId: 'atom-nhilego', slot: 'f' },
   technology: { enhId: 'byte-bomb', slot: 'f' },
-  gunpowder: { enhId: 'overload', slot: 'e' },
+  gunpowder: { enhId: 'overload', slot: 'f' },
   light: { enhId: 'killer-kebab', slot: 'f' },
   echo: { enhId: 'echo-bloom', slot: 'r' },
   subterfuge: { enhId: 'smoke-break', slot: 'f' },
   plasma: { enhId: 'unstable-orbital', slot: 'f' },
-  hunt: { enhId: 'beastling', slot: 'e' },
-  // Illusion gives up the Veil: the pane bends the caster's own bullets too, and a bot has no
-  // way to reason about that, so it is the one slot the AI is actively better off without.
-  illusion: { enhId: 'masquerade', slot: 'e' },
-  // Passion gives up Flirt: Perfume is the same job — pure meter, no damage — done over an area
-  // and on a timer instead of in a cone the bot has to line up, and a bot held to the Attraction
-  // ring is always standing near the cloud it sprayed anyway.
-  passion: { enhId: 'perfume', slot: 'e' },
+  hunt: { enhId: 'beastling', slot: 'f' },
+  // Illusion, Chalk and Radiation used to give up their E. E is never replaceable now
+  // (2026-10-15), so each binds over F instead — except Illusion, whose F is Guise (its best
+  // escape and its whole decoy game), so it gives up Relocate, the escape Guise replaces.
+  illusion: { enhId: 'masquerade', slot: 'r' },
   // Magma gives up Bloat: it is the one slot that costs the pressure economy nothing (the block
   // charges 25, the saw charges 30 a second), and a bot holding a chainsaw is committed to being
   // in melee anyway — which is exactly where a saved block would have mattered least.
@@ -75,11 +72,7 @@ const NPC_MASTERY_BINDS: Record<string, { enhId: string; slot: MasterySlot }> = 
   // — and the delay does the same job (half damage taken for eight seconds) without asking the
   // bot to guess. The two clock abilities and the permanent amputation all survive.
   death: { enhId: 'delay-the-inevitable', slot: 'r' },
-  // Chalk gives up Explosive Chalk. Both are a three-second commitment that pays off somewhere
-  // the target is going to be rather than where it is, so they are the same bet — but the fuse
-  // needs the enemy to walk down a line the bot's phantom cursor drew blind, while the drawing
-  // walks after them on its own. The Ward, the blue line and the shield all survive.
-  chalk: { enhId: 'living-chalk', slot: 'e' },
+  chalk: { enhId: 'living-chalk', slot: 'f' },
   // Psychic gives up Dodge Destiny. The window it takes instead is the same trade made better:
   // 1.25 seconds of nothing landing versus five seconds of nothing landing *yet* — and the bot
   // was only ever pressing R because it could see a queue, which is exactly what Utter Focus
@@ -98,17 +91,10 @@ const NPC_MASTERY_BINDS: Record<string, { enhId: string; slot: MasterySlot }> = 
   // decision at all, which is exactly the kind of trade a state machine plays well. The
   // barracks, the turret and the Expansion, the three the bot actually wins with, all survive.
   conquest: { enhId: 'market', slot: 'f' },
-  // Radiation gives up the Rod Baton. It is the one ability in the kit that asks the bot to
-  // decide *which* of two things a swing is for — a dose on a clean body or a stun on a dosed
-  // one — and to be standing in melee to do it, which is the range this element's own mastery
-  // passive is paying it not to be. The post does the baton's real job (stop them moving) from
-  // a distance and hands the tracer chain a target that cannot dodge. R is refused by
-  // `excludeSlots`, and the F and the Q are the two the bot already wins with.
-  radiation: { enhId: 'gamma-tether', slot: 'e' },
   // Cloth gives up R. The bot's whole safety-line play is a two-press combo it already runs
-  // well, but Wretched Scarf is the one button that rewards being caught out — and E is the
+  // well, and Bleed Stop is a better bail-out for a body that cannot plan one — and E is the
   // reel, which every other branch of its rotation is built around.
-  cloth: { enhId: 'wretched-scarf', slot: 'r' },
+  cloth: { enhId: 'bleed-stop', slot: 'r' },
   // Clay gives up Slink. The wall run is the one ability a movement state machine plays worst —
   // its whole value is choosing when to drop off, which a bot does on a timer — while the
   // creature Give Life wakes is a summon the bot plays perfectly by standing still. The golem,
@@ -120,13 +106,7 @@ const NPC_MASTERY_BINDS: Record<string, { enhId: string; slot: MasterySlot }> = 
   // rotation a real reason to press Solidify up close, which it otherwise never has. Q is refused
   // by `excludeSlots`, and the balls and the gum barrage are the two the bot already wins with.
   gum: { enhId: 'oobleck', slot: 'f' },
-  // Fortune gives up Safe Investment. It is the one key in the kit whose whole value is
-  // *deferred* — coins locked in a bank the bot has no plan for withdrawing from, and money not
-  // in the purse is money the golden pistol and the ultimate cannot price themselves off. The
-  // car is the opposite trade: three coins of nothing, thrown across the arena, and the bot's
-  // one real synergy with it (climb on to reload, step off to fight) is a state check rather
-  // than a judgement call. The market, the turnstiles and the beam all survive.
-  fortune: { enhId: 'drive-by-flex', slot: 'e' },
+  // Gold (id `fortune`) has no mastery since its 2026-10-15 rework, so nothing to bind.
 };
 
 /** Upgrade slots granted per difficulty level. Below Hard a bot fights bare. */

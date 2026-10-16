@@ -54,7 +54,7 @@ export const golemRitualAbility: Ability = {
 const biomeBuilder: Ability = {
   id: 'biome-builder',
   name: 'Biome Builder',
-  description: 'Stand untouchable at the arena\'s heart and raise up to 4 biomes, one per quarter, for 20s',
+  description: 'Stand untouchable at the arena\'s heart and fill up to 4 quarters with any mix of biomes for 20s',
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 60000,

@@ -187,7 +187,7 @@ const fire: ElementCodex = {
         'A bindable wave along your aim that deals no damage whatsoever. It pierces every enemy it '
         + 'passes through and leaves them Exposed for 5 seconds, so the next hit they take lands for '
         + '1.5×. 420px of range at 520 px/s, on its own 6s cooldown.',
-      cast: 'Bindable to E, R, F or Q. Fires along the aim and pierces every enemy it touches.',
+      cast: 'Bindable to R, F or Q. Fires along the aim and pierces every enemy it touches.',
       effects: [
         { tag: 'debuff', label: 'Exposed', detail: '5s of ☀️ Exposed on every enemy the wave passes through. The next hit they take deals 1.5×.' },
         { tag: 'damage', label: 'No damage of its own', detail: 'The wave deals 0. All of its value is in the multiplier it sets up.' },

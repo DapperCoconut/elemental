@@ -354,18 +354,19 @@ const CHALK_AVATAR: AvatarSpec = {
 };
 
 /**
- * The artist: two dusty hands each gripping a stick of chalk, standing in a scuffed patch of
- * their own powder. The stick colour is the live chalk — it is the only readout the player
- * needs during Masterpiece, and it is on the character rather than in the corner of the
- * screen, where their eyes already are.
+ * The artist: a plain slate orb (the baked `elem-chalk`) with two dusty white hands, one of
+ * them gripping a single stick of chalk. That stick is the whole costume, and it is also the
+ * live chalk readout — its colour is the chalk in hand, which is the only thing the player
+ * needs to know during Masterpiece, and it sits on the character where their eyes already are.
+ *
+ * Mastery enhances the stick rather than adding to it: a longer stick with a halo of its own
+ * colour, wider powder coronas on the hands and a brighter under-glow.
  */
 export class ChalkAvatar extends BaseAvatar {
   private chalkColor = CHK.white;
   /** 0–1 — how hard the character is currently pressing, i.e. is a stroke being laid. */
   private draw = 0;
   private drawTarget = 0;
-  /** Chalk dust that has settled around the feet, as a set of scuffs. */
-  private scuffSeed = Math.random() * 999;
 
   constructor(scene: Phaser.Scene, tint: ChalkColorFn, depth = 6) {
     super(scene, tint, depth, CHALK_AVATAR);
@@ -375,8 +376,7 @@ export class ChalkAvatar extends BaseAvatar {
   setChalk(color: number): void {
     if (color === this.chalkColor) return;
     this.chalkColor = color;
-    this.forEachHandLayer(1, (core) => core.setFillStyle(this.tint(color), 0.95));
-    this.forEachHandLayer(0, (glow) => glow.setFillStyle(this.tint(color), 0.22));
+    this.forEachHandLayer(0, (glow) => glow.setFillStyle(this.tint(color), this.mastered ? 0.4 : 0.22));
   }
 
   /** True while a drawing session is live — the hands press down and shed powder. */
@@ -389,8 +389,8 @@ export class ChalkAvatar extends BaseAvatar {
 
   protected applyMastery(on: boolean): void {
     this.forEachHandLayer(0, (glow) => {
-      glow.setRadius(on ? 14 : 11);
-      glow.setAlpha(on ? 0.34 : 0.22);
+      glow.setRadius(on ? 15 : 11);
+      glow.setAlpha(on ? 0.4 : 0.22);
     });
   }
 
@@ -398,45 +398,35 @@ export class ChalkAvatar extends BaseAvatar {
     new ChalkFx(this.scene, this.tint).dust(x, y, 1, 6, 480, this.chalkColor);
   }
 
+  /** A soft pool of ground-in powder, brighter while drawing — the slate needs it to lift off a dark floor. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void alpha;
-    // Ground-in powder underfoot, brighter while drawing.
-    g.fillStyle(this.tint(CHK.dust), a * (0.1 + this.draw * 0.16));
-    g.fillEllipse(x, y + 12, 46 + this.draw * 12, 18 + this.draw * 5);
-    // A handful of practice scuffs that never quite got rubbed out.
-    for (let i = 0; i < 5; i++) {
-      const ang = (i / 5) * TAU + this.t * 0.15;
-      const d = 16 + grain(this.scuffSeed, i) * 12;
-      const sx = x + Math.cos(ang) * d;
-      const sy = y + 12 + Math.sin(ang) * d * 0.38;
-      chalkLine(g, this.tint, sx - 5, sy, sx + 5, sy + (grain(this.scuffSeed, 9 + i) - 0.5) * 4,
-        1.4, this.chalkColor, a * (0.14 + this.draw * 0.2), this.scuffSeed + i);
-    }
+    const k = this.intensity * (this.mastered ? 1.15 : 1);
+    g.fillStyle(this.tint(CHK.dust), a * (this.mastered ? 0.26 : 0.14) * k);
+    g.fillCircle(x, y, 27 * k);
+    g.fillStyle(this.tint(this.chalkColor), a * this.draw * 0.12);
+    g.fillEllipse(x, y + 10, 40, 14);
   }
 
+  /** The one stick of chalk, gripped in the casting hand and angled along its reach. */
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void a;
-    // A stick of chalk gripped in each hand, angled along wherever that hand is reaching.
-    for (let i = 0; i < 2; i++) {
-      const hx = this.armX[i];
-      const hy = this.armY[i];
-      const ang = Math.atan2(hy - y, hx - x);
-      chalkStick(g, this.tint, hx + Math.cos(ang) * 5, hy + Math.sin(ang) * 5, ang,
-        13 + this.draw * 3, this.chalkColor, alpha);
-      if (this.draw > 0.3) {
-        g.fillStyle(this.tint(CHK.dust), alpha * this.draw * 0.5 * (0.5 + 0.5 * Math.sin(this.t * 14 + i)));
-        g.fillCircle(hx + Math.cos(ang) * 11, hy + Math.sin(ang) * 11, 2.4);
-      }
+    const m = this.mastered;
+    const hx = this.armX[1];
+    const hy = this.armY[1];
+    const ang = Math.atan2(hy - y, hx - x);
+    const len = (m ? 17 : 13) + this.draw * 3;
+    const sx = hx + Math.cos(ang) * 5;
+    const sy = hy + Math.sin(ang) * 5;
+    if (m) {
+      g.fillStyle(this.tint(this.chalkColor), alpha * (0.3 + 0.1 * Math.sin(this.t * 3)));
+      g.fillCircle(sx, sy, len * 0.62);
     }
-    // Dust hanging in the air over the crown while a stroke is being laid.
-    if (this.draw > 0.08) {
-      for (let i = 0; i < 4; i++) {
-        const ph = this.t * 1.8 + i * 1.6;
-        const px = x + Math.sin(ph * 1.3) * (8 + i * 3);
-        const py = y - 20 - ((ph * 9) % 20);
-        g.fillStyle(this.tint(this.chalkColor), alpha * this.draw * 0.4 * (1 - ((ph * 9) % 20) / 20));
-        g.fillCircle(px, py, 1.6);
-      }
+    chalkStick(g, this.tint, sx, sy, ang, len, this.chalkColor, alpha);
+    if (this.draw > 0.3) {
+      const tip = len * 0.5 + 5;
+      g.fillStyle(this.tint(CHK.dust), alpha * this.draw * 0.5 * (0.5 + 0.5 * Math.sin(this.t * 14)));
+      g.fillCircle(hx + Math.cos(ang) * tip, hy + Math.sin(ang) * tip, 2.4);
     }
   }
 }

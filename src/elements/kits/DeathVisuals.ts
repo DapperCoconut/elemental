@@ -1183,9 +1183,10 @@ export class DeathFx extends FxBase {
 
 const DEATH_AVATAR: AvatarSpec = {
   hands: [
-    { r: 13, color: DEA.void_, alpha: 0.42 },
-    { r: 7.4, color: DEA.ash, alpha: 0.8 },
-    { r: 2.8, color: DEA.bone, alpha: 0.95, ox: -1.7, oy: -1.9 },
+    { r: 10, color: DEA.smoke, alpha: 0.3 },
+    { r: 6.8, color: DEA.shroud, alpha: 0.98 },
+    { r: 3.4, color: DEA.ash, alpha: 0.95 },
+    { r: 1.8, color: DEA.bone, alpha: 0.9, ox: -1.8, oy: -1.8 },
   ],
   eyeWhite: DEA.bone,
   eyePupil: DEA.void_,
@@ -1193,28 +1194,26 @@ const DEATH_AVATAR: AvatarSpec = {
 };
 
 /**
- * Death himself.
+ * Death himself: a plain shroud-violet orb (the baked `elem-death`) wearing a **pointed hood**
+ * — the one accessory — and holding the **katana** in his right hand, the one secondary.
  *
- * The silhouette is three ideas stacked: a hood that comes to a point well above the eyes, a
- * mantle that tapers *outward* toward the floor so he reads as standing in a pile of cloth
- * rather than wearing a robe, and the katana held straight up over the crown — which is the one
- * detail the character is described by, so it is drawn at full length and never hidden.
+ * Two states still read on him. `setGuard` swings the blade from resting upright to levelled
+ * along the aim (Riposte). `setDoom` is the clock: the eyes go bone → gold → blood red, the thread
+ * up the hood brightens, and the under-glow darkens and spreads — so a player never has to look
+ * at the corner of the screen to know how much of the minute is left.
  *
- * Two states change him. `setGuard` drops the blade out of the overhead hold and levels it
- * along the aim (Riposte). `setDoom` is the clock: at zero the shroud is thrashing, the bone
- * has gone red, and the pendant on his chest has cracked — so a player never has to look at the
- * corner of the screen to know how much of the minute is left.
+ * Mastery enhances what is there rather than adding to it: a taller hood with a gold-lit seam, a
+ * longer blade with a lit edge, wider coronas on the hands and a deeper glow.
  */
 export class DeathAvatar extends BaseAvatar {
   /** 0 = the minute has just started, 1 = midnight. Lerped so the change creeps in. */
   private doom = 0;
   private doomTarget = 0;
-  /** 0 = katana overhead, 1 = levelled along the aim. */
+  /** 0 = katana resting upright, 1 = levelled along the aim. */
   private guard = 0;
   private guardTarget = 0;
   /** Ability tell: brightens the edge for a beat after every cast. */
   private flare = 0;
-  private seed = Math.random() * 999;
   /** Last colour pushed to the eyes, so the doom tell doesn't rebuild two arcs every frame. */
   private eyeColor = DEA.bone;
 
@@ -1225,7 +1224,7 @@ export class DeathAvatar extends BaseAvatar {
   /** Fraction of the doomsday clock already spent, 0–1. */
   setDoom(v: number): void { this.doomTarget = Phaser.Math.Clamp(v, 0, 1); }
 
-  /** Riposte: the blade comes down off the shoulder and points at the cursor. */
+  /** Riposte: the blade comes down and points at the cursor. */
   setGuard(on: boolean): void { this.guardTarget = on ? 1 : 0; }
 
   update(delta: number, x: number, y: number, alpha: number): void {
@@ -1245,8 +1244,8 @@ export class DeathAvatar extends BaseAvatar {
 
   protected applyMastery(on: boolean): void {
     this.forEachHandLayer(0, (glow) => {
-      glow.setRadius(on ? 16 : 13);
-      glow.setAlpha(on ? 0.6 : 0.42);
+      glow.setRadius(on ? 13.5 : 10);
+      glow.setFillStyle(this.tint(on ? DEA.gold : DEA.smoke), on ? 0.3 : 0.3);
     });
   }
 
@@ -1254,105 +1253,63 @@ export class DeathAvatar extends BaseAvatar {
     new DeathFx(this.scene, this.tint).soot(x, y, 2, 7, 380, 4);
   }
 
-  /** What he leaves on the floor: a hole rather than a shadow, with the shroud creeping out of it. */
+  /** A cold violet under-glow that darkens toward midnight. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void alpha;
-    g.fillStyle(this.tint(DEA.void_), a * 0.55);
-    g.fillEllipse(x, y + 16, 52 + this.doom * 10, 18);
-    shroud(g, this.tint, x, y + 12, 22 + this.doom * 5, this.t, a * 0.75,
-      { tatters: 9, seed: this.seed, agitate: this.doom });
-  }
-
-  /** The mantle: dark cloth that widens toward the floor, with a bone sternum showing through. */
-  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    void a;
-    const hem = 1 + this.doom * 0.12;
-    const sway = Math.sin(this.t * 1.7) * 1.6;
-
-    // Ragged hem: sampled points rather than a rectangle, so the bottom edge is torn.
-    const pts: Phaser.Geom.Point[] = [
-      new Phaser.Geom.Point(x - 11, y - 15),
-      new Phaser.Geom.Point(x + 11, y - 15),
-    ];
-    for (let i = 0; i <= 8; i++) {
-      const u = 1 - (i / 8) * 2;
-      const w = (16 + Math.abs(u) * -2) * hem;
-      pts.push(new Phaser.Geom.Point(
-        x + u * w + sway * (i / 8),
-        y + 16 + jitter(this.seed, i) * 5,
-      ));
-    }
-    g.fillStyle(this.tint(DEA.void_), alpha * 0.92);
-    g.fillPoints(pts, true);
-    g.fillStyle(this.tint(DEA.shroud), alpha * 0.85);
-    g.fillPoints(pts.map((p) => new Phaser.Geom.Point(x + (p.x - x) * 0.82, y + (p.y - y) * 0.9)), true);
-
-    // Sternum and four ribs, fading down — bone showing through an open mantle.
-    g.lineStyle(2, this.tint(DEA.pale), alpha * (0.5 + this.flare * 0.35));
-    g.lineBetween(x, y - 10, x, y + 8);
-    for (let i = 0; i < 4; i++) {
-      const ry = y - 7 + i * 4.6;
-      const rw = 7 - i * 0.9;
-      g.lineStyle(1.5, this.tint(DEA.pale), alpha * (0.42 - i * 0.07));
-      g.beginPath();
-      g.arc(x, ry, rw, 0.25, Math.PI - 0.25, false);
-      g.strokePath();
+    const k = this.intensity * (this.mastered ? 1.15 : 1) * (1 + this.doom * 0.15);
+    g.fillStyle(this.tint(this.mastered ? DEA.gold : DEA.smoke), a * (this.mastered ? 0.24 : 0.26) * k);
+    g.fillCircle(x, y, 28 * k);
+    if (this.doom > 0.01) {
+      g.fillStyle(this.tint(DEA.blood), a * 0.18 * this.doom);
+      g.fillCircle(x, y, 26 * k);
     }
   }
 
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void a;
+    const m = this.mastered;
     const crown = y - 18;
     const lean = Math.cos(this.facing) * 2.2;
     const heat = 0.5 + this.flare * 0.5;
 
     // ── Hood ──
-    // A peak well clear of the eyes, with the cowl falling away behind it on both sides.
-    const peak = crown - (this.mastered ? 20 : 15);
-    g.fillStyle(this.tint(DEA.void_), alpha * 0.95);
+    // A peak clear of the eyes, the cowl falling over the crown on both sides. It stops below
+    // the health bar so the point is never hidden behind it.
+    const peak = crown - (m ? 14 : 11);
+    const tip = x + lean * 1.6;
+    g.fillStyle(this.tint(DEA.void_), alpha * 0.96);
     g.fillPoints([
-      new Phaser.Geom.Point(x - 13, crown + 6),
-      new Phaser.Geom.Point(x + lean * 1.6, peak),
-      new Phaser.Geom.Point(x + 13, crown + 6),
-      new Phaser.Geom.Point(x + 9, crown + 1),
-      new Phaser.Geom.Point(x - 9, crown + 1),
+      new Phaser.Geom.Point(x - 15, crown + 9),
+      new Phaser.Geom.Point(x - 12, crown + 1),
+      new Phaser.Geom.Point(tip, peak),
+      new Phaser.Geom.Point(x + 12, crown + 1),
+      new Phaser.Geom.Point(x + 15, crown + 9),
+      new Phaser.Geom.Point(x + 8, crown + 5),
+      new Phaser.Geom.Point(x - 8, crown + 5),
     ], true);
-    g.lineStyle(1.4, this.tint(DEA.ash), alpha * 0.7);
-    g.lineBetween(x + lean * 1.6, peak, x - 2, crown + 3);
-    // A thread of doom running up the hood — the only lit line on him when nothing is happening.
-    g.lineStyle(1.2, this.tint(this.doom > 0.7 ? DEA.blood : DEA.gold), alpha * (0.25 + this.doom * 0.55));
-    g.lineBetween(x + lean * 1.6, peak, x + lean, crown + 5);
+    g.fillStyle(this.tint(DEA.shroud), alpha * 0.9);
+    g.fillPoints([
+      new Phaser.Geom.Point(x - 11, crown + 2.4),
+      new Phaser.Geom.Point(tip - 1, peak + 3),
+      new Phaser.Geom.Point(x - 3, crown + 4.6),
+    ], true);
+    // A thread of doom up the seam — the only lit line on him when nothing is happening. Gold
+    // and brighter once mastered.
+    const seam = this.doom > 0.7 ? DEA.blood : DEA.gold;
+    g.lineStyle(m ? 1.6 : 1.2, this.tint(seam), alpha * Math.min(1, (m ? 0.55 : 0.25) + this.doom * 0.55));
+    g.lineBetween(tip, peak, x + lean, crown + 5);
 
-    // ── Clock pendant ──
-    // The same primitive as the HUD dial, small, hanging at the chest on a short chain.
-    const px = x + 0.5;
-    const py = y + 5;
-    g.lineStyle(1, this.tint(DEA.brass), alpha * 0.55);
-    g.lineBetween(x - 4, y - 9, px, py - 5);
-    g.lineBetween(x + 4, y - 9, px, py - 5);
-    clockFace(g, this.tint, px, py, this.mastered ? 7.2 : 6, 1 - this.doom, alpha * 0.95,
-      { hostile: this.doom > 0.8, seed: this.seed, numerals: false });
-
-    // ── The katana ──
-    // Held high over the crown by default, because that is what he is; levelled along the aim
-    // while Riposte is up. Interpolated between the two, so the drop reads as a movement.
-    const overhead = -Math.PI / 2 - 0.24 + Math.sin(this.t * 1.4) * 0.05;
-    const level = this.facing;
-    const bladeAng = Phaser.Math.Angle.RotateTo(overhead, level,
-      Math.abs(Phaser.Math.Angle.Wrap(level - overhead)) * this.guard);
-    const gripDist = 12 + this.guard * 16;
-    const gx = x + Math.cos(bladeAng) * gripDist * (this.guard > 0.5 ? 1 : 0.15);
-    const gy = (this.guard > 0.5 ? y - 2 : crown - 2) + Math.sin(bladeAng) * gripDist * 0.35;
-    const len = (this.mastered ? 62 : 54) * (1 + this.guard * 0.1);
-
-    // Mastered: a second blade rides half a radian behind the first, like an afterimage that
-    // never faded. Drawn under the real one so the real one still reads as solid.
-    if (this.mastered) {
-      katana(g, this.tint, gx, gy, bladeAng - 0.22, len * 0.94, alpha * 0.3,
-        { glow: 1, bladeColor: DEA.smoke, wrap: DEA.shroud });
-    }
-    katana(g, this.tint, gx, gy, bladeAng, len, alpha,
-      { glow: heat * (0.4 + this.guard * 0.8) + this.doom * 0.5 });
+    // ── The katana, in the right hand ──
+    // Resting upright beside the body by default; levelled along the aim while Riposte is up.
+    const hx = this.armX[1];
+    const hy = this.armY[1];
+    if (!Number.isFinite(hx)) return;
+    const rest = -Math.PI / 2 + 0.28 + Math.sin(this.t * 1.4) * 0.04;
+    const bladeAng = Phaser.Math.Angle.RotateTo(rest, this.facing,
+      Math.abs(Phaser.Math.Angle.Wrap(this.facing - rest)) * this.guard);
+    const len = m ? 42 : 36;
+    katana(g, this.tint, hx, hy, bladeAng, len, alpha,
+      { glow: heat * (0.3 + this.guard * 0.8) + this.doom * 0.5 + (m ? 0.6 : 0) });
   }
 
   /**

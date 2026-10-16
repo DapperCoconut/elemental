@@ -275,7 +275,7 @@ const electricity: ElementCodex = {
         + 'at 120 soaked. A carrier who dies while wearing it sets it off immediately at whatever it had '
         + 'accumulated rather than wasting the payload. 14s cooldown.',
       cast:
-        'Bindable to E, R, F or Q, replacing that slot\'s base ability entirely for the match. Fired '
+        'Bindable to R, F or Q, replacing that slot\'s base ability entirely for the match. Fired '
         + 'toward the cursor, instant.',
       effects: [
         { tag: 'utility', label: 'Flight', detail: '460 px/s in a straight line until it latches or leaves the arena. Latch radius is 26px.' },

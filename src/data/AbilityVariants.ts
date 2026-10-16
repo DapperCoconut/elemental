@@ -103,23 +103,12 @@ const ABILITY_VARIANTS: Record<string, Partial<Record<string, AbilityVariantSet>
     },
   },
   sound: {
-    e: {
-      label: 'Records on the deck (a harmonized Disc Dice changes the record — Accelerando is loaded at the bell)',
-      variants: [
-        { emoji: '💚', name: 'Accelerando Disc', description: 'Move 20% faster, and every ability cooldown recharges 25% faster.' },
-        { emoji: '🔴', name: 'Bass Disc', description: 'Deal 20% more damage with everything.' },
-        { emoji: '🔵', name: 'Calm Disc', description: 'Regenerate 2 HP every second.' },
-        { emoji: '💚', name: 'Accelerando — cut somebody', description: 'Sound System banks +3% move speed per fighter the green record slices, for the rest of the match.', requiresUpgrade: 'e' },
-        { emoji: '🔴', name: 'Bass — cut somebody', description: 'Sound System banks +2% damage per fighter the red record slices, for the rest of the match.', requiresUpgrade: 'e' },
-        { emoji: '🔵', name: 'Calm — cut somebody', description: 'Sound System banks +1% damage resistance per fighter the blue record slices, floored at 75% off.', requiresUpgrade: 'e' },
-      ],
-    },
     f: {
-      label: 'Notes on the bugle bar (Perfect Pitch adds the two you are not meant to strike)',
+      label: 'Soul Songs (F cycles them — Staccato is the one a match starts on)',
       variants: [
-        { emoji: '🎺', name: 'Brass Note', description: 'Click it under the line: +1% move AND attack speed, banked permanently. Drop it and the call is over.' },
-        { emoji: '🔴', name: 'Red Note', description: 'Let it run off the end of the bar for +1% damage. Striking one counts as a mistake; missing one does not.', requiresUpgrade: 'f' },
-        { emoji: '💚', name: 'Green Hold Note', description: 'Catch the head and keep the button down across the tail. A perfect carry is +3% attack speed; a partial one pays pro rata.', requiresUpgrade: 'f' },
+        { emoji: '🔴', name: 'Staccato', description: '+20% damage. Your baton travels 30% faster and loses its spin half as fast.' },
+        { emoji: '🔵', name: 'Melody', description: '+25% move speed and 20% shorter cooldowns.' },
+        { emoji: '🟢', name: 'Smooth', description: '20% damage resistance and 3 HP every second.' },
       ],
     },
   },

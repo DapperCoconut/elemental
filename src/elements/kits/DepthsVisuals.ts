@@ -910,7 +910,8 @@ export function illicium(
   let py = y;
   let ex = x;
   let ey = y;
-  g.lineStyle(2.4, tint(DPT.deep), alpha * 0.95);
+  // Teal rather than the abyss colour, so the rod still reads against a dark floor.
+  g.lineStyle(2.6, tint(DPT.trench), alpha * 0.95);
   for (let i = 1; i <= segs; i++) {
     const s = i / segs;
     // An arc that leans forward as it rises, so the bulb dangles in front of the face.
@@ -1068,9 +1069,9 @@ export class QuietDepthsFx extends DepthsFx {
 
 const DEPTHS_AVATAR: AvatarSpec = {
   hands: [
-    { r: 12, color: DPT.teal, alpha: 0.22 },
-    { r: 7, color: DPT.trench, alpha: 0.95 },
-    { r: 2.6, color: DPT.cyan, alpha: 0.95, ox: -1.6, oy: -1.6 },
+    { r: 11, color: DPT.cyan, alpha: 0.2 },
+    { r: 7, color: DPT.teal, alpha: 0.97 },
+    { r: 2.8, color: DPT.foam, alpha: 0.9, ox: -1.6, oy: -1.6 },
   ],
   eyeWhite: DPT.foam,
   eyePupil: DPT.abyss,
@@ -1078,14 +1079,16 @@ const DEPTHS_AVATAR: AvatarSpec = {
 };
 
 /**
- * The angler: a thing from the bottom of the water with a light on its head and too many
- * teeth. Its two tells are both permanent — the illicium arcing over the crown with the esca
- * glowing on the end, and a row of gill slits venting bubbles down its flank.
+ * The angler: a clear deep-sea teal orb (the baked `elem-depths`) with one accessory — the
+ * **illicium** arcing over the crown with the esca glowing on its end.
  *
- * Two states change the silhouette. While the passive is fading the body out, the esca is the
- * *only* thing that stays lit, which is what sells the lie to whoever comes to eat it. And a
- * caught fish is held crosswise in the jaw, which is the player's one readout of which of the
- * five they are about to throw.
+ * Two states change what is drawn, and both are gameplay. While the passive is fading the body
+ * out, the esca is the *only* thing that stays lit, which is what sells the lie to whoever
+ * comes to eat it. And a caught fish is held crosswise at the mouth, which is the player's one
+ * readout of which fish they are about to throw.
+ *
+ * Mastery enhances the lure: a longer rod, a bigger brighter esca, foam-white hand coronas and
+ * glowing algae-green eyes.
  */
 export class DepthsAvatar extends BaseAvatar {
   /** 0–1 — how far the passive has faded the body out. The esca ignores this. */
@@ -1100,7 +1103,6 @@ export class DepthsAvatar extends BaseAvatar {
   private fish: FishKind | null = null;
   /** 0–1 fishing progress, drawn as a taut line running off the illicium. */
   private fishing = 0;
-  private seed = Math.random() * 999;
   /** The alpha handed in before the fade — what the esca is drawn at, whatever the body does. */
   private baseAlpha = 1;
 
@@ -1127,9 +1129,10 @@ export class DepthsAvatar extends BaseAvatar {
   }
 
   protected applyMastery(on: boolean): void {
+    this.setEyeWhite(on ? DPT.lure : DPT.foam);
     this.forEachHandLayer(0, (glow) => {
-      glow.setRadius(on ? 15 : 12);
-      glow.setAlpha(on ? 0.34 : 0.22);
+      glow.setRadius(on ? 14.5 : 11);
+      glow.setFillStyle(this.tint(on ? DPT.lure : DPT.cyan), on ? 0.3 : 0.2);
     });
   }
 
@@ -1139,48 +1142,32 @@ export class DepthsAvatar extends BaseAvatar {
     new DepthsFx(this.scene, this.tint).bubbles(x, y, 1, 5, DPT.foam, 420, 4);
   }
 
+  /** A soft cold-water halo, so the teal orb separates from the dark floor. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void alpha;
-    // The pool of dark the character stands in, and the cold light the esca throws down it.
-    g.fillStyle(this.tint(DPT.abyss), a * 0.5);
-    g.fillEllipse(x, y + 13, 50, 19);
-    g.fillStyle(this.tint(DPT.teal), a * 0.14);
-    g.fillEllipse(x, y + 12, 66 + Math.sin(this.t * 2) * 5, 24);
-    for (let i = 0; i < 3; i++) {
-      const r = 17 + i * 10 + Math.sin(this.t * 1.8 + i) * 3;
-      g.lineStyle(1.3, this.tint(i === 1 ? DPT.cyan : DPT.trench), a * (0.2 - i * 0.045));
-      g.strokeEllipse(x, y + 13, r * 2, r * 0.78);
-    }
-  }
-
-  /** Gills: three slits down the near flank, venting into the water. */
-  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    void a;
-    g.lineStyle(1.8, this.tint(DPT.abyss), alpha * 0.7);
-    for (let i = 0; i < 3; i++) {
-      const gy = y - 4 + i * 5;
-      g.lineBetween(x + 12, gy, x + 16 + Math.sin(this.t * 3 + i) * 1.2, gy + 3);
-    }
-    bubbleColumn(g, this.tint, x + 15, y + 2, this.t, 3, 3, 20, alpha * 0.5, this.seed);
+    const k = this.mastered ? 1.15 : 1;
+    g.fillStyle(this.tint(DPT.cyan), a * 0.16 * k);
+    g.fillCircle(x, y, 28 * k);
   }
 
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void a;
-    const vis = alpha;
+    const m = this.mastered;
     // The esca ignores the fade entirely — a lure that dimmed with the thing holding it would
     // stop being bait at exactly the moment the passive finished setting it.
     const lit = this.baseAlpha;
 
     // ── The illicium and its esca ──
-    const tip = illicium(g, this.tint, x, y - 20, 26 + (this.mastered ? 5 : 0), this.t,
+    const tip = illicium(g, this.tint, x, y - 20, 26 + (m ? 6 : 0), this.t,
       lit * (0.35 + 0.65 * (1 - this.hidden)));
     const pulse = 0.8 + 0.2 * Math.sin(this.t * 3.4);
-    g.fillStyle(this.tint(DPT.lure), lit * 0.16);
-    g.fillCircle(tip.x, tip.y, 15 * pulse);
+    const er = m ? 1.35 : 1;
+    g.fillStyle(this.tint(DPT.lure), lit * (m ? 0.24 : 0.16));
+    g.fillCircle(tip.x, tip.y, 15 * pulse * er);
     g.fillStyle(this.tint(DPT.algae), lit * 0.4);
-    g.fillCircle(tip.x, tip.y, 8 * pulse);
+    g.fillCircle(tip.x, tip.y, 8 * pulse * er);
     g.fillStyle(this.tint(DPT.lure), lit);
-    g.fillCircle(tip.x, tip.y, 4 * pulse);
+    g.fillCircle(tip.x, tip.y, 4 * pulse * er);
 
     // A taut line off the esca while fishing, dipping into the floor in front.
     if (this.fishing > 0) {
@@ -1206,19 +1193,7 @@ export class DepthsAvatar extends BaseAvatar {
       g.fillCircle(endX, endY + bob - 1.4, 1.6);
     }
 
-    // ── The jaw ──
-    // An underbite of teeth across the lower face. Sits below the eyes at y-4, so it reads as
-    // a mouth rather than covering the face.
-    g.fillStyle(this.tint(DPT.abyss), vis * 0.85);
-    g.fillEllipse(x, y + 9, 26, 9);
-    g.fillStyle(this.tint(DPT.bone), vis * 0.95);
-    for (let i = 0; i < 6; i++) {
-      const tx = x - 11 + i * 4.4;
-      g.fillTriangle(tx, y + 5, tx + 3.2, y + 5, tx + 1.6, y + 11);
-      g.fillTriangle(tx + 1, y + 13, tx + 4.2, y + 13, tx + 2.6, y + 7.5);
-    }
-
-    // ── A caught fish, clamped crosswise in that jaw ──
+    // ── A caught fish, clamped crosswise at the mouth ──
     if (this.fish) {
       const kind = this.fish;
       const wig = this.t * 9;

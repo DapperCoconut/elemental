@@ -280,7 +280,7 @@ const slime: ElementCodex = {
         + '0 move speed for all of it, and leaks 12 pools of 20px under you, one every 250ms, scattered '
         + 'up to 16px either way. 12s cooldown.',
       cast:
-        'Bindable to E, R, F or Q, replacing that slot\'s base ability for the match. Refuses to cast '
+        'Bindable to R, F or Q, replacing that slot\'s base ability for the match. Refuses to cast '
         + 'below 50% arena acid coverage.',
       effects: [
         { tag: 'damage', label: 'The spray', detail: '200 lashes at 1 damage each, released evenly over 3 seconds — one every 15ms — in fully random directions at 650 px/s.' },

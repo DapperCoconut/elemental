@@ -2,8 +2,9 @@ import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import {
-  SILENCE, SilenceAvatar, SilenceFx, bloodSplat, fogBank, graspHand, silenceEye, toothRing,
+  SILENCE, SilenceAvatar, SilenceFx, clawFingerLayered, fogBank, graspHand, silenceEye,
 } from '../../../elements/kits/SilenceVisuals';
+import { SilenceMaze } from '../../../elements/kits/SilenceMaze';
 
 /**
  * Silence's showcases.
@@ -11,11 +12,11 @@ import {
  * Two things have to be in frame or a loop is documenting a knife element with atmosphere. The
  * first is the **fog** — the 90px band around the arena border is where the whole economy lives,
  * so every script paints it and shows the stealth meter filling or draining against it. The
- * second is **the eye**: this is the only element that reads which way somebody is facing, and a
- * backstab preview without the rear arc drawn on the victim is showing a bigger number for no
- * visible reason.
+ * second is **the back shadow**: this is the only element that reads which way somebody is
+ * facing, and a backstab preview without the rear arc drawn on the victim is showing a bigger
+ * number for no visible reason.
  *
- * Silence puts no sprite in the world: the fog, the watchers, the beam, the teeth, the grabbing
+ * Silence puts no sprite in the world: the fog, the watchers, the beam, the shadow aura, the grabbing
  * arm and the blob are all Graphics repainted per frame out of `SilenceVisuals`, so `ctx.fly` is
  * useless throughout.
  *
@@ -60,13 +61,16 @@ const HYMN_RADIUS = 140;
 const HYMN_PULL_PER_S = 44;
 const HYMN_MATURE_MS = 6000;
 
-const FEAST_RADIUS = 110;
-const FEAST_DURATION_MS = 8000;
-const FEAST_REQUIRED_INSIDE_MS = 6000;
-const FEAST_DMG = 35;
-const HALLUCINATE_MS = 30000;
-const MIDGET_COUNT = 5;
-const MIDGET_DMG = 5;
+const STALK_RADIUS = 130;
+const STALK_DURATION_MS = 3000;
+const STALK_DMG = 20;
+const STALK_DRAIN_PER_S = 5;
+const STALK_TURN_SLOW_MS = 5000;
+const STALKED_TURN_RAD_PER_S = Math.PI * 0.4;
+const STEALTH_INVIS_MIN = 20;
+
+const MAZE_SURVIVE_MS = 12000;
+const MAZE_PULSE_EVERY_MS = 1500;
 
 const RUN_ARM_RANGE = 500;
 const RUN_HIT_RADIUS = 60;
@@ -74,6 +78,7 @@ const RUN_MISS_REFUND_MS = 45000;
 const BLOB_CATCH_DMG = 80;
 const BLOB_SPEED = 380;
 const HALL_VICTIM_SLOW = 0.8;
+const MAZE_BLOB_SPEED = 235;
 const SPIT_DMG = 5;
 const GRAB_ESCAPE_PRESSES = 14;
 
@@ -148,34 +153,26 @@ function label(ctx: PreviewCtx, x: number, y: number, text: string, color: numbe
 }
 
 /**
- * The victim — with the thing that makes this element different drawn on them: an eye that says
- * which way they are facing, and the 120° rear arc a backstab has to come from.
+ * The victim — with the thing that makes this element different drawn on them: the back shadow a
+ * Silence player sees, a dark wedge spilling out across the 120° rear arc a backstab must come from.
  */
 function victim(
   ctx: PreviewCtx, at: Mark,
-  o?: { facing?: () => number; arc?: boolean; silenced?: () => boolean; halluc?: () => boolean },
+  o?: { facing?: () => number; arc?: boolean; silenced?: () => boolean; halluc?: () => boolean; stalked?: () => boolean },
 ): void {
   const g = ctx.adopt(ctx.scene.add.graphics().setDepth(5));
   ctx.onFrame((_dt, elapsed) => {
     const t = elapsed / 1000;
     const face = o?.facing?.() ?? 0;
     g.clear();
-    if (o?.arc) {
-      // The rear arc — ±60° of the way they are facing away from.
-      g.fillStyle(ctx.tint(SILENCE.blood), 0.12);
-      g.beginPath();
-      g.moveTo(at.x, at.y);
-      g.arc(at.x, at.y, 60, face + Math.PI - BACKSTAB_ARC_RAD, face + Math.PI + BACKSTAB_ARC_RAD, false);
-      g.closePath();
-      g.fillPath();
-    }
+    if (o?.arc) backShadow(g, ctx, at, face, o?.stalked?.() ?? false, t);
     g.fillStyle(0x2b2f3d, 1);
     g.fillCircle(at.x, at.y, 17);
     g.fillStyle(0x3c4254, 1);
     g.fillCircle(at.x, at.y, 13);
-    // One eye, pointed where they are looking — the whole reason the arc is readable.
-    silenceEye(g, ctx.tint, at.x + Math.cos(face) * 6, at.y + Math.sin(face) * 6, face, 5,
-      0, 1, SILENCE.sclera, 1);
+    // A nose: which way the dummy is pointed, without a HUD marker on it.
+    g.fillStyle(0x59607a, 1);
+    g.fillCircle(at.x + Math.cos(face) * 11, at.y + Math.sin(face) * 11, 4);
     if (o?.silenced?.()) {
       g.lineStyle(1.6, ctx.tint(SILENCE.orchid), 0.6 + 0.35 * Math.sin(t * 5));
       g.strokeCircle(at.x, at.y, 24);
@@ -188,6 +185,32 @@ function victim(
       }
     }
   });
+}
+
+/** The kit's back shadow (SilenceKit.paintBackShadows), at preview scale. */
+function backShadow(g: Phaser.GameObjects.Graphics, ctx: PreviewCtx, at: Mark, face: number, stalked: boolean, t: number): void {
+  const rear = face + Math.PI;
+  const reach = stalked ? 72 : 60;
+  const a0 = rear - BACKSTAB_ARC_RAD;
+  const a1 = rear + BACKSTAB_ARC_RAD;
+  for (let i = 4; i >= 1; i--) {
+    g.fillStyle(ctx.tint(SILENCE.void), (stalked ? 0.16 : 0.11) + 0.05 * (4 - i));
+    g.beginPath();
+    g.moveTo(at.x, at.y);
+    g.arc(at.x, at.y, reach * (i / 4), a0, a1, false);
+    g.closePath();
+    g.fillPath();
+  }
+  for (let i = 0; i < 7; i++) {
+    const a = a0 + (a1 - a0) * (i / 6);
+    const wob = 0.85 + 0.15 * Math.sin(t * 2.2 + i * 1.9);
+    g.fillStyle(ctx.tint(SILENCE.void), 0.22);
+    g.fillCircle(at.x + Math.cos(a) * reach * wob, at.y + Math.sin(a) * reach * wob, 6 + 2 * Math.sin(t * 3 + i));
+  }
+  g.lineStyle(1.4, ctx.tint(stalked ? SILENCE.gore : SILENCE.amethyst), stalked ? 0.55 : 0.3);
+  g.beginPath();
+  g.arc(at.x, at.y, reach * 0.92, a0, a1, false);
+  g.strokePath();
 }
 
 /**
@@ -574,108 +597,141 @@ export const ritualUpgraded: PreviewScript = {
   run(ctx) { ritualLoop(ctx, { terror: true }); },
 };
 
-// ── F — Feast ─────────────────────────────────────────────────────────
+// ── F — Stalk ─────────────────────────────────────────────────────────
 
-function feastLoop(ctx: PreviewCtx, opts: { banquet: boolean }): void {
-  const s = stageIt(ctx);
-  const foe: Mark = { x: ctx.w * 0.62, y: ctx.h * 0.5 };
-  let hallucUntil = -9999;
+function stalkLoop(ctx: PreviewCtx, opts: { despress: boolean }): void {
+  const home: Mark = { x: ctx.w * 0.24, y: ctx.h * 0.5 };
+  const s = drivenCaster(ctx, home);
+  const foe: Mark = { x: ctx.w * 0.6, y: ctx.h * 0.5 };
+  let facing = Math.PI;
+  let stalkedUntil = -9999;
   let now = 0;
-  victim(ctx, foe, { facing: () => Math.PI, halluc: () => now < hallucUntil });
-  ctx.onFrame((_dt, elapsed) => { now = elapsed; });
-  fog(ctx, () => s.at);
+  victim(ctx, foe, { facing: () => facing, arc: true, stalked: () => now < stalkedUntil });
 
-  const ring: Mark = { x: ctx.w * 0.6, y: ctx.h * 0.5 };
-  let ringFrom = -1;
+  let auraFrom = -1;
   let inside = 0;
+  let stacks = 0;
+  let struck = false;
   const g = ctx.adopt(ctx.scene.add.graphics().setDepth(DEPTH_GROUND_FX));
-  const clock = ctx.adopt(ctx.scene.add.text(0, 0, '', {
-    fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
-    color: hex(SILENCE.bone),
-  }).setOrigin(0.5).setDepth(31));
-
-  interface Midget { x: number; y: number; ang: number; gate: number }
-  const midgets: Midget[] = [];
+  const hands = ctx.adopt(ctx.scene.add.graphics().setDepth(DEPTH_STALKER));
 
   ctx.onFrame((dt, elapsed) => {
     const t = elapsed / 1000;
+    const step = dt / 1000;
+    now = elapsed;
     g.clear();
-    clock.setVisible(false);
-    if (ringFrom >= 0 && elapsed - ringFrom < FEAST_DURATION_MS) {
-      const bite = 0.5 + 0.5 * Math.sin(t * 6);
-      toothRing(g, ctx.tint, ring.x, ring.y, FEAST_RADIUS * 0.5, 18, bite, 0.95);
-      if (Phaser.Math.Distance.Between(foe.x, foe.y, ring.x, ring.y) <= FEAST_RADIUS * 0.5) {
-        inside += dt;
-      }
-      clock.setVisible(true).setPosition(ring.x, ring.y - FEAST_RADIUS * 0.5 - 12)
-        .setText(`${(inside / 1000).toFixed(1)}s / ${FEAST_REQUIRED_INSIDE_MS / 1000}s inside`);
-      clock.setColor(hex(inside >= FEAST_REQUIRED_INSIDE_MS ? SILENCE.gore : SILENCE.bone));
+    hands.clear();
+
+    // The caster closes in, then circles round behind once the victim can't turn.
+    if (elapsed < 1300) home.x = Math.min(foe.x - 70, home.x + 90 * step);
+    else if (struck) {
+      const a = Math.atan2(home.y - foe.y, home.x - foe.x) + 1.1 * step;
+      home.x = foe.x + Math.cos(a) * 70;
+      home.y = foe.y + Math.sin(a) * 70;
     }
-    // Flesh Banquet's midgets, hounding the victim for as long as the visions last.
-    for (const m of midgets) {
-      const d = Phaser.Math.Distance.Between(m.x, m.y, foe.x, foe.y);
-      if (d > 18) {
-        m.x += ((foe.x - m.x) / d) * 140 * (dt / 1000);
-        m.y += ((foe.y - m.y) / d) * 140 * (dt / 1000);
-      } else if (elapsed >= m.gate) {
-        m.gate = elapsed + 500;
-        tick(ctx, foe.x + (Math.random() - 0.5) * 20, foe.y - 12, `${MIDGET_DMG}`, SILENCE.gore);
+    // The victim tries to keep facing them — instantly until Stalked, then at a crawl.
+    const want = Math.atan2(home.y - foe.y, home.x - foe.x);
+    if (elapsed < stalkedUntil) {
+      const diff = Phaser.Math.Angle.Wrap(want - facing);
+      const max = STALKED_TURN_RAD_PER_S * step;
+      facing = Phaser.Math.Angle.Wrap(facing + Phaser.Math.Clamp(diff, -max, max));
+    } else {
+      facing = want;
+    }
+
+    const live = auraFrom >= 0 && elapsed - auraFrom < STALK_DURATION_MS;
+    if (live) {
+      const grow = Phaser.Math.Clamp((elapsed - auraFrom) / 260, 0, 1);
+      const R = STALK_RADIUS * 0.62 * (0.6 + 0.4 * grow);
+      fogBank(g, home.x, home.y, R * 0.95, 1.3, t, ctx.tint(opts.despress ? SILENCE.bruise : SILENCE.void), 0.32 * grow, 10);
+      g.fillStyle(ctx.tint(SILENCE.void), 0.24 * grow);
+      g.fillCircle(home.x, home.y, R * 0.72);
+      for (let i = 0; i < 14; i++) {
+        const a = (i / 14) * Math.PI * 2 + t * 0.4;
+        clawFingerLayered(g, ctx.tint, home.x + Math.cos(a) * R, home.y + Math.sin(a) * R, a + Math.PI,
+          10 + 4 * Math.sin(t * 3 + i), 2, SILENCE.void, opts.despress ? SILENCE.lilac : SILENCE.violet, 0.55 * grow, 0.35, false);
       }
-      m.ang = Math.atan2(foe.y - m.y, foe.x - m.x);
-      SilenceFx.drawMidget(g, ctx.tint, m.x, m.y, m.ang, t, 1);
+      if (opts.despress) {
+        for (let i = 0; i < 8; i++) {
+          const u = (t * 0.8 + i / 8) % 1;
+          g.fillStyle(ctx.tint(SILENCE.lilac), 0.45 * (1 - u));
+          g.fillEllipse(home.x + Math.cos(i * 2.4) * R * 0.6, home.y + Math.sin(i * 1.7) * R * 0.5 + u * 14, 2.4, 5);
+        }
+      }
+      const isIn = Phaser.Math.Distance.Between(home.x, home.y, foe.x, foe.y) <= R;
+      if (isIn && !struck) {
+        inside += dt;
+        const k = Phaser.Math.Clamp(inside / STALK_DURATION_MS, 0, 1);
+        g.lineStyle(1.6, ctx.tint(SILENCE.orchid), 0.4 + 0.5 * k);
+        g.beginPath();
+        g.arc(foe.x, foe.y, 30 - 10 * k, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * k, false);
+        g.strokePath();
+      }
+      if (isIn && opts.despress) {
+        const n = Math.floor((elapsed - auraFrom) / 1000) + 1;
+        if (n > stacks) {
+          stacks = n;
+          tick(ctx, foe.x, foe.y - 28 - stacks * 4, `😞 DESPRESS ×${stacks} · ${stacks * 10}% SLOWER · −${stacks * 10} RESIST`, SILENCE.lilac);
+        }
+      }
+      if (!struck && inside >= STALK_DURATION_MS * 0.95) {
+        struck = true;
+        stalkedUntil = elapsed + STALK_TURN_SLOW_MS;
+        s.fx.rupture(foe.x, foe.y, 44, { claws: 7, rings: 2 });
+        tick(ctx, foe.x, foe.y - 16, `${STALK_DMG}`, SILENCE.gore);
+        tick(ctx, foe.x, foe.y - 34, `🫥 STALKED · ${STALK_TURN_SLOW_MS / 1000}s · CAN'T TURN`, SILENCE.orchid);
+      }
+    }
+    // Stalked: hands on their back, over the shoulders.
+    if (elapsed < stalkedUntil) {
+      const back = facing + Math.PI;
+      for (let i = -2; i <= 2; i++) {
+        const a = back + i * 0.32;
+        clawFingerLayered(hands, ctx.tint, foe.x + Math.cos(a) * 26, foe.y + Math.sin(a) * 26,
+          a + Math.PI, 13, 2.2, SILENCE.void, SILENCE.violet, 0.75, 0.6);
+      }
     }
   });
 
   ctx.at(400, () => {
-    ringFrom = 400;
-    s.av.play('slam', 0);
-    s.fx.graspRing(ring.x, ring.y, 10, FEAST_RADIUS * 0.5, SILENCE.meat, 520, 8, true);
-    tick(ctx, ring.x, ring.y - 40, `🦷 FEAST · ${FEAST_DURATION_MS / 1000}s`, SILENCE.bone);
+    auraFrom = 400;
+    s.av.play('clap', 0);
+    s.fx.graspRing(home.x, home.y, 10, STALK_RADIUS * 0.6, SILENCE.violet, 480, DEPTH_GROUND_FX + 1, true);
+    tick(ctx, home.x, home.y - 40, `🫥 STALK · ${STALK_DURATION_MS / 1000}s · −${STALK_DRAIN_PER_S} stealth/s`, SILENCE.lilac);
   });
-  ctx.at(400 + FEAST_DURATION_MS * 0.78, () => {
-    if (inside < FEAST_REQUIRED_INSIDE_MS * 0.7) return;
-    hallucUntil = 400 + FEAST_DURATION_MS * 0.78 + HALLUCINATE_MS;
-    s.fx.rupture(foe.x, foe.y, 50, {});
-    tick(ctx, foe.x, foe.y - 16, `${FEAST_DMG}`, SILENCE.gore);
-    tick(ctx, foe.x, foe.y - 34, `👁 HALLUCINATIONS · ${HALLUCINATE_MS / 1000}s`, SILENCE.orchid);
-    if (!opts.banquet) return;
-    // The arena turns to meat, and five things are let out.
-    for (let i = 0; i < 26; i++) {
-      const x = Phaser.Math.Between(8, Math.floor(ctx.w) - 8);
-      const y = Phaser.Math.Between(8, Math.floor(ctx.h) - 8);
-      const decal = ctx.adopt(ctx.scene.add.graphics().setDepth(2));
-      bloodSplat(decal, ctx.tint, x, y, 10 + Math.random() * 10, i, 0.45);
-    }
-    for (let i = 0; i < MIDGET_COUNT; i++) {
-      const a = (i / MIDGET_COUNT) * Math.PI * 2;
-      midgets.push({ x: ring.x + Math.cos(a) * 50, y: ring.y + Math.sin(a) * 50, ang: a, gate: 0 });
-    }
-    tick(ctx, foe.x, foe.y - 52, `🍖 ${MIDGET_COUNT} MIDGETS · ${MIDGET_DMG} A BITE`, SILENCE.meat);
+  // The payoff: they cannot come about, and the knife goes in from behind.
+  ctx.at(6200, () => {
+    s.av.play('dash', Math.atan2(foe.y - home.y, foe.x - home.x));
+    s.fx.slash(foe.x, foe.y, Math.atan2(foe.y - home.y, foe.x - home.x), 55, Math.PI / 3, { bloody: true });
+    tick(ctx, foe.x, foe.y - 16, `${Math.round(STAB_BASE_DMG * STAB_BACKSTAB_MULT)}`, SILENCE.gore);
+    tick(ctx, foe.x, foe.y - 34, '🔪 BACKSTAB', SILENCE.gore);
   });
 
   label(ctx, ctx.w * 0.5, ctx.h - 8,
-    opts.banquet ? `the arena turns to flesh, and ${MIDGET_COUNT} things hound them for the whole ${HALLUCINATE_MS / 1000}s`
-      : `${FEAST_REQUIRED_INSIDE_MS / 1000} of the ${FEAST_DURATION_MS / 1000} seconds inside · then ${FEAST_DMG} and ${HALLUCINATE_MS / 1000}s of seeing things`,
+    opts.despress ? 'every second inside: 10% slower and 10 points of resistance stripped — fading 3s after it ends'
+      : `all ${STALK_DURATION_MS / 1000}s inside: ${STALK_DMG} damage, and ${STALK_TURN_SLOW_MS / 1000}s of turning like a ship — they cast where they face`,
     SILENCE.violet);
 }
 
 export const feast: PreviewScript = {
-  duration: 9000,
+  duration: 8000,
   scale: 0.9,
-  caption: 'F — a ring of teeth. Six seconds inside it is 35 damage and thirty seconds of hallucinations',
-  run(ctx) { feastLoop(ctx, { banquet: false }); },
+  bodyTexture: '',
+  caption: 'F — Stalk. A shadow round you for three seconds; stay in it and they cannot turn to face you',
+  run(ctx) { stalkLoop(ctx, { despress: false }); },
 };
 
 export const feastUpgraded: PreviewScript = {
-  duration: 10000,
+  duration: 8000,
   scale: 0.9,
-  caption: 'Flesh Banquet — the arena becomes meat, and five toothy things are let out after them',
-  run(ctx) { feastLoop(ctx, { banquet: true }); },
+  bodyTexture: '',
+  caption: 'Despress — the shadow weighs on them: slower, and their armour peeled back, every second',
+  run(ctx) { stalkLoop(ctx, { despress: true }); },
 };
 
 // ── Q — Run ───────────────────────────────────────────────────────────
 
-function runLoop(ctx: PreviewCtx, opts: { maze: boolean }): void {
+function runLoop(ctx: PreviewCtx): void {
   const s = stageIt(ctx);
   const foe: Mark = { x: ctx.w * 0.74, y: ctx.h * 0.6 };
   victim(ctx, foe, { facing: () => Math.PI });
@@ -713,7 +769,7 @@ function runLoop(ctx: PreviewCtx, opts: { maze: boolean }): void {
     // The pocket dimension: a corridor with a door at the top, or a maze.
     hall.fillStyle(ctx.tint(SILENCE.void), 0.96);
     hall.fillRect(0, 0, ctx.w, ctx.h);
-    const halfW = ctx.w * (opts.maze ? 0.46 : 0.26);
+    const halfW = ctx.w * 0.26;
     hall.fillStyle(ctx.tint(SILENCE.pitch), 1);
     hall.fillRect(ctx.w * 0.5 - halfW, 0, halfW * 2, ctx.h);
     hall.lineStyle(2, ctx.tint(SILENCE.violet), 0.55);
@@ -722,26 +778,15 @@ function runLoop(ctx: PreviewCtx, opts: { maze: boolean }): void {
     hall.fillStyle(ctx.tint(SILENCE.bone), 0.5 + 0.3 * Math.sin(t * 3));
     hall.fillRect(ctx.w * 0.5 - 14, 2, 28, 12);
 
-    if (opts.maze) {
-      // The Labyrinth: walls the blob simply eats through.
-      hall.lineStyle(3, ctx.tint(SILENCE.plum), 0.9);
-      for (let r = 1; r < 5; r++) {
-        const y = (r / 5) * ctx.h;
-        const gapX = ctx.w * 0.5 - halfW + ((r * 97) % (halfW * 1.6));
-        hall.lineBetween(ctx.w * 0.5 - halfW, y, gapX, y);
-        hall.lineBetween(gapX + 30, y, ctx.w * 0.5 + halfW, y);
-      }
-    }
-
     // They run for the door, slowed. The blob comes up behind them.
-    runner.y -= 70 * HALL_VICTIM_SLOW * (opts.maze ? 0.7 : 1) * step;
+    runner.y -= 70 * HALL_VICTIM_SLOW * step;
     const d = Phaser.Math.Distance.Between(blob.x, blob.y, runner.x, runner.y);
     if (d > 4) {
       blob.x += ((runner.x - blob.x) / d) * BLOB_SPEED * 0.22 * step;
       blob.y += ((runner.y - blob.y) / d) * BLOB_SPEED * 0.22 * step;
     }
     hall.fillStyle(0x3c4254, 1);
-    hall.fillCircle(runner.x, runner.y, opts.maze ? 10 : 15);
+    hall.fillCircle(runner.x, runner.y, 15);
     SilenceFx.drawBlob(hall, ctx.tint, blob.x, blob.y, 26, t, 1);
     if (d > 22 || runner.y < 18) return;
     chase = -1;
@@ -776,8 +821,7 @@ function runLoop(ctx: PreviewCtx, opts: { maze: boolean }): void {
   }
 
   label(ctx, ctx.w * 0.5, ctx.h - 8,
-    opts.maze ? 'a 9×6 maze instead — they shrink, slow further and can barely see, and the blob eats the walls'
-      : `${RUN_ARM_RANGE}px arm · ${BLOB_CATCH_DMG} if it catches them · a whiff refunds ${RUN_MISS_REFUND_MS / 1000}s of the 60`,
+    `${RUN_ARM_RANGE}px arm · ${BLOB_CATCH_DMG} if it catches them · a whiff refunds ${RUN_MISS_REFUND_MS / 1000}s of the 60`,
     SILENCE.violet);
 }
 
@@ -785,14 +829,97 @@ export const run: PreviewScript = {
   duration: 8000,
   scale: 0.86,
   caption: 'Q — an arm out to 500px, and then both of you are somewhere else and they have to run',
-  run(ctx) { runLoop(ctx, { maze: false }); },
+  run(ctx) { runLoop(ctx); },
 };
 
+/**
+ * The Labyrinth, on the kit's real maze (a fixed seed), scaled down to the stage: the blob steers
+ * the corridors toward the last heartbeat while the shrunken victim makes for the lit exit.
+ */
+function labyrinthLoop(ctx: PreviewCtx): void {
+  const W = 960;
+  const H = 640;
+  const maze = new SilenceMaze(0x51e7ce, W, H, false);
+  const sc = Math.min(ctx.w / W, ctx.h / H);
+  const ox = (ctx.w - W * sc) / 2;
+  const oy = (ctx.h - H * sc) / 2;
+  const floor = ctx.adopt(ctx.scene.add.graphics().setDepth(2));
+  const walls = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
+  const live = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+  const bodies = ctx.adopt(ctx.scene.add.graphics().setDepth(6));
+  const dark = ctx.adopt(ctx.scene.add.graphics().setDepth(20));
+  for (const g of [floor, walls, live, bodies, dark]) g.setPosition(ox, oy).setScale(sc);
+  maze.paintStatic(floor, walls, ctx.tint);
+
+  const runner = { ...maze.center(maze.victimStart) };
+  const blob = { ...maze.center(maze.blobStart) };
+  let heard = { ...runner };
+  let nextPulse = 0;
+  const pulses: number[] = [];
+  let over = false;
+
+  ctx.onFrame((dt, elapsed) => {
+    const t = elapsed / 1000;
+    const step = dt / 1000;
+    live.clear();
+    bodies.clear();
+    dark.clear();
+    maze.paintLive(live, ctx.tint, t, runner);
+    if (over) return;
+
+    if (elapsed >= nextPulse) {
+      nextPulse = elapsed + MAZE_PULSE_EVERY_MS;
+      heard = { ...runner };
+      pulses.push(elapsed);
+    }
+    const move = (p: Mark, to: Mark, speed: number, r: number): void => {
+      const a = Math.atan2(to.y - p.y, to.x - p.x);
+      const d = Phaser.Math.Distance.Between(p.x, p.y, to.x, to.y);
+      const v = Math.min(d, speed * step);
+      const q = maze.resolve(p.x + Math.cos(a) * v, p.y + Math.sin(a) * v, r);
+      p.x = q.x;
+      p.y = q.y;
+    };
+    const exit = maze.exitPoint();
+    const exitCell = maze.cellOf(exit.x, exit.y);
+    const inExit = maze.stepsBetween(runner.x, runner.y, exit.x, exit.y) === 0;
+    move(runner, inExit ? exit : maze.nextStep(runner.x, runner.y, exitCell), 150, 10);
+    const sees = Phaser.Math.Distance.Between(blob.x, blob.y, runner.x, runner.y) < 190;
+    const goal = sees ? runner : heard;
+    const same = maze.stepsBetween(blob.x, blob.y, goal.x, goal.y) === 0;
+    move(blob, same ? goal : maze.nextStep(blob.x, blob.y, maze.cellOf(goal.x, goal.y)), MAZE_BLOB_SPEED, 20);
+
+    // The hunter's view: its own light, and the heartbeat through the walls.
+    for (const p0 of pulses) {
+      const k = (elapsed - p0) / 900;
+      if (k >= 1) continue;
+      dark.lineStyle(3 * (1 - k) + 1, ctx.tint(SILENCE.gore), 0.85 * (1 - k));
+      dark.strokeCircle(heard.x, heard.y, 10 + 60 * k);
+    }
+    bodies.fillStyle(0x3c4254, 1);
+    bodies.fillCircle(runner.x, runner.y, 10);
+    SilenceFx.drawBlob(bodies, ctx.tint, blob.x, blob.y, 30, t, 1);
+
+    if (Phaser.Math.Distance.Between(blob.x, blob.y, runner.x, runner.y) < 40) {
+      over = true;
+      tick(ctx, ox + runner.x * sc, oy + runner.y * sc - 16, `💀 ${BLOB_CATCH_DMG}`, SILENCE.gore);
+    } else if (Phaser.Math.Distance.Between(runner.x, runner.y, exit.x, exit.y) < 30 || elapsed > MAZE_SURVIVE_MS) {
+      over = true;
+      tick(ctx, ox + runner.x * sc, oy + runner.y * sc - 16, 'ESCAPED', SILENCE.pale);
+    }
+  });
+
+  label(ctx, ctx.w * 0.5, ctx.h - 8,
+    `you steer the blob · their heartbeat every ${MAZE_PULSE_EVERY_MS / 1000}s · they reach the light or last ${MAZE_SURVIVE_MS / 1000}s`,
+    SILENCE.violet);
+}
+
 export const runUpgraded: PreviewScript = {
-  duration: 9000,
+  duration: 12000,
   scale: 0.86,
-  caption: 'The Labyrinth — a maze instead of a corridor, and the blob does not need the corridors',
-  run(ctx) { runLoop(ctx, { maze: true }); },
+  bodyTexture: '',
+  caption: 'The Labyrinth — a hunt in the dark. You steer; they follow the cold light to the door',
+  run(ctx) { labyrinthLoop(ctx); },
 };
 
 // ── Passives ──────────────────────────────────────────────────────────
@@ -801,7 +928,7 @@ export const theFog: PreviewScript = {
   duration: 10000,
   scale: 0.9,
   bodyTexture: '',
-  caption: '90px of dark around the border. Stand in it and you are gone — bar and all',
+  caption: '90px of dark around the border. It banks stealth — and from 20 up you are gone, bar and all',
   run(ctx) {
     const home: Mark = { x: ctx.w * 0.5, y: ctx.h * 0.5 };
     let visible = 1;
@@ -809,7 +936,7 @@ export const theFog: PreviewScript = {
     const foe: Mark = { x: ctx.w * 0.5, y: ctx.h * 0.34 };
     victim(ctx, foe, { facing: () => Math.PI / 2 });
     const f = fog(ctx, () => home);
-    ctx.onFrame(() => { visible = f.inside(home) || f.stealth() > 0 ? 0.35 : 1; });
+    ctx.onFrame(() => { visible = f.stealth() >= STEALTH_INVIS_MIN ? 0.35 : 1; });
 
     // Into the fog, fill up, walk back out, and drain in the open.
     ctx.onFrame((dt, elapsed) => {
@@ -818,7 +945,8 @@ export const theFog: PreviewScript = {
       else if (elapsed < 6000) return;
       else home.y = Math.max(ctx.h * 0.45, home.y - 60 * step);
     });
-    ctx.at(2600, () => tick(ctx, home.x, home.y - 40, '🌫️ IN THE FOG · INVISIBLE', SILENCE.lilac));
+    ctx.at(2600, () => tick(ctx, home.x, home.y - 40, '🌫️ IN THE FOG · BANKING', SILENCE.lilac));
+    ctx.at(4700, () => tick(ctx, home.x, home.y - 40, `${STEALTH_INVIS_MIN} STEALTH · INVISIBLE`, SILENCE.pale));
     ctx.at(6000, () => tick(ctx, home.x, home.y - 40, `+${STEALTH_MAX} BANKED`, SILENCE.pale));
     ctx.at(7200, () => tick(ctx, home.x, home.y - 40,
       `STILL INVISIBLE · ${STEALTH_DRAIN_PER_S}/s`, SILENCE.amethyst));
@@ -829,14 +957,14 @@ export const theFog: PreviewScript = {
       color: hex(SILENCE.violet),
     }).setOrigin(0.5).setDepth(31));
     ctx.onFrame(() => {
-      const gone = f.inside(home) || f.stealth() > 0;
+      const gone = f.stealth() >= STEALTH_INVIS_MIN;
       eye.setText(gone ? 'on their screen: nothing at all' : 'on their screen: you');
       eye.setColor(hex(gone ? SILENCE.gore : SILENCE.violet));
     });
     void s;
 
     label(ctx, ctx.w * 0.5, ctx.h - 8,
-      `${STEALTH_GAIN_PER_S}/s in, ${STEALTH_DRAIN_PER_S}/s out · a full meter is 10 seconds of open ground`,
+      `${STEALTH_GAIN_PER_S}/s in, ${STEALTH_DRAIN_PER_S}/s out · invisible from ${STEALTH_INVIS_MIN} up · a full meter is 8s of open ground`,
       SILENCE.violet);
   },
 };
@@ -903,7 +1031,7 @@ export const theRearArc: PreviewScript = {
   duration: 8000,
   scale: 0.9,
   bodyTexture: '',
-  caption: 'Everyone has an eye. Silence is the only element that reads it',
+  caption: 'Everyone casts a shadow behind them. Stab from inside it',
   run(ctx) {
     const home: Mark = { x: ctx.w * 0.2, y: ctx.h * 0.5 };
     const s = drivenCaster(ctx, home);
@@ -943,7 +1071,7 @@ export const theRearArc: PreviewScript = {
     }
 
     label(ctx, ctx.w * 0.5, ctx.h - 8,
-      'a 120° wedge behind them · being invisible does not change it, and turning is free', SILENCE.violet);
+      'a 120° wedge behind them · being invisible does not change it — only Stalk stops them turning', SILENCE.violet);
   },
 };
 

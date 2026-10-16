@@ -53,22 +53,31 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
    in the AI rotation. See the "Bot synergy contract" section in CLAUDE.md and the doc
    comment on `NpcAiState`. Silence's three are the canon: `npcSilenceMatureStalker`
    (ritual → grabber), `npcSilenceSacrificeStab` (stab through own stalker),
-   `npcSilenceMutateWatcher` (E+ seeker mutation, youngest-watcher / keep-two rule).
+   `npcSilenceMutateWatcher` (E+ seeker mutation, youngest-watcher / keep-two rule),
+   plus the Stalk pair (2026-10-15): `npcSilenceStalkOpen` (cast F when the target can
+   be held in the aura) → the mirror AI shadows them round to their back →
+   `npcSilenceBackstabAim` (stab from inside the Stalked target's back shadow).
 5. **Movement profile** — tune the element's `MOVEMENT_PROFILES` entry alongside the
    rewrite.
 
 ## Partial passes landed outside a batch
 
-- **Magma (2026-08-12), step 2 + part of step 4 only.** Magma Mastery shipped, so the
-  kit now has its npc half: `npcMasteryActive` already drove `setMastered` on the npc
-  avatar, and `MagmaKit.updateNpcSaw` is the kit-side cast path for Magma Saw (a private
-  hold/release timer, so nothing for `castAbility` to find) with `NPC_MASTERY_BINDS.magma`
-  giving up the R slot. One synergy field is published: `magmaObsidianPoint`, the bot's
-  own over-erupting cone, walked into with the soft perfume-style seek so the collapse
-  actually lands the Obsidian Coat. `doMagmaAbilities` now reads `npcMagmaSawSlot` /
-  `npcMagmaSawOut`. **Steps 1, 3 and 5 are untouched** — the kit's shop-upgrade branches
-  are already owner-aware via `up(owner, slot)`, but the routine itself has not been
-  rewritten and the movement profile has not been retuned.
+- **Magma (2026-08-12 mastery; 2026-10-13 F/Q rework), steps 2 and 4, part of 3.** Magma
+  Mastery shipped first: `npcMasteryActive` drives `setMastered` on the npc avatar, and
+  `MagmaKit.updateNpcSaw` is the kit-side cast path for Magma Saw (a private hold/release
+  timer, so nothing for `castAbility` to find) with `NPC_MASTERY_BINDS.magma` giving up the
+  R slot; `magmaObsidianPoint` is walked into with the soft perfume-style seek so the
+  collapse lands the Obsidian Coat. The F/Q rework (Blunder-Boil + Pressure Gauge, Molten
+  Mutiny + Pirate King) rewrote `doMagmaAbilities` around the kit's new synergy fields:
+  `npcMagmaCannonVolcano` (a volcano of its own beside the player → aim the broadside there,
+  one round lights it critical), `npcMagmaGaugePressure` ≥ 0.6 (fire F *away* from the
+  player so the hot recoil flight hits them for 18), `npcMagmaGaugeOver` (only vent an
+  overpressured gun inside 110px, so the 35 it costs the bot also lands), plus
+  `npcMagmaMounted` (click is cannons, nothing else is pressed — F would throw it
+  overboard) and `npcMagmaPendant`/`npcMagmaShip` (don the pendant early, once). The kit
+  steers the npc's ship itself in `advanceCursor` (holds 190px off the target). **Not done:**
+  the bot never dismounts, does not place the volcano-under-the-player deliberately before
+  mounting, and the movement profile (step 5) is untouched.
 
 - **Death (2026-08-12), step 2 only.** Death Mastery shipped, so the kit now has its npc
   half. `npcMasteryActive` already drove `setMastered` on the npc avatar;
@@ -122,6 +131,18 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   `owns(owner, slot)`, but the base rotation has not been rewritten and the movement profile has
   not been retuned.
 
+- **Radiation — REWORKED 2026-10-15, the notes below this one are history.** E is now Barrage
+  (a 45°→5° cone held on a target for 3s, then a 5-round hitscan burst), R Fallout Bunker (75 HP
+  lead ring; blocks shots and enemies, the owner takes no damage inside), F Rod Baton (close
+  strike; dose, or 16 + 2s stun on a dosed target). Click and Q unchanged; Critical Mission, X-Ray,
+  Waste Disposal, all upgrades and the mastery are gone. Bot fields: `npcRadiationBarraging`
+  (the kit steers the bot's cone at a capped 2.6 rad/s with aim-error wobble; the AI presses
+  nothing while it is open), `npcRadiationTargetDosed` (rod → stun, Barrage → 8s),
+  `npcRadiationTargetStunned` (a lock that cannot be walked out of), `npcRadiationNeedsCover`
+  (own airdrop falling, not sheltered → R first; the kit also holds the bot inside its bunker
+  until the drop lands, so the bunker eats the self-hit), `npcRadiationSheltered`. The bot only
+  draws Q while R is ready.
+
 - **Radiation (2026-08-12), step 2 + step 4 only.** Radiation Mastery shipped, so the kit now has
   its npc half. `npcMasteryActive` already drove `setMastered` on the npc avatar, and the Sniper's
   Instinct passive runs for the bot exactly as it does for the player — a zoner keeping its band
@@ -160,6 +181,14 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   untouched** — the kit was already owner-aware via `up(owner, slot)`, but the base rotation has
   not been rewritten and the movement profile has not been retuned.
 
+- **Marrow (restored 2026-10-12 as its own test element, beside Cloth).** `doMarrowAbilities` came
+  back from the pre-Cloth commit unchanged, with its four kit-published `NpcAiState` fields:
+  `npcMarrowCells` (sockets on the bone bar — the sixth cast is refused, so the rotation is a
+  composition, not a spam), `npcMarrowMasts` (a second Mastacre over a live one is wasted),
+  `npcMarrowInflammation` (the fever; a dry bar makes Q worth casting out of range just for the
+  heat) and `npcMarrowTcellArmed` (F has transformed into a T-cell summon, which is the only time
+  it is worth a socket). No movement-profile retune and no mastery bind — Marrow has no mastery.
+
 - **Cloth (2026-08-16), built to the contract rather than retrofitted.** Cloth replaced Marrow
   outright, so `doClothAbilities` was written against the synergy contract from the first line
   instead of being rewritten into it. The element is four two-press combos and nothing else, and
@@ -174,9 +203,32 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   `ClothKit.npcRightClick` drives whichever one it drafted off a single condition each, and the
   draft itself is kit-side (`npcDraft` takes the biggest card that fits, since a bot cannot plan a
   loom). `NPC_MASTERY_BINDS.cloth` gives up **R** — the safety-line combo is the one the rotation
-  runs best without help, and Wretched Scarf is the only button in the game that rewards being
-  caught out. **Steps 1 and 5 are untouched**: the movement profile has not been retuned, and a
+  runs best without help. Wretched Scarf was deleted 2026-10-15; the bind is now **Bleed Stop**,
+  which `ClothKit` ties off for the bot itself (kit-driven, like the right-click artworks). **Steps 1 and 5 are untouched**: the movement profile has not been retuned, and a
   short-reach element that wants to live inside 62px probably needs its own.
+
+- **Illusion F rework (2026-10-15), Tesseract → Guise, Mind-Boggle → Re-Trick.** Being fooled
+  by the clone is the ability working, so ArenaScene hands `doAI` **`IllusionKit.npcDecoyTarget()`**
+  as the target while the player is guised — a `Proxy` of the player that reads `x`/`y`/
+  `body.velocity` off the clone, banks `takeDamage` into the clone and swallows every write.
+  Invasion husks get the same view through `huskTargetsView` / `absorbDecoyHit`. The player's
+  invisible shots set `playerShotsUnseen`, which skips the dodge loop. Bot side: Guise is the
+  close-range / low-HP escape (checked before Relocate), the rotation is just Click while
+  `npcIllusionGuised`, and the synergy **Guise → Re-Trick** is `npcIllusionRetrick` (kit-computed:
+  the clone is <450ms from fading, or the player is within 130px of the real body and the clone
+  is safer), executed first via `ctx.illusionRetrick()` because the recast bypasses `castAbility`.
+  `NPC_MASTERY_BINDS.illusion` moved from F to **R** so a mastered bot keeps Guise.
+
+- **Soul (2026-10-15), Click → Lantern of the Damned + soul beam, Click+ → Soul Lord.** Siphon
+  and Possession are gone. `SoulKit.npcLanternTarget()` → `npcSoulLanternTarget` (nearest own grave
+  zombie within 360px) replaces `npcSoulDrainPoint`: own zombies are now both the corpse supply and
+  the lantern kill count, so the bot burns them first when its queue is under 2. `npcBeamAim()` →
+  `npcSoulBeamAim` publishes an aim when the beam is ready and lines up 2+ targets (or a Soul Lord
+  hemorrhage setup next to the opponent); the AI calls `ctx.soulBeam`, which only *starts* a charge —
+  the kit fires it itself when full, so the bot's wind-up is as visible as the player's. Soul Lord
+  is mirrored for the npc via `hasNpcUpgrade('click')` (kills, split, hemorrhage, orbs, ascension).
+  Online: the beam release relays as pseudo-cast `soul-beam:<charge%>` → `replayNpcMastery` →
+  `SoulKit.replayBeam`. The entry below is historical.
 
 - **Soul (2026-08-16), step 4 only, forced by the Click rework.** Lantern Light became **Siphon**
   (`soul-siphon`), which changed the bot's default from "spray pools at the target" to "throw a
@@ -204,6 +256,85 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   (driven in `TimeKit.updateNpcRevolver`, not in the routine) is meaningfully stronger at range
   than it was, and the movement profile is now tuned for the wrong ability. Retune it in the batch.
 
+- **Psychic (2026-10-15 chess rework), steps 2–3; movement profile untouched.** The whole
+  kit was replaced (pawns, bishop/knight/rook pieces with auras, Queen form), and
+  `doPsychicAbilities` was rewritten around four kit-owned fields. `npcPsychicMove` is the
+  click the board wants this tick — a piece whose legal move passes through (or, for a knight,
+  lands its blast on) the target led by the move's travel time; as the queen, her own slide;
+  failing both, a rook taking one of the bot's own half-expired bishops/knights for the
+  30-second aura. It is carried out with `ctx.psychicMovePiece(x, y)` (not a cast — moves have
+  no cooldown) and checked **first**. `npcPsychicBishopAt/KnightAt/RookAt` are spawn points on a
+  diagonal / rank-or-file / knight-jump through the target, picked nearest the bot so the aura
+  lands where the bot stands. The queen is pressed once ≥2 pieces are up (her ×3 multiplies
+  them) or below 45% HP; pawns only inside 200px and never as the queen. Planning is
+  throttled to 120ms (`NPC_PLAN_MS`) and is off online. **Not done:** the bot does not walk
+  *into* its own auras (no seek override), and the movement profile has not been retuned for
+  a kit that now wants to stand still near its pieces.
+
+- **Gold (id `fortune`, 2026-10-15 rework), steps 3–5.** The shopkeeper was replaced by an
+  alchemist and `doFortuneAbilities` rewritten around kit-published fields. Synergies checked
+  first: `npcGoldHeartLive` → Plume thrown onto the gold-hearted target (`npcGoldPlumeAt`) so it
+  has to walk out and fill its heart; Midas cast inside 420px while the target is above 30%;
+  `npcGoldCanAdvance` gates E (the kit picks the card itself in `npcChoose`). `goldSeekPoint` is
+  a soft seek to its own plume, its loot, or Midas floor while the curse is live.
+  `npcGoldFrayAim` is the gravity-corrected aim for the falling grass. Movement profile is now a
+  150–300px skirmisher. No mastery or upgrades exist yet, so steps 1–2 are moot until they do.
+
+- **Magnet (2026-10-15 scrap rework), steps 3–4; movement profile untouched.** Rods, Magnetize,
+  Protect and Atom Smasher are gone; `doMagnetAbilities` was rewritten around MagnetKit's fields,
+  all checked before the rotation: `npcMagnetRecall` (a nail has sat in the target 1.2s → rip it
+  out via the non-ability `ctx.magnetRecall`), `npcMagnetRepulseAt` (the kit scores the cone —
+  coins in it, a planted spike to launch, a nail coming home within 150px to re-fire, a shard to
+  dash on when far, a nailed target to throw when close — and asks for Repulse at ≥2),
+  `npcMagnetZipTo` (an unridden planted spike that closes the gap by 150px, or opens it when
+  hurt → `ctx.magnetZip`; the next Repulse then launches the spike point-blank), and
+  `npcMagnetHover` (hold the coins while Repulse is ≥70% back and two coins are past 1.2s —
+  `ctx.magnetHover` every tick, idempotent). `npcMagnetCoinAim` tosses coins 110px toward the
+  target so they hang inside the next cone; `npcMagnetSpikeAt` leads by 0.8s of velocity.
+  `npcMagnetBusy` (gathering/piloting) returns null — the kit pilots the npc mech itself in
+  `npcPilot` (smash on a 0.31s lead, rail/cannon off cooldown, avalanche after 3s, self-destruct
+  with 1.2s left). No mastery or upgrades exist yet, so steps 1–2 are moot.
+
+- **Sound (2026-10-15 marching-band rework), steps 3–5.** The violin/boombox/bugle/Coda kit is
+  gone, and with it `npcSoundHarmonizeIn` / `npcSoundComposeSlot`. SoundKit now runs the bot's
+  metronome itself (`botMetronome` rolls each 1.1s beat once against `NPC_BEAT_CHANCE[level]` and
+  clicks inside or before the window) and steers its baton at the player, so the rotation never
+  presses Click. `doSoundAbilities` reads, before anything else: `npcSoundSoloing` (on stage → the
+  kit plays the Call of the Void chart with `NPC_SOLO_CHANCE[level]` per note → null), then the
+  synergy `npcSoundDetonate` (a Fermata victim has been out of tune ≥3.5s or has <1.5s left → the
+  free recast through the non-ability `ctx.soundCast('fermata-detonate')`). Then Hum until
+  `npcSoundSong` matches `npcSoundWantedSong` (Smooth under 40% HP, Melody when out of baton
+  reach, else Staccato), Q whenever up, Fermata inside 230px, Crescendo inside 260px. Movement
+  profile is now a 70–150px skirmisher (baton reach 170). No mastery or upgrades exist yet, so
+  steps 1–2 are moot.
+
+- **Harvest (id `gluttony`, 2026-10-15 rework replacing the chef), steps 3–5.**
+  `doGluttonyAbilities` was rewritten around GluttonyKit's fields, all checked before the
+  rotation: `npcHarvestCanExecute` (the kit says Reaping Hour's 30, through the target's own
+  vulnerability, lands under the execute line) → Q inside 175px; `npcHarvestHeartAim` (one of
+  its own corrupt hearts within sickle reach — aiming the click at it puts the loop's far side
+  through the heart: 75 Corrupt HP); `npcHarvestBiteHeavy` (its Corrupt HP ≥ its health, so
+  Consume adds 40% corruption) and `npcHarvestTargetBuffed` (shields/weak HP/dodge/buffs worth
+  stealing) → F inside 100px; `npcHarvestTargetCorruption` ≥ 40 or `npcHarvestTargetOnMold` →
+  Feeding Frenzy. Rotation: re-sow when `npcHarvestMatureMold` < 30, bite up close, scythe a
+  ≥55%-corrupted target, sickle under 460px. `harvestSeekPoint` walks it into the middle of
+  its own mold while the target is 120–420px away and off the rot, so the chase happens on
+  the mold. The kit picks the bot's sickle curl at random per throw (no right mouse button).
+  Movement profile: brawler 90–240px, retreat at 20%. No mastery or upgrades exist yet, so
+  steps 1–2 are moot.
+- **Devotion (id `passion`, 2026-10-15 rework replacing the charmer), steps 3–5.**
+  `doPassionAbilities` reads one kit-published bundle, `npcDevotion` (from
+  `PassionKit.npcOpportunities()`), and checks it before the rotation: `ascendNow` (target
+  within 34px of the bot's own row, so the chariot hits both and carries the bot onto them) →
+  Q; `crucifixPoint` (the bot's own feet inside 150px — a sanctuary the player is shoved out of —
+  otherwise a wall 45% of the way to them when none is standing) → F; `grenadePoint` (target in
+  the bot's holy water, on its crucifix rim, or ≥50% faith) → R; `waterPoint` (the target's
+  lead, unless a puddle is already there; gated on `npcDevotionWaterCharges`) → E. During the
+  Ascendance wind-up `holdLineY` steers the bot vertically onto its own line so it gets picked
+  up. `npcDevotionRiding` blocks casting while it is off the field. The kit chooses the bot's
+  sermon charge (full when the target is pinned or ≥75% faith). Movement profile kept from
+  Passion: skirmisher 150–290px. No mastery or upgrades exist yet, so steps 1–2 are moot.
+
 ## Gotchas (learned the hard way — read before each batch)
 
 - **The reaction tick shrinks per-frame random gates ~10×.** Old routines rolled
@@ -217,8 +348,8 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
 - **Mastery cooldown seeding**: kit-owned mastery ability timers need
   `lastCastAt = -COOLDOWN` style seeding or the bot's first cast silently waits out a
   full cooldown.
-- **Silence corner-bug post-mortem** (the shape of bug to avoid): `isInvisible` is
-  `inFog || stealth > 0`, and the old npc slink (`!invis && stealth < 35` → full-speed
+- **Silence corner-bug post-mortem** (the shape of bug to avoid): `isInvisible` was
+  `inFog || stealth > 0` (since 2026-10-15 it is `stealth >= 20`), and the old npc slink (`!invis && stealth < 35` → full-speed
   seek to a static wall point) flip-flopped against doAI's chase at the fog line every
   frame. The cure was *commitment* (a `npcFogFarming` hysteresis flag that only a full
   meter clears) plus arrival damping. Any kit steering that can disagree with doAI

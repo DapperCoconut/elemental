@@ -4,23 +4,13 @@ import { Ability, CastContext } from './Ability';
 /**
  * Radiation — a test element, reachable only from a cheat-mode save for now.
  *
- * A sniper in lead. Everything he owns is a procedure: tag the target three times, confirm, fire
- * — and the one thing he never does is improvise. The armour is dark purple lead plate with the
- * seams glowing green where the load inside it is getting out, which is also the honest summary
- * of the element: he is carrying something that is killing him, and he is spending it on you.
+ * A sniper in lead. The click is a procedure — tag the target three times and the railgun fires
+ * itself — and the Q is the same procedure with the stakes moved. In between, three tools for the
+ * range a sniper does not want to be at: a sighting cone that has to be held on a body while it
+ * closes, a lead bunker to hide in, and a uranium rod for the enemy who got close anyway.
  *
- * The clock is the whole design. **Critical Mission** hands him half again his speed and a
- * quarter more damage at the bell, and then halves both every twelve seconds, forever. He is
- * never as strong as he was a moment ago, so every ability in the kit is about closing the job
- * before the numbers run out — and every one of them is a chain that a single miss breaks.
- *
- * The status the element sells is **irradiated**: for ten seconds, every point of healing aimed
- * at the victim lands as a hit instead. It costs nothing to hold and it does nothing on its own,
- * which is exactly why it is worth stacking on everything before the payload arrives.
- *
- * The five corrupt shop upgrades all hang off one addition: **the irradiation ladder**, which
- * turns that flat window into three rungs. See `RadiationKit` for the mechanics and
- * `data/codex/radiation.ts` for the long form.
+ * The status the element sells is **irradiated**: every point of healing aimed at the victim
+ * lands as a hit instead. Barrage hits harder on it and the Rod Baton turns it into a stun.
  *
  * Every `cast` below is a one-line delegate; the whole simulation lives in RadiationKit.
  */
@@ -34,31 +24,31 @@ const railgun: Ability = {
   cast(ctx: CastContext) { ctx.radiationRailgun(ctx.targetX, ctx.targetY); },
 };
 
+const barrage: Ability = {
+  id: 'radiation-barrage',
+  name: 'Barrage',
+  description: 'Open a 45° sighting cone in front of you. Hold it over an enemy and it closes to 5° over 3 seconds — let them out of it and the ability is cancelled. Once it closes, an instant aimed burst of 5 hitscan rounds fires at them: 5 damage each, or 8 if they are irradiated.',
+  displayKey: 'E',
+  cooldown: 7000,
+  cast(ctx: CastContext) { ctx.radiationBarrage(ctx.targetX, ctx.targetY); },
+};
+
+const bunker: Ability = {
+  id: 'radiation-bunker',
+  name: 'Fallout Bunker',
+  description: 'Build a round lead bunker where you are standing. It has 75 HP and lasts 10 seconds. It stops enemy projectiles and enemies cannot walk into it. While you are inside, nothing can hurt you — every hit lands on the bunker instead.',
+  displayKey: 'R',
+  cooldown: 16000,
+  cast(ctx: CastContext) { ctx.radiationBunker(); },
+};
+
 const baton: Ability = {
   id: 'radiation-baton',
   name: 'Rod Baton',
-  description: 'Dash forward and whip a spent fuel rod through everything in front of you for 15 damage. A clean target is irradiated for 10 seconds; one that already is gets stunned for 1.5 seconds instead — so the baton is either the opener or the finisher, never both.',
-  displayKey: 'E',
-  cooldown: 3000,
-  cast(ctx: CastContext) { ctx.radiationBaton(ctx.targetX, ctx.targetY); },
-};
-
-const xray: Ability = {
-  id: 'radiation-xray',
-  name: 'X-Ray Vision',
-  description: 'Eight seconds of seeing through the arena. The screen goes green, everything on it is drawn as its own skeleton — invisible or not — and every enemy hitbox swells 33%. The bones are for you; the hitboxes are for them.',
-  displayKey: 'R',
-  cooldown: 12000,
-  cast(ctx: CastContext) { ctx.radiationXray(); },
-};
-
-const waste: Ability = {
-  id: 'radiation-waste',
-  name: 'Waste Disposal',
-  description: 'Roll a drum of nuclear waste out in front of you and shoot it. The burst deals 30 damage, irradiates, throws you backwards — untouchable the whole way — and sprays live puddles across the floor. The moment you land you snipe every puddle in turn: 15 damage each, and anything standing in one, or caught by one going off, is irradiated.',
+  description: 'Pull out a uranium rod and strike forward at close range. Enemies hit take 8 damage and are irradiated for 4 seconds. Enemies who are already irradiated take 16 damage and are stunned for 2 seconds instead.',
   displayKey: 'F',
-  cooldown: 14000,
-  cast(ctx: CastContext) { ctx.radiationWaste(ctx.targetX, ctx.targetY); },
+  cooldown: 6000,
+  cast(ctx: CastContext) { ctx.radiationBaton(ctx.targetX, ctx.targetY); },
 };
 
 const extermination: Ability = {
@@ -76,5 +66,5 @@ export const radiationElement: Element = {
   name: 'Radiation',
   color: 0x7cff3d,
   emoji: '☢️',
-  abilities: [railgun, baton, xray, waste, extermination],
+  abilities: [railgun, barrage, bunker, baton, extermination],
 };

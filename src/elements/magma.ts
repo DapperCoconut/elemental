@@ -2,16 +2,16 @@ import { Element } from './Element';
 import { Ability, CastContext } from './Ability';
 
 /**
- * Magma — a test element, reachable only from a cheat-mode save for now.
+ * Magma — a melting pirate whose volcano is a pressure vessel charged by his own attacks.
  *
- * Its two summons are *pressure vessels*, and they are charged by Magma's own attacks. That
- * inverts the usual question: every other element asks where the enemy is, and Magma also asks
- * where your volcano is, because a puddle that lands on it, a rock that hits it or a fist that
- * comes down on it is worth more than the same attack aimed at a person.
+ * That inverts the usual question: every other element asks where the enemy is, and Magma also
+ * asks where your volcano is, because a puddle that lands on it, a rock that hits it or a cone
+ * fired across it is worth more than the same attack aimed at a person. The lava on the floor
+ * does ordinary damage; the pressure quietly climbs toward a collapse that clears the arena.
  *
- * The result is an element with two economies running at once — the lava on the floor doing
- * ordinary damage, and the pressure quietly climbing toward a collapse that clears the arena,
- * or toward twenty seconds of being a dragon.
+ * The other half of the kit is the pirate's. Blunder-Boil is a blunderbuss of lava whose recoil
+ * throws *you*, and Molten Mutiny is a cursed pendant that skims a fifth of everything you deal
+ * until it has enough to raise the ship.
  *
  * Every `cast` here is a one-line delegate; the whole simulation lives in MagmaKit.
  */
@@ -19,7 +19,7 @@ import { Ability, CastContext } from './Ability';
 const plume: Ability = {
   id: 'magma-plume',
   name: 'Plume',
-  description: 'Throw out 5 pools of magma around you. Anything standing in one burns for 34 a second. Hatched, this becomes dragon breath instead.',
+  description: 'Throw out 5 pools of magma around you. Anything standing in one burns for 34 a second. At the helm of the ship, this fires all six cannons instead.',
   displayKey: 'Click',
   cooldown: 2000,
   cast(ctx: CastContext) { ctx.magmaPlume(ctx.targetX, ctx.targetY); },
@@ -43,23 +43,25 @@ const bloat: Ability = {
   cast(ctx: CastContext) { ctx.magmaBloat(); },
 };
 
-const jet: Ability = {
-  id: 'magma-jet',
-  name: 'Magma Jet',
-  description: 'Hold F to open a jet of molten flame at your cursor. It burns everything in the cone for 12 every 0.15s and throws you backwards away from wherever you are pointing. Up to 3s of thrust, and it charges your vessels the whole way.',
+const blunder: Ability = {
+  id: 'magma-blunder',
+  name: 'Blunder-Boil',
+  description: 'Blast a cone of lava at your cursor for 15 to everything caught in it — and the recoil throws you a long way the other direction. Holds 2 charges, each back in 3s.',
   displayKey: 'F',
-  cooldown: 12000,
-  cast(ctx: CastContext) { ctx.magmaJet(ctx.targetX, ctx.targetY); },
+  // The real refusal is the charge count, which the kit owns; this only stops a double-press
+  // emptying both charges on one frame.
+  cooldown: 300,
+  cast(ctx: CastContext) { ctx.magmaBlunder(ctx.targetX, ctx.targetY); },
 };
 
-const dragonKin: Ability = {
-  id: 'magma-dragon-kin',
-  name: 'Dragon Kin',
-  description: 'Lay a dragon egg holding 250 pressure. Attack it until it hatches and you become the dragon for 20s: 20% less damage taken, 20% more speed, and a click that breathes fire.',
+const mutiny: Ability = {
+  id: 'magma-mutiny',
+  name: 'Molten Mutiny',
+  description: 'Don a cursed red pendant that takes 20% of every point you would deal — to a body or into a volcano — and keeps it. At 50 it wakes the flaming pirate ship: 300 hull burning down 15 a second, steered by your cursor, six cannons on the click, Space to go over the side and back aboard. Q again removes the pendant.',
   displayKey: 'Q',
   isUltimate: true,
-  cooldown: 55000,
-  cast(ctx: CastContext) { ctx.magmaDragonKin(ctx.targetX, ctx.targetY); },
+  cooldown: 8000,
+  cast(ctx: CastContext) { ctx.magmaMutiny(); },
 };
 
 export const magmaElement: Element = {
@@ -67,5 +69,5 @@ export const magmaElement: Element = {
   name: 'Magma',
   color: 0xff5a1e,
   emoji: '🌋',
-  abilities: [plume, volcano, bloat, jet, dragonKin],
+  abilities: [plume, volcano, bloat, blunder, mutiny],
 };

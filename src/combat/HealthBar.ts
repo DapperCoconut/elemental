@@ -15,7 +15,7 @@ export class HealthBar {
     this.graphics.setDepth(10);
   }
 
-  update(x: number, y: number, hp: number, shieldHp = 0, chargeRatio = 0, clottedHp = 0, weakHp = 0, chargeColor = 0xffdd00): void {
+  update(x: number, y: number, hp: number, shieldHp = 0, chargeRatio = 0, clottedHp = 0, weakHp = 0, chargeColor = 0xffdd00, corruptHp = 0): void {
     this.graphics.clear();
     if (!this.visible) return;
 
@@ -65,6 +65,19 @@ export class HealthBar {
       const weakRatio = Math.min(weakHp / this.maxHp, 1 - fillEnd);
       this.graphics.fillStyle(0x999999, 0.85);
       this.graphics.fillRect(bx + this.barW * fillEnd, by, this.barW * weakRatio, this.barH);
+      fillEnd += weakRatio;
+    }
+
+    // Corrupt HP (sick purple — Harvest). Bonus health, so it sits past the end like a shield —
+    // and when the bar is already full it rots back over the top of it from the right, because
+    // the scarecrow gets most of it while healthy and an invisible pool would be no pool at all.
+    if (corruptHp > 0) {
+      const corruptRatio = Math.min(corruptHp / this.maxHp, 1);
+      const start = Math.max(0, Math.min(fillEnd, 1 - corruptRatio));
+      this.graphics.fillStyle(0x8a2fc9, 0.95);
+      this.graphics.fillRect(bx + this.barW * start, by, this.barW * corruptRatio, this.barH);
+      this.graphics.fillStyle(0xd27bff, 0.8);
+      this.graphics.fillRect(bx + this.barW * start, by, this.barW * corruptRatio, 2);
     }
   }
 

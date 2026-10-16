@@ -24,7 +24,7 @@ export const LIGHT = {
   /** Everything light does happens against its own shadow. */
   night: 0x14110a,
   shade: 0x0a0a12,
-  /** The element's own pale gold — a lance at a crawl. */
+  /** The element's own pale gold — a lance at a crawl, and the body of the star. */
   pale: 0xfff4a8,
   cream: 0xfff0c0,
   glow: 0xffffcc,
@@ -42,10 +42,14 @@ export const LIGHT = {
   /** The Aurora perk's curtain — the only two colours in the kit that aren't heat or glass. */
   auroraGreen: 0x44ffaa,
   auroraViolet: 0x9955ff,
-  /** Ramps, blinks and anything made of cold glass. */
-  cyan: 0x66ddff,
-  sky: 0x88ddff,
-  glass: 0xbfe9ff,
+  /**
+   * Ramps, blinks and anything made of cold glass — blue-white starlight, never aqua. A mint
+   * tint next to the pale gold read as toothpaste; these sit on the blue side of white instead,
+   * the way a hot star does next to a yellow one.
+   */
+  cyan: 0x9fc4ff,
+  sky: 0xbcd6ff,
+  glass: 0xdfe8ff,
   steel: 0x445577,
   white: 0xffffff,
 } as const;
@@ -771,6 +775,26 @@ export class LightAura {
 
 // ── LightAvatar ───────────────────────────────────────────────────────────
 
+/**
+ * A four-point twinkle: two crossed thin diamonds, the long one along `ang`. The sparkle every
+ * star in the kit is built from — the corona rays, the orbiting glints, the crest.
+ */
+export function twinkle(
+  g: Phaser.GameObjects.Graphics, cx: number, cy: number, r: number, ang: number, waist = 0.22,
+): void {
+  for (const [len, rot] of [[r, 0], [r * 0.55, Math.PI / 2]] as const) {
+    const a = ang + rot;
+    const c = Math.cos(a), s = Math.sin(a);
+    const w = len * waist;
+    fillPts(g, [
+      { x: cx + c * len, y: cy + s * len },
+      { x: cx - s * w, y: cy + c * w },
+      { x: cx - c * len, y: cy - s * len },
+      { x: cx + s * w, y: cy - c * w },
+    ]);
+  }
+}
+
 /** Concentric discs of one lamp ball hand, outermost first. */
 const LIGHT_AVATAR: AvatarSpec = {
   hands: [
@@ -786,24 +810,30 @@ const LIGHT_AVATAR: AvatarSpec = {
 };
 
 /**
- * The light character rig: two lamp ball hands, a pair of eyes, and a prismatic crest over the
- * crown that rakes back with speed. Hands, eyes and gestures come from BaseAvatar; what light
- * adds is the pool of headlight underfoot and the crest above.
+ * The light character rig: a star on wheels. Two lamp ball hands, a pair of eyes, a corona of
+ * rays standing out from behind the body that twinkles at rest and streams back with speed,
+ * and a crest of rays off the crown that rakes back on the straights. Hands, eyes and gestures
+ * come from BaseAvatar; what light adds is the starburst under the sprite, the headlight pool
+ * underfoot and the crest above.
+ *
+ * The player is a yellow star and the NPC a blue-white one, so two light racers never blur
+ * together — the two colours of a star, not two colours of toothpaste.
  */
 export class LightAvatar extends BaseAvatar {
   private fx: LightFx;
-  /** Warm crest for the player, cold for the NPC, so two light racers never blur together. */
+  /** Warm for the player, blue-white for the NPC. */
   private accent: number;
   /** 0 = standing still, 1 = flat out. Rakes the crest and stretches the glow. */
   private speed = 0;
+  private seed = Math.random() * 999;
 
   constructor(scene: Phaser.Scene, tint: LightColorFn, owner: 'player' | 'npc' = 'player', depth = 6) {
     super(scene, tint, depth, LIGHT_AVATAR);
     this.fx = new LightFx(scene, tint);
-    this.accent = owner === 'player' ? LIGHT.pale : LIGHT.cyan;
+    this.accent = owner === 'player' ? LIGHT.pale : LIGHT.sky;
     if (owner === 'npc') {
-      this.forEachHandLayer(0, (halo) => halo.setFillStyle(this.tint(LIGHT.cyan), 0.26));
-      this.forEachHandLayer(1, (shell) => shell.setFillStyle(this.tint(LIGHT.sky), 0.92));
+      this.forEachHandLayer(0, (halo) => halo.setFillStyle(this.tint(LIGHT.sky), 0.26));
+      this.forEachHandLayer(1, (shell) => shell.setFillStyle(this.tint(LIGHT.cyan), 0.92));
     }
   }
 
@@ -811,9 +841,10 @@ export class LightAvatar extends BaseAvatar {
   setSpeed(v: number): void { this.speed = Phaser.Math.Clamp(v, 0, 1); }
 
   /**
-   * Mastery tell — Unstoppable, made visible: amber eyes, a wider corona and a gold rim on each
-   * hand, a five-shard crest instead of three, and a bull-bar chevron thrown out ahead of the
-   * face. Shape changes, not brighter tints — a tint alone vanishes at gameplay zoom.
+   * Mastery tell — Unstoppable, made visible by enhancing what the star already has rather than
+   * adding to it: amber eyes, a wider corona and a gold rim on each hand, and (in `drawExtras`)
+   * the crest's three rays grown longer with a gold flare at each tip. Shape changes, not just
+   * brighter tints — a tint alone vanishes at gameplay zoom.
    */
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? LIGHT.amber : LIGHT.glow);
@@ -843,15 +874,58 @@ export class LightAvatar extends BaseAvatar {
     };
   }
 
-  /** The headlight pool: a wedge of light thrown forward, stretching as speed builds. */
+  /**
+   * The starburst and the headlight pool. The burst is drawn *under* the sprite on purpose: the
+   * body is the star's core and the rays stand out from behind it, which is the only way a
+   * disc reads as a star rather than a disc with spikes stuck on. Rays twinkle at rest and
+   * stream back along the heading as speed builds.
+   */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
     const k = this.intensity;
-    g.fillStyle(this.tint(LIGHT.pale), a * 0.14 * k);
-    g.fillEllipse(x, y + 6, 50 * k, 22 * k);
-    // Beam cast along the heading — this is what makes the rig read as *aimed*.
-    const reach = 34 + this.speed * 70;
-    const spread = 0.42 - this.speed * 0.18;
-    g.fillStyle(this.tint(this.accent), a * (0.1 + this.speed * 0.18));
+    const sp = this.speed;
+    const back = this.facing + Math.PI;
+
+    // Soft halo, stretched back along the heading when moving.
+    g.fillStyle(this.tint(this.accent), a * 0.16 * k);
+    g.fillCircle(x, y, 26 * k);
+    g.fillStyle(this.tint(LIGHT.glow), a * 0.08 * k);
+    g.fillCircle(x, y, 34 * k + sp * 6);
+
+    // The rays. Four long cardinal ones and four shorter diagonals. Each twinkles on its own
+    // phase, and the whole wheel turns slowly.
+    const spin = this.t * 0.35 + this.seed;
+    const n = 8;
+    for (let i = 0; i < n; i++) {
+      const base = spin + (i / n) * TAU;
+      const long = i % 2 === 0;
+      const tw = 0.75 + 0.25 * Math.sin(this.t * 3.1 + i * 1.7 + this.seed);
+      // Rays on the trailing side lengthen into a streak as the car winds up.
+      const trailing = Math.max(0, Math.cos(base - back));
+      const len = ((long ? 46 : 30) * tw + trailing * sp * 34) * k;
+      const w = (long ? 3.6 : 2.4) * (1 - sp * 0.3);
+      const c = Math.cos(base), s = Math.sin(base);
+      g.fillStyle(this.tint(i % 2 === 0 ? this.accent : LIGHT.gold), a * (0.8 + trailing * sp * 0.2) * tw);
+      fillPts(g, [
+        { x: x + c * 8, y: y + s * 8 },
+        { x: x - s * w, y: y + c * w },
+        { x: x + c * len, y: y + s * len },
+        { x: x + s * w, y: y - c * w },
+      ]);
+      g.fillStyle(this.tint(LIGHT.white), a * 0.6 * tw);
+      fillPts(g, [
+        { x: x + c * 8, y: y + s * 8 },
+        { x: x - s * w * 0.35, y: y + c * w * 0.35 },
+        { x: x + c * len * 0.7, y: y + s * len * 0.7 },
+        { x: x + s * w * 0.35, y: y - c * w * 0.35 },
+      ]);
+    }
+
+    // Headlight pool and the beam cast along the heading — what makes the rig read as *aimed*.
+    g.fillStyle(this.tint(LIGHT.pale), a * 0.12 * k);
+    g.fillEllipse(x, y + 8, 50 * k, 20 * k);
+    const reach = 34 + sp * 70;
+    const spread = 0.42 - sp * 0.18;
+    g.fillStyle(this.tint(this.accent), a * (0.1 + sp * 0.18));
     fillPts(g, [
       { x, y: y + 4 },
       { x: x + Math.cos(this.facing - spread) * reach, y: y + 4 + Math.sin(this.facing - spread) * reach * 0.55 },
@@ -861,48 +935,51 @@ export class LightAvatar extends BaseAvatar {
   }
 
   /**
-   * The crest: a fan of prism shards over the crown, raked back as speed builds so the character
-   * visibly leans into a straight. Rooted at y - 20 so it never covers the face, and drawn over
-   * the sprite so the bright edges read instead of only the dark tips clearing the body.
+   * The crest: a fan of rays off the crown with a twinkle at each tip, raked back as speed
+   * builds so the character visibly leans into a straight. Rooted at y - 20 so it never covers
+   * the face, and drawn over the sprite so the bright tips read instead of only the dark roots
+   * clearing the body.
    */
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     const rootY = y - 20;
-    const count = this.mastered ? 5 : 3;
-    const scale = (this.mastered ? 1.25 : 1) * this.intensity;
+    // Mastered, the same three rays stand longer and flare gold at the tips.
+    const count = 3;
+    const scale = (this.mastered ? 1.35 : 1) * this.intensity;
     // Rake: the whole crest lies down toward the back as the car winds up.
     const rake = this.speed * 0.7;
     const back = this.facing + Math.PI;
 
-    // Straight up at rest, laid over toward the back the harder you are accelerating.
     const rakeAng = Phaser.Math.Angle.RotateTo(-Math.PI / 2, back, rake);
     for (let i = 0; i < count; i++) {
       const side = (i - (count - 1) / 2) / Math.max(0.5, (count - 1) / 2);
       const lean = side * 0.5 + Math.sin(this.t * 2.2 + i) * 0.05;
       const ang = rakeAng + lean;
-      const len = (17 - Math.abs(side) * 3) * scale;
+      const tw = 0.8 + 0.2 * Math.sin(this.t * 4 + i * 2.1 + this.seed);
+      const len = (17 - Math.abs(side) * 3) * scale * tw;
       const cx = x + Math.sin(lean) * 11 * scale + Math.cos(back) * rake * 8;
       const cy = rootY - Math.cos(lean) * 5 * scale;
       lightShardLayered(
         g, this.tint, cx + Math.cos(ang) * len * 0.5, cy + Math.sin(ang) * len * 0.5, ang,
-        len, 3.4 * scale,
+        len, 3.2 * scale,
         i % 2 === 0 ? this.accent : LIGHT.gold, a * 0.95, 0.3, 1.1,
       );
+      // A sparkle at the tip of every ray — sat in a gold flare once mastered.
+      const tx = cx + Math.cos(ang) * len, ty = cy + Math.sin(ang) * len;
+      if (this.mastered) {
+        g.fillStyle(this.tint(LIGHT.amber), alpha * 0.35 * tw);
+        g.fillCircle(tx, ty, 5 * scale);
+      }
+      g.fillStyle(this.tint(LIGHT.white), alpha * 0.9 * tw);
+      twinkle(g, tx, ty, 4.5 * scale * tw, this.t * 1.5 + i);
     }
 
-    // Mastery: a bull-bar chevron thrown out ahead of the face, plus an orbiting halo.
-    if (this.mastered) {
-      const fx = x + Math.cos(this.facing) * 20;
-      const fy = y + Math.sin(this.facing) * 20 - 4;
-      g.fillStyle(this.tint(LIGHT.gold), alpha * 0.9);
-      lightShard(g, fx, fy, this.facing + Math.PI / 2, 26, 3.4, 0.5);
-      g.fillStyle(this.tint(LIGHT.amber), alpha * 0.85);
-      lightShard(g, fx + Math.cos(this.facing) * 5, fy + Math.sin(this.facing) * 5,
-        this.facing + Math.PI / 2, 16, 2.6, 0.5);
-      for (let i = 0; i < 3; i++) {
-        const p = this.t * 1.8 + (i / 3) * TAU;
-        g.fillStyle(this.tint(LIGHT.cream), alpha * 0.9);
-        lightShard(g, x + Math.cos(p) * 25, y - 30 + Math.sin(p) * 7, p + Math.PI / 2, 11, 2.4, 0.4);
-      }
+    // Two glints drifting round the star.
+    const glints = 2;
+    for (let i = 0; i < glints; i++) {
+      const p = this.t * 1.3 + (i / glints) * TAU + this.seed;
+      const tw = 0.5 + 0.5 * Math.sin(this.t * 5 + i * 2.6);
+      g.fillStyle(this.tint(i % 2 ? LIGHT.cream : this.accent), alpha * (0.5 + 0.5 * tw));
+      twinkle(g, x + Math.cos(p) * 27, y - 6 + Math.sin(p) * 22, 3 + tw * 3, p);
     }
   }
 }

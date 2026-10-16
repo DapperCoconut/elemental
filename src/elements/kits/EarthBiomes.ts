@@ -12,8 +12,10 @@ import {
  * Biome Builder — Earth's Q.
  *
  * The caster is drawn to the middle of the arena, stands untouchable on a dais for up to five
- * seconds, and is offered four seed stones, one per quarter of the arena. Each stone they click
- * slams into the floor and that quarter becomes the climate carved on it for twenty seconds.
+ * seconds, and is offered four seed stones. The stones never run out: every click flings a copy
+ * of that stone into a free quarter (its own first, then the nearest one still bare), so the
+ * caster can mix and match — four quarters of mountain, or half lava half ocean — and each quarter
+ * becomes that climate for twenty seconds.
  * The five climates are hazards for everyone *else*: lava burns, ice slows, the ocean drags
  * toward the caster, the mountain grows spikes, and the jungle drops apples only the owner
  * may eat. Symbiosis (Q+) then pays the owner for standing in their own weather.
@@ -50,7 +52,8 @@ const PAD = 32;
 const SELECT_MS = 5000;
 const GLIDE_MS = 320;
 const NPC_CHANNEL_MS = 1100;
-const SLAM_MS = 240;
+const DROP_MS = 380;
+const PICK_FLARE_MS = 260;
 const ZONE_MS = 20000;
 const FADE_MS = 2000;
 const ARRIVE_MS = 520;
@@ -78,13 +81,26 @@ const STONE_OFFSETS: Array<[number, number]> = [[-96, -68], [96, -68], [-96, 68]
 
 interface SeedStone {
   kind: EarthBiome;
-  /** 0 NW, 1 NE, 2 SW, 3 SE — the quarter the stone hangs over. */
+  /** 0 NW, 1 NE, 2 SW, 3 SE — the quarter the stone hangs over, and the one it fills first. */
   quadrant: number;
   x: number;
   y: number;
   seed: number;
   bornAt: number;
-  /** Set when picked; the stone drops and the quarter arrives when this time passes. */
+  /** Last click — the stone flares for a beat but stays offered. */
+  pickedAt: number;
+}
+
+/** A copy of a clicked stone, flung from the ring into the quarter it will become. */
+interface Drop {
+  kind: EarthBiome;
+  quadrant: number;
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+  seed: number;
+  /** The quarter arrives when this time passes. */
   slamAt: number;
   slammed: boolean;
 }
@@ -97,6 +113,8 @@ interface Rite {
   /** Selection window closes; for a bot this is also when its picks slam. */
   until: number;
   stones: SeedStone[];
+  /** One per quarter at most; the rite is done once four have landed. */
+  drops: Drop[];
   wasInvincible: boolean;
   label: Phaser.GameObjects.Text | null;
   /** The bot decides instantly; its stones slam staggered from here. */
@@ -276,12 +294,12 @@ export class BiomeWorld {
     const kinds = this.shuffledKinds();
     const stones: SeedStone[] = kinds.map((kind, i) => ({
       kind, quadrant: i, x: this.cx + STONE_OFFSETS[i][0], y: this.cy + STONE_OFFSETS[i][1],
-      seed: Math.random() * 100, bornAt: time + GLIDE_MS + i * 70, slamAt: 0, slammed: false,
+      seed: Math.random() * 100, bornAt: time + GLIDE_MS + i * 70, pickedAt: -Infinity,
     }));
     const rite: Rite = {
       owner, startedAt: time, fromX: f.x, fromY: f.y,
-      until: time + (owner === 'player' ? SELECT_MS : NPC_CHANNEL_MS + 4 * 170 + SLAM_MS),
-      stones, wasInvincible: f.isInvincible, label: null,
+      until: time + (owner === 'player' ? SELECT_MS : NPC_CHANNEL_MS + DROP_MS + 3 * 170 + 100),
+      stones, drops: [], wasInvincible: f.isInvincible, label: null,
       npcSlamFrom: time + NPC_CHANNEL_MS, arrived: false,
     };
     if (owner === 'player') {
@@ -290,8 +308,12 @@ export class BiomeWorld {
         color: '#f4dfb1', stroke: '#24170d', strokeThickness: 4, align: 'center',
       }).setOrigin(0.5).setDepth(13);
     } else {
-      // The bot picks on the spot; its stones drop one after another once the channel is done.
-      for (let i = 0; i < stones.length; i++) stones[i].slamAt = rite.npcSlamFrom + i * 170;
+      // The bot picks on the spot — any stone for any quarter, repeats allowed — and its copies
+      // drop one after another once the channel is done.
+      for (let q = 0; q < 4; q++) {
+        const stone = stones[Math.floor(Math.random() * stones.length)];
+        this.queueDrop(rite, stone, q, rite.npcSlamFrom + DROP_MS + q * 170);
+      }
     }
     this.rites[owner] = rite;
     f.isInvincible = true;
@@ -316,9 +338,10 @@ export class BiomeWorld {
     const f = this.fighter(owner);
     f.isInvincible = rite.wasInvincible;
     rite.label?.destroy();
-    // Stones that were never chosen crumble where they hang.
+    // Copies already in the air still land — finishing early never eats a pick.
+    for (const d of rite.drops) if (!d.slammed) this.slamDrop(rite, d, time);
+    // The offered stones crumble where they hang.
     for (const s of rite.stones) {
-      if (s.slammed) continue;
       this.api.fx(owner).debris(s.x, s.y - 6, 7, { speed: 90, life: 520, fall: 40, depth: 9 });
       this.api.fx(owner).dust(s.x, s.y, 2, 22, 8);
     }
@@ -410,45 +433,66 @@ export class BiomeWorld {
       }
       fx.impact(this.cx, this.cy + 6, 60, { shards: 8, dust: 3, crater: false, depth: 8 });
     }
-    // Stones that were picked drop on their timer.
-    for (const s of rite.stones) {
-      if (s.slamAt > 0 && !s.slammed && time >= s.slamAt) this.slamStone(rite, s, time);
+    // Flung copies land on their timer.
+    for (const d of rite.drops) {
+      if (!d.slammed && time >= d.slamAt) this.slamDrop(rite, d, time);
     }
-    if (rite.label) {
-      const picked = rite.stones.filter((s) => s.slamAt > 0).length;
-      const left = Math.max(0, (rite.until - time) / 1000);
-      rite.label.setText(`CHOOSE YOUR BIOMES  ${picked}/4\n${left.toFixed(1)}s  ·  Q to finish`);
-    }
-    const allDown = rite.stones.every((s) => s.slammed);
+    const allDown = rite.drops.length >= 4 && rite.drops.every((d) => d.slammed);
     if (time >= rite.until || allDown) this.endRite(owner, time);
   }
 
   private hoveredStone(rite: Rite, mx: number, my: number): SeedStone | null {
+    if (rite.drops.length >= 4) return null;
     let best: SeedStone | null = null;
     let bestD = STONE_PICK_R;
     for (const s of rite.stones) {
-      if (s.slamAt > 0) continue;
       const d = Phaser.Math.Distance.Between(mx, my, s.x, s.y - 6);
       if (d <= bestD) { best = s; bestD = d; }
     }
     return best;
   }
 
+  /** A click: the stone stays offered, and a copy of it is flung into the next free quarter. */
   private pickStone(rite: Rite, stone: SeedStone, time: number): void {
-    stone.slamAt = time + SLAM_MS;
+    const quadrant = this.freeQuadrantFor(rite, stone.quadrant);
+    if (quadrant < 0) return;
+    stone.pickedAt = time;
+    this.queueDrop(rite, stone, quadrant, time + DROP_MS);
     const info = BIOME_INFO[stone.kind];
     this.api.fx(rite.owner).ring(stone.x, stone.y - 8, 20, 56, info.color, 300, 4, 11);
     this.announce(stone.x, stone.y - 44, `✓ ${info.name}`, info.text, 12, 900);
   }
 
-  private slamStone(rite: Rite, stone: SeedStone, time: number): void {
-    stone.slammed = true;
-    this.spawnZone(rite.owner, stone.kind, stone.quadrant, time);
+  private queueDrop(rite: Rite, stone: SeedStone, quadrant: number, slamAt: number): void {
+    rite.drops.push({
+      kind: stone.kind, quadrant, fromX: stone.x, fromY: stone.y,
+      toX: this.cx + STONE_OFFSETS[quadrant][0] * 2.2, toY: this.cy + STONE_OFFSETS[quadrant][1] * 2.2,
+      seed: stone.seed, slamAt, slammed: false,
+    });
+  }
+
+  /** The stone's own quarter if it is still bare, else the nearest bare one; -1 when all four are taken. */
+  private freeQuadrantFor(rite: Rite, preferred: number): number {
+    const taken = new Set(rite.drops.map((d) => d.quadrant));
+    if (!taken.has(preferred)) return preferred;
+    let best = -1;
+    let bestD = Infinity;
+    for (let q = 0; q < 4; q++) {
+      if (taken.has(q)) continue;
+      const d = Math.hypot(STONE_OFFSETS[q][0] - STONE_OFFSETS[preferred][0], STONE_OFFSETS[q][1] - STONE_OFFSETS[preferred][1]);
+      if (d < bestD) { best = q; bestD = d; }
+    }
+    return best;
+  }
+
+  private slamDrop(rite: Rite, drop: Drop, time: number): void {
+    drop.slammed = true;
+    this.spawnZone(rite.owner, drop.kind, drop.quadrant, time);
     const fx = this.api.fx(rite.owner);
-    fx.impact(stone.x, stone.y + 10, 52, { shards: 9, dust: 2, depth: 8, duration: 420 });
-    fx.ring(stone.x, stone.y + 10, 14, 120, BIOME_INFO[stone.kind].color, 520, 6, 9);
+    fx.impact(drop.toX, drop.toY + 10, 52, { shards: 9, dust: 2, depth: 8, duration: 420 });
+    fx.ring(drop.toX, drop.toY + 10, 14, 120, BIOME_INFO[drop.kind].color, 520, 6, 9);
     this.api.scene.cameras.main.shake(220, 0.012);
-    this.api.onSlam(rite.owner, stone.kind);
+    this.api.onSlam(rite.owner, drop.kind);
   }
 
   // ── Zones ─────────────────────────────────────────────────────────────────
@@ -733,19 +777,13 @@ export class BiomeWorld {
       const progress = owner === 'player' ? Phaser.Math.Clamp((r.until - time) / SELECT_MS, 0, 1)
         : Phaser.Math.Clamp((time - r.startedAt) / (r.until - r.startedAt), 0, 1);
       drawRiteDais(rite, tint, this.cx, this.cy, this.t, grow, progress, 1);
+      const full = r.drops.length >= 4;
       for (const s of r.stones) {
-        if (s.slammed) continue;
         const sg = Phaser.Math.Clamp((time - s.bornAt) / 260, 0, 1);
         if (sg <= 0) continue;
-        if (s.slamAt > 0) {
-          // Picked: it rises for a beat and comes down hard.
-          const p = Phaser.Math.Clamp((time - (s.slamAt - SLAM_MS)) / SLAM_MS, 0, 1);
-          const y = p < 0.35 ? s.y - p / 0.35 * 26 : s.y - 26 + ((p - 0.35) / 0.65) ** 2 * 36;
-          drawSeedStone(rite, tint, s.kind, s.x, y, this.t, s.seed, 1, true, 1);
-          continue;
-        }
-        const hover = owner === 'player' && Phaser.Math.Distance.Between(this.hoverX, this.hoverY, s.x, s.y - 6) <= STONE_PICK_R;
-        drawSeedStone(rite, tint, s.kind, s.x, s.y, this.t, s.seed, sg, hover, 1);
+        const flare = time - s.pickedAt < PICK_FLARE_MS;
+        const hover = owner === 'player' && !full && Phaser.Math.Distance.Between(this.hoverX, this.hoverY, s.x, s.y - 6) <= STONE_PICK_R;
+        drawSeedStone(rite, tint, s.kind, s.x, s.y, this.t, s.seed, sg, hover || flare, full ? 0.45 : 1);
         if (hover) {
           const info = BIOME_INFO[s.kind];
           rite.fillStyle(tint(EARTH.crevice), 0.8);
@@ -754,14 +792,24 @@ export class BiomeWorld {
           rite.strokeRoundedRect(s.x - 86, s.y + 30, 172, 20, 5);
         }
       }
+      // Flung copies: an arc out of the ring, then down hard on their quarter.
+      for (const d of r.drops) {
+        if (d.slammed) continue;
+        const p = Phaser.Math.Clamp((time - (d.slamAt - DROP_MS)) / DROP_MS, 0, 1);
+        if (p <= 0) continue;
+        const e = p * p;
+        const x = Phaser.Math.Linear(d.fromX, d.toX, e);
+        const y = Phaser.Math.Linear(d.fromY, d.toY, e) - Math.sin(p * Math.PI) * 46;
+        drawSeedStone(rite, tint, d.kind, x, y, this.t, d.seed, 1, true, 1);
+      }
       // A hovered stone's rule, as text, so the choice is informed.
       if (owner === 'player') {
         const hov = this.hoveredStone(r, this.hoverX, this.hoverY);
         if (r.label) {
-          const picked = r.stones.filter((s) => s.slamAt > 0).length;
           const left = Math.max(0, (r.until - time) / 1000);
-          const line = hov ? `${BIOME_INFO[hov.kind].name} — ${BIOME_INFO[hov.kind].rule}` : 'click a stone to raise its biome';
-          r.label.setText(`CHOOSE YOUR BIOMES  ${picked}/4  ·  ${left.toFixed(1)}s\n${line}`);
+          const line = hov ? `${BIOME_INFO[hov.kind].name} — ${BIOME_INFO[hov.kind].rule}`
+            : 'click stones to fill the quarters — the same one as often as you like';
+          r.label.setText(`CHOOSE YOUR BIOMES  ${r.drops.length}/4  ·  ${left.toFixed(1)}s  ·  Q to finish\n${line}`);
         }
       }
     }

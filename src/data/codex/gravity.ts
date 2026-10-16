@@ -259,7 +259,7 @@ const gravity: ElementCodex = {
         + 'grounded for 10 seconds, with vertical movement taken away entirely — a grounded player can '
         + 'hop 34px for 420ms by pressing W, and bots hop by themselves every 2–3.5 seconds. 18s '
         + 'cooldown.',
-      cast: 'Bindable to E, R, F or Q, taking that slot over from Gravity\'s own ability.',
+      cast: 'Bindable to R, F or Q, taking that slot over from Gravity\'s own ability.',
       effects: [
         { tag: 'damage', label: 'On the way down', detail: '20 stars falling at 480 px/s from random points across the width. 10 damage to each fighter a star passes within 20px of — once per star per target.' },
         { tag: 'damage', label: 'On the floor', detail: '15 more damage in a 45px radius where each one bursts.' },

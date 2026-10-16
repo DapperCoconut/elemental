@@ -248,7 +248,7 @@ export function silenceEye(
   g.fillCircle(hl.x, hl.y, r * 0.13);
 }
 
-/** A ring of inward-pointing teeth — the feast circle, the blob's maw, the maze's chewed walls. */
+/** A ring of inward-pointing teeth — the blob's maw and the possessed body's bite. */
 export function toothRing(
   g: Phaser.GameObjects.Graphics, tint: SilenceColorFn,
   cx: number, cy: number, radius: number, count: number,
@@ -1106,36 +1106,6 @@ export class SilenceFx extends FxBase {
     g.fillCircle(x - 1.6, y - 1.8, 2.2);
   }
 
-  /** A pallid biter — one of the five that come for a hallucinating victim. */
-  static drawMidget(
-    g: Phaser.GameObjects.Graphics, tint: SilenceColorFn,
-    x: number, y: number, angle: number, t: number, alpha: number,
-  ): void {
-    const cos = Math.cos(angle), sin = Math.sin(angle);
-    const to = (lx: number, ly: number): Pt => ({ x: x + lx * cos - ly * sin, y: y + lx * sin + ly * cos });
-    // Legs, out of phase so the pack does not march in step.
-    for (let i = 0; i < 4; i++) {
-      const a = angle + Math.PI / 2 + (i - 1.5) * 0.7 + Math.sin(t * 11 + i * 1.7) * 0.35;
-      clawFingerLayered(g, tint, x, y, a, 11, 1.7, SILENCE.void, SILENCE.violet, alpha * 0.9, 0.7, false);
-    }
-    g.fillStyle(tint(SILENCE.void), alpha * 0.45);
-    g.fillCircle(x + 1, y + 2, 9);
-    g.fillStyle(tint(SILENCE.bone), alpha);
-    g.fillCircle(x, y, 8.2);
-    // All the teeth crammed onto the leading edge — it is basically a mouth with legs.
-    const bite = 0.4 + 0.6 * Math.abs(Math.sin(t * 8));
-    g.fillStyle(tint(SILENCE.void), alpha);
-    fillPts(g, [to(2, -6), to(9, -3 * bite), to(9, 3 * bite), to(2, 6)]);
-    g.fillStyle(tint(SILENCE.bone), alpha);
-    for (let i = 0; i < 4; i++) {
-      const ly = -5 + i * 3.3;
-      fillPts(g, [to(3, ly), to(3, ly + 2), to(8.5, ly + 1 - 3 * bite)]);
-      fillPts(g, [to(3, ly), to(3, ly + 2), to(8.5, ly + 1 + 3 * bite)]);
-    }
-    silenceEye(g, tint, to(-2, -3).x, to(-2, -3).y, angle, 2.4, 0.8, 1, SILENCE.gore, alpha);
-    silenceEye(g, tint, to(-2, 3).x, to(-2, 3).y, angle, 2.4, 0.8, 1, SILENCE.gore, alpha);
-  }
-
   /** The striker: what a Silence user becomes when the terror bar fills. */
   static drawStrikerAura(
     g: Phaser.GameObjects.Graphics, tint: SilenceColorFn,
@@ -1308,13 +1278,13 @@ export class SilenceAura {
 
 // ── SilenceAvatar ─────────────────────────────────────────────────────────
 
-/** Concentric discs of one claw-fist, outermost first. The fingers are painted in drawExtras. */
+/** Concentric discs of one plain fog-fist, outermost first, in the body's plum. */
 const SILENCE_AVATAR: AvatarSpec = {
   hands: [
     { r: 11.5, color: SILENCE.void, alpha: 0.3 },
-    { r: 7.2, color: SILENCE.pitch, alpha: 1 },
-    { r: 4.4, color: SILENCE.plum, alpha: 1 },
-    { r: 1.8, color: SILENCE.violet, alpha: 1, ox: -2, oy: -2.2 },
+    { r: 7.2, color: SILENCE.plum, alpha: 1 },
+    { r: 4.4, color: SILENCE.violet, alpha: 1 },
+    { r: 1.8, color: SILENCE.orchid, alpha: 1, ox: -2, oy: -2.2 },
   ],
   eyeWhite: SILENCE.sclera,
   eyePupil: SILENCE.void,
@@ -1323,13 +1293,16 @@ const SILENCE_AVATAR: AvatarSpec = {
 };
 
 /**
- * The Silence character rig: two clawed hands, a pair of tracking eyes, and a crown of eye-stalks
- * craning up off the head, each one blinking and looking on its own schedule.
+ * The Silence character rig: a plain orb of plum fog with two ball fists and tracking eyes,
+ * and one **big eye on a stalk** craning up off the crown, blinking on its own clock.
  *
- * The crown is the idea. Silence's whole kit is about who can see whom — you are invisible in the
- * fog, you plant watchers, you backstab things that are facing the wrong way, and the mastery
- * pays you for being unobserved. So the character has to be visibly *more eyes than body*: a
- * thing that is looking at you from several places at once, before it has cast anything.
+ * Silence's kit is about who can see whom — fog stealth, watchers, backstabs — so its one
+ * accessory is an extra eye that is always looking. The rig still sinks into the fog as the
+ * stealth meter fills (that is gameplay feedback, not costume), and terror stains the iris.
+ *
+ * Mastery (Weep) enhances the eye rather than adding to it: the stalk lengthens, the eye
+ * swells with a blood-red iris and a dark halo, the face's eyes go red and the fists' shroud
+ * widens.
  */
 export class SilenceAvatar extends BaseAvatar {
   private fx: SilenceFx;
@@ -1337,10 +1310,8 @@ export class SilenceAvatar extends BaseAvatar {
   private accent: number;
   /** Stealth meter, 0–1 — the rig dissolves into fog as it fills. */
   private stealth = 0;
-  /** Terror meter, 0–1 — feeds the crown, which grows an extra eye per fifth. */
+  /** Terror meter, 0–1 — stains the crown eye's iris rust as it climbs. */
   private terror = 0;
-  /** Per-stalk blink clocks, so the crown never blinks in unison. */
-  private stalkPhase = [0.2, 1.7, 3.1, 4.4, 5.9];
 
   constructor(scene: Phaser.Scene, tint: SilenceColorFn, owner: 'player' | 'npc' = 'player', depth = 6) {
     super(scene, tint, depth, SILENCE_AVATAR);
@@ -1350,14 +1321,13 @@ export class SilenceAvatar extends BaseAvatar {
 
   /** Stealth meter, 0–1. Sinks the rig into the fog as it climbs. */
   setStealth(v: number): void { this.stealth = Phaser.Math.Clamp(v, 0, 1); }
-  /** Terror meter, 0–1. Opens another eye on the crown for every fifth of it. */
+  /** Terror meter, 0–1. Stains the crown eye's iris. */
   setTerror(v: number): void { this.terror = Phaser.Math.Clamp(v, 0, 1); }
 
   /**
-   * Mastery tell — Weep, made visible: the hands grow a wider shroud, the eyes go blood-red, and
-   * (in drawExtras) the crown gains two more stalks, every eye on the rig runs a dark tear track,
-   * and the claws grow a second joint so the reach is visibly longer. Shape changes, not brighter
-   * tints — a tint alone vanishes at gameplay zoom.
+   * Mastery tell — Weep: blood-red eyes, a wider shroud and gore rim on each fist; `drawExtras`
+   * lengthens the stalk and swells the crown eye. Shape changes, not just tints — a tint alone
+   * vanishes at gameplay zoom.
    */
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? SILENCE.gore : SILENCE.sclera);
@@ -1386,90 +1356,58 @@ export class SilenceAvatar extends BaseAvatar {
 
   /**
    * The fog it stands in, thickening as the stealth meter fills until the body is a shape inside
-   * a cloud rather than a fighter on a floor.
+   * a cloud rather than a fighter on a floor. Mastery only deepens the accent glow.
    */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
     const k = this.intensity;
     const s = this.stealth;
-    g.fillStyle(this.tint(SILENCE.void), a * (0.3 + s * 0.4));
-    g.fillEllipse(x, y + 10, 52 * k * (1 + s * 0.5), 19 * k);
-    fogBank(g, x, y + 6, (24 + s * 20) * k, 0.7, this.t, this.tint(SILENCE.void), a * (0.22 + s * 0.5), 7);
-    if (this.mastered) {
-      // Weep: the fog it leaves behind pools wider and creeps outward on its own.
-      fogBank(g, x, y + 10, 40 * k, 2.3, this.t * 0.6, this.tint(SILENCE.bruise), a * 0.28, 6);
-    }
-    g.fillStyle(this.tint(this.accent), a * 0.1 * k);
-    g.fillCircle(x, y, 24 * k);
+    g.fillStyle(this.tint(SILENCE.void), a * (0.22 + s * 0.4));
+    g.fillEllipse(x, y + 10, 46 * k * (1 + s * 0.5), 16 * k);
+    fogBank(g, x, y + 6, (22 + s * 20) * k, 0.7, this.t, this.tint(SILENCE.void), a * (0.14 + s * 0.5), 7);
+    g.fillStyle(this.tint(this.mastered ? SILENCE.gore : this.accent), a * (this.mastered ? 0.16 : 0.1) * k);
+    g.fillCircle(x, y, 26 * k);
   }
 
   /**
-   * The claws on the ends of the hands, and the crown: a fan of eye-stalks craning off the top of
-   * the head, each blinking on its own clock, plus a pair of long fingers curling over from behind.
-   *
-   * Rooted above the head so it never covers the face, and drawn over the sprite so the eyes read
-   * instead of only their dark stalks clearing the body.
+   * The crown eye: one stalk craning up and over the back shoulder, with a big eye on the end
+   * that blinks and looks where the body is facing. Raked sideways so it clears the health
+   * bar, and drawn over the sprite so the stalk roots on the body.
    */
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    const tint = this.tint;
-    const hidden = this.stealth;
-    const vis = alpha * (1 - hidden * 0.45);
-
-    // ── Claws on the hands ──
-    for (let i = 0; i < 2; i++) {
-      const hx = this.armX[i], hy = this.armY[i];
-      if (hx === 0 && hy === 0) continue;
-      const out = Math.atan2(hy - y, hx - x);
-      const digits = this.mastered ? 4 : 3;
-      for (let d = 0; d < digits; d++) {
-        const ang = out + (d - (digits - 1) / 2) * 0.5;
-        clawFingerLayered(g, tint, hx, hy, ang,
-          (this.mastered ? 17 : 12) * this.intensity, 2.4,
-          SILENCE.pitch, this.mastered ? SILENCE.gore : this.accent, vis * 0.95,
-          0.55 + Math.sin(this.t * 3 + d) * 0.12);
-      }
-    }
-
-    // ── The crown of eye-stalks ──
-    const bob = Math.sin(this.t * 1.8) * 2.2;
-    const rootY = y - 17 + bob;
-    // Base three, plus one per fifth of the terror bar, plus two more once mastered.
-    const stalks = 3 + Math.round(this.terror * 2) + (this.mastered ? 2 : 0);
-    for (let i = 0; i < stalks; i++) {
-      const spread = (i - (stalks - 1) / 2) / Math.max(1, stalks - 1);
-      const lean = spread * 1.05 + Math.sin(this.t * 1.4 + i * 1.9) * 0.16;
-      const len = (13 + (i % 2) * 5) * (this.mastered ? 1.3 : 1) * this.intensity;
-      const ang = -Math.PI / 2 + lean;
-      const ex = x + Math.cos(ang) * len;
-      const ey = rootY + Math.sin(ang) * len;
-      // Stalk: a tapering neck, dark, so the eye on the end of it floats.
-      g.lineStyle(3.4, tint(SILENCE.void), vis * 0.9);
-      strokePts(g, [{ x, y: rootY + 2 }, { x: x + Math.cos(ang) * len * 0.5 + Math.sin(this.t * 2 + i) * 2, y: rootY + Math.sin(ang) * len * 0.5 }, { x: ex, y: ey }]);
-      // Each one blinks on its own clock — a crown that blinks together reads as a machine.
-      const ph = this.stalkPhase[i % this.stalkPhase.length];
-      const blink = Math.sin(this.t * (1.1 + (i % 3) * 0.24) + ph);
-      const open = blink > 0.86 ? 1 - (blink - 0.86) / 0.14 : 1;
-      silenceEye(g, tint, ex, ey, ang + Math.PI / 2, 4.2 + (i % 2) * 1.1,
-        Math.cos(this.facing - ang) * 0.9, open,
-        this.mastered ? SILENCE.gore : this.terror > 0.6 ? SILENCE.rust : this.accent, vis);
-
-      if (this.mastered) {
-        // Weep: every eye on the rig runs a tear track. This, more than the colour, is the tell.
-        g.lineStyle(1.4, tint(SILENCE.plum), vis * (0.5 + 0.4 * Math.sin(this.t * 2 + i)));
-        strokePts(g, [{ x: ex, y: ey + 3 }, { x: ex - 1, y: ey + 9 + Math.sin(this.t * 3 + i) * 2 }]);
-        if (Math.sin(this.t * 1.7 + i * 2.3) > 0.95) {
-          g.fillStyle(tint(SILENCE.lilac), vis * 0.8);
-          g.fillCircle(ex - 1, ey + 12, 1.5);
-        }
-      }
-    }
-
-    // ── Two long fingers curling over from behind the head ──
-    for (const side of [-1, 1]) {
-      const ang = -Math.PI / 2 + side * 1.15 + Math.sin(this.t * 1.1 + side) * 0.1;
-      clawFingerLayered(g, tint, x + side * 12, rootY + 4, ang,
-        (this.mastered ? 26 : 20) * this.intensity, 3,
-        SILENCE.void, this.accent, vis * 0.85, -side * 0.75);
-    }
     void a;
+    const tint = this.tint;
+    const m = this.mastered;
+    const vis = alpha * (1 - this.stealth * 0.45);
+    // Craned over the shoulder AWAY from the facing, so it never piles onto the kit's facing
+    // pip (SilenceKit.paintFaceEyes), which sits out on the facing side.
+    const side = Math.cos(this.facing) >= 0 ? -1 : 1;
+
+    const rootX = x + side * 5;
+    const rootY = y - 18;
+    const len = (m ? 17 : 13) * this.intensity;
+    const ang = -Math.PI / 2 + side * 1.0 + Math.sin(this.t * 1.4) * 0.1;
+    const ex = rootX + Math.cos(ang) * len;
+    const ey = rootY + Math.sin(ang) * len;
+    const mx = rootX + Math.cos(ang) * len * 0.5 - side * 2 + Math.sin(this.t * 2) * 1.2;
+    const my = rootY + Math.sin(ang) * len * 0.5 - 2;
+
+    // Stalk: a dark tapering neck so the eye on the end of it floats.
+    g.lineStyle(m ? 4.4 : 3.6, tint(SILENCE.void), vis);
+    strokePts(g, [{ x: rootX, y: rootY + 2 }, { x: mx, y: my }, { x: ex, y: ey }]);
+    g.lineStyle(1.4, tint(SILENCE.plum), vis * 0.9);
+    strokePts(g, [{ x: rootX, y: rootY + 2 }, { x: mx, y: my }, { x: ex, y: ey }]);
+
+    // Mastery: a dark halo the swollen eye sits in.
+    const r = m ? 7.2 : 5.8;
+    if (m) {
+      g.fillStyle(tint(SILENCE.gore), vis * (0.18 + 0.08 * Math.sin(this.t * 3)));
+      g.fillCircle(ex, ey, r * 1.7);
+    }
+
+    // The eye blinks on its own clock, out of step with the face's.
+    const blink = Math.sin(this.t * 1.15 + 1.7);
+    const open = blink > 0.9 ? 1 - (blink - 0.9) / 0.1 : 1;
+    const iris = m ? SILENCE.gore : this.terror > 0.6 ? SILENCE.rust : this.accent;
+    silenceEye(g, tint, ex, ey, 0, r, Math.cos(this.facing) * 0.9, open, iris, vis);
   }
 }

@@ -8,7 +8,7 @@ export const ABSTRACT_WORLDS: World[] = [
   // Tier 1 (children of electricity)
   { id: 'slime',       name: 'Acid',        emoji: '🟢', color: 0x66cc44, parentId: 'electricity', mapX: 140, mapY: 210, nodes: makeNodes('slime') },
   { id: 'fate',        name: 'Fate',        emoji: '🃏', color: 0x88eecc, parentId: 'electricity', mapX: 360, mapY: 210, nodes: makeNodes('fate') },
-  { id: 'sound',       name: 'Sound',       emoji: '🔊', color: 0xff66cc, parentId: 'electricity', mapX: 580, mapY: 210, nodes: makeNodes('sound') },
+  { id: 'sound',       name: 'Sound',       emoji: '🔊', color: 0x8a1c33, parentId: 'electricity', mapX: 580, mapY: 210, nodes: makeNodes('sound') },
   { id: 'light',       name: 'Light',       emoji: '✨', color: 0xfff4a8, parentId: 'electricity', mapX: 800, mapY: 210, nodes: makeNodes('light') },
 
   // Tier 2: slime children

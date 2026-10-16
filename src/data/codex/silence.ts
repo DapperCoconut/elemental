@@ -10,11 +10,11 @@ import { ElementCodex } from '../AbilityCodex';
 const silence: ElementCodex = {
   identity:
     'A thin dark thing that lives in the fog around the edge of the arena and does not want to be '
-    + 'seen doing any of this. Stand in the fog and you disappear — genuinely, to the other '
-    + 'player, health bar and all — and you bank stealth that makes the next knife worth more '
-    + 'than double. Everything else is a way of making the fight worse to be inside: watchers '
-    + 'that stand around staring, a beam that takes their abilities away for twenty seconds, a '
-    + 'circle of teeth that leaves them hallucinating for thirty, and an ultimate that drags them '
+    + 'seen doing any of this. Bank stealth in the fog and you disappear — genuinely, to the other '
+    + 'player, health bar and all — and the next knife is worth more than double. Everything else '
+    + 'is a way of making the fight worse to be inside: watchers that stand around staring, a beam '
+    + 'that takes their abilities away for twenty seconds, a shadow that leaves them unable to turn '
+    + 'round to face you, and an ultimate that drags them '
     + 'out of the arena entirely into a corridor with something in it. Silence does not out-damage '
     + 'anybody. It makes the match unpleasant until they lose it.',
 
@@ -23,15 +23,16 @@ const silence: ElementCodex = {
       emoji: '🌫️',
       name: 'The Fog',
       basics:
-        'A 90px band around the entire arena edge. Standing anywhere in it makes you invisible '
-        + 'immediately — to the other player you are gone, sprite and health bar both, while on your own '
+        'A 90px band around the entire arena edge that banks stealth. Once the meter reaches 20 you are '
+        + 'invisible — to the other player you are gone, sprite and health bar both, while on your own '
         + 'screen you stay faintly visible at 35% so you can still play. A 0–100 meter gains 10 a second '
         + 'in the fog and drains 10 a second outside it, and a Stab converts the whole meter into damage: '
         + '+25 at a full 100, taking a 20-damage stab to 45, spending the meter entirely. Every watcher '
         + 'you own is +20% stealth gain and −20% drain, so three fill the meter at 16 a second and empty '
         + 'it at 4.',
       effects: [
-        { tag: 'area', label: 'The band', detail: '90px around the entire arena edge. Standing anywhere in it makes you invisible immediately.' },
+        { tag: 'area', label: 'The band', detail: '90px around the entire arena edge. It banks stealth — it does not hide you by itself.' },
+        { tag: 'shield', label: 'The threshold', detail: 'You are invisible only while the meter is at 20 or above, in the fog or out of it. Below 20 you can be seen.' },
         { tag: 'resource', label: 'The meter', detail: '0–100. Gains 10 a second in the fog, drains 10 a second outside it.' },
         { tag: 'buff', label: 'What it is worth', detail: 'A Stab converts the whole meter into damage: +25 at a full 100, taking a 20-damage stab to 45. The meter is spent entirely doing it.' },
         { tag: 'shield', label: 'Actually invisible', detail: 'To the other player you are gone — sprite and health bar both. On your own screen you stay faintly visible at 35% so you can still play.' },
@@ -39,7 +40,8 @@ const silence: ElementCodex = {
       ],
       notes: [
         'The fog is the element\'s whole economy: it is where you are safe, where you charge, and the only place you can be ignored.',
-        'Because the drain is only 10 a second, a full meter is ten seconds of invisibility in open ground — which is most of a fight.',
+        'Because the drain is only 10 a second and you vanish from 20 up, a full meter is eight seconds of invisibility in open ground — which is most of a fight.',
+        'Walking into the fog with an empty meter leaves you visible for the first two seconds. Stealth, not the fog, is what hides you.',
         'A corrupted copy of the enemy walking around, from the Puppetmaster enhancement, switches the fog off for you entirely while it is out.',
       ],
     },
@@ -74,8 +76,9 @@ const silence: ElementCodex = {
         { tag: 'area', label: 'The arc', detail: '±60° of the direction they are facing away from — a 120° wedge behind them.' },
       ],
       notes: [
-        'The mastery requirement From Behind is 50 backstabs, which makes learning to read the eye the element\'s core skill.',
-        'Being invisible does not change the arc. A player who knows where you are can still turn to face you, and turning is free.',
+        'On a Silence player\'s screen every foe casts a back shadow — a dark wedge spilling out behind them across exactly this arc. Stab from inside the shadow and it is a backstab.',
+        'The mastery requirement From Behind is 50 backstabs, which makes reading those shadows the element\'s core skill.',
+        'Being invisible does not change the arc. A player who knows where you are can still turn to face you — unless Stalk has hold of them, in which case turning takes seconds.',
       ],
     },
   ],
@@ -185,31 +188,33 @@ const silence: ElementCodex = {
 
     'silence-feast': {
       basics:
-        'Opens a 110px ring at the cursor for 8 seconds that leans 60px toward whatever you are facing, '
-        + 'so it can be walked onto somebody rather than only placed. Anybody who spends 6 of those 8 '
-        + 'seconds inside it is bitten for 35 and hallucinates for 30 seconds: against a player their '
-        + 'screen is haunted, with an eye covering it every 10 seconds for 2 and a false copy of you '
-        + 'appearing every 8 for 3; against a bot it simply misses 20% of the time. 18s cooldown.',
-      cast: 'F, at the cursor. A 110px circle for 8 seconds that follows the caster\'s facing by 60px. 18s cooldown.',
+        'A shadow aura of 130px rises round you for 3 seconds and moves with you, burning 5 stealth a '
+        + 'second on top of the normal drain. An enemy who stays inside it for the whole 3 seconds — '
+        + 'stepping out restarts their count — takes 20 damage and is Stalked for 5 seconds: they turn at '
+        + 'about 72° a second instead of instantly, and every ability they cast fires the way they are '
+        + 'facing rather than where they aimed. 18s cooldown.',
+      cast: 'F, on yourself. A 130px aura that follows you for 3 seconds. 18s cooldown.',
       effects: [
-        { tag: 'damage', label: 'The bite', detail: '35 damage, but only to somebody who has spent 6 of the 8 seconds inside the ring.' },
-        { tag: 'debuff', label: 'Hallucinations', detail: '30 seconds. Against a player their screen is haunted — an eye covers it every 10 seconds for 2, and a false copy of you appears every 8 for 3. Against a bot it simply misses 20% of the time.' },
-        { tag: 'utility', label: 'It follows you', detail: 'The ring leans 60px toward whatever the caster is facing, so it can be walked onto somebody rather than only placed.' },
+        { tag: 'area', label: 'The aura', detail: '130px round you, for 3 seconds, moving with you. It burns 5 extra stealth a second while it is up.' },
+        { tag: 'damage', label: 'The catch', detail: '20 damage to anybody who stays inside for the full 3 seconds. Stepping out restarts their count.' },
+        { tag: 'debuff', label: 'Stalked', detail: '5 seconds. They turn at about 72° a second instead of instantly, and everything they cast goes the way they face — not where they aim.' },
+        { tag: 'resource', label: 'Terror', detail: 'A Stalk that lands banks 25 terror — if you have the terror bar (Night Terror, or the mastery).' },
       ],
       upgrade: {
         basics:
-          'Five midgets crawl out at 140 px/s and bite for 5 damage every 0.5 seconds until the '
-          + 'hallucinations end, and the arena turns with them — 26 flesh decals of eyeballs and teeth '
-          + 'across the floor for the whole 30 seconds.',
+          'Despress: the aura weighs on anyone inside it. A stack lands on the way in and another every '
+          + 'second they stay, holding until the aura ends and then fading 3 seconds later. Each stack is '
+          + '10% slower movement and strips 10 points of their damage resistance — it lifts armour back '
+          + 'toward normal damage, never past it.',
         effects: [
-          { tag: 'summon', label: 'The midgets', detail: '5 of them at 140 px/s, biting for 5 damage every 0.5 seconds until the hallucinations end.', requiresUpgrade: 'f' },
-          { tag: 'utility', label: 'The arena turns', detail: '26 flesh decals across the floor — eyeballs and teeth — for the whole 30 seconds.', requiresUpgrade: 'f' },
+          { tag: 'debuff', label: 'Despress', detail: 'A stack on entry and one more per second inside. Each: 10% slower movement and 10 points of damage resistance stripped (never below normal damage). Lasts until the aura ends, then 3 seconds more.', requiresUpgrade: 'f' },
         ],
       },
       notes: [
-        'Six seconds inside an eight-second circle is a very long time to stand still, so the ring is really a zoning tool that occasionally pays 35.',
-        'Against a human the hallucinations are the entire point; against a bot the 20% miss chance is worth more than the 35 damage.',
-        'Five midgets at 5 damage every half second is 50 a second if they are all on the victim — Flesh Banquet is by far the largest damage upgrade in the element.',
+        'Stalked is the backstab setup: the victim can see you circling behind them and still cannot come about in time.',
+        'Because a Stalked fighter fires along their facing, walking round them sideways makes most of their attacks miss you.',
+        'The aura burns stealth and you are visible at the centre of a pool of shadow — it is a commitment, not an ambush.',
+        'Despress does nothing to someone with no resistance; it is the answer to shields, armour stances and damage-reduction buffs.',
       ],
     },
 
@@ -234,15 +239,17 @@ const silence: ElementCodex = {
       ],
       upgrade: {
         basics:
-          'The corridor becomes a 9×6 labyrinth, with the camera zoomed to 1.6× and 170px of vision, and '
-          + 'the victim is shrunk to 60% size and slowed a further 30% on top of the hallway\'s own 20%. The '
-          + 'blob cheats: it chews through a wall in 1.2 seconds, so the maze is a delay rather than a '
-          + 'defence. A bot\'s survival chance is halved outright.',
+          'The Labyrinth: the pocket dimension becomes an 11×7 maze in the dark, and you hunt in it. You '
+          + 'steer the blob through the corridors with WASD at 235 px/s, seeing 190px round yourself, and '
+          + 'the victim\'s heartbeat flashes their position every 1.5 seconds. They are shrunk to 60% and '
+          + 'move at 85% speed, see only 140px round themselves, and get out by reaching the lit exit on the '
+          + 'maze\'s border or surviving 12 seconds. Caught is 80 damage. Bot hunters follow the heartbeat; '
+          + 'bot victims make for the exit at a walk.',
         effects: [
-          { tag: 'control', label: 'The maze', detail: 'A 9×6 labyrinth instead of a straight hallway, with the camera zoomed to 1.6× and 170px of vision.', requiresUpgrade: 'q' },
-          { tag: 'debuff', label: 'What it does to them', detail: 'Shrunk to 60% size and slowed a further 30% on top of the hallway\'s own 20%.', requiresUpgrade: 'q' },
-          { tag: 'utility', label: 'The blob cheats', detail: 'It chews through a wall in 1.2 seconds, so the maze is a delay rather than a defence.', requiresUpgrade: 'q' },
-          { tag: 'utility', label: 'Bots barely escape', detail: 'Their survival chance is halved outright.', requiresUpgrade: 'q' },
+          { tag: 'control', label: 'The maze', detail: 'An 11×7 labyrinth with loops, candles in the dead ends and a cold-lit exit cut into the border. The exit is always a real walk from the victim and usually on the far side of them from you.', requiresUpgrade: 'q' },
+          { tag: 'utility', label: 'The hunt', detail: 'You steer the blob with WASD at 235 px/s and see 190px round you. Their heartbeat shows you where they are every 1.5 seconds.', requiresUpgrade: 'q' },
+          { tag: 'debuff', label: 'What it does to them', detail: 'Shrunk to 60%, 85% speed, and only 140px of vision — plus the exit\'s light and the candles.', requiresUpgrade: 'q' },
+          { tag: 'utility', label: 'The way out', detail: 'Reach the exit, or survive 12 seconds. Caught is 80 damage.', requiresUpgrade: 'q' },
         ],
       },
       notes: [

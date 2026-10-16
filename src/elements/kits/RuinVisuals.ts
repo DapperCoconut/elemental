@@ -666,9 +666,9 @@ export class RuinFx extends FxBase {
 
 const RUIN_AVATAR: AvatarSpec = {
   hands: [
-    { r: 12, color: RUI.red, alpha: 0.2 },
-    { r: 7, color: RUI.ash, alpha: 0.95 },
-    { r: 2.4, color: RUI.rust, alpha: 0.95, ox: -1.6, oy: -1.6 },
+    { r: 11, color: RUI.red, alpha: 0.2 },
+    { r: 7, color: RUI.red, alpha: 0.97 },
+    { r: 2.6, color: RUI.bright, alpha: 0.9, ox: -1.6, oy: -1.6 },
   ],
   eyeWhite: RUI.bone,
   eyePupil: RUI.voidDark,
@@ -676,19 +676,21 @@ const RUIN_AVATAR: AvatarSpec = {
 };
 
 /**
- * Ruin himself: a cracked red frame with a row of spikes down his back, one eye burning and
- * the other an empty socket.
+ * Ruin himself: a plain brick-red orb (the baked `elem-ruin`) wearing one thing — a broken
+ * **crown of rusted spikes** driven up out of the top of his head — plus one small touch, the
+ * empty right eye socket.
  *
- * Two things make him read at a glance. The spikes are drawn *behind* the crown and rake
- * backward, so the silhouette has teeth from any angle; and the right eye socket is painted
- * over the rig's own eye in `drawExtras` — the base rig always builds two eyes, so the only
- * way to take one away is to put a hole on top of it. The cracks widen as he loses health,
- * which is the one honest thing about him: he really is coming apart.
+ * The socket is painted over the rig's right eye in `drawExtras`: the base rig always builds
+ * two eyes, so the only way to be down one is to put a hole on top of it.
+ *
+ * `setRuinLevel` (his HP loss) eats the spikes' metal and deepens the red under-glow; a cast
+ * flares the spike tips. Mastery enhances the same crown — longer spikes with ember-hot tips —
+ * plus ember eyes and wider hand coronas.
  */
 export class RuinAvatar extends BaseAvatar {
   /** 0–1 — how far gone the frame is. Driven off the fighter's own HP ratio. */
   private ruinLevel = 0;
-  /** Ability tell: brightens the spikes and the socket for a moment after a cast. */
+  /** Ability tell: brightens the spike tips for a moment after a cast. */
   private flare = 0;
   private seed = Math.random() * 999;
 
@@ -710,9 +712,10 @@ export class RuinAvatar extends BaseAvatar {
   }
 
   protected applyMastery(on: boolean): void {
+    this.setEyeWhite(on ? RUI.ember : RUI.bone);
     this.forEachHandLayer(0, (glow) => {
-      glow.setRadius(on ? 15 : 12);
-      glow.setAlpha(on ? 0.34 : 0.2);
+      glow.setRadius(on ? 14.5 : 11);
+      glow.setFillStyle(this.tint(on ? RUI.ember : RUI.red), on ? 0.3 : 0.2);
     });
   }
 
@@ -720,78 +723,51 @@ export class RuinAvatar extends BaseAvatar {
     new RuinFx(this.scene, this.tint).rustPuff(x, y, 2, 6, 380, 4);
   }
 
+  /** A soft red under-glow that deepens as he comes apart. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void alpha;
-    // He stands in his own debris: a dark pool with cracks running out of it.
-    g.fillStyle(this.tint(RUI.voidDark), a * 0.45);
-    g.fillEllipse(x, y + 14, 48, 18);
-    g.fillStyle(this.tint(RUI.red), a * (0.1 + this.ruinLevel * 0.1));
-    g.fillEllipse(x, y + 13, 64 + Math.sin(this.t * 2) * 5, 24);
-    crackWeb(g, this.tint, x, y + 14, 34 + this.ruinLevel * 16, this.seed, a * 0.5, 1,
-      { runs: 6, squash: 0.35, width: 1.8, color: RUI.ash });
-  }
-
-  /** The frame itself: cracks across the torso that open as the health goes. */
-  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    void a;
-    crackWeb(g, this.tint, x + 2, y + 2, 15 + this.ruinLevel * 7, this.seed + 4, alpha * (0.5 + this.ruinLevel * 0.5), 1,
-      { runs: 4 + Math.round(this.ruinLevel * 4), width: 1.8, color: RUI.voidDark });
-    // Chips missing out of the shell, more of them the worse he is.
-    g.fillStyle(this.tint(RUI.voidDark), alpha * 0.75);
-    const chips = 2 + Math.round(this.ruinLevel * 4);
-    for (let i = 0; i < chips; i++) {
-      const a2 = jitter(this.seed, 500 + i) * TAU;
-      const d = 12 + jitter(this.seed, 520 + i) * 8;
-      const cx = x + Math.cos(a2) * d;
-      const cy = y + Math.sin(a2) * d;
-      g.fillPoints([
-        new Phaser.Geom.Point(cx, cy),
-        new Phaser.Geom.Point(cx + 4 + jitter(this.seed, 540 + i) * 3, cy + 1),
-        new Phaser.Geom.Point(cx + 1, cy + 4 + jitter(this.seed, 560 + i) * 3),
-      ], true);
-    }
+    const k = this.mastered ? 1.15 : 1;
+    g.fillStyle(this.tint(RUI.red), a * (0.14 + this.ruinLevel * 0.1) * k);
+    g.fillCircle(x, y, 27 * k);
   }
 
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void a;
-    const heat = 0.55 + this.flare * 0.45;
+    const m = this.mastered;
+    const heat = 0.35 + this.flare * 0.65;
+    const lean = Math.cos(this.facing) * 1.5;
 
-    // ── The spikes down his back ──
-    // Raked backward from the crown and fanned, so there is a silhouette of teeth whichever
-    // way he is facing. The mastered rig grows a longer middle spine.
-    const back = this.facing + Math.PI;
-    const count = 5;
-    for (let i = 0; i < count; i++) {
-      const s = i / (count - 1) - 0.5;
-      const ang = back + s * 1.15 - 0.12;
-      const len = (this.mastered ? 26 : 20) * (1 - Math.abs(s) * 0.45) + Math.sin(this.t * 3 + i) * 1.2;
-      rustySpike(g, this.tint, x + Math.cos(ang) * 12, y - 6 + Math.sin(ang) * 8, ang,
-        len, 5.5, alpha * 0.95, { seed: this.seed + i * 3, wear: 0.6, barbs: 1, color: RUI.ash });
-    }
-    // Shoulder spikes, shorter and pointed out sideways.
-    for (const side of [-1, 1]) {
-      const ang = this.facing + side * (Math.PI / 2);
-      rustySpike(g, this.tint, x + Math.cos(ang) * 13, y + 2 + Math.sin(ang) * 9, ang,
-        13, 4.5, alpha * 0.9, { seed: this.seed + 30 + side, wear: 0.7, barbs: 0, color: RUI.iron });
-    }
+    // ── The crown of spikes ──
+    // Three rusted spikes fanned up out of the crown, the middle one tallest. Upright rather
+    // than facing-relative so the silhouette is a crown from every angle.
+    const spikes = [
+      { dx: -7.5, ang: -Math.PI / 2 - 0.55, len: 10 },
+      { dx: 0, ang: -Math.PI / 2, len: 13 },
+      { dx: 7.5, ang: -Math.PI / 2 + 0.55, len: 10 },
+    ];
+    spikes.forEach((s, i) => {
+      const len = s.len * (m ? 1.25 : 1) + Math.sin(this.t * 3 + i) * 0.6;
+      const rx = x + lean + s.dx;
+      // Rooted just inside the crown and kept short: the health bar sits at y - 30.
+      const ry = y - 14 + Math.abs(s.dx) * 0.3;
+      rustySpike(g, this.tint, rx, ry, s.ang, len, 5.4, alpha,
+        { seed: this.seed + i * 3, wear: 0.3 + this.ruinLevel * 0.6, barbs: 0, color: RUI.iron });
+      // Tips burn on a cast; mastered, they always do.
+      const tx = rx + Math.cos(s.ang) * len * 0.9;
+      const ty = ry + Math.sin(s.ang) * len * 0.9;
+      const glow = m ? Math.max(heat, 0.7) : heat * 0.7;
+      g.fillStyle(this.tint(m ? RUI.ember : RUI.bright), alpha * 0.35 * glow);
+      g.fillCircle(tx, ty, m ? 4.5 : 3.2);
+    });
 
     // ── The empty socket ──
-    // Painted over the rig's right eye — `BaseAvatar` always builds two, so a hole on top is
-    // the only way to be down one. Same maths as the base rig's eye placement.
+    // Painted over the rig's right eye. Same maths as the base rig's eye placement.
     const bob = Math.sin(this.t * 2.6) * 1.1;
     const ex = x + 7.2 + Math.cos(this.facing) * 2.4;
     const ey = y - 4 + Math.sin(this.facing) * 2.0 + bob;
     g.fillStyle(this.tint(RUI.voidDark), alpha);
     g.fillCircle(ex, ey, 5.2);
-    g.fillStyle(this.tint(RUI.ash), alpha * 0.6);
-    g.fillCircle(ex + 0.8, ey + 0.8, 3.4);
-    // Cracks running out of the socket across the face — the eye didn't fall out, it broke out.
-    crackWeb(g, this.tint, ex, ey, 12, this.seed + 9, alpha * 0.8, 1,
-      { runs: 4, width: 1.5, color: RUI.voidDark });
-    // The good eye burns rather than looks.
-    const gx = x - 7.2 + Math.cos(this.facing) * 2.4;
-    const gy = ey;
-    g.fillStyle(this.tint(RUI.red), alpha * 0.22 * heat);
-    g.fillCircle(gx, gy, 8 + Math.sin(this.t * 5) * 1.2);
+    g.fillStyle(this.tint(RUI.blood), alpha * 0.6);
+    g.fillCircle(ex + 0.8, ey + 0.8, 3.2);
   }
 }

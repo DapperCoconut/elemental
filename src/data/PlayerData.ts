@@ -55,6 +55,8 @@ interface SaveData {
    * Quantum's unlock, upgrades, perks and mastery to Subterfuge.
    */
   migratedSubterfugeId: boolean;
+  /** Set once `restoreMagmaChalkIds` has run — see that function. Fresh saves are born stamped. */
+  restoredMagmaChalk: boolean;
   /** True once the screwdriver has been picked up off a shop page. */
   screwdriverFound: boolean;
   /**
@@ -168,6 +170,50 @@ function migrateSubterfugeId(d: SaveData): void {
   }
 }
 
+/**
+ * Undoes a rename that should never have shipped. An abandoned Wax/Clay draft replaced Magma
+ * with Wax and Chalk with Clay outright, and its `load()` rewrote every save it touched:
+ * `magma` → `wax` and `chalk` → `clay` across the unlock list, the gauntlet lists, the
+ * element-keyed records and the pending Lab forge. Magma and Chalk were restored as their own
+ * elements (Wax and Clay are independent, cheat-gated test elements), so a save that went
+ * through that build is missing both of them and carries their history under the wrong ids.
+ *
+ * **Runs exactly once per save, guarded by `restoredMagmaChalk`.** Wax and Clay are live ids,
+ * so this must never run on every load — see `migrateSubterfugeId` for how that ends. Each key
+ * moves back only when its real owner is absent: a cheat profile rebuilt on the current code
+ * holds all four legitimately and is left alone.
+ *
+ * The draft deleted Magma's shop upgrades, perks and mastery progress rather than renaming them,
+ * so those cannot be brought back here; the unlock, Paper Journal, skins and death tally can.
+ */
+function restoreMagmaChalkIds(d: SaveData): void {
+  const PAIRS: Array<[string, string]> = [['wax', 'magma'], ['clay', 'chalk']];
+  const records: Array<Record<string, unknown>> = [
+    d.owned, d.active, d.unlockedPerks, d.equippedPerks, d.masteryProgress,
+    d.masteryEnabled, d.masteryBinds, d.equippedSkins, d.paperJournal, d.deathsByElement,
+  ];
+  const lists: Array<string[]> = [
+    d.unlockedElements, d.gauntletsCompleted, d.gauntletsCompletedHard, d.quantumBond,
+  ];
+  for (const [WRONG, REAL] of PAIRS) {
+    for (const rec of records) {
+      if (!(WRONG in rec) || REAL in rec) continue;
+      rec[REAL] = rec[WRONG];
+      delete rec[WRONG];
+    }
+    for (const list of lists) {
+      const at = list.indexOf(WRONG);
+      if (at < 0 || list.includes(REAL)) continue;
+      list[at] = REAL;
+    }
+    if (d.pendingUnstable) {
+      if (d.pendingUnstable.result === WRONG) d.pendingUnstable.result = REAL;
+      const at = d.pendingUnstable.ingredients.indexOf(WRONG);
+      if (at >= 0 && !d.pendingUnstable.ingredients.includes(REAL)) d.pendingUnstable.ingredients[at] = REAL;
+    }
+  }
+}
+
 function load(): SaveData {
   try {
     const raw = localStorage.getItem(storageKey());
@@ -211,6 +257,7 @@ function load(): SaveData {
         quantumResearching: parsed.quantumResearching ?? '',
         quantumQuestProgress: parsed.quantumQuestProgress ?? {},
         migratedSubterfugeId: parsed.migratedSubterfugeId ?? false,
+        restoredMagmaChalk: parsed.restoredMagmaChalk ?? false,
         screwdriverFound: parsed.screwdriverFound ?? false,
         screwdriverPage: parsed.screwdriverPage ?? -1,
         screwsRemoved: parsed.screwsRemoved ?? {},
@@ -230,6 +277,12 @@ function load(): SaveData {
         // lands, every load would migrate again and keep eating Quantum's keys.
         save(d);
       }
+      if (!d.restoredMagmaChalk) {
+        restoreMagmaChalkIds(d);
+        d.restoredMagmaChalk = true;
+        // Same rule as above: stamped to disk inside load(), or it would fire again next read.
+        save(d);
+      }
       // Sanity: clear equipped perk if no longer unlocked
       for (const el of Object.keys(d.equippedPerks)) {
         if (!(d.unlockedPerks[el] ?? []).includes(d.equippedPerks[el])) {
@@ -242,7 +295,7 @@ function load(): SaveData {
     // corrupted save — start fresh
   }
   // A save that never existed has nothing to migrate — born already stamped.
-  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], labLevel: 0, corruptShards: 0, huskJournal: [], apocalypseSeen: false, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {}, achievements: [], equippedSkins: {}, divineNuclei: 0, kingDefeated: false, devourerDefeated: false, devourerChoice: '', bountyRerollOffset: 0, completedBountyKeys: [], passionQTaps: 0, passionQCensored: false, paperJournal: {}, quantumBond: [], quantumResearched: [], quantumResearching: '', quantumQuestProgress: {}, migratedSubterfugeId: true, screwdriverFound: false, screwdriverPage: -1, screwsRemoved: {}, secretModesUnlocked: [], pendingUnstable: null, deathsByElement: {}, realityFountainLit: false, realityIntroSeen: false, realityDefeated: false, realityKillOrder: '', strongholdBest: {} };
+  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], labLevel: 0, corruptShards: 0, huskJournal: [], apocalypseSeen: false, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {}, achievements: [], equippedSkins: {}, divineNuclei: 0, kingDefeated: false, devourerDefeated: false, devourerChoice: '', bountyRerollOffset: 0, completedBountyKeys: [], passionQTaps: 0, passionQCensored: false, paperJournal: {}, quantumBond: [], quantumResearched: [], quantumResearching: '', quantumQuestProgress: {}, migratedSubterfugeId: true, restoredMagmaChalk: true, screwdriverFound: false, screwdriverPage: -1, screwsRemoved: {}, secretModesUnlocked: [], pendingUnstable: null, deathsByElement: {}, realityFountainLit: false, realityIntroSeen: false, realityDefeated: false, realityKillOrder: '', strongholdBest: {} };
 }
 
 function save(data: SaveData): void {
@@ -625,7 +678,12 @@ export function setMasteryEnabled(elementId: string, on: boolean): void {
 
 /** slot ('e'/'r'/'f'/'q') -> mastery enhancement id, for one element. */
 export function getMasteryBinds(elementId: string): Record<string, string> {
-  return load().masteryBinds[elementId] ?? {};
+  // E can no longer be replaced; an old save's E bind is ignored rather than deleted.
+  const { e: _e, ...binds } = load().masteryBinds[elementId] ?? {};
+  void _e;
+  // Ice's two bindables merged into one form-switching slot; an old Icicle Impale bind reads as it.
+  for (const s of Object.keys(binds)) if (binds[s] === 'icicle-impale') binds[s] = 'curling-stone';
+  return binds;
 }
 
 /** Binds a mastery ability onto a slot, replacing whatever ability that slot held. */

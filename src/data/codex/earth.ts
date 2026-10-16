@@ -119,15 +119,16 @@ const earth: ElementCodex = {
     'biome-builder': {
       basics:
         'You are drawn to the heart of the arena and stand untouchable on a dais for up to 5 seconds while '
-        + 'four seed stones hang around you, one over each quarter of the floor. Click a stone and it slams down: '
-        + 'that quarter becomes the biome carved on it for 20 seconds. Lava burns anyone else standing in it, Ice '
+        + 'four seed stones hang around you. Click a stone and a copy of it is flung into a bare quarter of the floor, '
+        + 'which becomes that biome for 20 seconds — the stones never run out, so you can mix and match: four '
+        + 'Mountains, or half Lava half Ocean. Lava burns anyone else standing in it, Ice '
         + 'halves their speed, the Ocean drags them toward you, the Jungle drops apples only you may eat, and the '
         + 'Mountain grows spikes you can launch with Click or rain down with Quake. Four of the five are offered '
         + 'each cast; press Q again to finish early.',
       cast: 'Q. Up to 5s of choosing at the arena centre, then 20s of weather. 60s cooldown.',
       effects: [
-        { tag: 'shield', label: 'The dais', detail: 'Drawn to the arena centre over 0.3s and immune to all damage for the whole rite — up to 5s, or until Q is pressed again or all four stones are down.' },
-        { tag: 'utility', label: 'Four seed stones', detail: 'A random 4 of the 5 biomes, one stone per quarter (NW, NE, SW, SE). Clicking one raises that quarter; stones never picked crumble when the rite ends.' },
+        { tag: 'shield', label: 'The dais', detail: 'Drawn to the arena centre over 0.3s and immune to all damage for the whole rite — up to 5s, or until Q is pressed again or all four quarters are filled.' },
+        { tag: 'utility', label: 'Four seed stones', detail: 'A random 4 of the 5 biomes, one hanging toward each quarter (NW, NE, SW, SE). Every click fills one quarter with that stone\'s biome — its own quarter if still bare, otherwise the nearest bare one — and the stone stays to be picked again. Four clicks fill the arena.' },
         { tag: 'dot', label: 'Lava', detail: 'Enemies standing in it take 3 damage every 0.5s (6 a second) for as long as they stay.' },
         { tag: 'debuff', label: 'Ice', detail: 'Enemies standing in it move at 50% speed.' },
         { tag: 'heal', label: 'Jungle', detail: 'An apple falls somewhere in the quarter every 2.4–3.6s. Walking over one heals you 25; an enemy stepping on one squashes it.' },
@@ -218,7 +219,7 @@ const earth: ElementCodex = {
         + '5 seconds. A player\'s screen turns fuzzy and hard to see through; a bot fires wildly with no '
         + 'accuracy; Invasion husks wander at random instead of pathing, and ranged ones keep firing but '
         + 'erratically. 10s cooldown.',
-      cast: 'Bindable to E, R, F or Q. Fires a cone along the aim.',
+      cast: 'Bindable to R, F or Q. Fires a cone along the aim.',
       effects: [
         { tag: 'debuff', label: 'Against a player', detail: 'Their screen turns fuzzy and hard to see through for 5s.' },
         { tag: 'debuff', label: 'Against a bot', detail: 'It fires wildly with no accuracy for 5s.' },

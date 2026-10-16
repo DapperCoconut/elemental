@@ -4,11 +4,11 @@ import { Projectile } from '../../combat/Projectile';
 import { CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
 import type { NetIllusionMsg } from '../../network/NetworkManager';
+import { HealthBar } from '../../combat/HealthBar';
 import { Sfx } from '../../audio';
 import {
-  ILL, IllusionAvatar, IllusionColorFn, IllusionFx, SHAPE_LABEL, ShapeKind,
-  fracture, gateway, harlequinMask, illusionDagger, phantomFigure, shapeBody, tesseract,
-  warpPane, weakCone,
+  ILL, IllusionAvatar, IllusionColorFn, IllusionFx,
+  gateway, illusionDagger, phantomFigure, warpPane,
 } from './IllusionVisuals';
 
 type Owner = 'player' | 'npc';
@@ -40,19 +40,23 @@ const CORNER_INSET = 58;
 const DANCE_MS = 20000;
 const DANCE_HOP_MS = 3000;
 
-// ── Tesseract (F) ────────────────────────────────────────────────────────────
-const TESS_SPEED = 430;
-const TESS_DAMAGE = 20;
-const TESS_SIZE = 21;
-const TESS_HIT_R = 30;
-/** How long it flies before folding away unspent. */
-const TESS_LIFE_MS = 2600;
-const SHAPE_MS = 8000;
-/** Everything a folded fighter gains: size, and therefore hitbox. */
-const SHAPE_SIZE_MULT = 1.3;
+// ── Guise (F) ────────────────────────────────────────────────────────────────
+const GUISE_MS = 3000;
+/** 80% smaller. Written to `shapeSizeMult`, so it rides on top of every other size system. */
+const GUISE_SIZE = 0.2;
+const GUISE_SPEED = 1.35;
+/** What the illusionist looks like on their own screen while they are hidden from everyone else. */
+const GUISE_SELF_ALPHA = 0.38;
+/** The share of everything the clone soaked up that it hands back when it fades. */
+const GUISE_PAYOUT = 0.2;
+/** The clone's body: a normal fighter's radius, because it is meant to be taken for one. */
+const CLONE_HIT_R = 22;
+/** How often an online illusionist tells the other screen where their clone is. */
+const CLONE_SYNC_MS = 50;
+/** A bot's clone keeps about this far off its target, like a real fighter holding range. */
+const CLONE_BOT_RANGE = 210;
 
 const ARENA_PAD = 32;
-const SHAPE_KINDS: ShapeKind[] = ['square', 'star', 'rhombus'];
 
 // ── Mastery: Reality Shift (passive) ─────────────────────────────────────────
 /** How far in from its wall a doorway stands. Far enough that nobody clips the world edge. */
@@ -102,14 +106,9 @@ const PHANTOM_MARK_MS = 5000;
 const PHANTOM_VULN_MULT = 1.2;
 const PHANTOM_SLOW_MULT = 0.7;
 
-// ── Mind-Boggle (F+) ─────────────────────────────────────────────────────────
-/** Half the cone, in radians — a 30° wedge in total. */
-const BOGGLE_HALF = Math.PI / 12;
-/** How far the wedge sticks out of the folded body. Cosmetic: the test is angular. */
-const BOGGLE_REACH = 52;
-const BOGGLE_MULT = 1.5;
-/** Radians per second the weak point turns at, so it can never just be camped on. */
-const BOGGLE_SPIN = 0.85;
+// ── Re-Trick (F+) ────────────────────────────────────────────────────────────
+const RETRICK_MS = 10000;
+const RETRICK_MULT = 1.25;
 
 // ── Blade Dance (Q+) ─────────────────────────────────────────────────────────
 const BLADE_COUNT = 10;
@@ -150,32 +149,14 @@ interface Veil {
 }
 
 /**
- * A tesseract in flight. Kit-owned rather than a group `Projectile` for one reason: a shared
- * group member is drawn by whoever's sim it exists on, and this is the one thing in the game
- * that is only allowed to be visible to the person who threw it.
+ * A Guise clone's drawn body: the fighter's own sprite at full size, its own rig, and a health
+ * bar mirroring the real one. All three, because the opponent is meant to take it for the real
+ * thing — a body with no bar over it would be the tell.
  */
-interface Tess {
-  owner: Owner;
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  spin: number;
-  diesAt: number;
-}
-
-/** Somebody who has been folded, and everything needed to put them back. */
-interface Morph {
-  kind: ShapeKind;
-  until: number;
-  /** The texture they were wearing before — restored verbatim when the fold lapses. */
-  texture: string;
-  spin: number;
-  /**
-   * Mind-Boggle (F+): the turning seam in this fold, and who is allowed to exploit it. Null
-   * unless whoever threw the tesseract owned the upgrade at the moment it landed.
-   */
-  weak: { owner: Owner; ang: number } | null;
+interface CloneViz {
+  img: Phaser.GameObjects.Image;
+  avatar: IllusionAvatar;
+  bar: HealthBar;
 }
 
 /** The red understudy a Relocate leaves behind, and the clock it is counting down. */
@@ -194,7 +175,7 @@ interface Mark {
   until: number;
 }
 
-/** One Blade Dance dagger in flight. Kit-owned, like the tesseract, and for the same reason. */
+/** One Blade Dance dagger in flight. Kit-owned, so a Guise can keep it off the other screen. */
 interface Blade {
   owner: Owner;
   x: number;
@@ -225,6 +206,23 @@ interface Side {
   maskCastAt: number;
   /** Reality Shift (mastery): the earliest this side may take another gateway. */
   gateLockUntil: number;
+  /** Guise (F): when the clone fades. 0 when no clone is out. */
+  guiseUntil: number;
+  /** Latched so the fighter's size, alpha and visibility are handed back exactly once. */
+  guiseInstalled: boolean;
+  cloneX: number;
+  cloneY: number;
+  cloneVx: number;
+  cloneVy: number;
+  /** Everything the clone has soaked up this Guise. */
+  cloneStored: number;
+  /** The sprite the fighter was wearing at full size — the clone wears it too. */
+  cloneTexture: string;
+  cloneScale: number;
+  /** Online: when this side last told the other screen where its clone is. */
+  cloneSentAt: number;
+  /** Re-Trick (F+): the surprise bonus runs until here. */
+  retrickUntil: number;
 }
 
 function makeSide(owner: Owner): Side {
@@ -233,6 +231,8 @@ function makeSide(owner: Owner): Side {
     // Ready on the first frame of a match: readiness is measured against `scene.time.now`,
     // which is already large by the time a kit is built, so 0 would lock the key out.
     masked: false, maskCastAt: -MASK_COOLDOWN_MS, gateLockUntil: 0,
+    guiseUntil: 0, guiseInstalled: false, cloneX: 0, cloneY: 0, cloneVx: 0, cloneVy: 0,
+    cloneStored: 0, cloneTexture: '', cloneScale: 1, cloneSentAt: 0, retrickUntil: 0,
   };
 }
 
@@ -269,7 +269,7 @@ export interface IllusionArenaApi {
   getNearestEnemy(fromX: number, fromY: number): Fighter;
   buildPlayerContext(x: number, y: number): CastContext;
   setStatusIndicator(id: string, status: CustomStatus | null): void;
-  /** Attacker → victim: a fold the local sim just resolved against its replica. */
+  /** The illusion messages the cast relay can't carry (blink, mask, the Guise clone). */
   sendIllusionMsg(msg: NetIllusionMsg): void;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
@@ -298,22 +298,25 @@ export class IllusionKit {
   private npcAvatar: IllusionAvatar | null = null;
   /** Panes and afterimages: under the fighters, over the shared projectile layer. */
   private fieldGfx: Phaser.GameObjects.Graphics | null = null;
-  /** Tesseracts and folded bodies: over the fighters, because both are meant to obscure. */
+  /** Blade Dance daggers: over the fighters, so a fan of them is unmissable. */
   private airGfx: Phaser.GameObjects.Graphics | null = null;
   /**
-   * Online PvP only: the full-screen invert a folded player is left looking through. A white
-   * rectangle in DIFFERENCE blend is the cheapest honest colour inversion there is.
+   * The opponent's effects while their Guise is up: a real `IllusionFx` whose every graphic is
+   * born hidden. Everything the opponent does still happens — it is just not drawn here.
    */
-  private invertRect: Phaser.GameObjects.Rectangle | null = null;
-  private invertUntil = 0;
+  private readonly nfxHidden: IllusionFx;
+  private clones: Record<Owner, CloneViz | null> = { player: null, npc: null };
+  /**
+   * What an AI is handed instead of the fighter while that fighter's Guise is up — see
+   * `decoyOf`. Built once per side per match and dropped by `reset()`.
+   */
+  private decoys: Record<Owner, Fighter | null> = { player: null, npc: null };
   private vizT = 0;
 
   // ── Sim ──
   private sides: Record<Owner, Side> = { player: makeSide('player'), npc: makeSide('npc') };
   private shots: Shot[] = [];
   private veils: Veil[] = [];
-  private tesses: Tess[] = [];
-  private morphs = new Map<Fighter, Morph>();
   private phantoms: Phantom[] = [];
   private blades: Blade[] = [];
   private marks = new Map<Fighter, Mark>();
@@ -355,6 +358,8 @@ export class IllusionKit {
     this.ncol = (base) => api.illusionColor('npc', base);
     this.pfx = new IllusionFx(api.scene, this.pcol);
     this.nfx = new IllusionFx(api.scene, this.ncol);
+    this.nfxHidden = new IllusionFx(api.scene, this.ncol)
+      .setSink((obj) => { (obj as Phaser.GameObjects.Graphics).setVisible(false); });
   }
 
   // ── Small helpers ──────────────────────────────────────────────────────────
@@ -362,7 +367,31 @@ export class IllusionKit {
   private get now(): number { return this.api.scene.time.now; }
   private side(owner: Owner): Side { return this.sides[owner]; }
   private fighter(owner: Owner): Fighter { return owner === 'player' ? this.api.player : this.api.npc; }
-  private fx(owner: Owner): IllusionFx { return owner === 'player' ? this.pfx : this.nfx; }
+  private fx(owner: Owner): IllusionFx {
+    if (owner === 'player') return this.pfx;
+    return this.hides('npc') ? this.nfxHidden : this.nfx;
+  }
+
+  /**
+   * Whether this side's attacks are being kept off the local screen: its Guise is up, so
+   * nothing it throws may give away where it really is. Only ever the npc — the local player
+   * always sees their own work.
+   */
+  private hides(owner: Owner): boolean {
+    return owner === 'npc' && this.guised('npc');
+  }
+
+  private guised(owner: Owner): boolean { return this.side(owner).guiseUntil > 0; }
+
+  /** A floating label for one side, unless that side is hiding from this screen. */
+  private say(owner: Owner, x: number, y: number, text: string, color: string): void {
+    if (!this.hides(owner)) this.api.showFloatingText(x, y, text, color);
+  }
+
+  /** …and a sound — panned by position, so it would give a hidden fighter away just as fast. */
+  private sfx(owner: Owner, name: string, x: number, opts?: { volume?: number; rate?: number }): void {
+    if (!this.hides(owner)) Sfx.playAt(name, x, opts);
+  }
   private col(owner: Owner): IllusionColorFn { return owner === 'player' ? this.pcol : this.ncol; }
   private body(f: Fighter): Phaser.Physics.Arcade.Body { return f.body as Phaser.Physics.Arcade.Body; }
 
@@ -416,13 +445,14 @@ export class IllusionKit {
 
   reset(): void {
     // Anything written onto a fighter has to be handed back, or the next match starts with
-    // somebody permanently square and somebody else permanently immune to bullets.
-    for (const f of [...this.morphs.keys()]) this.unfold(f, false);
-    this.morphs.clear();
+    // somebody permanently tiny and somebody else permanently immune to bullets.
     for (const owner of ['player', 'npc'] as Owner[]) {
       const f = this.fighter(owner);
       if (f && this.sides[owner].phaseInstalled) f.projectilePhase = false;
+      if (this.sides[owner].guiseInstalled) this.uninstallGuise(owner);
+      this.destroyClone(owner);
     }
+    this.decoys = { player: null, npc: null };
     // Same debt, different field: a Phantom's vulnerability is written straight onto bodies.
     for (const f of this.touched) f.illusionIncomingMult = 1;
     this.touched.clear();
@@ -431,7 +461,6 @@ export class IllusionKit {
     this.sides = { player: makeSide('player'), npc: makeSide('npc') };
     this.shots = [];
     this.veils = [];
-    this.tesses = [];
     this.phantoms = [];
     this.blades = [];
     this.aimX = 0;
@@ -439,7 +468,6 @@ export class IllusionKit {
     this.npcAimX = 0;
     this.npcAimY = 0;
     this.vizT = 0;
-    this.invertUntil = 0;
     this.botGrabAt = 0;
     this.botBluffAt = 0;
     this.prevPointerDown = false;
@@ -451,7 +479,6 @@ export class IllusionKit {
     this.npcAvatar?.destroy(); this.npcAvatar = null;
     this.fieldGfx?.destroy(); this.fieldGfx = null;
     this.airGfx?.destroy(); this.airGfx = null;
-    this.invertRect?.destroy(); this.invertRect = null;
   }
 
   // ── Input ──────────────────────────────────────────────────────────────────
@@ -477,7 +504,11 @@ export class IllusionKit {
     if (clicked) p.castAbility('illusion-crack-shot', ctx);
     if (mask !== 'e' && Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('illusion-veil', ctx);
     if (mask !== 'r' && Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('illusion-relocate', ctx);
-    if (mask !== 'f' && Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('illusion-tesseract', ctx);
+    if (mask !== 'f' && Phaser.Input.Keyboard.JustDown(this.api.fKey)) {
+      // F+ (Re-Trick): with a clone out, F is the swap — a recast, so the cooldown is not asked.
+      if (this.guised('player') && this.up('player', 'f')) this.doRetrick('player');
+      else p.castAbility('illusion-guise', ctx);
+    }
     if (mask !== 'q' && Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('illusion-dance', ctx);
   }
 
@@ -504,6 +535,8 @@ export class IllusionKit {
     proj.setRotation(ang);
     this.api.projectiles.add(proj);
     proj.launch(Math.cos(ang) * SHOT_SPEED, Math.sin(ang) * SHOT_SPEED);
+    // Guise: a bullet out of nowhere is the whole point. It still flies and still hurts.
+    if (this.hides(owner)) proj.setAlpha(0);
     const shot: Shot = { owner, proj, through: new Set(), split };
     this.shots.push(shot);
     return shot;
@@ -534,7 +567,7 @@ export class IllusionKit {
     const body = proj.body as Phaser.Physics.Arcade.Body | null;
     const through = body ? Math.atan2(body.velocity.y, body.velocity.x) : 0;
     this.fx(s.owner).pierceSpray(target.x, target.y, through);
-    Sfx.playAt('crystal-shatter', target.x, { volume: 0.4, rate: 1.6 });
+    this.sfx(s.owner, 'crystal-shatter', target.x, { volume: 0.4, rate: 1.6 });
     return true;
   }
 
@@ -556,7 +589,7 @@ export class IllusionKit {
     this.avatar(owner)?.play('sweep', ang);
     this.avatar(owner)?.setScattered(true);
     this.fx(owner).ring(x, y, 12, VEIL_HALF_LEN, ILL.warp, 420);
-    this.api.showFloatingText(f.x, f.y - 46, '🌫️ VEIL', this.hex(ILL.warp));
+    this.say(owner, f.x, f.y - 46, '🌫️ VEIL', this.hex(ILL.warp));
   }
 
   /** R — Relocate. The whole ability is one line; the point is that there is nothing else. */
@@ -570,33 +603,315 @@ export class IllusionKit {
     if (leaves) this.dropPhantom(owner, fromX, fromY);
   }
 
-  /** F — Tesseract. Thrown at a person who is not allowed to know it exists. */
-  doTesseract(owner: Owner, tx: number, ty: number): void {
+  /**
+   * F — Guise. The illusionist shrinks to a fifth of their size, speeds up and vanishes, and a
+   * full-size clone walks off after the cursor wearing their face, their rig and their health
+   * bar. Everything that comes for the clone is remembered, and a fifth of it is paid back to
+   * the enemy when the clone fades.
+   *
+   * Online the cast is replayed on the opponent's sim like any other, so their copy of us
+   * shrinks and hides there too; the clone's position is streamed separately (`k:'clone'`),
+   * because only this sim knows where our cursor is.
+   */
+  doGuise(owner: Owner, tx: number, ty: number): void {
     const f = this.fighter(owner);
-    if (!f || !f.active) return;
+    if (!f || !f.active || f.hp <= 0) return;
     if (owner === 'npc') { this.npcAimX = tx; this.npcAimY = ty; }
-    // Online: the victim's replay of this cast must produce nothing. The cube is invisible to
-    // them by design, so a local copy could only ever fold them a second time — with its own
-    // roll of the shape — on top of the fold the thrower's sim already relayed.
-    if (owner === 'npc' && this.api.isOnline) return;
+    const s = this.side(owner);
+    // A recast with a clone already out is Re-Trick's business, and without the upgrade it is
+    // simply not available — the cooldown would have refused it anyway.
+    if (this.guised(owner)) return;
 
-    const ang = Math.atan2(ty - f.y, tx - f.x);
-    this.tesses.push({
-      owner,
-      x: f.x + Math.cos(ang) * 26,
-      y: f.y + Math.sin(ang) * 26,
-      vx: Math.cos(ang) * TESS_SPEED,
-      vy: Math.sin(ang) * TESS_SPEED,
-      spin: 0,
-      diesAt: this.now + TESS_LIFE_MS,
-    });
+    // The clone is the body the fighter had a moment ago, so it is captured before the shrink.
+    s.cloneTexture = f.texture.key;
+    s.cloneScale = f.scaleX;
+    s.cloneX = f.x;
+    s.cloneY = f.y;
+    s.cloneVx = 0;
+    s.cloneVy = 0;
+    s.cloneStored = 0;
+    s.cloneSentAt = 0;
+    s.guiseUntil = this.now + GUISE_MS;
+    this.installGuise(owner);
 
-    this.avatar(owner)?.play('slam', ang);
-    // Only the thrower gets a cast tell — the other side must have nothing to react to.
-    if (this.showsTess(owner)) {
-      this.fx(owner).ring(f.x, f.y, 10, 54, ILL.cyan, 380);
-      this.api.showFloatingText(f.x, f.y - 46, '⬛ TESSERACT', this.hex(ILL.cyan));
+    // The puff is visible to everyone — it is the clone's opponent who is meant to believe the
+    // smoke cleared on the same body. What they must not get is a tell for the *small* one.
+    const fx = this.fx(owner);
+    fx.ring(f.x, f.y, 8, 46, ILL.violet, 360);
+    fx.shards(f.x, f.y, 6, 26, ILL.magenta, 360, 6);
+    this.avatar(owner)?.play('flex');
+    if (owner === 'player') {
+      Sfx.playAt('blink', f.x, { volume: 0.6, rate: 1.3 });
+      this.api.showFloatingText(f.x, f.y - 50, '🎭 GUISE', this.hex(ILL.magenta));
     }
+  }
+
+  /**
+   * F+ — Re-Trick. Swap into the clone: the illusionist arrives exactly where it stood, at full
+   * size, and the clone is simply not there any more. Its store is still paid out — it faded,
+   * after all — and the surprise is worth 25% more damage for ten seconds.
+   *
+   * Nothing about the swap is drawn on the opponent's screen. From their side the body they
+   * were chasing just keeps standing there, now real.
+   */
+  doRetrick(owner: Owner): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (!f || !f.active || f.hp <= 0 || !this.guised(owner) || !this.up(owner, 'f')) return;
+    const x = s.cloneX;
+    const y = s.cloneY;
+
+    this.payOut(owner, false);
+    this.endGuise(owner);
+    // Online: a replica's position belongs to the peer's state stream, but their next packet
+    // carries this exact spot — moving it here too saves a frame of it standing in the old one.
+    this.body(f).reset(x, y);
+    s.retrickUntil = this.now + RETRICK_MS;
+
+    if (owner === 'player') {
+      this.pfx.blinkIn(x, y, ILL.magenta);
+      this.pfx.ring(x, y, 10, 40, ILL.crimson, 300);
+      this.api.showFloatingText(x, y - 50, '🃏 RE-TRICK', this.hex(ILL.crimson));
+      if (this.api.isOnline) this.api.sendIllusionMsg({ t: 'ill', k: 'retrick', x, y });
+    }
+  }
+
+  /** Shrink, speed up and vanish. Re-applied every frame by `updateGuise` so nothing drops it. */
+  private installGuise(owner: Owner): void {
+    const f = this.fighter(owner);
+    const s = this.side(owner);
+    s.guiseInstalled = true;
+    if (f.shapeSizeMult !== GUISE_SIZE) { f.shapeSizeMult = GUISE_SIZE; f.applySizeMult(); }
+    if (owner === 'player') {
+      // Hidden from everyone else; a ghost to its own player, who still has to steer it.
+      f.setAlpha(GUISE_SELF_ALPHA);
+    } else {
+      f.forceInvisible = true;
+      f.setAlpha(0);
+      f.setHealthBarVisible(false);
+    }
+  }
+
+  private uninstallGuise(owner: Owner): void {
+    const f = this.fighter(owner);
+    const s = this.side(owner);
+    s.guiseInstalled = false;
+    if (!f) return;
+    if (f.shapeSizeMult !== 1) {
+      f.shapeSizeMult = 1;
+      if (f.active) f.applySizeMult();
+    }
+    if (owner === 'npc') {
+      f.forceInvisible = false;
+      if (f.active) f.setHealthBarVisible(true);
+    }
+    if (f.active) f.setAlpha(1);
+  }
+
+  /** The clone is gone, whichever way it went. Its store has already been paid by the caller. */
+  private endGuise(owner: Owner): void {
+    const s = this.side(owner);
+    s.guiseUntil = 0;
+    s.cloneStored = 0;
+    this.uninstallGuise(owner);
+    this.destroyClone(owner);
+  }
+
+  /**
+   * A fifth of everything the clone soaked up, paid to whoever is nearest it. Resolved only on
+   * the sim that owns the clone — a remote illusionist's sim pays us, and its hit is relayed.
+   */
+  private payOut(owner: Owner, loud: boolean): void {
+    const s = this.side(owner);
+    const fx = this.fx(owner);
+    if (loud) {
+      fx.shards(s.cloneX, s.cloneY, 10, 34, ILL.violet, 460, 8);
+      fx.blinkOut(s.cloneX, s.cloneY, ILL.violet);
+      this.sfx(owner, 'crystal-shatter', s.cloneX, { volume: 0.6, rate: 1.2 });
+    }
+    if (owner === 'npc' && this.api.isOnline) return;
+    const amount = Math.round(s.cloneStored * GUISE_PAYOUT);
+    if (amount < 1) return;
+    const target = owner === 'player'
+      ? this.api.getNearestEnemy(s.cloneX, s.cloneY)
+      : this.api.player;
+    if (!target || !target.active || target.hp <= 0) return;
+    fx.crackBeam(s.cloneX, s.cloneY, target.x, target.y, ILL.violet);
+    target.takeDamage(amount);
+    this.api.spawnHitFlash(target.x, target.y, ILL.violet);
+    this.say(owner, target.x, target.y - 50, `🎭 ${amount} RETURNED`, this.hex(ILL.violet));
+  }
+
+  /**
+   * The clone soaking up a hit. Only the owning sim banks it (see `payOut`); the other screen
+   * still stops the shot on the body it believes in.
+   */
+  private cloneAbsorb(owner: Owner, amount: number): void {
+    if (!this.guised(owner) || amount <= 0) return;
+    const s = this.side(owner);
+    if (!(owner === 'npc' && this.api.isOnline)) s.cloneStored += amount;
+    this.api.spawnHitFlash(s.cloneX, s.cloneY, ILL.violet);
+  }
+
+  /** Whether a point is on this side's clone, with some slack for whatever is testing it. */
+  private onClone(owner: Owner, x: number, y: number, slack: number): boolean {
+    const s = this.side(owner);
+    return this.guised(owner)
+      && Phaser.Math.Distance.Between(x, y, s.cloneX, s.cloneY) <= CLONE_HIT_R + slack;
+  }
+
+  private updateGuise(time: number, delta: number): void {
+    const dt = delta / 1000;
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const s = this.side(owner);
+      if (!this.guised(owner)) continue;
+      const f = this.fighter(owner);
+      if (!f || !f.active || f.hp <= 0) { this.endGuise(owner); continue; }
+      if (time >= s.guiseUntil) {
+        this.payOut(owner, true);
+        this.endGuise(owner);
+        continue;
+      }
+      // Held every frame: a Fate roll, a hit flash or another kit's resize must not be the
+      // thing that hands the illusionist their body back early.
+      this.installGuise(owner);
+
+      // ── Where the clone goes ──
+      // The local player's clone follows the cursor at the fighter's own walking pace. A
+      // bot's holds range on its target like a fighter would. A remote illusionist's is
+      // wherever their last `k:'clone'` said it was.
+      if (!(owner === 'npc' && this.api.isOnline)) {
+        let gx: number;
+        let gy: number;
+        if (owner === 'player') {
+          gx = this.aimX;
+          gy = this.aimY;
+        } else {
+          const p = this.api.player;
+          const ang = Math.atan2(s.cloneY - p.y, s.cloneX - p.x) + dt * 0.7;
+          gx = p.x + Math.cos(ang) * CLONE_BOT_RANGE;
+          gy = p.y + Math.sin(ang) * CLONE_BOT_RANGE;
+        }
+        gx = Phaser.Math.Clamp(gx, this.left + 24, this.right - 24);
+        gy = Phaser.Math.Clamp(gy, this.top + 24, this.bottom - 24);
+        const dx = gx - s.cloneX;
+        const dy = gy - s.cloneY;
+        const d = Math.hypot(dx, dy);
+        const speed = f.speed;
+        if (d > 4) {
+          const step = Math.min(d, speed * dt);
+          s.cloneVx = (dx / d) * speed;
+          s.cloneVy = (dy / d) * speed;
+          s.cloneX += (dx / d) * step;
+          s.cloneY += (dy / d) * step;
+        } else {
+          s.cloneVx = 0;
+          s.cloneVy = 0;
+        }
+      }
+      if (owner === 'player' && this.api.isOnline && time - s.cloneSentAt >= CLONE_SYNC_MS) {
+        s.cloneSentAt = time;
+        this.api.sendIllusionMsg({ t: 'ill', k: 'clone', x: s.cloneX, y: s.cloneY });
+      }
+
+      // ── What hits it ──
+      // A snapshot: `destroy()` splices the group's live array.
+      const mineIsPlayer = owner === 'player';
+      for (const obj of [...this.api.projectiles.getChildren()]) {
+        const p = obj as Projectile;
+        if (!p.active || !p.body || p.isHeal) continue;
+        if (p.isFromPlayer === mineIsPlayer) continue;
+        if (!this.onClone(owner, p.x, p.y, 6)) continue;
+        this.cloneAbsorb(owner, Math.max(1, p.damage ?? 8));
+        p.destroy();
+      }
+    }
+  }
+
+  // ── Guise: the clone's body ────────────────────────────────────────────────
+
+  private destroyClone(owner: Owner): void {
+    const c = this.clones[owner];
+    if (!c) return;
+    c.img.destroy();
+    c.avatar.destroy();
+    c.bar.destroy();
+    this.clones[owner] = null;
+  }
+
+  private updateClones(delta: number): void {
+    const { scene } = this.api;
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const s = this.side(owner);
+      const f = this.fighter(owner);
+      if (!this.guised(owner) || !f) { this.destroyClone(owner); continue; }
+      let c = this.clones[owner];
+      if (!c) {
+        const key = scene.textures.exists(s.cloneTexture) ? s.cloneTexture : 'elem-illusion';
+        c = {
+          img: scene.add.image(s.cloneX, s.cloneY, key).setDepth(5).setScale(s.cloneScale),
+          avatar: new IllusionAvatar(scene, this.col(owner)),
+          bar: new HealthBar(scene, f.maxHp),
+        };
+        this.clones[owner] = c;
+      }
+      c.img.setPosition(s.cloneX, s.cloneY);
+      // The opponent's copy faces whoever it is pretending to fight; ours faces the way it walks.
+      const foe = owner === 'player' ? this.api.getNearestEnemy(s.cloneX, s.cloneY) : this.api.player;
+      const facing = foe && foe.active
+        ? Math.atan2(foe.y - s.cloneY, foe.x - s.cloneX)
+        : Math.atan2(s.cloneVy, s.cloneVx);
+      c.avatar.setFacing(facing);
+      c.avatar.setMastered(owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
+      // The last third of a second fades it, so the shatter has something to come out of.
+      const fade = Phaser.Math.Clamp((s.guiseUntil - this.now) / 300, 0, 1);
+      c.img.setAlpha(fade);
+      c.avatar.update(delta, s.cloneX, s.cloneY, fade);
+      c.bar.setMaxHp(f.maxHp);
+      c.bar.update(s.cloneX, s.cloneY, f.hp, f.shieldHp);
+    }
+  }
+
+  /**
+   * What an AI chases instead of this side's fighter while its Guise is up: the real fighter,
+   * standing where the clone is. Reads of `x`, `y` and `body.velocity` answer for the clone;
+   * a `takeDamage` lands in the clone's store; every write is swallowed, so a slow or a bleed
+   * a husk tries to put on "the player" goes nowhere. Everything else (hp, element, flags)
+   * still reads through, so the AI's own decisions about range and health stay honest.
+   */
+  private decoyOf(owner: Owner): Fighter | null {
+    if (!this.guised(owner)) return null;
+    const real = this.fighter(owner);
+    if (!real) return null;
+    const cached = this.decoys[owner];
+    if (cached) return cached;
+    const kit = this;
+    const realBody = real.body as Phaser.Physics.Arcade.Body;
+    const body = new Proxy(realBody, {
+      get(t, k) {
+        if (k === 'velocity') {
+          const s = kit.side(owner);
+          return new Phaser.Math.Vector2(s.cloneVx, s.cloneVy);
+        }
+        const v = Reflect.get(t, k, t);
+        // Nothing may move or reshape the real body through the decoy.
+        return typeof v === 'function' ? () => undefined : v;
+      },
+      set() { return true; },
+    });
+    const decoy = new Proxy(real, {
+      get(t, k) {
+        const s = kit.side(owner);
+        if (k === 'x') return s.cloneX;
+        if (k === 'y') return s.cloneY;
+        if (k === 'body') return body;
+        if (k === 'takeDamage') return (amount: number) => kit.cloneAbsorb(owner, amount);
+        return Reflect.get(t, k, t);
+      },
+      set() { return true; },
+    });
+    this.decoys[owner] = decoy;
+    return decoy;
   }
 
   /** Q — Illusion Dance. Twenty seconds of being somewhere else and being made of nothing. */
@@ -615,7 +930,7 @@ export class IllusionKit {
       this.avatar(owner)?.setEchoes(6);
       this.fx(owner).ring(f.x, f.y, 14, 130, ILL.violet, 620);
       this.fx(owner).ring(f.x, f.y, 14, 168, ILL.magenta, 760);
-      this.api.showFloatingText(f.x, f.y - 50, '🎭 ILLUSION DANCE', this.hex(ILL.magenta));
+      this.say(owner, f.x, f.y - 50, '🎭 ILLUSION DANCE', this.hex(ILL.magenta));
     }
   }
 
@@ -626,7 +941,7 @@ export class IllusionKit {
       owner, x, y, bornAt: this.now, blowsAt: this.now + PHANTOM_FUSE_MS, seed: Math.random() * 999,
     });
     this.fx(owner).ring(x, y, 8, 40, ILL.crimson, 320);
-    this.api.showFloatingText(x, y - 42, '👻 PHANTOM', this.hex(ILL.crimson));
+    this.say(owner, x, y - 42, '👻 PHANTOM', this.hex(ILL.crimson));
   }
 
   private updatePhantoms(time: number): void {
@@ -640,7 +955,7 @@ export class IllusionKit {
 
   private detonatePhantom(p: Phantom): void {
     this.fx(p.owner).phantomBurst(p.x, p.y, PHANTOM_RADIUS);
-    Sfx.playAt('blink', p.x, { volume: 0.7, rate: 0.7 });
+    this.sfx(p.owner, 'blink', p.x, { volume: 0.7, rate: 0.7 });
 
     for (const t of this.targetsOf(p.owner)) {
       if (Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) > PHANTOM_RADIUS) continue;
@@ -659,11 +974,11 @@ export class IllusionKit {
   }
 
   /**
-   * Both of this element's upgrade vulnerabilities, rewritten onto their victims from scratch.
+   * Every damage bonus this element writes onto its victims, rewritten from scratch.
    *
    * Pulled together into one pass because they share a field, and share a field because a
-   * folded body standing in a Phantom's blast is meant to be worth 1.2 × 1.5 rather than
-   * whichever of the two happened to write last.
+   * Phantom-marked body hit by a masked, Re-Tricked illusionist is meant to be worth
+   * 1.2 × 1.5 × 1.25 rather than whichever of the three happened to write last.
    */
   private refreshIncoming(time: number): void {
     const next = new Map<Fighter, number>();
@@ -672,25 +987,17 @@ export class IllusionKit {
     for (const [f, m] of this.marks) {
       if (f.active && f.hp > 0 && m.until > time) mul(f, PHANTOM_VULN_MULT);
     }
-    for (const [victim, m] of this.morphs) {
-      if (!m.weak || !victim.active || victim.hp <= 0) continue;
-      const src = this.fighter(m.weak.owner);
-      if (!src || !src.active || src.hp <= 0) continue;
-      // The test is which side of them you are on, not where the shot happens to be: a hit
-      // has no position by the time it reaches `takeDamage`, and a ranged element's shots
-      // arrive along the line from the shooter anyway.
-      const toSrc = Math.atan2(src.y - victim.y, src.x - victim.x);
-      if (Math.abs(Phaser.Math.Angle.Wrap(toSrc - m.weak.ang)) <= BOGGLE_HALF) mul(victim, BOGGLE_MULT);
-    }
-
-    // Masquerade: the wearer's 50% is written onto everything they are allowed to hurt, which
+    // Masquerade and Re-Trick: the wearer's 50% is written onto everything they are allowed to hurt, which
     // in every mode this element sees is exactly the set of things that can damage them back.
     // A remote opponent's mask is skipped: their sim already applied it and relayed the result,
     // so a second application here would bill the hit twice.
     for (const owner of ['player', 'npc'] as Owner[]) {
-      if (!this.side(owner).masked) continue;
       if (owner === 'npc' && (this.api.isOnline || this.api.isInvasion)) continue;
-      for (const t of this.targetsOf(owner)) mul(t, MASK_DAMAGE_MULT);
+      const s = this.side(owner);
+      if (s.masked) for (const t of this.targetsOf(owner)) mul(t, MASK_DAMAGE_MULT);
+      // F+ Re-Trick: the surprise is the illusionist's, so it is written onto what they hit —
+      // the same victim-side field the mask uses, so the two multiply.
+      if (s.retrickUntil > time) for (const t of this.targetsOf(owner)) mul(t, RETRICK_MULT);
     }
 
     for (const f of this.touched) if (!next.has(f)) f.illusionIncomingMult = 1;
@@ -733,11 +1040,11 @@ export class IllusionKit {
     // only be undone by the next packet, so the replay keeps the effect and drops the jump.
     if (!(owner === 'npc' && this.api.isOnline)) this.body(f).reset(to.x, to.y);
     fx.blinkIn(to.x, to.y, ILL.magenta);
-    Sfx.playAt('blink', to.x, { volume: 0.8 });
+    this.sfx(owner, 'blink', to.x, { volume: 0.8 });
 
     this.avatar(owner)?.play('dash');
     this.avatar(owner)?.setScattered(true);
-    if (announce) this.api.showFloatingText(to.x, to.y - 46, '✨ RELOCATE', this.hex(ILL.violet));
+    if (announce) this.say(owner, to.x, to.y - 46, '✨ RELOCATE', this.hex(ILL.violet));
     // Recorded unconditionally, mastery or not — this is how the mastery is earned. Both the
     // R and the Dance's own hops come through here, and the gateways record their own.
     if (owner === 'player') this.api.recordMasteryStat('teleports', 1);
@@ -817,10 +1124,10 @@ export class IllusionKit {
     if (!(owner === 'npc' && this.api.isOnline)) this.body(f).reset(ax, ay);
     fx.blinkIn(ax, ay, ILL.magenta);
     fx.ring(ax, ay, GATE_HALF_W + 18, 10, ILL.violet, 420);
-    Sfx.playAt('blink', ax, { volume: 0.7, rate: 1.15 });
+    this.sfx(owner, 'blink', ax, { volume: 0.7, rate: 1.15 });
     this.avatar(owner)?.play('dash');
     this.avatar(owner)?.setScattered(true);
-    this.api.showFloatingText(ax, ay - 48, '🚪 REALITY SHIFT', this.hex(ILL.warp));
+    this.say(owner, ax, ay - 48, '🚪 REALITY SHIFT', this.hex(ILL.warp));
     if (owner === 'player') this.api.recordMasteryStat('teleports', 1);
 
     // The passive's whole reason to exist mid-ultimate: a gateway taken during the Dance is a
@@ -879,8 +1186,8 @@ export class IllusionKit {
     const f = this.fighter(owner);
     s.masked = false;
     this.fx(owner).maskBreak(f.x, f.y - 4);
-    Sfx.playAt('crystal-shatter', f.x, { volume: 0.7, rate: 1.1 });
-    this.api.showFloatingText(f.x, f.y - 52, '🎭 UNMASKED', '#ffc94a');
+    this.sfx(owner, 'crystal-shatter', f.x, { volume: 0.7, rate: 1.1 });
+    this.say(owner, f.x, f.y - 52, '🎭 UNMASKED', '#ffc94a');
     if (owner === 'npc') this.npcMaskAt = time + NPC_MASK_REGRIP_MS;
     if (owner === 'player' && this.api.isOnline) this.api.sendIllusionMsg({ t: 'ill', k: 'mask', on: false });
   }
@@ -1012,28 +1319,27 @@ export class IllusionKit {
   update(time: number, delta: number): void {
     const playerIs = this.api.elementId === 'illusion';
     const npcIs = this.api.npcElementId === 'illusion';
-    // Folds and Phantom marks outlive their caster's presence in a match (an online opponent
-    // can fold you and then die), so their bookkeeping has to run even when neither side is
+    // Phantom marks and a Guise outlive their caster's presence in a match (an online opponent
+    // can mark you and then die), so their bookkeeping has to run even when neither side is
     // Illusion — a mark left un-expired would leave a body soft for the rest of the fight.
-    if (!playerIs && !npcIs && this.morphs.size === 0 && this.marks.size === 0
-        && this.invertUntil <= time) return;
+    if (!playerIs && !npcIs && this.marks.size === 0 && this.touched.size === 0
+        && !this.guised('player') && !this.guised('npc')) return;
 
     this.vizT += delta / 1000;
     this.ensureLayers();
 
     this.updateShots(time);
     this.updateVeils(time);
-    this.updateTesseracts(time, delta);
+    this.updateGuise(time, delta);
     this.updatePhantoms(time);
     this.updateBlades(time, delta);
     this.updateGates(time);
     this.updateMasquerade(time);
     for (const owner of ['player', 'npc'] as Owner[]) this.updateDance(owner, time);
-    this.updateMorphs(time, delta);
     this.updateMarks(time);
     this.refreshIncoming(time);
-    this.updateInvert(time);
     this.updateAvatars(delta, playerIs, npcIs);
+    this.updateClones(delta);
 
     this.paintField(time);
     this.paintAir(time);
@@ -1043,7 +1349,7 @@ export class IllusionKit {
   private ensureLayers(): void {
     const { scene } = this.api;
     // Fighters are depth 5. The panes belong behind them (they are in the floor's plane and
-    // must never hide a character); the tesseract and the folded bodies belong in front.
+    // must never hide a character); the daggers belong in front.
     if (!this.fieldGfx) this.fieldGfx = scene.add.graphics().setDepth(4);
     if (!this.airGfx) this.airGfx = scene.add.graphics().setDepth(8);
   }
@@ -1084,7 +1390,7 @@ export class IllusionKit {
   private crack(owner: Owner, x: number, y: number, inwardAng: number): void {
     const fx = this.fx(owner);
     fx.wallCrack(x, y, inwardAng, ILL.crimson);
-    Sfx.playAt('crystal-shatter', x, { volume: 0.55, rate: 1.35 });
+    this.sfx(owner, 'crystal-shatter', x, { volume: 0.55, rate: 1.35 });
 
     const target = this.enemyOf(owner);
     if (!target) return;
@@ -1152,7 +1458,7 @@ export class IllusionKit {
         // or the same pane would immediately bend the thing it just made.
         v.bent.add(copy.proj);
         this.fx(v.owner).split(proj.x, proj.y, heading, DUP_SPREAD);
-        this.api.spawnHitFlash(proj.x, proj.y, ILL.spark);
+        if (!this.hides(v.owner)) this.api.spawnHitFlash(proj.x, proj.y, ILL.spark);
         continue;
       }
 
@@ -1162,7 +1468,7 @@ export class IllusionKit {
       proj.setRotation(ang);
 
       this.fx(v.owner).shards(proj.x, proj.y, 4, 14, ILL.warp, 300, 6);
-      this.api.spawnHitFlash(proj.x, proj.y, ILL.warp);
+      if (!this.hides(v.owner)) this.api.spawnHitFlash(proj.x, proj.y, ILL.warp);
       // Only somebody else's shot counts towards the mastery. The pane bending your own
       // bullets is the ability working as designed, but firing into your own pane on a loop
       // would be a grind rather than a skill, so it is worth nothing.
@@ -1170,129 +1476,22 @@ export class IllusionKit {
     }
   }
 
-  // ── Tesseract ──────────────────────────────────────────────────────────────
-
-  /** Whether this side's tesseracts are drawn at all — only their thrower may see one. */
-  private showsTess(owner: Owner): boolean {
-    return owner === 'player';
-  }
-
-  private updateTesseracts(time: number, delta: number): void {
-    const dt = delta / 1000;
-    for (let i = this.tesses.length - 1; i >= 0; i--) {
-      const t = this.tesses[i];
-      t.x += t.vx * dt;
-      t.y += t.vy * dt;
-      t.spin += dt * 3.4;
-
-      const spent = time >= t.diesAt
-        || t.x < this.left || t.x > this.right || t.y < this.top || t.y > this.bottom;
-
-      let hit: Fighter | null = null;
-      for (const f of this.targetsOf(t.owner)) {
-        if (Phaser.Math.Distance.Between(t.x, t.y, f.x, f.y) <= TESS_HIT_R) { hit = f; break; }
-      }
-
-      if (hit) {
-        this.tesses.splice(i, 1);
-        // The impact is visible to everyone: the *cube* is the secret, not being hit by it.
-        this.fx(t.owner).fold(hit.x, hit.y, ILL.cyan);
-        hit.takeDamage(TESS_DAMAGE);
-        this.applyFold(t.owner, hit);
-      } else if (spent) {
-        this.tesses.splice(i, 1);
-        if (this.showsTess(t.owner)) this.fx(t.owner).shards(t.x, t.y, 6, 26, ILL.cyan, 380, 8);
-      }
-    }
-  }
+  // ── Guise: Ruin Second Skin ────────────────────────────────────────────────
 
   /**
-   * Fold a fighter into a shape. Husks, the 1v1 npc and an online replica all take this the
-   * same way — everything it touches is a `Fighter`, so nothing has to be special-cased.
-   */
-  private applyFold(owner: Owner, victim: Fighter): void {
-    const kind = SHAPE_KINDS[Math.floor(Math.random() * SHAPE_KINDS.length)];
-    this.fold(victim, kind, SHAPE_MS);
-    this.api.showFloatingText(victim.x, victim.y - 48, `⬛ ${SHAPE_LABEL[kind]}`, this.hex(ILL.cyan));
-
-    // F+ (Mind-Boggle): the fold was done badly on purpose, and left a seam. Stamped at the
-    // moment of the fold rather than read live, so an upgrade equipped mid-match can't
-    // retroactively open a hole in somebody who is already square.
-    if (this.up(owner, 'f')) {
-      const m = this.morphs.get(victim);
-      if (m) {
-        m.weak = { owner, ang: Math.random() * Math.PI * 2 };
-        this.api.showFloatingText(victim.x, victim.y - 66, '🎯 MIND-BOGGLE', this.hex(ILL.crimson));
-      }
-    }
-
-    // Online: our sim just folded a replica. The person that body belongs to has to be told,
-    // both to wear the shape and to have their screen turned inside out for the duration.
-    if (owner === 'player' && this.api.isOnline && victim === this.api.npc) {
-      this.api.sendIllusionMsg({ t: 'ill', k: 'shape', s: kind, ms: SHAPE_MS });
-    }
-  }
-
-  /** Put a fighter into a shape for `ms`. Re-folding refreshes rather than stacking. */
-  private fold(victim: Fighter, kind: ShapeKind, ms: number): void {
-    const existing = this.morphs.get(victim);
-    if (existing) {
-      existing.kind = kind;
-      existing.until = this.now + ms;
-      return;
-    }
-    this.morphs.set(victim, {
-      kind, until: this.now + ms, texture: victim.texture.key, spin: Math.random() * Math.PI,
-      weak: null,
-    });
-    victim.setTexture(this.shapeTexture(kind));
-    victim.shapeSizeMult = SHAPE_SIZE_MULT;
-    victim.applySizeMult();
-  }
-
-  private shapeTexture(kind: ShapeKind): string {
-    return `illusion-shape-${kind}`;
-  }
-
-  /** Hand a fighter its own body back. */
-  /**
-   * Ruin Mastery — Second Skin. A Tesseract fold is a form in the most literal sense the game
-   * has: the body is not a body any more, it is a square, a star or a rhombus, with its own
-   * texture and its own hitbox. `unfold` is the kit's own lapse, which is the only thing that
-   * puts the texture and `shapeSizeMult` back correctly.
+   * Ruin Mastery — Second Skin. A Guise is a form in the plainest sense: a different size, a
+   * different speed and a body nobody can see. Ending it the kit's own way is the only thing
+   * that hands back `shapeSizeMult`, the alpha and the health bar — and the clone is torn down
+   * without paying out, because it did not fade, it was broken.
    */
   revertForms(f: Fighter): string[] {
-    if (!this.morphs.has(f)) return [];
-    this.unfold(f, true);
-    return ['Tesseract'];
-  }
-
-  private unfold(victim: Fighter, announce: boolean): void {
-    const m = this.morphs.get(victim);
-    if (!m) return;
-    this.morphs.delete(victim);
-    if (victim.active) {
-      if (this.api.scene.textures.exists(m.texture)) victim.setTexture(m.texture);
-      victim.shapeSizeMult = 1;
-      victim.applySizeMult();
-      if (announce) {
-        this.pfx.shards(victim.x, victim.y, 7, 30, ILL.cyan, 420, 8);
-        this.api.showFloatingText(victim.x, victim.y - 44, '⬛ UNFOLDED', this.hex(ILL.ghost));
-      }
-    } else {
-      victim.shapeSizeMult = 1;
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      if (this.fighter(owner) !== f || !this.guised(owner)) continue;
+      this.fx(owner).shards(this.side(owner).cloneX, this.side(owner).cloneY, 8, 30, ILL.violet, 420, 8);
+      this.endGuise(owner);
+      return ['Guise'];
     }
-  }
-
-  private updateMorphs(time: number, delta: number): void {
-    for (const [victim, m] of [...this.morphs]) {
-      if (!victim.active || victim.hp <= 0) { this.unfold(victim, false); continue; }
-      if (time >= m.until) { this.unfold(victim, true); continue; }
-      m.spin += (delta / 1000) * 1.3;
-      // The seam turns on its own clock, slower than the body — you have to keep walking
-      // around them to stay on it, which is the whole cost of the upgrade.
-      if (m.weak) m.weak.ang += (delta / 1000) * BOGGLE_SPIN;
-    }
+    return [];
   }
 
   // ── Illusion Dance ─────────────────────────────────────────────────────────
@@ -1310,7 +1509,7 @@ export class IllusionKit {
       this.avatar(owner)?.setScattered(false);
       if (f) {
         this.fx(owner).ring(f.x, f.y, 90, 12, ILL.violet, 420);
-        this.api.showFloatingText(f.x, f.y - 46, '🎭 THE DANCE ENDS', this.hex(ILL.ghost));
+        this.say(owner, f.x, f.y - 46, '🎭 THE DANCE ENDS', this.hex(ILL.ghost));
       }
       return;
     }
@@ -1361,8 +1560,8 @@ export class IllusionKit {
 
     this.avatar(owner)?.play('sweep', base);
     this.fx(owner).ring(f.x, f.y, 10, 62, ILL.magenta, 380);
-    Sfx.playAt('crystal-shatter', f.x, { volume: 0.6, rate: 0.9 });
-    this.api.showFloatingText(f.x, f.y - 54, '🗡️ BLADE DANCE', this.hex(ILL.violet));
+    this.sfx(owner, 'crystal-shatter', f.x, { volume: 0.6, rate: 0.9 });
+    this.say(owner, f.x, f.y - 54, '🗡️ BLADE DANCE', this.hex(ILL.violet));
   }
 
   private updateBlades(time: number, delta: number): void {
@@ -1421,13 +1620,13 @@ export class IllusionKit {
     }
 
     fx.blinkIn(tx, ty, ILL.violet);
-    Sfx.playAt('blink', tx, { volume: 0.8, rate: 0.85 });
-    this.api.showFloatingText(tx, ty - 46, '🗡️ CAST ACROSS', this.hex(ILL.violet));
+    this.sfx(owner, 'blink', tx, { volume: 0.8, rate: 0.85 });
+    this.say(owner, tx, ty - 46, '🗡️ CAST ACROSS', this.hex(ILL.violet));
   }
 
-  // ── Online: the folded player's own screen ─────────────────────────────────
+  // ── Online: what the other sim tells us ────────────────────────────────────
 
-  /** Attacker's sim folded us. Wear the shape, and look at the world through the negative. */
+  /** The illusion events the cast relay cannot carry. */
   handleNetMsg(msg: NetIllusionMsg): void {
     const p = this.api.player;
     if (!p || !p.active || p.hp <= 0) return;
@@ -1467,25 +1666,26 @@ export class IllusionKit {
       return;
     }
 
-    if (msg.k !== 'shape') return;
-    this.ensureLayers();
-    this.fold(p, msg.s, msg.ms);
-    this.invertUntil = this.now + msg.ms;
-    this.pfx.fold(p.x, p.y, ILL.cyan);
-    this.api.showFloatingText(p.x, p.y - 48, `⬛ ${SHAPE_LABEL[msg.s]}`, this.hex(ILL.cyan));
-  }
+    // Their Guise clone moved. Our replay of the cast already shrank and hid them; only their
+    // sim knows where their cursor is, so the clone's position is all this carries.
+    if (msg.k === 'clone') {
+      const s = this.sides.npc;
+      if (!this.guised('npc')) return;
+      const dt = Math.max(1, this.now - s.cloneSentAt) / 1000;
+      s.cloneVx = (msg.x - s.cloneX) / dt;
+      s.cloneVy = (msg.y - s.cloneY) / dt;
+      s.cloneX = msg.x;
+      s.cloneY = msg.y;
+      s.cloneSentAt = this.now;
+      return;
+    }
 
-  private updateInvert(time: number): void {
-    const on = time < this.invertUntil;
-    if (on && !this.invertRect) {
-      const { scene } = this.api;
-      this.invertRect = scene.add.rectangle(
-        0, 0, scene.scale.width, scene.scale.height, 0xffffff, 1,
-      ).setOrigin(0, 0).setScrollFactor(0).setDepth(40);
-      this.invertRect.setBlendMode(Phaser.BlendModes.DIFFERENCE);
-    } else if (!on && this.invertRect) {
-      this.invertRect.destroy();
-      this.invertRect = null;
+    // They swapped into it. Silently — the body we were looking at simply becomes real.
+    if (msg.k === 'retrick') {
+      const n = this.api.npc;
+      if (!this.guised('npc')) return;
+      this.endGuise('npc');
+      if (n && n.active) this.body(n).reset(msg.x, msg.y);
     }
   }
 
@@ -1502,6 +1702,8 @@ export class IllusionKit {
       this.playerAvatar.setIntensity(s.danceUntil > 0 ? 1.35 : 1);
       this.playerAvatar.setMastered(this.api.masteryActive);
       this.playerAvatar.setMasquerade(s.masked);
+      // Guise: the rig shrinks with the body, so the ghost being steered is honestly that small.
+      this.playerAvatar.setRigScale(s.guiseUntil > 0 ? GUISE_SIZE : 1);
       this.playerAvatar.update(delta, f.x, f.y, f.active && f.hp > 0 ? f.alpha : 0);
     } else if (this.playerAvatar) {
       this.playerAvatar.destroy();
@@ -1515,6 +1717,7 @@ export class IllusionKit {
       this.npcAvatar.setFacing(Math.atan2(this.npcAimY - f.y, this.npcAimX - f.x));
       this.npcAvatar.setIntensity(s.danceUntil > 0 ? 1.35 : 1);
       this.npcAvatar.setMastered(this.api.npcMasteryActive);
+      this.npcAvatar.setRigScale(s.guiseUntil > 0 ? GUISE_SIZE : 1);
       // Deliberately never told about its own mask. This avatar is drawn on the *opponent's*
       // screen, and the mask not being there is the entire ability.
       this.npcAvatar.update(delta, f.x, f.y, f.active && f.hp > 0 ? f.alpha : 0);
@@ -1547,6 +1750,8 @@ export class IllusionKit {
     }
 
     for (const v of this.veils) {
+      // Guise: the opponent's panes go dark while they are hidden, and come back after.
+      if (this.hides(v.owner)) continue;
       // Fades over its last third of a second, so it never blinks out of existence.
       const fade = Phaser.Math.Clamp((v.until - time) / 320, 0, 1);
       warpPane(g, this.col(v.owner), v.x, v.y, v.ang, VEIL_HALF_LEN, VEIL_HALF_THICK,
@@ -1556,54 +1761,22 @@ export class IllusionKit {
     // Phantoms stand on the floor plane with the panes — they are scenery the opponent has
     // to decide whether to believe, not something in the air.
     for (const p of this.phantoms) {
+      if (this.hides(p.owner)) continue;
       const charge = Phaser.Math.Clamp((time - p.bornAt) / PHANTOM_FUSE_MS, 0, 1);
       phantomFigure(g, this.col(p.owner), p.x, p.y, this.vizT, charge, 1, p.seed);
     }
   }
 
-  /** Tesseracts and folded bodies, over the fighters. */
+  /** Blade Dance daggers, over the fighters. */
   private paintAir(time: number): void {
     const g = this.airGfx;
     if (!g) return;
     g.clear();
     void time;
 
-    for (const t of this.tesses) {
-      if (!this.showsTess(t.owner)) continue;
-      const tint = this.col(t.owner);
-      // A wake of two lagging ghosts, so it reads as a thing moving through a dimension
-      // rather than a sprite sliding across the floor.
-      for (let i = 2; i >= 1; i--) {
-        tesseract(g, tint, t.x - (t.vx / TESS_SPEED) * i * 11, t.y - (t.vy / TESS_SPEED) * i * 11,
-          TESS_SIZE * (1 - i * 0.14), t.spin - i * 0.5, 0.24 / i);
-      }
-      tesseract(g, tint, t.x, t.y, TESS_SIZE, t.spin, 1);
-    }
-
-    for (const [victim, m] of this.morphs) {
-      if (!victim.active || victim.hp <= 0) continue;
-      const tint = victim === this.api.player ? this.ncol : this.pcol;
-      const left = m.until - this.now;
-      const alpha = Phaser.Math.Clamp(left / 400, 0, 1) * (victim.alpha > 0.02 ? 1 : 0);
-      // Drawn over the sprite as well as swapped onto it: a body wearing a rig (most elements
-      // paint one) would otherwise still be a circle under all those hands and eyes.
-      shapeBody(g, tint, m.kind, victim.x, victim.y,
-        27 * victim.sizeMult * victim.shapeSizeMult, m.spin, alpha * 0.85);
-      // The seam the fold left, ticking round the shape.
-      const a = m.spin * 2.2;
-      fracture(g, tint, victim.x + Math.cos(a) * 30, victim.y + Math.sin(a) * 30,
-        victim.x - Math.cos(a) * 30, victim.y - Math.sin(a) * 30, 1.4, ILL.cyan, alpha * 0.4,
-        m.spin * 10, 1.2);
-      harlequinMask(g, tint, victim.x, victim.y - 2, 7, alpha * 0.55, ILL.cyan);
-      // F+: the seam. Drawn in the *attacker's* colours — it belongs to whoever folded them.
-      if (m.weak) {
-        weakCone(g, this.col(m.weak.owner), victim.x, victim.y, m.weak.ang,
-          BOGGLE_HALF, BOGGLE_REACH, alpha, this.vizT);
-      }
-    }
-
     // Daggers, over everything: five of them crossing an arena has to be unmissable.
     for (const b of this.blades) {
+      if (this.hides(b.owner)) continue;
       const tint = this.col(b.owner);
       for (let i = 2; i >= 1; i--) {
         illusionDagger(g, tint, b.x - (b.vx / BLADE_SPEED) * i * 9, b.y - (b.vy / BLADE_SPEED) * i * 9,
@@ -1645,14 +1818,18 @@ export class IllusionKit {
       until: myVeil.until, priority: 116,
     } : null);
 
-    // The victim side: the local player folded into a shape, whoever did it.
-    const mine = this.morphs.get(this.api.player);
-    this.api.setStatusIndicator('illusion-folded', mine ? {
-      name: `Folded — ${SHAPE_LABEL[mine.kind].toLowerCase()}`, emoji: '⬛', color: ILL.cyan,
-      description: mine.weak
-        ? 'A tesseract folded you flat. You are 30% larger, which means 30% easier to hit — and the fold left a seam, so anything landing on that side of you hits for 1.5×.'
-        : 'A tesseract folded you flat. You are 30% larger, which means 30% easier to hit, until it wears off.',
-      until: mine.until, priority: 14,
+    this.api.setStatusIndicator('illusion-guise', playerIsIllusion && this.guised('player') ? {
+      name: 'Guise', emoji: '🎭', color: ILL.magenta,
+      description: this.up('player', 'f')
+        ? 'You are tiny, fast and invisible, and your clone is drawing the fire. Everything you throw is invisible too. When it fades it pays back 20% of what it soaked up — or press F to swap into it.'
+        : 'You are tiny, fast and invisible, and your clone is drawing the fire. Everything you throw is invisible too. When it fades it pays back 20% of what it soaked up.',
+      until: s.guiseUntil, count: Math.round(s.cloneStored), priority: 101,
+    } : null);
+
+    this.api.setStatusIndicator('illusion-retrick', playerIsIllusion && s.retrickUntil > time ? {
+      name: 'Re-Trick', emoji: '🃏', color: ILL.crimson,
+      description: 'You swapped into your clone and they never saw it coming: +25% damage.',
+      until: s.retrickUntil, priority: 103,
     } : null);
 
     // …and the local player caught by somebody's Phantom.
@@ -1680,8 +1857,62 @@ export class IllusionKit {
   /** Whether this side already has a pane out, so the AI spends E on a fresh one. */
   hasVeil(owner: Owner): boolean { return this.veils.some((v) => v.owner === owner); }
 
-  /** Whether the local player is currently folded — read by the AI to press its advantage. */
-  isFolded(f: Fighter): boolean { return this.morphs.has(f); }
+  /** True while this side's Guise clone is out. */
+  isGuised(owner: Owner): boolean { return this.guised(owner); }
+
+  /**
+   * Bot synergy (F+ Re-Trick): the swap is worth taking now. Either the clone is about to fade
+   * anyway — swapping a moment early costs nothing and buys the 25% — or the player has found
+   * the real, tiny bot and the clone is the safer place to be. Side-effect-free.
+   */
+  npcRetrickReady(): boolean {
+    const s = this.sides.npc;
+    if (!this.guised('npc') || !this.up('npc', 'f') || this.api.isOnline) return false;
+    if (s.guiseUntil - this.now < 450) return true;
+    const n = this.api.npc;
+    const p = this.api.player;
+    if (!n || !p || !p.active) return false;
+    const toReal = Phaser.Math.Distance.Between(n.x, n.y, p.x, p.y);
+    const toClone = Phaser.Math.Distance.Between(s.cloneX, s.cloneY, p.x, p.y);
+    return toReal < 130 && toClone > toReal + 60;
+  }
+
+  /**
+   * What the npc AI should chase this frame instead of the player: the player's Guise clone,
+   * or null when there is no Guise. Bots are meant to be fooled by it — that is the ability.
+   */
+  npcDecoyTarget(): Fighter | null { return this.decoyOf('player'); }
+
+  /** Invasion: the husks' view of who is in the room — the player swapped for their clone. */
+  huskTargetsView(list: Fighter[]): Fighter[] {
+    const decoy = this.decoyOf('player');
+    if (!decoy) return list;
+    return list.map((f) => (f === this.api.player ? decoy : f));
+  }
+
+  /** Invasion: a husk hit that was aimed at a decoy. True when the clone took it. */
+  absorbDecoyHit(target: Fighter, amount: number): boolean {
+    if (!this.guised('player') || target !== this.decoys.player) return false;
+    this.cloneAbsorb('player', amount);
+    return true;
+  }
+
+  /** Invasion: a husk shot passing through the player's clone. True when it stopped there. */
+  tryHitClone(x: number, y: number, radius: number, damage: number): boolean {
+    if (!this.onClone('player', x, y, radius)) return false;
+    this.cloneAbsorb('player', damage);
+    return true;
+  }
+
+  /**
+   * ArenaScene's AoE chokepoint: a blast owned by `owner` that reaches the *other* side's clone
+   * is banked by it. The real fighter is resolved separately and on its own position, so a
+   * blast on the clone does nothing to the tiny body standing somewhere else.
+   */
+  notifyAoe(cx: number, cy: number, radius: number, damage: number, owner: Owner): void {
+    const victim: Owner = owner === 'player' ? 'npc' : 'player';
+    if (this.onClone(victim, cx, cy, radius - CLONE_HIT_R)) this.cloneAbsorb(victim, damage);
+  }
 
   /**
    * The slot the opponent gave up to Masquerade, so its AI stops casting what used to be
@@ -1701,7 +1932,10 @@ export class IllusionKit {
 
   private speedMultFor(f: Fighter): number {
     const m = f ? this.marks.get(f) : undefined;
-    return m && m.until > this.now ? PHANTOM_SLOW_MULT : 1;
+    const slow = m && m.until > this.now ? PHANTOM_SLOW_MULT : 1;
+    // Guise: a fifth of the size and a third again as fast.
+    const quick = f === this.api.player ? this.guised('player') : f === this.api.npc && this.guised('npc');
+    return slow * (quick ? GUISE_SPEED : 1);
   }
 
   /**
@@ -1725,6 +1959,10 @@ export class IllusionKit {
       const v = this.veils.find((veil) => veil.owner === 'player');
       if (v) return Phaser.Math.Clamp((v.until - time) / VEIL_MS, 0, 1);
     }
+    // The clone's own clock while it is out — the card is the Re-Trick window too.
+    if (abilityId === 'illusion-guise' && this.guised('player')) {
+      return Phaser.Math.Clamp((s.guiseUntil - time) / GUISE_MS, 0, 1);
+    }
     return p.getCooldownRatio(abilityId);
   }
 
@@ -1732,8 +1970,9 @@ export class IllusionKit {
    * Ruin's Spikes of Ruin (see `combat/SummonPurge.ts`).
    * Warp panes and un-detonated Phantoms — the two things this element plants and leaves
    * standing. Anything already bent by a pane keeps its new heading: the kick has already
-   * been applied, and the pane was only ever the thing that applied it. Daggers and
-   * tesseracts are shots in flight rather than structures, so the spikes never touch them.
+   * been applied, and the pane was only ever the thing that applied it. Daggers are shots in
+   * flight rather than structures, and a Guise clone is a form (see `revertForms`), so the
+   * spikes never touch either.
    */
   purgeSummons(
     x: number, y: number, radius: number, exceptOwner: 'player' | 'npc',

@@ -6,6 +6,8 @@ import {
   ArmGesture, GUNPOWDER, GunpowderAura, GunpowderAuraStyle, GunpowderAvatar, GunpowderColorFn,
   GunpowderFx, musket, smokePuff,
 } from './GunpowderVisuals';
+import { FONT_DISPLAY, FONT_UI } from '../../ui/Theme';
+import { fillNotched, strokeNotched } from '../../ui/Shapes';
 
 // ── Type definitions ──────────────────────────────────────────────────────────
 
@@ -387,6 +389,7 @@ export class GunpowderKit {
   private menuGfx: Phaser.GameObjects.Graphics | null = null;
   private menuLabels: Phaser.GameObjects.Text[] = [];
   private menuBtnAreas: ArsenalMenuBtn[] = [];
+  private menuHover = -1;
 
   // ── Arsenal HUD ───────────────────────────────────────────────────────────
   private arsenalHudCx = 0;
@@ -610,6 +613,8 @@ export class GunpowderKit {
       this.tryRemoveArsenalWeapon(pointer.worldX, pointer.worldY);
     }
     this.wasRightDown = rightDown;
+
+    this.updateArsenalMenu(pointer);
 
     // ── Click: Musket Shot / menu selection ──────────────────────────────
     if (pointer.isDown && !pointerWasDown) {
@@ -1718,31 +1723,72 @@ export class GunpowderKit {
 
     const { scene } = this.arena;
     const W = scene.scale.width;
-    const panelW = 260, rowH = 46, panelH = this.menuOffered.length * rowH + 16;
-    const px = (W - panelW) / 2, py = 110;
+    const n = this.menuOffered.length;
+    const cardW = 200, cardH = 156, gap = 14;
+    const totalW = n * cardW + (n - 1) * gap;
+    const x0 = (W - totalW) / 2, cardY = 132;
+    const max = this.arena.hasUpgrade('r') ? ARSENAL_MAX_R_UPGRADED : ARSENAL_MAX;
 
     this.menuGfx = scene.add.graphics().setDepth(48).setScrollFactor(0);
-    this.menuGfx.fillStyle(0x1a1208, 0.94);
-    this.menuGfx.fillRect(px, py, panelW, panelH);
-    this.menuGfx.lineStyle(2, 0xdd9944, 1);
-    this.menuGfx.strokeRect(px, py, panelW, panelH);
-
     this.menuLabels = [];
     this.menuBtnAreas = [];
+
+    const title = scene.add.text(W / 2, cardY - 34, 'ARSENAL EXPANSION', {
+      fontSize: '18px', fontFamily: FONT_DISPLAY, color: '#ffcc77', stroke: '#000000', strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(49).setScrollFactor(0);
+    const sub = scene.add.text(W / 2, cardY - 14,
+      `Choose a weapon  ·  arsenal ${this.playerArsenal.length}/${max}  ·  click or press 1–${n}  ·  F picks at random`, {
+        fontSize: '11px', fontFamily: FONT_UI, color: '#c9b08a', stroke: '#000000', strokeThickness: 3,
+      }).setOrigin(0.5).setDepth(49).setScrollFactor(0);
+    this.menuLabels.push(title, sub);
+
     this.menuOffered.forEach((type, i) => {
       const def = WEAPON_DEFS[type];
-      const ry = py + 8 + i * rowH;
-      const label = scene.add.text(px + 12, ry + rowH / 2 - 8, `${def.emoji} ${def.name}`, {
-        fontSize: '15px', fontFamily: 'Arial', color: '#ffddaa', stroke: '#000000', strokeThickness: 2,
-      }).setOrigin(0, 0.5).setDepth(49).setScrollFactor(0);
-      const desc = scene.add.text(px + 12, ry + rowH / 2 + 10, def.desc, {
-        fontSize: '10px', fontFamily: 'Arial', color: '#aaaaaa',
-      }).setOrigin(0, 0.5).setDepth(49).setScrollFactor(0);
-      this.menuLabels.push(label, desc);
-      this.menuBtnAreas.push({ x: px, y: ry, w: panelW, h: rowH, type });
+      const x = x0 + i * (cardW + gap);
+      const exotic = EXTRA_WEAPON_TYPES.includes(type);
+      const owned = this.playerArsenal.filter((sl) => sl.type === type).length;
+      const t = (tx: number, ty: number, str: string, style: Phaser.Types.GameObjects.Text.TextStyle) =>
+        scene.add.text(tx, ty, str, style).setDepth(49).setScrollFactor(0);
+      this.menuLabels.push(
+        t(x + 12, cardY + 10, `${i + 1}`, { fontSize: '13px', fontFamily: FONT_DISPLAY, color: '#ffcc77' }),
+        t(x + cardW - 12, cardY + 11, exotic ? 'EXOTIC' : owned > 0 ? `OWNED ×${owned}` : '', {
+          fontSize: '9px', fontFamily: FONT_DISPLAY, color: exotic ? '#ff8866' : '#9fd49f',
+        }).setOrigin(1, 0),
+        t(x + cardW / 2, cardY + 40, def.emoji, { fontSize: '30px' }).setOrigin(0.5),
+        t(x + cardW / 2, cardY + 72, def.name, {
+          fontSize: '15px', fontFamily: FONT_DISPLAY, color: '#ffe2b0', stroke: '#000000', strokeThickness: 3,
+        }).setOrigin(0.5),
+        t(x + cardW / 2, cardY + 88, def.desc, {
+          fontSize: '10px', fontFamily: FONT_UI, color: '#d6cbb8', align: 'center',
+          wordWrap: { width: cardW - 20 }, lineSpacing: 1,
+        }).setOrigin(0.5, 0),
+      );
+      this.menuBtnAreas.push({ x, y: cardY, w: cardW, h: cardH, type });
     });
 
+    this.menuHover = -1;
     this.menuOpen = true;
+    this.drawArsenalMenu();
+  }
+
+  /** Repaint the picker's plates — only the hovered card changes, so this runs on hover change. */
+  private drawArsenalMenu(): void {
+    const g = this.menuGfx;
+    if (!g) return;
+    g.clear();
+    const W = this.arena.scene.scale.width;
+    // A dim band behind the cards so the fight stays visible but clearly paused for the choice.
+    g.fillStyle(0x000000, 0.45);
+    g.fillRect(0, 86, W, 222);
+    this.menuBtnAreas.forEach((b, i) => {
+      const hot = i === this.menuHover;
+      const exotic = EXTRA_WEAPON_TYPES.includes(b.type);
+      const accent = exotic ? 0xff7a4a : 0xdd9944;
+      const lift = hot ? 4 : 0;
+      fillNotched(g, b.x, b.y - lift, b.w, b.h, hot ? 0x3a2612 : 0x1d140a, 0.96);
+      fillNotched(g, b.x + 6, b.y + 6 - lift, b.w - 12, 58, 0x000000, 0.25, 8);
+      strokeNotched(g, b.x, b.y - lift, b.w, b.h, hot ? 0xffd27a : accent, hot ? 1 : 0.8, hot ? 3 : 2);
+    });
   }
 
   private closeArsenalMenu(): void {
@@ -1750,16 +1796,33 @@ export class GunpowderKit {
     for (const l of this.menuLabels) l.destroy();
     this.menuLabels = [];
     this.menuBtnAreas = [];
+    this.menuHover = -1;
     this.menuOpen = false;
   }
 
-  private handleMenuClick(px: number, py: number): void {
-    for (const btn of this.menuBtnAreas) {
-      if (px >= btn.x && px <= btn.x + btn.w && py >= btn.y && py <= btn.y + btn.h) {
-        this.commitArsenalPick(btn.type);
+  private menuIndexAt(px: number, py: number): number {
+    return this.menuBtnAreas.findIndex((b) => px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h);
+  }
+
+  /** Hover highlight + 1/2/3 hotkeys while the picker is up. */
+  private updateArsenalMenu(pointer: Phaser.Input.Pointer): void {
+    if (!this.menuOpen) return;
+    const hover = this.menuIndexAt(pointer.worldX, pointer.worldY);
+    if (hover !== this.menuHover) { this.menuHover = hover; this.drawArsenalMenu(); }
+    const kb = this.arena.scene.input.keyboard;
+    if (!kb) return;
+    const codes = [Phaser.Input.Keyboard.KeyCodes.ONE, Phaser.Input.Keyboard.KeyCodes.TWO, Phaser.Input.Keyboard.KeyCodes.THREE];
+    for (let i = 0; i < this.menuBtnAreas.length && i < codes.length; i++) {
+      if (Phaser.Input.Keyboard.JustDown(kb.addKey(codes[i], false))) {
+        this.commitArsenalPick(this.menuBtnAreas[i].type);
         return;
       }
     }
+  }
+
+  private handleMenuClick(px: number, py: number): void {
+    const i = this.menuIndexAt(px, py);
+    if (i >= 0) this.commitArsenalPick(this.menuBtnAreas[i].type);
   }
 
   private autoPickArsenalMenu(): void {

@@ -1,31 +1,30 @@
 import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import {
-  MAG, MagmaAvatar, MagmaFx, breathCone, dragonEgg, lavaRock, magmaArm, magmaFist, magmaSaw,
-  moltenPool, obsidianCoat, pressureGauge, volcanoCone,
+  MAG, MagmaAvatar, MagmaFx, breathCone, cannonball, lavaRock, magmaSaw, moltenPool,
+  obsidianCoat, pirateShip, pirateSpirit, pressureGauge, volcanoCone,
 } from '../../../elements/kits/MagmaVisuals';
 
 /**
  * Magma's showcases.
  *
- * Magma puts nothing in the world as a sprite — pools, rocks, vessels, the arm and the fist are
- * all data the kit repaints into four Graphics layers, so every loop here keeps the same little
+ * Magma puts nothing in the world as a sprite — pools, rocks, volcanoes, the ship and the crew
+ * are all data the kit repaints into Graphics layers, so every loop here keeps the same little
  * records the kit keeps and paints them with the real painters: `moltenPool`, `volcanoCone`,
- * `dragonEgg`, `pressureGauge`, `lavaRock`, `magmaArm`, `magmaFist` and `breathCone`. One-shots
- * go through a real `MagmaFx` with a sticky sink.
+ * `pressureGauge`, `lavaRock`, `breathCone`, `pirateShip`, `cannonball` and `pirateSpirit`.
+ * One-shots go through a real `MagmaFx` with a sticky sink.
  *
- * `bodyTexture` is `elem-fire` on purpose: `ArenaScene.ELEMENT_TEXTURES` has no entry for magma,
- * so that is genuinely the ball the arena stages under the rig, and `MagmaAvatar.drawBody` only
- * paints a silhouette of its own once hatched. Staging anything else would document a character
- * the player never sees.
+ * `bodyTexture` is `elem-magma`: the basalt ball ArenaScene stages under the rig. The pirate's
+ * hat, patch, sash, hook and cutlass are the `MagmaAvatar`'s, hung off that ball — so what the
+ * loops stage is exactly the character the player sees in the arena.
  */
 
-const BODY = 'elem-fire';
+const BODY = 'elem-magma';
 
 // ── Staging ───────────────────────────────────────────────────────────
 
-interface Pool { x: number; y: number; born: number; fromX: number; fromY: number }
-interface Vessel { x: number; y: number; r: number; p: number; max: number; kind: 'volcano' | 'egg'; seed: number }
+interface Pool { x: number; y: number; born: number; fromX: number; fromY: number; r?: number; life?: number }
+interface Vessel { x: number; y: number; r: number; p: number; max: number; seed: number }
 
 function fxOf(ctx: PreviewCtx): MagmaFx {
   return ctx.capture(() => new MagmaFx(ctx.scene, ctx.tint).setSink(ctx.sink));
@@ -64,7 +63,7 @@ function molten(av: unknown): MagmaAvatar | null {
 
 /**
  * The floor: pools in the air on their arc with a landing ring, pools on the ground cooling over
- * their 6 seconds, and the vessels standing in them with their gauges. Every loop wants this.
+ * their life, and the volcanoes standing in them with their gauges. Every loop wants this.
  */
 function field(
   ctx: PreviewCtx, pools: Pool[], vessels: Vessel[],
@@ -77,33 +76,33 @@ function field(
     const t = elapsed / 1000;
     for (let i = pools.length - 1; i >= 0; i--) {
       const p = pools[i];
+      const r = p.r ?? 27;
+      const lifeMs = p.life ?? 6000;
+      const flight = p.r ? 0 : 260;
       const age = elapsed - p.born;
-      if (age < 260) {
+      if (age < flight) {
         // Still in the air: an arc, and the ring that says where it is going to land.
-        const f = age / 260;
+        const f = age / flight;
         const x = Phaser.Math.Linear(p.fromX, p.x, f);
         const y = Phaser.Math.Linear(p.fromY, p.y, f) - Math.sin(f * Math.PI) * 44;
         objs.fillStyle(ctx.tint(MAG.magma), 0.3); objs.fillCircle(x, y, 13);
         objs.fillStyle(ctx.tint(MAG.lava), 1); objs.fillCircle(x, y, 8);
         objs.fillStyle(ctx.tint(MAG.white), 0.8); objs.fillCircle(x - 2, y - 2, 3.2);
         objs.lineStyle(1.6, ctx.tint(MAG.ember), 0.35 + f * 0.35);
-        objs.strokeEllipse(p.x, p.y, 27 * 1.7 * (0.5 + f * 0.5), 27 * 1.15 * (0.5 + f * 0.5));
+        objs.strokeEllipse(p.x, p.y, r * 1.7 * (0.5 + f * 0.5), r * 1.15 * (0.5 + f * 0.5));
         continue;
       }
-      const life = age - 260;
-      if (life > 6000) { pools.splice(i, 1); continue; }
+      const life = age - flight;
+      if (life > lifeMs) { pools.splice(i, 1); continue; }
       // The crust skins over as it cools — the warning that it is nearly finished.
-      const heat = Phaser.Math.Clamp(1 - (life / 6000) * 1.15, 0.05, 1);
-      const fade = Phaser.Math.Clamp((6000 - life) / 900, 0, 1);
-      moltenPool(ground, ctx.tint, p.x, p.y, 27, heat, t, p.born % 999, fade);
+      const heat = Phaser.Math.Clamp(1 - (life / lifeMs) * 1.15, 0.05, 1);
+      const fade = Phaser.Math.Clamp((lifeMs - life) / Math.min(900, lifeMs * 0.5), 0, 1);
+      moltenPool(ground, ctx.tint, p.x, p.y, r, heat, t, p.born % 999, fade);
     }
     for (const v of vessels) {
       const ratio = v.p / v.max;
-      if (v.kind === 'volcano') volcanoCone(objs, ctx.tint, v.x, v.y + v.r * 0.5, v.r, ratio, t, v.seed);
-      else dragonEgg(objs, ctx.tint, v.x, v.y, v.r, ratio, t, v.seed);
-      const isEgg = v.kind === 'egg';
-      pressureGauge(gauges, ctx.tint, v.x, v.y - (isEgg ? v.r * 1.5 : v.r * 2.1),
-        isEgg ? 62 : 48, ratio, isEgg ? MAG.scaleLit : MAG.magma);
+      volcanoCone(objs, ctx.tint, v.x, v.y + v.r * 0.5, v.r, ratio, t, v.seed);
+      pressureGauge(gauges, ctx.tint, v.x, v.y - v.r * 2.1, 48, ratio, MAG.magma);
     }
   });
 }
@@ -111,6 +110,12 @@ function field(
 /** Lob one pool, exactly as `firePlume` and `ventPool` do. */
 function lob(pools: Pool[], from: { x: number; y: number }, x: number, y: number, born: number): void {
   pools.push({ x, y, born, fromX: from.x, fromY: from.y });
+}
+
+/** The real recoil: 240px eased out over 380ms, exactly as `updateFly` plays it. */
+function recoil(from: { x: number; y: number }, ang: number, dist: number, u: number): { x: number; y: number } {
+  const ease = 1 - (1 - u) * (1 - u);
+  return { x: from.x + Math.cos(ang) * dist * ease, y: from.y + Math.sin(ang) * dist * ease };
 }
 
 // ══ CLICK — Plume ═════════════════════════════════════════════════════
@@ -169,6 +174,7 @@ export const plume: PreviewScript = {
       molten(av)?.setVenting(false);
       readout.setText('and each pool cools over 6 seconds. The grey crust is the warning.');
     });
+    ctx.at(8200, () => readout.setText('at the helm of the ship this click is six cannons instead — see Molten Mutiny'));
   },
 };
 
@@ -207,7 +213,7 @@ export const volcano: PreviewScript = {
     });
 
     const site = { x: ctx.w * 0.44, y: ctx.cy };
-    const v: Vessel = { ...site, r: 30, p: 0, max: 100, kind: 'volcano', seed: 7 };
+    const v: Vessel = { ...site, r: 30, p: 0, max: 100, seed: 7 };
 
     ctx.at(300, () => {
       vessels.push(v);
@@ -321,7 +327,7 @@ export const bloat: PreviewScript = {
     const fx = fxOf(ctx);
     const av = ctx.useAvatar(() => new MagmaAvatar(ctx.scene, ctx.tint));
     av.setFacing(ctx.aim);
-    const vessels: Vessel[] = [{ x: ctx.cx - 54, y: ctx.cy + 14, r: 26, p: 90, max: 250, kind: 'egg', seed: 3 }];
+    const vessels: Vessel[] = [{ x: ctx.cx - 54, y: ctx.cy + 14, r: 30, p: 40, max: 100, seed: 3 }];
     field(ctx, [], vessels);
     const victim = { x: ctx.cx + 78, y: ctx.cy - 4 };
     dummyAt(ctx, victim);
@@ -361,199 +367,265 @@ export const bloat: PreviewScript = {
       float(ctx, ctx.cx, ctx.cy - 50, '💥 BLOCKED', hex(MAG.gold), 14);
       float(ctx, victim.x, victim.y - 24, '30', '#ffb3aa', 15);
       vessels[0].p += 25;
-      float(ctx, vessels[0].x, vessels[0].y - 48, '+25 pressure', hex(MAG.scaleLit), 11);
-      readout.setText('the whole hit refused, 30 back in a 96px ring, and 25 into your own egg');
+      float(ctx, vessels[0].x, vessels[0].y - 70, '+25 pressure', hex(MAG.ember), 11);
+      readout.setText('the whole hit refused, 30 back in a 96px ring, and 25 into your own volcano');
     });
     ctx.at(5200, () => readout.setText('it intercepts before shields and armour — the answer to one huge hit, not to chip'));
     ctx.at(7000, () => readout.setText('8s cooldown on a 10s window: it can very nearly be kept up permanently'));
   },
 };
 
-// ══ F — Magma Jet ══════════════════════════════════════
+// ══ F — Blunder-Boil ══════════════════════════════════════════════════
 
-export const jet: PreviewScript = {
+export const blunderBoil: PreviewScript = {
   duration: 13000,
   scale: 0.83,
   bodyTexture: BODY,
-  caption: 'F — hold for a cone of flame at the cursor and 330 px/s of thrust the other way',
+  caption: 'F — a cone of lava for 15 at the cursor, and the recoil throws you 240px the other way',
   run(ctx) {
     const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new MagmaAvatar(ctx.scene, ctx.tint));
-    av.setFacing(ctx.aim);
-    molten(av)?.setVenting(true);
-    const vessels: Vessel[] = [{ x: ctx.cx + 170, y: ctx.cy + 50, r: 26, p: 20, max: 250, kind: 'egg', seed: 11 }];
-    field(ctx, [], vessels);
-    const victim = { x: ctx.cx + 130, y: ctx.cy - 20 };
+    const av = ctx.useAvatar(() => new MagmaAvatar(ctx.scene, ctx.tint), { manual: true });
+    const victim = { x: ctx.cx + 110, y: ctx.cy - 10 };
     dummyAt(ctx, victim);
+    const vessels: Vessel[] = [{ x: ctx.cx - 150, y: ctx.cy + 40, r: 30, p: 30, max: 100, seed: 11 }];
+    field(ctx, [], vessels);
     const readout = label(ctx, ctx.w * 0.5, 12, '#ff8b22', 11);
-
-    // Where the flame is pointed, whether the throttle is open, and how much fuel is left.
-    const jetState = { aimX: victim.x, aimY: victim.y, on: false, spent: 0, bodyX: ctx.cx, bodyY: ctx.cy };
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
     const gauge = label(ctx, ctx.w * 0.5, ctx.h - 18, '#ffc44a', 10);
 
+    // The pirate, the shot he last fired, and the two charges.
+    const st = { x: ctx.cx, y: ctx.cy, charges: 2, reloadAt: -1, shotAt: -1, shotX: 0, shotY: 0, shotAng: 0, flyAng: 0 };
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+
+    const fire = (at: number, tx: number, ty: number): void => ctx.at(at, () => {
+      if (st.charges <= 0) return;
+      if (st.charges === 2) st.reloadAt = at + 3000;
+      st.charges--;
+      st.shotAt = at;
+      st.shotX = st.x; st.shotY = st.y;
+      st.shotAng = Math.atan2(ty - st.y, tx - st.x);
+      st.flyAng = st.shotAng + Math.PI;
+      av.play('punch', st.shotAng);
+      molten(av)?.setVenting(true);
+      ctx.capture(() => {
+        fx.erupt(st.x + Math.cos(st.shotAng) * 16, st.y + Math.sin(st.shotAng) * 16, 36, MAG.lava);
+        fx.shock(st.x, st.y, 10, 54, MAG.gold, 380);
+        fx.smoke(st.x, st.y, 5, 700);
+      });
+      float(ctx, st.x, st.y - 52, '💥 BLUNDER-BOIL', hex(MAG.lava), 12);
+      // The cone: 160px, 0.5 rad either side, widening a touch with distance.
+      const d = Phaser.Math.Distance.Between(st.x, st.y, victim.x, victim.y);
+      const off = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(victim.y - st.y, victim.x - st.x) - st.shotAng));
+      if (d <= 160 && off <= 0.5 + 14 / Math.max(24, d)) float(ctx, victim.x, victim.y - 26, '15', '#ffb3aa', 15);
+      for (const v of vessels) {
+        const dv = Phaser.Math.Distance.Between(st.x + Math.cos(st.shotAng) * 88, st.y + Math.sin(st.shotAng) * 88, v.x, v.y);
+        if (dv <= 80 + v.r) { v.p = Math.min(100, v.p + 15); float(ctx, v.x, v.y - 70, '+15 pressure', hex(MAG.ember), 11); }
+      }
+    });
+
     ctx.onFrame((delta, elapsed) => {
-      const dt = delta / 1000;
-      const t = elapsed / 1000;
       g.clear();
-      if (jetState.on && jetState.spent < 3000) {
-        jetState.spent += delta;
-        const ang = Math.atan2(jetState.aimY - jetState.bodyY, jetState.aimX - jetState.bodyX);
-        // The thrust: the caster is pushed straight back down the line they are burning along.
-        jetState.bodyX -= Math.cos(ang) * 330 * dt * 0.45;
-        jetState.bodyY -= Math.sin(ang) * 330 * dt * 0.45;
-        av.setFacing(ang);
-        const left = Phaser.Math.Clamp(1 - jetState.spent / 3000, 0, 1);
-        breathCone(g, ctx.tint,
-          jetState.bodyX + Math.cos(ang) * 12, jetState.bodyY + Math.sin(ang) * 12, ang,
-          175, 0.42, t, 3, MAG.lava, MAG.magma, 0.6 + left * 0.4);
-        // The exhaust out of the back, which is the visual reason the caster is retreating.
+      // Reload, one charge at a time.
+      if (st.charges < 2 && st.reloadAt >= 0 && elapsed >= st.reloadAt) {
+        st.charges++;
+        if (st.charges < 2) st.reloadAt = elapsed + 3000;
+      }
+      // The recoil, played out as position over 380ms.
+      if (st.shotAt >= 0 && elapsed - st.shotAt <= 380) {
+        const u = (elapsed - st.shotAt) / 380;
+        const p = recoil({ x: st.shotX, y: st.shotY }, st.flyAng, 240, u);
+        st.x = Phaser.Math.Clamp(p.x, 40, ctx.w - 40);
+        st.y = Phaser.Math.Clamp(p.y, 40, ctx.h - 40);
+        const fade = Phaser.Math.Clamp(1 - u * 1.6, 0, 1);
+        if (fade > 0) {
+          breathCone(g, ctx.tint, st.shotX + Math.cos(st.shotAng) * 12, st.shotY + Math.sin(st.shotAng) * 12, st.shotAng,
+            160 * (0.7 + u * 0.3), 0.5 * (0.8 + u * 0.3), elapsed / 1000, 3, MAG.lava, MAG.magma, fade);
+        }
         for (let i = 0; i < 3; i++) {
-          const a = ang + Math.PI + (i - 1) * 0.28;
-          const len = 20 + Math.sin(t * 22 + i * 2) * 7;
-          g.fillStyle(ctx.tint(i === 1 ? MAG.white : MAG.gold), 0.55 * left);
+          const a = st.flyAng + Math.PI + (i - 1) * 0.3;
+          const len = 16 + Math.sin(elapsed / 45 + i * 2) * 6;
+          g.fillStyle(ctx.tint(i === 1 ? MAG.white : MAG.gold), 0.5 * (1 - u));
           g.fillPoints([
-            new Phaser.Geom.Point(jetState.bodyX + Math.cos(a - 0.18) * 8, jetState.bodyY + Math.sin(a - 0.18) * 8),
-            new Phaser.Geom.Point(jetState.bodyX + Math.cos(a) * len, jetState.bodyY + Math.sin(a) * len),
-            new Phaser.Geom.Point(jetState.bodyX + Math.cos(a + 0.18) * 8, jetState.bodyY + Math.sin(a + 0.18) * 8),
+            new Phaser.Geom.Point(st.x + Math.cos(a - 0.2) * 8, st.y + Math.sin(a - 0.2) * 8),
+            new Phaser.Geom.Point(st.x + Math.cos(a) * len, st.y + Math.sin(a) * len),
+            new Phaser.Geom.Point(st.x + Math.cos(a + 0.2) * 8, st.y + Math.sin(a + 0.2) * 8),
           ], true);
         }
+      } else if (st.shotAt >= 0) {
+        molten(av)?.setVenting(false);
       }
-      av.update(delta, jetState.bodyX, jetState.bodyY, 1);
-      gauge.setText(`fuel ${((3000 - jetState.spent) / 1000).toFixed(1)}s`
-        + `   ·   ${jetState.on ? 'THROTTLE OPEN' : 'closed'}`);
+      av.setFacing(Math.atan2(victim.y - st.y, victim.x - st.x));
+      av.update(delta, st.x, st.y, 1);
+      const reload = st.charges < 2 && st.reloadAt >= 0 ? `   ·   next in ${Math.max(0, (st.reloadAt - elapsed) / 1000).toFixed(1)}s` : '';
+      gauge.setText(`charges ${'●'.repeat(st.charges)}${'○'.repeat(2 - st.charges)}${reload}`);
     });
 
-    ctx.at(300, () => {
-      ctx.capture(() => fx.erupt(ctx.cx, ctx.cy, 40, MAG.lava));
-      float(ctx, ctx.cx, ctx.cy - 52, '🚀 MAGMA JET', hex(MAG.lava), 12);
-      readout.setText('held, not pressed — three seconds of fuel, spent only while F is down');
-    });
-
-    // Burn the dummy, and be shoved away from it while doing so.
-    ctx.at(900, () => { jetState.on = true; jetState.aimX = victim.x; jetState.aimY = victim.y; });
-    for (let i = 0; i < 6; i++) {
-      ctx.at(1000 + i * 150, () => {
-        float(ctx, victim.x + (i % 2 ? 10 : -10), victim.y - 26 - i * 3, '12', '#ffb3aa', 13);
-      });
-    }
-    ctx.at(1200, () => readout.setText('12 every 0.15s in the cone — and 330 px/s carrying you the other way'));
-    ctx.at(1900, () => { jetState.on = false; readout.setText('let go and it stops, whatever fuel is left'); });
-
-    // Then the reason it exists: pointing it at your own egg is the fastest charge in the kit.
-    ctx.at(3400, () => {
-      jetState.bodyX = ctx.cx - 40; jetState.bodyY = ctx.cy - 30;
-      readout.setText('and the best charger in the kit is the same jet, aimed at your own egg');
-    });
-    ctx.at(4200, () => { jetState.on = true; jetState.aimX = vessels[0].x; jetState.aimY = vessels[0].y; });
-    for (let i = 0; i < 8; i++) {
-      ctx.at(4400 + i * 200, () => {
-        vessels[0].p = Math.min(250, vessels[0].p + 5.2);
-        ctx.capture(() => fx.ember(vessels[0].x, vessels[0].y, 3, 18, 420, MAG.scaleLit));
-      });
-    }
-    ctx.at(4600, () => readout.setText('26 pressure a second, for as long as the flame is on it'));
-    ctx.at(6100, () => { jetState.on = false; });
-    ctx.at(7200, () => readout.setText('the thrust is written over your movement — while the jet is open, aim is the steering'));
-    ctx.at(10000, () => readout.setText('with Jet Slam (F+), riding it into a wall brings a dozen rocks down around you'));
+    ctx.at(300, () => readout.setText('two charges in the gun, three seconds each to come back'));
+    fire(900, victim.x, victim.y);
+    ctx.at(1400, () => readout.setText('15 to everything in a 160px cone — and the recoil carries you 240px the other way'));
+    ctx.at(3200, () => readout.setText('aiming at them and getting away from them are the same press'));
+    // The second charge: across its own volcano, which is also a step further back.
+    ctx.at(4600, () => readout.setText('the second charge, across your own volcano: 15 pressure, and another step back'));
+    fire(5200, vessels[0].x, vessels[0].y);
+    ctx.at(7400, () => readout.setText('empty. One charge reloads at a time, three seconds each.'));
+    ctx.at(9600, () => readout.setText('with Pressure Gauge (F+): a third charge, and a gun that gets hotter the longer it sits full'));
+    ctx.at(11400, () => readout.setText('fired from the ship\'s deck, the recoil takes you over the side — the ship holds where it is'));
   },
 };
 
-// ══ Q — Dragon Kin ════════════════════════════════════════════════════
+// ══ Q — Molten Mutiny ═════════════════════════════════════════════════
 
-export const dragonKin: PreviewScript = {
-  duration: 15000,
-  scale: 0.9,
+export const moltenMutiny: PreviewScript = {
+  duration: 17000,
+  scale: 0.72,
   bodyTexture: BODY,
-  caption: 'Q — 250 pressure out of your own output buys 20s of −20% taken, +20% speed and breath',
+  caption: 'Q — the pendant keeps a fifth of what you deal; at 50 it wakes the ship',
   run(ctx) {
     const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new MagmaAvatar(ctx.scene, ctx.tint));
-    av.setFacing(ctx.aim);
+    const av = ctx.useAvatar(() => new MagmaAvatar(ctx.scene, ctx.tint), { manual: true });
     const rig = molten(av);
     const pools: Pool[] = [];
-    const vessels: Vessel[] = [];
+    const vessels: Vessel[] = [{ x: ctx.w * 0.62, y: ctx.cy + 40, r: 30, p: 20, max: 100, seed: 4 }];
     field(ctx, pools, vessels);
-    const victim = { x: ctx.cx + 170, y: ctx.cy - 6 };
+    const victim = { x: ctx.w * 0.74, y: ctx.cy - 30 };
     dummyAt(ctx, victim);
-    const readout = label(ctx, ctx.w * 0.5, 12, '#c07dff', 11);
-    const egg: Vessel = { x: ctx.cx + 70, y: ctx.cy + 30, r: 26, p: 0, max: 250, kind: 'egg', seed: 5 };
+    const readout = label(ctx, ctx.w * 0.5, 12, '#ff3b4a', 11);
+    const tally = label(ctx, ctx.w * 0.5, ctx.h - 18, '#ffc44a', 10);
 
+    const st = {
+      x: ctx.cx, y: ctx.cy, pendant: false, power: 0,
+      ship: null as null | { x: number; y: number; heading: number; hp: number; mounted: boolean },
+      aimX: victim.x, aimY: victim.y,
+    };
+    const balls: { x: number; y: number; vx: number; vy: number; born: number; seed: number }[] = [];
+    const hull = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    const rigG = ctx.adopt(ctx.scene.add.graphics().setDepth(7));
+
+    ctx.onFrame((delta, elapsed) => {
+      hull.clear(); rigG.clear();
+      const dt = delta / 1000;
+      const t = elapsed / 1000;
+      if (st.ship) {
+        st.ship.hp -= 15 * dt;
+        if (st.ship.mounted) {
+          // Steered at the cursor at the kit's 115 px/s, holding off at 14px.
+          const dx = st.aimX - st.ship.x, dy = st.aimY - st.ship.y;
+          const d = Math.hypot(dx, dy);
+          if (d > 14) {
+            const step = Math.min(d, 115 * dt);
+            st.ship.x += (dx / d) * step; st.ship.y += (dy / d) * step;
+            st.ship.heading += Phaser.Math.Angle.Wrap(Math.atan2(dy, dx) - st.ship.heading) * Math.min(1, dt * 4);
+          }
+          st.x = st.ship.x; st.y = st.ship.y - 4;
+        }
+        pirateShip(hull, ctx.tint, st.ship.x, st.ship.y, st.ship.heading, t, st.ship.hp / 300, 7, 'hull');
+        pirateShip(rigG, ctx.tint, st.ship.x, st.ship.y, st.ship.heading, t, st.ship.hp / 300, 7, 'rig');
+        pressureGauge(rigG, ctx.tint, st.ship.x, st.ship.y - 58, 70, st.ship.hp / 300, MAG.gold);
+        tally.setText(`hull ${Math.max(0, Math.round(st.ship.hp))} / 300   ·   −15 a second   ·   ${st.ship.mounted ? 'click = broadside · cursor steers · Space = over the side' : 'Space near it to board'}`);
+      } else if (st.pendant) {
+        tally.setText(`pendant ${Math.round(st.power)} / 50   ·   a fifth of every point you would deal`);
+      }
+      for (let i = balls.length - 1; i >= 0; i--) {
+        const b = balls[i];
+        b.x += b.vx * dt; b.y += b.vy * dt;
+        if (elapsed - b.born > 1500 || b.x > ctx.w + 20) { balls.splice(i, 1); continue; }
+        if (Phaser.Math.Distance.Between(b.x, b.y, victim.x, victim.y) <= 20) {
+          float(ctx, victim.x + (Math.random() - 0.5) * 20, victim.y - 26, '26', '#ffb3aa', 13);
+          ctx.capture(() => fx.erupt(b.x, b.y, 26, MAG.gold));
+          balls.splice(i, 1); continue;
+        }
+        const v = vessels[0];
+        if (v && v.p < 100 && Phaser.Math.Distance.Between(b.x, b.y, v.x, v.y) <= v.r + 8) {
+          v.p = 100;
+          ctx.capture(() => fx.erupt(v.x, v.y - v.r, 40, MAG.gold));
+          float(ctx, v.x, v.y - 90, '💣 LIT', hex(MAG.gold), 12);
+          balls.splice(i, 1); continue;
+        }
+        cannonball(rigG, ctx.tint, b.x, b.y, Math.atan2(b.vy, b.vx), t * 9 + b.seed, b.seed);
+      }
+      rig?.setPendant(st.pendant ? st.power / 50 : -1);
+      rig?.setHelm(!!st.ship?.mounted);
+      av.setFacing(Math.atan2(st.aimY - st.y, st.aimX - st.x));
+      av.update(delta, st.x, st.y, 1);
+    });
+
+    // ── The pendant ──
     ctx.at(300, () => {
-      vessels.push(egg);
+      st.pendant = true;
       av.play('raise');
       ctx.capture(() => {
-        fx.shock(egg.x, egg.y, 8, 90, MAG.scale, 620);
-        fx.ember(egg.x, egg.y - 16, 14, 34, 900, MAG.scaleLit);
+        fx.shock(st.x, st.y, 8, 50, MAG.pendant, 520);
+        fx.ember(st.x, st.y - 4, 8, 24, 640, MAG.pendantLit);
       });
-      float(ctx, egg.x, egg.y - 60, '🥚 DRAGON KIN', hex(MAG.scaleLit), 12);
-      readout.setText('250 pressure, 40 seconds to find it, and it vents nothing while you do');
+      float(ctx, st.x, st.y - 52, '📿 MOLTEN MUTINY', hex(MAG.pendantLit), 12);
+      readout.setText('a cursed pendant: 20% of every point you would deal goes into it instead');
     });
-    // Filled the honest way: lava lobbed onto it, 16 a second per pool.
-    for (let k = 0; k < 6; k++) {
-      ctx.at(900 + k * 700, () => {
+    // Paid for the honest way — plumes at the dummy and the volcano, each skimmed.
+    for (let k = 0; k < 5; k++) {
+      ctx.at(1100 + k * 900, () => {
+        if (st.ship) return;
         av.play('sweep', ctx.aim); rig?.setVenting(true);
-        for (let i = 0; i < 3; i++) {
-          const a = (i / 2 - 0.5) * 0.9 + Math.atan2(egg.y - ctx.cy, egg.x - ctx.cx);
-          lob(pools, { x: ctx.cx, y: ctx.cy },
-            egg.x + Math.cos(a) * 16, egg.y + Math.sin(a) * 16, 900 + k * 700);
+        for (let i = 0; i < 5; i++) {
+          const a = ctx.aim + ((i / 4) - 0.5) * 1.24;
+          lob(pools, { x: st.x, y: st.y }, st.x + Math.cos(a) * 110, st.y + Math.sin(a) * 110, 1100 + k * 900);
         }
+        // Compressed: a real fifty is a good deal more lava than this.
+        st.power = Math.min(50, st.power + 10);
+        ctx.capture(() => fx.ember(st.x, st.y + 6, 3, 10, 420, MAG.pendantLit));
+        float(ctx, st.x, st.y - 30, `📿 +10`, hex(MAG.pendantLit), 11);
+        if (k === 1) readout.setText('damage to a body, pressure into a volcano — the pendant takes its fifth of both');
+        if (k === 3) readout.setText('the gem brightens as it fills. Q again takes it off, and the curse keeps what it took.');
       });
     }
-    const hatched = { at: -1 };
-    ctx.onFrame((dt, elapsed) => {
-      if (hatched.at >= 0 || !vessels.length) return;
-      let on = 0;
-      for (const p of pools) {
-        if (elapsed - p.born < 260) continue;
-        if (Phaser.Math.Distance.Between(p.x, p.y, egg.x, egg.y) <= 27 + egg.r) on++;
-      }
-      // Compressed: the loop has 5 seconds, a real fill takes far longer. The rate is the kit's.
-      if (on) egg.p = Math.min(250, egg.p + 16 * on * 3.4 * (dt / 1000));
-      readout.setText(`${Math.round(egg.p)} / 250   —   16 a second per pool sitting on it`);
-      if (egg.p < 250) return;
-      hatched.at = elapsed;
-      vessels.length = 0;
-      rig?.setDragon(true);
-      rig?.setVenting(false);
-      ctx.capture(() => {
-        fx.erupt(egg.x, egg.y, 110, MAG.scale);
-        fx.ember(egg.x, egg.y, 24, 90, 1100, MAG.scaleLit);
-        fx.shock(egg.x, egg.y, 20, 170, MAG.scaleLit, 700);
-        fx.shock(ctx.cx, ctx.cy, 12, 96, MAG.scale, 620);
-      });
-      float(ctx, ctx.cx, ctx.cy - 56, '🐉 DRAGON KIN', hex(MAG.scaleLit), 14);
-      readout.setText('20 seconds: damage taken ×0.8, move speed ×1.2, and the click is fire');
-    });
 
-    // Dragon Breath: the real cone, on the real 0.9s clock.
-    const breath = { until: -1, tick: 0, dealt: 0 };
-    const cone = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
-    ctx.onFrame((_dt, elapsed) => {
-      cone.clear();
-      if (elapsed > breath.until) return;
-      const left = (breath.until - elapsed) / 900;
-      const grow = Phaser.Math.Clamp((1 - left) * 4, 0, 1) * Phaser.Math.Clamp(left * 3, 0, 1);
-      breathCone(cone, ctx.tint,
-        ctx.cx + Math.cos(ctx.aim) * 14, ctx.cy + Math.sin(ctx.aim) * 14, ctx.aim,
-        210 * (0.5 + grow * 0.5), 0.44 * (0.4 + grow * 0.6),
-        elapsed / 1000, 7, MAG.scaleLit, MAG.membrane, 0.55 + grow * 0.45);
-      if (elapsed < breath.tick) return;
-      breath.tick = elapsed + 180;
-      breath.dealt += 14;
-      float(ctx, victim.x, victim.y - 22, '14', '#ffb3aa', 12);
-    });
-    for (let i = 0; i < 3; i++) {
-      ctx.at(9200 + i * 1400, (): void => {
-        if (hatched.at < 0) return;
-        av.play('punch', ctx.aim);
-        breath.until = 9200 + i * 1400 + 900;
-        breath.tick = 0;
-        float(ctx, ctx.cx, ctx.cy - 50, '🐉 BREATHE', hex(MAG.breath), 11);
+    // ── The ship ──
+    ctx.at(5800, () => {
+      st.pendant = false;
+      rig?.setVenting(false);
+      st.ship = { x: st.x, y: st.y, heading: ctx.aim, hp: 300, mounted: true };
+      ctx.capture(() => {
+        fx.erupt(st.x, st.y, 90, MAG.magma);
+        fx.shock(st.x, st.y, 20, 150, MAG.gold, 700);
+        fx.shock(st.x, st.y, 14, 110, MAG.pendantLit, 620);
+        fx.smoke(st.x, st.y - 20, 12, 1400);
       });
-    }
-    ctx.at(10400, () => readout.setText('14 damage every 180ms inside 210px — and 25 pressure a second into anything of yours in the fire'));
-    ctx.at(13400, () => readout.setText('Plume is gone for the whole 20 seconds. Breath shares the click outright.'));
+      float(ctx, st.x, st.y - 64, '🏴‍☠️ THE SHIP RISES', hex(MAG.gold), 14);
+      readout.setText('fifty taken: the ship comes up under you — 300 hull, burning down 15 a second');
+      st.aimX = ctx.cx + 60; st.aimY = ctx.cy + 10;
+    });
+    ctx.at(7400, () => readout.setText('the cursor is the helm. It is slow, and it takes every hit meant for you.'));
+    // Broadsides.
+    const broadside = (at: number): void => ctx.at(at, () => {
+      if (!st.ship) return;
+      av.play('punch', Math.atan2(victim.y - st.y, victim.x - st.x));
+      const c = Math.cos(st.ship.heading), sn = Math.sin(st.ship.heading);
+      for (let i = 0; i < 6; i++) {
+        const u = -22 + (i % 3) * 18, v = (i < 3 ? -1 : 1) * 14;
+        const px = st.ship.x + c * u - sn * v, py = st.ship.y + sn * u + c * v;
+        const tx = i === 4 ? vessels[0].x : victim.x;
+        const ty = i === 4 ? vessels[0].y : victim.y;
+        const ang = Math.atan2(ty - py, tx - px) + (Math.random() - 0.5) * 0.24;
+        balls.push({ x: px, y: py, vx: Math.cos(ang) * 430, vy: Math.sin(ang) * 430, born: at, seed: i * 31 });
+        ctx.capture(() => { fx.ember(px, py, 4, 12, 360, MAG.gold); fx.smoke(px, py, 2, 600); });
+      }
+      float(ctx, st.ship.x, st.ship.y - 56, '💣 BROADSIDE', hex(MAG.gold), 12);
+    });
+    broadside(8600);
+    ctx.at(8900, () => readout.setText('the click is all six cannons: 26 apiece, heavy knockback — and a round across your own volcano lights it on the spot'));
+    broadside(10800);
+    ctx.at(12200, () => {
+      if (!st.ship) return;
+      st.ship.mounted = false;
+      const a = Math.atan2(st.aimY - st.y, st.aimX - st.x);
+      st.x = st.ship.x + Math.cos(a) * 50; st.y = st.ship.y + Math.sin(a) * 50;
+      float(ctx, st.x, st.y - 52, '🪂 OVER THE SIDE', '#8a8a8a', 12);
+      readout.setText('Space goes over the side. The ship holds where it is, still burning, still a hull between you and them.');
+    });
+    ctx.at(14400, () => {
+      if (!st.ship) return;
+      st.ship.mounted = true;
+      float(ctx, st.ship.x, st.ship.y - 52, '⚓ ABOARD', hex(MAG.gold), 12);
+      readout.setText('Space within 84px of the hull and you are back at the helm. When the hull runs out, it sinks and you are on your feet.');
+    });
   },
 };
 
@@ -563,21 +635,21 @@ export const pressure: PreviewScript = {
   duration: 14000,
   scale: 0.9,
   bodyTexture: BODY,
-  caption: 'Passive — every attack you own charges your own summons instead of a person',
+  caption: 'Passive — every attack you own charges your own volcano instead of a person',
   run(ctx) {
     const fx = fxOf(ctx);
     const av = ctx.useAvatar(() => new MagmaAvatar(ctx.scene, ctx.tint));
     av.setFacing(ctx.aim);
     const pools: Pool[] = [];
     const vessels: Vessel[] = [
-      { x: ctx.cx + 110, y: ctx.cy - 18, r: 30, p: 0, max: 100, kind: 'volcano', seed: 2 },
-      { x: ctx.cx + 220, y: ctx.cy + 34, r: 26, p: 0, max: 250, kind: 'egg', seed: 9 },
+      { x: ctx.cx + 110, y: ctx.cy - 18, r: 30, p: 0, max: 100, seed: 2 },
+      { x: ctx.cx + 220, y: ctx.cy + 34, r: 30, p: 0, max: 100, seed: 9 },
     ];
     field(ctx, pools, vessels);
     const readout = label(ctx, ctx.w * 0.5, 12, '#ffc44a', 11);
     const tally = label(ctx, ctx.w * 0.5, ctx.h - 18, '#ff8b22', 10);
     ctx.onFrame(() => tally.setText(
-      `volcano ${Math.round(vessels[0].p)} / 100     ·     egg ${Math.round(vessels[1].p)} / 250`));
+      `near volcano ${Math.round(vessels[0].p)} / 100     ·     far volcano ${Math.round(vessels[1].p)} / 100`));
 
     const bump = (v: Vessel, n: number, why: string, colour: number): void => {
       v.p = Math.min(v.max, v.p + n);
@@ -596,15 +668,20 @@ export const pressure: PreviewScript = {
       vessels[0].p = Math.min(100, vessels[0].p + 16 * (dt / 1000));
     });
     ctx.at(4400, () => bump(vessels[0], 10, 'a thrown rock: 10, and the rock is spent doing it', MAG.ember));
-    ctx.at(5600, () => bump(vessels[0], 8, 'a slap of the fist: 8', MAG.magma));
-    ctx.at(6800, () => bump(vessels[1], 22, 'a punch: 22 — the best charge in the kit', MAG.scaleLit));
-    ctx.at(8000, () => bump(vessels[1], 25, 'a popped Bloat: 25 to everything of yours inside 96px', MAG.gold));
-    ctx.at(9200, () => {
+    ctx.at(5600, () => bump(vessels[1], 15, 'a Blunder-Boil cone across it: 15, same as it does to a body', MAG.lava));
+    ctx.at(6800, () => bump(vessels[1], 25, 'a popped Bloat: 25 to everything of yours inside 96px', MAG.gold));
+    ctx.at(8000, () => {
       bump(vessels[1], 40, 'a volcano collapsing: 40 to every other vessel inside its 150px blast', MAG.gold);
       ctx.capture(() => fx.shock(vessels[0].x, vessels[0].y, 30, 150, MAG.gold, 720));
     });
-    ctx.at(10600, () => bump(vessels[1], 25, 'dragon breath: 25 a second to anything of yours in the fire', MAG.breath));
-    ctx.at(12000, () => readout.setText('a full vessel stops accepting — anything spent on a topped-out one is simply wasted'));
+    ctx.at(9400, () => {
+      vessels[1].p = 100;
+      ctx.capture(() => fx.erupt(vessels[1].x, vessels[1].y - 30, 40, MAG.gold));
+      float(ctx, vessels[1].x, vessels[1].y - 90, '💣 LIT', hex(MAG.gold), 12);
+      readout.setText('and a cannonball from the ship skips the ladder: whatever it had, it goes critical now');
+    });
+    ctx.at(11200, () => readout.setText('a full vessel stops accepting — anything spent on a topped-out one is simply wasted'));
+    ctx.at(12600, () => readout.setText('with the pendant on, a fifth of every one of these goes into the pendant instead'));
   },
 };
 
@@ -657,6 +734,275 @@ export const lavaOnTheFloor: PreviewScript = {
   },
 };
 
+// ══ PASSIVE — The Buccaneer ═══════════════════════════════════════════
+
+export const theBuccaneer: PreviewScript = {
+  duration: 14000,
+  scale: 1.15,
+  bodyTexture: BODY,
+  caption: 'Passive — a basalt ball in a pirate\'s kit; the pendant and the captain\'s commission are worn, not cast',
+  run(ctx) {
+    const av = ctx.useAvatar(() => new MagmaAvatar(ctx.scene, ctx.tint), { manual: true });
+    const rig = molten(av);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#ffc44a', 11);
+    const tally = label(ctx, ctx.w * 0.5, ctx.h - 18, '#ff8b22', 10);
+    const st = { facing: ctx.aim, pendant: -1, mastered: false, helm: false };
+
+    // Turning slowly on the spot, so every piece of the kit gets its moment facing the camera.
+    ctx.onFrame((delta, elapsed) => {
+      st.facing = ctx.aim + Math.sin(elapsed / 1400) * 1.1;
+      av.setFacing(st.facing);
+      rig?.setPendant(st.pendant);
+      rig?.setHelm(st.helm);
+      av.setMastered(st.mastered);
+      av.update(delta, ctx.cx, ctx.cy, 1);
+    });
+
+    ctx.at(300, () => {
+      readout.setText('the body is a sphere of cooled basalt with the melt in nine lit seams');
+      tally.setText('the same material as every object the kit puts on the field');
+    });
+    ctx.at(2600, () => {
+      readout.setText('everything else hangs off the ball: tricorn, eye patch, sash and buckle, lava beard, peg leg');
+      tally.setText('hook on the left hand, a 24px obsidian cutlass in the right — the hat is visibly melting');
+    });
+    ctx.at(5400, () => {
+      st.pendant = 0;
+      av.play('raise');
+      readout.setText('Molten Mutiny hangs the pendant on the chest: a red gem on a gold chain');
+      tally.setText('pendant 0 / 50');
+    });
+    ctx.onFrame((dt, elapsed) => {
+      if (elapsed < 5400 || elapsed > 8600 || st.pendant < 0) return;
+      st.pendant = Math.min(1, st.pendant + (dt / 1000) / 3.2);
+      tally.setText(`pendant ${Math.round(st.pendant * 50)} / 50   —   the gem brightens with what it has taken`);
+    });
+    ctx.at(8800, () => {
+      st.pendant = -1;
+      st.helm = true;
+      readout.setText('at the helm the scorch under his feet fades — the deck is under him');
+      tally.setText('the hands come up to the wheel');
+    });
+    ctx.at(11000, () => {
+      st.helm = false;
+      st.mastered = true;
+      av.play('flex');
+      readout.setText('mastered, he is the captain: gold lace on the brim, crossed cutlasses, a lava plume, an earring');
+      tally.setText('and wider coronas on both hands');
+    });
+  },
+};
+
+// ══ UPGRADED — Pressure Gauge (F+) ════════════════════════════════════
+
+export const upgradedPressureGauge: PreviewScript = {
+  duration: 16000,
+  scale: 0.83,
+  bodyTexture: BODY,
+  caption: 'F+ — three charges; sit on a full gun and it kicks harder, until it bursts',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new MagmaAvatar(ctx.scene, ctx.tint), { manual: true });
+    const victim = { x: ctx.cx + 60, y: ctx.cy - 6 };
+    dummyAt(ctx, victim);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#ff8b22', 11);
+    const gauge = label(ctx, ctx.w * 0.5, ctx.h - 18, '#ffc44a', 10);
+
+    // Compressed clock: the real gauge fills over 9 seconds and overpressures 6 later.
+    const st = { x: ctx.cx - 60, y: ctx.cy, fullAt: 300, pressure: 0, over: false, shotAt: -1, shotX: 0, shotY: 0, ang: 0, flyAng: 0, hot: 0, hit: false };
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const card = ctx.adopt(ctx.scene.add.graphics().setDepth(22));
+
+    ctx.onFrame((delta, elapsed) => {
+      g.clear(); card.clear();
+      if (st.fullAt >= 0) {
+        st.pressure = Phaser.Math.Clamp((elapsed - st.fullAt) / 3000, 0, 1);
+        st.over = elapsed - st.fullAt >= 5000;
+      }
+      // The F card, as ArenaScene paints it: darker and redder with the gauge, black when over.
+      const cw = 90, ch = 14, cx0 = ctx.w * 0.5 - cw / 2, cy0 = ctx.h - 40;
+      card.fillStyle(0x05070a, 0.85); card.fillRoundedRect(cx0 - 2, cy0 - 2, cw + 4, ch + 4, 3);
+      if (st.over) {
+        card.fillStyle(0x1a1416, 0.92);
+      } else {
+        const base = Phaser.Display.Color.ValueToColor(0xff7733);
+        const hot = Phaser.Display.Color.ValueToColor(0xc40c14);
+        const mix = Phaser.Display.Color.Interpolate.ColorWithColor(base, hot, 100, Math.round(st.pressure * 100));
+        card.fillStyle(Phaser.Display.Color.GetColor(mix.r, mix.g, mix.b), 0.45 + st.pressure * 0.45);
+      }
+      card.fillRect(cx0, cy0, cw, ch);
+      // Smoke off an overpressured gun.
+      if (st.over && st.shotAt < 0) {
+        for (let i = 0; i < 3; i++) {
+          const ph = ((elapsed / 1250) + i * 0.33) % 1;
+          g.fillStyle(ctx.tint(MAG.smoke), 0.5 * (1 - ph));
+          g.fillCircle(st.x + 14 + Math.sin(ph * 6 + i) * 4, st.y - 8 - ph * 26, 3 + ph * 4);
+        }
+      }
+      // The recoil flight, and the hot corona that makes it a hit.
+      if (st.shotAt >= 0 && elapsed - st.shotAt <= 380) {
+        const u = (elapsed - st.shotAt) / 380;
+        const p = recoil({ x: st.shotX, y: st.shotY }, st.flyAng, 240 + 200 * st.hot, u);
+        st.x = Phaser.Math.Clamp(p.x, 40, ctx.w - 40); st.y = Phaser.Math.Clamp(p.y, 40, ctx.h - 40);
+        const fade = Phaser.Math.Clamp(1 - u * 1.6, 0, 1);
+        if (fade > 0) {
+          breathCone(g, ctx.tint, st.shotX + Math.cos(st.ang) * 12, st.shotY + Math.sin(st.ang) * 12, st.ang,
+            160 * (0.7 + u * 0.3), 0.5 * (0.8 + u * 0.3), elapsed / 1000, 3, st.hot > 0.6 ? MAG.white : MAG.lava, MAG.magma, fade);
+        }
+        if (st.hot >= 0.6) {
+          g.lineStyle(2.2, ctx.tint(MAG.white), 0.5 + 0.3 * Math.sin(elapsed / 33));
+          g.strokeCircle(st.x, st.y, 34);
+          g.fillStyle(ctx.tint(MAG.gold), 0.18); g.fillCircle(st.x, st.y, 34);
+          if (!st.hit && Phaser.Math.Distance.Between(st.x, st.y, victim.x, victim.y) <= 34) {
+            st.hit = true;
+            ctx.capture(() => fx.erupt(victim.x, victim.y, 30, MAG.gold));
+            float(ctx, victim.x, victim.y - 44, '🏴‍☠️ 18 — RAMMED', hex(MAG.gold), 13);
+          }
+        }
+      }
+      av.setFacing(Math.atan2(victim.y - st.y, victim.x - st.x));
+      av.update(delta, st.x, st.y, 1);
+      gauge.setText(st.over ? 'OVERPRESSURED — the next F bursts'
+        : st.fullAt >= 0 ? `pressure ${Math.round(st.pressure * 100)}%   ·   F deals ${Math.round(15 + 20 * st.pressure)} · flies ${Math.round(240 + 200 * st.pressure)}px${st.pressure >= 0.6 ? ' · you are the shot' : ''}`
+          : 'charges ●●○  —  the gauge only runs on a full gun');
+    });
+
+    ctx.at(300, () => readout.setText('three charges banked: the gauge starts running, and the F card darkens'));
+    ctx.at(1600, () => readout.setText('a pressurised shot hits harder and throws you further — up to 35 and 440px'));
+    // Fire hot, *away* from the dummy, so the flight carries through them.
+    ctx.at(2800, () => {
+      st.hot = st.pressure; st.fullAt = -1; st.over = false;
+      st.shotAt = 2800; st.shotX = st.x; st.shotY = st.y; st.hit = false;
+      st.ang = Math.atan2(st.y - victim.y, st.x - victim.x); // away from them
+      st.flyAng = st.ang + Math.PI;
+      av.play('punch', st.ang);
+      ctx.capture(() => { fx.erupt(st.x + Math.cos(st.ang) * 16, st.y + Math.sin(st.ang) * 16, 50, MAG.white); fx.smoke(st.x, st.y, 5, 700); });
+      float(ctx, st.x, st.y - 52, `💥 BLUNDER-BOIL ${Math.round(st.hot * 100)}%`, hex(MAG.lava), 12);
+      readout.setText('past 60% you are the shot: fired away from them, the recoil carries you through them for 18');
+    });
+    ctx.at(5200, () => { st.pressure = 0; readout.setText('fire it and the gauge resets — the pressure was the cost of not firing'); });
+    // Now the long wait.
+    ctx.at(6400, () => {
+      st.x = ctx.cx - 60; st.y = ctx.cy; st.shotAt = -1;
+      st.fullAt = 6400;
+      readout.setText('full again, and left alone this time. Nine seconds to full pressure…');
+    });
+    ctx.at(9600, () => readout.setText('…and six more at full before the gun is overpressured. The card goes smoky black.'));
+    ctx.at(12400, () => {
+      st.fullAt = -1; st.over = false; st.pressure = 0;
+      av.play('punch', ctx.aim);
+      ctx.capture(() => {
+        fx.erupt(st.x, st.y, 120 * 0.7, MAG.magma);
+        fx.shock(st.x, st.y, 20, 120, MAG.white, 640);
+        fx.smoke(st.x, st.y, 14, 1300);
+      });
+      float(ctx, st.x, st.y - 56, '💀 OVERPRESSURE −35', hex(MAG.white), 14);
+      float(ctx, victim.x, victim.y - 30, '35', '#ffb3aa', 15);
+      readout.setText('press F now and it does not fire — it bursts: 35 to you and everyone within 120px');
+    });
+    ctx.at(14600, () => readout.setText('so a full gun is a clock. Spend a charge before the card goes black.'));
+  },
+};
+
+// ══ UPGRADED — Pirate King (Q+) ═══════════════════════════════════════
+
+export const upgradedPirateKing: PreviewScript = {
+  duration: 15000,
+  scale: 0.72,
+  bodyTexture: BODY,
+  caption: 'Q+ — crew of flame every 4–5s while the ship is up; each lunges for 20 and leaves fire',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new MagmaAvatar(ctx.scene, ctx.tint), { manual: true });
+    const rig = molten(av);
+    const pools: Pool[] = [];
+    field(ctx, pools, []);
+    const victim = { x: ctx.w * 0.72, y: ctx.cy - 20 };
+    dummyAt(ctx, victim);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#ffc44a', 11);
+    const tally = label(ctx, ctx.w * 0.5, ctx.h - 18, '#ffc44a', 10);
+
+    const ship = { x: ctx.cx, y: ctx.cy + 10, heading: ctx.aim, hp: 300 };
+    interface Sp { x: number; y: number; hp: number; seed: number; orbit: number; facing: number; dashUntil: number; dashFrom: number; vx: number; vy: number; hit: boolean; trail: number }
+    const crew: Sp[] = [];
+    const hull = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    const rigG = ctx.adopt(ctx.scene.add.graphics().setDepth(7));
+    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    rig?.setHelm(true);
+
+    const spawn = (at: number): void => ctx.at(at, () => {
+      if (crew.length >= 3) return;
+      const orbit = Math.random() * Math.PI * 2;
+      crew.push({ x: ship.x + Math.cos(orbit) * 50, y: ship.y + Math.sin(orbit) * 30, hp: 50, seed: at % 999, orbit, facing: ship.heading, dashUntil: 0, dashFrom: 0, vx: 0, vy: 0, hit: false, trail: 0 });
+      ctx.capture(() => { fx.ember(ship.x, ship.y - 20, 10, 30, 700, MAG.gold); fx.smoke(ship.x, ship.y - 20, 4, 800); });
+      float(ctx, ship.x, ship.y - 70, '👻 ALL HANDS', hex(MAG.gold), 12);
+    });
+    const lunge = (at: number, who: number): void => ctx.at(at, () => {
+      const sp = crew[who];
+      if (!sp) return;
+      const d = Math.max(1, Phaser.Math.Distance.Between(sp.x, sp.y, victim.x, victim.y));
+      const travel = Math.min(240, d + 60);
+      const speed = travel / 0.32;
+      sp.facing = Math.atan2(victim.y - sp.y, victim.x - sp.x);
+      sp.vx = Math.cos(sp.facing) * speed; sp.vy = Math.sin(sp.facing) * speed;
+      sp.dashFrom = at; sp.dashUntil = at + 320; sp.hit = false; sp.trail = 0;
+      ctx.capture(() => fx.ember(sp.x, sp.y, 5, 16, 400, MAG.gold));
+    });
+
+    ctx.onFrame((delta, elapsed) => {
+      hull.clear(); rigG.clear(); air.clear();
+      const dt = delta / 1000;
+      const t = elapsed / 1000;
+      ship.hp -= 15 * dt;
+      pirateShip(hull, ctx.tint, ship.x, ship.y, ship.heading, t, ship.hp / 300, 7, 'hull');
+      pirateShip(rigG, ctx.tint, ship.x, ship.y, ship.heading, t, ship.hp / 300, 7, 'rig');
+      for (let i = crew.length - 1; i >= 0; i--) {
+        const sp = crew[i];
+        sp.hp -= 8 * dt;
+        if (sp.hp <= 0) { ctx.capture(() => fx.smoke(sp.x, sp.y, 4, 700)); crew.splice(i, 1); continue; }
+        if (sp.dashUntil > elapsed) {
+          const px = sp.x, py = sp.y;
+          sp.x += sp.vx * dt; sp.y += sp.vy * dt;
+          sp.trail += Phaser.Math.Distance.Between(px, py, sp.x, sp.y);
+          while (sp.trail >= 18) { sp.trail -= 18; pools.push({ x: sp.x, y: sp.y + 14, born: elapsed, fromX: sp.x, fromY: sp.y, r: 15, life: 1400 }); }
+          if (!sp.hit && Phaser.Math.Distance.Between(sp.x, sp.y, victim.x, victim.y) <= 22) {
+            sp.hit = true;
+            ctx.capture(() => fx.erupt(victim.x, victim.y, 24, MAG.lava));
+            float(ctx, victim.x, victim.y - 44, '👻 20', hex(MAG.gold), 14);
+          }
+        } else {
+          sp.orbit += dt * 0.9;
+          const wx = ship.x + Math.cos(sp.orbit) * 54, wy = ship.y + Math.sin(sp.orbit) * 30 - 10;
+          sp.x += (wx - sp.x) * Math.min(1, dt * 3); sp.y += (wy - sp.y) * Math.min(1, dt * 3);
+          sp.facing = Math.atan2(victim.y - sp.y, victim.x - sp.x);
+        }
+        const dash = sp.dashUntil > elapsed ? Phaser.Math.Clamp((elapsed - sp.dashFrom) / 320, 0, 1) : 0;
+        pirateSpirit(air, ctx.tint, sp.x, sp.y - 16, sp.facing, t + sp.seed, sp.seed, Phaser.Math.Clamp(sp.hp / 50, 0, 1), dash);
+      }
+      av.setFacing(Math.atan2(victim.y - ship.y, victim.x - ship.x));
+      av.update(delta, ship.x, ship.y - 4, 1);
+      tally.setText(`crew ${crew.length} / 3   ·   ${crew.map((c) => `${Math.max(0, Math.round(c.hp))}hp`).join('  ')}   ·   hull ${Math.max(0, Math.round(ship.hp))}`);
+    });
+
+    ctx.at(300, () => readout.setText('the ship is up, so the crew climbs out: one every 4–5 seconds, three at most'));
+    spawn(600);
+    ctx.at(1400, () => readout.setText('50 health each, burning down 8 a second — about six seconds of a man'));
+    lunge(2400, 0);
+    ctx.at(2700, () => readout.setText('every 2–3 seconds one lunges through whoever is nearest: 20 on contact'));
+    ctx.at(3600, () => readout.setText('and the line he flew along is on fire for a moment behind him'));
+    spawn(4800);
+    lunge(5400, 0);
+    lunge(6200, 1);
+    ctx.at(7000, () => readout.setText('they hang in the air over the deck between lunges, and enemy shots burn them down faster'));
+    spawn(9200);
+    lunge(9800, 2);
+    lunge(10600, 1);
+    ctx.at(11600, () => readout.setText('three of them, each on its own clock — the ship is a fortress for as long as it floats'));
+    lunge(12800, 0);
+    ctx.at(13600, () => readout.setText('when the hull runs out they stop coming; the ones already out burn down where they are'));
+  },
+};
+
 // ══ MASTERY — Obsidian Coat ═══════════════════════════════════════════
 
 export const masteryObsidianCoat: PreviewScript = {
@@ -675,7 +1021,7 @@ export const masteryObsidianCoat: PreviewScript = {
     const tally = label(ctx, ctx.w * 0.5, ctx.h - 18, '#fff0c0', 10);
 
     // A cone already at 100 and already counting down — the passive only ever starts here.
-    const v: Vessel = { x: ctx.cx + 108, y: ctx.cy + 4, r: 30, p: 100, max: 100, kind: 'volcano', seed: 4 };
+    const v: Vessel = { x: ctx.cx + 108, y: ctx.cy + 4, r: 30, p: 100, max: 100, seed: 4 };
     const state = { over: 0, sawFrom: -1, coatFrom: -1, power: 0 };
 
     // The saw held against it, which is how the overfill actually gets in: 30 a second.

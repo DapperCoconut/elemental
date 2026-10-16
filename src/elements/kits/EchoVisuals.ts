@@ -970,12 +970,10 @@ const ECHO_AVATAR: AvatarSpec = {
 };
 
 /**
- * The echo character rig: two membrane-clawed hands, a pair of eyes that track the aim, and a set
- * of bat wings folded over the crown that beat when the fighter moves.
- *
- * The wings are the idea. This element's whole vocabulary is *the shape sound makes*, and its
- * wings are literally that primitive — so the character is visibly built out of the same stuff its
- * abilities are.
+ * The echo character rig: a plain dusk-indigo orb (the baked `elem-echo`), two ball hands, a pair
+ * of eyes that track the aim, and one accessory — a pair of tall **bat ears** on the crown that
+ * twitch as the fighter listens. The ears are the idea: this element hears the room rather than
+ * seeing it, so the one thing it wears is the organ it fights with.
  */
 export class EchoAvatar extends BaseAvatar {
   private fx: EchoFx;
@@ -991,13 +989,16 @@ export class EchoAvatar extends BaseAvatar {
   }
 
   /**
-   * Mastery tell — Vibration Detection, made visible: a third eye opens over the crown, the wings
-   * grow a fourth membrane finger, the hands gain a wide sonar corona and the eyes go white. Shape
-   * changes, not brighter tints — a tint alone vanishes at gameplay zoom.
+   * Mastery tell — Vibration Detection, made visible on what is already there: the ears grow
+   * taller with their inner membrane lit sonar-green (see drawExtras), the hands gain a wide
+   * sonar corona and rim, the eyes go white and the idle ping runs faster and sonar-coloured.
    */
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? ECHO.white : ECHO.ghost);
-    this.forEachHandLayer(0, (glow) => glow.setRadius(on ? 16 : 12));
+    this.forEachHandLayer(0, (glow) => {
+      glow.setRadius(on ? 16 : 12);
+      glow.setFillStyle(this.tint(on ? ECHO.sonar : ECHO.pale), on ? 0.24 : 0.18);
+    });
     this.forEachHandLayer(1, (shell) => {
       if (on) shell.setStrokeStyle(2, this.tint(ECHO.sonar), 0.9);
       else shell.setStrokeStyle();
@@ -1038,62 +1039,43 @@ export class EchoAvatar extends BaseAvatar {
   }
 
   /**
-   * Claws on each hand, wings folded over the crown, and — once mastered — a third eye and the
-   * four quadrant ticks of Vibration Detection turning around the head.
-   *
-   * Rooted above the head so it never covers the face, and drawn over the sprite so the membrane
-   * reads instead of only its dark tips clearing the body.
+   * The bat ears, rooted at the crown (`y - 18`) so they never cover the face. Each is a dark
+   * dusk point with a lighter membrane inside; they flick with a slow listening twitch, and
+   * prick up hard while the fighter is buffed.
    */
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    // ── Claws ──
-    for (let i = 0; i < 2; i++) {
-      const hx = this.armX[i], hy = this.armY[i];
-      if (hx === 0 && hy === 0) continue;
-      const out = Math.atan2(hy - y, hx - x);
-      echoChirpLayered(g, this.tint, hx, hy, out, 10 * this.intensity, 0.72, 8,
-        this.mastered ? ECHO.sonar : ECHO.mist, alpha * 0.9, 3, 0, false);
-    }
-
-    // ── The crown wings ──
-    const rootY = y - 18;
-    // They beat harder when the fighter is buffed, and idle to a slow breath otherwise.
-    const beat = Math.sin(this.t * (this.intensity > 1 ? 12 : 3.4));
-    const span = 15 * this.intensity;
-    const fingers = this.mastered ? 4 : 3;
-    for (const side of [-1, 1]) {
-      const sx = x + side * 5;
-      const wingAng = -Math.PI / 2 + side * (0.95 - beat * 0.3);
-      echoChirpLayered(g, this.tint, sx, rootY, wingAng,
-        span * (1.25 + beat * 0.16), 0.86, span * (0.82 - beat * 0.12),
-        ECHO.umbra, alpha * 0.95, fingers, 0, false);
-      // A lit leading bone down the front edge of each wing.
-      const tipA = wingAng + 0.86;
-      g.lineStyle(1.6, this.tint(this.mastered ? ECHO.sonar : ECHO.slate), alpha * 0.85);
-      strokePts(g, [
-        { x: sx, y: rootY },
-        { x: sx + Math.cos(tipA) * span * 1.35, y: rootY + Math.sin(tipA) * span * 1.35 },
-      ]);
-    }
-    // Ear points between the wings, so the crown still reads as a head.
-    for (const side of [-1, 1]) {
-      g.fillStyle(this.tint(ECHO.umbra), alpha * 0.95);
-      fillPts(g, [
-        { x: x + side * 4, y: rootY + 5 },
-        { x: x + side * 10, y: rootY - 9 },
-        { x: x + side * 11, y: rootY + 2 },
-      ]);
-    }
-
-    // ── Mastery: the third eye, and the quadrant ticks it reads the room with ──
-    if (this.mastered) {
-      eyeGlyph(g, this.tint, x, rootY - 6, 0, this.facing, 6.6, ECHO.sonar, alpha * 0.95,
-        0.55 + 0.45 * Math.abs(Math.sin(this.t * 0.9)));
-      for (let i = 0; i < 4; i++) {
-        const ang = this.t * 0.8 + (i / 4) * TAU;
-        echoChirpLayered(g, this.tint, x, y, ang, 30, 0.3, 6,
-          ECHO.sonar, alpha * 0.55, 2, 0, false);
-      }
-    }
     void a;
+    const m = this.mastered;
+    const rootY = y - 15;
+    const lean = Math.cos(this.facing) * 1.5;
+    const h = (m ? 22 : 18) * this.intensity;
+    for (const side of [-1, 1]) {
+      // Each ear twitches on its own clock, so they never move in lockstep.
+      const twitch = Math.sin(this.t * (this.intensity > 1 ? 9 : 2.2) + side * 1.7);
+      const tilt = side * (0.32 + twitch * 0.06);
+      const bx = x + lean + side * 9;
+      const tipX = bx + Math.sin(tilt) * h;
+      const tipY = rootY - Math.cos(tilt) * h;
+      const inX = bx - side * 7, outX = bx + side * 7.5;
+      g.fillStyle(this.tint(ECHO.umbra), alpha);
+      fillPts(g, [
+        { x: inX, y: rootY + 3 }, { x: tipX, y: tipY },
+        { x: outX, y: rootY + 4 },
+      ]);
+      g.fillStyle(this.tint(ECHO.dusk), alpha);
+      fillPts(g, [
+        { x: inX + side * 1, y: rootY + 2 }, { x: tipX - side * 0.4, y: tipY + 2 },
+        { x: outX - side * 1.4, y: rootY + 3 },
+      ]);
+      // The inner membrane — lit sonar-green and pulsing once mastered.
+      const mx = bx + Math.sin(tilt) * h * 0.25;
+      g.fillStyle(this.tint(m ? ECHO.sonar : ECHO.mist),
+        alpha * (m ? 0.65 + 0.25 * Math.sin(this.t * 4) : 0.75));
+      fillPts(g, [
+        { x: mx - 4.5, y: rootY + 2 },
+        { x: bx + Math.sin(tilt) * h * 0.8, y: rootY - Math.cos(tilt) * h * 0.8 },
+        { x: mx + 4.5, y: rootY + 2 },
+      ]);
+    }
   }
 }

@@ -2067,15 +2067,16 @@ const CREATION_AVATAR: AvatarSpec = {
 };
 
 /**
- * The Creation character rig: an artisan with two forge-hot ball hands, a hammer gripped in
- * the leading one, and a gear turning over the crown. Hands, eyes and gestures come from
- * BaseAvatar; what Creation adds is the tool it holds, the gearworks above it, and the forge
- * glow pooling at its feet.
+ * The Creation character rig: a plain forged-copper orb (the baked `elem-creation` texture),
+ * two forge-hot ball hands, a pair of eyes, and one smith's gear turning over the crown. The
+ * gear is the only accessory; the body alone says "creation".
+ *
+ * Mastery enhances the gear rather than adding to it: it grows, spins faster and its rim runs
+ * nexus-pink around a glowing bore; the eyes go white-hot, the hands gain a wider forge corona
+ * with a gold rim, and the under-glow intensifies.
  */
 export class CreationAvatar extends BaseAvatar {
   private fx: CreationFx;
-  /** Rises toward 1 while a build is being held, tilting the hammer up ready to strike. */
-  private cocked = 0;
 
   constructor(scene: Phaser.Scene, tint: CreationColorFn, depth = 6) {
     super(scene, tint, depth, CREATION_AVATAR);
@@ -2083,10 +2084,8 @@ export class CreationAvatar extends BaseAvatar {
   }
 
   /**
-   * Mastery tell — a permanent, readable upgrade to the character, so a mastered Creation user
-   * is identifiable before they cast anything: white-hot eyes, a wider forge corona with a
-   * brass rim on each hand, and (in `drawExtras`) a three-gear crown running nexus-pink with a
-   * heavier hammer. Shape changes, not just a brighter tint.
+   * Mastery tell — white-hot eyes and a wider forge corona with a gold rim on each hand;
+   * `drawExtras` enlarges the gear and runs it nexus-pink. Shape changes, not just a tint.
    */
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? CREATION.white : CREATION.spark);
@@ -2120,79 +2119,38 @@ export class CreationAvatar extends BaseAvatar {
     this.fx.sparks(x, y, 1, { speed: 20, size: 2, life: 460, gravity: 40, depth: 5 });
   }
 
-  /** Forge light pooling at the smith's feet, with heat rippling off it. */
+  /** Soft forge light pooled under the character. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
-    g.fillStyle(this.tint(CREATION.copper), a * 0.3 * this.intensity);
-    g.fillEllipse(x, y + 6, 52 * this.intensity, 22 * this.intensity);
-    g.fillStyle(this.tint(CREATION.ember), a * 0.22 * this.intensity);
-    g.fillEllipse(x, y + 5, 32 * this.intensity, 13 * this.intensity);
-    // Heat ripples lifting off the pool.
-    for (let i = 0; i < 3; i++) {
-      const p = (this.t * 0.7 + i / 3) % 1;
-      g.lineStyle(1.6, this.tint(CREATION.brass), a * 0.3 * (1 - p));
-      g.strokeCircle(x, y + 6, 12 + p * 26);
-    }
+    const k = this.intensity * (this.mastered ? 1.15 : 1);
+    g.fillStyle(this.tint(this.mastered ? CREATION.ember : CREATION.copper), a * (this.mastered ? 0.32 : 0.24) * k);
+    g.fillCircle(x, y, 28 * k);
+    g.fillStyle(this.tint(CREATION.soot), a * 0.22 * k);
+    g.fillEllipse(x, y + 8, 36 * k, 14 * k);
   }
 
   /**
-   * The hammer the character actually grips, plus the gear crown above it. The hammer is
-   * anchored to the leading hand's live position, so every gesture swings it for free. The
-   * gears are rooted at the crown (`y - 22`) and drawn over the sprite, so the near teeth pass
-   * in front of the head — which is what sells them as machinery rather than a halo.
+   * The smith's gear, rooted at the crown (`y - 22`) and drawn over the sprite so its lower
+   * teeth sit on the head. It turns faster the harder the character is working. Mastered, it is
+   * larger, spins quicker, and its rim and bore burn nexus-pink.
    */
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    const m = this.mastered ? 1 : 0;
-    // Cock the hammer while a hold is running (building, charging), relax otherwise.
-    const want = this.hold ? 1 : 0;
-    this.cocked += (want - this.cocked) * 0.08;
-
-    // ── The hammer ──
-    const hx = this.armX[1], hy = this.armY[1];
-    const grip = Math.atan2(hy - y, hx - x) - 0.5 - this.cocked * 0.7;
-    const scale = (this.mastered ? 1.25 : 1) * (0.95 + this.intensity * 0.08);
-    const cos = Math.cos(grip), sin = Math.sin(grip);
-    // Haft runs back through the fist; the head sits out past the knuckles.
-    g.lineStyle(4.2 * scale, this.tint(CREATION.timber), alpha * 0.95);
-    g.lineBetween(hx - cos * 9 * scale, hy - sin * 9 * scale, hx + cos * 12 * scale, hy + sin * 12 * scale);
-    g.fillStyle(this.tint(CREATION.soot), alpha);
-    forgedShard(g, hx + cos * 20 * scale, hy + sin * 20 * scale, grip + Math.PI, 19 * scale, 7 * scale);
-    g.fillStyle(this.tint(CREATION.steel), alpha);
-    forgedShard(g, hx + cos * 19 * scale, hy + sin * 19 * scale, grip + Math.PI, 16 * scale, 5.4 * scale);
-    g.fillStyle(this.tint(m ? CREATION.nexusLit : CREATION.silver), alpha * 0.9);
-    forgedShard(g, hx + cos * 17 * scale, hy + sin * 17 * scale, grip + Math.PI, 10 * scale, 2 * scale);
-    rivet(g, this.tint, hx + cos * 11 * scale, hy + sin * 11 * scale, 2.2 * scale, alpha);
-
-    // ── The gear crown ──
-    const rootY = y - 22;
-    const gears = this.mastered ? 3 : 1;
-    const rim = this.mastered ? CREATION.nexusLit : CREATION.brass;
-    for (let i = 0; i < gears; i++) {
-      // Interlocking: each extra gear sits on the previous one's pitch circle and counter-turns.
-      const ang = Math.PI + i * 2.1;
-      const r = (11 - i * 2.2) * scale;
-      const gx = x + (i === 0 ? 0 : Math.cos(ang) * (13 + i * 2) * scale);
-      const gy = rootY + (i === 0 ? 0 : Math.sin(ang) * 6 * scale);
-      drawGear(g, this.tint, gx, gy, r, 9 - i, this.t * (i % 2 === 0 ? 1.6 : -2.2) * (1 + this.intensity * 0.4),
-        CREATION.bronze, rim, alpha * 0.95);
+    const m = this.mastered;
+    const rootY = y - (m ? 24 : 22);
+    const scale = (m ? 1.18 : 1) * (0.95 + this.intensity * 0.08);
+    const r = 9 * scale;
+    const gx = x + Math.cos(this.facing) * 1.5;
+    const spin = this.t * (m ? 2.2 : 1.4) * (1 + this.intensity * 0.4);
+    if (m) {
+      g.fillStyle(this.tint(CREATION.nexus), 0.22 * a);
+      g.fillCircle(gx, rootY, r * 1.75);
     }
-
-    // Sparks lifting off the crown, more of them the harder the character is working.
-    const plumes = this.mastered ? 4 : 3;
-    for (let i = 0; i < plumes; i++) {
-      const p = (this.t * 1.4 + i / plumes) % 1;
-      const px = x + Math.sin(this.t * 2 + i * 2.3) * 12 * scale;
-      const py = rootY - 6 - p * 20 * this.intensity;
-      g.fillStyle(this.tint(p < 0.5 ? CREATION.spark : CREATION.brass), a * (1 - p) * 0.9);
-      g.fillCircle(px, py, (2.4 - p * 1.4) * scale);
-    }
-
-    // Mastery: rivets orbiting the head on a shallow ellipse, so the mastered silhouette reads
-    // even when the gears are edge-on.
-    if (this.mastered) {
-      for (let i = 0; i < 3; i++) {
-        const p = this.t * 1.4 + (i / 3) * TAU;
-        rivet(g, this.tint, x + Math.cos(p) * 23, rootY - 4 + Math.sin(p) * 6, 3, alpha * 0.95);
-      }
+    drawGear(g, this.tint, gx, rootY, r, 9, spin, CREATION.bronze, m ? CREATION.nexusLit : CREATION.brass, alpha * 0.97);
+    // The bore lights up once mastered — the Nexus burning in the hub.
+    if (m) {
+      g.fillStyle(this.tint(CREATION.nexus), 0.95 * alpha);
+      g.fillCircle(gx, rootY, r * 0.26);
+      g.fillStyle(this.tint(CREATION.nexusLit), 0.9 * a);
+      g.fillCircle(gx - r * 0.06, rootY - r * 0.06, r * 0.13);
     }
   }
 }

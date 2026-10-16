@@ -961,15 +961,17 @@ export class RubberAvatar extends BaseAvatar {
   }
 
   /**
-   * Mastery tell — Vulcanization, made visible: the fists go cured black under a hot rim, the
-   * eyes turn molten, the corona widens and the crown coil gains a turn (see drawExtras). Shape
-   * changes, not brighter tints — a tint alone vanishes at gameplay zoom.
+   * Mastery tell — Vulcanization, made visible on what is already there: the eyes turn molten,
+   * the fists gain a hot rim and a wider corona, and the crown spring itself cures (see
+   * drawExtras) — taller, an extra turn, heat-cured orange with a gold knob. No new parts.
    */
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? RUBBER.gold : RUBBER.cream);
-    this.forEachHandLayer(0, (glow) => glow.setRadius(on ? 16.5 : 12.5));
+    this.forEachHandLayer(0, (glow) => {
+      glow.setRadius(on ? 16.5 : 12.5);
+      glow.setFillStyle(this.tint(on ? RUBBER.flame : RUBBER.rose), on ? 0.3 : 0.2);
+    });
     this.forEachHandLayer(1, (shell) => {
-      shell.setFillStyle(this.tint(on ? RUBBER.cured : RUBBER.maroon), 1);
       if (on) shell.setStrokeStyle(2, this.tint(RUBBER.flame), 0.95);
       else shell.setStrokeStyle();
     });
@@ -1019,7 +1021,7 @@ export class RubberAvatar extends BaseAvatar {
       const bow = Phaser.Math.Clamp((reach - 26) * 0.4, -14, 14) * (i === 0 ? 1 : -1);
       rubberStrandLayered(g, this.tint, rootX, rootY, hx, hy, w * 1.4, w,
         bow + Math.sin(this.t * 5 + i * 2) * 3,
-        this.mastered ? RUBBER.cured : RUBBER.maroon, alpha * 0.95);
+        RUBBER.maroon, alpha * 0.95);
     }
   }
 
@@ -1039,10 +1041,13 @@ export class RubberAvatar extends BaseAvatar {
     this.coilVel += (-this.coil * 0.5 - this.coilVel * 0.16) + drop * 0.5;
     this.coil = Phaser.Math.Clamp(this.coil + this.coilVel * 0.25, -9, 9);
 
-    const turns = this.mastered ? 4 : 3;
-    const height = 20 * this.intensity - this.coil;
-    const wide = 8 * this.intensity + this.coil * 0.4;
-    const color = this.mastered ? RUBBER.cured : RUBBER.rose;
+    // Mastered, the same spring is vulcanized: taller, one more turn, glowing heat-cured orange,
+    // with a gold knob that throbs with heat.
+    const m = this.mastered;
+    const turns = m ? 4 : 3;
+    const height = (m ? 25 : 20) * this.intensity - this.coil;
+    const wide = (m ? 9 : 8) * this.intensity + this.coil * 0.4;
+    const color = m ? RUBBER.flame : RUBBER.rose;
     let px = x, py = rootY;
     for (let i = 1; i <= turns * 2; i++) {
       const u = i / (turns * 2);
@@ -1051,25 +1056,16 @@ export class RubberAvatar extends BaseAvatar {
       rubberStrandLayered(g, this.tint, px, py, nx, ny, 3.4, 3.2, 0, color, alpha * 0.95);
       px = nx; py = ny;
     }
-    // The knob on top, squashed by however hard the spring is loaded.
-    rubberBall(g, this.tint, px, py, 6 * this.intensity, 0,
-      Phaser.Math.Clamp(Math.abs(this.coil) / 9, 0, 0.7),
-      this.mastered ? RUBBER.flame : RUBBER.pink, alpha, 0,
-      this.mastered ? RUBBER.gold : RUBBER.cream);
-
-    // ── Mastery: heat coming off the cure, and a hot band round the middle ──
-    if (this.mastered) {
-      for (let i = 0; i < 3; i++) {
-        const p = (this.t * 1.1 + i / 3) % 1;
-        const ox = Math.sin(i * 2.1 + this.t * 2.6) * 14;
-        rubberStrandLayered(g, this.tint,
-          x + ox, rootY - 2, x + ox * 0.5, rootY - 2 - (8 + p * 22),
-          3.2 * (1 - p), 1, 6 * Math.sin(this.t * 7 + i), RUBBER.gold, alpha * 0.85 * (1 - p), false);
-      }
-      const bandY = y + 4;
-      rubberStrandLayered(g, this.tint, x - 21, bandY, x + 21, bandY, 3.6, 3.6,
-        3 * Math.sin(this.t * 4), RUBBER.flame, alpha * 0.9);
+    if (m) {
+      g.fillStyle(this.tint(RUBBER.flame), alpha * (0.3 + 0.15 * Math.sin(this.t * 6)));
+      g.fillCircle(px, py, 11 * this.intensity);
     }
+    // The knob on top, squashed by however hard the spring is loaded.
+    rubberBall(g, this.tint, px, py, (m ? 7 : 6) * this.intensity, 0,
+      Phaser.Math.Clamp(Math.abs(this.coil) / 9, 0, 0.7),
+      m ? RUBBER.gold : RUBBER.pink, alpha, 0,
+      m ? RUBBER.white : RUBBER.cream);
+
     void a;
   }
 }

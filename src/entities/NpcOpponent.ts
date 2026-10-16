@@ -57,7 +57,7 @@ const MOVEMENT_PROFILES: Record<string, MovementProfile> = {
   electricity: { archetype: 'skirmisher', range: [100, 220], retreatHp: 0.20 },
   slime:       { archetype: 'skirmisher', range: [140, 280], retreatHp: 0.28 },
   fate:        { archetype: 'zoner',      range: [240, 400], retreatHp: 0.32 },
-  sound:       { archetype: 'skirmisher', range: [160, 300], retreatHp: 0.28 },
+  sound:       { archetype: 'skirmisher', range: [70, 150],  retreatHp: 0.25 },
   light:       { archetype: 'skirmisher', range: [160, 320], retreatHp: 0.25 },
   magnet:      { archetype: 'skirmisher', range: [150, 290], retreatHp: 0.28 },
   metal:       { archetype: 'brawler',    range: [60, 160],  retreatHp: 0.15 },
@@ -83,13 +83,15 @@ const MOVEMENT_PROFILES: Record<string, MovementProfile> = {
   dune:        { archetype: 'skirmisher', range: [160, 300], retreatHp: 0.28 },
   paper:       { archetype: 'skirmisher', range: [160, 300], retreatHp: 0.28 },
   death:       { archetype: 'brawler',    range: [70, 170],  retreatHp: 0.15 },
-  fortune:     { archetype: 'zoner',      range: [240, 400], retreatHp: 0.32 },
+  fortune:     { archetype: 'skirmisher', range: [150, 300], retreatHp: 0.3 },
   cloth:      { archetype: 'brawler',    range: [90, 200],  retreatHp: 0.18 },
+  marrow:     { archetype: 'brawler',    range: [90, 200],  retreatHp: 0.18 },
+  tempest:    { archetype: 'skirmisher', range: [130, 300], retreatHp: 0.25 },
   psychic:     { archetype: 'zoner',      range: [240, 400], retreatHp: 0.32 },
   radiation:   { archetype: 'skirmisher', range: [150, 290], retreatHp: 0.28 },
   bind:        { archetype: 'summoner',   range: [220, 380], retreatHp: 0.30 },
   gum:         { archetype: 'brawler',    range: [50, 150],  retreatHp: 0.15 },
-  gluttony:    { archetype: 'brawler',    range: [80, 200],  retreatHp: 0.18 },
+  gluttony:    { archetype: 'brawler',    range: [90, 240],  retreatHp: 0.2 },
 };
 
 /**
@@ -101,21 +103,8 @@ const MOVEMENT_PROFILES: Record<string, MovementProfile> = {
 const DECISION_MS: Record<number, number> = { 1: 420, 2: 320, 3: 230, 4: 160, 5: 110 };
 const TRUE_NIGHTMARE_DECISION_MS = 85;
 
-/**
- * Psychic: the smallest stress pool an npc will spend its ultimate on. 60 points is three
- * seconds of coma at the ability's 20-per-second rate, which is roughly the point at which the
- * follow-up (half of every hit banked straight back as fresh stress) pays the cooldown back.
- */
-const COMA_WORTH_IT = 60;
-
-/**
- * Psychic: how far ahead the bot throws a Migraine charge. The fuse is 2.5 seconds, but leading
- * by all of it puts the mark somewhere the target was never really going — 1.4 s lands it just
- * in front of them, which is close enough to punish a straight line and loose enough to dodge.
- * `MAX_LEAD` caps the throw in pixels so a dash never drags the charge across the whole arena.
- */
-const PSYCHIC_BOMB_LEAD_S = 1.4;
-const PSYCHIC_BOMB_MAX_LEAD = 180;
+/** Psychic: the bot throws pawns from inside this — one step plus a diagonal capture. */
+const PSYCHIC_PAWN_RANGE = 200;
 
 /** True Nightmare — chance a cast's effect happens a second time. */
 const TRUE_NIGHTMARE_DOUBLE_CHANCE = 0.25;
@@ -210,8 +199,10 @@ export interface NpcAiState {
   npcSoulCorpseCount?: number;
   npcSoulAmalgamCount?: number;
   npcSoulGraveCount?: number;
-  /** Soul: where the npc's nearest drainable grave zombie is standing, if any (SoulKit-owned). */
-  npcSoulDrainPoint?: { x: number; y: number } | null;
+  /** Soul: the npc's nearest own grave zombie in lantern range — kills + corpses (SoulKit-owned). */
+  npcSoulLanternTarget?: { x: number; y: number } | null;
+  /** Soul: a beam aim lining up 2+ targets, or a Soul Lord hemorrhage setup; null when not worth it. */
+  npcSoulBeamAim?: { x: number; y: number } | null;
   npcHuntBeastForm?: boolean;
   npcHuntTrailActive?: boolean;
   /** Blast is charge-gated inside HuntKit; its ability cooldown says nothing about that. */
@@ -254,6 +245,10 @@ export interface NpcAiState {
   npcSilenceSacrificeStab?: { x: number; y: number };
   /** E+ synergy: re-cast Watch onto this own watcher to grow it into a seeker. */
   npcSilenceMutateWatcher?: { x: number; y: number };
+  /** F synergy: the target is close enough to hold inside a Stalk aura — cast it now. */
+  npcSilenceStalkOpen?: boolean;
+  /** F → Click synergy: the target is Stalked and we are in their back shadow — stab here. */
+  npcSilenceBackstabAim?: { x: number; y: number };
   // Echo — no persistent ai state needed
   echoAttachActive?: boolean;
   // Quantum
@@ -347,19 +342,39 @@ export interface NpcAiState {
    */
   npcChalkLivingSlot?: 'e' | 'r' | 'f' | 'q' | null;
   // Magma
-  /** Hatched. Everything is aimed at the target rather than at its own summons. */
-  npcMagmaDragon?: boolean;
-  npcMagmaJet?: boolean;
   npcMagmaBloat?: boolean;
   npcMagmaVolcanoes?: number;
-  npcMagmaHasEgg?: boolean;
+  /** Blunder-Boil charges in hand. Zero means F is a reload message, not a shot. */
+  npcMagmaBlunderCharges?: number;
+  /** Pressure Gauge (F+): 0–1 on the gun. Past 0.6 the recoil flight itself hits people. */
+  npcMagmaGaugePressure?: number;
+  /** Pressure Gauge (F+): the next F bursts for 35 on the bot too — only worth it point blank. */
+  npcMagmaGaugeOver?: boolean;
+  /** Molten Mutiny's pendant is on and skimming. */
+  npcMagmaPendant?: boolean;
+  /** The ship is up. Q is unavailable until it sinks. */
+  npcMagmaShip?: boolean;
+  /** At the helm: the click is a broadside, movement is the kit's, F would throw it overboard. */
+  npcMagmaMounted?: boolean;
+  /**
+   * Magma synergy: a volcano of its own standing next to the player that one cannonball would
+   * light on the spot. The kit owns the geometry; aim the broadside here instead of at the body.
+   */
+  npcMagmaCannonVolcano?: { x: number; y: number };
   // Illusion
   /** The dance is running: it is untouchable and hopping, so it should just be shooting. */
   npcIllusionDancing?: boolean;
   /** A pane is already hanging — a second would only bend its own bullets twice. */
   npcIllusionHasVeil?: boolean;
-  /** The target is already folded, so the Tesseract has nothing left to spend itself on. */
-  npcIllusionTargetFolded?: boolean;
+  /** Its Guise is up: the clone is drawing the fire, so this is the time to just shoot. */
+  npcIllusionGuised?: boolean;
+  /**
+   * F+ Re-Trick is worth taking now — the clone is about to fade, or the player has found the
+   * real body. The kit owns the geometry and the upgrade check; the AI only acts on it.
+   */
+  npcIllusionRetrick?: boolean;
+  /** The player is behind an Illusion Guise: their shots cannot be seen, so none are dodged. */
+  playerShotsUnseen?: boolean;
   /**
    * The slot Masquerade is bound over for this bot, if any. The mask itself is put on by the
    * kit on a blind timer — the AI's only job is to stop casting the base ability it replaced.
@@ -419,29 +434,23 @@ export interface NpcAiState {
   /** Camo Fade has finished: the line is reaching the two fish only a hidden angler can land. */
   npcDepthsCamoed?: boolean;
 
-  // Gluttony
-  /**
-   * Somewhere the AI has to physically be, overriding chase/strafe entirely. Only ever a
-   * collection: something of its own has finished on the grill, is speared on a landed skewer,
-   * or is lying on the floor where a throw missed.
-   */
-  gluttonySeekPoint?: { x: number; y: number };
-  /** In butcher form: five different keys, and damage lands on the bar rather than the health. */
-  npcGluttonyButcher?: boolean;
-  /** Milliseconds left of butcher form. */
-  npcGluttonyHunger?: number;
-  /** How much is in the prep strip — the currency for both Feast and Maw Awakening. */
-  npcGluttonyFood?: number;
-  npcGluttonyHasMeat?: boolean;
-  /** Head down, half speed, two seconds committed. Nothing may interrupt it. */
-  npcGluttonyForaging?: boolean;
-  /** Room on the grate. A full grill makes throwing ingredients at it pointless. */
-  npcGluttonyGrillRoom?: boolean;
-  npcGluttonyMawAwake?: boolean;
-  /** How many of the bot's own ingredients are on the grate right now. */
-  npcGluttonyCooking?: number;
-  /** Where the grill is, so Charcoal Chuck can be aimed at it as fuel rather than as a weapon. */
-  gluttonyGrillPoint?: { x: number; y: number };
+  // Harvest (element id `gluttony`)
+  /** The middle of the bot's own mold, while the target is close but off it — lure them onto the rot. */
+  harvestSeekPoint?: { x: number; y: number };
+  /** One of the bot's own corrupt hearts within sickle reach: aim the loop's far side through it. */
+  npcHarvestHeartAim?: { x: number; y: number };
+  /** The target is standing on the bot's rotting mold. */
+  npcHarvestTargetOnMold?: boolean;
+  /** Corruption on the target, 0–100 — the crows and the scythe both scale off it. */
+  npcHarvestTargetCorruption?: number;
+  /** Reaping Hour would put the target under its execute line. */
+  npcHarvestCanExecute?: boolean;
+  /** The bot's Corrupt HP is at least its health: Consume floods the target with corruption. */
+  npcHarvestBiteHeavy?: boolean;
+  /** The target carries something Consume can steal. */
+  npcHarvestTargetBuffed?: boolean;
+  /** Mature cells of the bot's own mold — sow again when this is thin. */
+  npcHarvestMatureMold?: number;
 
   // Ruin
   /** A spike ring is already counting down; a second F would only replace it with itself. */
@@ -493,23 +502,39 @@ export interface NpcAiState {
    */
   deathWeaponPoint?: { x: number; y: number };
 
-  // Fortune
-  /** Coins in the purse. Everything the element does costs some of these. */
-  npcFortuneCoins?: number;
-  /** Coins already tied up, so the bot doesn't bank its way out of being able to shoot. */
-  npcFortuneInvested?: number;
-  /** Rounds left in the magazine. Zero means a reload is running and the trigger does nothing. */
-  npcFortuneAmmo?: number;
-  /** The golden beam is open: the kit is steering it, so no other key is worth pressing. */
-  npcFortuneBeaming?: boolean;
-  /** Turnstiles already up — a second wall would only restart a live one. */
-  npcFortuneWall?: boolean;
-  /**
-   * The mastery car is sitting on the bank key. Published by the kit rather than re-derived
-   * here, because which slot the enhancement landed on is the kit's business — the AI only
-   * needs to know that pressing E would be a refused (and audible) cast.
-   */
-  npcFortuneNoBank?: boolean;
+  // Gold (element id `fortune`)
+  /** Gold in the purse. Advance is the only thing that spends it. */
+  npcGoldCoins?: number;
+  /** Ten gold and no cards already open — published so a refused (and audible) E is never pressed. */
+  npcGoldCanAdvance?: boolean;
+  /** The cane lunge is carrying the body; nothing else is worth pressing until it lands. */
+  npcGoldLunging?: boolean;
+  /** Synergy: the target wears the bot's gold heart, so a plume on top of them makes them walk. */
+  npcGoldHeartLive?: boolean;
+  /** Synergy: Midas is laying gold floor under the target — worth chasing them across it. */
+  npcGoldMidasLive?: boolean;
+  /** Fray falls: the kit's gravity-corrected aim point that puts the clump through the target. */
+  npcGoldFrayAim?: { x: number; y: number };
+  /** Where the plume should land: on a hearted target, otherwise at the bot's own feet toward them. */
+  npcGoldPlumeAt?: { x: number; y: number };
+  /** Its own plume to stand in, loot to collect, or gold floor to run on. Soft seek. */
+  goldSeekPoint?: { x: number; y: number };
+
+  // Magnet
+  /** Gathering scrap or piloting the mech — hands off (the kit pilots the mech itself). */
+  npcMagnetBusy?: boolean;
+  /** Synergy: a Repulse at this point fires something worth firing (coins, a spike, a nail coming home, a shard to dash on). */
+  npcMagnetRepulseAt?: { x: number; y: number };
+  /** Synergy: a nail has sat in the target long enough — rip it out, then meet it with Repulse. */
+  npcMagnetRecall?: boolean;
+  /** Synergy: a planted spike to ride to — closes the gap (or opens it when hurt). */
+  npcMagnetZipTo?: { x: number; y: number };
+  /** Where to hang a Steel Spike: where the target is heading. */
+  npcMagnetSpikeAt?: { x: number; y: number };
+  /** Toss coins a short way toward the target so they hang inside the next Repulse cone. */
+  npcMagnetCoinAim?: { x: number; y: number };
+  /** Synergy: hold the coins in the air — a Repulse is nearly back and there are coins worth keeping. */
+  npcMagnetHover?: boolean;
 
   // Cloth
   /** A long pin is in a body or a wall: E is now the reel-in, not a throw. */
@@ -525,17 +550,67 @@ export interface NpcAiState {
   /** Something is webbed: it cannot move, so this is the free-damage window. */
   npcClothWebbed?: boolean;
 
-  // Psychic
-  /** Abilities currently sitting in the target's delayed-cast queue — the E/R decision. */
-  npcPsychicQueue?: number;
-  /** One of them is an ultimate, which is the only thing worth spending Mind Control on. */
-  npcPsychicBigCast?: boolean;
-  /** Stress on the target. The Q is a payout, so the bot waits for the pool to be worth it. */
-  npcPsychicStress?: number;
+  // Marrow
+  /** Occupied sockets on the bone bar, 0–5. A sixth cell is refused outright. */
+  npcMarrowCells?: number;
+  /** Mast cells still on their fuse — a second Mastacre on top of a live one is wasted. */
+  npcMarrowMasts?: number;
+  /** The fever, 0–100. High enough and the bot is happy to trade hits. */
+  npcMarrowInflammation?: number;
+  /** Dendricles has transformed: F is a T-cell summon, not a strike. */
+  npcMarrowTcellArmed?: boolean;
+
+  // Tempest
+  /** Off the floor: every key is its airborne form, and F does nothing. */
+  npcTempestAirborne?: boolean;
+  /** Gale Burst charges in hand, 0–2. A click with none is refused. */
+  npcTempestCharges?: number;
+  /** Live fronts of its own on the floor, 0–2. */
+  npcTempestFronts?: number;
   /**
-   * Mastery: the slot Utter Focus was dropped over, if any. The kit presses the window itself
-   * (it owns both the cooldown and the reason to open it), so this is only here to stop the AI
-   * pressing the ability that is no longer in that slot.
+   * Airborne with a front of its own to drop onto: R is a slam that destroys the front and
+   * bounces the bot higher than it started, which is the only way its height ever goes *up*
+   * without a key being spent — the combination the flight kit is built around.
+   */
+  npcTempestCanSlam?: boolean;
+  /**
+   * Falling and under 80px of height: a burst on itself *now* is the big 620 px/s lift rather
+   * than the ordinary 380, so this is the one moment the click is worth spending on the floor.
+   */
+  npcTempestLandingSoon?: boolean;
+  /** Holding someone in the sky: free damage for three seconds, nothing to aim at but them. */
+  npcTempestGrabbing?: boolean;
+  /** Its Storm Currents are running: the target cannot steer, so every shot is a hit. */
+  npcTempestEyeLive?: boolean;
+  /**
+   * Somewhere the AI has to physically be, overriding chase/strafe: the current the kit wants
+   * it to ride, offered on the kit's own flight schedule and only when one is in walking range.
+   */
+  tempestCurrentPoint?: { x: number; y: number };
+  /**
+   * A foe standing within 90px of a wall, with the aim point nudged so the burst throws them
+   * *into* it — the passive's 12 on top of the burst's 10. The kit owns the geometry.
+   */
+  npcTempestWallShot?: { x: number; y: number };
+
+  // Psychic
+  /**
+   * The move the kit wants the bot's click to make this tick — a piece sliding or jumping
+   * through the target, a rook taking one of the bot's own pieces for its aura, or (as the
+   * queen) the bot's own slide. Carried out with `ctx.psychicMovePiece(x, y)`.
+   */
+  npcPsychicMove?: { x: number; y: number };
+  /** Crowned: no legs, no pawns — every click is a queen move. */
+  npcPsychicQueen?: boolean;
+  /** How many of the bot's own pieces are on the board. */
+  npcPsychicPieces?: number;
+  /** Where to stand each fresh piece so its first move is already lined up on the target. */
+  npcPsychicBishopAt?: { x: number; y: number };
+  npcPsychicKnightAt?: { x: number; y: number };
+  npcPsychicRookAt?: { x: number; y: number };
+  /**
+   * Mastery: the slot Utter Focus was dropped over, if any. The kit presses the window itself,
+   * so this is only here to stop the AI pressing the ability that is no longer in that slot.
    */
   npcPsychicMasterySlot?: 'r' | 'f' | 'q';
 
@@ -544,19 +619,16 @@ export interface NpcAiState {
   npcRadiationTracers?: number;
   /** The flare gun is out — every click has to go into the same body or the ultimate is wasted. */
   npcRadiationFlares?: boolean;
-  /** Mid-drum or mid-fall: the kit owns the body, so nothing else is worth pressing. */
-  npcRadiationBusy?: boolean;
-  /** The target already has a dose, which is what turns the baton from an opener into a stun. */
+  /** Barrage's cone is open (or its burst is firing). The kit steers the cone; the bot just stays in range. */
+  npcRadiationBarraging?: boolean;
+  /** The target carries a dose: the Rod Baton stuns instead of dosing, and Barrage hits for 8 instead of 5. */
   npcRadiationTargetDosed?: boolean;
-  /**
-   * Mastery: a Gamma Tether post has the target on a chain, so they cannot leave a 150px circle.
-   * Every procedure in this kit needs the target to still be there in a second's time, so this
-   * is the window in which all of them are free. The kit plants the post itself — it owns the
-   * geometry — and publishes the fact here.
-   */
-  npcRadiationTethered?: boolean;
-  /** The slot the post was bound over, so the AI stops pressing the ability that is no longer there. */
-  npcRadiationMasterySlot?: 'e' | 'f' | 'q';
+  /** The target is stunned by the rod — a Barrage lock they cannot walk out of. */
+  npcRadiationTargetStunned?: boolean;
+  /** The bot's own airdrop is falling and it is not inside a bunker. A bunker round it eats the self-hit. */
+  npcRadiationNeedsCover?: boolean;
+  /** The bot is inside its own standing bunker — the place to stand while the airdrop lands. */
+  npcRadiationSheltered?: boolean;
 
   // Bind
   /** 0–100 of the patron's patience. Above 70 the bot stops spending anything at all. */
@@ -613,39 +685,38 @@ export interface NpcAiState {
   /** Paper Mastery: the slot Restructure took, which no longer holds the ability under it. */
   npcPaperRestructureSlot?: 'e' | 'r' | 'f' | null;
 
-  // Passion
-  /** A rose is already in its teeth; the kit throws that one, so F must not be re-cast. */
-  npcPassionHasRose?: boolean;
-  /** Mid-pose. Everything else can wait out the five seconds. */
-  npcPassionPosing?: boolean;
-  /** 0–1 of the target's love bar. The whole element is this number, so every branch reads it. */
-  npcPassionTargetLove?: number;
+  // Devotion (id `passion`)
+  /** 0–1 of the target's faith. The whole element is this number. */
+  npcDevotionFaith?: number;
+  /** Carried off by its own chariot: invisible, untouchable, and not casting. */
+  npcDevotionRiding?: boolean;
+  /** Holy water bottles in hand — E is refused at 0, so the routine must not ask. */
+  npcDevotionWaterCharges?: number;
   /**
-   * Passion Mastery: the centre of a perfume cloud the bot sprayed itself and has not finished
-   * drinking in. Standing in it is the only way the aura is ever banked, so the kit hands the
-   * point over rather than hoping the fight drifts through it.
+   * Synergy cast points, computed by PassionKit (which owns the geometry): where holy water
+   * should land, where the crucifix should stand (its own feet up close, a wall at range),
+   * where a grenade is worth throwing (the target pinned in water or on the crucifix's rim),
+   * whether the target is level for Ascendance, and the line to hold during its wind-up so the
+   * chariot carries the bot down onto them.
    */
-  passionCloudPoint?: { x: number; y: number };
-  /**
-   * Passion Mastery: the slot Perfume was bound over. The base ability underneath it is gone for
-   * the bot exactly as it is for a player, so the routine has to stop asking for it — the kit
-   * casts the spray itself, since enhancement ids are not in `element.abilities`.
-   */
-  npcPassionPerfumeSlot?: string;
+  npcDevotion?: {
+    waterPoint?: { x: number; y: number };
+    crucifixPoint?: { x: number; y: number };
+    grenadePoint?: { x: number; y: number };
+    ascendNow: boolean;
+    holdLineY?: number;
+  };
 
   /**
-   * Sound: milliseconds until this bot's harmonize window opens — `0` while it is open, and
-   * `Infinity` once the beat has gone past or the meter was never started. Every cast restarts
-   * the metronome, so a cast thrown a quarter-second early does not merely miss the bonus, it
-   * moves the next window as well. The kit owns the timing; this is a read of it.
+   * Sound: the kit runs the bot's metronome and baton itself. What the rotation reads is the one
+   * synergy (a Fermata slam's Out of Tune is only cashed by the free recast — `npcSoundDetonate`
+   * is true once the victim has been sour long enough to be worth detonating), the soul song the
+   * kit wants for the situation and the one playing, and whether the bot is on stage soloing.
    */
-  npcSoundHarmonizeIn?: number;
-  /**
-   * Sound Mastery: the slot Compose was bound over. The kit presses the composition itself
-   * (enhancement ids are not in `element.abilities`), so all the rotation has to do is stop
-   * asking for the ability that is no longer under that key.
-   */
-  npcSoundComposeSlot?: string;
+  npcSoundDetonate?: boolean;
+  npcSoundWantedSong?: string;
+  npcSoundSong?: string;
+  npcSoundSoloing?: boolean;
 
   /**
    * Conquest: the square the bot is walking to in order to place its next building. Every
@@ -872,7 +943,7 @@ export class NpcOpponent extends Fighter {
       body.setVelocity(this.trueDodgeVx, this.trueDodgeVy);
       dodging = true;
     }
-    if (!dodging && this.difficulty.dodgeRange > 0) {
+    if (!dodging && this.difficulty.dodgeRange > 0 && !aiState.playerShotsUnseen) {
       const projs = aiState.projectiles.getChildren();
       for (const go of projs) {
         if (!(go instanceof Projectile)) continue;
@@ -1057,11 +1128,11 @@ export class NpcOpponent extends Fighter {
       }
     }
 
-    // ── Gluttony: fetching what it cooked ────────────────────────
-    // Same shape as the Depths seek above: a bot that has something finished on the grate has
-    // nothing to gain from strafing on its way to pick it up.
-    if (aiState.gluttonySeekPoint) {
-      const seek = aiState.gluttonySeekPoint;
+    // ── Harvest: backing onto its own mold ───────────────────────
+    // Same shape as the Depths seek above: the bot walks into the middle of its rot so whoever is
+    // chasing it has to stand on the mold to keep swinging.
+    if (aiState.harvestSeekPoint) {
+      const seek = aiState.harvestSeekPoint;
       const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
       if (d > 6) {
         const a = Phaser.Math.Angle.Between(this.x, this.y, seek.x, seek.y);
@@ -1085,21 +1156,29 @@ export class NpcOpponent extends Fighter {
       }
     }
 
-    // ── Passion: standing in its own perfume ─────────────────────
-    // Softer than the seeks above — the cloud is worth walking into, not worth abandoning the
-    // fight for, so it only steers while the bot is actually outside the cloud and it keeps
-    // whatever the movement state was doing once it is in.
-    if (aiState.passionCloudPoint) {
-      const seek = aiState.passionCloudPoint;
+    // ── Gold: its own plume, the loot, the Midas floor ───────────
+    // Same soft shape as the other seeks here: worth walking into, not worth abandoning the
+    // fight for, so it only steers while the bot is outside and lets the movement state run once
+    // it arrives.
+    if (aiState.goldSeekPoint) {
+      const seek = aiState.goldSeekPoint;
       const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
-      if (d > 70) {
+      if (d > 24) {
         const a = Phaser.Math.Angle.Between(this.x, this.y, seek.x, seek.y);
         body.setVelocity(Math.cos(a) * this.speed, Math.sin(a) * this.speed);
       }
     }
 
+    // ── Devotion: holding the chariot's line ─────────────────────
+    // During Ascendance's wind-up the bot stays level with the line it drew, so the chariot
+    // scoops it up and drops it on the target. Only the vertical is steered; it keeps strafing.
+    if (aiState.npcDevotion?.holdLineY !== undefined) {
+      const dy = aiState.npcDevotion.holdLineY - this.y;
+      if (Math.abs(dy) > 14) body.setVelocity(body.velocity.x * 0.6, Math.sign(dy) * this.speed);
+    }
+
     // ── Earth: going to stand in its own weather ──────────────────
-    // Same soft shape as the perfume walk: Symbiosis only pays inside a quarter the bot raised,
+    // Same soft shape as the other seeks here: Symbiosis only pays inside a quarter the bot raised,
     // so it steers there while outside and leaves the movement state alone once it arrives.
     if (aiState.earthBiomePoint) {
       const seek = aiState.earthBiomePoint;
@@ -1111,7 +1190,7 @@ export class NpcOpponent extends Fighter {
     }
 
     // ── Wax: the hive to cash in, the candle to stand in, the payload to carry ──
-    // Same soft shape as the perfume walk above. A hive worth redeeming outranks the candle,
+    // Same soft shape as the other seeks here. A hive worth redeeming outranks the candle,
     // and strapped bombs outrank both: a bot wearing eight bombs has one job.
     if (this.element.id === 'wax') {
       // The candle is only worth walking back to when the bot needs the armour — otherwise the
@@ -1132,7 +1211,7 @@ export class NpcOpponent extends Fighter {
     }
 
     // ── Magma: standing in its own supercritical collapse ────────
-    // Same soft shape as the perfume walk above, and for the same reason: the coat is worth
+    // Same soft shape as the other seeks here, and for the same reason: the coat is worth
     // walking into, not worth abandoning the fight for. Inside the blast it goes back to
     // whatever the movement state was already doing.
     if (aiState.magmaObsidianPoint) {
@@ -1151,6 +1230,20 @@ export class NpcOpponent extends Fighter {
       const seek = aiState.deathWeaponPoint;
       const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
       if (d > 6) {
+        const a = Phaser.Math.Angle.Between(this.x, this.y, seek.x, seek.y);
+        body.setVelocity(Math.cos(a) * this.speed, Math.sin(a) * this.speed);
+      } else {
+        body.setVelocity(0, 0);
+      }
+    }
+
+    // ── Tempest: walking to a current ────────────────────────────
+    // Offered by the kit on its own flight schedule. Soft: it stops offering the point the
+    // moment the bot launches, so this never fights the airborne drift.
+    if (aiState.tempestCurrentPoint) {
+      const seek = aiState.tempestCurrentPoint;
+      const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
+      if (d > 30) {
         const a = Phaser.Math.Angle.Between(this.x, this.y, seek.x, seek.y);
         body.setVelocity(Math.cos(a) * this.speed, Math.sin(a) * this.speed);
       } else {
@@ -1311,6 +1404,12 @@ export class NpcOpponent extends Fighter {
     if (this.element.id === 'cloth') {
       return this.doClothAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
+    if (this.element.id === 'marrow') {
+      return this.doMarrowAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    if (this.element.id === 'tempest') {
+      return this.doTempestAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
     if (this.element.id === 'psychic') {
       return this.doPsychicAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
@@ -1330,19 +1429,16 @@ export class NpcOpponent extends Fighter {
   }
 
   /**
-   * Gluttony. Two entirely different routines behind one method, because the element is two
-   * kits sharing five keys — and the thing that decides which one it is running is a thirty
-   * second clock rather than anything about the fight.
+   * Harvest (element id `gluttony`). The kit's synergies are checked first, in the order they pay:
    *
-   * As the chef the ordering is economic before it is aggressive: Forage while it is too far
-   * away to be punished for standing still, throw whatever is raw at the grill (which the kit
-   * folds into the click for it, since the bot has no strip to click), and hold Feast until the
-   * larder is actually worth doubling. Charcoal is aimed at the grill roughly half the time it
-   * has something cooking, because superheating is worth more than fifteen damage.
+   * - **Reaping Hour executes** — the kit says when the swing would put the target under the line.
+   * - **Sickle → heart**: a heart of its own in reach is 75 Corrupt HP, worth more than any poke.
+   * - **Corrupt HP → heavy bite**: with as much rot as health, Consume floods the target.
+   * - **Consume steals**: a shielded or buffed target is bitten for what it carries.
+   * - **Mold → crows**: the frenzy waits for a corrupted target (or one standing in the rot).
    *
-   * As the butcher it stops economising entirely. Damage is free while the bar holds, so it
-   * closes, and the only patience left in the routine is holding the ultimate until there is
-   * something in the strip to feed the maw — a three-second awakening is not worth the key.
+   * Then the rotation: re-sow when its mold is thin, bite up close, scythe a corrupted target at
+   * range, and keep the sickle in the air.
    */
   private doGluttonyAbilities(
     target: Fighter,
@@ -1356,61 +1452,35 @@ export class NpcOpponent extends Fighter {
   ): string | null {
     void target;
     void time;
-    // Two seconds head-down is a real commitment; casting over the top of it wastes the slow.
-    if (aiState.npcGluttonyForaging) return null;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-    const food = aiState.npcGluttonyFood ?? 0;
+    const corruption = aiState.npcHarvestTargetCorruption ?? 0;
 
-    if (aiState.npcGluttonyButcher) {
-      const hunger = aiState.npcGluttonyHunger ?? 0;
-
-      // The maw is worth exactly what was fed into it, so a bare-larder awakening is refused.
-      if (!aiState.npcGluttonyMawAwake && !skipSpecials && food >= 2 && dist < 520) {
-        if (this.castAbility('glut-maw', buildContext(aimX, aimY))) return 'glut-maw';
-      }
-      // Cannibalize is the only thing in the form that buys time back without eating.
-      if (!skipSpecials && dist < 110) {
-        if (this.castAbility('glut-cannibalize', buildContext(aimX, aimY))) return 'glut-cannibalize';
-      }
-      // The skewer wants a lane, not a scuffle — and meat is the best food in the game.
-      if (!aiState.npcGluttonyHasMeat && !skipSpecials && dist > 130 && dist < 620) {
-        if (this.castAbility('glut-poach', buildContext(aimX, aimY))) return 'glut-poach';
-      }
-      // Change back on the last of the bar rather than being dumped out of the form mid-swing.
-      if (hunger > 0 && hunger < 2600 && food === 0) {
-        if (this.castAbility('glut-return', buildContext(aimX, aimY))) return 'glut-return';
-      }
-      if (dist < 120) {
-        if (this.castAbility('glut-cleave', buildContext(aimX, aimY))) return 'glut-cleave';
-      }
-      return null;
+    if (aiState.npcHarvestCanExecute && dist < 175) {
+      if (this.castAbility('harvest-reap', buildContext(aimX, aimY))) return 'harvest-reap';
+    }
+    const heart = aiState.npcHarvestHeartAim;
+    if (heart) {
+      if (this.castAbility('harvest-sickle', buildContext(heart.x, heart.y))) return 'harvest-sickle';
+    }
+    if (!skipSpecials && dist < 100 && (aiState.npcHarvestBiteHeavy || aiState.npcHarvestTargetBuffed)) {
+      if (this.castAbility('harvest-consume', buildContext(aimX, aimY))) return 'harvest-consume';
+    }
+    if (!skipSpecials && dist < 480 && (corruption >= 40 || aiState.npcHarvestTargetOnMold)) {
+      if (this.castAbility('harvest-frenzy', buildContext(aimX, aimY))) return 'harvest-frenzy';
     }
 
-    // ── Chef ──
-    // Transform on damage taken, or once there is enough in the strip to survive the form.
-    if (!skipSpecials && (hpRatio < 0.55 || (food >= 3 && dist < 340))) {
-      if (this.castAbility('glut-butcher', buildContext(aimX, aimY))) return 'glut-butcher';
+    // ── Rotation ──
+    if (!skipSpecials && (aiState.npcHarvestMatureMold ?? 0) < 30 && dist < 300) {
+      if (this.castAbility('harvest-sow', buildContext(aimX, aimY))) return 'harvest-sow';
     }
-    // Feast is a heal, and a heal at full health is thrown away.
-    if (!skipSpecials && hpRatio < 0.7 && food >= 3) {
-      if (this.castAbility('glut-feast', buildContext(aimX, aimY))) return 'glut-feast';
+    if (!skipSpecials && dist < 90 && (hpRatio < 0.6 || Math.random() < 0.5)) {
+      if (this.castAbility('harvest-consume', buildContext(aimX, aimY))) return 'harvest-consume';
     }
-    if (!skipSpecials && dist < 540) {
-      // Half the time the charcoal is fuel rather than a weapon — a superheated grill is worth
-      // more over a fight than one briquette to the chest, but only while something is on it.
-      const grill = aiState.gluttonyGrillPoint;
-      const atGrill = !!grill && (aiState.npcGluttonyCooking ?? 0) > 0 && Math.random() < 0.5;
-      const tx = atGrill ? grill!.x : aimX;
-      const ty = atGrill ? grill!.y : aimY;
-      if (this.castAbility('glut-charcoal', buildContext(tx, ty))) return 'glut-charcoal';
+    if (!skipSpecials && dist < 165 && corruption >= 55) {
+      if (this.castAbility('harvest-reap', buildContext(aimX, aimY))) return 'harvest-reap';
     }
-    // Two seconds of half speed is affordable out of reach and nowhere else.
-    if (!skipSpecials && food < 4 && dist > 260) {
-      if (this.castAbility('glut-forage', buildContext(aimX, aimY))) return 'glut-forage';
-    }
-    // The click is both the knife and the grill loader; GluttonyKit decides which from the strip.
-    if (dist < 700 || (aiState.npcGluttonyGrillRoom && food > 0)) {
-      if (this.castAbility('glut-knife', buildContext(aimX, aimY))) return 'glut-knife';
+    if (dist < 460) {
+      if (this.castAbility('harvest-sickle', buildContext(aimX, aimY))) return 'harvest-sickle';
     }
     return null;
   }
@@ -1505,19 +1575,19 @@ export class NpcOpponent extends Fighter {
   ): string | null {
     void target;
     void time;
-    void hpRatio;
-    // Mid-drum or mid-fall the kit owns the body; anything pressed now is thrown away.
-    if (aiState.npcRadiationBusy) return null;
+    // Mid-Barrage the kit steers the cone; anything pressed now would only distract from it, and
+    // a stray tracer would scrub the board on top.
+    if (aiState.npcRadiationBarraging) return null;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-    // Mastery: the post is played by the kit (it owns the geometry). All this has to do is stop
-    // pressing whichever ability is no longer in that slot.
-    const bound = aiState.npcRadiationMasterySlot;
-    // …and cash the window in when the kit has actually caught somebody. A tethered target is
-    // pinned inside 150px of a spot the bot chose, which is the one state in which the drum, the
-    // baton and the whole tracer chain stop being bets and start being certainties.
-    const held = !!aiState.npcRadiationTethered;
 
-    // The flare gun overrides everything. Nothing else is worth a button while it is out.
+    // ── Synergy: the airdrop is falling and the bunker eats the self-hit ──
+    // Checked before everything, including the flare gun: 200 damage to ourselves is the one
+    // thing in the kit that can lose the match on its own.
+    if (aiState.npcRadiationNeedsCover) {
+      if (this.castAbility('radiation-bunker', buildContext(aimX, aimY))) return 'radiation-bunker';
+    }
+
+    // The flare gun overrides everything else. Nothing is worth a button while it is out.
     if (aiState.npcRadiationFlares) {
       if (dist < 460 && this.castAbility('radiation-railgun', buildContext(aimX, aimY))) {
         return 'radiation-railgun';
@@ -1525,36 +1595,42 @@ export class NpcOpponent extends Fighter {
       return null;
     }
 
-    // The ultimate is only worth drawing where five rounds can actually be placed — and a
-    // tethered body cannot dodge the fifth one, which is the only round that ever misses.
-    if (!skipSpecials && bound !== 'q' && dist < (held ? 520 : 380)) {
+    // ── Synergy: a dosed target in reach — the rod stuns instead of dosing ──
+    if (aiState.npcRadiationTargetDosed && dist < 125) {
+      if (this.castAbility('radiation-baton', buildContext(aimX, aimY))) return 'radiation-baton';
+    }
+
+    // ── Synergy: a stunned target cannot leave the cone, and a dosed one takes 8 a round ──
+    if (!skipSpecials && dist < 520 && (aiState.npcRadiationTargetStunned || aiState.npcRadiationTargetDosed)) {
+      if (this.castAbility('radiation-barrage', buildContext(aimX, aimY))) return 'radiation-barrage';
+    }
+
+    // The ultimate is only worth drawing where five rounds can actually be placed — and with the
+    // bunker ready, so the drop it calls can be sat out.
+    if (!skipSpecials && dist < 380 && this.getCooldownRatio('radiation-bunker') >= 1) {
       if (this.castAbility('radiation-extermination', buildContext(aimX, aimY))) {
         return 'radiation-extermination';
       }
     }
 
-    // Sight before the shot: eight seconds of fatter hitboxes is eight seconds of not missing,
-    // and a miss is the only thing that can undo the tracers it is about to plant.
-    if (!skipSpecials && dist < 520) {
-      if (this.castAbility('radiation-xray', buildContext(aimX, aimY))) return 'radiation-xray';
+    // Cover when hurt and pressed, rather than as a reflex.
+    if (!skipSpecials && hpRatio < 0.5 && dist < 260 && !aiState.npcRadiationSheltered) {
+      if (this.castAbility('radiation-bunker', buildContext(aimX, aimY))) return 'radiation-bunker';
     }
 
-    // The drum wants a target close enough for the blast and the puddles to both matter — and a
-    // chained one cannot walk out of seven pools, so the range it is worth throwing at widens.
-    if (!skipSpecials && bound !== 'f' && dist < (held ? 460 : 300)) {
-      if (this.castAbility('radiation-waste', buildContext(aimX, aimY))) return 'radiation-waste';
-    }
-
-    // The baton is the finisher, not the opener — held until a dose is already on them. The
-    // chain plants that dose itself, so a tethered target is always worth the swing.
-    if (bound !== 'e' && dist < 150 && (aiState.npcRadiationTargetDosed || held)) {
+    // Too close: the rod as an opener, which doses the target for everything above.
+    if (dist < 110) {
       if (this.castAbility('radiation-baton', buildContext(aimX, aimY))) return 'radiation-baton';
     }
 
+    // Barrage on a clean target, at mid range where the cone is easiest to hold.
+    if (!skipSpecials && dist > 160 && dist < 420) {
+      if (this.castAbility('radiation-barrage', buildContext(aimX, aimY))) return 'radiation-barrage';
+    }
+
     // The engine. Held inside the range where the tracer will actually arrive, because the whole
-    // chain this bot is building dies on one stray click — unless the target is on a chain, in
-    // which case it is not going anywhere and the tracer cannot be walked out of.
-    const safeRange = held ? 700 : (aiState.npcRadiationTracers ?? 0) > 0 ? 420 : 620;
+    // chain this bot is building dies on one stray click.
+    const safeRange = (aiState.npcRadiationTracers ?? 0) > 0 ? 420 : 620;
     if (dist < safeRange) {
       if (this.castAbility('radiation-railgun', buildContext(aimX, aimY))) return 'radiation-railgun';
     }
@@ -1636,18 +1712,14 @@ export class NpcOpponent extends Fighter {
   }
 
   /**
-   * Psychic. The bot is playing the same information game the player is: it can see the queue
-   * over the target's head, so the ordering below is really "is something coming, and is it
-   * worth answering" rather than a rotation.
+   * Psychic — a chess player. The kit owns the board: it works out which piece can move
+   * through the target this tick (`npcPsychicMove`) and where each fresh piece should stand so
+   * its first move is already lined up (`npcPsychic*At`). The rotation only decides *when*.
    *
-   * Two rules keep it honest. It only reaches for Mind Control when the thing at the front of
-   * the queue is an ultimate — everything smaller is worth eating, and a seized click is five
-   * seconds spent on twelve damage. And it only cashes the Q in once the pool is worth at least
-   * three seconds of coma, because the ability is a payout rather than an opener: the coma is
-   * where the next pool comes from, and a two-point detonation buys none of it.
-   *
-   * The whip is the fallback and the engine. Everything else in the element exists to make room
-   * for more of it.
+   * Synergies, all kit-planned: a piece placed on a line through the target is a slide (or a
+   * knight's landing) waiting to happen; its aura is placed near the bot so the bot stands in
+   * it; a rook can take one of the bot's own tired pieces to wear its aura for 30 seconds; and
+   * the queen is pressed once the board is already full, because her ×3 multiplies on top.
    */
   private doPsychicAbilities(
     target: Fighter,
@@ -1660,67 +1732,61 @@ export class NpcOpponent extends Fighter {
     aiState: NpcAiState,
   ): string | null {
     void time;
+    void target;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-    const queued = aiState.npcPsychicQueue ?? 0;
-    const stress = aiState.npcPsychicStress ?? 0;
-    // Mastery: whichever of R/F/Q Utter Focus was dropped on is not that ability any more. The
-    // kit opens the window on its own schedule, so all the rotation has to do is stop pressing
-    // a key that no longer answers.
     const taken = aiState.npcPsychicMasterySlot;
+    const pieces = aiState.npcPsychicPieces ?? 0;
 
-    // The payout. Three seconds under is the floor worth 30 seconds of cooldown.
-    if (taken !== 'q' && stress >= COMA_WORTH_IT) {
-      if (this.castAbility('psychic-coma', buildContext(aimX, aimY))) return 'psychic-coma';
+    // A planned move first: it is free (no cooldown) and it is where the damage is.
+    const move = aiState.npcPsychicMove;
+    if (move) {
+      buildContext(move.x, move.y).psychicMovePiece(move.x, move.y);
+      return null;
     }
 
-    // Something big is two seconds out. Steal it rather than trying to walk out from under it.
-    if (!skipSpecials && queued > 0 && aiState.npcPsychicBigCast) {
-      if (this.castAbility('psychic-mind-control', buildContext(aimX, aimY))) return 'psychic-mind-control';
+    // The crown, once there is a board for it to multiply — or when the bot is in trouble.
+    if (taken !== 'q' && !aiState.npcPsychicQueen && !skipSpecials && dist < 460
+        && (pieces >= 2 || hpRatio < 0.45)) {
+      if (this.castAbility('psychic-queen', buildContext(aimX, aimY))) return 'psychic-queen';
     }
 
-    // Anything else in the queue is answered by simply not being there when it lands. Held back
-    // while healthy, because 1.25 seconds spent invincible at full HP is 1.25 seconds not whipping.
-    if (taken !== 'r' && queued > 0 && hpRatio < 0.8) {
-      if (this.castAbility('psychic-dodge-destiny', buildContext(aimX, aimY))) return 'psychic-dodge-destiny';
+    // Pieces, each on a line through the target. The bishop first when it is hurting.
+    const place = (id: string, at: { x: number; y: number } | undefined): string | null => {
+      if (!at) return null;
+      return this.castAbility(id, buildContext(at.x, at.y)) ? id : null;
+    };
+    if (!skipSpecials && dist < 560) {
+      const order: [string, { x: number; y: number } | undefined, string | undefined][] = hpRatio < 0.7
+        ? [['psychic-bishop', aiState.npcPsychicBishopAt, undefined],
+          ['psychic-rook', aiState.npcPsychicRookAt, 'f'], ['psychic-knight', aiState.npcPsychicKnightAt, 'r']]
+        : [['psychic-rook', aiState.npcPsychicRookAt, 'f'], ['psychic-knight', aiState.npcPsychicKnightAt, 'r'],
+          ['psychic-bishop', aiState.npcPsychicBishopAt, undefined]];
+      for (const [id, at, slot] of order) {
+        if (slot && taken === slot) continue;
+        const cast = place(id, at);
+        if (cast) return cast;
+      }
     }
 
-    // The charge. It sits for two and a half seconds before it goes off, so it is thrown where
-    // they are going rather than where they are — dead reckoning off their current velocity,
-    // led by rather less than the full fuse because nobody walks a straight line for that long.
-    if (taken !== 'f' && !skipSpecials && dist < 480) {
-      const vel = (target.body as Phaser.Physics.Arcade.Body | null)?.velocity;
-      const vx = vel?.x ?? 0;
-      const vy = vel?.y ?? 0;
-      // Seconds of lead, shortened so the throw itself never exceeds MAX_LEAD pixels.
-      const secs = Math.min(PSYCHIC_BOMB_LEAD_S, PSYCHIC_BOMB_MAX_LEAD / Math.max(1, Math.hypot(vx, vy)));
-      const tx = aimX + vx * secs;
-      const ty = aimY + vy * secs;
-      if (this.castAbility('psychic-migraine', buildContext(tx, ty))) return 'psychic-migraine';
-    }
-
-    // The engine. Aimed slightly long so the tip does the work whenever the range allows it.
-    if (dist < 210) {
-      const reach = Math.max(dist, 170);
-      const ang = Math.atan2(aimY - this.y, aimX - this.x);
-      const tx = this.x + Math.cos(ang) * reach;
-      const ty = this.y + Math.sin(ang) * reach;
-      if (this.castAbility('psychic-headache', buildContext(tx, ty))) return 'psychic-headache';
+    // Pawns while close — not as the queen, whose click is her legs.
+    if (!aiState.npcPsychicQueen && dist < PSYCHIC_PAWN_RANGE) {
+      if (this.castAbility('psychic-en-passant', buildContext(aimX, aimY))) return 'psychic-en-passant';
     }
     return null;
   }
 
   /**
-   * Fortune. The bot is playing an economy, so the ordering below is a spending policy rather
-   * than a rotation: the beam is by far the best thing it can buy with coins, the two
-   * investments are how it turns a lull into more coins, and the trigger is the only thing that
-   * mints any in the first place.
+   * Gold (element id `fortune`). The kit's synergies are checked first, in the order they pay:
    *
-   * The one rule that matters is that it never invests itself broke. Coins are ammunition for Q
-   * and price the golden pistol, so anything it locks away is damage it cannot deal — it only
-   * banks a surplus, and only while it is not already sitting on a beam it could open.
+   * 1. **Heart → Plume.** A gold-hearted target standing in a burning cloud has to walk out of
+   *    it, and walking is what fills the heart. So the plume goes on top of them the moment the
+   *    heart is live.
+   * 2. **Midas → the floor.** The curse is cast at a range the bot can follow; the floor it lays
+   *    is the bot's road (the kit publishes `goldSeekPoint` and the soft seek walks it there).
+   * 3. **Gold → Advance.** Ten gold is always spent — the kit gates the press and picks the card.
    *
-   * The kit does its own shopping on a timer (`botStock`), so nothing here has to reason about
-   * a catalogue the AI cannot see.
+   * After those the rotation is ordinary: the cane inside its reach, a plume at its own feet so it
+   * can stand in it and earn, and grass thrown at the kit's gravity-corrected aim.
    */
   private doFortuneAbilities(
     target: Fighter,
@@ -1734,41 +1800,40 @@ export class NpcOpponent extends Fighter {
   ): string | null {
     void target;
     void time;
-    void hpRatio;
-    // The kit is steering the beam and refuses every other key while it is open.
-    if (aiState.npcFortuneBeaming) return null;
+    if (aiState.npcGoldLunging) return null;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-    const coins = aiState.npcFortuneCoins ?? 0;
 
-    // The single biggest thing the purse can buy. Opened at a range the slow turn can actually
-    // walk onto a body — point blank it would sweep past them, and across the arena it would
-    // spend its whole budget on empty floor.
-    if (coins >= 14 && dist < 420 && dist > 70) {
-      if (this.castAbility('fortune-p2w', buildContext(aimX, aimY))) return 'fortune-p2w';
+    // 1. Heart → Plume.
+    const plumeAt = aiState.npcGoldPlumeAt;
+    if (aiState.npcGoldHeartLive && plumeAt && dist < 380) {
+      if (this.castAbility('fortune-plume', buildContext(plumeAt.x, plumeAt.y))) return 'fortune-plume';
     }
 
-    // Turnstiles across their approach. Worth it whenever they have coins to lose, and worth it
-    // anyway as a wall of noise between the two of you.
-    if (!skipSpecials && !aiState.npcFortuneWall && dist > 140) {
-      // Dropped between the two of you rather than on top of them, which is what makes it a toll
-      // booth instead of a decoration.
-      const wx = (this.x + aimX) / 2;
-      if (this.castAbility('fortune-paywall', buildContext(wx, aimY))) return 'fortune-paywall';
+    // 2. Midas, at a range the bot can follow the floor it lays. Saved for a fight that is going
+    // to last — a nearly dead target is not worth a 30-second ultimate.
+    if (!skipSpecials && !aiState.npcGoldMidasLive && dist < 420 && (target.hp / Math.max(1, target.maxHp) > 0.3 || hpRatio < 0.4)) {
+      if (this.castAbility('fortune-midas', buildContext(aimX, aimY))) return 'fortune-midas';
     }
 
-    // Surplus only. Ten coins is a beam and a bit, so anything past that can go to work. With
-    // Fortune Mastery on, the bank key is the car's and the whole surplus goes to the market.
-    if (!skipSpecials && coins > 12) {
-      const bank = !aiState.npcFortuneNoBank && Math.random() < 0.5;
-      if (bank) {
-        if (this.castAbility('fortune-safe', buildContext(aimX, aimY))) return 'fortune-safe';
-      } else if (this.castAbility('fortune-risky', buildContext(aimX, aimY))) return 'fortune-risky';
+    // 3. Spend the purse.
+    if (aiState.npcGoldCanAdvance) {
+      if (this.castAbility('fortune-advance', buildContext(aimX, aimY))) return 'fortune-advance';
     }
 
-    // The trigger. Refused outright while the magazine is empty, because a refused cast still
-    // stamps (and voices) its cooldown.
-    if ((aiState.npcFortuneAmmo ?? 0) > 0 && dist < 720) {
-      if (this.castAbility('fortune-fire', buildContext(aimX, aimY))) return 'fortune-fire';
+    // The cane, inside its reach (150px lunge + the cane).
+    if (!skipSpecials && dist < 185) {
+      if (this.castAbility('fortune-heart', buildContext(aimX, aimY))) return 'fortune-heart';
+    }
+
+    // A plume to stand in and earn from, between the bot and the target.
+    if (!skipSpecials && plumeAt && dist < 460) {
+      if (this.castAbility('fortune-plume', buildContext(plumeAt.x, plumeAt.y))) return 'fortune-plume';
+    }
+
+    // Grass: the falling clump is only worth throwing inside the range it can still reach.
+    const aim = aiState.npcGoldFrayAim ?? { x: aimX, y: aimY };
+    if (dist < 400) {
+      if (this.castAbility('fortune-fray', buildContext(aim.x, aim.y))) return 'fortune-fray';
     }
     return null;
   }
@@ -1855,6 +1920,166 @@ export class NpcOpponent extends Fighter {
     // ── Click ── the default, and the whole reason to be in somebody's face.
     if (dist < 110) {
       if (this.castAbility('cloth-pin', buildContext(aimX, aimY))) return 'cloth-pin';
+    }
+    return null;
+  }
+
+  /**
+   * Tempest. Two rotations, one per axis, and the synergies the kit publishes come first in both.
+   *
+   * Airborne: a front to drop onto is the best thing it can do (`npcTempestCanSlam` — damage,
+   * the front's rectangle as the shockwave, and it comes back up higher); a self-burst in the
+   * last 80px of a fall is the big lift (`npcTempestLandingSoon`); an empty click is refilled by
+   * the hop; a target underneath is dived on, which is the only way the Eye ever opens.
+   *
+   * Grounded: a target by a wall is burst *into* it (`npcTempestWallShot`, 10 + 12); the roll
+   * is spent inside kick range; the grapple is the ultimate and goes off at mid range; a front
+   * is laid toward the target so there is something to slam onto later; F is only pressed
+   * standing on the current the kit walked it to. Projectile aim uses the velocity lead.
+   */
+  private doTempestAbilities(
+    target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+  ): string | null {
+    void time;
+    void hpRatio;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const charges = aiState.npcTempestCharges ?? 0;
+    const lead = this.difficulty.level >= 4 ? { x: this.leadX, y: this.leadY } : { x: aimX, y: aimY };
+
+    if (aiState.npcTempestAirborne) {
+      // ── Synergy: a front of its own under it ──
+      if (aiState.npcTempestCanSlam && dist < 460) {
+        if (this.castAbility('tempest-front', buildContext(aimX, aimY))) return 'tempest-front';
+      }
+      // ── Synergy: the big lift, bought in the last 80px of the fall ──
+      if (aiState.npcTempestLandingSoon && charges > 0 && !aiState.npcTempestGrabbing) {
+        if (this.castAbility('tempest-gale', buildContext(this.x, this.y))) return 'tempest-gale';
+      }
+      // Holding someone: every burst is a hit on a body that cannot move, and lifts the pair.
+      if (aiState.npcTempestGrabbing) {
+        if (charges > 0 && this.castAbility('tempest-gale', buildContext(this.x, this.y))) return 'tempest-gale';
+        if (this.castAbility('tempest-kick', buildContext(aimX, aimY))) return 'tempest-kick';
+        return null;
+      }
+      // An empty click: the hop refills it and buys height.
+      if (charges === 0) {
+        if (this.castAbility('tempest-kick', buildContext(aimX, aimY))) return 'tempest-kick';
+      }
+      // A target underneath: the dive, and the Eye. The only reason to come down early.
+      if (!skipSpecials && dist < 150 && !aiState.npcTempestEyeLive) {
+        if (this.castAbility('tempest-forecast', buildContext(aimX, aimY))) return 'tempest-forecast';
+      }
+      if (charges > 0 && dist < 400) {
+        if (this.castAbility('tempest-gale', buildContext(lead.x, lead.y))) return 'tempest-gale';
+      }
+      return null;
+    }
+
+    // ── Synergy: a body by a wall ──
+    if (aiState.npcTempestWallShot) {
+      const w = aiState.npcTempestWallShot;
+      if (this.castAbility('tempest-gale', buildContext(w.x, w.y))) return 'tempest-gale';
+    }
+    // F only ever where the kit walked it to.
+    if (aiState.tempestCurrentPoint) {
+      const c = aiState.tempestCurrentPoint;
+      if (Phaser.Math.Distance.Between(this.x, this.y, c.x, c.y) <= 70) {
+        if (this.castAbility('tempest-updraft', buildContext(aimX, aimY))) return 'tempest-updraft';
+      }
+    }
+    // The kick: inside its roll, and more so when the click is empty.
+    if (!skipSpecials && dist < 160 && (charges === 0 || Math.random() < 0.6)) {
+      if (this.castAbility('tempest-kick', buildContext(aimX, aimY))) return 'tempest-kick';
+    }
+    // The grapple: mid range, where the dash lands on them rather than past them.
+    if (!skipSpecials && dist > 90 && dist < 380 && !aiState.npcTempestEyeLive) {
+      if (this.castAbility('tempest-forecast', buildContext(aimX, aimY))) return 'tempest-forecast';
+    }
+    // A front toward the target: a highway now, and something to slam onto from the air later.
+    if (!skipSpecials && (aiState.npcTempestFronts ?? 0) < 2 && dist > 150 && dist < 420) {
+      if (this.castAbility('tempest-front', buildContext(aimX, aimY))) return 'tempest-front';
+    }
+    if (charges > 0 && dist < 420) {
+      if (this.castAbility('tempest-gale', buildContext(lead.x, lead.y))) return 'tempest-gale';
+    }
+    return null;
+  }
+
+  /**
+   * Marrow. There is no aiming decision in the whole element — the cells walk themselves — so
+   * the only thing worth being clever about is the bone bar. Five sockets, and the sixth cast
+   * is refused and refunded rather than queued, which means a bot that spams E ends up with
+   * five macrophages and no way to make a neutrophil. The order below is therefore a
+   * composition: keep one macrophage up for the inflammation upkeep, spend the rest on
+   * neutrophils (which are meant to die and leave webs), and save the last socket for the
+   * T-cell whenever Dendricles has actually transformed.
+   *
+   * Mastacre is exempt from the cap and is simply the biggest button it owns, so it goes off
+   * whenever anything is close enough for five homing bombs to reach.
+   */
+  private doMarrowAbilities(
+    target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+  ): string | null {
+    void target;
+    void time;
+    void hpRatio;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const cells = aiState.npcMarrowCells ?? 0;
+    const full = cells >= 5;
+
+    // ── Q ──
+    // Five mast cells that home and then detonate. They cost no socket, so the only question is
+    // whether it is worth spending: in range it is 125 damage, and out of range it is still a
+    // full fever bar — which is why a bot whose inflammation has run dry casts it anyway.
+    const fever = aiState.npcMarrowInflammation ?? 0;
+    if (!skipSpecials && (aiState.npcMarrowMasts ?? 0) === 0 && (dist < 520 || fever < 30)) {
+      if (this.castAbility('marrow-mastacre', buildContext(aimX, aimY))) return 'marrow-mastacre';
+    }
+
+    // ── F ──
+    // Armed, it is a T-cell and worth a socket. Unarmed it is a short-range strike that is only
+    // worth pressing in somebody's face, where all five tentacles land and arm the next one.
+    if (aiState.npcMarrowTcellArmed) {
+      if (!full && this.castAbility('marrow-dendricles', buildContext(aimX, aimY))) return 'marrow-dendricles';
+    } else if (dist < 150) {
+      if (this.castAbility('marrow-dendricles', buildContext(aimX, aimY))) return 'marrow-dendricles';
+    }
+
+    if (full) return null;
+
+    // ── E ──
+    // The first socket always goes to a macrophage: it is the only thing in the kit that keeps
+    // the fever up on its own, and everything else in the element scales off that bar.
+    if (cells === 0) {
+      if (this.castAbility('marrow-macrosma', buildContext(aimX, aimY))) return 'marrow-macrosma';
+    }
+
+    // ── R ──
+    // Cheap, fast, hits hardest, and leaves a web where it falls. The bot's default spend.
+    if (!skipSpecials) {
+      if (this.castAbility('marrow-neutralize', buildContext(aimX, aimY))) return 'marrow-neutralize';
+    }
+    if (this.castAbility('marrow-macrosma', buildContext(aimX, aimY))) return 'marrow-macrosma';
+
+    // ── Click ──
+    // Nothing else was ready. An antibody is 12 damage and a permanent mark, and it is the only
+    // thing in the kit the bot can do at range every half second.
+    if (dist < 620) {
+      if (this.castAbility('marrow-antibody', buildContext(aimX, aimY))) return 'marrow-antibody';
     }
     return null;
   }
@@ -2117,11 +2342,9 @@ export class NpcOpponent extends Fighter {
   }
 
   /**
-   * Passion. Only one of its five abilities deals damage, so the usual "am I winning the trade"
-   * questions don't apply — every branch below is asking the same thing instead, which is
-   * whether the target's love bar is far enough along for the next tool to be worth its
-   * cooldown. Smooch in particular is refused outright below half a bar, because the kiss
-   * simply doesn't land there and casting it would throw eight seconds away.
+   * Devotion. Nothing it does deals damage, so the usual trading questions don't apply. Every
+   * synergy is published by PassionKit as a cast point and checked first; the generic rotation
+   * underneath only fills gaps.
    */
   private doPassionAbilities(
     target: Fighter,
@@ -2133,42 +2356,39 @@ export class NpcOpponent extends Fighter {
     aimY: number,
     aiState: NpcAiState,
   ): string | null {
-    void target;
     void time;
     void hpRatio;
-    // The pose is a five-second commitment and the kit is already collecting on it.
-    if (aiState.npcPassionPosing) return null;
-    const love = aiState.npcPassionTargetLove ?? 0;
+    if (aiState.npcDevotionRiding) return null;
+    const op = aiState.npcDevotion;
+    const faith = aiState.npcDevotionFaith ?? 0;
+    const water = aiState.npcDevotionWaterCharges ?? 0;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-    // Mastery: whichever key Perfume was bound over no longer has an ability under it. PassionKit
-    // pulls the trigger on the spray itself and steers the bot into the cloud through
-    // `passionCloudPoint`; all that is left here is not casting into an empty slot.
-    const gone = aiState.npcPassionPerfumeSlot;
 
-    // Exhibition wants them close enough that walking out of the cone isn't free, and is worth
-    // most while there is still bar left to fill.
-    if (gone !== 'q' && !skipSpecials && dist < 460 && love < 0.9) {
-      if (this.castAbility('passion-exhibition', buildContext(aimX, aimY))) return 'passion-exhibition';
+    // ── Synergies first ──
+    // Level with the target: the chariot runs them over and carries the bot down onto them.
+    if (op?.ascendNow && !skipSpecials) {
+      if (this.castAbility('passion-ascendance', buildContext(target.x, target.y))) return 'passion-ascendance';
+    }
+    // Up close the crucifix is a sanctuary on its own feet; at range it is a wall that taxes shots.
+    if (op?.crucifixPoint && !skipSpecials) {
+      const c = op.crucifixPoint;
+      if (this.castAbility('passion-crucifix', buildContext(c.x, c.y))) return 'passion-crucifix';
+    }
+    // A target pinned in holy water or on the crucifix's rim cannot leave the blast.
+    if (op?.grenadePoint && !skipSpecials) {
+      const g = op.grenadePoint;
+      if (this.castAbility('passion-grenade', buildContext(g.x, g.y))) return 'passion-grenade';
+    }
+    if (op?.waterPoint && water > 0) {
+      const w = op.waterPoint;
+      if (this.castAbility('passion-holy-water', buildContext(w.x, w.y))) return 'passion-holy-water';
     }
 
-    // The kiss is the biggest single jump in the kit, but only past the halfway gate.
-    if (gone !== 'r' && !skipSpecials && love >= 0.5 && dist < 300) {
-      if (this.castAbility('passion-smooch', buildContext(aimX, aimY))) return 'passion-smooch';
+    // ── Generic rotation ──
+    if (!skipSpecials && dist < 360 && faith >= 0.25) {
+      if (this.castAbility('passion-grenade', buildContext(aimX, aimY))) return 'passion-grenade';
     }
-
-    // Flirt is pure meter and pays more the further along they already are — spend it on cooldown
-    // whenever they are actually inside the cone's reach.
-    if (gone !== 'e' && !skipSpecials && dist < 190) {
-      if (this.castAbility('passion-flirt', buildContext(aimX, aimY))) return 'passion-flirt';
-    }
-
-    // The rose is armour first and a projectile second, so it goes out early and the kit
-    // decides when to throw it.
-    if (gone !== 'f' && !skipSpecials && !aiState.npcPassionHasRose) {
-      if (this.castAbility('passion-manipulate', buildContext(aimX, aimY))) return 'passion-manipulate';
-    }
-
-    if (this.castAbility('passion-loveshot', buildContext(aimX, aimY))) return 'passion-loveshot';
+    if (this.castAbility('passion-sermon', buildContext(aimX, aimY))) return 'passion-sermon';
     return null;
   }
 
@@ -2306,9 +2526,9 @@ export class NpcOpponent extends Fighter {
   /**
    * Illusion. The element has almost no sustained damage, so the AI's job is to keep the two
    * things that *do* pay — the bullet and the crack it leaves — landing while it is somewhere
-   * the player isn't. Relocate is therefore spent as an escape rather than an opener, and the
-   * Tesseract is held for a target that isn't already folded, since a second fold buys nothing
-   * but the twenty damage.
+   * the player isn't. Relocate is therefore spent as an escape rather than an opener, and so is
+   * Guise — a clone to chase is the best answer to being chased. While the clone is out the
+   * only job is the click, and the Re-Trick swap (F+) is read off the kit first.
    */
   private doIllusionAbilities(
     target: Fighter,
@@ -2327,10 +2547,28 @@ export class NpcOpponent extends Fighter {
     // put on by IllusionKit rather than decided here — see the note on `npcIllusionMaskSlot`.
     const masked = aiState.npcIllusionMaskSlot ?? null;
 
+    // Synergy: Guise → Re-Trick. The kit says when the swap is worth it; the recast skips
+    // `castAbility` because the cooldown is already running from the Guise itself.
+    if (aiState.npcIllusionRetrick && masked !== 'f') {
+      buildContext(aimX, aimY).illusionRetrick();
+      return null;
+    }
+    // Hidden behind the clone, every special would only be noise. Keep the bullets coming.
+    if (aiState.npcIllusionGuised) {
+      if (this.castAbility('illusion-crack-shot', buildContext(aimX, aimY))) return 'illusion-crack-shot';
+      return null;
+    }
+
     // Twenty seconds of bullets passing through is the answer to being caught, so it is
     // spent on being caught — and while it runs, everything else is just the click.
     if (masked !== 'q' && !aiState.npcIllusionDancing && !skipSpecials && (hpRatio < 0.45 || dist < 140)) {
       if (this.castAbility('illusion-dance', buildContext(aimX, aimY))) return 'illusion-dance';
+    }
+
+    // Guise is the other way out: being found up close, or getting low, is when a clone to
+    // chase is worth the most. It also pays back a fifth of whatever the player wastes on it.
+    if (masked !== 'f' && !skipSpecials && !aiState.npcIllusionDancing && (dist < 200 || hpRatio < 0.55)) {
+      if (this.castAbility('illusion-guise', buildContext(aimX, aimY))) return 'illusion-guise';
     }
 
     // Relocate is an escape hatch. Mid-dance it is redundant — the dance hops on its own.
@@ -2344,11 +2582,6 @@ export class NpcOpponent extends Fighter {
       if (this.castAbility('illusion-veil', buildContext(aimX, aimY))) return 'illusion-veil';
     }
 
-    // The cube is slow, so it wants a target that is neither too far to reach nor already
-    // wearing the shape it would apply.
-    if (masked !== 'f' && !skipSpecials && !aiState.npcIllusionTargetFolded && dist < 430) {
-      if (this.castAbility('illusion-tesseract', buildContext(aimX, aimY))) return 'illusion-tesseract';
-    }
 
     // The bullet is the filler — and at range a miss still cracks off the wall for half.
     if (this.castAbility('illusion-crack-shot', buildContext(aimX, aimY))) return 'illusion-crack-shot';
@@ -2356,11 +2589,17 @@ export class NpcOpponent extends Fighter {
   }
 
   /**
-   * Magma. The element's whole economy is that its own summons are charged by its own attacks,
-   * so this AI has a second aim point: `npcMagmaChargeTarget`. Whenever there is a vessel with
-   * room left in it, the cheap abilities fire at *that* instead of at the player, which is how
-   * a volcano ever reaches 100 or an egg ever hatches. Everything expensive still goes at the
-   * player, and once the egg pays out the whole thing flips to pure offence for twenty seconds.
+   * Magma. The element's economy is that its own volcano is charged by its own attacks, so this
+   * AI has a second aim point: `npcMagmaChargeTarget`. Whenever there is a vessel with room left
+   * in it, the cheap abilities fire at *that* instead of at the player, which is how a volcano
+   * ever reaches 100.
+   *
+   * The pirate half has three synergies the kit publishes and this routine spends first: a
+   * broadside into its own volcano next to the player (`npcMagmaCannonVolcano`), a Blunder-Boil
+   * fired while the gauge is hot enough that the recoil flight is itself a hit, and an
+   * overpressured gun that is only ever vented point blank, so the 35 it costs the bot lands on
+   * somebody too. At the helm the click is cannons and nothing else is pressed — F would throw
+   * it off its own ship.
    */
   private doMagmaAbilities(
     target: Fighter,
@@ -2376,23 +2615,52 @@ export class NpcOpponent extends Fighter {
     void time;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
     const charge = aiState.npcMagmaChargeTarget;
-    const dragon = !!aiState.npcMagmaDragon;
     // Magma Mastery: the saw is cast by the kit off a private timer (enhancement ids are not in
     // `element.abilities`, so there is nothing here for `castAbility` to find). All this routine
     // owes it is the slot it took, and the good sense not to pile casts on top of a live saw.
     const sawSlot = aiState.npcMagmaSawSlot;
+    if (aiState.npcMagmaSawOut) return null;
 
-    // Hatched: no more investing, just breathing on people.
-    if (dragon) {
-      if (dist < 240 && this.castAbility('magma-plume', buildContext(aimX, aimY))) return 'magma-plume';
+    // ── At the helm ──
+    if (aiState.npcMagmaMounted) {
+      // Synergy: a volcano of its own beside the player goes critical on the first round.
+      const lit = aiState.npcMagmaCannonVolcano;
+      if (lit && this.castAbility('magma-plume', buildContext(lit.x, lit.y))) return 'magma-plume';
+      if (dist < 440 && this.castAbility('magma-plume', buildContext(aimX, aimY))) return 'magma-plume';
+      // A volcano placed under the player from the deck is the next broadside's fuse.
+      if (!skipSpecials && sawSlot !== 'e' && (aiState.npcMagmaVolcanoes ?? 0) < 2 && dist < 380) {
+        if (this.castAbility('magma-volcano', buildContext(aimX + (Math.random() - 0.5) * 40, aimY + (Math.random() - 0.5) * 40))) return 'magma-volcano';
+      }
       return null;
     }
 
-    if (aiState.npcMagmaSawOut) return null;
+    // ── The pendant: on early, while there is a whole fight to pay for the ship with ──
+    if (!skipSpecials && sawSlot !== 'q' && !aiState.npcMagmaPendant && !aiState.npcMagmaShip && hpRatio > 0.3) {
+      if (this.castAbility('magma-mutiny', buildContext(this.x, this.y))) return 'magma-mutiny';
+    }
 
-    // The egg is the long game and only worth starting when there is time to pay for it.
-    if (!skipSpecials && sawSlot !== 'q' && !aiState.npcMagmaHasEgg && hpRatio > 0.5) {
-      if (this.castAbility('magma-dragon-kin', buildContext(this.x, this.y))) return 'magma-dragon-kin';
+    // ── Blunder-Boil ──
+    const charges = aiState.npcMagmaBlunderCharges ?? 0;
+    const pressure = aiState.npcMagmaGaugePressure ?? 0;
+    if (sawSlot !== 'f' && charges > 0) {
+      if (aiState.npcMagmaGaugeOver) {
+        // Synergy: an overpressured gun bursts on the bot as well, so it is only ever vented
+        // with the player inside the same 120px.
+        if (dist < 110 && this.castAbility('magma-blunder', buildContext(aimX, aimY))) return 'magma-blunder';
+      } else if (pressure >= 0.6 && dist < 150) {
+        // Synergy: hot enough that the recoil is a second hit. Aim *away* from the player, so
+        // the flight goes through them.
+        const ax = this.x - (aimX - this.x);
+        const ay = this.y - (aimY - this.y);
+        if (this.castAbility('magma-blunder', buildContext(ax, ay))) return 'magma-blunder';
+      } else if (!skipSpecials && (dist < 140 || (hpRatio < 0.4 && dist < 200))) {
+        // Point blank, or hurt and close: the cone hits them and the recoil leaves.
+        if (this.castAbility('magma-blunder', buildContext(aimX, aimY))) return 'magma-blunder';
+      } else if (!skipSpecials && charge && pressure < 0.6 && charges >= 2
+        && Phaser.Math.Distance.Between(this.x, this.y, charge.x, charge.y) < 130) {
+        // A spare charge across its own volcano is 15 pressure and a free step back.
+        if (this.castAbility('magma-blunder', buildContext(charge.x, charge.y))) return 'magma-blunder';
+      }
     }
 
     // A free block is worth having up before it is needed, not after.
@@ -2401,7 +2669,7 @@ export class NpcOpponent extends Fighter {
     }
 
     // Volcanoes go between us: close enough to the player that the lava is in the way, close
-    // enough to the AI that its own plumes and its own fist can still reach up and charge it.
+    // enough to the AI that its own plumes and cones can still reach up and charge it.
     if (!skipSpecials && sawSlot !== 'e' && (aiState.npcMagmaVolcanoes ?? 0) < 2) {
       const toX = aimX - this.x;
       const toY = aimY - this.y;
@@ -2410,13 +2678,6 @@ export class NpcOpponent extends Fighter {
       const vx = this.x + (toX / len) * reach + (Math.random() - 0.5) * 50;
       const vy = this.y + (toY / len) * reach + (Math.random() - 0.5) * 50;
       if (this.castAbility('magma-volcano', buildContext(vx, vy))) return 'magma-volcano';
-    }
-
-    // The jet is the fastest way to fill a vessel and the only disengage in the kit — and
-    // because it shoves you away from whatever you point it at, both of those are the same
-    // press. It wants to be out whenever there is something in front of it.
-    if (!skipSpecials && sawSlot !== 'f' && !aiState.npcMagmaJet && (charge || dist < 260)) {
-      if (this.castAbility('magma-jet', buildContext(aimX, aimY))) return 'magma-jet';
     }
 
     // Plume: at the vessel if there is one with room in it, otherwise at the player.
@@ -2878,8 +3139,9 @@ export class NpcOpponent extends Fighter {
   }
 
   /**
-   * The soloist. Its metronome runs in SoundKit off the cast ids returned here, so the harder
-   * difficulties land harmonized casts simply by casting more often — no special-casing needed.
+   * The drum major. The kit keeps the bot's metronome and steers its baton at the player, so the
+   * rotation here is the four keys. The one synergy — Fermata puts the target out of tune, and
+   * the free recast detonates it — is read first, off the kit's `npcSoundDetonate`.
    */
   private doSoundAbilities(
     target: Fighter,
@@ -2893,59 +3155,30 @@ export class NpcOpponent extends Fighter {
   ): string | null {
     void aimX;
     void aimY;
-    const SOUND_HIT_CHANCES = [0.20, 0.35, 0.50, 0.65, 0.80];
-    const hitChance = SOUND_HIT_CHANCES[this.difficulty.level - 1];
-    const angleToTarget = Phaser.Math.Angle.Between(this.x, this.y, target.x, target.y);
-    const soundAimCtx = (chance: number) => {
-      if (Math.random() < chance) return buildContext(target.x, target.y);
-      const side = Math.random() < 0.5 ? 1 : -1;
-      const missAng = angleToTarget + side * (Math.PI / 2 + (Math.random() - 0.5) * Math.PI / 3);
-      return buildContext(this.x + Math.cos(missAng) * 600, this.y + Math.sin(missAng) * 600);
-    };
+    // On stage the kit is playing the solo; nothing else can be pressed.
+    if (aiState.npcSoundSoloing) return null;
+
+    // ── Synergy: detonate the Out of Tune the last slam left. Free, so it is never skipped.
+    if (aiState.npcSoundDetonate) {
+      buildContext(target.x, target.y).soundCast('fermata-detonate', target.x, target.y);
+      return null;
+    }
 
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    if (skipSpecials) return null;
 
-    // ── The kit's own synergy: play it on the beat ──
-    // A harmonized E is the only way the deck ever changes record, a harmonized R is a golden
-    // boombox worth 1.5× everything banked inside it, and a harmonized F buys a slip on the
-    // bugle run. Every one of those is worth far more than the half-second of waiting it costs,
-    // and because *any* cast restarts the metronome, throwing one early also moves the next
-    // window — so a bot that fires the instant a cooldown is up can never harmonize at all.
-    const beatIn = aiState.npcSoundHarmonizeIn ?? Number.POSITIVE_INFINITY;
-    const inWindow = beatIn === 0;
-    // Sharper opponents keep better time; a Novice barely waits at all.
-    const patience = 90 * this.difficulty.level;
-    if (!skipSpecials && beatIn > 0 && beatIn <= patience) return null;
+    // Hum until the song matches what the kit wants for the moment.
+    if (aiState.npcSoundWantedSong && aiState.npcSoundWantedSong !== aiState.npcSoundSong
+      && this.castAbility('hum', buildContext(target.x, target.y))) return 'hum';
 
-    // Compose (mastery) took one of the four keys, and the kit presses that one itself.
-    const taken = aiState.npcSoundComposeSlot;
-    const free = (slot: string) => taken !== slot;
+    // Call of the Void — the solo hits wherever they are, so it is worth playing whenever it is up.
+    if (this.castAbility('call-of-the-void', buildContext(target.x, target.y))) return 'call-of-the-void';
 
-    if (!skipSpecials) {
-      // On the beat the three stance abilities outrank the ultimate, because harmonizing is the
-      // only thing that changes the record and the only thing that makes a box golden.
-      if (inWindow) {
-        if (dist < 130 && free('e')
-          && this.castAbility('disc-dice', buildContext(target.x, target.y))) return 'disc-dice';
-        if (free('r') && this.castAbility('boombox', buildContext(this.x, this.y))) return 'boombox';
-        if (free('f') && this.castAbility('bugle', buildContext(target.x, target.y))) return 'bugle';
-      }
-      // Coda — cash the banked buffs in for a level whenever the ultimate is up.
-      if (free('q') && this.castAbility('coda', buildContext(target.x, target.y))) return 'coda';
-      // Bugle — tempo, and its cooldown is short enough to keep topped up.
-      if (free('f') && this.castAbility('bugle', buildContext(target.x, target.y))) return 'bugle';
-      // Disc Dice — only worth slinging when the player is inside the cut.
-      if (dist < 130 && free('e')) {
-        if (this.castAbility('disc-dice', buildContext(target.x, target.y))) return 'disc-dice';
-      }
-      // Boombox — dropped underfoot, so it is a self-buff first and a shove second.
-      if (free('r') && this.castAbility('boombox', buildContext(this.x, this.y))) return 'boombox';
-    }
+    // Fermata — dash to the baton and slam, when the target is near the baton's reach.
+    if (dist < 230 && this.castAbility('fermata', buildContext(target.x, target.y))) return 'fermata';
 
-    // Default: strike the violin.
-    if (this.aiState === 'attack' || this.aiState === 'chase') {
-      if (this.castAbility('staccato', soundAimCtx(hitChance))) return 'staccato';
-    }
+    // Crescendo — dance in close so the wave lands at the end of it.
+    if (dist < 260 && this.castAbility('crescendo', buildContext(target.x, target.y))) return 'crescendo';
     return null;
   }
 
@@ -3452,6 +3685,11 @@ export class NpcOpponent extends Fighter {
     const sharpX = this.x + Math.cos(sharpAngle) * dist;
     const sharpY = this.y + Math.sin(sharpAngle) * dist;
 
+    // Synergy — the kit says a charged beam would pierce two or more things on one line (or set
+    // up a Soul Lord hemorrhage next to them). The kit runs the charge itself and fires when full.
+    const beamAim = aiState.npcSoulBeamAim;
+    if (beamAim && !skipSpecials && Math.random() < 0.08) buildContext(beamAim.x, beamAim.y).soulBeam(beamAim.x, beamAim.y);
+
     if (!skipSpecials) {
       // 1. Place a grave early if none are out yet.
       if (graves === 0) {
@@ -3476,15 +3714,14 @@ export class NpcOpponent extends Fighter {
       }
     }
 
-    // Synergy — a grave zombie is a corpse waiting to happen, and Siphon is the only thing that
-    // turns one into the other. Feed the queue first whenever it is running dry; the kit tells us
-    // where the nearest drainable body is standing.
-    const drainPoint = aiState.npcSoulDrainPoint;
-    if (drainPoint && corpses < 2
-      && this.castAbility('soul-siphon', buildContext(drainPoint.x, drainPoint.y))) return 'soul-siphon';
+    // Synergy — a grave zombie is a corpse waiting to happen *and* a lantern kill (which is what
+    // scales the lantern and unlocks Soul Lord). Burn our own down whenever the queue runs dry.
+    const lanternTarget = aiState.npcSoulLanternTarget;
+    if (lanternTarget && corpses < 2
+      && this.castAbility('soul-lantern', buildContext(lanternTarget.x, lanternTarget.y))) return 'soul-lantern';
 
-    // Default: throw a siphon cord onto the target when it is inside the cord's own leash.
-    if (dist < 320 && this.castAbility('soul-siphon', buildContext(sharpX, sharpY))) return 'soul-siphon';
+    // Default: wisps at the target — they fly to the aim point and on, so it is good at any range.
+    if (dist < 520 && this.castAbility('soul-lantern', buildContext(sharpX, sharpY))) return 'soul-lantern';
 
     return null;
   }
@@ -3708,6 +3945,15 @@ export class NpcOpponent extends Fighter {
     return null;
   }
 
+  /** Last hover state handed to MagnetKit, so the context is only built when it changes. */
+  private magnetHoverSent = false;
+
+  /**
+   * Magnet. Every synergy is published by MagnetKit and checked first: a nail that has sat in the
+   * target gets ripped out, and the Repulse the kit asks for re-fires it; coins are tossed short
+   * so they hang inside the cone and are held while Repulse comes back; a spike that closes the
+   * gap is ridden to, and the Repulse after it launches the spike point-blank.
+   */
   private doMagnetAbilities(
     target: Fighter,
     buildContext: (tX: number, tY: number) => CastContext,
@@ -3718,31 +3964,39 @@ export class NpcOpponent extends Fighter {
     aimY: number,
     aiState: NpcAiState,
   ): string | null {
-    void target; void aiState;
-    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-
-    if (!skipSpecials) {
-      // Protect when low on HP
-      if (hpRatio < 0.4) {
-        if (this.castAbility('protect', buildContext(aimX, aimY))) return 'protect';
-      }
-      // Magnetize enemy if close
-      if (dist < 180) {
-        if (this.castAbility('magnetize', buildContext(aimX, aimY))) return 'magnetize';
-      }
-      // Nail implant at medium range
-      if (dist < 250) {
-        if (this.castAbility('nail-implant', buildContext(aimX, aimY))) return 'nail-implant';
-      }
-      // Atom smasher when in attack range
-      if (dist < 220) {
-        if (this.castAbility('atom-smasher', buildContext(aimX, aimY))) return 'atom-smasher';
-      }
+    void target;
+    if (aiState.npcMagnetBusy) return null;
+    const hover = !!aiState.npcMagnetHover;
+    if (hover !== this.magnetHoverSent) {
+      this.magnetHoverSent = hover;
+      buildContext(aimX, aimY).magnetHover(hover);
     }
 
-    // Default: mag pulse as primary attack
-    if (this.aiState === 'attack' || this.aiState === 'chase') {
-      if (this.castAbility('mag-pulse', buildContext(aimX, aimY))) return 'mag-pulse';
+    if (aiState.npcMagnetRecall) {
+      buildContext(aimX, aimY).magnetRecall();
+      return 'magnet-recall';
+    }
+    const rp = aiState.npcMagnetRepulseAt;
+    if (rp && this.castAbility('magnet-repulse', buildContext(rp.x, rp.y))) return 'magnet-repulse';
+    const zip = aiState.npcMagnetZipTo;
+    if (zip) {
+      buildContext(zip.x, zip.y).magnetZip(zip.x, zip.y);
+      return 'magnet-zip';
+    }
+
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    if (!skipSpecials) {
+      if (dist < 420 && hpRatio > 0.35) {
+        if (this.castAbility('magnet-mecha', buildContext(aimX, aimY))) return 'magnet-mecha';
+      }
+      const sp = aiState.npcMagnetSpikeAt;
+      if (sp && dist < 520 && this.castAbility('magnet-spike', buildContext(sp.x, sp.y))) return 'magnet-spike';
+      if (dist < 520 && this.castAbility('magnet-nail', buildContext(aimX, aimY))) return 'magnet-nail';
+    }
+
+    const coin = aiState.npcMagnetCoinAim;
+    if (coin && dist < 460 && !aiState.npcMagnetHover) {
+      if (this.castAbility('magnet-coin', buildContext(coin.x, coin.y))) return 'magnet-coin';
     }
     return null;
   }
@@ -4054,8 +4308,22 @@ export class NpcOpponent extends Fighter {
       if (this.castAbility('silence-ritual', buildContext(this.x, this.y))) return 'silence-ritual';
     }
 
+    // ── Stalk → backstab ──
+    // A Stalked target can't come about, and the kit has walked us into its back shadow:
+    // this is the stab the whole F exists to set up, so it outranks everything else.
+    const backstab = aiState.npcSilenceBackstabAim;
+    if (backstab) {
+      if (this.castAbility('silence-stab', buildContext(backstab.x, backstab.y))) return 'silence-stab';
+    }
+
     if (!skipSpecials) {
       // ── Synergies first (see the NpcAiState synergy contract) ──
+      // Stalk when the kit says the target can be held inside the aura; the kit's mirror
+      // AI then shadows them round to their back for the three seconds.
+      if (aiState.npcSilenceStalkOpen) {
+        if (this.castAbility('silence-feast', buildContext(aimX, aimY))) return 'silence-feast';
+      }
+
       // Convert a matured stalker into a grabber the moment Ritual comes up.
       const mature = aiState.npcSilenceMatureStalker;
       if (mature) {
@@ -4091,9 +4359,6 @@ export class NpcOpponent extends Fighter {
       if (!invisible) {
         if (dist < 260) {
           if (this.castAbility('silence-ritual', buildContext(aimX, aimY))) return 'silence-ritual';
-        }
-        if (dist < 240) {
-          if (this.castAbility('silence-feast', buildContext(aimX, aimY))) return 'silence-feast';
         }
         if (dist < 420 && (hpRatio < 0.6 || _target.hp / _target.maxHp < 0.6)) {
           if (this.castAbility('silence-run', buildContext(_target.x, _target.y))) return 'silence-run';

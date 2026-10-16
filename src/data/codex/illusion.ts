@@ -13,9 +13,9 @@ const illusion: ElementCodex = {
     + 'this kit hits especially hard and nothing in it burns, bleeds or stacks — the whole '
     + 'element is spent on making the other person\'s answer wrong. A bullet that pays out on '
     + 'the wall it missed. A pane of loose space that bends whatever crosses it, yours '
-    + 'included. Two different ways of simply not being where you were. And a cube thrown at '
-    + 'somebody who is not allowed to know it exists, which leaves them wearing a bigger '
-    + 'silhouette than the one they were aiming from behind. Play it and you will end fights '
+    + 'included. Two different ways of simply not being where you were. And a full-size clone '
+    + 'that walks off wearing your face while the real you, a fifth of the size and invisible, '
+    + 'goes somewhere else entirely. Play it and you will end fights '
     + 'with the opponent still confident they had you.',
 
   passives: [
@@ -40,26 +40,23 @@ const illusion: ElementCodex = {
       ],
     },
     {
-      emoji: '⬛',
-      name: 'Folded',
+      emoji: '🎭',
+      name: 'The Clone',
       basics:
-        'The status the tesseract applies: 8 seconds at ×1.3 size, and because the arena sizes the '
-        + 'hitbox off the sprite that is 30% more body for everything in the game to land on rather than '
-        + 'a cosmetic. Re-folding an already-folded fighter refreshes the clock and re-rolls the shape '
-        + 'rather than stacking anything, and the exact texture they were wearing at the moment of the '
-        + 'fold is restored verbatim when it lapses, with the size multiplier handed back at the same '
-        + 'time. Anything that is a Fighter can be folded: the 1v1 bot, an online replica, every husk in '
-        + 'an Invasion wave, a world boss.',
+        'What Guise leaves standing: the illusionist\'s own sprite at full size, their own rig, and a '
+        + 'health bar that reads their real health — nothing on it says it is not them. It walks at the '
+        + 'fighter\'s normal pace (the caster\'s cursor for a player, holding about 210px off its target for '
+        + 'a bot). It cannot die. Every enemy shot that reaches its 22px body is stopped there, every '
+        + 'blast that reaches it and every husk bite aimed at it is banked instead, and when it fades a '
+        + 'fifth of that total is paid to whoever is nearest it.',
       effects: [
-        { tag: 'debuff', label: 'Bigger', detail: 'Size multiplied by 1.3 — and because the arena sizes the hitbox off the sprite, that is 30% more body for everything in the game to land on, not a cosmetic.' },
-        { tag: 'utility', label: 'Duration', detail: '8 seconds. Re-folding an already-folded fighter refreshes the clock and re-rolls the shape rather than stacking anything.' },
-        { tag: 'utility', label: 'What comes back', detail: 'The exact texture they were wearing at the moment of the fold, restored verbatim when it lapses, with the size multiplier handed back at the same time.' },
-        { tag: 'utility', label: 'Who can be folded', detail: 'Anything that is a Fighter: the 1v1 bot, an online replica, every husk in an Invasion wave, a world boss.' },
+        { tag: 'utility', label: 'Taken for the real thing', detail: 'Full-size sprite, rig and a live health bar. Bots and husks target it automatically for the whole 3 seconds.' },
+        { tag: 'shield', label: 'It cannot die', detail: 'Shots that reach it stop on it; blasts and husk bites aimed at it are banked rather than dealt.' },
+        { tag: 'damage', label: 'The payback', detail: '20% of everything it banked, to the enemy nearest it, when it fades.' },
       ],
       notes: [
-        'The bookkeeping runs even when neither side is playing Illusion, because an online opponent can fold you and then die — a fold with nobody left to expire it would leave a body permanently 30% wider.',
-        'Online, being folded also turns your entire screen into its own negative for the full 8 seconds. That is the victim\'s half of the trick and it does not exist against a bot.',
-        'A folded fighter who dies is unfolded silently, so the shape never survives onto a fresh match.',
+        'It only stops what reaches it. A homing attack or a melee hit that finds the real, tiny illusionist still lands on them.',
+        'Online the clone is drawn on the opponent\'s screen from a 20 Hz position stream, and only the illusionist\'s sim banks what it soaks up — so it is never paid twice.',
       ],
     },
   ],
@@ -137,7 +134,8 @@ const illusion: ElementCodex = {
         ],
       },
       notes: [
-        'Only group projectiles are bent. This element\'s own tesseracts and Blade Dance daggers are kit-owned objects and sail straight through their own panes.',
+        'Only group projectiles are bent. This element\'s own Blade Dance daggers are kit-owned objects and sail straight through their own panes.',
+        'While a Guise is up the opponent\'s screen does not draw your panes at all — they still bend, and they reappear when the clone fades.',
         'It bends every element\'s shots, which is worth remembering against kits that fire in volleys — an Air splice or a Gunpowder burst through a pane arrives as a mess.',
         'A pane is a structure, so Ruin\'s Spikes of Ruin can tear it down. Anything it already bent keeps its new heading; the kick was applied, and the pane was only ever the thing that applied it.',
       ],
@@ -179,45 +177,38 @@ const illusion: ElementCodex = {
       ],
     },
 
-    'illusion-tesseract': {
+    'illusion-guise': {
       basics:
-        'Throws a cube at the cursor at 430 px/s for up to 2.6 seconds, launched 26px out, dealing 20 '
-        + 'damage to the first body within 30px and folding them for 8 seconds into a square, star or '
-        + 'rhombus — one of the three at random, evenly — at ×1.3 size, hitbox included. A cube that '
-        + 'finds nobody folds away in a scatter of cyan splinters. It is a one-way mirror: invisible to '
-        + 'everybody but the person who threw it, though the impact is loud and visible to all, so being '
-        + 'hit is not the secret, the cube is. Online, a fold your sim resolves is relayed to the real '
-        + 'person wearing it, who spends the 8 seconds looking at their own screen inverted. 12s '
-        + 'cooldown.',
-      cast: 'F, aimed at the cursor, launched 26px out. 12s cooldown. Only the caster gets a cast tell.',
+        'For 3 seconds you are 80% smaller (a fifth of your size, hitbox included), 35% faster and '
+        + 'invisible to the opponent, and a full-size clone of you follows your cursor at your normal '
+        + 'walking pace. Bots and husks target the clone automatically. It cannot die but it banks '
+        + 'everything that hits it, and when it fades 20% of that is dealt to the enemy nearest it. '
+        + 'While it is out everything you throw is invisible on the opponent\'s screen too — bullets, '
+        + 'cracks, daggers, Phantoms, even your Veils, which reappear when the 3 seconds end. 12s cooldown.',
+      cast: 'F. Instant; the clone starts where you stand and walks to the cursor. 12s cooldown.',
       effects: [
-        { tag: 'damage', label: 'The impact', detail: '20 damage to the first body within 30px of the cube.' },
-        { tag: 'control', label: 'The fold', detail: '8 seconds folded into a square, star or rhombus — one of the three at random, evenly. Size ×1.3, and with it the hitbox.' },
-        { tag: 'area', label: 'The flight', detail: '430 px/s for up to 2.6 seconds, or until it leaves the play area. A cube that finds nobody folds away in a scatter of cyan splinters — visible to the thrower only.' },
-        { tag: 'utility', label: 'The one-way mirror', detail: 'Invisible to everybody but the person who threw it. The impact, on the other hand, is loud and visible to all: being hit by it is not the secret, the cube is.' },
-        { tag: 'utility', label: 'Online', detail: 'A fold your sim resolves is relayed to the real person wearing it, who takes the shape and spends the 8 seconds looking at their own screen inverted.' },
+        { tag: 'buff', label: 'Small and quick', detail: 'Size ×0.2 (hitbox included) and movement ×1.35 for 3 seconds.' },
+        { tag: 'utility', label: 'Invisible', detail: 'Gone from the opponent\'s screen, health bar and all. On your own screen you are a faint ghost so you can still steer.' },
+        { tag: 'utility', label: 'The decoy', detail: 'A full-size clone with your rig and a live health bar follows your cursor. Bots and husks chase it, not you.' },
+        { tag: 'damage', label: 'The payback', detail: '20% of everything the clone banked is dealt to the enemy nearest it when it fades.' },
+        { tag: 'utility', label: 'Silent hands', detail: 'Every attack you make while it is out is invisible to the opponent, Veils included. Bots do not dodge what they cannot see.' },
       ],
       upgrade: {
         basics:
-          'A folded body grows a seam: a 30° wedge, 15° either side of its heading, and everything you '
-          + 'land while you are inside it hits for ×1.5. It turns at 0.85 radians a second — about 49°/s, a '
-          + 'full lap roughly every 7.4 seconds — so the angle can never simply be camped on and you have '
-          + 'to keep walking around them. The test is the angle from the folded body to you at the moment '
-          + 'damage lands, not where the shot came from, since a hit has no position left by the time it '
-          + 'resolves. The seam is written the instant the cube lands and belongs to whoever threw it, so '
-          + 'buying the upgrade mid-match cannot open a hole in somebody who is already square.',
+          'Press F again while the clone is out to swap into it: you arrive exactly where it stood at '
+          + 'full size, the clone is gone, and the surprise gives you +25% damage for 10 seconds. The '
+          + 'clone\'s bank is still paid out. Nothing is drawn for the swap on the opponent\'s screen — '
+          + 'the body they were chasing simply becomes real.',
         effects: [
-          { tag: 'debuff', label: 'The seam', detail: 'A 30° wedge (15° either side of its heading). Everything you land while you are inside it hits for ×1.5.', requiresUpgrade: 'f' },
-          { tag: 'utility', label: 'It turns', detail: '0.85 radians a second — about 49°/s, a full lap roughly every 7.4 seconds — so the angle can never simply be camped on. You have to keep walking around them.', requiresUpgrade: 'f' },
-          { tag: 'utility', label: 'Where you are, not where the shot came from', detail: 'The test is the angle from the folded body to *you* at the moment damage lands. A hit has no position left by the time it resolves, and a ranged shot came along that line anyway.', requiresUpgrade: 'f' },
-          { tag: 'utility', label: 'Stamped at the fold', detail: 'The seam is written the instant the cube lands, and it belongs to whoever threw it. Buying the upgrade mid-match cannot open a hole in somebody who is already square.', requiresUpgrade: 'f' },
+          { tag: 'utility', label: 'The swap', detail: 'F during a Guise teleports you into the clone and ends the Guise. It is a recast, so it never waits on the cooldown.', requiresUpgrade: 'f' },
+          { tag: 'buff', label: 'Surprise advantage', detail: '+25% damage for 10 seconds after the swap.', requiresUpgrade: 'f' },
+          { tag: 'utility', label: 'No tell', detail: 'No flash, sound or label on the opponent\'s screen. Only you see the swap happen.', requiresUpgrade: 'f' },
         ],
       },
       notes: [
-        'A seam multiplies with a Phantom mark rather than overriding it: a folded, understudied target standing in your wedge takes ×1.2 × ×1.5 = ×1.8 from everything you land.',
-        'The seam is painted in the folder\'s own colours, on the folded body, so the victim can see exactly which side of themselves is open.',
-        'Because the cube is drawn only for the player\'s own side, a co-op ally playing Illusion throws a tesseract nobody on the screen can see — including them.',
-        'Online, the opponent\'s cast is not replayed locally at all. A local copy could only fold you a second time, with its own roll of the shape, on top of the fold their sim already sent.',
+        'Re-Trick multiplies with the Masquerade mask and a Phantom mark: a marked opponent hit by a masked, Re-Tricked illusionist takes 1.2 × 1.5 × 1.25.',
+        'Bots with the upgrade swap just before the clone would fade anyway, or the moment you find the real one.',
+        'Ruin\'s Second Skin breaks a Guise like any other form — the clone is torn down without paying anything out.',
       ],
     },
 
@@ -307,8 +298,8 @@ const illusion: ElementCodex = {
       notes: [
         'Their health bar is the leak. The numbers lie but the bar does not, so an opponent paying close attention to how fast they are actually dying can work it out without ever clicking.',
         'A bot reaches for the mask 2–8 seconds after one goes on, and occasionally reaches at a face with nothing on it and eats the 15 — it is guessing, not reading, exactly as a person would be.',
-        'Nightmare Illusion bots wear one themselves, over their Veil. If a fight is going worse than the numbers say it should, click the illusionist.',
-        'It stacks multiplicatively with the Phantom mark and the Mind-Boggle seam: a folded, understudied opponent hit from the seam by a masked illusionist is taking 1.2 × 1.5 × 1.5.',
+        'Nightmare Illusion bots wear one themselves, over their Relocate. If a fight is going worse than the numbers say it should, click the illusionist.',
+        'It stacks multiplicatively with the Phantom mark and Re-Trick: an understudied opponent hit by a masked, Re-Tricked illusionist is taking 1.2 × 1.5 × 1.25.',
       ],
     },
   },

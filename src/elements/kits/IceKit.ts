@@ -168,6 +168,8 @@ export interface IceArenaApi {
   /** Mastery enhancement id bound over the given ability slot, or null if that slot is unchanged. */
   masteryBindFor(slot: string): string | null;
   recordMasteryStat(key: string, amount: number): void;
+  /** Rename the bound mastery card in place — the one slot is a different ability per form. */
+  setAbilityCardLabel(abilityId: string, name: string, description: string): void;
 }
 
 // ── IceKit ───────────────────────────────────────────────────────────────────
@@ -342,6 +344,7 @@ export class IceKit {
     this.icyTrails = [];
     this.playerBlackIceMorphActive = false;
     if (this.playerBlackIceArmor) { this.playerBlackIceArmor.destroy(); this.playerBlackIceArmor = null; }
+    this.masteryCardBlackIce = null;
     this.playerIceSpeedBoostUntil = 0;
     this.playerSlushLastTick = 0;
     this.playerSkateRecentUntil = 0;
@@ -748,6 +751,7 @@ export class IceKit {
       const aimY = this.aimY || player.y;
       this.playerAvatar.setFacing(Math.atan2(aimY - player.y, aimX - player.x));
       this.playerAvatar.setVoid(this.playerBlackIceMorphActive);
+      this.syncMasteryCard();
       // Skating and armouring up are the character working at full stretch.
       this.playerAvatar.setIntensity(
         this.playerSkaterActive ? 1.4 : (this.playerBlockUpActive || this.playerBlackIceMorphActive) ? 1.25 : 1,
@@ -1406,10 +1410,35 @@ export class IceKit {
   private castMasteryBind(slot: 'e' | 'r' | 'f' | 'q', time: number): boolean {
     if (!this.arena.masteryActive) return false;
     switch (this.arena.masteryBindFor(slot)) {
-      case 'icicle-impale': this.tryCastIcicleImpale(time); return true;
-      case 'curling-stone': this.tryCastCurlingStone(time); return true;
+      // One slot, two abilities: Curling Stone in normal form, Icicle Impale in Black Ice.
+      case 'icicle-impale':
+      case 'curling-stone':
+        if (this.playerBlackIceMorphActive) this.tryCastIcicleImpale(time);
+        else this.tryCastCurlingStone(time);
+        return true;
       default: return false;
     }
+  }
+
+  /** 0 = just cast, 1 = ready — for whichever ability the merged mastery slot holds right now. */
+  getMasterySlotCooldownRatio(time: number): number {
+    return this.playerBlackIceMorphActive
+      ? this.getIcicleImpaleCooldownRatio(time)
+      : this.getCurlingStoneCooldownRatio(time);
+  }
+
+  /** Last form the merged mastery card was labelled for, so it is only renamed on a change. */
+  private masteryCardBlackIce: boolean | null = null;
+
+  /** Keep the mastery card's name in step with the form — it is a different ability in each. */
+  private syncMasteryCard(): void {
+    if (!this.arena.masteryActive) return;
+    const blackIce = this.playerBlackIceMorphActive;
+    if (blackIce === this.masteryCardBlackIce) return;
+    this.masteryCardBlackIce = blackIce;
+    this.arena.setAbilityCardLabel('curling-stone',
+      blackIce ? 'Icicle Impale' : 'Curling Stone',
+      blackIce ? 'Dash and impale — shatters into bonus frost after 50 damage' : 'Summon a stone — shoot it to send it sliding');
   }
 
   private tryCastIcicleImpale(time: number): void {

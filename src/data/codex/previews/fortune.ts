@@ -1,30 +1,40 @@
 import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import {
-  FOR, FortuneAvatar, FortuneFx, auditMark, auditor, bloodCoin, bouncyBolt, bulletShape,
-  daggerShape, gildedAura, goldBeam, goldCone, grenadeShape, gunShape, healPylon, midasBullet,
-  muzzleOf, passTier, pepperFlame, roombaShape, rustyCar, stall, turnstile,
+  FOR, FortuneAvatar, FortuneFx, StatKind, advanceCard, goldCoin, goldFloor, goldPlume, goldStatue,
+  goldenHeart, grassBlade, midasGilt, powderBag,
 } from '../../../elements/kits/FortuneVisuals';
 
 /**
- * Fortune's showcases.
+ * Gold's showcases.
  *
- * There is no `proj-fortune` — every bullet, dagger, coin, turnstile and flame is Graphics the
- * kit repaints each frame — so these loops keep the kit's own little records and paint them with
- * the real painters: `bulletShape`, `daggerShape`, `bloodCoin`, `stall`, `turnstile`, `goldBeam`,
- * `pepperFlame`, `roombaShape`, and `muzzleOf` for where a shot actually leaves the barrel.
- * One-shots go through a real `FortuneFx` with a sticky sink.
+ * Every loop keeps the same small records the kit keeps (blades with a velocity and a birth time,
+ * a plume, a heart's stress, floor patches, loot) and paints them with the kit's own exported
+ * painters. One-shots go through a real `FortuneFx` with a sticky sink. Numbers are the kit's.
  */
 
-// ── Staging ───────────────────────────────────────────────────────────
+// ── Kit numbers the loops replay ───────────────────────────────────────
+const FRAY_SPEED = 485;
+const FRAY_GRAVITY = 900;
+const FRAY_GILD_MS = 180;
+const PLUME_R = 105;
+const HEART_TRAVEL = 420;
 
-interface Shot { x: number; y: number; vx: number; vy: number; size: number; seed: number; dead: boolean }
+// ── Staging ───────────────────────────────────────────────────────────
 
 function fxOf(ctx: PreviewCtx): FortuneFx {
   return ctx.capture(() => new FortuneFx(ctx.scene, ctx.tint).setSink(ctx.sink));
 }
 
-function dummyAt(ctx: PreviewCtx, at: { x: number; y: number }, depth = 5): void {
+/** The alchemist's rig, or null when a skin has replaced the character. */
+function alch(av: unknown): FortuneAvatar | null {
+  return av instanceof FortuneAvatar ? av : null;
+}
+
+const hex = (c: number): string => `#${c.toString(16).padStart(6, '0')}`;
+
+/** A stand-in enemy that can be moved around, unlike `ctx.addDummy`'s fixed mark. */
+function dummyAt(ctx: PreviewCtx, at: { x: number; y: number }, depth = 4): void {
   const g = ctx.adopt(ctx.scene.add.graphics().setDepth(depth));
   ctx.onFrame(() => {
     g.clear();
@@ -37,1368 +47,482 @@ function dummyAt(ctx: PreviewCtx, at: { x: number; y: number }, depth = 5): void
 
 function float(ctx: PreviewCtx, x: number, y: number, text: string, color: string, size = 11): void {
   const t = ctx.adopt(ctx.scene.add.text(x, y, text, {
-    fontSize: `${size}px`, fontFamily: 'Arial Black', color,
-  }).setOrigin(0.5).setDepth(24));
+    fontSize: `${size}px`, fontFamily: 'Arial Black', color, stroke: '#1a1206', strokeThickness: 3,
+  }).setOrigin(0.5).setDepth(19));
   ctx.scene.tweens.add({ targets: t, y: y - 16, alpha: 0, duration: 900 });
 }
 
 function label(ctx: PreviewCtx, x: number, y: number, color: string, size = 11): Phaser.GameObjects.Text {
   return ctx.adopt(ctx.scene.add.text(x, y, '', {
     fontSize: `${size}px`, fontFamily: 'Arial Black', color,
-  }).setOrigin(0.5).setDepth(24));
+  }).setOrigin(0.5).setDepth(19));
 }
 
-const hex = (c: number): string => `#${c.toString(16).padStart(6, '0')}`;
-
-/** The shopkeeper rig, or null when a skin has replaced the character. */
-function keeper(av: unknown): FortuneAvatar | null {
-  return av instanceof FortuneAvatar ? av : null;
+/** A purse readout pinned top-left, the way the status tray counts it. */
+function purse(ctx: PreviewCtx, read: () => number): void {
+  const t = label(ctx, 56, 14, hex(FOR.goldLit), 12);
+  ctx.onFrame(() => t.setText(`🪙 ${Math.floor(read())}`));
 }
 
-/** The purse, drawn as the kit draws a coin, with the running total beside it. */
-function purse(ctx: PreviewCtx, read: () => number, at: { x: number; y: number }): void {
-  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(23));
-  const t = ctx.adopt(ctx.scene.add.text(at.x + 14, at.y, '', {
-    fontSize: '13px', fontFamily: 'Arial Black', color: hex(FOR.goldLit),
-  }).setOrigin(0, 0.5).setDepth(23));
-  ctx.onFrame((_dt, elapsed) => {
+interface Blade { x: number; y: number; vx: number; vy: number; born: number; alive: boolean }
+
+/** Throw a Fray clump from (x, y) aimed at `ang`, simulated exactly as the kit does. */
+function throwClump(
+  ctx: PreviewCtx, blades: Blade[], x: number, y: number, ang: number, now: number, n = 7,
+): void {
+  for (let i = 0; i < n; i++) {
+    const a = ang + (i / (n - 1) - 0.5) * 0.48 + (Math.random() - 0.5) * 0.08;
+    const v = FRAY_SPEED * (0.9 + Math.random() * 0.2);
+    blades.push({ x: x + Math.cos(ang) * 20, y: y + Math.sin(ang) * 20, vx: Math.cos(a) * v, vy: Math.sin(a) * v, born: now, alive: true });
+  }
+}
+
+/** Paint and step a blade list; `hit` is asked for every live blade and returns true when it lands. */
+function bladeLayer(
+  ctx: PreviewCtx, blades: Blade[], hit: (b: Blade) => boolean, onHit: (b: Blade) => void,
+): void {
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+  ctx.onFrame((dt, elapsed) => {
     g.clear();
-    bloodCoin(g, ctx.tint, at.x, at.y, 8, 1, { spin: elapsed / 400 });
-    t.setText(`${Math.floor(read())}`);
+    const s = dt / 1000;
+    for (const b of blades) {
+      if (!b.alive) continue;
+      b.vy += FRAY_GRAVITY * s;
+      b.x += b.vx * s;
+      b.y += b.vy * s;
+      if (elapsed - b.born > 1800 || b.y > ctx.h + 30) { b.alive = false; continue; }
+      if (hit(b)) { b.alive = false; onHit(b); continue; }
+      const gild = Phaser.Math.Clamp((elapsed - b.born) / FRAY_GILD_MS, 0, 1);
+      grassBlade(g, ctx.tint, b.x, b.y, Math.atan2(b.vy, b.vx), 15, gild, 1);
+    }
   });
 }
 
-/** Bullets in the air, stepped and painted exactly as `updateBullets` does. */
-function bulletLayer(ctx: PreviewCtx, shots: Shot[], depth = 11): void {
-  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(depth));
-  ctx.onFrame((delta) => {
-    g.clear();
-    const dt = delta / 1000;
-    for (let i = shots.length - 1; i >= 0; i--) {
-      const b = shots[i];
-      b.x += b.vx * dt; b.y += b.vy * dt;
-      if (b.dead || b.x < -20 || b.x > ctx.w + 20) { shots.splice(i, 1); continue; }
-      bulletShape(g, ctx.tint, b.x, b.y, Math.atan2(b.vy, b.vx), b.size, 1, { seed: b.seed });
-    }
-  });
-}
+// ══ CLICK — Fray ═══════════════════════════════════════════════════════
 
-// ══ CLICK — Open Fire ═════════════════════════════════════════════════
-
-export const openFire: PreviewScript = {
-  duration: 15000,
+export const fray: PreviewScript = {
+  duration: 6500,
   scale: 0.9,
-  caption: 'Click — the gun is the rate limiter, and the gun is whatever you have bought',
+  caption: 'Click — 7 grass blades, gilded in flight by the other hand, then falling under gravity. 3 a blade',
   run(ctx) {
     const fx = fxOf(ctx);
     const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
-    const rig = keeper(av);
     av.setFacing(ctx.aim);
-    const victim = { x: ctx.cx + 220, y: ctx.cy - 6 };
-    dummyAt(ctx, victim);
-    const shots: Shot[] = [];
-    bulletLayer(ctx, shots);
-    const coins = { n: 0 };
-    purse(ctx, () => coins.n, { x: 22, y: 16 });
-    const readout = label(ctx, ctx.w * 0.5, 12, '#f0c33c', 11);
-    const gauge = label(ctx, ctx.w * 0.5, ctx.h - 18, '#b8c2cc', 10);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#e8dcb8', 11);
+    const target = { x: ctx.cx + 250, y: ctx.cy + 10 };
+    dummyAt(ctx, target);
+    const blades: Blade[] = [];
+    let elapsedNow = 0;
+    ctx.onFrame((_dt, e) => { elapsedNow = e; });
+    bladeLayer(ctx, blades,
+      (b) => Phaser.Math.Distance.Between(b.x, b.y, target.x, target.y) < 24,
+      (b) => {
+        float(ctx, target.x + (Math.random() - 0.5) * 20, target.y - 24, '3', hex(FOR.goldLit), 12);
+        ctx.capture(() => fx.bladeHit(b.x, b.y, Math.atan2(b.vy, b.vx)));
+      });
 
-    // The held gun, drawn with the kit's own painter so the silhouette is the real one.
-    const held = { kind: 'pistol', recoil: 0, ammo: 10, mag: 10 };
-    const gunG = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
-    ctx.onFrame((delta) => {
-      held.recoil = Math.max(0, held.recoil - delta / 220);
-      gunG.clear();
-      gunShape(gunG, ctx.tint, ctx.cx, ctx.cy, ctx.aim, held.kind, 1,
-        { recoil: held.recoil, golden: held.kind === 'golden' });
-      gauge.setText(`${held.kind.toUpperCase()}   ·   ${held.ammo}/${held.mag} rounds`);
-    });
-
-    const fire = (dmg: number, speed: number, size: number): void => {
-      const mz = muzzleOf(ctx.cx, ctx.cy, ctx.aim, held.kind);
-      held.recoil = 1;
-      held.ammo = Math.max(0, held.ammo - 1);
-      rig?.kick(1);
-      av.play('punch', ctx.aim);
-      ctx.capture(() => { fx.muzzle(mz.x, mz.y, ctx.aim, 1); fx.brass(ctx.cx, ctx.cy - 4, ctx.aim); });
-      shots.push({ x: mz.x, y: mz.y, vx: Math.cos(ctx.aim) * speed, vy: Math.sin(ctx.aim) * speed, size, seed: dmg, dead: false });
-      // 1 coin per 20 damage, and the remainder is carried rather than rounded away.
-      const before = Math.floor(coins.n);
-      coins.n += dmg / 20;
-      ctx.scene.time.delayedCall(Math.max(0, ((victim.x - mz.x) / speed) * 1000), () => {
-        float(ctx, victim.x, victim.y - 22, `${dmg}`, '#ffb3aa', dmg >= 30 ? 16 : 13);
-        if (Math.floor(coins.n) > before) ctx.capture(() => fx.coinBurst(victim.x, victim.y - 6, 1, 24));
+    const throwAt = (ms: number, lift: number): void => {
+      ctx.at(ms, () => {
+        const d = target.x - ctx.cx;
+        const tFlight = d / FRAY_SPEED;
+        const drop = 0.5 * FRAY_GRAVITY * tFlight * tFlight * lift;
+        const ang = Math.atan2(target.y - drop - ctx.cy, d);
+        av.setFacing(ang);
+        av.play('punch', ang);
+        alch(av)?.setGlowHand(1);
+        ctx.capture(() => fx.transmute(ctx.cx + Math.cos(ang - 1.25) * 22, ctx.cy + Math.sin(ang - 1.25) * 22));
+        throwClump(ctx, blades, ctx.cx, ctx.cy, ang, elapsedNow);
       });
     };
-
-    ctx.at(300, () => readout.setText('the free pistol: 10 damage, 10 rounds, a shot every 190ms'));
-    for (let i = 0; i < 5; i++) ctx.at(700 + i * 190, () => fire(10, 900, 5));
-    ctx.at(2400, () => {
-      held.kind = 'rifle'; held.ammo = 1; held.mag = 1;
-      rig?.setGun('rifle');
-      ctx.capture(() => fx.cash(ctx.cx, ctx.cy, 40, 480, 22));
-      float(ctx, ctx.cx, ctx.cy - 48, '🪖 RIFLE', hex(FOR.gold), 12);
-      readout.setText('10 coins at the counter: 30 damage — and one round in it');
-    });
-    ctx.at(3000, () => fire(30, 1120, 7));
-    ctx.at(4600, () => { held.ammo = 1; fire(30, 1120, 7); });
-    ctx.at(6000, () => {
-      held.mag = 1; held.ammo = 1;
-      ctx.capture(() => fx.cash(ctx.cx, ctx.cy, 40, 480, 22));
-      float(ctx, ctx.cx, ctx.cy - 48, '🔩 +🛢️ MODS', hex(FOR.contraband), 12);
-      readout.setText('Hollow Point and 50 Cal. from the drawer: +5 and +10 a bullet');
-    });
-    ctx.at(6600, () => fire(45, 1120, 7));
-    ctx.at(8200, () => { held.ammo = 1; fire(45, 1120, 7); });
-    ctx.at(9600, () => {
-      held.kind = 'golden'; held.ammo = 10; held.mag = 10;
-      rig?.setGun('golden');
-      ctx.capture(() => fx.cash(ctx.cx, ctx.cy, 46, 520, 22));
-      float(ctx, ctx.cx, ctx.cy - 48, '🌟 GOLDEN PISTOL', hex(FOR.goldLit), 13);
-      readout.setText('30 coins: hitscan, 20 damage, +1 for every 2 coins in your purse');
-    });
-    for (let i = 0; i < 3; i++) {
-      ctx.at(10400 + i * 700, () => {
-        const dmg = 20 + Math.floor(coins.n / 2);
-        held.recoil = 1; held.ammo--;
-        rig?.kick(0.6);
-        av.play('punch', ctx.aim);
-        const mz = muzzleOf(ctx.cx, ctx.cy, ctx.aim, 'golden');
-        ctx.capture(() => { fx.muzzle(mz.x, mz.y, ctx.aim, 0.8); fx.impact(victim.x, victim.y, ctx.aim + Math.PI); });
-        float(ctx, victim.x, victim.y - 22, `${dmg}`, '#ffb3aa', 17);
-        coins.n += dmg / 20;
-      });
-    }
-    ctx.at(13000, () => readout.setText('so banking your money makes this gun worse — it is the one item arguing against the other buttons'));
+    ctx.at(200, () => readout.setText('aimed straight at them, the clump falls short — the blades have weight'));
+    throwAt(500, 0);
+    ctx.at(2200, () => readout.setText('aim above them: the gilded blades arc down into the body'));
+    throwAt(2500, 1);
+    throwAt(3400, 1);
+    throwAt(4300, 1);
+    ctx.at(5300, () => readout.setText('7 blades, 3 each — small alone, a lot when the whole clump lands'));
   },
 };
 
-// ══ CLICK+ — Alt-Fire ═════════════════════════════════════════════════
+// ══ E — Advance ═════════════════════════════════════════════════════════
 
-export const openFireUpgraded: PreviewScript = {
-  duration: 17000,
-  scale: 0.85,
-  caption: 'Click+ — every gun turns out to have a second trigger, and none of them are the same',
+const STAT_TEXT: Record<StatKind, [string, string]> = {
+  might: ['MIGHT', '+10% damage'],
+  hide: ['GILDED HIDE', '-7% damage taken'],
+  stride: ['STRIDE', '+7% speed'],
+  haste: ['HASTE', '-8% cooldowns'],
+  vigor: ['VIGOR', '+30 max HP'],
+  greed: ['GREED', '+25% gold'],
+  sheaf: ['SHEAF', '+2 blades'],
+  mend: ['MEND', '+1.5 HP/s'],
+};
+
+export const advance: PreviewScript = {
+  duration: 7600,
+  scale: 0.9,
+  caption: 'E — spend 10 gold, three upgrade cards appear over your head; click one to keep it for the match',
   run(ctx) {
     const fx = fxOf(ctx);
     const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
-    const rig = keeper(av);
-    av.setFacing(ctx.aim);
-    const victim = { x: ctx.cx + 230, y: ctx.cy - 6 };
-    dummyAt(ctx, victim);
-    const shots: Shot[] = [];
-    bulletLayer(ctx, shots);
-    const coins = { n: 18 };
-    purse(ctx, () => coins.n, { x: 22, y: 16 });
-    const readout = label(ctx, ctx.w * 0.5, 12, '#f0c33c', 11);
-    const gauge = label(ctx, ctx.w * 0.5, ctx.h - 18, '#b8c2cc', 10);
+    av.setFacing(-Math.PI / 2);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#e8dcb8', 11);
+    let gold = 20;
+    purse(ctx, () => gold);
 
-    const held = { kind: 'pistol', recoil: 0, ammo: 10, mag: 10, spin: 0 };
-    const gunG = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
-    ctx.onFrame((delta) => {
-      held.recoil = Math.max(0, held.recoil - delta / 220);
-      gunG.clear();
-      // A revolver being wound up is drawn spinning in the hand rather than levelled.
-      gunShape(gunG, ctx.tint, ctx.cx, ctx.cy, ctx.aim + held.spin * 6, held.kind, 1,
-        { recoil: held.recoil, golden: held.kind === 'golden' });
-      gauge.setText(`${held.kind.toUpperCase()}   ·   ${held.ammo}/${held.mag} rounds`);
-    });
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(16));
+    const texts = Array.from({ length: 6 }, (_, i) => ctx.adopt(ctx.scene.add.text(0, 0, '', {
+      fontSize: i % 2 === 0 ? '8px' : '7px', fontFamily: 'Arial Black', color: i % 2 === 0 ? '#fff3c4' : '#e6c46a',
+    }).setOrigin(0.5).setDepth(17)));
+    const cursor = ctx.adopt(ctx.scene.add.graphics().setDepth(18));
 
-    const spit = (dmg: number, speed: number, size: number, spread: number): void => {
-      const a = ctx.aim + (Math.random() - 0.5) * spread;
-      const mz = muzzleOf(ctx.cx, ctx.cy, a, held.kind);
-      held.recoil = 1;
-      held.ammo = Math.max(0, held.ammo - 1);
-      rig?.kick(1);
-      ctx.capture(() => fx.muzzle(mz.x, mz.y, a, 1));
-      shots.push({ x: mz.x, y: mz.y, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed, size, seed: dmg, dead: false });
+    let offer: StatKind[] | null = null;
+    let opened = 0;
+    let hover = -1;
+    let now = 0;
+    const W = 58, H = 70, GAP = 8;
+    const centres = (): { x: number; y: number }[] => {
+      const at = ctx.casterAt();
+      const y = Math.max(H / 2 + 22, at.y - 96);
+      return [-1, 0, 1].map((k) => ({ x: at.x + k * (W + GAP), y }));
     };
-
-    // ── The pistol dump: every round in the magazine, 55ms apart, aimed by hope.
-    ctx.at(300, () => readout.setText('right click on the pistol: the whole magazine, one round every 55ms'));
-    for (let i = 0; i < 10; i++) ctx.at(700 + i * 55, () => spit(10, 900, 5, 0.34));
-    ctx.at(1300, () => float(ctx, ctx.cx, ctx.cy - 44, '🔫 MAG DUMP', hex(FOR.gold), 12));
-    ctx.at(1900, () => readout.setText('scattered across 0.34 radians — and it starts its own reload, because there is nothing left'));
-
-    // ── The revolver, spun up for three seconds.
-    ctx.at(3400, () => {
-      held.kind = 'revolver'; held.ammo = 6; held.mag = 6;
-      rig?.setGun('revolver');
-      readout.setText('the revolver is held instead. Three seconds of spinning walks it from 20 to 30.');
-    });
-    const spinBar = label(ctx, ctx.cx, ctx.cy - 62, '#fff0a8', 12);
-    ctx.onFrame((delta, elapsed) => {
-      if (elapsed < 3900 || elapsed > 6900) { held.spin = 0; spinBar.setText(''); return; }
-      held.spin += delta / 2600;
-      const k = Math.min(1, (elapsed - 3900) / 3000);
-      spinBar.setPosition(ctx.cx, ctx.cy - 62).setText(`${Math.round(20 + 10 * k)} dmg  ·  ${Math.round(k * 100)}% spun`);
-    });
-    ctx.at(6950, () => {
-      held.spin = 0;
-      spinBar.setText('');
-      const mz = muzzleOf(ctx.cx, ctx.cy, ctx.aim, 'revolver');
-      held.recoil = 1; held.ammo--;
-      rig?.kick(2);
-      av.play('punch', ctx.aim);
-      ctx.capture(() => { fx.muzzle(mz.x, mz.y, ctx.aim, 1.9); fx.impact(victim.x, victim.y, ctx.aim + Math.PI); });
-      float(ctx, ctx.cx, ctx.cy - 46, '🎯 FULLY SPUN', hex(FOR.goldLit), 13);
-      float(ctx, victim.x, victim.y - 22, '30', '#ffb3aa', 18);
-      readout.setText('one round, for one round of ammunition — and a full charge pierces');
-    });
-
-    // ── The AR, throwing what is left of its clip.
-    ctx.at(8400, () => {
-      held.kind = 'ar'; held.ammo = 12; held.mag = 30;
-      rig?.setGun('ar');
-      readout.setText('the AR throws the rest of the clip at your cursor as one lump');
-    });
-    const clip = { x: 0, y: 0, live: false };
-    const clipG = ctx.adopt(ctx.scene.add.graphics().setDepth(12));
-    ctx.onFrame((delta, elapsed) => {
-      clipG.clear();
-      if (!clip.live) return;
-      clip.x += 640 * (delta / 1000);
-      grenadeShape(clipG, ctx.tint, clip.x, clip.y, 0, 1, { spin: elapsed / 120, size: 7 });
-      if (clip.x < victim.x - 10) return;
-      clip.live = false;
-      ctx.capture(() => fx.blast(clip.x, clip.y, 34));
-      for (let k = 0; k < 12; k++) {
-        const a = (k / 12) * Math.PI * 2;
-        shots.push({
-          x: clip.x, y: clip.y, vx: Math.cos(a) * 760, vy: Math.sin(a) * 760,
-          size: 4.4, seed: k, dead: false,
-        });
+    ctx.onFrame((_dt, e) => {
+      now = e;
+      g.clear(); cursor.clear();
+      for (const t of texts) t.setVisible(false);
+      if (!offer) return;
+      const cs = centres();
+      const a = Phaser.Math.Clamp((e - opened) / 220, 0, 1);
+      for (let i = 0; i < 3; i++) {
+        const rise = (1 - a) * 14;
+        advanceCard(g, ctx.tint, cs[i].x, cs[i].y + rise, W, H, offer[i], hover === i, a);
+        texts[i * 2].setVisible(true).setText(STAT_TEXT[offer[i]][0]).setPosition(cs[i].x, cs[i].y + rise + 16).setAlpha(a);
+        texts[i * 2 + 1].setVisible(true).setText(STAT_TEXT[offer[i]][1]).setPosition(cs[i].x, cs[i].y + rise + 27).setAlpha(a);
       }
-      float(ctx, clip.x, clip.y - 30, '💥 12 ROUNDS', hex(FOR.gold), 13);
-    });
-    ctx.at(9000, () => {
-      clip.x = ctx.cx + 20; clip.y = ctx.cy; clip.live = true;
-      held.ammo = 0;
-      av.play('sweep', ctx.aim);
-      float(ctx, ctx.cx, ctx.cy - 44, '💥 CLIP × 12', hex(FOR.gold), 12);
-    });
-    ctx.at(10400, () => readout.setText('it bursts where you pointed, into one bullet for every round that was in it'));
-
-    // ── The golden pistol's Midas round.
-    ctx.at(11800, () => {
-      held.kind = 'golden'; held.ammo = 10; held.mag = 10;
-      rig?.setGun('golden');
-      readout.setText('and the golden pistol coughs up something slow: 5 coins and 2 rounds');
-    });
-    const midas = { x: 0, live: false };
-    const gild = { until: -1 };
-    const midasG = ctx.adopt(ctx.scene.add.graphics().setDepth(12));
-    ctx.onFrame((delta, elapsed) => {
-      midasG.clear();
-      if (gild.until > elapsed) gildedAura(midasG, ctx.tint, victim.x, victim.y, 22, 1, { t: elapsed / 1000 });
-      if (!midas.live) return;
-      midas.x += 250 * (delta / 1000);
-      midasBullet(midasG, ctx.tint, midas.x, ctx.cy - 2, 0, 1, { t: elapsed / 1000, seed: 3, size: 11 });
-      if (midas.x < victim.x - 14) return;
-      midas.live = false;
-      gild.until = elapsed + 5000;
-      ctx.capture(() => fx.impact(victim.x, victim.y, Math.PI));
-      float(ctx, victim.x, victim.y - 22, '25', '#ffb3aa', 16);
-      float(ctx, victim.x, victim.y - 40, '🌟 GILDED', hex(FOR.goldLit), 13);
-    });
-    ctx.at(12400, () => {
-      coins.n -= 5; held.ammo -= 2;
-      midas.x = ctx.cx + 26; midas.live = true;
-      const mz = muzzleOf(ctx.cx, ctx.cy, ctx.aim, 'golden');
-      held.recoil = 1;
-      av.play('punch', ctx.aim);
-      ctx.capture(() => fx.muzzle(mz.x, mz.y, ctx.aim, 1.6));
-      float(ctx, ctx.cx, ctx.cy - 50, '🌟 MIDAS ROUND', hex(FOR.goldLit), 13);
-    });
-    ctx.at(14200, () => readout.setText('gilded for 5 seconds — and every coin their wounds mint is worth double'));
-    ctx.at(15600, () => readout.setText('the launcher drops its shells at your feet and leaves; the blaster fires a 12-bounce laser'));
-  },
-};
-
-// ══ E — Safe Investment ═══════════════════════════════════════════════
-
-export const safeInvestment: PreviewScript = {
-  duration: 13000,
-  scale: 0.9,
-  caption: 'E — 5 coins in; 10% every 10 seconds, never less than 1. Hold to withdraw.',
-  run(ctx) {
-    const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
-    av.setFacing(ctx.aim);
-    const money = { purse: 12, bank: 0 };
-    purse(ctx, () => money.purse, { x: 22, y: 16 });
-    const readout = label(ctx, ctx.w * 0.5, 12, '#f0c33c', 11);
-    const vault = label(ctx, ctx.w * 0.5, ctx.h - 20, '#fff0a8', 13);
-    ctx.onFrame(() => vault.setText(`🏦 ${money.bank} banked`));
-
-    const deposit = (at: number): void => ctx.at(at, () => {
-      const n = Math.min(5, money.purse);
-      if (n <= 0) { float(ctx, ctx.cx, ctx.cy - 44, '🏦 NOTHING TO DEPOSIT', hex(FOR.canvasShade), 11); return; }
-      money.purse -= n; money.bank += n;
-      av.play('sweep', ctx.aim);
-      ctx.capture(() => fx.cash(ctx.cx, ctx.cy, 30, 420, 12));
-      float(ctx, ctx.cx, ctx.cy - 44, `🏦 +${n} BANKED`, hex(FOR.gold), 12);
-    });
-    // The 10-second drum, compressed to 2.4s of loop so the ladder is visible.
-    const settle = (at: number): void => ctx.at(at, () => {
-      const gain = Math.max(1, Math.floor(money.bank * 0.10));
-      money.bank += gain;
-      ctx.capture(() => fx.coinBurst(ctx.cx, ctx.cy - 14, Math.min(5, gain), 22));
-      float(ctx, ctx.cx, ctx.cy - 60, `🏦 +${gain} CAPITAL GAINS`, hex(FOR.gold), 12);
-      readout.setText(`10% of ${money.bank - gain}, rounded down — but never less than 1`);
-    });
-
-    ctx.at(300, () => readout.setText('tap E: five coins in, or whatever you have if it is less'));
-    deposit(700);
-    deposit(1400);
-    settle(3000); settle(5000); settle(7000); settle(9000);
-    ctx.at(10600, () => {
-      readout.setText('hold E for 340ms and the whole balance comes back at once');
-      money.purse += money.bank;
-      ctx.capture(() => fx.coinBurst(ctx.cx, ctx.cy - 10, 9, 40, 800));
-      float(ctx, ctx.cx, ctx.cy - 48, `🪙 WITHDREW ${money.bank}`, hex(FOR.goldLit), 13);
-      money.bank = 0;
-    });
-    ctx.at(12000, () => readout.setText('no risk, no condition, nothing can take it — the only free money in the game'));
-  },
-};
-
-// ══ E+ — Safe Marketing ═══════════════════════════════════════════════
-
-export const safeInvestmentUpgraded: PreviewScript = {
-  duration: 15000,
-  scale: 0.85,
-  caption: 'E+ — three new lines on the public shelf: a cold pepper, a pylon, and a teleport',
-  run(ctx) {
-    const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
-    av.setFacing(ctx.aim);
-    const money = { purse: 20 };
-    purse(ctx, () => money.purse, { x: 22, y: 16 });
-    const readout = label(ctx, ctx.w * 0.5, 12, '#9fe4ff', 11);
-    const gauge = label(ctx, ctx.w * 0.5, ctx.h - 18, '#bda98a', 10);
-
-    const foe = { x: ctx.cx + 120, y: ctx.cy + 30, slowUntil: -1 };
-    dummyAt(ctx, foe);
-    // The harness parks the rig; the ring comes off wherever it is standing.
-    const me = { x: ctx.cx, y: ctx.cy };
-    const pylons = [
-      { x: ctx.cx - 190, y: ctx.cy + 60, readyAt: 0 },
-      { x: ctx.cx + 200, y: ctx.cy - 70, readyAt: 0 },
-    ];
-    const pepper = { until: -1, next: 0 };
-
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
-    ctx.onFrame((delta, elapsed) => {
-      g.clear();
-      const t = elapsed / 1000;
-      for (const p of pylons) healPylon(g, ctx.tint, p.x, p.y, 1, { t, ready: elapsed >= p.readyAt ? 1 : 0 });
-      // The ring: one every three seconds, 132px across, 20% for five seconds on anything in it.
-      if (elapsed < pepper.until && elapsed >= pepper.next) {
-        pepper.next = elapsed + 3000;
-        ctx.capture(() => fx.frost(me.x, me.y, 132));
-        if (Phaser.Math.Distance.Between(me.x, me.y, foe.x, foe.y) <= 132) {
-          foe.slowUntil = elapsed + 5000;
-          float(ctx, foe.x, foe.y - 30, '🥶 CHILLED', '#9fe4ff', 11);
-        }
+      if (hover >= 0) {
+        const c = cs[hover];
+        cursor.fillStyle(0xffffff, 0.95);
+        cursor.fillTriangle(c.x + 6, c.y + 6, c.x + 6, c.y + 20, c.x + 16, c.y + 15);
       }
-      void delta;
-      gauge.setText(elapsed < pepper.until
-        ? `🥶 ${((pepper.until - elapsed) / 1000).toFixed(1)}s of pepper left  ·  next ring in ${((pepper.next - elapsed) / 1000).toFixed(1)}s`
-        : elapsed < foe.slowUntil ? 'their move speed: 80%' : '');
     });
 
-    ctx.at(300, () => readout.setText('Safe Marketing does not touch the bank. It restocks the counter.'));
-    ctx.at(900, () => {
-      money.purse -= 3;
-      pepper.until = 12900; pepper.next = 900;
-      ctx.capture(() => fx.cash(me.x, me.y, 40, 480, 22));
-      float(ctx, me.x, me.y - 48, '🥶 CHILLY PEPPER  −3', hex(FOR.gold), 12);
-      readout.setText('a freezing ring off you every 3 seconds, for 12');
-    });
-    ctx.at(4200, () => readout.setText('20% slower for 5 seconds on anything of theirs it catches'));
-    ctx.at(6000, () => {
-      money.purse -= 5;
-      pylons[0].readyAt = 0;
-      ctx.capture(() => fx.cash(pylons[0].x, pylons[0].y - 16, 30, 420, 12));
-      float(ctx, me.x, me.y - 48, '🗼 HEAL PYLON  −5', hex(FOR.neon), 12);
-      readout.setText('a pylon somewhere on the floor. Green means it has a charge in it.');
-    });
-    ctx.at(7400, () => {
-      // Touch it: 10 HP, and the light goes out for five seconds.
-      ctx.capture(() => fx.cash(pylons[0].x, pylons[0].y - 16, 26, 420, 12));
-      pylons[0].readyAt = 12400;
-      float(ctx, pylons[0].x, pylons[0].y - 34, '🗼 +10', hex(FOR.neon), 13);
-      readout.setText('touch it below full health: 10 HP, and it goes dark for 5 seconds');
-    });
-    ctx.at(9200, () => {
-      money.purse -= 8;
-      float(ctx, me.x, me.y - 48, '🌀 TELE-CORE  −8', hex(FOR.neon), 12);
-      readout.setText('and for 12 seconds Space stops being a dash');
-    });
-    // The jump, drawn as the two ends of it: the hole you leave and the one you arrive in.
-    const jump = (at: number, to: { x: number; y: number }): void => ctx.at(at, () => {
-      ctx.capture(() => fx.rift(me.x, me.y, 30));
-      ctx.capture(() => fx.rift(to.x, to.y, 30));
-      float(ctx, to.x, to.y - 44, '🌀 TELEPORT', hex(FOR.goldLit), 12);
-    });
-    jump(10400, { x: ctx.cx + 230, y: ctx.cy - 90 });
-    jump(11800, { x: ctx.cx - 120, y: ctx.cy + 60 });
-    ctx.at(13000, () => readout.setText('all three sit on the GENERAL page — the enemy can buy them, and pays you half for it'));
-  },
-};
-
-// ══ R — Risky Investment ══════════════════════════════════════════════
-
-export const riskyInvestment: PreviewScript = {
-  duration: 14000,
-  scale: 0.9,
-  caption: 'R — the market judges the 10 seconds after: +20% dealing, −20% taking, +10% both',
-  run(ctx) {
-    const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
-    av.setFacing(ctx.aim);
-    const money = { purse: 15, stocks: 0, dealt: 0, taken: 0 };
-    purse(ctx, () => money.purse, { x: 22, y: 16 });
-    const readout = label(ctx, ctx.w * 0.5, 12, '#6ef2a2', 11);
-    const board = label(ctx, ctx.w * 0.5, ctx.h - 20, '#6ef2a2', 12);
-    ctx.onFrame(() => board.setText(
-      `📈 ${money.stocks} invested   ·   dealt ${Math.round(money.dealt)}/50   ·   taken ${Math.round(money.taken)}/100`));
-
-    ctx.at(400, () => {
-      const n = Math.min(5, money.purse);
-      money.purse -= n; money.stocks += n;
-      av.play('sweep', ctx.aim);
-      ctx.capture(() => fx.cash(ctx.cx, ctx.cy, 30, 420, 12));
-      float(ctx, ctx.cx, ctx.cy - 44, `📈 +${n} INVESTED`, hex(FOR.contraband), 12);
-      readout.setText('fresh money resets the window it will be judged on');
-    });
-    const settleAt = (at: number, dealt: number, taken: number, why: string): void => {
-      ctx.at(at - 900, () => { money.dealt = dealt; money.taken = taken; readout.setText(why); });
+    const round = (at: number, kinds: StatKind[], pickI: number): void => {
       ctx.at(at, () => {
-        const good = money.dealt > 50, bad = money.taken > 100;
-        const rate = good && bad ? 0.10 : good ? 0.20 : bad ? -0.20 : 0;
-        money.dealt = 0; money.taken = 0;
-        if (rate === 0) {
-          float(ctx, ctx.cx, ctx.cy - 60, 'no change', '#bda98a', 11);
-          return;
-        }
-        const d = Math.max(1, Math.round(Math.abs(money.stocks * rate))) * Math.sign(rate);
-        money.stocks = Math.max(0, money.stocks + d);
-        float(ctx, ctx.cx, ctx.cy - 60, `${d > 0 ? '📈 +' : '📉 '}${d} STOCK`,
-          hex(d > 0 ? FOR.contraband : FOR.blood), 13);
+        gold -= 10;
+        offer = kinds;
+        opened = now;
+        hover = -1;
+        av.play('flex');
+        alch(av)?.setGlowHand(0.8);
+        const at2 = ctx.casterAt();
+        ctx.capture(() => fx.advanceOpen(at2.x, at2.y - 96));
+        float(ctx, at2.x, at2.y - 40, '-10 🪙', hex(FOR.gold), 11);
+      });
+      ctx.at(at + 700, () => { hover = 0; });
+      ctx.at(at + 1200, () => { hover = 1; });
+      ctx.at(at + 1700, () => { hover = pickI; });
+      ctx.at(at + 2200, () => {
+        if (!offer) return;
+        const c = centres()[pickI];
+        const kind = offer[pickI];
+        offer = null;
+        hover = -1;
+        av.play('flex');
+        ctx.capture(() => fx.advancePick(c.x, c.y));
+        const at2 = ctx.casterAt();
+        float(ctx, at2.x, at2.y - 52, `${STAT_TEXT[kind][0]}  ${STAT_TEXT[kind][1]}`, hex(FOR.goldLit), 12);
       });
     };
-    settleAt(3200, 84, 30, 'a good window: over 50 dealt, under 100 taken');
-    settleAt(6000, 10, 140, 'a bad one: over 100 taken, and it can be ground to zero');
-    settleAt(8800, 96, 132, 'both at once — the market splits the difference rather than choosing');
-    settleAt(11400, 12, 20, 'and a quiet ten seconds settles at exactly nothing. Idling does not grow it.');
-    ctx.at(12600, () => readout.setText('the take bar is twice the deal bar, so a bruising exchange still settles positive'));
+    ctx.at(150, () => readout.setText('10 gold buys an offer of three, drawn from eight stats'));
+    round(500, ['might', 'sheaf', 'hide'], 1);
+    ctx.at(3600, () => readout.setText('click the one you want — picks stack, and last the whole match'));
+    round(4000, ['haste', 'vigor', 'greed'], 2);
   },
 };
 
-// ══ R+ — Risky Marketing ══════════════════════════════════════════════
+// ══ R — Gold Plume ═════════════════════════════════════════════════════
 
-export const riskyInvestmentUpgraded: PreviewScript = {
-  duration: 16000,
-  scale: 0.85,
-  caption: 'R+ — two guns nobody should be selling, and three grips that trade one trigger for the other',
-  run(ctx) {
-    const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
-    const rig = keeper(av);
-    av.setFacing(ctx.aim);
-    const victim = { x: ctx.cx + 250, y: ctx.cy - 6 };
-    dummyAt(ctx, victim);
-    const money = { purse: 40 };
-    purse(ctx, () => money.purse, { x: 22, y: 16 });
-    const readout = label(ctx, ctx.w * 0.5, 12, '#6ef2a2', 11);
-    const gauge = label(ctx, ctx.w * 0.5, ctx.h - 18, '#b8c2cc', 10);
-
-    const held = { kind: 'launcher', recoil: 0, ammo: 3, mag: 3 };
-    const gunG = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
-    ctx.onFrame((delta) => {
-      held.recoil = Math.max(0, held.recoil - delta / 220);
-      gunG.clear();
-      gunShape(gunG, ctx.tint, ctx.cx, ctx.cy, ctx.aim, held.kind, 1, { recoil: held.recoil });
-      gauge.setText(`${held.kind === 'launcher' ? 'GRENADE LAUNCHER' : 'BOUNCY BLASTER'}   ·   ${held.ammo}/${held.mag}`);
-    });
-
-    // Shells: 380 px/s to where you aimed, bursting for 20 inside 94px.
-    const shells: { x: number; y: number; vx: number; toX: number }[] = [];
-    // Bolts: 700 px/s with three wall bounces, or 900 with twelve.
-    const bolts: { x: number; y: number; vx: number; vy: number; left: number; max: number; heavy: boolean }[] = [];
-    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(12));
-    ctx.onFrame((delta, elapsed) => {
-      air.clear();
-      const dt = delta / 1000;
-      for (let i = shells.length - 1; i >= 0; i--) {
-        const s = shells[i];
-        const was = s.x;
-        s.x += s.vx * dt;
-        grenadeShape(air, ctx.tint, s.x, s.y, 0, 1, { spin: elapsed / 110, size: 7 });
-        if ((was - s.toX) * (s.x - s.toX) > 0) continue;
-        shells.splice(i, 1);
-        ctx.capture(() => fx.blast(s.x, s.y, 94));
-        float(ctx, s.x, s.y - 34, '20', '#ffb3aa', 15);
-      }
-      for (let i = bolts.length - 1; i >= 0; i--) {
-        const b = bolts[i];
-        b.x += b.vx * dt; b.y += b.vy * dt;
-        let bounced = false;
-        if (b.x < 14 || b.x > ctx.w - 14) { b.vx = -b.vx; b.x = Phaser.Math.Clamp(b.x, 14, ctx.w - 14); bounced = true; }
-        if (b.y < 14 || b.y > ctx.h - 14) { b.vy = -b.vy; b.y = Phaser.Math.Clamp(b.y, 14, ctx.h - 14); bounced = true; }
-        if (bounced) {
-          b.left--;
-          ctx.capture(() => fx.impact(b.x, b.y, Math.atan2(b.vy, b.vx), 160));
-          float(ctx, b.x, b.y - 16, `${b.left}`, '#6ef2a2', 10);
-        }
-        if (b.left <= 0) { bolts.splice(i, 1); continue; }
-        bouncyBolt(air, ctx.tint, b.x, b.y, Math.atan2(b.vy, b.vx), b.heavy ? 8 : 5, 1,
-          { charge: b.left / b.max, t: elapsed / 1000 });
-      }
-    });
-
-    ctx.at(300, () => {
-      money.purse -= 20;
-      float(ctx, ctx.cx, ctx.cy - 48, '💣 GRENADE LAUNCHER  −20', hex(FOR.gold), 12);
-      readout.setText('3 shells, a 2.7 second reload, and 20 damage inside 94px wherever you aimed');
-    });
-    for (let i = 0; i < 3; i++) {
-      ctx.at(900 + i * 700, () => {
-        held.recoil = 1; held.ammo--;
-        rig?.kick(1.2);
-        av.play('punch', ctx.aim);
-        shells.push({ x: ctx.cx + 26, y: ctx.cy - 2, vx: 380, toX: victim.x + (i - 1) * 40 });
-      });
-    }
-    ctx.at(3200, () => readout.setText('right click drops all of them at your own feet instead — and then you leave'));
-    ctx.at(3900, () => {
-      held.ammo = 0;
-      ctx.capture(() => { fx.blast(ctx.cx, ctx.cy, 113); fx.rift(ctx.cx, ctx.cy + 6, 30); });
-      float(ctx, ctx.cx, ctx.cy - 60, '🚀 EXIT STRATEGY', hex(FOR.goldLit), 13);
-      readout.setText('60 damage at point blank, and 3 seconds off the screen where nothing can touch you');
-    });
-    ctx.at(7200, () => {
-      ctx.capture(() => fx.rift(ctx.cx, ctx.cy, 30));
-      float(ctx, ctx.cx, ctx.cy - 44, '🪂 TOUCHDOWN', hex(FOR.gold), 12);
-    });
-
-    ctx.at(8400, () => {
-      money.purse -= 12;
-      held.kind = 'bouncy'; held.ammo = 8; held.mag = 8;
-      rig?.setGun('bouncy');
-      float(ctx, ctx.cx, ctx.cy - 48, '🟢 BOUNCY BLASTER  −12', hex(FOR.neon), 12);
-      readout.setText('8 rounds of 10 — and each one comes off the walls three times');
-    });
-    for (let i = 0; i < 3; i++) {
-      ctx.at(9000 + i * 600, () => {
-        held.recoil = 1; held.ammo--;
-        const a = ctx.aim - 0.5 + i * 0.5;
-        bolts.push({ x: ctx.cx + 22, y: ctx.cy, vx: Math.cos(a) * 700, vy: Math.sin(a) * 700, left: 3, max: 3, heavy: false });
-      });
-    }
-    ctx.at(11400, () => {
-      held.ammo -= 4;
-      const a = ctx.aim - 0.35;
-      bolts.push({ x: ctx.cx + 22, y: ctx.cy, vx: Math.cos(a) * 900, vy: Math.sin(a) * 900, left: 12, max: 12, heavy: true });
-      float(ctx, ctx.cx, ctx.cy - 46, '🟢 HEAVY LASER', hex(FOR.neon), 12);
-      readout.setText('the alt is 4 rounds for one 20-damage bolt with twelve bounces in it');
-    });
-    ctx.at(14000, () => readout.setText('and three grips: Specialized ×1.5 on the alt, Basic ×1.35 on the main, Dual Grip for a whole second gun'));
-  },
-};
-
-// ══ F — Paywall ═══════════════════════════════════════════════════════
-
-export const paywall: PreviewScript = {
-  duration: 12000,
+export const goldPlumeShow: PreviewScript = {
+  duration: 8000,
   scale: 0.9,
-  caption: 'F — a full-height row of turnstiles: 1 coin a shot, 3 a crossing, all of it to you',
+  caption: 'R — a bag of powder bursts into golden dust for 6s: 9 damage a second inside, and 2 gold a second to you standing in it',
   run(ctx) {
     const fx = fxOf(ctx);
     const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
     av.setFacing(ctx.aim);
-    const mine = { coins: 4 };
-    const theirs = { coins: 14 };
-    purse(ctx, () => mine.coins, { x: 22, y: 16 });
-    const themPurse = ctx.adopt(ctx.scene.add.text(ctx.w - 22, 16, '', {
-      fontSize: '12px', fontFamily: 'Arial Black', color: hex(FOR.canvasShade),
-    }).setOrigin(1, 0.5).setDepth(23));
-    ctx.onFrame(() => themPurse.setText(`enemy purse ${theirs.coins} 🪙`));
+    const readout = label(ctx, ctx.w * 0.5, 12, '#e8dcb8', 11);
+    let gold = 0;
+    purse(ctx, () => gold);
+    const target = { x: ctx.cx + 230, y: ctx.cy };
+    dummyAt(ctx, target);
+    const land = { x: ctx.cx + 200, y: ctx.cy };
 
-    const enemy = { x: ctx.w * 0.85, y: ctx.cy };
-    dummyAt(ctx, enemy);
-    const wall = { x: ctx.w * 0.6, up: false, hot: 0 };
-    const shots: Shot[] = [];
-    const readout = label(ctx, ctx.w * 0.5, 12, '#f0c33c', 11);
-
-    // The line itself: a column of turnstiles top to bottom, exactly as the kit paints it.
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(6));
-    ctx.onFrame((delta, elapsed) => {
-      g.clear();
-      wall.hot = Math.max(0, wall.hot - delta / 260);
-      if (!wall.up) return;
-      for (let y = 18; y < ctx.h; y += 42) {
-        turnstile(g, ctx.tint, wall.x, y, 1, { spin: elapsed / 500 + y, hot: wall.hot });
-      }
-    });
-    // Their shots, and the toll each one pays on the way through.
-    const bullets = ctx.adopt(ctx.scene.add.graphics().setDepth(11));
-    ctx.onFrame((delta) => {
-      bullets.clear();
-      const dt = delta / 1000;
-      for (let i = shots.length - 1; i >= 0; i--) {
-        const b = shots[i];
-        const wasRight = b.x > wall.x;
-        b.x += b.vx * dt; b.y += b.vy * dt;
-        if (b.x < -20) { shots.splice(i, 1); continue; }
-        if (wall.up && wasRight && b.x <= wall.x && !b.dead) {
-          b.dead = true;
-          const paid = Math.min(1, theirs.coins);
-          wall.hot = 1;
-          if (paid > 0) {
-            theirs.coins -= paid; mine.coins += paid;
-            ctx.capture(() => fx.coinBurst(wall.x, b.y, 1, 20, 560));
-            float(ctx, wall.x, b.y - 18, '🎫 −1', hex(FOR.gold), 11);
-          } else {
-            float(ctx, wall.x, b.y - 18, '🎫 NO FUNDS', hex(FOR.canvasShade), 10);
-          }
-        }
-        bulletShape(bullets, ctx.tint, b.x, b.y, Math.atan2(b.vy, b.vx), 5, 1, { seed: i });
-      }
-    });
-
-    ctx.at(400, () => {
-      wall.up = true;
-      av.play('slam', ctx.aim);
-      float(ctx, wall.x, 30, '🎫 PAYWALL', hex(FOR.gold), 12);
-      readout.setText('full arena height, 5 seconds — and it blocks absolutely nothing');
-    });
-    for (let i = 0; i < 5; i++) {
-      ctx.at(900 + i * 380, () => {
-        shots.push({ x: enemy.x - 20, y: enemy.y + (i - 2) * 9, vx: -820, vy: 0, size: 5, seed: i, dead: false });
-      });
-    }
-    ctx.at(1800, () => readout.setText('every shot they put through it costs them a coin, straight into your purse'));
-    // And the body crossing, which is worth three.
-    ctx.onFrame((delta, elapsed) => {
-      if (elapsed < 4200 || elapsed > 6400) return;
-      const wasRight = enemy.x > wall.x;
-      enemy.x -= 150 * (delta / 1000);
-      if (wall.up && wasRight && enemy.x <= wall.x) {
-        const paid = Math.min(3, theirs.coins);
-        wall.hot = 1;
-        theirs.coins -= paid; mine.coins += paid;
-        ctx.capture(() => fx.coinBurst(wall.x, enemy.y, Math.min(4, paid), 20, 560));
-        float(ctx, wall.x, enemy.y - 18, `🎫 −${paid}`, hex(FOR.gold), 13);
-      }
-    });
-    ctx.at(4400, () => readout.setText('and walking through it is 3 — charged on the crossing, so leaning on it is free'));
-    ctx.at(7000, () => { wall.up = false; readout.setText('nothing is destroyed. It changes hands.'); });
-    ctx.at(9000, () => readout.setText('a payer with no coins passes free — it can only take what they actually have'));
-  },
-};
-
-// ══ F+ — Tax Evasion ══════════════════════════════════════════════════
-
-export const paywallUpgraded: PreviewScript = {
-  duration: 15000,
-  scale: 0.85,
-  caption: 'F+ — 7.5 seconds of turnstiles, and past 10 coins somebody comes to look at the books',
-  run(ctx) {
-    const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
-    av.setFacing(ctx.aim);
-    const mine = { coins: 6 };
-    const theirs = { coins: 22 };
-    purse(ctx, () => mine.coins, { x: 22, y: 16 });
-    const themPurse = ctx.adopt(ctx.scene.add.text(ctx.w - 22, 16, '', {
-      fontSize: '12px', fontFamily: 'Arial Black', color: hex(FOR.canvasShade),
-    }).setOrigin(1, 0.5).setDepth(23));
-    ctx.onFrame(() => themPurse.setText(`enemy purse ${theirs.coins} 🪙`));
-
-    const enemy = { x: ctx.w * 0.86, y: ctx.cy + 10 };
-    dummyAt(ctx, enemy);
-    const wall = { x: ctx.w * 0.62, up: false, hot: 0, take: 0 };
-    const shots: Shot[] = [];
-    const readout = label(ctx, ctx.w * 0.5, 12, '#f0c33c', 11);
-    const ledger = label(ctx, ctx.w * 0.5, ctx.h - 18, '#b3202e', 11);
-    ctx.onFrame(() => ledger.setText(wall.up ? `🎫 ${wall.take} coins through this wall  ·  audit at 11` : ''));
-
-    // The line, and the man at the top of the screen once the ledger is interesting.
-    const audit = { on: false, firesAt: 0, done: false, flash: 0 };
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(6));
-    ctx.onFrame((delta, elapsed) => {
-      g.clear();
-      wall.hot = Math.max(0, wall.hot - delta / 260);
-      audit.flash = Math.max(0, audit.flash - delta / 240);
-      if (wall.up) {
-        for (let y = 18; y < ctx.h; y += 42) {
-          turnstile(g, ctx.tint, wall.x, y, 1, { spin: elapsed / 500 + y, hot: wall.hot });
-        }
-      }
-      if (!audit.on) return;
-      const ay = 6;
-      const ang = Math.atan2(enemy.y - ay, enemy.x - wall.x);
-      auditor(g, ctx.tint, wall.x, ay, ang, 1, { fired: audit.done ? audit.flash : 0 });
-      if (audit.done) return;
-      const lock = Phaser.Math.Clamp(1 - (audit.firesAt - elapsed) / 5000, 0, 1);
-      auditMark(g, ctx.tint, wall.x + Math.cos(ang) * 30, ay + Math.sin(ang) * 30,
-        enemy.x, enemy.y, 1, { t: elapsed / 1000, lock });
-      if (elapsed < audit.firesAt) return;
-      audit.done = true;
-      audit.flash = 1;
-      ctx.capture(() => fx.impact(enemy.x, enemy.y, ang + Math.PI, 420));
-      float(ctx, enemy.x, enemy.y - 24, '35', '#ffb3aa', 18);
-      float(ctx, enemy.x, enemy.y - 46, '🎯 ASSESSED', hex(FOR.blood), 13);
-      readout.setText('35 damage, 20% slower, and 20% more damage taken from everything for 8 seconds');
-    });
-
-    // Their shots, each one a coin — or, with an empty purse, eight damage.
-    const bullets = ctx.adopt(ctx.scene.add.graphics().setDepth(11));
-    ctx.onFrame((delta) => {
-      bullets.clear();
-      const dt = delta / 1000;
-      for (let i = shots.length - 1; i >= 0; i--) {
-        const b = shots[i];
-        const wasRight = b.x > wall.x;
-        b.x += b.vx * dt; b.y += b.vy * dt;
-        if (b.x < -20) { shots.splice(i, 1); continue; }
-        if (wall.up && wasRight && b.x <= wall.x && !b.dead) {
-          b.dead = true;
-          wall.hot = 1;
-          if (theirs.coins > 0) {
-            theirs.coins -= 1; mine.coins += 1; wall.take += 1;
-            ctx.capture(() => fx.coinBurst(wall.x, b.y, 1, 20, 560));
-            float(ctx, wall.x, b.y - 18, '🎫 −1', hex(FOR.gold), 11);
-            if (wall.take > 10 && !audit.on) {
-              audit.on = true;
-              audit.firesAt = 0;
-              float(ctx, wall.x, 44, '🕵️ AUDIT', hex(FOR.blood), 13);
-            }
-          } else {
-            float(ctx, wall.x, b.y - 18, '🎫 8 IN BLOOD', hex(FOR.blood), 11);
-          }
-        }
-        bulletShape(bullets, ctx.tint, b.x, b.y, Math.atan2(b.vy, b.vx), 5, 1, { seed: i });
-      }
-    });
-    // The audit clock cannot be set from inside the bullet loop without knowing the time.
-    ctx.onFrame((_delta, elapsed) => {
-      if (audit.on && audit.firesAt === 0) audit.firesAt = elapsed + 5000;
-    });
-
-    ctx.at(300, () => {
-      wall.up = true;
-      av.play('slam', ctx.aim);
-      float(ctx, wall.x, 30, '🎫 PAYWALL', hex(FOR.gold), 12);
-      readout.setText('7.5 seconds instead of 5 — half again as long to run the meter up');
-    });
-    for (let i = 0; i < 13; i++) {
-      ctx.at(800 + i * 330, () => {
-        shots.push({ x: enemy.x - 20, y: enemy.y + ((i % 5) - 2) * 11, vx: -820, vy: 0, size: 5, seed: i, dead: false });
-      });
-    }
-    ctx.at(2400, () => readout.setText('every shot through it is still a coin — the ledger is what changed'));
-    ctx.at(5200, () => readout.setText('past ten coins, a man in a hat is lying at the top of the arena'));
-    ctx.at(6400, () => readout.setText('he takes five seconds to be sure. The reticle closing is the clock.'));
-    ctx.at(12400, () => readout.setText('and an enemy with an empty purse pays the toll in blood: 8 damage a coin'));
-  },
-};
-
-// ══ Q — Pay-to-Win ════════════════════════════════════════════════════
-
-export const payToWin: PreviewScript = {
-  duration: 13000,
-  scale: 0.58,
-  caption: 'Q — 95 damage a second down a 520px beam, at 6 coins a second, until the purse is empty',
-  run(ctx) {
-    const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
-    const rig = keeper(av);
-    av.setFacing(ctx.aim);
-    const money = { coins: 34 };
-    purse(ctx, () => money.coins, { x: 22, y: 16 });
-    const victim = { x: ctx.cx + 300, y: ctx.cy + 120 };
-    dummyAt(ctx, victim);
-    const readout = label(ctx, ctx.w * 0.5, 12, '#fff0a8', 11);
-    const gauge = label(ctx, ctx.w * 0.5, ctx.h - 18, '#f0c33c', 10);
-
-    const beam = { on: false, ang: -0.9, tick: 0, dealt: 0 };
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(14));
-    ctx.onFrame((delta, elapsed) => {
-      g.clear();
-      const dt = delta / 1000;
-      if (!beam.on) return;
-      // 1.15 radians a second toward the cursor — it is walked onto a target, never snapped.
-      const want = Math.atan2(victim.y - ctx.cy, victim.x - ctx.cx);
-      beam.ang = Phaser.Math.Angle.RotateTo(beam.ang, want, 1.15 * dt);
-      goldBeam(g, ctx.tint, ctx.cx, ctx.cy, beam.ang, 520, 15, 1, { t: elapsed / 1000, seed: 4 });
-      // The bill, taken in whole coins as they come due.
-      beam.tick += dt * 6;
-      while (beam.tick >= 1) {
-        beam.tick -= 1;
-        if (money.coins <= 0) {
-          beam.on = false;
-          float(ctx, ctx.cx, ctx.cy - 50, '💸 OUT OF MONEY', hex(FOR.blood), 13);
-          readout.setText('the 22-second cooldown is not the real limit — the purse is');
-          break;
-        }
-        money.coins--;
-      }
-      if (!beam.on) return;
-      // The burn, on the same segment test the kit uses.
-      const ex = ctx.cx + Math.cos(beam.ang) * 520;
-      const ey = ctx.cy + Math.sin(beam.ang) * 520;
-      const dx = ex - ctx.cx, dy = ey - ctx.cy;
-      const len2 = dx * dx + dy * dy;
-      const u = Phaser.Math.Clamp(((victim.x - ctx.cx) * dx + (victim.y - ctx.cy) * dy) / len2, 0, 1);
-      const d = Phaser.Math.Distance.Between(ctx.cx + dx * u, ctx.cy + dy * u, victim.x, victim.y);
-      if (d <= 25) {
-        beam.dealt += 95 * dt;
-        if (Math.random() < dt * 8) ctx.capture(() => fx.impact(victim.x, victim.y, beam.ang + Math.PI));
-      }
-      gauge.setText(`${Math.round(beam.dealt)} dealt   ·   ${money.coins} coins left   ·   6 a second`);
-    });
-
-    ctx.at(400, () => {
-      beam.on = true;
-      av.play('raise', ctx.aim);
-      rig?.setWealth(1);
-      float(ctx, ctx.cx, ctx.cy - 50, '💰 PAY-TO-WIN', hex(FOR.goldLit), 13);
-      readout.setText('it does not aim — it turns, at about 66° a second, toward the cursor');
-    });
-    ctx.at(2200, () => readout.setText('you walk it onto people. 95 damage a second for as long as it is on them.'));
-    ctx.at(5000, () => readout.setText('and it is metered: 6 coins a second, taken a whole coin at a time'));
-    ctx.at(9600, () => {
-      if (!beam.on) return;
-      beam.on = false;
-      readout.setText('8 seconds of full uptime is 760 damage and 48 coins');
-    });
-    ctx.at(11200, () => readout.setText('under 6 coins it refuses outright — a Paywall that emptied you locks your ultimate'));
-  },
-};
-
-// ══ Q+ — Golden Excess ════════════════════════════════════════════════
-
-export const payToWinUpgraded: PreviewScript = {
-  duration: 14000,
-  scale: 0.58,
-  caption: 'Q+ — the line becomes a wedge, and the wedge grows with every coin fed into it',
-  run(ctx) {
-    const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
-    const rig = keeper(av);
-    av.setFacing(ctx.aim);
-    const money = { coins: 180 };
-    purse(ctx, () => money.coins, { x: 22, y: 16 });
-    const victims = [
-      { x: ctx.cx + 300, y: ctx.cy + 110 },
-      { x: ctx.cx + 330, y: ctx.cy - 40 },
-      { x: ctx.cx + 210, y: ctx.cy + 210 },
-    ];
-    for (const v of victims) dummyAt(ctx, v);
-    const readout = label(ctx, ctx.w * 0.5, 12, '#ffb347', 11);
-    const gauge = label(ctx, ctx.w * 0.5, ctx.h - 18, '#f0c33c', 10);
-
-    const beam = { on: false, ang: -0.7, tick: 0, spent: 0, dealt: 0 };
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(14));
-    ctx.onFrame((delta, elapsed) => {
-      g.clear();
-      const dt = delta / 1000;
-      if (!beam.on) return;
-      const want = Math.atan2(victims[0].y - ctx.cy, victims[0].x - ctx.cx);
-      beam.ang = Phaser.Math.Angle.RotateTo(beam.ang, want, 1.15 * dt);
-
-      // Everything below is read off one number: what this cast has already burned.
-      const half = Math.min(1.2, 0.10 + beam.spent * 0.011);
-      const dps = Math.min(700, 95 + beam.spent * 4.5);
-      const drain = Math.min(70, 6 + beam.spent * 0.22);
-      goldCone(g, ctx.tint, ctx.cx, ctx.cy, beam.ang, 520, half, 1,
-        { t: elapsed / 1000, heat: Math.min(1, beam.spent / 90) });
-
-      beam.tick += dt * drain;
-      while (beam.tick >= 1) {
-        beam.tick -= 1;
-        if (money.coins <= 0) {
-          beam.on = false;
-          float(ctx, ctx.cx, ctx.cy - 50, '💸 OUT OF MONEY', hex(FOR.blood), 13);
-          readout.setText('a 180-coin purse, gone in about five seconds. That is the upgrade.');
-          break;
-        }
-        money.coins--; beam.spent++;
-      }
-      if (!beam.on) return;
-
-      for (const v of victims) {
-        const d = Phaser.Math.Distance.Between(ctx.cx, ctx.cy, v.x, v.y);
-        if (d > 520) continue;
-        const off = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(v.y - ctx.cy, v.x - ctx.cx) - beam.ang));
-        if (off > half + Math.atan2(25, Math.max(1, d))) continue;
-        beam.dealt += dps * dt;
-        if (Math.random() < dt * 5) ctx.capture(() => fx.impact(v.x, v.y, beam.ang + Math.PI));
-      }
-      gauge.setText(`${Math.round(beam.spent)} coins burned  ·  ${Math.round(half * 2 * 57.3)}° wide  ·  ${Math.round(dps)} dmg/s  ·  ${Math.round(drain)} coins/s  ·  ${Math.round(beam.dealt)} dealt`);
-    });
-
-    ctx.at(400, () => {
-      beam.on = true;
-      av.play('raise', ctx.aim);
-      rig?.setWealth(1);
-      float(ctx, ctx.cx, ctx.cy - 50, '💰 GOLDEN EXCESS', hex(FOR.goldLit), 13);
-      readout.setText('it opens as the same narrow beam — 0.10 radians and 95 a second');
-    });
-    ctx.at(2600, () => readout.setText('every coin it burns widens it by 0.011 radians and adds 4.5 damage a second'));
-    ctx.at(5200, () => readout.setText('and the drain climbs with it, so a full purse goes in fast rather than evenly'));
-    ctx.at(8200, () => readout.setText('the gold walks to furnace orange as the bill climbs — the colour is the cost'));
-    ctx.at(11400, () => {
-      if (!beam.on) return;
-      beam.on = false;
-      readout.setText('at the ceiling it is a 138° wedge doing 700 a second. It is not a beam any more.');
-    });
-  },
-};
-
-// ══ PASSIVE — Blood Coins ═════════════════════════════════════════════
-
-export const bloodCoins: PreviewScript = {
-  duration: 11000,
-  scale: 0.9,
-  caption: 'Passive — 1 coin per 20 damage anybody deals, and the enemy earns the same way',
-  run(ctx) {
-    const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
-    av.setFacing(ctx.aim);
-    const victim = { x: ctx.cx + 160, y: ctx.cy - 4 };
-    dummyAt(ctx, victim);
-    const mine = { n: 0 };
-    const theirs = { n: 0 };
-    purse(ctx, () => mine.n, { x: 22, y: 16 });
-    const themLabel = ctx.adopt(ctx.scene.add.text(ctx.w - 22, 16, '', {
-      fontSize: '12px', fontFamily: 'Arial Black', color: hex(FOR.canvasShade),
-    }).setOrigin(1, 0.5).setDepth(23));
-    ctx.onFrame(() => themLabel.setText(`they hold ${Math.floor(theirs.n)} 🪙`));
-    const readout = label(ctx, ctx.w * 0.5, 12, '#f0c33c', 11);
-    const gauge = label(ctx, ctx.w * 0.5, ctx.h - 18, '#bda98a', 10);
-    ctx.onFrame(() => gauge.setText(
-      `${(mine.n % 1 * 20).toFixed(0)}/20 damage toward your next coin — the remainder is carried, never rounded away`));
-
-    const hit = (at: number, dmg: number, onThem: boolean): void => ctx.at(at, () => {
-      const purseRef = onThem ? mine : theirs;
-      const target = onThem ? victim : { x: ctx.cx, y: ctx.cy };
-      const before = Math.floor(purseRef.n);
-      purseRef.n += dmg / 20;
-      float(ctx, target.x, target.y - 22, `${dmg}`, '#ffb3aa', 13);
-      if (Math.floor(purseRef.n) > before) {
-        ctx.capture(() => fx.coinBurst(target.x, target.y - 6, Math.floor(purseRef.n) - before, 24));
-      }
-    });
-
-    ctx.at(300, () => readout.setText('coins do not drop. They bleed out of wounds.'));
-    hit(700, 10, true); hit(1200, 10, true);
-    ctx.at(1600, () => readout.setText('20 damage, one coin. The change is carried into the next one.'));
-    hit(2000, 30, true); hit(2600, 15, true);
-    ctx.at(3600, () => readout.setText('and every wound they put on you pays them at exactly the same rate'));
-    hit(4000, 25, false); hit(4700, 35, false);
-    ctx.at(6000, () => readout.setText('there is no other income in the element — a Fortune who is losing is a Fortune who is broke'));
-    hit(6600, 45, true); hit(7300, 20, true);
-    ctx.at(8600, () => readout.setText('it is measured on the raw figure, so overkill, shields and armour all resolve first'));
-  },
-};
-
-// ══ PASSIVE — The Stall ═══════════════════════════════════════════════
-
-export const theStall: PreviewScript = {
-  duration: 13000,
-  scale: 0.9,
-  caption: 'Passive — a shop in the middle of the arena that sells to both sides, at half to you',
-  run(ctx) {
-    const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
-    av.setFacing(ctx.aim);
-    const mine = { coins: 24 };
-    const theirs = { coins: 20 };
-    purse(ctx, () => mine.coins, { x: 22, y: 16 });
-    const themLabel = ctx.adopt(ctx.scene.add.text(ctx.w - 22, 16, '', {
-      fontSize: '12px', fontFamily: 'Arial Black', color: hex(FOR.canvasShade),
-    }).setOrigin(1, 0.5).setDepth(23));
-    ctx.onFrame(() => themLabel.setText(`enemy purse ${theirs.coins} 🪙`));
-
-    const stallAt = { x: ctx.w * 0.5, y: ctx.cy - 12 };
-    const shopper = { x: ctx.w * 0.9, y: ctx.cy + 10 };
-    dummyAt(ctx, shopper);
-    const page = { illegal: false };
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
-    const ring = ctx.adopt(ctx.scene.add.graphics().setDepth(1));
-    ctx.onFrame((_dt, elapsed) => {
-      g.clear(); ring.clear();
-      stall(g, ctx.tint, stallAt.x, stallAt.y, 128, 1,
-        { t: elapsed / 1000, illegal: page.illegal, stock: 3 });
-      // The 132px counter range, so "stand next to it" is a thing you can see.
-      ring.lineStyle(1.4, ctx.tint(page.illegal ? FOR.contraband : FOR.gold), 0.3);
-      ring.strokeCircle(stallAt.x, stallAt.y, 132);
-    });
-    const readout = label(ctx, ctx.w * 0.5, 12, '#f0c33c', 11);
-
-    ctx.at(400, () => readout.setText('one stall, dead centre, served within 132px — by either side'));
-    ctx.at(1600, () => {
-      page.illegal = true;
-      ctx.capture(() => fx.cash(stallAt.x, stallAt.y, 46, 520, 22));
-      float(ctx, stallAt.x, stallAt.y - 60, 'T  ·  ARMS ☠', hex(FOR.contraband), 12);
-      readout.setText('T flips to the illegal pages — and only the shopkeeper can see them at all');
-    });
-    ctx.at(3200, () => {
-      mine.coins -= 10;
-      float(ctx, ctx.cx, ctx.cy - 48, '🪖 RIFLE', hex(FOR.gold), 12);
-      ctx.capture(() => fx.cash(stallAt.x, stallAt.y, 46, 520, 22));
-      readout.setText('buying from your own stall pays no commission — it is skipped, not paid in a circle');
-    });
-    ctx.at(4800, () => { page.illegal = false; readout.setText('the enemy walks up. They get the general page and nothing else.'); });
-    // Their purchase, and the half of it that comes straight back.
-    const theyBuy = (at: number, name: string, cost: number): void => ctx.at(at, () => {
-      theirs.coins -= cost;
-      ctx.capture(() => fx.cash(stallAt.x, stallAt.y, 46, 520, 22));
-      float(ctx, shopper.x, shopper.y - 48, name, hex(FOR.gold), 11);
-      const cut = Math.floor(cost * 0.5);
-      mine.coins += cut;
-      ctx.capture(() => fx.coinBurst(ctx.cx, ctx.cy - 10, Math.min(6, cut), 26));
-      float(ctx, ctx.cx, ctx.cy - 56, `🪙 +${cut} COMMISSION`, hex(FOR.goldLit), 12);
-    });
-    theyBuy(6000, '🩹 BANDAGES  −4', 4);
-    theyBuy(7800, '🧪 CURE-ALL  −10', 10);
-    theyBuy(9600, '💝 DONATION  −20', 20);
-    ctx.at(10400, () => readout.setText('the Donation costs 20 and does nothing — and is the largest single income in the element'));
-    ctx.at(12000, () => readout.setText('an NPC wanders up and buys something about every 9 seconds. That is a salary.'));
-  },
-};
-
-// ══ PASSIVE — The Catalogue ═══════════════════════════════════════════
-
-export const theCatalogue: PreviewScript = {
-  duration: 17000,
-  scale: 0.9,
-  caption: 'Passive — where the element\'s real numbers live: eight items, five guns, seven mods',
-  run(ctx) {
-    const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
-    av.setFacing(ctx.aim);
-    const victim = { x: ctx.cx + 210, y: ctx.cy - 6 };
-    const bystander = { x: ctx.cx + 270, y: ctx.cy + 46 };
-    dummyAt(ctx, victim);
-    dummyAt(ctx, bystander);
-    const readout = label(ctx, ctx.w * 0.5, 12, '#f0c33c', 11);
-    const price = label(ctx, ctx.w * 0.5, ctx.h - 18, '#fff0a8', 11);
-
-    // The three world objects the shelf can put on the floor, each stepped as its kit steps it.
-    const flames: { x: number; y: number; born: number; seed: number }[] = [];
-    const daggers: { x: number; y: number; vx: number; vy: number; ang: number }[] = [];
-    const bots: { x: number; y: number; ang: number; spin: number }[] = [];
-    const walker = { x: ctx.cx, y: ctx.cy, drop: 0 };
-    const pepperOn = { until: -1 };
-
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
-    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(11));
-    ctx.onFrame((delta, elapsed) => {
-      g.clear(); air.clear();
-      const dt = delta / 1000;
-      const t = elapsed / 1000;
-      // Spicy Pepper: a patch every 70ms behind a moving body, each living 2.6 seconds.
-      if (elapsed < pepperOn.until) {
-        walker.drop += delta;
-        if (walker.drop >= 70) {
-          walker.drop = 0;
-          flames.push({ x: walker.x, y: walker.y + 8, born: elapsed, seed: elapsed % 999 });
-        }
-      }
-      for (let i = flames.length - 1; i >= 0; i--) {
-        if (elapsed - flames[i].born > 2600) { flames.splice(i, 1); continue; }
-        pepperFlame(g, ctx.tint, flames[i].x, flames[i].y, 18, 1, { t, seed: flames[i].seed });
-      }
-      // Ornate Daggers: 620 px/s, painted with the kit's own blade.
-      for (let i = daggers.length - 1; i >= 0; i--) {
-        const d = daggers[i];
-        d.x += d.vx * dt; d.y += d.vy * dt;
-        if (d.x > ctx.w + 20 || d.y < -20 || d.y > ctx.h + 20) { daggers.splice(i, 1); continue; }
-        daggerShape(air, ctx.tint, d.x, d.y, d.ang, 1);
-      }
-      // Death Machines: 96 px/s, turning at 3.2 rad/s toward the nearest body.
-      for (const b of bots) {
-        b.spin += dt * 4;
-        const want = Math.atan2(victim.y - b.y, victim.x - b.x);
-        b.ang = Phaser.Math.Angle.RotateTo(b.ang, want, 3.2 * dt);
-        b.x += Math.cos(b.ang) * 96 * dt;
-        b.y += Math.sin(b.ang) * 96 * dt;
-        roombaShape(g, ctx.tint, b.x, b.y, b.ang, 1, { spin: b.spin, angry: 1 });
-      }
-    });
-
-    const buy = (at: number, name: string, cost: number, note: string, then?: () => void): void =>
-      ctx.at(at, () => {
-        av.play('sweep', ctx.aim);
-        ctx.capture(() => fx.cash(ctx.cx, ctx.cy, 40, 480, 22));
-        float(ctx, ctx.cx, ctx.cy - 48, name, hex(FOR.gold), 12);
-        price.setText(`${name}  —  ${cost} coins`);
-        readout.setText(note);
-        then?.();
-      });
-
-    buy(500, '🌶️ SPICY PEPPER', 3, '5 seconds of a fire trail: 26 a second inside 22px, and it sets them alight', () => {
-      pepperOn.until = 5500;
-    });
-    ctx.onFrame((delta, elapsed) => {
-      if (elapsed > 500 && elapsed < 5500) walker.x = ctx.cx + Math.sin((elapsed - 500) / 500) * 70;
-      void delta;
-    });
-    ctx.at(3400, () => readout.setText('overlapping patches split one patch\'s worth — a doubled-back trail is wider, not hotter'));
-
-    buy(5800, '🗡️ ORNATE DAGGERS', 5, '3 volleys of 8, 170ms apart, 2 damage each — 48 if every blade lands', () => {
-      for (let v = 0; v < 3; v++) {
-        ctx.at(5800 + v * 170, () => {
-          for (let i = 0; i < 8; i++) {
-            const a = ctx.aim + ((i / 7) - 0.5) * 1.24;
-            daggers.push({ x: ctx.cx + 14, y: ctx.cy, vx: Math.cos(a) * 620, vy: Math.sin(a) * 620, ang: a });
-          }
-        });
-      }
-    });
-
-    buy(8000, '🧨 EXPLOSIVES POUCH', 3, 'your next 5 hits also blast everything ELSE within 96px', () => {
-      ctx.at(8600, () => {
-        float(ctx, victim.x, victim.y - 22, '30', '#ffb3aa', 14);
-        ctx.capture(() => fx.boom(victim.x, victim.y, 96 * 0.7));
-        float(ctx, bystander.x, bystander.y - 22, '30', '#ffb3aa', 14);
-        float(ctx, victim.x, victim.y - 52, '🧨 SPLASH ×1', hex(FOR.gold), 11);
-        readout.setText('it spares the body that was hit — a cleave onto everything else, not a multiplier');
-      });
-    });
-
-    buy(10600, '🤖 DEATH MACHINE', 8, 'a knife on a vacuum: 96 px/s, 25 on touch, one hit per victim per 1.4s', () => {
-      bots.push({ x: ctx.cx + 30, y: ctx.cy + 30, ang: 0, spin: 0 });
-      ctx.at(12400, () => float(ctx, victim.x, victim.y - 36, '🤖 DEATH MACHINE  25', hex(FOR.steel), 11));
-    });
-
-    buy(13400, '🏺 THE MIRACLE', 12, '20 seconds in which every good thing is doubled — heals, durations, capital gains');
-    buy(15200, '💝 DONATION', 20, 'thank you for your generous support');
-  },
-};
-
-// ══ MASTERY — Battle Pass ═════════════════════════════════════════════
-
-export const masteryBattlePass: PreviewScript = {
-  duration: 18000,
-  scale: 0.9,
-  caption: 'Mastery passive — thirty tiers, 3 coins each, in order. Every fifth one is an item⁺.',
-  run(ctx) {
-    const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
-    av.setFacing(ctx.aim);
-    const coins = { n: 24 };
-    purse(ctx, () => coins.n, { x: 22, y: 44 });
-    const readout = label(ctx, ctx.w * 0.5, ctx.h - 34, '#f0c33c', 11);
-    const nextLine = label(ctx, ctx.w * 0.5, ctx.h - 16, '#e6d8b8', 10);
-    // The running sheet, exactly as the status tray reads it back in-match.
-    const sheet = label(ctx, ctx.w - 16, 52, '#a8791e', 10).setOrigin(1, 0);
-
-    // The real ribbon, painted with the kit's own notch. Thirty tiers across the top, the
-    // bought ones struck gold, the next one pulsing, the fifths a head taller with a star.
-    const TIERS = 30;
-    const bought = { n: 0 };
-    const pad = 44;
-    const y = 20;
-    const span = ctx.w - pad * 2;
-    const step = span / TIERS;
-    const ribbon = ctx.adopt(ctx.scene.add.graphics().setDepth(22));
-    ctx.onFrame((_dt, elapsed) => {
-      ribbon.clear();
-      ribbon.fillStyle(FOR.ink, 0.72);
-      ribbon.fillRect(pad - 10, y - 14, span + 20, 28);
-      ribbon.lineStyle(1.4, ctx.tint(FOR.brass), 0.7);
-      ribbon.strokeRect(pad - 10, y - 14, span + 20, 28);
-      for (let i = 0; i < TIERS; i++) {
-        const state = i < bought.n ? 'owned' : i === bought.n ? 'next' : 'locked';
-        passTier(ribbon, ctx.tint, pad + step * (i + 0.5), y, Math.max(4, step - 4), 14, 1,
-          { state, plus: (i + 1) % 5 === 0, t: elapsed / 1000 });
-      }
-    });
-
-    // Whatever this run's ladder happens to be. Six rungs is one full run to a star.
-    const ladder = [
-      { emoji: '🔩', name: 'Hollowed Tips', desc: '+12% weapon damage', sheet: 'damage ×1.12' },
-      { emoji: '🎽', name: 'Speed Sling', desc: '−12% reload time', sheet: 'reload ×0.88' },
-      { emoji: '🩹', name: 'Bandages', desc: 'a free item off the public shelf', sheet: '' },
-      { emoji: '🪙', name: 'Private Mint', desc: '+10% coin rate', sheet: 'coin rate ×1.10' },
-      { emoji: '🧪', name: 'Cure-All+', desc: 'cleanse, heal 120, no new debuffs for 45s', sheet: '' },
-      { emoji: '⚡', name: 'Filed Trigger', desc: '+10% fire rate', sheet: 'fire rate ×1.10' },
-    ];
-    const gained: string[] = [];
-    const showNext = (): void => {
-      const r = ladder[bought.n];
-      nextLine.setText(r ? `[B]  3🪙  —  ${r.emoji} ${r.name}: ${r.desc}` : '[B]  3🪙  —  tier 7…');
-    };
-    showNext();
-
-    ctx.at(300, () => readout.setText('press B anywhere in the arena — you never have to walk to the stall'));
-
-    const take = (at: number, note: string): void => ctx.at(at, () => {
-      const r = ladder[bought.n];
-      if (!r) return;
-      const plus = (bought.n + 1) % 5 === 0;
-      coins.n -= 3;
-      bought.n++;
-      if (r.sheet) gained.push(r.sheet);
-      sheet.setText(gained.join('\n'));
-      av.play('raise', ctx.aim);
-      ctx.capture(() => fx.cash(ctx.cx, ctx.cy - 20, 34, 460, 20));
-      float(ctx, ctx.cx, ctx.cy - 52, `${r.emoji} ${r.name.toUpperCase()}`,
-        hex(plus ? FOR.goldLit : FOR.gold), plus ? 13 : 12);
-      if (plus) ctx.capture(() => fx.coinBurst(ctx.cx, ctx.cy - 14, 8, 40, 900));
-      readout.setText(note);
-      showNext();
-    });
-
-    take(1400, 'tier 1 — three coins, and the buffs stack with themselves all match');
-    take(3600, 'tier 2 — nothing on the ladder is unique. Two of these is genuinely −23% reload.');
-    take(5800, 'tier 3 — about a third of the rungs are free items. Never guns, never attachments.');
-    take(8000, 'tier 4 — the coin rate itself is on the pass, so the pass pays for the pass');
-    take(10400, 'tier 5 ⭐ — every fifth one is an item⁺: the shelf version, but simply better');
-    ctx.at(12200, () => readout.setText('Cure-All is 50 health and 20 seconds. Cure-All⁺ is 120 and 45.'));
-    take(14000, 'tier 6 — and on up to thirty. Ninety coins for a second character sheet.');
-    ctx.at(16200, () => readout.setText('the whole ladder is rolled fresh every single match'));
-  },
-};
-
-// ══ MASTERY — Drive by Flex ═══════════════════════════════════════════
-
-export const masteryDriveByFlex: PreviewScript = {
-  duration: 19000,
-  scale: 0.78,
-  caption: 'Mastery ability — it does not steer. It bounces, it rams, and on the last bounce it goes up.',
-  run(ctx) {
-    const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
-    av.setFacing(ctx.aim);
-    const victim = { x: ctx.cx + 250, y: ctx.cy - 30 };
-    dummyAt(ctx, victim);
-    const readout = label(ctx, ctx.w * 0.5, 12, '#f0c33c', 11);
-    const gauge = label(ctx, ctx.w * 0.5, ctx.h - 16, '#b8c2cc', 10);
-
-    // The car, stepped exactly as `updateCars` steps it: constant speed, reflect off the inset,
-    // one bounce per frame however many walls it touched, and a wreck at zero.
-    const INSET = 27;
-    const car = {
-      alive: false, x: ctx.cx, y: ctx.cy, vx: 0, vy: 0,
-      bounces: 5, max: 5, rider: false, turret: 0, seed: 7, gate: 0,
-      buffs: { spikes: false, tires: false, robo: false, speedster: false, tank: false, sunroof: false, gunner: false },
-    };
-    const trail: { x: number; y: number; born: number; seed: number }[] = [];
-    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
-    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(11));
-
-    ctx.onFrame((delta, elapsed) => {
+    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(3.5));
+    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    let bagAt = -1;
+    let plumeAt = -1;
+    let lastTick = 0;
+    let lastSec = 0;
+    let dmgAcc = 0;
+    ctx.onFrame((dt, e) => {
       ground.clear(); air.clear();
-      const dt = delta / 1000;
-      const t = elapsed / 1000;
-
-      for (let i = trail.length - 1; i >= 0; i--) {
-        if (elapsed - trail[i].born > 2600) { trail.splice(i, 1); continue; }
-        pepperFlame(ground, ctx.tint, trail[i].x, trail[i].y, 16, 1, { t, seed: trail[i].seed });
-      }
-      if (!car.alive) return;
-
-      let speed = 155;
-      if (car.buffs.tires) speed *= 1.45;
-      if (car.buffs.speedster) speed *= 2.4;
-      if (car.buffs.tank) speed *= 0.45;
-      const len = Math.hypot(car.vx, car.vy) || 1;
-      car.vx = (car.vx / len) * speed;
-      car.vy = (car.vy / len) * speed;
-      car.x += car.vx * dt;
-      car.y += car.vy * dt;
-
-      let bounced = false;
-      if (car.x < INSET) { car.x = INSET; car.vx = Math.abs(car.vx); bounced = true; }
-      else if (car.x > ctx.w - INSET) { car.x = ctx.w - INSET; car.vx = -Math.abs(car.vx); bounced = true; }
-      if (car.y < INSET) { car.y = INSET; car.vy = Math.abs(car.vy); bounced = true; }
-      else if (car.y > ctx.h - INSET) { car.y = ctx.h - INSET; car.vy = -Math.abs(car.vy); bounced = true; }
-      if (bounced) {
-        car.bounces--;
-        ctx.capture(() => fx.impact(car.x, car.y, Math.atan2(car.vy, car.vx) + Math.PI, 260));
-        gauge.setText(`${car.bounces} bounces left`);
-        if (car.bounces <= 0) {
-          car.alive = false;
-          ctx.capture(() => fx.wreck(car.x, car.y, 92));
-          float(ctx, car.x, car.y - 46, '💥 30 IN 92px', '#ffb3aa', 13);
-          readout.setText('the fifth bounce is not optional — the car always ends this way');
-          return;
+      if (bagAt >= 0 && plumeAt < 0) {
+        const u = Phaser.Math.Clamp((e - bagAt) / 450, 0, 1);
+        const x = ctx.cx + (land.x - ctx.cx) * u;
+        const y = ctx.cy + (land.y - ctx.cy) * u - Math.sin(u * Math.PI) * 60;
+        powderBag(air, ctx.tint, x, y, u * 9, 1);
+        if (u >= 1) {
+          plumeAt = e;
+          lastTick = e;
+          lastSec = e;
+          ctx.capture(() => fx.bagBurst(land.x, land.y, PLUME_R));
         }
       }
-
-      if (car.buffs.speedster && elapsed % 80 < delta) {
-        trail.push({ x: car.x, y: car.y + 6, born: elapsed, seed: elapsed % 999 });
+      if (plumeAt >= 0 && e - plumeAt < 6000) {
+        const born = Phaser.Math.Clamp((e - plumeAt) / 260, 0, 1);
+        const life = Phaser.Math.Clamp((6000 - (e - plumeAt)) / 700, 0, 1);
+        goldPlume(ground, ctx.tint, land.x, land.y, PLUME_R * (0.7 + 0.3 * born), 0.9 * born * life, e / 1000, 3);
+        while (e - lastTick >= 250) { lastTick += 250; dmgAcc += 2.25; }
+        if (e - lastSec >= 1000) {
+          lastSec += 1000;
+          float(ctx, target.x, target.y - 26, `${Math.round(dmgAcc)}`, '#ffb3aa', 13);
+          dmgAcc = 0;
+          const at = ctx.casterAt();
+          if (Phaser.Math.Distance.Between(at.x, at.y, land.x, land.y) <= PLUME_R) {
+            float(ctx, at.x + 18, at.y - 34, '+2 🪙', hex(FOR.goldLit), 11);
+            ctx.capture(() => fx.goldGain(at.x, at.y - 10, 2));
+          }
+        }
+        const at = ctx.casterAt();
+        if (Phaser.Math.Distance.Between(at.x, at.y, land.x, land.y) <= PLUME_R) gold += 2 * dt / 1000;
       }
-
-      // The ram, with the kit's own 0.9 second per-victim gate.
-      if (Phaser.Math.Distance.Between(car.x, car.y, victim.x, victim.y) < 27 + 12
-        && elapsed > car.gate) {
-        car.gate = elapsed + 900;
-        float(ctx, victim.x, victim.y - 24, car.buffs.spikes ? '34' : '18', '#ffb3aa', 15);
-        float(ctx, victim.x, victim.y - 44, '🚗 RAMMED', hex(FOR.blood), 11);
-        ctx.capture(() => fx.impact(victim.x, victim.y, Math.atan2(car.vy, car.vx), 280));
-      }
-
-      car.turret = Math.atan2(victim.y - car.y, victim.x - car.x);
-      rustyCar(air, ctx.tint, car.x, car.y, Math.atan2(car.vy, car.vx), 1, {
-        t: t + car.seed, wear: 1 - car.bounces / car.max, turret: car.turret,
-        rider: car.rider, ...car.buffs,
-      });
     });
 
+    ctx.at(200, () => readout.setText('the bag is thrown at the cursor and bursts where it lands'));
+    ctx.at(500, () => { av.play('sweep', ctx.aim); bagAt = 500; });
+    ctx.at(1600, () => readout.setText('anything of theirs in the dust takes 9 a second'));
+    ctx.at(3200, () => {
+      readout.setText('walk in yourself and the dust pays you 2 gold a second');
+      ctx.glideCaster({ to: { x: land.x - 70, y: land.y + 20 }, ms: 700, ease: 'out' });
+    });
+  },
+};
+
+// ══ F — Heart of Gold ═════════════════════════════════════════════════
+
+export const heartOfGold: PreviewScript = {
+  duration: 9500,
+  scale: 0.9,
+  caption: 'F — lunge with the cane (16). A gold heart fills with every step they take; full is a heart attack: 28 and a 1.4s stun',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#e8dcb8', 11);
+    let gold = 0;
+    purse(ctx, () => gold);
+    const target = { x: ctx.cx + 230, y: ctx.cy };
+    dummyAt(ctx, target);
+    const hud = ctx.adopt(ctx.scene.add.graphics().setDepth(16));
+
+    let hearted = false;
+    let stress = 0;
+    let walking = false;
+    let stunnedUntil = 0;
+    let walkT = 0;
+    let dmgAcc = 0;
+    const home = { x: target.x, y: target.y };
+    ctx.onFrame((dt, e) => {
+      hud.clear();
+      if (!hearted) return;
+      const s = dt / 1000;
+      if (walking && e > stunnedUntil) {
+        walkT += s;
+        const px = target.x;
+        const py = target.y;
+        target.x = home.x + Math.sin(walkT * 2.2) * 70;
+        target.y = home.y + Math.sin(walkT * 4.4) * 22;
+        stress += Math.hypot(target.x - px, target.y - py) / HEART_TRAVEL;
+      } else {
+        stress = Math.max(0, stress - 0.12 * s);
+      }
+      if (stress >= 1) {
+        stress = 0;
+        stunnedUntil = e + 1400;
+        ctx.capture(() => fx.heartAttack(target.x, target.y));
+        float(ctx, target.x, target.y - 56, '💔 HEART ATTACK', hex(FOR.bloodLit), 14);
+        float(ctx, target.x, target.y - 26, '28', '#ffb3aa', 15);
+        dmgAcc += 28;
+      }
+      while (dmgAcc >= 20) {
+        dmgAcc -= 20;
+        gold += 1;
+        const at = ctx.casterAt();
+        float(ctx, at.x + 18, at.y - 34, '+1 🪙', hex(FOR.goldLit), 11);
+      }
+      goldenHeart(hud, ctx.tint, target.x, target.y - 46, stress, e / 1000, 1);
+    });
+
+    ctx.at(200, () => readout.setText('the cane lunges 150px — anyone it passes is stabbed for 16'));
+    ctx.at(600, () => {
+      av.play('dash', ctx.aim);
+      const to = { x: target.x - 70, y: target.y };
+      ctx.capture(() => fx.caneLunge(ctx.cx, ctx.cy, to.x, to.y));
+      ctx.glideCaster({ to, ms: 180, ease: 'out' });
+    });
+    ctx.at(760, () => {
+      float(ctx, target.x, target.y - 26, '16', '#ffb3aa', 13);
+      ctx.capture(() => fx.heartApply(target.x, target.y - 34));
+      float(ctx, target.x, target.y - 54, '💛 HEART OF GOLD', hex(FOR.goldLit), 12);
+      hearted = true;
+      dmgAcc += 16;
+    });
+    ctx.at(1600, () => { readout.setText('every step they take stresses the gold heart'); walking = true; });
+    ctx.at(5600, () => readout.setText('a full heart is a heart attack — and every 20 damage they take pays you 1 gold'));
+    ctx.at(8200, () => { walking = false; readout.setText('standing still lets it settle, a little'); });
+  },
+};
+
+// ══ Q — Midas Curse ═══════════════════════════════════════════════════
+
+export const midasCurse: PreviewScript = {
+  duration: 10000,
+  scale: 0.9,
+  caption: 'Q — the target turns to gold, and so does the floor they walk. Their shots drop as coins, their summons stand as statues',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#e8dcb8', 11);
+    let gold = 0;
+    purse(ctx, () => gold);
+    const target = { x: ctx.cx + 260, y: ctx.cy - 20 };
+    dummyAt(ctx, target);
+
+    const floor = ctx.adopt(ctx.scene.add.graphics().setDepth(2));
+    const gilt = ctx.adopt(ctx.scene.add.graphics().setDepth(5.6));
+    const summonG = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    const patches: { x: number; y: number; r: number; seed: number; born: number }[] = [];
+    const loot: { kind: 'coin' | 'statue'; x: number; y: number; born: number; seed: number }[] = [];
+    let cursedAt = -1;
+    let walkT = 0;
+    let last = { x: target.x, y: target.y };
+    let shot: { x: number; y: number } | null = null;
+    let summon: { x: number; y: number; born: number } | null = null;
+    const home = { x: target.x, y: target.y };
+
+    ctx.onFrame((dt, e) => {
+      floor.clear(); gilt.clear(); summonG.clear();
+      if (cursedAt >= 0) {
+        walkT += dt / 1000;
+        target.x = home.x - Math.sin(walkT * 0.9) * 140;
+        target.y = home.y + Math.sin(walkT * 1.8) * 30;
+        if (Phaser.Math.Distance.Between(last.x, last.y, target.x, target.y) >= 26) {
+          last = { x: target.x, y: target.y };
+          patches.push({ x: target.x, y: target.y + 10, r: 30 * (0.85 + Math.random() * 0.3), seed: Math.random() * 999, born: e });
+        }
+      }
+      for (const p of patches) goldFloor(floor, ctx.tint, p.x, p.y, p.r, 0.85 * Phaser.Math.Clamp((e - p.born) / 300, 0, 1), p.seed, e / 1000);
+      for (const l of loot) {
+        if (l.kind === 'statue') goldStatue(floor, ctx.tint, l.x, l.y, 15, 1, l.seed, e / 1000);
+        else if (e - l.born > 360) goldCoin(floor, ctx.tint, l.x, l.y, 6, e / 500 + l.seed, 1);
+      }
+      if (cursedAt >= 0) midasGilt(gilt, ctx.tint, target.x, target.y, 0.15 + Phaser.Math.Clamp((e - cursedAt) / 10000, 0, 1) * 0.85, e / 1000, 1);
+      if (shot) {
+        shot.x -= 380 * dt / 1000;
+        summonG.fillStyle(0x9a4fd6, 1); summonG.fillCircle(shot.x, shot.y, 6);
+        summonG.fillStyle(0xe6c6ff, 1); summonG.fillCircle(shot.x, shot.y, 2.6);
+        if (shot.x < target.x - 70) {
+          const s = shot;
+          shot = null;
+          const tx = s.x - 4;
+          const ty = s.y + 18;
+          ctx.capture(() => fx.coinDrop(s.x, s.y, tx, ty));
+          loot.push({ kind: 'coin', x: tx, y: ty, born: e, seed: 1 });
+        }
+      }
+      if (summon) {
+        const a = Phaser.Math.Clamp((e - summon.born) / 120, 0, 1);
+        summonG.fillStyle(0x3c4254, a); summonG.fillRect(summon.x - 12, summon.y - 16, 24, 26);
+        summonG.fillStyle(0x8e97ad, a); summonG.fillRect(summon.x - 8, summon.y - 12, 16, 6);
+      }
+      // The alchemist collects anything it walks over.
+      const at = ctx.casterAt();
+      for (let i = loot.length - 1; i >= 0; i--) {
+        const l = loot[i];
+        if (l.kind === 'coin' && e - l.born < 360) continue;
+        if (Phaser.Math.Distance.Between(at.x, at.y, l.x, l.y) > 34) continue;
+        loot.splice(i, 1);
+        const v = l.kind === 'coin' ? 1 : 2;
+        gold += v;
+        ctx.capture(() => fx.pickup(l.x, l.y));
+        float(ctx, at.x + 18, at.y - 34, `+${v} 🪙`, hex(FOR.goldLit), 11);
+      }
+    });
+
+    ctx.at(200, () => readout.setText('the curse lands on whoever is nearest the cursor'));
     ctx.at(500, () => {
-      car.alive = true;
-      car.x = ctx.cx + 40; car.y = ctx.cy;
-      car.vx = Math.cos(ctx.aim) * 155; car.vy = Math.sin(ctx.aim - 0.5) * 155;
-      car.bounces = 5; car.max = 5;
-      av.play('slam', ctx.aim);
-      ctx.capture(() => fx.rift(car.x, car.y + 8, 26));
-      readout.setText('155 px/s, five bounces, 18 on the ram. It goes forward and nothing else.');
-      gauge.setText('5 bounces left');
+      av.play('raise');
+      ctx.capture(() => fx.midasCast(ctx.cx, ctx.cy));
     });
-
-    ctx.at(3000, () => readout.setText('it comes off the walls like a DVD logo — a corner is one bounce, not two'));
-
+    ctx.at(800, () => {
+      cursedAt = 800;
+      ctx.capture(() => fx.midasStrike(target.x, target.y));
+      float(ctx, target.x, target.y - 50, '👑 MIDAS CURSE', hex(FOR.goldLit), 13);
+    });
+    ctx.at(1500, () => readout.setText('every step they take turns the floor to gold — for the rest of the match'));
+    ctx.at(3300, () => { readout.setText('they shoot — and the shot drops out of the air as a coin'); shot = { x: target.x - 20, y: target.y }; });
     ctx.at(5200, () => {
-      car.rider = true;
-      ctx.capture(() => fx.cash(car.x, car.y - 18, 26, 380, 12));
-      float(ctx, car.x, car.y - 40, '🚗 ABOARD', hex(FOR.goldLit), 12);
-      readout.setText('Space within 54px — 40% faster reload, 35% faster trigger, and no steering');
+      readout.setText('they summon — and it is a golden statue the instant it appears');
+      summon = { x: target.x + 40, y: target.y + 30, born: 5200 };
     });
-    ctx.at(7400, () => { car.rider = false; float(ctx, car.x, car.y - 40, '🚗 OFF', '#bda98a', 11); });
+    ctx.at(5650, () => {
+      if (!summon) return;
+      const s = summon;
+      summon = null;
+      ctx.capture(() => fx.transmuteSummon(s.x, s.y, 22));
+      loot.push({ kind: 'statue', x: s.x, y: s.y, born: 5650, seed: 7 });
+    });
+    ctx.at(6600, () => {
+      readout.setText('on gold floor you are 50% faster; pick up the coin (+1) and the statue (+2)');
+      const first = loot[0];
+      if (first) ctx.glideCaster({ to: { x: first.x, y: first.y }, ms: 900, ease: 'out' });
+    });
+    ctx.at(7700, () => {
+      const next = loot[0];
+      if (next) ctx.glideCaster({ to: { x: next.x, y: next.y }, ms: 700, ease: 'out' });
+    });
+  },
+};
 
-    // The garage, bolted on one at a time onto the car already out.
-    ctx.at(8400, () => {
-      car.buffs.spikes = true;
-      car.bounces = 6; car.max = 6;
-      float(ctx, ctx.cx, ctx.cy - 48, '🔱 SPIKED BUMPER  −2', hex(FOR.gold), 12);
-      readout.setText('the stall grows a GARAGE tab. Ram 18 → 34.');
+// ══ Passive — The Purse ═══════════════════════════════════════════════
+
+export const thePurse: PreviewScript = {
+  duration: 7000,
+  scale: 0.9,
+  caption: 'The Purse — gold from your own plume, a hearted enemy\'s blood, the Midas floor and its loot. Advance spends it',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#e8dcb8', 11);
+    let gold = 0;
+    purse(ctx, () => gold);
+    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
+    const at0 = { x: ctx.cx, y: ctx.cy };
+    let sec = 0;
+    ctx.onFrame((dt, e) => {
+      ground.clear();
+      goldPlume(ground, ctx.tint, at0.x, at0.y, PLUME_R * 0.9, 0.8, e / 1000, 5);
+      gold += 2 * dt / 1000;
+      alch(av)?.setGold(Math.min(1, gold / 30));
+      if (e - sec >= 1000) {
+        sec += 1000;
+        float(ctx, at0.x + 18, at0.y - 34, '+2 🪙', hex(FOR.goldLit), 11);
+        ctx.capture(() => fx.goldGain(at0.x, at0.y - 10, 2));
+      }
     });
-    ctx.at(10200, () => {
-      car.buffs.robo = true;
-      float(ctx, ctx.cx, ctx.cy - 48, '🤖 ROBO-GUNNER  −3', hex(FOR.gold), 12);
-      readout.setText('an automatic on the roof: 3 rounds a second at 2 damage, inside 200px');
-    });
-    ctx.onFrame((_dt, elapsed) => {
-      if (!car.alive || !car.buffs.robo) return;
-      if (elapsed % 333 >= 16) return;
-      if (Phaser.Math.Distance.Between(car.x, car.y, victim.x, victim.y) > 200) return;
-      ctx.capture(() => fx.muzzle(car.x + Math.cos(car.turret) * 18, car.y + Math.sin(car.turret) * 18, car.turret, 0.6));
-    });
-    ctx.at(12200, () => {
-      car.buffs.speedster = true;
-      car.bounces = 14; car.max = 14;
-      float(ctx, ctx.cx, ctx.cy - 48, '🏁 SPEEDSTER  −5', hex(FOR.goldLit), 13);
-      readout.setText('2.4× speed, ten more bounces, and it burns a fire trail behind it');
-    });
-    ctx.at(15600, () => readout.setText('three buffs is the whole build, for the whole match. Tank alone is seven coins.'));
+    ctx.at(200, () => readout.setText('standing in your own Gold Plume: 2 gold a second'));
+    ctx.at(3000, () => readout.setText('a gold-hearted enemy: 1 per 20 damage · Midas floor: 1 per 3s · coins 1, statues 2'));
+    ctx.at(5500, () => readout.setText('the purse fills, the under-glow swells — and Advance spends it ten at a time'));
   },
 };

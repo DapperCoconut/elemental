@@ -28,10 +28,11 @@ const silenceRitual: Ability = {
   cast(ctx: CastContext) { ctx.silenceRitual(ctx.targetX, ctx.targetY); },
 };
 
+// Id kept from the old Feast so saves, cooldown bars and replays keep working.
 const silenceFeast: Ability = {
   id: 'silence-feast',
-  name: 'Feast',
-  description: 'Teeth circle for 8s. Enemy inside for 6s total: 35 dmg + Hallucinations 30s (players see horrors; bots miss 20%).',
+  name: 'Stalk',
+  description: 'A shadow aura surrounds you for 3s (drains 5 extra stealth/s). An enemy inside for all 3s takes 20 dmg and is Stalked for 5s: they turn very slowly and their attacks go where they face.',
   displayKey: 'F',
   cooldown: 18000,
   cast(ctx: CastContext) { ctx.silenceFeast(ctx.targetX, ctx.targetY); },

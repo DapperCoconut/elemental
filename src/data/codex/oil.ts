@@ -293,7 +293,7 @@ const oil: ElementCodex = {
         + 'to mount: held click then fires a 2-damage laser every 100ms in a 20px radius, 20 damage a '
         + 'second sustained, but mounting roots you and the turret owns your movement and mouse until you '
         + 'jump off. 20s cooldown, and it refuses to build with fewer than 3 drones.',
-      cast: 'Bindable to E, R, F or Q. First cast builds it at the cursor. Recast next to it to mount; recast again to jump off. Refuses to cast with fewer than 3 drones.',
+      cast: 'Bindable to R, F or Q. First cast builds it at the cursor. Recast next to it to mount; recast again to jump off. Refuses to cast with fewer than 3 drones.',
       effects: [
         { tag: 'resource', label: 'The cost', detail: '3 drones, consumed on construction — half a full fleet, and with Drone Array 30% of your damage resistance.' },
         { tag: 'summon', label: 'The turret', detail: '150 health, a 24px body, standing 10s or until destroyed. Enemy projectiles reaching it are soaked by it rather than by you.' },

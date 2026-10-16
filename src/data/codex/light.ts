@@ -258,7 +258,7 @@ const light: ElementCodex = {
         + 'slam still zeroes your speed. A rider that survives 12 seconds without a wall slides off '
         + 'unharmed. 20s cooldown.',
       cast:
-        'Bindable to E, R, F or Q, replacing that slot\'s base ability for the match. Instant; it '
+        'Bindable to R, F or Q, replacing that slot\'s base ability for the match. Instant; it '
         + 'enhances the lance rather than firing anything.',
       effects: [
         { tag: 'buff', label: 'The window', detail: '5 seconds during which a lance contact impales instead of dealing damage. The lance sits 44px out rather than 34 and wears a gold collar.' },

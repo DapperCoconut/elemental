@@ -11,14 +11,16 @@ export interface MasteryRequirement {
 
 /** Ability slots a mastery ability can be bound to. Click is deliberately excluded. */
 export type MasterySlot = 'e' | 'r' | 'f' | 'q';
-export const MASTERY_SLOTS: MasterySlot[] = ['e', 'r', 'f', 'q'];
+/** The slots a bindable may take. Click and E are never replaceable — `'e'` stays in the type only so
+ *  kits that scan every key keep compiling; an old save's E bind is ignored on read. */
+export const MASTERY_SLOTS: MasterySlot[] = ['r', 'f', 'q'];
 
 export interface MasteryEnhancement {
   /** Stable id — used as the ability id when this enhancement is bound to a slot. */
   id: string;
   name: string;
   description: string;
-  /** True for active abilities the player binds over one of their E/R/F/Q abilities. Passives omit it. */
+  /** True for active abilities the player binds over one of their R/F/Q abilities (never Click or E). Passives omit it. */
   bindable?: boolean;
   /** Slots this enhancement may not be bound to — the MenuScene loadout refuses them as drop targets. */
   excludeSlots?: MasterySlot[];
@@ -397,18 +399,11 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         description: 'Passive: when an enemy carrying frost or void frost stacks touches another enemy, that enemy catches 1 matching stack. Each enemy can only catch a spread stack once per second.',
       },
       {
-        id: 'icicle-impale',
-        name: 'Icicle Impale',
-        bindable: true,
-        hudDescription: 'Dash and impale — shatters into bonus frost after 50 damage',
-        description: 'Dash forward a short distance. The first enemy you hit is impaled with a visible icicle. Once they take 50 more damage, the icicle shatters, slamming 2 bonus frost (or void frost) stacks onto them — this can push them past the normal 5-stack cap, up to a hard max of 7. More stacks means more slow and bonus damage taken for frost, more DOT damage for void. While impaled, every frost/void stack applied to them lasts 10 seconds instead of 8.',
-      },
-      {
         id: 'curling-stone',
-        name: 'Curling Stone',
+        name: 'Curling Stone / Icicle Impale',
         bindable: true,
-        hudDescription: 'Summon a stone — shoot it to send it sliding',
-        description: 'Summon a curling stone in front of you for 20 seconds. Shooting the stone shoves it a short way and freezes another layer of frost onto it, up to 5 — the more frost it carries, the further and faster it slides and the harder it hits. Void frost counts exactly the same. It bounces off the arena walls, and any enemy it slams into takes 30 damage (60 at 5 stacks), once per second each. On one of your Skate trails the stone goes flying.',
+        hudDescription: 'Curling Stone — or Icicle Impale while in Black Ice',
+        description: 'One slot, two abilities: which one you cast depends on your form.\n\nNormal form — Curling Stone: summon a curling stone in front of you for 20 seconds. Shooting the stone shoves it a short way and freezes another layer of frost onto it, up to 5 — the more frost it carries, the further and faster it slides and the harder it hits. Void frost counts exactly the same. It bounces off the arena walls, and any enemy it slams into takes 30 damage (60 at 5 stacks), once per second each. On one of your Skate trails the stone goes flying.\n\nBlack Ice form — Icicle Impale: dash forward a short distance. The first enemy you hit is impaled with a visible icicle. Once they take 50 more damage, the icicle shatters, slamming 2 bonus frost (or void frost) stacks onto them — this can push them past the normal 5-stack cap, up to a hard max of 7. While impaled, every frost/void stack applied to them lasts 10 seconds instead of 8.\n\nThe two keep their own cooldowns.',
       },
     ],
   },
@@ -585,7 +580,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       {
         id: 'strength-in-numbers',
         name: 'Strength in Numbers',
-        description: 'Passive: your amalgams are linked by faint grey threads. Every other amalgam on the field grants each of them 5% damage resistance — 10% each with all three slots filled with amalgams rather than with grave zombies you have not drained yet.',
+        description: 'Passive: your amalgams are linked by faint grey threads. Every other amalgam on the field grants each of them 5% damage resistance — 10% each with all three slots filled with amalgams rather than with grave zombies you have not killed yet.',
       },
       {
         id: 'grave-mistake',
@@ -688,52 +683,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       },
     ],
   },
-  magnet: {
-    elementId: 'magnet',
-    name: 'Magnet Mastery',
-    enhancedEmoji: '🧲',
-    enhancedColor: 0x7733aa,
-    requirements: [
-      {
-        key: 'rodSmashes',
-        label: 'Rod Wrecker',
-        howTo: 'Smash your magnetic rods into enemies',
-        target: 500,
-      },
-      {
-        key: 'nailTears',
-        label: 'Nail Puller',
-        howTo: 'Tear implanted nails back out of enemies by recalling them (E)',
-        target: 75,
-      },
-      {
-        key: 'protectBlocks',
-        label: 'Deflector Shield',
-        howTo: 'Block enemy projectiles with your Protect (R) orbs',
-        target: 50,
-      },
-      {
-        key: 'atomSmashes',
-        label: 'Compactor',
-        howTo: 'Crush enemies with the Atom Smasher (Q) compaction',
-        target: 5,
-      },
-    ],
-    enhancements: [
-      {
-        id: 'metal-detector',
-        name: 'Metal Detector',
-        description: 'Passive: two ancient rods lie hidden under the arena with no visible marker — land a mag-pulse (click) on one to unearth it. An exposed ancient rod smashes like any other, and if your Atom Smasher (Q) sweeps over it, it powers up: every 3 seconds it fires a 5-damage laser at any enemy that is magnetized or carrying your nails. Both can be powered up at once.',
-      },
-      {
-        id: 'mag-lev',
-        name: 'Mag-Lev',
-        bindable: true,
-        hudDescription: 'Hop on a magnetic board — bash and sling into enemies',
-        description: 'Hop onto a magnetic skateboard, gaining 50 shield HP. While riding you bash enemies you touch and can click to sling yourself across the arena into them. Lose the 50 shield HP, or re-cast, and you dismount — dismounting drops all of your shield HP. 6 second cooldown to re-mount.',
-      },
-    ],
-  },
+  // Magnet's mastery (Metal Detector / Mag-Lev) was retired with the 2026-10-15 scrap rework; a new one is owed.
   growth: {
     elementId: 'growth',
     name: 'Growth Mastery',
@@ -1486,52 +1436,6 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       },
     ],
   },
-  passion: {
-    elementId: 'passion',
-    name: 'Passion Mastery',
-    enhancedEmoji: '💞',
-    enhancedColor: 0xff2f7d,
-    requirements: [
-      {
-        key: 'impressed',
-        label: 'Head Turner',
-        howTo: 'Impress entities — land three Loveshots (Click) on them back-to-back without missing (needs the Click+ Show-off upgrade)',
-        target: 50,
-      },
-      {
-        key: 'roseHits',
-        label: 'Thorn Collector',
-        howTo: 'Take hits with the rose in your teeth — every blow aimed at you while Manipulate (F) is held counts one',
-        target: 100,
-      },
-      {
-        key: 'poseCharms',
-        label: 'Centre Of Attention',
-        howTo: 'Seduce entities mid-pose — fill a love bar to the end while Exhibition (Q) is running',
-        target: 5,
-      },
-      {
-        key: 'makeoutCharms',
-        label: 'Sealed With A Kiss',
-        howTo: 'Charm entities with Make-out — Smooch (R) somebody already past 90% of their bar (needs the R+ Make-out upgrade)',
-        target: 5,
-      },
-    ],
-    enhancements: [
-      {
-        id: 'attraction',
-        name: 'Attraction',
-        description: 'Passive: a wide ring of your own gravity, 260px across, hangs around you wherever you walk — a pink haze thick with drifting hearts standing in the air just outside its edge. Anything that steps inside it does not get to step back out. The moment an enemy crosses in they are caught, and from then on the boundary holds them: they can run at it, slide along it and fight you across it, but the distance between the two of you never opens past that ring again. Nothing that happens to them takes it off, and it moves with you, so retreating is only ever dragging them with you.',
-      },
-      {
-        id: 'perfume',
-        name: 'Perfume',
-        bindable: true,
-        hudDescription: 'A 6s cloud of perfume ahead of you — it loves anyone in it, and doses you while you stand in it',
-        description: 'Spray a great blooming cloud of perfume in front of you. It hangs there for 6 seconds, about 110px across, and everybody who walks through it falls a little further for you: 12 love a second for as long as they are inside it, with no damage and no cast attached — the air is doing the work.\n\nStand in your own cloud and you are wearing it. Every second spent inside banks two seconds of the perfume effect, up to twelve, and while it is on you the scent comes with you: a 96px aura on your own body worth 10 love a second to anything close enough to smell it. So the cloud is worth casting on your own feet as often as on theirs — one is a trap, the other is a coat of the stuff you carry away with you.\n\n18 second cooldown.',
-      },
-    ],
-  },
   magma: {
     elementId: 'magma',
     name: 'Magma Mastery',
@@ -1545,10 +1449,10 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         target: 15,
       },
       {
-        key: 'jetDistance',
-        label: 'Rocket Sled',
-        howTo: 'Travel 25,000px on Magma Jet (F) thrust — roughly 25 full-length burns',
-        target: 25000,
+        key: 'blunderHits',
+        label: 'Point Blank',
+        howTo: 'Catch entities in a Blunder-Boil (F) cone — every body inside the blast counts one',
+        target: 60,
       },
       {
         key: 'eruptions',
@@ -1557,9 +1461,9 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         target: 50,
       },
       {
-        key: 'hatches',
-        label: 'Dragonwaker',
-        howTo: 'Fill a Dragon Egg (Q) to 250 and hatch it',
+        key: 'mutinies',
+        label: 'Raise The Colours',
+        howTo: 'Fill the Molten Mutiny (Q) pendant to 50 and wake the ship',
         target: 5,
       },
     ],
@@ -1573,8 +1477,8 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         id: 'magma-saw',
         name: 'Magma Saw',
         bindable: true,
-        hudDescription: 'Hold to rev a molten chainsaw — 20 damage a second, hotter every second, and it explodes at 8',
-        description: 'Hold the bound key to rev a chainsaw of molten rock, then let go to start cutting. The charge buys nothing but time: a tap runs the saw 2.5 seconds, a full 1.6-second rev runs it the full 8.\n\nThe saw sits out at arm\'s length and follows your cursor. It bites for 1 damage every 0.05s — about 20 a second — and the longer it runs the harder it bites: 40 a second after two seconds, 60 after four, 80 after six, and the blade goes from gold to white-hot to a furious red as it does. It also charges anything of yours it is held against, at 30 pressure a second.\n\nAt 8 seconds it is too hot to hold and detonates: 35 damage inside 150px to everyone including you, throwing you backwards and everybody else a long way further. Press the key again at any point to cut the motor and walk away from that — which is the whole decision the ability asks.\n\n14 second cooldown, from the moment the saw starts.',
+        hudDescription: 'Hold to rev a molten chainsaw — 20 damage a second, hotter every second, and it explodes at 4',
+        description: 'Hold the bound key to rev a chainsaw of molten rock, then let go to start cutting. The charge buys nothing but time: a tap runs the saw 1.25 seconds, a full 1.6-second rev runs it the full 4.\n\nThe saw sits out at arm\'s length and follows your cursor. It bites for 1 damage every 0.05s — about 20 a second — and the longer it runs the harder it bites: 40 a second after two seconds, and the blade goes from gold to white-hot to a furious red as it does. It also charges anything of yours it is held against, at 30 pressure a second.\n\nAt 4 seconds it is too hot to hold and detonates: 35 damage inside 150px to everyone including you, throwing you backwards and everybody else a long way further. Press the key again at any point to cut the motor and walk away from that — which is the whole decision the ability asks.\n\n14 second cooldown, from the moment the saw starts.',
       },
     ],
   },
@@ -1810,7 +1714,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       {
         id: 'predictors-snare',
         name: "Predictor's Snare",
-        description: 'Passive: your dash stops being a dash. Press Space and you are simply *there* — standing on the movement marker at the end of the enemy\'s thread, on the exact spot they were going to be in two seconds, before they are.\n\nAnd you do not arrive empty-handed. A small closed eye is left burnt into the floor where you landed. It lies there with its lid down for 14 seconds, and the moment the enemy walks over it — which is what the thread said they were about to do — it opens and puts 15 stress into them. Up to six of them can be on the floor at once, and every one of them is a place the enemy has already told you they are going.\n\nThe counterplay is the same one the whole element has: the marker only exists while they are walking somewhere. Stand still and there is nothing at the end of the thread, and the dash is an ordinary dash again.',
+        description: 'Passive: your dash stops being a dash. Press Space and you are simply *there* — standing on the exact spot the enemy was going to be in two seconds, before they are.\n\nAnd you do not arrive empty-handed. A small closed eye is left burnt into the floor where you landed. It lies there with its lid down for 14 seconds, and the moment the enemy walks over it — which is what they were about to do — it opens and deals them 15 damage. Up to six of them can be on the floor at once, and every one of them is a place the enemy has already told you they are going.\n\nThe counterplay is the same one the whole element has: the marker only exists while they are walking somewhere. Stand still and there is nowhere to arrive, and the dash is an ordinary dash again.',
       },
       {
         id: 'utter-focus',
@@ -1819,8 +1723,8 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         // Mind Control is the entire payoff of a longer queue — five seconds of held casts with
         // nothing able to reach into them is a window that reads well and does nothing.
         excludeSlots: ['e'],
-        hudDescription: 'Close your eyes for 8s: the future opens to 5 seconds and all your stress is worth 1.2x',
-        description: 'Shut your eyes and stop looking at the present altogether.\n\nFor 8 seconds the two seconds you are ahead becomes **five**. Their route on the floor runs five seconds forward instead of two, the ghost at the end of it stands five seconds into the future, and every ability they press is held for the full five before it is allowed to happen — which also means the queue over their head grows long enough that Mind Control can pick through it.\n\nAgainst another person there is a third delay on top of those two: their **movement keys** are held back by the same five seconds. What they are pressing now is what their body will do five seconds from now, so for the first stretch of the window they do not move at all and after that they walk the route you have been watching on the floor the whole time. This is the only situation in the game in which the thread over a real opponent is a fact rather than an estimate.\n\nEverything you land while your eyes are shut is worth **1.2x stress**.\n\nThe price is that you are reading rather than watching. Every hit that lands on you during the window knocks half a second off it, so a psychic who is being pressured gets far less of it than one who opened the window from behind cover. 26 second cooldown.',
+        hudDescription: 'Close your eyes for 8s: everything they press is held 5 seconds instead of 2',
+        description: 'Shut your eyes and stop looking at the present altogether.\n\nFor 8 seconds the two seconds you are ahead becomes **five**: every ability they press is held for the full five before it is allowed to happen, and the queue over your head grows to match.\n\nAgainst another person there is a third delay on top of those two: their **movement keys** are held back by the same five seconds. What they are pressing now is what their body will do five seconds from now, so for the first stretch of the window they do not move at all and after that they walk the route you have already been shown.\n\nThe price is that you are reading rather than watching. Every hit that lands on you during the window knocks half a second off it, so a psychic who is being pressured gets far less of it than one who opened the window from behind cover. 26 second cooldown.',
       },
     ],
   },
@@ -1935,61 +1839,11 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         description: 'Passive, bound to **Space**, and it is a wardrobe rather than a buff.\n\nOne press sheds whatever you are wearing in a spray of panels and leaves you standing in the next thing. There are four, and they cycle in order:\n\n**🤵 Black Suit** — every hit that reaches you lands for **3 less**, flat, before anything else. It is the one you start the match in and it is quietly the best against a swarm, because it is subtracted from each hit rather than from the total.\n\n**🧥 Heavy Coat** — **10% less damage** from every source. No conditions, no exceptions, and the only one of the four that is never wrong.\n\n**👘 Thin Silks** — every negative status on you runs **33% shorter**. Stuns, slows, burns, freezes, roots, silences: all of them. Against a control element it is worth more than any amount of armour.\n\n**🧢 Casual Hoodie** — **20% less** from anything that arrives as an area blast or a piercing shot. Against a normal shot it does nothing at all; against an ultimate it is the largest number on this list.\n\nSwapping costs nothing but the moment it takes, so the real skill is reading what is about to be thrown at you and being in the right thing when it lands.',
       },
       {
-        id: 'wretched-scarf',
-        name: 'Wretched Scarf',
+        id: 'bleed-stop',
+        name: 'Bleed Stop',
         bindable: true,
-        hudDescription: 'Wrap up for 3s: nothing gets through, then all of it comes back out as one blast',
-        description: 'The tailor pulls the whole scarf in and winds it round themselves until there is nothing left but a tight cocoon about the size of anybody else\'s body.\n\nTwo things happen at once. The scarf **stops being a hitbox** — for three seconds you are a small circle like every other element on the roster, which against a shot-heavy opponent is most of what the ability is for. And every point of damage that does still reach you is **negated outright**: not absorbed, not reduced, simply refused.\n\nNone of it is forgiven, though. It is counted. When the three seconds run out the wool unwinds in one motion and **90% of everything that was thrown at you comes back out as a blast** in a wide radius around where you are standing — so the correct answer to somebody dumping an ultimate into it is to be standing on top of them when it opens.\n\nIt is the only defensive cooldown in the game that gets stronger the harder it is punished, and the only one that is a bad idea to use on nothing. 18 second cooldown.',
-      },
-    ],
-  },
-  radiation: {
-    elementId: 'radiation',
-    name: 'Radiation Mastery',
-    enhancedEmoji: '📡',
-    enhancedColor: 0x2fe0a8,
-    requirements: [
-      {
-        key: 'confirms',
-        label: 'Three On One Body',
-        howTo: 'Land the third Geiger Tracer (Click) on a body and let the railgun fire itself — every confirmed set counts one, and a stray click still scrubs the board',
-        target: 50,
-      },
-      {
-        key: 'level3Doses',
-        label: 'Top Of The Ladder',
-        howTo: 'Push an entity all the way to level 3 irradiation — the Exposure swing, the Final Vision beam, the bare Supercritical core or Finality all get there (needs the corrupt upgrades that open the ladder)',
-        target: 25,
-      },
-      {
-        key: 'supercriticals',
-        label: 'Nothing Contained',
-        howTo: 'Go Supercritical: land a *direct* Waste Disposal (F) drum on a body while Final Vision is running (needs the R+ and F+ corrupt upgrades)',
-        target: 5,
-      },
-      {
-        key: 'nukeKills',
-        label: 'Airdrop Confirmed',
-        howTo: 'Land the killing blow with the Extermination (Q) airdrop — five flares into one body, and somebody on the screen does not get up',
-        target: 3,
-      },
-    ],
-    enhancements: [
-      {
-        id: 'snipers-instinct',
-        name: "Sniper's Instinct",
-        description: 'Passive, and it is two admissions of the same thing: this man should never have been in the room.\n\nThe first is armour that is worth more the further away he is. Standing on top of somebody he takes full damage, exactly as he always did. From there every pixel of separation is worth something, until at 620px and beyond everything aimed at him lands for **45% less**. It is measured live, off whichever enemy is actually nearest, so it is not a buff he opens and holds — it is a running score on how well he is playing the range.\n\nThe second is the line. A thin lead sight runs from the weapon hand out to wherever the cursor is, stopping exactly where a tracer thrown right now would stop: at the body it would clamp onto, at the wall it would strike, or at the 700px where it simply runs out. A reticle sits on that point, and it goes green when the line ends on a body and hazard-yellow when it ends on nothing. There is no new information in it — it is the same maths the click already ran — but the whole element is a chain that one stray tracer scrubs, and this is the difference between knowing that and seeing it.',
-      },
-      {
-        id: 'gamma-tether',
-        name: 'Gamma Tether',
-        bindable: true,
-        // Final Vision is a prerequisite for a *second* upgrade — Cutdown only opens Supercritical
-        // while the R is running — so binding over R would quietly delete an F+ the player already
-        // bought, which is the one cost that is not written on the card.
-        excludeSlots: ['r'],
-        hudDescription: 'Plant a device at the cursor. It chains the nearest enemy inside 150px of it for 6s, and their dose stops running down',
-        description: 'A squat lead post driven into the floor wherever the cursor was, on three splayed legs, with a hazard band around its belly and a green charge bar across the front of it that drains for the whole six seconds it has left to live.\n\nWhat comes off the top of it is a chain. It reaches out to the nearest enemy within 260px, catches them, and from that moment they are **not allowed further than 150px from the post**. Inside that circle they can walk wherever they like; at the edge of it the chain simply does not pay out any more, and their own movement stops meaning anything in the outward direction. The catch is not instant and it is not a taunt — a post planted where nobody is standing yet lies there and takes the first body that walks into range.\n\nThe chain is live waste on a wire, so it plants a dose on whoever it catches. And for as long as it holds them, **the dose stops running out**: the trefoil over their head keeps its bar exactly where it is and the ten, twenty or forty seconds they were counting down simply pause. Six seconds of held ladder, on top of six seconds of a target that cannot leave a 150px circle you chose.\n\nThat circle is the whole point. Everything Radiation owns is a procedure that dies to somebody walking away from it: three tracers, a drum, seven pools and a sweep. A tethered enemy cannot walk away from any of it. 15 second cooldown, one post at a time, and no damage of its own whatsoever.',
+        hudDescription: 'Tie off for 5s: half the scarf, and you can lose at most 75 in total',
+        description: 'The tailor knots the scarf off short and cinches it tight round the middle.\n\nFor **5 seconds** the scarf is **50% shorter** — half the tail, so half the target trailing behind you — and you can take **at most 75 damage** across the whole window. Every point past that is simply not received: the hit lands, the number is spent, and your health does not move.\n\nArmour and outfits are applied first, so the 75 is counted after them — a Heavy Coat stretches it further.\n\nIt is a licence to make the risky play: walk into the ultimate, take the trade, stand in the fire for the pin you need. 20 second cooldown.',
       },
     ],
   },
@@ -2141,103 +1995,8 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       },
     ],
   },
-  fortune: {
-    elementId: 'fortune',
-    name: 'Fortune Mastery',
-    enhancedEmoji: '🎟️',
-    enhancedColor: 0x8c5c31,
-    requirements: [
-      {
-        key: 'catalogueOwned',
-        label: 'Retail Therapy',
-        howTo: 'Buy every distinct line the stall stocks at least once — all 29 of them, across the general shelf, the ARMS page and the MODS drawer. It counts across matches and never resets, but six of the lines only appear once you own the matching corrupt upgrade',
-        target: 29,
-        isBest: true,
-      },
-      {
-        key: 'coinsEarned',
-        label: 'Make Money',
-        howTo: 'Earn 500 blood coins. Anything that puts a coin in your purse counts: wounds you inflict, commission off enemy purchases, turnstile tolls and settled investments',
-        target: 500,
-      },
-      {
-        key: 'investGains',
-        label: 'Compound Interest',
-        howTo: 'Make 100 coins purely from capital gains — the bank\'s 10% payouts and a market settling upward. The money you put in does not count, only what it grew by',
-        target: 100,
-      },
-      {
-        key: 'p2wDamage',
-        label: 'Pay to Win',
-        howTo: 'Deal 250 damage with the golden beam (Q). Only the beam counts — it is the one attack in the element you buy rather than fire',
-        target: 250,
-      },
-    ],
-    enhancements: [
-      {
-        id: 'battle-pass',
-        name: 'Battle Pass',
-        description: 'Passive: there is a **battle pass** across the top of the screen now, and it is rolled fresh every single match.\n\n**Thirty tiers, 3 coins each, bought strictly in order** — press **B** at any time, anywhere in the arena. You do not have to be at the stall; the pass is not the shop, and that is the point: it is the one place your money goes that does not require you to stand in the middle of the room to spend it.\n\nMost of what is on it is **stat buffs** — bullet damage, fire rate, reload speed, magazine, movement, maximum health, plating, the coin rate itself, the interest rate itself. They stack, they last the match, and the pass is randomised so no two fights hand you the same ladder.\n\nScattered through them are ordinary shop items, handed over free.\n\nAnd **every fifth tier is an item⁺** — a version of something off the public shelf that is simply better than the one for sale. Bandages⁺ heal 55 instead of 20. A Cure-All⁺ is 120 health and 45 seconds of nothing sticking to you. Death Machine⁺ is a 45-damage vacuum and it does not count against your three. Tier 30 is the last one, and by then you have spent 90 coins on a second character sheet.',
-      },
-      {
-        id: 'drive-by-flex',
-        name: 'Drive by Flex',
-        bindable: true,
-        hudDescription: 'Summon a rusty car that bounces round the arena ramming people. Space near it to ride it — faster reloads and a faster trigger. 5 bounces, then it explodes. The stall grows a GARAGE tab',
-        description: 'A rusted saloon comes out of nowhere at head height, drops onto its wheels and **drives**. It does not steer, it does not chase and it does not stop: it goes forward until it meets a wall, comes off it like a DVD logo, and does it again. Anything in its way is rammed for **18**.\n\nIt is slow, and it has **five bounces in it**. On the fifth it explodes.\n\n**Press Space near it and you are on the roof.** Riding it is a **40% faster reload and a 35% faster trigger**, and the car keeps driving with you on it — you have given up steering in exchange for a firing platform. Space again and you step off. A car that explodes with you on it throws you clear; it is your car, and it will not hurt you.\n\nThe stall grows a fourth tab for it: a **GARAGE**, and it is not cosmetic. **Spiked Bumper** (2) makes the ram nearly double. **Quick Tires** (1) speeds it up. **Stronger Chassis** (2) is three more bounces. **Suicide Mission** (2) turns the death explosion into a shrapnel storm. **Sunroof** (3) is a much bigger ride bonus plus 20% damage while you are up there. **Mounted Gunner** (3) is +5 rounds in whatever you are holding, while you are holding onto the roof. **Robo-Gunner** (3) bolts on an automatic that spits three 2-damage rounds a second at anything close. **Speedster** (5) makes it *fast*, gives it ten more bounces, and lights a fire trail behind it. **Tank** (7) is the other direction entirely: five more bounces, a ram that hurts far more, a crawl instead of a drive, and a 15-damage explosive shell every three seconds at anything nearby.\n\n**The car takes three of them. Ever.** Three is the whole build, and Tank alone is seven coins, so the expensive ones cost you the cheap ones twice over.',
-      },
-    ],
-  },
-  gluttony: {
-    elementId: 'gluttony',
-    name: 'Gluttony Mastery',
-    enhancedEmoji: '🐀',
-    enhancedColor: 0x8c6b5a,
-    requirements: [
-      {
-        key: 'hotKnifeHits',
-        label: 'Searing Service',
-        howTo: 'Land a blade that came off the coals. Every entity a red-hot kitchen knife — or a red-hot cleaver — cuts counts one',
-        target: 50,
-      },
-      {
-        key: 'foodsCooked',
-        label: 'Fifty Covers',
-        howTo: 'Finish cooking ingredients on the grate. It is the moment the ring fills that counts, whether or not you ever walk back to collect it',
-        target: 50,
-      },
-      {
-        key: 'larderKinds',
-        label: 'The Whole Larder',
-        howTo: 'Cook every one of the eight ingredients at least once — mushroom, carrot, potato and meat, plus the four the E⁺ Head Chef upgrade adds. It counts across matches and never resets',
-        target: 8,
-        isBest: true,
-      },
-      {
-        key: 'mawKills',
-        label: 'It Ate Well',
-        howTo: 'Let the maw finish somebody. A gobbet, a tentacle whip, a close bite, the dread maw\'s scream or its wall limbs — any of them landing the killing blow completes this permanently',
-        target: 1,
-      },
-    ],
-    enhancements: [
-      {
-        id: 'snacking',
-        name: 'Snacking',
-        description: 'Passive: you never stop eating. There is always something in a pocket, and it is always going in.\n\nA **slow regeneration**, running the whole match, in both forms — and its rate is read straight off the **strip**. An empty strip is **1 health a second**, which is barely worth naming; a strip carrying **200 points of healing** is **9 a second**, and everything between the two is a straight line.\n\nWhat the number counts is what the food would be *worth to you if you ate it*, not how many tiles are full: a cooked potato is worth twice a raw one, an over-seared anything is worth a quarter more again, a Winter Mint is worth a tenth of your own maximum health, and a rotten scrap is worth half of nothing. Six raw carrots is 60 and barely moves the needle. Two cooked cuts of meat and a pineapple is most of the way to the ceiling.\n\nThe wrinkle is that it is the exact opposite of every other thing in the kit. Eating is how Gluttony has always paid for being alive, and Snacking pays you for *not* eating — for walking round with a full larder you are saving. The moment you spend it, the regeneration is gone with it, and a Feast that empties the strip in one keystroke empties this too.',
-      },
-      {
-        id: 'chefs-friend',
-        name: 'Chef\'s Friend',
-        bindable: true,
-        // F is the door between the two halves of the element in both directions. Bound over it,
-        // the mastery would delete the butcher form and the way back out of it at once.
-        excludeSlots: ['f'],
-        hudDescription: 'A rat hole opens at the top of the arena. Throw cooked food in and bread, cheese or a pie comes back out. In butcher form the rat comes out mutated and fights for you — feed it to make it worse',
-        description: 'There is a hole in the wall at the top of the arena now, and two beady eyes in it.\n\n**Throw cooked food at the hole** — it has to be cooked, he is not an animal — and the rat takes it and is gone. A moment later something else comes back out and drops on the floor for you: **🍞 Bread** (30 raw, 60 cooked, 8s on the grate), **🧀 Cheese** (25 and 45, 5s), or **🥧 Pie** (30 and 60, 10s, and eating it is **+20% movement for 8 seconds**). Nothing else in the element turns food into better food, and the three of them are not on any forage table — the rat is the only way you will ever see them.\n\nThe **bound key is a whistle**. In the kitchen it sends him out to your cursor to **fetch**: the nearest thing of yours lying on the floor, or the cut of meat still stuck on a skewer in the wall, picked up and carried back onto your strip. If there is nothing out there to fetch, he goes down the hole and brings you one of his three instead. **14 second cooldown.**\n\nAnd then you put the whites down. **In butcher form the rat comes out of the hole as the thing it actually is** — twice the size, wrong colour, too many teeth — and it fights next to you. It runs down whoever you are fighting and **slashes for 12**, about once a second, and between swings it collects whatever food is lying around and brings that back too. The whistle stops being a fetch and becomes a **sic**: it charges the target and the next slash lands for **double**.\n\n**Feed it.** Throw any food you have at the rat and it eats it: **+25% damage and +15% speed per feed, up to four**, and — this is the part worth building around — a feeding buys it **12 seconds of staying out after butcher form has ended**. A rat fed on the way out of the transformation is still fighting for you long after the toque is back on.',
-      },
-    ],
-  },
+  // Fortune Mastery (Battle Pass / Drive by Flex) was retired with the 2026-10-15 Gold rework;
+  // a new one is owed.
   dream: {
     elementId: 'dream',
     name: 'Dream Mastery',
@@ -2333,54 +2092,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       },
     ],
   },
-  sound: {
-    elementId: 'sound',
-    name: 'Sound Mastery',
-    enhancedEmoji: '🎤',
-    enhancedColor: 0xff2299,
-    requirements: [
-      {
-        key: 'harmonizedCasts',
-        label: 'On The Beat',
-        howTo: 'Land an ability inside the metronome\'s gold window. Any of the five counts, and the streak does not have to hold — a hundred harmonized casts is a hundred harmonized casts',
-        target: 100,
-      },
-      {
-        key: 'bugleNotes',
-        label: 'A Hundred Notes',
-        howTo: 'Strike a note on the bugle rhythm bar (F). Hold notes count as they are caught',
-        target: 100,
-      },
-      {
-        key: 'codaLevel',
-        label: 'Turn It Up',
-        howTo: 'Reach Coda level 3 — the electric guitar — in a single match. One match that gets there completes this permanently',
-        target: 3,
-        isBest: true,
-      },
-      {
-        key: 'bugleRun',
-        label: 'Flawless Twenty',
-        howTo: 'Land 20 notes in a row inside one bugle call without dropping one. A single clean run completes this permanently',
-        target: 20,
-        isBest: true,
-      },
-    ],
-    enhancements: [
-      {
-        id: 'audience-participation',
-        name: 'Audience Participation',
-        description: 'Passive: **you have an audience.**\n\nA crowd of shadows stands along the front of the stage for the whole match — heads bobbing, arms up, small wands waving in the dark. They are silhouettes and they are not in the fight: nothing can hit them and they cannot hit anything.\n\nWhat they do is **listen**, and listening pays. The crowd generates **2 hype a second**, for free, forever. Sound has always had to earn its hype by banking percentages and then burning them; this is the first hype in the element that arrives on its own, and over a long match it is worth a Coda level by itself.\n\nAnd they can be **played to**. Deal **50 damage inside any 5 second window** and the room goes up: the shadows jump, the wands go wild, and hype pays **double — 4 a second — for 5 seconds**. The window is rolling, so a burst that lands 50 keeps the crowd on their feet for as long as you keep giving them a reason.\n\nThey do not care how you did it. A Solo that walls the room, a mirror ball through somebody, a record cutting through a wave of husks — 50 is 50.',
-      },
-      {
-        id: 'compose',
-        name: 'Compose',
-        bindable: true,
-        hudDescription: 'Write for 3 seconds — a staff unrolls behind you and a note lands on it every 30px you cover. Then the whole bar hops off and goes hunting, 3 damage a note',
-        description: 'Press it and you start **writing**.\n\nFor **3 seconds** a five-line staff unrolls on the floor behind you, following exactly where you walk, and a note is engraved onto it **every 30px of stave you lay down**. The notes sit on the line, pitched up and down as the bar goes, and they are pure decoration until the writing stops.\n\nWhen the 3 seconds are up, **the composition plays**. Every note on the staff hops off the line, hangs for a beat, and then goes for the nearest enemy — **3 damage each**, one small burst apiece, released in a stream rather than all at once.\n\n**The staff is the ability.** Three damage a note is nothing; a bar with forty notes on it is not. And the only thing that decides how many notes there are is **how far you got** in those three seconds:\n\n• Stand still and you write **nothing**. A staff with no length has no notes on it, and the ability does literally zero.\n• Walk it and you get a respectable bar.\n• Wearing everything this element banks — a Coda ladder, a bugle run, a green record, a boombox field — you cover **twice the ground**, and the bar is twice as long.\n\nThat is the whole design: Sound spends the entire match buying move speed and then never has anything to spend it on. This is what it is for. **Up to 64 notes**, which is 192 damage from a key that asks you to run in a circle.\n\n**18 second cooldown.**',
-      },
-    ],
-  },
+  // Sound's mastery was retired with the 2026-10-15 marching-band rework; a new one is owed.
 };
 
 export function getMasteryDef(elementId: string): MasteryDef | undefined {

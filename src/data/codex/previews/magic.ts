@@ -1207,6 +1207,6 @@ export const masteryTransmogrify: PreviewScript = {
       bolt.x = ctx.cx; bolt.y = ctx.cy; bolt.live = true;
       readout.setText('130 px/s — slower than a walk, and the easiest thing here to dodge');
     });
-    ctx.at(6200, () => readout.setText('bound over E, R, F or Q — that slot loses its spell for the match'));
+    ctx.at(6200, () => readout.setText('bound over R, F or Q — that slot loses its spell for the match'));
   },
 };

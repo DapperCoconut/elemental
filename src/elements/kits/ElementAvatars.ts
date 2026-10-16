@@ -34,6 +34,8 @@ import { MagicAvatar } from './MagicVisuals';
 import { MagmaAvatar } from './MagmaVisuals';
 import { MagnetAvatar } from './MagnetVisuals';
 import { ClothAvatar } from './ClothVisuals';
+import { MarrowAvatar } from './MarrowVisuals';
+import { TempestAvatar } from './TempestVisuals';
 import { MetalAvatar } from './MetalVisuals';
 import { OilAvatar } from './OilVisuals';
 import { PaperAvatar } from './PaperVisuals';
@@ -114,6 +116,8 @@ const ELEMENT_AVATARS: Record<string, ElementAvatarFactory> = {
   psychic: (s, t) => new PsychicAvatar(s, t),
   ruin: (s, t) => new RuinAvatar(s, t),
   cloth: (s, t) => new ClothAvatar(s, t),
+  marrow: (s, t) => new MarrowAvatar(s, t),
+  tempest: (s, t) => new TempestAvatar(s, t),
   magma: (s, t) => new MagmaAvatar(s, t),
   chalk: (s, t) => new ChalkAvatar(s, t),
   wax: (s, t) => new WaxAvatar(s, t),
@@ -142,7 +146,7 @@ export function makeElementAvatar(
  * The fighter body sprite that goes *under* the rig, or undefined when the element paints
  * its own torso instead.
  *
- * Magma and Cloth are the two that do — their avatars override `drawBody`, so BootScene
+ * Magma, Cloth and Marrow are the ones that do — their avatars override `drawBody`, so BootScene
  * never generates an `elem-` texture for them and asking for one would draw nothing.
  */
 export function elementBodyTexture(scene: Phaser.Scene, elementId: string): string | undefined {

@@ -840,18 +840,22 @@ const METAL_AVATAR: AvatarSpec = {
     { r: 4.8, color: METAL.iron, alpha: 1 },
     { r: 1.8, color: METAL.chrome, alpha: 1, ox: -2.1, oy: -2.2 },
   ],
-  eyeWhite: METAL.steel,
+  eyeWhite: METAL.white,
   eyePupil: METAL.shadow,
   // Armoured hands: heavy, so they lag and smear like something with weight behind them.
   squash: { div: 17, x: 0.42, y: 0.24 },
 };
 
 /**
- * The metal character rig: two gauntleted fists with knuckle blades, a pair of eyes, and a
- * length of chain slung over the crown with a hook swinging off the end of it.
+ * The metal character rig: a plain orb of forged steel (the baked `elem-metal` texture), two
+ * gauntleted ball fists, a pair of eyes, and one accessory — a **crest of three blades** fanned
+ * up off the crown. This element's whole vocabulary is *edges*, and a fighter crowned with
+ * knives reads as metal before it has swung anything.
  *
- * The knuckle blades are the idea — this element's whole vocabulary is *edges*, and a fighter
- * whose fists are visibly bladed reads as metal before it has swung anything.
+ * Mastery (Natural Clot) enhances the crest rather than adding to it: longer blades with
+ * crimson edges and blood run down their spines, blood-red eyes, and a wider corona with a
+ * crimson rim on each fist. A divine perk's finish (gold dagger, live Conduit plate) recolours
+ * the crest's edges, since it is the one piece of steel always on screen.
  */
 export class MetalAvatar extends BaseAvatar {
   private fx: MetalFx;
@@ -874,12 +878,12 @@ export class MetalAvatar extends BaseAvatar {
   setFinish(finish: 'none' | 'gold' | 'live'): void { this.metalFinish = finish; }
 
   /**
-   * Mastery tell — Natural Clot, made visible: the fists grow a scabbed outer shell and a
-   * crimson rim, the eyes go blood-red, and a gorget of clotted plate rides the shoulders (drawn
-   * in drawExtras). Shape changes, not brighter tints — a tint alone vanishes at gameplay zoom.
+   * Mastery tell — Natural Clot, made visible: the fists grow a wider corona and a crimson rim,
+   * the eyes go blood-red, and (in `drawExtras`) the blade crest lengthens and bleeds. Shape
+   * changes, not brighter tints — a tint alone vanishes at gameplay zoom.
    */
   protected applyMastery(on: boolean): void {
-    this.setEyeWhite(on ? METAL.rose : METAL.steel);
+    this.setEyeWhite(on ? METAL.rose : METAL.white);
     this.forEachHandLayer(0, (glow) => glow.setRadius(on ? 15 : 11.5));
     this.forEachHandLayer(1, (shell) => {
       if (on) shell.setStrokeStyle(2, this.tint(METAL.crimson), 0.95);
@@ -903,78 +907,39 @@ export class MetalAvatar extends BaseAvatar {
     };
   }
 
-  /** Blood pooled underfoot, with a drop or two escaping the edge of it. */
+  /** A soft under-glow in the owner's accent, deepening to gore once mastered. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
-    const k = this.intensity;
-    bloodSplat(g, this.tint, x, y + 8, 24 * k, 3.1, this.accent, a * 0.2);
-    g.fillStyle(this.tint(METAL.gore), a * 0.16 * k);
-    g.fillEllipse(x, y + 9, 52 * k, 20 * k);
+    const k = this.intensity * (this.mastered ? 1.15 : 1);
+    g.fillStyle(this.tint(this.mastered ? METAL.gore : this.accent), a * (this.mastered ? 0.26 : 0.16) * k);
+    g.fillCircle(x, y, 28 * k);
   }
 
-  /**
-   * Knuckle blades on each fist, plus the crown: a chain looped over the head with a hook
-   * hanging off it, rocking as the fighter moves. Rooted above the head so it never covers the
-   * face, and drawn over the sprite so the steel reads instead of only its dark tips clearing
-   * the body.
-   */
+  /** The blade crest, rooted at the crown (`y - 16`) so the blades fan up and clear the face. */
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    // ── Knuckle blades ──
-    for (let i = 0; i < 2; i++) {
-      const hx = this.armX[i], hy = this.armY[i];
-      if (hx === 0 && hy === 0) continue;
-      const out = Math.atan2(hy - y, hx - x);
-      // Gold (divine perk) recolours the edges: this fighter is carrying a dagger, not a sabre,
-      // and the knuckle blades are the only steel always on screen to say so.
-      const edge = this.metalFinish === 'gold' ? METAL.gold
-        : this.metalFinish === 'live' ? METAL.live
-        : this.mastered ? METAL.crimson : METAL.steel;
-      for (let k = -1; k <= 1; k++) {
-        bladeShardLayered(g, this.tint, hx, hy, out + k * 0.46, 11 * this.intensity, 2.4,
-          edge, alpha * 0.95, 0.08, false);
-      }
-      // Conduit: charge crawling between the knuckles.
-      if (this.metalFinish === 'live') {
-        const arc = this.t * 9 + i * 2.1;
-        g.lineStyle(1.4, this.tint(METAL.liveHi), alpha * (0.35 + 0.35 * Math.sin(arc)));
-        g.beginPath();
-        g.moveTo(hx - 5, hy - 3);
-        g.lineTo(hx + Math.sin(arc) * 3, hy);
-        g.lineTo(hx + 5, hy - 4);
-        g.strokePath();
-      }
+    void a;
+    const m = this.mastered;
+    const rootY = y - 16;
+    const lean = Math.cos(this.facing) * 1.5;
+    const sway = Math.sin(this.t * 1.6) * 0.05;
+    // A divine perk's finish wins over mastery's crimson: it says which weapon is in play.
+    const edge = this.metalFinish === 'gold' ? METAL.gold
+      : this.metalFinish === 'live' ? METAL.live
+      : m ? METAL.crimson : METAL.chrome;
+    for (let k = -1; k <= 1; k++) {
+      const len = (k === 0 ? 14 : 11) * (m ? 1.25 : 1);
+      const bx = x + lean + k * 5;
+      bladeShardLayered(g, this.tint, bx, rootY + Math.abs(k) * 1.5, -Math.PI / 2 + k * 0.5 + sway, len, k === 0 ? 3 : 2.6,
+        edge, alpha, 0.06, m);
     }
-
-    // ── The crown chain ──
-    const rootY = y - 20;
-    const rock = Math.sin(this.t * 1.6) * 0.22;
-    const span = 20 * this.intensity;
-    chainRun(g, this.tint, x - span, rootY, x + span, rootY - 2, 9 + Math.sin(this.t * 2.4) * 3,
-      METAL.steel, a * 0.95, 0.85);
-    // The hook, swinging off the right-hand end.
-    const hookA = Math.PI / 2 + rock;
-    const hx = x + span + Math.cos(hookA) * 4;
-    const hy = rootY + Math.sin(hookA) * 10;
-    bladeShardLayered(g, this.tint, hx, hy, hookA + 0.5, 14, 3.2, METAL.iron, a * 0.95, 0.55, true);
-
-    // ── Mastery: a gorget of clotted plate, and shards orbiting the head ──
-    if (this.mastered) {
-      for (let i = 0; i < 7; i++) {
-        const ang = Math.PI * 0.15 + (i / 6) * Math.PI * 0.7;
-        const px = x + Math.cos(ang) * 21;
-        const py = y - 6 + Math.sin(ang) * 15;
-        g.fillStyle(this.tint(i % 2 === 0 ? METAL.clot : METAL.gore), alpha * 0.9);
-        fillPts(g, [
-          { x: px - 5, y: py - 3 }, { x: px + 5, y: py - 4 },
-          { x: px + 4, y: py + 4 }, { x: px - 4, y: py + 3 },
-        ]);
-        g.fillStyle(this.tint(METAL.blood), alpha * 0.5);
-        g.fillCircle(px - 1, py - 1, 1.8);
-      }
-      for (let i = 0; i < 3; i++) {
-        const ang = this.t * 1.5 + (i / 3) * TAU;
-        bladeShardLayered(g, this.tint, x + Math.cos(ang) * 28, rootY - 6 + Math.sin(ang) * 9, ang + Math.PI / 2,
-          12, 2.6, METAL.rose, alpha * 0.9, 0.1, false);
-      }
+    // Conduit: charge crawling across the roots of the crest.
+    if (this.metalFinish === 'live') {
+      const arc = this.t * 9;
+      g.lineStyle(1.4, this.tint(METAL.liveHi), alpha * (0.35 + 0.35 * Math.sin(arc)));
+      g.beginPath();
+      g.moveTo(x + lean - 7, rootY - 2);
+      g.lineTo(x + lean + Math.sin(arc) * 3, rootY - 5);
+      g.lineTo(x + lean + 7, rootY - 2);
+      g.strokePath();
     }
   }
 }

@@ -452,9 +452,16 @@ const CLAY_AVATAR: AvatarSpec = {
 };
 
 /**
- * The shaper: a figure of wet clay with thumbed hands, a drip running off its crown, and —
- * when fused with its golem — a bigger body of stacked clay drawn over the sprite with a
- * crack opening in it for every layer lost. Mastery turns the figure's lumps to bedrock.
+ * The shaper: a plain orb of wet clay (the baked `elem-clay` texture) with ball hands and one
+ * accessory — a fresh **dollop of clay** slapped on the crown with a drip running off it, the
+ * potter's last handful. Everything else that says "clay" lives in the abilities.
+ *
+ * Fused with the golem, the fighter itself grows (`claySizeMult` scales the sprite and, via
+ * `setRigScale`, this whole rig), so the fused form adds no costume: only a crack across the orb
+ * for every layer lost and the layer pips over the head, both gameplay readouts.
+ *
+ * Mastery enhances what is there: the dollop sets into a bigger slab of bedrock with a pale
+ * fracture seam, the hands harden to bedrock with a wider corona, and the eyes go seam-white.
  */
 export class ClayAvatar extends BaseAvatar {
   private fx: ClayFx;
@@ -470,7 +477,7 @@ export class ClayAvatar extends BaseAvatar {
   /** Drop whatever sustained pose is held — a drawing or a wall run ending must not strand it. */
   releaseHold(): void { this.setHold(null); }
 
-  /** Fuse: draw the bigger body, with `layers` of `max` still intact. */
+  /** Fuse: mark the cracks and layer pips, with `layers` of `max` still intact. */
   setFused(on: boolean, layers = 8, max = 8): void {
     this.fusedOn = on;
     this.layers = layers;
@@ -496,63 +503,52 @@ export class ClayAvatar extends BaseAvatar {
     this.fx.clods(x, y, 1, 40, 360, 5);
   }
 
+  /** A wet slick under a wet body — darker and wider once mastered. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
-    // Wet ground under a wet body: a dark slick with a highlight, and slip splashed about.
-    const m = this.fusedOn ? 1.5 : 1;
-    g.fillStyle(this.tint(CLAY.wet), a * 0.35 * this.intensity);
-    g.fillEllipse(x + 2, y + 9, 54 * m, 24 * m);
-    g.fillStyle(this.tint(CLAY.slip), a * 0.3);
-    g.fillEllipse(x, y + 10, 36 * m, 14 * m);
-    g.fillStyle(this.tint(CLAY.sheen), a * 0.18);
-    g.fillEllipse(x - 8 * m, y + 7, 14 * m, 4);
-    for (let i = 0; i < 3; i++) {
-      const ang = this.t * 0.3 + (i / 3) * TAU;
-      clayLump(g, this.tint, x + Math.cos(ang) * 22 * m, y + 12 + Math.sin(ang) * 6, 3.4, 2.4, i + 11, CLAY.slip, a * 0.6, ang, 0);
-    }
+    const k = this.intensity * (this.mastered ? 1.15 : 1);
+    g.fillStyle(this.tint(this.mastered ? CLAY.bedrock : CLAY.wet), a * (this.mastered ? 0.4 : 0.32) * k);
+    g.fillEllipse(x + 2, y + 9, 50 * k, 22 * k);
+    g.fillStyle(this.tint(CLAY.warm), a * 0.14 * k);
+    g.fillCircle(x, y, 26 * k);
   }
 
+  /**
+   * Fused only: one crack across the orb for every layer the golem-body has lost. This is the
+   * fused form's health readout, not costume, so it stays.
+   */
   protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void a;
     if (!this.fusedOn) return;
-    // The fused creature: a taller body of stacked lumps over the sprite, one crack per layer lost.
-    const bed = this.mastered;
-    clayLump(g, this.tint, x, y + 6, 30, 24, 3, bed ? CLAY.bedrock : CLAY.body, alpha, 0, 3);
-    clayLump(g, this.tint, x - 21, y - 6, 12, 9, 4, bed ? CLAY.bedrockLit : CLAY.light, alpha, 0.4, 1);
-    clayLump(g, this.tint, x + 22, y - 5, 12, 9, 5, bed ? CLAY.bedrockLit : CLAY.light, alpha, -0.4, 1);
     const lost = this.maxLayers - this.layers;
-    g.lineStyle(2, this.tint(bed ? CLAY.seam : CLAY.wet), alpha * 0.9);
+    g.lineStyle(1.8, this.tint(this.mastered ? CLAY.seam : CLAY.wet), alpha * 0.9);
     for (let i = 0; i < lost; i++) {
       const ang = (i / this.maxLayers) * TAU + 0.6;
-      const sx = x + Math.cos(ang) * 10, sy = y + 6 + Math.sin(ang) * 8;
-      g.lineBetween(sx, sy, sx + Math.cos(ang) * 16, sy + Math.sin(ang) * 13);
-      g.lineBetween(sx + Math.cos(ang) * 9, sy + Math.sin(ang) * 7, sx + Math.cos(ang + 0.9) * 14, sy + Math.sin(ang + 0.9) * 10);
+      const sx = x + Math.cos(ang) * 8, sy = y + 2 + Math.sin(ang) * 7;
+      g.lineBetween(sx, sy, sx + Math.cos(ang) * 11, sy + Math.sin(ang) * 10);
+      g.lineBetween(sx + Math.cos(ang) * 6, sy + Math.sin(ang) * 5, sx + Math.cos(ang + 0.9) * 10, sy + Math.sin(ang + 0.9) * 8);
     }
   }
 
+  /** The dollop on the crown (`y - 18`), and the fused layer pips above it. */
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void a;
     const bed = this.mastered;
-    // Thumbprints over the hands, so the ball hands read as worked clay.
-    for (let i = 0; i < 2; i++) {
-      g.lineStyle(1.6, this.tint(CLAY.slip), alpha * 0.8);
-      g.beginPath();
-      g.arc(this.armX[i], this.armY[i] + 1, 4.5, Math.PI * 0.2, Math.PI * 0.8, false);
-      g.strokePath();
-    }
-    // A drip running off the crown, and the wet lip it runs from.
     const rootY = y - 18;
-    g.fillStyle(this.tint(bed ? CLAY.bedrockLit : CLAY.light), alpha * 0.95);
-    g.fillEllipse(x, rootY + 1, 18, 6);
-    const sag = (this.t * 0.18) % 1;
-    g.fillStyle(this.tint(bed ? CLAY.bedrockLit : CLAY.slip), alpha * 0.95);
-    g.fillRoundedRect(x + 4, rootY, 3, 5 + sag * 9, 1.5);
-    g.fillCircle(x + 5.5, rootY + 5 + sag * 9, 2.2);
-    // Mastery: a ring of bedrock chips orbiting the crown.
+    const s = bed ? 1.25 : 1;
+    const lean = Math.cos(this.facing) * 1.5;
+    // The dollop: a squat lump sat on the crown, its base pressed flat into the body.
+    clayLump(g, this.tint, x + lean, rootY - 3.5 * s, 13 * s, 7.5 * s, 7, bed ? CLAY.bedrockLit : CLAY.warm, alpha, 0.15, 1);
     if (bed) {
-      for (let i = 0; i < 5; i++) {
-        const ang = this.t * 0.9 + (i / 5) * TAU;
-        clayLump(g, this.tint, x + Math.cos(ang) * 17, rootY - 3 + Math.sin(ang) * 6, 4, 3, i + 20, CLAY.bedrockLit, alpha, ang, 0);
-      }
+      // Set into bedrock: one pale fracture seam across the slab.
+      g.lineStyle(1.4, this.tint(CLAY.seam), alpha * 0.9);
+      g.lineBetween(x + lean - 7, rootY - 5, x + lean - 1, rootY - 1.5);
+      g.lineBetween(x + lean - 1, rootY - 1.5, x + lean + 5, rootY - 6);
+    } else {
+      // One drip slowly sagging off the lip of the wet dollop.
+      const sag = (this.t * 0.18) % 1;
+      g.fillStyle(this.tint(CLAY.slip), alpha * 0.95);
+      g.fillRoundedRect(x + lean + 5, rootY - 1, 3, 4 + sag * 7, 1.5);
+      g.fillCircle(x + lean + 6.5, rootY + 3 + sag * 7, 2);
     }
     // Fused: the layer pips over the head, the one HUD element that belongs on the body.
     if (this.fusedOn) {

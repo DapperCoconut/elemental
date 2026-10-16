@@ -43,7 +43,7 @@ const cloth: ElementCodex = {
         'Standing still does not retract the scarf — the kit pays out slack behind the last knot, so an idle tailor still trails a full length rather than a bobble.',
         'A shot already inside the body core is ArenaScene\'s business rather than the scarf\'s, so nothing is ever counted twice.',
         'Split is a hedge, not an upgrade: two shorter strands are harder for a single shot to find and much easier for one blast to catch both of.',
-        'Wretched Scarf is the only thing that takes the scarf off the field entirely, which is most of what that mastery ability is for.',
+        'Bleed Stop ties it off at half length for 5 seconds — the only way to shrink it on demand.',
       ],
     },
     {
@@ -77,14 +77,14 @@ const cloth: ElementCodex = {
   abilities: {
     'cloth-pin': {
       basics:
-        'A jab with a pin: 4 damage inside 62px and a 1.1 radian arc in front of you, auto-firing '
-        + 'about seven times a second while the button is held. It is the lowest damage figure in '
+        'A jab with a pin: 7 damage inside 62px and a 1.1 radian arc in front of you, auto-firing '
+        + 'about seven times a second while the button is held. It is one of the lowest damage figures in '
         + 'the game and it is not what the button is for — every pin that lands counts toward a '
         + 'streak on that body, and the streak is what Click+ spends. Sharpened Pins adds +1, Reach '
         + 'doubles the 62px, and Echo makes one press in five throw a second free jab 110ms later.',
       cast: 'Click, auto-firing while the button is held. 145ms between jabs.',
       effects: [
-        { tag: 'damage', label: 'The jab', detail: '4 damage to the first body inside 62px within a 1.1 radian arc of your aim.' },
+        { tag: 'damage', label: 'The jab', detail: '7 damage to the first body inside 62px within a 1.1 radian arc of your aim.' },
         { tag: 'utility', label: 'The rate', detail: '145ms between pins — about seven a second, and the fastest attack on the roster.' },
         { tag: 'resource', label: 'The streak', detail: 'Every landed pin counts toward 10 on that body. Switching victims resets it, and it does not tick while a grapple spin is already running.' },
         { tag: 'buff', label: 'What the loom adds', detail: 'Sharpened Pins: +1 damage. Reach: 62px becomes 124px. Echo: 20% of presses throw a second free jab 110ms later.' },
@@ -280,24 +280,20 @@ const cloth: ElementCodex = {
         'Swapping costs nothing but the moment it takes. The skill is reading what is about to land and being in the right thing when it does.',
       ],
     },
-    'wretched-scarf': {
+    'bleed-stop': {
       basics:
-        'Wind the whole scarf around yourself for 3 seconds. The scarf stops being a hitbox — you '
-        + 'become a small circle like every other element on the roster — and every point of damage '
-        + 'that does still reach you is negated outright rather than absorbed. None of it is '
-        + 'forgiven: it is counted, and when the three seconds end the wool unwinds and 90% of '
-        + 'everything thrown at you comes back out as a blast in a 190px radius. 18s cooldown.',
-      cast: 'Whichever of E / R / F / Q it is bound over. 18s cooldown.',
+        'Tie the scarf off for 5 seconds. It is 50% shorter for the duration — half the tail, so half '
+        + 'the trailing hitbox — and you can lose at most 75 health in total while it holds. Every '
+        + 'point past the 75 is simply not received. 20s cooldown.',
+      cast: 'Whichever of E / R / F / Q it is bound over. 20s cooldown.',
       effects: [
-        { tag: 'shield', label: 'The negation', detail: 'All damage taken for 3 seconds is refused outright — not reduced, not absorbed.', requiresMastery: true },
-        { tag: 'utility', label: 'The small target', detail: 'The scarf is off the field for the duration, so the hitbox is a normal-sized circle rather than a 220px trail.', requiresMastery: true },
-        { tag: 'damage', label: 'The return', detail: '90% of everything negated is released as one blast inside 190px when the 3 seconds end.', requiresMastery: true },
-        { tag: 'cost', label: 'Used on nothing', detail: 'Nothing negated means nothing returned. It is the only defensive cooldown in the game that is actively wasted by not being punished.', requiresMastery: true },
+        { tag: 'shield', label: 'The tourniquet', detail: 'At most 75 damage gets through across the whole 5 seconds; everything after that is refused.', requiresMastery: true },
+        { tag: 'utility', label: 'The short scarf', detail: 'The scarf is half its usual length while it holds, so there is half as much of you to hit.', requiresMastery: true },
       ],
       notes: [
-        'The blast is flagged as area damage, so it is read by anything that resists area damage — including another Cloth player in a Casual Hoodie.',
-        'The right answer to an opponent dumping an ultimate into it is to be standing on top of them when it opens.',
-        'It banks off the raw damage tally rather than off what got through, so armour you were already wearing does not quietly shrink the payload.',
+        'The 75 is counted after armour, outfits and every other reduction, so a Heavy Coat or a Black Suit stretches it further.',
+        'It is a total, not a per-hit cap: one big ultimate can spend the whole 75 at once, and after that nothing lands until the knot comes undone.',
+        'The status tray shows how much of the 75 is left.',
       ],
     },
   },

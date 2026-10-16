@@ -2,8 +2,9 @@ import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import {
-  FATE, FateAvatar, FateFx, HOUSE_TONES, TAROT_TONES, fateCardLayered, fateChip,
+  FATE, FateAvatar, FateFx, HOUSE_TONES, TAROT_TONES, fateCardLayered, fateChip, fatePlayingCard, suitInk,
 } from '../../../elements/kits/FateVisuals';
+import { CARD_RANKS, CARD_SUITS, CARD_USES, PRESERVE_USES, FateCardType } from '../../../elements/kits/FateKit';
 
 /**
  * Fate's showcases.
@@ -139,60 +140,96 @@ function dummy(ctx: PreviewCtx, at: Mark): void {
  * blurb, the gold rim of a Preserve, the purple of an Enchant, the magenta of a Tarot, and the
  * highlight on whichever one the click will throw.
  */
-interface HandCard { def: CardDef; preserved: boolean; enchanted: boolean; great: boolean; curse: number }
+interface HandCard {
+  def: CardDef; preserved: boolean; enchanted: boolean; great: boolean; curse: number;
+  uses: number; wear: number; seed: number;
+}
+
+/** The fan's cards are the arena HUD's own playing cards, shrunk to fit the stage. */
+const PREVIEW_CARD_SCALE = 0.62;
 
 function hand(
   ctx: PreviewCtx,
   read: () => { cards: HandCard[]; selected: number; hovered?: number },
 ): void {
-  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(18));
+  const papers: Phaser.GameObjects.Graphics[] = [];
   const texts: Phaser.GameObjects.Text[] = [];
-  const y = ctx.h - 26;
+  const ranks: Phaser.GameObjects.Text[] = [];
+  const y = ctx.h - 28;
   for (let i = 0; i < UPGRADED_HAND_SIZE; i++) {
+    papers.push(ctx.adopt(ctx.scene.add.graphics().setDepth(18).setScale(PREVIEW_CARD_SCALE)));
     texts.push(ctx.adopt(ctx.scene.add.text(0, 0, '', {
       fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
       color: '#ffffff', align: 'center',
     }).setOrigin(0.5).setDepth(19)));
+    ranks.push(ctx.adopt(ctx.scene.add.text(0, 0, '', {
+      fontSize: '7px', fontFamily: 'Georgia, serif', fontStyle: 'bold',
+    }).setOrigin(0.5).setDepth(19)));
   }
+  const cw = 46, ch = 64;
   ctx.onFrame((_dt, elapsed) => {
     const t = elapsed / 1000;
     const st = read();
-    g.clear();
-    for (const tx of texts) tx.setVisible(false);
+    for (let i = 0; i < UPGRADED_HAND_SIZE; i++) {
+      papers[i].clear().setVisible(false);
+      texts[i].setVisible(false);
+      ranks[i].setVisible(false);
+    }
     const n = st.cards.length;
-    const w = 24;
-    const step = Math.min(30, (ctx.w - 24) / Math.max(1, n));
+    const step = Math.min(32, (ctx.w - 24) / Math.max(1, n));
     for (let i = 0; i < n; i++) {
       const c = st.cards[i];
       const x = ctx.w / 2 + (i - (n - 1) / 2) * step;
       const sel = i === st.selected;
-      const hov = st.hovered === i;
-      const tones = c.great ? TAROT_TONES : HOUSE_TONES;
-      fateCardLayered(g, ctx.tint, tones, x, y - (sel ? 6 : 0), 0, w, 34, 1, sel ? 1 : 0.82, {
-        face: c.def.color,
-      });
+      const cy = y - (sel ? 6 : 0);
+      const suit = CARD_SUITS[c.def.type as FateCardType];
       // The three coats: gold for preserved, purple for enchanted, magenta for a Tarot card.
-      if (c.preserved) {
-        g.lineStyle(1.6, ctx.tint(FATE.gold), 0.5 + 0.4 * Math.sin(t * 5 + i));
-        g.strokeRect(x - w / 2 - 2, y - 19 - (sel ? 6 : 0), w + 4, 38);
+      const pulse = 0.5 + 0.5 * Math.sin(t * 6 + i);
+      const border = c.great ? FATE.great : c.enchanted ? FATE.enchant : c.preserved ? FATE.gold : FATE.ash;
+      const p = papers[i].setVisible(true).setPosition(x, cy);
+      const dmg = fatePlayingCard(p, {
+        w: cw, h: ch, suit, face: c.def.color, border,
+        borderWidth: (c.great || c.enchanted || c.preserved) ? 2 + pulse : 1.4,
+        wear: c.wear, seed: c.seed, selected: sel, uses: c.uses,
+      });
+      if (st.hovered === i) {
+        p.lineStyle(1.5, ctx.tint(FATE.mint), 0.9);
+        p.strokeRect(-cw / 2 - 5, -ch / 2 - 5, cw + 10, ch + 10);
       }
-      if (c.enchanted || c.great) {
-        g.lineStyle(1.4, ctx.tint(c.great ? FATE.great : FATE.enchant), 0.55 + 0.4 * Math.sin(t * 7 + i));
-        g.strokeRect(x - w / 2 - 4, y - 21 - (sel ? 6 : 0), w + 8, 42);
+      texts[i].setVisible(true).setPosition(x, cy)
+        .setText(c.curse >= 0 ? `${c.def.emoji}\n${CURSES[c.curse].emoji}` : c.def.emoji);
+      if (!dmg.topLeftGone) {
+        ranks[i].setVisible(true)
+          .setPosition(x + (-cw / 2 + 7) * PREVIEW_CARD_SCALE, cy + (-ch / 2 + 9) * PREVIEW_CARD_SCALE)
+          .setText(CARD_RANKS[c.def.type as FateCardType])
+          .setColor(suitInk(suit) === FATE.blood ? '#cc2233' : '#14141c');
       }
-      if (hov) {
-        g.lineStyle(1, ctx.tint(FATE.mint), 0.9);
-        g.strokeRect(x - w / 2 - 6, y - 23 - (sel ? 6 : 0), w + 12, 46);
-      }
-      const tx = texts[i];
-      tx.setVisible(true).setPosition(x, y - (sel ? 6 : 0));
-      tx.setText(c.curse >= 0 ? `${c.def.emoji}\n${CURSES[c.curse].emoji}` : c.def.emoji);
     }
   });
 }
 
 function randomCard(pool: CardDef[] = CARDS.filter((c) => !c.nu)): HandCard {
-  return { def: pool[Math.floor(Math.random() * pool.length)], preserved: false, enchanted: false, great: false, curse: -1 };
+  return fresh(pool[Math.floor(Math.random() * pool.length)]);
+}
+
+function fresh(def: CardDef): HandCard {
+  return {
+    def, preserved: false, enchanted: false, great: false, curse: -1,
+    uses: CARD_USES, wear: 0, seed: Math.floor(Math.random() * 0x7fffffff),
+  };
+}
+
+/** Spends one of a card's uses, tearing it; on its last one it is shredded out of the hand. */
+function wearCard(ctx: PreviewCtx, s: Stage, cards: HandCard[], i: number): boolean {
+  const c = cards[i];
+  c.preserved = false;
+  c.uses -= 1;
+  c.wear += 1;
+  if (c.uses > 0) return false;
+  cards.splice(i, 1);
+  s.fx.cards(ctx.cx, ctx.cy - 8, 7, { size: 5, speed: 90, life: 700, fall: 30, face: c.def.color });
+  tick(ctx, ctx.cx, ctx.cy - 52, `💔 ${c.def.name.toUpperCase()} SHREDDED`, 0xff9a7a);
+  return true;
 }
 
 /** The one card effect every loop reuses — the throw, drawn as the card's own colour. */
@@ -224,15 +261,14 @@ function throwLoop(ctx: PreviewCtx, opts: { newCards: boolean }): void {
   let selected = 0;
   hand(ctx, () => ({ cards, selected }));
 
-  // Four throws, each highlighting a different card, so the "one key, eighteen abilities" reads.
+  // One card thrown until it tears apart, then another — each throw rips it a little further.
   for (let i = 0; i < 4; i++) {
     ctx.at(500 + i * 1300, () => {
-      selected = i % cards.length;
+      selected = 0;
       const c = cards[selected];
       throwCard(ctx, s, { x: ctx.cx, y: ctx.cy }, foe, c);
-      // Spent, and the empty slot refills on the deck's own five-second clock.
-      cards.splice(selected, 1);
-      if (selected >= cards.length) selected = Math.max(0, cards.length - 1);
+      // Its last use shreds it, and the empty slot refills on the deck's own five-second clock.
+      wearCard(ctx, s, cards, selected);
     });
   }
   ctx.at(5600, () => {
@@ -326,7 +362,10 @@ function preserveLoop(ctx: PreviewCtx, opts: { wonder: boolean }): void {
   const size = opts.wonder ? UPGRADED_HAND_SIZE : BASE_HAND_SIZE;
   const cards: HandCard[] = Array.from({ length: size }, () => randomCard());
   // A card worth keeping, so the ability has a point.
-  cards[2] = { def: CARDS.find((c) => c.type === 'lightning')!, preserved: false, enchanted: false, great: false, curse: -1 };
+  // A card worth keeping, already on its last use — so the ability has a point.
+  cards[2] = fresh(CARDS.find((c) => c.type === 'lightning')!);
+  cards[2].uses = 1;
+  cards[2].wear = CARD_USES - 1;
   let selected = 2;
   hand(ctx, () => ({ cards, selected }));
 
@@ -339,50 +378,47 @@ function preserveLoop(ctx: PreviewCtx, opts: { wonder: boolean }): void {
   });
   ctx.at(1700, () => {
     cards[2].preserved = true;
-    // Without Wonder Preserve, gilding a card strips the purple straight back off it.
-    if (!opts.wonder) {
-      cards[2].enchanted = false;
-      tick(ctx, ctx.cx, ctx.cy - 52, 'the enchantment is stripped', FATE.ash);
-    } else {
-      tick(ctx, ctx.cx, ctx.cy - 52, 'and it keeps the enchantment', FATE.great);
-    }
+    cards[2].uses += PRESERVE_USES;
+    if (opts.wonder) tick(ctx, ctx.cx, ctx.cy - 52, 'its next throw keeps the enchantment', FATE.great);
     s.av.play('flex');
     s.fx.ring(ctx.cx, ctx.cy, 50, 16, FATE.gold, 400, 4, 5);
     s.fx.sparkle(ctx.cx, ctx.cy - 10, 9, 30, 10, FATE.gold);
-    tick(ctx, ctx.cx, ctx.cy - 34, '✨ PRESERVED', FATE.gold);
+    tick(ctx, ctx.cx, ctx.cy - 34, `✨ PRESERVED · +${PRESERVE_USES} USES`, FATE.gold);
   });
-  // Thrown once — and it comes back.
+  // Thrown on what would have been its last use — and it stays, tearing further.
   ctx.at(3200, () => {
     throwCard(ctx, s, { x: ctx.cx, y: ctx.cy }, foe, cards[2]);
-    cards[2].preserved = false;
+    // Wonder Preserve: the gilded throw keeps the purple for one more.
+    if (!opts.wonder) cards[2].enchanted = false;
+    wearCard(ctx, s, cards, 2);
     ctx.at(500, () => {
       s.fx.sparkle(ctx.cx, ctx.cy - 10, 6, 24, 10, FATE.gold);
-      tick(ctx, ctx.cx, ctx.cy - 34, '✨ AND IT STAYED', FATE.gold);
+      tick(ctx, ctx.cx, ctx.cy - 34, `✨ AND IT STAYED · ${cards[2]?.uses ?? 0} LEFT`, FATE.gold);
     });
   });
-  // …and thrown again, this time for real.
+  // …and again, more ragged every time.
   ctx.at(5200, () => {
     throwCard(ctx, s, { x: ctx.cx, y: ctx.cy }, foe, cards[2]);
-    cards.splice(2, 1);
-    selected = 0;
+    cards[2].enchanted = false;
+    wearCard(ctx, s, cards, 2);
   });
 
   label(ctx, ctx.w * 0.5, 12,
-    opts.wonder ? `hand of ${UPGRADED_HAND_SIZE} · gold and purple stack`
-      : `hand of ${BASE_HAND_SIZE} · gold replaces purple`, FATE.gold);
+    opts.wonder ? `hand of ${UPGRADED_HAND_SIZE} · +${PRESERVE_USES} uses, and it keeps the purple`
+      : `hand of ${BASE_HAND_SIZE} · +${PRESERVE_USES} uses on a ${CARD_USES}-use card`, FATE.gold);
 }
 
 export const preserve: PreviewScript = {
   duration: 7000,
   scale: 0.9,
-  caption: 'R — the highlighted card turns gold and survives its next throw',
+  caption: 'R — the highlighted card turns gold and gains 3 more uses before it is shredded',
   run(ctx) { preserveLoop(ctx, { wonder: false }); },
 };
 
 export const preserveUpgraded: PreviewScript = {
   duration: 7000,
   scale: 0.9,
-  caption: 'Wonder Preserve — gold and purple stack now, and the hand is eight cards wide',
+  caption: 'Wonder Preserve — the gilded throw keeps its enchantment, and the hand is eight cards wide',
   run(ctx) { preserveLoop(ctx, { wonder: true }); },
 };
 
@@ -395,7 +431,7 @@ function enchantLoop(ctx: PreviewCtx, opts: { wonder: boolean }): void {
 
   const barrier = CARDS.find((c) => c.type === 'barrier')!;
   const cards: HandCard[] = Array.from({ length: BASE_HAND_SIZE }, () => randomCard());
-  cards[3] = { def: barrier, preserved: false, enchanted: false, great: false, curse: -1 };
+  cards[3] = fresh(barrier);
   let selected = 3;
   hand(ctx, () => ({ cards, selected }));
 
@@ -569,6 +605,9 @@ export const theHand: PreviewScript = {
   run(ctx) {
     const s = stageIt(ctx);
     const cards: HandCard[] = Array.from({ length: BASE_HAND_SIZE }, () => randomCard());
+    // The card thrown at the end is already on its last use, torn from the two before it.
+    cards[5].uses = 1;
+    cards[5].wear = CARD_USES - 1;
     let selected = 0;
     hand(ctx, () => ({ cards, selected }));
 
@@ -589,9 +628,9 @@ export const theHand: PreviewScript = {
     ctx.at(4800, () => {
       const c = cards[selected];
       s.fx.flick(ctx.cx, ctx.cy, 0, c.def.color, 1, 8, HOUSE_TONES);
-      cards.splice(selected, 1);
+      wearCard(ctx, s, cards, selected);
       selected = 0;
-      tick(ctx, ctx.cx, ctx.cy - 34, `${c.def.emoji} THROWN — SPENT`, c.def.color);
+      tick(ctx, ctx.cx, ctx.cy - 34, `${c.def.emoji} THROWN — LAST USE`, c.def.color);
     });
     ctx.at(4800 + DRAW_INTERVAL_MS * 0.7, () => {
       cards.push(randomCard());
@@ -742,7 +781,7 @@ export const masteryTarotOfFate: PreviewScript = {
 
     const striker = CARDS.find((c) => c.type === 'striker')!;
     const cards: HandCard[] = Array.from({ length: BASE_HAND_SIZE }, () => randomCard());
-    cards[2] = { def: striker, preserved: false, enchanted: false, great: false, curse: -1 };
+    cards[2] = fresh(striker);
     let selected = 2;
     let hovered = 2;
     hand(ctx, () => ({ cards, selected, hovered }));
@@ -766,7 +805,9 @@ export const masteryTarotOfFate: PreviewScript = {
     ctx.at(4000, () => {
       selected = 2;
       throwCard(ctx, s, home, foe, cards[2]);
-      cards.splice(2, 1);
+      cards[2].great = false;
+      cards[2].curse = -1;
+      wearCard(ctx, s, cards, 2);
       selected = 0;
       hovered = -1;
     });

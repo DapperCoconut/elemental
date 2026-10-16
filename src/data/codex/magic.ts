@@ -319,7 +319,7 @@ const magic: ElementCodex = {
         + 'of it with everything ready. Binding it costs that slot\'s base ability for the whole match — '
         + 'on Q, that means no Necronomicon at all. 12s cooldown.',
       cast:
-        'Bindable to E, R, F or Q, replacing that slot\'s base ability for the match. Fired at the '
+        'Bindable to R, F or Q, replacing that slot\'s base ability for the match. Fired at the '
         + 'cursor, 12s cooldown.',
       effects: [
         { tag: 'utility', label: 'The bolt', detail: '130 px/s in a straight line — slower than a walking fighter — connecting within 22px. It expires at the arena edge.' },

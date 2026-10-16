@@ -32,6 +32,8 @@ export const TECH = {
   phosphor: 0x33ff88,
   phosphorDim: 0x18a05a,
   mint: 0x44ccaa,
+  /** The body orb's mid-tone — the hands are cut from it. */
+  teal: 0x17645a,
   /** Signal. */
   cyan: 0x33aaee,
   ice: 0x88ddff,
@@ -779,13 +781,13 @@ export class TechnologyAura {
 
 // ── TechnologyAvatar ──────────────────────────────────────────────────────
 
-/** Concentric discs of one hand — a little screen in a dark bezel. */
+/** Concentric discs of one hand — plain balls cut from the body's teal. */
 const TECH_AVATAR: AvatarSpec = {
   hands: [
     { r: 11, color: TECH.cyan, alpha: 0.22 },
-    { r: 7.4, color: TECH.board, alpha: 1 },
-    { r: 4.6, color: TECH.screen, alpha: 1 },
-    { r: 2, color: TECH.phosphor, alpha: 1, ox: -2, oy: -2.2 },
+    { r: 7.4, color: TECH.teal, alpha: 1 },
+    { r: 4.6, color: TECH.mint, alpha: 1 },
+    { r: 2, color: TECH.white, alpha: 0.9, ox: -2, oy: -2.2 },
   ],
   eyeWhite: TECH.phosphor,
   eyePupil: TECH.night,
@@ -794,12 +796,12 @@ const TECH_AVATAR: AvatarSpec = {
 };
 
 /**
- * The Technology character rig: two hands that are little screens, a pair of tracking eyes, and
- * a CRT monitor hovering over the crown with code scrolling down it.
+ * The Technology character rig: a plain teal orb of screen-light with two little-screen ball
+ * hands and tracking eyes, wearing a single **antenna** on the crown — a short mast with a
+ * blinking signal bead, the one thing that says "machine" before anything is cast.
  *
- * The monitor is the idea. Every ability in this element is a thing happening *on a computer* —
- * popups, uploads, a browser, an admin console — so the character has to be visibly the machine
- * those things are happening on, before it has cast anything.
+ * Mastery enhances the antenna rather than adding to it: the mast grows, the bead turns amber
+ * and swells, and its glow pulses faster as the VPN ramp banks speed.
  */
 export class TechnologyAvatar extends BaseAvatar {
   private fx: TechnologyFx;
@@ -807,25 +809,20 @@ export class TechnologyAvatar extends BaseAvatar {
   private accent: number;
   /** VPN ramp, 0–1 — how much speed the mastery passive has banked. */
   private vpn = 0;
-  /** Rolling code rows on the head monitor. Regenerated as the display scrolls. */
-  private rows: boolean[][] = [];
-  private scroll = 0;
 
   constructor(scene: Phaser.Scene, tint: TechColorFn, owner: 'player' | 'npc' = 'player', depth = 6) {
     super(scene, tint, depth, TECH_AVATAR);
     this.fx = new TechnologyFx(scene, tint);
     this.accent = owner === 'player' ? TECH.phosphor : TECH.cyan;
-    for (let i = 0; i < 6; i++) this.rows.push(Array.from({ length: 5 }, () => Math.random() < 0.5));
   }
 
-  /** VPN ramp, 0–1. Drives the extra fans and the overclock read on the monitor. */
+  /** VPN ramp, 0–1. Speeds up the antenna bead's pulse. */
   setVpn(v: number): void { this.vpn = Phaser.Math.Clamp(v, 0, 1); }
 
   /**
-   * Mastery tell — VPN, made visible: the hands gain a bright bezel, the eyes go amber, and (in
-   * drawExtras) the head monitor grows a second stacked screen, a pair of antennae go up, and a
-   * throughput bar runs along the bottom of the display. Shape changes, not brighter tints — a
-   * tint alone vanishes at gameplay zoom.
+   * Mastery tell: amber eyes, a wider corona and amber bezel on each hand; `drawExtras` raises
+   * the antenna and lights its bead amber. Shape changes, not brighter tints — a tint alone
+   * vanishes at gameplay zoom.
    */
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? TECH.amber : TECH.phosphor);
@@ -853,113 +850,54 @@ export class TechnologyAvatar extends BaseAvatar {
     };
   }
 
-  /** The pool of screen-light it stands in, and a grid on the floor under it. */
+  /** A soft pool of screen-light, stronger once mastered. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
-    const k = this.intensity;
-    g.fillStyle(this.tint(TECH.night), a * 0.36);
-    g.fillEllipse(x, y + 11, 48 * k, 17 * k);
-    g.fillStyle(this.tint(this.accent), a * 0.11 * k);
-    g.fillCircle(x, y, 25 * k);
-    // A patch of grid, brighter under a mastered (overclocked) caster.
-    const cell = 11;
-    g.lineStyle(1, this.tint(TECH.cyan), a * (this.mastered ? 0.3 : 0.16) * k);
-    for (let i = -2; i <= 2; i++) {
-      g.lineBetween(x + i * cell, y - cell * 2 + 8, x + i * cell, y + cell * 2 + 8);
-      g.lineBetween(x - cell * 2, y + i * cell + 8, x + cell * 2, y + i * cell + 8);
-    }
+    const k = this.intensity * (this.mastered ? 1.15 : 1);
+    g.fillStyle(this.tint(this.mastered ? TECH.mint : this.accent), a * (this.mastered ? 0.28 : 0.2) * k);
+    g.fillCircle(x, y, 27 * k);
   }
 
   /**
-   * The screens in the hands, and the crown: a CRT monitor over the head with code scrolling
-   * down it, on a little stand, with antennae once mastered.
-   *
-   * Rooted above the head so it never covers the face, and drawn over the sprite so the display
-   * actually reads instead of only the dark bezel clearing the body.
+   * The antenna, rooted on the crown on a small base cap, raked toward the facing side and
+   * swaying as the body moves. Drawn over the sprite so the cap sits on the body.
    */
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    const tint = this.tint;
-
-    // ── The screens in the hands ──
-    for (let i = 0; i < 2; i++) {
-      const hx = this.armX[i], hy = this.armY[i];
-      if (hx === 0 && hy === 0) continue;
-      bitTileLayered(g, tint, hx, hy, 0, 7 * this.intensity,
-        (i + Math.floor(this.t * 4)) % 2 === 0, this.accent, alpha * 0.95, false);
-    }
-
-    // ── The head monitor ──
-    const bob = Math.sin(this.t * 1.8) * 1.8;
-    const rootY = y - 22 + bob;
-    const w = 30 * this.intensity;
-    const h = 22 * this.intensity;
-
-    // Stand: a neck and a foot, so the thing is standing on the head rather than floating.
-    g.fillStyle(tint(TECH.slate), alpha);
-    g.fillRect(x - 2.4, rootY + h / 2, 4.8, 6);
-    g.fillRect(x - 7, rootY + h / 2 + 5, 14, 2.6);
-
-    // Bezel and screen.
-    g.fillStyle(tint(TECH.night), alpha * 0.5);
-    g.fillRect(x - w / 2 + 2, rootY - h / 2 + 3, w, h);
-    g.fillStyle(tint(TECH.slate), alpha);
-    g.fillRect(x - w / 2, rootY - h / 2, w, h);
-    g.fillStyle(tint(TECH.screen), alpha);
-    g.fillRect(x - w / 2 + 3, rootY - h / 2 + 3, w - 6, h - 6);
-
-    // Scrolling code: rows of bits that fall off the bottom and are re-rolled at the top.
-    this.scroll += 0.03;
-    if (this.scroll >= 1) {
-      this.scroll -= 1;
-      this.rows.pop();
-      this.rows.unshift(Array.from({ length: 5 }, () => Math.random() < 0.5));
-    }
-    const cellW = (w - 8) / 5;
-    for (let r = 0; r < this.rows.length; r++) {
-      const ry = rootY - h / 2 + 5 + (r + this.scroll) * 3.4;
-      if (ry > rootY + h / 2 - 5) continue;
-      for (let c = 0; c < 5; c++) {
-        if (!this.rows[r][c]) continue;
-        g.fillStyle(tint(this.accent), alpha * (0.85 - r * 0.1));
-        g.fillRect(x - w / 2 + 4.5 + c * cellW, ry, cellW * 0.55, 2);
-      }
-    }
-    // Screen glare: one diagonal band across the glass.
-    g.fillStyle(tint(TECH.white), alpha * 0.08);
-    fillPts(g, [
-      { x: x - w / 2 + 3, y: rootY + h / 2 - 3 },
-      { x: x - w / 2 + 3 + w * 0.35, y: rootY - h / 2 + 3 },
-      { x: x - w / 2 + 3 + w * 0.6, y: rootY - h / 2 + 3 },
-      { x: x - w / 2 + 3 + w * 0.25, y: rootY + h / 2 - 3 },
-    ]);
-
-    // ── Mastery: a second stacked screen, antennae, and a throughput bar ──
-    if (this.mastered) {
-      const w2 = w * 0.62, h2 = h * 0.5;
-      g.fillStyle(tint(TECH.slate), alpha);
-      g.fillRect(x + w / 2 - 2, rootY - h / 2 - h2 + 2, w2, h2);
-      g.fillStyle(tint(TECH.screen), alpha);
-      g.fillRect(x + w / 2, rootY - h / 2 - h2 + 4, w2 - 4, h2 - 4);
-      for (let i = 0; i < 3; i++) {
-        g.fillStyle(tint(TECH.amber), alpha * 0.8);
-        g.fillRect(x + w / 2 + 1.5, rootY - h / 2 - h2 + 6 + i * 3, (w2 - 7) * (0.4 + 0.6 * Math.abs(Math.sin(this.t * 2 + i))), 1.8);
-      }
-      // Antennae, leaning with the sway.
-      for (const side of [-1, 1]) {
-        const lean = side * (0.5 + Math.sin(this.t * 1.4) * 0.08);
-        g.lineStyle(1.8, tint(TECH.wire), alpha);
-        strokePts(g, [
-          { x: x + side * w * 0.3, y: rootY - h / 2 },
-          { x: x + side * w * 0.3 + Math.sin(lean) * 12, y: rootY - h / 2 - 14 },
-        ]);
-        g.fillStyle(tint(TECH.amber), alpha);
-        g.fillCircle(x + side * w * 0.3 + Math.sin(lean) * 12, rootY - h / 2 - 14, 2.2);
-      }
-      // Throughput: the VPN ramp, read straight off the front of the machine.
-      g.fillStyle(tint(TECH.night), alpha * 0.8);
-      g.fillRect(x - w / 2 + 3, rootY + h / 2 - 4.5, w - 6, 3);
-      g.fillStyle(tint(this.vpn > 0.8 ? TECH.amber : TECH.cyan), alpha);
-      g.fillRect(x - w / 2 + 3, rootY + h / 2 - 4.5, (w - 6) * this.vpn, 3);
-    }
     void a;
+    const tint = this.tint;
+    const m = this.mastered;
+    // Rooted off-centre and raked well over to one side, so the bead stays clear of the
+    // health bar that sits straight above the head.
+    const side = Math.cos(this.facing) >= 0 ? 1 : -1;
+    const rootX = x + side * 8;
+    const rootY = y - 18;
+    const len = m ? 16 : 13;
+    const sway = side * 1.0 + Math.sin(this.t * 2.2) * 0.1;
+    const tipX = rootX + Math.sin(sway) * len;
+    const tipY = rootY - Math.cos(sway) * len;
+
+    // Base cap: a little dark dome bolted to the crown.
+    g.fillStyle(tint(TECH.night), alpha);
+    g.fillEllipse(rootX, rootY + 1, 12, 6.5);
+    g.fillStyle(tint(TECH.steel), alpha);
+    g.fillEllipse(rootX, rootY + 0.4, 9.5, 4.6);
+
+    // Mast: a dark outline under a steel wire, so it reads against any floor.
+    g.lineStyle(3.2, tint(TECH.night), alpha);
+    g.lineBetween(rootX, rootY, tipX, tipY);
+    g.lineStyle(1.6, tint(m ? TECH.amber : TECH.wire), alpha);
+    g.lineBetween(rootX, rootY, tipX, tipY);
+
+    // Signal bead: blinks in the accent; amber, bigger and faster with the VPN once mastered.
+    const rate = m ? 5 + this.vpn * 7 : 3;
+    const pulse = 0.5 + 0.5 * Math.sin(this.t * rate);
+    const bead = m ? TECH.amber : this.accent;
+    g.fillStyle(tint(bead), alpha * (m ? 0.3 : 0.18) * (0.6 + pulse * 0.4));
+    g.fillCircle(tipX, tipY, m ? 7.5 : 5);
+    g.fillStyle(tint(TECH.night), alpha);
+    g.fillCircle(tipX, tipY, m ? 3.8 : 3.1);
+    g.fillStyle(tint(bead), alpha * (0.7 + pulse * 0.3));
+    g.fillCircle(tipX, tipY, m ? 2.9 : 2.2);
+    g.fillStyle(tint(TECH.white), alpha * 0.7);
+    g.fillCircle(tipX - 0.8, tipY - 0.8, 0.8);
   }
 }

@@ -36,6 +36,8 @@ export interface CampaignSlot {
   migratedAmberWorld?: boolean;
   /** Set once `migrateMarrowWorld` has run on this slot — same rule, same reason. */
   migratedMarrowWorld?: boolean;
+  /** Set once `restoreMagmaChalkWorlds` has run on this slot — same rule, same reason. */
+  restoredMagmaChalkWorlds?: boolean;
 }
 
 interface CampaignData {
@@ -232,6 +234,60 @@ function migrateMarrowWorld(slot: CampaignSlot): void {
   }
 }
 
+/**
+ * Undoes the campaign half of the abandoned Wax/Clay draft's rename (see
+ * `PlayerData.restoreMagmaChalkIds`): that build moved the Magma world's clears, story beats
+ * and items under `wax`, and the Chalk world's under `clay`. Neither Wax nor Clay has a
+ * campaign world on the current code, so anything a slot holds under those ids is Magma's or
+ * Chalk's and goes back where it belongs.
+ *
+ * **Once per slot, guarded by `restoredMagmaChalkWorlds`.** Wax and Clay will get worlds of
+ * their own, at which point an unguarded run would start eating their progress.
+ */
+function restoreMagmaChalkWorlds(slot: CampaignSlot): void {
+  const WORLDS: Array<[string, string]> = [['wax', 'magma'], ['clay', 'chalk']];
+  const ITEMS: Record<string, string> = {
+    'royal-jelly': 'core-sample', 'wax-carapace': 'obsidian-skin', 'hive-heart': 'vent-heart',
+    'wet-clay': 'gym-chalk', 'kiln-shell': 'outline', 'slip': 'dust-cloud',
+  };
+  for (const [WRONG, REAL] of WORLDS) {
+    const rename = (id: string): string => (id === WRONG || id.startsWith(`${WRONG}-`)
+      ? REAL + id.slice(WRONG.length)
+      : id);
+
+    const wrongFights = slot.fightsCompleted?.[WRONG];
+    if (wrongFights) {
+      const merged = new Set([...(slot.fightsCompleted[REAL] ?? []), ...wrongFights.map(rename)]);
+      slot.fightsCompleted[REAL] = [...merged];
+      delete slot.fightsCompleted[WRONG];
+    }
+
+    for (const list of [slot.challengesCompleted, slot.gauntletsCompleted]) {
+      if (!list) continue;
+      const at = list.indexOf(WRONG);
+      if (at < 0) continue;
+      if (list.includes(REAL)) list.splice(at, 1);
+      else list[at] = REAL;
+    }
+
+    if (slot.seenStoryBeats) {
+      slot.seenStoryBeats = [...new Set(slot.seenStoryBeats.map((id) => {
+        const colon = id.lastIndexOf(':');
+        return colon < 0 ? id : `${id.slice(0, colon + 1)}${rename(id.slice(colon + 1))}`;
+      }))];
+    }
+  }
+
+  if (slot.inventory) {
+    for (const [from, to] of Object.entries(ITEMS)) {
+      const held = slot.inventory[from];
+      if (!held) continue;
+      slot.inventory[to] = (slot.inventory[to] ?? 0) + held;
+      delete slot.inventory[from];
+    }
+  }
+}
+
 function load(): CampaignData {
   try {
     const raw = localStorage.getItem(campaignKey());
@@ -260,6 +316,11 @@ function load(): CampaignData {
         if (!slot.migratedMarrowWorld) {
           migrateMarrowWorld(slot);
           slot.migratedMarrowWorld = true;
+          migrated = true;
+        }
+        if (!slot.restoredMagmaChalkWorlds) {
+          restoreMagmaChalkWorlds(slot);
+          slot.restoredMagmaChalkWorlds = true;
           migrated = true;
         }
       }
@@ -308,7 +369,7 @@ export function setActiveSlot(idx: 0 | 1 | 2): void {
 
 export function createSlot(idx: 0 | 1 | 2, name: string): void {
   const data = load();
-  data.slots[idx] = { name, createdAt: Date.now(), fightsCompleted: {}, challengesCompleted: [], gauntletsCompleted: [], keys: 0, sparks: 0, cheated: false, portalUnlocked: false, inventory: {}, migratedSubterfugeWorld: true, migratedAmberWorld: true };
+  data.slots[idx] = { name, createdAt: Date.now(), fightsCompleted: {}, challengesCompleted: [], gauntletsCompleted: [], keys: 0, sparks: 0, cheated: false, portalUnlocked: false, inventory: {}, migratedSubterfugeWorld: true, migratedAmberWorld: true, migratedMarrowWorld: true, restoredMagmaChalkWorlds: true };
   save(data);
 }
 

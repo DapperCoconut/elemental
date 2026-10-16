@@ -28,6 +28,9 @@ export const CLT = {
   cloth: 0xd1435c,
   clothLit: 0xf5788c,
   clothDeep: 0x8a2135,
+  /** The orb body's outer rim and mid tier — the same rose hue, darker and between. */
+  clothRim: 0x52101f,
+  clothMid: 0xae2f48,
   clothPale: 0xf7c3cc,
   /** Steel. Every pin, nail, needle and anchor. */
   steel: 0xd8dfe8,
@@ -127,60 +130,6 @@ export function pinGlyph(
   g.fillCircle(headX - c * hr * 0.2, headY - s * hr * 0.2, hr * 0.72);
   g.fillStyle(tint(CLT.brassLit), alpha * 0.9);
   g.fillCircle(headX - hr * 0.3, headY - hr * 0.35, hr * 0.3);
-}
-
-/**
- * One winding of thread over the ball body: a rotated ellipse stroked as a polyline, so the band
- * curves *across* the ball the way wound wool does instead of ringing it like a hoop. Kept inside
- * the body radius, which is what stops a winding spilling off the silhouette.
- */
-export function yarnBand(
-  g: Phaser.GameObjects.Graphics, tint: ColorFn,
-  x: number, y: number, rx: number, ry: number, rot: number,
-  color: number, alpha: number, width = 1.5,
-): void {
-  const c = Math.cos(rot);
-  const s = Math.sin(rot);
-  g.lineStyle(width, tint(color), alpha);
-  g.beginPath();
-  for (let i = 0; i <= 22; i++) {
-    const a = (i / 22) * TAU;
-    const ex = Math.cos(a) * rx;
-    const ey = Math.sin(a) * ry;
-    const px = x + ex * c - ey * s;
-    const py = y + ex * s + ey * c;
-    if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
-  }
-  g.strokePath();
-}
-
-/**
- * A garment wrapped round the ball body. The hem follows the body's own rim — that is what keeps
- * the character round when it is dressed — and the top edge is a neckline that rides high on the
- * flanks and sags in the middle, so the face stays bare wool.
- *
- * `shoulder` is how far up the flanks the cloth reaches (0 = the equator, 1 = the crown) and
- * `neck` is how many pixels the neckline sags below that at the centre.
- */
-export function outfitWrap(
-  g: Phaser.GameObjects.Graphics, tint: ColorFn,
-  x: number, y: number, rx: number, ry: number,
-  shoulder: number, neck: number, color: number, alpha: number,
-): void {
-  const a0 = -Math.asin(Phaser.Math.Clamp(shoulder, 0, 0.95));
-  const pts: Phaser.Geom.Point[] = [];
-  for (let i = 0; i <= 20; i++) {
-    const ang = a0 + (i / 20) * (Math.PI - 2 * a0);
-    pts.push(new Phaser.Geom.Point(x + Math.cos(ang) * rx, y + Math.sin(ang) * ry));
-  }
-  const topY = y + Math.sin(a0) * ry;
-  const halfW = Math.cos(a0) * rx;
-  for (let i = 1; i < 12; i++) {
-    const k = i / 12;
-    pts.push(new Phaser.Geom.Point(x - halfW + k * halfW * 2, topY + Math.sin(k * Math.PI) * neck));
-  }
-  g.fillStyle(tint(color), alpha);
-  g.fillPoints(pts, true);
 }
 
 /** A nail: shorter, blunter, flat-headed. What Nail Storm throws by the dozen. */
@@ -521,7 +470,7 @@ export class ClothFx extends FxBase {
     });
   }
 
-  /** Clothstorm / Wretched Scarf: a wide ring of fabric thrown outward. */
+  /** Clothstorm / Bleed Stop: a wide ring of fabric thrown outward. */
   burst(x: number, y: number, r: number, color = CLT.cloth): void {
     this.flashIn(x, y, r * 0.35, CLT.clothPale, color, 11);
     this.anim(11, 420, (g, t) => {
@@ -599,27 +548,30 @@ const CLOTH_AVATAR: AvatarSpec = {
 };
 
 /**
- * A big round ball of wool that got dressed, with a very large scarf trailing off it.
+ * A plain round ball of red wool with a very large scarf trailing off it.
  *
- * The body is the ball the scarf is wound from: a wide, soft sphere criss-crossed with thread,
- * and the winding *is* the scarf bar — a tailor who has paid out most of their wool is visibly
- * down to a few loose strands over a dark core. The needle driven through it is the element's
- * read at icon size. What the avatar owns on top of that is the wardrobe: the garment wrapped
- * round the ball is the mastery's whole tell, and it changes colour and cut with every press of
- * Space.
+ * Cloth has no sprite underneath (`elem-bodyless`), so `drawBody` paints the torso: the same
+ * one-hue orb every early element is — dark wine rim, rose core, one rim light, one glint — and
+ * nothing printed on it. The tailor lives in the accessories instead. The **scarf** is the one
+ * that matters: its near end is wound twice round the crown here, and the rest of it is world
+ * geometry the kit draws (and that the game hits), so the collar is the join between the two.
+ * The one secondary touch is the **needle** held point-out in the right hand.
+ *
+ * Mastery enhances those two rather than adding to them: the collar gains a brass-stitched hem
+ * and a band in the current outfit's colour (so a wardrobe change still shows on the rig), the
+ * needle grows longer with a brass glint at its point, the hands get a wider corona and the eyes turn brass.
  */
 export class ClothAvatar extends BaseAvatar {
-  /** 0–1 of the scarf bar. Drives how much thread is still wound on the bobbin. */
+  /** 0–1 of the scarf bar. The under-shadow narrows as the ball unwinds. */
   private wound = 1;
   private woundTarget = 1;
-  /** 0–1 of max scarf that is currently Pinned. Pins push out through the body. */
+  /** 0–1 of max scarf that is currently Pinned. Shows as a bruised pool in the under-glow. */
   private pinned = 0;
   private pinnedTarget = 0;
   /** Which outfit is on, and how far through the change we are. */
   private outfit: Outfit = 'suit';
   private swap = 0;
   private flare = 0;
-  private seed = Math.random() * 999;
 
   constructor(scene: Phaser.Scene, tint: ClothColorFn, depth = 6) {
     super(scene, tint, depth, CLOTH_AVATAR);
@@ -649,10 +601,12 @@ export class ClothAvatar extends BaseAvatar {
     super.play(gesture, angle, duration);
   }
 
+  /** Brass eyes and a wider, brighter wool corona round each hand; the accessories gild in `drawExtras`. */
   protected applyMastery(on: boolean): void {
+    this.setEyeWhite(on ? CLT.brassLit : CLT.clothPale);
     this.forEachHandLayer(0, (glow) => {
       glow.setRadius(on ? 15 : 12);
-      glow.setAlpha(on ? 0.55 : 0.3);
+      glow.setFillStyle(this.tint(on ? CLT.brass : CLT.clothDeep), on ? 0.4 : 0.3);
     });
   }
 
@@ -663,7 +617,7 @@ export class ClothAvatar extends BaseAvatar {
   /** A soft wool shadow, wider the fuller the ball of wool still is. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void alpha;
-    g.fillStyle(this.tint(CLT.clothDeep), a * 0.4);
+    g.fillStyle(this.tint(this.mastered ? CLT.brass : CLT.clothDeep), a * (this.mastered ? 0.3 : 0.4));
     g.fillEllipse(x, y + 19, 40 + this.wound * 14, 14);
     if (this.pinned > 0.02) {
       g.fillStyle(this.tint(CLT.pinnedDark), a * this.pinned * 0.5);
@@ -672,199 +626,93 @@ export class ClothAvatar extends BaseAvatar {
   }
 
   /**
-   * The ball of wool, dressed. The windings across it are the scarf bar told a second time —
-   * they unwind as the scarf is cut down, so a hurt tailor is visibly running out of material
-   * and the dark core underneath starts to show through.
+   * The body: a plain one-hue orb, the same tiers `bakeOrb` gives every baked element (radius 22,
+   * dark rim → lit core, one rim light, one glint), painted live because Cloth has no sprite.
    */
   protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void a;
-    const breathe = Math.sin(this.t * 2.6) * 0.7;
-    const coat = OUTFIT_COLOR[this.outfit];
-    // Round, and as big as anybody else's. Breathing squashes it rather than resizing it, so the
-    // hitbox read never moves.
-    const rx = 18 + breathe * 0.35;
-    const ry = 17 - breathe * 0.35;
-
-    // ── The ball ──
-    g.fillStyle(this.tint(CLT.ink), alpha * 0.9);
-    g.fillEllipse(x, y + 1.5, rx * 2 + 3, ry * 2 + 3);
+    g.fillStyle(this.tint(CLT.clothRim), alpha);
+    g.fillCircle(x, y, 22);
     g.fillStyle(this.tint(CLT.clothDeep), alpha);
-    g.fillEllipse(x, y, rx * 2, ry * 2);
-    // The wool itself, inset so the dark rim reads as the shadowed underside of the sphere.
-    g.fillStyle(this.tint(CLT.cloth), alpha * (0.45 + this.wound * 0.55));
-    g.fillEllipse(x - 1, y - 1, rx * 1.74, ry * 1.74);
-    g.fillStyle(this.tint(CLT.clothLit), alpha * 0.4);
-    g.fillEllipse(x - 5.5, y - 6.5, rx * 0.8, ry * 0.62);
-
-    // ── The winding ──
-    // Bands crossing the ball at a spread of angles. The count is the scarf bar.
-    const bands = 3 + Math.round(this.wound * 5);
-    for (let i = 0; i < bands; i++) {
-      const f = bands > 1 ? i / (bands - 1) : 0.5;
-      const rot = -0.95 + f * 1.9 + Math.sin(this.t * 0.6 + i * 1.3) * 0.06;
-      yarnBand(
-        g, this.tint, x, y - 1,
-        rx * (0.9 - f * 0.08), ry * (0.24 + Math.abs(f - 0.5) * 0.34), rot,
-        i % 2 ? CLT.clothDeep : CLT.clothPale, alpha * 0.55, 1.4,
-      );
-    }
-    // A loose end lifting off the crown — the thread this ball is paying out.
-    const curl = Math.sin(this.t * 2.1) * 3;
-    g.lineStyle(2, this.tint(CLT.cloth), alpha * 0.9);
+    g.fillCircle(x, y, 19.5);
+    g.fillStyle(this.tint(CLT.clothMid), alpha);
+    g.fillCircle(x, y + 1, 16);
+    g.fillStyle(this.tint(CLT.cloth), alpha);
+    g.fillCircle(x, y + 2.5, 12);
+    g.fillStyle(this.tint(CLT.clothLit), alpha * 0.85);
+    g.fillEllipse(x, y + 7, 16, 8);
+    g.lineStyle(2.5, this.tint(CLT.clothLit), alpha * 0.9);
+    g.strokeCircle(x, y, 21);
+    g.lineStyle(2, this.tint(CLT.clothLit), alpha * 0.55);
     g.beginPath();
-    g.moveTo(x + 11, y - 11);
-    g.lineTo(x + 16 + curl * 0.4, y - 16);
-    g.lineTo(x + 14 + curl, y - 21);
+    g.arc(x, y, 18.5, Math.PI * 1.15, Math.PI * 1.85);
     g.strokePath();
+    g.fillStyle(this.tint(CLT.clothPale), alpha * 0.85);
+    g.fillEllipse(x - 6.5, y - 8, 8, 5);
 
-    // ── The outfit ──
-    // Wrapped round the ball, hem following its rim, neckline sagging clear of the face.
-    switch (this.outfit) {
-      case 'coat':
-        // Heavy: rides high on the flanks, hangs a little wide of the body, storm flap across.
-        outfitWrap(g, this.tint, x, y + 1, rx * 1.06, ry * 1.04, 0.74, 11, CLT.ink, alpha * 0.9);
-        outfitWrap(g, this.tint, x, y, rx * 1.04, ry * 1.02, 0.72, 11, coat, alpha * 0.97);
-        g.fillStyle(this.tint(CLT.ink), alpha * 0.35);
-        g.fillEllipse(x, y + 4, rx * 1.7, 5);
-        // Collar wings standing off the shoulders.
-        for (const sd of [-1, 1]) {
-          g.fillStyle(this.tint(coat), alpha);
-          g.fillPoints([
-            new Phaser.Geom.Point(x + sd * 5, y - 6),
-            new Phaser.Geom.Point(x + sd * 17, y - 12),
-            new Phaser.Geom.Point(x + sd * 13, y + 1),
-          ], true);
-        }
-        break;
-      case 'silk':
-        // Thin: a low wrap crossing over itself, with most of the wool still showing.
-        outfitWrap(g, this.tint, x, y, rx, ry, 0.42, 7, CLT.silk, alpha * 0.9);
-        g.lineStyle(2, this.tint(CLT.clothPale), alpha * 0.75);
-        g.lineBetween(x - 12, y - 3, x + 9, y + 9);
-        g.lineStyle(1.4, this.tint(CLT.ink), alpha * 0.3);
-        g.lineBetween(x + 11, y - 2, x - 8, y + 10);
-        // A sash end trailing off the hip.
-        g.fillStyle(this.tint(CLT.silk), alpha * 0.85);
-        g.fillPoints([
-          new Phaser.Geom.Point(x - 11, y + 4),
-          new Phaser.Geom.Point(x - 17 + curl * 0.5, y + 13),
-          new Phaser.Geom.Point(x - 8, y + 11),
-        ], true);
-        break;
-      case 'hoodie':
-        // Casual: a bunched hood behind the crown and a kangaroo pocket across the belly.
-        g.fillStyle(this.tint(CLT.ink), alpha * 0.5);
-        g.fillEllipse(x, y - 13, rx * 1.5, 12);
-        g.fillStyle(this.tint(coat), alpha * 0.95);
-        g.fillEllipse(x, y - 14, rx * 1.35, 10);
-        outfitWrap(g, this.tint, x, y, rx * 1.02, ry, 0.66, 10, coat, alpha * 0.95);
-        g.lineStyle(1.6, this.tint(CLT.ink), alpha * 0.45);
-        g.beginPath();
-        g.arc(x, y + 3, 11, 0.25, Math.PI - 0.25);
-        g.strokePath();
-        // Drawstrings.
-        for (const sd of [-1, 1]) {
-          g.lineStyle(1.4, this.tint(CLT.clothPale), alpha * 0.8);
-          g.lineBetween(x + sd * 4, y - 5, x + sd * 3, y + 2);
-        }
-        break;
-      default:
-        // Black Suit: lapels off a pale shirt, with a knot of tie at the neckline.
-        outfitWrap(g, this.tint, x, y, rx, ry, 0.6, 10, CLT.ink, alpha * 0.9);
-        outfitWrap(g, this.tint, x, y - 0.6, rx * 0.99, ry * 0.99, 0.58, 10, coat, alpha * 0.97);
-        g.fillStyle(this.tint(CLT.clothPale), alpha * 0.92);
-        g.fillPoints([
-          new Phaser.Geom.Point(x - 5, y - 3), new Phaser.Geom.Point(x + 5, y - 3),
-          new Phaser.Geom.Point(x, y + 9),
-        ], true);
-        for (const sd of [-1, 1]) {
-          g.fillStyle(this.tint(coat), alpha);
-          g.fillPoints([
-            new Phaser.Geom.Point(x + sd * 4, y - 4),
-            new Phaser.Geom.Point(x + sd * 14, y - 8),
-            new Phaser.Geom.Point(x + sd * 6, y + 6),
-          ], true);
-        }
-        g.fillStyle(this.tint(CLT.clothDeep), alpha);
-        g.fillTriangle(x - 2.4, y - 2, x + 2.4, y - 2, x, y + 6);
-        break;
-    }
-
-    // ── Pins driven through ──
-    // Pin Cushion, made visible on the body: one needle per fifth of the pinned pool, stuck
-    // through the ball the way spare pins live in a cushion.
-    const pins = Math.round(this.pinned * 5);
-    for (let i = 0; i < pins; i++) {
-      const ang = -1.9 + i * 0.78 + Math.sin(this.t * 1.6 + i) * 0.05;
-      pinGlyph(
-        g, this.tint,
-        x + Math.cos(ang) * 8, y - 2 + Math.sin(ang) * 7,
-        ang, 22, alpha * 0.95, { head: 2.2 },
-      );
-    }
-
-    // ── The tailor's needle ──
-    // Always there, driven diagonally through the ball. It is the element's read at 12px.
-    pinGlyph(g, this.tint, x + 2, y - 2, -0.72, 40, alpha, { head: 3.4 });
-
-    // The swap flash, riding over everything.
+    // The wardrobe change: a brief flash over the orb, so Space still reads on the body.
     if (this.swap > 0.01) {
       g.fillStyle(this.tint(CLT.clothPale), alpha * this.swap * 0.5);
-      g.fillEllipse(x, y, rx * 2.2, ry * 2.2);
+      g.fillCircle(x, y, 23);
     }
   }
 
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void a;
-    const crown = y - 15;
+    const m = this.mastered;
+    const crown = y - 16;
+    const lean = Math.cos(this.facing) * 1.5;
 
-    // ── Collar ──
-    // The scarf's near end, wrapped twice round the top of the ball. The rest of it is world
-    // geometry the kit draws, so this is the join between the two.
+    // ── The scarf collar ──
+    // Wound twice round the crown, stopping above the eyes. The free end the kit paints as world
+    // geometry leaves from here.
     for (let i = 0; i < 2; i++) {
-      const cy = crown + 1 + i * 4;
-      g.fillStyle(this.tint(i ? CLT.clothDeep : CLT.cloth), alpha * 0.95);
-      g.fillEllipse(x, cy, 27 - i * 3.6, 8.4 - i * 1.4);
-      g.fillStyle(this.tint(CLT.clothPale), alpha * 0.28);
-      g.fillEllipse(x - 3, cy - 1.6, 14 - i * 2.6, 2.8);
+      const cy = crown + i * 4;
+      g.fillStyle(this.tint(CLT.ink), alpha * 0.5);
+      g.fillEllipse(x + lean, cy + 1.2, 28 - i * 3.6, 9 - i * 1.4);
+      g.fillStyle(this.tint(i ? CLT.clothDeep : CLT.cloth), alpha);
+      g.fillEllipse(x + lean, cy, 27 - i * 3.6, 8.4 - i * 1.4);
+      g.fillStyle(this.tint(CLT.clothPale), alpha * 0.3);
+      g.fillEllipse(x + lean - 3, cy - 1.6, 14 - i * 2.6, 2.6);
     }
-
-    // ── Pincushion hat ──
-    // A little wool dome over the crown with spare pins parked in it. The pins fan wider the
-    // more the character is casting, which is the only idle tell the rig has.
-    g.fillStyle(this.tint(CLT.clothDeep), alpha);
-    g.fillEllipse(x, crown - 5, 18, 10);
+    // A loose knot-end lifting off one side.
+    const flutter = Math.sin(this.t * 2.4) * 2;
     g.fillStyle(this.tint(CLT.cloth), alpha);
-    g.fillEllipse(x - 1, crown - 6.6, 14.5, 7.4);
-    for (let i = 0; i < 4; i++) {
-      const ang = -Math.PI / 2 + (i - 1.5) * (0.42 + this.flare * 0.16);
-      pinGlyph(g, this.tint, x + Math.cos(ang) * 7, crown - 6 + Math.sin(ang) * 4.5, ang, 16, alpha * 0.95, { head: 2 });
-    }
+    g.fillPoints([
+      new Phaser.Geom.Point(x + lean + 9, crown - 2),
+      new Phaser.Geom.Point(x + lean + 17 + flutter * 0.4, crown - 8 + flutter),
+      new Phaser.Geom.Point(x + lean + 18 + flutter * 0.5, crown - 3 + flutter),
+      new Phaser.Geom.Point(x + lean + 11, crown + 2),
+    ], true);
 
-    // ── Loose threads ──
-    // A few strands lifting off the shoulders. Cheap motion that keeps a still character alive.
-    for (let i = 0; i < 3; i++) {
-      const ph = (this.t * 0.6 + i / 3) % 1;
-      const sx = x + (jitter(this.seed, 40 + i) - 0.5) * 32;
-      const sy = y - 4 - ph * 16;
-      g.lineStyle(1, this.tint(CLT.clothDeep), alpha * (1 - ph) * 0.5);
-      g.lineBetween(sx, sy, sx + Math.sin(this.t * 3 + i) * 4, sy - 6);
-    }
-
-    // Mastered: a golden thimble crowns them, and the spare pins turn brass.
-    if (this.mastered) {
-      const my = crown - 15;
-      g.fillStyle(this.tint(CLT.brassDark), alpha * 0.9);
-      g.fillEllipse(x, my + 3, 12, 5);
-      g.fillStyle(this.tint(CLT.brass), alpha);
-      g.fillRoundedRect(x - 5, my - 5, 10, 9, 3);
-      g.fillStyle(this.tint(CLT.brassLit), alpha);
-      g.fillEllipse(x, my - 5, 10, 4);
-      // Dimples.
-      for (let i = 0; i < 3; i++) {
-        g.fillStyle(this.tint(CLT.brassDark), alpha * 0.7);
-        g.fillCircle(x - 3 + i * 3, my - 1 + (i % 2) * 2.4, 0.9);
+    // Mastered: the collar is hemmed in the current outfit's colour, stitched in brass.
+    if (m) {
+      const hemY = crown + 0.5;
+      g.fillStyle(this.tint(OUTFIT_COLOR[this.outfit]), alpha);
+      g.fillEllipse(x + lean, hemY, 25, 3.6);
+      g.lineStyle(1.2, this.tint(CLT.brassLit), alpha * 0.95);
+      for (let i = -3; i <= 3; i++) {
+        const sx = x + lean + i * 3;
+        g.lineBetween(sx - 0.9, hemY - 1, sx + 0.9, hemY + 1);
       }
+      g.fillStyle(this.tint(CLT.brassLit), alpha * (0.25 + 0.15 * Math.sin(this.t * 3)));
+      g.fillEllipse(x + lean, crown - 2, 30, 6);
+    }
+
+    // ── The needle, in the right hand ──
+    // Held point-out along the aim; it flicks wider while casting.
+    const hx = this.armX[1], hy = this.armY[1];
+    const ang = this.facing - 0.35 + this.flare * 0.3;
+    const len = m ? 26 : 20;
+    pinGlyph(
+      g, this.tint,
+      hx + Math.cos(ang) * len * 0.3, hy + Math.sin(ang) * len * 0.3,
+      ang, len, alpha, { head: m ? 2.8 : 2.2, hot: false },
+    );
+    if (m) {
+      const tx = hx + Math.cos(ang) * len * 0.8, ty = hy + Math.sin(ang) * len * 0.8;
+      g.fillStyle(this.tint(CLT.brassLit), alpha * (0.35 + 0.2 * Math.sin(this.t * 5)));
+      g.fillCircle(tx, ty, 3);
     }
   }
 }

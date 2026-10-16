@@ -3,229 +3,181 @@ import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
 import type { NetPsychicMsg } from '../../network/NetworkManager';
+import type { SummonPurgeTarget } from '../../combat/SummonPurge';
+import type { FormRevertTarget } from '../../combat/FormRevert';
 import { Sfx } from '../../audio';
 import {
-  PSY, PsychicAvatar, PsychicColorFn, PsychicFx, comaSwirl, destinyGhost, focusMandala, focusMark,
-  foresightPath, keyChip, lashPoints, migraineMark, mindSigil, psiWhip, snareRune, stressCracks,
-  thirdEye,
+  ChessKind, PSY, PsychicAvatar, PsychicColorFn, PsychicFx, chessPiece, focusMandala, heavenlyAura,
+  mightAura, moveGuide, queenCrown, queueCard, snareRune, strideAura,
 } from './PsychicVisuals';
-import { meterGain } from '../../combat/Meters';
 
 type Owner = 'player' | 'npc';
+type PieceKind = 'bishop' | 'knight' | 'rook';
 
 const ARENA_PAD = 32;
 const BOTH: Owner[] = ['player', 'npc'];
 
 // ── Opened Eyes (passive) ────────────────────────────────────────────────────
 /**
- * How far ahead the psychic sees, and — because the two have to be the same number for any of
- * this to be honest — how long every ability cast at him is held before it resolves.
+ * How long every ability cast at the psychic is held before it resolves. The queue over his
+ * head is that hold, drawn.
  */
 const FORESIGHT_MS = 2000;
-/** Chips shown over an enemy's head. The spec asks for three; the queue itself is unbounded. */
-const CHIPS_SHOWN = 3;
-/** Steps in the projected route. 20 over two seconds is a marker every 100 ms. */
-const PATH_STEPS = 20;
+/** How far ahead the shadow of the enemy stands. */
+const GHOST_MS = 1000;
+/** Below this the shadow would sit inside the real body, so it is not drawn at all. */
+const GHOST_MIN_DIST = 14;
+/** Cards shown in the queue over the psychic's head. The queue itself is unbounded. */
+const CARDS_SHOWN = 4;
 /** Online: how often the victim's own sim tells the psychic what is sitting in its queue. */
 const QUEUE_RELAY_MS = 160;
+/** A relayed queue older than this is treated as gone. */
+const QUEUE_STALE_MS = 1200;
+/** The dead-reckoning step for bodies with no AI plan to read. */
+const PATH_STEP_MS = 100;
 
-// ── Stress ───────────────────────────────────────────────────────────────────
-const STRESS_HOLD_MS = 10_000;
-/** What counts as "a lot" for the size of the crack art and the burst. Not a cap. */
-const STRESS_FULL = 80;
+// ── Click: En Passant ────────────────────────────────────────────────────────
+const PAWN_STEP = 130;
+const PAWN_STEP_MS = 300;
+const PAWN_LIFE_MS = 3000;
+const PAWN_TOUCH_DAMAGE = 8;
+const PAWN_TOUCH_R = 16;
+/** The capture: forward-left and forward-right, like the real thing. */
+const PAWN_STRIKE_DAMAGE = 16;
+const PAWN_STRIKE_REACH = 48;
+const PAWN_STRIKE_R = 24;
+const PAWN_STRIKE_EVERY_MS = 1000;
 
-// ── Headache (Click) ─────────────────────────────────────────────────────────
-const WHIP_DAMAGE = 12;
-const WHIP_STRESS = 5;
-const WHIP_TIP_BONUS = 5;
-const WHIP_LEN = 196;
+// ── E / R / F: the pieces ────────────────────────────────────────────────────
+const PIECE_LIFE_MS = 8000;
+/** How close a click has to land to a piece to pick it up. */
+const PIECE_PICK_R = 30;
+const AURA_R = 110;
+/** Every aura is 15%, and every one stacks multiplicatively with its own kind. */
+const AURA_STEP = 0.15;
 /**
- * How far off the cord still counts, *on top of* the victim's own body radius — the cord is a
- * cord, not a point, and a lash laid across someone's shoulder should land. Checked against the
- * segments rather than the 18 sample points so there are no cold gaps between them.
+ * A piece that has just moved has to settle before it can move again. Long enough that one
+ * piece is worth a handful of slides over its eight seconds, not a machine gun.
  */
-const WHIP_HIT_R = 18;
-/** Fallback body radius for a target with no physics body. Matches `Fighter.applySizeMult`. */
-const WHIP_BODY_R = 22;
-/** Past this far along the lash counts as the tip. The last ~45 px of a 196 px whip. */
-const WHIP_TIP_FRAC = 0.77;
-const WHIP_ANIM_MS = 260;
-/** Where in the animation the lash is at full extension — also when the hit is resolved. */
-const WHIP_CRACK_T = 0.55;
+const PIECE_SETTLE_MS = 2000;
+/** Bishop and rook slides. */
+const SLIDE_SPEED = 1100;
+const SLIDE_MIN = 40;
+const SLIDE_MAX = 460;
+/** Added to the victim's body radius when a sliding piece is tested against it. */
+const SLIDE_HIT_R = 16;
+const BISHOP_DAMAGE = 40;
+const ROOK_DAMAGE = 45;
+/** One knight "square". A jump is two of these one way and one the other. */
+const KNIGHT_UNIT = 75;
+const KNIGHT_LEAP_MS = 340;
+const KNIGHT_BLAST_R = 80;
+const KNIGHT_DAMAGE = 35;
+/** A rook passing within this of another piece takes it. */
+const CAPTURE_R = 26;
+/** …and wears that piece's aura for this long, wherever it goes. */
+const STOLEN_AURA_MS = 30_000;
 
-// ── Dodge Destiny (R) ────────────────────────────────────────────────────────
-const DODGE_MS = 1250;
+// ── Q: Queen ─────────────────────────────────────────────────────────────────
+const QUEEN_MS = 15_000;
+/** Every aura at once, three times over. */
+const QUEEN_MULT = 3;
+const QUEEN_MOVE_MAX = 380;
+const QUEEN_SLIDE_SPEED = 1300;
+const QUEEN_SETTLE_MS = 1000;
+const QUEEN_PATH_DAMAGE = 25;
+const QUEEN_BLAST_R = 85;
+const QUEEN_BLAST_DAMAGE = 20;
 
-// ── Migraine (F) ─────────────────────────────────────────────────────────────
-const MIGRAINE_MS = 3000;
-const MIGRAINE_STRESS_PER_S = 10;
-/** How long the charge sits under its mark before it goes off. */
-const MIGRAINE_FUSE_MS = 2500;
-/** How far the detonation reaches. Matches Fire's Pressure Bomb, which it is modelled on. */
-const MIGRAINE_RADIUS = 100;
-/** Stress from being caught by the blast itself, on top of the per-second ticks. */
-const MIGRAINE_HIT_STRESS = 10;
-
-// ── Coma (Q) ─────────────────────────────────────────────────────────────────
-const COMA_MULT = 1.5;
-/** Every this many points of detonated stress buys one second face down. */
-const COMA_PER_STRESS = 20;
-/** How much of a hit lands as damage while they are under; the rest is banked as stress. */
-const COMA_SPLIT = 0.5;
-
-// ── Whip Snap (Click+) ───────────────────────────────────────────────────────
-/**
- * How far the end of a route has to be from the body before there is anything to aim at. The
- * same 24px the destiny ghost is drawn at, so what the player can hit is exactly what is painted.
- */
-const SNAP_MIN_DIST = 24;
-/** How close the cord has to pass to the ghost. Wider than a body: it is a spot, not a target. */
-const SNAP_R = 26;
-const SNAP_STRESS = 20;
-
-// ── Ability Theft (E+) ───────────────────────────────────────────────────────
-/** Taken off the thief's own ability in the slot they just robbed. */
-const THEFT_REFUND_MS = 5000;
-
-// ── Infinite Perspective (R+) ────────────────────────────────────────────────
-/** Damage inside the window below that fires Dodge Destiny on its own. */
-const PERSPECTIVE_DAMAGE = 50;
-/** How long an incoming hit is remembered while adding up to that 50. */
-const PERSPECTIVE_WINDOW_MS = 2000;
-
-// ── Mind's Focus (F+) ────────────────────────────────────────────────────────
-/** The longest the charge can be wound. It fires itself on reaching this rather than stalling. */
-const FOCUS_MAX_MS = 5000;
-/** Extra fuse bought per second held — 2.5s at a tap out to 6.5s fully wound. */
-const FOCUS_FUSE_PER_S = 800;
-/** Extra blast radius per second held — 100px out to 200px. */
-const FOCUS_RADIUS_PER_S = 20;
-/** Extra flat stress on the blast per second held. */
-const FOCUS_STRESS_PER_S = 4;
-/** Share of the pool they are *already* carrying added on the blast, per second held. */
-const FOCUS_POOL_CUT_PER_S = 0.1;
-
-// ── Cycle of Abuse (Q+) ──────────────────────────────────────────────────────
-/** Taken off a comatose victim's pool every second and dealt to them as ordinary damage. */
-const BLEED_PER_S = 3;
-const BLEED_AOE_RADIUS = 120;
-const BLEED_AOE_DAMAGE = 10;
-/** How much of everything bled out is handed back to them when they wake up. */
-const BLEED_RETURN = 0.25;
-
-// ── Predictor's Snare (mastery passive) ──────────────────────────────────────
-/** Stress put into whoever walks over a rune. */
-const SNARE_STRESS = 15;
-/** How close counts as standing on it, on top of the victim's own body radius. */
+// ── Mastery ──────────────────────────────────────────────────────────────────
+/** Predictor's Snare: what a closed eye deals to whoever walks over it. */
+const SNARE_DAMAGE = 15;
 const SNARE_R = 20;
 const SNARE_LIFE_MS = 14_000;
-/** How long a fresh rune takes to settle. Nothing can be caught by a rune it is standing in. */
 const SNARE_ARM_MS = 260;
-/** Runes on the floor at once, per side. The oldest is rubbed out to make room. */
 const SNARE_MAX = 6;
-
-// ── Utter Focus (mastery ability) ────────────────────────────────────────────
+/** Below this a route is not worth teleporting onto. */
+const SNARE_MIN_DIST = 24;
 const UTTER_ID = 'utter-focus';
 const UTTER_MS = 8000;
-/** What the two seconds of the passive becomes while his eyes are shut. */
 const UTTER_FORESIGHT_MS = 5000;
-const UTTER_STRESS_MULT = 1.2;
-/** Taken off the window by every hit that lands on him while it runs. */
 const UTTER_HIT_COST_MS = 500;
 const UTTER_COOLDOWN_MS = 26_000;
-/** Online: how often the psychic tells the victim how much of the window is left. */
 const UTTER_RELAY_MS = 500;
-/** Online: how often the victim tells the psychic where their held keys are taking them. */
 const ROUTE_RELAY_MS = 160;
-/** Points in a relayed route. Ten over five seconds is a marker every half second. */
 const ROUTE_POINTS = 10;
-/** A relayed route older than this is treated as gone, exactly as the queue mirror is. */
 const ROUTE_STALE_MS = 700;
-/** The bot reconsiders pressing it this often. */
 const NPC_UTTER_CHECK_MS = 250;
-/** …and only inside this range, where 1.2x on a lash is actually worth something. */
 const NPC_UTTER_RANGE = 300;
 
-// ── World objects ────────────────────────────────────────────────────────────
+/** How often the bot re-plans which piece to move where. */
+const NPC_PLAN_MS = 120;
 
-/** One ability sitting in a victim's delayed-cast queue. */
+// ── Types ────────────────────────────────────────────────────────────────────
+
 interface Queued {
   id: string;
-  /** Legend on the chip — 'Click', 'E', 'R', 'F', 'Q'. */
+  /** Display key, for the card's badge. */
   key: string;
-  /** Ultimates get a gold chip and are worth spending Mind Control on. */
+  name: string;
   big: boolean;
-  /** Game-clock time at which it resolves. */
+  /** Scene time at which it resolves. */
   at: number;
+  /** Scene time at which it was pressed, for the fuse on its card. */
+  pressed: number;
   fire: () => void;
 }
 
-interface Stress {
-  amount: number;
-  /** Game-clock time the pool goes off on its own. Every new point pushes it back. */
-  releaseAt: number;
-  by: Owner;
+/** A move in progress, for a piece or for the queen herself. */
+interface Move {
+  fx: number;
+  fy: number;
+  tx: number;
+  ty: number;
+  start: number;
+  ms: number;
+  /** Knights jump; everyone else slides and hits what they slide through. */
+  leap: boolean;
+  /** Bodies this move has already hit — one hit per body per move. */
+  hit: Set<Fighter>;
+}
+
+interface Piece {
+  /** Per-owner spawn serial. Online moves are addressed by it, so both sims must agree. */
+  id: number;
+  kind: PieceKind;
+  owner: Owner;
+  x: number;
+  y: number;
+  born: number;
+  until: number;
+  /** Scene time from which it may move again. */
+  readyAt: number;
+  move: Move | null;
+  face: number;
   seed: number;
 }
 
-interface Coma {
-  until: number;
-  by: Owner;
-  /** Last seen `rawDamageTaken`, so the half of every hit we eat can be banked back. */
-  lastRaw: number;
-  /** Cycle of Abuse (Q+): game-clock time of the next point of stress coming out sideways. */
-  nextBleedAt: number;
-  /** Cycle of Abuse (Q+): everything bled so far, a quarter of which is waiting on the way out. */
-  bled: number;
-}
-
-interface Migraine {
-  until: number;
-  by: Owner;
-  nextTickAt: number;
-}
-
-/** A planted migraine, counting down to its detonation. */
-interface Charge {
+interface Pawn {
+  owner: Owner;
   x: number;
   y: number;
-  /** Game-clock time it was put down, so the mark's fuse hand reads a wound charge correctly. */
-  plantedAt: number;
-  /** Game-clock time it goes off. */
-  firesAt: number;
-  by: Owner;
-  /** How far it reaches. Mind's Focus (F+) buys this; without the upgrade it is always 100. */
-  radius: number;
-  /** Seconds of Mind's Focus wind-up baked into it. 0 for an ordinary tap. */
-  charge: number;
-}
-
-/**
- * The whip, mid-crack. The hit is resolved the instant it is cast, so the origin is pinned
- * here rather than tracked to the moving hand — otherwise the line that was drawn and the line
- * that was tested would drift apart over the 260 ms the animation runs for.
- */
-interface Lash {
-  ox: number;
-  oy: number;
+  fx: number;
+  fy: number;
+  tx: number;
+  ty: number;
   ang: number;
-  start: number;
-  tip: boolean;
+  born: number;
+  until: number;
+  touched: Set<Fighter>;
+  nextStrikeAt: number;
 }
 
-/**
- * Predictor's Snare (mastery passive): a closed eye left on the floor where a dash landed.
- *
- * It is only ever planted on a spot the enemy's own thread said they were walking to, which is
- * why it needs no seeking behaviour of any kind — the trap and the prediction are the same thing.
- */
 interface Snare {
   x: number;
   y: number;
   by: Owner;
-  /** Game-clock time it fades on its own. */
   until: number;
-  /** …and the time before which it cannot catch anybody, so a rune never trips on arrival. */
   armedAt: number;
   seed: number;
 }
@@ -234,48 +186,32 @@ interface Side {
   owner: Owner;
   aimX: number;
   aimY: number;
-  lash: Lash | null;
-  /** Game-clock expiry of Dodge Destiny. */
-  dodgeUntil: number;
-  /** Utter Focus (mastery): game-clock expiry of the window, or 0 when his eyes are open. */
+  /** Next piece serial. */
+  serial: number;
+  /** The piece the player has picked up, by serial; -1 for none. */
+  selected: number;
+  /** Queen form: scene time it ends, 0 when not crowned. */
+  queenUntil: number;
+  queenReadyAt: number;
+  queenMove: Move | null;
+  /** Rook captures: auras worn without the piece, each with its own clock. */
+  stolen: { kind: PieceKind; until: number }[];
   utterUntil: number;
-  /** Game-clock time it was last cast. The card counts its own cooldown off this. */
   utterCastAt: number;
-  /** Last seen `rawDamageTaken`, so every hit inside the window can shorten it. */
   utterRaw: number;
-  /** Online: game-clock time of the last remaining-window heartbeat we sent. */
   utterRelayAt: number;
-  /** The bot's next look at whether the window is worth opening. */
   npcUtterCheckAt: number;
-  /** Mind's Focus (F+): game-clock time F went down, or 0 when nothing is being wound. */
-  focusStart: number;
-  /** Where the wind-up is currently pointed, so the preview ring and the plant agree. */
-  focusX: number;
-  focusY: number;
-  /** Infinite Perspective (R+): recent hits, for the rolling total that trips it. */
-  recent: { at: number; amt: number }[];
-  /**
-   * The `damageAbsorber` this kit installed, kept so it is only ever taken back off a body that
-   * is still wearing ours — the slot is shared with Time's Remain and Air's wind dodge.
-   */
-  absorber: ((amount: number) => boolean) | null;
-  /** Whatever was in that slot when we took it, chained under ours. */
-  prevAbsorber: ((amount: number) => boolean) | null;
 }
 
 function makeSide(owner: Owner): Side {
   return {
-    owner, aimX: 0, aimY: 0, lash: null, dodgeUntil: 0,
-    // Readiness is measured against the absolute game clock, and the kit's *first* match runs
-    // the constructor rather than `reset` — so a zero here would lock the ability out for the
-    // first 26 seconds of it.
-    utterUntil: 0, utterCastAt: -UTTER_COOLDOWN_MS, utterRaw: 0, utterRelayAt: 0,
-    npcUtterCheckAt: 0,
-    focusStart: 0, focusX: 0, focusY: 0, recent: [], absorber: null, prevAbsorber: null,
+    owner, aimX: 0, aimY: 0, serial: 0, selected: -1,
+    queenUntil: 0, queenReadyAt: 0, queenMove: null, stolen: [],
+    utterUntil: 0, utterCastAt: -UTTER_COOLDOWN_MS, utterRaw: 0, utterRelayAt: 0, npcUtterCheckAt: 0,
   };
 }
 
-/** What `NpcOpponent` exposes about its locomotion, for the route projection. */
+/** `NpcOpponent.movementPlan`, as far as this kit needs it. */
 interface MovementPlan {
   closing: boolean;
   range: number;
@@ -284,13 +220,19 @@ interface MovementPlan {
   frozen: boolean;
 }
 
-// ── Arena API ────────────────────────────────────────────────────────────────
+/** What the bot should do with a click this tick, worked out by the kit. */
+interface NpcPlan {
+  /** Piece serial, or -1 for the queen herself. */
+  piece: number;
+  x: number;
+  y: number;
+}
 
 export interface PsychicArenaApi {
   get scene(): Phaser.Scene;
   get player(): Fighter;
   get npc(): Fighter;
-  /** Everything the player is allowed to hurt — husks in Invasion, the npc in a plain 1v1. */
+  /** The player's enemies: `[npc]` in a duel, the husks in an Invasion. */
   get enemies(): Fighter[];
   get eKey(): Phaser.Input.Keyboard.Key;
   get rKey(): Phaser.Input.Keyboard.Key;
@@ -300,88 +242,56 @@ export interface PsychicArenaApi {
   get npcElementId(): string;
   get width(): number;
   get height(): number;
-  /** Online PvP: the opponent is a real person, delaying their own casts on their own machine. */
+  /** True in online PvP, where the npc slot is a replica of a real opponent. */
   get isOnline(): boolean;
-  /** Skins: maps a Psychic visual colour through that side's equipped skin. */
+  /** Invasion: the npc slot is a placeholder or a co-op *ally*, never an enemy. */
+  get isInvasion(): boolean;
+  /** Invasion husks in another room share screen coordinates; this says whether one is really here. */
+  isTargetable(f: Fighter): boolean;
   psychicColor(owner: Owner, base: number): number;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
   setStatusIndicator(id: string, status: CustomStatus | null): void;
-  /** Online: the queue mirror, and the three things the psychic does to a body it doesn't own. */
   sendPsychicMsg(msg: NetPsychicMsg): void;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
-  /** Which mastery enhancement each side dropped over an E/R/F/Q slot this match. */
   masteryBindFor(slot: string): string | null;
   npcMasteryBindFor(slot: string): string | null;
-  /** Cumulative mastery counters. Written unconditionally; the adapter gates on the element. */
-  recordMasteryStat(key: string, amount: number): void;
-  /** …and the ratchets, for a requirement that is a single best instance rather than a total. */
-  recordMasteryBest(key: string, value: number): void;
-  /** Shop upgrades: the local player's equipped slots. */
-  hasUpgrade(slot: string): boolean;
-  /** …and the online opponent's, so their upgraded tricks reproduce on this sim. */
-  hasNpcUpgrade(slot: string): boolean;
 }
 
 // ── PsychicKit ───────────────────────────────────────────────────────────────
 
 /**
- * Psychic.
+ * Psychic — the grandmaster.
  *
- * The element is one mechanism with four consequences. The mechanism is `castDelayMs`: while a
- * psychic is on the field, every ability aimed at him is **queued rather than resolved** — the
- * cooldown is paid at the press, the effect lands two seconds later, and this kit owns the gap.
- * Everything the player sees above an enemy's head is that queue, drawn; everything the player
- * sees on the floor is the same two seconds applied to their feet. Mind Control reaches into the
- * queue and takes something out of it. Dodge Destiny is exactly as long as a telegraph.
+ * Two halves that have nothing to do with each other mechanically and everything to do with
+ * each other in play.
  *
- * The other half of the kit is **stress**, which is a second health bar that only exists in the
- * future. It is added by everything, it never ticks, and it does nothing at all until it goes off
- * — either on its own ten seconds after the last point landed, or on the Q, multiplied. Because
- * it releases as pierce damage it is the only thing in the element that armour cannot answer,
- * which is what makes a psychic worth being afraid of rather than merely annoying.
+ * **Opened Eyes** is the passive, and it is the old element's one good idea kept whole: while a
+ * psychic is on the field every ability aimed at him is *queued* rather than resolved (the
+ * generic `Fighter.castDelayMs`), and he is shown the queue. It is drawn over his own head now,
+ * as a vertical stack of cards with the next one at the bottom, because that is where a player's
+ * eyes already are. The enemy's route is no longer a thread on the floor — it is a shadow of the
+ * enemy standing exactly where they will be in one second, and nothing else.
  *
- * The online story is the same story with the machines swapped. A remote opponent delays their
- * *own* casts on their *own* sim — they can see `npcElementId === 'psychic'` just as easily as
- * we can — and relays the resulting queue back for us to draw. Nothing about the foreknowledge
- * is computed on the psychic's machine, which is the only arrangement in which their shots
- * really do come out two seconds late rather than merely looking like they do.
+ * **The board** is everything he presses. Click throws a pawn forward that captures on its
+ * diagonals; E, R and F stand a bishop, knight or rook on the cursor for eight seconds, each
+ * with an aura that is worth 15% of something to him while he stands in it (damage taken, speed,
+ * damage dealt — all stacking). Click a standing piece to pick it up and click again to move it
+ * the way that piece moves in chess, through anybody in the way. The rook takes any piece it
+ * runs over and keeps that piece's aura for 30 seconds. Q makes him the queen: every aura three
+ * times over, no legs, and a click that moves him like the strongest piece on the board.
  *
- * ## The shop upgrades
+ * Damage-dealt is a victim-side multiplier (`psychicIncomingMult` on his targets) because
+ * `takeDamage` has no attacker reference — the same arrangement Justice, Magma and Death use.
+ * Damage-taken is the same field on his own body. Both are rewritten from scratch every frame.
  *
- * All five are bought against the same fact: the element already draws the next two seconds on
- * the floor, and without upgrades that drawing is only ever *advice*. Every upgrade turns some
- * part of it into a mechanic.
- *
- * - **Click+ Whip Snap** — the ghost at the end of the route becomes a hitbox. Catch it and they
- *   are pulled to it for 20 stress and no damage at all.
- * - **E+ Ability Theft** — what comes out of their queue pays five seconds off the thief's own
- *   ability in the same slot.
- * - **R+ Infinite Perspective** — Dodge Destiny presses itself the instant 50 damage is about to
- *   land, and refuses that hit outright.
- * - **F+ Mind's Focus** — F is held for up to five seconds; the wind-up buys fuse, radius and
- *   stress, and the last of those scales off the pool the victim is already carrying.
- * - **Q+ Cycle of Abuse** — a comatose body bleeds its own pool out at 3 a second, throwing a
- *   120px shockwave with every point, and gets a quarter of it back when it wakes.
- *
- * ## The mastery
- *
- * Both halves are the same trade the element already makes — foreknowledge for tempo — bought
- * once more at a steeper price.
- *
- * - **Predictor's Snare** (passive) turns the Space dash into a teleport onto the *movement
- *   marker*: not where they are, where the thread says they will be. A closed eye is left burnt
- *   into that spot, and 15 stress goes into whoever walks over it — which, by construction, is
- *   the person whose own route put it there.
- * - **Utter Focus** (bindable) shuts his eyes for eight seconds and opens the window from two
- *   seconds to five. Everything aimed at him is held five seconds, everything he lands is worth
- *   1.2x stress, and against a real opponent their *movement keys* are held the same five — the
- *   only arrangement in the game in which the thread over another person is a fact. Every hit
- *   that lands on him while it runs takes half a second back off it.
+ * The netcode for the passive still runs *backwards*: a remote opponent delays their own casts
+ * on their own sim and relays the queue back. Piece spawns ride the ordinary cast relay; piece
+ * moves are kit messages addressed by a per-owner spawn serial.
  */
-export class PsychicKit {
+export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
   private api: PsychicArenaApi;
 
   // ── Visuals ──
@@ -391,49 +301,48 @@ export class PsychicKit {
   private readonly nfx: PsychicFx;
   private playerAvatar: PsychicAvatar | null = null;
   private npcAvatar: PsychicAvatar | null = null;
-  /** Routes, coma mandalas and meditation rings — under the fighters. */
+  /** Auras, runes and the meditation mandala — under the fighters. */
   private groundGfx: Phaser.GameObjects.Graphics | null = null;
-  /** The whip, stress cracks, the prediction bar and the destiny ghost — over them. */
+  /** The pieces themselves — at fighter height, so they stand among the bodies. */
+  private pieceGfx: Phaser.GameObjects.Graphics | null = null;
+  /** Move guides, the crown and the queue cards — over everything. */
   private airGfx: Phaser.GameObjects.Graphics | null = null;
   /**
-   * Pooled legends for the prediction chips and the stress readouts. Pooled rather than made
-   * per-enemy because both appear and vanish several times a second, and `setStyle` rebuilds a
-   * Text's canvas texture — `setText` on an unchanged string does not.
+   * Pooled legends for the queue cards. Pooled because cards appear and vanish several times a
+   * second and `setStyle` rebuilds a Text's canvas texture — `setText` on an unchanged string
+   * does not.
    */
   private labels: Phaser.GameObjects.Text[] = [];
   private labelsUsed = 0;
+  /** Pooled shadows of the enemy, one per target. */
+  private ghosts: Phaser.GameObjects.Image[] = [];
+  private ghostsUsed = 0;
   private vizT = 0;
 
   // ── Sim ──
   private sides: Record<Owner, Side> = { player: makeSide('player'), npc: makeSide('npc') };
-  /** Every fighter whose casts this kit is currently holding, and what it is holding. */
   private queues = new Map<Fighter, Queued[]>();
-  /** Everyone whose `castDelayMs`/`queueDelayedCast` this kit installed, so it can take them back. */
   private foreseen = new Set<Fighter>();
-  private stress = new Map<Fighter, Stress>();
-  private comas = new Map<Fighter, Coma>();
-  private migraines = new Map<Fighter, Migraine>();
-  /** Migraines that have been planted but have not gone off yet. */
-  private charges: Charge[] = [];
-  /** Predictor's Snare (mastery): closed eyes waiting on the floor, oldest first. */
+  private pieces: Piece[] = [];
+  private pawns: Pawn[] = [];
   private snares: Snare[] = [];
-  /** Fractions of a point of stress not yet written to the mastery counter. */
-  private stressBanked = 0;
-  /**
-   * Utter Focus (mastery), on the machine being read: this player's own movement keys, held.
-   *
-   * Samples go in at the top of every frame and come out five seconds later, so the body is
-   * always executing an input that was pressed a window ago. Oldest first; `movePlayed` is
-   * whichever one has matured most recently and is therefore what the legs are currently doing.
-   */
+  /** Observed velocity per body, for bodies with no AI plan to replay (husks, replicas). */
+  private seen = new Map<Fighter, { x: number; y: number; vx: number; vy: number; at: number }>();
+  /** The mouse button last frame, so a press can be told from a hold. */
+  private wasDown = false;
+  /** What the press that is still held down was spent on. Only a pawn press repeats. */
+  private pressMode: 'pawn' | 'spent' | null = null;
+  private npcPlan: NpcPlan | null = null;
+  private npcPlanAt = 0;
+
+  // Utter Focus, on the machine being read.
   private moveBuffer: { at: number; vx: number; vy: number }[] = [];
   private movePlayed = { vx: 0, vy: 0 };
   private lastRouteRelayAt = 0;
-  /** …and on the psychic's machine, what came back: their real route, next-to-last last. */
   private netRoute: { x: number; y: number }[] = [];
   private netRouteAt = 0;
-  /** Online: the opponent's own report of what is in their queue, next one last. */
-  private netQueueKeys: string[] = [];
+  /** Online: the opponent's own report of their queue, soonest first. */
+  private netQueue: { id: string; left: number }[] = [];
   private netQueueAt = 0;
   private lastQueueRelayAt = 0;
   private lastQueueSentAt = 0;
@@ -455,6 +364,7 @@ export class PsychicKit {
   private fx(owner: Owner): PsychicFx { return owner === 'player' ? this.pfx : this.nfx; }
   private col(owner: Owner): PsychicColorFn { return owner === 'player' ? this.pcol : this.ncol; }
   private body(f: Fighter): Phaser.Physics.Arcade.Body { return f.body as Phaser.Physics.Arcade.Body; }
+  private bodyR(f: Fighter): number { return (f.body as Phaser.Physics.Arcade.Body | null)?.radius || 20; }
 
   private get left(): number { return ARENA_PAD; }
   private get right(): number { return this.api.width - ARENA_PAD; }
@@ -473,18 +383,16 @@ export class PsychicKit {
     return owner === 'player' ? this.api.elementId === 'psychic' : this.api.npcElementId === 'psychic';
   }
 
-  /** Shop upgrades, for whichever side is asking. */
-  private up(owner: Owner, slot: string): boolean {
-    return owner === 'player' ? this.api.hasUpgrade(slot) : this.api.hasNpcUpgrade(slot);
-  }
-
   private avatar(owner: Owner): PsychicAvatar | null {
     return owner === 'player' ? this.playerAvatar : this.npcAvatar;
   }
 
   private targetsOf(owner: Owner): Fighter[] {
+    // In an Invasion the npc slot is on the player's side. A co-op ally's pieces are resolved
+    // on its own machine and forwarded; here they must touch nobody, least of all us.
+    if (owner === 'npc' && this.api.isInvasion) return [];
     const list = owner === 'player' ? this.api.enemies : [this.api.player];
-    return list.filter((f) => this.alive(f));
+    return list.filter((f) => this.alive(f) && this.api.isTargetable(f));
   }
 
   /** Everything this kit ever writes a field on, so a stale multiplier can always be cleared. */
@@ -496,21 +404,9 @@ export class PsychicKit {
     return out;
   }
 
-  /**
-   * True for a body this machine is only rendering. Their sim owns what that fighter aims and
-   * how it moves, so anything we apply to it here would be applied twice — see `doMigraine`.
-   */
+  /** True for a body this machine is only rendering — its sim lives on the other machine. */
   private isNetReplica(f: Fighter): boolean {
     return this.api.isOnline && f === this.api.npc;
-  }
-
-  /** True when a status we just applied belongs to a person on another machine. */
-  private shouldRelay(owner: Owner, victim: Fighter): boolean {
-    return owner === 'player' && this.api.isOnline && victim === this.api.npc;
-  }
-
-  private refund(f: Fighter, abilityId: string): void {
-    f.resetCooldown(abilityId);
   }
 
   private nearestTarget(owner: Owner): Fighter | null {
@@ -524,6 +420,17 @@ export class PsychicKit {
     return best;
   }
 
+  private clampX(x: number): number { return Phaser.Math.Clamp(x, this.left, this.right); }
+  private clampY(y: number): number { return Phaser.Math.Clamp(y, this.top, this.bottom); }
+
+  private segDist(ax: number, ay: number, bx: number, by: number, px: number, py: number): number {
+    const dx = bx - ax;
+    const dy = by - ay;
+    const len2 = dx * dx + dy * dy;
+    const u = len2 > 0 ? Phaser.Math.Clamp(((px - ax) * dx + (py - ay) * dy) / len2, 0, 1) : 0;
+    return Phaser.Math.Distance.Between(ax + dx * u, ay + dy * u, px, py);
+  }
+
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
   reset(): void {
@@ -531,23 +438,22 @@ export class PsychicKit {
     // last frame of a match would simply vanish along with the kit's state.
     for (const f of [...this.foreseen]) this.releaseForesight(f, false);
     this.foreseen.clear();
-    // Infinite Perspective's absorber is a closure over this kit — dropped before the state it
-    // reads is, or a stale one would still be sitting on a body at the start of the next match.
-    for (const owner of BOTH) this.dropAbsorber(owner);
     this.queues.clear();
-    this.stress.clear();
-    this.comas.clear();
-    this.migraines.clear();
-    this.charges = [];
+    this.pieces = [];
+    this.pawns = [];
     this.snares = [];
-    this.stressBanked = 0;
+    this.seen.clear();
+    this.wasDown = false;
+    this.pressMode = null;
+    this.npcPlan = null;
+    this.npcPlanAt = 0;
     this.moveBuffer = [];
     this.movePlayed = { vx: 0, vy: 0 };
     this.lastRouteRelayAt = 0;
     this.netRoute = [];
     this.netRouteAt = 0;
     this.sides = { player: makeSide('player'), npc: makeSide('npc') };
-    this.netQueueKeys = [];
+    this.netQueue = [];
     this.netQueueAt = 0;
     this.lastQueueRelayAt = 0;
     this.lastQueueSentAt = 0;
@@ -557,7 +463,6 @@ export class PsychicKit {
     for (const f of this.allFighters()) {
       if (!f) continue;
       f.psychicIncomingMult = 1;
-      f.aimScatterUntil = 0;
       f.castDelayMs = 0;
       f.queueDelayedCast = null;
       f.moveInputDelayMs = 0;
@@ -566,32 +471,29 @@ export class PsychicKit {
     this.playerAvatar?.destroy(); this.playerAvatar = null;
     this.npcAvatar?.destroy(); this.npcAvatar = null;
     this.groundGfx?.destroy(); this.groundGfx = null;
+    this.pieceGfx?.destroy(); this.pieceGfx = null;
     this.airGfx?.destroy(); this.airGfx = null;
     for (const t of this.labels) t.destroy();
     this.labels = [];
     this.labelsUsed = 0;
+    for (const g of this.ghosts) g.destroy();
+    this.ghosts = [];
+    this.ghostsUsed = 0;
 
-    this.api.setStatusIndicator('psychic-stress', null);
-    this.api.setStatusIndicator('psychic-coma', null);
-    this.api.setStatusIndicator('psychic-foresight', null);
-    this.api.setStatusIndicator('psychic-focus', null);
-    this.api.setStatusIndicator('psychic-utter', null);
-    this.api.setStatusIndicator('psychic-held', null);
+    for (const id of ['psychic-foresight', 'psychic-grace', 'psychic-stride', 'psychic-might',
+      'psychic-queen', 'psychic-utter', 'psychic-held']) {
+      this.api.setStatusIndicator(id, null);
+    }
   }
 
   // ── Mastery helpers ────────────────────────────────────────────────────────
 
-  /** Whether Element Mastery is on for whichever side is asking. */
   private masteryOn(owner: Owner): boolean {
     return this.isPsychic(owner)
       && (owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
   }
 
-  /**
-   * Which slot Utter Focus was dropped on, or null. E is never scanned — `excludeSlots` refuses
-   * it, because a five-second queue with no Mind Control to reach into it is a window that reads
-   * beautifully and does nothing at all.
-   */
+  /** Which of R/F/Q Utter Focus was dropped on, or null. */
   private utterSlot(owner: Owner): 'r' | 'f' | 'q' | null {
     if (!this.masteryOn(owner)) return null;
     for (const s of ['r', 'f', 'q'] as const) {
@@ -601,37 +503,28 @@ export class PsychicKit {
     return null;
   }
 
-  /** The player's key for a bound slot. */
   private keyFor(slot: 'r' | 'f' | 'q'): Phaser.Input.Keyboard.Key {
     return slot === 'r' ? this.api.rKey : slot === 'f' ? this.api.fKey : this.api.qKey;
   }
 
-  /** True while that side has his eyes shut. */
   private focused(owner: Owner): boolean {
     return this.now < this.side(owner).utterUntil;
   }
 
-  /**
-   * How far ahead that psychic can see right now — and therefore, since the two are the same
-   * number, how long everything aimed at him is held for.
-   */
+  /** How long everything aimed at that psychic is held for right now. */
   private foresightMs(owner: Owner): number {
     return this.focused(owner) ? UTTER_FORESIGHT_MS : FORESIGHT_MS;
   }
 
-  /**
-   * Only ever recorded for the player: the grind is the human's, not the bot's. Written whether
-   * or not the mastery is on — that is how it gets unlocked in the first place.
-   */
-  private record(owner: Owner, key: string, amount = 1): void {
-    if (owner === 'player' && amount > 0) this.api.recordMasteryStat(key, amount);
+  private queen(owner: Owner): boolean {
+    return this.isPsychic(owner) && this.now < this.side(owner).queenUntil;
   }
 
   private ensureLayers(): void {
     const { scene } = this.api;
-    // Fighters sit at depth 5, so the route goes just under them and everything the player has
-    // to read at a glance goes well over them.
-    if (!this.groundGfx) this.groundGfx = scene.add.graphics().setDepth(4);
+    // Fighters sit at depth 5: auras just under them, pieces among them, readouts over them.
+    if (!this.groundGfx) this.groundGfx = scene.add.graphics().setDepth(3);
+    if (!this.pieceGfx) this.pieceGfx = scene.add.graphics().setDepth(5);
     if (!this.airGfx) this.airGfx = scene.add.graphics().setDepth(16);
   }
 
@@ -647,6 +540,16 @@ export class PsychicKit {
 
   // ── Input ──────────────────────────────────────────────────────────────────
 
+  /**
+   * One button does three jobs, decided at the moment it goes down:
+   *
+   * 1. Down on one of your own standing pieces — pick it up (or put it back down).
+   * 2. Down anywhere with a piece in hand — move it there, the way that piece moves.
+   * 3. Otherwise — throw a pawn, or as the queen, move yourself.
+   *
+   * Only the third repeats while the button is held, and only as a pawn: a held click that
+   * picked something up must not start spraying pawns the moment the piece is put down.
+   */
   handleInput(time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
     void time;
     if (this.api.elementId !== 'psychic') return;
@@ -655,561 +558,879 @@ export class PsychicKit {
     s.aimY = mouseY;
 
     const p = this.api.player;
-    if (!this.alive(p) || this.comas.has(p)) return;
+    const down = pointer.isDown;
+    const pressed = down && !this.wasDown;
+    this.wasDown = down;
+    if (!down) this.pressMode = null;
+    if (!this.alive(p)) return;
+
+    // A selection whose piece has gone (expired, captured, purged) is dropped quietly.
+    if (s.selected >= 0 && !this.pieceById('player', s.selected)) s.selected = -1;
 
     const ctx = this.api.buildPlayerContext(mouseX, mouseY);
 
-    // Mastery: whichever of R/F/Q Utter Focus was dropped on stops being its own ability. The
-    // wind-up included — a bound F is not a Migraine any more, so it must not open one either.
     const bound = this.utterSlot('player');
     if (bound && Phaser.Input.Keyboard.JustDown(this.keyFor(bound))) this.tryCastUtter('player');
 
-    // Held rather than clicked: the whip is a 700 ms rhythm and its own cooldown is the gate.
-    if (pointer.isDown) p.castAbility('psychic-headache', ctx);
-
-    // Mind Control is refused before `castAbility` rather than inside the do-method, because a
-    // cast that reaches `cast()` has already stamped (and voiced) its cooldown — reaching into
-    // an empty queue would cost five seconds for nothing.
-    if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) {
-      if (this.seizableFrom('player')) {
-        p.castAbility('psychic-mind-control', ctx);
-      } else if (p.getCooldownRatio('psychic-mind-control') >= 1) {
-        this.api.showFloatingText(p.x, p.y - 46, 'NOTHING TO SEIZE', this.hex(PSY.violetLit));
+    if (pressed) {
+      this.pressMode = 'spent';
+      const under = this.pieceAt('player', mouseX, mouseY);
+      if (under && under.id === s.selected) {
+        s.selected = -1;
+      } else if (under && !under.move) {
+        s.selected = under.id;
+        Sfx.playAt('ui-click', under.x, { rate: 1.3, volume: 0.5 });
+      } else if (s.selected >= 0) {
+        const pc = this.pieceById('player', s.selected);
+        if (pc && this.movePiece(pc, mouseX, mouseY)) s.selected = -1;
+      } else if (this.queen('player')) {
+        this.queenMove('player', mouseX, mouseY);
+      } else {
+        this.pressMode = 'pawn';
       }
     }
-    if (bound !== 'r' && Phaser.Input.Keyboard.JustDown(this.api.rKey)) {
-      p.castAbility('psychic-dodge-destiny', ctx);
+    if (this.pressMode === 'pawn' && !this.queen('player')) {
+      p.castAbility('psychic-en-passant', ctx);
     }
-    // Mind's Focus turns F into a hold. The upgraded release never goes near `castAbility`, so
-    // it stamps its own cooldown — the charge-and-release arrangement `startCooldown` exists for.
-    if (bound !== 'f') {
-      if (this.up('player', 'f')) this.handleFocus(p, mouseX, mouseY);
-      else if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('psychic-migraine', ctx);
-    }
-    if (bound !== 'q' && Phaser.Input.Keyboard.JustDown(this.api.qKey)) {
-      p.castAbility('psychic-coma', ctx);
-    }
+
+    if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('psychic-bishop', ctx);
+    if (bound !== 'r' && Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('psychic-knight', ctx);
+    if (bound !== 'f' && Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('psychic-rook', ctx);
+    if (bound !== 'q' && Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('psychic-queen', ctx);
   }
 
-  /**
-   * F+ — winding the charge up in his hand instead of dropping it.
-   *
-   * Every gate `castAbility` would have applied is applied here at the *press* rather than the
-   * release, because the release is what stamps: a psychic who starts winding while the ability
-   * is still cooling would otherwise get a free one the moment he let go.
-   */
-  private handleFocus(p: Fighter, mx: number, my: number): void {
-    const s = this.sides.player;
-    s.focusX = mx;
-    s.focusY = my;
-
-    if (!s.focusStart) {
-      if (!Phaser.Input.Keyboard.JustDown(this.api.fKey)) return;
-      const now = Date.now();
-      if (p.getCooldownRatio('psychic-migraine') < 1) return;
-      if (now < p.disarmedUntil || now < p.silencedUntil || now < p.chickenUntil) return;
-      s.focusStart = this.now;
-      this.avatar('player')?.play('flex');
-      return;
-    }
-
-    const held = this.now - s.focusStart;
-    // Fires itself at the top of the wind-up rather than stalling there — a charge that can be
-    // held open for ever is a charge nobody ever has to respect.
-    if (this.api.fKey.isDown && held < FOCUS_MAX_MS) return;
-    s.focusStart = 0;
-    p.startCooldown('psychic-migraine');
-    this.doMigraine('player', mx, my, Math.min(held, FOCUS_MAX_MS));
+  /** Space is not a dash while crowned — the queen only moves the way a queen moves. */
+  suppressesDodge(): boolean {
+    return this.queen('player');
   }
 
   // ── Ability entry points (called from build*Context) ───────────────────────
 
   /**
-   * Click — the whip. The lash is resolved the instant it is cast, against the shape it will be
-   * drawn in at the crack, so what hits and what the player sees hit are the same geometry. The
-   * tip is worth double the stress and is about 45 px of a 196 px lash, which is the whole skill
-   * in the ability: standing at exactly the wrong distance is how you get the most out of it.
+   * Click — En Passant. A pawn is thrown out of the psychic's hand one decent step toward the
+   * cursor, hitting anything it walks into. When it stops it captures like a pawn: on the two
+   * diagonals in front of it, harder than the step, and again every second until it goes.
    */
-  doHeadache(owner: Owner, tx: number, ty: number): void {
+  doEnPassant(owner: Owner, tx: number, ty: number): void {
     const f = this.fighter(owner);
-    if (!this.alive(f)) { this.refund(f, 'psychic-headache'); return; }
+    if (!this.alive(f)) return;
     this.ensureLayers();
     const s = this.side(owner);
     s.aimX = tx;
     s.aimY = ty;
-
-    const av = this.avatar(owner);
-    const hand = av ? this.handOf(av, f) : { x: f.x, y: f.y };
-    // Aim from the hand the cord actually leaves, not from the body centre. The two sit ~25 px
-    // apart, and a lash thrown *parallel* to the aim instead of *along* it slides past a target
-    // the cursor was sitting right on top of.
-    const ang = Math.atan2(ty - hand.y, tx - hand.x);
-    const pts = this.lashPoints(hand.x, hand.y, ang, WHIP_CRACK_T);
-
-    // Whip Snap (Click+): the cord is tested against the *end of the route* first, and anything
-    // caught there is taken out of the ordinary hit list entirely — the lash landed on where they
-    // are going to be, not on them, so it deals no damage and none of the usual stress.
-    const snapped = new Map<Fighter, { x: number; y: number }>();
-    if (this.up(owner, 'click')) {
-      for (const t of this.targetsOf(owner)) {
-        const dest = this.destinyOf(t, owner);
-        if (!dest) continue;
-        for (let i = 1; i < pts.length; i++) {
-          if (this.segDist(pts[i - 1], pts[i], dest.x, dest.y) > SNAP_R) continue;
-          snapped.set(t, dest);
-          break;
-        }
-      }
-    }
-
-    const hit = new Map<Fighter, boolean>();   // victim → was it the tip
-    for (const t of this.targetsOf(owner)) {
-      if (snapped.has(t)) continue;
-      const body = t.body as Phaser.Physics.Arcade.Body | null;
-      const reach = WHIP_HIT_R + (body?.radius || WHIP_BODY_R);
-      for (let i = 1; i < pts.length; i++) {
-        if (this.segDist(pts[i - 1], pts[i], t.x, t.y) > reach) continue;
-        const isTip = i / (pts.length - 1) >= WHIP_TIP_FRAC;
-        hit.set(t, (hit.get(t) ?? false) || isTip);
-      }
-    }
-
-    for (const [t, dest] of snapped) this.snapTo(owner, t, dest);
-
-    let anyTip = false;
-    for (const [t, tip] of hit) {
-      anyTip = anyTip || tip;
-      t.takeDamage(WHIP_DAMAGE);
-      this.addStress(t, WHIP_STRESS + (tip ? WHIP_TIP_BONUS : 0), owner);
-      this.api.spawnHitFlash(t.x, t.y, this.col(owner)(tip ? PSY.stress : PSY.violetLit));
-      this.fx(owner).crack(t.x, t.y, ang, tip);
-      if (tip) this.api.showFloatingText(t.x, t.y - 62, '⚡ TIP!', this.hex(PSY.gold));
-    }
-    if (!hit.size && !snapped.size) {
-      // Nothing there — crack it in the air anyway, at the tip, so the reach is legible.
-      const end = pts[pts.length - 1];
-      this.fx(owner).crack(end.x, end.y, ang, false);
-    }
-
-    s.lash = { ox: hand.x, oy: hand.y, ang, start: this.now, tip: anyTip };
-    av?.play('sweep', ang);
+    const ang = Math.atan2(ty - f.y, tx - f.x);
+    const fx = this.clampX(f.x + Math.cos(ang) * 18);
+    const fy = this.clampY(f.y + Math.sin(ang) * 18);
+    const step = Math.min(PAWN_STEP, Math.max(30, Phaser.Math.Distance.Between(fx, fy, tx, ty)));
+    this.pawns.push({
+      owner, x: fx, y: fy, fx, fy,
+      tx: this.clampX(fx + Math.cos(ang) * step),
+      ty: this.clampY(fy + Math.sin(ang) * step),
+      ang, born: this.now, until: this.now + PAWN_LIFE_MS,
+      touched: new Set(), nextStrikeAt: this.now + PAWN_STEP_MS,
+    });
+    this.avatar(owner)?.play('punch', ang);
   }
 
-  /**
-   * Where a body's route ends, or null when there is nothing there to aim at.
-   *
-   * The 24px floor is the same one `paintAir` uses to decide whether to draw the ghost at all,
-   * so the thing Whip Snap can catch is exactly the thing the player can see. Somebody standing
-   * still has no future to be snapped to, which is the counterplay: stop walking.
-   */
-  private destinyOf(f: Fighter, owner: Owner): { x: number; y: number } | null {
-    const pts = this.projectPath(f, this.foresightMs(owner));
-    if (pts.length < 3) return null;
-    const end = pts[pts.length - 1];
-    return Phaser.Math.Distance.Between(end.x, end.y, f.x, f.y) < SNAP_MIN_DIST ? null : end;
-  }
+  doBishop(owner: Owner, tx: number, ty: number): void { this.summon(owner, 'bishop', tx, ty); }
+  doKnight(owner: Owner, tx: number, ty: number): void { this.summon(owner, 'knight', tx, ty); }
+  doRook(owner: Owner, tx: number, ty: number): void { this.summon(owner, 'rook', tx, ty); }
 
-  /** Whip Snap (Click+): put them where the thread said they were going. */
-  private snapTo(owner: Owner, v: Fighter, to: { x: number; y: number }): void {
-    const fromX = v.x;
-    const fromY = v.y;
-    this.fx(owner).snap(fromX, fromY, to.x, to.y);
-    Sfx.playAt('torment', to.x, { rate: 1.35, volume: 0.7 });
-    if (this.isNetReplica(v)) {
-      // Their position is streamed from their machine; moving the copy here would be undone by
-      // the next packet, so the move is asked for rather than done.
-      this.api.sendPsychicMsg({ t: 'psy', k: 'snap', x: to.x, y: to.y });
-    } else {
-      this.body(v).reset(to.x, to.y);
-    }
-    this.addStress(v, SNAP_STRESS, owner);
-    this.api.showFloatingText(to.x, to.y - 46, '🪢 SNAPPED', this.hex(PSY.gold));
-  }
-
-  /**
-   * E — reach into the queue over their head and take the front card off it. The ability never
-   * happens and it goes back on a full cooldown from this moment, so a stolen ultimate is worth
-   * far more than a stolen click.
-   */
-  doMindControl(owner: Owner): void {
+  /** E/R/F — stand a piece on the cursor. No limit; the cooldowns are the limit. */
+  private summon(owner: Owner, kind: PieceKind, tx: number, ty: number): void {
     const f = this.fighter(owner);
-    if (!this.alive(f)) { this.refund(f, 'psychic-mind-control'); return; }
+    if (!this.alive(f)) return;
     this.ensureLayers();
+    const s = this.side(owner);
+    s.aimX = tx;
+    s.aimY = ty;
+    const x = this.clampX(tx);
+    const y = this.clampY(ty);
+    this.pieces.push({
+      id: s.serial++, kind, owner, x, y,
+      born: this.now, until: this.now + PIECE_LIFE_MS,
+      readyAt: this.now + 250, move: null,
+      face: x >= f.x ? 1 : -1, seed: Math.random() * 999,
+    });
+    this.fx(owner).summonPiece(x, y, kind === 'bishop');
+    this.avatar(owner)?.play('slam', Math.atan2(y - f.y, x - f.x));
+    const name = kind === 'bishop' ? '✝ BISHOP' : kind === 'knight' ? '♞ KNIGHT' : '♜ ROOK';
+    this.api.showFloatingText(x, y - 44, name, this.hex(kind === 'bishop' ? PSY.gold : PSY.violetLit));
+  }
 
-    const victim = this.seizableFrom(owner);
-    if (!victim) { this.refund(f, 'psychic-mind-control'); return; }
+  /** Q — become the queen. */
+  doQueen(owner: Owner): void {
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    this.ensureLayers();
+    const s = this.side(owner);
+    s.queenUntil = this.now + QUEEN_MS;
+    s.queenReadyAt = this.now + 200;
+    s.queenMove = null;
+    if (owner === 'player') s.selected = -1;
+    this.fx(owner).coronation(f.x, f.y);
+    this.avatar(owner)?.play('raise');
+    this.api.scene.cameras.main.shake(160, 0.003);
+    this.api.showFloatingText(f.x, f.y - 60, '♛ QUEEN', this.hex(PSY.gold));
+  }
 
-    this.avatar(owner)?.play('clap', Math.atan2(victim.y - f.y, victim.x - f.x));
-    this.fx(owner).seize(victim.x, victim.y, f.x, f.y);
+  /**
+   * The bot's click, when the kit has worked out that a move is worth more than a pawn. The
+   * plan was made in `update` (where the geometry lives); this only carries it out, and refuses
+   * anything that has gone stale since.
+   */
+  doNpcCommand(tx: number, ty: number): void {
+    const plan = this.npcPlan;
+    if (!plan || Math.abs(plan.x - tx) > 1 || Math.abs(plan.y - ty) > 1) return;
+    this.npcPlan = null;
+    if (plan.piece < 0) {
+      this.queenMove('npc', plan.x, plan.y);
+      return;
+    }
+    const pc = this.pieceById('npc', plan.piece);
+    if (pc) this.movePiece(pc, plan.x, plan.y);
+  }
 
-    if (this.isNetReplica(victim)) {
-      // Their queue lives on their machine. All we have here is the mirror, which their next
-      // relay will correct — so take the head off it optimistically and tell them to do the same.
-      const key = this.netQueueKeys.length ? this.netQueueKeys[this.netQueueKeys.length - 1] : '?';
-      this.netQueueKeys.pop();
-      this.api.sendPsychicMsg({ t: 'psy', k: 'cancel' });
-      this.api.showFloatingText(victim.x, victim.y - 70, `🚫 ${key} SEIZED`, this.hex(PSY.gold));
-      this.record(owner, 'castsDenied');
-      if (this.up(owner, 'e')) this.creditTheft(owner, key);
+  // ── The board ──────────────────────────────────────────────────────────────
+
+  private pieceById(owner: Owner, id: number): Piece | null {
+    return this.pieces.find((p) => p.owner === owner && p.id === id) ?? null;
+  }
+
+  /** The owner's own standing piece under a point, nearest first. */
+  private pieceAt(owner: Owner, x: number, y: number): Piece | null {
+    let best: Piece | null = null;
+    let bestD = PIECE_PICK_R;
+    for (const p of this.pieces) {
+      if (p.owner !== owner) continue;
+      // The hitbox is the piece's body, which stands up off its foot.
+      const d = Phaser.Math.Distance.Between(x, y, p.x, p.y - 10);
+      if (d <= bestD) { bestD = d; best = p; }
+    }
+    return best;
+  }
+
+  /**
+   * How far along a ray a slide can go before leaving the arena.
+   */
+  private rayRoom(x: number, y: number, dx: number, dy: number): number {
+    let room = Infinity;
+    if (dx > 1e-6) room = Math.min(room, (this.right - x) / dx);
+    if (dx < -1e-6) room = Math.min(room, (this.left - x) / dx);
+    if (dy > 1e-6) room = Math.min(room, (this.bottom - y) / dy);
+    if (dy < -1e-6) room = Math.min(room, (this.top - y) / dy);
+    return Math.max(0, room);
+  }
+
+  /**
+   * The legal move a piece of `kind` standing at (x, y) would make toward a point.
+   *
+   * Sliders snap the cursor onto the nearest of their lines — diagonals for a bishop, ranks and
+   * files for a rook, all eight for the queen — and travel the cursor's distance along it,
+   * clamped to the arena and to the piece's reach. A knight picks whichever of its eight jumps
+   * lands nearest the cursor. Null when there is no room to move at all.
+   */
+  private legalDest(kind: ChessKind, x: number, y: number, tx: number, ty: number): { x: number; y: number } | null {
+    if (kind === 'knight') {
+      const u = KNIGHT_UNIT;
+      let best: { x: number; y: number } | null = null;
+      let bestD = Infinity;
+      for (const [a, b] of [[2, 1], [1, 2], [-1, 2], [-2, 1], [-2, -1], [-1, -2], [1, -2], [2, -1]]) {
+        const lx = x + a * u;
+        const ly = y + b * u;
+        if (lx < this.left || lx > this.right || ly < this.top || ly > this.bottom) continue;
+        const d = Phaser.Math.Distance.Between(lx, ly, tx, ty);
+        if (d < bestD) { bestD = d; best = { x: lx, y: ly }; }
+      }
+      return best;
+    }
+    const dirs: [number, number][] = [];
+    const D = Math.SQRT1_2;
+    if (kind !== 'bishop') dirs.push([1, 0], [-1, 0], [0, 1], [0, -1]);
+    if (kind !== 'rook') dirs.push([D, D], [D, -D], [-D, D], [-D, -D]);
+    const vx = tx - x;
+    const vy = ty - y;
+    let bestDir: [number, number] | null = null;
+    let bestDot = -Infinity;
+    for (const d of dirs) {
+      const dot = (vx * d[0] + vy * d[1]) / (Math.hypot(vx, vy) || 1);
+      if (dot > bestDot && this.rayRoom(x, y, d[0], d[1]) >= SLIDE_MIN) { bestDot = dot; bestDir = d; }
+    }
+    if (!bestDir) return null;
+    const max = kind === 'queen' ? QUEEN_MOVE_MAX : SLIDE_MAX;
+    const along = vx * bestDir[0] + vy * bestDir[1];
+    const len = Math.min(Phaser.Math.Clamp(along, SLIDE_MIN, max), this.rayRoom(x, y, bestDir[0], bestDir[1]));
+    return { x: x + bestDir[0] * len, y: y + bestDir[1] * len };
+  }
+
+  /** Pick a piece up and put it down somewhere legal. Returns false when it could not move. */
+  private movePiece(pc: Piece, tx: number, ty: number, relayed = false): boolean {
+    if (pc.move || this.now < pc.readyAt) return false;
+    const dest = this.legalDest(pc.kind, pc.x, pc.y, tx, ty);
+    if (!dest) return false;
+    const d = Phaser.Math.Distance.Between(pc.x, pc.y, dest.x, dest.y);
+    const leap = pc.kind === 'knight';
+    pc.move = {
+      fx: pc.x, fy: pc.y, tx: dest.x, ty: dest.y, start: this.now,
+      ms: leap ? KNIGHT_LEAP_MS : Math.max(120, (d / SLIDE_SPEED) * 1000),
+      leap, hit: new Set(),
+    };
+    if (Math.abs(dest.x - pc.x) > 1) pc.face = dest.x > pc.x ? 1 : -1;
+    // A piece's eight seconds are the piece's, not the move's — moving does not buy it time.
+    Sfx.playAt(leap ? 'jump' : 'whoosh', pc.x, { rate: leap ? 1.1 : 1.3, volume: 0.6 });
+    if (pc.owner === 'player' && this.api.isOnline && !relayed) {
+      this.api.sendPsychicMsg({ t: 'psy', k: 'move', id: pc.id, x: Math.round(dest.x), y: Math.round(dest.y) });
+    }
+    return true;
+  }
+
+  /** The queen moving herself — the psychic's own body sliding along one of eight lines. */
+  private queenMove(owner: Owner, tx: number, ty: number): boolean {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (!this.alive(f) || s.queenMove || this.now < s.queenReadyAt) return false;
+    const dest = this.legalDest('queen', f.x, f.y, tx, ty);
+    if (!dest) return false;
+    const d = Phaser.Math.Distance.Between(f.x, f.y, dest.x, dest.y);
+    // The queen's speed aura is three knights' worth, and it is spent here — she has no legs.
+    const speed = QUEEN_SLIDE_SPEED * this.speedMult(owner);
+    s.queenMove = {
+      fx: f.x, fy: f.y, tx: dest.x, ty: dest.y, start: this.now,
+      ms: Math.max(110, (d / speed) * 1000), leap: false, hit: new Set(),
+    };
+    this.avatar(owner)?.play('dash', Math.atan2(dest.y - f.y, dest.x - f.x));
+    Sfx.playAt('whoosh', f.x, { rate: 1.1, volume: 0.8 });
+    if (owner === 'player' && this.api.isOnline) {
+      this.api.sendPsychicMsg({ t: 'psy', k: 'qmove', x: Math.round(dest.x), y: Math.round(dest.y) });
+    }
+    return true;
+  }
+
+  /** Everything a slide passes through this frame, from `(ax, ay)` to `(bx, by)`. */
+  private sweepHits(owner: Owner, m: Move, ax: number, ay: number, bx: number, by: number, dmg: number): void {
+    const ang = Math.atan2(m.ty - m.fy, m.tx - m.fx);
+    for (const t of this.targetsOf(owner)) {
+      if (m.hit.has(t)) continue;
+      if (this.segDist(ax, ay, bx, by, t.x, t.y) > SLIDE_HIT_R + this.bodyR(t)) continue;
+      m.hit.add(t);
+      t.takeDamage(dmg);
+      this.fx(owner).pieceHit(t.x, t.y, ang);
+      this.api.spawnHitFlash(t.x, t.y, this.col(owner)(PSY.gold));
+      Sfx.playAt('hit-heavy', t.x, { rate: 1.1, volume: 0.7 });
+    }
+  }
+
+  /**
+   * A landing: the knight's, or the queen's. `spared` are bodies the same move already hit on
+   * the way through — one move is one hit per body, so a queen slide that ends on top of
+   * somebody is not two hits.
+   */
+  private blast(owner: Owner, x: number, y: number, r: number, dmg: number, spared?: Set<Fighter>): void {
+    this.fx(owner).landing(x, y, r);
+    Sfx.playAt('explosion-small', x, { rate: 1.15, volume: 0.8 });
+    this.api.scene.cameras.main.shake(90, 0.002);
+    for (const t of this.targetsOf(owner)) {
+      if (spared?.has(t)) continue;
+      if (Phaser.Math.Distance.Between(x, y, t.x, t.y) > r + this.bodyR(t) * 0.5) continue;
+      t.takeDamage(dmg);
+      this.api.spawnHitFlash(t.x, t.y, this.col(owner)(PSY.violetLit));
+    }
+  }
+
+  /**
+   * The rook taking a piece. Any piece on the board — the enemy's, or your own — except your own
+   * pawns, which are too short-lived to be worth stepping on. A bishop, knight or rook taken
+   * hands its aura to the rook's owner for 30 seconds, worn wherever they go.
+   */
+  private captureAlong(rook: Piece, ax: number, ay: number, bx: number, by: number): void {
+    for (let i = this.pieces.length - 1; i >= 0; i--) {
+      const o = this.pieces[i];
+      if (o === rook) continue;
+      if (this.segDist(ax, ay, bx, by, o.x, o.y) > CAPTURE_R) continue;
+      this.pieces.splice(i, 1);
+      this.dropSelection(o);
+      const s = this.side(rook.owner);
+      s.stolen.push({ kind: o.kind, until: this.now + STOLEN_AURA_MS });
+      this.fx(rook.owner).capture(o.x, o.y);
+      Sfx.playAt('crystal-shatter', o.x, { rate: 0.9, volume: 0.8 });
+      const what = o.kind === 'bishop' ? "BISHOP'S GRACE" : o.kind === 'knight' ? "KNIGHT'S STRIDE" : "ROOK'S MIGHT";
+      const who = this.fighter(rook.owner);
+      this.api.showFloatingText(o.x, o.y - 40, '♜ CAPTURED', this.hex(PSY.stress));
+      if (this.alive(who)) this.api.showFloatingText(who.x, who.y - 58, `+${what} 30s`, this.hex(PSY.gold));
+    }
+    for (let i = this.pawns.length - 1; i >= 0; i--) {
+      const pw = this.pawns[i];
+      if (pw.owner === rook.owner) continue;
+      if (this.segDist(ax, ay, bx, by, pw.x, pw.y) > CAPTURE_R) continue;
+      this.pawns.splice(i, 1);
+      this.fx(rook.owner).capture(pw.x, pw.y);
+    }
+  }
+
+  private dropSelection(p: Piece): void {
+    const s = this.side(p.owner);
+    if (s.selected === p.id) s.selected = -1;
+  }
+
+  private updatePieces(): void {
+    for (let i = this.pieces.length - 1; i >= 0; i--) {
+      const pc = this.pieces[i];
+      // A piece outlives nothing of its owner's but its own clock — a dead psychic's board goes.
+      if (this.now >= pc.until || !this.alive(this.fighter(pc.owner))) {
+        this.pieces.splice(i, 1);
+        this.dropSelection(pc);
+        this.fx(pc.owner).vanish(pc.x, pc.y);
+        continue;
+      }
+      const m = pc.move;
+      if (!m) continue;
+      const k = Phaser.Math.Clamp((this.now - m.start) / m.ms, 0, 1);
+      const e = m.leap ? k : 1 - (1 - k) * (1 - k);
+      const nx = m.fx + (m.tx - m.fx) * e;
+      const ny = m.fy + (m.ty - m.fy) * e;
+      if (!m.leap) {
+        const dmg = pc.kind === 'rook' ? ROOK_DAMAGE : BISHOP_DAMAGE;
+        this.sweepHits(pc.owner, m, pc.x, pc.y, nx, ny, dmg);
+        if (pc.kind === 'rook') this.captureAlong(pc, pc.x, pc.y, nx, ny);
+      }
+      pc.x = nx;
+      pc.y = ny;
+      if (k < 1) continue;
+      pc.move = null;
+      pc.readyAt = this.now + PIECE_SETTLE_MS;
+      if (m.leap) this.blast(pc.owner, pc.x, pc.y, KNIGHT_BLAST_R, KNIGHT_DAMAGE);
+      else this.fx(pc.owner).slide(m.fx, m.fy, m.tx, m.ty);
+    }
+  }
+
+  private updatePawns(): void {
+    for (let i = this.pawns.length - 1; i >= 0; i--) {
+      const pw = this.pawns[i];
+      if (this.now >= pw.until || !this.alive(this.fighter(pw.owner))) {
+        this.pawns.splice(i, 1);
+        this.fx(pw.owner).vanish(pw.x, pw.y);
+        continue;
+      }
+      const k = Phaser.Math.Clamp((this.now - pw.born) / PAWN_STEP_MS, 0, 1);
+      if (k < 1 || pw.x !== pw.tx || pw.y !== pw.ty) {
+        const e = 1 - (1 - k) * (1 - k);
+        const nx = pw.fx + (pw.tx - pw.fx) * e;
+        const ny = pw.fy + (pw.ty - pw.fy) * e;
+        for (const t of this.targetsOf(pw.owner)) {
+          if (pw.touched.has(t)) continue;
+          if (this.segDist(pw.x, pw.y, nx, ny, t.x, t.y) > PAWN_TOUCH_R + this.bodyR(t)) continue;
+          pw.touched.add(t);
+          t.takeDamage(PAWN_TOUCH_DAMAGE);
+          this.api.spawnHitFlash(t.x, t.y, this.col(pw.owner)(PSY.violetLit));
+        }
+        pw.x = nx;
+        pw.y = ny;
+      }
+      if (this.now < pw.nextStrikeAt) continue;
+      pw.nextStrikeAt += PAWN_STRIKE_EVERY_MS;
+      this.pawnStrike(pw);
+    }
+  }
+
+  /** The capture, on both forward diagonals at once. One hit per body however it is caught. */
+  private pawnStrike(pw: Pawn): void {
+    this.fx(pw.owner).pawnStrike(pw.x, pw.y - 6, pw.ang, PAWN_STRIKE_REACH);
+    Sfx.playAt('stab', pw.x, { rate: 1.35, volume: 0.45 });
+    for (const t of this.targetsOf(pw.owner)) {
+      let caught = false;
+      for (const side of [-1, 1]) {
+        const a = pw.ang + side * Math.PI / 4;
+        const sx = pw.x + Math.cos(a) * PAWN_STRIKE_REACH;
+        const sy = pw.y + Math.sin(a) * PAWN_STRIKE_REACH;
+        if (this.segDist(pw.x, pw.y, sx, sy, t.x, t.y) <= PAWN_STRIKE_R + this.bodyR(t) * 0.5) caught = true;
+      }
+      if (!caught) continue;
+      t.takeDamage(PAWN_STRIKE_DAMAGE);
+      this.fx(pw.owner).pieceHit(t.x, t.y, pw.ang);
+      this.api.spawnHitFlash(t.x, t.y, this.col(pw.owner)(PSY.gold));
+    }
+  }
+
+  private updateQueens(): void {
+    for (const owner of BOTH) {
+      const s = this.side(owner);
+      if (!s.queenUntil) continue;
+      const f = this.fighter(owner);
+      if (!this.alive(f) || this.now >= s.queenUntil || !this.isPsychic(owner)) {
+        this.endQueen(owner);
+        continue;
+      }
+      const m = s.queenMove;
+      if (!m) continue;
+      const k = Phaser.Math.Clamp((this.now - m.start) / m.ms, 0, 1);
+      const e = 1 - (1 - k) * (1 - k);
+      const nx = m.fx + (m.tx - m.fx) * e;
+      const ny = m.fy + (m.ty - m.fy) * e;
+      const ox = f.x;
+      const oy = f.y;
+      this.sweepHits(owner, m, ox, oy, nx, ny, QUEEN_PATH_DAMAGE);
+      // A replica's position is streamed from its own machine; the slide there is the real one.
+      if (!this.isNetReplica(f)) this.body(f).reset(nx, ny);
+      if (k < 1) continue;
+      s.queenMove = null;
+      s.queenReadyAt = this.now + QUEEN_SETTLE_MS;
+      this.fx(owner).slide(m.fx, m.fy, m.tx, m.ty);
+      this.blast(owner, m.tx, m.ty, QUEEN_BLAST_R, QUEEN_BLAST_DAMAGE, m.hit);
+    }
+  }
+
+  private endQueen(owner: Owner): void {
+    const s = this.side(owner);
+    if (!s.queenUntil) return;
+    s.queenUntil = 0;
+    s.queenMove = null;
+    const f = this.fighter(owner);
+    if (this.alive(f)) {
+      this.fx(owner).vanish(f.x, f.y - 30);
+      this.api.showFloatingText(f.x, f.y - 50, 'CROWN LIFTED', this.hex(PSY.violetLit));
+    }
+  }
+
+  // ── The auras ──────────────────────────────────────────────────────────────
+
+  /** How many of `kind`'s auras are on that side's psychic right now, stolen ones included. */
+  private stacks(owner: Owner, kind: PieceKind): number {
+    const f = this.fighter(owner);
+    if (!this.isPsychic(owner) || !this.alive(f)) return 0;
+    let n = 0;
+    for (const p of this.pieces) {
+      if (p.owner !== owner || p.kind !== kind) continue;
+      if (Phaser.Math.Distance.Between(p.x, p.y, f.x, f.y) <= AURA_R) n++;
+    }
+    for (const st of this.side(owner).stolen) if (st.kind === kind && st.until > this.now) n++;
+    return n;
+  }
+
+  /** The queen is every aura at three times the size, multiplied onto whatever else is up. */
+  private queenStep(owner: Owner): number {
+    return this.queen(owner) ? AURA_STEP * QUEEN_MULT : 0;
+  }
+
+  /** Damage taken, ×. The bishop's light. */
+  private guardMult(owner: Owner): number {
+    return Math.pow(1 - AURA_STEP, this.stacks(owner, 'bishop')) * (1 - this.queenStep(owner));
+  }
+
+  /** Movement speed, ×. The knight's stride. */
+  private speedMult(owner: Owner): number {
+    return Math.pow(1 + AURA_STEP, this.stacks(owner, 'knight')) * (1 + this.queenStep(owner));
+  }
+
+  /** Damage dealt, ×. The rook's might. */
+  private mightMult(owner: Owner): number {
+    return Math.pow(1 + AURA_STEP, this.stacks(owner, 'rook')) * (1 + this.queenStep(owner));
+  }
+
+  /**
+   * Rewritten from scratch onto every body each frame — the Justice pattern — so an aura that
+   * is walked out of between two ticks can never leave a stale multiplier behind.
+   */
+  private applyAuras(): void {
+    for (const f of this.allFighters()) if (f) f.psychicIncomingMult = 1;
+    for (const owner of BOTH) {
+      const s = this.side(owner);
+      s.stolen = s.stolen.filter((st) => st.until > this.now);
+      if (!this.isPsychic(owner)) continue;
+      const f = this.fighter(owner);
+      if (!this.alive(f)) continue;
+      f.psychicIncomingMult *= this.guardMult(owner);
+      const might = this.mightMult(owner);
+      if (might !== 1) for (const t of this.targetsOf(owner)) t.psychicIncomingMult *= might;
+    }
+  }
+
+  // ── The bot's board sense ──────────────────────────────────────────────────
+
+  /**
+   * Work out the best thing the bot's click could do with the board this tick, owner-side, so
+   * the AI never has to re-derive a single line of chess. In order:
+   *
+   * 1. As the queen, a line that runs through the target (or as close to them as a line goes).
+   * 2. Any piece whose legal move passes through the target, or (a knight) lands its blast on
+   *    them — the target's position is led by a fraction of the move's own travel time.
+   * 3. A rook that can take one of the bot's own bishops or knights for the 30-second aura,
+   *    when it has nothing better to hit.
+   *
+   * Read by ArenaScene into `NpcAiState` and side-effect-free from there on.
+   */
+  private planNpc(): void {
+    if (this.now - this.npcPlanAt < NPC_PLAN_MS) return;
+    this.npcPlanAt = this.now;
+    this.npcPlan = null;
+    if (!this.isPsychic('npc') || this.api.isOnline) return;
+    const f = this.api.npc;
+    const t = this.nearestTarget('npc');
+    if (!this.alive(f) || !t) return;
+    const vel = this.velocityOf(t);
+    const lead = (s: number): { x: number; y: number } => ({
+      x: this.clampX(t.x + vel.x * s), y: this.clampY(t.y + vel.y * s),
+    });
+    const reach = SLIDE_HIT_R + this.bodyR(t) - 6;
+    const s = this.sides.npc;
+
+    if (this.queen('npc')) {
+      if (s.queenMove || this.now < s.queenReadyAt) return;
+      const at = lead(0.2);
+      const dest = this.legalDest('queen', f.x, f.y, at.x + (at.x - f.x) * 0.15, at.y + (at.y - f.y) * 0.15);
+      if (!dest) return;
+      const onLine = this.segDist(f.x, f.y, dest.x, dest.y, at.x, at.y) <= reach;
+      const lands = Phaser.Math.Distance.Between(dest.x, dest.y, at.x, at.y) <= QUEEN_BLAST_R;
+      // Off any line, the queen still walks: she has no other way to close.
+      if (onLine || lands || Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) > 140) {
+        this.npcPlan = { piece: -1, x: dest.x, y: dest.y };
+      }
       return;
     }
 
-    const q = this.queues.get(victim);
-    if (!q || !q.length) { this.refund(f, 'psychic-mind-control'); return; }
-    const taken = q.shift() as Queued;
-    if (!q.length) this.queues.delete(victim);
-    victim.restampCooldown(taken.id);
-    this.api.showFloatingText(victim.x, victim.y - 70, `🚫 ${taken.key} SEIZED`, this.hex(PSY.gold));
-    this.record(owner, 'castsDenied');
-    if (this.up(owner, 'e')) this.creditTheft(owner, taken.key);
-  }
-
-  /**
-   * Ability Theft (E+): five seconds off the thief's own ability in the slot they just robbed.
-   *
-   * Matched on the display key rather than the id, because the two elements share nothing else —
-   * "the slot" is the only thing a stolen Fireball and a Headache have in common. Stealing their
-   * E is the funny case and is deliberately left in: Mind Control's own cooldown is 5 seconds, so
-   * robbing an E pays for the robbery.
-   */
-  private creditTheft(owner: Owner, key: string): void {
-    const f = this.fighter(owner);
-    const own = f.element.abilities.find((a) => a.displayKey === key);
-    if (!own) return;
-    f.reduceCooldown(own.id, THEFT_REFUND_MS);
-    this.api.showFloatingText(f.x, f.y - 54, `⏱ ${key} −5s`, this.hex(PSY.gold));
-  }
-
-  /**
-   * R — 1.25 seconds of nothing being able to touch you. Re-asserted every frame rather than set
-   * once, because a dash anywhere else in the game clears `isInvincible` on a timer of its own
-   * and would otherwise cut this short.
-   */
-  doDodgeDestiny(owner: Owner): void {
-    const f = this.fighter(owner);
-    if (!this.alive(f)) { this.refund(f, 'psychic-dodge-destiny'); return; }
-    this.ensureLayers();
-    const s = this.side(owner);
-    s.dodgeUntil = this.now + DODGE_MS;
-    f.isInvincible = true;
-    this.avatar(owner)?.setBlind(true);
-    this.avatar(owner)?.play('flex');
-    this.fx(owner).veil(f.x, f.y, DODGE_MS);
-    this.api.showFloatingText(f.x, f.y - 50, '👁️ DESTINY DODGED', this.hex(PSY.gold));
-  }
-
-  /**
-   * F — a migraine left on the floor rather than handed out.
-   *
-   * The charge is planted at the cursor and goes off two and a half seconds later, which is the
-   * same deal Fire's Pressure Bomb offers: a mark on the ground everyone can read, and a wait
-   * long enough that a placed charge is a prediction rather than a hit. It suits this element
-   * better than it suits Fire's, because predicting where somebody will be standing is the
-   * entire passive — the thread on the floor is already telling you where to put it.
-   *
-   * What it detonates is the migraine itself: three seconds in which most of what they aim goes
-   * somewhere else, plus ten stress a second, plus ten for being caught at all. The aim half is
-   * a single generic field on the victim, read where every ability in the game gets its target
-   * point, so it works on anything they might be.
-   */
-  doMigraine(owner: Owner, tx: number, ty: number, chargeMs = 0): void {
-    const f = this.fighter(owner);
-    if (!this.alive(f)) { this.refund(f, 'psychic-migraine'); return; }
-    this.ensureLayers();
-
-    // Clamped so a charge thrown at the edge still covers ground the fight happens on.
-    const x = Phaser.Math.Clamp(tx, this.left, this.right);
-    const y = Phaser.Math.Clamp(ty, this.top, this.bottom);
-    const s = this.side(owner);
-    s.aimX = tx;
-    s.aimY = ty;
-
-    // Mind's Focus (F+) buys all three of a charge's numbers at once. Zero on an ordinary tap,
-    // which is what makes every figure below identical to the unupgraded ability.
-    const charge = chargeMs / 1000;
-    const radius = MIGRAINE_RADIUS + charge * FOCUS_RADIUS_PER_S;
-    const fuse = MIGRAINE_FUSE_MS + charge * FOCUS_FUSE_PER_S;
-
-    this.avatar(owner)?.play('slam', Math.atan2(y - f.y, x - f.x));
-    this.charges.push({
-      x, y, plantedAt: this.now, firesAt: this.now + fuse, by: owner, radius, charge,
-    });
-    this.fx(owner).plant(x, y, radius * 0.34);
-    if (charge > 0.05) {
-      this.api.showFloatingText(x, y - 26, `🌀 ${charge.toFixed(1)}s FOCUS`, this.hex(PSY.violetLit));
-    }
-  }
-
-  /** The fuse. Nothing about a planted charge moves — only the mark on it does. */
-  private updateCharges(): void {
-    for (let i = this.charges.length - 1; i >= 0; i--) {
-      const c = this.charges[i];
-      if (this.now < c.firesAt) continue;
-      this.charges.splice(i, 1);
-      this.detonateCharge(c);
-    }
-  }
-
-  private detonateCharge(c: Charge): void {
-    this.ensureLayers();
-    this.fx(c.by).detonation(c.x, c.y, c.radius);
-    this.api.scene.cameras.main.shake(140, 0.003);
-    Sfx.playAt('torment', c.x, { rate: 0.9, volume: 1 });
-
-    // "Fully wound" is the whole five seconds of Mind's Focus, and it only counts if the blast
-    // actually caught somebody — a perfect wind-up thrown at an empty floor is not a landing.
-    let caught = false;
-
-    for (const v of this.targetsOf(c.by)) {
-      if (Phaser.Math.Distance.Between(c.x, c.y, v.x, v.y) > c.radius) continue;
-      caught = true;
-      // A replica's shots are fired on the machine that owns it, so scattering the copy here
-      // would bend an angle that has already been bent once. Relay it and let them do it.
-      if (!this.isNetReplica(v)) {
-        v.aimScatterUntil = Math.max(v.aimScatterUntil, Date.now() + MIGRAINE_MS);
-      }
-      this.migraines.set(v, { until: this.now + MIGRAINE_MS, by: c.by, nextTickAt: this.now + 1000 });
-      // Read before the add, or the wind-up would be scaling off stress it is itself applying.
-      const carried = this.stress.get(v)?.amount ?? 0;
-      this.addStress(v, MIGRAINE_HIT_STRESS
-        + c.charge * FOCUS_STRESS_PER_S
-        + carried * c.charge * FOCUS_POOL_CUT_PER_S, c.by);
-      this.fx(c.by).throb(v.x, v.y);
-      this.api.spawnHitFlash(v.x, v.y, this.col(c.by)(PSY.stress));
-      this.api.showFloatingText(v.x, v.y - 54, '🤯 MIGRAINE', this.hex(PSY.stress));
-      if (this.shouldRelay(c.by, v)) {
-        this.api.sendPsychicMsg({ t: 'psy', k: 'scatter', ms: MIGRAINE_MS });
-      }
-    }
-
-    if (caught && c.charge >= FOCUS_MAX_MS / 1000 - 0.05) this.record(c.by, 'fullMigraines');
-  }
-
-  /**
-   * Q — cash the whole pool in at 1.5x and put them under for a second per twenty points. The
-   * coma is the second half of the ability and the better half: while it runs, everything the
-   * psychic lands is halved and the missing half goes straight back into a fresh pool, so a Q
-   * that lands on 80 stress hands you four seconds in which to build the next 80.
-   */
-  doComa(owner: Owner): void {
-    const f = this.fighter(owner);
-    if (!this.alive(f)) { this.refund(f, 'psychic-coma'); return; }
-    this.ensureLayers();
-    this.avatar(owner)?.play('raise');
-
-    let landed = false;
-    for (const v of this.targetsOf(owner)) {
-      const st = this.stress.get(v);
-      if (!st || st.amount < 1) continue;
-      landed = true;
-      const total = Math.round(st.amount * COMA_MULT);
-      this.stress.delete(v);
-      this.api.showFloatingText(v.x, v.y - 74, `×${COMA_MULT} → ${total}`, this.hex(PSY.stress));
-      this.detonate(v, total, owner);
-
-      const secs = Math.floor(total / COMA_PER_STRESS);
-      if (secs > 0) this.beginComa(owner, v, secs * 1000);
-    }
-    // No pool anywhere means the ultimate was spent on nothing at all — hand it back rather
-    // than eating a thirty-second cooldown for a light show.
-    if (!landed) {
-      this.refund(f, 'psychic-coma');
-      this.api.showFloatingText(f.x, f.y - 50, 'NO STRESS TO CASH', this.hex(PSY.violetLit));
-    }
-  }
-
-  // ── Stress ─────────────────────────────────────────────────────────────────
-
-  /**
-   * Add to a victim's pool and push the fuse back out to a full ten seconds.
-   *
-   * `quiet` is for the coma's banking, which lands on every single tick of every burn, poison
-   * and bleed the victim is wearing — a pop-up per tick would bury the arena. The readout over
-   * their head is already live, so the number is never actually hidden.
-   */
-  private addStress(victim: Fighter, amount: number, by: Owner, quiet = false): void {
-    if (amount <= 0 || !this.alive(victim)) return;
-    // Utter Focus (mastery) is applied here rather than at each call site, so every source in
-    // the element is covered by it at once — lashes, ticks, blasts, snares and the coma's own
-    // banking. The number the player sees pop is the boosted one, because it is the real one.
-    // Ruin's Combo Breaker halves every meter in the game, and stress is the biggest of them.
-    // Applied here for the same reason Utter Focus is: one place covers every source at once.
-    const amt = meterGain(this.fighter(by), this.focused(by) ? amount * UTTER_STRESS_MULT : amount);
-    const cur = this.stress.get(victim);
-    this.stress.set(victim, {
-      amount: (cur?.amount ?? 0) + amt,
-      releaseAt: this.now + STRESS_HOLD_MS,
-      by,
-      seed: cur?.seed ?? Math.random() * 999,
-    });
-    // Banked to whole points before it is written. The coma's half-damage banking calls this
-    // every frame a burn is ticking, and a `localStorage` write per frame for a fraction of a
-    // point is the one thing this counter must not become.
-    if (by === 'player') {
-      this.stressBanked += amt;
-      if (this.stressBanked >= 1) {
-        const whole = Math.floor(this.stressBanked);
-        this.stressBanked -= whole;
-        this.record('player', 'stressDealt', whole);
-      }
-    }
-    if (quiet) return;
-    this.api.showFloatingText(
-      victim.x + (Math.random() - 0.5) * 22, victim.y - 34,
-      `+${Math.round(amt)}`, this.hex(PSY.stress),
-    );
-  }
-
-  /**
-   * Let a pool go. Pierce, because "stress damage pierces through damage resistance" — which in
-   * this codebase means it skips the whole mitigation product *and* every absorb layer under it.
-   * A comatose victim is re-baselined straight afterwards, or the half of this hit the coma eats
-   * would come back as stress and the two would feed each other forever.
-   */
-  private detonate(victim: Fighter, amount: number, by: Owner): void {
-    if (amount <= 0) return;
-    // The biggest single release, ever, on one body — a ratchet rather than a total, so it is
-    // one enormous Q that finishes it rather than a hundred small ones.
-    if (by === 'player') this.api.recordMasteryBest('bestDetonation', Math.round(amount));
-    this.fx(by).burst(victim.x, victim.y, Math.min(1, amount / STRESS_FULL));
-    victim.takeDamage(amount, { pierce: true });
-    const c = this.comas.get(victim);
-    if (c) c.lastRaw = victim.rawDamageTaken;
-  }
-
-  private updateStress(): void {
-    for (const [v, st] of [...this.stress]) {
-      if (!this.alive(v)) { this.stress.delete(v); continue; }
-      if (this.now < st.releaseAt) continue;
-      this.stress.delete(v);
-      this.api.showFloatingText(v.x, v.y - 60, `💥 ${Math.round(st.amount)} STRESS`, this.hex(PSY.stress));
-      this.detonate(v, Math.round(st.amount), st.by);
-    }
-  }
-
-  // ── Coma ───────────────────────────────────────────────────────────────────
-
-  private beginComa(owner: Owner, victim: Fighter, ms: number): void {
-    this.comas.set(victim, {
-      until: this.now + ms, by: owner, lastRaw: victim.rawDamageTaken,
-      nextBleedAt: this.now + 1000, bled: 0,
-    });
-    this.fx(owner).sleep(victim.x, victim.y);
-    this.api.showFloatingText(victim.x, victim.y - 58, `💤 COMA ${(ms / 1000).toFixed(0)}s`, this.hex(PSY.violetLit));
-    if (this.shouldRelay(owner, victim)) this.api.sendPsychicMsg({ t: 'psy', k: 'coma', ms });
-  }
-
-  /**
-   * The armour multiplier is rewritten from scratch onto every body each frame — the Justice
-   * pattern — so a coma that ends between two ticks can never leave a stale 0.5 behind.
-   */
-  private updateComas(): void {
-    for (const f of this.allFighters()) {
-      if (f) f.psychicIncomingMult = 1;
-    }
-    for (const [v, c] of [...this.comas]) {
-      if (!this.alive(v) || this.now >= c.until) {
-        this.comas.delete(v);
-        this.endComa(v, c);
+    for (const pc of this.pieces) {
+      if (pc.owner !== 'npc' || pc.move || this.now < pc.readyAt) continue;
+      const at = lead(pc.kind === 'knight' ? KNIGHT_LEAP_MS / 1000 : 0.25);
+      if (pc.kind === 'knight') {
+        const dest = this.legalDest('knight', pc.x, pc.y, at.x, at.y);
+        if (dest && Phaser.Math.Distance.Between(dest.x, dest.y, at.x, at.y) <= KNIGHT_BLAST_R * 0.8) {
+          this.npcPlan = { piece: pc.id, x: dest.x, y: dest.y };
+          return;
+        }
         continue;
       }
-      v.psychicIncomingMult = COMA_SPLIT;
-      // Casting is a generic field; being held still is this kit's own speed multiplier, since
-      // a comatose fighter still has to be pushable by everything else in the game.
-      v.disarmedUntil = Math.max(v.disarmedUntil, Date.now() + 150);
-      if (!this.isNetReplica(v)) this.body(v).setVelocity(0, 0);
+      // Aim past them so the slide goes all the way through rather than stopping short.
+      const ang = Math.atan2(at.y - pc.y, at.x - pc.x);
+      const dest = this.legalDest(pc.kind, pc.x, pc.y, at.x + Math.cos(ang) * 60, at.y + Math.sin(ang) * 60);
+      if (dest && this.segDist(pc.x, pc.y, dest.x, dest.y, at.x, at.y) <= reach) {
+        this.npcPlan = { piece: pc.id, x: dest.x, y: dest.y };
+        return;
+      }
+    }
 
-      // Whatever the armour just ate, banked back as stress. `rawDamageTaken` is tallied before
-      // any multiplier runs, so the difference is the *full* hit and half of it is what landed.
-      const raw = v.rawDamageTaken;
-      const dealt = raw - c.lastRaw;
-      c.lastRaw = raw;
-      if (dealt > 0.5) this.addStress(v, dealt * COMA_SPLIT, c.by, true);
-
-      // Cycle of Abuse last, so the banking above has already settled everything else this
-      // frame — the bleed re-baselines behind itself and must not be reached by it.
-      if (this.up(c.by, 'q') && this.now >= c.nextBleedAt) {
-        c.nextBleedAt += 1000;
-        this.bleed(v, c);
+    // Nothing to hit: a rook eats one of the bot's own pieces for its aura, if one is on a line.
+    for (const rook of this.pieces) {
+      if (rook.owner !== 'npc' || rook.kind !== 'rook' || rook.move || this.now < rook.readyAt) continue;
+      for (const o of this.pieces) {
+        if (o === rook || o.owner !== 'npc' || o.kind === 'rook') continue;
+        // Only once the piece has done most of its job — a fresh bishop is worth more standing.
+        if (o.until - this.now > PIECE_LIFE_MS * 0.5) continue;
+        const dest = this.legalDest('rook', rook.x, rook.y, o.x, o.y);
+        if (dest && this.segDist(rook.x, rook.y, dest.x, dest.y, o.x, o.y) <= CAPTURE_R - 4) {
+          this.npcPlan = { piece: rook.id, x: dest.x, y: dest.y };
+          return;
+        }
       }
     }
   }
 
   /**
-   * Cycle of Abuse (Q+): one point of pressure a second coming out of a comatose body sideways.
+   * Where the bot should stand a fresh piece, so that the move after it is already lined up.
    *
-   * The stress is *removed* rather than released — it comes off the pool and lands on them as
-   * ordinary damage, which their armour (including the coma's own halving) answers normally.
-   * What it is not is banked: `lastRaw` is re-baselined immediately, exactly as `detonate` does,
-   * or the coma would hand half of every bleed straight back and the pool would never drain.
-   *
-   * The shockwave is the interesting half. It hits everything in 120px *except* the body it came
-   * out of — which in a duel means the psychic standing over them, and that is the point of the
-   * name. Cashing a Coma and then camping on top of it costs 10 a second.
+   * A bishop goes on a diagonal through the target, a rook on a rank or file through them and a
+   * knight one jump away from them — each at the candidate nearest the bot, so the aura it
+   * brings is also somewhere the bot can stand in.
    */
-  private bleed(v: Fighter, c: Coma): void {
-    const st = this.stress.get(v);
-    if (!st || st.amount < 0.5) return;
-    const amt = Math.min(BLEED_PER_S, st.amount);
-    st.amount -= amt;
-    if (st.amount < 0.5) this.stress.delete(v);
-    c.bled += amt;
+  npcPlaceFor(kind: PieceKind): { x: number; y: number } | undefined {
+    const f = this.api.npc;
+    const t = this.nearestTarget('npc');
+    if (!this.alive(f) || !t) return undefined;
+    const cands: { x: number; y: number }[] = [];
+    if (kind === 'knight') {
+      const u = KNIGHT_UNIT;
+      for (const [a, b] of [[2, 1], [1, 2], [-1, 2], [-2, 1], [-2, -1], [-1, -2], [1, -2], [2, -1]]) {
+        cands.push({ x: t.x + a * u, y: t.y + b * u });
+      }
+    } else {
+      const D = Math.SQRT1_2;
+      const dirs: [number, number][] = kind === 'bishop'
+        ? [[D, D], [D, -D], [-D, D], [-D, -D]]
+        : [[1, 0], [-1, 0], [0, 1], [0, -1]];
+      for (const d of dirs) for (const r of [130, 190]) cands.push({ x: t.x + d[0] * r, y: t.y + d[1] * r });
+    }
+    let best: { x: number; y: number } | undefined;
+    let bestD = Infinity;
+    for (const c of cands) {
+      if (c.x < this.left + 8 || c.x > this.right - 8 || c.y < this.top + 8 || c.y > this.bottom - 8) continue;
+      const d = Phaser.Math.Distance.Between(f.x, f.y, c.x, c.y);
+      if (d < bestD) { bestD = d; best = c; }
+    }
+    return best;
+  }
 
-    v.takeDamage(amt);
-    c.lastRaw = v.rawDamageTaken;
-    this.fx(c.by).bleedBurst(v.x, v.y, BLEED_AOE_RADIUS);
-    this.api.showFloatingText(v.x - 18, v.y - 30, `−${amt.toFixed(0)}`, this.hex(PSY.stressDeep));
+  // ── Opened Eyes: the queue ─────────────────────────────────────────────────
 
-    const caster = this.fighter(c.by);
-    for (const other of this.allFighters()) {
-      if (other === v || !this.alive(other)) continue;
-      if (Phaser.Math.Distance.Between(v.x, v.y, other.x, other.y) > BLEED_AOE_RADIUS) continue;
-      other.takeDamage(BLEED_AOE_DAMAGE, other === caster ? { selfInflicted: true } : undefined);
-      this.api.spawnHitFlash(other.x, other.y, this.col(c.by)(PSY.stress));
+  /**
+   * Install or remove the delayed-cast hook on everyone who should be under it. Online the
+   * psychic never touches the replica — the person behind it delays their own casts on their
+   * own machine and sends the queue back.
+   */
+  private updateForesight(): void {
+    const want = new Map<Fighter, number>();
+    if (this.isPsychic('npc') && this.alive(this.api.npc) && !this.api.isInvasion) {
+      want.set(this.api.player, this.foresightMs('npc'));
+    }
+    if (this.isPsychic('player') && this.alive(this.api.player) && !this.api.isOnline) {
+      for (const f of this.targetsOf('player')) want.set(f, this.foresightMs('player'));
+    }
+    for (const f of [...this.foreseen]) {
+      if (!want.has(f)) this.releaseForesight(f, true);
+    }
+    for (const [f, ms] of want) {
+      f.castDelayMs = ms;
+      if (this.foreseen.has(f)) continue;
+      f.queueDelayedCast = (id, delay, fire) => this.enqueue(f, id, delay, fire);
+      this.foreseen.add(f);
     }
   }
 
-  /** Cycle of Abuse (Q+): a quarter of everything bled is waiting on them when they wake up. */
-  private endComa(v: Fighter, c: Coma): void {
-    if (!this.alive(v) || c.bled <= 0 || !this.up(c.by, 'q')) return;
-    const back = Math.round(c.bled * BLEED_RETURN);
-    if (back < 1) return;
-    this.addStress(v, back, c.by, true);
-    this.api.showFloatingText(v.x, v.y - 66, `🔁 ${back} RETURNED`, this.hex(PSY.stress));
+  /**
+   * Give a fighter its casts back. Anything still queued fires immediately rather than being
+   * dropped: it was paid for at the press.
+   */
+  private releaseForesight(f: Fighter, fire: boolean): void {
+    f.castDelayMs = 0;
+    f.queueDelayedCast = null;
+    this.foreseen.delete(f);
+    const q = this.queues.get(f);
+    this.queues.delete(f);
+    if (!fire || !q || !this.alive(f)) return;
+    for (const e of q) e.fire();
   }
 
-  private updateMigraines(): void {
-    for (const [v, m] of [...this.migraines]) {
-      if (!this.alive(v) || this.now >= m.until) { this.migraines.delete(v); continue; }
-      if (this.now < m.nextTickAt) continue;
-      m.nextTickAt += 1000;
-      this.addStress(v, MIGRAINE_STRESS_PER_S, m.by);
+  private enqueue(f: Fighter, abilityId: string, ms: number, fire: () => void): boolean {
+    if (!this.alive(f)) return false;
+    const ability = f.element.abilities.find((a) => a.id === abilityId);
+    const q = this.queues.get(f) ?? [];
+    q.push({
+      id: abilityId,
+      key: ability?.displayKey ?? '?',
+      name: ability?.name ?? abilityId,
+      big: !!ability?.isUltimate,
+      at: this.now + ms,
+      pressed: this.now,
+      fire,
+    });
+    q.sort((a, b) => a.at - b.at);
+    this.queues.set(f, q);
+    return true;
+  }
+
+  private updateQueues(): void {
+    for (const [f, q] of [...this.queues]) {
+      if (!this.alive(f)) { this.queues.delete(f); continue; }
+      while (q.length && q[0].at <= this.now) {
+        const e = q.shift() as Queued;
+        e.fire();
+      }
+      if (!q.length) this.queues.delete(f);
     }
+  }
+
+  /**
+   * Everything the psychic is holding, across every enemy, as cards soonest-first. `left` is the
+   * fraction of the hold still to run, which is what the fuse on each card shows.
+   */
+  private cardsFor(owner: Owner): { key: string; name: string; big: boolean; left: number; secs: number }[] {
+    const out: { key: string; name: string; big: boolean; left: number; secs: number; at: number }[] = [];
+    if (owner === 'player' && this.isNetReplica(this.api.npc)) {
+      if (this.now - this.netQueueAt > QUEUE_STALE_MS) return [];
+      const since = this.now - this.netQueueAt;
+      for (const e of this.netQueue) {
+        const a = this.api.npc.element.abilities.find((ab) => ab.id === e.id);
+        const ms = Math.max(0, e.left - since);
+        out.push({
+          key: a?.displayKey ?? '?', name: a?.name ?? e.id, big: !!a?.isUltimate,
+          left: ms / this.foresightMs('player'), secs: ms / 1000, at: ms,
+        });
+      }
+    } else {
+      for (const t of this.targetsOf(owner)) {
+        for (const e of this.queues.get(t) ?? []) {
+          const ms = Math.max(0, e.at - this.now);
+          out.push({
+            key: e.key, name: e.name, big: e.big,
+            left: ms / Math.max(1, e.at - e.pressed), secs: ms / 1000, at: e.at,
+          });
+        }
+      }
+    }
+    out.sort((a, b) => a.at - b.at);
+    return out.slice(0, CARDS_SHOWN);
+  }
+
+  /** Online: tell the psychic what our own sim is holding, soonest first, with time left. */
+  private relayQueue(): void {
+    if (!this.api.isOnline || !this.isPsychic('npc')) return;
+    if (this.now - this.lastQueueRelayAt < QUEUE_RELAY_MS) return;
+    this.lastQueueRelayAt = this.now;
+    const q = (this.queues.get(this.api.player) ?? []).slice(0, CARDS_SHOWN);
+    const ids = q.map((e) => e.id);
+    const ms = q.map((e) => Math.max(0, Math.round(e.at - this.now)));
+    const sig = ids.join(',');
+    // Resent on a heartbeat as well as on change: the receiver treats a mirror older than
+    // 1.2 s as gone, so a queue that happens to sit unchanged must not go quiet.
+    if (sig === this.lastRelayedQueue && this.now - this.lastQueueSentAt < 700) return;
+    this.lastRelayedQueue = sig;
+    this.lastQueueSentAt = this.now;
+    this.api.sendPsychicMsg({ t: 'psy', k: 'queue', ids, ms });
+  }
+
+  // ── Online ─────────────────────────────────────────────────────────────────
+
+  handleNetMsg(msg: NetPsychicMsg): void {
+    switch (msg.k) {
+      case 'queue':
+        this.netQueue = msg.ids.slice(0, CARDS_SHOWN).map((id, i) => ({ id, left: msg.ms[i] ?? 0 }));
+        this.netQueueAt = this.now;
+        break;
+      case 'move': {
+        // Their piece, on our board. Spawns arrived through the ordinary cast relay, so the
+        // serial on it is the same one their machine gave it.
+        const pc = this.pieceById('npc', msg.id);
+        if (pc) {
+          // A move that lands while the replayed piece is still settling is honoured anyway —
+          // their machine already allowed it.
+          pc.readyAt = 0;
+          if (pc.move) { pc.x = pc.move.tx; pc.y = pc.move.ty; pc.move = null; }
+          this.movePiece(pc, msg.x, msg.y, true);
+        }
+        break;
+      }
+      case 'qmove': {
+        const f = this.api.npc;
+        if (!this.alive(f)) break;
+        const s = this.sides.npc;
+        // The body is streamed; this slide is only here so its hits and its landing are drawn
+        // (and resolved, attacker-side, by the machine that owns them).
+        s.queenMove = {
+          fx: f.x, fy: f.y, tx: msg.x, ty: msg.y, start: this.now,
+          ms: Math.max(110, (Phaser.Math.Distance.Between(f.x, f.y, msg.x, msg.y) / QUEEN_SLIDE_SPEED) * 1000),
+          leap: false, hit: new Set(),
+        };
+        break;
+      }
+      case 'utter': {
+        const s = this.sides.npc;
+        if (msg.ms <= 0) { this.endUtter('npc'); break; }
+        const wasOpen = s.utterUntil > 0;
+        s.utterUntil = this.now + msg.ms;
+        if (!wasOpen) this.beginUtter('npc', msg.ms);
+        break;
+      }
+      case 'route':
+        this.netRoute = [];
+        for (let i = 0; i + 1 < msg.pts.length; i += 2) {
+          this.netRoute.push({ x: msg.pts[i], y: msg.pts[i + 1] });
+        }
+        this.netRouteAt = this.now;
+        break;
+      default:
+        break;
+    }
+  }
+
+  // ── Projection ─────────────────────────────────────────────────────────────
+
+  /** Track every body's velocity from where it actually went, for anything with no plan. */
+  private observe(): void {
+    for (const f of this.allFighters()) {
+      if (!this.alive(f)) { this.seen.delete(f); continue; }
+      const o = this.seen.get(f);
+      if (!o) { this.seen.set(f, { x: f.x, y: f.y, vx: 0, vy: 0, at: this.now }); continue; }
+      const dt = (this.now - o.at) / 1000;
+      if (dt <= 0) continue;
+      // Smoothed, so a replica's 20 Hz position stream does not make the shadow stutter.
+      const k = Math.min(1, dt * 8);
+      o.vx += ((f.x - o.x) / dt - o.vx) * k;
+      o.vy += ((f.y - o.y) / dt - o.vy) * k;
+      o.x = f.x;
+      o.y = f.y;
+      o.at = this.now;
+    }
+  }
+
+  private velocityOf(f: Fighter): { x: number; y: number } {
+    const o = this.seen.get(f);
+    if (o && !this.isNetReplica(f) && f.body) {
+      const b = this.body(f);
+      return { x: b.velocity.x, y: b.velocity.y };
+    }
+    return o ? { x: o.vx, y: o.vy } : { x: 0, y: 0 };
+  }
+
+  /**
+   * The next `ms` of a body's movement, as a polyline.
+   *
+   * For a bot this is not a guess: `NpcOpponent.movementPlan` hands over the exact locomotion
+   * rule it is following this tick, and it is replayed forward against the player's current
+   * position. A body with no plan (a replica, a husk) falls back to dead reckoning off the
+   * velocity it has actually been moving at — unless Utter Focus is holding a remote
+   * opponent's feet, in which case their own machine has sent the route and it is used verbatim.
+   */
+  private projectPath(f: Fighter, ms: number): { x: number; y: number }[] {
+    if (this.isNetReplica(f) && this.now - this.netRouteAt < ROUTE_STALE_MS && this.netRoute.length > 2) {
+      const n = Math.max(2, Math.round((ms / UTTER_FORESIGHT_MS) * this.netRoute.length));
+      return [{ x: f.x, y: f.y }, ...this.netRoute.slice(0, n)];
+    }
+    const steps = Math.max(4, Math.round(ms / PATH_STEP_MS));
+    const dt = ms / 1000 / steps;
+    const pts: { x: number; y: number }[] = [{ x: f.x, y: f.y }];
+    const plan = (f as unknown as { movementPlan?: MovementPlan }).movementPlan;
+    const px = this.api.player.x;
+    const py = this.api.player.y;
+    let x = f.x;
+    let y = f.y;
+
+    if (plan && !this.isNetReplica(f)) {
+      if (plan.frozen) return pts;
+      for (let i = 0; i < steps; i++) {
+        const d = Phaser.Math.Distance.Between(x, y, px, py);
+        const toward = Math.atan2(py - y, px - x);
+        const closing = d > plan.range;
+        const a = closing ? toward : toward + plan.strafe * (Math.PI / 2);
+        const sp = plan.speed * (closing ? 1 : 0.6);
+        x = this.clampX(x + Math.cos(a) * sp * dt);
+        y = this.clampY(y + Math.sin(a) * sp * dt);
+        pts.push({ x, y });
+      }
+      return pts;
+    }
+
+    let { x: vx, y: vy } = this.velocityOf(f);
+    if (Math.hypot(vx, vy) < 8) return pts;
+    for (let i = 0; i < steps; i++) {
+      x = this.clampX(x + vx * dt);
+      y = this.clampY(y + vy * dt);
+      vx *= 0.97;
+      vy *= 0.97;
+      pts.push({ x, y });
+    }
+    return pts;
+  }
+
+  /** Where a body will be standing `ms` from now, or null when it is not going anywhere. */
+  private futureOf(f: Fighter, ms: number, minDist: number): { x: number; y: number } | null {
+    const pts = this.projectPath(f, ms);
+    const end = pts[pts.length - 1];
+    return Phaser.Math.Distance.Between(end.x, end.y, f.x, f.y) < minDist ? null : end;
   }
 
   // ── Predictor's Snare (mastery passive) ────────────────────────────────────
 
   /**
-   * The dash, replaced.
-   *
-   * Called from `ArenaScene.executeDodge` before it decides what kind of movement the Space key
-   * is. Returning true means this kit has already put the body where it is going — there is no
-   * velocity to set and no direction to honour, because the destination was never the direction
-   * he was holding. It was the end of somebody else's thread.
-   *
-   * Refuses when nobody has a route worth reading, and the dash is then an ordinary dash. That
-   * is the whole counterplay to the passive and it is the same one the element already has:
-   * stand still and you have no future to be ambushed at.
+   * The dash, replaced: Space puts the psychic on the spot the nearest enemy's route ends at
+   * (the end of the foresight window), and leaves a closed eye there. Refuses — leaving an
+   * ordinary dash — when nobody has a route worth arriving at.
    */
   trySnareDash(): boolean {
     if (!this.masteryOn('player')) return false;
     const p = this.api.player;
-    if (!this.alive(p) || this.comas.has(p)) return false;
+    if (!this.alive(p)) return false;
 
     let dest: { x: number; y: number } | null = null;
     let bestD = Infinity;
     for (const t of this.targetsOf('player')) {
-      const d = this.destinyOf(t, 'player');
+      const d = this.futureOf(t, this.foresightMs('player'), SNARE_MIN_DIST);
       if (!d) continue;
       const dist = Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y);
       if (dist >= bestD) continue;
@@ -1219,8 +1440,8 @@ export class PsychicKit {
     if (!dest) return false;
 
     this.ensureLayers();
-    const x = Phaser.Math.Clamp(dest.x, this.left, this.right);
-    const y = Phaser.Math.Clamp(dest.y, this.top, this.bottom);
+    const x = this.clampX(dest.x);
+    const y = this.clampY(dest.y);
     const fromX = p.x;
     const fromY = p.y;
     this.body(p).reset(x, y);
@@ -1231,13 +1452,9 @@ export class PsychicKit {
     return true;
   }
 
-  /** Leave a closed eye on the spot. The oldest is rubbed out rather than refusing a new one. */
   private plantSnare(owner: Owner, x: number, y: number): void {
     const mine = this.snares.filter((s) => s.by === owner);
-    if (mine.length >= SNARE_MAX) {
-      const oldest = mine[0];
-      this.snares.splice(this.snares.indexOf(oldest), 1);
-    }
+    if (mine.length >= SNARE_MAX) this.snares.splice(this.snares.indexOf(mine[0]), 1);
     this.snares.push({
       x, y, by: owner,
       until: this.now + SNARE_LIFE_MS,
@@ -1246,28 +1463,19 @@ export class PsychicKit {
     });
   }
 
-  /**
-   * Runes catching people, and runes running out.
-   *
-   * A rune is spent the moment it fires — it is a prediction that came true, and a prediction
-   * cannot come true twice. Only the planter's own enemies can trip one, so a psychic walking
-   * back over his own eye does nothing at all.
-   */
   private updateSnares(): void {
     for (let i = this.snares.length - 1; i >= 0; i--) {
       const s = this.snares[i];
       if (this.now >= s.until) { this.snares.splice(i, 1); continue; }
       if (this.now < s.armedAt) continue;
       for (const v of this.targetsOf(s.by)) {
-        const body = v.body as Phaser.Physics.Arcade.Body | null;
-        const reach = SNARE_R + (body?.radius || WHIP_BODY_R);
-        if (Phaser.Math.Distance.Between(s.x, s.y, v.x, v.y) > reach) continue;
+        if (Phaser.Math.Distance.Between(s.x, s.y, v.x, v.y) > SNARE_R + this.bodyR(v)) continue;
         this.snares.splice(i, 1);
         this.ensureLayers();
         this.fx(s.by).snareTrip(s.x, s.y);
         Sfx.playAt('torment', s.x, { rate: 1.5, volume: 0.6 });
-        this.addStress(v, SNARE_STRESS, s.by);
-        this.api.spawnHitFlash(v.x, v.y, this.col(s.by)(PSY.stress));
+        v.takeDamage(SNARE_DAMAGE);
+        this.api.spawnHitFlash(v.x, v.y, this.col(s.by)(PSY.gold));
         this.api.showFloatingText(v.x, v.y - 46, '🧿 SNARED', this.hex(PSY.gold));
         break;
       }
@@ -1276,17 +1484,10 @@ export class PsychicKit {
 
   // ── Utter Focus (mastery ability) ──────────────────────────────────────────
 
-  /**
-   * The press.
-   *
-   * It never goes near `castAbility` — the enhancement is not in the element's ability list —
-   * so every refusal that function applies has to be repeated here, or a disarmed psychic would
-   * find one key on his bar still worked.
-   */
   private tryCastUtter(owner: Owner): void {
     const f = this.fighter(owner);
     const s = this.side(owner);
-    if (!this.alive(f) || this.comas.has(f)) return;
+    if (!this.alive(f)) return;
     const wall = Date.now();
     if (wall < f.disarmedUntil || wall < f.silencedUntil || wall < f.chickenUntil) return;
     if (this.focused(owner)) {
@@ -1302,10 +1503,6 @@ export class PsychicKit {
     if (owner === 'player') f.triggerCooldown(UTTER_ID);
   }
 
-  /**
-   * The window itself. Separate from the refusals above because the machine on the *other* end
-   * of it opens the same eight seconds on a body that never pressed anything.
-   */
   private beginUtter(owner: Owner, ms = UTTER_MS): void {
     const f = this.fighter(owner);
     const s = this.side(owner);
@@ -1320,17 +1517,10 @@ export class PsychicKit {
     this.fx(owner).focus(f.x, f.y);
     Sfx.playAt('status-curse', f.x, { rate: 0.6, volume: 0.9 });
     this.api.showFloatingText(f.x, f.y - 54, '🧿 UTTER FOCUS', this.hex(PSY.gold));
-    this.api.showFloatingText(f.x, f.y - 36,
-      `${UTTER_FORESIGHT_MS / 1000}s AHEAD · ×${UTTER_STRESS_MULT} STRESS`, this.hex(PSY.violetLit));
+    this.api.showFloatingText(f.x, f.y - 36, `${UTTER_FORESIGHT_MS / 1000}s AHEAD`, this.hex(PSY.violetLit));
   }
 
-  /**
-   * Online replay: the remote psychic pressed their bound key.
-   *
-   * Their cast relay and their first remaining-time heartbeat are two packets describing the
-   * same instant and either may arrive first, so this refuses a window that is already open
-   * rather than opening a second one on top of it.
-   */
+  /** Online replay: the remote psychic pressed their bound key. */
   doNpcUtterFocus(): void {
     if (this.focused('npc')) return;
     this.beginUtter('npc');
@@ -1346,8 +1536,6 @@ export class PsychicKit {
       this.api.showFloatingText(f.x, f.y - 46, '👁️ EYES OPEN', this.hex(PSY.violetLit));
       Sfx.playAt('status-expire', f.x, { rate: 1.1, volume: 0.6 });
     }
-    // Whoever was being held is let go on the same frame, so a window that ends between two
-    // relays never leaves an opponent walking five seconds behind their own hands.
     if (owner === 'npc') this.releaseHeldMovement();
     if (this.shouldRelayUtter(owner)) {
       this.api.sendPsychicMsg({ t: 'psy', k: 'utter', ms: 0 });
@@ -1355,40 +1543,25 @@ export class PsychicKit {
     }
   }
 
-  /** True when the person on the other end of this window is a real one, on another machine. */
   private shouldRelayUtter(owner: Owner): boolean {
     return owner === 'player' && this.api.isOnline && this.alive(this.api.npc);
   }
 
-  /**
-   * The window, per frame, for both sides.
-   *
-   * Two things happen in here that do not happen anywhere else in the kit. The first is the
-   * price: `rawDamageTaken` is diffed exactly as the coma's banking diffs it, and any hit at all
-   * inside a frame costs half a second of the eight. The second is the heartbeat — the remaining
-   * time is what crosses the wire rather than the duration, because the duration is not a
-   * constant once anything has hit him.
-   */
+  /** The window per frame: every frame he is hit costs half a second, and online it heartbeats. */
   private updateUtter(): void {
     for (const owner of BOTH) {
       const s = this.side(owner);
       if (!s.utterUntil) continue;
       const f = this.fighter(owner);
       if (!this.alive(f) || !this.isPsychic(owner)) { this.endUtter(owner); continue; }
-
-      // The price. Counted once a frame however many things landed in it — the window is paid
-      // for in hits taken, not in damage, and a burn tick is not worth the same as a nuke.
       const raw = f.rawDamageTaken;
       if (raw > s.utterRaw + 0.5) {
         s.utterUntil -= UTTER_HIT_COST_MS;
         this.fx(owner).mote(f.x, f.y - 20);
-        this.api.showFloatingText(f.x + 22, f.y - 40,
-          `−${UTTER_HIT_COST_MS / 1000}s FOCUS`, this.hex(PSY.stress));
+        this.api.showFloatingText(f.x + 22, f.y - 40, `−${UTTER_HIT_COST_MS / 1000}s FOCUS`, this.hex(PSY.stress));
       }
       s.utterRaw = raw;
-
       if (this.now >= s.utterUntil) { this.endUtter(owner); continue; }
-
       if (this.shouldRelayUtter(owner) && this.now - s.utterRelayAt >= UTTER_RELAY_MS) {
         s.utterRelayAt = this.now;
         this.api.sendPsychicMsg({ t: 'psy', k: 'utter', ms: Math.round(s.utterUntil - this.now) });
@@ -1396,27 +1569,17 @@ export class PsychicKit {
     }
   }
 
-  /**
-   * The bot's half of the mastery.
-   *
-   * The window is worth pressing for exactly two things the kit already owns: every point of
-   * stress inside it is worth 1.2, and the queue over the target's head grows long enough that
-   * Mind Control has something to pick out of it. Both of those want the same thing — a target
-   * close enough to keep whipping — so the opportunity is computed here and nowhere else, and
-   * `doPsychicAbilities` never has to reason about the mastery at all.
-   */
+  /** The bot opens the window when the target is close, or already has something queued. */
   private updateNpcMastery(): void {
     const s = this.sides.npc;
-    if (!this.utterSlot('npc')) return;
+    if (!this.utterSlot('npc') || this.api.isOnline) return;
     if (this.now < s.npcUtterCheckAt) return;
     s.npcUtterCheckAt = this.now + NPC_UTTER_CHECK_MS;
     const f = this.api.npc;
-    if (!this.alive(f) || this.comas.has(f)) return;
+    if (!this.alive(f)) return;
     if (this.focused('npc') || this.now - s.utterCastAt < UTTER_COOLDOWN_MS) return;
     const t = this.nearestTarget('npc');
     if (!t) return;
-    // Close enough that the multiplier lands on something, or already holding a press of theirs
-    // worth stretching out to five seconds.
     const near = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) <= NPC_UTTER_RANGE;
     if (!near && !this.queues.get(t)?.length) return;
     this.tryCastUtter('npc');
@@ -1424,28 +1587,12 @@ export class PsychicKit {
 
   // ── Utter Focus, on the machine being read ─────────────────────────────────
 
-  /**
-   * How long this player's own movement keys are being held back, or 0.
-   *
-   * Only ever non-zero online. Offline the psychic is a bot whose route this kit already
-   * projects exactly — holding a human's feet would buy the bot nothing it does not have, and
-   * would cost the human the one thing the passive was never supposed to take.
-   */
   private moveDelayMs(): number {
-    if (!this.api.isOnline || !this.isPsychic('npc') || !this.focused('npc')) return 0;
+    if (!this.api.isOnline || this.api.isInvasion || !this.isPsychic('npc') || !this.focused('npc')) return 0;
     return UTTER_FORESIGHT_MS;
   }
 
-  /**
-   * Hold this frame's movement, and hand back whatever was pressed a window ago.
-   *
-   * Called from `ArenaScene`'s movement block with the velocity it was about to set. Everything
-   * that has matured is drained (so a frame drop cannot make the body skip an input entirely)
-   * and the last one out is what the legs keep doing until the next matures. Until the buffer is
-   * a full window deep there is nothing mature in it at all, which is why the first stretch of
-   * somebody else's Utter Focus is spent standing still: the keys being pressed have not
-   * happened yet.
-   */
+  /** Hold this frame's movement, and hand back whatever was pressed a window ago. */
   delayMovement(vx: number, vy: number): { vx: number; vy: number } {
     const delay = this.moveDelayMs();
     if (delay <= 0) {
@@ -1461,7 +1608,6 @@ export class PsychicKit {
     return this.movePlayed;
   }
 
-  /** Give the legs back. Everything still in the buffer is dropped rather than replayed late. */
   private releaseHeldMovement(): void {
     if (this.api.player) this.api.player.moveInputDelayMs = 0;
     if (!this.moveBuffer.length && !this.movePlayed.vx && !this.movePlayed.vy) return;
@@ -1469,14 +1615,7 @@ export class PsychicKit {
     this.movePlayed = { vx: 0, vy: 0 };
   }
 
-  /**
-   * …and tell the psychic where those held keys are taking us.
-   *
-   * This is the only piece of the whole element in which the thread on the psychic's floor is a
-   * fact rather than an estimate, and the reason is simply that the answer is already known over
-   * here: the buffer *is* the next five seconds of this body's movement, so it is integrated
-   * forward and sent as ten points rather than guessed at from a velocity on the other side.
-   */
+  /** …and tell the psychic where those held keys are taking us. */
   private relayRoute(): void {
     const delay = this.moveDelayMs();
     if (delay <= 0) return;
@@ -1485,9 +1624,6 @@ export class PsychicKit {
     const p = this.api.player;
     if (!this.alive(p)) return;
 
-    // The timeline of what the legs are going to do, as segments ending at a game-clock time.
-    // A sample pressed at `at` takes over the body at `at + delay` and holds it until the next
-    // one matures; whatever they are doing right now holds until the oldest held sample does.
     const buf = this.moveBuffer;
     const segs: { vx: number; vy: number; until: number }[] = [];
     const end = this.now + delay;
@@ -1514,8 +1650,8 @@ export class PsychicKit {
         const seg = segs[si];
         const cut = Math.min(to, seg.until);
         if (cut > t) {
-          x = Phaser.Math.Clamp(x + seg.vx * ((cut - t) / 1000), this.left, this.right);
-          y = Phaser.Math.Clamp(y + seg.vy * ((cut - t) / 1000), this.top, this.bottom);
+          x = this.clampX(x + seg.vx * ((cut - t) / 1000));
+          y = this.clampY(y + seg.vy * ((cut - t) / 1000));
           t = cut;
         }
         if (t < seg.until) break;
@@ -1527,432 +1663,40 @@ export class PsychicKit {
     this.api.sendPsychicMsg({ t: 'psy', k: 'route', pts });
   }
 
-  // ── Opened Eyes: the queue ─────────────────────────────────────────────────
-
-  /**
-   * Install or remove the delayed-cast hook on everyone who should be under it.
-   *
-   * Online is the interesting case. The psychic never touches the replica: the person behind it
-   * can see they are fighting a psychic just as well as we can, so they delay their own casts on
-   * their own machine and send the queue back. Delaying the copy here as well would put their
-   * shots four seconds late instead of two.
-   */
-  private updateForesight(): void {
-    // Whose window each victim is under. Mapped rather than collected because the mastery makes
-    // the length a live number — five seconds while that psychic has his eyes shut, two when he
-    // opens them — and it has to be rewritten every frame rather than stamped once on install.
-    const want = new Map<Fighter, number>();
-    if (this.isPsychic('npc') && this.alive(this.api.npc)) {
-      want.set(this.api.player, this.foresightMs('npc'));
-    }
-    if (this.isPsychic('player') && this.alive(this.api.player) && !this.api.isOnline) {
-      for (const f of this.targetsOf('player')) want.set(f, this.foresightMs('player'));
-    }
-
-    for (const f of [...this.foreseen]) {
-      if (!want.has(f)) this.releaseForesight(f, true);
-    }
-    for (const [f, ms] of want) {
-      // A window that widens does not retro-delay what is already queued — those casts were
-      // stamped against the window that was running when they were pressed, and reaching back
-      // into the queue to push them out would be the psychic stealing time twice for one press.
-      f.castDelayMs = ms;
-      if (this.foreseen.has(f)) continue;
-      f.queueDelayedCast = (id, delay, fire) => this.enqueue(f, id, delay, fire);
-      this.foreseen.add(f);
-    }
-  }
-
-  /**
-   * Give a fighter its casts back. Anything still queued fires immediately rather than being
-   * dropped: it was paid for at the press, and a psychic dying mid-telegraph should read as the
-   * held-back second going off all at once, not as free cooldowns for whoever killed him.
-   */
-  private releaseForesight(f: Fighter, fire: boolean): void {
-    f.castDelayMs = 0;
-    f.queueDelayedCast = null;
-    this.foreseen.delete(f);
-    const q = this.queues.get(f);
-    this.queues.delete(f);
-    if (!fire || !q || !this.alive(f)) return;
-    for (const e of q) e.fire();
-  }
-
-  private enqueue(f: Fighter, abilityId: string, ms: number, fire: () => void): boolean {
-    if (!this.alive(f)) return false;
-    const ability = f.element.abilities.find((a) => a.id === abilityId);
-    const q = this.queues.get(f) ?? [];
-    q.push({
-      id: abilityId,
-      key: ability?.displayKey ?? '?',
-      big: !!(ability as { isUltimate?: boolean } | undefined)?.isUltimate,
-      at: this.now + ms,
-      fire,
-    });
-    q.sort((a, b) => a.at - b.at);
-    this.queues.set(f, q);
-    return true;
-  }
-
-  private updateQueues(): void {
-    for (const [f, q] of [...this.queues]) {
-      if (!this.alive(f)) { this.queues.delete(f); continue; }
-      while (q.length && q[0].at <= this.now) {
-        const e = q.shift() as Queued;
-        e.fire();
-      }
-      if (!q.length) this.queues.delete(f);
-    }
-  }
-
-  /** The nearest enemy with something in their queue worth stealing, or null. */
-  private seizableFrom(owner: Owner): Fighter | null {
-    const f = this.fighter(owner);
-    let best: Fighter | null = null;
-    let bestD = Infinity;
-    for (const t of this.targetsOf(owner)) {
-      const has = this.isNetReplica(t)
-        ? this.netQueueKeys.length > 0 && this.now - this.netQueueAt < 1200
-        : (this.queues.get(t)?.length ?? 0) > 0;
-      if (!has) continue;
-      const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
-      if (d < bestD) { bestD = d; best = t; }
-    }
-    return best;
-  }
-
-  /** What is queued on a body, as chip legends with the next one *last* (i.e. rightmost). */
-  private chipsFor(f: Fighter, window: number): { key: string; big: boolean; heat: number }[] {
-    if (this.isNetReplica(f)) {
-      if (this.now - this.netQueueAt > 1200) return [];
-      return this.netQueueKeys.slice(-CHIPS_SHOWN).map((key, i, arr) => ({
-        key, big: key === 'Q', heat: i === arr.length - 1 ? 0.85 : 0.3,
-      }));
-    }
-    const q = this.queues.get(f);
-    if (!q || !q.length) return [];
-    // The queue is soonest-first; the bar reads next-on-the-right, so it is drawn reversed.
-    return q.slice(0, CHIPS_SHOWN).reverse().map((e) => ({
-      key: e.key,
-      big: e.big,
-      heat: Phaser.Math.Clamp(1 - (e.at - this.now) / window, 0, 1),
-    }));
-  }
-
-  /**
-   * Online: tell the psychic what our own sim is holding. This is the only piece of the passive
-   * that cannot be worked out locally on their machine, and it is three short strings at 6 Hz.
-   */
-  private relayQueue(): void {
-    if (!this.api.isOnline || !this.isPsychic('npc')) return;
-    if (this.now - this.lastQueueRelayAt < QUEUE_RELAY_MS) return;
-    this.lastQueueRelayAt = this.now;
-    const q = this.queues.get(this.api.player) ?? [];
-    // Soonest-first locally; sent next-last so the receiver can draw it straight out.
-    const keys = q.slice(0, CHIPS_SHOWN).reverse().map((e) => e.key);
-    const sig = keys.join(',');
-    // Resent on a heartbeat as well as on change: the receiver treats a mirror older than
-    // 1.2 s as gone, so a queue that happens to sit unchanged must not go quiet.
-    if (sig === this.lastRelayedQueue && this.now - this.lastQueueSentAt < 700) return;
-    this.lastRelayedQueue = sig;
-    this.lastQueueSentAt = this.now;
-    this.api.sendPsychicMsg({ t: 'psy', k: 'queue', keys });
-  }
-
-  // ── Online ─────────────────────────────────────────────────────────────────
-
-  /** Everything the opponent's sim decided that ours has no way to work out for itself. */
-  handleNetMsg(msg: NetPsychicMsg): void {
-    const p = this.api.player;
-    switch (msg.k) {
-      case 'queue':
-        this.netQueueKeys = msg.keys.slice(0, CHIPS_SHOWN);
-        this.netQueueAt = this.now;
-        break;
-      case 'cancel': {
-        const q = this.queues.get(p);
-        if (!q || !q.length) break;
-        const taken = q.shift() as Queued;
-        if (!q.length) this.queues.delete(p);
-        p.restampCooldown(taken.id);
-        this.ensureLayers();
-        this.nfx.seize(p.x, p.y, p.x, p.y - 60);
-        this.api.showFloatingText(p.x, p.y - 70, `🚫 ${taken.key} SEIZED`, this.hex(PSY.gold));
-        break;
-      }
-      case 'scatter':
-        if (!this.alive(p)) break;
-        p.aimScatterUntil = Math.max(p.aimScatterUntil, Date.now() + msg.ms);
-        this.migraines.set(p, { until: this.now + msg.ms, by: 'npc', nextTickAt: Infinity });
-        this.ensureLayers();
-        this.nfx.throb(p.x, p.y);
-        this.api.showFloatingText(p.x, p.y - 54, '🤯 MIGRAINE', this.hex(PSY.stress));
-        break;
-      case 'snap': {
-        if (!this.alive(p)) break;
-        // Whip Snap caught the end of our route on their sim. Our body is the authority on where
-        // it is, so the move is done here and streamed back rather than assumed over there.
-        const fromX = p.x;
-        const fromY = p.y;
-        this.body(p).reset(
-          Phaser.Math.Clamp(msg.x, this.left, this.right),
-          Phaser.Math.Clamp(msg.y, this.top, this.bottom),
-        );
-        this.ensureLayers();
-        this.nfx.snap(fromX, fromY, p.x, p.y);
-        this.api.showFloatingText(p.x, p.y - 46, '🪢 SNAPPED', this.hex(PSY.gold));
-        break;
-      }
-      case 'coma':
-        if (!this.alive(p)) break;
-        // Applied without a relay of its own — the psychic's sim already has its own copy
-        // running on the replica, which is where their half-damage banking is computed.
-        this.comas.set(p, {
-          until: this.now + msg.ms, by: 'npc', lastRaw: p.rawDamageTaken,
-          nextBleedAt: this.now + 1000, bled: 0,
-        });
-        this.ensureLayers();
-        this.nfx.sleep(p.x, p.y);
-        this.api.showFloatingText(p.x, p.y - 58, `💤 COMA ${(msg.ms / 1000).toFixed(0)}s`, this.hex(PSY.violetLit));
-        break;
-      case 'utter': {
-        // The heartbeat carries what is *left*, so this is a set rather than an add — a psychic
-        // who has been hit four times since the last packet is three seconds shorter than the
-        // duration he opened with, and this side has no way of knowing that on its own.
-        const s = this.sides.npc;
-        if (msg.ms <= 0) { this.endUtter('npc'); break; }
-        const wasOpen = s.utterUntil > 0;
-        s.utterUntil = this.now + msg.ms;
-        if (!wasOpen) this.beginUtter('npc', msg.ms);
-        break;
-      }
-      case 'route':
-        // The psychic's side of the same window: their held keys, integrated on their machine.
-        this.netRoute = [];
-        for (let i = 0; i + 1 < msg.pts.length; i += 2) {
-          this.netRoute.push({ x: msg.pts[i], y: msg.pts[i + 1] });
-        }
-        this.netRouteAt = this.now;
-        break;
-      default:
-        break;
-    }
-  }
-
   // ── Per-frame ──────────────────────────────────────────────────────────────
 
   update(time: number, delta: number): void {
     void time;
     const playerIs = this.isPsychic('player');
     const npcIs = this.isPsychic('npc');
-    const anyState = this.queues.size || this.stress.size || this.comas.size
-      || this.migraines.size || this.foreseen.size || this.charges.length
+    const anyState = this.queues.size || this.foreseen.size || this.pieces.length || this.pawns.length
       || this.snares.length || this.sides.player.utterUntil || this.sides.npc.utterUntil
-      || this.sides.player.absorber || this.sides.npc.absorber;
+      || this.sides.player.queenUntil || this.sides.npc.queenUntil;
     if (!playerIs && !npcIs && !anyState) return;
 
     this.ensureLayers();
     this.ensureAvatars();
     this.vizT += delta / 1000;
 
-    // The window first: it decides how long everything installed below it is held for, and a
-    // frame in which the two disagreed would put a cast in the queue against the wrong clock.
+    this.observe();
     this.updateUtter();
     this.updateNpcMastery();
     this.updateForesight();
-    this.updatePerspective();
     this.updateQueues();
-    this.updateCharges();
-    this.updateMigraines();
-    this.updateStress();
-    this.updateComas();
+    this.updatePieces();
+    this.updatePawns();
+    this.updateQueens();
+    this.applyAuras();
     this.updateSnares();
-    this.updateDodges();
-    this.updateFocus();
+    this.planNpc();
     this.relayQueue();
     this.relayRoute();
 
     this.paintGround();
+    this.paintPieces();
     this.paintAir();
     this.updateAvatars(delta);
     this.pushStatuses(playerIs, npcIs);
-  }
-
-  // ── Infinite Perspective (R+) ──────────────────────────────────────────────
-
-  /**
-   * Keep the automatic dodge's hook on whichever psychic has bought it.
-   *
-   * `damageAbsorber` is one slot shared with Time's Remain and Air's wind dodge, so ours chains
-   * onto whatever was there when we took it and is only ever handed back if the body is still
-   * wearing ours. It is re-seated only when the slot has been emptied outright — a kit that
-   * chained *onto* us is still calling us, and reinstalling on top of it would double us up.
-   */
-  private updatePerspective(): void {
-    for (const owner of BOTH) {
-      const s = this.side(owner);
-      const f = this.fighter(owner);
-      const want = this.isPsychic(owner) && this.up(owner, 'r') && this.alive(f);
-      if (!want) { this.dropAbsorber(owner); continue; }
-      if (!s.absorber) {
-        const prev = f.damageAbsorber;
-        const fn = (amount: number): boolean =>
-          this.tryPerspective(owner, amount) || (prev ? prev(amount) : false);
-        s.prevAbsorber = prev;
-        s.absorber = fn;
-        f.damageAbsorber = fn;
-      } else if (!f.damageAbsorber) {
-        f.damageAbsorber = s.absorber;
-      }
-    }
-  }
-
-  private dropAbsorber(owner: Owner): void {
-    const s = this.side(owner);
-    if (!s.absorber) return;
-    const f = this.fighter(owner);
-    if (f && f.damageAbsorber === s.absorber) f.damageAbsorber = s.prevAbsorber;
-    s.absorber = null;
-    s.prevAbsorber = null;
-    s.recent = [];
-  }
-
-  /**
-   * The read, made for him. True means the hit is refused outright.
-   *
-   * "50 damage" is a rolling total rather than one number, because chip damage is still damage
-   * and an ability that only ever answered single big hits would be dead against half the roster.
-   * A hit that trips it is the one that never lands; the window is thrown away with it, so the
-   * next 50 has to be earned from scratch.
-   */
-  private tryPerspective(owner: Owner, amount: number): boolean {
-    const f = this.fighter(owner);
-    if (!this.alive(f) || amount <= 0) return false;
-    const s = this.side(owner);
-    const now = this.now;
-    s.recent = s.recent.filter((r) => now - r.at < PERSPECTIVE_WINDOW_MS);
-    const total = s.recent.reduce((n, r) => n + r.amt, 0) + amount;
-    // Not enough yet, or the window is on cooldown along with the ability it presses.
-    if (total < PERSPECTIVE_DAMAGE || f.getCooldownRatio('psychic-dodge-destiny') < 1) {
-      s.recent.push({ at: now, amt: amount });
-      return false;
-    }
-    s.recent = [];
-    // Stamped through the fighter rather than cast, so the cooldown, the sound and the online
-    // relay all happen exactly as they would have if he had pressed it himself.
-    f.startCooldown('psychic-dodge-destiny');
-    this.doDodgeDestiny(owner);
-    this.api.showFloatingText(f.x, f.y - 68, '👁️ INFINITE PERSPECTIVE', this.hex(PSY.gold));
-    return true;
-  }
-
-  /**
-   * Mind's Focus (F+): a wind-up cannot outlive the man doing it.
-   *
-   * `handleInput` stops being called the moment he is comatose or dead, so without this the
-   * charge would sit at whatever it had reached and go off on whatever key press woke him.
-   * Nothing is refunded because nothing was spent — the cooldown is stamped at the release.
-   */
-  private updateFocus(): void {
-    const s = this.sides.player;
-    if (!s.focusStart) return;
-    const p = this.api.player;
-    if (this.alive(p) && !this.comas.has(p) && this.up('player', 'f')) return;
-    s.focusStart = 0;
-    this.api.showFloatingText(p.x, p.y - 46, 'FOCUS LOST', this.hex(PSY.violetLit));
-  }
-
-  private updateDodges(): void {
-    for (const owner of BOTH) {
-      const s = this.side(owner);
-      if (!s.dodgeUntil) continue;
-      const f = this.fighter(owner);
-      if (this.now < s.dodgeUntil) {
-        // Re-asserted every frame: `dashCaster` and half a dozen kits clear `isInvincible` on
-        // timers of their own, and this window has to outlast all of them.
-        if (this.alive(f)) f.isInvincible = true;
-        continue;
-      }
-      s.dodgeUntil = 0;
-      if (this.alive(f)) f.isInvincible = false;
-      this.avatar(owner)?.setBlind(false);
-    }
-  }
-
-  // ── Projection ─────────────────────────────────────────────────────────────
-
-  /**
-   * The next two seconds of a body's movement, as a polyline.
-   *
-   * For a bot this is not a guess: `NpcOpponent.movementPlan` hands over the exact locomotion
-   * rule it is following this tick — close to `range`, then strafe at 60% speed in `strafe` —
-   * and this replays that rule forward against the player's current position. It stops being
-   * true the moment the player moves, which is the point: the thread is a promise the psychic
-   * can walk out from under.
-   *
-   * A body with no plan to read (an online replica, a husk) falls back to dead reckoning off
-   * its current velocity, lightly damped — *unless* Utter Focus is running, in which case the
-   * replica's own machine is holding its movement keys and relaying the route they will actually
-   * produce, and that is used verbatim. It is the one time this thread is not a projection.
-   *
-   * `ms` is the horizon, which is the psychic's own window: two seconds normally, five while his
-   * eyes are shut. The step stays at 100ms either way, so the half-second ticks stay honest.
-   */
-  private projectPath(f: Fighter, ms = FORESIGHT_MS): { x: number; y: number }[] {
-    if (this.isNetReplica(f) && this.now - this.netRouteAt < ROUTE_STALE_MS && this.netRoute.length > 2) {
-      return this.netRoute;
-    }
-    const steps = Math.max(4, Math.round(ms / (FORESIGHT_MS / PATH_STEPS)));
-    const dt = ms / 1000 / steps;
-    const pts: { x: number; y: number }[] = [{ x: f.x, y: f.y }];
-    const plan = (f as unknown as { movementPlan?: MovementPlan }).movementPlan;
-    const px = this.api.player.x;
-    const py = this.api.player.y;
-    let x = f.x;
-    let y = f.y;
-
-    if (plan) {
-      if (plan.frozen) return pts;
-      for (let i = 0; i < steps; i++) {
-        const d = Phaser.Math.Distance.Between(x, y, px, py);
-        const toward = Math.atan2(py - y, px - x);
-        const closing = d > plan.range;
-        const a = closing ? toward : toward + plan.strafe * (Math.PI / 2);
-        const sp = plan.speed * (closing ? 1 : 0.6);
-        x = Phaser.Math.Clamp(x + Math.cos(a) * sp * dt, this.left, this.right);
-        y = Phaser.Math.Clamp(y + Math.sin(a) * sp * dt, this.top, this.bottom);
-        pts.push({ x, y });
-      }
-      return pts;
-    }
-
-    const b = this.body(f);
-    let vx = b.velocity.x;
-    let vy = b.velocity.y;
-    if (Math.hypot(vx, vy) < 8) return pts;
-    for (let i = 0; i < steps; i++) {
-      x = Phaser.Math.Clamp(x + vx * dt, this.left, this.right);
-      y = Phaser.Math.Clamp(y + vy * dt, this.top, this.bottom);
-      vx *= 0.97;
-      vy *= 0.97;
-      pts.push({ x, y });
-    }
-    return pts;
-  }
-
-  /** The whip's cord: a snaking walk out from the hand, with a wave travelling down it. */
-  /** Distance from a point to the segment a→b, so the cord hits along its length, not at its knots. */
-  private segDist(a: { x: number; y: number }, b: { x: number; y: number }, px: number, py: number): number {
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const len2 = dx * dx + dy * dy;
-    const u = len2 > 0 ? Phaser.Math.Clamp(((px - a.x) * dx + (py - a.y) * dy) / len2, 0, 1) : 0;
-    return Phaser.Math.Distance.Between(a.x + dx * u, a.y + dy * u, px, py);
-  }
-
-  /** The cord's shape at `t`. Lives in the visuals because it is the art and the hitbox at once. */
-  private lashPoints(x: number, y: number, ang: number, t: number): { x: number; y: number }[] {
-    return lashPoints(x, y, ang, t, { len: WHIP_LEN, crackT: WHIP_CRACK_T });
   }
 
   // ── Painting ───────────────────────────────────────────────────────────────
@@ -1962,22 +1706,19 @@ export class PsychicKit {
     if (!g) return;
     g.clear();
 
-    // The passive, on the floor: one thread per enemy, only for the side that can see.
-    for (const owner of BOTH) {
-      if (!this.isPsychic(owner) || !this.alive(this.fighter(owner))) continue;
-      // The npc's foreknowledge is real but private — drawing it would hand the player the
-      // bot's routing for free. Only the local player's copy is ever painted.
-      if (owner !== 'player') continue;
-      const tint = this.col(owner);
-      for (const t of this.targetsOf(owner)) {
-        const pts = this.projectPath(t, this.foresightMs(owner));
-        if (pts.length < 3) continue;
-        foresightPath(g, tint, pts, 0.95, this.vizT);
-      }
+    // Auras: every piece's, both sides' — a buff your opponent cannot see is a buff they
+    // cannot play around, and walking the queen out of a bishop's light is half of the game.
+    for (const pc of this.pieces) {
+      const life = Phaser.Math.Clamp((pc.until - this.now) / 600, 0, 1);
+      const born = Phaser.Math.Clamp((this.now - pc.born) / 250, 0, 1);
+      const a = 0.9 * life * born;
+      const tint = this.col(pc.owner);
+      if (pc.kind === 'bishop') heavenlyAura(g, tint, pc.x, pc.y, AURA_R, a, this.vizT, pc.seed);
+      else if (pc.kind === 'knight') strideAura(g, tint, pc.x, pc.y, AURA_R, a, this.vizT + pc.seed);
+      else mightAura(g, tint, pc.x, pc.y, AURA_R, a, this.vizT + pc.seed);
     }
 
-    // Predictor's Snare (mastery): both sides' runes, because a trap nobody can see is not a
-    // prediction, it is a landmine — and the thread that put it there was public too.
+    // Predictor's Snare (mastery): both sides' runes.
     for (const s of this.snares) {
       const life = Phaser.Math.Clamp((s.until - this.now) / 1200, 0, 1);
       const arm = Phaser.Math.Clamp(1 - (s.armedAt - this.now) / SNARE_ARM_MS, 0, 1);
@@ -1986,51 +1727,120 @@ export class PsychicKit {
 
     // Utter Focus (mastery): the mandala under whoever has his eyes shut.
     for (const owner of BOTH) {
-      const side = this.side(owner);
       if (!this.focused(owner)) continue;
       const f = this.fighter(owner);
       if (!this.alive(f)) continue;
       focusMandala(g, this.col(owner), f.x, f.y, 52,
-        (side.utterUntil - this.now) / UTTER_MS, this.vizT);
+        (this.side(owner).utterUntil - this.now) / UTTER_MS, this.vizT);
     }
 
-    // Meditation rings under a psychic who is holding someone's future.
+    // The queen: a gold court under her, in every one of the eight directions she can go.
     for (const owner of BOTH) {
-      if (!this.isPsychic(owner)) continue;
+      if (!this.queen(owner)) continue;
       const f = this.fighter(owner);
       if (!this.alive(f)) continue;
-      const held = this.heldCount(owner);
-      if (!held) continue;
       const tint = this.col(owner);
-      for (let i = 0; i < 2; i++) {
-        const r = 26 + i * 9 + Math.sin(this.vizT * 2 + i) * 2;
-        g.lineStyle(1.2 - i * 0.4, tint(PSY.violet), 0.4 - i * 0.12);
-        g.strokeEllipse(f.x, f.y + 14, r * 2, r * 0.7);
+      g.fillStyle(tint(PSY.gold), 0.1);
+      g.fillEllipse(f.x, f.y + 12, 84, 34);
+      g.lineStyle(1.4, tint(PSY.gold), 0.5);
+      g.strokeEllipse(f.x, f.y + 12, 84, 34);
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        g.lineStyle(1, tint(PSY.gold), 0.22);
+        g.lineBetween(f.x + Math.cos(a) * 30, f.y + 12 + Math.sin(a) * 12,
+          f.x + Math.cos(a) * 58, f.y + 12 + Math.sin(a) * 23);
       }
     }
 
-    // Planted migraines, ticking down. Both sides' charges are drawn: a mark you cannot see is
-    // not a telegraph, it is an ambush, and this ability is meant to be walked out of.
-    for (const c of this.charges) {
-      // Measured against this charge's own fuse rather than the constant: a wound one runs
-      // longer, and a hand that swept the rim early would lie about when it goes off.
-      const t = 1 - (c.firesAt - this.now) / Math.max(1, c.firesAt - c.plantedAt);
-      migraineMark(g, this.col(c.by), c.x, c.y, c.radius, t);
+    this.paintGhosts();
+  }
+
+  /**
+   * Where they will be in one second: a shadow of their own body, standing there. Only for the
+   * local psychic — the bot's foreknowledge is real but private, and drawing it would hand the
+   * player its routing for free.
+   */
+  private paintGhosts(): void {
+    this.ghostsUsed = 0;
+    if (this.isPsychic('player') && this.alive(this.api.player)) {
+      const g = this.groundGfx;
+      for (const t of this.targetsOf('player')) {
+        const at = this.futureOf(t, GHOST_MS, GHOST_MIN_DIST);
+        if (!at) continue;
+        const key = t.texture?.key;
+        if (!key || key === '__MISSING') continue;
+        let img = this.ghosts[this.ghostsUsed];
+        if (!img) {
+          img = this.api.scene.add.image(0, 0, key).setDepth(4);
+          this.ghosts.push(img);
+        }
+        this.ghostsUsed++;
+        if (img.texture.key !== key) img.setTexture(key);
+        const flicker = 0.5 + 0.08 * Math.sin(this.vizT * 5 + this.ghostsUsed);
+        // Their own body, sunk into violet: recognisably them, unmistakably not solid.
+        img.setPosition(at.x, at.y)
+          .setScale(t.scaleX, t.scaleY)
+          .setFlipX(t.flipX)
+          .setTint(this.pcol(PSY.robe))
+          .setAlpha(flicker)
+          .setVisible(true);
+        // A lit rim, a haze and the shadow it would cast, so it reads as "them, but not yet"
+        // against a dark floor rather than as a hole in it.
+        if (g) {
+          const r = 22 * t.scaleX;
+          g.fillStyle(this.pcol(PSY.violet), 0.16);
+          g.fillCircle(at.x, at.y, r + 6);
+          g.lineStyle(1.6, this.pcol(PSY.violetLit), 0.55 + 0.15 * Math.sin(this.vizT * 4));
+          g.strokeCircle(at.x, at.y, r);
+          g.fillStyle(this.pcol(PSY.ink), 0.3);
+          g.fillEllipse(at.x, at.y + 18 * t.scaleY, 30 * t.scaleX, 8);
+        }
+      }
+    }
+    for (let i = this.ghostsUsed; i < this.ghosts.length; i++) this.ghosts[i].setVisible(false);
+  }
+
+  private paintPieces(): void {
+    const g = this.pieceGfx;
+    if (!g) return;
+    g.clear();
+    const sel = this.sides.player.selected;
+    const hover = this.isPsychic('player')
+      ? this.pieceAt('player', this.sides.player.aimX, this.sides.player.aimY) : null;
+
+    for (const pw of this.pawns) {
+      const life = Phaser.Math.Clamp((pw.until - this.now) / 300, 0, 1);
+      chessPiece(g, this.col(pw.owner), 'pawn', pw.owner === 'player' ? 'white' : 'black',
+        pw.x, pw.y - 6, 0.72, life, { glow: 0.4 });
     }
 
-    // Mind's Focus (F+), still in his hand: the blast he would get if he let go now.
-    const fs = this.sides.player;
-    if (fs.focusStart) {
-      const charge = Math.min(FOCUS_MAX_MS, this.now - fs.focusStart) / 1000;
-      focusMark(g, this.pcol, fs.focusX, fs.focusY,
-        MIGRAINE_RADIUS + charge * FOCUS_RADIUS_PER_S,
-        charge / (FOCUS_MAX_MS / 1000), this.vizT);
-    }
-
-    // Coma mandalas, under the body so they never cover a draining health bar.
-    for (const [v, c] of this.comas) {
-      if (!this.alive(v)) continue;
-      comaSwirl(g, this.col(c.by), v.x, v.y, 26, 0.9, this.vizT);
+    for (const pc of this.pieces) {
+      const tint = this.col(pc.owner);
+      const life = Phaser.Math.Clamp((pc.until - this.now) / 400, 0, 1);
+      const born = Phaser.Math.Clamp((this.now - pc.born) / 200, 0, 1);
+      let lift = 0;
+      if (pc.move?.leap) {
+        const k = Phaser.Math.Clamp((this.now - pc.move.start) / pc.move.ms, 0, 1);
+        lift = Math.sin(k * Math.PI) * 46;
+      }
+      const isSel = pc.owner === 'player' && pc.id === sel;
+      if (isSel || (hover === pc && pc.owner === 'player')) {
+        g.lineStyle(isSel ? 2.4 : 1.4, tint(PSY.gold), isSel ? 0.95 : 0.55);
+        g.strokeEllipse(pc.x, pc.y + 12, 44, 16);
+      }
+      chessPiece(g, tint, pc.kind, pc.owner === 'player' ? 'white' : 'black',
+        pc.x, pc.y - 8 - (1 - born) * 18, 1, life * (0.4 + 0.6 * born), { face: pc.face, lift, glow: isSel ? 1 : 0.5 });
+      // Its eight seconds, as a ring that empties round its foot.
+      const left = Phaser.Math.Clamp((pc.until - this.now) / PIECE_LIFE_MS, 0, 1);
+      g.lineStyle(2, tint(PSY.violetLit), 0.55 * life);
+      g.beginPath();
+      g.arc(pc.x, pc.y + 6, 19, -Math.PI / 2, -Math.PI / 2 + left * Math.PI * 2, false);
+      g.strokePath();
+      // Still settling from its last move: dimmed foot.
+      if (this.now < pc.readyAt && !pc.move) {
+        g.fillStyle(tint(PSY.ink), 0.35);
+        g.fillEllipse(pc.x, pc.y + 6, 28, 9);
+      }
     }
   }
 
@@ -2039,93 +1849,74 @@ export class PsychicKit {
     if (!g) return;
     g.clear();
     this.labelsUsed = 0;
+    const s = this.sides.player;
 
-    // ── The whip ──
-    for (const owner of BOTH) {
-      const s = this.side(owner);
-      if (!s.lash) continue;
-      const t = (this.now - s.lash.start) / WHIP_ANIM_MS;
-      if (t >= 1) { s.lash = null; continue; }
-      if (!this.alive(this.fighter(owner))) { s.lash = null; continue; }
-      const pts = this.lashPoints(s.lash.ox, s.lash.oy, s.lash.ang, t);
-      // Fades out over the back half, so the crack is the brightest frame.
-      const alpha = t < 0.6 ? 1 : 1 - (t - 0.6) / 0.4;
-      psiWhip(g, this.col(owner), pts, alpha, {
-        tipHot: s.lash.tip ? Phaser.Math.Clamp(1 - Math.abs(t - WHIP_CRACK_T) * 4, 0, 1) : 0,
-      });
-    }
-
-    // ── Stress, on whoever is carrying it ──
-    for (const [v, st] of this.stress) {
-      if (!this.alive(v)) continue;
-      const load = Math.min(1, st.amount / STRESS_FULL);
-      const tint = this.col(st.by);
-      stressCracks(g, tint, v.x, v.y - 4, load, 0.85, st.seed, this.vizT * 7);
-
-      // The readout, and under it the ten-second fuse as a bar that empties. Both sit above
-      // the prediction chips, which is the order the spec asks for.
-      const fuse = Phaser.Math.Clamp((st.releaseAt - this.now) / STRESS_HOLD_MS, 0, 1);
-      const bx = v.x;
-      const by = v.y - 84;
-      g.fillStyle(tint(PSY.stressDeep), 0.5);
-      g.fillRect(bx - 20, by + 9, 40, 2.6);
-      g.fillStyle(tint(PSY.stress), 0.95);
-      g.fillRect(bx - 20, by + 9, 40 * fuse, 2.6);
-      this.label(`${Math.round(st.amount)}`, bx, by, 15, this.hex(PSY.stress), true);
-    }
-
-    // ── The prediction bar ──
-    // Only the local player ever sees one, and only over things they are fighting.
+    // ── The move you are about to make ──
     if (this.isPsychic('player') && this.alive(this.api.player)) {
-      const tint = this.pcol;
-      const window = this.foresightMs('player');
-      for (const t of this.targetsOf('player')) {
-        const chips = this.chipsFor(t, window);
-        if (!chips.length) continue;
-        const w = 26;
-        const gap = 4;
-        const total = chips.length * w + (chips.length - 1) * gap;
-        const y = t.y - 62;
-        for (let i = 0; i < chips.length; i++) {
-          const c = chips[i];
-          const x = t.x - total / 2 + w / 2 + i * (w + gap);
-          keyChip(g, tint, x, y, w, 18, 0.95, c.heat);
-          if (c.big) {
-            mindSigil(g, tint, x, y, 12, 0.35 * c.heat, { phase: this.vizT * 2, sides: 5, eye: false });
+      const pc = s.selected >= 0 ? this.pieceById('player', s.selected) : null;
+      const from = pc ? { x: pc.x, y: pc.y } : this.queen('player') && !s.queenMove ? this.api.player : null;
+      const kind: ChessKind | null = pc ? pc.kind : from ? 'queen' : null;
+      // The queen's guide only shows when the cursor is not on one of her pieces.
+      const overPiece = !pc && this.pieceAt('player', s.aimX, s.aimY);
+      if (from && kind && !overPiece) {
+        const dest = this.legalDest(kind, from.x, from.y, s.aimX, s.aimY);
+        if (dest) {
+          const leap = kind === 'knight';
+          let hot = false;
+          for (const t of this.targetsOf('player')) {
+            if (leap || kind === 'queen') {
+              if (Phaser.Math.Distance.Between(dest.x, dest.y, t.x, t.y) <= (leap ? KNIGHT_BLAST_R : QUEEN_BLAST_R)) hot = true;
+            }
+            if (!leap && this.segDist(from.x, from.y, dest.x, dest.y, t.x, t.y) <= SLIDE_HIT_R + this.bodyR(t)) hot = true;
           }
-          this.label(c.key, x, y, c.key.length > 2 ? 8 : 11,
-            this.hex(c.big ? PSY.gold : PSY.aether), true);
+          const ready = pc ? this.now >= pc.readyAt : this.now >= s.queenReadyAt;
+          moveGuide(g, this.pcol, from.x, from.y, dest.x, dest.y, leap, hot, ready ? 0.95 : 0.4, this.vizT,
+            leap ? KNIGHT_BLAST_R : kind === 'queen' ? QUEEN_BLAST_R : 0);
         }
-        // An eye at the right-hand end, pointing at the one that is about to happen.
-        thirdEye(g, tint, t.x + total / 2 + 11, y, 5.5, 0.6 + 0.4 * Math.sin(this.vizT * 4), 0.9,
-          { glow: 0.5, lash: false });
       }
     }
 
-    // ── Where they will be ──
+    // ── The crown ──
+    for (const owner of BOTH) {
+      if (!this.queen(owner)) continue;
+      const f = this.fighter(owner);
+      if (!this.alive(f)) continue;
+      // Above the health bar, which sits at about y-30 and would otherwise cut the crown in half.
+      queenCrown(g, this.col(owner), f.x, f.y - 50, 1.1, 0.95, this.vizT);
+    }
+
+    // ── The queue, over the psychic's own head ──
+    // Next at the bottom, nearest the head; everything after it stacks upward. The crown, when
+    // there is one, pushes the stack up out of its way.
     if (this.isPsychic('player') && this.alive(this.api.player)) {
-      const snappable = this.up('player', 'click');
-      for (const t of this.targetsOf('player')) {
-        const pts = this.projectPath(t, this.foresightMs('player'));
-        if (pts.length < 3) continue;
-        const end = pts[pts.length - 1];
-        if (Phaser.Math.Distance.Between(end.x, end.y, t.x, t.y) < SNAP_MIN_DIST) continue;
-        destinyGhost(g, this.pcol, end.x, end.y, snappable ? 0.95 : 0.8, this.vizT);
-        // Whip Snap (Click+): the ghost stops being a read-out and becomes a target, so it is
-        // ringed at exactly the window the cord is tested against.
-        if (!snappable) continue;
-        g.lineStyle(1.4, this.pcol(PSY.gold), 0.5 + 0.25 * Math.sin(this.vizT * 5));
-        g.strokeCircle(end.x, end.y, SNAP_R);
+      const p = this.api.player;
+      const cards = this.cardsFor('player');
+      let y = p.y - (this.queen('player') ? 80 : 54);
+      for (let i = 0; i < cards.length; i++) {
+        const c = cards[i];
+        const next = i === 0;
+        const w = next ? 104 : 88;
+        const h = next ? 20 : 16;
+        const a = next ? 1 : 0.85 - i * 0.12;
+        queueCard(g, this.pcol, p.x, y, w, h, a, c.left, next, c.big);
+        const bw = h - 4;
+        const kx = p.x - w / 2 + 3 + bw / 2;
+        this.label(c.key === 'Click' ? 'M1' : c.key, kx, y - 0.5, c.key.length > 1 ? 8 : (next ? 11 : 9),
+          this.hex(c.big ? PSY.ink : PSY.aether), true);
+        const name = c.name.length > 13 ? `${c.name.slice(0, 12)}…` : c.name;
+        this.label(name, p.x + bw / 2 + 1, y - 1, next ? 10 : 8,
+          this.hex(next ? PSY.gold : PSY.violetLit), next);
+        y -= h + 3;
+      }
+      if (cards.length) {
+        this.label('NEXT ▾', p.x + 70, p.y - (this.queen('player') ? 80 : 54), 8, this.hex(PSY.gold), true);
       }
     }
 
     for (let i = this.labelsUsed; i < this.labels.length; i++) this.labels[i].setVisible(false);
   }
 
-  /**
-   * A pooled label. `setText`/`setPosition` are cheap on an unchanged value; `setStyle` is not,
-   * so size and colour are only written when they actually differ from what the slot is wearing.
-   */
+  /** A pooled label. Size and colour are only rewritten when they actually change. */
   private label(text: string, x: number, y: number, size: number, color: string, bold: boolean): void {
     let t = this.labels[this.labelsUsed];
     if (!t) {
@@ -2136,28 +1927,23 @@ export class PsychicKit {
       this.labels.push(t);
     }
     this.labelsUsed++;
-    const style = t.style as unknown as { fontSize: string; color: string };
-    if (style.fontSize !== `${size}px` || style.color !== color) {
-      t.setStyle({ fontSize: `${size}px`, color, fontStyle: bold ? 'bold' : 'normal' });
+    const style = t.style as unknown as { fontSize: string; color: string; fontStyle: string };
+    const fs = bold ? 'bold' : 'normal';
+    if (style.fontSize !== `${size}px` || style.color !== color || style.fontStyle !== fs) {
+      t.setStyle({ fontSize: `${size}px`, color, fontStyle: fs });
     }
     t.setText(text);
     t.setPosition(x, y);
     t.setVisible(true);
   }
 
-  /** How many abilities this side is currently holding out of the world. */
   private heldCount(owner: Owner): number {
     if (owner === 'player' && this.isNetReplica(this.api.npc)) {
-      return this.now - this.netQueueAt < 1200 ? this.netQueueKeys.length : 0;
+      return this.now - this.netQueueAt < QUEUE_STALE_MS ? this.netQueue.length : 0;
     }
     let n = 0;
     for (const t of this.targetsOf(owner)) n += this.queues.get(t)?.length ?? 0;
     return n;
-  }
-
-  private handOf(av: PsychicAvatar, f: Fighter): { x: number; y: number } {
-    const h = av.castHand();
-    return Number.isFinite(h.x) && (h.x || h.y) ? h : { x: f.x, y: f.y };
   }
 
   // ── Avatars & HUD ──────────────────────────────────────────────────────────
@@ -2169,15 +1955,10 @@ export class PsychicKit {
       const f = this.fighter(owner);
       if (!this.alive(f)) { av.update(delta, f?.x ?? 0, f?.y ?? 0, 0); continue; }
       const s = this.side(owner);
-      const target = this.nearestTarget(owner);
       av.setFacing(Math.atan2(s.aimY - f.y, s.aimX - f.x));
-      // Focus is "how much of the future am I holding right now" — the queue, plus whatever
-      // pressure is sitting on the person I am holding it for.
-      const load = target ? (this.stress.get(target)?.amount ?? 0) / STRESS_FULL : 0;
-      av.setFocus(Math.min(1, 0.2 + this.heldCount(owner) * 0.24 + load * 0.45));
-      // The third eye is written here rather than at each cast, because two different things
-      // now shut it — a dodge and the mastery's window — and they overlap freely.
-      av.setBlind(this.now < s.dodgeUntil || this.focused(owner));
+      const mine = this.pieces.filter((p) => p.owner === owner).length;
+      av.setFocus(Math.min(1, 0.2 + this.heldCount(owner) * 0.2 + mine * 0.12 + (this.queen(owner) ? 0.4 : 0)));
+      av.setBlind(this.focused(owner));
       av.setMastered(owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
       av.update(delta, f.x, f.y, f.alpha);
     }
@@ -2185,40 +1966,13 @@ export class PsychicKit {
 
   private pushStatuses(playerIs: boolean, npcIs: boolean): void {
     const p = this.api.player;
+    const pct = (m: number): number => Math.round(Math.abs(m - 1) * 100);
 
-    const st = this.stress.get(p);
-    this.api.setStatusIndicator('psychic-stress', st ? {
-      name: 'Stress', emoji: '🩸', color: PSY.stress, priority: 6,
-      description: 'A pool of psychic pressure. It does nothing until it goes off, then lands all at once and straight through every scrap of armour you own. Every new point puts the fuse back to 10 seconds.',
-      until: st.releaseAt, count: Math.round(st.amount),
-    } : null);
-
-    const coma = this.comas.get(p);
-    this.api.setStatusIndicator('psychic-coma', coma ? {
-      name: 'Coma', emoji: '💤', color: PSY.violet, priority: 2,
-      description: this.up(coma.by, 'q')
-        ? 'Face down. Held still and unable to cast, half of every hit banked back as stress — and 3 of that stress a second is being torn back out of you and thrown at everything nearby.'
-        : 'Face down. Held still and unable to cast — and half of every hit you take is being banked straight back as stress.',
-      until: coma.until,
-    } : null);
-
-    // Mind's Focus (F+), while it is being wound. Untimed on purpose: the bar is the arc on the
-    // floor, and a second countdown in the tray would be the same number said twice.
-    const fs = this.sides.player;
-    const charge = fs.focusStart ? Math.min(FOCUS_MAX_MS, this.now - fs.focusStart) / 1000 : 0;
-    this.api.setStatusIndicator('psychic-focus', fs.focusStart ? {
-      name: "Mind's Focus", emoji: '🌀', color: PSY.violetLit, priority: 150,
-      description: 'Winding a Migraine up. Every second buys 0.8s of extra fuse, 20px of extra blast, 4 more stress on the hit and another 10% of whatever pool the target is already carrying. It goes off on its own at 5 seconds.',
-      count: Math.round(charge * 10) / 10, suffix: 's',
-    } : null);
-
-    // The passive, shown to both sides for opposite reasons: the psychic is told how much he is
-    // holding, and his opponent is told that everything they press is two seconds late.
     const held = playerIs ? this.heldCount('player') : 0;
     const secs = (ms: number): string => `${Math.round(ms / 100) / 10}`;
     this.api.setStatusIndicator('psychic-foresight', playerIs && held > 0 ? {
       name: 'Opened Eyes', emoji: '👁️', color: PSY.gold, priority: 152,
-      description: `You are ${secs(this.foresightMs('player'))} seconds ahead. Everything they press is sitting in the queue over their head until it catches up with them.`,
+      description: `Everything they press is held ${secs(this.foresightMs('player'))} seconds before it happens. The cards over your head are what is coming — the bottom one goes off first.`,
       count: held,
     } : (npcIs && p.castDelayMs > 0 ? {
       name: 'Foreseen', emoji: '👁️', color: PSY.violet, priority: 8,
@@ -2226,67 +1980,83 @@ export class PsychicKit {
       count: this.queues.get(p)?.length ?? 0,
     } : null));
 
-    // Utter Focus (mastery), for whichever of the two is wearing it.
+    const grace = playerIs ? this.guardMult('player') : 1;
+    const stride = playerIs ? this.speedMult('player') : 1;
+    const might = playerIs ? this.mightMult('player') : 1;
+    const crowned = playerIs && this.queen('player');
+    this.api.setStatusIndicator('psychic-grace', !crowned && grace < 0.999 ? {
+      name: "Bishop's Grace", emoji: '✝️', color: PSY.gold, priority: 154,
+      description: `Standing in heavenly light: ${pct(grace)}% less damage taken. Every bishop's light you stand in (and every one a rook has taken for you) is another 15%.`,
+      count: this.stacks('player', 'bishop'),
+    } : null);
+    this.api.setStatusIndicator('psychic-stride', !crowned && stride > 1.001 ? {
+      name: "Knight's Stride", emoji: '🐎', color: PSY.violetLit, priority: 155,
+      description: `${pct(stride)}% faster. Every knight's aura you stand in (and every one a rook has taken for you) is another 15%.`,
+      count: this.stacks('player', 'knight'),
+    } : null);
+    this.api.setStatusIndicator('psychic-might', !crowned && might > 1.001 ? {
+      name: "Rook's Might", emoji: '🏰', color: PSY.stress, priority: 156,
+      description: `${pct(might)}% more damage dealt. Every rook's aura you stand in (and every one a rook has taken for you) is another 15%.`,
+      count: this.stacks('player', 'rook'),
+    } : null);
+    this.api.setStatusIndicator('psychic-queen', crowned ? {
+      name: 'Queen', emoji: '♛', color: PSY.gold, priority: 157,
+      description: `Every aura three times over, on top of any pieces you stand in: ${pct(grace)}% less damage taken, ${pct(stride)}% faster slides and ${pct(might)}% more damage. You have no legs — click to move like a queen, in any of eight directions, through anyone in the way, landing in an explosion.`,
+      until: this.sides.player.queenUntil,
+    } : null);
+
     const ps = this.sides.player;
     this.api.setStatusIndicator('psychic-utter', playerIs && this.focused('player') ? {
       name: 'Utter Focus', emoji: '🧿', color: PSY.gold, priority: 153,
-      description: `Your eyes are shut and you are ${UTTER_FORESIGHT_MS / 1000} seconds ahead instead of ${FORESIGHT_MS / 1000}. Every point of stress you inflict is worth ×${UTTER_STRESS_MULT}, and online their movement keys are held back the same ${UTTER_FORESIGHT_MS / 1000} seconds as their casts. Every hit that lands on you takes ${UTTER_HIT_COST_MS / 1000}s off it.`,
+      description: `Your eyes are shut and everything they press is held ${UTTER_FORESIGHT_MS / 1000} seconds instead of ${FORESIGHT_MS / 1000}. Online their movement keys are held the same ${UTTER_FORESIGHT_MS / 1000} seconds. Every hit that lands on you takes ${UTTER_HIT_COST_MS / 1000}s off it.`,
       until: ps.utterUntil,
     } : null);
 
-    // …and for the person on the other end of it, who has an entirely different problem.
     this.api.setStatusIndicator('psychic-held', npcIs && this.focused('npc') ? {
       name: 'Held', emoji: '🧿', color: PSY.stress, priority: 3,
       description: p.moveInputDelayMs > 0
-        ? `They have closed their eyes. Everything you press — abilities *and* movement — is being held for ${UTTER_FORESIGHT_MS / 1000} seconds before your body does it, and they have been watching where it takes you the whole time. Hit them: every hit shortens it by ${UTTER_HIT_COST_MS / 1000}s.`
-        : `They have closed their eyes and gone ${UTTER_FORESIGHT_MS / 1000} seconds ahead. Everything you cast is held that long, and everything they land on you is worth ×${UTTER_STRESS_MULT} stress. Hit them: every hit shortens it by ${UTTER_HIT_COST_MS / 1000}s.`,
+        ? `They have closed their eyes. Everything you press — abilities *and* movement — is being held for ${UTTER_FORESIGHT_MS / 1000} seconds before your body does it. Hit them: every hit shortens it by ${UTTER_HIT_COST_MS / 1000}s.`
+        : `They have closed their eyes. Everything you cast is held ${UTTER_FORESIGHT_MS / 1000} seconds. Hit them: every hit shortens it by ${UTTER_HIT_COST_MS / 1000}s.`,
       until: this.sides.npc.utterUntil,
     } : null);
   }
 
   // ── Public accessors (read by ArenaScene / the AI) ──────────────────────────
 
-  /** Held still while comatose. Pulled by ArenaScene rather than pushed onto the body. */
+  /** Knight auras, pulled by ArenaScene. The queen has no legs at all. */
   getPlayerSpeedMult(): number {
-    return this.comas.has(this.api.player) ? 0 : 1;
+    if (!this.isPsychic('player')) return 1;
+    return this.queen('player') ? 0 : this.speedMult('player');
   }
 
   getNpcSpeedMult(): number {
-    return this.comas.has(this.api.npc) ? 0 : 1;
+    // An online replica's movement is streamed from the machine that owns it, which has
+    // already applied its own auras (and its own lack of legs). Applying them again here would
+    // freeze the copy of a crowned queen where she was standing.
+    if (!this.isPsychic('npc') || this.api.isOnline) return 1;
+    return this.queen('npc') ? 0 : this.speedMult('npc');
   }
 
-  /** How many of the player's abilities the npc psychic is currently holding. */
-  queueCount(owner: Owner): number {
-    return this.heldCount(owner);
+  /** The move the bot's click should make this tick, if any. */
+  npcMove(): { x: number; y: number } | undefined {
+    return this.npcPlan ? { x: this.npcPlan.x, y: this.npcPlan.y } : undefined;
   }
 
-  /** True when the thing at the front of that side's stolen queue is an ultimate. */
-  queueHasUltimate(owner: Owner): boolean {
-    for (const t of this.targetsOf(owner)) {
-      for (const e of this.queues.get(t) ?? []) if (e.big) return true;
-    }
-    return false;
+  npcIsQueen(): boolean {
+    return this.queen('npc');
   }
 
-  /** Stress currently sitting on that side's nearest enemy — the bot's cue for the Q. */
-  stressOnTarget(owner: Owner): number {
-    const t = this.nearestTarget(owner);
-    return t ? Math.round(this.stress.get(t)?.amount ?? 0) : 0;
+  npcPieceCount(): number {
+    return this.pieces.filter((p) => p.owner === 'npc').length;
   }
 
-  /**
-   * Which of the bot's own slots Utter Focus was dropped on, or undefined. Published into
-   * `NpcAiState` so `doPsychicAbilities` stops pressing the ability that is no longer there —
-   * the kit casts the window itself, so the AI only needs to know what it gave up for it.
-   */
   npcMasterySlot(): 'r' | 'f' | 'q' | undefined {
     return this.utterSlot('npc') ?? undefined;
   }
 
   /**
-   * Ability tray fill. Utter Focus is the only card in the element that spends most of its life
-   * showing a state rather than a cooldown — the eight seconds while they run, and the 26
-   * filling back up once they do not.
+   * Ability tray fill. The Queen card shows the crown's remaining time while it is worn, and
+   * Utter Focus its window and then its cooldown.
    */
   getBarRatio(abilityId: string, time: number): number {
     const s = this.sides.player;
@@ -2294,6 +2064,49 @@ export class PsychicKit {
       if (time < s.utterUntil) return 0.1 + 0.9 * Phaser.Math.Clamp((s.utterUntil - time) / UTTER_MS, 0, 1);
       return Phaser.Math.Clamp((time - s.utterCastAt) / UTTER_COOLDOWN_MS, 0, 1);
     }
+    if (abilityId === 'psychic-queen' && time < s.queenUntil) {
+      return 0.1 + 0.9 * Phaser.Math.Clamp((s.queenUntil - time) / QUEEN_MS, 0, 1);
+    }
     return this.api.player.getCooldownRatio(abilityId);
+  }
+
+  // ── SummonPurgeTarget / FormRevertTarget ───────────────────────────────────
+
+  /** Pieces and pawns are things somebody summoned; auras and runes are not. */
+  purgeSummons(
+    x: number, y: number, radius: number, exceptOwner: Owner,
+    report?: (px: number, py: number) => void,
+  ): number {
+    let razed = 0;
+    const near = (px: number, py: number): boolean => {
+      if (Phaser.Math.Distance.Between(x, y, px, py) > radius) return false;
+      razed++;
+      report?.(px, py);
+      return true;
+    };
+    for (let i = this.pieces.length - 1; i >= 0; i--) {
+      const pc = this.pieces[i];
+      if (pc.owner === exceptOwner || !near(pc.x, pc.y)) continue;
+      this.pieces.splice(i, 1);
+      this.dropSelection(pc);
+      this.fx(pc.owner).vanish(pc.x, pc.y);
+    }
+    for (let i = this.pawns.length - 1; i >= 0; i--) {
+      const pw = this.pawns[i];
+      if (pw.owner === exceptOwner || !near(pw.x, pw.y)) continue;
+      this.pawns.splice(i, 1);
+      this.fx(pw.owner).vanish(pw.x, pw.y);
+    }
+    return razed;
+  }
+
+  /** The queen is a form. Ending it gives her legs back. */
+  revertForms(f: Fighter): string[] {
+    for (const owner of BOTH) {
+      if (this.fighter(owner) !== f || !this.queen(owner)) continue;
+      this.endQueen(owner);
+      return ['Queen'];
+    }
+    return [];
   }
 }

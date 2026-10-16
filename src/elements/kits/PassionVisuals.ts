@@ -2,49 +2,46 @@ import Phaser from 'phaser';
 import { ArmHold, ArmPose, AvatarSpec, BaseAvatar, ColorFn, FxBase, TAU, easeIn, easeOut } from './ElementVisuals';
 
 /**
- * Everything Passion draws.
+ * Everything Devotion draws. (The element id is still `passion`, so the file keeps the name.)
  *
- * The element never lands a blow it means as a blow, so its art has to carry the whole fight:
- * you can't read a Passion match off the health bars, only off how flushed the other fighter
- * is. That makes three things load-bearing rather than decorative — the heart-filled meter over
- * the enemy's head, the blush that deepens in three visible stages on their face, and the
- * hearts their eyes turn into once it is nearly over. Everything else in this file exists to
- * make those three legible at a glance.
+ * The element never deals a point of damage, so its art carries the whole fight: you cannot read
+ * a Devotion match off the health bars, only off the faith bar over the enemy's head and the halo
+ * that forms above them as it fills — a dotted ring at a quarter, a solid one at half, a blazing
+ * glory at three quarters. Everything else in this file exists to make those readable at a glance.
  *
- * The rule for the rest: pink is never flat. Every fill is a deep wine shadow with a hot core
- * and a cream highlight on the upper-left, because a single mid-pink circle reads as a bubble
- * and this element already has enough of those.
+ * The element's primitive is the **holy ray**: a tapered lance of light, fat at the root and
+ * needle-thin at the tip, always painted in three passes (warm halo → pale body → white core). A
+ * glory is a ring of them, a burst is a fan of them, and the chariot's flames are long ones bent
+ * by the wind. The second shape is the plain Latin cross, which every ability carries somewhere.
+ *
+ * Light yellow is never flat: every fill runs from a deep ochre shadow through the element's pale
+ * gold to a near-white core, because a single mid-yellow disc reads as a coin.
  */
 
 export type PassionColorFn = ColorFn;
 
-export const PSN = {
-  /** The dark everything is drawn against — a wine-black, never a neutral one. */
-  ink: 0x2a0a1c,
-  wine: 0x7a1338,
-  /** The deep-red blush, and the heart of the rose. */
-  deep: 0xc21e5b,
-  /** The element colour, and the hot core of every fill. */
-  hot: 0xff2f7d,
-  pink: 0xff5fa2,
-  /** The light blush, at 25%. */
-  blush: 0xff9ec4,
-  /** Highlights, lace, the cream of a camera flash cooling off. */
-  cream: 0xffe3ef,
-  /** Pistol trim and the warm edge of a flashbulb. */
-  gold: 0xf7d774,
-  leaf: 0x3f8f52,
-  stem: 0x2c6b3a,
-  /**
-   * Bare skin, for the two mature-mode scenes. The only colours in the palette that aren't a
-   * pink — which is the point: the suit coming off has to change the silhouette's *hue*, or a
-   * pink character losing a pink suit reads as nothing happening at all.
-   */
-  tan: 0xd9a066,
-  tanDeep: 0xa06d3e,
-  /** The bar itself, and the white of a bulb going off. */
-  censor: 0x101014,
-  flash: 0xfff6d8,
+export const DEV = {
+  /** The dark everything is drawn against — a warm umber, never a neutral black. */
+  ink: 0x2b2210,
+  umber: 0x6e5626,
+  ochre: 0xb98b2c,
+  gold: 0xe8b93a,
+  /** The element colour. */
+  holy: 0xf5e08a,
+  pale: 0xfff2b8,
+  white: 0xfffcf0,
+  /** Holy water. */
+  waterDeep: 0x2f7fc0,
+  water: 0x8fd3ff,
+  waterLit: 0xd8f2ff,
+  /** The chariot's fire. */
+  fireDeep: 0xc8461a,
+  fire: 0xff9a2e,
+  fireHot: 0xffe07a,
+  /** The crucifix. */
+  woodDeep: 0x4a2a12,
+  wood: 0x8a5a2c,
+  woodLit: 0xc08a50,
 };
 
 // ── Primitives ────────────────────────────────────────────────────────────
@@ -55,976 +52,741 @@ export function jitter(seed: number, i: number): number {
   return v - Math.floor(v);
 }
 
-/** Local (u across, v along) → world, for a shape rotated to `ang` about (x, y). */
-function pt(x: number, y: number, ca: number, sa: number, u: number, v: number): Phaser.Geom.Point {
-  return new Phaser.Geom.Point(x + ca * u - sa * v, y + sa * u + ca * v);
-}
-
 /**
- * The outline of a heart, tip pointing along `ang`.
- *
- * Built off the classic parametric curve rather than two circles and a triangle — the lobes
- * have to meet in a real cusp at the top, and a bullet the player sees a hundred times a match
- * is exactly the wrong place to approximate that.
+ * The holy ray: a tapered lance from (x, y) out along `ang`. Fat and rounded at the root, a
+ * needle at the tip, with a slight swell a third of the way out so a ring of them reads as light
+ * pouring out rather than as a starburst of spikes.
  */
-export function heartPoints(
-  x: number, y: number, size: number, ang = Math.PI / 2, segs = 26,
-): Phaser.Geom.Point[] {
-  // Local +v is the tip; rotate so that axis lands on `ang`.
-  const th = ang - Math.PI / 2;
-  const ca = Math.cos(th);
-  const sa = Math.sin(th);
-  const pts: Phaser.Geom.Point[] = [];
-  for (let i = 0; i < segs; i++) {
-    const t = (i / segs) * TAU;
-    const hu = 16 * Math.sin(t) ** 3;
-    const hv = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
-    pts.push(pt(x, y, ca, sa, (hu / 17) * size, (hv / 17) * size));
-  }
-  return pts;
-}
-
-/**
- * A filled heart with its shadow, core and highlight — the element's one universal shape.
- * `lit` pushes the highlight toward white for the things that are supposed to glow.
- */
-export function heart(
-  g: Phaser.GameObjects.Graphics,
-  tint: PassionColorFn,
-  x: number, y: number, size: number, ang: number, color: number, alpha: number, lit = false,
+export function holyRay(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  x: number, y: number, ang: number, len: number, halfW: number,
+  color: number, alpha: number,
 ): void {
-  g.fillStyle(tint(PSN.wine), alpha * 0.85);
-  g.fillPoints(heartPoints(x, y + size * 0.09, size * 1.06, ang), true);
-  g.fillStyle(tint(color), alpha);
-  g.fillPoints(heartPoints(x, y, size, ang), true);
-  // Highlight on the upper-left lobe, offset along the shape's own axes so it survives rotation.
-  const ca = Math.cos(ang - Math.PI / 2);
-  const sa = Math.sin(ang - Math.PI / 2);
-  const h = pt(x, y, ca, sa, -size * 0.34, -size * 0.34);
-  g.fillStyle(tint(lit ? PSN.flash : PSN.cream), alpha * (lit ? 0.95 : 0.7));
-  g.fillEllipse(h.x, h.y, size * 0.44, size * 0.3);
-}
-
-/** Just the outline — for the ghost hearts a cone or a ring is made of. */
-export function heartOutline(
-  g: Phaser.GameObjects.Graphics,
-  tint: PassionColorFn,
-  x: number, y: number, size: number, ang: number, color: number, alpha: number, width = 1.6,
-): void {
-  g.lineStyle(width, tint(color), alpha);
-  g.strokePoints(heartPoints(x, y, size, ang), true);
-}
-
-/**
- * The pink pistol, muzzle pointing along `ang`.
- *
- * A revolver rather than an automatic, because the cylinder is what makes it read as a *pistol*
- * at 20px instead of a pink rectangle. `kick` rocks the whole thing back around the grip on the
- * frame a shot is fired.
- */
-export function pistol(
-  g: Phaser.GameObjects.Graphics,
-  tint: PassionColorFn,
-  x: number, y: number, ang: number, alpha: number, scale = 1, kick = 0,
-): { x: number; y: number } {
-  const a = ang - kick * 0.5;
-  const ca = Math.cos(a);
-  const sa = Math.sin(a);
-  const s = scale;
-  const P = (u: number, v: number) => pt(x, y, ca, sa, u * s, v * s);
-
-  // Grip: raked back and down, with a cream inlay panel.
-  const grip = [P(-3, 1), P(-9, 9), P(-4.5, 11), P(1, 2.5)];
-  g.fillStyle(tint(PSN.ink), alpha);
-  g.fillPoints(grip, true);
-  g.fillStyle(tint(PSN.cream), alpha * 0.5);
-  g.fillPoints([P(-4.2, 2.6), P(-7.6, 8), P(-5.6, 8.8), P(-2.6, 3.2)], true);
-
-  // Frame and barrel, one tapering run from the hammer to the muzzle.
-  g.fillStyle(tint(PSN.deep), alpha);
-  g.fillPoints([P(-4, -2.6), P(9, -2.2), P(13, -1.4), P(13, 1.2), P(-3.5, 2.2)], true);
-  g.fillStyle(tint(PSN.hot), alpha);
-  g.fillPoints([P(-3.4, -1.9), P(9, -1.6), P(12.4, -1), P(12.4, 0.2), P(-3, 0.6)], true);
-  // The top strap catches the light along its whole length.
-  g.lineStyle(0.9 * s, tint(PSN.cream), alpha * 0.65);
-  g.lineBetween(P(-3.2, -2.2).x, P(-3.2, -2.2).y, P(12.6, -1.5).x, P(12.6, -1.5).y);
-
-  // Cylinder — the part that says revolver.
-  const cyl = P(2.4, -0.2);
-  g.fillStyle(tint(PSN.wine), alpha);
-  g.fillCircle(cyl.x, cyl.y, 3.4 * s);
-  g.fillStyle(tint(PSN.pink), alpha);
-  g.fillCircle(cyl.x, cyl.y, 2.6 * s);
-  g.fillStyle(tint(PSN.ink), alpha * 0.9);
-  for (let i = 0; i < 5; i++) {
-    const ch = i * (TAU / 5) + a * 0.6;
-    g.fillCircle(cyl.x + Math.cos(ch) * 1.5 * s, cyl.y + Math.sin(ch) * 1.5 * s, 0.62 * s);
-  }
-
-  // Trigger guard, hammer spur, gold bead at the muzzle.
-  g.lineStyle(1.2 * s, tint(PSN.ink), alpha * 0.9);
-  g.beginPath();
-  const guard = P(-0.5, 3.4);
-  g.arc(guard.x, guard.y, 2.8 * s, a - 0.4, a + Math.PI + 0.4, false);
-  g.strokePath();
-  g.fillStyle(tint(PSN.ink), alpha);
-  g.fillPoints([P(-4.4, -2.4), P(-6.6, -3.6), P(-5.4, -0.8)], true);
-  const tip = P(13.4, -0.1);
-  g.fillStyle(tint(PSN.gold), alpha);
-  g.fillCircle(tip.x, tip.y, 1.1 * s);
-
-  // The engraving. Small, but it is the reason this is a Passion pistol and not a Hunt one.
-  heart(g, tint, P(6.4, 0.2).x, P(6.4, 0.2).y, 2.6 * s, a + Math.PI / 2, PSN.cream, alpha * 0.8);
-  return { x: tip.x, y: tip.y };
-}
-
-/**
- * A rose, head at (x, y) with the stem running back along `ang + π`.
- *
- * Petals are drawn as four rings of overlapping arcs working inward, each ring rotated off the
- * last, so the bloom has a spiral rather than a bullseye — the single detail that separates a
- * rose from a red circle at this size.
- */
-export function rose(
-  g: Phaser.GameObjects.Graphics,
-  tint: PassionColorFn,
-  x: number, y: number, ang: number, alpha: number, scale = 1, wilt = 0,
-): void {
-  const back = ang + Math.PI;
-  const s = scale;
-  const droop = wilt * 0.5;
-
-  // Stem: three segments, each bending further under the wilt.
-  let px = x;
-  let py = y;
-  g.lineStyle(2.1 * s, tint(PSN.stem), alpha * (1 - wilt * 0.35));
-  for (let i = 1; i <= 3; i++) {
-    const seg = back + droop * i * 0.42;
-    const cx = px + Math.cos(seg) * 7 * s;
-    const cy = py + Math.sin(seg) * 7 * s + droop * i * 1.4 * s;
-    g.lineBetween(px, py, cx, cy);
-    px = cx;
-    py = cy;
-  }
-
-  // Two leaves off the middle of the stem, angled apart.
-  const mid = { x: (x + px) / 2, y: (y + py) / 2 };
-  for (const side of [-1, 1]) {
-    const la = back + side * 0.85 + droop * 0.5;
-    const lca = Math.cos(la);
-    const lsa = Math.sin(la);
-    g.fillStyle(tint(side < 0 ? PSN.leaf : PSN.stem), alpha * (1 - wilt * 0.5));
-    g.fillPoints([
-      pt(mid.x, mid.y, lca, lsa, 0, 0),
-      pt(mid.x, mid.y, lca, lsa, 2.2 * s, 4.5 * s),
-      pt(mid.x, mid.y, lca, lsa, 0, 9 * s),
-      pt(mid.x, mid.y, lca, lsa, -2.2 * s, 4.5 * s),
-    ], true);
-  }
-
-  // The bloom: outer sepals, then the spiral.
-  g.fillStyle(tint(PSN.wine), alpha);
-  g.fillCircle(x, y, 5.4 * s);
-  const rings: Array<[number, number, number]> = [
-    [4.9, PSN.deep, 5], [3.7, PSN.hot, 4], [2.5, PSN.pink, 3],
-  ];
-  rings.forEach(([r, color, count], ri) => {
-    g.fillStyle(tint(color), alpha * (1 - wilt * 0.3));
-    for (let i = 0; i < count; i++) {
-      const pa = ang + (i / count) * TAU + ri * 0.7;
-      g.fillEllipse(
-        x + Math.cos(pa) * r * 0.42 * s, y + Math.sin(pa) * r * 0.42 * s,
-        r * 1.15 * s, r * 0.86 * s,
-      );
-    }
-  });
-  g.fillStyle(tint(PSN.cream), alpha * 0.55);
-  g.fillEllipse(x - 1.1 * s, y - 1.3 * s, 2.1 * s, 1.5 * s);
-
-  // A petal or two already on their way to the floor once it starts going.
-  if (wilt > 0.4) {
-    g.fillStyle(tint(PSN.deep), alpha * (wilt - 0.4) * 1.4);
-    g.fillEllipse(x + 6 * s, y + 6 * s * wilt, 3.4 * s, 2.2 * s);
-  }
-}
-
-/** The fedora, sitting on a crown at (x, y). Brim, pinched crown, band, and a rose in the band. */
-export function fedora(
-  g: Phaser.GameObjects.Graphics,
-  tint: PassionColorFn,
-  x: number, y: number, alpha: number, tilt: number, scale = 1,
-): void {
-  const s = scale;
-  const ca = Math.cos(tilt);
-  const sa = Math.sin(tilt);
-  const P = (u: number, v: number) => pt(x, y, ca, sa, u * s, v * s);
-
-  // Brim: a wide ellipse with the near edge rolled up, drawn as a second darker sliver.
-  g.fillStyle(tint(PSN.wine), alpha);
-  const brim = P(0, 1.5);
-  g.fillEllipse(brim.x, brim.y, 34 * s, 11 * s);
-  g.fillStyle(tint(PSN.ink), alpha * 0.55);
-  g.fillEllipse(brim.x, brim.y + 1.6 * s, 34 * s, 6 * s);
-
-  // Crown: a tapering box with the front pinch cut into its top edge.
-  g.fillStyle(tint(PSN.deep), alpha);
-  g.fillPoints([P(-11, 0), P(-8.5, -11), P(-2.5, -13), P(0, -10),
-    P(2.5, -13), P(8.5, -11), P(11, 0)], true);
-  g.fillStyle(tint(PSN.hot), alpha * 0.75);
-  g.fillPoints([P(-8.5, -1), P(-6.6, -10), P(-2.5, -11.6), P(-1.4, -9)], true);
-
-  // Band, and the rosebud tucked into it.
-  g.fillStyle(tint(PSN.ink), alpha);
-  g.fillPoints([P(-10.4, -1.4), P(-8.9, -6.4), P(8.9, -6.4), P(10.4, -1.4)], true);
-  g.fillStyle(tint(PSN.cream), alpha * 0.35);
-  g.lineStyle(0.8 * s, tint(PSN.cream), alpha * 0.35);
-  g.lineBetween(P(-9.6, -4).x, P(-9.6, -4).y, P(9.6, -4).x, P(9.6, -4).y);
-  const bud = P(8.2, -4.4);
-  heart(g, tint, bud.x, bud.y, 4.2 * s, Math.PI / 2 + tilt, PSN.pink, alpha);
-}
-
-/**
- * The blush. Three stages, and the whole passive is legible off which one is on a face:
- * 1 = a hint at 25%, 2 = the deep red at 50%, 3 = the same red plus a shimmer at 75%.
- */
-export function blush(
-  g: Phaser.GameObjects.Graphics,
-  tint: PassionColorFn,
-  x: number, y: number, stage: 1 | 2 | 3, alpha: number, t: number,
-): void {
-  const pulse = 1 + Math.sin(t * (stage === 1 ? 2.2 : 4.4)) * (stage === 1 ? 0.05 : 0.11);
-  const color = stage === 1 ? PSN.blush : PSN.deep;
-  const w = (stage === 1 ? 8.4 : 11.4) * pulse;
-  const h = (stage === 1 ? 4.6 : 6.2) * pulse;
-  const a = alpha * (stage === 1 ? 0.5 : 0.78);
-  for (const side of [-1, 1]) {
-    const bx = x + side * 11.5;
-    const by = y - 1;
-    g.fillStyle(tint(color), a * 0.45);
-    g.fillEllipse(bx, by, w * 1.35, h * 1.3);
-    g.fillStyle(tint(color), a);
-    g.fillEllipse(bx, by, w, h);
-    // The three little stroke marks that make a blush read as a blush and not a bruise.
-    if (stage >= 2) {
-      g.lineStyle(1.1, tint(PSN.hot), a * 0.8);
-      for (let i = -1; i <= 1; i++) {
-        g.lineBetween(bx + i * 3.1 - 1.2, by - 2.4, bx + i * 3.1 + 1.2, by + 2.4);
-      }
-    }
-  }
-  if (stage === 3) {
-    // Shimmer: sparkles lifting off the cheeks, so 75% is never mistaken for 50%.
-    for (let i = 0; i < 4; i++) {
-      const ph = t * 2.4 + i * 1.7;
-      const sx = x + (i < 2 ? -1 : 1) * (9 + jitter(i, 1) * 7);
-      const sy = y - 6 - ((ph % 1) * 9);
-      const sa2 = alpha * (1 - (ph % 1)) * 0.9;
-      g.fillStyle(tint(PSN.cream), sa2);
-      g.fillCircle(sx, sy, 1.5 * (1 - (ph % 1) * 0.5));
-    }
-  }
-}
-
-/** Heart-shaped eyes, replacing whatever the victim's own face was doing. Beat on their own clock. */
-export function heartEyes(
-  g: Phaser.GameObjects.Graphics,
-  tint: PassionColorFn,
-  x: number, y: number, alpha: number, t: number,
-): void {
-  // Two beats per cycle, like a real one — a single sine reads as breathing, not a pulse.
-  const beat = Math.max(Math.sin(t * 7), Math.sin(t * 7 - 0.9) * 0.7);
-  const size = 6.4 + Math.max(0, beat) * 1.9;
-  for (const side of [-1, 1]) {
-    const ex = x + side * 7.4;
-    const ey = y - 4;
-    g.fillStyle(tint(PSN.hot), alpha * 0.28);
-    g.fillCircle(ex, ey, size * 1.15);
-    heart(g, tint, ex, ey, size, Math.PI / 2, PSN.hot, alpha, true);
-  }
-}
-
-/** A lipstick print, left where a kiss landed. */
-export function kissMark(
-  g: Phaser.GameObjects.Graphics,
-  tint: PassionColorFn,
-  x: number, y: number, ang: number, size: number, alpha: number,
-): void {
+  if (alpha <= 0.01 || len <= 1) return;
   const ca = Math.cos(ang);
   const sa = Math.sin(ang);
-  const P = (u: number, v: number) => pt(x, y, ca, sa, u * size, v * size);
-  g.fillStyle(tint(PSN.deep), alpha);
-  // Upper lip: two lobes meeting in a cupid's bow. Lower lip: one fuller sweep.
-  g.fillPoints([P(-1, -0.05), P(-0.55, -0.42), P(-0.16, -0.14), P(0, -0.3),
-    P(0.16, -0.14), P(0.55, -0.42), P(1, -0.05)], true);
-  g.fillPoints([P(-1, 0.05), P(-0.5, 0.52), P(0.5, 0.52), P(1, 0.05)], true);
-  g.lineStyle(1, tint(PSN.ink), alpha * 0.5);
-  g.lineBetween(P(-1, 0).x, P(-1, 0).y, P(1, 0).x, P(1, 0).y);
-  g.fillStyle(tint(PSN.cream), alpha * 0.4);
-  g.fillEllipse(P(-0.4, 0.24).x, P(-0.4, 0.24).y, size * 0.4, size * 0.18);
+  const nx = -sa;
+  const ny = ca;
+  const swell = halfW * 1.15;
+  const pts = [
+    new Phaser.Geom.Point(x + nx * halfW, y + ny * halfW),
+    new Phaser.Geom.Point(x + ca * len * 0.32 + nx * swell, y + sa * len * 0.32 + ny * swell),
+    new Phaser.Geom.Point(x + ca * len, y + sa * len),
+    new Phaser.Geom.Point(x + ca * len * 0.32 - nx * swell, y + sa * len * 0.32 - ny * swell),
+    new Phaser.Geom.Point(x - nx * halfW, y - ny * halfW),
+  ];
+  g.fillStyle(tint(color), alpha);
+  g.fillPoints(pts, true);
+  // The rounded root — without it a ring of rays has a hard polygon hole in the middle.
+  g.fillCircle(x, y, halfW);
 }
 
-/** The five things that come off during a censored Exhibition, in the order they leave. */
-export type GarmentKind = 'hat' | 'jacket' | 'shirt' | 'tie' | 'trousers';
-
-/**
- * One discarded piece of the suit, centred at (x, y) and rotated to `ang`.
- *
- * `settle` is 0 while the garment is still tumbling through the air and 1 once it has come to
- * rest on the floor. On landing the whole shape is squashed toward the floor plane *after* it
- * is rotated — squashing in the garment's own frame just makes a thinner jacket — and given a
- * contact shadow. Those two things are the entire difference between "in the air" and "on the
- * ground" when both are drawn from the same flat set of polygons.
- */
-export function garment(
-  g: Phaser.GameObjects.Graphics,
-  tint: PassionColorFn,
-  kind: GarmentKind,
-  x: number, y: number, ang: number, alpha: number, scale = 1, settle = 0,
+/** Three passes of `holyRay`: warm halo, pale body, white-hot core. */
+export function holyRayLayered(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  x: number, y: number, ang: number, len: number, halfW: number, alpha: number,
+  outer = DEV.gold,
 ): void {
-  const s = scale;
-  if (settle > 0.02) {
-    g.fillStyle(tint(PSN.ink), alpha * 0.32 * settle);
-    g.fillEllipse(x, y + 6 * s, 32 * s, 9 * s);
-  }
+  holyRay(g, tint, x, y, ang, len * 1.08, halfW * 1.6, outer, alpha * 0.35);
+  holyRay(g, tint, x, y, ang, len, halfW, DEV.holy, alpha * 0.8);
+  holyRay(g, tint, x, y, ang, len * 0.7, halfW * 0.45, DEV.white, alpha * 0.95);
+}
 
-  // The hat is the one piece that already has a drawing, and it lands brim-down anyway.
-  if (kind === 'hat') {
-    fedora(g, tint, x, y + 2 * s * settle, alpha, ang, s * (1 - 0.12 * settle));
+/** A ring of rays around a point — the glory behind a saint, and the shape of every holy burst. */
+export function glory(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  x: number, y: number, r0: number, len: number, rays: number, spin: number, alpha: number,
+  halfW = 2.6,
+): void {
+  for (let i = 0; i < rays; i++) {
+    const a = spin + (i / rays) * TAU;
+    // Alternate long and short, the way a gilded monstrance is cut.
+    const l = len * (i % 2 ? 0.62 : 1);
+    holyRayLayered(g, tint, x + Math.cos(a) * r0, y + Math.sin(a) * r0, a, l, halfW, alpha);
+  }
+}
+
+/** A plain Latin cross, its long arm down, rotated so "down" points along `ang + π/2`. */
+export function cross(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  x: number, y: number, size: number, ang: number, color: number, alpha: number,
+  outline = DEV.ink,
+): void {
+  if (alpha <= 0.01) return;
+  const ca = Math.cos(ang);
+  const sa = Math.sin(ang);
+  const w = size * 0.2;
+  // Local (u across, v down) → world.
+  const P = (u: number, v: number): Phaser.Geom.Point =>
+    new Phaser.Geom.Point(x + ca * u - sa * v, y + sa * u + ca * v);
+  const top = -size * 0.62;
+  const bot = size;
+  const arm = size * 0.5;
+  const armY = -size * 0.22;
+  const pts = [
+    P(-w, top), P(w, top), P(w, armY - w), P(arm, armY - w), P(arm, armY + w), P(w, armY + w),
+    P(w, bot), P(-w, bot), P(-w, armY + w), P(-arm, armY + w), P(-arm, armY - w), P(-w, armY - w),
+  ];
+  g.fillStyle(tint(outline), alpha * 0.55);
+  g.fillPoints(pts.map((p) => new Phaser.Geom.Point(p.x + 1, p.y + 1)), true);
+  g.fillStyle(tint(color), alpha);
+  g.fillPoints(pts, true);
+}
+
+/** An elliptical halo ring, seen slightly from above. */
+export function halo(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  x: number, y: number, rx: number, alpha: number, width = 2.4, dotted = false, t = 0,
+): void {
+  if (alpha <= 0.01) return;
+  const ry = rx * 0.34;
+  if (dotted) {
+    const n = 12;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * TAU + t * 0.8;
+      g.fillStyle(tint(DEV.holy), alpha * (0.55 + 0.45 * Math.sin(a * 2 + t * 3)));
+      g.fillCircle(x + Math.cos(a) * rx, y + Math.sin(a) * ry, width * 0.6);
+    }
     return;
   }
-
-  const ca = Math.cos(ang);
-  const sa = Math.sin(ang);
-  const fy = 1 - 0.42 * settle;
-  const P = (u: number, v: number): Phaser.Geom.Point => {
-    const p = pt(x, y, ca, sa, u * s, v * s);
-    return new Phaser.Geom.Point(p.x, y + (p.y - y) * fy);
-  };
-  const poly = (pts: Array<[number, number]>, color: number, a: number): void => {
-    g.fillStyle(tint(color), alpha * a);
-    g.fillPoints(pts.map(([u, v]) => P(u, v)), true);
-  };
-
-  if (kind === 'jacket') {
-    // Sleeves first, so the body reads as sitting in front of them rather than between them.
-    poly([[-8, -9], [-18, -3], [-15, 4], [-7, 1]], PSN.wine, 0.95);
-    poly([[8, -9], [18, -3], [15, 4], [7, 1]], PSN.wine, 0.95);
-    poly([[-9, -10], [9, -10], [12, 11], [-12, 11]], PSN.ink, 0.95);
-    // It came off open, so the cream lining is showing down the middle.
-    poly([[-3.4, -10], [3.4, -10], [2.4, 10], [-2.4, 10]], PSN.cream, 0.5);
-    poly([[-9, -10], [-2.6, -9], [-4.6, 1]], PSN.deep, 0.9);
-    poly([[9, -10], [2.6, -9], [4.6, 1]], PSN.deep, 0.9);
-    poly([[-6, -11.6], [6, -11.6], [4, -8.6], [-4, -8.6]], PSN.deep, 0.95);
-    // The pin off the left lapel — the detail that makes this *his* jacket on the floor.
-    const pin = P(-6.2, -5.6);
-    heart(g, tint, pin.x, pin.y, 3.2 * s, Math.PI / 2 + ang, PSN.hot, alpha * 0.95);
-  } else if (kind === 'shirt') {
-    poly([[-7, -8], [-15, -2], [-12.5, 3.5], [-6, 0.5]], PSN.cream, 0.78);
-    poly([[7, -8], [15, -2], [12.5, 3.5], [6, 0.5]], PSN.cream, 0.78);
-    poly([[-8, -9], [8, -9], [9.5, 10], [-9.5, 10]], PSN.cream, 0.9);
-    poly([[-5.4, -10.4], [0, -6], [-1.5, -9.8]], PSN.blush, 0.9);
-    poly([[5.4, -10.4], [0, -6], [1.5, -9.8]], PSN.blush, 0.9);
-    g.fillStyle(tint(PSN.blush), alpha * 0.7);
-    for (let i = 0; i < 4; i++) {
-      const b = P(0, -3.5 + i * 4);
-      g.fillCircle(b.x, b.y, 0.9 * s);
-    }
-  } else if (kind === 'tie') {
-    poly([[-2.6, -8], [2.6, -8], [2, -4.6], [-2, -4.6]], PSN.deep, 0.95);
-    poly([[-2, -4.6], [2, -4.6], [3.4, 7], [0, 11], [-3.4, 7]], PSN.hot, 0.95);
-    g.lineStyle(0.9 * s, tint(PSN.cream), alpha * 0.4);
-    g.lineBetween(P(-1.6, -3).x, P(-1.6, -3).y, P(2.4, 6).x, P(2.4, 6).y);
-  } else {
-    // Trousers: a waistband and two legs with daylight between them, or it reads as a skirt.
-    poly([[-8, -9], [8, -9], [8, -5], [-8, -5]], PSN.ink, 0.95);
-    poly([[-8, -5], [-1, -5], [-1.6, 12], [-6.5, 12]], PSN.wine, 0.95);
-    poly([[8, -5], [1, -5], [1.6, 12], [6.5, 12]], PSN.wine, 0.95);
-    g.lineStyle(1 * s, tint(PSN.cream), alpha * 0.26);
-    g.lineBetween(P(-7, -3).x, P(-7, -3).y, P(-5.4, 11).x, P(-5.4, 11).y);
-    g.lineBetween(P(7, -3).x, P(7, -3).y, P(5.4, 11).x, P(5.4, 11).y);
-  }
+  g.lineStyle(width + 3, tint(DEV.gold), alpha * 0.3);
+  g.strokeEllipse(x, y, rx * 2, ry * 2);
+  g.lineStyle(width, tint(DEV.holy), alpha * 0.95);
+  g.strokeEllipse(x, y, rx * 2, ry * 2);
+  g.lineStyle(width * 0.4, tint(DEV.white), alpha * 0.9);
+  g.strokeEllipse(x, y - 0.6, rx * 2 - 2, ry * 2 - 1);
 }
 
 /**
- * The bare head, drawn over the fighter sprite while the suit is off.
- *
- * This exists because the `elem-passion` texture has the fedora *baked into it* — the sprite is
- * a heart, a revolver and a hat brim, and the rig's own fedora has always been a second hat sat
- * on top of the first. Suppressing the rig's one therefore leaves the sprite's one behind, so
- * the only way to actually take the hat off is to paint over the sprite. It is drawn on the rig's
- * body layer, which sits above the sprite and below the eyes.
- *
- * The hair is the payoff: nobody has seen this character's head before, because the hat has
- * covered it in every frame the game has ever drawn.
+ * The mitre: a tall two-peaked bishop's hat with a gold band and a cross on the front. The one
+ * accessory. `scale` grows it for a mastered priest and `trim` gilds its edges.
  */
-export function bareHead(
-  g: Phaser.GameObjects.Graphics,
-  tint: PassionColorFn,
-  x: number, y: number, alpha: number, t: number,
+export function mitre(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  x: number, y: number, alpha: number, tilt: number, scale = 1, trim = DEV.ochre,
 ): void {
-  // Neck first, so the jaw and the torso both close over it.
-  g.fillStyle(tint(PSN.tanDeep), alpha * 0.95);
-  g.fillRect(x - 6, y + 2, 12, 10);
+  const ca = Math.cos(tilt);
+  const sa = Math.sin(tilt);
+  const P = (u: number, v: number): Phaser.Geom.Point =>
+    new Phaser.Geom.Point(x + (ca * u - sa * v) * scale, y + (sa * u + ca * v) * scale);
+  // The body of the hat: two arched halves meeting in a notch at the top.
+  const shell = [
+    P(-10, 2), P(-11, -6), P(-8.5, -14), P(-3.5, -21), P(-0.5, -16),
+    P(0.5, -16), P(3.5, -21), P(8.5, -14), P(11, -6), P(10, 2),
+  ];
+  g.fillStyle(tint(DEV.umber), alpha * 0.6);
+  g.fillPoints(shell.map((p) => new Phaser.Geom.Point(p.x + 1.2, p.y + 1.2)), true);
+  g.fillStyle(tint(DEV.white), alpha);
+  g.fillPoints(shell, true);
+  // Shading down the right half so it reads as a folded cone, not a flat card.
+  g.fillStyle(tint(DEV.pale), alpha * 0.9);
+  g.fillPoints([P(0.5, -16), P(3.5, -21), P(8.5, -14), P(11, -6), P(10, 2), P(1, 2)], true);
+  // Trim: the outline, the front band and the base band.
+  g.lineStyle(1.3, tint(trim), alpha);
+  g.strokePoints(shell, true);
+  g.fillStyle(tint(trim), alpha);
+  g.fillPoints([P(-1.6, -16), P(1.6, -16), P(1.6, 2), P(-1.6, 2)], true);
+  g.fillPoints([P(-10.4, -1.5), P(10.4, -1.5), P(10, 2), P(-10, 2)], true);
+  // The cross on the front.
+  const c = P(0, -8);
+  cross(g, tint, c.x, c.y, 5.4 * scale, tilt, DEV.gold, alpha, DEV.umber);
+}
 
-  g.fillStyle(tint(PSN.tanDeep), alpha * 0.9);
-  g.fillCircle(x, y - 3, 21);
-  g.fillStyle(tint(PSN.tan), alpha);
-  g.fillCircle(x, y - 4, 20);
-  // Ears, and the jaw shadow under the cheekbones.
-  for (const side of [-1, 1]) {
-    g.fillStyle(tint(PSN.tan), alpha);
-    g.fillEllipse(x + side * 19.5, y - 2, 6, 9);
-    g.fillStyle(tint(PSN.tanDeep), alpha * 0.5);
-    g.fillEllipse(x + side * 19.5, y - 2, 2.6, 4.4);
+/** The faith bar over a victim's head, with notches at the three thresholds. */
+export function faithBar(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  x: number, y: number, w: number, h: number, ratio: number, t: number,
+): void {
+  const left = x - w / 2;
+  g.fillStyle(tint(DEV.ink), 0.82);
+  g.fillRoundedRect(left - 1.5, y - 1.5, w + 3, h + 3, 2.5);
+  if (ratio > 0) {
+    g.fillStyle(tint(DEV.ochre), 1);
+    g.fillRect(left, y, w * ratio, h);
+    g.fillStyle(tint(DEV.holy), 1);
+    g.fillRect(left, y, w * ratio, h * 0.6);
+    // A glint running along the filled part.
+    const gx = left + ((t * 40) % Math.max(1, w * ratio));
+    g.fillStyle(tint(DEV.white), 0.75);
+    g.fillRect(gx, y, 3, h * 0.6);
   }
-  g.fillStyle(tint(PSN.tanDeep), alpha * 0.34);
-  g.fillEllipse(x, y + 8, 26, 9);
-
-  // Hair: a slicked-back cap with a fringe swept to the left, breathing a little so it doesn't
-  // read as a helmet.
-  const sway = Math.sin(t * 1.7) * 0.7;
-  g.fillStyle(tint(PSN.ink), alpha);
-  g.fillPoints([
-    new Phaser.Geom.Point(x - 20, y - 6),
-    new Phaser.Geom.Point(x - 17, y - 17),
-    new Phaser.Geom.Point(x - 6, y - 23),
-    new Phaser.Geom.Point(x + 8, y - 23),
-    new Phaser.Geom.Point(x + 18, y - 16),
-    new Phaser.Geom.Point(x + 20, y - 5),
-    new Phaser.Geom.Point(x + 15, y - 9),
-    new Phaser.Geom.Point(x + 4, y - 12 + sway),
-    new Phaser.Geom.Point(x - 9, y - 10 + sway),
-    new Phaser.Geom.Point(x - 15, y - 7),
-  ], true);
-  // The kiss-curl that escapes the sweep, and the shine along the top of it.
-  g.fillStyle(tint(PSN.ink), alpha * 0.95);
-  g.fillEllipse(x - 12, y - 8 + sway, 7, 5);
-  g.fillStyle(tint(PSN.wine), alpha * 0.55);
-  g.fillEllipse(x - 5, y - 18, 13, 4);
-  g.fillStyle(tint(PSN.cream), alpha * 0.28);
-  g.fillEllipse(x - 8, y - 19, 6, 2.2);
-
-  // Cheek highlight, upper-left like every other fill in the element.
-  g.fillStyle(tint(PSN.cream), alpha * 0.22);
-  g.fillEllipse(x - 8, y - 1, 9, 6);
+  for (const m of [0.25, 0.5, 0.75]) {
+    g.fillStyle(tint(ratio >= m ? DEV.white : DEV.umber), 0.9);
+    g.fillRect(left + w * m - 0.5, y - 1, 1, h + 2);
+  }
+  // A small cross capping the bar, so it can never be mistaken for a health bar.
+  cross(g, tint, left + w + 6, y + h / 2, 4.2, 0, ratio >= 1 ? DEV.white : DEV.holy, 1, DEV.ink);
 }
 
 /**
- * The bed, thrown down under a mature-mode Make-out. The head end is along `ang`, so the two
- * fighters standing on it line up with the pillows.
- *
- * `rise` is 0 while it is still dropping into the arena and 1 once it has arrived: it scales the
- * whole thing up from nothing and drags a shadow out from under it, because a bed that simply
- * appears at full size reads as a texture pop rather than as something that landed.
+ * Holy water, boiling. A blue-white pool with a gold rim, bubbles welling and popping on a fixed
+ * seed, steam curling off it, and a cross of light shimmering on the surface. `life` is 0→1 over
+ * the puddle's lifetime: it shrinks a touch and pales at the end so the expiry is readable.
  */
-export function bed(
-  g: Phaser.GameObjects.Graphics,
-  tint: PassionColorFn,
-  x: number, y: number, ang: number, alpha: number, rise = 1, scale = 1,
+export function holyWaterPuddle(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  x: number, y: number, r: number, t: number, seed: number, life: number, alpha = 1,
 ): void {
-  const s = scale * (0.55 + easeOut(Phaser.Math.Clamp(rise, 0, 1)) * 0.45);
-  const ca = Math.cos(ang);
-  const sa = Math.sin(ang);
-  // Local u runs across the bed, v from the head (-) to the foot (+).
-  const P = (u: number, v: number) => pt(x, y, ca, sa, u * s, v * s);
-  const poly = (pts: Array<[number, number]>, color: number, a: number): void => {
-    g.fillStyle(tint(color), alpha * a);
-    g.fillPoints(pts.map(([u, v]) => P(u, v)), true);
-  };
-
-  // Contact shadow, offset down-screen rather than along the bed's own axis.
-  g.fillStyle(tint(PSN.ink), alpha * 0.34);
-  g.fillEllipse(x, y + 9 * s, 78 * s, 44 * s);
-
-  // Frame, then the mattress inset into it.
-  poly([[-33, -46], [33, -46], [33, 46], [-33, 46]], PSN.ink, 0.95);
-  poly([[-29, -42], [29, -42], [29, 42], [-29, 42]], PSN.cream, 0.9);
-
-  // Headboard: a slab with a heart cut into its top edge.
-  poly([[-35, -56], [35, -56], [35, -44], [-35, -44]], PSN.wine, 0.98);
-  poly([[-31, -54], [31, -54], [31, -47], [-31, -47]], PSN.deep, 0.6);
-  const crest = P(0, -50);
-  heart(g, tint, crest.x, crest.y, 9 * s, ang + Math.PI / 2, PSN.hot, alpha * 0.95);
-
-  // Two pillows at the head end, each with a crease down its middle.
-  for (const side of [-1, 1]) {
-    const pc = P(side * 14, -33);
-    g.fillStyle(tint(PSN.cream), alpha * 0.98);
-    g.fillEllipse(pc.x, pc.y, 26 * s, 17 * s);
-    g.fillStyle(tint(PSN.blush), alpha * 0.45);
-    g.fillEllipse(pc.x, pc.y, 18 * s, 10 * s);
-  }
-
-  // The duvet, pulled up over the foot half, with a turned-back cream cuff along its top edge.
-  poly([[-31, 2], [31, 2], [31, 44], [-31, 44]], PSN.wine, 0.96);
-  poly([[-31, 2], [31, 2], [31, 9], [-31, 9]], PSN.cream, 0.75);
-  // Quilting: hearts in a staggered grid, the pattern that makes it a Passion bed.
-  for (let row = 0; row < 3; row++) {
-    for (let col = -1; col <= 1; col++) {
-      const hp = P(col * 17 + (row % 2 ? 8.5 : 0), 17 + row * 11);
-      heart(g, tint, hp.x, hp.y, 5 * s, ang + Math.PI / 2, PSN.hot, alpha * 0.55);
-    }
-  }
-  // Folds running the length of the duvet.
-  g.lineStyle(1.1 * s, tint(PSN.ink), alpha * 0.25);
-  for (const u of [-16, 0, 16]) {
-    g.lineBetween(P(u, 10).x, P(u, 10).y, P(u * 1.1, 43).x, P(u * 1.1, 43).y);
-  }
-}
-
-/** A censor bar — black, hard-edged, with the hazard hatching along its long sides. */
-export function censorBar(
-  g: Phaser.GameObjects.Graphics,
-  x: number, y: number, w: number, h: number, ang: number, alpha: number,
-): void {
-  const ca = Math.cos(ang);
-  const sa = Math.sin(ang);
-  const P = (u: number, v: number) => pt(x, y, ca, sa, u, v);
-  g.fillStyle(PSN.censor, alpha);
-  g.fillPoints([P(-w / 2, -h / 2), P(w / 2, -h / 2), P(w / 2, h / 2), P(-w / 2, h / 2)], true);
-  g.lineStyle(1.2, 0xffffff, alpha * 0.55);
-  g.strokePoints([P(-w / 2, -h / 2), P(w / 2, -h / 2), P(w / 2, h / 2), P(-w / 2, h / 2)], true);
-  g.lineStyle(1, 0xffffff, alpha * 0.22);
-  for (let u = -w / 2 + 3; u < w / 2; u += 5) {
-    g.lineBetween(P(u, -h / 2).x, P(u, -h / 2).y, P(u + 2.4, h / 2).x, P(u + 2.4, h / 2).y);
-  }
-}
-
-/**
- * The love meter, above whatever health bar the victim already has.
- *
- * Filled with hearts rather than a solid colour because it has to be unmistakable at a glance:
- * a plain pink bar in a game full of coloured bars would read as another shield layer, and this
- * one is the only bar in the game that kills you when it *finishes*.
- */
-export function loveBar(
-  g: Phaser.GameObjects.Graphics,
-  tint: PassionColorFn,
-  x: number, y: number, w: number, h: number, ratio: number, t: number, alpha = 1,
-): void {
-  const bx = x - w / 2;
-  const r = Phaser.Math.Clamp(ratio, 0, 1);
-  g.fillStyle(PSN.ink, alpha * 0.9);
-  g.fillRect(bx - 1, y - 1, w + 2, h + 2);
-  g.fillStyle(PSN.wine, alpha * 0.5);
-  g.fillRect(bx, y, w, h);
-
-  const fw = w * r;
-  if (fw > 0.5) {
-    g.fillStyle(tint(PSN.hot), alpha);
-    g.fillRect(bx, y, fw, h);
-    // The hearts inside the fill scroll slowly, so a full bar still looks like it is filling.
-    for (let hx = bx + 3; hx < bx + fw - 1; hx += 6) {
-      const drift = ((t * 8 + hx) % 6) - 3;
-      const cx = hx + drift * 0.15;
-      if (cx < bx + 1 || cx > bx + fw - 1) continue;
-      g.fillStyle(tint(PSN.cream), alpha * 0.42);
-      g.fillPoints(heartPoints(cx, y + h / 2, h * 0.62), true);
-    }
-    // A live heart riding the leading edge, beating faster the closer it is to done.
-    const head = bx + fw;
-    const beat = 1 + Math.sin(t * (5 + r * 12)) * 0.16;
-    heart(g, tint, head, y + h / 2, (h * 0.95) * beat, Math.PI / 2, PSN.cream, alpha);
-  }
-
-  // The three stage marks, so the thresholds the blush announces are also on the meter.
-  g.lineStyle(1, PSN.cream, alpha * 0.4);
-  for (const mark of [0.25, 0.5, 0.75]) {
-    g.lineBetween(bx + w * mark, y, bx + w * mark, y + h);
-  }
-}
-
-// ── Mastery ───────────────────────────────────────────────────────────────
-
-/**
- * Attraction's boundary.
- *
- * The load-bearing part is the *outside*: a caught enemy has to be able to see, without being
- * told, that the far side of the line is where they are not allowed to be. So the ring itself is
- * a thin hard edge and everything beyond it is haze — a pink wall of scent and drifting hearts
- * that thickens the further out it goes, the way a held breath looks. Inside the line is left
- * completely clear, because that is the half of the arena the fight is actually happening in.
- */
-export function attractionRing(
-  g: Phaser.GameObjects.Graphics,
-  tint: PassionColorFn,
-  x: number, y: number, r: number, t: number, alpha = 1, seed = 0,
-): void {
-  // The haze, drawn as rings stepping outward and fading — cheaper than a real gradient and it
-  // gives the wall a grain the eye can read movement in.
-  const bands = 7;
-  for (let i = 0; i < bands; i++) {
-    const rr = r + 2 + i * 4.2 + Math.sin(t * 1.6 + i * 0.7) * 1.2;
-    g.lineStyle(4.6, tint(i < 3 ? PSN.hot : PSN.pink), alpha * 0.13 * (1 - i / bands));
-    g.strokeCircle(x, y, rr);
-  }
-
-  // The edge itself: a bright hairline with a wine shadow just outside it, so the boundary reads
-  // as a surface rather than as a circle somebody drew.
-  g.lineStyle(2.4, tint(PSN.wine), alpha * 0.5);
-  g.strokeCircle(x, y, r + 2.2);
-  g.lineStyle(1.6, tint(PSN.hot), alpha * (0.6 + Math.abs(Math.sin(t * 2.2)) * 0.3));
-  g.strokeCircle(x, y, r);
-
-  // Hearts standing in the haze, orbiting slowly and bobbing in and out of the wall. Every one of
-  // them is deterministic off `seed`, so the wall looks the same from frame to frame rather than
-  // boiling.
-  const n = 22;
+  const fade = alpha * (life > 0.85 ? 1 - (life - 0.85) / 0.15 : 1);
+  if (fade <= 0.01) return;
+  const rr = r * (1 - life * 0.08);
+  // Lobed edge, so it reads as liquid that splashed rather than a stamped disc.
+  const pts: Phaser.Geom.Point[] = [];
+  const n = 26;
   for (let i = 0; i < n; i++) {
-    const spin = t * (0.18 + jitter(seed, i) * 0.12) * (i % 2 ? 1 : -1);
-    const a = (i / n) * TAU + spin;
-    const drift = Math.sin(t * 1.3 + i * 1.7) * 5;
-    const rr = r + 7 + jitter(seed, i + 40) * 16 + drift;
-    const size = 4 + jitter(seed, i + 80) * 3.6;
-    const fade = 0.35 + Math.abs(Math.sin(t * 0.9 + i)) * 0.5;
-    heart(g, tint, x + Math.cos(a) * rr, y + Math.sin(a) * rr,
-      size, a + Math.PI / 2, i % 3 ? PSN.pink : PSN.blush, alpha * fade);
+    const a = (i / n) * TAU;
+    const k = 0.9 + jitter(seed, i) * 0.16 + Math.sin(t * 2 + i) * 0.015;
+    pts.push(new Phaser.Geom.Point(x + Math.cos(a) * rr * k, y + Math.sin(a) * rr * k * 0.82));
   }
-
-  // Four inward chevrons on the boundary, turning with it — the "this way" of the whole passive.
+  g.fillStyle(tint(DEV.gold), fade * 0.35);
+  g.fillPoints(pts.map((p) => new Phaser.Geom.Point(x + (p.x - x) * 1.07, y + (p.y - y) * 1.07)), true);
+  g.fillStyle(tint(DEV.waterDeep), fade * 0.55);
+  g.fillPoints(pts, true);
+  g.fillStyle(tint(DEV.water), fade * 0.5);
+  g.fillEllipse(x - rr * 0.08, y - rr * 0.06, rr * 1.5, rr * 1.15);
+  g.fillStyle(tint(DEV.waterLit), fade * 0.35);
+  g.fillEllipse(x - rr * 0.22, y - rr * 0.2, rr * 0.8, rr * 0.45);
+  // The cross of light on the surface.
+  const shimmer = 0.25 + 0.15 * Math.sin(t * 3 + seed);
+  cross(g, tint, x, y - rr * 0.05, rr * 0.42, 0, DEV.white, fade * shimmer, DEV.waterDeep);
+  // Bubbles: each cycles well → swell → pop on its own clock.
+  for (let i = 0; i < 9; i++) {
+    const ph = (t * (0.8 + jitter(seed, i + 40) * 0.7) + jitter(seed, i + 20)) % 1;
+    const a = jitter(seed, i + 60) * TAU;
+    const d = Math.sqrt(jitter(seed, i + 80)) * rr * 0.78;
+    const bx = x + Math.cos(a) * d;
+    const by = y + Math.sin(a) * d * 0.8;
+    if (ph < 0.85) {
+      const br = 1.4 + ph * 3.6;
+      g.lineStyle(1, tint(DEV.waterLit), fade * 0.8);
+      g.strokeCircle(bx, by, br);
+      g.fillStyle(tint(DEV.white), fade * 0.5);
+      g.fillCircle(bx - br * 0.35, by - br * 0.35, br * 0.3);
+    } else {
+      const p = (ph - 0.85) / 0.15;
+      g.lineStyle(1, tint(DEV.white), fade * (1 - p));
+      g.strokeCircle(bx, by, 5 + p * 5);
+    }
+  }
+  // Steam curling off the top.
   for (let i = 0; i < 4; i++) {
-    const a = t * 0.34 + (i / 4) * TAU;
-    const ca = Math.cos(a);
-    const sa = Math.sin(a);
-    const P = (u: number, v: number) => pt(x + ca * r, y + sa * r, ca, sa, u, v);
-    g.lineStyle(2, tint(PSN.cream), alpha * 0.5);
-    g.beginPath();
-    g.moveTo(P(6, -7).x, P(6, -7).y);
-    g.lineTo(P(-2, 0).x, P(-2, 0).y);
-    g.lineTo(P(6, 7).x, P(6, 7).y);
-    g.strokePath();
+    const ph = (t * 0.45 + i * 0.25 + jitter(seed, i + 100)) % 1;
+    const sx = x + (jitter(seed, i + 120) - 0.5) * rr * 1.2 + Math.sin(ph * 6 + i) * 5;
+    const sy = y - ph * 34;
+    g.fillStyle(tint(DEV.white), fade * (1 - ph) * 0.22);
+    g.fillCircle(sx, sy, 5 + ph * 8);
   }
 }
 
-/** The little shove a body gets when it tries to leave — a bloom of hearts against the wall. */
-export function attractionRebound(
-  g: Phaser.GameObjects.Graphics,
-  tint: PassionColorFn,
-  x: number, y: number, ang: number, strength: number, alpha = 1,
+/** A holy-water vial: glass body, blue water, a cork and a gold cross label. */
+export function vial(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  x: number, y: number, ang: number, alpha: number, size = 1,
 ): void {
   const ca = Math.cos(ang);
   const sa = Math.sin(ang);
-  const P = (u: number, v: number) => pt(x, y, ca, sa, u, v);
-  for (let i = 0; i < 3; i++) {
-    const off = 3 + i * 5;
-    g.lineStyle(2.6 - i * 0.6, tint(i ? PSN.pink : PSN.cream), alpha * strength * (0.6 - i * 0.15));
-    g.beginPath();
-    g.moveTo(P(off, -16 + i * 3).x, P(off, -16 + i * 3).y);
-    g.lineTo(P(off + 5, 0).x, P(off + 5, 0).y);
-    g.lineTo(P(off, 16 - i * 3).x, P(off, 16 - i * 3).y);
-    g.strokePath();
-  }
+  const P = (u: number, v: number): Phaser.Geom.Point =>
+    new Phaser.Geom.Point(x + (ca * u - sa * v) * size, y + (sa * u + ca * v) * size);
+  const body = [P(-6, -3), P(-4, -6), P(4, -6), P(6, -3), P(6, 6), P(4, 8), P(-4, 8), P(-6, 6)];
+  g.fillStyle(tint(DEV.ink), alpha * 0.4);
+  g.fillPoints(body.map((p) => new Phaser.Geom.Point(p.x + 1, p.y + 1)), true);
+  g.fillStyle(tint(DEV.waterLit), alpha * 0.55);
+  g.fillPoints(body, true);
+  g.fillStyle(tint(DEV.water), alpha * 0.9);
+  g.fillPoints([P(-6, 0), P(6, 0), P(6, 6), P(4, 8), P(-4, 8), P(-6, 6)], true);
+  // Neck and cork.
+  g.fillStyle(tint(DEV.waterLit), alpha * 0.7);
+  g.fillPoints([P(-2.2, -6), P(2.2, -6), P(2.2, -9), P(-2.2, -9)], true);
+  g.fillStyle(tint(DEV.wood), alpha);
+  g.fillPoints([P(-2.6, -9), P(2.6, -9), P(2.2, -12), P(-2.2, -12)], true);
+  const c = P(0, 2);
+  cross(g, tint, c.x, c.y, 4, ang, DEV.gold, alpha, DEV.waterDeep);
+  const glint = P(-3.6, -2);
+  g.fillStyle(tint(DEV.white), alpha * 0.8);
+  g.fillEllipse(glint.x, glint.y, 1.6 * size, 3.4 * size);
 }
 
 /**
- * A cloud of perfume.
- *
- * Built out of lobes rather than one big circle: a single soft disc reads as an aura, and this is
- * supposed to read as *stuff hanging in the air* that a fighter can walk into and out of. The
- * lobes breathe on their own clocks so the silhouette never settles, and the mist speckle inside
- * it is what sells the volume.
+ * The Holy Hand Grenade: a golden orb, a jewelled band around its middle, and a cross on top.
+ * `fuse` 0→1 drives a pulsing glow that quickens toward the burst.
  */
-export function perfumeCloud(
-  g: Phaser.GameObjects.Graphics,
-  tint: PassionColorFn,
-  x: number, y: number, r: number, t: number, alpha: number, seed: number,
+export function handGrenade(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  x: number, y: number, spin: number, alpha: number, fuse: number, t: number,
 ): void {
-  if (alpha <= 0.01) return;
+  const pulse = 0.5 + 0.5 * Math.sin(t * (6 + fuse * 26));
+  g.fillStyle(tint(DEV.holy), alpha * (0.15 + fuse * 0.35) * (0.6 + pulse * 0.4));
+  g.fillCircle(x, y, 13 + fuse * 7 + pulse * 3);
+  g.fillStyle(tint(DEV.umber), alpha);
+  g.fillCircle(x + 0.8, y + 0.8, 7.6);
+  g.fillStyle(tint(DEV.ochre), alpha);
+  g.fillCircle(x, y, 7.2);
+  g.fillStyle(tint(DEV.gold), alpha);
+  g.fillCircle(x - 0.6, y - 0.6, 6.2);
+  g.fillStyle(tint(DEV.pale), alpha * 0.85);
+  g.fillCircle(x - 2.4, y - 2.6, 2.2);
+  // The band, tilted with the spin so it reads as rolling.
+  const bw = Math.cos(spin) * 7;
+  g.lineStyle(1.6, tint(DEV.umber), alpha * 0.9);
+  g.strokeEllipse(x, y, Math.max(1, Math.abs(bw) * 2), 14);
+  g.fillStyle(tint(DEV.waterDeep), alpha);
+  g.fillCircle(x + bw * 0.6, y, 1.4);
+  // The cross on top.
+  cross(g, tint, x, y - 10.5, 4.6, 0, DEV.gold, alpha, DEV.umber);
+}
 
-  // Lobes. Two rings of them: a wide outer skirt and a denser core.
-  for (const [count, dist, size, col, a] of [
-    [9, 0.62, 0.52, PSN.pink, 0.13],
-    [7, 0.34, 0.46, PSN.blush, 0.17],
-    [5, 0.14, 0.42, PSN.cream, 0.15],
-  ] as Array<[number, number, number, number, number]>) {
-    for (let i = 0; i < count; i++) {
-      const ang = (i / count) * TAU + jitter(seed, i + count) * TAU;
-      const breathe = 1 + Math.sin(t * 1.7 + i * 1.3 + jitter(seed, i) * 6) * 0.09;
-      const d = r * dist * (0.82 + jitter(seed, i + 20) * 0.36);
-      g.fillStyle(tint(col), alpha * a);
-      g.fillEllipse(x + Math.cos(ang) * d, y + Math.sin(ang) * d * 0.86,
-        r * size * 2 * breathe, r * size * 1.72 * breathe);
-    }
-  }
+/** The crucifix itself, standing upright with its foot at (x, y). `rise` 0→1 lifts it in. */
+export function crucifixPost(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  x: number, y: number, alpha: number, t: number, rise = 1, scale = 1,
+): void {
+  const s = scale * (0.4 + easeOut(rise) * 0.6);
+  // Shadow on the floor.
+  g.fillStyle(tint(DEV.ink), alpha * 0.35 * rise);
+  g.fillEllipse(x + 4, y + 2, 26 * s, 8 * s);
+  // Mound of earth it is planted in.
+  g.fillStyle(tint(DEV.woodDeep), alpha);
+  g.fillEllipse(x, y, 20 * s, 7 * s);
+  const top = y - 58 * s;
+  const armY = y - 44 * s;
+  const w = 3.6 * s;
+  const arm = 15 * s;
+  // Post and crossbeam: dark side, lit side, grain.
+  g.fillStyle(tint(DEV.woodDeep), alpha);
+  g.fillRect(x - w, top, w * 2, y - top);
+  g.fillRect(x - arm, armY - w, arm * 2, w * 2);
+  g.fillStyle(tint(DEV.wood), alpha);
+  g.fillRect(x - w, top, w * 1.2, y - top);
+  g.fillRect(x - arm, armY - w, arm * 2, w * 1.1);
+  g.fillStyle(tint(DEV.woodLit), alpha * 0.8);
+  g.fillRect(x - w, top, w * 0.4, y - top);
+  // A gold sunburst where the beams meet.
+  const glow = 0.6 + 0.4 * Math.sin(t * 2.4);
+  glory(g, tint, x, armY, 3 * s, 9 * s * (0.8 + glow * 0.3), 8, t * 0.4, alpha * 0.8 * rise, 1.4 * s);
+  g.fillStyle(tint(DEV.white), alpha * glow);
+  g.fillCircle(x, armY, 2.4 * s);
+}
 
-  // Mist: fine motes turning slowly around the centre, drifting outward and back.
-  for (let i = 0; i < 26; i++) {
-    const a = jitter(seed, i + 100) * TAU + t * (0.25 + jitter(seed, i) * 0.3);
-    const ph = (t * 0.35 + jitter(seed, i + 140)) % 1;
-    const d = r * (0.2 + ph * 0.85);
-    g.fillStyle(tint(i % 4 ? PSN.cream : PSN.hot), alpha * (1 - ph) * 0.5);
-    g.fillCircle(x + Math.cos(a) * d, y + Math.sin(a) * d * 0.88, 1 + jitter(seed, i + 180) * 1.8);
-  }
-
-  // And the hearts coming up out of it, because a cloud with no hearts in it is a smoke bomb.
-  for (let i = 0; i < 5; i++) {
-    const ph = (t * 0.5 + i * 0.2 + jitter(seed, i + 220)) % 1;
-    const hx = x + Math.sin(t * 1.1 + i * 2.2) * r * 0.44 + (jitter(seed, i + 260) - 0.5) * r * 0.5;
-    const hy = y + r * 0.5 - ph * r * 1.5;
-    heart(g, tint, hx, hy, 4.6 + (1 - ph) * 2.6, Math.PI / 2, PSN.hot, alpha * (1 - ph) * 0.75);
-  }
-
-  // The boundary, so "am I standing in it" is never a guess.
-  g.lineStyle(1.4, tint(PSN.pink), alpha * 0.34);
+/** The aura around a crucifix: a ring of light on the floor with crosses turning slowly in it. */
+export function crucifixAura(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  x: number, y: number, r: number, t: number, alpha: number, flare = 0,
+): void {
+  g.fillStyle(tint(DEV.holy), alpha * (0.07 + flare * 0.1));
+  g.fillCircle(x, y, r);
+  g.fillStyle(tint(DEV.pale), alpha * 0.06);
+  g.fillCircle(x, y, r * 0.7);
+  g.lineStyle(4, tint(DEV.gold), alpha * (0.22 + flare * 0.3));
   g.strokeCircle(x, y, r);
+  g.lineStyle(1.6, tint(DEV.white), alpha * (0.6 + flare * 0.3));
+  g.strokeCircle(x, y, r - 1);
+  const n = 8;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * TAU + t * 0.25;
+    cross(g, tint, x + Math.cos(a) * (r - 9), y + Math.sin(a) * (r - 9), 5.4, a + Math.PI / 2,
+      DEV.holy, alpha * 0.7, DEV.umber);
+  }
+  // Short rays standing out of the rim, pointing outward — "keep out", not "come in".
+  for (let i = 0; i < 16; i++) {
+    const a = (i / 16) * TAU - t * 0.18;
+    holyRay(g, tint, x + Math.cos(a) * r, y + Math.sin(a) * r, a, 9 + Math.sin(t * 3 + i) * 3,
+      1.6, DEV.holy, alpha * 0.5);
+  }
 }
 
 /**
- * The dose you carry away with you. Ribbons of scent wound around the wearer, plus the same mist
- * as the cloud at a fraction of the density — it has to be obviously the *same substance*, just
- * less of it, or the two halves of the ability read as two unrelated effects.
+ * Ascendance's telegraph: a band of light right across the arena, filling from the edges as the
+ * wind-up runs out, with crosses marching along its centre line toward the chariot's exit.
  */
-export function perfumeAura(
-  g: Phaser.GameObjects.Graphics,
-  tint: PassionColorFn,
-  x: number, y: number, r: number, t: number, alpha: number,
+export function ascendBand(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  left: number, right: number, y: number, half: number, progress: number, dir: number,
+  t: number, alpha = 1,
 ): void {
-  if (alpha <= 0.01) return;
-  g.fillStyle(tint(PSN.pink), alpha * 0.09);
-  g.fillEllipse(x, y + 4, r * 2, r * 1.62);
-
-  // Three ribbons at different tilts, each a squashed circle drawn as a chain of dashes.
-  for (let k = 0; k < 3; k++) {
-    const tilt = t * (0.5 + k * 0.22) + k * 1.1;
-    const rr = r * (0.55 + k * 0.2);
-    g.lineStyle(2.2 - k * 0.4, tint(k === 1 ? PSN.cream : PSN.blush), alpha * (0.45 - k * 0.08));
-    for (let i = 0; i < 14; i++) {
-      if (i % 2) continue;
-      const a0 = (i / 14) * TAU + tilt;
-      const a1 = ((i + 1) / 14) * TAU + tilt;
-      const sq = 0.42 + k * 0.12;
-      g.lineBetween(x + Math.cos(a0) * rr, y + 4 + Math.sin(a0) * rr * sq,
-        x + Math.cos(a1) * rr, y + 4 + Math.sin(a1) * rr * sq);
-    }
+  const w = right - left;
+  const beat = 0.5 + 0.5 * Math.sin(t * (6 + progress * 14));
+  g.fillStyle(tint(DEV.holy), alpha * (0.08 + progress * 0.14 + beat * 0.05));
+  g.fillRect(left, y - half, w, half * 2);
+  // The fill sweeping across from the side the chariot comes in on.
+  const fillW = w * progress;
+  const fx = dir > 0 ? left : right - fillW;
+  g.fillStyle(tint(DEV.fire), alpha * 0.14);
+  g.fillRect(fx, y - half, fillW, half * 2);
+  // Edges.
+  g.lineStyle(2, tint(DEV.gold), alpha * (0.5 + beat * 0.4));
+  g.lineBetween(left, y - half, right, y - half);
+  g.lineBetween(left, y + half, right, y + half);
+  g.lineStyle(1, tint(DEV.white), alpha * 0.6);
+  g.lineBetween(left, y - half + 3, right, y - half + 3);
+  g.lineBetween(left, y + half - 3, right, y + half - 3);
+  // Marching crosses.
+  const step = 64;
+  const off = ((t * 90 * dir) % step + step) % step;
+  for (let cx = left - step + off; cx < right + step; cx += step) {
+    if (cx < left + 6 || cx > right - 6) continue;
+    cross(g, tint, cx, y, 7, 0, DEV.holy, alpha * (0.35 + progress * 0.45), DEV.umber);
   }
-
-  for (let i = 0; i < 10; i++) {
-    const ph = (t * 0.6 + i * 0.1) % 1;
-    const a = (i / 10) * TAU + t * 0.4;
-    const d = r * (0.3 + ph * 0.7);
-    g.fillStyle(tint(i % 3 ? PSN.cream : PSN.hot), alpha * (1 - ph) * 0.55);
-    g.fillCircle(x + Math.cos(a) * d, y + 2 + Math.sin(a) * d * 0.7 - ph * 10, 1.2 + (1 - ph) * 1.4);
+  // Chevrons along both edges pointing the way it will run.
+  for (let cx = left + 20; cx < right; cx += 46) {
+    for (const ey of [y - half - 7, y + half + 7]) {
+      g.lineStyle(2, tint(DEV.gold), alpha * 0.5 * beat);
+      g.lineBetween(cx - 5 * dir, ey - 4, cx, ey);
+      g.lineBetween(cx - 5 * dir, ey + 4, cx, ey);
+    }
   }
 }
 
-/** The atomiser: a cut-glass bottle with a bulb, drawn in the caster's hand as they spray. */
-export function perfumeBottle(
-  g: Phaser.GameObjects.Graphics,
-  tint: PassionColorFn,
-  x: number, y: number, ang: number, alpha: number, squeeze = 0,
+/** One long wind-bent flame tongue, for the chariot and its horses. */
+function flameLick(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  x: number, y: number, ang: number, len: number, w: number, alpha: number,
 ): void {
-  const ca = Math.cos(ang);
-  const sa = Math.sin(ang);
-  const P = (u: number, v: number) => pt(x, y, ca, sa, u, v);
-  // Body — a flat-shouldered flask, shadow first then the glass over it.
-  g.fillStyle(tint(PSN.wine), alpha * 0.8);
-  g.fillPoints([P(-5, -6), P(4, -5), P(4, 5), P(-5, 6)], true);
-  g.fillStyle(tint(PSN.blush), alpha * 0.85);
-  g.fillPoints([P(-4, -5), P(3, -4), P(3, 4), P(-4, 5)], true);
-  // The liquid sitting in the bottom half of it.
-  g.fillStyle(tint(PSN.hot), alpha * 0.9);
-  g.fillPoints([P(-4, 1), P(3, 0.6), P(3, 4), P(-4, 5)], true);
-  // Neck, collar and nozzle.
-  g.fillStyle(tint(PSN.gold), alpha * 0.95);
-  g.fillPoints([P(3, -2), P(8, -1.6), P(8, 1.6), P(3, 2)], true);
-  // The rubber bulb behind it, squashed while it is being squeezed.
-  const bulb = 4.4 - squeeze * 1.4;
-  g.fillStyle(tint(PSN.ink), alpha * 0.7);
-  g.fillEllipse(P(-9, 0).x, P(-9, 0).y, bulb * 2.2, bulb * 2);
-  g.fillStyle(tint(PSN.cream), alpha * 0.3);
-  g.fillEllipse(P(-2.4, -2.4).x, P(-2.4, -2.4).y, 3.4, 2.2);
+  holyRay(g, tint, x, y, ang, len * 1.1, w * 1.5, DEV.fireDeep, alpha * 0.55);
+  holyRay(g, tint, x, y, ang, len, w, DEV.fire, alpha * 0.85);
+  holyRay(g, tint, x, y, ang, len * 0.6, w * 0.45, DEV.fireHot, alpha * 0.95);
+}
+
+/**
+ * The flaming chariot, running along `dir` (±1) with its front at (x, y). Two horses of fire pull
+ * a gilded car on one great spoked wheel; everything streams flame backward. Optionally carries
+ * the caster as a small bright figure riding the car.
+ */
+export function chariot(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  x: number, y: number, dir: number, t: number, alpha: number, rider = false,
+): void {
+  const back = dir > 0 ? Math.PI : 0;
+  // Flame trail streaming back off everything.
+  for (let i = 0; i < 9; i++) {
+    const oy = (jitter(i, 3) - 0.5) * 50;
+    const ox = -dir * (30 + jitter(i, 7) * 60);
+    const len = 50 + jitter(i, 11) * 70 + Math.sin(t * 20 + i) * 12;
+    flameLick(g, tint, x + ox, y + oy, back + (jitter(i, 5) - 0.5) * 0.3, len, 6, alpha * 0.85);
+  }
+  // Horses: two stacked, staggered, each a body of flame with a neck, head and galloping legs.
+  for (let h = 0; h < 2; h++) {
+    const hx = x - dir * (6 + h * 14);
+    const hy = y - 12 + h * 18;
+    const gallop = Math.sin(t * 26 + h * 1.8);
+    // Mane and tail.
+    flameLick(g, tint, hx - dir * 14, hy - 4, back - dir * 0.3, 22, 4, alpha);
+    flameLick(g, tint, hx + dir * 10, hy - 14, back - dir * 0.9, 16, 3.4, alpha);
+    // Body.
+    g.fillStyle(tint(DEV.fireDeep), alpha);
+    g.fillEllipse(hx, hy, 30, 13);
+    g.fillStyle(tint(DEV.fire), alpha);
+    g.fillEllipse(hx, hy - 1, 26, 9);
+    // Neck and head.
+    g.fillStyle(tint(DEV.fire), alpha);
+    g.fillPoints([
+      new Phaser.Geom.Point(hx + dir * 8, hy - 3),
+      new Phaser.Geom.Point(hx + dir * 15, hy - 15),
+      new Phaser.Geom.Point(hx + dir * 21, hy - 13),
+      new Phaser.Geom.Point(hx + dir * 13, hy + 1),
+    ], true);
+    g.fillStyle(tint(DEV.fireHot), alpha);
+    g.fillEllipse(hx + dir * 20, hy - 13, 9, 6);
+    g.fillStyle(tint(DEV.white), alpha);
+    g.fillCircle(hx + dir * 21, hy - 14, 1.2);
+    // Legs.
+    g.lineStyle(2.6, tint(DEV.fire), alpha);
+    g.lineBetween(hx + dir * 8, hy + 4, hx + dir * (12 + gallop * 6), hy + 13);
+    g.lineBetween(hx - dir * 8, hy + 4, hx - dir * (10 - gallop * 6), hy + 13);
+  }
+  // Traces back to the car.
+  const cx = x - dir * 44;
+  g.lineStyle(1.6, tint(DEV.gold), alpha * 0.9);
+  g.lineBetween(x - dir * 14, y - 10, cx + dir * 10, y - 4);
+  g.lineBetween(x - dir * 14, y + 8, cx + dir * 10, y + 2);
+  // The car: a gilded tub.
+  g.fillStyle(tint(DEV.umber), alpha);
+  g.fillPoints([
+    new Phaser.Geom.Point(cx + dir * 12, y - 12),
+    new Phaser.Geom.Point(cx - dir * 14, y - 16),
+    new Phaser.Geom.Point(cx - dir * 16, y + 6),
+    new Phaser.Geom.Point(cx + dir * 10, y + 6),
+  ], true);
+  g.fillStyle(tint(DEV.gold), alpha);
+  g.fillPoints([
+    new Phaser.Geom.Point(cx + dir * 11, y - 10),
+    new Phaser.Geom.Point(cx - dir * 13, y - 14),
+    new Phaser.Geom.Point(cx - dir * 14, y + 3),
+    new Phaser.Geom.Point(cx + dir * 9, y + 3),
+  ], true);
+  cross(g, tint, cx - dir * 2, y - 4, 6, 0, DEV.white, alpha, DEV.umber);
+  if (rider) {
+    // The priest, hauled aboard: a bright orb with a mitre peak showing over the rail.
+    g.fillStyle(tint(DEV.holy), alpha);
+    g.fillCircle(cx - dir * 2, y - 20, 8);
+    g.fillStyle(tint(DEV.white), alpha);
+    g.fillTriangle(cx - dir * 2 - 5, y - 26, cx - dir * 2 + 5, y - 26, cx - dir * 2, y - 36);
+  }
+  // The wheel: rim, spokes turning, hub.
+  const wx = cx - dir * 2;
+  const wy = y + 8;
+  const spin = t * 22 * dir;
+  g.lineStyle(3, tint(DEV.ochre), alpha);
+  g.strokeCircle(wx, wy, 11);
+  g.lineStyle(1.4, tint(DEV.gold), alpha);
+  for (let i = 0; i < 6; i++) {
+    const a = spin + (i / 6) * TAU;
+    g.lineBetween(wx, wy, wx + Math.cos(a) * 10, wy + Math.sin(a) * 10);
+  }
+  g.fillStyle(tint(DEV.white), alpha);
+  g.fillCircle(wx, wy, 2.4);
+}
+
+/** The ground mark where a crash is about to land: a shadow that tightens and a ring of crosses. */
+export function crashMark(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  x: number, y: number, r: number, progress: number, t: number,
+): void {
+  const k = easeIn(progress);
+  g.fillStyle(tint(DEV.ink), 0.12 + k * 0.25);
+  g.fillEllipse(x, y, r * 2 * (1.2 - k * 0.5), r * 0.9 * (1.2 - k * 0.5));
+  g.lineStyle(2, tint(DEV.fire), 0.3 + k * 0.5);
+  g.strokeCircle(x, y, r);
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * TAU + t * 1.4;
+    cross(g, tint, x + Math.cos(a) * r, y + Math.sin(a) * r, 6, 0, DEV.fireHot, 0.4 + k * 0.5, DEV.fireDeep);
+  }
 }
 
 // ── Fx ────────────────────────────────────────────────────────────────────
 
 export class PassionFx extends FxBase {
-  /** Hearts drifting up and apart. The element's default "something happened". */
-  hearts(x: number, y: number, count = 8, spread = 30, color = PSN.hot, ms = 720, depth = 9): void {
-    const seeds = Array.from({ length: count }, (_, i) => ({
-      a: -Math.PI / 2 + (Math.random() - 0.5) * 2.4,
+  /** Rising star-glints. The element's default "something holy happened". */
+  sparkle(x: number, y: number, count = 8, spread = 30, color = DEV.holy, ms = 720, depth = 9): void {
+    const seeds = Array.from({ length: count }, () => ({
+      a: -Math.PI / 2 + (Math.random() - 0.5) * 2.6,
       d: spread * (0.35 + Math.random() * 0.65),
-      r: 4 + Math.random() * 5,
-      s: i * 1.7 + Math.random() * 3,
-      w: 0.6 + Math.random() * 1.4,
+      r: 2.6 + Math.random() * 3,
+      s: Math.random() * 9,
     }));
     this.anim(depth, ms, (g, t) => {
-      const e = easeOut(t);
-      for (const p of seeds) {
-        const px = x + Math.cos(p.a) * p.d * e + Math.sin(t * 7 + p.s) * p.w * 4;
-        const py = y + Math.sin(p.a) * p.d * e - e * 26;
-        heart(g, this.tint, px, py, p.r * (0.5 + e * 0.7), Math.PI / 2, color, (1 - t) * 0.9);
-      }
-    });
-  }
-
-  /** A ring of hearts opening outward — casts that affect an area rather than a direction. */
-  heartRing(x: number, y: number, r0: number, r1: number, color = PSN.pink, ms = 600, depth = 9): void {
-    const n = 12;
-    this.anim(depth, ms, (g, t) => {
-      const e = easeOut(t);
-      const r = r0 + (r1 - r0) * e;
-      g.lineStyle(2, this.tint(color), (1 - t) * 0.5);
-      g.strokeCircle(x, y, r);
-      for (let i = 0; i < n; i++) {
-        const a = (i / n) * TAU + t * 0.6;
-        heart(g, this.tint, x + Math.cos(a) * r, y + Math.sin(a) * r,
-          6 * (1 - t * 0.4), a + Math.PI / 2, color, (1 - t) * 0.95);
-      }
-    });
-  }
-
-  /** The Flirt cone: a wedge that sweeps out along the aim, hearts riding its leading arc. */
-  flirtCone(x: number, y: number, ang: number, reach: number, half: number, ms = 520): void {
-    this.anim(9, ms, (g, t) => {
-      const e = easeOut(t);
-      const r = reach * e;
-      const fade = 1 - t;
-      g.fillStyle(this.tint(PSN.pink), fade * 0.16);
-      g.beginPath();
-      g.moveTo(x, y);
-      g.arc(x, y, r, ang - half, ang + half, false);
-      g.closePath();
-      g.fillPath();
-      g.lineStyle(2, this.tint(PSN.hot), fade * 0.6);
-      g.beginPath();
-      g.arc(x, y, r, ang - half, ang + half, false);
-      g.strokePath();
-      for (let i = 0; i <= 6; i++) {
-        const a = ang - half + (i / 6) * half * 2;
-        heart(g, this.tint, x + Math.cos(a) * r, y + Math.sin(a) * r,
-          7 * (0.5 + e * 0.6), a, PSN.hot, fade * 0.95);
-      }
-    });
-  }
-
-  /** The pistol going off: a heart-shaped muzzle bloom and a puff of smoke behind it. */
-  muzzle(x: number, y: number, ang: number): void {
-    this.anim(10, 190, (g, t) => {
-      const fade = 1 - t;
-      heart(g, this.tint, x + Math.cos(ang) * 6, y + Math.sin(ang) * 6,
-        13 * (0.6 + t * 0.9), ang, PSN.cream, fade * 0.9, true);
-      for (let i = 0; i < 4; i++) {
-        const a = ang + (jitter(i, 3) - 0.5) * 1.5;
-        const d = 8 + t * 22 * (0.5 + jitter(i, 7));
-        g.fillStyle(this.tint(PSN.blush), fade * 0.4);
-        g.fillCircle(x + Math.cos(a) * d, y + Math.sin(a) * d, 2.5 + t * 3.5);
-      }
-    });
-  }
-
-  /** A kiss landing: the print, and the hearts coming off it. */
-  smooch(x: number, y: number, ang: number): void {
-    this.anim(11, 620, (g, t) => {
-      const fade = 1 - easeIn(t);
-      kissMark(g, this.tint, x, y, ang + Math.PI / 2, 15 + t * 6, fade);
-      for (let i = 0; i < 5; i++) {
-        const a = -Math.PI / 2 + (jitter(i, 11) - 0.5) * 2;
-        const d = t * (22 + jitter(i, 13) * 20);
-        heart(g, this.tint, x + Math.cos(a) * d, y + Math.sin(a) * d,
-          5 + jitter(i, 17) * 3, Math.PI / 2, PSN.hot, fade * 0.9);
-      }
-    });
-  }
-
-  /** Petals bursting off a thrown rose that connected. */
-  petals(x: number, y: number, count = 10): void {
-    const seeds = Array.from({ length: count }, (_, i) => ({
-      a: Math.random() * TAU, d: 16 + Math.random() * 34, spin: (Math.random() - 0.5) * 9, s: i,
-    }));
-    this.anim(9, 760, (g, t) => {
       const e = easeOut(t);
       for (const p of seeds) {
         const px = x + Math.cos(p.a) * p.d * e;
-        const py = y + Math.sin(p.a) * p.d * e + e * e * 16;
-        const pa = p.a + p.spin * t;
-        g.fillStyle(this.tint(p.s % 2 ? PSN.deep : PSN.hot), (1 - t) * 0.9);
-        g.fillEllipse(px, py, 6 * Math.abs(Math.cos(pa)) + 2, 4);
+        const py = y + Math.sin(p.a) * p.d * e - e * 22;
+        const r = p.r * (1 - t * 0.5) * (0.7 + 0.3 * Math.sin(t * 20 + p.s));
+        g.lineStyle(1.6, this.tint(color), (1 - t) * 0.95);
+        g.lineBetween(px - r, py, px + r, py);
+        g.lineBetween(px, py - r * 1.4, px, py + r);
+        g.fillStyle(this.tint(DEV.white), (1 - t) * 0.9);
+        g.fillCircle(px, py, r * 0.35);
       }
     });
   }
 
-  /**
-   * The atomiser going off: the bottle in the hand, a fan of droplets leaving the nozzle, and the
-   * bloom they turn into as they cross to where the cloud is about to be.
-   */
-  spray(x: number, y: number, ang: number, reach: number): void {
-    const drops = Array.from({ length: 22 }, (_, i) => ({
-      a: ang + (jitter(i, 5) - 0.5) * 0.62,
-      d: 0.35 + jitter(i, 9) * 0.65,
-      r: 1.4 + jitter(i, 13) * 2.4,
-      s: jitter(i, 17),
+  /** An expanding ring of light with crosses riding its edge. */
+  ring(x: number, y: number, r0: number, r1: number, color = DEV.holy, ms = 600, depth = 9): void {
+    const n = Math.max(8, Math.round(r1 / 9));
+    this.anim(depth, ms, (g, t) => {
+      const e = easeOut(t);
+      const r = r0 + (r1 - r0) * e;
+      g.lineStyle(3, this.tint(color), (1 - t) * 0.55);
+      g.strokeCircle(x, y, r);
+      g.lineStyle(1, this.tint(DEV.white), (1 - t) * 0.7);
+      g.strokeCircle(x, y, r - 2);
+      for (let i = 0; i < n; i += 2) {
+        const a = (i / n) * TAU + t * 0.5;
+        cross(g, this.tint, x + Math.cos(a) * r, y + Math.sin(a) * r, 5 * (1 - t * 0.5), 0,
+          color, (1 - t) * 0.8);
+      }
+    });
+  }
+
+  /** The sermon going out: a fan of light off the hand. */
+  preach(x: number, y: number, ang: number, power: number): void {
+    this.anim(10, 260 + power * 160, (g, t) => {
+      const fade = 1 - t;
+      const n = 5 + Math.round(power * 4);
+      for (let i = 0; i < n; i++) {
+        const a = ang + (i / (n - 1) - 0.5) * (0.7 + power * 0.5);
+        holyRayLayered(g, this.tint, x, y, a, (18 + power * 22) * (0.5 + easeOut(t)), 2.2, fade * 0.8);
+      }
+      g.fillStyle(this.tint(DEV.white), fade * 0.8);
+      g.fillCircle(x, y, 5 + power * 4);
+    });
+  }
+
+  /** A letter striking home: a small glory and a cross popping off the body. */
+  letterHit(x: number, y: number, ang: number): void {
+    this.anim(11, 300, (g, t) => {
+      const fade = 1 - t;
+      glory(g, this.tint, x, y, 3, 10 + t * 12, 6, ang, fade * 0.8, 1.6);
+      cross(g, this.tint, x + Math.cos(ang) * 6, y - 10 - t * 14, 5, 0, DEV.holy, fade);
+    });
+  }
+
+  /** The vial bursting: glass shards, a splash crown, then steam rolling off the new puddle. */
+  shatter(x: number, y: number, r: number): void {
+    const shards = Array.from({ length: 10 }, (_, i) => ({
+      a: (i / 10) * TAU + Math.random() * 0.4, d: 20 + Math.random() * 30, s: Math.random() * 6,
     }));
-    this.anim(9, 520, (g, t) => {
+    this.flashIn(x, y, 14, DEV.white, DEV.water, 11);
+    this.anim(10, 520, (g, t) => {
       const e = easeOut(t);
       const fade = 1 - t;
-      perfumeBottle(g, this.tint, x, y, ang, fade * 0.95, Math.min(1, t * 3));
-      for (const p of drops) {
-        const d = 10 + reach * p.d * e;
-        g.fillStyle(this.tint(p.s > 0.7 ? PSN.hot : PSN.cream), fade * 0.7);
-        g.fillCircle(x + Math.cos(p.a) * d, y + Math.sin(p.a) * d, p.r * (0.6 + e));
+      // Splash crown.
+      for (let i = 0; i < 12; i++) {
+        const a = (i / 12) * TAU;
+        const d = r * 0.3 + e * r * 0.75;
+        const h = Math.sin(t * Math.PI) * 14;
+        g.fillStyle(this.tint(i % 2 ? DEV.water : DEV.waterLit), fade * 0.85);
+        g.fillCircle(x + Math.cos(a) * d, y + Math.sin(a) * d * 0.8 - h, 3.4 * fade + 1);
       }
-      // The nozzle's own puff, right at the glass.
-      g.fillStyle(this.tint(PSN.blush), fade * 0.35);
-      g.fillCircle(x + Math.cos(ang) * 12, y + Math.sin(ang) * 12, 6 + e * 10);
+      // Glass.
+      for (const p of shards) {
+        const px = x + Math.cos(p.a) * p.d * e;
+        const py = y + Math.sin(p.a) * p.d * e - Math.sin(t * Math.PI) * 18;
+        const ra = p.a + p.s * t;
+        g.fillStyle(this.tint(DEV.waterLit), fade);
+        g.fillTriangle(px, py, px + Math.cos(ra) * 5, py + Math.sin(ra) * 5,
+          px + Math.cos(ra + 2) * 3, py + Math.sin(ra + 2) * 3);
+      }
+      g.lineStyle(2, this.tint(DEV.gold), fade * 0.6);
+      g.strokeEllipse(x, y, r * 2 * e, r * 1.64 * e);
     });
   }
 
   /**
-   * A flashbulb going off at the edge of the screen. Two of these a second, alternating sides,
-   * is the whole read on Exhibition being up — the pose itself is on the character.
+   * The Holy Hand Grenade going off. Flash → boiling golden lobes → a glory of rays → staggered
+   * shockwaves → cross-shaped shrapnel → pale smoke → a scorched sigil left on the floor.
    */
-  cameraFlash(x: number, y: number, facing: number): void {
-    this.anim(24, 260, (g, t) => {
-      const fade = 1 - t;
-      // The bulb, then the cone of light it throws across the arena.
-      g.fillStyle(PSN.flash, fade * 0.95);
-      g.fillCircle(x, y, 7 + t * 5);
-      g.fillStyle(PSN.gold, fade * 0.55);
-      g.fillCircle(x, y, 13 + t * 12);
-      g.fillStyle(PSN.flash, fade * 0.14);
-      g.beginPath();
-      g.moveTo(x, y);
-      g.arc(x, y, 240 * (0.4 + t * 0.9), facing - 0.42, facing + 0.42, false);
-      g.closePath();
-      g.fillPath();
-      // Four-point star glint.
-      g.lineStyle(2.2, PSN.flash, fade * 0.9);
-      for (let i = 0; i < 4; i++) {
-        const a = i * (Math.PI / 2) + 0.4;
-        const r = 12 + t * 26;
-        g.lineBetween(x, y, x + Math.cos(a) * r, y + Math.sin(a) * r);
-      }
-    });
-  }
-
-  /**
-   * The charm. Hearts close in around the victim, then everything goes at once — this plays
-   * over a fighter that is already dead, so it is the only explanation the player gets.
-   */
-  charm(x: number, y: number): void {
-    const n = 14;
-    const seeds = Array.from({ length: n }, (_, i) => ({
-      a: (i / n) * TAU + Math.random() * 0.3, r: 6 + Math.random() * 5,
+  holyBurst(x: number, y: number, r: number, big = 1): void {
+    this.flashIn(x, y, r * 0.45, DEV.white, DEV.holy, 13);
+    const lobes = Array.from({ length: 8 + Math.round(big * 4) }, () => ({
+      a: Math.random() * TAU, d: Math.random() * r * 0.4, s: 0.4 + Math.random() * 0.5,
     }));
-    this.anim(12, 900, (g, t) => {
-      // First half: the cage tightens. Second half: it blows outward and fades.
-      const close = t < 0.45 ? 1 - easeIn(t / 0.45) : (t - 0.45) / 0.55;
-      const d = t < 0.45 ? 20 + close * 46 : 20 + easeOut(close) * 120;
-      const fade = t < 0.45 ? 1 : 1 - close;
-      for (const s of seeds) {
-        const px = x + Math.cos(s.a) * d;
-        const py = y + Math.sin(s.a) * d;
-        heart(g, this.tint, px, py, s.r * (t < 0.45 ? 1 + (1 - close) * 0.5 : 1 + close),
-          s.a + Math.PI / 2, PSN.hot, fade * 0.95, true);
+    this.anim(12, 520, (g, t) => {
+      const e = easeOut(t);
+      const fade = 1 - easeIn(t);
+      for (const l of lobes) {
+        const lx = x + Math.cos(l.a) * l.d * (0.5 + e);
+        const ly = y + Math.sin(l.a) * l.d * (0.5 + e);
+        g.fillStyle(this.tint(DEV.gold), fade * 0.5);
+        g.fillCircle(lx, ly, r * l.s * (0.4 + e * 0.6));
+        g.fillStyle(this.tint(DEV.pale), fade * 0.6);
+        g.fillCircle(lx, ly, r * l.s * (0.25 + e * 0.35));
       }
-      if (t >= 0.4) {
-        const b = (t - 0.4) / 0.6;
-        g.fillStyle(this.tint(PSN.cream), (1 - b) * 0.5);
-        g.fillCircle(x, y, 26 * (1 + b * 2));
-      }
-      heart(g, this.tint, x, y, 26 * (1 + (t < 0.45 ? 0 : (t - 0.45))), Math.PI / 2,
-        PSN.deep, fade * 0.85, true);
+      g.fillStyle(this.tint(DEV.white), fade * 0.7);
+      g.fillCircle(x, y, r * 0.3 * (1 - t * 0.6));
     });
+    this.anim(13, 640, (g, t) => {
+      glory(g, this.tint, x, y, r * 0.2 * easeOut(t), r * (0.5 + easeOut(t) * 0.8), 14, t * 0.4,
+        (1 - t) * 0.9, 3.4 + big);
+    });
+    for (let i = 0; i < 3; i++) {
+      this.scene.time.delayedCall(i * 90, () => this.ring(x, y, r * 0.3, r * (1 + i * 0.25), i ? DEV.gold : DEV.white, 520));
+    }
+    const shards = Array.from({ length: 12 + Math.round(big * 6) }, () => ({
+      a: Math.random() * TAU, d: r * (0.7 + Math.random() * 0.8), spin: (Math.random() - 0.5) * 8,
+    }));
+    this.anim(12, 760, (g, t) => {
+      const e = easeOut(t);
+      for (const s of shards) {
+        cross(g, this.tint, x + Math.cos(s.a) * s.d * e, y + Math.sin(s.a) * s.d * e + e * e * 16,
+          4.4 * (1 - t * 0.5), s.spin * t, DEV.holy, (1 - t) * 0.95);
+      }
+    });
+    this.anim(8, 1300, (g, t) => {
+      for (let i = 0; i < 7; i++) {
+        const a = (i / 7) * TAU + 0.3;
+        const d = r * 0.4 + t * r * 0.4;
+        g.fillStyle(this.tint(DEV.pale), (1 - t) * 0.22);
+        g.fillCircle(x + Math.cos(a) * d, y + Math.sin(a) * d - t * 30, 14 + t * 22);
+      }
+    });
+    this.anim(3, 2600, (g, t) => {
+      const fade = 1 - easeIn(t);
+      g.fillStyle(this.tint(DEV.ochre), fade * 0.18);
+      g.fillCircle(x, y, r * 0.75);
+      cross(g, this.tint, x, y, r * 0.35, 0, DEV.gold, fade * 0.35, DEV.umber);
+    });
+  }
+
+  /** The crucifix being driven into the floor: a thud ring and dust kicked out sideways. */
+  plant(x: number, y: number, auraR: number): void {
+    this.ring(x, y, 10, auraR, DEV.gold, 640, 4);
+    this.anim(9, 560, (g, t) => {
+      const e = easeOut(t);
+      for (let i = 0; i < 10; i++) {
+        const side = i % 2 ? 1 : -1;
+        const d = 8 + e * (24 + jitter(i, 5) * 26);
+        g.fillStyle(this.tint(DEV.woodLit), (1 - t) * 0.5);
+        g.fillCircle(x + side * d, y + 2 - Math.sin(t * Math.PI) * (6 + jitter(i, 9) * 8), 3 + t * 4);
+      }
+    });
+    this.sparkle(x, y - 44, 8, 30, DEV.holy, 700);
+  }
+
+  /** A shot catching the crucifix's light: a little cross flares where it crossed the rim. */
+  blessShot(x: number, y: number): void {
+    this.anim(11, 380, (g, t) => {
+      const fade = 1 - t;
+      glory(g, this.tint, x, y, 2, 8 + t * 10, 4, t, fade * 0.8, 1.4);
+      cross(g, this.tint, x, y - t * 12, 5, 0, DEV.white, fade);
+    });
+  }
+
+  /** The chariot sweeping the caster up and away: a column of fire and a ring of sparks. */
+  liftOff(x: number, y: number): void {
+    this.flashIn(x, y, 20, DEV.white, DEV.fire, 12);
+    this.anim(12, 700, (g, t) => {
+      const fade = 1 - t;
+      for (let i = 0; i < 7; i++) {
+        const a = -Math.PI / 2 + (i - 3) * 0.12;
+        holyRay(g, this.tint, x + (i - 3) * 4, y, a, 40 + easeOut(t) * 90, 4, i % 2 ? DEV.fire : DEV.fireHot, fade * 0.8);
+      }
+    });
+    this.sparkle(x, y, 10, 36, DEV.fireHot, 700);
+  }
+
+  /**
+   * The crash. A blazing comet drops out of the top of the screen, then everything at once: flash,
+   * fire lobes, a glory, a ground ring, burning crosses flung outward, smoke, and a scorch.
+   */
+  crash(x: number, y: number, r: number): void {
+    this.anim(13, 220, (g, t) => {
+      const cy = y - (1 - easeIn(t)) * 300;
+      flameLick(g, this.tint, x, cy, -Math.PI / 2, 70 + t * 40, 12, 1);
+      g.fillStyle(this.tint(DEV.white), 1);
+      g.fillCircle(x, cy, 10);
+    });
+    this.scene.time.delayedCall(200, () => {
+      this.flashIn(x, y, r * 0.5, DEV.white, DEV.fireHot, 13);
+      this.anim(12, 560, (g, t) => {
+        const e = easeOut(t);
+        const fade = 1 - easeIn(t);
+        for (let i = 0; i < 10; i++) {
+          const a = (i / 10) * TAU;
+          flameLick(g, this.tint, x + Math.cos(a) * r * 0.2 * e, y + Math.sin(a) * r * 0.2 * e,
+            a, r * (0.35 + e * 0.6), 7, fade);
+        }
+      });
+      this.holyBurst(x, y, r, 1.4);
+    });
+  }
+
+  /**
+   * Conversion — the bar filled. A shaft of light drops on them from above, a cross rises out of
+   * the body and the glory blooms behind it. Plays over a fighter that is already gone, so it is
+   * the only explanation the player gets.
+   */
+  convert(x: number, y: number): void {
+    this.anim(12, 1100, (g, t) => {
+      const fade = t < 0.7 ? 1 : 1 - (t - 0.7) / 0.3;
+      const open = easeOut(Math.min(1, t * 3));
+      const w = 26 * open;
+      g.fillStyle(this.tint(DEV.holy), fade * 0.22);
+      g.fillRect(x - w * 1.6, y - 400, w * 3.2, 420);
+      g.fillStyle(this.tint(DEV.white), fade * 0.35);
+      g.fillRect(x - w * 0.6, y - 400, w * 1.2, 420);
+      glory(g, this.tint, x, y - 10 - t * 40, 14, 30 + t * 30, 12, t * 0.6, fade * 0.85, 3);
+      cross(g, this.tint, x, y - 10 - t * 60, 16 + t * 6, 0, DEV.white, fade, DEV.gold);
+    });
+    this.sparkle(x, y, 16, 50, DEV.white, 1100);
   }
 }
 
@@ -1032,218 +794,78 @@ export class PassionFx extends FxBase {
 
 const PASSION_AVATAR: AvatarSpec = {
   hands: [
-    { r: 12, color: PSN.pink, alpha: 0.24 },
-    { r: 7, color: PSN.hot, alpha: 0.95 },
-    { r: 2.6, color: PSN.cream, alpha: 0.95, ox: -1.6, oy: -1.6 },
+    { r: 10, color: DEV.holy, alpha: 0.22 },
+    { r: 6.8, color: DEV.gold, alpha: 0.98 },
+    { r: 3.6, color: DEV.holy, alpha: 0.95 },
+    { r: 1.8, color: DEV.white, alpha: 0.95, ox: -1.8, oy: -1.8 },
   ],
-  eyeWhite: PSN.cream,
-  eyePupil: PSN.ink,
+  eyeWhite: DEV.white,
+  eyePupil: DEV.ink,
   squash: { div: 14, x: 0.45, y: 0.26 },
 };
 
-/** What each hand layer becomes once the suit is off, indexed against `PASSION_AVATAR.hands`. */
-const BARE_HANDS = [PSN.tan, PSN.tan, PSN.cream];
-
 /**
- * The fighter sprite's colours while stripped — the head is the sprite, not part of the rig.
- * Top and bottom, because the repaint has to be a `setTintFill`: a plain multiplicative tint can
- * only ever darken the sprite's own pink, so tan comes out red rather than tan.
- */
-export const PASSION_SKIN_TINT: [number, number] = [PSN.tan, PSN.tanDeep];
-
-/**
- * The gunner: a fedora, a pink revolver and a rose when there is one. Nothing about the
- * silhouette is threatening on purpose — the pistol is held low and loose, and the only time
- * the character stops looking relaxed is while it is posing for the cameras.
+ * The priest: a plain light-gold orb (the baked `elem-passion`) wearing a **mitre** — the one
+ * accessory. Nothing else is ever painted on the rig except the light it gives off.
+ *
+ * - **Preaching** (holding Click) draws the hands together in front in a prayer and lets a glory
+ *   of rays build behind the head as the sermon charges.
+ * - **Riding** (Ascendance) hides the rig entirely; the kit paints the priest on the chariot.
+ *
+ * Mastery enhances the hat rather than adding to it: a taller mitre with gilded trim, gold eyes,
+ * wider coronas on the hands and a stronger under-glow.
  */
 export class PassionAvatar extends BaseAvatar {
-  private rose = false;
-  private roseWilt = 0;
-  /** 0–1 — how far into an Exhibition pose the character is. */
-  private posing = 0;
-  private censored = false;
-  /** The suit and the hat are off — they are world objects on the floor for the pose's duration. */
-  private stripped = false;
-  private kick = 0;
-  private seed = Math.random() * 999;
+  /** 0–1 — how charged the current sermon is; 0 when not preaching. */
+  private preach = 0;
 
   constructor(scene: Phaser.Scene, tint: PassionColorFn, depth = 6) {
     super(scene, tint, depth, PASSION_AVATAR);
   }
 
-  setRose(on: boolean, wilt = 0): void { this.rose = on; this.roseWilt = Phaser.Math.Clamp(wilt, 0, 1); }
-  setPosing(v: number): void { this.posing = Phaser.Math.Clamp(v, 0, 1); }
-  setCensored(on: boolean): void { this.censored = on; }
+  setPreach(v: number): void { this.preach = Phaser.Math.Clamp(v, 0, 1); }
 
-  /**
-   * The suit coming off, and with it the character's whole colour. The hands are the one part
-   * of the silhouette the base class owns, so they have to be repainted here or they read as
-   * gloves somebody kept on. Early-outs, because kits call this every frame.
-   */
-  setStripped(on: boolean): void {
-    if (on === this.stripped) return;
-    this.stripped = on;
-    PASSION_AVATAR.hands.forEach((layer, i) => {
-      const color = on ? BARE_HANDS[i] ?? layer.color : layer.color;
-      this.forEachHandLayer(i, (arc) => arc.setFillStyle(this.tint(color), layer.alpha));
-    });
-  }
-  /** Rocks the pistol back. Decays on its own, so a kit can fire this and forget it. */
-  recoil(): void { this.kick = 1; }
-
-  /**
-   * Where the muzzle actually is. The pistol always rides hand 1 (see `drawExtras`), so this
-   * is the only honest spawn point for a bullet — `castHand` answers with whichever hand the
-   * last gesture used, which is the wrong one half the time.
-   */
-  pistolTip(): { x: number; y: number } {
+  /** Where letters and bottles leave from: just ahead of the casting hand along the aim. */
+  handTip(): { x: number; y: number } {
+    const i = 1;
     return {
-      x: this.armX[1] + Math.cos(this.facing) * 13,
-      y: this.armY[1] + Math.sin(this.facing) * 13,
+      x: this.armX[i] + Math.cos(this.facing) * 8,
+      y: this.armY[i] + Math.sin(this.facing) * 8,
     };
   }
 
-  update(delta: number, x: number, y: number, alpha: number): void {
-    this.kick = Math.max(0, this.kick - delta / 130);
-    super.update(delta, x, y, alpha);
-  }
-
-  /** The pose: one hand on the hip, the other thrown up behind the head. */
+  /** Prayer: both hands pressed together in front of the chest, along the aim. */
   protected extraHoldPose(hold: ArmHold, side: number, idle: ArmPose): ArmPose | null {
-    if (hold !== 'ride') return null;
-    const sway = Math.sin(this.t * 2.6) * 0.12;
-    return side < 0
-      ? { ang: Math.PI * 0.78 + sway, dist: 26, scale: idle.scale * 1.05 }
-      : { ang: -Math.PI * 0.62 + sway, dist: 40, scale: idle.scale * 1.2 };
+    if (hold !== 'brace') return null;
+    const a = this.facing + side * 0.32;
+    return { ang: a, dist: 17 + Math.sin(this.t * 9) * 1.2 * this.preach, scale: idle.scale * (1 + this.preach * 0.25) };
   }
 
   protected applyMastery(on: boolean): void {
+    this.setEyeWhite(on ? DEV.holy : DEV.white);
     this.forEachHandLayer(0, (glow) => {
-      glow.setRadius(on ? 15 : 12);
-      glow.setAlpha(on ? 0.36 : 0.24);
+      glow.setRadius(on ? 13.5 : 10);
+      glow.setFillStyle(this.tint(on ? DEV.pale : DEV.holy), on ? 0.34 : 0.22);
     });
   }
 
   protected emitTrail(x: number, y: number): void {
-    new PassionFx(this.scene, this.tint).hearts(x, y, 1, 8, PSN.blush, 420, 4);
+    new PassionFx(this.scene, this.tint).sparkle(x, y, 1, 8, DEV.holy, 420, 4);
   }
 
+  /** A soft gold under-glow; while preaching, a glory of rays builds behind the body. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    void alpha;
-    g.fillStyle(this.tint(PSN.wine), a * 0.38);
-    g.fillEllipse(x, y + 13, 48, 17);
-    g.fillStyle(this.tint(PSN.pink), a * 0.16 * (1 + this.posing));
-    g.fillEllipse(x, y + 10, 66 + Math.sin(this.t * 2) * 5, 26);
-    // Hearts circling the feet, faster and wider while posing.
-    const n = 3;
-    for (let i = 0; i < n; i++) {
-      const ha = this.t * (0.9 + this.posing * 2.2) + (i / n) * TAU;
-      const hr = 26 + this.posing * 10 + Math.sin(this.t * 1.6 + i) * 3;
-      heart(g, this.tint, x + Math.cos(ha) * hr, y + 12 + Math.sin(ha) * hr * 0.34,
-        4.6, Math.PI / 2, PSN.pink, a * 0.5);
+    const k = this.intensity * (this.mastered ? 1.15 : 1);
+    g.fillStyle(this.tint(DEV.holy), a * (this.mastered ? 0.3 : 0.2) * k * (1 + this.preach * 0.6));
+    g.fillCircle(x, y, 28 * k);
+    if (this.preach > 0.02) {
+      glory(g, this.tint, x, y - 4, 20, 10 + this.preach * 22, 12, this.t * 0.5, alpha * this.preach * 0.75, 2.2);
     }
-  }
-
-  /** A pink suit under a dark jacket: lapels, a collar, and a heart pin on the left one. */
-  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    void a;
-    if (this.stripped) {
-      // The head goes on first and covers the sprite outright — hat, heart, revolver and all.
-      // See `bareHead`: the fedora is part of the texture, so this is the only way it comes off.
-      bareHead(g, this.tint, x, y, alpha, this.t);
-      // Suit's on the floor. What is left has to be a shape in its own right rather than a hole,
-      // because the censor bars only cover the middle of it — and it is tan rather than pink so
-      // that the change is legible on a character whose every other part is already pink.
-      g.fillStyle(this.tint(PSN.tan), alpha * 0.98);
-      g.fillPoints([
-        new Phaser.Geom.Point(x - 12, y + 2), new Phaser.Geom.Point(x + 12, y + 2),
-        new Phaser.Geom.Point(x + 8, y + 10), new Phaser.Geom.Point(x + 11, y + 19),
-        new Phaser.Geom.Point(x - 11, y + 19), new Phaser.Geom.Point(x - 8, y + 10),
-      ], true);
-      // Shading down the right-hand side, and the waist crease across the middle.
-      g.fillStyle(this.tint(PSN.tanDeep), alpha * 0.45);
-      g.fillPoints([
-        new Phaser.Geom.Point(x + 4, y + 2), new Phaser.Geom.Point(x + 12, y + 2),
-        new Phaser.Geom.Point(x + 8, y + 10), new Phaser.Geom.Point(x + 11, y + 19),
-        new Phaser.Geom.Point(x + 3, y + 19),
-      ], true);
-      g.lineStyle(1.2, this.tint(PSN.tanDeep), alpha * 0.5);
-      g.lineBetween(x - 8, y + 10, x + 8, y + 10);
-      g.fillStyle(this.tint(PSN.cream), alpha * 0.32);
-      g.fillEllipse(x - 6, y + 6, 8, 5);
-      return;
-    }
-    g.fillStyle(this.tint(PSN.ink), alpha * 0.9);
-    g.fillPoints([
-      new Phaser.Geom.Point(x - 15, y + 4), new Phaser.Geom.Point(x - 6, y + 1),
-      new Phaser.Geom.Point(x - 4, y + 18), new Phaser.Geom.Point(x - 16, y + 16),
-    ], true);
-    g.fillPoints([
-      new Phaser.Geom.Point(x + 15, y + 4), new Phaser.Geom.Point(x + 6, y + 1),
-      new Phaser.Geom.Point(x + 4, y + 18), new Phaser.Geom.Point(x + 16, y + 16),
-    ], true);
-    g.fillStyle(this.tint(PSN.cream), alpha * 0.85);
-    g.fillPoints([
-      new Phaser.Geom.Point(x - 5, y + 2), new Phaser.Geom.Point(x + 5, y + 2),
-      new Phaser.Geom.Point(x + 3, y + 17), new Phaser.Geom.Point(x - 3, y + 17),
-    ], true);
-    g.fillStyle(this.tint(PSN.hot), alpha * 0.95);
-    g.fillPoints([
-      new Phaser.Geom.Point(x - 2.6, y + 3), new Phaser.Geom.Point(x + 2.6, y + 3),
-      new Phaser.Geom.Point(x + 1.6, y + 16), new Phaser.Geom.Point(x - 1.6, y + 16),
-    ], true);
-    heart(g, this.tint, x - 10, y + 7, 4, Math.PI / 2, PSN.hot, alpha * 0.95);
   }
 
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void a;
-    const tilt = Math.sin(this.t * 1.4) * 0.06 - 0.14 + this.posing * 0.18;
-    // The hat is the first thing to go when the suit comes off — the kit is drawing it on the
-    // floor for as long as this is set, so drawing it on the head too would duplicate it.
-    if (!this.stripped) fedora(g, this.tint, x, y - 19, alpha, tilt, this.mastered ? 1.12 : 1);
-
-    // The pistol rides the right hand, muzzle along the aim.
-    const hx = this.armX[1];
-    const hy = this.armY[1];
-    if (Number.isFinite(hx)) {
-      pistol(g, this.tint, hx, hy, this.facing, alpha, 1, this.kick);
-    }
-
-    // The rose is held crosswise in the teeth — the one readout of whether F is armed.
-    if (this.rose) {
-      rose(g, this.tint, x + 13, y + 8, 0.35 + Math.sin(this.t * 2.2) * 0.08,
-        alpha * 0.98, 0.95, this.roseWilt);
-      g.lineStyle(1.4, this.tint(PSN.ink), alpha * 0.6);
-      g.lineBetween(x - 4, y + 9, x + 4, y + 9);
-    }
-
-    if (this.posing <= 0.01) return;
-
-    // ── Posing ──
-    const p = this.posing;
-    if (this.censored) {
-      // The joke version. One small bar, over the only part that needs one — the face and the
-      // chest stay visible, because the point of the pose is being looked at. It jitters a frame
-      // at a time so it reads as broadcast censorship rather than as costume.
-      const j = Math.floor(this.t * 9);
-      censorBar(g, x + (jitter(this.seed, j) - 0.5) * 1.4, y + 15, 22, 10,
-        (jitter(this.seed, j + 1) - 0.5) * 0.07, alpha * p);
-    } else {
-      // A sash of light across the chest and a burst of glamour sparkle.
-      g.fillStyle(this.tint(PSN.cream), alpha * p * 0.22);
-      g.fillPoints([
-        new Phaser.Geom.Point(x - 17, y - 2), new Phaser.Geom.Point(x + 17, y + 8),
-        new Phaser.Geom.Point(x + 17, y + 14), new Phaser.Geom.Point(x - 17, y + 4),
-      ], true);
-    }
-    for (let i = 0; i < 5; i++) {
-      const ph = (this.t * 1.6 + i * 0.37) % 1;
-      const sa2 = alpha * p * (1 - ph) * 0.9;
-      const sx = x + Math.cos(i * 1.9 + this.t) * (18 + ph * 22);
-      const sy = y - 6 + Math.sin(i * 2.3 + this.t) * (16 + ph * 18);
-      g.lineStyle(1.6, this.tint(PSN.flash), sa2);
-      g.lineBetween(sx - 4, sy, sx + 4, sy);
-      g.lineBetween(sx, sy - 4, sx, sy + 4);
-    }
+    const tilt = Math.sin(this.t * 1.3) * 0.05 + Math.cos(this.facing) * 0.08;
+    mitre(g, this.tint, x, y - 18, alpha, tilt, this.mastered ? 1.2 : 1, this.mastered ? DEV.gold : DEV.ochre);
   }
 }

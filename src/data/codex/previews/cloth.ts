@@ -218,7 +218,7 @@ export const theTapestry: PreviewScript = {
 export const pin: PreviewScript = {
   duration: 11000,
   scale: 0.9,
-  caption: 'Click — 4 damage at arm\'s length, about seven times a second. The count in the corner is the only thing that matters.',
+  caption: 'Click — 7 damage at arm\'s length, about seven times a second. The count in the corner is the only thing that matters.',
   run(ctx) {
     const fx = fxOf(ctx);
     const av = ctx.useAvatar(() => new ClothAvatar(ctx.scene, ctx.tint));
@@ -250,7 +250,7 @@ export const pin: PreviewScript = {
       flash = 1;
       av.play('punch', ctx.aim, 120);
       fx.stab(victim.x - 14, victim.y, ctx.aim, 0.8);
-      float(ctx, victim.x, victim.y - 18, '-4', '#ffdddd', 10);
+      float(ctx, victim.x, victim.y - 18, '-7', '#ffdddd', 10);
       count.setText(`🧵  ${hits % 10 === 0 ? 'COMBO!' : `${hits % 10} / 10`}`);
       if (hits % 10 === 0) {
         fx.burst(victim.x, victim.y, 60);
@@ -790,63 +790,69 @@ export const outfitChange: PreviewScript = {
   },
 };
 
-// ══ MASTERY — Wretched Scarf ══════════════════════════════════════════
+// ══ MASTERY — Bleed Stop ══════════════════════════════════════════════
 
-export const wretchedScarf: PreviewScript = {
-  duration: 11000,
+export const bleedStop: PreviewScript = {
+  duration: 9000,
   scale: 0.9,
-  caption: 'Mastery — wrap up for three seconds. Nothing gets through, the scarf stops being a hitbox, and all of it comes back out as one blast.',
+  caption: 'Mastery — tie off for five seconds. Half the scarf, and no more than 75 gets through however much is thrown.',
   run(ctx) {
     const fx = fxOf(ctx);
     const av = ctx.useAvatar(() => new ClothAvatar(ctx.scene, ctx.tint));
     av.setMastered(true);
     av.setFacing(ctx.aim);
-    const victim = { x: ctx.cx + 180, y: ctx.cy - 6 };
-    dummyAt(ctx, victim);
-    let wrapped = false;
-    scarf(ctx, 6, { segments: () => (wrapped ? 2 : 13) });
+    let tied = false;
+    scarf(ctx, 6, { segments: () => (tied ? 7 : 14) });
     const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
     const read = label(ctx, ctx.w * 0.5, 12, hex(CLT.clothPale), 12);
-    let stored = 0;
+    let budget = 75;
     let t = 0;
 
-    ctx.at(900, () => {
-      wrapped = true;
-      stored = 0;
+    ctx.at(800, () => {
+      tied = true;
+      budget = 75;
       av.play('clap', 0, 400);
       const at = ctx.casterAt();
-      fx.burst(at.x, at.y, 60, CLT.clothDeep);
+      fx.burst(at.x, at.y, 54, CLT.clothPale);
+      float(ctx, at.x, at.y - 44, '🩹 BLEED STOP', hex(CLT.clothPale), 12);
     });
-    for (let i = 0; i < 5; i++) {
-      ctx.at(1200 + i * 520, () => {
-        if (!wrapped) return;
-        stored += 14;
+    // Four 30s in a row: two land in full, the third is cut to 15, the fourth is refused.
+    for (let i = 0; i < 4; i++) {
+      ctx.at(1500 + i * 800, () => {
+        if (!tied) return;
+        const took = Math.min(30, budget);
+        budget -= took;
         const at = ctx.casterAt();
-        float(ctx, at.x + 22, at.y - 20, 'NEGATED', hex(CLT.clothPale), 10);
+        float(ctx, at.x + 22, at.y - 20, took > 0 ? `-${took}` : 'REFUSED', took > 0 ? '#ffdddd' : hex(CLT.clothPale), 11);
         fx.lint(at.x, at.y, 3, 12, 260, CLT.clothDeep);
       });
     }
-    ctx.at(3900, () => {
-      wrapped = false;
+    ctx.at(5800, () => {
+      tied = false;
       const at = ctx.casterAt();
-      const payload = Math.round(stored * 0.9);
-      fx.burst(at.x, at.y, 190, CLT.clothDeep);
-      float(ctx, victim.x, victim.y - 26, `-${payload}`, '#ffdddd', 13);
-      float(ctx, at.x, at.y - 44, `🧣 ${payload} RETURNED`, hex(CLT.clothPale), 12);
-      stored = 0;
+      fx.lint(at.x, at.y, 5, 18, 320, CLT.clothPale);
+      float(ctx, at.x, at.y - 44, `🩹 ${75 - budget} LET THROUGH`, hex(CLT.clothPale), 12);
     });
 
     ctx.onFrame((dt) => {
       t += dt / 1000;
       g.clear();
-      if (!wrapped) { read.setText(''); return; }
+      if (!tied) { read.setText(''); return; }
       const at = ctx.casterAt();
-      for (let i = 0; i < 5; i++) {
-        const a = t * 3 + (i / 5) * Math.PI * 2;
-        g.lineStyle(4.5, ctx.tint(i % 2 ? CLT.clothDeep : CLT.cloth), 0.9);
-        g.strokeEllipse(at.x, at.y, 30 - i * 2 + Math.sin(a) * 2, 34 - i * 2.4);
+      const spent = 1 - budget / 75;
+      for (let i = 0; i < 2; i++) {
+        const tilt = (i ? -0.32 : 0.28) + Math.sin(t * 2 + i) * 0.04;
+        const cy = at.y + 3 + i * 5;
+        const dx = Math.cos(tilt) * 22;
+        const dy = Math.sin(tilt) * 22;
+        g.lineStyle(6, ctx.tint(0xf2ede4), 0.92);
+        g.lineBetween(at.x - dx, cy - dy, at.x + dx, cy + dy);
+        g.fillStyle(ctx.tint(CLT.clothDeep), 0.35 + spent * 0.5);
+        g.fillCircle(at.x - dx * 0.2, cy - dy * 0.2, 2 + spent * 4);
       }
-      read.setText(`🧣  ${stored} banked`);
+      g.fillStyle(ctx.tint(0xf2ede4), 1);
+      g.fillCircle(at.x + 14, at.y + 4, 4.5);
+      read.setText(`🩹  ${budget} of 75 left`);
     });
   },
 };

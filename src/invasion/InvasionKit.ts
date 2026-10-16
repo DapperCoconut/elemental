@@ -60,6 +60,12 @@ export interface InvasionArenaApi {
   silenceStalkerHunt(): boolean;
   /** Silence: a husk shot landed here — kills a player stalker in radius. Returns true if it did. */
   tryHitSilenceStalker(x: number, y: number, radius: number): boolean;
+  /** Illusion Guise: who a husk sees in its room — the player swapped for their clone. */
+  huskTargetsView?(list: Fighter[]): Fighter[];
+  /** Illusion Guise: a husk bite that landed on the clone. True when the clone banked it. */
+  absorbDecoyHit?(target: Fighter, amount: number): boolean;
+  /** Illusion Guise: a husk shot crossing the clone. True when it stopped there. */
+  tryHitIllusionClone?(x: number, y: number, radius: number, damage: number): boolean;
   /** Soul: a real husk died — feeds the player's corpse queue if they're playing Soul. */
   notifyHuskDefeated?(husk: Husk): void;
   /** Where the local player is pointing — the apocalypse torch follows the cursor. */
@@ -180,7 +186,10 @@ export type HuskStatus =
   | { k: 'halluc'; ms: number }
   | { k: 'atkslow'; mult: number }
   // Silence E+ seeker cone: stabs on a panicked target drain only 50 stealth.
-  | { k: 'panic'; ms: number };
+  | { k: 'panic'; ms: number }
+  // Silence F Stalk (slow turning) and F+ Despress (slow + resistance strip, stacking).
+  | { k: 'stalked'; ms: number }
+  | { k: 'despress'; stacks: number; ms: number };
 
 /**
  * One-shot visual effects the co-op guest replays locally. Husk *behaviour* is
@@ -244,6 +253,8 @@ interface HuskShot {
   homing?: boolean;
   /** Contact radius; boss orbs are fatter than a spitter's gob. */
   hitRadius?: number;
+  /** Who fired it — Gold's Midas Curse turns a cursed husk's shots into coins. */
+  from?: Husk;
 }
 
 type WavePhase = 'idle' | 'warning' | 'active' | 'rest';
@@ -736,7 +747,8 @@ export class InvasionKit implements HuskWorld, EffectWorld {
     const currentRoom = mansion.currentRoom;
     for (const husk of alive) {
       husk.huntInvisibleTargets = stalkerHunt && husk.roomIndex === currentRoom;
-      husk.update(this.targetsInRoom(husk.roomIndex), time, delta);
+      const seen = this.targetsInRoom(husk.roomIndex);
+      husk.update(this.arena.huskTargetsView?.(seen) ?? seen, time, delta);
     }
 
     this.effects?.update(time, delta);
@@ -1036,6 +1048,8 @@ export class InvasionKit implements HuskWorld, EffectWorld {
   /** Route husk-sourced damage to whichever fighter ate it (ally hits go over the wire). */
   private damageTargetInternal(target: Fighter, amount: number): void {
     if (amount <= 0) return;
+    // A Guise clone stands in for the player in the husks' eyes; what lands on it is banked.
+    if (this.arena.absorbDecoyHit?.(target, amount)) return;
     const isLocal = target === this.arena.player || this.arena.plantTargets().includes(target);
     if (isLocal) {
       // Husks are the one thing that may hit a co-op player through their
@@ -1374,8 +1388,53 @@ export class InvasionKit implements HuskWorld, EffectWorld {
       room: from.roomIndex,
       elementId,
       homing: elementId === 'psychic',
+      from,
     });
     this.coopHooks?.onFx({ k: 'shot', x: from.x, y: from.y, vx, vy, ms: SHOT_LIFETIME_MS, rm: from.roomIndex });
+  }
+
+  /**
+   * Gold's Midas Curse: take every shot `from` has in the air out of it, silently, and say where
+   * each one was. The kit drops a coin at each spot.
+   */
+  stealShotsFrom(from: Husk): { x: number; y: number }[] {
+    const out: { x: number; y: number }[] = [];
+    for (let i = this.shots.length - 1; i >= 0; i--) {
+      const s = this.shots[i];
+      if (s.from !== from) continue;
+      out.push({ x: s.gfx.x, y: s.gfx.y });
+      s.gfx.destroy();
+      this.shots.splice(i, 1);
+    }
+    return out;
+  }
+
+  /**
+   * Devotion's crucifix: every husk shot inside a circle, left in the air, with who fired it.
+   * The shot object itself is the key, so the kit can pay each one out once.
+   */
+  huskShotsNear(x: number, y: number, r: number): { key: object; from: Fighter | null }[] {
+    const out: { key: object; from: Fighter | null }[] = [];
+    for (const s of this.shots) {
+      if (Phaser.Math.Distance.Between(s.gfx.x, s.gfx.y, x, y) > r) continue;
+      out.push({ key: s, from: s.from ?? null });
+    }
+    return out;
+  }
+
+  /**
+   * Magnet's orbiting scrap: take the first husk shot within `r` of the point out of the air.
+   * False when there was none, so the shard survives.
+   */
+  blockShotNear(x: number, y: number, r: number): boolean {
+    for (let i = 0; i < this.shots.length; i++) {
+      const s = this.shots[i];
+      if (Phaser.Math.Distance.Between(s.gfx.x, s.gfx.y, x, y) > r) continue;
+      s.gfx.destroy();
+      this.shots.splice(i, 1);
+      return true;
+    }
+    return false;
   }
 
   summon(count: number, x: number, y: number): void {
@@ -1559,6 +1618,7 @@ export class InvasionKit implements HuskWorld, EffectWorld {
       room: from.roomIndex,
       homing: o.homing,
       hitRadius: o.radius + 12,
+      from,
     });
     this.coopHooks?.onFx({
       k: 'shot', x: from.x, y: from.y, vx, vy, ms: lifetime,
@@ -1683,6 +1743,7 @@ export class InvasionKit implements HuskWorld, EffectWorld {
       const hitR = s.hitRadius ?? SHOT_HIT_RADIUS;
       // Blind-fire shots can clip a silence stalker — one hit kills it.
       if (!done && s.room === current && this.arena.tryHitSilenceStalker(s.gfx.x, s.gfx.y, hitR)) done = true;
+      if (!done && s.room === current && this.arena.tryHitIllusionClone?.(s.gfx.x, s.gfx.y, hitR, s.damage)) done = true;
 
       if (!done) {
         for (const t of targets) {
@@ -1790,6 +1851,12 @@ export class InvasionKit implements HuskWorld, EffectWorld {
         break;
       case 'panic':
         husk.panickedUntil = Math.max(husk.panickedUntil, Date.now() + s.ms);
+        break;
+      case 'stalked':
+        husk.stalkedUntil = Math.max(husk.stalkedUntil, Date.now() + s.ms);
+        break;
+      case 'despress':
+        husk.addDespress(s.stacks, s.ms);
         break;
     }
   }

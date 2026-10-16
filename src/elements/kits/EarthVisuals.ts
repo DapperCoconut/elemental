@@ -1450,11 +1450,15 @@ const EARTH_AVATAR: AvatarSpec = {
   squash: { div: 20, x: 0.26, y: 0.12 },
 };
 
+
 /**
- * The earth character rig: two boulder hands with real facets cut into them, a pair of eyes,
- * and a crown of slabs hovering off the head like a broken ring of standing stones. The hands,
- * eyes and gestures come from BaseAvatar; what earth adds is the dust it stands in, the faceting
- * over the hands, and the crown above.
+ * The earth character rig: a plain clay-brown orb (the baked `elem-earth`), the shared eyes,
+ * two plain boulder hands, and ONE accessory — a crown of three standing stones rooted at the
+ * top of the head, the tall keystone in the middle and a shorter slab leaning out on each side.
+ *
+ * Mastery (Unbreakable) enhances that crown rather than adding to it: the stones stand taller
+ * and a molten seam runs up each one, the eyes turn molten gold, each hand gets a granite rim
+ * over a wider dust corona, and the under-glow warms.
  */
 export class EarthAvatar extends BaseAvatar {
   private fx: EarthFx;
@@ -1464,13 +1468,7 @@ export class EarthAvatar extends BaseAvatar {
     this.fx = new EarthFx(scene, tint);
   }
 
-  /**
-   * Mastery tell for Unbreakable — a permanent, readable upgrade to the character so a mastered
-   * earth user is identifiable before they cast anything: molten eyes, a granite rim welded
-   * around each hand over a wider dust corona, and (in `drawExtras`) a crown that fuses from
-   * loose slabs into a solid armoured collar with two boulders riding it. Shape changes, not
-   * brighter tints — a tint alone vanishes at gameplay zoom.
-   */
+  /** Mastery tell: molten eyes and a granite-rimmed hand over a wider dust corona. */
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? EARTH.gold : EARTH.pale);
     this.forEachHandLayer(0, (halo) => {
@@ -1503,94 +1501,43 @@ export class EarthAvatar extends BaseAvatar {
     this.fx.grit(x, y, 1, { speed: 16, size: 1.7, life: 460, fall: 44, depth: 5 });
   }
 
+  /** Earth doesn't glow so much as cast: a soft dusty shadow, warmed by the melt once mastered. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
-    // Earth doesn't glow — it casts. The under-layer is the shadow it sits in plus the loose
-    // stones that have collected around its feet.
-    g.fillStyle(this.tint(EARTH.crevice), a * 0.3 * this.intensity);
-    g.fillEllipse(x, y + 8, 54 * this.intensity, 26 * this.intensity);
-    g.fillStyle(this.tint(EARTH.umber), a * 0.22 * this.intensity);
-    g.fillEllipse(x, y + 10, 34 * this.intensity, 15 * this.intensity);
-    for (let i = 0; i < 4; i++) {
-      const ang = this.t * 0.25 + (i / 4) * TAU;
-      const d = 22 * this.intensity;
-      g.fillStyle(this.tint(EARTH.stone), a * 0.55);
-      pebble(g, x + Math.cos(ang) * d, y + 11 + Math.sin(ang) * d * 0.3, 3.2, ang, i);
-    }
+    const k = this.intensity * (this.mastered ? 1.12 : 1);
+    g.fillStyle(this.tint(this.mastered ? EARTH.magma : EARTH.dust), a * (this.mastered ? 0.2 : 0.16) * k);
+    g.fillCircle(x, y, 28 * k);
+    g.fillStyle(this.tint(EARTH.umber), a * 0.22 * k);
+    g.fillEllipse(x, y + 9, 36 * k, 14 * k);
   }
 
   /**
-   * Faceting cut over both hands plus a crown of slabs turning over the head. Drawn over the
-   * sprite — beneath it only the dark edges would clear the 22px body and the crown would read
-   * as a stray spike. Rooted at the crown (y - 18) so it never covers the face.
+   * The standing-stone crown, rooted at the crown (`y - 18`) so it never covers the face. The
+   * stones hold still — a crown that orbits reads as debris, not as part of the character —
+   * and only rock a hair, the way a heavy thing settles.
    */
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    const mastery = this.mastered ? 1.35 : 1;
-    const rootY = y - 18;
-
-    // Hard facets over each ball hand: the single cheapest thing that stops the hands reading
-    // as spheres. The rig's live hand positions are right here, so this costs nothing.
-    for (let i = 0; i < 2; i++) {
-      const hx = this.armX[i], hy = this.armY[i];
-      const spin = this.t * 0.5 + i * 2.1;
-      g.fillStyle(this.tint(EARTH.shale), alpha * 0.75);
-      pebble(g, hx, hy, 6.6 * (this.mastered ? 1.15 : 1), spin, i * 2);
-      g.fillStyle(this.tint(EARTH.pale), alpha * 0.55);
-      pebble(g, hx - 2, hy - 2.2, 2.6, spin + 1.2, i * 2 + 1);
-      if (this.mastered) {
-        // Welded granite band — the mastery read at hand scale.
-        g.lineStyle(1.8, this.tint(EARTH.dust), alpha * 0.8);
-        g.strokeCircle(hx, hy, 9.4);
-      }
-    }
-
-    // The crown: slabs standing off the head on a shallow ellipse, each leaning outward and
-    // rocking, so it reads as a ring of megaliths orbiting rather than a hat.
-    const crownN = this.mastered ? 6 : 4;
-    for (let i = 0; i < crownN; i++) {
-      const p = this.t * 0.9 + (i / crownN) * TAU;
-      const depthF = Math.sin(p);                       // behind the head vs in front of it
-      const cx = x + Math.cos(p) * 19 * mastery;
-      const cy = rootY - 6 + depthF * 5;
-      const lean = Math.cos(p) * 0.42;
-      const h = (13 + Math.sin(this.t * 3 + i) * 1.6) * mastery * this.intensity;
+    void a;
+    const m = this.mastered;
+    const tall = (m ? 1.25 : 1) * this.intensity;
+    const rootY = y - 15;
+    const lean = Math.cos(this.facing) * 1.5;
+    const vein = m ? EARTH.magma : undefined;
+    // Side slabs first so the keystone overlaps them.
+    for (const side of [-1, 1] as const) {
+      const rock = Math.sin(this.t * 1.3 + side) * 0.04;
       stoneChunkLayered(
-        g, this.tint, cx, cy, -Math.PI / 2 + lean,
-        h, 4.6 * mastery, alpha * (0.72 + depthF * 0.24), i * 0.7,
+        g, this.tint, x + lean + side * 9, rootY + 1, -Math.PI / 2 + side * 0.42 + rock,
+        11 * tall, 4.2, alpha, side > 0 ? 1.4 : 2.8, vein,
       );
     }
-
-    // A slab keystone directly over the crown ties the ring together.
     stoneChunkLayered(
-      g, this.tint, x, rootY - 4, -Math.PI / 2 + Math.sin(this.t * 1.6) * 0.12,
-      (15 + Math.sin(this.t * 2.4) * 2) * mastery * this.intensity, 5.4 * mastery,
-      a * 0.95, 4.2,
+      g, this.tint, x + lean, rootY - 1, -Math.PI / 2 + Math.sin(this.t * 1.1) * 0.03,
+      15 * tall, 5.2, alpha, 4.2, vein,
     );
-
-    // Dust sifting off the crown, so the stones look like they are grinding against each other.
-    const fall = (this.t * 1.1) % 1;
-    for (let i = 0; i < 2; i++) {
-      const p = this.t * 0.9 + i * Math.PI;
-      g.fillStyle(this.tint(EARTH.sand), alpha * 0.5 * (1 - fall));
-      pebble(g, x + Math.cos(p) * 19 * mastery, rootY + fall * 16, 1.8 * (1 - fall * 0.5), p, i);
-    }
-
-    if (this.mastered) {
-      // Mastery boulders riding the collar, orbiting slower and lower than the crown itself so
-      // the two rings read as one heavy silhouette rather than as a blur.
-      for (let i = 0; i < 2; i++) {
-        const p = -this.t * 0.7 + (i / 2) * TAU;
-        const bx = x + Math.cos(p) * 26;
-        const by = y - 26 + Math.sin(p) * 7;
-        g.fillStyle(this.tint(EARTH.umber), alpha * 0.9);
-        pebble(g, bx, by, 6.4, p, i * 3);
-        g.fillStyle(this.tint(EARTH.rock), alpha * 0.95);
-        pebble(g, bx, by, 5, p + 0.5, i * 3 + 1);
-        g.fillStyle(this.tint(EARTH.gold), alpha * 0.7);
-        pebble(g, bx - 1.4, by - 1.6, 1.8, p + 1, i * 3 + 2);
-      }
-      // Molten seam running around the collar.
-      g.lineStyle(2, this.tint(EARTH.magma), alpha * (0.35 + 0.25 * Math.sin(this.t * 4)));
-      g.strokeEllipse(x, y - 24, 50, 15);
+    if (m) {
+      // The melt glowing out of the seams, breathing slowly.
+      g.fillStyle(this.tint(EARTH.ember), alpha * (0.14 + 0.08 * Math.sin(this.t * 3)));
+      g.fillEllipse(x + lean, rootY - 8 * tall, 30, 22 * tall);
     }
   }
 }

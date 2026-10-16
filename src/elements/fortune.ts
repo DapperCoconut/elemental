@@ -2,71 +2,67 @@ import { Element } from './Element';
 import { Ability, CastContext } from './Ability';
 
 /**
- * Fortune — a test element, reachable only from a cheat-mode save for now.
+ * Gold — a test element, reachable only from a cheat-mode save for now. The id is still
+ * `fortune` (it replaced the old shopkeeper of that name), so saves and campaign data keep it.
  *
- * A shopkeeper who has set his stall up in the middle of a fight and has no intention of
- * moving it. Everything he owns is an economy: blood coins bleed out of every wound anybody
- * takes, the stall in the centre of the arena sells to *both* sides, and the two investment
- * abilities are the only things in the game that make a resource go up on its own.
- *
- * The trick of the element is that his opponent is also his customer. They earn coins the
- * same way he does, they can walk up to the same counter and buy the same bandages — and half
- * of what they hand over comes straight back to him. The illegal page behind the second tab is
- * the only part of the shop they never see, and it is where all of his damage lives.
+ * An alchemist who has stopped pretending the work is about anything but gold. One hand throws
+ * whatever is nearest; the other turns it to gold on the way. His purse is the element's one
+ * resource, and every ability is either a way to fill it or the one way to spend it — Advance,
+ * three stat cards over his head, ten gold a pick, kept for the match.
  *
  * Every `cast` below is a one-line delegate; the whole simulation lives in FortuneKit.
  */
 
-const fire: Ability = {
-  id: 'fortune-fire',
-  name: 'Open Fire',
-  description: 'Fire whatever you are holding. You start with the pistol; everything better is behind the illegal tab of your own shop. Passive — Shopkeeper: a stall stands in the middle of the arena. Every 20 damage anybody deals earns that side 1 blood coin, and both sides can spend them at the counter — stand next to it and press 1–8, or T to change tab. Anything your enemy buys hands you back half of what they paid.',
+const fray: Ability = {
+  id: 'fortune-fray',
+  name: 'Fray',
+  description: 'Throw a clump of 7 grass blades forward; your other hand turns them to gold in the air. Then they fall toward the bottom of the screen as if the arena had gravity. 3 damage a blade — small alone, a lot when the whole clump lands. Hold to keep throwing.',
   displayKey: 'Click',
-  cooldown: 140,
-  cast(ctx: CastContext) { ctx.fortuneFire(ctx.targetX, ctx.targetY); },
+  cooldown: 520,
+  cast(ctx: CastContext) { ctx.fortuneFray(ctx.targetX, ctx.targetY); },
 };
 
-const safeInvestment: Ability = {
-  id: 'fortune-safe',
-  name: 'Safe Investment',
-  description: 'Put 5 blood coins in the bank. Every 10 seconds the balance pays out 10% of itself as capital gains, never less than 1 coin. Hold the key instead of tapping it to pull the whole balance back out.',
+const advance: Ability = {
+  id: 'fortune-advance',
+  name: 'Advance',
+  description: 'Spend 10 gold: three upgrade cards appear over your head. Click one to keep it for the rest of the match — more damage, less damage taken, speed, shorter cooldowns, max HP, more gold, more blades or regeneration. Picks stack.',
   displayKey: 'E',
-  cooldown: 1000,
-  cast(ctx: CastContext) { ctx.fortuneSafeInvest(); },
+  cooldown: 1500,
+  cast(ctx: CastContext) { ctx.fortuneAdvance(); },
 };
 
-const riskyInvestment: Ability = {
-  id: 'fortune-risky',
-  name: 'Risky Investment',
-  description: 'Put 5 blood coins into the market. Every 10 seconds it settles: deal over 50 damage in the window and it grows 20%, take over 100 damage and it shrinks 20% — do both and you scrape a 10% gain. Hold the key to cash out.',
+const plume: Ability = {
+  id: 'fortune-plume',
+  name: 'Gold Plume',
+  description: 'Throw a bag of powder that bursts into a cloud of fine golden dust for 6 seconds. Enemies inside take 9 damage a second. Standing inside it yourself earns 2 gold a second.',
   displayKey: 'R',
-  cooldown: 1000,
-  cast(ctx: CastContext) { ctx.fortuneRiskyInvest(); },
+  cooldown: 9000,
+  cast(ctx: CastContext) { ctx.fortunePlume(ctx.targetX, ctx.targetY); },
 };
 
-const paywall: Ability = {
-  id: 'fortune-paywall',
-  name: 'Paywall',
-  description: 'Drop a row of turnstiles from the top of the arena to the bottom, at your cursor, for 5 seconds. Every enemy shot that passes through costs them 1 blood coin, and every time an enemy walks through it costs them 3 — all of it paid straight to you.',
+const heart: Ability = {
+  id: 'fortune-heart',
+  name: 'Heart of Gold',
+  description: 'Lunge forward and stab with your golden cane for 16. Anyone hit gets a golden heart for 6 seconds: every step they take stresses it, and if they move too much they have a heart attack — 28 damage and a 1.4 second stun. Every 20 damage a gold-hearted enemy takes gives you 1 gold.',
   displayKey: 'F',
-  cooldown: 12000,
-  cast(ctx: CastContext) { ctx.fortunePaywall(ctx.targetX, ctx.targetY); },
+  cooldown: 10000,
+  cast(ctx: CastContext) { ctx.fortuneHeart(ctx.targetX, ctx.targetY); },
 };
 
-const payToWin: Ability = {
-  id: 'fortune-p2w',
-  name: 'Pay-to-Win',
-  description: 'Open a golden beam out in front of you that burns everything it touches for enormous constant damage. It turns very slowly, so it has to be walked onto a target — and it eats 6 blood coins a second, so it stops the moment you cannot afford it.',
+const midas: Ability = {
+  id: 'fortune-midas',
+  name: 'Midas Curse',
+  description: 'For 10 seconds the enemy nearest your cursor slowly turns to gold, and so does the floor they walk on — permanently. On gold floor you are 50% faster and earn 1 gold every 3 seconds. Their shots turn into gold coins that drop to the ground (+1 gold each when you pick them up), and anything they summon or build turns into a golden statue on the spot (+2 gold).',
   displayKey: 'Q',
   isUltimate: true,
-  cooldown: 22000,
-  cast(ctx: CastContext) { ctx.fortunePayToWin(ctx.targetX, ctx.targetY); },
+  cooldown: 30000,
+  cast(ctx: CastContext) { ctx.fortuneMidas(ctx.targetX, ctx.targetY); },
 };
 
 export const fortuneElement: Element = {
   id: 'fortune',
-  name: 'Fortune',
+  name: 'Gold',
   color: 0xd8a531,
   emoji: '🪙',
-  abilities: [fire, safeInvestment, riskyInvestment, paywall, payToWin],
+  abilities: [fray, advance, plume, heart, midas],
 };

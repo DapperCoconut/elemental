@@ -1266,9 +1266,13 @@ const GRAVITY_AVATAR: AvatarSpec = {
 };
 
 /**
- * The gravity character rig: two dark-star fists, a pair of eyes, and a tilted ring system
- * orbiting the crown. The hands, eyes and gestures come from BaseAvatar; what gravity adds is
- * the ring, the moons riding it, and the well pooling underfoot.
+ * The gravity character rig: a plain violet orb (the baked `elem-gravity` texture), two
+ * dark-star fists, a pair of eyes, and one tilted ring with a single moon orbiting the crown —
+ * a ringed planet. The ring is the only accessory; the body alone says "gravity".
+ *
+ * Mastery enhances the ring rather than adding to it: it grows wider and thicker with a bright
+ * photon edge, its moon swells and glows, the eyes go white, the fists gain a wider event
+ * horizon, and the under-glow deepens.
  */
 export class GravityAvatar extends BaseAvatar {
   private fx: GravityFx;
@@ -1289,10 +1293,8 @@ export class GravityAvatar extends BaseAvatar {
   setRiding(on: boolean): void { this.riding = on; }
 
   /**
-   * Mastery tell — a permanent, readable upgrade to the character itself, so a mastered gravity
-   * user is identifiable at a glance before they cast anything: white eyes, a much wider event
-   * horizon on each fist with a hard photon rim, a second ring, and three moons riding it.
-   * Shape changes, not just brighter tints.
+   * Mastery tell — white eyes and a much wider event horizon with a hard photon rim on each
+   * fist; `drawExtras` widens and brightens the ring. Shape changes, not just brighter tints.
    */
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? GRAVITY.white : GRAVITY.pale);
@@ -1311,69 +1313,70 @@ export class GravityAvatar extends BaseAvatar {
     this.fx.arms(x, y, 1, { speed: 14, size: 2.2, life: 620, depth: 5, tones: this.tones });
   }
 
-  /** A well pooling under the character, with matter falling in toward its feet. */
+  /** A soft violet well pooled under the character. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
-    g.fillStyle(this.tint(GRAVITY.void), a * 0.34 * this.intensity);
-    g.fillEllipse(x, y + 7, 54 * this.intensity, 24 * this.intensity);
-    g.fillStyle(this.tint(this.tones.body), a * 0.2 * this.intensity);
-    g.fillEllipse(x, y + 6, 36 * this.intensity, 16 * this.intensity);
-    for (let i = 0; i < 5; i++) {
-      const phase = (this.t * 0.6 + i / 5) % 1;
-      const r = 26 * this.intensity * (1 - phase * 0.85);
-      g.fillStyle(this.tint(this.tones.lit), a * 0.35 * (1 - phase));
-      gravArm(g, x, y + 6, (i / 5) * TAU + this.t * 0.8, r, r * 0.3, 2.4 * (1 - phase * 0.5), 1.5);
-    }
+    const k = this.intensity * (this.mastered ? 1.15 : 1);
+    g.fillStyle(this.tint(this.tones.body), a * (this.mastered ? 0.32 : 0.24) * k);
+    g.fillCircle(x, y, 28 * k);
+    g.fillStyle(this.tint(GRAVITY.void), a * 0.3 * k);
+    g.fillEllipse(x, y + 8, 38 * k, 14 * k);
   }
 
   /**
-   * The ring system: an inclined band of matter orbiting the head with moons riding it. Rooted
-   * at the crown so it never covers the face, and drawn over the sprite so the near half of the
-   * ring passes in front of the body — which is what sells it as an orbit rather than a halo.
+   * The ring: an inclined band of matter orbiting the crown with one moon riding it. Rooted
+   * above the head so it stays clear of the face, and drawn over the sprite so the near half
+   * passes in front of the crown — which is what sells it as an orbit rather than a halo.
    */
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    const rootY = y - 22;
-    const scale = (this.mastered ? 1.25 : 1) * (0.94 + this.intensity * 0.08);
+    const m = this.mastered;
+    const rootY = y - 19;
+    const scale = (m ? 1.12 : 1) * (0.94 + this.intensity * 0.08);
     // Riding the moon flattens the ring into a proper orbital plane.
-    const tiltY = (this.riding ? 0.16 : 0.34) * scale;
-    const rings = this.mastered ? 2 : 1;
-
-    for (let k = 0; k < rings; k++) {
-      const rx = (25 + k * 7) * scale;
-      const ry = rx * tiltY;
-      const lean = 0.28 + k * 0.1;
-      const segs = 30;
-      // Far half first, then the moons, then the near half — that ordering is the depth cue.
-      for (const half of [0, 1]) {
-        g.lineStyle((2.6 - k * 0.7) * scale, this.tint(half === 0 ? this.tones.dark : this.tones.lit),
-          (half === 0 ? 0.7 : 0.9) * alpha);
-        g.beginPath();
-        for (let i = 0; i <= segs / 2; i++) {
-          const ang = Math.PI * (half + i / (segs / 2));
-          const ox = Math.cos(ang) * rx, oy = Math.sin(ang) * ry;
-          const px = x + ox * Math.cos(lean) - oy * Math.sin(lean);
-          const py = rootY + ox * Math.sin(lean) + oy * Math.cos(lean);
-          if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
-        }
-        g.strokePath();
-      }
-    }
-
-    // Moons riding the ring — one unmastered, three once mastered.
-    const moons = this.mastered ? 3 : 1;
-    for (let i = 0; i < moons; i++) {
-      const ang = this.t * 1.1 + (i / moons) * TAU;
-      const rx = 25 * scale, ry = rx * tiltY, lean = 0.28;
+    const tiltY = this.riding ? 0.16 : 0.3;
+    const rx = 24 * scale;
+    const ry = rx * tiltY;
+    const lean = 0.16;
+    const segs = 30;
+    const at = (ang: number) => {
       const ox = Math.cos(ang) * rx, oy = Math.sin(ang) * ry;
-      const px = x + ox * Math.cos(lean) - oy * Math.sin(lean);
-      const py = rootY + ox * Math.sin(lean) + oy * Math.cos(lean);
-      const near = Math.sin(ang) > 0;
-      const r = (near ? 3.6 : 2.6) * scale;
+      return { px: x + ox * Math.cos(lean) - oy * Math.sin(lean), py: rootY + ox * Math.sin(lean) + oy * Math.cos(lean) };
+    };
+    const arc = (half: number) => {
+      g.beginPath();
+      for (let i = 0; i <= segs / 2; i++) {
+        const { px, py } = at(Math.PI * (half + i / (segs / 2)));
+        if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
+      }
+      g.strokePath();
+    };
+    const moonAng = this.t * 1.1;
+    const moonNear = Math.sin(moonAng) > 0;
+    const drawMoon = () => {
+      const { px, py } = at(moonAng);
+      const r = (moonNear ? 3.4 : 2.6) * (m ? 1.25 : 1) * scale;
+      if (m) {
+        g.fillStyle(this.tint(this.tones.lit), 0.3 * a);
+        g.fillCircle(px, py, r * 2);
+      }
       g.fillStyle(this.tint(GRAVITY.moonDark), 0.95 * alpha);
       g.fillCircle(px, py, r);
       g.fillStyle(this.tint(GRAVITY.moon), 0.95 * alpha);
       g.fillCircle(px - r * 0.22, py - r * 0.24, r * 0.72);
       g.fillStyle(this.tint(GRAVITY.moonlit), 0.8 * a);
       g.fillCircle(px - r * 0.4, py - r * 0.42, r * 0.32);
+    };
+
+    // Far half, then a far-side moon, then the near half, then a near-side moon — that
+    // ordering is the depth cue.
+    g.lineStyle((m ? 3.2 : 2.6) * scale, this.tint(this.tones.body), 0.85 * alpha);
+    arc(1);
+    if (!moonNear) drawMoon();
+    if (m) {
+      g.lineStyle(5.5 * scale, this.tint(this.tones.lit), 0.25 * a);
+      arc(0);
     }
+    g.lineStyle((m ? 3.4 : 2.6) * scale, this.tint(m ? this.tones.hot : this.tones.lit), 0.95 * alpha);
+    arc(0);
+    if (moonNear) drawMoon();
   }
 }

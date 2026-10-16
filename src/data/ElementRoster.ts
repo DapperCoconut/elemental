@@ -57,6 +57,8 @@ import { passionElement } from '../elements/passion';
 import { deathElement } from '../elements/death';
 import { fortuneElement } from '../elements/fortune';
 import { clothElement } from '../elements/cloth';
+import { marrowElement } from '../elements/marrow';
+import { tempestElement } from '../elements/tempest';
 import { psychicElement } from '../elements/psychic';
 import { radiationElement } from '../elements/radiation';
 import { bindElement } from '../elements/bind';
@@ -106,6 +108,8 @@ export const ELEMENT_DATA_MAP: Record<string, Element> = {
   death: deathElement,
   fortune: fortuneElement,
   cloth: clothElement,
+  marrow: marrowElement,
+  tempest: tempestElement,
   psychic: psychicElement,
   radiation: radiationElement,
   bind: bindElement,
@@ -215,16 +219,6 @@ export const ELEMENT_FORM_TABS: Record<string,
       hint: 'Hybrid form needs the Q+ upgrade. The beast seizes the controls every 10s.',
     },
   ],
-  gluttony: [
-    {
-      label: '👨‍🍳 CHEF', accent: 0xd6dee6, text: '#f6f2e8',
-      hint: 'The grill is in the middle of the arena and the prep strip is at the top of the screen. Click a tile to hold that ingredient; right-click eats it.',
-    },
-    {
-      label: '🔪 BUTCHER', accent: 0xa81f2b, text: '#ff9aa2',
-      hint: '30 seconds, and damage comes off the hunger bar instead of your health. Eating is the only way to put time back on it.',
-    },
-  ],
   justice: [
     {
       label: '⚖️ GROUND', accent: 0xc9a13a, text: '#f0d68a',
@@ -263,12 +257,12 @@ export const ELEMENT_FORM_TABS: Record<string,
 export const VAULT_ELEMENTS: ElementDef[] = [
   { id: 'illusion', name: 'Illusion', emoji: '🎭', color: 0xb45cff, available: true },
   { id: 'conquest', name: 'Conquest', emoji: '🏰', color: 0xc23a2e, available: true },
-  { id: 'passion', name: 'Passion', emoji: '💘', color: 0xff5fa2, available: true },
+  { id: 'passion', name: 'Devotion', emoji: '🙏', color: 0xf5e08a, available: true },
   { id: 'death', name: 'Death', emoji: '⚰️', color: 0x4a4468, available: true },
-  { id: 'fortune', name: 'Fortune', emoji: '🪙', color: 0xd8a531, available: true },
+  { id: 'fortune', name: 'Gold', emoji: '🪙', color: 0xd8a531, available: true },
   // Slime keeps the id `gum` — `slime` still belongs to Acid, which kept the old name's slot.
   { id: 'gum', name: 'Slime', emoji: '🫠', color: 0x46b93f, available: true },
-  { id: 'gluttony', name: 'Gluttony', emoji: '🍖', color: 0xd8452f, available: true },
+  { id: 'gluttony', name: 'Harvest', emoji: '🌾', color: 0x6a2c91, available: true },
 ];
 
 /**
@@ -284,7 +278,7 @@ export const VAULT_ELEMENTS: ElementDef[] = [
 export const UNSTABLE_ELEMENTS: ElementDef[] = [
   { id: 'radiation', name: 'Radiation', emoji: '☢️', color: 0x7cff3d, available: true },
   { id: 'depths', name: 'Depths', emoji: '🐟', color: 0x0e8f9c, available: true },
-  { id: 'psychic', name: 'Psychic', emoji: '👁️', color: 0x9b4dff, available: true },
+  { id: 'psychic', name: 'Psychic', emoji: '👁️', color: 0xe8e4d8, available: true },
   { id: 'ruin', name: 'Ruin', emoji: '🧱', color: 0xc4392c, available: true },
   { id: 'cloth', name: 'Cloth', emoji: '🧣', color: 0xd1435c, available: true },
   { id: 'magma', name: 'Magma', emoji: '🌋', color: 0xff5a1e, available: true },
@@ -304,6 +298,9 @@ export const UNSTABLE_ELEMENTS: ElementDef[] = [
 export const TEST_ELEMENTS: ElementDef[] = [
   { id: 'wax', name: 'Wax', emoji: '🕯️', color: 0xf2c85b, available: true },
   { id: 'clay', name: 'Clay', emoji: '🏺', color: 0x9a5c32, available: true },
+  // Marrow's old recipe slot went to Cloth, so it is back here as a pick with no obtainment.
+  { id: 'marrow', name: 'Marrow', emoji: '🦴', color: 0xb8323f, available: true },
+  { id: 'tempest', name: 'Tempest', emoji: '🌪️', color: 0x7fb4ff, available: true },
 ];
 
 /** Abstract combined elements — created by fusing two abstract elements in a Lvl 1+ Lab. */

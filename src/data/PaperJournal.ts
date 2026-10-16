@@ -548,16 +548,17 @@ const JOURNAL_ELEMENTS: Record<string, JournalElement> = {
     ],
   },
   passion: {
-    name: 'Passion', emoji: '💘', color: 0xff5fa2, archetype: 'mobile',
+    name: 'Devotion', emoji: '🙏', color: 0xf5e08a, archetype: 'control',
     pages: [
-      ['Charmed', 'Your health was never the bar that mattered and you were watching the wrong one.'],
-      ['The Other Meter', 'Nothing lowers it. Every hit you take is permanent progress toward losing.'],
-      ['Distance', 'It fills the bar faster the longer it is near you. Near is a choice.'],
-      ['Break the Spell', 'It has to keep landing hits to progress. Two clean dodges is a whole exchange denied.'],
-      ['Out of Reach', 'Its best tools are close-range. Range is the entire counterplay.'],
-      ['Between Roses', 'It commits fully to the big plays and has nothing at all for a beat afterwards.'],
+      ['Converted', 'Your health was never the bar that mattered. The faith bar was, and it was nearly full.'],
+      ['It Fills Itself', 'Past a quarter it fills on its own. Every second you let the fight drag on is faith.'],
+      ['Stay Dry', 'Its holy water is the whole engine. Never finish a dodge standing in a puddle.'],
+      ['Shoot Around the Cross', 'Every shot fired into the crucifix\'s light is a point of faith you gave it yourself.'],
+      ['Off the Line', 'When the band lights up, leave it. The chariot only runs where it was drawn.'],
+      ['Kill the Priest', 'It deals no damage at all. Pressure is the only counterplay; it cannot race you.'],
     ],
   },
+
   paper: {
     name: 'Paper', emoji: '📄', color: 0xf2ead6, archetype: 'arcane',
     pages: [

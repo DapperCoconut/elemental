@@ -3,26 +3,28 @@ import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
 import { Sfx } from '../../audio';
+import type { Projectile } from '../../combat/Projectile';
 import {
-  MAG, MagmaAvatar, MagmaColorFn, MagmaFx, breathCone, dragonEgg, lavaRock, magmaSaw, moltenPool,
-  mortarShell, obsidianCoat, pressureGauge, scaleArmor, volcanoCone,
+  MAG, MagmaAvatar, MagmaColorFn, MagmaFx, breathCone, cannonball, lavaRock, magmaSaw,
+  moltenPool, mortarShell, obsidianCoat, pirateShip, pirateSpirit, pressureGauge, volcanoCone,
 } from './MagmaVisuals';
 import { meterGain } from '../../combat/Meters';
 
 type Owner = 'player' | 'npc';
 
 /**
- * Magma — a test element, reachable only from a cheat-mode save for now.
+ * Magma — a melting pirate whose volcanoes are charged by his own attacks.
  *
- * Two of its five abilities put a *pressure vessel* on the floor, and the thing that makes the
- * element what it is is that the vessels are charged by Magma's own attacks. Nothing else in
- * the game asks you to aim at your own summon. A volcano you never hit is a slow trickle of
- * lava; a volcano you stand next to and beat on with the fist erupts in six seconds and takes
- * the arena with it. The dragon egg is the same bargain at ten times the price: 250 pressure,
- * paid for out of your own damage output, for twenty seconds of being something else entirely.
+ * The thing that makes the element what it is: a volcano you never hit is a slow trickle of
+ * lava, and a volcano you stand next to and beat on erupts in six seconds and takes the arena
+ * with it. So every damage source below routes through one chokepoint — `feed` — and the
+ * question "does this hurt them or does it charge me" is answered per-object, not per-ability.
  *
- * So every damage source below routes through one chokepoint — `feed` — and the question
- * "does this hurt them or does it charge me" is answered per-object, not per-ability.
+ * The other two buttons are the pirate's. Blunder-Boil (F) is a blunderbuss of lava with a
+ * recoil that throws *you*, so aiming and retreating are one press. Molten Mutiny (Q) is a
+ * cursed pendant that skims a fifth of everything you deal — damage and pressure alike — and
+ * when it has taken fifty it wakes the ship: three hundred points of burning hull you steer
+ * with the cursor, six cannons on the click, and a deck you can jump off and back onto.
  */
 
 const ARENA_PAD = 32;
@@ -80,30 +82,43 @@ const BLOAT_DMG = 30;
 const BLOAT_R = 96;
 const BLOAT_FEED = 25;
 
-// ── Magma Jet (F) ────────────────────────────────────────────────────────────
+// ── Blunder-Boil (F) ─────────────────────────────────────────────────────────
 /**
- * The jet is the only ability in the kit that moves you, and it moves you *backwards*: the
- * flame goes at the cursor and you go away from it. That makes aiming and retreating the same
- * action, and makes the ability as much a disengage as an attack.
+ * A blunderbuss of lava. The cone goes at the cursor and the recoil throws the pirate the other
+ * way, hard — so aiming at somebody and getting away from them are the same press, and the
+ * ability is as much a disengage as an attack. Two charges, each three seconds to come back.
  */
-const JET_MAX_MS = 3000;
-const JET_PUSH = 330;
-const JET_RANGE = 175;
-const JET_HALF = 0.42;
-const JET_TICK_MS = 150;
-const JET_TICK_DMG = 12;
-const JET_FEED_PER_S = 26;
-/** How long the npc holds the throttle down for in one burst. */
-const NPC_JET_MS = 1300;
+const BLUNDER_CHARGES = 2;
+const BLUNDER_RECHARGE_MS = 3000;
+const BLUNDER_RANGE = 160;
+const BLUNDER_HALF = 0.5;
+const BLUNDER_DMG = 15;
+const BLUNDER_FEED = 15;
+/** How far the recoil carries the pirate, and over how long. */
+const BLUNDER_LAUNCH = 240;
+const BLUNDER_LAUNCH_MS = 380;
+const BLUNDER_ENEMY_SHOVE = 60;
+/** The real refusal lives on the charge count; this only stops a double-press firing twice. */
+const BLUNDER_TAP_MS = 300;
 
-// ── Jet Slam (F+) ────────────────────────────────────────────────────────────
-/** How close to a wall counts as hitting it. A fighter's own body radius, roughly. */
-const SLAM_WALL_PAD = 8;
-const SLAM_COOLDOWN_MS = 2000;
-const SLAM_ROCKS = 12;
-const SLAM_ROCK_DMG = 18;
-const SLAM_SELF_DMG = 15;
-const SLAM_SPREAD = 130;
+// ── Pressure Gauge (F+) ──────────────────────────────────────────────────────
+/**
+ * A third charge, and a gauge that only runs while all three are banked: the longer you sit on
+ * a full gun the harder it kicks, until it has been full so long it goes off in your hands.
+ */
+const GAUGE_CHARGES = 3;
+/** Time at three charges for the gauge to read full. */
+const GAUGE_FULL_MS = 9000;
+/** Time *at* full before the gun is overpressured and the next press detonates. */
+const GAUGE_OVER_MS = 6000;
+const GAUGE_DMG_BONUS = 20;
+const GAUGE_LAUNCH_BONUS = 200;
+/** Pressure from which the pirate himself is a projectile while the recoil carries him. */
+const GAUGE_CONTACT_AT = 0.6;
+const GAUGE_CONTACT_DMG = 18;
+const GAUGE_CONTACT_R = 34;
+const GAUGE_BLAST_DMG = 35;
+const GAUGE_BLAST_R = 120;
 
 // ── Mag-Mortar (Click+) ──────────────────────────────────────────────────────
 const MORTAR_IMPACT_DMG = 10;
@@ -119,31 +134,50 @@ const OVERFILL_R_PER = 0.9;
 /** Every point of damage swallowed while R is held is worth this much on the burst. */
 const BOMB_PER_POINT = 1.5;
 
-// ── Full Draconic (Q+) ───────────────────────────────────────────────────────
-const POUND_DMG = 55;
-const POUND_R = 130;
-const POUND_STUN_MS = 1800;
-const SCALE_MS = 4000;
-const SCALE_INCOMING = 0.75;
-const DRACO_DASH_DIST = 300;
-const DRACO_DASH_MS = 420;
-const DRACO_DASH_DMG = 45;
-const DRACO_DASH_R = 46;
+// ── Molten Mutiny (Q) ────────────────────────────────────────────────────────
+/** The pendant's cut of everything you deal — damage to a body and pressure into a vessel alike. */
+const PENDANT_TAX = 0.2;
+/** How much it has to have taken before the ship wakes. */
+const PENDANT_AWAKEN = 50;
+const SHIP_HP = 300;
+const SHIP_DECAY_PER_S = 15;
+const SHIP_SPEED = 115;
+/** The hull as a hit shape — a circle, because the real shape is a long boat nobody can see the edge of. */
+const SHIP_HULL_R = 36;
+/** How close the pirate has to be to jump back aboard. */
+const SHIP_MOUNT_R = 84;
+const SHIP_RAM_DMG = 8;
+const SHIP_RAM_SHOVE = 110;
+const SHIP_RAM_GAP_MS = 700;
+/** The ship has to be actually under way to ram — parked against somebody it does nothing. */
+const SHIP_RAM_MIN_SPEED = 40;
+const CANNONS = 6;
+const CANNON_SPEED = 430;
+const CANNON_DMG = 26;
+const CANNON_HIT_R = 20;
+const CANNON_SHOVE = 170;
+const CANNON_LIFE_MS = 1500;
+const CANNON_SPREAD = 0.12;
+const MAX_CANNONBALLS = 40;
 
-// ── Dragon Kin (Q) ───────────────────────────────────────────────────────────
-const EGG_MAX = 250;
-const EGG_LIFE_MS = 40000;
-const EGG_R = 26;
-const DRAGON_MS = 20000;
-const DRAGON_INCOMING = 0.8;
-const DRAGON_SPEED = 1.2;
-/** Dragon Breath replaces the click outright while hatched. */
-const BREATH_MS = 900;
-const BREATH_RANGE = 210;
-const BREATH_HALF = 0.44;
-const BREATH_TICK_MS = 180;
-const BREATH_TICK_DMG = 14;
-const BREATH_FEED_PER_S = 25;
+// ── Pirate King (Q+) ─────────────────────────────────────────────────────────
+const SPIRIT_EVERY_MIN_MS = 4000;
+const SPIRIT_EVERY_MAX_MS = 5000;
+const SPIRIT_HP = 50;
+const SPIRIT_DECAY_PER_S = 8;
+const SPIRIT_MAX = 3;
+const SPIRIT_DASH_MIN_MS = 2000;
+const SPIRIT_DASH_MAX_MS = 3000;
+const SPIRIT_DASH_MS = 320;
+const SPIRIT_DASH_DIST = 240;
+/** How far away a spirit will still bother lunging. */
+const SPIRIT_DASH_RANGE = 360;
+const SPIRIT_DMG = 20;
+const SPIRIT_HIT_R = 22;
+/** The fire a lunge leaves behind it: small pools, close together, short-lived. */
+const TRAIL_R = 15;
+const TRAIL_LIFE_MS = 1400;
+const TRAIL_GAP_PX = 18;
 
 // ── Mastery: Obsidian Coat (passive) ─────────────────────────────────────────
 /**
@@ -166,9 +200,9 @@ const COAT_SHOTS_MAX = 4;
 // ── Mastery: Magma Saw (bindable) ────────────────────────────────────────────
 /** How long the key may be held for. The charge buys nothing but runtime. */
 const SAW_HOLD_MAX_MS = 1600;
-const SAW_MIN_MS = 2500;
+const SAW_MIN_MS = 1250;
 /** Too hot to hold. A saw that reaches this detonates, and a full rev runs exactly to it. */
-const SAW_OVERHEAT_MS = 8000;
+const SAW_OVERHEAT_MS = 4000;
 const SAW_COOLDOWN_MS = 14000;
 /** Where the saw floats, out from the caster toward the cursor, and how wide it bites. */
 const SAW_HOLD_DIST = 34;
@@ -184,7 +218,7 @@ const SAW_BLAST_R = 150;
 const SAW_SELF_SHOVE = 190;
 const SAW_ENEMY_SHOVE = 240;
 /** Npc: the last moment it will decide whether to ride the saw into the blast or cut the motor. */
-const NPC_SAW_COMMIT_MS = 7200;
+const NPC_SAW_COMMIT_MS = 3600;
 
 /** Knockback is played out as a position shove — see `Shove`. */
 const SHOVE_MS = 260;
@@ -204,9 +238,12 @@ interface Pool {
   landAt: number;
   until: number;
   seed: number;
+  /** Radius and lifetime — Plume's 27px/6s, or a spirit's trail at 15px/1.4s. */
+  r: number;
+  life: number;
   /**
-   * Mag-Mortar (Click+) and Jet Slam (F+): damage this glob does *on landing*, before it
-   * settles into an ordinary pool. 0 for a plain plume glob, which is the base ability.
+   * Mag-Mortar (Click+): damage this glob does *on landing*, before it settles into an
+   * ordinary pool. 0 for a plain plume glob, which is the base ability.
    */
   impact: number;
   /** Blast radius of that impact. */
@@ -230,14 +267,10 @@ interface Rock {
   source: Vessel | null;
 }
 
-/**
- * A pressure vessel. The volcano and the egg are the same object with different numbers on it
- * and different answers to being filled — which is deliberate, because the player has to learn
- * the charging game exactly once.
- */
+/** A pressure vessel — the volcano. Fed by its owner's attacks, and it pays out at 100. */
 interface Vessel {
   owner: Owner;
-  kind: 'volcano' | 'egg';
+  kind: 'volcano';
   x: number;
   y: number;
   r: number;
@@ -248,7 +281,7 @@ interface Vessel {
   nextPoolAt: number;
   nextRockAt: number;
   rockAng: number;
-  /** Volcano only: when the collapse lands. 0 until it tops out. */
+  /** When the collapse lands. 0 until it tops out. */
   blowAt: number;
   /** Brief white-out after being fed, so a hit on your own summon reads as a hit. */
   flashUntil: number;
@@ -257,6 +290,58 @@ interface Vessel {
    * screaming. Paid back on the collapse and nowhere else.
    */
   over: number;
+}
+
+/** Molten Mutiny's ship. One per side, and the side's captain is either aboard it or not. */
+interface Ship {
+  owner: Owner;
+  x: number;
+  y: number;
+  heading: number;
+  hp: number;
+  seed: number;
+  mounted: boolean;
+  /** How fast the hull is moving this frame, for the ram and the wake. */
+  speed: number;
+  /** Per-victim ram clock, so a hull parked against somebody is one hit and not sixty a second. */
+  ramAt: Map<Fighter, number>;
+  /** Pirate King (Q+): when the next spirit climbs out of the hull. */
+  nextSpiritAt: number;
+  /** Brief white-out when the hull takes a hit. */
+  flashUntil: number;
+}
+
+/** One round of a broadside. Kills on a body, or on the first volcano of its owner's it crosses. */
+interface Cannonball {
+  owner: Owner;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  until: number;
+  seed: number;
+}
+
+/** Pirate King (Q+): a crewman of flame hanging over the deck, who lunges at people. */
+interface Spirit {
+  owner: Owner;
+  x: number;
+  y: number;
+  hp: number;
+  seed: number;
+  /** Where he hangs around the ship. */
+  orbit: number;
+  facing: number;
+  nextDashAt: number;
+  /** 0 while hovering; the end of the lunge while lunging. */
+  dashUntil: number;
+  dashFrom: number;
+  dashVx: number;
+  dashVy: number;
+  /** Already cut somebody on this lunge. */
+  dashHit: boolean;
+  /** Distance travelled since the last trail pool was dropped. */
+  trailAcc: number;
 }
 
 /** A knockback in progress. Velocity is stomped every frame by both movement systems, so a
@@ -287,39 +372,32 @@ interface Side {
   /** Bloat Bomb (R+): whether the trigger is currently held down. */
   bombHeld: boolean;
 
-  // Magma Jet
-  /** Latest the jet may still be running. Extended while the button is held. */
-  jetUntil: number;
-  /** Total throttle already spent this cast, against JET_MAX_MS. */
-  jetSpent: number;
-  jetTickAt: number;
-  /** Latched so the jet can be shut off with a puff on the frame it stops. */
-  jetWasOut: boolean;
-  /**
-   * Mastery requirement: ground actually covered under thrust. Measured as position moved
-   * between two jetting frames rather than as `JET_PUSH × dt`, so a burn spent grinding into a
-   * wall banks nothing — and flushed in whole hundreds, because the alternative is a
-   * localStorage write every frame the jet is open.
-   */
-  jetDistAcc: number;
-  jetPrevX: number;
-  jetPrevY: number;
-  /** Jet Slam (F+): earliest the next wall impact may summon the sky. */
-  slamReadyAt: number;
-  /** Npc only: latest it will keep the throttle down for this burst. */
-  npcJetUntil: number;
+  // Blunder-Boil
+  blunderCharges: number;
+  /** When the next charge comes back. Only one is ever in flight. */
+  blunderRechargeAt: number;
+  /** Pressure Gauge (F+): when the gun last filled to three charges, or 0 while it is not full. */
+  gaugeFullAt: number;
+  /** The recoil, played out as position. 0 while the pirate is on his feet. */
+  flyUntil: number;
+  flyFrom: number;
+  flyX0: number;
+  flyY0: number;
+  flyAng: number;
+  flyDist: number;
+  /** Pressure Gauge (F+): the gauge reading when he was launched — decides whether he is a projectile. */
+  flyHot: number;
+  flyHit: Set<Fighter>;
 
-  // Dragon Kin
-  dragonUntil: number;
-  breathUntil: number;
-  breathTickAt: number;
-  /** Full Draconic (Q+): dragon scale armour, from the draconic R. */
-  scaleUntil: number;
-  /** Full Draconic (Q+): the draconic F's charge, played out as position. */
-  dashUntil: number;
-  dashAng: number;
-  dashHit: Set<Fighter>;
-  dashDragged: Set<Fighter>;
+  // Molten Mutiny
+  pendantOn: boolean;
+  /** What the pendant has taken so far, out of PENDANT_AWAKEN. */
+  pendantPower: number;
+  /** Fractional damage the tax has skimmed but not yet been able to take off a whole hit. */
+  taxCarry: number;
+  ship: Ship | null;
+  shipSavedAbsorber: ((amount: number) => boolean) | null;
+  shipAbsorberInstalled: boolean;
 
   // ── Mastery: Obsidian Coat ──
   coatUntil: number;
@@ -351,7 +429,6 @@ interface Side {
   curX: number;
   curY: number;
   curAng: number;
-
 }
 
 function makeSide(owner: Owner): Side {
@@ -366,23 +443,23 @@ function makeSide(owner: Owner): Side {
     absorberInstalled: false,
     bombCharge: 0,
     bombHeld: false,
-    jetUntil: 0,
-    jetSpent: 0,
-    jetTickAt: 0,
-    jetWasOut: false,
-    jetDistAcc: 0,
-    jetPrevX: 0,
-    jetPrevY: 0,
-    slamReadyAt: 0,
-    npcJetUntil: 0,
-    dragonUntil: 0,
-    breathUntil: 0,
-    breathTickAt: 0,
-    scaleUntil: 0,
-    dashUntil: 0,
-    dashAng: 0,
-    dashHit: new Set(),
-    dashDragged: new Set(),
+    blunderCharges: BLUNDER_CHARGES,
+    blunderRechargeAt: 0,
+    gaugeFullAt: 0,
+    flyUntil: 0,
+    flyFrom: 0,
+    flyX0: 0,
+    flyY0: 0,
+    flyAng: 0,
+    flyDist: 0,
+    flyHot: 0,
+    flyHit: new Set(),
+    pendantOn: false,
+    pendantPower: 0,
+    taxCarry: 0,
+    ship: null,
+    shipSavedAbsorber: null,
+    shipAbsorberInstalled: false,
     coatUntil: 0,
     coatPower: 0,
     coatOutApplied: 1,
@@ -409,10 +486,14 @@ export interface MagmaArenaApi {
   get npc(): Fighter;
   /** Everything the player is allowed to hurt — husks in Invasion, the npc in a plain 1v1. */
   get enemies(): Fighter[];
+  /** Everything in the air. The ship's hull and the spirits stop enemy shots with their bodies. */
+  get projectiles(): Phaser.Physics.Arcade.Group;
   get eKey(): Phaser.Input.Keyboard.Key;
   get rKey(): Phaser.Input.Keyboard.Key;
   get fKey(): Phaser.Input.Keyboard.Key;
   get qKey(): Phaser.Input.Keyboard.Key;
+  /** Space: off the ship and back onto it. Only read while `suppressesDodge()` says so. */
+  get spaceKey(): Phaser.Input.Keyboard.Key;
   get pointerWasDown(): boolean;
   get elementId(): string;
   get npcElementId(): string;
@@ -455,11 +536,13 @@ export class MagmaKit {
   private npcAvatar: MagmaAvatar | null = null;
   /** Lava on the floor. Under the fighters — you stand *in* it. */
   private groundGfx: Phaser.GameObjects.Graphics | null = null;
-  /** Things standing on the floor: vessels and flying rock. Over the fighters. */
+  /** The ship's hull and deck: over the lava, under the fighters, because the captain stands on it. */
+  private hullGfx: Phaser.GameObjects.Graphics | null = null;
+  /** Things standing on the floor: vessels, flying rock, cannonballs, the ship's rigging. Over the fighters. */
   private objGfx: Phaser.GameObjects.Graphics | null = null;
   /** Pressure gauges, which must clear the vessels they belong to. */
   private gaugeGfx: Phaser.GameObjects.Graphics | null = null;
-  /** The fist, its arm, and the breath cone — the only things allowed over everything. */
+  /** The blunderbuss cone, the saw, the spirits — the only things allowed over everything. */
   private fistGfx: Phaser.GameObjects.Graphics | null = null;
   private hudGfx: Phaser.GameObjects.Graphics | null = null;
   private hudLabel: Phaser.GameObjects.Text | null = null;
@@ -470,12 +553,16 @@ export class MagmaKit {
   private pools: Pool[] = [];
   private rocks: Rock[] = [];
   private vessels: Vessel[] = [];
+  private cannonballs: Cannonball[] = [];
+  private spirits: Spirit[] = [];
   private shoves: Shove[] = [];
   /** Fractional pool damage carried between frames, per victim. */
   private burnAccum = new Map<Fighter, number>();
   /** Latched each frame from `handleInput` — the player's real cursor. */
   private aimX = 0;
   private aimY = 0;
+  /** Every absorber this kit has installed, so `reset` can tell its own from a stranger's. */
+  private ourAbsorbers = new WeakSet<(amount: number) => boolean>();
 
   constructor(api: MagmaArenaApi) {
     this.api = api;
@@ -530,22 +617,36 @@ export class MagmaKit {
     return `#${color.toString(16).padStart(6, '0')}`;
   }
 
-  private isDragon(owner: Owner): boolean {
-    return this.side(owner).dragonUntil > this.now;
-  }
-
   /** Shop upgrades, for whichever side is asking. */
   private up(owner: Owner, slot: string): boolean {
     return owner === 'player' ? this.api.hasUpgrade(slot) : this.api.hasNpcUpgrade(slot);
   }
 
-  /** Full Draconic (Q+) is only ever in play while the dragon is out. */
-  private draconic(owner: Owner): boolean {
-    return this.isDragon(owner) && this.up(owner, 'q');
+  private vesselsOf(owner: Owner): Vessel[] {
+    return this.vessels.filter((v) => v.owner === owner);
   }
 
-  private vesselsOf(owner: Owner, kind?: 'volcano' | 'egg'): Vessel[] {
-    return this.vessels.filter((v) => v.owner === owner && (!kind || v.kind === kind));
+  private shipOf(owner: Owner): Ship | null { return this.side(owner).ship; }
+
+  private mounted(owner: Owner): boolean { return !!this.side(owner).ship?.mounted; }
+
+  /**
+   * The one way the kit ever hurts a body. Molten Mutiny's pendant takes its fifth here — of
+   * everything, the saw's single points included — and banks it, so "20% of the damage you
+   * would have dealt" is one rule rather than a tax written into eleven places. The skim is
+   * carried fractionally so a stream of 1-point burn ticks still pays exactly a fifth.
+   */
+  private strike(owner: Owner, t: Fighter, amount: number, opts?: Parameters<Fighter['takeDamage']>[1]): void {
+    const s = this.side(owner);
+    let dealt = amount;
+    if (s.pendantOn && amount > 0) {
+      const tax = amount * PENDANT_TAX + s.taxCarry;
+      const whole = Math.floor(tax);
+      s.taxCarry = tax - whole;
+      dealt = amount - whole;
+      this.addPendant(owner, amount * PENDANT_TAX);
+    }
+    if (dealt > 0) t.takeDamage(dealt, opts);
   }
 
   // ── Mastery helpers ────────────────────────────────────────────────────────
@@ -593,14 +694,21 @@ export class MagmaKit {
       const s = this.sides[owner];
       const f = this.fighter(owner);
       if (f) {
-        if (s.absorberInstalled) f.damageAbsorber = s.savedAbsorber;
+        // Two absorbers may be stacked (ship under bloat, or bloat under ship). Whichever went
+        // on second saved the first one's closure; the first saved the fighter's original. So
+        // the original is whichever saved value is *not* one of ours.
+        if (s.absorberInstalled && s.shipAbsorberInstalled) {
+          const shipWasSecond = !!s.shipSavedAbsorber && this.ourAbsorbers.has(s.shipSavedAbsorber);
+          f.damageAbsorber = shipWasSecond ? s.savedAbsorber : s.shipSavedAbsorber;
+        } else if (s.absorberInstalled) {
+          f.damageAbsorber = s.savedAbsorber;
+        } else if (s.shipAbsorberInstalled) {
+          f.damageAbsorber = s.shipSavedAbsorber;
+        }
         f.magmaIncomingMult = 1;
         // Obsidian Coat rides on the *shared* outgoing multiplier, so it has to divide its own
         // contribution back out rather than resetting the field somebody else may also own.
         if (s.coatOutApplied !== 1) f.outgoingDamageMult /= s.coatOutApplied;
-        // Dragon scale clears control effects and sets Unstoppable while it runs; hand that
-        // back or the next match starts with somebody who cannot be stunned.
-        if (s.scaleUntil > 0) f.unstoppable = false;
       }
     }
 
@@ -608,7 +716,10 @@ export class MagmaKit {
     this.pools = [];
     this.rocks = [];
     this.vessels = [];
+    this.cannonballs = [];
+    this.spirits = [];
     this.shoves = [];
+    this.ourAbsorbers = new WeakSet();
     this.burnAccum.clear();
     this.vizT = 0;
     this.aimX = 0;
@@ -617,6 +728,7 @@ export class MagmaKit {
     this.playerAvatar?.destroy(); this.playerAvatar = null;
     this.npcAvatar?.destroy(); this.npcAvatar = null;
     this.groundGfx?.destroy(); this.groundGfx = null;
+    this.hullGfx?.destroy(); this.hullGfx = null;
     this.objGfx?.destroy(); this.objGfx = null;
     this.gaugeGfx?.destroy(); this.gaugeGfx = null;
     this.fistGfx?.destroy(); this.fistGfx = null;
@@ -628,8 +740,8 @@ export class MagmaKit {
 
   handleInput(time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
     if (this.api.elementId !== 'magma') return;
-    // Latched before anything else: the cursor is where the fist is, and a frame that early-
-    // outs on an ability still has to move the fist.
+    // Latched before anything else: the cursor is where the ship is going, and a frame that
+    // early-outs on an ability still has to steer.
     this.aimX = mouseX;
     this.aimY = mouseY;
 
@@ -648,39 +760,49 @@ export class MagmaKit {
       this.handleSawKey('player', key, time);
     }
 
+    // Space: off the deck, or back onto it. Only consumed while the dodge is suppressed for
+    // exactly this reason — otherwise this `JustDown` would eat ArenaScene's roll.
+    if (this.suppressesDodge() && Phaser.Input.Keyboard.JustDown(this.api.spaceKey)) {
+      if (this.mounted('player')) this.dismount('player', 'jump');
+      else this.mount('player');
+    }
+
     if (clicked) p.castAbility('magma-plume', ctx);
     if (saw !== 'e' && Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('magma-volcano', ctx);
     if (saw !== 'r' && Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('magma-bloat', ctx);
-    if (saw !== 'f' && Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('magma-jet', ctx);
-    if (saw !== 'q' && Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('magma-dragon-kin', ctx);
+    if (saw !== 'f' && Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('magma-blunder', ctx);
+    if (saw !== 'q' && Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('magma-mutiny', ctx);
 
-    // ── Held buttons ──
-    // The jet burns for as long as F is down and no longer; letting go ends the burst even
-    // with throttle left, which is what makes short taps a real option.
-    if (s.jetUntil > this.now && !this.api.fKey.isDown) s.jetUntil = 0;
     // Bloat Bomb (R+): holding R is the whole upgrade, so the key state is read every frame
     // rather than only on the press that cast it.
     s.bombHeld = this.up('player', 'r') && this.api.rKey.isDown && s.bloatUntil > this.now;
   }
 
+  /**
+   * Space belongs to the ship while the player is aboard it or standing close enough to board.
+   * Read by ArenaScene's dodge block, so one press is never both a jump and a roll.
+   */
+  suppressesDodge(): boolean {
+    if (this.api.elementId !== 'magma') return false;
+    const s = this.sides.player;
+    if (!s.ship) return false;
+    if (s.ship.mounted) return true;
+    const f = this.api.player;
+    return !!f && Phaser.Math.Distance.Between(f.x, f.y, s.ship.x, s.ship.y) <= SHIP_MOUNT_R;
+  }
+
   // ── Ability entry points (called from build*Context) ───────────────────────
 
   /**
-   * Click — Plume, or Dragon Breath while hatched. One ability id covers both because the two
-   * are never available at the same time, and sharing the slot is the point of Dragon Kin.
+   * Click — Plume, or the broadside while at the helm. One ability id covers both because the
+   * two are never available at the same time, and the ship owning your click is the point.
    */
   doPlume(owner: Owner, tx: number, ty: number): void {
     const s = this.side(owner);
     const f = this.fighter(owner);
     if (!f) return;
 
-    if (this.isDragon(owner)) {
-      s.breathUntil = this.now + BREATH_MS;
-      s.breathTickAt = 0;
-      this.avatar(owner)?.play('punch', Math.atan2(ty - f.y, tx - f.x));
-      this.api.showFloatingText(f.x, f.y - 50, '🐉 BREATHE', this.hex(MAG.breath));
-      return;
-    }
+    if (this.mounted(owner)) { this.fireCannons(owner, tx, ty); return; }
 
     // Obsidian Coat (mastery) widens the fan rather than making each glob hotter — the pools
     // never stack, so the only thing extra shots can buy is more ground, which is the point.
@@ -691,14 +813,13 @@ export class MagmaKit {
     this.avatar(owner)?.play('sweep', s.plumeAng);
   }
 
-  /** E — Volcano, or the draconic ground pound while Full Draconic is up. */
+  /** E — Volcano. */
   doVolcano(owner: Owner, tx: number, ty: number): void {
     const f = this.fighter(owner);
     if (!f) return;
-    if (this.draconic(owner)) { this.doGroundPound(owner); return; }
-    const mine = this.vesselsOf(owner, 'volcano');
+    const mine = this.vesselsOf(owner);
     // Oldest goes if the pair is already out, so the ability never becomes uncastable.
-    if (mine.length >= MAX_VOLCANOES) this.removeVessel(mine[0], 'crumble');
+    if (mine.length >= MAX_VOLCANOES) this.removeVessel(mine[0]);
 
     const x = this.clampX(tx);
     const y = this.clampY(ty);
@@ -725,12 +846,11 @@ export class MagmaKit {
     this.api.scene.cameras.main.shake(160, 0.004);
   }
 
-  /** R — Magma Bloat, or the draconic scale armour while Full Draconic is up. */
+  /** R — Magma Bloat. */
   doBloat(owner: Owner): void {
     const s = this.side(owner);
     const f = this.fighter(owner);
     if (!f) return;
-    if (this.draconic(owner)) { this.doScaleArmor(owner); return; }
     s.bloatUntil = this.now + BLOAT_MS;
     this.installAbsorber(owner);
     this.avatar(owner)?.play('flex');
@@ -741,149 +861,590 @@ export class MagmaKit {
     this.api.showFloatingText(f.x, f.y - 48, '🫧 BLOATED', this.hex(MAG.gold));
   }
 
+  // ── Blunder-Boil ───────────────────────────────────────────────────────────
+
+  private blunderMax(owner: Owner): number {
+    return this.up(owner, 'f') ? GAUGE_CHARGES : BLUNDER_CHARGES;
+  }
+
+  /** Pressure Gauge (F+): 0–1, how long the gun has sat full. 0 without the upgrade. */
+  private gaugePressure(owner: Owner): number {
+    const s = this.side(owner);
+    if (!this.up(owner, 'f') || s.gaugeFullAt <= 0) return 0;
+    return Phaser.Math.Clamp((this.now - s.gaugeFullAt) / GAUGE_FULL_MS, 0, 1);
+  }
+
+  /** Pressure Gauge (F+): the gun has been full too long and the next press is a detonation. */
+  private gaugeOver(owner: Owner): boolean {
+    const s = this.side(owner);
+    if (!this.up(owner, 'f') || s.gaugeFullAt <= 0) return false;
+    return this.now - s.gaugeFullAt >= GAUGE_FULL_MS + GAUGE_OVER_MS;
+  }
+
   /**
-   * F — Magma Jet, or the draconic charge while Full Draconic is up.
+   * F — Blunder-Boil.
    *
-   * The jet is a *held* ability: the cast opens the throttle and `handleInput` closes it the
-   * moment the key comes up. Everything it does — the cone, the thrust, the charging — happens
-   * in `updateJet`, so a burst can be any length between one frame and three seconds.
+   * The cone goes at the cursor and the pirate goes the other way. With Pressure Gauge (F+)
+   * the gauge reading at the moment of the press is folded into both halves — more damage in
+   * the cone, more distance on the recoil, and past 60% the pirate is a cannonball himself for
+   * the length of the flight. A gun left full too long does not fire at all: it bursts.
    */
-  doJet(owner: Owner, tx: number, ty: number): void {
+  doBlunder(owner: Owner, tx: number, ty: number): void {
     const s = this.side(owner);
     const f = this.fighter(owner);
     if (!f) return;
-    if (this.draconic(owner)) { this.doDraconicDash(owner, tx, ty); return; }
-    s.jetUntil = this.now + JET_MAX_MS;
-    s.jetSpent = 0;
-    s.jetTickAt = 0;
-    s.npcJetUntil = this.now + NPC_JET_MS;
-    this.avatar(owner)?.play('punch', Math.atan2(ty - f.y, tx - f.x));
-    const fx = this.fx(owner);
-    fx.erupt(f.x, f.y, 40, MAG.lava);
-    this.api.showFloatingText(f.x, f.y - 52, '🚀 MAGMA JET', this.hex(MAG.lava));
-    this.api.scene.cameras.main.shake(140, 0.004);
-  }
-
-  // ── Full Draconic (Q+) ─────────────────────────────────────────────────────
-
-  /** The draconic E: everything under you, flattened. */
-  private doGroundPound(owner: Owner): void {
-    const f = this.fighter(owner);
-    const fx = this.fx(owner);
-    fx.erupt(f.x, f.y, POUND_R * 0.8, MAG.scaleLit);
-    fx.shock(f.x, f.y, 24, POUND_R, MAG.scale, 640);
-    fx.smoke(f.x, f.y, 8, 900);
-    this.avatar(owner)?.play('slam');
-    for (const t of this.targetsOf(owner)) {
-      if (Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) > POUND_R) continue;
-      t.takeDamage(POUND_DMG);
-      this.api.spawnHitFlash(t.x, t.y, this.col(owner)(MAG.scaleLit));
-      if (!t.unstoppable) {
-        t.earthStunnedUntil = Math.max(t.earthStunnedUntil, this.now + POUND_STUN_MS);
-        t.applyDisarm(POUND_STUN_MS);
-      }
-      this.shove(t, Math.atan2(t.y - f.y, t.x - f.x), 70);
-      this.api.showFloatingText(t.x, t.y - 44, `🐲 ${POUND_DMG} — STUNNED`, this.hex(MAG.scaleLit));
-    }
-    // It is an attack like every other, so it charges whatever is standing in the crater.
-    this.feed(owner, f.x, f.y, POUND_R, 40);
-    this.api.scene.cameras.main.shake(320, 0.009);
-  }
-
-  /** The draconic R: four seconds of nothing being allowed to stick to you. */
-  private doScaleArmor(owner: Owner): void {
-    const s = this.side(owner);
-    const f = this.fighter(owner);
-    s.scaleUntil = this.now + SCALE_MS;
-    this.avatar(owner)?.play('flex');
-    const fx = this.fx(owner);
-    fx.shock(f.x, f.y, 16, 70, MAG.scaleLit, 560);
-    fx.ember(f.x, f.y - 6, 12, 34, 700, MAG.scaleLit);
-    this.api.showFloatingText(f.x, f.y - 52, '🐲 DRAGON SCALE', this.hex(MAG.scaleLit));
-  }
-
-  /** The draconic F: a charge that takes everyone it passes with it. */
-  private doDraconicDash(owner: Owner, tx: number, ty: number): void {
-    const s = this.side(owner);
-    const f = this.fighter(owner);
-    s.dashAng = Math.atan2(ty - f.y, tx - f.x);
-    s.dashUntil = this.now + DRACO_DASH_MS;
-    s.dashHit.clear();
-    s.dashDragged.clear();
-    this.avatar(owner)?.play('punch', s.dashAng);
-    this.fx(owner).erupt(f.x, f.y, 50, MAG.scale);
-    this.api.showFloatingText(f.x, f.y - 52, '🐲 CHARGE', this.hex(MAG.scaleLit));
-    this.api.scene.cameras.main.shake(220, 0.006);
-  }
-
-  /**
-   * The charge, played out as position. Anyone it catches is pinned to the dragon's flank and
-   * carried for the rest of it, which is the point — it is a relocation as much as a hit.
-   */
-  private updateDraconicDash(owner: Owner, time: number, dt: number): void {
-    const s = this.side(owner);
-    if (s.dashUntil <= time) return;
-    const f = this.fighter(owner);
-    if (!f || !f.active || f.hp <= 0) { s.dashUntil = 0; return; }
-
-    const step = (DRACO_DASH_DIST / (DRACO_DASH_MS / 1000)) * dt;
-    const nx = this.clampX(f.x + Math.cos(s.dashAng) * step);
-    const ny = this.clampY(f.y + Math.sin(s.dashAng) * step);
-    const dx = nx - f.x;
-    const dy = ny - f.y;
-    f.setPosition(nx, ny);
-    this.fx(owner).ember(f.x, f.y, 3, 18, 360, MAG.scaleLit);
-
-    for (const t of this.targetsOf(owner)) {
-      if (s.dashDragged.has(t)) {
-        // Already hooked: they come along, wherever the dragon goes.
-        t.setPosition(this.clampX(t.x + dx), this.clampY(t.y + dy));
-        continue;
-      }
-      if (Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) > DRACO_DASH_R) continue;
-      s.dashDragged.add(t);
-      if (s.dashHit.has(t)) continue;
-      s.dashHit.add(t);
-      t.takeDamage(DRACO_DASH_DMG);
-      this.api.spawnHitFlash(t.x, t.y, this.col(owner)(MAG.scale));
-      this.fx(owner).erupt(t.x, t.y, 40, MAG.scaleLit);
-      this.api.showFloatingText(t.x, t.y - 44, `🐲 ${DRACO_DASH_DMG}`, this.hex(MAG.scaleLit));
-    }
-  }
-
-  /** Q — Dragon Kin. */
-  doDragonKin(owner: Owner, tx: number, ty: number): void {
-    const f = this.fighter(owner);
-    if (!f) return;
-    // Full Draconic: the ultimate is simply unavailable for its own twenty seconds.
-    if (this.draconic(owner)) {
+    if (s.blunderCharges <= 0) {
       if (owner === 'player') {
-        this.api.showFloatingText(f.x, f.y - 52, '🐲 ALREADY THE DRAGON', '#8a8a8a');
+        this.api.showFloatingText(f.x, f.y - 52,
+          `🔫 RELOADING ${Math.max(0, (s.blunderRechargeAt - this.now) / 1000).toFixed(1)}s`, '#8a8a8a');
       }
       return;
     }
-    for (const old of this.vesselsOf(owner, 'egg')) this.removeVessel(old, 'crumble');
+    const pressure = this.gaugePressure(owner);
+    const over = this.gaugeOver(owner);
+    const max = this.blunderMax(owner);
+    // Only one charge is ever reloading; the clock starts on the shot that broke the stack.
+    if (s.blunderCharges >= max) s.blunderRechargeAt = this.now + BLUNDER_RECHARGE_MS;
+    s.blunderCharges--;
+    s.gaugeFullAt = 0;
 
-    const x = this.clampX(tx);
-    const y = this.clampY(ty);
-    this.vessels.push({
-      owner, kind: 'egg', x, y, r: EGG_R,
-      pressure: 0, max: EGG_MAX,
-      until: this.now + EGG_LIFE_MS,
-      seed: Math.random() * 999,
-      nextPoolAt: Infinity,
-      nextRockAt: Infinity,
-      rockAng: 0,
-      blowAt: 0,
-      flashUntil: 0,
-      over: 0,
-    });
+    // Fired from the deck, the recoil takes you off it — the ship stays where it is.
+    if (this.mounted(owner)) this.dismount(owner, 'recoil');
 
+    const ang = Math.atan2(ty - f.y, tx - f.x);
     const fx = this.fx(owner);
-    fx.shock(x, y, 8, 90, MAG.scale, 620);
-    fx.ember(x, y - 16, 14, 34, 900, MAG.scaleLit);
+    this.avatar(owner)?.play('punch', ang);
+    this.avatar(owner)?.setVenting(true);
+
+    if (over) {
+      this.gaugeBlast(owner, f);
+    } else {
+      const dmg = Math.round(BLUNDER_DMG + GAUGE_DMG_BONUS * pressure);
+      let caught = 0;
+      for (const t of this.targetsOf(owner)) {
+        const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
+        if (d > BLUNDER_RANGE) continue;
+        const off = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(t.y - f.y, t.x - f.x) - ang));
+        // Widens with distance the way a real cone does, rather than being a fixed wedge.
+        if (off > BLUNDER_HALF + 14 / Math.max(24, d)) continue;
+        this.strike(owner, t, dmg);
+        caught++;
+        this.api.spawnHitFlash(t.x, t.y, this.col(owner)(MAG.lava));
+        this.shove(t, ang, BLUNDER_ENEMY_SHOVE + pressure * 60);
+        this.api.showFloatingText(t.x, t.y - 44, `🔫 ${dmg}`, this.hex(MAG.lava));
+      }
+      this.record(owner, 'blunderHits', caught);
+      // Same geometry as the damage, so a cone across your own volcano charges it.
+      const midX = f.x + Math.cos(ang) * BLUNDER_RANGE * 0.55;
+      const midY = f.y + Math.sin(ang) * BLUNDER_RANGE * 0.55;
+      this.feed(owner, midX, midY, BLUNDER_RANGE * 0.5, BLUNDER_FEED + GAUGE_DMG_BONUS * pressure);
+      fx.erupt(f.x + Math.cos(ang) * 16, f.y + Math.sin(ang) * 16, 36 + pressure * 20, pressure > 0.6 ? MAG.white : MAG.lava);
+      fx.shock(f.x, f.y, 10, 54, MAG.gold, 380);
+      this.api.showFloatingText(f.x, f.y - 52,
+        pressure > 0.02 ? `💥 BLUNDER-BOIL ${Math.round(pressure * 100)}%` : '💥 BLUNDER-BOIL', this.hex(MAG.lava));
+    }
+
+    // ── The recoil ──
+    s.flyFrom = this.now;
+    s.flyUntil = this.now + BLUNDER_LAUNCH_MS;
+    s.flyX0 = f.x;
+    s.flyY0 = f.y;
+    s.flyAng = ang + Math.PI;
+    s.flyDist = BLUNDER_LAUNCH + GAUGE_LAUNCH_BONUS * pressure;
+    s.flyHot = pressure;
+    s.flyHit.clear();
+    fx.smoke(f.x, f.y, 5, 700);
+    Sfx.playAt('explosion-small', f.x, { volume: 0.7, rate: 0.9 + pressure * 0.3 });
+    this.api.scene.cameras.main.shake(140 + pressure * 120, 0.004 + pressure * 0.004);
+  }
+
+  /** Pressure Gauge (F+): the gun bursts. Everybody inside 120px pays, the pirate first. */
+  private gaugeBlast(owner: Owner, f: Fighter): void {
+    const fx = this.fx(owner);
+    fx.erupt(f.x, f.y, GAUGE_BLAST_R * 0.7, MAG.magma);
+    fx.shock(f.x, f.y, 20, GAUGE_BLAST_R, MAG.white, 640);
+    fx.smoke(f.x, f.y, 14, 1300);
+    Sfx.playAt('explosion-large', f.x, { volume: 0.85, rate: 0.9 });
+    for (const t of this.targetsOf(owner)) {
+      if (Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) > GAUGE_BLAST_R) continue;
+      this.strike(owner, t, GAUGE_BLAST_DMG);
+      this.api.spawnHitFlash(t.x, t.y, this.col(owner)(MAG.magma));
+      this.shove(t, Math.atan2(t.y - f.y, t.x - f.x), 160);
+      this.api.showFloatingText(t.x, t.y - 44, `💥 ${GAUGE_BLAST_DMG}`, this.hex(MAG.magma));
+    }
+    // Online, the pirate may be a replica — their own sim has already charged them, and
+    // `takeDamage` on a netGhost relays the number straight back as a second helping.
+    if (!f.netGhost) f.takeDamage(GAUGE_BLAST_DMG, { selfInflicted: true });
+    this.feed(owner, f.x, f.y, GAUGE_BLAST_R, 40);
+    this.api.showFloatingText(f.x, f.y - 56, `💀 OVERPRESSURE −${GAUGE_BLAST_DMG}`, this.hex(MAG.white));
+    this.api.scene.cameras.main.shake(380, 0.011);
+  }
+
+  /**
+   * The recoil, played out as position so neither movement system can erase it. Eases out over
+   * its 380ms, so the pirate is thrown and then skids rather than stopping dead. While hot (F+)
+   * he is a 34px projectile and anyone he passes through is hit once.
+   */
+  private updateFly(owner: Owner, time: number): void {
+    const s = this.side(owner);
+    if (s.flyUntil <= time) {
+      if (s.flyUntil > 0) {
+        s.flyUntil = 0;
+        s.flyHot = 0;
+      }
+      return;
+    }
+    const f = this.fighter(owner);
+    if (!f || !f.active || f.hp <= 0) { s.flyUntil = 0; return; }
+    const u = Phaser.Math.Clamp((time - s.flyFrom) / BLUNDER_LAUNCH_MS, 0, 1);
+    const ease = 1 - (1 - u) * (1 - u);
+    const nx = this.clampX(s.flyX0 + Math.cos(s.flyAng) * s.flyDist * ease);
+    const ny = this.clampY(s.flyY0 + Math.sin(s.flyAng) * s.flyDist * ease);
+    f.setPosition(nx, ny);
+    (f.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+    this.fx(owner).ember(f.x - Math.cos(s.flyAng) * 10, f.y - Math.sin(s.flyAng) * 10, 2, 14,
+      300, s.flyHot >= GAUGE_CONTACT_AT ? MAG.white : MAG.ember);
+
+    // Pressure Gauge (F+): hot enough, and the pirate is the shot.
+    if (s.flyHot < GAUGE_CONTACT_AT) return;
+    for (const t of this.targetsOf(owner)) {
+      if (s.flyHit.has(t)) continue;
+      if (Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) > GAUGE_CONTACT_R) continue;
+      s.flyHit.add(t);
+      this.strike(owner, t, GAUGE_CONTACT_DMG);
+      this.api.spawnHitFlash(t.x, t.y, this.col(owner)(MAG.white));
+      this.fx(owner).erupt(t.x, t.y, 30, MAG.gold);
+      this.shove(t, s.flyAng, 90);
+      this.api.showFloatingText(t.x, t.y - 44, `🏴‍☠️ ${GAUGE_CONTACT_DMG} — RAMMED`, this.hex(MAG.gold));
+    }
+  }
+
+  /** Charges come back one at a time; the gauge (F+) starts the moment the gun is full. */
+  private updateBlunder(owner: Owner, time: number): void {
+    const s = this.side(owner);
+    const max = this.blunderMax(owner);
+    if (s.blunderCharges < max && time >= s.blunderRechargeAt) {
+      s.blunderCharges++;
+      if (s.blunderCharges < max) s.blunderRechargeAt = time + BLUNDER_RECHARGE_MS;
+    }
+    if (this.up(owner, 'f')) {
+      if (s.blunderCharges >= max) {
+        if (s.gaugeFullAt <= 0) s.gaugeFullAt = time;
+      } else {
+        s.gaugeFullAt = 0;
+      }
+    } else {
+      s.gaugeFullAt = 0;
+    }
+    // The overpressure moment, said once — six seconds of sitting on a full gun is long enough
+    // to have forgotten it was loaded.
+    const f = this.fighter(owner);
+    if (f && owner === 'player' && s.gaugeFullAt > 0
+      && time - s.gaugeFullAt >= GAUGE_FULL_MS + GAUGE_OVER_MS
+      && time - s.gaugeFullAt < GAUGE_FULL_MS + GAUGE_OVER_MS + 40) {
+      this.api.showFloatingText(f.x, f.y - 56, '💀 OVERPRESSURED', this.hex(MAG.white));
+      this.fx(owner).smoke(f.x, f.y - 10, 6, 900);
+    }
+  }
+
+  // ── Molten Mutiny ──────────────────────────────────────────────────────────
+
+  /** Q — don the pendant, or take it off again. Unavailable while the ship is out. */
+  doMutiny(owner: Owner): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (!f) return;
+    if (s.ship) {
+      if (owner === 'player') this.api.showFloatingText(f.x, f.y - 52, "🏴‍☠️ SHIP'S OUT", '#8a8a8a');
+      return;
+    }
+    const fx = this.fx(owner);
+    if (s.pendantOn) {
+      // Taking it off discards what it took — the curse keeps its cut.
+      s.pendantOn = false;
+      s.pendantPower = 0;
+      s.taxCarry = 0;
+      fx.smoke(f.x, f.y, 5, 700);
+      this.api.showFloatingText(f.x, f.y - 52, '📿 PENDANT OFF', '#8a8a8a');
+      return;
+    }
+    s.pendantOn = true;
+    s.pendantPower = 0;
+    s.taxCarry = 0;
     this.avatar(owner)?.play('raise');
-    this.api.showFloatingText(x, y - 60, '🥚 DRAGON KIN', this.hex(MAG.scaleLit));
+    fx.shock(f.x, f.y, 8, 50, MAG.pendant, 520);
+    fx.ember(f.x, f.y - 4, 8, 24, 640, MAG.pendantLit);
+    this.api.showFloatingText(f.x, f.y - 52, '📿 MOLTEN MUTINY', this.hex(MAG.pendantLit));
+  }
+
+  /** The pendant takes its cut. At fifty, the ship. */
+  private addPendant(owner: Owner, amount: number): void {
+    const s = this.side(owner);
+    if (!s.pendantOn || amount <= 0) return;
+    const before = s.pendantPower;
+    s.pendantPower = Math.min(PENDANT_AWAKEN, s.pendantPower + amount);
+    const f = this.fighter(owner);
+    if (f && Math.floor(s.pendantPower / 10) > Math.floor(before / 10)) {
+      this.fx(owner).ember(f.x, f.y + 6, 3, 10, 420, MAG.pendantLit);
+    }
+    if (s.pendantPower >= PENDANT_AWAKEN) this.awaken(owner);
+  }
+
+  /** Fifty taken. The pendant is spent and the ship comes up under the pirate's feet. */
+  private awaken(owner: Owner): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    s.pendantOn = false;
+    s.pendantPower = 0;
+    s.taxCarry = 0;
+    if (!f || !f.active || f.hp <= 0) return;
+    s.ship = {
+      owner, x: f.x, y: f.y,
+      heading: Math.atan2(s.curY - f.y, s.curX - f.x),
+      hp: SHIP_HP, seed: Math.random() * 999, mounted: false, speed: 0,
+      ramAt: new Map(),
+      nextSpiritAt: this.now + SPIRIT_EVERY_MIN_MS,
+      flashUntil: 0,
+    };
+    this.mount(owner);
+    const fx = this.fx(owner);
+    fx.erupt(f.x, f.y, 90, MAG.magma);
+    fx.shock(f.x, f.y, 20, 150, MAG.gold, 700);
+    fx.shock(f.x, f.y, 14, 110, MAG.pendantLit, 620);
+    fx.smoke(f.x, f.y - 20, 12, 1400);
+    fx.ember(f.x, f.y, 20, 70, 1000, MAG.gold);
+    Sfx.playAt('roar', f.x, { volume: 0.8, rate: 0.75 });
+    this.api.showFloatingText(f.x, f.y - 64, '🏴‍☠️ THE SHIP RISES', this.hex(MAG.gold));
+    this.api.scene.cameras.main.shake(380, 0.009);
+    this.record(owner, 'mutinies', 1);
+  }
+
+  /** Aboard. The hull takes every hit meant for the captain from here on. */
+  private mount(owner: Owner): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (!s.ship || s.ship.mounted || !f) return;
+    s.ship.mounted = true;
+    this.installShipAbsorber(owner);
+    this.avatar(owner)?.setHelm(true);
+    this.avatar(owner)?.play('raise');
+    this.fx(owner).ember(f.x, f.y + 8, 6, 20, 480, MAG.gold);
+    if (owner === 'player') this.api.showFloatingText(f.x, f.y - 52, '⚓ ABOARD', this.hex(MAG.gold));
+  }
+
+  /**
+   * Off the deck. `jump` is the player choosing to; `recoil` is the blunderbuss throwing them;
+   * `sunk` is the deck going out from under them. The ship stays exactly where it is.
+   */
+  private dismount(owner: Owner, why: 'jump' | 'recoil' | 'sunk'): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (!s.ship?.mounted) return;
+    s.ship.mounted = false;
+    this.uninstallShipAbsorber(owner);
+    this.avatar(owner)?.setHelm(false);
+    if (!f) return;
+    if (why === 'jump') {
+      // Over the side, toward the cursor, far enough to be clear of the hull.
+      const a = Math.atan2(s.curY - f.y, s.curX - f.x);
+      f.setPosition(this.clampX(s.ship.x + Math.cos(a) * (SHIP_HULL_R + 14)),
+        this.clampY(s.ship.y + Math.sin(a) * (SHIP_HULL_R + 14)));
+      this.fx(owner).ember(f.x, f.y + 8, 5, 18, 420);
+      if (owner === 'player') this.api.showFloatingText(f.x, f.y - 52, '🪂 OVER THE SIDE', '#8a8a8a');
+    }
+  }
+
+  private installShipAbsorber(owner: Owner): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (!f || s.shipAbsorberInstalled) return;
+    s.shipSavedAbsorber = f.damageAbsorber;
+    s.shipAbsorberInstalled = true;
+    const absorber = (amount: number): boolean => {
+      const st = this.side(owner);
+      if (!st.ship?.mounted) return false;
+      this.hurtShip(st.ship, amount);
+      return true;
+    };
+    this.ourAbsorbers.add(absorber);
+    f.damageAbsorber = absorber;
+  }
+
+  private uninstallShipAbsorber(owner: Owner): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (!s.shipAbsorberInstalled) return;
+    if (f) f.damageAbsorber = s.shipSavedAbsorber;
+    s.shipAbsorberInstalled = false;
+    s.shipSavedAbsorber = null;
+  }
+
+  private hurtShip(ship: Ship, amount: number): void {
+    if (amount <= 0) return;
+    ship.hp -= amount;
+    ship.flashUntil = this.now + 110;
+    this.fx(ship.owner).ember(ship.x + (Math.random() - 0.5) * 40, ship.y + (Math.random() - 0.5) * 16, 3, 14, 420);
+    if (ship.owner === 'player' || amount >= 8) {
+      this.api.showFloatingText(ship.x + (Math.random() - 0.5) * 30, ship.y - 46, `⚓ −${Math.round(amount)}`, this.hex(MAG.ash));
+    }
+  }
+
+  /**
+   * The ship, every frame: the hull burning down at fifteen a second, steering for the cursor
+   * while the captain is aboard, carrying him, ramming what it runs into, stopping enemy shots
+   * with its hull, and — with Pirate King — putting crew over the side.
+   */
+  private updateShip(owner: Owner, time: number, dt: number): void {
+    const s = this.side(owner);
+    const ship = s.ship;
+    if (!ship) return;
+    const f = this.fighter(owner);
+
+    ship.hp -= SHIP_DECAY_PER_S * dt;
+    if (ship.hp <= 0) { this.sink(owner); return; }
+
+    // ── Steering ──
+    ship.speed = 0;
+    if (ship.mounted && f && f.active && f.hp > 0) {
+      const dx = s.curX - ship.x;
+      const dy = s.curY - ship.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 14) {
+        const step = Math.min(dist, SHIP_SPEED * dt);
+        ship.x = this.clampX(ship.x + (dx / dist) * step);
+        ship.y = this.clampY(ship.y + (dy / dist) * step);
+        ship.speed = step / Math.max(dt, 0.0001);
+        const want = Math.atan2(dy, dx);
+        ship.heading += Phaser.Math.Angle.Wrap(want - ship.heading) * Math.min(1, dt * 4);
+      }
+      // The captain is where the deck is. Written after movement has resolved, so WASD does
+      // nothing while aboard — the cursor is the helm.
+      f.setPosition(ship.x, ship.y - 4);
+      (f.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+    } else if (ship.mounted) {
+      this.dismount(owner, 'sunk');
+    }
+
+    // ── Ram ──
+    if (ship.speed >= SHIP_RAM_MIN_SPEED) {
+      for (const t of this.targetsOf(owner)) {
+        if (Phaser.Math.Distance.Between(ship.x, ship.y, t.x, t.y) > SHIP_HULL_R + 10) continue;
+        if (time < (ship.ramAt.get(t) ?? 0)) continue;
+        ship.ramAt.set(t, time + SHIP_RAM_GAP_MS);
+        this.strike(owner, t, SHIP_RAM_DMG);
+        this.api.spawnHitFlash(t.x, t.y, this.col(owner)(MAG.gold));
+        this.shove(t, Math.atan2(t.y - ship.y, t.x - ship.x), SHIP_RAM_SHOVE);
+        this.fx(owner).ember(t.x, t.y, 5, 18, 420, MAG.gold);
+        this.api.showFloatingText(t.x, t.y - 44, `⚓ ${SHIP_RAM_DMG} — RAMMED`, this.hex(MAG.gold));
+      }
+    }
+
+    // ── The hull stops shots ──
+    // Theirs only; yours sail through. Snapshotted, because destroying a child while iterating
+    // the live group array skips every other shot.
+    for (const child of [...this.api.projectiles.getChildren()]) {
+      const proj = child as Projectile;
+      if (!proj.active || !proj.body) continue;
+      if (proj.isFromPlayer === (owner === 'player')) continue;
+      if (Phaser.Math.Distance.Between(proj.x, proj.y, ship.x, ship.y) > SHIP_HULL_R) continue;
+      this.hurtShip(ship, Math.max(1, proj.damage));
+      proj.destroy();
+    }
+
+    // ── Pirate King (Q+): the crew ──
+    if (this.up(owner, 'q') && time >= ship.nextSpiritAt) {
+      ship.nextSpiritAt = time + SPIRIT_EVERY_MIN_MS + Math.random() * (SPIRIT_EVERY_MAX_MS - SPIRIT_EVERY_MIN_MS);
+      if (this.spirits.filter((sp) => sp.owner === owner).length < SPIRIT_MAX) this.spawnSpirit(owner, ship, time);
+    }
+  }
+
+  private sink(owner: Owner): void {
+    const s = this.side(owner);
+    const ship = s.ship;
+    if (!ship) return;
+    this.dismount(owner, 'sunk');
+    s.ship = null;
+    const fx = this.fx(owner);
+    fx.erupt(ship.x, ship.y, 80, MAG.magma);
+    fx.shock(ship.x, ship.y, 20, 130, MAG.gold, 700);
+    fx.smoke(ship.x, ship.y - 10, 16, 1600);
+    fx.ember(ship.x, ship.y, 18, 60, 900);
+    Sfx.playAt('explosion-large', ship.x, { volume: 0.7, rate: 0.8 });
+    // What was left of the hull goes back to being what it was made of.
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2 + Math.random();
+      this.addPool(owner, this.clampX(ship.x + Math.cos(a) * 34), this.clampY(ship.y + Math.sin(a) * 22),
+        ship.x, ship.y - 10);
+    }
+    this.api.showFloatingText(ship.x, ship.y - 60, '⚓ SHIP SUNK', this.hex(MAG.ash));
+    this.api.scene.cameras.main.shake(260, 0.007);
+  }
+
+  /** The broadside. Six rounds from six ports, all aimed at the cursor with a little scatter. */
+  private fireCannons(owner: Owner, tx: number, ty: number): void {
+    const s = this.side(owner);
+    const ship = s.ship;
+    if (!ship) return;
+    const c = Math.cos(ship.heading), sn = Math.sin(ship.heading);
+    for (let i = 0; i < CANNONS; i++) {
+      // Three a side, along the hull.
+      const u = -22 + (i % 3) * 18;
+      const v = (i < 3 ? -1 : 1) * 14;
+      const px = ship.x + c * u - sn * v;
+      const py = ship.y + sn * u + c * v;
+      const ang = Math.atan2(ty - py, tx - px) + (Math.random() - 0.5) * CANNON_SPREAD * 2;
+      this.cannonballs.push({
+        owner, x: px, y: py,
+        vx: Math.cos(ang) * CANNON_SPEED, vy: Math.sin(ang) * CANNON_SPEED,
+        until: this.now + CANNON_LIFE_MS, seed: Math.random() * 999,
+      });
+      this.fx(owner).ember(px, py, 4, 12, 360, MAG.gold);
+      this.fx(owner).smoke(px, py, 2, 600);
+    }
+    while (this.cannonballs.length > MAX_CANNONBALLS) this.cannonballs.shift();
+    this.avatar(owner)?.play('punch', Math.atan2(ty - ship.y, tx - ship.x));
+    this.avatar(owner)?.setVenting(true);
+    Sfx.playAt('explosion-small', ship.x, { volume: 0.8, rate: 0.75 });
+    this.api.showFloatingText(ship.x, ship.y - 56, '💣 BROADSIDE', this.hex(MAG.gold));
+    this.api.scene.cameras.main.shake(180, 0.006);
+  }
+
+  private updateCannonballs(time: number, dt: number): void {
+    const gone: Cannonball[] = [];
+    for (const b of this.cannonballs) {
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      if (time >= b.until || b.x < this.left - 20 || b.x > this.right + 20
+        || b.y < this.top - 20 || b.y > this.bottom + 20) {
+        gone.push(b);
+        continue;
+      }
+      const ang = Math.atan2(b.vy, b.vx);
+      // Enemies first — a round that could do both should hurt somebody.
+      const victim = this.targetsOf(b.owner)
+        .find((t) => Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) <= CANNON_HIT_R);
+      if (victim) {
+        this.strike(b.owner, victim, CANNON_DMG);
+        this.api.spawnHitFlash(victim.x, victim.y, this.col(b.owner)(MAG.gold));
+        this.fx(b.owner).erupt(b.x, b.y, 26, MAG.gold);
+        this.shove(victim, ang, CANNON_SHOVE);
+        this.api.showFloatingText(victim.x, victim.y - 44, `💣 ${CANNON_DMG}`, this.hex(MAG.gold));
+        gone.push(b);
+        continue;
+      }
+      // A volcano of its owner's in the way is lit on the spot: whatever pressure it had, it
+      // goes critical now. The round is spent doing it.
+      const v = this.vesselsOf(b.owner)
+        .find((o) => o.blowAt <= 0 && Phaser.Math.Distance.Between(b.x, b.y, o.x, o.y) <= o.r + 8);
+      if (v) {
+        this.feed(b.owner, v.x, v.y, 1, Math.max(0, v.max - v.pressure) + 1);
+        this.fx(b.owner).erupt(v.x, v.y - v.r, 40, MAG.gold);
+        this.api.showFloatingText(v.x, v.y - 90, '💣 LIT', this.hex(MAG.gold));
+        gone.push(b);
+      }
+    }
+    if (gone.length) this.cannonballs = this.cannonballs.filter((b) => !gone.includes(b));
+  }
+
+  // ── Pirate King ────────────────────────────────────────────────────────────
+
+  private spawnSpirit(owner: Owner, ship: Ship, time: number): void {
+    const orbit = Math.random() * Math.PI * 2;
+    this.spirits.push({
+      owner, x: ship.x + Math.cos(orbit) * 50, y: ship.y + Math.sin(orbit) * 30,
+      hp: SPIRIT_HP, seed: Math.random() * 999, orbit, facing: ship.heading,
+      nextDashAt: time + SPIRIT_DASH_MIN_MS * 0.5 + Math.random() * SPIRIT_DASH_MIN_MS,
+      dashUntil: 0, dashFrom: 0, dashVx: 0, dashVy: 0, dashHit: false, trailAcc: 0,
+    });
+    const fx = this.fx(owner);
+    fx.ember(ship.x, ship.y - 20, 10, 30, 700, MAG.gold);
+    fx.smoke(ship.x, ship.y - 20, 4, 800);
+    this.api.showFloatingText(ship.x, ship.y - 70, '👻 ALL HANDS', this.hex(MAG.gold));
+  }
+
+  /**
+   * The crew: hanging over the deck, burning down at eight a second, and every two or three
+   * seconds one of them lunges through whoever is closest, cutting for twenty and leaving the
+   * line he flew along on fire.
+   */
+  private updateSpirits(time: number, dt: number): void {
+    const gone: Spirit[] = [];
+    for (const sp of this.spirits) {
+      sp.hp -= SPIRIT_DECAY_PER_S * dt;
+      if (sp.hp <= 0) { gone.push(sp); continue; }
+
+      // Enemy shots burn him down faster.
+      for (const child of [...this.api.projectiles.getChildren()]) {
+        const proj = child as Projectile;
+        if (!proj.active || !proj.body) continue;
+        if (proj.isFromPlayer === (sp.owner === 'player')) continue;
+        if (Phaser.Math.Distance.Between(proj.x, proj.y, sp.x, sp.y) > 18) continue;
+        sp.hp -= Math.max(1, proj.damage);
+        this.fx(sp.owner).ember(sp.x, sp.y, 4, 14, 400);
+        proj.destroy();
+      }
+      if (sp.hp <= 0) { gone.push(sp); continue; }
+
+      const target = this.enemyOf(sp.owner);
+
+      if (sp.dashUntil > time) {
+        // Lunging. Straight line, fire behind, one cut.
+        const px = sp.x, py = sp.y;
+        sp.x = this.clampX(sp.x + sp.dashVx * dt);
+        sp.y = this.clampY(sp.y + sp.dashVy * dt);
+        sp.trailAcc += Phaser.Math.Distance.Between(px, py, sp.x, sp.y);
+        while (sp.trailAcc >= TRAIL_GAP_PX) {
+          sp.trailAcc -= TRAIL_GAP_PX;
+          this.addPool(sp.owner, sp.x, sp.y + 14, sp.x, sp.y, { r: TRAIL_R, life: TRAIL_LIFE_MS, flight: 0 });
+        }
+        if (!sp.dashHit) {
+          for (const t of this.targetsOf(sp.owner)) {
+            if (Phaser.Math.Distance.Between(sp.x, sp.y, t.x, t.y) > SPIRIT_HIT_R) continue;
+            sp.dashHit = true;
+            this.strike(sp.owner, t, SPIRIT_DMG);
+            this.api.spawnHitFlash(t.x, t.y, this.col(sp.owner)(MAG.gold));
+            this.fx(sp.owner).erupt(t.x, t.y, 24, MAG.lava);
+            this.shove(t, sp.facing, 50);
+            this.api.showFloatingText(t.x, t.y - 44, `👻 ${SPIRIT_DMG}`, this.hex(MAG.gold));
+            break;
+          }
+        }
+        continue;
+      }
+
+      // Hovering: drift around the ship, or around where it went down.
+      const ship = this.shipOf(sp.owner);
+      const hx = ship ? ship.x : sp.x, hy = ship ? ship.y : sp.y;
+      sp.orbit += dt * 0.9;
+      const wantX = hx + Math.cos(sp.orbit) * 54;
+      const wantY = hy + Math.sin(sp.orbit) * 30 - 10;
+      sp.x += (wantX - sp.x) * Math.min(1, dt * 3);
+      sp.y += (wantY - sp.y) * Math.min(1, dt * 3);
+      if (target) sp.facing = Math.atan2(target.y - sp.y, target.x - sp.x);
+
+      if (target && time >= sp.nextDashAt
+        && Phaser.Math.Distance.Between(sp.x, sp.y, target.x, target.y) <= SPIRIT_DASH_RANGE) {
+        sp.nextDashAt = time + SPIRIT_DASH_MIN_MS + Math.random() * (SPIRIT_DASH_MAX_MS - SPIRIT_DASH_MIN_MS);
+        // Through the target, not to it: the lunge carries past where they are standing.
+        const d = Math.max(1, Phaser.Math.Distance.Between(sp.x, sp.y, target.x, target.y));
+        const travel = Math.min(SPIRIT_DASH_DIST, d + 60);
+        const speed = travel / (SPIRIT_DASH_MS / 1000);
+        sp.facing = Math.atan2(target.y - sp.y, target.x - sp.x);
+        sp.dashVx = Math.cos(sp.facing) * speed;
+        sp.dashVy = Math.sin(sp.facing) * speed;
+        sp.dashFrom = time;
+        sp.dashUntil = time + SPIRIT_DASH_MS;
+        sp.dashHit = false;
+        sp.trailAcc = 0;
+        this.fx(sp.owner).ember(sp.x, sp.y, 5, 16, 400, MAG.gold);
+        Sfx.playAt('whoosh', sp.x, { volume: 0.5, rate: 1.3 });
+      }
+    }
+    for (const sp of gone) {
+      this.fx(sp.owner).smoke(sp.x, sp.y, 4, 700);
+      this.fx(sp.owner).ember(sp.x, sp.y, 6, 20, 500);
+    }
+    if (gone.length) this.spirits = this.spirits.filter((sp) => !gone.includes(sp));
   }
 
   // ── Update ─────────────────────────────────────────────────────────────────
@@ -902,13 +1463,11 @@ export class MagmaKit {
       this.advanceCursor(owner, dt);
       this.firePlume(owner, time);
       this.updateBloat(owner, time);
-      this.updateJet(owner, time, dt, delta);
-      this.updateDraconicDash(owner, time, dt);
-      this.updateBreath(owner, time, dt);
+      this.updateBlunder(owner, time);
+      this.updateFly(owner, time);
+      this.updateShip(owner, time, dt);
       this.updateSaw(owner, time, dt);
-      this.updateDragon(owner, time);
-      this.updateScale(owner, time);
-      // After `updateDragon`, which owns `magmaIncomingMult` and folds the coat's armour into it.
+      // Owns `magmaIncomingMult`; the coat's armour is folded in there.
       this.updateCoat(owner, time);
     }
     this.updateNpcSaw(time);
@@ -916,13 +1475,16 @@ export class MagmaKit {
     this.updatePools(time, dt);
     this.updateVessels(time, dt);
     this.updateRocks(time, dt);
+    this.updateCannonballs(time, dt);
+    this.updateSpirits(time, dt);
     this.updateShoves(dt);
     this.updateAvatars(delta, playerIs, npcIs);
 
     this.paintGround(time);
+    this.paintHull(time);
     this.paintObjects(time);
     this.paintGauges();
-    this.paintJets(time);
+    this.paintTools(time);
     this.paintHud(playerIs, time);
     this.pushStatuses(playerIs, time);
   }
@@ -930,6 +1492,7 @@ export class MagmaKit {
   private ensureLayers(): void {
     const { scene } = this.api;
     if (!this.groundGfx) this.groundGfx = scene.add.graphics().setDepth(2);
+    if (!this.hullGfx) this.hullGfx = scene.add.graphics().setDepth(4);
     if (!this.objGfx) this.objGfx = scene.add.graphics().setDepth(6);
     if (!this.gaugeGfx) this.gaugeGfx = scene.add.graphics().setDepth(8);
     if (!this.fistGfx) this.fistGfx = scene.add.graphics().setDepth(9);
@@ -937,10 +1500,9 @@ export class MagmaKit {
   }
 
   /**
-   * The npc has no mouse, so it gets a phantom one. Everything the element does is aimed with
-   * that cursor, so this is the whole of the AI's aim: pools and summons go near the target,
-   * and a running jet is pointed dead at whatever it wants to burn — which, because the jet
-   * shoves you the other way, is also how the AI kites.
+   * The npc has no mouse, so it gets a phantom one. The saw points dead at what it is cutting,
+   * the ship is steered to cannon range of the target, and otherwise the cursor loiters around
+   * whoever it is aiming at.
    */
   private advanceCursor(owner: Owner, dt: number): void {
     const s = this.side(owner);
@@ -958,7 +1520,7 @@ export class MagmaKit {
     // orbiting its own target would simply miss. A critical cone of its own within reach wins:
     // sawing that is how the bot ever earns an Obsidian Coat.
     if (s.sawFrom > 0) {
-      const cone = this.vesselsOf(owner, 'volcano')
+      const cone = this.vesselsOf(owner)
         .find((v) => v.blowAt > 0 && v.over < OVERFILL_MAX
           && Phaser.Math.Distance.Between(f.x, f.y, v.x, v.y) < SAW_HOLD_DIST + SAW_R);
       const at = cone ?? target;
@@ -968,26 +1530,20 @@ export class MagmaKit {
         return;
       }
     }
-    // What the flame is being pointed at. A vessel of its own that still has room in it and is
-    // in range outranks the player — burning your own summon is the element, and an AI that
-    // never did it would never reach a collapse or a hatch.
-    const vessel = this.vesselsOf(owner)
-      .filter((v) => v.pressure < v.max
-        && Phaser.Math.Distance.Between(f.x, f.y, v.x, v.y) < JET_RANGE)
-      .sort((a, b) => (b.kind === 'egg' ? 1 : 0) - (a.kind === 'egg' ? 1 : 0))[0];
-    const jetting = s.jetUntil > this.now;
-    const focus = jetting && vessel ? vessel : target;
-    const tx = focus ? focus.x : f.x;
-    const ty = focus ? focus.y : f.y;
 
-    if (jetting && focus) {
-      // Straight at it. No orbit — the jet is a held beam, and wobbling it just wastes fuel.
-      s.curX = this.clampX(tx);
-      s.curY = this.clampY(ty);
+    // At the helm the cursor is the wheel: steer to a point short of the target, so the ship
+    // closes to a range the broadside is good at and then holds there, bow on.
+    if (s.ship?.mounted && target) {
+      const d = Math.max(1, Phaser.Math.Distance.Between(s.ship.x, s.ship.y, target.x, target.y));
+      const hold = 190;
+      const k = Math.max(0, d - hold) / d;
+      s.curX = this.clampX(s.ship.x + (target.x - s.ship.x) * k);
+      s.curY = this.clampY(s.ship.y + (target.y - s.ship.y) * k);
       return;
     }
 
-    // No jet out: loiter around whatever it is aiming at.
+    const tx = target ? target.x : f.x;
+    const ty = target ? target.y : f.y;
     s.curAng += dt * 2.2;
     s.curX = this.clampX(tx + Math.cos(s.curAng) * 46);
     s.curY = this.clampY(ty + Math.sin(s.curAng) * 46 * 0.8);
@@ -998,12 +1554,24 @@ export class MagmaKit {
   /**
    * The one place pressure is ever added. Everything Magma does that hurts anybody passes
    * through here first with the same geometry it used for damage, which is what makes "all of
-   * magma's attacks charge it" true rather than a list of special cases.
+   * magma's attacks charge it" true rather than a list of special cases. Molten Mutiny's
+   * pendant takes its fifth of this too — it is damage the volcano would have had.
    *
    * Returns the vessels that were actually fed, so a rock can die on the thing it charged.
    */
   private feed(owner: Owner, x: number, y: number, radius: number, amount: number, except?: Vessel | null): Vessel[] {
     const hit: Vessel[] = [];
+    const s = this.side(owner);
+    if (s.pendantOn && amount > 0) {
+      const tax = amount * PENDANT_TAX;
+      amount -= tax;
+      // Only skimmed if there was a vessel to feed — a cone fired at nobody's volcano is not
+      // damage anybody would have taken.
+      if (this.vessels.some((v) => v.owner === owner && v !== except
+        && Phaser.Math.Distance.Between(x, y, v.x, v.y) <= radius + v.r)) {
+        this.addPendant(owner, tax);
+      }
+    }
     // Ruin's Combo Breaker halves every meter in the game, and every pressure bar on the board
     // is fed through here — one wrap covers the lot.
     amount = meterGain(this.fighter(owner), amount);
@@ -1017,8 +1585,7 @@ export class MagmaKit {
       // coat is *paid for* in overfill and a passive nobody can use without owning a shop
       // upgrade first would not be a passive at all.
       if (v.pressure >= v.max) {
-        if ((!this.up(owner, 'e') && !this.masteryOn(owner))
-          || v.kind !== 'volcano' || v.blowAt <= 0) continue;
+        if ((!this.up(owner, 'e') && !this.masteryOn(owner)) || v.blowAt <= 0) continue;
         if (v.over >= OVERFILL_MAX) continue;
         const gained = Math.min(amount, OVERFILL_MAX - v.over);
         if (gained <= 0) continue;
@@ -1039,45 +1606,22 @@ export class MagmaKit {
       v.flashUntil = this.now + 110;
       // A whole point of pressure is worth a spark; a fractional tick is not.
       if (Math.floor(v.pressure) > Math.floor(before)) {
-        this.fx(owner).ember(v.x + (Math.random() - 0.5) * v.r, v.y - v.r * 0.5, 1, 8, 420,
-          v.kind === 'egg' ? MAG.scaleLit : MAG.ember);
+        this.fx(owner).ember(v.x + (Math.random() - 0.5) * v.r, v.y - v.r * 0.5, 1, 8, 420, MAG.ember);
       }
       if (v.pressure >= v.max && before < v.max) this.onVesselFull(v);
     }
     return hit;
   }
 
-  /** A vessel has topped out. The volcano starts its countdown; the egg hatches on the spot. */
+  /** A volcano has topped out. The countdown starts. */
   private onVesselFull(v: Vessel): void {
     const fx = this.fx(v.owner);
-    if (v.kind === 'volcano') {
-      v.blowAt = this.now + VOLC_BLOW_MS;
-      v.until = v.blowAt + 1;
-      v.nextRockAt = this.now;
-      fx.erupt(v.x, v.y - v.r, 60, MAG.gold);
-      this.api.showFloatingText(v.x, v.y - 78, '🌋 CRITICAL', this.hex(MAG.white));
-      this.api.scene.cameras.main.shake(240, 0.006);
-    } else {
-      this.hatch(v);
-    }
-  }
-
-  private hatch(v: Vessel): void {
-    const s = this.side(v.owner);
-    const f = this.fighter(v.owner);
-    s.dragonUntil = this.now + DRAGON_MS;
-    this.vessels = this.vessels.filter((o) => o !== v);
-
-    const fx = this.fx(v.owner);
-    fx.erupt(v.x, v.y, 110, MAG.scale);
-    fx.ember(v.x, v.y, 24, 90, 1100, MAG.scaleLit);
-    fx.shock(v.x, v.y, 20, 170, MAG.scaleLit, 700);
-    if (f) {
-      fx.shock(f.x, f.y, 12, 96, MAG.scale, 620);
-      this.api.showFloatingText(f.x, f.y - 56, '🐉 DRAGON KIN', this.hex(MAG.scaleLit));
-    }
-    this.api.scene.cameras.main.shake(360, 0.009);
-    this.record(v.owner, 'hatches', 1);
+    v.blowAt = this.now + VOLC_BLOW_MS;
+    v.until = v.blowAt + 1;
+    v.nextRockAt = this.now;
+    fx.erupt(v.x, v.y - v.r, 60, MAG.gold);
+    this.api.showFloatingText(v.x, v.y - 78, '🌋 CRITICAL', this.hex(MAG.white));
+    this.api.scene.cameras.main.shake(240, 0.006);
   }
 
   // ── Plume ──────────────────────────────────────────────────────────────────
@@ -1112,19 +1656,19 @@ export class MagmaKit {
   }
 
   private updatePools(time: number, dt: number): void {
-    const landing = this.pools.filter((p) => p.landAt <= time && p.landAt > time - 40);
+    const landing = this.pools.filter((p) => p.flightMs > 0 && p.landAt <= time && p.landAt > time - 40);
     for (const p of landing) {
       const fx = this.fx(p.owner);
-      fx.splat(p.x, p.y, POOL_R * 0.9);
-      fx.ember(p.x, p.y, 4, POOL_R * 0.7, 520);
-      // Mag-Mortar and Jet Slam: the round goes off where it lands. The pool it leaves behind
-      // is unchanged, so the upgrade adds an opener rather than replacing the floor.
+      fx.splat(p.x, p.y, p.r * 0.9);
+      fx.ember(p.x, p.y, 4, p.r * 0.7, 520);
+      // Mag-Mortar: the round goes off where it lands. The pool it leaves behind is unchanged,
+      // so the upgrade adds an opener rather than replacing the floor.
       if (p.impact <= 0) continue;
       fx.erupt(p.x, p.y, p.impactR * 0.8, MAG.gold);
       fx.shock(p.x, p.y, 12, p.impactR, MAG.ember, 480);
       for (const t of this.targetsOf(p.owner)) {
         if (Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) > p.impactR) continue;
-        t.takeDamage(p.impact);
+        this.strike(p.owner, t, p.impact);
         this.api.spawnHitFlash(t.x, t.y, this.col(p.owner)(MAG.gold));
       }
       // Same geometry as the damage, so an impact charges like everything else does.
@@ -1137,11 +1681,11 @@ export class MagmaKit {
     for (const p of this.pools) {
       if (time < p.landAt) continue;
       for (const t of this.targetsOf(p.owner)) {
-        if (Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) > POOL_R) continue;
+        if (Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) > p.r) continue;
         burn.set(t, p.owner);
       }
       // …and the same pool charges anything of its owner's that it is sitting on.
-      this.feed(p.owner, p.x, p.y, POOL_R, POOL_FEED_PER_S * dt);
+      this.feed(p.owner, p.x, p.y, p.r, POOL_FEED_PER_S * dt);
     }
 
     for (const [t, owner] of burn) {
@@ -1149,7 +1693,7 @@ export class MagmaKit {
       const whole = Math.floor(acc);
       this.burnAccum.set(t, acc - whole);
       if (whole > 0) {
-        t.takeDamage(whole);
+        this.strike(owner, t, whole);
         if (Math.random() < 0.3) this.api.spawnHitFlash(t.x, t.y, this.col(owner)(MAG.lava));
       }
     }
@@ -1164,41 +1708,36 @@ export class MagmaKit {
     for (const v of [...this.vessels]) {
       const ratio = v.pressure / v.max;
 
-      if (v.kind === 'volcano') {
-        // Lava. The fuller it is, the faster it comes.
-        if (time >= v.nextPoolAt) {
-          const gap = Phaser.Math.Linear(VOLC_PUDDLE_SLOW_MS, VOLC_PUDDLE_FAST_MS, ratio);
-          v.nextPoolAt = time + gap;
-          this.ventPool(v, time);
-        }
-        // Rock, once there is enough pressure behind it to throw any.
-        if (ratio >= VOLC_ROCK_AT || v.blowAt > 0) {
-          if (time >= v.nextRockAt) {
-            if (v.blowAt > 0) {
-              v.nextRockAt = time + VOLC_BLOW_ROCK_MS;
-              this.spitRock(v, v.rockAng);
-              v.rockAng += 2.4;
-            } else {
-              const f = Phaser.Math.Clamp((ratio - VOLC_ROCK_AT) / (1 - VOLC_ROCK_AT), 0, 1);
-              v.nextRockAt = time + Phaser.Math.Linear(VOLC_ROCK_SLOW_MS, VOLC_ROCK_FAST_MS, f);
-              // A three-spoke burst, turning a little each time, so cover builds up all round.
-              for (let i = 0; i < 3; i++) this.spitRock(v, v.rockAng + (i / 3) * Math.PI * 2);
-              v.rockAng += 0.9;
-            }
+      // Lava. The fuller it is, the faster it comes.
+      if (time >= v.nextPoolAt) {
+        const gap = Phaser.Math.Linear(VOLC_PUDDLE_SLOW_MS, VOLC_PUDDLE_FAST_MS, ratio);
+        v.nextPoolAt = time + gap;
+        this.ventPool(v);
+      }
+      // Rock, once there is enough pressure behind it to throw any.
+      if (ratio >= VOLC_ROCK_AT || v.blowAt > 0) {
+        if (time >= v.nextRockAt) {
+          if (v.blowAt > 0) {
+            v.nextRockAt = time + VOLC_BLOW_ROCK_MS;
+            this.spitRock(v, v.rockAng);
+            v.rockAng += 2.4;
+          } else {
+            const f = Phaser.Math.Clamp((ratio - VOLC_ROCK_AT) / (1 - VOLC_ROCK_AT), 0, 1);
+            v.nextRockAt = time + Phaser.Math.Linear(VOLC_ROCK_SLOW_MS, VOLC_ROCK_FAST_MS, f);
+            // A three-spoke burst, turning a little each time, so cover builds up all round.
+            for (let i = 0; i < 3; i++) this.spitRock(v, v.rockAng + (i / 3) * Math.PI * 2);
+            v.rockAng += 0.9;
           }
         }
-        if (v.blowAt > 0 && time >= v.blowAt) { this.collapse(v); continue; }
       }
+      if (v.blowAt > 0 && time >= v.blowAt) { this.collapse(v); continue; }
 
-      if (time >= v.until) {
-        this.removeVessel(v, v.kind === 'egg' ? 'spoil' : 'crumble');
-      }
+      if (time >= v.until) this.removeVessel(v);
     }
   }
 
   /** A volcano coughing up a pool of lava somewhere near its own base. */
-  private ventPool(v: Vessel, time: number): void {
-    void time;
+  private ventPool(v: Vessel): void {
     const ang = Math.random() * Math.PI * 2;
     const d = v.r + 14 + Math.random() * 58;
     const x = this.clampX(v.x + Math.cos(ang) * d);
@@ -1238,7 +1777,7 @@ export class MagmaKit {
 
     for (const t of this.targetsOf(v.owner)) {
       if (Phaser.Math.Distance.Between(v.x, v.y, t.x, t.y) > radius) continue;
-      t.takeDamage(dmg);
+      this.strike(v.owner, t, dmg);
       this.api.spawnHitFlash(t.x, t.y, this.col(v.owner)(MAG.magma));
       const a = Math.atan2(t.y - v.y, t.x - v.x);
       this.shove(t, a, 120 + v.over * 0.4);
@@ -1275,27 +1814,28 @@ export class MagmaKit {
    */
   private addPool(
     owner: Owner, x: number, y: number, fromX: number, fromY: number,
-    { impact = 0, impactR = MORTAR_IMPACT_R, shell = false, flight = PLUME_FLIGHT_MS } = {},
+    {
+      impact = 0, impactR = MORTAR_IMPACT_R, shell = false, flight = PLUME_FLIGHT_MS,
+      r = POOL_R, life = POOL_LIFE_MS,
+    } = {},
   ): void {
     this.pools.push({
       owner, x, y, fromX, fromY,
       landAt: this.now + flight,
-      until: this.now + flight + POOL_LIFE_MS,
+      until: this.now + flight + life,
       seed: Math.random() * 999,
+      r, life,
       impact, impactR, shell, flightMs: flight,
     });
     while (this.pools.length > MAX_POOLS) this.pools.shift();
   }
 
-  /** A vessel going away without paying out — timed out, or replaced by a fresh cast. */
-  private removeVessel(v: Vessel, why: 'crumble' | 'spoil'): void {
+  /** A volcano going away without paying out — timed out, or replaced by a fresh cast. */
+  private removeVessel(v: Vessel): void {
     this.vessels = this.vessels.filter((o) => o !== v);
     const fx = this.fx(v.owner);
     fx.smoke(v.x, v.y - 10, 7, 1000);
-    fx.ember(v.x, v.y, 5, v.r, 620, v.kind === 'egg' ? MAG.scaleLit : MAG.ember);
-    if (why === 'spoil') {
-      this.api.showFloatingText(v.x, v.y - 44, '🥚 WENT COLD', '#8a8a8a');
-    }
+    fx.ember(v.x, v.y, 5, v.r, 620, MAG.ember);
   }
 
   // ── Rocks ──────────────────────────────────────────────────────────────────
@@ -1316,7 +1856,7 @@ export class MagmaKit {
       const victim = this.targetsOf(r.owner)
         .find((t) => Phaser.Math.Distance.Between(r.x, r.y, t.x, t.y) <= ROCK_HIT_R);
       if (victim) {
-        victim.takeDamage(ROCK_DMG);
+        this.strike(r.owner, victim, ROCK_DMG);
         this.api.spawnHitFlash(victim.x, victim.y, this.col(r.owner)(MAG.magma));
         this.fx(r.owner).ember(r.x, r.y, 5, 18, 480);
         gone.push(r);
@@ -1341,7 +1881,7 @@ export class MagmaKit {
     s.absorberInstalled = true;
     // Looked up through `this.side` rather than captured, so a match restart that rebuilds the
     // side objects can never leave a live closure pointing at a dead shield.
-    f.damageAbsorber = (amount: number) => {
+    const absorber = (amount: number): boolean => {
       const st = this.side(owner);
       if (st.bloatUntil <= this.now) return false;
       // Bloat Bomb (R+): while the trigger is held the hit is still refused outright, but it
@@ -1358,6 +1898,8 @@ export class MagmaKit {
       this.popBloat(owner);
       return true;
     };
+    this.ourAbsorbers.add(absorber);
+    f.damageAbsorber = absorber;
   }
 
   /**
@@ -1413,7 +1955,7 @@ export class MagmaKit {
     let caught = 0;
     for (const t of this.targetsOf(owner)) {
       if (Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) > radius) continue;
-      t.takeDamage(dmg);
+      this.strike(owner, t, dmg);
       caught++;
       this.api.spawnHitFlash(t.x, t.y, this.col(owner)(MAG.lava));
       this.shove(t, Math.atan2(t.y - f.y, t.x - f.x), 90 + bonus * 0.4);
@@ -1423,192 +1965,6 @@ export class MagmaKit {
     this.api.showFloatingText(f.x, f.y - 50,
       bonus > 0 ? `💣 BLOAT BOMB ${dmg}` : '💥 BLOCKED', this.hex(MAG.gold));
     this.api.scene.cameras.main.shake(bonus > 0 ? 340 : 200, bonus > 0 ? 0.01 : 0.006);
-  }
-
-  // ── Magma Jet ──────────────────────────────────────────────────────────────
-
-  /**
-   * The jet, while the button is down.
-   *
-   * Three things happen at once and they are deliberately the same action: a cone of flame
-   * goes out at the cursor, the caster is thrown the *other* way, and everything of theirs
-   * standing in the fire is charged. That makes the aim decision and the escape decision one
-   * decision, which is the whole ability — you cannot burn somebody without backing away from
-   * them, and you cannot back away without pointing the fire at wherever you left.
-   */
-  private updateJet(owner: Owner, time: number, dt: number, delta: number): void {
-    const s = this.side(owner);
-    const f = this.fighter(owner);
-
-    // The npc has no key to hold, so its burst is a timer.
-    if (owner === 'npc' && s.jetUntil > time && time >= s.npcJetUntil) s.jetUntil = 0;
-
-    if (s.jetUntil <= time || s.jetSpent >= JET_MAX_MS) {
-      if (s.jetWasOut) {
-        s.jetWasOut = false;
-        s.jetUntil = 0;
-        if (f) this.fx(owner).smoke(f.x, f.y, 6, 700);
-      }
-      return;
-    }
-    if (!f || !f.active || f.hp <= 0) { s.jetUntil = 0; return; }
-    // Ground covered under thrust, banked in whole hundreds (see `jetDistAcc`).
-    if (s.jetWasOut) {
-      s.jetDistAcc += Phaser.Math.Distance.Between(s.jetPrevX, s.jetPrevY, f.x, f.y);
-      const whole = Math.floor(s.jetDistAcc / 100) * 100;
-      if (whole > 0) {
-        s.jetDistAcc -= whole;
-        this.record(owner, 'jetDistance', whole);
-      }
-    }
-    s.jetPrevX = f.x;
-    s.jetPrevY = f.y;
-    s.jetWasOut = true;
-    s.jetSpent += delta;
-
-    const ang = Math.atan2(s.curY - f.y, s.curX - f.x);
-
-    // ── The thrust ──
-    // Written straight onto the body, after ArenaScene's movement pass has already resolved
-    // the frame — the jet is not a contribution to your walking, it *is* your movement.
-    const body = f.body as Phaser.Physics.Arcade.Body;
-    body.setVelocity(-Math.cos(ang) * JET_PUSH, -Math.sin(ang) * JET_PUSH);
-    this.fx(owner).ember(f.x + Math.cos(ang) * 10, f.y + Math.sin(ang) * 10, 2, 16, 300);
-
-    // ── Jet Slam (F+) ──
-    // A wall at your back while the throttle is open brings the ceiling down with you.
-    if (this.up(owner, 'f') && time >= s.slamReadyAt && this.againstWall(f)) {
-      s.slamReadyAt = time + SLAM_COOLDOWN_MS;
-      this.jetSlam(owner, f);
-    }
-
-    // ── Charging ──
-    // Same geometry the damage uses, so the jet feeds a volcano exactly as hard as it burns.
-    const midX = f.x + Math.cos(ang) * JET_RANGE * 0.55;
-    const midY = f.y + Math.sin(ang) * JET_RANGE * 0.55;
-    this.feed(owner, midX, midY, JET_RANGE * 0.5, JET_FEED_PER_S * dt);
-
-    // ── The burn ──
-    if (time < s.jetTickAt) return;
-    s.jetTickAt = time + JET_TICK_MS;
-    for (const t of this.targetsOf(owner)) {
-      const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
-      if (d > JET_RANGE) continue;
-      const off = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(t.y - f.y, t.x - f.x) - ang));
-      // Widens with distance the way a real cone does, rather than being a fixed wedge.
-      if (off > JET_HALF + 14 / Math.max(24, d)) continue;
-      t.takeDamage(JET_TICK_DMG);
-      this.api.spawnHitFlash(t.x, t.y, this.col(owner)(MAG.lava));
-    }
-  }
-
-  /** Whether the fighter is jammed up against the edge of the arena. */
-  private againstWall(f: Fighter): boolean {
-    return f.x <= this.left + SLAM_WALL_PAD || f.x >= this.right - SLAM_WALL_PAD
-      || f.y <= this.top + SLAM_WALL_PAD || f.y >= this.bottom - SLAM_WALL_PAD;
-  }
-
-  /**
-   * Jet Slam (F+). Riding your own exhaust into a wall shakes a dozen rocks out of the sky.
-   * They come down as lava that detonates where it lands and then stays hot, and the impact
-   * costs the pilot fifteen — this is a collision, and collisions are not free.
-   */
-  private jetSlam(owner: Owner, f: Fighter): void {
-    const fx = this.fx(owner);
-    fx.erupt(f.x, f.y, 60, MAG.gold);
-    fx.shock(f.x, f.y, 18, 90, MAG.white, 520);
-    fx.smoke(f.x, f.y, 8, 900);
-    for (let i = 0; i < SLAM_ROCKS; i++) {
-      const a = (i / SLAM_ROCKS) * Math.PI * 2 + Math.random();
-      const d = 18 + Math.random() * SLAM_SPREAD;
-      const x = this.clampX(f.x + Math.cos(a) * d);
-      const y = this.clampY(f.y + Math.sin(a) * d * 0.85);
-      // Dropped from well above the arena, so they read as falling rather than as thrown.
-      this.addPool(owner, x, y, x + (Math.random() - 0.5) * 30, y - 260, {
-        impact: SLAM_ROCK_DMG, impactR: 34, shell: true,
-        flight: 340 + Math.random() * 420,
-      });
-    }
-    // Online, the pilot may be a replica — their own sim has already charged them the fifteen,
-    // and `takeDamage` on a netGhost relays the number straight back to them as a second helping.
-    // The collision belongs to the sim that owns the body it happened to.
-    if (!f.netGhost) f.takeDamage(SLAM_SELF_DMG, { selfInflicted: true });
-    this.api.showFloatingText(f.x, f.y - 54, '🪨 JET SLAM', this.hex(MAG.gold));
-    this.api.scene.cameras.main.shake(300, 0.009);
-  }
-
-  // ── Dragon ─────────────────────────────────────────────────────────────────
-
-  private updateBreath(owner: Owner, time: number, dt: number): void {
-    const s = this.side(owner);
-    if (s.breathUntil <= time) return;
-    const f = this.fighter(owner);
-    if (!f || !f.active || f.hp <= 0) { s.breathUntil = 0; return; }
-
-    const ang = Math.atan2(s.curY - f.y, s.curX - f.x);
-
-    // Charges anything of yours standing in the fire, same as everything else does.
-    const midX = f.x + Math.cos(ang) * BREATH_RANGE * 0.55;
-    const midY = f.y + Math.sin(ang) * BREATH_RANGE * 0.55;
-    this.feed(owner, midX, midY, BREATH_RANGE * 0.5, BREATH_FEED_PER_S * dt);
-
-    if (time < s.breathTickAt) return;
-    s.breathTickAt = time + BREATH_TICK_MS;
-    for (const t of this.targetsOf(owner)) {
-      const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
-      if (d > BREATH_RANGE) continue;
-      const off = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(t.y - f.y, t.x - f.x) - ang));
-      // Widens with distance the way a real cone does, rather than being a fixed wedge.
-      if (off > BREATH_HALF + 14 / Math.max(24, d)) continue;
-      t.takeDamage(BREATH_TICK_DMG);
-      this.api.spawnHitFlash(t.x, t.y, this.col(owner)(MAG.breath));
-    }
-  }
-
-  /**
-   * Full Draconic's scale armour (Q+): four seconds during which nothing sticks. The control
-   * fields are cleared every frame rather than once on cast, because anything can write a new
-   * stun a frame later and "immune to every negative status" has to mean it.
-   */
-  private updateScale(owner: Owner, time: number): void {
-    const s = this.side(owner);
-    const f = this.fighter(owner);
-    if (!f) return;
-    if (s.scaleUntil > time) {
-      f.unstoppable = true;
-      f.earthStunnedUntil = 0;
-      f.frozenUntil = 0;
-      f.highGravityUntil = 0;
-      f.skeweredUntil = 0;
-      return;
-    }
-    if (s.scaleUntil > 0) {
-      s.scaleUntil = 0;
-      f.unstoppable = false;
-      this.fx(owner).smoke(f.x, f.y, 6, 700);
-      this.api.showFloatingText(f.x, f.y - 50, '🐲 SCALES DOWN', '#8a8a8a');
-    }
-  }
-
-  /** Keeps the hatched buffs on the Fighter and takes them off again when the clock runs out. */
-  private updateDragon(owner: Owner, time: number): void {
-    const s = this.side(owner);
-    const f = this.fighter(owner);
-    if (!f) return;
-    const on = s.dragonUntil > time;
-    // The one place `magmaIncomingMult` is ever written. All three stack: being a dragon is 20%
-    // off, clamping the plates over it is another 25%, and a coat of obsidian is up to 30% more.
-    const coat = this.coatPower(owner);
-    f.magmaIncomingMult = (on ? DRAGON_INCOMING : 1)
-      * (s.scaleUntil > time ? SCALE_INCOMING : 1)
-      * (s.coatUntil > time ? 1 - (COAT_ARMOR_MIN + (COAT_ARMOR_MAX - COAT_ARMOR_MIN) * coat) : 1);
-    if (!on && s.breathUntil > time) s.breathUntil = 0;
-    // The moment it lapses, say so — twenty seconds is long enough to have forgotten.
-    if (!on && s.dragonUntil > 0) {
-      s.dragonUntil = 0;
-      this.fx(owner).smoke(f.x, f.y, 8, 900);
-      this.api.showFloatingText(f.x, f.y - 50, '🐉 SPENT', '#8a8a8a');
-    }
   }
 
   // ── Mastery: Obsidian Coat ─────────────────────────────────────────────────
@@ -1639,12 +1995,9 @@ export class MagmaKit {
   }
 
   /**
-   * The coat's three halves, resolved once a frame.
-   *
-   * The armour goes through `magmaIncomingMult`, which `updateDragon` already owns — so it is
-   * folded in there rather than written here, and this method only owns the *outgoing* side and
-   * the expiry. The outgoing field is shared, so it is applied by dividing the old contribution
-   * out and multiplying the new one in.
+   * The coat's three halves, resolved once a frame. This is the one place `magmaIncomingMult`
+   * is ever written. The outgoing field is shared, so it is applied by dividing the old
+   * contribution out and multiplying the new one in.
    */
   private updateCoat(owner: Owner, time: number): void {
     const s = this.side(owner);
@@ -1657,6 +2010,10 @@ export class MagmaKit {
       this.fx(owner).smoke(f.x, f.y, 6, 800);
       this.api.showFloatingText(f.x, f.y - 50, '🪨 GLASS SHED', '#8a8a8a');
     }
+
+    const coat = this.coatPower(owner);
+    f.magmaIncomingMult = s.coatUntil > time
+      ? 1 - (COAT_ARMOR_MIN + (COAT_ARMOR_MAX - COAT_ARMOR_MIN) * coat) : 1;
 
     const want = s.coatUntil > time
       ? 1 + COAT_DMG_MIN + (COAT_DMG_MAX - COAT_DMG_MIN) * s.coatPower
@@ -1796,7 +2153,7 @@ export class MagmaKit {
     let cut = false;
     for (const t of this.targetsOf(owner)) {
       if (Phaser.Math.Distance.Between(head.x, head.y, t.x, t.y) > SAW_R + 12) continue;
-      t.takeDamage(bite);
+      this.strike(owner, t, bite);
       cut = true;
       // One spark in three: twenty hits a second would otherwise be a wall of flashes.
       if (Math.random() < 0.34) {
@@ -1823,7 +2180,7 @@ export class MagmaKit {
 
     for (const t of this.targetsOf(owner)) {
       if (Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) > SAW_BLAST_R) continue;
-      t.takeDamage(SAW_BLAST_DMG);
+      this.strike(owner, t, SAW_BLAST_DMG);
       this.api.spawnHitFlash(t.x, t.y, this.col(owner)(MAG.magma));
       this.shove(t, Math.atan2(t.y - f.y, t.x - f.x), SAW_ENEMY_SHOVE);
       this.api.showFloatingText(t.x, t.y - 44, `🪚 ${SAW_BLAST_DMG}`, this.hex(MAG.magma));
@@ -1869,6 +2226,8 @@ export class MagmaKit {
       return;
     }
 
+    // Not from the deck: the saw is a melee tool and the ship holds its range.
+    if (this.mounted('npc')) return;
     if (time < s.npcSawNextAt || time - s.sawCastAt < SAW_COOLDOWN_MS) return;
     if (!target || Phaser.Math.Distance.Between(f.x, f.y, target.x, target.y) > 190) return;
     s.npcSawRide = false;
@@ -1916,34 +2275,26 @@ export class MagmaKit {
   private updateAvatars(delta: number, playerIs: boolean, npcIs: boolean): void {
     const { scene } = this.api;
 
-    if (playerIs) {
-      const f = this.api.player;
-      if (!this.playerAvatar) this.playerAvatar = new MagmaAvatar(scene, this.pcol);
-      const s = this.sides.player;
-      this.playerAvatar.setFacing(Math.atan2(this.aimY - f.y, this.aimX - f.x));
-      this.playerAvatar.setDragon(this.isDragon('player'));
-      this.playerAvatar.setVenting(s.plumeLeft > 0 || s.breathUntil > this.now || s.jetUntil > this.now);
-      this.playerAvatar.setIntensity(this.isDragon('player') ? 1.35 : 1);
-      this.playerAvatar.setMastered(this.api.masteryActive);
-      this.playerAvatar.update(delta, f.x, f.y, f.active && f.hp > 0 ? f.alpha : 0);
-    } else if (this.playerAvatar) {
-      this.playerAvatar.destroy();
-      this.playerAvatar = null;
-    }
-
-    if (npcIs) {
-      const f = this.api.npc;
-      if (!this.npcAvatar) this.npcAvatar = new MagmaAvatar(scene, this.ncol);
-      const s = this.sides.npc;
-      this.npcAvatar.setFacing(Math.atan2(s.curY - f.y, s.curX - f.x));
-      this.npcAvatar.setDragon(this.isDragon('npc'));
-      this.npcAvatar.setVenting(s.plumeLeft > 0 || s.breathUntil > this.now || s.jetUntil > this.now);
-      this.npcAvatar.setIntensity(this.isDragon('npc') ? 1.35 : 1);
-      this.npcAvatar.setMastered(this.api.npcMasteryActive);
-      this.npcAvatar.update(delta, f.x, f.y, f.active && f.hp > 0 ? f.alpha : 0);
-    } else if (this.npcAvatar) {
-      this.npcAvatar.destroy();
-      this.npcAvatar = null;
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const is = owner === 'player' ? playerIs : npcIs;
+      let av = this.avatar(owner);
+      if (!is) {
+        if (av) { av.destroy(); if (owner === 'player') this.playerAvatar = null; else this.npcAvatar = null; }
+        continue;
+      }
+      const f = this.fighter(owner);
+      if (!av) {
+        av = new MagmaAvatar(scene, this.col(owner));
+        if (owner === 'player') this.playerAvatar = av; else this.npcAvatar = av;
+      }
+      const s = this.side(owner);
+      av.setFacing(Math.atan2(s.curY - f.y, s.curX - f.x));
+      av.setVenting(s.plumeLeft > 0 || s.flyUntil > this.now);
+      av.setHelm(this.mounted(owner));
+      av.setPendant(s.pendantOn ? s.pendantPower / PENDANT_AWAKEN : -1);
+      av.setIntensity(this.mounted(owner) ? 1.25 : 1);
+      av.setMastered(owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
+      av.update(delta, f.x, f.y, f.active && f.hp > 0 ? f.alpha : 0);
     }
   }
 
@@ -1955,11 +2306,35 @@ export class MagmaKit {
     g.clear();
     for (const p of this.pools) {
       if (time < p.landAt) continue;
-      const age = (time - p.landAt) / POOL_LIFE_MS;
+      const age = (time - p.landAt) / p.life;
       // Skins over as it dies, which is also the warning that it is about to stop hurting.
       const heat = Phaser.Math.Clamp(1 - age * 1.15, 0.05, 1);
-      const fade = Phaser.Math.Clamp((p.until - time) / 900, 0, 1);
-      moltenPool(g, this.col(p.owner), p.x, p.y, POOL_R, heat, this.vizT, p.seed, fade);
+      const fade = Phaser.Math.Clamp((p.until - time) / Math.min(900, p.life * 0.5), 0, 1);
+      moltenPool(g, this.col(p.owner), p.x, p.y, p.r, heat, this.vizT, p.seed, fade);
+    }
+  }
+
+  /** The hull and deck, under the fighters: the captain stands on it. */
+  private paintHull(time: number): void {
+    const g = this.hullGfx;
+    if (!g) return;
+    g.clear();
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const ship = this.side(owner).ship;
+      if (!ship) continue;
+      pirateShip(g, this.col(owner), ship.x, ship.y, ship.heading, this.vizT, ship.hp / SHIP_HP, ship.seed, 'hull');
+      if (ship.flashUntil > time) {
+        g.fillStyle(this.col(owner)(MAG.white), ((ship.flashUntil - time) / 110) * 0.35);
+        g.fillEllipse(ship.x, ship.y, 100, 44);
+      }
+      // The boarding ring, while the captain is off the deck and close enough to come back.
+      if (!ship.mounted && owner === 'player') {
+        const f = this.api.player;
+        if (f && Phaser.Math.Distance.Between(f.x, f.y, ship.x, ship.y) <= SHIP_MOUNT_R) {
+          g.lineStyle(1.6, this.col(owner)(MAG.gold), 0.4 + 0.25 * Math.sin(this.vizT * 6));
+          g.strokeEllipse(ship.x, ship.y, SHIP_MOUNT_R * 2, SHIP_MOUNT_R * 1.3);
+        }
+      }
     }
   }
 
@@ -1976,7 +2351,7 @@ export class MagmaKit {
       const y = Phaser.Math.Linear(p.fromY, p.y, f) - Math.sin(f * Math.PI) * 44;
       const tint = this.col(p.owner);
       if (p.shell) {
-        // Mag-Mortar / Jet Slam: a finned round, nose-down along its own flight path.
+        // Mag-Mortar: a finned round, nose-down along its own flight path.
         const ang = Math.atan2(p.y - p.fromY, p.x - p.fromX) + Math.PI * 0.12;
         mortarShell(g, tint, x, y, ang, 1);
       } else {
@@ -1988,7 +2363,7 @@ export class MagmaKit {
         g.fillCircle(x - 2, y - 2, 3.2);
       }
       // Where it is going to land, so it can be stepped out of.
-      const ringR = p.impact > 0 ? p.impactR : POOL_R;
+      const ringR = p.impact > 0 ? p.impactR : p.r;
       g.lineStyle(p.impact > 0 ? 2.2 : 1.6, tint(p.impact > 0 ? MAG.gold : MAG.ember),
         0.35 + f * 0.35);
       g.strokeEllipse(p.x, p.y, ringR * 1.7 * (0.5 + f * 0.5), ringR * 1.15 * (0.5 + f * 0.5));
@@ -1996,12 +2371,7 @@ export class MagmaKit {
 
     for (const v of this.vessels) {
       const tint = this.col(v.owner);
-      const ratio = v.pressure / v.max;
-      if (v.kind === 'volcano') {
-        volcanoCone(g, tint, v.x, v.y + v.r * 0.5, v.r, ratio, this.vizT, v.seed);
-      } else {
-        dragonEgg(g, tint, v.x, v.y, v.r, ratio, this.vizT, v.seed);
-      }
+      volcanoCone(g, tint, v.x, v.y + v.r * 0.5, v.r, v.pressure / v.max, this.vizT, v.seed);
       if (v.flashUntil > time) {
         g.fillStyle(tint(MAG.white), ((v.flashUntil - time) / 110) * 0.45);
         g.fillCircle(v.x, v.y, v.r * 1.5);
@@ -2011,6 +2381,18 @@ export class MagmaKit {
     for (const r of this.rocks) {
       lavaRock(g, this.col(r.owner), r.x, r.y, 6, r.spin, r.seed);
     }
+    for (const b of this.cannonballs) {
+      cannonball(g, this.col(b.owner), b.x, b.y, Math.atan2(b.vy, b.vx), this.vizT * 9 + b.seed, b.seed);
+    }
+
+    // The rigging, over the fighters: masts fore and aft of where the captain stands.
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const ship = this.side(owner).ship;
+      if (!ship) continue;
+      pirateShip(g, this.col(owner), ship.x, ship.y, ship.heading, this.vizT, ship.hp / SHIP_HP, ship.seed, 'rig');
+      // The hull's own gauge, aft of the stern lantern.
+      pressureGauge(g, this.col(owner), ship.x, ship.y - 58, 70, ship.hp / SHIP_HP, MAG.gold);
+    }
   }
 
   private paintGauges(): void {
@@ -2018,18 +2400,21 @@ export class MagmaKit {
     if (!g) return;
     g.clear();
     for (const v of this.vessels) {
-      const tint = this.col(v.owner);
-      const isEgg = v.kind === 'egg';
-      const y = v.y - (isEgg ? v.r * 1.5 : v.r * 2.1);
-      pressureGauge(g, tint, v.x, y, isEgg ? 62 : 48, v.pressure / v.max,
-        isEgg ? MAG.scaleLit : MAG.magma);
+      pressureGauge(g, this.col(v.owner), v.x, v.y - v.r * 2.1, 48, v.pressure / v.max, MAG.magma);
     }
   }
 
-  private paintJets(time: number): void {
+  /** What is in hand: the blunderbuss going off, the saw, the coat, and the crew in the air. */
+  private paintTools(time: number): void {
     const g = this.fistGfx;
     if (!g) return;
     g.clear();
+
+    for (const sp of this.spirits) {
+      const dash = sp.dashUntil > time ? Phaser.Math.Clamp((time - sp.dashFrom) / SPIRIT_DASH_MS, 0, 1) : 0;
+      pirateSpirit(g, this.col(sp.owner), sp.x, sp.y - 16, sp.facing, this.vizT + sp.seed, sp.seed,
+        Phaser.Math.Clamp(sp.hp / SPIRIT_HP, 0, 1), dash);
+    }
 
     for (const owner of ['player', 'npc'] as Owner[]) {
       if (!this.isMagma(owner)) continue;
@@ -2037,30 +2422,11 @@ export class MagmaKit {
       const f = this.fighter(owner);
       if (!f || !f.active || f.hp <= 0) continue;
       const tint = this.col(owner);
-      const dragon = this.isDragon(owner);
-
-      // Dragon Breath.
-      if (s.breathUntil > time) {
-        const ang = Math.atan2(s.curY - f.y, s.curX - f.x);
-        const left = (s.breathUntil - time) / BREATH_MS;
-        // Flares open, then chokes off — a cone at constant width reads as a texture.
-        const grow = Phaser.Math.Clamp((1 - left) * 4, 0, 1) * Phaser.Math.Clamp(left * 3, 0, 1);
-        breathCone(g, tint,
-          f.x + Math.cos(ang) * 14, f.y + Math.sin(ang) * 14, ang,
-          BREATH_RANGE * (0.5 + grow * 0.5), BREATH_HALF * (0.4 + grow * 0.6),
-          this.vizT, 7, MAG.scaleLit, MAG.membrane, 0.55 + grow * 0.45);
-      }
 
       // Obsidian Coat, under everything else the caster is holding — it is worn, not wielded.
       if (s.coatUntil > time) {
         obsidianCoat(g, tint, f.x, f.y, s.coatPower, this.vizT,
           Phaser.Math.Clamp((s.coatUntil - time) / 600, 0, 1));
-      }
-
-      // Full Draconic's scale armour, over the body and under the flame.
-      if (s.scaleUntil > time) {
-        scaleArmor(g, tint, f.x, f.y, this.vizT,
-          Phaser.Math.Clamp((s.scaleUntil - time) / 400, 0, 1));
       }
 
       // The saw: revving in the hand while the key is held, then out at arm's length cutting.
@@ -2085,45 +2451,62 @@ export class MagmaKit {
         }
       }
 
-      // The jet: a cone at the cursor and a plume of thrust out of the caster's back.
-      if (s.jetUntil <= time) continue;
-      const ang = Math.atan2(s.curY - f.y, s.curX - f.x);
-      const left = Phaser.Math.Clamp(1 - s.jetSpent / JET_MAX_MS, 0, 1);
-      // Flares open over the first tenth of a second and chokes off as the fuel runs out.
-      const grow = Phaser.Math.Clamp((JET_MAX_MS - s.jetSpent) / 260, 0, 1)
-        * Phaser.Math.Clamp(s.jetSpent / 120, 0.35, 1);
-      breathCone(g, tint,
-        f.x + Math.cos(ang) * 12, f.y + Math.sin(ang) * 12, ang,
-        JET_RANGE * (0.6 + grow * 0.4), JET_HALF * (0.6 + grow * 0.4),
-        this.vizT, 3,
-        dragon ? MAG.scaleLit : MAG.lava, dragon ? MAG.membrane : MAG.magma,
-        0.6 + left * 0.4);
+      // Blunder-Boil: the cone hangs in the air for the first part of the recoil, pointed back
+      // at where the pirate was standing when he fired — a muzzle flash the length of the shot.
+      if (s.flyUntil > time) {
+        const u = Phaser.Math.Clamp((time - s.flyFrom) / BLUNDER_LAUNCH_MS, 0, 1);
+        const fade = Phaser.Math.Clamp(1 - u * 1.6, 0, 1);
+        if (fade > 0) {
+          const ang = s.flyAng + Math.PI;
+          breathCone(g, tint,
+            s.flyX0 + Math.cos(ang) * 12, s.flyY0 + Math.sin(ang) * 12, ang,
+            BLUNDER_RANGE * (0.7 + u * 0.3), BLUNDER_HALF * (0.8 + u * 0.3),
+            this.vizT, 3, s.flyHot > 0.6 ? MAG.white : MAG.lava, MAG.magma, fade);
+        }
+        // The exhaust out of the barrel's back, which is the visual reason he is airborne.
+        for (let i = 0; i < 3; i++) {
+          const a = s.flyAng + Math.PI + (i - 1) * 0.3;
+          const len = 16 + Math.sin(this.vizT * 22 + i * 2) * 6;
+          g.fillStyle(tint(i === 1 ? MAG.white : MAG.gold), 0.5 * (1 - u));
+          g.fillPoints([
+            new Phaser.Geom.Point(f.x + Math.cos(a - 0.2) * 8, f.y + Math.sin(a - 0.2) * 8),
+            new Phaser.Geom.Point(f.x + Math.cos(a) * len, f.y + Math.sin(a) * len),
+            new Phaser.Geom.Point(f.x + Math.cos(a + 0.2) * 8, f.y + Math.sin(a + 0.2) * 8),
+          ], true);
+        }
+        // Hot enough to be the shot: a corona round the pirate for the flight.
+        if (s.flyHot >= GAUGE_CONTACT_AT) {
+          g.lineStyle(2.2, tint(MAG.white), 0.5 + 0.3 * Math.sin(this.vizT * 30));
+          g.strokeCircle(f.x, f.y, GAUGE_CONTACT_R);
+          g.fillStyle(tint(MAG.gold), 0.18);
+          g.fillCircle(f.x, f.y, GAUGE_CONTACT_R);
+        }
+      }
 
-      // The exhaust: three short tongues out of the caster's back, which is the visual
-      // explanation for why they are travelling in the wrong direction.
-      for (let i = 0; i < 3; i++) {
-        const a = ang + Math.PI + (i - 1) * 0.28;
-        const len = 20 + Math.sin(this.vizT * 22 + i * 2) * 7;
-        g.fillStyle(tint(i === 1 ? MAG.white : MAG.gold), 0.55 * left);
-        g.fillPoints([
-          new Phaser.Geom.Point(f.x + Math.cos(a - 0.18) * 8, f.y + Math.sin(a - 0.18) * 8),
-          new Phaser.Geom.Point(f.x + Math.cos(a) * len, f.y + Math.sin(a) * len),
-          new Phaser.Geom.Point(f.x + Math.cos(a + 0.18) * 8, f.y + Math.sin(a + 0.18) * 8),
-        ], true);
+      // Pressure Gauge (F+): smoke off a gun that has sat full too long.
+      if (this.gaugeOver(owner)) {
+        for (let i = 0; i < 3; i++) {
+          const ph = (this.vizT * 0.8 + i * 0.33) % 1;
+          g.fillStyle(tint(MAG.smoke), 0.5 * (1 - ph));
+          g.fillCircle(f.x + 14 + Math.sin(ph * 6 + i) * 4, f.y - 8 - ph * 26, 3 + ph * 4);
+        }
       }
     }
   }
 
-  /** What is in hand: the fist's clock and how to use it, or the dragon's. */
+  /** What is in hand: the saw's clock, the gauge, the ship's hull, or the pendant's take. */
   private paintHud(playerIsMagma: boolean, time: number): void {
     const g = this.hudGfx;
     if (!g) return;
     g.clear();
     const s = this.sides.player;
     const showSaw = playerIsMagma && s.sawFrom > 0;
-    const showJet = playerIsMagma && s.jetUntil > time;
-    const showDragon = playerIsMagma && this.isDragon('player');
-    if (!showSaw && !showJet && !showDragon) {
+    const showShip = playerIsMagma && !!s.ship;
+    const pressure = playerIsMagma ? this.gaugePressure('player') : 0;
+    const over = playerIsMagma && this.gaugeOver('player');
+    const showGauge = playerIsMagma && (pressure > 0 || over);
+    const showPendant = playerIsMagma && s.pendantOn;
+    if (!showSaw && !showShip && !showGauge && !showPendant) {
       this.hudLabel?.setVisible(false);
       return;
     }
@@ -2133,7 +2516,9 @@ export class MagmaKit {
     const w = 186;
     const heat = this.sawHeat('player', time);
     const hot = showSaw ? (heat > 0.78 ? MAG.magma : heat > 0.45 ? MAG.white : MAG.gold)
-      : showDragon ? MAG.scaleLit : MAG.magma;
+      : showShip ? MAG.gold
+        : showGauge ? (over ? MAG.ash : pressure > 0.6 ? MAG.white : MAG.magma)
+          : MAG.pendantLit;
 
     g.fillStyle(0x05070a, 0.85);
     g.fillRoundedRect(x - 4, y - 4, w, 34, 4);
@@ -2144,9 +2529,11 @@ export class MagmaKit {
     // thing detonates, so an empty bar means "let go now".
     const ratio = showSaw
       ? Phaser.Math.Clamp(1 - heat, 0, 1)
-      : showJet
-        ? Phaser.Math.Clamp(1 - s.jetSpent / JET_MAX_MS, 0, 1)
-        : Phaser.Math.Clamp((s.dragonUntil - time) / DRAGON_MS, 0, 1);
+      : showShip
+        ? Phaser.Math.Clamp((s.ship?.hp ?? 0) / SHIP_HP, 0, 1)
+        : showGauge
+          ? (over ? 1 : pressure)
+          : Phaser.Math.Clamp(s.pendantPower / PENDANT_AWAKEN, 0, 1);
     g.fillStyle(this.pcol(MAG.smoke), 1);
     g.fillRect(x, y + 20, w - 8, 6);
     g.fillStyle(this.pcol(hot), 1);
@@ -2165,11 +2552,17 @@ export class MagmaKit {
     this.hudLabel.setText(showSaw
       ? `MAGMA SAW — ${Math.min(SAW_DMG_MAX, 1 + Math.floor((time - s.sawFrom) / SAW_RAMP_MS)) * 20} A SECOND\n`
         + `${((SAW_OVERHEAT_MS - (time - s.sawFrom)) / 1000).toFixed(1)}s TO DETONATION · PRESS AGAIN TO CUT THE MOTOR`
-      : showJet
-        ? 'MAGMA JET — HOLD F\nFLAME AT THE CURSOR · YOU GO THE OTHER WAY'
-        : (this.draconic('player')
-          ? 'FULL DRACONIC\nE POUND · R SCALES · F CHARGE'
-          : 'DRAGON KIN\nCLICK = BREATH · −20% TAKEN · +20% SPEED'));
+      : showShip
+        ? `THE SHIP — ${Math.max(0, Math.round(s.ship?.hp ?? 0))} HULL · −${SHIP_DECAY_PER_S} A SECOND\n`
+          + (s.ship?.mounted ? 'CLICK = BROADSIDE · CURSOR STEERS · SPACE = OVER THE SIDE'
+            : 'SPACE NEAR THE HULL TO BOARD · IT HOLDS WHERE IT IS')
+        : showGauge
+          ? (over
+            ? 'PRESSURE GAUGE — OVERPRESSURED\nF WILL BURST: 35 TO YOU AND EVERYONE WITHIN 120px'
+            : `PRESSURE GAUGE — ${Math.round(pressure * 100)}%\n`
+              + `F HITS ${Math.round(BLUNDER_DMG + GAUGE_DMG_BONUS * pressure)} · FLIES ${Math.round(BLUNDER_LAUNCH + GAUGE_LAUNCH_BONUS * pressure)}px${pressure >= GAUGE_CONTACT_AT ? ' · YOU ARE THE SHOT' : ''}`)
+          : `MOLTEN MUTINY — ${Math.round(s.pendantPower)} / ${PENDANT_AWAKEN}\n`
+            + 'THE PENDANT TAKES A FIFTH OF EVERYTHING YOU DEAL · Q AGAIN TO REMOVE');
     this.hudLabel.setColor(this.hex(hot));
   }
 
@@ -2178,25 +2571,28 @@ export class MagmaKit {
   private pushStatuses(playerIsMagma: boolean, time: number): void {
     const s = this.sides.player;
 
-    this.api.setStatusIndicator('magma-dragon', playerIsMagma && this.isDragon('player') ? {
-      name: 'Dragon Kin', emoji: '🐉', color: MAG.scaleLit,
-      description: this.draconic('player')
-        ? `Hatched, with the full moveset. ${Math.round((1 - DRAGON_INCOMING) * 100)}% less damage taken, ${Math.round((DRAGON_SPEED - 1) * 100)}% more speed, click breathes fire — and E is a ${POUND_DMG} ground pound with a ${POUND_STUN_MS / 1000}s stun, R is 4 seconds of scale armour, F is a charge that drags everyone it passes. Q is unavailable until this runs out.`
-        : `Hatched. You take ${Math.round((1 - DRAGON_INCOMING) * 100)}% less damage, move ${Math.round((DRAGON_SPEED - 1) * 100)}% faster, and your click is dragon breath.`,
-      until: s.dragonUntil, priority: 100,
+    this.api.setStatusIndicator('magma-pendant', playerIsMagma && s.pendantOn ? {
+      name: 'Molten Mutiny', emoji: '📿', color: MAG.pendantLit,
+      description: `The cursed pendant is taking ${Math.round(PENDANT_TAX * 100)}% of every point you would deal — to a body or into a volcano — and keeping it. At ${PENDANT_AWAKEN} it wakes the ship. Press Q again to take it off, and lose what it has taken.`,
+      count: Math.round(s.pendantPower), suffix: ` / ${PENDANT_AWAKEN}`, priority: 100,
     } : null);
 
-    this.api.setStatusIndicator('magma-scale', playerIsMagma && s.scaleUntil > time ? {
-      name: 'Dragon Scale', emoji: '🐲', color: MAG.scale,
-      description: `Plates clamped over you. Immune to every stun, root and slow in the game, and ${Math.round((1 - SCALE_INCOMING) * 100)}% less damage on top of what being a dragon already gives you.`,
-      until: s.scaleUntil, priority: 104,
+    this.api.setStatusIndicator('magma-ship', playerIsMagma && s.ship ? {
+      name: s.ship.mounted ? 'At The Helm' : 'The Ship', emoji: '🏴‍☠️', color: MAG.gold,
+      description: s.ship.mounted
+        ? `Aboard. The hull takes every hit meant for you and burns down ${SHIP_DECAY_PER_S} a second on its own. The cursor steers it, the click fires all six cannons for ${CANNON_DMG} apiece and lights any volcano of yours a round crosses, running into somebody is ${SHIP_RAM_DMG} and a shove. Space to go over the side.${this.api.hasUpgrade('q') ? ' Pirate King: the crew climbs out every few seconds.' : ''}`
+        : `Holding where you left it, still burning down ${SHIP_DECAY_PER_S} a second, still stopping shots with its hull. Stand within ${SHIP_MOUNT_R}px and press Space to board again.`,
+      count: Math.max(0, Math.round(s.ship.hp)), suffix: ` / ${SHIP_HP}`, priority: 102,
     } : null);
 
-    this.api.setStatusIndicator('magma-jet', playerIsMagma && s.jetUntil > time ? {
-      name: 'Magma Jet', emoji: '🚀', color: MAG.lava,
-      description: `Molten flame at the cursor for ${JET_TICK_DMG} every ${JET_TICK_MS / 1000}s, and the thrust throwing you the other way. Let go of F to shut it off; there is ${((JET_MAX_MS - s.jetSpent) / 1000).toFixed(1)}s of burn left.${this.api.hasUpgrade('f') ? ' Ride it into a wall and the sky comes down.' : ''}`,
-      count: Math.round(Math.max(0, JET_MAX_MS - s.jetSpent) / 100) / 10, suffix: 's',
-      priority: 112,
+    const pressure = playerIsMagma ? this.gaugePressure('player') : 0;
+    const over = playerIsMagma && this.gaugeOver('player');
+    this.api.setStatusIndicator('magma-gauge', playerIsMagma && (pressure > 0 || over) ? {
+      name: over ? 'Overpressured' : 'Pressure Gauge', emoji: over ? '💀' : '🌡️', color: over ? MAG.ash : MAG.magma,
+      description: over
+        ? `The gun has sat full too long. The next F does not fire — it bursts for ${GAUGE_BLAST_DMG} to you and everyone within ${GAUGE_BLAST_R}px.`
+        : `All three charges banked and the pressure climbing. F deals ${Math.round(BLUNDER_DMG + GAUGE_DMG_BONUS * pressure)} and throws you ${Math.round(BLUNDER_LAUNCH + GAUGE_LAUNCH_BONUS * pressure)}px${pressure >= GAUGE_CONTACT_AT ? `, and you hit anyone you fly through for ${GAUGE_CONTACT_DMG}` : ''}. Full too long and it bursts.`,
+      count: Math.round(pressure * 100), suffix: '%', priority: 110,
     } : null);
 
     this.api.setStatusIndicator('magma-bloat', playerIsMagma && s.bloatUntil > time ? {
@@ -2226,28 +2622,21 @@ export class MagmaKit {
       priority: 114,
     } : null);
 
-    const egg = this.vesselsOf('player', 'egg')[0];
-    this.api.setStatusIndicator('magma-egg', playerIsMagma && egg ? {
-      name: 'Dragon Egg', emoji: '🥚', color: MAG.scaleLit,
-      description: `Attack your own egg to pressurise it. At ${EGG_MAX} it hatches.`,
-      count: Math.floor(egg?.pressure ?? 0), suffix: ` / ${EGG_MAX}`, priority: 118,
-    } : null);
-
-    const volcanoes = this.vesselsOf('player', 'volcano');
+    const volcanoes = this.vesselsOf('player');
     const hottest = volcanoes.reduce((m, v) => Math.max(m, v.pressure), 0);
-    const over = volcanoes.reduce((m, v) => Math.max(m, v.over), 0);
+    const overfill = volcanoes.reduce((m, v) => Math.max(m, v.over), 0);
     this.api.setStatusIndicator('magma-volcano', playerIsMagma && volcanoes.length ? {
-      name: over > 0 ? 'Supercritical' : 'Volcano', emoji: '🌋', color: over > 0 ? MAG.white : MAG.magma,
-      description: over > 0
-        ? `Past the cap and still taking it. ${Math.round(over)} overfill banked — the collapse is up to ${Math.round(VOLC_COLLAPSE_DMG + over * OVERFILL_DMG_PER)} in a ${Math.round(VOLC_COLLAPSE_R + over * OVERFILL_R_PER)}px blast. Keep hitting it until it goes.`
+      name: overfill > 0 ? 'Supercritical' : 'Volcano', emoji: '🌋', color: overfill > 0 ? MAG.white : MAG.magma,
+      description: overfill > 0
+        ? `Past the cap and still taking it. ${Math.round(overfill)} overfill banked — the collapse is up to ${Math.round(VOLC_COLLAPSE_DMG + overfill * OVERFILL_DMG_PER)} in a ${Math.round(VOLC_COLLAPSE_R + overfill * OVERFILL_R_PER)}px blast. Keep hitting it until it goes.`
         : `Attack it to raise its pressure — more pressure means more lava and more rock. At ${VOLCANO_MAX} it goes critical and collapses.`,
-      count: over > 0 ? Math.round(over) : Math.round(hottest),
-      suffix: over > 0 ? ' over' : ` / ${VOLCANO_MAX}`, priority: 120,
+      count: overfill > 0 ? Math.round(overfill) : Math.round(hottest),
+      suffix: overfill > 0 ? ' over' : ` / ${VOLCANO_MAX}`, priority: 120,
     } : null);
 
     // The victim side: hostile lava under the local player's feet.
     const standing = this.pools.some((p) => p.owner === 'npc' && time >= p.landAt
-      && Phaser.Math.Distance.Between(p.x, p.y, this.api.player.x, this.api.player.y) <= POOL_R);
+      && Phaser.Math.Distance.Between(p.x, p.y, this.api.player.x, this.api.player.y) <= p.r);
     this.api.setStatusIndicator('magma-scalded', standing ? {
       name: 'Standing In Lava', emoji: '🔥', color: MAG.lava,
       description: `You are standing in someone else's magma — ${POOL_DPS} a second for as long as you do. Step out of it.`,
@@ -2256,19 +2645,6 @@ export class MagmaKit {
   }
 
   // ── Accessors read by ArenaScene / the npc ─────────────────────────────────
-
-  /** Dragon Kin's haste. Pulled by ArenaScene, not pushed — its update runs after movement. */
-  private speedMultFor(owner: Owner): number {
-    return this.isMagma(owner) && this.isDragon(owner) ? DRAGON_SPEED : 1;
-  }
-
-  getPlayerSpeedMult(): number { return this.speedMultFor('player'); }
-  getNpcSpeedMult(): number { return this.speedMultFor('npc'); }
-
-  /** True while the hatched window is running — the AI plays very differently inside it. */
-  isDragonActive(owner: Owner): boolean { return this.isDragon(owner); }
-
-  isJetActive(owner: Owner): boolean { return this.side(owner).jetUntil > this.now; }
 
   /** True while a saw is out — the bot stops asking for other abilities while one is running. */
   isSawActive(owner: Owner): boolean { return this.side(owner).sawFrom > 0; }
@@ -2287,7 +2663,7 @@ export class MagmaKit {
     if (!f || !f.active || f.hp <= 0) return null;
     // Only worth walking to a cone that has actually banked overfill — an ordinary collapse
     // leaves nothing to wear.
-    const v = this.vesselsOf('npc', 'volcano')
+    const v = this.vesselsOf('npc')
       .filter((o) => o.blowAt > 0 && o.over > 0)
       .sort((a, b) => a.blowAt - b.blowAt)[0];
     return v ? { x: v.x, y: v.y } : null;
@@ -2311,24 +2687,54 @@ export class MagmaKit {
   isBloatActive(owner: Owner): boolean { return this.side(owner).bloatUntil > this.now; }
 
   /** How many volcanoes this side has standing — the AI stops at the cap. */
-  volcanoCount(owner: Owner): number { return this.vesselsOf(owner, 'volcano').length; }
+  volcanoCount(owner: Owner): number { return this.vesselsOf(owner).length; }
 
-  hasEgg(owner: Owner): boolean { return this.vesselsOf(owner, 'egg').length > 0; }
+  /** Blunder-Boil charges in hand. */
+  blunderCharges(owner: Owner): number { return this.side(owner).blunderCharges; }
+
+  /** Pressure Gauge (F+): 0–1 on the bot's gun. */
+  npcGaugePressure(): number { return this.gaugePressure('npc'); }
+
+  /** Pressure Gauge (F+): the bot's next F is a detonation, not a shot. */
+  npcGaugeOver(): boolean { return this.gaugeOver('npc'); }
+
+  isPendantOn(owner: Owner): boolean { return this.side(owner).pendantOn; }
+
+  hasShip(owner: Owner): boolean { return !!this.side(owner).ship; }
+
+  isMounted(owner: Owner): boolean { return this.mounted(owner); }
+
+  /**
+   * Synergy: a volcano of the bot's own that a broadside should be aimed at instead of the
+   * player — one still climbing, standing close enough to the target that its instant collapse
+   * will land on them, and within the cannons' reach of the ship. Side-effect-free.
+   */
+  npcCannonVolcano(): { x: number; y: number } | null {
+    const s = this.sides.npc;
+    if (!s.ship?.mounted) return null;
+    const target = this.enemyOf('npc');
+    if (!target) return null;
+    const ship = s.ship;
+    const v = this.vesselsOf('npc')
+      .filter((o) => o.blowAt <= 0
+        && Phaser.Math.Distance.Between(o.x, o.y, target.x, target.y) <= VOLC_COLLAPSE_R * 0.9
+        && Phaser.Math.Distance.Between(o.x, o.y, ship.x, ship.y) <= CANNON_SPEED * (CANNON_LIFE_MS / 1000) * 0.8)
+      .sort((a, b) => b.pressure - a.pressure)[0];
+    return v ? { x: v.x, y: v.y } : null;
+  }
 
   /**
    * Where the AI should aim if it wants to charge something of its own, or null when there is
-   * nothing left to fill. The egg comes first: it is the expensive one, and the only one that
-   * expires having paid out nothing at all.
+   * nothing left to fill.
    */
   chargeTarget(owner: Owner): { x: number; y: number } | null {
-    const list = [...this.vesselsOf(owner, 'egg'), ...this.vesselsOf(owner, 'volcano')]
-      .filter((v) => v.pressure < v.max);
+    const list = this.vesselsOf(owner).filter((v) => v.pressure < v.max);
     return list.length ? { x: list[0].x, y: list[0].y } : null;
   }
 
   /**
    * Ability tray fill. Three of the five spend most of their life showing something other than
-   * a cooldown — a live fist's clock, a bloat's window, and Q's whole pressure-then-dragon arc.
+   * a cooldown — F's charges, R's window, and Q's pendant-then-ship arc.
    */
   getBarRatio(abilityId: string, time: number): number {
     const s = this.sides.player;
@@ -2343,19 +2749,21 @@ export class MagmaKit {
       }
       return Phaser.Math.Clamp((time - s.sawCastAt) / SAW_COOLDOWN_MS, 0, 1);
     }
-    if (abilityId === 'magma-jet' && s.jetUntil > time) {
-      return Phaser.Math.Clamp(1 - s.jetSpent / JET_MAX_MS, 0, 1);
+    if (abilityId === 'magma-blunder') {
+      const max = this.blunderMax('player');
+      if (s.blunderCharges >= max) return 1;
+      const partial = Phaser.Math.Clamp(1 - (s.blunderRechargeAt - time) / BLUNDER_RECHARGE_MS, 0, 1);
+      return Phaser.Math.Clamp((s.blunderCharges + partial) / max, 0, 1);
     }
     if (abilityId === 'magma-bloat' && s.bloatUntil > time) {
       return Phaser.Math.Clamp((s.bloatUntil - time) / BLOAT_MS, 0, 1);
     }
-    if (abilityId === 'magma-dragon-kin') {
-      if (this.isDragon('player')) return Phaser.Math.Clamp((s.dragonUntil - time) / DRAGON_MS, 0, 1);
-      const egg = this.vesselsOf('player', 'egg')[0];
-      if (egg) return Phaser.Math.Clamp(egg.pressure / egg.max, 0, 1);
+    if (abilityId === 'magma-mutiny') {
+      if (s.ship) return Phaser.Math.Clamp(s.ship.hp / SHIP_HP, 0, 1);
+      if (s.pendantOn) return Phaser.Math.Clamp(s.pendantPower / PENDANT_AWAKEN, 0, 1);
     }
     if (abilityId === 'magma-volcano') {
-      const hottest = this.vesselsOf('player', 'volcano')
+      const hottest = this.vesselsOf('player')
         .reduce((m, v) => Math.max(m, (v.pressure + v.over) / v.max), 0);
       if (hottest > 0) return Phaser.Math.Clamp(hottest, 0, 1);
     }
@@ -2363,9 +2771,29 @@ export class MagmaKit {
   }
 
   /**
+   * Ability tray colour. Pressure Gauge (F+) paints the F card: darker and redder as the gauge
+   * climbs, pulsing as it nears full, and smoky black once the gun is overpressured. Null means
+   * "the card's own colour".
+   */
+  getBarStyle(abilityId: string): { color: number; alpha: number } | null {
+    if (abilityId !== 'magma-blunder' || this.api.elementId !== 'magma') return null;
+    if (this.gaugeOver('player')) return { color: 0x1a1416, alpha: 0.92 };
+    const p = this.gaugePressure('player');
+    if (p <= 0) return null;
+    const base = Phaser.Display.Color.ValueToColor(0xff7733);
+    const hot = Phaser.Display.Color.ValueToColor(0xc40c14);
+    const mix = Phaser.Display.Color.Interpolate.ColorWithColor(base, hot, 100, Math.round(p * 100));
+    const pulse = p > 0.6 ? 0.1 * Math.sin(this.vizT * (6 + p * 10)) : 0;
+    return {
+      color: Phaser.Display.Color.GetColor(mix.r, mix.g, mix.b),
+      alpha: Phaser.Math.Clamp(0.45 + p * 0.45 + pulse, 0.3, 1),
+    };
+  }
+
+  /**
    * Ruin's Spikes of Ruin (see `combat/SummonPurge.ts`).
-   * Pressure vessels — volcanoes and dragon eggs alike. A vessel razed this way is simply
-   * gone: it does not top out, so nothing erupts and nothing hatches.
+   * Volcanoes, the ship and the crew. A vessel razed this way is simply gone: it does not top
+   * out, so nothing erupts. A razed ship drops its captain where it was.
    */
   purgeSummons(
     x: number, y: number, radius: number, exceptOwner: 'player' | 'npc',
@@ -2381,6 +2809,19 @@ export class MagmaKit {
       const v = this.vessels[i];
       if (v.owner === exceptOwner || !near(v.x, v.y)) continue;
       this.vessels.splice(i, 1);
+      razed++;
+    }
+    for (let i = this.spirits.length - 1; i >= 0; i--) {
+      const sp = this.spirits[i];
+      if (sp.owner === exceptOwner || !near(sp.x, sp.y)) continue;
+      this.spirits.splice(i, 1);
+      razed++;
+    }
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const ship = this.side(owner).ship;
+      if (owner === exceptOwner || !ship || !near(ship.x, ship.y)) continue;
+      this.dismount(owner, 'sunk');
+      this.side(owner).ship = null;
       razed++;
     }
     return razed;

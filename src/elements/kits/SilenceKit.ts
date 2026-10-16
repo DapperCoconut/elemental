@@ -10,6 +10,7 @@ import {
   bloodSplat, clawFingerLayered, fogBank, silenceEye, toothRing,
 } from './SilenceVisuals';
 import { meterGain } from '../../combat/Meters';
+import { SilenceMaze } from './SilenceMaze';
 
 // ── SilenceArenaApi ────────────────────────────────────────────────────────
 
@@ -79,6 +80,8 @@ const FOG_WIDTH = 90;                 // px ring around the arena border
 const STEALTH_MAX = 100;
 const STEALTH_GAIN_PER_S = 10;
 const STEALTH_DRAIN_PER_S = 10;
+/** Below this much stealth you are visible, fog or not. */
+const STEALTH_INVIS_MIN = 20;
 const STALKER_RATE_BONUS = 0.2;       // per stalker: +20% gain, -20% drain
 const STALKER_DMG_BONUS = 0.1;        // per stalker: +10% outgoing kit damage
 
@@ -131,12 +134,18 @@ const GRABBER_CD_PENALTY = 1.2;       // permanent cooldownMult / attackInterval
 const GRAB_ESCAPE_PRESSES = 14;
 const GRAB_BOT_ESCAPE_CHANCE = 0.33;
 
-const FEAST_RADIUS = 110;
-const FEAST_DURATION_MS = 8000;
-const FEAST_REQUIRED_INSIDE_MS = 6000;
-const FEAST_DMG = 35;
-const FEAST_FOLLOW_OFFSET = 60;       // leans toward the caster's facing (cursor for players)
-const HALLUCINATE_MS = 30000;
+// F: Stalk — a shadow aura that rides on the caster.
+const STALK_RADIUS = 130;
+const STALK_DURATION_MS = 3000;
+/** Continuous time a foe must spend inside. The aura lasts 3s; the slack absorbs frame timing. */
+const STALK_LOCK_MS = 2850;
+const STALK_DMG = 20;
+const STALK_DRAIN_PER_S = 5;          // extra stealth burned per second while the aura is up
+const STALK_TURN_SLOW_MS = 5000;
+/** Terror banked by a Stalk that lands (Night Terror / mastery terror bar only). */
+const STALK_TERROR_GAIN = 25;
+/** How fast a Stalked fighter can come about. Normally facing snaps; this is a 180° in 2.5s. */
+const STALKED_TURN_RAD_PER_S = Math.PI * 0.4;
 
 const RUN_ARM_RANGE = 500;
 const RUN_ARM_MS = 350;
@@ -219,25 +228,28 @@ const SANGUINE_SLASHES = 10;
 const SANGUINE_SLASH_DMG = 6;
 const SANGUINE_STAGGER_MS = 80;
 
-// F+ Flesh Banquet
-const MIDGET_COUNT = 5;
-const MIDGET_SPEED = 140;
-const MIDGET_DMG = 5;
-const MIDGET_BITE_CD_MS = 500;
-const FLESH_DECAL_COUNT = 26;
+// F+ Despress
+// (Per-stack slow and resistance strip live on Fighter — see despressSlowMult.)
+const DESPRESS_STACK_EVERY_MS = 1000;
+const DESPRESS_LINGER_MS = 3000;
 
-// Q+ The Labyrinth
-const MAZE_COLS = 9;
-const MAZE_ROWS = 6;
-const MAZE_WALL_T = 12;
+// Q+ The Labyrinth — a hunt in the dark. The caster steers the blob through real corridors;
+// the shrunken victim sees a small circle around themselves and must reach the exit or outlast
+// the timer.
 const MAZE_VICTIM_SCALE = 0.6;
-const MAZE_VICTIM_SLOW = 0.7;                 // stacks on HALL_VICTIM_SLOW
-const MAZE_ZOOM = 1.6;
-const MAZE_EAT_MS = 1200;
-const MAZE_VISION_RADIUS = 170;
-const MAZE_BOT_SURVIVE_MULT = 0.5;
-/** The blob lumbers in the maze — walls (and eating them) are its real weapon. */
-const MAZE_BLOB_SPEED = 240;
+const MAZE_VICTIM_SLOW = 0.85;                // replaces the hallway's dread slow
+const MAZE_VICTIM_RADIUS = 10;
+const MAZE_BLOB_SPEED = 235;                  // player-steered
+const MAZE_BOT_BLOB_SPEED = 205;              // bot hunters only know where you were at the last heartbeat
+const MAZE_BOT_VICTIM_SPEED = 150;
+const MAZE_BLOB_SCALE = 1.05;
+const MAZE_BLOB_RADIUS = 20;
+const MAZE_CATCH_DIST = 40;
+const MAZE_SURVIVE_MS = 12000;
+const MAZE_EXIT_REACH = 30;
+const MAZE_VICTIM_SIGHT = 140;
+const MAZE_BLOB_SIGHT = 190;
+const MAZE_PULSE_EVERY_MS = 1500;
 
 // ── Mastery tuning ─────────────────────────────────────────────────────────
 
@@ -396,13 +408,6 @@ interface StrikerState {
   replica: boolean;
 }
 
-interface Midget {
-  x: number;
-  y: number;
-  angle: number;
-  nextBiteAt: number;
-}
-
 interface BloodDecal {
   target: Fighter;
   ox: number;
@@ -411,12 +416,6 @@ interface BloodDecal {
   r: number;
   seed: number;
   until: number;
-}
-
-interface MazeWall {
-  rect: Phaser.GameObjects.Rectangle;
-  /** 0 while solid; set when the blob starts eating it (removed MAZE_EAT_MS later). */
-  dyingAt: number;
 }
 
 /** Mastery — Puppetmaster: the stitched effigy standing in for one specific fighter. */
@@ -539,14 +538,17 @@ interface TortureRack {
   seed: number;
 }
 
-interface FeastCircle {
-  x: number;
-  y: number;
+interface StalkAura {
   owner: Owner;
   bornAt: number;
   endsAt: number;
+  /** F+ Despress, fixed at cast time. */
+  despress: boolean;
+  /** Unbroken time each foe has spent inside — stepping out resets it. */
   insideMs: Map<Fighter, number>;
-  triggered: Set<Fighter>;
+  /** Despress: total time inside, one stack per full second. */
+  stackMs: Map<Fighter, number>;
+  struck: Set<Fighter>;
 }
 
 interface SpitGlob {
@@ -586,13 +588,20 @@ interface RunState {
   victimSlowUntil: number;
   // Q+ The Labyrinth
   mazeSeed: number | null;  // set at doRun when the caster owns the upgrade
-  mazeWalls: MazeWall[];
-  mazePath: { x: number; y: number }[]; // solution waypoints for cosmetic bot runs
-  mazePathIdx: number;
-  vignetteRect: Phaser.GameObjects.Rectangle | null;
-  vignetteHole: Phaser.GameObjects.Graphics | null;
+  maze: SilenceMaze | null;
+  mazeFloor: Phaser.GameObjects.Graphics | null;
+  mazeWalls: Phaser.GameObjects.Graphics | null;
+  /** The dark: a full-screen sheet with holes cut by `darkHoles` (local viewer only). */
+  darkRect: Phaser.GameObjects.Rectangle | null;
+  darkHoles: Phaser.GameObjects.Graphics | null;
+  /** The victim's heartbeat — the only thing a hunter knows of them out of its own light. */
+  nextPulseAt: number;
+  /** Bot hunter: where it last heard the heartbeat. */
+  heardX: number;
+  heardY: number;
   victimPrevScale: number;
-  zoomed: boolean;
+  /** Countdown above the dark, for whichever of the two is at this keyboard. */
+  mazeTimer: Phaser.GameObjects.Text | null;
 }
 
 // ── SilenceKit ─────────────────────────────────────────────────────────────
@@ -638,9 +647,11 @@ export class SilenceKit {
   private grabbers: Grabber[] = [];
   private rituals: RitualCircle[] = [];
   private racks: TortureRack[] = [];   // Torture perk
-  private feasts: FeastCircle[] = [];
+  private stalks: StalkAura[] = [];
   private spits: SpitGlob[] = [];
   private run: RunState | null = null;
+  /** Q+ Labyrinth heartbeats, drawn on the hunter's screen above the dark. */
+  private mazePulses: Array<{ x: number; y: number; bornAt: number }> = [];
 
   // Upgrade world objects / state
   private vultures: Vulture[] = [];
@@ -648,10 +659,6 @@ export class SilenceKit {
   private bloodDecals: BloodDecal[] = [];
   private terror: Record<Owner, number> = { player: 0, npc: 0 };
   private strikers: Record<Owner, StrikerState | null> = { player: null, npc: null };
-  private midgets = new Map<Fighter, Midget[]>();
-  private fleshOverlay: Phaser.GameObjects.Rectangle | null = null;
-  /** Flesh-arena dressing: fixed placements, repainted every frame so they pulse and blink. */
-  private fleshDecals: Array<{ x: number; y: number; a: number; s: number; eye: boolean }> = [];
   private panicText: Phaser.GameObjects.Text | null = null;
   private terrorBarBg: Phaser.GameObjects.Rectangle | null = null;
   private terrorBarFill: Phaser.GameObjects.Rectangle | null = null;
@@ -663,10 +670,12 @@ export class SilenceKit {
   private stealthBarBg: Phaser.GameObjects.Rectangle | null = null;
   private stealthBarFill: Phaser.GameObjects.Rectangle | null = null;
   private stealthLabel: Phaser.GameObjects.Text | null = null;
+  /** The 20-stealth line: above it you are invisible. */
+  private stealthThreshold: Phaser.GameObjects.Rectangle | null = null;
   private stalkerPips: Phaser.GameObjects.Arc[] = [];
 
-  // Facing eyes (silence player's screen only) — painted per frame, so they blink and track.
-  private faceEyes: Fighter[] = [];
+  // Back shadows (silence player's screen only): where each foe's backstab arc is.
+  private backShadows: Fighter[] = [];
 
   // Hallucination FX (local player as victim)
   private eyeScreenRect: Phaser.GameObjects.Rectangle | null = null;
@@ -795,6 +804,7 @@ export class SilenceKit {
     this.endStriker('player', true);
     this.endStriker('npc', true);
     this.endRunChase(false, true);
+    this.mazePulses = [];
     this.stalkers = [];
     this.grabbers = [];
     for (const v of this.vultures) {
@@ -803,9 +813,6 @@ export class SilenceKit {
     this.vultures = [];
     this.eyeShots = [];
     this.bloodDecals = [];
-    this.midgets.clear();
-    this.fleshOverlay?.destroy(); this.fleshOverlay = null;
-    this.fleshDecals = [];
     this.panicText?.destroy(); this.panicText = null;
     this.terrorBarBg?.destroy(); this.terrorBarBg = null;
     this.terrorBarFill?.destroy(); this.terrorBarFill = null;
@@ -815,14 +822,15 @@ export class SilenceKit {
     this.pendingMazeSeed = null;
     this.rituals = [];
     this.racks = [];
-    this.feasts = [];
+    this.stalks = [];
     this.spits = [];
     this.stealthBarBg?.destroy(); this.stealthBarBg = null;
     this.stealthBarFill?.destroy(); this.stealthBarFill = null;
     this.stealthLabel?.destroy(); this.stealthLabel = null;
+    this.stealthThreshold?.destroy(); this.stealthThreshold = null;
     for (const p of this.stalkerPips) p.destroy();
     this.stalkerPips = [];
-    this.faceEyes = [];
+    this.backShadows = [];
     this.eyeScreenRect?.destroy(); this.eyeScreenRect = null;
     this.eyeScreenEyes = [];
     this.eyeScreenUntil = 0;
@@ -852,7 +860,8 @@ export class SilenceKit {
     if (owner === 'npc' && f.netGhost) return f.forceInvisible;
     // The hallway chase hides the caster from everyone else in the main arena.
     if (this.run?.phase === 'chase' && this.run.caster === owner) return true;
-    return this.isInFog(f.x, f.y) || this.stealth[owner] > 0;
+    // The fog only banks stealth now; you vanish once a fifth of the meter is full.
+    return this.stealth[owner] >= STEALTH_INVIS_MIN;
   }
 
   /** During the chase the victim is off in the pocket dimension too — untargetable. */
@@ -878,8 +887,7 @@ export class SilenceKit {
     if (this.arena.masteryActive && this.weepUnwatched) mult *= WEEP_SPEED_MULT;
     const run = this.run;
     if (run?.phase === 'chase' && run.victim === this.arena.player) {
-      mult *= HALL_VICTIM_SLOW;
-      if (run.mazeSeed !== null) mult *= MAZE_VICTIM_SLOW;
+      mult *= run.mazeSeed !== null ? MAZE_VICTIM_SLOW : HALL_VICTIM_SLOW;
       if (time < run.victimSlowUntil) mult *= 0.5;
     }
     return mult;
@@ -1373,7 +1381,12 @@ export class SilenceKit {
     this.rituals.push({ x: tx, y: ty, owner, castAt: scene.time.now, strikeAt });
   }
 
-  doFeast(tx: number, ty: number, owner: Owner): void {
+  /**
+   * F: Stalk. A shadow aura rides on the caster for 3s, burning extra stealth. Anyone who
+   * spends the whole of it inside takes the hit and is left turning like a ship for a while —
+   * which is what sets up the backstab. F+ Despress makes the aura itself hurt to stand in.
+   */
+  doStalk(tx: number, ty: number, owner: Owner): void {
     // Mastery — Puppetmaster: while this owner is possessing, the base slots are only
     // borrowed for their cooldown bars. The real actions ride their own puppet-* ids,
     // so a replayed base cast here would be a phantom second hit.
@@ -1388,21 +1401,28 @@ export class SilenceKit {
       this.doStrikerRetreat(owner);
       return;
     }
-    const x = caster.x + Math.cos(caster.facingAngle) * FEAST_FOLLOW_OFFSET;
-    const y = caster.y + Math.sin(caster.facingAngle) * FEAST_FOLLOW_OFFSET;
+    // One aura at a time — a recast refreshes it rather than stacking two.
+    this.stalks = this.stalks.filter((a) => a.owner !== owner);
     this.gesture(owner, 'silence-feast', caster.facingAngle);
-    this.feasts.push({
-      x, y, owner,
-      bornAt: scene.time.now,
-      endsAt: scene.time.now + FEAST_DURATION_MS,
+    const now = scene.time.now;
+    this.stalks.push({
+      owner,
+      bornAt: now,
+      endsAt: now + STALK_DURATION_MS,
+      despress: this.arena.hasUpgrade(owner, 'f'),
       insideMs: new Map(),
-      triggered: new Set(),
+      stackMs: new Map(),
+      struck: new Set(),
     });
-    // The ground splits and the teeth come up through it.
+    // The shadow comes up off the floor round the caster's feet.
     const fx = this.fx(owner);
-    fx.motes(x, y, 12, { speed: FEAST_RADIUS * 1.4, size: 6, life: 700, depth: DEPTH_GROUND_FX, color: SILENCE.void });
-    fx.graspRing(x, y, FEAST_RADIUS * 0.3, FEAST_RADIUS, SILENCE.bone, 520, DEPTH_GROUND_FX + 1, true);
-    scene.cameras.main.shake(180, 0.003);
+    fx.motes(caster.x, caster.y, 14, { speed: STALK_RADIUS * 1.2, size: 7, life: 640, depth: DEPTH_GROUND_FX, color: SILENCE.void });
+    fx.graspRing(caster.x, caster.y, STALK_RADIUS * 0.25, STALK_RADIUS, SILENCE.violet, 480, DEPTH_GROUND_FX + 1, true);
+  }
+
+  /** True while `owner` has a Stalk aura up (bot AI shadows its target during it). */
+  isStalking(owner: Owner): boolean {
+    return this.stalks.some((a) => a.owner === owner);
   }
 
   doRun(tx: number, ty: number, owner: Owner): void {
@@ -1461,13 +1481,16 @@ export class SilenceKit {
       spitHits: 0,
       victimSlowUntil: 0,
       mazeSeed,
-      mazeWalls: [],
-      mazePath: [],
-      mazePathIdx: 0,
-      vignetteRect: null,
-      vignetteHole: null,
+      maze: null,
+      mazeFloor: null,
+      mazeWalls: null,
+      darkRect: null,
+      darkHoles: null,
+      nextPulseAt: 0,
+      heardX: 0,
+      heardY: 0,
       victimPrevScale: 1,
-      zoomed: false,
+      mazeTimer: null,
     };
   }
 
@@ -2308,19 +2331,19 @@ export class SilenceKit {
     this.npcIsSilence = npcIsSilence;
     const dt = delta / 1000;
 
-    this.updateFacing();
+    this.updateFacing(dt);
     this.updateWeep();
     this.updateStealth('player', dt);
     this.updateStealth('npc', dt);
     this.renderInvisibility('player');
     this.renderInvisibility('npc');
-    this.updateFaceEyes();
+    this.updateBackShadows();
     this.updateStalkers(time, dt);
     this.updateGrabbers(time, delta);
     this.updateVultures(time, dt);
     this.updateRituals(time);
     this.updateRacks(time);
-    this.updateFeasts(time, delta);
+    this.updateStalks(time, delta);
     this.updateSpits(time, dt);
     this.updateRunChase(time);
     this.updateHallucinations(time);
@@ -2329,7 +2352,6 @@ export class SilenceKit {
     this.updateStriker('player', time, dt);
     this.updateStriker('npc', time, dt);
     this.updateEyeShots(time, dt);
-    this.updateMidgets(time, dt);
     this.updatePanicOverlay(time);
     this.updateBloodDecals(time);
     // Mastery — both owners: 'player' is our own possession, 'npc' is a remote
@@ -2366,74 +2388,167 @@ export class SilenceKit {
     air.clear();
 
     this.paintFog(time);
-    this.paintMazeWalls(ground, t);
-    this.paintFeasts(ground, t);
+    this.paintMaze(time, t);
+    this.paintBackShadows(ground, time);
+    this.paintStalks(ground, t);
     this.paintGazeCones(ground, time);
     this.paintStalkers(world, time, t);
     this.paintGrabbers(world, air, time, t);
     this.paintVultures(world, ground, time, t);
     this.paintPuppetry(world, air, t);
-    this.paintMidgets(world, t);
     this.paintBloodDecals(world, time);
     this.paintProjectiles(air, t);
     this.paintStrikers(world, air, t);
     this.paintRacks(world, air, t);
     this.paintRunArm(air, time, t);
     this.paintBlob(world, t);
-    this.paintFaceEyes(air, t);
-    this.paintFleshDecals(ground, t);
+    this.paintStalkedVictims(world, t);
     this.paintEyeScreen(t);
   }
 
-  private paintFeasts(g: Phaser.GameObjects.Graphics, t: number): void {
+  /**
+   * Stalk: a pool of shadow riding on the caster. Fingers line its rim pointing inward — the
+   * edge you must not let them drag you out of — and a noose of dark tightens round each foe
+   * as their three seconds run down. Despress turns it bruised and weeping.
+   */
+  private paintStalks(g: Phaser.GameObjects.Graphics, t: number): void {
     const now = this.arena.scene.time.now;
-    for (const f of this.feasts) {
-      const col = this.col(f.owner);
-      const age = Phaser.Math.Clamp((now - f.bornAt) / 320, 0, 1);
-      const life = Phaser.Math.Clamp((f.endsAt - now) / 600, 0, 1);
-      const a = age * life;
-      // A gullet, not a disc: a dark throat with a ring of teeth grinding round it.
-      fogBank(g, f.x, f.y, FEAST_RADIUS * 0.85 * age, f.bornAt * 0.001, t, col(SILENCE.void), a * 0.7, 9);
-      g.fillStyle(col(SILENCE.meat), a * 0.3);
-      g.fillCircle(f.x, f.y, FEAST_RADIUS * 0.62 * age);
-      // The bite cycles — it is always in the middle of chewing on something.
-      const bite = 0.45 + 0.45 * Math.sin(t * 2.4 + f.bornAt);
-      toothRing(g, col, f.x, f.y, FEAST_RADIUS * age, 24, bite, a);
-      toothRing(g, col, f.x, f.y, FEAST_RADIUS * 0.6 * age, 16, 1 - bite, a * 0.8);
-      // Anyone standing in it has fingers coming up round their ankles.
-      for (const [foe, ms] of f.insideMs) {
-        if (!foe.active || f.triggered.has(foe)) continue;
-        const k = Phaser.Math.Clamp(ms / FEAST_REQUIRED_INSIDE_MS, 0, 1);
-        for (let i = 0; i < 6; i++) {
-          const ang = (i / 6) * Math.PI * 2 + t;
-          clawFingerLayered(g, col, foe.x + Math.cos(ang) * 18, foe.y + Math.sin(ang) * 10 + 8,
-            -Math.PI / 2 + Math.cos(ang) * 0.5, 10 + k * 18, 2.2,
-            SILENCE.pitch, SILENCE.bone, a * (0.4 + k * 0.6), 0.4, false);
+    const TAU = Math.PI * 2;
+    for (const a of this.stalks) {
+      const caster = this.fighterOf(a.owner);
+      if (!caster.active) continue;
+      const col = this.col(a.owner);
+      const grow = Phaser.Math.Clamp((now - a.bornAt) / 260, 0, 1);
+      const fade = Phaser.Math.Clamp((a.endsAt - now) / 300, 0, 1);
+      const al = grow * fade;
+      const x = caster.x;
+      const y = caster.y;
+      const R = STALK_RADIUS * (0.6 + 0.4 * grow);
+      const rim = a.despress ? SILENCE.lilac : SILENCE.violet;
+
+      fogBank(g, x, y, R * 0.95, a.bornAt * 0.001, t, col(a.despress ? SILENCE.bruise : SILENCE.void), 0.3 * al, 10);
+      g.fillStyle(col(SILENCE.void), 0.24 * al);
+      g.fillCircle(x, y, R * 0.72);
+      g.lineStyle(1.5, col(SILENCE.amethyst), 0.32 * al);
+      g.strokeCircle(x, y, R);
+      for (let i = 0; i < 18; i++) {
+        const ang = (i / 18) * TAU + t * 0.4;
+        clawFingerLayered(g, col, x + Math.cos(ang) * R, y + Math.sin(ang) * R, ang + Math.PI,
+          13 + 5 * Math.sin(t * 3 + i * 1.3), 2.3, SILENCE.void, rim, 0.55 * al, 0.35, false);
+      }
+      // Time left, wound round the rim.
+      const left = Phaser.Math.Clamp((a.endsAt - now) / STALK_DURATION_MS, 0, 1);
+      g.lineStyle(3, col(SILENCE.orchid), 0.55 * al);
+      g.beginPath();
+      g.arc(x, y, R + 6, -Math.PI / 2, -Math.PI / 2 + TAU * left);
+      g.strokePath();
+
+      // Despress: the shadow weeps — drops falling through it the whole time.
+      if (a.despress) {
+        for (let i = 0; i < 10; i++) {
+          const u = (t * 0.8 + i / 10) % 1;
+          const px = x + Math.cos(i * 2.4) * R * 0.65;
+          const py = y + Math.sin(i * 1.7) * R * 0.55 + u * 20;
+          g.fillStyle(col(SILENCE.lilac), 0.45 * (1 - u) * al);
+          g.fillEllipse(px, py, 2.6, 5.5);
         }
+      }
+
+      // Each foe being stalked: a tendril from the caster and a noose closing on them.
+      for (const [foe, ms] of a.insideMs) {
+        if (!foe.active || ms <= 0 || a.struck.has(foe) || foe.alpha <= 0.01) continue;
+        const k = Phaser.Math.Clamp(ms / STALK_LOCK_MS, 0, 1);
+        const nr = 34 - 12 * k;
+        g.lineStyle(2 + 3 * k, col(SILENCE.void), 0.6 * al);
+        g.strokeCircle(foe.x, foe.y + 4, nr);
+        g.lineStyle(1.6, col(SILENCE.orchid), (0.35 + 0.5 * k) * al);
+        g.beginPath();
+        g.arc(foe.x, foe.y + 4, nr, -Math.PI / 2, -Math.PI / 2 + TAU * k);
+        g.strokePath();
+        const dx = foe.x - x;
+        const dy = foe.y - y;
+        const len = Math.hypot(dx, dy) || 1;
+        const nx = -dy / len;
+        const ny = dx / len;
+        g.lineStyle(1.5 + 2 * k, col(SILENCE.void), (0.3 + 0.4 * k) * al);
+        g.beginPath();
+        for (let j = 0; j <= 12; j++) {
+          const u = j / 12;
+          const wob = Math.sin(u * 9 + t * 6) * 6 * Math.sin(u * Math.PI);
+          const px = x + dx * u + nx * wob;
+          const py = y + dy * u + ny * wob;
+          if (j === 0) g.moveTo(px, py); else g.lineTo(px, py);
+        }
+        g.strokePath();
       }
     }
   }
 
   /**
-   * Q+ The Labyrinth: a wall the blob has started on. The alpha fade underneath says it is
-   * dying; this says *how* — a mouth working its way through it, spitting out the pieces.
+   * Stalked: something has its hands on your back. Fingers hook over the shoulders from the
+   * rear arc, so the victim and the hunter can both see which way they are failing to turn.
    */
-  private paintMazeWalls(g: Phaser.GameObjects.Graphics, t: number): void {
+  private paintStalkedVictims(g: Phaser.GameObjects.Graphics, t: number): void {
+    const now = Date.now();
+    for (const f of [this.arena.player, this.arena.npc, ...this.arena.enemies]) {
+      if (!f || !f.active || f.hp <= 0 || now >= f.stalkedUntil || f.alpha <= 0.01) continue;
+      const left = Phaser.Math.Clamp((f.stalkedUntil - now) / 600, 0, 1);
+      const back = f.facingAngle + Math.PI;
+      const r = 20 * (f.sizeMult || 1);
+      for (let i = -2; i <= 2; i++) {
+        const a = back + i * 0.32;
+        clawFingerLayered(g, this.pcol, f.x + Math.cos(a) * (r + 10), f.y + Math.sin(a) * (r + 10),
+          a + Math.PI + Math.sin(t * 4 + i) * 0.08, 16, 2.4, SILENCE.void, SILENCE.violet, 0.75 * left, 0.6);
+      }
+    }
+  }
+
+  /**
+   * Q+ The Labyrinth, the parts that move: the exit light, candles and wall eyes under the
+   * fighters; the heartbeat rings and — on the victim's screen — the blob's eyes above the dark.
+   */
+  private paintMaze(time: number, t: number): void {
     const run = this.run;
-    if (!run || run.mazeWalls.length === 0) return;
-    const now = this.arena.scene.time.now;
-    for (const w of run.mazeWalls) {
-      if (w.dyingAt === 0) continue;
-      const k = Phaser.Math.Clamp(1 - (w.dyingAt - now) / MAZE_EAT_MS, 0, 1);
-      const r = w.rect;
-      const bite = 0.4 + 0.6 * Math.abs(Math.sin(t * 9));
-      toothRing(g, this.col(run.caster), r.x, r.y, Math.max(r.width, r.height) * 0.5 * (0.5 + k * 0.5),
-        12, bite, 1 - k * 0.4);
-      // Masonry coming away in lumps.
-      if (Math.random() < 0.25) {
-        this.fx(run.caster).shred(r.x, r.y, 2, {
-          color: SILENCE.plum, speed: 90, size: 4, life: 420, depth: DEPTH_HALL_FLOOR + 2,
-        });
+    if (!run?.maze || run.phase !== 'chase') {
+      this.layers.get(DEPTH_HALL_FLOOR + 0.7)?.clear();
+      this.layers.get(DEPTH_NOISE + 3)?.clear();
+      return;
+    }
+    const live = this.layer(DEPTH_HALL_FLOOR + 0.7);
+    const top = this.layer(DEPTH_NOISE + 3);
+    live.clear();
+    top.clear();
+    const caster = this.fighterOf(run.caster);
+    const victim = run.victim;
+    const col = this.col(run.caster);
+    run.maze.paintLive(live, col, t, victim.active ? victim : null);
+
+    const hunterHere = caster === this.arena.player;
+    for (let i = this.mazePulses.length - 1; i >= 0; i--) {
+      const p = this.mazePulses[i];
+      const k = (time - p.bornAt) / 900;
+      if (k >= 1) { this.mazePulses.splice(i, 1); continue; }
+      if (!hunterHere) continue;
+      // Two rings, a beat apart: lub-dub.
+      for (const lag of [0, 0.18]) {
+        const kk = k - lag;
+        if (kk <= 0) continue;
+        top.lineStyle(1 + 3 * (1 - kk), col(SILENCE.gore), 0.85 * (1 - kk));
+        top.strokeCircle(p.x, p.y, 8 + 54 * kk);
+      }
+      top.fillStyle(col(SILENCE.gore), 0.6 * (1 - k));
+      top.fillCircle(p.x, p.y, 4 + 2 * Math.sin(k * Math.PI));
+    }
+
+    // The victim can't see the blob — but close enough, they see its eyes.
+    if (victim === this.arena.player && caster.active) {
+      const d = Phaser.Math.Distance.Between(caster.x, caster.y, victim.x, victim.y);
+      if (d < 320 && d > MAZE_VICTIM_SIGHT * 0.8) {
+        const a = Phaser.Math.Clamp(1 - d / 320, 0, 1) * (0.7 + 0.3 * Math.sin(t * 5));
+        const look = Math.atan2(victim.y - caster.y, victim.x - caster.x);
+        for (const side of [-1, 1]) {
+          silenceEye(top, col, caster.x + side * 8, caster.y - 4, look, 4.2, 0.9, 1, SILENCE.gore, a);
+        }
       }
     }
   }
@@ -2570,12 +2685,6 @@ export class SilenceKit {
     }
   }
 
-  private paintMidgets(g: Phaser.GameObjects.Graphics, t: number): void {
-    for (const pack of this.midgets.values()) {
-      for (const m of pack) SilenceFx.drawMidget(g, this.pcol, m.x, m.y, m.angle, t, 1);
-    }
-  }
-
   private paintBloodDecals(g: Phaser.GameObjects.Graphics, time: number): void {
     for (const b of this.bloodDecals) {
       if (!b.target.active) continue;
@@ -2676,38 +2785,48 @@ export class SilenceKit {
     if (!run || run.phase !== 'chase') return;
     const caster = this.fighterOf(run.caster);
     if (!caster.active) return;
-    SilenceFx.drawBlob(g, this.col(run.caster), caster.x, caster.y, 48 * caster.scaleX, t, 1);
+    // In the maze it has to fit the corridors, so it is drawn at its collision size.
+    const r = run.maze ? MAZE_BLOB_RADIUS * 1.5 : 48 * caster.scaleX;
+    SilenceFx.drawBlob(g, this.col(run.caster), caster.x, caster.y, r, t, 1);
   }
 
   /**
-   * The facing pip every fighter wears on a Silence player's screen. Backstabs are the whole
-   * click ability, so knowing which way each body is pointed has to be readable at a glance —
-   * and an eye that looks where its owner is looking says it better than an arrow would.
+   * The back shadow every foe casts on a Silence player's screen: a wedge of dark spilling out
+   * behind them across exactly the arc a stab must come from to count as a backstab. It sits
+   * on the floor under the fighter, so it reads as *their* shadow rather than a UI marker —
+   * and a foe who has been Stalked casts a deeper one with a red lip, because they can't turn.
    */
-  private paintFaceEyes(g: Phaser.GameObjects.Graphics, t: number): void {
-    for (const f of this.faceEyes) {
+  private paintBackShadows(g: Phaser.GameObjects.Graphics, time: number): void {
+    const now = Date.now();
+    const t = time / 1000;
+    for (const f of this.backShadows) {
       if (!f.active || f.alpha <= 0.01) continue;
-      const r = 26 * (f.sizeMult || 1);
-      silenceEye(g, this.pcol,
-        f.x + Math.cos(f.facingAngle) * r, f.y + Math.sin(f.facingAngle) * r,
-        f.facingAngle, 5, 0.9,
-        // Blinks on a per-fighter clock derived from its position — cheap, and never in unison.
-        Math.sin(t * 1.3 + f.x * 0.01) > 0.96 ? 0.1 : 1,
-        f === this.arena.player ? SILENCE.amethyst : SILENCE.rust, 0.9);
-    }
-  }
-
-  private paintFleshDecals(g: Phaser.GameObjects.Graphics, t: number): void {
-    for (const d of this.fleshDecals) {
-      if (d.eye) {
-        // Set into puckered flesh, and it opens and closes on its own.
-        g.fillStyle(this.pcol(SILENCE.meat), 0.75);
-        g.fillCircle(d.x, d.y, 13 * d.s);
-        silenceEye(g, this.pcol, d.x, d.y, d.a, 7 * d.s, Math.sin(t * 0.9 + d.x) * 0.9,
-          Phaser.Math.Clamp(Math.sin(t * 0.7 + d.y * 0.05) * 2, 0, 1), SILENCE.gore, 0.9);
-      } else {
-        toothRing(g, this.pcol, d.x, d.y, 13 * d.s, 10, 0.4 + 0.4 * Math.sin(t * 1.6 + d.x * 0.05), 0.85);
+      const rear = f.facingAngle + Math.PI;
+      const stalked = now < f.stalkedUntil;
+      const reach = (stalked ? 96 : 78) * (f.sizeMult || 1);
+      const a0 = rear - BACKSTAB_ARC_RAD;
+      const a1 = rear + BACKSTAB_ARC_RAD;
+      // Banded so it is darkest at the body and thins toward the tip.
+      for (let i = 4; i >= 1; i--) {
+        const r = reach * (i / 4);
+        g.fillStyle(this.pcol(SILENCE.void), (stalked ? 0.16 : 0.11) + 0.05 * (4 - i));
+        g.beginPath();
+        g.moveTo(f.x, f.y);
+        g.arc(f.x, f.y, r, a0, a1);
+        g.closePath();
+        g.fillPath();
       }
+      // A ragged lip of wisps along the far edge, crawling slowly so it reads as shadow.
+      for (let i = 0; i < 7; i++) {
+        const a = a0 + (a1 - a0) * (i / 6);
+        const wob = 0.85 + 0.15 * Math.sin(t * 2.2 + i * 1.9 + f.x * 0.01);
+        g.fillStyle(this.pcol(SILENCE.void), 0.22);
+        g.fillCircle(f.x + Math.cos(a) * reach * wob, f.y + Math.sin(a) * reach * wob, 7 + 3 * Math.sin(t * 3 + i));
+      }
+      g.lineStyle(1.4, this.pcol(stalked ? SILENCE.gore : SILENCE.amethyst), stalked ? 0.55 : 0.3);
+      g.beginPath();
+      g.arc(f.x, f.y, reach * 0.92, a0, a1);
+      g.strokePath();
     }
   }
 
@@ -2863,7 +2982,7 @@ export class SilenceKit {
    * fingers that occasionally feel their way out of it and withdraw.
    */
   private paintFog(time: number): void {
-    if (!this.hasSilenceUser()) {
+    if (!this.hasSilenceUser() || this.run?.maze) {
       this.layers.get(DEPTH_FOG)?.clear();
       return;
     }
@@ -2919,6 +3038,8 @@ export class SilenceKit {
     const f = this.fighterOf(owner);
     if (!f.active || f.hp <= 0) return;
     const stalkerCount = this.stalkersAlive(owner);
+    // Stalk burns stealth on top of whatever the fog is doing.
+    if (this.isStalking(owner)) this.stealth[owner] = Math.max(0, this.stealth[owner] - STALK_DRAIN_PER_S * dt);
     // Hymn (perk): while the song is giving your position away the fog stops banking, however
     // deep in it you are. Checked before the fog branch so it overrides it outright.
     const betrayed = this.hymnBetrayed(owner);
@@ -2967,37 +3088,46 @@ export class SilenceKit {
 
   // ── Facing + eye indicators ────────────────────────────────────────
 
-  private updateFacing(): void {
+  private updateFacing(dt: number): void {
     if (!this.hasSilenceUser()) return;
+    const now = Date.now();
+    // Stalked fighters come about slowly; everyone else faces where they mean to instantly.
+    // ArenaScene.scatterAim aims a Stalked fighter's casts down this same facing.
+    const turn = (f: Fighter, want: number): void => {
+      if (now >= f.stalkedUntil) { f.facingAngle = want; return; }
+      const diff = Phaser.Math.Angle.Wrap(want - f.facingAngle);
+      const step = STALKED_TURN_RAD_PER_S * dt;
+      f.facingAngle = Phaser.Math.Angle.Wrap(f.facingAngle + Phaser.Math.Clamp(diff, -step, step));
+    };
     const scene = this.arena.scene;
     const player = this.arena.player;
     const pointer = scene.input.activePointer;
     if (player.active) {
-      player.facingAngle = Math.atan2(pointer.worldY - player.y, pointer.worldX - player.x);
+      turn(player, Math.atan2(pointer.worldY - player.y, pointer.worldX - player.x));
     }
     const npc = this.arena.npc;
     if (npc.active && !npc.netGhost) {
       const body = npc.body as Phaser.Physics.Arcade.Body | null;
       if (body && (Math.abs(body.velocity.x) > 5 || Math.abs(body.velocity.y) > 5)) {
-        npc.facingAngle = Math.atan2(body.velocity.y, body.velocity.x);
+        turn(npc, Math.atan2(body.velocity.y, body.velocity.x));
       }
     }
     for (const e of this.arena.enemies) {
       if (!e.active) continue;
       const body = e.body as Phaser.Physics.Arcade.Body | null;
       if (body && (Math.abs(body.velocity.x) > 5 || Math.abs(body.velocity.y) > 5)) {
-        e.facingAngle = Math.atan2(body.velocity.y, body.velocity.x);
+        turn(e, Math.atan2(body.velocity.y, body.velocity.x));
       }
     }
   }
 
-  /** Rebuild the list of fighters wearing a facing pip. `paintFaceEyes` draws them. */
-  private updateFaceEyes(): void {
-    this.faceEyes.length = 0;
+  /** Rebuild the list of foes casting a back shadow. `paintBackShadows` draws them. */
+  private updateBackShadows(): void {
+    this.backShadows.length = 0;
     if (!this.playerIsSilence) return;
-    for (const f of [this.arena.player, this.arena.npc, ...this.arena.enemies]) {
+    for (const f of this.foesOf('player')) {
       if (!f || !f.active || f.hp <= 0) continue;
-      this.faceEyes.push(f);
+      this.backShadows.push(f);
     }
   }
 
@@ -3625,13 +3755,21 @@ export class SilenceKit {
     let afflicted = 0;
     for (const foe of this.foesOf(owner)) {
       if (!foe.active || foe.hp <= 0) continue;
-      if (now < foe.silencedUntil || now < foe.panickedUntil || now < foe.hallucinatingUntil) afflicted++;
+      if (now < foe.silencedUntil || now < foe.panickedUntil || now < foe.hallucinatingUntil
+        || now < foe.stalkedUntil || now < foe.despressUntil) afflicted++;
     }
     if (afflicted === 0) return;
+    this.addTerror(owner, afflicted * dt);
+  }
+
+  /** Bank terror (if this owner has the bar and we simulate it), announcing a full bar. */
+  private addTerror(owner: Owner, amount: number): void {
+    if (!this.hasOwnStealthSim(owner) || !this.hasTerrorBar(owner)) return;
+    if (this.strikers[owner]) return; // no farming terror while transformed
     const before = this.terror[owner];
     // Ruin's Combo Breaker halves every meter in the game — the fear bar included.
     this.terror[owner] = Math.min(TERROR_MAX,
-      before + meterGain(this.fighterOf(owner), afflicted * dt));
+      before + meterGain(this.fighterOf(owner), amount));
     if (before < TERROR_MAX && this.terror[owner] >= TERROR_MAX && this.arena.hasUpgrade(owner, 'r')) {
       const caster = this.fighterOf(owner);
       this.arena.showFloatingText(caster.x, caster.y - 36, '🐺 TERROR FULL — RITUAL YOURSELF', '#ff2233');
@@ -4016,80 +4154,6 @@ export class SilenceKit {
     }
   }
 
-  // ── Flesh Banquet (F+): flesh arena + midgets ──────────────────────
-
-  private updateMidgets(time: number, dt: number): void {
-    const now = Date.now();
-    const scene = this.arena.scene;
-
-    // Victims: hallucinating, locally simulated, and the opposing silence
-    // caster owns the upgrade. Net ghosts run their own midgets at home.
-    const wanted = new Set<Fighter>();
-    const consider = (foe: Fighter, casterOwner: Owner, casterIsSilence: boolean): void => {
-      if (!casterIsSilence || !this.arena.hasUpgrade(casterOwner, 'f')) return;
-      if (!foe.active || foe.hp <= 0 || foe.netGhost) return;
-      if (now < foe.hallucinatingUntil) wanted.add(foe);
-    };
-    for (const foe of this.foesOf('player')) consider(foe, 'player', this.playerIsSilence);
-    for (const foe of this.foesOf('npc')) consider(foe, 'npc', this.npcIsSilence);
-
-    for (const f of wanted) {
-      if (this.midgets.has(f)) continue;
-      const pack: Midget[] = [];
-      for (let i = 0; i < MIDGET_COUNT; i++) {
-        const edge = Math.floor(Math.random() * 4);
-        const x = edge === 0 ? -20 : edge === 1 ? this.arena.width + 20 : Phaser.Math.Between(0, this.arena.width);
-        const y = edge === 2 ? -20 : edge === 3 ? this.arena.height + 20 : Phaser.Math.Between(0, this.arena.height);
-        pack.push({ x, y, angle: 0, nextBiteAt: 0 });
-      }
-      this.midgets.set(f, pack);
-      this.arena.showFloatingText(f.x, f.y - 44, '🦷 THEY COME', '#ffaaaa');
-    }
-
-    for (const [f, pack] of this.midgets) {
-      if (!wanted.has(f)) {
-        this.midgets.delete(f);
-        continue;
-      }
-      for (const m of pack) {
-        const ang = Math.atan2(f.y - m.y, f.x - m.x);
-        m.x += Math.cos(ang) * MIDGET_SPEED * dt;
-        m.y += Math.sin(ang) * MIDGET_SPEED * dt;
-        m.angle = ang; // teeth face the meal
-        if (time >= m.nextBiteAt && Phaser.Math.Distance.Between(m.x, m.y, f.x, f.y) < 24) {
-          m.nextBiteAt = time + MIDGET_BITE_CD_MS;
-          f.takeDamage(MIDGET_DMG);
-          this.arena.spawnHitFlash(f.x, f.y, 0xffaa99);
-          this.pfx.stain(m.x, m.y, 5, DEPTH_GROUND_FX, true);
-        }
-      }
-    }
-
-    // Flesh arena dressing — the local player's screen only, purely visual.
-    const localFlesh = this.arena.player.active
-      && now < this.arena.player.hallucinatingUntil
-      && this.npcIsSilence && this.arena.hasUpgrade('npc', 'f');
-    if (localFlesh && !this.fleshOverlay) {
-      this.fleshOverlay = scene.add.rectangle(
-        this.arena.width / 2, this.arena.height / 2, this.arena.width, this.arena.height, 0x661122, 0.22,
-      ).setDepth(DEPTH_FOG + 1);
-      scene.tweens.add({ targets: this.fleshOverlay, alpha: 0.34, yoyo: true, repeat: -1, duration: 900 });
-      for (let i = 0; i < FLESH_DECAL_COUNT; i++) {
-        this.fleshDecals.push({
-          x: Phaser.Math.Between(30, this.arena.width - 30),
-          y: Phaser.Math.Between(30, this.arena.height - 30),
-          a: Math.random() * Math.PI * 2,
-          s: 0.8 + Math.random() * 0.9,
-          eye: i % 2 === 0,
-        });
-      }
-    } else if (!localFlesh && this.fleshOverlay) {
-      this.fleshOverlay.destroy();
-      this.fleshOverlay = null;
-      this.fleshDecals = [];
-    }
-  }
-
   // ── Panic overlay ("I see you" — multiplayer victims only) ─────────
 
   private updatePanicOverlay(time: number): void {
@@ -4113,36 +4177,48 @@ export class SilenceKit {
 
   // ── Feasts ─────────────────────────────────────────────────────────
 
-  private updateFeasts(time: number, delta: number): void {
-    for (let i = this.feasts.length - 1; i >= 0; i--) {
-      const f = this.feasts[i];
-      if (time >= f.endsAt) {
-        this.feasts.splice(i, 1);
+  private updateStalks(time: number, delta: number): void {
+    for (let i = this.stalks.length - 1; i >= 0; i--) {
+      const a = this.stalks[i];
+      const caster = this.fighterOf(a.owner);
+      if (time >= a.endsAt || !caster.active || caster.hp <= 0) {
+        this.stalks.splice(i, 1);
         continue;
       }
-
-      const caster = this.fighterOf(f.owner);
-      if (caster.active) {
-        f.x = caster.x + Math.cos(caster.facingAngle) * FEAST_FOLLOW_OFFSET;
-        f.y = caster.y + Math.sin(caster.facingAngle) * FEAST_FOLLOW_OFFSET;
-      }
-
-      for (const foe of this.foesOf(f.owner)) {
-        if (!foe.active || foe.hp <= 0 || f.triggered.has(foe)) continue;
-        if (Phaser.Math.Distance.Between(foe.x, foe.y, f.x, f.y) > FEAST_RADIUS) continue;
-        const acc = (f.insideMs.get(foe) ?? 0) + delta;
-        f.insideMs.set(foe, acc);
-        if (acc >= FEAST_REQUIRED_INSIDE_MS) {
-          f.triggered.add(foe);
-          const dmg = Math.round(FEAST_DMG * (1 + STALKER_DMG_BONUS * this.stalkersAlive(f.owner)));
-          foe.takeDamage(dmg);
-          this.applyStatus(foe, { k: 'halluc', ms: HALLUCINATE_MS });
-          this.arena.spawnHitFlash(foe.x, foe.y, 0x99aa88);
-          this.arena.showFloatingText(foe.x, foe.y - 40, '🌀 HALLUCINATING', '#aaffaa');
-          // The jaws finally close, and the victim's picture of the world tears.
-          this.fx(f.owner).rupture(foe.x, foe.y, 64, { bloody: true, claws: 9, rings: 2, duration: 480 });
-          this.fx(f.owner).staticBurst(foe.x, foe.y, 60, DEPTH_NOISE, 420);
+      for (const foe of this.foesOf(a.owner)) {
+        if (!foe.active || foe.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(foe.x, foe.y, caster.x, caster.y) > STALK_RADIUS) {
+          // "Three seconds straight": stepping out starts the count again.
+          a.insideMs.set(foe, 0);
+          continue;
         }
+        // F+ Despress: a stack on the way in and one more for every second spent inside.
+        // The stacks hold until the aura ends, then linger for three seconds.
+        if (a.despress) {
+          const before = a.stackMs.get(foe) ?? -1;
+          const after = Math.max(0, before) + delta;
+          a.stackMs.set(foe, after);
+          const gained = Math.floor(after / DESPRESS_STACK_EVERY_MS) - Math.floor(before / DESPRESS_STACK_EVERY_MS);
+          if (gained > 0) {
+            this.applyStatus(foe, { k: 'despress', stacks: gained, ms: (a.endsAt - time) + DESPRESS_LINGER_MS });
+            this.arena.showFloatingText(foe.x, foe.y - 30, `😞 DESPRESS ×${foe.despressStacks}`, '#9988cc');
+          }
+        }
+        if (a.struck.has(foe)) continue;
+        const acc = (a.insideMs.get(foe) ?? 0) + delta;
+        a.insideMs.set(foe, acc);
+        if (acc < STALK_LOCK_MS) continue;
+        a.struck.add(foe);
+        const dmg = Math.round(STALK_DMG * (1 + STALKER_DMG_BONUS * this.stalkersAlive(a.owner)));
+        foe.takeDamage(dmg);
+        this.applyStatus(foe, { k: 'stalked', ms: STALK_TURN_SLOW_MS });
+        this.addTerror(a.owner, STALK_TERROR_GAIN);
+        this.arena.spawnHitFlash(foe.x, foe.y, 0x553366);
+        this.arena.showFloatingText(foe.x, foe.y - 40, '🫥 STALKED — CAN\'T TURN', '#bb88ff');
+        // The shadow closes over them from behind.
+        const back = foe.facingAngle + Math.PI;
+        this.fx(a.owner).rupture(foe.x + Math.cos(back) * 14, foe.y + Math.sin(back) * 14, 52, { claws: 7, rings: 2, duration: 420 });
+        this.arena.scene.cameras.main.shake(140, 0.003);
       }
     }
   }
@@ -4157,6 +4233,7 @@ export class SilenceKit {
       let dead = time >= s.diesAt;
 
       const run = this.run;
+      if (!dead && run?.maze?.isSolid(s.x, s.y)) dead = true;
       if (!dead && run?.phase === 'chase' && run.caster === s.owner) {
         const victim = run.victim;
         if (victim.active && Phaser.Math.Distance.Between(s.x, s.y, victim.x, victim.y) < 26) {
@@ -4219,10 +4296,13 @@ export class SilenceKit {
       return;
     }
 
-    const maze = run.mazeSeed !== null;
+    if (run.maze) {
+      this.updateMazeChase(run, caster, victim, time);
+      return;
+    }
 
-    // Victim slows: constant hallway dread + spit hits (+ maze smallness). The player
-    // side is pulled by ArenaScene through getPlayerSpeedMult() instead — see there.
+    // Victim slows: constant hallway dread + spit hits. The player side is pulled by
+    // ArenaScene through getPlayerSpeedMult() instead — see there.
     if (victim === this.arena.npc && time < run.victimSlowUntil) {
       this.arena.applyNpcSpeedMult(0.5);
     }
@@ -4232,9 +4312,8 @@ export class SilenceKit {
     if (casterIsLocal) {
       const body = caster.body as Phaser.Physics.Arcade.Body | null;
       if (body) {
-        const blobSpeed = maze ? MAZE_BLOB_SPEED : BLOB_SPEED;
         const ang = Math.atan2(victim.y - caster.y - 20, victim.x - caster.x);
-        body.setVelocity(Math.cos(ang) * blobSpeed, Math.sin(ang) * blobSpeed);
+        body.setVelocity(Math.cos(ang) * BLOB_SPEED, Math.sin(ang) * BLOB_SPEED);
       }
       if (run.caster === 'player') this.arena.setPlayerYankUntil(scene.time.now + 60);
       else this.npcLockUntil = Math.max(this.npcLockUntil, scene.time.now + 60);
@@ -4242,43 +4321,19 @@ export class SilenceKit {
 
     // Bot victim: cosmetic run toward the exit; pace decided by the roll.
     // Survivors outrun the blob; doomed bots stumble slowly enough to be caught
-    // well before the exit line. In the maze the roll is half as generous.
+    // well before the exit line.
     if (run.victimIsBot) {
-      const base = BOT_SURVIVE_BASE * (maze ? MAZE_BOT_SURVIVE_MULT : 1);
-      const survive = run.botRoll < base - SPIT_SURVIVAL_PENALTY * run.spitHits;
+      const survive = run.botRoll < BOT_SURVIVE_BASE - SPIT_SURVIVAL_PENALTY * run.spitHits;
       const slowMult = time < run.victimSlowUntil ? 0.5 : 1;
       const vBody = victim.body as Phaser.Physics.Arcade.Body | null;
-      if (maze) {
-        // Follow the maze solution corridor waypoint by waypoint.
-        const pace = (survive ? 260 : 90) * slowMult;
-        let wp = run.mazePath[run.mazePathIdx];
-        while (wp && Phaser.Math.Distance.Between(victim.x, victim.y, wp.x, wp.y) < 24 && run.mazePathIdx < run.mazePath.length - 1) {
-          run.mazePathIdx++;
-          wp = run.mazePath[run.mazePathIdx];
-        }
-        if (wp) {
-          const ang = Math.atan2(wp.y - victim.y, wp.x - victim.x);
-          vBody?.setVelocity(Math.cos(ang) * pace, Math.sin(ang) * pace);
-        }
-      } else {
-        const pace = survive ? BLOB_SPEED + 50 : 150;
-        vBody?.setVelocity((cx - victim.x) * 2, -pace * slowMult);
-      }
+      const pace = survive ? BLOB_SPEED + 50 : 150;
+      vBody?.setVelocity((cx - victim.x) * 2, -pace * slowMult);
       if (victim === this.arena.npc) this.npcLockUntil = Math.max(this.npcLockUntil, scene.time.now + 60);
     }
 
-    if (maze) {
-      // The maze spans the whole pocket dimension — arena bounds + walls.
-      this.clampToArena(caster);
-      this.clampToArena(victim);
-      this.collideMazeWalls(caster, true, time);
-      if (!victim.netGhost) this.collideMazeWalls(victim, false, time);
-      this.updateMazeDread(run, victim, time);
-    } else {
-      // Both stay clamped inside the corridor.
-      this.clampToCorridor(caster);
-      this.clampToCorridor(victim);
-    }
+    // Both stay clamped inside the corridor.
+    this.clampToCorridor(caster);
+    this.clampToCorridor(victim);
 
     // Door opens partway through the chase — survive the blob until then.
     const doorOpen = time >= run.doorOpensAt;
@@ -4286,28 +4341,7 @@ export class SilenceKit {
       run.exitGfx.setFillStyle(0x77ccff, 1).setStrokeStyle(2, 0xbbeeff);
     }
 
-    // Resolution. A remote victim's machine is the sole catch authority — the
-    // caster resolving locally would teleport the blob home mid-stream and rob
-    // the victim's sim of its catch. The caster instead reads the synced hp.
-    const dist = Phaser.Math.Distance.Between(caster.x, caster.y, victim.x, victim.y);
-    if (victim.netGhost) {
-      if (victim.hp <= run.victimStartHp - BLOB_CATCH_DMG + 10) {
-        this.arena.showFloatingText(victim.x, victim.y - 42, '💀 CONSUMED', '#ff2244');
-        scene.cameras.main.shake(350, 0.008);
-        if (run.caster === 'player') this.arena.recordMasteryStat('runCatches', 1);
-        this.endRunChase(true);
-        return;
-      }
-    } else if (dist <= BLOB_CATCH_DIST && !victim.isInvincible) {
-      // Dodge i-frames let the victim phase through the blob instead of dying in it.
-      victim.takeDamage(BLOB_CATCH_DMG);
-      this.arena.spawnHitFlash(victim.x, victim.y, 0xff1133);
-      this.arena.showFloatingText(victim.x, victim.y - 42, '💀 CONSUMED', '#ff2244');
-      scene.cameras.main.shake(350, 0.008);
-      if (run.caster === 'player') this.arena.recordMasteryStat('runCatches', 1);
-      this.endRunChase(true);
-      return;
-    }
+    if (this.resolveCatch(run, caster, victim, BLOB_CATCH_DIST)) return;
     // Bots ignore the door — their survival roll already decided the outcome.
     if (victim.y <= HALL_EXIT_Y && (run.victimIsBot || doorOpen)) {
       this.arena.showFloatingText(victim.x, victim.y + 20, 'ESCAPED', '#88ff88');
@@ -4319,6 +4353,168 @@ export class SilenceKit {
     }
   }
 
+  /**
+   * Did the blob get them? A remote victim's machine is the sole catch authority — the
+   * caster resolving locally would teleport the blob home mid-stream and rob the victim's
+   * sim of its catch. The caster instead reads the synced hp. True when the chase ended.
+   */
+  private resolveCatch(run: RunState, caster: Fighter, victim: Fighter, reach: number): boolean {
+    const scene = this.arena.scene;
+    if (victim.netGhost) {
+      if (victim.hp > run.victimStartHp - BLOB_CATCH_DMG + 10) return false;
+    } else {
+      // Dodge i-frames let the victim phase through the blob instead of dying in it.
+      if (Phaser.Math.Distance.Between(caster.x, caster.y, victim.x, victim.y) > reach || victim.isInvincible) return false;
+      victim.takeDamage(BLOB_CATCH_DMG);
+      this.arena.spawnHitFlash(victim.x, victim.y, 0xff1133);
+    }
+    this.arena.showFloatingText(victim.x, victim.y - 42, '💀 CONSUMED', '#ff2244');
+    scene.cameras.main.shake(350, 0.008);
+    if (run.caster === 'player') this.arena.recordMasteryStat('runCatches', 1);
+    this.endRunChase(true);
+    return true;
+  }
+
+  // ── Q+ The Labyrinth: a hunt in the dark ───────────────────────────
+  //
+  // The caster steers the blob through the corridors (bots hunt by heartbeat); the shrunken
+  // victim sees only a small circle round themselves, the exit's cold light and the candles,
+  // and gets out by reaching the door or by lasting until the maze lets go of them.
+
+  private updateMazeChase(run: RunState, caster: Fighter, victim: Fighter, time: number): void {
+    const scene = this.arena.scene;
+    const maze = run.maze!;
+    const casterIsLocal = !(run.caster === 'npc' && caster.netGhost);
+    const slowed = time < run.victimSlowUntil;
+
+    // Heartbeat: where the victim is, broadcast to the hunter every beat.
+    if (time >= run.nextPulseAt) {
+      run.nextPulseAt = time + MAZE_PULSE_EVERY_MS;
+      run.heardX = victim.x;
+      run.heardY = victim.y;
+      this.mazePulses.push({ x: victim.x, y: victim.y, bornAt: time });
+    }
+
+    // ── The blob ──
+    if (casterIsLocal) {
+      const body = caster.body as Phaser.Physics.Arcade.Body | null;
+      if (run.caster === 'player') {
+        // WASD steers the blob; ArenaScene's own movement is held off by the yank.
+        this.arena.setPlayerYankUntil(scene.time.now + 60);
+        let vx = (this.arena.dKey.isDown ? 1 : 0) - (this.arena.aKey.isDown ? 1 : 0);
+        let vy = (this.arena.sKey.isDown ? 1 : 0) - (this.arena.wKey.isDown ? 1 : 0);
+        const len = Math.hypot(vx, vy);
+        if (len > 0) { vx /= len; vy /= len; }
+        body?.setVelocity(vx * MAZE_BLOB_SPEED, vy * MAZE_BLOB_SPEED);
+      } else {
+        // Bot hunter: it goes where it last heard the heart — and once it can see the
+        // victim in its own light, it goes straight for them.
+        this.npcLockUntil = Math.max(this.npcLockUntil, scene.time.now + 60);
+        const sees = Phaser.Math.Distance.Between(caster.x, caster.y, victim.x, victim.y) <= MAZE_BLOB_SIGHT;
+        const goal = sees ? { x: victim.x, y: victim.y } : { x: run.heardX, y: run.heardY };
+        const step = maze.nextStep(caster.x, caster.y, maze.cellOf(goal.x, goal.y));
+        const sameCell = maze.stepsBetween(caster.x, caster.y, goal.x, goal.y) === 0;
+        const aim = sameCell ? goal : step;
+        const ang = Math.atan2(aim.y - caster.y, aim.x - caster.x);
+        const d = Phaser.Math.Distance.Between(caster.x, caster.y, aim.x, aim.y);
+        const v = d < 4 ? 0 : MAZE_BOT_BLOB_SPEED;
+        body?.setVelocity(Math.cos(ang) * v, Math.sin(ang) * v);
+      }
+      this.keepInMaze(caster, MAZE_BLOB_RADIUS);
+    }
+
+    // ── The victim ──
+    if (!victim.netGhost) {
+      if (run.victimIsBot) {
+        // Bot victims make for the exit; spit hits make them stumble.
+        const vBody = victim.body as Phaser.Physics.Arcade.Body | null;
+        const step = maze.nextStep(victim.x, victim.y, maze.exitCell);
+        const exit = maze.exitPoint();
+        const inExitCell = maze.stepsBetween(victim.x, victim.y, exit.x, exit.y) === 0;
+        const aim = inExitCell ? exit : step;
+        const ang = Math.atan2(aim.y - victim.y, aim.x - victim.x);
+        const pace = MAZE_BOT_VICTIM_SPEED * (slowed ? 0.5 : 1);
+        vBody?.setVelocity(Math.cos(ang) * pace, Math.sin(ang) * pace);
+        if (victim === this.arena.npc) this.npcLockUntil = Math.max(this.npcLockUntil, scene.time.now + 60);
+        else victim.puppetControlledUntil = Math.max(victim.puppetControlledUntil, scene.time.now + 60);
+      } else if (victim === this.arena.npc && slowed) {
+        this.arena.applyNpcSpeedMult(0.5);
+      }
+      this.keepInMaze(victim, MAZE_VICTIM_RADIUS);
+    }
+
+    this.updateMazeDark(run, caster, victim, time);
+
+    if (this.resolveCatch(run, caster, victim, MAZE_CATCH_DIST)) return;
+    const exit = maze.exitPoint();
+    if (Phaser.Math.Distance.Between(victim.x, victim.y, exit.x, exit.y) <= MAZE_EXIT_REACH) {
+      this.arena.showFloatingText(victim.x, victim.y - 30, 'ESCAPED', '#88ff88');
+      this.endRunChase(false);
+      return;
+    }
+    if (time >= run.chaseEndsAt) {
+      this.arena.showFloatingText(victim.x, victim.y - 30, 'THE MAZE LETS GO', '#88ff88');
+      this.endRunChase(false);
+    }
+  }
+
+  /** Walls first, then the arena edge — a fighter can never be left standing in masonry. */
+  private keepInMaze(f: Fighter, radius: number): void {
+    const maze = this.run?.maze;
+    if (!maze) return;
+    const p = maze.resolve(f.x, f.y, radius);
+    const nx = Phaser.Math.Clamp(p.x, 24, this.arena.width - 24);
+    const ny = Phaser.Math.Clamp(p.y, 24, this.arena.height - 24);
+    if (Math.abs(nx - f.x) > 0.01 || Math.abs(ny - f.y) > 0.01) {
+      const body = f.body as Phaser.Physics.Arcade.Body | null;
+      if (!body) return;
+      // Keep the velocity along the wall, so bodies slide round corners instead of sticking.
+      const vx = body.velocity.x;
+      const vy = body.velocity.y;
+      body.reset(nx, ny);
+      const pushX = nx - f.x;
+      const pushY = ny - f.y;
+      body.setVelocity(Math.abs(pushX) > 0.01 ? 0 : vx, Math.abs(pushY) > 0.01 ? 0 : vy);
+    }
+  }
+
+  /**
+   * The dark, for whoever is at this keyboard. The victim sees a small circle round
+   * themselves; the hunter sees its own light. Both see the exit and the candles.
+   * An observer (an Invasion co-op ally) sees the whole maze.
+   */
+  private updateMazeDark(run: RunState, caster: Fighter, victim: Fighter, time: number): void {
+    const local = this.arena.player;
+    const isVictim = victim === local;
+    const isHunter = caster === local;
+    if (!isVictim && !isHunter) return;
+    const scene = this.arena.scene;
+    if (!run.darkRect) {
+      run.darkRect = scene.add.rectangle(
+        this.arena.width / 2, this.arena.height / 2, this.arena.width, this.arena.height, 0x020007, isVictim ? 0.96 : 0.72,
+      ).setDepth(DEPTH_NOISE + 2);
+      run.darkHoles = scene.make.graphics({}, false);
+      const mask = run.darkHoles.createGeometryMask();
+      mask.invertAlpha = true;
+      run.darkRect.setMask(mask);
+    }
+    if (!run.mazeTimer) {
+      run.mazeTimer = scene.add.text(this.arena.width / 2, 22, '', {
+        fontSize: '15px', fontFamily: 'Georgia, serif', fontStyle: 'italic',
+        color: isVictim ? '#bbeeff' : '#ff3355', stroke: '#05000a', strokeThickness: 4,
+      }).setOrigin(0.5).setDepth(DEPTH_NOISE + 4).setScrollFactor(0);
+    }
+    const secs = Math.max(0, Math.ceil((run.chaseEndsAt - time) / 1000));
+    run.mazeTimer.setText(isVictim ? `find the light — or last ${secs}s` : `hunt them — ${secs}s · WASD`);
+    const t = time / 1000;
+    const holes = run.darkHoles!;
+    holes.clear();
+    holes.fillStyle(0xffffff, 1);
+    const me = isVictim ? victim : caster;
+    const sight = isVictim ? MAZE_VICTIM_SIGHT : MAZE_BLOB_SIGHT;
+    holes.fillCircle(me.x, me.y, sight + Math.sin(t * 3) * 4);
+    for (const l of run.maze!.lights(t)) holes.fillCircle(l.x, l.y, l.r);
+  }
   private startChase(run: RunState, victim: Fighter, time: number): void {
     const scene = this.arena.scene;
     const W = this.arena.width;
@@ -4338,18 +4534,29 @@ export class SilenceKit {
     const victimBody = victim.body as Phaser.Physics.Arcade.Body | null;
 
     if (run.mazeSeed !== null) {
-      // Q+ The Labyrinth: the pocket dimension is a giant dark maze.
-      run.floor = scene.add.rectangle(W / 2, H / 2, W, H, 0x0b0612, 1).setDepth(DEPTH_HALL_FLOOR);
-      this.buildMaze(run);
-      // Blob at the maze entrance, the shrunken victim a few corridors ahead.
-      const start = run.mazePath[0] ?? { x: cx, y: H - 70 };
-      const headStart = Math.min(3, Math.max(1, run.mazePath.length - 2));
-      const ahead = run.mazePath[headStart] ?? { x: cx, y: H - 270 };
-      casterBody?.reset(start.x, Math.min(H - 40, start.y + 30));
-      victimBody?.reset(ahead.x, ahead.y);
-      run.mazePathIdx = headStart;
+      // Q+ The Labyrinth. Online, positions travel mirrored on x, so the sim running a
+      // remote caster's maze builds it mirrored too — otherwise the walls wouldn't line up.
+      const mirror = run.caster === 'npc' && caster.netGhost && this.isPvpNet();
+      const maze = new SilenceMaze(run.mazeSeed, W, H, mirror);
+      run.maze = maze;
+      run.mazeFloor = scene.add.graphics().setDepth(DEPTH_HALL_FLOOR);
+      run.mazeWalls = scene.add.graphics().setDepth(DEPTH_HALL_FLOOR + 0.5);
+      maze.paintStatic(run.mazeFloor, run.mazeWalls, this.col(run.caster));
+      const vs = maze.center(maze.victimStart);
+      const bs = maze.center(maze.blobStart);
+      casterBody?.reset(bs.x, bs.y);
+      victimBody?.reset(vs.x, vs.y);
       run.victimPrevScale = victim.scaleX;
       victim.setScale(run.victimPrevScale * MAZE_VICTIM_SCALE);
+      run.chaseEndsAt = time + MAZE_SURVIVE_MS;
+      // The hunter hears the first beat straight away.
+      run.nextPulseAt = time;
+      caster.setTexture('silence-blob');
+      caster.setScale(MAZE_BLOB_SCALE);
+      this.arena.showFloatingText(vs.x, vs.y - 30, 'H I D E', '#ff2244');
+      scene.cameras.main.shake(400, 0.01);
+      scene.cameras.main.flash(200, 10, 0, 20);
+      return;
     } else {
       // Pocket dimension dressing: black mask with a corridor cut out.
       const mask = scene.add.graphics().setDepth(DEPTH_HALL_MASK);
@@ -4376,13 +4583,6 @@ export class SilenceKit {
     scene.cameras.main.flash(200, 10, 0, 20);
   }
 
-  private clampToArena(f: Fighter): void {
-    const body = f.body as Phaser.Physics.Arcade.Body | null;
-    const nx = Phaser.Math.Clamp(f.x, 24, this.arena.width - 24);
-    const ny = Phaser.Math.Clamp(f.y, 24, this.arena.height - 30);
-    if (nx !== f.x || ny !== f.y) body?.reset(nx, ny);
-  }
-
   private clampToCorridor(f: Fighter): void {
     const W = this.arena.width;
     const H = this.arena.height;
@@ -4391,169 +4591,6 @@ export class SilenceKit {
     const nx = Phaser.Math.Clamp(f.x, cx - HALL_HALF_W + 20, cx + HALL_HALF_W - 20);
     const ny = Phaser.Math.Clamp(f.y, HALL_TOP_Y + 10, H - 30);
     if (nx !== f.x || ny !== f.y) body?.reset(nx, ny);
-  }
-
-  // ── The Labyrinth (Q+) ─────────────────────────────────────────────
-
-  /** Deterministic PRNG — the same seed builds the same maze on both sims. */
-  private mulberry32(seed: number): () => number {
-    let a = seed >>> 0;
-    return () => {
-      a = (a + 0x6d2b79f5) | 0;
-      let t = Math.imul(a ^ (a >>> 15), 1 | a);
-      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-  }
-
-  /** Recursive-backtracker maze over the arena + BFS solution path for bots. */
-  private buildMaze(run: RunState): void {
-    const scene = this.arena.scene;
-    const W = this.arena.width;
-    const H = this.arena.height;
-    const rand = this.mulberry32(run.mazeSeed!);
-    const cols = MAZE_COLS;
-    const rows = MAZE_ROWS;
-    const left = 20;
-    const right = W - 20;
-    const top = HALL_TOP_Y + 16;
-    const bottom = H - 20;
-    const cw = (right - left) / cols;
-    const ch = (bottom - top) / rows;
-
-    // vWall[c][r]: wall between cells (c-1,r) and (c,r). hWall[c][r]: between (c,r-1) and (c,r).
-    const vWall: boolean[][] = Array.from({ length: cols + 1 }, () => Array<boolean>(rows).fill(true));
-    const hWall: boolean[][] = Array.from({ length: cols }, () => Array<boolean>(rows + 1).fill(true));
-    const visited: boolean[][] = Array.from({ length: cols }, () => Array<boolean>(rows).fill(false));
-    const entranceCol = Math.floor(rand() * cols);
-    const stack: Array<[number, number]> = [[entranceCol, rows - 1]];
-    visited[entranceCol][rows - 1] = true;
-    while (stack.length > 0) {
-      const [x, y] = stack[stack.length - 1];
-      const opts: Array<[number, number]> = [];
-      if (x > 0 && !visited[x - 1][y]) opts.push([x - 1, y]);
-      if (x < cols - 1 && !visited[x + 1][y]) opts.push([x + 1, y]);
-      if (y > 0 && !visited[x][y - 1]) opts.push([x, y - 1]);
-      if (y < rows - 1 && !visited[x][y + 1]) opts.push([x, y + 1]);
-      if (opts.length === 0) { stack.pop(); continue; }
-      const [nx, ny] = opts[Math.floor(rand() * opts.length)];
-      if (nx !== x) vWall[Math.max(x, nx)][y] = false;
-      else hWall[x][Math.max(y, ny)] = false;
-      visited[nx][ny] = true;
-      stack.push([nx, ny]);
-    }
-    const exitCol = Math.floor(rand() * cols);
-    hWall[exitCol][0] = false; // the only breach in the top boundary
-
-    const addWall = (x: number, y: number, w: number, h: number): void => {
-      const rect = scene.add.rectangle(x, y, w, h, 0x1a0a22, 1)
-        .setStrokeStyle(1, 0x3a1450, 0.9).setDepth(DEPTH_HALL_FLOOR + 1);
-      run.mazeWalls.push({ rect, dyingAt: 0 });
-    };
-    for (let c = 0; c <= cols; c++) {
-      for (let r = 0; r < rows; r++) {
-        if (vWall[c][r]) addWall(left + c * cw, top + (r + 0.5) * ch, MAZE_WALL_T, ch + MAZE_WALL_T);
-      }
-    }
-    for (let c = 0; c < cols; c++) {
-      for (let r = 0; r <= rows; r++) {
-        if (hWall[c][r]) addWall(left + (c + 0.5) * cw, top + r * ch, cw + MAZE_WALL_T, MAZE_WALL_T);
-      }
-    }
-    // Exit marker — sealed until the door timer opens it (same rules as the hallway).
-    run.exitGfx = scene.add.rectangle(left + (exitCol + 0.5) * cw, top - 4, cw - MAZE_WALL_T, 12, 0x551111, 1)
-      .setStrokeStyle(2, 0x882222).setDepth(DEPTH_HALL_FLOOR + 0.5);
-
-    // BFS from the entrance cell to the exit cell → waypoints for bot victims.
-    const key = (c: number, r: number): number => r * cols + c;
-    const prev = new Map<number, number>();
-    const seen = new Set<number>([key(entranceCol, rows - 1)]);
-    const queue: Array<[number, number]> = [[entranceCol, rows - 1]];
-    while (queue.length > 0) {
-      const [c, r] = queue.shift()!;
-      if (c === exitCol && r === 0) break;
-      const push = (nc: number, nr: number, open: boolean): void => {
-        if (!open || seen.has(key(nc, nr))) return;
-        seen.add(key(nc, nr));
-        prev.set(key(nc, nr), key(c, r));
-        queue.push([nc, nr]);
-      };
-      if (c > 0) push(c - 1, r, !vWall[c][r]);
-      if (c < cols - 1) push(c + 1, r, !vWall[c + 1][r]);
-      if (r > 0) push(c, r - 1, !hWall[c][r]);
-      if (r < rows - 1) push(c, r + 1, !hWall[c][r + 1]);
-    }
-    const cells: Array<[number, number]> = [];
-    let k: number | undefined = key(exitCol, 0);
-    while (k !== undefined) {
-      cells.unshift([k % cols, Math.floor(k / cols)]);
-      k = prev.get(k);
-    }
-    run.mazePath = cells.map(([c, r]) => ({ x: left + (c + 0.5) * cw, y: top + (r + 0.5) * ch }));
-    run.mazePath.push({ x: left + (exitCol + 0.5) * cw, y: HALL_EXIT_Y - 20 });
-    run.mazePathIdx = 0;
-  }
-
-  /** Push a fighter out of solid walls; the blob starts eating whatever it hits. */
-  private collideMazeWalls(f: Fighter, isBlob: boolean, time: number): void {
-    const run = this.run;
-    if (!run) return;
-    const half = 15 * Math.max(0.4, f.scaleX || 1);
-    for (const w of run.mazeWalls) {
-      if (w.dyingAt !== 0 && time >= w.dyingAt) continue; // already chewed through
-      const r = w.rect;
-      const leftEdge = r.x - r.width / 2 - half;
-      const rightEdge = r.x + r.width / 2 + half;
-      const topEdge = r.y - r.height / 2 - half;
-      const bottomEdge = r.y + r.height / 2 + half;
-      if (f.x <= leftEdge || f.x >= rightEdge || f.y <= topEdge || f.y >= bottomEdge) continue;
-      if (isBlob && w.dyingAt === 0) {
-        w.dyingAt = time + MAZE_EAT_MS;
-        this.arena.scene.tweens.add({ targets: r, alpha: 0.25, duration: MAZE_EAT_MS });
-      }
-      const dl = f.x - leftEdge;
-      const dr = rightEdge - f.x;
-      const du = f.y - topEdge;
-      const dd = bottomEdge - f.y;
-      const m = Math.min(dl, dr, du, dd);
-      let nx = f.x;
-      let ny = f.y;
-      if (m === dl) nx = leftEdge; else if (m === dr) nx = rightEdge;
-      else if (m === du) ny = topEdge; else ny = bottomEdge;
-      (f.body as Phaser.Physics.Arcade.Body | null)?.reset(nx, ny);
-    }
-  }
-
-  /** Per-frame maze atmosphere: chewed walls crumble, the victim sees almost nothing. */
-  private updateMazeDread(run: RunState, victim: Fighter, time: number): void {
-    const scene = this.arena.scene;
-    for (let i = run.mazeWalls.length - 1; i >= 0; i--) {
-      const w = run.mazeWalls[i];
-      if (w.dyingAt !== 0 && time >= w.dyingAt) {
-        const r = w.rect;
-        scene.tweens.add({ targets: r, alpha: 0, scaleY: 0.2, duration: 180, onComplete: () => r.destroy() });
-        run.mazeWalls.splice(i, 1);
-      }
-    }
-
-    // Fog-of-war vignette + zoomed camera: only the local player suffers it.
-    if (victim !== this.arena.player) return;
-    if (!run.vignetteRect) {
-      run.vignetteRect = scene.add.rectangle(
-        this.arena.width / 2, this.arena.height / 2, this.arena.width, this.arena.height, 0x020007, 0.94,
-      ).setDepth(DEPTH_NOISE + 2);
-      run.vignetteHole = scene.make.graphics({}, false);
-      const mask = run.vignetteHole.createGeometryMask();
-      mask.invertAlpha = true;
-      run.vignetteRect.setMask(mask);
-    }
-    run.vignetteHole!.clear();
-    run.vignetteHole!.fillStyle(0xffffff, 1);
-    run.vignetteHole!.fillCircle(victim.x, victim.y, MAZE_VISION_RADIUS);
-    const cam = scene.cameras.main;
-    cam.setZoom(MAZE_ZOOM);
-    cam.centerOn(victim.x, victim.y);
-    run.zoomed = true;
   }
 
   /** Tear down the hallway/maze and put both fighters back. Safe to call when idle. */
@@ -4565,15 +4602,13 @@ export class SilenceKit {
     run.maskGfx?.destroy();
     run.floor?.destroy();
     run.exitGfx?.destroy();
-    for (const w of run.mazeWalls) w.rect.destroy();
-    run.mazeWalls = [];
-    run.vignetteRect?.destroy();
-    run.vignetteHole?.destroy();
-    if (run.zoomed) {
-      const cam = this.arena.scene.cameras.main;
-      cam.setZoom(1);
-      cam.centerOn(this.arena.width / 2, this.arena.height / 2);
-    }
+    run.mazeFloor?.destroy();
+    run.mazeWalls?.destroy();
+    run.darkRect?.destroy();
+    run.darkHoles?.destroy();
+    run.mazeTimer?.destroy();
+    this.mazePulses = [];
+    this.layers.get(DEPTH_NOISE + 3)?.clear();
     if (run.phase !== 'chase') return;
 
     const caster = this.fighterOf(run.caster);
@@ -4583,7 +4618,7 @@ export class SilenceKit {
       (caster.body as Phaser.Physics.Arcade.Body | null)?.reset(run.casterPrev.x, run.casterPrev.y);
     }
     const victim = run.victim;
-    if (run.mazeSeed !== null && victim.active) {
+    if (run.maze && victim.active) {
       victim.setScale(run.victimPrevScale);
     }
     if (victim.active && victim.hp > 0) {
@@ -4727,6 +4762,29 @@ export class SilenceKit {
       return;
     }
 
+    // Stalk: hold the target inside the aura for the whole three seconds, edging round to
+    // their back as we go — then, while they are Stalked and can't turn, sit in their back
+    // shadow. The stab itself is doSilenceAbilities' (npcSilenceBackstabAim).
+    if (this.isStalking('npc') || Date.now() < player.stalkedUntil) {
+      this.npcFogFarming = false;
+      const behindX = player.x + Math.cos(player.facingAngle + Math.PI) * 62;
+      const behindY = player.y + Math.sin(player.facingAngle + Math.PI) * 62;
+      const d = Phaser.Math.Distance.Between(npc.x, npc.y, behindX, behindY);
+      if (d > 12) {
+        // Never cut straight through the target to get behind them: swing round its side.
+        const toBehind = Math.atan2(behindY - npc.y, behindX - npc.x);
+        const toPlayer = Math.atan2(player.y - npc.y, player.x - npc.x);
+        const near = Phaser.Math.Distance.Between(npc.x, npc.y, player.x, player.y) < 70;
+        const across = Math.abs(Phaser.Math.Angle.Wrap(toBehind - toPlayer)) < 0.6;
+        const ang = near && across ? toPlayer + Math.PI / 2 : toBehind;
+        const v = npc.speed * 1.1 * Phaser.Math.Clamp(d / 40, 0.4, 1);
+        body.setVelocity(Math.cos(ang) * v, Math.sin(ang) * v);
+      } else {
+        body.setVelocity(0, 0);
+      }
+      return;
+    }
+
     if (invis && npc.getCooldownRatio(STAB_CD_ID) >= 1 && stealth > 30) {
       // Ambush: slide to a point behind the player's facing, then backstab.
       this.npcFogFarming = false;
@@ -4777,6 +4835,37 @@ export class SilenceKit {
     // never degenerates into the old wall-vibration.
     const v = npc.speed * Phaser.Math.Clamp(d / 60, 0.45, 1);
     body.setVelocity(Math.cos(ang) * v, Math.sin(ang) * v);
+  }
+
+  /**
+   * NpcAiState — F synergy: the player is close enough that the mirror AI can hold them
+   * inside a Stalk aura for its whole three seconds, and isn't already Stalked.
+   */
+  getNpcStalkOpen(): boolean {
+    if (!this.npcIsSilence || this.strikers.npc || this.awakened.npc || this.run) return false;
+    if (this.isStalking('npc')) return false;
+    const npc = this.arena.npc;
+    const player = this.arena.player;
+    if (!npc.active || npc.hp <= 0 || !player.active || player.hp <= 0) return false;
+    if (Date.now() < player.stalkedUntil) return false;
+    return Phaser.Math.Distance.Between(npc.x, npc.y, player.x, player.y) <= STALK_RADIUS * 0.75;
+  }
+
+  /**
+   * NpcAiState — Stalk → Click synergy: the player is Stalked and the bot is standing in their
+   * back shadow within the dash. Returns where to stab; null when the backstab isn't on.
+   */
+  getNpcBackstabAim(): { x: number; y: number } | null {
+    if (!this.npcIsSilence || this.strikers.npc || this.awakened.npc || this.run) return null;
+    const npc = this.arena.npc;
+    const player = this.arena.player;
+    if (!npc.active || npc.hp <= 0 || !player.active || player.hp <= 0) return null;
+    if (Date.now() >= player.stalkedUntil) return null;
+    if (Phaser.Math.Distance.Between(npc.x, npc.y, player.x, player.y) > STAB_DASH_LEN * 0.8) return null;
+    const fromPlayer = Math.atan2(npc.y - player.y, npc.x - player.x);
+    const rear = player.facingAngle + Math.PI;
+    if (Math.abs(Phaser.Math.Angle.Wrap(fromPlayer - rear)) > BACKSTAB_ARC_RAD * 0.8) return null;
+    return { x: player.x, y: player.y };
   }
 
   /** NpcAiState: full terror + Night Terror means the bot should ritual *itself*. */
@@ -4842,6 +4931,8 @@ export class SilenceKit {
       this.stealthLabel = scene.add.text(x, y - 14, 'STEALTH', {
         fontSize: '10px', color: '#9977bb', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
       }).setOrigin(0, 0.5).setDepth(24).setScrollFactor(0);
+      this.stealthThreshold = scene.add.rectangle(x + 1 + 148 * (STEALTH_INVIS_MIN / STEALTH_MAX), y, 2, 14, 0xeeddff, 0.85)
+        .setDepth(25).setScrollFactor(0);
       for (let i = 0; i < STALKER_MAX; i++) {
         this.stalkerPips.push(
           scene.add.circle(x + 160 + i * 16, y, 5, 0x110016, 1)
@@ -4851,7 +4942,9 @@ export class SilenceKit {
     }
     const ratio = this.stealth.player / STEALTH_MAX;
     this.stealthBarFill!.width = 148 * ratio;
-    this.stealthBarFill!.setFillStyle(this.isInvisible('player') ? 0xaa66ee : 0x663399, 0.95);
+    const hidden = this.isInvisible('player');
+    this.stealthBarFill!.setFillStyle(hidden ? 0xaa66ee : 0x663399, 0.95);
+    this.stealthLabel!.setText(hidden ? 'STEALTH · HIDDEN' : 'STEALTH · SEEN');
     const count = this.stalkersAlive('player');
     this.stalkerPips.forEach((p, i) => p.setFillStyle(i < count ? 0xff2244 : 0x110016, 1));
 
@@ -4903,8 +4996,10 @@ export class SilenceKit {
    * directly; co-op guest husk replicas don't simulate, so the status is
    * forwarded to the host over the existing ghost-status channel.
    */
-  private applyStatus(foe: Fighter, status: Extract<HuskStatus, { k: 'silence' | 'halluc' | 'atkslow' | 'panic' }>): void {
+  private applyStatus(foe: Fighter, status: Extract<HuskStatus, { k: 'silence' | 'halluc' | 'atkslow' | 'panic' | 'stalked' | 'despress' }>): void {
     if (status.k === 'silence') foe.silencedUntil = Math.max(foe.silencedUntil, Date.now() + status.ms);
+    else if (status.k === 'stalked') foe.stalkedUntil = Math.max(foe.stalkedUntil, Date.now() + status.ms);
+    else if (status.k === 'despress') foe.addDespress(status.stacks, status.ms);
     else if (status.k === 'halluc') foe.hallucinatingUntil = Math.max(foe.hallucinatingUntil, Date.now() + status.ms);
     else if (status.k === 'panic') foe.panickedUntil = Math.max(foe.panickedUntil, Date.now() + status.ms);
     else {
@@ -4929,7 +5024,7 @@ export class SilenceKit {
 
   /**
    * Ruin's Spikes of Ruin (see `combat/SummonPurge.ts`).
-   * Watchers, seekers, grabbers, vultures, corrupt clones, ritual circles and feasts. A
+   * Watchers, seekers, grabbers, vultures, corrupt clones, ritual circles and Stalk auras. A
    * grabber or vulture with somebody in its hands is skipped: it is the only thing holding that
    * fighter's body, and deleting it mid-carry would strand them.
    */
@@ -4973,10 +5068,11 @@ export class SilenceKit {
       this.rituals.splice(i, 1);
       razed++;
     }
-    for (let i = this.feasts.length - 1; i >= 0; i--) {
-      const f = this.feasts[i];
-      if (f.owner === exceptOwner || !near(f.x, f.y)) continue;
-      this.feasts.splice(i, 1);
+    for (let i = this.stalks.length - 1; i >= 0; i--) {
+      const a = this.stalks[i];
+      const c = this.fighterOf(a.owner);
+      if (a.owner === exceptOwner || !near(c.x, c.y)) continue;
+      this.stalks.splice(i, 1);
       razed++;
     }
     return razed;

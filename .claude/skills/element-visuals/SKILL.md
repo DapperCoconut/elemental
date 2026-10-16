@@ -115,6 +115,14 @@ way round instead of unwinding through a full turn.
 where it aims, blink on a random 2–4s timer, and narrow them while casting. This is the single
 cheapest thing that turns a sprite into a character — do not skip it.
 
+**Keep it uncluttered (user rule, 2026-10-13).** The body is ONE hue — a plain orb, dark rim to
+light core, one rim light, one glint (`bakeOrb` in `BootScene.ts` bakes exactly this). No
+pattern, symbol, costume or picture on the body; the colour alone says which element it is.
+The character's concept lives in **one accessory on top**, plus at most one small secondary
+touch (one held item, or one face piece). Hands stay plain balls. A pirate is a lava orb in a
+tricorn, not a coat, sash, beard, hook, cutlass and peg leg. The roster drifted into costumes
+once already and had to be stripped back across ~30 rigs — don't reintroduce it.
+
 **A silhouette extra.** Fire gets a plume off the crown. Give yours the element's equivalent
 (dripping ribbons, a static halo, drifting leaves, a shadow shroud). **Draw it at `depth + 2`,
 over the sprite** — under it, only the dark tips clear the 22px body and it reads as a stray
@@ -143,9 +151,11 @@ alternating side for repeat-cast abilities so spam doesn't look mechanical.
 Two separate axes. Do both.
 
 **The character** — `setMastered(on)` applies a permanent, silhouette-level upgrade, readable
-before a single cast. Fire's: white-hot eyes, a wider corona on each hand, a 30% taller plume,
-and three embers orbiting the head. Make it a *shape* change, not just a brighter tint — a tint
-alone is invisible at gameplay zoom. Call it every frame from the kit's avatar update, passing
+before a single cast. Fire's: white-hot eyes, a wider corona on each hand, a 30% taller plume.
+**Enhance what is already there — never add new objects** (no second hat, crown, orbiting
+props, drones, weapons). Grow or gild the accessory, widen the hand coronas, recolour the eyes,
+deepen the glow. It must still be a *shape* change, not just a brighter tint — a tint alone is
+invisible at gameplay zoom. Call it every frame from the kit's avatar update, passing
 the kit's `masteryActive` flag; the setter early-outs when unchanged, so this is free.
 
 **The abilities** — an upgraded or mastery-bound ability must look bigger, not just hit harder.
@@ -219,7 +229,8 @@ In the kit:
 - [ ] Eyes that track aim, blink, and narrow while casting
 - [ ] Silhouette extra drawn *over* the sprite, rooted at the crown
 - [ ] A gesture mapped to every ability, on both the player and the NPC rig
-- [ ] `setMastered` changes the silhouette, not just the tint
+- [ ] One-hue orb body; one accessory (+ at most one small secondary); plain ball hands
+- [ ] `setMastered` enhances existing features (bigger/gilded accessory, coronas, eyes) — adds no new objects
 - [ ] Upgraded abilities scale shards/smoke/duration/shake, not only radius
 - [ ] Every `add.circle` + scale-tween in the element replaced
 - [ ] ArenaScene net smaller

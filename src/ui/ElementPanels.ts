@@ -1331,7 +1331,7 @@ export class ElementPanels {
 
   /**
    * Final section of the mastery scroll: drag a mastery ability chip onto one of the
-   * element's E/R/F/Q slots to replace that ability with it. Click is not a valid target.
+   * element's R/F/Q slots to replace that ability with it. Click and E are not valid targets.
    *
    * Everything lives inside the scroll container, so drags are driven manually off scene
    * pointer events with a floating ghost rather than Phaser's `draggable` — container-local
@@ -1362,7 +1362,7 @@ export class ElementPanels {
     innerY += 20;
 
     const sub = this.scene.add.text(cx, innerY, unlocked
-      ? 'Drag a mastery ability onto a slot to replace that ability. Click cannot be replaced.'
+      ? 'Drag a mastery ability onto a slot to replace that ability. Click and E cannot be replaced.'
       : 'Complete the challenges above to bind mastery abilities.', {
       fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
       color: unlocked ? '#aaaacc' : '#555566',

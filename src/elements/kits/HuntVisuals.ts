@@ -2341,21 +2341,35 @@ const HUNT_AVATAR: AvatarSpec = {
   squash: { div: 12, x: 0.58, y: 0.2 },
 };
 
+
 /**
- * The hunt character rig: two heavy fists, a pair of eyes, and a set of ears above the crown
- * that grow into a full snarling head as the beast comes out. The hands, eyes and gestures come
- * from BaseAvatar; what hunt adds is the form change, the claws that sprout on the fists in
- * beast form, and the blood pooling underfoot.
+ * The hunt character rig: a one-hue orb per form (the baked `elem-hunt` / `elem-hunt-beast` /
+ * `elem-hunt-hybrid` textures), the shared eyes and two plain fists, and ONE accessory on the
+ * crown that says which shape he is in:
+ *
+ * - **human** — the hunter's peaked leather hood, fur-trimmed at the brim, over an ember orb.
+ * - **hybrid** — the hood is gone and half-grown wolf ears push up out of a silver orb.
+ * - **beast** — full wolf ears over a blood-red orb.
+ *
+ * The hood and the ears ease into each other through `beastness`, so a transformation reads as
+ * the ears growing out rather than a costume swap. Mastery enhances the accessory instead of
+ * adding to it: a bigger hood with a bone-white trim, bigger ears with bone rims and lit
+ * insides, bone-white eyes, a heavier corona on each fist and a stronger under-glow.
+ *
+ * He also carries his weapon between the fists — the crossbow, or the shotgun brought up for
+ * Blast — driven by `setWeapon` / `flashWeapon` / `setLoad` / `kick` / `rack` from the kit.
  */
 export class HuntAvatar extends BaseAvatar {
   private fx: HuntFx;
   private tones: HuntTones;
   private form: HuntForm = 'human';
-  /** Eased toward 1 in beast form so the head grows rather than popping. */
+  /** Eased toward the form (human 0, hybrid 0.55, beast 1) so ears grow rather than pop. */
   private beastness = 0;
   private moon = false;
   /** Hell (divine perk): wearing hellhound colours over the beast shape. */
   private hell = false;
+  /** Attacks pin the ears back; it relaxes on its own. */
+  private snarl = 0;
 
   /** The kit in his hands. Driven by the kit from the form. */
   private weapon: HuntWeapon = 'crossbow';
@@ -2370,8 +2384,6 @@ export class HuntAvatar extends BaseAvatar {
   private recoil = 0;
   /** Pump action, kicked when a shell is racked. */
   private pump = 0;
-  /** How far the jaws are apart. Attacks snap it open; it closes on its own. */
-  private snarl = 0;
 
   constructor(scene: Phaser.Scene, tint: HuntColorFn, tones: HuntTones = HUNTER_TONES, depth = 6) {
     super(scene, tint, depth, HUNT_AVATAR);
@@ -2388,8 +2400,7 @@ export class HuntAvatar extends BaseAvatar {
 
   /**
    * Bring a different weapon up for a moment and then put it away again. Human form carries the
-   * crossbow, but Blast is a shotgun — without this he fires buckshot out of a crossbow, which
-   * is the sort of thing you only notice once and then cannot stop noticing.
+   * crossbow, but Blast is a shotgun — without this he fires buckshot out of a crossbow.
    */
   flashWeapon(w: HuntWeapon, ms = 900): void {
     this.swap = w;
@@ -2408,13 +2419,10 @@ export class HuntAvatar extends BaseAvatar {
   /** Rack the pump — the fore-end slams back and rides forward again. */
   rack(): void { this.pump = 1; }
 
-  /** Snap the jaws open. Decays back to an idle pant on its own. */
+  /** An attack: the ears flatten back for a beat. Decays on its own. */
   snap(amount = 1): void { this.snarl = Math.max(this.snarl, Phaser.Math.Clamp(amount, 0, 1)); }
 
-  /**
-   * Which of hunt's three shapes the character is wearing. Beast and hybrid are separate
-   * silhouettes, not tints — the ears grow, the muzzle comes out, the fists sprout claws.
-   */
+  /** Which of hunt's three shapes the character is wearing. */
   setForm(form: HuntForm): void {
     if (form === this.form) return;
     this.form = form;
@@ -2435,7 +2443,8 @@ export class HuntAvatar extends BaseAvatar {
     const tones = this.formTones();
     this.forEachHandLayer(1, (shell) => shell.setFillStyle(this.tint(tones.body), 0.95));
     this.forEachHandLayer(2, (core) => core.setFillStyle(this.tint(tones.lit), 1));
-    this.forEachHandLayer(0, (halo) => halo.setFillStyle(this.tint(tones.crust), 0.34));
+    this.forEachHandLayer(0, (halo) =>
+      halo.setFillStyle(this.tint(this.mastered ? tones.wound : tones.crust), 0.34));
   }
 
   /** Blood Moon overhead — everything the character wears runs red under it. */
@@ -2455,17 +2464,14 @@ export class HuntAvatar extends BaseAvatar {
   }
 
   /**
-   * Mastery tell — a permanent, readable upgrade to the character itself, so a mastered hunt
-   * user is identifiable at a glance before they cast anything: bone-white eyes, a heavy corona
-   * and a hard rim on each fist, a bigger head, a rack of trophy fangs strung overhead and a
-   * taken skull swinging off the belt. Shape changes, not just brighter tints — a tint alone
-   * vanishes at gameplay zoom.
+   * Mastery tell — enhances what is already there: bone-white eyes, a heavier corona and a bone
+   * rim on each fist; `drawExtras` enlarges the hood / ears and trims them in bone.
    */
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? HUNT.white : HUNT.bone);
     this.forEachHandLayer(0, (halo) => {
       halo.setRadius(on ? 14 : 10);
-      halo.setFillStyle(this.tint(on ? this.tones.wound : HUNT.rust), on ? 0.34 : 0.3);
+      halo.setFillStyle(this.tint(on ? this.formTones().wound : HUNT.rust), on ? 0.34 : 0.3);
     });
     this.forEachHandLayer(1, (shell) => {
       if (on) shell.setStrokeStyle(1.6, this.tint(HUNT.bone), 0.9);
@@ -2478,10 +2484,6 @@ export class HuntAvatar extends BaseAvatar {
     this.fx.splatter(x, y, 1, { speed: 10, size: 2, life: 480, fall: 30, depth: 5, tones: this.activeTones() });
   }
 
-  /**
-   * Bleed off the impulses the kit pokes in — recoil, the pump stroke and the snarl all decay
-   * on their own so a caller only ever has to say "it happened", never "it is still happening".
-   */
   update(delta: number, x: number, y: number, alpha: number): void {
     const dt = delta / 1000;
     this.recoil = Math.max(0, this.recoil - dt * 7);
@@ -2499,224 +2501,127 @@ export class HuntAvatar extends BaseAvatar {
     return this.swapLeft > 0 ? this.swap : this.weapon;
   }
 
-  /** How far the jaws hang open right now: an idle pant, plus whatever the last attack added. */
-  private jawOpen(): number {
-    return Phaser.Math.Clamp(0.16 + 0.09 * Math.sin(this.t * 3.4) + this.snarl * 0.82, 0, 1);
-  }
-
   /**
-   * Where the weapon sits: between the two fists, shoved a little further out along the aim so
-   * the stock never crosses the face. Anchoring it to the live hand positions is what makes it
-   * look *held* — when a gesture throws a fist forward the whole weapon lunges with it.
+   * Where the weapon sits: between the two fists, pushed out along the aim and dropped to chest
+   * height so the stock never crosses the face. Anchored to the live hands, so a gesture that
+   * throws a fist forward makes the whole weapon lunge with it.
    */
   private weaponAnchor(x: number, y: number): { x: number; y: number } {
     const mx = (this.armX[0] + this.armX[1]) / 2;
     const my = (this.armY[0] + this.armY[1]) / 2;
     return {
       x: mx + Math.cos(this.facing) * 12 + (mx - x) * 0.1,
-      // Held at the chest, not across the face — otherwise the stock cuts through the eyes.
       y: my + Math.sin(this.facing) * 12 + (my - y) * 0.1 + 8,
     };
   }
 
-  /**
-   * Under the character: the blood it stands in, the gouges it has scored into the floor, and —
-   * once the beast is out — the ruff along its back and the tail sweeping behind it. All of it
-   * lives on the low layer so the body sits on top and the silhouette reads in one piece.
-   */
-  protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+  /** A soft under-glow in the form's own colour; stronger once mastered. */
+  protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
     const tones = this.activeTones();
-    const b = this.beastness;
-
-    g.fillStyle(this.tint(tones.crust), a * 0.3 * this.intensity);
-    g.fillEllipse(x, y + 7, 54 * this.intensity, 25 * this.intensity);
-    g.fillStyle(this.tint(tones.body), a * 0.2 * this.intensity);
-    g.fillEllipse(x, y + 6, 36 * this.intensity, 17 * this.intensity);
-    // Three gouges scored into the floor, turning slowly under the character.
-    for (let i = 0; i < 3; i++) {
-      const ang = this.t * 0.5 + (i / 3) * TAU;
-      huntGashLayered(
-        g, this.tint, tones,
-        x + Math.cos(ang) * 13, y + 7 + Math.sin(ang) * 6,
-        ang + Math.PI / 2, (16 + Math.sin(this.t * 2 + i) * 3) * this.intensity, 2.6,
-        a * 0.4, { curve: 0.3, flick: false, edge: false },
-      );
-    }
-    if (b <= 0.08) return;
-
-    // Hackles: a fan of raised fur standing up around the back of the body, away from the aim.
-    const back = this.facing + Math.PI;
-    for (let i = 0; i < 9; i++) {
-      const ang = back + (i - 4) * 0.28;
-      const len = (14 + 10 * Math.abs(Math.sin(i * 2.1))) * b * this.intensity;
-      const bx = x + Math.cos(ang) * 19, by = y + Math.sin(ang) * 19;
-      const tip = ang + Math.sin(this.t * 3 + i) * 0.12;
-      g.fillStyle(this.tint(HUNT.fur), 0.9 * alpha);
-      g.beginPath();
-      g.moveTo(bx + Math.cos(ang + 1.5) * 4, by + Math.sin(ang + 1.5) * 4);
-      g.lineTo(bx + Math.cos(tip) * len, by + Math.sin(tip) * len);
-      g.lineTo(bx + Math.cos(ang - 1.5) * 4, by + Math.sin(ang - 1.5) * 4);
-      g.closePath();
-      g.fillPath();
-    }
-
-    // Tail: four tapering segments trailing behind, each swinging a beat after the one ahead.
-    let tx = x + Math.cos(back) * 20, ty = y + Math.sin(back) * 20;
-    let ta = back;
-    for (let i = 0; i < 4; i++) {
-      ta += Math.sin(this.t * 3.6 - i * 0.7) * 0.34;
-      const seg = (13 - i * 1.6) * b * this.intensity;
-      const nx = tx + Math.cos(ta) * seg, ny = ty + Math.sin(ta) * seg;
-      g.lineStyle((13 - i * 2.6) * b, this.tint(HUNT.fur), 0.92 * alpha);
-      g.lineBetween(tx, ty, nx, ny);
-      tx = nx; ty = ny;
-    }
-    // Bone-white tip.
-    g.fillStyle(this.tint(HUNT.bone), 0.8 * alpha * b);
-    g.fillCircle(tx, ty, 3.4 * b);
+    const k = this.intensity * (this.mastered ? 1.15 : 1);
+    g.fillStyle(this.tint(tones.body), a * (this.mastered ? 0.3 : 0.22) * k);
+    g.fillCircle(x, y, 28 * k);
+    g.fillStyle(this.tint(tones.crust), a * 0.18 * k);
+    g.fillEllipse(x, y + 8, 34 * k, 14 * k);
   }
 
   /**
-   * Everything over the sprite: the hood he wears while he is still a man, the crossbow or
-   * shotgun in his fists, the claws that replace them, and — as the beast comes out — a full
-   * snarling head grown over the top of the body. Rooted so nothing ever buries the eyes.
+   * The one accessory, rooted at the crown (`y - 18`) so it never covers the eyes: the hood in
+   * human form, fading out as the wolf ears grow in for hybrid and beast.
    */
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    // Ease toward the form so the change is a growth, not a pop.
+    void a;
     const want = this.form === 'human' ? 0 : this.form === 'hybrid' ? 0.55 : 1;
     this.beastness += (want - this.beastness) * 0.12;
     const b = this.beastness;
     const tones = this.activeTones();
-    const scale = (this.mastered ? 1.22 : 1) * this.intensity;
+    const m = this.mastered;
+    const s = m ? 1.12 : 1;
+    const rootY = y - 18;
+    const lean = Math.cos(this.facing) * 2;
 
-    // ── Forearms ──
-    // Two tapered limbs from the shoulders out to the fists. Without them the hands read as
-    // two loose balls; with them the character has reach, and the weapon has something holding it.
-    for (let i = 0; i < 2; i++) {
-      const s = i === 0 ? -1 : 1;
-      const sx = x + Math.cos(this.facing + s * 1.5) * 12;
-      const sy = y + Math.sin(this.facing + s * 1.5) * 12 + 3;
-      const hx = this.armX[i], hy = this.armY[i];
-      g.lineStyle(7 * scale, this.tint(b > 0.4 ? HUNT.fur : tones.crust), 0.9 * alpha);
-      g.lineBetween(sx, sy, hx, hy);
-      g.lineStyle(3 * scale, this.tint(b > 0.4 ? HUNT.furLit : tones.body), 0.6 * alpha);
-      g.lineBetween(sx, sy, hx * 0.5 + sx * 0.5, hy * 0.5 + sy * 0.5);
+    // ── The hood ── (human form; rots away as the beast rises)
+    const hood = Math.max(0, 1 - b * 1.8);
+    if (hood > 0.02) {
+      const ha = alpha * hood;
+      const P = (px: number, py: number) => new Phaser.Geom.Point(x + lean + px * s, rootY + py * s);
+      // Thrown back a touch from the aim, so the peak trails the way he is not looking.
+      const peak = -Math.cos(this.facing) * 3;
+      g.fillStyle(this.tint(HUNT.pitch), ha);
+      g.fillPoints([P(-16, 7), P(-13, -1), P(-5, -8), P(peak, -14.5), P(5, -8), P(13, -1), P(16, 7),
+        P(9, 3.4), P(0, 2.4), P(-9, 3.4)], true);
+      g.fillStyle(this.tint(HUNT.hide), ha);
+      g.fillPoints([P(-14.4, 5.8), P(-11.8, -0.6), P(-4.4, -6.8), P(peak, -12.6), P(4.4, -6.8), P(11.8, -0.6),
+        P(14.4, 5.8), P(8.6, 2.2), P(0, 1.2), P(-8.6, 2.2)], true);
+      // A seam up to the peak, lit in the hunter's ember so the leather reads as rounded.
+      g.lineStyle(1.3, this.tint(tones.body), 0.55 * ha);
+      g.lineBetween(x + lean - 7 * s, rootY - 3 * s, x + lean + peak * s, rootY - 12 * s);
+      // Fur trim along the brim — bone-white once mastered.
+      for (let i = 0; i < 7; i++) {
+        const f = (i / 6 - 0.5) * 2;
+        const bx = x + lean + f * 13.5 * s;
+        const by = rootY + (3 + Math.abs(f) * 2.6) * s;
+        g.fillStyle(this.tint(m ? HUNT.bone : HUNT.fur), 0.95 * ha);
+        g.fillCircle(bx, by, (m ? 2.6 : 2.2) + Math.abs(Math.sin(i * 2.3)) * 0.8);
+      }
     }
 
-    // ── The kit in his hands ──
+    // ── The weapon in his fists ── (the beast holds nothing — it grew its own)
     const held = this.heldWeapon();
     if (held && b < 0.9) {
       const w = this.weaponAnchor(x, y);
       const wa = alpha * (1 - b);
+      const ws = s * this.intensity;
       if (held === 'crossbow') {
-        drawCrossbow(g, this.tint, tones, w.x, w.y, this.facing, 0.9 * scale, this.load, this.recoil, wa);
+        drawCrossbow(g, this.tint, tones, w.x, w.y, this.facing, 0.9 * ws, this.load, this.recoil, wa);
       } else {
-        drawShotgun(g, this.tint, tones, w.x, w.y, this.facing, 0.82 * scale, this.pump, this.recoil, this.shells, wa);
+        drawShotgun(g, this.tint, tones, w.x, w.y, this.facing, 0.82 * ws, this.pump, this.recoil, this.shells, wa);
       }
-      // Grip straps: the fists actually close on it rather than floating alongside.
-      g.lineStyle(3.4 * scale, this.tint(tones.crust), 0.55 * wa);
+      // Grip straps: the fists close on it rather than floating alongside.
+      g.lineStyle(3.4 * ws, this.tint(tones.crust), 0.55 * wa);
       for (let i = 0; i < 2; i++) g.lineBetween(this.armX[i], this.armY[i], w.x, w.y);
     }
 
-    // ── Claws ──
+    // ── Claws ── (the beast's weapons, pushing out through the fists as it rises)
     if (b > 0.25) {
       for (let i = 0; i < 2; i++) {
         const out = Math.atan2(this.armY[i] - y, this.armX[i] - x);
-        drawClaws(g, this.tint, tones, this.armX[i], this.armY[i], out, (b - 0.25) / 0.75 * scale, alpha);
+        drawClaws(g, this.tint, tones, this.armX[i], this.armY[i], out, (b - 0.25) / 0.75 * s * this.intensity, alpha);
       }
     }
 
-    // ── The hood ──
-    // While he is still a man: a peaked leather hood with a fur-trimmed brim, thrown back a
-    // little from the aim, and a scarf pulled up over the jaw. It rots away as the beast rises.
-    const hood = Math.max(0, 1 - b * 1.6);
-    if (hood > 0.02) {
-      const ha = alpha * hood;
-      const lean = this.facing;
-      const peakX = x - Math.cos(lean) * 5, peakY = y - 26 - Math.sin(lean) * 2;
-      g.fillStyle(this.tint(HUNT.hide), 0.96 * ha);
-      g.beginPath();
-      g.moveTo(x - 21 * scale, y - 3);
-      g.lineTo(x - 17 * scale, y - 18 * scale);
-      g.lineTo(peakX, peakY);
-      g.lineTo(x + 17 * scale, y - 18 * scale);
-      g.lineTo(x + 21 * scale, y - 3);
-      g.lineTo(x + 15 * scale, y - 12);
-      g.lineTo(x - 15 * scale, y - 12);
-      g.closePath();
-      g.fillPath();
-      // Fur trim: tufts hanging off the brim, stopping just short of the brow.
-      for (let i = 0; i < 9; i++) {
-        const f = (i / 8 - 0.5) * 2;
-        const bx = x + f * 20 * scale;
-        const by = y - 12 - Math.cos(f * 1.3) * 3;
-        g.fillStyle(this.tint(HUNT.fur), 0.95 * ha);
-        g.fillCircle(bx, by, (2.6 + Math.abs(Math.sin(i * 2.3)) * 1.6) * scale);
-      }
-      g.lineStyle(1.6 * scale, this.tint(tones.body), 0.5 * ha);
-      g.lineBetween(x - 16 * scale, y - 16 * scale, peakX, peakY + 3);
-      // Scarf across the jaw, knotted off to one side.
-      g.fillStyle(this.tint(tones.crust), 0.9 * ha);
-      g.fillEllipse(x + Math.cos(lean) * 2, y + 12, 30 * scale, 12 * scale);
-      g.fillStyle(this.tint(tones.body), 0.55 * ha);
-      g.fillEllipse(x + Math.cos(lean) * 2, y + 10.5, 24 * scale, 6 * scale);
-      g.fillStyle(this.tint(tones.crust), 0.9 * ha);
-      g.fillCircle(x + 15 * scale, y + 14, 4 * scale);
-      // Bandolier across the chest, with brass showing in the loops.
-      g.lineStyle(5 * scale, this.tint(HUNT.hide), 0.9 * ha);
-      g.lineBetween(x - 16 * scale, y - 2, x + 13 * scale, y + 19);
-      for (let i = 0; i < 4; i++) {
-        const f = 0.15 + i * 0.22;
-        const bx = x - 16 * scale + 29 * scale * f;
-        const by = y - 2 + 21 * f;
-        g.fillStyle(this.tint(HUNT.hull), 0.95 * ha);
-        g.fillCircle(bx, by, 2.4 * scale);
-        g.fillStyle(this.tint(HUNT.brass), 0.95 * ha);
-        g.fillCircle(bx, by, 1.3 * scale);
-      }
-    }
-
-    // ── The head ──
-    // Sized off the rig's eye spacing rather than off the body or the intensity: the sockets
-    // have to land on the eyes that are already there. Ears, jaw and ruff all overhang the
-    // sprite, so the silhouette still grows with the beast even though the skull doesn't.
+    // ── The ears ── (hybrid half-grown, beast full)
     if (b > 0.06) {
-      drawWolfHead(
-        g, this.tint, this.moon ? MOON_TONES : tones,
-        x, y, this.facing, 19.5 * (0.62 + 0.38 * b), this.jawOpen() * b, alpha * Math.min(1, b * 1.7),
-        { mane: b, drop: 0.03 },
-      );
-      // Eyeshine burning through the open sockets, on top of the rig's own eyes.
-      // `a` carries the rig's breathing pulse, so the eyes flare and settle with the body.
-      const glow = this.moon ? HUNT.moon : tones.lit;
-      for (const s of [-1, 1]) {
-        g.fillStyle(this.tint(glow), 0.4 * a * b);
-        g.fillCircle(x + s * 7.2 + Math.cos(this.facing) * 2.4, y - 4 + Math.sin(this.facing) * 2, 4.6 * b);
+      const ea = alpha * Math.min(1, b * 1.7);
+      const size = (7 + 7 * b) * s;
+      // Attacks flatten them back and out; otherwise they twitch on their own.
+      const pin = this.snarl * 0.5;
+      for (const side of [-1, 1] as const) {
+        const twitch = Math.sin(this.t * 2.2 + side * 1.7) * 0.06;
+        const tilt = side * (0.32 + pin) + twitch;
+        const bx = x + lean + side * 9 * s, by = rootY + 4;
+        const up = -Math.PI / 2 + tilt;
+        const tipX = bx + Math.cos(up) * size, tipY = by + Math.sin(up) * size;
+        const w = size * 0.5;
+        const lx = bx + Math.cos(up - Math.PI / 2) * w, ly = by + Math.sin(up - Math.PI / 2) * w;
+        const rx = bx + Math.cos(up + Math.PI / 2) * w, ry = by + Math.sin(up + Math.PI / 2) * w;
+        g.fillStyle(this.tint(tones.crust), ea);
+        g.fillTriangle(lx, ly, tipX, tipY, rx, ry);
+        // The inside of the ear, in the form's bright tone — lit hotter once mastered.
+        const ix = bx + Math.cos(up) * size * 0.18, iy = by + Math.sin(up) * size * 0.18;
+        const itx = bx + Math.cos(up) * size * 0.78, ity = by + Math.sin(up) * size * 0.78;
+        g.fillStyle(this.tint(m ? tones.lit : tones.wound), 0.9 * ea);
+        g.fillTriangle(
+          ix + Math.cos(up - Math.PI / 2) * w * 0.5, iy + Math.sin(up - Math.PI / 2) * w * 0.5,
+          itx, ity,
+          ix + Math.cos(up + Math.PI / 2) * w * 0.5, iy + Math.sin(up + Math.PI / 2) * w * 0.5,
+        );
+        if (m) {
+          g.lineStyle(1.4, this.tint(HUNT.bone), 0.9 * ea);
+          g.lineBetween(lx, ly, tipX, tipY);
+          g.lineBetween(tipX, tipY, rx, ry);
+        }
       }
-    }
-
-    // ── Mastery ──
-    if (this.mastered) {
-      // Trophy fangs strung overhead, swinging on their own beat.
-      for (let i = 0; i < 3; i++) {
-        const p = this.t * 1.1 + (i / 3) * TAU;
-        const cx = x + Math.cos(p) * 26;
-        const cy = y - 34 + Math.sin(p) * 7;
-        g.fillStyle(this.tint(HUNT.bone), 0.95 * alpha);
-        huntGash(g, cx, cy, p + Math.PI / 2, 12, 3, 0.4, 0);
-        g.fillStyle(this.tint(tones.body), 0.55 * alpha);
-        g.fillCircle(cx, cy, 1.6);
-      }
-      // A skull he took, hanging off the belt and swinging with his stride.
-      const sway = Math.sin(this.t * 2.3) * 0.22;
-      const kx = x - Math.cos(this.facing) * 16 + Math.sin(sway) * 8;
-      const ky = y + 18 + Math.cos(sway) * 4;
-      g.lineStyle(1.4, this.tint(HUNT.hide), 0.8 * alpha);
-      g.lineBetween(x - Math.cos(this.facing) * 14, y + 6, kx, ky - 6);
-      drawWolfHead(
-        g, this.tint, { ...tones, crust: HUNT.bone, body: 0xd8c9a8, wound: HUNT.hide, lit: HUNT.rust, spark: HUNT.white },
-        kx, ky, Math.PI / 2, 9, 0.25, 0.9 * alpha, { mane: 0, solid: true, eyes: false },
-      );
     }
   }
 }

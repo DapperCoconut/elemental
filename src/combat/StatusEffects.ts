@@ -168,6 +168,18 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     read: (f) => f.castPunishUntil,
     write: (f, t) => { f.castPunishUntil = t; },
   },
+  {
+    id: 'stunned', name: 'Stunned', emoji: '💫', color: 0xffcc55, priority: 9, kind: 'timer',
+    description: 'Stunned. Cannot move or use abilities until it wears off.',
+    read: (f) => f.stunnedUntil,
+    write: (f, t) => { f.stunnedUntil = t; },
+  },
+  {
+    id: 'out-of-tune', name: 'Out of Tune', emoji: '🎵', color: 0xb8304a, priority: 17.5, kind: 'timer',
+    description: 'Your timing is gone. Every ability has a 25% chance to misfire — the cooldown is spent and nothing happens. A Sound player can detonate it.',
+    read: (f) => f.outOfTuneUntil,
+    write: (f, t) => { f.outOfTuneUntil = t; },
+  },
 
   // ── Frost / void stacks ──────────────────────────────────────────
   {
@@ -229,6 +241,18 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     description: 'Panicking — stabs against you drain far less stealth.',
     read: (f) => f.panickedUntil,
     write: (f, t) => { f.panickedUntil = t; },
+  },
+  {
+    id: 'stalked', name: 'Stalked', emoji: '🫥', color: 0x6622aa, priority: 33.5, kind: 'timer',
+    description: 'Something has its hands on your back. You turn slowly, and everything you cast goes the way you are facing, not where you aim.',
+    read: (f) => f.stalkedUntil,
+    write: (f, t) => { f.stalkedUntil = t; },
+  },
+  {
+    id: 'despressed', name: 'Despress', emoji: '😞', color: 0x8877bb, priority: 33.6, kind: 'stack',
+    description: 'Each stack: 10% slower, and 10 points of your damage resistance stripped away (it never makes you take more than normal).',
+    read: (f) => f.activeDespressStacks(),
+    readUntil: (f) => f.despressUntil,
   },
   {
     id: 'intoxicated', name: 'Intoxicated', emoji: '🍺', color: 0xddaa33, priority: 34, kind: 'timer',
@@ -295,6 +319,35 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     description: 'Coated in oil. Fire damage will set the coating alight.',
     read: (f) => f.oilyUntil,
     write: (f, t) => { f.oilyUntil = t; },
+  },
+  {
+    id: 'gold-heart', name: 'Heart of Gold', emoji: '💛', color: 0xf0c33c, priority: 46.2, kind: 'timer',
+    description: 'Your heart has turned to gold and cannot take the exercise. Every step you take fills it with stress; a full heart is a heart attack — 28 damage and a 1.4 second stun. Standing still lets it settle a little. Every 20 damage you take while it lasts pays the alchemist a gold coin.',
+    read: (f) => f.goldHeartUntil,
+    write: (f, t) => { f.goldHeartUntil = t; },
+  },
+  {
+    id: 'midas', name: 'Midas Curse', emoji: '👑', color: 0xffd34d, priority: 46.4, kind: 'timer',
+    description: 'You are turning to gold, and so is the floor you walk on — it stays gold, and the alchemist runs faster and earns on it. Every shot you fire drops as a gold coin, and anything you summon or build turns into a golden statue the moment it appears.',
+    read: (f) => f.midasUntil,
+    write: (f, t) => { f.midasUntil = t; },
+  },
+  {
+    id: 'harvest-corruption', name: 'Corruption', emoji: '🟣', color: 0x8a2fc9, priority: 46.6, kind: 'amount',
+    description: 'The scarecrow\'s rot is in you. The more of it there is, the more of every hit the Harvest heals off you, the harder its crows bite, and the higher the line under which its scythe simply kills you (10% of your health, up to 25% at full rot). It grows while you stand on its mold and fades slowly once you are off it.',
+    read: (f) => Math.round(f.harvestCorruption),
+    suffix: '%',
+  },
+  {
+    id: 'devotion-faith', name: 'Faith', emoji: '🙏', color: 0xf5e08a, priority: 46.7, kind: 'amount',
+    description: 'The priest\'s faith is in you, and nothing takes it out. At 200 you are converted on the spot — no shield or armour saves you. At 25% it fills on its own, 2 a second; at 50% your blows land 20% softer on the priest; at 75% you are drawn toward their holy water and every attack fills it 25% faster.',
+    read: (f) => Math.round(f.devotionFaith),
+  },
+  {
+    id: 'harvest-reaped', name: 'Reaped', emoji: '🌾', color: 0x5c2a7a, priority: 46.8, kind: 'amount',
+    description: 'Cut by Reaping Hour. Every cut is another permanent 15% more damage taken, compounded, for the rest of the match.',
+    read: (f) => (f.gluttonyIncomingMult > 1.001 ? Math.round((f.gluttonyIncomingMult - 1) * 100) : 0),
+    suffix: '%',
   },
   {
     id: 'fragile', name: 'Fragile', emoji: '📛', color: 0xdd3355, priority: 46, kind: 'amount',
@@ -373,6 +426,11 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     id: 'weak-hp', name: 'Weak HP', emoji: '🩶', color: 0x999999, priority: 104, kind: 'amount',
     description: 'Temporary bonus health that soaks damage but decays at 3/s.',
     read: (f) => Math.round(f.weakHp),
+  },
+  {
+    id: 'corrupt-hp', name: 'Corrupt HP', emoji: '🫀', color: 0x8a2fc9, priority: 104.5, kind: 'amount',
+    description: 'Rotten bonus health. Spent before your real health — and whoever chews through it catches the corruption.',
+    read: (f) => Math.round(f.corruptHp),
   },
   {
     id: 'absorbing', name: 'Absorbing', emoji: '🌫️', color: 0xaaccdd, priority: 105, kind: 'flag',
@@ -660,4 +718,30 @@ export function clearDebuffs(f: Fighter): number {
   if (f.darkVulnStacks > 0) { f.darkVulnStacks = 0; n++; }
   if (f.hopelessness > 0) { f.hopelessness = 0; n++; }
   return n;
+}
+
+/**
+ * Harvest's Consume: take every *transferable* positive effect off `victim` and put it on `thief`,
+ * and report what came across by name.
+ *
+ * "Transferable" is the same honesty rule {@link clearDebuffs} keeps: only the pools and counters
+ * that a fighter genuinely carries on its own body — shield charges and shield HP, weak HP, dodge
+ * and wind dodge. Kit-owned multiplier buffs (damage, speed, haste) are rewritten every frame by
+ * whoever grants them, so moving the number would be undone on the next tick; the kit copies
+ * those for itself instead.
+ *
+ * `thief` may be null: the pools are still stripped off the victim and simply go nowhere. That is
+ * the online replay of an opponent's bite on this machine — the victim's own sim is the one that
+ * owns its shields, and the thief's copy lives on the thief's machine.
+ */
+export function stealBuffs(victim: Fighter, thief: Fighter | null): string[] {
+  const took: string[] = [];
+  const give = (fn: (t: Fighter) => void): void => { if (thief) fn(thief); };
+  if (victim.shieldCharges > 0) { const v = victim.shieldCharges; give((t) => { t.shieldCharges += v; }); victim.shieldCharges = 0; took.push('Shield'); }
+  if (victim.shieldHp > 0) { const v = victim.shieldHp; give((t) => { t.shieldHp += v; }); victim.shieldHp = 0; took.push('Shield HP'); }
+  if (victim.weakHp > 0) { const v = victim.weakHp; give((t) => { t.weakHp += v; }); victim.weakHp = 0; took.push('Weak HP'); }
+  if (victim.corruptHp > 0) { const v = victim.corruptHp; give((t) => { t.corruptHp += v; }); victim.corruptHp = 0; took.push('Corrupt HP'); }
+  if (victim.dodgeChance > 0) { const v = victim.dodgeChance; give((t) => { t.dodgeChance += v; }); victim.dodgeChance = 0; took.push('Evasion'); }
+  if (victim.windDodge > 0) { const v = victim.windDodge; give((t) => { t.windDodge += v; }); victim.windDodge = 0; took.push('Wind Dodge'); }
+  return took;
 }

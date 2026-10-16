@@ -344,7 +344,7 @@ const conquest: ElementCodex = {
         + 'a 20-second cooldown — and emptying the bank inside those 8 seconds means double damage for '
         + 'the rest of them, with the hit that emptied it landing at the ordinary rate and everything '
         + 'after doubled. 30 Authority, or 25 with Discounted.',
-      cast: 'The bound key (E, R, F or Q), placed on the square you are standing on. 30 Authority, or 25 with Discounted. 0.6s cooldown.',
+      cast: 'The bound key (R, F or Q), placed on the square you are standing on. 30 Authority, or 25 with Discounted. 0.6s cooldown.',
       effects: [
         { tag: 'summon', label: 'The stall', detail: '50 HP, +100 with Fortress. It counts against the nine-building limit like anything else.' },
         { tag: 'resource', label: 'The income', detail: '1 Authority a second, on top of every town centre\'s 2.' },

@@ -311,7 +311,7 @@ export class Husk extends Fighter {
   }
 
   private get moveSpeed(): number {
-    let spd = this.speed * this.walkSpeedMult * this.purgeSpeedMult * this.effectSpeedMult;
+    let spd = this.speed * this.walkSpeedMult * this.purgeSpeedMult * this.effectSpeedMult * this.despressSlowMult();
     if (this.frostStacks > 0) spd *= Math.max(0.2, 1 - this.frostStacks * 0.1);
     return spd;
   }
@@ -392,6 +392,8 @@ export class Husk extends Fighter {
     });
     // Hallucinating husks whiff 20% of their bites (the lunge still plays).
     if (Date.now() < this.hallucinatingUntil && Math.random() < 0.2) return;
+    // Out of tune (Sound's Fermata): a quarter of bites misfire.
+    if (Date.now() < this.outOfTuneUntil && Math.random() < 0.25) { this.lastTuneMissAt = Date.now(); return; }
     this.onBite?.(Math.round(this.biteDamage * damageMult * this.effectDamageMult), target);
   }
 
@@ -408,7 +410,8 @@ export class Husk extends Fighter {
     if (time >= this.nextAttackAt) {
       this.nextAttackAt = time + SPITTER_SHOT_MS * this.attackIntervalMult;
       const aim = this.jitteredAim(target.x, target.y, time);
-      this.world?.fireShot(this, aim.x, aim.y, this.biteDamage);
+      if (Date.now() < this.outOfTuneUntil && Math.random() < 0.25) this.lastTuneMissAt = Date.now();
+      else this.world?.fireShot(this, aim.x, aim.y, this.biteDamage);
     }
     // Still bites if something walks right into it.
     this.tryBite(target, dist, time);

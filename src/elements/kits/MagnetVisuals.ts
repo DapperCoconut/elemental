@@ -3,7 +3,8 @@ import { AvatarSpec, ArmHold, ArmPose, BaseAvatar, ColorFn, FxBase, TAU, easeIn,
 
 /**
  * Shared drawing kit for everything Magnet renders: the polarised avatar (one north hand, one
- * south, a horseshoe worn as a crown, eyes), the field auras, and the one-shot effects every
+ * south, a horseshoe worn as a crown, eyes), the per-frame painters for coins, nails, spikes
+ * and scrap, and the one-shot effects every
  * ability throws off.
  *
  * The generic halves — the tween-backed animation runner and the character rig itself — live in
@@ -59,16 +60,22 @@ export const MAGNET = {
   /** Electromagnet perk — a rod left live by the compactor rather than flung. */
   live: 0x66ffff,
   spark: 0xccffff,
+  // Mecha Massacre: blue-black scrap plate, cobalt trim and a cyan visor.
+  gun: 0x161b26,
+  gunMid: 0x232c3d,
+  gunHi: 0x34425c,
+  cobalt: 0x1f5fbf,
+  neon: 0x4fb8ff,
+  visor: 0x8fe8ff,
+  oil: 0x07090e,
 } as const;
 
 export interface Pt { x: number; y: number }
 
-/** What a rod is made of. Drives its colour and how the metal is hatched. */
-export type RodKind = 'steel' | 'copper' | 'ancient' | 'ancient-live';
 
 // ── Path helpers ──────────────────────────────────────────────────────────
 
-function fillPts(g: Phaser.GameObjects.Graphics, pts: Pt[]): void {
+export function fillPts(g: Phaser.GameObjects.Graphics, pts: Pt[]): void {
   if (pts.length < 3) return;
   g.beginPath();
   g.moveTo(pts[0].x, pts[0].y);
@@ -77,7 +84,7 @@ function fillPts(g: Phaser.GameObjects.Graphics, pts: Pt[]): void {
   g.fillPath();
 }
 
-function strokePts(g: Phaser.GameObjects.Graphics, pts: Pt[], close = false): void {
+export function strokePts(g: Phaser.GameObjects.Graphics, pts: Pt[], close = false): void {
   if (pts.length < 2) return;
   g.beginPath();
   g.moveTo(pts[0].x, pts[0].y);
@@ -168,16 +175,6 @@ export function ironFilings(
   }
 }
 
-/** The colour a rod shows, from what it is made of and what has been done to it. */
-export function rodColor(kind: RodKind, bouncing: boolean, permBonus: number): number {
-  if (kind === 'copper') return MAGNET.copper;
-  if (kind === 'ancient') return MAGNET.bronze;
-  if (kind === 'ancient-live') return MAGNET.amber;
-  if (bouncing && permBonus > 0) return MAGNET.blue;
-  if (bouncing) return MAGNET.hot;
-  if (permBonus > 0) return MAGNET.ember;
-  return MAGNET.iron;
-}
 
 /**
  * A bar of metal: a capsule with a lit top face, a hatched shadow along the bottom, and a
@@ -262,22 +259,27 @@ export function horseshoe(
   const legW = s * 0.34;
   const gap = s * 0.36;
 
-  // The yoke: a bent bar, drawn as an arc band across the top.
-  g.lineStyle(legW, tint(MAGNET.dark), alpha);
-  g.beginPath();
+  // The yoke: a bent bar, drawn as an arc band across the top — a dark outline under polished
+  // iron, so it separates from both a dark floor and the crimson body.
   const arcSegs = 12;
-  for (let i = 0; i <= arcSegs; i++) {
-    const a = Math.PI + (i / arcSegs) * Math.PI;
-    // sin runs 0 → -1 → 0 across this half-turn, so the yoke arches *up* over the legs.
-    const p = at(Math.cos(a) * (gap + legW * 0.5), Math.sin(a) * s * 0.62 - s * 0.1);
-    if (i === 0) g.moveTo(p.x, p.y); else g.lineTo(p.x, p.y);
+  for (const [w, col] of [[legW + 2.4, MAGNET.shadow], [legW, MAGNET.iron]] as const) {
+    g.lineStyle(w, tint(col), alpha);
+    g.beginPath();
+    for (let i = 0; i <= arcSegs; i++) {
+      const a = Math.PI + (i / arcSegs) * Math.PI;
+      // sin runs 0 → -1 → 0 across this half-turn, so the yoke arches *up* over the legs.
+      const p = at(Math.cos(a) * (gap + legW * 0.5), Math.sin(a) * s * 0.62 - s * 0.1);
+      if (i === 0) g.moveTo(p.x, p.y); else g.lineTo(p.x, p.y);
+    }
+    g.strokePath();
   }
-  g.strokePath();
 
   // Legs, coloured by pole.
   for (const [dir, col] of [[-1, MAGNET.red], [1, MAGNET.blue]] as const) {
     const lx = dir * (gap + legW * 0.5);
-    g.fillStyle(tint(MAGNET.dark), alpha);
+    g.fillStyle(tint(MAGNET.shadow), alpha);
+    fillPts(g, [at(lx - legW / 2 - 1.2, -s * 0.1), at(lx + legW / 2 + 1.2, -s * 0.1), at(lx + legW / 2 + 1.2, s * 0.5 + 1.2), at(lx - legW / 2 - 1.2, s * 0.5 + 1.2)]);
+    g.fillStyle(tint(MAGNET.iron), alpha);
     fillPts(g, [at(lx - legW / 2, -s * 0.1), at(lx + legW / 2, -s * 0.1), at(lx + legW / 2, s * 0.5), at(lx - legW / 2, s * 0.5)]);
     g.fillStyle(tint(col), alpha);
     fillPts(g, [at(lx - legW / 2, s * 0.16), at(lx + legW / 2, s * 0.16), at(lx + legW / 2, s * 0.5), at(lx - legW / 2, s * 0.5)]);
@@ -326,7 +328,7 @@ export class MagnetFx extends FxBase {
 
   /**
    * A pulse: field lines springing outward in a rosette, with filings kicked up along them.
-   * Every mag-pulse, repulse and shockwave in the element is one of these — a plain expanding
+   * Every pulse and shockwave in the element is one of these — a plain expanding
    * circle is the shape this element must never use.
    */
   pulse(
@@ -474,347 +476,349 @@ export class MagnetFx extends FxBase {
     this.sparks(x2, y2, 5, Math.atan2(y2 - y1, x2 - x1) + Math.PI, depth + 1, color);
   }
 
-  // ── Per-frame painters ──────────────────────────────────────────────────
-  // Drawn into a Graphics the caller already owns, because these ride on live gameplay state:
-  // a rod's velocity, an orb's remaining HP, how far a compactor plate has travelled.
+
+  // ── Revamp one-shots ────────────────────────────────────────────────────
 
   /**
-   * A rod in the world: a machined bar of metal turned along its heading, with motion smear
-   * behind it once it is really moving and a field halo while it is being flung.
+   * Repulse: a fan of field lines thrown outward across a cone in front of the caster, with a
+   * pressure front riding its far edge and filings blown off it. The cone is drawn at its real
+   * size — what is inside the fan is what got pushed.
    */
-  static drawRod(
-    g: Phaser.GameObjects.Graphics, tint: MagnetColorFn,
-    x: number, y: number, vx: number, vy: number,
-    kind: RodKind, bouncing: boolean, permBonus: number, isSword: boolean, t: number,
-    charged = false,
-  ): void {
-    const speed = Math.hypot(vx, vy);
-    const angle = speed > 8 ? Math.atan2(vy, vx) : 0;
-    // Electromagnet: a live rod reads cyan whatever it is made of — the charge is the story.
-    const color = charged ? MAGNET.live : rodColor(kind, bouncing, permBonus);
-    const len = isSword ? 30 : 22;
-    const thick = isSword ? 6 : 11;
-
-    // Smear: ghosts of the bar strung out behind it, longer the faster it travels.
-    if (speed > 60) {
-      const smear = Math.min(1, speed / 900);
-      for (let i = 3; i >= 1; i--) {
-        const back = i * 9 * smear;
-        metalBar(g, tint, x - Math.cos(angle) * back, y - Math.sin(angle) * back, angle,
-          len, thick * 0.8, color, 0.16 * smear * (1 - i * 0.2), false);
+  repulse(x: number, y: number, angle: number, radius: number, halfAngle: number, color: number, depth = 8): void {
+    const lines = 9;
+    const front = (g: Phaser.GameObjects.Graphics, r: number): void => {
+      const steps = 18;
+      g.beginPath();
+      for (let i = 0; i <= steps; i++) {
+        const a = angle - halfAngle + (i / steps) * halfAngle * 2;
+        const px = x + Math.cos(a) * r, py = y + Math.sin(a) * r;
+        if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
       }
-    }
-
-    if (isSword) {
-      // Blade perk: a tapered blade with a lit edge and a crossguard instead of a bar.
-      const cos = Math.cos(angle), sin = Math.sin(angle);
-      const at = (lx: number, ly: number): Pt => ({ x: x + lx * cos - ly * sin, y: y + lx * sin + ly * cos });
-      g.fillStyle(tint(MAGNET.shadow), 0.4);
-      g.fillEllipse(x, y + 5, len, 6);
-      g.fillStyle(tint(color), 1);
-      fillPts(g, [at(-len * 0.5, -3), at(len * 0.36, -3), at(len * 0.5, 0), at(len * 0.36, 3), at(-len * 0.5, 3)]);
-      g.fillStyle(tint(MAGNET.chrome), 0.8);
-      fillPts(g, [at(-len * 0.44, -2.4), at(len * 0.34, -1.6), at(len * 0.34, -0.4), at(-len * 0.44, -0.6)]);
-      g.fillStyle(tint(MAGNET.dark), 1);
-      fillPts(g, [at(-len * 0.5, -6), at(-len * 0.42, -6), at(-len * 0.42, 6), at(-len * 0.5, 6)]);
-    } else {
-      metalBar(g, tint, x, y, angle, len, thick, color, 1);
-    }
-
-    // Electromagnet: the charge sitting on it — a soft halo, a tight field, and forks of
-    // current jumping off the ends. Drawn over the bar so it never looks merely tinted.
-    if (charged) {
-      g.fillStyle(tint(MAGNET.live), 0.14 + 0.08 * Math.sin(t * 8));
-      g.fillCircle(x, y, 22 + Math.sin(t * 8) * 3);
-      for (let i = 0; i < 2; i++) {
-        const p = (t * 2.4 + i / 2) % 1;
-        const r = 10 + p * 18;
-        g.fillStyle(tint(MAGNET.live), 0.5 * (1 - p));
-        fieldArc(g, x - r, y, x + r, y, r * 0.7, 2.4, 12);
-        fieldArc(g, x - r, y, x + r, y, -r * 0.7, 2.4, 12);
-      }
-      // Two forks, one off each end, redrawn every frame so they never look static.
-      for (const end of [-1, 1]) {
-        const ex = x + Math.cos(angle) * len * 0.5 * end;
-        const ey = y + Math.sin(angle) * len * 0.5 * end;
-        const a0 = angle + end * (0.9 + Math.sin(t * 11 + end) * 0.7);
-        g.lineStyle(1.8, tint(MAGNET.spark), 0.5 + 0.4 * Math.sin(t * 17 + end * 2));
-        g.beginPath();
-        g.moveTo(ex, ey);
-        g.lineTo(ex + Math.cos(a0) * 7, ey + Math.sin(a0) * 7);
-        g.lineTo(ex + Math.cos(a0 + 0.8) * 12, ey + Math.sin(a0 + 0.8) * 12);
-        g.strokePath();
-      }
-    }
-
-    // A rod under power wears its field.
-    if (bouncing || kind === 'ancient-live') {
-      for (let i = 0; i < 2; i++) {
-        const p = (t * 1.6 + i / 2) % 1;
-        const r = 12 + p * 16;
-        g.fillStyle(tint(kind === 'ancient-live' ? MAGNET.amber : color), 0.6 * (1 - p));
-        fieldArc(g, x - r, y, x + r, y, r * 0.8, 3, 14);
-        fieldArc(g, x - r, y, x + r, y, -r * 0.8, 3, 14);
-      }
-    }
-  }
-
-  /** A nail in flight or buried in someone, with the pull line back to whoever owns it. */
-  static drawNail(
-    g: Phaser.GameObjects.Graphics, tint: MagnetColorFn,
-    x: number, y: number, angle: number, color: number, implanted: boolean,
-    ownerX: number, ownerY: number, t: number,
-  ): void {
-    if (implanted) {
-      // Buried: the shaft sunk in, plus the tether hauling the victim toward its owner.
-      fieldArcLayered(g, tint, x, y, ownerX, ownerY, 22 * Math.sin(t * 2), 2.6, color, 0.4);
-      ironNail(g, tint, x, y, Math.atan2(ownerY - y, ownerX - x) + Math.PI, 16, color, 1);
-      g.fillStyle(tint(color), 0.25 + 0.15 * Math.sin(t * 7));
-      g.fillCircle(x, y, 11);
-      return;
-    }
-    ironNail(g, tint, x, y, angle, 18, color, 1);
-    // Air behind it, so a thrown nail reads as travelling rather than drifting.
-    g.fillStyle(tint(color), 0.25);
-    fieldArc(g, x - Math.cos(angle) * 22, y - Math.sin(angle) * 22, x, y, 5, 4, 10);
-  }
-
-  /** One orbiting ball bearing, dented and dimmed as it soaks damage. */
-  static drawShieldOrb(
-    g: Phaser.GameObjects.Graphics, tint: MagnetColorFn,
-    x: number, y: number, hpRatio: number, t: number, alpha = 1,
-  ): void {
-    const r = 5 + hpRatio * 3;
-    g.fillStyle(tint(MAGNET.azure), alpha * 0.25);
-    g.fillCircle(x, y, r * 2);
-    g.fillStyle(tint(MAGNET.dark), alpha);
-    g.fillCircle(x, y, r);
-    g.fillStyle(tint(MAGNET.azure), alpha);
-    g.fillCircle(x, y, r * 0.85);
-    // Specular highlight — a ball bearing is the shiniest thing in this element.
-    g.fillStyle(tint(MAGNET.sky), alpha * 0.9);
-    g.fillCircle(x - r * 0.32, y - r * 0.36, r * 0.34);
-    g.fillStyle(tint(MAGNET.white), alpha);
-    g.fillCircle(x - r * 0.38, y - r * 0.42, r * 0.16);
-    // A damaged orb crackles.
-    if (hpRatio < 0.6) {
-      g.lineStyle(1, tint(MAGNET.white), alpha * (0.4 + 0.4 * Math.sin(t * 14)));
-      g.strokeCircle(x, y, r + 2);
-    }
-  }
-
-  /** The compactor core: a plated drum with a warning light and the field it is winding up. */
-  static drawCompactor(
-    g: Phaser.GameObjects.Graphics, tint: MagnetColorFn,
-    x: number, y: number, charge: number, t: number, alpha = 1,
-  ): void {
-    // The suction field dragging everything in, tighter the closer it is to firing.
-    for (let i = 0; i < 6; i++) {
-      const a = t * 0.8 + (i / 6) * TAU;
-      const p = 1 - ((t * 0.9 + i / 6) % 1);
-      const r = 40 + p * 130;
-      g.fillStyle(tint(MAGNET.rose), alpha * 0.5 * (1 - p) * (0.4 + charge * 0.6));
-      fieldArc(g, x + Math.cos(a) * r, y + Math.sin(a) * r, x, y, r * 0.3, 5, 14);
-    }
-
-    g.fillStyle(tint(MAGNET.shadow), alpha * 0.5);
-    g.fillEllipse(x, y + 18, 52, 14);
-    g.fillStyle(tint(MAGNET.dark), alpha);
-    g.fillCircle(x, y, 22);
-    g.fillStyle(tint(MAGNET.plate), alpha);
-    g.fillCircle(x, y, 18);
-    // Hazard wedges around the drum.
-    for (let i = 0; i < 6; i++) {
-      const a0 = t * 0.5 + (i / 6) * TAU;
-      g.fillStyle(tint(i % 2 === 0 ? MAGNET.amber : MAGNET.dark), alpha * 0.9);
+      g.strokePath();
+    };
+    this.anim(depth, 340, (g, t) => {
+      const e = easeOut(t);
+      const fade = 1 - easeIn(t);
+      const r = radius * e;
+      g.fillStyle(this.tint(color), 0.12 * fade);
       g.beginPath();
       g.moveTo(x, y);
-      g.arc(x, y, 18, a0, a0 + TAU / 12, false);
+      g.arc(x, y, r, angle - halfAngle, angle + halfAngle, false);
       g.closePath();
       g.fillPath();
-    }
-    g.fillStyle(tint(MAGNET.plateHi), alpha);
-    g.fillCircle(x, y, 10);
-    // Warning light, faster the closer it is to slamming.
-    g.fillStyle(tint(MAGNET.red), alpha * (0.4 + 0.6 * Math.abs(Math.sin(t * (4 + charge * 16)))));
-    g.fillCircle(x, y, 6);
-    g.lineStyle(2.5, tint(MAGNET.plateHi), alpha);
-    g.strokeCircle(x, y, 22);
+      for (let i = 0; i < lines; i++) {
+        const a = angle - halfAngle + (i / (lines - 1)) * halfAngle * 2;
+        fieldArcLayered(g, this.tint,
+          x + Math.cos(a) * 14, y + Math.sin(a) * 14, x + Math.cos(a) * r, y + Math.sin(a) * r,
+          (i % 2 === 0 ? 1 : -1) * r * 0.08, 4.5 * (1 - t * 0.5), color, 0.8 * fade);
+      }
+      g.lineStyle(10 * (1 - t) + 2, this.tint(color), 0.35 * fade);
+      front(g, r);
+      g.lineStyle(4 * (1 - t) + 1, this.tint(MAGNET.white), 0.75 * fade);
+      front(g, r);
+      ironFilings(g, this.tint, x + Math.cos(angle) * r * 0.7, y + Math.sin(angle) * r * 0.7,
+        r * 0.45, 10, x, y, MAGNET.steel, 0.7 * fade, t * 3);
+    });
   }
 
-  /** One compactor plate: a hazard-striped ram face on a hydraulic arm. */
-  static drawCompactorWall(
-    g: Phaser.GameObjects.Graphics, tint: MagnetColorFn,
-    x: number, y: number, halfH: number, facing: 1 | -1, alpha = 1,
-  ): void {
-    const w = 20;
-    // Arm running back off screen.
-    g.fillStyle(tint(MAGNET.dark), alpha);
-    g.fillRect(x - facing * 90 - w * 0.2, y - 7, 90, 14);
-    g.fillStyle(tint(MAGNET.plate), alpha * 0.9);
-    g.fillRect(x - facing * 90 - w * 0.2, y - 4, 90, 5);
-
-    // Ram face.
-    g.fillStyle(tint(MAGNET.dark), alpha);
-    g.fillRect(x - w / 2 - 2, y - halfH - 2, w + 4, halfH * 2 + 4);
-    g.fillStyle(tint(MAGNET.plate), alpha);
-    g.fillRect(x - w / 2, y - halfH, w, halfH * 2);
-    // Hazard stripes.
-    for (let i = 0; i < 8; i++) {
-      const sy = y - halfH + (i / 8) * halfH * 2;
-      g.fillStyle(tint(i % 2 === 0 ? MAGNET.amber : MAGNET.dark), alpha * 0.8);
-      g.fillRect(x - w / 2, sy, w, halfH * 0.13);
-    }
-    // Lit leading edge.
-    g.fillStyle(tint(MAGNET.plateHi), alpha);
-    g.fillRect(x + facing * (w / 2 - 3), y - halfH, 3, halfH * 2);
-    g.lineStyle(2, tint(MAGNET.plateHi), alpha * 0.9);
-    g.strokeRect(x - w / 2, y - halfH, w, halfH * 2);
-  }
-
-  /**
-   * The Mag-Lev board: a deck riding on a cushion of field lines, tilting with the rider's
-   * heading. The cushion is the whole point — a board without a visible gap is just a plank.
-   */
-  static drawMagLevBoard(
-    gg: Phaser.GameObjects.Graphics, tint: MagnetColorFn,
-    x: number, y: number, lean: number, t: number, alpha = 1,
-  ): void {
-    const cos = Math.cos(lean), sin = Math.sin(lean);
-    const at = (lx: number, ly: number): Pt => ({ x: x + lx * cos - ly * sin, y: y + lx * sin + ly * cos });
-
-    // The cushion: field lines arcing between the deck and the floor.
-    for (let i = 0; i < 4; i++) {
-      const p = (t * 1.8 + i / 4) % 1;
-      const ox = -18 + i * 12;
-      gg.fillStyle(tint(MAGNET.lilac), alpha * 0.75 * (1 - p));
-      fieldArc(gg, x + ox - 6, y + 6, x + ox + 6, y + 6 + 10 * p, 7, 3, 10);
-    }
-    gg.fillStyle(tint(MAGNET.violet), alpha * 0.25);
-    gg.fillEllipse(x, y + 12, 52, 12);
-
-    // Deck: a rounded plank with a lit rail and two field emitters underneath.
-    gg.fillStyle(tint(MAGNET.violet), alpha);
-    fillPts(gg, [at(-22, -4), at(22, -4), at(24, 2), at(-24, 2)]);
-    gg.fillStyle(tint(MAGNET.lilac), alpha);
-    fillPts(gg, [at(-22, -4), at(22, -4), at(22, -1.6), at(-22, -1.6)]);
-    for (const ox of [-13, 13]) {
-      const p = at(ox, 3);
-      gg.fillStyle(tint(MAGNET.sky), alpha * (0.6 + 0.4 * Math.sin(t * 9 + ox)));
-      gg.fillCircle(p.x, p.y, 3);
-    }
-  }
-
-  /** A buried ancient rod, showing only as a faint disturbance until a pulse finds it. */
-  static drawBuriedRod(
-    g: Phaser.GameObjects.Graphics, tint: MagnetColorFn,
-    x: number, y: number, t: number,
-  ): void {
-    const pulse = 0.16 + 0.1 * Math.sin(t * 2);
-    g.fillStyle(tint(MAGNET.bronze), pulse * 0.5);
-    g.fillEllipse(x, y, 26, 14);
-    ironFilings(g, tint, x, y, 15, 7, x, y, MAGNET.bronzeHi, pulse, 0.9);
+  /** Steel Spike landing: a crater of radial cracks left on the floor under a blown-out ring. */
+  slam(x: number, y: number, radius: number, color: number, depth = 7): void {
+    const cracks = Array.from({ length: 9 }, (_, i) => ({
+      a: (i / 9) * TAU + Math.random() * 0.4,
+      l: radius * (0.55 + Math.random() * 0.45),
+      k: (Math.random() - 0.5) * 0.5,
+    }));
+    this.anim(2, 1600, (g, t) => {
+      const fade = t < 0.1 ? 1 : 1 - (t - 0.1) / 0.9;
+      g.fillStyle(this.tint(MAGNET.shadow), 0.35 * fade);
+      g.fillEllipse(x, y, radius * 0.9, radius * 0.5);
+      g.lineStyle(2, this.tint(MAGNET.shadow), 0.8 * fade);
+      for (const c of cracks) {
+        strokePts(g, [
+          { x, y },
+          { x: x + Math.cos(c.a + c.k) * c.l * 0.5, y: y + Math.sin(c.a + c.k) * c.l * 0.3 },
+          { x: x + Math.cos(c.a) * c.l, y: y + Math.sin(c.a) * c.l * 0.6 },
+        ]);
+      }
+    });
+    this.pulse(x, y, radius * 1.1, color, 420, depth, 12);
+    this.flash(x, y, radius * 0.4, depth + 2, color);
+    this.shrapnel(x, y, 8, { speed: radius * 2, size: 9, life: 520, depth: depth + 1, color: MAGNET.iron });
   }
 }
 
-// ── MagnetAura ────────────────────────────────────────────────────────────
-
-export type MagnetAuraStyle =
-  | 'magnetized'  // Magnetize: the victim wrapped in a field everything metal falls into
-  | 'protect'     // Protect: the orbit ring the bearings ride
-  | 'maglev'      // Mag-Lev: the violet hover field around the rider
-  | 'reflect';    // R+ Reflect Burst: a hard shell that throws shots back
+// ── Per-frame painters ────────────────────────────────────────────────────
+// Drawn into a Graphics the caller already owns, because they ride on live gameplay state: a
+// coin's height, a spike's countdown, how fast a shard is still tumbling.
 
 /**
- * A persistent field riding on a fighter. One Graphics, driven by whoever owns it.
- *
- * The styles differ in *shape*: magnetized converges, protect orbits, maglev lifts, reflect
- * encloses. Several can be up at once, so they must stay separable.
+ * A coin in the air. `z` is its height above the floor point `(x, y)`: the shadow stays on the
+ * floor and shrinks as the coin climbs, which is the only thing that sells a top-down toss. A
+ * held coin stops dead in a blue cradle of field lines.
  */
-export class MagnetAura {
-  private g: Phaser.GameObjects.Graphics;
-  private t = 0;
-  private intensity = 1;
-
-  constructor(
-    scene: Phaser.Scene,
-    private tint: MagnetColorFn,
-    private style: MagnetAuraStyle,
-    private radius: number,
-    depth = 3,
-  ) {
-    this.g = scene.add.graphics().setDepth(depth);
-  }
-
-  /** Usually the remaining fraction of the effect, so a field visibly runs down. */
-  setIntensity(v: number): void { this.intensity = v; }
-
-  update(delta: number, x: number, y: number, alpha = 1): void {
-    if (!this.g.active) return;
-    this.t += delta / 1000;
-    const g = this.g;
-    g.clear();
-    if (alpha <= 0.02) return;
-    const k = Phaser.Math.Clamp(this.intensity, 0, 1);
-    const r = this.radius;
-
-    switch (this.style) {
-      case 'magnetized': {
-        // Field lines closing on the victim, with filings dragged in along them.
-        for (let i = 0; i < 8; i++) {
-          const a = this.t * 0.6 + (i / 8) * TAU;
-          const p = (this.t * 0.7 + i / 8) % 1;
-          const d = r * (1 - p * 0.55);
-          g.fillStyle(this.tint(i % 2 === 0 ? MAGNET.rose : MAGNET.red), 0.7 * alpha * k * (1 - p * 0.6));
-          fieldArc(g, x + Math.cos(a) * d, y + Math.sin(a) * d, x, y, d * 0.28, 4.5, 14);
-        }
-        ironFilings(g, this.tint, x, y, r * 0.75, 14, x, y, MAGNET.steel, 0.6 * alpha * k, this.t * 0.4);
-        g.lineStyle(2, this.tint(MAGNET.rose), (0.35 + 0.25 * Math.sin(this.t * 5)) * alpha * k);
-        g.strokeCircle(x, y, r);
-        break;
-      }
-      case 'protect': {
-        // The orbit the bearings ride, marked so the ring reads even between the orbs.
-        g.fillStyle(this.tint(MAGNET.azure), 0.08 * alpha);
-        g.fillCircle(x, y, r);
-        g.lineStyle(1.4, this.tint(MAGNET.sky), 0.4 * alpha);
-        g.strokeCircle(x, y, r);
-        for (let i = 0; i < 6; i++) {
-          const a = -this.t * 0.9 + (i / 6) * TAU;
-          g.fillStyle(this.tint(MAGNET.azure), 0.5 * alpha);
-          fieldArc(g, x + Math.cos(a) * r, y + Math.sin(a) * r,
-            x + Math.cos(a + 0.9) * r, y + Math.sin(a + 0.9) * r, r * 0.16, 3, 12);
-        }
-        break;
-      }
-      case 'maglev': {
-        // Lift: the rider held off the floor by a cushion that pushes back.
-        g.fillStyle(this.tint(MAGNET.violet), 0.16 * alpha);
-        g.fillEllipse(x, y + 22, r * 2.2, r * 0.7);
-        for (let i = 0; i < 3; i++) {
-          const p = (this.t * 2 + i / 3) % 1;
-          g.fillStyle(this.tint(MAGNET.lilac), 0.7 * alpha * (1 - p));
-          fieldArc(g, x - r * 0.8, y + 16 + p * 8, x + r * 0.8, y + 16 + p * 8, 9, 3.4, 12);
-        }
-        break;
-      }
-      case 'reflect': {
-        // A hard shell: overlapping arcs forming a dome that shots bounce off.
-        for (let i = 0; i < 10; i++) {
-          const a = (i / 10) * TAU + this.t * 0.5;
-          const b = a + TAU / 8;
-          g.fillStyle(this.tint(i % 2 === 0 ? MAGNET.sky : MAGNET.azure), 0.55 * alpha * k);
-          fieldArc(g, x + Math.cos(a) * r, y + Math.sin(a) * r,
-            x + Math.cos(b) * r, y + Math.sin(b) * r, r * 0.13, 6, 12);
-        }
-        g.fillStyle(this.tint(MAGNET.azure), 0.1 * alpha * k);
-        g.fillCircle(x, y, r);
-        break;
-      }
+export function drawCoin(
+  g: Phaser.GameObjects.Graphics, tint: MagnetColorFn,
+  x: number, y: number, z: number, spin: number, hover: boolean, t: number, alpha = 1,
+): void {
+  const lift = Phaser.Math.Clamp(z / 130, 0, 1);
+  g.fillStyle(tint(MAGNET.shadow), alpha * (0.45 - lift * 0.25));
+  g.fillEllipse(x, y + 2, 14 - lift * 6, 5 - lift * 2);
+  const cy = y - z;
+  if (hover) {
+    g.fillStyle(tint(MAGNET.blue), alpha * (0.2 + 0.08 * Math.sin(t * 6)));
+    g.fillCircle(x, cy, 16);
+    for (let i = 0; i < 3; i++) {
+      const a = t * 1.6 + (i / 3) * TAU;
+      g.fillStyle(tint(MAGNET.sky), alpha * 0.75);
+      fieldArc(g, x + Math.cos(a) * 16, cy + Math.sin(a) * 16,
+        x + Math.cos(a + 1.4) * 16, cy + Math.sin(a + 1.4) * 16, 5, 2.4, 10);
     }
+    // A thin line down to the shadow, so a held coin still says where it is over the floor.
+    g.lineStyle(1, tint(MAGNET.sky), alpha * 0.25);
+    g.lineBetween(x, cy + 8, x, y);
   }
+  const c = Math.cos(spin);
+  const w = Math.max(1.6, 7 * Math.abs(c));
+  g.fillStyle(tint(MAGNET.bronze), alpha);
+  g.fillEllipse(x, cy, w * 2 + 2, 16);
+  g.fillStyle(tint(c >= 0 ? MAGNET.gold : MAGNET.amber), alpha);
+  g.fillEllipse(x, cy, w * 2, 14);
+  if (w > 3) {
+    g.lineStyle(1.2, tint(MAGNET.bronzeHi), alpha * 0.9);
+    g.strokeEllipse(x, cy, w * 1.3, 9);
+    g.fillStyle(tint(MAGNET.goldHi), alpha * 0.9);
+    g.fillEllipse(x - w * 0.35, cy - 3, w * 0.5, 3.2);
+  }
+  // A glint runs over the rim as it turns edge-on.
+  if (Math.abs(Math.sin(spin)) > 0.92) {
+    g.fillStyle(tint(MAGNET.white), alpha * 0.9);
+    g.fillCircle(x, cy - 6, 1.8);
+  }
+}
 
-  destroy(): void { this.g.destroy(); }
+/** A coin that Repulse has fired: edge-on, with a gold streak and a field wake behind it. */
+export function drawCoinShot(
+  g: Phaser.GameObjects.Graphics, tint: MagnetColorFn,
+  x: number, y: number, angle: number, t: number, alpha = 1,
+): void {
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  g.fillStyle(tint(MAGNET.gold), alpha * 0.28);
+  fieldArc(g, x - cos * 34, y - sin * 34, x, y, 0, 7, 10);
+  g.fillStyle(tint(MAGNET.sky), alpha * 0.4);
+  fieldArc(g, x - cos * 24, y - sin * 24, x, y, 4, 3, 10);
+  metalBar(g, tint, x, y, angle + Math.PI / 2, 12, 4, MAGNET.gold, alpha, false);
+  g.fillStyle(tint(MAGNET.white), alpha * (0.6 + 0.4 * Math.sin(t * 40)));
+  g.fillCircle(x, y, 1.6);
+}
+
+/**
+ * A nail. In flight it is point-first; buried, it juts out of the victim with a faint field line
+ * back to its owner (the tell that it can be pushed or ripped out); pulled out, it flies home
+ * head-first in a blue halo — the colour that says "Repulse me now".
+ */
+export function drawNail(
+  g: Phaser.GameObjects.Graphics, tint: MagnetColorFn,
+  x: number, y: number, angle: number, state: 'fly' | 'stuck' | 'return',
+  ownerX: number, ownerY: number, t: number, alpha = 1,
+): void {
+  if (state === 'stuck') {
+    fieldArcLayered(g, tint, x, y, ownerX, ownerY, 22 * Math.sin(t * 2), 2.2, MAGNET.red, 0.28 * alpha);
+    g.fillStyle(tint(MAGNET.rose), alpha * (0.22 + 0.14 * Math.sin(t * 7)));
+    g.fillCircle(x, y, 9);
+    ironNail(g, tint, x, y, angle, 16, MAGNET.steel, alpha);
+    return;
+  }
+  if (state === 'return') {
+    g.fillStyle(tint(MAGNET.blue), alpha * (0.2 + 0.1 * Math.sin(t * 12)));
+    g.fillCircle(x, y, 14);
+    g.fillStyle(tint(MAGNET.sky), alpha * 0.45);
+    fieldArc(g, x - Math.cos(angle) * 28, y - Math.sin(angle) * 28, x, y, 4, 4, 10);
+    ironNail(g, tint, x, y, angle + Math.PI, 18, MAGNET.chrome, alpha);
+    return;
+  }
+  g.fillStyle(tint(MAGNET.steel), alpha * 0.25);
+  fieldArc(g, x - Math.cos(angle) * 24, y - Math.sin(angle) * 24, x, y, 5, 4, 10);
+  ironNail(g, tint, x, y, angle, 18, MAGNET.steel, alpha);
+}
+
+/**
+ * The Steel Spike itself, standing upright: a tapered machined rod with a pommel cap and a blue
+ * pole stud. `lift` is the height of its point above the floor point `(x, y)` — negative once
+ * it has been driven in.
+ */
+export function drawSpike(
+  g: Phaser.GameObjects.Graphics, tint: MagnetColorFn,
+  x: number, y: number, lift: number, t: number, glow: number, alpha = 1,
+): void {
+  const len = 56, w = 6;
+  const tipY = y - lift;
+  const topY = tipY - len;
+  if (glow > 0) {
+    g.fillStyle(tint(MAGNET.sky), alpha * glow * (0.22 + 0.1 * Math.sin(t * 5)));
+    g.fillCircle(x, topY + len * 0.3, 18);
+  }
+  g.fillStyle(tint(MAGNET.shadow), alpha);
+  fillPts(g, [{ x: x - w - 1.5, y: topY - 1 }, { x: x + w + 1.5, y: topY - 1 }, { x: x + 1.5, y: tipY + 2 }, { x: x - 1.5, y: tipY + 2 }]);
+  g.fillStyle(tint(MAGNET.iron), alpha);
+  fillPts(g, [{ x: x - w, y: topY }, { x: x + w, y: topY }, { x, y: tipY }]);
+  g.fillStyle(tint(MAGNET.chrome), alpha * 0.6);
+  fillPts(g, [{ x: x - w, y: topY }, { x: x - w * 0.2, y: topY }, { x, y: tipY }]);
+  g.lineStyle(1.2, tint(MAGNET.dark), alpha * 0.7);
+  for (const k of [0.2, 0.38]) {
+    const yy = topY + len * k;
+    const hw = w * (1 - k);
+    g.lineBetween(x - hw, yy, x + hw, yy);
+  }
+  g.fillStyle(tint(MAGNET.dark), alpha);
+  g.fillRect(x - w - 3, topY - 6, (w + 3) * 2, 7);
+  g.fillStyle(tint(MAGNET.plateHi), alpha);
+  g.fillRect(x - w - 3, topY - 6, (w + 3) * 2, 2.5);
+  g.fillStyle(tint(MAGNET.blue), alpha * (0.7 + 0.3 * Math.sin(t * 6)));
+  g.fillCircle(x, topY - 3, 3);
+}
+
+/**
+ * A spike hanging over its drop point. The shadow is the warning: a speck that swells to the
+ * spike's full footprint over the two seconds, inside a dashed ring marking the shockwave.
+ */
+export function drawSpikeHover(
+  g: Phaser.GameObjects.Graphics, tint: MagnetColorFn,
+  x: number, y: number, p: number, radius: number, t: number, alpha = 1,
+): void {
+  const sw = 10 + p * 34;
+  g.fillStyle(tint(MAGNET.shadow), alpha * (0.2 + 0.45 * p));
+  g.fillEllipse(x, y, sw, sw * 0.42);
+  const segs = 24;
+  g.lineStyle(2, tint(MAGNET.sky), alpha * (0.15 + 0.5 * p));
+  for (let i = 0; i < segs; i += 2) {
+    const a0 = (i / segs) * TAU + t * 0.6;
+    g.beginPath();
+    g.arc(x, y, radius, a0, a0 + TAU / segs, false);
+    g.strokePath();
+  }
+  const lift = 150 - 40 * p + Math.sin(t * 4) * 3;
+  for (const s of [-1, 1]) {
+    g.fillStyle(tint(MAGNET.sky), alpha * 0.3);
+    fieldArc(g, x, y - lift - 50, x, y - 2, s * 14, 2.5, 14);
+  }
+  drawSpike(g, tint, x, y, lift, t, 0.6, alpha);
+}
+
+/** A spike driven into the floor. A pulsing ring while it can still be ridden (F again). */
+export function drawSpikePlanted(
+  g: Phaser.GameObjects.Graphics, tint: MagnetColorFn,
+  x: number, y: number, t: number, zipReady: boolean, life: number, alpha = 1,
+): void {
+  const a = alpha * (life < 0.15 ? 0.5 + 0.5 * Math.abs(Math.sin(t * 10)) : 1);
+  g.fillStyle(tint(MAGNET.shadow), a * 0.45);
+  g.fillEllipse(x, y + 2, 34, 12);
+  drawSpike(g, tint, x, y, -12, t, zipReady ? 1 : 0, a);
+  g.fillStyle(tint(MAGNET.dark), a);
+  g.fillEllipse(x, y, 20, 7);
+  g.fillStyle(tint(MAGNET.plate), a * 0.8);
+  for (const s of [-1, 1]) {
+    fillPts(g, [{ x: x + s * 4, y: y - 1 }, { x: x + s * 13, y: y - 5 }, { x: x + s * 11, y: y + 3 }]);
+  }
+  if (zipReady) {
+    const p = (t * 0.9) % 1;
+    const r = 30 + p * 26;
+    g.lineStyle(2, tint(MAGNET.sky), a * 0.6 * (1 - p));
+    g.strokeEllipse(x, y, r, r * 0.4);
+  }
+}
+
+/** A spike Repulse has launched: point-first along its heading, with a field wake behind it. */
+export function drawSpikeFlying(
+  g: Phaser.GameObjects.Graphics, tint: MagnetColorFn,
+  x: number, y: number, angle: number, alpha = 1,
+): void {
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  const at = (lx: number, ly: number): Pt => ({ x: x + lx * cos - ly * sin, y: y + lx * sin + ly * cos });
+  g.fillStyle(tint(MAGNET.sky), alpha * 0.3);
+  fieldArc(g, x - cos * 80, y - sin * 80, x, y, 0, 14, 12);
+  g.fillStyle(tint(MAGNET.white), alpha * 0.35);
+  fieldArc(g, x - cos * 50, y - sin * 50, x, y, 0, 5, 12);
+  g.fillStyle(tint(MAGNET.shadow), alpha);
+  fillPts(g, [at(-30, -7.5), at(30, 0), at(-30, 7.5)]);
+  g.fillStyle(tint(MAGNET.iron), alpha);
+  fillPts(g, [at(-29, -6), at(28, 0), at(-29, 6)]);
+  g.fillStyle(tint(MAGNET.chrome), alpha * 0.6);
+  fillPts(g, [at(-29, -6), at(28, 0), at(-29, -1)]);
+  g.fillStyle(tint(MAGNET.dark), alpha);
+  fillPts(g, [at(-35, -9), at(-29, -9), at(-29, 9), at(-35, 9)]);
+  const c = at(-32, 0);
+  g.fillStyle(tint(MAGNET.blue), alpha);
+  g.fillCircle(c.x, c.y, 2.6);
+}
+
+/**
+ * A shard of scrap: a torn five-cornered plate, jittered per `seed` so each one keeps its own
+ * silhouette. On the floor it lies in its shadow and glints now and then; in orbit it sits in a
+ * blue field and its torn edge lights up.
+ */
+export function drawScrap(
+  g: Phaser.GameObjects.Graphics, tint: MagnetColorFn,
+  x: number, y: number, angle: number, size: number, seed: number,
+  mode: 'fly' | 'ground' | 'orbit', t: number, alpha = 1,
+): void {
+  const pts: Pt[] = [];
+  for (let i = 0; i < 5; i++) {
+    const a = angle + (i / 5) * TAU;
+    const r = size * (0.55 + (((seed + i) * 0.618) % 1) * 0.55);
+    pts.push({ x: x + Math.cos(a) * r, y: y + Math.sin(a) * r * 0.85 });
+  }
+  if (mode === 'orbit') {
+    g.fillStyle(tint(MAGNET.blue), alpha * (0.2 + 0.1 * Math.sin(t * 6 + seed)));
+    g.fillCircle(x, y, size * 1.6);
+  } else if (mode === 'ground') {
+    g.fillStyle(tint(MAGNET.shadow), alpha * 0.35);
+    g.fillEllipse(x, y + size * 0.6, size * 2, size * 0.7);
+  }
+  g.fillStyle(tint(MAGNET.oil), alpha);
+  fillPts(g, pts.map((p) => ({ x: x + (p.x - x) * 1.2, y: y + (p.y - y) * 1.2 })));
+  g.fillStyle(tint(seed % 3 === 0 ? MAGNET.gunMid : MAGNET.gunHi), alpha);
+  fillPts(g, pts);
+  g.lineStyle(1.3, tint(mode === 'orbit' ? MAGNET.neon : MAGNET.plateHi), alpha * 0.9);
+  strokePts(g, [pts[0], pts[1], pts[2]]);
+  g.fillStyle(tint(MAGNET.plate), alpha);
+  g.fillCircle(x + Math.cos(angle) * size * 0.2, y + Math.sin(angle) * size * 0.2, Math.max(1, size * 0.16));
+  if (mode === 'ground' && Math.sin(t * 2.4 + seed * 3) > 0.96) {
+    g.fillStyle(tint(MAGNET.white), alpha);
+    g.fillCircle(pts[1].x, pts[1].y, 1.5);
+  }
+}
+
+/** The ring orbiting scrap rides on, marked so it reads even between shards. */
+export function drawOrbitRing(
+  g: Phaser.GameObjects.Graphics, tint: MagnetColorFn,
+  x: number, y: number, r: number, t: number, alpha = 1,
+): void {
+  g.lineStyle(1.2, tint(MAGNET.sky), 0.3 * alpha);
+  g.strokeCircle(x, y, r);
+  for (let i = 0; i < 4; i++) {
+    const a = -t * 1.2 + (i / 4) * TAU;
+    g.fillStyle(tint(MAGNET.azure), 0.4 * alpha);
+    fieldArc(g, x + Math.cos(a) * r, y + Math.sin(a) * r, x + Math.cos(a + 0.8) * r, y + Math.sin(a + 0.8) * r, r * 0.14, 2.6, 10);
+  }
+}
+
+/** Mecha Massacre's wind-up: a pile of scrap building up round the caster, and a closing ring. */
+export function drawGatherPile(
+  g: Phaser.GameObjects.Graphics, tint: MagnetColorFn,
+  x: number, y: number, p: number, t: number, alpha = 1,
+): void {
+  g.fillStyle(tint(MAGNET.blue), alpha * (0.12 + 0.18 * p));
+  g.fillCircle(x, y, 30 + p * 16);
+  const n = Math.floor(3 + p * 15);
+  for (let i = 0; i < n; i++) {
+    const a = i * 2.399 + t * (0.6 + (i % 3) * 0.2);
+    const r = 18 + ((i * 0.37) % 1) * (10 + p * 18);
+    drawScrap(g, tint, x + Math.cos(a) * r, y + Math.sin(a) * r * 0.8, a * 1.7, 4 + (i % 4), i, 'orbit', t, alpha * 0.95);
+  }
+  g.lineStyle(3, tint(MAGNET.neon), alpha * 0.85);
+  g.beginPath();
+  g.arc(x, y, 48, -Math.PI / 2, -Math.PI / 2 + p * TAU, false);
+  g.strokePath();
 }
 
 // ── MagnetAvatar ──────────────────────────────────────────────────────────
@@ -834,12 +838,15 @@ const MAGNET_AVATAR: AvatarSpec = {
 };
 
 /**
- * The magnet character rig: one north hand and one south hand, a pair of eyes, and a horseshoe
- * magnet turning over the crown with the field jumping its gap. Hands, eyes and gestures come
- * from BaseAvatar; what magnet adds is the polarity, the filings underfoot and the horseshoe.
+ * The magnet character rig: a plain crimson orb (the baked `elem-magnet` texture), one north
+ * hand and one south hand, a pair of eyes, and one accessory — the element's emblem, a
+ * **horseshoe magnet** crowning the head with the field jumping its gap.
  *
  * The two-tone hands are the whole idea. Every other element's rig has a matched pair; this one
  * is *polarised*, and that asymmetry is readable at a glance even before it casts anything.
+ *
+ * Mastery (Metal Detector) enhances what is there: a bigger horseshoe with an amber charge
+ * glowing behind it, amber eyes, and a wider corona with an amber rim on each hand.
  */
 export class MagnetAvatar extends BaseAvatar {
   private fx: MagnetFx;
@@ -856,9 +863,9 @@ export class MagnetAvatar extends BaseAvatar {
   }
 
   /**
-   * Mastery tell — Metal Detector, made visible: amber eyes, a wider corona and a gold rim on
-   * each hand, a bigger horseshoe, and a detector coil sweeping its ping ring around the body.
-   * Shape changes, not brighter tints — a tint alone vanishes at gameplay zoom.
+   * Mastery tell — Metal Detector: amber eyes, a wider corona and an amber rim on each hand,
+   * and (in `drawExtras`) a bigger, charged horseshoe. Shape changes, not just tints — a tint
+   * alone vanishes at gameplay zoom.
    */
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? MAGNET.amber : MAGNET.steel);
@@ -886,39 +893,29 @@ export class MagnetAvatar extends BaseAvatar {
     };
   }
 
-  /** Filings gathered underfoot, all pointing at whoever is standing on them. */
+  /** A soft under-glow in the owner's accent, amber once mastered. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
-    const k = this.intensity;
-    g.fillStyle(this.tint(this.accent), a * 0.14 * k);
-    g.fillEllipse(x, y + 7, 54 * k, 24 * k);
-    ironFilings(g, this.tint, x, y + 7, 26 * k, 12, x, y, MAGNET.iron, a * 0.75, 0.4);
+    const k = this.intensity * (this.mastered ? 1.15 : 1);
+    g.fillStyle(this.tint(this.mastered ? MAGNET.amber : this.accent), a * (this.mastered ? 0.2 : 0.14) * k);
+    g.fillCircle(x, y, 28 * k);
   }
 
   /**
-   * The crown: a horseshoe magnet hovering over the head, rocking gently, with the field jumping
-   * its poles. Rooted at y - 22 so it never covers the face, and drawn over the sprite so the
-   * red and blue legs read instead of only the dark yoke clearing the body.
+   * The crown: a horseshoe magnet sat over the head, rocking gently, with the field jumping its
+   * poles. Rooted low enough that the yoke clears the health bar and the legs stop above the eyes.
    */
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    const rootY = y - 26;
-    const size = (this.mastered ? 26 : 20) * this.intensity;
+    const m = this.mastered;
+    const size = (m ? 18 : 15) * this.intensity;
+    // Legs end just above the eyes whatever the size, so a bigger magnet grows upward.
+    const rootY = y - 13 - size * 0.5;
     const rock = Math.sin(this.t * 1.8) * 0.16;
-    horseshoe(g, this.tint, x, rootY, rock, size, a * 0.95, this.t);
-
-    // Mastery: the detector coil — a ring under the horseshoe with a ping sweeping round it.
-    if (this.mastered) {
-      g.lineStyle(2, this.tint(MAGNET.amber), alpha * 0.55);
-      g.strokeCircle(x, y, 30);
-      const ping = (this.t * 0.9) % 1;
-      const pa = -Math.PI / 2 + ping * TAU;
-      g.fillStyle(this.tint(MAGNET.goldHi), alpha * 0.95);
-      fieldArc(g, x + Math.cos(pa) * 30, y + Math.sin(pa) * 30,
-        x + Math.cos(pa + 0.7) * 30, y + Math.sin(pa + 0.7) * 30, 5, 5, 12);
-      for (let i = 0; i < 2; i++) {
-        const p = (this.t * 1.2 + i / 2) % 1;
-        g.lineStyle(1.6, this.tint(MAGNET.amber), alpha * 0.6 * (1 - p));
-        g.strokeCircle(x, y, 30 + p * 22);
-      }
+    if (m) {
+      // Charged: an amber glow behind the horseshoe, pulsing with the detector's ping.
+      g.fillStyle(this.tint(MAGNET.amber), alpha * (0.22 + 0.1 * Math.sin(this.t * 5)));
+      g.fillCircle(x, rootY - size * 0.08, size * 0.75);
     }
+    void a;
+    horseshoe(g, this.tint, x, rootY, rock, size, alpha, this.t);
   }
 }

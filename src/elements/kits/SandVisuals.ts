@@ -1069,8 +1069,13 @@ const SAND_AVATAR: AvatarSpec = {
 };
 
 /**
- * Sand himself: a body of packed dune with the wind still working on it, wearing a wide desert
- * hood and carrying the flintlock in whichever hand last fired.
+ * Sand himself: a plain orb of packed dune wearing a wide straw hat. The hat is the whole
+ * costume; the flintlock he fires lives in the ability art, not on the rig (`muzzle` still
+ * says where its shots leave the working hand). The golden orb's buff lights the hat band, and
+ * Tempered Temptation fuses the orb to one-hue glass — a state change, so it keeps its own body.
+ *
+ * Mastery enhances the hat rather than adding to it: a wider brim, a gold band, a stronger
+ * golden glow on the hands and warm gold eyes.
  *
  * The rig owns exactly one piece of state the rest of the game cares about — `elevation`. Every
  * altitude read in the element funnels through it: the body swells as he rises (near-field
@@ -1081,14 +1086,13 @@ const SAND_AVATAR: AvatarSpec = {
 export class SandAvatar extends BaseAvatar {
   /** Height above the floor, in the same units the kit's sim uses. */
   private elevation = 0;
-  /** 0–1, non-zero while the golden orb's buff is up — drives the shroud on the barrel. */
+  /** 0–1, non-zero while the golden orb's buff is up — lights the hat band. */
   private golden = 0;
-  /** Kicks to 1 on a shot and decays; walks the gun back along its axis. */
+  /** Kicks to 1 on a shot and decays; jolts the hat back off the aim. */
   private recoil = 0;
   /** 0–1, eased toward Tempered Temptation's glass body so the change of state is a transition. */
   private tempered = 0;
   private temperedWant = 0;
-  private seed = Math.random() * 999;
 
   constructor(scene: Phaser.Scene, tint: SandColorFn, depth = 6) {
     super(scene, tint, depth, SAND_AVATAR);
@@ -1129,9 +1133,10 @@ export class SandAvatar extends BaseAvatar {
   }
 
   protected applyMastery(on: boolean): void {
+    this.setEyeWhite(on ? SND.goldHot : SND.stoneWarmLit);
     this.forEachHandLayer(0, (glow) => {
       glow.setRadius(on ? 15 : 12);
-      glow.setAlpha(on ? 0.34 : 0.2);
+      glow.setFillStyle(this.tint(on ? SND.gold : SND.sand), on ? 0.34 : 0.2);
     });
   }
 
@@ -1145,10 +1150,13 @@ export class SandAvatar extends BaseAvatar {
    * rather than having to judge it.
    */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    void a;
     const drop = this.elevation * LIFT;
     const k = Math.min(1, this.elevation / 190);
 
+    if (this.mastered) {
+      g.fillStyle(this.tint(SND.gold), a * 0.16 * this.intensity);
+      g.fillCircle(x, y, 30 * this.intensity);
+    }
     g.fillStyle(this.tint(SND.shadow), alpha * (0.4 - k * 0.2));
     g.fillEllipse(x, y + 15 + drop, 40 - k * 16, 14 - k * 6);
 
@@ -1168,79 +1176,69 @@ export class SandAvatar extends BaseAvatar {
     }
   }
 
-  /** Packed dune for a torso, swelling as he climbs — or fused to glass while tempered. */
+  /**
+   * The same plain orb as the baked `elem-dune`, repainted here so it can swell as he climbs
+   * (near-field perspective — the top-down camera's only honest "closer") and fuse to one-hue
+   * glass while tempered.
+   */
   protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void a;
-    // Near-field swell: the top-down camera's only honest way to say "closer to it".
     const s = 1 + Math.min(0.3, this.elevation / 620);
-    const r = 18 * s;
-    const k = this.tempered;
-
-    g.fillStyle(this.tint(k > 0.5 ? SND.glassDeep : SND.dark), alpha);
-    g.fillCircle(x, y + 1, r);
-    g.fillStyle(this.tint(k > 0.5 ? SND.glass : SND.deep), alpha * (k > 0.5 ? 0.8 : 1));
-    g.fillCircle(x - r * 0.12, y - r * 0.1, r * 0.86);
-    g.fillStyle(this.tint(k > 0.5 ? SND.glassLit : SND.sand), alpha * 0.95);
-    g.fillCircle(x - r * 0.22, y - r * 0.24, r * 0.58);
-    // The wind is still working on him: grain lifting off the windward shoulder. Tempered, the
-    // loose grain is gone — that is the whole difference between sand and what sand becomes.
-    grains(g, this.tint, x, y, r * 0.9, 12, alpha * 0.55 * (1 - k),
-      { seed: this.seed, color: SND.stoneWarmLit, size: 1.5, drift: Math.sin(this.t * 2.3) * 2 });
-    if (k > 0.02) {
-      // Facets across the torso, catching the light as he turns.
-      for (let i = 0; i < 5; i++) {
-        const ang = this.facing + (i / 5 - 0.5) * 2.6;
-        g.fillStyle(this.tint(i % 2 ? SND.glassLit : SND.glassDeep), alpha * k * 0.3);
-        g.fillPoints([
-          new Phaser.Geom.Point(x, y),
-          new Phaser.Geom.Point(x + Math.cos(ang - 0.28) * r, y + Math.sin(ang - 0.28) * r),
-          new Phaser.Geom.Point(x + Math.cos(ang + 0.28) * r, y + Math.sin(ang + 0.28) * r),
-        ], true);
-      }
-    }
-    // Slip face: the sharp crest a real dune carries on its lee side.
-    g.lineStyle(1.8, this.tint(k > 0.5 ? SND.glassLit : SND.stoneWarmLit), alpha * (0.5 + k * 0.4));
+    const r = 22 * s;
+    const glass = this.tempered > 0.5;
+    const tone = glass
+      ? { rim: SND.glassDeep, shell: 0x3f8a90, body: 0x6cbfb8, mid: SND.glass, core: SND.glassLit, light: SND.glassLit }
+      : { rim: 0x6e5028, shell: SND.dark, body: SND.deep, mid: 0xd9b46c, core: SND.sand, light: SND.stoneWarmLit };
+    const bodyAlpha = alpha * (glass ? 0.92 : 1);
+    g.fillStyle(this.tint(tone.rim), bodyAlpha);
+    g.fillCircle(x, y, r);
+    g.fillStyle(this.tint(tone.shell), bodyAlpha);
+    g.fillCircle(x, y, r * 0.886);
+    g.fillStyle(this.tint(tone.body), bodyAlpha);
+    g.fillCircle(x, y + s, r * 0.727);
+    g.fillStyle(this.tint(tone.mid), bodyAlpha);
+    g.fillCircle(x, y + 2.5 * s, r * 0.545);
+    g.fillStyle(this.tint(tone.core), bodyAlpha * 0.85);
+    g.fillEllipse(x, y + 7 * s, 16 * s, 8 * s);
+    g.lineStyle(2.5 * s, this.tint(tone.light), bodyAlpha * 0.9);
+    g.strokeCircle(x, y, r * 0.955);
+    g.lineStyle(2 * s, this.tint(tone.light), bodyAlpha * 0.55);
     g.beginPath();
-    g.arc(x, y + 1, r * 0.72, this.facing - 1.1, this.facing + 1.1, false);
+    g.arc(x, y, r * 0.84, Math.PI * 1.15, Math.PI * 1.85);
     g.strokePath();
+    g.fillStyle(this.tint(0xfff3d6), bodyAlpha * 0.85);
+    g.fillEllipse(x - 6.5 * s, y - 8 * s, 8 * s, 5 * s);
   }
 
-  /** The hood, and the flintlock in the working hand. */
+  /** The straw hat, rooted at the crown and tipped along the aim. */
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void a;
-    const crown = y - 18;
-    const lean = Math.cos(this.facing) * 2.6;
-    const s = this.mastered ? 1.18 : 1;
+    const m = this.mastered;
+    // Rides the body's near-field swell, so it stays seated on the crown as he climbs.
+    const swell = 1 + Math.min(0.3, this.elevation / 620);
+    const s = (m ? 1.12 : 1) * swell;
+    const kick = this.recoil * 2.5;
+    const cx = x + Math.cos(this.facing) * (2.6 - kick);
+    const cy = y - 18 * swell - Math.sin(this.facing) * kick * 0.4;
 
-    // ── Desert hood ──
-    // A wide brim tipped along the aim, with the cloth falling behind it. Rooted at the crown
-    // so it never covers the eyes.
+    // Brim: a wide flat ellipse, its underside shadowed.
     g.fillStyle(this.tint(SND.dark), alpha * 0.9);
-    g.fillEllipse(x + lean, crown - 1, 34 * s, 12 * s);
-    g.fillStyle(this.tint(SND.deep), alpha);
-    g.fillEllipse(x + lean, crown - 3, 26 * s, 9 * s);
-    g.fillStyle(this.tint(SND.stoneWarmLit), alpha * 0.9);
-    g.fillEllipse(x + lean, crown - 5.5 * s, 15 * s, 7 * s);
-    // Cloth tail streaming off the lee side.
-    const back = this.facing + Math.PI;
-    g.fillStyle(this.tint(SND.deep), alpha * 0.75);
-    g.fillPoints([
-      new Phaser.Geom.Point(x + lean - 9, crown),
-      new Phaser.Geom.Point(x + lean + 9, crown),
-      new Phaser.Geom.Point(x + Math.cos(back) * 22 + Math.sin(this.t * 3) * 4,
-        crown + 12 + Math.sin(back) * 10),
-    ], true);
-    if (this.mastered) {
-      // Mastery tell: a gold circlet round the brim, visible in silhouette.
-      g.lineStyle(2.2, this.tint(SND.gold), alpha * 0.9);
-      g.strokeEllipse(x + lean, crown - 2, 29, 11);
+    g.fillEllipse(cx, cy + 1, 38 * s, 12 * s);
+    g.fillStyle(this.tint(SND.stoneWarmLit), alpha);
+    g.fillEllipse(cx, cy - 0.5, 35 * s, 10 * s);
+    // The band — gold once mastered, and blazing while the golden orb's buff is up — wrapped
+    // round the base of the crown, under the dome.
+    const lit = m || this.golden > 0;
+    if (this.golden > 0) {
+      g.fillStyle(this.tint(SND.gold), alpha * (0.28 + 0.12 * Math.sin(this.t * 6)));
+      g.fillEllipse(cx, cy - 3 * s, 24 * s, 11 * s);
     }
-
-    // ── The flintlock ──
-    // Held in the lead hand so it travels with the rig's own spring rather than being pinned
-    // to the body — the gun lags the turn, which is most of why the character reads as heavy.
-    const i = this.gunHand();
-    flintlock(g, this.tint, this.armX[i], this.armY[i], this.facing, alpha,
-      { golden: this.golden, recoil: this.recoil, t: this.t });
+    g.fillStyle(this.tint(lit ? SND.gold : SND.wood), alpha);
+    g.fillEllipse(cx, cy - 2.6 * s, 17 * s, 6.5 * s);
+    // Crown of the hat.
+    g.fillStyle(this.tint(SND.deep), alpha);
+    g.fillEllipse(cx, cy - 5 * s, 15 * s, 7 * s);
+    g.fillStyle(this.tint(SND.sand), alpha);
+    g.fillEllipse(cx - 1, cy - 6 * s, 12 * s, 5 * s);
   }
 }

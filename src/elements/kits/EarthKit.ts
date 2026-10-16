@@ -3069,7 +3069,8 @@ export class EarthKit {
     if (this.titanLandingUntil > time) return;
 
     // ── Biome Builder — the rite owns the mouse and the Q key while the stones are offered ──
-    if (this.biomes.handleInput(time, pointer, this.arena.pointerWasDown, mouseX, mouseY,
+    // Gate on the rite first: JustDown consumes the press, so polling it every frame ate the cast.
+    if (this.biomes.isRiteActive('player') && this.biomes.handleInput(time, pointer, this.arena.pointerWasDown, mouseX, mouseY,
       Phaser.Input.Keyboard.JustDown(this.arena.qKey))) return;
 
     // ── Earth Mastery — Dust Screen takes over whichever slot it's bound to ──

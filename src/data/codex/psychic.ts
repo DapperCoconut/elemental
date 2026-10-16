@@ -1,286 +1,148 @@
 import { ElementCodex } from '../AbilityCodex';
 
 /**
- * Psychic — two seconds of the future, and a pool that only exists in it.
+ * Psychic — two seconds of the future, and a chessboard to spend them on.
  *
- * Verified against `src/elements/psychic.ts`, `kits/PsychicKit.ts` and `ArenaScene.scatterAim`.
- * Psychic has five corrupt shop upgrades and a mastery, and no perks, so every number below is a
- * constant at the top of the kit.
- *
- * The upgrades share one idea rather than one mechanic: unupgraded, everything the passive draws
- * on the floor is *advice*. Each upgrade turns a piece of that drawing into something with rules —
- * the ghost becomes a hitbox, the queue pays rent, the telegraph presses R for you.
+ * Verified against `src/elements/psychic.ts` and `kits/PsychicKit.ts`. Psychic has no shop
+ * upgrades (the old five were retired with the chess rework) and no perks; its mastery predates
+ * the rework. Every number below is a constant at the top of the kit.
  */
 const psychic: ElementCodex = {
   identity:
-    'A monk who stared at a wall until the eye in the middle of his forehead opened, and who has '
-    + 'been two seconds ahead of everybody ever since. Nothing he throws is a projectile — the only '
-    + 'thing that touches anybody is a whip, and even that is a delivery system for stress, a second '
-    + 'health bar that sits there doing nothing for ten seconds and then goes off all at once '
-    + 'straight through armour. Everything else in the kit is spent on the gap: stealing an ability '
-    + 'out of the queue over their head, standing untouchable for exactly as long as a telegraph, '
-    + 'or ruining their aim to make the pool grow faster. Slow, patient, and unanswerable once the '
-    + 'number gets big.',
+    'A monk who stared at a chessboard until the eye in the middle of his forehead opened. Every '
+    + 'ability his enemy presses is held two seconds before it happens, stacked in a column of cards '
+    + 'over his own head, and their shadow shows where they will be standing a second from now. '
+    + 'Everything he presses is a piece: pawns thrown from the hand, and a bishop, knight and rook '
+    + 'stood on the board for eight seconds, each with an aura he wants to stand in — less damage '
+    + 'taken, more speed, more damage dealt. Click a piece to pick it up and click again to move it '
+    + 'the way it moves in chess, through anybody in its way. Q makes him the queen.',
 
   passives: [
     {
       emoji: '👁️',
       name: 'Opened Eyes',
       basics:
-        'You read the future. Every ability the enemy casts resolves 2 seconds after the press — the '
-        + 'cooldown starts at the press, so it costs them tempo rather than uptime — and everything they '
-        + 'press meanwhile stacks behind it in an unbounded queue, with the nearest 3 shown as chips over '
-        + 'their head, an ultimate marked by a gold chip with a five-pointed sigil. You also see where '
-        + 'they are going: a 20-step projection over the same 2 seconds, one marker every 100ms, clamped '
-        + 'to the arena\'s 32px margin, ending in a hollow ghost with an eye for a head, drawn only when '
-        + 'the projection lands more than 24px from where they are now. For a bot the route is not a '
-        + 'guess — it replays the exact locomotion rule the AI is following this tick. With Whip Snap '
-        + 'owned, the ghost grows a gold 26px ring that is a real hitbox for the cord, and the passive '
-        + 'stops being a read-out and becomes half of the Click.',
+        'Every ability the enemy casts resolves 2 seconds after the press — the cooldown starts at '
+        + 'the press, so it costs them tempo rather than uptime — and everything they press meanwhile '
+        + 'queues behind it. The queue is drawn over your own head as a vertical stack of up to 4 cards: '
+        + 'the bottom card, gold and larger, is the one going off next, and each card carries the key, '
+        + 'the ability\'s name and a fuse that empties as it gets closer. An ultimate has a gold key '
+        + 'badge. Separately, a shadow of each enemy — their own body, filled with ink — stands where '
+        + 'they will be in 1 second; for a bot that is its exact locomotion rule replayed forward, for '
+        + 'anything else it is their actual velocity, damped. Nothing else is drawn: no thread, no line.',
       effects: [
-        { tag: 'debuff', label: 'The delay', detail: 'Every ability the enemy casts resolves 2 seconds after the press. The cooldown starts at the press, so the delay costs them tempo rather than uptime.' },
-        { tag: 'utility', label: 'The queue', detail: 'Unbounded — anything they press while something is already held stacks behind it. The bar over their head shows the nearest 3.' },
-        { tag: 'utility', label: 'The route', detail: 'A 20-step projection over the same 2 seconds, one marker every 100ms, clamped to the arena\'s 32px margin. For a bot it is not a guess: it replays the exact locomotion rule the AI is following this tick.' },
-        { tag: 'utility', label: 'The ghost', detail: 'A hollow body with an eye for a head at the far end of the thread, drawn only when the projection lands more than 24px from where they are now.' },
-        { tag: 'utility', label: 'Reading it back', detail: 'Ultimates get a gold chip with a five-pointed sigil behind it — that is the one worth spending Mind Control on.' },
-        { tag: 'control', label: 'The ghost as a target', detail: 'With Whip Snap owned the ghost grows a gold 26px ring: that ring is a real hitbox for the cord, and catching it drags them to it. The passive stops being a read-out and becomes half of the Click.', requiresUpgrade: 'click' },
+        { tag: 'debuff', label: 'The delay', detail: 'Every ability the enemy casts resolves 2 seconds after the press. The cooldown starts at the press.' },
+        { tag: 'utility', label: 'The queue', detail: 'Unbounded. Shown over your own head as a column of up to 4 cards, the next one at the bottom in gold, each with a fuse that empties as it approaches.' },
+        { tag: 'utility', label: 'The shadow', detail: 'A dark copy of each enemy standing where they will be in 1 second. Hidden when they are not going anywhere (under 14px away).' },
       ],
       notes: [
-        'The thread stops being true the moment the target changes their mind, which is the point: it is a promise the psychic can walk out from under.',
-        'A body with no AI plan to read — an online replica, a husk — falls back to dead reckoning off its current velocity, damped 3% a step, and shows nothing at all below 8 px/s.',
-        'A psychic who dies mid-telegraph does not hand out free cooldowns: everything still queued fires immediately rather than being dropped.',
-        'Online, the opponent delays their own casts on their own machine and relays the queue back at roughly 6 times a second. Their shots really are two seconds late rather than merely looking it — and a mirror older than 1.2s is treated as gone.',
-        'A psychic NPC has the same foreknowledge, but its copy of the thread is never painted. Drawing it would hand you the bot\'s routing for free.',
-      ],
-    },
-    {
-      emoji: '🩸',
-      name: 'Stress',
-      basics:
-        'A pool that builds with no cap, though the crack art and the burst stop growing at 80 points. '
-        + 'Its fuse is 10 seconds and every new point pushes it back out to a full 10, so a psychic who '
-        + 'keeps whipping never lets it go off by accident. When it does, the whole pool lands at once as '
-        + 'pierce damage, skipping the entire mitigation product and every absorb layer under it — 100 '
-        + 'stress is 100 health whatever they are wearing. It is fed by Headache (5, or 10 on the tip), '
-        + 'Migraine (10 for being caught, then 10 a second for 3 seconds) and half of every hit that '
-        + 'lands on a comatose target. Cycle of Abuse adds a second exit that is not a detonation: 3 a '
-        + 'second torn off a comatose victim and spent as ordinary damage, with a quarter of it handed '
-        + 'back when they wake.',
-      effects: [
-        { tag: 'utility', label: 'The pool', detail: 'Builds with no cap. The crack art and the size of the burst scale up to 80 points and stop growing there; the number does not.' },
-        { tag: 'utility', label: 'The fuse', detail: '10 seconds, and every single new point pushes it back out to a full 10 — so a psychic who keeps whipping never lets it go off by accident.' },
-        { tag: 'damage', label: 'Release', detail: 'The whole pool at once as pierce damage: it skips the entire mitigation product and every absorb layer under it. 100 stress is 100 health, whatever they are wearing.' },
-        { tag: 'utility', label: 'What feeds it', detail: 'Headache (5, or 10 on the tip), Migraine (10 for being caught by the charge, then 10 a second for 3 seconds), and half of every hit that lands on a comatose target.' },
-        { tag: 'utility', label: 'A second way out', detail: 'Cycle of Abuse gives the pool an exit that is not a detonation: 3 a second is torn off a comatose victim and spent as ordinary damage instead of waiting for the fuse. A quarter of everything spent that way is handed back when they wake.', requiresUpgrade: 'q' },
-      ],
-      notes: [
-        'The pool belongs to whoever last added to it — that side\'s palette paints the cracks and the burst.',
-        'Coma\'s banking is silent: it lands on every tick of every burn, poison and bleed the victim is wearing, so a pop-up per tick would bury the arena. The readout over their head is live regardless.',
-        'A comatose victim is re-baselined immediately after any detonation, or the half of the burst the coma eats would come back as fresh stress and the two would feed each other forever.',
+        'A bot\'s shadow is not a guess: it replays the exact movement rule the AI is following this tick. A husk or an online opponent is projected from how they have actually been moving.',
+        'A psychic who dies mid-telegraph does not hand out free cooldowns: everything still queued fires immediately.',
+        'Online, the opponent delays their own casts on their own machine and relays the queue (with each card\'s time left) about 6 times a second; a mirror older than 1.2s is treated as gone.',
+        'A psychic bot has the same foreknowledge, but its copy is never drawn — that would hand you its routing for free.',
       ],
     },
   ],
 
   abilities: {
-    'psychic-headache': {
+    'psychic-en-passant': {
       basics:
-        'A 196px cord that deals 12 ordinary damage to everything it crosses — tested as 18 line '
-        + 'segments against a body-radius-plus-18px window, so a lash laid across a shoulder lands rather '
-        + 'than slipping between sample points. A body hit adds 5 stress, or 10 for anything caught past '
-        + '77% of the cord, the last ~45px, which prints "⚡ TIP!" and cracks red. 260ms of animation with '
-        + 'the hit resolved at 55% of it and a 700ms cooldown, so holding the button is about 1.4 lashes '
-        + 'a second.',
-      cast: 'Click, held rather than tapped — the whip is a 700ms rhythm and its own cooldown is the only gate. Aimed at the cursor, thrown from the hand rather than the body centre.',
+        'Throws a pawn out of your hand one 130px step toward the cursor over 0.3 seconds; anything '
+        + 'it walks into takes 8. Once it stops it captures the way a pawn does — on the two diagonals '
+        + 'in front of it, 48px out — for 16 to anything caught there, then again every second until it '
+        + 'vanishes 3 seconds after it was thrown (up to 3 captures). 0.65s cooldown; holding the button '
+        + 'keeps throwing. Pressed on one of your own standing pieces, the click picks that piece up '
+        + 'instead, and the next click moves it.',
+      cast: 'Click, aimed at the cursor; hold to keep throwing. 0.65s cooldown. A click that lands on one of your own pieces selects it instead of throwing.',
       effects: [
-        { tag: 'damage', label: 'The lash', detail: '12 damage to everything the cord crosses. Ordinary damage — armour answers this half normally.' },
-        { tag: 'area', label: 'The reach', detail: '196px of cord, tested as 18 line segments against a body-radius-plus-18px window, so a lash laid across a shoulder lands rather than slipping between sample points.' },
-        { tag: 'utility', label: 'The pool', detail: '+5 stress on a body hit.' },
-        { tag: 'utility', label: 'The tip', detail: '+10 stress instead, for anything caught past 77% of the cord — the last ~45px of the 196. Prints "⚡ TIP!" and cracks red.' },
-        { tag: 'utility', label: 'Timing', detail: '260ms of animation with the hit resolved at 55% of it, and a 700ms cooldown, so holding the button is roughly 1.4 lashes a second.' },
+        { tag: 'damage', label: 'The step', detail: '8 to anything the pawn walks into during its 130px, 0.3s step.' },
+        { tag: 'damage', label: 'The capture', detail: '16 to anything on either forward diagonal, 48px out, when it stops — and again every second after.' },
+        { tag: 'summon', label: 'The pawn', detail: 'Lasts 3 seconds from the throw, so up to 3 captures. No limit on how many are out.' },
+        { tag: 'utility', label: 'Moving pieces', detail: 'Click one of your own bishops, knights or rooks to pick it up (gold ring), then click anywhere to move it. Click it again to put it back down.' },
       ],
-      upgrade: {
-        basics:
-          'The cord is now tested against the end of their projected route within 26px before it is '
-          + 'tested against any body, and anything caught there is teleported to that point for 20 stress — '
-          + 'double the best tip hit and four times a body hit. A snapped target takes 0 damage and none of '
-          + 'the ordinary 5 or 10 stress: the lash landed on where they were going, not on them, and they '
-          + 'are taken out of the ordinary hit list entirely. It only exists when the projection lands more '
-          + 'than 24px from the body, so somebody standing still has no future to be pulled to. A gold 26px '
-          + 'ring pulses on the ghost, drawn at exactly the size it is tested at.',
-        effects: [
-          { tag: 'control', label: 'The snap', detail: 'The cord is tested against the end of the route within 26px, before it is tested against any body. Anything caught there is teleported to that point.' },
-          { tag: 'utility', label: 'The pool', detail: '20 stress — double the best possible tip hit, and four times a body hit.' },
-          { tag: 'cost', label: 'No damage at all', detail: 'A snapped target takes 0 damage and none of the ordinary 5/10 stress. The lash landed on where they were going, not on them, and a target caught by the snap is taken out of the ordinary hit list entirely.' },
-          { tag: 'utility', label: 'Only what moves', detail: 'The ghost — and so the snap — only exists when the projection lands more than 24px from the body. Somebody standing still has no future to be pulled to.' },
-          { tag: 'utility', label: 'The tell', detail: 'A gold 26px ring pulses on the ghost the moment the upgrade is owned, so the target you are aiming at is drawn at exactly the size it is tested at.' },
-        ],
-      },
       notes: [
-        'The whole skill in the ability is standing at exactly the wrong distance. Point blank is 5 stress a lash; hanging back at the very end of the cord is 10.',
-        'A lash that catches nobody still cracks in the air at the tip, so the reach stays legible when you are practising the range.',
-        'It hits everything the cord crosses, which in an Invasion wave is every husk on the line at once — each of them getting its own pool.',
+        'Throw past them, not at them: a pawn that stops beside an enemy catches them on its diagonal for double what the step does.',
+        'As the queen, Click is your legs instead — no pawns are thrown while you are crowned.',
       ],
     },
 
-    'psychic-mind-control': {
+    'psychic-bishop': {
       basics:
-        'Takes the soonest-resolving entry out of the nearest enemy\'s queue: the ability never fires '
-        + 'and its effect never lands, and its cooldown is restamped in full from the instant it was '
-        + 'seized, so a stolen 30-second ultimate is 30 fresh seconds on top of the 2 they already spent '
-        + 'waiting. Pressed with nothing seizable it is refused before the cast is stamped, printing '
-        + '"NOTHING TO SEIZE" and costing no cooldown at all. The chips over their head are the shopping '
-        + 'list. 5s cooldown.',
-      cast: 'E, no aim — it takes the nearest enemy who actually has something queued. 5s cooldown.',
+        'Stands a bishop on the cursor for 8 seconds. Its heavenly light covers 110px around it: while '
+        + 'you stand in it you take 15% less damage, and every other bishop light you stand in stacks '
+        + 'multiplicatively (two is 28%, three is 39%). Click the bishop to pick it up and click again '
+        + 'to slide it diagonally — the cursor snaps to the nearest of the four diagonals and the slide '
+        + 'goes as far as the cursor, up to 460px, at 1100px a second. Everyone it passes through takes '
+        + '40. After a move it settles for 2 seconds before it can move again. 6s cooldown.',
+      cast: 'E, at the cursor. 6s cooldown. Then Click the piece, Click again to move it.',
       effects: [
-        { tag: 'control', label: 'The theft', detail: 'Removes the soonest-resolving entry from the target\'s queue. The ability never fires and its effect never lands.' },
-        { tag: 'debuff', label: 'The cooldown', detail: 'Restamped in full from the instant it was seized — a stolen 30-second ultimate is 30 fresh seconds, on top of the 2 they already spent waiting.' },
-        { tag: 'utility', label: 'Free when it whiffs', detail: 'Pressed with nothing seizable, it is refused before the cast is stamped: it prints "NOTHING TO SEIZE" and costs no cooldown at all.' },
-        { tag: 'utility', label: 'Reading the target', detail: 'The chips over their head are the shopping list. Gold chip with a sigil behind it means an ultimate is in the queue.' },
+        { tag: 'shield', label: "Bishop's Grace", detail: '15% less damage taken while standing within 110px of the bishop. Every bishop stacks: ×0.85 each.' },
+        { tag: 'damage', label: 'The slide', detail: '40 to everyone it passes through, once each per move. Diagonals only, up to 460px.' },
+        { tag: 'summon', label: 'The piece', detail: '8 seconds on the board, shown as a ring that empties round its foot. It can move once every 2 seconds. No limit on how many.' },
       ],
-      upgrade: {
-        basics:
-          'Every successful seizure also takes 5 seconds off the cooldown of your own ability in the same '
-          + 'slot as the one you stole, printing "⏱ <key> −5s". It is matched on the display key rather '
-          + 'than the ability id, since the slot is the only thing a stolen Fireball and a Headache have in '
-          + 'common — and because Mind Control\'s own cooldown is 5 seconds, seizing an E refunds the entire '
-          + 'cost of the theft. A refused press credits nothing.',
-        effects: [
-          { tag: 'buff', label: 'The credit', detail: '5 seconds off the cooldown of the thief\'s own ability in the same slot as the one seized. Prints "⏱ <key> −5s" over him.' },
-          { tag: 'utility', label: 'Matched by slot', detail: 'Paired on the display key (Click / E / R / F / Q), not the ability id — the slot is the only thing a stolen Fireball and a Headache have in common.' },
-          { tag: 'buff', label: 'Stealing their E', detail: 'Mind Control\'s own cooldown is 5 seconds, so seizing an E refunds the entire cost of the theft and hands it straight back.' },
-          { tag: 'utility', label: 'Where it applies', detail: 'On every successful seizure, including the optimistic one taken against the relayed mirror online. A refused press ("NOTHING TO SEIZE") credits nothing.' },
-        ],
-      },
       notes: [
-        'Value is entirely in what you take. A stolen click is worth under a second; a stolen ultimate is worth its whole cooldown, which is why the chips are colour-coded.',
-        'Online, the theft is applied optimistically against the relayed mirror and a cancel is sent for the opponent\'s own sim to honour — their next relay corrects any disagreement.',
-        'It reaches into the *queue*, not the arena. An ability that already resolved cannot be taken back.',
+        'The move guide turns gold when the line runs through an enemy — that is the click worth making.',
+        'Moving a bishop moves its light. Slide it through them and toward where you are going to stand.',
       ],
     },
 
-    'psychic-dodge-destiny': {
+    'psychic-knight': {
       basics:
-        '1.25 seconds of full invincibility: nothing lands, not damage, not shields being stripped, not '
-        + 'status. It is re-asserted every single frame rather than set once, because dashes and half a '
-        + 'dozen other kits clear invincibility on timers of their own, so nothing in the game can cut '
-        + 'the window short. The monk\'s third eye is forced shut for the duration. 6s cooldown.',
-      cast: 'R. Instant, no aim. 6s cooldown.',
+        'Stands a knight on the cursor for 8 seconds. Its aura covers 110px: while you stand in it you '
+        + 'move 15% faster, and every other knight stacks multiplicatively. Click it, then click again, '
+        + 'to jump it like a chess knight — two 75px squares one way and one the other, whichever of the '
+        + 'eight jumps lands nearest the cursor. It leaps over everything (the jump itself hits nothing) '
+        + 'and lands 0.34s later in an 80px explosion that deals 35. 6s cooldown.',
+      cast: 'R, at the cursor. 6s cooldown. Then Click the piece, Click again to jump it.',
       effects: [
-        { tag: 'shield', label: 'Untouchable', detail: '1.25 seconds of full invincibility. Nothing lands: not damage, not shields being stripped, not status.' },
-        { tag: 'utility', label: 'Held open', detail: 'Re-asserted every single frame rather than set once, because dashes and half a dozen other kits clear invincibility on timers of their own. Nothing in the game can cut the window short.' },
-        { tag: 'utility', label: 'The tell', detail: 'The monk\'s third eye is forced shut for the whole window and reopens to whatever focus it was at.' },
+        { tag: 'buff', label: "Knight's Stride", detail: '15% faster while standing within 110px of the knight. Every knight stacks: ×1.15 each.' },
+        { tag: 'area', label: 'The landing', detail: '35 to everything within 80px of where it lands.' },
+        { tag: 'movement', label: 'The jump', detail: 'An L: 150px one way and 75px the other. It flies over anything in between.' },
       ],
-      upgrade: {
-        basics:
-          'It now fires itself when 50 damage is about to land, measured after every mitigation and '
-          + 'armour multiplier on the way in, and refuses the triggering hit entirely — 0 damage and no '
-          + 'shield spent. The 50 is a running total inside a rolling 2-second window rather than one blow, '
-          + 'so five 10s trip it just as a single 50 does, and the window empties when it fires. You get '
-          + 'the ordinary ability, and it spends the real 6-second cooldown, so an automatic dodge is a '
-          + 'manual one you no longer have; on cooldown, the hit lands normally. The hook sits on the '
-          + 'absorb layer, which pierce damage skips, so another psychic\'s stress release is not stopped by '
-          + 'it.',
-        effects: [
-          { tag: 'shield', label: 'The trigger', detail: '50 damage about to land, measured after every mitigation and armour multiplier on the way in. The triggering hit is refused entirely — 0 damage, no shield spent.' },
-          { tag: 'utility', label: 'A running total', detail: 'It is 50 inside a rolling 2-second window, not 50 in one blow — five 10s in a row trip it just as a single 50 does. The window is emptied when it fires.' },
-          { tag: 'shield', label: 'What you get', detail: 'The ordinary ability: the same 1.25 seconds of full invincibility, re-asserted every frame.' },
-          { tag: 'cost', label: 'It is not free', detail: 'It spends the real 6-second cooldown, so an automatic dodge is a manual one you no longer have. On cooldown, the hit lands normally.' },
-          { tag: 'utility', label: 'Pierce goes through it', detail: 'The hook sits on the absorb layer, which pierce damage skips — so another psychic\'s stress release is not stopped by this, and neither is anything else that pierces.' },
-        ],
-      },
       notes: [
-        '1.25 seconds against a 2-second telegraph means you can press it *after* seeing a chip go gold and still be under it when the ability lands.',
-        'Invincibility does not stop stress — the pool is already on you, and it goes off when its fuse runs out regardless of what you were invincible to.',
+        'The guide draws the arc and the blast ring before you commit, so you can see what the landing will catch.',
       ],
     },
 
-    'psychic-migraine': {
+    'psychic-rook': {
       basics:
-        'Paints a mark at the cursor, clamped to the arena\'s 32px margin, that resolves 2.5 seconds '
-        + 'later as a 100px blast — long enough to walk out of from a standing start, which is the whole '
-        + 'deal being offered. Everything caught takes 10 stress and then 10 a second for 3 seconds, 40 '
-        + 'in total, and has its aim ruined: for those 3 seconds 66% of their casts are rotated 20–35° '
-        + 'off true to either side, about the caster and at the same range, while the other 34% land '
-        + 'honestly. Both sides\' marks are painted under the fighters. 15s cooldown, refunded only if the '
-        + 'caster is already dead — where it lands is your problem.',
-      cast: 'F, aimed at the cursor and clamped to the arena\'s 32px margin. 2.5s fuse, then a 100px blast. 15s cooldown. Refunded only if the caster is already dead — where it lands is your problem.',
+        'Stands a rook on the cursor for 8 seconds. Its aura covers 110px: while you stand in it you '
+        + 'deal 15% more damage, and every other rook stacks multiplicatively. Click it, then click again, '
+        + 'to slide it along a rank or file, up to 460px; everyone it passes through takes 45. Any other '
+        + 'piece it runs over — yours or theirs — is captured and destroyed, and if it was a bishop, '
+        + 'knight or rook you wear that piece\'s aura for 30 seconds wherever you go. It also flattens '
+        + 'enemy pawns. 8s cooldown.',
+      cast: 'F, at the cursor. 8s cooldown. Then Click the piece, Click again to slide it.',
       effects: [
-        { tag: 'area', label: 'The blast', detail: '100px radius measured from the mark to the centre of a body, resolved once, 2.5 seconds after the press. Everything on the enemy list inside it is caught: 1 in a duel, however many are standing in it in Invasion.' },
-        { tag: 'debuff', label: 'Ruined aim', detail: '3 seconds in which 66% of their casts are rotated 20–35° off true, to either side, about the caster and at the same range. The other 34% land honestly.' },
-        { tag: 'utility', label: 'The pool', detail: '+10 stress for being caught by the blast, then 10 a second for the 3 seconds after it — 40 in total on a clean hit.' },
-        { tag: 'utility', label: 'The telegraph', detail: 'Both sides\' marks are painted, under the fighters at depth 4. 2.5 seconds is long enough to walk 100px out of it from a standing start, which is the whole deal being offered.' },
+        { tag: 'buff', label: "Rook's Might", detail: '15% more damage dealt while standing within 110px of the rook. Every rook stacks: ×1.15 each.' },
+        { tag: 'damage', label: 'The slide', detail: '45 to everyone it passes through, once each per move. Ranks and files only, up to 460px.' },
+        { tag: 'buff', label: 'Capture', detail: 'Runs over another bishop, knight or rook (either side\'s) and destroys it — you wear that piece\'s aura for 30 seconds, no standing required. Stolen auras stack with everything else.' },
       ],
-      upgrade: {
-        basics:
-          'F can be held for up to 5 seconds, firing itself on reaching 5 rather than stalling; releasing '
-          + 'early fires whatever it had reached and a tap is exactly the base ability. Each second held '
-          + 'adds 0.8s of fuse (2.5s at a tap out to 6.5s), 20px of radius (100px out to 200px, with the '
-          + 'rim drawn at the real size throughout), 4 flat stress (10 out to 30), and 10% of the pool they '
-          + 'are already carrying — fully wound that is half their current pool again, so 60 stress on a '
-          + 'target becomes 90 plus the flat 30, read before the add so it never scales off itself. The 15s '
-          + 'cooldown is stamped at the release, and the wind-up is dropped for nothing if you are put in a '
-          + 'coma or killed during it ("FOCUS LOST").',
-        effects: [
-          { tag: 'utility', label: 'The wind-up', detail: 'Hold F for up to 5 seconds. It fires itself on reaching 5 rather than stalling there; releasing early fires it at whatever it had reached, and a tap is exactly the base ability.' },
-          { tag: 'utility', label: 'Longer fuse', detail: '+0.8s of fuse per second held — 2.5s at a tap out to 6.5s fully wound. A wound charge sits on the floor longer, so the mark is a longer promise as well as a bigger one.' },
-          { tag: 'area', label: 'Wider blast', detail: '+20px of radius per second held: 100px at a tap, 200px fully wound. The rim on the floor is drawn at the real size the whole time.' },
-          { tag: 'utility', label: 'More stress, flat', detail: '+4 stress on the blast per second held — 10 at a tap, 30 fully wound, before the part below.' },
-          { tag: 'damage', label: 'More stress, scaling', detail: '+10% of the pool they are *already* carrying, per second held. Fully wound that is half their current pool again — 60 stress on a target becomes 90 plus the flat 30. Read before the add, so it never scales off itself.' },
-          { tag: 'cost', label: 'What it costs', detail: 'The 15s cooldown is stamped at the release, not the press, and the wind-up is dropped for nothing if he is put in a coma or killed during it ("FOCUS LOST").' },
-        ],
-      },
       notes: [
-        'It is Fire\'s Pressure Bomb with a migraine in it instead of an explosion, and it suits this element better: the thread on the floor is already telling you where they are going to be standing.',
-        'A third of their shots landing honestly is deliberate — a debuff that misses *everything* stops reading as distress and starts reading as a stun.',
-        'The ability\'s own one-line description says "up to 30 degrees". The kit rotates 20–35°, so the floor is higher and the ceiling is higher than the card claims.',
-        'The press is only the plant. The cooldown starts there, the sound at the press is the seal going down, and the torment is played by the kit when the fuse runs out.',
-        'A charge outlives nothing: it is dropped along with the rest of the kit\'s state at the start of the next match, and a caster who dies mid-fuse still gets the detonation.',
-        'Online it is relayed rather than applied locally, and only at the detonation: bending the copy here as well would bend an angle that has already been bent once on the machine that owns it.',
+        'Capturing your own tired bishop before it expires turns its last two seconds into thirty.',
+        'In a mirror match the rook is the answer to their pieces: take the bishop and their armour is yours.',
+        'The damage bonus is applied on the victim\'s side (their damage taken), so it covers everything you hit them with, pieces and pawns alike.',
       ],
     },
 
-    'psychic-coma': {
+    'psychic-queen': {
       basics:
-        'Detonates the stress pool on every enemy carrying one for 1.5× its value as pierce damage — 80 '
-        + 'stress becomes 120 health, through anything — and puts them face down for 1 second per 20 '
-        + 'points detonated, rounded down, so 120 is 6 seconds and under 20 is none at all. A coma forces '
-        + 'velocity to zero every frame and disarms on a rolling 150ms refresh, so they can neither walk '
-        + 'nor cast. While they are under, damage they take is halved and the half that was eaten is '
-        + 'banked straight back as stress, so a Q on 80 buys six seconds in which to build the next pool '
-        + 'for free. With no pool anywhere it is refunded outright and prints "NO STRESS TO CASH". 30s '
-        + 'cooldown.',
-      cast: 'Q. Instant, no aim — it detonates the pool on every enemy carrying one. 30s cooldown. Ultimate.',
+        'For 15 seconds you are the queen: every aura at once, three times over — 45% less damage '
+        + 'taken, 45% more damage dealt, 45% faster — multiplied on top of any pieces you are standing '
+        + 'in. You cannot walk or dash. Click to move yourself like a queen: the cursor snaps to the '
+        + 'nearest of eight lines and you slide up to 380px along it (at 1300px a second, sped up by '
+        + 'your speed aura), dealing 25 to everyone you pass through and landing in an 85px explosion '
+        + 'for 20 to anyone the slide did not already hit. 1 second between moves. Clicking one of your pieces still picks it up. 30s cooldown.',
+      cast: 'Q. Instant. 30s cooldown. Ultimate. The ability card shows the crown\'s time while it is worn.',
       effects: [
-        { tag: 'damage', label: 'The detonation', detail: 'The whole pool ×1.5 as pierce damage. 80 stress becomes 120 health, through anything.' },
-        { tag: 'control', label: 'Face down', detail: '1 second of coma for every 20 points detonated, rounded down. 120 detonated is 6 seconds; under 20 detonated is none at all.' },
-        { tag: 'control', label: 'What a coma is', detail: 'Velocity forced to zero every frame and disarmed on a rolling 150ms refresh, so they can neither walk nor cast for the duration.' },
-        { tag: 'debuff', label: 'The battery', detail: 'Damage taken while under is multiplied by 0.5 — and the half that was eaten is banked back as stress. A Q on 80 buys 6 seconds in which to build the next pool for free.' },
-        { tag: 'utility', label: 'Free when it whiffs', detail: 'With no pool anywhere the ultimate is refunded outright and prints "NO STRESS TO CASH" — 30 seconds is not spent on a light show.' },
+        { tag: 'buff', label: 'Every aura ×3', detail: '45% less damage taken, 45% more damage dealt, 45% faster slides — on top of any piece auras you stand in.' },
+        { tag: 'movement', label: 'No legs', detail: 'WASD and Space do nothing. Click slides you along one of eight lines, up to 380px.' },
+        { tag: 'damage', label: 'The slide', detail: '25 to everyone you pass through, once each per move. 1 second between moves.' },
+        { tag: 'area', label: 'The landing', detail: '20 to everything within 85px of where you stop that the slide did not already hit.' },
       ],
-      upgrade: {
-        basics:
-          'A comatose victim now bleeds: 3 stress a second taken off their pool and dealt as ordinary '
-          + 'damage, which their armour answers normally — the coma\'s own halving included — so it lands as '
-          + 'roughly 1.5 while they are under. Every point bled throws a 120px burst dealing 10 damage to '
-          + 'every living body inside it except the one in the coma, who is never touched by their own '
-          + 'pressure. You are not exempt: standing over a victim to whip them costs 10 a second as '
-          + 'self-inflicted damage, which is what the name is warning about. A quarter of everything bled '
-          + 'is handed back as a fresh pool with a full 10-second fuse the moment the coma ends, unless '
-          + 'they died under. The bleed\'s own damage is exempt from the coma\'s banking — it is a drain, not '
-          + 'a loan.',
-        effects: [
-          { tag: 'dot', label: 'The bleed', detail: '3 stress a second is taken off a comatose victim\'s pool and dealt to them as ordinary damage. Their armour answers it normally, the coma\'s own 0.5 included, so it lands as roughly 1.5 while they are under.' },
-          { tag: 'area', label: 'The shockwave', detail: 'Every point bled throws a 120px burst dealing 10 damage to every living body inside it — except the one in the coma, who is never touched by their own pressure.' },
-          { tag: 'cost', label: 'You are in the blast', detail: 'The psychic is not exempt. Standing over a comatose victim to whip them costs 10 a second, taken as self-inflicted damage. The name is the warning.' },
-          { tag: 'resource', label: 'The refund', detail: '25% of everything bled is added back as a fresh pool the moment the coma ends — 18 bled over 6 seconds returns 5, with a full 10-second fuse on it. Nothing is returned if they died under.' },
-          { tag: 'utility', label: 'Not banked', detail: 'The bleed\'s own damage is exempt from the coma\'s half-damage banking. It is a drain, not a loan — otherwise the coma would hand half of every bleed straight back and the pool would never go down.' },
-        ],
-      },
       notes: [
-        'The multiplier is applied before the coma length is worked out, so the ×1.5 buys seconds as well as damage: 80 stress is 6 seconds, not 4.',
-        'The half-damage is a *discount for them* and a *loan to you*. Nothing is lost — it comes back as a pool with a fresh 10-second fuse on it.',
-        'The whip banks nothing extra while they are under; it is the coma splitting the incoming hit, so any damage source at all feeds it, including your own burns and anything an ally is doing.',
-        'Pierce means invincibility is the only thing that stops it landing, and even that does not stop the pool from existing.',
+        'Crown yourself with pieces already on the board: the ×3 multiplies whatever the auras are already giving you.',
+        'Ruin\'s Second Skin ends the crown like any other form.',
       ],
     },
   },
@@ -288,65 +150,47 @@ const psychic: ElementCodex = {
   mastery: {
     'predictors-snare': {
       basics:
-        'Space stops being a dash and becomes a teleport to the end of the nearest living enemy\'s '
-        + 'projected route — the same point the ghost is drawn at, clamped to the arena\'s 32px margin. '
-        + 'Direction is ignored entirely; WASD has nothing to do with it. A closed eye is left on the '
-        + 'landing spot, arming after 0.26s and lying there 14 seconds, dealing 15 stress to the first '
-        + 'enemy whose body comes within 20px of it and then spent. Six can be on the floor at once, and '
-        + 'a seventh rubs out the oldest rather than refusing the dash. If nobody on the field has a '
-        + 'route ending more than 24px from where they stand it is an ordinary 520px dash. Under Utter '
-        + 'Focus the marker is five seconds ahead instead of two, so the teleport reaches much further '
-        + 'and the rune is planted much deeper into their future. No cooldown of its own — it rides the '
-        + 'dodge\'s own second.',
-      cast: 'Space. Replaces the ordinary Space dash entirely while Psychic Mastery is on. No cooldown of its own — it rides the dodge\'s own 1 second.',
+        'Space stops being a dash and becomes a teleport to where the nearest living enemy will be '
+        + 'standing when the foresight window runs out — 2 seconds ahead, or 5 under Utter Focus — '
+        + 'clamped to the arena\'s 32px margin. Direction is ignored. A closed eye is left on the '
+        + 'landing spot, arming after 0.26s and lying there 14 seconds, dealing 15 damage to the first '
+        + 'enemy whose body comes within 20px of it and then spent. Six can be on the floor at once; a '
+        + 'seventh rubs out the oldest. If nobody is going anywhere (their projection ends under 24px '
+        + 'away) it is an ordinary dash. No cooldown of its own — it rides the dodge\'s. Not available '
+        + 'while crowned: the Queen has no Space at all.',
+      cast: 'Space. Replaces the ordinary dash while Psychic Mastery is on.',
       effects: [
-        { tag: 'movement', label: 'Where you land', detail: 'The end of the nearest living enemy\'s projected route — the same point the destiny ghost is drawn at, clamped to the arena\'s 32px margin. Direction is ignored: WASD has nothing to do with it.' },
-        { tag: 'summon', label: 'The rune', detail: 'A closed eye is left on the landing spot. It arms after 0.26s and lies there for 14 seconds.' },
-        { tag: 'debuff', label: 'What it does', detail: '15 stress to the first enemy whose body comes within 20px of it, plus their own radius. It is spent the moment it fires.' },
-        { tag: 'area', label: 'How many', detail: '6 on the floor at once. Planting a 7th rubs out the oldest rather than refusing the dash.' },
-        { tag: 'utility', label: 'When it refuses', detail: 'Nobody on the field has a route ending more than 24px from where they are standing — then it is an ordinary 520px dash, exactly as it was before the mastery.' },
-        { tag: 'buff', label: 'Under Utter Focus', detail: 'The marker is five seconds ahead instead of two, so the teleport reaches much further and the rune is planted much deeper into their future. The stress it deals is ×1.2 like everything else.' },
+        { tag: 'movement', label: 'Where you land', detail: 'Where the nearest living enemy will be standing at the end of the foresight window (2s, or 5s under Utter Focus).' },
+        { tag: 'summon', label: 'The rune', detail: 'A closed eye left on the landing spot. Arms after 0.26s, lies there 14 seconds.' },
+        { tag: 'damage', label: 'What it does', detail: '15 damage to the first enemy whose body comes within 20px of it. Spent the moment it fires.' },
+        { tag: 'area', label: 'How many', detail: '6 on the floor at once; a 7th rubs out the oldest.' },
+        { tag: 'utility', label: 'When it refuses', detail: 'Nobody has a projection ending more than 24px away — then it is an ordinary dash.' },
       ],
       notes: [
-        'The rune is not a trap you place — it is a prediction you cash. It only ever ends up somewhere the enemy has already told you they are walking, which is why it needs no seeking behaviour at all.',
-        'Standing still beats it, and beats it completely: no route means no marker, no teleport and no rune. It is the same counterplay Whip Snap asks for, which is the point — the mastery makes refusing to move even more expensive.',
-        'A rune cannot catch the psychic who planted it. Only the planter\'s own enemies trip one.',
-        'The teleport goes through the dodge, so the 280ms of invincibility and the 1s cooldown are unchanged — and so is the WASD lockout during it, which is what stops you sliding off the marker you just bought.',
-        'The passive is the human player\'s. A bot has no Space dash to replace, so a Nightmare psychic gets the mastery\'s ability and its look but never plants a rune.',
+        'This mastery predates the chess rework and is due to be redesigned; it still works as written.',
+        'Standing still beats it completely: no projection, no teleport, no rune.',
+        'A bot has no Space dash, so a bot psychic never plants a rune.',
       ],
     },
     'utter-focus': {
       basics:
-        'Eight seconds in which your read goes from 2 seconds ahead to 5: route, ghost, chips and the '
-        + 'delay on their casts are all the same number and move together, so every ability aimed at you '
-        + 'resolves 5 seconds after the press — though casts already queued keep the window they were '
-        + 'pressed under. All stress you inflict is ×1.2 while it runs, lashes, tips, Migraine ticks, '
-        + 'blast stress, snares and the coma\'s banking alike. Against a real opponent online their '
-        + 'movement keys are buffered by the same 5 seconds on their own machine, so for the first 5 '
-        + 'seconds they do not move at all and after that they walk the route you have been reading — and '
-        + 'while their feet are held, their machine integrates the buffered keys forward and relays 10 '
-        + 'points of the result about six times a second, making it the only projection in the game that '
-        + 'is a fact. Every frame in which any damage lands on you takes 0.5s off the window, so six hits '
-        + 'inside it and there is nothing left. Your third eye is drawn shut throughout, which is the '
-        + 'tell they have to read. Bindable to R, F or Q — never E. 26s cooldown.',
-      cast: 'The bound key (R, F or Q — never E). Instant, no aim. 26 second cooldown, counted from the press; the ability card shows the 8 seconds first and the 26 after.',
+        'Eight seconds with your eyes shut, in which every ability aimed at you is held 5 seconds '
+        + 'instead of 2 (casts already queued keep the window they were pressed under). Against a real '
+        + 'opponent online their movement keys are buffered by the same 5 seconds on their own machine '
+        + 'and the resulting route is relayed back, so Predictor\'s Snare lands on a fact rather than an '
+        + 'estimate. Every frame in which damage lands on you takes 0.5s off the window. Bindable to R, '
+        + 'F or Q — never E. 26s cooldown.',
+      cast: 'The bound key (R, F or Q — never E). Instant. 26s cooldown, counted from the press.',
       effects: [
-        { tag: 'buff', label: 'Five seconds ahead', detail: 'The passive\'s window goes from 2s to 5s for the whole 8 seconds. Route, ghost, chips and delay are all the same number, so all four move together.' },
-        { tag: 'control', label: 'The delay', detail: 'Every ability cast at you resolves 5 seconds after the press instead of 2. Casts already in the queue keep the window they were pressed under — a widening window does not reach back.' },
-        { tag: 'damage', label: 'Every point is worth more', detail: '×1.2 on all stress you inflict while it runs — lashes, tips, Migraine ticks, blast stress, snares and the coma\'s own banking alike.' },
-        { tag: 'control', label: 'Held feet (online only)', detail: 'Against a real opponent their movement keys are buffered by the same 5 seconds on their own machine. For the first 5 seconds of the window there is nothing mature in that buffer, so they do not move at all; after that they walk the route you have been reading.' },
-        { tag: 'utility', label: 'A route that is not a guess', detail: 'While their feet are held, their machine integrates the buffered keys forward and relays 10 points of the result about 6 times a second. The thread over an online opponent is the only projection in the game that is a fact.' },
-        { tag: 'cost', label: 'Being hit shortens it', detail: 'Every frame in which any damage at all lands on you takes 0.5s off the window. Six hits inside it and there is no window left.' },
-        { tag: 'utility', label: 'Blind', detail: 'His third eye is drawn shut for the duration, exactly as it is during Dodge Destiny. It is the tell the opponent has to read.' },
+        { tag: 'control', label: 'The delay', detail: 'Every ability cast at you resolves 5 seconds after the press instead of 2.' },
+        { tag: 'control', label: 'Held feet (online only)', detail: 'A real opponent\'s movement keys are buffered by the same 5 seconds; for the first 5 seconds they do not move at all.' },
+        { tag: 'cost', label: 'Being hit shortens it', detail: 'Every frame in which any damage lands on you takes 0.5s off the window.' },
+        { tag: 'utility', label: 'Blind', detail: 'Your third eye is drawn shut for the duration — the tell they have to read.' },
       ],
       notes: [
-        'A five-second queue is the only thing that makes Mind Control comfortable: three chips over their head instead of one, and long enough to pick the gold one. That is why E is the one slot this cannot be bound over — binding it there would delete the reason to press it.',
-        'It is not an invulnerability. Everything still lands, five seconds later, all of it at once — and the pile-up at the end of the window is exactly the thing a psychic is supposed to have already walked out from under.',
-        'The counter is pressure rather than burst. A single enormous hit costs the window half a second; six chip ticks cost it three.',
-        'A Space dodge is not a movement key and is not held — it is the one way out of the buffered feet, and it is deliberately left open. Somebody being read can still roll.',
-        'Online, what crosses the wire is how much of the window is *left*, roughly twice a second, rather than how long it was — every hit the psychic takes changes that number and the other machine has no way to know.',
-        'Offline the movement half never runs. A bot\'s route is already projected exactly from its own locomotion rule, so holding a human\'s feet would buy the psychic nothing and cost the human everything.',
-        'Predictor\'s Snare reaches five seconds too while this is up, which is the pairing: the teleport lands much further away, and the rune is planted much deeper into a route they have not walked yet.',
+        'This mastery predates the chess rework and is due to be redesigned; it still works as written.',
+        'Binding it over R, F or Q gives up the Knight, Rook or Queen for the match.',
+        'A Space dodge is not a movement key and is not held — the way out of the buffered feet.',
       ],
     },
   },

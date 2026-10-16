@@ -52,7 +52,7 @@ const SPLIT_LEN = 0.62;
 const SPLIT_OFFSET = 11;
 
 // ── Pin (Click) ──────────────────────────────────────────────────────────────
-const PIN_DAMAGE = 4;
+const PIN_DAMAGE = 7;
 const PIN_RANGE = 62;
 const PIN_ARC = 1.1;
 /** Landing this many pins on one body grapples you to it and spins you round it once. */
@@ -134,12 +134,15 @@ const SLICE_FREEZE_MS = 2000;
 const SLICE_DAMAGE = 15;
 
 // ── Mastery ──────────────────────────────────────────────────────────────────
-const WRETCHED_MS = 3000;
-const WRETCHED_CD = 18000;
-const WRETCHED_R = 190;
-/** Wretched Scarf pays back this share of what it swallowed. */
-const WRETCHED_RETURN = 0.9;
 const OUTFIT_SWAP_CD = 900;
+/** Bleed Stop: how long the tourniquet holds, and the most it lets through in that time. */
+const BLEED_MS = 5000;
+const BLEED_CAP = 75;
+const BLEED_CD = 20000;
+/** The scarf is tied off to this fraction of its length while it holds. */
+const BLEED_SCARF = 0.5;
+/** Gauze, not wool: the one off-palette colour in the kit, so the tourniquet reads at a glance. */
+const BANDAGE = 0xf2ede4;
 
 // ── Sim types ────────────────────────────────────────────────────────────────
 
@@ -271,9 +274,11 @@ interface Side {
   // ── Mastery ──
   outfit: Outfit;
   nextSwapAt: number;
-  wretchedUntil: number;
-  wretchedStored: number;
-  wretchedReadyAt: number;
+  /** Bleed Stop (mastery): the tourniquet's window, and when it may be tied again. */
+  bleedUntil: number;
+  bleedReadyAt: number;
+  /** Latched so the fighter's damage budget is handed back exactly once when the window shuts. */
+  bleedInstalled: boolean;
 
   // ── Bookkeeping ──
   lastRaw: number;
@@ -307,7 +312,8 @@ function makeSide(): Side {
     burnUntil: 0, burnStartedAt: 0, burnAccum: 0,
     coatCharges: 0, stormUntil: 0, stormNextAt: 0, knitUntil: 0,
     locX: 0, locY: 0, locSet: false,
-    outfit: 'suit', nextSwapAt: 0, wretchedUntil: 0, wretchedStored: 0, wretchedReadyAt: 0,
+    outfit: 'suit', nextSwapAt: 0, 
+    bleedUntil: 0, bleedReadyAt: 0, bleedInstalled: false,
     baseDodge: 0, baseCrit: 0, baseFlat: 0, baseStatusDur: 1, baseCaptured: false,
     lastRaw: -1, pinnedDamageAccum: 0, webDamageAccum: 0, retreats: 0,
   };
@@ -328,6 +334,8 @@ export interface ClothArenaApi {
   get fKey(): Phaser.Input.Keyboard.Key;
   get qKey(): Phaser.Input.Keyboard.Key;
   get spaceKey(): Phaser.Input.Keyboard.Key;
+  /** Online PvP: the npc is a person, whose own sim decides when they tie off. */
+  get isOnline(): boolean;
   get rightPointerWasDown(): boolean;
   get elementId(): string;
   get npcElementId(): string;
@@ -386,6 +394,9 @@ export class ClothKit implements SummonPurgeTarget {
   private draft: Draft | null = null;
   /** Guards the re-entrant path where thorns damage triggers another absorb. */
   private inThorns = false;
+  /** Bot Bleed Stop: the npc's damage tally at the start of the current 1.5s watch window. */
+  private npcBleedWatchRaw = -1;
+  private npcBleedWatchAt = 0;
 
   constructor(api: ClothArenaApi) {
     this.api = api;
@@ -498,7 +509,8 @@ export class ClothKit implements SummonPurgeTarget {
     const k = f.maxHp > 0 ? Phaser.Math.Clamp(f.hp / f.maxHp, 0, 1) : 0;
     const burn = this.now < s.burnUntil ? 1 - Math.min(0.55, s.burnAccum / Math.max(1, f.maxHp)) : 1;
     const len = SCARF_MAX_SEGMENTS * (SCARF_MIN_K + (1 - SCARF_MIN_K) * k)
-      * (1 - s.fx.scarfShorter) * burn * (s.fx.split ? SPLIT_LEN : 1);
+      * (1 - s.fx.scarfShorter) * burn * (s.fx.split ? SPLIT_LEN : 1)
+      * (this.now < s.bleedUntil ? BLEED_SCARF : 1);
     return Phaser.Math.Clamp(Math.round(len), 2, SCARF_MAX_SEGMENTS);
   }
 
@@ -576,8 +588,6 @@ export class ClothKit implements SummonPurgeTarget {
     for (const owner of BOTH) {
       const f = this.fighter(owner);
       if (!this.isCloth(owner) || !this.alive(f)) continue;
-      // Wrapped up, the scarf is not out there to be hit — that is the whole ability.
-      if (this.now < this.side(owner).wretchedUntil) continue;
       const strands = this.scarfStrands(owner);
       if (strands.length === 0) continue;
       const mineIsPlayer = owner === 'player';
@@ -674,7 +684,7 @@ export class ClothKit implements SummonPurgeTarget {
 
       // The body core. The scarf is the hitbox; the tailor themselves is barely one.
       // `applySizeMult` rebuilds the physics body, so it is only called when it changes.
-      const wantHitbox = this.now < s.wretchedUntil ? 0.62 : CLOTH_HITBOX;
+      const wantHitbox = CLOTH_HITBOX;
       if (f.hitboxMult !== wantHitbox) { f.hitboxMult = wantHitbox; f.applySizeMult(); }
 
       // The scarf *is* the health bar. The floating pip over the tailor's head is replaced by
@@ -693,7 +703,6 @@ export class ClothKit implements SummonPurgeTarget {
       // ── Armour ──
       let armour = s.fx.incomingMult;
       if (this.mastered(owner) && s.outfit === 'coat') armour *= 0.9;
-      if (this.now < s.wretchedUntil) armour = 0;
       f.clothIncomingMult = armour;
 
       // ── The wardrobe ──
@@ -729,6 +738,7 @@ export class ClothKit implements SummonPurgeTarget {
     f.pinnedHp = 0;
     f.pinnedVulnMult = 1.25;
     f.onPinnedAbsorb = null;
+    f.damageBudget = -1;
     if (f.hitboxMult === CLOTH_HITBOX || f.hitboxMult === 0.62) {
       f.hitboxMult = 1;
       if (f.active) f.applySizeMult();
@@ -740,10 +750,6 @@ export class ClothKit implements SummonPurgeTarget {
     const s = this.side(owner);
     const f = this.fighter(owner);
     if (!this.alive(f)) return;
-
-    // Wretched Scarf banks here rather than in its own updater, because this is the only place
-    // the raw delta exists — `applyStats` has already consumed it by the time anything else runs.
-    if (this.now < s.wretchedUntil) { s.wretchedStored += raw; return; }
 
     // Thick Skin converts a slice of the hit into pins rather than preventing it.
     if (s.fx.thickSkin) {
@@ -793,6 +799,8 @@ export class ClothKit implements SummonPurgeTarget {
     this.slices = [];
     this.draft = null;
     this.inThorns = false;
+    this.npcBleedWatchRaw = -1;
+    this.npcBleedWatchAt = 0;
     this.vizT = 0;
 
     // Q+ Salvage: a few pieces of the last tapestry are still on the loom. Only for a player
@@ -853,28 +861,28 @@ export class ClothKit implements SummonPurgeTarget {
       ['f', 'cloth-pin-cushion', this.api.fKey],
       ['q', 'cloth-tapestry', this.api.qKey],
     ];
-    const bound = this.wretchedSlot();
+    const bleed = this.boundSlot('bleed-stop');
     for (const [slot, abilityId, key] of slots) {
       if (!Phaser.Input.Keyboard.JustDown(key)) continue;
-      // The mastery has taken this key: it is Wretched Scarf now, not the base ability.
-      if (slot === bound) { this.tryCastWretched('player'); continue; }
+      // The mastery has taken this key: it is the bound enhancement now, not the base ability.
+      if (slot === bleed) { this.tryCastBleedStop('player'); continue; }
       p.castAbility(abilityId, ctx);
     }
   }
 
-  /** The slot Wretched Scarf is bound over this match, or null if it is not bound. */
-  private wretchedSlot(owner: Owner = 'player'): string | null {
+  /** The slot a bindable mastery enhancement is bound over this match, or null if it is not. */
+  private boundSlot(enhId: string, owner: Owner = 'player'): string | null {
     if (!this.mastered(owner)) return null;
     for (const slot of ['e', 'r', 'f', 'q']) {
       const bind = owner === 'player' ? this.api.masteryBindFor(slot) : this.api.npcMasteryBindFor(slot);
-      if (bind === 'wretched-scarf') return slot;
+      if (bind === enhId) return slot;
     }
     return null;
   }
 
   /** True while a base ability's key has been given away to the mastery. */
   private slotTaken(owner: Owner, slot: string): boolean {
-    return this.wretchedSlot(owner) === slot;
+    return this.boundSlot('bleed-stop', owner) === slot;
   }
 
   // ── Click: Pin ─────────────────────────────────────────────────────────────
@@ -1708,60 +1716,80 @@ export class ClothKit implements SummonPurgeTarget {
     }
   }
 
-  private tryCastWretched(owner: Owner): void {
+  /**
+   * Bleed Stop: tie the scarf off. For five seconds it is half as long, and the tailor can lose
+   * at most 75 in total — every point past that is refused by `Fighter.damageBudget`, which
+   * clamps after all mitigation, so armour still stretches the 75 further.
+   */
+  private tryCastBleedStop(owner: Owner): void {
     const s = this.side(owner);
     const f = this.fighter(owner);
-    if (!this.alive(f) || this.now < s.wretchedReadyAt) return;
-    s.wretchedReadyAt = this.now + WRETCHED_CD * s.fx.cooldownMult;
-    s.wretchedUntil = this.now + WRETCHED_MS;
-    s.wretchedStored = 0;
+    if (!this.alive(f) || this.now < s.bleedReadyAt) return;
+    s.bleedReadyAt = this.now + BLEED_CD * s.fx.cooldownMult;
+    s.bleedUntil = this.now + BLEED_MS;
+    s.bleedInstalled = true;
+    f.damageBudget = BLEED_CAP;
     this.avatar(owner)?.play('clap', 0, 400);
-    this.fx(owner).burst(f.x, f.y, 60, CLT.clothDeep);
-    Sfx.playAt('whip', f.x, { volume: 0.7, rate: 0.8 });
-    if (owner === 'player') {
-      this.api.showFloatingText(f.x, f.y - 52, '🧣 WRETCHED SCARF', this.hex(CLT.clothPale));
-      this.api.broadcastMasteryCast('wretched-scarf');
-    }
+    this.fx(owner).burst(f.x, f.y, 54, CLT.clothPale);
+    this.fx(owner).lint(f.x, f.y, 6, 22, 360, CLT.cloth);
+    Sfx.playAt('whip', f.x, { volume: 0.65, rate: 1.25 });
+    this.api.showFloatingText(f.x, f.y - 52, '🩹 BLEED STOP', this.hex(CLT.clothPale));
+    if (owner === 'player') this.api.broadcastMasteryCast('bleed-stop');
   }
 
-  doNpcWretched(): void { this.tryCastWretched('npc'); }
-
-  /** 0–1 fill for the Wretched Scarf HUD card. */
-  getBarRatio(abilityId: string, time: number): number {
-    if (abilityId !== 'wretched-scarf') return 1;
-    const s = this.sides.player;
-    const cd = WRETCHED_CD * s.fx.cooldownMult;
-    return Phaser.Math.Clamp(1 - (s.wretchedReadyAt - time) / cd, 0, 1);
-  }
+  doNpcBleedStop(): void { this.tryCastBleedStop('npc'); }
 
   /**
-   * Wretched Scarf, while it runs and when it ends.
-   *
-   * Everything aimed at the tailor is eaten by `clothIncomingMult` being zero, but the fever
-   * bookkeeping still sees the raw figure — so the ability can bank exactly what it swallowed and
-   * hand it back as a blast. Nothing is invented and nothing is lost.
+   * The bot ties off on its own, kit-side like the right-click artworks: the AI has no reason
+   * to know about the bind, and the only signal that matters — "I am being burst down right
+   * now" — is a damage tally only this kit is watching. 35 taken inside a 1.5s window, or
+   * anything at all below 40% health, and the tourniquet goes on.
    */
-  private updateWretched(): void {
+  private npcBleedAuto(): void {
+    if (this.api.isOnline || !this.isCloth('npc') || !this.boundSlot('bleed-stop', 'npc')) return;
+    const f = this.fighter('npc');
+    const s = this.side('npc');
+    if (!this.alive(f)) return;
+    if (this.npcBleedWatchRaw < 0 || this.now - this.npcBleedWatchAt >= 1500) {
+      this.npcBleedWatchRaw = f.rawDamageTaken;
+      this.npcBleedWatchAt = this.now;
+    }
+    if (this.now < s.bleedReadyAt || this.now < s.bleedUntil) return;
+    const burst = f.rawDamageTaken - this.npcBleedWatchRaw;
+    const low = f.hp < f.maxHp * 0.4 && burst > 0;
+    if (burst >= 35 || low) {
+      this.tryCastBleedStop('npc');
+      this.npcBleedWatchRaw = f.rawDamageTaken;
+    }
+  }
+
+  /** The window shutting: hand the fighter's budget back exactly once. */
+  private updateBleedStop(): void {
+    this.npcBleedAuto();
     for (const owner of BOTH) {
       const s = this.side(owner);
+      if (!s.bleedInstalled || this.now < s.bleedUntil) continue;
+      s.bleedInstalled = false;
       const f = this.fighter(owner);
-      if (!this.isCloth(owner) || !this.alive(f)) continue;
-      // While it is up, `onHurt` is doing the banking — see the note there.
-      if (this.now < s.wretchedUntil) continue;
-      if (s.wretchedStored <= 0) continue;
-      const payload = Math.round(s.wretchedStored * WRETCHED_RETURN);
-      s.wretchedStored = 0;
-      if (payload < 1) continue;
-      this.fx(owner).burst(f.x, f.y, WRETCHED_R, CLT.clothDeep);
-      Sfx.playAt('flame-burst', f.x, { volume: 0.9, rate: 0.7 });
-      for (const t of this.targetsOf(owner)) {
-        if (Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) > WRETCHED_R) continue;
-        this.hit(owner, t, payload, { aoe: true });
-      }
-      if (owner === 'player') {
-        this.api.showFloatingText(f.x, f.y - 56, `🧣 ${payload} RETURNED`, this.hex(CLT.clothPale));
+      if (!f) continue;
+      const held = Math.max(0, f.damageBudget);
+      f.damageBudget = -1;
+      if (f.active && f.hp > 0) {
+        this.fx(owner).lint(f.x, f.y, 5, 18, 320, CLT.clothPale);
+        this.api.showFloatingText(f.x, f.y - 52, `🩹 ${Math.round(BLEED_CAP - held)} LET THROUGH`, this.hex(CLT.clothPale));
       }
     }
+  }
+
+  /** 0–1 fill for the bindable mastery HUD cards. */
+  getBarRatio(abilityId: string, time: number): number {
+    const s = this.sides.player;
+    if (abilityId === 'bleed-stop') {
+      // Drains with the tourniquet's own clock while it holds, then refills with the cooldown.
+      if (s.bleedUntil > time) return Phaser.Math.Clamp((s.bleedUntil - time) / BLEED_MS, 0, 1);
+      return Phaser.Math.Clamp(1 - (s.bleedReadyAt - time) / (BLEED_CD * s.fx.cooldownMult), 0, 1);
+    }
+    return 1;
   }
 
   // ── SummonPurgeTarget ──────────────────────────────────────────────────────
@@ -1809,7 +1837,7 @@ export class ClothKit implements SummonPurgeTarget {
     this.updateSafety();
     this.updateNails(delta);
     this.updateRightClick(delta);
-    this.updateWretched();
+    this.updateBleedStop();
     this.updateDraft();
     // The draft eats the mouse while it is open, so it is a menu: incoming damage lands at
     // 5% while the player is picking (Fighter.menuGuards). The npc's draft is data-only.
@@ -1843,7 +1871,7 @@ export class ClothKit implements SummonPurgeTarget {
     this.npcAvatar?.destroy(); this.npcAvatar = null;
     this.api.setStatusIndicator('cloth-pinned', null);
     this.api.setStatusIndicator('cloth-burn', null);
-    this.api.setStatusIndicator('cloth-wretched', null);
+    this.api.setStatusIndicator('cloth-bleed-stop', null);
   }
 
   private ensureLayers(): void {
@@ -1952,9 +1980,6 @@ export class ClothKit implements SummonPurgeTarget {
       const s = this.side(owner);
       const f = this.fighter(owner);
       if (!this.alive(f)) continue;
-      // Wrapped up, the tail is gone — the cocoon is painted over the tailor by `paintAir`,
-      // because being wrapped is the one time the wool is meant to hide them.
-      if (this.now < s.wretchedUntil) continue;
       // A pinned scarf is drawn by the slice loop below, as a ghost. Drawing it here as well
       // would paint the same wool twice at two different opacities.
       if (this.slices.some((sl) => sl.owner === owner && !sl.snapped)) continue;
@@ -1984,21 +2009,36 @@ export class ClothKit implements SummonPurgeTarget {
     g.clear();
     const t = this.vizT;
 
-    // ── Wrapped up: the scarf is a tight cocoon on the body instead of a tail behind it ──
+    // ── Bleed Stop: a tourniquet knotted round the middle, tightening as the budget is spent ──
     for (const owner of BOTH) {
       if (!this.isCloth(owner)) continue;
       const s = this.side(owner);
       const f = this.fighter(owner);
-      if (!this.alive(f) || this.now >= s.wretchedUntil) continue;
+      if (!this.alive(f) || this.now >= s.bleedUntil) continue;
       const tint = this.col(owner);
-      const k = (s.wretchedUntil - this.now) / WRETCHED_MS;
-      for (let i = 0; i < 5; i++) {
-        const a = t * 3 + (i / 5) * Math.PI * 2;
-        g.lineStyle(4.5, tint(i % 2 ? CLT.clothDeep : CLT.cloth), 0.9);
-        g.strokeEllipse(f.x, f.y, 34 - i * 2 + Math.sin(a) * 2, 38 - i * 2.4);
+      const spent = f.damageBudget >= 0 ? 1 - f.damageBudget / BLEED_CAP : 1;
+      const fade = Phaser.Math.Clamp((s.bleedUntil - this.now) / 300, 0, 1);
+      // Two bands of bandage, slightly crossed, with the stain creeping along them.
+      for (let i = 0; i < 2; i++) {
+        const tilt = (i ? -0.32 : 0.28) + Math.sin(t * 2 + i) * 0.04;
+        const cx = f.x;
+        const cy = f.y + 3 + i * 5;
+        const hw = 22;
+        const dx = Math.cos(tilt) * hw;
+        const dy = Math.sin(tilt) * hw;
+        g.lineStyle(6, tint(BANDAGE), 0.92 * fade);
+        g.lineBetween(cx - dx, cy - dy, cx + dx, cy + dy);
+        g.lineStyle(1.2, tint(CLT.clothPale), 0.6 * fade);
+        g.lineBetween(cx - dx, cy - dy - 2.5, cx + dx, cy + dy - 2.5);
+        g.fillStyle(tint(CLT.clothDeep), (0.35 + spent * 0.5) * fade);
+        g.fillCircle(cx - dx * 0.2, cy - dy * 0.2, 2 + spent * 4);
       }
-      g.fillStyle(tint(CLT.clothPale), 0.2 + (1 - k) * 0.4);
-      g.fillCircle(f.x, f.y, 17);
+      // The knot, and its two loose tails.
+      g.fillStyle(tint(BANDAGE), fade);
+      g.fillCircle(f.x + 14, f.y + 4, 4.5);
+      g.lineStyle(3, tint(BANDAGE), 0.85 * fade);
+      g.lineBetween(f.x + 14, f.y + 4, f.x + 22 + Math.sin(t * 6) * 2, f.y + 13);
+      g.lineBetween(f.x + 14, f.y + 4, f.x + 25, f.y + 6 + Math.cos(t * 5) * 2);
     }
 
     // ── Pins in flight and pins planted ──
@@ -2169,11 +2209,12 @@ export class ClothKit implements SummonPurgeTarget {
       count: Math.round((this.burnBonus('player') - 1) * 100),
       suffix: '%',
     } : null);
-    this.api.setStatusIndicator('cloth-wretched', this.now < s.wretchedUntil ? {
-      name: 'Wretched Scarf', emoji: '🧣', color: CLT.clothDeep,
-      description: 'Wrapped up. Nothing gets through, and all of it comes back out at the end.',
-      until: s.wretchedUntil,
-      count: Math.round(s.wretchedStored),
+    const p = this.api.player;
+    this.api.setStatusIndicator('cloth-bleed-stop', this.now < s.bleedUntil && p.damageBudget >= 0 ? {
+      name: 'Bleed Stop', emoji: '🩹', color: CLT.clothPale,
+      description: 'The scarf is tied off at half length. You can lose at most this much more before the tourniquet refuses everything else.',
+      until: s.bleedUntil,
+      count: Math.round(p.damageBudget),
     } : null);
   }
 

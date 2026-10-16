@@ -1,13 +1,13 @@
 import { Element } from './Element';
 import { Ability, CastContext } from './Ability';
 
-const soulSiphon: Ability = {
-  id: 'soul-siphon',
-  name: 'Siphon',
-  description: 'Click on something to open a purple cord between it and you. A cord on an enemy (or one of your own grave zombies) drains 4 dmg/s out of it; a cord on one of your Amalgams feeds it 8 hp/s instead, and healing above its maximum becomes shield HP. Three cords at once, on three targets or all on one. They snap past 330px.',
+const soulLantern: Ability = {
+  id: 'soul-lantern',
+  name: 'Lantern of the Damned',
+  description: 'Click to launch a flaming wisp that chases your cursor until it reaches it — it bends toward a moving cursor but never turns back on itself — then flies straight on. 8 damage. Hold right click to charge a soul beam instead and release to fire it: a piercing line that hits everything along it for 6–22 depending on charge (1.2s to full, 1.5s cooldown). Every zombie the lantern, beam or their effects kill this match adds +5% damage to both, up to ×3.',
   displayKey: 'Click',
-  cooldown: 400,
-  cast(ctx: CastContext) { ctx.soulSiphon(ctx.targetX, ctx.targetY); },
+  cooldown: 350,
+  cast(ctx: CastContext) { ctx.soulLantern(ctx.targetX, ctx.targetY); },
 };
 
 const soulArise: Ability = {
@@ -22,7 +22,7 @@ const soulArise: Ability = {
 const soulGrave: Ability = {
   id: 'soul-grave',
   name: 'Grave',
-  description: 'Plant a headstone at the cursor. Every 5s it spits out a weak, ordinary zombie that hunts YOU — drain your own zombies down with Siphon to feed the corpse queue. A grave holds its spawn while you already have 3 bodies standing. Graves never expire and are never capped, so don\'t plant too many.',
+  description: 'Plant a headstone at the cursor. Every 5s it spits out a weak, ordinary zombie that hunts YOU — burn your own zombies down with the Lantern to feed the corpse queue. A grave holds its spawn while you already have 3 bodies standing. Graves never expire and are never capped, so don\'t plant too many.',
   displayKey: 'R',
   cooldown: 500,
   cast(ctx: CastContext) { ctx.soulGrave(ctx.targetX, ctx.targetY); },
@@ -52,5 +52,5 @@ export const soulElement: Element = {
   name: 'Soul',
   color: 0xccaaff,
   emoji: '👻',
-  abilities: [soulSiphon, soulArise, soulGrave, soulDeathWhistle, soulHellsTorment],
+  abilities: [soulLantern, soulArise, soulGrave, soulDeathWhistle, soulHellsTorment],
 };

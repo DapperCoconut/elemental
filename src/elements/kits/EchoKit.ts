@@ -936,11 +936,17 @@ export class EchoKit {
         let range = this.playerBatFormActive ? 60 : this.playerBeaconConeBoostUntil > time ? 156 : 130;
         if (time < this.playerBiolumUntil) range *= BIOLUM_RADIUS_MULT;
         const halfAngle = Phaser.Math.DegToRad(35);
-        this.fogEraser.beginPath();
-        this.fogEraser.moveTo(player.x, player.y);
-        this.fogEraser.arc(player.x, player.y, range, aimAngle - halfAngle, aimAngle + halfAngle, false);
-        this.fogEraser.closePath();
-        this.fogEraser.fillPath();
+        // An explicit fan anchored on the bearer — a moveTo+arc path let the cone's apex drift
+        // off the player.
+        const pts: Phaser.Types.Math.Vector2Like[] = [{ x: player.x, y: player.y }];
+        const steps = 20;
+        for (let i = 0; i <= steps; i++) {
+          const a = aimAngle - halfAngle + (2 * halfAngle * i) / steps;
+          pts.push({ x: player.x + Math.cos(a) * range, y: player.y + Math.sin(a) * range });
+        }
+        this.fogEraser.fillPoints(pts, true);
+        // A small halo at the feet so the cone visibly starts from the bearer.
+        this.fogEraser.fillCircle(player.x, player.y, 24);
       } else {
         let playerRadius = this.playerBatFormActive ? 45 : this.playerLanternActive ? 128 : 90;
         if (time < this.playerBiolumUntil) playerRadius *= BIOLUM_RADIUS_MULT;

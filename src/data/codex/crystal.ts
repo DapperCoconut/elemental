@@ -227,7 +227,7 @@ const crystal: ElementCodex = {
         + 'shard — 24 damage from a full 12. Recasting Atune throws an idle chakram back out at your '
         + 'current cursor, so the disc is reusable while it still has shards, and with Trick of the Light '
         + 'every clone throws a mini chakram of 4 shards as well, tripling the shredding. 14s cooldown.',
-      cast: 'Bindable to E, R, F or Q. Flies to the cursor and stops there.',
+      cast: 'Bindable to R, F or Q. Flies to the cursor and stops there.',
       effects: [
         { tag: 'damage', label: 'Per shard', detail: '2 damage per shard, within 15px of it, and that shard is consumed. 12 shards is 24 damage if every one connects.' },
         { tag: 'movement', label: 'The throw', detail: '260 px/s to the cursor, rotating at 3.2 radians a second, then it parks where it arrived.' },

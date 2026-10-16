@@ -10,10 +10,11 @@ import { ElementCodex } from '../AbilityCodex';
 const soul: ElementCodex = {
   identity:
     'A summoner with no summon button. Soul plants headstones that spit out zombies hunting *you*, '
-    + 'drains those zombies dry on a siphon cord, and raises the corpses as Amalgams that fight '
-    + 'at your side. Every part of the loop costs you something, and the payoff is the only genuine '
-    + 'crew in the game — three bodies that heal, buff each other, and can be set on fire as a '
-    + 'finisher, or climbed into and worn.',
+    + 'burns those zombies down with a lantern of damned wisps, and raises the corpses as Amalgams '
+    + 'that fight at your side. Every zombie the lantern kills makes it hit harder, and with Soul Lord '
+    + 'the kill count climbs through splitting wisps, bleeding beams and orbiting souls to a golden, '
+    + 'angelic ascension. The payoff is the only genuine crew in the game — three bodies that heal, '
+    + 'buff each other, and can be set on fire as a finisher.',
 
   passives: [
     {
@@ -21,13 +22,13 @@ const soul: ElementCodex = {
       name: 'The Corpse Queue',
       basics:
         'A five-slot queue of bodies, newest at the front, so Arise! always raises your most recent '
-        + 'kill. Anything that dies near you fills it — your own grave zombies drained down on a Siphon '
-        + 'cord, enemies you kill, Invasion husks. A corpse remembers its max HP, so raising a 200 HP '
+        + 'kill. Anything that dies near you fills it — your own grave zombies burned down by the '
+        + 'Lantern, enemies you kill, Invasion husks. A corpse remembers its max HP, so raising a 200 HP '
         + 'creature gives you a 200 HP Amalgam, and Angered and variant traits carry through the queue as '
         + 'well.',
       effects: [
         { tag: 'resource', label: 'Capacity', detail: '5 corpses held. The newest goes to the front, so Arise! always raises the most recent kill.' },
-        { tag: 'resource', label: 'What fills it', detail: 'Anything that dies near you — your own grave zombies drained down on a Siphon cord, enemies you killed, and Invasion husks.' },
+        { tag: 'resource', label: 'What fills it', detail: 'Anything that dies near you — your own grave zombies burned down by the Lantern, enemies you killed, and Invasion husks.' },
         { tag: 'utility', label: 'It remembers', detail: 'A corpse keeps its max HP, so raising a 200 HP creature gives you a 200 HP Amalgam. Angered and variant traits carry through the queue too.' },
       ],
       notes: [
@@ -39,14 +40,14 @@ const soul: ElementCodex = {
       name: 'Three Bodies',
       basics:
         'One side may have three living bodies on the field at a time, and grave zombies and '
-        + 'Amalgams share the ceiling — a zombie you have not drained yet is a slot your Amalgam '
+        + 'Amalgams share the ceiling — a zombie you have not killed yet is a slot your Amalgam '
         + 'cannot use, which is the whole tension of the loop. A grave that comes due while the field '
         + 'is full simply holds its spawn and restarts its 5 second clock, so nothing banks up and '
         + 'arrives at once; Arise refuses outright and does not spend the corpse. The count is drawn '
         + 'beside the corpse queue and turns red at the ceiling.',
       effects: [
         { tag: 'resource', label: 'The ceiling', detail: '3 living bodies per side, counting grave zombies and Amalgams together.' },
-        { tag: 'cost', label: 'They compete', detail: 'A grave zombie you have not drained yet occupies a slot your Amalgam cannot use. Draining is how you make room as well as how you make corpses.' },
+        { tag: 'cost', label: 'They compete', detail: 'A grave zombie you have not killed yet occupies a slot your Amalgam cannot use. Killing them is how you make room as well as how you make corpses.' },
         { tag: 'utility', label: 'Graves hold, they do not queue', detail: 'A grave that comes due at the cap skips that spawn and restarts its 5 second clock, so nothing banks up.' },
         { tag: 'utility', label: 'Arise refuses for free', detail: 'Arise at the cap does nothing and does not spend the corpse — you lose the 3 second cooldown and nothing else.' },
       ],
@@ -62,14 +63,14 @@ const soul: ElementCodex = {
         'Your risen creatures: a 19px body at 115 px/s carrying the max HP of the corpse it came from. '
         + 'It bites for 8 on a 0.9s cooldown and every 4–6 seconds launches at ×2.4 speed for 0.4s to hit '
         + 'for 15. Amalgams raised from metal, earth, light or silence bodies swing instead of shooting — '
-        + '6 damage within 50px every 0.8s. They can be repaired: a Siphon cord feeds them 8 HP a '
-        + 'second, and Death Whistle restores 75% of their max HP outright.',
+        + '6 damage within 50px every 0.8s. They can be repaired: Death Whistle restores 75% of '
+        + 'their max HP outright, and Cruel Offering\'s decay clouds feed them 6 HP a second.',
       effects: [
         { tag: 'summon', label: 'The body', detail: 'A 19px creature moving at 115 px/s, with the max HP of whatever corpse it came from.' },
         { tag: 'damage', label: 'Bite', detail: '8 damage on a 0.9s cooldown.' },
         { tag: 'damage', label: 'Dash bite', detail: 'Every 4–6s it launches at ×2.4 speed for 0.4s and hits for 15.' },
         { tag: 'damage', label: 'Melee lineage', detail: 'Amalgams raised from metal, earth, light or silence bodies swing instead of shooting: 6 damage within 50px every 0.8s.' },
-        { tag: 'utility', label: 'They can be healed', detail: 'A Siphon cord feeds them 8 HP/s with the overflow becoming shield HP, and Death Whistle restores 75% of their max HP outright.' },
+        { tag: 'utility', label: 'They can be healed', detail: 'Death Whistle restores 75% of their max HP outright, and Cruel Offering\'s decay clouds (E+) feed them 6 HP/s with the overflow becoming shield HP.' },
       ],
       notes: [
         'Dealing damage with Amalgams is one of the four Soul Mastery requirements (1000 damage), and raising them is another (200 Amalgams).',
@@ -78,48 +79,45 @@ const soul: ElementCodex = {
   ],
 
   abilities: {
-    'soul-siphon': {
+    'soul-lantern': {
       basics:
-        'One press opens one cord onto whatever is nearest the cursor, inside 72px of it. A cord on '
-        + 'anything hostile — the other fighter, an Invasion husk, the loose Alpha, or one of your own '
-        + 'grave zombies — drains 2 damage out of it every 0.5s, so 4 a second per cord and 12 a second '
-        + 'with all three on one target. A cord on one of your Amalgams feeds it 4 HP every 0.5s instead, '
-        + 'and anything above its maximum becomes shield HP up to a second full bar, with no upgrade '
-        + 'needed. Three cords is the ceiling; a fourth press recycles the oldest. They snap on their own '
-        + 'past 330px.',
-      cast: 'Click on something. One press, one cord — it is not held down.',
+        'Click throws a flaming wisp that chases your cursor. It bends toward the cursor as it moves — '
+        + 'up to 7 radians a second — until it reaches it, then flies straight on; if the cursor ends up '
+        + 'behind it, it gives up the chase rather than turning back, so it can never circle the mouse. '
+        + 'It hits the first foe or zombie it touches for 8. Hold right click instead to charge a soul '
+        + 'beam (1.2s to full) and release to fire it: a 460px line that pierces everything along it for '
+        + '6 to 22 depending on charge, on a 1.5s cooldown. Every zombie the lantern family kills this '
+        + 'match — wisps, beam, and the Soul Lord effects — adds 5% damage to all of it, up to ×3.',
+      cast: 'Click for a wisp. Hold right click to charge the beam, release to fire it at the cursor.',
       effects: [
-        { tag: 'dot', label: 'Drain', detail: '2 damage every 0.5s per cord — 4 a second, or 12 a second with all three on the same target.' },
-        { tag: 'heal', label: 'Mend', detail: 'A cord on one of your Amalgams feeds it 4 HP every 0.5s — 8 a second — instead of draining it.' },
-        { tag: 'shield', label: 'Overheal is free', detail: 'Healing above an Amalgam\'s maximum becomes shield HP, up to 100% of its max — 200% effective health at the cap. This is base now, not an upgrade.' },
-        { tag: 'resource', label: 'Three cords', detail: 'Three at once, on three different things or all on one. A fourth press releases the oldest rather than being refused.' },
-        { tag: 'utility', label: 'The leash', detail: 'A cord snaps on its own once the far end is more than 330px away, and the cord visibly pulls taut as it approaches that.' },
-        { tag: 'utility', label: 'Availability', detail: '0.4s between presses.' },
+        { tag: 'damage', label: 'Wisp', detail: '8 damage to the first foe or zombie it touches. 330 px/s, 0.35s between wisps.' },
+        { tag: 'utility', label: 'It follows the cursor — once', detail: 'Bends toward the live cursor until it reaches it, then flies straight. If the cursor swings more than ~100° off its heading it stops chasing instead of circling back.' },
+        { tag: 'damage', label: 'Soul beam', detail: 'Right click: hold to charge (1.2s), release to fire a 460px piercing line for 6–22 by charge. Released under 15% charge it fizzles for free. 1.5s cooldown.' },
+        { tag: 'resource', label: 'Kills', detail: 'Every zombie (grave zombies, enemy Amalgams, Invasion husks, the Alpha) killed by any lantern-family damage counts. The count shows left of the corpse queue.' },
+        { tag: 'buff', label: 'It grows', detail: '+5% wisp and beam damage per kill this match, up to +200% (×3) at 40 kills.' },
       ],
       upgrade: {
         basics:
-          'Put all three cords onto the same Amalgam and you climb into it for 12 seconds. Your own body '
-          + 'opens up like a flower and stops being reachable at all — every point of damage aimed at it '
-          + 'is swallowed before shields — while WASD walks the Amalgam, Click bites with it on a 0.65s '
-          + 'cooldown, and whatever move its variant has is bound to E on a 4s cooldown: a spitter spits, '
-          + 'a medic pulses, and anything else throws itself forward at ×3 speed for 0.4s. A ridden body '
-          + 'bites far more than its AI ever would — every grave zombie on the board and the enemy\'s own '
-          + 'risen are targets too, not just the opposing fighter. It ends at 12 seconds or when the '
-          + 'Amalgam dies, whichever comes first, and takes 30 seconds to come back.',
+          'Soul Lord turns the kill count into a ladder of new powers, each kept for the rest of the '
+          + 'match. At 5 kills a wisp that hits something bursts into 3 smaller wisps in random, evenly '
+          + 'spaced directions, each carrying 40% of its damage. At 10 the beam inflicts Hemorrhage: '
+          + 'whatever it hits wears a bleeding soul aura for 4s that hurts everything else within 80px '
+          + 'for 3 every 0.5s (scaled by kills), and the bearer for 1. At 15 three soul orbs circle you, '
+          + 'hitting whatever they touch for 5 (scaled), spinning faster with every further kill. At 25 '
+          + 'you ascend: the beam charges in 0.6s, every soul ability burns gold instead of purple, every '
+          + 'wisp homes on the nearest target once it is free of the cursor, and you become a golden, '
+          + 'haloed, winged figure.',
         effects: [
-          { tag: 'buff', label: 'Untouchable', detail: 'While riding, every point of damage aimed at your own body is absorbed outright, ahead of shields. 0 damage taken for the whole possession.', requiresUpgrade: 'click' },
-          { tag: 'control', label: 'You are the Amalgam', detail: 'Your body is pinned in place and WASD drives the Amalgam instead, at its own move speed. Its AI stops running for the duration, and Death Whistle no longer recalls it.', requiresUpgrade: 'click' },
-          { tag: 'damage', label: 'Bite', detail: 'Click bites for the Amalgam\'s own bite damage within 58px, on a 0.65s cooldown.', requiresUpgrade: 'click' },
-          { tag: 'damage', label: 'It can hit the dead too', detail: 'A ridden body targets every grave zombie on the board — yours included, which is how it feeds the corpse queue — and the enemy\'s own Amalgams, on top of the opposing fighter. Its AI only ever attacked the last of those 3.', requiresUpgrade: 'click' },
-          { tag: 'damage', label: 'Its own move on E', detail: 'A 4s cooldown: a spitter fires a shot, a medic pulses 12% healing to nearby Amalgams within 165px, everything else lunges at ×3 speed for 0.4s.', requiresUpgrade: 'click' },
-          { tag: 'cost', label: 'Duration and recovery', detail: '12 seconds, or until the Amalgam dies — whichever comes first. Then 30 seconds before a third cord can take you anywhere, counted from the moment you land back in your body.', requiresUpgrade: 'click' },
+          { tag: 'damage', label: '5 — Split', detail: 'A wisp that hits bursts into 3 shards in random, equidistant directions, each 40% of the wisp\'s damage. Shards never re-hit the thing the wisp burst on.', requiresUpgrade: 'click' },
+          { tag: 'dot', label: '10 — Hemorrhage', detail: 'The beam leaves a 4s soul aura on what it hits: 3 dmg every 0.5s (×kills bonus) to everything else within 80px, and 1 to the bearer. Re-hitting refreshes it.', requiresUpgrade: 'click' },
+          { tag: 'damage', label: '15 — Soul orbs', detail: 'Three orbs circle you at 48px, hitting what they touch for 5 (×kills bonus) at most every 0.6s per target. They spin faster with every kill past 15.', requiresUpgrade: 'click' },
+          { tag: 'buff', label: '25 — Ascension', detail: 'Beam charges in 0.6s, wisps (and shards) home on the nearest target within 280px once free of the cursor, every soul effect turns gold, and the character turns golden with a halo and wings.', requiresUpgrade: 'click' },
         ],
       },
       notes: [
-        'Your R, F and Q still answer while riding — the body is open, not asleep. Only Click and E are taken over, and E outranks a mastery bound to the same key for the duration.',
-        'Draining your own grave zombies is the main way the corpse queue is fed, so the cords are the supply line as well as the damage.',
-        'A plate under the corpse queue names the body you are wearing, shows its health and shield, counts the 12 seconds down, and becomes the 30 second recovery clock once you are out — so a third cord is never a guess.',
-        'The three cords are released when the ride ends, so a possession always costs you your whole Siphon board as well as the cooldown.',
+        'Your own grave zombies are both your corpse supply and your kill count — burning them down with the lantern feeds both at once.',
+        'Wisps hit grave zombies on either side, so killing the enemy\'s zombies counts too (though their corpse still goes to the enemy\'s queue).',
+        'Kills are counted per match and reset every round.',
       ],
     },
 
@@ -140,7 +138,7 @@ const soul: ElementCodex = {
           'Everything you raise now leaves a cloud of decay where it falls — grave zombies and Amalgams '
           + 'alike. An 84px cloud lasting 6 seconds and ticking once a second: 6 damage a second to '
           + 'anything hostile inside it plus a 30% move slow while they stand there, and 6 HP a second to '
-          + 'your own Amalgams, with the overflow becoming shield HP the same way a cord\'s does. The rot '
+          + 'your own Amalgams, with the overflow becoming shield HP up to a second full bar. The rot '
           + 'is left by the death, not by the cast, so it accumulates wherever the fighting actually is.',
         effects: [
           { tag: 'dot', label: 'Rot', detail: '6 damage a second to anything hostile standing in the 84px cloud, ticking once a second for 6 seconds.', requiresUpgrade: 'e' },
@@ -156,7 +154,7 @@ const soul: ElementCodex = {
         'Plants a permanent headstone at the cursor that spits out one plain zombie every 5 seconds — '
         + 'never anything else, unupgraded. There is '
         + 'no cap and no way to remove one, and the zombies hunt you: 20 HP, 70 px/s, biting for 5 on a '
-        + '1.2s cooldown. That is the point — draining your own zombies down with Siphon is the '
+        + '1.2s cooldown. That is the point — burning your own zombies down with the Lantern is the '
         + 'main way to fill the corpse queue. 0.5s cooldown, so you can carpet the arena in seconds, '
         + 'which is exactly the mistake to avoid.',
       cast: 'R at the cursor. Instant.',
@@ -164,7 +162,7 @@ const soul: ElementCodex = {
         { tag: 'summon', label: 'The grave', detail: 'A permanent headstone spitting out one zombie every 5s. Uncapped in number, and there is no way to remove one — though a grave that comes due while 3 bodies are already standing skips that spawn.' },
         { tag: 'summon', label: 'Plain bodies only', detail: 'Unupgraded, a grave raises the basic 20 HP zombie and nothing else — no variants, no tiers.' },
         { tag: 'cost', label: 'It hunts you', detail: 'Grave zombies target the caster: 20 HP, 70 px/s, biting for 5 on a 1.2s cooldown.' },
-        { tag: 'resource', label: 'The point', detail: 'Draining your own zombies down with Siphon is the main way to fill the corpse queue — 1 body every 10s or so per grave.' },
+        { tag: 'resource', label: 'The point', detail: 'Burning your own zombies down with the Lantern is the main way to fill the corpse queue — 1 body every 10s or so per grave.' },
         { tag: 'utility', label: 'Availability', detail: '0.5s cooldown — you can carpet the arena in seconds, which is exactly the mistake it warns about.' },
       ],
       upgrade: {
@@ -276,7 +274,7 @@ const soul: ElementCodex = {
         'Every Amalgam gains 5% damage resistance for every other Amalgam alive. The formula still runs '
         + 'to a 75% cap at sixteen bodies, but the three-body ceiling means you will never see more than '
         + '10% — two Amalgams is 5% each and three is 10% each. What it really rewards now is keeping all '
-        + 'three slots filled with Amalgams rather than with grave zombies you have not drained. The '
+        + 'three slots filled with Amalgams rather than with grave zombies you have not killed. The '
         + 'links are drawn as grey threads between bodies, thickening as the bonus climbs.',
       effects: [
         { tag: 'shield', label: 'Per-ally resistance', detail: '5% damage resistance to each Amalgam for every *other* Amalgam alive — 2 out means 5% each, 3 out means 10% each.' },
@@ -284,7 +282,7 @@ const soul: ElementCodex = {
         { tag: 'utility', label: 'Readable', detail: 'The links are drawn as grey threads between bodies, thickening and brightening as the bonus climbs.' },
       ],
       notes: [
-        'Passive — no bind and no key. Since grave zombies and Amalgams share the three-body ceiling, the passive is really paying you to drain your plots down promptly rather than to plant more of them.',
+        'Passive — no bind and no key. Since grave zombies and Amalgams share the three-body ceiling, the passive is really paying you to burn your plots down promptly rather than to plant more of them.',
       ],
     },
     'grave-mistake': {
@@ -297,7 +295,7 @@ const soul: ElementCodex = {
         + 'allies inside that radius for half the health you are personally missing (150 each at 400 max '
         + 'and 100 remaining), with the excess spilling into weak HP rather than being wasted. 12s '
         + 'cooldown on both forms.',
-      cast: 'Bindable to E, R, F or Q. The first cast destroys your nearest grave to wake the Alpha. Once the Alpha is killed the same key becomes Soul Screech.',
+      cast: 'Bindable to R, F or Q. The first cast destroys your nearest grave to wake the Alpha. Once the Alpha is killed the same key becomes Soul Screech.',
       effects: [
         { tag: 'summon', label: 'The Alpha', detail: '200 HP, moving at 85 px/s, hostile to you. It bites for 20.' },
         { tag: 'debuff', label: 'Anti-heal cones', detail: 'Every 3s it fires 5 green bullets at 5 damage each. Being hit blocks all healing — yours and your allies\' — for 5s.' },

@@ -93,7 +93,9 @@ export interface CastContext {
   placeCrystalPortal: (tx: number, ty: number) => void;
   activateCrystalTrick: () => void;
   // Soul
-  soulSiphon: (tx: number, ty: number) => void;
+  soulLantern: (tx: number, ty: number) => void;
+  /** Start charging the soul beam at a fixed point (bots); the kit fires it when full. */
+  soulBeam: (tx: number, ty: number) => void;
   soulArise: () => void;
   soulGrave: (tx: number, ty: number) => void;
   soulDeathWhistle: (tx: number, ty: number) => void;
@@ -149,12 +151,15 @@ export interface CastContext {
   fateEnchant: () => void;
   fateAllIn: () => void;
   // Magnet (abstract combined: electricity + slime)
-  magnetPulse: (x: number, y: number) => void;
-  magnetNailShoot: (tx: number, ty: number) => void;
-  magnetNailRecall: () => void;
-  magnetMagnetize: (tx: number, ty: number) => void;
-  magnetProtect: () => void;
-  magnetAtomSmasher: (x: number, y: number) => void;
+  magnetCoin: (tx: number, ty: number) => void;
+  magnetRepulse: (tx: number, ty: number) => void;
+  magnetNail: (tx: number, ty: number) => void;
+  magnetSpike: (tx: number, ty: number) => void;
+  magnetMecha: () => void;
+  /** Non-ability presses (no cooldown): rip nails out, ride to a spike, hold the coins. */
+  magnetRecall: () => void;
+  magnetZip: (tx: number, ty: number) => void;
+  magnetHover: (on: boolean) => void;
   // Metal (abstract combined: electricity + fate)
   metalSlash: (tx: number, ty: number) => void;
   metalFlailCraft: () => void;
@@ -250,17 +255,20 @@ export interface CastContext {
   chalkPerma: () => void;
   chalkShield: () => void;
   chalkMasterpiece: () => void;
-  // Magma (test element: cheat mode only for now)
+  // Magma
   magmaPlume: (tx: number, ty: number) => void;
   magmaVolcano: (tx: number, ty: number) => void;
   magmaBloat: () => void;
-  magmaJet: (tx: number, ty: number) => void;
-  magmaDragonKin: (tx: number, ty: number) => void;
+  magmaBlunder: (tx: number, ty: number) => void;
+  magmaMutiny: () => void;
   // Illusion (test element: cheat mode only for now)
   illusionCrackShot: (tx: number, ty: number) => void;
   illusionVeil: (tx: number, ty: number) => void;
   illusionRelocate: () => void;
-  illusionTesseract: (tx: number, ty: number) => void;
+  /** F — Guise: shrink, vanish and send a full-size clone after the cursor. */
+  illusionGuise: (tx: number, ty: number) => void;
+  /** F+ — Re-Trick: swap into the live clone. A recast, so it never touches the cooldown. */
+  illusionRetrick: () => void;
   illusionDance: () => void;
   // Ruin (test element: cheat mode only for now)
   ruinShred: (tx: number, ty: number) => void;
@@ -280,12 +288,12 @@ export interface CastContext {
   depthsEutrophication: () => void;
   depthsAngler: (tx: number, ty: number) => void;
   depthsMegalodon: (tx: number, ty: number) => void;
-  // Passion (test element: cheat mode only for now)
-  passionLoveshot: (tx: number, ty: number) => void;
-  passionFlirt: (tx: number, ty: number) => void;
-  passionSmooch: (tx: number, ty: number) => void;
-  passionManipulate: (tx: number, ty: number) => void;
-  passionExhibition: () => void;
+  // Devotion (id `passion`)
+  passionSermon: (tx: number, ty: number) => void;
+  passionHolyWater: (tx: number, ty: number) => void;
+  passionGrenade: (tx: number, ty: number) => void;
+  passionCrucifix: (tx: number, ty: number) => void;
+  passionAscendance: (tx: number, ty: number) => void;
   // Conquest (test element: cheat mode only for now)
   conquestBanner: () => void;
   conquestBuild: (kind: 'barracks' | 'turret' | 'barricade') => void;
@@ -296,18 +304,31 @@ export interface CastContext {
   paperShuriken: (tx: number, ty: number) => void;
   paperMache: () => void;
   paperClimax: (tx: number, ty: number) => void;
-  // Fortune (test element: cheat mode only for now)
-  fortuneFire: (tx: number, ty: number) => void;
-  fortuneSafeInvest: () => void;
-  fortuneRiskyInvest: () => void;
-  fortunePaywall: (tx: number, ty: number) => void;
-  fortunePayToWin: (tx: number, ty: number) => void;
+  // Gold (element id `fortune`; test element: cheat mode only for now)
+  fortuneFray: (tx: number, ty: number) => void;
+  fortuneAdvance: () => void;
+  fortunePlume: (tx: number, ty: number) => void;
+  fortuneHeart: (tx: number, ty: number) => void;
+  fortuneMidas: (tx: number, ty: number) => void;
   // Cloth (test element: cheat mode only for now)
   clothPin: (tx: number, ty: number) => void;
   clothLongpin: (tx: number, ty: number) => void;
   clothSafetyLine: () => void;
   clothPinCushion: () => void;
   clothTapestry: () => void;
+
+  // Marrow (test element: cheat mode only for now)
+  marrowAntibody: (tx: number, ty: number) => void;
+  marrowMacrosma: () => void;
+  marrowNeutralize: () => void;
+  marrowDendricles: (tx: number, ty: number) => void;
+  marrowMastacre: () => void;
+  // Tempest (test element: cheat mode only for now)
+  tempestGale: (tx: number, ty: number) => void;
+  tempestKick: (tx: number, ty: number) => void;
+  tempestFront: (tx: number, ty: number) => void;
+  tempestUpdraft: () => void;
+  tempestForecast: (tx: number, ty: number) => void;
   // Death (test element: cheat mode only for now)
   deathStyxShot: (tx: number, ty: number) => void;
   deathDisarm: (tx: number, ty: number) => void;
@@ -315,16 +336,24 @@ export interface CastContext {
   deathAmputate: (tx: number, ty: number) => void;
   deathDeal: (tx: number, ty: number) => void;
   // Psychic (test element: cheat mode only for now)
-  psychicHeadache: (tx: number, ty: number) => void;
-  psychicMindControl: () => void;
-  psychicDodgeDestiny: () => void;
-  psychicMigraine: (tx: number, ty: number) => void;
-  psychicComa: () => void;
+  psychicEnPassant: (tx: number, ty: number) => void;
+  psychicBishop: (tx: number, ty: number) => void;
+  psychicKnight: (tx: number, ty: number) => void;
+  psychicRook: (tx: number, ty: number) => void;
+  psychicQueen: () => void;
+  /**
+   * Not an ability: the bot's click on the board, carrying out the move PsychicKit planned for
+   * it (`NpcAiState.npcPsychicMove`). A no-op on the player's context — the player's clicks are
+   * read by the kit's own input handler.
+   */
+  psychicMovePiece: (tx: number, ty: number) => void;
+  // Sound — every ability is resolved by SoundKit, keyed by ability id.
+  soundCast: (abilityId: string, tx: number, ty: number) => void;
   // Radiation (test element: cheat mode only for now)
   radiationRailgun: (tx: number, ty: number) => void;
+  radiationBarrage: (tx: number, ty: number) => void;
+  radiationBunker: () => void;
   radiationBaton: (tx: number, ty: number) => void;
-  radiationXray: () => void;
-  radiationWaste: (tx: number, ty: number) => void;
   radiationExtermination: () => void;
   // Bind (test element: cheat mode only for now)
   bindSummon: (tx: number, ty: number) => void;
@@ -345,17 +374,12 @@ export interface CastContext {
   quantumArenaSplit: () => void;
   quantumEffectSplit: () => void;
   quantumParasite: (tx: number, ty: number) => void;
-  // Gluttony (test element: cheat mode only for now). Two forms, so ten entries.
-  gluttonyKnife: (tx: number, ty: number) => void;
-  gluttonyForage: () => void;
-  gluttonyCharcoal: (tx: number, ty: number) => void;
-  gluttonyButcher: () => void;
-  gluttonyFeast: () => void;
-  gluttonyCleave: (tx: number, ty: number) => void;
-  gluttonyPoach: (tx: number, ty: number) => void;
-  gluttonyCannibalize: (tx: number, ty: number) => void;
-  gluttonyReturn: () => void;
-  gluttonyMawAwakening: () => void;
+  // Harvest (element id `gluttony`, test element: cheat mode only for now).
+  harvestSickle: (tx: number, ty: number) => void;
+  harvestSow: () => void;
+  harvestFrenzy: (tx: number, ty: number) => void;
+  harvestConsume: (tx: number, ty: number) => void;
+  harvestReap: (tx: number, ty: number) => void;
   hasPerk: (perkId: string) => boolean;
 }
 

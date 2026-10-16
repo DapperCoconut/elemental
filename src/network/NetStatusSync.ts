@@ -38,6 +38,7 @@ const MIRRORED_TIMERS = new Set([
   'frozen', 'chicken', 'disarmed', 'silenced', 'chain-bound', 'skewered', 'vibration', 'wrenched',
   'confused', 'wandering', 'hallucinating', 'lagging', 'panicked', 'intoxicated', 'unsteady',
   'high-gravity', 'inverted', 'exposed', 'purged', 'heal-block', 'dark-link', 'oily',
+  'gold-heart', 'midas', 'stalked', 'stunned', 'out-of-tune',
 ]);
 
 const TIMER_DESCRIPTORS: StatusDescriptor[] = STATUS_DESCRIPTORS
@@ -68,12 +69,39 @@ const NUMERIC_FIELDS: NetNumericField[] = [
   { i: 'stoke', read: (f) => f.fireStokeBonus, apply: (f, v) => { f.fireStokeBonus = Math.max(f.fireStokeBonus, v); }, clear: (f) => { f.fireStokeBonus = 0; } },
   { i: 'darkv', read: (f) => f.darkVulnStacks, apply: (f, v) => { f.darkVulnStacks = Math.max(f.darkVulnStacks, v); }, clear: (f) => { f.darkVulnStacks = 0; } },
   { i: 'hope', read: (f) => f.hopelessness, apply: (f, v) => { f.hopelessness = Math.max(f.hopelessness, v); }, clear: (f) => { f.hopelessness = 0; } },
+  // Silence F+ Despress: the stack count rides with its own expiry (stacks without a clock
+  // would never lapse on the victim's side).
+  {
+    i: 'desp',
+    read: (f) => f.activeDespressStacks(),
+    apply: (f, v) => {
+      if (v <= 0) return;
+      // Refreshed by every 10 Hz tick the sender still has it; lapses shortly after it stops.
+      f.despressStacks = Math.max(f.activeDespressStacks(), v);
+      f.despressUntil = Math.max(f.despressUntil, Date.now() + 400);
+    },
+    clear: (f) => { f.despressStacks = 0; f.despressUntil = 0; },
+  },
+  // Radiation's irradiated: the healing lock is read inside `Fighter.heal` on the victim's own
+  // sim, so it has to travel. Sent as remaining ms and re-based on arrival.
+  {
+    i: 'irrad',
+    read: (f) => Math.max(0, f.healInvertedUntil - Date.now()),
+    apply: (f, v) => { if (v > 0) f.healInvertedUntil = Math.max(f.healInvertedUntil, Date.now() + v); },
+    clear: (f) => { f.healInvertedUntil = 0; },
+  },
   { i: 'vuln', read: (f) => (f.vulnerableNextHit ? 1 : 0), apply: (f, v) => { if (v > 0) f.vulnerableNextHit = true; }, clear: (f) => { f.vulnerableNextHit = false; } },
   // Permanent by design on both sims — mirrored once, never cleared.
   { i: 'carrier', read: (f) => (f.sicknessCarrier ? 1 : 0), apply: (f, v) => { if (v > 0) f.sicknessCarrier = true; }, clear: () => {} },
   { i: 'atkint', read: (f) => f.attackIntervalMult, apply: (f, v) => { f.attackIntervalMult = Math.max(f.attackIntervalMult, v); }, clear: (f) => { f.attackIntervalMult = 1; } },
   { i: 'incdmg', read: (f) => f.incomingDamageMultiplier, apply: (f, v) => { f.incomingDamageMultiplier = Math.max(f.incomingDamageMultiplier, v); }, clear: (f) => { f.incomingDamageMultiplier = 1; } },
   { i: 'outdmg', read: (f) => f.outgoingDamageMult, apply: (f, v) => { f.outgoingDamageMult = Math.min(f.outgoingDamageMult, v); }, clear: (f) => { f.outgoingDamageMult = 1; } },
+  // Gold's heart: how full of stress it is. Drawn on the victim; only the attacker's sim decides it.
+  { i: 'gstress', read: (f) => f.goldHeartStress, apply: (f, v) => { f.goldHeartStress = v; }, clear: (f) => { f.goldHeartStress = 0; } },
+  // Harvest's rot: the attacker's sim decides it; a mirror only ever raises it.
+  // Devotion's faith: decided on the priest's sim; a mirror only ever raises it.
+  { i: 'fth', read: (f) => f.devotionFaith, apply: (f, v) => { f.devotionFaith = Math.max(f.devotionFaith, v); }, clear: () => {} },
+  { i: 'hcorr', read: (f) => f.harvestCorruption, apply: (f, v) => { f.harvestCorruption = Math.max(f.harvestCorruption, v); }, clear: () => {} },
   { i: 'frost', read: (f) => f.frostStacks, apply: applyFrost, clear: (f) => { f.frostStacks = 0; f.frostStackTimers.length = 0; } },
   { i: 'vfrost', read: (f) => f.voidFrostStacks, apply: applyVoidFrost, clear: (f) => { f.voidFrostStacks = 0; f.voidFrostStackTimers.length = 0; } },
   { i: 'pfrost', read: (f) => f.permafrostStacks, apply: (f, v) => { f.permafrostStacks = Math.max(f.permafrostStacks, v); }, clear: () => {} },

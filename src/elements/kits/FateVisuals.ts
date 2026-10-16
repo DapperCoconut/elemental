@@ -256,6 +256,221 @@ export function fateCardLayered(
   fillPoly(g, sheen);
 }
 
+// ── The hand: real playing cards that wear out ───────────────────────────
+
+export interface PlayingCardOpts {
+  w: number;
+  h: number;
+  suit: Suit;
+  /** The card's gameplay colour — its frame and court panel. */
+  face: number;
+  /** Rim colour: gilt when preserved, violet when enchanted, magenta under Tarot. */
+  border: number;
+  borderWidth: number;
+  /** Throws made with the card. 0 is mint; every throw tears it further. */
+  wear: number;
+  /** Fixes where the tears fall, so a card keeps its own damage between redraws. */
+  seed: number;
+  selected: boolean;
+  /** Throws left, shown as pips along the foot. */
+  uses: number;
+}
+
+/** What tearing took with it — the caller hides any index text that no longer has card under it. */
+export interface PlayingCardDamage { topLeftGone: boolean; bottomRightGone: boolean }
+
+/** Wear stops getting visibly worse past this — a card can't lose more than it has. */
+const MAX_VISIBLE_WEAR = 7;
+
+function seededRng(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function mixColor(a: number, b: number, t: number): number {
+  const ch = (sh: number) => Math.round(((a >> sh) & 0xff) * (1 - t) + ((b >> sh) & 0xff) * t);
+  return (ch(16) << 16) | (ch(8) << 8) | ch(0);
+}
+
+/**
+ * A playing card from the hand bar, drawn around (0, 0): torn outline, index pips in two corners,
+ * a court panel in the card's colour, and the damage of every throw it has survived — frayed
+ * edges first, then bites out of the rim, rips running into the face, creases and stains, the
+ * stock yellowing as it goes. Text (rank, art, curse) is the caller's; this paints the paper.
+ */
+export function fatePlayingCard(g: Phaser.GameObjects.Graphics, o: PlayingCardOpts): PlayingCardDamage {
+  const { w, h } = o;
+  const hw = w / 2, hh = h / 2;
+  const wear = Math.min(o.wear, MAX_VISIBLE_WEAR);
+  const rnd = seededRng(o.seed);
+
+  // ── The outline: a chamfered rectangle walked in short steps, each pushed inward by fray + bites.
+  const c = 5;
+  const corners: Pt[] = [
+    { x: -hw + c, y: -hh }, { x: hw - c, y: -hh }, { x: hw, y: -hh + c }, { x: hw, y: hh - c },
+    { x: hw - c, y: hh }, { x: -hw + c, y: hh }, { x: -hw, y: hh - c }, { x: -hw, y: -hh + c },
+  ];
+  const base: { p: Pt; n: Pt; u: number }[] = [];
+  let perim = 0;
+  const segs: number[] = [];
+  for (let i = 0; i < corners.length; i++) {
+    const a = corners[i], b = corners[(i + 1) % corners.length];
+    segs.push(Math.hypot(b.x - a.x, b.y - a.y));
+    perim += segs[i];
+  }
+  let run = 0;
+  for (let i = 0; i < corners.length; i++) {
+    const a = corners[i], b = corners[(i + 1) % corners.length];
+    const len = segs[i];
+    const steps = Math.max(1, Math.round(len / 3));
+    // Inward normal of a clockwise (screen-space) outline.
+    const n = { x: -(b.y - a.y) / len, y: (b.x - a.x) / len };
+    for (let k = 0; k < steps; k++) {
+      const t = k / steps;
+      base.push({ p: { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }, n, u: (run + len * t) / perim });
+    }
+    run += len;
+  }
+
+  const bites: { u: number; half: number; depth: number }[] = [];
+  const biteCount = Math.min(5, Math.max(0, wear - 1));
+  for (let i = 0; i < biteCount; i++) {
+    bites.push({
+      u: rnd(),
+      half: (3 + rnd() * 4 + wear) / perim,
+      depth: Math.min(11, 3 + wear * 1.4 + rnd() * 2.5),
+    });
+  }
+  const fray = wear * 0.45;
+  const disp = base.map((b) => {
+    let d = wear > 0 ? rnd() * fray : 0;
+    for (const bite of bites) {
+      let du = Math.abs(b.u - bite.u);
+      du = Math.min(du, 1 - du);
+      if (du < bite.half) d = Math.max(d, bite.depth * (1 - du / bite.half) * (0.6 + rnd() * 0.4));
+    }
+    return d;
+  });
+  const at = (i: number, inset: number): Pt => {
+    const b = base[i];
+    const d = Math.max(inset, disp[i] + (inset > 0 ? 1.5 : 0));
+    return { x: b.p.x + b.n.x * d, y: b.p.y + b.n.y * d };
+  };
+  const ring = (inset: number): Pt[] => base.map((_, i) => at(i, inset));
+  const outline = ring(0);
+
+  // A corner index is gone once the tearing near it runs deeper than the index sits.
+  const cornerGone = (cx: number, cy: number): boolean => {
+    let worst = 0;
+    base.forEach((b, i) => { if (Math.hypot(b.p.x - cx, b.p.y - cy) < 11) worst = Math.max(worst, disp[i]); });
+    return worst > 5;
+  };
+  const damage: PlayingCardDamage = {
+    topLeftGone: cornerGone(-hw, -hh),
+    bottomRightGone: cornerGone(hw, hh),
+  };
+
+  // ── Paper.
+  if (o.selected) {
+    g.lineStyle(6, o.face, 0.35);
+    strokePoly(g, outline);
+  }
+  g.fillStyle(FATE.shade, 0.45);
+  fillPoly(g, outline.map((p) => ({ x: p.x + 2, y: p.y + 3 })));
+  const stock = mixColor(FATE.ivory, 0xd8c99c, Math.min(1, wear / MAX_VISIBLE_WEAR) * 0.75);
+  g.fillStyle(stock, 1);
+  fillPoly(g, outline);
+  g.lineStyle(o.borderWidth, o.border, 1);
+  strokePoly(g, outline);
+
+  // Inner frame in the card's colour, following the tears so it never hangs over a missing bite.
+  g.lineStyle(1, o.face, 0.75 - wear * 0.05);
+  strokePoly(g, ring(4));
+
+  // Court panel: the card's art sits on this.
+  const px = hw - 10, py = hh - 16;
+  g.fillStyle(o.face, 0.2);
+  g.fillRect(-px, -py, px * 2, py * 2);
+  g.lineStyle(1.2, o.face, 0.9);
+  g.strokeRect(-px, -py, px * 2, py * 2);
+  g.lineStyle(0.8, o.face, 0.5);
+  g.strokeRect(-px + 2, -py + 2, px * 2 - 4, py * 2 - 4);
+  // A faint watermark suit behind the art.
+  g.fillStyle(suitInk(o.suit), 0.12);
+  suitGlyph(g, o.suit, 0, 0, Math.min(px, py) * 0.85);
+
+  // Corner pips under the rank text.
+  g.fillStyle(suitInk(o.suit), 1);
+  if (!damage.topLeftGone) suitGlyph(g, o.suit, -hw + 7, -hh + 19, 3.4);
+  if (!damage.bottomRightGone) suitGlyph(g, o.suit, hw - 7, hh - 19, 3.4, Math.PI);
+
+  // Throws left, as pips along the foot. Past six it is a number, drawn by nobody — six reads fine.
+  const shown = Math.min(o.uses, 6);
+  for (let i = 0; i < shown; i++) {
+    const x = -hw + 8 + i * 5, y = hh - 7;
+    g.fillStyle(FATE.ink, 0.8);
+    g.fillCircle(x, y, 2.1);
+    g.fillStyle(o.face, 1);
+    g.fillCircle(x, y, 1.5);
+  }
+
+  if (wear <= 0) return damage;
+
+  // ── Damage, worst last.
+  // Creases: a dark fold line with a lit ridge beside it.
+  const creases = Math.min(4, wear);
+  for (let i = 0; i < creases; i++) {
+    const a = outline[Math.floor(rnd() * outline.length)];
+    const b = outline[Math.floor(rnd() * outline.length)];
+    if (Math.hypot(a.x - b.x, a.y - b.y) < w * 0.6) continue;
+    g.lineStyle(1, 0x000000, 0.14);
+    g.lineBetween(a.x, a.y, b.x, b.y);
+    g.lineStyle(1, 0xffffff, 0.35);
+    g.lineBetween(a.x + 1, a.y + 1, b.x + 1, b.y + 1);
+  }
+
+  // Stains from being handled.
+  const stains = Math.min(3, Math.max(0, wear - 2));
+  for (let i = 0; i < stains; i++) {
+    const sx = (rnd() - 0.5) * w * 0.6, sy = (rnd() - 0.5) * h * 0.6, r = 3 + rnd() * 4;
+    g.fillStyle(0x7a5a30, 0.16);
+    g.fillCircle(sx, sy, r);
+    g.fillCircle(sx + r * 0.6, sy + r * 0.3, r * 0.6);
+  }
+
+  // Rips: jagged dark splits running in from the rim, fibres catching the light along one side.
+  const rips = Math.min(4, Math.floor((wear + 1) / 2));
+  for (let i = 0; i < rips; i++) {
+    const start = Math.floor(rnd() * outline.length);
+    let p = { ...outline[start] };
+    const n = base[start].n;
+    let ang = Math.atan2(n.y, n.x) + (rnd() - 0.5) * 1.1;
+    const len = h * (0.12 + 0.07 * wear) * (0.7 + rnd() * 0.5);
+    const pts: Pt[] = [p];
+    for (let d = 0; d < len; d += 3) {
+      ang += (rnd() - 0.5) * 0.9;
+      p = { x: p.x + Math.cos(ang) * 3, y: p.y + Math.sin(ang) * 3 };
+      if (Math.abs(p.x) > hw - 2 || Math.abs(p.y) > hh - 2) break;
+      pts.push(p);
+    }
+    if (pts.length < 2) continue;
+    // Gape: the split is widest where it starts.
+    for (let k = 1; k < pts.length; k++) {
+      const gape = 2.2 * (1 - k / pts.length) + 0.6;
+      g.lineStyle(gape + 0.8, FATE.ash, 0.85);
+      g.lineBetween(pts[k - 1].x, pts[k - 1].y, pts[k].x, pts[k].y);
+      g.lineStyle(0.8, 0xffffff, 0.7);
+      g.lineBetween(pts[k - 1].x + 1, pts[k - 1].y - 1, pts[k].x + 1, pts[k].y - 1);
+    }
+  }
+  return damage;
+}
+
 /** A casino chip: notched rim, inset face, centre pip. Fate's other unit of currency. */
 export function fateChip(
   g: Phaser.GameObjects.Graphics, tint: FateColorFn,
@@ -932,9 +1147,12 @@ const FATE_AVATAR: AvatarSpec = {
 };
 
 /**
- * The fate character rig: two chip ball hands, a pair of eyes, and a fan of cards worn like a
- * crown, each one turning on its own beat. Hands, eyes and gestures come from BaseAvatar; what
- * fate adds is the felt underfoot and the hand held above the head.
+ * The fate character rig: a plain jade orb (the baked `elem-fate` texture), two chip ball
+ * hands, a pair of eyes, and a fan of three cards worn like a crown, each one turning on its
+ * own beat. The fan is the only accessory; the body alone says "fate".
+ *
+ * Mastery enhances the fan rather than adding to it: the cards grow and lift in a gold halo,
+ * the eyes go gold, the hands gain a gilded rim and wider glow, and the under-glow intensifies.
  */
 export class FateAvatar extends BaseAvatar {
   private fx: FateFx;
@@ -951,10 +1169,9 @@ export class FateAvatar extends BaseAvatar {
   }
 
   /**
-   * Mastery tell — a permanent, readable upgrade to the character, so a mastered fate user is
-   * identifiable before they play a card: gold eyes, a gilded rim and wider glow on each hand,
-   * a five-card crown instead of three, and chips orbiting the head. Shape changes, not just
-   * brighter tints — a tint alone vanishes at gameplay zoom.
+   * Mastery tell — gold eyes and a gilded rim with a wider glow on each hand; `drawExtras`
+   * enlarges the fan and lights it gold. Shape changes, not just brighter tints — a tint alone
+   * vanishes at gameplay zoom.
    */
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? FATE.gold : FATE.bone);
@@ -983,59 +1200,48 @@ export class FateAvatar extends BaseAvatar {
     };
   }
 
-  /** The felt: a table-green pool with a betting ring marked on it. */
+  /** A soft felt-green glow pooled under the character. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
-    const k = this.intensity;
-    g.fillStyle(this.tint(FATE.felt), a * 0.3 * k);
-    g.fillEllipse(x, y + 6, 56 * k, 26 * k);
-    g.fillStyle(this.tint(FATE.teal), a * 0.18 * k);
-    g.fillEllipse(x, y + 6, 38 * k, 17 * k);
-    g.lineStyle(1.4, this.tint(FATE.gold), a * 0.4);
-    g.strokeEllipse(x, y + 6, 44 * k, 20 * k);
-    // Chips sitting on the felt around the caster's feet.
-    for (let i = 0; i < 3; i++) {
-      const ang = this.t * 0.4 + (i / 3) * TAU;
-      fateChip(g, this.tint, x + Math.cos(ang) * 20 * k, y + 6 + Math.sin(ang) * 9 * k,
-        3, i === 0 ? FATE.gold : FATE.mint, a * 0.75, ang);
-    }
+    const k = this.intensity * (this.mastered ? 1.15 : 1);
+    g.fillStyle(this.tint(this.mastered ? FATE.jade : FATE.teal), a * (this.mastered ? 0.3 : 0.24) * k);
+    g.fillCircle(x, y, 28 * k);
+    g.fillStyle(this.tint(FATE.felt), a * 0.28 * k);
+    g.fillEllipse(x, y + 8, 38 * k, 14 * k);
   }
 
   /**
-   * The crown: a fan of cards held above the head, each turning on its own beat so the hand
-   * always looks live. Rooted at y - 18 so the cards never cover the face, and drawn over the
-   * sprite so their faces show instead of only their dark edges clearing the body.
+   * The crown: a fan of three cards held above the head, each turning on its own beat so the
+   * hand always looks live. Rooted at y - 9 so the fan sits on the crown above the eyes, and drawn over
+   * the sprite so their faces show instead of only their dark edges clearing the body.
+   * Mastered, the fan is larger and sits in a gold halo.
    */
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    const rootY = y - 16;
-    const count = this.mastered ? 5 : 3;
-    const scale = this.mastered ? 1.3 : 1;
-    const spread = 0.42;
+    void alpha;
+    const m = this.mastered;
+    // Low enough that the fan sits on the crown below the health bar, which hides anything
+    // drawn above about y - 30.
+    const rootY = y - 9;
+    const count = 3;
+    const scale = m ? 1.15 : 1;
+    const spread = 0.55;
 
+    if (m) {
+      g.fillStyle(this.tint(FATE.gold), 0.24 * a);
+      g.fillEllipse(x, rootY - 12 * this.intensity, 44, 22);
+    }
     for (let i = 0; i < count; i++) {
       const side = (i - (count - 1) / 2) / Math.max(1, (count - 1) / 2);
       const lean = side * spread + Math.sin(this.t * 1.6 + i) * 0.05;
-      const lift = 15 * this.intensity * scale * (1 - Math.abs(side) * 0.16);
-      const cx = x + Math.sin(lean) * lift * 1.15;
+      const lift = 12 * this.intensity * scale * (1 - Math.abs(side) * 0.12);
+      const cx = x + Math.sin(lean) * lift * 1.3;
       const cy = rootY - Math.cos(lean) * lift;
       fateCardLayered(
         g, this.tint, this.tones, cx, cy, lean,
-        13 * scale, 18 * scale,
+        12 * scale, 17 * scale,
         // Each card in the fan turns on its own phase — a static fan reads as a paper hat.
         Math.cos(this.t * 1.6 + i * 1.4), a * 0.95,
         { suit: SUITS[i % SUITS.length], shadow: false },
       );
-    }
-
-    // Mastery orbit: chips circling the head on a shallow ellipse.
-    if (this.mastered) {
-      for (let i = 0; i < 3; i++) {
-        const p = this.t * 1.4 + (i / 3) * TAU;
-        fateChip(
-          g, this.tint,
-          x + Math.cos(p) * 25, y - 32 + Math.sin(p) * 7,
-          4.4, i === 1 ? FATE.great : FATE.gold, alpha * 0.95, p * 2,
-        );
-      }
     }
   }
 }
