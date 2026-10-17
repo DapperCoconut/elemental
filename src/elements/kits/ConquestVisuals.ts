@@ -649,10 +649,29 @@ export function buildingHpBar(
   g: Phaser.GameObjects.Graphics,
   x: number, y: number, w: number, ratio: number, color: number, alpha: number,
 ): void {
-  g.fillStyle(0x000000, alpha * 0.55);
-  g.fillRect(x - w / 2 - 1, y - 1, w + 2, 5);
-  g.fillStyle(color, alpha);
-  g.fillRect(x - w / 2, y, w * Phaser.Math.Clamp(ratio, 0, 1), 3);
+  const k = Phaser.Math.Clamp(ratio, 0, 1);
+  const l = x - w / 2;
+  // An iron-banded timber rail: dark iron case, a darker trough, the fill with a lit top edge.
+  g.fillStyle(0x000000, alpha * 0.4);
+  g.fillRect(l - 1, y, w + 3, 6);
+  g.fillStyle(CNQ.ironDark, alpha * 0.95);
+  g.fillRect(l - 1.5, y - 1.5, w + 3, 6);
+  g.fillStyle(0x120c06, alpha * 0.9);
+  g.fillRect(l, y - 0.2, w, 3.4);
+  if (k > 0) {
+    g.fillStyle(color, alpha);
+    g.fillRect(l, y - 0.2, w * k, 3.4);
+    g.fillStyle(0xffffff, alpha * 0.3);
+    g.fillRect(l, y - 0.2, w * k, 1.1);
+  }
+  // Iron bands every quarter, and rivets on the ends.
+  if (w >= 24) {
+    g.fillStyle(CNQ.ironDark, alpha);
+    for (let i = 1; i < 4; i++) g.fillRect(l + (w * i) / 4 - 0.5, y - 1.5, 1, 6);
+  }
+  g.fillStyle(CNQ.iron, alpha);
+  g.fillCircle(l - 0.2, y + 1.5, 1);
+  g.fillCircle(l + w + 0.2, y + 1.5, 1);
 }
 
 /** The pike, drawn as an actual thrust: a shaft, a leaf blade, and a pennant trailing the swing. */
@@ -1045,8 +1064,11 @@ const CONQUEST_AVATAR: AvatarSpec = {
  * standing in (so the territory bonus reads without looking at the floor), else banner red.
  * Owning more than one town adds a gold bar across the cloth: the empire has split.
  *
- * Mastery enhances the standard rather than adding to it: a taller pole, a bigger cloth with
- * gilded edging, a glowing gold finial, gold eyes and wider gold hand coronas.
+ * Body detail: a gold sash with a pinned campaign medal, fringed epaulettes and coat buttons.
+ *
+ * Mastered (Emperor): a jewelled gold crown on the head, a crimson royal mantle with an ermine hem
+ * hanging behind, the sash turns royal white with a crimson stripe, plus a taller gilded pole, a
+ * bigger gold-edged cloth, a glowing finial, gold eyes and wider gold hand coronas.
  */
 export class ConquestAvatar extends BaseAvatar {
   /** The colour of whichever territory the commander is standing on, or 0 for neutral ground. */
@@ -1082,11 +1104,93 @@ export class ConquestAvatar extends BaseAvatar {
     new ConquestFx(this.scene, this.tint).chip(x, y, CNQ.gold, 4);
   }
 
+  /**
+   * The uniform on the orb: a gold sash slung from the left shoulder to the right hip with a
+   * campaign medal pinned on it, a fringed epaulette on each shoulder, and a row of brass
+   * buttons down the right.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    void a;
+    const m = this.mastered;
+    const P = (px: number, py: number) => new Phaser.Geom.Point(px, py);
+    // Sash.
+    const sash = [P(x - 17, y - 6), P(x - 12, y - 11), P(x + 15, y + 9), P(x + 10, y + 14)];
+    g.fillStyle(0x000000, alpha * 0.25);
+    g.fillPoints(sash.map((q) => P(q.x + 0.8, q.y + 1.2)), true);
+    g.fillStyle(this.tint(m ? CNQ.parchment : CNQ.gold), alpha * 0.95);
+    g.fillPoints(sash, true);
+    g.lineStyle(0.9, this.tint(CNQ.goldDeep), alpha);
+    g.lineBetween(x - 17, y - 6, x + 10, y + 14);
+    g.lineBetween(x - 12, y - 11, x + 15, y + 9);
+    if (m) {
+      // Mastered sash: a royal white with a crimson stripe down its middle.
+      g.lineStyle(1.6, this.tint(CNQ.crimson), alpha * 0.9);
+      g.lineBetween(x - 14.5, y - 8.5, x + 12.5, y + 11.5);
+    }
+    // Medal pinned at the sash's middle: ribbon then a gold star.
+    const mx = x - 2, my = y + 1;
+    g.fillStyle(this.tint(CNQ.crimson), alpha);
+    g.fillRect(mx - 2, my - 5, 4, 4);
+    g.fillStyle(this.tint(CNQ.parchment), alpha * 0.8);
+    g.fillRect(mx - 0.5, my - 5, 1, 4);
+    const star: Phaser.Geom.Point[] = [];
+    for (let i = 0; i < 10; i++) {
+      const ang = -Math.PI / 2 + (i / 10) * Math.PI * 2;
+      const r = i % 2 ? 1.5 : 3.6;
+      star.push(P(mx + Math.cos(ang) * r, my + 1.5 + Math.sin(ang) * r));
+    }
+    g.fillStyle(this.tint(CNQ.goldDeep), alpha);
+    g.fillPoints(star.map((q) => P(q.x + 0.5, q.y + 0.5)), true);
+    g.fillStyle(this.tint(CNQ.gold), alpha);
+    g.fillPoints(star, true);
+    // Epaulettes: gold boards with a fringe hanging off them.
+    for (const side of [-1, 1]) {
+      const ex = x + side * 15.5, ey = y - 9;
+      g.fillStyle(this.tint(CNQ.goldDeep), alpha);
+      g.fillEllipse(ex, ey + 0.6, 10, 5);
+      g.fillStyle(this.tint(CNQ.gold), alpha);
+      g.fillEllipse(ex, ey, 9, 4);
+      g.lineStyle(1, this.tint(CNQ.gold), alpha * 0.9);
+      for (let i = 0; i < 5; i++) {
+        const fx = ex - 3.6 + i * 1.8;
+        g.lineBetween(fx, ey + 1.5, fx + side * 0.3, ey + 4.5 + Math.sin(this.t * 3 + i) * 0.4);
+      }
+    }
+    // Buttons down the right of the coat.
+    for (let i = 0; i < 3; i++) {
+      g.fillStyle(this.tint(CNQ.goldDeep), alpha);
+      g.fillCircle(x + 9.6, y - 3 + i * 5, 1.3);
+      g.fillStyle(this.tint(CNQ.muzzle), alpha * 0.9);
+      g.fillCircle(x + 9.3, y - 3.3 + i * 5, 0.6);
+    }
+  }
+
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void alpha;
     const k = this.intensity * (this.mastered ? 1.15 : 1);
     g.fillStyle(this.tint(this.mastered ? CNQ.gold : CNQ.crimson), a * (this.mastered ? 0.24 : 0.2) * k);
     g.fillCircle(x, y, 28 * k);
+    if (this.mastered) {
+      // Emperor: a royal mantle hangs behind him, crimson-black with an ermine hem and gold edging,
+      // swaying as he moves.
+      const sway = Math.sin(this.t * 1.8) * 1.5 - Math.cos(this.facing) * 2;
+      const P = (px: number, py: number) => new Phaser.Geom.Point(px, py);
+      const mantle = [P(x - 16, y - 10), P(x + 16, y - 10), P(x + 23 + sway, y + 24), P(x + 8 + sway, y + 27),
+        P(x - 8 + sway, y + 27), P(x - 23 + sway, y + 24)];
+      g.fillStyle(this.tint(CNQ.blood), alpha * 0.98);
+      g.fillPoints(mantle, true);
+      g.lineStyle(1.4, this.tint(CNQ.gold), alpha * 0.95);
+      g.strokePoints(mantle, true, true);
+      // Ermine hem: white fur with the black tails.
+      g.fillStyle(this.tint(CNQ.parchment), alpha);
+      g.fillPoints([P(x - 23 + sway, y + 20), P(x + 23 + sway, y + 20), P(x + 23 + sway, y + 24), P(x + 8 + sway, y + 27),
+        P(x - 8 + sway, y + 27), P(x - 23 + sway, y + 24)], true);
+      g.fillStyle(0x15100a, alpha * 0.9);
+      for (let i = 0; i < 7; i++) {
+        const tx = x - 18 + i * 6 + sway;
+        g.fillTriangle(tx - 1, y + 21.5, tx + 1, y + 21.5, tx, y + 24.5);
+      }
+    }
     // A held-ground ring: only while standing on your own land — a readout, kept faint.
     if (this.standing !== 0) {
       g.lineStyle(1.4, this.tint(this.standing), a * 0.35);
@@ -1142,5 +1246,30 @@ export class ConquestAvatar extends BaseAvatar {
     }
     g.fillStyle(this.tint(CNQ.gold), alpha);
     g.fillCircle(px, poleTop - 2, m ? 3 : 2.4);
+
+    if (m) {
+      // The crown, set a little to the left of the standard so the pole never runs through it.
+      const cx = x - 4 + Math.cos(this.facing) * 1.2;
+      const cy = y - 17;
+      const P = (px2: number, py2: number) => new Phaser.Geom.Point(cx + px2, cy + py2);
+      const crown = [P(-8, 1), P(-8.5, -6), P(-5, -2.5), P(-2.5, -8), P(0, -3), P(2.5, -8), P(5, -2.5), P(8.5, -6), P(8, 1)];
+      g.fillStyle(0x000000, alpha * 0.35);
+      g.fillPoints(crown.map((q) => new Phaser.Geom.Point(q.x + 0.8, q.y + 1)), true);
+      g.fillStyle(this.tint(CNQ.gold), alpha);
+      g.fillPoints(crown, true);
+      g.fillStyle(this.tint(CNQ.goldDeep), alpha);
+      g.fillRect(cx - 8, cy - 1, 16, 2.4);
+      g.lineStyle(0.8, this.tint(CNQ.muzzle), alpha * 0.9);
+      g.lineBetween(cx - 7.5, cy - 1.2, cx + 7.5, cy - 1.2);
+      // Jewels: a ruby in the middle, pearls on the points.
+      g.fillStyle(this.tint(CNQ.crimson), alpha);
+      g.fillCircle(cx, cy + 0.2, 1.4);
+      g.fillStyle(this.tint(CNQ.parchment), alpha);
+      for (const px2 of [-8.5, -2.5, 2.5, 8.5]) g.fillCircle(cx + px2, cy + (Math.abs(px2) > 5 ? -6 : -8), 1.1);
+      // A glint running across the band.
+      const u = (this.t * 0.5) % 1;
+      g.fillStyle(this.tint(CNQ.muzzle), alpha * Math.sin(u * Math.PI) * 0.8);
+      g.fillCircle(cx - 7 + u * 14, cy, 1.2);
+    }
   }
 }

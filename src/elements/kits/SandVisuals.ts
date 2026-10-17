@@ -66,6 +66,13 @@ export const SND = {
   /** The flamethrowers that open up across a tempered course's gaps. */
   flame: 0xff8a2b,
   flameHot: 0xffe08a,
+  /** The desert neckerchief — terracotta dyed cloth, knotted at the side. */
+  scarf: 0xb5502f,
+  scarfLit: 0xe0784a,
+  scarfDeep: 0x6e2a18,
+  /** Mastered regalia: a lapis-dyed scarf with gold fringe under a sun-disc. */
+  lapis: 0x2b4c9a,
+  lapisLit: 0x6a92e0,
 };
 
 /** Deterministic 0–1 noise, so a block chips the same way every frame. */
@@ -359,10 +366,29 @@ export function miniIdol(
   g.fillEllipse(x, y - h * 0.45, size * 0.44, size * 0.28);
   g.fillStyle(tint(SND.glassLit), alpha * (0.6 + 0.4 * charge));
   g.fillCircle(x, y - h * 0.45, size * 0.12 + charge * size * 0.06);
-  g.lineStyle(1.6, tint(SND.glassLit), alpha * 0.5);
+  // The charge reads as a sun-dial: a dim track with six notches, the lit arc sweeping round
+  // it, and a bright grain riding the arc's head.
+  const cr = size * 0.95;
+  const cy = y - h * 0.35;
+  const ch = Phaser.Math.Clamp(charge, 0, 1);
+  g.lineStyle(2.4, tint(SND.glassDeep), alpha * 0.4);
+  g.strokeCircle(x, cy, cr);
+  g.lineStyle(1.6, tint(ch >= 0.999 ? SND.glassLit : SND.glass), alpha * (0.55 + 0.35 * ch));
   g.beginPath();
-  g.arc(x, y - h * 0.35, size * 0.95, -Math.PI / 2, -Math.PI / 2 + TAU * Phaser.Math.Clamp(charge, 0, 1), false);
+  g.arc(x, cy, cr, -Math.PI / 2, -Math.PI / 2 + TAU * ch, false);
   g.strokePath();
+  for (let i = 0; i < 6; i++) {
+    const ang = -Math.PI / 2 + (i / 6) * TAU;
+    const lit = i / 6 <= ch;
+    g.lineStyle(1, tint(lit ? SND.glassLit : SND.glassDeep), alpha * (lit ? 0.85 : 0.5));
+    g.lineBetween(x + Math.cos(ang) * (cr - 2), cy + Math.sin(ang) * (cr - 2),
+      x + Math.cos(ang) * (cr + 2), cy + Math.sin(ang) * (cr + 2));
+  }
+  if (ch > 0.02) {
+    const ha = -Math.PI / 2 + TAU * ch;
+    g.fillStyle(tint(SND.glassLit), alpha * 0.95);
+    g.fillCircle(x + Math.cos(ha) * cr, cy + Math.sin(ha) * cr, 1.5 + Math.sin(t * 9) * 0.4);
+  }
 }
 
 /**
@@ -1074,8 +1100,13 @@ const SAND_AVATAR: AvatarSpec = {
  * says where its shots leave the working hand). The golden orb's buff lights the hat band, and
  * Tempered Temptation fuses the orb to one-hue glass — a state change, so it keeps its own body.
  *
- * Mastery enhances the hat rather than adding to it: a wider brim, a gold band, a stronger
- * golden glow on the hands and warm gold eyes.
+ * Secondary detail: a stippled, wind-rippled dune body, a terracotta neckerchief knotted at the
+ * side with its tails streaming, and a woven straw brim.
+ *
+ * Mastery is regalia you can read from across the arena: the brim widens and gets a gold edge,
+ * the band turns gold with a sun-disc medallion on its front, three golden grains orbit the hat
+ * like sand round an hourglass neck, a slow sun-ring turns under him, the neckerchief turns
+ * lapis with a gold fringe, and the eyes and hand coronas go gold.
  *
  * The rig owns exactly one piece of state the rest of the game cares about — `elevation`. Every
  * altitude read in the element funnels through it: the body swells as he rises (near-field
@@ -1135,9 +1166,11 @@ export class SandAvatar extends BaseAvatar {
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? SND.goldHot : SND.stoneWarmLit);
     this.forEachHandLayer(0, (glow) => {
-      glow.setRadius(on ? 15 : 12);
-      glow.setFillStyle(this.tint(on ? SND.gold : SND.sand), on ? 0.34 : 0.2);
+      glow.setRadius(on ? 17 : 12);
+      glow.setFillStyle(this.tint(on ? SND.gold : SND.sand), on ? 0.4 : 0.2);
     });
+    this.forEachHandLayer(1, (ball) => ball.setFillStyle(this.tint(on ? 0xd8a940 : SND.deep), 0.95));
+    this.forEachHandLayer(2, (glint) => glint.setFillStyle(this.tint(on ? SND.goldHot : SND.stoneWarmLit), 1));
   }
 
   protected emitTrail(x: number, y: number): void {
@@ -1156,6 +1189,18 @@ export class SandAvatar extends BaseAvatar {
     if (this.mastered) {
       g.fillStyle(this.tint(SND.gold), a * 0.16 * this.intensity);
       g.fillCircle(x, y, 30 * this.intensity);
+      // A slow sun-ring under him: twelve short gold rays turning round the body.
+      const rr = 33 * this.intensity;
+      const spin = this.t * 0.6;
+      g.lineStyle(1.4, this.tint(SND.gold), alpha * 0.4);
+      g.strokeCircle(x, y, rr);
+      g.lineStyle(2, this.tint(SND.goldHot), alpha * 0.55);
+      for (let i = 0; i < 12; i++) {
+        const ang = spin + (i / 12) * TAU;
+        const len = i % 2 === 0 ? 6 : 3.5;
+        g.lineBetween(x + Math.cos(ang) * (rr + 1), y + Math.sin(ang) * (rr + 1),
+          x + Math.cos(ang) * (rr + 1 + len), y + Math.sin(ang) * (rr + 1 + len));
+      }
     }
     g.fillStyle(this.tint(SND.shadow), alpha * (0.4 - k * 0.2));
     g.fillEllipse(x, y + 15 + drop, 40 - k * 16, 14 - k * 6);
@@ -1208,6 +1253,89 @@ export class SandAvatar extends BaseAvatar {
     g.strokePath();
     g.fillStyle(this.tint(0xfff3d6), bodyAlpha * 0.85);
     g.fillEllipse(x - 6.5 * s, y - 8 * s, 8 * s, 5 * s);
+
+    if (!glass) {
+      // Packed grit: a fixed stipple of short dark and lit grains, so the orb reads as sand.
+      for (let i = 0; i < 16; i++) {
+        const ang = jitter(7, i) * TAU;
+        const d = Math.sqrt(jitter(13, i)) * r * 0.78;
+        const gx = x + Math.cos(ang) * d;
+        const gy = y + Math.sin(ang) * d;
+        const lit = i % 3 === 0;
+        g.fillStyle(this.tint(lit ? SND.stoneWarmLit : SND.dark), bodyAlpha * (lit ? 0.7 : 0.45));
+        g.fillRect(gx - 0.9 * s, gy - 0.5 * s, 1.8 * s, 1 * s);
+      }
+      // Wind ripples across the dune, between the eyes and the scarf.
+      g.lineStyle(1.3 * s, this.tint(SND.dark), bodyAlpha * 0.38);
+      g.beginPath();
+      g.arc(x - 2 * s, y + r * 1.25, r * 1.05, Math.PI * 1.36, Math.PI * 1.64);
+      g.strokePath();
+      g.lineStyle(1 * s, this.tint(SND.stoneWarmLit), bodyAlpha * 0.45);
+      g.beginPath();
+      g.arc(x - 2 * s, y + r * 1.29, r * 1.05, Math.PI * 1.38, Math.PI * 1.62);
+      g.strokePath();
+    }
+
+    this.drawScarf(g, x, y, r, s, bodyAlpha);
+  }
+
+  /**
+   * The neckerchief: a band across the lower front of the orb, knotted on the side away from
+   * the aim with two tails streaming. Terracotta normally, lapis with a gold fringe mastered.
+   */
+  private drawScarf(g: Phaser.GameObjects.Graphics, x: number, y: number, r: number, s: number, al: number): void {
+    const m = this.mastered;
+    const glass = this.tempered > 0.5;
+    const base = glass ? SND.glassDeep : m ? SND.lapis : SND.scarf;
+    const lit = glass ? SND.glass : m ? SND.lapisLit : SND.scarfLit;
+    const deep = glass ? SND.glassDeep : m ? 0x1a2c5e : SND.scarfDeep;
+    const by = y + r * 0.64;
+    g.fillStyle(this.tint(deep), al);
+    g.fillEllipse(x, by + 1.2 * s, r * 1.3, r * 0.44);
+    g.fillStyle(this.tint(base), al);
+    g.fillEllipse(x, by, r * 1.26, r * 0.36);
+    g.fillStyle(this.tint(lit), al * 0.8);
+    g.fillEllipse(x - r * 0.08, by - r * 0.08, r * 0.9, r * 0.12);
+    // Fold creases.
+    g.lineStyle(1 * s, this.tint(deep), al * 0.6);
+    for (const k of [-0.32, 0, 0.3]) {
+      g.lineBetween(x + r * k, by - r * 0.12, x + r * (k + 0.06), by + r * 0.14);
+    }
+    if (m && !glass) {
+      g.lineStyle(1.3 * s, this.tint(SND.gold), al * 0.95);
+      g.beginPath();
+      g.arc(x, by - r * 0.55, r * 0.76, Math.PI * 0.27, Math.PI * 0.73);
+      g.strokePath();
+    }
+
+    // Knot and tails, on the side away from the aim, so they stream behind him.
+    const away = Math.cos(this.facing) >= 0 ? -1 : 1;
+    const kx = x + away * r * 0.5;
+    const ky = by + r * 0.06;
+    for (let i = 0; i < 2; i++) {
+      const flap = Math.sin(this.t * 7 + i * 1.7) * 2.2 * s;
+      const len = (i === 0 ? 13 : 10) * s;
+      const ang = Math.PI / 2 - away * (0.55 + i * 0.45);
+      const tx = kx + Math.cos(ang) * len + flap * 0.4;
+      const ty = ky + Math.sin(ang) * len + flap;
+      const nx = -Math.sin(ang) * 2.6 * s;
+      const ny = Math.cos(ang) * 2.6 * s;
+      g.fillStyle(this.tint(i === 0 ? base : deep), al);
+      g.fillPoints([
+        new Phaser.Geom.Point(kx + nx, ky + ny),
+        new Phaser.Geom.Point(kx - nx, ky - ny),
+        new Phaser.Geom.Point(tx - nx * 0.4, ty - ny * 0.4),
+        new Phaser.Geom.Point(tx + nx * 0.2, ty + ny * 0.2 + 1.5 * s),
+      ], true);
+      if (m && !glass) {
+        g.fillStyle(this.tint(SND.gold), al);
+        g.fillCircle(tx, ty, 1.4 * s);
+      }
+    }
+    g.fillStyle(this.tint(lit), al);
+    g.fillCircle(kx, ky, 3 * s);
+    g.fillStyle(this.tint(deep), al * 0.7);
+    g.fillCircle(kx + 0.8 * s, ky + 0.8 * s, 1.4 * s);
   }
 
   /** The straw hat, rooted at the crown and tipped along the aim. */
@@ -1226,6 +1354,15 @@ export class SandAvatar extends BaseAvatar {
     g.fillEllipse(cx, cy + 1, 38 * s, 12 * s);
     g.fillStyle(this.tint(SND.stoneWarmLit), alpha);
     g.fillEllipse(cx, cy - 0.5, 35 * s, 10 * s);
+    // Woven straw: radial strands across the brim and a stitched rim.
+    g.lineStyle(0.9, this.tint(SND.deep), alpha * 0.55);
+    for (let i = 0; i < 14; i++) {
+      const ang = (i / 14) * TAU + 0.11;
+      const ca = Math.cos(ang), sa = Math.sin(ang);
+      g.lineBetween(cx + ca * 9 * s, cy - 0.5 + sa * 3.4 * s, cx + ca * 16.8 * s, cy - 0.5 + sa * 4.7 * s);
+    }
+    g.lineStyle(m ? 1.6 : 1, this.tint(m ? SND.gold : SND.deep), alpha * (m ? 0.95 : 0.7));
+    g.strokeEllipse(cx, cy - 0.5, 34 * s, 9.6 * s);
     // The band — gold once mastered, and blazing while the golden orb's buff is up — wrapped
     // round the base of the crown, under the dome.
     const lit = m || this.golden > 0;
@@ -1240,5 +1377,53 @@ export class SandAvatar extends BaseAvatar {
     g.fillEllipse(cx, cy - 5 * s, 15 * s, 7 * s);
     g.fillStyle(this.tint(SND.sand), alpha);
     g.fillEllipse(cx - 1, cy - 6 * s, 12 * s, 5 * s);
+    // A crease pinched into the top of the crown.
+    g.lineStyle(1, this.tint(SND.dark), alpha * 0.5);
+    g.lineBetween(cx - 4 * s, cy - 6.5 * s, cx + 3.5 * s, cy - 6.2 * s);
+
+    if (!m) {
+      // A single sandstone bead tied on the band.
+      g.fillStyle(this.tint(SND.stoneWarm), alpha);
+      g.fillCircle(cx + 6 * s, cy - 2.2 * s, 1.8 * s);
+      g.fillStyle(this.tint(SND.stoneWarmLit), alpha);
+      g.fillCircle(cx + 5.6 * s, cy - 2.7 * s, 0.7 * s);
+      return;
+    }
+
+    // ── Mastered regalia ──
+    // A sun-disc medallion on the front of the band, its rays breathing.
+    const mx = cx + Math.cos(this.facing) * 3 * s;
+    const my = cy - 2.6 * s;
+    const pulse = 0.5 + 0.5 * Math.sin(this.t * 3.2);
+    g.fillStyle(this.tint(SND.gold), alpha * (0.22 + 0.18 * pulse));
+    g.fillCircle(mx, my, 7.5 * s);
+    g.lineStyle(1.2, this.tint(SND.goldHot), alpha * 0.9);
+    for (let i = 0; i < 8; i++) {
+      const ang = (i / 8) * TAU + this.t * 0.8;
+      const r0 = 3.4 * s, r1 = (5.2 + pulse * 1.2) * s;
+      g.lineBetween(mx + Math.cos(ang) * r0, my + Math.sin(ang) * r0, mx + Math.cos(ang) * r1, my + Math.sin(ang) * r1);
+    }
+    g.fillStyle(this.tint(SND.dark), alpha);
+    g.fillCircle(mx, my, 3.3 * s);
+    g.fillStyle(this.tint(SND.gold), alpha);
+    g.fillCircle(mx, my, 2.7 * s);
+    g.fillStyle(this.tint(SND.goldHot), alpha);
+    g.fillCircle(mx - 0.7 * s, my - 0.7 * s, 1.1 * s);
+
+    // Three golden grains orbiting the hat, each with a short fading tail.
+    const orbR = 22 * s;
+    const orbY = cy - 3 * s;
+    for (let i = 0; i < 3; i++) {
+      const ph = this.t * 1.9 + (i / 3) * TAU;
+      for (let k = 4; k >= 0; k--) {
+        const pa = ph - k * 0.13;
+        const px = cx + Math.cos(pa) * orbR;
+        const py = orbY + Math.sin(pa) * orbR * 0.34;
+        // Behind the crown on the far half of the orbit: fainter.
+        const far = Math.sin(pa) < 0 ? 0.55 : 1;
+        g.fillStyle(this.tint(k === 0 ? SND.goldHot : SND.gold), alpha * far * (k === 0 ? 1 : 0.5 - k * 0.09));
+        g.fillCircle(px, py, (k === 0 ? 2.3 : 1.7 - k * 0.25) * s);
+      }
+    }
   }
 }

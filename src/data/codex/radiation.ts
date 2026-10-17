@@ -4,8 +4,8 @@ import { ElementCodex } from '../AbilityCodex';
  * Radiation — a sniper in lead plate (reworked 2026-10-15).
  *
  * Verified against `src/elements/radiation.ts` and `kits/RadiationKit.ts`; every figure below is
- * a constant at the top of the kit. Radiation has no shop upgrades and no mastery since the
- * rework — both were retired and new ones are owed — and no perks.
+ * a constant at the top of the kit. The five shop upgrades (2026-10-16) live in the kit's "Shop
+ * upgrades" section. Radiation has no mastery since the rework — one is owed — and no perks.
  */
 const radiation: ElementCodex = {
   identity:
@@ -57,6 +57,19 @@ const radiation: ElementCodex = {
         { tag: 'debuff', label: 'On confirm', detail: '10 seconds irradiated.' },
         { tag: 'cost', label: 'The miss', detail: 'A tracer that hits nothing sheds every tracer this side has planted, on every body.' },
       ],
+      upgrade: {
+        basics:
+          'Flick Shot: face away from the nearest enemy — more than 100° off them — then flick your aim '
+          + 'back and click. A tracer thrown within 0.35 seconds of facing away comes out spiked, and '
+          + 'when it lands it deals 25 damage. It is still a tracer: it counts toward the three, and if '
+          + 'it misses it still scrubs the board. A tracer thrown while you are still facing away is '
+          + 'not spiked, and flares never are.',
+        effects: [
+          { tag: 'utility', label: 'The flick', detail: 'Aim more than 100° away from the nearest enemy, then click toward them within 0.35s.', requiresUpgrade: 'click' },
+          { tag: 'damage', label: 'Spiked', detail: '25 damage when the spiked tracer lands.', requiresUpgrade: 'click' },
+          { tag: 'resource', label: 'Still a tracer', detail: 'It counts toward the railgun\'s three like any other tracer.', requiresUpgrade: 'click' },
+        ],
+      },
       notes: [
         'While the flare gun from Q is out, the click fires flares instead and no tracers are placed.',
         'A tracer is swept across its whole step rather than sampled at the end of it, so a fast round on a small target cannot skip through the body between two frames.',
@@ -79,6 +92,19 @@ const radiation: ElementCodex = {
         { tag: 'damage', label: 'The burst', detail: '5 hitscan rounds, 60ms apart, aimed at the target: 5 damage each.' },
         { tag: 'damage', label: 'Irradiated', detail: '8 damage per round instead of 5 against an irradiated target.' },
       ],
+      upgrade: {
+        basics:
+          'Trigger Happy: the burst no longer stops at five. The first five rounds fire as usual, then '
+          + 'the cone stays up and you keep firing — one round every 0.1 seconds, 5 damage each or 8 on '
+          + 'an irradiated target — for as long as the enemy stays inside the cone. While it fires the '
+          + 'cone keeps closing, from 5° down to 1° over 4 seconds, so it gets harder and harder to '
+          + 'hold. The moment they are outside it the fire stops.',
+        effects: [
+          { tag: 'damage', label: 'Sustained fire', detail: 'After the first five, a round every 0.1s — 50 damage a second, 80 on an irradiated target.', requiresUpgrade: 'e' },
+          { tag: 'area', label: 'Closing', detail: 'The cone keeps narrowing while it fires: 5° to 1° over 4 seconds.', requiresUpgrade: 'e' },
+          { tag: 'cost', label: 'Ceasing', detail: 'It stops the moment the target leaves the cone.', requiresUpgrade: 'e' },
+        ],
+      },
       notes: [
         'A lock reticle closes in on the target as the cone narrows; the rails turn yellow in the last stretch.',
         'A stunned target cannot walk out of the cone — the Rod Baton\'s stun lasts 2 of the 3 seconds.',
@@ -102,6 +128,20 @@ const radiation: ElementCodex = {
         { tag: 'shield', label: 'Inside', detail: 'While you are inside, every hit on you lands on the bunker instead.' },
         { tag: 'shield', label: 'The airdrop', detail: 'Inside your bunker when your own airdrop lands: you take none of its 200, and the bunker comes down.' },
       ],
+      upgrade: {
+        basics:
+          'Turret Town: the bunker comes with two radioactive turrets, one bolted to each side of the '
+          + 'wall. Each shoots for 4 damage about twice a second at the nearest enemy within 300px — or, '
+          + 'for 3 seconds after anything hits the bunker, at anyone within 600px. They only ever shoot '
+          + 'enemies who are irradiated; a clean enemy can stand right next to them. They come down '
+          + 'with the bunker.',
+        effects: [
+          { tag: 'summon', label: 'The turrets', detail: 'Two, one on each side of the bunker wall. They last as long as the bunker.', requiresUpgrade: 'r' },
+          { tag: 'damage', label: 'Shots', detail: '4 damage, one shot every 0.42s per turret.', requiresUpgrade: 'r' },
+          { tag: 'area', label: 'Reach', detail: '300px — 600px for 3 seconds after the bunker is hit.', requiresUpgrade: 'r' },
+          { tag: 'cost', label: 'Irradiated only', detail: 'They never shoot an enemy who is not irradiated.', requiresUpgrade: 'r' },
+        ],
+      },
       notes: [
         'An HP arc rides the top of the wall, and the blocks crack and fall out as it is damaged.',
         'Hits that pierce shields go straight through, as they do for every shield in the game.',
@@ -121,6 +161,18 @@ const radiation: ElementCodex = {
         { tag: 'damage', label: 'Dosed target', detail: '16 damage.' },
         { tag: 'control', label: 'Stun', detail: 'A dosed target is stunned for 2 seconds — no moving, no casting.' },
       ],
+      upgrade: {
+        basics:
+          'Mutation: when the rod hits an enemy who is already irradiated, they still take 16 and are '
+          + 'still stunned for 2 seconds — but the dose comes off, and they are mutated instead. A '
+          + 'mutated enemy\'s hitbox is 25% bigger for 15 seconds, so tracers, flares, Barrage and '
+          + 'everything else land on them more easily.',
+        effects: [
+          { tag: 'debuff', label: 'Mutated', detail: 'Hitbox 25% bigger for 15 seconds.', requiresUpgrade: 'f' },
+          { tag: 'cost', label: 'The dose', detail: 'Their irradiation is removed — healing works on them again until they are re-dosed.', requiresUpgrade: 'f' },
+          { tag: 'control', label: 'Base effects', detail: 'Still 16 damage and a 2-second stun.', requiresUpgrade: 'f' },
+        ],
+      },
       notes: [
         'Two rods in a row is a dose and then a stun; a railgun confirm or the airdrop sets the stun up from range.',
       ],
@@ -142,6 +194,19 @@ const radiation: ElementCodex = {
         { tag: 'cost', label: 'And you', detail: '200 to you too, through self-damage — unless you are inside your own Fallout Bunker, which takes the blast for you and collapses.' },
         { tag: 'cost', label: 'The miss', detail: 'Four on one body and a stray, or the window running out: nothing happens and the cooldown is spent.' },
       ],
+      upgrade: {
+        basics:
+          'Complete Annihilation: the airdrop splashes 11 radioactive puddles across the arena that '
+          + 'last 9 seconds. An enemy standing in one takes 3 damage every 0.4 seconds and is irradiated '
+          + 'while they stay. Any enemy who was already irradiated when the nuke hit becomes '
+          + 'over-radiated for 8 seconds: they move at half speed and take 30% more damage from '
+          + 'everything, on top of the 200 and the fresh dose.',
+        effects: [
+          { tag: 'area', label: 'Puddles', detail: '11 puddles in a fixed splash around the middle of the arena, for 9 seconds.', requiresUpgrade: 'q' },
+          { tag: 'damage', label: 'Standing in one', detail: '3 damage every 0.4s (7.5 a second), and a 2.5-second dose kept topped up.', requiresUpgrade: 'q' },
+          { tag: 'debuff', label: 'Over-radiated', detail: 'Already irradiated when the nuke hits: half speed and +30% damage taken for 8 seconds.', requiresUpgrade: 'q' },
+        ],
+      },
       notes: [
         'The magazine is shown over your head and a hit counter over each enemy you have tagged.',
       ],

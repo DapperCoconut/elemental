@@ -925,17 +925,52 @@ export function queueCard(
   tint: PsychicColorFn,
   x: number, y: number, w: number, h: number, alpha: number, left: number, next: boolean, big: boolean,
 ): void {
+  // A carved tile off the board: drop shadow, ebony notched plate, a faint checker carved into
+  // the face, an ivory inlay line, and gold corner pins on the card that goes off next.
+  g.fillStyle(0x000000, alpha * 0.35);
+  g.fillRect(x - w / 2 + 2, y - h / 2 + 2, w, h);
   keyChip(g, tint, x, y, w, h, alpha, next ? 0.85 : 0.25);
-  // The key badge.
+  const sq = h / 4;
+  g.fillStyle(tint(PSY.robe), alpha * 0.22);
+  for (let cx = 0; cx * sq < w - h - 6; cx++) {
+    for (let cy = 0; cy < 4; cy++) {
+      if ((cx + cy) % 2 === 0) continue;
+      g.fillRect(x - w / 2 + h + cx * sq, y - h / 2 + cy * sq, sq, sq);
+    }
+  }
+  g.lineStyle(0.8, tint(next ? PSY.gold : PSY.aether), alpha * (next ? 0.55 : 0.25));
+  g.strokeRect(x - w / 2 + 2.5, y - h / 2 + 2.5, w - 5, h - 5);
+
+  // The key badge: a little ivory (or gold) square carved with a bevel.
   const bw = h - 4;
-  g.fillStyle(tint(big ? PSY.gold : next ? PSY.violet : PSY.robe), alpha * (next ? 0.9 : 0.6));
-  g.fillRect(x - w / 2 + 3, y - h / 2 + 2, bw, h - 4);
-  // The fuse.
-  const fw = (w - 8) * Phaser.Math.Clamp(left, 0, 1);
-  g.fillStyle(tint(PSY.ink), alpha * 0.7);
-  g.fillRect(x - w / 2 + 4, y + h / 2 - 3, w - 8, 2);
+  const bx = x - w / 2 + 3, by = y - h / 2 + 2;
+  g.fillStyle(tint(big ? PSY.goldDeep : next ? PSY.skinShade : PSY.robeDeep), alpha * (next ? 0.95 : 0.7));
+  g.fillRect(bx, by, bw, h - 4);
+  g.fillStyle(tint(big ? PSY.gold : next ? PSY.violet : PSY.robe), alpha * (next ? 0.95 : 0.7));
+  g.fillRect(bx, by, bw - 1.5, h - 5.5);
+  g.fillStyle(tint(PSY.aether), alpha * (next ? 0.4 : 0.15));
+  g.fillRect(bx, by, bw - 1.5, 1.2);
+
+  // The fuse: a gold thread burning down, with a spark at its head.
+  const fw = (w - bw - 10) * Phaser.Math.Clamp(left, 0, 1);
+  const fx = bx + bw + 3, fy = y + h / 2 - 3;
+  g.fillStyle(tint(PSY.ink), alpha * 0.8);
+  g.fillRect(fx, fy, w - bw - 10, 2);
   g.fillStyle(tint(next ? PSY.gold : PSY.violetLit), alpha * 0.95);
-  g.fillRect(x - w / 2 + 4, y + h / 2 - 3, fw, 2);
+  g.fillRect(fx, fy, fw, 2);
+  if (next && fw > 1) {
+    g.fillStyle(tint(PSY.gold), alpha * 0.35);
+    g.fillCircle(fx + fw, fy + 1, 3.4);
+    g.fillStyle(tint(0xfff6dd), alpha);
+    g.fillCircle(fx + fw, fy + 1, 1.3);
+  }
+  if (next) {
+    g.fillStyle(tint(PSY.gold), alpha);
+    for (const [cx, cy] of [[x - w / 2 + 1.5, y - h / 2 + 1.5], [x + w / 2 - 1.5, y - h / 2 + 1.5],
+      [x - w / 2 + 1.5, y + h / 2 - 1.5], [x + w / 2 - 1.5, y + h / 2 - 1.5]] as [number, number][]) {
+      g.fillCircle(cx, cy, 1.4);
+    }
+  }
 }
 
 /** The crown that hangs over a psychic who has become the queen. */
@@ -961,6 +996,74 @@ export function queenCrown(
   }
   g.fillStyle(tint(PSY.stress), alpha);
   g.fillCircle(x, cy - 1 * s, 2 * s);
+}
+
+/**
+ * Sight Lines (E upgrade): one square of the diagonal a bishop has just travelled, lit. It is a
+ * real board square — axis-aligned, so a line of them corner-to-corner *is* a chess diagonal —
+ * filled with the bishop's warm light, a gold rim, a bevel of ivory on the top-left and ink on
+ * the bottom-right so it reads as set into the floor, and the bishop's mitre-cross cut into the
+ * middle. `alpha` carries both the fade-in and the fade-out.
+ */
+export function sightSquare(
+  g: Phaser.GameObjects.Graphics,
+  tint: PsychicColorFn,
+  x: number, y: number, size: number, alpha: number, t: number, seed: number,
+): void {
+  const h = size / 2;
+  const pulse = 0.75 + 0.25 * Math.sin(t * 3.2 + seed);
+  // Bloom: the light spills a little past the square's edge.
+  g.fillStyle(tint(PSY.gold), alpha * 0.12 * pulse);
+  g.fillRect(x - h - 5, y - h - 5, size + 10, size + 10);
+  g.fillStyle(tint(0xfff3cc), alpha * 0.26 * pulse);
+  g.fillRect(x - h, y - h, size, size);
+  // Inner square: the lit core of the tile.
+  g.fillStyle(tint(0xfff6dd), alpha * 0.22);
+  g.fillRect(x - h + 5, y - h + 5, size - 10, size - 10);
+  // Bevel — ivory catches the light on two sides, ink on the other two.
+  g.lineStyle(1.4, tint(PSY.aether), alpha * 0.7);
+  g.lineBetween(x - h, y + h, x - h, y - h);
+  g.lineBetween(x - h, y - h, x + h, y - h);
+  g.lineStyle(1.4, tint(PSY.goldDeep), alpha * 0.75);
+  g.lineBetween(x + h, y - h, x + h, y + h);
+  g.lineBetween(x + h, y + h, x - h, y + h);
+  g.lineStyle(1, tint(PSY.gold), alpha * 0.85 * pulse);
+  g.strokeRect(x - h + 2.5, y - h + 2.5, size - 5, size - 5);
+  // The mitre cross.
+  g.lineStyle(2, tint(PSY.gold), alpha * 0.9);
+  g.lineBetween(x, y - h * 0.45, x, y + h * 0.45);
+  g.lineBetween(x - h * 0.3, y - h * 0.12, x + h * 0.3, y - h * 0.12);
+  // A mote of light drifting down through the square, like the aura's.
+  const ph = (t * 0.6 + jitter(seed, 3)) % 1;
+  g.fillStyle(tint(0xfff6dd), alpha * 0.8 * Math.sin(ph * Math.PI));
+  g.fillCircle(x + (jitter(seed, 4) - 0.5) * size * 0.6, y - h + ph * size, 1.5);
+}
+
+/**
+ * Mount Protect (R upgrade): the psychic in the saddle. A gold ward round the rider — a lit
+ * shell with a horseshoe of studs turning on it — so the invulnerable leap reads at a glance.
+ */
+export function rideWard(
+  g: Phaser.GameObjects.Graphics,
+  tint: PsychicColorFn,
+  x: number, y: number, alpha: number, t: number,
+): void {
+  const r = 28 + Math.sin(t * 9) * 1.5;
+  g.fillStyle(tint(PSY.gold), alpha * 0.14);
+  g.fillCircle(x, y, r + 6);
+  g.fillStyle(tint(0xfff3cc), alpha * 0.12);
+  g.fillCircle(x, y, r);
+  g.lineStyle(2.2, tint(PSY.gold), alpha * 0.9);
+  g.strokeCircle(x, y, r);
+  g.lineStyle(1, tint(PSY.aether), alpha * 0.6);
+  g.strokeCircle(x, y, r - 4);
+  // The horseshoe: an open arc of studs, spinning.
+  const spin = t * 4;
+  for (let i = 0; i < 7; i++) {
+    const a = spin + (i / 9) * TAU;
+    g.fillStyle(tint(i % 2 ? PSY.aether : PSY.gold), alpha);
+    g.fillCircle(x + Math.cos(a) * r, y + Math.sin(a) * r, 2.2);
+  }
 }
 
 // ── Fx ────────────────────────────────────────────────────────────────────
@@ -1332,6 +1435,87 @@ export class PsychicFx extends FxBase {
     });
   }
 
+  /** Insight Move (Click upgrade): the pawn sees the empty diagonals and takes another step. */
+  insight(x: number, y: number, ang: number, depth = 15): void {
+    this.anim(depth, 380, (g, t) => {
+      const e = easeOut(t);
+      for (let i = 0; i < 2; i++) {
+        const d = 10 + e * 26 + i * 9;
+        const cx = x + Math.cos(ang) * d;
+        const cy = y + Math.sin(ang) * d;
+        const back = ang + Math.PI;
+        g.lineStyle(2.4 * (1 - t) + 0.5, this.tint(i ? PSY.aether : PSY.gold), (1 - t) * 0.9);
+        g.lineBetween(cx, cy, cx + Math.cos(back + 0.6) * 8, cy + Math.sin(back + 0.6) * 8);
+        g.lineBetween(cx, cy, cx + Math.cos(back - 0.6) * 8, cy + Math.sin(back - 0.6) * 8);
+      }
+      // A blink of the eye over the pawn.
+      g.lineStyle(1.4, this.tint(PSY.gold), (1 - t) * 0.8);
+      g.strokeEllipse(x, y - 22, 12, 6 * (1 - e) + 1);
+    });
+  }
+
+  /**
+   * Castle (F upgrade): king and rook trading squares. Two streaks crossing in opposite
+   * directions, a battlement stamped where the rook comes down, and the slam's ring.
+   */
+  castle(kx: number, ky: number, rx: number, ry: number, r: number, depth = 15): void {
+    this.flashIn(rx, ry, r * 0.5, PSY.aether, PSY.stress, depth);
+    this.flashIn(kx, ky, 18, PSY.aether, PSY.gold, depth);
+    this.anim(depth, 560, (g, t) => {
+      const e = easeOut(t);
+      const nx = -(ry - ky);
+      const ny = rx - kx;
+      const len = Math.hypot(nx, ny) || 1;
+      const ox = (nx / len) * 7;
+      const oy = (ny / len) * 7;
+      g.lineStyle(3 * (1 - t) + 0.5, this.tint(PSY.gold), (1 - t) * 0.85);
+      g.lineBetween(rx + ox, ry + oy, kx + ox, ky + oy);
+      g.lineStyle(3 * (1 - t) + 0.5, this.tint(PSY.stress), (1 - t) * 0.85);
+      g.lineBetween(kx - ox, ky - oy, rx - ox, ry - oy);
+      g.lineStyle(4 * (1 - t) + 1, this.tint(PSY.stress), (1 - t) * 0.9);
+      g.strokeEllipse(rx, ry, r * 2 * e, r * 1.3 * e);
+      // Merlons thrown up round the rim.
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * TAU;
+        const sz = 7 * (1 - t) + 2;
+        g.fillStyle(this.tint(i % 2 ? PSY.stressDeep : PSY.stress), (1 - t) * 0.9);
+        g.fillRect(rx + Math.cos(a) * r * e - sz / 2, ry + Math.sin(a) * r * e * 0.65 - sz / 2 - t * 10, sz, sz);
+      }
+    });
+  }
+
+  /** Checkmate (Q upgrade): the king topples — a gold crown cracks in two over the body. */
+  checkmate(x: number, y: number, depth = 17): void {
+    this.flashIn(x, y, 30, PSY.aether, PSY.gold, depth);
+    this.anim(depth, 1100, (g, t) => {
+      const e = easeOut(t);
+      const fall = easeIn(Math.min(1, t * 1.4));
+      const cy = y - 46 - e * 8;
+      // The crown's two halves, falling apart.
+      for (const side of [-1, 1]) {
+        const ox = side * (2 + fall * 14);
+        const rot = side * fall * 0.7;
+        const pts = [[-11, 3], [0, 3], [0, -4], [-3, -12], [-6, -3], [-13, -9]].map(([px, py]) => {
+          // The points are the crown's left half; the right half is its mirror.
+          const qx = side < 0 ? px : -px;
+          const c = Math.cos(rot);
+          const s = Math.sin(rot);
+          return new Phaser.Geom.Point(x + ox + (qx * c - py * s) * 1.3, cy + fall * 12 + (qx * s + py * c) * 1.3);
+        });
+        g.fillStyle(this.tint(PSY.gold), (1 - t) * 0.95);
+        g.fillPoints(pts, true);
+        g.lineStyle(1.2, this.tint(PSY.goldDeep), (1 - t));
+        g.strokePoints(pts, true);
+      }
+      // The crack between them.
+      g.lineStyle(2, this.tint(PSY.stress), (1 - t) * 0.9);
+      g.lineBetween(x, cy - 16, x - 3, cy - 6);
+      g.lineBetween(x - 3, cy - 6, x + 2, cy + 2);
+      g.lineStyle(3 * (1 - t) + 0.6, this.tint(PSY.gold), (1 - t) * 0.8);
+      g.strokeCircle(x, y, 18 + e * 46);
+    });
+  }
+
   /** A thought coming apart: the shed particle behind a moving hand. */
   mote(x: number, y: number, depth = 4): void {
     const a = Math.random() * TAU;
@@ -1368,8 +1552,9 @@ const PSYCHIC_AVATAR: AvatarSpec = {
  *
  * The crown tops out at y-30 — the health bar covers y-38..-30 and would cut the cross off.
  *
- * Mastery enhances the same crown rather than adding anything: it widens and is gilded (gold
- * trim, a gold cross, the jewel-eye burning), the rig's eyes turn gold and the hand coronas widen.
+ * Mastery gilds the crown (gold trim, a gold cross, the jewel-eye burning), stands a rayed gold
+ * halo behind it, turns a ring of the board under his feet, and gives him gold eyes, wider hand
+ * coronas and a gilt rim on the chest medallion.
  */
 export class PsychicAvatar extends BaseAvatar {
   /** 0 = at rest, 1 = reading the future as hard as he can. Lerped. */
@@ -1425,10 +1610,74 @@ export class PsychicAvatar extends BaseAvatar {
 
   /** A soft silver aura that brightens with focus — warmer and wider once mastered. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    void alpha;
     const k = this.mastered ? 1.2 : 1;
     g.fillStyle(this.tint(this.mastered ? PSY.gold : PSY.violetLit), a * (0.1 + this.focus * 0.12) * k);
     g.fillCircle(x, y, (26 + this.focus * 4) * k);
+
+    if (!this.mastered) return;
+    // Mastery, part one: a ring of the board turning under his feet — sixteen alternating
+    // ivory and ebony squares on a gold-rimmed ellipse.
+    const cx = x, cy = y + 16, rx = 34, ry = 11;
+    const segs = 16;
+    const spin = this.t * 0.35;
+    for (let i = 0; i < segs; i++) {
+      const a0 = spin + (i / segs) * TAU, a1 = spin + ((i + 1) / segs) * TAU;
+      const pts = [
+        new Phaser.Geom.Point(cx + Math.cos(a0) * rx, cy + Math.sin(a0) * ry),
+        new Phaser.Geom.Point(cx + Math.cos(a1) * rx, cy + Math.sin(a1) * ry),
+        new Phaser.Geom.Point(cx + Math.cos(a1) * rx * 0.72, cy + Math.sin(a1) * ry * 0.72),
+        new Phaser.Geom.Point(cx + Math.cos(a0) * rx * 0.72, cy + Math.sin(a0) * ry * 0.72),
+      ];
+      g.fillStyle(this.tint(i % 2 === 0 ? PSY.aether : PSY.ink), alpha * 0.7);
+      g.fillPoints(pts, true);
+    }
+    g.lineStyle(1.5, this.tint(PSY.gold), alpha * 0.9);
+    g.strokeEllipse(cx, cy, rx * 2, ry * 2);
+    g.lineStyle(1, this.tint(PSY.goldDeep), alpha * 0.8);
+    g.strokeEllipse(cx, cy, rx * 1.44, ry * 1.44);
+
+    // Part two: a gilded halo standing behind the crown, with rays at the eight compass points.
+    const hx = x, hy = y - 20 + Math.sin(this.t * 2.2) * 0.6;
+    g.fillStyle(this.tint(PSY.gold), alpha * 0.16);
+    g.fillCircle(hx, hy, 22);
+    for (let i = 0; i < 8; i++) {
+      const ang = (i / 8) * TAU + this.t * 0.2;
+      const len = i % 2 === 0 ? 30 : 25;
+      g.fillStyle(this.tint(PSY.gold), alpha * 0.5);
+      g.fillTriangle(
+        hx + Math.cos(ang - 0.09) * 19, hy + Math.sin(ang - 0.09) * 19,
+        hx + Math.cos(ang + 0.09) * 19, hy + Math.sin(ang + 0.09) * 19,
+        hx + Math.cos(ang) * len, hy + Math.sin(ang) * len,
+      );
+    }
+    g.lineStyle(2, this.tint(PSY.gold), alpha * 0.85);
+    g.strokeCircle(hx, hy, 19);
+  }
+
+  /**
+   * Carved detail on the ebony orb: a polished sheen across the upper-left, and a small
+   * checkered medallion inlaid on the chest — a diamond of the board, ivory and ebony, in a
+   * thin rim that is silver at rest and gold once mastered.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
+    const m = this.mastered;
+    g.lineStyle(2, this.tint(PSY.violetLit), alpha * 0.22);
+    g.beginPath();
+    g.arc(x, y, 16, Math.PI * 1.08, Math.PI * 1.42, false);
+    g.strokePath();
+    const mx = x, my = y + 11, r = 3.6;
+    const D = (dx: number, dy: number) => new Phaser.Geom.Point(mx + dx - dy, my + (dx + dy) * 0.9);
+    g.fillStyle(this.tint(m ? PSY.goldDeep : PSY.robe), alpha);
+    g.fillPoints([D(-r - 1, -r - 1), D(r + 1, -r - 1), D(r + 1, r + 1), D(-r - 1, r + 1)], true);
+    for (let i = 0; i < 2; i++) {
+      for (let j = 0; j < 2; j++) {
+        const x0 = -r + i * r, y0 = -r + j * r;
+        g.fillStyle(this.tint((i + j) % 2 === 0 ? PSY.aether : PSY.ink), alpha * 0.95);
+        g.fillPoints([D(x0, y0), D(x0 + r, y0), D(x0 + r, y0 + r), D(x0, y0 + r)], true);
+      }
+    }
+    g.lineStyle(1, this.tint(m ? PSY.gold : PSY.violetLit), alpha * 0.9);
+    g.strokePoints([D(-r, -r), D(r, -r), D(r, r), D(-r, r)], true);
   }
 
   /** The king's crown, with the third eye as the jewel in its band. The element's entire tell. */

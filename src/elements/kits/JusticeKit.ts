@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { FONT_DISPLAY } from '../../ui/Theme';
 import { Sfx } from '../../audio';
 import { Fighter } from '../../entities/Fighter';
 import { Projectile } from '../../combat/Projectile';
@@ -7,7 +8,7 @@ import type { CustomStatus } from './StatusHudKit';
 import {
   ColiseumRing, FlamePillar, JUS, JudgeRig, JusticeAvatar, JusticeColorFn, JusticeFx, SeraphForm,
   angelBite, barrageSpear, chainHead, chainRun, drawJudgeScene, holySpikes, impaleRig, judgeRig,
-  padlock, spearShape, styleMeter, tranceBeams, wallSlab, willMeter,
+  padlock, spearShape, styleMeter, styleRankWreath, tranceBeams, wallSlab, willMeter,
 } from './JusticeVisuals';
 import { meterStep } from '../../combat/Meters';
 import {
@@ -2601,23 +2602,25 @@ export class JusticeKit {
     const s = this.style;
     const r = this.rank;
     const w = 230, h = 11;
-    const x = this.api.width - w - 26;
+    const x = this.api.width - w - 50;
     const y = this.top + 8;
     const heat = Phaser.Math.Clamp((s.heatUntil - time) / STYLE_HEAT_MS, 0, 1);
     styleMeter(hg, this.pcol, x, y, w, h, s.points / STYLE_PER_RANK, r.color,
       heat, s.points < 18 && s.rank > 0, this.vizT);
+    // The letter sits in a laurel wreath hung off the right end of the plaque.
+    styleRankWreath(hg, this.pcol, x + w + 26, y + h / 2, 15, r.color, heat, this.vizT);
 
     if (!this.styleLabel) {
-      this.styleLabel = this.api.scene.add.text(x + w + 8, y + h / 2 - 1, '', {
-        fontSize: '22px',
-        fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
-        color: '#ffffff', stroke: '#05070f', strokeThickness: 5,
-      }).setOrigin(0, 0.5).setDepth(21).setScrollFactor(0);
+      this.styleLabel = this.api.scene.add.text(x + w + 26, y + h / 2 - 1, '', {
+        fontSize: '20px',
+        fontFamily: FONT_DISPLAY,
+        color: '#ffffff', stroke: '#2b2010', strokeThickness: 5,
+      }).setOrigin(0.5, 0.5).setDepth(21).setScrollFactor(0);
     }
     if (!this.styleName) {
-      this.styleName = this.api.scene.add.text(x + w, y + h + 6, '', {
-        fontSize: '9px',
-        fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+      this.styleName = this.api.scene.add.text(x + w + 8, y + h + 10, '', {
+        fontSize: '10px',
+        fontFamily: FONT_DISPLAY,
         color: '#8a8f9c', stroke: '#05070f', strokeThickness: 3,
       }).setOrigin(1, 0).setDepth(21).setScrollFactor(0);
     }
@@ -2684,14 +2687,14 @@ export class JusticeKit {
 
     // Draining reads red-hot at the bottom of the bar; regen glows.
     const low = ratio < 0.25;
-    willMeter(g, this.pcol, x, y, w, h, ratio);
+    willMeter(g, this.pcol, x, y, w, h, ratio, this.vizT);
 
     if (!this.hudLabel) {
-      this.hudLabel = this.api.scene.add.text(x, y + h + 3, '', {
+      this.hudLabel = this.api.scene.add.text(x - 4, y + h + 9, '', {
         fontSize: '10px',
-        fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+        fontFamily: FONT_DISPLAY,
         color: '#a8ccff',
-        stroke: '#05070f',
+        stroke: '#2b2010',
         strokeThickness: 3,
       }).setDepth(21).setScrollFactor(0);
     }

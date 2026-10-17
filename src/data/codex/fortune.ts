@@ -3,9 +3,10 @@ import { ElementCodex } from '../AbilityCodex';
 /**
  * Gold — the alchemist (element id `fortune`, kept from the shopkeeper it replaced).
  *
- * Verified against `src/elements/fortune.ts` and `kits/FortuneKit.ts`. Gold has no shop upgrades
- * and no mastery — both were retired with the 2026-10-15 rework and new ones are owed — and no
- * perks. Every number below is a constant at the top of the kit.
+ * Verified against `src/elements/fortune.ts` and `kits/FortuneKit.ts`. The five shop upgrades
+ * (2026-10-16) are constants in the kit's "Shop upgrades" block. Gold has no mastery yet — the
+ * shopkeeper's was retired with the 2026-10-15 rework — and no perks. Every number below is a
+ * constant at the top of the kit.
  */
 const fortune: ElementCodex = {
   identity:
@@ -56,6 +57,21 @@ const fortune: ElementCodex = {
         { tag: 'area', label: 'The arc', detail: 'Leaves at 430–540px/s and falls at 900px/s². Gone after 1.8s or off the screen.' },
         { tag: 'buff', label: 'Sheaf', detail: 'Each Sheaf pick from Advance adds 2 blades to the clump.' },
       ],
+      upgrade: {
+        basics:
+          'Accumulation: a blade that misses and falls all the way to the bottom of the arena stays '
+          + 'there, lying on the floor (up to 90; the oldest gives way). Once six or more are down, the '
+          + 'pile rolls for a burst — every 1.5 seconds with a small pile, down to every 0.35 seconds with '
+          + 'a big one, with a chance of n ÷ (n + 30) for n blades on the floor. A burst picks 5 blades '
+          + 'plus a third of the pile, the ones lying nearest the enemy closest to the floor, stirs them '
+          + 'for 0.28 seconds, then throws them up on arcs that come down through where that enemy stood. '
+          + 'Each is a gold blade worth 3, and one that misses again lands back on the pile.',
+        effects: [
+          { tag: 'summon', label: 'The pile', detail: 'Blades that reach the floor stay there — up to 90.', requiresUpgrade: 'click' },
+          { tag: 'damage', label: 'Bursts', detail: '5 blades + a third of the pile, 3 each, thrown up through the enemy nearest the floor.', requiresUpgrade: 'click' },
+          { tag: 'area', label: 'More is more', detail: 'Rolls every 1.5s → 0.35s as the pile grows; chance n ÷ (n + 30). Nothing below 6 blades.', requiresUpgrade: 'click' },
+        ],
+      },
       notes: [
         'Aim above anything far away: at 300px the clump has dropped roughly 150px by the time it arrives.',
         'Point-blank every blade lands; at range the fall spreads them into a curtain.',
@@ -81,8 +97,27 @@ const fortune: ElementCodex = {
         { tag: 'buff', label: 'Sheaf', detail: '+2 blades on every Fray per pick.' },
         { tag: 'heal', label: 'Mend', detail: '1.5 HP a second of regeneration per pick.' },
       ],
+      upgrade: {
+        basics:
+          'Artisan: every offer shows two more cards, each set with a jewel on top and an extra price '
+          + 'under it, paid when you take it (on top of the 10 the offer cost). A card you cannot afford '
+          + 'is greyed and refuses the click. Pearl (8 gold) is worth two picks; Diamond (20) four. Ruby '
+          + '(10) turns the card on the enemy instead: Might becomes 10% less damage dealt to you, Gilded '
+          + 'Hide 7% more damage taken, Stride 7% slower, Haste 8% longer cooldowns, Vigor 30 less max HP '
+          + 'and Mend a 1.5-HP-a-second bleed — never on Greed or Sheaf. Sapphire (8) starts at one '
+          + 'pick and grows by one more every 20 seconds, up to six. Jade (12) is worth double for every '
+          + 'other jade you own — one is a pick, two are two picks each, three are four each.',
+        effects: [
+          { tag: 'resource', label: 'Jeweled cards', detail: 'Two extra cards per offer, each with its own price.', requiresUpgrade: 'e' },
+          { tag: 'buff', label: 'Pearl · Diamond', detail: '×2 for 8 gold · ×4 for 20 gold.', requiresUpgrade: 'e' },
+          { tag: 'debuff', label: 'Ruby', detail: 'The card\'s effect, inverted, on the enemy. 10 gold. Not on Greed or Sheaf.', requiresUpgrade: 'e' },
+          { tag: 'buff', label: 'Sapphire', detail: '1 pick, +1 every 20s, up to 6. 8 gold.', requiresUpgrade: 'e' },
+          { tag: 'buff', label: 'Jade', detail: 'Each jade is worth 2^(jades owned − 1) picks. 12 gold.', requiresUpgrade: 'e' },
+        ],
+      },
       notes: [
         'A bar under the cards counts down the 10 seconds before a card is picked for you.',
+        'With Artisan, an offer left to its fuse takes one of the three plain cards — never a jeweled one; ruby picks show in your tray as Ruby Curses.',
         'Each pick appears in your status tray with how many times you have taken it.',
         'Online the opponent sees your three cards come up, but not which one you took.',
       ],
@@ -100,6 +135,18 @@ const fortune: ElementCodex = {
         { tag: 'area', label: 'The cloud', detail: '105px radius, 6 seconds. Lands 0.45s after the throw.' },
         { tag: 'resource', label: 'Gold', detail: '2 gold a second while you stand inside it.' },
       ],
+      upgrade: {
+        basics:
+          'Glittery Cloak: the cloud is 20% larger (126px) and full of gold leaf. While you stand '
+          + 'inside your own cloud, 15% of the attacks that reach you miss. Enemies standing in it shoot '
+          + 'wide — a bot or husk aims up to 24° off, and a player\'s own shots leave the hand up to 18° '
+          + 'off line.',
+        effects: [
+          { tag: 'area', label: 'Bigger', detail: '126px instead of 105px.', requiresUpgrade: 'r' },
+          { tag: 'shield', label: 'Dodge', detail: '15% of incoming attacks miss while you stand in your own cloud.', requiresUpgrade: 'r' },
+          { tag: 'debuff', label: 'Blinding', detail: 'Enemies inside shoot up to 18–24° off their aim.', requiresUpgrade: 'r' },
+        ],
+      },
       notes: [
         'Dropped on a gold-hearted enemy it forces a choice: stand in the dust, or walk out and stress the heart.',
         'Dropped at your own feet it is an income — the cheapest way to fill the purse for Advance.',
@@ -124,6 +171,16 @@ const fortune: ElementCodex = {
         { tag: 'control', label: 'Heart attack', detail: '28 damage and a 1.4s stun (no movement, no casting) when the heart fills. Stress resets; the heart stays.' },
         { tag: 'resource', label: 'Blood money', detail: '1 gold for every 20 damage the hearted body takes.' },
       ],
+      upgrade: {
+        basics:
+          'Gold Hex: a golden heart also hexes whoever wears it. While the hex lasts — as long as the '
+          + 'heart, and 5 seconds after — every ability they have that is cooling down charges at half '
+          + 'speed. It shows in their status tray as Gold Hex.',
+        effects: [
+          { tag: 'debuff', label: 'Hex', detail: 'Every cooldown charges 50% slower.', requiresUpgrade: 'f' },
+          { tag: 'debuff', label: 'Duration', detail: 'The heart\'s 6 seconds, plus 5 more after it.', requiresUpgrade: 'f' },
+        ],
+      },
       notes: [
         'The heart is drawn over their head and beats faster and redder as the stress climbs — they can see it too.',
         'A single frame of movement counts for at most 60px, so a teleport is not an instant heart attack.',
@@ -149,6 +206,20 @@ const fortune: ElementCodex = {
         { tag: 'control', label: 'Shots to coins', detail: 'Every projectile they fire becomes a dropped coin worth 1 gold.' },
         { tag: 'control', label: 'Summons to statues', detail: 'Every summon or structure they make turns into a golden statue worth 2 gold. It does nothing else.' },
       ],
+      upgrade: {
+        basics:
+          'Full Metal Alchemy: when the curse runs its full 10 seconds, the enemy is turned to solid '
+          + 'gold for 3 seconds — a statue with light rays shining off it, stunned in place, unable to '
+          + 'move or cast. Then you choose. Hit it while it stands and it takes double damage from '
+          + 'everything; or leave it untouched, and when it melts it leaves 3 gold coins at its feet. '
+          + 'Any damage at all cracks the statue and spends the coins. A cleansed or dead target never '
+          + 'becomes a statue.',
+        effects: [
+          { tag: 'control', label: 'Solid gold', detail: '3-second stun (no moving, no casting) when the curse ends on its own.', requiresUpgrade: 'q' },
+          { tag: 'damage', label: 'Brittle', detail: 'Takes double damage while it stands.', requiresUpgrade: 'q' },
+          { tag: 'resource', label: 'Melt', detail: 'Untouched, it melts into 3 coins (1 gold each).', requiresUpgrade: 'q' },
+        ],
+      },
       notes: [
         'The floor outlives the curse — a long curse is a road you keep for the whole fight.',
         'Coins and statues last 25 seconds on the floor.',

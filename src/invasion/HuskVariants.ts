@@ -168,6 +168,7 @@ export const HUSK_FAMILIES: HuskFamily[] = [
   { elementId: 'bind', name: 'Bind', emoji: '⛓️', color: 0xe0b743, category: 'corrupt', behavior: 'melee', marker: 'chain', quirk: 'horns', hp: 1.2, speed: 0.9, damage: 1 },
   { elementId: 'gum', name: 'Slime', emoji: '🫠', color: 0x46b93f, category: 'corrupt', behavior: 'melee', marker: 'slick', quirk: 'bulk', hp: 1.6, speed: 0.8, damage: 1, size: 1.12 },
   { elementId: 'gluttony', name: 'Harvest', emoji: '🌾', color: 0x6a2c91, category: 'corrupt', behavior: 'melee', marker: 'meat', quirk: 'bulk', hp: 1.4, speed: 0.85, damage: 1.2, size: 1.1 },
+  { elementId: 'myth', name: 'Myth', emoji: '🌠', color: 0x7d5cff, category: 'corrupt', behavior: 'melee', marker: 'star', quirk: 'halo', hp: 1.25, speed: 1, damage: 1.1 },
 ];
 
 /** Wave a tier first appears on. */

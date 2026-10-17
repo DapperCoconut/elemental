@@ -6,6 +6,9 @@ import { meterStep } from '../../combat/Meters';
 import {
   FROST_TONES, ICE, IceArmor, IceAvatar, IceColorFn, IceFx, iceShard, tonesFor,
 } from './IceVisuals';
+import { FONT_DISPLAY } from '../../ui/Theme';
+
+type StackKind = 'frost' | 'permafrost' | 'permavoid' | 'voidfrost';
 
 /**
  * Every ice ability — the player's and the NPC's alike — is cast through the `do*` methods
@@ -200,6 +203,9 @@ export class IceKit {
   private playerFrostVisual: Phaser.GameObjects.Text | null = null;
   private playerPermafrostVisual: Phaser.GameObjects.Text | null = null;
   private playerPermavoidVisual: Phaser.GameObjects.Text | null = null;
+  /** Frost badges + turret ammo racks, wiped and repainted at the top of every `update`. */
+  private hudG: Phaser.GameObjects.Graphics | null = null;
+  private hudT = 0;
 
   // ── Player state — Block Up / Black Ice ─────────────────────────────────
   private playerBlockUpActive = false;
@@ -335,6 +341,7 @@ export class IceKit {
     if (this.playerFrostVisual) { this.playerFrostVisual.destroy(); this.playerFrostVisual = null; }
     if (this.playerPermafrostVisual) { this.playerPermafrostVisual.destroy(); this.playerPermafrostVisual = null; }
     if (this.playerPermavoidVisual) { this.playerPermavoidVisual.destroy(); this.playerPermavoidVisual = null; }
+    if (this.hudG) { this.hudG.destroy(); this.hudG = null; }
     this.playerBlockUpActive = false;
     if (this.playerBlockUpArmor) { this.playerBlockUpArmor.destroy(); this.playerBlockUpArmor = null; }
     this.playerFrozenUntil = 0;
@@ -381,6 +388,10 @@ export class IceKit {
 
   update(time: number, delta: number, isPlayerIce: boolean, isNpcIce = false): void {
     const { player, npc, enemies, scene } = this.arena;
+
+    if (!this.hudG || !this.hudG.active) this.hudG = scene.add.graphics().setDepth(9.8);
+    this.hudG.clear();
+    this.hudT += delta / 1000;
 
     this.updateAvatars(delta, isPlayerIce, isNpcIce);
     this.updateSpikeTrails(delta);
@@ -631,94 +642,18 @@ export class IceKit {
       }
     }
 
-    // Frost visual indicators above enemies
+    // Frost stack badges above every frosted fighter — a frosted chip with a drawn glyph
+    // per stack kind, the count beside it. Painted into hudG (wiped at the top of update).
     for (const t of enemies) {
       if (!t.active) continue;
-      const frostLabel = t.frostStacks > 0 ? `❄️×${t.frostStacks}` : '';
-      if (frostLabel) {
-        if (!t.frostVisual) {
-          t.frostVisual = scene.add.text(t.x, t.y - 42, frostLabel,
-            { fontSize: '12px', fontFamily: 'Arial', color: '#aaddff' }).setOrigin(0.5).setDepth(10);
-        } else {
-          t.frostVisual.setText(frostLabel).setPosition(t.x, t.y - 42);
-        }
-      } else if (t.frostVisual) {
-        t.frostVisual.destroy(); t.frostVisual = null;
-      }
-
-      const pfLabel = t.permafrostStacks > 0 ? `🧊×${t.permafrostStacks}` : '';
-      if (pfLabel) {
-        if (!t.permafrostVisual) {
-          t.permafrostVisual = scene.add.text(t.x, t.y - 78, pfLabel,
-            { fontSize: '11px', fontFamily: 'Arial', color: '#88eeff' }).setOrigin(0.5).setDepth(10);
-        } else {
-          t.permafrostVisual.setText(pfLabel).setPosition(t.x, t.y - 78);
-        }
-      } else if (t.permafrostVisual) {
-        t.permafrostVisual.destroy(); t.permafrostVisual = null;
-      }
-
-      const pvLabel = t.permavoidStacks > 0 ? `💜×${t.permavoidStacks}` : '';
-      if (pvLabel) {
-        if (!t.permavoidVisual) {
-          t.permavoidVisual = scene.add.text(t.x, t.y - 90, pvLabel,
-            { fontSize: '11px', fontFamily: 'Arial', color: '#cc44ff' }).setOrigin(0.5).setDepth(10);
-        } else {
-          t.permavoidVisual.setText(pvLabel).setPosition(t.x, t.y - 90);
-        }
-      } else if (t.permavoidVisual) {
-        t.permavoidVisual.destroy(); t.permavoidVisual = null;
-      }
+      t.frostVisual = this.stackLabel(t.frostVisual, t.frostStacks, t.x, t.y - 42, 'frost', t.alpha);
+      t.permafrostVisual = this.stackLabel(t.permafrostVisual, t.permafrostStacks, t.x, t.y - 78, 'permafrost', t.alpha);
+      t.permavoidVisual = this.stackLabel(t.permavoidVisual, t.permavoidStacks, t.x, t.y - 90, 'permavoid', t.alpha);
     }
-
-    // Void frost visual
-    const vfLabel = npc.voidFrostStacks > 0 ? `☠️×${npc.voidFrostStacks}` : '';
-    if (vfLabel) {
-      if (!npc.voidFrostVisual) {
-        npc.voidFrostVisual = scene.add.text(npc.x, npc.y - 54, vfLabel,
-          { fontSize: '12px', fontFamily: 'Arial', color: '#cc88ff' }).setOrigin(0.5).setDepth(10);
-      } else {
-        npc.voidFrostVisual.setText(vfLabel).setPosition(npc.x, npc.y - 54);
-      }
-    } else if (npc.voidFrostVisual) {
-      npc.voidFrostVisual.destroy(); npc.voidFrostVisual = null;
-    }
-
-    const frostPlayerLabel = this.playerFrostStacks > 0 ? `❄️×${this.playerFrostStacks}` : '';
-    if (frostPlayerLabel) {
-      if (!this.playerFrostVisual) {
-        this.playerFrostVisual = scene.add.text(player.x, player.y - 42, frostPlayerLabel,
-          { fontSize: '12px', fontFamily: 'Arial', color: '#aaddff' }).setOrigin(0.5).setDepth(10);
-      } else {
-        this.playerFrostVisual.setText(frostPlayerLabel).setPosition(player.x, player.y - 42);
-      }
-    } else if (this.playerFrostVisual) {
-      this.playerFrostVisual.destroy(); this.playerFrostVisual = null;
-    }
-
-    const playerPfLabel = player.permafrostStacks > 0 ? `🧊×${player.permafrostStacks}` : '';
-    if (playerPfLabel) {
-      if (!this.playerPermafrostVisual) {
-        this.playerPermafrostVisual = scene.add.text(player.x, player.y - 54, playerPfLabel,
-          { fontSize: '11px', fontFamily: 'Arial', color: '#88eeff' }).setOrigin(0.5).setDepth(10);
-      } else {
-        this.playerPermafrostVisual.setText(playerPfLabel).setPosition(player.x, player.y - 54);
-      }
-    } else if (this.playerPermafrostVisual) {
-      this.playerPermafrostVisual.destroy(); this.playerPermafrostVisual = null;
-    }
-
-    const playerPvLabel = player.permavoidStacks > 0 ? `💜×${player.permavoidStacks}` : '';
-    if (playerPvLabel) {
-      if (!this.playerPermavoidVisual) {
-        this.playerPermavoidVisual = scene.add.text(player.x, player.y - 66, playerPvLabel,
-          { fontSize: '11px', fontFamily: 'Arial', color: '#cc44ff' }).setOrigin(0.5).setDepth(10);
-      } else {
-        this.playerPermavoidVisual.setText(playerPvLabel).setPosition(player.x, player.y - 66);
-      }
-    } else if (this.playerPermavoidVisual) {
-      this.playerPermavoidVisual.destroy(); this.playerPermavoidVisual = null;
-    }
+    npc.voidFrostVisual = this.stackLabel(npc.voidFrostVisual, npc.voidFrostStacks, npc.x, npc.y - 54, 'voidfrost', npc.alpha);
+    this.playerFrostVisual = this.stackLabel(this.playerFrostVisual, this.playerFrostStacks, player.x, player.y - 42, 'frost', player.alpha);
+    this.playerPermafrostVisual = this.stackLabel(this.playerPermafrostVisual, player.permafrostStacks, player.x, player.y - 54, 'permafrost', player.alpha);
+    this.playerPermavoidVisual = this.stackLabel(this.playerPermavoidVisual, player.permavoidStacks, player.x, player.y - 66, 'permavoid', player.alpha);
 
     // Armour shells ride their owners.
     this.playerBlockUpArmor?.update(delta, player.x, player.y, player.alpha);
@@ -1583,10 +1518,10 @@ export class IceKit {
       nextFireAt: scene.time.now + SNOW_FIRE_INTERVAL_MS,
       expiresAt: scene.time.now + SNOW_TURRET_MS,
       owner,
-      ammoLabel: scene.add.text(x, y - 46, '❄️ 0', {
-        fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
-        color: '#cceeff', stroke: '#062338', strokeThickness: 3,
-      }).setOrigin(0.5).setDepth(12),
+      ammoLabel: scene.add.text(x + 30, y - 46, `0/${SNOW_AMMO_MAX}`, {
+        fontSize: '10px', fontFamily: FONT_DISPLAY,
+        color: '#e6f7ff', stroke: '#062338', strokeThickness: 3,
+      }).setOrigin(0, 0.5).setDepth(12),
     });
 
     // It is thrown up out of the floor: a pillar of snow that packs itself down into a turret.
@@ -1596,6 +1531,124 @@ export class IceKit {
     fx.rime(x, y, 40, 1);
     scene.cameras.main.shake(120, 0.004);
     this.arena.showFloatingText(x, y - 62, '⛄ SNOW TURRET!', '#cceeff');
+  }
+
+  /**
+   * Create/update/destroy one stack-count label and paint its badge: a frosted pill with a
+   * glyph chip on the left — a snowflake for frost, an ice cube for permafrost, a void
+   * crystal for permavoid, a dark-hearted void flake for void frost — and the count beside it.
+   * Returns the (possibly new, possibly null) label for the caller to store back.
+   */
+  private stackLabel(
+    cur: Phaser.GameObjects.Text | null, n: number, x: number, y: number, kind: StackKind, alpha: number,
+  ): Phaser.GameObjects.Text | null {
+    if (n <= 0) { cur?.destroy(); return null; }
+    const isVoid = kind === 'permavoid' || kind === 'voidfrost';
+    const txt = `×${n}`;
+    if (!cur || !cur.active) {
+      cur = this.arena.scene.add.text(x, y, txt, {
+        fontSize: '11px', fontFamily: FONT_DISPLAY,
+        color: isVoid ? '#f0d8ff' : '#e6f7ff', stroke: isVoid ? '#220044' : '#062338', strokeThickness: 3,
+      }).setDepth(10);
+    }
+    cur.setOrigin(0, 0.5).setText(txt);
+    const w = 20 + cur.width;
+    const x0 = x - w / 2;
+    cur.setPosition(x0 + 17, y).setAlpha(alpha);
+    const g = this.hudG;
+    if (!g || alpha <= 0.05) return cur;
+    const c = this.pcol;
+    const shell = isVoid ? ICE.voidDeep : ICE.abyss;
+    const body = isVoid ? ICE.voidCore : ICE.deep;
+    const rim = isVoid ? ICE.voidPale : ICE.frost;
+    const glyph = isVoid ? ICE.voidPale : ICE.mist;
+    const h = 15;
+    g.fillStyle(0x000000, 0.3 * alpha);
+    g.fillRoundedRect(x0 + 1, y - h / 2 + 2, w, h, h / 2);
+    g.fillStyle(c(shell), 0.88 * alpha);
+    g.fillRoundedRect(x0, y - h / 2, w, h, h / 2);
+    g.fillStyle(c(body), 0.9 * alpha);
+    g.fillRoundedRect(x0 + 1, y - h / 2 + 1, w - 2, h / 2, { tl: h / 2 - 1, tr: h / 2 - 1, bl: 0, br: 0 });
+    g.lineStyle(1, c(rim), 0.8 * alpha);
+    g.strokeRoundedRect(x0, y - h / 2, w, h, h / 2);
+    // Rime frost crusting the bottom edge.
+    g.fillStyle(c(isVoid ? ICE.voidBody : ICE.pale), 0.5 * alpha);
+    for (let k = 0; k < 4; k++) g.fillTriangle(x0 + 8 + k * 6, y + h / 2 - 0.5, x0 + 11 + k * 6, y + h / 2 - 0.5, x0 + 9.5 + k * 6, y + h / 2 - 3);
+    // Glyph chip.
+    const ix = x0 + 8, iy = y;
+    g.fillStyle(c(isVoid ? ICE.voidBody : ICE.steel), alpha);
+    g.fillCircle(ix, iy, 6.2);
+    const spin = this.hudT * 0.6;
+    if (kind === 'frost' || kind === 'voidfrost') {
+      g.lineStyle(1.2, c(glyph), alpha);
+      for (let k = 0; k < 6; k++) {
+        const a = spin + (k / 6) * Math.PI * 2;
+        const ex = ix + Math.cos(a) * 4.6, ey = iy + Math.sin(a) * 4.6;
+        g.lineBetween(ix, iy, ex, ey);
+        const mx = ix + Math.cos(a) * 2.8, my = iy + Math.sin(a) * 2.8;
+        g.lineBetween(mx, my, mx + Math.cos(a + 0.8) * 1.4, my + Math.sin(a + 0.8) * 1.4);
+        g.lineBetween(mx, my, mx + Math.cos(a - 0.8) * 1.4, my + Math.sin(a - 0.8) * 1.4);
+      }
+      if (kind === 'voidfrost') { g.fillStyle(c(ICE.voidDeep), alpha); g.fillCircle(ix, iy, 1.8); }
+    } else if (kind === 'permafrost') {
+      // Isometric ice cube.
+      g.fillStyle(c(ICE.pale), alpha);
+      g.fillTriangle(ix, iy - 4.5, ix + 4, iy - 2.2, ix, iy);
+      g.fillTriangle(ix, iy - 4.5, ix - 4, iy - 2.2, ix, iy);
+      g.fillStyle(c(ICE.sky), alpha);
+      g.fillTriangle(ix - 4, iy - 2.2, ix, iy, ix - 4, iy + 2.4);
+      g.fillTriangle(ix, iy, ix, iy + 4.6, ix - 4, iy + 2.4);
+      g.fillStyle(c(ICE.ice), alpha);
+      g.fillTriangle(ix + 4, iy - 2.2, ix, iy, ix + 4, iy + 2.4);
+      g.fillTriangle(ix, iy, ix, iy + 4.6, ix + 4, iy + 2.4);
+    } else {
+      // Void crystal: a tall faceted diamond with a glowing heart.
+      g.fillStyle(c(ICE.voidGlow), alpha);
+      g.fillTriangle(ix, iy - 5, ix + 3, iy, ix, iy + 5);
+      g.fillStyle(c(ICE.voidPale), alpha);
+      g.fillTriangle(ix, iy - 5, ix - 3, iy, ix, iy + 5);
+      g.fillStyle(0xffffff, alpha * (0.5 + 0.5 * Math.sin(this.hudT * 4)));
+      g.fillCircle(ix, iy, 1);
+    }
+    return cur;
+  }
+
+  /**
+   * Snow turret ammo: a little ice tray hung over the turret with five sockets, each holding a
+   * packed snowball while loaded, and a frost line along the tray filling as the next throw
+   * readies.
+   */
+  private paintAmmoRack(x: number, y: number, ammo: number, ready: number, alpha: number, c: IceColorFn): void {
+    const g = this.hudG;
+    if (!g) return;
+    const n = SNOW_AMMO_MAX, step = 9, w = n * step + 6, h = 13;
+    const x0 = x - w / 2, y0 = y - h / 2;
+    g.fillStyle(0x000000, 0.3 * alpha);
+    g.fillRoundedRect(x0 + 1, y0 + 2, w, h, 5);
+    g.fillStyle(c(ICE.abyss), 0.88 * alpha);
+    g.fillRoundedRect(x0, y0, w, h, 5);
+    g.lineStyle(1, c(ICE.frost), 0.75 * alpha);
+    g.strokeRoundedRect(x0, y0, w, h, 5);
+    for (let i = 0; i < n; i++) {
+      const sx = x0 + 3 + step / 2 + i * step, sy = y - 0.5;
+      // Socket.
+      g.fillStyle(c(ICE.deep), alpha);
+      g.fillCircle(sx, sy, 3.6);
+      if (i < ammo) {
+        const bob = i === ammo - 1 ? Math.sin(this.hudT * 6) * 0.5 : 0;
+        g.fillStyle(c(ICE.pale), alpha);
+        g.fillCircle(sx, sy + bob, 3.4);
+        g.fillStyle(c(ICE.sky), alpha * 0.8);
+        g.fillCircle(sx + 0.8, sy + 0.9 + bob, 2.2);
+        g.fillStyle(c(ICE.white), alpha);
+        g.fillCircle(sx - 1, sy - 1 + bob, 1.3);
+      }
+    }
+    // Reload frost line under the sockets.
+    g.fillStyle(c(ICE.teal), alpha);
+    g.fillRect(x0 + 4, y0 + h - 2.6, w - 8, 1.6);
+    g.fillStyle(c(ammo > 0 ? ICE.white : ICE.sky), alpha);
+    g.fillRect(x0 + 4, y0 + h - 2.6, (w - 8) * ready, 1.6);
   }
 
   /** Feeds, aims, fires and finally melts every turret, then flies its rounds. */
@@ -1647,7 +1700,12 @@ export class IceKit {
             left < 1200 ? Math.max(0.15, left / 1200) : 1,
           );
         }
-        turret.ammoLabel?.setPosition(turret.x, turret.y - 46).setText(`❄️ ${turret.ammo}`);
+        {
+          const left = turret.expiresAt - time;
+          const fade = left < 1200 ? Math.max(0.15, left / 1200) : 1;
+          this.paintAmmoRack(turret.x, turret.y - 46, turret.ammo, ready, fade, this.col(turret.owner));
+          turret.ammoLabel?.setPosition(turret.x + 30, turret.y - 46).setText(`${turret.ammo}/${SNOW_AMMO_MAX}`).setAlpha(fade);
+        }
 
         if (mark && turret.ammo > 0 && time >= turret.nextFireAt) {
           turret.nextFireAt = time + SNOW_FIRE_INTERVAL_MS;

@@ -878,6 +878,50 @@ export class ShadowAvatar extends BaseAvatar {
     });
   }
 
+  /**
+   * Darkness soaking up the body: a crescent of abyss pooled in the lower half and three veins
+   * of shadow curling up toward the face. Mastered, the veins burn mauve and a third eye — a
+   * blood-red slit — opens on the brow between the crown and the eyes.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    void a;
+    const m = this.mastered;
+    // Lower crescent of pooled dark.
+    g.fillStyle(this.tint(SHADOW.abyss), alpha * 0.45);
+    g.beginPath();
+    g.arc(x, y, 21, Math.PI * 0.08, Math.PI * 0.92, false);
+    g.arc(x, y - 6, 19, Math.PI * 0.85, Math.PI * 0.15, true);
+    g.closePath();
+    g.fillPath();
+    // Veins curling up from the base.
+    for (let i = 0; i < 3; i++) {
+      const bx = x + (i - 1) * 9;
+      const sway = Math.sin(this.t * 1.8 + i * 2) * 2.5;
+      g.lineStyle(m ? 1.6 : 1.2, this.tint(m ? SHADOW.mauve : SHADOW.plum), alpha * (m ? 0.85 : 0.6));
+      g.beginPath();
+      g.moveTo(bx, y + 19);
+      g.lineTo(bx + sway, y + 13);
+      g.lineTo(bx - sway * 0.6 + (i - 1) * 2, y + 7);
+      g.lineTo(bx + sway * 0.4 + (i - 1) * 3.5, y + 4);
+      g.strokePath();
+      g.fillStyle(this.tint(m ? SHADOW.pale : SHADOW.orchid), alpha * 0.7);
+      g.fillCircle(bx + sway * 0.4 + (i - 1) * 3.5, y + 4, 0.9);
+    }
+    if (m) {
+      // The third eye, blinking on its own slow rhythm.
+      const open = Math.max(0.15, Math.min(1, Math.abs(Math.sin(this.t * 0.6)) * 3));
+      const ey = y - 13;
+      g.fillStyle(this.tint(SHADOW.abyss), alpha);
+      g.fillEllipse(x, ey, 5.5, 8);
+      g.fillStyle(this.tint(SHADOW.blood), alpha * 0.9);
+      g.fillEllipse(x, ey, 4, 6.5 * open);
+      g.fillStyle(this.tint(SHADOW.pale), alpha);
+      g.fillEllipse(x + Math.cos(this.facing) * 0.6, ey, 1.2, 4 * open);
+      g.lineStyle(1, this.tint(SHADOW.mauve), alpha * 0.8);
+      g.strokeEllipse(x, ey, 6, 8.5);
+    }
+  }
+
   /** Fast-moving hands shed motes of dark. */
   protected emitTrail(x: number, y: number): void {
     this.fx.wisps(x, y, 1, { speed: 16, size: 2.4, life: 520, rise: 20, depth: 5 });
@@ -895,6 +939,21 @@ export class ShadowAvatar extends BaseAvatar {
       const reach = 16 + Math.sin(this.t * 2.4 + i * 1.7) * 7;
       g.fillStyle(this.tint(SHADOW.pitch), a * 0.45);
       shadowTendril(g, x, y + 6, ang, reach * this.intensity, 3.2, Math.sin(this.t + i) * 6);
+    }
+    if (this.mastered) {
+      // Mastered: an eclipse corona behind the body — a lit ring with rays turning round it.
+      const r = 27;
+      g.lineStyle(5, this.tint(SHADOW.orchid), a * 0.35);
+      g.strokeCircle(x, y, r);
+      g.lineStyle(2, this.tint(SHADOW.mauve), a * 0.85);
+      g.strokeCircle(x, y, r - 1);
+      for (let i = 0; i < 12; i++) {
+        const u = this.t * 0.4 + (i / 12) * TAU;
+        const len = 5 + (i % 2) * 4 + Math.sin(this.t * 3 + i) * 1.5;
+        g.lineStyle(i % 2 ? 1.2 : 2, this.tint(i % 2 ? SHADOW.lilac : SHADOW.pale), a * 0.7);
+        g.lineBetween(x + Math.cos(u) * (r + 1), y + Math.sin(u) * (r + 1),
+          x + Math.cos(u) * (r + 1 + len), y + Math.sin(u) * (r + 1 + len));
+      }
     }
   }
 
@@ -935,6 +994,9 @@ export class ShadowAvatar extends BaseAvatar {
         g.fillCircle(cx, cy, 3.4);
         g.lineStyle(1.2, this.tint(SHADOW.mauve), alpha * 0.8);
         g.strokeCircle(cx, cy, 4);
+        // A watcher pupil in each void.
+        g.fillStyle(this.tint(SHADOW.blood), alpha);
+        g.fillCircle(cx + Math.cos(this.facing) * 0.8, cy, 1.4);
       }
     }
   }

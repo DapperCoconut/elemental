@@ -1202,8 +1202,9 @@ const DEATH_AVATAR: AvatarSpec = {
  * up the hood brightens, and the under-glow darkens and spreads — so a player never has to look
  * at the corner of the screen to know how much of the minute is left.
  *
- * Mastery enhances what is there rather than adding to it: a taller hood with a gold-lit seam, a
- * longer blade with a lit edge, wider coronas on the hands and a deeper glow.
+ * Mastered (Lord of the Hour): a great gold clock-ring turns behind him, three teal river souls
+ * circle him, his resting eyes go teal, his knuckles and hand coronas go gold, the chest pendant
+ * grows a gold ring, the hood rises taller with a lit seam and the blade lengthens.
  */
 export class DeathAvatar extends BaseAvatar {
   /** 0 = the minute has just started, 1 = midnight. Lerped so the change creeps in. */
@@ -1232,7 +1233,8 @@ export class DeathAvatar extends BaseAvatar {
     this.doom += (this.doomTarget - this.doom) * Math.min(1, delta / 400);
     this.guard += (this.guardTarget - this.guard) * Math.min(1, delta / 110);
     // The eyes are the cheapest doom meter there is, and they are already on the rig.
-    const eye = this.doom > 0.75 ? DEA.blood : this.doom > 0.4 ? DEA.gold : DEA.bone;
+    // Mastered, the resting stare is the river's teal instead of bone.
+    const eye = this.doom > 0.75 ? DEA.blood : this.doom > 0.4 ? DEA.gold : this.mastered ? DEA.styx : DEA.bone;
     if (eye !== this.eyeColor) { this.eyeColor = eye; this.setEyeWhite(eye); }
     super.update(delta, x, y, alpha);
   }
@@ -1244,9 +1246,56 @@ export class DeathAvatar extends BaseAvatar {
 
   protected applyMastery(on: boolean): void {
     this.forEachHandLayer(0, (glow) => {
-      glow.setRadius(on ? 13.5 : 10);
-      glow.setFillStyle(this.tint(on ? DEA.gold : DEA.smoke), on ? 0.3 : 0.3);
+      glow.setRadius(on ? 14.5 : 10);
+      glow.setFillStyle(this.tint(on ? DEA.gold : DEA.smoke), on ? 0.34 : 0.3);
     });
+    // Bone knuckles go gold.
+    this.forEachHandLayer(3, (k) => k.setFillStyle(this.tint(on ? DEA.after : DEA.bone), 0.95));
+  }
+
+  /**
+   * The shroud itself: two deep folds falling from the cowl, a ragged hem hanging below the orb,
+   * a bone clasp at the throat and — on the chest — the doomsday clock as a pendant, its hands
+   * the same minute as the corner dial.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    void a;
+    // Folds.
+    g.lineStyle(2, this.tint(DEA.void_), alpha * 0.45);
+    g.beginPath();
+    g.arc(x - 26, y - 4, 22, -0.55, 0.75);
+    g.strokePath();
+    g.beginPath();
+    g.arc(x + 26, y - 4, 22, Math.PI - 0.75, Math.PI + 0.55);
+    g.strokePath();
+    g.lineStyle(1, this.tint(DEA.smoke), alpha * 0.35);
+    g.beginPath();
+    g.arc(x - 24, y - 5, 22, -0.45, 0.6);
+    g.strokePath();
+    // Ragged hem: tatters below the orb, swaying.
+    g.fillStyle(this.tint(DEA.shroud), alpha * 0.95);
+    for (let i = 0; i < 7; i++) {
+      const u = i / 6 - 0.5;
+      const bx = x + u * 30;
+      const by = y + 15 - Math.abs(u) * 8;
+      const len = 6 + jitter(5, i) * 5 + Math.sin(this.t * 2.4 + i) * 1.2;
+      g.fillTriangle(bx - 3, by, bx + 3, by, bx + Math.sin(this.t * 1.7 + i) * 1.5, by + len);
+    }
+    // Pendant on a thread, hung from a bone clasp.
+    const px = x + Math.cos(this.facing) * 1.2;
+    const py = y + 10;
+    g.lineStyle(0.9, this.tint(DEA.pale), alpha * 0.7);
+    g.lineBetween(x - 6, y + 2, px, py - 5);
+    g.lineBetween(x + 6, y + 2, px, py - 5);
+    g.fillStyle(this.tint(DEA.bone), alpha);
+    g.fillEllipse(x - 6, y + 2, 4, 2.6);
+    g.fillEllipse(x + 6, y + 2, 4, 2.6);
+    clockFace(g, this.tint, px, py, this.mastered ? 5.6 : 4.8, 1 - this.doom, alpha,
+      { hostile: this.doom > 0.75, numerals: false });
+    if (this.mastered) {
+      g.lineStyle(1, this.tint(DEA.after), alpha * (0.6 + 0.3 * Math.sin(this.t * 4)));
+      g.strokeCircle(px, py, 7.4);
+    }
   }
 
   protected emitTrail(x: number, y: number): void {
@@ -1262,6 +1311,23 @@ export class DeathAvatar extends BaseAvatar {
     if (this.doom > 0.01) {
       g.fillStyle(this.tint(DEA.blood), a * 0.18 * this.doom);
       g.fillCircle(x, y, 26 * k);
+    }
+    if (this.mastered) {
+      // Lord of the Hour: a great gold clock-ring turning slowly behind him, twelve bone ticks
+      // on it and a lit wedge marking the seconds he has bought.
+      const R = 32;
+      const rot = this.t * 0.25;
+      g.lineStyle(2.6, this.tint(DEA.brass), alpha * 0.75);
+      g.strokeCircle(x, y, R);
+      g.lineStyle(1.2, this.tint(DEA.gold), alpha * (0.6 + 0.25 * Math.sin(this.t * 3)));
+      g.strokeCircle(x, y, R + 2.4);
+      for (let i = 0; i < 12; i++) {
+        const ang = rot + (i / 12) * TAU;
+        const long = i % 3 === 0;
+        const r0 = R - (long ? 5 : 3);
+        g.lineStyle(long ? 2 : 1.2, this.tint(long ? DEA.bone : DEA.gold), alpha * 0.85);
+        g.lineBetween(x + Math.cos(ang) * r0, y + Math.sin(ang) * r0, x + Math.cos(ang) * (R + 4), y + Math.sin(ang) * (R + 4));
+      }
     }
   }
 
@@ -1310,6 +1376,23 @@ export class DeathAvatar extends BaseAvatar {
     const len = m ? 42 : 36;
     katana(g, this.tint, hx, hy, bladeAng, len, alpha,
       { glow: heat * (0.3 + this.guard * 0.8) + this.doom * 0.5 + (m ? 0.6 : 0) });
+
+    if (m) {
+      // Three river souls circle him, dipping behind and in front of the shroud.
+      for (let i = 0; i < 3; i++) {
+        const ang = this.t * 1.3 + (i / 3) * TAU;
+        const front = Math.sin(ang) > -0.2;
+        if (!front) continue;
+        const sx = x + Math.cos(ang) * 27;
+        const sy = y + 4 + Math.sin(ang) * 9;
+        g.fillStyle(this.tint(DEA.deep), alpha * 0.5);
+        g.fillCircle(sx - Math.cos(ang + 1.2) * 3, sy - Math.sin(ang + 1.2) * 1.5, 2.2);
+        g.fillStyle(this.tint(DEA.styx), alpha * 0.9);
+        g.fillCircle(sx, sy, 2.6);
+        g.fillStyle(this.tint(DEA.edge), alpha * 0.9);
+        g.fillCircle(sx - 0.6, sy - 0.6, 1);
+      }
+    }
   }
 
   /**

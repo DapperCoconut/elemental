@@ -12,10 +12,10 @@ import {
 } from '../../data/PaperJournal';
 import { Sfx } from '../../audio';
 import {
-  BOOK_TONE, BookId, PAP, PaperAvatar, PaperColorFn, PaperFx, arcaneSpike, burningScrap,
+  BOOK_TONE, BookId, PAP, PaperAvatar, PaperColorFn, PaperFx, arcaneSpike, bindingRing, burningScrap, burstPage,
   chainRun, crucifixShape, flameSpirit, fortuneTeller, ghostBlade, ghostKnight, herbSeed,
   lightSlab, lotusBloom, paperPlaneShape, paperShard, paperSheet, pinwheelShape, portalTear,
-  shurikenShape, targetRing,
+  reloadTome, shurikenShape, targetRing,
 } from './PaperVisuals';
 
 type Owner = 'player' | 'npc';
@@ -2743,8 +2743,8 @@ export class PaperKit implements SummonPurgeTarget {
       const by = Phaser.Math.Linear(s.tearY, s.rebuildY, k);
       // The half-built body: a low pile of sheets that grows a course at a time, and a ring of
       // the book's colour marking where the rest of it is being told to land.
-      g.lineStyle(1.6, this.col(owner)(tone.accent), 0.28 + Math.sin(this.vizT * 5) * 0.08);
-      g.strokeCircle(bx, by, 20 + (1 - k) * 8);
+      bindingRing(g, this.col(owner), bx, by, 20 + (1 - k) * 8, s.rebuilt, SHARD_COUNT, this.vizT,
+        { accent: tone.accent });
       for (let i = 0; i < s.rebuilt; i++) {
         const a = (i / SHARD_COUNT) * TAU + this.vizT * 0.5;
         paperSheet(g, this.col(owner), bx + Math.cos(a) * 7 * (1 - k), by - i * 1.4 + 8,
@@ -2760,15 +2760,23 @@ export class PaperKit implements SummonPurgeTarget {
         { accent: BOOK_TONE[s.book].accent, seed: sh.seed, home });
     }
 
-    // ── The open book's page, floating over a laser burst ──
+    // ── The open book over the head: an ink-ticked page while the laser burns, then the closed
+    // tome binding itself back up while it reloads ──
     for (const owner of ['player', 'npc'] as Owner[]) {
       const s = this.sides[owner];
-      if (this.now >= s.laserUntil) continue;
       const f = this.fighter(owner);
-      if (!this.alive(f)) continue;
-      const k = (s.laserUntil - this.now) / LASER_BURST_MS;
-      paperSheet(g, this.col(owner), f.x, f.y - 40 - (1 - k) * 6, Math.sin(this.vizT * 3) * 0.2,
-        22, 16, 0.8, { color: PAP.beam, seed: 9, curl: 1, drop: 2 });
+      if (!this.alive(f) || this.torn(owner)) continue;
+      const tone = BOOK_TONE[s.book];
+      if (this.now < s.laserUntil) {
+        const k = (s.laserUntil - this.now) / LASER_BURST_MS;
+        const elapsed = LASER_BURST_MS - (s.laserUntil - this.now);
+        const fired = Math.min(4, Math.floor(elapsed / LASER_TICK_MS) + 1);
+        burstPage(g, this.col(owner), f.x, f.y - 44 - (1 - k) * 4, this.vizT, fired, 4, k,
+          { accent: PAP.beam, cover: tone.cover });
+      } else if (this.now < s.reloadUntil) {
+        const k = 1 - Phaser.Math.Clamp((s.reloadUntil - this.now) / LASER_RELOAD_MS, 0, 1);
+        reloadTome(g, this.col(owner), f.x, f.y - 44, this.vizT, k, { accent: PAP.beam, cover: tone.cover });
+      }
     }
   }
 

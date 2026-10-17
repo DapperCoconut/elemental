@@ -403,7 +403,7 @@ export const prismRampUpgraded: PreviewScript = {
   duration: 7000,
   scale: 0.8,
   bodyTexture: '',
-  caption: 'Prism Drill — all your speed for a 900 px/s boring head that re-stuns every 0.5s',
+  caption: 'Prism Drill — let go of R as you hit the ramp: a drill that crawls through them, grinding',
   run(ctx) {
     const { car, fx, air, ground } = drive(ctx, {});
     accelBar(ctx, car);
@@ -417,6 +417,8 @@ export const prismRampUpgraded: PreviewScript = {
 
     const drill = { x: 0, y: 0, angle: 0, speed: 0, live: false, biting: false };
     let fired = false;
+    let dmg = 1;
+    let nextTick = 0;
     ctx.onFrame((dt, elapsed) => {
       air.clear();
       if (!fired) {
@@ -424,26 +426,36 @@ export const prismRampUpgraded: PreviewScript = {
         LightFx.drawLance(air, ctx.tint, car.x, car.y, car.angle, car.ratio, elapsed / 1000, false);
         if (Phaser.Math.Distance.Between(car.x, car.y, ramp.x, ramp.y) <= 34) {
           fired = true;
-          // All of it, spent: 2–5 damage scaling with the ratio you paid in.
-          const dmg = 2 + Math.round(3 * car.ratio);
+          // All of it, spent: 2–6 damage a tick scaling with the ratio you paid in.
+          dmg = 2 + Math.round(4 * car.ratio);
           fx.flash(ramp.x, ramp.y, 26, 11, LIGHT.red);
           fx.beam(car.x, car.y, ramp.x, ramp.y, LIGHT.red, 9, 220);
           fx.shards(ramp.x, ramp.y, 8, { speed: 300, angle: 0, spread: 0.8, color: LIGHT.ember, depth: 10 });
           float(ctx, car.x, car.y - 30, '🔻 PRISM DRILL', '#ff4422', 11);
+          float(ctx, ramp.x, ramp.y + 30, 'R released!', '#ffaa22', 10);
           ground.clear();
           car.speed = 0;
           car.ratio = 0;
           Object.assign(drill, { x: ramp.x, y: ramp.y, angle: 0, speed: 900, live: true });
-          ctx.at(600, () => float(ctx, victim.x, victim.y - 26, `${dmg}`, '#ff4422', 13));
         }
         return;
       }
       if (!drill.live) return;
       drill.x += Math.cos(drill.angle) * drill.speed * (dt / 1000);
-      if (!drill.biting && Phaser.Math.Distance.Between(drill.x, drill.y, victim.x, victim.y) <= 26) {
+      // Inside the body it crawls at 25 px/s, grinding damage in every 100ms; out the far side it
+      // takes off again.
+      const inside = Phaser.Math.Distance.Between(drill.x, drill.y, victim.x, victim.y) <= 26;
+      if (inside && !drill.biting) {
         drill.biting = true;
-        drill.speed *= 0.1;
+        nextTick = elapsed;
         fx.boom(victim.x, victim.y, 46, { color: LIGHT.red, shards: 7, mark: false, duration: 300 });
+      } else if (!inside && drill.biting) {
+        drill.biting = false;
+      }
+      drill.speed = drill.biting ? 25 : 900;
+      if (drill.biting && elapsed >= nextTick) {
+        nextTick = elapsed + 100;
+        float(ctx, victim.x + Phaser.Math.Between(-10, 10), victim.y - 26, `${dmg}`, '#ff4422', 11);
       }
       LightFx.drawDrill(air, ctx.tint, drill.x, drill.y, drill.angle, elapsed / 1000, drill.biting);
     });
@@ -492,58 +504,15 @@ export const lightTrick: PreviewScript = {
   },
 };
 
-export const lightTrickUpgraded: PreviewScript = {
-  duration: 5600,
-  scale: 0.88,
-  bodyTexture: '',
-  caption: 'Javelin Burst — a trick that catches a ramp fires 12 javelins instead of 3 lances',
-  run(ctx) {
-    const { car, av, fx, air, ground } = drive(ctx, {});
-    accelBar(ctx, car);
-    const ramp = { x: ctx.w * 0.5, y: ctx.cy, angle: 0 };
-    ctx.onFrame((_dt, elapsed) => {
-      ground.clear();
-      LightFx.drawRamp(ground, ctx.tint, ramp.x, ramp.y, ramp.angle, elapsed / 1000);
-    });
-    ctx.onFrame((dt, elapsed) => {
-      stepCar(car, 0, dt, elapsed);
-      air.clear();
-      LightFx.drawLance(air, ctx.tint, car.x, car.y, car.angle, car.ratio, elapsed / 1000, false);
-    });
-
-    ctx.at(1500, () => {
-      av.play('clap');
-      fx.flash(car.x, car.y, 25, 9, LIGHT.pale);
-      fx.ring(car.x, car.y, 10, 50, LIGHT.pale, 320, 4, 8);
-      // The burst catching the ramp: twelve javelins, evenly spaced, all the way round.
-      fx.boom(ramp.x, ramp.y, 70, { color: LIGHT.cyan, shards: 12, mark: false });
-      for (let i = 0; i < 12; i++) {
-        const a = (i / 12) * Math.PI * 2;
-        ctx.fly({
-          texture: 'proj-light-triangle',
-          from: { x: ramp.x, y: ramp.y },
-          to: { x: ramp.x + Math.cos(a) * 900, y: ramp.y + Math.sin(a) * 900 },
-          speed: 480, pierce: true,
-        });
-      }
-      car.boostUntil = 1500 + 1500;
-      float(ctx, car.x, car.y - 34, '🌟 JAVELIN BURST', '#66ddff', 11);
-      float(ctx, ramp.x, ramp.y - 34, '12 × 5', '#66ddff', 11);
-    });
-  },
-};
-
 // ══ Q — Speed 'O' Light ═══════════════════════════════════════════════
 
-/** Both ultimate loops run the real 60ms bounce clock; Q+ is whether every 10th one sticks. */
-function speedOLightScript(flare: boolean): PreviewScript {
+/** The ultimate loop runs the real 60ms bounce clock. */
+function speedOLightScript(): PreviewScript {
   return {
     duration: 8600,
     scale: 0.5,
     bodyTexture: '',
-    caption: flare
-      ? "Flare-Stream — every 10th hop leaves a 35s beam that triples your acceleration"
-      : "Q — 125 hops at 60ms, each leaving a 15-damage streak, all of it undodgeable",
+    caption: "Q — 125 hops at 60ms, each leaving a 15-damage streak, all of it undodgeable",
     run(ctx) {
       const fx = ctx.capture(() => new LightFx(ctx.scene, ctx.tint).setSink(ctx.sink));
       const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
@@ -559,12 +528,8 @@ function speedOLightScript(flare: boolean): PreviewScript {
       const readout = label(ctx, ctx.w * 0.5, 12, '#fff4a8', 11);
 
       const streaks: { x1: number; y1: number; x2: number; y2: number; born: number; hit: boolean }[] = [];
-      const beams: { x1: number; y1: number; x2: number; y2: number }[] = [];
       ctx.onFrame((_dt, elapsed) => {
         ground.clear();
-        for (const b of beams) {
-          LightFx.drawStreak(ground, ctx.tint, b.x1, b.y1, b.x2, b.y2, 18 * 0.8, LIGHT.ember, 0.7, elapsed / 1000);
-        }
         for (let i = streaks.length - 1; i >= 0; i--) {
           const s = streaks[i];
           const life = 1 - (elapsed - s.born) / 900;
@@ -597,7 +562,6 @@ function speedOLightScript(flare: boolean): PreviewScript {
             const s = { x1: pos.x, y1: pos.y, x2: nx, y2: ny, born: now, hit: false };
             streaks.push(s);
             fx.flare(nx, ny, 0.55, 12, LIGHT.white, Math.atan2(ny - pos.y, nx - pos.x));
-            if (flare && hops % 10 === 0) beams.push({ x1: pos.x, y1: pos.y, x2: nx, y2: ny });
             // 15 damage inside 40px of the line, once per target per streak.
             const d = distToSeg(victim.x, victim.y, s.x1, s.y1, s.x2, s.y2);
             if (d <= 40) {
@@ -608,7 +572,7 @@ function speedOLightScript(flare: boolean): PreviewScript {
             pos.x = nx;
             pos.y = ny;
           }
-          readout.setText(`hop ${hops}/125   —   ${dealt} dealt${flare ? `   —   ${beams.length} beams` : ''}`);
+          readout.setText(`hop ${hops}/125   —   ${dealt} dealt`);
         });
       });
     },
@@ -623,8 +587,7 @@ function distToSeg(px: number, py: number, x1: number, y1: number, x2: number, y
   return Phaser.Math.Distance.Between(px, py, x1 + t * dx, y1 + t * dy);
 }
 
-export const speedOLight = speedOLightScript(false);
-export const speedOLightUpgraded = speedOLightScript(true);
+export const speedOLight = speedOLightScript();
 
 // ══ Passive ═══════════════════════════════════════════════════════════
 

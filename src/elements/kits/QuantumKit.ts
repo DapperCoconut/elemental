@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import type { CustomStatus } from './StatusHudKit';
 import { Sfx } from '../../audio';
+import { FONT_DISPLAY } from '../../ui/Theme';
 
 type Owner = 'player' | 'npc';
 
@@ -502,38 +503,106 @@ export class QuantumKit {
     }
     while (this.hudLabels.length < forms.length) {
       this.hudLabels.push(this.api.scene.add.text(0, y, '', {
-        fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+        fontSize: '11px', fontFamily: FONT_DISPLAY, stroke: '#031018', strokeThickness: 3,
       }).setOrigin(0.5).setDepth(HUD_DEPTH).setScrollFactor(0));
     }
 
+    const t = this.api.scene.time.now / 1000;
     const g = this.hud;
     g.clear();
-    g.fillStyle(0x061014, 0.88);
-    g.fillRoundedRect(cx - half, y - HUD_H / 2, totalW, HUD_H, 8);
-    g.lineStyle(1.5, Q_CYAN, 0.55);
-    g.strokeRoundedRect(cx - half, y - HUD_H / 2, totalW, HUD_H, 8);
+    const left = cx - half, top = y - HUD_H / 2;
 
-    // The live stop gets a filled slot in its own element's colour; the dormant ones a hairline.
+    // Plate: drop shadow, deep cyan glass, a faint standing wave across it, a double rim and
+    // corner brackets — a readout off a lab instrument.
+    g.fillStyle(0x000000, 0.4);
+    g.fillRoundedRect(left + 2, top + 3, totalW, HUD_H, 9);
+    g.fillStyle(0x041016, 0.92);
+    g.fillRoundedRect(left, top, totalW, HUD_H, 9);
+    g.fillStyle(0x0d3a52, 0.35);
+    g.fillRoundedRect(left + 3, top + 3, totalW - 6, HUD_H / 2 - 3, { tl: 7, tr: 7, bl: 0, br: 0 });
+    g.lineStyle(1, Q_CYAN, 0.16);
+    for (let k = 0; k < 2; k++) {
+      g.beginPath();
+      for (let xx = 0; xx <= totalW - 12; xx += 4) {
+        const yy = y + Math.sin(xx * 0.09 + t * (2.2 + k) + k * 1.7) * (HUD_H * 0.28) * Math.sin(t * 0.8 + k);
+        if (xx === 0) g.moveTo(left + 6 + xx, yy); else g.lineTo(left + 6 + xx, yy);
+      }
+      g.strokePath();
+    }
+    g.lineStyle(1.5, Q_CYAN, 0.6);
+    g.strokeRoundedRect(left, top, totalW, HUD_H, 9);
+    g.lineStyle(1, 0xb07dff, 0.35);
+    g.strokeRoundedRect(left + 2.5, top + 2.5, totalW - 5, HUD_H - 5, 7);
+    const br = 7;
+    g.lineStyle(2, 0xeaffff, 0.85);
+    for (const [bx, by, sx, sy] of [[left, top, 1, 1], [left + totalW, top, -1, 1], [left, top + HUD_H, 1, -1], [left + totalW, top + HUD_H, -1, -1]]) {
+      g.beginPath();
+      g.moveTo(bx + sx * br, by + sy * 1);
+      g.lineTo(bx + sx * 1, by + sy * 1);
+      g.lineTo(bx + sx * 1, by + sy * br);
+      g.strokePath();
+    }
+
+    // Entanglement between neighbouring stops: a wavy link with a photon running along it.
+    for (let i = 0; i < forms.length - 1; i++) {
+      const jx = left + (i + 1) * HUD_SLOT_W + 2;
+      g.lineStyle(1.2, Q_CYAN, 0.5);
+      g.beginPath();
+      for (let k = 0; k <= 8; k++) {
+        const yy = top + 7 + (k / 8) * (HUD_H - 14);
+        const xx = jx + Math.sin(k * 1.2 + t * 6) * 2.2;
+        if (k === 0) g.moveTo(xx, yy); else g.lineTo(xx, yy);
+      }
+      g.strokePath();
+      const ph = (t * 1.4 + i * 0.5) % 1;
+      g.fillStyle(0xeaffff, 0.9);
+      g.fillCircle(jx + Math.sin(ph * 9.6 + t * 6) * 2.2, top + 7 + ph * (HUD_H - 14), 1.6);
+    }
+
+    // The live stop is a lit capsule in its own colour with an electron circling it; the
+    // dormant ones are ghosts — a hairline with a faint offset double, plainly "somewhere else".
     for (let i = 0; i < forms.length; i++) {
       const live = i === this.playerIdx;
-      const sx = cx - half + 6 + i * HUD_SLOT_W;
+      const sx = left + 6 + i * HUD_SLOT_W;
       const sw = HUD_SLOT_W - 8;
+      const sy = top + 6, sh = HUD_H - 12;
       const col = this.api.elementColor(forms[i]);
       if (live) {
-        g.fillStyle(col, 0.34);
-        g.fillRoundedRect(sx, y - HUD_H / 2 + 6, sw, HUD_H - 12, 6);
-        g.lineStyle(1.5, col, 0.95);
+        const pulse = 0.85 + 0.15 * Math.sin(t * 4);
+        g.fillStyle(col, 0.16 * pulse);
+        g.fillRoundedRect(sx - 3, sy - 3, sw + 6, sh + 6, 9);
+        g.fillStyle(col, 0.38 * pulse);
+        g.fillRoundedRect(sx, sy, sw, sh, 6);
+        g.fillStyle(0xffffff, 0.14);
+        g.fillRoundedRect(sx + 2, sy + 1.5, sw - 4, sh * 0.4, { tl: 5, tr: 5, bl: 0, br: 0 });
+        g.lineStyle(1.6, col, 0.95);
+        g.strokeRoundedRect(sx, sy, sw, sh, 6);
+        // Electron on an orbit round the capsule.
+        const oa = t * 3.2;
+        const ex = sx + sw / 2 + Math.cos(oa) * (sw / 2 + 1);
+        const ey = sy + sh / 2 + Math.sin(oa) * (sh / 2 + 1);
+        g.lineStyle(0.8, col, 0.4);
+        g.strokeEllipse(sx + sw / 2, sy + sh / 2, sw + 2, sh + 2);
+        g.fillStyle(col, 0.5);
+        g.fillCircle(ex, ey, 3.4);
+        g.fillStyle(0xffffff, 1);
+        g.fillCircle(ex, ey, 1.6);
       } else {
-        g.lineStyle(1, col, 0.3);
+        const jx = Math.sin(t * 2.3 + i * 1.7) * 1.5, jy = Math.cos(t * 1.9 + i) * 1;
+        g.lineStyle(1, 0xb07dff, 0.22);
+        g.strokeRoundedRect(sx + jx, sy + jy, sw, sh, 6);
+        g.fillStyle(col, 0.06);
+        g.fillRoundedRect(sx, sy, sw, sh, 6);
+        g.lineStyle(1, col, 0.32);
+        g.strokeRoundedRect(sx, sy, sw, sh, 6);
       }
-      g.strokeRoundedRect(sx, y - HUD_H / 2 + 6, sw, HUD_H - 12, 6);
 
-      const t = this.hudLabels[i];
-      t.setPosition(sx + sw / 2, y);
-      t.setText(`${this.api.elementEmoji(forms[i])} ${this.api.elementName(forms[i])}`);
-      t.setColor(live ? '#ffffff' : '#5d7076');
-      t.setAlpha(live ? 1 : 0.75);
-      t.setVisible(true);
+      const label = this.hudLabels[i];
+      label.setPosition(sx + sw / 2, y);
+      label.setText(`${this.api.elementEmoji(forms[i])} ${this.api.elementName(forms[i])}`);
+      label.setColor(live ? '#ffffff' : '#6f8a92');
+      label.setAlpha(live ? 1 : 0.75);
+      label.setVisible(true);
     }
     for (let i = forms.length; i < this.hudLabels.length; i++) this.hudLabels[i].setVisible(false);
   }

@@ -1038,6 +1038,66 @@ export class GunpowderAvatar extends BaseAvatar {
     g.fillCircle(x, y, 28 * k);
     g.fillStyle(this.tint(this.accent), a * 0.12 * k);
     g.fillEllipse(x, y + 8, 34 * k, 14 * k);
+    if (this.mastered) {
+      g.lineStyle(1.4, this.tint(GUNPOWDER.brass), a * 0.55);
+      g.strokeEllipse(x, y + 4, 56, 20);
+    }
+  }
+
+  /**
+   * The regimentals painted on the orb: pipeclayed white cross-belts meeting at a brass
+   * buckle plate, and a cartridge-box strap stitch. Mastered, the field commission shows on
+   * the chest — a gold star medal on a crimson ribbon and a gold aiguillette looped across
+   * the other side.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    void a;
+    const A = alpha;
+    const m = this.mastered;
+    const lean = Math.cos(this.facing) * 1.4;
+    const bx = x + lean, by = y + 9;
+    // Cross-belts: two straps from the shoulders, crossing at the buckle.
+    for (const sd of [-1, 1]) {
+      const sx = x + sd * 15, sy = y - 1;
+      const ex = x - sd * 12 + lean, ey = y + 18;
+      g.lineStyle(3.6, this.tint(GUNPOWDER.buff), A * 0.95);
+      g.lineBetween(sx, sy, ex, ey);
+      g.lineStyle(2.4, this.tint(GUNPOWDER.belt), A);
+      g.lineBetween(sx, sy, ex, ey);
+    }
+    // Buckle plate.
+    g.fillStyle(this.tint(GUNPOWDER.stock), A);
+    g.fillRoundedRect(bx - 4, by - 3.2, 8, 6.4, 1.4);
+    g.fillStyle(this.tint(m ? GUNPOWDER.gold : GUNPOWDER.brass), A);
+    g.fillRoundedRect(bx - 3.4, by - 2.6, 6.8, 5.2, 1.2);
+    g.fillStyle(this.tint(GUNPOWDER.glow), A * 0.7);
+    g.fillRect(bx - 2.6, by - 2.1, 5.2, 1);
+    if (!m) return;
+    // Gold star medal on a crimson ribbon, left breast.
+    const mx = x - 9 + lean, my = y + 3;
+    g.fillStyle(this.tint(GUNPOWDER.crimson), A);
+    g.fillRect(mx - 2, my - 4.5, 4, 4);
+    g.fillStyle(this.tint(GUNPOWDER.belt), A * 0.8);
+    g.fillRect(mx - 0.5, my - 4.5, 1, 4);
+    const pts: Pt[] = [];
+    for (let i = 0; i < 10; i++) {
+      const ang = -Math.PI / 2 + (i / 10) * TAU;
+      const r = i % 2 === 0 ? 3.6 : 1.6;
+      pts.push({ x: mx + Math.cos(ang) * r, y: my + 2 + Math.sin(ang) * r });
+    }
+    g.fillStyle(this.tint(GUNPOWDER.gold), A);
+    fillPts(g, pts);
+    g.fillStyle(this.tint(GUNPOWDER.glow), A * (0.6 + 0.4 * Math.sin(this.t * 3)));
+    g.fillCircle(mx, my + 2, 1);
+    // Aiguillette: two gold cords looping from the right shoulder.
+    g.lineStyle(1.2, this.tint(GUNPOWDER.gold), A);
+    for (let k = 0; k < 2; k++) {
+      g.beginPath();
+      g.arc(x + 11 + lean, y + 1 + k * 1.6, 6 + k * 2, Math.PI * 0.15, Math.PI * 0.9, false);
+      g.strokePath();
+    }
+    g.fillStyle(this.tint(GUNPOWDER.brass), A);
+    g.fillTriangle(x + 4 + lean, y + 7, x + 6 + lean, y + 7, x + 5 + lean, y + 10);
   }
 
   /** The shako, rooted at the crown so its peak frames the face from above. */
@@ -1046,5 +1106,24 @@ export class GunpowderAvatar extends BaseAvatar {
     const lean = Math.cos(this.facing) * 2.2;
     shako(g, this.tint, x, y - 13, lean, 1 + (this.intensity - 1) * 0.3, alpha, this.t,
       this.ammo > 0, this.mastered);
+    // Mastered: three lit fuses ride a ring round the fusilier, each a hot spark trailing smoke
+    // and embers — the whole man is primed.
+    if (this.mastered) {
+      for (let i = 0; i < 3; i++) {
+        const oa = this.t * 1.8 + (i / 3) * TAU;
+        const ox = x + Math.cos(oa) * 28, oy = y + 4 + Math.sin(oa) * 10;
+        for (let k = 1; k <= 4; k++) {
+          const ta = oa - k * 0.16;
+          g.fillStyle(this.tint(k < 2 ? GUNPOWDER.blaze : GUNPOWDER.ember), alpha * (0.6 - k * 0.12));
+          g.fillCircle(x + Math.cos(ta) * 28, y + 4 + Math.sin(ta) * 10, 2.2 - k * 0.35);
+        }
+        g.fillStyle(this.tint(GUNPOWDER.ember), alpha * 0.35);
+        g.fillCircle(ox, oy, 5);
+        g.fillStyle(this.tint(GUNPOWDER.glow), alpha);
+        g.fillCircle(ox, oy, 2.2);
+        g.fillStyle(this.tint(GUNPOWDER.white), alpha);
+        g.fillCircle(ox, oy, 1);
+      }
+    }
   }
 }

@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import {
-  GluttonyAvatar, HAR, HarvestFx, MoldCell, corruptHeart, corruptionVeil, crowShape, fleshChunk, moldLayer,
-  seedShape, sickleShape, sickleTrail,
+  GluttonyAvatar, HAR, HarvestFx, MoldCell, cookDish, corruptHeart, corruptionVeil, crowShape, fleshChunk, moldLayer,
+  moldWorm, poisonVial, rotBullet, seedShape, sickleShape, sickleTrail,
 } from '../../../elements/kits/GluttonyVisuals';
 
 /**
@@ -390,6 +390,282 @@ export const reap: PreviewScript = {
     ctx.at(700, () => readout.setText('the one below the line — 22% health, fully corrupted — is simply cut down'));
     ctx.at(3600, () => { bGone = false; rot = 0; readout.setText('every cut is another permanent 15% — it compounds'); });
     swing(4200);
+  },
+};
+
+// ══ Shop upgrades ══════════════════════════════════════════════════════
+
+export const sickleUpgraded: PreviewScript = {
+  duration: 6400,
+  scale: 0.9,
+  caption: 'Click+ Recursive — the sickle swings round you and flies a second loop toward the cursor, cutting everything again',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new GluttonyAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#e2b0ff', 11);
+    const a = { x: ctx.tx - 30, y: ctx.cy - 26 };
+    const b = { x: ctx.tx - 10, y: ctx.cy + 44 };
+    dummyAt(ctx, a);
+    dummyAt(ctx, b);
+    const caster = { x: ctx.cx, y: ctx.cy };
+    const loops: (Loop & { second: boolean })[] = [];
+    const glow = ctx.adopt(ctx.scene.add.graphics().setDepth(8.9));
+    loopLayer(ctx, loops, (l, x, y) => {
+      for (const d of [a, b]) {
+        if (Phaser.Math.Distance.Between(x, y, d.x, d.y) < 30 && !l.hits.has(d)) {
+          l.hits.add(d);
+          float(ctx, d.x, d.y - 26, '12', hex(HAR.purpleLit), 12);
+          ctx.capture(() => fx.sickleHit(d.x, d.y, 0));
+        }
+      }
+    });
+    ctx.onFrame((_dt, e) => {
+      glow.clear();
+      for (const l of loops) {
+        if (!(l as { second?: boolean }).second) continue;
+        const u = Phaser.Math.Clamp((e - l.start) / l.dur, 0, 1);
+        const th = l.phi0 + l.side * u * Math.PI * 2;
+        glow.fillStyle(ctx.tint(HAR.purpleLit), 0.25);
+        glow.fillCircle(l.cx + Math.cos(th) * l.R, l.cy + Math.sin(th) * l.R, 18);
+      }
+      crow(av)?.setSickleOut(loops.length > 0);
+    });
+    ctx.at(300, () => {
+      const first = throwLoop(caster, { x: ctx.tx + 30, y: ctx.cy - 20 }, 1, 300);
+      loops.push({ ...first, second: false });
+      crow(av)?.play('punch', ctx.aim);
+      readout.setText('the first loop, out and back');
+      ctx.at(300 + first.dur, () => {
+        ctx.capture(() => fx.sickleRecurse(caster.x, caster.y, 1));
+        loops.push({ ...throwLoop(caster, { x: ctx.tx + 20, y: ctx.cy + 40 }, 1, 300 + first.dur), second: true });
+        readout.setText('…round the scarecrow, and out again — toward the cursor now');
+      });
+    });
+  },
+};
+
+export const sowUpgraded: PreviewScript = {
+  duration: 8600,
+  scale: 0.9,
+  caption: 'E+ Vile Rot — the mold grabs whoever walks on it (1s stun, 10) and grows worms that spit rot for 5',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new GluttonyAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#e2b0ff', 11);
+    const seeds = [0, 1, 2, 3, 4].map((i) => ({ x: ctx.cx + 60 + Math.cos(i * 1.3) * 40, y: ctx.cy + Math.sin(i * 1.3) * 26, at: 0 }));
+    const mold = moldGrid(ctx, seeds, 80, 2.4);
+    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(2.2));
+    const up = ctx.adopt(ctx.scene.add.graphics().setDepth(5.6));
+    const victim = { x: ctx.cx + 80, y: ctx.cy - 6 };
+    dummyAt(ctx, victim, () => 0.4);
+    const worm = { x: ctx.cx + 10, y: ctx.cy + 40, born: -1, shotAt: -9999 };
+    const shots: { x: number; y: number; vx: number; vy: number }[] = [];
+    ctx.onFrame((dt, e) => {
+      ground.clear();
+      up.clear();
+      moldLayer(ground, ctx.tint, mold.cells(), CELL, e / 1000, 0.92, victim);
+      if (worm.born >= 0) {
+        const ang = Math.atan2(victim.y - (worm.y - 30), victim.x - worm.x);
+        const rise = Phaser.Math.Clamp((e - worm.born) / 450, 0, 1);
+        const recoil = Phaser.Math.Clamp(1 - (e - worm.shotAt) / 220, 0, 1);
+        moldWorm(up, ctx.tint, worm.x, worm.y, ang, rise, e / 1000, recoil, 1);
+      }
+      for (let i = shots.length - 1; i >= 0; i--) {
+        const b = shots[i];
+        b.x += b.vx * dt / 1000;
+        b.y += b.vy * dt / 1000;
+        rotBullet(up, ctx.tint, b.x, b.y, Math.atan2(b.vy, b.vx), 1);
+        if (Phaser.Math.Distance.Between(b.x, b.y, victim.x, victim.y) < 22) {
+          shots.splice(i, 1);
+          float(ctx, victim.x, victim.y - 26, '5', hex(HAR.purpleLit), 12);
+          ctx.capture(() => fx.rotBulletHit(b.x, b.y, Math.atan2(b.vy, b.vx)));
+        }
+      }
+    });
+    ctx.at(1600, () => {
+      ctx.capture(() => fx.rotGrab(victim.x, victim.y, 1000));
+      float(ctx, victim.x, victim.y - 50, '✋ GRABBED', hex(HAR.purpleLit), 12);
+      float(ctx, victim.x, victim.y - 28, '10', '#ffffff', 12);
+      readout.setText('the rot reaches up and holds them for a second');
+    });
+    ctx.at(3600, () => {
+      worm.born = 3600;
+      ctx.capture(() => fx.wormEmerge(worm.x, worm.y));
+      readout.setText('mature mold pushes up worms — up to three, 8 seconds each');
+    });
+    for (const ms of [4300, 5500, 6700, 7900]) {
+      ctx.at(ms, () => {
+        worm.shotAt = ms;
+        const hx = worm.x;
+        const hy = worm.y - 30;
+        const ang = Math.atan2(victim.y - hy, victim.x - hx);
+        shots.push({ x: hx, y: hy, vx: Math.cos(ang) * 300, vy: Math.sin(ang) * 300 });
+      });
+    }
+  },
+};
+
+export const frenzyUpgraded: PreviewScript = {
+  duration: 7000,
+  scale: 0.9,
+  caption: 'R+ Poison Payload — the crows carry vials. Press R again: they shatter for 12 and poison for 4 a second',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new GluttonyAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#e2b0ff', 11);
+    const victim = { x: ctx.tx, y: ctx.cy };
+    dummyAt(ctx, victim, () => 0.2);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const crows = [0, 1, 2].map((i) => ({ x: ctx.cx, y: ctx.cy - 10, ang: 0, phase: (i / 3) * Math.PI * 2 }));
+    let vials = true;
+    let on = false;
+    ctx.onFrame((dt, e) => {
+      g.clear();
+      if (!on || e > 6300) return;
+      for (const c of crows) {
+        const a = (e / 1000) * CROW_SPIN + c.phase;
+        const tx = victim.x + Math.cos(a) * CROW_ORBIT_R;
+        const ty = victim.y - 6 + Math.sin(a) * CROW_ORBIT_R * 0.5;
+        const px = c.x;
+        const py = c.y;
+        const d = Phaser.Math.Distance.Between(c.x, c.y, tx, ty);
+        const step = Math.min(d, 560 * dt / 1000);
+        if (d > 0.5) { c.x += ((tx - c.x) / d) * step; c.y += ((ty - c.y) / d) * step; c.ang = Math.atan2(c.y - py, c.x - px); }
+        if (vials) poisonVial(g, ctx.tint, c.x, c.y + 11, Math.sin(e / 200 + c.phase) * 0.35, 1);
+        crowShape(g, ctx.tint, c.x, c.y, c.ang, 9, e / 60 + c.phase, 1);
+      }
+    });
+    ctx.at(300, () => {
+      on = true;
+      crow(av)?.play('raise', undefined, 520);
+      ctx.capture(() => fx.crowRelease(ctx.cx, ctx.cy - 8));
+      readout.setText('each crow has a vial of poison in its claws');
+    });
+    ctx.at(2600, () => {
+      vials = false;
+      readout.setText('R again — all three let go');
+      for (const c of crows) {
+        const x = c.x;
+        const y0 = c.y + 11;
+        const y1 = c.y + 18;
+        ctx.capture(() => fx.vialFall(x, y0, x, y1, 240));
+        ctx.at(2840, () => ctx.capture(() => fx.vialShatter(x, y1, 48)));
+      }
+    });
+    ctx.at(2860, () => {
+      float(ctx, victim.x, victim.y - 30, '36', '#ffffff', 13);
+      float(ctx, victim.x, victim.y - 48, '🧪 POISONED ×3', '#9be35a', 11);
+    });
+    for (let i = 0; i < 8; i++) {
+      ctx.at(3360 + i * 500, () => {
+        float(ctx, victim.x + (Math.random() - 0.5) * 16, victim.y - 24, '6', '#9be35a', 11);
+        ctx.capture(() => fx.poisonTick(victim.x, victim.y));
+      });
+    }
+    ctx.at(3500, () => readout.setText('every vial that splashed them is 4 a second for 5 seconds'));
+  },
+};
+
+export const consumeUpgraded: PreviewScript = {
+  duration: 7600,
+  scale: 0.9,
+  caption: 'F+ Corrupt Cooking — flesh goes in the pot: Jerky (1), Meat Broth (2) or the Vile Feast (3), from a menu up top',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new GluttonyAvatar(ctx.scene, ctx.tint));
+    av.setFacing(0);
+    const readout = label(ctx, ctx.w * 0.5, ctx.h - 14, '#e2b0ff', 11);
+    const menu = ctx.adopt(ctx.scene.add.graphics().setDepth(18));
+    const dishes = ['jerky', 'broth', 'feast'] as const;
+    const costs = [1, 2, 3];
+    let flesh = 3;
+    let hot = -1;
+    ctx.onFrame((_dt, e) => {
+      menu.clear();
+      const W = 58;
+      const x0 = ctx.w / 2 - (W * 3 + 8) / 2;
+      for (let i = 0; i < 3; i++) {
+        const x = x0 + i * (W + 4);
+        const can = flesh >= costs[i];
+        menu.fillStyle(ctx.tint(HAR.ink), 0.86);
+        menu.fillRoundedRect(x, 8, W, 34, 6);
+        menu.fillStyle(ctx.tint(hot === i ? HAR.rot : HAR.rotDeep), can ? 0.9 : 0.4);
+        menu.fillRoundedRect(x + 2, 10, W - 4, 30, 5);
+        menu.lineStyle(hot === i ? 2 : 1.2, ctx.tint(hot === i ? HAR.glow : HAR.purple), can ? 1 : 0.45);
+        menu.strokeRoundedRect(x, 8, W, 34, 6);
+        cookDish(menu, ctx.tint, dishes[i], x + 20, 26, e / 1000 + i, can ? 1 : 0.4);
+        for (let k = 0; k < costs[i]; k++) fleshChunk(menu, ctx.tint, x + W - 8 - k * 8, 16, 2.6, e / 1000 + k, k < flesh ? 1 : 0.3);
+      }
+    });
+    const cook = (ms: number, i: number, text: string, float1: string): void => {
+      ctx.at(ms - 400, () => { hot = i; });
+      ctx.at(ms, () => {
+        hot = -1;
+        flesh -= costs[i];
+        ctx.capture(() => fx.cookServe(ctx.cx, ctx.cy, dishes[i]));
+        crow(av)?.play('clap', -Math.PI / 2);
+        readout.setText(text);
+        ctx.at(ms + 520, () => float(ctx, ctx.cx, ctx.cy - 50, float1, hex(HAR.fleshLit), 11));
+      });
+    };
+    cook(900, 0, 'Jerky — 1 meat, 100 healed over 15 seconds', '🥩 +100 HP / 15s');
+    cook(2800, 1, 'Meat Broth — 2 meat, 33% less damage for 20 seconds', '🍲 -33% DAMAGE');
+    ctx.at(4300, () => { flesh = 3; readout.setText('three more bites later…'); });
+    cook(5600, 2, 'Vile Feast — all 3: +150 max health for the round, and 150 healed', '🍖 +150 MAX HP');
+  },
+};
+
+export const reapUpgraded: PreviewScript = {
+  duration: 7000,
+  scale: 0.9,
+  caption: 'Q+ Endless Harvest — every Harvest kill hands Reaping Hour straight back. No limit',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new GluttonyAvatar(ctx.scene, ctx.tint));
+    av.setFacing(0);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#e2b0ff', 11);
+    const marks = [
+      { x: ctx.cx + 110, y: ctx.cy - 40, gone: false },
+      { x: ctx.cx + 120, y: ctx.cy + 36, gone: false },
+      { x: ctx.cx - 110, y: ctx.cy, gone: false },
+    ];
+    const bg = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    ctx.onFrame(() => {
+      bg.clear();
+      for (const m of marks) {
+        if (m.gone) continue;
+        bg.fillStyle(0x2b2f3d, 1); bg.fillCircle(m.x, m.y, 17);
+        bg.fillStyle(0x3c4254, 1); bg.fillCircle(m.x, m.y, 13);
+        bg.fillStyle(0x111111, 0.85); bg.fillRect(m.x - 26, m.y - 38, 52, 7);
+        bg.fillStyle(0xff3300, 1); bg.fillRect(m.x - 26, m.y - 38, 52 * 0.08, 7);
+      }
+    });
+    const swing = (ms: number, ang: number, kills: number[]): void => {
+      ctx.at(ms, () => {
+        crow(av)?.play('raise', ang, 320);
+        ctx.capture(() => fx.reapWindup(ctx.cx, ctx.cy, ang, 320));
+      });
+      ctx.at(ms + 320, () => {
+        crow(av)?.reap(ang, 1);
+        ctx.capture(() => fx.reapSwing(ctx.cx, ctx.cy, ang, REAP_REACH, REAP_HALF, 1));
+        for (const k of kills) {
+          const m = marks[k];
+          m.gone = true;
+          ctx.capture(() => fx.execute(m.x, m.y, ang));
+          float(ctx, m.x, m.y - 46, '☠ HARVESTED', hex(HAR.glow), 13);
+        }
+        ctx.capture(() => fx.ring(ctx.cx, ctx.cy, 10, 54, 460, HAR.glow, 4, 12));
+        float(ctx, ctx.cx, ctx.cy - 56, '🌾 ENDLESS HARVEST', hex(HAR.glow), 12);
+      });
+    };
+    swing(500, 0, [0, 1]);
+    ctx.at(900, () => readout.setText('two harvested — and the scythe is ready again'));
+    swing(2000, Math.PI, [2]);
+    ctx.at(2400, () => readout.setText('swing after swing, as long as something dies'));
+    ctx.at(4600, () => { for (const m of marks) m.gone = false; });
   },
 };
 

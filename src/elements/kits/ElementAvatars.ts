@@ -36,6 +36,7 @@ import { MagnetAvatar } from './MagnetVisuals';
 import { ClothAvatar } from './ClothVisuals';
 import { MarrowAvatar } from './MarrowVisuals';
 import { TempestAvatar } from './TempestVisuals';
+import { MythAvatar } from './MythVisuals';
 import { MetalAvatar } from './MetalVisuals';
 import { OilAvatar } from './OilVisuals';
 import { PaperAvatar } from './PaperVisuals';
@@ -118,6 +119,7 @@ const ELEMENT_AVATARS: Record<string, ElementAvatarFactory> = {
   cloth: (s, t) => new ClothAvatar(s, t),
   marrow: (s, t) => new MarrowAvatar(s, t),
   tempest: (s, t) => new TempestAvatar(s, t),
+  myth: (s, t) => new MythAvatar(s, t),
   magma: (s, t) => new MagmaAvatar(s, t),
   chalk: (s, t) => new ChalkAvatar(s, t),
   wax: (s, t) => new WaxAvatar(s, t),

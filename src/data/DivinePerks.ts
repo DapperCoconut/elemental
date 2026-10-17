@@ -49,7 +49,7 @@ export const DIVINE_PERKS: PerkDef[] = [
     name: 'Revitalize',
     emoji: '⚡',
     color: 0x88ff44,
-    description: 'Root Shield brings a plant to life instead of shielding it. Living plants grow root legs and walk: Sunflower, Rose, Nightcap and Pitcher stalk the nearest enemy, Cotton and Nurse Lily follow you. They also carry 25% more HP and heal 5 HP per second.',
+    description: 'Root Shield brings a plant to life instead of shielding it. Living plants grow root legs and walk: most stalk the nearest enemy (a walking Helicopter is a blender), while Lotus and Pitcher follow you. They also carry 25% more HP and heal 5 HP per second.',
     ingredients: ['life', 'electricity'],
     tier: 'divine',
     elementId: 'life',

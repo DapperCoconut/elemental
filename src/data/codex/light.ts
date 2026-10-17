@@ -127,22 +127,24 @@ const light: ElementCodex = {
       ],
       upgrade: {
         basics:
-          'Driving into your own ramp no longer rides it: your speed is set to 0, car mode ends, the ramp '
-          + 'is destroyed and a drill is launched instead. It flies 900 px/s until it touches something and '
-          + 'then 90 px/s while it bites, lives 4 seconds with a 26px contact radius, deals 2 to 5 damage '
-          + 'scaling with the speed ratio you paid in, and re-applies a 0.5s stun every 0.5s for as long as '
-          + 'it is grinding — the target is held until the drill dies.',
+          'Let go of R within 0.18s of your lance reaching your own ramp and it is not ridden: your speed '
+          + 'is set to 0, car mode ends, the ramp is destroyed and a drill is launched instead. Keep holding '
+          + 'R, or let go too early, and you ride the ramp as normal. The drill flies 900 px/s, crawls at '
+          + '25 px/s while it is inside somebody, grinding 2 to 6 damage (scaling with the speed ratio you '
+          + 'paid in) every 0.1s and re-applying a 0.5s stun every 0.5s, then takes off again out the far '
+          + 'side. 6s lifetime, 26px contact radius.',
         effects: [
+          { tag: 'utility', label: 'The release', detail: 'Let go of R within 0.18s either side of reaching your own ramp. Holding R straight through it rides the ramp as normal.', requiresUpgrade: 'r' },
           { tag: 'cost', label: 'Everything you had', detail: 'Your speed is set to 0, car mode ends, and the ramp is destroyed rather than being ridden.', requiresUpgrade: 'r' },
-          { tag: 'damage', label: 'Drill damage', detail: '2 to 5 damage on contact, scaling linearly with the speed ratio you paid in.', requiresUpgrade: 'r' },
-          { tag: 'control', label: 'Pinned', detail: 'A 0.5s stun re-applied every 0.5s for as long as it is grinding into them — held in place until the drill dies.', requiresUpgrade: 'r' },
-          { tag: 'utility', label: 'Flight', detail: '900 px/s until it touches something, then 90 px/s (10%) while it bites. 4s lifetime, 26px contact radius.', requiresUpgrade: 'r' },
+          { tag: 'damage', label: 'Grinding', detail: '2 to 6 damage every 0.1s for as long as it is inside somebody, scaling linearly with the speed ratio you paid in — roughly 2s to pass through one body.', requiresUpgrade: 'r' },
+          { tag: 'control', label: 'Pinned', detail: 'A 0.5s stun re-applied every 0.5s for as long as it is grinding into them.', requiresUpgrade: 'r' },
+          { tag: 'utility', label: 'Flight', detail: '900 px/s in the open, 25 px/s while inside a body. 6s lifetime, 26px contact radius.', requiresUpgrade: 'r' },
         ],
       },
       notes: [
         'Ramps are triggered by anybody, not just their owner — an opponent who runs over your ramp still eats the three lances, they just get no boost.',
         'Drill hits are the mastery\'s Driller requirement (50) and riding your own ramps is Stunt Course (150).',
-        'The damage on the drill is tiny; its value is the lock, not the number.',
+        'Each tick is tiny, but twenty of them land on the way through one body — 40 to 120 damage with the target held still the whole time.',
       ],
     },
 
@@ -157,18 +159,6 @@ const light: ElementCodex = {
         { tag: 'buff', label: 'Trick boost', detail: '1.2s of your speed floored at 207 px/s — but only if the burst actually hit something. A whiff grants nothing.' },
         { tag: 'utility', label: 'Availability', detail: '1s cooldown, the shortest in the kit after the lance itself.' },
       ],
-      upgrade: {
-        basics:
-          'F now pops a ramp into twelve javelins: evenly spaced around a full circle at 480 px/s, 5 '
-          + 'damage each — 60 damage of coverage off a 1-second cooldown. The boost becomes the longer of '
-          + 'the two windows, 1.5 seconds rather than 1.2, and the ramp is not consumed, so the same one '
-          + 'can be popped again on the next cooldown.',
-        effects: [
-          { tag: 'damage', label: 'Twelve javelins', detail: '12 projectiles evenly spaced around a full circle at 480 px/s, 5 damage each — 60 damage of coverage from a 1s-cooldown ability.', requiresUpgrade: 'f' },
-          { tag: 'buff', label: 'Both boosts', detail: 'The boost window becomes the longer of the two — 1.5s, the ramp figure — rather than the trick\'s 1.2s.', requiresUpgrade: 'f' },
-          { tag: 'utility', label: 'No ramp consumed', detail: 'The ramp is not destroyed by a javelin burst. The same ramp can be popped again on the next cooldown.', requiresUpgrade: 'f' },
-        ],
-      },
       notes: [
         'The ramp search includes the opponent\'s ramps, and the javelins belong to whoever owns the ramp — popping an enemy ramp with your trick fires twelve of their javelins at you.',
         'Trick hits are the mastery\'s Showboat requirement — 100 of them.',
@@ -189,18 +179,6 @@ const light: ElementCodex = {
         { tag: 'shield', label: 'Untouchable', detail: '+100% dodge chance for the whole duration, removed the moment the last bounce lands.' },
         { tag: 'utility', label: 'Availability', detail: '45s cooldown — one, maybe two, in a long fight.' },
       ],
-      upgrade: {
-        basics:
-          'Every 10th teleport leaves a beam behind — 12 across a full cast — each lasting 35 seconds, '
-          + 'with no cap on how many can exist. Standing within 40px of one of your own raises your '
-          + 'acceleration from 175 to 525 px/s². They do no damage and have no effect on enemies at all: '
-          + 'they are pure road surface.',
-        effects: [
-          { tag: 'summon', label: 'Beams laid', detail: 'Every 10th teleport leaves a beam — 12 of them over a full 125-bounce cast — each lasting 35s. There is no cap on how many can exist.', requiresUpgrade: 'q' },
-          { tag: 'buff', label: 'Triple acceleration', detail: 'Standing within 40px of one of your own beams raises the acceleration rate from 175 to 525 px/s².', requiresUpgrade: 'q' },
-          { tag: 'utility', label: 'Yours alone', detail: 'Beams do no damage and have no effect on enemies whatsoever. They are pure road surface.', requiresUpgrade: 'q' },
-        ],
-      },
       notes: [
         'The ability card says 25 bounces at 10 damage each; the kit runs 125 bounces at 15 damage. The figures above are the kit\'s.',
         'Killing somebody with a streak is the mastery\'s Hit and Run requirement — 5 of them.',

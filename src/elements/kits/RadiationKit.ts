@@ -5,8 +5,8 @@ import type { CustomStatus } from './StatusHudKit';
 import type { Projectile } from '../../combat/Projectile';
 import { Sfx } from '../../audio';
 import {
-  RAD, RadiationAvatar, RadiationColorFn, RadiationFx, barrageCone, dropFootprint, falloutBunker,
-  flareRound, geigerTracer, lockReticle, trefoil, uraniumRod,
+  RAD, RadiationAvatar, RadiationColorFn, RadiationFx, barrageCone, bunkerTurret, dropFootprint,
+  falloutBunker, falloutPuddle, doseCells, flareRound, geigerDial, geigerTracer, lockReticle, trefoil, uraniumRod,
 } from './RadiationVisuals';
 
 type Owner = 'player' | 'npc';
@@ -79,6 +79,43 @@ const AIRDROP_DAMAGE = 200;
 
 const BODY_R = 22;
 
+// ── Shop upgrades ────────────────────────────────────────────────────────────
+/** Click+ Flick Shot: aim this far off the nearest enemy counts as facing away from them. */
+const FLICK_AWAY_RAD = 100 * DEG;
+/** …and a tracer thrown within this long of facing away is a flick. */
+const FLICK_WINDOW_MS = 350;
+const FLICK_DAMAGE = 25;
+/** E+ Trigger Happy: the sustained fire's gap, and how the cone keeps closing while it runs. */
+const TRIGGER_GAP = 100;
+const TRIGGER_MIN_DEG = 1;
+const TRIGGER_NARROW_MS = 4000;
+/** R+ Turret Town: one turret on each side of the wall. */
+const TURRET_RANGE = 300;
+/** A turret answers anything that hit its bunker this recently, from twice as far. */
+const TURRET_AGGRO_MS = 3000;
+const TURRET_GAP = 420;
+const TURRET_DAMAGE = 4;
+/** F+ Mutation. */
+const MUTATION_MS = 15_000;
+const MUTATION_HITBOX = 1.25;
+/** Q+ Complete Annihilation. */
+const OVER_MS = 8000;
+const OVER_INCOMING = 1.3;
+const PUDDLE_MS = 9000;
+const PUDDLE_TICK_MS = 400;
+const PUDDLE_DAMAGE = 3;
+const PUDDLE_DOSE_MS = 2500;
+/**
+ * Where the puddles land, as fractions of the arena, with each one's radius. Fixed rather than
+ * random so both sims of an online match paint them in the same places — the drop always lands
+ * in the middle, so the splash pattern can be too.
+ */
+const PUDDLE_SPOTS: [number, number, number][] = [
+  [0.5, 0.5, 58], [0.3, 0.32, 46], [0.7, 0.3, 50], [0.24, 0.66, 52], [0.76, 0.68, 46],
+  [0.46, 0.8, 44], [0.58, 0.18, 40], [0.13, 0.4, 42], [0.87, 0.46, 44], [0.38, 0.52, 36],
+  [0.64, 0.56, 38],
+];
+
 /**
  * Closest point on the segment (ax,ay)→(bx,by) to (px,py).
  *
@@ -109,6 +146,8 @@ interface Round {
   ang: number;
   /** Distance still allowed before it counts as a miss. */
   left: number;
+  /** Click+ Flick Shot: thrown straight out of facing away, so it hurts when it lands. */
+  spiked: boolean;
 }
 
 /**
@@ -124,6 +163,29 @@ interface Barrage {
   lockedAt: number;
   shotsLeft: number;
   nextShotAt: number;
+  /** E+ Trigger Happy: when the sustained fire began (0 = not sustaining), and rounds fired. */
+  firingSince: number;
+  fired: number;
+}
+
+/** R+ Turret Town: one gun on the bunker wall. */
+interface Turret {
+  /** Which side of the wall, -1 or 1. */
+  side: number;
+  ang: number;
+  nextAt: number;
+  recoil: number;
+  live: boolean;
+}
+
+/** Q+ Complete Annihilation: a pool of fallout left behind by the drop. */
+interface Puddle {
+  owner: Owner;
+  x: number;
+  y: number;
+  r: number;
+  until: number;
+  seed: number;
 }
 
 interface Bunker {
@@ -135,6 +197,10 @@ interface Bunker {
   /** 0–1, decayed per frame — the wall flashing where it last stopped something. */
   hit: number;
   seed: number;
+  /** R+ Turret Town: the two guns on the wall, or null without the upgrade. */
+  turrets: Turret[] | null;
+  /** Game clock until which the turrets answer whoever hit the bunker, from further out. */
+  aggroUntil: number;
 }
 
 /** The flare gun, out and loaded. `hits` is the whole ability: five on one body or nothing. */
@@ -178,13 +244,17 @@ interface Side {
   prevAbsorber: ((amount: number) => boolean) | null;
   flares: Flares | null;
   swing: Swing | null;
+  /** Click+ Flick Shot: the last game-clock moment this side was facing away from its enemy. */
+  awayAt: number;
+  /** The bot's facing, read off its walk — offline it has no cursor to flick. */
+  face: number;
 }
 
 function makeSide(owner: Owner): Side {
   return {
     owner, aimX: 0, aimY: 0, stuck: new Map(),
     barrage: null, bunker: null, absorber: null, prevAbsorber: null,
-    flares: null, swing: null,
+    flares: null, swing: null, awayAt: -Infinity, face: 0,
   };
 }
 
@@ -218,6 +288,8 @@ export interface RadiationArenaApi {
   showFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
   setStatusIndicator(id: string, status: CustomStatus | null): void;
+  /** Shop upgrades: the player's own, or the opponent's (a bot's loadout, a remote handshake). */
+  hasUpgrade(owner: Owner, slot: string): boolean;
 }
 
 // ── RadiationKit ─────────────────────────────────────────────────────────────
@@ -266,6 +338,12 @@ export class RadiationKit {
   private irradiated = new Map<Fighter, { until: number; full: number; by: Owner }>();
   /** Victim → game-clock expiry of a rod stun. */
   private stunned = new Map<Fighter, number>();
+  /** Q+ fallout puddles on the floor. */
+  private puddles: Puddle[] = [];
+  /** Victim → game clock of their next puddle tick, so overlapping pools never double up. */
+  private puddleTickAt = new Map<Fighter, number>();
+  /** Fighters whose `hitboxMult` currently carries the Mutation factor. */
+  private grown = new Set<Fighter>();
 
   constructor(api: RadiationArenaApi) {
     this.api = api;
@@ -319,6 +397,11 @@ export class RadiationKit {
     return out;
   }
 
+  /** Shop upgrade check — only ever true for a side that is actually playing Radiation. */
+  private up(owner: Owner, slot: string): boolean {
+    return this.isRadiation(owner) && this.api.hasUpgrade(owner, slot);
+  }
+
   private refund(f: Fighter, abilityId: string): void {
     f.resetCooldown(abilityId);
   }
@@ -362,7 +445,18 @@ export class RadiationKit {
       if (!f) continue;
       f.healInvertedUntil = 0;
       f.onHealInverted = null;
+      f.radMutatedUntil = 0;
+      f.overRadiatedUntil = 0;
+      f.radiationIncomingMult = 1;
     }
+    for (const f of this.grown) {
+      if (!f) continue;
+      f.hitboxMult /= MUTATION_HITBOX;
+      if (f.active) f.applySizeMult();
+    }
+    this.grown.clear();
+    this.puddles = [];
+    this.puddleTickAt.clear();
 
     this.sides = { player: makeSide('player'), npc: makeSide('npc') };
     this.rounds = [];
@@ -424,6 +518,13 @@ export class RadiationKit {
     }
   }
 
+  /** Take a dose off somebody outright (F+ Mutation turns it into something worse). */
+  private cleanse(victim: Fighter): void {
+    this.irradiated.delete(victim);
+    victim.healInvertedUntil = 0;
+    victim.onHealInverted = null;
+  }
+
   private isIrradiated(victim: Fighter): boolean {
     return this.irradiated.has(victim) || Date.now() < victim.healInvertedUntil;
   }
@@ -439,7 +540,9 @@ export class RadiationKit {
       this.irradiate(p, 'npc', mirrored, this.irradiated.has(p));
     }
     for (const [v, d] of [...this.irradiated]) {
-      if (this.alive(v) && this.now < d.until) continue;
+      // Online, an adopted dose ends when the mirror drops it — F+ Mutation takes it off early.
+      const dropped = this.api.isOnline && v === p && d.by === 'npc' && Date.now() >= v.healInvertedUntil;
+      if (this.alive(v) && this.now < d.until && !dropped) continue;
       this.irradiated.delete(v);
       if (v) { v.healInvertedUntil = 0; v.onHealInverted = null; }
     }
@@ -485,7 +588,12 @@ export class RadiationKit {
     const flaring = !!s.flares && s.flares.ammo > 0;
     const m = this.muzzle(owner);
     const ang = Math.atan2(ty - m.y, tx - m.x);
+    // Click+ Flick Shot: a tracer thrown straight out of facing away from them comes out barbed.
+    const spiked = !flaring && this.up(owner, 'click') && this.now - s.awayAt <= FLICK_WINDOW_MS
+      && !this.facingAway(owner, ang);
+    if (spiked) Sfx.playAt('whoosh', f.x, { rate: 1.6, volume: 0.6 });
     this.rounds.push({
+      spiked,
       owner,
       kind: flaring ? 'flare' : 'tracer',
       x: m.x, y: m.y,
@@ -526,6 +634,8 @@ export class RadiationKit {
       lockedAt: 0,
       shotsLeft: 0,
       nextShotAt: 0,
+      firingSince: 0,
+      fired: 0,
     };
     this.avatar(owner)?.setHold('reach', s.barrage.ang);
     Sfx.playAt('sonic-pulse', f.x, { rate: 1.3, volume: 0.6 });
@@ -543,6 +653,10 @@ export class RadiationKit {
       x: f.x, y: f.y, hp: BUNKER_HP,
       builtAt: this.now, until: this.now + BUNKER_MS,
       hit: 0, seed: Math.random() * 999,
+      turrets: this.up(owner, 'r')
+        ? [-1, 1].map((side) => ({ side, ang: side < 0 ? Math.PI : 0, nextAt: 0, recoil: 0, live: false }))
+        : null,
+      aggroUntil: 0,
     };
     this.installAbsorber(owner);
     this.avatar(owner)?.play('slam');
@@ -583,6 +697,8 @@ export class RadiationKit {
       this.fx(owner).rodStrike(t.x, t.y, ang, hot);
       if (hot) this.stun(t, owner, ROD_STUN_MS);
       else this.irradiate(t, owner, ROD_DOSE_MS);
+      // F+ Mutation: the dose they were already carrying curdles into a mutation.
+      if (hot && this.up(owner, 'f')) this.mutate(t, owner);
     }
 
     s.swing = { x: f.x, y: f.y, ang, start: this.now, hot: anyHot };
@@ -640,8 +756,10 @@ export class RadiationKit {
 
       if (landed) {
         this.rounds.splice(i, 1);
-        if (r.kind === 'tracer') this.onTracerHit(r.owner, landed);
-        else this.onFlareHit(r.owner, landed);
+        if (r.kind === 'tracer') {
+          if (r.spiked) this.onFlickHit(r.owner, landed, r.ang);
+          this.onTracerHit(r.owner, landed);
+        } else this.onFlareHit(r.owner, landed);
         continue;
       }
       if (out || r.left <= 0) {
@@ -650,6 +768,16 @@ export class RadiationKit {
         else this.onFlareMiss(r.owner);
       }
     }
+  }
+
+  /** Click+ Flick Shot: the barbs land for 25 before the tracer counts like any other. */
+  private onFlickHit(owner: Owner, victim: Fighter, ang: number): void {
+    if (!this.alive(victim)) return;
+    victim.takeDamage(FLICK_DAMAGE);
+    this.api.spawnHitFlash(victim.x, victim.y, this.col(owner)(RAD.hot));
+    this.fx(owner).flickHit(victim.x, victim.y, ang);
+    this.api.showFloatingText(victim.x, victim.y - 66, '✦ FLICK SHOT', this.hex(RAD.hotLit));
+    Sfx.playAt('hit-heavy', victim.x, { rate: 1.2, volume: 0.7 });
   }
 
   private onTracerHit(owner: Owner, victim: Fighter): void {
@@ -762,11 +890,16 @@ export class RadiationKit {
     Sfx.playAt('explosion-large', a.x, { rate: 0.55, volume: 1 });
     Sfx.playAt('quake', a.x, { rate: 0.6, volume: 1 });
 
+    const annihilation = this.up(a.owner, 'q');
     for (const t of this.targetsOf(a.owner)) {
+      // Q+: read before the drop doses them, or every target would count as already irradiated.
+      const wasHot = this.isIrradiated(t);
       t.takeDamage(AIRDROP_DAMAGE);
       this.api.spawnHitFlash(t.x, t.y, this.col(a.owner)(RAD.core));
       this.irradiate(t, a.owner, IRRADIATED_MS, true);
+      if (annihilation && wasHot) this.overRadiate(t, a.owner);
     }
+    if (annihilation) this.spillPuddles(a.owner);
     // "Everyone on screen" includes the caster. The self-hit goes through the self-damage route
     // so a shield can't be spent dodging your own bomb — but a caster inside their own bunker is
     // exactly what the bunker is for: it takes the drop, and comes down doing it.
@@ -799,6 +932,11 @@ export class RadiationKit {
 
   /** The cone's current half-width, in radians. */
   private coneHalf(b: Barrage): number {
+    // E+ Trigger Happy: once the fire is sustained the cone carries on closing, 5° down to 1°.
+    if (b.firingSince > 0) {
+      const k = Phaser.Math.Clamp((this.now - b.firingSince) / TRIGGER_NARROW_MS, 0, 1);
+      return (Phaser.Math.Linear(BARRAGE_CLOSED_DEG, TRIGGER_MIN_DEG, k) / 2) * DEG;
+    }
     const k = b.victim ? Phaser.Math.Clamp((this.now - b.lockedAt) / BARRAGE_LOCK_MS, 0, 1) : 0;
     return (Phaser.Math.Linear(BARRAGE_OPEN_DEG, BARRAGE_CLOSED_DEG, k) / 2) * DEG;
   }
@@ -852,14 +990,26 @@ export class RadiationKit {
       if (!this.alive(f) || this.stunned.has(f)) { this.endBarrage(owner, 'quiet'); continue; }
 
       // ── The burst ──
-      if (b.shotsLeft > 0) {
-        if (this.now < b.nextShotAt) continue;
+      if (b.shotsLeft > 0 || b.firingSince > 0) {
         const v = b.victim;
-        if (!v || !this.alive(v)) { this.endBarrage(owner, 'quiet'); continue; }
-        this.fireBarrageRound(owner, v, BARRAGE_SHOTS - b.shotsLeft);
-        b.shotsLeft--;
-        b.nextShotAt = this.now + BARRAGE_SHOT_GAP;
-        if (b.shotsLeft <= 0) this.endBarrage(owner, 'quiet');
+        // E+ Trigger Happy keeps the cone up through the burst: it is what ends the fire.
+        if (b.firingSince > 0) {
+          this.aimCone(owner, b, delta / 1000);
+          av?.setHold('reach', b.ang);
+        }
+        if (this.now < b.nextShotAt) continue;
+        if (!v || !this.alive(v)) { this.endBarrage(owner, b.firingSince > 0 ? 'ceased' : 'quiet'); continue; }
+        if (b.shotsLeft > 0) {
+          this.fireBarrageRound(owner, v, b.fired++);
+          b.shotsLeft--;
+          b.nextShotAt = this.now + (b.firingSince > 0 ? TRIGGER_GAP : BARRAGE_SHOT_GAP);
+          if (b.shotsLeft <= 0 && b.firingSince <= 0) this.endBarrage(owner, 'quiet');
+          continue;
+        }
+        // Past the guaranteed five: every further round needs them still inside the cone.
+        if (!this.inCone(owner, b, v)) { this.endBarrage(owner, 'ceased'); continue; }
+        this.fireBarrageRound(owner, v, b.fired++);
+        b.nextShotAt = this.now + TRIGGER_GAP;
         continue;
       }
 
@@ -895,6 +1045,11 @@ export class RadiationKit {
       // Closed. The cone is spent and the burst begins on the next frame.
       b.shotsLeft = BARRAGE_SHOTS;
       b.nextShotAt = this.now;
+      if (this.up(owner, 'e')) {
+        b.firingSince = this.now;
+        this.api.showFloatingText(b.victim.x, b.victim.y - 54, '☢ TRIGGER HAPPY', this.hex(RAD.hazard));
+        continue;
+      }
       av?.setHold(null);
       this.api.showFloatingText(b.victim.x, b.victim.y - 54, '☢ BARRAGE', this.hex(RAD.hazard));
     }
@@ -912,10 +1067,10 @@ export class RadiationKit {
     const hot = this.isIrradiated(victim);
     victim.takeDamage(hot ? BARRAGE_HOT_DAMAGE : BARRAGE_DAMAGE);
     this.api.spawnHitFlash(victim.x, victim.y, this.col(owner)(hot ? RAD.hazard : RAD.neon));
-    Sfx.playAt('musket', victim.x, { rate: 1.5 + i * 0.06, volume: 0.55 });
+    Sfx.playAt('musket', victim.x, { rate: 1.5 + Math.min(i, 8) * 0.06, volume: 0.55 });
   }
 
-  private endBarrage(owner: Owner, why: 'quiet' | 'lost' | 'nothing'): void {
+  private endBarrage(owner: Owner, why: 'quiet' | 'lost' | 'nothing' | 'ceased'): void {
     const s = this.side(owner);
     const b = s.barrage;
     if (!b) return;
@@ -923,6 +1078,12 @@ export class RadiationKit {
     this.avatar(owner)?.setHold(null);
     if (why === 'quiet') return;
     const f = this.fighter(owner);
+    if (why === 'ceased') {
+      this.fx(owner).lockLost(f.x, f.y, b.ang, this.coneHalf(b), BARRAGE_RANGE);
+      this.api.showFloatingText(f.x, f.y - 50, `✖ CEASE FIRE · ${b.fired} ROUNDS`, this.hex(RAD.hazard));
+      Sfx.playAt('reload', f.x, { rate: 1.3, volume: 0.6 });
+      return;
+    }
     this.fx(owner).lockLost(f.x, f.y, b.ang, this.coneHalf(b), BARRAGE_RANGE);
     this.api.showFloatingText(f.x, f.y - 50, why === 'lost' ? '✖ LOCK LOST' : '✖ NO TARGET',
       this.hex(RAD.hazard));
@@ -967,6 +1128,7 @@ export class RadiationKit {
     const dmg = Math.max(0, Math.round(amount));
     bk.hp -= dmg;
     bk.hit = 1;
+    bk.aggroUntil = this.now + TURRET_AGGRO_MS;
     if (dmg > 0) this.api.showFloatingText(x, y, `🛡 ${dmg}`, this.hex(RAD.leadLit));
     Sfx.playAt('hit-light', x, { rate: 0.7, volume: 0.6 });
     if (bk.hp <= 0) this.breakBunker(owner);
@@ -1087,6 +1249,157 @@ export class RadiationKit {
     }
   }
 
+  // ── Shop upgrades ──────────────────────────────────────────────────────────
+
+  /** Which way that side is facing — the cursor, the relayed facing online, or the bot's walk. */
+  private faceAngle(owner: Owner): number {
+    const f = this.fighter(owner);
+    const s = this.side(owner);
+    if (owner === 'player') return Math.atan2(s.aimY - f.y, s.aimX - f.x);
+    if (this.api.isOnline) return f.facingAngle;
+    return s.face;
+  }
+
+  /** Whether an angle points away from that side's nearest enemy. */
+  private facingAway(owner: Owner, ang: number): boolean {
+    const f = this.fighter(owner);
+    const t = this.nearestTarget(owner);
+    if (!t) return false;
+    const to = Math.atan2(t.y - f.y, t.x - f.x);
+    return Math.abs(Phaser.Math.Angle.Wrap(to - ang)) > FLICK_AWAY_RAD;
+  }
+
+  /**
+   * Click+ Flick Shot bookkeeping: stamp the last moment each side was facing away. The bot has
+   * no cursor, so offline it faces where it is walking — a retreat turns its back, and a tracer
+   * thrown on the way out is its flick.
+   */
+  private updateFlick(delta: number): void {
+    void delta;
+    for (const owner of BOTH) {
+      if (!this.up(owner, 'click')) continue;
+      const f = this.fighter(owner);
+      if (!this.alive(f)) continue;
+      const s = this.side(owner);
+      if (owner === 'npc' && !this.api.isOnline) {
+        const v = this.body(f)?.velocity;
+        if (v && Math.hypot(v.x, v.y) > 40) s.face = Math.atan2(v.y, v.x);
+      }
+      if (this.facingAway(owner, this.faceAngle(owner))) s.awayAt = this.now;
+    }
+  }
+
+  /**
+   * R+ Turret Town: a gun each side of the wall. They only ever shoot somebody who is already
+   * irradiated — within their own range, or anybody who has hit the bunker in the last three
+   * seconds from twice as far.
+   */
+  private turretPos(bk: Bunker, tr: Turret): { x: number; y: number } {
+    return { x: bk.x + tr.side * (BUNKER_R + 2), y: bk.y };
+  }
+
+  private updateTurrets(delta: number): void {
+    for (const owner of BOTH) {
+      const bk = this.side(owner).bunker;
+      if (!bk?.turrets) continue;
+      const aggro = this.now < bk.aggroUntil;
+      for (const tr of bk.turrets) {
+        tr.recoil = Math.max(0, tr.recoil - delta / 140);
+        const at = this.turretPos(bk, tr);
+        let best: Fighter | null = null;
+        let bestD = Infinity;
+        for (const t of this.targetsOf(owner)) {
+          if (!this.isIrradiated(t)) continue;
+          const d = Phaser.Math.Distance.Between(at.x, at.y, t.x, t.y);
+          if (d > TURRET_RANGE * (aggro ? 2 : 1) || d >= bestD) continue;
+          best = t;
+          bestD = d;
+        }
+        tr.live = !!best;
+        if (!best) continue;
+        const want = Math.atan2(best.y - at.y, best.x - at.x);
+        tr.ang = Phaser.Math.Angle.RotateTo(tr.ang, want, 9 * (delta / 1000));
+        if (this.now < tr.nextAt) continue;
+        tr.nextAt = this.now + TURRET_GAP;
+        tr.recoil = 1;
+        const mx = at.x + Math.cos(tr.ang) * 20;
+        const my = at.y + Math.sin(tr.ang) * 20;
+        this.fx(owner).pistolShot(mx, my, best.x + (Math.random() - 0.5) * 8, best.y + (Math.random() - 0.5) * 8);
+        best.takeDamage(TURRET_DAMAGE);
+        this.api.spawnHitFlash(best.x, best.y, this.col(owner)(RAD.neon));
+        Sfx.playAt('musket', at.x, { rate: 2.1, volume: 0.35 });
+      }
+    }
+  }
+
+  /** F+ Mutation: the dose comes off, and the body comes out 25% bigger for 15 seconds. */
+  private mutate(victim: Fighter, by: Owner): void {
+    if (!this.alive(victim)) return;
+    this.cleanse(victim);
+    victim.radMutatedUntil = Math.max(victim.radMutatedUntil, Date.now() + MUTATION_MS);
+    this.fx(by).mutate(victim.x, victim.y);
+    this.api.showFloatingText(victim.x, victim.y - 66, '🧬 MUTATED', this.hex(RAD.neonLit));
+    Sfx.playAt('status-poison', victim.x, { rate: 0.7, volume: 0.85 });
+  }
+
+  /** Q+: caught by the drop while already carrying a dose. */
+  private overRadiate(victim: Fighter, by: Owner): void {
+    if (!this.alive(victim)) return;
+    victim.overRadiatedUntil = Math.max(victim.overRadiatedUntil, Date.now() + OVER_MS);
+    this.fx(by).overRadiate(victim.x, victim.y);
+    this.api.showFloatingText(victim.x, victim.y - 78, '☢☢ OVER-RADIATED', this.hex(RAD.hot));
+  }
+
+  /** Q+: the drop splashes fallout across the floor in a fixed pattern round the middle. */
+  private spillPuddles(owner: Owner): void {
+    const w = this.api.width;
+    const h = this.api.height;
+    PUDDLE_SPOTS.forEach(([fx, fy, r], i) => {
+      const x = Phaser.Math.Clamp(w * fx, this.left + r * 0.5, this.right - r * 0.5);
+      const y = Phaser.Math.Clamp(h * fy, this.top + r * 0.5, this.bottom - r * 0.5);
+      this.puddles.push({ owner, x, y, r, until: this.now + PUDDLE_MS, seed: i * 7.31 + 1.7 });
+      this.fx(owner).puddleSplash(x, y, r);
+    });
+  }
+
+  private updatePuddles(): void {
+    this.puddles = this.puddles.filter((pd) => this.now < pd.until);
+    if (!this.puddles.length) { this.puddleTickAt.clear(); return; }
+    for (const pd of this.puddles) {
+      for (const t of this.targetsOf(pd.owner)) {
+        const d = Phaser.Math.Distance.Between(pd.x, pd.y, t.x, t.y);
+        if (d > pd.r + this.swell(t)) continue;
+        if (this.now < (this.puddleTickAt.get(t) ?? 0)) continue;
+        this.puddleTickAt.set(t, this.now + PUDDLE_TICK_MS);
+        t.takeDamage(PUDDLE_DAMAGE);
+        this.irradiate(t, pd.owner, PUDDLE_DOSE_MS, this.isIrradiated(t));
+      }
+    }
+  }
+
+  /**
+   * Turn the two upgrade timers on every fighter into what they do. Read off the generic fields
+   * rather than kept in the kit, so a timer mirrored over the network works on the victim's sim
+   * exactly like one this kit wrote.
+   */
+  private updateAfflictions(): void {
+    const wall = Date.now();
+    for (const f of this.allFighters()) {
+      if (!f) continue;
+      const want = f.active && wall < f.radMutatedUntil;
+      if (want && !this.grown.has(f)) {
+        f.hitboxMult *= MUTATION_HITBOX;
+        f.applySizeMult();
+        this.grown.add(f);
+      } else if (!want && this.grown.has(f)) {
+        f.hitboxMult /= MUTATION_HITBOX;
+        if (f.active) f.applySizeMult();
+        this.grown.delete(f);
+      }
+      f.radiationIncomingMult = wall < f.overRadiatedUntil ? OVER_INCOMING : 1;
+    }
+  }
+
   // ── Per-frame ──────────────────────────────────────────────────────────────
 
   update(time: number, delta: number): void {
@@ -1094,20 +1407,24 @@ export class RadiationKit {
     const playerIs = this.isRadiation('player');
     const npcIs = this.isRadiation('npc');
     const anyState = this.rounds.length || this.irradiated.size || this.stunned.size || this.airdrop
-      || this.sides.player.bunker || this.sides.npc.bunker;
+      || this.sides.player.bunker || this.sides.npc.bunker || this.puddles.length || this.grown.size;
     if (!playerIs && !npcIs && !anyState) return;
 
     this.ensureLayers();
     this.ensureAvatars();
     this.vizT += delta / 1000;
 
+    this.updateFlick(delta);
     this.updateRounds(delta);
     this.updateBarrage(delta);
     this.updateIrradiated();
     this.updateStuns();
     this.updateBunkers(delta);
+    this.updateTurrets(delta);
     this.updateFlareWindow();
     this.updateAirdrop();
+    this.updatePuddles();
+    this.updateAfflictions();
 
     this.paintGround();
     this.paintAir();
@@ -1122,6 +1439,11 @@ export class RadiationKit {
     if (!g) return;
     g.clear();
 
+    for (const pd of this.puddles) {
+      const fade = Phaser.Math.Clamp((pd.until - this.now) / 800, 0, 1);
+      falloutPuddle(g, this.col(pd.owner), pd.x, pd.y, pd.r, 0.9 * fade, this.vizT, pd.seed);
+    }
+
     for (const owner of BOTH) {
       const bk = this.side(owner).bunker;
       if (!bk) continue;
@@ -1133,6 +1455,12 @@ export class RadiationKit {
         hit: bk.hit,
         seed: bk.seed,
       });
+      const built = Phaser.Math.Clamp((this.now - bk.builtAt) / BUNKER_BUILD_MS, 0, 1);
+      for (const tr of bk.turrets ?? []) {
+        const at = this.turretPos(bk, tr);
+        bunkerTurret(g, this.col(owner), at.x, at.y, tr.ang, 0.95 * fade * built, this.vizT,
+          { recoil: tr.recoil, live: tr.live });
+      }
     }
 
     const a = this.airdrop;
@@ -1151,7 +1479,7 @@ export class RadiationKit {
     // ── Barrage cones and their lock ──
     for (const owner of BOTH) {
       const b = this.side(owner).barrage;
-      if (!b || b.shotsLeft > 0) continue;
+      if (!b || (b.shotsLeft > 0 && b.firingSince <= 0)) continue;
       const f = this.fighter(owner);
       if (!this.alive(f)) continue;
       const tint = this.col(owner);
@@ -1165,7 +1493,7 @@ export class RadiationKit {
     for (const r of this.rounds) {
       const tint = this.col(r.owner);
       if (r.kind === 'flare') flareRound(g, tint, r.x, r.y, r.ang, 1, this.vizT);
-      else geigerTracer(g, tint, r.x, r.y, r.ang + this.vizT * 9, 1, { lamp: 0.5 });
+      else geigerTracer(g, tint, r.x, r.y, r.ang + this.vizT * 9, 1, { lamp: 0.5, spiked: r.spiked });
     }
 
     // ── Tracers clamped to a body, and the confirm pips over its head ──
@@ -1226,35 +1554,16 @@ export class RadiationKit {
       if (!this.alive(v)) continue;
       const left = Phaser.Math.Clamp((d.until - this.now) / Math.max(1, d.full), 0, 1);
       const tint = this.col(d.by);
-      trefoil(g, tint, v.x, v.y - 34, 6.5, 0.55 + 0.35 * Math.sin(this.vizT * 5),
-        { phase: this.vizT * 1.6, color: RAD.neonLit });
-      g.fillStyle(tint(RAD.neonDeep), 0.5);
-      g.fillRect(v.x - 15, v.y - 26, 30, 2.4);
-      g.fillStyle(tint(RAD.neon), 0.95);
-      g.fillRect(v.x - 15, v.y - 26, 30 * left, 2.4);
+      geigerDial(g, tint, v.x, v.y - 27, 11, left, this.vizT + v.x * 0.01, 0.95);
     }
   }
 
-  /** A row of filled/empty lozenges — the one counter shape the element uses everywhere. */
+  /** A row of dose cells — the one counter shape the element uses everywhere. */
   private pips(
     g: Phaser.GameObjects.Graphics, tint: RadiationColorFn,
     x: number, y: number, filled: number, total: number, glow: number,
   ): void {
-    const w = 8;
-    const gap = 3;
-    const span = total * w + (total - 1) * gap;
-    for (let i = 0; i < total; i++) {
-      const px = x - span / 2 + w / 2 + i * (w + gap);
-      const on = i < filled;
-      g.fillStyle(tint(RAD.ink), 0.75);
-      g.fillRect(px - w / 2 - 1, y - 4, w + 2, 8);
-      g.fillStyle(tint(on ? RAD.neon : RAD.leadDeep), on ? 0.55 + glow * 0.45 : 0.85);
-      g.fillRect(px - w / 2, y - 3, w, 6);
-      if (on) {
-        g.fillStyle(tint(RAD.core), 0.5 + glow * 0.5);
-        g.fillRect(px - w / 2 + 1.6, y - 1.4, w - 3.2, 2.8);
-      }
-    }
+    doseCells(g, tint, x, y, filled, total, glow, this.vizT);
   }
 
   // ── Avatars & HUD ──────────────────────────────────────────────────────────
@@ -1267,7 +1576,7 @@ export class RadiationKit {
       if (!this.alive(f)) { av.update(delta, f?.x ?? 0, f?.y ?? 0, 0); continue; }
       const s = this.side(owner);
       const b = s.barrage;
-      av.setFacing(b && !b.shotsLeft ? b.ang : Math.atan2(s.aimY - f.y, s.aimX - f.x));
+      av.setFacing(b && (!b.shotsLeft || b.firingSince > 0) ? b.ang : Math.atan2(s.aimY - f.y, s.aimX - f.x));
       // The suit runs warm at rest and hot while a lock is closing.
       av.setDose(b ? 0.5 + this.lockProgress(b) * 0.5 : 0.5);
       av.update(delta, f.x, f.y, f.alpha);
@@ -1286,7 +1595,11 @@ export class RadiationKit {
     } : null);
 
     const b = s.barrage;
-    this.api.setStatusIndicator('radiation-barrage', playerIs && b && !b.shotsLeft ? {
+    this.api.setStatusIndicator('radiation-barrage', playerIs && b && b.firingSince > 0 ? {
+      name: 'Trigger Happy', emoji: '🎯', color: RAD.hazard, priority: 141,
+      description: `Firing until they leave the cone — and it keeps closing, down to ${TRIGGER_MIN_DEG}°.`,
+      count: b.fired, suffix: ' rds',
+    } : playerIs && b && !b.shotsLeft ? {
       name: 'Barrage', emoji: '🎯', color: RAD.hazard, priority: 141,
       description: b.victim
         ? `Locking. Keep them inside the cone while it closes from ${BARRAGE_OPEN_DEG}° to ${BARRAGE_CLOSED_DEG}° — if they get out, the lock is lost.`
@@ -1316,11 +1629,17 @@ export class RadiationKit {
 
   /** A full stop for a body the rod has stunned. */
   getPlayerSpeedMult(): number {
-    return this.stunned.has(this.api.player) ? 0 : 1;
+    const p = this.api.player;
+    if (this.stunned.has(p)) return 0;
+    // Online, an opponent's over-radiation already reaches us through the relayed speed (`spd`),
+    // so applying the mirrored timer here too would slow us twice.
+    return this.api.isOnline ? 1 : p.overRadiatedSpeedMult();
   }
 
   getNpcSpeedMult(): number {
-    return this.stunned.has(this.api.npc) ? 0 : 1;
+    const n = this.api.npc;
+    if (this.stunned.has(n)) return 0;
+    return n.overRadiatedSpeedMult();
   }
 
   /** Tracers already on the bot's target — the AI's cue for how badly a miss would hurt. */
@@ -1365,5 +1684,33 @@ export class RadiationKit {
   /** True while that side is inside its own standing bunker. */
   isSheltered(owner: Owner): boolean {
     return this.sheltered(owner);
+  }
+
+  /** Click+ Flick Shot: that side turned its back within the window, so a tracer now is barbed. */
+  flickReady(owner: Owner): boolean {
+    return this.up(owner, 'click') && !this.side(owner).flares && this.now - this.side(owner).awayAt <= FLICK_WINDOW_MS;
+  }
+
+  /**
+   * Whether that side has something standing that only pays out on a dosed target and its target
+   * is clean: R+ turrets with the target in their reach, or a Q+ drop falling (an irradiated
+   * target becomes over-radiated).
+   */
+  wantsDose(owner: Owner): boolean {
+    const t = this.nearestTarget(owner);
+    if (!t || this.isIrradiated(t)) return false;
+    if (this.up(owner, 'q') && this.airdrop?.owner === owner) return true;
+    const bk = this.side(owner).bunker;
+    return !!bk?.turrets && Phaser.Math.Distance.Between(bk.x, bk.y, t.x, t.y) < TURRET_RANGE + 80;
+  }
+
+  /**
+   * F+ Mutation strips the dose it cashes in. That is the wrong trade while a Q+ drop is falling
+   * (the dose is what over-radiates them) or R+ turrets are standing (the dose is what they shoot).
+   */
+  keepDose(owner: Owner): boolean {
+    if (!this.up(owner, 'f')) return false;
+    if (this.up(owner, 'q') && this.airdrop?.owner === owner) return true;
+    return !!this.side(owner).bunker?.turrets;
   }
 }

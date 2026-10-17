@@ -229,6 +229,98 @@ export function windowPane(
   }
 }
 
+/**
+ * A CRT terminal window for screen-space HUD chrome (top-left at `x, y`): a bevelled plastic
+ * bezel with a drop shadow, a two-tone title bar with square min/max/close buttons, and an
+ * inset phosphor screen with crawling scanlines, a slow rolling refresh band and a dark
+ * vignette rim. Meant to be repainted every frame so the scanlines and band move.
+ */
+export function crtWindow(
+  g: Phaser.GameObjects.Graphics, tint: TechColorFn,
+  x: number, y: number, w: number, h: number, t: number,
+  o: { bezel?: number; bar?: number; screen?: number; glow?: number; alpha?: number; barH?: number } = {},
+): { sx: number; sy: number; sw: number; sh: number } {
+  const bezel = o.bezel ?? TECH.steel;
+  const bar = o.bar ?? TECH.slate;
+  const screen = o.screen ?? TECH.screen;
+  const glow = o.glow ?? TECH.phosphor;
+  const a = (o.alpha ?? 1) * (0.97 + 0.03 * Math.sin(t * 47));
+  const barH = o.barH ?? 20;
+
+  g.fillStyle(tint(TECH.night), a * 0.5);
+  g.fillRoundedRect(x + 4, y + 5, w, h, 6);
+  g.fillStyle(tint(bezel), a);
+  g.fillRoundedRect(x, y, w, h, 6);
+  // bevel: lit top-left edge, shaded bottom-right edge
+  g.lineStyle(1.5, tint(TECH.wire), a * 0.7);
+  g.beginPath(); g.moveTo(x + 3, y + h - 3); g.lineTo(x + 3, y + 3); g.lineTo(x + w - 3, y + 3); g.strokePath();
+  g.lineStyle(1.5, tint(TECH.night), a * 0.8);
+  g.beginPath(); g.moveTo(x + w - 2, y + 3); g.lineTo(x + w - 2, y + h - 2); g.lineTo(x + 3, y + h - 2); g.strokePath();
+
+  // title bar
+  g.fillStyle(tint(bar), a);
+  g.fillRect(x + 4, y + 4, w - 8, barH - 2);
+  g.fillStyle(tint(TECH.white), a * 0.12);
+  g.fillRect(x + 4, y + 4, w - 8, (barH - 2) / 2);
+  // square buttons, close is the red one
+  for (let i = 0; i < 3; i++) {
+    const bx = x + w - 8 - 13 - i * 15, by = y + 6;
+    const bs = barH - 6;
+    g.fillStyle(tint(i === 0 ? TECH.alert : TECH.wire), a);
+    g.fillRect(bx, by, bs, bs);
+    g.fillStyle(tint(TECH.white), a * 0.35);
+    g.fillRect(bx, by, bs, 1.5);
+    g.lineStyle(1.4, tint(TECH.night), a * 0.85);
+    if (i === 0) {
+      g.lineBetween(bx + 3, by + 3, bx + bs - 3, by + bs - 3);
+      g.lineBetween(bx + bs - 3, by + 3, bx + 3, by + bs - 3);
+    } else if (i === 1) {
+      g.strokeRect(bx + 3, by + 3, bs - 6, bs - 6);
+    } else {
+      g.lineBetween(bx + 3, by + bs - 4, bx + bs - 3, by + bs - 4);
+    }
+  }
+
+  // the screen
+  const sx = x + 6, sy = y + barH + 4, sw = w - 12, sh = h - barH - 10;
+  g.fillStyle(tint(screen), a);
+  g.fillRect(sx, sy, sw, sh);
+  g.fillStyle(tint(glow), a * 0.05);
+  g.fillRect(sx + sw * 0.1, sy + sh * 0.1, sw * 0.8, sh * 0.8);
+  g.fillStyle(tint(TECH.night), a * 0.22);
+  for (let ly = sy + ((t * 18) % 3); ly < sy + sh; ly += 3) g.fillRect(sx, ly, sw, 1);
+  const band = sy + ((t * 0.35) % 1) * sh;
+  g.fillStyle(tint(glow), a * 0.07);
+  g.fillRect(sx, Math.max(sy, band - 6), sw, Math.min(12, sy + sh - band + 6));
+  g.lineStyle(3, tint(TECH.night), a * 0.45);
+  g.strokeRect(sx + 1.5, sy + 1.5, sw - 3, sh - 3);
+  g.lineStyle(1, tint(glow), a * 0.4);
+  g.strokeRect(sx, sy, sw, sh);
+  return { sx, sy, sw, sh };
+}
+
+/** A bevelled terminal key-cap button (centred), lit with a phosphor rim when hovered. */
+export function crtButton(
+  g: Phaser.GameObjects.Graphics, tint: TechColorFn,
+  cx: number, cy: number, w: number, h: number, color: number, hover: boolean, t: number,
+): void {
+  const x = cx - w / 2, y = cy - h / 2;
+  if (hover) {
+    g.fillStyle(tint(TECH.phosphor), 0.18 + 0.08 * Math.sin(t * 8));
+    g.fillRoundedRect(x - 3, y - 3, w + 6, h + 6, 5);
+  }
+  g.fillStyle(tint(TECH.night), 0.6);
+  g.fillRoundedRect(x + 1, y + 3, w, h, 4);
+  g.fillStyle(tint(color), 0.97);
+  g.fillRoundedRect(x, y, w, h, 4);
+  g.fillStyle(tint(TECH.white), hover ? 0.22 : 0.13);
+  g.fillRoundedRect(x + 2, y + 2, w - 4, h / 2 - 2, 3);
+  g.fillStyle(tint(TECH.night), 0.3);
+  g.fillRect(x + 3, y + h - 3, w - 6, 2);
+  g.lineStyle(1.3, tint(hover ? TECH.phosphor : TECH.wire), hover ? 0.95 : 0.6);
+  g.strokeRoundedRect(x, y, w, h, 4);
+}
+
 /** A sheathed cable: a dark jacket with a bright core stripe and a plug on the far end. */
 export function cableRun(
   g: Phaser.GameObjects.Graphics, tint: TechColorFn,
@@ -800,8 +892,9 @@ const TECH_AVATAR: AvatarSpec = {
  * hands and tracking eyes, wearing a single **antenna** on the crown — a short mast with a
  * blinking signal bead, the one thing that says "machine" before anything is cast.
  *
- * Mastery enhances the antenna rather than adding to it: the mast grows, the bead turns amber
- * and swells, and its glow pulses faster as the VPN ramp banks speed.
+ * Mastery grows the antenna and turns its bead amber (pulsing faster as the VPN ramp banks
+ * speed), and adds what only the sysadmin has: an amber HUD visor across the eyes, a second
+ * mast, and a tilted ring of amber bit tiles orbiting the body.
  */
 export class TechnologyAvatar extends BaseAvatar {
   private fx: TechnologyFx;
@@ -858,6 +951,46 @@ export class TechnologyAvatar extends BaseAvatar {
   }
 
   /**
+   * Body markings: printed-circuit traces running across the lower shell to solder pads, and a
+   * row of three status LEDs on the chest that blink in sequence. Mastered, an amber HUD visor
+   * band sits across the eyes (under them, so they still track) and the traces light amber.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
+    const tint = this.tint;
+    const m = this.mastered;
+    const trace = tint(m ? TECH.amber : TECH.phosphorDim);
+    g.lineStyle(1.1, trace, alpha * (m ? 0.75 : 0.5));
+    const runs: Pt[][] = [
+      [{ x: x - 17, y: y + 6 }, { x: x - 10, y: y + 6 }, { x: x - 6, y: y + 11 }, { x: x - 6, y: y + 16 }],
+      [{ x: x + 17, y: y + 5 }, { x: x + 11, y: y + 5 }, { x: x + 8, y: y + 9 }, { x: x + 2, y: y + 9 }],
+      [{ x: x + 4, y: y + 19 }, { x: x + 4, y: y + 14 }, { x: x + 12, y: y + 14 }],
+    ];
+    for (const r of runs) strokePts(g, r);
+    g.fillStyle(trace, alpha * 0.9);
+    for (const r of runs) { const e = r[r.length - 1]; g.fillCircle(e.x, e.y, 1.5); }
+    // status LEDs
+    const step = Math.floor(this.t * (m ? 6 : 3)) % 3;
+    for (let i = 0; i < 3; i++) {
+      const on = i === step;
+      g.fillStyle(tint(TECH.night), alpha * 0.8);
+      g.fillCircle(x - 4 + i * 4, y + 3, 1.6);
+      g.fillStyle(tint(on ? (m ? TECH.amber : this.accent) : TECH.teal), alpha * (on ? 1 : 0.7));
+      g.fillCircle(x - 4 + i * 4, y + 3, 1.1);
+    }
+    if (m) {
+      // the HUD visor
+      const lx = Math.cos(this.facing) * 2.4;
+      g.fillStyle(tint(TECH.night), alpha * 0.6);
+      g.fillRoundedRect(x - 15 + lx, y - 9, 30, 10, 4);
+      g.lineStyle(1.4, tint(TECH.amber), alpha * 0.95);
+      g.strokeRoundedRect(x - 15 + lx, y - 9, 30, 10, 4);
+      const sweep = ((this.t * 0.8) % 1) * 26;
+      g.fillStyle(tint(TECH.amber), alpha * 0.35);
+      g.fillRect(x - 13 + lx + sweep, y - 8, 2, 8);
+    }
+  }
+
+  /**
    * The antenna, rooted on the crown on a small base cap, raked toward the facing side and
    * swaying as the body moves. Drawn over the sprite so the cap sits on the body.
    */
@@ -899,5 +1032,51 @@ export class TechnologyAvatar extends BaseAvatar {
     g.fillCircle(tipX, tipY, m ? 2.9 : 2.2);
     g.fillStyle(tint(TECH.white), alpha * 0.7);
     g.fillCircle(tipX - 0.8, tipY - 0.8, 0.8);
+
+    // Signal arcs radiating off the bead when it peaks.
+    if (pulse > 0.7) {
+      g.lineStyle(1.2, tint(bead), alpha * (pulse - 0.7) * 2.5);
+      g.beginPath();
+      g.arc(tipX, tipY, m ? 10 : 8, -Math.PI * 0.8, -Math.PI * 0.2, false);
+      g.strokePath();
+    }
+
+    // Pixel ticks round each hand — a little targeting reticle on every screen-hand.
+    for (let i = 0; i < 2; i++) {
+      const hx = this.armX[i], hy = this.armY[i];
+      if (hx === 0 && hy === 0) continue;
+      g.fillStyle(tint(m ? TECH.amber : this.accent), alpha * 0.85);
+      for (let k = 0; k < 4; k++) {
+        const ka = (k / 4) * Math.PI * 2 + Math.PI / 4;
+        g.fillRect(hx + Math.cos(ka) * 9.5 - 1, hy + Math.sin(ka) * 9.5 - 1, 2, 2);
+      }
+    }
+
+    if (!m) return;
+    // ── Mastered only: twin mast + data ring ──
+    // A second, shorter mast on the opposite side of the crown, and a tilted ring of amber bit
+    // tiles orbiting the body — the sysadmin's halo.
+    const r2X = x - side * 8;
+    const t2X = r2X - Math.sin(sway) * 10, t2Y = rootY - Math.cos(sway) * 10;
+    g.fillStyle(tint(TECH.night), alpha);
+    g.fillEllipse(r2X, rootY + 1, 10, 5.5);
+    g.lineStyle(3, tint(TECH.night), alpha);
+    g.lineBetween(r2X, rootY, t2X, t2Y);
+    g.lineStyle(1.4, tint(TECH.amber), alpha);
+    g.lineBetween(r2X, rootY, t2X, t2Y);
+    g.fillStyle(tint(TECH.amber), alpha * (0.6 + 0.4 * Math.sin(this.t * rate + 2)));
+    g.fillCircle(t2X, t2Y, 2.2);
+    for (let i = 0; i < 8; i++) {
+      const oa = this.t * 1.4 + (i / 8) * Math.PI * 2;
+      const ox = x + Math.cos(oa) * 30;
+      const oy = y + 4 + Math.sin(oa) * 9;
+      const front = Math.sin(oa) > 0;
+      // Passing behind the body: hidden by it rather than drawn over the face.
+      if (!front && Math.abs(Math.cos(oa)) < 0.75) continue;
+      g.fillStyle(tint(TECH.night), alpha * (front ? 0.9 : 0.45));
+      g.fillRect(ox - 3, oy - 3, 6, 6);
+      g.fillStyle(tint(i % 2 ? TECH.amber : TECH.gold), alpha * (front ? 1 : 0.5));
+      g.fillRect(ox - 2, oy - 2, 4, 4);
+    }
   }
 }

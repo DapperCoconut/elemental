@@ -746,7 +746,12 @@ const WATER_AVATAR: AvatarSpec = {
 /**
  * The water character rig: two liquid ball hands, a pair of eyes, and a fountain playing off
  * the crown that arcs over and drips. The hands, eyes and gestures come from BaseAvatar; what
- * water adds is the wet sheen beneath and the fountain above.
+ * water adds is the wet sheen beneath, a rolling wave line and rising bubbles inside the body,
+ * a drip off each hand, and the fountain above.
+ *
+ * Mastered, a floating ring of water — a halo with a foam crest running round it — hangs over
+ * the fountain, ripples spread from the feet, a tide of droplets orbits the head, and the
+ * hands grow a foam rim and a wider halo.
  */
 export class WaterAvatar extends BaseAvatar {
   private fx: WaterFx;
@@ -756,22 +761,17 @@ export class WaterAvatar extends BaseAvatar {
     this.fx = new WaterFx(scene, tint);
   }
 
-  /**
-   * Mastery tell — a permanent, readable upgrade to the character itself so a mastered water
-   * user is identifiable at a glance, before they cast anything: pale-white eyes, a wider
-   * halo and foam ring on each hand, a taller fountain, and a tide of droplets orbiting the
-   * head. Shape changes, not just brighter tints — a tint alone vanishes at gameplay zoom.
-   */
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? WATER.white : WATER.pale);
     this.forEachHandLayer(0, (halo) => {
-      halo.setRadius(on ? 12.5 : 9);
-      halo.setFillStyle(this.tint(on ? WATER.cyan : WATER.ocean), on ? 0.34 : 0.3);
+      halo.setRadius(on ? 13.5 : 9);
+      halo.setFillStyle(this.tint(on ? WATER.cyan : WATER.ocean), on ? 0.38 : 0.3);
     });
     this.forEachHandLayer(1, (shell) => {
-      if (on) shell.setStrokeStyle(1.6, this.tint(WATER.foam), 0.9);
+      if (on) shell.setStrokeStyle(1.8, this.tint(WATER.foam), 0.95);
       else shell.setStrokeStyle();
     });
+    this.forEachHandLayer(2, (core) => core.setFillStyle(this.tint(on ? WATER.foam : WATER.cyan), 1));
   }
 
   /** Fast-moving hands shed droplets. */
@@ -779,11 +779,55 @@ export class WaterAvatar extends BaseAvatar {
     this.fx.spray(x, y, 1, { speed: 20, size: 2.2, life: 420, fall: 34, depth: 5 });
   }
 
-  protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
+  protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     g.fillStyle(this.tint(WATER.ocean), a * 0.28 * this.intensity);
     g.fillEllipse(x, y + 4, 56 * this.intensity, 40 * this.intensity);
     g.fillStyle(this.tint(WATER.bright), a * 0.14 * this.intensity);
     g.fillEllipse(x, y + 6, 34 * this.intensity, 22 * this.intensity);
+    if (!this.mastered) return;
+    // Mastery: ripples spreading out from where the fighter stands, three rings in step.
+    for (let i = 0; i < 3; i++) {
+      const p = (this.t * 0.55 + i / 3) % 1;
+      g.lineStyle(2 * (1 - p) + 0.5, this.tint(i === 0 ? WATER.foam : WATER.cyan), alpha * 0.55 * (1 - p));
+      g.strokeEllipse(x, y + 14, 30 + p * 52, 10 + p * 18);
+    }
+  }
+
+  /**
+   * Inside the bead: a slow wave line rolling across the lower body and a few bubbles rising
+   * from the bottom and popping before they reach the eyes.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
+    // Rolling wave line across the belly.
+    g.lineStyle(1.6, this.tint(WATER.sky), alpha * 0.6);
+    g.beginPath();
+    for (let i = 0; i <= 12; i++) {
+      const f = i / 12;
+      const px = x - 15 + f * 30;
+      const py = y + 7 + Math.sin(f * TAU * 1.5 + this.t * 3) * 1.8;
+      if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
+    }
+    g.strokePath();
+    g.lineStyle(1, this.tint(WATER.pale), alpha * 0.4);
+    g.beginPath();
+    for (let i = 0; i <= 10; i++) {
+      const f = i / 10;
+      const px = x - 11 + f * 22;
+      const py = y + 12 + Math.sin(f * TAU * 1.2 - this.t * 2.4) * 1.3;
+      if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
+    }
+    g.strokePath();
+    // Bubbles rising from the bottom of the bead.
+    for (let i = 0; i < 4; i++) {
+      const p = (this.t * (0.4 + i * 0.09) + i * 0.27) % 1;
+      const bx = x + (i - 1.5) * 7 + Math.sin(this.t * 3 + i) * 1.6;
+      const by = y + 18 - p * 16;
+      const r = 0.9 + p * 1.3;
+      g.lineStyle(0.9, this.tint(WATER.pale), alpha * 0.75 * (1 - p));
+      g.strokeCircle(bx, by, r);
+      g.fillStyle(this.tint(WATER.white), alpha * 0.6 * (1 - p));
+      g.fillCircle(bx - r * 0.35, by - r * 0.35, r * 0.35);
+    }
   }
 
   /**
@@ -800,15 +844,10 @@ export class WaterAvatar extends BaseAvatar {
       const p = this.t * 2.6 + i * 1.9;
       const lift = (20 + Math.sin(p) * 5) * this.intensity * mastery;
       const outward = side * (15 + Math.sin(p * 0.8) * 3.5);
-
-      // Rising leg of the jet. Fat and well spread — three narrow jets rooted at one point
-      // merge into a single spiky clump and read as a crown of thorns rather than water.
       waterRibbonLayered(
         g, this.tint, x + side * 7, rootY,
         -Math.PI / 2 + side * 0.34, lift, 6.4 * mastery, outward * 0.7, a * 0.95,
       );
-      // Falling leg, arcing outward and back down — this is the half that makes it read as a
-      // fountain rather than as a static plume standing on end.
       const fallAng = Math.PI / 2 + side * 0.85;
       const apexX = x + side * 7 + outward * 0.8;
       const apexY = rootY - lift;
@@ -816,7 +855,6 @@ export class WaterAvatar extends BaseAvatar {
         g, this.tint, apexX, apexY,
         fallAng, lift * 0.8, 4.2 * mastery, outward * 1.3, a * 0.8,
       );
-      // The bead about to break off the end of the fall.
       const dropT = (this.t * 1.4 + i * 0.33) % 1;
       const dx = apexX + Math.cos(fallAng) * lift * 0.8 + outward * 1.3;
       const dy = apexY + Math.sin(fallAng) * lift * 0.8 + dropT * 14;
@@ -824,21 +862,47 @@ export class WaterAvatar extends BaseAvatar {
       waterRibbon(g, dx, dy - 5, Math.PI / 2, 6, 2.4 * (1 - dropT * 0.5));
     }
 
-    // Mastery tide: four droplets circling the head on a shallow ellipse, each stretched
-    // along its own orbit so the crown reads as water in motion, not as beads on a wire.
-    if (this.mastered) {
-      for (let i = 0; i < 4; i++) {
-        const p = this.t * 1.6 + (i / 4) * TAU;
-        const cx = x + Math.cos(p) * 22;
-        const cy = y - 28 + Math.sin(p) * 6.5;
-        const tangent = Math.atan2(Math.cos(p) * 6.5, -Math.sin(p) * 22);
-        g.fillStyle(this.tint(WATER.ocean), alpha * 0.5);
-        waterRibbon(g, cx, cy, tangent, 11, 3.4);
-        g.fillStyle(this.tint(WATER.cyan), alpha * 0.9);
-        waterRibbon(g, cx, cy, tangent, 8, 2.2);
-        g.fillStyle(this.tint(WATER.white), alpha * 0.85);
-        g.fillCircle(cx + Math.cos(tangent) * 6, cy + Math.sin(tangent) * 6, 1.3);
-      }
+    // A bead forming under each hand and falling away.
+    for (let i = 0; i < 2; i++) {
+      const p = (this.t * 1.1 + i * 0.5) % 1;
+      const hx = this.armX[i], hy = this.armY[i] + 6;
+      const sw = p < 0.6 ? p / 0.6 : 1;
+      const fall = p < 0.6 ? 0 : (p - 0.6) / 0.4;
+      g.fillStyle(this.tint(WATER.cyan), alpha * 0.85 * (1 - fall));
+      waterRibbon(g, hx, hy - 3 + fall * 12, Math.PI / 2, 3 + sw * 3, 1.2 + sw * 1.2);
+    }
+
+    if (!this.mastered) return;
+
+    // Mastery halo: a floating ring of water over the fountain, foam crest chasing round it.
+    const hy = y - 44 + Math.sin(this.t * 2) * 1.5;
+    const rx = 17, ry = 5;
+    g.lineStyle(5, this.tint(WATER.deep), alpha * 0.55);
+    g.strokeEllipse(x, hy, rx * 2, ry * 2);
+    g.lineStyle(3.2, this.tint(WATER.bright), alpha * 0.95);
+    g.strokeEllipse(x, hy, rx * 2, ry * 2);
+    g.lineStyle(1.2, this.tint(WATER.pale), alpha * 0.85);
+    g.strokeEllipse(x, hy - 0.8, rx * 2 - 2, ry * 2 - 2);
+    for (let k = 0; k < 3; k++) {
+      const p = this.t * 2.4 + (k / 3) * TAU;
+      g.fillStyle(this.tint(WATER.white), alpha * 0.95);
+      g.fillCircle(x + Math.cos(p) * rx, hy + Math.sin(p) * ry, 1.9);
+      g.fillStyle(this.tint(WATER.foam), alpha * 0.6);
+      g.fillCircle(x + Math.cos(p - 0.25) * rx, hy + Math.sin(p - 0.25) * ry, 1.3);
+    }
+
+    // Tide: four droplets circling the head on a shallow ellipse.
+    for (let i = 0; i < 4; i++) {
+      const p = this.t * 1.6 + (i / 4) * TAU;
+      const cx = x + Math.cos(p) * 24;
+      const cy = y - 26 + Math.sin(p) * 7;
+      const tangent = Math.atan2(Math.cos(p) * 7, -Math.sin(p) * 24);
+      g.fillStyle(this.tint(WATER.ocean), alpha * 0.5);
+      waterRibbon(g, cx, cy, tangent, 11, 3.4);
+      g.fillStyle(this.tint(WATER.cyan), alpha * 0.9);
+      waterRibbon(g, cx, cy, tangent, 8, 2.2);
+      g.fillStyle(this.tint(WATER.white), alpha * 0.85);
+      g.fillCircle(cx + Math.cos(tangent) * 6, cy + Math.sin(tangent) * 6, 1.3);
     }
   }
 }

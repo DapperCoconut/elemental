@@ -38,6 +38,13 @@ export const SOUND = {
   gold: 0xf0c04e,
   goldHi: 0xffe8a6,
   goldShade: 0x93681f,
+  /** Musical Perfection's sliver in the middle of the beat window: a deeper, richer gold. */
+  goldRich: 0xffa51c,
+  goldRichHi: 0xffd36b,
+  /** The gong: a bronze disc with a darker hammered centre. */
+  bronze: 0xb87a2e,
+  bronzeHi: 0xf2c072,
+  bronzeDark: 0x5e3a12,
   /** The bugle. */
   brass: 0xd9a441,
   brassHi: 0xffe9a8,
@@ -1198,6 +1205,176 @@ export class SoundFx extends FxBase {
     g.arc(x, y, r * 1.8, -Math.PI / 2, -Math.PI / 2 + TAU * Phaser.Math.Clamp(fuse, 0, 1), false);
     g.strokePath();
   }
+
+  // ── Shop upgrades ───────────────────────────────────────────────────────
+
+  /**
+   * Infectious Moves: whoever the Crescendo wave caught is dancing. A little disco square lights
+   * up under their feet tile by tile, two notes skip round them, and they bob — the read is "they
+   * are busy", which is the point: no attacks until it stops.
+   */
+  static drawDancing(
+    g: Phaser.GameObjects.Graphics, tint: SoundColorFn,
+    x: number, y: number, t: number, color: number, alpha = 1,
+  ): void {
+    if (alpha <= 0.01) return;
+    // The floor: a 3×3 of tiles, one lit at a time on the beat, diamond-on so it sits on the ground.
+    const lit = Math.floor(t * 6) % 9;
+    for (let i = 0; i < 9; i++) {
+      const cx = (i % 3) - 1, cy = Math.floor(i / 3) - 1;
+      const px = x + (cx - cy) * 9, py = y + 18 + (cx + cy) * 4.2;
+      g.fillStyle(tint(i === lit ? SOUND.goldHi : i % 2 ? color : SOUND.maroon), alpha * (i === lit ? 0.75 : 0.32));
+      fillPts(g, [{ x: px, y: py - 4 }, { x: px + 8.4, y: py }, { x: px, y: py + 4 }, { x: px - 8.4, y: py }]);
+    }
+    // Two notes skipping round at shoulder height, the second half a turn behind.
+    for (let k = 0; k < 2; k++) {
+      const a = t * 5 + k * Math.PI;
+      const hop = Math.abs(Math.sin(t * 9 + k)) * 6;
+      const nx = x + Math.cos(a) * 24, ny = y - 18 + Math.sin(a) * 8 - hop;
+      musicNoteLayered(g, tint, nx, ny, 4.6, Math.sin(t * 6 + k) * 0.4, k ? SOUND.gold : color, alpha, { flags: k + 1 });
+    }
+    // Motion ticks either side of the body: the shimmy.
+    const sway = Math.sin(t * 14) * 3;
+    g.lineStyle(1.6, tint(SOUND.goldHi), alpha * 0.8);
+    for (const side of [-1, 1]) {
+      g.lineBetween(x + side * (20 + sway), y - 6, x + side * (25 + sway), y - 10);
+      g.lineBetween(x + side * (21 + sway), y + 2, x + side * (27 + sway), y + 1);
+    }
+  }
+
+  /**
+   * Harmony's In Tune: a pair of tuning-fork rings round the drum major, breathing on the beat.
+   * `health` is the regeneration as a share of where it started — 1 fresh, 0 at the turn, negative
+   * once it is biting — and the rings run song-colour → gold → sour → crimson along it, so the
+   * moment to recast is readable straight off the character.
+   */
+  static drawInTune(
+    g: Phaser.GameObjects.Graphics, tint: SoundColorFn,
+    x: number, y: number, t: number, health: number, song: number, alpha = 1,
+  ): void {
+    if (alpha <= 0.01) return;
+    const c = health > 0.45 ? song : health > 0.08 ? SOUND.gold : health > -0.2 ? SOUND.sour : SOUND.crimson;
+    const breathe = 1 + Math.sin(t * 5.7) * 0.06;
+    g.lineStyle(2, tint(c), alpha * 0.55);
+    g.strokeCircle(x, y, 30 * breathe);
+    g.lineStyle(1, tint(SOUND.goldHi), alpha * 0.35);
+    g.strokeCircle(x, y, 35 * breathe);
+    // Rising motes: green crosses while it heals, sour drops falling once it hurts.
+    for (let i = 0; i < 4; i++) {
+      const u = (t * 0.8 + i / 4) % 1;
+      const a = i * 1.7 + t * 0.6;
+      const px = x + Math.cos(a) * 20;
+      if (health > 0) {
+        const py = y + 10 - u * 36;
+        g.fillStyle(tint(SOUND.smoothPale), alpha * (1 - u) * 0.9);
+        g.fillRect(px - 3, py - 1, 6, 2);
+        g.fillRect(px - 1, py - 3, 2, 6);
+      } else {
+        const py = y - 26 + u * 36;
+        g.fillStyle(tint(health > -0.2 ? SOUND.sour : SOUND.crimson), alpha * (1 - u) * 0.9);
+        g.fillCircle(px, py, 2.2);
+      }
+    }
+  }
+
+  /**
+   * Deaf: the drum major's own ears are ringing after the gong. Two jagged ringing arcs either side
+   * of the head and a struck-through note over it.
+   */
+  static drawDeaf(
+    g: Phaser.GameObjects.Graphics, tint: SoundColorFn,
+    x: number, y: number, t: number, alpha = 1,
+  ): void {
+    if (alpha <= 0.01) return;
+    const jit = Math.sin(t * 31) * 1.2;
+    for (const side of [-1, 1]) {
+      for (let k = 0; k < 2; k++) {
+        g.lineStyle(1.4, tint(k ? SOUND.steel : SOUND.bronzeHi), alpha * (0.8 - k * 0.3));
+        g.beginPath();
+        g.arc(x + side * (16 + k * 5) + jit, y, 6 + k * 3, side > 0 ? -0.9 : Math.PI - 0.9, side > 0 ? 0.9 : Math.PI + 0.9, false);
+        g.strokePath();
+      }
+    }
+    const hy = y - 16 + Math.sin(t * 4) * 1.2;
+    g.fillStyle(tint(SOUND.steel), alpha);
+    musicNote(g, x, hy, 4.4, 0.2, { flags: 1 });
+    g.lineStyle(1.8, tint(SOUND.crimson), alpha);
+    g.lineBetween(x - 8, hy - 9, x + 8, hy + 5);
+  }
+
+  /**
+   * Big Finish: the gong on its stand beside the drum major, and the mallet. `swing` 0 → 1 is the
+   * wind-up (mallet lifting back over the shoulder) and `ring` (0 until the strike, then the ms
+   * since) shakes the disc and fans rings off it. `dir` is the side the gong stands on.
+   */
+  static drawGong(
+    g: Phaser.GameObjects.Graphics, tint: SoundColorFn,
+    x: number, y: number, dir: 1 | -1, t: number, swing: number, ring: number, flair: number, alpha = 1,
+  ): void {
+    if (alpha <= 0.01) return;
+    const r = 26 + flair * 10;
+    const shake = ring > 0 ? Math.sin(ring * 0.09) * Math.max(0, 1 - ring / 900) * 3 : 0;
+    const gx = x + shake, gy = y - 6;
+    // The stand: two posts and a crossbar in dark wood, with a cord to the disc.
+    g.fillStyle(tint(SOUND.shade), alpha * 0.35);
+    g.fillEllipse(x, y + r + 14, r * 2.6, 9);
+    g.lineStyle(4, tint(SOUND.woodDark), alpha);
+    g.lineBetween(x - r - 8, y + r + 12, x - r - 8, gy - r - 12);
+    g.lineBetween(x + r + 8, y + r + 12, x + r + 8, gy - r - 12);
+    g.lineBetween(x - r - 12, gy - r - 12, x + r + 12, gy - r - 12);
+    g.lineStyle(2, tint(SOUND.woodHi), alpha * 0.8);
+    g.lineBetween(x - r - 12, gy - r - 13.5, x + r + 12, gy - r - 13.5);
+    g.lineStyle(1.2, tint(SOUND.goldShade), alpha);
+    g.lineBetween(x - r * 0.5, gy - r - 12, gx - r * 0.4, gy - r * 0.8);
+    g.lineBetween(x + r * 0.5, gy - r - 12, gx + r * 0.4, gy - r * 0.8);
+    // The disc: bronze rim, a hammered darker centre, and a boss.
+    if (ring > 0) {
+      g.fillStyle(tint(SOUND.goldHi), alpha * Math.max(0, 0.45 - ring / 2000));
+      g.fillCircle(gx, gy, r + 10);
+    }
+    g.fillStyle(tint(SOUND.bronzeDark), alpha);
+    g.fillCircle(gx, gy, r + 2);
+    g.fillStyle(tint(SOUND.bronze), alpha);
+    g.fillCircle(gx, gy, r);
+    g.fillStyle(tint(SOUND.bronzeDark), alpha * 0.55);
+    g.fillCircle(gx, gy, r * 0.62);
+    g.lineStyle(1, tint(SOUND.bronzeHi), alpha * 0.5);
+    for (let i = 1; i <= 3; i++) g.strokeCircle(gx, gy, r * (0.25 + i * 0.22));
+    g.fillStyle(tint(SOUND.bronzeHi), alpha);
+    g.fillCircle(gx, gy, r * 0.18);
+    g.fillStyle(tint(SOUND.white), alpha * 0.7);
+    g.fillEllipse(gx - r * 0.42, gy - r * 0.45, r * 0.5, r * 0.2);
+    // Rings coming off it after the strike.
+    if (ring > 0) {
+      for (let k = 0; k < 3; k++) {
+        const u = ((ring / 700) + k / 3) % 1;
+        const life = Math.max(0, 1 - ring / 1400);
+        g.lineStyle(2.4 - u * 1.6, tint(k % 2 ? SOUND.goldHi : SOUND.bronzeHi), alpha * life * (1 - u));
+        g.strokeCircle(gx, gy, r + 6 + u * (60 + flair * 70));
+      }
+    }
+    // The mallet: held from the drum major's side, lifting back over the shoulder, then down onto
+    // the boss. Pivot sits between the player and the gong.
+    const px = x - dir * (r + 30), py = y - 4;
+    const back = -dir * 2.2, hit = 0;
+    const k = ring > 0 ? 1 : swing;
+    const a = ring > 0 ? hit + Math.sin(Math.min(1, ring / 160) * Math.PI) * -dir * 0.25
+      : back * easeOut(Math.min(1, k * 1.6)) * (1 - easeIn(Math.max(0, (k - 0.62) / 0.38)));
+    const len = r + 24;
+    const hx = px + Math.cos(dir > 0 ? a : Math.PI + a) * len;
+    const hy = py + Math.sin(dir > 0 ? a : Math.PI + a) * len;
+    g.lineStyle(3.2, tint(SOUND.woodDark), alpha);
+    g.lineBetween(px, py, hx, hy);
+    g.lineStyle(1.4, tint(SOUND.woodHi), alpha * 0.8);
+    g.lineBetween(px, py - 1, hx, hy - 1);
+    g.fillStyle(tint(SOUND.maroonDeep), alpha);
+    g.fillCircle(hx, hy, 8.5);
+    g.fillStyle(tint(SOUND.maroonHi), alpha);
+    g.fillCircle(hx - 1, hy - 1.5, 6.5);
+    g.fillStyle(tint(SOUND.blush), alpha * 0.6);
+    g.fillCircle(hx - 2.5, hy - 3, 2);
+    void t;
+  }
 }
 
 // ── SoundAvatar ───────────────────────────────────────────────────────────
@@ -1292,6 +1469,52 @@ export class SoundAvatar extends BaseAvatar {
   }
 
   /**
+   * The jacket painted on the orb: hussar frogging — three gold cords across the chest with a
+   * button at each end and a centre row of buttons. Mastered, gold epaulettes with a swinging
+   * bullion fringe sit on both shoulders.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    void a;
+    const A = alpha;
+    const lean = Math.cos(this.facing) * 1.4;
+    const cords = [{ dy: 6.5, w: 11.5 }, { dy: 10.5, w: 10.5 }, { dy: 14.5, w: 8.5 }];
+    // A darker placket down the middle.
+    g.fillStyle(this.tint(SOUND.maroonDeep), A * 0.55);
+    g.fillRect(x + lean - 2.2, y + 3, 4.4, 16);
+    for (const c of cords) {
+      const cy = y + c.dy;
+      g.lineStyle(1.6, this.tint(SOUND.goldShade), A);
+      g.lineBetween(x + lean - c.w, cy + 0.6, x + lean + c.w, cy + 0.6);
+      g.lineStyle(1.1, this.tint(this.mastered ? SOUND.goldHi : SOUND.gold), A);
+      g.lineBetween(x + lean - c.w, cy, x + lean + c.w, cy);
+      // The looped ends of each cord.
+      for (const sd of [-1, 1]) {
+        g.lineStyle(1, this.tint(SOUND.gold), A * 0.9);
+        g.strokeCircle(x + lean + sd * (c.w + 1.4), cy, 1.5);
+      }
+      g.fillStyle(this.tint(SOUND.goldHi), A);
+      g.fillCircle(x + lean, cy, 1.4);
+    }
+    if (!this.mastered) return;
+    // Epaulettes: a gold pad on each shoulder with a fringe that swings with the dance.
+    const sway = Math.sin(this.t * (3 + this.dance * 8)) * (0.8 + this.dance * 1.5);
+    for (const sd of [-1, 1]) {
+      const ex = x + sd * 16.5, ey = y - 1;
+      g.fillStyle(this.tint(SOUND.goldShade), A);
+      g.fillEllipse(ex, ey + 0.6, 12, 6.4);
+      g.fillStyle(this.tint(SOUND.gold), A);
+      g.fillEllipse(ex, ey, 11, 5.4);
+      g.fillStyle(this.tint(SOUND.goldHi), A);
+      g.fillEllipse(ex - sd * 1.2, ey - 1, 5, 2);
+      g.lineStyle(1, this.tint(SOUND.gold), A);
+      for (let i = 0; i < 5; i++) {
+        const fx = ex - 4.4 + i * 2.2;
+        g.lineBetween(fx, ey + 2.4, fx + sway, ey + 7);
+      }
+    }
+  }
+
+  /**
    * The shako, rooted at the crown so it never covers the face, and the bugle at the lips while
    * the solo is on.
    */
@@ -1321,10 +1544,14 @@ export class SoundAvatar extends BaseAvatar {
     }
 
     // The hat body: a trapezoid, a touch narrower at the crown, near-black so the orb stays the colour.
-    g.fillStyle(this.tint(SOUND.shako), alpha);
+    // Mastered, the field shako becomes the white dress shako.
+    g.fillStyle(this.tint(this.mastered ? SOUND.gloveShade : SOUND.shako), alpha);
     fillPts(g, [at(-10.5, -1), at(10.5, -1), at(9, -21), at(-9, -21)]);
-    g.fillStyle(this.tint(SOUND.shakoHi), alpha);
+    g.fillStyle(this.tint(this.mastered ? SOUND.ivory : SOUND.shakoHi), alpha);
     fillPts(g, [at(-9, -21), at(-3, -21), at(-4.5, -1), at(-10.5, -1)]);
+    // Gold chin-cords looping down the front.
+    g.lineStyle(1, this.tint(this.mastered ? SOUND.goldShade : SOUND.gold), alpha * 0.85);
+    strokePts(g, [at(-9.6, -4), at(-4, -6.5), at(0, -5), at(4, -6.5), at(9.6, -4)], false);
     // Gold top rim and band.
     const band = this.mastered ? 4.6 : 3.2;
     g.fillStyle(this.tint(SOUND.gold), alpha);
@@ -1354,6 +1581,22 @@ export class SoundAvatar extends BaseAvatar {
     if (this.instrument === 'bugle') {
       const dir = Math.cos(this.facing) >= 0 ? 1 : -1;
       SoundFx.drawBugle(g, this.tint, x, y + 4, dir, this.t, alpha);
+    }
+
+    // Mastered: three gilded notes orbit the drum major on a tilted ring.
+    if (this.mastered) {
+      g.lineStyle(1, this.tint(SOUND.gold), alpha * 0.28);
+      g.strokeEllipse(x, y + 4, 62, 20);
+      for (let i = 0; i < 3; i++) {
+        const oa = this.t * 1.4 + (i / 3) * TAU;
+        const ox = x + Math.cos(oa) * 31, oy = y + 4 + Math.sin(oa) * 10;
+        // Hide the back half behind the body: only notes in front (sin > -0.3) or off to the side.
+        if (Math.sin(oa) < -0.2 && Math.abs(Math.cos(oa)) < 0.7) continue;
+        g.fillStyle(this.tint(SOUND.goldShade), alpha * 0.9);
+        musicNote(g, ox + 0.6, oy + 0.6, 4.2, Math.sin(this.t * 3 + i) * 0.3, { flags: i === 1 ? 2 : 1 });
+        g.fillStyle(this.tint(SOUND.goldHi), alpha);
+        musicNote(g, ox, oy, 4.2, Math.sin(this.t * 3 + i) * 0.3, { flags: i === 1 ? 2 : 1 });
+      }
     }
   }
 }

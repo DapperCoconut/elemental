@@ -28,9 +28,11 @@ import { ConquestMenuScene } from './scenes/ConquestMenuScene';
 import { DialogueScene } from './scenes/DialogueScene';
 import { StrongholdSetupScene } from './scenes/StrongholdSetupScene';
 import { StrongholdScene } from './scenes/StrongholdScene';
+import { installFastGraphics } from './render/FastGraphics';
 import { installSuperSampling, maskLogicalSize, LOGICAL_WIDTH, LOGICAL_HEIGHT, RENDER_SCALE } from './render/SuperSample';
 
 installSuperSampling();
+installFastGraphics();
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,

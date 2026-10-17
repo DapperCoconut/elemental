@@ -1648,6 +1648,61 @@ export class OilAvatar extends BaseAvatar {
     });
   }
 
+  /**
+   * The crude body itself: a thin-film rainbow sheen sliding round the lower half, two slow
+   * drips, and the operator's headset boom mic curling to the mouth. Mastered, three gold
+   * rank chevrons are stencilled on the chest below the face.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    void a;
+    // Thin-film sheen: violet → teal → gold bands, drifting.
+    const film = [OIL.violet, OIL.teal, OIL.gold];
+    for (let i = 0; i < 3; i++) {
+      const r = 17 - i * 2.2;
+      const start = Math.PI * 0.15 + Math.sin(this.t * 0.8 + i) * 0.25;
+      g.lineStyle(1.6, this.tint(film[i]), alpha * 0.32);
+      g.beginPath();
+      g.arc(x - 1, y + 1, r, start, start + Math.PI * 0.55);
+      g.strokePath();
+    }
+    // Specular pool, top-left (outside the eye band, above it).
+    g.fillStyle(this.tint(OIL.chrome), alpha * 0.18);
+    g.fillEllipse(x - 11, y - 12, 7, 3.5);
+    // Slow drips off the underside.
+    for (const [dx, ph] of [[-8, 0], [6, 0.5]] as const) {
+      const k = (this.t * 0.35 + ph) % 1;
+      const dy = y + 17 + k * 6;
+      g.fillStyle(this.tint(OIL.crude), alpha * (1 - k * 0.6));
+      g.fillEllipse(x + dx, dy, 3.2, 4 + k * 2);
+      g.fillStyle(this.tint(OIL.teal), alpha * 0.5 * (1 - k));
+      g.fillCircle(x + dx - 0.6, dy - 1, 0.7);
+    }
+    // Headset boom mic from the helmet's left rail down toward the mouth.
+    const side = Math.cos(this.facing) >= 0 ? -1 : 1;
+    g.lineStyle(1.3, this.tint(OIL.tar), alpha);
+    g.beginPath();
+    g.moveTo(x + side * 13, y - 11);
+    g.lineTo(x + side * 14, y - 2);
+    g.lineTo(x + side * 8, y + 5);
+    g.strokePath();
+    g.fillStyle(this.tint(OIL.steel), alpha);
+    g.fillCircle(x + side * 7.5, y + 5.4, 1.8);
+    g.fillStyle(this.tint(OIL.tar), alpha);
+    g.fillRect(x + side * 13 - 2, y - 13, 4, 5);
+    if (this.mastered) {
+      // Rank chevrons.
+      for (let i = 0; i < 3; i++) {
+        const cy = y + 9 + i * 3.2;
+        g.lineStyle(1.8, this.tint(i === 0 ? OIL.white : OIL.gold), alpha * 0.95);
+        g.beginPath();
+        g.moveTo(x - 5, cy - 1.8);
+        g.lineTo(x, cy + 1);
+        g.lineTo(x + 5, cy - 1.8);
+        g.strokePath();
+      }
+    }
+  }
+
   /** Fast-moving hands sling crude. */
   protected emitTrail(x: number, y: number): void {
     this.fx.spatter(x, y, 1, { speed: 18, size: 2.2, life: 460, fall: 40, depth: 5 });
@@ -1660,6 +1715,16 @@ export class OilAvatar extends BaseAvatar {
     g.fillCircle(x, y, 28 * k);
     g.fillStyle(this.tint(OIL.violet), a * 0.12 * k);
     g.fillEllipse(x, y + 8, 34 * k, 14 * k);
+    if (this.mastered) {
+      // Mastered: a command-post target ring of gold dashes turning on the floor.
+      const rx = 34 * this.intensity, ry = 15 * this.intensity;
+      for (let i = 0; i < 16; i++) {
+        const u0 = (i / 16) * Math.PI * 2 + this.t * 0.7;
+        const u1 = u0 + (Math.PI * 2) / 16 * 0.55;
+        g.lineStyle(2, this.tint(i % 4 === 0 ? OIL.white : OIL.gold), a * 0.8);
+        g.lineBetween(x + Math.cos(u0) * rx, y + 9 + Math.sin(u0) * ry, x + Math.cos(u1) * rx, y + 9 + Math.sin(u1) * ry);
+      }
+    }
   }
 
   /**
@@ -1707,6 +1772,35 @@ export class OilAvatar extends BaseAvatar {
     if (m) {
       g.fillStyle(this.tint(OIL.gold), alpha * (0.22 + 0.1 * Math.sin(this.t * 4)));
       g.fillCircle(mx, rootY - 0.4 * s, 4);
+
+      // Command antenna off the right rail, whipping slightly, with a blinking beacon.
+      const ax = x + lean + 11 * s, ay = rootY + 1 * s;
+      const whip = Math.sin(this.t * 3.1) * 2.4;
+      g.lineStyle(1.4, this.tint(OIL.steel), alpha);
+      g.beginPath();
+      g.moveTo(ax, ay);
+      g.lineTo(ax + 2 + whip * 0.4, ay - 6);
+      g.lineTo(ax + 4 + whip, ay - 11);
+      g.strokePath();
+      // Kept short: the over-head HP bar sits at y-38 and would swallow a taller mast.
+      const blink = Math.sin(this.t * 5) > 0 ? 1 : 0.35;
+      g.fillStyle(this.tint(OIL.gold), alpha * 0.35 * blink);
+      g.fillCircle(ax + 4 + whip, ay - 11, 4.5);
+      g.fillStyle(this.tint(blink > 0.5 ? OIL.white : OIL.gold), alpha);
+      g.fillCircle(ax + 4 + whip, ay - 11, 1.8);
+
+      // Gold command star on the dome.
+      const sx = x + lean - 6 * s, sy = rootY + 1.4 * s;
+      const pts: Phaser.Geom.Point[] = [];
+      for (let i = 0; i < 10; i++) {
+        const ang = -Math.PI / 2 + (i / 10) * Math.PI * 2;
+        const r = i % 2 ? 1.5 : 3.6;
+        pts.push(new Phaser.Geom.Point(sx + Math.cos(ang) * r, sy + Math.sin(ang) * r));
+      }
+      g.fillStyle(this.tint(OIL.gold), alpha);
+      g.fillPoints(pts, true);
+      g.fillStyle(this.tint(OIL.white), alpha * 0.7);
+      g.fillCircle(sx - 0.6, sy - 0.8, 0.8);
     }
   }
 

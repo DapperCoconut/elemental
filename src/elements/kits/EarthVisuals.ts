@@ -1452,13 +1452,15 @@ const EARTH_AVATAR: AvatarSpec = {
 
 
 /**
- * The earth character rig: a plain clay-brown orb (the baked `elem-earth`), the shared eyes,
- * two plain boulder hands, and ONE accessory — a crown of three standing stones rooted at the
- * top of the head, the tall keystone in the middle and a shorter slab leaning out on each side.
+ * The earth character rig: a clay-brown orb (the baked `elem-earth`), the shared eyes, two
+ * boulder hands, and a crown of three standing stones rooted at the top of the head, the tall
+ * keystone in the middle carrying a set amber gem. Detail: sediment strata and embedded
+ * pebbles across the lower body, and cracked knuckles on each hand.
  *
- * Mastery (Unbreakable) enhances that crown rather than adding to it: the stones stand taller
- * and a molten seam runs up each one, the eyes turn molten gold, each hand gets a granite rim
- * over a wider dust corona, and the under-glow warms.
+ * Mastery (Unbreakable): the stones stand taller with a molten seam up each, the gem burns
+ * gold, the strata split into glowing lava seams, three rock shards orbit the head, a ring of
+ * molten cracks opens in the floor round the feet, the eyes turn molten gold and each hand
+ * gets a granite rim over a wider corona.
  */
 export class EarthAvatar extends BaseAvatar {
   private fx: EarthFx;
@@ -1468,12 +1470,11 @@ export class EarthAvatar extends BaseAvatar {
     this.fx = new EarthFx(scene, tint);
   }
 
-  /** Mastery tell: molten eyes and a granite-rimmed hand over a wider dust corona. */
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? EARTH.gold : EARTH.pale);
     this.forEachHandLayer(0, (halo) => {
-      halo.setRadius(on ? 13.5 : 10);
-      halo.setFillStyle(this.tint(on ? EARTH.dust : EARTH.umber), on ? 0.3 : 0.26);
+      halo.setRadius(on ? 14 : 10);
+      halo.setFillStyle(this.tint(on ? EARTH.magma : EARTH.umber), on ? 0.3 : 0.26);
     });
     this.forEachHandLayer(1, (shell) => {
       if (on) shell.setStrokeStyle(2, this.tint(EARTH.umber), 1);
@@ -1502,12 +1503,74 @@ export class EarthAvatar extends BaseAvatar {
   }
 
   /** Earth doesn't glow so much as cast: a soft dusty shadow, warmed by the melt once mastered. */
-  protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
+  protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     const k = this.intensity * (this.mastered ? 1.12 : 1);
     g.fillStyle(this.tint(this.mastered ? EARTH.magma : EARTH.dust), a * (this.mastered ? 0.2 : 0.16) * k);
     g.fillCircle(x, y, 28 * k);
     g.fillStyle(this.tint(EARTH.umber), a * 0.22 * k);
     g.fillEllipse(x, y + 9, 36 * k, 14 * k);
+    if (!this.mastered) return;
+    // Mastery: the floor splits round the feet — six radial cracks with lava glowing in them.
+    const heat = 0.6 + 0.4 * Math.sin(this.t * 2.4);
+    for (let i = 0; i < 6; i++) {
+      const ang = (i / 6) * TAU + 0.3;
+      const pts: [number, number][] = [];
+      for (let s2 = 0; s2 <= 3; s2++) {
+        const r = 18 + s2 * 6;
+        const jag = s2 % 2 === 0 ? 0.12 : -0.12;
+        pts.push([x + Math.cos(ang + jag) * r, y + 12 + Math.sin(ang + jag) * r * 0.36]);
+      }
+      g.lineStyle(3, this.tint(EARTH.crevice), alpha * 0.8);
+      g.beginPath();
+      pts.forEach(([px, py], j) => (j === 0 ? g.moveTo(px, py) : g.lineTo(px, py)));
+      g.strokePath();
+      g.lineStyle(1.3, this.tint(i % 2 ? EARTH.magma : EARTH.ember), alpha * heat);
+      g.beginPath();
+      pts.forEach(([px, py], j) => (j === 0 ? g.moveTo(px, py) : g.lineTo(px, py)));
+      g.strokePath();
+    }
+  }
+
+  /**
+   * Sediment strata curving across the lower body and two pebbles set in the clay; mastered,
+   * the strata split and run with lava. Kept below the eye band so the face stays clean.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
+    const m = this.mastered;
+    const bands = [{ dy: 6, r: 0.92, c: EARTH.shale }, { dy: 11, r: 0.8, c: EARTH.sand }, { dy: 15.5, r: 0.62, c: EARTH.shale }];
+    bands.forEach((b, i) => {
+      const half = Math.sqrt(Math.max(0, 21 * 21 - b.dy * b.dy)) * b.r;
+      g.lineStyle(m ? 2.2 : 1.6, this.tint(b.c), alpha * 0.7);
+      g.beginPath();
+      for (let k = 0; k <= 10; k++) {
+        const f = k / 10;
+        const px = x - half + f * half * 2;
+        const py = y + b.dy + Math.sin(f * Math.PI) * 1.6 + Math.sin(f * 7 + i) * 0.5;
+        if (k === 0) g.moveTo(px, py); else g.lineTo(px, py);
+      }
+      g.strokePath();
+      if (m && i !== 1) {
+        const heat = 0.55 + 0.45 * Math.sin(this.t * 3 + i * 1.7);
+        g.lineStyle(1, this.tint(i === 0 ? EARTH.magma : EARTH.gold), alpha * heat);
+        g.beginPath();
+        for (let k = 1; k <= 9; k++) {
+          const f = k / 10;
+          const px = x - half + f * half * 2;
+          const py = y + b.dy + Math.sin(f * Math.PI) * 1.6 + Math.sin(f * 7 + i) * 0.5;
+          if (k === 1) g.moveTo(px, py); else g.lineTo(px, py);
+        }
+        g.strokePath();
+      }
+    });
+    // Pebbles pressed into the clay.
+    for (const [px, py, r] of [[-11, 13, 2.4], [9, 17, 1.9]] as const) {
+      g.fillStyle(this.tint(EARTH.umber), alpha * 0.8);
+      g.fillCircle(x + px, y + py + 0.6, r);
+      g.fillStyle(this.tint(EARTH.rock), alpha);
+      g.fillCircle(x + px, y + py, r * 0.85);
+      g.fillStyle(this.tint(EARTH.pale), alpha * 0.6);
+      g.fillCircle(x + px - r * 0.3, y + py - r * 0.3, r * 0.3);
+    }
   }
 
   /**
@@ -1534,10 +1597,39 @@ export class EarthAvatar extends BaseAvatar {
       g, this.tint, x + lean, rootY - 1, -Math.PI / 2 + Math.sin(this.t * 1.1) * 0.03,
       15 * tall, 5.2, alpha, 4.2, vein,
     );
-    if (m) {
-      // The melt glowing out of the seams, breathing slowly.
-      g.fillStyle(this.tint(EARTH.ember), alpha * (0.14 + 0.08 * Math.sin(this.t * 3)));
-      g.fillEllipse(x + lean, rootY - 8 * tall, 30, 22 * tall);
+    // An amber gem set in the keystone — gold and burning once mastered.
+    const gx = x + lean, gy = rootY - 8 * tall;
+    g.fillStyle(this.tint(EARTH.umber), alpha);
+    g.fillCircle(gx, gy, 2.8);
+    g.fillStyle(this.tint(m ? EARTH.gold : EARTH.magma), alpha);
+    g.fillTriangle(gx, gy - 2.6, gx + 2.2, gy, gx, gy + 2.6);
+    g.fillTriangle(gx, gy - 2.6, gx - 2.2, gy, gx, gy + 2.6);
+    g.fillStyle(this.tint(EARTH.chalk), alpha * (m ? 0.6 + 0.4 * Math.sin(this.t * 5) : 0.6));
+    g.fillCircle(gx - 0.7, gy - 0.9, 0.8);
+
+    // Cracked knuckles: a little fissure across the face of each boulder hand.
+    for (let i = 0; i < 2; i++) {
+      const hx = this.armX[i], hy = this.armY[i];
+      g.lineStyle(1.1, this.tint(m ? EARTH.magma : EARTH.crevice), alpha * 0.85);
+      g.beginPath();
+      g.moveTo(hx - 4, hy - 1);
+      g.lineTo(hx - 1, hy + 1);
+      g.lineTo(hx + 1.5, hy - 1.5);
+      g.lineTo(hx + 4, hy + 0.5);
+      g.strokePath();
+    }
+
+    if (!m) return;
+    // The melt glowing out of the seams, breathing slowly.
+    g.fillStyle(this.tint(EARTH.ember), alpha * (0.14 + 0.08 * Math.sin(this.t * 3)));
+    g.fillEllipse(x + lean, rootY - 8 * tall, 30, 22 * tall);
+    // Three rock shards orbiting the head, each trailing a lava glow.
+    for (let i = 0; i < 3; i++) {
+      const p = this.t * 1.2 + (i / 3) * TAU;
+      const ox = x + Math.cos(p) * 26, oy = y - 22 + Math.sin(p) * 7;
+      g.fillStyle(this.tint(EARTH.ember), alpha * 0.25);
+      g.fillCircle(ox, oy, 6);
+      stoneChunkLayered(g, this.tint, ox, oy + 3, -Math.PI / 2 + p * 0.5, 7, 3.2, alpha, i * 1.7 + 0.5, EARTH.magma);
     }
   }
 }

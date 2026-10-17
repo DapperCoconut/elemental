@@ -40,6 +40,11 @@ export const WAX = {
   rope: 0x1a1410,
   /** A mastered apiarist's flame burns blue — the only cool colour in the element. */
   royal: 0x5fb6ff,
+  /** The white-hot heart of the royal flame. */
+  royalLit: 0xd4efff,
+  /** Gilt for the mastered apiarist's crown. */
+  gilt: 0xffd23a,
+  giltDeep: 0xa8740e,
 } as const;
 
 /** Deterministic 0–1 noise so a candle's drips or a hive's bands never boil between frames. */
@@ -263,15 +268,88 @@ export function drawHive(
     }
   }
   if (honey !== null) {
+    // Honey trough: a framed wooden gauge with comb end-caps, the honey sloshing in it.
+    const hw = 62, hx = x - hw / 2, hy = y - 27;
+    const fill = Phaser.Math.Clamp(honey, 0, 1);
+    g.fillStyle(tint(WAX.soot), alpha * 0.9);
+    g.fillRoundedRect(hx - 3, hy - 1.5, hw + 6, 9, 4);
+    g.fillStyle(tint(WAX.umber), alpha);
+    g.fillRoundedRect(hx - 2, hy - 0.5, hw + 4, 7, 3);
     g.fillStyle(tint(WAX.soot), alpha * 0.85);
-    g.fillRoundedRect(x - 33, y - 27, 66, 7, 3);
-    g.fillStyle(tint(WAX.honeyLit), alpha);
-    g.fillRoundedRect(x - 31, y - 25.5, 62 * Phaser.Math.Clamp(honey, 0, 1), 4, 2);
+    g.fillRect(hx, hy + 0.8, hw, 4.4);
+    if (fill > 0) {
+      const fw = hw * fill;
+      g.fillStyle(tint(WAX.honey), alpha);
+      g.fillRect(hx, hy + 0.8, fw, 4.4);
+      // A wavy lit surface along the top of the honey.
+      g.fillStyle(tint(WAX.honeyLit), alpha);
+      for (let sx = 0; sx < fw; sx += 4) {
+        const wy = Math.sin(t * 4 + sx * 0.4) * 0.5;
+        g.fillRect(hx + sx, hy + 0.8 + wy, Math.min(4, fw - sx), 1.6);
+      }
+      g.fillStyle(tint(WAX.cream), alpha * 0.55);
+      g.fillRect(hx + 1, hy + 1.2, Math.max(0, fw - 2), 0.8);
+      // A slow drip off the leading edge of the honey.
+      const dp = (t * 0.6 + seed) % 1;
+      if (fill < 1) waxDrip(g, tint, hx + fw - 1.5, hy + 5, 2 + dp * 5, 1.1, WAX.honey, alpha * (1 - dp * 0.6));
+    }
+    for (const ex of [hx - 3, hx + hw + 3]) {
+      g.fillStyle(tint(WAX.soot), alpha);
+      combCell(g, ex, hy + 3, 4.6);
+      g.fillStyle(tint(fill >= 1 ? WAX.honeyLit : WAX.wax), alpha);
+      combCell(g, ex, hy + 3, 3.3);
+    }
   }
   // A few bees working the top.
   for (let i = 0; i < 3; i++) {
     const a = t * (1.8 + i * 0.3) + i * 2.1 + seed;
     drawBee(g, tint, x + Math.cos(a) * 24, y - 30 + Math.sin(a) * 8, a + Math.PI / 2, t, seed + i, false, alpha * 0.9, 0.55);
+  }
+}
+
+/**
+ * The Rule Beetanica strap gauge: a ring of comb cells round the fighter that fill with honey
+ * one by one as Q is held, a fuse spark running the ring's lit edge, and the whole ring
+ * flaring cream once the bombs are strapped and ready.
+ */
+export function drawStrapGauge(
+  g: Phaser.GameObjects.Graphics, tint: WaxColorFn, x: number, y: number, ratio: number, t: number, alpha = 1,
+): void {
+  const n = 12, r = 38;
+  const ready = ratio >= 1;
+  const start = -Math.PI / 2;
+  // A dark fuse cord the cells sit on.
+  g.lineStyle(3.4, tint(WAX.soot), alpha * 0.55);
+  g.strokeCircle(x, y, r);
+  g.lineStyle(1.4, tint(WAX.umber), alpha * 0.8);
+  g.strokeCircle(x, y, r);
+  for (let i = 0; i < n; i++) {
+    const a = start + (i / n) * TAU;
+    const cx = x + Math.cos(a) * r, cy = y + Math.sin(a) * r;
+    const cellFill = Phaser.Math.Clamp(ratio * n - i, 0, 1);
+    g.fillStyle(tint(WAX.soot), alpha * 0.85);
+    combCell(g, cx, cy, 5.2, a);
+    g.fillStyle(tint(WAX.umber), alpha * 0.9);
+    combCell(g, cx, cy, 4.1, a);
+    if (cellFill > 0) {
+      const pulse = ready ? 0.8 + 0.2 * Math.sin(t * 10 + i) : 1;
+      g.fillStyle(tint(ready ? WAX.cream : WAX.honeyLit), alpha * pulse);
+      combCell(g, cx, cy, 4.1 * cellFill, a);
+      g.fillStyle(tint(WAX.cream), alpha * 0.6 * cellFill);
+      g.fillCircle(cx - 1.2, cy - 1.2, 1);
+    }
+  }
+  // The spark riding the lit edge.
+  const sa = start + ratio * TAU;
+  const sx = x + Math.cos(sa) * r, sy = y + Math.sin(sa) * r;
+  const fl = 0.8 + Math.sin(t * 31) * 0.2;
+  g.fillStyle(tint(WAX.flame), alpha * 0.35);
+  g.fillCircle(sx, sy, 7 * fl);
+  g.fillStyle(tint(ready ? WAX.cream : WAX.flameCore), alpha);
+  g.fillCircle(sx, sy, 2.6 * fl);
+  if (ready) {
+    g.lineStyle(2, tint(WAX.cream), alpha * (0.4 + 0.3 * Math.sin(t * 8)));
+    g.strokeCircle(x, y, r + 7 + Math.sin(t * 8) * 1.5);
   }
 }
 
@@ -603,11 +681,12 @@ export class WaxAvatar extends BaseAvatar {
   releaseLunge(): void { if (this.hold === 'reach') this.setHold(null); }
 
   protected applyMastery(on: boolean): void {
-    this.setEyeWhite(on ? WAX.royal : WAX.cream);
+    this.setEyeWhite(on ? WAX.royalLit : WAX.cream);
     this.forEachHandLayer(0, (halo) => {
-      halo.setRadius(on ? 13 : 10);
-      halo.setFillStyle(this.tint(on ? WAX.royal : WAX.honey), on ? 0.3 : 0.28);
+      halo.setRadius(on ? 14 : 10);
+      halo.setFillStyle(this.tint(on ? WAX.royal : WAX.honey), on ? 0.34 : 0.28);
     });
+    this.forEachHandLayer(1, (shell) => shell.setFillStyle(this.tint(on ? WAX.gilt : WAX.wax), 1));
   }
 
   /** `reach` — the lunge: lead hand far out along the aim with the foil, the rear hand tucked. */
@@ -633,8 +712,51 @@ export class WaxAvatar extends BaseAvatar {
     for (let i = 0; i < 4; i++) {
       const ph = (this.t * 0.35 + i * 0.25) % 1;
       const mx = x + Math.sin(this.t * 1.3 + i * 2) * 14 * (1 - ph) + (i - 1.5) * 8;
-      g.fillStyle(this.tint(WAX.pale), a * 0.5 * (1 - ph));
-      g.fillCircle(mx, y + 4 - ph * 34, 1.4);
+      g.fillStyle(this.tint(this.mastered ? WAX.royal : WAX.pale), a * 0.5 * (1 - ph));
+      g.fillCircle(mx, y + 4 - ph * 34, this.mastered ? 1.8 : 1.4);
+    }
+    if (this.mastered) {
+      // A royal comb ring turning on the floor, and a cool pool inside the warm one.
+      g.fillStyle(this.tint(WAX.royal), a * 0.1);
+      g.fillEllipse(x, y + 9, 56, 24);
+      g.lineStyle(1.6, this.tint(WAX.royal), a * 0.55);
+      for (let i = 0; i < 10; i++) {
+        const ang = this.t * 0.6 + (i / 10) * TAU;
+        const cx = x + Math.cos(ang) * 34, cy = y + 9 + Math.sin(ang) * 15;
+        strokeComb(g, cx, cy, 3.6, ang);
+      }
+    }
+  }
+
+  /**
+   * The wax body's surface: a melted pool at the crown with drips running from its lip, a
+   * soft sheen down one side and a little patch of comb on the opposite cheek. All kept clear
+   * of the eye band (y-10..y+2) except the drips that run past it on the outer edge.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
+    const m = this.mastered;
+    // Melt pool at the crown.
+    g.fillStyle(this.tint(WAX.deep), alpha * 0.35);
+    g.fillEllipse(x, y - 13, 24, 8);
+    g.fillStyle(this.tint(m ? WAX.cream : WAX.pale), alpha * 0.85);
+    g.fillEllipse(x, y - 14, 20, 6);
+    g.fillStyle(this.tint(WAX.cream), alpha * 0.7);
+    g.fillEllipse(x - 4, y - 15, 7, 2);
+    // Drips running off the pool's lip down the outer edges of the body.
+    const drips: [number, number, number][] = [[-13, 12, 0], [-8, 7, 1], [9, 9, 2], [14, 14, 3]];
+    for (const [dx, len, k] of drips) {
+      const sag = 0.7 + 0.3 * Math.sin(this.t * 0.8 + k * 1.7);
+      waxDrip(g, this.tint, x + dx, y - 13 + Math.abs(dx) * 0.15, len, 1.6, WAX.pale, alpha * 0.85, sag);
+    }
+    // Sheen down the left flank.
+    g.fillStyle(this.tint(WAX.cream), alpha * 0.28);
+    g.fillEllipse(x - 12, y + 4, 4, 14);
+    // Comb patch low on the right cheek — the beekeeper's mark.
+    for (const [cx, cy] of [[9, 9], [13.5, 11.6], [9, 14.2]] as [number, number][]) {
+      g.fillStyle(this.tint(WAX.deep), alpha * 0.6);
+      combCell(g, x + cx, y + cy, 2.6);
+      g.fillStyle(this.tint(m ? WAX.gilt : WAX.honey), alpha * 0.9);
+      combCell(g, x + cx, y + cy, 1.9);
     }
   }
 
@@ -656,12 +778,57 @@ export class WaxAvatar extends BaseAvatar {
       g.fillStyle(this.tint(WAX.honey), alpha * 0.85);
       combCell(g, this.armX[i], this.armY[i], 3.6, this.t * 0.5);
     }
-    // The mastered crown: a ring of cells turning over the head.
+    // A wax-coloured comb collar under the crown, so the wick sits in something.
+    if (!m) {
+      g.fillStyle(this.tint(WAX.deep), alpha * 0.85);
+      g.fillEllipse(x, rootY + 3, 12, 4);
+      g.fillStyle(this.tint(WAX.honey), alpha);
+      g.fillEllipse(x, rootY + 2.4, 9, 2.6);
+    }
+    // A worker bee doing slow laps of the head — the apiarist's companion.
+    {
+      const ang = this.t * 1.6;
+      const bx = x + Math.cos(ang) * 22, by = rootY + 2 + Math.sin(ang) * 7;
+      drawBee(g, this.tint, bx, by, ang + Math.PI / 2, this.t, 3, false, alpha * 0.95, 0.5);
+    }
+    // The mastered regalia: a gilt comb crown with a blue gem, and a queen bee in attendance.
     if (m) {
-      for (let i = 0; i < 6; i++) {
-        const ang = this.t * 1.1 + (i / 6) * TAU;
-        g.fillStyle(this.tint(WAX.royal), alpha * (0.5 + 0.4 * Math.sin(this.t * 4 + i)));
-        combCell(g, x + Math.cos(ang) * 17, rootY - 2 + Math.sin(ang) * 6, 3.4, ang);
+      const cy = rootY + 1;
+      g.fillStyle(this.tint(WAX.giltDeep), alpha);
+      g.fillRoundedRect(x - 15, cy - 1, 30, 6, 2);
+      for (let i = -2; i <= 2; i++) {
+        const px = x + i * 6.4, py = cy - 3 - (2 - Math.abs(i)) * 2.4;
+        g.fillStyle(this.tint(WAX.giltDeep), alpha);
+        combCell(g, px, py, 4.4);
+        g.fillStyle(this.tint(WAX.gilt), alpha);
+        combCell(g, px, py, 3.4);
+        g.fillStyle(this.tint(WAX.cream), alpha * 0.7);
+        g.fillCircle(px - 1, py - 1, 0.9);
+      }
+      g.fillStyle(this.tint(WAX.gilt), alpha);
+      g.fillRect(x - 14, cy, 28, 2.6);
+      // Gem pulsing blue in the centre cell.
+      const gp = 0.75 + 0.25 * Math.sin(this.t * 5);
+      g.fillStyle(this.tint(WAX.royal), alpha * 0.35 * gp);
+      g.fillCircle(x, cy - 7.8, 6);
+      g.fillStyle(this.tint(WAX.royal), alpha);
+      combCell(g, x, cy - 7.8, 2.4);
+      g.fillStyle(this.tint(WAX.royalLit), alpha * gp);
+      g.fillCircle(x - 0.6, cy - 8.4, 0.9);
+      // The queen: a larger bee opposite the worker, trailing blue sparks.
+      const qa = this.t * 1.6 + Math.PI;
+      const qx = x + Math.cos(qa) * 24, qy = rootY + 2 + Math.sin(qa) * 8;
+      g.fillStyle(this.tint(WAX.royal), alpha * 0.25);
+      g.fillCircle(qx, qy, 7);
+      drawBee(g, this.tint, qx, qy, qa + Math.PI / 2, this.t, 9, false, alpha, 0.72);
+      // Royal flame-licks on each hand.
+      for (let i = 0; i < 2; i++) {
+        const hx = this.armX[i], hy = this.armY[i] - 6;
+        const hf = 0.8 + Math.sin(this.t * 15 + i * 2) * 0.2;
+        g.fillStyle(this.tint(WAX.royal), alpha * 0.9);
+        g.fillTriangle(hx - 2.6, hy + 2, hx + 2.6, hy + 2, hx + Math.sin(this.t * 11 + i) * 1.2, hy - 7 * hf);
+        g.fillStyle(this.tint(WAX.royalLit), alpha);
+        g.fillCircle(hx, hy + 1, 1.3);
       }
     }
     // Wick and flame at the crown.
@@ -680,7 +847,7 @@ export class WaxAvatar extends BaseAvatar {
       new Phaser.Geom.Point(x + Math.sin(this.t * 17) * 1.6, fy - fh),
       new Phaser.Geom.Point(x - 1.4, fy - fh * 0.5),
     ], true);
-    g.fillStyle(this.tint(WAX.flameCore), alpha);
+    g.fillStyle(this.tint(m ? WAX.royalLit : WAX.flameCore), alpha);
     g.fillEllipse(x, fy - 1, 4.2, fh * 0.6);
     g.fillStyle(this.tint(WAX.cream), alpha * 0.9);
     g.fillEllipse(x, fy, 2, 3.4);

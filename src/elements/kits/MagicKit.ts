@@ -5,6 +5,7 @@ import {
   arcaneRing, runeOrb, sigilStarLayered, vineLash,
 } from './MagicVisuals';
 import { meterGain } from '../../combat/Meters';
+import { FONT_DISPLAY, FONT_UI } from '../../ui/Theme';
 
 // ── Arena API ─────────────────────────────────────────────────────────────────
 
@@ -530,6 +531,8 @@ export class MagicKit {
   private necronomiconLastPick = 0;
 
   private aimCountdownLabel: Phaser.GameObjects.Text | null = null;
+  /** Draining rune ring behind the countdown label. */
+  private aimCountdownRing: Phaser.GameObjects.Graphics | null = null;
   private aimCountdownEnd = 0;
   private aimCountdownFired = false;
 
@@ -804,6 +807,7 @@ export class MagicKit {
     this.necronomiconKeyNavUsed = false; this.necronomiconLastPick = 0;
 
     if (this.aimCountdownLabel) { this.aimCountdownLabel.destroy(); this.aimCountdownLabel = null; }
+    if (this.aimCountdownRing) { this.aimCountdownRing.destroy(); this.aimCountdownRing = null; }
     this.aimCountdownEnd = 0; this.aimCountdownFired = false;
 
     this.crosshairs = [];
@@ -1338,8 +1342,27 @@ export class MagicKit {
     // ── Aim countdown label ───────────────────────────────────────────
     if (this.aimCountdownLabel?.active) {
       const remaining = Math.max(0, (this.aimCountdownEnd - time) / 1000);
-      this.aimCountdownLabel.setText(`✨ ${remaining.toFixed(1)}`);
+      this.aimCountdownLabel.setText(remaining.toFixed(1));
       this.aimCountdownLabel.setPosition(this.api.player.x, this.api.player.y - 54);
+      const ring = this.aimCountdownRing;
+      if (ring?.active) {
+        const left = Phaser.Math.Clamp(remaining / 2, 0, 1);
+        const rx = this.api.player.x, ry = this.api.player.y - 54;
+        ring.clear();
+        ring.fillStyle(MAGIC.ink, 0.55);
+        ring.fillCircle(rx, ry, 21);
+        ring.lineStyle(3, MAGIC.violet, 0.6);
+        ring.strokeCircle(rx, ry, 19);
+        ring.lineStyle(3, MAGIC.orchid, 0.95);
+        ring.beginPath();
+        ring.arc(rx, ry, 19, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * left, false);
+        ring.strokePath();
+        for (let k = 0; k < 6; k++) {
+          const a = time / 600 + (k / 6) * Math.PI * 2;
+          ring.fillStyle(MAGIC.blush, 0.85);
+          ring.fillCircle(rx + Math.cos(a) * 24, ry + Math.sin(a) * 24, 1.3);
+        }
+      }
     }
 
     // ── Reposition open menus ─────────────────────────────────────────
@@ -2068,26 +2091,86 @@ export class MagicKit {
       if (!this.darknessBarGfx) {
         this.darknessBarGfx = this.api.scene.add.graphics().setDepth(25);
         this.darknessBarText = this.api.scene.add.text(0, 0, '', {
-          fontSize: '9px', color: '#cc88ff', fontFamily: 'Arial',
-          stroke: '#000000', strokeThickness: 2,
+          fontSize: '9px', color: '#e8c8ff', fontFamily: FONT_UI, fontStyle: 'bold',
+          stroke: '#1a0a2e', strokeThickness: 3,
         }).setDepth(26).setOrigin(0.5, 1);
       }
-      const bx = this.api.player.x - 30;
-      const by = this.api.player.y + 40;
-      const barW = 60; const barH = 6;
-      this.darknessBarGfx.clear();
-      this.darknessBarGfx.fillStyle(0x111111, 0.65);
-      this.darknessBarGfx.fillRect(bx, by, barW, barH);
-      const fillColor = this.darkness >= 75 ? 0xff0000 : this.darkness >= 40 ? 0x880088 : 0x550066;
-      this.darknessBarGfx.fillStyle(fillColor, 0.9);
-      this.darknessBarGfx.fillRect(bx, by, barW * (this.darkness / 100), barH);
-      this.darknessBarText?.setPosition(this.api.player.x, by - 1);
+      this.drawDarknessPhial(time);
       this.darknessBarText?.setText(`☠ ${Math.round(this.darkness)}/100`);
     }
 
     this.paintWorld(time);
     this.updateAuras(time, delta);
     this.updateAvatars(delta);
+  }
+
+  /**
+   * The Darkness meter as a corked crystal phial lying under the caster's feet: a leather-and-
+   * brass cradle, glass that fills with swirling void ink (plum, then magenta, then blood red past
+   * 75), bubbles rising through it, and a skull seal on the cork. Same 0–100 read as before.
+   */
+  private drawDarknessPhial(time: number): void {
+    const g = this.darknessBarGfx;
+    if (!g) return;
+    const t = time / 1000;
+    const cx = this.api.player.x;
+    const by = this.api.player.y + 40;
+    const bx = cx - 30;
+    const barW = 60, barH = 7;
+    const frac = Phaser.Math.Clamp(this.darkness / 100, 0, 1);
+    const hot = this.darkness >= 75;
+    const fill = hot ? MAGIC.blood : this.darkness >= 40 ? MAGIC.magenta : MAGIC.darkPlum;
+    g.clear();
+    // cradle shadow + leather strap
+    g.fillStyle(MAGIC.ink, 0.55);
+    g.fillRoundedRect(bx - 4, by - 2, barW + 12, barH + 4, 4);
+    // glass body
+    g.fillStyle(MAGIC.voidInk, 0.85);
+    g.fillRoundedRect(bx, by, barW, barH, 3.5);
+    if (frac > 0) {
+      const fw = Math.max(3, barW * frac);
+      if (hot) {
+        g.fillStyle(MAGIC.blood, 0.25 + 0.15 * Math.sin(t * 8));
+        g.fillRoundedRect(bx - 2, by - 2, fw + 4, barH + 4, 4);
+      }
+      g.fillStyle(fill, 0.95);
+      g.fillRoundedRect(bx, by, fw, barH, 3.5);
+      // swirl: two darker eddies sliding along the ink
+      g.fillStyle(MAGIC.voidInk, 0.45);
+      for (let k = 0; k < 2; k++) {
+        const sx = bx + ((t * 14 + k * 30) % Math.max(1, fw));
+        g.fillEllipse(sx, by + barH / 2, 8, 3);
+      }
+      // rising bubbles
+      g.fillStyle(MAGIC.orchid, 0.75);
+      for (let k = 0; k < 3; k++) {
+        const ph = (t * 0.9 + k / 3) % 1;
+        const px = bx + 4 + ((k * 37) % Math.max(4, fw - 6));
+        if (px < bx + fw - 2) g.fillCircle(px, by + barH - 1 - ph * (barH - 2), 0.9 + ph * 0.6);
+      }
+    }
+    // glass highlight + rim
+    g.fillStyle(MAGIC.white, 0.28);
+    g.fillRect(bx + 3, by + 1.2, barW - 6, 1.2);
+    g.lineStyle(1.2, MAGIC.lilac, 0.75);
+    g.strokeRoundedRect(bx, by, barW, barH, 3.5);
+    // brass end-caps and the cork with its skull seal
+    g.fillStyle(MAGIC.brass, 1);
+    g.fillRect(bx - 3, by - 1, 3, barH + 2);
+    g.fillStyle(MAGIC.stone, 1);
+    g.fillRoundedRect(bx + barW, by + 0.5, 6, barH - 1, 1.5);
+    g.fillStyle(MAGIC.parchment, 0.95);
+    g.fillCircle(bx + barW + 9, by + barH / 2, 3.4);
+    g.fillStyle(MAGIC.ink, 1);
+    g.fillCircle(bx + barW + 8, by + barH / 2 - 0.6, 0.8);
+    g.fillCircle(bx + barW + 10, by + barH / 2 - 0.6, 0.8);
+    g.fillRect(bx + barW + 8.4, by + barH / 2 + 1.2, 1.2, 1);
+    // quarter ticks
+    g.lineStyle(1, MAGIC.parchment, 0.4);
+    for (const q of [0.25, 0.5, 0.75]) {
+      g.beginPath(); g.moveTo(bx + barW * q, by + barH - 2); g.lineTo(bx + barW * q, by + barH); g.strokePath();
+    }
+    this.darknessBarText?.setPosition(cx, by - 1);
   }
 
   /**
@@ -2421,8 +2504,10 @@ export class MagicKit {
     const lblObjs: Phaser.GameObjects.Text[] = [];
     for (let i = 0; i < count; i++) {
       const { x: lx, y: ly } = MagicFx.wheelLabelPos(cx, cy, R, i, count, selectedIndex);
-      const t = this.api.scene.add.text(lx, ly, labels[i], { fontSize: '10px', color: '#ffffff', fontFamily: 'Arial', align: 'center', wordWrap: { width: 72 } })
-        .setOrigin(0.5, 0.5).setDepth(32);
+      const t = this.api.scene.add.text(lx, ly, labels[i], {
+        fontSize: '11px', color: '#fff4e0', fontFamily: FONT_UI, fontStyle: 'bold', align: 'center',
+        wordWrap: { width: 72 }, stroke: '#1a0a2e', strokeThickness: 3,
+      }).setOrigin(0.5, 0.5).setDepth(32);
       lblObjs.push(t);
     }
     if (slot === 'grimoire') {
@@ -2484,14 +2569,17 @@ export class MagicKit {
   private _spawnAimCountdown(onFire: () => void): void {
     const DELAY = 2000;
     if (this.aimCountdownLabel) { this.aimCountdownLabel.destroy(); }
-    this.aimCountdownLabel = this.api.scene.add.text(this.api.player.x, this.api.player.y - 54, '✨ 2.0', {
-      fontSize: '18px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#cc99ff',
-      stroke: '#220044', strokeThickness: 3,
+    if (this.aimCountdownRing) { this.aimCountdownRing.destroy(); }
+    this.aimCountdownRing = this.api.scene.add.graphics().setDepth(29);
+    this.aimCountdownLabel = this.api.scene.add.text(this.api.player.x, this.api.player.y - 54, '2.0', {
+      fontSize: '17px', fontFamily: FONT_DISPLAY, color: '#f0dcff',
+      stroke: '#2a0a4a', strokeThickness: 4,
     }).setOrigin(0.5).setDepth(30);
     this.aimCountdownEnd = this.api.scene.sys.game.loop.now + DELAY;
     this.aimCountdownFired = false;
     this.api.scene.time.delayedCall(DELAY, () => {
       if (this.aimCountdownLabel) { this.aimCountdownLabel.destroy(); this.aimCountdownLabel = null; }
+      if (this.aimCountdownRing) { this.aimCountdownRing.destroy(); this.aimCountdownRing = null; }
       onFire();
     });
   }

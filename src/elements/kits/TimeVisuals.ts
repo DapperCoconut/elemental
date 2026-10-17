@@ -730,13 +730,56 @@ export class TimeFx extends FxBase {
     const beat = 0.85 + 0.15 * Math.sin(t * 6);
     const rim = failed ? TIME.heat : tones.lit;
 
-    // The face it is all drawn on, so the arcs are not floating over the arena floor.
-    g.fillStyle(tint(TIME.night), 0.55);
-    g.fillCircle(x, y + 1.5, radius * 1.06);
-    g.fillStyle(tint(failed ? 0x4a1a08 : tones.shell), 0.82);
+    // A brass pocket watch: bow and crown on top, a knurled case, then the dark enamel face the
+    // arcs are laid on so they never float over the arena floor.
+    const caseR = radius * 1.2;
+    const caseCol = failed ? 0x8a2a10 : tones === FROZEN_TONES ? TIME.steel : TIME.brass;
+    g.fillStyle(tint(TIME.night), 0.5);
+    g.fillCircle(x + 1, y + 2.5, caseR + 1);
+    // Bow (ring) and winding crown.
+    g.lineStyle(2.2, tint(caseCol), 0.95);
+    g.strokeCircle(x, y - caseR - radius * 0.34, radius * 0.22);
+    g.fillStyle(tint(caseCol), 1);
+    g.fillRoundedRect(x - radius * 0.2, y - caseR - radius * 0.2, radius * 0.4, radius * 0.3, 1.5);
+    g.fillStyle(tint(TIME.pale), 0.6);
+    g.fillRect(x - radius * 0.12, y - caseR - radius * 0.17, radius * 0.08, radius * 0.24);
+    // Case: dark rim, brass body, a lit upper-left bevel.
+    g.fillStyle(tint(TIME.night), 1);
+    g.fillCircle(x, y, caseR);
+    g.fillStyle(tint(caseCol), 1);
+    g.fillCircle(x, y, caseR - 1);
+    g.lineStyle(1.6, tint(TIME.pale), 0.55);
+    g.beginPath();
+    g.arc(x, y, caseR - 1.6, Math.PI * 0.95, Math.PI * 1.6, false);
+    g.strokePath();
+    g.lineStyle(1.4, tint(TIME.night), 0.5);
+    g.beginPath();
+    g.arc(x, y, caseR - 1.6, Math.PI * 1.95, Math.PI * 2.6, false);
+    g.strokePath();
+    // Knurling round the case edge.
+    for (let i = 0; i < 36; i++) {
+      const a = (i / 36) * TAU;
+      g.lineStyle(0.8, tint(TIME.night), 0.35);
+      g.beginPath();
+      g.moveTo(x + Math.cos(a) * (caseR - 2.4), y + Math.sin(a) * (caseR - 2.4));
+      g.lineTo(x + Math.cos(a) * (caseR - 0.6), y + Math.sin(a) * (caseR - 0.6));
+      g.strokePath();
+    }
+    g.fillStyle(tint(TIME.night), 0.95);
+    g.fillCircle(x, y, radius + 0.8);
+    g.fillStyle(tint(failed ? 0x4a1a08 : tones.shell), 0.96);
     g.fillCircle(x, y, radius);
     g.lineStyle(2, tint(rim), 0.75 * beat);
     g.strokeCircle(x, y, radius);
+    // Small seconds sub-dial at six o'clock, always running.
+    const sdY = y + radius * 0.42;
+    g.lineStyle(0.8, tint(rim), 0.4);
+    g.strokeCircle(x, sdY, radius * 0.2);
+    g.lineStyle(0.9, tint(TIME.pale), 0.7);
+    g.beginPath();
+    g.moveTo(x, sdY);
+    g.lineTo(x + Math.cos(t * 6) * radius * 0.17, sdY + Math.sin(t * 6) * radius * 0.17);
+    g.strokePath();
 
     // Hour ticks around the bezel — the same twelve the rest of Time's art uses.
     for (let i = 0; i < 12; i++) {
@@ -787,6 +830,48 @@ export class TimeFx extends FxBase {
     g.fillCircle(x, y, radius * 0.13);
     g.fillStyle(tint(TIME.white), 0.9);
     g.fillCircle(x + Math.cos(hand) * radius * 0.9, y + Math.sin(hand) * radius * 0.9, radius * 0.09);
+    // Crystal glint across the glass.
+    g.fillStyle(tint(TIME.white), 0.16);
+    g.fillEllipse(x - radius * 0.35, y - radius * 0.45, radius * 0.9, radius * 0.38);
+  }
+
+  /**
+   * A "WANTED" handbill pinned over a marked fighter, sized to the label text laid on it: torn
+   * parchment, a nail at the top, a red ink rule under the header, and a gentle sway.
+   */
+  static drawBountyTag(
+    g: Phaser.GameObjects.Graphics, tint: TimeColorFn, x: number, y: number,
+    w: number, h: number, t: number, alpha = 1,
+  ): void {
+    const sway = Math.sin(t * 2.4) * 0.8;
+    const l = x - w / 2 + sway, r = x + w / 2 + sway, top = y - h / 2, bot = y + h / 2;
+    g.fillStyle(tint(TIME.night), 0.45 * alpha);
+    g.fillRect(l + 1.5, top + 2, w, h);
+    // Paper with ragged bottom edge.
+    g.fillStyle(tint(0xe8d3a0), 0.97 * alpha);
+    g.beginPath();
+    g.moveTo(l, top);
+    g.lineTo(r, top);
+    g.lineTo(r, bot - 1);
+    const teeth = Math.max(4, Math.round(w / 5));
+    for (let i = teeth; i >= 0; i--) {
+      g.lineTo(l + (i / teeth) * w, bot + (i % 2 === 0 ? 1.5 : -1));
+    }
+    g.closePath();
+    g.fillPath();
+    // Aged edges and a corner stain.
+    g.lineStyle(1, tint(0x8a6a3a), 0.7 * alpha);
+    g.strokeRect(l + 1.5, top + 1.5, w - 3, h - 3);
+    g.fillStyle(tint(0xb08850), 0.25 * alpha);
+    g.fillCircle(r - 4, top + 4, 3.5);
+    // Red rule under the header line.
+    g.fillStyle(tint(0x8a1a10), 0.75 * alpha);
+    g.fillRect(l + 4, y - 0.5, w - 8, 1);
+    // Nail.
+    g.fillStyle(tint(TIME.gun), alpha);
+    g.fillCircle(x + sway, top + 1, 2);
+    g.fillStyle(tint(TIME.steel), alpha);
+    g.fillCircle(x + sway - 0.5, top + 0.5, 0.8);
   }
 
   /**
@@ -1029,9 +1114,10 @@ const TIME_AVATAR: AvatarSpec = {
  * brass fists, a pair of eyes, and the gunslinger's wide-brim hat over the crown. The hat is the
  * only costume — the body alone says "time".
  *
- * Mastery enhances what is already there rather than adding to it: the hat grows taller with a
- * gilded band and a lit crown edge, the eyes go white, the fists gain a wider corona and a hard
- * rim, and the under-glow brightens.
+ * The orb carries an engraved chapter ring and a pocket-watch chain; each fist has a ticking
+ * clock hand on the knuckle. Mastery adds regalia on top: a taller gilded hat with a sheriff's
+ * star, a Roman bezel turning behind the crown, a gold clock ring underfoot, an opened watch
+ * fob, white eyes and wide rimmed coronas on the fists.
  */
 export class TimeAvatar extends BaseAvatar {
   private fx: TimeFx;
@@ -1067,13 +1153,15 @@ export class TimeAvatar extends BaseAvatar {
 
   /**
    * Mastery tell — white eyes and a wide corona with a hard rim on each fist; `drawExtras`
-   * enlarges and gilds the hat. Shape changes, not just a tint — a tint alone vanishes at play zoom.
+   * enlarges and gilds the hat, pins a sheriff's star to its band and hangs a spinning Roman
+   * bezel behind the crown; `drawGlow` lays a slow gold clock ring on the ground. Shape changes,
+   * not just a tint — a tint alone vanishes at play zoom.
    */
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? TIME.white : TIME.pale);
     this.forEachHandLayer(0, (halo) => {
-      halo.setRadius(on ? 13.5 : 10);
-      halo.setFillStyle(this.tint(on ? this.tones.lit : TIME.brass), on ? 0.32 : 0.28);
+      halo.setRadius(on ? 14.5 : 10);
+      halo.setFillStyle(this.tint(on ? this.tones.lit : TIME.brass), on ? 0.36 : 0.28);
     });
     this.forEachHandLayer(1, (shell) => {
       if (on) shell.setStrokeStyle(1.5, this.tint(TIME.pale), 0.9);
@@ -1099,6 +1187,72 @@ export class TimeAvatar extends BaseAvatar {
     g.fillCircle(x, y, 28 * k * pulse);
     g.fillStyle(this.tint(tones.shell), a * 0.2 * k);
     g.fillEllipse(x, y + 8, 36 * k, 14 * k);
+
+    if (this.mastered) {
+      // A gilded clock face laid flat under the boots, its twelve studs creeping round.
+      const cy = y + 12;
+      const spin = this.frozen ? 0 : this.t * 0.4;
+      g.lineStyle(2, this.tint(tones.lit), a * 0.7);
+      g.strokeEllipse(x, cy, 64, 22);
+      g.lineStyle(1, this.tint(tones.hot), a * 0.45);
+      g.strokeEllipse(x, cy, 54, 18);
+      for (let i = 0; i < 12; i++) {
+        const ang = spin + (i / 12) * TAU;
+        const big = i % 3 === 0;
+        g.fillStyle(this.tint(big ? tones.hot : tones.lit), a * (big ? 0.95 : 0.6));
+        g.fillCircle(x + Math.cos(ang) * 32, cy + Math.sin(ang) * 11, big ? 1.9 : 1.1);
+      }
+    }
+  }
+
+  /**
+   * Engraving on the brass orb: a fine chapter ring round the rim with twelve hour studs, and a
+   * pocket-watch chain swagged across the belly to a fob at the hip. Mastered, the chain turns
+   * gold and the fob opens into a lit little watch face. Kept to the rim and the lower half so
+   * the eyes stay clear.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
+    const tones = this.activeTones();
+    const m = this.mastered;
+    g.lineStyle(1, this.tint(tones.shell), 0.45 * alpha);
+    g.strokeCircle(x, y, 17.5);
+    for (let i = 0; i < 12; i++) {
+      const ang = (i / 12) * TAU - Math.PI / 2;
+      const big = i % 3 === 0;
+      const r0 = big ? 14.6 : 15.8;
+      g.lineStyle(big ? 1.6 : 0.9, this.tint(big ? tones.shell : tones.body), (big ? 0.7 : 0.5) * alpha);
+      g.beginPath();
+      g.moveTo(x + Math.cos(ang) * r0, y + Math.sin(ang) * r0);
+      g.lineTo(x + Math.cos(ang) * 17.3, y + Math.sin(ang) * 17.3);
+      g.strokePath();
+    }
+    // Watch chain: a sagging run of links from the left flank to a fob low on the right.
+    const sway = Math.sin(this.t * 2.2) * 1.2;
+    const chain = m ? tones.hot : TIME.steel;
+    for (let i = 0; i <= 7; i++) {
+      const u = i / 7;
+      const cx = x - 12 + u * 22;
+      const cy = y + 5 + Math.sin(u * Math.PI) * 6 + sway * u;
+      g.fillStyle(this.tint(TIME.night), 0.5 * alpha);
+      g.fillCircle(cx, cy + 0.7, 1.35);
+      g.fillStyle(this.tint(chain), 0.95 * alpha);
+      g.fillCircle(cx, cy, 1.15);
+    }
+    const fx = x + 10, fy = y + 9 + sway;
+    g.fillStyle(this.tint(tones.shell), 0.95 * alpha);
+    g.fillCircle(fx, fy, m ? 4.4 : 3.4);
+    g.fillStyle(this.tint(m ? tones.lit : tones.body), alpha);
+    g.fillCircle(fx, fy, m ? 3.5 : 2.5);
+    if (m) {
+      g.fillStyle(this.tint(TIME.pale), alpha);
+      g.fillCircle(fx, fy, 2.5);
+      g.lineStyle(0.9, this.tint(TIME.night), 0.9 * alpha);
+      const hand = this.frozen ? -1 : this.t * 3;
+      g.beginPath();
+      g.moveTo(fx, fy);
+      g.lineTo(fx + Math.cos(hand) * 2.2, fy + Math.sin(hand) * 2.2);
+      g.strokePath();
+    }
   }
 
   /**
@@ -1143,5 +1297,61 @@ export class TimeAvatar extends BaseAvatar {
     g.moveTo(cx - 9 * scale, brimY - crownH + 2);
     g.lineTo(cx + 9 * scale, brimY - crownH + 2);
     g.strokePath();
+    // Band buckle — a small brass square on every hat.
+    g.fillStyle(this.tint(m ? tones.hot : tones.lit), 0.95 * alpha);
+    g.fillRect(cx + 5 * scale, brimY - 5.2 * scale, 3.6 * scale, 3.8 * scale);
+    g.fillStyle(this.tint(tones.shell), 0.9 * alpha);
+    g.fillRect(cx + 6 * scale, brimY - 4.2 * scale, 1.6 * scale, 1.8 * scale);
+
+    // Knuckle detail on each fist: a tiny clock hand ticking round the brass.
+    for (let i = 0; i < 2; i++) {
+      const hx = this.armX[i], hy = this.armY[i];
+      const ang = this.frozen ? -Math.PI / 2 : this.t * (i === 0 ? 2 : -2) + i;
+      g.fillStyle(this.tint(tones.shell), 0.85 * alpha);
+      timeHand(g, hx, hy, ang, 4.6, 0.75, 0.25);
+      g.fillStyle(this.tint(TIME.night), 0.9 * alpha);
+      g.fillCircle(hx, hy, 0.9);
+    }
+
+    if (!m) return;
+
+    // Sheriff's star pinned on the band.
+    const sx = cx - 4 * scale, sy = brimY - 3.2 * scale;
+    const sr = 4.4 * scale;
+    g.fillStyle(this.tint(TIME.night), 0.6 * alpha);
+    this.star(g, sx + 0.6, sy + 0.8, sr, 5);
+    g.fillStyle(this.tint(tones.hot), alpha);
+    this.star(g, sx, sy, sr, 5);
+    g.fillStyle(this.tint(TIME.white), 0.9 * alpha);
+    g.fillCircle(sx - 0.6, sy - 0.8, 1.1 * scale);
+
+    // A Roman bezel turning behind the crown — a halo made of a clock.
+    const bx = cx, by = brimY - crownH - 5 * scale;
+    const br = 9 * scale;
+    const spin = this.frozen ? 0 : this.t * 0.9;
+    g.lineStyle(2, this.tint(tones.lit), 0.85 * a);
+    g.beginPath();
+    g.arc(bx, by, br, Math.PI * 0.95, Math.PI * 2.05, false);
+    g.strokePath();
+    for (let i = 0; i < 7; i++) {
+      const ang = Math.PI + (i / 6) * Math.PI;
+      const pulse = 0.6 + 0.4 * Math.sin(spin * 3 - i * 0.9);
+      g.fillStyle(this.tint(i === 3 ? TIME.white : tones.hot), pulse * alpha);
+      g.fillCircle(bx + Math.cos(ang) * br, by + Math.sin(ang) * br, i === 3 ? 2 : 1.3);
+    }
+    g.fillStyle(this.tint(tones.hot), 0.95 * alpha);
+    timeHand(g, bx, by + br * 0.35, -Math.PI / 2 + Math.sin(spin) * 0.6, br * 0.8, 1.1, 0.15);
+  }
+
+  private star(g: Phaser.GameObjects.Graphics, x: number, y: number, r: number, n: number): void {
+    g.beginPath();
+    for (let i = 0; i < n * 2; i++) {
+      const rr = i % 2 === 0 ? r : r * 0.45;
+      const ang = -Math.PI / 2 + (i / (n * 2)) * TAU;
+      const px = x + Math.cos(ang) * rr, py = y + Math.sin(ang) * rr;
+      if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
+    }
+    g.closePath();
+    g.fillPath();
   }
 }

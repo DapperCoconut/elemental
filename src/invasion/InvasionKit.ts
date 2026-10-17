@@ -253,6 +253,8 @@ interface HuskShot {
   homing?: boolean;
   /** Contact radius; boss orbs are fatter than a spitter's gob. */
   hitRadius?: number;
+  /** Blessed by Devotion's Disarming Words: already slowed and softened, never twice. */
+  disarmed?: boolean;
   /** Who fired it — Gold's Midas Curse turns a cursed husk's shots into coins. */
   from?: Husk;
 }
@@ -1418,6 +1420,26 @@ export class InvasionKit implements HuskWorld, EffectWorld {
     for (const s of this.shots) {
       if (Phaser.Math.Distance.Between(s.gfx.x, s.gfx.y, x, y) > r) continue;
       out.push({ key: s, from: s.from ?? null });
+    }
+    return out;
+  }
+
+  /**
+   * Devotion's Disarming Words: every husk shot within `r` of the point that has not been blessed
+   * yet turns gold, slows and softens. Returns where each one was, for the kit's sparkle.
+   */
+  disarmShotsNear(
+    x: number, y: number, r: number, damageMult: number, speedMult: number, color: number,
+  ): { x: number; y: number }[] {
+    const out: { x: number; y: number }[] = [];
+    for (const s of this.shots) {
+      if (s.disarmed || Phaser.Math.Distance.Between(s.gfx.x, s.gfx.y, x, y) > r) continue;
+      s.disarmed = true;
+      s.damage *= damageMult;
+      s.vx *= speedMult;
+      s.vy *= speedMult;
+      s.gfx.setFillStyle(color, 1);
+      out.push({ x: s.gfx.x, y: s.gfx.y });
     }
     return out;
   }

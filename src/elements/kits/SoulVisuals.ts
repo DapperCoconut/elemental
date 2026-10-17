@@ -1630,6 +1630,20 @@ export class SoulAvatar extends BaseAvatar {
     g.fillEllipse(x, y + 7, 54 * this.intensity, 26 * this.intensity);
     g.fillStyle(this.tint(this.tones.body), a * 0.22 * this.intensity);
     g.fillEllipse(x, y + 5, 38 * this.intensity, 19 * this.intensity);
+    if (this.mastered && !this.ascended) {
+      // Mastered: a necromancer's rune circle turning slowly on the ground.
+      const rx = 33 * this.intensity, ry = 15 * this.intensity, cy = y + 8;
+      g.lineStyle(1.6, this.tint(this.tones.core), a * 0.75);
+      g.strokeEllipse(x, cy, rx * 2, ry * 2);
+      g.lineStyle(1, this.tint(this.tones.glow), a * 0.5);
+      g.strokeEllipse(x, cy, rx * 1.6, ry * 1.6);
+      for (let i = 0; i < 8; i++) {
+        const u = this.t * 0.6 + (i / 8) * TAU;
+        const px = x + Math.cos(u) * rx * 0.9, py = cy + Math.sin(u) * ry * 0.9;
+        g.fillStyle(this.tint(i % 2 ? SOUL.white : this.tones.core), a * 0.9);
+        g.fillRect(px - 1, py - 2, 2, 4);
+      }
+    }
     for (let i = 0; i < 5; i++) {
       const ang = -Math.PI / 2 + Math.sin(this.t * 0.7 + i * 1.3) * 0.5;
       const ox = (i - 2) * 8.5;
@@ -1683,7 +1697,7 @@ export class SoulAvatar extends BaseAvatar {
   /** Ascended: a gold body over the sprite, under the eyes — the whole character turns golden. */
   protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void a;
-    if (!this.ascended) return;
+    if (!this.ascended) { this.drawShroud(g, x, y, alpha); return; }
     const k = this.ascendT;
     g.fillStyle(this.tint(SOUL.bronze), alpha * k);
     g.fillCircle(x, y, 21);
@@ -1697,7 +1711,96 @@ export class SoulAvatar extends BaseAvatar {
     g.strokeCircle(x, y, 20.5);
   }
 
+  /**
+   * The grave-shroud: a tattered dark hem across the lower body with a stitched trim. Mastered,
+   * the trim burns white and a soul sigil — a ringed eye with three rays — glows on the chest
+   * below the face band.
+   */
+  private drawShroud(g: Phaser.GameObjects.Graphics, x: number, y: number, alpha: number): void {
+    const top = y + 6;
+    const pts: Array<[number, number]> = [];
+    const N = 12;
+    for (let i = 0; i <= N; i++) {
+      const ang = (20 + (i / N) * 140) * (Math.PI / 180);
+      const sway = Math.sin(this.t * 3 + i * 1.3) * 0.8;
+      const r = (i % 2 ? 21 : 18) + sway;
+      pts.push([x + Math.cos(ang) * r, y + Math.max(6.5, Math.sin(ang) * r)]);
+    }
+    g.fillStyle(this.tint(this.tones.shroud), alpha * 0.72);
+    g.beginPath();
+    g.moveTo(x + 20.5, top);
+    for (const [px, py] of pts) g.lineTo(px, py);
+    g.lineTo(x - 20.5, top);
+    g.closePath();
+    g.fillPath();
+    // Stitched trim along the top of the hem.
+    g.lineStyle(1.2, this.tint(this.mastered ? SOUL.white : this.tones.glow), alpha * (this.mastered ? 0.85 : 0.5));
+    g.lineBetween(x - 20, top, x + 20, top);
+    for (let sx = -17; sx <= 17; sx += 4.25) {
+      g.lineBetween(x + sx - 1, top - 1.5, x + sx + 1, top + 1.5);
+    }
+    // Two hanging tatters.
+    for (const side of [-1, 1]) {
+      const sw = Math.sin(this.t * 2.6 + side) * 1.5;
+      g.fillStyle(this.tint(this.tones.body), alpha * 0.6);
+      g.fillTriangle(x + side * 9 - 2, top + 2, x + side * 9 + 2, top + 2, x + side * 10 + sw, top + 13);
+    }
+    if (this.mastered) {
+      const pulse = 0.55 + 0.45 * Math.sin(this.t * 3.5);
+      const sy = y + 13;
+      g.fillStyle(this.tint(this.tones.core), alpha * 0.35 * pulse);
+      g.fillCircle(x, sy, 6.5);
+      g.lineStyle(1.3, this.tint(SOUL.white), alpha * (0.6 + pulse * 0.4));
+      g.strokeCircle(x, sy, 4);
+      g.fillStyle(this.tint(SOUL.white), alpha);
+      g.fillEllipse(x, sy, 4, 2.2);
+      g.fillStyle(this.tint(SOUL.void), alpha);
+      g.fillCircle(x, sy, 0.9);
+      for (const ra of [-Math.PI / 2, Math.PI / 6, (5 * Math.PI) / 6]) {
+        g.lineBetween(x + Math.cos(ra) * 5, sy + Math.sin(ra) * 5, x + Math.cos(ra) * 7.5, sy + Math.sin(ra) * 7.5);
+      }
+    }
+  }
+
+  /**
+   * The Lantern of the Damned, hung off the right hand on a short chain. A soul flame flickers
+   * in the cage; mastered, the cage is gilded and the flame burns white-hot inside a wide halo.
+   */
+  private drawLantern(g: Phaser.GameObjects.Graphics, alpha: number): void {
+    const hx = this.armX[1], hy = this.armY[1];
+    const sway = Math.sin(this.t * 2.2) * 2.2;
+    const lx = hx + sway, ly = hy + 12;
+    const m = this.mastered || this.ascended;
+    const metal = m ? SOUL.gold : SOUL.stone;
+    const metalHi = m ? SOUL.sun : SOUL.bone;
+    const flick = 0.75 + 0.25 * Math.sin(this.t * 13) * Math.sin(this.t * 7.3);
+    // Halo.
+    g.fillStyle(this.tint(m ? SOUL.halo : this.tones.glow), alpha * (m ? 0.3 : 0.18) * flick);
+    g.fillCircle(lx, ly + 1, m ? 13 : 8);
+    // Chain.
+    g.lineStyle(1, this.tint(metal), alpha * 0.9);
+    g.lineBetween(hx, hy + 3, lx, ly - 6);
+    // Cap and ring.
+    g.fillStyle(this.tint(metal), alpha);
+    g.fillTriangle(lx - 4.5, ly - 4, lx + 4.5, ly - 4, lx, ly - 7.5);
+    g.strokeCircle(lx, ly - 8, 1.4);
+    // Glass with flame.
+    g.fillStyle(this.tint(SOUL.void), alpha * 0.85);
+    g.fillRect(lx - 3.6, ly - 4, 7.2, 8.5);
+    g.fillStyle(this.tint(m ? SOUL.sun : this.tones.glow), alpha * flick);
+    g.fillEllipse(lx, ly + 0.5, 4.2, 6.5 * flick);
+    g.fillStyle(this.tint(SOUL.white), alpha * (m ? 1 : 0.7));
+    g.fillEllipse(lx, ly + 1.4, 1.8, 3);
+    // Cage bars and base.
+    g.lineStyle(1, this.tint(metalHi), alpha);
+    g.strokeRect(lx - 3.6, ly - 4, 7.2, 8.5);
+    g.lineBetween(lx, ly - 4, lx, ly + 4.5);
+    g.fillStyle(this.tint(metal), alpha);
+    g.fillRect(lx - 4.5, ly + 4.5, 9, 2);
+  }
+
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    this.drawLantern(g, alpha);
     if (this.ascended) {
       // The cowl is gone: a bright halo floats above the crown instead.
       const hy = y - 30 + Math.sin(this.t * 2) * 1.5;

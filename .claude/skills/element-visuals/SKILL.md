@@ -123,6 +123,10 @@ touch (one held item, or one face piece). Hands stay plain balls. A pirate is a 
 tricorn, not a coat, sash, beard, hook, cutlass and peg leg. The roster drifted into costumes
 once already and had to be stripped back across ~30 rigs — don't reintroduce it.
 
+**Loosened 2026-10-16:** the user found the stripped rigs too sparse. Modest secondary detail in
+the element's own language is now welcome — subtle body markings or texture, a small ornament,
+hand details — as long as the body colour still reads first and nothing becomes a costume.
+
 **A silhouette extra.** Fire gets a plume off the crown. Give yours the element's equivalent
 (dripping ribbons, a static halo, drifting leaves, a shadow shroud). **Draw it at `depth + 2`,
 over the sprite** — under it, only the dark tips clear the 22px body and it reads as a stray
@@ -152,9 +156,10 @@ Two separate axes. Do both.
 
 **The character** — `setMastered(on)` applies a permanent, silhouette-level upgrade, readable
 before a single cast. Fire's: white-hot eyes, a wider corona on each hand, a 30% taller plume.
-**Enhance what is already there — never add new objects** (no second hat, crown, orbiting
-props, drones, weapons). Grow or gild the accessory, widen the hand coronas, recolour the eyes,
-deepen the glow. It must still be a *shape* change, not just a brighter tint — a tint alone is
+It must be **unmistakable side by side** (2026-10-16: the user could not tell the forms apart).
+Mastery MAY add a piece only the mastered form has — a crown or halo, orbiting motes, an aura
+ring at the feet — on top of gilding the accessory, widening the hand coronas, recolouring the
+eyes and deepening the glow. Still no drones, extra weapons or costumes. It must still be a *shape* change, not just a brighter tint — a tint alone is
 invisible at gameplay zoom. Call it every frame from the kit's avatar update, passing
 the kit's `masteryActive` flag; the setter early-outs when unchanged, so this is free.
 
@@ -229,8 +234,8 @@ In the kit:
 - [ ] Eyes that track aim, blink, and narrow while casting
 - [ ] Silhouette extra drawn *over* the sprite, rooted at the crown
 - [ ] A gesture mapped to every ability, on both the player and the NPC rig
-- [ ] One-hue orb body; one accessory (+ at most one small secondary); plain ball hands
-- [ ] `setMastered` enhances existing features (bigger/gilded accessory, coronas, eyes) — adds no new objects
+- [ ] One-hue orb body reads first; one main accessory plus modest secondary detail; no costume
+- [ ] `setMastered` is unmistakable side by side (gilded accessory, coronas, eyes, plus a mastered-only piece such as a crown, halo or orbiting motes)
 - [ ] Upgraded abilities scale shards/smoke/duration/shake, not only radius
 - [ ] Every `add.circle` + scale-tween in the element replaced
 - [ ] ArenaScene net smaller

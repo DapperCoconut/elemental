@@ -557,9 +557,12 @@ const CLOTH_AVATAR: AvatarSpec = {
  * geometry the kit draws (and that the game hits), so the collar is the join between the two.
  * The one secondary touch is the **needle** held point-out in the right hand.
  *
- * Mastery enhances those two rather than adding to them: the collar gains a brass-stitched hem
- * and a band in the current outfit's colour (so a wardrobe change still shows on the rig), the
- * needle grows longer with a brass glint at its point, the hands get a wider corona and the eyes turn brass.
+ * The orb is wound like a ball of wool with two pins stuck in its flank, and the off hand
+ * wears a brass thimble trailing a loop of thread to the needle.
+ * Mastered: a golden thread circles the body with a needle stitching it round, a brass prize
+ * rosette pins the collar, the collar gains a brass-stitched hem and a band in the current
+ * outfit's colour, the needle grows longer with a brass glint, the hands get a wider brass
+ * corona and the eyes turn brass.
  */
 export class ClothAvatar extends BaseAvatar {
   /** 0–1 of the scarf bar. The under-shadow narrows as the ball unwinds. */
@@ -650,6 +653,31 @@ export class ClothAvatar extends BaseAvatar {
     g.fillStyle(this.tint(CLT.clothPale), alpha * 0.85);
     g.fillEllipse(x - 6.5, y - 8, 8, 5);
 
+    // A ball of wool: strands wound round the orb in three crossing directions, each a pale
+    // highlight over a dark groove, so the body reads as yarn rather than a plain sphere.
+    const spin = this.t * 0.15;
+    for (let i = 0; i < 7; i++) {
+      const tilt = spin + (i % 3) * (Math.PI / 3) + (i * 0.21);
+      const r = 8 + (i % 4) * 3.3;
+      const c = Math.cos(tilt), sn = Math.sin(tilt);
+      const arc = (rr: number, col: number, al: number, w: number) => {
+        g.lineStyle(w, this.tint(col), alpha * al);
+        g.beginPath();
+        for (let k = 0; k <= 10; k++) {
+          const u = Math.PI * 0.15 + (k / 10) * Math.PI * 0.7;
+          const ex = Math.cos(u) * rr, ey = Math.sin(u) * rr * 0.42;
+          const px = x + ex * c - ey * sn, py = y + 3 + ex * sn + ey * c;
+          if (k === 0) g.moveTo(px, py); else g.lineTo(px, py);
+        }
+        g.strokePath();
+      };
+      arc(r, CLT.clothRim, 0.35, 1.6);
+      arc(r - 0.8, CLT.clothLit, 0.35, 0.9);
+    }
+    // Two pins stuck in the ball's flank, brass heads catching the light (gold-tipped mastered).
+    pinGlyph(g, this.tint, x + 15, y + 9, Math.PI * 0.85, 11, alpha, { head: this.mastered ? 2.2 : 1.7 });
+    pinGlyph(g, this.tint, x + 17, y + 2, Math.PI * 1.05, 10, alpha, { head: this.mastered ? 2.2 : 1.7 });
+
     // The wardrobe change: a brief flash over the orb, so Space still reads on the body.
     if (this.swap > 0.01) {
       g.fillStyle(this.tint(CLT.clothPale), alpha * this.swap * 0.5);
@@ -697,6 +725,59 @@ export class ClothAvatar extends BaseAvatar {
       }
       g.fillStyle(this.tint(CLT.brassLit), alpha * (0.25 + 0.15 * Math.sin(this.t * 3)));
       g.fillEllipse(x + lean, crown - 2, 30, 6);
+    }
+
+    // ── A brass thimble on the off hand ──
+    {
+      const tx = this.armX[0], ty = this.armY[0] - 3;
+      g.fillStyle(this.tint(CLT.brassDark), alpha);
+      g.fillRoundedRect(tx - 4, ty - 5, 8, 8, { tl: 4, tr: 4, bl: 1, br: 1 });
+      g.fillStyle(this.tint(m ? CLT.brassLit : CLT.brass), alpha);
+      g.fillRoundedRect(tx - 3.2, ty - 4.4, 6.4, 6.8, { tl: 3.2, tr: 3.2, bl: 1, br: 1 });
+      g.fillStyle(this.tint(CLT.brassDark), alpha * 0.7);
+      for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) g.fillCircle(tx - 1.8 + i * 1.8, ty - 2.4 + j * 1.8, 0.45);
+      g.fillStyle(this.tint(CLT.steelLit), alpha * 0.7);
+      g.fillRect(tx - 2.6, ty - 3.6, 1, 4);
+      // A trailing loop of thread from thimble to needle.
+      g.lineStyle(0.9, this.tint(m ? CLT.brassLit : CLT.clothPale), alpha * 0.6);
+      g.beginPath();
+      const hx2 = this.armX[1], hy2 = this.armY[1];
+      for (let k = 0; k <= 8; k++) {
+        const u = k / 8;
+        const px = tx + (hx2 - tx) * u;
+        const py = ty + (hy2 - ty) * u + Math.sin(u * Math.PI) * (10 + Math.sin(this.t * 2) * 2);
+        if (k === 0) g.moveTo(px, py); else g.lineTo(px, py);
+      }
+      g.strokePath();
+    }
+
+    // Mastered only: a golden thread circling the body, a needle stitching it round, and a
+    // prize rosette pinned to the collar.
+    if (m) {
+      const head = this.t * 2.2;
+      const R = 27, RY = 9, cyo = y + 6;
+      for (let k = 0; k < 18; k++) {
+        const u0 = head - k * 0.22, u1 = u0 - 0.13;
+        const front = Math.sin(u0) > 0;
+        g.lineStyle(front ? 1.6 : 1, this.tint(CLT.brassLit), alpha * (1 - k / 18) * (front ? 0.95 : 0.4));
+        g.lineBetween(x + Math.cos(u0) * R, cyo + Math.sin(u0) * RY, x + Math.cos(u1) * R, cyo + Math.sin(u1) * RY);
+      }
+      const nx = x + Math.cos(head) * R, ny = cyo + Math.sin(head) * RY;
+      pinGlyph(g, this.tint, nx, ny, head + Math.PI / 2, 10, alpha, { head: 1.4 });
+      // Rosette.
+      const rx = x + lean - 10, ry = crown + 4;
+      g.fillStyle(this.tint(CLT.clothDeep), alpha);
+      g.fillTriangle(rx - 3, ry, rx - 1, ry, rx - 4, ry + 9);
+      g.fillTriangle(rx + 1, ry, rx + 3, ry, rx + 4, ry + 9);
+      for (let i = 0; i < 10; i++) {
+        const ang = (i / 10) * Math.PI * 2 + this.t * 0.5;
+        g.fillStyle(this.tint(i % 2 ? CLT.brass : CLT.brassLit), alpha);
+        g.fillCircle(rx + Math.cos(ang) * 4, ry + Math.sin(ang) * 4, 2);
+      }
+      g.fillStyle(this.tint(OUTFIT_COLOR[this.outfit]), alpha);
+      g.fillCircle(rx, ry, 2.6);
+      g.fillStyle(this.tint(CLT.steelLit), alpha * 0.8);
+      g.fillCircle(rx - 0.8, ry - 0.8, 0.8);
     }
 
     // ── The needle, in the right hand ──

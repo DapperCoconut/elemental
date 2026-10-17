@@ -912,6 +912,65 @@ export class MetalAvatar extends BaseAvatar {
     const k = this.intensity * (this.mastered ? 1.15 : 1);
     g.fillStyle(this.tint(this.mastered ? METAL.gore : this.accent), a * (this.mastered ? 0.26 : 0.16) * k);
     g.fillCircle(x, y, 28 * k);
+    // Mastered: a slow ring of blood drops circling at the feet, like a clot forming.
+    if (this.mastered) {
+      g.lineStyle(1.4, this.tint(METAL.crimson), a * 0.55);
+      g.strokeEllipse(x, y + 14, 50, 15);
+      for (let i = 0; i < 8; i++) {
+        const oa = this.t * 0.9 + (i / 8) * Math.PI * 2;
+        g.fillStyle(this.tint(i % 2 ? METAL.blood : METAL.rose), a * 0.9);
+        g.fillCircle(x + Math.cos(oa) * 25, y + 14 + Math.sin(oa) * 7.5, i % 2 ? 1.6 : 2.2);
+      }
+    }
+  }
+
+  /**
+   * Forged plate painted on the orb: a curved gorget seam under the eyes and a centre seam
+   * running down from it, each studded with rivets, plus a couple of scratch marks. Mastered,
+   * the seams weep — blood beads at the rivets and runs down the plate in slow drips.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    void a;
+    const A = alpha;
+    const m = this.mastered;
+    const lean = Math.cos(this.facing) * 1.4;
+    const cx = x + lean;
+    // Gorget seam: a dark groove with a lit lower lip.
+    g.lineStyle(1.6, this.tint(METAL.char), A * 0.85);
+    g.beginPath(); g.arc(cx, y - 14, 20, Math.PI * 0.22, Math.PI * 0.78, false); g.strokePath();
+    g.lineStyle(1, this.tint(METAL.chrome), A * 0.45);
+    g.beginPath(); g.arc(cx, y - 13, 20, Math.PI * 0.25, Math.PI * 0.75, false); g.strokePath();
+    // Centre seam.
+    g.lineStyle(1.4, this.tint(METAL.char), A * 0.8);
+    g.lineBetween(cx, y + 6, cx, y + 19);
+    g.lineStyle(0.8, this.tint(METAL.chrome), A * 0.4);
+    g.lineBetween(cx + 1, y + 7, cx + 1, y + 18);
+    // Rivets along the gorget.
+    const rivets: Pt[] = [];
+    for (let i = 0; i < 5; i++) {
+      const ang = Math.PI * (0.27 + i * 0.115);
+      rivets.push({ x: cx + Math.cos(ang) * 20, y: y - 14 + Math.sin(ang) * 20 });
+    }
+    for (const r of rivets) {
+      g.fillStyle(this.tint(METAL.char), A); g.fillCircle(r.x, r.y + 0.4, 1.5);
+      g.fillStyle(this.tint(m ? METAL.crimson : METAL.chrome), A); g.fillCircle(r.x - 0.3, r.y - 0.3, 1);
+    }
+    // Scratches.
+    g.lineStyle(0.8, this.tint(METAL.chrome), A * 0.35);
+    g.lineBetween(cx - 13, y + 10, cx - 8, y + 14);
+    g.lineBetween(cx + 8, y + 9, cx + 12, y + 12);
+    if (!m) return;
+    // Mastered: blood runs from the rivets.
+    for (let i = 0; i < rivets.length; i++) {
+      if (i === 2) continue;
+      const r = rivets[i];
+      const u = (this.t * 0.35 + i * 0.37) % 1;
+      const len = 3 + u * 9;
+      g.lineStyle(1.2, this.tint(METAL.blood), A * 0.9);
+      g.lineBetween(r.x, r.y + 1, r.x, r.y + len);
+      g.fillStyle(this.tint(METAL.crimson), A * (1 - u * 0.5));
+      g.fillCircle(r.x, r.y + len + 0.6, 1.3);
+    }
   }
 
   /** The blade crest, rooted at the crown (`y - 16`) so the blades fan up and clear the face. */
@@ -931,6 +990,32 @@ export class MetalAvatar extends BaseAvatar {
       bladeShardLayered(g, this.tint, bx, rootY + Math.abs(k) * 1.5, -Math.PI / 2 + k * 0.5 + sway, len, k === 0 ? 3 : 2.6,
         edge, alpha, 0.06, m);
     }
+    // Mastered: a spiked iron circlet clamps the crest's roots, set with a blood jewel.
+    if (m) {
+      const cy = rootY + 1;
+      g.fillStyle(this.tint(METAL.char), alpha);
+      g.fillRoundedRect(x + lean - 11, cy - 1.5, 22, 5, 2);
+      g.fillStyle(this.tint(METAL.steel), alpha);
+      g.fillRoundedRect(x + lean - 10, cy - 1, 20, 3.4, 1.5);
+      g.fillStyle(this.tint(METAL.chrome), alpha * 0.7);
+      g.fillRect(x + lean - 9, cy - 0.8, 18, 0.9);
+      for (const sx of [-9, -4.5, 4.5, 9]) {
+        g.fillStyle(this.tint(METAL.iron), alpha);
+        g.fillTriangle(x + lean + sx - 1.8, cy - 1, x + lean + sx + 1.8, cy - 1, x + lean + sx, cy - 6.5);
+        g.fillStyle(this.tint(METAL.chrome), alpha * 0.8);
+        g.fillTriangle(x + lean + sx - 0.6, cy - 1, x + lean + sx + 0.4, cy - 1, x + lean + sx, cy - 6);
+      }
+      const pulse = 0.75 + 0.25 * Math.sin(this.t * 4);
+      g.fillStyle(this.tint(METAL.rose), alpha * 0.35 * pulse);
+      g.fillCircle(x + lean, cy + 0.8, 4.4);
+      g.fillStyle(this.tint(METAL.blood), alpha);
+      g.fillCircle(x + lean, cy + 0.8, 2.6);
+      g.fillStyle(this.tint(METAL.rose), alpha * pulse);
+      g.fillCircle(x + lean, cy + 0.6, 1.7);
+      g.fillStyle(this.tint(METAL.white), alpha * 0.9);
+      g.fillCircle(x + lean - 0.7, cy, 0.6);
+    }
+
     // Conduit: charge crawling across the roots of the crest.
     if (this.metalFinish === 'live') {
       const arc = this.t * 9;

@@ -56,6 +56,7 @@ export class ConquestMenuScene extends Phaser.Scene {
     modal.g.setScrollFactor(0);
     for (const o of modal.objects) (o as Phaser.GameObjects.Text).setScrollFactor?.(0);
     modal.scrim.setScrollFactor(0);
+    this.drawWarMap(cx, cy, LAYOUT[model.paths.length === 3 ? 3 : 2].modalW, 520, model.color);
 
     addButton(this, {
       x: cx, y: cy + 218, w: 200, h: 38,
@@ -82,6 +83,46 @@ export class ConquestMenuScene extends Phaser.Scene {
     if (model.authority !== this.lastAuthority) {
       this.lastAuthority = model.authority;
       this.render(this.scale.width / 2, this.scale.height / 2);
+    }
+  }
+
+  /**
+   * The war table under the columns: the modal's body inked as a campaign map — a faint survey
+   * grid in the town's colour, a couple of dotted march routes, a compass rose in the corner and
+   * gold map-corner brackets. Drawn once; it never changes with the model.
+   */
+  private drawWarMap(cx: number, cy: number, w: number, h: number, color: number): void {
+    const g = this.add.graphics().setDepth(DEPTH.modal + 2).setScrollFactor(0);
+    const l = cx - w / 2 + 16;
+    const r = cx + w / 2 - 16;
+    const t = cy - h / 2 + 52;
+    const b = cy + h / 2 - 16;
+    g.fillStyle(mix(0x1e1610, color, 0.08), 0.55);
+    g.fillRect(l, t, r - l, b - t);
+    g.lineStyle(1, mix(color, 0xf2e8d0, 0.5), 0.06);
+    for (let x = l + 24; x < r; x += 24) g.lineBetween(x, t, x, b);
+    for (let y = t + 24; y < b; y += 24) g.lineBetween(l, y, r, y);
+    // Dotted routes.
+    g.fillStyle(0xc23a2e, 0.18);
+    for (let i = 0; i < 40; i++) {
+      const u = i / 39;
+      g.fillCircle(l + 30 + u * (r - l - 60), b - 46 - Math.sin(u * Math.PI * 3) * 14, 1.4);
+      g.fillCircle(l + 30 + u * (r - l - 60), t + 40 + Math.cos(u * Math.PI * 2) * 10, 1.1);
+    }
+    // Compass rose.
+    const rx = l + 34, ry = b - 34;
+    g.fillStyle(0xf2e8d0, 0.12);
+    g.fillTriangle(rx, ry - 20, rx - 4, ry, rx + 4, ry);
+    g.fillTriangle(rx, ry + 20, rx - 4, ry, rx + 4, ry);
+    g.fillTriangle(rx - 20, ry, rx, ry - 4, rx, ry + 4);
+    g.fillTriangle(rx + 20, ry, rx, ry - 4, rx, ry + 4);
+    g.lineStyle(1, 0xf2e8d0, 0.12);
+    g.strokeCircle(rx, ry, 12);
+    // Gold corner brackets on the map.
+    g.lineStyle(1.6, 0xe8c23a, 0.55);
+    for (const [x0, y0, dx, dy] of [[l, t, 1, 1], [r, t, -1, 1], [l, b, 1, -1], [r, b, -1, -1]]) {
+      g.lineBetween(x0, y0, x0 + dx * 14, y0);
+      g.lineBetween(x0, y0, x0, y0 + dy * 14);
     }
   }
 
@@ -186,6 +227,27 @@ export class ConquestMenuScene extends Phaser.Scene {
       : path === 1 ? mix(model.color, 0xffffff, 0.4)
       : mix(model.color, C.arcane, 0.65);
 
+    // A banner ribbon behind the column's name, swallowtailed at both ends.
+    const rib = this.add.graphics().setDepth(DEPTH.modalContent - 1);
+    const rw = w * 0.78;
+    const rl = x - rw / 2, rr = x + rw / 2;
+    const dark = mix(accent, 0x000000, 0.55);
+    rib.fillStyle(mix(accent, 0x000000, 0.7), 0.95);
+    rib.fillPoints([
+      new Phaser.Geom.Point(rl - 14, top - 7), new Phaser.Geom.Point(rl + 2, top - 7), new Phaser.Geom.Point(rl + 2, top + 9),
+      new Phaser.Geom.Point(rl - 14, top + 9), new Phaser.Geom.Point(rl - 8, top + 1),
+    ], true);
+    rib.fillPoints([
+      new Phaser.Geom.Point(rr + 14, top - 7), new Phaser.Geom.Point(rr - 2, top - 7), new Phaser.Geom.Point(rr - 2, top + 9),
+      new Phaser.Geom.Point(rr + 14, top + 9), new Phaser.Geom.Point(rr + 8, top + 1),
+    ], true);
+    rib.fillStyle(dark, 1);
+    rib.fillRect(rl, top - 10, rw, 20);
+    rib.lineStyle(1, mix(accent, 0xffffff, 0.3), 0.8);
+    rib.lineBetween(rl, top - 8, rr, top - 8);
+    rib.lineBetween(rl, top + 8, rr, top + 8);
+    this.push(rib);
+
     this.push(this.add.text(x, top, PATH_LABEL[model.kind][path], {
       fontSize: '13px', fontFamily: FONT_DISPLAY, color: hex(mix(accent, 0xffffff, 0.5)), letterSpacing: 3,
     }).setOrigin(0.5).setDepth(DEPTH.modalContent));
@@ -198,14 +260,47 @@ export class ConquestMenuScene extends Phaser.Scene {
       const h = 52;
       // Owned tiers are lit; the next one is outlined; anything past it is a ghost, so the
       // column reads as a track you are partway along.
-      g.fillStyle(owned ? mix(accent, 0x000000, 0.55) : C.well, owned ? 0.95 : 0.6);
-      g.fillRect(x - w / 2, y - h / 2, w, h);
+      // Each tier is a field order: a cut-cornered plate, inked in the column's colour once it is
+      // owned, with a parchment sheen along its top edge.
+      const l = x - w / 2, r = x + w / 2, t = y - h / 2, b = y + h / 2, c = 6;
+      const plate = [
+        new Phaser.Geom.Point(l + c, t), new Phaser.Geom.Point(r, t), new Phaser.Geom.Point(r, b - c),
+        new Phaser.Geom.Point(r - c, b), new Phaser.Geom.Point(l, b), new Phaser.Geom.Point(l, t + c),
+      ];
+      g.fillStyle(0x000000, 0.35);
+      g.fillPoints(plate.map((q) => new Phaser.Geom.Point(q.x + 2, q.y + 3)), true);
+      g.fillStyle(owned ? mix(accent, 0x000000, 0.55) : C.well, owned ? 0.95 : 0.7);
+      g.fillPoints(plate, true);
+      g.fillStyle(0xf2e8d0, owned ? 0.08 : isNext ? 0.05 : 0.02);
+      g.fillRect(l + c, t + 1, w - c, h * 0.35);
       g.lineStyle(isNext ? 2 : 1, owned ? accent : isNext ? mix(accent, 0xffffff, 0.3) : C.line,
         owned ? 0.9 : isNext ? 0.8 : 0.3);
-      g.strokeRect(x - w / 2, y - h / 2, w, h);
-      // Tier pips down the left edge.
+      g.strokePoints(plate, true, true);
+      // Tier ribbon down the left edge, notched at the foot like a hanging pennant.
       g.fillStyle(owned ? accent : C.line, owned ? 1 : 0.4);
-      g.fillRect(x - w / 2, y - h / 2 + 2, 3, h - 4);
+      g.fillPoints([
+        new Phaser.Geom.Point(l + 1, t + c + 1), new Phaser.Geom.Point(l + 5, t + c - 3),
+        new Phaser.Geom.Point(l + 5, b - 2), new Phaser.Geom.Point(l + 3, b - 6), new Phaser.Geom.Point(l + 1, b - 2),
+      ], true);
+      if (owned) {
+        // A wax seal pressed under the tick.
+        const sx = r - 16, sy = y - 10;
+        g.fillStyle(0x000000, 0.35);
+        g.fillCircle(sx + 1, sy + 1.5, 9.5);
+        g.fillStyle(mix(accent, 0x7a1010, 0.5), 1);
+        for (let k = 0; k < 9; k++) {
+          const a = (k / 9) * Math.PI * 2;
+          g.fillCircle(sx + Math.cos(a) * 7, sy + Math.sin(a) * 7, 3);
+        }
+        g.fillCircle(sx, sy, 7.6);
+        g.lineStyle(1, 0x000000, 0.3);
+        g.strokeCircle(sx, sy, 5.4);
+      } else if (isNext) {
+        // The next order's corner, gilded.
+        g.lineStyle(1.6, C.gold, 0.8);
+        g.lineBetween(r - 12, t + 1, r - 1, t + 1);
+        g.lineBetween(r - 1, t + 1, r - 1, t + 12);
+      }
       this.push(g);
 
       const titleColor = owned ? hex(mix(accent, 0xffffff, 0.6)) : isNext ? T.bright : T.ghost;
@@ -220,10 +315,17 @@ export class ConquestMenuScene extends Phaser.Scene {
         lineSpacing: -1,
       }).setDepth(DEPTH.modalContent));
 
-      this.push(this.add.text(x + w / 2 - 10, y - 17, owned ? '✓' : `${defs[i].cost}`, {
-        fontSize: owned ? '13px' : '12px', fontFamily: FONT_MONO,
-        color: owned ? T.good : isNext ? T.gold : T.ghost,
-      }).setOrigin(1, 0).setDepth(DEPTH.modalContent));
+      if (owned) {
+        this.push(this.add.text(x + w / 2 - 16, y - 10, '✓', {
+          fontSize: '13px', fontFamily: FONT_DISPLAY, color: '#f2e8d0',
+          stroke: '#2a0a08', strokeThickness: 2,
+        }).setOrigin(0.5).setDepth(DEPTH.modalContent));
+      } else {
+        this.push(this.add.text(x + w / 2 - 10, y - 17, `${defs[i].cost}`, {
+          fontSize: '12px', fontFamily: FONT_MONO,
+          color: isNext ? T.gold : T.ghost,
+        }).setOrigin(1, 0).setDepth(DEPTH.modalContent));
+      }
     }
 
     // ── The buy button ──

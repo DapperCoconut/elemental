@@ -908,6 +908,251 @@ export function chainLink(
     x - Math.cos(ang + 1.57) * h, y - Math.sin(ang + 1.57) * h);
 }
 
+// ── HUD relics ────────────────────────────────────────────────────────────
+
+/** A small almond eye glyph — gold lids, violet iris. The HUD's punctuation. */
+export function eyeGlyph(
+  g: Phaser.GameObjects.Graphics,
+  tint: BindColorFn,
+  x: number, y: number, r: number, alpha: number, look = 0, red = false,
+): void {
+  const lid = (k: number): Phaser.Geom.Point[] => {
+    const pts: Phaser.Geom.Point[] = [];
+    for (let i = 0; i <= 10; i++) {
+      const u = i / 10;
+      pts.push(new Phaser.Geom.Point(x - r + u * 2 * r, y + k * Math.sin(u * Math.PI) * r * 0.62));
+    }
+    return pts;
+  };
+  const upper = lid(-1), lower = lid(1).reverse();
+  g.fillStyle(tint(BND.void), alpha);
+  g.fillPoints([...upper, ...lower], true);
+  g.fillStyle(tint(red ? BND.wrath : BND.iris), alpha);
+  g.fillCircle(x + look * r * 0.35, y, r * 0.42);
+  g.fillStyle(tint(BND.void), alpha);
+  g.fillCircle(x + look * r * 0.35, y, r * 0.18);
+  g.fillStyle(tint(BND.irisLit), alpha * 0.9);
+  g.fillCircle(x + look * r * 0.35 - r * 0.14, y - r * 0.14, r * 0.1);
+  g.lineStyle(Math.max(1, r * 0.22), tint(red ? BND.wrath : BND.gold), alpha);
+  g.beginPath();
+  g.moveTo(upper[0].x, upper[0].y);
+  for (const p of upper) g.lineTo(p.x, p.y);
+  g.strokePath();
+  g.beginPath();
+  g.moveTo(lower[0].x, lower[0].y);
+  for (const p of lower) g.lineTo(p.x, p.y);
+  g.strokePath();
+}
+
+/** A bevelled gold tablet with clipped corners — the frame every Bind HUD piece is carved into. */
+export function relicPlate(
+  g: Phaser.GameObjects.Graphics,
+  tint: BindColorFn,
+  cx: number, cy: number, w: number, h: number, alpha: number,
+  { cut = 6, rim = BND.gold, glow = 0, glowCol = BND.gold } = {},
+): void {
+  const pts = (inset: number): Phaser.Geom.Point[] => {
+    const x0 = cx - w / 2 + inset, x1 = cx + w / 2 - inset;
+    const y0 = cy - h / 2 + inset, y1 = cy + h / 2 - inset;
+    const c = Math.max(1, cut - inset * 0.5);
+    return [
+      new Phaser.Geom.Point(x0 + c, y0), new Phaser.Geom.Point(x1 - c, y0),
+      new Phaser.Geom.Point(x1, y0 + c), new Phaser.Geom.Point(x1, y1 - c),
+      new Phaser.Geom.Point(x1 - c, y1), new Phaser.Geom.Point(x0 + c, y1),
+      new Phaser.Geom.Point(x0, y1 - c), new Phaser.Geom.Point(x0, y0 + c),
+    ];
+  };
+  if (glow > 0.01) {
+    g.lineStyle(7, tint(glowCol), alpha * glow * 0.35);
+    g.strokePoints(pts(-2), true);
+  }
+  // Drop shadow, then the dark body of the tablet.
+  g.fillStyle(tint(BND.void), alpha * 0.55);
+  g.fillPoints(pts(0).map((p) => new Phaser.Geom.Point(p.x + 2, p.y + 3)), true);
+  g.fillStyle(tint(BND.void), alpha * 0.92);
+  g.fillPoints(pts(0), true);
+  g.fillStyle(tint(BND.cosmicDeep), alpha * 0.9);
+  g.fillPoints(pts(2.5), true);
+  // Bevel: dark outer lip, the gold rim, a lit inner hairline along the top.
+  g.lineStyle(3, tint(BND.goldDeep), alpha);
+  g.strokePoints(pts(0.5), true);
+  g.lineStyle(1.3, tint(rim), alpha * 0.95);
+  g.strokePoints(pts(1.2), true);
+  const top = pts(2.6);
+  g.lineStyle(1, tint(BND.goldLit), alpha * 0.55);
+  g.lineBetween(top[0].x, top[0].y, top[1].x, top[1].y);
+}
+
+/**
+ * The patron's anger, carved as a reliquary tablet hung under the eye: an inset trough of
+ * molten gold that heats to orange and then runs red, a travelling sheen, eye glyphs at the
+ * quarter marks that open as the anger passes them, and a hex stud at each end where the
+ * chains anchor. `anger` 0–1; `wrath` 1 while the god has turned (bar full, pulsing red).
+ */
+export function angerPlaque(
+  g: Phaser.GameObjects.Graphics,
+  tint: BindColorFn,
+  cx: number, by: number, w: number, anger: number, wrath: number, t: number,
+): void {
+  const h = 9;
+  const cy = by + h / 2 - 1;
+  const hot = anger > 0.7;
+  const pulse = 0.5 + 0.5 * Math.sin(t * 16);
+  relicPlate(g, tint, cx, cy, w + 34, 24, 0.97, {
+    cut: 8,
+    rim: wrath ? BND.wrath : hot ? BND.heat : BND.gold,
+    glow: wrath ? 0.6 + pulse * 0.4 : hot ? 0.35 + 0.25 * Math.sin(t * 6) : 0,
+    glowCol: wrath ? BND.wrath : BND.heat,
+  });
+
+  // Trough with an inner shadow along its top edge.
+  const x0 = cx - w / 2;
+  g.fillStyle(tint(BND.void), 1);
+  g.fillRect(x0 - 1, by - 2, w + 2, h + 2);
+  g.fillStyle(tint(BND.cosmicDeep), 1);
+  g.fillRect(x0, by - 1, w, h);
+  g.fillStyle(tint(BND.void), 0.6);
+  g.fillRect(x0, by - 1, w, 2);
+
+  // Molten fill: base, lit top band, shaded bottom band.
+  const fill = wrath ? 1 : Phaser.Math.Clamp(anger, 0, 1);
+  const fw = w * fill;
+  if (fw > 0.5) {
+    const base = wrath ? BND.wrath : hot ? BND.heat : BND.gold;
+    const lit = wrath ? 0xffb0a8 : hot ? 0xffd9a0 : BND.goldLit;
+    const deep = wrath ? BND.wrathDeep : hot ? 0x9a4a10 : BND.goldDeep;
+    const fa = wrath ? 0.6 + 0.4 * pulse : 0.97;
+    g.fillStyle(tint(base), fa);
+    g.fillRect(x0, by - 1, fw, h);
+    g.fillStyle(tint(lit), fa * 0.75);
+    g.fillRect(x0, by, fw, 2);
+    g.fillStyle(tint(deep), fa * 0.7);
+    g.fillRect(x0, by + h - 3, fw, 2);
+    // A slanted sheen sliding along the molten metal, clipped to the filled length.
+    const sx = x0 + ((t * 70) % (w + 40)) - 20;
+    for (let k = 0; k < 6; k++) {
+      const px = sx + k;
+      if (px < x0 || px > x0 + fw - 1) continue;
+      g.fillStyle(tint(BND.goldLit), fa * 0.4 * (1 - Math.abs(k - 2.5) / 3));
+      g.fillRect(px, by - 1, 1, h);
+    }
+    // The leading edge glows like a pour front.
+    g.fillStyle(tint(lit), fa * (0.5 + 0.3 * Math.sin(t * 9)));
+    g.fillCircle(x0 + fw, cy, 4.2);
+    g.fillStyle(tint(0xffffff), fa * 0.7);
+    g.fillRect(x0 + fw - 1, by - 1, 1.6, h);
+  }
+  g.lineStyle(1.2, tint(BND.goldDeep), 0.95);
+  g.strokeRect(x0 - 1, by - 2, w + 2, h + 2);
+
+  // Quarter marks: eye glyphs set into the rim above the trough, opening as anger passes them.
+  for (let i = 1; i < 4; i++) {
+    const qx = x0 + (w * i) / 4;
+    const passed = fill >= i / 4;
+    g.fillStyle(tint(BND.goldDeep), 0.95);
+    g.fillRect(qx - 0.6, by - 1, 1.2, h);
+    if (passed) {
+      eyeGlyph(g, tint, qx, by - 6.5, 3.6, 0.95, Math.sin(t * 0.8 + i) * 0.6, !!wrath || i === 3);
+    } else {
+      g.lineStyle(1.2, tint(BND.goldDeep), 0.9);
+      g.lineBetween(qx - 3.2, by - 6.5, qx + 3.2, by - 6.5);
+    }
+  }
+
+  // End studs: hex-cut gems where the chains anchor, with a chain run up into the veil.
+  for (const side of [-1, 1]) {
+    const sx = cx + side * (w / 2 + 10);
+    const hex: Phaser.Geom.Point[] = [];
+    for (let k = 0; k < 6; k++) {
+      const p = (k / 6) * TAU + Math.PI / 6;
+      hex.push(new Phaser.Geom.Point(sx + Math.cos(p) * 6, cy + Math.sin(p) * 6));
+    }
+    g.fillStyle(tint(BND.goldDeep), 1);
+    g.fillPoints(hex, true);
+    g.fillStyle(tint(wrath ? BND.wrath : BND.iris), 1);
+    g.fillCircle(sx, cy, 3.2);
+    g.fillStyle(tint(BND.irisLit), 0.85);
+    g.fillCircle(sx - 1, cy - 1, 1.1);
+    g.lineStyle(1, tint(BND.goldLit), 0.7);
+    g.strokePoints(hex, true);
+    const sway = Math.sin(t * 1.3 + side) * 1.5;
+    for (let k = 0; k < 3; k++) {
+      chainLink(g, tint, sx + side * (5 + k * 6) + sway * k * 0.3, cy - 9 - k * 7,
+        side > 0 ? -0.85 : -2.3, 0.85, 0.8, anger);
+    }
+  }
+}
+
+/** The beam's heat, as a tiny gold reliquary vial above the head. `heat` 0–1. */
+export function heatVial(
+  g: Phaser.GameObjects.Graphics,
+  tint: BindColorFn,
+  x: number, by: number, w: number, heat: number, overheated: boolean, t: number,
+): void {
+  const h = 5;
+  const x0 = x - w / 2;
+  g.fillStyle(tint(BND.void), 0.55);
+  g.fillRoundedRect(x0 - 3, by - 2, w + 6, h + 5, 3);
+  g.fillStyle(tint(BND.void), 0.9);
+  g.fillRoundedRect(x0 - 3, by - 3, w + 6, h + 4, 3);
+  g.fillStyle(tint(BND.cosmicDeep), 1);
+  g.fillRect(x0, by - 1, w, h);
+  const hot = overheated || heat > 0.75;
+  const base = overheated ? BND.wrath : hot ? BND.heat : BND.gold;
+  const fa = overheated ? 0.6 + 0.4 * Math.sin(t * 14) : 0.97;
+  const fw = w * Phaser.Math.Clamp(heat, 0, 1);
+  g.fillStyle(tint(base), fa);
+  g.fillRect(x0, by - 1, fw, h);
+  g.fillStyle(tint(overheated ? 0xffb0a8 : BND.goldLit), fa * 0.7);
+  g.fillRect(x0, by - 1, fw, 1.4);
+  // Bubbles rising off a hot fill.
+  if (hot) {
+    for (let i = 0; i < 3; i++) {
+      const u = (t * 1.6 + i / 3) % 1;
+      const bx = x0 + fw * jitter(7, i);
+      g.fillStyle(tint(BND.goldLit), fa * (1 - u) * 0.8);
+      g.fillCircle(bx, by - 2 - u * 5, 1 * (1 - u) + 0.4);
+    }
+  }
+  g.lineStyle(1.2, tint(overheated ? BND.wrath : BND.gold), 0.95);
+  g.strokeRoundedRect(x0 - 3, by - 3, w + 6, h + 4, 3);
+  // The top of the scale is a red spike, so "how close am I" is a position rather than a guess.
+  g.fillStyle(tint(BND.wrath), 0.95);
+  g.fillTriangle(x0 + w + 1, by - 5, x0 + w + 4, by + h / 2, x0 + w + 1, by + h + 3);
+  // A single link hanging off the left cap — the vial is chained to its bearer.
+  chainLink(g, tint, x0 - 5, by + h / 2, 0, 0.9, 0.55, heat);
+}
+
+/**
+ * The sacrifice banner's tablet: a wide gold plaque behind the prompt text, chained up off both
+ * top corners, with an eye at each end. `ready` runs the rim red and pulsing — the god has
+ * finished deciding.
+ */
+export function tithePlaque(
+  g: Phaser.GameObjects.Graphics,
+  tint: BindColorFn,
+  cx: number, cy: number, w: number, h: number, ready: boolean, t: number,
+): void {
+  const pulse = 0.5 + 0.5 * Math.sin(t * (ready ? 9 : 3));
+  relicPlate(g, tint, cx, cy, w, h, 0.96, {
+    cut: 10,
+    rim: ready ? BND.wrath : BND.gold,
+    glow: ready ? 0.5 + pulse * 0.5 : 0.25 * pulse,
+    glowCol: ready ? BND.wrath : BND.gold,
+  });
+  // Inner filigree rule just inside the rim.
+  g.lineStyle(1, tint(BND.goldDeep), 0.8);
+  g.strokeRect(cx - w / 2 + 26, cy - h / 2 + 5, w - 52, h - 10);
+  for (const side of [-1, 1]) {
+    eyeGlyph(g, tint, cx + side * (w / 2 - 14), cy, 7, 0.95, Math.sin(t * 0.9) * 0.7, ready);
+    // Chains up off the top corners.
+    for (let k = 0; k < 4; k++) {
+      chainLink(g, tint, cx + side * (w / 2 - 20 + k * 3), cy - h / 2 - 4 - k * 8,
+        -Math.PI / 2 + side * 0.2, 0.9, 0.9, ready ? 1 : 0);
+    }
+  }
+}
+
 // ── Fx ────────────────────────────────────────────────────────────────────
 
 /** Bind's one-shot effects. Everything sustained is painted per-frame by the kit instead. */
@@ -1218,9 +1463,14 @@ const BIND_AVATAR: AvatarSpec = {
  * red, so a character about to be turned on reads from across the arena without a cast; and
  * while the god acts through the body (`setChannelling`) the halo blazes.
  *
- * Mastery enhances the halo rather than adding to it: the snapped spike grows back, the ring
- * widens, thickens and gets a gold glow, the eyes turn the patron's iris-violet, and the hands
- * take a wide gold-ringed corona.
+ * Secondary detail: a slow cosmic swirl and star specks painted into the orb, a chain slung
+ * across the lower body, and an iron manacle on each wrist with a broken link dangling off it.
+ *
+ * Mastery is unmistakable: the snapped spike grows back and the halo gilds and glows, a gold
+ * third eye opens on the brow, the slung chain and both manacles turn to gold (the manacles
+ * split open — the vessel is no longer held, it is wearing the chains), three gold hex glyphs
+ * orbit the body, the eyes turn the patron's iris-violet, and the hands take a wide gold-ringed
+ * corona.
  */
 export class BindAvatar extends BaseAvatar {
   /** 0–1: the patron's patience, running out. Drives halo tension and colour. */
@@ -1268,6 +1518,123 @@ export class BindAvatar extends BaseAvatar {
     new BindFx(this.scene, this.tint).mote(x, y);
   }
 
+  /** Cosmic depth painted into the orb, a slung chain, and (mastered) the gold third eye. */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    void a;
+    const m = this.mastered;
+    // Swirl: two counter-turning aether arcs inside the orb, like something moving behind glass.
+    const sw = this.t * 0.6;
+    g.lineStyle(1.6, this.tint(BND.cosmicLit), alpha * 0.45);
+    g.beginPath();
+    g.arc(x, y + 2, 11, sw, sw + 1.9, false);
+    g.strokePath();
+    g.lineStyle(1.1, this.tint(BND.aether), alpha * 0.3);
+    g.beginPath();
+    g.arc(x, y + 2, 7, -sw * 1.4 + 2, -sw * 1.4 + 3.6, false);
+    g.strokePath();
+    // Star specks, twinkling on their own clocks.
+    for (let i = 0; i < 5; i++) {
+      const p = jitter(23, i) * TAU;
+      const r = 6 + jitter(29, i) * 8;
+      const tw = 0.4 + 0.6 * Math.max(0, Math.sin(this.t * (1.5 + jitter(31, i) * 2) + i * 2));
+      g.fillStyle(this.tint(i % 2 ? BND.aether : BND.goldLit), alpha * 0.7 * tw);
+      g.fillCircle(x + Math.cos(p) * r, y + 3 + Math.sin(p) * r * 0.8, 0.6 + tw * 0.6);
+    }
+    // A chain slung across the lower body, sagging on a shallow arc.
+    const LINKS = 6;
+    for (let i = 0; i < LINKS; i++) {
+      const u = i / (LINKS - 1);
+      const lx = x - 13 + u * 26;
+      const ly = y + 6 + Math.sin(u * Math.PI) * 5 + Math.sin(this.t * 2 + i) * 0.4;
+      const ang = Math.atan2(Math.cos(u * Math.PI) * 5 * Math.PI / 26, 1);
+      if (m) {
+        g.lineStyle(1.9, this.tint(BND.goldDeep), alpha * 0.85);
+        g.strokeEllipse(lx, ly, 6.5, 4.2);
+        g.lineStyle(1.1, this.tint(i % 2 ? BND.goldLit : BND.gold), alpha);
+        g.strokeEllipse(lx, ly, 5.5, 3.4);
+      } else {
+        chainLink(g, this.tint, lx, ly, ang, alpha * 0.9, 0.6, this.strain);
+      }
+    }
+    if (m) {
+      // The third eye: a gold almond on the brow, iris drifting with the aim.
+      const ex = x, ey = y - 12.5;
+      const glowA = 0.25 + 0.15 * Math.sin(this.t * 3);
+      g.fillStyle(this.tint(BND.gold), alpha * glowA);
+      g.fillCircle(ex, ey, 5.5);
+      g.fillStyle(this.tint(BND.goldDeep), alpha);
+      g.fillEllipse(ex, ey, 9, 5);
+      g.fillStyle(this.tint(BND.goldLit), alpha);
+      g.fillEllipse(ex, ey, 7.4, 3.6);
+      g.fillStyle(this.tint(this.strain > 0.55 ? BND.wrath : BND.iris), alpha);
+      g.fillCircle(ex + Math.cos(this.facing) * 1.3, ey, 1.6);
+      g.fillStyle(this.tint(BND.void), alpha);
+      g.fillCircle(ex + Math.cos(this.facing) * 1.3, ey, 0.7);
+    }
+  }
+
+  /** Wrist manacles on both hands: iron and shut, or (mastered) gold and split open. */
+  private drawManacles(g: Phaser.GameObjects.Graphics, x: number, y: number, alpha: number): void {
+    const m = this.mastered;
+    for (let i = 0; i < 2; i++) {
+      const hx = this.armX[i], hy = this.armY[i];
+      // The cuff sits on the side of the hand facing the body.
+      const back = Math.atan2(y - hy, x - hx);
+      const cx = hx + Math.cos(back) * 4.5, cy = hy + Math.sin(back) * 4.5;
+      const open = m ? 0.9 : 0.15;
+      g.lineStyle(3.2, this.tint(m ? BND.goldDeep : BND.void), alpha * 0.85);
+      g.beginPath();
+      g.arc(cx, cy, 5.6, back + Math.PI / 2 + open, back + Math.PI * 1.5 - open, true);
+      g.strokePath();
+      g.lineStyle(1.8, this.tint(m ? BND.gold : BND.chain), alpha);
+      g.beginPath();
+      g.arc(cx, cy, 5.6, back + Math.PI / 2 + open, back + Math.PI * 1.5 - open, true);
+      g.strokePath();
+      g.lineStyle(0.9, this.tint(m ? BND.goldLit : BND.chainLit), alpha * 0.8);
+      g.beginPath();
+      g.arc(cx, cy, 5.6, back + Math.PI + 0.5, back + Math.PI * 1.5 - open, true);
+      g.strokePath();
+      // A broken link trailing off the cuff toward the body.
+      const sway = Math.sin(this.t * 3 + i * 2) * 0.35;
+      const lx = cx + Math.cos(back + sway) * 9, ly = cy + Math.sin(back + sway) * 9 + 1.5;
+      chainLink(g, this.tint, lx, ly, back + sway, alpha * (m ? 0.5 : 0.85), 0.55, this.strain);
+      if (m) {
+        g.fillStyle(this.tint(BND.goldLit), alpha * (0.5 + 0.4 * Math.sin(this.t * 6 + i * 3)));
+        g.fillCircle(cx + Math.cos(back + Math.PI) * 5.6, cy + Math.sin(back + Math.PI) * 5.6, 1.4);
+      }
+    }
+  }
+
+  /**
+   * Mastered only: three gold hex glyphs circling the body on a tilted orbit. Called twice — the
+   * far half from `drawGlow` (under the sprite) and the near half from `drawExtras` — so a glyph
+   * passing behind never paints over the face.
+   */
+  private drawOrbitGlyphs(g: Phaser.GameObjects.Graphics, x: number, y: number, alpha: number, near: boolean): void {
+    for (let i = 0; i < 3; i++) {
+      const p = this.t * 1.1 + (i / 3) * TAU;
+      const gx = x + Math.cos(p) * 27;
+      const gy = y + 4 + Math.sin(p) * 9;
+      const front = Math.sin(p) > 0;
+      if (front !== near) continue;
+      const s = front ? 3.6 : 2.8;
+      const al = alpha * (front ? 0.95 : 0.5);
+      const hex: Phaser.Geom.Point[] = [];
+      for (let k = 0; k < 6; k++) {
+        const q = (k / 6) * TAU + this.t * 2;
+        hex.push(new Phaser.Geom.Point(gx + Math.cos(q) * s, gy + Math.sin(q) * s));
+      }
+      g.fillStyle(this.tint(BND.gold), al * 0.3);
+      g.fillCircle(gx, gy, s * 2);
+      g.fillStyle(this.tint(BND.goldDeep), al);
+      g.fillPoints(hex, true);
+      g.lineStyle(1, this.tint(BND.goldLit), al);
+      g.strokePoints(hex, true);
+      g.fillStyle(this.tint(this.strain > 0.55 ? BND.wrath : BND.iris), al);
+      g.fillCircle(gx, gy, s * 0.4);
+    }
+  }
+
   /** A soft cosmic under-glow, reddening as the patron loses patience and brightening while it acts. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void alpha;
@@ -1275,6 +1642,12 @@ export class BindAvatar extends BaseAvatar {
     g.fillStyle(this.tint(this.strain > 0.6 ? BND.wrathDeep : BND.cosmicLit),
       a * ((this.mastered ? 0.3 : 0.22) + this.channel * 0.16) * k);
     g.fillCircle(x, y, 28 * k);
+    if (this.mastered) {
+      // A thin gold ring on the floor of the glow — the orbit the hex glyphs run on.
+      g.lineStyle(1.2, this.tint(BND.gold), alpha * (0.3 + 0.1 * Math.sin(this.t * 2)));
+      g.strokeEllipse(x, y + 4, 54, 18);
+      this.drawOrbitGlyphs(g, x, y, alpha, false);
+    }
   }
 
   /**
@@ -1284,6 +1657,8 @@ export class BindAvatar extends BaseAvatar {
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void a;
     const m = this.mastered;
+    this.drawManacles(g, x, y, alpha);
+    if (m) this.drawOrbitGlyphs(g, x, y, alpha, true);
     // Low on the crown: anything above y - 30 hides under the health bar.
     const crown = y - 19 - this.strain * 1.5;
     const hot = this.strain > 0.55;

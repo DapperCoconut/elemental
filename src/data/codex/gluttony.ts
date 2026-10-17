@@ -3,9 +3,10 @@ import { ElementCodex } from '../AbilityCodex';
 /**
  * Harvest — the scarecrow (element id `gluttony`, kept from the chef it replaced).
  *
- * Verified against `src/elements/gluttony.ts` and `kits/GluttonyKit.ts`. Harvest has no shop
- * upgrades and no mastery — the chef's were retired with the 2026-10-15 rework and new ones are
- * owed — and no perks. Every number below is a constant at the top of the kit.
+ * Verified against `src/elements/gluttony.ts` and `kits/GluttonyKit.ts`. The five shop upgrades
+ * (2026-10-16) are constants in the kit's "Shop upgrades" block. Harvest has no mastery yet — the
+ * chef's was retired with the 2026-10-15 rework — and no perks. Every number below is a constant
+ * at the top of the kit.
  */
 const gluttony: ElementCodex = {
   identity:
@@ -79,6 +80,19 @@ const gluttony: ElementCodex = {
         { tag: 'area', label: 'The loop', detail: 'Diameter = cursor distance, clamped 140–380px. 0.62s + 1.5ms/px round trip.' },
         { tag: 'resource', label: 'Hearts', detail: 'Bursts your own corrupt hearts: +75 Corrupt HP, then 5 a second for 5 seconds.' },
       ],
+      upgrade: {
+        basics:
+          'Recursive: when the sickle comes home it does not stop. It whips once around you and flies '
+          + 'a second full loop, thrown from wherever you are standing then toward wherever your cursor '
+          + 'is then, curling the same way. The second loop forgets who the first one cut, so '
+          + 'everything can be cut twice — 24 a throw against a body both loops pass through. It glows '
+          + 'purple while it is on its second loop.',
+        effects: [
+          { tag: 'damage', label: 'Second swing', detail: 'A second loop, 12 to everything it passes through again.', requiresUpgrade: 'click' },
+          { tag: 'area', label: 'Re-aimed', detail: 'Thrown from you, toward the cursor, at the moment the first loop returns.', requiresUpgrade: 'click' },
+          { tag: 'resource', label: 'Hearts', detail: 'The second loop bursts hearts too.', requiresUpgrade: 'click' },
+        ],
+      },
       notes: [
         'The curl is shown in your status tray; the sickle leaves your hand empty while it is out.',
         'Two can be in the air at once on a long loop.',
@@ -101,6 +115,21 @@ const gluttony: ElementCodex = {
         { tag: 'debuff', label: 'Rot', detail: 'Up to 6% corruption a second on mature mold.' },
         { tag: 'resource', label: 'Hearts', detail: 'Mature mold (20+ cells) grows a heart every 5s, up to 3.' },
       ],
+      upgrade: {
+        basics:
+          'Vile Rot: once a second, every enemy standing on mold at least half grown has an 18% chance '
+          + 'of being grabbed — a hand of rot claws up around their feet, holds them still and unable '
+          + 'to attack for 1 second, and squeezes for 10. The same body cannot be grabbed again for 3.5 '
+          + 'seconds. Every 3.5 seconds, mold with at least 8 fully grown cells also pushes up a worm '
+          + '(3 at most), on the mature cell nearest an enemy within reach. A worm lives 8 seconds, or '
+          + 'until the mold under it dies, and spits a gob of rot at the nearest enemy within 380px '
+          + 'every 1.2 seconds: 5 damage, 300px a second, first body it touches.',
+        effects: [
+          { tag: 'control', label: 'Grab', detail: '18% a second on rotting mold: 1s stun + 10 damage. 3.5s before the same body again.', requiresUpgrade: 'e' },
+          { tag: 'summon', label: 'Worms', detail: 'One every 3.5s on mature mold, 3 at once, 8s each.', requiresUpgrade: 'e' },
+          { tag: 'damage', label: 'Spit', detail: '5 per gob, every 1.2s, at the nearest enemy within 380px.', requiresUpgrade: 'e' },
+        ],
+      },
       notes: [
         'Mold outside every live colony\'s reach withers away at half a point of growth a second.',
         'The scatter is seeded by where you stand, so both machines grow the same mold online.',
@@ -118,6 +147,20 @@ const gluttony: ElementCodex = {
         { tag: 'damage', label: 'Peck', detail: '5 × (1 + 2 × corruption) — 5 to 15. Each crow re-pecks a body every 0.45s.' },
         { tag: 'summon', label: 'Crows', detail: '3 crows, 6 seconds, orbiting the cursor at ~52px.' },
       ],
+      upgrade: {
+        basics:
+          'Poison Payload: each crow flies out carrying a small vial of poison. Press R again while '
+          + 'they are still up and all three let go at once: each vial falls for a quarter of a second '
+          + 'and shatters in a 48px burst of glass for 12. Everything a vial splashes is Poisoned for '
+          + '5 seconds, taking 4 damage a second — and every vial that splashed them is its own stack, '
+          + 'so a body under all three takes 12 a second. The vials can be dropped only once a cast; '
+          + 'after that the crows go on pecking as usual.',
+        effects: [
+          { tag: 'damage', label: 'Shatter', detail: '12 per vial in a 48px burst.', requiresUpgrade: 'r' },
+          { tag: 'debuff', label: 'Poison', detail: '4 a second for 5s, per vial — up to 12 a second from all three.', requiresUpgrade: 'r' },
+          { tag: 'control', label: 'Recast', detail: 'R while the crows still carry their vials. Once per cast.', requiresUpgrade: 'r' },
+        ],
+      },
       notes: [
         'Dragging the circle over a target keeps all three pecking it.',
         'A bot\'s or an online opponent\'s crows circle a point that drifts toward their target, since their cursor is not shared.',
@@ -142,6 +185,21 @@ const gluttony: ElementCodex = {
         { tag: 'resource', label: 'Corrupt Flesh', detail: '+1 per bite that lands (3 max). Eaten below 75 health for 75 Corrupt HP.' },
         { tag: 'debuff', label: 'Heavy bite', detail: '+40% corruption when your Corrupt HP ≥ your health.' },
       ],
+      upgrade: {
+        basics:
+          'Corrupt Cooking: Corrupt Flesh is no longer eaten on its own below 75 health — it goes in '
+          + 'the pot. A cooking menu sits at the top of the screen with three dishes; click one to cook '
+          + 'it (the click never throws a sickle). Jerky costs 1 meat and heals 100 over 15 seconds '
+          + '(strips stack). Meat Broth costs 2 and makes you take 33% less damage for 20 seconds. '
+          + 'Vile Feast costs 3: +150 maximum health for the rest of the round, and 150 healed. A dish '
+          + 'you cannot afford is dimmed.',
+        effects: [
+          { tag: 'heal', label: 'Jerky (1)', detail: '100 healed over 15 seconds.', requiresUpgrade: 'f' },
+          { tag: 'shield', label: 'Meat Broth (2)', detail: '33% less damage taken for 20 seconds.', requiresUpgrade: 'f' },
+          { tag: 'buff', label: 'Vile Feast (3)', detail: '+150 max health for the round, and 150 healed.', requiresUpgrade: 'f' },
+          { tag: 'resource', label: 'No raw meat', detail: 'Flesh is never eaten automatically while you have this.', requiresUpgrade: 'f' },
+        ],
+      },
       notes: [
         'Flesh you carry circles your shoulders and is shown in your status tray.',
         'Buffs that a kit rewrites every frame cannot be moved, so damage and speed are copied rather than taken.',
@@ -161,6 +219,16 @@ const gluttony: ElementCodex = {
         { tag: 'debuff', label: 'Reaped', detail: '×1.15 damage taken, permanent, compounding per cut.' },
         { tag: 'control', label: 'Execute', detail: 'Killed at ≤10% health, up to ≤25% at 100% corruption.' },
       ],
+      upgrade: {
+        basics:
+          'Endless Harvest: every kill a Harvest attack makes resets Reaping Hour\'s cooldown on the '
+          + 'spot — the sickle, a crow, the bite, a grab, a worm, a vial or its poison, or the scythe '
+          + 'itself, execute included. There is no limit, so a room full of low enemies can be reaped '
+          + 'one swing after another.',
+        effects: [
+          { tag: 'resource', label: 'Reset', detail: 'Any Harvest kill: Reaping Hour is ready again at once. No limit.', requiresUpgrade: 'q' },
+        ],
+      },
       notes: [
         'The line is checked after the swing\'s own damage lands, so a cut that pushes them under it still kills.',
         'The vulnerability shows in the victim\'s tray as Reaped.',

@@ -729,28 +729,104 @@ export class MagicFx extends FxBase {
     colors: readonly number[], selected: number,
     toggle: 'none' | 'light' | 'dark' = 'none',
   ): void {
+    // An open spell-circle off a grimoire page: an ink-and-gold rune ring round five inked
+    // wedges, the chosen one lifted out and gilded, with a sigil hub in the middle.
     const count = colors.length;
     const step = (Math.PI * 2) / count;
+    const outer = radius + 18;
+    // Redrawn every frame while open, so the rune band can turn slowly and the pick can breathe.
+    const now = g.scene ? g.scene.time.now / 1000 : 0;
+    const breathe = 0.5 + 0.5 * Math.sin(now * 5);
+    // backing disc + rune band
+    g.fillStyle(MAGIC.ink, 0.6);
+    g.fillCircle(cx, cy, outer);
+    g.lineStyle(2.5, MAGIC.brass, 0.85);
+    g.strokeCircle(cx, cy, outer);
+    g.lineStyle(1, MAGIC.gold, 0.55);
+    g.strokeCircle(cx, cy, outer - 5);
+    for (let k = 0; k < 60; k++) {
+      const a = (k / 60) * Math.PI * 2 + now * 0.25;
+      const long = k % 4 === 0;
+      const r0 = outer - (long ? 5 : 3.5), r1 = outer - 1;
+      g.lineStyle(long ? 1.6 : 1, MAGIC.gold, long ? 0.8 : 0.45);
+      g.beginPath();
+      g.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0);
+      g.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1);
+      g.strokePath();
+    }
     for (let i = 0; i < count; i++) {
       const startA = i * step - Math.PI / 2 - step / 2;
       const endA = startA + step;
+      const midA = startA + step / 2;
       const isSelected = i === selected;
       const r = isSelected ? radius + 10 : radius;
-      g.fillStyle(colors[i], isSelected ? 0.9 : 0.55);
+      // lifted wedge casts a soft colour glow
+      if (isSelected) {
+        g.fillStyle(colors[i], 0.18 + 0.14 * breathe);
+        g.beginPath(); g.moveTo(cx, cy);
+        g.arc(cx, cy, r + 6 + breathe * 4, startA - 0.04, endA + 0.04, false);
+        g.closePath(); g.fillPath();
+      }
+      g.fillStyle(colors[i], isSelected ? 0.9 : 0.5);
       g.beginPath(); g.moveTo(cx, cy);
       g.arc(cx, cy, r, startA, endA, false);
       g.closePath(); g.fillPath();
-      g.lineStyle(isSelected ? 3 : 1, isSelected ? 0xffffff : 0xaaaaaa, isSelected ? 0.9 : 0.4);
+      // inked vignette toward the hub, and a lit band along the rim
+      g.fillStyle(MAGIC.ink, isSelected ? 0.2 : 0.38);
+      g.beginPath(); g.moveTo(cx, cy);
+      g.arc(cx, cy, r * 0.42, startA, endA, false);
+      g.closePath(); g.fillPath();
+      g.lineStyle(3, MAGIC.white, isSelected ? 0.35 : 0.12);
+      g.beginPath();
+      g.arc(cx, cy, r - 3, startA + 0.05, endA - 0.05, false);
+      g.strokePath();
+      // gilt borders
+      g.lineStyle(isSelected ? 3 : 1.4, isSelected ? MAGIC.gold : MAGIC.brass, isSelected ? 1 : 0.6);
       g.beginPath(); g.moveTo(cx, cy);
       g.arc(cx, cy, r, startA, endA, false);
       g.closePath(); g.strokePath();
+      // a small diamond rune at the rim of every wedge
+      const rx = cx + Math.cos(midA) * (r - 9), ry = cy + Math.sin(midA) * (r - 9);
+      const d = isSelected ? 4.5 : 3.2;
+      g.fillStyle(isSelected ? MAGIC.white : MAGIC.parchment, isSelected ? 1 : 0.7);
+      g.beginPath();
+      g.moveTo(rx, ry - d); g.lineTo(rx + d * 0.7, ry); g.lineTo(rx, ry + d); g.lineTo(rx - d * 0.7, ry);
+      g.closePath(); g.fillPath();
     }
+    // the hub: a gilt sigil ring, or the light/dark book toggle when that upgrade is owned
     if (toggle !== 'none') {
       const dark = toggle === 'dark';
-      g.fillStyle(dark ? 0x440088 : 0xddaa00, 0.92);
+      g.fillStyle(dark ? MAGIC.wildVoid : MAGIC.brass, 0.95);
       g.fillCircle(cx, cy, 24);
-      g.lineStyle(2, dark ? 0xcc44ff : 0xffffff, 0.9);
+      g.fillStyle(dark ? MAGIC.voidInk : MAGIC.gold, 0.9);
+      g.fillCircle(cx, cy, 17);
+      if (dark) {
+        // a slit void eye
+        g.fillStyle(MAGIC.orchid, 0.95);
+        g.fillEllipse(cx, cy, 20, 8);
+        g.fillStyle(MAGIC.voidInk, 1);
+        g.fillEllipse(cx, cy, 4, 8);
+      } else {
+        // a sun sigil
+        g.fillStyle(MAGIC.white, 0.95);
+        g.fillCircle(cx, cy, 6);
+        for (let k = 0; k < 8; k++) {
+          const a = (k / 8) * Math.PI * 2;
+          g.fillTriangle(
+            cx + Math.cos(a - 0.2) * 8, cy + Math.sin(a - 0.2) * 8,
+            cx + Math.cos(a + 0.2) * 8, cy + Math.sin(a + 0.2) * 8,
+            cx + Math.cos(a) * 14, cy + Math.sin(a) * 14);
+        }
+      }
+      g.lineStyle(2, dark ? 0xcc44ff : MAGIC.white, 0.9);
       g.strokeCircle(cx, cy, 24);
+    } else {
+      g.fillStyle(MAGIC.ink, 0.9);
+      g.fillCircle(cx, cy, 13);
+      g.lineStyle(1.6, MAGIC.gold, 0.85);
+      g.strokeCircle(cx, cy, 13);
+      g.fillStyle(MAGIC.orchid, 0.9);
+      g.fillCircle(cx, cy, 3.5);
     }
   }
 
@@ -1634,8 +1710,9 @@ const MAGIC_AVATAR: AvatarSpec = {
  * Magic has no medium of its own (it borrows fire, water, stone and wind), so the hat is what
  * says "spellcaster" before anything is cast; the body colour alone says magic.
  *
- * Mastery enhances the hat rather than adding to it: it grows, the band gilds, the tip lights
- * with a glowing star point, the eyes go gold and the hand coronas widen.
+ * Mastery grows and gilds the hat and lights its tip, turns the eyes gold, gilds the chest rune,
+ * and adds two pieces only the archmage has: a gold spell-circle turning underfoot and a small
+ * open spellbook orbiting the head.
  */
 export class MagicAvatar extends BaseAvatar {
   private fx: MagicFx;
@@ -1689,6 +1766,40 @@ export class MagicAvatar extends BaseAvatar {
     const col = this.corruption > 0.4 ? MAGIC.magenta : MAGIC.purple;
     g.fillStyle(this.tint(col), a * (this.mastered ? 0.3 : 0.22) * k);
     g.fillCircle(x, y, 28 * k);
+    // Mastered only: a gilt spell-circle turning under the archmage's feet.
+    if (this.mastered) {
+      arcaneRing(g, this.tint, x, y + 2, 32, this.t * 0.8, MAGIC.gold, a * 1.1, 2, 6, true);
+    }
+  }
+
+  /**
+   * Body markings: a faint orchid rune-circle glowing on the chest (a ring round a little
+   * triangle sigil) and a pair of crescent-moon marks on the cheeks. Mastered, the rune burns
+   * gold and pulses.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
+    const m = this.mastered;
+    const col = this.tint(m ? MAGIC.gold : MAGIC.orchid);
+    const pulse = m ? 0.75 + 0.25 * Math.sin(this.t * 4) : 0.45;
+    const cy = y + 9;
+    g.lineStyle(1.2, col, alpha * pulse);
+    g.strokeCircle(x, cy, 6);
+    g.beginPath();
+    for (let k = 0; k <= 3; k++) {
+      const ang = -Math.PI / 2 + (k / 3) * Math.PI * 2 + this.t * 0.6;
+      const px = x + Math.cos(ang) * 4.6, py = cy + Math.sin(ang) * 4.6;
+      if (k === 0) g.moveTo(px, py); else g.lineTo(px, py);
+    }
+    g.strokePath();
+    g.fillStyle(col, alpha * pulse);
+    g.fillCircle(x, cy, 1.1);
+    // crescent cheek marks
+    for (const side of [-1, 1]) {
+      g.fillStyle(this.tint(MAGIC.lilac), alpha * 0.45);
+      g.fillCircle(x + side * 13, y + 3, 2.2);
+      g.fillStyle(this.tint(MAGIC.violet), alpha * 0.9);
+      g.fillCircle(x + side * 13 + side * 1, y + 2.4, 1.9);
+    }
   }
 
   /**
@@ -1738,6 +1849,58 @@ export class MagicAvatar extends BaseAvatar {
     } else {
       g.fillStyle(this.tint(MAGIC.lilac), alpha * 0.9);
       g.fillCircle(tp.x, tp.y, 1.6);
+    }
+
+    // Embroidery on the felt: two tiny stars and a buckle on the band.
+    g.fillStyle(this.tint(m ? MAGIC.gold : MAGIC.lilac), alpha * 0.85);
+    const s1 = P(-4.5, -7.5), s2 = P(3, -10.5);
+    sigilStar(g, s1.x, s1.y, this.t * 0.5, 2.2, 0.8, 4);
+    sigilStar(g, s2.x, s2.y, -this.t * 0.5, 1.6, 0.6, 4);
+    const bk = P(0, -2.3);
+    g.lineStyle(1.2, this.tint(m ? MAGIC.white : MAGIC.brass), alpha);
+    g.strokeRect(bk.x - 2 * s, bk.y - 1.6 * s, 4 * s, 3.2 * s);
+
+    // Spark glints at the fingertips: a small 4-point star ticking round each hand.
+    for (let i = 0; i < 2; i++) {
+      const hx = this.armX[i], hy = this.armY[i];
+      if (hx === 0 && hy === 0) continue;
+      const oa = this.t * 3 + i * Math.PI;
+      g.fillStyle(this.tint(m ? MAGIC.gold : this.accent), alpha * 0.9);
+      sigilStar(g, hx + Math.cos(oa) * (m ? 11 : 9), hy + Math.sin(oa) * (m ? 11 : 9), oa, m ? 3.2 : 2.4, 0.9, 4);
+    }
+
+    if (!m) return;
+    // ── Mastered only: the familiar tome ──
+    // A small open spellbook floats round the archmage's head, its pages flicking, trailing
+    // gold motes. The silhouette piece the unmastered caster never has.
+    const oa = this.t * 1.3;
+    const bx = x + Math.cos(oa) * 28;
+    const byy = y - 6 + Math.sin(oa) * 10;
+    const front = Math.sin(oa) > -0.2;
+    // Tucked behind the hat/body on the far side of its orbit, not painted over the face.
+    const hidden = !front && Math.abs(Math.cos(oa)) < 0.7;
+    const ba = alpha * (hidden ? 0 : front ? 1 : 0.55);
+    const flip = Math.sin(this.t * 6) * 2;
+    g.fillStyle(this.tint(MAGIC.gold), ba * 0.25);
+    g.fillCircle(bx, byy, 10);
+    g.fillStyle(this.tint(MAGIC.leather), ba);
+    g.fillRect(bx - 8, byy - 5, 16, 10);
+    g.fillStyle(this.tint(MAGIC.parchment), ba);
+    g.fillRect(bx - 7, byy - 4.5, 6.5, 8.5);
+    g.fillRect(bx + 0.5, byy - 4.5, 6.5, 8.5);
+    g.fillStyle(this.tint(MAGIC.white), ba * 0.9);
+    g.fillTriangle(bx, byy - 4.5, bx + 4 + flip, byy - 6, bx, byy + 4);
+    g.lineStyle(0.8, this.tint(MAGIC.violet), ba * 0.8);
+    for (const ly of [-2, 0, 2]) {
+      g.lineBetween(bx - 6, byy + ly, bx - 1.5, byy + ly);
+      g.lineBetween(bx + 1.5, byy + ly, bx + 6, byy + ly);
+    }
+    g.fillStyle(this.tint(MAGIC.gold), ba);
+    g.fillRect(bx - 0.6, byy - 5, 1.2, 10);
+    for (let k = 1; k <= 3; k++) {
+      const ta = oa - k * 0.22;
+      g.fillStyle(this.tint(MAGIC.gold), alpha * (0.6 - k * 0.15));
+      g.fillCircle(x + Math.cos(ta) * 28, y - 6 + Math.sin(ta) * 10, 1.6 - k * 0.3);
     }
   }
 }

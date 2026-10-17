@@ -841,6 +841,54 @@ export class GrowthAvatar extends BaseAvatar {
     });
   }
 
+  /**
+   * The cell interior, painted over the sprite and under the face: a lumpy membrane rim and a
+   * few organelles drifting through the lower half of the body. Mastered, the membrane doubles
+   * into a bright pulsing envelope and the nucleus lights up gold-white — a finished organism
+   * rather than a culture still dividing.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    void a;
+    const T = this.tones;
+    // Lumpy membrane: a ring of overlapping blebs riding the sprite's edge.
+    const blebs = 14;
+    for (let i = 0; i < blebs; i++) {
+      const ang = (i / blebs) * TAU + this.t * 0.25;
+      const r = 20.5 + Math.sin(this.t * 2.2 + i * 1.7) * 0.9;
+      g.fillStyle(this.tint(T.shell), alpha * 0.45);
+      g.fillCircle(x + Math.cos(ang) * r, y + Math.sin(ang) * r, 2.6);
+    }
+    g.lineStyle(1.2, this.tint(this.mastered ? T.spark : T.lit), alpha * (this.mastered ? 0.8 : 0.45));
+    g.strokeCircle(x, y, 19.5);
+    // Organelles drifting in the lower body (well clear of the eye band at y-4).
+    const orgs = this.mastered ? 4 : 3;
+    for (let i = 0; i < orgs; i++) {
+      const p = this.t * 0.7 + i * 2.1;
+      const ox = x + Math.sin(p) * 10 + (i - (orgs - 1) / 2) * 3;
+      const oy = y + 9 + Math.cos(p * 1.3) * 3.5;
+      g.fillStyle(this.tint(T.shell), alpha * 0.5);
+      g.fillEllipse(ox, oy, 6.5, 4.5);
+      g.fillStyle(this.tint(T.cyto), alpha * 0.75);
+      g.fillEllipse(ox, oy, 4.5, 3);
+      g.fillStyle(this.tint(T.spark), alpha * 0.6);
+      g.fillCircle(ox - 1, oy - 0.8, 0.9);
+    }
+    // Nucleus, low and centred.
+    const nb = 1 + Math.sin(this.t * 3) * 0.08;
+    g.fillStyle(this.tint(T.shell), alpha * 0.55);
+    g.fillCircle(x, y + 13, 4.6 * nb);
+    g.fillStyle(this.tint(this.mastered ? GROWTH.pollen : T.lit), alpha * 0.85);
+    g.fillCircle(x, y + 13, 3 * nb);
+    if (this.mastered) {
+      // Double membrane, breathing — the clearest mastered read on the body itself.
+      const pulse = 0.5 + 0.5 * Math.sin(this.t * 4);
+      g.lineStyle(2.4, this.tint(T.spark), alpha * (0.35 + pulse * 0.4));
+      g.strokeCircle(x, y, 22.5 + pulse * 1.2);
+      g.fillStyle(this.tint(GROWTH.white), alpha * (0.5 + pulse * 0.4));
+      g.fillCircle(x - 1, y + 12, 1.3);
+    }
+  }
+
   /** Fast-moving hands shed daughter cells. */
   protected emitTrail(x: number, y: number): void {
     this.fx.motes(x, y, 1, { speed: 16, size: 2.2, life: 620, rise: 16, depth: 5, tones: this.tones });
@@ -857,6 +905,17 @@ export class GrowthAvatar extends BaseAvatar {
       const reach = (14 + Math.sin(this.t * 1.9 + i * 1.3) * 5) * this.intensity;
       g.fillStyle(this.tint(this.tones.cyto), a * 0.45);
       growthPod(g, x, y + 6, ang, reach, 3, Math.sin(this.t + i) * 6);
+    }
+    if (this.mastered) {
+      // Mastered culture: a petri-dish ring of colony dots and an outward bloom pulse.
+      const bloom = (this.t * 0.6) % 1;
+      g.lineStyle(2, this.tint(this.tones.lit), a * (1 - bloom) * 0.7);
+      g.strokeEllipse(x, y + 6, (40 + bloom * 40) * this.intensity, (22 + bloom * 22) * this.intensity);
+      for (let i = 0; i < 10; i++) {
+        const ang = -this.t * 0.5 + (i / 10) * TAU;
+        g.fillStyle(this.tint(i % 2 ? this.tones.spark : this.tones.cyto), a * 0.8);
+        g.fillCircle(x + Math.cos(ang) * 32 * this.intensity, y + 6 + Math.sin(ang) * 17 * this.intensity, 2);
+      }
     }
   }
 
@@ -881,6 +940,36 @@ export class GrowthAvatar extends BaseAvatar {
         Math.sin(p * 0.8) * 8, a * 0.95,
         { cilia: 2, phase: p * 2, bud: 1 + (0.5 + 0.5 * Math.sin(p * 1.3)) * 0.6 },
       );
+    }
+
+    // Mastery helix: a DNA double helix wound into a ring orbiting the body at the waist —
+    // two counter-phased strands with base-pair rungs, the evolved organism's signature. The
+    // stretch behind the body is skipped so the ring reads as going round it, and nothing
+    // crosses the face.
+    if (this.mastered) {
+      const hy = y + 6;
+      const rx = 28, ry = 8;
+      const N = 30;
+      for (let i = 0; i < N; i++) {
+        const u = (i / N) * TAU + this.t * 0.9;
+        const u2 = ((i + 1) / N) * TAU + this.t * 0.9;
+        const cx1 = Math.cos(u), cx2 = Math.cos(u2);
+        const back = Math.sin(u) < 0;
+        if (back && Math.abs(cx1) * rx < 21) continue;
+        const front = back ? 0.5 : 1;
+        const wob = Math.sin(u * 4 + this.t * 3) * 3;
+        const wob2 = Math.sin(u2 * 4 + this.t * 3) * 3;
+        const ax = x + cx1 * rx, ay = hy + Math.sin(u) * ry;
+        const x2 = x + cx2 * rx, y2 = hy + Math.sin(u2) * ry;
+        if (i % 2 === 0) {
+          g.lineStyle(1.4, this.tint(i % 4 ? GROWTH.helix : GROWTH.amber), alpha * front * 0.9);
+          g.lineBetween(ax, ay + wob, ax, ay - wob);
+        }
+        g.lineStyle(2, this.tint(GROWTH.pollen), alpha * front);
+        g.lineBetween(ax, ay + wob, x2, y2 + wob2);
+        g.lineStyle(2, this.tint(this.tones.lit), alpha * front);
+        g.lineBetween(ax, ay - wob, x2, y2 - wob2);
+      }
     }
 
     // Mastery colony: three daughter cells circling the head on a shallow ellipse, each with a

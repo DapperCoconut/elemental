@@ -8,7 +8,7 @@ import { Sfx } from '../../audio';
 import {
   DPT, DepthsAvatar, DepthsColorFn, DepthsFx, FISH_COLOR, FISH_EMOJI, FISH_LABEL,
   FISH_PROFILE, FishKind, QuietDepthsFx, REMORA_PROFILE, algaeOrb, bubbleColumn, darkPuddle,
-  fishBody, krakenArm, krakenHead, oxygenBar, piranha as drawPiranha, poisonBarb, sharkBody,
+  boneSpine, fishBody, krakenArm, krakenHead, oxygenBar, piranha as drawPiranha, poisonBarb, sharkBody,
 } from './DepthsVisuals';
 import { meterGain } from '../../combat/Meters';
 
@@ -180,6 +180,12 @@ const CAMO_FULL_MS = 6000;
 const CAMO_BREAK_DAMAGE = 5;
 /** Past this, the body is gone: bots stop being able to aim at it and the kit goes silent. */
 const CAMO_HIDDEN_AT = 0.999;
+/**
+ * The most either fade is allowed to take of the local player's *own* view of themselves.
+ * Both fades are only invisible to the enemy: the human playing Depths still sees a ghost of
+ * the angler, its bar and its effects, so they always know where they are.
+ */
+const SELF_VEIL_MAX = 0.7;
 /** How long a bloom you just poisoned refuses to feed *you* again. */
 const CAMO_ALGAE_ARM_MS = 4000;
 
@@ -572,7 +578,7 @@ export class DepthsKit implements SummonPurgeTarget {
    * that something is happening to *them*.
    */
   private fx(owner: Owner): DepthsFx {
-    if (this.camoHidden(owner)) return owner === 'player' ? this.pquiet : this.nquiet;
+    if (this.hiddenFromViewer(owner)) return owner === 'player' ? this.pquiet : this.nquiet;
     return owner === 'player' ? this.pfx : this.nfx;
   }
   private col(owner: Owner): DepthsColorFn { return owner === 'player' ? this.pcol : this.ncol; }
@@ -652,11 +658,24 @@ export class DepthsKit implements SummonPurgeTarget {
   }
 
   /**
+   * Fully camouflaged *as seen from this screen*. The local human is always `player`, and they
+   * keep seeing themselves — only the opponent's camouflage removes anything from view.
+   */
+  private hiddenFromViewer(owner: Owner): boolean {
+    return owner === 'npc' && this.camoHidden(owner);
+  }
+
+  /** How much of this side's body the fades may take away on this screen. */
+  private viewVeil(owner: Owner, v: number): number {
+    return owner === 'player' ? Math.min(v, SELF_VEIL_MAX) : v;
+  }
+
+  /**
    * Anything the caster says about themselves, swallowed while they are invisible. Text about
    * what happened to *somebody else* keeps using `showFloatingText` directly.
    */
   private say(owner: Owner, x: number, y: number, text: string, color: number): void {
-    if (this.camoHidden(owner)) return;
+    if (this.hiddenFromViewer(owner)) return;
     this.api.showFloatingText(x, y, text, this.hex(color));
   }
 
@@ -1056,7 +1075,7 @@ export class DepthsKit implements SummonPurgeTarget {
 
     // `forceInvisible` exists for exactly this: without it `takeDamage`'s alpha flash would
     // paint a body back onto the water every time a piranha chewed on somebody invisible.
-    const wantForced = this.camoHidden(owner);
+    const wantForced = this.hiddenFromViewer(owner);
     if (wantForced !== s.camoForced) {
       s.camoForced = wantForced;
       f.forceInvisible = wantForced;
@@ -1094,7 +1113,8 @@ export class DepthsKit implements SummonPurgeTarget {
 
     // The two fades are one number on the body. Whichever has taken more of you wins, so a
     // camouflaged angler who then stands still does not become somehow more visible.
-    const veil = Math.max(s.hidden, s.camo);
+    // Capped on your own side: invisible to the enemy, only mostly transparent to you.
+    const veil = this.viewVeil(owner, Math.max(s.hidden, s.camo));
 
     if (veil > 0.02) {
       f.setAlpha(1 - veil);
@@ -2339,8 +2359,8 @@ export class DepthsKit implements SummonPurgeTarget {
       if (!this.playerAvatar) this.playerAvatar = new DepthsAvatar(scene, this.pcol);
       this.playerAvatar.setFacing(Math.atan2(this.aimY - f.y, this.aimX - f.x));
       this.playerAvatar.setIntensity(s.boostUntil > this.now ? 1.35 : 1);
-      this.playerAvatar.setHidden(s.hidden);
-      this.playerAvatar.setCamo(s.camo);
+      this.playerAvatar.setHidden(this.viewVeil('player', s.hidden));
+      this.playerAvatar.setCamo(this.viewVeil('player', s.camo));
       this.playerAvatar.setFish(s.fish);
       this.playerAvatar.setFishing(s.fishing ? 1 - s.fishRemain / FISH_CATCH_MS : 0);
       this.playerAvatar.setMastered(this.api.masteryActive);
@@ -2502,10 +2522,7 @@ export class DepthsKit implements SummonPurgeTarget {
       // A bone bar under it — the fifty points are the whole counterplay, so they are shown.
       const w = 30;
       const r = Phaser.Math.Clamp(k.hp / SKELE_HP, 0, 1);
-      g.fillStyle(this.col(k.owner)(DPT.abyss), fade * 0.8);
-      g.fillRect(k.x - w / 2 - 1, k.y + 17, w + 2, 4);
-      g.fillStyle(this.col(k.owner)(DPT.bone), fade * 0.95);
-      g.fillRect(k.x - w / 2, k.y + 18, w * r, 2);
+      boneSpine(g, this.col(k.owner), k.x, k.y + 19, w, r, fade);
     }
 
     // ── The kraken's head ──

@@ -59,6 +59,7 @@ import { fortuneElement } from '../elements/fortune';
 import { clothElement } from '../elements/cloth';
 import { marrowElement } from '../elements/marrow';
 import { tempestElement } from '../elements/tempest';
+import { mythElement } from '../elements/myth';
 import { psychicElement } from '../elements/psychic';
 import { radiationElement } from '../elements/radiation';
 import { bindElement } from '../elements/bind';
@@ -110,6 +111,7 @@ export const ELEMENT_DATA_MAP: Record<string, Element> = {
   cloth: clothElement,
   marrow: marrowElement,
   tempest: tempestElement,
+  myth: mythElement,
   psychic: psychicElement,
   radiation: radiationElement,
   bind: bindElement,
@@ -301,6 +303,8 @@ export const TEST_ELEMENTS: ElementDef[] = [
   // Marrow's old recipe slot went to Cloth, so it is back here as a pick with no obtainment.
   { id: 'marrow', name: 'Marrow', emoji: '🦴', color: 0xb8323f, available: true },
   { id: 'tempest', name: 'Tempest', emoji: '🌪️', color: 0x7fb4ff, available: true },
+  // The ultimate element. Its obtainment is undecided, so it waits here with the others.
+  { id: 'myth', name: 'Myth', emoji: '🌠', color: 0x7d5cff, available: true },
 ];
 
 /** Abstract combined elements — created by fusing two abstract elements in a Lvl 1+ Lab. */

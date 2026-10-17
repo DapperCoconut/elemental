@@ -67,6 +67,10 @@ export const DPT = {
   shark: 0x4a6672,
   sharkDark: 0x1d2f38,
   bone: 0xf2f7f2,
+  /** Diving brass — the oxygen gauge, the helmet porthole rim and the mastered regalia. */
+  brassDeep: 0x5e3f17,
+  brass: 0xc08a3a,
+  brassLit: 0xf3d58e,
 };
 
 /**
@@ -796,29 +800,91 @@ export function oxygenBar(
   tint: DepthsColorFn,
   x: number, y: number, w: number, ratio: number, t: number, alpha: number,
 ): void {
-  const h = 6;
-  const panic = ratio <= 0.2;
+  // A diver's air supply: a brass pressure dial on the left, plumbed into a glass-fronted
+  // tank that drains as the victim drowns, with bubbles rising in what is left.
+  const h = 8;
+  const r = Phaser.Math.Clamp(ratio, 0, 1);
+  const panic = r <= 0.2;
   const shake = panic ? Math.sin(t * 40) * 1.4 : 0;
-  const bx = x - w / 2 + shake;
+  const bx = x - w / 2 + 6 + shake;
+  const tw = w - 6;
 
+  // Tank: brass shell, deep glass, then the air column.
   g.fillStyle(tint(DPT.abyss), alpha * 0.85);
-  g.fillRoundedRect(bx - 2, y - 2, w + 4, h + 4, 3);
-  g.fillStyle(tint(DPT.deep), alpha * 0.9);
-  g.fillRect(bx, y, w, h);
+  g.fillRoundedRect(bx - 2, y - 2, tw + 4, h + 4, (h + 4) / 2);
+  g.fillStyle(tint(DPT.brassDeep), alpha);
+  g.fillRoundedRect(bx - 1, y - 1, tw + 2, h + 2, (h + 2) / 2);
+  g.fillStyle(tint(DPT.deep), alpha * 0.95);
+  g.fillRoundedRect(bx + 1, y + 1, tw - 2, h - 2, (h - 2) / 2);
+  const fillCol = r > 0.5 ? DPT.cyan : r > 0.2 ? DPT.teal : DPT.blood;
+  const fw = (tw - 2) * r;
+  if (fw > 1) {
+    g.fillStyle(tint(fillCol), alpha);
+    g.fillRoundedRect(bx + 1, y + 1, fw, h - 2, Math.min((h - 2) / 2, fw / 2));
+    g.fillStyle(tint(DPT.foam), alpha * 0.45);
+    g.fillRect(bx + 3, y + 1.6, Math.max(0, fw - 4), 1.4);
+    // Bubbles drifting along inside the air that is left.
+    for (let i = 0; i < 4; i++) {
+      const px = bx + 3 + (((i * 13 + t * 11) % Math.max(1, fw - 4)));
+      const py = y + h / 2 + Math.sin(t * 4 + i * 2) * 1.4;
+      g.lineStyle(0.7, tint(DPT.foam), alpha * 0.75);
+      g.strokeCircle(px, py, 0.9 + (i % 2) * 0.5);
+    }
+  }
+  // Brass bands round the tank.
+  g.fillStyle(tint(DPT.brass), alpha);
+  for (const f of [0.33, 0.66]) g.fillRect(bx + tw * f - 1, y - 1, 2, h + 2);
+  g.lineStyle(1, tint(DPT.brassLit), alpha * 0.7);
+  g.strokeRoundedRect(bx - 1, y - 1, tw + 2, h + 2, (h + 2) / 2);
 
-  const fillCol = ratio > 0.5 ? DPT.cyan : ratio > 0.2 ? DPT.teal : DPT.blood;
-  g.fillStyle(tint(fillCol), alpha);
-  g.fillRect(bx, y, w * Phaser.Math.Clamp(ratio, 0, 1), h);
-  g.fillStyle(tint(DPT.foam), alpha * 0.45);
-  g.fillRect(bx, y, w * Phaser.Math.Clamp(ratio, 0, 1), 1.6);
+  // The pressure dial: brass bezel, pale face, a red zone and a needle that shivers in it.
+  const dx = bx - 7, dy = y + h / 2, dr = 7;
+  g.fillStyle(tint(DPT.abyss), alpha * 0.9);
+  g.fillCircle(dx, dy, dr + 1.6);
+  g.fillStyle(tint(DPT.brass), alpha);
+  g.fillCircle(dx, dy, dr + 0.6);
+  g.fillStyle(tint(DPT.brassLit), alpha * 0.8);
+  g.fillCircle(dx - 1.5, dy - 1.5, dr * 0.5);
+  g.fillStyle(tint(DPT.foam), alpha);
+  g.fillCircle(dx, dy, dr - 1.4);
+  const a0 = Math.PI * 0.75, sweep = Math.PI * 1.5;
+  g.lineStyle(1.6, tint(DPT.blood), alpha * 0.9);
+  g.beginPath();
+  g.arc(dx, dy, dr - 2.6, a0, a0 + sweep * 0.2, false);
+  g.strokePath();
+  const na = a0 + sweep * r + (panic ? Math.sin(t * 50) * 0.08 : 0);
+  g.lineStyle(1.2, tint(r <= 0 ? DPT.blood : DPT.abyss), alpha);
+  g.lineBetween(dx, dy, dx + Math.cos(na) * (dr - 2), dy + Math.sin(na) * (dr - 2));
+  g.fillStyle(tint(DPT.brassDeep), alpha);
+  g.fillCircle(dx, dy, 1.2);
+}
 
-  g.lineStyle(1.2, tint(DPT.foam), alpha * 0.7);
-  g.strokeRect(bx, y, w, h);
-
-  // A bubble marker on the left cap, so the bar is never confused for a health bar.
-  g.fillStyle(tint(ratio <= 0 ? DPT.blood : DPT.foam), alpha * 0.9);
-  g.strokeCircle(bx - 7, y + h / 2, 3.2);
-  g.fillCircle(bx - 8.2, y + h / 2 - 1.1, 1.1);
+/**
+ * A skele-fish's health: a little spine of vertebrae, one bone per tenth of its HP, each lit
+ * bone-white while it stands and dim once it is broken.
+ */
+export function boneSpine(
+  g: Phaser.GameObjects.Graphics, tint: DepthsColorFn,
+  x: number, y: number, w: number, ratio: number, alpha: number,
+): void {
+  const n = 8;
+  const step = w / n;
+  const lit = Math.ceil(Phaser.Math.Clamp(ratio, 0, 1) * n - 0.001);
+  g.fillStyle(tint(DPT.abyss), alpha * 0.75);
+  g.fillRoundedRect(x - w / 2 - 3, y - 4, w + 6, 8, 4);
+  g.lineStyle(1, tint(DPT.bone), alpha * 0.4);
+  g.lineBetween(x - w / 2, y, x + w / 2, y);
+  for (let i = 0; i < n; i++) {
+    const cx = x - w / 2 + step * (i + 0.5);
+    const on = i < lit;
+    g.fillStyle(tint(on ? DPT.bone : DPT.trench), alpha * (on ? 0.95 : 0.8));
+    g.fillRoundedRect(cx - step * 0.32, y - 2.6, step * 0.64, 5.2, 1.5);
+    if (on) {
+      g.fillStyle(tint(DPT.scale), alpha * 0.8);
+      g.fillRect(cx - 0.5, y - 3.6, 1, 1.4);
+      g.fillRect(cx - 0.5, y + 2.2, 1, 1.4);
+    }
+  }
 }
 
 /**
@@ -1087,8 +1153,9 @@ const DEPTHS_AVATAR: AvatarSpec = {
  * comes to eat it. And a caught fish is held crosswise at the mouth, which is the player's one
  * readout of which fish they are about to throw.
  *
- * Mastery enhances the lure: a longer rod, a bigger brighter esca, foam-white hand coronas and
- * glowing algae-green eyes.
+ * Mastery: a longer rod and a bigger brighter esca, a webbed crest of glowing abyssal spines
+ * over the crown, a bioluminescent ring with three lanternfish circling it, lure-green
+ * photophores, hand coronas and eyes. All of it fades with Camo Fade.
  */
 export class DepthsAvatar extends BaseAvatar {
   /** 0–1 — how far the passive has faded the body out. The esca ignores this. */
@@ -1131,9 +1198,49 @@ export class DepthsAvatar extends BaseAvatar {
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? DPT.lure : DPT.foam);
     this.forEachHandLayer(0, (glow) => {
-      glow.setRadius(on ? 14.5 : 11);
-      glow.setFillStyle(this.tint(on ? DPT.lure : DPT.cyan), on ? 0.3 : 0.2);
+      glow.setRadius(on ? 15 : 11);
+      glow.setFillStyle(this.tint(on ? DPT.lure : DPT.cyan), on ? 0.32 : 0.2);
     });
+    this.forEachHandLayer(2, (core) => core.setFillStyle(this.tint(on ? DPT.lure : DPT.foam), 0.95));
+  }
+
+  /**
+   * Anglerfish anatomy painted on the orb: a row of photophores along the flank that pulse in
+   * sequence, a fringe of fine needle teeth along the jaw, and a ragged pectoral fin either
+   * side. Everything here rides the faded alpha, so it vanishes with the body.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
+    const m = this.mastered;
+    // Pectoral fins, fluttering.
+    for (const side of [-1, 1]) {
+      const fx = x + side * 17, fy = y + 6;
+      const flap = Math.sin(this.t * 5 + side) * 2;
+      g.fillStyle(this.tint(DPT.trench), alpha * 0.85);
+      g.fillTriangle(fx, fy - 4, fx, fy + 4, fx + side * 9, fy + 6 + flap);
+      g.lineStyle(0.8, this.tint(m ? DPT.lure : DPT.cyan), alpha * 0.6);
+      g.lineBetween(fx, fy, fx + side * 8, fy + 5 + flap);
+    }
+    // Jaw line with needle teeth.
+    g.lineStyle(1.2, this.tint(DPT.abyss), alpha * 0.8);
+    g.beginPath();
+    g.arc(x, y + 1, 11, Math.PI * 0.2, Math.PI * 0.8, false);
+    g.strokePath();
+    g.fillStyle(this.tint(DPT.bone), alpha * 0.9);
+    for (let i = 0; i < 6; i++) {
+      const a = Math.PI * (0.25 + i * 0.1);
+      const tx = x + Math.cos(a) * 11, ty = y + 1 + Math.sin(a) * 11;
+      g.fillTriangle(tx - 1, ty, tx + 1, ty, tx, ty - (i % 2 ? 2.6 : 3.6));
+    }
+    // Photophores along the flank, a ripple of light travelling down the row.
+    for (let i = 0; i < 5; i++) {
+      const a = Math.PI * (0.95 + i * 0.13);
+      const px = x + Math.cos(a) * 16, py = y + 2 + Math.sin(a) * -10 + i * 2.2;
+      const p = 0.4 + 0.6 * Math.max(0, Math.sin(this.t * 3 - i * 0.9));
+      g.fillStyle(this.tint(m ? DPT.lure : DPT.cyan), alpha * 0.3 * p);
+      g.fillCircle(px, py, 3.2);
+      g.fillStyle(this.tint(m ? DPT.lure : DPT.foam), alpha * (0.5 + 0.5 * p));
+      g.fillCircle(px, py, 1.2);
+    }
   }
 
   protected emitTrail(x: number, y: number): void {
@@ -1148,6 +1255,26 @@ export class DepthsAvatar extends BaseAvatar {
     const k = this.mastered ? 1.15 : 1;
     g.fillStyle(this.tint(DPT.cyan), a * 0.16 * k);
     g.fillCircle(x, y, 28 * k);
+    // Mastery: a bioluminescent ring in the water round the angler, and three lanternfish
+    // circling it. All on the faded alpha, so Camo Fade still takes it all away.
+    if (this.mastered) {
+      g.lineStyle(1.5, this.tint(DPT.lure), alpha * (0.35 + 0.15 * Math.sin(this.t * 2.2)));
+      g.strokeEllipse(x, y + 4, 70, 30);
+      for (let i = 0; i < 3; i++) {
+        const p = this.t * 0.8 + (i / 3) * TAU;
+        const fx = x + Math.cos(p) * 34, fy = y + 4 + Math.sin(p) * 15;
+        const head = p + Math.PI / 2;
+        g.fillStyle(this.tint(DPT.lure), alpha * 0.25);
+        g.fillCircle(fx, fy, 5.5);
+        g.fillStyle(this.tint(DPT.cyan), alpha * 0.9);
+        g.fillEllipse(fx, fy, 6, 6);
+        g.fillTriangle(fx - Math.cos(head) * 3, fy - Math.sin(head) * 3,
+          fx - Math.cos(head) * 7 - Math.sin(head) * 2.5, fy - Math.sin(head) * 7 + Math.cos(head) * 2.5,
+          fx - Math.cos(head) * 7 + Math.sin(head) * 2.5, fy - Math.sin(head) * 7 - Math.cos(head) * 2.5);
+        g.fillStyle(this.tint(DPT.lure), alpha);
+        g.fillCircle(fx + Math.cos(head) * 2, fy + Math.sin(head) * 2, 1.3);
+      }
+    }
   }
 
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
@@ -1156,6 +1283,34 @@ export class DepthsAvatar extends BaseAvatar {
     // The esca ignores the fade entirely — a lure that dimmed with the thing holding it would
     // stop being bait at exactly the moment the passive finished setting it.
     const lit = this.baseAlpha;
+
+    // ── Mastery: a crest of abyssal spines along the crown, webbed and tipped with light ──
+    if (m) {
+      const fade = alpha;
+      const spines = 5;
+      const base: { x: number; y: number }[] = [];
+      for (let i = 0; i < spines; i++) {
+        const a = Math.PI + (i + 0.5) * (Math.PI / spines);
+        const bx = x + Math.cos(a) * 15, by = y - 2 + Math.sin(a) * 15;
+        const len = 9 + (i === 2 ? 5 : i % 2 === 0 ? 1 : 3) + Math.sin(this.t * 3 + i) * 1;
+        base.push({ x: bx + Math.cos(a) * len, y: by + Math.sin(a) * len });
+        g.lineStyle(1.6, this.tint(DPT.abyss), fade);
+        g.lineBetween(bx, by, bx + Math.cos(a) * len, by + Math.sin(a) * len);
+      }
+      g.fillStyle(this.tint(DPT.trench), fade * 0.55);
+      g.beginPath();
+      g.moveTo(x - 15, y - 2);
+      for (const b of base) g.lineTo(b.x, b.y);
+      g.lineTo(x + 15, y - 2);
+      g.closePath();
+      g.fillPath();
+      for (const b of base) {
+        g.fillStyle(this.tint(DPT.lure), fade * 0.35);
+        g.fillCircle(b.x, b.y, 3.6);
+        g.fillStyle(this.tint(DPT.lure), fade);
+        g.fillCircle(b.x, b.y, 1.5);
+      }
+    }
 
     // ── The illicium and its esca ──
     const tip = illicium(g, this.tint, x, y - 20, 26 + (m ? 6 : 0), this.t,

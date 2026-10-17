@@ -5,7 +5,7 @@ import type { CustomStatus } from './StatusHudKit';
 import { SummonPurgeTarget } from '../../combat/SummonPurge';
 import { Sfx } from '../../audio';
 import {
-  WAX, WaxAvatar, WaxColorFn, WaxFx, combCell, drawBee, drawCandle, drawCandleAura, drawDart, drawGrapple,
+  WAX, WaxAvatar, WaxColorFn, WaxFx, combCell, strokeComb, drawStrapGauge, drawBee, drawCandle, drawCandleAura, drawDart, drawGrapple,
   drawHive, drawPoisonTell, drawPuddle, drawStickyBomb,
 } from './WaxVisuals';
 
@@ -1265,8 +1265,13 @@ export class WaxKit implements SummonPurgeTarget {
       if (s.bankedAuras.some((u) => u > time)) drawCandleAura(ground, tint, f.x, f.y, CANDLE_RADIUS * 0.8, t + 3, 0.8);
       const bees = s.shields.filter((sh) => sh.until > time).reduce((sum, sh) => sum + sh.beesPerHit, 0);
       if (bees > 0) {
-        air.lineStyle(1.6, tint(WAX.honeyLit), 0.45 + Math.sin(t * 4) * 0.15);
-        air.strokeCircle(f.x, f.y, 30 + Math.sin(t * 3) * 2);
+        // A lattice of comb outlines hanging round the fighter — the swarm's guard.
+        const sr = 30 + Math.sin(t * 3) * 2;
+        air.lineStyle(1.2, tint(WAX.honeyLit), 0.35 + Math.sin(t * 4) * 0.12);
+        for (let i = 0; i < 14; i++) {
+          const a = -t * 0.5 + (i / 14) * Math.PI * 2;
+          strokeComb(air, f.x + Math.cos(a) * sr, f.y + Math.sin(a) * sr, 4.2, a);
+        }
         for (let i = 0; i < bees * 2; i++) {
           const a = t * 2.2 + (i / (bees * 2)) * Math.PI * 2;
           drawBee(air, tint, f.x + Math.cos(a) * 32, f.y + Math.sin(a) * 30, a + Math.PI / 2, t, i, false, 0.9, 0.6);
@@ -1294,10 +1299,7 @@ export class WaxKit implements SummonPurgeTarget {
       if (!s.qHolding || s.qHoldFired || !this.isWax(owner)) continue;
       const f = this.fighter(owner);
       const ratio = Phaser.Math.Clamp((time - s.qHoldStart) / BOMB_HOLD_MS, 0, 1);
-      air.lineStyle(5, this.tint(owner)(ratio >= 1 ? WAX.cream : WAX.wax), 0.9);
-      air.beginPath();
-      air.arc(f.x, f.y, 38, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ratio, false);
-      air.strokePath();
+      drawStrapGauge(air, this.tint(owner), f.x, f.y, ratio, t);
     }
   }
 

@@ -804,7 +804,10 @@ const ACID_AVATAR: AvatarSpec = {
 /**
  * The acid character rig: two globule ball hands that sling as they move, a pair of eyes, and a
  * crest of ribbons running off the crown and dripping. Hands, eyes and gestures come from
- * BaseAvatar; what acid adds is the pool underfoot and the running above.
+ * BaseAvatar; what acid adds is the pool underfoot and the running above. The orb is pitted
+ * with corrosion and slow bubbles, with a drip running down one cheek; bubbles rise off the
+ * hands. Mastery adds a turning caustic hazard sigil behind the crest, a bubbling ring round
+ * the pool, five ribbons, orbiting globules and wide caustic-rimmed hand halos.
  */
 export class AcidAvatar extends BaseAvatar {
   private fx: AcidFx;
@@ -875,6 +878,49 @@ export class AcidAvatar extends BaseAvatar {
       g.fillStyle(this.tint(this.tones.hot), a * 0.8);
       g.fillCircle(x + Math.cos(ang) * 15 * k, y + 6 + Math.sin(ang) * 7 * k, br);
     }
+    if (this.mastered) {
+      // A ring of boiling bubbles round the pool's edge — the pool itself is now caustic.
+      g.lineStyle(1.8, this.tint(this.tones.hot), a * 0.55);
+      g.strokeEllipse(x, y + 8, 64, 22);
+      for (let i = 0; i < 10; i++) {
+        const ang = (i / 10) * TAU + this.t * 0.5;
+        const p = (this.t * 1.4 + i * 0.37) % 1;
+        const br = 1 + 2.4 * Math.sin(p * Math.PI);
+        g.fillStyle(this.tint(i % 2 ? this.tones.hot : this.tones.wet), a * 0.9);
+        g.fillCircle(x + Math.cos(ang) * 32, y + 8 + Math.sin(ang) * 11 - p * 3, br);
+      }
+    }
+  }
+
+  /**
+   * Corrosion on the orb: a few dark pits with lit rims, bubbles rising through the lower half,
+   * and a drip running down the side of the face. Mastered, the pits glow from inside.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
+    const m = this.mastered;
+    const pits: [number, number, number][] = [[-10, 8, 2.4], [8, 11, 1.9], [12, 2, 1.5], [-4, 14, 1.4], [-13, -1, 1.3]];
+    for (const [px, py, r] of pits) {
+      g.fillStyle(this.tint(this.tones.rind), 0.65 * alpha);
+      g.fillCircle(x + px, y + py, r);
+      g.fillStyle(this.tint(m ? this.tones.hot : this.tones.live), (m ? 0.85 : 0.5) * alpha);
+      g.fillCircle(x + px + r * 0.15, y + py + r * 0.2, r * 0.45);
+    }
+    // Bubbles rising through the liquid body.
+    for (let i = 0; i < 4; i++) {
+      const p = (this.t * 0.45 + i * 0.27) % 1;
+      const bx = x + Math.sin(i * 2.3 + this.t) * 8;
+      const by = y + 16 - p * 18;
+      const r = 0.8 + p * 1.4;
+      g.lineStyle(0.8, this.tint(this.tones.wet), (1 - p) * 0.7 * alpha);
+      g.strokeCircle(bx, by, r);
+    }
+    // A drip running down the cheek.
+    const run = (this.t * 0.6) % 1;
+    g.fillStyle(this.tint(this.tones.live), 0.85 * alpha);
+    g.fillRect(x + 14.2, y - 6, 1.6, 6 + run * 6);
+    g.fillCircle(x + 15, y + run * 6, 1.6 + run * 0.6);
+    g.fillStyle(this.tint(this.tones.wet), 0.7 * alpha);
+    g.fillCircle(x + 14.6, y - 0.4 + run * 6, 0.6);
   }
 
   /**
@@ -886,6 +932,32 @@ export class AcidAvatar extends BaseAvatar {
     const rootY = y - 18;
     const count = this.mastered ? 5 : 3;
     const scale = this.mastered ? 1.3 : 1;
+
+    // Mastery regalia, behind the crest: a caustic hazard sigil turning slowly — three lobes
+    // round a ring, glowing hot.
+    if (this.mastered) {
+      // Above the over-head health bar (y-39..y-31), which would otherwise cover it.
+      const sx = x, sy = rootY - 36;
+      const spin = this.t * 0.7;
+      g.fillStyle(this.tint(this.tones.live), a * 0.25);
+      g.fillCircle(sx, sy, 15);
+      for (let i = 0; i < 3; i++) {
+        const ang = spin + (i / 3) * TAU - Math.PI / 2;
+        const lx = sx + Math.cos(ang) * 7, ly = sy + Math.sin(ang) * 7;
+        g.lineStyle(3.2, this.tint(this.tones.rind), alpha * 0.85);
+        g.beginPath();
+        g.arc(lx, ly, 5.6, ang + 0.9, ang + TAU - 0.9, false);
+        g.strokePath();
+        g.lineStyle(1.8, this.tint(this.tones.hot), alpha);
+        g.beginPath();
+        g.arc(lx, ly, 5.6, ang + 0.9, ang + TAU - 0.9, false);
+        g.strokePath();
+      }
+      g.lineStyle(2.2, this.tint(ACID.white), alpha * 0.9);
+      g.strokeCircle(sx, sy, 4);
+      g.fillStyle(this.tint(this.tones.hot), alpha);
+      g.fillCircle(sx, sy, 1.6);
+    }
 
     for (let i = 0; i < count; i++) {
       const side = (i - (count - 1) / 2) / Math.max(1, (count - 1) / 2);
@@ -906,6 +978,17 @@ export class AcidAvatar extends BaseAvatar {
       g.fillCircle(tx, ty, (1.6 + swell * 2.6) * scale);
       g.fillStyle(this.tint(this.tones.wet), alpha * 0.9 * (1 - swell * 0.5));
       g.fillCircle(tx - 0.8, ty - 0.8, (0.6 + swell) * scale);
+    }
+
+    // Bubbles fizzing up off each hand.
+    for (let i = 0; i < 2; i++) {
+      for (let k = 0; k < 2; k++) {
+        const p = (this.t * 1.3 + k * 0.5 + i * 0.25) % 1;
+        const bx = this.armX[i] + Math.sin(this.t * 4 + k * 3 + i) * 3;
+        const by = this.armY[i] - 6 - p * 10;
+        g.lineStyle(0.9, this.tint(this.mastered ? ACID.white : this.tones.wet), (1 - p) * 0.8 * alpha);
+        g.strokeCircle(bx, by, 0.9 + p * 1.3);
+      }
     }
 
     // Mastery orbit: globules circling the head on a shallow ellipse, each with its own bead.

@@ -1039,6 +1039,36 @@ export class EchoAvatar extends BaseAvatar {
   }
 
   /**
+   * Body markings: a speaker-grille of three lilac sound arcs across the belly (the organ it
+   * fights with, worn on the chest) and two little bat fangs under the eyes. Mastered, the
+   * grille lights sonar-green and its arcs ripple outward on a loop.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
+    const m = this.mastered;
+    const col = this.tint(m ? ECHO.sonar : ECHO.lilac);
+    for (let i = 0; i < 3; i++) {
+      const ripple = m ? ((this.t * 0.9 + i / 3) % 1) : 0;
+      const r = 6 + i * 4 + ripple * 3;
+      const al = m ? 0.75 * (1 - ripple * 0.6) : 0.32 - i * 0.06;
+      g.lineStyle(1.4, col, alpha * al);
+      g.beginPath();
+      g.arc(x, y + 4, r, Math.PI * 0.28, Math.PI * 0.72, false);
+      g.strokePath();
+    }
+    // fangs
+    g.fillStyle(this.tint(ECHO.ghost), alpha * 0.95);
+    for (const side of [-1, 1]) {
+      const fx = x + side * 3.2 + Math.cos(this.facing) * 1.2;
+      fillPts(g, [{ x: fx - 1.4, y: y + 3 }, { x: fx + 1.4, y: y + 3 }, { x: fx, y: y + 6.2 }]);
+    }
+    // a faint rim of moonlight on the upper shell
+    g.lineStyle(1.2, this.tint(m ? ECHO.biolumPale : ECHO.pale), alpha * (m ? 0.6 : 0.3));
+    g.beginPath();
+    g.arc(x, y, 20.5, Math.PI * 1.12, Math.PI * 1.88, false);
+    g.strokePath();
+  }
+
+  /**
    * The bat ears, rooted at the crown (`y - 18`) so they never cover the face. Each is a dark
    * dusk point with a lighter membrane inside; they flick with a slow listening twitch, and
    * prick up hard while the fighter is buffed.
@@ -1076,6 +1106,56 @@ export class EchoAvatar extends BaseAvatar {
         { x: bx + Math.sin(tilt) * h * 0.8, y: rootY - Math.cos(tilt) * h * 0.8 },
         { x: mx + 4.5, y: rootY + 2 },
       ]);
+      // a fur tuft at the ear root
+      g.fillStyle(this.tint(m ? ECHO.biolumPale : ECHO.lilac), alpha * 0.7);
+      fillPts(g, [
+        { x: bx - 2.5, y: rootY + 2 }, { x: bx + side * 2, y: rootY - 4 }, { x: bx + 2.5, y: rootY + 2 },
+      ]);
+    }
+
+    // Hand claws: two tiny hooked talons on each membrane hand, pointing along the aim.
+    for (let i = 0; i < 2; i++) {
+      const hx = this.armX[i], hy = this.armY[i];
+      const ang = Math.atan2(hy - y, hx - x);
+      g.fillStyle(this.tint(m ? ECHO.sonar : ECHO.ghost), alpha * 0.85);
+      for (const off of [-0.45, 0.45]) {
+        const ca = ang + off;
+        const bx = hx + Math.cos(ca) * 6.5, by = hy + Math.sin(ca) * 6.5;
+        fillPts(g, [
+          { x: bx + Math.cos(ca + 1.57) * 1.5, y: by + Math.sin(ca + 1.57) * 1.5 },
+          { x: bx + Math.cos(ca) * 4, y: by + Math.sin(ca) * 4 },
+          { x: bx - Math.cos(ca + 1.57) * 1.5, y: by - Math.sin(ca + 1.57) * 1.5 },
+        ]);
+      }
+    }
+
+    if (!m) return;
+    // ── Mastered only: the Sonar Diadem ──────────────────────────────────
+    // A floating crescent of three sonar crests between the ears, a bright tuning-fork gem at
+    // its heart, and three sonar motes that circle the body on a tilted orbit.
+    const cy = rootY - 9 + Math.sin(this.t * 2.4) * 1.2;
+    const pulse = 0.7 + 0.3 * Math.sin(this.t * 5);
+    g.lineStyle(2.4, this.tint(ECHO.sonar), alpha * 0.95);
+    g.beginPath();
+    g.arc(x + lean, cy + 6, 9, Math.PI * 1.15, Math.PI * 1.85, false);
+    g.strokePath();
+    for (const k of [-1, 0, 1]) {
+      const px = x + lean + k * 6.5;
+      const py = cy - (k === 0 ? 5 : 2);
+      g.fillStyle(this.tint(ECHO.sonar), alpha);
+      fillPts(g, [{ x: px - 2.2, y: py + 3 }, { x: px, y: py - (k === 0 ? 5 : 3) }, { x: px + 2.2, y: py + 3 }]);
+    }
+    g.fillStyle(this.tint(ECHO.white), alpha * pulse);
+    g.fillCircle(x + lean, cy + 0.5, 2.1);
+    for (let i = 0; i < 3; i++) {
+      const oa = this.t * 1.8 + (i / 3) * TAU;
+      if (Math.sin(oa) < 0 && Math.abs(Math.cos(oa)) < 0.75) continue; // behind the body
+      const ox = x + Math.cos(oa) * 27;
+      const oy = y + 2 + Math.sin(oa) * 9;
+      g.fillStyle(this.tint(ECHO.sonar), alpha * 0.28);
+      g.fillCircle(ox, oy, 4.2);
+      g.fillStyle(this.tint(ECHO.biolumPale), alpha * 0.95);
+      g.fillCircle(ox, oy, 1.8);
     }
   }
 }

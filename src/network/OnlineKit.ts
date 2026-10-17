@@ -121,9 +121,10 @@ export class OnlineKit {
    */
   private readonly onReplicaDamage = (amount: number, opts?: DamageOpts) => {
     if (amount <= 0 || this.matchEnded) return;
-    const msg: { t: 'dmg'; a: number; p?: 1; f?: 1 } = { t: 'dmg', a: Math.round(amount) };
+    const msg: { t: 'dmg'; a: number; p?: 1; f?: 1; tr?: 1 } = { t: 'dmg', a: Math.round(amount) };
     if (opts?.pierce) msg.p = 1;
     if (opts?.fireDot) msg.f = 1;
+    if (opts?.trueDamage) msg.tr = 1;
     Net.send(msg);
   };
   private readonly onPlayerDefeated = () => this.sendDeath();
@@ -308,7 +309,9 @@ export class OnlineKit {
         // Devotion's 50%-faith softening is armour on the priest, decided on the priest's sim.
         * p.passionIncomingMult
         // Sound's Smooth soul song, likewise self-granted.
-        * p.soundIncomingMult * 1000) / 1000,
+        * p.soundIncomingMult
+        // Harvest's Meat Broth (Corrupt Cooking), likewise self-granted.
+        * p.harvestIncomingMult * 1000) / 1000,
       fr: p.flatDamageReduction,
       dc: p.hardDamageCap,
     });
@@ -329,7 +332,7 @@ export class OnlineKit {
       t: 'fx',
       e: collectNetStatuses(npc, now, this.api.gameNow()),
       spd: Math.round(Math.min(1, this.api.npcSpeedMult()) * 1000) / 1000,
-      cd: Math.round(Math.max(1, npc.cooldownMult) * 1000) / 1000,
+      cd: Math.round(Math.max(1, npc.cooldownMult * npc.goldCooldownMult) * 1000) / 1000,
     });
   }
 
@@ -435,7 +438,7 @@ export class OnlineKit {
         // there; our own absorb layers (invincibility, absorber, shields) still apply.
         const player = this.api.player;
         if (player?.active && player.hp > 0) {
-          player.takeDamage(msg.a, { netApplied: true, pierce: !!msg.p, fireDot: !!msg.f });
+          player.takeDamage(msg.a, { netApplied: true, pierce: !!msg.p, fireDot: !!msg.f, trueDamage: !!msg.tr });
         }
         break;
       }
@@ -499,9 +502,9 @@ export class OnlineKit {
         }
         break;
       case 'psy':
-        // Piece moves, queen slides and the Utter Focus route carry positions, which mirror
-        // like every other coordinate. The queue and the focus heartbeat carry none.
-        if (msg.k === 'move' || msg.k === 'qmove') {
+        // Piece moves, queen slides, castling and the Utter Focus route carry positions, which
+        // mirror like every other coordinate. The queue and the focus heartbeat carry none.
+        if (msg.k === 'move' || msg.k === 'qmove' || msg.k === 'castle') {
           this.api.onPsychicMsg({ ...msg, x: this.mirrorX(msg.x) });
         } else if (msg.k === 'route') {
           this.api.onPsychicMsg({ ...msg, pts: msg.pts.map((v, i) => (i % 2 === 0 ? this.mirrorX(v) : v)) });

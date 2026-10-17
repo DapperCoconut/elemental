@@ -1009,10 +1009,37 @@ const ICE_AVATAR: AvatarSpec = {
   squash: { div: 17, x: 0.34, y: 0.16 },
 };
 
+/** A six-armed snowflake glyph: arms with two pairs of barbs each, and a hex heart. */
+function snowflake(
+  g: Phaser.GameObjects.Graphics, cx: number, cy: number, r: number, rot: number,
+  color: number, alpha: number, width: number,
+): void {
+  g.lineStyle(width, color, alpha);
+  for (let i = 0; i < 6; i++) {
+    const a = rot + (i / 6) * TAU;
+    const cos = Math.cos(a), sin = Math.sin(a);
+    g.lineBetween(cx, cy, cx + cos * r, cy + sin * r);
+    for (const f of [0.45, 0.72]) {
+      const bx = cx + cos * r * f, by = cy + sin * r * f;
+      const bl = r * (f < 0.6 ? 0.3 : 0.2);
+      for (const side of [-1, 1]) {
+        const ba = a + side * 0.75;
+        g.lineBetween(bx, by, bx + Math.cos(ba) * bl, by + Math.sin(ba) * bl);
+      }
+    }
+  }
+  g.strokeCircle(cx, cy, r * 0.16);
+}
+
 /**
  * The ice character rig: two frozen ball hands, a pair of eyes, and a crown of shards growing
  * off the head. The hands, eyes and gestures come from BaseAvatar; what ice adds is the chill
- * pooling underneath and the crystals above.
+ * pooling underneath, frost ferns and an etched snowflake on the lower body, a small spike
+ * of ice on each hand, and the crystals above.
+ *
+ * Mastered: a great snowflake halo turns slowly behind the head, the crown grows to five
+ * taller shards, three more shards orbit the head, snow drifts down around the fighter, the
+ * eyes go white and the hands take a hard white rim over a wider rime halo.
  */
 export class IceAvatar extends BaseAvatar {
   private fx: IceFx;
@@ -1060,7 +1087,7 @@ export class IceAvatar extends BaseAvatar {
   }
 
   /** The chill pooling under the character, with rime creeping outward along the ground. */
-  protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
+  protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     g.fillStyle(this.tint(this.tones.shell), a * 0.3 * this.intensity);
     g.fillEllipse(x, y + 5, 56 * this.intensity, 32 * this.intensity);
     g.fillStyle(this.tint(this.tones.body), a * 0.14 * this.intensity);
@@ -1071,6 +1098,44 @@ export class IceAvatar extends BaseAvatar {
       g.fillStyle(this.tint(this.tones.facet), a * 0.5);
       iceShard(g, x, y + 6, ang, reach, 2.6, (i % 2 ? 1 : -1) * 0.5);
     }
+    if (!this.mastered) return;
+    // Mastery halo: a great snowflake turning slowly behind the head, with a frost disc
+    // behind it so it reads against any floor.
+    const hx = x, hy = y - 26 + Math.sin(this.t * 1.8) * 1.2;
+    g.fillStyle(this.tint(this.tones.facet), alpha * 0.16);
+    g.fillCircle(hx, hy, 25);
+    snowflake(g, hx, hy, 24, this.t * 0.35, this.tint(this.tones.body), alpha * 0.7, 3);
+    snowflake(g, hx, hy, 24, this.t * 0.35, this.tint(this.tones.spark), alpha * 0.9, 1.3);
+  }
+
+  /**
+   * Frost on the lower body: feathery fern fronds creeping up from the bottom edge and a
+   * small etched snowflake, kept below the eye band so the face stays clean.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
+    const lit = this.tint(this.tones.lit);
+    // Fern fronds: a spine with alternating barbs, three of them fanning up from the base.
+    for (const [ox, oy, ang, len] of [[-11, 17, -Math.PI / 2 - 0.55, 11], [-1, 20, -Math.PI / 2 + 0.05, 9], [10, 18, -Math.PI / 2 + 0.6, 10]] as const) {
+      const bx = x + ox, by = y + oy;
+      const cos = Math.cos(ang), sin = Math.sin(ang);
+      g.lineStyle(1.1, lit, alpha * 0.7);
+      g.lineBetween(bx, by, bx + cos * len, by + sin * len);
+      for (let k = 1; k <= 3; k++) {
+        const f = k / 4;
+        const px = bx + cos * len * f, py = by + sin * len * f;
+        const bl = (1 - f) * 4 + 1.2;
+        const side = k % 2 ? 1 : -1;
+        const ba = ang + side * 0.8;
+        g.lineBetween(px, py, px + Math.cos(ba) * bl, py + Math.sin(ba) * bl);
+      }
+    }
+    // Etched snowflake on the belly, glinting now and then.
+    const glint = 0.45 + 0.4 * Math.max(0, Math.sin(this.t * 1.3));
+    snowflake(g, x + 8, y + 10, 4.6, 0.3, this.tint(this.tones.spark), alpha * glint, 0.9);
+    // Hairline facet lines that make the shell read as cut crystal.
+    g.lineStyle(0.8, this.tint(this.tones.spark), alpha * 0.35);
+    g.lineBetween(x - 16, y + 4, x - 6, y + 9);
+    g.lineBetween(x - 6, y + 9, x - 9, y + 17);
   }
 
   /**
@@ -1095,9 +1160,23 @@ export class IceAvatar extends BaseAvatar {
       );
     }
 
+    // A small spike of ice standing off each hand.
+    for (let i = 0; i < 2; i++) {
+      const hx = this.armX[i], hy = this.armY[i];
+      const ang = -Math.PI / 2 + (i === 0 ? -0.6 : 0.6);
+      iceShardLayered(g, this.tint, this.tones, hx, hy - 2, ang, this.mastered ? 11 : 8, this.mastered ? 2.8 : 2.2, 0, alpha * 0.95, false);
+    }
+
     // Mastery orbit: three shards circling the head on a shallow ellipse, each tumbling on its
-    // own axis so the crown reads as ice in motion, not as beads on a wire.
+    // own axis so the crown reads as ice in motion, not as beads on a wire. Snow drifts down.
     if (this.mastered) {
+      for (let i = 0; i < 5; i++) {
+        const p = (this.t * 0.4 + i / 5) % 1;
+        const sx = x + Math.sin(i * 2.3 + this.t * 0.9) * 26;
+        const sy = y - 34 + p * 56;
+        g.fillStyle(this.tint(this.tones.spark), alpha * 0.8 * Math.sin(p * Math.PI));
+        g.fillCircle(sx, sy, 1.4);
+      }
       for (let i = 0; i < 3; i++) {
         const p = this.t * 1.4 + (i / 3) * TAU;
         const cx = x + Math.cos(p) * 24;

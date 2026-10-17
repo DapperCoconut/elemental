@@ -1170,7 +1170,8 @@ export class FateAvatar extends BaseAvatar {
 
   /**
    * Mastery tell — gold eyes and a gilded rim with a wider glow on each hand; `drawExtras`
-   * enlarges the fan and lights it gold. Shape changes, not just brighter tints — a tint alone
+   * enlarges the fan, lights it gold, gilds the knuckle chips and tumbles two golden dice over
+   * the head; `drawGlow` lays a gold-rimmed table with a ring of chips underfoot. Shape changes, not just brighter tints — a tint alone
    * vanishes at gameplay zoom.
    */
   protected applyMastery(on: boolean): void {
@@ -1207,6 +1208,40 @@ export class FateAvatar extends BaseAvatar {
     g.fillCircle(x, y, 28 * k);
     g.fillStyle(this.tint(FATE.felt), a * 0.28 * k);
     g.fillEllipse(x, y + 8, 38 * k, 14 * k);
+    if (this.mastered) {
+      // The high-roller's table: a gold-rimmed felt oval and a ring of stacked chips round it.
+      g.lineStyle(2, this.tint(FATE.gold), a * 0.75);
+      g.strokeEllipse(x, y + 10, 66, 22);
+      const chips = [FATE.blood, FATE.gold, FATE.ink, FATE.jade, FATE.enchant, FATE.gold];
+      for (let i = 0; i < chips.length; i++) {
+        const ang = this.t * 0.6 + (i / chips.length) * TAU;
+        fateChip(g, this.tint, x + Math.cos(ang) * 33, y + 10 + Math.sin(ang) * 11, 3.2, chips[i], a * 1.2, this.t * 2 + i);
+      }
+    }
+  }
+
+  /**
+   * The dealer's orb: a faint harlequin lattice over the lower half and a little suit pin
+   * under the face. Mastered, the lattice is gilt and the pin becomes a gold spade.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
+    const m = this.mastered;
+    g.lineStyle(0.8, this.tint(m ? FATE.gold : FATE.felt), (m ? 0.6 : 0.45) * alpha);
+    for (let i = -3; i <= 3; i++) {
+      const ox = i * 6;
+      // Diagonals clipped to a lens across the lower body.
+      g.beginPath(); g.moveTo(x + ox - 6, y + 4); g.lineTo(x + ox + 6, y + 16); g.strokePath();
+      g.beginPath(); g.moveTo(x + ox + 6, y + 4); g.lineTo(x + ox - 6, y + 16); g.strokePath();
+    }
+    // Lattice diamonds pick up one red pip each.
+    for (let i = -2; i <= 2; i++) {
+      g.fillStyle(this.tint(i % 2 === 0 ? FATE.blood : FATE.ink), 0.55 * alpha);
+      g.fillCircle(x + i * 6, y + 10, 1);
+    }
+    g.fillStyle(this.tint(FATE.shade), 0.6 * alpha);
+    suitGlyph(g, 'spade', x, y + 6.5, m ? 3.6 : 3);
+    g.fillStyle(this.tint(m ? FATE.gold : FATE.bone), alpha);
+    suitGlyph(g, 'spade', x, y + 6, m ? 3.2 : 2.6);
   }
 
   /**
@@ -1242,6 +1277,48 @@ export class FateAvatar extends BaseAvatar {
         Math.cos(this.t * 1.6 + i * 1.4), a * 0.95,
         { suit: SUITS[i % SUITS.length], shadow: false },
       );
+    }
+
+    // A chip rolling round each hand's knuckles.
+    for (let i = 0; i < 2; i++) {
+      const ang = this.t * (i === 0 ? 2.6 : -2.6) + i;
+      fateChip(g, this.tint, this.armX[i] + Math.cos(ang) * 8, this.armY[i] + Math.sin(ang) * 8, 2.6,
+        m ? FATE.gold : (i === 0 ? FATE.blood : FATE.ink), alpha, this.t * 3);
+    }
+
+    // Mastery regalia: a pair of golden dice tumbling over the head, above the health bar.
+    if (m) {
+      for (let i = 0; i < 2; i++) {
+        const p = this.t * 1.3 + i * Math.PI;
+        const dx = x + Math.cos(p) * 13, dy = y - 50 + Math.sin(p * 2) * 2.5;
+        this.die(g, dx, dy, 5.4, this.t * (i === 0 ? 1.8 : -2.1), 1 + ((Math.floor(this.t * 1.5) + i * 3) % 6), alpha);
+      }
+    }
+  }
+
+  /** A gilt die, rotated, with real pip layouts. */
+  private die(g: Phaser.GameObjects.Graphics, cx: number, cy: number, half: number, rot: number, face: number, alpha: number): void {
+    const cos = Math.cos(rot), sin = Math.sin(rot);
+    const at = (lx: number, ly: number) => ({ x: cx + lx * cos - ly * sin, y: cy + lx * sin + ly * cos });
+    const corners = [at(-half, -half), at(half, -half), at(half, half), at(-half, half)];
+    g.fillStyle(this.tint(FATE.gold), 0.3 * alpha);
+    g.fillCircle(cx, cy, half * 2);
+    g.fillStyle(this.tint(FATE.brass), alpha);
+    g.fillPoints(corners.map((c) => new Phaser.Math.Vector2(c.x + 0.8, c.y + 1)), true);
+    g.fillStyle(this.tint(FATE.gold), alpha);
+    g.fillPoints(corners.map((c) => new Phaser.Math.Vector2(c.x, c.y)), true);
+    g.lineStyle(1, this.tint(FATE.glint), 0.9 * alpha);
+    g.strokePoints(corners.map((c) => new Phaser.Math.Vector2(c.x, c.y)), true);
+    const q = half * 0.5;
+    const layouts: Record<number, [number, number][]> = {
+      1: [[0, 0]], 2: [[-q, -q], [q, q]], 3: [[-q, -q], [0, 0], [q, q]],
+      4: [[-q, -q], [q, -q], [-q, q], [q, q]], 5: [[-q, -q], [q, -q], [0, 0], [-q, q], [q, q]],
+      6: [[-q, -q], [q, -q], [-q, 0], [q, 0], [-q, q], [q, q]],
+    };
+    g.fillStyle(this.tint(FATE.ink), alpha);
+    for (const [lx, ly] of layouts[face] ?? layouts[1]) {
+      const p = at(lx, ly);
+      g.fillCircle(p.x, p.y, half * 0.17);
     }
   }
 }

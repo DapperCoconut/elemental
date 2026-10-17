@@ -6,6 +6,7 @@ import {
   shadowTendril, shadowTendrilLayered,
 } from './ShadowVisuals';
 import { BaseAvatar } from './ElementVisuals';
+import { FONT_DISPLAY } from '../../ui/Theme';
 import { makeSkinAvatar } from './skins/SkinAvatars';
 
 /**
@@ -305,6 +306,9 @@ export class ShadowKit {
   }> = [];
   /** Screen-space bounds of the trap bar; a click inside it must never become an attack. */
   private trapBarBounds = { x1: 0, y1: 0, x2: 0, y2: 0 };
+  /** The void-pocket plates behind the trap icons, redrawn every frame. */
+  private trapBarGfx: Phaser.GameObjects.Graphics | null = null;
+  private trapBarHover: TrapKind | null = null;
 
   // ── NPC shadow ───────────────────────────────────────────────────────
   private npcShadowTentacleActive = false;
@@ -771,6 +775,8 @@ export class ShadowKit {
   private teardownTrapBar(): void {
     for (const s of this.trapBarSlots) { s.bg.destroy(); s.art.destroy(); s.name.destroy(); }
     this.trapBarSlots = [];
+    this.trapBarGfx?.destroy(); this.trapBarGfx = null;
+    this.trapBarHover = null;
     this.trapBarBounds = { x1: 0, y1: 0, x2: 0, y2: 0 };
   }
 
@@ -787,24 +793,26 @@ export class ShadowKit {
       x2: startX - slotW / 2 + total, y2: y + 28,
     };
 
+    this.trapBarGfx = scene.add.graphics().setDepth(199.5).setScrollFactor(0);
     for (let i = 0; i < menu.length; i++) {
       const def = menu[i];
       const x = startX + i * (slotW + gap);
-      const bg = scene.add.rectangle(x, y, slotW, 56, SHADOW.pitch, 0.85)
-        .setStrokeStyle(2, def.color, 0.8)
+      // The rect is only the hit area now; the void-pocket plate is painted by paintTrapBar.
+      const bg = scene.add.rectangle(x, y, slotW, 56, SHADOW.pitch, 0.01)
         .setDepth(200)
         .setScrollFactor(0)
         .setInteractive({ useHandCursor: true });
       const art = scene.add.graphics().setDepth(201).setScrollFactor(0);
-      const name = scene.add.text(x, y + 18, def.name, { fontSize: '9px', color: '#ccaadd' })
-        .setOrigin(0.5).setDepth(201).setScrollFactor(0);
+      const name = scene.add.text(x, y + 19, def.name.toUpperCase(), {
+        fontSize: '9px', fontFamily: FONT_DISPLAY, color: '#ccaadd', stroke: '#08000f', strokeThickness: 3,
+      }).setOrigin(0.5).setDepth(201).setScrollFactor(0);
 
       bg.on('pointerdown', () => {
         this.selectedTrap = def.kind;
         this.refreshTrapBar();
       });
-      bg.on('pointerover', () => bg.setFillStyle(SHADOW.violet, 0.9));
-      bg.on('pointerout', () => this.refreshTrapBar());
+      bg.on('pointerover', () => { this.trapBarHover = def.kind; });
+      bg.on('pointerout', () => { if (this.trapBarHover === def.kind) this.trapBarHover = null; this.refreshTrapBar(); });
 
       this.trapBarSlots.push({ kind: def.kind, bg, art, name, x, y });
     }
@@ -814,15 +822,73 @@ export class ShadowKit {
   private refreshTrapBar(): void {
     for (const s of this.trapBarSlots) {
       const def = ShadowKit.TRAP_MENU.find((d) => d.kind === s.kind)!;
+      void def;
       const sel = s.kind === this.selectedTrap;
-      s.bg.setFillStyle(sel ? SHADOW.plum : SHADOW.pitch, sel ? 0.95 : 0.85);
-      s.bg.setStrokeStyle(sel ? 3 : 2, def.color, sel ? 1 : 0.6);
       s.name.setColor(sel ? '#ffffff' : '#9977aa');
     }
   }
 
   /** Repaint the four icons, so each one twitches in the bar exactly as it will on the floor. */
   private paintTrapBar(time: number): void {
+    const g = this.trapBarGfx;
+    if (g) {
+      g.clear();
+      const b = this.trapBarBounds;
+      // A torn strip of night the four pockets hang in, with tendrils curling off each end.
+      g.fillStyle(0x000000, 0.4);
+      g.fillRoundedRect(b.x1 - 8, b.y1 - 3, b.x2 - b.x1 + 16, b.y2 - b.y1 + 10, 12);
+      g.fillStyle(SHADOW.abyss, 0.88);
+      g.fillRoundedRect(b.x1 - 10, b.y1 - 6, b.x2 - b.x1 + 20, b.y2 - b.y1 + 12, 12);
+      g.lineStyle(1.5, SHADOW.violet, 1);
+      g.strokeRoundedRect(b.x1 - 10, b.y1 - 6, b.x2 - b.x1 + 20, b.y2 - b.y1 + 12, 12);
+      for (const side of [-1, 1]) {
+        const ex = side < 0 ? b.x1 - 10 : b.x2 + 10;
+        const ey = (b.y1 + b.y2) / 2;
+        for (let k = 0; k < 3; k++) {
+          const wave = Math.sin(time / 420 + k * 1.7 + side) * 4;
+          g.lineStyle(2.4 - k * 0.6, k === 0 ? SHADOW.orchid : SHADOW.plum, 0.8 - k * 0.2);
+          g.beginPath();
+          g.moveTo(ex, ey - 10 + k * 10);
+          g.lineTo(ex + side * 6, ey - 12 + k * 10 + wave);
+          g.lineTo(ex + side * 11, ey - 8 + k * 10 - wave * 0.6);
+          g.strokePath();
+        }
+      }
+      for (const s of this.trapBarSlots) {
+        const def = ShadowKit.TRAP_MENU.find((d) => d.kind === s.kind)!;
+        const sel = s.kind === this.selectedTrap;
+        const hov = s.kind === this.trapBarHover;
+        const w = 74, h = 56, x0 = s.x - w / 2, y0 = s.y - h / 2;
+        if (sel) {
+          // A selected pocket breathes a violet aura out of its edges.
+          const pulse = 0.5 + 0.5 * Math.sin(time / 240);
+          g.fillStyle(def.color, 0.12 + pulse * 0.12);
+          g.fillRoundedRect(x0 - 4, y0 - 4, w + 8, h + 8, 12);
+        }
+        g.fillStyle(sel ? SHADOW.violet : hov ? SHADOW.umbra : SHADOW.pitch, 0.95);
+        g.fillRoundedRect(x0, y0, w, h, 9);
+        // Inner vignette: the pocket is deeper in the middle.
+        g.fillStyle(SHADOW.abyss, 0.55);
+        g.fillEllipse(s.x, s.y - 3, w - 14, h - 16);
+        // Wisps drifting up inside the pocket.
+        for (let k = 0; k < 3; k++) {
+          const ph = (time / 1600 + k / 3 + s.x * 0.001) % 1;
+          g.fillStyle(def.color, (1 - ph) * (sel ? 0.5 : 0.22));
+          g.fillCircle(x0 + 12 + k * 25 + Math.sin(ph * 6 + k) * 3, y0 + h - 6 - ph * (h - 12), 1.8);
+        }
+        g.lineStyle(sel ? 2.5 : 1.5, def.color, sel ? 1 : hov ? 0.85 : 0.5);
+        g.strokeRoundedRect(x0, y0, w, h, 9);
+        // Hooked thorn corners.
+        g.lineStyle(1.5, sel ? SHADOW.pale : def.color, sel ? 0.9 : 0.5);
+        for (const [cx, cy, dx, dy] of [[x0, y0, 1, 1], [x0 + w, y0, -1, 1], [x0, y0 + h, 1, -1], [x0 + w, y0 + h, -1, -1]]) {
+          g.lineBetween(cx + dx * 2, cy + dy * 7, cx + dx * 2, cy + dy * 2);
+          g.lineBetween(cx + dx * 2, cy + dy * 2, cx + dx * 7, cy + dy * 2);
+        }
+        // Name ribbon under the icon.
+        g.fillStyle(sel ? def.color : SHADOW.umbra, sel ? 0.55 : 0.8);
+        g.fillRoundedRect(x0 + 8, s.y + 13, w - 16, 12, 5);
+      }
+    }
     for (const s of this.trapBarSlots) {
       s.art.clear();
       this.drawTrapIcon(s.art, s.kind, s.x, s.y - 4, time + s.x * 3, s.kind === this.selectedTrap ? 1 : 0.65);

@@ -617,7 +617,12 @@ const FIRE_AVATAR: AvatarSpec = {
 /**
  * The fire character rig: two little glowing ball arms plus a pair of eyes and a halo of
  * body heat, all layered over the fighter sprite. The arms, eyes and gestures come from
- * BaseAvatar; what fire adds is the heat haze beneath and the plume off the crown.
+ * BaseAvatar; what fire adds is the heat haze beneath, the ember-cracked body, the flame
+ * licks off each hand and the plume off the crown.
+ *
+ * Mastered, the fire turns white-hot: a gold flame crown studded with white embers sits in
+ * the plume, the plume itself burns pale-to-white instead of red-to-yellow, a ring of fire
+ * circles the feet, three embers orbit the head and the hand coronas swell.
  */
 export class FireAvatar extends BaseAvatar {
   private fx: FireFx;
@@ -627,17 +632,14 @@ export class FireAvatar extends BaseAvatar {
     this.fx = new FireFx(scene, tint);
   }
 
-  /**
-   * Mastery tell — a permanent, readable upgrade to the character itself so a mastered fire
-   * user is identifiable at a glance, before they cast anything: white-hot eyes, a wider
-   * corona on each hand, a taller plume, and a crown of embers orbiting the head.
-   */
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? FIRE.white : FIRE.pale);
     this.forEachHandLayer(0, (glow) => {
-      glow.setRadius(on ? 12.5 : 9);
-      glow.setFillStyle(this.tint(on ? FIRE.amber : FIRE.core), on ? 0.35 : 0.28);
+      glow.setRadius(on ? 13.5 : 9);
+      glow.setFillStyle(this.tint(on ? FIRE.gold : FIRE.core), on ? 0.4 : 0.28);
     });
+    this.forEachHandLayer(1, (shell) => shell.setFillStyle(this.tint(on ? FIRE.yellow : FIRE.amber), 0.9));
+    this.forEachHandLayer(2, (core) => core.setFillStyle(this.tint(on ? FIRE.pale : FIRE.yellow), 1));
   }
 
   /** Fast-moving arms shed sparks. */
@@ -645,38 +647,120 @@ export class FireAvatar extends BaseAvatar {
     this.fx.embers(x, y, 1, { speed: 18, size: 2.2, life: 420, rise: 26, depth: 5 });
   }
 
-  protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
+  protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     g.fillStyle(this.tint(FIRE.gold), a * 0.3 * this.intensity);
     g.fillCircle(x, y, 27 * this.intensity);
+    if (!this.mastered) return;
+    // Mastery: a ring of small flames burning on the floor around the feet, turning slowly.
+    g.fillStyle(this.tint(FIRE.amber), alpha * 0.18);
+    g.fillEllipse(x, y + 16, 66, 22);
+    for (let i = 0; i < 10; i++) {
+      const p = this.t * 0.8 + (i / 10) * TAU;
+      const fx = x + Math.cos(p) * 30;
+      const fy = y + 16 + Math.sin(p) * 10;
+      const flick = 0.75 + 0.25 * Math.sin(this.t * 9 + i * 1.7);
+      g.fillStyle(this.tint(FIRE.orange), alpha * 0.55);
+      flameTongue(g, fx, fy, -Math.PI / 2, 11 * flick, 3.2);
+      g.fillStyle(this.tint(FIRE.pale), alpha * 0.7);
+      flameTongue(g, fx, fy, -Math.PI / 2, 5.5 * flick, 1.6);
+    }
   }
 
   /**
-   * Flames rising off the crown, plus the mastery ember crown. Rooted at `y - 18` so the
-   * tongues never cover the face, and drawn over the sprite so their bright middles show
-   * instead of just the dark tips poking out past the body.
+   * Ember cracks across the lower body: three thin seams of hotter fire glowing through the
+   * shell, flickering out of step. Kept below the eye band so the face stays clean.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
+    const hot = this.mastered ? FIRE.white : FIRE.yellow;
+    const seams: [number, number][][] = [
+      [[-15, 3], [-11, 6], [-12, 10], [-8, 13]],
+      [[14, 2], [11, 7], [13, 11]],
+      [[-3, 13], [1, 16], [5, 14], [8, 17]],
+    ];
+    seams.forEach((pts, i) => {
+      const flick = 0.55 + 0.45 * Math.sin(this.t * (4 + i) + i * 2.1);
+      g.lineStyle(2.4, this.tint(FIRE.deep), alpha * 0.55);
+      g.beginPath();
+      pts.forEach(([px, py], k) => (k === 0 ? g.moveTo(x + px, y + py) : g.lineTo(x + px, y + py)));
+      g.strokePath();
+      g.lineStyle(1.1, this.tint(hot), alpha * flick * 0.9);
+      g.beginPath();
+      pts.forEach(([px, py], k) => (k === 0 ? g.moveTo(x + px, y + py) : g.lineTo(x + px, y + py)));
+      g.strokePath();
+    });
+    // Molten heart glowing up from the belly.
+    const beat = 0.5 + 0.5 * Math.sin(this.t * 3.2);
+    g.fillStyle(this.tint(this.mastered ? FIRE.pale : FIRE.gold), alpha * (0.22 + 0.14 * beat));
+    g.fillEllipse(x, y + 9, 16, 9);
+  }
+
+  /**
+   * Flames rising off the crown, a lick off each hand, plus the mastery crown and embers.
+   * Rooted at `y - 18` so the tongues never cover the face.
    */
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    const mastery = this.mastered ? 1.3 : 1;
+    const m = this.mastered;
+    const mastery = m ? 1.3 : 1;
     for (let i = 0; i < 5; i++) {
       const p = this.t * 3.4 + i * 1.7;
       const ang = -Math.PI / 2 + (i - 2) * 0.46 + Math.sin(p) * 0.2;
       const len = (26 + Math.sin(p * 1.3) * 9) * this.intensity * mastery;
-      flameTongueLayered(g, this.tint, x, y - 18, ang, len, 8.5 * mastery, Math.sin(p) * 6, a);
+      if (m) {
+        // White-hot plume: amber shell, pale body, white heart.
+        g.fillStyle(this.tint(FIRE.amber), a * 0.6);
+        flameTongue(g, x, y - 18, ang, len, 8.5 * mastery, Math.sin(p) * 6);
+        g.fillStyle(this.tint(FIRE.pale), a * 0.85);
+        flameTongue(g, x, y - 18, ang, len * 0.76, 8.5 * mastery * 0.66, Math.sin(p) * 4.8);
+        g.fillStyle(this.tint(FIRE.white), a * 0.95);
+        flameTongue(g, x, y - 18, ang, len * 0.46, 8.5 * mastery * 0.38, Math.sin(p) * 3);
+      } else {
+        flameTongueLayered(g, this.tint, x, y - 18, ang, len, 8.5, Math.sin(p) * 6, a);
+      }
     }
 
-    // Mastery crown: three embers circling the head on a shallow ellipse.
-    if (this.mastered) {
-      for (let i = 0; i < 3; i++) {
-        const p = this.t * 1.5 + (i / 3) * TAU;
-        const cx = x + Math.cos(p) * 21;
-        const cy = y - 27 + Math.sin(p) * 6;
-        g.fillStyle(this.tint(FIRE.gold), alpha * 0.5);
-        g.fillCircle(cx, cy, 5);
-        g.fillStyle(this.tint(FIRE.yellow), alpha * 0.95);
-        g.fillCircle(cx, cy, 3);
-        g.fillStyle(this.tint(FIRE.white), alpha * 0.9);
-        g.fillCircle(cx, cy, 1.4);
-      }
+    // A small flame licking up off each ball hand, so the hands read as burning, not as balls.
+    for (let i = 0; i < 2; i++) {
+      const hx = this.armX[i], hy = this.armY[i];
+      const p = this.t * 7 + i * 2.3;
+      const len = (m ? 14 : 10) + Math.sin(p) * 2.5;
+      flameTongueLayered(g, this.tint, hx, hy - 3, -Math.PI / 2 + Math.sin(p * 0.7) * 0.25, len, m ? 4.2 : 3.4, Math.sin(p) * 2, alpha * 0.85);
+    }
+
+    if (!m) return;
+
+    // Mastery crown: a gold band with five flame-shaped points, set in the plume.
+    const cy = y - 21 + Math.sin(this.t * 2.6) * 1.1;
+    const gold = this.tint(FIRE.gold), dark = this.tint(FIRE.ember);
+    g.fillStyle(dark, alpha * 0.9);
+    g.fillRoundedRect(x - 13, cy - 1, 26, 6.5, 2);
+    g.fillStyle(gold, alpha);
+    g.fillRoundedRect(x - 12, cy, 24, 4.5, 1.8);
+    for (let i = 0; i < 5; i++) {
+      const px = x - 10 + i * 5;
+      const h = i === 2 ? 11 : i % 2 === 0 ? 7 : 9;
+      g.fillStyle(dark, alpha * 0.9);
+      g.fillTriangle(px - 3, cy + 0.5, px + 3, cy + 0.5, px, cy - h - 1);
+      g.fillStyle(gold, alpha);
+      g.fillTriangle(px - 2.2, cy + 0.5, px + 2.2, cy + 0.5, px, cy - h);
+      // White-hot ember set in each point.
+      const tw = 0.6 + 0.4 * Math.sin(this.t * 6 + i);
+      g.fillStyle(this.tint(FIRE.white), alpha * tw);
+      g.fillCircle(px, cy - h * 0.35, 1.2);
+    }
+    g.fillStyle(this.tint(FIRE.pale), alpha * 0.8);
+    g.fillRect(x - 11, cy + 0.6, 22, 1.2);
+
+    // Three embers circling the head on a shallow ellipse.
+    for (let i = 0; i < 3; i++) {
+      const p = this.t * 1.5 + (i / 3) * TAU;
+      const ex = x + Math.cos(p) * 24;
+      const ey = y - 27 + Math.sin(p) * 7;
+      g.fillStyle(this.tint(FIRE.gold), alpha * 0.5);
+      g.fillCircle(ex, ey, 5);
+      g.fillStyle(this.tint(FIRE.yellow), alpha * 0.95);
+      g.fillCircle(ex, ey, 3);
+      g.fillStyle(this.tint(FIRE.white), alpha * 0.9);
+      g.fillCircle(ex, ey, 1.4);
     }
   }
 }

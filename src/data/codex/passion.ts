@@ -3,9 +3,9 @@ import { ElementCodex } from '../AbilityCodex';
 /**
  * Devotion — the holy priest (element id `passion`, kept from the charmer it replaced).
  *
- * Verified against `src/elements/passion.ts` and `kits/PassionKit.ts`. Devotion has no shop
- * upgrades and no mastery yet — Passion's were retired with the 2026-10-15 rework and new ones are
- * owed — and no perks. Every number below is a constant at the top of the kit.
+ * Verified against `src/elements/passion.ts` and `kits/PassionKit.ts`. The five shop upgrades
+ * (2026-10-16) are constants in the kit's "Shop upgrades" block. Devotion has no mastery yet — one
+ * is owed — and no perks. Every number below is a constant at the top of the kit.
  */
 const passion: ElementCodex = {
   identity:
@@ -68,6 +68,17 @@ const passion: ElementCodex = {
         { tag: 'debuff', label: 'Full sermon', detail: '12 letters, 6 faith each — 72 total. In between scales evenly.' },
         { tag: 'area', label: 'The barrage', detail: 'One straight file along the aim, 34ms apart, 560px/s for 1.1s of flight.' },
       ],
+      upgrade: {
+        basics:
+          'Disarming Words: every letter blesses each enemy projectile it passes through. A blessed '
+          + 'shot turns bright gold, deals 20% less damage and flies 20% slower, and the letter keeps '
+          + 'flying. A shot is only ever blessed once, however many letters cross it.',
+        effects: [
+          { tag: 'shield', label: 'Softened', detail: 'A blessed shot deals 20% less damage.', requiresUpgrade: 'click' },
+          { tag: 'control', label: 'Slowed', detail: 'A blessed shot flies 20% slower.', requiresUpgrade: 'click' },
+          { tag: 'utility', label: 'Passes through', detail: 'The letter is not spent on the shot — it can still reach the enemy.', requiresUpgrade: 'click' },
+        ],
+      },
       notes: [
         'A glory of rays builds behind the priest while the sermon charges — the enemy can see it coming.',
         'A full sermon into someone at 75% faith lands 7.5 a letter.',
@@ -86,6 +97,17 @@ const passion: ElementCodex = {
         { tag: 'dot', label: 'Boiling', detail: '9 faith a second to every enemy inside the 72px puddle.' },
         { tag: 'area', label: 'The puddle', detail: '72px radius, 8 seconds. Lands 0.52s after the throw.' },
       ],
+      upgrade: {
+        basics:
+          'Purge Sins: an enemy who steps into your holy water — or has a bottle land on them — has '
+          + 'every negative effect on them washed off at once, and gains faith for how much there was: '
+          + '4 for each effect, 2 for every second a timed effect still had left (up to 10 seconds '
+          + 'each), and 2 for every stack. At most 60 faith per purge.',
+        effects: [
+          { tag: 'utility', label: 'The purge', detail: 'Every discrete debuff on them is removed when they enter the puddle.', requiresUpgrade: 'e' },
+          { tag: 'debuff', label: 'Penance', detail: '4 faith per effect + 2 per second left (10s cap each) + 2 per stack; 60 at most.', requiresUpgrade: 'e' },
+        ],
+      },
       notes: [
         'At 75% faith the enemy is pulled toward your nearest puddle — two bottles on the floor make two pulls to choose from.',
       ],
@@ -101,6 +123,17 @@ const passion: ElementCodex = {
         { tag: 'debuff', label: 'The burst', detail: '45 faith to every enemy within 130px, 3 seconds after the throw.' },
         { tag: 'area', label: 'The bounce', detail: 'Bounces off arena walls, enemy bodies and enemy crucifix auras (78% speed kept per bounce).' },
       ],
+      upgrade: {
+        basics:
+          'Repentance: the grenade does not disappear when it explodes. It leaps at the nearest enemy '
+          + 'and bounces about for 3 more seconds, then explodes again for half the faith (22.5). Then '
+          + 'it leaps once more and explodes a final time 3 seconds later for a third (about 15).',
+        effects: [
+          { tag: 'debuff', label: 'Second blast', detail: '3s after the first: 50% of the faith in the same 130px.', requiresUpgrade: 'r' },
+          { tag: 'debuff', label: 'Final blast', detail: '3s after that: 33% of the faith.', requiresUpgrade: 'r' },
+          { tag: 'movement', label: 'The leap', detail: 'After each blast it jumps toward the nearest enemy, up to 420px.', requiresUpgrade: 'r' },
+        ],
+      },
       notes: [
         'A ring shrinks around it over the last second to show where the blast will reach.',
         'Your own crucifix does not stop it, so it keeps rattling round an enemy pinned against its rim.',
@@ -119,6 +152,19 @@ const passion: ElementCodex = {
         { tag: 'control', label: 'Holy aura', detail: 'Enemies cannot enter its 90px radius.' },
         { tag: 'debuff', label: 'Blessed shots', detail: '+1 faith to the shooter for each enemy projectile that enters the aura (once per shot).' },
       ],
+      upgrade: {
+        basics:
+          'Pocket Crucifix: press F while you are inside your crucifix\'s aura to pick it up. Press F '
+          + 'again to set it down where you are standing. Neither costs the cooldown. While it is in '
+          + 'your hand the click no longer preaches — it raises the crucifix, and its aura stands '
+          + 'around you and moves with you, shoving enemies off its edge and taxing their shots. '
+          + 'Click again to lower it.',
+        effects: [
+          { tag: 'utility', label: 'Pick up / set down', detail: 'F inside the aura picks it up; F again sets it down at your feet. No cooldown.', requiresUpgrade: 'f' },
+          { tag: 'control', label: 'Raised', detail: 'Click with it in hand: the 90px aura follows you.', requiresUpgrade: 'f' },
+          { tag: 'cost', label: 'Hands full', detail: 'While you carry it, the click raises or lowers it instead of preaching.', requiresUpgrade: 'f' },
+        ],
+      },
       notes: [
         'Planted on your own feet it is a sanctuary nobody can step into.',
         'Shots still fly on through it — the aura taxes them, it does not stop them.',
@@ -140,6 +186,19 @@ const passion: ElementCodex = {
         { tag: 'movement', label: 'Taken up', detail: 'Caught in it yourself: 2 seconds off the field, invisible and invulnerable.' },
         { tag: 'debuff', label: 'Descent', detail: 'Crash at the cursor: 80 faith to every enemy within 120px.' },
       ],
+      upgrade: {
+        basics:
+          'Pillars of Fire: when your own chariot takes you up, you stay in the sky for 8 seconds '
+          + 'instead of 2. A crosshair follows your cursor; click to drop a pillar of yellow fire on '
+          + 'it, up to 3 times. Each pillar burns for about a second, giving 28 faith a second to '
+          + 'anyone inside its 46px and slowing them by 40% for 1.5 seconds. You still crash down at '
+          + 'the cursor when the ride ends.',
+        effects: [
+          { tag: 'movement', label: 'In the sky', detail: '8 seconds off the field, invisible and invulnerable.', requiresUpgrade: 'q' },
+          { tag: 'dot', label: 'Pillar', detail: '28 faith a second for 1s to everyone within 46px. 3 per ride.', requiresUpgrade: 'q' },
+          { tag: 'debuff', label: 'Holy fire', detail: '40% slower while burning, for 1.5s after.', requiresUpgrade: 'q' },
+        ],
+      },
       notes: [
         'A burning mark shows where you will land for the last 0.7 seconds of the ride — aim it at them.',
         'Stepping off the line before the chariot arrives cancels the ride but not the chariot.',

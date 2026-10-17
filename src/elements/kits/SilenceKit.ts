@@ -673,6 +673,8 @@ export class SilenceKit {
   /** The 20-stealth line: above it you are invisible. */
   private stealthThreshold: Phaser.GameObjects.Rectangle | null = null;
   private stalkerPips: Phaser.GameObjects.Arc[] = [];
+  /** The whole Silence HUD (plates, fog vial, stalker eyes, heartbeat strip) in one Graphics. */
+  private hudGfx: Phaser.GameObjects.Graphics | null = null;
 
   // Back shadows (silence player's screen only): where each foe's backstab arc is.
   private backShadows: Fighter[] = [];
@@ -830,6 +832,8 @@ export class SilenceKit {
     this.stealthThreshold?.destroy(); this.stealthThreshold = null;
     for (const p of this.stalkerPips) p.destroy();
     this.stalkerPips = [];
+    if (this.hudGfx?.active) this.hudGfx.destroy();
+    this.hudGfx = null;
     this.backShadows = [];
     this.eyeScreenRect?.destroy(); this.eyeScreenRect = null;
     this.eyeScreenEyes = [];
@@ -4921,68 +4925,200 @@ export class SilenceKit {
   private updateHud(): void {
     if (!this.playerIsSilence) return;
     const scene = this.arena.scene;
-    if (!this.stealthBarBg) {
-      const x = 26;
-      const y = 66;
-      this.stealthBarBg = scene.add.rectangle(x, y, 150, 12, 0x0a0a18, 0.9)
-        .setOrigin(0, 0.5).setStrokeStyle(1, 0x553377).setDepth(23).setScrollFactor(0);
-      this.stealthBarFill = scene.add.rectangle(x + 1, y, 0, 10, 0x8844cc, 0.95)
-        .setOrigin(0, 0.5).setDepth(24).setScrollFactor(0);
-      this.stealthLabel = scene.add.text(x, y - 14, 'STEALTH', {
-        fontSize: '10px', color: '#9977bb', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
+    const F = '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif';
+    const x = 26;
+    const y = 66;
+    if (!this.hudGfx || !this.hudGfx.active) {
+      // One Graphics paints every plate, bar and eye; only the words are Text.
+      this.hudGfx = scene.add.graphics().setDepth(23).setScrollFactor(0);
+    }
+    if (!this.stealthLabel) {
+      this.stealthLabel = scene.add.text(x + 4, y - 15, 'STEALTH', {
+        fontSize: '10px', color: '#b799dd', fontFamily: F, fontStyle: 'bold',
+        stroke: '#05000a', strokeThickness: 3,
       }).setOrigin(0, 0.5).setDepth(24).setScrollFactor(0);
-      this.stealthThreshold = scene.add.rectangle(x + 1 + 148 * (STEALTH_INVIS_MIN / STEALTH_MAX), y, 2, 14, 0xeeddff, 0.85)
-        .setDepth(25).setScrollFactor(0);
-      for (let i = 0; i < STALKER_MAX; i++) {
-        this.stalkerPips.push(
-          scene.add.circle(x + 160 + i * 16, y, 5, 0x110016, 1)
-            .setStrokeStyle(1, 0x553377).setDepth(24).setScrollFactor(0),
-        );
+    }
+    const now = scene.time.now;
+    const t = now / 1000;
+    const g = this.hudGfx;
+    const c = this.pcol;
+    g.clear();
+
+    // ── Stealth: a vial of fog behind a torn black plate, with a row of red eyes ──
+    const ratio = Phaser.Math.Clamp(this.stealth.player / STEALTH_MAX, 0, 1);
+    const hidden = this.isInvisible('player');
+    const count = this.stalkersAlive('player');
+    const plateW = 160 + STALKER_MAX * 16 + 8;
+    this.paintTornPlate(g, x - 8, y - 24, plateW, 36, SILENCE.plum, t);
+    // track
+    g.fillStyle(c(SILENCE.void), 0.95);
+    g.fillRoundedRect(x, y - 6, 150, 12, 5);
+    if (ratio > 0) {
+      const fw = Math.max(4, 148 * ratio);
+      g.fillStyle(c(hidden ? SILENCE.orchid : SILENCE.violet), 0.95);
+      g.fillRoundedRect(x + 1, y - 5, fw, 10, 4);
+      // drifting fog wisps inside the fill
+      for (let k = 0; k < 5; k++) {
+        const wx = x + 1 + ((t * (10 + k * 3) + k * 37) % Math.max(6, fw));
+        const wy = y + Math.sin(t * 1.7 + k * 2) * 2;
+        g.fillStyle(c(hidden ? SILENCE.lilac : SILENCE.amethyst), 0.28);
+        g.fillEllipse(Math.min(wx, x + fw - 2), wy, 12, 5);
+      }
+      g.fillStyle(c(SILENCE.white), 0.14);
+      g.fillRect(x + 3, y - 4, fw - 4, 2);
+    }
+    g.lineStyle(1.2, c(hidden ? SILENCE.lilac : SILENCE.violet), 0.85);
+    g.strokeRoundedRect(x, y - 6, 150, 12, 5);
+    // threshold: a little eye on a stalk — shut once you are hidden, staring while you're seen
+    const tx = x + 1 + 148 * (STEALTH_INVIS_MIN / STEALTH_MAX);
+    g.fillStyle(c(SILENCE.pale), 0.85);
+    g.fillRect(tx - 1, y - 7, 2, 14);
+    g.fillStyle(c(SILENCE.void), 0.95);
+    g.fillEllipse(tx, y - 11, 11, 7);
+    if (hidden) {
+      g.lineStyle(1.4, c(SILENCE.lilac), 0.95);
+      g.beginPath(); g.arc(tx, y - 13, 4.5, Math.PI * 0.2, Math.PI * 0.8, false); g.strokePath();
+    } else {
+      g.fillStyle(c(SILENCE.sclera), 0.95);
+      g.fillEllipse(tx, y - 11, 9, 5);
+      g.fillStyle(c(SILENCE.gore), 1);
+      g.fillCircle(tx + Math.sin(t * 1.3) * 1.5, y - 11, 1.8);
+    }
+    // stalker eyes
+    for (let i = 0; i < STALKER_MAX; i++) {
+      const ex = x + 160 + i * 16, ey = y;
+      const alive = i < count;
+      g.fillStyle(c(SILENCE.pitch), 1);
+      g.fillEllipse(ex, ey, 13, 9);
+      if (alive) {
+        const blink = Math.sin(t * 0.9 + i * 2.3) > 0.97;
+        g.fillStyle(c(SILENCE.gore), 0.25 + 0.15 * Math.sin(t * 4 + i));
+        g.fillCircle(ex, ey, 8);
+        if (!blink) {
+          g.fillStyle(c(SILENCE.blood), 1);
+          g.fillEllipse(ex, ey, 11, 6.5);
+          g.fillStyle(c(SILENCE.void), 1);
+          g.fillEllipse(ex + Math.sin(t * 1.1 + i) * 1.2, ey, 2.2, 6);
+          g.fillStyle(c(SILENCE.white), 0.8);
+          g.fillCircle(ex - 2.5, ey - 1.4, 0.9);
+        } else {
+          g.lineStyle(1.4, c(SILENCE.gore), 1);
+          g.lineBetween(ex - 5, ey, ex + 5, ey);
+        }
+      } else {
+        g.lineStyle(1.2, c(SILENCE.violet), 0.8);
+        g.beginPath(); g.arc(ex, ey - 2, 5, Math.PI * 0.15, Math.PI * 0.85, false); g.strokePath();
       }
     }
-    const ratio = this.stealth.player / STEALTH_MAX;
-    this.stealthBarFill!.width = 148 * ratio;
-    const hidden = this.isInvisible('player');
-    this.stealthBarFill!.setFillStyle(hidden ? 0xaa66ee : 0x663399, 0.95);
-    this.stealthLabel!.setText(hidden ? 'STEALTH · HIDDEN' : 'STEALTH · SEEN');
-    const count = this.stalkersAlive('player');
-    this.stalkerPips.forEach((p, i) => p.setFillStyle(i < count ? 0xff2244 : 0x110016, 1));
+    this.stealthLabel.setText(hidden ? 'STEALTH · HIDDEN' : 'STEALTH · SEEN');
+    this.stealthLabel.setColor(hidden ? '#d8bbff' : '#9977bb');
 
-    // R+ Night Terror (and Silence Mastery, which spends terror on Puppetmaster):
-    // the TERROR bar lives just under the stealth bar.
+    // ── Terror: a heartbeat monitor. The pulse quickens as the bar fills, and once it can buy
+    // something the whole strip flickers like a dying bulb. ──
     if (this.hasTerrorBar('player')) {
-      if (!this.terrorBarBg) {
-        const x = 26;
-        const y = 94;
-        this.terrorBarBg = scene.add.rectangle(x, y, 150, 12, 0x180404, 0.9)
-          .setOrigin(0, 0.5).setStrokeStyle(1, 0x772222).setDepth(23).setScrollFactor(0);
-        this.terrorBarFill = scene.add.rectangle(x + 1, y, 0, 10, 0xcc1122, 0.95)
-          .setOrigin(0, 0.5).setDepth(24).setScrollFactor(0);
-        this.terrorLabel = scene.add.text(x, y - 14, 'TERROR', {
-          fontSize: '10px', color: '#cc5555', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
+      const ty = 94;
+      if (!this.terrorLabel) {
+        this.terrorLabel = scene.add.text(x + 4, ty - 15, 'TERROR', {
+          fontSize: '10px', color: '#cc5555', fontFamily: F, fontStyle: 'bold',
+          stroke: '#05000a', strokeThickness: 3,
         }).setOrigin(0, 0.5).setDepth(24).setScrollFactor(0);
       }
-      const tRatio = this.terror.player / TERROR_MAX;
-      this.terrorBarFill!.width = 148 * tRatio;
+      const tRatio = Phaser.Math.Clamp(this.terror.player / TERROR_MAX, 0, 1);
       // Lit whenever the bar can actually buy something: a Striker at full, or —
       // with the mastery — a voodoo doll at a quarter.
       const spendable = tRatio >= 1
         || (this.arena.masteryActive && this.terror.player >= PUPPET_TERROR_COST);
-      this.terrorBarFill!.setFillStyle(spendable ? 0xff2233 : 0x991122, 0.95);
-      this.terrorLabel!.setColor(spendable ? '#ff4455' : '#cc5555');
+      const flick = spendable && (Math.sin(t * 23) + Math.sin(t * 37)) > 1.5 ? 0.45 : 1;
+      this.paintTornPlate(g, x - 8, ty - 22, 168, 32, SILENCE.meat, t + 3);
+      g.fillStyle(c(0x180404), 0.95);
+      g.fillRoundedRect(x, ty - 6, 150, 12, 3);
+      // faint monitor grid
+      g.lineStyle(1, c(SILENCE.rust), 0.25);
+      for (let gx = x + 10; gx < x + 150; gx += 10) g.lineBetween(gx, ty - 5, gx, ty + 5);
+      if (tRatio > 0) {
+        const fw = 148 * tRatio;
+        g.fillStyle(c(spendable ? SILENCE.gore : SILENCE.rust), 0.9 * flick);
+        g.fillRoundedRect(x + 1, ty - 5, Math.max(3, fw), 10, 3);
+        g.fillStyle(c(SILENCE.void), 0.25);
+        g.fillRect(x + 1, ty + 1, Math.max(3, fw), 4);
+      }
+      // the ECG trace runs the full strip; a bright blip rides it at the heart rate
+      const bpm = 60 + 110 * tRatio;
+      const beat = (t * bpm / 60) % 1;
+      g.lineStyle(1.4, c(SILENCE.pale), 0.85 * flick);
+      g.beginPath();
+      for (let k = 0; k <= 60; k++) {
+        const px = x + 2 + (k / 60) * 146;
+        const ph = ((k / 60) * 3 - beat * 3 + 30) % 1;
+        let py = ty;
+        if (ph > 0.40 && ph < 0.45) py = ty + 2;
+        else if (ph >= 0.45 && ph < 0.5) py = ty - 5;
+        else if (ph >= 0.5 && ph < 0.55) py = ty + 4;
+        if (k === 0) g.moveTo(px, py); else g.lineTo(px, py);
+      }
+      g.strokePath();
+      g.lineStyle(1.2, c(spendable ? SILENCE.gore : SILENCE.blood), 0.9 * flick);
+      g.strokeRoundedRect(x, ty - 6, 150, 12, 3);
+      // a beating anatomical heart at the end of the strip
+      const pump = beat < 0.15 ? 1.25 : 1;
+      const hx = x + 160, hy = ty;
+      g.fillStyle(c(SILENCE.blood), flick);
+      g.fillCircle(hx - 2.4 * pump, hy - 1.5 * pump, 3.4 * pump);
+      g.fillCircle(hx + 2.4 * pump, hy - 1.5 * pump, 3.4 * pump);
+      g.fillTriangle(hx - 5.6 * pump, hy - 0.5, hx + 5.6 * pump, hy - 0.5, hx, hy + 6 * pump);
+      this.terrorLabel.setColor(spendable ? '#ff4455' : '#cc5555');
     }
 
-    // Striker countdown, just below the top HP bar.
+    // Striker countdown, just below the top HP bar: a slashed black title card behind the words.
     const st = this.strikers.player;
     if (st) {
       if (!this.strikerTimerText) {
         this.strikerTimerText = scene.add.text(this.arena.width / 2, 58, '', {
-          fontSize: '15px', color: '#ff3344', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', fontStyle: 'bold',
+          fontSize: '15px', color: '#ff3344', fontFamily: F, fontStyle: 'bold',
+          stroke: '#05000a', strokeThickness: 4,
         }).setOrigin(0.5).setDepth(24).setScrollFactor(0);
       }
-      const remain = Math.max(0, st.endsAt - scene.time.now) / 1000;
+      const remain = Math.max(0, st.endsAt - now) / 1000;
       this.strikerTimerText.setText(`🐺 ${remain.toFixed(1)}s   💥 ${Math.round(st.storedDamage)} stored`);
+      const bw = this.strikerTimerText.width + 34;
+      const cx = this.arena.width / 2;
+      this.paintTornPlate(g, cx - bw / 2, 58 - 13, bw, 26, SILENCE.meat, t + 7);
+      // three claw rakes torn through the card
+      g.lineStyle(2, c(SILENCE.gore), 0.55 + 0.25 * Math.sin(t * 6));
+      for (let k = 0; k < 3; k++) {
+        const sx = cx - bw / 2 + 6 + k * 5;
+        g.lineBetween(sx, 49, sx + 7, 67);
+        g.lineBetween(cx + bw / 2 - 18 + k * 5, 49, cx + bw / 2 - 11 + k * 5, 67);
+      }
     }
+  }
+
+  /**
+   * A torn black plate: ragged top and bottom edges that crawl very slightly, a coloured bleed
+   * along the bottom and a thin pale scratch — the backing for every Silence HUD strip.
+   */
+  private paintTornPlate(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number, bleed: number, t: number): void {
+    const c = this.pcol;
+    g.fillStyle(c(SILENCE.void), 0.55);
+    g.fillRect(x + 3, y + 4, w, h);
+    g.fillStyle(c(SILENCE.pitch), 0.9);
+    g.beginPath();
+    const n = Math.max(4, Math.floor(w / 9));
+    g.moveTo(x, y + 2);
+    for (let k = 1; k <= n; k++) {
+      const px = x + (k / n) * w;
+      g.lineTo(px, y + (k % 2 ? 0 : 3) + Math.sin(t * 0.7 + k * 1.9) * 0.8);
+    }
+    for (let k = n; k >= 0; k--) {
+      const px = x + (k / n) * w;
+      g.lineTo(px, y + h - (k % 2 ? 0 : 3) + Math.sin(t * 0.6 + k * 2.3) * 0.8);
+    }
+    g.closePath();
+    g.fillPath();
+    g.fillStyle(c(bleed), 0.35);
+    g.fillRect(x + 2, y + h - 6, w - 4, 3);
+    g.lineStyle(1, c(SILENCE.pale), 0.12);
+    g.lineBetween(x + w * 0.62, y + 4, x + w * 0.7, y + h - 5);
   }
 
   // ── Helpers ────────────────────────────────────────────────────────

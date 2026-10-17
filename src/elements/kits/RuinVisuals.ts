@@ -288,6 +288,15 @@ export function padlock(
     if (i === 0) g.moveTo(p.x, p.y); else g.lineTo(p.x, p.y);
   }
   g.strokePath();
+  // A lit ridge along the shackle so the hoop reads as forged round bar.
+  g.lineStyle(size * 0.07, tint(RUI.bone), alpha * 0.35);
+  g.beginPath();
+  for (let i = 0; i <= 12; i++) {
+    const a = Math.PI + (i / 12) * (Math.PI - open);
+    const p = P(Math.cos(a) * size * 0.42 - size * 0.03, -size * 0.58 + Math.sin(a) * size * 0.42);
+    if (i === 0) g.moveTo(p.x, p.y); else g.lineTo(p.x, p.y);
+  }
+  g.strokePath();
 
   const bodyPts = [
     P(-size * 0.6, -size * 0.5), P(size * 0.6, -size * 0.5),
@@ -305,6 +314,24 @@ export function padlock(
     const p = P((jitter(i, 3) - 0.5) * size, (jitter(i, 9) - 0.5) * size * 0.8);
     g.fillCircle(p.x, p.y, size * 0.07);
   }
+  // Bevel: a lit top lip, a sunk bottom lip, rivets in the corners.
+  const lip0 = P(-size * 0.56, -size * 0.42), lip1 = P(size * 0.56, -size * 0.42);
+  g.lineStyle(1.4, tint(RUI.ember), alpha * 0.55);
+  g.lineBetween(lip0.x, lip0.y, lip1.x, lip1.y);
+  const bot0 = P(-size * 0.62, size * 0.47), bot1 = P(size * 0.62, size * 0.47);
+  g.lineStyle(1.4, tint(RUI.blood), alpha * 0.7);
+  g.lineBetween(bot0.x, bot0.y, bot1.x, bot1.y);
+  g.fillStyle(tint(RUI.iron), alpha);
+  for (const [u, v] of [[-0.46, -0.32], [0.46, -0.32], [-0.5, 0.36], [0.5, 0.36]]) {
+    const r = P(u * size, v * size);
+    g.fillCircle(r.x, r.y, size * 0.075);
+  }
+  // A ruinic seam cracked across the face, breathing the ancient green.
+  const seam = [P(-size * 0.6, -size * 0.12), P(-size * 0.3, size * 0.02), P(-size * 0.22, -size * 0.18), P(0, -size * 0.06)];
+  g.lineStyle(2.2, tint(RUI.ancient), alpha * (0.18 + 0.12 * Math.sin(wobble * 3)));
+  for (let i = 0; i < seam.length - 1; i++) g.lineBetween(seam[i].x, seam[i].y, seam[i + 1].x, seam[i + 1].y);
+  g.lineStyle(0.9, tint(RUI.ancient), alpha * 0.85);
+  for (let i = 0; i < seam.length - 1; i++) g.lineBetween(seam[i].x, seam[i].y, seam[i + 1].x, seam[i + 1].y);
   const key = P(0, size * 0.02);
   g.fillStyle(tint(RUI.voidDark), alpha);
   g.fillCircle(key.x, key.y, size * 0.2);
@@ -684,8 +711,9 @@ const RUIN_AVATAR: AvatarSpec = {
  * two eyes, so the only way to be down one is to put a hole on top of it.
  *
  * `setRuinLevel` (his HP loss) eats the spikes' metal and deepens the red under-glow; a cast
- * flares the spike tips. Mastery enhances the same crown — longer spikes with ember-hot tips —
- * plus ember eyes and wider hand coronas.
+ * flares the spike tips. Mastery: longer spikes with ember-hot tips and a ruby set at their
+ * root, ruinic green burning in the body's cracks, a ring of broken masonry orbiting him, ember
+ * eyes and wider hand coronas.
  */
 export class RuinAvatar extends BaseAvatar {
   /** 0–1 — how far gone the frame is. Driven off the fighter's own HP ratio. */
@@ -717,18 +745,79 @@ export class RuinAvatar extends BaseAvatar {
       glow.setRadius(on ? 14.5 : 11);
       glow.setFillStyle(this.tint(on ? RUI.ember : RUI.red), on ? 0.3 : 0.2);
     });
+    this.forEachHandLayer(2, (core) => core.setFillStyle(this.tint(on ? RUI.ancient : RUI.bright), 0.9));
   }
 
   protected emitTrail(x: number, y: number): void {
     new RuinFx(this.scene, this.tint).rustPuff(x, y, 2, 6, 380, 4);
   }
 
+  /**
+   * The frame coming apart: a fracture radiating from the empty socket and another from low on
+   * the flank, both widening with `ruinLevel`, plus a riveted iron patch holding the worst of it
+   * together. Mastered, ruinic green burns in the bottom of every crack.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
+    const m = this.mastered;
+    const bob = Math.sin(this.t * 2.6) * 1.1;
+    const ex = x + 7.2 + Math.cos(this.facing) * 2.4;
+    const ey = y - 4 + Math.sin(this.facing) * 2.0 + bob;
+    const grow = 0.55 + this.ruinLevel * 0.45;
+    if (m) {
+      const glow = 0.45 + 0.25 * Math.sin(this.t * 4);
+      crackWeb(g, this.tint, ex, ey, 13, this.seed, alpha * glow, grow, { runs: 4, color: RUI.ancient, width: 3.6 });
+      crackWeb(g, this.tint, x - 7, y + 9, 12, this.seed + 7, alpha * glow, grow, { runs: 4, color: RUI.ancient, width: 3.6 });
+    }
+    crackWeb(g, this.tint, ex, ey, 13, this.seed, alpha * 0.85, grow, { runs: 4, color: RUI.voidDark, width: 1.6 });
+    crackWeb(g, this.tint, x - 7, y + 9, 12, this.seed + 7, alpha * 0.85, grow, { runs: 4, color: RUI.voidDark, width: 1.6 });
+    // Iron patch, bolted over the lower-right.
+    const px = x + 9, py = y + 10;
+    g.fillStyle(this.tint(RUI.voidDark), alpha * 0.6);
+    g.fillRect(px - 4.5, py - 3.5 + 1, 9, 7);
+    g.fillStyle(this.tint(RUI.iron), alpha * 0.95);
+    g.fillRect(px - 4.5, py - 3.5, 9, 7);
+    g.fillStyle(this.tint(RUI.rust), alpha * 0.8);
+    g.fillRect(px - 4.5, py + 1.5, 9, 2);
+    g.fillStyle(this.tint(m ? RUI.ember : RUI.bone), alpha * 0.85);
+    for (const [rx, ry] of [[-3, -2], [3, -2], [-3, 2], [3, 2]]) g.fillCircle(px + rx, py + ry, 0.8);
+  }
+
+  /** Mastery: a ring of broken masonry and rust orbiting him, held up by the ruin itself. */
+  private drawDebris(g: Phaser.GameObjects.Graphics, x: number, y: number, alpha: number, front: boolean): void {
+    for (let i = 0; i < 6; i++) {
+      const p = this.t * 0.7 + (i / 6) * TAU;
+      const inFront = Math.sin(p) > 0;
+      if (inFront !== front) continue;
+      const cx = x + Math.cos(p) * 32;
+      const cy = y + 2 + Math.sin(p) * 11 + Math.sin(this.t * 2 + i) * 2;
+      const sz = 3 + jitter(this.seed, 40 + i) * 2.5;
+      const rot = this.t * (0.8 + i * 0.2);
+      const pts: Phaser.Geom.Point[] = [];
+      for (let k = 0; k < 5; k++) {
+        const a = rot + (k / 5) * TAU;
+        const d = sz * (0.65 + jitter(this.seed, 60 + i * 5 + k) * 0.5);
+        pts.push(new Phaser.Geom.Point(cx + Math.cos(a) * d, cy + Math.sin(a) * d));
+      }
+      const shade = front ? 1 : 0.65;
+      g.fillStyle(this.tint(RUI.ancient), alpha * 0.18 * shade);
+      g.fillCircle(cx, cy, sz + 3);
+      g.fillStyle(this.tint(i % 2 === 0 ? RUI.stone : RUI.rust), alpha * shade);
+      g.fillPoints(pts, true);
+      g.lineStyle(0.8, this.tint(RUI.ancient), alpha * 0.7 * shade);
+      g.strokePoints(pts, true);
+    }
+  }
+
   /** A soft red under-glow that deepens as he comes apart. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    void alpha;
     const k = this.mastered ? 1.15 : 1;
     g.fillStyle(this.tint(RUI.red), a * (0.14 + this.ruinLevel * 0.1) * k);
     g.fillCircle(x, y, 27 * k);
+    if (this.mastered) {
+      g.lineStyle(1.2, this.tint(RUI.ancient), a * 0.5);
+      g.strokeEllipse(x, y + 2, 64, 22);
+      this.drawDebris(g, x, y, alpha, false);
+    }
   }
 
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
@@ -759,6 +848,17 @@ export class RuinAvatar extends BaseAvatar {
       g.fillStyle(this.tint(m ? RUI.ember : RUI.bright), alpha * 0.35 * glow);
       g.fillCircle(tx, ty, m ? 4.5 : 3.2);
     });
+    // An iron band binding the spikes at the root.
+    g.lineStyle(2.2, this.tint(RUI.ash), alpha);
+    g.lineBetween(x + lean - 10, y - 13, x + lean + 10, y - 13);
+    g.lineStyle(1, this.tint(RUI.rust), alpha * 0.9);
+    g.lineBetween(x + lean - 10, y - 14, x + lean + 10, y - 14);
+
+    // Mastery: a ruby set at the root of the crown, and the debris passing in front of him.
+    if (m) {
+      rubyJewel(g, this.tint, x + lean, y - 15, 4.2, this.t, alpha, this.seed);
+      this.drawDebris(g, x, y, alpha, true);
+    }
 
     // ── The empty socket ──
     // Painted over the rig's right eye. Same maths as the base rig's eye placement.

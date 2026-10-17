@@ -9,6 +9,7 @@ import {
   moltenPool, mortarShell, obsidianCoat, pirateShip, pirateSpirit, pressureGauge, volcanoCone,
 } from './MagmaVisuals';
 import { meterGain } from '../../combat/Meters';
+import { FONT_DISPLAY, FONT_UI } from '../../ui/Theme';
 
 type Owner = 'player' | 'npc';
 
@@ -546,6 +547,7 @@ export class MagmaKit {
   private fistGfx: Phaser.GameObjects.Graphics | null = null;
   private hudGfx: Phaser.GameObjects.Graphics | null = null;
   private hudLabel: Phaser.GameObjects.Text | null = null;
+  private hudHint: Phaser.GameObjects.Text | null = null;
   private vizT = 0;
 
   // ── Sim ──
@@ -734,6 +736,7 @@ export class MagmaKit {
     this.fistGfx?.destroy(); this.fistGfx = null;
     this.hudGfx?.destroy(); this.hudGfx = null;
     this.hudLabel?.destroy(); this.hudLabel = null;
+    this.hudHint?.destroy(); this.hudHint = null;
   }
 
   // ── Input ──────────────────────────────────────────────────────────────────
@@ -2494,7 +2497,13 @@ export class MagmaKit {
     }
   }
 
-  /** What is in hand: the saw's clock, the gauge, the ship's hull, or the pendant's take. */
+  /**
+   * What is in hand: the saw's clock, the gauge, the ship's hull, or the pendant's take.
+   *
+   * Drawn as a slab of cooling basalt with a crucible channel cut into it: the meter is a run of
+   * lava in that channel, bubbling, white-hot at its leading edge. A medallion on the left says
+   * which of the four it is — a spinning saw, a ship's wheel, a pressure dial or the red pendant.
+   */
   private paintHud(playerIsMagma: boolean, time: number): void {
     const g = this.hudGfx;
     if (!g) return;
@@ -2508,23 +2517,15 @@ export class MagmaKit {
     const showPendant = playerIsMagma && s.pendantOn;
     if (!showSaw && !showShip && !showGauge && !showPendant) {
       this.hudLabel?.setVisible(false);
+      this.hudHint?.setVisible(false);
       return;
     }
 
-    const x = this.left + 8;
-    const y = this.top + 8;
-    const w = 186;
     const heat = this.sawHeat('player', time);
     const hot = showSaw ? (heat > 0.78 ? MAG.magma : heat > 0.45 ? MAG.white : MAG.gold)
       : showShip ? MAG.gold
         : showGauge ? (over ? MAG.ash : pressure > 0.6 ? MAG.white : MAG.magma)
           : MAG.pendantLit;
-
-    g.fillStyle(0x05070a, 0.85);
-    g.fillRoundedRect(x - 4, y - 4, w, 34, 4);
-    g.lineStyle(1.5, this.pcol(hot), 0.7);
-    g.strokeRoundedRect(x - 4, y - 4, w, 34, 4);
-
     // The saw's bar is the heat, not its runtime: it drains to nothing at the exact instant the
     // thing detonates, so an empty bar means "let go now".
     const ratio = showSaw
@@ -2534,36 +2535,198 @@ export class MagmaKit {
         : showGauge
           ? (over ? 1 : pressure)
           : Phaser.Math.Clamp(s.pendantPower / PENDANT_AWAKEN, 0, 1);
-    g.fillStyle(this.pcol(MAG.smoke), 1);
-    g.fillRect(x, y + 20, w - 8, 6);
-    g.fillStyle(this.pcol(hot), 1);
-    g.fillRect(x, y + 20, (w - 8) * ratio, 6);
 
-    if (!this.hudLabel) {
-      this.hudLabel = this.api.scene.add.text(x, y, '', {
-        fontSize: '10px',
-        fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
-        color: '#ff8b22',
-        stroke: '#05070a',
-        strokeThickness: 3,
-      }).setDepth(21).setScrollFactor(0);
-    }
-    this.hudLabel.setVisible(true);
-    this.hudLabel.setText(showSaw
-      ? `MAGMA SAW — ${Math.min(SAW_DMG_MAX, 1 + Math.floor((time - s.sawFrom) / SAW_RAMP_MS)) * 20} A SECOND\n`
-        + `${((SAW_OVERHEAT_MS - (time - s.sawFrom)) / 1000).toFixed(1)}s TO DETONATION · PRESS AGAIN TO CUT THE MOTOR`
+    const title = showSaw
+      ? `MAGMA SAW — ${Math.min(SAW_DMG_MAX, 1 + Math.floor((time - s.sawFrom) / SAW_RAMP_MS)) * 20} A SECOND`
       : showShip
-        ? `THE SHIP — ${Math.max(0, Math.round(s.ship?.hp ?? 0))} HULL · −${SHIP_DECAY_PER_S} A SECOND\n`
-          + (s.ship?.mounted ? 'CLICK = BROADSIDE · CURSOR STEERS · SPACE = OVER THE SIDE'
-            : 'SPACE NEAR THE HULL TO BOARD · IT HOLDS WHERE IT IS')
+        ? `THE SHIP — ${Math.max(0, Math.round(s.ship?.hp ?? 0))} HULL · −${SHIP_DECAY_PER_S} A SECOND`
+        : showGauge
+          ? (over ? 'PRESSURE GAUGE — OVERPRESSURED' : `PRESSURE GAUGE — ${Math.round(pressure * 100)}%`)
+          : `MOLTEN MUTINY — ${Math.round(s.pendantPower)} / ${PENDANT_AWAKEN}`;
+    const hint = showSaw
+      ? `${((SAW_OVERHEAT_MS - (time - s.sawFrom)) / 1000).toFixed(1)}s TO DETONATION · PRESS AGAIN TO CUT THE MOTOR`
+      : showShip
+        ? (s.ship?.mounted ? 'CLICK = BROADSIDE · CURSOR STEERS · SPACE = OVER THE SIDE'
+          : 'SPACE NEAR THE HULL TO BOARD · IT HOLDS WHERE IT IS')
         : showGauge
           ? (over
-            ? 'PRESSURE GAUGE — OVERPRESSURED\nF WILL BURST: 35 TO YOU AND EVERYONE WITHIN 120px'
-            : `PRESSURE GAUGE — ${Math.round(pressure * 100)}%\n`
-              + `F HITS ${Math.round(BLUNDER_DMG + GAUGE_DMG_BONUS * pressure)} · FLIES ${Math.round(BLUNDER_LAUNCH + GAUGE_LAUNCH_BONUS * pressure)}px${pressure >= GAUGE_CONTACT_AT ? ' · YOU ARE THE SHOT' : ''}`)
-          : `MOLTEN MUTINY — ${Math.round(s.pendantPower)} / ${PENDANT_AWAKEN}\n`
-            + 'THE PENDANT TAKES A FIFTH OF EVERYTHING YOU DEAL · Q AGAIN TO REMOVE');
-    this.hudLabel.setColor(this.hex(hot));
+            ? 'F WILL BURST: 35 TO YOU AND EVERYONE WITHIN 120px'
+            : `F HITS ${Math.round(BLUNDER_DMG + GAUGE_DMG_BONUS * pressure)} · FLIES ${Math.round(BLUNDER_LAUNCH + GAUGE_LAUNCH_BONUS * pressure)}px${pressure >= GAUGE_CONTACT_AT ? ' · YOU ARE THE SHOT' : ''}`)
+          : 'THE PENDANT TAKES A FIFTH OF EVERYTHING YOU DEAL · Q AGAIN TO REMOVE';
+
+    const x = this.left + 4;
+    const y = this.top + 4;
+    const iconR = 15;
+    const tx = x + iconR * 2 + 14;
+    if (!this.hudLabel) {
+      this.hudLabel = this.api.scene.add.text(0, 0, '', {
+        fontSize: '11px', fontFamily: FONT_DISPLAY, color: '#ff8b22',
+        stroke: '#120a0b', strokeThickness: 3,
+      }).setDepth(21).setScrollFactor(0);
+    }
+    if (!this.hudHint) {
+      this.hudHint = this.api.scene.add.text(0, 0, '', {
+        fontSize: '9px', fontFamily: FONT_UI, fontStyle: 'bold', color: '#e6dac4',
+        stroke: '#120a0b', strokeThickness: 3,
+      }).setDepth(21).setScrollFactor(0);
+    }
+    this.hudLabel.setVisible(true).setText(title).setColor(this.hex(this.pcol(hot))).setPosition(tx, y + 4);
+    this.hudHint.setVisible(true).setText(hint).setPosition(tx, y + 31);
+    const w = Math.max(220, tx - x + Math.max(this.hudLabel.width, this.hudHint.width) + 12);
+    const h = 46;
+    const t = time / 1000;
+    const P = this.pcol;
+
+    // ── The slab: jagged basalt with a crust highlight and a lava seam along its foot ──
+    const slab: Phaser.Geom.Point[] = [];
+    const steps = Math.max(6, Math.round(w / 22));
+    for (let i = 0; i <= steps; i++) {
+      slab.push(new Phaser.Geom.Point(x + (w * i) / steps, y + (i % 2 ? 1.5 : -1) + Math.sin(i * 2.3) * 1.2));
+    }
+    slab.push(new Phaser.Geom.Point(x + w + 3, y + h * 0.5));
+    for (let i = steps; i >= 0; i--) {
+      slab.push(new Phaser.Geom.Point(x + (w * i) / steps, y + h + (i % 2 ? -1 : 1.5) + Math.cos(i * 1.7) * 1.2));
+    }
+    slab.push(new Phaser.Geom.Point(x - 3, y + h * 0.5));
+    g.fillStyle(MAG.scorch, 0.55);
+    g.fillPoints(slab.map((p) => new Phaser.Geom.Point(p.x + 2, p.y + 3)), true);
+    g.fillStyle(P(MAG.basalt), 0.94);
+    g.fillPoints(slab, true);
+    g.fillStyle(P(MAG.crustDeep), 0.9);
+    g.fillRect(x + 2, y + 2, w - 4, 9);
+    g.fillStyle(P(MAG.crust), 0.35);
+    g.fillRect(x + 2, y + 2, w - 4, 3);
+    // Glowing seam along the foot of the slab, breathing with the heat.
+    g.lineStyle(1.6, P(hot), 0.45 + 0.2 * Math.sin(t * 3));
+    g.strokePoints(slab, true);
+    g.lineStyle(1, P(MAG.ash), 0.35);
+    g.lineBetween(x + 4, y + 1.5, x + w - 4, y + 1.5);
+    // A few hairline cracks in the rock with heat showing through.
+    for (let i = 0; i < 3; i++) {
+      const cx = x + w * (0.35 + i * 0.22);
+      const glow = 0.25 + 0.2 * Math.sin(t * 2 + i * 1.7);
+      g.lineStyle(1, P(MAG.magma), glow);
+      g.beginPath();
+      g.moveTo(cx, y + h);
+      g.lineTo(cx + 3, y + h - 4);
+      g.lineTo(cx - 1, y + h - 7);
+      g.strokePath();
+    }
+
+    // ── Medallion ──
+    const mx = x + iconR + 6, my = y + h / 2;
+    g.fillStyle(P(MAG.scorch), 1);
+    g.fillCircle(mx, my, iconR + 2);
+    g.fillStyle(P(MAG.crustDeep), 1);
+    g.fillCircle(mx, my, iconR);
+    g.fillStyle(P(hot), 0.16 + 0.08 * Math.sin(t * 4));
+    g.fillCircle(mx, my, iconR - 2);
+    g.lineStyle(1.8, P(MAG.gold), 0.85);
+    g.strokeCircle(mx, my, iconR + 0.5);
+    g.lineStyle(1, P(MAG.white), 0.25);
+    g.beginPath(); g.arc(mx, my, iconR - 1.5, Math.PI * 1.1, Math.PI * 1.6); g.strokePath();
+    if (showSaw) {
+      // A spinning saw blade: toothed disc, faster as it heats.
+      const spin = t * (6 + heat * 18);
+      const pts: Phaser.Geom.Point[] = [];
+      for (let i = 0; i < 20; i++) {
+        const a = spin + (i / 20) * Math.PI * 2;
+        const r = i % 2 ? 7 : 10.5;
+        pts.push(new Phaser.Geom.Point(mx + Math.cos(a) * r, my + Math.sin(a) * r));
+      }
+      g.fillStyle(P(hot), 0.95);
+      g.fillPoints(pts, true);
+      g.fillStyle(P(MAG.basalt), 1);
+      g.fillCircle(mx, my, 3.5);
+      g.fillStyle(P(MAG.white), 0.8);
+      g.fillCircle(mx - 1, my - 1, 1.2);
+    } else if (showShip) {
+      // A ship's wheel, rocking gently.
+      const rock = Math.sin(t * 1.4) * 0.35;
+      g.lineStyle(2, P(MAG.gold), 1);
+      for (let i = 0; i < 8; i++) {
+        const a = rock + (i / 8) * Math.PI * 2;
+        g.lineBetween(mx + Math.cos(a) * 2, my + Math.sin(a) * 2, mx + Math.cos(a) * 11, my + Math.sin(a) * 11);
+      }
+      g.lineStyle(2.4, P(MAG.crust), 1);
+      g.strokeCircle(mx, my, 7.5);
+      g.lineStyle(1, P(MAG.gold), 0.9);
+      g.strokeCircle(mx, my, 7.5);
+      g.fillStyle(P(MAG.gold), 1);
+      g.fillCircle(mx, my, 2.6);
+    } else if (showGauge) {
+      // A pressure dial whose needle trembles harder as it climbs.
+      g.fillStyle(P(MAG.bone), 0.9);
+      g.fillCircle(mx, my, 10);
+      g.lineStyle(1, P(MAG.basalt), 0.7);
+      for (let i = 0; i <= 6; i++) {
+        const a = Math.PI * 0.75 + (i / 6) * Math.PI * 1.5;
+        g.lineBetween(mx + Math.cos(a) * 7, my + Math.sin(a) * 7, mx + Math.cos(a) * 9.5, my + Math.sin(a) * 9.5);
+      }
+      g.lineStyle(2, P(MAG.magma), 0.9);
+      g.beginPath(); g.arc(mx, my, 8.2, Math.PI * 1.85, Math.PI * 2.25); g.strokePath();
+      const shake = (over ? 0.25 : pressure * 0.08) * Math.sin(t * 40);
+      const na = Math.PI * 0.75 + Math.min(1, over ? 1.05 : pressure) * Math.PI * 1.5 + shake;
+      g.lineStyle(1.8, P(MAG.pendant), 1);
+      g.lineBetween(mx, my, mx + Math.cos(na) * 8.5, my + Math.sin(na) * 8.5);
+      g.fillStyle(P(MAG.basalt), 1);
+      g.fillCircle(mx, my, 2);
+    } else {
+      // The cursed pendant, pulsing faster as it fills.
+      const pulse = 0.5 + 0.5 * Math.sin(t * (3 + ratio * 9));
+      g.fillStyle(P(MAG.pendant), 0.25 + 0.25 * pulse);
+      g.fillCircle(mx, my + 1, 9 + ratio * 3);
+      const gem = (r: number) => [
+        new Phaser.Geom.Point(mx, my - r * 1.15), new Phaser.Geom.Point(mx + r, my - r * 0.3),
+        new Phaser.Geom.Point(mx + r * 0.62, my + r), new Phaser.Geom.Point(mx - r * 0.62, my + r),
+        new Phaser.Geom.Point(mx - r, my - r * 0.3),
+      ];
+      g.fillStyle(P(MAG.basalt), 1);
+      g.fillPoints(gem(8.5), true);
+      g.fillStyle(P(ratio > 0.75 ? MAG.pendantLit : MAG.pendant), 0.8 + 0.2 * pulse);
+      g.fillPoints(gem(6.5), true);
+      g.fillStyle(P(MAG.white), 0.5 + ratio * 0.4);
+      g.fillCircle(mx - 2, my - 2.5, 1.4);
+      g.lineStyle(1.2, P(MAG.gold), 0.9);
+      g.beginPath(); g.arc(mx, my - 14, 7, Math.PI * 0.2, Math.PI * 0.8); g.strokePath();
+    }
+
+    // ── The crucible channel ──
+    const bx = tx, by = y + 19, bw = w - (tx - x) - 10, bh = 9;
+    g.fillStyle(P(MAG.scorch), 1);
+    g.fillRoundedRect(bx - 2, by - 2, bw + 4, bh + 4, (bh + 4) / 2);
+    g.fillStyle(P(MAG.smoke), 1);
+    g.fillRoundedRect(bx, by, bw, bh, bh / 2);
+    g.lineStyle(1, P(MAG.crust), 0.9);
+    g.strokeRoundedRect(bx - 2, by - 2, bw + 4, bh + 4, (bh + 4) / 2);
+    const fw = Math.max(bh, bw * ratio);
+    if (ratio > 0.005) {
+      g.fillStyle(P(MAG.magma), 1);
+      g.fillRoundedRect(bx, by, fw, bh, bh / 2);
+      g.fillStyle(P(hot === MAG.ash ? MAG.ash : MAG.lava), 0.95);
+      g.fillRoundedRect(bx + 1, by + 1, fw - 2, bh * 0.5, bh * 0.25);
+      g.fillStyle(P(MAG.white), 0.45);
+      g.fillRect(bx + 3, by + 1.5, Math.max(0, fw - 8), 1.2);
+      // Bubbles rising and popping in the melt.
+      for (let i = 0; i < 6; i++) {
+        const ph = (t * 0.9 + i * 0.37) % 1;
+        const bxp = bx + 4 + ((i * 0.618 + 0.13) % 1) * Math.max(0, fw - 8);
+        g.fillStyle(P(MAG.gold), 0.6 * (1 - ph));
+        g.fillCircle(bxp, by + bh - 2 - ph * (bh - 3), 0.8 + ph * 1.4);
+      }
+      // White-hot meniscus at the leading edge.
+      g.fillStyle(P(MAG.white), 0.65 + 0.25 * Math.sin(t * 8));
+      g.fillCircle(bx + fw - bh / 2, by + bh / 2, bh * 0.38);
+      g.fillStyle(P(hot), 0.25);
+      g.fillCircle(bx + fw - bh / 2, by + bh / 2, bh * 0.9);
+    }
+    // Tick notches chiselled into the rim.
+    for (let i = 1; i < 4; i++) {
+      const nx = bx + (bw * i) / 4;
+      g.lineStyle(1, P(MAG.ash), 0.55);
+      g.lineBetween(nx, by - 2, nx, by + 1);
+      g.lineBetween(nx, by + bh - 1, nx, by + bh + 2);
+    }
   }
 
   // ── Status tray ────────────────────────────────────────────────────────────

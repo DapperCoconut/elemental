@@ -131,6 +131,23 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   `owns(owner, slot)`, but the base rotation has not been rewritten and the movement profile has
   not been retuned.
 
+- **Myth (2026-10-15, new test element) — steps 3, 4 and 5 landed with the kit.** The
+  storyteller: a crowd passive paying Echo Shards (45 dealt in 4s), and every key with a
+  shard-costing second act. `doMythAbilities` has two rotations (tray, and the five guns once
+  Final Destiny is up). Published fields: `npcMythShards`, `npcMythTipStunLive` (a star-mace
+  stun → slash first), `npcMythTruthWindow`, `npcMythDetermined`, `npcMythBeastLive`,
+  `npcMythDestiny`, `npcMythTakenRecent` (≥28 in 1.5s → Determination), `npcMythCheerClose`
+  (half a shard away → whip aimed so the tip lands), `npcMythVulnStacks` (≥2 → shotgun), and the
+  seek override `mythFlipPoint` (walk into the beast's path for the 20% flip, with its own block
+  in the movement section). **Gotcha — recasts are not casts:** right-click, E/R/F-again spend a
+  shard without touching a cooldown, so they never reach `castAbility` and the routine cannot
+  make them; `MythKit.updateBotRecasts` spends the bot's shards itself on a 420ms beat (dash when
+  the target is inside 280px of an open window, recall when the beast is carrying the target
+  >200px away, longer Determination under half health or with two spare, maces in whip range
+  with two spare). Online the replica never self-recasts — the relayed `myth-*` pseudo-cast ids
+  drive it through `MythKit.replayNet`. Profile: skirmisher [110, 240], retreat 0.22. Steps 1
+  and 2 do not apply yet (no upgrades, no mastery). Not runtime-tested.
+
 - **Radiation — REWORKED 2026-10-15, the notes below this one are history.** E is now Barrage
   (a 45°→5° cone held on a target for 3s, then a 5-round hitscan burst), R Fallout Bunker (75 HP
   lead ring; blocks shots and enemies, the owner takes no damage inside), F Rod Baton (close
@@ -142,6 +159,14 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   (own airdrop falling, not sheltered → R first; the kit also holds the bot inside its bunker
   until the drop lands, so the bunker eats the self-hit), `npcRadiationSheltered`. The bot only
   draws Q while R is ready.
+  **Upgrades (2026-10-16):** Flick Shot / Trigger Happy / Turret Town / Mutation / Complete
+  Annihilation, all in RadiationKit's "Shop upgrades" section. Bot fields:
+  `npcRadiationFlickReady` (offline the bot "faces" its walk, so a tracer thrown out of a retreat
+  is barbed — fire it), `npcRadiationWantsDose` (R+ turrets standing with the target in reach, or a
+  Q+ drop falling, and the target is clean → rod if close, else tracers), `npcRadiationKeepDose`
+  (F+ would strip a dose the turrets or the falling drop still need → hold the hot rod). Trigger
+  Happy needs no field: the kit steers the cone through the sustained fire, and the existing stun
+  synergy is what makes it un-walkable.
 
 - **Radiation (2026-08-12), step 2 + step 4 only.** Radiation Mastery shipped, so the kit now has
   its npc half. `npcMasteryActive` already drove `setMastered` on the npc avatar, and the Sniper's
@@ -270,6 +295,14 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   throttled to 120ms (`NPC_PLAN_MS`) and is off online. **Not done:** the bot does not walk
   *into* its own auras (no seek override), and the movement profile has not been retuned for
   a kit that now wants to stand still near its pieces.
+  **Upgrades (2026-10-16, all gated on `hasNpcUpgrade`):** Castle (F+) and Mount Protect (R+)
+  ride the same `npcPsychicMove` channel — `NpcPlan.piece === -2` is a castle, planned
+  *before* the queen and piece checks when the target is within 63px and the rook is >150px
+  from them (the slam lands on the target, the bot lands at the rook); below 50% HP with the
+  target inside 160px, a knight whose aura the bot stands in is jumped *away* from the target
+  (checked before attacking moves, so a hurt bot does not ride into them). Checkmate (Q+)
+  publishes `npcPsychicCheckmate` (target ≤40% HP) and the AI crowns on it regardless of the
+  board. Insight Move and Sight Lines are automatic in the kit.
 
 - **Gold (id `fortune`, 2026-10-15 rework), steps 3–5.** The shopkeeper was replaced by an
   alchemist and `doFortuneAbilities` rewritten around kit-published fields. Synergies checked
@@ -278,7 +311,13 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   `npcGoldCanAdvance` gates E (the kit picks the card itself in `npcChoose`). `goldSeekPoint` is
   a soft seek to its own plume, its loot, or Midas floor while the curse is live.
   `npcGoldFrayAim` is the gravity-corrected aim for the falling grass. Movement profile is now a
-  150–300px skirmisher. No mastery or upgrades exist yet, so steps 1–2 are moot until they do.
+  150–300px skirmisher. No mastery exists yet.
+  **Upgrades (2026-10-16):** Accumulation (Click+), Glittery Cloak (R+) and Gold Hex (F+) are
+  passives the kit runs for the bot; Artisan (E+) is played in `npcChoose`, which scores jeweled
+  cards by their worth (Jade by how many jades it owns) and never picks one it cannot pay for.
+  Full Metal Alchemy (Q+) publishes `npcGoldStatueHold` (its statue is up, uncracked, and the bot is
+  short of an Advance) → `doFortuneAbilities` returns before anything else so the statue melts into
+  its 3 coins, which `goldSeekPoint` then walks it to.
 
 - **Magnet (2026-10-15 scrap rework), steps 3–4; movement profile untouched.** Rods, Magnetize,
   Protect and Atom Smasher are gone; `doMagnetAbilities` was rewritten around MagnetKit's fields,
@@ -293,7 +332,14 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   target so they hang inside the next cone; `npcMagnetSpikeAt` leads by 0.8s of velocity.
   `npcMagnetBusy` (gathering/piloting) returns null — the kit pilots the npc mech itself in
   `npcPilot` (smash on a 0.31s lead, rail/cannon off cooldown, avalanche after 3s, self-destruct
-  with 1.2s left). No mastery or upgrades exist yet, so steps 1–2 are moot.
+  with 1.2s left). No mastery yet.
+  **Shop upgrades (2026-10-16)** ride the same fields, so `doMagnetAbilities` is unchanged; every
+  extra is gated on `up('npc', slot)` inside the kit. Magnetize (E+): `npcMagnetRepulseAt` scores
+  +1 for catching an unmagnetised target in the cone, +1 more if a coin/nail/spike of the bot's is
+  already in flight (it locks the moment they are magnetised). Nailstorm (R+): +2 to Repulse with
+  2+ nails in a target within 340px, and `npcMagnetRecall` rips the instant all 3 are in.
+  Electromagnet (F+): `npcMagnetZipTo` also rides a live spike within 145px of the target from
+  160px+ out, so the Charged aura lands on them. Shatter Shot and Mega Mechancements need no play.
 
 - **Sound (2026-10-15 marching-band rework), steps 3–5.** The violin/boombox/bugle/Coda kit is
   gone, and with it `npcSoundHarmonizeIn` / `npcSoundComposeSlot`. SoundKit now runs the bot's
@@ -305,8 +351,16 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   free recast through the non-ability `ctx.soundCast('fermata-detonate')`). Then Hum until
   `npcSoundSong` matches `npcSoundWantedSong` (Smooth under 40% HP, Melody when out of baton
   reach, else Staccato), Q whenever up, Fermata inside 230px, Crescendo inside 260px. Movement
-  profile is now a 70–150px skirmisher (baton reach 170). No mastery or upgrades exist yet, so
-  steps 1–2 are moot.
+  profile is now a 70–150px skirmisher (baton reach 170). No mastery exists yet.
+  **Upgrades (2026-10-16), all gated on `hasNpcUpgrade`:** Click+ — `botMetronome` aims for the
+  Perfect sliver (spread `0.7 − 0.1·level` of the window), and the kit brings the baton home for a
+  Tempo tap when the player is >380px away (`npcWantsBatonHome`). E+ — `npcSoundVictimDancing` →
+  Fermata inside 320px while the player can't attack. R+ — the kit brings the baton home when the bot
+  is under 70% HP with R ready; `npcSoundHarmonyReady` → press Fermata (resolves to In Tune), then
+  `npcSoundHarmonyRelease` (regen ≤0.5 HP/s, i.e. the net's peak) → free `soundCast('harmony-release')`,
+  read first of all. F+ — passive, levels from the bot's own beats. Q+ — kit-played: the solo speeds up
+  to tempo `1 + 0.16·level` unless the bot is under 35% HP; `npcSoundDeaf` → the rotation stands down
+  after Hum (wanted song becomes Melody, or Smooth under 50%).
 
 - **Harvest (id `gluttony`, 2026-10-15 rework replacing the chef), steps 3–5.**
   `doGluttonyAbilities` was rewritten around GluttonyKit's fields, all checked before the
@@ -320,8 +374,13 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   ≥55%-corrupted target, sickle under 460px. `harvestSeekPoint` walks it into the middle of
   its own mold while the target is 120–420px away and off the rot, so the chase happens on
   the mold. The kit picks the bot's sickle curl at random per throw (no right mouse button).
-  Movement profile: brawler 90–240px, retreat at 20%. No mastery or upgrades exist yet, so
-  steps 1–2 are moot.
+  Movement profile: brawler 90–240px, retreat at 20%. No mastery yet.
+  **Upgrades (2026-10-16):** Click+ Recursive and E+ Vile Rot are passive (the kit re-aims the
+  second loop at the target and rolls the grabs/worms itself). R+ Poison Payload and F+ Corrupt
+  Cooking are kit-played, Conquest-style, in `GluttonyKit.updateNpcUpgradePlay`: the bot lets go
+  of the vials the frame a vial-carrying crow is over its target, and cooks the Vile Feast the
+  moment it has 3 flesh, Meat Broth at 2 below 50% health, Jerky below 35%. Q+ Endless Harvest
+  needs no AI: `npcHarvestCanExecute` already lines up the killing swing.
 - **Devotion (id `passion`, 2026-10-15 rework replacing the charmer), steps 3–5.**
   `doPassionAbilities` reads one kit-published bundle, `npcDevotion` (from
   `PassionKit.npcOpportunities()`), and checks it before the rotation: `ascendNow` (target
@@ -333,7 +392,33 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   Ascendance wind-up `holdLineY` steers the bot vertically onto its own line so it gets picked
   up. `npcDevotionRiding` blocks casting while it is off the field. The kit chooses the bot's
   sermon charge (full when the target is pinned or ≥75% faith). Movement profile kept from
-  Passion: skirmisher 150–290px. No mastery or upgrades exist yet, so steps 1–2 are moot.
+  Passion: skirmisher 150–290px. No mastery exists yet.
+  **Upgrades (2026-10-16):** Click+ Disarming Words, E+ Purge Sins and R+ Repentance are
+  passive on the bot's own casts (its letters bless the player's shots, its puddles purge, its
+  grenade leaps on its own) — nothing to decide. F+ Pocket Crucifix and Q+ Pillars of Fire
+  bypass `castAbility`, so — like Conquest's economy — the kit plays them for the bot instead of
+  publishing them: `updateNpcPocket` picks the cross up and raises it when the player is within
+  170px while the bot stands in its aura (the sanctuary walks with it and shoves them off),
+  lowers and sets it down once they are past 220px; on a sky ride `updateRide` drops a pillar on
+  the player's lead 1.2s in and every 2s after. A bot holding the cross does not preach (its
+  sermon cast is a no-op, matching the player's click).
+
+- **Life (2026-10-16 garden rework — eight new seeds), steps 3–4; movement profile untouched.**
+  Rose, Nurse Lily and Cotton are gone; the bed is Sunflower (3s solar link), Nightcap (poison
+  bombs), Helicopter (rotor blades), Mushroom Colony (8-way volley), Frost Lily (piercing
+  chill), Flaming Sprout (5s machine gun), Lotus (orb) and Pitcher (sprinkler). The bot used to
+  plant only Sunflowers; now `LifeKit.npcPlantPlan()` picks the seed *and* the spot, and
+  `createPlant(…, 'npc')` reads the same plan for the seed — so the plan must stay a pure
+  function of the board (no randomness), or the seed the AI aimed for and the seed that grows
+  would disagree. Plan order: Helicopter between itself and a target inside 200px → Flaming
+  Sprout in front of a target inside 320px → **Pitcher at the centroid of two or more of its
+  attackers (synergy: watering)** → Lotus at its feet below 60% HP → the missing seed of the
+  rotation; with a full bed only the situational seeds replace a plant. Other opportunities, all
+  checked before the rotation: `npcLifeShieldAt` (a half-dead plant with the player on it →
+  Root Shield), `npcLifeFertilize` (two plants inside the wave → Fertilize), and
+  `lifeSeekPoint` (a ripe Lotus orb within 300px → a soft walk to eat it, like Gold's seek).
+  Online, the human opponent's pick arrives as a `life-seed:<id>` pseudo-cast and overrides the
+  plan. Steps 1–2 still owed: Life's upgrades and Reap are player-only.
 
 ## Gotchas (learned the hard way — read before each batch)
 

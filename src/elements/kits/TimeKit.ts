@@ -7,6 +7,7 @@ import {
   FROZEN_TONES, HEAT_TONES, MINT_TONES, NOON_TONES, NPC_TONES, TIME, TimeAvatar, TimeColorFn,
   TimeDial, TimeFx, TimeTones, tonesFor,
 } from './TimeVisuals';
+import { FONT_DISPLAY } from '../../ui/Theme';
 
 /**
  * Every time ability — the player's and the NPC's alike — is cast through this kit, so each one
@@ -257,6 +258,8 @@ export class TimeKit {
   private playerBountyAccum = 0;         // synced floor(float)
   private playerHighestBountyEver = 0;
   private playerBountyLabel: Phaser.GameObjects.Text | null = null;
+  /** The WANTED handbill the bounty label is printed on. */
+  private playerBountyTag: Phaser.GameObjects.Graphics | null = null;
   private playerBountyAuraActive = false;
   private playerBountyAuraEnd = 0;
   /** Cast timestamp, so the dial can show what fraction of the sentence is left. */
@@ -276,6 +279,7 @@ export class TimeKit {
   private npcBountyAccum = 0;
   private npcHighestBountyEver = 0;
   private npcBountyLabel: Phaser.GameObjects.Text | null = null;
+  private npcBountyTag: Phaser.GameObjects.Graphics | null = null;
   private npcBountyAuraActive = false;
   private npcBountyAuraEnd = 0;
   private npcBountyAuraStart = 0;
@@ -422,6 +426,7 @@ export class TimeKit {
 
     this.playerBountyFloat = 0; this.playerBountyAccum = 0; this.playerHighestBountyEver = 0;
     this.playerBountyLabel?.destroy(); this.playerBountyLabel = null;
+    this.playerBountyTag?.destroy(); this.playerBountyTag = null;
     this.playerBountyAuraActive = false;
     this.playerBountyAura?.destroy(); this.playerBountyAura = null;
     if (npc.cooldownMult > 1) npc.cooldownMult = 1;
@@ -436,6 +441,7 @@ export class TimeKit {
 
     this.npcBountyFloat = 0; this.npcBountyAccum = 0; this.npcHighestBountyEver = 0;
     this.npcBountyLabel?.destroy(); this.npcBountyLabel = null;
+    this.npcBountyTag?.destroy(); this.npcBountyTag = null;
     this.npcBountyAuraActive = false;
     this.npcBountyAura?.destroy(); this.npcBountyAura = null;
     if (player.cooldownMult > 1) player.cooldownMult = 1;
@@ -826,15 +832,7 @@ export class TimeKit {
     const { npc, scene, projectiles } = this.arena;
 
     // Bounty label above enemy
-    const bountyCount = Math.floor(this.playerBountyAccum);
-    if (bountyCount >= 1) {
-      if (!this.playerBountyLabel) {
-        this.playerBountyLabel = scene.add.text(0, 0, '', { fontSize: '11px', color: '#ffdd44' }).setOrigin(0.5).setDepth(20);
-      }
-      this.playerBountyLabel.setText(`Bounty: ${bountyCount}`).setPosition(npc.x, npc.y - 55);
-    } else {
-      this.playerBountyLabel?.setText('');
-    }
+    this.paintBountyTag('player', Math.floor(this.playerBountyAccum), npc.x, npc.y - 58, time);
 
     if (!this.playerBountyAuraActive) return;
     // The bounty dial rides the marked fighter and counts their sentence down.
@@ -1031,15 +1029,7 @@ export class TimeKit {
   private updateNpcBountyAura(time: number, delta: number): void {
     const { player, scene, projectiles } = this.arena;
 
-    const bountyCount = Math.floor(this.npcBountyAccum);
-    if (bountyCount >= 1) {
-      if (!this.npcBountyLabel) {
-        this.npcBountyLabel = scene.add.text(0, 0, '', { fontSize: '11px', color: '#ffdd44' }).setOrigin(0.5).setDepth(20);
-      }
-      this.npcBountyLabel.setText(`Bounty: ${bountyCount}`).setPosition(player.x, player.y - 55);
-    } else {
-      this.npcBountyLabel?.setText('');
-    }
+    this.paintBountyTag('npc', Math.floor(this.npcBountyAccum), player.x, player.y - 58, time);
 
     if (!this.npcBountyAuraActive) return;
     this.npcBountyAura?.update(delta, player.x, player.y,
@@ -1376,6 +1366,36 @@ export class TimeKit {
     } else {
       this.npcAmmo = 6; this.npcReloading = false;
     }
+  }
+
+  /**
+   * The bounty count over a marked fighter, printed on a swaying WANTED handbill. Same text and
+   * position as the old floating label; the label object is kept (the hit-pulse tweens it).
+   */
+  private paintBountyTag(side: 'player' | 'npc', count: number, x: number, y: number, time: number): void {
+    const { scene } = this.arena;
+    const tint = side === 'player' ? this.pcol : this.ncol;
+    let label = side === 'player' ? this.playerBountyLabel : this.npcBountyLabel;
+    let tag = side === 'player' ? this.playerBountyTag : this.npcBountyTag;
+    if (count < 1) {
+      label?.setText('');
+      tag?.clear();
+      return;
+    }
+    if (!label) {
+      label = scene.add.text(0, 0, '', {
+        fontFamily: FONT_DISPLAY, fontSize: '9px', color: '#4a2a10', align: 'center', lineSpacing: -2,
+      }).setOrigin(0.5).setDepth(20);
+      if (side === 'player') this.playerBountyLabel = label; else this.npcBountyLabel = label;
+    }
+    if (!tag) {
+      tag = scene.add.graphics().setDepth(19.5);
+      if (side === 'player') this.playerBountyTag = tag; else this.npcBountyTag = tag;
+    }
+    label.setText(`WANTED\nBounty: ${count}`).setPosition(x + Math.sin(time / 1000 * 2.4) * 0.8, y + 1);
+    const w = Math.max(48, label.width + 10), h = label.height + 8;
+    tag.clear();
+    TimeFx.drawBountyTag(tag, tint, x, y, w * label.scaleX, h * label.scaleY, time / 1000);
   }
 
   /**

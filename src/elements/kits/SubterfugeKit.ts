@@ -5,6 +5,7 @@ import {
   ArmGesture, SUB, SubAuraStyle, SubColorFn, SubterfugeAura, SubterfugeAvatar, SubterfugeFx,
   banknoteLayered, smokeBank, stiletto,
 } from './SubterfugeVisuals';
+import { FONT_DISPLAY, FONT_UI } from '../../ui/Theme';
 import { meterGain } from '../../combat/Meters';
 
 // ── Arena API ────────────────────────────────────────────────────────────────
@@ -351,6 +352,8 @@ export class SubterfugeKit {
   private sprayDmgAccum = 0;
   private npcSprayDmgAccum = 0;
   private bulletCounterText: Phaser.GameObjects.Text | null = null;
+  /** Over-head tags behind the ammo counter and the retainer label, repainted per frame. */
+  private tagGfx: Phaser.GameObjects.Graphics | null = null;
   private lastSprayShotAt = 0;
   private npcLastSprayShotAt = 0;
   private sprayFocusMs = 0;             // E+ Steady Hands
@@ -533,6 +536,8 @@ export class SubterfugeKit {
     this.npcSprayFocusMs = 0;
     if (this.bulletCounterText?.active) this.bulletCounterText.destroy();
     this.bulletCounterText = null;
+    if (this.tagGfx?.active) this.tagGfx.destroy();
+    this.tagGfx = null;
 
     for (const l of this.lackeys) this._destroyLackeyVisuals(l);
     this.lackeys = [];
@@ -834,6 +839,30 @@ export class SubterfugeKit {
         ignited: l.ignited,
         enemy: l.owner === 'npc',
       });
+      // Loyalty as a banknote laid over the head: the paper is what is left of his pay, the
+      // torn-off grey end is what has run out, and the seal turns red in the last quarter.
+      const ratio = Phaser.Math.Clamp(l.loyaltyMs / l.loyaltyMaxMs, 0, 1);
+      const c = this.col(l.owner);
+      const bx = l.x - 17, by = l.y - 27;
+      g.fillStyle(c(SUB.ink), 0.55);
+      g.fillRect(bx + 1, by + 1.5, 34, 7);
+      g.fillStyle(c(SUB.slate), 0.85);
+      g.fillRect(bx, by, 34, 7);
+      if (ratio > 0) {
+        const fw = 34 * ratio;
+        g.fillStyle(c(SUB.paper), 0.97);
+        g.fillRect(bx, by, fw, 7);
+        g.fillStyle(c(SUB.moneyGreen), 0.35);
+        g.fillRect(bx + 1, by + 1, Math.max(0, fw - 2), 5);
+        g.lineStyle(0.8, c(SUB.olive), 0.7);
+        g.strokeRect(bx + 1.5, by + 1.5, Math.max(0, fw - 3), 4);
+        if (fw > 10) {
+          g.fillStyle(c(ratio < 0.25 ? SUB.crimson : SUB.gold), 1);
+          g.fillCircle(bx + Math.min(fw - 4, 17), by + 3.5, 2);
+        }
+      }
+      g.lineStyle(1, c(SUB.ink), 0.9);
+      g.strokeRect(bx, by, 34, 7);
     }
   }
 
@@ -893,6 +922,16 @@ export class SubterfugeKit {
       const amount = owner === 'player' ? this.money : this.npcMoney;
       const cap = this._moneyMax(owner);
       const tint = this.col(owner);
+      // An open leather billfold the notes sit in: dark hide, a stitched seam and a gold clip.
+      const ww = cap * 17 + 8;
+      g.fillStyle(tint(SUB.ink), 0.4);
+      g.fillRoundedRect(f.x - ww / 2 + 1, f.y - 50, ww, 14, 4);
+      g.fillStyle(tint(SUB.wine), 0.85);
+      g.fillRoundedRect(f.x - ww / 2, f.y - 51.5, ww, 14, 4);
+      g.fillStyle(tint(SUB.paperShade), 0.45);
+      for (let sx = f.x - ww / 2 + 4; sx < f.x + ww / 2 - 4; sx += 4) g.fillRect(sx, f.y - 39.5, 2, 0.8);
+      g.fillStyle(tint(SUB.gold), 0.95);
+      g.fillRect(f.x - 2, f.y - 53, 4, 4);
       for (let i = 0; i < cap; i++) {
         const x = f.x + (i - (cap - 1) / 2) * 17;
         const y = f.y - 44 + Math.sin(t * 2.4 + i * 0.7) * 1.4;
@@ -1144,18 +1183,56 @@ export class SubterfugeKit {
     }
   }
 
+  /** The over-head tag layer: cleared here once a frame, then each tag paints into it. */
+  private _tags(): Phaser.GameObjects.Graphics {
+    if (!this.tagGfx || !this.tagGfx.active) this.tagGfx = this.api.scene.add.graphics().setDepth(21);
+    return this.tagGfx;
+  }
+
+  /**
+   * A black-and-gold price tag: a dark card with a notched left end, a punched eyelet and a
+   * thin gold rule. Shared by the ammo counter and the retainer label.
+   */
+  private _paintTag(g: Phaser.GameObjects.Graphics, cx: number, cy: number, w: number, h: number, rule: number): void {
+    const c = this.pcol;
+    const x = cx - w / 2, y = cy - h / 2;
+    g.fillStyle(c(SUB.ink), 0.45);
+    g.fillRoundedRect(x + 1.5, y + 2.5, w, h, 3);
+    g.fillStyle(c(SUB.charcoal), 0.92);
+    g.beginPath();
+    g.moveTo(x + 6, y); g.lineTo(x + w, y); g.lineTo(x + w, y + h); g.lineTo(x + 6, y + h); g.lineTo(x, cy);
+    g.closePath(); g.fillPath();
+    g.lineStyle(1.2, c(rule), 0.9);
+    g.strokePath();
+    g.fillStyle(c(SUB.paperShade), 0.9);
+    g.fillCircle(x + 6, cy, 1.6);
+  }
+
   private _renderBulletCounter(time: number): void {
     const { player, scene } = this.api;
     const visible = this.api.eKey.isDown || time - this.lastSprayShotAt < 800;
     if (!this.bulletCounterText || !this.bulletCounterText.active) {
       this.bulletCounterText = scene.add.text(player.x, player.y - 58, '', {
-        fontSize: '14px', fontFamily: '"Arial Black"', color: '#ff3333',
-        stroke: '#000000', strokeThickness: 3,
+        fontSize: '14px', fontFamily: FONT_DISPLAY, color: '#ff4455',
+        stroke: '#0a0a0a', strokeThickness: 3,
       }).setOrigin(0.5).setDepth(22);
     }
+    this._tags().clear();
     this.bulletCounterText.setVisible(visible);
     if (visible) {
-      this.bulletCounterText.setText(`${this.bullets}`).setPosition(player.x, player.y - 58);
+      this.bulletCounterText.setText(`${this.bullets}`).setPosition(player.x + 6, player.y - 58);
+      // A tag behind the number, with a brass cartridge laid on its left end.
+      const g = this._tags();
+      const w = this.bulletCounterText.width + 26;
+      this._paintTag(g, player.x, player.y - 58, w, 18, this.bullets > 0 ? SUB.crimson : SUB.ashDark);
+      const bx = player.x - w / 2 + 12, by = player.y - 58;
+      g.fillStyle(this.pcol(this.bullets > 0 ? SUB.brass : SUB.ashDark), 1);
+      g.fillRect(bx - 3, by - 2.4, 5, 4.8);
+      g.fillStyle(this.pcol(this.bullets > 0 ? SUB.gold : SUB.ash), 1);
+      g.fillRect(bx - 3, by - 2.4, 5, 1.4);
+      g.fillStyle(this.pcol(SUB.steel), 1);
+      g.fillCircle(bx + 3, by, 2.4);
+      g.fillRect(bx + 1.5, by - 2.4, 1.6, 4.8);
     }
   }
 
@@ -1193,12 +1270,14 @@ export class SubterfugeKit {
     const angle = Math.random() * Math.PI * 2;
     const x = caster.x + Math.cos(angle) * 50;
     const y = caster.y + Math.sin(angle) * 50;
-    const barBg = scene.add.rectangle(x, y - 24, 32, 5, 0x333311, 0.8).setDepth(11) as Phaser.GameObjects.Rectangle;
-    const barFill = scene.add.rectangle(x - 16, y - 24, 32, 5, 0xffdd33, 0.95).setOrigin(0, 0.5).setDepth(12) as Phaser.GameObjects.Rectangle;
+    // Kept as invisible handles for the existing teardown; the loyalty bar itself is painted
+    // per frame in _paintRecruits as a little banknote that drains.
+    const barBg = scene.add.rectangle(x, y - 24, 32, 5, 0x333311, 0.8).setDepth(11).setVisible(false) as Phaser.GameObjects.Rectangle;
+    const barFill = scene.add.rectangle(x - 16, y - 24, 32, 5, 0xffdd33, 0.95).setOrigin(0, 0.5).setDepth(12).setVisible(false) as Phaser.GameObjects.Rectangle;
     const levelText = this._up(owner, 'f')
       ? scene.add.text(x, y - 38, ROMAN[1], {
-          fontSize: '17px', fontFamily: '"Arial Black"', color: '#ffdd33',
-          stroke: '#000000', strokeThickness: 4,
+          fontSize: '16px', fontFamily: 'Georgia, "Times New Roman", serif', fontStyle: 'bold', color: '#ffdd33',
+          stroke: '#1a1a1a', strokeThickness: 4,
         }).setOrigin(0.5).setDepth(13) as Phaser.GameObjects.Text
       : null;
     // Moral perk: the whole payroll signs on for a quarter longer, Bards included.
@@ -1276,8 +1355,8 @@ export class SubterfugeKit {
     for (let i = 0; i < this._recruitOrder('player').length; i++) {
       this.recruitMenuLabels.push(
         this.api.scene.add.text(0, 0, '', {
-          fontSize: '11px', color: '#ffffff', fontFamily: 'Arial', align: 'center',
-          wordWrap: { width: 80 },
+          fontSize: '11px', color: '#ffffff', fontFamily: FONT_UI, fontStyle: 'bold', align: 'center',
+          wordWrap: { width: 80 }, stroke: '#0a0a0a', strokeThickness: 3,
         }).setOrigin(0.5).setDepth(32),
       );
     }
@@ -1296,6 +1375,19 @@ export class SubterfugeKit {
     const count = order.length;
     const angleStep = (Math.PI * 2) / count;
     gfx.clear();
+    // The Rolodex: a black lacquer dial with a gold pinstripe rim and card-tab wedges.
+    const tNow = this.api.scene.time.now / 1000;
+    gfx.fillStyle(SUB.ink, 0.62);
+    gfx.fillCircle(cx, cy, R + 22);
+    gfx.lineStyle(3, SUB.brass, 0.9);
+    gfx.strokeCircle(cx, cy, R + 22);
+    gfx.lineStyle(1, SUB.gold, 0.5);
+    gfx.strokeCircle(cx, cy, R + 17);
+    for (let k = 0; k < 40; k++) {
+      const a = (k / 40) * Math.PI * 2 + tNow * 0.15;
+      gfx.fillStyle(SUB.gold, k % 5 === 0 ? 0.8 : 0.35);
+      gfx.fillCircle(cx + Math.cos(a) * (R + 19.5), cy + Math.sin(a) * (R + 19.5), k % 5 === 0 ? 1.6 : 0.9);
+    }
     for (let i = 0; i < count; i++) {
       const type = order[i];
       const affordable = this.money >= RECRUIT_COST[type];
@@ -1306,18 +1398,47 @@ export class SubterfugeKit {
       gfx.beginPath(); gfx.moveTo(cx, cy);
       gfx.arc(cx, cy, rr, startA, startA + angleStep, false);
       gfx.closePath(); gfx.fillPath();
-      gfx.lineStyle(isSelected ? 3 : 1, isSelected ? 0xffffff : 0xaaaaaa, isSelected ? 0.9 : 0.4);
+      // pinstripes across the wedge, the suit cloth
+      gfx.lineStyle(1, SUB.white, affordable ? 0.07 : 0.03);
+      for (let k = 1; k <= 4; k++) {
+        gfx.beginPath();
+        gfx.arc(cx, cy, rr * (0.2 * k + 0.1), startA + 0.04, startA + angleStep - 0.04, false);
+        gfx.strokePath();
+      }
+      // a dark vignette toward the hub
+      gfx.fillStyle(SUB.ink, 0.35);
+      gfx.beginPath(); gfx.moveTo(cx, cy);
+      gfx.arc(cx, cy, rr * 0.38, startA, startA + angleStep, false);
+      gfx.closePath(); gfx.fillPath();
+      if (isSelected) {
+        gfx.lineStyle(4, affordable ? SUB.gold : SUB.ashDark, 0.35 + 0.2 * Math.sin(tNow * 6));
+        gfx.beginPath();
+        gfx.arc(cx, cy, rr + 4, startA + 0.03, startA + angleStep - 0.03, false);
+        gfx.strokePath();
+      }
+      gfx.lineStyle(isSelected ? 3 : 1.2, isSelected ? SUB.gold : SUB.brass, isSelected ? 1 : 0.55);
       gfx.beginPath(); gfx.moveTo(cx, cy);
       gfx.arc(cx, cy, rr, startA, startA + angleStep, false);
       gfx.closePath(); gfx.strokePath();
+      // a banknote price tab at the rim of each card
+      const tabA = startA + angleStep / 2;
+      banknoteLayered(gfx, this.pcol, cx + Math.cos(tabA) * (rr - 10), cy + Math.sin(tabA) * (rr - 10),
+        tabA + Math.PI / 2, 14, 4.2, affordable ? 0.95 : 0.35, 0.1, affordable ? SUB.gold : SUB.ashDark);
 
       const lbl = this.recruitMenuLabels[i];
       if (!lbl?.active) continue;
       const midA = i * angleStep - Math.PI / 2;
       lbl.setPosition(cx + Math.cos(midA) * (rr * 0.66), cy + Math.sin(midA) * (rr * 0.66));
       lbl.setText(`${RECRUIT_EMOJI[type]} ${RECRUIT_NAME[type]}\n💵${RECRUIT_COST[type]}`);
-      lbl.setColor(affordable ? '#ffffff' : '#777777');
+      lbl.setColor(affordable ? (isSelected ? '#fff2c0' : '#ffffff') : '#777777');
     }
+    // hub: a gold signet with the house crimson inside
+    gfx.fillStyle(SUB.brass, 1);
+    gfx.fillCircle(cx, cy, 13);
+    gfx.fillStyle(SUB.wine, 1);
+    gfx.fillCircle(cx, cy, 9.5);
+    gfx.fillStyle(SUB.gold, 1);
+    gfx.fillTriangle(cx - 4, cy + 3, cx + 4, cy + 3, cx, cy - 5);
   }
 
   private _updateRecruitMenuHover(pointer: Phaser.Input.Pointer): void {
@@ -2194,14 +2315,21 @@ export class SubterfugeKit {
     }
     if (!this.retainerLabel?.active) {
       this.retainerLabel = this.api.scene.add.text(0, 0, '', {
-        fontSize: '12px', fontFamily: '"Arial Black"', color: '#ff8888',
-        stroke: '#000000', strokeThickness: 3,
+        fontSize: '12px', fontFamily: FONT_DISPLAY, color: '#ffaaaa',
+        stroke: '#0a0a0a', strokeThickness: 3,
       }).setOrigin(0.5).setDepth(22);
     }
     const secs = Math.max(0, (this.retainerUntil - time) / 1000);
     this.retainerLabel
-      .setPosition(this.api.player.x, this.api.player.y - 72)
+      .setPosition(this.api.player.x + 3, this.api.player.y - 72)
       .setText(`🤝 Q ${RETAINER_COST}💵 · ${secs.toFixed(1)}s`);
+    // A contract tag behind it, its gold rule burning down with the retainer.
+    const g = this._tags();
+    const w = this.retainerLabel.width + 20;
+    this._paintTag(g, this.api.player.x, this.api.player.y - 72, w, 18, SUB.gold);
+    const frac = Phaser.Math.Clamp((this.retainerUntil - time) / RETAINER_MS, 0, 1);
+    g.fillStyle(this.pcol(SUB.crimson), 0.95);
+    g.fillRect(this.api.player.x - w / 2 + 7, this.api.player.y - 63, (w - 8) * frac, 2);
   }
 
   // ── CastContext dispatchers ──────────────────────────────────────────────

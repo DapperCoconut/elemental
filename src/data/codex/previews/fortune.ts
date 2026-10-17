@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import {
-  FOR, FortuneAvatar, FortuneFx, StatKind, advanceCard, goldCoin, goldFloor, goldPlume, goldStatue,
-  goldenHeart, grassBlade, midasGilt, powderBag,
+  FOR, FortuneAvatar, FortuneFx, Jewel, StatKind, advanceCard, glitterCloak, glitterMotes, goldCoin, goldFloor,
+  goldPlume, goldStatue, goldStatueShell, goldenHeart, grassBlade, jewelGem, midasGilt, powderBag, statueRays,
 } from '../../../elements/kits/FortuneVisuals';
 
 /**
@@ -524,5 +524,383 @@ export const thePurse: PreviewScript = {
     ctx.at(200, () => readout.setText('standing in your own Gold Plume: 2 gold a second'));
     ctx.at(3000, () => readout.setText('a gold-hearted enemy: 1 per 20 damage · Midas floor: 1 per 3s · coins 1, statues 2'));
     ctx.at(5500, () => readout.setText('the purse fills, the under-glow swells — and Advance spends it ten at a time'));
+  },
+};
+
+// ══ Shop upgrades ══════════════════════════════════════════════════════
+
+export const frayUpgraded: PreviewScript = {
+  duration: 9000,
+  scale: 0.9,
+  caption: 'Click+ Accumulation — misses pile up on the floor; the bigger the pile, the more often it bursts up through them',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#e8dcb8', 11);
+    const target = { x: ctx.cx + 250, y: ctx.cy + 10 };
+    dummyAt(ctx, target);
+    const floorY = ctx.h - 16;
+    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(2));
+    const blades: (Blade & { gold?: boolean })[] = [];
+    const pile: { x: number; ang: number; lift: number }[] = [];
+    let now = 0;
+    ctx.onFrame((dt, e) => {
+      now = e;
+      air.clear(); ground.clear();
+      ground.lineStyle(1, 0x3a3326, 0.8);
+      ground.lineBetween(0, floorY + 4, ctx.w, floorY + 4);
+      const s = dt / 1000;
+      for (const b of blades) {
+        if (!b.alive) continue;
+        b.vy += FRAY_GRAVITY * s;
+        b.x += b.vx * s;
+        b.y += b.vy * s;
+        if (Phaser.Math.Distance.Between(b.x, b.y, target.x, target.y) < 24) {
+          b.alive = false;
+          float(ctx, target.x + (Math.random() - 0.5) * 20, target.y - 24, '3', hex(FOR.goldLit), 12);
+          ctx.capture(() => fx.bladeHit(b.x, b.y, Math.atan2(b.vy, b.vx)));
+          continue;
+        }
+        if (b.vy > 0 && b.y >= floorY) {
+          b.alive = false;
+          pile.push({ x: b.x, ang: (Math.random() < 0.5 ? 0 : Math.PI) + (Math.random() - 0.5) * 0.5, lift: 0 });
+          ctx.capture(() => fx.bladeLand(b.x, floorY, Math.atan2(b.vy, b.vx)));
+          continue;
+        }
+        const gild = b.gold ? 1 : Phaser.Math.Clamp((e - b.born) / FRAY_GILD_MS, 0, 1);
+        grassBlade(air, ctx.tint, b.x, b.y, Math.atan2(b.vy, b.vx), 15, gild, 1);
+      }
+      for (const p of pile) {
+        const sx = p.lift > 0 ? (Math.random() - 0.5) * 3 : 0;
+        grassBlade(ground, ctx.tint, p.x - Math.cos(p.ang) * 6.5 + sx, floorY - Math.sin(p.ang) * 6.5 - p.lift * 3, p.ang, 13, 1, 1);
+      }
+    });
+    const throwLow = (at: number): void => ctx.at(at, () => {
+      const ang = -0.05;
+      av.setFacing(ang);
+      av.play('punch', ang);
+      alch(av)?.setGlowHand(1);
+      throwClump(ctx, blades, ctx.cx, ctx.cy, ang, now);
+    });
+    const burst = (at: number, n: number): void => {
+      ctx.at(at, () => {
+        const pick = pile.slice().sort((a, b) => Math.abs(a.x - target.x) - Math.abs(b.x - target.x)).slice(0, n);
+        for (const p of pick) p.lift = 1;
+        const xs = pick.map((p) => p.x);
+        ctx.capture(() => fx.pileBurst((Math.min(...xs) + Math.max(...xs)) / 2, floorY, Math.max(30, Math.max(...xs) - Math.min(...xs))));
+      });
+      ctx.at(at + 280, () => {
+        const lifted = pile.filter((p) => p.lift > 0);
+        for (const p of lifted) {
+          pile.splice(pile.indexOf(p), 1);
+          const T = 0.5 + Math.random() * 0.25;
+          const tx = target.x + (Math.random() - 0.5) * 30;
+          const ty = target.y + (Math.random() - 0.5) * 30;
+          blades.push({ x: p.x, y: floorY - 2, vx: (tx - p.x) / T, vy: (ty - floorY - 0.5 * FRAY_GRAVITY * T * T) / T, born: now - FRAY_GILD_MS, alive: true, gold: true });
+        }
+        float(ctx, target.x, target.y - 50, 'BURST', hex(FOR.goldLit), 13);
+      });
+    };
+    ctx.at(200, () => readout.setText('the clumps that fall short land on the floor — and stay there'));
+    for (const at of [400, 1100, 1800, 2500]) throwLow(at);
+    ctx.at(3600, () => readout.setText('the bigger the pile, the more often it stirs and bursts up through them'));
+    burst(4000, 8);
+    throwLow(5200);
+    throwLow(5900);
+    burst(6900, 10);
+  },
+};
+
+const JEWEL_LINES: Record<Jewel, string> = {
+  pearl: '×2 the effect', diamond: '×4 the effect', ruby: 'turned on the foe', sapphire: 'grows over time', jade: '×2 per jade',
+};
+
+export const advanceUpgraded: PreviewScript = {
+  duration: 8400,
+  scale: 0.9,
+  caption: 'E+ Artisan — two jeweled cards join every offer, each with a price of its own under it',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
+    av.setFacing(-Math.PI / 2);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#e8dcb8', 11);
+    let gold = 46;
+    purse(ctx, () => gold);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(16));
+    const texts = Array.from({ length: 15 }, (_, i) => ctx.adopt(ctx.scene.add.text(0, 0, '', {
+      fontSize: i % 3 === 0 ? '8px' : '7px', fontFamily: 'Arial Black', color: i % 3 === 0 ? '#fff3c4' : i % 3 === 1 ? '#e6c46a' : '#fff0a8',
+    }).setOrigin(0.5).setDepth(17)));
+    const cursor = ctx.adopt(ctx.scene.add.graphics().setDepth(18));
+    type C = { kind: StatKind; jewel: Jewel | null; price: number; line: string };
+    let offer: C[] | null = null;
+    let opened = 0;
+    let hover = -1;
+    let now = 0;
+    const W = 58, H = 70, GAP = 8;
+    const centres = (): { x: number; y: number }[] => {
+      const at = ctx.casterAt();
+      const y = Math.max(H / 2 + 24, at.y - 96);
+      const x = Math.max(at.x, 2 * (W + GAP) + W / 2 + 6);
+      return [-2, -1, 0, 1, 2].map((k) => ({ x: x + k * (W + GAP), y }));
+    };
+    ctx.onFrame((_dt, e) => {
+      now = e;
+      g.clear(); cursor.clear();
+      for (const t of texts) t.setVisible(false);
+      if (!offer) return;
+      const cs = centres();
+      const a = Phaser.Math.Clamp((e - opened) / 220, 0, 1);
+      offer.forEach((c, i) => {
+        const rise = (1 - a) * 14;
+        const x = cs[i].x;
+        const y = cs[i].y + rise;
+        advanceCard(g, ctx.tint, x, y, W, H, c.kind, hover === i, a, e / 1000);
+        texts[i * 3].setVisible(true).setText(STAT_TEXT[c.kind][0]).setPosition(x, y + 16).setAlpha(a);
+        texts[i * 3 + 1].setVisible(true).setText(c.line).setPosition(x, y + 27).setAlpha(a);
+        if (!c.jewel) return;
+        jewelGem(g, ctx.tint, x, y - H / 2 - 1, 6, c.jewel, a, e / 1000 + i);
+        texts[i * 3 + 2].setVisible(true).setText(`${c.jewel.toUpperCase()}  ${c.price}🪙`).setPosition(x, y + H / 2 + 7).setAlpha(a);
+      });
+      if (hover >= 0) {
+        const c = cs[hover];
+        cursor.fillStyle(0xffffff, 0.95);
+        cursor.fillTriangle(c.x + 6, c.y + 6, c.x + 6, c.y + 20, c.x + 16, c.y + 15);
+      }
+    });
+    const round = (at: number, cards: C[], pickI: number, say: string): void => {
+      ctx.at(at, () => {
+        gold -= 10;
+        offer = cards;
+        opened = now;
+        hover = -1;
+        av.play('flex');
+        alch(av)?.setGlowHand(0.8);
+        const at2 = ctx.casterAt();
+        ctx.capture(() => fx.advanceOpen(at2.x, at2.y - 96));
+      });
+      ctx.at(at + 800, () => { hover = 3; });
+      ctx.at(at + 1400, () => { hover = pickI; readout.setText(say); });
+      ctx.at(at + 2200, () => {
+        if (!offer) return;
+        const c = centres()[pickI];
+        const card = offer[pickI];
+        offer = null;
+        hover = -1;
+        gold -= card.price;
+        av.play('flex');
+        ctx.capture(() => fx.advancePick(c.x, c.y));
+        const at2 = ctx.casterAt();
+        float(ctx, at2.x, at2.y - 52, `${card.jewel ? `${card.jewel.toUpperCase()} ` : ''}${STAT_TEXT[card.kind][0]}  ${card.line}`, hex(FOR.goldLit), 12);
+      });
+    };
+    ctx.at(150, () => readout.setText('three plain cards, and two set with jewels — priced under the card'));
+    round(500, [
+      { kind: 'might', jewel: null, price: 0, line: STAT_TEXT.might[1] },
+      { kind: 'stride', jewel: null, price: 0, line: STAT_TEXT.stride[1] },
+      { kind: 'mend', jewel: null, price: 0, line: STAT_TEXT.mend[1] },
+      { kind: 'hide', jewel: 'diamond', price: 20, line: '-25% dmg taken' },
+      { kind: 'haste', jewel: 'ruby', price: 10, line: 'foe +8% cooldowns' },
+    ], 3, `Diamond: four times the effect. Ruby: turned on the enemy (${JEWEL_LINES.ruby})`);
+    round(4300, [
+      { kind: 'greed', jewel: null, price: 0, line: STAT_TEXT.greed[1] },
+      { kind: 'vigor', jewel: null, price: 0, line: STAT_TEXT.vigor[1] },
+      { kind: 'sheaf', jewel: null, price: 0, line: STAT_TEXT.sheaf[1] },
+      { kind: 'might', jewel: 'sapphire', price: 8, line: '+10% damage ▲' },
+      { kind: 'stride', jewel: 'jade', price: 12, line: '+7% speed' },
+    ], 4, 'Sapphire grows every 20s. Jade doubles for every other jade you own');
+  },
+};
+
+export const goldPlumeUpgraded: PreviewScript = {
+  duration: 8000,
+  scale: 0.9,
+  caption: 'R+ Glittery Cloak — a bigger plume full of gold leaf: 15% of attacks miss you inside it, and enemies in it shoot wide',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#e8dcb8', 11);
+    const target = { x: ctx.cx + 300, y: ctx.cy };
+    dummyAt(ctx, target);
+    const R = PLUME_R * 1.2;
+    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(3.5));
+    const over = ctx.adopt(ctx.scene.add.graphics().setDepth(6));
+    const shots: { x: number; y: number; vx: number; vy: number; alive: boolean; dodge: boolean }[] = [];
+    let plumeAt = -1;
+    let enemyPlumeAt = -1;
+    ctx.onFrame((dt, e) => {
+      ground.clear(); over.clear();
+      const at = ctx.casterAt();
+      if (plumeAt >= 0) {
+        const born = Phaser.Math.Clamp((e - plumeAt) / 260, 0, 1);
+        goldPlume(ground, ctx.tint, ctx.cx, ctx.cy, R * (0.7 + 0.3 * born), 0.9 * born, e / 1000, 3);
+        glitterMotes(ground, ctx.tint, ctx.cx, ctx.cy, R * (0.7 + 0.3 * born), born, e / 1000, 3);
+        glitterCloak(over, ctx.tint, at.x, at.y, born, e / 1000);
+      }
+      if (enemyPlumeAt >= 0) {
+        const born = Phaser.Math.Clamp((e - enemyPlumeAt) / 260, 0, 1);
+        goldPlume(ground, ctx.tint, target.x, target.y, R * (0.7 + 0.3 * born), 0.9 * born, e / 1000, 8);
+        glitterMotes(ground, ctx.tint, target.x, target.y, R * (0.7 + 0.3 * born), born, e / 1000, 8);
+      }
+      for (const sh of shots) {
+        if (!sh.alive) continue;
+        sh.x += sh.vx * dt / 1000;
+        sh.y += sh.vy * dt / 1000;
+        if (sh.x < -20 || sh.y < -20 || sh.y > ctx.h + 20) { sh.alive = false; continue; }
+        if (Phaser.Math.Distance.Between(sh.x, sh.y, at.x, at.y) < 20) {
+          sh.alive = false;
+          if (sh.dodge) {
+            ctx.capture(() => fx.cloakDodge(at.x, at.y));
+            float(ctx, at.x, at.y - 44, '✨ DODGE', hex(FOR.goldLit), 12);
+          } else float(ctx, at.x, at.y - 30, '8', '#ffb3aa', 13);
+          continue;
+        }
+        over.fillStyle(0x9aa3b8, 1); over.fillCircle(sh.x, sh.y, 5);
+      }
+    });
+    const fire = (at: number, wide: boolean, dodge: boolean): void => ctx.at(at, () => {
+      const a = Math.PI + (wide ? (Math.random() < 0.5 ? -1 : 1) * (0.25 + Math.random() * 0.15) : 0);
+      shots.push({ x: target.x - 20, y: target.y, vx: Math.cos(a) * 340, vy: Math.sin(a) * 340, alive: true, dodge });
+    });
+    ctx.at(200, () => readout.setText('the plume is 20% bigger, and full of gold leaf'));
+    ctx.at(400, () => { av.play('sweep', ctx.aim); ctx.capture(() => fx.bagBurst(ctx.cx, ctx.cy, R)); plumeAt = 400; });
+    ctx.at(1300, () => readout.setText('standing in it, 15% of the attacks aimed at you miss'));
+    fire(1600, false, false);
+    fire(2300, false, true);
+    fire(3000, false, false);
+    ctx.at(3900, () => {
+      readout.setText('throw one on them, and their shots go wide');
+      av.play('sweep', ctx.aim);
+      ctx.capture(() => fx.bagBurst(target.x, target.y, R));
+      enemyPlumeAt = 3900;
+    });
+    fire(4600, true, false);
+    fire(5200, true, false);
+    fire(5800, true, false);
+    fire(6400, true, false);
+  },
+};
+
+export const heartUpgraded: PreviewScript = {
+  duration: 9000,
+  scale: 0.9,
+  caption: 'F+ Gold Hex — a golden heart makes every ability bar they have charge 50% slower, for the heart and 5s after',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#e8dcb8', 11);
+    const target = { x: ctx.cx + 230, y: ctx.cy };
+    dummyAt(ctx, target);
+    const hud = ctx.adopt(ctx.scene.add.graphics().setDepth(16));
+    const keys = ['E', 'R', 'F', 'Q'];
+    const tags = keys.map((k) => label(ctx, 0, 0, '#e8dcb8', 9).setText(k));
+    const fill = [0.1, 0.35, 0.6, 0.05];
+    let heartUntil = -1;
+    let hexUntil = -1;
+    ctx.onFrame((dt, e) => {
+      hud.clear();
+      const hexed = e < hexUntil;
+      const rate = (hexed ? 0.5 : 1) * dt / 5000;
+      const bx = target.x - 44;
+      const by = target.y + 34;
+      keys.forEach((_, i) => {
+        fill[i] = fill[i] >= 1 ? 0 : Math.min(1, fill[i] + rate * (1 + i * 0.2));
+        const x = bx + i * 23;
+        hud.fillStyle(0x17110a, 0.85); hud.fillRect(x, by, 20, 6);
+        hud.fillStyle(hexed ? 0xd8a531 : 0x8fd3ff, 1); hud.fillRect(x, by, 20 * fill[i], 6);
+        tags[i].setPosition(x + 10, by + 13);
+      });
+      if (hexed) {
+        hud.lineStyle(1.2, 0xffd34d, 0.6 + 0.3 * Math.sin(e / 120));
+        hud.strokeRect(bx - 3, by - 3, 4 * 23 + 3, 12);
+      }
+      if (e < heartUntil) goldenHeart(hud, ctx.tint, target.x, target.y - 46, 0.2 + 0.1 * Math.sin(e / 300), e / 1000, 1);
+    });
+    ctx.at(200, () => readout.setText('their ability bars, charging as normal'));
+    ctx.at(1600, () => {
+      av.play('dash', ctx.aim);
+      const to = { x: target.x - 70, y: target.y };
+      ctx.capture(() => fx.caneLunge(ctx.cx, ctx.cy, to.x, to.y));
+      ctx.glideCaster({ to, ms: 180, ease: 'out' });
+    });
+    ctx.at(1760, () => {
+      ctx.capture(() => fx.heartApply(target.x, target.y - 34));
+      float(ctx, target.x, target.y - 54, '⏳ GOLD HEX', hex(FOR.gold), 12);
+      heartUntil = 1760 + 4000;
+      hexUntil = 1760 + 6500;
+      readout.setText('a golden heart hexes them: every bar charges at half speed');
+    });
+    ctx.at(5900, () => readout.setText('the heart is gone — the hex lasts 5 seconds longer'));
+    ctx.at(8300, () => readout.setText('and the bars charge normally again'));
+  },
+};
+
+export const midasUpgraded: PreviewScript = {
+  duration: 10000,
+  scale: 0.9,
+  caption: 'Q+ Full Metal Alchemy — when the curse runs out they are solid gold for 3s: hit them for double damage, or let them melt into 3 coins',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#e8dcb8', 11);
+    let gold = 0;
+    purse(ctx, () => gold);
+    const target = { x: ctx.cx + 240, y: ctx.cy };
+    dummyAt(ctx, target);
+    const gilt = ctx.adopt(ctx.scene.add.graphics().setDepth(5.6));
+    const floor = ctx.adopt(ctx.scene.add.graphics().setDepth(2));
+    const coins: { x: number; y: number; born: number }[] = [];
+    let cursedAt = -1;
+    let statueAt = -1;
+    ctx.onFrame((_dt, e) => {
+      gilt.clear(); floor.clear();
+      if (cursedAt >= 0 && statueAt < 0) {
+        midasGilt(gilt, ctx.tint, target.x, target.y, 0.15 + Phaser.Math.Clamp((e - cursedAt) / 2600, 0, 1) * 0.85, e / 1000, 1);
+      }
+      if (statueAt >= 0 && e - statueAt < 3000) {
+        const melt = Phaser.Math.Clamp((e - statueAt - 2000) / 1000, 0, 1);
+        statueRays(gilt, ctx.tint, target.x, target.y, 1 - melt * 0.7, e / 1000);
+        goldStatueShell(gilt, ctx.tint, target.x, target.y, 1, e / 1000, melt, false);
+      }
+      for (const c of coins) if (e - c.born > 360) goldCoin(floor, ctx.tint, c.x, c.y, 6, e / 500 + c.x, 1);
+      const at = ctx.casterAt();
+      for (let i = coins.length - 1; i >= 0; i--) {
+        const c = coins[i];
+        if (e - c.born < 360 || Phaser.Math.Distance.Between(at.x, at.y, c.x, c.y) > 34) continue;
+        coins.splice(i, 1);
+        gold += 1;
+        ctx.capture(() => fx.pickup(c.x, c.y));
+        float(ctx, at.x + 18, at.y - 34, '+1 🪙', hex(FOR.goldLit), 11);
+      }
+    });
+    ctx.at(200, () => readout.setText('the Midas Curse runs its course (sped up here)'));
+    ctx.at(400, () => {
+      av.play('raise');
+      ctx.capture(() => fx.midasCast(ctx.cx, ctx.cy));
+      ctx.capture(() => fx.midasStrike(target.x, target.y));
+      cursedAt = 400;
+    });
+    ctx.at(3100, () => {
+      statueAt = 3100;
+      ctx.capture(() => fx.statueForm(target.x, target.y));
+      float(ctx, target.x, target.y - 56, '🗿 SOLID GOLD', hex(FOR.goldLit), 14);
+      readout.setText('solid gold: stunned 3s. Hit it for double damage — or wait');
+    });
+    ctx.at(6100, () => {
+      ctx.capture(() => fx.statueMelt(target.x, target.y));
+      readout.setText('left alone, it melts into 3 gold coins');
+      for (let i = 0; i < 3; i++) {
+        const tx = target.x + (i - 1) * 16;
+        const ty = target.y + 26;
+        ctx.capture(() => fx.coinDrop(target.x, target.y, tx, ty));
+        coins.push({ x: tx, y: ty, born: 6100 });
+      }
+    });
+    ctx.at(6900, () => ctx.glideCaster({ to: { x: target.x - 16, y: target.y + 26 }, ms: 900, ease: 'out' }));
+    ctx.at(7900, () => ctx.glideCaster({ to: { x: target.x + 18, y: target.y + 26 }, ms: 500, ease: 'out' }));
   },
 };

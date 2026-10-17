@@ -113,6 +113,30 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     write: (f, t) => { f.toxicUntil = t; },
   },
   {
+    id: 'life-burn', name: 'Sprout Fire', emoji: '🔥', color: 0xff6a1a, priority: 4, kind: 'timer',
+    description: 'Set alight by a Flaming Sprout. Burns for 2 damage every half second.',
+    read: (f) => f.lifeBurnUntil,
+    write: (f, t) => { f.lifeBurnUntil = t; },
+  },
+  {
+    id: 'life-poison', name: 'Nightcap Poison', emoji: '🍄', color: 0x8844cc, priority: 4, kind: 'stack',
+    description: 'Nightcap toxin. Every stack adds more damage per second, with no limit — it only clears once nobody tops it up for 4 seconds.',
+    read: (f) => f.lifePoisonStacks,
+    readUntil: (f) => f.lifePoisonUntil,
+  },
+  {
+    id: 'life-chill', name: 'Frostbitten', emoji: '❄️', color: 0x9fe6ff, priority: 40, kind: 'timer',
+    description: 'Rimed by Frost Lily ice. Moving 30% slower.',
+    read: (f) => f.lifeSlowUntil,
+    write: (f, t) => { f.lifeSlowUntil = t; },
+  },
+  {
+    id: 'life-frail', name: 'Brittle', emoji: '🧊', color: 0xbfefff, priority: 41, kind: 'timer',
+    description: 'Frozen brittle by a Frost Lily shard. Taking 20% more damage.',
+    read: (f) => f.lifeFrailUntil,
+    write: (f, t) => { f.lifeFrailUntil = t; },
+  },
+  {
     id: 'bleeding', name: 'Bleeding', emoji: '🩸', color: 0xcc1122, priority: 5, kind: 'timer',
     description: 'Open wound. Loses health over time.',
     read: (f) => (f.bleeding ? f.bleedingUntil : 0),
@@ -297,6 +321,18 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     read: (f) => f.darkVulnStacks,
   },
   {
+    id: 'myth-vuln', name: 'Exposed to Myth', emoji: '🎯', color: 0xffd166, priority: 41.5, kind: 'stack',
+    description: 'Pistol rounds found you. Each stack is 5% more damage taken, up to four; the shotgun counts it double.',
+    read: (f) => (Date.now() < f.mythVulnUntil ? f.mythVulnStacks : 0),
+    readUntil: (f) => f.mythVulnUntil,
+  },
+  {
+    id: 'jeered', name: 'Jeered', emoji: '👎', color: 0xff4a5e, priority: 41.6, kind: 'timer',
+    description: 'The crowd turned on you. 10% more damage taken while the booing lasts.',
+    read: (f) => f.mythJeeredUntil,
+    write: (f, t) => { f.mythJeeredUntil = t; },
+  },
+  {
     id: 'purged', name: 'Purged', emoji: '☠️', color: 0x99ff33, priority: 42, kind: 'timer',
     description: 'Acid purge — your speed boosts are suppressed while this lasts.',
     read: (f) => f.purgedUntil,
@@ -307,6 +343,30 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     description: 'All healing on you is ignored until this expires.',
     read: (f) => f.healStopUntil,
     write: (f, t) => { f.healStopUntil = t; },
+  },
+  {
+    id: 'rad-mutated', name: 'Mutated', emoji: '🧬', color: 0x9dff4a, priority: 43.5, kind: 'timer',
+    description: 'Mutated by a uranium rod. Your hitbox is 25% bigger, so everything aimed at you is easier to land.',
+    read: (f) => f.radMutatedUntil,
+    write: (f, t) => { f.radMutatedUntil = t; },
+  },
+  {
+    id: 'over-radiated', name: 'Over-Radiated', emoji: '☢️', color: 0xff3524, priority: 43.6, kind: 'timer',
+    description: 'Caught in a nuke while already irradiated. You move at half speed and take 30% more damage.',
+    read: (f) => f.overRadiatedUntil,
+    write: (f, t) => { f.overRadiatedUntil = t; },
+  },
+  {
+    id: 'sound-dance', name: 'Dancing', emoji: '💃', color: 0xff3b4a, priority: 17.6, kind: 'timer',
+    description: 'Caught by an Infectious Crescendo. You can still move, but you cannot attack until the dance is over.',
+    read: (f) => f.soundDanceUntil,
+    write: (f, t) => { f.soundDanceUntil = t; },
+  },
+  {
+    id: 'devotion-slow', name: 'Holy Fire', emoji: '🔥', color: 0xffd54a, priority: 43.7, kind: 'timer',
+    description: 'Burned by a pillar of yellow fire from the sky. You move 40% slower.',
+    read: (f) => f.devotionSlowUntil,
+    write: (f, t) => { f.devotionSlowUntil = t; },
   },
   {
     id: 'dark-link', name: 'Torture Link', emoji: '🕸️', color: 0x663388, priority: 44, kind: 'timer',
@@ -333,6 +393,18 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     write: (f, t) => { f.midasUntil = t; },
   },
   {
+    id: 'gold-hex', name: 'Gold Hex', emoji: '⏳', color: 0xd8a531, priority: 46.3, kind: 'timer',
+    description: 'The alchemist\'s golden heart hexed you. Every ability you have charges at half speed until this runs out — 5 seconds after the heart itself.',
+    read: (f) => f.goldHexUntil,
+    write: (f, t) => { f.goldHexUntil = t; },
+  },
+  {
+    id: 'gold-statue', name: 'Solid Gold', emoji: '🗿', color: 0xffe066, priority: 46.5, kind: 'timer',
+    description: 'The Midas Curse finished its work: you are a solid gold statue. You cannot move or cast until the gold melts. Everything the alchemist hits you with in the meantime does double damage.',
+    read: (f) => f.goldStatueUntil,
+    write: (f, t) => { f.goldStatueUntil = t; },
+  },
+  {
     id: 'harvest-corruption', name: 'Corruption', emoji: '🟣', color: 0x8a2fc9, priority: 46.6, kind: 'amount',
     description: 'The scarecrow\'s rot is in you. The more of it there is, the more of every hit the Harvest heals off you, the harder its crows bite, and the higher the line under which its scythe simply kills you (10% of your health, up to 25% at full rot). It grows while you stand on its mold and fades slowly once you are off it.',
     read: (f) => Math.round(f.harvestCorruption),
@@ -342,6 +414,12 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     id: 'devotion-faith', name: 'Faith', emoji: '🙏', color: 0xf5e08a, priority: 46.7, kind: 'amount',
     description: 'The priest\'s faith is in you, and nothing takes it out. At 200 you are converted on the spot — no shield or armour saves you. At 25% it fills on its own, 2 a second; at 50% your blows land 20% softer on the priest; at 75% you are drawn toward their holy water and every attack fills it 25% faster.',
     read: (f) => Math.round(f.devotionFaith),
+  },
+  {
+    id: 'harvest-poison', name: 'Rot Poison', emoji: '🧪', color: 0x8fd14f, priority: 46.75, kind: 'timer',
+    description: 'Splashed by a shattered crow vial. You take 4 damage a second until it wears off; every vial that hits you adds another 4.',
+    read: (f) => f.harvestPoisonUntil,
+    write: (f, t) => { f.harvestPoisonUntil = t; },
   },
   {
     id: 'harvest-reaped', name: 'Reaped', emoji: '🌾', color: 0x5c2a7a, priority: 46.8, kind: 'amount',
@@ -718,6 +796,35 @@ export function clearDebuffs(f: Fighter): number {
   if (f.darkVulnStacks > 0) { f.darkVulnStacks = 0; n++; }
   if (f.hopelessness > 0) { f.hopelessness = 0; n++; }
   return n;
+}
+
+/**
+ * How much there is to wash off a fighter, measured over exactly what {@link clearDebuffs} would
+ * remove: how many debuffs, how many seconds the timed ones had left (each capped at
+ * `secCapEach`), and how many stacks the stacking ones carried. Devotion's Purge Sins pays faith
+ * off this, so it has to be read *before* the cleanse.
+ */
+export function measureDebuffs(
+  f: Fighter, nowWall: number, nowGame: number, secCapEach = 10,
+): { count: number; seconds: number; stacks: number } {
+  let count = 0;
+  let seconds = 0;
+  let stacks = 0;
+  for (const desc of STATUS_DESCRIPTORS) {
+    if (!isDebuff(desc) || desc.kind !== 'timer' || !desc.write) continue;
+    const left = remainingMs(desc.read(f), nowWall, nowGame);
+    if (left <= 0) continue;
+    count++;
+    seconds += Math.min(secCapEach, left / 1000);
+  }
+  const stacked = [f.frostStacks, f.voidFrostStacks, f.permafrostStacks, f.permavoidStacks, f.darkVulnStacks];
+  for (const n of stacked) if (n > 0) { count++; stacks += n; }
+  if (f.bleeding) count++;
+  if (f.magicChainBound) count++;
+  if (f.vulnerableNextHit) count++;
+  if (f.aimOffsetBonusDeg > 0) count++;
+  if (f.hopelessness > 0) count++;
+  return { count, seconds, stacks };
 }
 
 /**

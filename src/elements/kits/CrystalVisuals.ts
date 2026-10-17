@@ -873,9 +873,63 @@ export class CrystalAvatar extends BaseAvatar {
       halo.setFillStyle(this.tint(on ? this.tones.lit : CRYSTAL.azure), on ? 0.32 : 0.3);
     });
     this.forEachHandLayer(1, (shell) => {
-      if (on) shell.setStrokeStyle(1.6, this.tint(CRYSTAL.white), 0.9);
+      if (on) shell.setStrokeStyle(1.8, this.tint(CRYSTAL.gold), 0.95);
       else shell.setStrokeStyle();
     });
+  }
+
+  /**
+   * The body as a cut gem: a girdle line just under the face with pavilion facets fanning down
+   * to a culet, and a specular glint that slides across the table. Mastered, the girdle is set
+   * in gold and a heart-stone burns at the culet.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    void a;
+    const T = this.tones;
+    const gy = y + 4;
+    const half = Math.sqrt(22 * 22 - 4 * 4) - 1.5;
+    const culY = y + 19;
+    // Pavilion facets, alternately shaded so the lower body reads faceted.
+    const N = 6;
+    for (let i = 0; i < N; i++) {
+      const xa = x - half + (i / N) * half * 2;
+      const xb = x - half + ((i + 1) / N) * half * 2;
+      const lit = (Math.sin(this.t * 1.6 - i * 0.9) + 1) / 2;
+      g.fillStyle(this.tint(i % 2 ? T.facet : T.body), alpha * (0.18 + lit * 0.22));
+      g.fillTriangle(xa, gy, xb, gy, x, culY);
+    }
+    g.lineStyle(1, this.tint(T.lit), alpha * 0.45);
+    for (let i = 0; i <= N; i++) {
+      g.lineBetween(x - half + (i / N) * half * 2, gy, x, culY);
+    }
+    // Girdle.
+    g.lineStyle(this.mastered ? 2 : 1.2, this.tint(this.mastered ? CRYSTAL.gold : T.lit), alpha * (this.mastered ? 0.95 : 0.6));
+    g.lineBetween(x - half, gy, x + half, gy);
+    // Crown-side facet ticks at the brow edges (outside the eye band).
+    g.lineStyle(1, this.tint(T.lit), alpha * 0.35);
+    g.lineBetween(x - 18, y - 10, x - 13, y - 16);
+    g.lineBetween(x + 18, y - 10, x + 13, y - 16);
+    // Sliding table glint.
+    const sweep = ((this.t * 0.45) % 1.4) - 0.2;
+    if (sweep > 0 && sweep < 1) {
+      const sx = x - 16 + sweep * 32;
+      g.fillStyle(this.tint(CRYSTAL.white), alpha * 0.4 * Math.sin(sweep * Math.PI));
+      g.fillTriangle(sx - 2, y + 18, sx + 3, y - 18, sx + 6, y - 18);
+    }
+    if (this.mastered) {
+      const pulse = 0.6 + 0.4 * Math.sin(this.t * 3.2);
+      g.fillStyle(this.tint(CRYSTAL.flare), alpha * 0.35 * pulse);
+      g.fillCircle(x, y + 13, 6);
+      g.fillStyle(this.tint(CRYSTAL.gold), alpha);
+      g.fillTriangle(x - 3.5, y + 11, x + 3.5, y + 11, x, y + 17);
+      g.fillStyle(this.tint(CRYSTAL.flare), alpha);
+      g.fillTriangle(x - 3.5, y + 11, x + 3.5, y + 11, x, y + 9);
+      g.fillStyle(this.tint(CRYSTAL.white), alpha * pulse);
+      g.fillCircle(x - 1, y + 11, 1);
+      // Gold setting rim around the whole body.
+      g.lineStyle(1.6, this.tint(CRYSTAL.gold), alpha * 0.75);
+      g.strokeCircle(x, y, 21.5);
+    }
   }
 
   /** Fast-moving hands shed chips of cut stone. */
@@ -896,6 +950,18 @@ export class CrystalAvatar extends BaseAvatar {
       const ang = this.t * 0.3 + (i / 6) * TAU;
       g.fillStyle(this.tint(this.tones.facet), a * 0.35);
       crystalPrism(g, x, y + 6, ang, (16 + Math.sin(this.t * 2 + i) * 4) * this.intensity, 2.4, 0.2);
+    }
+    if (this.mastered) {
+      // Mastered: the floor splits the light into a full turning spectrum ring.
+      const spectrum = [CRYSTAL.violet, CRYSTAL.magenta, CRYSTAL.gold, CRYSTAL.flare, CRYSTAL.prism, CRYSTAL.sky];
+      const segs = 24;
+      const rx = 34 * this.intensity, ry = 16 * this.intensity;
+      for (let i = 0; i < segs; i++) {
+        const u0 = (i / segs) * TAU + this.t * 0.5;
+        const u1 = ((i + 0.8) / segs) * TAU + this.t * 0.5;
+        g.lineStyle(2.4, this.tint(spectrum[i % spectrum.length]), a * 0.8);
+        g.lineBetween(x + Math.cos(u0) * rx, y + 7 + Math.sin(u0) * ry, x + Math.cos(u1) * rx, y + 7 + Math.sin(u1) * ry);
+      }
     }
   }
 
@@ -923,6 +989,29 @@ export class CrystalAvatar extends BaseAvatar {
         g.fillStyle(this.tint(this.tones.spark), alpha * 0.8 * lit);
         crystalPrism(g, x + side * 7.5, rootY, -Math.PI / 2 + side * 0.42, height * 0.7, 1.4 * scale, 0.22);
       }
+    }
+
+    // Mastery diadem: a gold band across the brow line of the crown with a cut flare-stone
+    // set dead centre — regalia only a mastered crystal wears.
+    if (this.mastered) {
+      const by = y - 18;
+      g.lineStyle(3, this.tint(0x8a6a18), alpha);
+      g.beginPath();
+      g.arc(x, by + 14, 16, Math.PI * 1.2, Math.PI * 1.8);
+      g.strokePath();
+      g.lineStyle(1.8, this.tint(CRYSTAL.gold), alpha);
+      g.beginPath();
+      g.arc(x, by + 14, 16, Math.PI * 1.2, Math.PI * 1.8);
+      g.strokePath();
+      const gp = 0.7 + 0.3 * Math.sin(this.t * 4);
+      g.fillStyle(this.tint(CRYSTAL.flare), alpha * 0.4 * gp);
+      g.fillCircle(x, by - 2, 7);
+      g.fillStyle(this.tint(CRYSTAL.gold), alpha);
+      g.beginPath();
+      g.moveTo(x, by - 7); g.lineTo(x + 4.5, by - 2); g.lineTo(x, by + 3); g.lineTo(x - 4.5, by - 2);
+      g.closePath(); g.fillPath();
+      g.fillStyle(this.tint(CRYSTAL.white), alpha * gp);
+      g.fillTriangle(x - 2.5, by - 2, x, by - 6, x, by - 2);
     }
 
     // Mastery orbit: three prisms circling the head on a shallow ellipse, each turning on its

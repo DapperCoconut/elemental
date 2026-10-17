@@ -906,6 +906,7 @@ export class ConquestKit implements ConquestMenuHost {
         fontSize: '15px',
         fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
         color: '#f2e8d0',
+        stroke: '#120c06', strokeThickness: 3,
       }).setDepth(23);
     }
     if (!this.playerAvatar && this.isConquest('player')) {
@@ -3727,10 +3728,8 @@ export class ConquestKit implements ConquestMenuHost {
     const x = 14;
     const y = 78;
     const h = 46 + (banner ? 18 : 0) + (marketLine ? 18 : 0);
-    g.fillStyle(0x0a0a14, 0.78);
-    g.fillRect(x - 6, y - 6, 190, h);
-    g.lineStyle(1.5, this.pcol(propaganda ? CNQ.crimson : banner ? banner.color : CNQ.gold), 0.6);
-    g.strokeRect(x - 6, y - 6, 190, h);
+    const accent = this.pcol(propaganda ? CNQ.crimson : banner ? banner.color : CNQ.gold);
+    this.paintWarTable(g, x - 6, y - 6, 190, h, accent);
 
     txt.setPosition(x, y);
     txt.setText(
@@ -3742,17 +3741,103 @@ export class ConquestKit implements ConquestMenuHost {
       + marketLine,
     );
 
+    // The commander's wax seal pressed into the corner of the map, in the standard's colour.
+    // Pressed over the frame's lower-right corner, clear of the text.
+    const sx = x + 179;
+    const sy = y + h - 12;
+    const seal = banner ? banner.color : CNQ.crimson;
+    g.fillStyle(0x000000, 0.35);
+    g.fillCircle(sx + 1, sy + 1.5, 8.5);
+    g.fillStyle(this.pcol(seal), 1);
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 9) * Math.PI * 2;
+      g.fillCircle(sx + Math.cos(a) * 6.2, sy + Math.sin(a) * 6.2, 2.8);
+    }
+    g.fillCircle(sx, sy, 6.8);
+    g.lineStyle(1, 0x000000, 0.3);
+    g.strokeCircle(sx, sy, 4.6);
+    // A crown stamped in it.
+    g.fillStyle(this.pcol(CNQ.gold), 0.85);
+    g.fillTriangle(sx - 3.6, sy + 1.6, sx - 2.6, sy - 2.8, sx - 1, sy + 1.6);
+    g.fillTriangle(sx - 1.6, sy + 1.6, sx, sy - 3.6, sx + 1.6, sy + 1.6);
+    g.fillTriangle(sx + 1, sy + 1.6, sx + 2.6, sy - 2.8, sx + 3.6, sy + 1.6);
+    g.fillRect(sx - 3.6, sy + 1.4, 7.2, 1.6);
+
     if (!banner) return;
     // A little pennant in the corner of the readout, in the form's own colour — parked on the
     // short first row rather than beside the label it would otherwise run into.
     const px = x + 166;
     const py = y - 2;
-    g.lineStyle(1.4, this.pcol(CNQ.timberDark), 0.9);
-    g.lineBetween(px, py - 4, px, py + 14);
+    const wave = (u: number) => Math.sin(this.vizT * 4 + u * 3) * 1.2 * u;
+    g.lineStyle(1.6, this.pcol(CNQ.timberDark), 0.95);
+    g.lineBetween(px, py - 4, px, py + 16);
+    g.lineStyle(0.8, this.pcol(CNQ.timber), 0.9);
+    g.lineBetween(px + 0.5, py - 4, px + 0.5, py + 16);
     g.fillStyle(this.pcol(banner.color), 0.95);
-    g.fillTriangle(px + 1, py, px + 17, py + 5, px + 1, py + 11);
+    g.fillPoints([
+      new Phaser.Geom.Point(px + 1, py), new Phaser.Geom.Point(px + 9, py + wave(0.5)),
+      new Phaser.Geom.Point(px + 17, py + 2 + wave(1)), new Phaser.Geom.Point(px + 12, py + 5.5 + wave(0.8)),
+      new Phaser.Geom.Point(px + 17, py + 9 + wave(1)), new Phaser.Geom.Point(px + 9, py + 11 + wave(0.5)),
+      new Phaser.Geom.Point(px + 1, py + 11),
+    ], true);
     g.fillStyle(this.pcol(CNQ.gold), 0.9);
     g.fillCircle(px, py - 5, 2);
+  }
+
+  /**
+   * The readout's plate: a slab of the war table — a dark timber frame with gold corner
+   * brackets, an inked campaign map inside it (faint grid, a dotted march route, a compass
+   * rose), and a hairline of the standard's colour around the map.
+   */
+  private paintWarTable(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number, accent: number): void {
+    // Drop shadow and timber frame.
+    g.fillStyle(0x000000, 0.4);
+    g.fillRect(x + 3, y + 4, w, h);
+    g.fillStyle(this.pcol(CNQ.timberDark), 0.95);
+    g.fillRect(x, y, w, h);
+    g.fillStyle(this.pcol(CNQ.timber), 0.55);
+    g.fillRect(x, y, w, 2.5);
+    // Wood grain along the frame.
+    g.lineStyle(0.8, 0x000000, 0.25);
+    g.lineBetween(x + 4, y + 1.5, x + w - 4, y + 1.5);
+    g.lineBetween(x + 4, y + h - 1.5, x + w - 4, y + h - 1.5);
+    // The map: aged parchment sunk into the frame, darkened so the readout stays legible.
+    const mx = x + 4, my = y + 4, mw = w - 8, mh = h - 8;
+    g.fillStyle(0x1e1610, 0.94);
+    g.fillRect(mx, my, mw, mh);
+    g.fillStyle(this.pcol(CNQ.parchment), 0.06);
+    g.fillRect(mx, my, mw, mh * 0.45);
+    // Faint survey grid.
+    g.lineStyle(0.6, this.pcol(CNQ.parchment), 0.07);
+    for (let gx = mx + 14; gx < mx + mw; gx += 14) g.lineBetween(gx, my, gx, my + mh);
+    for (let gy = my + 14; gy < my + mh; gy += 14) g.lineBetween(mx, gy, mx + mw, gy);
+    // A dotted march route curling across the bottom, the dots marching along it.
+    for (let i = 0; i < 16; i++) {
+      const u = ((i + this.vizT * 1.2) % 16) / 16;
+      const rx = mx + 8 + u * (mw - 40);
+      const ry = my + mh - 7 - Math.sin(u * Math.PI * 2) * 3;
+      g.fillStyle(this.pcol(CNQ.crimson), 0.32);
+      g.fillCircle(rx, ry, 0.9);
+    }
+    // Compass rose, faint, under the seal's corner.
+    const cx = mx + mw - 34, cy = my + 14;
+    g.fillStyle(this.pcol(CNQ.parchment), 0.1);
+    g.fillTriangle(cx, cy - 8, cx - 2, cy, cx + 2, cy);
+    g.fillTriangle(cx, cy + 8, cx - 2, cy, cx + 2, cy);
+    g.fillTriangle(cx - 8, cy, cx, cy - 2, cx, cy + 2);
+    g.fillTriangle(cx + 8, cy, cx, cy - 2, cx, cy + 2);
+    // Hairline of the standard's colour around the map.
+    g.lineStyle(1.2, accent, 0.65);
+    g.strokeRect(mx + 0.5, my + 0.5, mw - 1, mh - 1);
+    // Gold corner brackets on the frame.
+    g.lineStyle(1.6, this.pcol(CNQ.gold), 0.9);
+    const L = 7;
+    for (const [bx, by, dx, dy] of [[x, y, 1, 1], [x + w, y, -1, 1], [x, y + h, 1, -1], [x + w, y + h, -1, -1]]) {
+      g.lineBetween(bx, by, bx + dx * L, by);
+      g.lineBetween(bx, by, bx, by + dy * L);
+      g.fillStyle(this.pcol(CNQ.gold), 1);
+      g.fillCircle(bx + dx * 2.5, by + dy * 2.5, 1.2);
+    }
   }
 
   private drawAvatars(delta: number): void {

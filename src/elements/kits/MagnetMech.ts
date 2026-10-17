@@ -39,19 +39,39 @@ const CANNON_MS = 4000;
 const DEBRIS_FALL_MS = 2000;
 const PAD = 32;            // arena border inset — keeps effects off the HUD strip
 
-const SMASH_DAMAGE = 20;
-const SMASH_RADIUS = 96;
-const DEBRIS_DAMAGE = 10;
 const DEBRIS_RADIUS = 46;
-const RAIL_DAMAGE = 15;
-const RAIL_HALF_W = 26;
-const AVALANCHE_DAMAGE = 25;
-const AVALANCHE_SLAM_DAMAGE = 30;
-const AVALANCHE_STUN_MS = 700;
-const CANNON_TICK_DAMAGE = 5;
-const SLAG_TICK_DAMAGE = 5;
-const BLAST_DAMAGE = 20;
-const BLAST_RADIUS = 76;
+
+/** Every number a mech key deals. Q+ Mega Mechancements swaps the whole table for {@link MEGA_STATS}. */
+export interface MechStats {
+  cooldowns: Record<Exclude<MechAttack, 'destruct'>, number>;
+  smashDamage: number; smashRadius: number; smashDebris: number;
+  debrisDamage: number;
+  railDamage: number; railHalfW: number;
+  avalancheDamage: number; avalancheSlamDamage: number; avalancheStunMs: number; rainDamage: number;
+  cannonTickDamage: number; cannonHalfW: number; slagTickDamage: number;
+  blasts: number; blastDamage: number; blastRadius: number;
+}
+
+const BASE_STATS: MechStats = {
+  cooldowns: MECH_COOLDOWNS,
+  smashDamage: 20, smashRadius: 96, smashDebris: 3,
+  debrisDamage: 10,
+  railDamage: 15, railHalfW: 26,
+  avalancheDamage: 25, avalancheSlamDamage: 30, avalancheStunMs: 700, rainDamage: 12,
+  cannonTickDamage: 5, cannonHalfW: 34, slagTickDamage: 5,
+  blasts: 20, blastDamage: 20, blastRadius: 76,
+};
+
+/** Q+ Mega Mechancements: the red mech. Every key hits harder, wider and longer. */
+export const MEGA_STATS: MechStats = {
+  cooldowns: { smash: 1000, rail: 4000, avalanche: 11000, cannon: 8500 },
+  smashDamage: 30, smashRadius: 120, smashDebris: 5,
+  debrisDamage: 14,
+  railDamage: 22, railHalfW: 38,
+  avalancheDamage: 35, avalancheSlamDamage: 45, avalancheStunMs: 1200, rainDamage: 16,
+  cannonTickDamage: 7, cannonHalfW: 46, slagTickDamage: 7,
+  blasts: 30, blastDamage: 25, blastRadius: 90,
+};
 
 /** The narrow surface the mech needs from MagnetKit. */
 export interface MechApi {
@@ -132,8 +152,12 @@ export class MagnetMech {
   private worldG: Phaser.GameObjects.Graphics;
   private label: Phaser.GameObjects.Text | null;
 
-  constructor(private api: MechApi, flip: boolean, now: number) {
+  private readonly stats: MechStats;
+
+  /** `mega` = Q+ Mega Mechancements (the red mech, {@link MEGA_STATS}); the red itself is the kit's tint. */
+  constructor(private api: MechApi, flip: boolean, now: number, readonly mega = false) {
     this.flip = flip;
+    this.stats = mega ? MEGA_STATS : BASE_STATS;
     this.until = now + MECH_DURATION_MS;
     const { scene, width: W, height: H } = api;
     this.floorG = scene.add.graphics().setDepth(3);
@@ -146,10 +170,10 @@ export class MagnetMech {
       this.bodyG.setPosition(W, H).setScale(-1, -1);
       this.beamG.setPosition(W, H).setScale(-1, -1);
     }
-    const lp = this.toWorld(W / 2, 196);
+    const lp = this.toWorld(W / 2, 189);
     this.label = scene.add.text(lp.x, lp.y, '', {
-      fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
-      color: '#8fe8ff', stroke: '#07090e', strokeThickness: 4,
+      fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+      color: mega ? '#ff9a88' : '#8fe8ff', stroke: '#07090e', strokeThickness: 4,
     }).setOrigin(0.5).setDepth(32);
 
     const mkArm = (side: -1 | 1): MechArm => {
@@ -174,7 +198,7 @@ export class MagnetMech {
     }
     const c = this.toWorld(W / 2, 170);
     api.fx.pulse(c.x, c.y, W * 0.45, MAGNET.neon, 900, 29, 14);
-    api.announce(c.x, this.toWorld(W / 2, 240).y, '🤖 MECHA MASSACRE!', MAGNET.visor);
+    api.announce(c.x, this.toWorld(W / 2, 240).y, mega ? '🤖 MEGA MECHA MASSACRE!' : '🤖 MECHA MASSACRE!', MAGNET.visor);
   }
 
   // ── Frame helpers ──────────────────────────────────────────────────────
@@ -198,7 +222,7 @@ export class MagnetMech {
   /** 0 = just used, 1 = ready. For the ability tray. */
   readyRatio(a: Exclude<MechAttack, 'destruct'>, time: number): number {
     const left = this.readyAt[a] - time;
-    return left <= 0 ? 1 : Phaser.Math.Clamp(1 - left / MECH_COOLDOWNS[a], 0, 1);
+    return left <= 0 ? 1 : Phaser.Math.Clamp(1 - left / this.stats.cooldowns[a], 0, 1);
   }
 
   /** Fire one key. `x, y` is the aim in world coordinates. False if it could not go. */
@@ -210,7 +234,7 @@ export class MagnetMech {
     if (a === 'rail') this.railCast(time, x);
     if (a === 'avalanche') this.avalancheCast();
     if (a === 'cannon') this.cannonCast(time, x, y);
-    this.readyAt[a] = time + MECH_COOLDOWNS[a];
+    this.readyAt[a] = time + this.stats.cooldowns[a];
     return true;
   }
 
@@ -290,7 +314,7 @@ export class MagnetMech {
       this.api.fx.shrapnel(p.x, p.y, 9, { speed: 150, size: 13, life: 1100, fall: 440, depth: 27, color: MAGNET.gunHi });
     }
     if (destruct) {
-      this.blastsLeft = 20;
+      this.blastsLeft = this.stats.blasts;
       this.blastNextAt = time + 700;
       this.api.shake(900, 0.045);
       const c = this.toWorld(W / 2, 240);
@@ -324,7 +348,7 @@ export class MagnetMech {
     }
     this.updateWorld(time, delta);
     this.paint(time);
-    if (this.label) this.label.setText(`🤖 MECH  ${Math.max(0, (this.until - time) / 1000).toFixed(1)}s`);
+    if (this.label) this.label.setText(`🤖 ${this.mega ? 'MEGA MECH' : 'MECH'}  ${Math.max(0, (this.until - time) / 1000).toFixed(1)}s`);
   }
 
   private updateArms(time: number): void {
@@ -360,17 +384,17 @@ export class MagnetMech {
     const w = this.toWorld(arm.targetX, arm.targetY);
     this.api.shake(430, 0.032);
     for (const t of this.api.targets()) {
-      if (Phaser.Math.Distance.Between(w.x, w.y, t.x, t.y) > SMASH_RADIUS) continue;
-      this.api.hit(t, SMASH_DAMAGE);
+      if (Phaser.Math.Distance.Between(w.x, w.y, t.x, t.y) > this.stats.smashRadius) continue;
+      this.api.hit(t, this.stats.smashDamage);
     }
     this.api.fx.boom(w.x, w.y, 110, { color: MAGNET.neon, depth: 6 });
-    this.api.fx.slam(w.x, w.y, SMASH_RADIUS, MAGNET.sky, 6);
+    this.api.fx.slam(w.x, w.y, this.stats.smashRadius, MAGNET.sky, 6);
     // Three lumps of floor and plate kicked up — they come back down 2s later.
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < this.stats.smashDebris; i++) {
       const ang = Math.random() * Math.PI * 2;
       const dist = 90 + Math.random() * 150;
       const l = this.clampWorld(w.x + Math.cos(ang) * dist, w.y + Math.sin(ang) * dist);
-      this.spawnDebris(w.x, w.y, l.x, l.y, DEBRIS_FALL_MS, DEBRIS_DAMAGE, DEBRIS_RADIUS, 12 + Math.random() * 6);
+      this.spawnDebris(w.x, w.y, l.x, l.y, DEBRIS_FALL_MS, this.stats.debrisDamage, DEBRIS_RADIUS, 12 + Math.random() * 6);
     }
   }
 
@@ -413,10 +437,10 @@ export class MagnetMech {
         this.rail = null;
       } else {
         for (const t of this.api.targets()) {
-          if (Math.abs(t.x - rl.x) > RAIL_HALF_W) continue;
+          if (Math.abs(t.x - rl.x) > this.stats.railHalfW) continue;
           if (time < (rl.nextHit.get(t) ?? 0)) continue;
           rl.nextHit.set(t, time + 1000);
-          this.api.hit(t, RAIL_DAMAGE);
+          this.api.hit(t, this.stats.railDamage);
           this.api.fx.sparks(t.x, t.y, 8, -Math.PI / 2, 10, MAGNET.visor);
           this.api.shake(160, 0.01);
         }
@@ -434,7 +458,7 @@ export class MagnetMech {
         if (fx > front) continue;
         if (!av.hit.has(t)) {
           av.hit.add(t);
-          this.api.hit(t, AVALANCHE_DAMAGE);
+          this.api.hit(t, this.stats.avalancheDamage);
         }
         // Carried along on the front.
         const pushFx = Math.min(W - PAD - 12, front);
@@ -446,8 +470,8 @@ export class MagnetMech {
         this.api.shake(520, 0.04);
         for (const t of this.api.targets()) {
           if (this.toFrame(t.x, t.y).x < W - 170) continue;
-          this.api.hit(t, AVALANCHE_SLAM_DAMAGE);
-          this.api.stun(t, AVALANCHE_STUN_MS);
+          this.api.hit(t, this.stats.avalancheSlamDamage);
+          this.api.stun(t, this.stats.avalancheStunMs);
           const wall = this.toWorld(W - 20, 0).x;
           this.api.fx.shrapnel(wall, t.y, 14, { speed: 260, size: 12, life: 600, depth: 18, color: MAGNET.gunHi, angle: dir > 0 ? Math.PI : 0, spread: 1.1 });
           this.api.announce(t.x, t.y - 40, '💥 CRUSHED INTO THE WALL', MAGNET.sky);
@@ -461,7 +485,7 @@ export class MagnetMech {
           const ly = Phaser.Math.Between(PAD + 40, H - PAD - 20);
           const skyY = this.flip ? H + 90 + Math.random() * 120 : -90 - Math.random() * 120;
           this.spawnDebris(lx + Phaser.Math.Between(-60, 60), skyY, lx, ly,
-            DEBRIS_FALL_MS + Phaser.Math.Between(0, 400), 12, 46, 10 + Math.random() * 8);
+            DEBRIS_FALL_MS + Phaser.Math.Between(0, 400), this.stats.rainDamage, 46, 10 + Math.random() * 8);
         }
         const c = this.toWorld(W / 2, 250);
         this.api.announce(c.x, c.y, '🔩 IT RAINS SCRAP', MAGNET.steel);
@@ -478,8 +502,8 @@ export class MagnetMech {
         if (time >= b.nextTickAt) {
           b.nextTickAt = time + 200;
           for (const t of this.api.targets()) {
-            if (segDist(o.x, o.y, b.x, b.y, t.x, t.y) > 34) continue;
-            this.api.hit(t, CANNON_TICK_DAMAGE);
+            if (segDist(o.x, o.y, b.x, b.y, t.x, t.y) > this.stats.cannonHalfW) continue;
+            this.api.hit(t, this.stats.cannonTickDamage);
           }
         }
         if (time >= b.nextSlagAt) {
@@ -499,7 +523,7 @@ export class MagnetMech {
         this.slagAccum = 0;
         for (const t of this.api.targets()) {
           if (!this.slag.some(s => Phaser.Math.Distance.Between(t.x, t.y, s.x, s.y) <= s.r)) continue;
-          this.api.hit(t, SLAG_TICK_DAMAGE);
+          this.api.hit(t, this.stats.slagTickDamage);
         }
       }
     }
@@ -513,8 +537,8 @@ export class MagnetMech {
       this.api.shake(220, 0.022);
       this.api.fx.boom(x, y, 92, { color: MAGNET.amber, depth: 7 });
       for (const t of this.api.targets()) {
-        if (Phaser.Math.Distance.Between(x, y, t.x, t.y) > BLAST_RADIUS) continue;
-        this.api.hit(t, BLAST_DAMAGE);
+        if (Phaser.Math.Distance.Between(x, y, t.x, t.y) > this.stats.blastRadius) continue;
+        this.api.hit(t, this.stats.blastDamage);
       }
       this.slag.push({ x, y, r: 46, until: time + 9000, seed: Math.random() * 10 });
     }
@@ -550,7 +574,7 @@ export class MagnetMech {
       fg.fillStyle(tint(MAGNET.shadow), 0.25 + 0.3 * p);
       fg.fillEllipse(w.x, w.y, 60 + p * 80, (60 + p * 80) * 0.45);
       fg.lineStyle(3, tint(MAGNET.neon), 0.4 + 0.5 * p);
-      fg.strokeCircle(w.x, w.y, SMASH_RADIUS);
+      fg.strokeCircle(w.x, w.y, this.stats.smashRadius);
     }
     for (const r of this.debris) {
       const k = Phaser.Math.Clamp((time - r.startAt) / Math.max(1, r.landAt - r.startAt), 0, 1);
@@ -586,7 +610,52 @@ export class MagnetMech {
     if (!this.active) return;
     this.paintArms(g, time);
     this.paintHead(g, time);
+    this.paintPowerPlate(g, time);
     void W; void H;
+  }
+
+  /**
+   * The mech's run-time readout, bolted under the chin: a riveted scrap-plate placard with a
+   * row of fifteen power cells, one per second left, that drain toward the end and blink red
+   * on the last few. The label text sits on its top half.
+   */
+  private paintPowerPlate(g: Phaser.GameObjects.Graphics, time: number): void {
+    const tint = this.api.tint;
+    const cx = this.api.width / 2;
+    const left = Math.max(0, this.until - time);
+    const frac = left / MECH_DURATION_MS;
+    const PW = 168, PH = 34, L = cx - PW / 2, T = 178;
+    g.fillStyle(tint(MAGNET.oil), 1);
+    fillPts(g, [{ x: L - 4, y: T }, { x: L + PW + 4, y: T }, { x: L + PW - 4, y: T + PH + 3 }, { x: L + 4, y: T + PH + 3 }]);
+    g.fillStyle(tint(MAGNET.gunMid), 1);
+    fillPts(g, [{ x: L, y: T + 2 }, { x: L + PW, y: T + 2 }, { x: L + PW - 6, y: T + PH }, { x: L + 6, y: T + PH }]);
+    g.lineStyle(2, tint(MAGNET.cobalt), 1);
+    strokePts(g, [{ x: L, y: T + 2 }, { x: L + PW, y: T + 2 }, { x: L + PW - 6, y: T + PH }, { x: L + 6, y: T + PH }], true);
+    g.fillStyle(tint(MAGNET.plateHi), 0.9);
+    for (const [rx, ry] of [[L + 6, T + 7], [L + PW - 6, T + 7], [L + 11, T + PH - 5], [L + PW - 11, T + PH - 5]]) g.fillCircle(rx, ry, 2.2);
+    // The cell row.
+    const n = 15, cw = 7.4, gap = 1.8;
+    const rowW = n * cw + (n - 1) * gap;
+    const rx0 = cx - rowW / 2, ry0 = T + 19;
+    g.fillStyle(tint(MAGNET.oil), 1);
+    g.fillRect(rx0 - 3, ry0 - 2, rowW + 6, 12);
+    // Battery nub on the end.
+    g.fillRect(rx0 + rowW + 3, ry0 + 1, 3, 6);
+    const lit = frac * n;
+    const low = left < 4000;
+    const blink = Math.sin(time / 90) > 0;
+    for (let i = 0; i < n; i++) {
+      const x = rx0 + i * (cw + gap);
+      const on = Phaser.Math.Clamp(lit - i, 0, 1);
+      g.fillStyle(tint(MAGNET.gun), 1);
+      g.fillRect(x, ry0, cw, 8);
+      if (on <= 0) continue;
+      const c = low ? MAGNET.red : i >= Math.floor(lit) ? MAGNET.visor : MAGNET.neon;
+      g.fillStyle(tint(c), (low && !blink ? 0.45 : 1) * (0.35 + on * 0.65));
+      g.fillRect(x, ry0, cw, 8);
+      g.fillStyle(tint(MAGNET.white), 0.35 * on);
+      g.fillRect(x, ry0, cw, 2);
+    }
   }
 
   /** The cockpit: a riveted, patched helmet of blue-black plate with a cyan visor slit. */
@@ -677,6 +746,25 @@ export class MagnetMech {
       const p = (t * 0.8 + (s > 0 ? 0.5 : 0)) % 1;
       g.fillStyle(tint(MAGNET.neon), 0.25 * (1 - p));
       g.fillCircle(vx + s * (30 + p * 30), vy + 60 + p * 40, 8 + p * 10);
+    }
+
+    // Q+ Mega Mechancements: swept war-horns off the brow and a gold chevron under the crest.
+    if (this.mega) {
+      for (const s of [-1, 1]) {
+        const base = { x: cx + s * 168, y: cy + 14 };
+        const horn: Pt[] = [
+          { x: base.x - s * 26, y: base.y }, { x: base.x + s * 18, y: base.y + 6 },
+          { x: base.x + s * 74, y: base.y - 96 }, { x: base.x + s * 30, y: base.y - 40 },
+        ];
+        g.fillStyle(tint(MAGNET.oil), 1);
+        fillPts(g, horn.map(p => ({ x: p.x, y: p.y + 4 })));
+        g.fillStyle(tint(MAGNET.red), 1);
+        fillPts(g, horn);
+        g.lineStyle(2, tint(MAGNET.blush), 0.85);
+        strokePts(g, [horn[0], horn[3], horn[2]]);
+      }
+      g.lineStyle(5, tint(MAGNET.gold), 0.95);
+      strokePts(g, [{ x: cx - 70, y: cy + 92 }, { x: cx, y: cy + 118 }, { x: cx + 70, y: cy + 92 }]);
     }
 
     // The crest: the element's horseshoe bolted to the brow.
@@ -797,7 +885,7 @@ export class MagnetMech {
       g.fillStyle(tint(MAGNET.plateHi), life); g.fillRect(rl.x + s * 12 - 2, top, 3, bot - top);
     }
     g.fillStyle(tint(MAGNET.cobalt), 0.18 * life);
-    g.fillRect(rl.x - RAIL_HALF_W, top, RAIL_HALF_W * 2, bot - top);
+    g.fillRect(rl.x - this.stats.railHalfW, top, this.stats.railHalfW * 2, bot - top);
     for (let i = 0; i < 9; i++) {
       const y = top + (((i * 97) + t * 420) % (bot - top));
       g.fillStyle(tint(i % 2 === 0 ? MAGNET.visor : MAGNET.neon), 0.85 * life);

@@ -452,7 +452,8 @@ function figure(
     ? ctx.adopt(ctx.scene.add.image(ctx.cx, ctx.cy, 'elem-illusion').setDepth(5))
     : null;
   const av = ctx.capture(() => new IllusionAvatar(ctx.scene, ctx.tint));
-  ctx.adopt(av as unknown as Phaser.GameObjects.GameObject);
+  // The avatar is not a GameObject itself — hand its layers to the box, as useAvatar does.
+  ctx.capture(() => av.captureInto((o) => ctx.adopt(o)));
   ctx.onFrame((dt) => {
     const s = read();
     body?.setPosition(s.x, s.y).setAlpha(s.alpha).setScale(s.size);

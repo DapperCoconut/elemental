@@ -324,6 +324,19 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'tempest-updraft': ['gust', 0.7, 0.9],
   'tempest-forecast': ['grapple', 0.8, 1.0],
 
+  // ── Myth ──
+  // A whip crack, a blade, an oath, a portal, a reload — and five guns for Final Destiny.
+  'myth-whip': ['whip', 1.0, 0.85],
+  'myth-truth': ['slash', 0.7, 1.0],
+  'myth-determination': ['holy-chord', 0.8, 0.9],
+  'myth-beast': ['portal', 0.75, 1.0],
+  'myth-destiny': ['reload', 0.85, 1.0],
+  'myth-pistol': ['musket', 1.5, 0.6],
+  'myth-shotgun': ['shotgun', 1.0, 1.0],
+  'myth-grenades': ['grenade-throw', 1.0, 0.9],
+  'myth-rifle': ['air-snipe', 0.75, 1.0],
+  'myth-rocket': ['mortar-launch', 0.7, 1.0],
+
   // ── Marrow ──
   // Nothing here is a weapon being swung: four of the five are something wet being released,
   // so the set is a flick, two spawns, a whip and a swarm of fuses being lit.
@@ -544,7 +557,7 @@ const ELEMENT_PITCH: Record<string, number> = {
   rubber: 1.05, silence: 0.75, technology: 1.3, plasma: 1.25,
   creation: 1.0, dream: 1.2, justice: 0.95, king: 0.6, chalk: 1.35, illusion: 1.15, conquest: 0.85,
   magma: 0.7, wax: 1.3, clay: 0.88, depths: 0.72, passion: 1.28, ruin: 0.7, dune: 0.76, paper: 1.18,
-  death: 0.6, fortune: 1.08, cloth: 1.12, marrow: 0.92, tempest: 1.15, psychic: 1.22,
+  death: 0.6, fortune: 1.08, cloth: 1.12, marrow: 0.92, tempest: 1.15, psychic: 1.22, myth: 0.78,
   radiation: 1.12, bind: 0.66, gum: 0.86, gluttony: 0.82,
 };
 

@@ -920,6 +920,20 @@ export class LightAvatar extends BaseAvatar {
       ]);
     }
 
+    // Mastered: a gilded sun ring turning behind the burst.
+    if (this.mastered) {
+      g.lineStyle(2, this.tint(LIGHT.gold), a * 0.75);
+      g.strokeCircle(x, y, 31);
+      g.lineStyle(1, this.tint(LIGHT.white), a * 0.5);
+      g.strokeCircle(x, y, 28.5);
+      const turn = -this.t * 0.6;
+      g.fillStyle(this.tint(LIGHT.amber), a * 0.85);
+      for (let i = 0; i < 12; i++) {
+        const ra = turn + (i / 12) * TAU;
+        g.fillCircle(x + Math.cos(ra) * 31, y + Math.sin(ra) * 31, i % 3 === 0 ? 2.4 : 1.3);
+      }
+    }
+
     // Headlight pool and the beam cast along the heading — what makes the rig read as *aimed*.
     g.fillStyle(this.tint(LIGHT.pale), a * 0.12 * k);
     g.fillEllipse(x, y + 8, 50 * k, 20 * k);
@@ -932,6 +946,47 @@ export class LightAvatar extends BaseAvatar {
       { x: x + Math.cos(this.facing) * reach * 1.2, y: y + 4 + Math.sin(this.facing) * reach * 0.66 },
       { x: x + Math.cos(this.facing + spread) * reach, y: y + 4 + Math.sin(this.facing + spread) * reach * 0.55 },
     ]);
+  }
+
+  /**
+   * Racing livery painted on the star: twin pinstripes down the front and a number roundel on
+   * the chest carrying a four-point star. Mastered, the roundel is gilded and ringed by a
+   * slowly turning laurel of tiny rays.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    void a;
+    const A = alpha;
+    const lean = Math.cos(this.facing) * 1.6;
+    const ox = x + lean;
+    // Pinstripes, curving with the sphere.
+    g.lineStyle(1.3, this.tint(this.mastered ? LIGHT.amber : LIGHT.gold), A * 0.7);
+    for (const sd of [-1, 1]) {
+      g.beginPath();
+      g.moveTo(ox + sd * 3.6, y + 3);
+      g.lineTo(ox + sd * 3.9, y + 9);
+      g.lineTo(ox + sd * 3.2, y + 19);
+      g.strokePath();
+    }
+    // The roundel.
+    const ry = y + 11;
+    g.fillStyle(this.tint(this.mastered ? LIGHT.amber : LIGHT.steel), A * 0.9);
+    g.fillCircle(ox, ry, 5.4);
+    g.fillStyle(this.tint(this.mastered ? LIGHT.gold : LIGHT.glass), A);
+    g.fillCircle(ox, ry, 4.4);
+    g.fillStyle(this.tint(this.mastered ? LIGHT.white : this.accent === LIGHT.sky ? LIGHT.cyan : LIGHT.amber), A);
+    twinkle(g, ox, ry, 3.6, 0);
+    if (this.mastered) {
+      g.fillStyle(this.tint(LIGHT.gold), A * 0.85);
+      for (let i = 0; i < 10; i++) {
+        const ra = this.t * 0.8 + (i / 10) * TAU;
+        const c = Math.cos(ra), s2 = Math.sin(ra);
+        fillPts(g, [
+          { x: ox + c * 6.2 - s2 * 0.8, y: ry + s2 * 6.2 + c * 0.8 },
+          { x: ox + c * 8.6, y: ry + s2 * 8.6 },
+          { x: ox + c * 6.2 + s2 * 0.8, y: ry + s2 * 6.2 - c * 0.8 },
+        ]);
+      }
+    }
   }
 
   /**
@@ -973,8 +1028,26 @@ export class LightAvatar extends BaseAvatar {
       twinkle(g, tx, ty, 4.5 * scale * tw, this.t * 1.5 + i);
     }
 
+    // Mastered: a white-hot halo floats over the crest, with motes running round it, and a
+    // gilded sun ring turns behind the whole star — unmistakable at any zoom.
+    if (this.mastered) {
+      const hy = rootY - 21 * scale + Math.sin(this.t * 2) * 1.5;
+      const hx = x + Math.cos(back) * rake * 10;
+      g.lineStyle(4.5, this.tint(LIGHT.amber), alpha * 0.35);
+      g.strokeEllipse(hx, hy, 30, 9);
+      g.lineStyle(2.2, this.tint(LIGHT.gold), alpha);
+      g.strokeEllipse(hx, hy, 28, 8);
+      g.lineStyle(1, this.tint(LIGHT.white), alpha * 0.95);
+      g.strokeEllipse(hx, hy - 0.6, 24, 6);
+      for (let i = 0; i < 3; i++) {
+        const ma = this.t * 2.6 + (i / 3) * TAU;
+        g.fillStyle(this.tint(LIGHT.white), alpha);
+        twinkle(g, hx + Math.cos(ma) * 14, hy + Math.sin(ma) * 4, 2.6, ma);
+      }
+    }
+
     // Two glints drifting round the star.
-    const glints = 2;
+    const glints = this.mastered ? 4 : 2;
     for (let i = 0; i < glints; i++) {
       const p = this.t * 1.3 + (i / glints) * TAU + this.seed;
       const tw = 0.5 + 0.5 * Math.sin(this.t * 5 + i * 2.6);

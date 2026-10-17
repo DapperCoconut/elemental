@@ -39,6 +39,8 @@ const MIRRORED_TIMERS = new Set([
   'confused', 'wandering', 'hallucinating', 'lagging', 'panicked', 'intoxicated', 'unsteady',
   'high-gravity', 'inverted', 'exposed', 'purged', 'heal-block', 'dark-link', 'oily',
   'gold-heart', 'midas', 'stalked', 'stunned', 'out-of-tune',
+  'rad-mutated', 'over-radiated', 'devotion-slow', 'gold-hex', 'gold-statue', 'harvest-poison',
+  'sound-dance',
 ]);
 
 const TIMER_DESCRIPTORS: StatusDescriptor[] = STATUS_DESCRIPTORS
@@ -91,6 +93,17 @@ const NUMERIC_FIELDS: NetNumericField[] = [
     clear: (f) => { f.healInvertedUntil = 0; },
   },
   { i: 'vuln', read: (f) => (f.vulnerableNextHit ? 1 : 0), apply: (f, v) => { if (v > 0) f.vulnerableNextHit = true; }, clear: (f) => { f.vulnerableNextHit = false; } },
+  // Myth's pistol stacks: the count rides with its own expiry, like Despress.
+  {
+    i: 'mythv',
+    read: (f) => (Date.now() < f.mythVulnUntil ? f.mythVulnStacks : 0),
+    apply: (f, v) => {
+      if (v <= 0) return;
+      f.mythVulnStacks = Math.max(Date.now() < f.mythVulnUntil ? f.mythVulnStacks : 0, v);
+      f.mythVulnUntil = Math.max(f.mythVulnUntil, Date.now() + 400);
+    },
+    clear: (f) => { f.mythVulnStacks = 0; f.mythVulnUntil = 0; },
+  },
   // Permanent by design on both sims — mirrored once, never cleared.
   { i: 'carrier', read: (f) => (f.sicknessCarrier ? 1 : 0), apply: (f, v) => { if (v > 0) f.sicknessCarrier = true; }, clear: () => {} },
   { i: 'atkint', read: (f) => f.attackIntervalMult, apply: (f, v) => { f.attackIntervalMult = Math.max(f.attackIntervalMult, v); }, clear: (f) => { f.attackIntervalMult = 1; } },
@@ -98,6 +111,8 @@ const NUMERIC_FIELDS: NetNumericField[] = [
   { i: 'outdmg', read: (f) => f.outgoingDamageMult, apply: (f, v) => { f.outgoingDamageMult = Math.min(f.outgoingDamageMult, v); }, clear: (f) => { f.outgoingDamageMult = 1; } },
   // Gold's heart: how full of stress it is. Drawn on the victim; only the attacker's sim decides it.
   { i: 'gstress', read: (f) => f.goldHeartStress, apply: (f, v) => { f.goldHeartStress = v; }, clear: (f) => { f.goldHeartStress = 0; } },
+  // Gold's Ruby Vigor: max HP the attacker's picks take off. The victim's kit applies the delta.
+  { i: 'gvig', read: (f) => f.goldVigorCut, apply: (f, v) => { f.goldVigorCut = v; }, clear: (f) => { f.goldVigorCut = 0; } },
   // Harvest's rot: the attacker's sim decides it; a mirror only ever raises it.
   // Devotion's faith: decided on the priest's sim; a mirror only ever raises it.
   { i: 'fth', read: (f) => f.devotionFaith, apply: (f, v) => { f.devotionFaith = Math.max(f.devotionFaith, v); }, clear: () => {} },

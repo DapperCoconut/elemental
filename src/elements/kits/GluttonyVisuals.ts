@@ -407,6 +407,194 @@ export function fleshChunk(
   g.fillCircle(x + r * 0.3, y - r * 0.25, r * 0.18);
 }
 
+// ── Upgrade painters ─────────────────────────────────────────────────────────
+
+/**
+ * E+ Vile Rot: a hand of rot clawing up out of the mold around someone's feet. `rise` 0–1 is how
+ * far it has come out of the ground; `grip` 0–1 how tightly the fingers have closed.
+ */
+export function rotHand(
+  g: Phaser.GameObjects.Graphics, tint: HarvestColorFn, x: number, y: number, rise: number, grip: number, t: number, alpha: number,
+): void {
+  if (rise <= 0.01) return;
+  // The torn ground it comes out of.
+  g.fillStyle(tint(HAR.rotDeep), alpha * 0.7);
+  g.fillEllipse(x, y + 10, 44 * rise + 8, 14 * rise + 4);
+  g.fillStyle(tint(HAR.flesh), alpha * 0.45);
+  g.fillEllipse(x, y + 10, 30 * rise + 4, 8 * rise + 2);
+  // Five fingers on each side, curling in over the body as `grip` closes.
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 3; i++) {
+      const base = Math.PI * 0.5 + side * (0.55 + i * 0.42);
+      const rx = x + Math.cos(base) * 20;
+      const ry = y + 10 + Math.sin(base) * 6;
+      const up = -Math.PI / 2 + side * (0.5 - grip * 0.9) + Math.sin(t * 5 + i) * 0.08;
+      rotTendrilLayered(g, tint, rx, ry, up, (14 + i * 3) * rise, 3.1 - i * 0.4, alpha, side * (0.4 + grip * 0.8), -0.2);
+    }
+  }
+  // Knuckles of bone showing through, and an eye in the palm.
+  g.fillStyle(tint(HAR.tooth), alpha * 0.85 * rise);
+  g.fillCircle(x - 9, y + 4, 1.6);
+  g.fillCircle(x + 9, y + 4, 1.6);
+  g.fillStyle(tint(HAR.sclera), alpha * rise);
+  g.fillEllipse(x, y + 11, 7, 4);
+  g.fillStyle(tint(HAR.purple), alpha * rise);
+  g.fillCircle(x + Math.sin(t * 3) * 1.2, y + 11, 1.5);
+}
+
+/**
+ * E+ Vile Rot: a mold worm reared up out of the rot, segmented and wet, its round mouth of teeth
+ * turned toward `ang`. `rise` 0–1 is how far it is out of the ground.
+ */
+export function moldWorm(
+  g: Phaser.GameObjects.Graphics, tint: HarvestColorFn, x: number, y: number, ang: number, rise: number, t: number,
+  recoil: number, alpha: number,
+): void {
+  if (rise <= 0.01) return;
+  g.fillStyle(tint(HAR.rotDeep), alpha * 0.8);
+  g.fillEllipse(x, y + 4, 22, 8);
+  g.fillStyle(tint(HAR.ink), alpha * 0.6);
+  g.fillEllipse(x, y + 4, 12, 4);
+  const lean = Math.cos(ang) * 6;
+  const segs = 6;
+  const H = 30 * rise;
+  let hx = x;
+  let hy = y;
+  for (let i = 0; i <= segs; i++) {
+    const u = i / segs;
+    const sx = x + lean * u * u + Math.sin(t * 4 + u * 4) * 2.4 * u - Math.cos(ang) * recoil * 4 * u;
+    const sy = y - H * u;
+    const r = 6.4 - u * 1.8;
+    g.fillStyle(tint(HAR.rot), alpha);
+    g.fillCircle(sx, sy, r + 1);
+    g.fillStyle(tint(i % 2 ? HAR.purple : HAR.flesh), alpha);
+    g.fillCircle(sx, sy, r);
+    g.fillStyle(tint(HAR.purpleLit), alpha * 0.55);
+    g.fillCircle(sx - r * 0.35, sy - r * 0.3, r * 0.3);
+    hx = sx;
+    hy = sy;
+  }
+  // The mouth: a ring of teeth around a dark gullet, opening on each shot.
+  const mx = hx + Math.cos(ang) * 3;
+  const my = hy + Math.sin(ang) * 2 - 2;
+  const open = 3 + recoil * 2.5;
+  g.fillStyle(tint(HAR.ink), alpha);
+  g.fillCircle(mx, my, open);
+  g.fillStyle(tint(HAR.tooth), alpha);
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * TAU + t;
+    g.fillTriangle(
+      mx + Math.cos(a) * (open + 1.8), my + Math.sin(a) * (open + 1.8),
+      mx + Math.cos(a + 0.35) * (open + 1.8), my + Math.sin(a + 0.35) * (open + 1.8),
+      mx + Math.cos(a + 0.17) * (open - 1.2), my + Math.sin(a + 0.17) * (open - 1.2),
+    );
+  }
+  if (recoil > 0.2) {
+    g.fillStyle(tint(HAR.glow), alpha * recoil);
+    g.fillCircle(mx, my, open * 0.6);
+  }
+}
+
+/** A gob of rot spat by a worm: a dark drop with a hot core and a short wet tail. */
+export function rotBullet(
+  g: Phaser.GameObjects.Graphics, tint: HarvestColorFn, x: number, y: number, ang: number, alpha: number,
+): void {
+  g.fillStyle(tint(HAR.rotDeep), alpha);
+  rotTendril(g, x, y, ang + Math.PI, 12, 4.2, 0.3, 0);
+  g.fillStyle(tint(HAR.purple), alpha);
+  g.fillCircle(x, y, 4.4);
+  g.fillStyle(tint(HAR.glow), alpha * 0.9);
+  g.fillCircle(x - 1, y - 1, 1.8);
+}
+
+/** R+ Poison Payload: a stoppered glass vial of green rot hanging from a crow's feet. */
+export function poisonVial(
+  g: Phaser.GameObjects.Graphics, tint: HarvestColorFn, x: number, y: number, swing: number, alpha: number,
+): void {
+  const c = Math.cos(swing);
+  const s = Math.sin(swing);
+  const W = (lx: number, ly: number): Phaser.Geom.Point => P(x + lx * c - ly * s, y + lx * s + ly * c);
+  // The string up to the claws.
+  const top = W(0, -7);
+  g.lineStyle(1, tint(HAR.straw), alpha);
+  g.lineBetween(x, y - 11, top.x, top.y);
+  // Glass: a dark outline, the poison in it, a highlight down one side.
+  g.fillStyle(tint(HAR.ink), alpha * 0.9);
+  g.fillPoints([W(-3.2, -6), W(3.2, -6), W(4.6, 4), W(0, 7), W(-4.6, 4)], true);
+  g.fillStyle(tint(0x6cc23a), alpha);
+  g.fillPoints([W(-2.3, -2), W(2.3, -2), W(3.6, 3.6), W(0, 6), W(-3.6, 3.6)], true);
+  g.fillStyle(tint(0xd8ff9a), alpha * 0.8);
+  const hl = W(-1.6, 1);
+  g.fillCircle(hl.x, hl.y, 1);
+  // Cork.
+  g.fillStyle(tint(HAR.woodLit), alpha);
+  const ck = W(0, -7);
+  g.fillCircle(ck.x, ck.y, 2.2);
+}
+
+export type CookDish = 'jerky' | 'broth' | 'feast';
+
+/** F+ Corrupt Cooking: the three dishes, drawn as menu icons around (x, y). */
+export function cookDish(
+  g: Phaser.GameObjects.Graphics, tint: HarvestColorFn, dish: CookDish, x: number, y: number, t: number, alpha: number,
+): void {
+  if (dish === 'jerky') {
+    // Two dark twisted strips of dried rot-meat, crossed.
+    for (const [a, o] of [[-0.5, -2], [0.45, 2]] as const) {
+      const c = Math.cos(a);
+      const s = Math.sin(a);
+      const pts: Phaser.Geom.Point[] = [];
+      const back: Phaser.Geom.Point[] = [];
+      for (let i = 0; i <= 6; i++) {
+        const u = i / 6 - 0.5;
+        const w = 2.6 + Math.sin(i * 1.7) * 0.7;
+        const lx = u * 22;
+        const ly = Math.sin(u * 7) * 1.5 + o;
+        pts.push(P(x + lx * c - (ly - w) * s, y + lx * s + (ly - w) * c));
+        back.push(P(x + lx * c - (ly + w) * s, y + lx * s + (ly + w) * c));
+      }
+      g.fillStyle(tint(HAR.rotDeep), alpha);
+      g.fillPoints([...pts, ...back.reverse()], true);
+      g.fillStyle(tint(HAR.flesh), alpha);
+      g.fillCircle(x + c * 4 - s * o, y + s * 4 + c * o, 1.6);
+      g.fillCircle(x - c * 5 - s * o, y - s * 5 + c * o, 1.3);
+    }
+    return;
+  }
+  if (dish === 'broth') {
+    // A chipped wooden bowl of steaming purple broth.
+    g.fillStyle(tint(HAR.purple), alpha * 0.25);
+    for (let i = 0; i < 3; i++) {
+      const ph = (t * 0.7 + i / 3) % 1;
+      g.fillCircle(x - 5 + i * 5 + Math.sin(t * 3 + i) * 1.5, y - 6 - ph * 9, 2.4 * (1 - ph) + 0.8);
+    }
+    g.fillStyle(tint(HAR.wood), alpha);
+    g.fillEllipse(x, y + 2, 24, 14);
+    g.fillStyle(tint(HAR.woodLit), alpha);
+    g.fillEllipse(x, y - 1, 22, 7);
+    g.fillStyle(tint(HAR.rot), alpha);
+    g.fillEllipse(x, y - 1, 18, 5);
+    g.fillStyle(tint(HAR.purpleLit), alpha * 0.8);
+    g.fillCircle(x - 3, y - 1.5, 1.6);
+    g.fillStyle(tint(HAR.sclera), alpha);
+    g.fillCircle(x + 4, y - 1, 1.5);
+    return;
+  }
+  // The Vile Feast: a platter heaped with meat, a heart on top, a rib sticking out.
+  g.fillStyle(tint(HAR.steelDark), alpha);
+  g.fillEllipse(x, y + 5, 30, 9);
+  g.fillStyle(tint(HAR.steel), alpha * 0.7);
+  g.fillEllipse(x, y + 4, 26, 6);
+  fleshChunk(g, tint, x - 7, y + 1, 4.2, t, alpha);
+  fleshChunk(g, tint, x + 7, y + 1, 4.0, t + 1, alpha);
+  g.lineStyle(2, tint(HAR.tooth), alpha);
+  g.lineBetween(x + 3, y - 1, x + 11, y - 9);
+  g.fillStyle(tint(HAR.tooth), alpha);
+  g.fillCircle(x + 11, y - 9, 1.6);
+  corruptHeart(g, tint, x - 1, y - 4, 4.4, t, alpha);
+}
+
+
 // ── HarvestFx — one-shots ────────────────────────────────────────────────────
 
 export class HarvestFx extends FxBase {
@@ -726,6 +914,103 @@ export class HarvestFx extends FxBase {
   }
 
   /** An execute: the body is cut clean through and comes apart in rot. */
+  // ── Upgrade one-shots ──────────────────────────────────────────────────────
+
+  /** Click+ Recursive: the sickle whipping around the scarecrow for its second loop. */
+  sickleRecurse(x: number, y: number, side: number): void {
+    this.anim(9, 340, (g, t) => {
+      g.lineStyle(3 * (1 - t) + 1, this.tint(HAR.purpleLit), (1 - t) * 0.9);
+      g.beginPath();
+      const a0 = -Math.PI / 2;
+      g.arc(x, y, 22 + t * 6, a0, a0 + side * TAU * easeOut(t), side < 0);
+      g.strokePath();
+    });
+  }
+
+  /** E+ Vile Rot: the mold seizing someone — a hand comes up, closes, squeezes, sinks. */
+  rotGrab(x: number, y: number, ms: number): void {
+    this.anim(6, ms, (g, t) => {
+      const rise = t < 0.18 ? easeOut(t / 0.18) : t > 0.82 ? 1 - easeIn((t - 0.82) / 0.18) : 1;
+      const grip = t < 0.25 ? easeIn(t / 0.25) : 1;
+      rotHand(g, this.tint, x, y, rise, grip, t * ms / 1000, 1);
+    });
+    this.splatter(x, y + 8, 6, 22, 380, 6);
+  }
+
+  /** A worm bursting up out of the mold. */
+  wormEmerge(x: number, y: number): void {
+    this.splatter(x, y, 6, 18, 420, 4);
+    this.ring(x, y + 4, 4, 22, 360, HAR.purple, 3, 3);
+  }
+
+  /** A worm going back under: a wet slap and a ring. */
+  wormSink(x: number, y: number): void {
+    this.splatter(x, y, 4, 12, 300, 4);
+  }
+
+  /** A worm's gob landing. */
+  rotBulletHit(x: number, y: number, ang: number): void {
+    this.splatter(x, y, 4, 14, 300, 10, ang);
+    this.anim(10, 200, (g, t) => {
+      g.fillStyle(this.tint(HAR.purpleLit), (1 - t) * 0.6);
+      g.fillCircle(x, y, 4 + t * 8);
+    });
+  }
+
+  /** R+ Poison Payload: a vial tumbling from a crow to the ground. */
+  vialFall(x0: number, y0: number, x1: number, y1: number, ms: number): void {
+    const spin = (Math.random() - 0.5) * 9;
+    this.anim(9, ms, (g, t) => {
+      const e = easeIn(t);
+      poisonVial(g, this.tint, x0 + (x1 - x0) * t, y0 + (y1 - y0) * e, spin * t, 1);
+    });
+  }
+
+  /** The vial hitting the ground: a crown of glass and a green-and-purple splash. */
+  vialShatter(x: number, y: number, r: number): void {
+    const shards = Array.from({ length: 10 }, () => ({ a: Math.random() * TAU, d: r * (0.5 + Math.random() * 0.6), s: Math.random() * 6 }));
+    this.anim(10, 460, (g, t) => {
+      const e = easeOut(t);
+      for (const sh of shards) {
+        const sx = x + Math.cos(sh.a) * sh.d * e;
+        const sy = y + Math.sin(sh.a) * sh.d * e * 0.7 - Math.sin(t * Math.PI) * 10;
+        g.fillStyle(this.tint(0xd8ff9a), (1 - t) * 0.95);
+        g.fillTriangle(sx, sy - 2.5, sx + 2, sy + 1.5, sx - 1.5, sy + 2);
+      }
+    });
+    this.anim(4, 900, (g, t) => {
+      g.fillStyle(this.tint(0x4f8f2a), (1 - t) * 0.42);
+      g.fillEllipse(x, y, r * 2 * (0.5 + 0.5 * easeOut(t)), r * 1.3 * (0.5 + 0.5 * easeOut(t)));
+      g.fillStyle(this.tint(HAR.purple), (1 - t) * 0.3);
+      g.fillEllipse(x + 4, y + 2, r * 1.1 * easeOut(t), r * 0.7 * easeOut(t));
+    });
+    this.ring(x, y, 4, r, 360, 0x9be35a, 3, 10);
+  }
+
+  /** Poison bubbling off a body: little green blisters popping. */
+  poisonTick(x: number, y: number): void {
+    const bits = Array.from({ length: 3 }, () => ({ dx: (Math.random() - 0.5) * 26, dy: (Math.random() - 0.5) * 20 }));
+    this.anim(10, 420, (g, t) => {
+      for (const b of bits) {
+        g.lineStyle(1.2, this.tint(0x9be35a), (1 - t) * 0.9);
+        g.strokeCircle(x + b.dx, y + b.dy - t * 10, 1.5 + t * 3);
+      }
+    });
+  }
+
+  /** F+ Corrupt Cooking: a dish arriving — steam, a ring and the dish itself held up and eaten. */
+  cookServe(x: number, y: number, dish: CookDish): void {
+    this.anim(12, 760, (g, t) => {
+      const lift = easeOut(Math.min(1, t * 2));
+      const a = t < 0.7 ? 1 : 1 - (t - 0.7) / 0.3;
+      cookDish(g, this.tint, dish, x, y - 30 - lift * 14, t * 4, a);
+    });
+    this.scene.time.delayedCall(520, () => {
+      this.flashIn(x, y, 18, HAR.glow, dish === 'jerky' ? HAR.fleshLit : HAR.purple, 12);
+      this.ring(x, y, 10, dish === 'feast' ? 80 : 50, 520, dish === 'broth' ? HAR.purpleLit : HAR.fleshLit, 4, 12);
+    });
+  }
+
   execute(x: number, y: number, ang: number): void {
     this.flashIn(x, y, 34, HAR.glow, HAR.purple, 13);
     this.ring(x, y, 10, 90, 640, HAR.purpleLit, 6, 13);
@@ -764,8 +1049,9 @@ const HARVEST_AVATAR: AvatarSpec = {
  * black with a purple pupil) over a wide, stitched, purple grin that drools. The scythe is held,
  * not worn — a long shaft resting against the right hand with the blade hanging over the head.
  *
- * Mastered (no mastery exists yet, but the tell is ready): the grin splits wider, the drool runs
- * heavier, the knot's straw stands up taller and the eye-holes burn brighter.
+ * Mastered (no mastery exists yet, but the tell is ready): a crow perches on the knot, a purple
+ * crop-circle ring turns under the feet with spores rising off the sack, the eye-holes glow
+ * purple instead of black, the scythe's edge burns, the grin splits wider and the drool runs heavier.
  */
 export class GluttonyAvatar extends BaseAvatar {
   /** 0..1 while the scythe is being swung (Reaping Hour). */
@@ -810,9 +1096,76 @@ export class GluttonyAvatar extends BaseAvatar {
 
   protected applyMastery(on: boolean): void {
     this.forEachHandLayer(0, (glow) => {
-      glow.setRadius(on ? 13 : 9.5);
-      glow.setFillStyle(this.tint(on ? HAR.purple : HAR.rot), on ? 0.36 : 0.28);
+      glow.setRadius(on ? 14 : 9.5);
+      glow.setFillStyle(this.tint(on ? HAR.purpleLit : HAR.rot), on ? 0.4 : 0.28);
     });
+    // The eye-holes stop being black: something purple has moved in behind them.
+    this.setEyeWhite(on ? HAR.purple : HAR.ink);
+  }
+
+  /**
+   * Burlap on the sack itself: a faint weave, a stitched seam down one side, a sewn-on patch,
+   * and the cinched neck with straw stuffing poking out underneath.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    void a;
+    const R = 19;
+    // Weave: horizontal chords clipped to the orb, alternating dark and light threads.
+    for (let i = -3; i <= 3; i++) {
+      const dy = i * 5 + 1;
+      const half = Math.sqrt(Math.max(0, R * R - dy * dy)) - 1.5;
+      if (half <= 2) continue;
+      g.lineStyle(1, this.tint(i % 2 ? HAR.sackDark : HAR.sackLit), alpha * (i % 2 ? 0.32 : 0.14));
+      g.lineBetween(x - half, y + dy, x + half, y + dy);
+    }
+    for (let i = -2; i <= 2; i++) {
+      const dx = i * 6 + 3;
+      const half = Math.sqrt(Math.max(0, R * R - dx * dx)) - 2;
+      g.lineStyle(1, this.tint(HAR.sackDark), alpha * 0.18);
+      g.lineBetween(x + dx, y - half, x + dx, y + half);
+    }
+    // A stitched seam curving down the left side.
+    g.lineStyle(1.2, this.tint(HAR.ink), alpha * 0.6);
+    g.beginPath();
+    g.arc(x + 5, y, 17, Math.PI * 0.72, Math.PI * 1.28);
+    g.strokePath();
+    g.lineStyle(1, this.tint(HAR.straw), alpha * 0.7);
+    for (let i = 0; i < 5; i++) {
+      const ang = Math.PI * (0.76 + i * 0.12);
+      const cx = x + 5 + Math.cos(ang) * 17;
+      const cy = y + Math.sin(ang) * 17;
+      g.lineBetween(cx - 1.8, cy - 0.8, cx + 1.8, cy + 0.8);
+    }
+    // The patch on the cheek, cross-stitched on.
+    const px = x + 12;
+    const py = y + 8;
+    g.fillStyle(this.tint(HAR.sackLit), alpha * 0.85);
+    g.fillPoints([P(px - 4, py - 4), P(px + 4.5, py - 3.4), P(px + 4, py + 4), P(px - 3.6, py + 4.4)], true);
+    g.fillStyle(this.tint(HAR.flesh), alpha * 0.35);
+    g.fillRect(px - 2.5, py - 2, 5, 4);
+    g.lineStyle(0.9, this.tint(HAR.ink), alpha * 0.8);
+    for (const [cx, cy] of [[px - 4, py], [px + 4.2, py], [px, py - 3.8], [px, py + 4.2]]) {
+      g.lineBetween(cx - 1.2, cy - 1.2, cx + 1.2, cy + 1.2);
+      g.lineBetween(cx - 1.2, cy + 1.2, cx + 1.2, cy - 1.2);
+    }
+    // The cinched neck: a cord around the base with straw stuffing poking out below.
+    g.lineStyle(2.2, this.tint(HAR.ink), alpha * 0.9);
+    g.beginPath();
+    g.arc(x, y - 4, 21, Math.PI * 0.33, Math.PI * 0.67);
+    g.strokePath();
+    g.lineStyle(1, this.tint(HAR.straw), alpha * 0.85);
+    g.beginPath();
+    g.arc(x, y - 4.6, 21, Math.PI * 0.34, Math.PI * 0.66);
+    g.strokePath();
+    for (let i = 0; i < 6; i++) {
+      const u = i / 5 - 0.5;
+      const bx = x + u * 13;
+      const by = y + 16.5 - Math.abs(u) * 3;
+      const ang = Math.PI / 2 + u * 1.3 + Math.sin(this.t * 2 + i) * 0.08;
+      const len = 4 + hjit(i, 11) * 3;
+      g.lineStyle(1.2, this.tint(i % 2 ? HAR.strawLit : HAR.straw), alpha * 0.9);
+      g.lineBetween(bx, by, bx + Math.cos(ang) * len, by + Math.sin(ang) * len);
+    }
   }
 
   protected emitTrail(x: number, y: number): void {
@@ -834,6 +1187,20 @@ export class GluttonyAvatar extends BaseAvatar {
       g.fillStyle(this.tint(HAR.purple), a * (0.12 + this.rot * 0.25));
       g.fillCircle(x, y, 26 + this.rot * 8);
     }
+    if (this.mastered) {
+      // Harvest Lord: a slow ring of rot under the feet, a crop circle stamped in purple.
+      g.fillStyle(this.tint(HAR.purple), a * 0.16);
+      g.fillCircle(x, y, 33);
+      g.lineStyle(1.6, this.tint(HAR.purpleLit), alpha * 0.55);
+      g.strokeEllipse(x, y + 16, 62, 20);
+      for (let i = 0; i < 8; i++) {
+        const ang = this.t * 0.6 + (i / 8) * TAU;
+        const ex = x + Math.cos(ang) * 31;
+        const ey = y + 16 + Math.sin(ang) * 10;
+        g.fillStyle(this.tint(i % 2 ? HAR.glow : HAR.purpleLit), alpha * 0.7);
+        g.fillCircle(ex, ey, 1.4);
+      }
+    }
   }
 
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
@@ -853,7 +1220,7 @@ export class GluttonyAvatar extends BaseAvatar {
         scytheShape(g, this.tint, hx, hy, sweep, 50, 34, this.swingSide, alpha, this.swing);
       } else {
         const shaft = -Math.PI / 2 - face * 0.32 + Math.sin(this.t * 1.6) * 0.03;
-        scytheShape(g, this.tint, hx + face * 2, hy + 14, shaft, 52, m ? 34 : 28, -face, alpha * 0.98, 0.15 + this.rot * 0.4);
+        scytheShape(g, this.tint, hx + face * 2, hy + 14, shaft, 52, m ? 34 : 28, -face, alpha * 0.98, (m ? 0.75 + 0.2 * Math.sin(this.t * 4) : 0.15) + this.rot * 0.4);
       }
     }
 
@@ -882,6 +1249,25 @@ export class GluttonyAvatar extends BaseAvatar {
     g.lineBetween(x - 6 + lean, crown + 1, x + 6 + lean, crown + 1);
     g.lineStyle(1, this.tint(HAR.straw), alpha * 0.8);
     g.lineBetween(x - 5 + lean, crown + 0.5, x + 5 + lean, crown + 0.5);
+    // The cord's tails hang off one side of the knot.
+    g.lineStyle(1.2, this.tint(HAR.strawLit), alpha * 0.85);
+    g.lineBetween(x + 6 + lean, crown + 1, x + 9 + lean, crown + 6 + Math.sin(this.t * 2.2) * 0.8);
+    g.lineBetween(x + 6 + lean, crown + 1, x + 7 + lean, crown + 7 + Math.sin(this.t * 2.2 + 1) * 0.8);
+
+    if (m) {
+      // Harvest Lord: a crow has taken the knot as its perch and keeps watch over the field.
+      const flap = this.t * 2 % 7 < 0.5 ? this.t * 22 : 0.4;
+      const face = Math.cos(this.facing) >= 0 ? 0 : Math.PI;
+      crowShape(g, this.tint, x + lean, crown - 13, face, 7, flap, alpha);
+      // Rot motes rising off the sack like spores.
+      for (let i = 0; i < 4; i++) {
+        const u = (this.t * 0.35 + i * 0.25) % 1;
+        const mx2 = x + Math.sin(i * 2.3 + this.t * 1.2) * 16;
+        const my2 = y + 10 - u * 40;
+        g.fillStyle(this.tint(i % 2 ? HAR.glow : HAR.purpleLit), alpha * (1 - u) * 0.85);
+        g.fillCircle(mx2, my2, 1.6 - u * 0.6);
+      }
+    }
 
     // ── The grin: a wide stitched crescent, glowing purple, drooling ──
     const look = Math.cos(this.facing) * 2.2;

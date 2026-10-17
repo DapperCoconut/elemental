@@ -199,6 +199,13 @@ export class FireKit {
   // ── Alcohol perk state ────────────────────────────────────────────────
   private alcoholFlaskCount = 0;
   private alcoholFlaskVisual: Phaser.GameObjects.Text | null = null;
+  /**
+   * The kit's little in-world HUD — the sun seal over Exposed targets and the flask carried
+   * at the hip. One Graphics, wiped at the top of every `update`, so nothing it shows can
+   * outlive the frame that drew it.
+   */
+  private hudG: Phaser.GameObjects.Graphics | null = null;
+  private hudT = 0;
   private alcoholEHoldStart = 0;
   private alcoholEWasDown = false;
   private alcoholPuddles: AlcoholPuddle[] = [];
@@ -298,6 +305,7 @@ export class FireKit {
     if (this.alcoholHeatAura) { this.alcoholHeatAura.destroy(); this.alcoholHeatAura = null; }
     this.alcoholHeatAuraTickAccum = 0;
     if (this.alcoholFlyingFlask) { this.alcoholFlyingFlask.sprite.destroy(); this.alcoholFlyingFlask = null; }
+    if (this.hudG) { this.hudG.destroy(); this.hudG = null; }
 
     // Fire Mastery
     if (this.burningBodyWreath) { this.burningBodyWreath.destroy(); this.burningBodyWreath = null; }
@@ -309,6 +317,10 @@ export class FireKit {
 
   update(time: number, delta: number, isPlayerFire: boolean, isNpcFire: boolean): void {
     const { player, npc, scene } = this.arena;
+
+    this.hudT += delta / 1000;
+    if (!this.hudG || !this.hudG.active) this.hudG = scene.add.graphics().setDepth(9);
+    this.hudG.clear();
 
     this.updateAvatars(delta, isPlayerFire, isNpcFire);
     this.updateFireballTrails(delta);
@@ -797,6 +809,105 @@ export class FireKit {
   }
 
   /**
+   * The Exposed mark: a little sun seal hung over the target — a gold disc with a hot heart,
+   * ringed by slowly turning rays, the whole thing quickening as the window runs out.
+   * `left` is seconds remaining.
+   */
+  private paintSunSeal(g: Phaser.GameObjects.Graphics, x: number, y: number, left: number): void {
+    const c = this.pcol;
+    const urgent = left < 1.2;
+    const pulse = 0.5 + 0.5 * Math.sin(this.hudT * (urgent ? 16 : 5));
+    const bob = Math.sin(this.hudT * 3) * 1.2;
+    y += bob;
+    // Heat halo behind it so it reads over any floor.
+    g.fillStyle(c(FIRE.gold), 0.16 + 0.1 * pulse);
+    g.fillCircle(x, y, 15);
+    // Twelve rays, long and short alternating, rotating.
+    const spin = this.hudT * 0.9;
+    for (let i = 0; i < 12; i++) {
+      const a = spin + (i / 12) * Math.PI * 2;
+      const long = i % 2 === 0;
+      const r0 = 7.5, r1 = long ? 13.5 + pulse * 1.5 : 10.5;
+      const w = long ? 0.2 : 0.14;
+      g.fillStyle(c(long ? FIRE.amber : FIRE.yellow), 0.9);
+      g.fillTriangle(
+        x + Math.cos(a - w) * r0, y + Math.sin(a - w) * r0,
+        x + Math.cos(a + w) * r0, y + Math.sin(a + w) * r0,
+        x + Math.cos(a) * r1, y + Math.sin(a) * r1,
+      );
+    }
+    // The disc: dark rim, gold body, pale heart offset up-left like a lit sphere.
+    g.fillStyle(c(FIRE.deep), 0.95);
+    g.fillCircle(x, y, 7.6);
+    g.fillStyle(c(FIRE.gold), 1);
+    g.fillCircle(x, y, 6.4);
+    g.fillStyle(c(FIRE.yellow), 1);
+    g.fillCircle(x - 0.8, y - 0.8, 4.4);
+    g.fillStyle(c(FIRE.pale), 0.9);
+    g.fillCircle(x - 1.8, y - 1.8, 2);
+    // Countdown arc on the rim — the window draining as a sweep, not a number.
+    const frac = Phaser.Math.Clamp(left / (EXPOSED_DURATION_MS / 1000), 0, 1);
+    g.lineStyle(1.6, c(FIRE.white), 0.55 + 0.4 * pulse);
+    g.beginPath();
+    g.arc(x, y, 9.4, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2, false);
+    g.strokePath();
+  }
+
+  /**
+   * The carried flask (Alcohol perk): a round-bellied glass bottle with a cork, its amber
+   * contents sloshing with the fighter's step, and a spark of light on the glass.
+   */
+  private paintFlask(g: Phaser.GameObjects.Graphics, x: number, y: number): void {
+    const t = this.hudT;
+    const tilt = Math.sin(t * 2.4) * 0.12;
+    const cos = Math.cos(tilt), sin = Math.sin(tilt);
+    const P = (dx: number, dy: number) => ({ x: x + dx * cos - dy * sin, y: y + dx * sin + dy * cos });
+    // Shadow under the bottle.
+    g.fillStyle(0x000000, 0.25);
+    g.fillEllipse(x + 1, y + 9, 14, 4);
+    // Belly glass.
+    const belly = P(0, 3);
+    g.fillStyle(0x3a2410, 0.85);
+    g.fillCircle(belly.x, belly.y, 7.4);
+    // Liquid: lower part of the belly, surface wobbling.
+    const slosh = Math.sin(t * 5.2) * 1.4;
+    g.fillStyle(0xc97a3a, 0.95);
+    g.beginPath();
+    const lvl = 0.6;
+    for (let i = 0; i <= 14; i++) {
+      const a = Math.PI * (i / 14);
+      const p = P(Math.cos(a) * 6.4, 3 + Math.sin(a) * 6.4);
+      if (i === 0) g.moveTo(p.x, p.y); else g.lineTo(p.x, p.y);
+    }
+    const l1 = P(-6.2, 3 + lvl - slosh), l2 = P(6.2, 3 + lvl + slosh);
+    g.lineTo(l1.x, l1.y);
+    g.lineTo(l2.x, l2.y);
+    g.closePath();
+    g.fillPath();
+    g.lineStyle(1, 0xffcc88, 0.8);
+    g.lineBetween(l1.x, l1.y, l2.x, l2.y);
+    // Neck + cork.
+    const n0 = P(0, -4), n1 = P(0, -9);
+    g.lineStyle(4.2, 0x3a2410, 0.9);
+    g.lineBetween(n0.x, n0.y, n1.x, n1.y);
+    g.lineStyle(2.4, 0xc97a3a, 0.5);
+    g.lineBetween(n0.x, n0.y, n1.x, n1.y);
+    const cork = P(0, -11);
+    g.fillStyle(0x8a5a2a, 1);
+    g.fillRoundedRect(cork.x - 2.6, cork.y - 2.4, 5.2, 4, 1.2);
+    // Glass rim + glint.
+    g.lineStyle(1.2, 0xffe0b0, 0.75);
+    g.strokeCircle(belly.x, belly.y, 7.4);
+    const glint = P(-3, 0);
+    g.fillStyle(0xffffff, 0.75);
+    g.fillCircle(glint.x, glint.y, 1.6);
+    // A wisp of fumes off the cork.
+    const f = (t * 0.8) % 1;
+    g.fillStyle(this.pcol(FIRE.amber), 0.35 * (1 - f));
+    g.fillCircle(cork.x + Math.sin(t * 3) * 2, cork.y - 3 - f * 10, 1.6 + f * 2);
+  }
+
+  /**
    * Per-frame upkeep for the Heatwave debuff chain: the sun icon over exposed targets,
    * the burn → molten upgrade, and the molten DOT tick.
    */
@@ -807,12 +918,9 @@ export class FireKit {
     for (const t of [this.arena.player, ...this.arena.enemies]) {
       if (!t.active) continue;
 
-      // Exposed icon
+      // Exposed icon — a drawn sun seal; the old emoji text is only ever cleaned up now.
       if (t.exposedUntil > time) {
-        if (!t.exposedIcon) {
-          t.exposedIcon = scene.add.text(t.x, t.y - 40, '☀️', { fontSize: '16px' }).setOrigin(0.5).setDepth(9);
-        }
-        t.exposedIcon.setPosition(t.x, t.y - 40);
+        if (this.hudG && t.alpha > 0.05) this.paintSunSeal(this.hudG, t.x, t.y - 40, (t.exposedUntil - time) / 1000);
       } else if (t.exposedIcon) {
         t.exposedIcon.destroy();
         t.exposedIcon = null;
@@ -947,10 +1055,7 @@ export class FireKit {
   private updateAlcohol(time: number, delta: number, player: Fighter, scene: Phaser.Scene): void {
     // Flask visual — shown while player holds a flask
     if (this.alcoholFlaskCount > 0) {
-      if (!this.alcoholFlaskVisual) {
-        this.alcoholFlaskVisual = scene.add.text(0, 0, '🍺', { fontSize: '18px' }).setDepth(9).setOrigin(0.5, 0.5);
-      }
-      this.alcoholFlaskVisual.setPosition(player.x + 18, player.y - 18);
+      if (this.hudG && !player.forceInvisible) this.paintFlask(this.hudG, player.x + 18, player.y - 18);
     } else {
       if (this.alcoholFlaskVisual) { this.alcoholFlaskVisual.destroy(); this.alcoholFlaskVisual = null; }
     }

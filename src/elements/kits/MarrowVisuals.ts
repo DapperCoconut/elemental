@@ -1010,8 +1010,11 @@ const MARROW_AVATAR: AvatarSpec = {
  * glow marrow-red through the bone the hotter the host runs. The bone bar at the top of the
  * screen shows the brood, so the body no longer carries cells.
  *
- * Mastery enhances the crest — taller, with the marrow burning between the vertebrae — and
- * widens the hands' red corona; the marrow-red eye sockets flare to inflammation red.
+ * Detail: ribs and a sternum across the lower body (the marrow glows between them with the
+ * fever), cranial sutures, pores, and a bracelet of carpal beads round each hand.
+ * Mastered: a crown of bone fangs with marrow-red cores rings the crest, the four immune
+ * cells circle the host like a court, a marrow ring lights underfoot, the crest stacks taller
+ * and burns, the bracelets get red cores, the hands' corona widens and the eye sockets flare.
  */
 export class MarrowAvatar extends BaseAvatar {
   /** 0–1 of the inflammation bar. Lerped so a spike does not pop. */
@@ -1064,6 +1067,11 @@ export class MarrowAvatar extends BaseAvatar {
     g.fillEllipse(x, y + 14, 46 + heat * 26, 16);
     g.fillStyle(this.tint(MRW.inflame), a * (0.06 + heat * 0.36));
     g.fillCircle(x, y, 26 + heat * 8);
+    if (this.mastered) {
+      g.lineStyle(2, this.tint(MRW.marrowLit), alpha * (0.35 + 0.15 * Math.sin(this.t * 3)));
+      g.strokeEllipse(x, y + 14, 60, 19);
+      this.court(g, x, y, alpha, false);
+    }
   }
 
   /** The bone orb, painted the way `bakeOrb` bakes a sprite: dark rim → pale core, one glint. */
@@ -1087,6 +1095,55 @@ export class MarrowAvatar extends BaseAvatar {
     g.strokePath();
     g.fillStyle(this.tint(0xffffff), alpha * 0.85);
     g.fillEllipse(x - 6.5, y - 8, 8, 5);
+
+    // Ribs: three curved bars across the lower body with marrow glowing in the gaps — redder
+    // the hotter the fever runs.
+    const lean = Math.cos(this.facing) * 1.2;
+    const heat = this.inflam;
+    for (let i = 0; i < 3; i++) {
+      const ry = y + 6 + i * 4.2;
+      const rw = 15 - i * 2.6;
+      g.lineStyle(2.6, this.tint(heat > 0.5 ? MRW.inflame : MRW.marrowDeep), alpha * (0.35 + heat * 0.4));
+      g.beginPath(); g.arc(x + lean, ry - 3.2, rw, Math.PI * 0.2, Math.PI * 0.8); g.strokePath();
+      g.lineStyle(2, this.tint(MRW.boneDeep), alpha * 0.85);
+      g.beginPath(); g.arc(x + lean, ry - 4.8, rw, Math.PI * 0.22, Math.PI * 0.78); g.strokePath();
+      g.lineStyle(1, this.tint(MRW.serum), alpha * 0.5);
+      g.beginPath(); g.arc(x + lean, ry - 5.4, rw, Math.PI * 0.3, Math.PI * 0.6); g.strokePath();
+    }
+    // Sternum.
+    g.fillStyle(this.tint(MRW.boneShade), alpha * 0.9);
+    g.fillRoundedRect(x + lean - 1.6, y + 4, 3.2, 12, 1.5);
+    // Cranial sutures zig-zagging over the crown.
+    g.lineStyle(0.9, this.tint(MRW.boneDeep), alpha * 0.55);
+    g.beginPath();
+    g.moveTo(x - 15, y - 9);
+    for (let i = 1; i <= 8; i++) g.lineTo(x - 15 + i * 3.6, y - 12 - (i % 2) * 2 + Math.abs(i - 4) * 0.6);
+    g.strokePath();
+    // Pores.
+    for (let i = 0; i < 5; i++) {
+      g.fillStyle(this.tint(MRW.boneShade), alpha * 0.7);
+      g.fillCircle(x + [-14, -11, 13, 15, 10][i], y + [0, 5, -1, 4, 9][i], 0.8);
+    }
+  }
+
+  /** Mastered only: the four immune cells in miniature, circling the host like a court. */
+  private court(g: Phaser.GameObjects.Graphics, x: number, y: number, alpha: number, front: boolean): void {
+    const cols: [number, number][] = [
+      [MRW.macro, MRW.macroLit], [MRW.neut, MRW.neutLit], [MRW.tcell, MRW.tcellLit], [MRW.bcell, MRW.bcellLit],
+    ];
+    for (let i = 0; i < 4; i++) {
+      const ang = this.t * 1.1 + (i / 4) * Math.PI * 2;
+      const d = Math.sin(ang);
+      if ((d > 0) !== front) continue;
+      const cx = x + Math.cos(ang) * 28, cy = y + 4 + d * 9;
+      const r = 3.4 + d * 0.8;
+      g.fillStyle(this.tint(cols[i][0]), alpha * 0.3);
+      g.fillCircle(cx, cy, r + 2.5);
+      g.fillStyle(this.tint(cols[i][0]), alpha);
+      g.fillCircle(cx, cy, r);
+      g.fillStyle(this.tint(cols[i][1]), alpha * 0.9);
+      g.fillCircle(cx - r * 0.3, cy - r * 0.3, r * 0.4);
+    }
   }
 
   /**
@@ -1105,6 +1162,47 @@ export class MarrowAvatar extends BaseAvatar {
       g.fillStyle(this.tint(MRW.marrowLit), alpha * (0.16 + 0.06 * Math.sin(this.t * 4)));
       g.fillEllipse(x + lean, crown - 5 * s, 18 * s, 20 * s);
     }
+    // Bone bracelets: a ring of carpal beads round each hand, red-cored once mastered.
+    for (let h = 0; h < 2; h++) {
+      const hx = this.armX[h], hy = this.armY[h];
+      for (let i = 0; i < 5; i++) {
+        const ang = Math.PI * 0.55 + (i / 4) * Math.PI * 0.9;
+        const bx = hx + Math.cos(ang) * 8.4, by = hy + Math.sin(ang) * 8.4;
+        g.fillStyle(this.tint(MRW.boneDeep), alpha);
+        g.fillEllipse(bx, by, 4.2, 3.4);
+        g.fillStyle(this.tint(MRW.bone), alpha);
+        g.fillEllipse(bx - 0.3, by - 0.4, 3.2, 2.4);
+        if (m) {
+          g.fillStyle(this.tint(MRW.inflame), alpha * 0.9);
+          g.fillCircle(bx, by, 0.8);
+        }
+      }
+    }
+
+    if (m) {
+      // Mastered only: a crown of bone fangs ringing the crest, each with a marrow-red core,
+      // and the immune court in orbit.
+      for (let i = 0; i < 5; i++) {
+        const u = (i - 2) / 2;
+        const fx = x + lean + u * 10;
+        const fy = crown + 3 + Math.abs(u) * 2.5;
+        const fh = 9 - Math.abs(u) * 2.5;
+        g.fillStyle(this.tint(MRW.boneDeep), alpha);
+        g.fillTriangle(fx - 3, fy, fx + 3, fy, fx + u * 2, fy - fh);
+        g.fillStyle(this.tint(MRW.bone), alpha);
+        g.fillTriangle(fx - 2, fy - 0.5, fx + 2, fy - 0.5, fx + u * 2, fy - fh + 1.2);
+        g.fillStyle(this.tint(MRW.inflame), alpha * (0.6 + 0.3 * Math.sin(this.t * 4 + i)));
+        g.fillCircle(fx + u * 0.6, fy - fh * 0.35, 1.1);
+      }
+      g.fillStyle(this.tint(MRW.boneDeep), alpha);
+      g.fillEllipse(x + lean, crown + 3.5, 26, 4.4);
+      g.fillStyle(this.tint(MRW.bone), alpha);
+      g.fillEllipse(x + lean, crown + 3, 24, 3);
+      g.fillStyle(this.tint(MRW.marrow), alpha);
+      g.fillCircle(x + lean, crown + 3, 1.8);
+      this.court(g, x, y, alpha, true);
+    }
+
     for (let i = 0; i < 3; i++) {
       const vx = x + lean * (1 + i * 0.5);
       const vy = crown - i * 4.2 * s + Math.sin(this.t * 2 + i) * 0.6;

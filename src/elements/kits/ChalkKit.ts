@@ -9,6 +9,7 @@ import {
   CHK, ChalkAvatar, ChalkColorFn, ChalkFx, chalkBlob, chalkEyes, chalkLegs, chalkLine, chalkStick,
   grain,
 } from './ChalkVisuals';
+import { FONT_DISPLAY } from '../../ui/Theme';
 
 type Owner = 'player' | 'npc';
 type Slot = 'e' | 'r' | 'f' | 'q';
@@ -2545,7 +2546,14 @@ export class ChalkKit implements SummonPurgeTarget {
     }
   }
 
-  /** Chalk in hand, what is on the floor, and the shield's remaining board. */
+  /**
+   * Chalk in hand, what is on the floor, and the shield's remaining board.
+   *
+   * Drawn as a little schoolroom slate: a wooden frame, a dark board ghosted with old erased
+   * strokes, the stick in hand propped on the left and the Masterpiece colours lying in the
+   * chalk ledge along the bottom. The shield is a second slate with its HP kept as chalk tally
+   * marks — four strokes and a slash — so a shield running down is literally being rubbed out.
+   */
   private paintHud(playerIsChalk: boolean): void {
     const g = this.hudGfx;
     if (!g) return;
@@ -2559,42 +2567,125 @@ export class ChalkKit implements SummonPurgeTarget {
     const x = this.left + 8;
     const y = this.top + 8;
     const held = this.heldChalk('player');
+    const P = this.pcol;
+    const t = this.vizT;
+    const W = 184, H = 42;
+    const WOOD = 0x6b4527, WOOD_LIT = 0x9a6a3e, WOOD_DARK = 0x3a2412;
 
-    g.fillStyle(0x05070a, 0.85);
-    g.fillRoundedRect(x - 4, y - 4, 176, 34, 4);
-    g.lineStyle(1.5, this.pcol(held), 0.7);
-    g.strokeRoundedRect(x - 4, y - 4, 176, 34, 4);
+    const slate = (bx: number, by: number, bw: number, bh: number) => {
+      g.fillStyle(0x000000, 0.4);
+      g.fillRect(bx + 2, by + 3, bw, bh);
+      // Frame: four planks with a lit top edge and a dark inner bevel.
+      g.fillStyle(WOOD_DARK, 1);
+      g.fillRect(bx, by, bw, bh);
+      g.fillStyle(WOOD, 1);
+      g.fillRect(bx + 1, by + 1, bw - 2, bh - 2);
+      g.fillStyle(WOOD_LIT, 0.8);
+      g.fillRect(bx + 1, by + 1, bw - 2, 1.5);
+      g.fillRect(bx + 1, by + 1, 1.5, bh - 2);
+      // Wood grain.
+      g.lineStyle(0.6, WOOD_DARK, 0.45);
+      for (let i = 0; i < 3; i++) g.lineBetween(bx + 6 + i * bw * 0.31, by + 2, bx + 14 + i * bw * 0.31, by + 2);
+      // The board itself, recessed.
+      g.fillStyle(P(CHK.board), 1);
+      g.fillRect(bx + 4, by + 4, bw - 8, bh - 8);
+      g.fillStyle(P(CHK.slate), 0.85);
+      g.fillRect(bx + 5, by + 5, bw - 10, bh - 10);
+      g.lineStyle(1, 0x000000, 0.5);
+      g.lineBetween(bx + 4, by + 4.5, bx + bw - 4, by + 4.5);
+      // Ghosts of erased lessons: wide faint smears.
+      g.fillStyle(P(CHK.dust), 0.05);
+      g.fillEllipse(bx + bw * 0.55, by + bh * 0.5, bw * 0.5, bh * 0.45);
+      g.fillEllipse(bx + bw * 0.25, by + bh * 0.4, bw * 0.3, bh * 0.35);
+      g.lineStyle(1, P(CHK.dust), 0.07);
+      g.lineBetween(bx + bw * 0.4, by + 8, bx + bw * 0.8, by + 11);
+      g.lineBetween(bx + bw * 0.45, by + 13, bx + bw * 0.7, by + 12);
+      // Brass corner tacks.
+      g.fillStyle(0xc9a35a, 1);
+      for (const [cx, cy] of [[bx + 2.5, by + 2.5], [bx + bw - 2.5, by + 2.5], [bx + 2.5, by + bh - 2.5], [bx + bw - 2.5, by + bh - 2.5]]) {
+        g.fillCircle(cx, cy, 1.3);
+      }
+    };
 
-    // The stick currently in hand, then the Masterpiece colours as a palette. Prodigy adds a
-    // fourth stick to it, so the rack is only as wide as the palette actually is.
-    chalkStick(g, this.pcol, x + 16, y + 13, -0.5, 26, held, 1);
+    slate(x - 6, y - 6, W, H);
+    // The chalk ledge along the foot of the board.
+    const ledgeY = y + H - 13;
+    g.fillStyle(WOOD_DARK, 1);
+    g.fillRect(x - 8, ledgeY + 3, W + 4, 6);
+    g.fillStyle(WOOD, 1);
+    g.fillRect(x - 8, ledgeY + 3, W + 4, 4);
+    g.fillStyle(WOOD_LIT, 0.9);
+    g.fillRect(x - 8, ledgeY + 3, W + 4, 1.2);
+    // Dust that has settled on the ledge.
+    for (let i = 0; i < 9; i++) {
+      g.fillStyle(P(CHK.dust), 0.25 + 0.15 * ((i * 37) % 3));
+      g.fillCircle(x + 6 + i * 19 + ((i * 13) % 7), ledgeY + 3.4, 0.9 + ((i * 7) % 3) * 0.4);
+    }
+
+    // The stick in hand stands propped at the left, glowing faintly in its own colour.
+    g.fillStyle(P(held), 0.14 + 0.06 * Math.sin(t * 3));
+    g.fillCircle(x + 13, y + 12, 13);
+    chalkStick(g, P, x + 13, y + 12, -0.75, 24, held, 1);
+    // Underline scrawled beneath the label in the held colour.
+    chalkLine(g, P, x + 31, y + 25, x + 31 + 58 + Math.sin(t * 0.7) * 2, y + 24, 1.4, held, 0.6, 7);
+
+    // Then the Masterpiece colours lying in the ledge. Prodigy adds a fourth stick, so the rack
+    // is only as wide as the palette actually is.
     const palette: MpKind[] = this.up('player', 'q') ? MP_KINDS : ['green', 'orange', 'teal'];
     palette.forEach((k, i) => {
-      const px = x + 118 + (i - (palette.length - 3)) * 18;
+      const px = x + 128 + (i - (palette.length - 3)) * 18;
       const on = s.mpOn && s.mpChalk === k;
-      chalkStick(g, this.pcol, px, y + 13, -1.2, on ? 22 : 15, TONE[k], s.mpOn ? (on ? 1 : 0.4) : 0.22);
+      const a = s.mpOn ? (on ? 1 : 0.45) : 0.3;
+      if (on) {
+        // The live colour lifts out of the ledge and glows.
+        g.fillStyle(P(TONE[k]), 0.25 + 0.12 * Math.sin(t * 5));
+        g.fillCircle(px, ledgeY - 6, 10);
+        chalkStick(g, P, px, ledgeY - 6 + Math.sin(t * 4) * 1, -1.2, 20, TONE[k], a);
+      } else {
+        chalkStick(g, P, px, ledgeY + 1, 0.12, 14, TONE[k], a);
+      }
     });
 
-    // Shield board, only while there is one. Red pieces tint it, because a shield that hits
+    // Shield slate, only while there is one. Red pieces tint it, because a shield that hits
     // back is a different object to hide behind than one that only soaks.
     if (s.shieldNodes.length) {
-      const w = 176;
-      const by = y + 36;
-      g.fillStyle(0x05070a, 0.85);
-      g.fillRoundedRect(x - 4, by - 3, w, 12, 3);
-      g.fillStyle(this.pcol(CHK.slate), 0.9);
-      g.fillRect(x, by, w - 8, 6);
-      g.fillStyle(this.pcol(s.shieldBoom > 0.5 ? CHK.red : CHK.white), 1);
-      g.fillRect(x, by, (w - 8) * Phaser.Math.Clamp(s.shieldHp / s.shieldMax, 0, 1), 6);
+      const by = y + H - 2;
+      const bw = W, bh = 18;
+      slate(x - 6, by, bw, bh);
+      const ink = s.shieldBoom > 0.5 ? CHK.red : CHK.white;
+      const ratio = Phaser.Math.Clamp(s.shieldHp / s.shieldMax, 0, 1);
+      const ix = x + 2, iw = bw - 20;
+      const total = 30;
+      const shown = Math.ceil(total * ratio);
+      for (let i = 0; i < shown; i++) {
+        const grp = Math.floor(i / 5);
+        const j = i % 5;
+        const gx = ix + grp * (iw / 6);
+        const seed = 31 + i * 7;
+        if (j < 4) {
+          const sx = gx + j * 3.6;
+          chalkLine(g, P, sx, by + 5.5, sx + 0.8, by + bh - 5.5, 1.1, ink, 0.9, seed);
+        } else {
+          chalkLine(g, P, gx - 1.5, by + bh - 6, gx + 13, by + 6, 1.1, ink, 0.9, seed);
+        }
+      }
+      // The last mark flickers as if it is about to be rubbed out.
+      if (shown > 0 && ratio < 1) {
+        const i = shown - 1;
+        const gx = ix + Math.floor(i / 5) * (iw / 6) + (i % 5) * 3.6;
+        g.fillStyle(P(CHK.dust), 0.18 + 0.12 * Math.sin(t * 9));
+        g.fillCircle(gx + 1, by + bh / 2, 4);
+      }
     }
 
     if (!this.hudLabel) {
-      this.hudLabel = this.api.scene.add.text(x + 34, y + 6, '', {
+      this.hudLabel = this.api.scene.add.text(x + 31, y, '', {
         fontSize: '10px',
-        fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+        fontFamily: FONT_DISPLAY,
         color: '#f4f1e6',
-        stroke: '#05070a',
+        stroke: '#14181b',
         strokeThickness: 3,
+        lineSpacing: -1,
       }).setDepth(21).setScrollFactor(0);
     }
     const perma = this.marks.filter((m) => m.owner === 'player' && m.kind === 'perma').length;

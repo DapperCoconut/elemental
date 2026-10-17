@@ -5,8 +5,8 @@ import type { CustomStatus } from './StatusHudKit';
 import { stealBuffs } from '../../combat/StatusEffects';
 import { Sfx } from '../../audio';
 import {
-  GluttonyAvatar, HAR, HarvestColorFn, HarvestFx, MoldCell, corruptHeart, corruptionVeil, crowShape,
-  fleshChunk, moldLayer, seedShape, sickleShape, sickleTrail,
+  CookDish, GluttonyAvatar, HAR, HarvestColorFn, HarvestFx, MoldCell, cookDish, corruptHeart, corruptionVeil,
+  crowShape, fleshChunk, moldLayer, moldWorm, poisonVial, rotBullet, seedShape, sickleShape, sickleTrail,
 } from './GluttonyVisuals';
 
 type Owner = 'player' | 'npc';
@@ -106,6 +106,50 @@ const REAP_VULN = 1.15;
 const EXECUTE_BASE = 0.10;
 const EXECUTE_MAX = 0.25;
 
+// ── Shop upgrades ────────────────────────────────────────────────────────────
+// Click+ Recursive: the second loop is thrown from wherever the scarecrow is when the first one
+// comes home, toward wherever the cursor is then.
+// E+ Vile Rot — grabbing mold and worms.
+const GRAB_ROLL_MS = 1000;
+const GRAB_CHANCE = 0.18;
+const GRAB_STUN_MS = 1000;
+const GRAB_DAMAGE = 10;
+/** After a grab the same body cannot be grabbed again for this long. */
+const GRAB_REARM_MS = 3500;
+const WORM_EVERY_MS = 3500;
+const WORMS_MAX = 3;
+const WORM_LIFE_MS = 8000;
+const WORM_EMERGE_MS = 450;
+const WORM_FIRE_MS = 1200;
+const WORM_RANGE = 380;
+const WORM_SHOT_SPEED = 300;
+const WORM_SHOT_LIFE_MS = 1600;
+const WORM_SHOT_DAMAGE = 5;
+const WORM_SHOT_R = 6;
+// R+ Poison Payload.
+const VIAL_FALL_MS = 240;
+const VIAL_R = 48;
+const VIAL_DAMAGE = 12;
+const POISON_MS = 5000;
+const POISON_DPS = 4;
+const POISON_TICK_MS = 500;
+// F+ Corrupt Cooking.
+const JERKY_HEAL = 100;
+const JERKY_MS = 15_000;
+const BROTH_MS = 20_000;
+const BROTH_MULT = 0.67;
+const FEAST_MAX_HP = 150;
+const FEAST_HEAL = 150;
+const DISHES: { dish: CookDish; name: string; cost: number; blurb: string }[] = [
+  { dish: 'jerky', name: 'JERKY', cost: 1, blurb: '+100 HP / 15s' },
+  { dish: 'broth', name: 'MEAT BROTH', cost: 2, blurb: '-33% damage / 20s' },
+  { dish: 'feast', name: 'VILE FEAST', cost: 3, blurb: '+150 max HP' },
+];
+const MENU_Y = 62;
+const MENU_W = 118;
+const MENU_H = 46;
+const MENU_GAP = 8;
+
 // ── Bot ──────────────────────────────────────────────────────────────────────
 const NPC_HEART_AIM_R = LOOP_MAX;
 
@@ -127,6 +171,43 @@ interface Sickle {
   y: number;
   hit: Set<Fighter>;
   trail: { x: number; y: number }[];
+  /** Click+ Recursive: this is the second loop. */
+  recursed: boolean;
+}
+
+/** E+ Vile Rot: a worm reared up out of the mold. */
+interface Worm {
+  owner: Owner;
+  x: number;
+  y: number;
+  born: number;
+  nextShot: number;
+  ang: number;
+  shotAt: number;
+}
+
+interface RotShot {
+  owner: Owner;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  until: number;
+}
+
+/** R+ Poison Payload: a vial on its way down. */
+interface VialDrop {
+  owner: Owner;
+  x: number;
+  y: number;
+  at: number;
+}
+
+/** Every vial that splashed a body is one stack of 4/s, each with its own clock. */
+interface Poison {
+  owner: Owner;
+  stacks: number[];
+  nextTick: number;
 }
 
 interface Seed {
@@ -160,6 +241,8 @@ interface Flock {
   cx: number;
   cy: number;
   crows: Crow[];
+  /** R+ Poison Payload: the crows are still carrying their vials. */
+  vials: boolean;
 }
 
 interface Swing {
@@ -185,12 +268,19 @@ interface Side {
   stolenUntil: number;
   heartTimer: number;
   swing: Swing | null;
+  // ── Shop upgrades ──
+  wormTimer: number;
+  /** F+ Corrupt Cooking: Meat Broth's armour, and the Jerky heals still running. */
+  brothUntil: number;
+  jerky: number[];
+  jerkyFrac: number;
 }
 
 function makeSide(owner: Owner): Side {
   return {
     owner, aimX: 0, aimY: 0, arc: 1, flesh: 0, heartRegenUntil: 0, corruptFrac: 0, healFrac: 0,
     stolenDmg: 1, stolenSpeed: 1, stolenUntil: 0, heartTimer: 0, swing: null,
+    wormTimer: 0, brothUntil: 0, jerky: [], jerkyFrac: 0,
   };
 }
 
@@ -232,6 +322,8 @@ export interface GluttonyArenaApi {
   setStatusIndicator(id: string, status: CustomStatus | null): void;
   /** Online: relay a press that never touches a cooldown (the arc flip) as a pseudo-cast. */
   broadcast(id: string): void;
+  /** The player's shop upgrade, or the opponent's (online handshake / Hard+ bot loadout). */
+  hasUpgrade(owner: Owner, slot: string): boolean;
 }
 
 // ── GluttonyKit ──────────────────────────────────────────────────────────────
@@ -292,6 +384,22 @@ export class GluttonyKit {
   /** Reaping Hour stacks per body; written into `gluttonyIncomingMult` every frame. */
   private reaped = new Map<Fighter, number>();
   private wasRight = false;
+
+  // ── Shop upgrades ──
+  private worms: Worm[] = [];
+  private shots: RotShot[] = [];
+  private drops: VialDrop[] = [];
+  private poisons = new Map<Fighter, Poison>();
+  /** E+: when each body may next be grabbed, and the once-a-second roll clock. */
+  private grabRearm = new Map<Fighter, number>();
+  private grabAcc = 0;
+  /** Bodies a rot hand is holding still, until (scene time). */
+  private stuns = new Map<Fighter, number>();
+  /** F+: the cooking menu (screen space), and the press the menu swallowed. */
+  private menuGfx: Phaser.GameObjects.Graphics | null = null;
+  private menuTexts: Phaser.GameObjects.Text[] = [];
+  private wasLeft = false;
+  private pressSpent = false;
 
   constructor(api: GluttonyArenaApi) {
     this.api = api;
@@ -360,6 +468,40 @@ export class GluttonyKit {
     scene.tweens.add({ targets: t, y: y - 22, alpha: 0, duration: 1100, ease: 'Cubic.easeOut', onComplete: () => t.destroy() });
   }
 
+  /** A shop upgrade, on a side that is actually playing Harvest. */
+  private up(owner: Owner, slot: string): boolean {
+    return this.isHarvest(owner) && this.api.hasUpgrade(owner, slot);
+  }
+
+  /** Online: relay something only the owner's sim decides (a roll, a spawn, a recast). */
+  private relay(owner: Owner, id: string): void {
+    if (owner === 'player' && this.api.isOnline) this.api.broadcast(id);
+  }
+
+  /**
+   * E+ Vile Rot's hold. Same shape as Sound's stun: a cast lock, the generic `stunnedUntil`
+   * (mirrored online as `stunned`, so a peer we grab freezes on their own machine) and, for a
+   * body this sim moves, `earthStunnedUntil` and the post-movement hold in `updateStuns`.
+   */
+  private stun(owner: Owner, f: Fighter, ms: number): void {
+    if (this.isReplica(owner)) return;
+    this.stuns.set(f, Math.max(this.stuns.get(f) ?? 0, this.now + ms));
+    f.applyDisarm(ms);
+    f.stunnedUntil = Math.max(f.stunnedUntil, Date.now() + ms);
+    if (f !== this.api.player) f.earthStunnedUntil = Math.max(f.earthStunnedUntil, this.now + ms);
+  }
+
+  /** Q+ Endless Harvest: a Harvest kill hands Reaping Hour straight back. */
+  private onKill(owner: Owner, t: Fighter): void {
+    if (this.isReplica(owner) || !this.up(owner, 'q')) return;
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    f.resetCooldown('harvest-reap');
+    this.fx(owner).ring(f.x, f.y, 10, 54, 460, HAR.glow, 4, 12);
+    this.announce(t.x, t.y - 76, '🌾 ENDLESS HARVEST', HAR.glow, 12);
+    Sfx.playAt('ui-click', f.x, { rate: 0.55, volume: 0.6 });
+  }
+
   private corruptCap(f: Fighter): number { return Math.max(150, f.maxHp * CORRUPT_CAP_SHARE); }
 
   /** Corruption as 0–1. */
@@ -395,8 +537,10 @@ export class GluttonyKit {
   private hit(owner: Owner, t: Fighter, base: number, opts?: DamageOpts): void {
     const s = this.side(owner);
     const dmg = base * (this.now < s.stolenUntil ? s.stolenDmg : 1);
+    const wasAlive = t.hp > 0;
     t.lastIncomingDamage = 0;
     t.takeDamage(dmg, opts);
+    if (wasAlive && t.hp <= 0) this.onKill(owner, t);
     const dealt = t.lastIncomingDamage;
     const rot = this.rotOf(t);
     const f = this.fighter(owner);
@@ -425,9 +569,23 @@ export class GluttonyKit {
     this.reaped.clear();
     this.wasRight = false;
     this.vizT = 0;
+    this.worms = [];
+    this.shots = [];
+    this.drops = [];
+    this.poisons.clear();
+    this.grabRearm.clear();
+    this.grabAcc = 0;
+    this.stuns.clear();
+    this.wasLeft = false;
+    this.pressSpent = false;
+    this.menuGfx?.destroy(); this.menuGfx = null;
+    for (const t of this.menuTexts) t.destroy();
+    this.menuTexts = [];
 
     for (const f of this.allFighters()) {
       f.gluttonyIncomingMult = 1;
+      f.harvestIncomingMult = 1;
+      f.harvestPoisonUntil = 0;
       f.harvestCorruption = 0;
       f.corruptHp = 0;
       f.onCorruptAbsorb = null;
@@ -441,6 +599,8 @@ export class GluttonyKit {
     this.api.setStatusIndicator('harvest-flesh', null);
     this.api.setStatusIndicator('harvest-stolen', null);
     this.api.setStatusIndicator('harvest-arc', null);
+    this.api.setStatusIndicator('harvest-broth', null);
+    this.api.setStatusIndicator('harvest-jerky', null);
   }
 
   private ensureLayers(): void {
@@ -483,10 +643,26 @@ export class GluttonyKit {
 
     if (flip) this.flipArc('player');
 
+    // F+ Corrupt Cooking: a press that starts on the menu cooks, and never throws a sickle.
+    const left = pointer.leftButtonDown();
+    const pressed = left && !this.wasLeft;
+    this.wasLeft = left;
+    if (!left) this.pressSpent = false;
+    if (pressed && this.up('player', 'f')) {
+      const i = this.dishUnder(mouseX, mouseY);
+      if (i >= 0) {
+        this.pressSpent = true;
+        this.cook('player', i);
+      }
+    }
+
     const ctx = this.api.buildPlayerContext(mouseX, mouseY);
-    if (pointer.leftButtonDown()) p.castAbility('harvest-sickle', ctx);
+    if (left && !this.pressSpent) p.castAbility('harvest-sickle', ctx);
     if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('harvest-sow', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('harvest-frenzy', ctx);
+    if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) {
+      // R+ Poison Payload: while the crows still carry their vials, R lets go of them instead.
+      if (!this.dropVials('player')) p.castAbility('harvest-frenzy', ctx);
+    }
     if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('harvest-consume', ctx);
     if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('harvest-reap', ctx);
   }
@@ -502,11 +678,26 @@ export class GluttonyKit {
     }
   }
 
-  /** Online: the opponent's presses that touch no cooldown. */
+  /**
+   * Online: the opponent's presses that touch no cooldown, and the upgrade events only their sim
+   * decides. Whatever lands on us from these is visual: the owner resolved the damage and the
+   * stun/poison on its replica of us, and both reach us through the hit relay and the mirror.
+   */
   replayNet(id: string): void {
     const s = this.sides.npc;
     if (id === 'harvest-arc-r' && s.arc < 0) this.flipArc('npc');
     else if (id === 'harvest-arc-l' && s.arc > 0) this.flipArc('npc');
+    else if (id === 'harvest-vials') this.dropVials('npc');
+    else if (id.startsWith('harvest-grab:')) {
+      const [, x, y] = id.split(':').map(Number);
+      if (Number.isFinite(x) && Number.isFinite(y)) this.grabFx('npc', x, y);
+    } else if (id.startsWith('harvest-worm:')) {
+      const [, x, y] = id.split(':').map(Number);
+      if (Number.isFinite(x) && Number.isFinite(y)) this.spawnWorm('npc', x, y);
+    } else if (id.startsWith('harvest-cook:')) {
+      const i = Number(id.split(':')[1]);
+      if (DISHES[i]) this.serve('npc', i);
+    }
   }
 
   // ── Ability entry points (called from build*Context) ───────────────────────
@@ -527,7 +718,7 @@ export class GluttonyKit {
     this.sickles.push({
       owner, ox: f.x, oy: f.y, cx: f.x + Math.cos(ang) * R, cy: f.y + Math.sin(ang) * R, R,
       start: this.now, phi0: ang + Math.PI, side: s.arc, dur: LOOP_BASE_MS + D * LOOP_MS_PER_PX,
-      x: f.x, y: f.y, hit: new Set(), trail: [],
+      x: f.x, y: f.y, hit: new Set(), trail: [], recursed: false,
     });
     this.avatar(owner)?.play('punch', ang);
     this.fx(owner).sickleThrow(f.x + Math.cos(ang) * 18, f.y + Math.sin(ang) * 18, ang);
@@ -568,7 +759,7 @@ export class GluttonyKit {
     const f = this.fighter(owner);
     if (!this.alive(f)) return;
     this.ensureLayers();
-    const flock: Flock = { owner, until: this.now + CROW_MS, cx: tx, cy: ty, crows: [] };
+    const flock: Flock = { owner, until: this.now + CROW_MS, cx: tx, cy: ty, crows: [], vials: this.up(owner, 'r') };
     for (let i = 0; i < CROWS; i++) {
       flock.crows.push({
         owner, phase: (i / CROWS) * Math.PI * 2, x: f.x, y: f.y - 10, ang: Math.atan2(ty - f.y, tx - f.x),
@@ -654,7 +845,8 @@ export class GluttonyKit {
     const playerIs = this.isHarvest('player');
     const npcIs = this.isHarvest('npc');
     const anyState = this.sickles.length || this.seeds.length || this.hearts.length || this.flocks.length
-      || this.reaped.size || this.api.player?.harvestCorruption;
+      || this.reaped.size || this.api.player?.harvestCorruption || this.worms.length || this.shots.length
+      || this.poisons.size || this.stuns.size || this.drops.length;
     if (!playerIs && !npcIs && !anyState) return;
 
     this.ensureLayers();
@@ -671,8 +863,18 @@ export class GluttonyKit {
     this.updateFlocks(dt);
     this.updateSelf(dt);
     this.writeVulnerability();
+    // Shop upgrades.
+    this.updateGrabs(delta);
+    this.updateWorms(delta);
+    this.updateShots(dt);
+    this.updateDrops();
+    this.updatePoisons();
+    this.updateCooking(dt);
+    this.updateNpcUpgradePlay();
+    this.updateStuns();
 
     this.paint();
+    this.paintMenu(playerIs);
     this.updateAvatars(delta);
     this.pushStatuses(playerIs);
   }
@@ -717,6 +919,7 @@ export class GluttonyKit {
     // Pierced, and five times what is left: Justice's verdict pattern. Deliberately not wrapped in
     // `asNonAllyDamage`, so a co-op ally in the npc slot can never be executed by its own side.
     t.takeDamage(t.hp * 5 + 50, { pierce: true });
+    if (t.hp <= 0) this.onKill(owner, t);
   }
 
   /**
@@ -759,10 +962,39 @@ export class GluttonyKit {
         this.harvestHeart(sk.owner, ht);
       }
       if (u >= 1) {
+        // Click+ Recursive: round the scarecrow once more and out to the cursor *now*.
+        if (!sk.recursed && this.alive(f) && this.up(sk.owner, 'click')) {
+          this.recurse(sk, f);
+          continue;
+        }
         this.sickles.splice(i, 1);
         if (this.alive(f)) this.fx(sk.owner).sickleCatch(f.x, f.y);
       }
     }
+  }
+
+  /** Re-throw a returning sickle as its second loop: same curl, fresh aim, fresh cuts. */
+  private recurse(sk: Sickle, f: Fighter): void {
+    const s = this.side(sk.owner);
+    if (sk.owner === 'npc') {
+      const t = this.targetsOf('npc')[0];
+      if (t) { s.aimX = t.x; s.aimY = t.y; }
+    }
+    const ang = Math.atan2(s.aimY - f.y, s.aimX - f.x);
+    const D = Phaser.Math.Clamp(Phaser.Math.Distance.Between(f.x, f.y, s.aimX, s.aimY), LOOP_MIN, LOOP_MAX);
+    const R = D / 2;
+    sk.recursed = true;
+    sk.ox = f.x;
+    sk.oy = f.y;
+    sk.cx = f.x + Math.cos(ang) * R;
+    sk.cy = f.y + Math.sin(ang) * R;
+    sk.R = R;
+    sk.start = this.now;
+    sk.phi0 = ang + Math.PI;
+    sk.dur = LOOP_BASE_MS + D * LOOP_MS_PER_PX;
+    sk.hit.clear();
+    this.fx(sk.owner).sickleRecurse(f.x, f.y, sk.side);
+    Sfx.playAt('whoosh', f.x, { rate: 1.7, volume: 0.4 });
   }
 
   private harvestHeart(owner: Owner, ht: Heart): void {
@@ -971,8 +1203,8 @@ export class GluttonyKit {
       if (this.now < s.heartRegenUntil) this.addCorruptHp(owner, HEART_REGEN_PER_SEC * dt);
       f.corruptHp = Math.min(f.corruptHp, this.corruptCap(f));
       if (this.now >= s.stolenUntil) { s.stolenDmg = 1; s.stolenSpeed = 1; }
-      // Below 75: a piece of flesh goes straight in.
-      if (s.flesh > 0 && f.hp < FLESH_EAT_BELOW) {
+      // Below 75: a piece of flesh goes straight in — unless it is meant for the pot (F+).
+      if (s.flesh > 0 && f.hp < FLESH_EAT_BELOW && !this.up(owner, 'f')) {
         s.flesh--;
         f.corruptHp = Math.min(this.corruptCap(f), f.corruptHp + FLESH_CORRUPT_HP);
         this.fx(owner).eatFlesh(f.x, f.y);
@@ -998,6 +1230,365 @@ export class GluttonyKit {
     for (const [t, n] of this.reaped) {
       if (!t.active) { this.reaped.delete(t); continue; }
       t.gluttonyIncomingMult = Math.pow(REAP_VULN, n);
+    }
+  }
+
+  // ── E+ Vile Rot ────────────────────────────────────────────────────────────
+
+  /** Once a second, every enemy on rotting mold may be seized by it. The owner's sim rolls. */
+  private updateGrabs(delta: number): void {
+    this.grabAcc += delta;
+    if (this.grabAcc < GRAB_ROLL_MS) return;
+    this.grabAcc = 0;
+    for (const owner of BOTH) {
+      if (this.isReplica(owner) || !this.up(owner, 'e')) continue;
+      for (const t of this.targetsOf(owner)) {
+        if (this.moldAt(owner, t.x, t.y + 8) < MOLD_BITE_AT) continue;
+        if (this.now < (this.grabRearm.get(t) ?? 0)) continue;
+        if (Math.random() >= GRAB_CHANCE) continue;
+        this.grabRearm.set(t, this.now + GRAB_REARM_MS);
+        this.stun(owner, t, GRAB_STUN_MS);
+        this.hit(owner, t, GRAB_DAMAGE, { sourceX: t.x, sourceY: t.y + 10 });
+        this.grabFx(owner, t.x, t.y);
+        this.relay(owner, `harvest-grab:${Math.round(t.x)}:${Math.round(t.y)}`);
+      }
+    }
+    for (const [f, at] of [...this.grabRearm]) {
+      if (!f.active || this.now > at + 10_000) this.grabRearm.delete(f);
+    }
+  }
+
+  private grabFx(owner: Owner, x: number, y: number): void {
+    this.ensureLayers();
+    this.fx(owner).rotGrab(x, y, GRAB_STUN_MS);
+    this.announce(x, y - 52, '✋ GRABBED', HAR.purpleLit, 12);
+    Sfx.playAt('claw', x, { rate: 0.5, volume: 0.8 });
+  }
+
+  /** Where a new worm comes up: the mature cell of `owner`'s mold nearest an enemy in range. */
+  private wormSpot(owner: Owner): { x: number; y: number } | undefined {
+    if (!this.grids) return undefined;
+    const grid = this.grids[owner];
+    const mature: number[] = [];
+    for (let k = 0; k < grid.length; k++) if (grid[k] >= 1) mature.push(k);
+    if (mature.length < 8) return undefined;
+    const taken = (x: number, y: number): boolean => this.worms.some((w) => Math.abs(w.x - x) < CELL * 2 && Math.abs(w.y - y) < CELL * 2);
+    const cellXY = (k: number) => ({ x: (k % this.gridW + 0.5) * CELL, y: (Math.floor(k / this.gridW) + 0.5) * CELL });
+    const t = this.nearestEnemy(owner);
+    let best: { x: number; y: number } | undefined;
+    let bestD = Infinity;
+    for (const k of mature) {
+      const c = cellXY(k);
+      if (taken(c.x, c.y)) continue;
+      // Not right under them — a worm wants a clear line to spit along.
+      const d = t ? Phaser.Math.Distance.Between(c.x, c.y, t.x, t.y) : Math.random() * 1000;
+      if (t && (d < 50 || d > WORM_RANGE * 0.8)) continue;
+      if (d < bestD) { bestD = d; best = c; }
+    }
+    if (best) return best;
+    const c = cellXY(mature[Math.floor(Math.random() * mature.length)]);
+    return taken(c.x, c.y) ? undefined : c;
+  }
+
+  private spawnWorm(owner: Owner, x: number, y: number): void {
+    this.ensureLayers();
+    this.worms.push({ owner, x, y, born: this.now, nextShot: this.now + WORM_EMERGE_MS + 200, ang: Math.PI / 2, shotAt: 0 });
+    this.fx(owner).wormEmerge(x, y);
+    Sfx.playAt('bubble', x, { rate: 0.6, volume: 0.5 });
+  }
+
+  private updateWorms(delta: number): void {
+    for (const owner of BOTH) {
+      if (this.isReplica(owner) || !this.up(owner, 'e')) continue;
+      const s = this.side(owner);
+      s.wormTimer += delta;
+      if (s.wormTimer < WORM_EVERY_MS) continue;
+      s.wormTimer = 0;
+      if (this.worms.filter((w) => w.owner === owner).length >= WORMS_MAX) continue;
+      const spot = this.wormSpot(owner);
+      if (!spot) continue;
+      this.spawnWorm(owner, spot.x, spot.y);
+      this.relay(owner, `harvest-worm:${Math.round(spot.x)}:${Math.round(spot.y)}`);
+    }
+    for (let i = this.worms.length - 1; i >= 0; i--) {
+      const w = this.worms[i];
+      const age = this.now - w.born;
+      // A replica's worm lives out its clock: whether its mold is still there is the owner's call.
+      const starved = !this.isReplica(w.owner) && this.moldAt(w.owner, w.x, w.y) < 0.5;
+      if (age > WORM_LIFE_MS || starved || !this.isHarvest(w.owner)) {
+        this.fx(w.owner).wormSink(w.x, w.y);
+        this.worms.splice(i, 1);
+        continue;
+      }
+      const hx = w.x;
+      const hy = w.y - 30;
+      let t: Fighter | null = null;
+      let bestD = WORM_RANGE;
+      for (const c of this.targetsOf(w.owner)) {
+        const d = Phaser.Math.Distance.Between(hx, hy, c.x, c.y);
+        if (d < bestD) { bestD = d; t = c; }
+      }
+      if (!t) continue;
+      const want = Math.atan2(t.y - hy, t.x - hx);
+      w.ang = Phaser.Math.Angle.RotateTo(w.ang, want, 0.15);
+      if (age < WORM_EMERGE_MS || this.now < w.nextShot) continue;
+      w.nextShot = this.now + WORM_FIRE_MS;
+      w.shotAt = this.now;
+      this.shots.push({
+        owner: w.owner, x: hx + Math.cos(want) * 6, y: hy + Math.sin(want) * 6,
+        vx: Math.cos(want) * WORM_SHOT_SPEED, vy: Math.sin(want) * WORM_SHOT_SPEED, until: this.now + WORM_SHOT_LIFE_MS,
+      });
+      Sfx.playAt('splash', hx, { rate: 1.6, volume: 0.25 });
+    }
+  }
+
+  private updateShots(dt: number): void {
+    const W = this.api.width;
+    const H = this.api.height;
+    for (let i = this.shots.length - 1; i >= 0; i--) {
+      const b = this.shots[i];
+      const px = b.x;
+      const py = b.y;
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      let gone = this.now >= b.until || b.x < -20 || b.y < -20 || b.x > W + 20 || b.y > H + 20;
+      if (!gone) {
+        for (const t of this.targetsOf(b.owner)) {
+          if (this.segDist(px, py, b.x, b.y, t.x, t.y) > WORM_SHOT_R + this.bodyR(t)) continue;
+          if (!this.isReplica(b.owner)) this.hit(b.owner, t, WORM_SHOT_DAMAGE, { sourceX: px, sourceY: py });
+          this.fx(b.owner).rotBulletHit(b.x, b.y, Math.atan2(b.vy, b.vx));
+          gone = true;
+          break;
+        }
+      }
+      if (gone) this.shots.splice(i, 1);
+    }
+  }
+
+  /** Bodies a rot hand has hold of stay put, post-movement. */
+  private updateStuns(): void {
+    for (const [f, until] of this.stuns) {
+      if (this.now >= until || !f.active) { this.stuns.delete(f); continue; }
+      // An online replica's motion is streamed; its own sim freezes it off the mirrored stun.
+      if (this.api.isOnline && f === this.api.npc) continue;
+      (f.body as Phaser.Physics.Arcade.Body | null)?.setVelocity(0, 0);
+    }
+    // A peer's grab reaches us as the mirrored `stunnedUntil`; nothing else holds us still for it.
+    const p = this.api.player;
+    if (this.api.isOnline && this.isHarvest('npc') && p?.active && p.stunnedUntil > Date.now()) {
+      (p.body as Phaser.Physics.Arcade.Body | null)?.setVelocity(0, 0);
+    }
+  }
+
+  // ── R+ Poison Payload ──────────────────────────────────────────────────────
+
+  /** Every crow of `owner`'s still carrying a vial lets go of it. False if none was. */
+  private dropVials(owner: Owner): boolean {
+    let any = false;
+    for (const fl of this.flocks) {
+      if (fl.owner !== owner || !fl.vials) continue;
+      fl.vials = false;
+      any = true;
+      for (const c of fl.crows) {
+        const gy = c.y + 18;
+        this.drops.push({ owner, x: c.x, y: gy, at: this.now + VIAL_FALL_MS });
+        this.fx(owner).vialFall(c.x, c.y + 11, c.x, gy, VIAL_FALL_MS);
+      }
+    }
+    if (any) {
+      Sfx.playAt('whoosh', this.fighter(owner).x, { rate: 2, volume: 0.35 });
+      this.relay(owner, 'harvest-vials');
+    }
+    return any;
+  }
+
+  private updateDrops(): void {
+    for (let i = this.drops.length - 1; i >= 0; i--) {
+      const d = this.drops[i];
+      if (this.now < d.at) continue;
+      this.drops.splice(i, 1);
+      this.fx(d.owner).vialShatter(d.x, d.y, VIAL_R);
+      Sfx.playAt('ice-shatter', d.x, { rate: 1.5, volume: 0.55 });
+      // A replica's vials are scenery: the owner splashed its copy of us, and that reaches us.
+      if (this.isReplica(d.owner)) continue;
+      for (const t of this.targetsOf(d.owner)) {
+        if (Phaser.Math.Distance.Between(d.x, d.y, t.x, t.y) > VIAL_R + this.bodyR(t)) continue;
+        this.hit(d.owner, t, VIAL_DAMAGE, { aoe: true, sourceX: d.x, sourceY: d.y });
+        this.poison(d.owner, t);
+      }
+    }
+  }
+
+  private poison(owner: Owner, t: Fighter): void {
+    if (!this.alive(t)) return;
+    let p = this.poisons.get(t);
+    if (!p || p.owner !== owner) {
+      p = { owner, stacks: [], nextTick: this.now + POISON_TICK_MS };
+      this.poisons.set(t, p);
+    }
+    p.stacks.push(this.now + POISON_MS);
+    t.harvestPoisonUntil = Math.max(t.harvestPoisonUntil, Date.now() + POISON_MS);
+    this.announce(t.x, t.y - 40, `🧪 POISONED ×${p.stacks.length}`, 0x9be35a, 11);
+  }
+
+  private updatePoisons(): void {
+    for (const [t, p] of [...this.poisons]) {
+      p.stacks = p.stacks.filter((u) => u > this.now);
+      if (!this.alive(t) || !p.stacks.length) {
+        this.poisons.delete(t);
+        t.harvestPoisonUntil = 0;
+        continue;
+      }
+      if (this.now < p.nextTick) continue;
+      p.nextTick = this.now + POISON_TICK_MS;
+      this.hit(p.owner, t, (POISON_DPS * p.stacks.length * POISON_TICK_MS) / 1000);
+      this.fx(p.owner).poisonTick(t.x, t.y);
+    }
+  }
+
+  // ── F+ Corrupt Cooking ─────────────────────────────────────────────────────
+
+  private menuShown(): boolean {
+    return this.isHarvest('player') && this.up('player', 'f') && this.alive(this.api.player);
+  }
+
+  private dishRects(): { x: number; y: number; w: number; h: number }[] {
+    const total = DISHES.length * MENU_W + (DISHES.length - 1) * MENU_GAP;
+    const x0 = this.api.width / 2 - total / 2;
+    return DISHES.map((_, i) => ({ x: x0 + i * (MENU_W + MENU_GAP), y: MENU_Y - MENU_H / 2, w: MENU_W, h: MENU_H }));
+  }
+
+  private dishUnder(mx: number, my: number): number {
+    if (!this.menuShown()) return -1;
+    return this.dishRects().findIndex((r) => mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h);
+  }
+
+  /** Cook dish `i` out of `owner`'s Corrupt Flesh. False when there is not enough meat. */
+  private cook(owner: Owner, i: number): boolean {
+    const d = DISHES[i];
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (!d || !this.alive(f) || this.isReplica(owner)) return false;
+    if (s.flesh < d.cost) {
+      if (owner === 'player') {
+        this.announce(f.x, f.y - 46, `NEED ${d.cost} MEAT`, HAR.fleshLit, 11);
+        Sfx.playAt('ui-click', f.x, { rate: 0.7, volume: 0.4 });
+      }
+      return false;
+    }
+    s.flesh -= d.cost;
+    if (d.dish === 'jerky') s.jerky.push(this.now + JERKY_MS);
+    else if (d.dish === 'broth') s.brothUntil = this.now + BROTH_MS;
+    else {
+      f.increaseMaxHp(FEAST_MAX_HP);
+      f.heal(FEAST_HEAL);
+    }
+    this.serve(owner, i);
+    this.relay(owner, `harvest-cook:${i}`);
+    return true;
+  }
+
+  /** The dish arriving — everything a watcher sees; `cook` did the rest. */
+  private serve(owner: Owner, i: number): void {
+    const f = this.fighter(owner);
+    const d = DISHES[i];
+    if (!this.alive(f) || !d) return;
+    this.ensureLayers();
+    this.fx(owner).cookServe(f.x, f.y, d.dish);
+    this.avatar(owner)?.play('clap', -Math.PI / 2);
+    const label = d.dish === 'jerky' ? '🥩 JERKY: +100 HP' : d.dish === 'broth' ? '🍲 MEAT BROTH: -33% DAMAGE' : '🍖 VILE FEAST: +150 MAX HP';
+    this.announce(f.x, f.y - 58, label, d.dish === 'broth' ? HAR.purpleLit : HAR.fleshLit, 12);
+    Sfx.playAt('potion-drink', f.x, { rate: 0.7, volume: 0.7 });
+  }
+
+  /** Broth armour and Jerky heals, on whichever side this sim owns. */
+  private updateCooking(dt: number): void {
+    for (const owner of BOTH) {
+      const f = this.fighter(owner);
+      if (!f) continue;
+      const s = this.side(owner);
+      const mine = this.isHarvest(owner) && !this.isReplica(owner);
+      f.harvestIncomingMult = mine && this.now < s.brothUntil ? BROTH_MULT : 1;
+      s.jerky = s.jerky.filter((u) => u > this.now);
+      if (!mine || !s.jerky.length || !this.alive(f)) continue;
+      s.jerkyFrac += (JERKY_HEAL / (JERKY_MS / 1000)) * s.jerky.length * dt;
+      const whole = Math.floor(s.jerkyFrac);
+      if (whole > 0) {
+        s.jerkyFrac -= whole;
+        f.heal(whole);
+      }
+    }
+  }
+
+  /**
+   * The bot plays the two upgrades that need a decision: it lets go of the vials when a crow is
+   * over its target, and it cooks — the feast the moment it has three pieces, broth or jerky when
+   * it is hurt and has fewer.
+   */
+  private updateNpcUpgradePlay(): void {
+    if (this.api.isOnline || this.api.isInvasion || !this.isHarvest('npc')) return;
+    const n = this.api.npc;
+    const p = this.api.player;
+    if (!this.alive(n)) return;
+    if (this.alive(p) && this.flocks.some((fl) => fl.owner === 'npc' && fl.vials
+      && fl.crows.some((c) => Phaser.Math.Distance.Between(c.x, c.y + 18, p.x, p.y) < VIAL_R * 0.6 + this.bodyR(p)))) {
+      this.dropVials('npc');
+    }
+    if (!this.up('npc', 'f')) return;
+    const s = this.sides.npc;
+    const hpR = n.hp / Math.max(1, n.maxHp);
+    if (s.flesh >= 3) this.cook('npc', 2);
+    else if (s.flesh >= 2 && hpR < 0.5 && this.now >= s.brothUntil) this.cook('npc', 1);
+    else if (s.flesh >= 1 && hpR < 0.35 && !s.jerky.length) this.cook('npc', 0);
+  }
+
+  /** The cooking menu, top centre, screen space. Only ever the local player's. */
+  private paintMenu(playerIs: boolean): void {
+    const show = playerIs && this.menuShown();
+    if (!show) {
+      this.menuGfx?.setVisible(false);
+      for (const t of this.menuTexts) t.setVisible(false);
+      return;
+    }
+    const { scene } = this.api;
+    if (!this.menuGfx) {
+      this.menuGfx = scene.add.graphics().setScrollFactor(0).setDepth(29);
+      const style = (size: number, color: string): Phaser.Types.GameObjects.Text.TextStyle => ({
+        fontSize: `${size}px`, fontFamily: 'Arial Black', color, stroke: '#0c0610', strokeThickness: 3,
+      });
+      this.menuTexts = [scene.add.text(0, 0, '', style(10, this.hex(HAR.glow))).setOrigin(0.5)];
+      for (let i = 0; i < DISHES.length; i++) {
+        this.menuTexts.push(scene.add.text(0, 0, DISHES[i].name, style(10, this.hex(HAR.glow))).setOrigin(0, 0.5));
+        this.menuTexts.push(scene.add.text(0, 0, DISHES[i].blurb, style(8, this.hex(HAR.strawLit))).setOrigin(0, 0.5));
+      }
+      for (const t of this.menuTexts) t.setScrollFactor(0).setDepth(29.1);
+    }
+    const g = this.menuGfx;
+    g.clear().setVisible(true);
+    const s = this.sides.player;
+    const ptr = scene.input.activePointer;
+    const hover = this.dishUnder(ptr.worldX, ptr.worldY);
+    const rects = this.dishRects();
+    const head = this.menuTexts[0];
+    head.setVisible(true).setPosition(this.api.width / 2, rects[0].y - 8).setText(`CORRUPT COOKING · 🥩 ${s.flesh}/${FLESH_MAX}`);
+    for (let i = 0; i < DISHES.length; i++) {
+      const d = DISHES[i];
+      const r = rects[i];
+      const can = s.flesh >= d.cost;
+      const hot = hover === i;
+      const a = can ? 1 : 0.45;
+      g.fillStyle(this.pcol(HAR.ink), 0.86);
+      g.fillRoundedRect(r.x, r.y, r.w, r.h, 7);
+      g.fillStyle(this.pcol(hot && can ? HAR.rot : HAR.rotDeep), 0.9 * a);
+      g.fillRoundedRect(r.x + 2, r.y + 2, r.w - 4, r.h - 4, 6);
+      g.lineStyle(hot ? 2 : 1.4, this.pcol(hot && can ? HAR.glow : HAR.purple), a);
+      g.strokeRoundedRect(r.x, r.y, r.w, r.h, 7);
+      cookDish(g, this.pcol, d.dish, r.x + 19, r.y + r.h / 2 + 2, this.vizT + i, a);
+      for (let k = 0; k < d.cost; k++) {
+        fleshChunk(g, this.pcol, r.x + r.w - 9 - k * 9, r.y + 10, 3, this.vizT + k, k < s.flesh ? 1 : 0.3);
+      }
+      this.menuTexts[1 + i * 2].setVisible(true).setPosition(r.x + 38, r.y + 18).setAlpha(a);
+      this.menuTexts[2 + i * 2].setVisible(true).setPosition(r.x + 38, r.y + 33).setAlpha(a);
     }
   }
 
@@ -1034,6 +1625,13 @@ export class GluttonyKit {
       const fade = Phaser.Math.Clamp((HEART_LIFE_MS - (this.now - h.born)) / 1000, 0, 1);
       corruptHeart(mg, this.col(h.owner), h.x, h.y, HEART_R * (0.4 + 0.6 * grow), this.vizT + h.seed, fade);
     }
+    // E+ worms stand up out of the floor, so they paint over the bodies beside them.
+    for (const w of this.worms) {
+      const age = this.now - w.born;
+      const rise = Math.min(Phaser.Math.Clamp(age / WORM_EMERGE_MS, 0, 1), Phaser.Math.Clamp((WORM_LIFE_MS - age) / 300, 0, 1));
+      const recoil = Phaser.Math.Clamp(1 - (this.now - w.shotAt) / 220, 0, 1);
+      moldWorm(vg, this.col(w.owner), w.x, w.y, w.ang, rise, this.vizT + w.x * 0.01, recoil, 1);
+    }
 
     for (const f of this.allFighters()) {
       if (!f.active || f.alpha <= 0.05 || f.harvestCorruption <= 0.5) continue;
@@ -1041,13 +1639,22 @@ export class GluttonyKit {
       corruptionVeil(vg, this.col(by), f.x, f.y, this.rotOf(f), this.vizT, f.alpha);
     }
 
+    for (const b of this.shots) rotBullet(ag, this.col(b.owner), b.x, b.y, Math.atan2(b.vy, b.vx), 1);
     for (const sk of this.sickles) {
+      if (sk.recursed) {
+        // Click+ Recursive: the second loop burns purple.
+        ag.fillStyle(this.col(sk.owner)(HAR.purpleLit), 0.25);
+        ag.fillCircle(sk.x, sk.y, SICKLE_SIZE * 1.6);
+      }
       sickleTrail(ag, this.col(sk.owner), sk.trail, 1);
       sickleShape(ag, this.col(sk.owner), sk.x, sk.y, (this.now - sk.start) * 0.028 * sk.side, SICKLE_SIZE, 1);
     }
     for (const fl of this.flocks) {
       const fade = Phaser.Math.Clamp((fl.until - this.now) / 400, 0, 1);
-      for (const c of fl.crows) crowShape(ag, this.col(fl.owner), c.x, c.y, c.ang, 9, c.flap, fade);
+      for (const c of fl.crows) {
+        if (fl.vials) poisonVial(ag, this.col(fl.owner), c.x, c.y + 11, Math.sin(this.vizT * 5 + c.phase) * 0.35, fade);
+        crowShape(ag, this.col(fl.owner), c.x, c.y, c.ang, 9, c.flap, fade);
+      }
     }
     // Flesh trophies orbit the scarecrow's shoulders, one per piece.
     for (const owner of BOTH) {
@@ -1084,10 +1691,23 @@ export class GluttonyKit {
 
   private pushStatuses(playerIs: boolean): void {
     const s = this.sides.player;
+    const cooking = this.up('player', 'f');
     this.api.setStatusIndicator('harvest-flesh', playerIs && s.flesh > 0 ? {
       name: 'Corrupt Flesh', emoji: '🥩', color: HAR.fleshLit, priority: 150,
-      description: `Torn off bitten fighters by Consume (up to ${FLESH_MAX}). Drop below ${FLESH_EAT_BELOW} health and you eat one at once for ${FLESH_CORRUPT_HP} Corrupt HP.`,
+      description: cooking
+        ? `Torn off bitten fighters by Consume (up to ${FLESH_MAX}). Click a dish on the cooking menu at the top of the screen to cook it.`
+        : `Torn off bitten fighters by Consume (up to ${FLESH_MAX}). Drop below ${FLESH_EAT_BELOW} health and you eat one at once for ${FLESH_CORRUPT_HP} Corrupt HP.`,
       count: s.flesh,
+    } : null);
+    this.api.setStatusIndicator('harvest-broth', playerIs && this.now < s.brothUntil ? {
+      name: 'Meat Broth', emoji: '🍲', color: HAR.purpleLit, priority: 153,
+      description: 'Corrupt Cooking: you take 33% less damage.',
+      until: s.brothUntil,
+    } : null);
+    this.api.setStatusIndicator('harvest-jerky', playerIs && s.jerky.length ? {
+      name: 'Jerky', emoji: '🥓', color: HAR.fleshLit, priority: 154,
+      description: `Corrupt Cooking: healing ${Math.round((JERKY_HEAL / (JERKY_MS / 1000)) * 10) / 10} a second per strip.`,
+      count: s.jerky.length,
     } : null);
     const stolen = playerIs && this.now < s.stolenUntil;
     this.api.setStatusIndicator('harvest-stolen', stolen ? {

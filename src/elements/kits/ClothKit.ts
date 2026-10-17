@@ -6,6 +6,7 @@ import type { SummonPurgeTarget } from '../../combat/SummonPurge';
 import type { ProjectileRegistry } from '../../combat/ProjectileRegistry';
 import { Projectile } from '../../combat/Projectile';
 import { Sfx } from '../../audio';
+import { FONT_UI } from '../../ui/Theme';
 import {
   ARTWORK_MAP, ArtworkDef, TAPESTRY_SIZE, TapestryEffects, TapestryState, baseEffects,
   canPlace, cloneTapestry, emptyTapestry, fitsAt, place, rollOffers, summarise, usedCells,
@@ -2081,6 +2082,57 @@ export class ClothKit implements SummonPurgeTarget {
     }
   }
 
+  /**
+   * A fabric swatch backing plate: pinking-shear zigzag edges, a quilted ground and a running
+   * stitch inset from the border. Shared by the HUD's plate, the right-click label and the
+   * draft cards.
+   */
+  private fabricPlate(
+    g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number,
+    ground: number, thread: number, t: number, alpha = 0.92,
+  ): void {
+    const tint = this.pcol;
+    const zz = 3;
+    const pts: Phaser.Geom.Point[] = [];
+    const nx = Math.max(2, Math.round(w / (zz * 2)));
+    const ny = Math.max(2, Math.round(h / (zz * 2)));
+    for (let i = 0; i <= nx * 2; i++) pts.push(new Phaser.Geom.Point(x + (w * i) / (nx * 2), y + (i % 2 ? -zz * 0.6 : 0)));
+    for (let i = 1; i <= ny * 2; i++) pts.push(new Phaser.Geom.Point(x + w + (i % 2 ? zz * 0.6 : 0), y + (h * i) / (ny * 2)));
+    for (let i = nx * 2 - 1; i >= 0; i--) pts.push(new Phaser.Geom.Point(x + (w * i) / (nx * 2), y + h + (i % 2 ? zz * 0.6 : 0)));
+    for (let i = ny * 2 - 1; i >= 1; i--) pts.push(new Phaser.Geom.Point(x + (i % 2 ? -zz * 0.6 : 0), y + (h * i) / (ny * 2)));
+    g.fillStyle(0x000000, alpha * 0.4);
+    g.fillPoints(pts.map((p) => new Phaser.Geom.Point(p.x + 2, p.y + 3)), true);
+    g.fillStyle(tint(CLT.ink), alpha);
+    g.fillPoints(pts, true);
+    g.fillStyle(tint(ground), alpha * 0.9);
+    g.fillRect(x + 2, y + 2, w - 4, h - 4);
+    // Twill: faint diagonal weave across the ground.
+    g.lineStyle(1, tint(CLT.clothPale), 0.05);
+    for (let d = -h; d < w; d += 5) {
+      const x0 = Math.max(x + 2, x + 2 + d), y0 = y + 2 + Math.max(0, -d);
+      const len = Math.min(w - 4 - Math.max(0, d), h - 4 - Math.max(0, -d));
+      if (len > 0) g.lineBetween(x0, y0, x0 + len, y0 + len);
+    }
+    g.fillStyle(0xffffff, 0.05);
+    g.fillRect(x + 2, y + 2, w - 4, 3);
+    // Running stitch inset from the edge, the thread shimmering slightly.
+    const ins = 4;
+    const shimmer = 0.7 + 0.15 * Math.sin(t * 2);
+    g.lineStyle(1.1, tint(thread), alpha * shimmer);
+    const dash = (ax: number, ay: number, bx: number, by: number) => {
+      const len = Math.hypot(bx - ax, by - ay);
+      const n = Math.floor(len / 6);
+      for (let i = 0; i < n; i++) {
+        const u0 = (i * 6) / len, u1 = Math.min(1, (i * 6 + 3.4) / len);
+        g.lineBetween(ax + (bx - ax) * u0, ay + (by - ay) * u0, ax + (bx - ax) * u1, ay + (by - ay) * u1);
+      }
+    };
+    dash(x + ins, y + ins, x + w - ins, y + ins);
+    dash(x + w - ins, y + ins, x + w - ins, y + h - ins);
+    dash(x + w - ins, y + h - ins, x + ins, y + h - ins);
+    dash(x + ins, y + h - ins, x + ins, y + ins);
+  }
+
   /** The scarf bar, the pin bar, and a thumbnail of the loom. Screen space. */
   private paintHud(): void {
     const g = this.hudGfx;
@@ -2101,60 +2153,148 @@ export class ClothKit implements SummonPurgeTarget {
     const w = 216;
     const h = 15;
 
+    // ── The swatch: a quilted fabric plate with pinked edges and a running stitch ──
+    this.fabricPlate(g, x - 7, y - 8, w + 20, h + 38, CLT.deep, CLT.clothDeep, t);
+
     // ── The scarf bar ──
-    // Drawn as a length of wool rather than as a rectangle: this is the health bar for this
-    // element, and it should not look like anybody else's.
-    g.fillStyle(tint(CLT.ink), 0.72);
-    g.fillRoundedRect(x - 5, y - 5, w + 10, h + 32, 6);
+    // A knitted scarf paid out along a wooden needle: this is the health bar for this element,
+    // and it should not look like anybody else's.
     const k = f.maxHp > 0 ? Phaser.Math.Clamp(f.hp / f.maxHp, 0, 1) : 0;
-    g.fillStyle(tint(CLT.deep), 0.9);
+    const burning = this.now < s.burnUntil;
+    // The trough the scarf lies in.
+    g.fillStyle(tint(CLT.ink), 0.95);
+    g.fillRoundedRect(x - 1, y - 1, w + 2, h + 2, (h + 2) / 2);
+    g.fillStyle(tint(CLT.clothRim), 0.6);
     g.fillRoundedRect(x, y, w, h, h / 2);
-    // The wool itself, with knit rungs down it.
-    g.fillStyle(tint(CLT.clothDeep), 1);
-    g.fillRoundedRect(x, y, Math.max(h, w * k), h, h / 2);
-    g.fillStyle(tint(this.now < s.burnUntil ? CLT.ember : CLT.cloth), 1);
-    g.fillRoundedRect(x, y + 1.5, Math.max(h, w * k) - 2, h - 5, (h - 5) / 2);
-    for (let i = 0; i < Math.floor(w * k / 9); i++) {
-      g.lineStyle(1, tint(CLT.clothPale), 0.22);
-      g.lineBetween(x + 5 + i * 9, y + 2, x + 5 + i * 9, y + h - 2);
+    const sw = Math.max(h, w * k);
+    g.fillStyle(tint(burning ? CLT.emberDark : CLT.clothDeep), 1);
+    g.fillRoundedRect(x, y, sw, h, h / 2);
+    g.fillStyle(tint(burning ? CLT.ember : CLT.cloth), 1);
+    g.fillRoundedRect(x, y + 1, sw - 1, h - 3, (h - 3) / 2);
+    // Knit stitches: rows of little Vs down the length, so it reads as stockinette.
+    const col = 6;
+    for (let i = 0; i * col < sw - 6; i++) {
+      const cx = x + 4 + i * col;
+      for (let r = 0; r < 2; r++) {
+        const cy = y + 2.5 + r * 5;
+        g.lineStyle(1.2, tint(burning ? CLT.emberLit : CLT.clothLit), 0.55);
+        g.lineBetween(cx, cy, cx + col * 0.5, cy + 3.6);
+        g.lineBetween(cx + col * 0.5, cy + 3.6, cx + col, cy);
+        g.lineStyle(1, tint(burning ? CLT.emberDark : CLT.clothDeep), 0.45);
+        g.lineBetween(cx + col * 0.5, cy + 3.6, cx + col * 0.5, cy + 4.6);
+      }
+    }
+    // Stripes every so often, like a hand-knit scarf.
+    for (let i = 1; i * 48 < sw - 8; i++) {
+      g.fillStyle(tint(CLT.clothPale), 0.28);
+      g.fillRect(x + i * 48, y + 1, 4, h - 3);
+    }
+    // A soft highlight along the top of the wool.
+    g.fillStyle(0xffffff, 0.12);
+    g.fillRoundedRect(x + 3, y + 1.5, Math.max(0, sw - 8), 2.5, 1.2);
+    // Burn It Down: little flames licking off the wool.
+    if (burning) {
+      for (let i = 0; i < 6; i++) {
+        const ph = (t * 1.6 + i * 0.29) % 1;
+        const fx = x + 8 + ((i * 0.37) % 1) * Math.max(0, sw - 16);
+        g.fillStyle(tint(i % 2 ? CLT.ember : CLT.emberLit), 0.8 * (1 - ph));
+        g.fillCircle(fx, y - ph * 8, 2.4 * (1 - ph * 0.6));
+      }
     }
     // The fringe at the live end, so the bar reads as a scarf being paid out.
-    const ex = x + Math.max(h, w * k);
-    for (let i = -1; i <= 1; i++) {
-      g.lineStyle(1.2, tint(CLT.clothDeep), 0.85);
-      g.lineBetween(ex, y + h / 2, ex + 6, y + h / 2 + i * 4 + Math.sin(t * 6 + i) * 1.2);
+    const ex = x + sw;
+    for (let i = -2; i <= 2; i++) {
+      g.lineStyle(1.3, tint(burning ? CLT.emberDark : CLT.clothDeep), 0.9);
+      g.lineBetween(ex - 1, y + h / 2 + i * 2.6, ex + 6 + Math.abs(i), y + h / 2 + i * 3.4 + Math.sin(t * 6 + i) * 1.2);
     }
+    // The knitting needle the scarf is cast on, at the start.
+    g.lineStyle(2.4, tint(CLT.brassDark), 1);
+    g.lineBetween(x + 3, y - 4, x + 3, y + h + 4);
+    g.lineStyle(1, tint(CLT.brassLit), 0.9);
+    g.lineBetween(x + 2.4, y - 4, x + 2.4, y + h + 4);
+    g.fillStyle(tint(CLT.brass), 1);
+    g.fillCircle(x + 3, y - 5, 2.4);
 
-    // ── The pin bar, underneath ──
+    // ── The pincushion, underneath ──
+    // A velvet strip that fills with pinned health; a pin stands in it for every few points.
     const py = y + h + 4;
     const pk = f.maxHp > 0 ? Phaser.Math.Clamp(f.pinnedHp / f.maxHp, 0, 1) : 0;
-    g.fillStyle(tint(CLT.deep), 0.85);
-    g.fillRoundedRect(x, py, w, 7, 3.5);
+    g.fillStyle(tint(CLT.ink), 0.9);
+    g.fillRoundedRect(x - 1, py - 1, w + 2, 9, 4.5);
     if (pk > 0) {
+      const pw = Math.max(8, w * pk);
       g.fillStyle(tint(CLT.pinnedDark), 1);
-      g.fillRoundedRect(x, py, w * pk, 7, 3.5);
+      g.fillRoundedRect(x, py, pw, 7, 3.5);
       g.fillStyle(tint(CLT.pinned), 1);
-      g.fillRoundedRect(x, py + 1, Math.max(2, w * pk - 2), 4, 2);
+      g.fillRoundedRect(x, py, pw, 5, 2.5);
+      // Tufting dimples down the cushion.
+      for (let i = 1; i * 14 < pw - 4; i++) {
+        g.fillStyle(tint(CLT.pinnedDark), 0.8);
+        g.fillCircle(x + i * 14, py + 3, 1);
+        g.fillStyle(tint(CLT.pinnedLit), 0.35);
+        g.fillCircle(x + i * 14 - 0.6, py + 2.2, 0.8);
+      }
+      // Pins stuck in at jaunty angles, brass heads bobbing.
+      for (let i = 0; i * 18 + 9 < pw - 4; i++) {
+        const px = x + 9 + i * 18;
+        const ang = Math.PI / 2 + (jitter(i, 3) - 0.5) * 0.7;
+        pinGlyph(g, tint, px, py - 1.5, ang, 9, 0.95, { head: 1.6 });
+      }
       // A needle sticking out of the live end.
-      pinGlyph(g, tint, x + w * pk, py + 3.5, 0, 13, 0.95, { head: 2 });
+      pinGlyph(g, tint, x + pw, py + 3.5, 0, 13, 0.95, { head: 2 });
+    } else {
+      g.fillStyle(tint(CLT.pinnedDark), 0.3);
+      g.fillRoundedRect(x, py, w, 7, 3.5);
     }
 
     // ── The loom thumbnail ──
+    // A little wooden frame loom: posts, a warp beam top and bottom with the threads running
+    // between them, and the sewn pieces woven into the middle.
     const lc = 11;
-    const lx = x + w + 16;
+    const lx = x + w + 18;
     const ly = y - 2;
-    g.fillStyle(tint(CLT.ink), 0.72);
-    g.fillRoundedRect(lx - 4, ly - 4, TAPESTRY_SIZE * lc + 8, TAPESTRY_SIZE * lc + 8, 4);
+    const lw = TAPESTRY_SIZE * lc;
+    g.fillStyle(0x000000, 0.35);
+    g.fillRoundedRect(lx - 7, ly - 8, lw + 16, lw + 18, 3);
+    // Posts.
+    g.fillStyle(tint(CLT.loom), 1);
+    g.fillRect(lx - 7, ly - 9, 5, lw + 18);
+    g.fillRect(lx + lw + 2, ly - 9, 5, lw + 18);
+    g.fillStyle(tint(CLT.loomLit), 0.8);
+    g.fillRect(lx - 7, ly - 9, 1.5, lw + 18);
+    g.fillRect(lx + lw + 2, ly - 9, 1.5, lw + 18);
+    // Beams.
+    for (const by of [ly - 8, ly + lw + 3]) {
+      g.fillStyle(tint(CLT.brassDark), 1);
+      g.fillRoundedRect(lx - 9, by, lw + 18, 5, 2.5);
+      g.fillStyle(tint(CLT.brass), 1);
+      g.fillRoundedRect(lx - 9, by, lw + 18, 3, 1.5);
+      g.fillStyle(tint(CLT.brassLit), 0.8);
+      g.fillCircle(lx - 6.5, by + 2.5, 1.2);
+      g.fillCircle(lx + lw + 6.5, by + 2.5, 1.2);
+    }
+    // Warp threads behind the cells.
+    for (let i = 0; i <= TAPESTRY_SIZE * 2; i++) {
+      g.lineStyle(0.6, tint(CLT.web), 0.35);
+      g.lineBetween(lx + i * (lw / (TAPESTRY_SIZE * 2)), ly - 3, lx + i * (lw / (TAPESTRY_SIZE * 2)), ly + lw + 3);
+    }
     for (let gy = 0; gy < TAPESTRY_SIZE; gy++) {
       for (let gx = 0; gx < TAPESTRY_SIZE; gx++) {
         const id = s.tap.grid[gy * TAPESTRY_SIZE + gx];
         loomCell(g, tint, lx + gx * lc, ly + gy * lc, lc - 1, id ? ARTWORK_MAP[id]?.color ?? CLT.cloth : null, 1);
       }
     }
+    // The shuttle, slowly passing across under the bottom beam.
+    const shx = lx + ((Math.sin(t * 0.8) + 1) / 2) * lw;
+    g.fillStyle(tint(CLT.brassDark), 1);
+    g.fillEllipse(shx, ly + lw + 11, 12, 4);
+    g.fillStyle(tint(CLT.cloth), 1);
+    g.fillEllipse(shx, ly + lw + 11, 5, 2.4);
 
     if (!this.hudLabel) {
       this.hudLabel = this.api.scene.add.text(0, 0, '', {
-        fontSize: '11px', color: '#f7c3cc', fontStyle: 'bold',
+        fontSize: '11px', color: '#f7c3cc', fontStyle: 'bold', fontFamily: FONT_UI,
+        stroke: '#1a0d12', strokeThickness: 3,
       }).setDepth(21).setScrollFactor(0);
     }
     this.hudLabel.setVisible(true);
@@ -2168,10 +2308,13 @@ export class ClothKit implements SummonPurgeTarget {
     );
 
     // ── The right-click card ──
+    // A sewn-in clothing label hanging off a brass grommet; its cooldown is a line of running
+    // stitch being sewn across it, a stitch at a time.
     const rcId = s.fx.rightClick;
     if (!this.rcLabel) {
       this.rcLabel = this.api.scene.add.text(0, 0, '', {
-        fontSize: '11px', color: '#ffd98a', fontStyle: 'bold',
+        fontSize: '11px', color: '#ffd98a', fontStyle: 'bold', fontFamily: FONT_UI,
+        stroke: '#1a0d12', strokeThickness: 3,
       }).setDepth(21).setScrollFactor(0);
     }
     if (!rcId) {
@@ -2181,16 +2324,40 @@ export class ClothKit implements SummonPurgeTarget {
       const cdLeft = Math.max(0, s.rcReadyAt - this.now);
       const cd = (RC_COOLDOWNS[rcId] ?? 8000) * s.fx.cooldownMult;
       const ready = cdLeft <= 0;
-      const bx = lx + TAPESTRY_SIZE * lc + 18;
-      g.fillStyle(tint(CLT.ink), 0.75);
-      g.fillRoundedRect(bx - 4, ly - 4, 136, 30, 5);
-      g.fillStyle(tint(CLT.deep), 1);
-      g.fillRoundedRect(bx, ly + 14, 128, 7, 3.5);
-      g.fillStyle(tint(ready ? CLT.brass : CLT.clothDeep), 1);
-      g.fillRoundedRect(bx, ly + 14, 128 * (cd > 0 ? 1 - cdLeft / cd : 1), 7, 3.5);
+      const prog = cd > 0 ? 1 - cdLeft / cd : 1;
+      const bx = lx + lw + 22;
+      const tagCol = def?.color ?? CLT.cloth;
+      this.fabricPlate(g, bx - 6, ly - 6, 142, 34, CLT.deep, ready ? CLT.brass : tagCol, t);
+      // Grommet on the left edge.
+      g.fillStyle(tint(CLT.brassDark), 1);
+      g.fillCircle(bx - 1, ly + 11, 3.2);
+      g.fillStyle(tint(CLT.brass), 1);
+      g.fillCircle(bx - 1, ly + 11, 2.4);
+      g.fillStyle(tint(CLT.ink), 1);
+      g.fillCircle(bx - 1, ly + 11, 1.2);
+      // A swatch of the artwork's own colour.
+      g.fillStyle(tint(tagCol), 0.9);
+      g.fillRect(bx + 120, ly - 2, 10, 10);
+      g.lineStyle(1, tint(CLT.clothPale), 0.4);
+      g.strokeRect(bx + 120.5, ly - 1.5, 9, 9);
+      // The stitch line: sewn dashes up to the progress, needle at the head.
+      const sx0 = bx + 6, sx1 = bx + 128, sy = ly + 18;
+      g.lineStyle(1, tint(CLT.ink), 0.8);
+      g.lineBetween(sx0, sy, sx1, sy);
+      const sewn = sx0 + (sx1 - sx0) * prog;
+      for (let sx = sx0; sx < sewn - 1; sx += 6) {
+        g.lineStyle(2, tint(ready ? CLT.brassLit : CLT.clothPale), 1);
+        g.lineBetween(sx, sy, Math.min(sewn, sx + 3.6), sy);
+      }
+      if (!ready) {
+        pinGlyph(g, tint, sewn + 5, sy - 2 + Math.sin(t * 10) * 1.5, -0.25, 12, 1, { head: 1.4 });
+      } else {
+        g.fillStyle(tint(CLT.brassLit), 0.25 + 0.2 * Math.sin(t * 5));
+        g.fillRoundedRect(bx - 4, ly - 4, 138, 30, 4);
+      }
       this.rcLabel.setVisible(true);
-      this.rcLabel.setPosition(bx + 2, ly);
-      this.rcLabel.setColor(ready ? '#ffd98a' : '#8a2135');
+      this.rcLabel.setPosition(bx + 6, ly - 1);
+      this.rcLabel.setColor(ready ? '#ffd98a' : '#e07f92');
       this.rcLabel.setText(`🖱️ ${def?.name ?? rcId}`);
     }
 
@@ -2261,8 +2428,34 @@ export class ClothKit implements SummonPurgeTarget {
 
     // ── The loom ──
     const { x: lx, y: ly, cell } = this.loomOrigin();
-    g.fillStyle(tint(CLT.loom), 0.9);
-    g.fillRoundedRect(lx - 8, ly - 8, TAPESTRY_SIZE * cell + 16, TAPESTRY_SIZE * cell + 16, 7);
+    // A real frame loom: two posts, brass-capped warp beams, and the warp threads strung
+    // between them behind the cells.
+    const LW = TAPESTRY_SIZE * cell;
+    g.fillStyle(0x000000, 0.4);
+    g.fillRoundedRect(lx - 14, ly - 16, LW + 32, LW + 36, 6);
+    g.fillStyle(tint(CLT.loom), 0.95);
+    g.fillRoundedRect(lx - 8, ly - 8, LW + 16, LW + 16, 7);
+    for (const px of [lx - 16, lx + LW + 6]) {
+      g.fillStyle(tint(CLT.loom), 1);
+      g.fillRect(px, ly - 20, 10, LW + 40);
+      g.fillStyle(tint(CLT.loomLit), 0.9);
+      g.fillRect(px, ly - 20, 3, LW + 40);
+      g.fillStyle(tint(CLT.ink), 0.6);
+      g.fillRect(px + 8, ly - 20, 2, LW + 40);
+    }
+    for (const by of [ly - 18, ly + LW + 8]) {
+      g.fillStyle(tint(CLT.brassDark), 1);
+      g.fillRoundedRect(lx - 20, by, LW + 40, 10, 5);
+      g.fillStyle(tint(CLT.brass), 1);
+      g.fillRoundedRect(lx - 20, by, LW + 40, 6, 3);
+      g.fillStyle(tint(CLT.brassLit), 0.7);
+      g.fillRect(lx - 16, by + 1, LW + 32, 1.5);
+    }
+    for (let i = 0; i <= TAPESTRY_SIZE * 4; i++) {
+      const wx = lx + (LW * i) / (TAPESTRY_SIZE * 4);
+      g.lineStyle(1, tint(CLT.web), 0.4);
+      g.lineBetween(wx, ly - 8, wx, ly + LW + 8);
+    }
     for (let gy = 0; gy < TAPESTRY_SIZE; gy++) {
       for (let gx = 0; gx < TAPESTRY_SIZE; gx++) {
         const id = s.tap.grid[gy * TAPESTRY_SIZE + gx];
@@ -2293,10 +2486,15 @@ export class ClothKit implements SummonPurgeTarget {
       const def = d.offers[i];
       const cx = x0 + i * (cw + gap);
       const chosen = d.picked === def;
-      g.fillStyle(tint(CLT.deep), chosen ? 1 : 0.92);
-      g.fillRoundedRect(cx, y0, cw, 168, 8);
-      g.lineStyle(chosen ? 3 : 2, tint(chosen ? CLT.brassLit : def.color), 0.95);
-      g.strokeRoundedRect(cx, y0, cw, 168, 8);
+      // Each offer is a fabric swatch in its own colour of thread, pinned up by a brass pin.
+      this.fabricPlate(g, cx, y0, cw, 168, CLT.deep, chosen ? CLT.brassLit : def.color, this.vizT, chosen ? 1 : 0.94);
+      g.fillStyle(tint(def.color), 0.16);
+      g.fillRect(cx + 6, y0 + 6, cw - 12, 20);
+      if (chosen) {
+        g.lineStyle(2, tint(CLT.brassLit), 0.5 + 0.3 * Math.sin(this.vizT * 6));
+        g.strokeRect(cx - 3, y0 - 3, cw + 6, 174);
+      }
+      pinGlyph(g, tint, cx + cw - 16, y0 + 2, 2.3, 18, 1, { head: 3 });
 
       // The piece's shape, drawn full size so the player is choosing a shape as much as a stat.
       const sc = 17;

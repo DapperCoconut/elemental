@@ -5,8 +5,9 @@ import { Projectile } from '../../combat/Projectile';
 import { Sfx } from '../../audio';
 import type { CustomStatus } from './StatusHudKit';
 import {
-  MAGNET, MagnetAvatar, MagnetColorFn, MagnetFx, drawCoin, drawCoinShot, drawGatherPile, drawNail,
-  drawOrbitRing, drawScrap, drawSpikeFlying, drawSpikeHover, drawSpikePlanted,
+  MAGNET, MagnetAvatar, MagnetColorFn, MagnetFx, drawChargedAura, drawCoin, drawCoinFragment, drawCoinShot,
+  drawCrackle, drawGatherPile, drawLockLine, drawMagnetHalo, drawMagnetized, drawNail, drawOrbitRing, drawScrap,
+  drawSpikeFlying, drawSpikeHover, drawSpikePlanted, megaMechTint,
 } from './MagnetVisuals';
 import { MagnetMech, MechAttack } from './MagnetMech';
 
@@ -86,6 +87,51 @@ const ELECTRO_ZAP_DAMAGE = 6;
 const ELECTRO_ZAP_GAP_MS = 700;
 const ELECTRO_STUN_MS = 500;
 
+// Shop upgrades
+/** Click+ Shatter Shot: a fired coin that reaches the wall bursts into this many fragments. */
+const SHATTER_FRAGMENTS = 6;
+const FRAGMENT_SPEED = 640;
+const FRAGMENT_DAMAGE = 3;
+const FRAGMENT_MS = 900;
+/** Fan the fragments spread over when nobody is magnetised (radians either side of the aim). */
+const FRAGMENT_SPREAD = 0.45;
+/** E+ Magnetize: how long a body stays magnetised after Repulse touches it. */
+const MAGNETIZE_MS = 5000;
+/** A magnetised shot locks onto a magnetised body this far away — the "two magnets" rule. */
+const LOCK_RANGE = 720;
+/** A magnetised body pulls any of the magnet's shots that pass this close. */
+const ATTRACT_R = 110;
+const ATTRACT_RATE = 5;
+/** The "basic" homing of a magnetised shot with no magnetised body to lock onto. */
+const HOMING_RANGE = 360;
+const HOMING_RATE = 2.6;
+const SPIKE_HOMING_RATE = 1.4;
+/** Scrap off a repulsed spike flies straight home at this speed. */
+const SCRAP_HOME_SPEED = 620;
+/** R+ Nailstorm: three golden nails a shot, fanned this far apart. */
+const NAILSTORM_COUNT = 3;
+const NAILSTORM_SPREAD = 0.06;
+/** Every other nail in the same body adds this to each nail's rip-out. */
+const NAILSTORM_RIP_BONUS = 4;
+/** Repulse shoving a nailed body: this much damage per nail in them, and 20% more push per extra nail. */
+const NAILSTORM_SHOVE_DAMAGE = 4;
+const NAILSTORM_SHOVE_PER_NAIL = 0.2;
+/** …and each nail keeps the body magnetised a second longer. */
+const NAILSTORM_MAGNETIZE_PER_NAIL = 1000;
+/** F+ Electromagnet: a planted live spike arcs into everyone close. */
+const SPIKE_ZAP_R = 120;
+const SPIKE_ZAP_DAMAGE = 5;
+const SPIKE_ZAP_GAP_MS = 900;
+/** Riding a live spike leaves you charged. */
+const CHARGE_MS = 4000;
+const CHARGE_SPEED_MULT = 1.35;
+const CHARGE_AURA_R = 105;
+const CHARGE_AURA_DAMAGE = 5;
+const CHARGE_AURA_GAP_MS = 600;
+/** Live orbiting scrap shoots enemy shots out of the air this close to you, now and then. */
+const SHIELD_ZAP_R = 140;
+const SHIELD_ZAP_GAP_MS = 1100;
+
 // ── World objects ─────────────────────────────────────────────────────────
 
 interface Coin {
@@ -98,7 +144,19 @@ interface Coin {
   spin: number; spinRate: number;
 }
 
-interface CoinShot { owner: Owner; x: number; y: number; vx: number; vy: number; until: number }
+interface CoinShot {
+  owner: Owner; x: number; y: number; vx: number; vy: number; until: number;
+  /** E+ Magnetize: every fired coin was repulsed, so it is magnetised. */
+  mag: boolean;
+  /** The magnetised body this shot is perfectly locked onto, for the lock line. */
+  lock: Fighter | null;
+}
+
+/** Click+ Shatter Shot: a piece of a coin that burst on the wall. */
+interface Fragment {
+  owner: Owner; x: number; y: number; vx: number; vy: number; until: number;
+  bounces: number; seed: number; lock: Fighter | null;
+}
 
 interface Nail {
   owner: Owner;
@@ -111,6 +169,11 @@ interface Nail {
   offX: number; offY: number;
   angle: number;
   stuckUntil: number;
+  /** R+ Nailstorm. */
+  golden: boolean;
+  /** E+ Magnetize: re-fired by Repulse. */
+  mag: boolean;
+  lock: Fighter | null;
 }
 
 interface Spike {
@@ -122,6 +185,10 @@ interface Spike {
   zipped: boolean;
   vx: number; vy: number;
   hit: Set<Fighter>;
+  /** F+ Electromagnet: this spike carries current. */
+  live: boolean;
+  nextZapAt: number;
+  lock: Fighter | null;
 }
 
 interface Scrap {
@@ -133,6 +200,10 @@ interface Scrap {
   size: number; seed: number;
   until: number;
   hit: Set<Fighter>;
+  /** F+ Electromagnet: broken off a live spike. */
+  live: boolean;
+  /** E+ Magnetize: broken off a repulsed spike — flies straight home. */
+  home: boolean;
 }
 
 /** A shard streaming in from the screen edge during the Mecha Massacre wind-up. Visual only. */
@@ -154,11 +225,16 @@ interface Side {
   pod: { sx: number; sy: number; lx: number; ly: number; startAt: number; landAt: number } | null;
   motion: Motion | null;
   nextZapAt: number;
+  /** F+ Electromagnet: rode a live spike — faster, with a zapping aura, until this time. */
+  chargedUntil: number;
+  nextAuraZapAt: number;
+  nextShieldZapAt: number;
 }
 
 const makeSide = (): Side => ({
   aimX: 0, aimY: 0, hover: false, gatherUntil: 0, nextBitAt: 0, mech: null, piloting: false,
   preHp: 0, prevAbsorber: null, pod: null, motion: null, nextZapAt: 0,
+  chargedUntil: 0, nextAuraZapAt: 0, nextShieldZapAt: 0,
 });
 
 /** Mech key per ability slot, in tray order. */
@@ -204,6 +280,8 @@ export interface MagnetArenaApi {
   /** Invasion: take one husk shot within `r` of the point out of the air. False if none. */
   blockHuskShot(x: number, y: number, r: number): boolean;
   hasPerk(owner: Owner, perkId: string): boolean;
+  /** The owner's shop upgrade in `slot` — our own purchases, or the bot's/remote's loadout. */
+  hasUpgrade(owner: Owner, slot: string): boolean;
   spawnHitFlash(x: number, y: number, color: number): void;
   buildPlayerContext(x: number, y: number): CastContext;
   setStatusIndicator(id: string, status: CustomStatus | null): void;
@@ -257,6 +335,11 @@ export class MagnetKit {
   private spikes: Spike[] = [];
   private scraps: Scrap[] = [];
   private bits: GatherBit[] = [];
+  private fragments: Fragment[] = [];
+  /** E+ Magnetize: who is magnetised, by which side, until when. */
+  private magnetized = new Map<Fighter, { by: Owner; until: number }>();
+  /** Q+ Mega Mechancements: each side's Fx in the red mech palette, built on first use. */
+  private megaFx: Partial<Record<Owner, MagnetFx>> = {};
   private shoves = new Map<Fighter, { vx: number; vy: number; until: number }>();
   private stuns = new Map<Fighter, number>();
   private wasDown = false;
@@ -281,6 +364,10 @@ export class MagnetKit {
   private bodyR(f: Fighter): number { return (f.body as Phaser.Physics.Arcade.Body | null)?.radius || 20; }
   private isMagnet(owner: Owner): boolean {
     return owner === 'player' ? this.arena.elementId === 'magnet' : this.arena.npcElementId === 'magnet';
+  }
+  /** The owner's shop upgrade in `slot`, and only while that owner is actually playing Magnet. */
+  private up(owner: Owner, slot: string): boolean {
+    return this.isMagnet(owner) && this.arena.hasUpgrade(owner, slot);
   }
   /** An online opponent: drawn and replayed here, simulated (and moved) on their own machine. */
   private isReplica(owner: Owner): boolean { return owner === 'npc' && this.arena.isOnline; }
@@ -366,6 +453,8 @@ export class MagnetKit {
     this.spikes = [];
     this.scraps = [];
     this.bits = [];
+    this.fragments = [];
+    this.magnetized.clear();
     this.shoves.clear();
     this.stuns.clear();
     this.wasDown = false;
@@ -376,7 +465,9 @@ export class MagnetKit {
     this.npcAvatar?.destroy(); this.npcAvatar = null;
     this.groundGfx?.destroy(); this.groundGfx = null;
     this.airGfx?.destroy(); this.airGfx = null;
-    for (const id of ['magnet-coins', 'magnet-scrap', 'magnet-nailed', 'magnet-mech']) this.arena.setStatusIndicator(id, null);
+    for (const id of ['magnet-coins', 'magnet-scrap', 'magnet-nailed', 'magnet-mech', 'magnet-magnetized', 'magnet-charged']) {
+      this.arena.setStatusIndicator(id, null);
+    }
   }
 
   private ground(): Phaser.GameObjects.Graphics {
@@ -543,7 +634,10 @@ export class MagnetKit {
       const hy = c.y - c.z;
       if (!this.inCone(f, ang, c.x, hy, 12) && !this.inCone(f, ang, c.x, c.y, 12)) continue;
       this.coins.splice(i, 1);
-      this.coinShots.push({ owner, x: c.x, y: hy, vx: cos * COIN_SHOT_SPEED, vy: sin * COIN_SHOT_SPEED, until: this.now + COIN_SHOT_MS });
+      this.coinShots.push({
+        owner, x: c.x, y: hy, vx: cos * COIN_SHOT_SPEED, vy: sin * COIN_SHOT_SPEED, until: this.now + COIN_SHOT_MS,
+        mag: this.up(owner, 'e'), lock: null,
+      });
       fired++;
     }
     if (fired > 0) Sfx.playAt('money', f.x, { rate: 1.5, volume: 0.4 });
@@ -570,6 +664,7 @@ export class MagnetKit {
       n.vy = Math.sin(a) * NAIL_SPEED;
       n.travelled = 0;
       n.angle = a;
+      n.mag = this.up(owner, 'e');
       fx.sparks(n.x, n.y, 6, a, 10, MAGNET.sky);
       this.announce(n.x, n.y - 18, 'RE-FIRED', MAGNET.sky);
     }
@@ -589,16 +684,96 @@ export class MagnetKit {
     }
 
     // Nailed bodies are shoved from much further away — the nail in them is the handle.
+    const storm = this.up(owner, 'r');
+    const magnetize = this.up(owner, 'e');
     for (const t of this.targetsOf(owner)) {
-      if (!this.nails.some((n) => n.owner === owner && n.state === 'stuck' && n.victim === t)) continue;
-      const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
-      if (d > REPULSE_PUSH_RANGE) continue;
-      const a = Math.atan2(t.y - f.y, t.x - f.x);
-      const k = 1 - 0.4 * (d / REPULSE_PUSH_RANGE);
-      this.shove(owner, t, Math.cos(a) * REPULSE_PUSH_SPEED * k, Math.sin(a) * REPULSE_PUSH_SPEED * k, REPULSE_PUSH_MS);
-      fx.grasp(f.x, f.y, t.x, t.y, MAGNET.blue, 300);
-      this.announce(t.x, t.y - 30, 'REPULSED', MAGNET.sky);
+      const nailed = this.nailsIn(owner, t);
+      const touched = this.inCone(f, ang, t.x, t.y, this.bodyR(t));
+      if (nailed > 0) {
+        const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
+        if (d > REPULSE_PUSH_RANGE) continue;
+        const a = Math.atan2(t.y - f.y, t.x - f.x);
+        // R+ Nailstorm: every nail in them is another handle to throw them by — and it hurts.
+        const k = (1 - 0.4 * (d / REPULSE_PUSH_RANGE)) * (storm ? 1 + NAILSTORM_SHOVE_PER_NAIL * (nailed - 1) : 1);
+        this.shove(owner, t, Math.cos(a) * REPULSE_PUSH_SPEED * k, Math.sin(a) * REPULSE_PUSH_SPEED * k, REPULSE_PUSH_MS);
+        fx.grasp(f.x, f.y, t.x, t.y, MAGNET.blue, 300);
+        if (storm) this.hit(owner, t, NAILSTORM_SHOVE_DAMAGE * nailed, MAGNET.gold);
+        this.announce(t.x, t.y - 30, storm && nailed > 1 ? `REPULSED ×${nailed}` : 'REPULSED', MAGNET.sky);
+        if (magnetize) this.magnetize(owner, t, MAGNETIZE_MS + (storm ? NAILSTORM_MAGNETIZE_PER_NAIL * nailed : 0));
+      } else if (magnetize && touched) {
+        // E+ Magnetize: the wave itself leaves a charge in anyone it washes over.
+        this.magnetize(owner, t, MAGNETIZE_MS);
+      }
     }
+  }
+
+  /** How many of `owner`'s nails are stuck in `t`. */
+  private nailsIn(owner: Owner, t: Fighter): number {
+    let n = 0;
+    for (const nl of this.nails) if (nl.owner === owner && nl.state === 'stuck' && nl.victim === t) n++;
+    return n;
+  }
+
+  // ── E+ Magnetize ───────────────────────────────────────────────────────
+
+  private isMagnetized(by: Owner, f: Fighter): boolean {
+    const m = this.magnetized.get(f);
+    return !!m && m.by === by && this.now < m.until;
+  }
+
+  private magnetize(by: Owner, f: Fighter, ms: number): void {
+    const fresh = !this.isMagnetized(by, f);
+    const until = Math.max(fresh ? 0 : this.magnetized.get(f)!.until, this.now + ms);
+    this.magnetized.set(f, { by, until });
+    if (fresh) {
+      this.announce(f.x, f.y - 44, 'MAGNETIZED', MAGNET.rose);
+      this.fx(by).sparks(f.x, f.y, 8, -Math.PI / 2, 10, MAGNET.sky);
+    }
+  }
+
+  /**
+   * Where one of `owner`'s shots should bend, under E+ Magnetize. In order:
+   * 1. a magnetised shot and a magnetised body: a perfect lock (`rate` Infinity);
+   * 2. any shot passing close to a magnetised body is pulled toward it;
+   * 3. a magnetised shot with nothing magnetised about drifts toward the nearest body.
+   * `skip` leaves out bodies the shot has already gone through.
+   */
+  private homing(
+    owner: Owner, x: number, y: number, mag: boolean, basicRate: number, skip?: Set<Fighter>,
+  ): { t: Fighter; rate: number; lock: boolean } | null {
+    if (!this.up(owner, 'e')) return null;
+    const foes = this.targetsOf(owner).filter((t) => !skip?.has(t));
+    const nearest = (pick: (t: Fighter, d: number) => boolean): Fighter | null => {
+      let best: Fighter | null = null;
+      let bestD = Infinity;
+      for (const t of foes) {
+        const d = Phaser.Math.Distance.Between(x, y, t.x, t.y);
+        if (d < bestD && pick(t, d)) { best = t; bestD = d; }
+      }
+      return best;
+    };
+    if (mag) {
+      const t = nearest((v, d) => d <= LOCK_RANGE && this.isMagnetized(owner, v));
+      if (t) return { t, rate: Infinity, lock: true };
+    }
+    const pull = nearest((v, d) => d <= ATTRACT_R + this.bodyR(v) && this.isMagnetized(owner, v));
+    if (pull) return { t: pull, rate: ATTRACT_RATE, lock: false };
+    if (mag) {
+      const t = nearest((_, d) => d <= HOMING_RANGE);
+      if (t) return { t, rate: basicRate, lock: false };
+    }
+    return null;
+  }
+
+  /** Turn a velocity toward a point by at most `rate` rad/s, keeping its speed. */
+  private steer(vx: number, vy: number, x: number, y: number, tx: number, ty: number, rate: number, dt: number): { vx: number; vy: number } {
+    const speed = Math.hypot(vx, vy);
+    const cur = Math.atan2(vy, vx);
+    const want = Math.atan2(ty - y, tx - x);
+    const diff = Phaser.Math.Angle.Wrap(want - cur);
+    // A perfect lock simply points at the target (Infinity × a 0ms frame would be NaN).
+    const a = rate === Infinity || Math.abs(diff) <= rate * dt ? want : cur + Math.sign(diff) * rate * dt;
+    return { vx: Math.cos(a) * speed, vy: Math.sin(a) * speed };
   }
 
   /** R — Nail Implant: shoot one nail. (The rip-out is {@link doRecall}.) */
@@ -606,22 +781,38 @@ export class MagnetKit {
     const f = this.fighter(owner);
     if (!this.alive(f)) return;
     const a = Math.atan2(ty - f.y, tx - f.x);
-    this.nails.push({
-      owner, state: 'fly', x: f.x + Math.cos(a) * 18, y: f.y + Math.sin(a) * 18,
-      vx: Math.cos(a) * NAIL_SPEED, vy: Math.sin(a) * NAIL_SPEED, travelled: 0,
-      victim: null, offX: 0, offY: 0, angle: a, stuckUntil: 0,
-    });
+    // R+ Nailstorm: a tight fan of three golden nails — close enough that all three can bite one body.
+    const storm = this.up(owner, 'r');
+    const count = storm ? NAILSTORM_COUNT : 1;
+    for (let k = 0; k < count; k++) {
+      const na = a + (count === 1 ? 0 : (k - (count - 1) / 2) * NAILSTORM_SPREAD);
+      this.nails.push({
+        owner, state: 'fly', x: f.x + Math.cos(na) * 18, y: f.y + Math.sin(na) * 18,
+        vx: Math.cos(na) * NAIL_SPEED, vy: Math.sin(na) * NAIL_SPEED, travelled: 0,
+        victim: null, offX: 0, offY: 0, angle: na, stuckUntil: 0, golden: storm, mag: false, lock: null,
+      });
+    }
+    if (storm) this.fx(owner).sparks(f.x + Math.cos(a) * 20, f.y + Math.sin(a) * 20, 6, a, 10, MAGNET.goldHi);
     this.avatar(owner)?.play('punch', a, 240);
   }
 
   /** R again: rip every nail out (15 each) and send them home. */
   doRecall(owner: Owner): void {
     const f = this.fighter(owner);
+    // R+ Nailstorm: the more nails a body carries, the harder each one tears coming out.
+    const storm = this.up(owner, 'r');
+    const counts = new Map<Fighter, number>();
+    for (const nail of this.nails) {
+      if (nail.owner === owner && nail.state === 'stuck' && nail.victim) counts.set(nail.victim, (counts.get(nail.victim) ?? 0) + 1);
+    }
     let n = 0;
     for (const nail of this.nails) {
       if (nail.owner !== owner || nail.state !== 'stuck') continue;
       const v = nail.victim;
-      if (v && this.alive(v) && this.targetsOf(owner).includes(v)) this.hit(owner, v, NAIL_RIP_DAMAGE, MAGNET.rose);
+      if (v && this.alive(v) && this.targetsOf(owner).includes(v)) {
+        const bonus = storm ? NAILSTORM_RIP_BONUS * ((counts.get(v) ?? 1) - 1) : 0;
+        this.hit(owner, v, NAIL_RIP_DAMAGE + bonus, storm ? MAGNET.gold : MAGNET.rose);
+      }
       nail.state = 'return';
       nail.victim = null;
       const a = Math.atan2(f.y - nail.y, f.x - nail.x);
@@ -645,7 +836,7 @@ export class MagnetKit {
     const { x, y } = this.clampSpike(owner, tx, ty);
     this.spikes.push({
       owner, state: 'hover', x, y, slamAt: this.now + SPIKE_HOVER_MS, until: 0, zipped: false,
-      vx: 0, vy: 0, hit: new Set(),
+      vx: 0, vy: 0, hit: new Set(), live: this.up(owner, 'f'), nextZapAt: 0, lock: null,
     });
     this.avatar(owner)?.play('raise', a, 400);
   }
@@ -708,6 +899,14 @@ export class MagnetKit {
     this.fx(owner).grasp(sp.x, sp.y, f.x, f.y, MAGNET.blue, 380);
     this.avatar(owner)?.play('dash', a, 300);
     Sfx.playAt('magnet-pull', f.x, { rate: 0.9, volume: 0.55 });
+    // F+ Electromagnet: magnetising yourself to a live spike leaves its current in you.
+    if (sp.live) {
+      const s = this.sides[owner];
+      if (this.now >= s.chargedUntil) this.announce(f.x, f.y - 44, 'CHARGED', MAGNET.live);
+      s.chargedUntil = this.now + CHARGE_MS;
+      this.fx(owner).zap(sp.x, sp.y - 40, f.x, f.y);
+      Sfx.playAt('electric-charge', f.x, { rate: 1.4, volume: 0.45 });
+    }
     if (this.isReplica(owner)) return;
     this.sides[owner].motion = {
       kind: 'zip', vx: Math.cos(a) * ZIP_SPEED, vy: Math.sin(a) * ZIP_SPEED,
@@ -736,14 +935,17 @@ export class MagnetKit {
     const f = this.fighter(owner);
     s.gatherUntil = 0;
     s.mech?.destroy();
+    // Q+ Mega Mechancements: the red mech — its own palette, its own (bigger) numbers.
+    const mega = this.up(owner, 'q');
+    const red = megaMechTint((c) => c);
     s.mech = new MagnetMech({
       scene: this.arena.scene,
       width: this.arena.width,
       height: this.arena.height,
-      tint: this.col(owner),
-      fx: this.fx(owner),
+      tint: mega ? megaMechTint(this.col(owner)) : this.col(owner),
+      fx: mega ? this.megaFxOf(owner) : this.fx(owner),
       targets: () => this.targetsOf(owner),
-      hit: (t, dmg) => this.hit(owner, t, dmg, MAGNET.neon),
+      hit: (t, dmg) => this.hit(owner, t, dmg, mega ? red(MAGNET.neon) : MAGNET.neon),
       stun: (t, ms) => this.stun(owner, t, ms),
       push: (t, vx, vy, ms) => this.shove(owner, t, vx, vy, ms),
       carry: (t, x) => {
@@ -751,14 +953,18 @@ export class MagnetKit {
         if (this.isReplica(owner) && t === this.arena.player) return;
         t.setPosition(x, t.y);
       },
-      announce: (x, y, text, color) => this.announce(x, y, text, color),
+      announce: (x, y, text, color) => this.announce(x, y, text, mega ? red(color) : color),
       shake: (ms, k) => this.arena.scene.cameras.main.shake(ms, k),
-    }, owner === 'npc', this.now);
+    }, owner === 'npc', this.now, mega);
     s.piloting = true;
     s.preHp = f.hp;
     s.prevAbsorber = f.damageAbsorber;
     this.hidePilot(f);
     if (owner === 'player') this.swapCards(true);
+  }
+
+  private megaFxOf(owner: Owner): MagnetFx {
+    return (this.megaFx[owner] ??= new MagnetFx(this.arena.scene, megaMechTint(this.col(owner))));
   }
 
   /** The pilot is the mech now: hidden, rooted and untouchable — reasserted every frame. */
@@ -865,9 +1071,12 @@ export class MagnetKit {
     this.updateMechs(delta);
     this.updateCoins(delta);
     this.updateCoinShots(dt);
+    this.updateFragments(dt);
     this.updateNails(dt);
     this.updateSpikes(dt);
     this.updateScraps(dt);
+    this.updateCharge();
+    this.updateMagnetized();
     this.updateMotions();
     this.updateShoves();
     this.updateStuns();
@@ -961,9 +1170,20 @@ export class MagnetKit {
     const now = this.now;
     for (let i = this.coinShots.length - 1; i >= 0; i--) {
       const s = this.coinShots[i];
+      const h = this.homing(s.owner, s.x, s.y, s.mag, HOMING_RATE);
+      s.lock = h?.lock ? h.t : null;
+      if (h) Object.assign(s, this.steer(s.vx, s.vy, s.x, s.y, h.t.x, h.t.y, h.rate, dt));
       s.x += s.vx * dt;
       s.y += s.vy * dt;
-      let gone = now >= s.until || s.x < this.left || s.x > this.right || s.y < this.top || s.y > this.bottom;
+      const wall = s.x < this.left || s.x > this.right || s.y < this.top || s.y > this.bottom;
+      let gone = now >= s.until || wall;
+      // Click+ Shatter Shot: the coin bursts on the wall and the pieces come back into the arena.
+      if (wall && now < s.until && this.up(s.owner, 'click')) {
+        let nx = 0, ny = 0;
+        if (s.x < this.left) nx = 1; else if (s.x > this.right) nx = -1;
+        if (s.y < this.top) ny = 1; else if (s.y > this.bottom) ny = -1;
+        this.shatterCoin(s.owner, Phaser.Math.Clamp(s.x, this.left, this.right), Phaser.Math.Clamp(s.y, this.top, this.bottom), Math.atan2(ny, nx));
+      }
       if (!gone) {
         for (const t of this.targetsOf(s.owner)) {
           if (Phaser.Math.Distance.Between(s.x, s.y, t.x, t.y) > this.bodyR(t) + 8) continue;
@@ -977,12 +1197,80 @@ export class MagnetKit {
     }
   }
 
+  /**
+   * Click+ Shatter Shot. The fragments fan out at the nearest enemy — or, if anyone is
+   * magnetised, every one of them goes straight at that body and stays locked on.
+   */
+  private shatterCoin(owner: Owner, x: number, y: number, inward: number): void {
+    const foes = this.targetsOf(owner);
+    const byDist = (a: Fighter, b: Fighter): number =>
+      Phaser.Math.Distance.Between(x, y, a.x, a.y) - Phaser.Math.Distance.Between(x, y, b.x, b.y);
+    const mag = foes.filter((t) => this.isMagnetized(owner, t)).sort(byDist)[0] ?? null;
+    const near = mag ?? foes.slice().sort(byDist)[0] ?? null;
+    const aim = near ? Math.atan2(near.y - y, near.x - x) : inward;
+    const spread = mag ? 0.04 : FRAGMENT_SPREAD;
+    for (let k = 0; k < SHATTER_FRAGMENTS; k++) {
+      const a = aim + (k / (SHATTER_FRAGMENTS - 1) - 0.5) * 2 * spread + (Math.random() - 0.5) * 0.08;
+      const v = FRAGMENT_SPEED * (0.9 + Math.random() * 0.2);
+      this.fragments.push({
+        owner, x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, until: this.now + FRAGMENT_MS,
+        bounces: 1, seed: Math.floor(Math.random() * 100), lock: mag,
+      });
+    }
+    const fx = this.fx(owner);
+    fx.flash(x, y, 18, 10, MAGNET.goldHi);
+    fx.sparks(x, y, 7, inward, 10, MAGNET.gold);
+    Sfx.playAt('clang', x, { rate: 1.8, volume: 0.35 });
+  }
+
+  private updateFragments(dt: number): void {
+    const now = this.now;
+    for (let i = this.fragments.length - 1; i >= 0; i--) {
+      const fr = this.fragments[i];
+      // A magnetised body is where every fragment goes, no matter how it left the wall.
+      let lock: Fighter | null = null;
+      let bestD = Infinity;
+      for (const t of this.targetsOf(fr.owner)) {
+        if (!this.isMagnetized(fr.owner, t)) continue;
+        const d = Phaser.Math.Distance.Between(fr.x, fr.y, t.x, t.y);
+        if (d < bestD) { bestD = d; lock = t; }
+      }
+      fr.lock = lock;
+      if (lock) Object.assign(fr, this.steer(fr.vx, fr.vy, fr.x, fr.y, lock.x, lock.y, Infinity, dt));
+      fr.x += fr.vx * dt;
+      fr.y += fr.vy * dt;
+      let gone = now >= fr.until;
+      if (!gone && (fr.x < this.left || fr.x > this.right)) {
+        if (fr.bounces-- > 0) { fr.vx = -fr.vx; fr.x = Phaser.Math.Clamp(fr.x, this.left, this.right); } else gone = true;
+      }
+      if (!gone && (fr.y < this.top || fr.y > this.bottom)) {
+        if (fr.bounces-- > 0) { fr.vy = -fr.vy; fr.y = Phaser.Math.Clamp(fr.y, this.top, this.bottom); } else gone = true;
+      }
+      if (!gone) {
+        for (const t of this.targetsOf(fr.owner)) {
+          if (Phaser.Math.Distance.Between(fr.x, fr.y, t.x, t.y) > this.bodyR(t) + 5) continue;
+          this.hit(fr.owner, t, FRAGMENT_DAMAGE, MAGNET.gold);
+          this.fx(fr.owner).sparks(fr.x, fr.y, 2, Math.atan2(fr.vy, fr.vx) + Math.PI, 10, MAGNET.goldHi);
+          gone = true;
+          break;
+        }
+      }
+      if (gone) this.fragments.splice(i, 1);
+    }
+  }
+
   private updateNails(dt: number): void {
     const now = this.now;
     for (let i = this.nails.length - 1; i >= 0; i--) {
       const n = this.nails[i];
       const owner = this.fighter(n.owner);
       if (n.state === 'fly') {
+        const h = this.homing(n.owner, n.x, n.y, n.mag, HOMING_RATE);
+        n.lock = h?.lock ? h.t : null;
+        if (h) {
+          Object.assign(n, this.steer(n.vx, n.vy, n.x, n.y, h.t.x, h.t.y, h.rate, dt));
+          n.angle = Math.atan2(n.vy, n.vx);
+        }
         const sx = n.vx * dt, sy = n.vy * dt;
         n.x += sx; n.y += sy;
         n.travelled += Math.hypot(sx, sy);
@@ -995,6 +1283,7 @@ export class MagnetKit {
           if (Phaser.Math.Distance.Between(n.x, n.y, t.x, t.y) > this.bodyR(t) + 6) continue;
           this.hit(n.owner, t, NAIL_DAMAGE, MAGNET.steel);
           n.state = 'stuck';
+          n.lock = null;
           n.victim = t;
           n.offX = (n.x - t.x) * 0.7;
           n.offY = (n.y - t.y) * 0.7;
@@ -1050,8 +1339,25 @@ export class MagnetKit {
         if (now >= sp.until) {
           this.fx(sp.owner).shrapnel(sp.x, sp.y - 20, 4, { speed: 90, size: 9, color: MAGNET.iron });
           this.spikes.splice(i, 1);
+          continue;
+        }
+        // F+ Electromagnet: a live spike arcs into everyone standing close to it.
+        if (sp.live && now >= sp.nextZapAt) {
+          const near = this.targetsOf(sp.owner).filter((t) => Phaser.Math.Distance.Between(sp.x, sp.y, t.x, t.y) <= SPIKE_ZAP_R + this.bodyR(t));
+          if (near.length > 0) {
+            sp.nextZapAt = now + SPIKE_ZAP_GAP_MS;
+            for (const t of near) {
+              this.hit(sp.owner, t, SPIKE_ZAP_DAMAGE, MAGNET.live);
+              this.fx(sp.owner).zap(sp.x, sp.y - 46, t.x, t.y);
+            }
+            Sfx.playAt('electric-charge', sp.x, { rate: 2, volume: 0.25 });
+          }
         }
       } else {
+        // E+ Magnetize: a repulsed spike is magnetised — it drifts toward a body, and locks onto a magnetised one.
+        const h = this.homing(sp.owner, sp.x, sp.y, true, SPIKE_HOMING_RATE, sp.hit);
+        sp.lock = h?.lock ? h.t : null;
+        if (h) Object.assign(sp, this.steer(sp.vx, sp.vy, sp.x, sp.y, h.t.x, h.t.y, h.rate, dt));
         sp.x += sp.vx * dt;
         sp.y += sp.vy * dt;
         const blade = this.arena.hasPerk(sp.owner, 'blade');
@@ -1071,14 +1377,14 @@ export class MagnetKit {
         if (nx !== 0 || ny !== 0) {
           const x = Phaser.Math.Clamp(sp.x, this.left, this.right);
           const y = Phaser.Math.Clamp(sp.y, this.top, this.bottom);
-          this.shatter(sp.owner, x, y, Math.atan2(ny, nx), blade ? BLADE_SCRAP_COUNT : SCRAP_COUNT);
+          this.shatter(sp.owner, x, y, Math.atan2(ny, nx), blade ? BLADE_SCRAP_COUNT : SCRAP_COUNT, sp.live, this.up(sp.owner, 'e'));
           this.spikes.splice(i, 1);
         }
       }
     }
   }
 
-  private shatter(owner: Owner, x: number, y: number, inward: number, count: number): void {
+  private shatter(owner: Owner, x: number, y: number, inward: number, count: number, live = false, home = false): void {
     const fx = this.fx(owner);
     fx.flash(x, y, 30, 10, MAGNET.sky);
     fx.shrapnel(x, y, 8, { angle: inward, spread: 0.9, speed: 260, size: 10, color: MAGNET.iron });
@@ -1090,7 +1396,7 @@ export class MagnetKit {
       this.scraps.push({
         owner, state: 'fly', x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v,
         angle: Math.random() * Math.PI, spin: (Math.random() < 0.5 ? -1 : 1) * (8 + Math.random() * 6),
-        size: 9 + Math.random() * 3, seed: Math.floor(Math.random() * 100), until: 0, hit: new Set(),
+        size: 9 + Math.random() * 3, seed: Math.floor(Math.random() * 100), until: 0, hit: new Set(), live, home,
       });
     }
   }
@@ -1102,7 +1408,35 @@ export class MagnetKit {
     for (let i = this.scraps.length - 1; i >= 0; i--) {
       const s = this.scraps[i];
       const owner = this.fighter(s.owner);
-      if (s.state === 'fly') {
+      if (s.state === 'fly' && s.home && this.alive(owner)) {
+        // E+ Magnetize: scrap off a repulsed spike comes straight back to the hand that threw it,
+        // cutting through anyone on the way.
+        const a = Math.atan2(owner.y - s.y, owner.x - s.x);
+        s.vx = Math.cos(a) * SCRAP_HOME_SPEED;
+        s.vy = Math.sin(a) * SCRAP_HOME_SPEED;
+        s.x += s.vx * dt; s.y += s.vy * dt;
+        s.angle += s.spin * dt;
+        for (const t of this.targetsOf(s.owner)) {
+          if (s.hit.has(t)) continue;
+          if (Phaser.Math.Distance.Between(s.x, s.y, t.x, t.y) > this.bodyR(t) + s.size) continue;
+          s.hit.add(t);
+          this.hit(s.owner, t, SCRAP_FLY_DAMAGE, MAGNET.iron);
+        }
+        if (Phaser.Math.Distance.Between(s.x, s.y, owner.x, owner.y) <= SCRAP_PICKUP_R * 0.5 + this.bodyR(owner)) {
+          s.home = false;
+          s.vx = s.vy = 0;
+          if (orbits[s.owner].length < ORBIT_MAX) {
+            s.state = 'orbit';
+            orbits[s.owner].push(s);
+            this.fx(s.owner).grasp(owner.x, owner.y, s.x, s.y, MAGNET.blue, 260);
+            Sfx.playAt('magnet-pull', owner.x, { rate: 1.8, volume: 0.3 });
+          } else {
+            s.state = 'ground';
+            s.until = now + SCRAP_GROUND_MS;
+          }
+        }
+      } else if (s.state === 'fly') {
+        s.home = false;
         s.x += s.vx * dt; s.y += s.vy * dt;
         const drag = Math.pow(0.12, dt);
         s.vx *= drag; s.vy *= drag;
@@ -1155,6 +1489,13 @@ export class MagnetKit {
           list.splice(k, 1);
         }
       }
+      // F+ Electromagnet: live shards in the ring now and then shoot an incoming shot out of the air.
+      if (now >= this.sides[o].nextShieldZapAt) {
+        const live = list.filter((sc) => sc.live);
+        if (live.length > 0 && this.shieldZap(o, f, live[Math.floor(Math.random() * live.length)])) {
+          this.sides[o].nextShieldZapAt = now + SHIELD_ZAP_GAP_MS;
+        }
+      }
       // Electromagnet: the ring is live — one shard at a time arcs into whoever is close.
       if (electro && now >= this.sides[o].nextZapAt && list.length > 0) {
         const src = list[Math.floor(Math.random() * list.length)];
@@ -1165,6 +1506,58 @@ export class MagnetKit {
           this.fx(o).laser(src.x, src.y, t.x, t.y, MAGNET.live, 10, 2);
         }
       }
+    }
+  }
+
+  /** F+ Electromagnet: the nearest enemy shot inside {@link SHIELD_ZAP_R} is burnt out of the air. The shard survives. */
+  private shieldZap(owner: Owner, f: Fighter, src: Scrap): boolean {
+    const { projectiles } = this.arena;
+    let best: Projectile | null = null;
+    let bestD = SHIELD_ZAP_R;
+    if (projectiles) {
+      for (const go of projectiles.getChildren()) {
+        const p = go as Projectile;
+        if (!p.active || p.isFromPlayer === (owner === 'player')) continue;
+        const d = Phaser.Math.Distance.Between(p.x, p.y, f.x, f.y);
+        if (d < bestD) { bestD = d; best = p; }
+      }
+    }
+    if (best) {
+      this.fx(owner).zap(src.x, src.y, best.x, best.y);
+      best.setActive(false).setVisible(false);
+      return true;
+    }
+    if (owner === 'player' && this.arena.blockHuskShot(f.x, f.y, SHIELD_ZAP_R)) {
+      const a = Math.atan2(src.y - f.y, src.x - f.x);
+      this.fx(owner).zap(src.x, src.y, src.x + Math.cos(a) * 70, src.y + Math.sin(a) * 70);
+      return true;
+    }
+    return false;
+  }
+
+  /** F+ Electromagnet: the charge left in you by a live spike zaps everyone close. */
+  private updateCharge(): void {
+    const now = this.now;
+    for (const owner of BOTH) {
+      const s = this.sides[owner];
+      if (now >= s.chargedUntil) continue;
+      const f = this.fighter(owner);
+      if (!this.alive(f) || s.piloting) { s.chargedUntil = 0; continue; }
+      if (now < s.nextAuraZapAt) continue;
+      const near = this.targetsOf(owner).filter((t) => Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) <= CHARGE_AURA_R + this.bodyR(t));
+      if (near.length === 0) continue;
+      s.nextAuraZapAt = now + CHARGE_AURA_GAP_MS;
+      for (const t of near) {
+        this.hit(owner, t, CHARGE_AURA_DAMAGE, MAGNET.live);
+        this.fx(owner).zap(f.x, f.y, t.x, t.y);
+      }
+    }
+  }
+
+  private updateMagnetized(): void {
+    const now = this.now;
+    for (const [f, m] of this.magnetized) {
+      if (now >= m.until || !f.active || f.hp <= 0) this.magnetized.delete(f);
     }
   }
 
@@ -1247,8 +1640,11 @@ export class MagnetKit {
   // ── Painting ───────────────────────────────────────────────────────────
 
   private paint(): void {
+    const now0 = this.now;
     const idle = this.coins.length === 0 && this.coinShots.length === 0 && this.nails.length === 0
       && this.spikes.length === 0 && this.scraps.length === 0 && this.bits.length === 0
+      && this.fragments.length === 0 && this.magnetized.size === 0
+      && this.sides.player.chargedUntil <= now0 && this.sides.npc.chargedUntil <= now0
       && this.sides.player.gatherUntil <= 0 && this.sides.npc.gatherUntil <= 0
       && !this.sides.player.pod && !this.sides.npc.pod;
     if (idle && !this.groundGfx && !this.airGfx) return;
@@ -1267,7 +1663,13 @@ export class MagnetKit {
       const s = this.sides[owner];
       const f = this.fighter(owner);
       if (s.gatherUntil > 0 && this.alive(f)) {
-        drawGatherPile(g, this.col(owner), f.x, f.y, 1 - (s.gatherUntil - now) / GATHER_MS, t);
+        // Q+ Mega Mechancements: the pile is already red.
+        const tint = this.up(owner, 'q') ? megaMechTint(this.col(owner)) : this.col(owner);
+        drawGatherPile(g, tint, f.x, f.y, 1 - (s.gatherUntil - now) / GATHER_MS, t);
+      }
+      // F+ Electromagnet: the charge from a live spike.
+      if (now < s.chargedUntil && this.alive(f) && !s.piloting && !f.forceInvisible) {
+        drawChargedAura(g, this.col(owner), f.x, f.y, CHARGE_AURA_R, t, (s.chargedUntil - now) / CHARGE_MS);
       }
     }
 
@@ -1277,23 +1679,45 @@ export class MagnetKit {
       const f = this.fighter(owner);
       if (this.orbitOf(owner).length > 0 && this.alive(f)) drawOrbitRing(a, this.col(owner), f.x, f.y, ORBIT_R, t);
     }
+    // E+ Magnetize, on a body.
+    for (const [f, m] of this.magnetized) {
+      if (!f.active || f.forceInvisible || now >= m.until) continue;
+      drawMagnetized(a, this.col(m.by), f.x, f.y, this.bodyR(f), t, (m.until - now) / MAGNETIZE_MS);
+    }
     for (const s of this.scraps) {
       if (s.state !== 'ground') drawScrap(a, this.col(s.owner), s.x, s.y, s.angle, s.size, s.seed, s.state, t);
+      if (s.live) drawCrackle(a, this.col(s.owner), s.x, s.y, s.size * 1.1, t, s.state === 'ground' ? 0.5 : 0.9, 2);
     }
     for (const sp of this.spikes) {
       if (sp.state === 'hover') {
         drawSpikeHover(a, this.col(sp.owner), sp.x, sp.y, 1 - (sp.slamAt - now) / SPIKE_HOVER_MS, SPIKE_RADIUS, t);
       } else if (sp.state === 'flying') {
+        if (sp.lock) drawLockLine(a, this.col(sp.owner), sp.x, sp.y, sp.lock.x, sp.lock.y, t);
         drawSpikeFlying(a, this.col(sp.owner), sp.x, sp.y, Math.atan2(sp.vy, sp.vx));
+        if (sp.live) drawCrackle(a, this.col(sp.owner), sp.x, sp.y, 20, t);
       }
+    }
+    // A live planted spike's current plays round its head (painted in the air so it reads over bodies).
+    for (const sp of this.spikes) {
+      if (sp.state === 'planted' && sp.live) drawCrackle(a, this.col(sp.owner), sp.x, sp.y - 44, 16, t, 0.85);
     }
     for (const c of this.coins) {
       drawCoin(a, this.col(c.owner), c.x, c.y, c.z, c.spin, this.sides[c.owner].hover, t);
     }
-    for (const s of this.coinShots) drawCoinShot(a, this.col(s.owner), s.x, s.y, Math.atan2(s.vy, s.vx), t);
+    for (const s of this.coinShots) {
+      if (s.lock) drawLockLine(a, this.col(s.owner), s.x, s.y, s.lock.x, s.lock.y, t);
+      if (s.mag) drawMagnetHalo(a, this.col(s.owner), s.x, s.y, 9, t);
+      drawCoinShot(a, this.col(s.owner), s.x, s.y, Math.atan2(s.vy, s.vx), t);
+    }
+    for (const fr of this.fragments) {
+      if (fr.lock) drawLockLine(a, this.col(fr.owner), fr.x, fr.y, fr.lock.x, fr.lock.y, t, 0.6);
+      drawCoinFragment(a, this.col(fr.owner), fr.x, fr.y, Math.atan2(fr.vy, fr.vx), fr.seed);
+    }
     for (const n of this.nails) {
       const o = this.fighter(n.owner);
-      drawNail(a, this.col(n.owner), n.x, n.y, n.angle, n.state, o?.x ?? n.x, o?.y ?? n.y, t);
+      if (n.lock) drawLockLine(a, this.col(n.owner), n.x, n.y, n.lock.x, n.lock.y, t);
+      if (n.mag && n.state === 'fly') drawMagnetHalo(a, this.col(n.owner), n.x, n.y, 11, t);
+      drawNail(a, this.col(n.owner), n.x, n.y, n.angle, n.state, o?.x ?? n.x, o?.y ?? n.y, t, 1, n.golden);
     }
     for (const b of this.bits) {
       const f = this.fighter(b.owner);
@@ -1359,8 +1783,21 @@ export class MagnetKit {
     } : null);
     const mech = this.sides.player.mech;
     this.arena.setStatusIndicator('magnet-mech', playerIs && this.sides.player.piloting && mech?.active ? {
-      name: 'Mecha Massacre', emoji: '🤖', color: MAGNET.neon, priority: 149, until: mech.until,
-      description: 'You are the mech: untouchable and rooted. Click smash, E rail, R avalanche, F cannon, Q self-destruct.',
+      name: mech.mega ? 'Mega Mecha Massacre' : 'Mecha Massacre', emoji: '🤖', color: mech.mega ? 0xff4f5e : MAGNET.neon,
+      priority: 149, until: mech.until,
+      description: mech.mega
+        ? 'You are the red mech: untouchable and rooted, and every key hits harder, wider and longer. Click smash, E rail, R avalanche, F cannon, Q self-destruct.'
+        : 'You are the mech: untouchable and rooted. Click smash, E rail, R avalanche, F cannon, Q self-destruct.',
+    } : null);
+    const mag = this.magnetized.get(p);
+    this.arena.setStatusIndicator('magnet-magnetized', mag && mag.by === 'npc' && this.now < mag.until ? {
+      name: 'Magnetized', emoji: '🧲', color: MAGNET.rose, priority: 61, until: mag.until,
+      description: 'Their Repulse left a charge in you. Their coins, nails and spikes lock straight onto you, any of their shots passing close bends into you, and their coin fragments all fly at you.',
+    } : null);
+    const ch = this.sides.player.chargedUntil;
+    this.arena.setStatusIndicator('magnet-charged', playerIs && this.now < ch ? {
+      name: 'Charged', emoji: '⚡', color: MAGNET.live, priority: 152, until: ch,
+      description: `You rode a live spike: ${Math.round((CHARGE_SPEED_MULT - 1) * 100)}% faster, and your aura zaps everyone within ${CHARGE_AURA_R}px for ${CHARGE_AURA_DAMAGE} every ${CHARGE_AURA_GAP_MS / 1000}s.`,
     } : null);
   }
 
@@ -1369,7 +1806,7 @@ export class MagnetKit {
   private speedFor(owner: Owner): number {
     const s = this.sides[owner];
     if (s.gatherUntil > 0 || s.piloting) return 0;
-    return 1;
+    return this.now < s.chargedUntil ? CHARGE_SPEED_MULT : 1;
   }
 
   /** Rooted while gathering or piloting; stopped while stunned. Pulled by ArenaScene. */
@@ -1433,12 +1870,23 @@ export class MagnetKit {
     }
     if (dist > 280 && this.orbitOf('npc').some((sc) => this.inCone(n, ang, sc.x, sc.y, 16))) worth += 2;
     if (dist < 200 && this.nails.some((nl) => nl.owner === 'npc' && nl.state === 'stuck' && nl.victim === p)) worth += 2;
+    // E+ Magnetize: catching the target in the wave is half the cast — everything it fires, and
+    // everything already in the air, then locks onto them.
+    if (this.up('npc', 'e') && !this.isMagnetized('npc', p) && this.inCone(n, ang, p.x, p.y, this.bodyR(p))) {
+      worth += 1;
+      if (this.coinShots.some((c) => c.owner === 'npc') || this.nails.some((nl) => nl.owner === 'npc' && nl.state === 'fly')
+        || this.spikes.some((sp) => sp.owner === 'npc' && sp.state === 'flying')) worth += 1;
+    }
+    // R+ Nailstorm: every nail in them is another handle — and 4 more damage on the shove.
+    if (this.up('npc', 'r') && dist < REPULSE_PUSH_RANGE && this.nailsIn('npc', p) >= 2) worth += 2;
     return worth >= 2 ? { x: p.x, y: p.y } : undefined;
   }
 
   /** A nail has sat in the player for a beat — rip it out (and meet it with a Repulse). */
   npcRecallNow(): boolean {
     const p = this.arena.player;
+    // R+ Nailstorm: a full set of three tears hardest — rip the moment they are all in.
+    if (this.up('npc', 'r') && this.nailsIn('npc', p) >= NAILSTORM_COUNT) return true;
     return this.nails.some((nl) => nl.owner === 'npc' && nl.state === 'stuck' && nl.victim === p
       && nl.stuckUntil - this.now < NAIL_STUCK_MS - 1200);
   }
@@ -1453,6 +1901,8 @@ export class MagnetKit {
     for (const sp of this.spikes) {
       if (sp.owner !== 'npc' || sp.state !== 'planted' || sp.zipped) continue;
       const dSpike = Phaser.Math.Distance.Between(sp.x, sp.y, p.x, p.y);
+      // F+ Electromagnet: riding a live spike planted next to them lands the charged aura on them.
+      if (sp.live && !hurt && dSpike < CHARGE_AURA_R + 40 && dNow > 160) return { x: sp.x, y: sp.y };
       if (!hurt && dNow > 340 && dSpike < dNow - 150) return { x: sp.x, y: sp.y };
       if (hurt && dNow < 200 && dSpike > dNow + 200) return { x: sp.x, y: sp.y };
     }

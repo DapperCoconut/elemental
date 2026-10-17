@@ -682,6 +682,7 @@ export class CrystalKit {
         cl.sprite.clear();
         CrystalFx.drawMirage(cl.sprite, this.pcol, CLEAR_TONES, 0, 0, 16,
           (dirAngle - 90) * Math.PI / 180, time / 1000, Phaser.Math.Clamp(cl.hp / cl.maxHp, 0.35, 1));
+        drawCloneGauge(cl.sprite, this.pcol, CLEAR_TONES, cl.hp / cl.maxHp, (dirAngle - 90) * Math.PI / 180, time);
         // Check NPC projectile hits
         for (const go of allActiveProj) {
           const proj = go as Projectile;
@@ -719,6 +720,7 @@ export class CrystalKit {
         cl.sprite.clear();
         CrystalFx.drawMirage(cl.sprite, this.ncol, NPC_TONES, 0, 0, 16,
           (ndAngle - 90) * Math.PI / 180, time / 1000, Phaser.Math.Clamp(cl.hp / cl.maxHp, 0.35, 1) * 0.8);
+        drawCloneGauge(cl.sprite, this.ncol, NPC_TONES, cl.hp / cl.maxHp, (ndAngle - 90) * Math.PI / 180, time);
         for (const go of allActiveProj) {
           const proj = go as Projectile;
           if (!proj.active || !proj.isFromPlayer) continue;
@@ -926,6 +928,7 @@ export class CrystalKit {
       this.pfx.bloom(tx, ty, 34, 8, 4, CLEAR_TONES);
       const lblObj = scene.add.text(tx, ty, lbl, {
         fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffffff',
+        stroke: '#0d1a2a', strokeThickness: 4,
       }).setOrigin(0.5).setDepth(5);
       this.crystalPortals.push({
         gfx: scene.add.graphics().setDepth(4), label: lblObj,
@@ -943,6 +946,7 @@ export class CrystalKit {
       this.nfx.bloom(tx, ty, 34, 8, 4, NPC_TONES);
       const lblObj = scene.add.text(tx, ty, lbl, {
         fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#888888',
+        stroke: '#0d1a2a', strokeThickness: 4,
       }).setOrigin(0.5).setDepth(5);
       this.npcCrystalPortals.push({
         gfx: scene.add.graphics().setDepth(4), label: lblObj,
@@ -968,10 +972,12 @@ export class CrystalKit {
       this.playerAvatar?.play('raise', 0, 900);
       this.pfx.bloom(cx, cy, 60, 14, 6, CLEAR_TONES);
       for (const off of baseOffsets) {
-        const hpBg = scene.add.rectangle(cx, cy - 28, 30, 5, 0x222222).setDepth(12);
-        const hpBar = scene.add.rectangle(cx - 15, cy - 28, 30, 5, 0x44ff88).setDepth(13).setOrigin(0, 0.5);
+        // The plain bar/pointer rects stay on the record (other paths destroy them), but the
+        // clone's own Graphics paints a facet gauge and a prism pointer in their place.
+        const hpBg = scene.add.rectangle(cx, cy - 28, 30, 5, 0x222222).setDepth(12).setVisible(false);
+        const hpBar = scene.add.rectangle(cx - 15, cy - 28, 30, 5, 0x44ff88).setDepth(13).setOrigin(0, 0.5).setVisible(false);
         const spr = scene.add.graphics().setDepth(11).setPosition(cx, cy);
-        const dir = scene.add.rectangle(cx, cy - 20, 4, 10, 0xffffff, 0.8).setDepth(14);
+        const dir = scene.add.rectangle(cx, cy - 20, 4, 10, 0xffffff, 0.8).setDepth(14).setVisible(false);
         this.crystalClones.push({ sprite: spr, hp: 50, maxHp: 50, baseOffsetX: off.x, baseOffsetY: off.y, offsetX: off.x, offsetY: off.y, hpBar, hpBg, dirIndicator: dir });
         // Each mirage is refracted out of the caster, so the link is visible.
         this.pfx.refract(cx, cy, cx + off.x, cy + off.y, 8, CLEAR_TONES);
@@ -984,10 +990,10 @@ export class CrystalKit {
       this.npcAvatar?.play('raise', 0, 900);
       this.nfx.bloom(ncx, ncy, 60, 14, 6, NPC_TONES);
       for (const off of [{ x: -58, y: 0 }, { x: 58, y: 0 }]) {
-        const hpBg = scene.add.rectangle(ncx, ncy - 28, 30, 4, 0x333333).setDepth(12);
-        const hpBar = scene.add.rectangle(ncx - 15, ncy - 28, 30, 4, 0x44aaff).setDepth(13).setOrigin(0, 0.5);
+        const hpBg = scene.add.rectangle(ncx, ncy - 28, 30, 4, 0x333333).setDepth(12).setVisible(false);
+        const hpBar = scene.add.rectangle(ncx - 15, ncy - 28, 30, 4, 0x44aaff).setDepth(13).setOrigin(0, 0.5).setVisible(false);
         const spr = scene.add.graphics().setDepth(11).setPosition(ncx, ncy);
-        const dir = scene.add.rectangle(ncx, ncx - 20, 4, 10, 0x88ccff, 0.6).setDepth(14); // pre-existing bug: uses ncx twice not ncy — preserved as-is
+        const dir = scene.add.rectangle(ncx, ncx - 20, 4, 10, 0x88ccff, 0.6).setDepth(14).setVisible(false); // pre-existing bug: uses ncx twice not ncy — preserved as-is
         this.npcCrystalClones.push({ sprite: spr, hp: 50, maxHp: 50, baseOffsetX: off.x, baseOffsetY: off.y, offsetX: off.x, offsetY: off.y, hpBar, hpBg, dirIndicator: dir });
       }
     }
@@ -1474,4 +1480,55 @@ export class CrystalKit {
     }
     return razed;
   }
+}
+
+/**
+ * A mirage clone's over-head HP as a row of five cut gems (lit facets = health left, the last
+ * partial gem fills bottom-up) and a prism arrowhead toward where it's facing. Painted into
+ * the clone's own Graphics at its local origin, after the mirage body.
+ */
+function drawCloneGauge(
+  g: Phaser.GameObjects.Graphics, col: (c: number) => number, tones: CrystalTones,
+  frac: number, facing: number, time: number,
+): void {
+  const n = 5;
+  const f = Phaser.Math.Clamp(frac, 0, 1) * n;
+  const y = -29, gap = 7.5;
+  g.fillStyle(col(CRYSTAL.onyx), 0.7);
+  g.fillRoundedRect(-n * gap / 2 - 3, y - 5.5, n * gap + 6, 11, 4);
+  for (let i = 0; i < n; i++) {
+    const x = -((n - 1) * gap) / 2 + i * gap;
+    const lit = Phaser.Math.Clamp(f - i, 0, 1);
+    const diamond = (hw: number, hh: number) => {
+      g.beginPath();
+      g.moveTo(x, y - hh); g.lineTo(x + hw, y); g.lineTo(x, y + hh); g.lineTo(x - hw, y);
+      g.closePath();
+    };
+    diamond(3, 4.5);
+    g.fillStyle(col(tones.shell), 0.9);
+    g.fillPath();
+    if (lit > 0) {
+      g.fillStyle(col(tones.facet), 0.95 * lit);
+      diamond(3 * lit, 4.5 * lit);
+      g.fillPath();
+      g.fillStyle(col(tones.spark), 0.8 * lit);
+      g.fillTriangle(x - 1.6 * lit, y - 0.5, x, y - 4 * lit, x + 0.4, y - 0.5);
+    }
+    g.lineStyle(1, col(lit >= 1 ? tones.lit : tones.body), 0.9);
+    diamond(3, 4.5);
+    g.strokePath();
+  }
+  // Glint sweeping along the row.
+  const sweep = ((time / 900) % 1.6) - 0.3;
+  if (sweep > 0 && sweep < 1) {
+    g.fillStyle(col(CRYSTAL.white), 0.55);
+    g.fillCircle(-n * gap / 2 + sweep * n * gap, y - 1, 1.3);
+  }
+  // Prism pointer.
+  const px = Math.cos(facing) * 19, py = Math.sin(facing) * 19;
+  const cx = Math.cos(facing), sy = Math.sin(facing);
+  g.fillStyle(col(tones.facet), 0.9);
+  g.fillTriangle(px + cx * 6, py + sy * 6, px - sy * 3.5, py + cx * 3.5, px + sy * 3.5, py - cx * 3.5);
+  g.fillStyle(col(tones.spark), 0.8);
+  g.fillTriangle(px + cx * 6, py + sy * 6, px - sy * 1.5, py + cx * 1.5, px, py);
 }

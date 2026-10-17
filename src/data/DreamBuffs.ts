@@ -286,6 +286,11 @@ export const DREAM_BOONS: Record<string, DreamBoon[]> = {
     { emoji: '💨', name: 'Tailwind', blurb: 'Everything you throw has the wind behind it. 25% more damage.', damage: 1.25 },
     { emoji: '🪁', name: 'Light as Air', blurb: 'A quarter smaller and hard to catch. 20% dodge.', size: 0.75, dodge: 0.2 },
   ],
+  myth: [
+    { emoji: '💠', name: 'Standing Ovation', blurb: 'The crowd never sits down. 25% more damage.', damage: 1.25 },
+    { emoji: '⚔️', name: 'Excalibur\'s Oath', blurb: 'Nothing can stop a story that has decided its ending. 20% less damage taken and nothing shoves you.', armor: 0.8, knockbackImmune: true },
+    { emoji: '🌠', name: 'Written in the Stars', blurb: 'Every ending comes sooner. 30% off every cooldown.', cooldown: 0.7 },
+  ],
   marrow: [
     { emoji: '🦴', name: 'Bone Density', blurb: 'A skeleton built for this. 70 more health and 5 off every hit.', maxHp: 70, flatCut: 5 },
     { emoji: '🩹', name: 'Neutralize', blurb: 'An immune system that never sleeps. 5 health a second and nothing sticks to you.', regen: 5, cleanse: true },

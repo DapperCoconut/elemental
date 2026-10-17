@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { FONT_UI } from '../../ui/Theme';
 import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
@@ -8,7 +9,7 @@ import type { FormRevertTarget } from '../../combat/FormRevert';
 import { Sfx } from '../../audio';
 import {
   ChessKind, PSY, PsychicAvatar, PsychicColorFn, PsychicFx, chessPiece, focusMandala, heavenlyAura,
-  mightAura, moveGuide, queenCrown, queueCard, snareRune, strideAura,
+  mightAura, moveGuide, queenCrown, queueCard, rideWard, sightSquare, snareRune, strideAura,
 } from './PsychicVisuals';
 
 type Owner = 'player' | 'npc';
@@ -89,6 +90,35 @@ const QUEEN_PATH_DAMAGE = 25;
 const QUEEN_BLAST_R = 85;
 const QUEEN_BLAST_DAMAGE = 20;
 
+// ── Shop upgrades ────────────────────────────────────────────────────────────
+/** Click+ Insight Move: a pawn whose first capture catches nobody takes one more step. */
+const PAWN_MAX_STEPS = 2;
+/** E+ Sight Lines: one lit board square, edge to edge, along a bishop's diagonal. */
+const SIGHT_SQUARE = 30;
+const SIGHT_DAMAGE = 5;
+const SIGHT_MS = 5000;
+/** Squares light up one after another down the diagonal, this far apart. */
+const SIGHT_RIPPLE_MS = 22;
+/**
+ * One body is billed by a side's squares at most this often. Each square only ever bills a body
+ * once, but walking straight down a diagonal crosses one every ~0.1s.
+ */
+const SIGHT_HIT_GAP_MS = 350;
+/** R+ Mount Protect: the rider comes down just in front of the knight's foot, not inside it. */
+const RIDE_LAND_DY = 24;
+/** F+ Castle: the slam where the rook comes down. */
+const CASTLE_R = 70;
+const CASTLE_DAMAGE = 20;
+/** Q+ Checkmate: below this fraction of their health, the end of the reign kills. */
+const CHECKMATE_FRAC = 0.15;
+/** The bot crowns early to set a checkmate up once its target is down to this. */
+const NPC_CHECKMATE_SETUP = 0.4;
+/** The bot castles out of melee when its target is this close. */
+const NPC_CASTLE_TRIGGER = CASTLE_R * 0.9;
+/** The bot rides a knight out of trouble below this much health. */
+const NPC_RIDE_ESCAPE_HP = 0.5;
+const NPC_RIDE_ESCAPE_RANGE = 160;
+
 // ── Mastery ──────────────────────────────────────────────────────────────────
 /** Predictor's Snare: what a closed eye deals to whoever walks over it. */
 const SNARE_DAMAGE = 15;
@@ -156,6 +186,8 @@ interface Piece {
   move: Move | null;
   face: number;
   seed: number;
+  /** F+ Castle: a rook castles once. */
+  castled: boolean;
 }
 
 interface Pawn {
@@ -171,6 +203,37 @@ interface Pawn {
   until: number;
   touched: Set<Fighter>;
   nextStrikeAt: number;
+  /** Steps taken so far, and when the current one began. Insight Move allows a second. */
+  steps: number;
+  stepAt: number;
+}
+
+/** E+ Sight Lines: one lit square of a diagonal a bishop slid down. */
+interface SightSquare {
+  owner: Owner;
+  x: number;
+  y: number;
+  /** Lights up a moment after the square before it, so the line ripples on. */
+  born: number;
+  until: number;
+  seed: number;
+  /** Each square bills a body once. */
+  hit: Set<Fighter>;
+}
+
+/** R+ Mount Protect: the psychic in a knight's saddle. */
+interface Ride {
+  /** The knight's serial, for drawing; the ride runs on its own clock either way. */
+  piece: number;
+  who: Fighter;
+  fx: number;
+  fy: number;
+  tx: number;
+  ty: number;
+  start: number;
+  ms: number;
+  /** What `isInvincible` was before the leap — handed back on landing. */
+  saved: boolean;
 }
 
 interface Snare {
@@ -201,12 +264,15 @@ interface Side {
   utterRaw: number;
   utterRelayAt: number;
   npcUtterCheckAt: number;
+  ride: Ride | null;
+  /** Sight Lines: when each body was last billed by this side's squares. */
+  sightHitAt: Map<Fighter, number>;
 }
 
 function makeSide(owner: Owner): Side {
   return {
     owner, aimX: 0, aimY: 0, serial: 0, selected: -1,
-    queenUntil: 0, queenReadyAt: 0, queenMove: null, stolen: [],
+    queenUntil: 0, queenReadyAt: 0, queenMove: null, stolen: [], ride: null, sightHitAt: new Map(),
     utterUntil: 0, utterCastAt: -UTTER_COOLDOWN_MS, utterRaw: 0, utterRelayAt: 0, npcUtterCheckAt: 0,
   };
 }
@@ -222,7 +288,7 @@ interface MovementPlan {
 
 /** What the bot should do with a click this tick, worked out by the kit. */
 interface NpcPlan {
-  /** Piece serial, or -1 for the queen herself. */
+  /** Piece serial, -1 for the queen herself, or -2 to castle with the rook standing at (x, y). */
   piece: number;
   x: number;
   y: number;
@@ -254,6 +320,8 @@ export interface PsychicArenaApi {
   buildPlayerContext(x: number, y: number): CastContext;
   setStatusIndicator(id: string, status: CustomStatus | null): void;
   sendPsychicMsg(msg: NetPsychicMsg): void;
+  /** The shop upgrade in `slot` — the player's own, or the opponent's loadout for 'npc'. */
+  hasUpgrade(owner: Owner, slot: string): boolean;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
   masteryBindFor(slot: string): string | null;
@@ -326,6 +394,7 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
   private pieces: Piece[] = [];
   private pawns: Pawn[] = [];
   private snares: Snare[] = [];
+  private squares: SightSquare[] = [];
   /** Observed velocity per body, for bodies with no AI plan to replay (husks, replicas). */
   private seen = new Map<Fighter, { x: number; y: number; vx: number; vy: number; at: number }>();
   /** The mouse button last frame, so a press can be told from a hold. */
@@ -434,6 +503,8 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
   reset(): void {
+    // A rider still in the saddle gets its own invincibility back before the sides are dropped.
+    for (const owner of BOTH) this.endRide(owner);
     // Hand every borrowed cast back before dropping the queues, or an ability paid for on the
     // last frame of a match would simply vanish along with the kit's state.
     for (const f of [...this.foreseen]) this.releaseForesight(f, false);
@@ -442,6 +513,7 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
     this.pieces = [];
     this.pawns = [];
     this.snares = [];
+    this.squares = [];
     this.seen.clear();
     this.wasDown = false;
     this.pressMode = null;
@@ -514,6 +586,11 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
   /** How long everything aimed at that psychic is held for right now. */
   private foresightMs(owner: Owner): number {
     return this.focused(owner) ? UTTER_FORESIGHT_MS : FORESIGHT_MS;
+  }
+
+  /** That side's psychic owns the shop upgrade in `slot`. */
+  private up(owner: Owner, slot: string): boolean {
+    return this.isPsychic(owner) && this.api.hasUpgrade(owner, slot);
   }
 
   private queen(owner: Owner): boolean {
@@ -595,7 +672,9 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
 
     if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('psychic-bishop', ctx);
     if (bound !== 'r' && Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('psychic-knight', ctx);
-    if (bound !== 'f' && Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('psychic-rook', ctx);
+    if (bound !== 'f' && Phaser.Input.Keyboard.JustDown(this.api.fKey) && !this.tryCastle('player')) {
+      p.castAbility('psychic-rook', ctx);
+    }
     if (bound !== 'q' && Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('psychic-queen', ctx);
   }
 
@@ -628,6 +707,7 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
       ty: this.clampY(fy + Math.sin(ang) * step),
       ang, born: this.now, until: this.now + PAWN_LIFE_MS,
       touched: new Set(), nextStrikeAt: this.now + PAWN_STEP_MS,
+      steps: 1, stepAt: this.now,
     });
     this.avatar(owner)?.play('punch', ang);
   }
@@ -650,7 +730,7 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
       id: s.serial++, kind, owner, x, y,
       born: this.now, until: this.now + PIECE_LIFE_MS,
       readyAt: this.now + 250, move: null,
-      face: x >= f.x ? 1 : -1, seed: Math.random() * 999,
+      face: x >= f.x ? 1 : -1, seed: Math.random() * 999, castled: false,
     });
     this.fx(owner).summonPiece(x, y, kind === 'bishop');
     this.avatar(owner)?.play('slam', Math.atan2(y - f.y, x - f.x));
@@ -683,6 +763,10 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
     const plan = this.npcPlan;
     if (!plan || Math.abs(plan.x - tx) > 1 || Math.abs(plan.y - ty) > 1) return;
     this.npcPlan = null;
+    if (plan.piece === -2) {
+      this.castle('npc');
+      return;
+    }
     if (plan.piece < 0) {
       this.queenMove('npc', plan.x, plan.y);
       return;
@@ -776,6 +860,7 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
       leap, hit: new Set(),
     };
     if (Math.abs(dest.x - pc.x) > 1) pc.face = dest.x > pc.x ? 1 : -1;
+    if (leap) this.tryMount(pc, pc.move);
     // A piece's eight seconds are the piece's, not the move's — moving does not buy it time.
     Sfx.playAt(leap ? 'jump' : 'whoosh', pc.x, { rate: leap ? 1.1 : 1.3, volume: 0.6 });
     if (pc.owner === 'player' && this.api.isOnline && !relayed) {
@@ -788,7 +873,7 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
   private queenMove(owner: Owner, tx: number, ty: number): boolean {
     const s = this.side(owner);
     const f = this.fighter(owner);
-    if (!this.alive(f) || s.queenMove || this.now < s.queenReadyAt) return false;
+    if (!this.alive(f) || s.queenMove || s.ride || this.now < s.queenReadyAt) return false;
     const dest = this.legalDest('queen', f.x, f.y, tx, ty);
     if (!dest) return false;
     const d = Phaser.Math.Distance.Between(f.x, f.y, dest.x, dest.y);
@@ -900,6 +985,7 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
       pc.readyAt = this.now + PIECE_SETTLE_MS;
       if (m.leap) this.blast(pc.owner, pc.x, pc.y, KNIGHT_BLAST_R, KNIGHT_DAMAGE);
       else this.fx(pc.owner).slide(m.fx, m.fy, m.tx, m.ty);
+      if (pc.kind === 'bishop' && this.up(pc.owner, 'e')) this.lightDiagonal(pc.owner, m.fx, m.fy, m.tx, m.ty);
     }
   }
 
@@ -911,7 +997,7 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
         this.fx(pw.owner).vanish(pw.x, pw.y);
         continue;
       }
-      const k = Phaser.Math.Clamp((this.now - pw.born) / PAWN_STEP_MS, 0, 1);
+      const k = Phaser.Math.Clamp((this.now - pw.stepAt) / PAWN_STEP_MS, 0, 1);
       if (k < 1 || pw.x !== pw.tx || pw.y !== pw.ty) {
         const e = 1 - (1 - k) * (1 - k);
         const nx = pw.fx + (pw.tx - pw.fx) * e;
@@ -928,12 +1014,33 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
       }
       if (this.now < pw.nextStrikeAt) continue;
       pw.nextStrikeAt += PAWN_STRIKE_EVERY_MS;
-      this.pawnStrike(pw);
+      const caught = this.pawnStrike(pw);
+      // Insight Move: a first capture on empty squares means they are further on — step again.
+      if (!caught && pw.steps < PAWN_MAX_STEPS && this.up(pw.owner, 'click')) this.stepAgain(pw);
     }
   }
 
-  /** The capture, on both forward diagonals at once. One hit per body however it is caught. */
-  private pawnStrike(pw: Pawn): void {
+  /** Insight Move: another full step down the same file, then capture from there. */
+  private stepAgain(pw: Pawn): void {
+    pw.steps++;
+    pw.fx = pw.x;
+    pw.fy = pw.y;
+    pw.tx = this.clampX(pw.x + Math.cos(pw.ang) * PAWN_STEP);
+    pw.ty = this.clampY(pw.y + Math.sin(pw.ang) * PAWN_STEP);
+    pw.stepAt = this.now;
+    pw.nextStrikeAt = this.now + PAWN_STEP_MS;
+    // A fresh step: whoever the first one walked through can be walked through again.
+    pw.touched.clear();
+    this.fx(pw.owner).insight(pw.x, pw.y - 6, pw.ang);
+    Sfx.playAt('whoosh', pw.x, { rate: 1.6, volume: 0.35 });
+  }
+
+  /**
+   * The capture, on both forward diagonals at once. One hit per body however it is caught.
+   * Returns whether it caught anybody.
+   */
+  private pawnStrike(pw: Pawn): boolean {
+    let any = false;
     this.fx(pw.owner).pawnStrike(pw.x, pw.y - 6, pw.ang, PAWN_STRIKE_REACH);
     Sfx.playAt('stab', pw.x, { rate: 1.35, volume: 0.45 });
     for (const t of this.targetsOf(pw.owner)) {
@@ -945,10 +1052,12 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
         if (this.segDist(pw.x, pw.y, sx, sy, t.x, t.y) <= PAWN_STRIKE_R + this.bodyR(t) * 0.5) caught = true;
       }
       if (!caught) continue;
+      any = true;
       t.takeDamage(PAWN_STRIKE_DAMAGE);
       this.fx(pw.owner).pieceHit(t.x, t.y, pw.ang);
       this.api.spawnHitFlash(t.x, t.y, this.col(pw.owner)(PSY.gold));
     }
+    return any;
   }
 
   private updateQueens(): void {
@@ -957,6 +1066,8 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
       if (!s.queenUntil) continue;
       const f = this.fighter(owner);
       if (!this.alive(f) || this.now >= s.queenUntil || !this.isPsychic(owner)) {
+        // Only a reign that runs its full course ends in checkmate — not a death, not a purge.
+        if (this.alive(f) && this.isPsychic(owner) && this.now >= s.queenUntil) this.checkmate(owner);
         this.endQueen(owner);
         continue;
       }
@@ -989,6 +1100,174 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
       this.fx(owner).vanish(f.x, f.y - 30);
       this.api.showFloatingText(f.x, f.y - 50, 'CROWN LIFTED', this.hex(PSY.violetLit));
     }
+  }
+
+  // ── Shop upgrades ──────────────────────────────────────────────────────────
+
+  /**
+   * R+ Mount Protect: a knight moved while its owner stands in its aura carries them. The rider
+   * leaves from where they stand and comes down just in front of the knight's landing, over the
+   * same leap, and cannot be hurt until they are down.
+   */
+  private tryMount(pc: Piece, m: Move): void {
+    const owner = pc.owner;
+    if (!this.up(owner, 'r')) return;
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (!this.alive(f) || s.ride || s.queenMove) return;
+    if (Phaser.Math.Distance.Between(pc.x, pc.y, f.x, f.y) > AURA_R) return;
+    s.ride = {
+      piece: pc.id, who: f, fx: f.x, fy: f.y,
+      tx: m.tx, ty: this.clampY(m.ty + RIDE_LAND_DY),
+      start: m.start, ms: m.ms, saved: f.isInvincible,
+    };
+    // A replica's body and its invincibility both belong to the machine that owns it: the leap
+    // there is the real one, and this copy only draws the saddle.
+    if (!this.isNetReplica(f)) f.isInvincible = true;
+    this.avatar(owner)?.play('dash', Math.atan2(m.ty - f.y, m.tx - f.x));
+    this.api.showFloatingText(f.x, f.y - 50, '🐎 MOUNTED', this.hex(PSY.gold));
+  }
+
+  /** Carry each rider along their leap on its own clock — the knight being taken mid-air does not drop them. */
+  private updateRides(): void {
+    for (const owner of BOTH) {
+      const r = this.side(owner).ride;
+      if (!r) continue;
+      if (!this.alive(r.who) || this.fighter(owner) !== r.who) { this.endRide(owner); continue; }
+      const k = Phaser.Math.Clamp((this.now - r.start) / r.ms, 0, 1);
+      if (!this.isNetReplica(r.who)) {
+        this.body(r.who).reset(r.fx + (r.tx - r.fx) * k, r.fy + (r.ty - r.fy) * k);
+      }
+      if (k >= 1) this.endRide(owner);
+    }
+  }
+
+  private endRide(owner: Owner): void {
+    const s = this.side(owner);
+    const r = s.ride;
+    if (!r) return;
+    s.ride = null;
+    if (!this.isNetReplica(r.who) && r.who.active) r.who.isInvincible = r.saved;
+  }
+
+  /**
+   * E+ Sight Lines: the diagonal a bishop just slid down, lit square by square from where it
+   * started to where it landed. Squares sit corner to corner, so the line is a real diagonal.
+   */
+  private lightDiagonal(owner: Owner, fx: number, fy: number, tx: number, ty: number): void {
+    const d = Phaser.Math.Distance.Between(fx, fy, tx, ty);
+    const n = Math.max(1, Math.round(d / (SIGHT_SQUARE * Math.SQRT2)));
+    for (let i = 0; i <= n; i++) {
+      const k = i / n;
+      const born = this.now + i * SIGHT_RIPPLE_MS;
+      this.squares.push({
+        owner, x: fx + (tx - fx) * k, y: fy + (ty - fy) * k,
+        born, until: born + SIGHT_MS, seed: Math.random() * 999, hit: new Set(),
+      });
+    }
+  }
+
+  private updateSquares(): void {
+    for (let i = this.squares.length - 1; i >= 0; i--) {
+      const q = this.squares[i];
+      if (this.now >= q.until) { this.squares.splice(i, 1); continue; }
+      if (this.now < q.born) continue;
+      const side = this.side(q.owner);
+      for (const t of this.targetsOf(q.owner)) {
+        if (q.hit.has(t)) continue;
+        const reach = SIGHT_SQUARE / 2 + this.bodyR(t) * 0.4;
+        if (Math.abs(t.x - q.x) > reach || Math.abs(t.y - q.y) > reach) continue;
+        q.hit.add(t);
+        if (this.now - (side.sightHitAt.get(t) ?? -Infinity) < SIGHT_HIT_GAP_MS) continue;
+        side.sightHitAt.set(t, this.now);
+        t.takeDamage(SIGHT_DAMAGE);
+        this.api.spawnHitFlash(t.x, t.y, this.col(q.owner)(PSY.gold));
+      }
+    }
+  }
+
+  /** F+ Castle: the newest rook of that side's that has not castled yet and is standing still. */
+  private castleRook(owner: Owner): Piece | null {
+    let best: Piece | null = null;
+    for (const p of this.pieces) {
+      if (p.owner !== owner || p.kind !== 'rook' || p.castled || p.move) continue;
+      if (!best || p.id > best.id) best = p;
+    }
+    return best;
+  }
+
+  /** The F key with Castle owned: true when it was spent on castling rather than on a new rook. */
+  private tryCastle(owner: Owner): boolean {
+    if (!this.up(owner, 'f') || !this.castleRook(owner)) return false;
+    this.castle(owner);
+    return true;
+  }
+
+  /**
+   * Castle: king and rook trade squares. Bypasses `castAbility` (it costs no cooldown), so the
+   * refusals that would stop a rook cast are repeated here.
+   */
+  private castle(owner: Owner): boolean {
+    const f = this.fighter(owner);
+    const s = this.side(owner);
+    const rook = this.castleRook(owner);
+    if (!rook || !this.alive(f) || s.ride || s.queenMove) return false;
+    const wall = Date.now();
+    if (wall < f.disarmedUntil || wall < f.chickenUntil || wall < f.silencedUntil
+      || wall < f.stunnedUntil || f.lockRemaining('psychic-rook') > 0) return false;
+    const kx = f.x;
+    const ky = f.y;
+    if (!this.isNetReplica(f)) this.body(f).reset(rook.x, rook.y);
+    this.fx(owner).summonPiece(rook.x, rook.y);
+    this.landCastle(owner, rook, kx, ky);
+    if (owner === 'player' && this.api.isOnline) {
+      this.api.sendPsychicMsg({ t: 'psy', k: 'castle', id: rook.id, x: Math.round(kx), y: Math.round(ky) });
+    }
+    return true;
+  }
+
+  /** The rook coming down where the king stood, and the slam it makes. */
+  private landCastle(owner: Owner, rook: Piece, x: number, y: number): void {
+    const fromX = rook.x;
+    const fromY = rook.y;
+    rook.x = this.clampX(x);
+    rook.y = this.clampY(y);
+    rook.move = null;
+    rook.castled = true;
+    rook.readyAt = Math.max(rook.readyAt, this.now + 400);
+    if (Math.abs(rook.x - fromX) > 1) rook.face = rook.x > fromX ? 1 : -1;
+    this.ensureLayers();
+    this.fx(owner).castle(fromX, fromY, rook.x, rook.y, CASTLE_R);
+    Sfx.playAt('explosion-small', rook.x, { rate: 0.9, volume: 0.8 });
+    this.api.scene.cameras.main.shake(110, 0.0025);
+    this.avatar(owner)?.play('slam', Math.atan2(rook.y - fromY, rook.x - fromX));
+    this.api.showFloatingText(rook.x, rook.y - 44, '♜ CASTLED', this.hex(PSY.stress));
+    for (const t of this.targetsOf(owner)) {
+      if (Phaser.Math.Distance.Between(rook.x, rook.y, t.x, t.y) > CASTLE_R + this.bodyR(t) * 0.5) continue;
+      t.takeDamage(CASTLE_DAMAGE);
+      this.api.spawnHitFlash(t.x, t.y, this.col(owner)(PSY.stress));
+    }
+  }
+
+  /**
+   * Q+ Checkmate: a reign that runs its full course ends every enemy below 15% health. Online the
+   * psychic's own machine resolves it against the replica and the kill is relayed, so the
+   * victim's copy of the opponent's queen does not try it a second time.
+   */
+  private checkmate(owner: Owner): void {
+    if (!this.up(owner, 'q') || this.isNetReplica(this.fighter(owner))) return;
+    let any = false;
+    for (const t of this.targetsOf(owner)) {
+      if (t.maxHp <= 0 || t.hp / t.maxHp >= CHECKMATE_FRAC) continue;
+      any = true;
+      this.ensureLayers();
+      this.fx(owner).checkmate(t.x, t.y);
+      this.api.showFloatingText(t.x, t.y - 72, '♚ CHECKMATE', this.hex(PSY.gold));
+      t.takeDamage(t.hp, { trueDamage: true });
+    }
+    if (!any) return;
+    Sfx.playAt('status-curse', this.fighter(owner).x, { rate: 0.8, volume: 0.9 });
+    this.api.scene.cameras.main.shake(220, 0.004);
   }
 
   // ── The auras ──────────────────────────────────────────────────────────────
@@ -1072,6 +1351,17 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
     });
     const reach = SLIDE_HIT_R + this.bodyR(t) - 6;
     const s = this.sides.npc;
+    const gap = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
+
+    // Castle (F+): the target is on top of us — trade squares with the rook, and the slam comes
+    // down on them where we were standing. Worth it only when the rook is somewhere else.
+    if (this.up('npc', 'f') && !s.ride && !s.queenMove && gap <= NPC_CASTLE_TRIGGER) {
+      const rook = this.castleRook('npc');
+      if (rook && Phaser.Math.Distance.Between(rook.x, rook.y, t.x, t.y) > 150) {
+        this.npcPlan = { piece: -2, x: rook.x, y: rook.y };
+        return;
+      }
+    }
 
     if (this.queen('npc')) {
       if (s.queenMove || this.now < s.queenReadyAt) return;
@@ -1085,6 +1375,20 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
         this.npcPlan = { piece: -1, x: dest.x, y: dest.y };
       }
       return;
+    }
+
+    // Mount Protect (R+): hurt and crowded — ride a knight away from them, untouchable in the air.
+    if (this.up('npc', 'r') && !s.ride && f.hp / f.maxHp < NPC_RIDE_ESCAPE_HP && gap <= NPC_RIDE_ESCAPE_RANGE) {
+      const away = Math.atan2(f.y - t.y, f.x - t.x);
+      for (const pc of this.pieces) {
+        if (pc.owner !== 'npc' || pc.kind !== 'knight' || pc.move || this.now < pc.readyAt) continue;
+        if (Phaser.Math.Distance.Between(pc.x, pc.y, f.x, f.y) > AURA_R) continue;
+        const dest = this.legalDest('knight', pc.x, pc.y, pc.x + Math.cos(away) * 300, pc.y + Math.sin(away) * 300);
+        if (dest && Phaser.Math.Distance.Between(dest.x, dest.y, t.x, t.y) > gap + 40) {
+          this.npcPlan = { piece: pc.id, x: dest.x, y: dest.y };
+          return;
+        }
+      }
     }
 
     for (const pc of this.pieces) {
@@ -1307,6 +1611,12 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
           ms: Math.max(110, (Phaser.Math.Distance.Between(f.x, f.y, msg.x, msg.y) / QUEEN_SLIDE_SPEED) * 1000),
           leap: false, hit: new Set(),
         };
+        break;
+      }
+      case 'castle': {
+        // Their castle: their body teleport is streamed; the rook and its slam are ours to draw.
+        const rook = this.pieceById('npc', msg.id);
+        if (rook) this.landCastle('npc', rook, msg.x, msg.y);
         break;
       }
       case 'utter': {
@@ -1671,7 +1981,8 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
     const npcIs = this.isPsychic('npc');
     const anyState = this.queues.size || this.foreseen.size || this.pieces.length || this.pawns.length
       || this.snares.length || this.sides.player.utterUntil || this.sides.npc.utterUntil
-      || this.sides.player.queenUntil || this.sides.npc.queenUntil;
+      || this.sides.player.queenUntil || this.sides.npc.queenUntil || this.squares.length
+      || this.sides.player.ride || this.sides.npc.ride;
     if (!playerIs && !npcIs && !anyState) return;
 
     this.ensureLayers();
@@ -1684,7 +1995,9 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
     this.updateForesight();
     this.updateQueues();
     this.updatePieces();
+    this.updateRides();
     this.updatePawns();
+    this.updateSquares();
     this.updateQueens();
     this.applyAuras();
     this.updateSnares();
@@ -1705,6 +2018,14 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
     const g = this.groundGfx;
     if (!g) return;
     g.clear();
+
+    // Sight Lines (E upgrade): the lit diagonals, under everything else on the floor.
+    for (const q of this.squares) {
+      if (this.now < q.born) continue;
+      const a = Phaser.Math.Clamp((this.now - q.born) / 160, 0, 1)
+        * Phaser.Math.Clamp((q.until - this.now) / 800, 0, 1);
+      sightSquare(g, this.col(q.owner), q.x, q.y, SIGHT_SQUARE, a, this.vizT, q.seed);
+    }
 
     // Auras: every piece's, both sides' — a buff your opponent cannot see is a buff they
     // cannot play around, and walking the queen out of a bishop's light is half of the game.
@@ -1876,6 +2197,12 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
       }
     }
 
+    // ── Mount Protect: the rider's ward ──
+    for (const owner of BOTH) {
+      const r = this.side(owner).ride;
+      if (r && this.alive(r.who)) rideWard(g, this.col(owner), r.who.x, r.who.y, 0.9, this.vizT);
+    }
+
     // ── The crown ──
     for (const owner of BOTH) {
       if (!this.queen(owner)) continue;
@@ -1921,8 +2248,9 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
     let t = this.labels[this.labelsUsed];
     if (!t) {
       t = this.api.scene.add.text(0, 0, '', {
-        fontFamily: 'monospace', fontSize: `${size}px`, color,
+        fontFamily: FONT_UI, fontSize: `${size}px`, color,
         fontStyle: bold ? 'bold' : 'normal',
+        stroke: '#0b0b0d', strokeThickness: 2,
       }).setOrigin(0.5).setDepth(17);
       this.labels.push(t);
     }
@@ -2048,6 +2376,16 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
 
   npcPieceCount(): number {
     return this.pieces.filter((p) => p.owner === 'npc').length;
+  }
+
+  /**
+   * Checkmate (Q+): the bot's target is low enough that crowning now should leave them under the
+   * line when the reign runs out. Side-effect-free.
+   */
+  npcCheckmateSetup(): boolean {
+    if (!this.up('npc', 'q') || this.queen('npc') || this.api.isOnline) return false;
+    const t = this.nearestTarget('npc');
+    return !!t && t.maxHp > 0 && t.hp / t.maxHp <= NPC_CHECKMATE_SETUP;
   }
 
   npcMasterySlot(): 'r' | 'f' | 'q' | undefined {

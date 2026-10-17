@@ -80,7 +80,7 @@ export const plant: PreviewScript = {
     av.setHold('sow', ctx.aim);
     // The whole garden filling up, one seed every 5s in real time — compressed here so the
     // cap of five is legible in a single loop.
-    const kinds = ['sunflower', 'rose', 'nurse-lily', 'pitcher', 'cotton'];
+    const kinds = ['sunflower', 'frost-lily', 'lotus', 'pitcher', 'mushroom'];
     kinds.forEach((kind, i) => {
       const px = ctx.cx + 70 + i * 52;
       const py = ctx.cy + 14 + (i % 2) * 16;
@@ -100,8 +100,8 @@ export const plantUpgraded: PreviewScript = {
     const { fx, av } = stage(ctx);
     av.setHold('sow', ctx.aim);
     // Three plants that can actually be moved — the half of the upgrade nobody expects.
-    const kinds = ['sunflower', 'rose', 'nurse-lily'];
-    const HP = [25, 75, 25];
+    const kinds = ['sunflower', 'frost-lily', 'lotus'];
+    const HP = [30, 30, 35];
     const beds = kinds.map((kind, i) => ({
       kind, hp: HP[i],
       at: { x: ctx.cx + 76 + i * 56, y: ctx.cy + 18 + (i % 2) * 14 },
@@ -163,7 +163,7 @@ export const grow: PreviewScript = {
   run(ctx) {
     const { fx, av } = stage(ctx);
     const spots = [[100, 10], [156, 24], [212, 6]];
-    spots.forEach(([dx, dy], i) => plantAt(ctx, ctx.cx + dx, ctx.cy + dy, ['sunflower', 'rose', 'nurse-lily'][i], 0));
+    spots.forEach(([dx, dy], i) => plantAt(ctx, ctx.cx + dx, ctx.cy + dy, ['sunflower', 'frost-lily', 'lotus'][i], 0));
     ctx.at(400, () => {
       av.play('sweep', ctx.aim);
       const gx = ctx.cx + 156, gy = ctx.cy + 14;
@@ -181,7 +181,7 @@ export const growUpgraded: PreviewScript = {
   run(ctx) {
     const { fx, av } = stage(ctx);
     const spots: [number, number][] = [[100, 10], [156, 24], [212, 6]];
-    const kinds = ['sunflower', 'rose', 'nurse-lily'];
+    const kinds = ['sunflower', 'frost-lily', 'lotus'];
     let stacks = 0;
     const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
     const stars = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
@@ -239,7 +239,7 @@ export const thorns: PreviewScript = {
   run(ctx) {
     const { fx, av } = stage(ctx);
     const px = ctx.cx + 150, py = ctx.cy + 12;
-    plantAt(ctx, px, py, 'rose', 0);
+    plantAt(ctx, px, py, 'frost-lily', 0);
     ctx.at(300, () => {
       av.play('clap', ctx.aim);
       fx.thicket(px, py, 40, 3000);
@@ -262,7 +262,7 @@ export const thornsUpgraded: PreviewScript = {
   run(ctx) {
     const { fx, av } = stage(ctx);
     const px = ctx.cx + 140, py = ctx.cy + 12;
-    plantAt(ctx, px, py, 'rose', 0);
+    plantAt(ctx, px, py, 'frost-lily', 0);
     ctx.addDummy();
     ctx.at(300, () => {
       av.play('clap', ctx.aim);
@@ -286,7 +286,7 @@ export const thornDrag: PreviewScript = {
   run(ctx) {
     const { fx, av } = stage(ctx);
     const spots = [[92, 6], [140, 26], [190, 2], [232, 22]];
-    spots.forEach(([dx, dy], i) => plantAt(ctx, ctx.cx + dx, ctx.cy + dy, ['sunflower', 'rose', 'nurse-lily', 'pitcher'][i], 0));
+    spots.forEach(([dx, dy], i) => plantAt(ctx, ctx.cx + dx, ctx.cy + dy, ['sunflower', 'frost-lily', 'lotus', 'pitcher'][i], 0));
     ctx.at(300, () => {
       av.play('raise', ctx.aim, 900);
       fx.canopy(ctx.cx, ctx.cy, 24, 140, 6);
@@ -315,7 +315,7 @@ export const thornDragUpgraded: PreviewScript = {
   run(ctx) {
     const { fx, av } = stage(ctx);
     const spots = [[92, 6], [140, 26], [190, 2], [232, 22]];
-    spots.forEach(([dx, dy], i) => plantAt(ctx, ctx.cx + dx, ctx.cy + dy, ['sunflower', 'rose', 'nurse-lily', 'pitcher'][i], 0));
+    spots.forEach(([dx, dy], i) => plantAt(ctx, ctx.cx + dx, ctx.cy + dy, ['sunflower', 'frost-lily', 'lotus', 'pitcher'][i], 0));
     ctx.at(300, () => {
       av.play('raise', ctx.aim, 900);
       fx.canopy(ctx.cx, ctx.cy, 24, 140, 6);

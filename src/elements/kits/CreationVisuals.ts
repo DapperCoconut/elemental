@@ -2071,9 +2071,10 @@ const CREATION_AVATAR: AvatarSpec = {
  * two forge-hot ball hands, a pair of eyes, and one smith's gear turning over the crown. The
  * gear is the only accessory; the body alone says "creation".
  *
- * Mastery enhances the gear rather than adding to it: it grows, spins faster and its rim runs
- * nexus-pink around a glowing bore; the eyes go white-hot, the hands gain a wider forge corona
- * with a gold rim, and the under-glow intensifies.
+ * The orb carries a riveted belt seam with a glowing forge vent, and each hand wears a riveted
+ * cuff. Mastery adds regalia: a fan of forged blades crowning the gear, a second pink-rimmed
+ * gear meshed against the first, a nexus jewel set in the belt, nexus sparks circling the body,
+ * white-hot eyes and a wider gold-rimmed corona on each hand.
  */
 export class CreationAvatar extends BaseAvatar {
   private fx: CreationFx;
@@ -2126,6 +2127,52 @@ export class CreationAvatar extends BaseAvatar {
     g.fillCircle(x, y, 28 * k);
     g.fillStyle(this.tint(CREATION.soot), a * 0.22 * k);
     g.fillEllipse(x, y + 8, 36 * k, 14 * k);
+    if (this.mastered) {
+      // Nexus sparks circling the smith like filings round a magnet.
+      for (let i = 0; i < 4; i++) {
+        const ang = this.t * 2.1 + (i / 4) * TAU;
+        const px = x + Math.cos(ang) * 29, py = y + 3 + Math.sin(ang) * 10;
+        g.fillStyle(this.tint(CREATION.nexus), a * 0.4);
+        g.fillCircle(px, py, 4);
+        g.fillStyle(this.tint(CREATION.nexusLit), a * 1.2);
+        forgedShard(g, px, py, ang + Math.PI / 2, 5, 1.3);
+      }
+    }
+  }
+
+  /**
+   * Smithing on the orb: a riveted belt seam across the belly and a three-slot forge vent
+   * glowing beneath it. Mastered, a nexus jewel is set in the buckle.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
+    const m = this.mastered;
+    const by = y + 7;
+    g.fillStyle(this.tint(CREATION.soot), 0.55 * alpha);
+    g.fillRect(x - 17, by - 2, 34, 4.2);
+    g.fillStyle(this.tint(CREATION.bronze), 0.9 * alpha);
+    g.fillRect(x - 17, by - 2, 34, 3);
+    g.fillStyle(this.tint(CREATION.brass), 0.55 * alpha);
+    g.fillRect(x - 17, by - 2, 34, 0.9);
+    for (const ox of [-13, -6, 6, 13]) rivet(g, this.tint, x + ox, by - 0.5, 1.4, alpha);
+    // Buckle.
+    g.fillStyle(this.tint(CREATION.soot), alpha);
+    g.fillRect(x - 3.6, by - 3.2, 7.2, 5.6);
+    g.fillStyle(this.tint(m ? CREATION.gold : CREATION.brass), alpha);
+    g.fillRect(x - 2.8, by - 2.4, 5.6, 4);
+    if (m) {
+      g.fillStyle(this.tint(CREATION.nexus), alpha);
+      g.fillCircle(x, by - 0.4, 1.7);
+      g.fillStyle(this.tint(CREATION.white), 0.9 * alpha);
+      g.fillCircle(x - 0.5, by - 1, 0.6);
+    }
+    // Forge vent: three slots breathing ember light.
+    const breathe = 0.5 + 0.5 * Math.sin(this.t * 3.4);
+    for (let i = -1; i <= 1; i++) {
+      g.fillStyle(this.tint(CREATION.soot), 0.8 * alpha);
+      g.fillRoundedRect(x + i * 4.6 - 1.4, y + 11, 2.8, 5, 1.2);
+      g.fillStyle(this.tint(m ? CREATION.gold : CREATION.ember), (0.45 + 0.5 * breathe) * alpha);
+      g.fillRoundedRect(x + i * 4.6 - 0.8, y + 12, 1.6, 3.4, 0.8);
+    }
   }
 
   /**
@@ -2143,6 +2190,17 @@ export class CreationAvatar extends BaseAvatar {
     if (m) {
       g.fillStyle(this.tint(CREATION.nexus), 0.22 * a);
       g.fillCircle(gx, rootY, r * 1.75);
+      // A fan of forged blades standing up behind the gear — the master smith's crown.
+      for (let i = 0; i < 5; i++) {
+        const ang = -Math.PI / 2 + (i - 2) * 0.42;
+        const len = (i === 2 ? 15 : 11) * scale;
+        forgedShardLayered(g, this.tint, gx + Math.cos(ang) * r * 0.9, rootY + Math.sin(ang) * r * 0.9,
+          ang, len, 2.2 * scale, 0, alpha);
+      }
+      // Second gear meshed against the first, turning the other way.
+      const r2 = r * 0.55;
+      const mx = gx + r * 1.38, my = rootY + r * 0.5;
+      drawGear(g, this.tint, mx, my, r2, 7, -spin * (9 / 7) + 0.2, CREATION.iron, CREATION.nexusLit, alpha * 0.97);
     }
     drawGear(g, this.tint, gx, rootY, r, 9, spin, CREATION.bronze, m ? CREATION.nexusLit : CREATION.brass, alpha * 0.97);
     // The bore lights up once mastered — the Nexus burning in the hub.
@@ -2152,5 +2210,177 @@ export class CreationAvatar extends BaseAvatar {
       g.fillStyle(this.tint(CREATION.nexusLit), 0.9 * a);
       g.fillCircle(gx - r * 0.06, rootY - r * 0.06, r * 0.13);
     }
+
+    // A riveted cuff round each hand.
+    for (let i = 0; i < 2; i++) {
+      const hx = this.armX[i], hy = this.armY[i];
+      g.lineStyle(1.6, this.tint(m ? CREATION.gold : CREATION.iron), 0.9 * alpha);
+      g.strokeCircle(hx, hy, 7.4);
+      for (let k = 0; k < 3; k++) {
+        const ang = this.t * (i === 0 ? 0.8 : -0.8) + (k / 3) * TAU;
+        rivet(g, this.tint, hx + Math.cos(ang) * 7.4, hy + Math.sin(ang) * 7.4, 1.3, alpha);
+      }
+    }
   }
+}
+
+// ── In-match UI painters ──────────────────────────────────────────────────
+
+/**
+ * The mech's integrity as a riveted boiler gauge strip under its feet: soot backing plate,
+ * brass frame with corner rivets, a segmented copper→brass fill with a lit top seam, notch
+ * ticks every tenth, and a little gear cap on the left end that turns while it stands.
+ */
+export function drawMechHpGauge(
+  g: Phaser.GameObjects.Graphics, tint: CreationColorFn,
+  x: number, y: number, frac: number, t: number, alpha = 1,
+): void {
+  const f = Phaser.Math.Clamp(frac, 0, 1);
+  const w = 64, h = 8;
+  const l = x - w / 2, top = y - h / 2;
+  g.fillStyle(tint(CREATION.soot), 0.55 * alpha);
+  g.fillRoundedRect(l - 3, top - 2, w + 6, h + 6, 3);
+  g.fillStyle(tint(CREATION.iron), 0.98 * alpha);
+  g.fillRoundedRect(l - 3, top - 3, w + 6, h + 6, 3);
+  g.fillStyle(tint(CREATION.soot), alpha);
+  g.fillRect(l, top, w, h);
+  if (f > 0) {
+    const low = f < 0.3;
+    const pulse = low ? 0.65 + 0.35 * Math.sin(t * 10) : 1;
+    const segs = 10;
+    const segW = w / segs;
+    const lit = f * w;
+    for (let i = 0; i < segs; i++) {
+      const sx = l + i * segW;
+      const sw = Math.min(segW, lit - i * segW);
+      if (sw <= 0) break;
+      g.fillStyle(tint(low ? CREATION.rust : i < segs / 2 ? CREATION.copper : CREATION.brass), pulse * alpha);
+      g.fillRect(sx + 0.5, top + 0.5, Math.max(0, sw - 1), h - 1);
+    }
+    g.fillStyle(tint(CREATION.spark), 0.55 * pulse * alpha);
+    g.fillRect(l + 0.5, top + 0.8, Math.max(0, lit - 1), 1.4);
+    g.fillStyle(tint(CREATION.soot), 0.3 * alpha);
+    g.fillRect(l + 0.5, top + h - 2, Math.max(0, lit - 1), 1.5);
+  }
+  g.lineStyle(1, tint(CREATION.brass), 0.9 * alpha);
+  g.strokeRect(l - 0.5, top - 0.5, w + 1, h + 1);
+  for (const [rx, ry] of [[l - 1, top - 1.5], [l + w + 1, top - 1.5], [l - 1, top + h + 1.5], [l + w + 1, top + h + 1.5]]) {
+    rivet(g, tint, rx, ry, 1.3, alpha);
+  }
+  drawGear(g, tint, l - 6, y, 5, 7, t * 1.6, CREATION.bronze, CREATION.brass, alpha);
+}
+
+/**
+ * Ultimate Invention's three sliders as an inventor's control console: a riveted iron panel
+ * with a blueprint-blue inset, each slider a recessed brass slot with graduation ticks, a
+ * coloured fill and a lever knob; the instability timer reads off a nixie-style readout with a
+ * pressure needle. Layout matches the hit-test in CreationKit (track rows at `y0 + i*rowH + 6`).
+ */
+export function drawInventionPanel(
+  g: Phaser.GameObjects.Graphics, tint: CreationColorFn,
+  x0: number, y0: number, trackW: number, rowH: number,
+  vals: number[], colors: number[], timerFrac: number, dragging: number, t: number,
+): void {
+  const padL = 12, padR = 14;
+  const left = x0 - padL, top = y0 - 26;
+  const w = trackW + padL + padR;
+  const h = rowH * 3 + 44;
+  // Panel.
+  g.fillStyle(tint(0x000000), 0.4);
+  g.fillRoundedRect(left + 3, top + 4, w, h, 6);
+  g.fillStyle(tint(CREATION.iron), 0.97);
+  g.fillRoundedRect(left, top, w, h, 6);
+  g.fillStyle(tint(0x13233a), 0.95);
+  g.fillRoundedRect(left + 4, top + 4, w - 8, h - 8, 4);
+  // Blueprint grid.
+  g.lineStyle(1, tint(0x2c4a72), 0.45);
+  for (let gx = left + 10; gx < left + w - 6; gx += 10) {
+    g.beginPath(); g.moveTo(gx, top + 5); g.lineTo(gx, top + h - 5); g.strokePath();
+  }
+  for (let gy = top + 10; gy < top + h - 6; gy += 10) {
+    g.beginPath(); g.moveTo(left + 5, gy); g.lineTo(left + w - 5, gy); g.strokePath();
+  }
+  g.lineStyle(1.5, tint(CREATION.brass), 0.85);
+  g.strokeRoundedRect(left + 0.75, top + 0.75, w - 1.5, h - 1.5, 6);
+  for (const [rx, ry] of [[left + 5, top + 5], [left + w - 5, top + 5], [left + 5, top + h - 5], [left + w - 5, top + h - 5]]) {
+    rivet(g, tint, rx, ry, 2, 1);
+  }
+
+  for (let i = 0; i < 3; i++) {
+    const cy = y0 + i * rowH + 6;
+    const v = Phaser.Math.Clamp(vals[i] ?? 0, 0, 1);
+    const col = colors[i];
+    // Slot.
+    g.fillStyle(tint(CREATION.soot), 1);
+    g.fillRoundedRect(x0 - 2, cy - 5, trackW + 4, 10, 4);
+    g.lineStyle(1, tint(CREATION.bronze), 0.9);
+    g.strokeRoundedRect(x0 - 2, cy - 5, trackW + 4, 10, 4);
+    // Graduations.
+    for (let k = 0; k <= 10; k++) {
+      const tx = x0 + (k / 10) * trackW;
+      g.lineStyle(1, tint(CREATION.tan), k % 5 === 0 ? 0.8 : 0.4);
+      g.beginPath(); g.moveTo(tx, cy + 6); g.lineTo(tx, cy + (k % 5 === 0 ? 10 : 8)); g.strokePath();
+    }
+    // Fill.
+    if (v > 0.001) {
+      g.fillStyle(tint(col), 0.9);
+      g.fillRoundedRect(x0, cy - 3, v * trackW, 6, 3);
+      g.fillStyle(tint(CREATION.white), 0.35);
+      g.fillRect(x0 + 2, cy - 2.4, Math.max(0, v * trackW - 4), 1.3);
+    }
+    // Lever knob: brass stem with a coloured ball, glowing while dragged.
+    const kx = x0 + v * trackW;
+    const active = dragging === i;
+    if (active) {
+      g.fillStyle(tint(col), 0.3 + 0.15 * Math.sin(t * 12));
+      g.fillCircle(kx, cy, 12);
+    }
+    g.fillStyle(tint(CREATION.soot), 0.7);
+    g.fillRoundedRect(kx - 4, cy - 9 + 1, 8, 18, 3);
+    g.fillStyle(tint(CREATION.brass), 1);
+    g.fillRoundedRect(kx - 4, cy - 9, 8, 18, 3);
+    g.fillStyle(tint(CREATION.spark), 0.8);
+    g.fillRect(kx - 2.6, cy - 7.5, 1.4, 15);
+    g.lineStyle(1, tint(CREATION.soot), 0.8);
+    for (const oy of [-4, 0, 4]) { g.beginPath(); g.moveTo(kx - 2.5, cy + oy); g.lineTo(kx + 2.5, cy + oy); g.strokePath(); }
+    g.fillStyle(tint(col), 1);
+    g.fillCircle(kx, cy - 11, 3);
+    g.fillStyle(tint(CREATION.white), 0.8);
+    g.fillCircle(kx - 1, cy - 12, 1);
+  }
+
+  // Instability readout: a pressure dial whose needle sweeps toward red as the timer drains.
+  const dx = x0 + trackW - 8, dy = y0 + 3 * rowH + 6;
+  const tf = Phaser.Math.Clamp(timerFrac, 0, 1);
+  g.fillStyle(tint(CREATION.soot), 1);
+  g.fillCircle(dx, dy, 9);
+  g.lineStyle(1.4, tint(CREATION.brass), 1);
+  g.strokeCircle(dx, dy, 9);
+  // 270° sweep with the gap at the bottom: red zone at the empty end, gold the rest.
+  g.lineStyle(2.2, tint(0xff3333), 0.9);
+  g.beginPath(); g.arc(dx, dy, 6.5, Math.PI * 0.75, Math.PI * 1.1, false); g.strokePath();
+  g.lineStyle(2.2, tint(CREATION.gold), 0.7);
+  g.beginPath(); g.arc(dx, dy, 6.5, Math.PI * 1.1, Math.PI * 2.25, false); g.strokePath();
+  const na = Math.PI * 0.75 + Math.PI * 1.5 * tf + (tf < 0.25 ? Math.sin(t * 30) * 0.06 : 0);
+  g.lineStyle(1.4, tint(CREATION.white), 1);
+  g.beginPath(); g.moveTo(dx, dy); g.lineTo(dx + Math.cos(na) * 7.5, dy + Math.sin(na) * 7.5); g.strokePath();
+  g.fillStyle(tint(CREATION.brass), 1);
+  g.fillCircle(dx, dy, 1.8);
+}
+
+/** An engraved brass nameplate screwed to the floor under the Nexus. */
+export function drawNexusPlaque(
+  g: Phaser.GameObjects.Graphics, tint: CreationColorFn, x: number, y: number, w: number,
+): void {
+  const h = 14;
+  g.fillStyle(tint(CREATION.soot), 0.6);
+  g.fillRoundedRect(x - w / 2 + 1, y - h / 2 + 2, w, h, 3);
+  g.fillStyle(tint(CREATION.bronze), 1);
+  g.fillRoundedRect(x - w / 2, y - h / 2, w, h, 3);
+  g.fillStyle(tint(CREATION.brass), 0.9);
+  g.fillRoundedRect(x - w / 2 + 1.5, y - h / 2 + 1.5, w - 3, h - 3, 2);
+  g.fillStyle(tint(CREATION.spark), 0.5);
+  g.fillRect(x - w / 2 + 3, y - h / 2 + 2, w - 6, 1.2);
+  rivet(g, tint, x - w / 2 + 4, y, 1.6, 1);
+  rivet(g, tint, x + w / 2 - 4, y, 1.6, 1);
 }

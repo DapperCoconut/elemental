@@ -306,7 +306,8 @@ export class EchoKit {
   // Beacon perk (abstract-triple)
   private playerBeaconBatteries = 3;
   private playerBeaconRechargeAt: number[] = [0, 0, 0];
-  private playerBeaconBatteryIcons: Phaser.GameObjects.Text[] = [];
+  /** One Graphics, repainted per frame: three brass-capped lantern cells over the head. */
+  private playerBeaconBatteryIcons: Phaser.GameObjects.Graphics[] = [];
   private playerBeaconConeBoostUntil = 0;
   private playerBeaconIconsCreated = false;
 
@@ -856,13 +857,10 @@ export class EchoKit {
   private updateBeaconBatteries(time: number): void {
     if (!this.arena.hasPerk('player', 'beacon')) return;
     const player = this.arena.player;
-    // Lazy-create battery icons
+    // Lazy-create the battery gauge (one Graphics, repainted every frame)
     if (!this.playerBeaconIconsCreated) {
       this.playerBeaconIconsCreated = true;
-      for (let i = 0; i < 3; i++) {
-        const icon = this.arena.scene.add.text(0, 0, '🔋', { fontSize: '14px' }).setOrigin(0.5).setDepth(20);
-        this.playerBeaconBatteryIcons.push(icon);
-      }
+      this.playerBeaconBatteryIcons.push(this.arena.scene.add.graphics().setDepth(20));
     }
     // Recharge spent batteries
     for (let i = 0; i < 3; i++) {
@@ -873,11 +871,62 @@ export class EchoKit {
         this._updateBeaconIcons();
       }
     }
-    // Reposition icons above player
-    for (let i = 0; i < this.playerBeaconBatteryIcons.length; i++) {
-      const icon = this.playerBeaconBatteryIcons[i];
-      icon.setPosition(player.x + (i - 1) * 16, player.y - 48);
-      icon.setAlpha(i < this.playerBeaconBatteries ? 1 : 0.3);
+    this.drawBeaconCells(time);
+  }
+
+  /**
+   * Three little lantern cells above the head: a brass cap and foot around a glass tube.
+   * A charged cell burns lamp-yellow with a flickering wick; a spent one is dark glass that
+   * refills from the bottom as its 8 s recharge runs down.
+   */
+  private drawBeaconCells(time: number): void {
+    const g = this.playerBeaconBatteryIcons[0];
+    if (!g || !g.active) return;
+    const player = this.arena.player;
+    const c = this.pcol;
+    g.clear();
+    if (player.alpha < 0.05) return;
+    const pending = this.playerBeaconRechargeAt.filter((t) => t > 0).sort((a, b) => a - b);
+    const t = time / 1000;
+    for (let i = 0; i < 3; i++) {
+      const x = player.x + (i - 1) * 16;
+      const y = player.y - 48;
+      const lit = i < this.playerBeaconBatteries;
+      // soft lamp halo behind a charged cell
+      if (lit) {
+        g.fillStyle(c(ECHO.lamp), 0.16 + 0.06 * Math.sin(t * 6 + i));
+        g.fillCircle(x, y, 10);
+      }
+      // glass tube
+      g.fillStyle(c(ECHO.voidBlack), 0.85);
+      g.fillRoundedRect(x - 5, y - 6, 10, 13, 3);
+      if (lit) {
+        g.fillStyle(c(ECHO.amber), 0.95);
+        g.fillRoundedRect(x - 4, y - 5, 8, 11, 2);
+        g.fillStyle(c(ECHO.lampCore), 0.85 + 0.15 * Math.sin(t * 11 + i * 2));
+        g.fillEllipse(x, y + 0.5, 4, 6 + Math.sin(t * 9 + i) * 1.2);
+      } else {
+        const idx = i - this.playerBeaconBatteries;
+        const at = pending[idx];
+        const frac = at ? Phaser.Math.Clamp(1 - (at - time) / 8000, 0, 1) : 0;
+        const fh = 11 * frac;
+        if (fh > 0.5) {
+          g.fillStyle(c(ECHO.dusk), 0.9);
+          g.fillRect(x - 4, y + 6 - fh, 8, fh);
+          g.fillStyle(c(ECHO.pale), 0.7);
+          g.fillRect(x - 4, y + 6 - fh, 8, 1);
+        }
+      }
+      // glass glint
+      g.fillStyle(c(ECHO.white), lit ? 0.55 : 0.22);
+      g.fillRect(x - 3.5, y - 4, 1.4, 7);
+      // brass cap + foot
+      g.fillStyle(c(ECHO.gold), lit ? 1 : 0.5);
+      g.fillRect(x - 5.5, y - 8, 11, 2.5);
+      g.fillRect(x - 2, y - 10, 4, 2);
+      g.fillRect(x - 5.5, y + 6.5, 11, 2);
+      g.lineStyle(1, c(ECHO.umbra), 0.9);
+      g.strokeRoundedRect(x - 5, y - 6, 10, 13, 3);
     }
   }
 
@@ -895,9 +944,7 @@ export class EchoKit {
   }
 
   private _updateBeaconIcons(): void {
-    for (let i = 0; i < this.playerBeaconBatteryIcons.length; i++) {
-      this.playerBeaconBatteryIcons[i].setAlpha(i < this.playerBeaconBatteries ? 1 : 0.3);
-    }
+    // The gauge repaints itself every frame in drawBeaconCells.
   }
 
   // ── Fog of War ────────────────────────────────────────────────────────────

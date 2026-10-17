@@ -401,27 +401,127 @@ export function tranceBeams(
 }
 
 /**
- * The Willpower meter. A deep trough, the live fill, a pale gloss over its top third and
- * quarter ticks — the drain rate is meant to be legible at a glance, so the ticks matter.
- * Reads red under a quarter full.
+ * A sprig of laurel for the HUD plaques — five leaves along a curved stem, growing away from
+ * `(x, y)` in direction `dir` (±1). Shared by the Willpower plaque and the style meter.
+ */
+function laurelSprig(
+  g: Phaser.GameObjects.Graphics, tint: JusticeColorFn,
+  x: number, y: number, dir: number, size: number, alpha: number, lit = JUS.bright,
+): void {
+  g.lineStyle(1.4, tint(JUS.bronze), alpha);
+  g.beginPath();
+  g.moveTo(x, y);
+  for (let i = 1; i <= 6; i++) {
+    const p = i / 6;
+    g.lineTo(x + dir * p * size, y - Math.sin(p * Math.PI * 0.6) * size * 0.28);
+  }
+  g.strokePath();
+  for (let i = 0; i < 5; i++) {
+    const p = (i + 0.7) / 5.6;
+    const sx = x + dir * p * size;
+    const sy = y - Math.sin(p * Math.PI * 0.6) * size * 0.28;
+    const len = size * (0.36 - p * 0.12);
+    for (const up of [-1, 1]) {
+      const lx = sx - dir * len * 0.2;
+      const ly = sy + up * len * 0.34;
+      g.fillStyle(tint(JUS.gold), alpha * 0.95);
+      g.fillEllipse(lx, ly, len, len * 0.42);
+      g.fillStyle(tint(lit), alpha * 0.65);
+      g.fillEllipse(lx, ly - 0.5, len * 0.55, len * 0.2);
+    }
+  }
+  g.fillStyle(tint(JUS.pale), alpha);
+  g.fillCircle(x + dir * size, y - Math.sin(Math.PI * 0.6) * size * 0.28, 1.4);
+}
+
+/** Cut-cornered gilt plate — the backing every Justice HUD plaque sits on. */
+function giltPlate(
+  g: Phaser.GameObjects.Graphics, tint: JusticeColorFn,
+  x: number, y: number, w: number, h: number, cut: number, edge: number, alpha = 1,
+): void {
+  const pts = (ox: number, oy: number, ow: number, oh: number, c: number) => [
+    new Phaser.Geom.Point(ox + c, oy), new Phaser.Geom.Point(ox + ow - c, oy),
+    new Phaser.Geom.Point(ox + ow, oy + c), new Phaser.Geom.Point(ox + ow, oy + oh - c),
+    new Phaser.Geom.Point(ox + ow - c, oy + oh), new Phaser.Geom.Point(ox + c, oy + oh),
+    new Phaser.Geom.Point(ox, oy + oh - c), new Phaser.Geom.Point(ox, oy + c),
+  ];
+  // Drop shadow, umber body, a lit upper band, then a double-struck gilt edge.
+  g.fillStyle(0x000000, 0.45 * alpha);
+  g.fillPoints(pts(x + 2, y + 3, w, h, cut), true);
+  g.fillStyle(tint(JUS.umber), 0.94 * alpha);
+  g.fillPoints(pts(x, y, w, h, cut), true);
+  g.fillStyle(tint(JUS.bronze), 0.28 * alpha);
+  g.fillPoints(pts(x + 2, y + 2, w - 4, h * 0.42, Math.max(1, cut - 2)), true);
+  g.lineStyle(2, tint(JUS.bronze), alpha);
+  g.strokePoints(pts(x, y, w, h, cut), true);
+  g.lineStyle(1, tint(edge), 0.85 * alpha);
+  g.strokePoints(pts(x + 2.5, y + 2.5, w - 5, h - 5, Math.max(1, cut - 2)), true);
+  // Rivets at the four cut corners.
+  g.fillStyle(tint(JUS.bright), alpha);
+  for (const [rx, ry] of [[x + cut + 2, y + 3.5], [x + w - cut - 2, y + 3.5], [x + cut + 2, y + h - 3.5], [x + w - cut - 2, y + h - 3.5]]) {
+    g.fillCircle(rx, ry, 1.3);
+  }
+}
+
+/**
+ * The Willpower meter, as a gilt magistrate's plaque: a laurel sprig at either end, a marble
+ * trough with the cold-blue will inside it, a sheen that walks the fill, and a small column
+ * capital at each quarter so the drain rate stays legible at a glance. Reads red-hot under a
+ * quarter full. `t` (seconds) drives the sheen and the low-will pulse.
  */
 export function willMeter(
   g: Phaser.GameObjects.Graphics,
   tint: JusticeColorFn,
   x: number, y: number, w: number, h: number, ratio: number,
+  t = 0,
 ): void {
-  g.fillStyle(0x05070f, 0.85);
-  g.fillRoundedRect(x - 3, y - 3, w + 6, h + 6, 4);
-  g.lineStyle(1.5, tint(JUS.will), 0.7);
-  g.strokeRoundedRect(x - 3, y - 3, w + 6, h + 6, 4);
-  g.fillStyle(tint(JUS.willDeep), 0.9);
+  ratio = Phaser.Math.Clamp(ratio, 0, 1);
+  const low = ratio < 0.25;
+  giltPlate(g, tint, x - 8, y - 6, w + 16, h + 12, 5, low ? JUS.damned : JUS.bright);
+  laurelSprig(g, tint, x - 9, y + h / 2, -1, 22, 0.95);
+  laurelSprig(g, tint, x + w + 9, y + h / 2, 1, 22, 0.95);
+
+  // Marble trough.
+  g.fillStyle(tint(JUS.stoneDark), 1);
+  g.fillRect(x - 1, y - 1, w + 2, h + 2);
+  g.fillStyle(tint(JUS.willDeep), 0.95);
   g.fillRect(x, y, w, h);
-  g.fillStyle(tint(ratio < 0.25 ? JUS.damned : JUS.will), 1);
-  g.fillRect(x, y, w * ratio, h);
-  g.fillStyle(tint(JUS.willPale), 0.55);
-  g.fillRect(x, y, w * ratio, h * 0.38);
-  g.lineStyle(1, 0x05070f, 0.7);
-  for (let i = 1; i < 4; i++) g.lineBetween(x + (w * i) / 4, y, x + (w * i) / 4, y + h);
+
+  // The will itself: deep base, bright core band, pale gloss.
+  const fw = w * ratio;
+  if (fw > 0.5) {
+    const pulse = low ? 0.75 + 0.25 * Math.sin(t * 9) : 1;
+    g.fillStyle(tint(low ? JUS.flameDeep : JUS.willDeep), 1);
+    g.fillRect(x, y, fw, h);
+    g.fillStyle(tint(low ? JUS.damned : JUS.will), pulse);
+    g.fillRect(x, y + 1, fw, h - 2);
+    g.fillStyle(tint(JUS.willPale), 0.5);
+    g.fillRect(x, y + 1, fw, h * 0.32);
+    // A sheen walking left to right across whatever is filled.
+    const sx = x + ((t * 70) % (w + 40)) - 20;
+    const s0 = Math.max(x, sx), s1 = Math.min(x + fw, sx + 14);
+    if (s1 > s0) {
+      g.fillStyle(tint(JUS.white), 0.28);
+      g.fillRect(s0, y + 1, s1 - s0, h - 2);
+    }
+    // Lit leading edge.
+    g.fillStyle(tint(JUS.pale), 0.9);
+    g.fillRect(x + fw - 1.5, y, 1.5, h);
+  }
+
+  // Quarter marks as tiny column capitals above and below the trough.
+  for (let i = 1; i < 4; i++) {
+    const tx = x + (w * i) / 4;
+    g.lineStyle(1, 0x05070f, 0.55);
+    g.lineBetween(tx, y, tx, y + h);
+    g.fillStyle(tint(JUS.gold), 1);
+    g.fillRect(tx - 2.5, y - 3, 5, 2);
+    g.fillRect(tx - 2.5, y + h + 1, 5, 2);
+    g.fillStyle(tint(JUS.pale), 0.8);
+    g.fillRect(tx - 2.5, y - 3, 5, 0.8);
+  }
+  g.lineStyle(1, tint(JUS.bright), 0.6);
+  g.strokeRect(x - 1, y - 1, w + 2, h + 2);
 }
 
 // ── Combo Excelsius ───────────────────────────────────────────────────────
@@ -452,6 +552,8 @@ export function styleMeter(
     ], true);
   };
 
+  // Gilt backing plaque, so the gauge reads as Justice's regalia and not a loose bar.
+  giltPlate(g, tint, x - 10, y - 7, w + 20, h + 14, 5, color);
   if (heat > 0.01) {
     plate(x - 4 - heat * 3, y - 4 - heat * 3, w + 8 + heat * 6, h + 8 + heat * 6,
       tint(color), 0.18 * heat);
@@ -484,6 +586,45 @@ export function styleMeter(
   g.lineTo(x, y + h);
   g.closePath();
   g.strokePath();
+}
+
+/**
+ * The laurel wreath the style letter sits in: two arcs of leaves closing toward the top, tied
+ * with a ribbon of the rank colour at the bottom. `heat` swells it and adds a corona when a
+ * rank has just been scored.
+ */
+export function styleRankWreath(
+  g: Phaser.GameObjects.Graphics, tint: JusticeColorFn,
+  cx: number, cy: number, r: number, color: number, heat: number, t: number,
+): void {
+  const R = r * (1 + heat * 0.12);
+  g.fillStyle(tint(JUS.umber), 0.85);
+  g.fillCircle(cx, cy, R * 0.82);
+  g.lineStyle(1.5, tint(color), 0.7);
+  g.strokeCircle(cx, cy, R * 0.82);
+  if (heat > 0.01) {
+    g.lineStyle(2, tint(color), 0.5 * heat);
+    g.strokeCircle(cx, cy, R + 4 + Math.sin(t * 10) * 1.5);
+  }
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 6; i++) {
+      // From the ribbon at the bottom (PI/2) round to near the top.
+      const a = Math.PI / 2 + side * (0.45 + i * 0.42);
+      const lx = cx + Math.cos(a) * R;
+      const ly = cy + Math.sin(a) * R;
+      const len = 6.5 - i * 0.45;
+      g.fillStyle(tint(JUS.gold), 0.95);
+      g.fillEllipse(lx, ly, len, len * 0.5);
+      g.fillStyle(tint(JUS.bright), 0.7);
+      g.fillEllipse(lx - 0.4, ly - 0.6, len * 0.55, len * 0.22);
+    }
+  }
+  // Ribbon tails.
+  g.fillStyle(tint(color), 0.95);
+  g.fillTriangle(cx - 1, cy + R - 1, cx - 6, cy + R + 6, cx - 2, cy + R + 6);
+  g.fillTriangle(cx + 1, cy + R - 1, cx + 6, cy + R + 6, cx + 2, cy + R + 6);
+  g.fillStyle(tint(JUS.pale), 1);
+  g.fillCircle(cx, cy + R - 1, 1.8);
 }
 
 // ── Vigilante Vengeance ───────────────────────────────────────────────────
@@ -1179,7 +1320,7 @@ export class JusticeAvatar extends BaseAvatar {
   /** Sheer Will's blue. */
   setWilling(on: boolean): void {
     this.willTarget = on ? 1 : 0;
-    this.setEyeWhite(on ? JUS.willPale : JUS.pale);
+    this.setEyeWhite(on ? JUS.willPale : this.mastered ? JUS.bright : JUS.pale);
   }
 
   update(delta: number, x: number, y: number, alpha: number): void {
@@ -1200,9 +1341,46 @@ export class JusticeAvatar extends BaseAvatar {
 
   protected applyMastery(on: boolean): void {
     this.forEachHandLayer(0, (glow) => {
-      glow.setRadius(on ? 13 : 9.5);
-      glow.setFillStyle(this.tint(on ? JUS.bright : JUS.gold), on ? 0.34 : 0.24);
+      glow.setRadius(on ? 14 : 9.5);
+      glow.setFillStyle(this.tint(on ? JUS.bright : JUS.gold), on ? 0.4 : 0.24);
     });
+    // White-gold palms on a mastered magistrate, plain gilt otherwise.
+    this.forEachHandLayer(1, (core) => core.setFillStyle(this.tint(on ? JUS.pale : JUS.bright), 0.92));
+    if (this.willTarget < 0.5) this.setEyeWhite(on ? JUS.bright : JUS.pale);
+  }
+
+  /**
+   * The toga: a marble sash slung from the left shoulder across the chest, gilt-edged and
+   * pinned with a round fibula. Mastered, the sash turns cloth-of-gold and the pin carries a
+   * blue will-gem.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
+    const m = this.mastered;
+    const ax = x - 13, ay = y - 9;
+    const bx = x + 11, by = y + 15;
+    g.lineStyle(7, this.tint(JUS.umber), alpha * 0.35);
+    g.lineBetween(ax + 1, ay + 2, bx + 1, by + 2);
+    g.lineStyle(6, this.tint(m ? JUS.gold : JUS.marble), alpha * 0.9);
+    g.lineBetween(ax, ay, bx, by);
+    // Folds: two pale creases along the cloth.
+    g.lineStyle(1, this.tint(m ? JUS.pale : JUS.white), alpha * 0.6);
+    g.lineBetween(ax + 1.5, ay - 1.5, bx + 1.5, by - 1.5);
+    g.lineStyle(1, this.tint(m ? JUS.bronze : JUS.stone), alpha * 0.7);
+    g.lineBetween(ax - 1.5, ay + 1.8, bx - 1.5, by + 1.8);
+    // Gilt hem where the sash leaves the body.
+    g.fillStyle(this.tint(JUS.gold), alpha * 0.9);
+    g.fillCircle(bx, by, 2.2);
+    // Fibula.
+    g.fillStyle(this.tint(JUS.umber), alpha);
+    g.fillCircle(ax, ay, 3.8);
+    g.fillStyle(this.tint(JUS.gold), alpha);
+    g.fillCircle(ax, ay, 3.1);
+    g.fillStyle(this.tint(m ? JUS.will : JUS.pale), alpha);
+    g.fillCircle(ax, ay, m ? 1.8 : 1.3);
+    if (m) {
+      g.fillStyle(this.tint(JUS.willPale), alpha);
+      g.fillCircle(ax - 0.6, ay - 0.6, 0.7);
+    }
   }
 
   protected emitTrail(x: number, y: number): void {
@@ -1223,6 +1401,26 @@ export class JusticeAvatar extends BaseAvatar {
     // Ground halo — gold, tinted toward blue with the will.
     g.fillStyle(this.tint(this.will > 0.5 ? JUS.will : JUS.gold), a * (0.22 + this.will * 0.16));
     g.fillCircle(x, y, 27 + this.will * 5);
+    // Mastery: a radiant sunburst halo standing behind the head — the one-glance tell.
+    if (this.mastered) {
+      const hx = x, hy = y - 14;
+      const spin = this.t * 0.4;
+      for (let i = 0; i < 16; i++) {
+        const ang = spin + (i / 16) * TAU;
+        const len = i % 2 === 0 ? 34 : 27;
+        const w = 0.07;
+        g.fillStyle(this.tint(i % 2 === 0 ? JUS.bright : JUS.gold), alpha * 0.55);
+        g.fillTriangle(
+          hx + Math.cos(ang - w) * 18, hy + Math.sin(ang - w) * 18,
+          hx + Math.cos(ang + w) * 18, hy + Math.sin(ang + w) * 18,
+          hx + Math.cos(ang) * len, hy + Math.sin(ang) * len,
+        );
+      }
+      g.fillStyle(this.tint(JUS.pale), alpha * 0.28);
+      g.fillCircle(hx, hy, 24);
+      g.lineStyle(2, this.tint(JUS.bright), alpha * 0.85);
+      g.strokeCircle(hx, hy, 24);
+    }
     // Airborne: the shadow drops away and a lift-glow builds underneath.
     if (this.flying > 0.05) {
       g.fillStyle(this.tint(JUS.willPale), a * 0.2 * this.flying);
@@ -1250,12 +1448,19 @@ export class JusticeAvatar extends BaseAvatar {
         const len = (9 - i * 1.6) * laurel;
         const lx = x + Math.cos(ang) * 11 * laurel;
         const ly = crownY + Math.sin(ang) * 6 * laurel;
-        g.fillStyle(this.tint(JUS.gold), alpha * 0.9);
+        g.fillStyle(this.tint(JUS.bronze), alpha * 0.8);
+        g.fillEllipse(lx + 0.6, ly + 0.8, len, len * 0.5);
+        g.fillStyle(this.tint(this.mastered ? JUS.bright : JUS.gold), alpha * 0.95);
         g.fillEllipse(lx, ly, len, len * 0.5);
-        g.fillStyle(this.tint(JUS.bright), alpha * 0.7);
+        g.fillStyle(this.tint(this.mastered ? JUS.white : JUS.bright), alpha * 0.7);
         g.fillEllipse(lx, ly - 0.6, len * 0.6, len * 0.3);
       }
     }
+    // A gilt band tying the laurel at the brow.
+    g.lineStyle(1.6, this.tint(JUS.gold), alpha * 0.9);
+    g.beginPath();
+    g.arc(x, crownY + 7, 11 * laurel, Math.PI * 1.18, Math.PI * 1.82);
+    g.strokePath();
     g.fillStyle(this.tint(this.will > 0.5 ? JUS.willPale : JUS.pale), alpha * 0.95);
     g.fillCircle(x, crownY - 2, 2.2 + this.will * 0.8);
 
@@ -1267,8 +1472,28 @@ export class JusticeAvatar extends BaseAvatar {
       carry + Math.PI, 44, alpha * 0.9, 0.85,
     );
 
-    // Mastery: a second, higher laurel ring turning slowly overhead.
+    // Mastery: a second, higher laurel ring turning slowly overhead, and a pair of balance
+    // scales swinging from the off-hand side — regalia only the mastered magistrate carries.
     if (this.mastered) {
+      const sx = x + Math.cos(this.facing - Math.PI * 0.6) * 24;
+      const sy = y - 26 + bob;
+      const tilt = Math.sin(this.t * 1.7) * 0.22;
+      g.lineStyle(1.4, this.tint(JUS.gold), alpha);
+      g.lineBetween(sx, sy - 6, sx, sy);
+      const bx = Math.cos(tilt) * 9, by = Math.sin(tilt) * 9;
+      g.lineBetween(sx - bx, sy - by, sx + bx, sy + by);
+      for (const d of [-1, 1]) {
+        const px = sx + d * bx, py = sy + d * by;
+        g.lineStyle(0.8, this.tint(JUS.bright), alpha * 0.9);
+        g.lineBetween(px, py, px - 3, py + 6);
+        g.lineBetween(px, py, px + 3, py + 6);
+        g.fillStyle(this.tint(JUS.gold), alpha);
+        g.fillEllipse(px, py + 6.5, 8, 3);
+        g.fillStyle(this.tint(JUS.pale), alpha * 0.8);
+        g.fillEllipse(px, py + 6, 5, 1.2);
+      }
+      g.fillStyle(this.tint(JUS.pale), alpha);
+      g.fillCircle(sx, sy - 6.5, 1.6);
       for (let i = 0; i < 5; i++) {
         const p = this.t * 1.1 + (i / 5) * TAU;
         const cx = x + Math.cos(p) * 20;

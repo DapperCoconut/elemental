@@ -26,6 +26,7 @@ const SPIN_PER_HIT = 0.13;
 const DANCE_MS = 2000;
 const WAVE_RADIUS = 180;
 const SOLO_SCROLL = 0.32;
+const PERFECT_MS = 70;
 
 const hex = (c: number): string => `#${c.toString(16).padStart(6, '0')}`;
 
@@ -79,8 +80,14 @@ function batonLayer(ctx: PreviewCtx, b: Baton, victim: { x: number; y: number } 
   });
 }
 
-/** The beat bar, drawn along the top of the box; `onBeat` is the loop's "click". */
-function beatBar(ctx: PreviewCtx, hits: (beat: number) => boolean, onClick: (hit: boolean) => void): void {
+/**
+ * The beat bar, drawn along the top of the box; `onBeat` is the loop's "click". With `perfect`, the
+ * Musical Perfection sliver is drawn and the beats it names are clicked dead in its middle.
+ */
+function beatBar(
+  ctx: PreviewCtx, hits: (beat: number) => boolean, onClick: (hit: boolean, perfect: boolean) => void,
+  perfect?: (beat: number) => boolean,
+): void {
   const g = ctx.adopt(ctx.scene.add.graphics().setDepth(18));
   const barW = 220, barX = ctx.cx - barW / 2, y = 22;
   let lastBeat = -1;
@@ -90,12 +97,13 @@ function beatBar(ctx: PreviewCtx, hits: (beat: number) => boolean, onClick: (hit
     const idx = Math.floor(elapsed / BEAT_MS);
     const phase = elapsed - idx * BEAT_MS;
     // Click a little inside the window when the script says this beat is played, early when not.
-    const clickAt = hits(idx) ? BEAT_MS - WINDOW_MS * 0.5 : BEAT_MS * 0.4;
+    const isPerfect = !!perfect?.(idx);
+    const clickAt = hits(idx) ? BEAT_MS - WINDOW_MS * (perfect && !isPerfect ? 0.22 : 0.5) : BEAT_MS * 0.4;
     if (idx !== lastBeat && phase >= clickAt) {
       lastBeat = idx;
       const ok = hits(idx);
       if (ok) flash = 1; else bad = 1;
-      onClick(ok);
+      onClick(ok, ok && isPerfect);
     }
     flash = Math.max(0, flash - dt / 300);
     bad = Math.max(0, bad - dt / 300);
@@ -107,6 +115,11 @@ function beatBar(ctx: PreviewCtx, hits: (beat: number) => boolean, onClick: (hit
     const winX = barX + barW * (1 - WINDOW_MS / BEAT_MS);
     g.fillStyle(ctx.tint(SOUND.gold), phase >= BEAT_MS - WINDOW_MS ? 0.55 + flash * 0.4 : 0.22);
     g.fillRoundedRect(winX, y - 7, barX + barW - winX, 14, 4);
+    if (perfect) {
+      const pw = barW * PERFECT_MS / BEAT_MS;
+      g.fillStyle(ctx.tint(SOUND.goldRich), 0.8);
+      g.fillRect(barX + barW * (1 - WINDOW_MS / 2 / BEAT_MS) - pw / 2, y - 6, pw, 12);
+    }
     if (bad > 0) { g.fillStyle(ctx.tint(SOUND.sour), 0.35 * bad); g.fillRoundedRect(barX, y - 7, barW, 14, 4); }
     g.lineStyle(1, ctx.tint(SOUND.maroonHi), 0.9);
     g.strokeRoundedRect(barX, y - 7, barW, 14, 4);
@@ -450,6 +463,245 @@ export const perkBass: PreviewScript = {
       av.play('slam', 0, 380);
       fx.slam(ix, iy, 0, 130, 40, SOUND.maroonHi);
       for (let i = 0; i < 5; i++) charges.push({ x: ix + 97 + (i - 2) * 52, y: iy, at: 600, boom: 600 + 480 + i * 80 });
+    });
+  },
+};
+
+// ══ Shop upgrades ══════════════════════════════════════════════════════
+
+export const batonUpgraded: PreviewScript = {
+  duration: 9000,
+  scale: 0.9,
+  caption: 'Click+ Musical Perfection — the richer gold sliver mid-window spins the baton up 22%; tap yourself with the baton for +35% speed',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    const b: Baton = { x: ctx.cx + 80, y: ctx.cy, rot: 0, spin: 0, aim: { x: ctx.cx + 110, y: ctx.cy }, hidden: false, song: SOUND.staccato };
+    batonLayer(ctx, b, null);
+    beatBar(ctx, (i) => i !== 4, (ok, perfect) => {
+      b.spin = ok ? Math.min(1, b.spin + (perfect ? 0.22 : SPIN_PER_HIT)) : Math.max(0, b.spin - 0.08);
+      if (perfect) {
+        fx.batonFlourish(b.x, b.y - 10, SOUND.goldRich);
+        fx.sparkle(b.x, b.y - 12, 6, 22, 11, SOUND.goldRichHi);
+        float(ctx, b.x, b.y - 36, '✦ PERFECT +22%', hex(SOUND.goldRich), 10);
+      } else if (ok) {
+        fx.batonFlourish(b.x, b.y - 10);
+        float(ctx, b.x, b.y - 36, '+13%', hex(SOUND.goldHi), 10);
+      } else fx.batonFumble(b.x, b.y - 10);
+    }, (i) => i % 2 === 0);
+    // Twice, the cursor comes home: the baton taps the drum major, who sprints off.
+    let tapped = -1;
+    ctx.onFrame((_dt, el) => {
+      const c = ctx.casterAt();
+      const home = (el > 2400 && el < 3300) || (el > 6000 && el < 6900);
+      b.aim = home ? { x: c.x, y: c.y } : { x: c.x + 110, y: c.y + Math.sin(el / 500) * 30 };
+      av.setHold('reach', Math.atan2(b.y - c.y, b.x - c.x));
+      if (home && Math.hypot(b.x - c.x, b.y - c.y) < 30 && el - tapped > 1500) {
+        tapped = el;
+        fx.batonFlourish(c.x, c.y - 12, SOUND.goldRich);
+        fx.ripple(c.x, c.y, 8, 30, SOUND.staccato, 260, 2.4, 7, 6);
+        float(ctx, c.x, c.y - 46, '♪ TEMPO! +35%', hex(SOUND.goldRichHi), 10);
+        ctx.glideCaster({ to: { x: c.x + (c.x < ctx.cx ? 160 : -160), y: c.y }, ms: 420, ease: 'out' });
+      }
+    });
+    ctx.moveCaster(ctx.cx - 80, ctx.cy);
+  },
+};
+
+export const crescendoUpgraded: PreviewScript = {
+  duration: 5600,
+  scale: 0.9,
+  caption: 'E+ Infectious Moves — everyone the wave hits dances for 2s: they can still move, but cannot attack',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    const target = { x: ctx.cx + 120, y: ctx.cy };
+    dummyAt(ctx, target);
+    ctx.moveCaster(ctx.cx - 160, ctx.cy);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(5));
+    let danceUntil = -1;
+    ctx.onFrame((_dt, el) => {
+      g.clear();
+      if (el < danceUntil) {
+        target.x = ctx.cx + 120 + Math.sin(el / 160) * 10;
+        SoundFx.drawDancing(g, ctx.tint, target.x, target.y, el / 1000, SOUND.staccato, Math.min(1, (danceUntil - el) / 300));
+      }
+    });
+    ctx.at(200, () => {
+      av.play('raise', undefined, 500);
+      av.setHold('ride');
+      av.setDance(0.6);
+      ctx.glideCaster({ to: { x: ctx.cx - 20, y: ctx.cy + 10 }, ms: DANCE_MS, ease: 'in' });
+    });
+    ctx.at(200 + DANCE_MS, () => {
+      av.setHold(null);
+      av.setDance(0);
+      const c = ctx.casterAt();
+      fx.musicWave(c.x, c.y, WAVE_RADIUS, SOUND.staccato);
+      av.play('flex', undefined, 420);
+      danceUntil = 200 + DANCE_MS + 2000;
+      float(ctx, target.x, target.y - 30, '30', hex(SOUND.goldHi), 13);
+      float(ctx, target.x, target.y - 50, '💃 DANCE!', hex(SOUND.goldHi));
+    });
+    ctx.at(200 + DANCE_MS + 900, () => float(ctx, target.x, target.y - 50, '🚫 can\'t attack', hex(SOUND.maroonPale), 10));
+  },
+};
+
+export const fermataUpgraded: PreviewScript = {
+  duration: 9000,
+  scale: 0.9,
+  caption: 'R+ Harmony — R with the baton on top of you: In Tune. An echo baton circles, the song plays 50% stronger, regen falls 12 → 0 → hurting. Recast for the net as a burst',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    const target = { x: ctx.cx + 60, y: ctx.cy - 20 };
+    dummyAt(ctx, target);
+    const b: Baton = { x: ctx.cx + 30, y: ctx.cy, rot: 0, spin: 0.3, aim: { x: ctx.cx, y: ctx.cy }, hidden: false, song: SOUND.smooth };
+    batonLayer(ctx, b, null);
+    av.setSong(SONG_COLORS.smooth, SONG_PALE.smooth);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const start = 900;
+    let on = false, net = 0, acc = 0, ang = 0, lastHit = -1000;
+    ctx.onFrame((dt, el) => {
+      g.clear();
+      if (!on) return;
+      const c = ctx.casterAt();
+      const secs = (el - start) / 1000 * 1.6; // run at 1.6× so the turn arrives inside the loop
+      const rate = 12 - 2 * secs;
+      acc += rate * dt / 1000 * 1.6;
+      while (acc >= 1) { acc -= 1; net += 1; }
+      while (acc <= -1) { acc += 1; net -= 1; }
+      SoundFx.drawInTune(g, ctx.tint, c.x, c.y, el / 1000, rate / 12, SOUND.smooth, 1);
+      ang += 4.2 * dt / 1000;
+      const ex = c.x + Math.cos(ang) * 62, ey = c.y + Math.sin(ang) * 50;
+      SoundFx.drawBaton(g, ctx.tint, ex, ey, el / 200, 0.8, el / 1000, 0.6, SOUND.smoothPale);
+      if (Math.hypot(ex - target.x, ey - target.y) < 38 && el - lastHit > 450) {
+        lastHit = el;
+        fx.waveBurst(target.x, target.y, Math.atan2(target.y - ey, target.x - ex), 0.6, 9, SOUND.smoothPale);
+        float(ctx, target.x, target.y - 28, '6', hex(SOUND.smoothPale), 11);
+      }
+    });
+    ctx.at(start, () => {
+      on = true;
+      av.play('raise', undefined, 500);
+      fx.ripple(ctx.cx, ctx.cy, 10, 56, SOUND.smooth, 520, 3, 9, 8);
+      float(ctx, ctx.cx, ctx.cy - 56, '♪ IN TUNE', hex(SOUND.goldHi), 12);
+    });
+    for (const at of [1900, 2900, 3900]) ctx.at(at, () => float(ctx, ctx.cx - 30, ctx.cy - 40, `+${net} so far`, hex(SOUND.smoothPale), 10));
+    ctx.at(start + 3750, () => {
+      on = false;
+      av.play('clap', undefined, 360);
+      fx.ripple(ctx.cx, ctx.cy, 12, 70, SOUND.smooth, 560, 4, 9, 9);
+      fx.sparkle(ctx.cx, ctx.cy, 10, 36, 11, SOUND.smoothPale);
+      float(ctx, ctx.cx, ctx.cy - 58, `♪ RESOLVED +${net}`, hex(SOUND.smoothPale), 13);
+    });
+  },
+};
+
+export const humUpgraded: PreviewScript = {
+  duration: 9000,
+  scale: 0.9,
+  caption: 'F+ Practice Makes Perfect — every beat hit levels the song you are playing (5 beats a level, 8% stronger each, to 10). Each song levels on its own',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    const b: Baton = { x: ctx.cx + 80, y: ctx.cy, rot: 0, spin: 0.4, aim: { x: ctx.cx + 100, y: ctx.cy + 20 }, hidden: false, song: SOUND.staccato };
+    batonLayer(ctx, b, null);
+    let hits = 0;
+    const tab = ctx.adopt(ctx.scene.add.graphics().setDepth(18));
+    const label = ctx.adopt(ctx.scene.add.text(ctx.cx - 34, 44, '', {
+      fontSize: '9px', fontFamily: 'Arial Black', color: hex(SOUND.staccato), stroke: '#0b0306', strokeThickness: 2,
+    }).setOrigin(0.5).setDepth(19));
+    ctx.onFrame(() => {
+      const lvl = Math.floor(hits / 2); // two beats a level here, so it climbs inside the loop
+      tab.clear();
+      tab.fillStyle(ctx.tint(SOUND.maroonDeep), 0.94); tab.fillRoundedRect(ctx.cx - 75, 38, 150, 12, 5);
+      tab.lineStyle(1, ctx.tint(SOUND.gold), 0.85); tab.strokeRoundedRect(ctx.cx - 75, 38, 150, 12, 5);
+      for (let i = 0; i < 10; i++) {
+        tab.fillStyle(ctx.tint(SOUND.night), 1); tab.fillCircle(ctx.cx + 12 + i * 6, 44, 2.3);
+        if (i < lvl) { tab.fillStyle(ctx.tint(SOUND.staccato), 1); tab.fillCircle(ctx.cx + 12 + i * 6, 44, 2.1); }
+      }
+      label.setText(`STACCATO · LV ${lvl}`);
+    });
+    let sparkAt = 0;
+    ctx.onFrame((_dt, el) => {
+      const lvl = Math.floor(hits / 2);
+      const c = ctx.casterAt();
+      av.setHold('reach', Math.atan2(b.y - c.y, b.x - c.x));
+      if (lvl > 0 && el >= sparkAt) {
+        sparkAt = el + Math.max(150, 1000 - lvl * 85);
+        fx.sparkle(c.x, c.y, 1 + Math.floor(lvl / 3), 22 + lvl * 2, 7, SOUND.staccato);
+      }
+    });
+    beatBar(ctx, () => true, (ok) => {
+      if (!ok) return;
+      fx.batonFlourish(b.x, b.y - 10, SOUND.staccato);
+      hits++;
+      if (hits % 2 === 0) {
+        const c = ctx.casterAt();
+        fx.notes(c.x, c.y - 16, 4 + hits / 2, { speed: 110, size: 6, color: SOUND.staccato, rise: 50, angle: -Math.PI / 2, spread: 1.5 });
+        float(ctx, c.x, c.y - 56, `♪ STACCATO LV ${hits / 2}`, hex(SOUND.staccato), 11);
+      }
+    });
+  },
+};
+
+export const callOfTheVoidUpgraded: PreviewScript = {
+  duration: 7000,
+  scale: 0.9,
+  caption: 'Q+ Big Finish! — hold Space to speed the solo up (never back down). At the end: a gong for up to 150 by flair — then Deaf for 8s, dealing no damage',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    const target = { x: ctx.cx + 240, y: ctx.cy + 20 };
+    dummyAt(ctx, target);
+    const sx = ctx.cx - 160, sy = ctx.cy + 20;
+    ctx.moveCaster(sx, sy, { facing: 0 });
+    const st = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    const hud = ctx.adopt(ctx.scene.add.graphics().setDepth(18));
+    const fg = ctx.adopt(ctx.scene.add.graphics().setDepth(10));
+    let tempo = 1;
+    let soloing = true;
+    let gongAt = -1;
+    let deafUntil = -1;
+    let flair = 0;
+    av.setInstrument('bugle');
+    av.setHold('brace', 0);
+    let noteAt = 400;
+    ctx.onFrame((dt, el) => {
+      st.clear(); hud.clear(); fg.clear();
+      if (soloing) {
+        SoundFx.drawStage(st, ctx.tint, sx, sy + 16, el / 1000);
+        if (el > 800) tempo = Math.min(2, tempo + 0.3 * dt / 1000);
+        if (el >= noteAt) {
+          noteAt = el + 420 / tempo;
+          fx.noteShot(sx + 50, sy - 2, target.x, target.y, SOUND.staccato, false);
+        }
+        const fw = 160, fx0 = ctx.cx - fw / 2, fy = 16, k = tempo - 1;
+        hud.fillStyle(ctx.tint(SOUND.night), 0.95); hud.fillRoundedRect(fx0, fy, fw, 9, 3);
+        hud.fillStyle(ctx.tint(k > 0.66 ? SOUND.goldRich : SOUND.bronze), 1);
+        if (k > 0) hud.fillRoundedRect(fx0, fy, Math.max(4, fw * k), 9, 3);
+        hud.lineStyle(1, ctx.tint(SOUND.goldHi), 0.8); hud.strokeRoundedRect(fx0, fy, fw, 9, 3);
+      }
+      if (gongAt >= 0) {
+        const k = Phaser.Math.Clamp((el - gongAt) / 560, 0, 1);
+        const ring = el - gongAt - 560;
+        SoundFx.drawGong(st, ctx.tint, sx + 70, sy, 1, el / 1000, k, ring > 0 ? ring : 0, flair, 1);
+      }
+      if (el < deafUntil) SoundFx.drawDeaf(fg, ctx.tint, sx, sy - 30, el / 1000, 1);
+    });
+    ctx.at(900, () => float(ctx, ctx.cx, 40, 'holding Space…', hex(SOUND.goldRichHi), 10));
+    ctx.at(3600, () => {
+      soloing = false;
+      flair = tempo - 1;
+      av.setInstrument('none');
+      av.setHold('reach', 0);
+      av.play('raise', undefined, 560);
+      gongAt = 3600;
+      float(ctx, sx, sy - 62, `🔔 BIG FINISH ×${tempo.toFixed(2)}`, hex(SOUND.goldRichHi), 12);
+    });
+    ctx.at(4160, () => {
+      av.play('slam', 0, 380);
+      fx.boom(sx + 70, sy - 6, 90 + flair * 90, { color: SOUND.bronzeHi, petals: 10, notes: 8, duration: 620 });
+      ctx.at(160, () => float(ctx, target.x, target.y - 30, `${Math.round(150 * flair)}`, hex(SOUND.goldRichHi), 15));
+      float(ctx, sx + 70, sy - 70, 'BONG!', hex(SOUND.goldRichHi), 16);
+      deafUntil = 4160 + 2600;
+      ctx.at(300, () => float(ctx, sx, sy - 46, '🔇 DEAF — 0 damage', hex(SOUND.steel), 10));
     });
   },
 };

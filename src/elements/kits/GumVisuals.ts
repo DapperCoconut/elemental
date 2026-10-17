@@ -433,10 +433,9 @@ export function slimeBeacon(
 
   // The charge ring: how long the aura will run for once it is put down.
   if (charge > 0.02) {
-    g.lineStyle(2.4, tint(eyeLit), 0.9);
-    g.beginPath();
-    g.arc(bx, y, r * 1.6, -Math.PI / 2, -Math.PI / 2 + TAU * Math.min(1, charge), false);
-    g.strokePath();
+    gooTimerRing(g, tint, bx, y, r * 1.6, Math.min(1, charge), 0.95, t, {
+      deep: heal ? GUM.gumDeep : GUM.oozeDeep, fill: eye, lit: eyeLit, width: 2.6,
+    });
   }
 }
 
@@ -852,6 +851,70 @@ export class GumFx extends FxBase {
   }
 }
 
+/**
+ * A countdown drawn as a ring of slime: a dark sunken track, a thick lumpy band of goo that runs
+ * from twelve o'clock round to `left`, drips hanging off its underside, and a fat bead at the
+ * leading end that wobbles. Used for every "how long is this going to last" ring the kit puts on
+ * a body (encasement, digestion, a beacon's charge), so they all read as the same material.
+ */
+export function gooTimerRing(
+  g: Phaser.GameObjects.Graphics,
+  tint: GumColorFn,
+  x: number, y: number, r: number, left: number, alpha: number, t: number,
+  { deep = GUM.gumDeep, fill = GUM.gum, lit = GUM.gumLit, width = 3.2 } = {},
+): void {
+  const k = Phaser.Math.Clamp(left, 0, 1);
+  const TOP = -Math.PI / 2;
+  // Track.
+  g.lineStyle(width + 2.4, tint(GUM.murk), alpha * 0.45);
+  g.strokeCircle(x, y, r);
+  if (k <= 0.005) return;
+  const end = TOP + TAU * k;
+  g.lineStyle(width + 1.6, tint(deep), alpha * 0.95);
+  g.beginPath();
+  g.arc(x, y, r, TOP, end, false);
+  g.strokePath();
+  g.lineStyle(width, tint(fill), alpha);
+  g.beginPath();
+  g.arc(x, y, r, TOP, end, false);
+  g.strokePath();
+  // Lumps along the band, so it reads as something poured rather than a vector stroke.
+  const n = Math.max(1, Math.floor(k * 14));
+  for (let i = 0; i < n; i++) {
+    const a = TOP + ((i + 0.5) / 14) * TAU;
+    const lump = width * (0.55 + jitter(7, i) * 0.35) + Math.sin(t * 3 + i) * 0.3;
+    g.fillStyle(tint(fill), alpha);
+    g.fillCircle(x + Math.cos(a) * r, y + Math.sin(a) * r, lump);
+  }
+  // Shine along the outer edge of the band.
+  g.lineStyle(1, tint(lit), alpha * 0.85);
+  g.beginPath();
+  g.arc(x, y, r + width * 0.25, TOP, end, false);
+  g.strokePath();
+  // Drips off the lower half of whatever band is left.
+  for (let i = 0; i < 3; i++) {
+    const a = Math.PI * (0.25 + i * 0.25);
+    const rel = (a - TOP + TAU) % TAU;
+    if (rel > TAU * k) continue;
+    const cyc = (t * (0.6 + i * 0.15) + i * 0.3) % 1;
+    const px = x + Math.cos(a) * r;
+    const py = y + Math.sin(a) * r + width * 0.5;
+    g.fillStyle(tint(fill), alpha * (1 - cyc * 0.6));
+    g.fillEllipse(px, py + cyc * 3, 2.4, 2 + cyc * 6);
+    g.fillCircle(px, py + 2 + cyc * 6, 1.3 * (1 - cyc * 0.4));
+  }
+  // The bead at the leading end.
+  const bx = x + Math.cos(end) * r;
+  const by = y + Math.sin(end) * r;
+  const wob = 1 + Math.sin(t * 9) * 0.12;
+  g.fillStyle(tint(deep), alpha);
+  g.fillCircle(bx, by, width * 1.25 * wob + 0.8);
+  g.fillStyle(tint(fill), alpha);
+  g.fillCircle(bx, by, width * 1.25 * wob);
+  g.fillStyle(tint(GUM.shine), alpha * 0.9);
+  g.fillCircle(bx - width * 0.4, by - width * 0.45, width * 0.4);
+}
+
 // ── Avatar ────────────────────────────────────────────────────────────────
 
 const GUM_AVATAR: AvatarSpec = {
@@ -880,8 +943,12 @@ const GUM_AVATAR: AvatarSpec = {
  * after Solidify — leaving a dripping stump, which is the only time this character is genuinely
  * helpless and needs to look it.
  *
- * Mastered thickens the arm and adds a permanent inner core of hardened jade, so a mastered slime
- * is visibly part solid before it ever casts anything.
+ * Body detail: a swallowed pebble and gum wrapper drifting inside, a wet sheen, and a wad of pink
+ * gum stuck on the crown that blows and pops a bubble every few seconds.
+ *
+ * Mastered: a crown of jade crystals pushes up through the top of the blob, a jade ring glints in
+ * the puddle under it, the eyes go jade-white, the gum bubble hardens, the arm thickens with a
+ * jade thread down it, and a permanent inner core of hardened jade turns inside the body.
  */
 export class GumAvatar extends BaseAvatar {
   /** Body→hand distance the kit wants, in px. */
@@ -940,7 +1007,8 @@ export class GumAvatar extends BaseAvatar {
   }
 
   protected applyMastery(on: boolean): void {
-    this.forEachHandLayer(0, (halo) => { halo.setRadius(on ? 14.5 : 12); });
+    this.setEyeWhite(on ? GUM.solidLit : GUM.shine);
+    this.forEachHandLayer(0, (halo) => { halo.setRadius(on ? 15.5 : 12); });
     this.forEachHandLayer(2, (glint) => {
       glint.setFillStyle(this.tint(on ? GUM.solidLit : GUM.shine), on ? 0.95 : 0.85);
       glint.setRadius(on ? 4 : 3);
@@ -1000,6 +1068,16 @@ export class GumAvatar extends BaseAvatar {
     g.fillEllipse(x, y + 16, 42 * w, 12 * w);
     g.fillStyle(this.tint(GUM.ooze), a * 0.32);
     g.fillEllipse(x - 2, y + 15, 28 * w, 8 * w);
+    if (this.mastered) {
+      // A ring of jade set into the puddle, glinting — the floor it sits on has started to harden.
+      g.lineStyle(2.2, this.tint(GUM.solid), alpha * 0.7);
+      g.strokeEllipse(x, y + 16, 58, 19);
+      for (let i = 0; i < 6; i++) {
+        const ang = this.t * 0.5 + (i / 6) * TAU;
+        g.fillStyle(this.tint(GUM.solidLit), alpha * (0.5 + 0.5 * Math.sin(this.t * 3 + i)));
+        g.fillCircle(x + Math.cos(ang) * 29, y + 16 + Math.sin(ang) * 9.5, 1.5);
+      }
+    }
   }
 
   /**
@@ -1020,8 +1098,56 @@ export class GumAvatar extends BaseAvatar {
       g.fillStyle(this.tint(GUM.shine), alpha * 0.5);
       g.fillCircle(bx - 0.6, by - 0.7, 0.7 + j * 0.5);
     }
+    // Something it swallowed and never finished: a pebble and a pink gum wrapper drifting slowly
+    // round inside the translucent body.
+    const sw = this.t * 0.4;
+    const px = x - 6 + Math.cos(sw) * 3, py = y + 8 + Math.sin(sw) * 2;
+    g.fillStyle(this.tint(GUM.stone), alpha * 0.45);
+    g.fillEllipse(px, py, 4.4, 3.2);
+    g.fillStyle(this.tint(GUM.stoneLit), alpha * 0.35);
+    g.fillCircle(px - 0.8, py - 0.6, 0.8);
+    const wx = x + 8 + Math.sin(sw * 1.3) * 2, wy = y + 6 + Math.cos(sw) * 2;
+    g.fillStyle(this.tint(GUM.gum), alpha * 0.4);
+    g.fillPoints([
+      new Phaser.Geom.Point(wx - 3, wy - 1.5), new Phaser.Geom.Point(wx + 2.6, wy - 2.2),
+      new Phaser.Geom.Point(wx + 3.2, wy + 1.2), new Phaser.Geom.Point(wx - 2.4, wy + 2),
+    ], true);
+    // A wet sheen band across the upper body, the light caught in the skin.
+    g.lineStyle(1.4, this.tint(GUM.shine), alpha * 0.35);
+    g.beginPath();
+    g.arc(x, y + 6, 15, Math.PI * 1.15, Math.PI * 1.55);
+    g.strokePath();
+    // A wad of pink gum stuck to the crown, blowing a bubble every few seconds that pops.
+    const gx = x - 8, gy = y - 12;
+    g.fillStyle(this.tint(GUM.gumDeep), alpha);
+    g.fillEllipse(gx, gy + 0.6, 9, 6);
+    g.fillStyle(this.tint(GUM.gum), alpha);
+    g.fillEllipse(gx - 0.4, gy, 7.6, 4.8);
+    g.fillStyle(this.tint(GUM.gumLit), alpha * 0.9);
+    g.fillCircle(gx - 2, gy - 1, 1.1);
+    const cyc = (this.t * 0.28) % 1;
+    if (cyc < 0.82) {
+      const br = 1 + easeOut(cyc / 0.82) * 5;
+      gumBubble(g, this.tint, gx - 3 - br * 0.5, gy - 2 - br * 0.6, br, alpha * 0.9, this.t, { seed: 4, hard: this.mastered });
+    } else {
+      // The pop: a flick of pink shreds.
+      const u = (cyc - 0.82) / 0.18;
+      g.lineStyle(1.2, this.tint(this.mastered ? GUM.solidLit : GUM.gumLit), alpha * (1 - u));
+      for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * TAU;
+        const bx = gx - 6, by = gy - 6;
+        g.lineBetween(bx + Math.cos(a) * (3 + u * 4), by + Math.sin(a) * (3 + u * 4), bx + Math.cos(a) * (5 + u * 6), by + Math.sin(a) * (5 + u * 6));
+      }
+    }
     // The mastered core: a lump of hardened jade already sitting inside it.
     if (this.mastered) {
+      // And a crown of jade crystals pushed up through the top of the blob.
+      for (let i = 0; i < 5; i++) {
+        const u = i / 4 - 0.5;
+        const len = 13 - Math.abs(u) * 10 + Math.sin(this.t * 2 + i) * 0.5;
+        slimeShard(g, this.tint, x + 3 + u * 16, y - 10 - (0.5 - Math.abs(u)) * 4, -Math.PI / 2 + u * 0.9, len, alpha,
+          { seed: i * 5 + 2, deep: GUM.solidDeep, fill: GUM.solid, lit: GUM.solidLit });
+      }
       g.fillStyle(this.tint(GUM.solidDeep), alpha * 0.7);
       g.fillCircle(x + 1, y + 5, 7.4);
       g.fillStyle(this.tint(GUM.solid), alpha * 0.85);

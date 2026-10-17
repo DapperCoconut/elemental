@@ -1114,9 +1114,10 @@ const MAGMA_AVATAR: AvatarSpec = {
  * The body is the plain molten `elem-magma` orb the arena stages under the rig. The pirate is
  * said by one thing on top of it — a basalt tricorn going soft in the heat, skull on the crown,
  * drips off its horns — plus an eye patch as the single secondary touch. The hands are plain
- * lava balls. Mastered he is the captain, but nothing new appears: the tricorn's brim turns to
- * gilded lace with a lava glow under it, the skull's eyes burn, the hand coronas widen and the
- * eye whites go gold.
+ * lava balls with crust chips; on the orb sit crust plates with heat in the seams and a red
+ * sash. Mastered he is the captain: a flaming feather plume, gold doubloons orbiting him, a
+ * molten ring at his feet, gold signets and a sash buckle, the tricorn's brim in gilded lace,
+ * burning skull sockets, wider hand coronas and gold eye whites.
  *
  * `drawBody` paints only what sits *on* the sphere under the eyes — Molten Mutiny's pendant,
  * which is a gameplay tell — and `drawExtras` paints the patch and the hat over them.
@@ -1205,11 +1206,134 @@ export class MagmaAvatar extends BaseAvatar {
     const boost = this.mastered ? 0.08 : 0;
     g.fillStyle(this.tint(MAG.magma), a * (0.1 + boost + this.vent * 0.2) * (0.4 + ground * 0.6));
     g.fillEllipse(x, y + 14, 40 + this.vent * 14, 13 + this.vent * 5);
+    if (this.mastered) {
+      // The captain's mark: a slow ring of molten rock circling his feet, and a hot halo behind.
+      g.fillStyle(this.tint(MAG.lava), alpha * (0.1 + 0.05 * Math.sin(this.t * 3)));
+      g.fillCircle(x, y, 30);
+      g.lineStyle(2, this.tint(MAG.gold), alpha * 0.55 * (0.4 + ground * 0.6));
+      g.strokeEllipse(x, y + 14, 56, 18);
+      for (let i = 0; i < 8; i++) {
+        const ang = this.t * 0.8 + (i / 8) * Math.PI * 2;
+        g.fillStyle(this.tint(i % 2 ? MAG.lava : MAG.gold), alpha * 0.8 * (0.4 + ground * 0.6));
+        g.fillCircle(x + Math.cos(ang) * 28, y + 14 + Math.sin(ang) * 9, 1.6);
+      }
+      // Doubloons on the far side of their orbit pass behind him.
+      this.doubloons(g, x, y, alpha, false);
+    }
+  }
+
+  /**
+   * Mastered only: three gold doubloons orbiting the captain. Drawn twice a frame — the far
+   * half of the orbit from the glow layer (behind the body), the near half from the extras.
+   */
+  private doubloons(g: Phaser.GameObjects.Graphics, x: number, y: number, alpha: number, front: boolean): void {
+    for (let i = 0; i < 3; i++) {
+      const ang = this.t * 1.6 + (i / 3) * Math.PI * 2;
+      const depth = Math.sin(ang);
+      if ((depth > 0) !== front) continue;
+      const cx = x + Math.cos(ang) * 27;
+      const cy = y + 2 + depth * 8;
+      const sc = 0.8 + depth * 0.2;
+      const edge = Math.abs(Math.cos(this.t * 4 + i));
+      g.fillStyle(this.tint(MAG.lava), alpha * 0.3);
+      g.fillCircle(cx, cy, 5.5 * sc);
+      g.fillStyle(this.tint(MAG.crust), alpha);
+      g.fillEllipse(cx, cy, 7.4 * sc * (0.35 + edge * 0.65), 7.4 * sc);
+      g.fillStyle(this.tint(MAG.gold), alpha);
+      g.fillEllipse(cx, cy, 6.2 * sc * (0.35 + edge * 0.65), 6.2 * sc);
+      g.fillStyle(this.tint(MAG.white), alpha * 0.8);
+      g.fillCircle(cx - 1 * edge, cy - 1, 1);
+    }
+  }
+
+  /**
+   * Painted on the sphere under the face: crust plates with heat in the seams and the red
+   * pirate's sash slung across his belly. Mastered, the sash gets gold braid and a gold buckle.
+   */
+  private crustAndSash(g: Phaser.GameObjects.Graphics, x: number, y: number, A: number): void {
+    const lean = Math.cos(this.facing) * 1.5;
+    const glow = 0.55 + 0.3 * Math.sin(this.t * 2.4);
+    // Glowing seams between dark crust plates on the lower half of the orb.
+    const plates: [number, number, number, number][] = [
+      [-13, 8, 7, 4], [-4, 14, 8, 4], [9, 11, 7, 4.5], [15, 2, 4, 6], [-17, 0, 3.5, 6],
+    ];
+    for (const [px, py, rw, rh] of plates) {
+      g.fillStyle(this.tint(MAG.magma), A * 0.5 * glow);
+      g.fillEllipse(x + px + lean, y + py, rw * 2 + 3, rh * 2 + 3);
+      g.fillStyle(this.tint(MAG.crustDeep), A * 0.92);
+      g.fillEllipse(x + px + lean, y + py, rw * 2, rh * 2);
+      g.fillStyle(this.tint(MAG.crust), A * 0.6);
+      g.fillEllipse(x + px + lean - rw * 0.25, y + py - rh * 0.35, rw * 1.1, rh * 0.8);
+    }
+    // A forked crack of fresh melt up one flank.
+    g.lineStyle(1.3, this.tint(MAG.gold), A * glow);
+    g.beginPath();
+    g.moveTo(x - 9 + lean, y + 17);
+    g.lineTo(x - 11 + lean, y + 11);
+    g.lineTo(x - 8 + lean, y + 6);
+    g.moveTo(x - 11 + lean, y + 11);
+    g.lineTo(x - 15 + lean, y + 9);
+    g.strokePath();
+
+    // The sash: a curved band across the belly, knotted at his right hip with two tails.
+    const gilt = this.mastered;
+    const band: Phaser.Geom.Point[] = [];
+    for (let i = 0; i <= 8; i++) {
+      const u = i / 8;
+      band.push(new Phaser.Geom.Point(x - 17 + u * 34 + lean, y + 6 + u * 5 + Math.sin(u * Math.PI) * 3.5));
+    }
+    for (let i = 8; i >= 0; i--) {
+      const u = i / 8;
+      band.push(new Phaser.Geom.Point(x - 16 + u * 32 + lean, y + 11 + u * 5 + Math.sin(u * Math.PI) * 3.5));
+    }
+    g.fillStyle(this.tint(MAG.sash), A);
+    g.fillPoints(band, true);
+    g.lineStyle(1, this.tint(gilt ? MAG.gold : 0x6e1410), A * 0.95);
+    g.strokePoints(band, true);
+    // Fold shading along the band.
+    g.lineStyle(1, this.tint(0xe8443a), A * 0.55);
+    g.lineBetween(x - 12 + lean, y + 9.5, x + 8 + lean, y + 13.5);
+    const kx = x + 12 + lean, ky = y + 15;
+    const sway = Math.sin(this.t * 3.1) * 1.5;
+    g.fillStyle(this.tint(MAG.sash), A);
+    g.fillTriangle(kx - 1, ky, kx + 3, ky, kx + 1 + sway, ky + 9);
+    g.fillTriangle(kx + 1, ky, kx + 5, ky - 1, kx + 7 + sway, ky + 7);
+    if (gilt) {
+      g.fillStyle(this.tint(MAG.gold), A);
+      g.fillRect(kx - 3, ky - 3.5, 6, 6);
+      g.fillStyle(this.tint(MAG.crustDeep), A);
+      g.fillRect(kx - 1.5, ky - 2, 3, 3);
+      g.fillStyle(this.tint(MAG.white), A * 0.8);
+      g.fillRect(kx - 2.5, ky - 3, 1.5, 1);
+    } else {
+      g.fillStyle(this.tint(0x8a1a14), A);
+      g.fillCircle(kx, ky, 2.8);
+    }
+  }
+
+  /** Crusted chips on each lava hand, with a glint of heat in their cracks. */
+  private handCrust(g: Phaser.GameObjects.Graphics, A: number): void {
+    for (let i = 0; i < 2; i++) {
+      const hx = this.armX[i], hy = this.armY[i];
+      g.fillStyle(this.tint(MAG.crustDeep), A * 0.9);
+      g.fillEllipse(hx + 3, hy + 3, 6, 4);
+      g.fillEllipse(hx - 4, hy + 1.5, 3.5, 4.5);
+      g.lineStyle(0.8, this.tint(MAG.gold), A * 0.7);
+      g.lineBetween(hx + 1.5, hy + 3, hx + 4.5, hy + 2.6);
+      if (this.mastered) {
+        // A gold signet on each fist.
+        g.lineStyle(1.6, this.tint(MAG.gold), A);
+        g.strokeCircle(hx, hy, 5.4);
+        g.fillStyle(this.tint(MAG.pendantLit), A);
+        g.fillCircle(hx, hy - 5.4, 1.4);
+      }
+    }
   }
 
   /** Only Molten Mutiny's pendant sits on the sphere — it is a gameplay tell, not costume. */
   protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void a;
+    this.crustAndSash(g, x, y, alpha);
     if (this.pendant < 0) return;
     const A = alpha;
     const lean = Math.cos(this.facing) * 1.5;
@@ -1315,6 +1439,41 @@ export class MagmaAvatar extends BaseAvatar {
     g.fillStyle(this.tint(gilt ? MAG.lava : MAG.basalt), A);
     g.fillCircle(ex - 1.2, ey - 1, 0.9);
     g.fillCircle(ex + 1.2, ey - 1, 0.9);
+
+    // Mastered only: the captain's plume — a curling feather of flame off the left horn.
+    if (gilt) {
+      const px = hx - 5 * s, py = cy - 6 * s;
+      const sw = Math.sin(this.t * 2.2) * 2.5;
+      const quill: Phaser.Geom.Point[] = [];
+      const back: Phaser.Geom.Point[] = [];
+      for (let i = 0; i <= 8; i++) {
+        const u = i / 8;
+        const cxp = px - u * 16 - Math.sin(u * 2.4) * 4 + sw * u;
+        const cyp = py - u * 14 + u * u * 10;
+        const wdt = Math.sin(u * Math.PI) * 4.2 + 0.4;
+        quill.push(new Phaser.Geom.Point(cxp, cyp - wdt));
+        back.unshift(new Phaser.Geom.Point(cxp, cyp + wdt));
+      }
+      g.fillStyle(this.tint(MAG.magma), A * 0.95);
+      g.fillPoints(quill.concat(back), true);
+      g.fillStyle(this.tint(MAG.gold), A * 0.9);
+      g.fillPoints(quill.slice(1, 7).concat(back.slice(2, 8)), true);
+      g.lineStyle(1, this.tint(MAG.white), A * 0.85);
+      g.strokePoints(quill.map((q, i) => new Phaser.Geom.Point(q.x, (q.y + back[8 - i].y) / 2)), false);
+      // Flame licking off the feather's tip.
+      const tip = quill[8];
+      for (let i = 0; i < 3; i++) {
+        const ph = (this.t * 1.8 + i / 3) % 1;
+        g.fillStyle(this.tint(i % 2 ? MAG.lava : MAG.gold), A * 0.7 * (1 - ph));
+        g.fillCircle(tip.x - ph * 4, tip.y - ph * 9, 2.2 * (1 - ph * 0.5));
+      }
+      // Gold hoop earring catching the light under the right brim.
+      g.lineStyle(1.4, this.tint(MAG.gold), A);
+      g.strokeCircle(x + 17 + lean * 0.5, y + 1, 2.6);
+    }
+
+    this.handCrust(g, A);
+    if (gilt) this.doubloons(g, x, y, A, true);
 
     // Vent embers off the crown while casting.
     if (this.vent > 0.08) {

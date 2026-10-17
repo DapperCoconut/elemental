@@ -1182,6 +1182,104 @@ export class GravityFx extends FxBase {
 // ── GravityWell ───────────────────────────────────────────────────────────
 
 /**
+ * The ridden moon's integrity, as a curved lunar gauge hugging the moon's underside: a dark
+ * crater-pitted track, a moonlit fill with a highlight seam, a star at each end, and a little
+ * phase icon that wanes from full to new as the moon takes hits.
+ */
+export function drawMoonHpGauge(
+  g: Phaser.GameObjects.Graphics, tint: GravityColorFn,
+  x: number, y: number, radius: number, frac: number, t: number,
+): void {
+  const f = Phaser.Math.Clamp(frac, 0, 1);
+  const a0 = Math.PI * 0.18, a1 = Math.PI * 0.82;   // below the moon, left to right
+  const r = radius + 10;
+  const band = 6;
+  const pathArc = (from: number, to: number, rr: number, w: number, color: number, alpha: number): void => {
+    g.lineStyle(w, tint(color), alpha);
+    g.beginPath();
+    g.arc(x, y, rr, from, to, false);
+    g.strokePath();
+  };
+  // Track: shadow, dark rim, abyss channel.
+  pathArc(a0 - 0.04, a1 + 0.04, r + 1.2, band + 4, GRAVITY.void, 0.6);
+  pathArc(a0, a1, r, band + 2, GRAVITY.moonDark, 0.95);
+  pathArc(a0, a1, r, band, GRAVITY.abyss, 1);
+  // Fill runs right-to-left (it drains toward the right end, the moon's heading side).
+  if (f > 0.001) {
+    const fe = a1 - (a1 - a0) * f;
+    const low = f < 0.3;
+    const pulse = low ? 0.7 + 0.3 * Math.sin(t * 10) : 1;
+    pathArc(fe, a1, r, band, low ? GRAVITY.magma : GRAVITY.moon, pulse);
+    pathArc(fe, a1, r - 1.6, 1.6, GRAVITY.moonlit, 0.85 * pulse);
+    pathArc(fe, a1, r + 2, 1, GRAVITY.moonDark, 0.6);
+  }
+  // Craters dotted along the track.
+  for (let i = 1; i < 8; i++) {
+    const ang = a0 + (a1 - a0) * (i / 8);
+    g.fillStyle(tint(GRAVITY.void), 0.35);
+    g.fillCircle(x + Math.cos(ang) * (r + (i % 2 ? 1 : -1)), y + Math.sin(ang) * (r + (i % 2 ? 1 : -1)), 0.9);
+  }
+  // Star caps.
+  for (const ang of [a0, a1]) {
+    const sx = x + Math.cos(ang) * r, sy = y + Math.sin(ang) * r;
+    const tw = 0.7 + 0.3 * Math.sin(t * 4 + ang * 3);
+    g.fillStyle(tint(GRAVITY.white), tw);
+    g.fillTriangle(sx - 3.5, sy, sx + 3.5, sy, sx, sy - 1.2);
+    g.fillTriangle(sx - 3.5, sy, sx + 3.5, sy, sx, sy + 1.2);
+    g.fillTriangle(sx, sy - 3.5, sx, sy + 3.5, sx - 1.2, sy);
+    g.fillTriangle(sx, sy - 3.5, sx, sy + 3.5, sx + 1.2, sy);
+  }
+  // Phase icon at the bottom of the arc: lit disc with a shadow sliding over it.
+  const px = x, py = y + r + band + 4;
+  const pr = 4.5;
+  g.fillStyle(tint(GRAVITY.void), 0.8);
+  g.fillCircle(px, py, pr + 1.4);
+  g.fillStyle(tint(GRAVITY.moonlit), 1);
+  g.fillCircle(px, py, pr);
+  g.fillStyle(tint(GRAVITY.abyss), 0.92);
+  g.fillCircle(px - (pr * 2.1) * f, py, pr);
+  g.lineStyle(1, tint(GRAVITY.lilac), 0.8);
+  g.strokeCircle(px, py, pr + 0.6);
+}
+
+/**
+ * The Moon Rider mount charge: a crescent moon that fills from a sliver to full above the
+ * caster as Q is held, ringed by twelve star ticks that light in turn. Text label rides on top.
+ */
+export function drawMountCharge(
+  g: Phaser.GameObjects.Graphics, tint: GravityColorFn,
+  x: number, y: number, frac: number, t: number,
+): void {
+  const f = Phaser.Math.Clamp(frac, 0, 1);
+  const r = 9;
+  g.fillStyle(tint(GRAVITY.void), 0.75);
+  g.fillCircle(x, y, r + 5);
+  g.lineStyle(1.2, tint(GRAVITY.amethyst), 0.8);
+  g.strokeCircle(x, y, r + 5);
+  for (let i = 0; i < 12; i++) {
+    const ang = -Math.PI / 2 + (i / 12) * TAU;
+    const lit = i / 12 < f;
+    g.fillStyle(tint(lit ? GRAVITY.moonlit : GRAVITY.deep), lit ? 0.95 : 0.8);
+    g.fillCircle(x + Math.cos(ang) * (r + 5), y + Math.sin(ang) * (r + 5), lit ? 1.5 : 1);
+  }
+  // Moon waxing: lit disc, shadow disc sliding off as charge builds.
+  g.fillStyle(tint(GRAVITY.moon), 1);
+  g.fillCircle(x, y, r);
+  g.fillStyle(tint(GRAVITY.moonlit), 0.7);
+  g.fillCircle(x - r * 0.3, y - r * 0.3, r * 0.45);
+  g.fillStyle(tint(GRAVITY.moonDark), 0.5);
+  g.fillCircle(x + r * 0.3, y + r * 0.25, r * 0.18);
+  g.fillCircle(x - r * 0.1, y + r * 0.45, r * 0.12);
+  if (f < 1) {
+    g.fillStyle(tint(GRAVITY.abyss), 0.95);
+    g.fillCircle(x - r * 2.05 * f, y, r);
+  } else {
+    g.lineStyle(2, tint(GRAVITY.white), 0.6 + 0.4 * Math.sin(t * 9));
+    g.strokeCircle(x, y, r + 1.5);
+  }
+}
+
+/**
  * A persistent well locked to a point or a fighter — the Grav Bomb vortex, the Meteor Rain
  * recording aura, the mastery's captured-orb halo. Driven by whoever owns it: call `update`
  * every frame with the position and how charged it is.
@@ -1270,9 +1368,10 @@ const GRAVITY_AVATAR: AvatarSpec = {
  * dark-star fists, a pair of eyes, and one tilted ring with a single moon orbiting the crown —
  * a ringed planet. The ring is the only accessory; the body alone says "gravity".
  *
- * Mastery enhances the ring rather than adding to it: it grows wider and thicker with a bright
- * photon edge, its moon swells and glows, the eyes go white, the fists gain a wider event
- * horizon, and the under-glow deepens.
+ * The orb carries a faint nebula swirl with twinkling stars, and each fist drags a little
+ * captured mote round it. Mastery adds regalia: a second crossed ring (an armillary), a small
+ * black hole with a white photon ring hanging over the crown, three motes orbiting the body,
+ * a wider, brighter primary ring, white eyes and wide photon-rimmed event horizons on the fists.
  */
 export class GravityAvatar extends BaseAvatar {
   private fx: GravityFx;
@@ -1320,6 +1419,47 @@ export class GravityAvatar extends BaseAvatar {
     g.fillCircle(x, y, 28 * k);
     g.fillStyle(this.tint(GRAVITY.void), a * 0.3 * k);
     g.fillEllipse(x, y + 8, 38 * k, 14 * k);
+
+    if (this.mastered) {
+      // Three captured motes on a wide, tilted orbit round the whole body.
+      for (let i = 0; i < 3; i++) {
+        const ang = this.t * 1.6 + (i / 3) * TAU;
+        const px = x + Math.cos(ang) * 30, py = y + 2 + Math.sin(ang) * 11;
+        g.fillStyle(this.tint(this.tones.lit), a * 0.35);
+        g.fillCircle(px, py, 4.5);
+        g.fillStyle(this.tint(GRAVITY.white), a * 1.1);
+        g.fillCircle(px, py, 1.8);
+        // A short curling tail behind each mote.
+        g.fillStyle(this.tint(this.tones.hot), a * 0.55);
+        gravArm(g, x, y + 2, ang - 0.9, 30, 30, 1.6, 0.8);
+      }
+    }
+  }
+
+  /**
+   * Nebula on the orb: two faint dark spiral arms winding into the belly and a scatter of
+   * twinkling stars. Painted at low alpha so the violet body stays the identity.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
+    const spin = this.t * 0.5;
+    g.fillStyle(this.tint(GRAVITY.void), 0.28 * alpha);
+    for (let i = 0; i < 2; i++) {
+      gravArm(g, x, y + 3, spin + i * Math.PI, 17, 2, 5, 1.8);
+    }
+    g.fillStyle(this.tint(this.tones.lit), 0.22 * alpha);
+    gravArm(g, x, y + 3, spin + Math.PI * 0.5, 15, 2, 2.4, 1.8);
+    g.fillStyle(this.tint(GRAVITY.void), 0.5 * alpha);
+    g.fillCircle(x, y + 3, this.mastered ? 3.2 : 2.4);
+    if (this.mastered) {
+      g.lineStyle(1, this.tint(GRAVITY.white), 0.8 * alpha);
+      g.strokeCircle(x, y + 3, 3.6);
+    }
+    const stars: [number, number][] = [[-11, 6], [9, 10], [12, -1], [-6, 13], [3, 15], [-14, -2]];
+    stars.forEach(([sx, sy], i) => {
+      const tw = 0.4 + 0.6 * Math.abs(Math.sin(this.t * 2.2 + i * 1.7));
+      g.fillStyle(this.tint(GRAVITY.pale), tw * 0.85 * alpha);
+      g.fillCircle(x + sx, y + sy, i % 2 === 0 ? 0.9 : 0.6);
+    });
   }
 
   /**
@@ -1378,5 +1518,48 @@ export class GravityAvatar extends BaseAvatar {
     g.lineStyle((m ? 3.4 : 2.6) * scale, this.tint(m ? this.tones.hot : this.tones.lit), 0.95 * alpha);
     arc(0);
     if (moonNear) drawMoon();
+
+    // A captured mote circling each fist.
+    for (let i = 0; i < 2; i++) {
+      const ang = this.t * (i === 0 ? 4 : -4.4) + i * 2;
+      const hx = this.armX[i] + Math.cos(ang) * 9, hy = this.armY[i] + Math.sin(ang) * 4.5;
+      g.fillStyle(this.tint(m ? GRAVITY.white : this.tones.hot), 0.9 * alpha);
+      g.fillCircle(hx, hy, m ? 1.6 : 1.2);
+    }
+
+    if (!m) return;
+
+    // Second ring, crossed against the first: the armillary only a mastered walker carries.
+    const lean2 = -0.5;
+    const rx2 = rx * 0.82, ry2 = rx2 * 0.32;
+    const at2 = (ang: number) => {
+      const ox = Math.cos(ang) * rx2, oy = Math.sin(ang) * ry2;
+      return { px: x + ox * Math.cos(lean2) - oy * Math.sin(lean2), py: rootY - 2 + ox * Math.sin(lean2) + oy * Math.cos(lean2) };
+    };
+    g.lineStyle(2 * scale, this.tint(GRAVITY.white), 0.8 * alpha);
+    g.beginPath();
+    for (let i = 0; i <= segs; i++) {
+      const { px, py } = at2((i / segs) * TAU);
+      if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
+    }
+    g.strokePath();
+    const bead = at2(-this.t * 1.7);
+    g.fillStyle(this.tint(GRAVITY.white), alpha);
+    g.fillCircle(bead.px, bead.py, 1.8 * scale);
+
+    // A small black hole hung over the crown: void disc, a white photon ring, a lensed arc.
+    // High enough to clear the over-head health bar (y-39..y-31), which sits above the rig.
+    const hx = x, hy = rootY - 31 * scale;
+    const pr = 5.2 * scale;
+    g.fillStyle(this.tint(this.tones.lit), 0.28 * a);
+    g.fillCircle(hx, hy, pr * 2.1);
+    g.lineStyle(2.4 * scale, this.tint(this.tones.hot), 0.85 * alpha);
+    g.beginPath();
+    g.arc(hx, hy, pr * 1.55, this.t * 2, this.t * 2 + Math.PI * 1.2, false);
+    g.strokePath();
+    g.fillStyle(this.tint(GRAVITY.void), alpha);
+    g.fillCircle(hx, hy, pr);
+    g.lineStyle(1.4 * scale, this.tint(GRAVITY.white), 0.95 * alpha);
+    g.strokeCircle(hx, hy, pr + 0.6);
   }
 }

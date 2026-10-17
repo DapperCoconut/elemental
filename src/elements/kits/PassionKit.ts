@@ -8,9 +8,11 @@ import type { ProjectileRegistry, RegisteredProjectile } from '../../combat/Proj
 import type { SummonPurgeTarget } from '../../combat/SummonPurge';
 import {
   DEV, PassionAvatar, PassionColorFn, PassionFx, ascendBand, chariot, crashMark,
-  crucifixAura, crucifixPost, faithBar, glory, halo, handGrenade, holyWaterPuddle, vial,
+  crucifixAura, crucifixPost, faithBar, firePillar, glory, halo, handGrenade, holyWaterPuddle,
+  pillarCrosshair, skyPriest, vial,
 } from './PassionVisuals';
 import { meterGain } from '../../combat/Meters';
+import { measureDebuffs } from '../../combat/StatusEffects';
 
 /**
  * Devotion — the holy priest. (The element id is still `passion`, so the files and classes keep
@@ -113,6 +115,39 @@ const CRASH_MARK_MS = 700;
 const CRASH_R = 120;
 const CRASH_FAITH = 80;
 
+// ── Shop upgrades ────────────────────────────────────────────────────────────
+/** Click+ Disarming Words: what a letter does to an enemy shot it passes through. */
+const DISARM_DAMAGE_MULT = 0.8;
+const DISARM_SPEED_MULT = 0.8;
+const DISARM_TINT = 0xffd54a;
+const DISARM_R = LETTER_HIT_R + 8;
+/**
+ * E+ Purge Sins: faith for what the holy water washed off — a flat amount per effect, more for
+ * every second a timed one still had to run (capped per effect), and more per stack.
+ */
+const PURGE_FAITH_PER_EFFECT = 4;
+const PURGE_FAITH_PER_SEC = 2;
+const PURGE_SEC_CAP = 10;
+const PURGE_FAITH_PER_STACK = 2;
+const PURGE_FAITH_MAX = 60;
+/** R+ Repentance: two more blasts after the first, 3s apart, at these fractions of the first. */
+const REPENT_FUSE_MS = 3000;
+const REPENT_FAITH = [1, 0.5, 0.33];
+/** The leap toward the enemy takes this long, then it is bouncing again. */
+const REPENT_LEAP_S = 0.5;
+/** Q+ Pillars of Fire: the sky ride, and what it rains down. */
+const SKY_RIDE_MS = 8000;
+const PILLARS = 3;
+const PILLAR_R = 46;
+/** The column's fall from the sky before it burns. */
+const PILLAR_DROP_MS = 180;
+const PILLAR_MS = 1000;
+const PILLAR_FAITH_PER_SEC = 28;
+const PILLAR_SLOW_MS = 1500;
+/** The bot's pillar cadence on the sky ride. */
+const NPC_PILLAR_FIRST_MS = 1200;
+const NPC_PILLAR_EVERY_MS = 2000;
+
 // ── World objects ────────────────────────────────────────────────────────────
 
 interface Letter {
@@ -151,6 +186,8 @@ interface Puddle {
   seed: number;
   /** Per-victim pop-up throttle. */
   nextText: Map<Fighter, number>;
+  /** E+ Purge Sins: who is standing in it, so stepping in can be told from standing in. */
+  inside: Set<Fighter>;
 }
 
 interface Grenade {
@@ -164,6 +201,8 @@ interface Grenade {
   vz: number;
   spin: number;
   explodeAt: number;
+  /** R+ Repentance: 0 for the first blast, then 1 and 2 for the two that follow it. */
+  stage: number;
 }
 
 interface Crucifix {
@@ -173,6 +212,22 @@ interface Crucifix {
   bornAt: number;
   /** Lights up for a moment whenever something bounces off it. */
   flareUntil: number;
+  /** F+ Pocket Crucifix: in the priest's hand rather than in the floor. */
+  held: boolean;
+  /** Held *and* brandished: the aura stands round the priest and walks with them. */
+  raised: boolean;
+}
+
+/** Q+ — a pillar of yellow fire dropped from the sky ride. */
+interface Pillar {
+  owner: Owner;
+  x: number;
+  y: number;
+  landAt: number;
+  diesAt: number;
+  landed: boolean;
+  seed: number;
+  nextText: Map<Fighter, number>;
 }
 
 interface Side {
@@ -208,6 +263,13 @@ interface Side {
   rideY: number;
   /** True if the kit, not something else, turned the caster's invincibility on. */
   rideOwnsInvincible: boolean;
+  /** Q+: this ride is the long one, up in the sky with pillars to drop. */
+  skyRide: boolean;
+  pillarsLeft: number;
+  /** The bot's next pillar on a sky ride. */
+  nextPillarAt: number;
+  /** F+: the bot's next pocket-crucifix decision. */
+  nextPocketAt: number;
   // Aim
   aimX: number;
   aimY: number;
@@ -221,6 +283,7 @@ function makeSide(owner: Owner): Side {
     lineY: 0, lineDir: 1, warnStartedAt: 0, chariotAt: 0, chariotX: 0, chariotDone: true,
     chariotRolling: false, struck: [],
     rideUntil: 0, rideX: 0, rideY: 0, rideOwnsInvincible: false,
+    skyRide: false, pillarsLeft: 0, nextPillarAt: 0, nextPocketAt: 0,
     aimX: 0, aimY: 0,
   };
 }
@@ -257,6 +320,14 @@ export interface PassionArenaApi {
   huskShotsNear(x: number, y: number, r: number): { key: object; from: Fighter | null }[];
   /** Skins: maps a Devotion visual colour through that side's equipped skin. */
   passionColor(owner: Owner, base: number): number;
+  /** Shop upgrades: the local player's own, or the opponent's (online handshake / bot loadout). */
+  hasUpgrade(owner: Owner, slot: string): boolean;
+  /** Strips every discrete debuff off a fighter (the arena's one cleanse); returns how many. */
+  purgeDebuffs(f: Fighter): number;
+  /** Invasion: bless husk shots near a point (Click+). Empty outside Invasion. */
+  disarmHuskShotsNear(
+    x: number, y: number, r: number, damageMult: number, speedMult: number, color: number,
+  ): { x: number; y: number }[];
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
@@ -302,6 +373,10 @@ export class PassionKit implements SummonPurgeTarget {
   private crucifixes: Crucifix[] = [];
   /** Enemy shots that have already paid their faith to a crucifix. */
   private blessedShots = new WeakSet<object>();
+  /** Click+: enemy shots a letter has turned gold, so each is softened once and untinted when spent. */
+  private disarmed = new Set<Projectile>();
+  /** Q+: pillars of yellow fire on the floor. */
+  private pillars: Pillar[] = [];
   private nextPruneAt = 0;
   /** Victim → time of the last passive pop-up, so "+2" shows once a second rather than per frame. */
   private passiveTextAt = new Map<Fighter, number>();
@@ -343,6 +418,22 @@ export class PassionKit implements SummonPurgeTarget {
 
   private isDevotion(owner: Owner): boolean {
     return owner === 'player' ? this.api.elementId === 'passion' : this.api.npcElementId === 'passion';
+  }
+
+  /** A Devotion side with that shop upgrade equipped. */
+  private up(owner: Owner, slot: string): boolean {
+    return this.isDevotion(owner) && this.api.hasUpgrade(owner, slot);
+  }
+
+  /**
+   * The refusals `castAbility` would make, for the actions that bypass it (picking up, setting
+   * down and brandishing the pocket crucifix). `isClick` actions survive Silence, as a click does.
+   */
+  private canAct(f: Fighter, isClick: boolean): boolean {
+    const wall = Date.now();
+    if (wall < f.disarmedUntil || wall < f.chickenUntil || wall < f.stunnedUntil) return false;
+    if (!isClick && wall < f.silencedUntil) return false;
+    return f.lockRemaining('passion-crucifix') <= 0;
   }
 
   /**
@@ -466,6 +557,9 @@ export class PassionKit implements SummonPurgeTarget {
     this.grenades = [];
     this.crucifixes = [];
     this.blessedShots = new WeakSet();
+    for (const p of this.disarmed) if (p.active) p.clearTint();
+    this.disarmed.clear();
+    this.pillars = [];
     this.passiveTextAt.clear();
     this.vizT = 0;
 
@@ -483,16 +577,34 @@ export class PassionKit implements SummonPurgeTarget {
     const s = this.sides.player;
     s.aimX = mouseX;
     s.aimY = mouseY;
-    // Riding the chariot: nothing is castable, and the cursor is choosing where to land.
-    if (s.rideUntil > 0) { s.chargeStartedAt = 0; return; }
+    const pressed = pointer.isDown && !this.api.pointerWasDown;
+    // Riding the chariot: nothing is castable, and the cursor is choosing where to land. On the
+    // Q+ sky ride a click drops one of the pillars of fire on it.
+    if (s.rideUntil > 0) {
+      s.chargeStartedAt = 0;
+      if (pressed && s.skyRide && s.pillarsLeft > 0) {
+        this.firePillar('player', mouseX, mouseY);
+        this.api.broadcastMasteryCast('devotion-pillar');
+      }
+      return;
+    }
 
     const p = this.api.player;
     const ctx = (): CastContext => this.api.buildPlayerContext(mouseX, mouseY);
 
+    // F+ Pocket Crucifix: with the cross in hand, the click brandishes it instead of preaching.
+    const held = this.crucifixes.find((c) => c.owner === 'player' && c.held);
+    if (held) {
+      s.chargeStartedAt = 0;
+      if (pressed && this.canAct(p, true)) {
+        this.setRaised('player', !held.raised);
+        this.api.broadcastMasteryCast(held.raised ? 'devotion-raise' : 'devotion-lower');
+      }
+    }
+
     // Click — Sermon. Press starts preaching, release looses the barrage. A press while the
     // sermon is still cooling down is simply ignored rather than charging into nothing.
-    const pressed = pointer.isDown && !this.api.pointerWasDown;
-    if (pressed && s.chargeStartedAt === 0 && p.getCooldownRatio('passion-sermon') >= 1) {
+    if (!held && pressed && s.chargeStartedAt === 0 && p.getCooldownRatio('passion-sermon') >= 1) {
       s.chargeStartedAt = time;
     }
     if (!pointer.isDown && s.chargeStartedAt > 0) {
@@ -513,7 +625,9 @@ export class PassionKit implements SummonPurgeTarget {
       else this.api.showFloatingText(p.x, p.y - 44, '💧 NO HOLY WATER', this.hex(DEV.water));
     }
     if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('passion-grenade', ctx());
-    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('passion-crucifix', ctx());
+    if (Phaser.Input.Keyboard.JustDown(this.api.fKey) && !this.pocketPress('player')) {
+      p.castAbility('passion-crucifix', ctx());
+    }
     if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('passion-ascendance', ctx());
   }
 
@@ -529,6 +643,8 @@ export class PassionKit implements SummonPurgeTarget {
     // The bot cannot hold a button; the kit decides how long it would have preached.
     const charge = owner === 'npc' && !this.api.isOnline ? this.npcSermonCharge() : s.pendingCharge;
     s.pendingCharge = 0;
+    // F+: a priest with the cross in hand brandishes it on the click instead of preaching.
+    if (this.crucifixes.some((c) => c.owner === owner && c.held)) return;
 
     const n = Math.round(Phaser.Math.Linear(SERMON_MIN_LETTERS, SERMON_MAX_LETTERS, charge));
     const faith = Phaser.Math.Linear(SERMON_MIN_FAITH, SERMON_MAX_FAITH, charge);
@@ -592,7 +708,7 @@ export class PassionKit implements SummonPurgeTarget {
       owner, x: f.x + Math.cos(ang) * 16, y: f.y + Math.sin(ang) * 16,
       vx: Math.cos(ang) * v0, vy: Math.sin(ang) * v0,
       z: 4, vz: GRENADE_HOP_V * 1.3, spin: 0,
-      explodeAt: this.now + GRENADE_FUSE_MS,
+      explodeAt: this.now + GRENADE_FUSE_MS, stage: 0,
     });
     this.avatar(owner)?.play('slam', ang);
     this.api.showFloatingText(f.x, f.y - 50, '💣 HALLELUJAH', this.hex(DEV.gold));
@@ -614,7 +730,7 @@ export class PassionKit implements SummonPurgeTarget {
       this.fx(owner).sparkle(c.x, c.y - 40, 8, 30, DEV.pale, 600);
       this.crucifixes.splice(old, 1);
     }
-    this.crucifixes.push({ owner, x, y, bornAt: this.now, flareUntil: 0 });
+    this.crucifixes.push({ owner, x, y, bornAt: this.now, flareUntil: 0, held: false, raised: false });
     this.avatar(owner)?.play('slam', ang);
     this.fx(owner).plant(x, y, AURA_R);
     this.api.showFloatingText(x, y - 70, '✝️ CRUCIFIX', this.hex(DEV.holy));
@@ -657,6 +773,112 @@ export class PassionKit implements SummonPurgeTarget {
     Sfx.playAt('explosion-large', tx, { volume: 0.9, rate: 0.8 });
   }
 
+  // ── Shop upgrades: the pocket crucifix (F+) and the sky ride's pillars (Q+) ──
+
+  /**
+   * F+ — an F press that the pocket crucifix takes instead of a fresh plant: with the cross in
+   * hand it goes back down at the priest's feet; standing in its aura picks it up. Neither costs
+   * the cooldown. False when the press should be an ordinary cast.
+   */
+  private pocketPress(owner: Owner): boolean {
+    if (!this.up(owner, 'f')) return false;
+    const f = this.fighter(owner);
+    const c = this.crucifixes.find((x) => x.owner === owner);
+    if (!c || !this.alive(f)) return false;
+    if (c.held) {
+      if (!this.canAct(f, false)) return true;
+      this.setDownCrucifix(owner);
+      if (owner === 'player') this.api.broadcastMasteryCast('devotion-place');
+      return true;
+    }
+    if (Phaser.Math.Distance.Between(f.x, f.y, c.x, c.y) > AURA_R) return false;
+    if (!this.canAct(f, false)) return true;
+    this.pickUpCrucifix(owner);
+    if (owner === 'player') this.api.broadcastMasteryCast('devotion-pickup');
+    return true;
+  }
+
+  private pickUpCrucifix(owner: Owner): void {
+    const c = this.crucifixes.find((x) => x.owner === owner);
+    const f = this.fighter(owner);
+    if (!c || c.held || !f) return;
+    this.fx(owner).sparkle(c.x, c.y - 40, 8, 30, DEV.pale, 500);
+    c.held = true;
+    c.raised = false;
+    this.api.showFloatingText(f.x, f.y - 56, '✝️ IN HAND', this.hex(DEV.holy));
+    Sfx.playAt('whoosh', f.x, { volume: 0.4, rate: 1.4 });
+  }
+
+  /** Back into the floor, where the priest is standing now. */
+  private setDownCrucifix(owner: Owner): void {
+    const c = this.crucifixes.find((x) => x.owner === owner);
+    const f = this.fighter(owner);
+    if (!c || !c.held || !f) return;
+    c.held = false;
+    c.raised = false;
+    c.x = Phaser.Math.Clamp(f.x, this.left + 20, this.right - 20);
+    c.y = Phaser.Math.Clamp(f.y, this.top + 40, this.bottom - 10);
+    c.bornAt = this.now;
+    this.avatar(owner)?.play('slam');
+    this.fx(owner).plant(c.x, c.y, AURA_R);
+    this.api.showFloatingText(c.x, c.y - 70, '✝️ SET DOWN', this.hex(DEV.holy));
+    Sfx.playAt('stone-slam', c.x, { volume: 0.6, rate: 1.2 });
+  }
+
+  /** Brandished: the aura goes up round the priest and walks with them. */
+  private setRaised(owner: Owner, raised: boolean): void {
+    const c = this.crucifixes.find((x) => x.owner === owner && x.held);
+    const f = this.fighter(owner);
+    if (!c || !f || c.raised === raised) return;
+    c.raised = raised;
+    if (raised) {
+      c.bornAt = this.now;
+      this.fx(owner).ring(f.x, f.y, 20, AURA_R, DEV.gold, 500);
+      this.api.showFloatingText(f.x, f.y - 60, '✝️ BEHOLD', this.hex(DEV.white));
+      Sfx.playAt('holy-chord', f.x, { volume: 0.5, rate: 1.25 });
+    } else {
+      this.fx(owner).sparkle(f.x, f.y - 30, 6, 26, DEV.pale, 420);
+    }
+  }
+
+  /** Q+ — a pillar of yellow fire dropped on (x, y) from the sky ride. */
+  private firePillar(owner: Owner, tx: number, ty: number): void {
+    const s = this.side(owner);
+    // A replay of the peer's pillar is trusted: their sim already counted it.
+    if (this.authority(owner)) {
+      if (s.pillarsLeft <= 0) return;
+      s.pillarsLeft--;
+    } else {
+      s.pillarsLeft = Math.max(0, s.pillarsLeft - 1);
+    }
+    const x = this.clampX(tx);
+    const y = this.clampY(ty);
+    this.pillars.push({
+      owner, x, y, landAt: this.now + PILLAR_DROP_MS, diesAt: this.now + PILLAR_DROP_MS + PILLAR_MS,
+      landed: false, seed: Math.random() * 9, nextText: new Map(),
+    });
+    if (owner === 'player' || !this.api.isOnline) {
+      this.api.showFloatingText(x, y - 64, `🔥 PILLAR ${PILLARS - s.pillarsLeft}/${PILLARS}`, this.hex(DEV.gold));
+    }
+    Sfx.playAt('whoosh', x, { volume: 0.6, rate: 0.7 });
+  }
+
+  /**
+   * Online: one of the peer's upgrade actions that bypass `castAbility`. Their sim decided it;
+   * this one mirrors the object so it is drawn and — for a brandished crucifix — so the aura's
+   * exclusion runs here, where our body is.
+   */
+  replayNpcUpgradeAct(id: string, tx: number, ty: number): void {
+    switch (id) {
+      case 'devotion-pickup': this.pickUpCrucifix('npc'); break;
+      case 'devotion-place': this.setDownCrucifix('npc'); break;
+      case 'devotion-raise': this.setRaised('npc', true); break;
+      case 'devotion-lower': this.setRaised('npc', false); break;
+      case 'devotion-pillar': this.firePillar('npc', tx, ty); break;
+      default: break;
+    }
+  }
+
   // ── Update ─────────────────────────────────────────────────────────────────
 
   update(time: number, delta: number): void {
@@ -665,7 +887,7 @@ export class PassionKit implements SummonPurgeTarget {
     // World objects outlive their caster's element only for as long as they would anyway — but a
     // match with no Devotion in it has none to tick.
     if (!playerIs && !npcIs && !this.letters.length && !this.puddles.length && !this.grenades.length
-      && !this.crucifixes.length) return;
+      && !this.crucifixes.length && !this.pillars.length && !this.disarmed.size) return;
 
     this.vizT += delta / 1000;
     this.ensureLayers();
@@ -682,11 +904,14 @@ export class PassionKit implements SummonPurgeTarget {
       this.updateAscend(owner, time, delta);
       this.updateRide(owner, time);
     }
+    this.updateNpcPocket(time);
 
     this.updateLetters(time, dt);
+    this.updateDisarmed();
     this.updateBottles(time);
     this.updatePuddles(time, dt);
     this.updateGrenades(time, dt);
+    this.updatePillars(time, dt);
     this.updateCrucifixes();
     this.updateStages();
     this.prune(time);
@@ -821,11 +1046,15 @@ export class PassionKit implements SummonPurgeTarget {
   private startRide(owner: Owner): void {
     const f = this.fighter(owner);
     const s = this.side(owner);
-    s.rideUntil = this.now + RIDE_MS;
+    // Q+: the long ride — eight seconds up in the sky with three pillars of fire to drop.
+    s.skyRide = this.up(owner, 'q');
+    s.pillarsLeft = s.skyRide ? PILLARS : 0;
+    s.nextPillarAt = this.now + NPC_PILLAR_FIRST_MS;
+    s.rideUntil = this.now + (s.skyRide ? SKY_RIDE_MS : RIDE_MS);
     s.rideX = f.x;
     s.rideY = f.y;
     this.fx(owner).liftOff(f.x, f.y);
-    this.api.showFloatingText(f.x, f.y - 56, '🙌 TAKEN UP', this.hex(DEV.fireHot));
+    this.api.showFloatingText(f.x, f.y - 56, s.skyRide ? '🙌 TAKEN UP · 🔥×3' : '🙌 TAKEN UP', this.hex(DEV.fireHot));
     if (owner === 'player' || !this.api.isOnline) {
       if (!f.isInvincible) { f.isInvincible = true; s.rideOwnsInvincible = true; }
     }
@@ -849,6 +1078,13 @@ export class PassionKit implements SummonPurgeTarget {
     if (owner === 'npc') {
       const p = this.api.player;
       if (this.alive(p)) { s.aimX = p.x; s.aimY = p.y; }
+      // The bot's sky ride: a pillar on the player's lead every couple of seconds. Online the
+      // peer drops their own and the relay brings them.
+      if (s.skyRide && !this.api.isOnline && s.pillarsLeft > 0 && time >= s.nextPillarAt && this.alive(p)) {
+        s.nextPillarAt = time + NPC_PILLAR_EVERY_MS;
+        const pb = this.body(p);
+        this.firePillar('npc', p.x + (pb?.velocity.x ?? 0) * 0.25, p.y + (pb?.velocity.y ?? 0) * 0.25);
+      }
     }
     if (time < s.rideUntil) return;
 
@@ -881,6 +1117,8 @@ export class PassionKit implements SummonPurgeTarget {
     const s = this.side(owner);
     const f = this.fighter(owner);
     s.rideUntil = 0;
+    s.skyRide = false;
+    s.pillarsLeft = 0;
     if (!f) return;
     if (s.rideOwnsInvincible) { f.isInvincible = false; s.rideOwnsInvincible = false; }
     f.forceInvisible = false;
@@ -923,6 +1161,8 @@ export class PassionKit implements SummonPurgeTarget {
       const age = 1 - (l.diesAt - time) / LETTER_LIFE_MS;
       l.x += l.vx * dt;
       l.y += l.vy * dt;
+      // Click+ Disarming Words: the letter blesses every enemy shot it passes through, and flies on.
+      if (l.faith > 0 && this.up(l.owner, 'click')) this.disarmNear(l.owner, l.x, l.y);
 
       const gone = time >= l.diesAt || l.x < this.left - 40 || l.x > this.right + 40
         || l.y < this.top - 40 || l.y > this.bottom + 40;
@@ -948,6 +1188,49 @@ export class PassionKit implements SummonPurgeTarget {
     }
   }
 
+  /**
+   * Click+ — every enemy shot within reach of a letter that has not been blessed yet turns gold:
+   * 20% less damage and 20% slower, once. Each sim blesses its own copies, and since a shot's
+   * damage is resolved on its shooter's sim, the letters there (the replay of ours) are the ones
+   * that count online.
+   */
+  private disarmNear(owner: Owner, x: number, y: number): void {
+    // In Invasion the npc slot is an ally; its shots are not the enemy's.
+    if (!this.api.isInvasion) {
+      const enemyIsPlayer = owner === 'npc';
+      for (const obj of this.api.projectiles?.getChildren() ?? []) {
+        if (!(obj instanceof Projectile) || !obj.active || obj.isHeal) continue;
+        if (obj.isFromPlayer !== enemyIsPlayer || this.disarmed.has(obj)) continue;
+        if (Phaser.Math.Distance.Between(obj.x, obj.y, x, y) > DISARM_R) continue;
+        this.disarmed.add(obj);
+        obj.damage *= DISARM_DAMAGE_MULT;
+        const b = obj.body as Phaser.Physics.Arcade.Body | null;
+        b?.velocity.scale(DISARM_SPEED_MULT);
+        obj.setTint(DISARM_TINT);
+        this.blessedShot(owner, obj.x, obj.y);
+      }
+    } else if (owner === 'player') {
+      for (const at of this.api.disarmHuskShotsNear(x, y, DISARM_R, DISARM_DAMAGE_MULT, DISARM_SPEED_MULT, DISARM_TINT)) {
+        this.blessedShot(owner, at.x, at.y);
+      }
+    }
+  }
+
+  private blessedShot(owner: Owner, x: number, y: number): void {
+    this.fx(owner).disarm(x, y);
+    this.api.showFloatingText(x, y - 18, '✨ DISARMED', this.hex(DEV.gold));
+    Sfx.playAt('crystal-chime', x, { volume: 0.2, rate: 1.9 });
+  }
+
+  /** A spent shot hands its tint back — the projectile group may recycle the object. */
+  private updateDisarmed(): void {
+    for (const p of this.disarmed) {
+      if (p.active) continue;
+      p.clearTint();
+      this.disarmed.delete(p);
+    }
+  }
+
   private updateBottles(time: number): void {
     for (let i = this.bottles.length - 1; i >= 0; i--) {
       const b = this.bottles[i];
@@ -955,7 +1238,7 @@ export class PassionKit implements SummonPurgeTarget {
       this.bottles.splice(i, 1);
       this.puddles.push({
         owner: b.owner, x: b.toX, y: b.toY, bornAt: time, diesAt: time + PUDDLE_MS,
-        seed: Math.random() * 999, nextText: new Map(),
+        seed: Math.random() * 999, nextText: new Map(), inside: new Set(),
       });
       this.fx(b.owner).shatter(b.toX, b.toY, PUDDLE_R);
       Sfx.playAt('ice-shatter', b.toX, { volume: 0.6, rate: 1.2 });
@@ -969,7 +1252,12 @@ export class PassionKit implements SummonPurgeTarget {
       if (time >= p.diesAt) { this.puddles.splice(i, 1); continue; }
       if (!this.isDevotion(p.owner)) continue;
       for (const t of this.targetsOf(p.owner)) {
-        if (Phaser.Math.Distance.Between(t.x, t.y, p.x, p.y) > PUDDLE_R) continue;
+        if (Phaser.Math.Distance.Between(t.x, t.y, p.x, p.y) > PUDDLE_R) { p.inside.delete(t); continue; }
+        // E+ Purge Sins: the step in (or the splash landing on them) washes them clean.
+        if (!p.inside.has(t)) {
+          p.inside.add(t);
+          if (this.up(p.owner, 'e')) this.purgeSins(p.owner, t);
+        }
         this.addFaith(p.owner, t, PUDDLE_FAITH_PER_SEC * dt);
         if (time >= (p.nextText.get(t) ?? 0) && this.authority(p.owner)) {
           p.nextText.set(t, time + PUDDLE_TEXT_MS);
@@ -977,6 +1265,26 @@ export class PassionKit implements SummonPurgeTarget {
         }
       }
     }
+  }
+
+  /**
+   * E+ — every negative effect on the believer comes off in the holy water, and the priest is
+   * paid faith for how much there was: per effect, per second the timed ones had left, per stack.
+   *
+   * The cleanse runs on every sim (each clears its own copy; online the victim's own machine is
+   * the one holding their real timers), the faith only where the priest has authority.
+   */
+  private purgeSins(owner: Owner, t: Fighter): void {
+    const m = measureDebuffs(t, Date.now(), this.now, PURGE_SEC_CAP);
+    const n = Math.max(m.count, this.api.purgeDebuffs(t));
+    if (n <= 0) return;
+    const extra = Math.max(0, n - m.count);
+    const faith = Math.min(PURGE_FAITH_MAX, (m.count + extra) * PURGE_FAITH_PER_EFFECT
+      + m.seconds * PURGE_FAITH_PER_SEC + m.stacks * PURGE_FAITH_PER_STACK);
+    this.fx(owner).purge(t.x, t.y, Phaser.Math.Clamp(faith / PURGE_FAITH_MAX, 0, 1));
+    this.api.showFloatingText(t.x, t.y - 60, `🫧 SINS PURGED ×${n}`, this.hex(DEV.waterLit));
+    Sfx.playAt('bubble', t.x, { volume: 0.7, rate: 1.1 });
+    this.addFaith(owner, t, faith, '🫧');
   }
 
   private updateGrenades(time: number, dt: number): void {
@@ -1015,17 +1323,74 @@ export class PassionKit implements SummonPurgeTarget {
       // it through — so a grenade lobbed past your cross keeps rattling around the believer
       // who is pinned against its edge.
       for (const t of this.targetsOf(gr.owner)) this.bounceOff(gr, t.x, t.y, 22);
-      for (const c of this.crucifixes) if (c.owner !== gr.owner) this.bounceOff(gr, c.x, c.y, AURA_R);
+      for (const c of this.crucifixes) {
+        if (c.owner !== gr.owner && (!c.held || c.raised)) this.bounceOff(gr, c.x, c.y, AURA_R);
+      }
 
       if (time < gr.explodeAt) continue;
-      this.grenades.splice(i, 1);
-      this.fx(gr.owner).holyBurst(gr.x, gr.y, BURST_R);
-      this.api.scene.cameras.main.shake(260, 0.007);
-      Sfx.playAt('explosion-medium', gr.x, { volume: 0.9, rate: 1.05 });
-      Sfx.playAt('holy-chord', gr.x, { volume: 0.6, rate: 1.3 });
+      const share = REPENT_FAITH[gr.stage] ?? 1;
+      this.fx(gr.owner).holyBurst(gr.x, gr.y, BURST_R, gr.stage ? 0.8 : 1);
+      this.api.scene.cameras.main.shake(260, gr.stage ? 0.004 : 0.007);
+      Sfx.playAt('explosion-medium', gr.x, { volume: gr.stage ? 0.7 : 0.9, rate: 1.05 + gr.stage * 0.1 });
+      Sfx.playAt('holy-chord', gr.x, { volume: 0.6, rate: 1.3 + gr.stage * 0.1 });
       for (const t of this.targetsOf(gr.owner)) {
         if (Phaser.Math.Distance.Between(gr.x, gr.y, t.x, t.y) > BURST_R + 14) continue;
-        this.addFaith(gr.owner, t, BURST_FAITH, '💥');
+        this.addFaith(gr.owner, t, BURST_FAITH * share, '💥');
+      }
+      // R+ Repentance: it survives its own blast and leaps at the enemy, twice.
+      if (gr.stage < REPENT_FAITH.length - 1 && this.up(gr.owner, 'r')) {
+        this.repentLeap(gr, time);
+        continue;
+      }
+      this.grenades.splice(i, 1);
+    }
+  }
+
+  /** R+ — the grenade jumps up off its own blast toward the nearest enemy and re-arms. */
+  private repentLeap(gr: Grenade, time: number): void {
+    gr.stage++;
+    gr.explodeAt = time + REPENT_FUSE_MS;
+    let target: Fighter | null = null;
+    let bd = Infinity;
+    for (const t of this.targetsOf(gr.owner)) {
+      const d = Phaser.Math.Distance.Between(gr.x, gr.y, t.x, t.y);
+      if (d < bd) { bd = d; target = t; }
+    }
+    const ang = target ? Math.atan2(target.y - gr.y, target.x - gr.x) : Math.random() * Math.PI * 2;
+    const d = target ? Math.min(GRENADE_RANGE, bd) : 120;
+    const v0 = (d * GRENADE_DRAG) / (1 - Math.exp(-GRENADE_DRAG * REPENT_LEAP_S));
+    gr.vx = Math.cos(ang) * v0;
+    gr.vy = Math.sin(ang) * v0;
+    gr.z = Math.max(gr.z, 4);
+    gr.vz = GRENADE_HOP_V * 1.8;
+    this.api.showFloatingText(gr.x, gr.y - 30, gr.stage === 1 ? '🙏 REPENT' : '🙏 REPENT AGAIN', this.hex(DEV.gold));
+    Sfx.playAt('boing', gr.x, { volume: 0.4, rate: 0.9 });
+  }
+
+  /**
+   * Q+ — the pillars burn for a second after they land: faith every frame to anyone inside, and a
+   * slow written on the priest's sim (online the status mirror carries it to the victim).
+   */
+  private updatePillars(time: number, dt: number): void {
+    for (let i = this.pillars.length - 1; i >= 0; i--) {
+      const pl = this.pillars[i];
+      if (time >= pl.diesAt) { this.pillars.splice(i, 1); continue; }
+      if (time < pl.landAt) continue;
+      if (!pl.landed) {
+        pl.landed = true;
+        this.fx(pl.owner).pillarLand(pl.x, pl.y, PILLAR_R);
+        this.api.scene.cameras.main.shake(140, 0.004);
+        Sfx.playAt('explosion-medium', pl.x, { volume: 0.55, rate: 1.4 });
+      }
+      for (const t of this.targetsOf(pl.owner)) {
+        if (Phaser.Math.Distance.Between(t.x, t.y, pl.x, pl.y) > PILLAR_R + 14) continue;
+        if (!this.authority(pl.owner)) continue;
+        this.addFaith(pl.owner, t, PILLAR_FAITH_PER_SEC * dt);
+        if (!t.unstoppable) t.devotionSlowUntil = Math.max(t.devotionSlowUntil, Date.now() + PILLAR_SLOW_MS);
+        if (time >= (pl.nextText.get(t) ?? 0)) {
+          pl.nextText.set(t, time + 400);
+          this.api.showFloatingText(t.x + 12, t.y - 36, `+${Math.round(PILLAR_FAITH_PER_SEC * 0.4)} 🔥`, this.hex(DEV.gold));
+        }
       }
     }
   }
@@ -1053,6 +1418,12 @@ export class PassionKit implements SummonPurgeTarget {
   private updateCrucifixes(): void {
     for (const c of this.crucifixes) {
       if (!this.isDevotion(c.owner)) continue;
+      // F+ — a cross in the hand goes where the priest goes; only a brandished one has an aura.
+      if (c.held) {
+        const f = this.fighter(c.owner);
+        if (f) { c.x = f.x; c.y = f.y; }
+        if (!c.raised || !this.alive(f) || this.side(c.owner).rideUntil > 0) continue;
+      }
       for (const t of this.targetsOf(c.owner)) {
         const d = Phaser.Math.Distance.Between(t.x, t.y, c.x, c.y);
         if (d >= AURA_R || !this.canMove(t)) continue;
@@ -1166,7 +1537,10 @@ export class PassionKit implements SummonPurgeTarget {
     for (const f of [...this.caps.keys()]) if (!f.active) this.caps.delete(f);
     for (const f of [...this.stages.keys()]) if (!f.active) this.stages.delete(f);
     for (const f of [...this.passiveTextAt.keys()]) if (!f.active) this.passiveTextAt.delete(f);
-    for (const p of this.puddles) for (const f of [...p.nextText.keys()]) if (!f.active) p.nextText.delete(f);
+    for (const p of this.puddles) {
+      for (const f of [...p.nextText.keys()]) if (!f.active) p.nextText.delete(f);
+      for (const f of [...p.inside]) if (!f.active) p.inside.delete(f);
+    }
   }
 
   private updateAvatars(delta: number, playerIs: boolean, npcIs: boolean): void {
@@ -1188,7 +1562,8 @@ export class PassionKit implements SummonPurgeTarget {
       const preach = s.chargeStartedAt > 0
         ? Phaser.Math.Clamp((this.now - s.chargeStartedAt) / SERMON_CHARGE_MS, 0, 1) : 0;
       av.setPreach(preach);
-      av.setHold(s.chargeStartedAt > 0 ? 'brace' : null);
+      const raised = this.crucifixes.some((c) => c.owner === owner && c.held && c.raised);
+      av.setHold(s.chargeStartedAt > 0 ? 'brace' : raised ? 'reach' : null);
       av.setIntensity(1 + preach * 0.3);
       av.setMastered(owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
       av.update(delta, f.x, f.y, f.alpha);
@@ -1209,8 +1584,14 @@ export class PassionKit implements SummonPurgeTarget {
       holyWaterPuddle(g, this.col(p.owner), p.x, p.y, PUDDLE_R, t, p.seed, life);
     }
     for (const c of this.crucifixes) {
+      if (c.held && (!c.raised || this.side(c.owner).rideUntil > 0)) continue;
       const rise = Phaser.Math.Clamp((now - c.bornAt) / 260, 0, 1);
       crucifixAura(g, this.col(c.owner), c.x, c.y, AURA_R * rise, t, 1, c.flareUntil > now ? 1 : 0);
+    }
+    for (const pl of this.pillars) {
+      const drop = Phaser.Math.Clamp(1 - (pl.landAt - now) / PILLAR_DROP_MS, 0, 1);
+      const life = Phaser.Math.Clamp((now - pl.landAt) / PILLAR_MS, 0, 1);
+      if (drop >= 1) firePillar(g, this.col(pl.owner), pl.x, pl.y, PILLAR_R, 1, life, t, pl.seed);
     }
     for (const owner of BOTH) {
       const s = this.side(owner);
@@ -1261,8 +1642,24 @@ export class PassionKit implements SummonPurgeTarget {
     }
 
     for (const c of this.crucifixes) {
+      if (c.held) {
+        // In the hand: carried low at the side facing the aim, or held aloft over the head.
+        const s = this.side(c.owner);
+        const f = this.fighter(c.owner);
+        if (!f || !f.active || s.rideUntil > 0) continue;
+        const aimX = c.owner === 'player' ? s.aimX : this.api.player.x;
+        const dir = aimX >= f.x ? 1 : -1;
+        if (c.raised) crucifixPost(g, this.col(c.owner), f.x + dir * 6, f.y - 24, f.alpha, t, 1, 0.55);
+        else crucifixPost(g, this.col(c.owner), f.x + dir * 20, f.y + 16, f.alpha, t, 1, 0.42);
+        continue;
+      }
       const rise = Phaser.Math.Clamp((this.now - c.bornAt) / 260, 0, 1);
       crucifixPost(g, this.col(c.owner), c.x, c.y, 1, t, rise);
+    }
+    // Q+ pillars still falling: the shaft comes down over the fighters.
+    for (const pl of this.pillars) {
+      const drop = Phaser.Math.Clamp(1 - (pl.landAt - time) / PILLAR_DROP_MS, 0, 1);
+      if (drop < 1) firePillar(g, this.col(pl.owner), pl.x, pl.y, PILLAR_R, drop, 0, t, pl.seed);
     }
 
     for (const owner of BOTH) {
@@ -1276,6 +1673,15 @@ export class PassionKit implements SummonPurgeTarget {
         const left = s.rideUntil - time;
         if (left < CRASH_MARK_MS) {
           crashMark(g, tint, this.clampX(s.aimX), this.clampY(s.aimY), CRASH_R, 1 - left / CRASH_MARK_MS, t);
+        }
+      }
+      // Q+ — the sky ride: the priest as a small sun over the arena once the chariot is gone, and
+      // (for your own ride) the crosshair where the next pillar lands.
+      if (s.rideUntil > 0 && s.skyRide && (s.chariotDone || time > s.chariotAt + 600)) {
+        const sx = owner === 'npc' && this.api.isOnline ? s.rideX : this.clampX(s.aimX);
+        skyPriest(g, tint, sx, this.top + 18, t);
+        if (owner === 'player') {
+          pillarCrosshair(g, tint, this.clampX(s.aimX), this.clampY(s.aimY), PILLAR_R, s.pillarsLeft, PILLARS, t);
         }
       }
     }
@@ -1332,16 +1738,24 @@ export class PassionKit implements SummonPurgeTarget {
       } : null);
 
     this.api.setStatusIndicator('passion-ride', playerIsDevotion && s.rideUntil > time ? {
-      name: 'Taken Up', emoji: '🔥', color: DEV.fire,
-      description: 'Riding the chariot. You cannot be hurt. Aim the cursor — you crash down there.',
+      name: s.skyRide ? 'In the Sky' : 'Taken Up', emoji: '🔥', color: DEV.fire,
+      description: s.skyRide
+        ? `High above the arena. You cannot be hurt. Click to drop a pillar of yellow fire on the `
+          + `crosshair (${s.pillarsLeft} of ${PILLARS} left); you crash down on the cursor when the ride ends.`
+        : 'Riding the chariot. You cannot be hurt. Aim the cursor — you crash down there.',
       until: s.rideUntil, priority: 130,
+      ...(s.skyRide ? { count: s.pillarsLeft } : {}),
     } : null);
 
     const c = playerIsDevotion ? this.crucifixes.find((x) => x.owner === 'player') : undefined;
     this.api.setStatusIndicator('passion-crucifix', c ? {
-      name: 'Crucifix', emoji: '✝️', color: DEV.gold,
-      description: `Standing. No enemy can enter its ${AURA_R}px aura, and every shot they fire into `
-        + 'it gives them 1 faith. Plant another to move it.',
+      name: c.held ? (c.raised ? 'Crucifix Raised' : 'Crucifix in Hand') : 'Crucifix', emoji: '✝️', color: DEV.gold,
+      description: c.held
+        ? (c.raised
+          ? `Held aloft: its ${AURA_R}px aura stands round you and moves with you. Click to lower it, F to set it down here.`
+          : 'Carried. Click to raise it — the aura goes up round you — or press F to set it down where you stand.')
+        : `Standing. No enemy can enter its ${AURA_R}px aura, and every shot they fire into `
+          + 'it gives them 1 faith. Plant another to move it.',
       priority: 58,
     } : null);
   }
@@ -1356,7 +1770,7 @@ export class PassionKit implements SummonPurgeTarget {
     let razed = 0;
     for (let i = this.crucifixes.length - 1; i >= 0; i--) {
       const c = this.crucifixes[i];
-      if (c.owner === exceptOwner) continue;
+      if (c.owner === exceptOwner || c.held) continue;
       if (Phaser.Math.Distance.Between(x, y, c.x, c.y) > radius) continue;
       this.crucifixes.splice(i, 1);
       razed++;
@@ -1374,6 +1788,41 @@ export class PassionKit implements SummonPurgeTarget {
 
   npcWaterCharges(): number {
     return this.sides.npc.waterCharges;
+  }
+
+  /**
+   * F+ Pocket Crucifix for the bot. Picking up, raising and setting down bypass `castAbility`, so
+   * — like Conquest's economy — the kit plays them itself rather than publishing them to the AI.
+   * Offline only; online the peer presses their own keys and the relay brings the result.
+   *
+   * The synergy: pressed up close while standing in its own aura, the bot takes the sanctuary
+   * with it — picks it up and raises it, so the aura walks with the bot and shoves the player off.
+   * Once the player backs off past 220px it lowers the cross and sets it back down at its feet,
+   * where it is a wall again and the click goes back to preaching.
+   */
+  private updateNpcPocket(time: number): void {
+    if (this.api.isOnline || !this.up('npc', 'f')) return;
+    const s = this.sides.npc;
+    if (time < s.nextPocketAt || s.rideUntil > 0) return;
+    s.nextPocketAt = time + 400;
+    const npc = this.api.npc;
+    const p = this.api.player;
+    const c = this.crucifixes.find((x) => x.owner === 'npc');
+    if (!c || !this.alive(npc) || !this.alive(p)) return;
+    const d = Phaser.Math.Distance.Between(npc.x, npc.y, p.x, p.y);
+    if (!c.held) {
+      if (d < 170 && Phaser.Math.Distance.Between(npc.x, npc.y, c.x, c.y) <= AURA_R && this.canAct(npc, false)) {
+        this.pickUpCrucifix('npc');
+        if (this.canAct(npc, true)) this.setRaised('npc', true);
+      }
+      return;
+    }
+    if (d < 220) {
+      if (!c.raised && this.canAct(npc, true)) this.setRaised('npc', true);
+      return;
+    }
+    if (c.raised && this.canAct(npc, true)) this.setRaised('npc', false);
+    if (this.canAct(npc, false)) this.setDownCrucifix('npc');
   }
 
   /**

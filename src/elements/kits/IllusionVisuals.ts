@@ -34,6 +34,8 @@ export const ILL = {
   warp: 0x8a6cff,
   spark: 0xfff0ff,
   ghost: 0xd9c2ff,
+  /** Mastery: the pale-gold edge of the spectrum halo and the orbiting mirrors' frames. */
+  halo: 0xffe9a8,
 };
 
 /** The three things a Tesseract can fold somebody into. */
@@ -861,9 +863,13 @@ export class IllusionAvatar extends BaseAvatar {
 
   protected applyMastery(on: boolean): void {
     this.forEachHandLayer(0, (glow) => {
-      glow.setRadius(on ? 15 : 12);
-      glow.setAlpha(on ? 0.32 : 0.2);
+      glow.setRadius(on ? 17 : 12);
+      glow.setAlpha(on ? 0.36 : 0.2);
+      glow.setFillStyle(this.tint(on ? ILL.cyan : ILL.violet), on ? 0.36 : 0.2);
     });
+    this.forEachHandLayer(1, (core) => core.setRadius(on ? 8 : 7));
+    // A mastered illusionist sees through things: the eyes go prism-cyan.
+    this.setEyeWhite(on ? ILL.cyan : ILL.spark);
   }
 
   protected emitTrail(x: number, y: number): void {
@@ -914,13 +920,96 @@ export class IllusionAvatar extends BaseAvatar {
       g.strokeCircle(gx, gy, 21);
       harlequinMask(g, this.tint, gx, gy - 3, 8, fade * 1.4);
     }
+
+    this.paintFacets(g, x, y, alpha);
+  }
+
+  /**
+   * The real body's surface: a cut-gem face. A harlequin lattice of faint diamonds, one half
+   * of the orb shaded into the void (the same split the mask carries), a refraction crescent,
+   * and a little diamond ruff at the base. Low alpha throughout — the violet body stays the
+   * identity, this only stops it reading as a flat disc.
+   */
+  private paintFacets(g: Phaser.GameObjects.Graphics, x: number, y: number, alpha: number): void {
+    const R = 19;
+    // Shadow half: the side away from the light, mirroring the mask's split.
+    g.fillStyle(this.tint(ILL.voidDeep), alpha * 0.22);
+    g.slice(x, y, R, -Math.PI / 2, Math.PI / 2, false);
+    g.fillPath();
+
+    // Harlequin lattice — two crossing sets of chords, clipped to the orb by hand.
+    g.lineStyle(1, this.tint(ILL.ghost), alpha * 0.22);
+    for (let k = -2; k <= 2; k++) {
+      const off = k * 9;
+      for (const dir of [1, -1]) {
+        // Line x - dir*y = off (45°), intersected with the circle of radius R.
+        const c = off / Math.SQRT2;
+        const h2 = R * R - c * c;
+        if (h2 <= 4) continue;
+        const h = Math.sqrt(h2);
+        const nx = 1 / Math.SQRT2;
+        const ny = -dir / Math.SQRT2;
+        const tx = dir / Math.SQRT2;
+        const ty = 1 / Math.SQRT2;
+        g.lineBetween(x + nx * c - tx * h, y + ny * c - ty * h, x + nx * c + tx * h, y + ny * c + ty * h);
+      }
+    }
+    // A couple of lit diamonds in the lattice, slowly trading places.
+    const lit = Math.floor(this.t * 1.2) % 4;
+    const cells = [[-6.4, 6.4], [6.4, -6.4], [-6.4, -6.4], [6.4, 6.4]];
+    for (let i = 0; i < cells.length; i++) {
+      const [cx, cy] = cells[i];
+      const on = i === lit || i === (lit + 2) % 4;
+      g.fillStyle(this.tint(i % 2 === 0 ? ILL.magenta : ILL.violet), alpha * (on ? 0.32 : 0.12));
+      g.fillPoints([
+        new Phaser.Geom.Point(x + cx, y + cy - 4.5), new Phaser.Geom.Point(x + cx + 4.5, y + cy),
+        new Phaser.Geom.Point(x + cx, y + cy + 4.5), new Phaser.Geom.Point(x + cx - 4.5, y + cy),
+      ], true);
+    }
+
+    // Refraction crescent, upper left.
+    g.lineStyle(2.2, this.tint(ILL.spark), alpha * 0.45);
+    g.beginPath();
+    g.arc(x, y, R - 3, Math.PI * 1.05, Math.PI * 1.42, false);
+    g.strokePath();
+    g.lineStyle(1.2, this.tint(ILL.cyan), alpha * 0.35);
+    g.beginPath();
+    g.arc(x, y, R - 5.5, Math.PI * 1.08, Math.PI * 1.36, false);
+    g.strokePath();
+
+    // Harlequin ruff: five diamond points fanned along the base of the orb.
+    for (let i = 0; i < 5; i++) {
+      const ang = Math.PI / 2 + (i - 2) * 0.42;
+      const px = x + Math.cos(ang) * (R - 1);
+      const py = y + Math.sin(ang) * (R - 1);
+      const s = i === 2 ? 4.6 : 3.6;
+      const col = this.mastered ? (i % 2 === 0 ? ILL.halo : ILL.cyan) : (i % 2 === 0 ? ILL.magenta : ILL.violetDim);
+      g.fillStyle(this.tint(col), alpha * 0.85);
+      g.fillPoints([
+        new Phaser.Geom.Point(px - Math.cos(ang) * s, py - Math.sin(ang) * s),
+        new Phaser.Geom.Point(px - Math.sin(ang) * s * 0.7, py + Math.cos(ang) * s * 0.7),
+        new Phaser.Geom.Point(px + Math.cos(ang) * s * 1.2, py + Math.sin(ang) * s * 1.2),
+        new Phaser.Geom.Point(px + Math.sin(ang) * s * 0.7, py - Math.cos(ang) * s * 0.7),
+      ], true);
+    }
   }
 
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void a;
     // The mask itself, hovering at the crown and tilting with the aim.
     const bob = Math.sin(this.t * 2.4) * 2;
-    harlequinMask(g, this.tint, x, y - 26 + bob, 9.5 + (this.mastered ? 2 : 0), alpha);
+    if (this.mastered) this.paintSpectrumHalo(g, x, y - 26 + bob, alpha);
+    harlequinMask(g, this.tint, x, y - 26 + bob, 9.5 + (this.mastered ? 2 : 0), alpha,
+      this.mastered ? ILL.halo : ILL.violet);
+    // A teardrop jewel hanging off the mask's chin — a small second ornament for the crown.
+    {
+      const jy = y - 26 + bob + 9.5 + (this.mastered ? 2 : 0) + 2.5 + Math.sin(this.t * 3.1) * 0.8;
+      g.fillStyle(this.tint(this.mastered ? ILL.cyan : ILL.magenta), alpha * 0.95);
+      g.fillTriangle(x - 2.2, jy, x + 2.2, jy, x, jy + 5);
+      g.fillStyle(this.tint(ILL.spark), alpha * 0.8);
+      g.fillCircle(x - 0.6, jy + 1.2, 0.9);
+    }
+    if (this.mastered) this.paintMirrors(g, x, y, alpha);
 
     // Masquerade: the gold one, worn rather than floated — straight over the eyes, where the
     // crown mask deliberately never sits, so the two can never be mistaken for each other.
@@ -939,8 +1028,70 @@ export class IllusionAvatar extends BaseAvatar {
       }
       g.fillStyle(this.tint(ILL.cyan), alpha * 0.55);
       g.fillPoints(pts, true);
-      g.lineStyle(1.2, this.tint(ILL.spark), alpha * 0.8);
+      g.lineStyle(1.2, this.tint(this.mastered ? ILL.halo : ILL.spark), alpha * 0.8);
       g.strokePoints(pts, true, true);
+      // Light caught in the shard: a four-point glint that flares and fades out of phase.
+      const flare = Math.max(0, Math.sin(this.t * 3.3 + i * 2.1));
+      const gl = (this.mastered ? 6 : 3.5) * flare;
+      if (gl > 0.6) {
+        g.lineStyle(1, this.tint(ILL.spark), alpha * 0.85 * flare);
+        g.lineBetween(hx - gl, hy - 1, hx + gl, hy - 1);
+        g.lineBetween(hx, hy - 1 - gl, hx, hy - 1 + gl);
+      }
+    }
+  }
+
+  /**
+   * Mastery: a split-light halo fanned behind the crown mask — four bands of the spectrum the
+   * prism hands throw, shimmering outward. Nothing in the unmastered rig is this wide or this
+   * colourful above the head, so it reads at a glance.
+   */
+  private paintSpectrumHalo(g: Phaser.GameObjects.Graphics, x: number, y: number, alpha: number): void {
+    const bands = [ILL.halo, ILL.cyan, ILL.violet, ILL.magenta];
+    const shimmer = Math.sin(this.t * 2.6) * 0.06;
+    for (let i = 0; i < bands.length; i++) {
+      const r = 15 + i * 3.2;
+      g.lineStyle(2.6, this.tint(bands[i]), alpha * (0.75 - i * 0.1));
+      g.beginPath();
+      g.arc(x, y + 3, r, Math.PI * (1.08 - shimmer), Math.PI * (1.92 + shimmer), false);
+      g.strokePath();
+    }
+    // Rays of light breaking off the outer band.
+    for (let k = 0; k < 5; k++) {
+      const ang = Math.PI * (1.18 + k * 0.16);
+      const len = 4 + 3 * Math.max(0, Math.sin(this.t * 4 + k * 1.3));
+      const r0 = 27;
+      g.lineStyle(1.2, this.tint(ILL.spark), alpha * 0.7);
+      g.lineBetween(x + Math.cos(ang) * r0, y + 3 + Math.sin(ang) * r0,
+        x + Math.cos(ang) * (r0 + len), y + 3 + Math.sin(ang) * (r0 + len));
+    }
+  }
+
+  /**
+   * Mastery: three hand mirrors orbiting the body on a tilted ring, each flashing as it turns
+   * edge-on. Drawn with the ring so the back half dims behind the body.
+   */
+  private paintMirrors(g: Phaser.GameObjects.Graphics, x: number, y: number, alpha: number): void {
+    g.lineStyle(1, this.tint(ILL.halo), alpha * 0.22);
+    g.strokeEllipse(x, y + 2, 64, 20);
+    for (let k = 0; k < 3; k++) {
+      const ang = this.t * 1.4 + (k / 3) * TAU;
+      const mx = x + Math.cos(ang) * 32;
+      const my = y + 2 + Math.sin(ang) * 10;
+      const front = Math.sin(ang) > 0;
+      const face = Math.abs(Math.cos(this.t * 3 + k * 2));
+      const w = 2 + face * 4;
+      const fa = alpha * (front ? 0.95 : 0.4);
+      g.fillStyle(this.tint(ILL.voidDark), fa * 0.8);
+      g.fillEllipse(mx, my, w * 2 + 2, 12);
+      g.fillStyle(this.tint(ILL.cyan), fa * (0.5 + face * 0.4));
+      g.fillEllipse(mx, my, w * 2, 10);
+      g.lineStyle(1.3, this.tint(ILL.halo), fa);
+      g.strokeEllipse(mx, my, w * 2 + 2, 12);
+      if (face > 0.85) {
+        g.fillStyle(this.tint(ILL.spark), fa);
+        g.fillCircle(mx - w * 0.3, my - 2, 1.3);
+      }
     }
   }
 }

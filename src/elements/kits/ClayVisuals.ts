@@ -37,6 +37,13 @@ export const CLAY = {
   bedrock: 0x1f1b1a,
   bedrockLit: 0x4a4341,
   seam: 0xb8aa98,
+  /** Kiln fire glowing through the mastered bedrock's seams — the mastered form's signature. */
+  kiln: 0xff9a3c,
+  kilnHot: 0xffe2a8,
+  /** The potter's board and tools the HUD readouts sit on. */
+  wood: 0x6b4a2b,
+  woodDark: 0x2a1a0e,
+  woodLit: 0xa47c4f,
 } as const;
 
 /** Deterministic 0–1 noise, so a lump keeps its shape frame to frame instead of boiling. */
@@ -228,13 +235,106 @@ export function drawGuide(g: Phaser.GameObjects.Graphics, tint: ClayColorFn, x: 
   g.strokeCircle(x, y, r * 0.5);
 }
 
-export function drawClayBar(g: Phaser.GameObjects.Graphics, tint: ClayColorFn, x: number, y: number, ratio: number, alpha = 1): void {
-  g.fillStyle(tint(CLAY.wet), alpha * 0.9);
-  g.fillRoundedRect(x - 44, y - 5, 88, 10, 4);
+/**
+ * A clay budget readout: a coil of clay rolled out along a potter's board. The coil shortens as
+ * the budget is spent, its pinched end carries a thumbprint, and a little wheel at the left end
+ * keeps turning. Same footprint as the old bar (88 x 10 around `x, y`).
+ */
+export function drawClayBar(
+  g: Phaser.GameObjects.Graphics, tint: ClayColorFn, x: number, y: number, ratio: number, alpha = 1,
+  t = (globalThis.performance?.now() ?? 0) / 1000,
+): void {
+  const r = Phaser.Math.Clamp(ratio, 0, 1);
+  const L = x - 46, W = 92, H = 14, top = y - H / 2;
+  // The board: dark under-shadow, plank, grain lines, lit top edge, pegs.
+  g.fillStyle(tint(CLAY.woodDark), alpha * 0.75);
+  g.fillRoundedRect(L - 1, top + 1.5, W + 2, H + 1, 4);
+  g.fillStyle(tint(CLAY.wood), alpha * 0.96);
+  g.fillRoundedRect(L, top, W, H, 4);
+  g.lineStyle(1, tint(CLAY.woodDark), alpha * 0.45);
+  g.lineBetween(L + 14, top + 3.5, L + W - 6, top + 3.2);
+  g.lineBetween(L + 18, top + H - 3, L + W - 10, top + H - 3.4);
+  g.lineStyle(1, tint(CLAY.woodLit), alpha * 0.55);
+  g.lineBetween(L + 3, top + 0.8, L + W - 3, top + 0.8);
+  g.fillStyle(tint(CLAY.woodDark), alpha * 0.8);
+  g.fillCircle(L + W - 4, y, 1.3);
+  // The trough the coil lies in.
+  const tx = L + 14, tw = W - 20;
+  g.fillStyle(tint(CLAY.wet), alpha * 0.85);
+  g.fillRoundedRect(tx, y - 3.5, tw, 7, 3.5);
+  // The little potter's wheel at the left end, always turning.
+  const wx = L + 7;
+  g.fillStyle(tint(CLAY.woodDark), alpha);
+  g.fillCircle(wx, y, 5.6);
+  g.fillStyle(tint(CLAY.slip), alpha);
+  g.fillCircle(wx, y, 4.4);
+  g.lineStyle(1, tint(CLAY.sheen), alpha * 0.7);
+  for (let i = 0; i < 3; i++) {
+    const a = t * 4 + (i / 3) * TAU;
+    g.lineBetween(wx + Math.cos(a) * 1.4, y + Math.sin(a) * 1.4, wx + Math.cos(a) * 4, y + Math.sin(a) * 4);
+  }
   g.fillStyle(tint(CLAY.light), alpha);
-  g.fillRoundedRect(x - 42, y - 3, 84 * Phaser.Math.Clamp(ratio, 0, 1), 6, 3);
-  g.fillStyle(tint(CLAY.sheen), alpha * 0.5);
-  g.fillRect(x - 40, y - 2.4, Math.max(0, 80 * ratio), 1.4);
+  g.fillCircle(wx, y, 1.5);
+  // The coil itself: lumpy, with a travelling wet glint.
+  const cw = tw * r;
+  if (cw > 1) {
+    g.fillStyle(tint(CLAY.deep), alpha);
+    g.fillRoundedRect(tx, y - 3.2 + 1, cw, 6.4, 3.2);
+    g.fillStyle(tint(CLAY.light), alpha);
+    g.fillRoundedRect(tx, y - 3.2, cw, 6, 3);
+    g.fillStyle(tint(CLAY.warm), alpha * 0.9);
+    for (let px = tx + 4; px < tx + cw - 2; px += 7) g.fillCircle(px, y + 0.6 + Math.sin(px * 0.7) * 0.5, 2.6);
+    g.fillStyle(tint(CLAY.sheen), alpha * 0.6);
+    g.fillRect(tx + 2, y - 2.4, Math.max(0, cw - 4), 1.1);
+    const gx = tx + ((t * 30) % Math.max(1, cw));
+    g.fillStyle(tint(CLAY.cream), alpha * 0.75);
+    g.fillEllipse(gx, y - 1.8, 5, 1.6);
+    // Pinched end, thumbprint pressed into it.
+    const ex = tx + cw;
+    g.fillStyle(tint(CLAY.light), alpha);
+    g.fillCircle(ex - 1, y, 3.6);
+    g.lineStyle(0.8, tint(CLAY.slip), alpha * 0.9);
+    g.strokeCircle(ex - 1, y, 2.2);
+    g.strokeCircle(ex - 1, y, 1);
+  }
+}
+
+/**
+ * Stored Slipstream dashes: wet slip droplets resting in a little clay dish. Lit droplets are
+ * the guide blue (the element's one cool colour), spent ones are dried-out dimples.
+ */
+export function drawSlipPips(
+  g: Phaser.GameObjects.Graphics, tint: ClayColorFn, x: number, y: number, charges: number, max: number, t: number, alpha = 1,
+): void {
+  const gap = 18, w = (max - 1) * gap + 20;
+  g.fillStyle(tint(CLAY.wet), alpha * 0.6);
+  g.fillEllipse(x + 1, y + 6, w + 6, 10);
+  g.fillStyle(tint(CLAY.deep), alpha * 0.95);
+  g.fillEllipse(x, y + 4, w + 4, 9);
+  g.fillStyle(tint(CLAY.slip), alpha);
+  g.fillEllipse(x, y + 3, w, 6);
+  g.lineStyle(1, tint(CLAY.sheen), alpha * 0.35);
+  g.beginPath();
+  g.arc(x, y + 6, w * 0.5, Math.PI * 1.15, Math.PI * 1.85, false);
+  g.strokePath();
+  for (let i = 0; i < max; i++) {
+    const px = x - (max - 1) * gap / 2 + i * gap;
+    if (i < charges) {
+      const wob = Math.sin(t * 5 + i * 1.7) * 0.6;
+      g.fillStyle(tint(CLAY.guide), alpha);
+      g.fillCircle(px, y + 0.5, 4.6);
+      g.fillTriangle(px - 4, y - 1.2, px + 4, y - 1.2, px + wob, y - 9.5);
+      g.fillStyle(tint(CLAY.guideLit), alpha);
+      g.fillCircle(px - 0.6, y, 3.2);
+      g.fillStyle(tint(CLAY.cream), alpha * 0.85);
+      g.fillCircle(px - 1.8, y - 1.6, 1.2);
+    } else {
+      g.fillStyle(tint(CLAY.wet), alpha * 0.85);
+      g.fillEllipse(px, y + 3, 8, 3.6);
+      g.lineStyle(0.8, tint(CLAY.light), alpha * 0.4);
+      g.strokeEllipse(px, y + 3, 8, 3.6);
+    }
+  }
 }
 
 /** A slowing puddle of slip the fused creature leaves behind. */
@@ -452,16 +552,19 @@ const CLAY_AVATAR: AvatarSpec = {
 };
 
 /**
- * The shaper: a plain orb of wet clay (the baked `elem-clay` texture) with ball hands and one
- * accessory — a fresh **dollop of clay** slapped on the crown with a drip running off it, the
- * potter's last handful. Everything else that says "clay" lives in the abilities.
+ * The shaper: an orb of wet clay (the baked `elem-clay` texture) with ball hands. The body layer
+ * presses the potter's marks into the orb — a thumbprint swirl, two finger-drag grooves, a fleck
+ * of grit — and the crown carries a fresh **dollop of clay** with a drip running off it and a
+ * wooden modelling tool stuck in it.
  *
  * Fused with the golem, the fighter itself grows (`claySizeMult` scales the sprite and, via
- * `setRigScale`, this whole rig), so the fused form adds no costume: only a crack across the orb
- * for every layer lost and the layer pips over the head, both gameplay readouts.
+ * `setRigScale`, this whole rig): a crack across the orb for every layer lost, and the layer
+ * stack over the head, both gameplay readouts.
  *
- * Mastery enhances what is there: the dollop sets into a bigger slab of bedrock with a pale
- * fracture seam, the hands harden to bedrock with a wider corona, and the eyes go seam-white.
+ * Mastered, the clay has been *fired*: the orb takes dark bedrock strata with kiln-orange light
+ * pulsing through its seams, the dollop hardens into a crown of three stone spires glowing at the
+ * joins, three bedrock chips orbit the body, the hands become embers in stone and the eyes burn
+ * kiln-white. Side by side, wet brown vs. fired black-and-orange is impossible to confuse.
  */
 export class ClayAvatar extends BaseAvatar {
   private fx: ClayFx;
@@ -485,11 +588,13 @@ export class ClayAvatar extends BaseAvatar {
   }
 
   protected applyMastery(on: boolean): void {
-    this.setEyeWhite(on ? CLAY.seam : CLAY.eye);
+    this.setEyeWhite(on ? CLAY.kilnHot : CLAY.eye);
     this.forEachHandLayer(1, (shell) => shell.setFillStyle(this.tint(on ? CLAY.bedrockLit : CLAY.body), 1));
+    this.forEachHandLayer(2, (core) => core.setFillStyle(this.tint(on ? CLAY.kiln : CLAY.light), on ? 0.95 : 0.9));
+    this.forEachHandLayer(3, (glint) => glint.setFillStyle(this.tint(on ? CLAY.kilnHot : CLAY.cream), on ? 0.95 : 0.75));
     this.forEachHandLayer(0, (halo) => {
-      halo.setRadius(on ? 12.5 : 10);
-      halo.setFillStyle(this.tint(on ? CLAY.bedrock : CLAY.deep), on ? 0.38 : 0.28);
+      halo.setRadius(on ? 14 : 10);
+      halo.setFillStyle(this.tint(on ? CLAY.kiln : CLAY.deep), on ? 0.3 : 0.28);
     });
   }
 
@@ -500,27 +605,81 @@ export class ClayAvatar extends BaseAvatar {
   }
 
   protected emitTrail(x: number, y: number): void {
-    this.fx.clods(x, y, 1, 40, 360, 5);
+    this.fx.clods(x, y, 1, 40, 360, 5, this.mastered);
   }
 
-  /** A wet slick under a wet body — darker and wider once mastered. */
+  /** A wet slick under a wet body; mastered, a kiln-heat ring breathing on the floor. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
     const k = this.intensity * (this.mastered ? 1.15 : 1);
     g.fillStyle(this.tint(this.mastered ? CLAY.bedrock : CLAY.wet), a * (this.mastered ? 0.4 : 0.32) * k);
     g.fillEllipse(x + 2, y + 9, 50 * k, 22 * k);
-    g.fillStyle(this.tint(CLAY.warm), a * 0.14 * k);
+    g.fillStyle(this.tint(this.mastered ? CLAY.kiln : CLAY.warm), a * (this.mastered ? 0.2 : 0.14) * k);
     g.fillCircle(x, y, 26 * k);
+    if (this.mastered) {
+      const pulse = 0.5 + 0.5 * Math.sin(this.t * 3);
+      g.lineStyle(2, this.tint(CLAY.kiln), a * (0.35 + pulse * 0.3));
+      g.strokeEllipse(x, y + 12, 58 + pulse * 6, 22 + pulse * 2);
+      g.lineStyle(1, this.tint(CLAY.kilnHot), a * 0.3);
+      g.strokeEllipse(x, y + 12, 46, 16);
+    }
   }
 
   /**
-   * Fused only: one crack across the orb for every layer the golem-body has lost. This is the
-   * fused form's health readout, not costume, so it stays.
+   * The potter's marks pressed into the orb (or, mastered, fired strata and glowing seams), then —
+   * fused only — one crack per layer the golem-body has lost, the fused form's health readout.
    */
   protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void a;
+    const m = this.mastered;
+    if (!m) {
+      // Thumbprint swirl low on one side.
+      g.lineStyle(1, this.tint(CLAY.slip), alpha * 0.7);
+      for (let k = 0; k < 3; k++) {
+        g.beginPath();
+        g.arc(x + 9, y + 9, 2 + k * 1.8, Math.PI * (0.9 + k * 0.1), Math.PI * (2.3 - k * 0.1), false);
+        g.strokePath();
+      }
+      // Two finger-drag grooves across the lower belly, each with its sheen lip.
+      for (let k = 0; k < 2; k++) {
+        const gy = y + 10 + k * 4;
+        g.lineStyle(1.4, this.tint(CLAY.deep), alpha * 0.6);
+        g.beginPath();
+        g.arc(x - 3, gy - 14, 14 - k * 2, Math.PI * 0.62, Math.PI * 0.86, false);
+        g.strokePath();
+        g.lineStyle(0.8, this.tint(CLAY.sheen), alpha * 0.35);
+        g.beginPath();
+        g.arc(x - 3, gy - 15, 14 - k * 2, Math.PI * 0.62, Math.PI * 0.86, false);
+        g.strokePath();
+      }
+      // Grit flecks and a wet sheen band.
+      g.fillStyle(this.tint(CLAY.wet), alpha * 0.7);
+      g.fillCircle(x - 12, y + 4, 1.1);
+      g.fillCircle(x + 3, y + 15, 0.9);
+      g.fillStyle(this.tint(CLAY.sheen), alpha * 0.22);
+      g.fillEllipse(x - 7, y - 12, 14, 4);
+    } else {
+      // Fired: dark strata bands across the lower orb...
+      g.fillStyle(this.tint(CLAY.bedrock), alpha * 0.5);
+      g.fillEllipse(x, y + 12, 34, 9);
+      g.fillStyle(this.tint(CLAY.bedrockLit), alpha * 0.45);
+      g.fillEllipse(x + 1, y + 6.5, 36, 3);
+      // ...and kiln light pulsing through the seams.
+      const glow = 0.55 + 0.45 * Math.sin(this.t * 3.4);
+      const seams: number[][] = [
+        [-15, -6, -8, 2, -10, 10], [6, 4, 13, 9, 11, 16], [-2, 14, 3, 10, 8, 12],
+      ];
+      for (const sm of seams) {
+        g.lineStyle(3, this.tint(CLAY.kiln), alpha * 0.35 * glow);
+        g.lineBetween(x + sm[0], y + sm[1], x + sm[2], y + sm[3]);
+        g.lineBetween(x + sm[2], y + sm[3], x + sm[4], y + sm[5]);
+        g.lineStyle(1.2, this.tint(CLAY.kilnHot), alpha * (0.6 + 0.4 * glow));
+        g.lineBetween(x + sm[0], y + sm[1], x + sm[2], y + sm[3]);
+        g.lineBetween(x + sm[2], y + sm[3], x + sm[4], y + sm[5]);
+      }
+    }
     if (!this.fusedOn) return;
     const lost = this.maxLayers - this.layers;
-    g.lineStyle(1.8, this.tint(this.mastered ? CLAY.seam : CLAY.wet), alpha * 0.9);
+    g.lineStyle(1.8, this.tint(m ? CLAY.kiln : CLAY.wet), alpha * 0.9);
     for (let i = 0; i < lost; i++) {
       const ang = (i / this.maxLayers) * TAU + 0.6;
       const sx = x + Math.cos(ang) * 8, sy = y + 2 + Math.sin(ang) * 7;
@@ -529,33 +688,88 @@ export class ClayAvatar extends BaseAvatar {
     }
   }
 
-  /** The dollop on the crown (`y - 18`), and the fused layer pips above it. */
+  /** The crown (`y - 18`): wet dollop + tool, or the fired spire crown and orbiting chips; then the fused layer stack. */
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void a;
     const bed = this.mastered;
     const rootY = y - 18;
-    const s = bed ? 1.25 : 1;
     const lean = Math.cos(this.facing) * 1.5;
-    // The dollop: a squat lump sat on the crown, its base pressed flat into the body.
-    clayLump(g, this.tint, x + lean, rootY - 3.5 * s, 13 * s, 7.5 * s, 7, bed ? CLAY.bedrockLit : CLAY.warm, alpha, 0.15, 1);
-    if (bed) {
-      // Set into bedrock: one pale fracture seam across the slab.
-      g.lineStyle(1.4, this.tint(CLAY.seam), alpha * 0.9);
-      g.lineBetween(x + lean - 7, rootY - 5, x + lean - 1, rootY - 1.5);
-      g.lineBetween(x + lean - 1, rootY - 1.5, x + lean + 5, rootY - 6);
-    } else {
+    if (!bed) {
+      // The modelling tool, stuck in at an angle behind the dollop: a wooden shaft with a wire loop.
+      const tx0 = x + lean - 4, ty0 = rootY - 4;
+      const tx1 = tx0 - 9, ty1 = ty0 - 15;
+      g.lineStyle(3, this.tint(CLAY.woodDark), alpha);
+      g.lineBetween(tx0, ty0, tx1, ty1);
+      g.lineStyle(1.8, this.tint(CLAY.woodLit), alpha);
+      g.lineBetween(tx0, ty0, tx1, ty1);
+      g.lineStyle(1, this.tint(CLAY.seam), alpha * 0.9);
+      g.strokeEllipse(tx1 - 1.5, ty1 - 3, 4, 6);
+      // The dollop: a squat lump sat on the crown, its base pressed flat into the body.
+      clayLump(g, this.tint, x + lean, rootY - 3.5, 13, 7.5, 7, CLAY.warm, alpha, 0.15, 1);
+      // Thumb dent on top.
+      g.fillStyle(this.tint(CLAY.slip), alpha * 0.6);
+      g.fillEllipse(x + lean + 2, rootY - 7, 6, 2.4);
       // One drip slowly sagging off the lip of the wet dollop.
       const sag = (this.t * 0.18) % 1;
       g.fillStyle(this.tint(CLAY.slip), alpha * 0.95);
       g.fillRoundedRect(x + lean + 5, rootY - 1, 3, 4 + sag * 7, 1.5);
       g.fillCircle(x + lean + 6.5, rootY + 3 + sag * 7, 2);
+    } else {
+      // Bedrock slab at the base, three jagged spires rising off it, kiln light in every join.
+      clayLump(g, this.tint, x + lean, rootY - 3, 15, 6.5, 7, CLAY.bedrockLit, alpha, 0.15, 0);
+      const glow = 0.55 + 0.45 * Math.sin(this.t * 3.4 + 1);
+      const spires = [[-8, 13, 5], [0, 20, 6.5], [8, 14, 5]];
+      for (const [dx, h, w] of spires) {
+        const bx = x + lean + dx, by = rootY - 6;
+        g.fillStyle(this.tint(CLAY.bedrock), alpha);
+        g.fillTriangle(bx - w, by, bx + w, by, bx + dx * 0.15, by - h);
+        g.fillStyle(this.tint(CLAY.bedrockLit), alpha * 0.9);
+        g.fillTriangle(bx - w * 0.7, by, bx, by, bx + dx * 0.15, by - h);
+        g.lineStyle(1.1, this.tint(CLAY.kilnHot), alpha * (0.5 + 0.5 * glow));
+        g.lineBetween(bx + dx * 0.15, by - h * 0.85, bx + 1, by - h * 0.35);
+      }
+      g.fillStyle(this.tint(CLAY.kiln), alpha * 0.4 * glow);
+      g.fillEllipse(x + lean, rootY - 6, 26, 4);
+      g.fillStyle(this.tint(CLAY.kilnHot), alpha * (0.7 + 0.3 * glow));
+      g.fillEllipse(x + lean, rootY - 6, 18, 1.8);
+      // Three bedrock chips orbiting the body, embers trailing.
+      for (let i = 0; i < 3; i++) {
+        const ang = this.t * 1.6 + (i / 3) * TAU;
+        const ox = x + Math.cos(ang) * 30, oy = y + 4 + Math.sin(ang) * 11;
+        if (Math.sin(ang) < -0.2) continue; // behind the body
+        g.fillStyle(this.tint(CLAY.kiln), alpha * 0.35);
+        g.fillCircle(ox - Math.cos(ang + 0.5) * 3, oy - Math.sin(ang + 0.5) * 1.5, 2.2);
+        g.fillStyle(this.tint(CLAY.bedrock), alpha);
+        g.fillTriangle(ox - 3.5, oy + 2, ox + 3.5, oy + 1.5, ox, oy - 3.5);
+        g.fillStyle(this.tint(CLAY.kilnHot), alpha * 0.9);
+        g.fillCircle(ox, oy, 0.9);
+      }
     }
-    // Fused: the layer pips over the head, the one HUD element that belongs on the body.
+    // Fused: the layer stack over the head — little thrown rings on a board.
     if (this.fusedOn) {
+      const py = rootY - (bed ? 34 : 30);
+      const w = this.maxLayers * 9 + 6;
+      g.fillStyle(this.tint(CLAY.woodDark), alpha * 0.85);
+      g.fillRoundedRect(x - w / 2, py + 3, w, 4, 2);
+      g.fillStyle(this.tint(CLAY.wood), alpha);
+      g.fillRoundedRect(x - w / 2, py + 2.5, w, 2.5, 1.5);
       for (let i = 0; i < this.maxLayers; i++) {
         const px = x - (this.maxLayers - 1) * 4.5 + i * 9;
-        g.fillStyle(this.tint(i < this.layers ? (bed ? CLAY.seam : CLAY.light) : CLAY.wet), alpha * (i < this.layers ? 1 : 0.6));
-        g.fillRoundedRect(px - 3, rootY - 30, 6, 9, 2);
+        const live = i < this.layers;
+        if (live) {
+          g.fillStyle(this.tint(bed ? CLAY.bedrock : CLAY.deep), alpha);
+          g.fillRoundedRect(px - 3.6, py - 7, 7.2, 10, 2.5);
+          g.fillStyle(this.tint(bed ? CLAY.bedrockLit : CLAY.light), alpha);
+          g.fillRoundedRect(px - 3, py - 7, 6, 9, 2.2);
+          g.lineStyle(0.8, this.tint(bed ? CLAY.kiln : CLAY.slip), alpha * 0.9);
+          g.lineBetween(px - 3, py - 4, px + 3, py - 4);
+          g.lineBetween(px - 3, py - 1, px + 3, py - 1);
+          g.fillStyle(this.tint(bed ? CLAY.kilnHot : CLAY.cream), alpha * 0.7);
+          g.fillRect(px - 2, py - 6.4, 1.2, 4);
+        } else {
+          g.fillStyle(this.tint(CLAY.wet), alpha * 0.6);
+          g.fillEllipse(px, py + 1, 6, 3);
+        }
       }
     }
   }

@@ -9,6 +9,7 @@ import {
 import { BaseAvatar } from './ElementVisuals';
 import { makeSkinAvatar } from './skins/SkinAvatars';
 import { meterGain } from '../../combat/Meters';
+import { FONT_DISPLAY } from '../../ui/Theme';
 
 // ── Metal type definitions ─────────────────────────────────────────────────
 //
@@ -284,8 +285,10 @@ export class MetalKit {
 
   // ── Blood bar resource ─────────────────────────────────────────────────
   private blood: Record<'player' | 'npc', number> = { player: 0, npc: 0 };
-  private bloodBarBg: Phaser.GameObjects.Rectangle | null = null;
-  private bloodBarFill: Phaser.GameObjects.Rectangle | null = null;
+  /** The blood tank — one Graphics repainted each frame (see `updateBloodHud`). */
+  private bloodBarBg: Phaser.GameObjects.Graphics | null = null;
+  /** Smoothed fill level, so the tank sloshes up to a new value instead of snapping. */
+  private bloodShown = 0;
   private bloodBarLabel: Phaser.GameObjects.Text | null = null;
 
   // ── Flail Craft (E / Click-when-idle) ──────────────────────────────────
@@ -437,17 +440,14 @@ export class MetalKit {
   initHud(): void {
     const { scene } = this.arena;
     if (this.bloodBarBg) { this.bloodBarBg.destroy(); this.bloodBarBg = null; }
-    if (this.bloodBarFill) { this.bloodBarFill.destroy(); this.bloodBarFill = null; }
     if (this.bloodBarLabel) { this.bloodBarLabel.destroy(); this.bloodBarLabel = null; }
 
     const x = 26;
     const y = 66;
-    this.bloodBarBg = scene.add.rectangle(x, y, 150, 12, 0x1a0a0a, 0.9)
-      .setOrigin(0, 0.5).setStrokeStyle(1, 0x772233).setDepth(23).setScrollFactor(0);
-    this.bloodBarFill = scene.add.rectangle(x + 1, y, 0, 10, 0xcc0022, 0.95)
-      .setOrigin(0, 0.5).setDepth(24).setScrollFactor(0);
-    this.bloodBarLabel = scene.add.text(x, y - 14, 'BLOOD', {
-      fontSize: '10px', color: '#dd6677', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
+    this.bloodShown = this.blood.player / BLOOD_MAX;
+    this.bloodBarBg = scene.add.graphics().setDepth(23).setScrollFactor(0);
+    this.bloodBarLabel = scene.add.text(x + 24, y - 15, 'BLOOD', {
+      fontSize: '10px', color: '#ff8899', fontFamily: FONT_DISPLAY, stroke: '#0d0a0c', strokeThickness: 3,
     }).setOrigin(0, 0.5).setDepth(24).setScrollFactor(0);
   }
 
@@ -498,8 +498,8 @@ export class MetalKit {
     // Blood bar
     this.blood = { player: 0, npc: 0 };
     if (this.bloodBarBg) { this.bloodBarBg.destroy(); this.bloodBarBg = null; }
-    if (this.bloodBarFill) { this.bloodBarFill.destroy(); this.bloodBarFill = null; }
     if (this.bloodBarLabel) { this.bloodBarLabel.destroy(); this.bloodBarLabel = null; }
+    this.bloodShown = 0;
 
     // Flails — nulled outright rather than via destroyFlail(), which throws sparks off the
     // dying mace and would fire them at last match's coordinates on the first frame.
@@ -2008,9 +2008,103 @@ export class MetalKit {
     }
   }
 
+  /**
+   * The blood tank: a riveted steel cylinder with a glass sight window the blood sloshes in
+   * (a live wave on its surface, bubbles rising), steel end caps, graduation marks, and a
+   * round pressure gauge bolted to the left end whose needle reads the same level.
+   */
   private updateBloodHud(): void {
-    if (!this.bloodBarBg || this.arena.elementId !== 'metal') return;
-    const ratio = this.blood.player / BLOOD_MAX;
-    this.bloodBarFill!.width = 148 * ratio;
+    const g = this.bloodBarBg;
+    if (!g || !g.active || this.arena.elementId !== 'metal') return;
+    const ratio = Phaser.Math.Clamp(this.blood.player / BLOOD_MAX, 0, 1);
+    this.bloodShown += (ratio - this.bloodShown) * 0.18;
+    const lv = this.bloodShown;
+    const col = this.pcol;
+    const t = this.vizT;
+    const x = 26, y = 66;
+    g.clear();
+
+    // Pressure gauge on the left end.
+    const gx = x + 9, gy = y;
+    // Tank body (glass sight window between two steel caps).
+    const tx = x + 20, tw = 130, th = 14, ty = y - th / 2;
+    g.fillStyle(0x000000, 0.4);
+    g.fillRoundedRect(tx + 1, ty + 3, tw, th, 5);
+    g.fillStyle(col(METAL.char), 1);
+    g.fillRoundedRect(tx - 2, ty - 2, tw + 4, th + 4, 6);
+    g.fillStyle(col(METAL.shadow), 1);
+    g.fillRect(tx + 6, ty + 1, tw - 12, th - 2);
+    // The blood, with a sloshing wave on its leading edge and a dark-to-bright body.
+    const fw = (tw - 12) * lv;
+    if (fw > 0.5) {
+      const L = tx + 6;
+      g.fillStyle(col(METAL.gore), 1);
+      g.fillRect(L, ty + 1, fw, th - 2);
+      g.fillStyle(col(METAL.crimson), 0.95);
+      g.fillRect(L, ty + 1, fw, (th - 2) * 0.55);
+      // Wave: a bulging front that rocks back and forth.
+      const wob = Math.sin(t * 5) * 1.6;
+      g.fillStyle(col(METAL.crimson), 1);
+      g.fillEllipse(L + fw + wob * 0.3, y, 5 + Math.abs(wob), th - 2);
+      g.fillStyle(col(METAL.rose), 0.5);
+      g.fillRect(L, ty + 2, fw, 1.4);
+      // Bubbles drifting along the tank.
+      for (let i = 0; i < 4; i++) {
+        const u = ((t * 0.25 + i * 0.29) % 1);
+        const bx = L + u * fw;
+        const by = y + Math.sin(t * 3 + i * 2) * 3;
+        g.fillStyle(col(METAL.blush), 0.55);
+        g.fillCircle(bx, by, 1 + (i % 2) * 0.5);
+      }
+    }
+    // Glass sheen and graduation marks.
+    g.fillStyle(col(METAL.white), 0.12);
+    g.fillRect(tx + 6, ty + 1.5, tw - 12, 3);
+    g.lineStyle(1, col(METAL.chrome), 0.45);
+    for (let k = 1; k < 4; k++) {
+      const mx = tx + 6 + ((tw - 12) * k) / 4;
+      g.lineBetween(mx, ty + th - 1, mx, ty + th - (k === 2 ? 6 : 4));
+    }
+    // Steel bands at each end and one round the middle, with rivets.
+    for (const bx of [tx, tx + tw - 6, tx + tw / 2 - 2]) {
+      const bw = bx === tx + tw / 2 - 2 ? 4 : 6;
+      g.fillStyle(col(METAL.iron), 1);
+      g.fillRect(bx, ty - 2, bw, th + 4);
+      g.fillStyle(col(METAL.chrome), 0.7);
+      g.fillRect(bx, ty - 2, bw, 1.5);
+      g.fillStyle(col(METAL.steel), 1);
+      g.fillCircle(bx + bw / 2, ty + 1, 1);
+      g.fillCircle(bx + bw / 2, ty + th - 1, 1);
+    }
+    g.lineStyle(1, col(METAL.gore), 0.9);
+    g.strokeRoundedRect(tx - 2, ty - 2, tw + 4, th + 4, 6);
+    // Full: the tank throbs.
+    if (lv > 0.98) {
+      g.lineStyle(2, col(METAL.rose), 0.4 + 0.3 * Math.sin(t * 8));
+      g.strokeRoundedRect(tx - 4, ty - 4, tw + 8, th + 8, 7);
+    }
+
+    // The gauge itself, drawn last so it sits over the tank's end.
+    g.fillStyle(col(METAL.iron), 1);
+    g.fillCircle(gx, gy, 11);
+    g.fillStyle(col(METAL.chrome), 1);
+    g.fillCircle(gx, gy, 9);
+    g.fillStyle(col(METAL.shadow), 1);
+    g.fillCircle(gx, gy, 7.6);
+    // Red zone on the dial's top end.
+    g.lineStyle(2, col(METAL.crimson), 0.9);
+    g.beginPath(); g.arc(gx, gy, 6, Math.PI * 0.05, Math.PI * 0.25, false); g.strokePath();
+    g.lineStyle(1, col(METAL.steel), 0.8);
+    for (let k = 0; k <= 4; k++) {
+      const a = Math.PI * 0.75 + (k / 4) * Math.PI * 1.5;
+      g.lineBetween(gx + Math.cos(a) * 5, gy + Math.sin(a) * 5, gx + Math.cos(a) * 7, gy + Math.sin(a) * 7);
+    }
+    const na = Math.PI * 0.75 + lv * Math.PI * 1.5 + Math.sin(t * 20) * 0.03 * lv;
+    g.lineStyle(1.6, col(METAL.rose), 1);
+    g.lineBetween(gx, gy, gx + Math.cos(na) * 6.4, gy + Math.sin(na) * 6.4);
+    g.fillStyle(col(METAL.brass), 1);
+    g.fillCircle(gx, gy, 1.6);
+    g.fillStyle(col(METAL.white), 0.35);
+    g.fillEllipse(gx - 2.5, gy - 3.5, 5, 2.4);
   }
 }

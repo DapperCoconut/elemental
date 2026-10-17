@@ -9,8 +9,9 @@ import {
   CreationForge, CreationFx, CreationMechRig, CreationNexus, MECH_ARM_TONES, MechArmKind,
   MechArmView, blueprintFrame, craftPlank, drawAutomaton, drawBolt, drawDagger, drawFlask,
   drawNail, drawSaw, drawSpeedPad, drawSpikedPanel, drawWrench, forgedShard, plankPanel, rivet,
-  wrenchShape,
+  wrenchShape, drawMechHpGauge, drawInventionPanel, drawNexusPlaque,
 } from './CreationVisuals';
+import { FONT_DISPLAY, FONT_UI } from '../../ui/Theme';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -217,6 +218,8 @@ export interface CreationMech {
   /** Damage instances taken, for the Shield arm's every-Nth block. */
   hits: number;
   prompt: Phaser.GameObjects.Text | null;
+  /** The riveted boiler-gauge HP strip; `hpBar`/`hpBg` are kept hidden for their old callers. */
+  hpGfx: Phaser.GameObjects.Graphics;
 }
 
 /** A repair orb lobbed out by a Med Core arm, waiting to be walked over. */
@@ -419,6 +422,8 @@ export class CreationKit {
   // Nexus (shared world object, one per match)
   private nexusRig: CreationNexus | null = null;
   private nexusLabel: Phaser.GameObjects.Text | null = null;
+  /** Brass nameplate under the Nexus label. */
+  private nexusPlaque: Phaser.GameObjects.Graphics | null = null;
   private nexusX = 0;
   private nexusY = 0;
   private nexusBolts: CreationNexusBolt[] = [];
@@ -482,6 +487,8 @@ export class CreationKit {
   private creatSliderFills: Phaser.GameObjects.Rectangle[] = [];
   private creatSliderHandles: Phaser.GameObjects.Rectangle[] = [];
   private creatInventionTimerText: Phaser.GameObjects.Text | null = null;
+  /** The inventor's console the three sliders are painted on. */
+  private creatInventionPanel: Phaser.GameObjects.Graphics | null = null;
   private creatInventionDragSlider = -1;
   private creatSawAccum = 0;
   private creatNailAccum = 0;
@@ -605,6 +612,7 @@ export class CreationKit {
 
     if (this.nexusRig) { this.nexusRig.destroy(); this.nexusRig = null; }
     if (this.nexusLabel) { this.nexusLabel.destroy(); this.nexusLabel = null; }
+    if (this.nexusPlaque) { this.nexusPlaque.destroy(); this.nexusPlaque = null; }
     for (const b of this.nexusBolts) b.icon.destroy();
     this.nexusBolts = [];
     for (const p of this.creatPotions) p.gfx.destroy();
@@ -672,7 +680,7 @@ export class CreationKit {
     this.creatPlayerSpeedPadEnd = 0; this.creatNpcSlowEnd = 0; this.creatNpcSlowMult = 1;
     if (this.creatMech) {
       const m = this.creatMech;
-      m.rig.destroy(); m.hpBar.destroy(); m.hpBg.destroy(); m.prompt?.destroy();
+      m.rig.destroy(); m.hpBar.destroy(); m.hpBg.destroy(); m.hpGfx.destroy(); m.prompt?.destroy();
       this.creatMech = null;
     }
     for (const o of this.creatMedOrbs) o.gfx.destroy();
@@ -702,8 +710,11 @@ export class CreationKit {
     // The whole machine — riveted plinth, counter-rotating gears, caged core — is one
     // self-driving rig (see CreationNexus); the kit just tells it what it is doing.
     this.nexusRig = new CreationNexus(this.scene, this.pcol, cx, cy, 3);
-    this.nexusLabel = this.add.text(cx, cy + 52, 'Nexus',
-      { fontSize: '11px', fontFamily: 'Arial', color: '#ff99cc' }).setOrigin(0.5).setDepth(4);
+    this.nexusPlaque?.destroy();
+    this.nexusPlaque = this.add.graphics().setDepth(3.9);
+    drawNexusPlaque(this.nexusPlaque, this.pcol, cx, cy + 52, 52);
+    this.nexusLabel = this.add.text(cx, cy + 52, 'NEXUS',
+      { fontSize: '9px', fontFamily: FONT_DISPLAY, color: '#4a1430', stroke: '#ffdd99', strokeThickness: 1 }).setOrigin(0.5).setDepth(4);
     // It powers on rather than blinking into being.
     this.pfx.gearPulse(cx, cy, 46, 700, CREATION.nexusLit, 5);
     this.pfx.sparks(cx, cy, 10, { speed: 120, size: 2.4, life: 620, depth: 5 });
@@ -810,6 +821,8 @@ export class CreationKit {
     this.nexusRig = null;
     this.nexusLabel?.destroy();
     this.nexusLabel = null;
+    this.nexusPlaque?.destroy();
+    this.nexusPlaque = null;
 
     // The machine tearing itself apart and standing up out of its own pieces.
     this.pfx.explosion(x, y, 78, { shards: 16, smoke: 3, core: CREATION.rust, debris: false });
@@ -844,14 +857,15 @@ export class CreationKit {
       if (a.kind === 'shield') maxHp += a.view.boosted ? SHIELD_BONUS_HP + 15 : SHIELD_BONUS_HP;
     }
 
-    const hpBg = this.add.rectangle(x, y + 58, 60, 6, 0x221108, 0.85).setDepth(10);
-    const hpBar = this.add.rectangle(x - 30, y + 58, 60, 6, CREATION.brass, 0.95).setDepth(11).setOrigin(0, 0.5);
+    const hpBg = this.add.rectangle(x, y + 58, 60, 6, 0x221108, 0.85).setDepth(10).setVisible(false);
+    const hpBar = this.add.rectangle(x - 30, y + 58, 60, 6, CREATION.brass, 0.95).setDepth(11).setOrigin(0, 0.5).setVisible(false);
+    const hpGfx = this.add.graphics().setDepth(11);
     const prompt = this.add.text(x, y - 62, '[R] BOARD', {
       fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
       color: '#ffcc66', stroke: '#2a1206', strokeThickness: 4,
     }).setOrigin(0.5).setDepth(16);
 
-    this.creatMech = { rig, hp: maxHp, maxHp, hpBar, hpBg, arms, mounted: false, x, y, hits: 0, prompt };
+    this.creatMech = { rig, hp: maxHp, maxHp, hpBar, hpBg, arms, mounted: false, x, y, hits: 0, prompt, hpGfx };
     // Announce what it came out of the forge carrying.
     arms.forEach((a, i) => {
       const info = CREATION_MECH_ARM_INFO[a.kind];
@@ -946,6 +960,7 @@ export class CreationKit {
     mech.rig.destroy();
     mech.hpBar.destroy();
     mech.hpBg.destroy();
+    mech.hpGfx.destroy();
     mech.prompt?.destroy();
     if (mech.mounted) {
       this.player.damageAbsorber = null;
@@ -979,7 +994,7 @@ export class CreationKit {
     const rect = this.add.graphics().setDepth(4);
     plankPanel(rect, this.col(owner), w, h, 0.92, { steel });
     rect.setPosition(cx, cy);
-    const hpBg = this.add.rectangle(cx, cy - h / 2 - 6, w, 4, 0x333333).setDepth(5);
+    const hpBg = this.add.rectangle(cx, cy - h / 2 - 6, w, 4, CREATION.soot, 0.92).setDepth(5).setStrokeStyle(1, CREATION.brass, 0.85);
     const hpBar = this.add.rectangle(cx - w / 2, cy - h / 2 - 6, w, 4, CREATION.tan).setDepth(6).setOrigin(0, 0.5);
     this.creatBlockers.push({ rect, x: cx, y: cy, w, h, hp: maxHp, maxHp, owner, hpBar, hpBg });
     // Halves left by Blade Split were already standing — only a fresh build gets assembled.
@@ -1358,19 +1373,25 @@ export class CreationKit {
     this.creatSawAccum = 0; this.creatNailAccum = 0; this.creatBiasHealAccum = 0;
     this.creatInventionDragSlider = -1;
     const labels = ['Danger', 'Bias', 'Clutter'];
-    const colors = [0xff5544, 0xffcc33, 0x88aaff];
-    const x0 = INVENTION_SLIDER_X, y0 = INVENTION_SLIDER_Y, trackW = INVENTION_SLIDER_W, rowH = INVENTION_SLIDER_ROW;
+    const x0 = INVENTION_SLIDER_X, y0 = INVENTION_SLIDER_Y, rowH = INVENTION_SLIDER_ROW;
+    // One console Graphics, repainted each frame in updateInventionSliderInput; only the text
+    // stays as separate objects.
+    this.creatInventionPanel = this.add.graphics().setScrollFactor(0).setDepth(60);
+    this.creatInventionUi.push(this.creatInventionPanel);
+    const title = this.add.text(x0 - 4, y0 - 22, 'INVENTION', {
+      fontFamily: FONT_DISPLAY, fontSize: '10px', color: '#ffdd88', stroke: '#2a1206', strokeThickness: 3,
+    }).setScrollFactor(0).setDepth(62);
+    this.creatInventionUi.push(title);
     for (let i = 0; i < 3; i++) {
       const y = y0 + i * rowH;
-      const lbl = this.add.text(x0, y - 13, labels[i], { fontSize: '12px', color: '#ffffff' }).setScrollFactor(0).setDepth(60);
-      const track = this.add.rectangle(x0, y + 6, trackW, 8, 0x222228, 0.9).setOrigin(0, 0.5).setScrollFactor(0).setDepth(60).setStrokeStyle(1, 0x555560, 1);
-      const fill = this.add.rectangle(x0, y + 6, 0, 8, colors[i], 0.9).setOrigin(0, 0.5).setScrollFactor(0).setDepth(61);
-      const handle = this.add.rectangle(x0, y + 6, 10, 18, 0xffffff, 1).setScrollFactor(0).setDepth(62).setStrokeStyle(1, 0x000000, 0.5);
-      this.creatSliderFills.push(fill);
-      this.creatSliderHandles.push(handle);
-      this.creatInventionUi.push(lbl, track, fill, handle);
+      const lbl = this.add.text(x0, y - 9, labels[i].toUpperCase(), {
+        fontFamily: FONT_UI, fontSize: '10px', fontStyle: 'bold', color: '#e8f0ff', stroke: '#0a1424', strokeThickness: 3,
+      }).setScrollFactor(0).setDepth(62).setOrigin(0, 0.5);
+      this.creatInventionUi.push(lbl);
     }
-    this.creatInventionTimerText = this.add.text(x0, y0 + 3 * rowH - 2, '30.0s', { fontSize: '16px', fontStyle: 'bold', color: '#ff3333' }).setScrollFactor(0).setDepth(62);
+    this.creatInventionTimerText = this.add.text(x0, y0 + 3 * rowH + 6, '30.0s', {
+      fontFamily: FONT_DISPLAY, fontSize: '15px', color: '#ff5544', stroke: '#1a0604', strokeThickness: 4,
+    }).setScrollFactor(0).setDepth(62).setOrigin(0, 0.5);
     this.creatInventionUi.push(this.creatInventionTimerText);
   }
 
@@ -1380,6 +1401,7 @@ export class CreationKit {
     this.creatSliderFills = [];
     this.creatSliderHandles = [];
     this.creatInventionTimerText = null;
+    this.creatInventionPanel = null;
   }
 
   private endUltimateInvention(): void {
@@ -1417,6 +1439,12 @@ export class CreationKit {
     for (let i = 0; i < 3; i++) {
       if (this.creatSliderFills[i]) this.creatSliderFills[i].setSize(vals[i] * trackW, 8);
       if (this.creatSliderHandles[i]) this.creatSliderHandles[i].setX(x0 + vals[i] * trackW);
+    }
+    if (this.creatInventionPanel) {
+      this.creatInventionPanel.clear();
+      drawInventionPanel(this.creatInventionPanel, this.pcol, x0, y0, trackW, rowH, vals,
+        [0xff5544, 0xffcc33, 0x88aaff], this.creatInventionTimer / 30000, this.creatInventionDragSlider,
+        this.scene.time.now / 1000);
     }
     return this.creatInventionDragSlider >= 0;
   }
@@ -1763,7 +1791,7 @@ export class CreationKit {
     const rect = this.add.graphics().setDepth(4);
     drawSpeedPad(rect, this.pcol, w, h);
     rect.setPosition(x, y);
-    const hpBg = this.add.rectangle(x, y - h / 2 - 6, w, 4, 0x333333, 0.8).setDepth(5);
+    const hpBg = this.add.rectangle(x, y - h / 2 - 6, w, 4, CREATION.soot, 0.92).setDepth(5).setStrokeStyle(1, CREATION.brass, 0.85);
     const hpBar = this.add.rectangle(x - w / 2, y - h / 2 - 6, w, 4, CREATION.steel, 0.9).setDepth(6).setOrigin(0, 0.5);
     this.creatSpeedPads.push({
       rect, x, y, w, h, hp: SPRINGBOARD_PAD_HP, maxHp: SPRINGBOARD_PAD_HP,
@@ -1994,6 +2022,9 @@ export class CreationKit {
     const frac = Math.max(0, mech.hp / mech.maxHp);
     mech.hpBg.setPosition(mech.x, mech.y + 58);
     mech.hpBar.setPosition(mech.x - 30, mech.y + 58).setSize(60 * frac, 6);
+    mech.hpGfx.clear();
+    drawMechHpGauge(mech.hpGfx, this.pcol, mech.x, mech.y + 58, frac, time / 1000,
+      this.player.forceInvisible && mech.mounted ? 0 : 1);
 
     // Boarding prompt: only while you are close enough for R to actually do it.
     if (mech.prompt) {
@@ -2540,7 +2571,7 @@ export class CreationKit {
         const padSpr = this.add.graphics().setDepth(4);
         drawSpeedPad(padSpr, this.pcol, pw, ph);
         padSpr.setPosition(mouseX, mouseY);
-        const padHpBg = this.add.rectangle(mouseX, mouseY - ph / 2 - 6, pw, 4, 0x333333, 0.8).setDepth(5);
+        const padHpBg = this.add.rectangle(mouseX, mouseY - ph / 2 - 6, pw, 4, CREATION.soot, 0.92).setDepth(5).setStrokeStyle(1, CREATION.brass, 0.85);
         const padHpBar = this.add.rectangle(mouseX - pw / 2, mouseY - ph / 2 - 6, pw, 4, CREATION.steel, 0.9).setDepth(6).setOrigin(0, 0.5);
         this.creatSpeedPads.push({ rect: padSpr, x: mouseX, y: mouseY, w: pw, h: ph, hp: padHp, maxHp: padHp, hpBar: padHpBar, hpBg: padHpBg, owner: 'player' });
         this.pfx.assemble(mouseX, mouseY, pw, ph, 300);
@@ -2566,7 +2597,7 @@ export class CreationKit {
         const spkSpr = this.add.graphics().setDepth(4);
         drawSpikedPanel(spkSpr, this.pcol, sw, sh, false, spkSteel);
         spkSpr.setPosition(mouseX, mouseY);
-        const spkHpBg = this.add.rectangle(mouseX, mouseY - sh / 2 - 6, sw, 4, 0x333333, 0.8).setDepth(5);
+        const spkHpBg = this.add.rectangle(mouseX, mouseY - sh / 2 - 6, sw, 4, CREATION.soot, 0.92).setDepth(5).setStrokeStyle(1, CREATION.brass, 0.85);
         const spkHpBar = this.add.rectangle(mouseX - sw / 2, mouseY - sh / 2 - 6, sw, 4, CREATION.rust, 0.9).setDepth(6).setOrigin(0, 0.5);
         this.creatSpikedBlocks.push({ rect: spkSpr, x: mouseX, y: mouseY, w: sw, h: sh, hp: spkHp, maxHp: spkHp, hpBar: spkHpBar, hpBg: spkHpBg, owner: 'player', tickAccum: 0, invincible: false });
         this.pfx.assemble(mouseX, mouseY, sw, sh, 340);

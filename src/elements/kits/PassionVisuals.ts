@@ -192,30 +192,91 @@ export function mitre(
   cross(g, tint, c.x, c.y, 5.4 * scale, tilt, DEV.gold, alpha, DEV.umber);
 }
 
-/** The faith bar over a victim's head, with notches at the three thresholds. */
+/**
+ * The faith bar over a victim's head, as a strip of stained glass: a lancet-ended lead frame
+ * split into four panes (the quarter thresholds), each pane a lozenge of two glass tones that
+ * lights from the left as faith fills, a votive candle standing on each threshold that catches
+ * when it is crossed, and the cross capping the end.
+ */
 export function faithBar(
   g: Phaser.GameObjects.Graphics, tint: ColorFn,
   x: number, y: number, w: number, h: number, ratio: number, t: number,
 ): void {
+  const P = (px: number, py: number): Phaser.Geom.Point => new Phaser.Geom.Point(px, py);
   const left = x - w / 2;
-  g.fillStyle(tint(DEV.ink), 0.82);
-  g.fillRoundedRect(left - 1.5, y - 1.5, w + 3, h + 3, 2.5);
-  if (ratio > 0) {
-    g.fillStyle(tint(DEV.ochre), 1);
-    g.fillRect(left, y, w * ratio, h);
-    g.fillStyle(tint(DEV.holy), 1);
-    g.fillRect(left, y, w * ratio, h * 0.6);
-    // A glint running along the filled part.
-    const gx = left + ((t * 40) % Math.max(1, w * ratio));
-    g.fillStyle(tint(DEV.white), 0.75);
-    g.fillRect(gx, y, 3, h * 0.6);
+  const right = left + w;
+  const top = y - 1;
+  const bot = y + h + 1;
+  const mid = (top + bot) / 2;
+  const frame = [P(left - 5, mid), P(left, top - 1.5), P(right, top - 1.5), P(right + 5, mid), P(right, bot + 1.5), P(left, bot + 1.5)];
+  // Lead frame with a drop shadow.
+  g.fillStyle(tint(DEV.ink), 0.45);
+  g.fillPoints(frame.map((q) => P(q.x + 1, q.y + 1.5)), true);
+  g.fillStyle(tint(DEV.ink), 0.92);
+  g.fillPoints(frame, true);
+  // Unlit glass: dim, faintly coloured.
+  g.fillStyle(tint(DEV.umber), 0.55);
+  g.fillRect(left, top, w, bot - top);
+  // Lit glass: each pane split into a lozenge of two tones, filled up to `ratio`.
+  const k = Phaser.Math.Clamp(ratio, 0, 1);
+  const fill = w * k;
+  const pw = w / 4;
+  for (let i = 0; i < 4; i++) {
+    const x0 = left + i * pw;
+    const x1 = Math.min(x0 + pw, left + fill);
+    if (x1 <= x0) break;
+    const cx = x0 + pw / 2;
+    g.fillStyle(tint(i % 2 ? DEV.gold : DEV.ochre), 1);
+    g.fillRect(x0, top, x1 - x0, bot - top);
+    // The lozenge: a diamond of brighter glass in the middle of the pane, clipped to the fill.
+    const dpts = [P(cx, top), P(x0 + pw, mid), P(cx, bot), P(x0, mid)]
+      .map((q) => P(Math.min(q.x, x1), q.y));
+    g.fillStyle(tint(i === 3 ? DEV.white : DEV.holy), 1);
+    g.fillPoints(dpts, true);
   }
-  for (const m of [0.25, 0.5, 0.75]) {
-    g.fillStyle(tint(ratio >= m ? DEV.white : DEV.umber), 0.9);
-    g.fillRect(left + w * m - 0.5, y - 1, 1, h + 2);
+  if (fill > 0) {
+    // Light pouring through: a soft bloom over the lit glass and a glint running along it.
+    g.fillStyle(tint(DEV.white), 0.22 + 0.1 * Math.sin(t * 3));
+    g.fillRect(left, top, fill, (bot - top) * 0.4);
+    const gx = left + ((t * 40) % Math.max(1, fill));
+    g.fillStyle(tint(DEV.white), 0.7);
+    g.fillPoints([P(gx, top), P(gx + 3, top), P(gx + 1, bot), P(gx - 2, bot)], true);
+  }
+  // Lead came between the panes and around the edge.
+  g.lineStyle(1, tint(DEV.ink), 1);
+  g.strokeRect(left, top, w, bot - top);
+  for (let i = 1; i < 4; i++) g.lineBetween(left + i * pw, top - 1.5, left + i * pw, bot + 1.5);
+  // Gilt rim.
+  g.lineStyle(0.8, tint(DEV.ochre), 0.9);
+  g.strokePoints(frame, true, true);
+  // A votive candle on each threshold, lit once it is crossed.
+  for (let i = 1; i < 4; i++) {
+    const m = i / 4;
+    const cx = left + w * m;
+    const lit = k >= m;
+    g.fillStyle(tint(DEV.ink), 0.9);
+    g.fillRect(cx - 1.8, top - 6.5, 3.6, 5.5);
+    g.fillStyle(tint(lit ? DEV.white : DEV.pale), lit ? 1 : 0.55);
+    g.fillRect(cx - 1.2, top - 6, 2.4, 4.6);
+    if (lit) {
+      const fl = Math.sin(t * 13 + i * 2.1) * 0.5;
+      g.fillStyle(tint(DEV.fire), 0.35);
+      g.fillCircle(cx, top - 8.6, 3.2);
+      g.fillStyle(tint(DEV.fireHot), 1);
+      g.fillTriangle(cx - 1.3, top - 6.6, cx + 1.3, top - 6.6, cx + fl, top - 11.2);
+      g.fillStyle(tint(DEV.white), 1);
+      g.fillCircle(cx, top - 7.4, 0.7);
+    } else {
+      g.lineStyle(0.8, tint(DEV.ink), 0.8);
+      g.lineBetween(cx, top - 6, cx, top - 7.6);
+    }
   }
   // A small cross capping the bar, so it can never be mistaken for a health bar.
-  cross(g, tint, left + w + 6, y + h / 2, 4.2, 0, ratio >= 1 ? DEV.white : DEV.holy, 1, DEV.ink);
+  cross(g, tint, right + 9, mid, 4.6, 0, k >= 1 ? DEV.white : DEV.holy, 1, DEV.ink);
+  if (k >= 1) {
+    g.fillStyle(tint(DEV.holy), 0.25 + 0.15 * Math.sin(t * 5));
+    g.fillCircle(right + 9, mid, 7);
+  }
 }
 
 /**
@@ -552,6 +613,109 @@ export function crashMark(
   }
 }
 
+// ── Upgrades ──────────────────────────────────────────────────────────────
+
+/** Holy fire, the Q+ kind: the chariot's licks repainted gold-to-white instead of red-to-orange. */
+function yellowLick(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  x: number, y: number, ang: number, len: number, w: number, alpha: number,
+): void {
+  holyRay(g, tint, x, y, ang, len * 1.1, w * 1.5, DEV.ochre, alpha * 0.5);
+  holyRay(g, tint, x, y, ang, len, w, DEV.gold, alpha * 0.85);
+  holyRay(g, tint, x, y, ang, len * 0.62, w * 0.5, DEV.fireHot, alpha * 0.95);
+  holyRay(g, tint, x, y, ang, len * 0.3, w * 0.22, DEV.white, alpha);
+}
+
+/**
+ * Q+ — a pillar of yellow fire dropped from the sky. `drop` 0→1 is the column falling in (it
+ * lands as a shaft of light), `life` 0→1 the burn after; the flames on the floor gutter out over
+ * the last fifth.
+ */
+export function firePillar(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  x: number, y: number, r: number, drop: number, life: number, t: number, seed: number,
+): void {
+  const fade = life < 0.8 ? 1 : 1 - (life - 0.8) / 0.2;
+  // The shaft from the sky: narrow while falling, full width once it is down.
+  const w = r * (drop < 1 ? 0.25 + drop * 0.35 : 0.6 + 0.05 * Math.sin(t * 22 + seed));
+  const top = y - 520;
+  const bottom = drop < 1 ? Phaser.Math.Linear(top, y, easeIn(drop)) : y;
+  g.fillStyle(tint(DEV.gold), 0.18 * fade);
+  g.fillRect(x - w * 1.5, top, w * 3, bottom - top);
+  g.fillStyle(tint(DEV.fireHot), 0.32 * fade);
+  g.fillRect(x - w * 0.8, top, w * 1.6, bottom - top);
+  g.fillStyle(tint(DEV.white), 0.55 * fade);
+  g.fillRect(x - w * 0.25, top, w * 0.5, bottom - top);
+  if (drop < 1) return;
+  // The burn on the floor: scorched gold disc, ring, and licks leaning up out of it.
+  g.fillStyle(tint(DEV.ochre), 0.22 * fade);
+  g.fillEllipse(x, y, r * 2.1, r * 0.95);
+  g.fillStyle(tint(DEV.fireHot), 0.18 * fade);
+  g.fillEllipse(x, y, r * 1.5, r * 0.65);
+  g.lineStyle(2.4, tint(DEV.gold), 0.7 * fade);
+  g.strokeEllipse(x, y, r * 2, r * 0.9);
+  const n = 11;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * TAU + seed;
+    const px = x + Math.cos(a) * r * 0.78;
+    const py = y + Math.sin(a) * r * 0.36;
+    const len = r * (0.55 + 0.35 * jitter(seed, i)) * (0.8 + 0.2 * Math.sin(t * 14 + i * 1.7));
+    yellowLick(g, tint, px, py, -Math.PI / 2 + Math.sin(t * 6 + i) * 0.25, len, 5.5, fade);
+  }
+  yellowLick(g, tint, x, y, -Math.PI / 2 + Math.sin(t * 9 + seed) * 0.12, r * 1.6, 11, fade);
+  cross(g, tint, x, y - r * 0.9 - Math.sin(t * 5) * 3, 7, 0, DEV.white, 0.85 * fade, DEV.ochre);
+}
+
+/**
+ * Q+ — where the next pillar will come down: four gold ticks closing on a cross, with one pip per
+ * pillar left. Dim when the pillars are spent (it is then only the crash target).
+ */
+export function pillarCrosshair(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  x: number, y: number, r: number, left: number, max: number, t: number,
+): void {
+  const live = left > 0;
+  const a = live ? 0.9 : 0.35;
+  const breathe = 1 + Math.sin(t * 6) * 0.06;
+  const rr = r * breathe;
+  g.lineStyle(4, tint(DEV.ochre), a * 0.35);
+  g.strokeCircle(x, y, rr);
+  g.lineStyle(1.6, tint(live ? DEV.fireHot : DEV.pale), a);
+  g.strokeCircle(x, y, rr);
+  for (let i = 0; i < 4; i++) {
+    const ang = (i / 4) * TAU + t * 0.6;
+    const ca = Math.cos(ang);
+    const sa = Math.sin(ang);
+    g.lineStyle(2.6, tint(DEV.gold), a);
+    g.lineBetween(x + ca * (rr - 9), y + sa * (rr - 9), x + ca * (rr + 7), y + sa * (rr + 7));
+  }
+  cross(g, tint, x, y, 6, 0, live ? DEV.fireHot : DEV.pale, a, DEV.ochre);
+  for (let i = 0; i < max; i++) {
+    const px = x + (i - (max - 1) / 2) * 11;
+    const py = y + rr + 12;
+    g.fillStyle(tint(DEV.ink), a * 0.5);
+    g.fillCircle(px, py, 4);
+    g.fillStyle(tint(i < left ? DEV.fireHot : DEV.umber), a);
+    g.fillCircle(px, py, 3);
+  }
+}
+
+/**
+ * Q+ — the priest up in the sky over the arena: a small sun with a glory turning round it,
+ * pinned to the top edge above wherever they are aiming.
+ */
+export function skyPriest(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn, x: number, y: number, t: number,
+): void {
+  glory(g, tint, x, y, 9, 18 + Math.sin(t * 3) * 3, 12, t * 0.8, 0.7, 2);
+  g.fillStyle(tint(DEV.gold), 0.35);
+  g.fillCircle(x, y, 13);
+  g.fillStyle(tint(DEV.fireHot), 0.9);
+  g.fillCircle(x, y, 8);
+  g.fillStyle(tint(DEV.white), 1);
+  g.fillCircle(x - 1.5, y - 1.5, 3.5);
+}
+
 // ── Fx ────────────────────────────────────────────────────────────────────
 
 export class PassionFx extends FxBase {
@@ -769,6 +933,50 @@ export class PassionFx extends FxBase {
     });
   }
 
+  /** Click+ — a letter blesses an enemy shot: a gold flash and a little cross off it. */
+  disarm(x: number, y: number): void {
+    this.anim(10, 380, (g, t) => {
+      const fade = 1 - t;
+      g.lineStyle(2, this.tint(DEV.gold), fade * 0.9);
+      g.strokeCircle(x, y, 6 + easeOut(t) * 14);
+      cross(g, this.tint, x, y - 6 - t * 16, 5, 0, DEV.white, fade, DEV.gold);
+    });
+  }
+
+  /** E+ — sins washed off in the holy water: a column of bubbles and a rising ring. */
+  purge(x: number, y: number, power: number): void {
+    const n = 8 + Math.round(power * 10);
+    const seeds = Array.from({ length: n }, () => ({
+      ox: (Math.random() - 0.5) * 40, r: 2 + Math.random() * 3.5, s: Math.random() * 9, d: 0.4 + Math.random() * 0.6,
+    }));
+    this.anim(10, 900, (g, t) => {
+      const fade = 1 - easeIn(t);
+      for (const b of seeds) {
+        const py = y + 10 - easeOut(Math.min(1, t / b.d)) * 70;
+        const px = x + b.ox + Math.sin(t * 12 + b.s) * 4;
+        g.lineStyle(1.4, this.tint(DEV.waterLit), fade * 0.9);
+        g.strokeCircle(px, py, b.r);
+        g.fillStyle(this.tint(DEV.white), fade * 0.6);
+        g.fillCircle(px - b.r * 0.35, py - b.r * 0.35, b.r * 0.3);
+      }
+    });
+    this.ring(x, y, 8, 46 + power * 30, DEV.water, 700);
+    this.sparkle(x, y - 10, 6 + Math.round(power * 6), 34, DEV.waterLit, 800);
+  }
+
+  /** Q+ — a pillar lands: a gold flash and a short ring of fire on the floor. */
+  pillarLand(x: number, y: number, r: number): void {
+    this.flashIn(x, y, r * 0.6, DEV.white, DEV.gold, 12);
+    this.anim(11, 420, (g, t) => {
+      const fade = 1 - t;
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * TAU;
+        yellowLick(g, this.tint, x + Math.cos(a) * r * 0.3 * easeOut(t), y + Math.sin(a) * r * 0.14 * easeOut(t),
+          a, r * (0.3 + easeOut(t) * 0.5), 5, fade);
+      }
+    });
+  }
+
   /**
    * Conversion — the bar filled. A shaft of light drops on them from above, a cross rises out of
    * the body and the glory blooms behind it. Plays over a fighter that is already gone, so it is
@@ -805,15 +1013,16 @@ const PASSION_AVATAR: AvatarSpec = {
 };
 
 /**
- * The priest: a plain light-gold orb (the baked `elem-passion`) wearing a **mitre** — the one
- * accessory. Nothing else is ever painted on the rig except the light it gives off.
+ * The priest: a plain light-gold orb (the baked `elem-passion`) wearing a **mitre**, with a white
+ * stole and a pectoral cross painted on the body layer.
  *
  * - **Preaching** (holding Click) draws the hands together in front in a prayer and lets a glory
  *   of rays build behind the head as the sermon charges.
  * - **Riding** (Ascendance) hides the rig entirely; the kit paints the priest on the chariot.
  *
- * Mastery enhances the hat rather than adding to it: a taller mitre with gilded trim, gold eyes,
- * wider coronas on the hands and a stronger under-glow.
+ * Mastered (Saint): a gilded cruciform nimbus stands behind him with stars turning on its rim,
+ * the stole turns cloth-of-gold, the pectoral cross goes white with a jewel, the mitre grows
+ * taller with gold trim, gold eyes, wider coronas and a stronger under-glow.
  */
 export class PassionAvatar extends BaseAvatar {
   /** 0–1 — how charged the current sermon is; 0 when not preaching. */
@@ -844,9 +1053,43 @@ export class PassionAvatar extends BaseAvatar {
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? DEV.holy : DEV.white);
     this.forEachHandLayer(0, (glow) => {
-      glow.setRadius(on ? 13.5 : 10);
-      glow.setFillStyle(this.tint(on ? DEV.pale : DEV.holy), on ? 0.34 : 0.22);
+      glow.setRadius(on ? 14.5 : 10);
+      glow.setFillStyle(this.tint(on ? DEV.pale : DEV.holy), on ? 0.4 : 0.22);
     });
+  }
+
+  /**
+   * Vestments on the orb: a white stole hanging from the shoulders in two gold-edged bands with a
+   * small cross at each end, and a pectoral cross on a fine chain at the chest.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    void a;
+    const m = this.mastered;
+    const sway = Math.sin(this.t * 1.6) * 0.6;
+    for (const side of [-1, 1]) {
+      const pts = [
+        new Phaser.Geom.Point(x + side * 6, y + 0.5),
+        new Phaser.Geom.Point(x + side * 11, y - 1),
+        new Phaser.Geom.Point(x + side * 12.5 + sway, y + 17),
+        new Phaser.Geom.Point(x + side * 7 + sway, y + 18),
+      ];
+      g.fillStyle(this.tint(DEV.umber), alpha * 0.35);
+      g.fillPoints(pts.map((p) => new Phaser.Geom.Point(p.x + 0.8, p.y + 1)), true);
+      g.fillStyle(this.tint(m ? DEV.gold : DEV.white), alpha * 0.95);
+      g.fillPoints(pts, true);
+      g.lineStyle(1, this.tint(m ? DEV.white : DEV.ochre), alpha);
+      g.strokePoints(pts, true, true);
+      cross(g, this.tint, x + side * 9.6 + sway, y + 13, 3.2, 0, m ? DEV.white : DEV.gold, alpha, DEV.umber);
+    }
+    // Pectoral cross on its chain.
+    g.lineStyle(0.8, this.tint(DEV.ochre), alpha * 0.85);
+    g.lineBetween(x - 5, y + 1, x, y + 6);
+    g.lineBetween(x + 5, y + 1, x, y + 6);
+    cross(g, this.tint, x, y + 9.5, m ? 5.4 : 4.6, Math.sin(this.t * 1.4) * 0.08, m ? DEV.white : DEV.gold, alpha, DEV.umber);
+    if (m) {
+      g.fillStyle(this.tint(DEV.waterLit), alpha * (0.7 + 0.3 * Math.sin(this.t * 3)));
+      g.fillCircle(x, y + 8.6, 1);
+    }
   }
 
   protected emitTrail(x: number, y: number): void {
@@ -858,6 +1101,34 @@ export class PassionAvatar extends BaseAvatar {
     const k = this.intensity * (this.mastered ? 1.15 : 1);
     g.fillStyle(this.tint(DEV.holy), a * (this.mastered ? 0.3 : 0.2) * k * (1 + this.preach * 0.6));
     g.fillCircle(x, y, 28 * k);
+    if (this.mastered) {
+      // Saint: a cruciform nimbus — a gilded ring standing behind him with a cross in it, its
+      // arms reaching past the orb, and twelve small stars turning on the rim.
+      const ny = y - 3;
+      const R = 31;
+      g.fillStyle(this.tint(DEV.pale), alpha * 0.22);
+      g.fillCircle(x, ny, R);
+      g.lineStyle(4, this.tint(DEV.gold), alpha * 0.55);
+      g.strokeCircle(x, ny, R);
+      g.lineStyle(1.4, this.tint(DEV.white), alpha * (0.7 + 0.2 * Math.sin(this.t * 3)));
+      g.strokeCircle(x, ny, R - 1);
+      for (let i = 0; i < 4; i++) {
+        const ang = (i / 4) * TAU - Math.PI / 2;
+        const ca = Math.cos(ang), sa = Math.sin(ang);
+        g.fillStyle(this.tint(DEV.gold), alpha * 0.85);
+        g.fillPoints([
+          new Phaser.Geom.Point(x + ca * 18 - sa * 4, ny + sa * 18 + ca * 4),
+          new Phaser.Geom.Point(x + ca * R - sa * 5.5, ny + sa * R + ca * 5.5),
+          new Phaser.Geom.Point(x + ca * R + sa * 5.5, ny + sa * R - ca * 5.5),
+          new Phaser.Geom.Point(x + ca * 18 + sa * 4, ny + sa * 18 - ca * 4),
+        ], true);
+      }
+      for (let i = 0; i < 12; i++) {
+        const ang = this.t * 0.4 + (i / 12) * TAU;
+        g.fillStyle(this.tint(DEV.white), alpha * (0.5 + 0.5 * Math.sin(this.t * 4 + i)));
+        g.fillCircle(x + Math.cos(ang) * (R + 3.5), ny + Math.sin(ang) * (R + 3.5), 1.1);
+      }
+    }
     if (this.preach > 0.02) {
       glory(g, this.tint, x, y - 4, 20, 10 + this.preach * 22, 12, this.t * 0.5, alpha * this.preach * 0.75, 2.2);
     }

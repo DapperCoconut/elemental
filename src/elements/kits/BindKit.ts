@@ -7,7 +7,9 @@ import {
   BND, BindAvatar, BindColorFn, BindFx, arenaBinding, chainLink, chainRun, cosmicVeil, cultistFigure,
   darkMark, eviscerateCharge, faithRing, godBeam, hexWard, idolStatue, oblivionShard, overrageAura,
   patheticLunge, patronEye, ritualDagger, spreadReticle, vesselHalo, vesselMark,
+  angerPlaque, heatVial, tithePlaque,
 } from './BindVisuals';
+import { FONT_DISPLAY } from '../../ui/Theme';
 import { meterGain } from '../../combat/Meters';
 
 type Owner = 'player' | 'npc';
@@ -445,6 +447,8 @@ export class BindKit {
   /** The patron itself, its bar and every beam it fires — over everything. */
   private godGfx: Phaser.GameObjects.Graphics | null = null;
   private prompt: Phaser.GameObjects.Text | null = null;
+  /** The carved tablet behind the sacrifice banner, repainted each frame while it stands. */
+  private promptGfx: Phaser.GameObjects.Graphics | null = null;
   /** The slots the prompt is currently offering, and whether it has stopped stalling yet. */
   private promptKeys = '';
   private promptReady = false;
@@ -684,6 +688,7 @@ export class BindKit {
     this.airGfx?.destroy(); this.airGfx = null;
     this.godGfx?.destroy(); this.godGfx = null;
     this.prompt?.destroy(); this.prompt = null;
+    this.promptGfx?.destroy(); this.promptGfx = null;
     this.promptKeys = '';
     this.promptReady = false;
 
@@ -1131,9 +1136,12 @@ export class BindKit {
     this.promptReady = false;
     this.prompt = this.api.scene.add.text(width / 2, height - 96,
       this.promptText(false), {
-        fontFamily: 'monospace', fontSize: '17px', fontStyle: 'bold',
-        color: this.hex(BND.goldLit), backgroundColor: '#160a26', padding: { x: 12, y: 7 },
+        fontFamily: FONT_DISPLAY, fontSize: '16px',
+        color: this.hex(BND.goldLit), stroke: '#080415', strokeThickness: 4,
+        padding: { x: 4, y: 4 },
       }).setOrigin(0.5).setScrollFactor(0).setDepth(30);
+    this.promptGfx?.destroy();
+    this.promptGfx = this.api.scene.add.graphics().setScrollFactor(0).setDepth(29.9);
   }
 
   private promptText(ready: boolean): string {
@@ -1152,6 +1160,8 @@ export class BindKit {
   private hidePrompt(): void {
     this.prompt?.destroy();
     this.prompt = null;
+    this.promptGfx?.destroy();
+    this.promptGfx = null;
     this.promptReady = false;
   }
 
@@ -2063,20 +2073,7 @@ export class BindKit {
 
       // The heat bar, sitting above the health bar. Only ever shown when there is heat in it.
       if (s.heat > 0.01 || s.overheated) {
-        const tint = this.col(owner);
-        const w = 42;
-        const by = f.y - 46;
-        g.fillStyle(tint(BND.void), 0.8);
-        g.fillRect(f.x - w / 2 - 1, by - 1, w + 2, 6);
-        g.fillStyle(tint(BND.cosmicDeep), 0.9);
-        g.fillRect(f.x - w / 2, by, w, 4);
-        const hot = s.overheated || s.heat > 0.75;
-        g.fillStyle(tint(s.overheated ? BND.wrath : hot ? BND.heat : BND.gold),
-          s.overheated ? 0.6 + 0.4 * Math.sin(this.vizT * 14) : 0.95);
-        g.fillRect(f.x - w / 2, by, w * s.heat, 4);
-        // A tick at the top of the scale, so "how close am I" is a position rather than a guess.
-        g.fillStyle(tint(BND.wrath), 0.9);
-        g.fillRect(f.x + w / 2 - 1.4, by - 1.6, 1.6, 7.2);
+        heatVial(g, this.col(owner), f.x, f.y - 46, 42, s.heat, s.overheated, this.vizT);
       }
     }
   }
@@ -2106,24 +2103,10 @@ export class BindKit {
         0.28 + anger * 0.34 + awake * 0.38, 1,
         { wrath, drift: Math.sin(this.vizT * 0.7) + (wrath ? Math.sin(this.vizT * 11) : 0), t: this.vizT });
 
-      // The anger bar, hung under the eye like a jaw.
+      // The anger bar, hung under the eye like a jaw — a carved reliquary tablet.
       const w = 220;
       const by = EYE_Y + 44;
-      g.fillStyle(tint(BND.void), 0.85);
-      g.fillRect(this.eyeX - w / 2 - 3, by - 3, w + 6, 13);
-      g.fillStyle(tint(BND.cosmicDeep), 0.95);
-      g.fillRect(this.eyeX - w / 2, by, w, 7);
-      const hotBar = anger > 0.7;
-      g.fillStyle(tint(wrath ? BND.wrath : hotBar ? BND.heat : BND.gold),
-        wrath ? 0.55 + 0.45 * Math.sin(this.vizT * 16) : 0.95);
-      g.fillRect(this.eyeX - w / 2, by, w * (wrath ? 1 : anger), 7);
-      g.lineStyle(1.4, tint(BND.goldDeep), 0.9);
-      g.strokeRect(this.eyeX - w / 2, by, w, 7);
-      // Quarter ticks, so 75 anger is a place rather than a number.
-      for (let i = 1; i < 4; i++) {
-        g.fillStyle(tint(BND.goldDeep), 0.8);
-        g.fillRect(this.eyeX - w / 2 + (w * i) / 4, by, 1.2, 7);
-      }
+      angerPlaque(g, tint, this.eyeX, by, w, anger, wrath, this.vizT);
 
       // Chains hanging off the bar — the one place the element's own motif touches the HUD.
       for (let i = 0; i < 5; i++) {
@@ -2133,6 +2116,18 @@ export class BindKit {
           chainLink(g, tint, cx + swing * (k + 1) * 0.35, by + 14 + k * 8,
             Math.PI / 2, 0.75, 0.9, anger);
         }
+      }
+    }
+
+    // ── The tithe banner ──
+    const pg = this.promptGfx;
+    if (pg) {
+      pg.clear();
+      if (this.prompt) {
+        const pad = 46;
+        tithePlaque(pg, this.pcol, this.prompt.x, this.prompt.y,
+          this.prompt.width + pad * 2, this.prompt.height + 16, this.promptReady, this.vizT);
+        this.prompt.setColor(this.hex(this.promptReady ? BND.goldLit : BND.gold));
       }
     }
 

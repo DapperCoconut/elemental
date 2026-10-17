@@ -398,11 +398,11 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
       q: ab(15, 30000, { kind: 'bolt', color: 0xd9a441, speed: 700, count: 3, spread: 0.3 }, 'Call of the Void: a bugle solo, every note thrown down the lane.'),
     },
     upgrades: {
-      click: { damageMult: 1.3, note: 'a faster spin' },
-      e: { areaMult: 1.25, note: 'a longer dance' },
-      r: { rider: { stun: 1000 }, note: 'a longer hold' },
-      f: { areaMult: 1.3, note: 'a louder hum' },
-      q: { damageMult: 1.3, note: 'a longer solo' },
+      click: { damageMult: 1.3, note: 'musical perfection' },
+      e: { areaMult: 1.25, note: 'infectious moves' },
+      r: { rider: { stun: 1000 }, note: 'harmony' },
+      f: { areaMult: 1.3, note: 'practice makes perfect' },
+      q: { damageMult: 1.5, note: 'big finish!' },
     },
   },
   light: {
@@ -424,7 +424,7 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
     },
     mastery: { ...ab(30, 9000, { kind: 'bolt', texture: 'proj-light-triangle', color: 0xff8800, speed: 800, pierce: 5 }, 'Killer Kebab: a lance that skewers the line.'), name: 'Killer Kebab' },
   },
-  // Magnet: the 2026-10-15 scrap rework. No shop upgrades or mastery exist yet; the tower rows wait for them.
+  // Magnet: the 2026-10-15 scrap rework; shop upgrades 2026-10-16. No mastery yet.
   magnet: {
     tiers: ['Lodestone', 'Coil', 'Dynamo', 'Polar', 'Magnetar'],
     cost: 95, range: 210,
@@ -436,11 +436,11 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
       q: ab(20, 50000, { kind: 'summon', ms: 15000, color: 0x1f5fbf, attackMs: 1400, attackRange: 260, label: '🤖' }, 'Mecha Massacre: a scrap mech smashes the lane for 15s.'),
     },
     upgrades: {
-      click: { countAdd: 1, note: 'a fuller purse' },
-      e: { areaMult: 1.25, note: 'a wider cone' },
-      r: { damageMult: 1.3, note: 'longer nails' },
-      f: { damageMult: 1.3, note: 'a heavier spike' },
-      q: { damageMult: 1.3, note: 'more scrap' },
+      click: { countAdd: 2, note: 'shatter shot' },
+      e: { areaMult: 1.25, damageMult: 1.15, note: 'magnetize' },
+      r: { countAdd: 2, note: 'nailstorm' },
+      f: { damageMult: 1.3, rider: { stun: 400, chance: 0.3 }, note: 'electromagnet' },
+      q: { damageMult: 1.5, note: 'mega mechancements' },
     },
   },
   metal: {
@@ -781,11 +781,11 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
       q: ab(70, 16000, { kind: 'line', length: 320, width: 74, color: 0xff9a2e }, 'Ascendance: a flaming chariot thunders down the path.'),
     },
     upgrades: {
-      click: { countAdd: 2, note: 'a longer sermon' },
-      e: { areaMult: 1.25, note: 'a deeper font' },
-      r: { damageMult: 1.4, note: 'a holier grenade' },
-      f: { areaMult: 1.2, note: 'a taller cross' },
-      q: { damageMult: 1.4, note: 'a fiercer chariot' },
+      click: { countAdd: 2, rider: { slow: { mult: 0.8, ms: 1200 } }, note: 'Disarming Words: golden letters slow what they touch' },
+      e: { damageMult: 1.4, note: 'Purge Sins: the font burns away what ails them' },
+      r: { damageMult: 1.8, note: 'Repentance: the grenade leaps on and blasts twice more' },
+      f: { areaMult: 1.2, cooldownMult: 0.7, note: 'Pocket Crucifix: the cross goes up wherever it is needed' },
+      q: { damageMult: 1.3, rider: { slow: { mult: 0.6, ms: 1500 } }, note: 'Pillars of Fire: yellow fire falls with the chariot' },
     },
   },
   paper: {
@@ -826,7 +826,7 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
     },
     mastery: { ...ab(0, 14000, { kind: 'rally', radius: 1, ms: 8000, fireRateMult: 1.5, damageMult: 1.2, color: 0xb9902e }, 'Delay the Inevitable: eight seconds back on the clock.'), name: 'Delay The Inevitable' },
   },
-  // `fortune` is Gold, the alchemist. No upgrades or mastery since the 2026-10-15 rework.
+  // `fortune` is Gold, the alchemist. No mastery since the 2026-10-15 rework; upgrades re-themed 2026-10-16.
   fortune: {
     tiers: ['Lead', 'Copper', 'Silver', 'Gold', 'Philosopher'],
     cost: 100, range: 220,
@@ -838,11 +838,11 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
       q: ab(0, 30000, { kind: 'gold', amount: 30, color: 0xffd34d }, 'Midas Curse: the path turns to gold — and the gold is yours.'),
     },
     upgrades: {
-      click: { countAdd: 2, note: 'a thicker sheaf' },
-      e: { cooldownMult: 0.8, note: 'compound interest' },
-      r: { areaMult: 1.25, note: 'a bigger bag' },
-      f: { damageMult: 1.3, note: 'a heavier cane' },
-      q: { damageMult: 1, cooldownMult: 0.8, note: 'the Midas touch' },
+      click: { countAdd: 2, note: 'accumulation' },
+      e: { cooldownMult: 0.8, damageMult: 1.15, note: 'artisan' },
+      r: { areaMult: 1.2, note: 'glittery cloak' },
+      f: { damageMult: 1.2, note: 'gold hex' },
+      q: { damageMult: 1, cooldownMult: 0.8, note: 'full metal alchemy' },
     },
   },
   marrow: {
@@ -881,6 +881,24 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
       q: { areaMult: 1.3, rider: { stun: 2200 }, note: 'eye of the storm' },
     },
   },
+  myth: {
+    tiers: ['Tale', 'Fable', 'Legend', 'Saga', 'Myth'],
+    cost: 120, range: 210,
+    abilities: {
+      click: ab(12, 650, { kind: 'line', length: 180, width: 44, color: 0x7d5cff }, 'Cosmic Whip: a lash down the path; the star mace at the tip stuns whatever it lands on.', { rider: { stun: 500 } }),
+      e: ab(22, 6000, { kind: 'splash', radius: 90, color: 0xffd166, shape: 'strike' }, 'Truth Breaker: a true-damage slash that ignores every husk\'s armour.'),
+      r: ab(0, 14000, { kind: 'rally', radius: 150, ms: 4500, fireRateMult: 1.4, damageMult: 1.15, color: 0xffc83d }, 'Determination: the towers nearby decide to win — faster and harder for a while.'),
+      f: ab(8, 16000, { kind: 'line', length: 300, width: 70, color: 0x3b2a6b }, 'Beast of Myth: the beast pours down the path, chewing everything in it and dragging it back.', { rider: { slow: { mult: 0.4, ms: 1200 } } }),
+      q: ab(30, 30000, { kind: 'splash', radius: 150, color: 0xff4a5e, shape: 'burst' }, 'Shadow Rocket of Doom: one slow rocket, one enormous blast, and a cloud that lingers.', { rider: { stun: 800 } }),
+    },
+    upgrades: {
+      click: { damageMult: 1.3, note: 'phantom maces' },
+      e: { damageMult: 1.45, note: 'truth dash' },
+      r: { areaMult: 1.3, cooldownMult: 0.8, note: 'longer oath' },
+      f: { damageMult: 1.4, note: 'recalled beast' },
+      q: { areaMult: 1.3, damageMult: 1.2, note: 'direct hit' },
+    },
+  },
   cloth: {
     tiers: ['Thread', 'Stitch', 'Weave', 'Tapestry', 'Loom'],
     cost: 90, range: 170,
@@ -911,11 +929,11 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
       q: ab(0, 30000, { kind: 'rally', radius: 220, ms: 15000, fireRateMult: 1.45, damageMult: 1.45, color: 0xffd166 }, 'Queen: every tower nearby fights at ×1.45 for 15s.'),
     },
     upgrades: {
-      click: { damageMult: 1.3, note: 'sharper pawns' },
-      e: { damageMult: 1.3, note: 'a longer diagonal' },
-      r: { areaMult: 1.25, note: 'a wider landing' },
-      f: { damageMult: 1.3, note: 'a heavier rook' },
-      q: { cooldownMult: 0.8, note: 'a quicker coronation' },
+      click: { areaMult: 1.6, note: 'Insight Move: a second step down the path' },
+      e: { damageMult: 1, rider: { toxic: { ms: 5000, dps: 5 } }, note: 'Sight Lines: lit squares burn what walks them' },
+      r: { cooldownMult: 0.75, note: 'Mount Protect: the knight is back in the saddle sooner' },
+      f: { damageMult: 1.2, areaMult: 1.25, note: 'Castle: a slam where the rook comes down' },
+      q: { cooldownMult: 0.8, note: 'Checkmate: a quicker coronation' },
     },
     mastery: { ...ab(0, 14000, { kind: 'rally', radius: 230, ms: 8000, fireRateMult: 1.3, damageMult: 1.3, color: 0xffd166 }, 'Utter Focus: the future opens for every tower nearby.'), name: 'Utter Focus' },
   },
@@ -930,11 +948,11 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
       q: ab(16, 18000, { kind: 'bolt', color: 0x7cff3d, speed: 700, count: 5, spread: 0.5, splash: 70, lob: true }, 'Extermination: five flares, an airdrop on each.', { rider: { toxic: { ms: 5000, dps: 5 } } }),
     },
     upgrades: {
-      click: { damageMult: 1, rider: { toxic: { ms: 4000, dps: 5 } }, note: 'a hotter tracer' },
-      e: { countAdd: 1, note: 'a longer burst' },
-      r: { damageMult: 1.3, note: 'thicker lead' },
-      f: { damageMult: 1.3, note: 'a richer rod' },
-      q: { areaMult: 1.4, note: 'a wider drop' },
+      click: { damageMult: 1, pierceAdd: 1, rider: { toxic: { ms: 4000, dps: 6 } }, note: 'Flick Shot: spiked tracers tear deeper' },
+      e: { countAdd: 3, note: 'Trigger Happy: the burst keeps going' },
+      r: { cooldownMult: 0.75, note: 'Turret Town: the bunker goes back up armed and sooner' },
+      f: { damageMult: 1.25, areaMult: 1.25, note: 'Mutation: swollen husks are easier to hit' },
+      q: { areaMult: 1.3, rider: { toxic: { ms: 9000, dps: 7 }, slow: { mult: 0.5, ms: 3000 } }, note: 'Complete Annihilation: fallout puddles, over-radiated husks' },
     },
   },
   bind: {
@@ -975,7 +993,7 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
     },
     mastery: { ...ab(0, 12000, { kind: 'barrier', ms: 9000, hp: 220, color: 0x2b8b76, label: '🟩' }, 'Oobleck: a slab everything sticks in.'), name: 'Oobleck' },
   },
-  // Harvest (id `gluttony`). No upgrades or mastery yet — both were retired with the rework.
+  // Harvest (id `gluttony`). Upgrades re-themed 2026-10-16; no mastery yet.
   gluttony: {
     tiers: ['Seedling', 'Sprout', 'Blight', 'Rot', 'Reaper'],
     cost: 95, range: 200,
@@ -987,11 +1005,11 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
       q: ab(30, 35000, { kind: 'splash', radius: 160, color: 0x4a1766, delayMs: 320, shape: 'crater' }, 'Reaping Hour: a scythe swing — everything cut takes more damage for good.', { rider: { weaken: { mult: 1.15, ms: 600000 } } }),
     },
     upgrades: {
-      click: { pierceAdd: 2, note: 'a heavier sickle' },
-      e: { areaMult: 1.25, note: 'wider mold' },
-      r: { countAdd: 1, note: 'another crow' },
-      f: { damageMult: 1.3, note: 'deeper teeth' },
-      q: { cooldownMult: 0.8, note: 'the hour comes sooner' },
+      click: { countAdd: 1, note: 'recursive' },
+      e: { damageMult: 1.75, note: 'vile rot: grabbing mold and worms' },
+      r: { damageMult: 1.3, rider: { toxic: { ms: 4000, dps: 4 } }, note: 'poison payload' },
+      f: { damageMult: 1.2, note: 'corrupt cooking' },
+      q: { cooldownMult: 0.6, note: 'endless harvest' },
     },
   },
 

@@ -106,6 +106,107 @@ export function trefoil(
   }
 }
 
+// ── Counters ──────────────────────────────────────────────────────────────
+
+/**
+ * A row of dose cells in a lead housing — the counter shape the element uses for tracer
+ * confirms, flare tallies and the magazine. A riveted plate with a hazard-striped end cap on
+ * each side, and each cell a little glass tube: dark lead when empty, a neon column with a
+ * white-hot filament when lit. `glow` (0–1) is how hard the lit cells burn.
+ */
+export function doseCells(
+  g: Phaser.GameObjects.Graphics, tint: RadiationColorFn,
+  x: number, y: number, filled: number, total: number, glow: number, t = 0,
+): void {
+  const w = 7, gap = 3;
+  const span = total * w + (total - 1) * gap;
+  const left = x - span / 2;
+  const capW = 5;
+  // Housing.
+  g.fillStyle(tint(RAD.ink), 0.85);
+  g.fillRoundedRect(left - capW - 3, y - 6, span + capW * 2 + 6, 12, 3);
+  g.fillStyle(tint(RAD.lead), 0.95);
+  g.fillRoundedRect(left - capW - 2, y - 5, span + capW * 2 + 4, 10, 2.5);
+  g.fillStyle(tint(RAD.leadLit), 0.6);
+  g.fillRect(left - capW, y - 4.5, span + capW * 2, 1.5);
+  // Hazard end caps: alternating yellow/black diagonals.
+  for (const cx of [left - capW - 1, x + span / 2 + 1]) {
+    g.fillStyle(tint(RAD.hazard), 0.95);
+    g.fillRect(cx, y - 4, capW, 8);
+    g.fillStyle(tint(RAD.ink), 0.9);
+    for (let k = 0; k < 3; k++) {
+      const sx = cx + k * 2.4 - 1;
+      g.fillTriangle(sx, y + 4, sx + 1.4, y + 4, sx + 3.6, y - 4);
+    }
+  }
+  for (let i = 0; i < total; i++) {
+    const px = left + w / 2 + i * (w + gap);
+    const on = i < filled;
+    g.fillStyle(tint(RAD.leadDeep), 1);
+    g.fillRoundedRect(px - w / 2, y - 3.5, w, 7, 2);
+    if (on) {
+      const flick = 0.85 + 0.15 * Math.sin(t * 17 + i * 2.3);
+      g.fillStyle(tint(RAD.neon), (0.55 + glow * 0.45) * flick);
+      g.fillRoundedRect(px - w / 2 + 0.6, y - 3, w - 1.2, 6, 1.6);
+      g.fillStyle(tint(RAD.core), 0.6 + glow * 0.4);
+      g.fillRect(px - 0.8, y - 2.2, 1.6, 4.4);
+      g.fillStyle(tint(RAD.neonLit), 0.25 * glow);
+      g.fillCircle(px, y, 5.5);
+    }
+    // Glass glint.
+    g.fillStyle(tint(RAD.wash), on ? 0.5 : 0.18);
+    g.fillRect(px - w / 2 + 1, y - 3, 1, 3);
+  }
+}
+
+/**
+ * The irradiated marker: a tiny Geiger counter dial floating over the victim. A lead half-disc
+ * face with a trefoil at the pivot, a neon arc that drains as the dose decays (`ratio` 1→0),
+ * graduations, and a needle that chatters over the reading like a real counter.
+ */
+export function geigerDial(
+  g: Phaser.GameObjects.Graphics, tint: RadiationColorFn,
+  x: number, y: number, r: number, ratio: number, t: number, alpha = 1,
+): void {
+  ratio = Math.max(0, Math.min(1, ratio));
+  const a0 = Math.PI, a1 = TAU;
+  // Housing: an ink half-disc with a lead face and a flat base bar.
+  g.fillStyle(tint(RAD.ink), 0.85 * alpha);
+  g.slice(x, y, r + 3, a0, a1, false);
+  g.fillPath();
+  g.fillRect(x - r - 3, y - 0.5, (r + 3) * 2, 3.5);
+  g.fillStyle(tint(RAD.lead), 0.95 * alpha);
+  g.slice(x, y, r + 1.5, a0, a1, false);
+  g.fillPath();
+  // Track, then the live reading.
+  g.lineStyle(2.6, tint(RAD.neonDeep), 0.9 * alpha);
+  g.beginPath();
+  g.arc(x, y, r - 1.5, a0, a1, false);
+  g.strokePath();
+  if (ratio > 0.01) {
+    g.lineStyle(2.6, tint(ratio < 0.25 ? RAD.hazard : RAD.neon), alpha);
+    g.beginPath();
+    g.arc(x, y, r - 1.5, a0, a0 + Math.PI * ratio, false);
+    g.strokePath();
+  }
+  // Graduations.
+  g.lineStyle(0.8, tint(RAD.wash), 0.55 * alpha);
+  for (let i = 0; i <= 4; i++) {
+    const a = a0 + (i / 4) * Math.PI;
+    g.lineBetween(x + Math.cos(a) * (r - 4.5), y + Math.sin(a) * (r - 4.5), x + Math.cos(a) * (r - 3), y + Math.sin(a) * (r - 3));
+  }
+  // The needle, chattering.
+  const chatter = Math.sin(t * 31) * 0.05 + Math.sin(t * 13.7) * 0.04;
+  const na = a0 + Math.PI * Math.max(0, Math.min(1, ratio + chatter));
+  g.lineStyle(1.2, tint(RAD.hot), alpha);
+  g.lineBetween(x, y, x + Math.cos(na) * (r - 2), y + Math.sin(na) * (r - 2));
+  trefoil(g, tint, x, y - 0.5, 3.6, alpha, { phase: t * 1.6, color: RAD.neonLit });
+  g.lineStyle(1, tint(RAD.seam), 0.9 * alpha);
+  g.beginPath();
+  g.arc(x, y, r + 1.5, a0, a1, false);
+  g.strokePath();
+}
+
 /**
  * A Geiger Tracer: the little triangular device the click throws. Flat lead plate, a hazard
  * stripe down one edge, three legs it grips with, and a lamp that blinks faster the closer the
@@ -116,13 +217,33 @@ export function geigerTracer(
   g: Phaser.GameObjects.Graphics,
   tint: RadiationColorFn,
   x: number, y: number, ang: number, alpha: number,
-  { lamp = 0, scale = 1, legs = false } = {},
+  { lamp = 0, scale = 1, legs = false, spiked = false } = {},
 ): void {
   const r = 7 * scale;
   const pts: Phaser.Geom.Point[] = [];
   for (let i = 0; i < 3; i++) {
     const a = ang + (i / 3) * TAU;
     pts.push(new Phaser.Geom.Point(x + Math.cos(a) * r, y + Math.sin(a) * r));
+  }
+
+  if (spiked) {
+    // Flick Shot: barbs out of every corner and every edge, hot-tipped, so a spiked tracer in
+    // the air reads as the one that is going to hurt.
+    g.fillStyle(tint(RAD.hot), alpha * 0.22);
+    g.fillCircle(x, y, r * 2.1);
+    for (let i = 0; i < 6; i++) {
+      const a = ang + (i / 6) * TAU;
+      const len = (i % 2 === 0 ? 2.1 : 1.6) * r;
+      const side = 0.32;
+      g.fillStyle(tint(RAD.leadLit), alpha);
+      g.fillTriangle(
+        x + Math.cos(a - side) * r * 0.7, y + Math.sin(a - side) * r * 0.7,
+        x + Math.cos(a + side) * r * 0.7, y + Math.sin(a + side) * r * 0.7,
+        x + Math.cos(a) * len, y + Math.sin(a) * len,
+      );
+      g.fillStyle(tint(RAD.hot), alpha);
+      g.fillCircle(x + Math.cos(a) * len, y + Math.sin(a) * len, 1.3 * scale);
+    }
   }
 
   if (legs) {
@@ -529,6 +650,109 @@ export function uraniumRod(
   g.fillCircle(x1, y1, 2.6 + heat * 2);
 }
 
+/**
+ * R+ Turret Town: a squat lead turret bolted to the bunker wall. A hexagonal base plate, a
+ * rotating housing with a hazard band, and a twin barrel that kicks back on `recoil` (1 → 0).
+ * The lamp on its back is the read: dark while it has nothing irradiated to shoot at, neon
+ * when it does — the turret only fires on a body that is already carrying a dose.
+ */
+export function bunkerTurret(
+  g: Phaser.GameObjects.Graphics, tint: RadiationColorFn,
+  x: number, y: number, ang: number, alpha: number, t: number,
+  { recoil = 0, live = false } = {},
+): void {
+  // Base plate.
+  const base: Phaser.Geom.Point[] = [];
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * TAU + Math.PI / 6;
+    base.push(new Phaser.Geom.Point(x + Math.cos(a) * 12, y + Math.sin(a) * 12));
+  }
+  g.fillStyle(tint(RAD.ink), alpha * 0.9);
+  g.fillCircle(x, y + 2, 13);
+  g.fillStyle(tint(RAD.leadDeep), alpha);
+  g.fillPoints(base, true);
+  g.lineStyle(1, tint(RAD.seam), alpha * 0.8);
+  g.strokePoints(base, true);
+  for (const p of base) {
+    g.fillStyle(tint(RAD.leadLit), alpha);
+    g.fillCircle(x + (p.x - x) * 0.78, y + (p.y - y) * 0.78, 1.1);
+  }
+  // Twin barrels, kicked back along the aim.
+  const c = Math.cos(ang);
+  const s = Math.sin(ang);
+  const nx = -s;
+  const ny = c;
+  const back = recoil * 5;
+  for (const k of [-1, 1]) {
+    const ox = x + nx * k * 3.2 - c * back;
+    const oy = y + ny * k * 3.2 - s * back;
+    g.lineStyle(4, tint(RAD.ink), alpha);
+    g.lineBetween(ox, oy, ox + c * 17, oy + s * 17);
+    g.lineStyle(2.6, tint(RAD.lead), alpha);
+    g.lineBetween(ox, oy, ox + c * 17, oy + s * 17);
+    g.fillStyle(tint(live ? RAD.neon : RAD.neonDeep), alpha * (live ? 0.9 : 0.6));
+    g.fillCircle(ox + c * 17, oy + s * 17, 1.6);
+  }
+  if (recoil > 0.4) {
+    g.fillStyle(tint(RAD.hazard), alpha * recoil * 0.8);
+    g.fillCircle(x + c * 21, y + s * 21, 4 * recoil);
+  }
+  // Housing.
+  g.fillStyle(tint(RAD.lead), alpha);
+  g.fillCircle(x - c * back * 0.4, y - s * back * 0.4, 7.5);
+  g.lineStyle(1.6, tint(RAD.hazard), alpha * 0.85);
+  g.beginPath();
+  g.arc(x, y, 7.5, ang + 2.2, ang + 4.1, false);
+  g.strokePath();
+  // The lamp.
+  const blink = live ? 0.6 + 0.4 * Math.sin(t * 12) : 0.25;
+  g.fillStyle(tint(live ? RAD.neon : RAD.neonDeep), alpha * 0.25 * blink);
+  g.fillCircle(x - c * 3, y - s * 3, 6);
+  g.fillStyle(tint(live ? RAD.neonLit : RAD.neonMid), alpha * blink);
+  g.fillCircle(x - c * 3, y - s * 3, 2.2);
+}
+
+/**
+ * Q+ Complete Annihilation: a pool of fallout left on the floor after the drop. An irregular
+ * lobed slick (eight jittered lobes off the seed) in the neon ladder, a darker sump in the
+ * middle, bubbles that rise and pop, and a trefoil etched faintly into the surface.
+ */
+export function falloutPuddle(
+  g: Phaser.GameObjects.Graphics, tint: RadiationColorFn,
+  x: number, y: number, r: number, alpha: number, t: number, seed: number,
+): void {
+  const lobes = 8;
+  const rim: Phaser.Geom.Point[] = [];
+  const core: Phaser.Geom.Point[] = [];
+  for (let i = 0; i < lobes * 3; i++) {
+    const a = (i / (lobes * 3)) * TAU;
+    const lobe = jitter(seed, i % lobes);
+    const wob = Math.sin(a * lobes * 0.5 + seed + t * 0.8) * 0.05;
+    const k = 0.82 + lobe * 0.24 + wob;
+    rim.push(new Phaser.Geom.Point(x + Math.cos(a) * r * k, y + Math.sin(a) * r * k * 0.78));
+    core.push(new Phaser.Geom.Point(x + Math.cos(a) * r * k * 0.55, y + Math.sin(a) * r * k * 0.43));
+  }
+  g.fillStyle(tint(RAD.neon), alpha * 0.12);
+  g.fillCircle(x, y, r * 1.2);
+  g.fillStyle(tint(RAD.neonDeep), alpha * 0.75);
+  g.fillPoints(rim, true);
+  g.lineStyle(2, tint(RAD.neon), alpha * (0.55 + 0.2 * Math.sin(t * 3 + seed)));
+  g.strokePoints(rim, true);
+  g.fillStyle(tint(RAD.neonMid), alpha * 0.7);
+  g.fillPoints(core, true);
+  trefoil(g, tint, x, y, r * 0.3, alpha * 0.28, { phase: t * 0.3 + seed, color: RAD.neonLit });
+  // Bubbles: each one swells, lifts and pops on its own clock.
+  for (let i = 0; i < 4; i++) {
+    const life = (t * 0.9 + jitter(seed, 40 + i)) % 1;
+    const a = jitter(seed, 50 + i) * TAU;
+    const d = jitter(seed, 60 + i) * r * 0.6;
+    const bx = x + Math.cos(a) * d;
+    const by = y + Math.sin(a) * d * 0.78 - life * 4;
+    g.lineStyle(1, tint(RAD.neonLit), alpha * (1 - life) * 0.9);
+    g.strokeCircle(bx, by, 1.5 + life * 3.5);
+  }
+}
+
 // ── Fx ────────────────────────────────────────────────────────────────────
 
 /** Radiation's one-shot effects. Everything sustained is painted per-frame by the kit instead. */
@@ -729,6 +953,72 @@ export class RadiationFx extends FxBase {
     });
   }
 
+  // ── Upgrades ──
+
+  /** Click+ Flick Shot landing: the barbs driving in, a hot star and a ring of shrapnel. */
+  flickHit(x: number, y: number, ang: number, depth = 17): void {
+    const seed = Math.random() * 999;
+    this.flashIn(x, y, 20, RAD.hotLit, RAD.hot, depth);
+    this.anim(depth, 360, (g, t) => {
+      const e = easeOut(t);
+      g.lineStyle(2.4 * (1 - t) + 0.5, this.tint(RAD.hot), (1 - t) * 0.9);
+      g.strokeCircle(x, y, 6 + e * 26);
+      for (let i = 0; i < 6; i++) {
+        const a = ang + Math.PI + (i / 6) * TAU * 0.5 - TAU * 0.125 + (jitter(seed, i) - 0.5) * 0.4;
+        const l = (12 + jitter(seed, 10 + i) * 18) * e;
+        g.lineStyle(2 * (1 - t), this.tint(i % 2 ? RAD.hotLit : RAD.leadLit), (1 - t));
+        g.lineBetween(x, y, x + Math.cos(a) * l, y + Math.sin(a) * l);
+      }
+    });
+  }
+
+  /** F+ Mutation: the dose curdling — a double helix wrung out of the body and a sick bloom. */
+  mutate(x: number, y: number, depth = 17): void {
+    this.flashIn(x, y, 28, RAD.neonLit, RAD.neon, depth);
+    this.anim(depth, 760, (g, t) => {
+      const e = easeOut(t);
+      const h = 18 + e * 34;
+      for (const strand of [0, Math.PI]) {
+        g.lineStyle(2.2 * (1 - t) + 0.5, this.tint(strand ? RAD.hazard : RAD.neonLit), (1 - t) * 0.95);
+        g.beginPath();
+        for (let i = 0; i <= 14; i++) {
+          const u = i / 14;
+          const px = x + Math.sin(u * TAU * 1.5 + strand + t * 8) * 9;
+          const py = y + 10 - u * h;
+          if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
+        }
+        g.strokePath();
+      }
+      g.lineStyle(2 * (1 - t), this.tint(RAD.neon), (1 - t) * 0.7);
+      g.strokeCircle(x, y, 14 + e * 22);
+    });
+  }
+
+  /** Q+ over-radiation: the dose going critical — a hot trefoil and a red shock ring. */
+  overRadiate(x: number, y: number, depth = 17): void {
+    this.flashIn(x, y, 30, RAD.hotLit, RAD.hot, depth);
+    this.anim(depth, 700, (g, t) => {
+      const e = easeOut(t);
+      trefoil(g, this.tint, x, y - 6, 10 + e * 22, (1 - t) * 0.9, { phase: t * 5, color: RAD.hot });
+      g.lineStyle(3 * (1 - t) + 0.5, this.tint(RAD.hotMid), (1 - t) * 0.85);
+      g.strokeCircle(x, y, 12 + e * 40);
+    });
+  }
+
+  /** Q+ puddles splashing down out of the drop. */
+  puddleSplash(x: number, y: number, r: number, depth = 5): void {
+    const seed = Math.random() * 999;
+    this.anim(depth, 420, (g, t) => {
+      const e = easeOut(t);
+      for (let i = 0; i < 7; i++) {
+        const a = jitter(seed, i) * TAU;
+        const d = r * (0.4 + e * 0.8);
+        g.fillStyle(this.tint(i % 2 ? RAD.neonLit : RAD.neon), (1 - t) * 0.8);
+        g.fillCircle(x + Math.cos(a) * d, y + Math.sin(a) * d * 0.78 - Math.sin(t * Math.PI) * 10, 3 * (1 - t) + 0.8);
+      }
+    });
+  }
+
   /** The shed particle behind a moving hand: a flake of hot dust. */
   mote(x: number, y: number, depth = 4): void {
     const a = Math.random() * TAU;
@@ -763,8 +1053,9 @@ const RADIATION_AVATAR: AvatarSpec = {
  * drives how brightly the trefoil and the under-glow burn. `ping`
  * flashes the trefoil the instant the railgun confirms.
  *
- * Mastery enhances what is already there: the trefoil turns hazard-yellow and glows, the
- * helmet gains a hazard trim, the eyes go white-hot and the hand coronas widen.
+ * Mastery: the trefoil turns hazard-yellow and glows, the helmet gains a hazard trim and a
+ * blinking dosimeter antenna, three electron orbits ring the body like an atom, the eyes go
+ * white-hot and the hand coronas widen.
  */
 export class RadiationAvatar extends BaseAvatar {
   /** 0–1: how hot the suit is running. Drives the trefoil and the glow. */
@@ -812,6 +1103,60 @@ export class RadiationAvatar extends BaseAvatar {
     new RadiationFx(this.scene, this.tint).mote(x, y);
   }
 
+  /** Point `p` (0–1) round mastered orbit `i` — a tilted ellipse about the body. */
+  private orbitPoint(x: number, y: number, i: number, p: number): { x: number; y: number; front: boolean } {
+    const tilt = (i / 3) * Math.PI + this.t * 0.25;
+    const a = p * TAU;
+    const ex = Math.cos(a) * 31, ey = Math.sin(a) * 9;
+    return {
+      x: x + ex * Math.cos(tilt) - ey * Math.sin(tilt),
+      y: y + ex * Math.sin(tilt) + ey * Math.cos(tilt),
+      front: Math.sin(a) > 0,
+    };
+  }
+
+  /**
+   * A lead respirator over the mouth — a rounded snout with a neon intake grille and a filter
+   * canister either side — plus a dosimeter badge clipped to the chest. Mastered, the grille
+   * runs white-hot and the badge turns hazard-yellow.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
+    const m = this.mastered;
+    const lean = Math.cos(this.facing) * 2.2;
+    const mx = x + lean, my = y + 7;
+    // Canisters.
+    for (const side of [-1, 1]) {
+      const cx = mx + side * 8.5, cy = my + 2;
+      g.fillStyle(this.tint(RAD.ink), alpha);
+      g.fillCircle(cx, cy, 4.4);
+      g.fillStyle(this.tint(RAD.lead), alpha);
+      g.fillCircle(cx, cy, 3.6);
+      g.fillStyle(this.tint(m ? RAD.hazard : RAD.leadLit), alpha * 0.9);
+      g.fillCircle(cx, cy, 1.6);
+    }
+    // Snout.
+    g.fillStyle(this.tint(RAD.ink), alpha);
+    g.fillRoundedRect(mx - 6.5, my - 4, 13, 9, 4);
+    g.fillStyle(this.tint(RAD.lead), alpha);
+    g.fillRoundedRect(mx - 5.5, my - 3.2, 11, 7.4, 3.4);
+    g.fillStyle(this.tint(RAD.leadLit), alpha * 0.7);
+    g.fillRect(mx - 4, my - 2.8, 8, 1.2);
+    // Grille — three slots glowing with the dose.
+    const lit = 0.45 + this.dose * 0.45 + this.alert * 0.2;
+    for (let i = -1; i <= 1; i++) {
+      g.fillStyle(this.tint(m ? RAD.core : RAD.neon), alpha * Math.min(1, lit));
+      g.fillRect(mx + i * 3 - 0.8, my - 0.8, 1.6, 3.6);
+    }
+    // Dosimeter badge on the chest.
+    const bx = x - 10 - lean * 0.3, by = y + 13;
+    g.fillStyle(this.tint(RAD.ink), alpha);
+    g.fillRect(bx - 3.5, by - 3, 7, 6);
+    g.fillStyle(this.tint(m ? RAD.hazard : RAD.wash), alpha * 0.9);
+    g.fillRect(bx - 2.7, by - 2.2, 5.4, 4.4);
+    g.fillStyle(this.tint(RAD.neonMid), alpha);
+    g.fillRect(bx - 2.7, by + 0.4, 5.4 * Math.min(1, 0.3 + this.dose * 0.7), 1.8);
+  }
+
   /** A contamination halo — brighter the more charge is left in the suit, hotter mastered. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void alpha;
@@ -820,6 +1165,25 @@ export class RadiationAvatar extends BaseAvatar {
     g.fillCircle(x, y, 27 * k);
     g.fillStyle(this.tint(RAD.neon), a * (0.04 + this.dose * 0.1) * k);
     g.fillEllipse(x, y + 10, 34 * k, 12);
+
+    // Mastery: three electron orbits ringing the body like an atom. The rings live under the
+    // sprite; the electrons cross in front of it from `drawExtras`.
+    if (this.mastered) {
+      for (let i = 0; i < 3; i++) {
+        g.lineStyle(1.4, this.tint(i === 0 ? RAD.hazard : RAD.neonLit), alpha * 0.55);
+        g.beginPath();
+        for (let k2 = 0; k2 <= 28; k2++) {
+          const p = this.orbitPoint(x, y, i, k2 / 28);
+          if (k2 === 0) g.moveTo(p.x, p.y); else g.lineTo(p.x, p.y);
+        }
+        g.strokePath();
+        const e = this.orbitPoint(x, y, i, this.t * 0.9 + i / 3);
+        if (!e.front) {
+          g.fillStyle(this.tint(RAD.neonLit), alpha * 0.6);
+          g.fillCircle(e.x, e.y, 2.6);
+        }
+      }
+    }
   }
 
   /**
@@ -858,5 +1222,36 @@ export class RadiationAvatar extends BaseAvatar {
     g.fillStyle(this.tint(RAD.ink), alpha * 0.9);
     g.fillCircle(tx, ty, 5.2 * s);
     trefoil(g, this.tint, tx, ty, 4.4 * s, alpha * lit, { phase: 0, color: m ? RAD.hazard : RAD.neon });
+
+    // Rivets along the rim, and a stubby headlamp on the side the operative faces.
+    g.fillStyle(this.tint(m ? RAD.hazard : RAD.leadLit), alpha);
+    for (const rx of [-10.5, -5.5, 5.5, 10.5]) g.fillCircle(x + lean + rx * s, rootY + 4.6 * s, 0.9);
+    const side = Math.cos(this.facing) >= 0 ? 1 : -1;
+    const lx = x + lean + side * 12.4 * s, ly = rootY + 1.5 * s;
+    g.fillStyle(this.tint(RAD.ink), alpha);
+    g.fillCircle(lx, ly, 3.2);
+    g.fillStyle(this.tint(m ? RAD.core : RAD.neonLit), alpha * (0.6 + this.alert * 0.4));
+    g.fillCircle(lx, ly, 2);
+
+    // Mastery: a dosimeter antenna on the crown with a blinking hazard lamp, and the electrons
+    // passing in front of the body.
+    if (m) {
+      const ax = x + lean - 4 * s, ay = rootY - 5 * s;
+      g.lineStyle(1.4, this.tint(RAD.leadLit), alpha);
+      g.lineBetween(ax, ay, ax - 3, ay - 12);
+      const blink = Math.sin(this.t * 6) > 0 ? 1 : 0.35;
+      g.fillStyle(this.tint(RAD.hazard), alpha * 0.35 * blink);
+      g.fillCircle(ax - 3, ay - 13, 5);
+      g.fillStyle(this.tint(RAD.hazard), alpha * blink);
+      g.fillCircle(ax - 3, ay - 13, 2.2);
+      for (let i = 0; i < 3; i++) {
+        const e = this.orbitPoint(x, y, i, this.t * 0.9 + i / 3);
+        if (!e.front) continue;
+        g.fillStyle(this.tint(RAD.neon), alpha * 0.35);
+        g.fillCircle(e.x, e.y, 5);
+        g.fillStyle(this.tint(RAD.core), alpha);
+        g.fillCircle(e.x, e.y, 2.6);
+      }
+    }
   }
 }

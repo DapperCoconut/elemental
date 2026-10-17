@@ -7,8 +7,9 @@ import { NetTechMsg } from '../../network/NetworkManager';
 import { CustomStatus } from './StatusHudKit';
 import {
   ArmGesture, TECH, TechAuraStyle, TechColorFn, TechnologyAura, TechnologyAvatar, TechnologyFx,
-  bitTileLayered, windowPane,
+  bitTileLayered, crtButton, crtWindow, windowPane,
 } from './TechnologyVisuals';
+import { FONT_MONO } from '../../ui/Theme';
 import { meterGain } from '../../combat/Meters';
 
 type Owner = 'player' | 'npc';
@@ -154,7 +155,7 @@ interface AdminState {
   points: number;
   target: string;
   cursor: number;
-  box: Phaser.GameObjects.Rectangle | null;
+  box: Phaser.GameObjects.Graphics | null;
   text: Phaser.GameObjects.Text | null;
   keyListener: ((e: KeyboardEvent) => void) | null;
   nextTypeAt: number;
@@ -413,6 +414,15 @@ export class TechnologyKit {
   private wasAdminInvisible: Record<Owner, boolean> = { player: false, npc: false };
   private jail: Record<Owner, JailBox | null> = { player: null, npc: null };
   private consoleLogTexts: Phaser.GameObjects.Text[] = [];
+  /** Terminal backing plate behind the admin console log, repainted per frame. */
+  private consoleGfx: Phaser.GameObjects.Graphics | null = null;
+  /**
+   * Screen-space HUD chrome — CRT windows, key-cap buttons, the firewall chip — repainted every
+   * frame so scanlines crawl and buttons light on hover. Each Graphics also lives in the objs
+   * array of the UI it belongs to, so the existing teardown destroys it; dead entries are
+   * dropped here on the next paint.
+   */
+  private chrome: { g: Phaser.GameObjects.Graphics; draw: (g: Phaser.GameObjects.Graphics, t: number) => void }[] = [];
 
   // Security Breach (Q+)
   private breachTimes: Record<Owner, number[]> = { player: [], npc: [] };
@@ -670,6 +680,10 @@ export class TechnologyKit {
 
     for (const t of this.consoleLogTexts) t.destroy();
     this.consoleLogTexts = [];
+    if (this.consoleGfx?.active) this.consoleGfx.destroy();
+    this.consoleGfx = null;
+    for (const c of this.chrome) if (c.g.active) c.g.destroy();
+    this.chrome = [];
 
     this.breachTimes = { player: [], npc: [] };
     this.adminJackpot = { player: false, npc: false };
@@ -786,6 +800,7 @@ export class TechnologyKit {
     this.updateVpn(time, delta);
     this.updateByteBombs(time, delta);
     this.updateLag(time, delta);
+    this.paintChrome(time);
 
     if (this.arena.elementId === 'technology') this.updateShelter('player');
     if (this.arena.npcElementId === 'technology') this.updateShelter('npc');
@@ -794,6 +809,66 @@ export class TechnologyKit {
     this.paintWorld(time);
     this.updateAuras(delta, time);
     this.updateAvatars(delta);
+  }
+
+  // ── HUD chrome ────────────────────────────────────────────────────────────
+
+  /** Make a screen-space Graphics repainted every frame by `draw`. */
+  private addChrome(depth: number, draw: (g: Phaser.GameObjects.Graphics, t: number) => void): Phaser.GameObjects.Graphics {
+    const g = this.arena.scene.add.graphics().setDepth(depth).setScrollFactor(0);
+    draw(g, this.arena.scene.time.now / 1000);
+    this.chrome.push({ g, draw });
+    return g;
+  }
+
+  /** A transparent hit rectangle for a chrome-painted button; tracks hover in its data. */
+  private hitRect(x: number, y: number, w: number, h: number, depth = 45): Phaser.GameObjects.Rectangle {
+    const r = this.arena.scene.add.rectangle(x, y, w, h, 0x000000, 0).setDepth(depth).setScrollFactor(0)
+      .setInteractive({ useHandCursor: true });
+    r.setData('hover', false);
+    r.on('pointerover', () => r.setData('hover', true));
+    r.on('pointerout', () => r.setData('hover', false));
+    return r;
+  }
+
+  private paintChrome(time: number): void {
+    const t = time / 1000;
+    for (let i = this.chrome.length - 1; i >= 0; i--) {
+      const c = this.chrome[i];
+      if (!c.g.active) { this.chrome.splice(i, 1); continue; }
+      c.g.clear();
+      c.draw(c.g, t);
+    }
+
+    // Admin console log: a dark terminal plate behind whichever lines are still on screen.
+    const live = this.consoleLogTexts.filter((tx) => tx.active && tx.text !== '');
+    if (live.length > 0) {
+      if (!this.consoleGfx || !this.consoleGfx.active) {
+        this.consoleGfx = this.arena.scene.add.graphics().setDepth(49).setScrollFactor(0);
+      }
+      const g = this.consoleGfx;
+      g.clear();
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, al = 0;
+      for (const tx of live) {
+        const b = tx.getBounds();
+        x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y);
+        x1 = Math.max(x1, b.right); y1 = Math.max(y1, b.bottom);
+        al = Math.max(al, tx.alpha);
+      }
+      const px = x0 - 8, py = y0 - 6, pw = x1 - x0 + 16, ph = y1 - y0 + 12;
+      g.fillStyle(this.pcol(TECH.night), 0.82 * al);
+      g.fillRoundedRect(px, py, pw, ph, 4);
+      g.fillStyle(this.pcol(TECH.alert), 0.06 * al);
+      g.fillRect(px + 2, py + 2, pw - 4, ph - 4);
+      g.fillStyle(this.pcol(TECH.night), 0.35 * al);
+      for (let ly = py + ((t * 18) % 3); ly < py + ph; ly += 3) g.fillRect(px, ly, pw, 1);
+      g.lineStyle(1.2, this.pcol(TECH.alert), 0.6 * al);
+      g.strokeRoundedRect(px, py, pw, ph, 4);
+      g.fillStyle(this.pcol(TECH.alert), al * (Math.sin(t * 9) > 0 ? 0.9 : 0.2));
+      g.fillRect(px + pw - 9, py + ph - 9, 5, 2);
+    } else if (this.consoleGfx?.active) {
+      this.consoleGfx.clear();
+    }
   }
 
   // ── Painting ──────────────────────────────────────────────────────────────
@@ -1282,10 +1357,37 @@ export class TechnologyKit {
             }).setOrigin(0.5).setDepth(6).setAlpha(alpha + 0.2),
           );
         }
+        // The charges chip: a little amber terminal with one brick per charge.
+        const SH = this.arena.scene.scale.height;
+        this.firewallObjs.push(this.addChrome(49, (cg, ct) => {
+          const x = 6, y = SH - 34, w = 112, h = 28;
+          cg.fillStyle(this.pcol(TECH.night), 0.55);
+          cg.fillRoundedRect(x + 2, y + 3, w, h, 5);
+          cg.fillStyle(this.pcol(TECH.steel), 0.95);
+          cg.fillRoundedRect(x, y, w, h, 5);
+          cg.fillStyle(this.pcol(TECH.night), 0.95);
+          cg.fillRect(x + 4, y + 4, w - 8, h - 8);
+          cg.fillStyle(this.pcol(TECH.night), 0.4);
+          for (let ly = y + 4 + ((ct * 18) % 3); ly < y + h - 4; ly += 3) cg.fillRect(x + 4, ly, w - 8, 1);
+          for (let i = 0; i < FIREWALL_CHARGES; i++) {
+            const on = i < charges;
+            const bx = x + 58 + i * 16, by = y + 8;
+            cg.fillStyle(this.pcol(on ? TECH.rust : TECH.slate), on ? 0.95 : 0.6);
+            cg.fillRect(bx, by, 13, 5);
+            cg.fillRect(bx + (i % 2 ? 0 : 3), by + 6, 10, 5);
+            if (on) {
+              cg.fillStyle(this.pcol(TECH.amber), 0.35 + 0.25 * Math.sin(ct * 6 + i));
+              cg.fillRect(bx, by, 13, 1.5);
+            }
+          }
+          cg.lineStyle(1.2, this.pcol(TECH.rust), 0.75);
+          cg.strokeRoundedRect(x, y, w, h, 5);
+        }));
         this.firewallObjs.push(
-          this.arena.scene.add.text(12, this.arena.scene.scale.height - 12, `🧱 ${charges}/${FIREWALL_CHARGES}`, {
-            fontSize: '13px', color: '#ff9944', fontFamily: 'monospace',
-          }).setOrigin(0, 1).setDepth(50).setScrollFactor(0),
+          this.arena.scene.add.text(14, SH - 20, `FW ${charges}/${FIREWALL_CHARGES}`, {
+            fontSize: '12px', color: '#ffaa55', fontFamily: FONT_MONO, fontStyle: 'bold',
+            stroke: '#0a1218', strokeThickness: 2,
+          }).setOrigin(0, 0.5).setDepth(50).setScrollFactor(0),
         );
       }
     }
@@ -1416,12 +1518,45 @@ export class TechnologyKit {
     } else if (kind === 'clippy') {
       const cx = W - 128, cy = 96;
       const objs: Phaser.GameObjects.GameObject[] = [];
-      const box = scene.add.rectangle(cx, cy, 216, 118, 0x552277, 0.92).setStrokeStyle(2, 0xbb88ff).setDepth(44).setScrollFactor(0);
-      const title = scene.add.text(cx - 100, cy - 48, '📎 Clippy', { fontSize: '13px', color: '#eeddff', fontFamily: 'monospace' }).setOrigin(0, 0.5).setDepth(45).setScrollFactor(0);
-      const qText = scene.add.text(cx, cy - 14, 'Hi! I\'m Clippy!', { fontSize: '16px', color: '#ffffff', fontFamily: 'monospace' }).setOrigin(0.5).setDepth(45).setScrollFactor(0);
-      const inputText = scene.add.text(cx, cy + 12, '', { fontSize: '15px', color: '#ffff88', fontFamily: 'monospace' }).setOrigin(0.5).setDepth(45).setScrollFactor(0);
-      const timerBar = scene.add.rectangle(cx, cy + 44, 196, 7, 0xbb88ff, 0.9).setDepth(45).setScrollFactor(0);
+      // A violet assistant window: CRT chrome, a drawn paperclip mascot peeking off the left
+      // edge, and the quiz timer as a segmented progress strip along the bottom.
+      const col = this.col(owner);
+      const timerBar = scene.add.rectangle(cx, cy + 44, 196, 7, 0xbb88ff, 0).setDepth(45).setScrollFactor(0);
       timerBar.setVisible(false);
+      const box = this.addChrome(44, (cg, ct) => {
+        crtWindow(cg, col, cx - 108, cy - 59, 216, 118, ct, {
+          bezel: TECH.plum, bar: TECH.violet, screen: 0x1a0a2a, glow: TECH.violet,
+        });
+        // paperclip mascot
+        const px = cx - 112, py = cy + 6 + Math.sin(ct * 3) * 2;
+        cg.lineStyle(3, col(TECH.wire), 1);
+        cg.beginPath();
+        cg.arc(px, py - 14, 6, Math.PI, 0, false);
+        cg.lineTo(px + 6, py + 12);
+        cg.arc(px + 1.5, py + 12, 4.5, 0, Math.PI, false);
+        cg.lineTo(px - 3, py - 10);
+        cg.strokePath();
+        cg.fillStyle(col(TECH.white), 1);
+        cg.fillCircle(px - 2.5, py - 4, 2.6);
+        cg.fillCircle(px + 4, py - 4, 2.6);
+        cg.fillStyle(col(TECH.night), 1);
+        cg.fillCircle(px - 2, py - 3.6, 1.2);
+        cg.fillCircle(px + 4.5, py - 3.6, 1.2);
+        if (timerBar.visible) {
+          const frac = Phaser.Math.Clamp(timerBar.width / 196, 0, 1);
+          const bx = cx - 98, by = cy + 41, segs = 14, sw = 196 / segs;
+          cg.fillStyle(col(TECH.night), 0.9);
+          cg.fillRect(bx - 2, by - 2, 200, 10);
+          for (let k = 0; k < segs; k++) {
+            if ((k + 1) / segs > frac + 1e-3) break;
+            cg.fillStyle(col(frac < 0.3 ? TECH.alert : TECH.violet), 0.95);
+            cg.fillRect(bx + k * sw + 1, by, sw - 2, 6);
+          }
+        }
+      });
+      const title = scene.add.text(cx - 100, cy - 46, '📎 Clippy.exe', { fontSize: '12px', color: '#f4e8ff', fontFamily: FONT_MONO, fontStyle: 'bold', stroke: '#2a1040', strokeThickness: 2 }).setOrigin(0, 0.5).setDepth(45).setScrollFactor(0);
+      const qText = scene.add.text(cx, cy - 12, 'Hi! I\'m Clippy!', { fontSize: '16px', color: '#ffffff', fontFamily: FONT_MONO, fontStyle: 'bold', stroke: '#1a0a2a', strokeThickness: 3 }).setOrigin(0.5).setDepth(45).setScrollFactor(0);
+      const inputText = scene.add.text(cx, cy + 14, '', { fontSize: '15px', color: '#ffff88', fontFamily: FONT_MONO, stroke: '#1a0a2a', strokeThickness: 3 }).setOrigin(0.5).setDepth(45).setScrollFactor(0);
       objs.push(box, title, qText, inputText, timerBar);
       this.malware[owner] = {
         kind: 'clippy', owner, expiresAt,
@@ -2009,14 +2144,19 @@ export class TechnologyKit {
     this.surfPopupUntil = now + SURF_POPUP_LIFETIME_MS;
     this.surfPopupBounds = { x: cx - w / 2, y: cy - h / 2, w, h };
 
-    const box = scene.add.rectangle(cx, cy, w, h, 0x223344, 0.95).setStrokeStyle(2, 0x66aadd).setDepth(44).setScrollFactor(0);
-    const label = scene.add.text(cx, cy - 16, '🌐 Surf the web?', { fontSize: '16px', color: '#ddeeff', fontFamily: 'monospace' }).setOrigin(0.5).setDepth(45).setScrollFactor(0);
-    const yes = scene.add.rectangle(cx - 60, cy + 18, 90, 26, 0x226644, 0.95).setStrokeStyle(1, 0x66ffaa).setDepth(45).setScrollFactor(0)
-      .setInteractive({ useHandCursor: true });
-    const yesLbl = scene.add.text(cx - 60, cy + 18, 'Yes!', { fontSize: '13px', color: '#aaffcc', fontFamily: 'monospace' }).setOrigin(0.5).setDepth(46).setScrollFactor(0);
-    const no = scene.add.rectangle(cx + 60, cy + 18, 90, 26, 0x663333, 0.95).setStrokeStyle(1, 0xff8888).setDepth(45).setScrollFactor(0)
-      .setInteractive({ useHandCursor: true });
-    const noLbl = scene.add.text(cx + 60, cy + 18, 'X', { fontSize: '13px', color: '#ffbbbb', fontFamily: 'monospace' }).setOrigin(0.5).setDepth(46).setScrollFactor(0);
+    const yes = this.hitRect(cx - 60, cy + 18, 90, 26);
+    const no = this.hitRect(cx + 60, cy + 18, 90, 26);
+    const box = this.addChrome(44, (cg, ct) => {
+      // A slim dialog: chrome window with the two key-caps set into its screen.
+      crtWindow(cg, this.pcol, cx - w / 2, cy - h / 2 - 6, w, h + 12, ct, {
+        bezel: TECH.steel, bar: TECH.adBlue, screen: TECH.board, glow: TECH.cyan, barH: 14,
+      });
+      crtButton(cg, this.pcol, cx - 60, cy + 18, 90, 26, 0x226644, !!yes.getData('hover'), ct);
+      crtButton(cg, this.pcol, cx + 60, cy + 18, 90, 26, 0x663333, !!no.getData('hover'), ct);
+    });
+    const label = scene.add.text(cx, cy - 12, '🌐 Surf the web?', { fontSize: '16px', color: '#ddeeff', fontFamily: FONT_MONO, fontStyle: 'bold', stroke: '#0a1218', strokeThickness: 3 }).setOrigin(0.5).setDepth(45).setScrollFactor(0);
+    const yesLbl = scene.add.text(cx - 60, cy + 18, 'Yes!', { fontSize: '13px', color: '#ccffdd', fontFamily: FONT_MONO, fontStyle: 'bold', stroke: '#0a1218', strokeThickness: 2 }).setOrigin(0.5).setDepth(46).setScrollFactor(0);
+    const noLbl = scene.add.text(cx + 60, cy + 18, 'X', { fontSize: '13px', color: '#ffcccc', fontFamily: FONT_MONO, fontStyle: 'bold', stroke: '#0a1218', strokeThickness: 2 }).setOrigin(0.5).setDepth(46).setScrollFactor(0);
     yes.on('pointerdown', () => { this.closeSurfPopup(); this.openBrowser(); });
     no.on('pointerdown', () => this.closeSurfPopup());
     this.surfPopupObjs = [box, label, yes, yesLbl, no, noLbl];
@@ -2043,13 +2183,49 @@ export class TechnologyKit {
     const scene = this.arena.scene;
     const { cx, cy } = this.browserCenter();
 
-    const frame = scene.add.rectangle(cx, cy, BROWSER_W, BROWSER_H, 0x1a1a2a, 0.97).setStrokeStyle(3, 0x8899bb).setDepth(44).setScrollFactor(0);
-    const titleBar = scene.add.rectangle(cx, cy - BROWSER_H / 2 + 14, BROWSER_W, 28, 0x2f2f4a, 1).setDepth(45).setScrollFactor(0);
-    const title = scene.add.text(cx - BROWSER_W / 2 + 10, cy - BROWSER_H / 2 + 14, '🌐 NetScape Explorer', { fontSize: '13px', color: '#ccddee', fontFamily: 'monospace' }).setOrigin(0, 0.5).setDepth(46).setScrollFactor(0);
-    const urlBar = scene.add.rectangle(cx, cy - BROWSER_H / 2 + 42, BROWSER_W - 24, 20, 0x0e0e18, 1).setStrokeStyle(1, 0x555577).setDepth(45).setScrollFactor(0);
-    const url = scene.add.text(cx - BROWSER_W / 2 + 20, cy - BROWSER_H / 2 + 42, 'https://totally.legit.web', { fontSize: '11px', color: '#88aa88', fontFamily: 'monospace' }).setOrigin(0, 0.5).setDepth(46).setScrollFactor(0);
-    this.browserCoinText = scene.add.text(cx + BROWSER_W / 2 - 12, cy - BROWSER_H / 2 + 14, '🪙 0', { fontSize: '13px', color: '#ffdd66', fontFamily: 'monospace' }).setOrigin(1, 0.5).setDepth(46).setScrollFactor(0);
-    this.browserObjs = [frame, titleBar, title, urlBar, url, this.browserCoinText];
+    // A late-90s browser on a CRT: chrome window, a navigation strip with back/forward/reload
+    // glyphs and the URL well, a coin wallet chip in the title bar, and a status bar at the foot
+    // with a throbbing "loading" globe.
+    const x0 = cx - BROWSER_W / 2, y0 = cy - BROWSER_H / 2;
+    const frame = this.addChrome(44, (cg, ct) => {
+      crtWindow(cg, this.pcol, x0, y0, BROWSER_W, BROWSER_H, ct, {
+        bezel: TECH.slate, bar: TECH.adBlue, screen: 0x10101e, glow: TECH.cyan, barH: 28,
+      });
+      // nav strip
+      cg.fillStyle(this.pcol(TECH.steel), 1);
+      cg.fillRect(x0 + 6, y0 + 32, BROWSER_W - 12, 20);
+      cg.fillStyle(this.pcol(TECH.night), 1);
+      cg.fillRoundedRect(x0 + 12, y0 + 33, BROWSER_W - 24, 18, 3);
+      cg.lineStyle(1, this.pcol(TECH.wire), 0.6);
+      cg.strokeRoundedRect(x0 + 12, y0 + 33, BROWSER_W - 24, 18, 3);
+      // padlock-ish secure glyph at the left of the URL well
+      cg.fillStyle(this.pcol(TECH.phosphorDim), 1);
+      cg.fillRect(x0 + 15, y0 + 40, 5, 5);
+      cg.lineStyle(1.2, this.pcol(TECH.phosphorDim), 1);
+      cg.strokeCircle(x0 + 17.5, y0 + 39, 2);
+      // wallet chip behind the coin counter
+      cg.fillStyle(this.pcol(TECH.night), 0.85);
+      cg.fillRoundedRect(x0 + BROWSER_W - 108, y0 + 6, 52, 17, 4);
+      cg.lineStyle(1, this.pcol(TECH.amber), 0.7);
+      cg.strokeRoundedRect(x0 + BROWSER_W - 108, y0 + 6, 52, 17, 4);
+      // status bar
+      const sy = y0 + BROWSER_H - 15;
+      cg.fillStyle(this.pcol(TECH.steel), 1);
+      cg.fillRect(x0 + 6, sy, BROWSER_W - 12, 10);
+      const gx = x0 + BROWSER_W - 16, gy = sy + 5;
+      cg.fillStyle(this.pcol(TECH.cyan), 0.6 + 0.4 * Math.sin(ct * 5));
+      cg.fillCircle(gx, gy, 4);
+      cg.lineStyle(1, this.pcol(TECH.night), 0.8);
+      cg.strokeEllipse(gx, gy, 3 + 2 * Math.abs(Math.sin(ct * 2)), 8);
+      cg.lineBetween(gx - 4, gy, gx + 4, gy);
+      const load = (ct * 0.4) % 1;
+      cg.fillStyle(this.pcol(TECH.phosphorDim), 0.8);
+      cg.fillRect(x0 + 10, sy + 3, (BROWSER_W - 44) * load, 4);
+    });
+    const title = scene.add.text(x0 + 12, y0 + 18, '🌐 NetScape Explorer', { fontSize: '13px', color: '#e6f0ff', fontFamily: FONT_MONO, fontStyle: 'bold', stroke: '#0a1218', strokeThickness: 2 }).setOrigin(0, 0.5).setDepth(46).setScrollFactor(0);
+    const url = scene.add.text(x0 + 26, y0 + 42, 'https://totally.legit.web', { fontSize: '11px', color: '#88dd99', fontFamily: FONT_MONO }).setOrigin(0, 0.5).setDepth(46).setScrollFactor(0);
+    this.browserCoinText = scene.add.text(x0 + BROWSER_W - 60, y0 + 15, '🪙 0', { fontSize: '12px', color: '#ffdd66', fontFamily: FONT_MONO, fontStyle: 'bold', stroke: '#0a1218', strokeThickness: 2 }).setOrigin(1, 0.5).setDepth(46).setScrollFactor(0);
+    this.browserObjs = [frame, title, url, this.browserCoinText];
     this.showBrowserHome();
   }
 
@@ -2072,13 +2248,14 @@ export class TechnologyKit {
 
   private mkBrowserButton(x: number, y: number, w: number, h: number, label: string, color: number, cb: () => void): Phaser.GameObjects.GameObject[] {
     const scene = this.arena.scene;
-    const rect = scene.add.rectangle(x, y, w, h, color, 0.9).setStrokeStyle(1, 0xffffff, 0.5).setDepth(45).setScrollFactor(0)
-      .setInteractive({ useHandCursor: true });
-    const lbl = scene.add.text(x, y, label, { fontSize: '13px', color: '#ffffff', fontFamily: 'monospace', align: 'center' }).setOrigin(0.5).setDepth(46).setScrollFactor(0);
+    const rect = this.hitRect(x, y, w, h);
+    const cap = this.addChrome(45, (cg, ct) => crtButton(cg, this.pcol, x, y, w, h, color, !!rect.getData('hover'), ct));
+    const lbl = scene.add.text(x, y, label, {
+      fontSize: '13px', color: '#ffffff', fontFamily: FONT_MONO, fontStyle: 'bold', align: 'center',
+      stroke: '#0a1218', strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(46).setScrollFactor(0);
     rect.on('pointerdown', cb);
-    rect.on('pointerover', () => rect.setAlpha(0.8));
-    rect.on('pointerout', () => rect.setAlpha(1));
-    return [rect, lbl];
+    return [cap, rect, lbl];
   }
 
   private mkExitButton(): Phaser.GameObjects.GameObject[] {
@@ -2121,8 +2298,20 @@ export class TechnologyKit {
       this.updateBrowserCoinText();
       scene.tweens.add({ targets: coin, scaleX: 1.15, scaleY: 1.15, duration: 60, yoyo: true });
     });
-    const hint = scene.add.text(cx, cy - 52, 'Click the coin!', { fontSize: '14px', color: '#ffdd66', fontFamily: 'monospace' }).setOrigin(0.5).setDepth(46).setScrollFactor(0);
-    this.browserContentObjs = [coin, hint, ...this.mkExitButton()];
+    const hint = scene.add.text(cx, cy - 52, 'Click the coin!', { fontSize: '14px', color: '#ffdd66', fontFamily: FONT_MONO, fontStyle: 'bold', stroke: '#0a1218', strokeThickness: 3 }).setOrigin(0.5).setDepth(46).setScrollFactor(0);
+    // A spotlight of turning gold rays behind the coin, so the clicker reads as a prize.
+    const rays = this.addChrome(45, (cg, ct) => {
+      cg.fillStyle(this.pcol(TECH.amber), 0.12);
+      cg.fillCircle(cx, cy + 14, 58);
+      for (let k = 0; k < 12; k++) {
+        const a = ct * 0.6 + (k / 12) * Math.PI * 2;
+        cg.fillStyle(this.pcol(TECH.gold), 0.14);
+        cg.fillTriangle(cx, cy + 14,
+          cx + Math.cos(a - 0.12) * 70, cy + 14 + Math.sin(a - 0.12) * 70,
+          cx + Math.cos(a + 0.12) * 70, cy + 14 + Math.sin(a + 0.12) * 70);
+      }
+    });
+    this.browserContentObjs = [rays, coin, hint, ...this.mkExitButton()];
   }
 
   private showGrubShop(): void {
@@ -2170,7 +2359,7 @@ export class TechnologyKit {
 
   private flashBrowserMsg(msg: string): void {
     const { cx, cy } = this.browserCenter();
-    const t = this.arena.scene.add.text(cx, cy + BROWSER_H / 2 - 46, msg, { fontSize: '12px', color: '#ffff88', fontFamily: 'monospace' }).setOrigin(0.5).setDepth(47).setScrollFactor(0);
+    const t = this.arena.scene.add.text(cx, cy + BROWSER_H / 2 - 46, msg, { fontSize: '12px', color: '#ffff88', fontFamily: FONT_MONO, fontStyle: 'bold', stroke: '#0a1218', strokeThickness: 3 }).setOrigin(0.5).setDepth(47).setScrollFactor(0);
     this.browserContentObjs.push(t);
     this.arena.scene.tweens.add({ targets: t, alpha: 0, duration: 1200, onComplete: () => t.destroy() });
   }
@@ -2180,7 +2369,7 @@ export class TechnologyKit {
     const scene = this.arena.scene;
     const { cx, cy } = this.browserCenter();
     const wheel = scene.add.text(cx, cy + 4, '🎡', { fontSize: '64px' }).setOrigin(0.5).setDepth(46).setScrollFactor(0);
-    const result = scene.add.text(cx, cy - 52, `Spin for ${WHEEL_SPIN_COST} coins!`, { fontSize: '14px', color: '#ddaaff', fontFamily: 'monospace' }).setOrigin(0.5).setDepth(46).setScrollFactor(0);
+    const result = scene.add.text(cx, cy - 52, `Spin for ${WHEEL_SPIN_COST} coins!`, { fontSize: '14px', color: '#ddaaff', fontFamily: FONT_MONO, fontStyle: 'bold', stroke: '#0a1218', strokeThickness: 3 }).setOrigin(0.5).setDepth(46).setScrollFactor(0);
     const spinBtn = this.mkBrowserButton(cx + BROWSER_W / 2 - 70, cy + BROWSER_H / 2 - 24, 100, 22, `SPIN (${WHEEL_SPIN_COST}c)`, 0x663388, () => {
       if (this.wheelSpinning) return;
       if (this.browserCoins < WHEEL_SPIN_COST) { this.flashBrowserMsg('Not enough coins!'); return; }
@@ -2383,9 +2572,47 @@ export class TechnologyKit {
     fighter.applyDisarm(ADMIN_WINDOW_MS);
 
     const { width: SW, height: SH } = this.arena.scene.scale;
-    st.box = this.arena.scene.add.rectangle(SW / 2, SH / 2, SW, SH, 0x220011, 0.85).setStrokeStyle(2, 0xff4444).setDepth(25).setScrollFactor(0);
-    st.text = this.arena.scene.add.text(SW / 2, SH / 2, this.renderAdminString(st), {
-      fontSize: '48px', color: '#ff6666', fontFamily: 'monospace',
+    // Root-access takeover: the whole screen goes to a red-alert terminal — dim crimson wash,
+    // crawling scanlines, hazard bands top and bottom, and a central console window whose
+    // bottom strip drains with the typing window.
+    const acol = this.col(owner);
+    st.box = this.addChrome(25, (cg, ct) => {
+      cg.fillStyle(acol(0x220011), 0.85);
+      cg.fillRect(0, 0, SW, SH);
+      cg.fillStyle(acol(TECH.night), 0.25);
+      for (let ly = (ct * 30) % 4; ly < SH; ly += 4) cg.fillRect(0, ly, SW, 1.5);
+      const roll = ((ct * 0.25) % 1) * SH;
+      cg.fillStyle(acol(TECH.alert), 0.05);
+      cg.fillRect(0, roll - 30, SW, 60);
+      // hazard bands
+      for (const by of [44, SH - 70]) {
+        cg.fillStyle(acol(TECH.night), 0.9);
+        cg.fillRect(0, by, SW, 14);
+        cg.fillStyle(acol(TECH.alert), 0.55 + 0.25 * Math.sin(ct * 6));
+        for (let k = -1; k < SW / 24 + 1; k++) {
+          const hx = k * 24 + ((ct * 30) % 24);
+          cg.fillTriangle(hx, by + 14, hx + 10, by, hx + 18, by);
+          cg.fillTriangle(hx, by + 14, hx + 18, by, hx + 8, by + 14);
+        }
+      }
+      const ww = Math.min(SW - 80, 760), wh = 150;
+      const scr = crtWindow(cg, acol, SW / 2 - ww / 2, SH / 2 - wh / 2 - 10, ww, wh, ct, {
+        bezel: 0x3a0a14, bar: 0x881122, screen: 0x140006, glow: TECH.alert,
+      });
+      const left = st.active ? Phaser.Math.Clamp((st.endAt - this.arena.scene.time.now) / ADMIN_WINDOW_MS, 0, 1) : 0;
+      cg.fillStyle(acol(TECH.night), 0.9);
+      cg.fillRect(scr.sx + 10, scr.sy + scr.sh - 12, scr.sw - 20, 6);
+      cg.fillStyle(acol(left < 0.25 ? TECH.amber : TECH.alert), 0.95);
+      cg.fillRect(scr.sx + 10, scr.sy + scr.sh - 12, (scr.sw - 20) * left, 6);
+      // blinking block cursor in the corner of the console
+      if (Math.sin(ct * 8) > 0) {
+        cg.fillStyle(acol(TECH.alert), 0.9);
+        cg.fillRect(scr.sx + 10, scr.sy + 8, 9, 14);
+      }
+    });
+    st.text = this.arena.scene.add.text(SW / 2, SH / 2 - 6, this.renderAdminString(st), {
+      fontSize: '44px', color: '#ff6666', fontFamily: FONT_MONO, fontStyle: 'bold',
+      stroke: '#140006', strokeThickness: 5,
     }).setOrigin(0.5).setDepth(26).setScrollFactor(0);
 
     if (owner === 'player') {
@@ -2497,7 +2724,7 @@ export class TechnologyKit {
     const baseY = H - 24 - lines.length * 16;
     lines.forEach((line, i) => {
       const text = this.arena.scene.add.text(baseX, baseY + i * 16, '', {
-        fontSize: '12px', color: '#ff3333', fontFamily: 'monospace',
+        fontSize: '12px', color: '#ff4a4a', fontFamily: FONT_MONO, fontStyle: 'bold',
       }).setOrigin(0, 0.5).setDepth(50).setScrollFactor(0);
       this.consoleLogTexts.push(text);
       this.arena.scene.time.delayedCall(i * 220, () => { if (text.active) text.setText(prefix + line); });

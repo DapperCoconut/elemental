@@ -8,6 +8,7 @@ import {
   ANGERED_TONES, GOLD_TONES, NPC_TONES, ROT_TONES, SOUL, SPIRIT_TONES, SoulAmalgamBody,
   SoulAvatar, SoulColorFn, SoulFx, SoulShroud, SoulTones, TORMENT_TONES, tonesFor,
 } from './SoulVisuals';
+import { FONT_DISPLAY } from '../../ui/Theme';
 
 type Owner = 'player' | 'npc';
 
@@ -486,6 +487,8 @@ export class SoulKit {
   private hudBodyCount: Phaser.GameObjects.Text | null = null;
   /** Lantern kills, and with Soul Lord the next milestone — left of the corpse queue. */
   private hudKills: Phaser.GameObjects.Text | null = null;
+  /** The crypt-lintel plate behind the corpse queue: coffin slots, rising wisps, kill plaque. */
+  private hudGfx: Phaser.GameObjects.Graphics | null = null;
 
   /** Shared HuskWorld for every zombie/amalgam SoulKit owns — resolves target/owner by pool lookup. */
   private huskWorld: HuskWorld = {
@@ -577,6 +580,7 @@ export class SoulKit {
     this.hudIcons = [];
     this.hudBodyCount?.destroy(); this.hudBodyCount = null;
     this.hudKills?.destroy(); this.hudKills = null;
+    this.hudGfx?.destroy(); this.hudGfx = null;
     // Ward owns its own multiplier now, so the reset is unconditional rather than the old
     // "clear it only if the value still looks like mine" guess against a shared field.
     this.arena.player.wardIncomingMult = 1;
@@ -2277,11 +2281,12 @@ export class SoulKit {
         .setOrigin(0.5).setDepth(20).setScale(0.42).setAlpha(0.25);
       this.hudIcons.push(img);
     }
-    this.hudBodyCount = scene.add.text(cx + (cap - 1) * 13 + 24, HUD_Y, '', {
-      fontSize: '11px', fontFamily: 'Arial Black', color: '#9977bb',
+    this.hudGfx = scene.add.graphics().setDepth(19.6);
+    this.hudBodyCount = scene.add.text(cx + (cap - 1) * 13 + 26, HUD_Y, '', {
+      fontSize: '11px', fontFamily: FONT_DISPLAY, color: '#9977bb', stroke: '#0a0410', strokeThickness: 4,
     }).setOrigin(0, 0.5).setDepth(20);
-    this.hudKills = scene.add.text(cx - (cap - 1) * 13 - 24, HUD_Y, '', {
-      fontSize: '11px', fontFamily: 'Arial Black', color: '#ccaaff',
+    this.hudKills = scene.add.text(cx - (cap - 1) * 13 - 26, HUD_Y, '', {
+      fontSize: '11px', fontFamily: FONT_DISPLAY, color: '#ccaaff', stroke: '#0a0410', strokeThickness: 4,
     }).setOrigin(1, 0.5).setDepth(20);
   }
 
@@ -2313,6 +2318,107 @@ export class SoulKit {
       label += next ? ` → ${next}` : ' ✨';
     }
     this.hudKills?.setText(label).setColor(this.ascended.player ? '#ffe07a' : '#ccaaff');
+    this.drawHudPlate(queue, bodies >= SOUL_HUSK_CAP);
+  }
+
+  /**
+   * The corpse queue as a crypt: a carved stone lintel with a coffin niche per slot. A filled
+   * niche glows from inside and lets a little wisp curl up out of its lid; an Inflamed corpse
+   * smoulders, an angered one bleeds red. The kill tally and body count sit on the lintel's
+   * carved end-plaques. Redrawn every frame on one Graphics, under the husk icons.
+   */
+  private drawHudPlate(queue: Corpse[], atCap: boolean): void {
+    const g = this.hudGfx;
+    if (!g) return;
+    g.clear();
+    const now = this.arena.scene.time.now / 1000;
+    const cx = this.arena.scene.scale.width / 2;
+    const n = this.hudIcons.length;
+    const half = (n - 1) * 13;
+    const lift = this.kills.player;
+    const gold = this.ascended.player;
+    const trim = gold ? SOUL.gold : SOUL.orchid;
+    const trimHi = gold ? SOUL.sun : SOUL.lilac;
+    const x0 = cx - half - 100, x1 = cx + half + 76, top = HUD_Y - 14, bot = HUD_Y + 14;
+
+    // Shadow, then the stone slab with a gently arched top over the coffin row.
+    g.fillStyle(0x000000, 0.4);
+    g.fillRoundedRect(x0 + 2, top + 3, x1 - x0, bot - top, 6);
+    g.fillStyle(0x1a0f24, 0.95);
+    g.fillRoundedRect(x0, top, x1 - x0, bot - top, 6);
+    g.fillStyle(0x1a0f24, 0.95);
+    g.fillEllipse(cx, top + 2, half * 2 + 44, 14);
+    // Masonry: staggered brick joints.
+    g.lineStyle(1, 0x2e1d3d, 0.9);
+    g.lineBetween(x0 + 4, HUD_Y, x1 - 4, HUD_Y);
+    for (let bx = x0 + 18; bx < x1 - 6; bx += 24) {
+      g.lineBetween(bx, top + 2, bx, HUD_Y);
+      g.lineBetween(bx + 12, HUD_Y, bx + 12, bot - 2);
+    }
+    // Carved trim.
+    g.lineStyle(2, trim, 0.85);
+    g.strokeRoundedRect(x0, top, x1 - x0, bot - top, 6);
+    g.lineStyle(1, trimHi, 0.25);
+    g.strokeRoundedRect(x0 + 3, top + 3, x1 - x0 - 6, bot - top - 6, 4);
+    // Little skull-and-candle studs on each end.
+    for (const sx of [x0 + 9, x1 - 9]) {
+      const fl = 0.7 + 0.3 * Math.sin(now * 9 + sx);
+      g.fillStyle(SOUL.bone, 0.9);
+      g.fillRect(sx - 2, HUD_Y - 2, 4, 10);
+      g.fillStyle(gold ? SOUL.sun : SOUL.lilac, 0.45 * fl);
+      g.fillCircle(sx, HUD_Y - 6, 5);
+      g.fillStyle(gold ? SOUL.halo : SOUL.pale, fl);
+      g.fillEllipse(sx, HUD_Y - 5, 3, 5 * fl);
+    }
+    // Kill-milestone glow under the tally — swells as Soul Lord milestones approach.
+    if (lift > 0) {
+      g.fillStyle(trim, 0.12 + 0.06 * Math.sin(now * 3));
+      g.fillEllipse(cx - half - 60, HUD_Y, 72, 20);
+    }
+    g.fillStyle(atCap ? SOUL.blood : SOUL.stone, atCap ? 0.18 : 0.1);
+    g.fillEllipse(cx + half + 46, HUD_Y, 48, 20);
+
+    // Coffin niches.
+    for (let i = 0; i < n; i++) {
+      const sx = cx - half + i * 26;
+      const corpse = queue[i];
+      const hw = 9, sh = HUD_Y - 7, ttop = HUD_Y - 13, tbot = HUD_Y + 13;
+      const coffin = (inset: number) => {
+        g.beginPath();
+        g.moveTo(sx - (hw - 4) + inset, ttop + inset);
+        g.lineTo(sx + (hw - 4) - inset, ttop + inset);
+        g.lineTo(sx + hw - inset, sh);
+        g.lineTo(sx + (hw - 3) - inset, tbot - inset);
+        g.lineTo(sx - (hw - 3) + inset, tbot - inset);
+        g.lineTo(sx - hw + inset, sh);
+        g.closePath();
+      };
+      const glowCol = corpse?.inflamed ? SOUL.ember : corpse?.angered ? SOUL.blood : gold ? SOUL.gold : SOUL.orchid;
+      coffin(0);
+      g.fillStyle(0x07030c, 1);
+      g.fillPath();
+      if (corpse) {
+        const pulse = 0.6 + 0.4 * Math.sin(now * 3 + i);
+        coffin(1.5);
+        g.fillStyle(glowCol, 0.28 + pulse * 0.18);
+        g.fillPath();
+        // A wisp curling up out of the lid.
+        for (let w = 0; w < 3; w++) {
+          const ph = (now * 0.9 + w / 3 + i * 0.37) % 1;
+          const wy = ttop - ph * 12;
+          const wx = sx + Math.sin(ph * 7 + i) * 3;
+          g.fillStyle(corpse.inflamed ? SOUL.cinder : gold ? SOUL.sun : SOUL.lilac, (1 - ph) * 0.7);
+          g.fillCircle(wx, wy, 2.2 * (1 - ph) + 0.6);
+        }
+      }
+      coffin(0);
+      g.lineStyle(1.5, corpse ? glowCol : SOUL.grape, corpse ? 1 : 0.7);
+      g.strokePath();
+      // Lid cross.
+      g.lineStyle(1, corpse ? trimHi : SOUL.crypt, corpse ? 0.35 : 0.8);
+      g.lineBetween(sx, ttop + 3, sx, tbot - 3);
+      g.lineBetween(sx - 4, sh, sx + 4, sh);
+    }
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────

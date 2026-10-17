@@ -4,8 +4,9 @@ import { CastContext } from '../Ability';
 import { Projectile } from '../../combat/Projectile';
 import {
   ArmGesture, ELECTRIC, ElectricColorFn, ElectricityAura, ElectricityAvatar, ElectricityFx,
-  LIVE_TONES, NPC_TONES, PHOENIX_TONES, PLASMA_TONES, STORM_TONES,
+  LIVE_TONES, NPC_TONES, PHOENIX_TONES, PLASMA_TONES, STORM_TONES, drawKineticBattery,
 } from './ElectricityVisuals';
+import { FONT_DISPLAY } from '../../ui/Theme';
 import { meterGain } from '../../combat/Meters';
 
 interface StormCloud {
@@ -169,6 +170,8 @@ export class ElectricityKit {
 
   // HUD
   private kineticPowerText: Phaser.GameObjects.Text | null = null;
+  /** The battery cell the kinetic-power readout is printed on. */
+  private kineticHudGfx: Phaser.GameObjects.Graphics | null = null;
 
   // Kinetic power
   private kineticPower = 0;
@@ -246,6 +249,7 @@ export class ElectricityKit {
     // Destroy any lingering game objects from the previous match. Every GameObject dies with the
     // old scene run, so the visuals below are rebuilt lazily in update().
     if (this.kineticPowerText) { this.kineticPowerText.destroy(); this.kineticPowerText = null; }
+    if (this.kineticHudGfx) { this.kineticHudGfx.destroy(); this.kineticHudGfx = null; }
     if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
     if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
     if (this.shieldAura) { this.shieldAura.destroy(); this.shieldAura = null; }
@@ -295,9 +299,10 @@ export class ElectricityKit {
       const scene = this.arena.scene;
       const cx = scene.scale.width / 2;
       const cap = this.arena.hasUpgrade('r') ? 100 : 50;
-      this.kineticPowerText = scene.add.text(cx, 52, `⚡ 0/${cap}`, {
-        fontSize: '18px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffee00',
-        stroke: '#664400', strokeThickness: 3,
+      this.kineticHudGfx = scene.add.graphics().setDepth(19.5);
+      this.kineticPowerText = scene.add.text(cx, 54, `⚡ 0/${cap}`, {
+        fontSize: '13px', fontFamily: FONT_DISPLAY, color: '#ffffff',
+        stroke: '#3a2a00', strokeThickness: 4,
       }).setOrigin(0.5).setDepth(20);
     }
   }
@@ -1122,6 +1127,12 @@ export class ElectricityKit {
   private updateHud(cap: number): void {
     if (this.kineticPowerText) {
       this.kineticPowerText.setText(`⚡ ${Math.floor(this.kineticPower)}/${cap}`);
+    }
+    if (this.kineticHudGfx && this.kineticPowerText) {
+      const g = this.kineticHudGfx;
+      g.clear();
+      drawKineticBattery(g, this.pcol, LIVE_TONES, this.kineticPowerText.x, 54,
+        this.kineticPower / cap, this.arena.scene.time.now / 1000, this.arena.masteryActive);
     }
   }
 

@@ -11,6 +11,7 @@ import {
   sheath, shuriken, slashArc, slicedBullet, stumps, styxBrand, tentacle, wallFace, wallScar,
   weaponCore,
 } from './DeathVisuals';
+import { FONT_DISPLAY, FONT_UI } from '../../ui/Theme';
 import { meterStep } from '../../combat/Meters';
 
 type Owner = 'player' | 'npc';
@@ -2871,24 +2872,27 @@ export class DeathKit {
     if (!this.hudGfx) this.hudGfx = scene.add.graphics().setDepth(CLOCK_DEPTH).setScrollFactor(0);
     if (!this.hudTitle) {
       this.hudTitle = scene.add.text(cx, cy - CLOCK_R - 13, 'MIDNIGHT', {
-        fontSize: '11px', color: this.hex(accent), fontStyle: 'bold',
+        fontSize: '10px', fontFamily: FONT_DISPLAY, color: this.hex(accent),
+        stroke: '#07060d', strokeThickness: 3,
       }).setOrigin(0.5).setDepth(CLOCK_DEPTH + 1).setScrollFactor(0);
     }
     if (!this.hudCount) {
       this.hudCount = scene.add.text(cx, cy + CLOCK_R + 6, '', {
-        fontSize: '15px', color: '#e9e3d2', fontStyle: 'bold',
+        fontSize: '15px', fontFamily: FONT_DISPLAY, color: '#e9e3d2',
+        stroke: '#07060d', strokeThickness: 4,
       }).setOrigin(0.5).setDepth(CLOCK_DEPTH + 1).setScrollFactor(0);
     }
 
     const s = this.sides[owner];
     const frac = Phaser.Math.Clamp(s.clockMs / MIDNIGHT_MS, 0, 1);
     const secs = s.clockSpent ? 0 : Math.ceil(s.clockMs / 1000);
+    const late = frac < 0.25 ? 1 - frac / 0.25 : 0;
+    // A beat on every whole second, so the dial visibly ticks rather than sliding.
+    const tick = s.clockSpent ? 0 : Math.max(0, 1 - ((s.clockMs % 1000) / 1000) * 4);
 
     const g = this.hudGfx.setVisible(true);
     g.clear();
-    // A shroud behind the dial so it never sits on bare arena, thrashing harder as it runs out.
-    g.fillStyle(DEA.void_, 0.55);
-    g.fillCircle(cx, cy, CLOCK_R + 9);
+    this.paintCoffin(g, cx, cy, accent, late, tick);
     clockFace(g, this.col(owner), cx, cy, CLOCK_R, frac, 1,
       { hostile: !mine || frac < 0.08, seed: 7 });
     // Mastery: the eight seconds this dial was just given, ringed in gold around it — the number
@@ -2897,13 +2901,125 @@ export class DeathKit {
       g.lineStyle(3, DEA.gold, 0.35 + 0.3 * Math.sin(this.vizT * 5));
       g.strokeCircle(cx, cy, CLOCK_R + 6 + Math.sin(this.vizT * 5) * 1.5);
     }
+    // Twin hourglasses flank the count, their sand the same minute as the dial.
+    this.paintHourglass(g, cx - 30, cy + CLOCK_R + 7, frac, accent, 0);
+    this.paintHourglass(g, cx + 30, cy + CLOCK_R + 7, frac, accent, 0.5);
 
     this.hudTitle.setVisible(true).setPosition(cx, cy - CLOCK_R - 13)
       .setColor(this.hex(accent))
       .setText(mine ? 'MIDNIGHT' : 'YOUR MIDNIGHT');
     this.hudCount.setVisible(true).setPosition(cx, cy + CLOCK_R + 6)
       .setColor(this.hex(secs <= 10 ? DEA.blood : DEA.bone))
+      .setScale(1 + tick * (secs <= 10 ? 0.18 : 0.06))
       .setText(s.clockSpent ? '—' : `${secs}s`);
+  }
+
+  /**
+   * The case the dial is hung in: a coffin-lid plate of shroud with a bone frame, brass studs at
+   * its shoulders, a little skull capping the lid and a row of ribs along the foot. It reddens
+   * and throbs in the last quarter of the minute.
+   */
+  private paintCoffin(g: Phaser.GameObjects.Graphics, cx: number, cy: number, accent: number, late: number, tick: number): void {
+    const P = (x: number, y: number) => new Phaser.Geom.Point(cx + x, cy + y);
+    const lid = [P(-28, -62), P(28, -62), P(55, -22), P(40, 64), P(-40, 64), P(-55, -22)];
+    const inner = [P(-25, -57), P(25, -57), P(50, -22), P(36, 59), P(-36, 59), P(-50, -22)];
+    // Drop shadow, then the plate in two tones so it reads as a raised lid.
+    g.fillStyle(DEA.void_, 0.5);
+    g.fillPoints(lid.map((q) => new Phaser.Geom.Point(q.x + 3, q.y + 4)), true);
+    g.fillStyle(DEA.void_, 0.92);
+    g.fillPoints(lid, true);
+    g.fillStyle(DEA.shroud, 0.95);
+    g.fillPoints(inner, true);
+    g.fillStyle(DEA.ash, 0.35);
+    g.fillPoints([P(-25, -57), P(25, -57), P(50, -22), P(-50, -22)], true);
+    if (late > 0) {
+      g.fillStyle(DEA.blood, (0.08 + 0.1 * Math.sin(this.vizT * 8)) * late);
+      g.fillPoints(inner, true);
+    }
+    // Bone frame: a dim outer line and a bright inner hairline, like a carved moulding.
+    g.lineStyle(2.4, DEA.pale, 0.55);
+    g.strokePoints(lid, true, true);
+    g.lineStyle(1, late > 0 ? DEA.blood : accent, 0.45 + 0.35 * tick + late * 0.3);
+    g.strokePoints(inner, true, true);
+    // Brass studs at the shoulders and the foot.
+    for (const [sx, sy] of [[-55, -22], [55, -22], [-40, 64], [40, 64], [-28, -62], [28, -62]]) {
+      g.fillStyle(DEA.brass, 1);
+      g.fillCircle(cx + sx, cy + sy, 2.6);
+      g.fillStyle(DEA.gold, 0.9);
+      g.fillCircle(cx + sx - 0.6, cy + sy - 0.6, 1.1);
+    }
+    // A small skull hung from the foot of the lid (the head of the corner is the status tray's).
+    const kx = cx;
+    const ky = cy + 71;
+    // Crossed bones behind the skull.
+    g.lineStyle(2.2, DEA.pale, 0.8);
+    g.lineBetween(kx - 12, ky - 5, kx + 12, ky + 6);
+    g.lineBetween(kx + 12, ky - 5, kx - 12, ky + 6);
+    for (const [bx, by] of [[-12, -5], [12, 6], [12, -5], [-12, 6]]) {
+      g.fillStyle(DEA.bone, 0.9);
+      g.fillCircle(kx + bx, by + ky - 1, 1.6);
+      g.fillCircle(kx + bx, by + ky + 1, 1.6);
+    }
+    g.fillStyle(DEA.void_, 0.9);
+    g.fillCircle(kx, ky, 7.4);
+    g.fillStyle(DEA.bone, 1);
+    g.fillCircle(kx, ky - 0.6, 6);
+    g.fillRect(kx - 3.4, ky + 3, 6.8, 3.4);
+    g.fillStyle(DEA.pale, 0.8);
+    g.fillEllipse(kx, ky + 2.6, 9, 3);
+    g.fillStyle(late > 0 ? DEA.blood : DEA.void_, 1);
+    g.fillCircle(kx - 2.3, ky - 0.6, 1.7);
+    g.fillCircle(kx + 2.3, ky - 0.6, 1.7);
+    g.fillTriangle(kx - 0.8, ky + 2.4, kx + 0.8, ky + 2.4, kx, ky + 1);
+    g.lineStyle(0.8, DEA.void_, 0.9);
+    for (let i = -1; i <= 1; i++) g.lineBetween(kx + i * 1.6, ky + 3.6, kx + i * 1.6, ky + 6.2);
+    // A shroud ring behind the dial so it never sits on the lid's highlight.
+    g.fillStyle(DEA.void_, 0.6);
+    g.fillCircle(cx, cy, CLOCK_R + 5);
+  }
+
+  /** A little hourglass: top bulb draining as `frac` falls, a grain stream between the bulbs. */
+  private paintHourglass(g: Phaser.GameObjects.Graphics, x: number, y: number, frac: number, accent: number, phase: number): void {
+    const hw = 5;
+    const hh = 8;
+    // Frame caps.
+    g.fillStyle(DEA.brass, 1);
+    g.fillRect(x - hw - 1.5, y - hh - 2, hw * 2 + 3, 2);
+    g.fillRect(x - hw - 1.5, y + hh, hw * 2 + 3, 2);
+    g.lineStyle(1, DEA.brass, 0.9);
+    g.lineBetween(x - hw - 1, y - hh, x - hw - 1, y + hh);
+    g.lineBetween(x + hw + 1, y - hh, x + hw + 1, y + hh);
+    // Glass.
+    g.fillStyle(DEA.void_, 0.85);
+    g.fillTriangle(x - hw, y - hh, x + hw, y - hh, x, y);
+    g.fillTriangle(x - hw, y + hh, x + hw, y + hh, x, y);
+    // Sand: top bulb holds what is left, bottom what is spent.
+    const top = Phaser.Math.Clamp(frac, 0, 1);
+    if (top > 0.01) {
+      const ty = y - hh * top;
+      const tw = hw * top;
+      g.fillStyle(accent, 0.95);
+      g.fillTriangle(x - tw, ty, x + tw, ty, x, y);
+    }
+    const bot = 1 - top;
+    if (bot > 0.01) {
+      const by = y + hh - hh * bot;
+      const bw = hw;
+      g.fillStyle(accent, 0.85);
+      g.fillPoints([
+        new Phaser.Geom.Point(x - hw, y + hh), new Phaser.Geom.Point(x + hw, y + hh),
+        new Phaser.Geom.Point(x + bw * (1 - bot), by), new Phaser.Geom.Point(x - bw * (1 - bot), by),
+      ], true);
+    }
+    if (top > 0.01) {
+      const u = (this.vizT * 2 + phase) % 1;
+      g.fillStyle(DEA.bone, 0.9);
+      g.fillRect(x - 0.5, y, 1, hh * 0.9);
+      g.fillCircle(x, y + u * hh * 0.9, 0.9);
+    }
+    g.lineStyle(1, DEA.pale, 0.7);
+    g.strokeTriangle(x - hw, y - hh, x + hw, y - hh, x, y);
+    g.strokeTriangle(x - hw, y + hh, x + hw, y + hh, x, y);
   }
 
   // ── The limb picker ────────────────────────────────────────────────────────
@@ -2916,6 +3032,10 @@ export class DeathKit {
    *
    * The geometry is `pickerRect`'s, and it has to stay that way: the rows are clickable, and the
    * hit test is done against that rect rather than against these text objects.
+   *
+   * Dressed as a death warrant: a cut-cornered slab of shroud with a bone frame, a katana laid
+   * across the head of it, bone keycaps down the left, and a blood stroke through every limb
+   * already taken.
    */
   private paintPicker(playerIs: boolean): void {
     const open = playerIs && this.picking;
@@ -2932,21 +3052,25 @@ export class DeathKit {
     const cx = this.api.width / 2;
     const top = r.y;
     const h = r.h;
+    const L = cx - PICK_W / 2;
+    const R = cx + PICK_W / 2;
 
     if (!this.pickGfx) this.pickGfx = scene.add.graphics().setDepth(PICK_DEPTH).setScrollFactor(0);
     if (!this.pickTitle) {
       this.pickTitle = scene.add.text(cx, top + 14, '', {
-        fontSize: '13px', color: this.hex(DEA.blade), fontStyle: 'bold',
+        fontSize: '12px', fontFamily: FONT_DISPLAY, color: this.hex(DEA.blade),
+        stroke: '#07060d', strokeThickness: 3,
       }).setOrigin(0.5).setDepth(PICK_DEPTH + 1).setScrollFactor(0);
     }
     if (!this.pickHint) {
       this.pickHint = scene.add.text(cx, 0, '', {
-        fontSize: '11px', color: this.hex(DEA.pale),
+        fontSize: '11px', fontFamily: FONT_UI, color: this.hex(DEA.pale), fontStyle: 'italic',
       }).setOrigin(0.5).setDepth(PICK_DEPTH + 1).setScrollFactor(0);
     }
     while (this.pickRows.length < LIMBS.length) {
-      this.pickRows.push(scene.add.text(cx - PICK_W / 2 + 14, 0, '', {
-        fontSize: '12px', color: '#e9e3d2',
+      this.pickRows.push(scene.add.text(L + 34, 0, '', {
+        fontSize: '12px', fontFamily: FONT_UI, color: '#e9e3d2', fontStyle: 'bold',
+        stroke: '#07060d', strokeThickness: 2,
       }).setOrigin(0, 0.5).setDepth(PICK_DEPTH + 1).setScrollFactor(0));
     }
 
@@ -2959,15 +3083,55 @@ export class DeathKit {
 
     const g = this.pickGfx.setVisible(true);
     g.clear();
-    g.fillStyle(DEA.void_, 0.86);
-    g.fillRoundedRect(cx - PICK_W / 2, top, PICK_W, h, 8);
-    g.lineStyle(1.6, DEA.blade, 0.55);
-    g.strokeRoundedRect(cx - PICK_W / 2, top, PICK_W, h, 8);
-    // A hairline of steel under the title, the width of the blade that is about to be used.
-    g.lineStyle(1, DEA.edge, 0.35);
-    g.lineBetween(cx - PICK_W / 2 + 12, top + 27, cx + PICK_W / 2 - 12, top + 27);
+    const C = 10;
+    const slab = (x0: number, y0: number, x1: number, y1: number, c: number) => [
+      new Phaser.Geom.Point(x0 + c, y0), new Phaser.Geom.Point(x1 - c, y0), new Phaser.Geom.Point(x1, y0 + c),
+      new Phaser.Geom.Point(x1, y1 - c), new Phaser.Geom.Point(x1 - c, y1), new Phaser.Geom.Point(x0 + c, y1),
+      new Phaser.Geom.Point(x0, y1 - c), new Phaser.Geom.Point(x0, y0 + c),
+    ];
+    g.fillStyle(0x000000, 0.4);
+    g.fillPoints(slab(L + 4, top + 5, R + 4, top + h + 5, C), true);
+    g.fillStyle(DEA.void_, 0.94);
+    g.fillPoints(slab(L, top, R, top + h, C), true);
+    // Head band in lit shroud, body in deep shroud.
+    g.fillStyle(DEA.shroud, 0.95);
+    g.fillPoints(slab(L + 4, top + 4, R - 4, top + h - 4, C - 3), true);
+    g.fillStyle(DEA.ash, 0.45);
+    g.fillRect(L + 8, top + 5, PICK_W - 16, 23);
+    // Frame: dim bone outer, steel hairline inner.
+    g.lineStyle(2, DEA.pale, 0.5);
+    g.strokePoints(slab(L, top, R, top + h, C), true, true);
+    g.lineStyle(1, DEA.blade, 0.4);
+    g.strokePoints(slab(L + 4, top + 4, R - 4, top + h - 4, C - 3), true, true);
+    // Bone corner knuckles.
+    for (const [kx, ky] of [[L + 4, top + 4], [R - 4, top + 4], [L + 4, top + h - 4], [R - 4, top + h - 4]]) {
+      g.fillStyle(DEA.bone, 0.9);
+      g.fillCircle(kx, ky, 3);
+      g.fillStyle(DEA.void_, 1);
+      g.fillCircle(kx, ky, 1.1);
+    }
+    // The katana laid across the head of the warrant, glinting along its edge.
+    const by = top + 27;
+    // Hilt: wrapped grip with diamond ties, a round tsuba, then the blade with a faint curve.
+    g.fillStyle(DEA.void_, 1);
+    g.fillRect(L + 16, by - 2.2, 46, 4.4);
+    g.fillStyle(DEA.bone, 0.85);
+    for (let i = 0; i < 6; i++) g.fillTriangle(L + 19 + i * 7, by, L + 22.5 + i * 7, by - 2, L + 26 + i * 7, by);
+    g.fillStyle(DEA.brass, 1);
+    g.fillEllipse(L + 64, by, 4, 10);
+    g.fillStyle(DEA.blade, 0.95);
+    g.fillPoints([
+      new Phaser.Geom.Point(L + 66, by - 1.8), new Phaser.Geom.Point(R - 30, by - 2.6),
+      new Phaser.Geom.Point(R - 16, by - 0.4), new Phaser.Geom.Point(R - 30, by + 0.8),
+      new Phaser.Geom.Point(L + 66, by + 1.4),
+    ], true);
+    g.lineStyle(0.8, DEA.edge, 0.9);
+    g.lineBetween(L + 66, by + 1.2, R - 18, by - 0.2);
+    const gleam = (this.vizT * 0.45) % 1;
+    g.fillStyle(DEA.edge, 0.7 * Math.sin(gleam * Math.PI));
+    g.fillEllipse(L + 80 + gleam * (PICK_W - 120), by - 0.4, 16, 2.4);
 
-    this.pickTitle.setVisible(true).setPosition(cx, top + 14)
+    this.pickTitle.setVisible(true).setPosition(cx, top + 15)
       .setText(also > 0
         ? `🗡️ CUT LANDED ON ${this.pickCaught.length} — TAKE WHICH?`
         : `🗡️ CUT LANDED — ${left} LIMB${left === 1 ? '' : 'S'} LEFT TO TAKE`);
@@ -2985,16 +3149,39 @@ export class DeathKit {
         ? `−${Math.round((1 - AMP_LEG_SPEED[Math.min(2, legs + 1)]) * 100)}% speed`
         : `+${Math.round((AMP_ARM_CD[Math.min(2, arms + 1)] - 1) * 100)}% cd · `
           + `−${Math.round((1 - AMP_ARM_DMG[Math.min(2, arms + 1)]) * 100)}% dmg`;
-      if (i === hovered && !taken) {
-        g.fillStyle(DEA.blade, 0.16);
-        g.fillRoundedRect(cx - PICK_W / 2 + 8, rowY - PICK_ROW / 2 + 1, PICK_W - 16, PICK_ROW - 2, 4);
+      const hot = i === hovered && !taken;
+      // Row slab.
+      g.fillStyle(hot ? DEA.blade : DEA.void_, hot ? 0.16 : 0.45);
+      g.fillRoundedRect(L + 8, rowY - PICK_ROW / 2 + 2, PICK_W - 16, PICK_ROW - 4, 3);
+      if (hot) {
+        g.lineStyle(1, DEA.edge, 0.5);
+        g.strokeRoundedRect(L + 8, rowY - PICK_ROW / 2 + 2, PICK_W - 16, PICK_ROW - 4, 3);
+      }
+      // Bone keycap carrying the number key.
+      const kx = L + 20;
+      g.fillStyle(DEA.void_, 1);
+      g.fillRoundedRect(kx - 8, rowY - 8, 16, 16, 3);
+      g.fillStyle(taken ? DEA.smoke : DEA.bone, 1);
+      g.fillRoundedRect(kx - 7, rowY - 8, 14, 14, 3);
+      g.fillStyle(taken ? DEA.ash : DEA.pale, 1);
+      g.fillRect(kx - 7, rowY + 3, 14, 3);
+      // Pips on the keycap: the number, without a second text object.
+      g.fillStyle(DEA.void_, 1);
+      for (let p = 0; p <= i; p++) {
+        const px = kx + (p - i / 2) * 3.2;
+        g.fillCircle(px, rowY - 1.5, 1.2);
+      }
+      if (taken) {
+        // A blood stroke through the row.
+        g.lineStyle(2, DEA.blood, 0.75);
+        g.lineBetween(L + 30, rowY + 1, R - 14, rowY - 2);
       }
       this.pickRows[i].setVisible(true)
-        .setPosition(cx - PICK_W / 2 + 14, rowY)
-        .setColor(taken ? this.hex(DEA.smoke) : i === hovered ? this.hex(DEA.edge) : '#e9e3d2')
+        .setPosition(L + 34, rowY)
+        .setColor(taken ? this.hex(DEA.smoke) : hot ? this.hex(DEA.edge) : '#e9e3d2')
         .setText(taken
-          ? `[${i + 1}]  ${LIMB_EMOJI[limb]} ${LIMB_LABEL[limb]} — already gone`
-          : `[${i + 1}]  ${LIMB_EMOJI[limb]} ${LIMB_LABEL[limb]} — ${effect}`);
+          ? `${i + 1}  ${LIMB_EMOJI[limb]} ${LIMB_LABEL[limb]} — already gone`
+          : `${i + 1}  ${LIMB_EMOJI[limb]} ${LIMB_LABEL[limb]} — ${effect}`);
     }
 
     this.pickHint.setVisible(true)

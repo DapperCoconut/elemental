@@ -460,7 +460,7 @@ export const lifeMasteryThornThrash: PreviewScript = {
     const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
     ctx.onFrame((_dt, elapsed) => {
       g.clear();
-      LifeFx.drawPlant(g, ctx.tint, 'rose', px, py, elapsed / 1000, {});
+      LifeFx.drawPlant(g, ctx.tint, 'frost-lily', px, py, elapsed / 1000, {});
     });
     ctx.at(500, () => {
       av.play('punch', ctx.aim);
@@ -490,7 +490,7 @@ export const lifeMasteryThornThrash: PreviewScript = {
 
 export const lifeMasteryReap: PreviewScript = {
   duration: 4200,
-  caption: 'Mastery — destroy a plant, wear what it was for 20s. Six different buffs',
+  caption: 'Mastery — destroy a plant, wear what it was for 20–60s. Eight different gifts',
   run(ctx) {
     const { fx, av } = lifeStage(ctx);
     const px = ctx.cx + 130, py = ctx.cy + 10;
@@ -669,47 +669,49 @@ export const airMasteryDancersMomentum: PreviewScript = {
 /**
  * Life's only passive — the board itself.
  *
- * The codex lists six seeds and a cap of five. A loop that shows one plant is documenting a
- * summon; this one fills the board to the cap with all six art types cycling through it,
- * refuses the sixth planting the way the kit does, and lets the two followers walk. Every
- * plant is `LifeFx.drawPlant`, so the art is the same code the arena runs.
+ * The codex lists eight seeds and a cap of five. A loop that shows one plant is documenting a
+ * summon; this one fills the board to the cap from the seed bar, then plants a sixth the way the
+ * kit does — the oldest wilts to make room — and lets the garden fire. Every plant is
+ * `LifeFx.drawPlant`, so the art is the same code the arena runs.
  */
 export const lifeTheGarden: PreviewScript = {
   duration: 11000,
   scale: 0.9,
-  caption: 'Passive — five plants at once from six seeds. The board is the kit',
+  caption: 'Passive — five plants at once from eight seeds. The board is the kit',
   run(ctx) {
     const { fx, av } = lifeStage(ctx);
     const CAP = 5;
     const seeds: { type: PlantArtType; name: string; hp: number; note: string }[] = [
-      { type: 'sunflower', name: 'Sunflower', hp: 25, note: '10 dmg bullet every 1s' },
-      { type: 'rose', name: 'Rose', hp: 75, note: 'thorns — reflects damage' },
-      { type: 'nurse-lily', name: 'Nurse Lily', hp: 25, note: 'heals 3 every 2s · follows' },
-      { type: 'nightcap', name: 'Nightcap', hp: 25, note: 'lays poison puddles' },
-      { type: 'pitcher', name: 'Pitcher', hp: 50, note: 'traps for 3s' },
-      { type: 'cotton', name: 'Cotton', hp: 25, note: '+50% speed for 1s · follows' },
+      { type: 'sunflower', name: 'Sunflower', hp: 30, note: '3s solar link, heats up' },
+      { type: 'frost-lily', name: 'Frost Lily', hp: 30, note: 'piercing ice · slow + brittle' },
+      { type: 'lotus', name: 'Lotus', hp: 35, note: 'orb: +10 HP, +1 petal' },
+      { type: 'mushroom', name: 'Colony', hp: 35, note: '8 spores in a ring' },
+      { type: 'pitcher', name: 'Pitcher', hp: 50, note: 'waters plants nearby' },
+      { type: 'helicopter', name: 'Helicopter', hp: 70, note: 'spinning blades' },
+      { type: 'nightcap', name: 'Nightcap', hp: 25, note: 'poison bombs' },
+      { type: 'flaming-sprout', name: 'Fire Sprout', hp: 20, note: 'rapid fire · lives 5s' },
     ];
 
-    interface Planted { type: PlantArtType; x: number; y: number; born: number; follows: boolean }
+    interface Planted { type: PlantArtType; x: number; y: number; born: number }
     const bed: Planted[] = [];
+    let beamUntil = 0;
     const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
-    ctx.onFrame((dt, elapsed) => {
+    ctx.onFrame((_dt, elapsed) => {
       const t = elapsed / 1000;
       g.clear();
       for (const p of bed) {
-        // The two followers trail the caster at the kit's 40px standoff, at 62 px/s.
-        if (p.follows) {
-          const d = Phaser.Math.Distance.Between(p.x, p.y, ctx.cx, ctx.cy);
-          if (d > 40) {
-            p.x += ((ctx.cx - p.x) / d) * 62 * (dt / 1000);
-            p.y += ((ctx.cy - p.y) / d) * 62 * (dt / 1000);
-          }
-        }
         // Growing in: the first half-second of a plant's life is it coming up.
         const grow = Phaser.Math.Clamp((elapsed - p.born) / 500, 0, 1);
-        LifeFx.drawPlant(g, ctx.tint, p.type, p.x, p.y, t, { scale: 0.55 + grow * 0.35 });
+        const heat = p.type === 'sunflower' && elapsed < beamUntil ? 1 - (beamUntil - elapsed) / 3000 : 0;
+        LifeFx.drawPlant(g, ctx.tint, p.type, p.x, p.y, t, {
+          scale: 0.55 + grow * 0.35,
+          charge: p.type === 'lotus' ? Math.min(1, (elapsed - p.born) / 2500) : heat,
+          spin: t * 7,
+        });
+        if (heat > 0) LifeFx.drawSolarBeam(g, ctx.tint, p.x, p.y - 16, ctx.tx, ctx.ty, heat, t);
       }
     });
+    ctx.addDummy();
 
     // The seed bar at the top — the choice the codex says is the real decision.
     const bar = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
@@ -757,34 +759,31 @@ export const lifeTheGarden: PreviewScript = {
         av.play('slam', Math.atan2(spot.y - ctx.cy, spot.x - ctx.cx));
         fx.overgrowth(spot.x, spot.y, 26);
         fx.pollen(spot.x, spot.y, 8, { life: 600 });
-        bed.push({
-          type: s.type, x: spot.x, y: spot.y, born: 600 + i * 1200,
-          follows: s.type === 'nurse-lily' || s.type === 'cotton',
-        });
+        bed.push({ type: s.type, x: spot.x, y: spot.y, born: 600 + i * 1200 });
         say(spot.x, spot.y - 30, `${s.name} · ${s.hp} HP`, SEED_COLOR[s.type]);
         say(spot.x, spot.y - 46, s.note, LIFE.pale);
       });
     });
 
-    // The sixth seed is refused rather than replacing the oldest — the kit's actual rule.
+    // A sixth planting: the oldest plant wilts to make room — the kit's actual rule.
     ctx.at(6800, () => {
       selected = 5;
-      say(ctx.cx, ctx.cy - 10, `🌱 ${bed.length}/${CAP} — THE BED IS FULL`, LIFE.rot);
-      say(ctx.cx, ctx.cy - 26, 'the sixth is refused, not swapped in', LIFE.rot);
-      fx.wilt(ctx.cx, ctx.cy + 10, 22);
+      const old = bed.shift();
+      if (!old) return;
+      fx.wilt(old.x, old.y, 22);
+      say(ctx.cx, ctx.cy - 26, `🌱 ${CAP}/${CAP} — the oldest makes way`, LIFE.rot);
+      const s = seeds[5];
+      bed.push({ type: s.type, x: old.x, y: old.y, born: 7000 });
+      say(old.x, old.y - 30, `${s.name} · ${s.hp} HP`, SEED_COLOR[s.type]);
     });
-    // Then the board earns its keep: the sunflower shoots, the lily heals, cotton keeps up.
-    ctx.at(8000, () => {
-      const sun = bed.find((p) => p.type === 'sunflower');
-      if (sun) fx.petalMuzzle(sun.x, sun.y - 16, -0.3, 1, 6, LIFE.sun);
-      const lily = bed.find((p) => p.type === 'nurse-lily');
-      if (lily) { fx.healBloom(ctx.cx, ctx.cy, 34); say(ctx.cx, ctx.cy - 34, '+3', LIFE.lily); }
-    });
-    ctx.at(9400, () => {
-      const cot = bed.find((p) => p.type === 'cotton');
-      if (!cot) return;
-      fx.ring(ctx.cx, ctx.cy, 12, 40, LIFE.cotton, 420, 3, 5);
-      say(ctx.cx, ctx.cy - 34, '+50% SPEED · 1s', LIFE.cotton);
+    // Then the board earns its keep: the sunflower links up and heats, the lotus orb is eaten.
+    ctx.at(7600, () => { beamUntil = 7600 + 3000; });
+    ctx.at(9200, () => {
+      const lotus = bed.find((p) => p.type === 'lotus');
+      if (!lotus) return;
+      fx.vineLash(lotus.x, lotus.y - 14, ctx.cx, ctx.cy, LIFE.pollen);
+      fx.healBloom(ctx.cx, ctx.cy, 34, 6, LIFE.pollen);
+      say(ctx.cx, ctx.cy - 34, '🪷 +10 · +1 petal', LIFE.pollen);
     });
   },
 };

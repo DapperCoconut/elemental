@@ -1300,9 +1300,9 @@ const SILENCE_AVATAR: AvatarSpec = {
  * accessory is an extra eye that is always looking. The rig still sinks into the fog as the
  * stealth meter fills (that is gameplay feedback, not costume), and terror stains the iris.
  *
- * Mastery (Weep) enhances the eye rather than adding to it: the stalk lengthens, the eye
- * swells with a blood-red iris and a dark halo, the face's eyes go red and the fists' shroud
- * widens.
+ * Mastery (Weep): the stalk lengthens and the eye swells with a blood-red iris and halo, the
+ * face's eyes go red and weep blood down the shell, the mouth's stitches turn red, the claws
+ * lengthen and gore-rim, and a ragged crown of gore-tipped black thorns rings the crown.
  */
 export class SilenceAvatar extends BaseAvatar {
   private fx: SilenceFx;
@@ -1369,6 +1369,44 @@ export class SilenceAvatar extends BaseAvatar {
   }
 
   /**
+   * Body markings: the mouth is **sewn shut** — a pale seam with X stitches across it — and a
+   * couple of faint plum cracks run up the shell. Mastered (Weep), the stitches turn blood-red
+   * and two tracks of blood weep down from the eyes, drops sliding along them.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
+    const tint = this.tint;
+    const m = this.mastered;
+    const vis = alpha * (1 - this.stealth * 0.45);
+    const lx = Math.cos(this.facing) * 1.6;
+    // cracks
+    g.lineStyle(1, tint(SILENCE.bruise), vis * 0.8);
+    strokePts(g, [{ x: x - 15, y: y + 9 }, { x: x - 11, y: y + 6 }, { x: x - 12, y: y + 2 }, { x: x - 8, y: y - 1 }]);
+    strokePts(g, [{ x: x + 16, y: y + 4 }, { x: x + 12, y: y + 8 }, { x: x + 13, y: y + 12 }]);
+    // sewn mouth
+    const my = y + 7;
+    g.lineStyle(1.4, tint(SILENCE.void), vis);
+    g.lineBetween(x - 7 + lx, my, x + 7 + lx, my);
+    g.lineStyle(1.1, tint(m ? SILENCE.gore : SILENCE.bone), vis * 0.95);
+    for (let k = 0; k < 4; k++) {
+      const sx = x - 5.4 + k * 3.6 + lx;
+      g.lineBetween(sx - 1.3, my - 1.8, sx + 1.3, my + 1.8);
+      g.lineBetween(sx + 1.3, my - 1.8, sx - 1.3, my + 1.8);
+    }
+    if (m) {
+      for (const side of [-1, 1]) {
+        const ex = x + side * 7.2 + Math.cos(this.facing) * 2.4;
+        const top = y - 1, bot = y + 13 - side;
+        g.lineStyle(1.8, tint(SILENCE.blood), vis * 0.9);
+        strokePts(g, [{ x: ex, y: top }, { x: ex + side * 0.6, y: (top + bot) / 2 }, { x: ex - side * 0.4, y: bot }]);
+        const d = (this.t * 0.6 + (side > 0 ? 0.5 : 0)) % 1;
+        g.fillStyle(tint(SILENCE.gore), vis);
+        g.fillCircle(ex, top + (bot - top) * d, 1.6);
+        g.fillCircle(ex - side * 0.4, bot + 1, 1.3);
+      }
+    }
+  }
+
+  /**
    * The crown eye: one stalk craning up and over the back shoulder, with a big eye on the end
    * that blinks and looks where the body is facing. Raked sideways so it clears the health
    * bar, and drawn over the sprite so the stalk roots on the body.
@@ -1409,5 +1447,44 @@ export class SilenceAvatar extends BaseAvatar {
     const open = blink > 0.9 ? 1 - (blink - 0.9) / 0.1 : 1;
     const iris = m ? SILENCE.gore : this.terror > 0.6 ? SILENCE.rust : this.accent;
     silenceEye(g, tint, ex, ey, 0, r, Math.cos(this.facing) * 0.9, open, iris, vis);
+
+    // Bone claws: three hooked nails curling off each fist, along the line from the body.
+    for (let i = 0; i < 2; i++) {
+      const hx = this.armX[i], hy = this.armY[i];
+      if (hx === 0 && hy === 0) continue;
+      const ha = Math.atan2(hy - y, hx - x);
+      for (const off of [-0.55, 0, 0.55]) {
+        const ca = ha + off;
+        clawFingerLayered(g, tint, hx + Math.cos(ca) * 5, hy + Math.sin(ca) * 5, ca,
+          m ? 7 : 5.5, 1.3, m ? SILENCE.bone : SILENCE.sclera, m ? SILENCE.gore : SILENCE.violet, vis * 0.95, 0.6, false);
+      }
+    }
+
+    if (!m) return;
+    // ── Mastered only: the crown of thorns ──
+    // A ragged ring of black thorns round the crown, gore-tipped, with the stalk rising out of
+    // it — and a slow drip of blood off the lowest thorns.
+    const cx = x + Math.cos(this.facing) * 1.5;
+    const cy = y - 17;
+    for (let k = 0; k < 7; k++) {
+      const u = k / 6;
+      const ta = Math.PI * (1.12 + u * 0.76);
+      const bx = cx + Math.cos(ta) * 13, by = cy + 4 + Math.sin(ta) * 5;
+      const hgt = (k % 2 ? 7 : 10) + Math.sin(this.t * 2 + k) * 0.6;
+      const lean = (u - 0.5) * 0.9;
+      const tipX = bx + Math.sin(lean) * hgt, tipY = by - Math.cos(lean) * hgt;
+      g.fillStyle(tint(SILENCE.void), vis);
+      fillPts(g, [{ x: bx - 2.6, y: by + 1 }, { x: tipX, y: tipY }, { x: bx + 2.6, y: by + 1 }]);
+      g.fillStyle(tint(SILENCE.gore), vis);
+      fillPts(g, [
+        { x: tipX + (bx - 2.6 - tipX) * 0.28, y: tipY + (by + 1 - tipY) * 0.28 },
+        { x: tipX, y: tipY },
+        { x: tipX + (bx + 2.6 - tipX) * 0.28, y: tipY + (by + 1 - tipY) * 0.28 },
+      ]);
+    }
+    g.lineStyle(3, tint(SILENCE.void), vis);
+    g.beginPath(); g.arc(cx, cy + 9, 14, Math.PI * 1.1, Math.PI * 1.9, false); g.strokePath();
+    g.lineStyle(1, tint(SILENCE.rust), vis * 0.9);
+    g.beginPath(); g.arc(cx, cy + 9, 14, Math.PI * 1.1, Math.PI * 1.9, false); g.strokePath();
   }
 }

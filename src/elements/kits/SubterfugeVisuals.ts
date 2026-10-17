@@ -1010,9 +1010,10 @@ export class SubterfugeAvatar extends BaseAvatar {
   setCigarette(v: number): void { this.cig = v; }
 
   /**
-   * Mastery tell — the same fedora, made richer: the brim widens, the band turns gold and
-   * throws a halo, the eyes go gold and the hands' corona swells. Nothing new is added; the
-   * hat simply looks like it belongs to the boss now.
+   * Mastery tell — the boss: the brim widens, the band turns gold with diamond studs and
+   * throws a halo, the feather goes white, the eyes go gold and the hands' corona swells; the
+   * suit gets a gold tie, diamond pin and gold chain (drawBody); and three gold coins circle
+   * the waist (drawExtras).
    */
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? SUB.gold : SUB.paper);
@@ -1043,6 +1044,48 @@ export class SubterfugeAvatar extends BaseAvatar {
     const k = this.intensity;
     g.fillStyle(this.tint(this.accent), a * (this.mastered ? 0.2 : 0.12) * k);
     g.fillCircle(x, y, 25 * k);
+  }
+
+  /**
+   * Body markings: a charcoal suit front — two lapels meeting in a V under the chin with a
+   * house-colour necktie down the middle and a white pocket-square. Mastered, the boss wears a
+   * gold tie with a diamond pin, a gold pocket-square and a heavy gold chain slung across the
+   * chest.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
+    const tint = this.tint;
+    const m = this.mastered;
+    const top = y + 4;
+    // lapels
+    g.fillStyle(tint(SUB.charcoal), alpha * 0.95);
+    fillPts(g, [{ x: x - 15, y: y + 13 }, { x: x - 6, y: top }, { x: x - 1, y: y + 19 }, { x: x - 9, y: y + 19 }]);
+    fillPts(g, [{ x: x + 15, y: y + 13 }, { x: x + 6, y: top }, { x: x + 1, y: y + 19 }, { x: x + 9, y: y + 19 }]);
+    g.lineStyle(0.8, tint(SUB.graphite), alpha * 0.9);
+    strokePts(g, [{ x: x - 15, y: y + 13 }, { x: x - 6, y: top }, { x: x - 1, y: y + 19 }]);
+    strokePts(g, [{ x: x + 15, y: y + 13 }, { x: x + 6, y: top }, { x: x + 1, y: y + 19 }]);
+    // shirt + tie
+    g.fillStyle(tint(SUB.paper), alpha * 0.9);
+    fillPts(g, [{ x: x - 4.5, y: top + 1 }, { x: x + 4.5, y: top + 1 }, { x: x, y: y + 13 }]);
+    g.fillStyle(tint(m ? SUB.gold : SUB.wine), alpha);
+    fillPts(g, [{ x: x - 1.8, y: top + 1.5 }, { x: x + 1.8, y: top + 1.5 }, { x: x + 1.2, y: top + 3.5 }, { x: x - 1.2, y: top + 3.5 }]);
+    fillPts(g, [{ x: x - 1.2, y: top + 3.5 }, { x: x + 1.2, y: top + 3.5 }, { x: x + 2.6, y: y + 15 }, { x: x, y: y + 18 }, { x: x - 2.6, y: y + 15 }]);
+    // pocket square
+    g.fillStyle(tint(m ? SUB.gold : SUB.white), alpha * 0.95);
+    fillPts(g, [{ x: x + 8, y: y + 12 }, { x: x + 9.5, y: y + 9.5 }, { x: x + 11, y: y + 12 }]);
+    if (m) {
+      // diamond tie pin
+      const tw = 0.6 + 0.4 * Math.sin(this.t * 5);
+      g.fillStyle(tint(SUB.white), alpha * tw);
+      fillPts(g, [{ x: x, y: y + 8 }, { x: x + 1.6, y: y + 9.6 }, { x: x, y: y + 11.2 }, { x: x - 1.6, y: y + 9.6 }]);
+      // the chain
+      g.lineStyle(2.2, tint(SUB.brass), alpha);
+      g.beginPath(); g.arc(x, y - 8, 22, Math.PI * 0.3, Math.PI * 0.7, false); g.strokePath();
+      g.fillStyle(tint(SUB.gold), alpha);
+      for (let k = 0; k <= 8; k++) {
+        const ca = Math.PI * (0.3 + 0.4 * (k / 8));
+        g.fillCircle(x + Math.cos(ca) * 22, y - 8 + Math.sin(ca) * 22, 1.3);
+      }
+    }
   }
 
   /**
@@ -1077,6 +1120,53 @@ export class SubterfugeAvatar extends BaseAvatar {
     // Hatband: house colour, gilded once mastered.
     g.fillStyle(tint(m ? SUB.gold : this.accent), alpha);
     g.fillRect(x - crown * 0.7, rootY - 4, crown * 1.4, m ? 4 : 3.4);
+    // a feather tucked in the band on the back side of the hat
+    const fs = Math.cos(this.facing) >= 0 ? -1 : 1;
+    const fx0 = x + fs * crown * 0.55, fy0 = rootY - 3;
+    g.fillStyle(tint(m ? SUB.white : SUB.graphite), alpha * 0.95);
+    fillPts(g, [
+      { x: fx0, y: fy0 + 1 }, { x: fx0 + fs * 6, y: fy0 - 9 + Math.sin(this.t * 3) * 0.8 },
+      { x: fx0 + fs * 2.5, y: fy0 - 1 },
+    ]);
+    // a highlight along the crown's lit side
+    g.lineStyle(1, tint(SUB.graphite), alpha * 0.9);
+    g.lineBetween(x - crown * 0.5, rootY - 6, x - crown * 0.45, rootY - crown * 0.85 + tilt * 8);
+    if (m) {
+      // diamond studs set in the gold band, catching the light in turn
+      for (let k = -2; k <= 2; k++) {
+        const on = Math.floor(this.t * 4) % 5 === k + 2;
+        g.fillStyle(tint(SUB.white), alpha * (on ? 1 : 0.55));
+        g.fillCircle(x + k * crown * 0.26, rootY - 2, on ? 1.4 : 0.9);
+      }
+    }
+
+    // Gold signet ring on each hand.
+    for (let i = 0; i < 2; i++) {
+      const hx = this.armX[i], hy = this.armY[i];
+      if (hx === 0 && hy === 0) continue;
+      const ha = Math.atan2(hy - y, hx - x);
+      const rx = hx + Math.cos(ha + 0.9) * 5.5, ry = hy + Math.sin(ha + 0.9) * 5.5;
+      g.fillStyle(tint(SUB.brass), alpha);
+      g.fillCircle(rx, ry, m ? 2.4 : 1.8);
+      g.fillStyle(tint(m ? SUB.white : SUB.gold), alpha);
+      g.fillCircle(rx - 0.4, ry - 0.4, m ? 1.1 : 0.8);
+    }
+
+    if (m) {
+      // ── Mastered only: the boss's coins ── three gold coins circling at the waist, flipping.
+      for (let k = 0; k < 3; k++) {
+        const oa = this.t * 1.6 + (k / 3) * Math.PI * 2;
+        if (Math.sin(oa) < 0 && Math.abs(Math.cos(oa)) < 0.75) continue; // behind the body
+        const ox = x + Math.cos(oa) * 28, oy = y + 6 + Math.sin(oa) * 8;
+        const flip = Math.abs(Math.cos(this.t * 4 + k * 2));
+        g.fillStyle(tint(SUB.gold), alpha * 0.25);
+        g.fillCircle(ox, oy, 6);
+        g.fillStyle(tint(SUB.brass), alpha);
+        g.fillEllipse(ox, oy, 8 * flip + 1.5, 8);
+        g.fillStyle(tint(SUB.gold), alpha);
+        g.fillEllipse(ox, oy, 5.6 * flip + 1, 5.6);
+      }
+    }
 
     // ── The cigarette, only while Smoke Break has one lit ──
     if (this.cig >= 0) {

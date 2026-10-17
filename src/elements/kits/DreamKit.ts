@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { FONT_DISPLAY } from '../../ui/Theme';
 import { Sfx } from '../../audio';
 import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
@@ -6,7 +7,7 @@ import type { CustomStatus } from './StatusHudKit';
 import { Projectile } from '../../combat/Projectile';
 import {
   DRM, DreamAvatar, DreamColorFn, DreamFx, DreamPortal, OasisView, TrancePendulum,
-  angryRam, cosmicCannon, dreamCrown, dreamOrb, dreamcatcherShape, ekgTrace, hauntBolt,
+  angryRam, cosmicCannon, dreamCrown, dreamGauge, dreamOrb, dreamcatcherShape, ekgTrace, hauntBolt,
   leashRing, nightTerror, pendulumBob, pillowFort, sleepMeter, sleepyZ, spiritForm,
   spiritThread, star, spiritTearShape, tearMoon, wishCounter,
 } from './DreamVisuals';
@@ -3104,39 +3105,18 @@ export class DreamKit {
     const y = this.top + 8;
     const heat = this.swing.player;
 
-    g.fillStyle(0x05040f, 0.85);
-    g.fillRoundedRect(x - 3, y - 3, w + 6, h + 6, 4);
-    g.lineStyle(1.5, this.pcol(DRM.violet), 0.7);
-    g.strokeRoundedRect(x - 3, y - 3, w + 6, h + 6, 4);
-    g.fillStyle(this.pcol(DRM.deep), 0.9);
-    g.fillRect(x, y, w, h);
-    g.fillStyle(this.pcol(s.tranceOn ? DRM.purple : DRM.night), 1);
-    g.fillRect(x, y, w * heat, h);
-    g.fillStyle(this.pcol(DRM.pale), 0.5);
-    g.fillRect(x, y, w * heat, h * 0.36);
-    g.lineStyle(1, 0x05040f, 0.7);
-    for (let i = 1; i < 4; i++) g.lineBetween(x + (w * i) / 4, y, x + (w * i) / 4, y + h);
-
     // Dream pips: one per dream sitting in a catcher, waiting to be walked over.
     const held = this.catchers
       .filter((c) => c.owner === 'player')
       .reduce((n, c) => n + c.dreams, 0);
-    for (let i = 0; i < DREAM_CAP * CATCHER_MAX; i++) {
-      const px = x + 5 + i * 12;
-      const py = y + h + 16;
-      if (i < held) dreamOrb(g, this.pcol, px, py, 2.6, 1, this.vizT + i);
-      else {
-        g.lineStyle(1, this.pcol(DRM.deep), 0.7);
-        g.strokeCircle(px, py, 3);
-      }
-    }
+    dreamGauge(g, this.pcol, x, y, w, h, heat, s.tranceOn, held, DREAM_CAP * CATCHER_MAX, this.vizT);
 
     if (!this.hudLabel) {
-      this.hudLabel = this.api.scene.add.text(x, y + h + 24, '', {
+      this.hudLabel = this.api.scene.add.text(x - 28, y + h + 30, '', {
         fontSize: '10px',
-        fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+        fontFamily: FONT_DISPLAY,
         color: '#d8e2ff',
-        stroke: '#05040f',
+        stroke: '#0b0620',
         strokeThickness: 3,
       }).setDepth(21).setScrollFactor(0);
     }

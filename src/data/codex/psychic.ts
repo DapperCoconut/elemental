@@ -3,9 +3,10 @@ import { ElementCodex } from '../AbilityCodex';
 /**
  * Psychic — two seconds of the future, and a chessboard to spend them on.
  *
- * Verified against `src/elements/psychic.ts` and `kits/PsychicKit.ts`. Psychic has no shop
- * upgrades (the old five were retired with the chess rework) and no perks; its mastery predates
- * the rework. Every number below is a constant at the top of the kit.
+ * Verified against `src/elements/psychic.ts`, `kits/PsychicKit.ts` and the five shop upgrades in
+ * `data/Upgrades.ts` (Insight Move, Sight Lines, Mount Protect, Castle, Checkmate — the chess-era
+ * set that replaced the retired five). No perks; the mastery predates the rework. Every number
+ * below is a constant at the top of the kit.
  */
 const psychic: ElementCodex = {
   identity:
@@ -60,6 +61,19 @@ const psychic: ElementCodex = {
         { tag: 'summon', label: 'The pawn', detail: 'Lasts 3 seconds from the throw, so up to 3 captures. No limit on how many are out.' },
         { tag: 'utility', label: 'Moving pieces', detail: 'Click one of your own bishops, knights or rooks to pick it up (gold ring), then click anywhere to move it. Click it again to put it back down.' },
       ],
+      upgrade: {
+        basics:
+          'Insight Move: a pawn whose first capture catches nobody steps forward again — another full '
+          + '130px step down the same line over 0.3s, hitting anything it walks into for 8 (even somebody '
+          + 'the first step already hit), and captures from there for 16 and every second after. A pawn '
+          + 'whose first capture lands stays where it is. Two steps at most.',
+        effects: [
+          { tag: 'movement', label: 'The second step', detail: 'Only when the first capture caught nobody: another 130px step along the same line, 0.3s.', requiresUpgrade: 'click' },
+          { tag: 'damage', label: 'On the way', detail: '8 to anything the second step walks into — a fresh step, so the first step\'s victims can be hit again.', requiresUpgrade: 'click' },
+          { tag: 'damage', label: 'The captures', detail: '16 on both forward diagonals as soon as it stops, then every second, until the pawn\'s 3 seconds run out.', requiresUpgrade: 'click' },
+          { tag: 'utility', label: 'Two at most', detail: 'A pawn never takes a third step, whether or not the second capture lands.', requiresUpgrade: 'click' },
+        ],
+      },
       notes: [
         'Throw past them, not at them: a pawn that stops beside an enemy catches them on its diagonal for double what the step does.',
         'As the queen, Click is your legs instead — no pawns are thrown while you are crowned.',
@@ -80,6 +94,18 @@ const psychic: ElementCodex = {
         { tag: 'damage', label: 'The slide', detail: '40 to everyone it passes through, once each per move. Diagonals only, up to 460px.' },
         { tag: 'summon', label: 'The piece', detail: '8 seconds on the board, shown as a ring that empties round its foot. It can move once every 2 seconds. No limit on how many.' },
       ],
+      upgrade: {
+        basics:
+          'Sight Lines: every bishop slide leaves the diagonal it travelled lit — a line of 30px glowing '
+          + 'board squares, corner to corner, from where it started to where it stopped. An enemy stepping '
+          + 'onto a square takes 5. Each square bills a body once, and your squares bill any one body at '
+          + 'most every 0.35s. They fade after 5 seconds.',
+        effects: [
+          { tag: 'area', label: 'The squares', detail: '30px squares along the whole slide, start to finish, lighting up one after another. 5 seconds each.', requiresUpgrade: 'e' },
+          { tag: 'damage', label: 'Stepping on one', detail: '5 to an enemy whose body reaches a square. Each square hits a body once.', requiresUpgrade: 'e' },
+          { tag: 'utility', label: 'Pace', detail: 'Your squares hit any one body at most every 0.35s, so walking straight down a line costs about 15 a second, not 5 per square.', requiresUpgrade: 'e' },
+        ],
+      },
       notes: [
         'The move guide turns gold when the line runs through an enemy — that is the click worth making.',
         'Moving a bishop moves its light. Slide it through them and toward where you are going to stand.',
@@ -99,6 +125,18 @@ const psychic: ElementCodex = {
         { tag: 'area', label: 'The landing', detail: '35 to everything within 80px of where it lands.' },
         { tag: 'movement', label: 'The jump', detail: 'An L: 150px one way and 75px the other. It flies over anything in between.' },
       ],
+      upgrade: {
+        basics:
+          'Mount Protect: move a knight while you are standing in its 110px aura and you ride it. You '
+          + 'leave from where you stand and come down just in front of its landing over the same 0.34s '
+          + 'leap, and you cannot be hurt until you are down. The landing\'s 35-damage blast goes off as '
+          + 'usual.',
+        effects: [
+          { tag: 'movement', label: 'The ride', detail: 'Within 110px of the knight when it is moved: you travel with the jump and land 24px in front of where it lands.', requiresUpgrade: 'r' },
+          { tag: 'shield', label: 'In the air', detail: 'Invulnerable for the whole 0.34s leap, shown as a gold ward round you.', requiresUpgrade: 'r' },
+          { tag: 'utility', label: 'Not as the queen mid-slide', detail: 'No ride while a queen move is under way, and no queen move or castle while you are riding.', requiresUpgrade: 'r' },
+        ],
+      },
       notes: [
         'The guide draws the arc and the blast ring before you commit, so you can see what the landing will catch.',
       ],
@@ -118,6 +156,19 @@ const psychic: ElementCodex = {
         { tag: 'damage', label: 'The slide', detail: '45 to everyone it passes through, once each per move. Ranks and files only, up to 460px.' },
         { tag: 'buff', label: 'Capture', detail: 'Runs over another bishop, knight or rook (either side\'s) and destroys it — you wear that piece\'s aura for 30 seconds, no standing required. Stolen auras stack with everything else.' },
       ],
+      upgrade: {
+        basics:
+          'Castle: with a rook standing on the board, F castles instead — you and your newest rook swap '
+          + 'places instantly, at any time and off cooldown, once per rook. The rook comes down where you '
+          + 'were standing and slams the floor for 20 to everyone within 70px. Once every rook on the board '
+          + 'has castled, F places a new rook again.',
+        effects: [
+          { tag: 'movement', label: 'The swap', detail: 'You go to the rook\'s square and it goes to yours. Instant, and costs no cooldown. Once per rook.', requiresUpgrade: 'f' },
+          { tag: 'area', label: 'The slam', detail: '20 to everything within 70px of where the rook lands (your old square).', requiresUpgrade: 'f' },
+          { tag: 'cost', label: 'F is the swap', detail: 'While an un-castled rook stands, F castles rather than placing a second rook.', requiresUpgrade: 'f' },
+          { tag: 'utility', label: 'Refusals', detail: 'Not while disarmed, silenced, stunned or turned into a chicken, not while the rook is locked or sliding, and not mid-ride or mid-queen-slide.', requiresUpgrade: 'f' },
+        ],
+      },
       notes: [
         'Capturing your own tired bishop before it expires turns its last two seconds into thirty.',
         'In a mirror match the rook is the answer to their pieces: take the bishop and their armour is yours.',
@@ -140,6 +191,16 @@ const psychic: ElementCodex = {
         { tag: 'damage', label: 'The slide', detail: '25 to everyone you pass through, once each per move. 1 second between moves.' },
         { tag: 'area', label: 'The landing', detail: '20 to everything within 85px of where you stop that the slide did not already hit.' },
       ],
+      upgrade: {
+        basics:
+          'Checkmate: when the Queen runs its full 15 seconds, every enemy below 15% of their health is '
+          + 'killed outright. It only happens at the natural end of the reign — not if you die crowned or '
+          + 'the crown is stripped from you.',
+        effects: [
+          { tag: 'damage', label: 'Checkmate', detail: 'At the end of the reign, every enemy under 15% health takes true damage equal to all of it. Only invincibility stops it.', requiresUpgrade: 'q' },
+          { tag: 'utility', label: 'Only a full reign', detail: 'Dying while crowned, or having the form ended early (Ruin\'s Second Skin), checkmates nobody.', requiresUpgrade: 'q' },
+        ],
+      },
       notes: [
         'Crown yourself with pieces already on the board: the ×3 multiplies whatever the auras are already giving you.',
         'Ruin\'s Second Skin ends the crown like any other form.',

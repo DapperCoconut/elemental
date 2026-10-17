@@ -8,6 +8,7 @@ import {
 import { CustomStatus } from './StatusHudKit';
 import { meterGain } from '../../combat/Meters';
 import { Sfx } from '../../audio';
+import { FONT_DISPLAY } from '../../ui/Theme';
 
 type Owner = 'player' | 'npc';
 const BOTH: Owner[] = ['player', 'npc'];
@@ -31,6 +32,8 @@ export interface SoundArenaApi {
   readonly masteryActive: boolean;
   readonly npcMasteryActive: boolean;
   hasPerk(owner: Owner, perkId: string): boolean;
+  /** That side's shop upgrade: the player's own loadout, the bot's or the peer's for the npc. */
+  hasUpgrade(owner: Owner, slot: string): boolean;
   /** Whether that side is playing Sound right now (Quantum's active half included). */
   isSound(owner: Owner): boolean;
   /** Invasion: hidden or not-yet-arrived husks are not fair game. */
@@ -138,6 +141,51 @@ const HARMONY_BONUS_PER_STACK = 0.15;
 const HARMONY_MAX_STACKS = 4;
 const HARMONY_BUFF_MS = 20000;
 
+// ── Shop upgrades ─────────────────────────────────────────────────────────
+
+// Click+ Musical Perfection
+/** A sliver of richer gold in the middle of the beat window. */
+const PERFECT_AT = BEAT_MS - WINDOW_MS / 2;
+const PERFECT_MS = 70;
+const SPIN_PER_PERFECT = 0.22;
+/** Touching your own baton: a short burst of speed, once per touch. */
+const SELF_TAP_R = 30;
+const SELF_TAP_SPEED = 1.35;
+const SELF_TAP_MS = 550;
+const SELF_TAP_GAP_MS = 900;
+
+// E+ Infectious Moves
+const INFECT_DANCE_MS = 2000;
+
+// R+ Harmony
+/** How close the baton has to be for R to tune up instead of slamming. */
+const TUNE_GRAB_R = 36;
+const ECHO_ORBIT_R = 62;
+const ECHO_ORBIT_SPEED = 4.2;
+const ECHO_DMG = 6;
+const ECHO_REHIT_MS = 450;
+/** In Tune: the soul song plays half again as strong. */
+const IN_TUNE_POWER = 1.5;
+/** HP a second at the start, falling by this much every second — into self-damage past 6s. */
+const IN_TUNE_REGEN = 12;
+const IN_TUNE_REGEN_FALL = 2;
+const IN_TUNE_MAX_MS = 14000;
+
+// F+ Practice Makes Perfect
+const PRACTICE_HITS_PER_LEVEL = 5;
+const PRACTICE_MAX_LEVEL = 10;
+const PRACTICE_POWER_PER_LEVEL = 0.08;
+
+// Q+ Big Finish
+/** Tempo gained a second while Space is held. It never comes back down. */
+const FLAIR_RATE = 0.12;
+const FLAIR_MAX_TEMPO = 2;
+/** Gong damage at full flair (double tempo); scales linearly down to nothing at 1×. */
+const GONG_DMG = 150;
+const GONG_WINDUP_MS = 560;
+const GONG_MS = 1600;
+const DEAF_MS = 8000;
+
 // ── Types ─────────────────────────────────────────────────────────────────
 
 type NoteKind = 'quarter' | 'eighth' | 'sixteenth' | 'slur';
@@ -158,7 +206,14 @@ interface SoloNote {
 
 interface Solo {
   start: number;
-  end: number;
+  /** Chart time: ms of the chart played so far. Runs faster than the clock once Big Finish speeds it up. */
+  el: number;
+  /** Chart time at which the solo is over. */
+  endEl: number;
+  /** Big Finish: 1 → 2, raised by holding Space, never lowered. */
+  tempo: number;
+  /** The player is holding Space this frame. */
+  speeding: boolean;
   x: number;
   y: number;
   notes: SoloNote[];
@@ -177,6 +232,8 @@ interface Dash {
   start: number; end: number;
   aimX: number; aimY: number;
 }
+
+interface Gong { x: number; y: number; dir: 1 | -1; start: number; struck: boolean; flair: number }
 
 interface BassCharge { x: number; y: number; owner: Owner; armedAt: number; explodeAt: number }
 
@@ -211,6 +268,27 @@ interface Side {
   walkAccum: number;
   // Solo
   solo: Solo | null;
+  // Click+ Musical Perfection
+  selfTouching: boolean;
+  selfTapUntil: number;
+  selfTapReadyAt: number;
+  // R+ Harmony
+  inTune: boolean;
+  inTuneStart: number;
+  /** Net HP the regeneration has given (negative once it has taken more back) — the recast's burst. */
+  tuneNet: number;
+  tuneAccum: number;
+  echoAng: number;
+  echoX: number; echoY: number;
+  echoHits: Map<Fighter, number>;
+  // F+ Practice Makes Perfect
+  practice: Record<SoulSong, number>;
+  /** A replica's level of the song it is playing, as relayed. */
+  netLevel: number;
+  sparkleAt: number;
+  // Q+ Big Finish
+  gong: Gong | null;
+  deafUntil: number;
 }
 
 function freshSide(): Side {
@@ -223,6 +301,10 @@ function freshSide(): Side {
     dash: null, grabUntil: 0, tuned: new Set(),
     regenAccum: 0, resOwned: false, path: [], walkAccum: 0,
     solo: null,
+    selfTouching: false, selfTapUntil: 0, selfTapReadyAt: 0,
+    inTune: false, inTuneStart: 0, tuneNet: 0, tuneAccum: 0, echoAng: 0, echoX: 0, echoY: 0, echoHits: new Map(),
+    practice: { staccato: 0, melody: 0, smooth: 0 }, netLevel: 0, sparkleAt: 0,
+    gong: null, deafUntil: 0,
   };
 }
 
@@ -244,6 +326,7 @@ export class SoundKit {
   private hudLabel: Phaser.GameObjects.Text | null = null;
   private songLabel: Phaser.GameObjects.Text | null = null;
   private soloLabel: Phaser.GameObjects.Text | null = null;
+  private practiceLabel: Phaser.GameObjects.Text | null = null;
   private vizT = 0;
 
   private sides: Record<Owner, Side> = { player: freshSide(), npc: freshSide() };
@@ -254,6 +337,8 @@ export class SoundKit {
   /** 1 the instant a beat is hit (or fumbled), decaying — flashes the HUD window. */
   private beatFlash = 0;
   private fumbleFlash = 0;
+  private perfectFlash = 0;
+  private keySpace: Phaser.Input.Keyboard.Key | null = null;
 
   /** Every hard stun this kit has handed out, in scene time. */
   private stuns = new Map<Fighter, number>();
@@ -295,13 +380,36 @@ export class SoundKit {
     return list.filter((t) => this.alive(t) && this.arena.isTargetable(t));
   }
 
-  private dmgMult(owner: Owner): number {
-    return this.sides[owner].song === 'staccato' ? STACCATO_DMG : 1;
+  /** A shop upgrade, only while that side is actually playing Sound. */
+  private up(owner: Owner, slot: string): boolean {
+    return this.arena.isSound(owner) && this.arena.hasUpgrade(owner, slot);
   }
+
+  /** Practice Makes Perfect: a song's level, from the beats played while it was on. */
+  private songLevel(owner: Owner, song: SoulSong = this.sides[owner].song): number {
+    if (!this.up(owner, 'f')) return 0;
+    const s = this.sides[owner];
+    if (this.isReplica(owner)) return song === s.song ? s.netLevel : 0;
+    return Math.min(PRACTICE_MAX_LEVEL, Math.floor(s.practice[song] / PRACTICE_HITS_PER_LEVEL));
+  }
+
+  /** How strongly the soul song plays: its practice level, and half again while In Tune. */
+  private songPower(owner: Owner): number {
+    const s = this.sides[owner];
+    return (1 + PRACTICE_POWER_PER_LEVEL * this.songLevel(owner)) * (s.inTune ? IN_TUNE_POWER : 1);
+  }
+
+  private dmgMult(owner: Owner): number {
+    return this.sides[owner].song === 'staccato' ? 1 + (STACCATO_DMG - 1) * this.songPower(owner) : 1;
+  }
+
+  /** Big Finish's price: for 8 seconds after the gong, nothing this side does deals damage. */
+  private isDeaf(owner: Owner): boolean { return this.now < this.sides[owner].deafUntil; }
 
   /** The one place this kit deals damage. A replica never hurts our player — the relay does. */
   private strike(owner: Owner, t: Fighter, base: number, x: number, y: number): void {
     if (this.isReplica(owner) && t === this.arena.player) return;
+    if (this.isDeaf(owner)) return;
     t.takeDamage(Math.round(base * this.dmgMult(owner)), { sourceX: x, sourceY: y });
   }
 
@@ -354,7 +462,8 @@ export class SoundKit {
     const s = this.sides[owner];
     const now = this.now;
     let m = 1;
-    if (s.song === 'melody') m *= MELODY_SPEED;
+    if (s.song === 'melody') m *= 1 + (MELODY_SPEED - 1) * this.songPower(owner);
+    if (now < s.selfTapUntil) m *= SELF_TAP_SPEED;
     if (now < s.danceUntil) {
       const k = Phaser.Math.Clamp((now - s.danceStart) / DANCE_MS, 0, 1);
       m *= DANCE_SPEED_FROM + (DANCE_SPEED_TO - DANCE_SPEED_FROM) * k;
@@ -370,8 +479,8 @@ export class SoundKit {
     this.npcAvatar?.destroy(); this.npcAvatar = null;
     for (const g of [this.groundGfx, this.airGfx, this.stageGfx, this.hudGfx]) g?.destroy();
     this.groundGfx = null; this.airGfx = null; this.stageGfx = null; this.hudGfx = null;
-    for (const t of [this.hudLabel, this.songLabel, this.soloLabel]) t?.destroy();
-    this.hudLabel = null; this.songLabel = null; this.soloLabel = null;
+    for (const t of [this.hudLabel, this.songLabel, this.soloLabel, this.practiceLabel]) t?.destroy();
+    this.hudLabel = null; this.songLabel = null; this.soloLabel = null; this.practiceLabel = null;
     this.vizT = 0;
     // The old fighters (and any absorber hung on them) died with the old match.
     this.sides = { player: freshSide(), npc: freshSide() };
@@ -381,6 +490,8 @@ export class SoundKit {
     this.lastBatonRelayAt = 0;
     this.beatFlash = 0;
     this.fumbleFlash = 0;
+    this.perfectFlash = 0;
+    this.keySpace = null;
     this.stuns.clear();
     this.missSeen = new WeakMap();
     this.bassCharges = [];
@@ -406,7 +517,7 @@ export class SoundKit {
 
     if (s.solo) {
       this.soloInput(time, justDown, down);
-      if (Phaser.Input.Keyboard.JustDown(qKey)) this.endSolo('player', true);
+      if (Phaser.Input.Keyboard.JustDown(qKey)) this.endSolo('player', true, true);
       return;
     }
     if (s.dash) return;
@@ -415,8 +526,10 @@ export class SoundKit {
     if (justDown) player.castAbility('baton', ctx());
     if (Phaser.Input.Keyboard.JustDown(eKey)) player.castAbility('crescendo', ctx());
     if (Phaser.Input.Keyboard.JustDown(rKey)) {
-      // The detonation is free and outranks a fresh slam: anyone still out of tune gets it.
-      if (this.tunedAlive('player')) this.detonate('player');
+      // Harmony's recast comes first — its timing is the whole game. Then the detonation, which is
+      // free and outranks a fresh slam: anyone still out of tune gets it.
+      if (s.inTune) this.releaseInTune('player');
+      else if (this.tunedAlive('player')) this.detonate('player');
       else player.castAbility('fermata', ctx());
     }
     if (Phaser.Input.Keyboard.JustDown(fKey)) player.castAbility('hum', ctx());
@@ -435,11 +548,22 @@ export class SoundKit {
         if (!this.isReplica(owner)) this.judgeBeat(owner, this.now);
         break;
       case 'crescendo': this.startDance(owner); break;
-      case 'fermata': this.startFermata(owner, tx, ty); break;
+      case 'fermata': {
+        // With Harmony, the peer's press could have been either — it says which by pseudo-cast.
+        if (this.isReplica(owner) && this.up(owner, 'r')) break;
+        const tuneUp = this.up(owner, 'r') && this.batonOnTop(owner);
+        if (tuneUp) this.startInTune(owner);
+        else this.startFermata(owner, tx, ty);
+        if (owner === 'player' && this.arena.isOnline && this.up('player', 'r')) {
+          this.arena.broadcastMasteryCast(tuneUp ? 'sound-harmony' : 'sound-fermata');
+        }
+        break;
+      }
       case 'hum': this.cycleSong(owner); break;
       case 'call-of-the-void': this.startSolo(owner); break;
       // The bot's free recast — not an ability, so it never goes through castAbility.
       case 'fermata-detonate': if (owner === 'npc') this.doNpcDetonate(); break;
+      case 'harmony-release': if (owner === 'npc' && !this.isReplica(owner)) this.releaseInTune('npc'); break;
     }
   }
 
@@ -448,11 +572,21 @@ export class SoundKit {
     const s = this.sides.npc;
     if (id.startsWith('sound-baton:')) {
       s.aimX = tx; s.aimY = ty;
-      s.spin = Phaser.Math.Clamp(Number(id.slice('sound-baton:'.length)) / 100 || 0, 0, 1);
+      const [spin, lvl] = id.slice('sound-baton:'.length).split(':');
+      s.spin = Phaser.Math.Clamp(Number(spin) / 100 || 0, 0, 1);
+      s.netLevel = Phaser.Math.Clamp(Math.floor(Number(lvl) || 0), 0, PRACTICE_MAX_LEVEL);
     } else if (id === 'sound-detonate') {
       this.detonate('npc');
     } else if (id === 'sound-solo-end') {
       this.endSolo('npc', false);
+    } else if (id === 'sound-fermata') {
+      this.startFermata('npc', tx, ty);
+    } else if (id === 'sound-harmony') {
+      this.startInTune('npc');
+    } else if (id.startsWith('sound-harmony-end:')) {
+      this.endInTune('npc', Number(id.slice('sound-harmony-end:'.length)) || 0);
+    } else if (id.startsWith('sound-gong:')) {
+      this.startGong('npc', Phaser.Math.Clamp(Number(id.slice('sound-gong:'.length)) / 100 || 0, 0, 1));
     } else if (id.startsWith('sound-solo-hit')) {
       const big = id.endsWith(':big');
       const solo = s.solo;
@@ -483,11 +617,19 @@ export class SoundKit {
     else if (phase <= GRACE_MS) beat = idx - 1;
     if (beat >= 0 && beat !== s.lastHitBeat) {
       s.lastHitBeat = beat;
-      s.spin = Math.min(1, s.spin + SPIN_PER_HIT);
+      // Musical Perfection: the richer sliver in the middle of the window spins it up harder.
+      const perfect = beat === idx && this.up(owner, 'click') && Math.abs(phase - PERFECT_AT) <= PERFECT_MS / 2;
+      s.spin = Math.min(1, s.spin + (perfect ? SPIN_PER_PERFECT : SPIN_PER_HIT));
       s.combo++;
-      this.fx(owner).batonFlourish(s.bx, s.by - 10, SONG_COLORS[s.song]);
+      this.fx(owner).batonFlourish(s.bx, s.by - 10, perfect ? SOUND.goldRich : SONG_COLORS[s.song]);
+      if (perfect) {
+        this.fx(owner).sparkle(s.bx, s.by - 12, 6, 22, 11, SOUND.goldRichHi);
+        this.announce(s.bx, s.by - 36, '✦ PERFECT', SOUND.goldRich, 10);
+      }
+      this.practise(owner);
       if (owner === 'player') {
         this.beatFlash = 1;
+        if (perfect) this.perfectFlash = 1;
         if (s.combo > 0 && s.combo % HARMONY_EVERY === 0) this.throwResonator(time);
       }
       return;
@@ -511,7 +653,7 @@ export class SoundKit {
       }
       s.lastSeenBeat = idx;
     }
-    const decay = SPIN_DECAY * (s.song === 'staccato' ? STACCATO_DECAY : 1);
+    const decay = SPIN_DECAY * (s.song === 'staccato' ? Math.max(0.1, 1 - (1 - STACCATO_DECAY) * this.songPower(owner)) : 1);
     s.spin = Math.max(0, s.spin - decay * delta / 1000);
   }
 
@@ -526,9 +668,13 @@ export class SoundKit {
       s.npcBeat = idx;
       const lvl = Phaser.Math.Clamp(this.arena.npcLevel, 1, 5);
       s.npcBeatHit = Math.random() < NPC_BEAT_CHANCE[lvl - 1];
-      // Where in the sweep it clicks: in the window when it means to, early when it fumbles.
+      // Where in the sweep it clicks: in the window when it means to, early when it fumbles. With
+      // Musical Perfection it aims for the sliver in the middle, tighter the sharper it is.
+      const inWin = this.up('npc', 'click')
+        ? 0.5 + (Math.random() - 0.5) * (0.7 - 0.1 * lvl)
+        : 0.25 + Math.random() * 0.6;
       s.npcBeatAt = s.metroStart + idx * BEAT_MS
-        + (s.npcBeatHit ? BEAT_MS - WINDOW_MS * (0.25 + Math.random() * 0.6) : BEAT_MS * (0.3 + Math.random() * 0.25));
+        + (s.npcBeatHit ? BEAT_MS - WINDOW_MS * inWin : BEAT_MS * (0.3 + Math.random() * 0.25));
       // A fumble only happens some of the time; the rest of the misses are just silence.
       if (!s.npcBeatHit && Math.random() < 0.6) s.npcBeatAt = Infinity;
     }
@@ -547,10 +693,11 @@ export class SoundKit {
     if (!s.batonPlaced) { s.bx = f.x + 40; s.by = f.y; s.batonPlaced = true; }
     const dt = delta / 1000;
 
-    // The bot's baton hunts the player; the peer's follows their relayed cursor.
+    // The bot's baton hunts the player — or comes home, when the bot wants it on top of itself
+    // (a Harmony tune-up, or a Musical Perfection tap to sprint). The peer's follows their cursor.
     if (owner === 'npc' && !this.arena.isOnline) {
       const { player } = this.arena;
-      s.aimX = player.x; s.aimY = player.y;
+      if (this.npcWantsBatonHome(time)) { s.aimX = f.x; s.aimY = f.y; } else { s.aimX = player.x; s.aimY = player.y; }
     }
     let tx = s.aimX, ty = s.aimY;
     const dx = tx - f.x, dy = ty - f.y;
@@ -566,7 +713,8 @@ export class SoundKit {
     } else if (time < s.grabUntil) {
       // Just slammed: it stands where it was driven in for a beat before it lifts off again.
     } else {
-      const speed = (BATON_SPEED + BATON_SPEED_SPIN * s.spin) * (s.song === 'staccato' ? STACCATO_BATON_SPEED : 1);
+      const speed = (BATON_SPEED + BATON_SPEED_SPIN * s.spin)
+        * (s.song === 'staccato' ? 1 + (STACCATO_BATON_SPEED - 1) * this.songPower(owner) : 1);
       const ex = tx - s.bx, ey = ty - s.by;
       const ed = Math.hypot(ex, ey);
       const step = speed * dt;
@@ -577,6 +725,20 @@ export class SoundKit {
       if (ld > BATON_RANGE + 30) { s.bx = f.x + lx / ld * (BATON_RANGE + 30); s.by = f.y + ly / ld * (BATON_RANGE + 30); }
     }
     s.rot += (BATON_ROT + BATON_ROT_SPIN * s.spin) * dt;
+
+    // Musical Perfection: tapping yourself with the baton is a short burst of speed — once per
+    // touch, so a baton parked on top of you gives one and has to leave before it gives another.
+    if (this.up(owner, 'click') && !s.solo && !s.dash) {
+      const touching = Phaser.Math.Distance.Between(s.bx, s.by, f.x, f.y) <= SELF_TAP_R;
+      if (touching && !s.selfTouching && time >= s.selfTapReadyAt) {
+        s.selfTapUntil = time + SELF_TAP_MS;
+        s.selfTapReadyAt = time + SELF_TAP_GAP_MS;
+        this.fx(owner).batonFlourish(f.x, f.y - 12, SOUND.goldRich);
+        this.fx(owner).ripple(f.x, f.y, 8, 30, SONG_COLORS[s.song], 260, 2.4, 7, 6);
+        this.announce(f.x, f.y - 46, '♪ TEMPO!', SOUND.goldRichHi, 10);
+      }
+      s.selfTouching = touching;
+    }
 
     // Contact damage — not while it is in hand, and not on the stage.
     if (s.solo || s.dash || time < s.grabUntil) return;
@@ -628,9 +790,16 @@ export class SoundKit {
     this.avatar(owner)?.play('flex', undefined, 420);
     Sfx.playAt('sonic-pulse', f.x, { rate: 0.8, volume: 0.8 });
     this.arena.scene.cameras.main.shake(120, 0.004);
+    const infect = this.up(owner, 'e');
     for (const t of this.targets(owner)) {
       if (Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) > WAVE_RADIUS + 14) continue;
       this.strike(owner, t, WAVE_DMG, f.x, f.y);
+      // Infectious Moves: they catch the rhythm and dance — free to move, unable to attack. A
+      // replica leaves our player alone; the peer's sim puts it on and the status mirror brings it.
+      if (!infect || !this.alive(t) || (this.isReplica(owner) && t === this.arena.player)) continue;
+      t.soundDanceUntil = Math.max(t.soundDanceUntil, Date.now() + INFECT_DANCE_MS);
+      t.applyDisarm(INFECT_DANCE_MS);
+      this.announce(t.x, t.y - 48, '💃 DANCE!', SOUND.goldHi, 11);
     }
   }
 
@@ -766,6 +935,110 @@ export class SoundKit {
     if (this.tunedAlive('npc')) this.detonate('npc');
   }
 
+  // ── R+ Harmony ────────────────────────────────────────────────────────
+
+  private batonOnTop(owner: Owner): boolean {
+    const s = this.sides[owner];
+    const f = this.fighter(owner);
+    return this.alive(f) && !s.dash && !s.solo && Phaser.Math.Distance.Between(s.bx, s.by, f.x, f.y) <= TUNE_GRAB_R;
+  }
+
+  /** In Tune's regeneration right now, in HP a second — negative once it has turned on you. */
+  private tuneRate(owner: Owner): number {
+    const s = this.sides[owner];
+    return IN_TUNE_REGEN - IN_TUNE_REGEN_FALL * (this.now - s.inTuneStart) / 1000;
+  }
+
+  /** R with the baton on top of you: the echo baton spins up round you and you are In Tune. */
+  private startInTune(owner: Owner): void {
+    const s = this.sides[owner];
+    const f = this.fighter(owner);
+    if (!this.alive(f) || s.inTune) return;
+    s.inTune = true;
+    s.inTuneStart = this.now;
+    s.tuneNet = 0;
+    s.tuneAccum = 0;
+    s.echoAng = Math.atan2(s.by - f.y, s.bx - f.x);
+    s.echoHits.clear();
+    this.avatar(owner)?.play('raise', undefined, 500);
+    this.fx(owner).ripple(f.x, f.y, 10, 56, SONG_COLORS[s.song], 520, 3, 9, 8);
+    this.fx(owner).notes(f.x, f.y - 16, 7, { speed: 80, size: 7, life: 800, color: SONG_COLORS[s.song], rise: 40, angle: -Math.PI / 2, spread: 1.4 });
+    this.announce(f.x, f.y - 56, '♪ IN TUNE', SOUND.goldHi, 12);
+    Sfx.playAt('holy-chord', f.x, { rate: 1.1, volume: 0.6 });
+  }
+
+  /** The regeneration (its own body's machine only) and the echo baton orbiting. */
+  private updateInTune(owner: Owner, time: number, delta: number): void {
+    const s = this.sides[owner];
+    if (!s.inTune) return;
+    const f = this.fighter(owner);
+    if (!this.alive(f)) { this.endInTune(owner, 0); return; }
+    if (!this.isReplica(owner)) {
+      s.tuneAccum += this.tuneRate(owner) * delta / 1000;
+      while (s.tuneAccum >= 1) {
+        s.tuneAccum -= 1;
+        if (f.hp < f.maxHp) { f.heal(1); s.tuneNet += 1; }
+      }
+      while (s.tuneAccum <= -1) {
+        s.tuneAccum += 1;
+        f.takeDamage(1, { selfInflicted: true });
+        s.tuneNet -= 1;
+      }
+      if (time - s.inTuneStart >= IN_TUNE_MAX_MS) { this.endInTune(owner, 0); this.relayTuneEnd(owner, 0); return; }
+    }
+    // The echo: a ghost of the baton circling the drum major.
+    s.echoAng += ECHO_ORBIT_SPEED * delta / 1000;
+    s.echoX = f.x + Math.cos(s.echoAng) * ECHO_ORBIT_R;
+    s.echoY = f.y + Math.sin(s.echoAng) * ECHO_ORBIT_R * 0.8;
+    if (s.solo) return;
+    for (const t of this.targets(owner)) {
+      if (Phaser.Math.Distance.Between(s.echoX, s.echoY, t.x, t.y) > BATON_HIT_R + 14) continue;
+      if (time - (s.echoHits.get(t) ?? -Infinity) < ECHO_REHIT_MS) continue;
+      s.echoHits.set(t, time);
+      this.strike(owner, t, ECHO_DMG, s.echoX, s.echoY);
+      this.fx(owner).waveBurst(t.x, t.y, Math.atan2(t.y - s.echoY, t.x - s.echoX), 0.6, 9, SONG_PALE[s.song]);
+    }
+  }
+
+  /** The recast: a burst worth everything the regeneration has netted so far — which can be negative. */
+  private releaseInTune(owner: Owner): void {
+    const s = this.sides[owner];
+    if (!s.inTune) return;
+    const f = this.fighter(owner);
+    const burst = Math.round(s.tuneNet);
+    if (this.alive(f) && !this.isReplica(owner)) {
+      if (burst > 0) f.heal(burst);
+      else if (burst < 0) f.takeDamage(-burst, { selfInflicted: true });
+    }
+    this.endInTune(owner, burst);
+    this.relayTuneEnd(owner, burst);
+  }
+
+  private relayTuneEnd(owner: Owner, burst: number): void {
+    if (owner === 'player' && this.arena.isOnline) this.arena.broadcastMasteryCast(`sound-harmony-end:${burst}`);
+  }
+
+  /** Off it comes. `burst` is only for the picture — the HP has already moved. */
+  private endInTune(owner: Owner, burst: number): void {
+    const s = this.sides[owner];
+    if (!s.inTune) return;
+    s.inTune = false;
+    s.echoHits.clear();
+    const f = this.fighter(owner);
+    if (!this.alive(f) || burst === 0) return;
+    if (burst > 0) {
+      this.fx(owner).ripple(f.x, f.y, 12, 70, SOUND.smooth, 560, 4, 9, 9);
+      this.fx(owner).sparkle(f.x, f.y, 10, 36, 11, SOUND.smoothPale);
+      this.announce(f.x, f.y - 58, `♪ RESOLVED +${burst}`, SOUND.smoothPale, 12);
+      this.avatar(owner)?.play('clap', undefined, 360);
+      Sfx.playAt('holy-chord', f.x, { rate: 1.5, volume: 0.7 });
+    } else {
+      this.fx(owner).misfire(f.x, f.y);
+      this.announce(f.x, f.y - 58, `♭ SOUR ${burst}`, SOUND.sour, 12);
+      Sfx.playAt('ui-denied', f.x, { rate: 0.7, volume: 0.7 });
+    }
+  }
+
   // ── F: Hum ────────────────────────────────────────────────────────────
 
   private cycleSong(owner: Owner): void {
@@ -783,6 +1056,7 @@ export class SoundKit {
   npcWantedSong(): SoulSong {
     const { npc, player } = this.arena;
     const hp = npc.maxHp > 0 ? npc.hp / npc.maxHp : 1;
+    if (this.isDeaf('npc')) return hp < 0.5 ? 'smooth' : 'melody';
     if (hp < 0.4) return 'smooth';
     const d = Phaser.Math.Distance.Between(npc.x, npc.y, player.x, player.y);
     if (d > BATON_RANGE + 140) return 'melody';
@@ -796,12 +1070,13 @@ export class SoundKit {
     const s = this.sides[owner];
     const f = this.fighter(owner);
     if (!this.alive(f) || this.isReplica(owner)) return;
-    if (s.song === 'melody') f.reduceCooldowns(delta * MELODY_CD_RATE);
+    const power = this.songPower(owner);
+    if (s.song === 'melody') f.reduceCooldowns(delta * MELODY_CD_RATE * power);
     if (s.song === 'smooth') {
-      f.soundIncomingMult = SMOOTH_RES;
+      f.soundIncomingMult = Math.max(0.4, 1 - (1 - SMOOTH_RES) * power);
       s.resOwned = true;
       s.regenAccum += delta;
-      const per = 1000 / SMOOTH_REGEN;
+      const per = 1000 / (SMOOTH_REGEN * power);
       while (s.regenAccum >= per) {
         s.regenAccum -= per;
         if (f.hp < f.maxHp) f.heal(1);
@@ -809,6 +1084,35 @@ export class SoundKit {
     } else {
       s.regenAccum = 0;
       if (s.resOwned) { f.soundIncomingMult = 1; s.resOwned = false; }
+    }
+  }
+
+  /** Practice Makes Perfect: every beat played levels up whichever song is on, for the round. */
+  private practise(owner: Owner): void {
+    if (!this.up(owner, 'f') || this.isReplica(owner)) return;
+    const s = this.sides[owner];
+    const before = this.songLevel(owner);
+    s.practice[s.song]++;
+    const after = this.songLevel(owner);
+    if (after <= before) return;
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    this.fx(owner).notes(f.x, f.y - 16, 4 + after, { speed: 110, size: 6, life: 800, color: SONG_COLORS[s.song], rise: 50, angle: -Math.PI / 2, spread: 1.5 });
+    this.fx(owner).sparkle(f.x, f.y, 6 + after, 30, 11, SONG_PALE[s.song]);
+    this.announce(f.x, f.y - 56, `♪ ${SONG_NAMES[s.song]} LV ${after}`, SONG_COLORS[s.song], 11);
+  }
+
+  /** Higher-level songs throw off more: sparkles round the body, quicker and fuller each level. */
+  private emitPractice(owner: Owner, time: number): void {
+    const lvl = this.songLevel(owner);
+    if (lvl <= 0) return;
+    const s = this.sides[owner];
+    const f = this.fighter(owner);
+    if (!this.alive(f) || f.forceInvisible || f.alpha < 0.2 || time < s.sparkleAt) return;
+    s.sparkleAt = time + Math.max(150, 1000 - lvl * 85);
+    this.fx(owner).sparkle(f.x, f.y, 1 + Math.floor(lvl / 3), 22 + lvl * 2, 7, SONG_COLORS[s.song]);
+    if (lvl >= 5) {
+      this.fx(owner).notes(f.x, f.y - 8, Math.floor((lvl - 3) / 2), { speed: 30, size: 4 + lvl * 0.2, life: 700, depth: 7, color: SONG_PALE[s.song], rise: 30 });
     }
   }
 
@@ -824,7 +1128,7 @@ export class SoundKit {
         s.walkAccum += Math.hypot(f.x - last.x, f.y - last.y);
         if (s.walkAccum > 46) {
           s.walkAccum = 0;
-          this.fx(owner).notes(f.x, f.y + 10, 1, { speed: 14, size: 4, life: 700, depth: 4, color: SONG_COLORS[s.song], rise: 16 });
+          this.fx(owner).notes(f.x, f.y + 10, 1 + Math.floor(this.songLevel(owner) / 3), { speed: 14, size: 4, life: 700, depth: 4, color: SONG_COLORS[s.song], rise: 16 });
         }
       }
     }
@@ -921,7 +1225,7 @@ export class SoundKit {
     const notes = this.buildChart();
     const lastEnd = notes.reduce((m, n) => Math.max(m, n.at + n.len), 0);
     const solo: Solo = {
-      start: now, end: now + Math.min(SOLO_MAX_MS, lastEnd + 800),
+      start: now, el: 0, endEl: Math.min(SOLO_MAX_MS, lastEnd + 800), tempo: 1, speeding: false,
       x: f.x, y: f.y, notes, lane: 1, hits: 0, combo: 0,
       absorber: null, prevAbsorber: null, rolled: new Set(),
     };
@@ -937,12 +1241,17 @@ export class SoundKit {
     s.solo = solo;
     s.danceUntil = 0;
     s.dash = null;
+    s.gong = null;
     this.fx(owner).fanfare(f.x, f.y);
     this.announce(f.x, f.y - 60, '🎺 CALL OF THE VOID', SOUND.goldHi, 13);
     Sfx.playAt('train-horn', f.x, { rate: 1.5, volume: 0.6 });
   }
 
-  private endSolo(owner: Owner, relay: boolean): void {
+  /**
+   * `finale`: the solo was played out (or bowed out of) rather than cut short by death or a
+   * dormant Quantum half — with Big Finish, that is when the gong gets struck.
+   */
+  private endSolo(owner: Owner, relay: boolean, finale = false): void {
     const s = this.sides[owner];
     const solo = s.solo;
     if (!solo) return;
@@ -956,6 +1265,57 @@ export class SoundKit {
       this.announce(f.x, f.y - 60, `ENCORE! ×${solo.hits}`, SOUND.goldHi, 13);
     }
     if (relay && owner === 'player') this.arena.broadcastMasteryCast('sound-solo-end');
+    // Big Finish: how far it was sped up is the flair. None at all, and there is no gong.
+    const flair = (solo.tempo - 1) / (FLAIR_MAX_TEMPO - 1);
+    if (finale && !this.isReplica(owner) && this.up(owner, 'q') && flair > 0.005 && this.alive(f)) {
+      this.startGong(owner, flair);
+      if (owner === 'player' && this.arena.isOnline) this.arena.broadcastMasteryCast(`sound-gong:${Math.round(flair * 100)}`);
+    }
+  }
+
+  /** Whether the Space bar belongs to the solo right now — ArenaScene skips the dodge while it does. */
+  suppressesDodge(): boolean {
+    return this.sides.player.solo !== null && this.up('player', 'q');
+  }
+
+  // ── Q+ Big Finish ─────────────────────────────────────────────────────
+
+  private startGong(owner: Owner, flair: number): void {
+    const s = this.sides[owner];
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    // The gong stands on the enemy's side of the drum major, so the swing is toward them.
+    const foe = this.targets(owner)[0];
+    const dir: 1 | -1 = foe && foe.x < f.x ? -1 : 1;
+    const W = this.arena.width;
+    const gx = Phaser.Math.Clamp(f.x + dir * (60 + flair * 10), 50, W - 50);
+    s.gong = { x: gx, y: f.y, dir, start: this.now, struck: false, flair };
+    this.avatar(owner)?.play('raise', undefined, GONG_WINDUP_MS);
+    this.announce(f.x, f.y - 62, `🔔 BIG FINISH ×${solo2(1 + flair * (FLAIR_MAX_TEMPO - 1))}`, SOUND.goldRichHi, 12);
+  }
+
+  private updateGong(owner: Owner, time: number): void {
+    const s = this.sides[owner];
+    const g = s.gong;
+    if (!g) return;
+    const f = this.fighter(owner);
+    if (!g.struck && time >= g.start + GONG_WINDUP_MS) {
+      g.struck = true;
+      const dmg = Math.round(GONG_DMG * g.flair);
+      // Every enemy on the field hears it, wherever they are — the gong is the last note.
+      for (const t of this.targets(owner)) this.strike(owner, t, dmg, g.x, g.y);
+      if (this.alive(f)) this.avatar(owner)?.play('slam', g.dir > 0 ? 0 : Math.PI, 380);
+      this.fx(owner).boom(g.x, g.y - 6, 90 + g.flair * 90, { color: SOUND.bronzeHi, petals: 10, notes: 8, duration: 620 });
+      this.fx(owner).ripple(g.x, g.y - 6, 30, 220 + g.flair * 200, SOUND.goldHi, 900, 5, 10, 10);
+      this.arena.scene.cameras.main.shake(260, 0.006 + g.flair * 0.008);
+      Sfx.playAt('stone-slam', g.x, { rate: 0.55, volume: 1 });
+      Sfx.playAt('holy-chord', g.x, { rate: 0.6, volume: 0.9 });
+      this.announce(g.x, g.y - 70, `BONG! ${dmg}`, SOUND.goldRichHi, 16);
+      // The price: your own ears are ringing.
+      s.deafUntil = time + DEAF_MS;
+      if (this.alive(f)) this.announce(f.x, f.y - 46, '🔇 DEAF', SOUND.steel, 11);
+    }
+    if (time >= g.start + GONG_MS) s.gong = null;
   }
 
   /** The player's hands on the bugle: W/S or the arrows pick the line, the click plays it. */
@@ -976,8 +1336,11 @@ export class SoundKit {
     if (dn && !this.laneDownWas) solo.lane = Math.min(LANES - 1, solo.lane + 1);
     this.laneUpWas = up;
     this.laneDownWas = dn;
+    // Big Finish: Space held speeds the solo up. isDown only — JustDown would eat the dodge's flag.
+    if (kb && !this.keySpace) this.keySpace = kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+    solo.speeding = this.up('player', 'q') && !!this.keySpace?.isDown;
 
-    const el = time - solo.start;
+    const el = solo.el;
     if (justDown) {
       // The earliest unplayed note in reach of the bar.
       let best: SoloNote | null = null;
@@ -1037,7 +1400,7 @@ export class SoundKit {
     if (owner === 'player') this.arena.broadcastMasteryCast(big ? 'sound-solo-hit:big' : 'sound-solo-hit');
   }
 
-  private updateSolo(owner: Owner, time: number): void {
+  private updateSolo(owner: Owner, time: number, delta: number): void {
     const s = this.sides[owner];
     const solo = s.solo;
     if (!solo) return;
@@ -1045,7 +1408,16 @@ export class SoundKit {
     if (!this.alive(f)) { this.endSolo(owner, false); return; }
     // Rooted on the stage.
     if (!this.isReplica(owner)) (f.body as Phaser.Physics.Arcade.Body | null)?.reset(solo.x, solo.y);
-    const el = time - solo.start;
+    // Big Finish: the bot speeds its solo up to a target set by its rung — but not when it is
+    // low, since the gong leaves it deaf for eight seconds.
+    if (owner === 'npc' && !this.isReplica(owner) && this.up('npc', 'q')) {
+      const lvl = Phaser.Math.Clamp(this.arena.npcLevel, 1, 5);
+      const hp = f.maxHp > 0 ? f.hp / f.maxHp : 1;
+      solo.speeding = hp > 0.35 && solo.tempo < 1 + 0.16 * lvl;
+    }
+    if (solo.speeding) solo.tempo = Math.min(FLAIR_MAX_TEMPO, solo.tempo + FLAIR_RATE * delta / 1000);
+    solo.el += delta * solo.tempo;
+    const el = solo.el;
     if (owner === 'player') {
       for (const n of solo.notes) {
         if (n.state === 'pending' && el - n.at > SOLO_TOLERANCE) { n.state = 'missed'; solo.combo = 0; }
@@ -1053,7 +1425,8 @@ export class SoundKit {
     } else if (!this.isReplica(owner)) {
       // The bot plays its own chart, rolling each note once as it reaches the bar.
       const lvl = Phaser.Math.Clamp(this.arena.npcLevel, 1, 5);
-      const p = NPC_SOLO_CHANCE[lvl - 1];
+      // Faster is harder, for a bot as much as anyone.
+      const p = NPC_SOLO_CHANCE[lvl - 1] * (1 - (solo.tempo - 1) * 0.3);
       for (const n of solo.notes) {
         if (n.state === 'pending' && el >= n.at && !solo.rolled.has(n)) {
           solo.rolled.add(n);
@@ -1065,11 +1438,49 @@ export class SoundKit {
         }
       }
     }
-    if (time >= solo.end) this.endSolo(owner, owner === 'player');
+    // The replica keeps its own clock; the peer ends it by relay, which is always sooner.
+    if (el >= solo.endEl) this.endSolo(owner, owner === 'player', true);
   }
 
   /** Bot: on stage, the rotation stands down — the kit is playing the solo. */
   npcSoloing(): boolean { return this.sides.npc.solo !== null; }
+
+  // ── Bot: upgrade synergies (all side-effect-free reads) ──
+
+  /** Harmony is worth tuning up for: hurt, R ready, upgrade owned, not already in tune. */
+  private npcWantsHarmony(): boolean {
+    const { npc } = this.arena;
+    const s = this.sides.npc;
+    if (this.arena.isOnline || !this.up('npc', 'r') || s.inTune || s.solo || !this.alive(npc)) return false;
+    return npc.hp / Math.max(1, npc.maxHp) < 0.7 && npc.getCooldownRatio('fermata') >= 1;
+  }
+
+  /** The bot's baton heads home: to tune up, or to tap itself for a sprint when the player is far. */
+  private npcWantsBatonHome(time: number): boolean {
+    if (this.npcWantsHarmony()) return true;
+    const { npc, player } = this.arena;
+    const s = this.sides.npc;
+    return this.up('npc', 'click') && time >= s.selfTapReadyAt && !s.selfTouching
+      && Phaser.Math.Distance.Between(npc.x, npc.y, player.x, player.y) > 380;
+  }
+
+  /** R+ synergy: the baton is home and the bot wants the heal — press R and it tunes up. */
+  npcHarmonyReady(): boolean { return this.npcWantsHarmony() && this.batonOnTop('npc'); }
+
+  /** R+ synergy: the regeneration has peaked — the recast pays the most it ever will. */
+  npcHarmonyRelease(): boolean {
+    const s = this.sides.npc;
+    return !this.arena.isOnline && s.inTune && this.tuneRate('npc') <= 0.5;
+  }
+
+  /** Q+ aftermath: deaf, nothing it presses will hurt — the rotation stands down. */
+  npcDeaf(): boolean { return !this.arena.isOnline && this.isDeaf('npc'); }
+
+  /** E+ synergy: the player is dancing and cannot hit back — a free window to slam. */
+  npcVictimDancing(): boolean {
+    const { player } = this.arena;
+    return !this.arena.isOnline && this.up('npc', 'e') && player.soundDanceUntil > Date.now();
+  }
 
   // ── Per-frame update ─────────────────────────────────────────────────
 
@@ -1077,12 +1488,15 @@ export class SoundKit {
     this.vizT += delta / 1000;
     this.beatFlash = Math.max(0, this.beatFlash - delta / 300);
     this.fumbleFlash = Math.max(0, this.fumbleFlash - delta / 300);
+    this.perfectFlash = Math.max(0, this.perfectFlash - delta / 400);
 
     for (const owner of BOTH) {
       const on = owner === 'player' ? isPlayerSound : isNpcSound;
       if (!on) {
         // A dormant half (Quantum) must not stay on stage with its absorber hung on the fighter.
         if (this.sides[owner].solo) this.endSolo(owner, false);
+        this.endInTune(owner, 0);
+        this.sides[owner].gong = null;
         continue;
       }
       const f = this.fighter(owner);
@@ -1093,14 +1507,16 @@ export class SoundKit {
       this.updateBaton(owner, time, delta);
       this.updateDance(owner, time);
       this.updateSong(owner, delta);
-      this.updateSolo(owner, time);
-      if (this.alive(f)) this.trackPath(owner);
+      this.updateInTune(owner, time, delta);
+      this.updateSolo(owner, time, delta);
+      this.updateGong(owner, time);
+      if (this.alive(f)) { this.trackPath(owner); this.emitPractice(owner, time); }
     }
     if (isPlayerSound) {
       const p = this.sides.player;
       if (this.arena.isOnline && time - this.lastBatonRelayAt >= BATON_RELAY_MS && !p.solo) {
         this.lastBatonRelayAt = time;
-        this.arena.broadcastMasteryCast(`sound-baton:${Math.round(p.spin * 100)}`);
+        this.arena.broadcastMasteryCast(`sound-baton:${Math.round(p.spin * 100)}:${this.songLevel('player')}`);
       }
       if (time < this.harmonyUntil) {
         this.arena.player.reduceCooldowns(delta * HARMONY_BONUS_PER_STACK * this.harmonyStacks);
@@ -1170,10 +1586,36 @@ export class SoundKit {
         g.lineStyle(1, col(SOUND.maroonPale), 0.08);
         g.strokeCircle(f.x, f.y, BATON_RANGE);
       }
+      const vis = f.forceInvisible ? 0 : f.alpha;
       if (!s.solo) {
-        SoundFx.drawBaton(a, col, s.bx, s.by, s.rot, s.spin, this.vizT, f.forceInvisible ? 0 : f.alpha, SONG_COLORS[s.song]);
+        SoundFx.drawBaton(a, col, s.bx, s.by, s.rot, s.spin, this.vizT, vis, SONG_COLORS[s.song]);
+        if (owner === 'player') this.paintMiniBeat(a, time, s.bx, s.by + 24);
       }
+      if (s.inTune) {
+        SoundFx.drawInTune(g, col, f.x, f.y, this.vizT, this.tuneRate(owner) / IN_TUNE_REGEN, SONG_COLORS[s.song], vis);
+        if (!s.solo) {
+          g.lineStyle(1, col(SONG_PALE[s.song]), 0.18 * vis);
+          g.strokeEllipse(f.x, f.y, ECHO_ORBIT_R * 2, ECHO_ORBIT_R * 1.6);
+          SoundFx.drawBaton(a, col, s.echoX, s.echoY, s.rot * 1.4 + 1.2, 0.8, this.vizT, vis * 0.6, SONG_PALE[s.song]);
+        }
+      }
+      if (s.gong) {
+        const k = Phaser.Math.Clamp((time - s.gong.start) / GONG_WINDUP_MS, 0, 1);
+        const ring = s.gong.struck ? time - s.gong.start - GONG_WINDUP_MS : 0;
+        const fade = Phaser.Math.Clamp((s.gong.start + GONG_MS - time) / 300, 0, 1);
+        SoundFx.drawGong(st, col, s.gong.x, s.gong.y, s.gong.dir, this.vizT, k, Math.max(0.001, ring) * (s.gong.struck ? 1 : 0), s.gong.flair, fade);
+      }
+      if (this.isDeaf(owner)) SoundFx.drawDeaf(a, col, f.x, f.y - 30, this.vizT, vis * Math.min(1, (s.deafUntil - time) / 400));
       this.paintFollowers(a, owner);
+    }
+
+    // Everyone dancing to an Infectious Crescendo gets the floor and the notes.
+    const dancers = new Set<Fighter>();
+    for (const f of [this.arena.player, this.arena.npc, ...this.arena.enemies]) {
+      if (!f?.active || dancers.has(f) || f.soundDanceUntil <= now || f.hp <= 0) continue;
+      dancers.add(f);
+      const left = f.soundDanceUntil - now;
+      SoundFx.drawDancing(g, this.pcol, f.x, f.y, this.vizT, SOUND.staccato, Math.min(1, left / 300) * (f.forceInvisible ? 0 : 1));
     }
 
     // Everyone out of tune wears the discordant line.
@@ -1196,6 +1638,50 @@ export class SoundKit {
         : 0;
       SoundFx.drawGrenade(a, this.pcol, this.harmonyGrenade.x, this.harmonyGrenade.y, this.vizT, fuse);
     }
+  }
+
+  /**
+   * A pocket copy of the HUD's beat bar riding under the player's baton, so the beat can be kept
+   * without looking away from the fight: the gold window at the end, the note sweeping into it.
+   */
+  private paintMiniBeat(g: Phaser.GameObjects.Graphics, time: number, x: number, y: number): void {
+    const s = this.sides.player;
+    const col = this.pcol;
+    const { phase, idx } = this.beatIndex('player', time);
+    const p = phase / BEAT_MS;
+    const inWin = phase >= BEAT_MS - WINDOW_MS;
+    const played = s.lastHitBeat === idx;
+    const w = 56, h = 8, L = x - w / 2, T = y - h / 2;
+
+    g.fillStyle(0x000000, 0.3);
+    g.fillRoundedRect(L + 1, T + 1.5, w, h, 3);
+    g.fillStyle(col(SOUND.night), 0.88);
+    g.fillRoundedRect(L, T, w, h, 3);
+    const winX = L + w * (1 - WINDOW_MS / BEAT_MS);
+    g.fillStyle(col(SOUND.gold), inWin ? 0.4 + this.beatFlash * 0.45 : 0.16);
+    g.fillRect(winX, T + 1, L + w - winX - 1, h - 2);
+    if (this.up('player', 'click')) {
+      const px = L + w * ((PERFECT_AT - PERFECT_MS / 2) / BEAT_MS);
+      g.fillStyle(col(SOUND.goldRich), 0.6 + this.perfectFlash * 0.4);
+      g.fillRect(px, T + 1, w * PERFECT_MS / BEAT_MS, h - 2);
+    }
+    if (this.fumbleFlash > 0) {
+      g.fillStyle(col(SOUND.sour), 0.45 * this.fumbleFlash);
+      g.fillRoundedRect(L, T, w, h, 3);
+    }
+    g.lineStyle(1, col(SOUND.maroonPale), 0.3);
+    g.lineBetween(L + 3, y, L + w - 3, y);
+    g.lineStyle(1, col(SOUND.gold), 0.85);
+    g.strokeRoundedRect(L, T, w, h, 3);
+    // The double bar the note lands on.
+    const tx = L + w - 3;
+    g.lineStyle(1.6, col(SOUND.goldHi), 0.95);
+    g.lineBetween(tx, T - 1, tx, T + h + 1);
+    // The note, haloed while the window is open.
+    const nx = L + 4 + (w - 8) * p;
+    if (inWin && !played) { g.fillStyle(col(SOUND.goldHi), 0.3); g.fillCircle(nx, y, 4.5); }
+    g.fillStyle(col(played ? SOUND.goldHi : inWin ? SOUND.gold : SOUND.ivory), played ? 0.45 : 1);
+    g.fillCircle(nx, y, 2.4);
   }
 
   private avatar(owner: Owner): SoundAvatar | null { return owner === 'player' ? this.playerAvatar : this.npcAvatar; }
@@ -1244,22 +1730,24 @@ export class SoundKit {
     const g = this.hud();
     g.clear();
     const s = this.sides.player;
-    const font = '"Arial Black", "Segoe UI Black", Impact, sans-serif';
+    const font = FONT_DISPLAY;
     if (!this.hudLabel) {
-      this.hudLabel = scene.add.text(cx - 128, y, '', { fontSize: '10px', fontFamily: font, color: '#ffe8a6' })
+      this.hudLabel = scene.add.text(cx - 128, y, '', { fontSize: '10px', fontFamily: font, color: '#ffe8a6', stroke: '#1a0508', strokeThickness: 3 })
         .setOrigin(0.5).setDepth(23);
     }
     if (!this.songLabel) {
-      this.songLabel = scene.add.text(cx + 128, y, '', { fontSize: '9px', fontFamily: font }).setOrigin(0.5).setDepth(23);
+      this.songLabel = scene.add.text(cx + 128, y, '', { fontSize: '9px', fontFamily: font, stroke: '#1a0508', strokeThickness: 3, align: 'center' })
+        .setOrigin(0.5).setDepth(23).setLineSpacing(2);
     }
     if (!this.soloLabel) {
-      this.soloLabel = scene.add.text(cx, 0, '', { fontSize: '12px', fontFamily: font, color: '#ffe8a6' })
+      this.soloLabel = scene.add.text(cx, 0, '', { fontSize: '12px', fontFamily: font, color: '#ffe8a6', stroke: '#1a0508', strokeThickness: 3 })
         .setOrigin(0.5).setDepth(23);
     }
 
     if (s.solo) {
       this.hudLabel.setVisible(false);
       this.songLabel.setVisible(false);
+      this.practiceLabel?.setVisible(false);
       this.paintSoloStaff(g, time, s.solo);
       return;
     }
@@ -1267,48 +1755,160 @@ export class SoundKit {
     this.hudLabel.setVisible(true);
     this.songLabel.setVisible(true);
 
-    // The plate.
-    g.fillStyle(this.pcol(SOUND.shade), 0.9);
-    g.fillRoundedRect(cx - 156, y - 16, 312, 32, 6);
-    g.lineStyle(1, this.pcol(SOUND.maroonHi), 0.95);
-    g.strokeRoundedRect(cx - 156, y - 16, 312, 32, 6);
-
-    // The spin gauge at the left: a little baton turning at the real speed, over a fill.
-    SoundFx.drawBaton(g, this.pcol, cx - 128, y + 4, s.rot, s.spin, this.vizT, 0.95, SONG_COLORS[s.song]);
-    this.hudLabel.setPosition(cx - 128, y + 10).setText(`${Math.round(s.spin * 100)}%`);
-
-    // The beat bar: a note slides along it and lands at the far end on the beat.
-    const barX = cx - 100, barW = 196;
-    const { phase } = this.beatIndex('player', time);
+    const col = this.pcol;
+    const songCol = SONG_COLORS[s.song];
+    const { phase, idx } = this.beatIndex('player', time);
     const p = phase / BEAT_MS;
     const inWin = phase >= BEAT_MS - WINDOW_MS;
-    g.fillStyle(this.pcol(SOUND.night), 0.95);
-    g.fillRoundedRect(barX, y - 7, barW, 14, 4);
-    // Three thin staff lines run the length of it.
-    g.lineStyle(1, this.pcol(SOUND.maroonPale), 0.25);
-    for (let i = -1; i <= 1; i++) g.lineBetween(barX + 3, y + i * 4, barX + barW - 3, y + i * 4);
-    const winX = barX + barW * (1 - WINDOW_MS / BEAT_MS);
-    g.fillStyle(this.pcol(SOUND.gold), inWin ? 0.55 + this.beatFlash * 0.4 : 0.22);
-    g.fillRoundedRect(winX, y - 7, barX + barW - winX, 14, 4);
-    if (this.fumbleFlash > 0) {
-      g.fillStyle(this.pcol(SOUND.sour), 0.35 * this.fumbleFlash);
-      g.fillRoundedRect(barX, y - 7, barW, 14, 4);
+
+    // The plate: a maroon velvet music-stand board in a gold braid frame, with a drop shadow.
+    const L = cx - 156, T = y - 17, PW = 312, PH = 34;
+    g.fillStyle(0x000000, 0.35);
+    g.fillRoundedRect(L + 2, T + 3, PW, PH, 7);
+    g.fillStyle(col(SOUND.maroonDeep), 0.94);
+    g.fillRoundedRect(L, T, PW, PH, 7);
+    g.fillStyle(col(SOUND.maroon), 0.55);
+    g.fillRoundedRect(L + 2, T + 2, PW - 4, PH * 0.45, { tl: 6, tr: 6, bl: 0, br: 0 });
+    g.lineStyle(2, col(SOUND.goldShade), 1);
+    g.strokeRoundedRect(L, T, PW, PH, 7);
+    g.lineStyle(1, col(SOUND.gold), 0.95);
+    g.strokeRoundedRect(L + 2, T + 2, PW - 4, PH - 4, 5);
+    // Braid ticks along the top and bottom edge.
+    g.fillStyle(col(SOUND.goldHi), 0.55);
+    for (let bx = L + 14; bx < L + PW - 10; bx += 9) {
+      g.fillRect(bx, T + 0.5, 3, 1.2);
+      g.fillRect(bx + 4, T + PH - 1.7, 3, 1.2);
     }
-    g.lineStyle(1, this.pcol(SOUND.maroonHi), 0.9);
-    g.strokeRoundedRect(barX, y - 7, barW, 14, 4);
-    // The target the note lands on.
-    g.lineStyle(2, this.pcol(SOUND.goldHi), 0.9);
-    g.lineBetween(barX + barW - 6, y - 10, barX + barW - 6, y + 10);
-    // The note itself.
-    const played = s.lastHitBeat === this.beatIndex('player', time).idx;
-    const nx = barX + 6 + (barW - 12) * p;
-    g.fillStyle(this.pcol(played ? SOUND.goldHi : inWin ? SOUND.gold : SOUND.ivory), played ? 0.45 : 1);
+    // Brass studs in the corners.
+    for (const [sx, sy] of [[L + 6, T + 6], [L + PW - 6, T + 6], [L + 6, T + PH - 6], [L + PW - 6, T + PH - 6]]) {
+      g.fillStyle(col(SOUND.goldShade), 1); g.fillCircle(sx, sy, 2.4);
+      g.fillStyle(col(SOUND.goldHi), 1); g.fillCircle(sx - 0.6, sy - 0.6, 1.1);
+    }
+
+    // Practice Makes Perfect: the song and its level on a small tab just above the beat bar.
+    this.paintPracticeTab(g, cx - 4, T - 6);
+
+    // The spin gauge at the left: a brass medallion with the baton turning at its real speed,
+    // ringed by a gold arc that fills with the spin.
+    const gx = cx - 128, gy = y - 1;
+    g.fillStyle(col(SOUND.night), 1);
+    g.fillCircle(gx, gy, 14);
+    g.lineStyle(2, col(SOUND.brassShade), 1);
+    g.strokeCircle(gx, gy, 14);
+    if (s.spin > 0.01) {
+      g.lineStyle(2.4, col(songCol), 0.95);
+      g.beginPath();
+      g.arc(gx, gy, 14, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * s.spin, false);
+      g.strokePath();
+    }
+    g.lineStyle(1, col(SOUND.brassHi), 0.5);
+    g.beginPath(); g.arc(gx, gy, 11.5, Math.PI * 1.1, Math.PI * 1.7, false); g.strokePath();
+    SoundFx.drawBaton(g, col, gx, gy + 3, s.rot, s.spin, this.vizT, 0.95, songCol);
+    this.hudLabel.setPosition(gx, y + 11).setText(`${Math.round(s.spin * 100)}%`);
+
+    // The beat bar, written as a stave: five lines, a clef, a moving note that lands on the
+    // double bar at the far end on the beat.
+    const barX = cx - 104, barW = 200, barT = y - 10, barH = 20;
+    g.fillStyle(col(SOUND.night), 0.97);
+    g.fillRoundedRect(barX, barT, barW, barH, 4);
+    // The beat window as a warm gold spotlight that blooms when it is open.
+    const winX = barX + barW * (1 - WINDOW_MS / BEAT_MS);
+    const winA = inWin ? 0.4 + this.beatFlash * 0.45 : 0.14;
+    for (let i = 0; i < 3; i++) {
+      g.fillStyle(col(SOUND.gold), winA * (0.35 + i * 0.25));
+      g.fillRect(winX + (barX + barW - winX) * i * 0.22, barT + 1, (barX + barW - winX) * (1 - i * 0.22) - 1, barH - 2);
+    }
+    // Musical Perfection: the small, richer gold bar in the middle of the window.
+    if (this.up('player', 'click')) {
+      const px = barX + barW * ((PERFECT_AT - PERFECT_MS / 2) / BEAT_MS);
+      const pw = barW * PERFECT_MS / BEAT_MS;
+      g.fillStyle(col(SOUND.goldRich), (inWin ? 0.75 : 0.5) + this.perfectFlash * 0.25);
+      g.fillRect(px, barT + 1, pw, barH - 2);
+      g.lineStyle(1, col(SOUND.goldRichHi), 0.9);
+      g.lineBetween(px, barT + 1, px, barT + barH - 1);
+      g.lineBetween(px + pw, barT + 1, px + pw, barT + barH - 1);
+      if (this.perfectFlash > 0) {
+        g.fillStyle(col(SOUND.goldRichHi), 0.5 * this.perfectFlash);
+        g.fillRect(px - 3, barT - 2, pw + 6, barH + 4);
+      }
+    }
+    if (this.fumbleFlash > 0) {
+      g.fillStyle(col(SOUND.sour), 0.38 * this.fumbleFlash);
+      g.fillRoundedRect(barX, barT, barW, barH, 4);
+    }
+    g.lineStyle(1, col(SOUND.maroonPale), 0.32);
+    for (let i = -2; i <= 2; i++) g.lineBetween(barX + 4, y + i * 3.6, barX + barW - 4, y + i * 3.6);
+    // Measure bars sliding left with the beat, so the stave reads as music moving past.
+    g.lineStyle(1, col(SOUND.maroonPale), 0.28);
+    for (let k = 0; k < 4; k++) {
+      const mx = barX + 24 + ((k / 4 + (1 - p) / 4) % 1) * (barW - 40);
+      g.lineBetween(mx, y - 7.2, mx, y + 7.2);
+    }
+    drawClef(g, barX + 10, y, 9, col(SOUND.goldHi), 0.85);
+    g.lineStyle(1, col(SOUND.gold), 0.9);
+    g.strokeRoundedRect(barX, barT, barW, barH, 4);
+    // The double bar the note lands on.
+    const tx = barX + barW - 7;
+    g.lineStyle(1.2, col(SOUND.goldHi), 0.95);
+    g.lineBetween(tx - 3, barT + 2, tx - 3, barT + barH - 2);
+    g.lineStyle(2.6, col(SOUND.goldHi), 0.95);
+    g.lineBetween(tx, barT - 1, tx, barT + barH + 1);
+    // A little brass metronome pendulum above the target, swinging on the beat.
+    const swing = Math.sin(p * Math.PI * 2 - Math.PI / 2) * 0.5;
+    g.lineStyle(1.4, col(SOUND.brass), 0.95);
+    g.lineBetween(tx, barT - 1, tx + Math.sin(swing) * 9, barT - 1 - Math.cos(swing) * 9);
+    g.fillStyle(col(SOUND.brassHi), 1);
+    g.fillCircle(tx + Math.sin(swing) * 6, barT - 1 - Math.cos(swing) * 6, 1.8);
+    // The note itself, with a soft halo while it is inside the window.
+    const played = s.lastHitBeat === idx;
+    const nx = barX + 22 + (barW - 30) * p;
+    if (inWin && !played) { g.fillStyle(col(SOUND.goldHi), 0.25); g.fillCircle(nx, y + 2, 8); }
+    g.fillStyle(col(played ? SOUND.goldHi : inWin ? SOUND.gold : SOUND.ivory), played ? 0.45 : 1);
     musicNote(g, nx, y + 3, 5, -0.15, { flags: 1 });
 
-    // The song on the right, and the combo.
-    const song = s.song;
-    this.songLabel.setPosition(cx + 128, y).setText(`${SONG_NAMES[song]}${s.combo >= 2 ? `\n×${s.combo}` : ''}`)
-      .setColor(`#${SONG_COLORS[song].toString(16).padStart(6, '0')}`).setAlign('center');
+    // The song on the right: its name over a soft spotlight in the song's colour, with a gold
+    // rule beneath and the combo under that.
+    const jx = cx + 128;
+    g.fillStyle(col(songCol), 0.16 + 0.06 * Math.sin(this.vizT * 4));
+    g.fillEllipse(jx, y, 54, 26);
+    g.lineStyle(1, col(SOUND.gold), 0.6);
+    g.lineBetween(jx - 18, y + 1, jx + 18, y + 1);
+    g.fillStyle(col(SOUND.goldHi), 0.9);
+    g.fillCircle(jx, y + 1, 1.4);
+    this.songLabel.setPosition(jx, y).setText(`${SONG_NAMES[s.song]}${s.combo >= 2 ? `\n×${s.combo}` : ''}`)
+      .setColor(`#${col(songCol).toString(16).padStart(6, '0')}`);
+  }
+
+  /** The level tab: song name and level on the left, ten pips filling on the right. */
+  private paintPracticeTab(g: Phaser.GameObjects.Graphics, x: number, y: number): void {
+    if (!this.up('player', 'f')) { this.practiceLabel?.setVisible(false); return; }
+    const s = this.sides.player;
+    const col = this.pcol;
+    const songCol = SONG_COLORS[s.song];
+    const lvl = this.songLevel('player');
+    const into = lvl >= PRACTICE_MAX_LEVEL ? 1 : (s.practice[s.song] % PRACTICE_HITS_PER_LEVEL) / PRACTICE_HITS_PER_LEVEL;
+    const w = 150, h = 12;
+    g.fillStyle(0x000000, 0.3);
+    g.fillRoundedRect(x - w / 2 + 1, y - h / 2 + 1.5, w, h, { tl: 5, tr: 5, bl: 0, br: 0 });
+    g.fillStyle(col(SOUND.maroonDeep), 0.94);
+    g.fillRoundedRect(x - w / 2, y - h / 2, w, h, { tl: 5, tr: 5, bl: 0, br: 0 });
+    g.lineStyle(1, col(SOUND.gold), 0.85);
+    g.strokeRoundedRect(x - w / 2, y - h / 2, w, h, { tl: 5, tr: 5, bl: 0, br: 0 });
+    for (let i = 0; i < PRACTICE_MAX_LEVEL; i++) {
+      const px = x + 12 + i * 6, py = y;
+      g.fillStyle(col(SOUND.night), 1);
+      g.fillCircle(px, py, 2.3);
+      if (i < lvl) { g.fillStyle(col(songCol), 1); g.fillCircle(px, py, 2.1); }
+      else if (i === lvl && into > 0) { g.fillStyle(col(songCol), 0.35 + into * 0.4); g.fillCircle(px, py, 2.1 * into); }
+    }
+    if (!this.practiceLabel) {
+      this.practiceLabel = this.arena.scene.add.text(0, 0, '', {
+        fontSize: '8px', fontFamily: FONT_DISPLAY, stroke: '#1a0508', strokeThickness: 2,
+      }).setOrigin(0.5).setDepth(23);
+    }
+    this.practiceLabel.setVisible(true).setPosition(x - 34, y)
+      .setText(`${SONG_NAMES[s.song]} · LV ${lvl}`)
+      .setColor(`#${col(songCol).toString(16).padStart(6, '0')}`);
   }
 
   /** The solo's staff: three lines, the bar on the left, notes scrolling in from the right. */
@@ -1323,15 +1923,39 @@ export class SoundKit {
     const midY = top + panelH / 2 + 4;
     const laneY = (i: number) => midY + (i - 1) * gap;
     const hitX = left + 70;
-    const el = time - solo.start;
+    const el = solo.el;
     const col = this.pcol;
 
-    g.fillStyle(col(SOUND.shade), 0.88);
+    // A concert-hall score board: drop shadow, maroon velvet, a gilt double frame with
+    // scrolled corners, and stage-light sheen sweeping across.
+    g.fillStyle(0x000000, 0.4);
+    g.fillRoundedRect(left + 3, top + 4, panelW, panelH, 10);
+    g.fillStyle(col(SOUND.maroonDeep), 0.93);
     g.fillRoundedRect(left, top, panelW, panelH, 10);
-    g.lineStyle(2, col(SOUND.gold), 0.9);
+    g.fillStyle(col(SOUND.shade), 0.75);
+    g.fillRoundedRect(left + 6, top + 6, panelW - 12, panelH - 12, 7);
+    const sheen = left + ((this.vizT * 90) % (panelW + 120)) - 60;
+    g.fillStyle(col(SOUND.goldHi), 0.05);
+    g.fillPoints([
+      new Phaser.Geom.Point(sheen, top + 6), new Phaser.Geom.Point(sheen + 34, top + 6),
+      new Phaser.Geom.Point(sheen + 6, top + panelH - 6), new Phaser.Geom.Point(sheen - 28, top + panelH - 6),
+    ].map((pt) => new Phaser.Geom.Point(Phaser.Math.Clamp(pt.x, left + 6, left + panelW - 6), pt.y)), true);
+    g.lineStyle(2.5, col(SOUND.goldShade), 1);
     g.strokeRoundedRect(left, top, panelW, panelH, 10);
+    g.lineStyle(1.2, col(SOUND.gold), 0.95);
+    g.strokeRoundedRect(left + 3, top + 3, panelW - 6, panelH - 6, 8);
     g.lineStyle(1, col(SOUND.maroonHi), 0.9);
-    g.strokeRoundedRect(left + 4, top + 4, panelW - 8, panelH - 8, 8);
+    g.strokeRoundedRect(left + 6, top + 6, panelW - 12, panelH - 12, 7);
+    for (const [kx, ky, sx, sy] of [[left, top, 1, 1], [left + panelW, top, -1, 1], [left, top + panelH, 1, -1], [left + panelW, top + panelH, -1, -1]]) {
+      g.lineStyle(1.4, col(SOUND.goldHi), 0.9);
+      g.beginPath();
+      g.arc(kx + sx * 14, ky + sy * 14, 6, 0, Math.PI * 2);
+      g.strokePath();
+      g.fillStyle(col(SOUND.gold), 1);
+      g.fillCircle(kx + sx * 14, ky + sy * 14, 2.4);
+      g.lineBetween(kx + sx * 20, ky + sy * 14, kx + sx * 34, ky + sy * 14);
+      g.lineBetween(kx + sx * 14, ky + sy * 20, kx + sx * 14, ky + sy * 30);
+    }
 
     // The line you are on, lit.
     g.fillStyle(col(SOUND.gold), 0.12);
@@ -1340,9 +1964,8 @@ export class SoundKit {
       g.lineStyle(i === solo.lane ? 2 : 1.4, col(i === solo.lane ? SOUND.goldHi : SOUND.maroonPale), i === solo.lane ? 0.95 : 0.6);
       g.lineBetween(left + 14, laneY(i), left + panelW - 14, laneY(i));
     }
-    // A treble clef stand-in at the head of the staff: an S of crescents.
-    g.fillStyle(col(SOUND.maroonPale), 0.8);
-    musicNote(g, left + 28, laneY(2) - 2, 6, 0.2, { flags: 2 });
+    // A treble clef at the head of the staff, spanning all three lines.
+    drawClef(g, left + 24, midY, gap * 0.9, col(SOUND.goldHi), 0.85);
 
     // The bar you play on, with the bugle bell sitting on your line.
     g.fillStyle(col(SOUND.gold), 0.2 + this.beatFlash * 0.35);
@@ -1409,24 +2032,40 @@ export class SoundKit {
       }
     }
 
-    const left2 = Math.max(0, Math.ceil((solo.end - time) / 1000));
+    // Big Finish: a flair gauge in the top-right corner of the board, filling with the tempo.
+    const finish = this.up('player', 'q');
+    if (finish) {
+      const fw = 110, fx0 = left + panelW - fw - 22, fy = top + 12;
+      const k = (solo.tempo - 1) / (FLAIR_MAX_TEMPO - 1);
+      g.fillStyle(col(SOUND.night), 0.95);
+      g.fillRoundedRect(fx0, fy, fw, 7, 3);
+      g.fillStyle(col(k > 0.66 ? SOUND.goldRich : SOUND.bronze), 1);
+      if (k > 0) g.fillRoundedRect(fx0, fy, Math.max(4, fw * k), 7, 3);
+      g.lineStyle(1, col(SOUND.goldHi), 0.8);
+      g.strokeRoundedRect(fx0, fy, fw, 7, 3);
+      if (solo.speeding) { g.fillStyle(col(SOUND.goldRichHi), 0.3 + 0.2 * Math.sin(this.vizT * 20)); g.fillRoundedRect(fx0 - 2, fy - 2, fw + 4, 11, 4); }
+    }
+    const left2 = Math.max(0, Math.ceil((solo.endEl - solo.el) / solo.tempo / 1000));
     this.soloLabel!.setVisible(true).setPosition(cx, top - 12)
-      .setText(`🎺 CALL OF THE VOID   ×${solo.combo}   ${solo.hits} hit   ${left2}s   [W/S · ↑/↓ line · click · Q bow]`);
+      .setText(`🎺 CALL OF THE VOID   ×${solo.combo}   ${solo.hits} hit   ${left2}s${finish ? `   ${solo2(solo.tempo)}× flair` : ''}   [W/S · ↑/↓ line · click${finish ? ' · hold Space: faster' : ''} · Q bow]`);
   }
 
   private pushStatuses(time: number): void {
     const s = this.sides.player;
     const song = s.song;
+    const pw = this.songPower('player');
+    const pct = (v: number): number => Math.round(v * pw * 100);
     const desc: Record<SoulSong, string> = {
-      staccato: `+${Math.round((STACCATO_DMG - 1) * 100)}% damage. The baton travels ${Math.round((STACCATO_BATON_SPEED - 1) * 100)}% faster and loses its spin half as fast.`,
-      melody: `+${Math.round((MELODY_SPEED - 1) * 100)}% move speed and 20% shorter cooldowns.`,
-      smooth: `${Math.round((1 - SMOOTH_RES) * 100)}% damage resistance and ${SMOOTH_REGEN} HP a second.`,
+      staccato: `+${pct(STACCATO_DMG - 1)}% damage. The baton travels ${pct(STACCATO_BATON_SPEED - 1)}% faster and loses its spin ${Math.round(Math.min(0.9, (1 - STACCATO_DECAY) * pw) * 100)}% slower.`,
+      melody: `+${pct(MELODY_SPEED - 1)}% move speed and ${pct(MELODY_CD_RATE)}% faster cooldowns.`,
+      smooth: `${Math.round(Math.min(0.6, (1 - SMOOTH_RES) * pw) * 100)}% damage resistance and ${(SMOOTH_REGEN * pw).toFixed(1)} HP a second.`,
     };
+    const lvl = this.songLevel('player');
     this.arena.setStatusIndicator('sound-song', {
       name: `Soul Song: ${SONG_NAMES[song][0]}${SONG_NAMES[song].slice(1).toLowerCase()}`,
       emoji: song === 'staccato' ? '🔴' : song === 'melody' ? '🔵' : '🟢',
       color: this.pcol(SONG_COLORS[song]), priority: 124,
-      description: `${desc[song]} F changes the song.`,
+      description: `${desc[song]}${lvl > 0 ? ` Practised to level ${lvl}.` : ''} F changes the song.`,
     });
     const spin = Math.round(s.spin * 100);
     this.arena.setStatusIndicator('sound-spin', spin > 0 ? {
@@ -1442,6 +2081,24 @@ export class SoundKit {
       name: 'Harmony', emoji: '🌟', color: this.pcol(SOUND.goldHi), priority: 127,
       description: `+${Math.round(this.harmonyStacks * HARMONY_BONUS_PER_STACK * 100)}% move and attack speed.`,
       until: this.harmonyUntil, count: this.harmonyStacks,
+    } : null);
+    const rate = s.inTune ? this.tuneRate('player') : 0;
+    this.arena.setStatusIndicator('sound-intune', s.inTune ? {
+      name: 'In Tune', emoji: rate >= 0 ? '🎶' : '🎵', color: this.pcol(rate >= 0 ? SOUND.smooth : SOUND.sour), priority: 128,
+      description: `Your soul song plays ${Math.round((IN_TUNE_POWER - 1) * 100)}% stronger and an echo baton circles you. `
+        + `${rate >= 0 ? `Healing ${rate.toFixed(1)} HP a second` : `Hurting you ${(-rate).toFixed(1)} HP a second`}, falling. `
+        + `R now: ${s.tuneNet >= 0 ? `+${Math.round(s.tuneNet)} HP` : `${Math.round(s.tuneNet)} HP`}.`,
+      until: s.inTuneStart + IN_TUNE_MAX_MS,
+    } : null);
+    this.arena.setStatusIndicator('sound-deaf', this.isDeaf('player') ? {
+      name: 'Deaf', emoji: '🔇', color: this.pcol(SOUND.steel), priority: 129,
+      description: 'Your ears are still ringing from the gong. Nothing you do deals damage.',
+      until: s.deafUntil,
+    } : null);
+    this.arena.setStatusIndicator('sound-tempo', time < s.selfTapUntil ? {
+      name: 'Tempo', emoji: '⏩', color: this.pcol(SOUND.goldRich), priority: 130,
+      description: `+${Math.round((SELF_TAP_SPEED - 1) * 100)}% move speed — you tapped yourself with the baton.`,
+      until: s.selfTapUntil,
     } : null);
   }
 
@@ -1474,6 +2131,7 @@ export class SoundKit {
       for (const t of this.targets(c.owner)) {
         if (Phaser.Math.Distance.Between(c.x, c.y, t.x, t.y) > BASS_CHARGE_RADIUS) continue;
         if (this.isReplica(c.owner) && t === this.arena.player) continue;
+        if (this.isDeaf(c.owner)) continue;
         t.takeDamage(BASS_CHARGE_DAMAGE, { source: c, sourceX: c.x, sourceY: c.y });
       }
     }
@@ -1514,6 +2172,7 @@ export class SoundKit {
     let hitAny = false;
     for (const t of this.targets('player')) {
       if (Phaser.Math.Distance.Between(ex, ey, t.x, t.y) > HARMONY_RADIUS) continue;
+      if (this.isDeaf('player')) continue;
       t.takeDamage(HARMONY_DAMAGE);
       hitAny = true;
     }
@@ -1534,4 +2193,31 @@ export class SoundKit {
     void x; void y; void radius; void exceptOwner; void report;
     return 0;
   }
+}
+
+/** A tempo, written the way a conductor would call it: 1.35. */
+function solo2(v: number): string { return v.toFixed(2); }
+
+/** A treble clef in one stroked path: the curl round the G line, the tall loop, the tail. */
+function drawClef(g: Phaser.GameObjects.Graphics, x: number, y: number, h: number, color: number, alpha: number): void {
+  g.lineStyle(1.4, color, alpha);
+  g.beginPath();
+  // Spiral out from the G line.
+  const cy = y + h * 0.25;
+  for (let i = 0; i <= 18; i++) {
+    const u = i / 18;
+    const a = Math.PI * 0.5 + u * Math.PI * 2.1;
+    const r = h * 0.12 + u * h * 0.32;
+    const px = x + Math.cos(a) * r, py = cy + Math.sin(a) * r;
+    if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
+  }
+  // Up to the top loop, over, and straight down the spine to the tail.
+  g.lineTo(x + h * 0.25, y - h * 0.7);
+  g.lineTo(x + h * 0.05, y - h * 1.05);
+  g.lineTo(x - h * 0.1, y - h * 0.75);
+  g.lineTo(x + h * 0.1, y + h * 0.95);
+  g.lineTo(x - h * 0.12, y + h * 1.1);
+  g.strokePath();
+  g.fillStyle(color, alpha);
+  g.fillCircle(x - h * 0.12, y + h * 1.05, 1.5);
 }

@@ -7,6 +7,13 @@ import {
   ErosionAura, StoneGolem, StoneShield, stoneChunkLayered,
 } from './EarthVisuals';
 import { BiomeWorld, BiomeWorldApi } from './EarthBiomes';
+import { FONT_DISPLAY } from '../../ui/Theme';
+
+/** Shared look of every over-head stone plaque label (shield / golem HP). */
+const PLAQUE_TEXT: Phaser.Types.GameObjects.Text.TextStyle = {
+  fontSize: '10px', fontFamily: FONT_DISPLAY, stroke: '#1c1409', strokeThickness: 3,
+};
+type PlaqueKind = 'stone' | 'steel' | 'golem' | 'belt';
 
 /**
  * Golem Ritual and Titan Form were Earth's Q and Q+ until Biome Builder replaced them. Their
@@ -270,6 +277,8 @@ export class EarthKit {
   private titanHeadG: Phaser.GameObjects.Graphics | null = null;
   private titanArmsG: Phaser.GameObjects.Graphics | null = null;
   private titanTimerLabel: Phaser.GameObjects.Text | null = null;
+  /** Stone plaques behind every HP label — one Graphics wiped at the top of `update`. */
+  private plaqueG: Phaser.GameObjects.Graphics | null = null;
   private titanArms: TitanArm[] = [];
   private titanSmashCdUntil = 0;
   private titanTremorCdUntil = 0;
@@ -462,6 +471,8 @@ export class EarthKit {
     this.earthShieldRespawnAt = 0;
     this.earthShieldBroken = false;
     this.earthShieldLabel = null;
+    this.plaqueG?.destroy();
+    this.plaqueG = null;
     this.erosionAura = null;
     this.earthBashActive = false;
     this.earthBashEnd = 0;
@@ -581,6 +592,13 @@ export class EarthKit {
     const W = this.arena.width;
     const H = this.arena.height;
     void H;
+    // Plaques are repainted by whoever positions their label this frame; a label nobody
+    // positions (its shield just broke) hides instead of hanging stale over the fighter.
+    if (!this.plaqueG || !this.plaqueG.active) this.plaqueG = this.arena.scene.add.graphics().setDepth(10.5);
+    this.plaqueG.clear();
+    for (const l of [this.earthShieldLabel, this.npcEarthShieldLabel, this.earthBackShieldLabel, this.earthGolemHpLabel, this.npcEarthGolemHpLabel]) {
+      if (l && l.active) l.setVisible(false);
+    }
     const ptr = this.arena.scene.input.activePointer;
     const player = this.arena.player;
     const npc = this.arena.npc;
@@ -1558,9 +1576,9 @@ export class EarthKit {
 
     this.titanArmsG = this.arena.scene.add.graphics().setDepth(30);
     this.titanHeadG = this.arena.scene.add.graphics().setDepth(31);
-    this.titanTimerLabel = this.arena.scene.add.text(W / 2, 200, '', {
-      fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffbb55',
-      stroke: '#2a1c0c', strokeThickness: 4,
+    this.titanTimerLabel = this.arena.scene.add.text(W / 2, 196, '', {
+      fontSize: '13px', fontFamily: FONT_DISPLAY, color: '#ffd28a',
+      stroke: '#1c1409', strokeThickness: 4,
     }).setOrigin(0.5).setDepth(32);
 
     const mkArm = (side: -1 | 1): TitanArm => {
@@ -1694,8 +1712,9 @@ export class EarthKit {
         this.updateTitanArms(time);
         this.drawTitanHead(time);
         this.drawTitanArms(time);
+        this.paintTitanBanner(time);
         if (this.titanTimerLabel) {
-          this.titanTimerLabel.setText(`🗿 TITAN  ${((this.titanUntil - time) / 1000).toFixed(1)}s`);
+          this.titanTimerLabel.setText(`TITAN  ${((this.titanUntil - time) / 1000).toFixed(1)}s`);
         }
       }
     } else if (this.titanLandingUntil > 0) {
@@ -2422,8 +2441,8 @@ export class EarthKit {
       }
       if (!this.earthShieldLabel) {
         this.earthShieldLabel = scene.add.text(player.x, player.y - 30, '', {
-          fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
-          color: erosion ? '#ddbb77' : (hasDual ? '#bbbbbb' : '#ccaa66'),
+          ...PLAQUE_TEXT,
+          color: erosion ? '#ffe6a8' : (hasDual ? '#e8e8e8' : '#f0dcae'),
         }).setOrigin(0.5).setDepth(11);
       }
       // Also spawn back shield if Click+ — Erosion already banked that plate into the belt.
@@ -2508,7 +2527,7 @@ export class EarthKit {
       this.nfx.ring(npc.x, npc.y, 10, 46, EARTH.dust, 340, 3, 6);
       if (!this.npcEarthShieldLabel) {
         this.npcEarthShieldLabel = scene.add.text(npc.x, npc.y - 30, '', {
-          fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ccaa66',
+          ...PLAQUE_TEXT, color: '#f0dcae',
         }).setOrigin(0.5).setDepth(11);
       }
       // Wire NPC shield as damage absorber
@@ -2551,8 +2570,8 @@ export class EarthKit {
     });
     if (!this.earthBackShieldLabel) {
       this.earthBackShieldLabel = scene.add.text(player.x, player.y - 30, '', {
-        fontSize: '9px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#aaaaaa',
-      }).setOrigin(0.5).setDepth(10);
+        ...PLAQUE_TEXT, fontSize: '9px', color: '#e0e0e0',
+      }).setOrigin(0.5).setDepth(11);
     }
   }
 
@@ -2618,6 +2637,139 @@ export class EarthKit {
     }
   }
 
+  /**
+   * Position an HP label and paint its stone plaque behind it: a chiselled slab with a lit
+   * top bevel and a dark lower edge, a carved glyph for what it measures (shield, steel
+   * plate, golem fist, erosion belt) on the left, and a thin seam along the bottom that fills
+   * with packed earth for the HP left and shows bare cracks for what has been knocked off.
+   */
+  private placeLabel(
+    label: Phaser.GameObjects.Text, x: number, y: number,
+    hp: number, maxHp: number, kind: PlaqueKind, tint: EarthColorFn, alpha = 1,
+  ): void {
+    const ratio = Phaser.Math.Clamp(hp / Math.max(1, maxHp), 0, 1);
+    label.setText(`${Math.floor(hp)}/${maxHp}`);
+    label.setVisible(alpha > 0.05);
+    label.setAlpha(alpha);
+    const w = Math.max(44, label.width + 24), h = 17;
+    label.setPosition(x + 6, y - 1.5);
+    const g = this.plaqueG;
+    if (!g || alpha <= 0.05) return;
+    const x0 = x + 6 - w / 2 - 6, y0 = y - h / 2;
+    const metal = kind === 'steel';
+    const face = metal ? EARTH.iron : kind === 'golem' ? EARTH.rock : kind === 'belt' ? EARTH.sand : EARTH.stone;
+    const hi = metal ? EARTH.chrome : EARTH.pale;
+    // Shadow, dark under-edge, face, lit top bevel.
+    g.fillStyle(0x000000, 0.3 * alpha);
+    g.fillRoundedRect(x0 + 1, y0 + 2, w, h, 3);
+    g.fillStyle(tint(EARTH.umber), 0.95 * alpha);
+    g.fillRoundedRect(x0, y0, w, h, 3);
+    g.fillStyle(tint(face), 0.95 * alpha);
+    g.fillRoundedRect(x0 + 1, y0 + 1, w - 2, h - 3.5, 2.5);
+    g.fillStyle(tint(hi), 0.35 * alpha);
+    g.fillRect(x0 + 3, y0 + 1.5, w - 6, 1.2);
+    // Chisel nicks along the slab so it reads as cut stone, not a UI box.
+    g.fillStyle(tint(EARTH.umber), 0.55 * alpha);
+    g.fillTriangle(x0 + w - 4, y0 + 1, x0 + w - 1, y0 + 1, x0 + w - 1, y0 + 4);
+    g.fillTriangle(x0 + 1, y0 + h - 5, x0 + 4, y0 + h - 3, x0 + 1, y0 + h - 2);
+
+    // HP seam along the bottom.
+    const sx = x0 + 15, sw = w - 19, sy = y0 + h - 4.2;
+    g.fillStyle(tint(EARTH.crevice), 0.95 * alpha);
+    g.fillRect(sx, sy, sw, 2.6);
+    const fillC = ratio > 0.5 ? (metal ? EARTH.chrome : EARTH.dust) : ratio > 0.25 ? EARTH.magma : EARTH.ember;
+    g.fillStyle(tint(fillC), alpha);
+    g.fillRect(sx, sy, sw * ratio, 2.6);
+    // Cracks spidering into the empty part of the seam.
+    if (ratio < 0.98) {
+      g.lineStyle(0.8, tint(EARTH.crevice), 0.9 * alpha);
+      const cx = sx + sw * ratio;
+      g.lineBetween(cx, sy, cx + 2, sy - 3);
+      g.lineBetween(cx + 2, sy - 3, cx + 5, sy - 4);
+      if (ratio < 0.5) g.lineBetween(cx + sw * 0.25, sy, cx + sw * 0.25 - 2, sy - 3.5);
+    }
+
+    // Carved glyph on the left.
+    const ix = x0 + 8, iy = y0 + h / 2 - 0.8;
+    g.fillStyle(tint(EARTH.umber), alpha);
+    g.fillCircle(ix, iy, 6);
+    const gc = tint(metal ? EARTH.chrome : kind === 'belt' ? EARTH.gold : EARTH.dust);
+    g.fillStyle(gc, alpha);
+    if (kind === 'golem') {
+      // A fist: four knuckles over a palm block.
+      g.fillRoundedRect(ix - 3.6, iy - 1, 7.2, 4.6, 1.2);
+      for (let k = 0; k < 4; k++) g.fillCircle(ix - 2.7 + k * 1.8, iy - 1.6, 1.1);
+    } else if (kind === 'belt') {
+      // Erosion: three stones circling.
+      for (let k = 0; k < 3; k++) {
+        const a = this.arena.scene.time.now / 500 + (k / 3) * Math.PI * 2;
+        g.fillCircle(ix + Math.cos(a) * 3, iy + Math.sin(a) * 3, 1.5);
+      }
+    } else {
+      // A heater shield.
+      g.beginPath();
+      g.moveTo(ix - 3.8, iy - 3.8);
+      g.lineTo(ix + 3.8, iy - 3.8);
+      g.lineTo(ix + 3.8, iy);
+      g.lineTo(ix, iy + 4.4);
+      g.lineTo(ix - 3.8, iy);
+      g.closePath();
+      g.fillPath();
+      g.fillStyle(tint(EARTH.umber), 0.7 * alpha);
+      g.fillRect(ix - 0.5, iy - 3.2, 1, 6.4);
+    }
+  }
+
+  /**
+   * Titan Form's countdown: a carved stone lintel across the top of the arena with the time
+   * left cut into it and a band of glowing magma beneath that crumbles away as it runs out.
+   * Painted into the titan head layer, which is already cleared and redrawn every frame.
+   */
+  private paintTitanBanner(time: number): void {
+    const g = this.titanHeadG;
+    if (!g) return;
+    const W = this.arena.width;
+    const left = Math.max(0, this.titanUntil - time);
+    const ratio = Phaser.Math.Clamp(left / TITAN_DURATION_MS, 0, 1);
+    const c = this.pcol;
+    const cx = W / 2, cy = 200, w = 176, h = 30;
+    const x0 = cx - w / 2, y0 = cy - h / 2;
+    const urgent = left < 3000;
+    const pulse = 0.5 + 0.5 * Math.sin(time / (urgent ? 70 : 260));
+    g.fillStyle(0x000000, 0.35);
+    g.fillRoundedRect(x0 + 2, y0 + 3, w, h, 4);
+    g.fillStyle(c(EARTH.umber), 1);
+    g.fillRoundedRect(x0, y0, w, h, 4);
+    g.fillStyle(c(EARTH.stone), 1);
+    g.fillRoundedRect(x0 + 2, y0 + 2, w - 4, h - 6, 3);
+    g.fillStyle(c(EARTH.pale), 0.3);
+    g.fillRect(x0 + 4, y0 + 2.5, w - 8, 1.5);
+    // Keystone ends.
+    for (const side of [-1, 1]) {
+      const ex = side < 0 ? x0 - 6 : x0 + w - 4;
+      g.fillStyle(c(EARTH.umber), 1);
+      g.fillRect(ex, y0 - 3, 10, h + 6);
+      g.fillStyle(c(EARTH.rock), 1);
+      g.fillRect(ex + 1.5, y0 - 1.5, 7, h + 2);
+      g.fillStyle(c(EARTH.magma), 0.5 + 0.5 * pulse);
+      g.fillCircle(ex + 5, cy - 2, 2);
+    }
+    // Magma band that crumbles from the right.
+    const bx = x0 + 10, bw = w - 20, by = y0 + h - 8;
+    g.fillStyle(c(EARTH.crevice), 1);
+    g.fillRect(bx, by, bw, 5);
+    g.fillStyle(c(urgent ? EARTH.ember : EARTH.magma), 0.85 + 0.15 * pulse);
+    g.fillRect(bx, by, bw * ratio, 5);
+    g.fillStyle(c(EARTH.gold), 0.7);
+    g.fillRect(bx, by, bw * ratio, 1.5);
+    // Crumbs falling off the broken end.
+    for (let k = 0; k < 3; k++) {
+      const f = ((time / 600) + k / 3) % 1;
+      g.fillStyle(c(EARTH.rock), 1 - f);
+      g.fillRect(bx + bw * ratio + k * 2, by + 5 + f * 10, 2, 2);
+    }
+  }
+
   private updateEarthShieldSpritePosition(isPlayer: boolean, delta: number): void {
     // Erosion: the belt rides the player rather than standing off at an angle, and it takes
     // the splinter wind-up straight from the hold instead of through a plate.
@@ -2634,8 +2786,7 @@ export class EarthKit {
       );
       this.erosionAura.update(delta, p.forceInvisible ? 0 : p.alpha);
       if (this.earthShieldLabel) {
-        this.earthShieldLabel.setPosition(p.x, p.y - 44);
-        this.earthShieldLabel.setText(`🪨${Math.floor(this.earthShieldHp)}/${maxHp}`);
+        this.placeLabel(this.earthShieldLabel, p.x, p.y - 44, this.earthShieldHp, maxHp, 'belt', this.pcol, p.forceInvisible ? 0 : p.alpha);
       }
       return;
     }
@@ -2655,8 +2806,11 @@ export class EarthKit {
       sprite.update(delta);
     }
     if (label) {
-      label.setPosition(fighter.x + Math.cos(ang) * 36, fighter.y + Math.sin(ang) * 36 - 16);
-      label.setText(`🛡${Math.floor(hp)}/${maxHp}`);
+      const steel = isPlayer && this.arena.hasUpgrade('click');
+      this.placeLabel(
+        label, fighter.x + Math.cos(ang) * 36, fighter.y + Math.sin(ang) * 36 - 16, hp, maxHp,
+        steel ? 'steel' : 'stone', isPlayer ? this.pcol : this.ncol, fighter.forceInvisible ? 0 : fighter.alpha,
+      );
     }
     // Back shield (Click+ only)
     if (isPlayer && this.earthBackShieldSprite && this.earthBackShieldHp > 0) {
@@ -2671,11 +2825,12 @@ export class EarthKit {
       this.earthBackShieldSprite.setHp(this.earthBackShieldHp / bMaxHp);
       this.earthBackShieldSprite.update(delta);
       if (this.earthBackShieldLabel) {
-        this.earthBackShieldLabel.setPosition(
+        this.placeLabel(
+          this.earthBackShieldLabel,
           fighter.x + Math.cos(backAng) * 36,
           fighter.y + Math.sin(backAng) * 36 - 14,
+          this.earthBackShieldHp, bMaxHp, 'steel', this.pcol, fighter.forceInvisible ? 0 : fighter.alpha,
         );
-        this.earthBackShieldLabel.setText(`🛡${Math.floor(this.earthBackShieldHp)}/${bMaxHp}`);
       }
     }
   }
@@ -2836,8 +2991,8 @@ export class EarthKit {
     const fx = isPlayer ? this.pfx : this.nfx;
     const sprite = new StoneGolem(scene, tint, 6);
     const link = scene.add.graphics().setDepth(5);
-    const hpLabel = scene.add.text(shieldX, shieldY - 36, '💪 150', {
-      fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ccaa66',
+    const hpLabel = scene.add.text(shieldX, shieldY - 36, `${this.earthGolemMaxHp}/${this.earthGolemMaxHp}`, {
+      ...PLAQUE_TEXT, color: '#f0dcae',
     }).setOrigin(0.5).setDepth(11);
 
     if (isPlayer) {
@@ -2958,8 +3113,7 @@ export class EarthKit {
       EarthFx.drawTether(golemLink, tint, owner.x, owner.y, moveX, moveY, time / 1000);
     }
     if (golemHpLabel) {
-      golemHpLabel.setPosition(moveX, moveY - 36);
-      golemHpLabel.setText(`💪 ${Math.ceil(golemHp)}`);
+      this.placeLabel(golemHpLabel, moveX, moveY - 40, Math.ceil(golemHp), this.earthGolemMaxHp, 'golem', tint);
     }
 
     // Golem abilities

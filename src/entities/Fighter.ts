@@ -28,6 +28,13 @@ function isStationaryFor(source: object, x: number, y: number, thresholdMs: numb
 
 export interface DamageOpts {
   pierce?: boolean;
+  /**
+   * Myth's Truth Breaker: **true damage**. Everything `pierce` skips (absorbers, shields,
+   * every kind of extra health, the menu cut) plus the whole mitigation stage — armour,
+   * resistances, flat reductions and caps — and Clay's Fuse. Only outright invincibility
+   * frames and `immortal` still stop it. Relayed online as its own flag.
+   */
+  trueDamage?: boolean;
   fireDot?: boolean;
   source?: object;
   sourceX?: number;
@@ -96,6 +103,16 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    * it online. Cleared by the owning kit when its window closes and by its `reset()`.
    */
   public damageBudget = -1;
+
+  /**
+   * Myth — Final Destiny's pistol: each hit is a stack of 5% more damage taken, up to four,
+   * for five seconds (`Date.now()` clock). Victim-side, mirrored online as `mythv`. The
+   * shotgun reads the stacks for its own doubling.
+   */
+  public mythVulnStacks = 0;
+  public mythVulnUntil = 0;
+  /** Myth — The Crowd: jeered until this `Date.now()` timestamp, 10% more damage taken. */
+  public mythJeeredUntil = 0;
   /**
    * Which side landed the most recent hit on this body — stamped at ArenaScene's
    * two damage chokepoints (projectile contact and owner-tagged AoE), which
@@ -185,6 +202,26 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public goldHeartStress = 0;
   /** Gold's Midas Curse: scene time the curse lifts. Mirrored online like the heart. */
   public midasUntil = 0;
+  /**
+   * Gold upgrades. The two timers are scene time and mirrored online like the heart; the rest are
+   * written every frame by FortuneKit (its one writer) and handed back by its `reset()`.
+   *
+   * - `goldHexUntil` (F+ Gold Hex): every cooling ability on this body recharges at half speed.
+   * - `goldStatueUntil` (Q+ Full Metal Alchemy): a solid gold statue — no moving, no casting.
+   * - `goldCooldownMult` (E+ Ruby Haste): every cooldown stretched. Relayed online through `cd`.
+   * - `goldVigorCut` (E+ Ruby Vigor): max HP taken away. The kit applies it as a delta.
+   * - `goldSpeedMult` (E+ Ruby Stride): read by Husk.moveSpeed; the duel pair is slowed through the
+   *   kit's own speed mults instead, which is also what reaches an online victim.
+   * - `goldCloakDodge` (R+ Glittery Cloak): the chance a hit is dodged; `goldCloakDodges` counts
+   *   them so the kit can say so.
+   */
+  public goldHexUntil = 0;
+  public goldStatueUntil = 0;
+  public goldCooldownMult = 1;
+  public goldVigorCut = 0;
+  public goldSpeedMult = 1;
+  public goldCloakDodge = 0;
+  public goldCloakDodges = 0;
   /**
    * Ruin (Unstoppable Decay): 1.1^stacks of rot on this fighter, times 0.9^stacks carried by
    * whoever is hitting it — the victim-side stand-in for "the decayed deal less", since
@@ -307,6 +344,17 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   public gluttonyIncomingMult = 1;
   /**
+   * Harvest F+ Corrupt Cooking: Meat Broth's armour on the scarecrow itself (0.67 while it lasts).
+   * Separate from `gluttonyIncomingMult` because that one is the Reaping Hour vulnerability the
+   * *attacker* writes on its victims; this one is self-granted, so it travels online in `dm`.
+   */
+  public harvestIncomingMult = 1;
+  /**
+   * Harvest R+ Poison Payload: poisoned by a crow's vial until this `Date.now()` time. The kit owns
+   * the ticking; this field is the tray's and the online mirror's view of it.
+   */
+  public harvestPoisonUntil = 0;
+  /**
    * Harvest: how far the rot has got into this body, 0–100. Written by GluttonyKit on whoever
    * stands on the scarecrow's mold, bites into its Corrupt HP, or is bitten while it is half rot;
    * read back by its lifesteal, the crows and the scythe's execute line. A plain field so the
@@ -364,10 +412,23 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   public duneIncomingMult = 1;
   /**
-   * Radiation's slot in the mitigation product. Nothing writes it since the 2026-10-15 rework
-   * retired the mastery that did (Sniper's Instinct); kept so the owed replacement has a home.
+   * Radiation's slot in the mitigation product. RadiationKit rewrites it every frame from
+   * `overRadiatedUntil` (Q+ Complete Annihilation).
    */
   public radiationIncomingMult = 1;
+  /**
+   * Life's garden afflictions, all on the game clock and all ticked/rewritten by LifeKit:
+   * a Frost Lily shard's chill (slow) and frailty (+damage taken, folded in here as
+   * `lifeIncomingMult`), a Flaming Sprout's burn, and Nightcap essence's uncapped poison stacks.
+   * Their own fields rather than the generic burning/toxic ones, because those only tick on the
+   * npc side and the garden fights both ways.
+   */
+  public lifeIncomingMult = 1;
+  public lifeSlowUntil = 0;
+  public lifeFrailUntil = 0;
+  public lifeBurnUntil = 0;
+  public lifePoisonStacks = 0;
+  public lifePoisonUntil = 0;
 
   /**
    * Magic — the Wind summon's hurricane. Everything the storm can reach takes more while the
@@ -394,6 +455,28 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public healInvertedUntil = 0;
   /** Invoked with the amount whenever an irradiated heal turns into a hit, so a kit can draw it. */
   public onHealInverted: ((amount: number) => void) | null = null;
+  /**
+   * Radiation F+ Mutation: `Date.now()` epoch until which this fighter's hitbox is 25% bigger.
+   * RadiationKit turns the timer into `hitboxMult` on every sim, so a mirrored timer grows the
+   * body there too.
+   */
+  public radMutatedUntil = 0;
+  /**
+   * Radiation Q+ Complete Annihilation: `Date.now()` epoch until which this fighter is
+   * over-radiated — half speed, and +30% damage taken through `radiationIncomingMult`.
+   */
+  public overRadiatedUntil = 0;
+  /**
+   * Devotion Q+ (the sky ride's yellow-fire pillars): `Date.now()` epoch until which this fighter
+   * is slowed. Read through `devotionSlowMult()` by every mover.
+   */
+  public devotionSlowUntil = 0;
+  /**
+   * Sound E+ (Infectious Moves): `Date.now()` epoch until which this fighter is dancing — it can
+   * move but not attack. The cast lock itself is `disarmedUntil`; this is the dance the kit paints
+   * and husks read (they have no castAbility to refuse).
+   */
+  public soundDanceUntil = 0;
   /**
    * A multiplier on the *physics body only*, leaving the sprite the size it looks (Cloth's
    * scarf; first added for Radiation's retired X-Ray Vision). Its own field rather than a share of `sizeMult` because the two mean
@@ -830,6 +913,16 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   despressSlowMult(): number {
     return Math.max(0.2, 1 - 0.1 * this.activeDespressStacks());
   }
+
+  /** Movement factor from Radiation's over-radiation (Q+), for movers no kit steers (husks). */
+  overRadiatedSpeedMult(): number {
+    return Date.now() < this.overRadiatedUntil ? 0.5 : 1;
+  }
+
+  /** Movement factor from Devotion's yellow-fire pillars (Q+), for every mover. */
+  devotionSlowMult(): number {
+    return Date.now() < this.devotionSlowUntil ? 0.6 : 1;
+  }
   /**
    * Silence Mastery — Puppetmaster: someone else is steering this body until this
    * `scene.time.now` timestamp. Its own AI must yield entirely — no movement, no
@@ -1043,6 +1136,14 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     this.healthBar.setMaxHp(this.maxHp);
   }
 
+  /** The two Myth amplifiers, as one factor for `takeDamage`. 1 when neither is on. */
+  mythIncomingMult(): number {
+    const now = Date.now();
+    const vuln = now < this.mythVulnUntil ? 1 + 0.05 * this.mythVulnStacks : 1;
+    const jeer = now < this.mythJeeredUntil ? 1.1 : 1;
+    return vuln * jeer;
+  }
+
   takeDamage(amount: number, opts?: DamageOpts): void {
     // Invasion co-op: friendly fire from the ally replica never lands. Checked
     // before anything else so a blocked hit can't consume a buff or a shield.
@@ -1051,16 +1152,26 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     if (this.netAuthoritativeDamage && !opts?.netApplied && !opts?.selfInflicted) return;
     // Divine perk Order: self-inflicted costs are refused outright.
     if (opts?.selfInflicted && this.selfDamageImmune) { this.onSelfDamageBlocked?.(amount); return; }
+    // Myth's true damage: nothing on this side gets a say except invincibility itself.
+    const trueDamage = !!opts?.trueDamage;
     // Clay's Fuse counts the hit and eats it whole — see `fuseHitAbsorber`.
-    if (amount > 0 && !opts?.selfInflicted && this.fuseHitAbsorber?.(amount, opts)) return;
+    if (amount > 0 && !opts?.selfInflicted && !trueDamage && this.fuseHitAbsorber?.(amount, opts)) return;
     // Magic Mastery — Levitate: immune to damage from a source that hasn't moved in 3s.
     this.damageWasSelfInflicted = false;
-    if (this.levitating && opts?.source && opts.sourceX !== undefined && opts.sourceY !== undefined
+    if (this.levitating && !trueDamage && opts?.source && opts.sourceX !== undefined && opts.sourceY !== undefined
         && isStationaryFor(opts.source, opts.sourceX, opts.sourceY, 3000)) return;
     // Cloth's Thick Skin artwork revokes the pierce flag outright, so every absorb layer below
     // gets to see the hit. Resolved once here rather than at each layer so they cannot disagree.
-    const pierce = !!opts?.pierce && !this.pierceImmune;
+    // True damage is pierce that Thick Skin cannot revoke.
+    const pierce = trueDamage || (!!opts?.pierce && !this.pierceImmune);
     if (!pierce && this.isInvincible) return;
+    // Gold's Glittery Cloak: a hit that never finds the body in the glitter. Rolled on the body's
+    // own machine (a replica's chance is always 0), so a relayed hit is dodged by the victim.
+    if (!pierce && !opts?.selfInflicted && amount > 0 && this.goldCloakDodge > 0 && Math.random() < this.goldCloakDodge) {
+      this.goldCloakDodges++;
+      this.lastIncomingDamage = 0;
+      return;
+    }
 
     let isCrit = false;
     if (opts?.netApplied) {
@@ -1081,7 +1192,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       // Tallied here: after the crit roll (a crit really is a bigger hit) but before every
       // mitigation multiplier on the line below, which is what "damage aimed at you" means.
       this.rawDamageTaken += amount;
-      let mitigation = this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.waxIncomingMult * this.clayIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.paperIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.artifactIncomingMult * this.clothIncomingMult * this.marrowIncomingMult * this.gluttonyIncomingMult * this.orderIncomingMult * this.wardIncomingMult * this.bossWardIncomingMult * this.fortuneIncomingMult * this.dreamIncomingMult * this.duneIncomingMult * this.radiationIncomingMult * this.magicIncomingMult * this.mutationIncomingMult * this.mapArmorMult * this.starIncomingMult * this.earthBiomeIncomingMult * this.netDefenseMult;
+      let mitigation = trueDamage ? 1 : this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.waxIncomingMult * this.clayIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.paperIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.artifactIncomingMult * this.clothIncomingMult * this.marrowIncomingMult * this.gluttonyIncomingMult * this.harvestIncomingMult * this.orderIncomingMult * this.wardIncomingMult * this.bossWardIncomingMult * this.fortuneIncomingMult * this.dreamIncomingMult * this.duneIncomingMult * this.radiationIncomingMult * this.lifeIncomingMult * this.magicIncomingMult * this.mutationIncomingMult * this.mapArmorMult * this.starIncomingMult * this.earthBiomeIncomingMult * this.netDefenseMult;
       // Ruin's spikes turn armour inside out — 25% less damage taken comes back as 25% more.
       // Only a net *buff* is flipped; a fighter already taking extra damage is left alone.
       if (mitigation < 1 && this.scene.time.now < this.buffsInvertedUntil) mitigation = 2 - mitigation;
@@ -1096,7 +1207,9 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       // Casual Hoodie is conditional on how the hit arrived, so it sits outside the product
       // above rather than inside it — an ordinary shot must not pick it up.
       if (opts?.aoe || opts?.pierce) mitigation *= this.clothAoeMult;
-      amount = Math.round(amount * mitigation * this.ruinIncomingMult);
+      // Myth: pistol vulnerability stacks and the crowd's jeer, both plain amplifiers.
+      mitigation *= this.mythIncomingMult();
+      amount = Math.round(amount * mitigation * (trueDamage ? 1 : this.ruinIncomingMult));
       if (this.darkVulnStacks > 0) amount = Math.round(amount * (1 + 0.25 * this.darkVulnStacks));
       // Fire Mastery — Heatwave: exposed amplifies the next hit, then is consumed.
       // Fire damage-over-time is exempt on both counts: burn/molten ticks are neither
@@ -1113,7 +1226,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       }
       // Metal Mastery — Natural Clot: flat reduction on the final amount. A fully-absorbed
       // hit spends nothing (no shield charge, no clotted HP) — it simply bounces off.
-      const flatReduction = Math.max(this.flatDamageReduction, this.netFlatReduction);
+      const flatReduction = trueDamage ? 0 : Math.max(this.flatDamageReduction, this.netFlatReduction);
       if (flatReduction > 0) {
         amount = Math.max(0, amount - flatReduction);
         if (amount <= 0) { this.lastIncomingDamage = 0; this.emit('damaged', 0); return; }
@@ -1122,7 +1235,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       const damageCap = this.hardDamageCap > 0 && this.netDamageCap > 0
         ? Math.min(this.hardDamageCap, this.netDamageCap)
         : Math.max(this.hardDamageCap, this.netDamageCap);
-      if (damageCap > 0) amount = Math.min(amount, damageCap);
+      if (damageCap > 0 && !trueDamage) amount = Math.min(amount, damageCap);
     }
     // In a menu you are distracted, not absent: hits land at 5% instead of being blocked
     // outright. Applied to relayed (netApplied) hits too — only the victim's sim knows a
@@ -1130,7 +1243,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     if (!pierce && this.menuGuards.size > 0 && amount > 0) {
       amount = Math.max(1, Math.round(amount * 0.05));
     }
-    if (this.damageBudget >= 0 && amount > 0) {
+    if (this.damageBudget >= 0 && amount > 0 && !trueDamage) {
       amount = Math.min(amount, Math.floor(this.damageBudget));
       this.damageBudget = Math.max(0, this.damageBudget - amount);
     }
@@ -1463,7 +1576,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     const ultimateExtra = ability.isUltimate ? this.ultimateCooldownMult : 1;
     return ability.cooldown * (this.cooldownMult || 1) * this.netCooldownMult
       * this.amputationCooldownMult * this.deathDelayCooldownMult * this.dreamCooldownMult
-      * this.justiceCooldownMult * this.clothCooldownMult * ultimateExtra;
+      * this.justiceCooldownMult * this.clothCooldownMult * this.goldCooldownMult * ultimateExtra;
   }
 
   /** As {@link effectiveCooldown}, including whatever split was banked when this id was stamped. */
@@ -1592,6 +1705,21 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    * was actually taken off. The clamp matters — an ability with 400ms left can only give up
    * 400ms, and the mastery requirement counts *time removed*, not times pressed.
    */
+  /**
+   * The opposite of {@link reduceCooldowns}: push every ability still cooling `ms` further from
+   * ready. Gold's Hex calls it every frame with half the frame, so the bars charge at half speed.
+   */
+  delayCooldowns(ms: number): void {
+    if (ms <= 0) return;
+    const now = Date.now();
+    for (const [id, stamp] of this.cooldowns) {
+      const ability = this.element.abilities.find((a) => a.id === id);
+      if (!ability) continue;
+      if (this.storedCooldown(id, ability) - (now - stamp) <= 0) continue;
+      this.cooldowns.set(id, Math.min(now, stamp + ms));
+    }
+  }
+
   reduceCooldowns(ms: number, exceptId?: string): number {
     const now = Date.now();
     let removed = 0;

@@ -15,22 +15,27 @@ const life: ElementCodex = {
       emoji: '🌱',
       name: 'The Garden',
       basics:
-        'Five seeds, and five plants at a time per owner — a sixth is refused rather than replacing the '
-        + 'oldest. Sunflower (25 HP) fires a 10-damage bullet every second. Rose (75 HP) is the toughest, '
-        + 'with thorns that reflect damage to attackers. Nurse Lily (25 HP) walks with you and heals 3 HP '
-        + 'every 2s. Nightcap (25 HP) lays poison puddles. Pitcher (50 HP) traps an enemy that comes near '
-        + 'for 3s. Cotton (25 HP) follows you and grants +50% speed for 1s.',
+        'Eight seeds, and five plants at a time per owner — a sixth replaces the oldest. Sunflower (30 HP) '
+        + 'links a solar beam to the nearest enemy for 3s, its damage climbing as it turns from gold to red, '
+        + 'then recharges for 6s. Nightcap (25 HP) lobs poison bombs that burst into pools. Helicopter (70 HP) '
+        + 'spins a rotor of blades that cuts anything within 62px. Mushroom Colony (35 HP) fires eight spores '
+        + 'in a ring. Frost Lily (30 HP) throws piercing ice that slows and makes brittle. Flaming Sprout '
+        + '(20 HP) machine-guns fire for 5 seconds and then burns out. Lotus (35 HP) ripens a healing orb '
+        + 'that also adds a petal to your click. Pitcher (50 HP) is a sprinkler that waters the plants around it.',
       effects: [
-        { tag: 'summon', label: 'Plant cap', detail: 'Five plants at once, per owner. Planting a sixth is refused rather than replacing the oldest.' },
-        { tag: 'summon', label: 'Sunflower', detail: '25 HP. Fires a 10 damage bullet every 1s. The damage plant.' },
-        { tag: 'summon', label: 'Rose', detail: '75 HP — the toughest seed. Thorns, and reflects damage back at attackers.' },
-        { tag: 'summon', label: 'Nurse Lily', detail: '25 HP. Heals you 3 HP every 2s, and walks with you.' },
-        { tag: 'summon', label: 'Nightcap', detail: '25 HP. Lays down poison puddles.' },
-        { tag: 'summon', label: 'Pitcher', detail: '50 HP. Traps an enemy that comes near for 3s.' },
-        { tag: 'summon', label: 'Cotton', detail: '25 HP. Grants +50% speed for 1s, and follows you around.' },
+        { tag: 'summon', label: 'Plant cap', detail: 'Five plants at once, per owner. Planting a sixth wilts the oldest to make room.' },
+        { tag: 'damage', label: 'Sunflower', detail: '30 HP. Links to the nearest enemy within 400px for 3s: 4 damage/s climbing to 20/s (≈36 total), gold to red. 6s recharge; the link snaps past 480px.' },
+        { tag: 'dot', label: 'Nightcap', detail: '25 HP. Every 2.2s lobs a bomb (leading its target) within 480px: 8 damage in a 38px splash, then a 3s poison pool.' },
+        { tag: 'damage', label: 'Helicopter', detail: '70 HP. Blades sweep 62px round it, 3 damage every 0.2s (15/s) to everything inside.' },
+        { tag: 'damage', label: 'Mushroom Colony', detail: '35 HP. Every 2.6s, with anything within 520px, fires 8 spores in a full ring at 6 damage each.' },
+        { tag: 'control', label: 'Frost Lily', detail: '30 HP. Every 1.7s a piercing shard (7 damage, 560px reach): 30% slow for 2.5s and 20% more damage taken for 3s.' },
+        { tag: 'dot', label: 'Flaming Sprout', detail: '20 HP. A shot every 0.22s (3 damage) that sets the target burning — 2 damage every 0.5s for 2s. Dies after 5s.' },
+        { tag: 'heal', label: 'Lotus', detail: '35 HP. Ripens an orb every 5s. Walk over it: +10 HP and +1 petal per click for 15s. Stacks to 8, each on its own timer.' },
+        { tag: 'buff', label: 'Pitcher', detail: '50 HP. Every 1.5s waters your other plants within 140px: +4 HP, and for 2.5s they act 35% faster and hit 25% harder.' },
       ],
       notes: [
-        'Cotton and Nurse Lily are the two followers — they walk at 62 px/s, engage at 28px and trail you at 40px.',
+        'Pitcher and Fertilize stack: a fertilized, watered plant is acting almost twice as fast.',
+        'Lotus orbs belong to their owner — the enemy cannot steal yours.',
       ],
     },
   ],
@@ -58,13 +63,13 @@ const life: ElementCodex = {
 
     plant: {
       basics:
-        'Places the seed you have selected at the cursor with 25–75 HP depending on which one, and it '
+        'Places the seed you have selected at the cursor with 20–70 HP depending on which one, and it '
         + 'can be destroyed. Five plants maximum per owner — the enemy\'s garden does not count against '
-        + 'yours — on a 5s cooldown, so filling a garden from empty takes 20 seconds.',
+        + 'yours, and a sixth replaces your oldest — on a 5s cooldown, so filling a garden takes 20 seconds.',
       cast: 'E, placed at the cursor. Instant. Uses the currently selected seed from the bar.',
       effects: [
-        { tag: 'summon', label: 'Grow a plant', detail: 'Places the selected seed at the cursor. It has the HP from the seed table (25–75) and can be destroyed.' },
-        { tag: 'resource', label: 'Cap', detail: 'Maximum 5 plants. The cap is per owner, so the enemy\'s garden does not count against yours.' },
+        { tag: 'summon', label: 'Grow a plant', detail: 'Places the selected seed at the cursor. It has the HP from the seed table (20–70) and can be destroyed.' },
+        { tag: 'resource', label: 'Cap', detail: 'Maximum 5 plants; a sixth replaces the oldest. The cap is per owner, so the enemy\'s garden does not count against yours.' },
         { tag: 'utility', label: 'Availability', detail: '5s cooldown — filling a garden from empty takes 20 seconds.' },
       ],
       upgrade: {
@@ -172,20 +177,22 @@ const life: ElementCodex = {
     },
     reap: {
       basics:
-        'Destroys the plant under your cursor — or the nearest one — and takes its gift for 20 seconds. '
-        + 'Sunflower: +2 petal shotgun damage. Rose: enemies take 5 damage for every 20 you take. Nurse '
-        + 'Lily: heal 10% of all damage you deal. Nightcap: poison puddles bloom around you every second. '
-        + 'Pitcher: your petals slow 15% for 2s. Cotton: +25% move speed. 15s cooldown, and with a '
-        + 'five-plant cap on a 5s plant timer it costs 5 seconds of gardening.',
+        'Destroys the plant under your cursor — or the nearest one — and takes its gift for 20 seconds, '
+        + '+10s for every fertilizer star on it and +10s if Fertilize was still on it, up to a minute. '
+        + 'Each of the eight seeds gives something different, all of it on your click or your body. '
+        + '15s cooldown, and with a five-plant cap on a 5s plant timer it costs 5 seconds of gardening.',
       cast: 'Bindable to R, F or Q. Destroys the plant under the cursor, or the nearest one.',
       effects: [
-        { tag: 'buff', label: 'Sunflower', detail: '+2 petal shotgun damage for 20s.' },
-        { tag: 'buff', label: 'Rose', detail: 'Enemies take 5 damage for every 20 damage you take, for 20s.' },
-        { tag: 'heal', label: 'Nurse Lily', detail: 'Heal 10% of all damage you deal, for 20s.' },
-        { tag: 'dot', label: 'Nightcap', detail: 'Poison puddles bloom around you every second, for 20s.' },
-        { tag: 'control', label: 'Pitcher', detail: 'Your petals slow enemies 15% for 2s, for 20s.' },
-        { tag: 'movement', label: 'Cotton', detail: '+25% move speed for 20s.' },
+        { tag: 'damage', label: 'Sunflower', detail: 'Right-click: your own 3s solar link to the enemy nearest the cursor, same ramp as the plant. 6s recharge after it ends.' },
+        { tag: 'dot', label: 'Nightcap', detail: 'Every petal that lands adds a poison stack: 0.6 damage/s per stack, no cap. Clears 4s after the last top-up.' },
+        { tag: 'damage', label: 'Helicopter', detail: 'Three grass blades orbit you at 54px for 10 damage/s, and every click adds 3 stubby petals that drop after 130px.' },
+        { tag: 'damage', label: 'Mushroom Colony', detail: '+2 petals per click, and your Mushroom Colonies hit 50% harder.' },
+        { tag: 'control', label: 'Frost Lily', detail: 'Petals chill whoever they hit (30% slow for 1.5s) and bank off the arena wall once.' },
+        { tag: 'buff', label: 'Flaming Sprout', detail: 'Every chained click cuts the next cooldown 8% more, up to 65%. Stop for 0.9s and the chain resets.' },
+        { tag: 'heal', label: 'Lotus', detail: 'A lotus grows on your head every 8s. Your next dash spends it: 10 HP/s for 5s and +25% move speed.' },
+        { tag: 'buff', label: 'Pitcher', detail: 'You become the sprinkler: every 1.5s, your plants within 170px are watered (+4 HP, 35% faster, 25% harder).' },
         { tag: 'cost', label: 'It eats the plant', detail: 'The plant is destroyed outright. With a cap of 5 and a 5s plant cooldown, that is 5 seconds of gardening spent.' },
+        { tag: 'utility', label: 'Duration', detail: '20s base, +10s per permanent fertilizer star, +10s if freshly fertilized — 60s at most.' },
         { tag: 'utility', label: 'Availability', detail: '15s cooldown.' },
       ],
     },

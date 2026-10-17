@@ -163,6 +163,16 @@ export function coreAura(
   g.fillStyle(QC.hot, 0.3 * pulse);
   g.fillCircle(x, y - r * 0.1, r * 0.34);
 
+  // Probability cloud: a ring of dots that thicken and thin as the orbit "collapses" round
+  // the body, so the Third State reads as a field and not a plain glow.
+  for (let i = 0; i < 18; i++) {
+    const a = (i / 18) * Math.PI * 2 + t * 0.4;
+    const dens = 0.5 + 0.5 * Math.sin(a * 3 - t * 2.6 + seed);
+    const rr = r * (1.45 + 0.12 * jitter(seed, i));
+    g.fillStyle(i % 3 === 0 ? QC.ghost : QC.core, 0.15 + 0.45 * dens);
+    g.fillCircle(x + Math.cos(a) * rr, y + Math.sin(a) * rr * 0.8, 0.8 + dens * 1.1);
+  }
+
   // Two shells crossed at right angles, each tipped the other way, tumbling out of phase.
   for (let i = 0; i < 2; i++) {
     const tilt = Math.sin(t * (1.1 + i * 0.4) + i * 1.9);

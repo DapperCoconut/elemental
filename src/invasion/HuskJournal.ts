@@ -76,6 +76,7 @@ const HUSK_TRICKS: Record<string, string> = {
   bind: 'Throws a chain and shackles you where you stand for a second or so.',
   gum: 'Trails a thick green mire. Crossing one costs you most of your speed.',
   gluttony: 'A sack-headed scarecrow husk. It bites into any corpse that falls near it and grows off the meal.',
+  myth: 'Fights to a crowd only it can hear. Every bite it lands is applauded, and the husks around it hit harder for the cheering.',
 };
 
 /** What the tenth wave sends, and how the book says you live through it. */

@@ -280,6 +280,12 @@ export class Husk extends Fighter {
       return;
     }
 
+    // Dancing (Sound's Infectious Crescendo): it keeps coming, but every attack is off.
+    if (Date.now() < this.soundDanceUntil) {
+      this.moveToward(target, 1);
+      return;
+    }
+
     switch (this.variant.behavior) {
       case 'ranged':  this.updateRanged(target, bestDist, time); break;
       case 'medic':   this.updateMedic(target, bestDist, time); break;
@@ -311,7 +317,7 @@ export class Husk extends Fighter {
   }
 
   private get moveSpeed(): number {
-    let spd = this.speed * this.walkSpeedMult * this.purgeSpeedMult * this.effectSpeedMult * this.despressSlowMult();
+    let spd = this.speed * this.walkSpeedMult * this.purgeSpeedMult * this.effectSpeedMult * this.despressSlowMult() * this.overRadiatedSpeedMult() * this.devotionSlowMult() * this.goldSpeedMult;
     if (this.frostStacks > 0) spd *= Math.max(0.2, 1 - this.frostStacks * 0.1);
     return spd;
   }

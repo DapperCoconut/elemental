@@ -238,13 +238,13 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       {
         key: 'selfHealed',
         label: 'Vitality',
-        howTo: 'Heal yourself for 300 HP — Nurse Lilies and Cycle of Life both count',
+        howTo: 'Heal yourself for 300 HP — Lotus orbs, Lotus essence and Cycle of Life all count',
         target: 300,
       },
       {
         key: 'plantDamage',
         label: 'Attack Garden',
-        howTo: 'Have your plants deal 300 damage — Sunflower shots, Rose thorns, and Nightcap poison all count',
+        howTo: 'Have your plants deal 300 damage — solar links, rotor blades, spore volleys, ice shards, sprout fire and Nightcap bombs all count',
         target: 300,
       },
       {
@@ -264,8 +264,8 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         id: 'reap',
         name: 'Reap',
         bindable: true,
-        hudDescription: 'Destroy a plant to steal a 20s buff from it',
-        description: 'Destroy the plant under your cursor (nearest otherwise) and absorb its essence for 20 seconds. Sunflower: +2 petal shotgun damage. Rose: enemies take 5 damage for every 20 damage you take. Nurse Lily: heal 10% of the damage you deal. Nightcap: poison puddles bloom around you every second. Pitcher: your petals slow enemies 15% for 2 seconds. Cotton: +25% move speed. 15 second cooldown.',
+        hudDescription: 'Destroy a plant to steal a 20–60s gift from it',
+        description: 'Destroy the plant under your cursor (nearest otherwise) and absorb its essence — 20 seconds, +10s per fertilizer star and +10s if it was freshly fertilized, up to 60. Sunflower: right-click a 3s solar link of your own. Nightcap: petals stack an uncapped poison. Helicopter: grass blades spin round you, and click adds 3 short-range petals. Mushroom Colony: +2 petals per click, and your colonies hit 50% harder. Frost Lily: petals chill and bounce off a wall once. Flaming Sprout: keep clicking to fire faster and faster. Lotus: a lotus grows on your head every 8s; dashing spends it on 10 HP/s for 5s and +25% speed. Pitcher: you water your plants within 170px every 1.5s. 15 second cooldown.',
       },
     ],
   },

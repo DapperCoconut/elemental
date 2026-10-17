@@ -4,8 +4,9 @@ import { CastContext } from '../Ability';
 import { Projectile } from '../../combat/Projectile';
 import {
   GRAVITY, GravityAvatar, GravityColorFn, GravityFx, GravityTones, GravityWell, METEOR_TONES,
-  MOON_TONES, NPC_TONES, VOID_TONES, tonesFor,
+  MOON_TONES, NPC_TONES, VOID_TONES, drawMoonHpGauge, drawMountCharge, tonesFor,
 } from './GravityVisuals';
+import { FONT_DISPLAY } from '../../ui/Theme';
 
 /**
  * Every gravity ability — the player's and the NPC's alike — is cast through this kit, so each
@@ -233,10 +234,13 @@ export class GravityKit {
   private gravMoonY = 0;
   private gravMoonT = 0;
   private gravMoonHpBar: Phaser.GameObjects.Rectangle | null = null;
-  private gravMoonHpBg: Phaser.GameObjects.Rectangle | null = null;
+  /** The curved lunar integrity gauge under the ridden moon (replaces the old bg rectangle). */
+  private gravMoonHpBg: Phaser.GameObjects.Graphics | null = null;
   private gravQWasDown = false;
   private gravMoonChargeCircle: GravityWell | null = null;
   private gravMoonChargeText: Phaser.GameObjects.Text | null = null;
+  /** The waxing-crescent charge badge drawn with the Mounting label. */
+  private gravMoonChargeGfx: Phaser.GameObjects.Graphics | null = null;
 
   // ── Anti-Grav (F+) ──
   /** `scene.time.now` the slam lands, or 0 when the caster is on the ground. */
@@ -386,6 +390,7 @@ export class GravityKit {
     this.gravQWasDown = false;
     if (this.gravMoonChargeCircle) { this.gravMoonChargeCircle.destroy(); this.gravMoonChargeCircle = null; }
     if (this.gravMoonChargeText) { this.gravMoonChargeText.destroy(); this.gravMoonChargeText = null; }
+    if (this.gravMoonChargeGfx) { this.gravMoonChargeGfx.destroy(); this.gravMoonChargeGfx = null; }
 
     // Anti-Grav (F+)
     this.antiGravLandAt = 0; this.antiGravT = 0; this.antiGravWasInvincible = false;
@@ -740,8 +745,8 @@ export class GravityKit {
     this.gravMoonSprite = scene.add.graphics().setDepth(18.5);
     const seat = this.perimeterPoint(this.moonRideT);
     this.gravMoonX = seat.x; this.gravMoonY = seat.y;
-    this.gravMoonHpBg = scene.add.rectangle(seat.x, seat.y, 56, 5, 0x333333).setDepth(19);
-    this.gravMoonHpBar = scene.add.rectangle(seat.x - 28, seat.y, 56, 5, 0xccbbee).setDepth(20).setOrigin(0, 0.5);
+    this.gravMoonHpBg = scene.add.graphics().setDepth(19);
+    this.gravMoonHpBar = null;
 
     this.startNight();
 
@@ -860,10 +865,9 @@ export class GravityKit {
       MOON_RIDE_RADIUS, this.gravMoonT, Math.max(0, this.gravMoonHp / 100), this.moonHeading);
 
     const hpFrac = Math.max(0, this.gravMoonHp / 100);
-    if (this.gravMoonHpBg) this.gravMoonHpBg.setPosition(this.gravMoonX, this.gravMoonY + MOON_RIDE_RADIUS + 12);
-    if (this.gravMoonHpBar) {
-      this.gravMoonHpBar.setPosition(this.gravMoonX - 28, this.gravMoonY + MOON_RIDE_RADIUS + 12);
-      this.gravMoonHpBar.setSize(56 * hpFrac, 5);
+    if (this.gravMoonHpBg) {
+      this.gravMoonHpBg.clear();
+      drawMoonHpGauge(this.gravMoonHpBg, this.pcol, this.gravMoonX, this.gravMoonY, MOON_RIDE_RADIUS, hpFrac, time / 1000);
     }
 
     // Anything that touches a moving moon gets run over.
@@ -1561,17 +1565,26 @@ export class GravityKit {
           this.gravMoonChargeCircle = new GravityWell(this.arena.scene, this.pcol, MOON_TONES, 28, 12);
         }
         if (!this.gravMoonChargeText) {
-          this.gravMoonChargeText = this.arena.scene.add.text(player.x, player.y - 50, 'Mounting 0%', { fontSize: '11px', color: '#ccbbee' }).setOrigin(0.5).setDepth(13);
+          this.gravMoonChargeText = this.arena.scene.add.text(player.x, player.y - 50, 'Mounting 0%', {
+            fontFamily: FONT_DISPLAY, fontSize: '10px', color: '#e8dcff', stroke: '#1a0a2e', strokeThickness: 3,
+          }).setOrigin(0.5).setDepth(13);
+          this.gravMoonChargeGfx?.destroy();
+          this.gravMoonChargeGfx = this.arena.scene.add.graphics().setDepth(12.9);
         }
       }
       if (this.gravMoonHolding && this.gravMoonChargeCircle && this.gravMoonChargeText) {
         const mountPct = Math.min(100, Math.round((time - this.gravMoonHoldStart) / 3000 * 100));
         this.gravMoonChargeText.setText(`Mounting ${mountPct}%`).setPosition(player.x, player.y - 50);
+        if (this.gravMoonChargeGfx) {
+          this.gravMoonChargeGfx.clear();
+          drawMountCharge(this.gravMoonChargeGfx, this.pcol, player.x, player.y - 70, mountPct / 100, time / 1000);
+        }
         this.gravMoonChargeCircle.update(delta, player.x, player.y + 32, mountPct / 100, 1);
       }
       if (!this.arena.qKey.isDown && this.gravQWasDown) {
         if (this.gravMoonChargeCircle) { this.gravMoonChargeCircle.destroy(); this.gravMoonChargeCircle = null; }
         if (this.gravMoonChargeText) { this.gravMoonChargeText.destroy(); this.gravMoonChargeText = null; }
+        if (this.gravMoonChargeGfx) { this.gravMoonChargeGfx.destroy(); this.gravMoonChargeGfx = null; }
         if (this.gravMoonHolding) {
           this.gravMoonHolding = false;
           const heldMs = time - this.gravMoonHoldStart;

@@ -739,14 +739,73 @@ export class PlasmaAvatar extends BaseAvatar {
   /** A violet pool of charge underfoot, spitting the odd ground arc. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
     const k = this.intensity;
-    g.fillStyle(this.tint(this.accent), a * 0.16 * k);
+    g.fillStyle(this.tint(this.mastered ? PLASMA.hot : this.accent), a * (this.mastered ? 0.22 : 0.16) * k);
     g.fillEllipse(x, y + 7, 56 * k, 24 * k);
+    if (this.mastered) {
+      // A storm-wall ring round the feet, pulsing outward.
+      const u = (this.t * 0.8) % 1;
+      g.lineStyle(2, this.tint(PLASMA.hot), a * (1 - u) * 0.8);
+      g.strokeEllipse(x, y + 7, 40 + u * 34, (40 + u * 34) * 0.42);
+      g.lineStyle(1.2, this.tint(PLASMA.rose), a * 0.5);
+      g.strokeEllipse(x, y + 7, 62, 26);
+    }
     for (let i = 0; i < 3; i++) {
       const ang = this.t * 1.1 + (i / 3) * TAU;
       const d = 20 * k;
       g.lineStyle(1.3, this.tint(PLASMA.orchid), a * 0.6);
       strokePts(g, arcPath(x, y + 7, x + Math.cos(ang) * d, y + 7 + Math.sin(ang) * d * 0.5,
         6, this.t * 40 + i * 13, 3));
+    }
+  }
+
+  /**
+   * The containment rig painted on the orb: a tokamak band slung round the lower body with
+   * glowing coil studs, and two swirling plasma filaments curling inside the shell below the
+   * eyes. Mastered, the band ruptures — it runs white-hot pink, cracks along its length and
+   * spits sparks from the breaches.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    void a;
+    const A = alpha;
+    const m = this.mastered;
+    // Filaments: two curling strokes that slowly turn.
+    for (let i = 0; i < 2; i++) {
+      const ph = this.t * (1.4 + i * 0.5) + i * 2.1;
+      g.lineStyle(1.2, this.tint(i === 0 ? PLASMA.mist : this.accent), A * 0.45);
+      g.beginPath();
+      for (let k = 0; k <= 10; k++) {
+        const u = k / 10;
+        const ang = ph + u * 2.6;
+        const r = 4 + u * 8;
+        const px = x + Math.cos(ang) * r, py = y + 8 + Math.sin(ang) * r * 0.5;
+        if (k === 0) g.moveTo(px, py); else g.lineTo(px, py);
+      }
+      g.strokePath();
+    }
+    // The band.
+    const by = y + 9;
+    g.lineStyle(4, this.tint(PLASMA.void), A * 0.95);
+    g.beginPath(); g.arc(x, by - 30, 34, Math.PI * 0.3, Math.PI * 0.7, false); g.strokePath();
+    const seam = m ? PLASMA.hot : PLASMA.purple;
+    g.lineStyle(1.4, this.tint(seam), A * (0.7 + 0.3 * Math.sin(this.t * 6)));
+    g.beginPath(); g.arc(x, by - 30, 34, Math.PI * 0.31, Math.PI * 0.69, false); g.strokePath();
+    for (let i = 0; i < 4; i++) {
+      const ang = Math.PI * (0.35 + i * 0.1);
+      const sx = x + Math.cos(ang) * 34, sy = by - 30 + Math.sin(ang) * 34;
+      g.fillStyle(this.tint(PLASMA.deep), A); g.fillCircle(sx, sy, 2);
+      g.fillStyle(this.tint(m ? PLASMA.white : PLASMA.magenta), A); g.fillCircle(sx, sy, 1.1);
+    }
+    if (!m) return;
+    // Breaches: jagged white cracks with sparks spat off them.
+    for (let i = 0; i < 2; i++) {
+      const ang = Math.PI * (0.4 + i * 0.2);
+      const sx = x + Math.cos(ang) * 34, sy = by - 30 + Math.sin(ang) * 34;
+      g.lineStyle(1, this.tint(PLASMA.white), A);
+      g.lineBetween(sx - 1.5, sy - 2, sx + 0.8, sy);
+      g.lineBetween(sx + 0.8, sy, sx - 0.6, sy + 2.2);
+      const u = (this.t * 2.2 + i * 0.5) % 1;
+      g.fillStyle(this.tint(i ? PLASMA.rose : PLASMA.white), A * (1 - u));
+      g.fillCircle(sx + (i ? 1 : -1) * u * 7, sy + u * 5 - Math.sin(u * Math.PI) * 4, 1.2);
     }
   }
 
@@ -775,8 +834,13 @@ export class PlasmaAvatar extends BaseAvatar {
         { x: px - 2.6, y: rootY + 5 }, { x: px + 2.6, y: rootY + 5 },
         { x: px + 1.4, y: rootY - 9 }, { x: px - 1.4, y: rootY - 9 },
       ]);
-      g.fillStyle(this.tint(PLASMA.purple), alpha * 0.9);
-      g.fillCircle(px, rootY - 9, 2.6);
+      // Mastered, the prong tips are white-hot bulbs in a pink corona.
+      if (this.mastered) {
+        g.fillStyle(this.tint(PLASMA.hot), alpha * (0.35 + 0.15 * Math.sin(this.t * 9 + dir)));
+        g.fillCircle(px, rootY - 9, 6);
+      }
+      g.fillStyle(this.tint(this.mastered ? PLASMA.white : PLASMA.purple), alpha * 0.9);
+      g.fillCircle(px, rootY - 9, this.mastered ? 3.2 : 2.6);
     }
     // Lightning jumping the gap between the prongs, on two beats.
     for (let i = 0; i < 2; i++) {

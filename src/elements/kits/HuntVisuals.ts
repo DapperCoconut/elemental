@@ -1797,21 +1797,69 @@ export class HuntFx extends FxBase {
     g: Phaser.GameObjects.Graphics, tint: HuntColorFn,
     x: number, y: number, pumps: number, overloaded: boolean, t: number,
   ): void {
+    // A leather bandolier strip with four shell loops: a pumped round is a real shotgun shell
+    // (red hull, crimped top, brass head); the fourth — the overload round — runs hot.
     const slots = 4;
+    const gap = 11;
+    const w = slots * gap + 8, h = 20;
+    g.fillStyle(tint(HUNT.pitch), 0.55);
+    g.fillRoundedRect(x - w / 2 + 1.5, y - h / 2 + 2, w, h, 4);
+    g.fillStyle(tint(HUNT.wood), 0.95);
+    g.fillRoundedRect(x - w / 2, y - h / 2, w, h, 4);
+    g.fillStyle(tint(HUNT.woodLit), 0.5);
+    g.fillRect(x - w / 2 + 2, y - h / 2 + 1.5, w - 4, 2);
+    // Stitching along both edges.
+    g.lineStyle(1, tint(HUNT.cord), 0.6);
+    for (let sx = x - w / 2 + 3; sx < x + w / 2 - 3; sx += 4) {
+      g.lineBetween(sx, y - h / 2 + 4, sx + 2, y - h / 2 + 4);
+      g.lineBetween(sx, y + h / 2 - 2, sx + 2, y + h / 2 - 2);
+    }
+    if (overloaded) {
+      g.lineStyle(2, tint(HUNT.fresh), 0.5 + 0.5 * Math.sin(t * 14));
+      g.strokeRoundedRect(x - w / 2 - 1.5, y - h / 2 - 1.5, w + 3, h + 3, 5);
+    }
     for (let i = 0; i < slots; i++) {
-      const sx = x + (i - (slots - 1) / 2) * 11;
+      const sx = x + (i - (slots - 1) / 2) * gap;
       const filled = i < pumps;
       const danger = i === 3 && (filled || overloaded);
-      g.fillStyle(tint(danger ? HUNT.fresh : filled ? HUNT.spark : HUNT.pitch),
-        danger ? 0.7 + 0.3 * Math.sin(t * 14) : filled ? 0.95 : 0.5);
-      g.fillRoundedRect(sx - 3.6, y - 7, 7.2, 14, 2);
-      g.lineStyle(1, tint(filled ? HUNT.bone : HUNT.smoke), 0.85);
-      g.strokeRoundedRect(sx - 3.6, y - 7, 7.2, 14, 2);
-      if (filled) {
-        g.fillStyle(tint(HUNT.hide), 0.9);
-        g.fillRect(sx - 3.6, y + 2, 7.2, 5);
+      // The loop.
+      g.fillStyle(tint(HUNT.hide), 1);
+      g.fillRect(sx - 4.4, y - 1, 8.8, 7);
+      g.lineStyle(1, tint(HUNT.pitch), 0.9);
+      g.strokeRect(sx - 4.4, y - 1, 8.8, 7);
+      if (!filled) {
+        g.fillStyle(tint(HUNT.pitch), 0.8);
+        g.fillRect(sx - 3, y - 1, 6, 2);
+        continue;
       }
+      const hot = danger ? 0.6 + 0.4 * Math.sin(t * 14) : 0;
+      if (danger) {
+        g.fillStyle(tint(HUNT.fresh), 0.35 * hot);
+        g.fillCircle(sx, y - 3, 8);
+      }
+      // Hull.
+      g.fillStyle(tint(danger ? HUNT.fresh : HUNT.hull), 1);
+      g.fillRect(sx - 3.2, y - 9, 6.4, 11);
+      g.fillStyle(tint(HUNT.white), 0.25);
+      g.fillRect(sx - 2.4, y - 8.5, 1.4, 9.5);
+      // Crimp star on top.
+      g.lineStyle(1, tint(HUNT.gore), 0.9);
+      g.lineBetween(sx - 2.2, y - 9, sx + 2.2, y - 9);
+      g.lineBetween(sx, y - 9.5, sx, y - 8);
+      // Brass head peeking under the loop.
+      g.fillStyle(tint(HUNT.brass), 1);
+      g.fillRect(sx - 3.4, y + 5, 6.8, 2.4);
+      g.fillStyle(tint(HUNT.spark), 0.7);
+      g.fillRect(sx - 3.4, y + 5, 6.8, 0.8);
     }
+    // The loops sit over the hulls' lower halves — repaint the strap band across them.
+    g.fillStyle(tint(HUNT.hide), 0.95);
+    for (let i = 0; i < slots; i++) {
+      const sx = x + (i - (slots - 1) / 2) * gap;
+      g.fillRect(sx - 4.4, y + 1, 8.8, 3.2);
+    }
+    g.lineStyle(1, tint(HUNT.cord), 0.5);
+    g.lineBetween(x - w / 2 + 3, y + 2.6, x + w / 2 - 3, y + 2.6);
   }
 
   /**
@@ -2516,13 +2564,104 @@ export class HuntAvatar extends BaseAvatar {
   }
 
   /** A soft under-glow in the form's own colour; stronger once mastered. */
-  protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
+  protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     const tones = this.activeTones();
     const k = this.intensity * (this.mastered ? 1.15 : 1);
     g.fillStyle(this.tint(tones.body), a * (this.mastered ? 0.3 : 0.22) * k);
     g.fillCircle(x, y, 28 * k);
     g.fillStyle(this.tint(tones.crust), a * 0.18 * k);
     g.fillEllipse(x, y + 8, 34 * k, 14 * k);
+    if (this.mastered) this.drawPeltMantle(g, x, y, alpha, tones);
+  }
+
+  /**
+   * Mastered: the alpha's pelt — a wolf-hide mantle slung over the shoulders, shaggy fur
+   * flaring out past both sides of the body with bone-white tips. Painted under the sprite so
+   * the body sits in it; it changes the silhouette, which is what reads at play zoom.
+   */
+  private drawPeltMantle(g: Phaser.GameObjects.Graphics, x: number, y: number, alpha: number, tones: HuntTones): void {
+    for (const side of [-1, 1] as const) {
+      for (let i = 0; i < 6; i++) {
+        const f = i / 5;
+        const ang = side < 0 ? Math.PI + (-0.75 + f * 1.25) * -1 : -0.75 + f * 1.25;
+        const sway = Math.sin(this.t * 2.4 + i * 1.1 + side) * 0.06;
+        const len = 31 - Math.abs(f - 0.35) * 9;
+        const a0 = ang + sway;
+        const rx = x + Math.cos(a0) * 12, ry = y - 2 + Math.sin(a0) * 10;
+        const tx = x + Math.cos(a0) * len, ty = y - 2 + Math.sin(a0) * len * 0.75 + 4;
+        const px = -Math.sin(a0) * 5, py = Math.cos(a0) * 5;
+        g.fillStyle(this.tint(HUNT.fur), alpha * 0.95);
+        g.fillTriangle(rx + px, ry + py, tx, ty, rx - px, ry - py);
+        g.fillStyle(this.tint(HUNT.furLit), alpha * 0.8);
+        g.fillTriangle(rx + px * 0.4, ry + py * 0.4, x + Math.cos(a0) * len * 0.85, y - 2 + Math.sin(a0) * len * 0.64 + 3, rx - px * 0.4, ry - py * 0.4);
+        g.fillStyle(this.tint(HUNT.bone), alpha * 0.9);
+        g.fillCircle(tx, ty, 1.3);
+      }
+    }
+    g.fillStyle(this.tint(tones.wound), alpha * 0.2);
+    g.fillCircle(x, y - 2, 24);
+  }
+
+  /**
+   * Under the face: a leather strap slung across the lower body (fading as the beast takes
+   * over, replaced by three raked claw scars), and — mastered — war paint on the cheeks and a
+   * necklace of bone fangs with a blood-moon crescent pendant.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    void a;
+    const b = this.beastness;
+    const tones = this.activeTones();
+    const strap = Math.max(0, 1 - b * 1.4);
+    if (strap > 0.02) {
+      const sa = alpha * strap;
+      const silver = this.form === 'hybrid';
+      g.lineStyle(4, this.tint(HUNT.pitch), sa);
+      g.lineBetween(x - 19, y + 7, x + 13, y + 17);
+      g.lineStyle(2.6, this.tint(silver ? HUNT.steel : HUNT.wood), sa);
+      g.lineBetween(x - 19, y + 7, x + 13, y + 17);
+      // Brass buckle and a couple of studs.
+      g.fillStyle(this.tint(HUNT.brass), sa);
+      g.fillRect(x - 4, y + 10, 4, 3.4);
+      g.fillStyle(this.tint(silver ? HUNT.silver : HUNT.woodLit), sa);
+      g.fillCircle(x - 12, y + 9.2, 0.9);
+      g.fillCircle(x + 7, y + 15.1, 0.9);
+    }
+    if (b > 0.3) {
+      const ca = alpha * Math.min(1, (b - 0.3) / 0.5);
+      g.lineStyle(1.4, this.tint(HUNT.gore), ca * 0.9);
+      for (let i = 0; i < 3; i++) {
+        g.lineBetween(x + 6 + i * 3.5, y + 6, x + 1 + i * 3.5, y + 16);
+      }
+    }
+    if (this.mastered) {
+      // War paint: two blood stripes on each cheek, outside the eyes.
+      g.lineStyle(1.6, this.tint(HUNT.blood), alpha * 0.9);
+      for (const side of [-1, 1]) {
+        g.lineBetween(x + side * 13.5, y - 1, x + side * 16.5, y + 1);
+        g.lineBetween(x + side * 13, y + 2.5, x + side * 16, y + 4.5);
+      }
+      // Fang necklace on a cord.
+      g.lineStyle(1, this.tint(HUNT.cord), alpha * 0.8);
+      g.beginPath();
+      g.arc(x, y - 4, 13, Math.PI * 0.22, Math.PI * 0.78);
+      g.strokePath();
+      for (let i = 0; i < 6; i++) {
+        const u = Math.PI * (0.25 + (i / 5) * 0.5);
+        if (i === 2 || i === 3) continue;
+        const fx = x + Math.cos(u) * 13, fy = y - 4 + Math.sin(u) * 13;
+        g.fillStyle(this.tint(HUNT.bone), alpha);
+        g.fillTriangle(fx - 1.3, fy, fx + 1.3, fy, fx + Math.cos(u) * 0.5, fy + 4);
+      }
+      // Blood-moon crescent pendant, dead centre.
+      const py = y + 10.5;
+      const glow = 0.6 + 0.4 * Math.sin(this.t * 3);
+      g.fillStyle(this.tint(tones.wound), alpha * 0.35 * glow);
+      g.fillCircle(x, py, 5);
+      g.fillStyle(this.tint(HUNT.moon), alpha);
+      g.fillCircle(x, py, 3.2);
+      g.fillStyle(this.tint(HUNT.pitch), alpha);
+      g.fillCircle(x + 1.5, py - 1, 2.6);
+    }
   }
 
   /**

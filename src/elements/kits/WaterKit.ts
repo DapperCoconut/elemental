@@ -1337,22 +1337,84 @@ export class WaterKit {
    * stat it shows is water being taken out of the target.
    */
   private paintDehydrationBar(target: Fighter, bar: Phaser.GameObjects.Graphics, pct: number): void {
-    const w = 44, h = 5;
-    const x = target.x - w / 2, y = target.y - 50;
     bar.clear();
-    if (pct <= 0) return;
-    bar.fillStyle(this.pcol(WATER.abyss), 0.55);
-    bar.fillRoundedRect(x - 1, y - 1, w + 2, h + 2, 3);
-    // Remaining water sits on the left, sloshing as it drains away.
-    const wet = w * (1 - pct / 100);
-    if (wet > 1) {
-      bar.fillStyle(this.pcol(WATER.bright), 0.9);
-      bar.fillRoundedRect(x, y, wet, h, 2);
-      bar.fillStyle(this.pcol(WATER.foam), 0.9);
-      bar.fillCircle(x + wet, y + h / 2 + Math.sin(this.worldT * 6) * 1, h * 0.5);
+    if (pct <= 0 || target.alpha <= 0.05) return;
+    const c = this.pcol;
+    const t = this.worldT;
+    // A glass vial lying on its side over the head, corked at the right: the water left in
+    // the target pools along it from the left and drains toward the cork as Siphon dries it.
+    const w = 46, h = 8;
+    const x = target.x - w / 2 - 3, y = target.y - 52;
+    const wetFrac = 1 - pct / 100;
+    const wet = w * wetFrac;
+    const dry = pct >= 100;
+    const panic = dry ? 0.5 + 0.5 * Math.sin(t * 10) : 0;
+
+    // Drop shadow + dark glass body.
+    bar.fillStyle(0x000000, 0.3);
+    bar.fillRoundedRect(x - 1, y + 2, w + 10, h + 2, 5);
+    bar.fillStyle(c(WATER.abyss), 0.78);
+    bar.fillRoundedRect(x - 1.5, y - 1.5, w + 3, h + 3, (h + 3) / 2);
+
+    // Dry, salt-crusted glass where the water used to be.
+    if (wet < w - 1) {
+      bar.fillStyle(0xb8a888, 0.22 + 0.25 * panic);
+      bar.fillRoundedRect(x + Math.max(0, wet - 2), y + 0.5, w - Math.max(0, wet - 2), h - 1, (h - 1) / 2);
+      bar.fillStyle(0xe8dcc0, 0.45);
+      for (let i = 0; i < 6; i++) {
+        const sx = x + wet + ((i * 37) % 100) / 100 * (w - wet);
+        if (sx > x + w - 2) continue;
+        bar.fillCircle(sx, y + h - 1.6 - (i % 3) * 1.4, 0.7);
+      }
     }
-    bar.lineStyle(1, this.pcol(WATER.sky), 0.7);
-    bar.strokeRoundedRect(x - 1, y - 1, w + 2, h + 2, 3);
+
+    // The water: deep body, brighter top layer, a sloshing meniscus at the leading edge.
+    if (wet > 1.5) {
+      const slosh = Math.sin(t * 6.2) * 1.2;
+      bar.fillStyle(c(WATER.ocean), 0.95);
+      bar.fillRoundedRect(x, y, wet, h, Math.min(h / 2, wet / 2));
+      bar.fillStyle(c(WATER.bright), 0.9);
+      bar.fillRoundedRect(x, y, wet, h * 0.55, Math.min(h * 0.27, wet / 2));
+      // Meniscus: a bulging lens that leans with the slosh.
+      bar.fillStyle(c(WATER.cyan), 0.95);
+      bar.fillEllipse(x + wet - 0.5 + slosh * 0.4, y + h / 2, 4.2, h - 0.4);
+      bar.fillStyle(c(WATER.foam), 0.9);
+      bar.fillEllipse(x + wet + 0.6 + slosh * 0.6, y + h / 2 - 1, 1.8, h - 3);
+      // A couple of bubbles drifting through.
+      for (let i = 0; i < 2; i++) {
+        const bp = (t * (0.35 + i * 0.2) + i * 0.5) % 1;
+        const bx = x + 2 + bp * Math.max(0, wet - 5);
+        bar.fillStyle(c(WATER.pale), 0.7);
+        bar.fillCircle(bx, y + h * 0.6 - Math.sin(bp * Math.PI) * 1.6, 0.9 + i * 0.3);
+      }
+    }
+
+    // Graduation ticks every quarter, etched on the glass.
+    bar.lineStyle(1, c(WATER.foam), 0.45);
+    for (let i = 1; i < 4; i++) {
+      const tx = x + (w * i) / 4;
+      bar.lineBetween(tx, y + h - 0.5, tx, y + h - 3);
+    }
+    // Glass rim + the long specular streak that makes it read as glass, not paint.
+    bar.lineStyle(1.2, dry ? 0xff8866 : c(WATER.sky), dry ? 0.6 + 0.4 * panic : 0.85);
+    bar.strokeRoundedRect(x - 1.5, y - 1.5, w + 3, h + 3, (h + 3) / 2);
+    bar.lineStyle(1, c(WATER.white), 0.55);
+    bar.lineBetween(x + 3, y + 0.8, x + w - 6, y + 0.8);
+
+    // Cork on the right end, with a band of twine.
+    bar.fillStyle(0x6a4a2a, 1);
+    bar.fillRoundedRect(x + w + 1.5, y - 0.5, 6, h + 1, 2);
+    bar.fillStyle(0x9a7046, 1);
+    bar.fillRoundedRect(x + w + 2.3, y + 0.3, 4, h - 2.6, 1.4);
+    bar.lineStyle(1, 0xd8c8a0, 0.8);
+    bar.lineBetween(x + w + 4.5, y - 0.5, x + w + 4.5, y + h + 0.5);
+    // A single droplet icon on the left cap so the meter names itself.
+    const dx = x - 6, dy = y + h / 2;
+    bar.fillStyle(c(dry ? WATER.deep : WATER.cyan), 1);
+    bar.fillCircle(dx, dy + 1, 2.8);
+    bar.fillTriangle(dx - 2.5, dy, dx + 2.5, dy, dx, dy - 4.2);
+    bar.fillStyle(c(WATER.white), 0.85);
+    bar.fillCircle(dx - 0.9, dy + 0.3, 0.9);
   }
 
   private consumeGeyserCharge(g: Geyser): void {

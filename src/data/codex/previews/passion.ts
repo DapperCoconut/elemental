@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import {
   DEV, PassionAvatar, PassionFx, ascendBand, chariot, crashMark, crucifixAura, crucifixPost,
-  faithBar, glory, halo, handGrenade, holyWaterPuddle, vial,
+  faithBar, firePillar, glory, halo, handGrenade, holyWaterPuddle, pillarCrosshair, skyPriest, vial,
 } from '../../../elements/kits/PassionVisuals';
 
 /**
@@ -440,6 +440,302 @@ export const ascendance: PreviewScript = {
         }
       }
       if (e > 5300 && e < 6000) crashMark(air, ctx.tint, land.x, land.y, CRASH_R, (e - 5300) / 700, t);
+    });
+  },
+};
+
+
+// ══ UPGRADES ═══════════════════════════════════════════════════════════
+
+export const sermonUpgraded: PreviewScript = {
+  duration: 7000,
+  scale: 0.9,
+  caption: 'Click+ Disarming Words — letters bless the shots they pass: gold, 20% softer, 20% slower',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new PassionAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#ffd54a', 11);
+    const enemy = { x: ctx.cx + 300, y: ctx.cy };
+    believer(ctx, enemy, () => 40);
+    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const shots: { x: number; y: number; v: number; gold: boolean; done: boolean }[] = [];
+    const letters: Letter[] = [];
+    letterLayer(ctx, letters, () => false, () => {});
+    for (const at of [300, 1500, 2700, 3900, 5100]) {
+      ctx.at(at, () => shots.push({ x: enemy.x - 20, y: enemy.y + (Math.random() - 0.5) * 8, v: 300, gold: false, done: false }));
+    }
+    for (const at of [700, 1900, 3100, 4300, 5500]) {
+      ctx.at(at, () => {
+        av.play('punch', ctx.aim);
+        preach(ctx, letters, ctx.cx + 20, ctx.cy, ctx.aim, 6, at, 0.3);
+      });
+    }
+    ctx.at(200, () => readout.setText('they shoot — you preach straight back through it'));
+    ctx.at(2400, () => readout.setText('every shot a letter passes turns gold: 20% softer, 20% slower'));
+    ctx.onFrame((dt) => {
+      air.clear();
+      for (const sh of shots) {
+        if (sh.done) continue;
+        sh.x -= sh.v * dt / 1000;
+        if (!sh.gold && letters.some((l) => l.alive && Phaser.Math.Distance.Between(l.x, l.y, sh.x, sh.y) < 22)) {
+          sh.gold = true;
+          sh.v *= 0.8;
+          ctx.capture(() => fx.disarm(sh.x, sh.y));
+          float(ctx, sh.x, sh.y - 18, '✨ DISARMED', hex(DEV.gold), 10);
+        }
+        if (sh.x <= ctx.cx + 18) {
+          sh.done = true;
+          float(ctx, ctx.cx, ctx.cy - 30, sh.gold ? '8' : '10', sh.gold ? '#ffe9a0' : '#ffb3aa', 14);
+          continue;
+        }
+        air.fillStyle(sh.gold ? 0xffd54a : 0x9aa3b8, 1);
+        air.fillCircle(sh.x, sh.y, 5);
+        if (sh.gold) { air.lineStyle(1.4, 0xfffcf0, 0.8); air.strokeCircle(sh.x, sh.y, 7); }
+      }
+    });
+  },
+};
+
+export const holyWaterUpgraded: PreviewScript = {
+  duration: 7000,
+  scale: 0.9,
+  caption: 'E+ Purge Sins — stepping into the holy water washes every debuff off, and pays faith for them',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new PassionAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#8fd3ff', 11);
+    const pool = { x: ctx.cx + 190, y: ctx.cy };
+    const enemy = { x: ctx.cx + 360, y: ctx.cy };
+    let faith = 30;
+    believer(ctx, enemy, () => faith);
+    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
+    const icons = ctx.adopt(ctx.scene.add.text(enemy.x, enemy.y - 58, '🔥 ❄️ 🩸', { fontSize: '13px' }).setOrigin(0.5).setDepth(19));
+    let landed = -1;
+    let purged = false;
+    ctx.at(300, () => { readout.setText('burning, frozen, bleeding — sins'); av.play('punch', ctx.aim); });
+    ctx.at(820, () => { landed = 820; ctx.capture(() => fx.shatter(pool.x, pool.y, PUDDLE_R)); });
+    ctx.at(1600, () => readout.setText('they step into the holy water…'));
+    ctx.onFrame((dt, e) => {
+      ground.clear();
+      if (landed >= 0) holyWaterPuddle(ground, ctx.tint, pool.x, pool.y, PUDDLE_R, e / 1000, 7, Math.min(0.8, (e - landed) / 8000));
+      if (e > 1600 && enemy.x > pool.x) enemy.x -= 70 * dt / 1000;
+      icons.setPosition(enemy.x, enemy.y - 58);
+      if (!purged && landed >= 0 && Phaser.Math.Distance.Between(enemy.x, enemy.y, pool.x, pool.y) < PUDDLE_R) {
+        purged = true;
+        icons.setVisible(false);
+        ctx.capture(() => fx.purge(enemy.x, enemy.y, 0.6));
+        float(ctx, enemy.x, enemy.y - 60, '🫧 SINS PURGED ×3', hex(DEV.waterLit), 12);
+        faith += 34;
+        float(ctx, enemy.x, enemy.y - 34, '+34 🫧', hex(DEV.holy), 13);
+        readout.setText('…all three wash off: 4 each, +2 a second they had left, +2 a stack');
+      }
+      if (purged && landed >= 0) faith += 9 * dt / 1000;
+    });
+  },
+};
+
+export const grenadeUpgraded: PreviewScript = {
+  duration: 11000,
+  scale: 0.8,
+  caption: 'R+ Repentance — it survives its blast and leaps at them twice more: 45, then 22, then 15',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new PassionAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#e8b93a', 11);
+    const enemy = { x: ctx.cx + 230, y: ctx.cy + 10 };
+    let faith = 30;
+    believer(ctx, enemy, () => faith);
+    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const gr = { x: ctx.cx + 16, y: ctx.cy, vx: 0, vy: 0, z: 4, vz: 270, live: false, at: 0, stage: 0 };
+    const share = [45, 22, 15];
+    const leap = (toX: number, toY: number, vz: number): void => {
+      const ang = Math.atan2(toY - gr.y, toX - gr.x);
+      const d = Phaser.Math.Distance.Between(gr.x, gr.y, toX, toY);
+      const v0 = (d * 1.6) / (1 - Math.exp(-1.6 * 0.5));
+      gr.vx = Math.cos(ang) * v0;
+      gr.vy = Math.sin(ang) * v0;
+      gr.vz = vz;
+    };
+    ctx.at(300, () => {
+      readout.setText('one… two… three…');
+      av.play('slam', ctx.aim);
+      gr.live = true;
+      gr.at = 300;
+      leap(enemy.x - 20, enemy.y, 270);
+    });
+    ctx.onFrame((dt, e) => {
+      air.clear();
+      // The believer backs away after each blast; the grenade follows.
+      enemy.x = ctx.cx + 230 + Math.min(1, Math.max(0, (e - 3300) / 2000)) * 120 - Math.min(1, Math.max(0, (e - 6300) / 2000)) * 220;
+      enemy.y = ctx.cy + 10 + Math.sin(e / 900) * 30;
+      if (!gr.live) return;
+      const s = dt / 1000;
+      const keep = Math.exp(-1.6 * s);
+      gr.vx *= keep; gr.vy *= keep;
+      gr.x += gr.vx * s; gr.y += gr.vy * s;
+      gr.vz -= 900 * s; gr.z += gr.vz * s;
+      if (gr.z <= 0) { gr.z = 0; gr.vz = Math.max(95, Math.abs(gr.vz) * 0.6); }
+      gr.x = Phaser.Math.Clamp(gr.x, 30, ctx.w - 30);
+      gr.y = Phaser.Math.Clamp(gr.y, 30, ctx.h - 30);
+      const fuse = Phaser.Math.Clamp((e - gr.at) / 3000, 0, 1);
+      if (gr.stage) { air.fillStyle(ctx.tint(DEV.gold), 0.15); air.fillCircle(gr.x, gr.y - gr.z, 18); }
+      air.fillStyle(ctx.tint(DEV.ink), 0.3);
+      air.fillEllipse(gr.x, gr.y + 7, 14, 5);
+      handGrenade(air, ctx.tint, gr.x, gr.y - gr.z, e / 200, 1, fuse, e / 1000);
+      if (fuse < 1) return;
+      ctx.capture(() => fx.holyBurst(gr.x, gr.y, BURST_R, gr.stage ? 0.8 : 1));
+      if (Phaser.Math.Distance.Between(gr.x, gr.y, enemy.x, enemy.y) < BURST_R + 14) {
+        faith += share[gr.stage];
+        float(ctx, enemy.x, enemy.y - 30, `+${share[gr.stage]} 💥`, hex(DEV.gold), 13);
+      }
+      if (gr.stage >= 2) { gr.live = false; readout.setText('three blasts from one grenade'); return; }
+      gr.stage++;
+      gr.at = e;
+      float(ctx, gr.x, gr.y - 30, gr.stage === 1 ? '🙏 REPENT' : '🙏 REPENT AGAIN', hex(DEV.gold), 12);
+      readout.setText(gr.stage === 1 ? 'it leaps at them — half the faith in 3 seconds' : 'once more — a third of the faith');
+      leap(enemy.x, enemy.y, 380);
+    });
+  },
+};
+
+export const crucifixUpgraded: PreviewScript = {
+  duration: 10000,
+  scale: 0.85,
+  caption: 'F+ Pocket Crucifix — F in its aura picks it up; click raises it round you; F sets it down',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new PassionAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#c08a50', 11);
+    const me = { x: ctx.cx, y: ctx.cy };
+    const cross = { x: ctx.cx + 60, y: ctx.cy + 10, held: false, raised: false, born: 300 };
+    const enemy = { x: ctx.cx + 330, y: ctx.cy };
+    believer(ctx, enemy, () => 60);
+    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
+    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    ctx.at(300, () => { av.play('slam', ctx.aim); ctx.capture(() => fx.plant(cross.x, cross.y, AURA_R)); readout.setText('a crucifix at your feet'); });
+    ctx.at(1600, () => {
+      cross.held = true;
+      float(ctx, me.x, me.y - 50, '✝️ IN HAND', hex(DEV.holy), 12);
+      readout.setText('F inside its aura: pick it up');
+    });
+    ctx.at(2800, () => {
+      cross.raised = true;
+      cross.born = 2800;
+      av.setHold('reach');
+      ctx.capture(() => fx.ring(me.x, me.y, 20, AURA_R, DEV.gold, 500));
+      float(ctx, me.x, me.y - 54, '✝️ BEHOLD', hex(DEV.white), 12);
+      readout.setText('click: raise it — the aura walks with you');
+    });
+    ctx.at(7400, () => {
+      cross.raised = false;
+      cross.held = false;
+      cross.x = me.x;
+      cross.y = me.y;
+      cross.born = 7400;
+      av.setHold(null);
+      av.play('slam');
+      ctx.capture(() => fx.plant(cross.x, cross.y, AURA_R));
+      float(ctx, me.x, me.y - 60, '✝️ SET DOWN', hex(DEV.holy), 12);
+      readout.setText('F again: set it down where you stand');
+    });
+    ctx.onFrame((dt, e) => {
+      const t = e / 1000;
+      ground.clear();
+      air.clear();
+      // Walk the priest at the enemy while the cross is raised; the aura shoves them back.
+      if (e > 3200 && e < 7000) me.x += 60 * dt / 1000;
+      ctx.moveCaster(me.x, me.y);
+      if (cross.held) { cross.x = me.x; cross.y = me.y; }
+      if (e > 1200 && e < 7000 && !cross.raised) enemy.x = Math.max(me.x + 40, enemy.x - 30 * dt / 1000);
+      const auraOn = !cross.held || cross.raised;
+      if (auraOn && Phaser.Math.Distance.Between(enemy.x, enemy.y, cross.x, cross.y) < AURA_R) {
+        enemy.x = cross.x + AURA_R;
+        ctx.capture(() => fx.blessShot(enemy.x, enemy.y));
+      }
+      if (e >= 300) {
+        const rise = Phaser.Math.Clamp((e - cross.born) / 260, 0, 1);
+        if (auraOn) crucifixAura(ground, ctx.tint, cross.x, cross.y, AURA_R * rise, t, 1);
+        if (!cross.held) crucifixPost(air, ctx.tint, cross.x, cross.y, 1, t, rise);
+        else if (cross.raised) crucifixPost(air, ctx.tint, me.x + 6, me.y - 24, 1, t, 1, 0.55);
+        else crucifixPost(air, ctx.tint, me.x + 20, me.y + 16, 1, t, 1, 0.42);
+      }
+    });
+  },
+};
+
+export const ascendanceUpgraded: PreviewScript = {
+  duration: 11000,
+  scale: 0.8,
+  caption: 'Q+ Pillars of Fire — 8s in the sky; click to drop up to 3 pillars of yellow fire (28 faith/s, slow)',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new PassionAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#ffd54a', 11);
+    const enemy = { x: ctx.cx + 180, y: ctx.cy + 20 };
+    let faith = 40;
+    believer(ctx, enemy, () => faith);
+    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
+    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const pillars: { x: number; y: number; at: number }[] = [];
+    let cx = -150;
+    let riding = false;
+    let left = 3;
+    const aim = { x: enemy.x, y: enemy.y };
+    const drop = (at: number): void => {
+      ctx.at(at, () => {
+        left--;
+        pillars.push({ x: aim.x, y: aim.y, at });
+        float(ctx, aim.x, aim.y - 60, `🔥 PILLAR ${3 - left}/3`, hex(DEV.gold), 12);
+      });
+      ctx.at(at + 180, () => ctx.capture(() => fx.pillarLand(aim.x, aim.y, 46)));
+    };
+    ctx.at(200, () => readout.setText('ride your own chariot up…'));
+    ctx.at(1700, () => readout.setText('…and stay up there for 8 seconds. Click: a pillar of yellow fire'));
+    drop(2600);
+    drop(4400);
+    drop(6200);
+    ctx.at(8400, () => readout.setText('then down on the cursor, as always'));
+    ctx.at(9200, () => {
+      riding = false;
+      ctx.moveCaster(enemy.x - 14, enemy.y + 8, { alpha: 1 });
+      ctx.capture(() => fx.crash(enemy.x - 14, enemy.y + 8, CRASH_R));
+      faith += 80;
+      float(ctx, enemy.x, enemy.y - 34, '+80 ☄️', hex(DEV.fire), 13);
+    });
+    ctx.onFrame((dt, e) => {
+      const t = e / 1000;
+      ground.clear();
+      air.clear();
+      enemy.x = ctx.cx + 180 + Math.sin(e / 1300) * 60;
+      aim.x += (enemy.x - aim.x) * 0.08;
+      aim.y += (enemy.y - aim.y) * 0.08;
+      if (e > 200 && e < 1000) ascendBand(ground, ctx.tint, 0, ctx.w, ctx.cy, BAND_HALF, (e - 200) / 800, 1, t);
+      if (e >= 1000 && cx < ctx.w + 200) {
+        cx += CHARIOT_SPEED * 0.6 * dt / 1000;
+        chariot(air, ctx.tint, cx, ctx.cy, 1, t, 1, riding);
+        if (!riding && cx >= ctx.cx && e < 3000) {
+          riding = true;
+          ctx.capture(() => fx.liftOff(ctx.cx, ctx.cy));
+          ctx.moveCaster(ctx.cx, ctx.cy, { alpha: 0 });
+        }
+      }
+      for (const pl of pillars) {
+        const k = (e - pl.at) / 180;
+        const life = (e - pl.at - 180) / 1000;
+        if (life >= 1) continue;
+        firePillar(k < 1 ? air : ground, ctx.tint, pl.x, pl.y, 46, Math.min(1, k), Math.max(0, life), t, pl.at);
+        if (k >= 1 && Phaser.Math.Distance.Between(pl.x, pl.y, enemy.x, enemy.y) < 60) faith += 28 * dt / 1000;
+      }
+      if (riding && e > 1700 && e < 9200) {
+        skyPriest(air, ctx.tint, aim.x, 22, t);
+        pillarCrosshair(air, ctx.tint, aim.x, aim.y, 46, left, 3, t);
+      }
+      if (e > 8500 && e < 9200) crashMark(air, ctx.tint, enemy.x - 14, enemy.y + 8, CRASH_R, (e - 8500) / 700, t);
     });
   },
 };

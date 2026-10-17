@@ -4,7 +4,7 @@ import type { NetStatusEntry } from './NetStatusSync';
 import type { NetConquestSnap } from '../elements/kits/ConquestKit';
 
 /** Bump when the wire protocol or gameplay sync changes incompatibly. */
-export const NET_PROTOCOL_VERSION = 33;
+export const NET_PROTOCOL_VERSION = 39;
 
 /** Lobby selection payload exchanged while both players pick loadouts. */
 export interface NetSelection {
@@ -105,6 +105,9 @@ export type NetPsychicMsg =
   // Psychic → victim: as the queen, I slid to here. My body is streamed; this is so the slide's
   // hits and landing are drawn on your side too.
   | { t: 'psy'; k: 'qmove'; x: number; y: number }
+  // Psychic → victim (F upgrade, Castle): I swapped with my rook `id`; it came down at (x, y),
+  // where I was standing. My body is streamed; the rook's new square and its slam are not.
+  | { t: 'psy'; k: 'castle'; id: number; x: number; y: number }
   // Psychic → victim (mastery, ≈2 Hz while it runs): Utter Focus. `ms` is how much of the window
   // is *left* rather than how long it was, because every hit the psychic takes shortens it.
   // 0 ends it. The victim's own sim is what actually holds their casts and their movement keys.
@@ -179,7 +182,7 @@ export type NetMsg =
   | { t: 'hit'; amount: number }
   // Attacker → victim: a hit the attacker's sim resolved against its replica of the
   // victim. All multipliers already applied; the victim runs only its own absorb layers.
-  | { t: 'dmg'; a: number; p?: 1; f?: 1 }
+  | { t: 'dmg'; a: number; p?: 1; f?: 1; tr?: 1 }
   // Attacker → victim (10 Hz): status effects the attacker currently has on the victim.
   | { t: 'fx'; e: NetStatusEntry[]; spd: number; cd: number }
   // Attacker → victim: a knockback/pull the attacker's sim applied to its replica.

@@ -6,7 +6,7 @@ import { CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
 import { Sfx } from '../../audio';
 import {
-  GUM, GumAvatar, GumColorFn, GumFx, bloatShell, drips, gripSplat, gumBubble, gumShell, gummyArm,
+  GUM, GumAvatar, GumColorFn, GumFx, bloatShell, drips, gooTimerRing, gripSplat, gumBubble, gumShell, gummyArm,
   oobleckSlab, oozeBlob, slimeBeacon, slimeling, slimePuddle, slimeShard, zipLine,
 } from './GumVisuals';
 
@@ -2963,10 +2963,9 @@ export class GumKit {
         { hard: enc.hard, seed: 6 });
       // A countdown ring, so "when does this end" is a shape rather than a guess.
       const left = Phaser.Math.Clamp((enc.until - this.now) / ENCASE_MS, 0, 1);
-      g.lineStyle(2.4, this.col(enc.owner)(enc.hard ? GUM.solidLit : GUM.gumLit), 0.9);
-      g.beginPath();
-      g.arc(victim.x, victim.y, 31, -Math.PI / 2, -Math.PI / 2 + TAU * left, false);
-      g.strokePath();
+      gooTimerRing(g, this.col(enc.owner), victim.x, victim.y, 31, left, 0.95, this.vizT, enc.hard
+        ? { deep: GUM.solidDeep, fill: GUM.solid, lit: GUM.solidLit, width: 3 }
+        : { deep: GUM.gumDeep, fill: GUM.gum, lit: GUM.gumLit, width: 3 });
     }
 
     // Bodies glued to a wall.
@@ -3002,10 +3001,8 @@ export class GumKit {
       const wobble = Math.sin(this.vizT * 9) * 2;
       g.fillStyle(this.col(owner)(GUM.murk), 0.75 * left);
       g.fillCircle(f.x + wobble, f.y + 2, 7 * left + 2);
-      g.lineStyle(2, this.col(owner)(GUM.shine), 0.85);
-      g.beginPath();
-      g.arc(f.x, f.y, 22, -Math.PI / 2, -Math.PI / 2 + TAU * (1 - left), false);
-      g.strokePath();
+      gooTimerRing(g, this.col(owner), f.x, f.y, 22, 1 - left, 0.9, this.vizT,
+        { deep: GUM.oozeDeep, fill: GUM.oozeLit, lit: GUM.shine, width: 2.4 });
     }
 
     // The armed swell: a rim around a body that has opened up.

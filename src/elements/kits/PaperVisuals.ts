@@ -1139,6 +1139,144 @@ export class PaperFx extends FxBase {
   }
 }
 
+// ── Over-head book UI ────────────────────────────────────────────────────
+
+/**
+ * The Alien book held open over the caster's head while the laser burns: a small storybook in the
+ * open book's cover, a wash of beam light lifting off the pages, and one ink-pip per laser tick
+ * hung under it — lit while still to come, spent pips drawn as hollow ink rings.
+ */
+export function burstPage(
+  g: Phaser.GameObjects.Graphics,
+  tint: PaperColorFn,
+  x: number, y: number, t: number, fired: number, total: number, k: number,
+  { accent = PAP.beam, cover = 0x2c548f } = {},
+): void {
+  const bob = Math.sin(t * 4) * 1.2;
+  const by = y + bob;
+  // Beam light rising off the open pages, pulsing on each tick.
+  const pulse = 0.5 + 0.5 * Math.sin(t * 12.5);
+  g.fillStyle(tint(accent), 0.12 + pulse * 0.1);
+  g.fillTriangle(x - 10, by - 2, x + 10, by - 2, x, by - 20 - pulse * 3);
+  g.fillStyle(tint(PAP.bright), 0.18 + pulse * 0.12);
+  g.fillTriangle(x - 4, by - 2, x + 4, by - 2, x, by - 15 - pulse * 2);
+  storybookShape(g, tint, x, by, 0, 12, 1, { cover, accent, open: 1, seed: 9, drop: 2 });
+
+  // The tick pips, strung on a crease-line like a page's footnotes.
+  const n = Math.max(1, total);
+  const gap = 7;
+  const x0 = x - ((n - 1) * gap) / 2;
+  const py = by + 13;
+  g.lineStyle(1, tint(PAP.crease), 0.7);
+  g.lineBetween(x0 - 4, py, x0 + (n - 1) * gap + 4, py);
+  for (let i = 0; i < n; i++) {
+    const px = x0 + i * gap;
+    const left = i >= fired;
+    const D = (r: number) => [
+      new Phaser.Geom.Point(px, py - r), new Phaser.Geom.Point(px + r, py),
+      new Phaser.Geom.Point(px, py + r), new Phaser.Geom.Point(px - r, py),
+    ];
+    if (left) {
+      g.fillStyle(tint(PAP.drop), 0.4);
+      g.fillPoints(D(3.4).map((p) => new Phaser.Geom.Point(p.x + 1, p.y + 1)), true);
+      g.fillStyle(tint(accent), 0.95);
+      g.fillPoints(D(3.2), true);
+      g.fillStyle(tint(PAP.bright), 0.85);
+      g.fillCircle(px - 0.8, py - 0.8, 0.9);
+    } else {
+      g.fillStyle(tint(PAP.pulp), 0.9);
+      g.fillPoints(D(2.6), true);
+      g.lineStyle(1, tint(PAP.ink), 0.6);
+      g.strokePoints(D(2.6), true, true);
+    }
+  }
+  // The burst's remaining time as a thin ink rule under the pips, burning down from the right.
+  g.lineStyle(1.4, tint(accent), 0.75);
+  g.lineBetween(x0 - 4, py + 5, x0 - 4 + ((n - 1) * gap + 8) * Phaser.Math.Clamp(k, 0, 1), py + 5);
+}
+
+/**
+ * The same book shut and re-binding itself while the laser reloads: a hard cover in the book's
+ * colour with the page block showing down one edge and a bookmark ribbon that slides down the
+ * front as the reload fills. The ribbon reaching the bottom notch is "ready".
+ */
+export function reloadTome(
+  g: Phaser.GameObjects.Graphics,
+  tint: PaperColorFn,
+  x: number, y: number, t: number, k: number,
+  { accent = PAP.beam, cover = 0x2c548f } = {},
+): void {
+  const w = 18, h = 13;
+  const shake = k > 0.92 ? Math.sin(t * 40) * 0.6 : 0;
+  const L = x - w / 2 + shake, T = y - h / 2;
+  g.fillStyle(tint(PAP.drop), 0.35);
+  g.fillRect(L + 2, T + 2, w, h);
+  // Page block peeking past the cover, with a few page lines.
+  g.fillStyle(tint(PAP.pulp), 1);
+  g.fillRect(L + 2, T + 1.5, w, h - 3);
+  g.lineStyle(1, tint(PAP.crease), 0.7);
+  for (let i = 1; i < 4; i++) g.lineBetween(L + w - 0.5, T + 1.5 + i * (h - 3) / 4, L + w + 2, T + 1.5 + i * (h - 3) / 4);
+  // The hard cover.
+  g.fillStyle(tint(cover), 1);
+  g.fillRect(L, T, w, h);
+  g.fillStyle(tint(shade(cover, 0.7)), 1);
+  g.fillRect(L, T, 3, h);
+  g.fillStyle(tint(shade(cover, 1.35)), 0.55);
+  g.fillRect(L + 3, T, w - 3, 2);
+  g.lineStyle(1, tint(PAP.gilt), 0.85);
+  g.strokeRect(L + 4.5, T + 2, w - 7, h - 4);
+  // Bookmark ribbon: empty channel, then the filled length, then the swallow-tail.
+  const rx = L + w * 0.62;
+  const len = (h + 6) * Phaser.Math.Clamp(k, 0, 1);
+  g.fillStyle(tint(PAP.ink), 0.35);
+  g.fillRect(rx - 1.5, T, 3, h + 6);
+  g.fillStyle(tint(accent), 1);
+  g.fillRect(rx - 1.5, T, 3, len);
+  g.fillStyle(tint(PAP.bright), 0.6);
+  g.fillRect(rx - 1.5, T, 1, len);
+  if (len > 2) {
+    const ey = T + len;
+    g.fillStyle(tint(accent), 1);
+    g.fillTriangle(rx - 1.5, ey, rx + 1.5, ey, rx - 1.5, ey + 2.4);
+    g.fillTriangle(rx - 1.5, ey, rx + 1.5, ey, rx + 1.5, ey + 2.4);
+  }
+  g.lineStyle(1, tint(PAP.drop), 0.8);
+  g.strokeRect(L, T, w, h);
+}
+
+/**
+ * Restructuring's landing ring as a binding: one stitch per shard round the circle, sewn in
+ * the open book's colour as each piece comes home and left as faint pencil until then.
+ */
+export function bindingRing(
+  g: Phaser.GameObjects.Graphics,
+  tint: PaperColorFn,
+  x: number, y: number, r: number, done: number, total: number, t: number,
+  { accent = PAP.spectre } = {},
+): void {
+  const n = Math.max(1, total);
+  const spin = t * 0.6;
+  const pulse = 0.5 + 0.5 * Math.sin(t * 5);
+  g.lineStyle(1, tint(PAP.crease), 0.25);
+  g.strokeCircle(x, y, r);
+  for (let i = 0; i < n; i++) {
+    const a0 = spin + (i / n) * TAU;
+    const a1 = a0 + (TAU / n) * 0.62;
+    const lit = i < done;
+    g.lineStyle(lit ? 2.6 : 1.4, tint(lit ? accent : PAP.crease), lit ? 0.75 + pulse * 0.2 : 0.35);
+    g.beginPath();
+    g.arc(x, y, r, a0, a1, false);
+    g.strokePath();
+    if (lit) {
+      // A cross-stitch tick on every sewn segment.
+      const am = (a0 + a1) / 2;
+      g.lineStyle(1, tint(PAP.bright), 0.7);
+      g.lineBetween(x + Math.cos(am) * (r - 2.5), y + Math.sin(am) * (r - 2.5),
+        x + Math.cos(am) * (r + 2.5), y + Math.sin(am) * (r + 2.5));
+    }
+  }
+}
+
 // ── Avatar ────────────────────────────────────────────────────────────────
 
 const PAPER_AVATAR: AvatarSpec = {
@@ -1153,14 +1291,16 @@ const PAPER_AVATAR: AvatarSpec = {
 };
 
 /**
- * Paper himself: a plain orb of cream pulp (the baked `elem-paper`) wearing a folded newspaper
- * hat. The hat is the whole costume, and its ribbon carries the open book's colour, so a
- * right-click cycle is legible from across the arena without a HUD — the ribbon flashes as the
- * page turns, and the ability art takes its accent from the same table.
+ * Paper himself: an orb of cream pulp (the baked `elem-paper`) printed like a folded broadsheet —
+ * a diagonal fold, a column rule and a few lines of newsprint on the lower half — wearing a folded
+ * newspaper hat with a quill tucked in the band. The ribbon carries the open book's colour, so a
+ * right-click cycle is legible from across the arena without a HUD.
  *
- * Low health crumples the hat (it sags and skews), for a read at a glance. Mastery enhances
- * the hat rather than adding to it: a taller fold, a gilt brim, a glowing ribbon, wider pulp
- * coronas on the hands and a brighter under-glow.
+ * Low health crumples the hat (it sags and skews), for a read at a glance.
+ *
+ * Mastered is unmistakable: three gilt-edged manuscript pages orbit the body (passing behind it on
+ * the far side), the hat grows an illuminated gilt crest with a long bookmark tail, the quill
+ * turns gold and glows, the eyes go halo-gold and the hand coronas widen with gilt rims.
  */
 export class PaperAvatar extends BaseAvatar {
   private book: BookId = 0;
@@ -1200,11 +1340,12 @@ export class PaperAvatar extends BaseAvatar {
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? PAP.halo : PAP.bright);
     this.forEachHandLayer(0, (glow) => {
-      glow.setRadius(on ? 14.5 : 11);
-      glow.setAlpha(on ? 0.5 : 0.3);
+      glow.setRadius(on ? 15.5 : 11);
+      glow.setAlpha(on ? 0.55 : 0.3);
+      glow.setFillStyle(this.tint(on ? PAP.halo : PAP.pulp), on ? 0.55 : 0.3);
     });
     this.forEachHandLayer(1, (shell) => {
-      if (on) shell.setStrokeStyle(1.6, this.tint(PAP.gilt), 0.95);
+      if (on) shell.setStrokeStyle(1.8, this.tint(PAP.gilt), 0.95);
       else shell.setStrokeStyle();
     });
   }
@@ -1213,12 +1354,75 @@ export class PaperAvatar extends BaseAvatar {
     new PaperFx(this.scene, this.tint).shred(x, y, 2, 7, 380, 4);
   }
 
+  /** Where orbiting manuscript page `i` is this frame, and whether it is on the near side. */
+  private pageOrbit(i: number, x: number, y: number): { px: number; py: number; ang: number; near: boolean } {
+    const a = this.t * 1.1 + (i / 3) * TAU;
+    return {
+      px: x + Math.cos(a) * 27,
+      py: y + 4 + Math.sin(a) * 10,
+      ang: Math.sin(this.t * 1.7 + i) * 0.5 + a * 0.15,
+      near: Math.sin(a) > 0,
+    };
+  }
+
+  private drawPage(g: Phaser.GameObjects.Graphics, px: number, py: number, ang: number, alpha: number, near: boolean): void {
+    const k = near ? 1 : 0.8;
+    paperSheet(g, this.tint, px, py, ang, 11 * k, 8 * k, alpha * (near ? 1 : 0.75),
+      { color: PAP.pulp, seed: Math.round(px) & 7, curl: 0.8, drop: 1.4, crease: false });
+    // Gilt edging and two lines of script — it is a page out of the story, not a scrap.
+    const ca = Math.cos(ang), sa = Math.sin(ang);
+    const P = (u: number, v: number) => pt(px, py, ca, sa, u, v);
+    g.lineStyle(1, this.tint(PAP.gilt), alpha * 0.9);
+    g.strokePoints([P(5.5 * k, -4 * k), P(5.5 * k, 4 * k), P(-5.5 * k, 4 * k), P(-5.5 * k, -4 * k)], true, true);
+    g.lineStyle(1, this.tint(this.tone.deep), alpha * 0.6);
+    for (const v of [-1.4, 1.2]) {
+      const a0 = P(-3.5 * k, v * k), a1 = P(3 * k, v * k);
+      g.lineBetween(a0.x, a0.y, a1.x, a1.y);
+    }
+  }
+
   /** A soft wash of the open book's colour, so the cream body lifts off the floor. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    void alpha;
     const k = this.intensity * (this.mastered ? 1.15 : 1);
     g.fillStyle(this.tint(this.tone.accent), a * ((this.mastered ? 0.2 : 0.12) + this.flare * 0.1) * k);
     g.fillCircle(x, y, 28 * k);
+    if (!this.mastered) return;
+    // Mastered: a gilt orbit line on the floor, and the far-side pages passing behind the body.
+    g.lineStyle(1.4, this.tint(PAP.gilt), alpha * (0.35 + 0.15 * Math.sin(this.t * 3)));
+    g.strokeEllipse(x, y + 4, 54, 20);
+    for (let i = 0; i < 3; i++) {
+      const o = this.pageOrbit(i, x, y);
+      if (!o.near) this.drawPage(g, o.px, o.py, o.ang, alpha, false);
+    }
+  }
+
+  /** Newsprint on the pulp: a diagonal fold, a column rule and a few lines of type under the face. */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
+    const m = this.mastered;
+    // The fold: a faint shaded half on the lower-left, split by a crease line.
+    g.fillStyle(this.tint(PAP.shade), alpha * 0.28);
+    g.fillTriangle(x - 13, y - 9, x + 9, y + 13, x - 11, y + 11);
+    g.lineStyle(1, this.tint(PAP.crease), alpha * 0.55);
+    g.lineBetween(x - 14, y - 10, x + 10, y + 14);
+    // Headline bar and three lines of type, ragged right, below the eyes.
+    g.fillStyle(this.tint(m ? PAP.gilt : PAP.ink), alpha * (m ? 0.75 : 0.5));
+    g.fillRect(x - 8, y + 3, 16, 2);
+    g.lineStyle(1, this.tint(PAP.ink), alpha * 0.32);
+    const runs = [12, 9, 11];
+    for (let i = 0; i < 3; i++) {
+      const ly = y + 7.5 + i * 2.6;
+      g.lineBetween(x - 8, ly, x - 8 + runs[i] * (1 - i * 0.12), ly);
+    }
+    // Column rule.
+    g.lineStyle(1, this.tint(PAP.crease), alpha * 0.45);
+    g.lineBetween(x + 6, y + 6.5, x + 6, y + 14);
+    if (m) {
+      // An illuminated drop-cap in the open book's colour at the head of the column.
+      g.fillStyle(this.tint(this.tone.accent), alpha * 0.9);
+      g.fillRect(x + 8, y + 6.5, 3.5, 3.5);
+      g.lineStyle(1, this.tint(PAP.gilt), alpha);
+      g.strokeRect(x + 8, y + 6.5, 3.5, 3.5);
+    }
   }
 
   /** The newspaper hat, rooted at the crown, leaning with the aim. */
@@ -1234,6 +1438,21 @@ export class PaperAvatar extends BaseAvatar {
     const h = (m ? 17 : 15) * (1 - sag * 0.3);
     const P = (px: number, py: number) => new Phaser.Geom.Point(x + lean + px, crown + py);
 
+    // Mastered: a long bookmark tail streaming off the back of the hat, in the book's colour.
+    if (m) {
+      const sway = Math.sin(this.t * 3.2) * 2.5;
+      const back = -Math.cos(this.facing) >= 0 ? 1 : -1;
+      const bx = x + lean + back * w * 0.7, by = crown;
+      g.fillStyle(this.tint(tone.deep), alpha);
+      g.fillPoints([
+        new Phaser.Geom.Point(bx, by - 1), new Phaser.Geom.Point(bx + back * 3, by),
+        new Phaser.Geom.Point(bx + back * 4 + sway, by + 13), new Phaser.Geom.Point(bx + back * 2 + sway, by + 10.5),
+        new Phaser.Geom.Point(bx + sway * 0.6, by + 13),
+      ], true);
+      g.lineStyle(1, this.tint(PAP.gilt), alpha * 0.8);
+      g.lineBetween(bx, by - 1, bx + sway * 0.6, by + 13);
+    }
+
     g.fillStyle(this.tint(PAP.drop), alpha * 0.3);
     g.fillPoints([P(-w - 1, 3), P(w + 1, 3), P(0, -h + 2)], true);
     g.fillStyle(this.tint(PAP.pulp), alpha);
@@ -1241,11 +1460,42 @@ export class PaperAvatar extends BaseAvatar {
     // The shaded half of the fold.
     g.fillStyle(this.tint(PAP.shade), alpha);
     g.fillPoints([P(-w, 1), P(w * 0.2, -h), P(-w * 0.5, -h * 0.72)], true);
+    // Newsprint on the lit face of the hat — two short columns of type.
+    g.lineStyle(1, this.tint(PAP.ink), alpha * 0.3);
+    for (let i = 0; i < 3; i++) {
+      const v = -h * 0.18 - i * 2.6;
+      const span = (1 - (i + 1) / 4) * w * 0.55;
+      g.lineBetween(x + lean + w * 0.05, crown + v, x + lean + w * 0.05 + span, crown + v);
+    }
     // Crumpled: a creased dent across the fold.
     if (sag > 0.2) {
       g.lineStyle(1, this.tint(PAP.crease), alpha * sag);
       g.lineBetween(x + lean - w * 0.4, crown - h * 0.3, x + lean + w * 0.3, crown - h * 0.55);
     }
+    g.lineStyle(1, this.tint(PAP.crease), alpha * 0.85);
+    g.strokePoints([P(-w, 1), P(w, 1), P(w * 0.2, -h)], true, true);
+
+    // The quill tucked in the band: a swept vane and a nib, gold and glowing once mastered.
+    {
+      const qx = x + lean - w * 0.55, qy = crown - 1;
+      const sway = Math.sin(this.t * 2.4) * 0.08;
+      const qa = -2.1 + sway;
+      const qc = Math.cos(qa), qs = Math.sin(qa);
+      const Q = (u: number, v: number) => new Phaser.Geom.Point(qx + qc * u - qs * v, qy + qs * u + qc * v);
+      if (m) {
+        g.fillStyle(this.tint(PAP.halo), alpha * (0.22 + 0.12 * Math.sin(this.t * 6)));
+        g.fillCircle(qx + qc * 9, qy + qs * 9, 7);
+      }
+      g.fillStyle(this.tint(m ? PAP.gilt : PAP.bright), alpha);
+      g.fillPoints([Q(0, 0), Q(5, -2.6), Q(13, -2.2), Q(17, 0), Q(12, 1.8), Q(4, 1.4)], true);
+      g.lineStyle(1, this.tint(m ? PAP.haloDeep : PAP.crease), alpha * 0.9);
+      g.lineBetween(Q(0, 0).x, Q(0, 0).y, Q(17, 0).x, Q(17, 0).y);
+      for (let i = 1; i < 4; i++) {
+        const b = Q(i * 4, 0), e = Q(i * 4 + 2, -2);
+        g.lineBetween(b.x, b.y, e.x, e.y);
+      }
+    }
+
     // The brim — gilded once mastered.
     g.lineStyle(m ? 2.8 : 2.4, this.tint(m ? PAP.gilt : PAP.crease), alpha * 0.95);
     g.lineBetween(x + lean - w, crown + 1, x + lean + w, crown + 1);
@@ -1257,5 +1507,33 @@ export class PaperAvatar extends BaseAvatar {
     }
     g.lineStyle(rib, this.tint(this.flip > 0.5 ? PAP.bright : tone.accent), alpha * heat);
     g.lineBetween(x + lean - w * 0.85, crown - 1.6, x + lean + w * 0.6, crown - 3.4);
+
+    if (m) {
+      // Illuminated crest at the hat's peak: a gilt seal in the book's colour, softly radiant.
+      const tip = P(w * 0.2, -h);
+      const pulse = 0.5 + 0.5 * Math.sin(this.t * 4);
+      g.fillStyle(this.tint(PAP.halo), alpha * (0.18 + pulse * 0.14));
+      g.fillCircle(tip.x, tip.y, 7 + pulse * 1.5);
+      g.fillStyle(this.tint(PAP.gilt), alpha);
+      g.fillCircle(tip.x, tip.y, 3.8);
+      g.fillStyle(this.tint(tone.accent), alpha);
+      g.fillCircle(tip.x, tip.y, 2.2);
+      g.fillStyle(this.tint(PAP.bright), alpha * 0.9);
+      g.fillCircle(tip.x - 0.8, tip.y - 0.8, 0.8);
+      // Near-side manuscript pages, over the body.
+      for (let i = 0; i < 3; i++) {
+        const o = this.pageOrbit(i, x, y);
+        if (o.near) this.drawPage(g, o.px, o.py, o.ang, alpha, true);
+      }
+    }
+
+    // Hand detail: a tiny folded dog-ear of paper on each ball hand, gilt-edged when mastered.
+    for (let i = 0; i < 2; i++) {
+      const hx = this.armX[i], hy = this.armY[i];
+      g.fillStyle(this.tint(PAP.bright), alpha * 0.9);
+      g.fillTriangle(hx + 1, hy - 5.5, hx + 5.5, hy - 1, hx + 1, hy - 1);
+      g.lineStyle(1, this.tint(m ? PAP.gilt : PAP.crease), alpha * 0.85);
+      g.lineBetween(hx + 1, hy - 5.5, hx + 5.5, hy - 1);
+    }
   }
 }

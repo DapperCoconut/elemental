@@ -108,7 +108,7 @@ const SAND_PALETTE: Record<number, number> = {
 
 /**
  * Wither: life's palette drained to grave-dirt and ash. Keys are the exact values of the LIFE
- * palette in LifeVisuals.ts. Note the six seed accents all collapse toward the same dead greys —
+ * palette in LifeVisuals.ts. Note the seed accents all collapse toward the same dead greys —
  * a wilted garden should not still be colour-coded by species — but each keeps a trace of its
  * original hue so a Rose and a Nightcap are still telling themselves apart at close range.
  */
@@ -135,6 +135,15 @@ const WITHER_PALETTE: Record<number, number> = {
   0x8844cc: 0x3c3442, // night
   0x55aa44: 0x3f3d36, // pitcher
   0xeeeeff: 0xbdb8ae, // cotton
+  0xff3a1a: 0x5e2a22, // solar
+  0xa6d63c: 0x55523f, // heli
+  0xd2783a: 0x5a4434, // shroom
+  0x9fe6ff: 0x7f8a8e, // frost
+  0xe6f8ff: 0xc4c6c2, // ice
+  0xff6a1a: 0x6a3a28, // flame
+  0xffb030: 0x8a6a40, // ember
+  0xffa8d8: 0x7a6670, // lotus
+  0x5ec0ff: 0x4c5a64, // water
 };
 
 /**

@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import {
-  RAD, RadiationAvatar, RadiationFx, barrageCone, dropFootprint, falloutBunker, flareRound,
-  geigerTracer, lockReticle, trefoil, uraniumRod,
+  RAD, RadiationAvatar, RadiationFx, barrageCone, bunkerTurret, dropFootprint, falloutBunker,
+  falloutPuddle, flareRound, geigerTracer, lockReticle, trefoil, uraniumRod,
 } from '../../../elements/kits/RadiationVisuals';
 
 /**
@@ -555,6 +555,317 @@ export const extermination: PreviewScript = {
     });
     ctx.at(8600, () => readout.setText('four on one and one stray is "✖ NO CONFIRMATION" and forty seconds gone'));
     ctx.at(11200, () => readout.setText('drop a Fallout Bunker first and sit the blast out inside it'));
+  },
+};
+
+
+// ══ UPGRADES ═════════════════════════════════════════════════════════
+
+/** A spiked tracer in the air, stepped like `shoot` but painted barbed. */
+function spikedShot(
+  ctx: PreviewCtx, from: { x: number; y: number }, to: { x: number; y: number }, onLand: () => void,
+): void {
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(16));
+  const ang = Math.atan2(to.y - from.y, to.x - from.x);
+  const r = { x: from.x, y: from.y, done: false };
+  ctx.onFrame((dt, elapsed) => {
+    g.clear();
+    if (r.done) return;
+    r.x += Math.cos(ang) * TRACER_SPEED * (dt / 1000);
+    r.y += Math.sin(ang) * TRACER_SPEED * (dt / 1000);
+    if (Phaser.Math.Distance.Between(r.x, r.y, to.x, to.y) <= 35) { r.done = true; onLand(); return; }
+    geigerTracer(g, ctx.tint, r.x, r.y, ang + (elapsed / 1000) * 9, 1, { lamp: 0.5, spiked: true });
+  });
+}
+
+export const railgunUpgraded: PreviewScript = {
+  duration: 9000,
+  scale: 0.85,
+  caption: 'Click+ Flick Shot — face away, flick back and click: the tracer comes out spiked for 25',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new RadiationAvatar(ctx.scene, ctx.tint));
+    const muzzle = { x: ctx.cx + 18, y: ctx.cy - 2 };
+    const victim = { x: ctx.cx + 330, y: ctx.cy - 6 };
+    dummyAt(ctx, victim);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#c2ff8f', 11);
+    const away = ctx.aim + Math.PI;
+    const facing = { a: ctx.aim };
+    ctx.onFrame(() => av.setFacing(facing.a));
+    const stuck = { n: 0 };
+    const pipsG = ctx.adopt(ctx.scene.add.graphics().setDepth(17));
+    ctx.onFrame(() => { pipsG.clear(); if (stuck.n) pips(ctx, pipsG, victim.x, victim.y - 46, stuck.n, 3, 0.8); });
+
+    const flick = (at: number): void => {
+      ctx.at(at, () => { facing.a = away; readout.setText('turn your back on them…'); });
+      ctx.at(at + 900, () => {
+        facing.a = ctx.aim;
+        av.play('punch', ctx.aim);
+        readout.setText('…flick back and click inside 0.35s — the tracer comes out barbed');
+        spikedShot(ctx, muzzle, victim, () => {
+          stuck.n = Math.min(3, stuck.n + 1);
+          ctx.capture(() => { fx.flickHit(victim.x, victim.y, ctx.aim); fx.stick(victim.x, victim.y); });
+          float(ctx, victim.x, victim.y - 66, '✦ FLICK SHOT', hex(RAD.hotLit), 12);
+          float(ctx, victim.x, victim.y - 24, '25', '#ffb3aa', 18);
+        });
+      });
+    };
+    flick(300);
+    flick(3200);
+    ctx.at(6000, () => readout.setText('25 on landing — and it still counts as one of the railgun\'s three'));
+  },
+};
+
+export const barrageUpgraded: PreviewScript = {
+  duration: 12000,
+  scale: 0.8,
+  caption: 'E+ Trigger Happy — the burst keeps firing until they leave the cone, which closes to 1°',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new RadiationAvatar(ctx.scene, ctx.tint));
+    const victim = { x: ctx.cx + 300, y: ctx.cy };
+    dummyAt(ctx, victim);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#c2ff8f', 11);
+    const cone = { on: false, ang: ctx.aim, lockAt: -1, fireAt: -1, fired: 0, next: 0 };
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(16));
+    const half = (elapsed: number): number => {
+      if (cone.fireAt >= 0) {
+        const k = Phaser.Math.Clamp((elapsed - cone.fireAt) / 4000, 0, 1);
+        return (Phaser.Math.Linear(5, 1, k) / 2) * (Math.PI / 180);
+      }
+      const lock = cone.lockAt < 0 ? 0 : Phaser.Math.Clamp((elapsed - cone.lockAt) / 3000, 0, 1);
+      return (Phaser.Math.Linear(45, 5, lock) / 2) * (Math.PI / 180);
+    };
+    // The target drifts; the cone follows it a little behind, as a hand on a mouse would.
+    ctx.onFrame((dt, elapsed) => {
+      victim.y = ctx.cy + Math.sin(elapsed / 1100) * 40 + (elapsed > 8600 ? (elapsed - 8600) * 0.12 : 0);
+      if (!cone.on) return;
+      const want = Math.atan2(victim.y - ctx.cy, victim.x - ctx.cx);
+      cone.ang += Phaser.Math.Angle.Wrap(want - cone.ang) * (elapsed > 8600 ? 0.02 : 0.15);
+      av.setFacing(cone.ang);
+      if (cone.fireAt < 0 || elapsed < cone.next) return;
+      const d = Phaser.Math.Distance.Between(ctx.cx, ctx.cy, victim.x, victim.y);
+      const off = Math.abs(Phaser.Math.Angle.Wrap(want - cone.ang));
+      if (cone.fired >= 5 && off > half(elapsed) + Math.atan2(13, d)) {
+        ctx.capture(() => fx.lockLost(ctx.cx, ctx.cy, cone.ang, half(elapsed), 520));
+        float(ctx, ctx.cx, ctx.cy - 50, `✖ CEASE FIRE · ${cone.fired} ROUNDS`, hex(RAD.hazard), 12);
+        readout.setText('out of the cone — the fire stops');
+        cone.on = false;
+        av.setHold(null);
+        return;
+      }
+      cone.fired++;
+      cone.next = elapsed + (cone.fired <= 5 ? 60 : 100);
+      av.play('punch', want, 90);
+      ctx.capture(() => fx.pistolShot(ctx.cx + Math.cos(want) * 16, ctx.cy + Math.sin(want) * 16,
+        victim.x + (Math.random() - 0.5) * 10, victim.y + (Math.random() - 0.5) * 10));
+      float(ctx, victim.x + (Math.random() - 0.5) * 24, victim.y - 22, '5', '#ffb3aa', 12);
+      void dt;
+    });
+    ctx.onFrame((_dt, elapsed) => {
+      g.clear();
+      if (!cone.on) return;
+      const lock = cone.lockAt < 0 ? 0 : Phaser.Math.Clamp((elapsed - cone.lockAt) / 3000, 0, 1);
+      barrageCone(g, ctx.tint, ctx.cx, ctx.cy, cone.ang, half(elapsed), 520, 0.9, elapsed / 1000,
+        { lock, locked: cone.lockAt >= 0 });
+      if (cone.lockAt >= 0) lockReticle(g, ctx.tint, victim.x, victim.y, lock, 0.95, elapsed / 1000);
+    });
+    ctx.at(300, () => {
+      cone.on = true; av.setHold('reach', ctx.aim);
+      readout.setText('the lock closes exactly as before…');
+    });
+    ctx.at(600, () => { cone.lockAt = 600; float(ctx, victim.x, victim.y - 50, '◎ LOCKING', hex(RAD.neonLit), 11); });
+    ctx.at(3600, () => {
+      cone.fireAt = 3600; cone.next = 3600;
+      float(ctx, victim.x, victim.y - 54, '☢ TRIGGER HAPPY', hex(RAD.hazard), 12);
+      readout.setText('…but the burst does not stop — ten rounds a second while they stay inside');
+    });
+    ctx.at(6200, () => readout.setText('and the cone keeps closing as it fires, all the way down to 1°'));
+  },
+};
+
+export const bunkerUpgraded: PreviewScript = {
+  duration: 10000,
+  scale: 0.8,
+  caption: 'R+ Turret Town — two turrets on the bunker wall that only shoot irradiated enemies',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new RadiationAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const R = 72;
+    const enemy = { x: ctx.cx + 260, y: ctx.cy - 40 };
+    dummyAt(ctx, enemy);
+    const dose = { left: 0 };
+    doseMarker(ctx, enemy, () => dose.left);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#c2ff8f', 11);
+    const turrets = [-1, 1].map((side) => ({ side, ang: side < 0 ? Math.PI : 0, recoil: 0, next: 0 }));
+    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(2));
+    ctx.onFrame((dt, elapsed) => {
+      ground.clear();
+      if (elapsed < 600) return;
+      const t = elapsed / 1000;
+      const built = Phaser.Math.Clamp((elapsed - 600) / 260, 0, 1);
+      falloutBunker(ground, ctx.tint, ctx.cx, ctx.cy, R, 0.95, t, { hp: 1, built, occupied: true, hit: 0, seed: 4.1 });
+      for (const tr of turrets) {
+        const x = ctx.cx + tr.side * (R + 2);
+        const y = ctx.cy;
+        tr.recoil = Math.max(0, tr.recoil - dt / 140);
+        const live = dose.left > 0;
+        if (live) {
+          tr.ang = Phaser.Math.Angle.RotateTo(tr.ang, Math.atan2(enemy.y - y, enemy.x - x), 9 * (dt / 1000));
+          if (elapsed >= tr.next) {
+            tr.next = elapsed + 420;
+            tr.recoil = 1;
+            ctx.capture(() => fx.pistolShot(x + Math.cos(tr.ang) * 20, y + Math.sin(tr.ang) * 20, enemy.x, enemy.y));
+            float(ctx, enemy.x + tr.side * 8, enemy.y - 22, '4', '#ffb3aa', 12);
+          }
+        }
+        bunkerTurret(ground, ctx.tint, x, y, tr.ang, 0.95 * built, t, { recoil: tr.recoil, live });
+      }
+    });
+    ctx.onFrame((dt) => { if (dose.left > 0) dose.left -= (dt / 1000) / 5; });
+    ctx.at(300, () => readout.setText('the bunker goes up with a turret bolted to each side'));
+    ctx.at(600, () => {
+      av.play('slam');
+      ctx.capture(() => fx.bunkerRise(ctx.cx, ctx.cy, R));
+    });
+    ctx.at(1800, () => readout.setText('a clean enemy — the lamps stay dark and the turrets hold fire'));
+    ctx.at(3800, () => {
+      dose.left = 1;
+      ctx.capture(() => fx.dose(enemy.x, enemy.y));
+      float(ctx, enemy.x, enemy.y - 48, '☢ IRRADIATED', hex(RAD.neon), 11);
+      readout.setText('irradiate them, and both turrets open up: 4 a shot, about twice a second each');
+    });
+    ctx.at(7000, () => readout.setText('anything that hits the bunker is answered from twice as far for 3s'));
+  },
+};
+
+export const batonUpgraded: PreviewScript = {
+  duration: 9000,
+  scale: 0.9,
+  caption: 'F+ Mutation — the rod on a dosed target strips the dose and swells their hitbox 25% for 15s',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new RadiationAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const victim = { x: ctx.cx + 92, y: ctx.cy - 4, scale: 1 };
+    dummyAt(ctx, victim);
+    const dose = { left: 1 };
+    doseMarker(ctx, victim, () => dose.left);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#c2ff8f', 11);
+    // The hitbox ring, so the 25% is something you can see.
+    const ring = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
+    ctx.onFrame((_dt, elapsed) => {
+      ring.clear();
+      if (victim.scale <= 1) return;
+      ring.lineStyle(1.5, ctx.tint(RAD.neon), 0.5 + 0.3 * Math.sin(elapsed / 150));
+      ring.strokeCircle(victim.x, victim.y, 22 * victim.scale);
+    });
+    const swing = { start: -1 };
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(16));
+    ctx.onFrame((_dt, elapsed) => {
+      g.clear();
+      if (swing.start < 0) return;
+      const t = (elapsed - swing.start) / 300;
+      if (t >= 1) { swing.start = -1; return; }
+      const a = ctx.aim - 0.8 + (1 - (1 - t) * (1 - t)) * 1.6;
+      uraniumRod(g, ctx.tint, ctx.cx + Math.cos(a) * 14, ctx.cy + Math.sin(a) * 14,
+        ctx.cx + Math.cos(a) * 92, ctx.cy + Math.sin(a) * 92, 1 - t * 0.3, elapsed / 1000, { heat: 1 });
+    });
+    ctx.at(300, () => readout.setText('an enemy already carrying a dose…'));
+    ctx.at(1200, () => {
+      swing.start = 1200;
+      av.play('sweep', ctx.aim);
+      ctx.capture(() => fx.rodStrike(victim.x, victim.y, ctx.aim, true));
+      float(ctx, victim.x, victim.y - 24, '16', '#ffd27a', 17);
+      float(ctx, victim.x, victim.y - 52, '⚡ STUNNED', hex(RAD.hazard), 12);
+    });
+    ctx.at(1500, () => {
+      dose.left = 0;
+      ctx.capture(() => fx.mutate(victim.x, victim.y));
+      float(ctx, victim.x, victim.y - 66, '🧬 MUTATED', hex(RAD.neonLit), 12);
+      readout.setText('…still takes 16 and the stun — but the dose curdles into a mutation');
+    });
+    ctx.onFrame((_dt, elapsed) => {
+      if (elapsed < 1500) return;
+      victim.scale = Math.min(1.25, 1 + (elapsed - 1500) / 1200);
+    });
+    ctx.at(4200, () => readout.setText('a 25% bigger hitbox for 15 seconds — and healing works on them again'));
+  },
+};
+
+export const exterminationUpgraded: PreviewScript = {
+  duration: 11000,
+  scale: 0.75,
+  caption: 'Q+ Complete Annihilation — the drop leaves fallout puddles and over-radiates anyone already dosed',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new RadiationAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const victim = { x: ctx.cx + 300, y: ctx.cy - 120 };
+    dummyAt(ctx, victim);
+    const dose = { left: 1 };
+    doseMarker(ctx, victim, () => dose.left);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#7cff3d', 11);
+    const spots: [number, number, number][] = [
+      [0.5, 0.5, 58], [0.3, 0.32, 46], [0.7, 0.3, 50], [0.24, 0.66, 52], [0.76, 0.68, 46],
+      [0.46, 0.8, 44], [0.58, 0.18, 40], [0.13, 0.4, 42], [0.87, 0.46, 44], [0.38, 0.52, 36],
+      [0.64, 0.56, 38],
+    ];
+    const drop = { at: 2400, landed: false, over: false };
+    const floor = ctx.adopt(ctx.scene.add.graphics().setDepth(2));
+    ctx.onFrame((_dt, elapsed) => {
+      floor.clear();
+      const t = elapsed / 1000;
+      if (!drop.landed) {
+        const k = Phaser.Math.Clamp(1 - (drop.at - elapsed) / 1700, 0, 1);
+        if (elapsed > drop.at - 1700) {
+          dropFootprint(floor, ctx.tint, ctx.w / 2, ctx.h / 2, Math.max(ctx.w, ctx.h) * 0.62, 0.95, k, t);
+        }
+        return;
+      }
+      spots.forEach(([fx0, fy0, r], i) => falloutPuddle(floor, ctx.tint, ctx.w * fx0, ctx.h * fy0, r, 0.9, t, i * 7.31 + 1.7));
+    });
+    ctx.onFrame((dt) => { if (dose.left > 0 && drop.landed) dose.left -= (dt / 1000) / 10; });
+    // Over-radiated, the victim limps toward a puddle at half speed and ticks in it.
+    const tick = { next: 0 };
+    ctx.onFrame((dt, elapsed) => {
+      if (!drop.over) return;
+      const goal = { x: ctx.w * 0.7, y: ctx.h * 0.3 };
+      const d = Phaser.Math.Distance.Between(victim.x, victim.y, goal.x, goal.y);
+      if (d > 4) {
+        const a = Math.atan2(goal.y - victim.y, goal.x - victim.x);
+        victim.x += Math.cos(a) * 45 * (dt / 1000);
+        victim.y += Math.sin(a) * 45 * (dt / 1000);
+      }
+      if (d < 50 && elapsed >= tick.next) {
+        tick.next = elapsed + 400;
+        float(ctx, victim.x + (Math.random() - 0.5) * 16, victim.y - 22, '4', '#ffb3aa', 12);
+      }
+    });
+    const over = ctx.adopt(ctx.scene.add.graphics().setDepth(17));
+    ctx.onFrame((_dt, elapsed) => {
+      over.clear();
+      if (!drop.over) return;
+      trefoil(over, ctx.tint, victim.x, victim.y - 46, 7, 0.6 + 0.3 * Math.sin(elapsed / 90), { phase: elapsed / 400, color: RAD.hot });
+    });
+    ctx.at(200, () => readout.setText('the target is already irradiated when the drop is called'));
+    ctx.at(drop.at, () => {
+      drop.landed = true;
+      ctx.capture(() => {
+        fx.airdrop(ctx.w / 2, ctx.h / 2);
+        for (const [fx0, fy0, r] of spots) fx.puddleSplash(ctx.w * fx0, ctx.h * fy0, r);
+      });
+      float(ctx, victim.x, victim.y - 24, '200', '#ffb3aa', 20);
+    });
+    ctx.at(drop.at + 500, () => {
+      drop.over = true;
+      dose.left = 1;
+      ctx.capture(() => fx.overRadiate(victim.x, victim.y));
+      float(ctx, victim.x, victim.y - 78, '☢☢ OVER-RADIATED', hex(RAD.hot), 12);
+      readout.setText('dosed when it landed: over-radiated — half speed, +30% damage taken for 8s');
+    });
+    ctx.at(6000, () => readout.setText('and fallout everywhere for 9s: 3 every 0.4s to anyone standing in it'));
   },
 };
 

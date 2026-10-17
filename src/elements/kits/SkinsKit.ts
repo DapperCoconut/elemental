@@ -121,6 +121,7 @@ export class SkinsKit {
   clothColor(owner: Owner, base: number): number { return this.remap(owner, base); }
   marrowColor(owner: Owner, base: number): number { return this.remap(owner, base); }
   tempestColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  mythColor(owner: Owner, base: number): number { return this.remap(owner, base); }
   psychicColor(owner: Owner, base: number): number { return this.remap(owner, base); }
   radiationColor(owner: Owner, base: number): number { return this.remap(owner, base); }
   bindColor(owner: Owner, base: number): number { return this.remap(owner, base); }

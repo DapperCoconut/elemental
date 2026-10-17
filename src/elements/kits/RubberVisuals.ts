@@ -963,7 +963,8 @@ export class RubberAvatar extends BaseAvatar {
   /**
    * Mastery tell — Vulcanization, made visible on what is already there: the eyes turn molten,
    * the fists gain a hot rim and a wider corona, and the crown spring itself cures (see
-   * drawExtras) — taller, an extra turn, heat-cured orange with a gold knob. No new parts.
+   * drawExtras) — taller, an extra turn, heat-cured orange with a gold knob — and the body
+   * now rolls inside a black tyre with spinning tread lugs and flame licks (see drawGlow).
    */
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? RUBBER.gold : RUBBER.cream);
@@ -1008,6 +1009,34 @@ export class RubberAvatar extends BaseAvatar {
     g.fillStyle(this.tint(this.accent), a * 0.1);
     g.fillEllipse(x, y + 12, (56 + bob * 10) * k, (10 - bob * 3) * k);
 
+    // ── Mastered only: the cured tyre ──
+    // Vulcanization turns gum into tyre rubber, so the mastered fighter rolls inside a black
+    // tread ring with rotating chevron lugs and a hot orange sidewall line, licked by flame.
+    if (this.mastered) {
+      const spin = this.t * 2.2;
+      g.fillStyle(this.tint(RUBBER.cured), alpha * 0.95);
+      g.fillCircle(x, y, 29);
+      g.lineStyle(2, this.tint(RUBBER.flame), alpha * (0.7 + 0.2 * Math.sin(this.t * 6)));
+      g.strokeCircle(x, y, 24.5);
+      g.lineStyle(1.2, this.tint(RUBBER.soot), alpha);
+      g.strokeCircle(x, y, 29);
+      g.fillStyle(this.tint(RUBBER.soot), alpha);
+      for (let i = 0; i < 14; i++) {
+        const ang = spin + (i / 14) * TAU;
+        const f = frame(x + Math.cos(ang) * 27, y + Math.sin(ang) * 27, ang + Math.PI / 2);
+        fillPts(g, [f(-3, -1.5), f(0, 1.6), f(3, -1.5), f(0, -0.2)]);
+      }
+      for (let i = 0; i < 5; i++) {
+        const ang = -spin * 0.6 + (i / 5) * TAU;
+        const flick = 0.5 + 0.5 * Math.sin(this.t * 9 + i * 1.7);
+        const f = frame(x + Math.cos(ang) * 29, y + Math.sin(ang) * 29, ang);
+        g.fillStyle(this.tint(RUBBER.ember), alpha * 0.8);
+        fillPts(g, [f(0, -3), f(6 + flick * 5, 0), f(0, 3)]);
+        g.fillStyle(this.tint(RUBBER.gold), alpha * 0.9);
+        fillPts(g, [f(0, -1.4), f(3 + flick * 3, 0), f(0, 1.4)]);
+      }
+    }
+
     // ── Elastic arms: the hands are physically attached, and the strands show it ──
     // Drawn on the *under* layer and rooted at the chest, not the body centre: an arm swinging
     // across the head would otherwise sit on top of the face and blank the eyes out.
@@ -1023,6 +1052,35 @@ export class RubberAvatar extends BaseAvatar {
         bow + Math.sin(this.t * 5 + i * 2) * 3,
         RUBBER.maroon, alpha * 0.95);
     }
+  }
+
+  /**
+   * Body markings: a bouncy-ball seam band across the middle with stitched tread dots, a wide
+   * glossy highlight on the upper shell and little blush cheeks. Mastered, the seam cures to
+   * hot orange and the highlight goes white-hot gold.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
+    const m = this.mastered;
+    // the seam band, bowed a little so it reads as wrapping round a ball
+    const seam = this.tint(m ? RUBBER.flame : RUBBER.maroon);
+    g.lineStyle(3, seam, alpha * 0.8);
+    g.beginPath();
+    g.arc(x, y - 30, 40, Math.PI * 0.33, Math.PI * 0.67, false);
+    g.strokePath();
+    g.fillStyle(this.tint(m ? RUBBER.gold : RUBBER.pink), alpha * 0.85);
+    for (let i = -2; i <= 2; i++) {
+      const ang = Math.PI / 2 + i * 0.085;
+      g.fillCircle(x + Math.cos(ang) * 40, y - 30 + Math.sin(ang) * 40, 1);
+    }
+    // glossy highlight
+    g.fillStyle(this.tint(m ? RUBBER.gold : RUBBER.white), alpha * (m ? 0.45 : 0.32));
+    g.fillEllipse(x - 8, y - 13, 11, 5);
+    g.fillStyle(this.tint(RUBBER.white), alpha * 0.6);
+    g.fillCircle(x - 11, y - 14, 1.6);
+    // blush
+    g.fillStyle(this.tint(m ? RUBBER.ember : RUBBER.blush), alpha * 0.4);
+    g.fillEllipse(x - 11, y + 2, 5, 2.6);
+    g.fillEllipse(x + 11, y + 2, 5, 2.6);
   }
 
   /**
@@ -1065,6 +1123,21 @@ export class RubberAvatar extends BaseAvatar {
       Phaser.Math.Clamp(Math.abs(this.coil) / 9, 0, 0.7),
       m ? RUBBER.gold : RUBBER.pink, alpha, 0,
       m ? RUBBER.white : RUBBER.cream);
+
+    // Knuckle creases on each fist, turned toward the aim: two little dark grooves.
+    for (let i = 0; i < 2; i++) {
+      const hx = this.armX[i], hy = this.armY[i];
+      if (hx === 0 && hy === 0) continue;
+      const ang = Math.atan2(hy - y, hx - x);
+      const f = frame(hx, hy, ang);
+      g.lineStyle(1.3, this.tint(m ? RUBBER.cured : RUBBER.gum), alpha * 0.75);
+      for (const ly of [-2.2, 2.2]) strokePts(g, [f(2, ly - 1.4), f(4.6, ly), f(2, ly + 1.4)]);
+      if (m) {
+        // cured fists: a gold wrist band
+        g.lineStyle(2, this.tint(RUBBER.gold), alpha * 0.95);
+        strokePts(g, [f(-5, -5), f(-5, 5)]);
+      }
+    }
 
     void a;
   }

@@ -2,8 +2,9 @@ import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import {
-  MAGNET, MagnetAvatar, MagnetFx, drawCoin, drawCoinShot, drawGatherPile, drawNail, drawOrbitRing,
-  drawScrap, drawSpikeFlying, drawSpikeHover, drawSpikePlanted,
+  MAGNET, MagnetAvatar, MagnetFx, drawChargedAura, drawCoin, drawCoinFragment, drawCoinShot, drawCrackle,
+  drawGatherPile, drawLockLine, drawMagnetHalo, drawMagnetized, drawNail, drawOrbitRing,
+  drawScrap, drawSpikeFlying, drawSpikeHover, drawSpikePlanted, megaMechTint,
 } from '../../../elements/kits/MagnetVisuals';
 import { MagnetMech } from '../../../elements/kits/MagnetMech';
 
@@ -524,5 +525,289 @@ export const perkBlade: PreviewScript = {
       onSpikeWall: (s, nx, ny) => shatter(fx, w, s.x, s.y, Math.atan2(ny, nx), 5),
     });
     ctx.at(600, () => repulse(ctx, fx, av, w, 0));
+  },
+};
+
+// ══ Shop upgrades ══════════════════════════════════════════════════════
+
+/** Turn `(vx, vy)` toward a point by at most `rate` rad/s — the kit's `steer`. */
+function steerTo(v: { vx: number; vy: number; x: number; y: number }, tx: number, ty: number, rate: number, dt: number): void {
+  const sp = Math.hypot(v.vx, v.vy);
+  const cur = Math.atan2(v.vy, v.vx);
+  const want = Math.atan2(ty - v.y, tx - v.x);
+  const diff = Phaser.Math.Angle.Wrap(want - cur);
+  const a = Math.abs(diff) <= rate * dt ? want : cur + Math.sign(diff) * rate * dt;
+  v.vx = Math.cos(a) * sp; v.vy = Math.sin(a) * sp;
+}
+
+interface Frag { x: number; y: number; vx: number; vy: number; life: number; seed: number }
+
+export const coinUpgraded: PreviewScript = {
+  duration: 7000,
+  scale: 0.85,
+  caption: 'Click+ Shatter Shot — a fired coin that reaches the wall bursts into 6 fragments that fly back at the enemy, 3 each',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    const target = { x: ctx.cx + 120, y: ctx.cy - 110 };
+    dummyAt(ctx, target);
+    const w = emptyWorld();
+    const wallX = ctx.w - 14;
+    const frags: Frag[] = [];
+    // The kit's coin shots, plus the wall: coins that reach it burst.
+    worldLayer(ctx, w, null);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(10));
+    ctx.onFrame((dt) => {
+      const s = dt / 1000;
+      for (let i = w.shots.length - 1; i >= 0; i--) {
+        const sh = w.shots[i];
+        if (sh.x + sh.vx * s < wallX) continue;
+        w.shots.splice(i, 1);
+        const aim = Math.atan2(target.y - sh.y, target.x - wallX);
+        for (let k = 0; k < 6; k++) {
+          const a = aim + (k / 5 - 0.5) * 0.9;
+          frags.push({ x: wallX, y: sh.y, vx: Math.cos(a) * 640, vy: Math.sin(a) * 640, life: 900, seed: k * 7 + i });
+        }
+        fx.flash(wallX, sh.y, 18, 10, MAGNET.goldHi);
+        fx.sparks(wallX, sh.y, 7, Math.PI, 10, MAGNET.gold);
+      }
+      g.clear();
+      g.lineStyle(2, 0x3a4052, 0.9);
+      g.lineBetween(wallX + 2, 0, wallX + 2, ctx.h);
+      for (let i = frags.length - 1; i >= 0; i--) {
+        const fr = frags[i];
+        fr.x += fr.vx * s; fr.y += fr.vy * s; fr.life -= dt;
+        if (Phaser.Math.Distance.Between(fr.x, fr.y, target.x, target.y) < 22) {
+          frags.splice(i, 1);
+          float(ctx, target.x + (Math.random() - 0.5) * 24, target.y - 26, '3', hex(MAGNET.gold), 11);
+          continue;
+        }
+        if (fr.life <= 0) { frags.splice(i, 1); continue; }
+        drawCoinFragment(g, ctx.tint, fr.x, fr.y, Math.atan2(fr.vy, fr.vx), fr.seed);
+      }
+    });
+    ctx.glideCaster({ to: { x: ctx.cx - 60, y: ctx.cy + 40 }, ms: 400, ease: 'out' });
+    for (const at of [500, 900, 1300]) ctx.at(at, () => { av.play('punch', -Math.PI / 2, 200); tossCoin(ctx, w); });
+    ctx.at(1500, () => { w.hover = true; av.setHold('brace'); });
+    ctx.at(2300, () => { w.hover = false; av.setHold(null); });
+    ctx.at(2350, () => {
+      const n = repulse(ctx, fx, av, w, 0);
+      if (n > 0) float(ctx, ctx.cx, ctx.cy - 20, 'AT THE WALL', hex(MAGNET.sky));
+    });
+    ctx.at(3600, () => float(ctx, wallX - 60, ctx.cy - 80, 'SHATTER SHOT', hex(MAGNET.goldHi), 12));
+  },
+};
+
+export const repulseUpgraded: PreviewScript = {
+  duration: 8000,
+  scale: 0.85,
+  caption: 'E+ Magnetize — the wave magnetises the enemy, and everything it fires is magnetised too: two magnets lock on, perfectly',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    const target = { x: ctx.cx + 110, y: ctx.cy };
+    dummyAt(ctx, target);
+    const w = emptyWorld();
+    worldLayer(ctx, w, null);
+    let magUntil = -1;
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(10));
+    // The dummy steps out of the line after being hit by the wave — the coins follow it anyway.
+    ctx.onFrame((dt, e) => {
+      const s = dt / 1000;
+      const t = e / 1000;
+      if (e > 1900 && e < 3600) { target.y = Math.max(ctx.cy - 130, target.y - 110 * s); target.x = Math.min(ctx.cx + 260, target.x + 120 * s); }
+      g.clear();
+      const magnetized = e < magUntil;
+      if (magnetized) drawMagnetized(g, ctx.tint, target.x, target.y, 17, t, (magUntil - e) / 5000);
+      for (let i = w.shots.length - 1; i >= 0; i--) {
+        const sh = w.shots[i];
+        if (magnetized) {
+          steerTo(sh, target.x, target.y, 60, s);
+          drawLockLine(g, ctx.tint, sh.x, sh.y, target.x, target.y, t);
+        }
+        drawMagnetHalo(g, ctx.tint, sh.x, sh.y, 9, t);
+        if (Phaser.Math.Distance.Between(sh.x, sh.y, target.x, target.y) < 22) {
+          w.shots.splice(i, 1);
+          fx.sparks(sh.x, sh.y, 4, Math.PI, 10, MAGNET.goldHi);
+          float(ctx, target.x, target.y - 26, '6', hex(MAGNET.gold), 12);
+        }
+      }
+    });
+    for (const at of [200, 550, 900]) {
+      ctx.at(at, () => {
+        av.play('punch', -Math.PI / 2, 200);
+        const c = ctx.casterAt();
+        w.coins.push({ sx: c.x, sy: c.y, lx: c.x, ly: c.y, air: 900, spin: Math.random() * 3, x: c.x, y: c.y, z: 0 });
+      });
+    }
+    ctx.at(1100, () => { w.hover = true; av.setHold('brace'); });
+    ctx.at(1800, () => {
+      w.hover = false;
+      av.setHold(null);
+      repulse(ctx, fx, av, w, 0);
+      magUntil = 1800 + 5000;
+      float(ctx, target.x, target.y - 46, 'MAGNETIZED', hex(MAGNET.rose), 12);
+      // The coins leave slowly in the showcase so the lock reads.
+      for (const sh of w.shots) { sh.vx *= 0.4; sh.vy *= 0.4; sh.life = 3000; }
+    });
+    ctx.at(4300, () => float(ctx, ctx.cx, ctx.cy + 70, 'magnetised shot + magnetised body = lock', '#e8dcb8', 11));
+  },
+};
+
+export const nailUpgraded: PreviewScript = {
+  duration: 7200,
+  scale: 0.9,
+  caption: 'R+ Nailstorm — three golden nails at once, all in one body. Each extra nail makes the shove and the rip-out hurt more',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    const target = { x: ctx.cx + 280, y: ctx.cy };
+    dummyAt(ctx, target);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    interface N { x: number; y: number; a: number; vx: number; vy: number; state: 'fly' | 'stuck' | 'return'; ox: number; oy: number }
+    const nails: N[] = [];
+    ctx.onFrame((dt, e) => {
+      const s = dt / 1000;
+      const t = e / 1000;
+      const c = ctx.casterAt();
+      g.clear();
+      for (let i = nails.length - 1; i >= 0; i--) {
+        const n = nails[i];
+        if (n.state === 'fly') {
+          n.x += n.vx * s; n.y += n.vy * s;
+          if (Phaser.Math.Distance.Between(n.x, n.y, target.x, target.y) < 24) {
+            n.state = 'stuck'; n.ox = (n.x - target.x) * 0.7; n.oy = (n.y - target.y) * 0.7;
+            fx.sparks(n.x, n.y, 4, Math.PI, 10, MAGNET.goldHi);
+            float(ctx, target.x, target.y - 26 - i * 12, '10', hex(MAGNET.gold), 11);
+          }
+        } else if (n.state === 'stuck') {
+          n.x = target.x + n.ox; n.y = target.y + n.oy;
+        } else {
+          n.a = Math.atan2(c.y - n.y, c.x - n.x);
+          n.x += Math.cos(n.a) * NAIL_RETURN_SPEED * s; n.y += Math.sin(n.a) * NAIL_RETURN_SPEED * s;
+          if (Phaser.Math.Distance.Between(n.x, n.y, c.x, c.y) < 22) { nails.splice(i, 1); continue; }
+        }
+        drawNail(g, ctx.tint, n.x, n.y, n.a, n.state, c.x, c.y, t, 1, true);
+      }
+    });
+    ctx.at(300, () => {
+      av.play('punch', 0, 240);
+      const c = ctx.casterAt();
+      for (const k of [-1, 0, 1]) {
+        const a = k * 0.06;
+        nails.push({ x: c.x + 18, y: c.y, a, vx: Math.cos(a) * NAIL_SPEED, vy: Math.sin(a) * NAIL_SPEED, state: 'fly', ox: 0, oy: 0 });
+      }
+      fx.sparks(c.x + 20, c.y, 6, 0, 10, MAGNET.goldHi);
+    });
+    ctx.at(1600, () => {
+      const c = ctx.casterAt();
+      fx.repulse(c.x, c.y, 0, REPULSE_R, REPULSE_HALF, MAGNET.blue);
+      av.play('clap', 0, 300);
+      fx.grasp(c.x, c.y, target.x, target.y, MAGNET.blue, 300);
+      float(ctx, target.x, target.y - 50, 'REPULSED ×3 — 12', hex(MAGNET.gold), 12);
+      let vx = 1000;
+      ctx.onFrame((dt) => { target.x = Math.min(ctx.w - 30, target.x + vx * dt / 1000); vx *= 0.88; });
+    });
+    ctx.at(3600, () => {
+      for (const n of nails) n.state = 'return';
+      av.play('punch', 0, 260);
+      fx.sparks(target.x, target.y, 10, Math.PI, 10, MAGNET.goldHi);
+      float(ctx, target.x, target.y - 30, '23 · 23 · 23 RIPPED OUT', hex(MAGNET.gold), 12);
+    });
+  },
+};
+
+export const spikeUpgraded: PreviewScript = {
+  duration: 7600,
+  scale: 0.85,
+  caption: 'F+ Electromagnet — a live spike zaps everyone near it; ride to it and you are Charged: 35% faster, with a zapping aura',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    const target = { x: ctx.cx + 200, y: ctx.cy + 10 };
+    dummyAt(ctx, target);
+    const spike = { x: ctx.cx + 120, y: ctx.cy + 30 };
+    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
+    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    let chargedAt = -1;
+    let zipped = false;
+    let nextZap = 400;
+    let nextAura = 0;
+    ctx.onFrame((_dt, e) => {
+      const t = e / 1000;
+      ground.clear(); air.clear();
+      drawSpikePlanted(ground, ctx.tint, spike.x, spike.y, t, !zipped, 1);
+      drawCrackle(air, ctx.tint, spike.x, spike.y - 44, 16, t, 0.85);
+      if (e >= nextZap) {
+        nextZap = e + 900;
+        ctx.capture(() => fx.zap(spike.x, spike.y - 46, target.x, target.y));
+        float(ctx, target.x + 14, target.y - 26, '5', hex(MAGNET.live), 11);
+      }
+      const c = ctx.casterAt();
+      if (chargedAt >= 0 && e < chargedAt + 4000) {
+        drawChargedAura(ground, ctx.tint, c.x, c.y, 105, t, 1 - (e - chargedAt) / 4000);
+        if (e >= nextAura && Phaser.Math.Distance.Between(c.x, c.y, target.x, target.y) < 125) {
+          nextAura = e + 600;
+          ctx.capture(() => fx.zap(c.x, c.y, target.x, target.y));
+          float(ctx, target.x - 14, target.y - 26, '5', hex(MAGNET.spark), 11);
+        }
+      }
+    });
+    ctx.at(2400, () => {
+      zipped = true;
+      fx.grasp(spike.x, spike.y, ctx.cx, ctx.cy, MAGNET.blue, 380);
+      fx.zap(spike.x, spike.y - 40, ctx.cx, ctx.cy);
+      av.play('dash', 0, 300);
+      ctx.glideCaster({ to: { x: spike.x - 30, y: spike.y - 6 }, ms: 260, ease: 'out' });
+    });
+    ctx.at(2700, () => { chargedAt = 2700; float(ctx, spike.x - 30, spike.y - 60, 'CHARGED +35%', hex(MAGNET.live), 12); });
+    ctx.at(3600, () => ctx.glideCaster({ to: { x: ctx.cx - 60, y: ctx.cy - 60 }, ms: 900, ease: 'linear' }));
+    ctx.at(4600, () => ctx.glideCaster({ to: { x: target.x - 70, y: target.y + 10 }, ms: 700, ease: 'linear' }));
+  },
+};
+
+export const mechaUpgraded: PreviewScript = {
+  duration: 10500,
+  scale: 0.55,
+  caption: 'Q+ Mega Mechancements — the red mech: every key hits harder, wider and longer',
+  run(ctx) {
+    const { av } = stage(ctx);
+    const red = megaMechTint(ctx.tint);
+    const fx = ctx.capture(() => new MagnetFx(ctx.scene, red).setSink(ctx.sink));
+    const target = { x: ctx.w * 0.68, y: ctx.h * 0.62 };
+    dummyAt(ctx, target);
+    const pile = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    let gathering = true;
+    av.play('raise', -Math.PI / 2, 1500);
+    ctx.onFrame((_dt, e) => {
+      pile.clear();
+      if (!gathering) return;
+      const c = ctx.casterAt();
+      drawGatherPile(pile, red, c.x, c.y, Phaser.Math.Clamp(e / 1500, 0, 1), e / 1000);
+    });
+    let mech: MagnetMech | null = null;
+    ctx.at(1500, () => {
+      gathering = false;
+      ctx.moveCaster(ctx.cx, ctx.cy, { alpha: 0 });
+      mech = ctx.capture(() => new MagnetMech({
+        scene: ctx.scene, width: ctx.w, height: ctx.h, tint: red, fx,
+        targets: () => [], hit: () => {}, stun: () => {}, push: () => {}, carry: () => {},
+        announce: (x, y, text, color) => float(ctx, x, y, text, hex(red(color)), 16),
+        shake: () => {},
+      }, false, ctx.scene.time.now, true));
+    });
+    ctx.onFrame((dt) => {
+      if (mech) mech.update(ctx.scene.time.now, dt, target.x + Math.sin(ctx.scene.time.now / 300) * 80, target.y);
+    });
+    const key = (at: number, a: 'smash' | 'rail' | 'cannon' | 'avalanche' | 'destruct', label?: string): void => {
+      ctx.at(at, () => {
+        if (!mech) return;
+        mech.use(a, ctx.scene.time.now, target.x, target.y);
+        if (label) float(ctx, target.x, target.y - 34, label, hex(red(MAGNET.visor)), 16);
+      });
+    };
+    key(2200, 'smash', '30');
+    key(3200, 'smash', '30');
+    key(3900, 'rail', '22/s');
+    key(4800, 'cannon');
+    key(7300, 'avalanche');
+    key(9300, 'destruct');
+    ctx.at(10000, () => ctx.moveCaster(ctx.cx, ctx.cy, { alpha: 1 }));
   },
 };

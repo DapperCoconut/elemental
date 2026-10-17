@@ -234,6 +234,11 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
     blurb: 'A knockback brawler that can leave the floor. Ride the currents, slam your own fronts, and make every wall a weapon.',
     complexity: 5,
   },
+  myth: {
+    archetype: 'Legend',
+    blurb: 'The crowd pays in Echo Shards for a good show; every ability has a second act that costs one. The ultimate is a first-person shootout.',
+    complexity: 5,
+  },
   marrow: {
     archetype: 'Immune System',
     blurb: 'An immune response as a weapon — antibodies, white cells, and a bone bar paying for all of it.',

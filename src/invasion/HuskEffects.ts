@@ -220,6 +220,18 @@ export class HuskEffectEngine {
         this.world.showFloatingText(husk.x, husk.y - 30, '🦴 FED', '#ff8a9a');
         break;
       }
+      case 'myth': {
+        // The crowd cheers the bite: every husk nearby fights harder for a few seconds.
+        const room = this.world.roomOf(husk);
+        for (const other of this.world.livingHusks()) {
+          if (this.world.roomOf(other) !== room) continue;
+          if (Phaser.Math.Distance.Between(other.x, other.y, husk.x, husk.y) > 180) continue;
+          other.effectDamageMult = Math.max(other.effectDamageMult, 1.25);
+          other.effectRageUntil = Math.max(other.effectRageUntil, now + 3000);
+        }
+        this.world.showFloatingText(husk.x, husk.y - 30, '🌠 APPLAUSE', '#b39dff');
+        break;
+      }
       case 'cloth': {
         // The scarf winds tighter with every wrap: a smaller, quicker target that mends off the
         // bite. The inverse of every other feeder in the list, and deliberately so — Cloth's

@@ -223,6 +223,21 @@ export function sleepMeter(
   g.fillRect(x, cy, W * Phaser.Math.Clamp(ratio, 0, 1), H);
   g.fillStyle(tint(DRM.pale), alpha * 0.4);
   g.fillRect(x, cy, W * Phaser.Math.Clamp(ratio, 0, 1), H * 0.35);
+  // Pinprick stars in the unfilled night, and a pale inner hairline.
+  for (let i = 0; i < 4; i++) {
+    const sx = x + 6 + i * 15;
+    if (sx < x + W * ratio) continue;
+    g.fillStyle(tint(DRM.star), alpha * (0.35 + 0.3 * Math.sin(t * 3 + i * 2)));
+    g.fillCircle(sx, cy + 2 + (i % 2) * 4, 0.7);
+  }
+  g.lineStyle(1, tint(DRM.pale), alpha * 0.25);
+  g.strokeRoundedRect(x - 0.5, cy - 0.5, W + 1, H + 1, 2);
+  // The moon at the left end waxes as the sleepiness fills.
+  g.fillStyle(tint(DRM.night), alpha * 0.85);
+  g.fillCircle(x - 8, cy + H / 2, 7.5);
+  g.lineStyle(1, tint(asleep ? DRM.purple : DRM.violet), alpha * 0.85);
+  g.strokeCircle(x - 8, cy + H / 2, 7.5);
+  crescentMoon(g, tint, x - 8, cy + H / 2, 5, asleep ? 1 : ratio, asleep ? DRM.star : DRM.sky, alpha);
 
   // The paddock sits on the plate: fence at the right-hand end, flock to its left.
   const groundY = cy + H - 1;
@@ -246,6 +261,132 @@ export function sleepMeter(
 
   if (asleep) {
     zzz(g, tint, x + 5, cy - 5, 4.2, alpha, t);
+  }
+}
+
+/**
+ * A crescent moon whose lit sliver waxes with `fill` (0–1): an unlit disc, the lit disc, and
+ * a night-coloured bite that slides off it as it fills. At 1 it is a full, glowing moon.
+ */
+export function crescentMoon(
+  g: Phaser.GameObjects.Graphics,
+  tint: DreamColorFn,
+  cx: number, cy: number, r: number,
+  fill: number,
+  color = DRM.star,
+  alpha = 1,
+  bite = DRM.night,
+): void {
+  const f = Phaser.Math.Clamp(fill, 0, 1);
+  g.fillStyle(tint(color), alpha * (0.12 + f * 0.25));
+  g.fillCircle(cx, cy, r * 1.55);
+  g.fillStyle(tint(DRM.deep), alpha);
+  g.fillCircle(cx, cy, r);
+  g.fillStyle(tint(color), alpha);
+  g.fillCircle(cx, cy, r);
+  // The shadow bite: starts covering most of the disc, slides away as the moon fills.
+  if (f < 0.999) {
+    const off = r * (0.35 + f * 1.55);
+    g.fillStyle(tint(bite), alpha);
+    g.fillCircle(cx + off, cy - off * 0.25, r * 0.92);
+  }
+  // Two craters on the lit side.
+  g.fillStyle(tint(DRM.wishDeep), alpha * 0.25);
+  g.fillCircle(cx - r * 0.38, cy + r * 0.2, r * 0.2);
+  g.fillCircle(cx - r * 0.1, cy - r * 0.45, r * 0.13);
+}
+
+/**
+ * The pendulum gauge pinned top-left: a strip of night sky in a silver-violet frame, a
+ * crescent moon at its head that waxes with the swing, the fill as a nebula with stars caught
+ * in it, star ticks at each quarter, and a little dreamcatcher thread underneath carrying
+ * one bead per dream you are holding (`held` of `cap`).
+ */
+export function dreamGauge(
+  g: Phaser.GameObjects.Graphics,
+  tint: DreamColorFn,
+  x: number, y: number, w: number, h: number,
+  heat: number, trance: boolean,
+  held: number, cap: number,
+  t: number,
+): void {
+  heat = Phaser.Math.Clamp(heat, 0, 1);
+  const px = x - 30, py = y - 7, pw = w + 40, ph = h + 34;
+  // Plate: shadow, night body, a violet wash across the top, double frame.
+  g.fillStyle(0x000000, 0.4);
+  g.fillRoundedRect(px + 2, py + 3, pw, ph, 9);
+  g.fillStyle(tint(DRM.night), 0.94);
+  g.fillRoundedRect(px, py, pw, ph, 9);
+  g.fillStyle(tint(DRM.deep), 0.7);
+  g.fillRoundedRect(px + 2, py + 2, pw - 4, ph * 0.45, 7);
+  g.lineStyle(2, tint(DRM.violet), 0.95);
+  g.strokeRoundedRect(px, py, pw, ph, 9);
+  g.lineStyle(1, tint(DRM.pale), 0.35);
+  g.strokeRoundedRect(px + 3, py + 3, pw - 6, ph - 6, 7);
+  // A scatter of background stars that twinkle out of phase.
+  for (let i = 0; i < 9; i++) {
+    const sx = px + 34 + ((i * 53) % (pw - 44));
+    const sy = py + 4 + ((i * 17) % (ph - 8));
+    const tw = 0.25 + 0.35 * (0.5 + 0.5 * Math.sin(t * 2.3 + i * 1.7));
+    g.fillStyle(tint(DRM.star), tw);
+    g.fillCircle(sx, sy, 0.8);
+  }
+
+  // The moon at the head of the bar.
+  crescentMoon(g, tint, x - 15, y + h / 2 + 1, 9, heat, trance ? DRM.star : DRM.sky, 1);
+  if (trance && heat > 0.6) {
+    for (let i = 0; i < 3; i++) {
+      const a = t * 2 + (i / 3) * TAU;
+      star(g, tint, x - 15 + Math.cos(a) * 14, y + h / 2 + 1 + Math.sin(a) * 14, 2, 0.85, DRM.star, a);
+    }
+  }
+
+  // Trough.
+  g.fillStyle(tint(DRM.deep), 1);
+  g.fillRoundedRect(x - 1, y - 1, w + 2, h + 2, h / 2 + 1);
+  const fw = w * heat;
+  if (fw > 1) {
+    g.fillStyle(tint(trance ? DRM.violet : DRM.night), 1);
+    g.fillRoundedRect(x, y, fw, h, Math.min(h / 2, fw / 2));
+    g.fillStyle(tint(trance ? DRM.purple : DRM.blue), 0.85);
+    g.fillRoundedRect(x, y + 2, fw, h - 4, Math.min((h - 4) / 2, fw / 2));
+    g.fillStyle(tint(DRM.pale), 0.38);
+    g.fillRect(x + 3, y + 1.5, Math.max(0, fw - 6), h * 0.22);
+    // Stars caught in the fill, drifting slowly left.
+    for (let i = 0; i < 7; i++) {
+      const sx = x + ((i * 31 - t * 14) % w + w) % w;
+      if (sx > x + fw - 3) continue;
+      star(g, tint, sx, y + h * (0.3 + 0.4 * ((i * 7) % 3) / 2), 2.2, 0.75, DRM.star, t + i);
+    }
+    g.fillStyle(tint(DRM.white), 0.9);
+    g.fillCircle(x + fw - 1, y + h / 2, 2);
+  }
+  g.lineStyle(1, tint(DRM.sky), 0.55);
+  g.strokeRoundedRect(x - 1, y - 1, w + 2, h + 2, h / 2 + 1);
+  for (let i = 1; i < 4; i++) {
+    star(g, tint, x + (w * i) / 4, y + h + 3, 2.4, 0.8, DRM.pale, 0);
+  }
+
+  // The dreamcatcher thread: a sagging cord with a bead per held dream.
+  const ty = y + h + 15;
+  g.lineStyle(1, tint(DRM.hoop), 0.85);
+  g.beginPath();
+  for (let i = 0; i <= 20; i++) {
+    const p = i / 20;
+    const lx = x + p * (cap - 1) * 12 + 5 - 4;
+    g.lineTo(lx, ty + Math.sin(p * Math.PI) * 2.2);
+  }
+  g.strokePath();
+  for (let i = 0; i < cap; i++) {
+    const bx = x + 5 + i * 12;
+    const by = ty + Math.sin(((i * 12) / Math.max(1, (cap - 1) * 12)) * Math.PI) * 2.2;
+    if (i < held) dreamOrb(g, tint, bx, by, 2.6, 1, t + i);
+    else {
+      g.fillStyle(tint(DRM.night), 1);
+      g.fillCircle(bx, by, 3);
+      g.lineStyle(1, tint(DRM.violet), 0.6);
+      g.strokeCircle(bx, by, 3);
+    }
   }
 }
 
@@ -1962,9 +2103,37 @@ export class DreamAvatar extends BaseAvatar {
 
   protected applyMastery(on: boolean): void {
     this.forEachHandLayer(0, (glow) => {
-      glow.setRadius(on ? 13.5 : 10);
-      glow.setFillStyle(this.tint(on ? DRM.purple : DRM.violet), on ? 0.36 : 0.26);
+      glow.setRadius(on ? 14.5 : 10);
+      glow.setFillStyle(this.tint(on ? DRM.wish : DRM.violet), on ? 0.32 : 0.26);
     });
+    this.forEachHandLayer(1, (core) => core.setFillStyle(this.tint(on ? DRM.purple : DRM.blue), 0.9));
+    // Starlit eyes on a mastered dreamer.
+    this.setEyeWhite(on ? DRM.star : DRM.pale);
+  }
+
+  /**
+   * A constellation stitched across the lower body — the body is a piece of night sky, so it
+   * carries stars. Mastered, the lines between them light up gold and the stars swell.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
+    const m = this.mastered;
+    const dim = 1 - this.drowsy * 0.4;
+    const pts: [number, number][] = [[-11, 5], [-5, 10], [2, 7], [8, 12], [12, 4]];
+    g.lineStyle(m ? 1.2 : 0.8, this.tint(m ? DRM.wish : DRM.sky), alpha * (m ? 0.8 : 0.45) * dim);
+    g.beginPath();
+    g.moveTo(x + pts[0][0], y + pts[0][1]);
+    for (let i = 1; i < pts.length; i++) g.lineTo(x + pts[i][0], y + pts[i][1]);
+    g.strokePath();
+    for (let i = 0; i < pts.length; i++) {
+      const tw = 0.6 + 0.4 * Math.sin(this.t * 2.6 + i * 1.9);
+      star(g, this.tint, x + pts[i][0], y + pts[i][1], (m ? 3.2 : 2.2) * (i === 2 ? 1.3 : 1),
+        alpha * tw * dim, m ? DRM.star : DRM.pale, this.t * 0.5 + i);
+    }
+    // A sliver of moon tucked on the shoulder.
+    g.fillStyle(this.tint(DRM.star), alpha * 0.75 * dim);
+    g.fillCircle(x + 12, y - 11, 3.2);
+    g.fillStyle(this.tint(DRM.deep), alpha * 0.9);
+    g.fillCircle(x + 13.4, y - 11.8, 2.8);
   }
 
   protected emitTrail(x: number, y: number): void {
@@ -1977,6 +2146,20 @@ export class DreamAvatar extends BaseAvatar {
     g.fillCircle(x, y, 28 + this.drowsy * 8);
     g.fillStyle(this.tint(DRM.violet), a * (0.16 + this.swing * 0.2));
     g.fillCircle(x, y, 20 + this.swing * 12);
+    // Mastery: a full moon rising behind the head, ringed with a slow silver corona.
+    if (this.mastered) {
+      const mx = x, my = y - 26 + Math.sin(this.t * 2.4) * 1.2;
+      g.fillStyle(this.tint(DRM.wish), alpha * 0.18);
+      g.fillCircle(mx, my, 26);
+      g.fillStyle(this.tint(DRM.star), alpha * 0.85);
+      g.fillCircle(mx, my, 17);
+      g.fillStyle(this.tint(DRM.wishDeep), alpha * 0.22);
+      g.fillCircle(mx - 5, my + 3, 3.4);
+      g.fillCircle(mx + 6, my - 4, 2.4);
+      g.fillCircle(mx + 2, my + 8, 1.8);
+      g.lineStyle(1.5, this.tint(DRM.white), alpha * (0.45 + 0.25 * Math.sin(this.t * 3)));
+      g.strokeCircle(mx, my, 21);
+    }
     // Stars turning in the glow — the ambient cosmic tell.
     for (let i = 0; i < 5; i++) {
       const ang = this.t * (0.5 + this.swing) + (i / 5) * TAU;
@@ -1997,23 +2180,39 @@ export class DreamAvatar extends BaseAvatar {
     const capA = this.capAng + droop;
     const tipX = x + Math.cos(capA) * 30;
     const tipY = crownY + Math.sin(capA) * 26;
+    const m = this.mastered;
     g.fillStyle(this.tint(DRM.deep), alpha * 0.95);
     g.fillTriangle(x - 12, crownY, x + 12, crownY, tipX, tipY);
-    g.fillStyle(this.tint(DRM.purple), alpha * 0.9);
+    g.fillStyle(this.tint(m ? DRM.violet : DRM.purple), alpha * 0.9);
     g.fillTriangle(x - 8, crownY - 1, x + 6, crownY - 1, tipX, tipY);
+    // A stitched seam up the cone.
+    g.lineStyle(1, this.tint(m ? DRM.wish : DRM.pale), alpha * (m ? 0.85 : 0.35));
+    g.lineBetween(x - 1, crownY - 1, tipX, tipY);
     // Stars sewn into the cap.
     for (let i = 1; i <= 2; i++) {
       const f = i / 3;
       star(g, this.tint, x + (tipX - x) * f, crownY + (tipY - crownY) * f, 2.2, alpha * 0.9, DRM.star, this.t + i);
     }
-    g.fillStyle(this.tint(DRM.pale), alpha);
+    g.fillStyle(this.tint(m ? DRM.wish : DRM.pale), alpha);
     g.fillRoundedRect(x - 13, crownY - 4, 26, 6, 3);
-    g.fillStyle(this.tint(DRM.woolShade), alpha * 0.6);
+    g.fillStyle(this.tint(m ? DRM.wishDeep : DRM.woolShade), alpha * 0.6);
     g.fillRect(x - 13, crownY, 26, 2);
-    g.fillStyle(this.tint(DRM.star), alpha);
-    g.fillCircle(tipX, tipY, 4);
-    g.fillStyle(this.tint(DRM.white), alpha * 0.7);
-    g.fillCircle(tipX - 1.2, tipY - 1.2, 1.6);
+    // Little wool tufts along the brim.
+    for (let i = 0; i < 5; i++) {
+      g.fillStyle(this.tint(m ? DRM.star : DRM.wool), alpha * 0.9);
+      g.fillCircle(x - 10 + i * 5, crownY - 3.5, 1.6);
+    }
+    if (m) {
+      // Mastered: the pompom is a blazing star rather than a ball of wool.
+      star(g, this.tint, tipX, tipY, 9 + Math.sin(this.t * 4) * 1.2, alpha, DRM.wish, this.t * 1.5);
+      g.fillStyle(this.tint(DRM.white), alpha);
+      g.fillCircle(tipX, tipY, 2.4);
+    } else {
+      g.fillStyle(this.tint(DRM.star), alpha);
+      g.fillCircle(tipX, tipY, 4);
+      g.fillStyle(this.tint(DRM.white), alpha * 0.7);
+      g.fillCircle(tipX - 1.2, tipY - 1.2, 1.6);
+    }
 
     // ── Drowsy tell ──
     // Heavy lids drawn straight over the eyes, plus Zs once the character is far gone.

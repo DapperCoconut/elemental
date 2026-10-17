@@ -968,7 +968,9 @@ const ELECTRIC_AVATAR: AvatarSpec = {
 /**
  * The electricity character rig: two plasma ball hands with current arcing between them, a pair
  * of eyes, and a lightning-rod crown standing off the head with a discharge dancing across the
- * prongs. Hands, eyes and gestures come from BaseAvatar; what electricity adds is the arcing.
+ * prongs. The orb carries copper coil windings and a bolt emblem on the belly; each hand has a
+ * small insulator ring. Mastery adds a floating Tesla toroid over the rod that throws arcs, a
+ * crackling ring round the feet, five white-hot prongs, orbiting motes and wide rimmed coronas.
  */
 export class ElectricityAvatar extends BaseAvatar {
   private fx: ElectricityFx;
@@ -1038,6 +1040,64 @@ export class ElectricityAvatar extends BaseAvatar {
         1.4, a * 0.55, { nodes: false },
       );
     }
+    if (this.mastered) {
+      // A crackling ring round the feet: a solid band with nodes, re-arced between them.
+      const cy = y + 10;
+      g.lineStyle(2, this.tint(this.tones.hot), a * 0.6);
+      g.strokeEllipse(x, cy, 66, 22);
+      const nodes: Pt[] = [];
+      for (let i = 0; i < 6; i++) {
+        const ang = this.t * 0.9 + (i / 6) * TAU;
+        nodes.push({ x: x + Math.cos(ang) * 33, y: cy + Math.sin(ang) * 11 });
+      }
+      for (let i = 0; i < 6; i++) {
+        g.fillStyle(this.tint(this.tones.core), a * 1.1);
+        g.fillCircle(nodes[i].x, nodes[i].y, 2);
+        if (Math.random() < 0.35) {
+          const n2 = nodes[(i + 1) % 6];
+          boltLayered(g, this.tint, this.tones, boltPoints(nodes[i].x, nodes[i].y, n2.x, n2.y, { segments: 4, amplitude: 4 }),
+            1.1, a * 0.9, { nodes: false });
+        }
+      }
+    }
+  }
+
+  /**
+   * Hardware on the orb: two copper coil windings hugging the lower curve and a zig-zag bolt
+   * emblem on the belly that flickers with the current. Mastered, the coil goes gold and the
+   * emblem burns white.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
+    const m = this.mastered;
+    const coil = m ? ELECTRIC.volt : ELECTRIC.copper;
+    for (const [oy, rx] of [[10, 15], [14, 12]] as const) {
+      g.lineStyle(1.8, this.tint(ELECTRIC.tar), 0.5 * alpha);
+      g.beginPath();
+      g.arc(x, y + oy - 9, rx, Math.PI * 0.2, Math.PI * 0.8, false);
+      g.strokePath();
+      g.lineStyle(1.1, this.tint(coil), 0.9 * alpha);
+      g.beginPath();
+      g.arc(x, y + oy - 9.6, rx, Math.PI * 0.22, Math.PI * 0.78, false);
+      g.strokePath();
+    }
+    // The bolt emblem.
+    const flick = 0.65 + 0.35 * Math.abs(Math.sin(this.t * 9 + Math.sin(this.t * 23)));
+    const ex = x, ey = y + 8;
+    const bolt = (s: number) => {
+      g.beginPath();
+      g.moveTo(ex + 1.5 * s, ey - 5 * s);
+      g.lineTo(ex - 2.5 * s, ey + 0.6 * s);
+      g.lineTo(ex - 0.2 * s, ey + 0.6 * s);
+      g.lineTo(ex - 1.5 * s, ey + 5 * s);
+      g.lineTo(ex + 2.5 * s, ey - 0.8 * s);
+      g.lineTo(ex + 0.2 * s, ey - 0.8 * s);
+      g.closePath();
+      g.fillPath();
+    };
+    g.fillStyle(this.tint(this.tones.shell), 0.7 * alpha);
+    bolt(1.3);
+    g.fillStyle(this.tint(m ? ELECTRIC.white : this.tones.hot), flick * alpha);
+    bolt(1);
   }
 
   /**
@@ -1063,7 +1123,7 @@ export class ElectricityAvatar extends BaseAvatar {
       // its shape frame to frame.
       g.lineStyle(3.4 * scale, this.tint(this.tones.shell), alpha * 0.95);
       g.lineBetween(bx, rootY, tx, ty);
-      g.lineStyle(1.8 * scale, this.tint(this.tones.body), alpha * 0.95);
+      g.lineStyle(1.8 * scale, this.tint(this.mastered ? this.tones.core : this.tones.body), alpha * 0.95);
       g.lineBetween(bx, rootY, tx, ty);
       const lit = 0.4 + 0.6 * Math.max(0, Math.sin(this.t * 6 - i * 1.1));
       g.fillStyle(this.tint(this.tones.hot), alpha * 0.9 * lit);
@@ -1081,6 +1141,45 @@ export class ElectricityAvatar extends BaseAvatar {
         boltPoints(tips[i].x, tips[i].y, tips[i + 1].x, tips[i + 1].y, { segments: 4, amplitude: 5 }),
         1.5 * scale, a * 0.9, { nodes: false },
       );
+    }
+
+    // Insulator ring on each hand: a dark band with two ceramic studs.
+    for (let i = 0; i < 2; i++) {
+      const hx = this.armX[i], hy = this.armY[i];
+      g.lineStyle(1.4, this.tint(this.tones.shell), 0.8 * alpha);
+      g.strokeCircle(hx, hy, 7.6);
+      const ang = this.t * (i === 0 ? 3 : -3);
+      for (const o of [0, Math.PI]) {
+        g.fillStyle(this.tint(this.mastered ? ELECTRIC.white : this.tones.hot), 0.9 * alpha);
+        g.fillCircle(hx + Math.cos(ang + o) * 7.6, hy + Math.sin(ang + o) * 7.6, 1.4);
+      }
+    }
+
+    // Mastery regalia: a Tesla toroid hovering over the centre prong, throwing arcs.
+    if (this.mastered) {
+      const top = tips[Math.floor(tips.length / 2)];
+      const tx = top.x, ty = top.y - 7;
+      const bob = Math.sin(this.t * 3) * 1.2;
+      g.lineStyle(5, this.tint(this.tones.glow), alpha * 0.35);
+      g.strokeEllipse(tx, ty + bob, 22, 8);
+      g.lineStyle(3, this.tint(ELECTRIC.steel), alpha * 0.95);
+      g.strokeEllipse(tx, ty + bob, 20, 7);
+      g.lineStyle(1.4, this.tint(ELECTRIC.white), alpha * 0.9);
+      g.beginPath();
+      g.arc(tx, ty + bob - 0.6, 9, Math.PI * 1.1, Math.PI * 1.9, false);
+      g.strokePath();
+      g.fillStyle(this.tint(ELECTRIC.white), alpha);
+      g.fillCircle(tx, ty + bob - 4, 1.8);
+      if (Math.random() < 0.45) {
+        const ang = -Math.PI / 2 + (Math.random() - 0.5) * 2.4;
+        const len = 9 + Math.random() * 9;
+        boltLayered(
+          g, this.tint, this.tones,
+          boltPoints(tx + Math.cos(ang) * 10, ty + bob + Math.sin(ang) * 3.5,
+            tx + Math.cos(ang) * (10 + len), ty + bob + Math.sin(ang) * (3.5 + len), { segments: 3, amplitude: 4 }),
+          1.2, a, { nodes: false },
+        );
+      }
     }
 
     // Mastery orbit: charge motes circling the head on a shallow ellipse, each trailing a spark.
@@ -1110,6 +1209,85 @@ export class ElectricityAvatar extends BaseAvatar {
           width: 1.8, duration: 130, depth: 7, branches: this.mastered ? 2 : 1, tones: this.tones,
         });
       }
+    }
+  }
+}
+
+// ── In-match UI ───────────────────────────────────────────────────────────
+
+/**
+ * Kinetic power as a battery cell pinned under the top HP bar: a dark casing with copper end
+ * caps and a positive terminal, ten cells that light left to right with a liquid top edge and
+ * a bright current dash running along the charged part, and arcs leaping between the
+ * terminals once it is full. The `⚡ n/cap` label is printed over it by the kit.
+ */
+export function drawKineticBattery(
+  g: Phaser.GameObjects.Graphics, tint: ElectricColorFn, tones: BoltTones,
+  cx: number, cy: number, frac: number, t: number, mastered: boolean,
+): void {
+  const f = Phaser.Math.Clamp(frac, 0, 1);
+  const w = 148, h = 20;
+  const l = cx - w / 2, top = cy - h / 2;
+  const full = f >= 0.999;
+  // Glow behind when charged.
+  if (f > 0.05) {
+    g.fillStyle(tint(tones.glow), (0.08 + f * 0.16) * (full ? 0.8 + 0.2 * Math.sin(t * 8) : 1));
+    g.fillRoundedRect(l - 8, top - 6, w + 22, h + 12, 10);
+  }
+  // Casing: shadow, dark shell, bevel.
+  g.fillStyle(tint(0x000000), 0.45);
+  g.fillRoundedRect(l + 2, top + 3, w, h, 5);
+  g.fillStyle(tint(ELECTRIC.tar), 0.97);
+  g.fillRoundedRect(l, top, w, h, 5);
+  g.lineStyle(1.5, tint(mastered ? ELECTRIC.neon : ELECTRIC.amber), 0.9);
+  g.strokeRoundedRect(l, top, w, h, 5);
+  // Copper end cap and terminal.
+  g.fillStyle(tint(ELECTRIC.copper), 1);
+  g.fillRoundedRect(l + w - 1, top + 3, 5, h - 6, 2);
+  g.fillStyle(tint(ELECTRIC.amber), 1);
+  g.fillRoundedRect(l + w + 3, cy - 4, 5, 8, 2);
+  g.fillStyle(tint(ELECTRIC.neon), 0.7);
+  g.fillRect(l + w + 4, cy - 3, 1.5, 6);
+  g.fillStyle(tint(ELECTRIC.copper), 1);
+  g.fillRoundedRect(l - 3, top + 3, 4, h - 6, 2);
+  // Cells.
+  const cells = 10, gap = 2;
+  const iw = w - 8, ih = h - 8;
+  const cw = (iw - gap * (cells - 1)) / cells;
+  const lit = f * cells;
+  for (let i = 0; i < cells; i++) {
+    const x0 = l + 4 + i * (cw + gap);
+    g.fillStyle(tint(tones.shell), 0.9);
+    g.fillRect(x0, top + 4, cw, ih);
+    const k = Phaser.Math.Clamp(lit - i, 0, 1);
+    if (k <= 0) continue;
+    const col = i >= cells - 2 ? tones.core : i >= cells / 2 ? tones.hot : tones.body;
+    g.fillStyle(tint(col), 0.95);
+    g.fillRect(x0, top + 4, cw * k, ih);
+    g.fillStyle(tint(ELECTRIC.white), 0.35);
+    g.fillRect(x0, top + 4, cw * k, 1.6);
+  }
+  // Current dash sweeping along the charged length.
+  if (f > 0.02) {
+    const span = f * iw;
+    const p = (t * 140) % Math.max(1, span);
+    g.fillStyle(tint(ELECTRIC.white), 0.75);
+    g.fillRect(l + 4 + p, top + 5, 4, ih - 2);
+  }
+  // Polarity marks.
+  g.fillStyle(tint(ELECTRIC.white), 0.55);
+  g.fillRect(l - 10, cy - 0.75, 5, 1.5);
+  g.fillRect(l + w + 11, cy - 0.75, 5, 1.5);
+  g.fillRect(l + w + 12.75, cy - 2.5, 1.5, 5);
+  // Full: arcs leaping over the casing between the terminals.
+  if (full) {
+    for (let i = 0; i < 2; i++) {
+      if (Math.random() < 0.4) continue;
+      const mid = cx + (Math.random() - 0.5) * w * 0.6;
+      boltLayered(g, tint, tones,
+        boltPoints(l - 2, top + 2, mid, top - 6 - Math.random() * 4, { segments: 5, amplitude: 4 }), 1.2, 0.85, { nodes: false });
+      boltLayered(g, tint, tones,
+        boltPoints(mid, top - 6, l + w + 6, cy - 4, { segments: 5, amplitude: 4 }), 1.2, 0.85, { nodes: false });
     }
   }
 }

@@ -6,6 +6,7 @@ import type { SummonPurgeTarget } from '../../combat/SummonPurge';
 import type { ProjectileRegistry, RegisteredProjectile } from '../../combat/ProjectileRegistry';
 import { Projectile } from '../../combat/Projectile';
 import { Sfx } from '../../audio';
+import { FONT_DISPLAY } from '../../ui/Theme';
 import {
   CELL_TINT, CellKind, MRW, MarrowAvatar, MarrowColorFn, MarrowFx, antibody, bcell, boneShaft,
   cellGlyph, cytokine, dendrite, killerT, macrophage, mastCell, netWeb, neutrophil, tcell,
@@ -1874,6 +1875,38 @@ export class MarrowKit implements SummonPurgeTarget {
     const H = 22;
 
     boneShaft(g, this.pcol, x, y, W, H, 1);
+    const P = this.pcol;
+    const T = this.vizT;
+    // Bone texture: pores and a hairline crack or two, so the shaft reads as bone, not ivory.
+    for (let i = 0; i < 14; i++) {
+      const px = x + 8 + ((i * 0.618 + 0.11) % 1) * (W - 16);
+      const py = y + 4 + ((i * 0.382 + 0.27) % 1) * (H - 8);
+      g.fillStyle(P(MRW.boneShade), 0.55);
+      g.fillCircle(px, py, 0.7 + (i % 3) * 0.3);
+    }
+    g.lineStyle(0.8, P(MRW.boneDeep), 0.6);
+    g.beginPath();
+    g.moveTo(x + W * 0.31, y + 2); g.lineTo(x + W * 0.33, y + 7); g.lineTo(x + W * 0.315, y + 11);
+    g.moveTo(x + W * 0.72, y + H - 2); g.lineTo(x + W * 0.7, y + H - 7);
+    g.strokePath();
+    // The marrow canal: a red channel threading socket to socket, pulsing like a heartbeat.
+    {
+      const beat = Math.pow(Math.max(0, Math.sin(T * 4.2)), 6);
+      const x0 = x + 21, x1 = x + W - 21, cy = y + H / 2;
+      g.fillStyle(P(MRW.marrowDeep), 0.9);
+      g.fillRect(x0, cy - 2.2, x1 - x0, 4.4);
+      g.fillStyle(P(MRW.marrow), 0.85 + beat * 0.15);
+      g.fillRect(x0, cy - 1.4, x1 - x0, 2.8);
+      g.fillStyle(P(MRW.marrowLit), 0.3 + beat * 0.5);
+      g.fillRect(x0, cy - 1.4, x1 - x0, 1);
+    }
+    // Knuckle-end shading on both epiphyses.
+    for (const ex of [x, x + W]) {
+      g.fillStyle(P(MRW.serum), 0.35);
+      g.fillCircle(ex - 2, y - 1, 3.2);
+      g.lineStyle(1, P(MRW.boneDeep), 0.55);
+      g.lineBetween(ex, y + 2, ex, y + H - 2);
+    }
 
     const cells = this.mine('player');
     for (let i = 0; i < MAX_SUMMONS; i++) {
@@ -1910,23 +1943,59 @@ export class MarrowKit implements SummonPurgeTarget {
     const k = this.heat('player');
     const by = y + H + 8;
     const bh = 10;
-    g.fillStyle(this.pcol(MRW.ink), 0.85);
-    g.fillRoundedRect(x - 3, by - 3, W + 6, bh + 6, 4);
-    g.lineStyle(1.4, this.pcol(k > 0.66 ? MRW.inflame : MRW.marrowDeep), 0.75);
-    g.strokeRoundedRect(x - 3, by - 3, W + 6, bh + 6, 4);
-    g.fillStyle(this.pcol(MRW.deep), 1);
-    g.fillRect(x, by, W, bh);
-    g.fillStyle(this.pcol(MRW.marrow), 1);
-    g.fillRect(x, by, W * k, bh);
-    g.fillStyle(this.pcol(MRW.inflame), 0.55 + 0.35 * Math.sin(this.vizT * 6) * k);
-    g.fillRect(x, by, W * k, bh * 0.45);
-    g.lineStyle(1, this.pcol(MRW.ink), 0.6);
-    for (let i = 1; i < 4; i++) g.lineBetween(x + (W * i) / 4, by, x + (W * i) / 4, by + bh);
+    // Drawn as a blood vessel: a translucent tube of vein wall that floods with blood as the
+    // fever climbs, red cells tumbling along it, faster and redder the hotter it runs.
+    const hotEdge = k > 0.66;
+    g.fillStyle(P(MRW.ink), 0.85);
+    g.fillRoundedRect(x - 4, by - 4, W + 8, bh + 8, (bh + 8) / 2);
+    // Vessel wall.
+    g.fillStyle(P(MRW.marrowDeep), 0.55);
+    g.fillRoundedRect(x - 1, by - 1, W + 2, bh + 2, (bh + 2) / 2);
+    g.fillStyle(P(MRW.deep), 1);
+    g.fillRoundedRect(x, by, W, bh, bh / 2);
+    // Faint capillaries branching off the wall.
+    g.lineStyle(0.8, P(MRW.marrowDeep), 0.8);
+    for (let i = 0; i < 4; i++) {
+      const cx = x + W * (0.15 + i * 0.24);
+      g.lineBetween(cx, by - 1, cx + 4, by - 4);
+      g.lineBetween(cx + 4, by - 4, cx + 8, by - 4.5);
+      g.lineBetween(cx + 6, by + bh + 1, cx + 10, by + bh + 4);
+    }
+    const fw = W * k;
+    if (fw > 1) {
+      g.fillStyle(P(MRW.marrow), 1);
+      g.fillRoundedRect(x, by, Math.max(bh, fw), bh, bh / 2);
+      g.fillStyle(P(MRW.inflame), 0.45 + 0.35 * Math.sin(T * 6) * k);
+      g.fillRoundedRect(x + 1, by + 1, Math.max(bh - 2, fw - 2), bh * 0.42, bh * 0.2);
+      // Red cells: biconcave discs drifting downstream.
+      const speed = 18 + k * 60;
+      for (let i = 0; i < 12; i++) {
+        const cx = x + ((T * speed + i * 37.3) % Math.max(1, fw));
+        const cy = by + bh / 2 + Math.sin(T * 3 + i * 1.9) * (bh * 0.22);
+        const tumble = Math.abs(Math.cos(T * 2 + i));
+        g.fillStyle(P(MRW.marrowDeep), 0.9);
+        g.fillEllipse(cx, cy, 5, 3 + tumble * 1.6);
+        g.fillStyle(P(MRW.marrowLit), 0.75);
+        g.fillEllipse(cx, cy, 3.6, 1.6 + tumble * 1.1);
+        g.fillStyle(P(MRW.marrowDeep), 0.7);
+        g.fillEllipse(cx, cy, 1.6, 0.8 + tumble * 0.6);
+      }
+    }
+    // Glossy highlight along the vessel, and quarter valves.
+    g.fillStyle(P(MRW.serum), 0.18);
+    g.fillRoundedRect(x + 4, by + 1.2, W - 8, 1.6, 0.8);
+    g.lineStyle(1, P(MRW.ink), 0.55);
+    for (let i = 1; i < 4; i++) {
+      const vx = x + (W * i) / 4;
+      g.beginPath(); g.arc(vx - 3, by + bh / 2, bh / 2, -0.9, 0.9); g.strokePath();
+    }
+    g.lineStyle(1.4, P(hotEdge ? MRW.inflame : MRW.marrowDeep), hotEdge ? 0.55 + 0.35 * Math.sin(T * 8) : 0.75);
+    g.strokeRoundedRect(x - 4, by - 4, W + 8, bh + 8, (bh + 8) / 2);
 
     if (!this.hudLabel) {
-      this.hudLabel = this.api.scene.add.text(x, by + bh + 5, '', {
+      this.hudLabel = this.api.scene.add.text(x, by + bh + 7, '', {
         fontSize: '10px',
-        fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+        fontFamily: FONT_DISPLAY,
         color: '#f1e7d0',
         stroke: '#14090e',
         strokeThickness: 3,

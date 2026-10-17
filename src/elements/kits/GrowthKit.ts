@@ -33,6 +33,98 @@ import {
   growthEvolveSellRefundFraction,
 } from '../../data/GrowthEvolve';
 import { meterGain } from '../../combat/Meters';
+import { FONT_DISPLAY, FONT_UI } from '../../ui/Theme';
+
+// ── HUD drawing helpers (DNA helix chart) ───────────────────────────────
+
+function lerpColor(a: number, b: number, t: number): number {
+  const k = Math.max(0, Math.min(1, t));
+  const r = ((a >> 16) & 0xff) + ((((b >> 16) & 0xff) - ((a >> 16) & 0xff)) * k);
+  const gg = ((a >> 8) & 0xff) + ((((b >> 8) & 0xff) - ((a >> 8) & 0xff)) * k);
+  const bl = (a & 0xff) + (((b & 0xff) - (a & 0xff)) * k);
+  return (Math.round(r) << 16) | (Math.round(gg) << 8) | Math.round(bl);
+}
+
+/** A short vertical helix — the Evolve chart's connector from one node down to the next. */
+function drawDnaHelixV(
+  g: Phaser.GameObjects.Graphics, cx: number, y0: number, y1: number, amp: number, color: number, lit: boolean,
+): void {
+  const len = y1 - y0;
+  if (len <= 2) return;
+  const k = (Math.PI * 2) / Math.max(10, len / 1.25);
+  for (let y = y0 + 3; y < y1; y += 4) {
+    const sn = Math.sin((y - y0) * k);
+    g.lineStyle(1, lit ? 0xffd060 : color, lit ? 0.8 : 0.25);
+    g.lineBetween(cx - sn * amp, y, cx + sn * amp, y);
+  }
+  for (let y = y0; y < y1; y += 2) {
+    const y2 = Math.min(y1, y + 2);
+    const s1 = Math.sin((y - y0) * k), s2 = Math.sin((y2 - y0) * k);
+    g.lineStyle(2, color, lit ? 0.95 : 0.4);
+    g.lineBetween(cx + s1 * amp, y, cx + s2 * amp, y2);
+    g.lineStyle(2, lit ? 0x8dffc9 : color, lit ? 0.85 : 0.3);
+    g.lineBetween(cx - s1 * amp, y, cx - s2 * amp, y2);
+  }
+}
+
+/** Base-pair colours, A–T and G–C, as each lit rung's two halves. */
+const DNA_PAIRS: Array<[number, number]> = [[0x44ddaa, 0xffd060], [0xff6f8f, 0x66b8ff]];
+
+/**
+ * A horizontal DNA double helix from `x0` to `x0 + len`, centred on `cy`. Rungs left of
+ * `frac` light up in base-pair colours, the rest stay a dim husk; the helix scrolls slowly
+ * so the chart always feels alive. Strands fade where they twist behind each other.
+ */
+function drawDnaHelix(
+  g: Phaser.GameObjects.Graphics, x0: number, cy: number, len: number, amp: number,
+  frac: number, time: number, rungGap: number, lineW: number,
+): void {
+  const period = rungGap * 5;
+  const k = (Math.PI * 2) / period;
+  const ph = time / 520;
+  const fillX = x0 + len * Math.max(0, Math.min(1, frac));
+  // Rungs (base pairs) first, so the strands lace over them.
+  let idx = 0;
+  for (let x = x0 + rungGap / 2; x < x0 + len; x += rungGap, idx++) {
+    const s = Math.sin((x - x0) * k + ph);
+    const ya = cy + s * amp, yb = cy - s * amp;
+    const lit = x <= fillX;
+    const depth = 0.45 + 0.55 * Math.abs(Math.cos((x - x0) * k + ph));
+    if (lit) {
+      const [ca, cb] = DNA_PAIRS[idx % 2];
+      g.lineStyle(Math.max(1, lineW - 0.5), ca, 0.95 * depth);
+      g.lineBetween(x, ya, x, cy);
+      g.lineStyle(Math.max(1, lineW - 0.5), cb, 0.95 * depth);
+      g.lineBetween(x, cy, x, yb);
+    } else {
+      g.lineStyle(1, 0x1f4630, 0.75 * depth);
+      g.lineBetween(x, ya, x, yb);
+    }
+  }
+  // The two backbones, segment by segment so each can carry its own depth fade.
+  const step = 2.5;
+  for (let x = x0; x < x0 + len; x += step) {
+    const x2 = Math.min(x0 + len, x + step);
+    const s1 = Math.sin((x - x0) * k + ph), s2 = Math.sin((x2 - x0) * k + ph);
+    const c = Math.cos((x - x0) * k + ph);
+    const lit = x <= fillX;
+    // Strand A is in front where cos > 0, strand B where cos < 0.
+    const aA = lit ? (c > 0 ? 1 : 0.5) : (c > 0 ? 0.55 : 0.3);
+    const aB = lit ? (c < 0 ? 1 : 0.5) : (c < 0 ? 0.55 : 0.3);
+    g.lineStyle(lineW, lit ? 0x8dffc9 : 0x2a5a3c, aA);
+    g.lineBetween(x, cy + s1 * amp, x2, cy + s2 * amp);
+    g.lineStyle(lineW, lit ? 0x56d2ff : 0x24485a, aB);
+    g.lineBetween(x, cy - s1 * amp, x2, cy - s2 * amp);
+  }
+  // Growth tip: a bright replication fork where the lit strand meets the dim one.
+  if (frac > 0 && frac < 1) {
+    const pulse = 0.6 + 0.4 * Math.sin(time / 110);
+    g.fillStyle(0xeaffd0, 0.35 * pulse);
+    g.fillCircle(fillX, cy, amp + 2);
+    g.fillStyle(0xffffff, 0.85 * pulse);
+    g.fillCircle(fillX, cy, 1.6);
+  }
+}
 
 type Owner = 'player' | 'npc';
 type CloneVariant = 'yellow' | 'blue' | 'red';
@@ -484,8 +576,8 @@ export class GrowthKit {
   private compromiseBusy = false;
 
   private npcDnaBarGfx: Phaser.GameObjects.Graphics | null = null;
-  private dnaHudBarBg: Phaser.GameObjects.Rectangle | null = null;
-  private dnaHudBarFill: Phaser.GameObjects.Rectangle | null = null;
+  /** The DNA double-helix gauge pinned under the HP bar — one Graphics, redrawn per frame. */
+  private dnaHudBarGfx: Phaser.GameObjects.Graphics | null = null;
   private dnaHudBarText: Phaser.GameObjects.Text | null = null;
   private chargePips: Phaser.GameObjects.Arc[] = [];
 
@@ -604,8 +696,7 @@ export class GrowthKit {
     this.evolveRightWasDown = false;
 
     if (this.npcDnaBarGfx) { this.npcDnaBarGfx.destroy(); this.npcDnaBarGfx = null; }
-    if (this.dnaHudBarBg) { this.dnaHudBarBg.destroy(); this.dnaHudBarBg = null; }
-    if (this.dnaHudBarFill) { this.dnaHudBarFill.destroy(); this.dnaHudBarFill = null; }
+    if (this.dnaHudBarGfx) { this.dnaHudBarGfx.destroy(); this.dnaHudBarGfx = null; }
     if (this.dnaHudBarText) { this.dnaHudBarText.destroy(); this.dnaHudBarText = null; }
     for (const p of this.chargePips) p.destroy();
     this.chargePips = [];
@@ -2316,7 +2407,7 @@ export class GrowthKit {
     else this.npcDna = Math.min(DNA_CAP, this.npcDna + amount);
   }
 
-  /** Floating DNA bar above the NPC's head — the player's own DNA lives on the HUD bar. */
+  /** Floating DNA helix above the NPC's head — the player's own DNA lives on the HUD bar. */
   private drawDnaBar(): void {
     if (this.arena.npcElementId !== 'growth') {
       if (this.npcDnaBarGfx) this.npcDnaBarGfx.clear();
@@ -2329,49 +2420,92 @@ export class GrowthKit {
       this.npcDnaBarGfx = g;
     }
     g.clear();
-    const w = 44, h = 5;
+    const w = 46;
     const bx = fighter.x - w / 2;
-    const by = fighter.y - 29;
-    g.fillStyle(0x111111, 0.85);
-    g.fillRect(bx - 1, by - 1, w + 2, h + 2);
-    g.fillStyle(0x44ddaa, 1);
-    g.fillRect(bx, by, w * (this.npcDna / DNA_CAP), h);
+    const by = fighter.y - 27;
+    g.fillStyle(0x061208, 0.78);
+    g.fillRoundedRect(bx - 3, by - 5, w + 6, 10, 4);
+    g.lineStyle(1, 0x2f6a44, 0.9);
+    g.strokeRoundedRect(bx - 3, by - 5, w + 6, 10, 4);
+    drawDnaHelix(g, bx, by, w, 3.2, this.npcDna / DNA_CAP, this.arena.scene.time.now, 7, 1);
   }
 
-  /** DNA bar pinned to the HUD, just below the top-of-screen HP bar (player only). */
+  /** DNA gauge pinned to the HUD, just below the top-of-screen HP bar (player only) — a
+   *  double-helix growth chart: each collected strand lights one more base-pair rung. */
   private drawDnaHudBar(): void {
     if (this.arena.elementId !== 'growth') {
-      if (this.dnaHudBarBg) { this.dnaHudBarBg.destroy(); this.dnaHudBarBg = null; }
-      if (this.dnaHudBarFill) { this.dnaHudBarFill.destroy(); this.dnaHudBarFill = null; }
+      if (this.dnaHudBarGfx) { this.dnaHudBarGfx.destroy(); this.dnaHudBarGfx = null; }
       if (this.dnaHudBarText) { this.dnaHudBarText.destroy(); this.dnaHudBarText = null; }
       return;
     }
     const { scene, width } = this.arena;
-    const barY = this.arena.hpBarY + this.arena.hpBarH / 2 + 8;
-    const barH = 10;
-    const left = width / 2 - this.arena.hpBarW / 2;
-    if (!this.dnaHudBarBg) {
-      this.dnaHudBarBg = scene.add.rectangle(width / 2, barY, this.arena.hpBarW + 4, barH + 4, 0x0a0a18, 0.9)
-        .setStrokeStyle(2, 0x445577).setDepth(20);
-      this.dnaHudBarFill = scene.add.rectangle(left, barY, 0, barH, 0x44ddaa, 1)
-        .setOrigin(0, 0.5).setDepth(21);
+    const barW = this.arena.hpBarW;
+    const barH = 16;
+    const barY = this.arena.hpBarY + this.arena.hpBarH / 2 + 11;
+    const left = width / 2 - barW / 2;
+    if (!this.dnaHudBarGfx) {
+      this.dnaHudBarGfx = scene.add.graphics().setDepth(20);
       this.dnaHudBarText = scene.add
-        .text(width / 2, barY, '', {
+        .text(width / 2, barY + barH / 2 + 7, '', {
           fontSize: '11px',
-          fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
-          color: '#ffffff',
-          stroke: '#000000',
-          strokeThickness: 3,
+          fontFamily: FONT_DISPLAY,
+          color: '#c8ffe6',
+          stroke: '#04140a',
+          strokeThickness: 4,
         })
         .setOrigin(0.5)
         .setDepth(22);
     }
-    if (this.dnaHudBarFill) {
-      this.dnaHudBarFill.setSize(this.arena.hpBarW * Math.min(1, this.playerDna / DNA_CAP), barH);
+    const g = this.dnaHudBarGfx;
+    const now = scene.time.now;
+    const frac = Math.min(1, this.playerDna / DNA_CAP);
+    const full = frac >= 1;
+    g.clear();
+
+    // Specimen-slide backing plate: dark glass with a lab-chart grid and bevelled rim.
+    const px = left - 10, py = barY - barH / 2 - 4, pw = barW + 20, ph = barH + 8;
+    g.fillStyle(0x000000, 0.35);
+    g.fillRoundedRect(px + 2, py + 3, pw, ph, 7);
+    g.fillStyle(0x07160d, 0.94);
+    g.fillRoundedRect(px, py, pw, ph, 7);
+    g.lineStyle(1, 0x173a24, 0.8);
+    for (let gx = left; gx <= left + barW; gx += barW / DNA_CAP) {
+      g.lineBetween(gx, py + 3, gx, py + ph - 3);
     }
+    g.lineBetween(left, barY, left + barW, barY);
+    // Glass sheen across the top half.
+    g.fillStyle(0xffffff, 0.05);
+    g.fillRoundedRect(px + 3, py + 2, pw - 6, ph / 2 - 2, 5);
+    const rim = full ? lerpColor(0x44ffaa, 0xeaffd0, 0.5 + 0.5 * Math.sin(now / 160)) : 0x3f8a5c;
+    g.lineStyle(2, rim, 1);
+    g.strokeRoundedRect(px, py, pw, ph, 7);
+    g.lineStyle(1, 0x0b2a16, 1);
+    g.strokeRoundedRect(px + 2, py + 2, pw - 4, ph - 4, 5);
+
+    // The helix itself.
+    drawDnaHelix(g, left, barY, barW, barH / 2 - 1, frac, now, 9, 2);
+
+    // Strand caps: little nucleus end-knobs at each end of the chart.
+    for (const ex of [px + 3, px + pw - 3]) {
+      g.fillStyle(0x0b2a16, 1);
+      g.fillCircle(ex, barY, 5);
+      g.fillStyle(full ? 0x9cffcf : 0x44ddaa, 1);
+      g.fillCircle(ex, barY, 3);
+      g.fillStyle(0xffffff, 0.6);
+      g.fillCircle(ex - 1, barY - 1, 1.2);
+    }
+
+    if (full) {
+      // Ready to evolve: a soft pulse over the whole chart.
+      const pulse = 0.5 + 0.5 * Math.sin(now / 200);
+      g.lineStyle(3, 0x66ffbb, 0.18 + pulse * 0.22);
+      g.strokeRoundedRect(px - 3, py - 3, pw + 6, ph + 6, 9);
+    }
+
     if (this.dnaHudBarText) {
-      const bodyTag = this.fighterBody.isCloneBody ? '  (clone body)' : '';
-      this.dnaHudBarText.setText(`\u{1F9EC} ${this.playerDna} / ${DNA_CAP}${bodyTag}`);
+      const bodyTag = this.fighterBody.isCloneBody ? '  \u00B7 CLONE BODY' : '';
+      this.dnaHudBarText.setText(`DNA ${this.playerDna} / ${DNA_CAP}${bodyTag}`);
+      this.dnaHudBarText.setColor(full ? '#eaffd0' : '#c8ffe6');
     }
   }
 
@@ -2722,19 +2856,51 @@ export class GrowthKit {
     const panelH = 66 + (showTabs ? 26 : 0) + rows * rowGap + extraRows * (rowGap + 10) + 34;
 
     const accent = sickTab ? 0x8a2a2a : 0x4a8a2a;
-    gfx.fillStyle(sickTab ? 0x1a0808 : 0x0c1808, 0.94);
-    gfx.fillRoundedRect(panelX - 10, panelY - 6, panelW + 20, panelH, 14);
-    gfx.lineStyle(2, accent, 0.9);
-    gfx.strokeRoundedRect(panelX - 10, panelY - 6, panelW + 20, panelH, 14);
+    const ppx = panelX - 10, ppy = panelY - 6, ppw = panelW + 20;
+    // Drop shadow, then the chart sheet itself.
+    gfx.fillStyle(0x000000, 0.45);
+    gfx.fillRoundedRect(ppx + 4, ppy + 6, ppw, panelH, 14);
+    gfx.fillStyle(sickTab ? 0x170707 : 0x08140a, 0.97);
+    gfx.fillRoundedRect(ppx, ppy, ppw, panelH, 14);
+    // Lab-chart graph paper: fine grid plus a heavier line every fifth cell.
+    for (let gx = ppx + 12, i = 0; gx < ppx + ppw - 6; gx += 12, i++) {
+      gfx.lineStyle(1, sickTab ? 0x2a1010 : 0x10261a, i % 5 === 0 ? 0.9 : 0.45);
+      gfx.lineBetween(gx, ppy + 8, gx, ppy + panelH - 8);
+    }
+    for (let gy = ppy + 12, i = 0; gy < ppy + panelH - 6; gy += 12, i++) {
+      gfx.lineStyle(1, sickTab ? 0x2a1010 : 0x10261a, i % 5 === 0 ? 0.9 : 0.45);
+      gfx.lineBetween(ppx + 8, gy, ppx + ppw - 8, gy);
+    }
+    // Header band with a helix running behind the title.
+    gfx.fillStyle(sickTab ? 0x2a0c0c : 0x0f2a16, 0.95);
+    gfx.fillRoundedRect(ppx + 6, ppy + 4, ppw - 12, 40, 10);
+    drawDnaHelix(gfx, ppx + 18, panelY + 20, ppw - 36, 9,
+      sickTab ? 0 : Math.min(1, this.playerDna / DNA_CAP), 0, 11, 2);
+    gfx.fillStyle(sickTab ? 0x2a0c0c : 0x0f2a16, 0.82);
+    gfx.fillRoundedRect(W / 2 - 120, panelY - 2, 240, 42, 10);
+    // Double rim — bright outer, dark inner bevel.
+    gfx.lineStyle(3, accent, 1);
+    gfx.strokeRoundedRect(ppx, ppy, ppw, panelH, 14);
+    gfx.lineStyle(1, sickTab ? 0xff8899 : 0x9cffcf, 0.35);
+    gfx.strokeRoundedRect(ppx + 4, ppy + 4, ppw - 8, panelH - 8, 11);
+    // Corner nucleus rivets.
+    for (const [rx, ry] of [[ppx + 10, ppy + 10], [ppx + ppw - 10, ppy + 10], [ppx + 10, ppy + panelH - 10], [ppx + ppw - 10, ppy + panelH - 10]]) {
+      gfx.fillStyle(accent, 1);
+      gfx.fillCircle(rx, ry, 4);
+      gfx.fillStyle(0xffffff, 0.45);
+      gfx.fillCircle(rx - 1, ry - 1, 1.5);
+    }
 
     const titleText = sickTab ? '🩸 SICKNESS'
       : body.isCloneBody ? '🧬 EVOLVE — CLONE BODY' : '🧬 EVOLVE';
     const title = scene.add.text(W / 2, panelY + 10, titleText, {
-      fontSize: '17px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+      fontSize: '18px', fontFamily: FONT_DISPLAY,
       color: sickTab ? '#ff8899' : body.isCloneBody ? '#ffcc88' : '#aaffcc',
+      stroke: '#020a04', strokeThickness: 5,
     }).setOrigin(0.5).setDepth(41);
     const dnaText = scene.add.text(W / 2, panelY + 30, `\u{1F9EC} DNA: ${this.playerDna}/${DNA_CAP}`, {
-      fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#44ddaa',
+      fontSize: '13px', fontFamily: FONT_DISPLAY, color: '#66ffc4',
+      stroke: '#020a04', strokeThickness: 4,
     }).setOrigin(0.5).setDepth(41);
     this.evolveLabels.push(title, dnaText);
 
@@ -2752,7 +2918,7 @@ export class GrowthKit {
       showTabs
         ? 'Click: buy   Right-click: sell (needs Fast Evolution)   Click a tab to swap trees   [E] Close'
         : 'Click: buy   Right-click: sell (needs Fast Evolution)   SPACE: swap bodies   [E] Close', {
-        fontSize: '11px', fontFamily: 'Arial', color: '#cccccc',
+        fontSize: '11px', fontFamily: FONT_UI, color: '#bfe8cf', stroke: '#000000', strokeThickness: 3,
       }).setOrigin(0.5).setDepth(41);
     this.evolveLabels.push(hint);
   }
@@ -2768,10 +2934,14 @@ export class GrowthKit {
       const cx = W / 2 + (i - 0.5) * (tabW + 8);
       const bx = cx - tabW / 2;
       const on = this.evolveTab === t.id;
-      gfx.fillStyle(on ? t.color : 0x1a1a1a, on ? 0.9 : 0.8);
-      gfx.fillRoundedRect(bx, y - tabH / 2, tabW, tabH, 6);
+      gfx.fillStyle(on ? t.color : 0x111611, on ? 0.95 : 0.85);
+      gfx.fillRoundedRect(bx, y - tabH / 2, tabW, tabH, 11);
+      if (on) {
+        gfx.fillStyle(0xffffff, 0.14);
+        gfx.fillRoundedRect(bx + 3, y - tabH / 2 + 2, tabW - 6, tabH / 2 - 2, 8);
+      }
       gfx.lineStyle(2, t.color, on ? 1 : 0.5);
-      gfx.strokeRoundedRect(bx, y - tabH / 2, tabW, tabH, 6);
+      gfx.strokeRoundedRect(bx, y - tabH / 2, tabW, tabH, 11);
       const lbl = scene.add.text(cx, y, t.label, {
         fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: on ? '#ffffff' : '#999999',
       }).setOrigin(0.5).setDepth(41);
@@ -2800,12 +2970,27 @@ export class GrowthKit {
     const fillCol = node.isUltimate
       ? (maxed ? 0x554411 : lockedOut ? 0x2a2214 : 0x3a3018)
       : maxed ? 0x1e4d2a : level > 0 ? 0x1a3d22 : 0x14281a;
-    gfx.fillStyle(fillCol, 0.96);
-    gfx.fillRoundedRect(bx, ny - cardH / 2, cardW, cardH, 8);
+    const by = ny - cardH / 2;
+    gfx.fillStyle(0x000000, 0.4);
+    gfx.fillRoundedRect(bx + 2, by + 3, cardW, cardH, 8);
+    gfx.fillStyle(fillCol, 0.97);
+    gfx.fillRoundedRect(bx, by, cardW, cardH, 8);
+    // Cell-membrane sheen and a faint nucleus in the lower-right corner.
+    gfx.fillStyle(0xffffff, level > 0 ? 0.08 : 0.04);
+    gfx.fillRoundedRect(bx + 3, by + 2, cardW - 6, cardH * 0.38, 6);
+    gfx.fillStyle(pathColor, level > 0 ? 0.16 : 0.07);
+    gfx.fillCircle(bx + cardW - 22, ny + 4, 14);
+    // Path-colour spine down the left edge, like a gel-lane marker.
+    gfx.fillStyle(node.isUltimate ? 0xffcc44 : pathColor, lockedOut ? 0.35 : level > 0 ? 1 : 0.6);
+    gfx.fillRoundedRect(bx + 2, by + 6, 3, cardH - 12, 1.5);
     gfx.lineStyle(2, node.isUltimate ? 0xffcc44 : affordable ? pathColor : 0x3a5a3a, node.isUltimate || affordable ? 1 : 0.7);
-    gfx.strokeRoundedRect(bx, ny - cardH / 2, cardW, cardH, 8);
+    gfx.strokeRoundedRect(bx, by, cardW, cardH, 8);
+    if (maxed) {
+      gfx.lineStyle(1, 0xeaffd0, 0.5);
+      gfx.strokeRoundedRect(bx + 2, by + 2, cardW - 4, cardH - 4, 6);
+    }
 
-    const nameLabel = scene.add.text(bx + 7, ny - cardH / 2 + 5, `${node.isUltimate ? '★ ' : ''}${node.name}`, {
+    const nameLabel = scene.add.text(bx + 9, ny - cardH / 2 + 5, `${node.isUltimate ? '★ ' : ''}${node.name}`, {
       fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
       color: node.isUltimate ? '#ffdd66' : '#eeffee',
     }).setOrigin(0, 0).setDepth(41);
@@ -2817,20 +3002,25 @@ export class GrowthKit {
       fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
       color: maxed ? '#88ffaa' : lockedOut ? '#dd8888' : affordable ? '#ffee88' : '#997755',
     }).setOrigin(1, 0).setDepth(41);
-    const descLabel = scene.add.text(bx + 7, ny - cardH / 2 + 21, node.description, {
-      fontSize: '9px', fontFamily: 'Arial', color: '#aaccaa',
+    const descLabel = scene.add.text(bx + 9, ny - cardH / 2 + 21, node.description, {
+      fontSize: '9px', fontFamily: FONT_UI, color: '#b4d6b8',
       wordWrap: { width: cardW - 40 }, maxLines: 3,
     }).setOrigin(0, 0).setDepth(41);
     this.evolveLabels.push(nameLabel, costLabel, descLabel);
 
-    // Tier pips (bottom-right)
+    // Tier pips (bottom-right) — one base-pair rung per tier, lit in its pair colours.
     for (let t = 0; t < maxLevel; t++) {
       const px = bx + cardW - 10 - (maxLevel - 1 - t) * 10;
       const py = ny + cardH / 2 - 9;
-      gfx.fillStyle(t < level ? 0x88ff66 : 0x2a442a, 1);
-      gfx.fillCircle(px, py, 3.2);
-      gfx.lineStyle(1, 0x5a8a4a, 0.9);
-      gfx.strokeCircle(px, py, 3.2);
+      const on = t < level;
+      const [ca, cb] = DNA_PAIRS[t % 2];
+      gfx.lineStyle(2, on ? ca : 0x2a442a, 1);
+      gfx.lineBetween(px, py - 5, px, py);
+      gfx.lineStyle(2, on ? cb : 0x2a442a, 1);
+      gfx.lineBetween(px, py, px, py + 5);
+      gfx.fillStyle(on ? 0xeaffd0 : 0x3a5a3a, 1);
+      gfx.fillCircle(px, py - 5, 1.6);
+      gfx.fillCircle(px, py + 5, 1.6);
     }
 
     this.evolveAreas.push({ id: node.id, x: bx, y: ny - cardH / 2, w: cardW, h: cardH });
@@ -2851,7 +3041,7 @@ export class GrowthKit {
       const cx = panelX + colW * colIdx + colW / 2;
       const cssColor = `#${path.color.toString(16).padStart(6, '0')}`;
       const pathLabel = scene.add.text(cx, topY, path.name.toUpperCase(), {
-        fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: cssColor,
+        fontSize: '13px', fontFamily: FONT_DISPLAY, color: cssColor, stroke: '#020a04', strokeThickness: 4,
       }).setOrigin(0.5).setDepth(41);
       this.evolveLabels.push(pathLabel);
 
@@ -2869,10 +3059,9 @@ export class GrowthKit {
           ? growthEvolveUltimateCost(fastTier, apex)
           : growthEvolveNodeCost(level, node.row, fastTier, apex);
 
-        // Connector down to the next node
+        // Connector down to the next node — a little helix, lit once this tier is bought.
         if (rowIdx < nodes.length - 1) {
-          gfx.lineStyle(2, path.color, 0.35);
-          gfx.lineBetween(cx, ny + cardH / 2, cx, ny + rowGap - cardH / 2);
+          drawDnaHelixV(gfx, cx, ny + cardH / 2, ny + rowGap - cardH / 2, 4, path.color, level > 0);
         }
 
         this.drawNodeCard(gfx, node, cx, ny, cardW, cardH, {
@@ -2905,7 +3094,7 @@ export class GrowthKit {
         fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: maxed ? '#88ffaa' : affordable ? '#ffee88' : '#997755',
       }).setOrigin(1, 0).setDepth(41);
       const descLabel = scene.add.text(bx + 7, bottomY - cardH / 2 + 21, GROWTH_CLONE_MATURITY_DESC, {
-        fontSize: '9px', fontFamily: 'Arial', color: '#ccaa88', wordWrap: { width: cardW - 40 }, maxLines: 3,
+        fontSize: '9px', fontFamily: FONT_UI, color: '#ccaa88', wordWrap: { width: cardW - 40 }, maxLines: 3,
       }).setOrigin(0, 0).setDepth(41);
       this.evolveLabels.push(nameLabel, costLabel, descLabel);
       for (let t = 0; t < GROWTH_CLONE_MATURITY_MAX_LEVEL; t++) {
@@ -2948,7 +3137,7 @@ export class GrowthKit {
             color: owned ? '#bb99ff' : affordable ? '#ffee88' : '#776699',
           }).setOrigin(1, 0).setDepth(41);
         const descLabel = scene.add.text(bx + 7, rowY - cardH / 2 + 21, def.description, {
-          fontSize: '9px', fontFamily: 'Arial', color: '#bbaacc',
+          fontSize: '9px', fontFamily: FONT_UI, color: '#bbaacc',
           wordWrap: { width: cardW - 14 }, maxLines: 3,
         }).setOrigin(0, 0).setDepth(41);
         this.evolveLabels.push(nameLabel, costLabel, descLabel);
@@ -2973,7 +3162,7 @@ export class GrowthKit {
       const cx = panelX + colW * colIdx + colW / 2;
       const cssColor = `#${path.color.toString(16).padStart(6, '0')}`;
       const pathLabel = scene.add.text(cx, topY, path.name.toUpperCase(), {
-        fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: cssColor,
+        fontSize: '13px', fontFamily: FONT_DISPLAY, color: cssColor, stroke: '#020a04', strokeThickness: 4,
       }).setOrigin(0.5).setDepth(41);
       this.evolveLabels.push(pathLabel);
 
@@ -2991,8 +3180,7 @@ export class GrowthKit {
           : growthEvolveNodeCost(level, node.row, fastTier, apex);
 
         if (rowIdx < nodes.length - 1) {
-          gfx.lineStyle(2, path.color, 0.35);
-          gfx.lineBetween(cx, ny + cardH / 2, cx, ny + rowGap - cardH / 2);
+          drawDnaHelixV(gfx, cx, ny + cardH / 2, ny + rowGap - cardH / 2, 4, path.color, level > 0);
         }
 
         this.drawNodeCard(gfx, node, cx, ny, cardW, cardH, {

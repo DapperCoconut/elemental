@@ -4,6 +4,7 @@ import {
   ActiveStatus, StatusDescriptor, collectStatuses, remainingMs,
 } from '../../combat/StatusEffects';
 import { Sfx } from '../../audio';
+import * as UI from '../../ui';
 
 /**
  * What each status sounds like when it lands on the player.
@@ -107,6 +108,11 @@ interface Slot {
   count: Phaser.GameObjects.Text;
   /** Descriptor id currently bound to this slot, or null when hidden. */
   boundId: string | null;
+  /** What the frame layer paints for this slot this frame. */
+  color: number;
+  ratio: number;
+  debuff: boolean;
+  remainingMs: number;
 }
 
 /**
@@ -122,7 +128,9 @@ interface Slot {
  */
 export class StatusHudKit {
   private slots: Slot[] = [];
-  private tipPanel: Phaser.GameObjects.Rectangle | null = null;
+  private tipPanel: Phaser.GameObjects.Graphics | null = null;
+  /** One layer paints every slot's tile, timer sweep and rim — redrawn each frame. */
+  private frameGfx: Phaser.GameObjects.Graphics | null = null;
   private tipTitle: Phaser.GameObjects.Text | null = null;
   private tipBody: Phaser.GameObjects.Text | null = null;
   private tipTimer: Phaser.GameObjects.Text | null = null;
@@ -171,6 +179,7 @@ export class StatusHudKit {
     const player = this.arena.player;
     if (!player || !player.active) {
       for (const slot of this.slots) this.hideSlot(slot);
+      this.frameGfx?.clear();
       this.hideTooltip();
       return;
     }
@@ -214,6 +223,7 @@ export class StatusHudKit {
       : statuses;
     shown.forEach((status, i) => this.paintSlot(this.slots[i], status));
     for (let i = shown.length; i < this.slots.length; i++) this.hideSlot(this.slots[i]);
+    this.paintFrames();
 
     this.refreshTooltip(shown);
   }
@@ -224,6 +234,8 @@ export class StatusHudKit {
       slot.bg.destroy(); slot.fill.destroy(); slot.icon.destroy(); slot.count.destroy();
     }
     this.slots = [];
+    this.frameGfx?.destroy();
+    this.frameGfx = null;
     this.hoveredSlot = null;
     this.tipPanel?.destroy(); this.tipTitle?.destroy();
     this.tipBody?.destroy(); this.tipTimer?.destroy();
@@ -253,21 +265,21 @@ export class StatusHudKit {
 
   private buildSlots(): void {
     const scene = this.arena.scene;
+    this.frameGfx = scene.add.graphics().setDepth(DEPTH_BOX).setScrollFactor(0);
     for (let i = 0; i < SLOT_COUNT; i++) {
-      const bg = scene.add.rectangle(0, 0, BOX, BOX, 0x0a0a14, 0.85)
-        .setStrokeStyle(2, 0x333355).setDepth(DEPTH_BOX).setScrollFactor(0).setVisible(false);
-      // Origin (0.5, 1) pins the fill to the box's bottom edge so shrinking its height
-      // drains it downward rather than shifting it around.
-      const fill = scene.add.rectangle(0, 0, BOX - 4, BOX - 4, 0x333355, 0.45)
+      // The rectangle is only the hover target now; the frame layer paints the tile.
+      const bg = scene.add.rectangle(0, 0, BOX, BOX, 0x000000, 0.001)
+        .setDepth(DEPTH_BOX).setScrollFactor(0).setVisible(false);
+      const fill = scene.add.rectangle(0, 0, BOX - 4, BOX - 4, 0x333355, 0)
         .setOrigin(0.5, 1).setDepth(DEPTH_FILL).setScrollFactor(0).setVisible(false);
       const icon = scene.add.text(0, 0, '', { fontSize: '18px' })
         .setOrigin(0.5).setDepth(DEPTH_ICON).setScrollFactor(0).setVisible(false);
       const count = scene.add.text(0, 0, '', {
-        fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+        fontSize: '10px', fontFamily: UI.FONT_DISPLAY,
         color: '#ffffff', stroke: '#000000', strokeThickness: 3,
       }).setOrigin(1, 1).setDepth(DEPTH_COUNT).setScrollFactor(0).setVisible(false);
 
-      const slot: Slot = { bg, fill, icon, count, boundId: null };
+      const slot: Slot = { bg, fill, icon, count, boundId: null, color: 0, ratio: 1, debuff: false, remainingMs: 0 };
       // Hover only — no pointerdown handler, so the arena's click-to-cast path is untouched.
       bg.setInteractive({ useHandCursor: false })
         .on('pointerover', () => { this.hoveredSlot = slot; })
@@ -300,17 +312,15 @@ export class StatusHudKit {
 
   private buildTooltip(): void {
     const scene = this.arena.scene;
-    this.tipPanel = scene.add.rectangle(0, 0, TIP_W, 60, 0x0a0a18, 0.96)
-      .setOrigin(0, 0).setStrokeStyle(2, 0x445577)
-      .setDepth(DEPTH_TIP_PANEL).setScrollFactor(0).setVisible(false);
+    this.tipPanel = scene.add.graphics().setDepth(DEPTH_TIP_PANEL).setScrollFactor(0).setVisible(false);
     this.tipTitle = scene.add.text(0, 0, '', {
-      fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffffff',
+      fontSize: '13px', fontFamily: UI.FONT_DISPLAY, color: '#ffffff', stroke: '#000000', strokeThickness: 2,
     }).setOrigin(0, 0).setDepth(DEPTH_TIP_TEXT).setScrollFactor(0).setVisible(false);
     this.tipTimer = scene.add.text(0, 0, '', {
-      fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ffdd66',
+      fontSize: '11px', fontFamily: UI.FONT_DISPLAY, color: '#ffdd66',
     }).setOrigin(0, 0).setDepth(DEPTH_TIP_TEXT).setScrollFactor(0).setVisible(false);
     this.tipBody = scene.add.text(0, 0, '', {
-      fontSize: '11px', color: '#bbccdd', wordWrap: { width: TIP_W - TIP_PAD * 2 },
+      fontSize: '11px', fontFamily: UI.FONT_UI, color: '#c8d4e4', wordWrap: { width: TIP_W - TIP_PAD * 2 },
     }).setOrigin(0, 0).setDepth(DEPTH_TIP_TEXT).setScrollFactor(0).setVisible(false);
   }
 
@@ -318,20 +328,88 @@ export class StatusHudKit {
     const { desc } = status;
     slot.boundId = desc.id;
 
-    slot.bg.setVisible(true).setStrokeStyle(2, desc.color);
+    slot.bg.setVisible(true);
     slot.icon.setVisible(true).setText(desc.emoji);
 
-    // Drain: full height when freshly applied, zero as it expires. Untimed effects
-    // (stacks, amounts, flags) stay full so the box still reads as its own color.
     const total = this.totals.get(desc.id) ?? 0;
-    const ratio = status.remainingMs > 0 && total > 0
+    slot.ratio = status.remainingMs > 0 && total > 0
       ? Phaser.Math.Clamp(status.remainingMs / total, 0, 1)
       : 1;
-    slot.fill.setVisible(true).setFillStyle(desc.color, 0.45);
-    slot.fill.setSize(BOX - 4, (BOX - 4) * ratio);
+    slot.color = desc.color;
+    slot.debuff = desc.priority < 100;
+    slot.remainingMs = status.remainingMs;
+    // A timer about to lapse blinks its icon.
+    const ending = status.remainingMs > 0 && status.remainingMs < 1500;
+    slot.icon.setAlpha(ending ? 0.55 + 0.45 * Math.abs(Math.sin(this.arena.scene.time.now * 0.012)) : 1);
 
     const label = this.countLabel(status);
     slot.count.setVisible(label !== '').setText(label);
+  }
+
+  /**
+   * Every visible tile: a drop-shadowed plate tinted by the effect's colour, cut on the
+   * diagonal for debuffs and on all four corners for buffs so the two read apart at a glance,
+   * a clock sweep darkening the time already spent, and a rim that drains around the tile.
+   */
+  private paintFrames(): void {
+    const g = this.frameGfx;
+    if (!g || !g.active) return;
+    g.clear();
+    const now = this.arena.scene.time.now;
+    for (const slot of this.slots) {
+      if (!slot.boundId || !slot.bg.visible) continue;
+      const cx = slot.bg.x;
+      const cy = slot.bg.y;
+      const x = cx - BOX / 2;
+      const y = cy - BOX / 2;
+      const col = slot.color;
+      const corners = slot.debuff ? UI.DIAGONAL_CORNERS : UI.ALL_CORNERS;
+      const cut = slot.debuff ? 9 : 6;
+
+      UI.fillNotched(g, x + 1, y + 3, BOX, BOX, 0x000000, 0.5, cut, corners);
+      UI.fillNotchedGradient(g, x, y, BOX, BOX,
+        UI.mix(UI.tintPlate(col, 0.35), 0xffffff, 0.06), UI.mix(UI.tintPlate(col, 0.15), 0x000000, 0.5),
+        0.95, cut, corners, 10);
+      // Coloured core glow behind the icon.
+      g.fillStyle(col, 0.16); g.fillCircle(cx, cy - 1, BOX * 0.36);
+      g.fillStyle(col, 0.1); g.fillCircle(cx, cy - 1, BOX * 0.46);
+
+      // Clock sweep over the spent portion of a timed effect.
+      if (slot.ratio < 0.999) {
+        const start = -Math.PI / 2;
+        const spent = (1 - slot.ratio) * Math.PI * 2;
+        g.fillStyle(0x000000, 0.45);
+        // Kept inside the tile's inscribed circle so the sweep never spills past the plate.
+        g.slice(cx, cy, BOX * 0.42, start, start + spent, false);
+        g.fillPath();
+      }
+
+      UI.strokeNotched(g, x, y, BOX, BOX, UI.mix(col, 0x000000, 0.35), 0.9, 3, cut, corners);
+      UI.strokeNotched(g, x, y, BOX, BOX, col, 0.85, 1.5, cut, corners);
+      UI.drawSheen(g, x, y, BOX, BOX, UI.lighten(col, 0.7), 0.4, cut);
+
+      // Remaining-time rim along the foot of the tile.
+      if (slot.ratio < 0.999) {
+        g.fillStyle(0x000000, 0.6);
+        g.fillRect(x + 4, y + BOX - 4, BOX - 8, 2.5);
+        g.fillStyle(UI.lighten(col, 0.35), 1);
+        g.fillRect(x + 4, y + BOX - 4, (BOX - 8) * slot.ratio, 2.5);
+      }
+
+      // Debuffs carry a small warning chevron, buffs a small spark.
+      if (slot.debuff) {
+        g.fillStyle(0xff4d4d, 0.95);
+        g.fillTriangle(x + BOX - 3, y + 3, x + BOX - 10, y + 3, x + BOX - 3, y + 10);
+      } else {
+        UI.fillDiamond(g, x + 5, y + 5, 2.5, UI.lighten(col, 0.5), 0.9);
+      }
+
+      // Lapsing soon: the rim flashes.
+      if (slot.remainingMs > 0 && slot.remainingMs < 1500) {
+        const a = Math.abs(Math.sin(now * 0.012));
+        UI.strokeNotched(g, x - 2, y - 2, BOX + 4, BOX + 4, 0xffffff, a * 0.6, 1.5, cut + 1, corners);
+      }
+    }
   }
 
   private countLabel(status: ActiveStatus): string {
@@ -372,7 +450,15 @@ export class StatusHudKit {
     const x = Phaser.Math.Clamp(anchorX, 4, Math.max(4, SW - TIP_W - 4));
     const y = Phaser.Math.Clamp(anchorY, 4, Math.max(4, SH - height - 4));
 
-    panel.setPosition(x, y).setSize(TIP_W, height).setVisible(true);
+    panel.clear();
+    UI.fillNotched(panel, x + 2, y + 4, TIP_W, height, 0x000000, 0.5, 8);
+    UI.fillNotchedGradient(panel, x, y, TIP_W, height,
+      UI.mix(UI.tintPlate(desc.color, 0.22), 0xffffff, 0.04), UI.mix(UI.C.void_, desc.color, 0.05), 0.97, 8, UI.ALL_CORNERS, 12);
+    UI.strokeNotched(panel, x, y, TIP_W, height, desc.color, 0.75, 1.5, 8);
+    panel.fillStyle(desc.color, 0.8);
+    panel.fillRect(x + 1, y + 8, 2, height - 16);
+    UI.drawSheen(panel, x, y, TIP_W, height, UI.lighten(desc.color, 0.7), 0.35, 8);
+    panel.setVisible(true);
     title.setPosition(x + TIP_PAD, y + TIP_PAD).setVisible(true);
     timer.setPosition(x + TIP_PAD, y + TIP_PAD + title.height + 2).setVisible(true);
     body.setPosition(x + TIP_PAD, y + TIP_PAD + title.height + timer.height + 5).setVisible(true);

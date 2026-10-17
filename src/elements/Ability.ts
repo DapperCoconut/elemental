@@ -329,6 +329,17 @@ export interface CastContext {
   tempestFront: (tx: number, ty: number) => void;
   tempestUpdraft: () => void;
   tempestForecast: (tx: number, ty: number) => void;
+  // Myth (test element)
+  mythWhip: (tx: number, ty: number) => void;
+  mythTruth: (tx: number, ty: number) => void;
+  mythDetermination: () => void;
+  mythBeast: (tx: number, ty: number) => void;
+  mythDestiny: (tx: number, ty: number) => void;
+  mythPistol: (tx: number, ty: number) => void;
+  mythShotgun: (tx: number, ty: number) => void;
+  mythGrenades: (tx: number, ty: number) => void;
+  mythRifle: (tx: number, ty: number) => void;
+  mythRocket: (tx: number, ty: number) => void;
   // Death (test element: cheat mode only for now)
   deathStyxShot: (tx: number, ty: number) => void;
   deathDisarm: (tx: number, ty: number) => void;

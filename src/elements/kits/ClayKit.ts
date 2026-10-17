@@ -9,7 +9,7 @@ import type { CustomStatus } from './StatusHudKit';
 import { Sfx } from '../../audio';
 import {
   CLAY, ClayAvatar, ClayColorFn, ClayFx, clayShard, drawClayBar, drawClayPuddle, drawClayRope, drawCreature,
-  drawGolem, drawGuide, drawTether, drawWallSmear,
+  drawGolem, drawGuide, drawSlipPips, drawTether, drawWallSmear,
 } from './ClayVisuals';
 
 /**
@@ -1271,20 +1271,17 @@ export class ClayKit implements SummonPurgeTarget, FormRevertTarget {
           groups[n.anchor].push({ x: c.x + n.x, y: c.y + n.y });
         }
         for (const pts of [groups.fighter, groups.golem]) if (pts.length) drawClayRope(air, tint, pts, 11, 0.95, bed);
-        drawClayBar(hud, tint, f.x, f.y - 60, s.drawing.budget / CLOT_BUDGET);
+        drawClayBar(hud, tint, f.x, f.y - 60, s.drawing.budget / CLOT_BUDGET, 1, t);
       }
       if (s.lifeDrawing) {
         const d = s.lifeDrawing;
         drawGuide(air, tint, d.cx, d.cy, LIFE_RADIUS, t);
         if (d.nodes.length) drawClayRope(air, tint, d.nodes.map((n) => ({ x: d.cx + n.x, y: d.cy + n.y })), 11, 0.95, bed);
-        drawClayBar(hud, tint, f.x, f.y - 76, d.budget / LIFE_BUDGET);
+        drawClayBar(hud, tint, f.x, f.y - 76, d.budget / LIFE_BUDGET, 1, t);
       }
       if (s.slink === 'wall') drawWallSmear(air, tint, f.x, f.y, this.wallHeading(s), t);
       if (this.up(owner, 'f') && owner === 'player') {
-        for (let i = 0; i < 3; i++) {
-          hud.fillStyle(tint(i < s.slipstreamCharges ? CLAY.guideLit : CLAY.wet), i < s.slipstreamCharges ? 1 : 0.55);
-          hud.fillTriangle(f.x - 20 + i * 20, f.y - 82, f.x - 13 + i * 20, f.y - 92, f.x - 6 + i * 20, f.y - 82);
-        }
+        drawSlipPips(hud, tint, f.x + 7, f.y - 86, s.slipstreamCharges, 3, t);
       }
       if (s.leap) {
         const l = s.leap;

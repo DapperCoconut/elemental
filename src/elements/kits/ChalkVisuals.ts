@@ -359,8 +359,10 @@ const CHALK_AVATAR: AvatarSpec = {
  * live chalk readout — its colour is the chalk in hand, which is the only thing the player
  * needs to know during Masterpiece, and it sits on the character where their eyes already are.
  *
- * Mastery enhances the stick rather than adding to it: a longer stick with a halo of its own
- * colour, wider powder coronas on the hands and a brighter under-glow.
+ * A slate beret, a felt eraser in the off hand and chalk doodles on the body add the detail.
+ * Mastered: a hand-drawn rainbow halo turns over the beret, chalk motes of every Masterpiece
+ * colour orbit the body, the doodles turn colour, the beret stalk goes gold, the stick grows
+ * a halo of its own colour, and the hands and eyes pick up a sparkle-white rim.
  */
 export class ChalkAvatar extends BaseAvatar {
   private chalkColor = CHK.white;
@@ -392,6 +394,70 @@ export class ChalkAvatar extends BaseAvatar {
       glow.setRadius(on ? 15 : 11);
       glow.setAlpha(on ? 0.4 : 0.22);
     });
+    this.forEachHandLayer(1, (core) => {
+      if (on) core.setStrokeStyle(1.5, this.tint(CHK.spark), 0.9);
+      else core.setStrokeStyle();
+    });
+    this.setEyeWhite(on ? CHK.spark : CHK.white);
+  }
+
+  /**
+   * Painted on the slate under the face: a few doodles in chalk — a star, a squiggle, a little
+   * tally — and a smear where a thumb rubbed one out. Mastered, the doodles are drawn in the
+   * Masterpiece colours instead of plain white.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    void a;
+    const m = this.mastered;
+    const A = alpha;
+    const lean = Math.cos(this.facing) * 1.2;
+    // Thumb smear.
+    g.fillStyle(this.tint(CHK.dust), A * 0.1);
+    g.fillEllipse(x + 3 + lean, y + 11, 22, 7);
+    // A five-point star on the left flank.
+    const sx = x - 11 + lean, sy = y + 9;
+    const star: [number, number][] = [];
+    for (let i = 0; i < 5; i++) {
+      const ang = -Math.PI / 2 + (i * 2 * Math.PI * 2) / 5;
+      star.push([sx + Math.cos(ang) * 4.2, sy + Math.sin(ang) * 4.2]);
+    }
+    for (let i = 0; i < 5; i++) {
+      const [x0, y0] = star[i];
+      const [x1, y1] = star[(i + 1) % 5];
+      chalkLine(g, this.tint, x0, y0, x1, y1, 0.9, m ? CHK.orange : CHK.white, A * 0.75, 3 + i);
+    }
+    // A squiggle across the belly.
+    let px = x - 3 + lean, py = y + 14;
+    for (let i = 1; i <= 5; i++) {
+      const nx = x - 3 + lean + i * 3, ny = y + 14 + (i % 2 ? -2 : 1.5);
+      chalkLine(g, this.tint, px, py, nx, ny, 0.9, m ? CHK.teal : CHK.whiteDim, A * 0.7, 20 + i);
+      px = nx; py = ny;
+    }
+    // Three tally strokes on the right flank.
+    for (let i = 0; i < 3; i++) {
+      const tx = x + 11 + lean + i * 2.4;
+      chalkLine(g, this.tint, tx, y + 4, tx + 0.6, y + 10, 0.8, m ? CHK.green : CHK.white, A * 0.7, 40 + i);
+    }
+  }
+
+  /** A felt board eraser held in the off hand, its face caked with dust. */
+  private eraser(g: Phaser.GameObjects.Graphics, alpha: number): void {
+    const hx = this.armX[0], hy = this.armY[0];
+    const ang = Math.atan2(hy - this.armY[1], hx - this.armX[1]) * 0.15 + 0.2;
+    const c = Math.cos(ang), sn = Math.sin(ang);
+    const box = (w: number, h: number, ox: number, oy: number) => {
+      const pts = [[-w, -h], [w, -h], [w, h], [-w, h]].map(([u, v]) =>
+        new Phaser.Geom.Point(hx + ox + u * c - v * sn, hy + oy + u * sn + v * c));
+      return pts;
+    };
+    g.fillStyle(this.tint(0x8a5a32), alpha);
+    g.fillPoints(box(6, 2.4, 0, -2.6), true);
+    g.fillStyle(this.tint(0xb07a48), alpha * 0.9);
+    g.fillPoints(box(6, 0.8, 0, -4), true);
+    g.fillStyle(this.tint(CHK.dust), alpha * 0.9);
+    g.fillPoints(box(6, 1.3, 0, 0.6), true);
+    g.fillStyle(this.tint(this.chalkColor), alpha * 0.35);
+    g.fillPoints(box(4, 0.7, 1, 0.8), true);
   }
 
   protected emitTrail(x: number, y: number): void {
@@ -412,6 +478,64 @@ export class ChalkAvatar extends BaseAvatar {
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void a;
     const m = this.mastered;
+    const lean = Math.cos(this.facing) * 2;
+
+    // ── The beret: slate felt, slouched to one side, a chalk-stitched band ──
+    const bx = x + lean, by = y - 17;
+    if (m) {
+      // Mastered only: a hand-drawn halo of the Masterpiece colours, redrawn as it turns.
+      const cols = [CHK.green, CHK.orange, CHK.teal, CHK.crimson, CHK.blue, CHK.white];
+      const hr = 14, hy = by - 9;
+      for (let i = 0; i < 12; i++) {
+        const a0 = this.t * 0.9 + (i / 12) * Math.PI * 2;
+        const a1 = a0 + (Math.PI * 2) / 12 * 0.7;
+        chalkLine(g, this.tint,
+          bx + Math.cos(a0) * hr, hy + Math.sin(a0) * hr * 0.32,
+          bx + Math.cos(a1) * hr, hy + Math.sin(a1) * hr * 0.32,
+          1.6, cols[i % cols.length], alpha * 0.95, 60 + i);
+      }
+      // Sparkles twinkling on the halo.
+      for (let i = 0; i < 3; i++) {
+        const ph = (this.t * 0.6 + i / 3) % 1;
+        const ang = this.t * 0.9 + i * 2.1;
+        const sx = bx + Math.cos(ang) * hr, sy = hy + Math.sin(ang) * hr * 0.32;
+        const k = Math.sin(ph * Math.PI);
+        g.lineStyle(1, this.tint(CHK.spark), alpha * k);
+        g.lineBetween(sx - 3 * k, sy, sx + 3 * k, sy);
+        g.lineBetween(sx, sy - 3 * k, sx, sy + 3 * k);
+      }
+    }
+    g.fillStyle(this.tint(CHK.board), alpha);
+    g.fillEllipse(bx - 3, by - 1, 26, 10);
+    g.fillStyle(this.tint(CHK.slate), alpha);
+    g.fillEllipse(bx - 3.5, by - 2.2, 23, 7.5);
+    g.fillStyle(this.tint(CHK.whiteDim), alpha * 0.25);
+    g.fillEllipse(bx - 7, by - 3.6, 10, 2.6);
+    // Stalk on top — gold once mastered.
+    g.fillStyle(this.tint(m ? 0xffc44d : CHK.board), alpha);
+    g.fillRect(bx - 1, by - 7.5, 2, 3.5);
+    g.fillCircle(bx, by - 7.8, m ? 1.8 : 1.3);
+    // Chalk stitching round the band.
+    for (let i = 0; i < 6; i++) {
+      const u = -0.8 + i * 0.32;
+      g.lineStyle(1, this.tint(m ? CHK.spark : CHK.dust), alpha * 0.7);
+      g.lineBetween(bx - 3 + u * 11, by + 2.6 + Math.abs(u) * -1.2, bx - 3 + u * 11 + 2, by + 2.6 + Math.abs(u) * -1.2);
+    }
+
+    // Mastered only: chalk motes of every colour drifting round the body.
+    if (m) {
+      const cols = [CHK.green, CHK.orange, CHK.teal, CHK.crimson];
+      for (let i = 0; i < 4; i++) {
+        const ang = -this.t * 1.3 + (i / 4) * Math.PI * 2;
+        const ox = x + Math.cos(ang) * 25, oy = y + 4 + Math.sin(ang) * 9;
+        g.fillStyle(this.tint(cols[i]), alpha * 0.25);
+        g.fillCircle(ox, oy, 4.5);
+        chalkBlob(g, this.tint, ox, oy, 1.8, cols[i], alpha * 0.9, 80 + i);
+      }
+    }
+
+    this.eraser(g, alpha);
+
     const hx = this.armX[1];
     const hy = this.armY[1];
     const ang = Math.atan2(hy - y, hx - x);

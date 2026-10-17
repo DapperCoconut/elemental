@@ -5,7 +5,7 @@ import type { CustomStatus } from './StatusHudKit';
 import type { ProjectileRegistry, RegisteredProjectile } from '../../combat/ProjectileRegistry';
 import { Sfx } from '../../audio';
 import {
-  TMP, TempestAvatar, TempestColorFn, TempestFx, current as paintCurrent, fallGauge, frontLane,
+  TMP, TempestAvatar, TempestColorFn, TempestFx, boltPip, current as paintCurrent, fallGauge, frontLane,
   gustLayered, lightning, liftShadow, swirl,
 } from './TempestVisuals';
 
@@ -1204,10 +1204,18 @@ export class TempestKit {
         swirl(g, this.col(owner)(TMP.white), v.x, v.y - rig.lift * 0.4, 30, 0.7, { arms: 3, turns: 1, phase: -t * 7, squash: 0.65 });
         if (!gr.crashing) {
           // The three-second fuse as an arc around the pair.
-          g.lineStyle(2.5, this.col(owner)(TMP.white), 0.8);
+          // A ring of storm cloud with the remaining hold lit in white, a bolt riding its head.
+          const fx = rig.x, fy = rig.y - 34;
+          g.lineStyle(5, this.col(owner)(TMP.ink), 0.55);
+          g.strokeCircle(fx, fy, 16);
+          g.lineStyle(2, this.col(owner)(TMP.slate), 0.7);
+          g.strokeCircle(fx, fy, 16);
+          g.lineStyle(2.5, this.col(owner)(TMP.white), 0.9);
           g.beginPath();
-          g.arc(rig.x, rig.y - 34, 16, -Math.PI / 2, -Math.PI / 2 + hold * Math.PI * 2);
+          g.arc(fx, fy, 16, -Math.PI / 2, -Math.PI / 2 + hold * Math.PI * 2);
           g.strokePath();
+          const ha = -Math.PI / 2 + hold * Math.PI * 2;
+          boltPip(g, this.col(owner), fx + Math.cos(ha) * 16, fy + Math.sin(ha) * 16, true, 1);
         }
       }
     }
@@ -1224,9 +1232,14 @@ export class TempestKit {
         const a = ((n + i * 7) % 12) / 12 * Math.PI * 2;
         lightning(g, this.col(p.owner)(TMP.bolt), v.x, v.y, v.x + Math.cos(a) * 30, v.y + Math.sin(a) * 30, 5, 1.4, 0.8, n + i);
       }
+      // The bounce count, as a row of bolts on a little storm-cloud tag.
+      const pw = PONG_BOUNCES * 10 + 6;
+      g.fillStyle(this.col(p.owner)(TMP.ink), 0.7);
+      g.fillRoundedRect(v.x - pw / 2 - 5, v.y - 46, pw, 16, 8);
+      g.lineStyle(1, this.col(p.owner)(TMP.gust), 0.5);
+      g.strokeRoundedRect(v.x - pw / 2 - 5, v.y - 46, pw, 16, 8);
       for (let i = 0; i < PONG_BOUNCES; i++) {
-        g.fillStyle(this.col(p.owner)(i < p.bounces ? TMP.bolt : TMP.slate), 0.9);
-        g.fillCircle(v.x - 10 + i * 10, v.y - 38, 3.2);
+        boltPip(g, this.col(p.owner), v.x - 10 + i * 10, v.y - 38, i < p.bounces, 0.95);
       }
     }
   }

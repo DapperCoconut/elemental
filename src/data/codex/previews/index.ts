@@ -33,6 +33,7 @@ import * as fortune from './fortune';
 import * as cloth from './cloth';
 import * as marrow from './marrow';
 import * as tempest from './tempest';
+import * as myth from './myth';
 import * as justice from './justice';
 import * as gluttony from './gluttony';
 import * as quantum from './quantum';
@@ -308,9 +309,7 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'light:prism-ramp': light.prismRamp,
   'light:prism-ramp:up': light.prismRampUpgraded,
   'light:light-trick': light.lightTrick,
-  'light:light-trick:up': light.lightTrickUpgraded,
   'light:speed-o-light': light.speedOLight,
-  'light:speed-o-light:up': light.speedOLightUpgraded,
 
   // ── Magnet ──
   'magnet:magnet-coin': magnet.coinFlip,
@@ -318,6 +317,11 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'magnet:magnet-nail': magnet.nailImplant,
   'magnet:magnet-spike': magnet.steelSpike,
   'magnet:magnet-mecha': magnet.mechaMassacre,
+  'magnet:magnet-coin:up': magnet.coinUpgraded,
+  'magnet:magnet-repulse:up': magnet.repulseUpgraded,
+  'magnet:magnet-nail:up': magnet.nailUpgraded,
+  'magnet:magnet-spike:up': magnet.spikeUpgraded,
+  'magnet:magnet-mecha:up': magnet.mechaUpgraded,
 
   // ── Metal ──
   'metal:metal-slash': metal.metalSlash,
@@ -384,6 +388,11 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'psychic:psychic-knight': psychic.knightlyMandate,
   'psychic:psychic-rook': psychic.rookBattery,
   'psychic:psychic-queen': psychic.queen,
+  'psychic:psychic-en-passant:up': psychic.enPassantUpgraded,
+  'psychic:psychic-bishop:up': psychic.bisharpUpgraded,
+  'psychic:psychic-knight:up': psychic.knightlyMandateUpgraded,
+  'psychic:psychic-rook:up': psychic.rookBatteryUpgraded,
+  'psychic:psychic-queen:up': psychic.queenUpgraded,
 
   // ── Radiation ──
   'radiation:radiation-railgun': radiation.railgun,
@@ -391,6 +400,11 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'radiation:radiation-bunker': radiation.bunker,
   'radiation:radiation-baton': radiation.baton,
   'radiation:radiation-extermination': radiation.extermination,
+  'radiation:radiation-railgun:up': radiation.railgunUpgraded,
+  'radiation:radiation-barrage:up': radiation.barrageUpgraded,
+  'radiation:radiation-bunker:up': radiation.bunkerUpgraded,
+  'radiation:radiation-baton:up': radiation.batonUpgraded,
+  'radiation:radiation-extermination:up': radiation.exterminationUpgraded,
 
   // ── Magma ──
   'magma:magma-plume': magma.plume,
@@ -442,6 +456,11 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'fortune:fortune-plume': fortune.goldPlumeShow,
   'fortune:fortune-heart': fortune.heartOfGold,
   'fortune:fortune-midas': fortune.midasCurse,
+  'fortune:fortune-fray:up': fortune.frayUpgraded,
+  'fortune:fortune-advance:up': fortune.advanceUpgraded,
+  'fortune:fortune-plume:up': fortune.goldPlumeUpgraded,
+  'fortune:fortune-heart:up': fortune.heartUpgraded,
+  'fortune:fortune-midas:up': fortune.midasUpgraded,
 
   // ── Cloth ──
   'cloth:cloth-pin': cloth.pin,
@@ -477,6 +496,20 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'tempest:passive:wall-slam': tempest.wallSlam,
   'tempest:passive:flight': tempest.flight,
 
+  // ── Myth ── (the tray five, then Final Destiny's five guns)
+  'myth:myth-whip': myth.cosmicWhip,
+  'myth:myth-truth': myth.truthBreaker,
+  'myth:myth-determination': myth.determination,
+  'myth:myth-beast': myth.beastOfMyth,
+  'myth:myth-destiny': myth.finalDestiny,
+  'myth:myth-pistol': myth.pistol,
+  'myth:myth-shotgun': myth.shotgun,
+  'myth:myth-grenades': myth.grenades,
+  'myth:myth-rifle': myth.hunterRifle,
+  'myth:myth-rocket': myth.shadowRocket,
+  'myth:passive:the-crowd': myth.theCrowd,
+  'myth:passive:echo-shards': myth.echoShards,
+
   // ── Justice ── (ground five, then the flight five)
   'justice:justice-stab': justice.stab,
   'justice:justice-coliseum': justice.coliseum,
@@ -497,6 +530,11 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'gluttony:harvest-frenzy': gluttony.frenzy,
   'gluttony:harvest-consume': gluttony.consume,
   'gluttony:harvest-reap': gluttony.reap,
+  'gluttony:harvest-sickle:up': gluttony.sickleUpgraded,
+  'gluttony:harvest-sow:up': gluttony.sowUpgraded,
+  'gluttony:harvest-frenzy:up': gluttony.frenzyUpgraded,
+  'gluttony:harvest-consume:up': gluttony.consumeUpgraded,
+  'gluttony:harvest-reap:up': gluttony.reapUpgraded,
 
   // ── Quantum (the Third State's five; the bond itself is in the passives) ──
   'quantum:quantum-splicers': quantum.splicers,
@@ -523,6 +561,11 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'passion:passion-grenade': passion.grenade,
   'passion:passion-crucifix': passion.crucifix,
   'passion:passion-ascendance': passion.ascendance,
+  'passion:passion-sermon:up': passion.sermonUpgraded,
+  'passion:passion-holy-water:up': passion.holyWaterUpgraded,
+  'passion:passion-grenade:up': passion.grenadeUpgraded,
+  'passion:passion-crucifix:up': passion.crucifixUpgraded,
+  'passion:passion-ascendance:up': passion.ascendanceUpgraded,
 
   // ── Ruin ──
   'ruin:ruin-shred': ruin.shred,
@@ -662,6 +705,11 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'sound:fermata': sound.fermata,
   'sound:hum': sound.hum,
   'sound:call-of-the-void': sound.callOfTheVoid,
+  'sound:baton:up': sound.batonUpgraded,
+  'sound:crescendo:up': sound.crescendoUpgraded,
+  'sound:fermata:up': sound.fermataUpgraded,
+  'sound:hum:up': sound.humUpgraded,
+  'sound:call-of-the-void:up': sound.callOfTheVoidUpgraded,
 
   // ── Technology ──
   'technology:tech-cruncher': technology.cruncher,

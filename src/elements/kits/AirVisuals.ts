@@ -1082,8 +1082,11 @@ const AIR_AVATAR: AvatarSpec = {
  * still the dancer's tell: `setFanSpread` snaps the crest open when an ability fires and lets it
  * fold back at idle, so the kit's open/shut cue survives without a fan in each hand.
  *
- * Mastery enhances the crest rather than adding to it: a bigger fan with gilded ribs and a soft
- * glow behind it, white eyes, wider coronas on the hands and a stronger under-glow.
+ * Detail: a painted blossom sprig on the fan leaf, a swinging silk tassel off its pivot, breeze
+ * lines across the lower body and a tiny wind curl circling each hand.
+ *
+ * Mastered: a bigger fan with gilded ribs, a gold edge and a glow behind it, a cyclone ring of
+ * wind curls (with a feather riding it) wrapping the body, white eyes, gold-rimmed hands.
  */
 export class AirAvatar extends BaseAvatar {
   private fx: AirFx;
@@ -1104,15 +1107,19 @@ export class AirAvatar extends BaseAvatar {
     this.fanOpenTarget = Phaser.Math.Clamp(open, 0.08, 1);
   }
 
-  /** Mastery tell: white eyes and a wider cyan corona with a frost rim on each hand. */
+  /**
+   * Mastery tell: white eyes, a wider cyan corona with a frost rim on each hand — and, in the
+   * painted layers, a gilded fan with a blossom-gold glow, a cyclone ring of wind curls
+   * circling the body and feathers riding it.
+   */
   protected applyMastery(on: boolean): void {
     this.setEyeWhite(on ? AIR.white : AIR.mist);
     this.forEachHandLayer(0, (halo) => {
-      halo.setRadius(on ? 12 : 9);
-      halo.setFillStyle(this.tint(on ? AIR.cyan : AIR.steel), on ? 0.32 : 0.24);
+      halo.setRadius(on ? 13 : 9);
+      halo.setFillStyle(this.tint(on ? AIR.cyan : AIR.steel), on ? 0.36 : 0.24);
     });
     this.forEachHandLayer(1, (shell) => {
-      if (on) shell.setStrokeStyle(1.4, this.tint(AIR.frost), 0.9);
+      if (on) shell.setStrokeStyle(1.6, this.tint(AIR.bolt), 0.9);
       else shell.setStrokeStyle();
     });
   }
@@ -1130,6 +1137,71 @@ export class AirAvatar extends BaseAvatar {
     g.fillCircle(x, y, 28 * k);
     g.fillStyle(this.tint(AIR.steel), a * 0.16 * k);
     g.fillEllipse(x, y + 8, 36 * k, 14 * k);
+    // Mastery cyclone, back half — the curls passing behind the body.
+    if (this.mastered) this.drawCyclone(g, x, y, a, false);
+  }
+
+  /**
+   * The mastery cyclone: five wind curls chasing each other round the body on a tilted
+   * ellipse, with a feather riding it. Painted in two passes — the far half under the sprite
+   * from `drawGlow`, the near half over it from `drawExtras` — so the ring wraps the body.
+   */
+  private drawCyclone(g: Phaser.GameObjects.Graphics, x: number, y: number, alpha: number, front: boolean): void {
+    const rx = 31, ry = 10, cy = y + 6;
+    for (let i = 0; i < 5; i++) {
+      const p = this.t * 2.2 + (i / 5) * TAU;
+      const isFront = Math.sin(p) > 0;
+      if (isFront !== front) continue;
+      const px = x + Math.cos(p) * rx, py = cy + Math.sin(p) * ry;
+      const tangent = Math.atan2(Math.cos(p) * ry, -Math.sin(p) * rx);
+      g.fillStyle(this.tint(AIR.steel), alpha * 0.45);
+      windCurl(g, px, py, tangent, 18, 3.6, 0.5);
+      g.fillStyle(this.tint(i % 2 ? AIR.cyan : AIR.mist), alpha * 0.9);
+      windCurl(g, px, py, tangent, 14, 2.2, 0.5);
+    }
+    // A feather caught in the ring.
+    const fp = this.t * 2.2 + 0.6;
+    if ((Math.sin(fp) > 0) === front) {
+      const fx = x + Math.cos(fp) * rx, fy = cy + Math.sin(fp) * ry;
+      const fa = Math.atan2(Math.cos(fp) * ry, -Math.sin(fp) * rx) + Math.sin(this.t * 5) * 0.3;
+      g.fillStyle(this.tint(AIR.white), alpha * 0.95);
+      g.fillEllipse(fx, fy, 9, 3);
+      g.lineStyle(0.8, this.tint(AIR.storm), alpha * 0.8);
+      g.lineBetween(fx - Math.cos(fa) * 5, fy - Math.sin(fa) * 5, fx + Math.cos(fa) * 5, fy + Math.sin(fa) * 5);
+    }
+  }
+
+  /**
+   * Breeze lines across the lower body: two thin curls drifting sideways and a tiny swirl,
+   * kept below the eye band so the face stays clean.
+   */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
+    for (let i = 0; i < 2; i++) {
+      const drift = ((this.t * 0.5 + i * 0.5) % 1);
+      const px = x - 14 + drift * 10;
+      const py = y + 8 + i * 6;
+      const fade = Math.sin(drift * Math.PI);
+      g.lineStyle(1.4, this.tint(AIR.white), alpha * 0.7 * fade);
+      g.beginPath();
+      for (let k = 0; k <= 8; k++) {
+        const f = k / 8;
+        const lx = px + f * (18 - i * 4);
+        const ly = py + Math.sin(f * Math.PI * 1.4 + this.t * 2) * 1.4;
+        if (k === 0) g.moveTo(lx, ly); else g.lineTo(lx, ly);
+      }
+      g.strokePath();
+    }
+    // Little spiral curl on the cheek-side of the belly.
+    g.lineStyle(1.2, this.tint(AIR.storm), alpha * 0.55);
+    g.beginPath();
+    for (let k = 0; k <= 14; k++) {
+      const f = k / 14;
+      const ang = this.t * 1.5 + f * Math.PI * 2.4;
+      const r = 1 + f * 3.6;
+      const px = x + 10 + Math.cos(ang) * r, py = y + 12 + Math.sin(ang) * r;
+      if (k === 0) g.moveTo(px, py); else g.lineTo(px, py);
+    }
+    g.strokePath();
   }
 
   /**
@@ -1189,8 +1261,47 @@ export class AirAvatar extends BaseAvatar {
         cx + Math.cos(ang) * r, cy + Math.sin(ang) * r,
       );
     }
+    // A painted motif on the leaf: a blossom sprig — three petals and a stem — in pink.
+    const motifA = up + spread * 0.35, motifR = r * 0.62;
+    const mx = cx + Math.cos(motifA) * motifR, my = cy + Math.sin(motifA) * motifR;
+    g.lineStyle(0.9, this.tint(AIR.woodDark), alpha * 0.6);
+    g.lineBetween(mx, my, cx + Math.cos(up - spread * 0.25) * r * 0.5, cy + Math.sin(up - spread * 0.25) * r * 0.5);
+    g.fillStyle(this.tint(AIR.blossom), alpha * 0.95 * this.fanOpen);
+    for (let k = 0; k < 5; k++) {
+      const pa = (k / 5) * TAU + this.t * 0.2;
+      g.fillCircle(mx + Math.cos(pa) * 1.8, my + Math.sin(pa) * 1.8, 1.4);
+    }
+    g.fillStyle(this.tint(AIR.charge), alpha * this.fanOpen);
+    g.fillCircle(mx, my, 0.9);
+    // Gold edge band once mastered.
+    if (m) {
+      g.lineStyle(1.6, this.tint(AIR.charge), alpha * 0.9);
+      g.beginPath();
+      g.arc(cx, cy, r * 0.99, up - spread, up + spread);
+      g.strokePath();
+    }
+
     // Pivot rivet.
     g.fillStyle(this.tint(m ? AIR.charge : AIR.woodDark), alpha);
     g.fillCircle(cx, cy, 2.4);
+    // A silk tassel hanging off the pivot, swinging with the dance.
+    const sw = Math.sin(this.t * 3.1) * 0.35 + Math.cos(this.facing) * 0.2;
+    const tx = cx + 5 + Math.sin(sw) * 6, ty = cy + 6;
+    g.lineStyle(1, this.tint(m ? AIR.charge : AIR.wood), alpha * 0.9);
+    g.lineBetween(cx + 1.5, cy + 1, tx, ty);
+    g.fillStyle(this.tint(m ? AIR.charge : AIR.blossom), alpha);
+    g.fillCircle(tx, ty, 1.6);
+    g.fillTriangle(tx - 1.6, ty + 0.5, tx + 1.6, ty + 0.5, tx + Math.sin(sw) * 1.5, ty + 5);
+
+    // A tiny curl of wind circling each hand.
+    for (let i = 0; i < 2; i++) {
+      const hp = this.t * 6 + i * Math.PI;
+      const hx = this.armX[i] + Math.cos(hp) * 9, hy = this.armY[i] + Math.sin(hp) * 9;
+      g.fillStyle(this.tint(m ? AIR.cyan : AIR.white), alpha * 0.7);
+      windCurl(g, hx, hy, hp + Math.PI / 2, m ? 11 : 8, m ? 2 : 1.5, 0.8);
+    }
+
+    // Mastery cyclone, front half.
+    if (m) this.drawCyclone(g, x, y, alpha, true);
   }
 }

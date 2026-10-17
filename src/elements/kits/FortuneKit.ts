@@ -6,9 +6,11 @@ import type { ProjectileRegistry } from '../../combat/ProjectileRegistry';
 import { Projectile } from '../../combat/Projectile';
 import { Sfx } from '../../audio';
 import {
-  FOR, FortuneAvatar, FortuneColorFn, FortuneFx, StatKind, advanceCard, goldCoin, goldFloor,
-  goldPlume, goldStatue, goldenHeart, grassBlade, midasGilt, powderBag,
+  FOR, FortuneAvatar, FortuneColorFn, FortuneFx, Jewel, StatKind, advanceCard, glitterCloak, glitterMotes,
+  goldCoin, goldFloor, goldFuse, goldPlume, goldStatue, goldStatueShell, goldenHeart, grassBlade, jewelGem,
+  midasGilt, powderBag, statueRays,
 } from './FortuneVisuals';
+import { FONT_DISPLAY, FONT_UI } from '../../ui/Theme';
 
 type Owner = 'player' | 'npc';
 
@@ -116,6 +118,69 @@ const COIN_DROP_MS = 360;
 const SHOT_OWNER_R = 70;
 const PURGE_EVERY_MS = 100;
 
+// ── Shop upgrades ────────────────────────────────────────────────────────────
+// Click+ Accumulation — blades that reach the floor stay there, and the pile bursts.
+const PILE_MAX = 90;
+/** Fewer than this lying on the floor and the pile never stirs. */
+const PILE_MIN = 6;
+/** How often the pile rolls for a burst: every 1.5s with a small pile, down to 0.35s with a big one. */
+const PILE_ROLL_MS_MAX = 1500;
+const PILE_ROLL_MS_MIN = 350;
+const PILE_ROLL_MS_PER = 14;
+/** The chance a roll bursts is n / (n + this), for n blades lying on the floor. */
+const PILE_CHANCE_K = 30;
+/** A burst lifts this many blades, plus a share of the pile. */
+const BURST_BASE = 5;
+const BURST_SHARE = 0.35;
+/** The pile stirs this long before the burst leaves the floor — a beat to step out of the way. */
+const BURST_WARN_MS = 280;
+const BURST_STAGGER_MS = 14;
+/** Seconds a burst blade takes to reach where the target was. */
+const BURST_FLIGHT_MIN = 0.5;
+const BURST_FLIGHT_MAX = 0.75;
+const BURST_SCATTER = 22;
+const PILE_BLADE_LEN = 13;
+
+// E+ Artisan — two jeweled cards on every offer, each with a price of its own.
+const JEWELED_CARDS = 2;
+const JEWELS: Jewel[] = ['pearl', 'diamond', 'ruby', 'sapphire', 'jade'];
+const JEWEL_NAME: Record<Jewel, string> = { pearl: 'PEARL', diamond: 'DIAMOND', ruby: 'RUBY', sapphire: 'SAPPHIRE', jade: 'JADE' };
+const JEWEL_PRICE: Record<Jewel, number> = { pearl: 8, diamond: 20, ruby: 10, sapphire: 8, jade: 12 };
+const PEARL_WORTH = 2;
+const DIAMOND_WORTH = 4;
+/** A sapphire pick starts at one pick's worth and grows by one more every 20 seconds, up to six. */
+const SAPPHIRE_GROW_MS = 20_000;
+const SAPPHIRE_MAX = 6;
+/** Ruby turns a card on the enemy. Greed and Sheaf have nothing to turn, so they never carry one. */
+const RUBY_KINDS: StatKind[] = ['might', 'hide', 'stride', 'haste', 'vigor', 'mend'];
+const RUBY_MIGHT = 0.9;
+const RUBY_HIDE = 1.07;
+const RUBY_STRIDE = 0.93;
+const RUBY_HASTE = 1.08;
+const RUBY_VIGOR = 30;
+const RUBY_BLEED_HPS = 1.5;
+
+// R+ Glittery Cloak
+const CLOAK_R_MULT = 1.2;
+const CLOAK_DODGE = 0.15;
+/** Bots and husks in the glitter aim this much worse. */
+const CLOAK_AIM_DEG = 24;
+/** A player's own shots fired from inside the glitter leave up to this far off line. */
+const CLOAK_JITTER = 0.32;
+/** A shot is "fired from inside" if it is first seen this close to the shooter. */
+const CLOAK_SHOT_R = 60;
+
+// F+ Gold Hex
+const HEX_TAIL_MS = 5000;
+/** The share of every frame the hexed body's cooldowns lose: half speed. */
+const HEX_DRAG = 0.5;
+
+// Q+ Full Metal Alchemy
+const STATUE_MS = 3000;
+const STATUE_MELT_MS = 1000;
+const STATUE_VULN = 2;
+const STATUE_COINS = 3;
+
 // ── Bot ──────────────────────────────────────────────────────────────────────
 const NPC_PLUME_SEEK_R = 280;
 const NPC_LOOT_SEEK_R = 300;
@@ -134,6 +199,19 @@ interface Blade {
   dmg: number;
 }
 
+/** Click+: a blade lying on the arena floor. `launchAt` > 0 once a burst has picked it. */
+interface PileBlade {
+  owner: Owner;
+  x: number;
+  y: number;
+  ang: number;
+  seed: number;
+  born: number;
+  launchAt: number;
+  tx: number;
+  ty: number;
+}
+
 interface Bag {
   owner: Owner;
   fx: number;
@@ -141,12 +219,16 @@ interface Bag {
   tx: number;
   ty: number;
   start: number;
+  /** R+ Glittery Cloak, decided when the bag is thrown. */
+  cloak: boolean;
 }
 
 interface Plume {
   owner: Owner;
   x: number;
   y: number;
+  r: number;
+  cloak: boolean;
   born: number;
   until: number;
   seed: number;
@@ -186,6 +268,18 @@ interface Curse {
   start: number;
   lx: number;
   ly: number;
+  /** Cast on this sim — false for a curse we were only told about, which never turns to a statue here. */
+  live: boolean;
+}
+
+/** Q+ Full Metal Alchemy: a body the curse finished with. `Fighter.goldStatueUntil` is the truth. */
+interface Statue {
+  by: Owner;
+  /** Raw damage taken when it was made, so a hit can be noticed. */
+  raw: number;
+  hit: boolean;
+  /** Decided on this sim (vulnerability, coins); false for a mirrored statue we only draw. */
+  live: boolean;
 }
 
 interface Patch { x: number; y: number; r: number; seed: number; born: number }
@@ -203,8 +297,22 @@ interface Loot {
   seed: number;
 }
 
+/** One card on an offer. A jeweled card (E+ Artisan) has a stone and a price of its own. */
+interface Card {
+  kind: StatKind;
+  jewel: Jewel | null;
+  price: number;
+}
+
+/** A jeweled pick, kept as a pick so Sapphire can grow and Jade can count its siblings. */
+interface Gem {
+  kind: StatKind;
+  jewel: Jewel;
+  at: number;
+}
+
 interface Offer {
-  kinds: StatKind[];
+  cards: Card[];
   opened: number;
   until: number;
   /** Bot: when it takes a card. Replica: when the cards are put away unanswered. */
@@ -220,7 +328,19 @@ interface Side {
   frac: number;
   aimX: number;
   aimY: number;
+  /** What the picks are worth right now — plain picks plus every jewel. Recomputed each frame. */
   stats: Record<StatKind, number>;
+  /** Plain picks, one per card. */
+  plain: Record<StatKind, number>;
+  gems: Gem[];
+  /** Ruby picks: these land on whoever this side is fighting, inverted. */
+  ruby: Record<StatKind, number>;
+  /** Max HP already granted for Vigor, so a growing Sapphire grants only the difference. */
+  vigorApplied: number;
+  /** Click+: when the pile next rolls for a burst. */
+  pileRollAt: number;
+  /** R+: standing in its own glittery plume this frame. */
+  cloaked: boolean;
   offer: Offer | null;
   floorMs: number;
   onFloor: boolean;
@@ -236,7 +356,8 @@ function emptyStats(): Record<StatKind, number> {
 
 function makeSide(owner: Owner): Side {
   return {
-    owner, gold: 0, frac: 0, aimX: 0, aimY: 0, stats: emptyStats(), offer: null,
+    owner, gold: 0, frac: 0, aimX: 0, aimY: 0, stats: emptyStats(), plain: emptyStats(), gems: [],
+    ruby: emptyStats(), vigorApplied: 0, pileRollAt: 0, cloaked: false, offer: null,
     floorMs: 0, onFloor: false, pop: 0, popAt: 0, lunge: null, glow: 0,
   };
 }
@@ -273,6 +394,10 @@ export interface FortuneArenaApi {
   setStatusIndicator(id: string, status: CustomStatus | null): void;
   /** Ruin's board-wipe dispatch, borrowed: every kit's summons inside the circle, except `except`'s. */
   purgeSummons(x: number, y: number, r: number, except: Owner, report: (x: number, y: number) => void): number;
+  /** Shop upgrades: the player's own, or the bot's loadout / the online opponent's handshake. */
+  hasUpgrade(owner: Owner, slot: string): boolean;
+  /** Online: a pseudo-cast id for an action that never goes through `castAbility`. */
+  broadcastMasteryCast(id: string): void;
 }
 
 // ── FortuneKit ───────────────────────────────────────────────────────────────
@@ -320,16 +445,30 @@ export class FortuneKit {
   private hudGfx: Phaser.GameObjects.Graphics | null = null;
   /** Pooled card legends: name + line per card, three cards per side. */
   private labels: Phaser.GameObjects.Text[] = [];
+  private priceLabels: Phaser.GameObjects.Text[] = [];
   private vizT = 0;
 
   // ── Sim ──
   private sides: Record<Owner, Side> = { player: makeSide('player'), npc: makeSide('npc') };
   private blades: Blade[] = [];
+  /** Click+ Accumulation: blades lying on the floor, both sides'. */
+  private pile: PileBlade[] = [];
   private bags: Bag[] = [];
   private plumes: Plume[] = [];
   private hearts = new Map<Fighter, Heart>();
   private curses = new Map<Fighter, Curse>();
   private stuns = new Map<Fighter, number>();
+  private statues = new Map<Fighter, Statue>();
+  /** Ruby Vigor already taken off each body, so only a change is applied. */
+  private vigorCuts = new Map<Fighter, number>();
+  /** Ruby Mend: fractional bleed carried between frames. */
+  private bleedAcc = new Map<Fighter, number>();
+  /** R+: cloak dodges already announced, per body. */
+  private dodgesSeen = new Map<Fighter, number>();
+  /** R+: bodies inside an enemy's glittery plume this frame. */
+  private inGlitter = new Set<Fighter>();
+  /** R+: shots already judged for the glitter's wobble. */
+  private glitterShots = new WeakSet<object>();
   private patches: Patch[] = [];
   private loot: Loot[] = [];
   /** Shots already looked at, so an Invasion husk's shot is judged once, where it was first seen. */
@@ -405,6 +544,11 @@ export class FortuneKit {
 
   private might(owner: Owner): number { return 1 + MIGHT_STEP * this.side(owner).stats.might; }
 
+  /** A shop upgrade, only ever true for an alchemist. */
+  private up(owner: Owner, slot: string): boolean {
+    return this.isGold(owner) && this.api.hasUpgrade(owner, slot);
+  }
+
   /** A kit-made label: `showFloatingText` is a no-op in this codebase, so the few that matter are ours. */
   private announce(x: number, y: number, text: string, color: number, size = 12): void {
     const { scene } = this.api;
@@ -450,11 +594,18 @@ export class FortuneKit {
   reset(): void {
     this.sides = { player: makeSide('player'), npc: makeSide('npc') };
     this.blades = [];
+    this.pile = [];
     this.bags = [];
     this.plumes = [];
     this.hearts.clear();
     this.curses.clear();
     this.stuns.clear();
+    this.statues.clear();
+    this.vigorCuts.clear();
+    this.bleedAcc.clear();
+    this.dodgesSeen.clear();
+    this.inGlitter.clear();
+    this.glitterShots = new WeakSet();
     this.patches = [];
     this.loot = [];
     this.seenShots = new WeakSet();
@@ -468,6 +619,12 @@ export class FortuneKit {
       f.goldHeartUntil = 0;
       f.goldHeartStress = 0;
       f.midasUntil = 0;
+      f.goldHexUntil = 0;
+      f.goldStatueUntil = 0;
+      f.goldCooldownMult = 1;
+      f.goldVigorCut = 0;
+      f.goldSpeedMult = 1;
+      f.goldCloakDodge = 0;
     }
 
     this.playerAvatar?.destroy(); this.playerAvatar = null;
@@ -476,9 +633,13 @@ export class FortuneKit {
     this.floorGfx = this.plumeGfx = this.giltGfx = this.airGfx = this.hudGfx = null;
     for (const t of this.labels) t.destroy();
     this.labels = [];
+    for (const t of this.priceLabels) t.destroy();
+    this.priceLabels = [];
 
     this.api.setStatusIndicator('gold-purse', null);
     this.api.setStatusIndicator('gold-floor', null);
+    this.api.setStatusIndicator('gold-cloak', null);
+    this.api.setStatusIndicator('gold-ruby', null);
     for (const st of STATS) this.api.setStatusIndicator(`gold-stat-${st.kind}`, null);
   }
 
@@ -525,7 +686,13 @@ export class FortuneKit {
     if (pressed && s.offer) {
       const i = this.cardUnder('player', mouseX, mouseY);
       if (i >= 0) {
-        this.pick('player', s.offer.kinds[i]);
+        const card = s.offer.cards[i];
+        if (s.gold >= card.price) {
+          this.pick('player', i);
+        } else {
+          this.announce(p.x, p.y - 46, `NEED ${card.price} GOLD`, FOR.blood, 11);
+          Sfx.playAt('ui-click', p.x, { rate: 0.7, volume: 0.4 });
+        }
         this.pressSpent = true;
       }
     }
@@ -568,7 +735,7 @@ export class FortuneKit {
     s.aimX = tx;
     s.aimY = ty;
     const ang = Math.atan2(ty - f.y, tx - f.x);
-    const n = FRAY_BLADES + SHEAF_BLADES * s.stats.sheaf;
+    const n = FRAY_BLADES + Math.floor(SHEAF_BLADES * s.stats.sheaf);
     const ox = f.x + Math.cos(ang) * 20;
     const oy = f.y + Math.sin(ang) * 20;
     const dmg = FRAY_DAMAGE * this.might(owner);
@@ -601,8 +768,17 @@ export class FortuneKit {
       s.gold -= ADVANCE_COST;
     }
     const pool = Phaser.Utils.Array.Shuffle(STATS.map((d) => d.kind));
+    const cards: Card[] = pool.slice(0, OFFER_COUNT).map((kind) => ({ kind, jewel: null, price: 0 }));
+    // E+ Artisan: two more cards, each set with a stone and priced on top of the ten already spent.
+    if (this.up(owner, 'e')) {
+      for (const kind of pool.slice(OFFER_COUNT, OFFER_COUNT + JEWELED_CARDS)) {
+        const stones = RUBY_KINDS.includes(kind) ? JEWELS : JEWELS.filter((j) => j !== 'ruby');
+        const jewel = Phaser.Utils.Array.GetRandom(stones);
+        cards.push({ kind, jewel, price: JEWEL_PRICE[jewel] });
+      }
+    }
     s.offer = {
-      kinds: pool.slice(0, OFFER_COUNT),
+      cards,
       opened: this.now,
       until: this.now + OFFER_MS,
       decideAt: this.now + (ghost ? REPLICA_OFFER_MS : NPC_PICK_MS + Math.random() * 400),
@@ -625,7 +801,7 @@ export class FortuneKit {
     this.bags.push({
       owner, fx: f.x, fy: f.y,
       tx: this.clampX(f.x + Math.cos(ang) * d), ty: this.clampY(f.y + Math.sin(ang) * d),
-      start: this.now,
+      start: this.now, cloak: this.up(owner, 'r'),
     });
     this.avatar(owner)?.play('sweep', ang);
     Sfx.playAt('whoosh', f.x, { rate: 0.9, volume: 0.6 });
@@ -665,7 +841,7 @@ export class FortuneKit {
 
   private curse(by: Owner, v: Fighter): void {
     v.midasUntil = Math.max(v.midasUntil, this.now + MIDAS_MS);
-    this.curses.set(v, { by, start: this.now, lx: v.x, ly: v.y });
+    this.curses.set(v, { by, start: this.now, lx: v.x, ly: v.y, live: true });
     this.fx(by).midasStrike(v.x, v.y);
     this.announce(v.x, v.y - 50, '👑 MIDAS CURSE', FOR.goldLit, 14);
     Sfx.playAt('money', v.x, { rate: 0.6, volume: 0.9 });
@@ -697,11 +873,11 @@ export class FortuneKit {
     const f = this.fighter(owner);
     const offer = this.side(owner).offer;
     if (!offer) return [];
-    const n = offer.kinds.length;
+    const n = offer.cards.length;
     const span = n * CARD_W + (n - 1) * CARD_GAP;
     const cy = Math.max(this.top + CARD_H / 2 + 4, f.y - CARD_LIFT);
     const x0 = Phaser.Math.Clamp(f.x, this.left + span / 2, this.right - span / 2) - span / 2 + CARD_W / 2;
-    return offer.kinds.map((_, i) => ({ x: x0 + i * (CARD_W + CARD_GAP), y: cy }));
+    return offer.cards.map((_, i) => ({ x: x0 + i * (CARD_W + CARD_GAP), y: cy }));
   }
 
   private cardUnder(owner: Owner, x: number, y: number): number {
@@ -712,41 +888,125 @@ export class FortuneKit {
     return -1;
   }
 
-  private pick(owner: Owner, kind: StatKind): void {
+  /** Take card `i` of the open offer. A jeweled card is paid for here; the caller checked the purse. */
+  private pick(owner: Owner, i: number): void {
     const s = this.side(owner);
     const offer = s.offer;
-    if (!offer) return;
-    const at = this.cardCentres(owner)[offer.kinds.indexOf(kind)];
+    const card = offer?.cards[i];
+    if (!offer || !card) return;
+    if (card.price > s.gold) return;
+    const at = this.cardCentres(owner)[i];
+    const line = this.cardLine(owner, card);
+    s.gold -= card.price;
     s.offer = null;
-    s.stats[kind]++;
+    if (card.jewel) s.gems.push({ kind: card.kind, jewel: card.jewel, at: this.now });
+    else s.plain[card.kind]++;
+    this.recompute(owner);
     const f = this.fighter(owner);
-    if (kind === 'vigor') {
-      f.increaseMaxHp(VIGOR_HP);
-      f.heal(VIGOR_HP);
-    }
-    const def = STAT_BY_KIND.get(kind)!;
+    const def = STAT_BY_KIND.get(card.kind)!;
     this.fx(owner).advancePick(at?.x ?? f.x, at?.y ?? f.y - CARD_LIFT);
-    this.announce(f.x, f.y - 52, `${def.name}  ${def.line}`, def.color, 12);
+    const head = card.jewel ? `${JEWEL_NAME[card.jewel]} ${def.name}` : def.name;
+    this.announce(f.x, f.y - 52, `${head}  ${line}`, card.jewel === 'ruby' ? FOR.bloodLit : def.color, 12);
+    if (card.price > 0) this.announce(f.x, f.y - 38, `-${card.price} 🪙`, FOR.gold, 11);
     this.avatar(owner)?.play('flex');
     Sfx.playAt('ui-click', f.x, { rate: 1.4, volume: 0.6 });
-    Sfx.playAt('money', f.x, { rate: 1.1, volume: 0.5 });
+    Sfx.playAt('money', f.x, { rate: card.jewel ? 1.5 : 1.1, volume: 0.5 });
   }
 
-  /** The bot reads its three cards and takes the one it wants most right now. */
-  private npcChoose(kinds: StatKind[]): StatKind {
+  // ── E+ Artisan: what a pick is worth ───────────────────────────────────────
+
+  private gemWorth(g: Gem, jades: number): number {
+    switch (g.jewel) {
+      case 'pearl': return PEARL_WORTH;
+      case 'diamond': return DIAMOND_WORTH;
+      case 'sapphire': return Math.min(SAPPHIRE_MAX, 1 + (this.now - g.at) / SAPPHIRE_GROW_MS);
+      // Every jade is worth double for every other jade owned: 1, then 2 each, then 4 each...
+      case 'jade': return Math.pow(2, Math.max(0, jades - 1));
+      case 'ruby': return 0;
+    }
+  }
+
+  /** Fold plain picks and jewels into what the side's stats are worth this frame. */
+  private recompute(owner: Owner): void {
+    const s = this.side(owner);
+    const stats = { ...s.plain };
+    const ruby = emptyStats();
+    const jades = s.gems.filter((g) => g.jewel === 'jade').length;
+    for (const g of s.gems) {
+      if (g.jewel === 'ruby') ruby[g.kind] += 1;
+      else stats[g.kind] += this.gemWorth(g, jades);
+    }
+    s.stats = stats;
+    s.ruby = ruby;
+  }
+
+  private fmt(v: number): string { return `${Math.round(v * 10) / 10}`; }
+
+  /** The card's second line, at `m` picks' worth. */
+  private statLine(kind: StatKind, m: number): string {
+    switch (kind) {
+      case 'might': return `+${this.fmt(MIGHT_STEP * 100 * m)}% damage`;
+      case 'hide': return `-${Math.round((1 - Math.pow(HIDE_STEP, m)) * 100)}% dmg taken`;
+      case 'stride': return `+${this.fmt(STRIDE_STEP * 100 * m)}% speed`;
+      case 'haste': return `-${Math.round((1 - Math.pow(HASTE_STEP, m)) * 100)}% cooldowns`;
+      case 'vigor': return `+${Math.round(VIGOR_HP * m)} max HP`;
+      case 'greed': return `+${this.fmt(GREED_STEP * 100 * m)}% gold`;
+      case 'sheaf': return `+${Math.floor(SHEAF_BLADES * m)} blades`;
+      case 'mend': return `+${this.fmt(MEND_HPS * m)} HP/s`;
+    }
+  }
+
+  private rubyLine(kind: StatKind): string {
+    switch (kind) {
+      case 'might': return `foe -${Math.round((1 - RUBY_MIGHT) * 100)}% damage`;
+      case 'hide': return `foe +${Math.round((RUBY_HIDE - 1) * 100)}% taken`;
+      case 'stride': return `foe -${Math.round((1 - RUBY_STRIDE) * 100)}% speed`;
+      case 'haste': return `foe +${Math.round((RUBY_HASTE - 1) * 100)}% cooldowns`;
+      case 'vigor': return `foe -${RUBY_VIGOR} max HP`;
+      default: return `foe bleeds ${RUBY_BLEED_HPS}/s`;
+    }
+  }
+
+  private cardLine(owner: Owner, card: Card): string {
+    if (!card.jewel) return STAT_BY_KIND.get(card.kind)!.line;
+    switch (card.jewel) {
+      case 'pearl': return this.statLine(card.kind, PEARL_WORTH);
+      case 'diamond': return this.statLine(card.kind, DIAMOND_WORTH);
+      case 'sapphire': return `${this.statLine(card.kind, 1)} ▲`;
+      case 'ruby': return this.rubyLine(card.kind);
+      case 'jade': {
+        // Taking it makes one more jade, and each jade is then worth this much.
+        const jades = this.side(owner).gems.filter((g) => g.jewel === 'jade').length;
+        return this.statLine(card.kind, Math.pow(2, jades));
+      }
+    }
+  }
+
+  /** The bot reads its cards and takes the one it wants most right now — a jewel only if it can pay. */
+  private npcChoose(cards: Card[]): number {
     const f = this.api.npc;
     const hurt = f.hp / Math.max(1, f.maxHp);
     const s = this.sides.npc;
-    const score = (k: StatKind): number => {
-      const own = s.stats[k];
-      const base: Record<StatKind, number> = {
-        might: 1.2, hide: 1.0, stride: 0.8, haste: 1.1, vigor: 0.9, greed: 0.9, sheaf: 1.1, mend: 0.8,
-      };
-      let v = base[k] / (1 + own * 0.35);
-      if (hurt < 0.5 && (k === 'vigor' || k === 'mend' || k === 'hide')) v += 0.8;
-      return v + Math.random() * 0.3;
+    const jades = s.gems.filter((g) => g.jewel === 'jade').length;
+    const base: Record<StatKind, number> = {
+      might: 1.2, hide: 1.0, stride: 0.8, haste: 1.1, vigor: 0.9, greed: 0.9, sheaf: 1.1, mend: 0.8,
     };
-    return kinds.reduce((a, b) => (score(b) > score(a) ? b : a));
+    const score = (c: Card): number => {
+      if (c.price > s.gold) return -Infinity;
+      const own = s.stats[c.kind];
+      let v = base[c.kind] / (1 + own * 0.35);
+      if (hurt < 0.5 && (c.kind === 'vigor' || c.kind === 'mend' || c.kind === 'hide')) v += 0.8;
+      const worth = !c.jewel ? 1
+        : c.jewel === 'pearl' ? PEARL_WORTH
+          : c.jewel === 'diamond' ? DIAMOND_WORTH
+            : c.jewel === 'sapphire' ? 2.5
+              : c.jewel === 'jade' ? Math.pow(2, jades) * 1.2
+                : 1.4;
+      return v * worth - c.price * 0.02 + Math.random() * 0.3;
+    };
+    let best = 0;
+    for (let i = 1; i < cards.length; i++) if (score(cards[i]) > score(cards[best])) best = i;
+    return best;
   }
 
   private updateOffers(): void {
@@ -759,8 +1019,9 @@ export class FortuneKit {
         if (this.now >= o.decideAt) s.offer = null;
         continue;
       }
-      if (owner === 'npc' && this.now >= o.decideAt) { this.pick('npc', this.npcChoose(o.kinds)); continue; }
-      if (this.now >= o.until) this.pick(owner, Phaser.Utils.Array.GetRandom(o.kinds));
+      if (owner === 'npc' && this.now >= o.decideAt) { this.pick('npc', this.npcChoose(o.cards)); continue; }
+      // An unanswered offer takes a plain card for you — never one that costs more.
+      if (this.now >= o.until) this.pick(owner, Phaser.Math.Between(0, Math.min(OFFER_COUNT, o.cards.length) - 1));
     }
   }
 
@@ -772,7 +1033,9 @@ export class FortuneKit {
     const npcIs = this.isGold('npc');
     const anyState = this.blades.length || this.bags.length || this.plumes.length || this.hearts.size
       || this.curses.size || this.stuns.size || this.patches.length || this.loot.length
-      || this.api.player?.goldHeartUntil || this.api.player?.midasUntil;
+      || this.pile.length || this.statues.size
+      || this.api.player?.goldHeartUntil || this.api.player?.midasUntil
+      || this.api.player?.goldHexUntil || this.api.player?.goldStatueUntil || this.api.player?.goldVigorCut;
     if (!playerIs && !npcIs && !anyState) return;
 
     this.ensureLayers();
@@ -782,11 +1045,15 @@ export class FortuneKit {
 
     this.updateLunges();
     this.updateBlades(dt);
+    this.updatePile();
     this.updateBags();
     this.updatePlumes(dt);
+    this.updateGlitterShots();
     this.updateHearts(dt);
+    this.updateHex(delta);
     this.updateStuns();
     this.updateCurses();
+    this.updateStatues();
     this.updateLoot();
     this.updateFloor(delta);
     this.updateOffers();
@@ -847,6 +1114,24 @@ export class FortuneKit {
     }
     this.fx(by).heartApply(t.x, t.y - 34);
     if (!was) this.announce(t.x, t.y - 54, '💛 HEART OF GOLD', FOR.goldLit, 12);
+    // F+ Gold Hex: their bars charge at half speed for the heart and five seconds after it.
+    if (this.up(by, 'f')) {
+      const hexed = this.now < t.goldHexUntil;
+      t.goldHexUntil = Math.max(t.goldHexUntil, t.goldHeartUntil + HEX_TAIL_MS);
+      if (!hexed) this.announce(t.x, t.y - 68, '⏳ GOLD HEX', FOR.gold, 11);
+    }
+  }
+
+  /**
+   * F+ Gold Hex. The timer is the truth (mirrored online), and the drag is applied on the body's
+   * own machine: an online opponent's cooldowns are theirs to slow, from the mirrored timer.
+   */
+  private updateHex(delta: number): void {
+    for (const f of this.allFighters()) {
+      if (this.now >= f.goldHexUntil || !this.alive(f)) continue;
+      if (this.api.isOnline && f === this.api.npc) continue;
+      f.delayCooldowns(delta * HEX_DRAG);
+    }
   }
 
   private updateBlades(dt: number): void {
@@ -869,8 +1154,106 @@ export class FortuneKit {
           break;
         }
       }
+      // Click+ Accumulation: a blade that falls as far as the floor stays on it.
+      if (!gone && b.vy > 0 && b.y >= this.bottom && this.up(b.owner, 'click')) {
+        this.landBlade(b);
+        gone = true;
+      }
       if (gone) this.blades.splice(i, 1);
     }
+  }
+
+  // ── Click+ Accumulation ────────────────────────────────────────────────────
+
+  private landBlade(b: Blade): void {
+    const x = this.clampX(b.x);
+    const y = this.bottom + (Math.random() - 0.3) * 6;
+    this.pile.push({
+      owner: b.owner, x, y, ang: (Math.random() < 0.5 ? 0 : Math.PI) + (Math.random() - 0.5) * 0.5,
+      seed: Math.random() * 999, born: this.now, launchAt: 0, tx: 0, ty: 0,
+    });
+    this.fx(b.owner).bladeLand(x, y, Math.atan2(b.vy, b.vx));
+    // The oldest resting blade gives way to a new one past the cap.
+    let mine = 0;
+    for (const p of this.pile) if (p.owner === b.owner) mine++;
+    if (mine > PILE_MAX) {
+      const i = this.pile.findIndex((p) => p.owner === b.owner && !p.launchAt);
+      if (i >= 0) this.pile.splice(i, 1);
+    }
+  }
+
+  /**
+   * The pile rolls for a burst on a clock that speeds up as it grows, with a chance that grows
+   * with it. A burst picks the blades lying nearest the target, stirs them for a beat, then lifts
+   * them on arcs that come down through where the target was. An online replica never rolls:
+   * its machine does, and the burst arrives as `fortune-burst`.
+   */
+  private updatePile(): void {
+    if (!this.pile.length) return;
+    for (let i = this.pile.length - 1; i >= 0; i--) {
+      const p = this.pile[i];
+      if (!p.launchAt || this.now < p.launchAt) continue;
+      this.pile.splice(i, 1);
+      this.launchPileBlade(p);
+    }
+    for (const owner of BOTH) {
+      if (this.isReplica(owner) || !this.up(owner, 'click') || !this.alive(this.fighter(owner))) continue;
+      const s = this.side(owner);
+      if (this.now < s.pileRollAt) continue;
+      let n = 0;
+      for (const p of this.pile) if (p.owner === owner && !p.launchAt) n++;
+      if (n < PILE_MIN) continue;
+      s.pileRollAt = this.now + Math.max(PILE_ROLL_MS_MIN, PILE_ROLL_MS_MAX - PILE_ROLL_MS_PER * n);
+      if (Math.random() >= n / (n + PILE_CHANCE_K)) continue;
+      // Whoever is nearest the floor is the one the floor goes for.
+      let t: Fighter | null = null;
+      for (const c of this.targetsOf(owner)) if (!t || c.y > t.y) t = c;
+      if (!t) continue;
+      const count = Math.min(n, BURST_BASE + Math.round(n * BURST_SHARE));
+      this.burst(owner, t.x, t.y, count);
+      if (owner === 'player' && this.api.isOnline) {
+        this.api.broadcastMasteryCast(`fortune-burst:${Math.round(t.x)}:${Math.round(t.y)}:${count}`);
+      }
+    }
+  }
+
+  private burst(owner: Owner, tx: number, ty: number, count: number): void {
+    const resting = this.pile.filter((p) => p.owner === owner && !p.launchAt)
+      .sort((a, b) => Math.abs(a.x - tx) - Math.abs(b.x - tx))
+      .slice(0, count);
+    if (!resting.length) return;
+    let lo = Infinity;
+    let hi = -Infinity;
+    resting.forEach((p, i) => {
+      p.launchAt = this.now + BURST_WARN_MS + i * BURST_STAGGER_MS;
+      p.tx = tx + (Math.random() - 0.5) * 2 * BURST_SCATTER;
+      p.ty = ty + (Math.random() - 0.5) * 2 * BURST_SCATTER;
+      lo = Math.min(lo, p.x);
+      hi = Math.max(hi, p.x);
+    });
+    this.fx(owner).pileBurst((lo + hi) / 2, this.bottom, Math.max(30, hi - lo));
+    Sfx.playAt('whoosh', (lo + hi) / 2, { rate: 0.7, volume: 0.6 });
+  }
+
+  /** A lifted blade: thrown on the arc that passes through its aim point after the flight time. */
+  private launchPileBlade(p: PileBlade): void {
+    const T = Phaser.Math.FloatBetween(BURST_FLIGHT_MIN, BURST_FLIGHT_MAX);
+    const vx = (p.tx - p.x) / T;
+    const vy = (p.ty - p.y - 0.5 * FRAY_GRAVITY * T * T) / T;
+    this.blades.push({
+      owner: p.owner, x: p.x, y: p.y - 2, vx, vy,
+      // Already gold: it is the gilt that fell.
+      born: this.now - FRAY_GILD_MS, seed: p.seed, dmg: FRAY_DAMAGE * this.might(p.owner),
+    });
+  }
+
+  /** Online: the opponent's pile burst. */
+  replayNpcUpgradeAct(id: string): void {
+    if (!id.startsWith('fortune-burst:')) return;
+    const [, tx, ty, n] = id.split(':').map(Number);
+    if (![tx, ty, n].every(Number.isFinite)) return;
+    this.ensureLayers();
+    this.burst('npc', tx, ty, n);
   }
 
   private updateBags(): void {
@@ -878,32 +1261,69 @@ export class FortuneKit {
       const b = this.bags[i];
       if (this.now - b.start < BAG_MS) continue;
       this.bags.splice(i, 1);
+      const r = PLUME_R * (b.cloak ? CLOAK_R_MULT : 1);
       this.plumes.push({
-        owner: b.owner, x: b.tx, y: b.ty, born: this.now, until: this.now + PLUME_MS,
+        owner: b.owner, x: b.tx, y: b.ty, r, cloak: b.cloak, born: this.now, until: this.now + PLUME_MS,
         seed: Math.random() * 999, tickAt: this.now + PLUME_TICK_MS,
       });
-      this.fx(b.owner).bagBurst(b.tx, b.ty, PLUME_R);
+      this.fx(b.owner).bagBurst(b.tx, b.ty, r);
       Sfx.playAt('explosion-small', b.tx, { rate: 1.5, volume: 0.45 });
     }
   }
 
   private updatePlumes(dt: number): void {
+    for (const owner of BOTH) this.side(owner).cloaked = false;
+    this.inGlitter.clear();
     for (let i = this.plumes.length - 1; i >= 0; i--) {
       const pl = this.plumes[i];
       if (this.now >= pl.until) { this.plumes.splice(i, 1); continue; }
       // The owner, standing in it, is paid.
       const f = this.fighter(pl.owner);
       if (this.alive(f) && this.isGold(pl.owner)
-        && Phaser.Math.Distance.Between(f.x, f.y, pl.x, pl.y) <= PLUME_R) {
+        && Phaser.Math.Distance.Between(f.x, f.y, pl.x, pl.y) <= pl.r) {
         this.earn(pl.owner, PLUME_GOLD_PER_SEC * dt);
+        if (pl.cloak) this.side(pl.owner).cloaked = true;
+      }
+      // R+ Glittery Cloak: anyone of theirs in the glitter cannot see straight.
+      if (pl.cloak) {
+        for (const t of this.targetsOf(pl.owner)) {
+          if (Phaser.Math.Distance.Between(t.x, t.y, pl.x, pl.y) > pl.r + this.bodyR(t) * 0.5) continue;
+          this.inGlitter.add(t);
+          if (t === this.api.player) continue;
+          if (this.now >= t.aimOffsetBonusUntil || t.aimOffsetBonusDeg < CLOAK_AIM_DEG) t.aimOffsetBonusDeg = CLOAK_AIM_DEG;
+          t.aimOffsetBonusUntil = Math.max(t.aimOffsetBonusUntil, this.now + 250);
+        }
       }
       if (this.now < pl.tickAt) continue;
       pl.tickAt += PLUME_TICK_MS;
       const dmg = PLUME_DPS * (PLUME_TICK_MS / 1000) * this.might(pl.owner);
       for (const t of this.targetsOf(pl.owner)) {
-        if (Phaser.Math.Distance.Between(t.x, t.y, pl.x, pl.y) > PLUME_R + this.bodyR(t) * 0.5) continue;
+        if (Phaser.Math.Distance.Between(t.x, t.y, pl.x, pl.y) > pl.r + this.bodyR(t) * 0.5) continue;
         t.takeDamage(dmg);
       }
+    }
+  }
+
+  /**
+   * R+ Glittery Cloak, for a player standing in an enemy's glitter: the bot and husks aim through
+   * `aimOffsetBonusDeg`, but a player aims with the mouse, so their own shots are knocked off line
+   * as they leave the hand. Online this runs on the victim's machine, which replays the plume.
+   */
+  private updateGlitterShots(): void {
+    const p = this.api.player;
+    if (!p || !this.inGlitter.has(p)) return;
+    const group = this.api.projectiles;
+    if (!group) return;
+    for (const obj of group.getChildren()) {
+      if (!(obj instanceof Projectile) || !obj.active || !obj.isFromPlayer || obj.isHeal) continue;
+      if (this.glitterShots.has(obj)) continue;
+      this.glitterShots.add(obj);
+      if (Phaser.Math.Distance.Between(obj.x, obj.y, p.x, p.y) > CLOAK_SHOT_R) continue;
+      const body = obj.body as Phaser.Physics.Arcade.Body | null;
+      if (!body) continue;
+      const a = (Math.random() * 2 - 1) * CLOAK_JITTER;
+      body.velocity.rotate(a);
+      obj.rotation += a;
     }
   }
 
@@ -994,7 +1414,7 @@ export class FortuneKit {
     for (const f of this.allFighters()) {
       if (this.now < f.midasUntil && !this.curses.has(f)) {
         this.curses.set(f, {
-          by: f === this.api.player ? 'npc' : 'player', start: this.now, lx: f.x, ly: f.y,
+          by: f === this.api.player ? 'npc' : 'player', start: this.now, lx: f.x, ly: f.y, live: false,
         });
       }
     }
@@ -1002,8 +1422,11 @@ export class FortuneKit {
     if (purge) this.purgeAt = this.now + PURGE_EVERY_MS;
     for (const [v, c] of this.curses) {
       if (!v.active || v.hp <= 0 || this.now >= v.midasUntil) {
+        // Ran its full course (a cleanse writes the timer to 0, a death ends it early).
+        const finished = v.midasUntil > 0 && v.active && v.hp > 0;
         this.curses.delete(v);
         v.midasUntil = 0;
+        if (finished && c.live && this.up(c.by, 'q')) this.petrify(c.by, v);
         continue;
       }
       // The floor they walk on.
@@ -1075,6 +1498,56 @@ export class FortuneKit {
     }
   }
 
+  // ── Q+ Full Metal Alchemy ──────────────────────────────────────────────────
+
+  private petrify(by: Owner, v: Fighter): void {
+    v.goldStatueUntil = this.now + STATUE_MS;
+    this.statues.set(v, { by, raw: v.rawDamageTaken, hit: false, live: true });
+    this.stun(v, STATUE_MS);
+    this.fx(by).statueForm(v.x, v.y);
+    this.announce(v.x, v.y - 56, '🗿 SOLID GOLD', FOR.goldLit, 15);
+    Sfx.playAt('money', v.x, { rate: 0.5, volume: 1 });
+    Sfx.playAt('hit-heavy', v.x, { rate: 0.6, volume: 0.6 });
+  }
+
+  /**
+   * A statue stands for three seconds. The one who made it chooses: hit it while it is brittle
+   * (double damage), or leave it to melt and take the three coins it leaves. A hit spends the coins.
+   * A statue this sim did not make — an online mirror — is drawn and held still, nothing more.
+   */
+  private updateStatues(): void {
+    for (const f of this.allFighters()) {
+      if (this.now < f.goldStatueUntil && !this.statues.has(f)) {
+        this.statues.set(f, {
+          by: f === this.api.player ? 'npc' : 'player', raw: f.rawDamageTaken, hit: false, live: false,
+        });
+        this.stun(f, f.goldStatueUntil - this.now);
+      }
+    }
+    for (const [v, st] of this.statues) {
+      const gone = !v.active || v.hp <= 0;
+      if (!gone && st.live && !st.hit && v.rawDamageTaken > st.raw + 0.01) {
+        st.hit = true;
+        this.fx(st.by).statueCrack(v.x, v.y);
+        this.announce(v.x, v.y - 44, 'CRACKED', FOR.brass, 11);
+      }
+      if (!gone && this.now < v.goldStatueUntil) continue;
+      this.statues.delete(v);
+      this.stuns.delete(v);
+      v.goldStatueUntil = 0;
+      if (gone) continue;
+      this.fx(st.by).statueMelt(v.x, v.y);
+      if (!st.live || st.hit || !this.isGold(st.by)) continue;
+      for (let i = 0; i < STATUE_COINS; i++) {
+        const tx = this.clampX(v.x + (i - 1) * 16 + (Math.random() - 0.5) * 6);
+        const ty = this.clampY(v.y + 22 + Math.random() * 8);
+        this.loot.push({ kind: 'coin', by: st.by, x: tx, y: ty, fx: v.x, fy: v.y, born: this.now, r: 6, seed: Math.random() * 999 });
+        this.fx(st.by).coinDrop(v.x, v.y, tx, ty);
+      }
+      Sfx.playAt('money', v.x, { rate: 1.2, volume: 0.7 });
+    }
+  }
+
   private updateLoot(): void {
     for (let i = this.loot.length - 1; i >= 0; i--) {
       const l = this.loot[i];
@@ -1110,22 +1583,89 @@ export class FortuneKit {
     }
   }
 
-  /** The alchemist's own standing effects: hide, mend, and the transmuting hand's afterglow. */
+  /**
+   * Everything the kit writes on bodies every frame, in one place so each field has one writer:
+   * the alchemist's own hide, mend and vigor, the Ruby picks landing on whoever he fights, a
+   * statue's brittleness and the cloak's dodge. Values from an online replica's picks never
+   * reach here (its machine applies them and they arrive through `dm`, `spd`, `cd` and `gvig`), so
+   * the local player's slow, cooldown and vigor fields are left to the mirror when online.
+   */
   private updateSelf(dt: number): void {
-    for (const f of this.allFighters()) {
-      if (f !== this.api.player && f !== this.api.npc) f.fortuneIncomingMult = 1;
-    }
+    const incoming = new Map<Fighter, number>();
+    const speed = new Map<Fighter, number>();
+    const cool = new Map<Fighter, number>();
+    const vigor = new Map<Fighter, number>();
+    const mul = (m: Map<Fighter, number>, f: Fighter, v: number): void => { m.set(f, (m.get(f) ?? 1) * v); };
     for (const owner of BOTH) {
       const s = this.side(owner);
       const f = this.fighter(owner);
       s.glow = Math.max(0, s.glow - dt * 2.2);
-      if (!f) continue;
-      const gold = this.isGold(owner);
-      f.fortuneIncomingMult = gold ? Math.pow(HIDE_STEP, s.stats.hide) : 1;
-      if (gold && this.alive(f) && s.stats.mend > 0 && !this.isReplica(owner)) {
-        f.heal(MEND_HPS * s.stats.mend * dt);
+      if (!f || !this.isGold(owner) || this.isReplica(owner)) continue;
+      this.recompute(owner);
+      mul(incoming, f, Math.pow(HIDE_STEP, s.stats.hide) * Math.pow(RUBY_MIGHT, s.ruby.might));
+      if (this.alive(f)) {
+        if (s.stats.mend > 0) f.heal(MEND_HPS * s.stats.mend * dt);
+        const want = Math.round(VIGOR_HP * s.stats.vigor);
+        const d = want - s.vigorApplied;
+        if (d !== 0) {
+          f.increaseMaxHp(d);
+          if (d > 0) f.heal(d);
+          else if (f.hp > f.maxHp) f.hp = f.maxHp;
+          s.vigorApplied = want;
+        }
+      }
+      const r = s.ruby;
+      if (r.hide + r.stride + r.haste + r.vigor + r.mend <= 0) continue;
+      for (const t of this.targetsOf(owner)) {
+        if (r.hide) mul(incoming, t, Math.pow(RUBY_HIDE, r.hide));
+        if (r.stride) mul(speed, t, Math.pow(RUBY_STRIDE, r.stride));
+        if (r.haste) mul(cool, t, Math.pow(RUBY_HASTE, r.haste));
+        if (r.vigor) vigor.set(t, (vigor.get(t) ?? 0) + RUBY_VIGOR * r.vigor);
+        // A statue does not bleed: it would spend the coins it is waiting to drop.
+        if (r.mend && !this.statues.has(t)) {
+          const acc = (this.bleedAcc.get(t) ?? 0) + RUBY_BLEED_HPS * r.mend * dt;
+          const whole = Math.floor(acc);
+          this.bleedAcc.set(t, acc - whole);
+          if (whole > 0) t.takeDamage(whole);
+        }
       }
     }
+    for (const [v, st] of this.statues) if (st.live) mul(incoming, v, STATUE_VULN);
+
+    const mirrored = this.api.isOnline ? this.api.player : null;
+    for (const f of this.allFighters()) {
+      f.fortuneIncomingMult = incoming.get(f) ?? 1;
+      if (f !== mirrored) {
+        f.goldSpeedMult = speed.get(f) ?? 1;
+        f.goldCooldownMult = cool.get(f) ?? 1;
+        f.goldVigorCut = vigor.get(f) ?? 0;
+      } else {
+        f.goldSpeedMult = 1;
+        f.goldCooldownMult = 1;
+      }
+      this.applyVigorCut(f);
+      // R+ Glittery Cloak: only on the body's own machine, where its hits are resolved.
+      const owner: Owner | null = f === this.api.player ? 'player' : f === this.api.npc ? 'npc' : null;
+      const cloaked = !!owner && !this.isReplica(owner) && this.side(owner).cloaked && this.up(owner, 'r');
+      f.goldCloakDodge = cloaked ? CLOAK_DODGE : 0;
+      const seen = this.dodgesSeen.get(f) ?? f.goldCloakDodges;
+      if (f.goldCloakDodges > seen && this.alive(f)) {
+        this.fx(owner ?? 'player').cloakDodge(f.x, f.y);
+        this.announce(f.x, f.y - 44, '✨ DODGE', FOR.goldLit, 12);
+      }
+      this.dodgesSeen.set(f, f.goldCloakDodges);
+    }
+  }
+
+  /** Ruby Vigor: take the cut off max HP as a change, so it can grow and come back. */
+  private applyVigorCut(f: Fighter): void {
+    const had = this.vigorCuts.get(f) ?? 0;
+    const want = Math.max(0, f.goldVigorCut);
+    if (want === had) return;
+    const d = Math.min(want - had, f.maxHp - 1);
+    f.increaseMaxHp(-d);
+    if (f.hp > f.maxHp) f.hp = f.maxHp;
+    this.vigorCuts.set(f, had + d);
   }
 
   // ── Painting ───────────────────────────────────────────────────────────────
@@ -1155,16 +1695,49 @@ export class FortuneKit {
       goldCoin(fg, this.col(l.by), l.x, l.y, l.r, this.vizT * 2 + l.seed, fade);
     }
 
+    // Click+: the blades on the floor. A blade a burst has picked shivers and brightens first.
+    for (const p of this.pile) {
+      const stir = p.launchAt ? Phaser.Math.Clamp(1 - (p.launchAt - this.now) / BURST_WARN_MS, 0, 1) : 0;
+      const sx = stir ? (Math.random() - 0.5) * 3 * stir : 0;
+      const sy = stir ? -stir * 3 : 0;
+      const len = PILE_BLADE_LEN;
+      const rx = p.x - Math.cos(p.ang) * len * 0.5 + sx;
+      const ry = p.y - Math.sin(p.ang) * len * 0.5 + sy;
+      const a = Phaser.Math.Clamp((this.now - p.born) / 200, 0, 1);
+      fg.fillStyle(this.col(p.owner)(FOR.ink), 0.3 * a);
+      fg.fillEllipse(p.x, p.y + 3, len, 3);
+      grassBlade(fg, this.col(p.owner), rx, ry, p.ang, len, 1, a);
+      if (stir > 0) {
+        fg.fillStyle(this.col(p.owner)(FOR.goldLit), 0.35 * stir);
+        fg.fillCircle(p.x, p.y, 6 + stir * 4);
+      }
+    }
+
     for (const pl of this.plumes) {
       const born = Phaser.Math.Clamp((this.now - pl.born) / 260, 0, 1);
       const life = Phaser.Math.Clamp((pl.until - this.now) / 700, 0, 1);
-      goldPlume(pg, this.col(pl.owner), pl.x, pl.y, PLUME_R * (0.7 + 0.3 * born), 0.9 * born * life, this.vizT, pl.seed);
+      const r = pl.r * (0.7 + 0.3 * born);
+      goldPlume(pg, this.col(pl.owner), pl.x, pl.y, r, 0.9 * born * life, this.vizT, pl.seed);
+      if (pl.cloak) glitterMotes(pg, this.col(pl.owner), pl.x, pl.y, r, born * life, this.vizT, pl.seed);
     }
 
     for (const [v, c] of this.curses) {
       if (!v.active || v.alpha <= 0.05) continue;
       const prog = Phaser.Math.Clamp((this.now - c.start) / MIDAS_MS, 0, 1);
       midasGilt(gg, this.col(c.by), v.x, v.y, 0.15 + prog * 0.85, this.vizT, v.alpha);
+    }
+    for (const [v, st] of this.statues) {
+      if (!v.active) continue;
+      const left = v.goldStatueUntil - this.now;
+      const melt = Phaser.Math.Clamp(1 - left / STATUE_MELT_MS, 0, 1);
+      const a = Math.max(0.4, v.alpha);
+      statueRays(gg, this.col(st.by), v.x, v.y, a * (1 - melt * 0.7), this.vizT);
+      goldStatueShell(gg, this.col(st.by), v.x, v.y, a, this.vizT, melt, st.hit);
+    }
+    for (const owner of BOTH) {
+      const f = this.fighter(owner);
+      if (!this.side(owner).cloaked || !this.alive(f) || !this.up(owner, 'r')) continue;
+      glitterCloak(gg, this.col(owner), f.x, f.y, f.alpha, this.vizT);
     }
 
     for (const b of this.blades) {
@@ -1189,6 +1762,7 @@ export class FortuneKit {
 
   private paintOffers(g: Phaser.GameObjects.Graphics): void {
     let used = 0;
+    let priced = 0;
     for (const owner of BOTH) {
       const offer = this.side(owner).offer;
       if (!offer) continue;
@@ -1200,40 +1774,66 @@ export class FortuneKit {
       const appear = Phaser.Math.Clamp((this.now - offer.opened) / 220, 0, 1);
       const out = offer.ghost ? Phaser.Math.Clamp((offer.decideAt - this.now) / 250, 0, 1) : 1;
       const a = appear * out;
+      let jeweled = false;
       for (let i = 0; i < cs.length; i++) {
-        const kind = offer.kinds[i];
+        const card = offer.cards[i];
         const rise = (1 - appear) * 14;
-        advanceCard(g, this.col(owner), cs[i].x, cs[i].y + rise, CARD_W, CARD_H, kind, hover === i, a);
-        const def = STAT_BY_KIND.get(kind)!;
+        const cx = cs[i].x;
+        const cy = cs[i].y + rise;
+        // Only the alchemist's own purse is known; a replica's jewels are never greyed.
+        const short = !offer.ghost && card.price > s.gold;
+        advanceCard(g, this.col(owner), cx, cy, CARD_W, CARD_H, card.kind, hover === i && !short, a, this.vizT);
+        const def = STAT_BY_KIND.get(card.kind)!;
         const name = this.label(used++);
-        name.setText(def.name).setPosition(cs[i].x, cs[i].y + rise + 16).setAlpha(a).setVisible(true);
+        name.setText(def.name).setPosition(cx, cy + 16).setAlpha(a).setVisible(true);
         const line = this.label(used++);
-        line.setText(def.line).setPosition(cs[i].x, cs[i].y + rise + 27).setAlpha(a).setVisible(true);
+        line.setText(this.cardLine(owner, card)).setPosition(cx, cy + 27).setAlpha(a).setVisible(true)
+          .setColor(card.jewel === 'ruby' ? '#ff8a8a' : '#e6c46a');
+        if (!card.jewel) continue;
+        jeweled = true;
+        jewelGem(g, this.col(owner), cx, cy - CARD_H / 2 - 1, 6, card.jewel, a, this.vizT + i);
+        if (short) {
+          g.fillStyle(this.col(owner)(FOR.ink), a * 0.5);
+          g.fillRoundedRect(cx - CARD_W / 2, cy - CARD_H / 2, CARD_W, CARD_H, 6);
+        }
+        const price = this.priceLabel(priced++);
+        price.setText(`${JEWEL_NAME[card.jewel]}  ${card.price}🪙`).setPosition(cx, cy + CARD_H / 2 + 7)
+          .setAlpha(a).setVisible(true).setColor(short ? '#ff6b6b' : '#fff0a8');
       }
-      // The fuse on an unanswered offer, under the cards.
+      // The fuse on an unanswered offer, under the cards (and under the prices, when there are any).
       if (!offer.ghost && owner === 'player') {
         const left = Phaser.Math.Clamp((offer.until - this.now) / OFFER_MS, 0, 1);
         const span = cs.length * CARD_W + (cs.length - 1) * CARD_GAP;
         const x0 = cs[0].x - CARD_W / 2;
-        const y0 = cs[0].y + CARD_H / 2 + 5;
-        g.fillStyle(this.col(owner)(FOR.ink), 0.6 * a);
-        g.fillRect(x0, y0, span, 3);
-        g.fillStyle(this.col(owner)(FOR.gold), 0.9 * a);
-        g.fillRect(x0, y0, span * left, 3);
+        const y0 = cs[0].y + CARD_H / 2 + (jeweled ? 15 : 5);
+        goldFuse(g, this.col(owner), x0, y0, span, left, a, this.vizT);
       }
     }
     for (let i = used; i < this.labels.length; i++) this.labels[i].setVisible(false);
+    for (let i = priced; i < this.priceLabels.length; i++) this.priceLabels[i].setVisible(false);
   }
 
   private label(i: number): Phaser.GameObjects.Text {
     while (this.labels.length <= i) {
       const big = this.labels.length % 2 === 0;
       this.labels.push(this.api.scene.add.text(0, 0, '', {
-        fontSize: big ? '8px' : '7px', fontFamily: 'Arial Black',
+        fontSize: big ? '8px' : '7px', fontFamily: big ? FONT_DISPLAY : FONT_UI, fontStyle: big ? 'normal' : 'bold',
         color: big ? '#fff3c4' : '#e6c46a', align: 'center',
+        stroke: '#17110a', strokeThickness: big ? 2.5 : 2,
       }).setOrigin(0.5).setDepth(17).setVisible(false));
     }
     return this.labels[i];
+  }
+
+  /** E+ Artisan: the stone and its price, under a jeweled card. */
+  private priceLabel(i: number): Phaser.GameObjects.Text {
+    while (this.priceLabels.length <= i) {
+      this.priceLabels.push(this.api.scene.add.text(0, 0, '', {
+        fontSize: '7px', fontFamily: FONT_UI, fontStyle: 'bold', color: '#fff0a8', align: 'center',
+        stroke: '#17110a', strokeThickness: 2,
+      }).setOrigin(0.5).setDepth(17).setVisible(false));
+    }
+    return this.priceLabels[i];
   }
 
   // ── Avatars & HUD ──────────────────────────────────────────────────────────
@@ -1270,12 +1870,23 @@ export class FortuneKit {
     } : null);
     for (const st of STATS) {
       const n = playerIs ? s.stats[st.kind] : 0;
+      const shown = Math.round(n * 10) / 10;
       this.api.setStatusIndicator(`gold-stat-${st.kind}`, n > 0 ? {
         name: `Advance: ${st.name[0]}${st.name.slice(1).toLowerCase()}`, emoji: '⬆️', color: st.color, priority: 152,
-        description: `${st.line} per pick, for the rest of the match. Picked ${n}×.`,
-        count: n,
+        description: `${st.line} per pick, for the rest of the match. Worth ${shown} picks right now: ${this.statLine(st.kind, n)}.`,
+        count: shown,
       } : null);
     }
+    this.api.setStatusIndicator('gold-cloak', playerIs && this.api.player?.goldCloakDodge > 0 ? {
+      name: 'Glittery Cloak', emoji: '✨', color: FOR.goldLit, priority: 151.5,
+      description: `Standing in your own glittery plume: ${Math.round(CLOAK_DODGE * 100)}% of incoming attacks miss you.`,
+    } : null);
+    const rubies = RUBY_KINDS.filter((k) => s.ruby[k] > 0);
+    this.api.setStatusIndicator('gold-ruby', playerIs && rubies.length ? {
+      name: 'Ruby Curses', emoji: '♦️', color: FOR.bloodLit, priority: 152.5,
+      description: `Your ruby picks, turned on whoever you fight: ${rubies.map((k) => `${this.rubyLine(k)} ×${s.ruby[k]}`).join(', ')}.`,
+      count: rubies.reduce((n, k) => n + s.ruby[k], 0),
+    } : null);
   }
 
   // ── Public accessors (read by ArenaScene / the AI) ─────────────────────────
@@ -1288,16 +1899,21 @@ export class FortuneKit {
   /** Stride, the gold floor and a heart attack, pulled by ArenaScene's speed block. */
   getPlayerSpeedMult(): number {
     const p = this.api.player;
-    if (p && this.stunned(p)) return 0;
-    return this.isGold('player') ? this.speedFor('player') : 1;
+    if (!p) return 1;
+    if (this.stunned(p)) return 0;
+    // Ruby Stride, from the bot's picks (online it arrives through `spd` instead, and this is 1).
+    return p.goldSpeedMult * (this.isGold('player') ? this.speedFor('player') : 1);
   }
 
   getNpcSpeedMult(): number {
     const n = this.api.npc;
-    if (n && this.stunned(n)) return 0;
+    if (!n) return 1;
+    if (this.stunned(n)) return 0;
+    // Ruby Stride on the npc counts online too: it is what `spd` carries to the victim.
+    const slow = n.goldSpeedMult;
     // An online replica's motion is streamed; its own boosts already happened on its machine.
-    if (!this.isGold('npc') || this.api.isOnline) return 1;
-    return this.speedFor('npc');
+    if (!this.isGold('npc') || this.api.isOnline) return slow;
+    return slow * this.speedFor('npc');
   }
 
   coinsOf(owner: Owner): number { return this.side(owner).gold; }
@@ -1315,6 +1931,16 @@ export class FortuneKit {
     const p = this.api.player;
     const h = p ? this.hearts.get(p) : undefined;
     return !!h && h.by === 'npc' && this.now < p.goldHeartUntil;
+  }
+
+  /**
+   * Q+ Full Metal Alchemy, for the bot: its statue is standing and it would rather have the three
+   * coins than the double damage — it is short of an Advance. Side-effect-free.
+   */
+  npcStatueHold(): boolean {
+    const p = this.api.player;
+    const st = p ? this.statues.get(p) : undefined;
+    return !!st && st.live && st.by === 'npc' && !st.hit && this.sides.npc.gold < ADVANCE_COST;
   }
 
   npcMidasLive(): boolean {
@@ -1360,7 +1986,7 @@ export class FortuneKit {
     for (const pl of this.plumes) {
       if (pl.owner !== 'npc' || pl.until - this.now < 1500) continue;
       const d = Phaser.Math.Distance.Between(n.x, n.y, pl.x, pl.y);
-      if (d < PLUME_R * 0.6) return undefined;
+      if (d < pl.r * 0.6) return undefined;
       if (d < NPC_PLUME_SEEK_R && d < bestD) { bestD = d; best = { x: pl.x, y: pl.y }; }
     }
     if (best) return best;

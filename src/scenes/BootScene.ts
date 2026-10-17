@@ -2746,6 +2746,42 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('elem-psychic', 48, 48);
     gfx.clear();
 
+    // Myth — a hole cut in the arena with the night showing through: a black void with a thin
+    // violet rim and pinpricks of starlight. Excalibur is the rig's, not the body's.
+    bakeOrb(gfx, { rim: 0x3b2a6b, shell: 0x1f1540, body: 0x0a0616, mid: 0x05030c, core: 0x05030c, light: 0x3b2a6b, glint: 0x7d5cff });
+    for (let i = 0; i < 22; i++) {
+      const sa = Math.sin(i * 91.7 + 3.1) * 18733.517;
+      const sd = Math.sin(i * 47.3 + 1.7) * 18733.517;
+      const a = (sa - Math.floor(sa)) * Math.PI * 2;
+      const d = Math.sqrt(sd - Math.floor(sd)) * 15;
+      const px = 24 + Math.cos(a) * d;
+      const py = 24 + Math.sin(a) * d;
+      const big = i % 7 === 0;
+      gfx.fillStyle(i % 5 === 0 ? 0xa9c7ff : 0xfff6d5, big ? 1 : 0.85);
+      if (big) {
+        gfx.fillPoints([
+          new Phaser.Geom.Point(px, py - 2.6), new Phaser.Geom.Point(px + 0.9, py - 0.9), new Phaser.Geom.Point(px + 2.6, py),
+          new Phaser.Geom.Point(px + 0.9, py + 0.9), new Phaser.Geom.Point(px, py + 2.6), new Phaser.Geom.Point(px - 0.9, py + 0.9),
+          new Phaser.Geom.Point(px - 2.6, py), new Phaser.Geom.Point(px - 0.9, py - 0.9),
+        ], true);
+      } else {
+        gfx.fillCircle(px, py, 0.9);
+      }
+    }
+    gfx.generateTexture('elem-myth', 48, 48);
+    gfx.clear();
+
+    // Myth's star shard — the Stronghold tower's bolt.
+    gfx.fillStyle(0x7d5cff, 0.5);
+    gfx.fillCircle(8, 8, 7);
+    gfx.fillStyle(0xfff6d5, 1);
+    gfx.fillPoints([
+      new Phaser.Geom.Point(8, 1), new Phaser.Geom.Point(10, 6), new Phaser.Geom.Point(15, 8), new Phaser.Geom.Point(10, 10),
+      new Phaser.Geom.Point(8, 15), new Phaser.Geom.Point(6, 10), new Phaser.Geom.Point(1, 8), new Phaser.Geom.Point(6, 6),
+    ], true);
+    gfx.generateTexture('proj-myth-star', 16, 16);
+    gfx.clear();
+
     // Radiation — a plain orb of contained neon green (the RAD neon ladder). The trefoil and the
     // lead live on the rig's hazmat helmet, not on the body.
     bakeOrb(gfx, { rim: 0x0f2e08, shell: 0x1f5a10, body: 0x3f9e18, mid: 0x5cc82a, core: 0x9dff6a, light: 0xc2ff8f, glint: 0xeeffdc });

@@ -102,22 +102,18 @@ const E_PLUS_STEAM_INTERVAL_MS = 130;
 
 // ── R+ Prism Drill ──────────────────────────────────────────────────────
 const DRILL_SPEED = 900;
-const DRILL_SLOW_MULT = 0.1;
+/** Crawl speed while the drill is inside somebody — back to full speed once it is out the far side. */
+const DRILL_GRIND_SPEED = 25;
 const DRILL_HIT_RADIUS = 26;
 const DRILL_STUN_MS = 500;
 const DRILL_STUN_TICK_MS = 500;
+/** Damage is ground in on this tick for as long as the drill is inside a body. */
+const DRILL_DAMAGE_TICK_MS = 100;
 const DRILL_MIN_DAMAGE = 2;
-const DRILL_MAX_DAMAGE = 5;
-const DRILL_LIFETIME_MS = 4000;
-
-// ── F+ Javelin Burst ────────────────────────────────────────────────────
-const F_PLUS_JAVELIN_COUNT = 12;
-const F_PLUS_JAVELIN_SPEED = 480;
-
-// ── Q+ Flare-Stream ─────────────────────────────────────────────────────
-const FLARE_TELEPORT_INTERVAL = 10;
-const FLARE_BEAM_LIFETIME_MS = 35000;
-const FLARE_ACCEL_MULT = 3;
+const DRILL_MAX_DAMAGE = 6;
+const DRILL_LIFETIME_MS = 6000;
+/** R must be let go within this long of reaching the ramp (either side of it) to fire the drill. */
+const DRILL_RELEASE_WINDOW_MS = 180;
 
 // ── Aurora (divine perk) ────────────────────────────────────────────────
 /** Speed handed over for being hit at all, before the size of the hit is counted. */
@@ -180,14 +176,7 @@ interface LightDrill {
   dmg: number;
   hitTarget: Fighter | null;
   nextStunAt: number;
-  until: number;
-}
-
-interface LightFlareBeam {
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
+  nextTickAt: number;
   until: number;
 }
 
@@ -262,11 +251,11 @@ export class LightKit {
   private speedOLightBouncesLeft = 0;
   private speedOLightNextBounceAt = 0;
 
-  private accelBarBg: Phaser.GameObjects.Rectangle | null = null;
-  private accelBarFill: Phaser.GameObjects.Rectangle | null = null;
+  /** The lance tachometer under the HP bar — one Graphics repainted every frame it is shown. */
+  private accelGfx: Phaser.GameObjects.Graphics | null = null;
 
   // ── Click+ Redline ───────────────────────────────────────────────────────
-  private dangerVignette: Phaser.GameObjects.Rectangle[] | null = null;
+  private dangerVignette: Phaser.GameObjects.Graphics | null = null;
 
   // ── E+ Steam Charge ──────────────────────────────────────────────────────
   private ePlusHolding = false;
@@ -277,10 +266,11 @@ export class LightKit {
   private drills: LightDrill[] = [];
   private playerStunUntil = 0;
   private npcStunUntil = 0;
-
-  // ── Q+ Flare-Stream ──────────────────────────────────────────────────────
-  private playerTeleportCount = 0;
-  private flareBeams: LightFlareBeam[] = [];
+  /** R's state last frame, so the moment it is let go can be timed against a ramp contact. */
+  private rWasDown = false;
+  private rReleasedAt = -Infinity;
+  /** A ramp reached with R still held: rides normally unless R is let go inside the window. */
+  private pendingDrill: { ramp: LightRamp; until: number } | null = null;
 
   // ── Aurora (perk) ────────────────────────────────────────────────────────
   /** Last seen player HP, so a drop can be read as "you were hit" without a damage hook. */
@@ -376,8 +366,7 @@ export class LightKit {
 
     this.destroyAccelBar();
 
-    this.dangerVignette?.forEach((r) => r.destroy());
-    this.dangerVignette = null;
+    this.destroyDangerVignette();
 
     this.ePlusHolding = false;
     this.ePlusHoldStart = 0;
@@ -386,9 +375,9 @@ export class LightKit {
     this.drills = [];
     this.playerStunUntil = 0;
     this.npcStunUntil = 0;
-
-    this.playerTeleportCount = 0;
-    this.flareBeams = [];
+    this.rWasDown = false;
+    this.rReleasedAt = -Infinity;
+    this.pendingDrill = null;
 
     this.auroraLastHp = -1;
     this.auroraSurge = 0;
@@ -528,14 +517,19 @@ export class LightKit {
       }
     }
 
+    // R+ Prism Drill is timed off the moment R comes up, so track that edge every frame.
+    const rDown = this.arena.rKey.isDown;
+    if (this.rWasDown && !rDown) this.rReleasedAt = time;
+    this.rWasDown = rDown;
+
     // Ramp overlap checks run unconditionally — each array is naturally empty
     // on whichever side isn't playing Light this match.
     this.updateRampArray(time, this.ramps, player, this.arena.enemies);
     this.updateRampArray(time, this.npcRamps, npc, [player]);
+    this.resolvePendingDrill(time);
 
     this.updateStreaks(time);
     this.updateDrills(time, delta);
-    this.updateFlareBeams(time);
 
     // Mastery — Killer Kebab. Runs after the car step so riders land on this frame's lance.
     this.updateKebab(time, 'player');
@@ -639,19 +633,13 @@ export class LightKit {
 
     const auroraUp = this.arena.hasPerk('player', 'aurora') && player.active && player.hp > 0;
     const hasGround = this.ramps.length > 0 || this.npcRamps.length > 0
-      || this.streaks.length > 0 || this.flareBeams.length > 0 || this.flickerGhosts.length > 0
+      || this.streaks.length > 0 || this.flickerGhosts.length > 0
       || auroraUp;
     if (hasGround || this.groundGfx) {
       const g = this.ground();
       g.clear();
       // The curtain is worn, so it goes down first and everything else lies over it.
       if (auroraUp) LightFx.drawAurora(g, this.pcol, player.x, player.y, this.vizT, this.auroraSurge);
-      // Flare beams are permanent furniture, so they sit under the transient streaks.
-      for (const b of this.flareBeams) {
-        const life = Phaser.Math.Clamp((b.until - time) / FLARE_BEAM_LIFETIME_MS, 0, 1);
-        LightFx.drawStreak(g, this.pcol, b.x1, b.y1, b.x2, b.y2, STREAK_THICKNESS * 0.8,
-          LIGHT.ember, 0.25 + life * 0.55, this.vizT);
-      }
       for (const s of this.streaks) {
         const life = Phaser.Math.Clamp((s.until - time) / STREAK_LIFETIME_MS, 0, 1);
         LightFx.drawStreak(g, this.col(s.owner), s.x1, s.y1, s.x2, s.y2, STREAK_THICKNESS,
@@ -803,11 +791,7 @@ export class LightKit {
     const maxTurnStep = turnRate * dtS;
     angle += Phaser.Math.Clamp(diff, -maxTurnStep, maxTurnStep);
 
-    // Q+ Flare-Stream: standing on your own flare beam triples the accel rate
-    let accelRate = CAR_ACCEL_RATE;
-    if (isPlayer && this.flareBeams.length > 0 && this.arena.hasUpgrade('q') && this.isOnFlareBeam(body.center.x, body.center.y)) {
-      accelRate *= FLARE_ACCEL_MULT;
-    }
+    const accelRate = CAR_ACCEL_RATE;
 
     // Mastery — Unstoppable: the lance bites into the corner, so a hard turn costs far less speed.
     const unstoppable = isPlayer ? this.arena.masteryActive : this.arena.npcMasteryActive;
@@ -902,52 +886,129 @@ export class LightKit {
     }
   }
 
-  private ensureAccelBar(): void {
-    if (this.accelBarBg) return;
-    const { scene, width: W, hpBarY, hpBarH } = this.arena;
-    const barW = 220;
-    const barH = 8;
-    const barY = hpBarY + hpBarH / 2 + 3 + barH / 2;
-    this.accelBarBg = scene.add.rectangle(W / 2, barY, barW + 4, barH + 4, LIGHT.shade, 0.9)
-      .setStrokeStyle(2, LIGHT.steel).setDepth(20);
-    this.accelBarFill = scene.add.rectangle(W / 2 - barW / 2, barY, 0, barH, LANCE_COLOR_SLOW, 1)
-      .setOrigin(0, 0.5).setDepth(21);
+  private ensureAccelBar(): Phaser.GameObjects.Graphics {
+    if (!this.accelGfx || !this.accelGfx.active) this.accelGfx = this.arena.scene.add.graphics().setDepth(20);
+    return this.accelGfx;
   }
 
+  /**
+   * The lance tachometer: a chrome-bezelled dash strip of LED cells that warm from pale gold to
+   * red as the car accelerates, with a redline band (Click+), tick marks, a glowing needle at
+   * the fill edge and speed chevrons that strobe near the top end.
+   */
   private updateAccelBar(ratio: number): void {
-    this.ensureAccelBar();
-    const barW = 220;
-    if (this.accelBarFill) {
-      this.accelBarFill.setSize(barW * Phaser.Math.Clamp(ratio, 0, 1), 8);
-      this.accelBarFill.setFillStyle(mixColor(LANCE_COLOR_SLOW, LANCE_COLOR_FAST, ratio), 1);
+    const g = this.ensureAccelBar();
+    g.clear();
+    const { width: W, hpBarY, hpBarH } = this.arena;
+    const col = this.pcol;
+    const r = Phaser.Math.Clamp(ratio, 0, 1);
+    const barW = 220, barH = 8;
+    const cy = hpBarY + hpBarH / 2 + 3 + barH / 2;
+    const L = W / 2 - barW / 2, T = cy - barH / 2;
+    const t = this.arena.scene.time.now / 1000;
+    const redline = this.arena.hasUpgrade('click') ? CLICK_PLUS_DANGER_RATIO : 1;
+
+    // Bezel: dark well inside a chrome rim with a lit top edge, slanted ends like a dash gauge.
+    const bez = (dx: number, dy: number) => [
+      new Phaser.Geom.Point(L - 6 - dx, T - 3 - dy), new Phaser.Geom.Point(L + barW + 10 + dx, T - 3 - dy),
+      new Phaser.Geom.Point(L + barW + 4 + dx, T + barH + 3 + dy), new Phaser.Geom.Point(L - 12 - dx, T + barH + 3 + dy),
+    ];
+    g.fillStyle(0x000000, 0.35); g.fillPoints(bez(1, 1).map((p) => new Phaser.Geom.Point(p.x + 1, p.y + 2)), true);
+    g.fillStyle(col(LIGHT.steel), 1); g.fillPoints(bez(1.5, 1.5), true);
+    g.fillStyle(col(LIGHT.shade), 0.96); g.fillPoints(bez(0, 0), true);
+    g.lineStyle(1, col(LIGHT.glass), 0.55);
+    g.lineBetween(L - 7, T - 4.5, L + barW + 11, T - 4.5);
+
+    // LED cells.
+    const cells = 22, gap = 1.6, cw = (barW - gap * (cells - 1)) / cells;
+    const lit = r * cells;
+    for (let i = 0; i < cells; i++) {
+      const u = (i + 0.5) / cells;
+      const cx0 = L + i * (cw + gap);
+      const c = u >= redline ? LIGHT.red : mixColor(LANCE_COLOR_SLOW, LANCE_COLOR_FAST, u);
+      const on = Phaser.Math.Clamp(lit - i, 0, 1);
+      g.fillStyle(col(u >= redline ? 0x3a0800 : 0x1c1a10), 1);
+      g.fillRect(cx0, T, cw, barH);
+      if (on > 0) {
+        g.fillStyle(col(c), 0.45 + on * 0.55);
+        g.fillRect(cx0, T, cw, barH);
+        g.fillStyle(col(LIGHT.white), 0.35 * on);
+        g.fillRect(cx0, T, cw, 2);
+      }
+    }
+    // Redline band marker and ticks under the strip.
+    if (redline < 1) {
+      const rx = L + barW * redline;
+      g.lineStyle(1.5, col(LIGHT.red), 0.6 + 0.4 * Math.sin(t * 8) * (r > redline ? 1 : 0));
+      g.lineBetween(rx, T - 3, rx, T + barH + 3);
+    }
+    g.lineStyle(1, col(LIGHT.glass), 0.35);
+    for (let k = 0; k <= 10; k++) {
+      const tx = L + (barW * k) / 10;
+      g.lineBetween(tx, T + barH + 1, tx, T + barH + (k % 5 === 0 ? 4 : 2.5));
+    }
+    // The needle: a hot bead riding the fill edge.
+    if (r > 0.01) {
+      const nx = L + barW * r;
+      const nc = mixColor(LANCE_COLOR_SLOW, LANCE_COLOR_FAST, r);
+      g.fillStyle(col(nc), 0.3 + 0.15 * Math.sin(t * 12));
+      g.fillCircle(nx, cy, 7);
+      g.fillStyle(col(LIGHT.white), 0.95);
+      g.fillRect(nx - 1, T - 2, 2, barH + 4);
+    }
+    // Speed chevrons at the right end strobe as the lance nears the top.
+    if (r > 0.6) {
+      const k = (r - 0.6) / 0.4;
+      for (let i = 0; i < 3; i++) {
+        const blink = (Math.floor(t * 10) + i) % 3 === 0 ? 1 : 0.4;
+        const hx = L + barW + 16 + i * 6;
+        g.lineStyle(2, col(r > redline ? LIGHT.red : LIGHT.gold), k * blink);
+        g.lineBetween(hx, T - 1, hx + 4, cy);
+        g.lineBetween(hx + 4, cy, hx, T + barH + 1);
+      }
     }
   }
 
   private destroyAccelBar(): void {
-    if (this.accelBarBg) { this.accelBarBg.destroy(); this.accelBarBg = null; }
-    if (this.accelBarFill) { this.accelBarFill.destroy(); this.accelBarFill = null; }
+    this.accelGfx?.destroy();
+    this.accelGfx = null;
   }
 
   // ── Click+ Redline danger vignette ─────────────────────────────────────────
 
-  private ensureDangerVignette(): void {
-    if (this.dangerVignette) return;
-    const { scene, width: W, height: H } = this.arena;
-    const t = 36;
-    const mk = (x: number, y: number, w: number, h: number) =>
-      scene.add.rectangle(x, y, w, h, LIGHT.red, 0).setOrigin(0, 0).setScrollFactor(0).setDepth(999);
-    this.dangerVignette = [mk(0, 0, W, t), mk(0, H - t, W, t), mk(0, 0, t, H), mk(W - t, 0, t, H)];
-  }
-
+  /**
+   * Redline warning: a red vignette that feathers in from every screen edge in layered bands,
+   * pulsing like a warning light, with hazard corner brackets.
+   */
   private updateDangerVignette(alpha: number): void {
     if (alpha <= 0) { this.destroyDangerVignette(); return; }
-    this.ensureDangerVignette();
-    this.dangerVignette?.forEach((r) => r.setFillStyle(LIGHT.red, alpha));
+    if (!this.dangerVignette || !this.dangerVignette.active) {
+      this.dangerVignette = this.arena.scene.add.graphics().setScrollFactor(0).setDepth(999);
+    }
+    const g = this.dangerVignette;
+    g.clear();
+    const { width: W, height: H } = this.arena;
+    const pulse = 0.8 + 0.2 * Math.sin(this.arena.scene.time.now / 90);
+    const bands = 6, depth = 48;
+    for (let i = 0; i < bands; i++) {
+      const d = (depth / bands) * (i + 1);
+      const a = alpha * pulse * 1.1 * (1 - i / bands);
+      g.fillStyle(this.pcol(LIGHT.red), a);
+      const inset = (depth / bands) * i;
+      g.fillRect(inset, inset, W - inset * 2, d - inset);
+      g.fillRect(inset, H - d, W - inset * 2, d - inset);
+      g.fillRect(inset, d, d - inset, H - d * 2);
+      g.fillRect(W - d, d, d - inset, H - d * 2);
+    }
+    g.lineStyle(3, this.pcol(LIGHT.amber), alpha * 1.6 * pulse);
+    for (const [x, y, sx, sy] of [[8, 8, 1, 1], [W - 8, 8, -1, 1], [8, H - 8, 1, -1], [W - 8, H - 8, -1, -1]]) {
+      g.lineBetween(x, y, x + sx * 34, y);
+      g.lineBetween(x, y, x, y + sy * 34);
+    }
   }
 
   private destroyDangerVignette(): void {
-    if (!this.dangerVignette) return;
-    this.dangerVignette.forEach((r) => r.destroy());
+    this.dangerVignette?.destroy();
     this.dangerVignette = null;
   }
 
@@ -979,23 +1040,17 @@ export class LightKit {
         const was = ramp.overlapping.has(f);
         if (within && !was) {
           ramp.overlapping.add(f);
-          // R+ Prism Drill: driving your held lance onto your own ramp while holding R fires the drill instead
-          const drillReady = f === ownerFighter && f === this.arena.player && this.lanceHeld &&
-            this.arena.hasUpgrade('r') && this.arena.rKey.isDown;
-          if (drillReady) {
+          // R+ Prism Drill: letting go of R right as your held lance reaches your own ramp fires the
+          // drill instead. Just let go → fire now; still held → wait out the window for the release.
+          const drillable = f === ownerFighter && f === this.arena.player && this.lanceHeld &&
+            this.arena.hasUpgrade('r');
+          if (drillable && time - this.rReleasedAt <= DRILL_RELEASE_WINDOW_MS) {
             this.launchPrismDrill(ramp, time);
             shattered.push(ramp);
+          } else if (drillable && this.arena.rKey.isDown && !this.pendingDrill) {
+            this.pendingDrill = { ramp, until: time + DRILL_RELEASE_WINDOW_MS };
           } else {
-            this.launchRampLances(ramp);
-            // Hitting the ramp: the light breaks apart into its spectrum along the heading.
-            this.fx(ramp.owner).boom(ramp.x, ramp.y, 54, { color: LIGHT.cyan, shards: 8, mark: false });
-            if (f === ownerFighter) {
-              if (ramp.owner === 'player') {
-                this.carBoostUntil = time + RAMP_BOOST_MS;
-                this.arena.recordMasteryStat('rampRides', 1);
-              } else this.npcCarBoostUntil = time + RAMP_BOOST_MS;
-              this.arena.showFloatingText(f.x, f.y - 30, '⚡ RAMP BOOST', '#66ddff');
-            }
+            this.rideRamp(ramp, f, f === ownerFighter, time);
           }
         } else if (!within && was) {
           ramp.overlapping.delete(f);
@@ -1005,6 +1060,35 @@ export class LightKit {
     for (const r of shattered) {
       const idx = arr.indexOf(r);
       if (idx >= 0) arr.splice(idx, 1);
+    }
+  }
+
+  /** Driving over a ramp: three lances out of the prism, and a boost if it was your own. */
+  private rideRamp(ramp: LightRamp, f: Fighter, isOwner: boolean, time: number): void {
+    this.launchRampLances(ramp);
+    // Hitting the ramp: the light breaks apart into its spectrum along the heading.
+    this.fx(ramp.owner).boom(ramp.x, ramp.y, 54, { color: LIGHT.cyan, shards: 8, mark: false });
+    if (!isOwner) return;
+    if (ramp.owner === 'player') {
+      this.carBoostUntil = time + RAMP_BOOST_MS;
+      this.arena.recordMasteryStat('rampRides', 1);
+    } else this.npcCarBoostUntil = time + RAMP_BOOST_MS;
+    this.arena.showFloatingText(f.x, f.y - 30, '⚡ RAMP BOOST', '#66ddff');
+  }
+
+  /** A ramp reached with R held: R let go in time fires the drill, otherwise it is ridden as normal. */
+  private resolvePendingDrill(time: number): void {
+    const pending = this.pendingDrill;
+    if (!pending) return;
+    const { ramp } = pending;
+    if (!this.ramps.includes(ramp)) { this.pendingDrill = null; return; }
+    if (this.lanceHeld && !this.arena.rKey.isDown && time <= pending.until) {
+      this.pendingDrill = null;
+      this.launchPrismDrill(ramp, time);
+      this.ramps.splice(this.ramps.indexOf(ramp), 1);
+    } else if (time > pending.until || !this.lanceHeld) {
+      this.pendingDrill = null;
+      this.rideRamp(ramp, this.arena.player, true, time);
     }
   }
 
@@ -1026,7 +1110,7 @@ export class LightKit {
     scene.cameras.main.shake(140, 0.004);
     this.drills.push({
       x: ramp.x, y: ramp.y, angle: ramp.angle, speed: DRILL_SPEED, dmg,
-      hitTarget: null, nextStunAt: 0, until: time + DRILL_LIFETIME_MS,
+      hitTarget: null, nextStunAt: 0, nextTickAt: 0, until: time + DRILL_LIFETIME_MS,
     });
     this.arena.showFloatingText(player.x, player.y - 30, '🔻 PRISM DRILL', '#ff4422');
   }
@@ -1047,25 +1131,37 @@ export class LightKit {
         continue;
       }
 
+      // Inside somebody the drill crawls and grinds damage in on a fast tick; once it is out the far
+      // side it picks its full speed back up.
+      let inside: Fighter | null = null;
       for (const t of this.arena.enemies) {
         if (!t.active || t.hp <= 0) continue;
-        if (Phaser.Math.Distance.Between(d.x, d.y, t.x, t.y) > DRILL_HIT_RADIUS) continue;
-        if (d.hitTarget !== t) {
-          d.hitTarget = t;
-          d.speed *= DRILL_SLOW_MULT;
-          const hx = t.x, hy = t.y;
-          t.takeDamage(d.dmg);
-          // Biting in: the drill throws its spectrum back out of the wound.
-          this.pfx.boom(hx, hy, 46, { color: LIGHT.red, shards: 7, mark: false, duration: 300 });
-          this.arena.recordMasteryStat('drillHits', 1);
-          d.nextStunAt = time;
-        }
-        if (time >= d.nextStunAt) {
-          d.nextStunAt = time + DRILL_STUN_TICK_MS;
-          if (t === this.arena.player) this.playerStunUntil = Math.max(this.playerStunUntil, time + DRILL_STUN_MS);
-          else this.npcStunUntil = Math.max(this.npcStunUntil, time + DRILL_STUN_MS);
-        }
-        break;
+        if (Phaser.Math.Distance.Between(d.x, d.y, t.x, t.y) <= DRILL_HIT_RADIUS) { inside = t; break; }
+      }
+      if (!inside) {
+        d.hitTarget = null;
+        d.speed = DRILL_SPEED;
+        continue;
+      }
+      const t = inside;
+      if (d.hitTarget !== t) {
+        d.hitTarget = t;
+        d.nextTickAt = time;
+        d.nextStunAt = time;
+        // Biting in: the drill throws its spectrum back out of the wound.
+        this.pfx.boom(t.x, t.y, 46, { color: LIGHT.red, shards: 7, mark: false, duration: 300 });
+        this.arena.recordMasteryStat('drillHits', 1);
+      }
+      d.speed = DRILL_GRIND_SPEED;
+      if (time >= d.nextTickAt) {
+        d.nextTickAt = time + DRILL_DAMAGE_TICK_MS;
+        t.takeDamage(d.dmg);
+        this.pfx.shards(t.x, t.y, 2, { speed: 220, angle: d.angle + Math.PI, spread: 1.2, color: LIGHT.ember, depth: 10 });
+      }
+      if (time >= d.nextStunAt) {
+        d.nextStunAt = time + DRILL_STUN_TICK_MS;
+        if (t === this.arena.player) this.playerStunUntil = Math.max(this.playerStunUntil, time + DRILL_STUN_MS);
+        else this.npcStunUntil = Math.max(this.npcStunUntil, time + DRILL_STUN_MS);
       }
     }
   }
@@ -1109,36 +1205,10 @@ export class LightKit {
       }
     }
 
-    // F+ Javelin Burst: if the trick's AOE also catches a prism ramp, that ramp fires 12 javelins
-    // and grants both the trick boost and the ramp boost at once.
-    let rampHit: LightRamp | null = null;
-    if (owner === 'player' && this.arena.hasUpgrade('f')) {
-      const allRamps: LightRamp[] = [...this.ramps, ...this.npcRamps];
-      rampHit = allRamps.find((r) => Phaser.Math.Distance.Between(caster.x, caster.y, r.x, r.y) <= TRICK_RADIUS) ?? null;
-    }
-
-    if (rampHit) {
-      this.launchJavelinBurst(rampHit);
-      fx.boom(rampHit.x, rampHit.y, 70, { color: LIGHT.cyan, shards: 12, mark: false });
-      const boostUntil = time + Math.max(TRICK_BOOST_MS, RAMP_BOOST_MS);
-      if (owner === 'player') this.carBoostUntil = boostUntil; else this.npcCarBoostUntil = boostUntil;
-      this.arena.showFloatingText(caster.x, caster.y - 30, '🌟 JAVELIN BURST', '#66ddff');
-    } else if (hit) {
+    if (hit) {
       if (owner === 'player') this.carBoostUntil = time + TRICK_BOOST_MS;
       else this.npcCarBoostUntil = time + TRICK_BOOST_MS;
       this.arena.showFloatingText(caster.x, caster.y - 30, '✨ LIGHT TRICK', '#fff4a8');
-    }
-  }
-
-  private launchJavelinBurst(ramp: LightRamp): void {
-    const { scene, projectiles } = this.arena;
-    const isPlayerOwned = ramp.owner === 'player';
-    for (let i = 0; i < F_PLUS_JAVELIN_COUNT; i++) {
-      const a = (i / F_PLUS_JAVELIN_COUNT) * Math.PI * 2;
-      const proj = new Projectile(scene, ramp.x, ramp.y, 'proj-light-triangle', TRICK_DAMAGE, isPlayerOwned);
-      proj.setTint(LIGHT.cyan);
-      projectiles.add(proj);
-      proj.launch(Math.cos(a) * F_PLUS_JAVELIN_SPEED, Math.sin(a) * F_PLUS_JAVELIN_SPEED);
     }
   }
 
@@ -1208,22 +1278,10 @@ export class LightKit {
     else if (wall === 2) { nx = margin; ny = margin + Math.random() * (H - margin * 2); }
     else { nx = W - margin; ny = margin + Math.random() * (H - margin * 2); }
 
-    const midX = (caster.x + nx) / 2;
-    const midY = (caster.y + ny) / 2;
-    const length = Math.max(4, Phaser.Math.Distance.Between(caster.x, caster.y, nx, ny));
     const angle = Math.atan2(ny - caster.y, nx - caster.x);
     this.streaks.push({ x1: caster.x, y1: caster.y, x2: nx, y2: ny, owner, until: time + STREAK_LIFETIME_MS, hitSet: new Set() });
     // Each bounce leaves a flare at the wall it came off.
     this.fx(owner).flare(nx, ny, 0.55, 12, LIGHT.white, angle);
-
-    // Q+ Flare-Stream: every 10th teleport leaves a lasting orange beam
-    if (owner === 'player' && this.arena.hasUpgrade('q')) {
-      this.playerTeleportCount++;
-      if (this.playerTeleportCount % FLARE_TELEPORT_INTERVAL === 0) {
-        this.flareBeams.push({ x1: caster.x, y1: caster.y, x2: nx, y2: ny, until: time + FLARE_BEAM_LIFETIME_MS });
-        this.pfx.sparkle(midX, midY, 8, length * 0.3, 11, LIGHT.ember);
-      }
-    }
 
     caster.setPosition(nx, ny);
     body.reset(nx, ny);
@@ -1259,20 +1317,6 @@ export class LightKit {
         }
       }
     }
-  }
-
-  private updateFlareBeams(time: number): void {
-    for (let i = this.flareBeams.length - 1; i >= 0; i--) {
-      const b = this.flareBeams[i];
-      if (time >= b.until) { this.flareBeams.splice(i, 1); continue; }
-    }
-  }
-
-  private isOnFlareBeam(x: number, y: number): boolean {
-    for (const b of this.flareBeams) {
-      if (distToSegment(x, y, b.x1, b.y1, b.x2, b.y2) <= STREAK_HIT_RADIUS) return true;
-    }
-    return false;
   }
 
   // ── Mastery — Killer Kebab ───────────────────────────────────────────────

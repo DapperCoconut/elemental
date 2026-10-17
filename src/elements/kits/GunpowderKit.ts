@@ -394,7 +394,8 @@ export class GunpowderKit {
   // ── Arsenal HUD ───────────────────────────────────────────────────────────
   private arsenalHudCx = 0;
   private arsenalHudTexts: Phaser.GameObjects.Text[] = [];
-  private arsenalHudBgs: Phaser.GameObjects.Rectangle[] = [];
+  /** The weapon rack and powder pouch — one Graphics repainted every frame by `paintArsenalHud`. */
+  private arsenalHudGfx: Phaser.GameObjects.Graphics | null = null;
   private arsenalHudAreas: ArsenalHudSlot[] = [];
   private wasRightDown = false;
 
@@ -693,6 +694,7 @@ export class GunpowderKit {
     this.updateFireworks(time, delta);
     this.updateBlunderFire(time);
     this.paintWorld(time);
+    this.paintArsenalHud(time);
     this.updateAvatars(time, delta);
   }
 
@@ -1777,17 +1779,52 @@ export class GunpowderKit {
     if (!g) return;
     g.clear();
     const W = this.arena.scene.scale.width;
-    // A dim band behind the cards so the fight stays visible but clearly paused for the choice.
+    // A dim band behind the cards so the fight stays visible but clearly paused for the choice,
+    // feathered at its edges like a drift of powder smoke.
     g.fillStyle(0x000000, 0.45);
-    g.fillRect(0, 86, W, 222);
+    g.fillRect(0, 92, W, 210);
+    for (let i = 0; i < 4; i++) {
+      g.fillStyle(0x000000, 0.1 * (4 - i) / 4 + 0.05);
+      g.fillRect(0, 92 - (i + 1) * 3, W, 3);
+      g.fillRect(0, 302 + i * 3, W, 3);
+    }
+    // A brass rule under the title.
+    const midX = W / 2;
+    g.lineStyle(1, this.pcol(GUNPOWDER.brass), 0.7);
+    g.lineBetween(midX - 150, 128, midX - 20, 128);
+    g.lineBetween(midX + 20, 128, midX + 150, 128);
+    g.fillStyle(this.pcol(GUNPOWDER.brass), 0.9);
+    g.fillCircle(midX, 128, 2.4);
     this.menuBtnAreas.forEach((b, i) => {
       const hot = i === this.menuHover;
       const exotic = EXTRA_WEAPON_TYPES.includes(b.type);
       const accent = exotic ? 0xff7a4a : 0xdd9944;
       const lift = hot ? 4 : 0;
-      fillNotched(g, b.x, b.y - lift, b.w, b.h, hot ? 0x3a2612 : 0x1d140a, 0.96);
-      fillNotched(g, b.x + 6, b.y + 6 - lift, b.w - 12, 58, 0x000000, 0.25, 8);
-      strokeNotched(g, b.x, b.y - lift, b.w, b.h, hot ? 0xffd27a : accent, hot ? 1 : 0.8, hot ? 3 : 2);
+      const top = b.y - lift;
+      // Drop shadow, then the crate: walnut boards with a darker header band.
+      fillNotched(g, b.x + 3, top + 5, b.w, b.h, 0x000000, 0.4);
+      fillNotched(g, b.x, top, b.w, b.h, hot ? 0x3a2612 : 0x1d140a, 0.97);
+      g.lineStyle(1, 0x000000, 0.25);
+      for (let k = 1; k < 5; k++) g.lineBetween(b.x + 4, top + (b.h * k) / 5, b.x + b.w - 4, top + (b.h * k) / 5);
+      fillNotched(g, b.x + 6, top + 6, b.w - 12, 58, 0x000000, 0.28, 8);
+      // A medallion behind the weapon's icon.
+      const mx = b.x + b.w / 2, my = top + 40 + lift;
+      g.fillStyle(accent, hot ? 0.28 : 0.16);
+      g.fillCircle(mx, my, 24);
+      g.lineStyle(1.5, accent, hot ? 0.9 : 0.55);
+      g.strokeCircle(mx, my, 21);
+      g.lineStyle(1, 0xffe2b0, 0.25);
+      g.strokeCircle(mx, my, 18);
+      // Brass corner brackets with a nail each.
+      for (const [cx, cy, sx, sy] of [[b.x + 7, top + 7, 1, 1], [b.x + b.w - 7, top + 7, -1, 1], [b.x + 7, top + b.h - 7, 1, -1], [b.x + b.w - 7, top + b.h - 7, -1, -1]]) {
+        g.lineStyle(2.4, hot ? 0xffd27a : 0xd9a441, 0.95);
+        g.lineBetween(cx, cy, cx + sx * 12, cy);
+        g.lineBetween(cx, cy, cx, cy + sy * 12);
+        g.fillStyle(0xffeeaa, 0.9);
+        g.fillCircle(cx + sx * 2.5, cy + sy * 2.5, 1.2);
+      }
+      strokeNotched(g, b.x, top, b.w, b.h, hot ? 0xffd27a : accent, hot ? 1 : 0.8, hot ? 3 : 2);
+      if (hot) strokeNotched(g, b.x - 3, top - 3, b.w + 6, b.h + 6, 0xffaa33, 0.3, 2);
     });
   }
 
@@ -1873,8 +1910,8 @@ export class GunpowderKit {
   private destroyArsenalHud(): void {
     for (const t of this.arsenalHudTexts) t.destroy();
     this.arsenalHudTexts = [];
-    for (const b of this.arsenalHudBgs) b.destroy();
-    this.arsenalHudBgs = [];
+    this.arsenalHudGfx?.destroy();
+    this.arsenalHudGfx = null;
     this.arsenalHudAreas = [];
   }
 
@@ -1887,15 +1924,10 @@ export class GunpowderKit {
     const startX = this.arsenalHudCx - totalW / 2;
     const y = 74;
 
+    this.arsenalHudGfx = scene.add.graphics().setDepth(20).setScrollFactor(0);
     for (let i = 0; i < maxSlots; i++) {
       const x = startX + i * (slotSize + gap);
       const slot = this.playerArsenal[i];
-      const flagged = !!(slot && (slot.pendingRemoval || slot.skipFire));
-      const bgFill = slot ? (flagged ? 0x3a1a12 : 0x2a1e10) : 0x14100a;
-      const bgStroke = slot ? (flagged ? 0xdd5533 : 0xdd9944) : 0x554433;
-      const bg = scene.add.rectangle(x + slotSize / 2, y, slotSize, slotSize, bgFill, 0.9)
-        .setStrokeStyle(1.5, bgStroke, 0.9).setDepth(20).setScrollFactor(0);
-      this.arsenalHudBgs.push(bg);
       if (slot) {
         const icon = scene.add.text(x + slotSize / 2, y, WEAPON_DEFS[slot.type].emoji, { fontSize: '18px' })
           .setOrigin(0.5).setDepth(21).setScrollFactor(0);
@@ -1904,10 +1936,134 @@ export class GunpowderKit {
       this.arsenalHudAreas.push({ x, y: y - slotSize / 2, w: slotSize, h: slotSize, idx: i });
     }
 
-    const ammoText = scene.add.text(this.arsenalHudCx, y - 22, `🔫 ${this.playerAmmo}/${MUSKET_MAX_AMMO}`, {
-      fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#dd9944', stroke: '#220044', strokeThickness: 3,
-    }).setOrigin(0.5).setDepth(21).setScrollFactor(0);
+    const ammoText = scene.add.text(this.arsenalHudCx + 30, y - 22, `${this.playerAmmo}/${MUSKET_MAX_AMMO}`, {
+      fontSize: '11px', fontFamily: FONT_DISPLAY, color: '#ffcc77', stroke: '#140a1c', strokeThickness: 3,
+    }).setOrigin(0, 0.5).setDepth(21).setScrollFactor(0);
     this.arsenalHudTexts.push(ammoText);
+    this.paintArsenalHud(this.arena.scene.time.now);
+  }
+
+  /**
+   * The arsenal as a gunsmith's rack: a walnut plank with brass nails, each slot a brass-framed
+   * case lined in funeral-violet velvet (empty ones a dark socket), a misfiring slot hatched in
+   * smouldering red. Above it the cartridge pouch: a powder horn and one lead musket ball per
+   * round in the barrel, empty sockets for the spent ones.
+   */
+  private paintArsenalHud(time: number): void {
+    const g = this.arsenalHudGfx;
+    if (!g || !g.active) return;
+    g.clear();
+    const col = this.pcol;
+    const t = time / 1000;
+    const areas = this.arsenalHudAreas;
+    if (areas.length === 0) return;
+    const slotSize = 32;
+    const y = 74;
+    const L = areas[0].x, R = areas[areas.length - 1].x + slotSize;
+
+    // The plank.
+    g.fillStyle(0x000000, 0.4);
+    g.fillRoundedRect(L - 9, y - 19, R - L + 18, 40, 5);
+    g.fillStyle(col(GUNPOWDER.stock), 0.97);
+    g.fillRoundedRect(L - 10, y - 21, R - L + 20, 40, 5);
+    g.fillStyle(col(GUNPOWDER.wood), 0.6);
+    g.fillRect(L - 8, y - 19, R - L + 16, 6);
+    // Grain.
+    g.lineStyle(1, col(GUNPOWDER.soot), 0.35);
+    for (let k = 0; k < 3; k++) {
+      const gy = y - 10 + k * 10;
+      g.beginPath();
+      g.moveTo(L - 8, gy);
+      for (let px = L - 8; px <= R + 8; px += 12) g.lineTo(px, gy + Math.sin(px * 0.13 + k) * 1.4);
+      g.strokePath();
+    }
+    g.lineStyle(1.5, col(GUNPOWDER.brass), 0.9);
+    g.strokeRoundedRect(L - 10, y - 21, R - L + 20, 40, 5);
+    for (const nx of [L - 5, R + 5]) {
+      for (const ny of [y - 16, y + 14]) {
+        g.fillStyle(col(GUNPOWDER.brass), 1); g.fillCircle(nx, ny, 1.8);
+        g.fillStyle(col(GUNPOWDER.glow), 0.8); g.fillCircle(nx - 0.5, ny - 0.5, 0.7);
+      }
+    }
+
+    // The cases.
+    for (const a of areas) {
+      const slot = this.playerArsenal[a.idx];
+      const flagged = !!(slot && (slot.pendingRemoval || slot.skipFire));
+      const x = a.x, top = a.y;
+      if (!slot) {
+        g.fillStyle(col(GUNPOWDER.void), 0.85);
+        g.fillRoundedRect(x + 2, top + 2, slotSize - 4, slotSize - 4, 4);
+        g.lineStyle(1, col(GUNPOWDER.char), 1);
+        g.strokeRoundedRect(x + 2, top + 2, slotSize - 4, slotSize - 4, 4);
+        // A faint stencilled cross where a weapon would hang.
+        g.lineStyle(1, col(GUNPOWDER.ash), 0.25);
+        g.lineBetween(x + 12, top + 16, x + 20, top + 16);
+        g.lineBetween(x + 16, top + 12, x + 16, top + 20);
+        continue;
+      }
+      g.fillStyle(col(flagged ? GUNPOWDER.ember : GUNPOWDER.brass), 1);
+      g.fillRoundedRect(x, top, slotSize, slotSize, 5);
+      g.fillStyle(col(GUNPOWDER.stock), 1);
+      g.fillRoundedRect(x + 1.5, top + 1.5, slotSize - 3, slotSize - 3, 4);
+      g.fillStyle(col(flagged ? 0x3a1a12 : GUNPOWDER.plum), 1);
+      g.fillRoundedRect(x + 3, top + 3, slotSize - 6, slotSize - 6, 3);
+      g.fillStyle(col(GUNPOWDER.violet), flagged ? 0 : 0.45);
+      g.fillRoundedRect(x + 3, top + 3, slotSize - 6, (slotSize - 6) * 0.45, { tl: 3, tr: 3, bl: 0, br: 0 });
+      g.fillStyle(col(GUNPOWDER.glow), 0.55);
+      g.fillRect(x + 4, top + 1, slotSize - 8, 1);
+      if (flagged) {
+        // Hazard hatching and a smouldering pulse round the frame.
+        g.lineStyle(2, col(GUNPOWDER.ember), 0.35);
+        for (let k = -2; k < 4; k++) {
+          const hx = x + 3 + k * 8;
+          g.lineBetween(Math.max(x + 3, hx), top + 3 + Math.max(0, x + 3 - hx), Math.min(x + slotSize - 3, hx + 26), top + 3 + Math.min(26, x + slotSize - 3 - hx));
+        }
+        g.lineStyle(2, col(GUNPOWDER.flame), 0.4 + 0.4 * Math.sin(t * 9));
+        g.strokeRoundedRect(x - 1.5, top - 1.5, slotSize + 3, slotSize + 3, 6);
+      }
+    }
+
+    // The cartridge pouch above the rack.
+    const cx = this.arsenalHudCx, py = y - 22;
+    const pw = 82;
+    g.fillStyle(0x000000, 0.35);
+    g.fillRoundedRect(cx - pw / 2 + 1, py - 9, pw, 18, 9);
+    g.fillStyle(col(GUNPOWDER.soot), 0.96);
+    g.fillRoundedRect(cx - pw / 2, py - 10, pw, 18, 9);
+    g.lineStyle(1.2, col(GUNPOWDER.brass), 0.9);
+    g.strokeRoundedRect(cx - pw / 2, py - 10, pw, 18, 9);
+    // Powder horn on the left: a curved tapering horn with a brass cap.
+    const hx = cx - pw / 2 + 11;
+    g.fillStyle(col(GUNPOWDER.linen), 1);
+    g.fillPoints([
+      new Phaser.Geom.Point(hx - 6, py - 4), new Phaser.Geom.Point(hx + 2, py - 5),
+      new Phaser.Geom.Point(hx + 6, py + 2), new Phaser.Geom.Point(hx + 7, py + 4),
+      new Phaser.Geom.Point(hx + 3, py + 2), new Phaser.Geom.Point(hx - 4, py + 2),
+    ], true);
+    g.fillStyle(col(GUNPOWDER.buff), 1);
+    g.fillRect(hx - 2, py - 4.6, 1.4, 6.4);
+    g.fillStyle(col(GUNPOWDER.brass), 1);
+    g.fillRect(hx - 7.5, py - 4.5, 2.4, 6.6);
+    g.fillCircle(hx + 7, py + 4, 1.3);
+    // One lead ball per round.
+    for (let i = 0; i < MUSKET_MAX_AMMO; i++) {
+      const bx = cx - 12 + i * 12;
+      const full = i < this.playerAmmo;
+      g.fillStyle(col(GUNPOWDER.void), 1);
+      g.fillCircle(bx, py - 1, 5);
+      if (full) {
+        g.fillStyle(col(GUNPOWDER.ash), 1);
+        g.fillCircle(bx, py - 1, 4.2);
+        g.fillStyle(col(GUNPOWDER.steel), 1);
+        g.fillCircle(bx - 0.6, py - 1.6, 3.2);
+        g.fillStyle(col(GUNPOWDER.chrome), 0.9);
+        g.fillCircle(bx - 1.6, py - 2.6, 1.2);
+      } else {
+        g.lineStyle(1, col(GUNPOWDER.char), 1);
+        g.strokeCircle(bx, py - 1, 4);
+      }
+    }
   }
 
   // ── Perk painters ────────────────────────────────────────────────────────

@@ -519,7 +519,11 @@ const TEMPEST_AVATAR: AvatarSpec = {
  * Three live tells, all on what is already there: `setAir` streams wind off the body while
  * airborne, `setFall` leans the ring and the streaks with the fall, and `setEye` opens the Eye
  * of the Storm — a huge electric eyeball painted over the whole body while the ping-pong
- * currents are live. Mastery widens the cloud ring and lets it spark; the eyes go lightning-white.
+ * currents are live. Detail: a slow cyclone spiral and storm bands on the orb, wind wisps
+ * curling round the hands. Mastered: the cloud ring becomes a gold-lit thunderhead with a crown
+ * of three lightning bolts standing out of it, rain falls past the body, a lightning seam
+ * crackles across the orb, the ring widens and sparks, the hand coronas and wisps go bolt-gold
+ * and the eyes go lightning-yellow.
  */
 export class TempestAvatar extends BaseAvatar {
   private air = 0;
@@ -563,6 +567,7 @@ export class TempestAvatar extends BaseAvatar {
     this.forEachHandLayer(0, (glow) => {
       glow.setRadius(on ? 16.5 : 13);
       glow.setAlpha(on ? 0.5 : 0.3);
+      glow.setFillStyle(this.tint(on ? TMP.bolt : TMP.gust), on ? 0.5 : 0.3);
     });
   }
 
@@ -589,6 +594,18 @@ export class TempestAvatar extends BaseAvatar {
     void alpha;
     g.fillStyle(this.tint(TMP.sky), a * (this.mastered ? 0.3 : 0.22));
     g.fillCircle(x, y + 2, 26 + this.air * 6);
+    if (this.mastered) {
+      // Rain falling from the thunderhead past the body, and a gold flicker in the glow.
+      g.fillStyle(this.tint(TMP.bolt), a * 0.12 * (0.5 + 0.5 * Math.sin(this.t * 11)));
+      g.fillCircle(x, y - 10, 30);
+      for (let i = 0; i < 7; i++) {
+        const k = (this.t * 1.6 + i / 7) % 1;
+        const rx = x + (jitter(11, i) - 0.5) * 50;
+        const ry = y - 24 + k * 50;
+        g.lineStyle(1, this.tint(TMP.gust), alpha * 0.45 * Math.sin(k * Math.PI));
+        g.lineBetween(rx, ry, rx - 1.5, ry + 6);
+      }
+    }
     if (this.air > 0.05) {
       // Streaks peel off below and behind: the direction of travel is up when rising, and the
       // fall leans them the other way.
@@ -624,6 +641,35 @@ export class TempestAvatar extends BaseAvatar {
     g.strokePath();
     g.fillStyle(this.tint(0xffffff), alpha * 0.85);
     g.fillEllipse(x - 6.5, y - 8, 8, 5);
+
+    // A cyclone seen from above, turning slowly on the belly: three pale spiral bands.
+    swirl(g, this.tint(TMP.gust), x, y + 7, 12, alpha * 0.4,
+      { arms: 3, turns: 0.75, phase: -this.t * (1.2 + this.air * 2), width: 1.6, squash: 0.5, inner: 0.2 });
+    // Darker storm bands across the lower body.
+    g.lineStyle(1.6, this.tint(TMP.slate), alpha * 0.6);
+    g.beginPath(); g.arc(x, y - 3, 19, Math.PI * 0.25, Math.PI * 0.75); g.strokePath();
+    g.lineStyle(1, this.tint(TMP.deep), alpha * 0.5);
+    g.beginPath(); g.arc(x, y - 8, 21, Math.PI * 0.3, Math.PI * 0.7); g.strokePath();
+    // Mastered: a lightning seam crackling across the body.
+    if (this.mastered) {
+      const n = Math.floor(this.sparkSeed / 120);
+      lightning(g, this.tint(TMP.bolt), x - 15, y + 6, x + 14, y + 12, 3, 1.2, alpha * 0.75, n);
+    }
+  }
+
+  /** Little wind wisps curling round each hand. */
+  private handWisps(g: Phaser.GameObjects.Graphics, alpha: number): void {
+    for (let h = 0; h < 2; h++) {
+      const hx = this.armX[h], hy = this.armY[h];
+      const spin = this.t * (3 + this.air * 2) * (h ? 1 : -1);
+      for (let i = 0; i < 2; i++) {
+        const a0 = spin + i * Math.PI;
+        g.lineStyle(1.2, this.tint(this.mastered ? TMP.bolt : TMP.gust), alpha * 0.65);
+        g.beginPath();
+        g.arc(hx, hy, 11 + i * 1.5, a0, a0 + 1.3);
+        g.strokePath();
+      }
+    }
   }
 
   /**
@@ -640,6 +686,20 @@ export class TempestAvatar extends BaseAvatar {
     const spin = this.t * (1.2 + this.air * 1.6 + this.eye * 2.5);
     const lean = Math.cos(this.facing) * 2 + this.fall * 2;
     const puffs = m ? 8 : 6;
+    this.handWisps(g, alpha);
+    if (m) {
+      // Mastered only: a crown of three lightning bolts standing up out of the thunderhead.
+      const n = Math.floor(this.sparkSeed / 110);
+      for (let i = -1; i <= 1; i++) {
+        const bx = x + lean + i * 8;
+        const h = 14 - Math.abs(i) * 4 + Math.sin(this.t * 6 + i) * 1.5;
+        g.fillStyle(this.tint(TMP.bolt), alpha * 0.22);
+        g.fillCircle(bx, crown - h * 0.6, 5);
+        lightning(g, this.tint(TMP.bolt), bx, crown - 1, bx + i * 3, crown - h, 2.2, 2, alpha, n + i * 7);
+        g.fillStyle(this.tint(TMP.boltHot), alpha);
+        g.fillCircle(bx + i * 3, crown - h, 1.6);
+      }
+    }
     for (let i = 0; i < puffs; i++) {
       const ang = spin + (i / puffs) * TAU;
       const px = x + lean + Math.cos(ang) * rx;
@@ -647,10 +707,20 @@ export class TempestAvatar extends BaseAvatar {
       // Back of the ring is dimmer and smaller: a cheap read on depth.
       const front = (Math.sin(ang) + 1) / 2;
       const r = (m ? 4.6 : 3.8) * (0.7 + front * 0.5);
-      g.fillStyle(this.tint(TMP.gust), alpha * (0.45 + front * 0.4));
-      g.fillCircle(px, py, r);
-      g.fillStyle(this.tint(TMP.white), alpha * (0.5 + front * 0.45));
-      g.fillCircle(px - r * 0.3, py - r * 0.3, r * 0.6);
+      if (m) {
+        // Mastered: the ring is a thunderhead — dark puffs lit gold from underneath.
+        g.fillStyle(this.tint(TMP.bolt), alpha * (0.3 + front * 0.3) * (0.7 + 0.3 * Math.sin(this.t * 7 + i)));
+        g.fillCircle(px, py + r * 0.35, r * 1.15);
+        g.fillStyle(this.tint(TMP.slate), alpha * (0.6 + front * 0.35));
+        g.fillCircle(px, py, r);
+        g.fillStyle(this.tint(TMP.storm), alpha * (0.5 + front * 0.4));
+        g.fillCircle(px - r * 0.3, py - r * 0.35, r * 0.6);
+      } else {
+        g.fillStyle(this.tint(TMP.gust), alpha * (0.45 + front * 0.4));
+        g.fillCircle(px, py, r);
+        g.fillStyle(this.tint(TMP.white), alpha * (0.5 + front * 0.45));
+        g.fillCircle(px - r * 0.3, py - r * 0.3, r * 0.6);
+      }
     }
     if (m) {
       // Mastered: the ring sparks. One short bolt between two puffs, re-rolled every few frames.
@@ -722,37 +792,91 @@ export function liftShadow(
   }
 }
 
-/** The fall-speed arrow beside a flying body: a track with a down arrow that reddens with speed. */
+/**
+ * The fall-speed gauge beside a flying body, drawn as a little barometer: a glass tube in a
+ * storm-slate casing with cloud-puff caps, height ticks filling from the bottom like a rising
+ * column, and an arrow with a wind tail that reddens and stretches with speed.
+ */
 export function fallGauge(
   g: Phaser.GameObjects.Graphics, tint: TempestColorFn, x: number, y: number, speedK: number, heightK: number, alpha: number,
 ): void {
   const H = 56;
   const top = y - H / 2;
-  g.lineStyle(3, tint(TMP.ink), alpha * 0.8);
-  g.lineBetween(x, top, x, top + H);
-  g.lineStyle(1.4, tint(TMP.gust), alpha * 0.6);
-  g.lineBetween(x, top, x, top + H);
-  // Height ticks fill from the bottom.
+  const t = performance.now() / 1000;
+  // Casing.
+  g.fillStyle(tint(TMP.ink), alpha * 0.75);
+  g.fillRoundedRect(x - 6.5, top - 4, 13, H + 8, 6.5);
+  g.fillStyle(tint(TMP.deep), alpha * 0.9);
+  g.fillRoundedRect(x - 5, top - 2.5, 10, H + 5, 5);
+  // The glass, with the height column rising in it.
+  g.fillStyle(tint(TMP.slate), alpha * 0.8);
+  g.fillRoundedRect(x - 2.6, top, 5.2, H, 2.6);
+  const colH = H * Phaser.Math.Clamp(heightK, 0, 1);
+  if (colH > 1) {
+    g.fillStyle(tint(TMP.sky), alpha * 0.85);
+    g.fillRoundedRect(x - 2.6, top + H - colH, 5.2, colH, 2.6);
+    g.fillStyle(tint(TMP.white), alpha * 0.6);
+    g.fillRect(x - 1.6, top + H - colH + 1, 1, Math.max(0, colH - 2));
+  }
+  // Height ticks along the casing, lit as the column passes them.
   const ticks = 6;
   for (let i = 0; i < ticks; i++) {
     const lit = heightK * ticks > i;
-    g.lineStyle(2, tint(lit ? TMP.white : TMP.slate), alpha * (lit ? 0.9 : 0.5));
     const yy = top + H - (i / (ticks - 1)) * H;
-    g.lineBetween(x - 4, yy, x + 4, yy);
+    g.lineStyle(1.6, tint(lit ? TMP.white : TMP.slate), alpha * (lit ? 0.95 : 0.55));
+    g.lineBetween(x - 8, yy, x - 5, yy);
   }
-  // The arrow: pale when hovering, blood red at terminal velocity, and longer the faster you fall.
+  // Cloud-puff caps top and bottom.
+  for (const [cy, k] of [[top - 4, 1], [top + H + 4, 0.85]] as [number, number][]) {
+    g.fillStyle(tint(TMP.gust), alpha * 0.85);
+    g.fillCircle(x - 3.5 * k, cy, 3.2 * k);
+    g.fillCircle(x + 3.5 * k, cy, 3.2 * k);
+    g.fillCircle(x, cy - 1.6 * k, 4 * k);
+    g.fillStyle(tint(TMP.white), alpha * 0.8);
+    g.fillCircle(x - 1, cy - 2.4 * k, 1.8 * k);
+  }
+  // The arrow: pale when hovering, blood red at terminal velocity, longer the faster you fall,
+  // trailing a wind tail above it.
   const c = mix(TMP.white, TMP.red, speedK);
+  const ax = x + 12;
   const ay = top + H * (0.25 + speedK * 0.5);
   const len = 10 + speedK * 16;
+  for (let i = 0; i < 3; i++) {
+    const wob = Math.sin(t * 9 + i * 2) * 1.5;
+    g.lineStyle(1, tint(TMP.gust), alpha * (0.25 + speedK * 0.35) * (1 - i * 0.25));
+    g.lineBetween(ax - 3 + i * 3 + wob, ay - len - 6 - i * 3, ax - 3 + i * 3, ay - len + 4);
+  }
+  g.lineStyle(5, tint(TMP.ink), alpha * 0.55);
+  g.lineBetween(ax, ay - len, ax, ay + len);
   g.lineStyle(3.2, tint(c), alpha * (0.75 + speedK * 0.25));
-  g.lineBetween(x, ay - len, x, ay + len);
-  g.beginPath();
-  g.moveTo(x - 6 - speedK * 3, ay + len - 7);
-  g.lineTo(x, ay + len);
-  g.lineTo(x + 6 + speedK * 3, ay + len - 7);
-  g.strokePath();
+  g.lineBetween(ax, ay - len, ax, ay + len);
+  g.fillStyle(tint(c), alpha * (0.8 + speedK * 0.2));
+  g.fillTriangle(ax - 6 - speedK * 3, ay + len - 7, ax + 6 + speedK * 3, ay + len - 7, ax, ay + len + 2);
   if (speedK > 0.6) {
     g.fillStyle(tint(TMP.red), alpha * (speedK - 0.6) * 1.2);
-    g.fillCircle(x, ay + len, 5);
+    g.fillCircle(ax, ay + len, 5 + Math.sin(t * 20) * 1);
+  }
+}
+
+/** A charge pip shaped as a lightning bolt — lit or spent. For counters that ride over a body. */
+export function boltPip(
+  g: Phaser.GameObjects.Graphics, tint: TempestColorFn, x: number, y: number, lit: boolean, alpha: number,
+): void {
+  const pts = [
+    new Phaser.Geom.Point(x + 1.5, y - 6), new Phaser.Geom.Point(x - 3, y + 0.8),
+    new Phaser.Geom.Point(x - 0.2, y + 0.8), new Phaser.Geom.Point(x - 1.5, y + 6),
+    new Phaser.Geom.Point(x + 3, y - 0.8), new Phaser.Geom.Point(x + 0.2, y - 0.8),
+  ];
+  if (lit) {
+    g.fillStyle(tint(TMP.bolt), alpha * 0.3);
+    g.fillCircle(x, y, 6.5);
+  }
+  g.fillStyle(tint(TMP.ink), alpha * 0.85);
+  g.fillPoints(pts.map((p) => new Phaser.Geom.Point(p.x + (p.x - x) * 0.35, p.y + (p.y - y) * 0.2)), true);
+  g.fillStyle(tint(lit ? TMP.bolt : TMP.slate), alpha);
+  g.fillPoints(pts, true);
+  if (lit) {
+    g.fillStyle(tint(TMP.boltHot), alpha * 0.9);
+    g.fillCircle(x + 0.6, y - 2.4, 0.9);
   }
 }

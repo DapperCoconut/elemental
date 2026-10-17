@@ -87,6 +87,7 @@ const MOVEMENT_PROFILES: Record<string, MovementProfile> = {
   cloth:      { archetype: 'brawler',    range: [90, 200],  retreatHp: 0.18 },
   marrow:     { archetype: 'brawler',    range: [90, 200],  retreatHp: 0.18 },
   tempest:    { archetype: 'skirmisher', range: [130, 300], retreatHp: 0.25 },
+  myth:       { archetype: 'skirmisher', range: [110, 240], retreatHp: 0.22 },
   psychic:     { archetype: 'zoner',      range: [240, 400], retreatHp: 0.32 },
   radiation:   { archetype: 'skirmisher', range: [150, 290], retreatHp: 0.28 },
   bind:        { archetype: 'summoner',   range: [220, 380], retreatHp: 0.30 },
@@ -163,6 +164,14 @@ export interface NpcAiState {
   plantCount: number;
   thornDragActive: boolean;
   enemyNearPlant: boolean;
+  /** Life: where (and, inside the kit, which seed) the bot's next planting goes; absent = don't. */
+  npcLifePlantAt?: { x: number; y: number };
+  /** Life: two or more of its plants sit inside Fertilize's wave. */
+  npcLifeFertilize?: boolean;
+  /** Life: a half-dead plant with the enemy on it — Root Shield it. */
+  npcLifeShieldAt?: { x: number; y: number };
+  /** Life: a ripe Lotus orb of its own close enough to go and eat. */
+  lifeSeekPoint?: { x: number; y: number };
   /** Air: the NPC's own Wind Breaker is up, so it should be holding the player, not chasing. */
   airTornadoActive: boolean;
   /** Air: wind dodge the NPC has banked — high enough and it can afford to dance in close. */
@@ -513,6 +522,8 @@ export interface NpcAiState {
   npcGoldHeartLive?: boolean;
   /** Synergy: Midas is laying gold floor under the target — worth chasing them across it. */
   npcGoldMidasLive?: boolean;
+  /** Q+ Full Metal Alchemy: the bot's statue is up and it wants the three coins it melts into — hold fire. */
+  npcGoldStatueHold?: boolean;
   /** Fray falls: the kit's gravity-corrected aim point that puts the clump through the target. */
   npcGoldFrayAim?: { x: number; y: number };
   /** Where the plume should land: on a hearted target, otherwise at the bot's own feet toward them. */
@@ -593,6 +604,31 @@ export interface NpcAiState {
    */
   npcTempestWallShot?: { x: number; y: number };
 
+  // Myth
+  /** Echo Shards in hand, 0–3. The kit spends them itself; the routine only times the base casts around them. */
+  npcMythShards?: number;
+  /** A foe its star mace just stunned: Truth Breaker and the recast dash cannot miss. */
+  npcMythTipStunLive?: boolean;
+  /** The three-second recast window after a slash is open (the kit dashes through it with a shard). */
+  npcMythTruthWindow?: boolean;
+  /** Determination is running: invincible, then immune — the moment to stand in and trade. */
+  npcMythDetermined?: boolean;
+  /** Its beast is loose. */
+  npcMythBeastLive?: boolean;
+  /** In Final Destiny: the five keys are the five guns. */
+  npcMythDestiny?: boolean;
+  /** Damage taken in the last 1.5s — the cue for Determination. */
+  npcMythTakenRecent?: number;
+  /** The crowd is half-way to a shard: commit damage now. */
+  npcMythCheerClose?: boolean;
+  /** Pistol vulnerability stacks on the target, 0–4: the shotgun's cue. */
+  npcMythVulnStacks?: number;
+  /**
+   * Somewhere the AI has to physically be, overriding chase/strafe: the point on its beast's
+   * path where it will be run over and flip for 20% speed. Offered only while the flip is possible.
+   */
+  mythFlipPoint?: { x: number; y: number };
+
   // Psychic
   /**
    * The move the kit wants the bot's click to make this tick — a piece sliding or jumping
@@ -613,6 +649,11 @@ export interface NpcAiState {
    * so this is only here to stop the AI pressing the ability that is no longer in that slot.
    */
   npcPsychicMasterySlot?: 'r' | 'f' | 'q';
+  /**
+   * Checkmate (Q upgrade): the target is low enough that a reign started now should end with
+   * them under 15% — and the end of the reign kills them. Crown regardless of the board.
+   */
+  npcPsychicCheckmate?: boolean;
 
   // Radiation
   /** Tracers already stuck on the target. Three confirms the shot; a miss scrubs all of them. */
@@ -629,6 +670,12 @@ export interface NpcAiState {
   npcRadiationNeedsCover?: boolean;
   /** The bot is inside its own standing bunker — the place to stand while the airdrop lands. */
   npcRadiationSheltered?: boolean;
+  /** Click+ Flick Shot: the bot turned its back within the window — a tracer now comes out barbed for 25. */
+  npcRadiationFlickReady?: boolean;
+  /** R+ turrets standing or a Q+ drop falling, and the target is clean: both only pay out on a dose. */
+  npcRadiationWantsDose?: boolean;
+  /** F+ Mutation would strip a dose the turrets or the falling drop still need — hold the hot rod. */
+  npcRadiationKeepDose?: boolean;
 
   // Bind
   /** 0–100 of the patron's patience. Above 70 the bot stops spending anything at all. */
@@ -717,6 +764,15 @@ export interface NpcAiState {
   npcSoundWantedSong?: string;
   npcSoundSong?: string;
   npcSoundSoloing?: boolean;
+  /**
+   * Sound upgrades. R+ Harmony: the baton is home and the bot wants the heal (press R → tune up),
+   * and the regeneration has peaked (recast now). Q+: deaf after the gong — stand down. E+: the
+   * player is dancing and cannot hit back — slam.
+   */
+  npcSoundHarmonyReady?: boolean;
+  npcSoundHarmonyRelease?: boolean;
+  npcSoundDeaf?: boolean;
+  npcSoundVictimDancing?: boolean;
 
   /**
    * Conquest: the square the bot is walking to in order to place its next building. Every
@@ -1156,6 +1212,17 @@ export class NpcOpponent extends Fighter {
       }
     }
 
+    // ── Life: a ripe Lotus orb ───────────────────────────────────
+    // Soft, like Gold's below: a heal and a petal are worth a short detour, never the fight.
+    if (aiState.lifeSeekPoint) {
+      const seek = aiState.lifeSeekPoint;
+      const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
+      if (d > 10) {
+        const a = Phaser.Math.Angle.Between(this.x, this.y, seek.x, seek.y);
+        body.setVelocity(Math.cos(a) * this.speed, Math.sin(a) * this.speed);
+      }
+    }
+
     // ── Gold: its own plume, the loot, the Midas floor ───────────
     // Same soft shape as the other seeks here: worth walking into, not worth abandoning the
     // fight for, so it only steers while the bot is outside and lets the movement state run once
@@ -1244,6 +1311,20 @@ export class NpcOpponent extends Fighter {
       const seek = aiState.tempestCurrentPoint;
       const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
       if (d > 30) {
+        const a = Phaser.Math.Angle.Between(this.x, this.y, seek.x, seek.y);
+        body.setVelocity(Math.cos(a) * this.speed, Math.sin(a) * this.speed);
+      } else {
+        body.setVelocity(0, 0);
+      }
+    }
+
+    // ── Myth: stepping into its own beast's path ─────────────────
+    // Offered only while a flip is possible and the point is on the way, so the vault for
+    // 20% speed is deliberate rather than an accident of chasing.
+    if (aiState.mythFlipPoint) {
+      const seek = aiState.mythFlipPoint;
+      const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
+      if (d > 16) {
         const a = Phaser.Math.Angle.Between(this.x, this.y, seek.x, seek.y);
         body.setVelocity(Math.cos(a) * this.speed, Math.sin(a) * this.speed);
       } else {
@@ -1409,6 +1490,9 @@ export class NpcOpponent extends Fighter {
     }
     if (this.element.id === 'tempest') {
       return this.doTempestAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    if (this.element.id === 'myth') {
+      return this.doMythAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
     if (this.element.id === 'psychic') {
       return this.doPsychicAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
@@ -1587,6 +1671,11 @@ export class NpcOpponent extends Fighter {
       if (this.castAbility('radiation-bunker', buildContext(aimX, aimY))) return 'radiation-bunker';
     }
 
+    // ── Synergy: turrets standing or a Q+ drop falling — both only pay out on a dosed target ──
+    if (aiState.npcRadiationWantsDose && dist < 125) {
+      if (this.castAbility('radiation-baton', buildContext(aimX, aimY))) return 'radiation-baton';
+    }
+
     // The flare gun overrides everything else. Nothing is worth a button while it is out.
     if (aiState.npcRadiationFlares) {
       if (dist < 460 && this.castAbility('radiation-railgun', buildContext(aimX, aimY))) {
@@ -1595,8 +1684,19 @@ export class NpcOpponent extends Fighter {
       return null;
     }
 
-    // ── Synergy: a dosed target in reach — the rod stuns instead of dosing ──
-    if (aiState.npcRadiationTargetDosed && dist < 125) {
+    // ── Synergy: Flick Shot — a tracer thrown straight out of a retreat lands for 25 ──
+    if (aiState.npcRadiationFlickReady && dist < 420) {
+      if (this.castAbility('radiation-railgun', buildContext(aimX, aimY))) return 'radiation-railgun';
+    }
+
+    // ── Synergy: R+ turrets / a Q+ drop want a dose and the rod is out of reach — tracers dose ──
+    if (aiState.npcRadiationWantsDose && dist < 420) {
+      if (this.castAbility('radiation-railgun', buildContext(aimX, aimY))) return 'radiation-railgun';
+    }
+
+    // ── Synergy: a dosed target in reach — the rod stuns instead of dosing (and with F+ mutates,
+    // unless the dose is still wanted by the turrets or the falling drop) ──
+    if (aiState.npcRadiationTargetDosed && !aiState.npcRadiationKeepDose && dist < 125) {
       if (this.castAbility('radiation-baton', buildContext(aimX, aimY))) return 'radiation-baton';
     }
 
@@ -1720,6 +1820,12 @@ export class NpcOpponent extends Fighter {
    * knight's landing) waiting to happen; its aura is placed near the bot so the bot stands in
    * it; a rook can take one of the bot's own tired pieces to wear its aura for 30 seconds; and
    * the queen is pressed once the board is already full, because her ×3 multiplies on top.
+   *
+   * Upgrades, also kit-planned: Castle (F+) and Mount Protect (R+) arrive as ordinary
+   * `npcPsychicMove` clicks — a castle out of melee that drops the slam on the target, or a knight
+   * ridden away while hurt — and Checkmate (Q+) crowns early once the target is low enough
+   * (`npcPsychicCheckmate`) that the reign's end will finish them. Insight Move and Sight Lines
+   * need no decision at all.
    */
   private doPsychicAbilities(
     target: Fighter,
@@ -1746,7 +1852,7 @@ export class NpcOpponent extends Fighter {
 
     // The crown, once there is a board for it to multiply — or when the bot is in trouble.
     if (taken !== 'q' && !aiState.npcPsychicQueen && !skipSpecials && dist < 460
-        && (pieces >= 2 || hpRatio < 0.45)) {
+        && (pieces >= 2 || hpRatio < 0.45 || aiState.npcPsychicCheckmate)) {
       if (this.castAbility('psychic-queen', buildContext(aimX, aimY))) return 'psychic-queen';
     }
 
@@ -1783,7 +1889,9 @@ export class NpcOpponent extends Fighter {
    *    heart is live.
    * 2. **Midas → the floor.** The curse is cast at a range the bot can follow; the floor it lays
    *    is the bot's road (the kit publishes `goldSeekPoint` and the soft seek walks it there).
-   * 3. **Gold → Advance.** Ten gold is always spent — the kit gates the press and picks the card.
+   * 3. **Gold → Advance.** Ten gold is always spent — the kit gates the press and picks the card
+   *    (with Artisan, a jeweled one when it can pay for it).
+   * 0. **Midas → statue → coins** (Q+). The kit says when the statue is worth more melted than hit.
    *
    * After those the rotation is ordinary: the cane inside its reach, a plume at its own feet so it
    * can stand in it and earn, and grass thrown at the kit's gravity-corrected aim.
@@ -1801,6 +1909,9 @@ export class NpcOpponent extends Fighter {
     void target;
     void time;
     if (aiState.npcGoldLunging) return null;
+    // 0. Full Metal Alchemy: a statue left alone melts into three coins. Short of an Advance, the
+    // bot leaves it be — anything it threw now would crack the statue and spend the coins.
+    if (aiState.npcGoldStatueHold) return null;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     // 1. Heart → Plume.
@@ -1920,6 +2031,93 @@ export class NpcOpponent extends Fighter {
     // ── Click ── the default, and the whole reason to be in somebody's face.
     if (dist < 110) {
       if (this.castAbility('cloth-pin', buildContext(aimX, aimY))) return 'cloth-pin';
+    }
+    return null;
+  }
+
+  /**
+   * Myth. Two rotations: the storyteller's, and the gunslinger's once Final Destiny is up.
+   *
+   * The shard recasts are presses that never touch a cooldown, so the kit spends them itself
+   * (`MythKit.updateBotRecasts`) off the same opportunities it publishes here; this routine's
+   * job is to make the base casts *around* that. Synergies first: a foe its star mace has just
+   * stunned is slashed (`npcMythTipStunLive` — 22 true, and the kit's dash follows with a shard);
+   * heavy incoming damage is answered with Determination (`npcMythTakenRecent`); a crowd close
+   * to cheering is pressed with the whip (`npcMythCheerClose`); the beast is loosed at mid range
+   * so the kit's `mythFlipPoint` can walk the bot into its own vault. In Final Destiny: the
+   * shotgun is held for pistol stacks (`npcMythVulnStacks`), the rifle for range, the rocket
+   * for a stunned or held target, grenades at mid range, the pistol fills.
+   */
+  private doMythAbilities(
+    target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+  ): string | null {
+    void time;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const lead = this.difficulty.level >= 4 ? { x: this.leadX, y: this.leadY } : { x: aimX, y: aimY };
+
+    if (aiState.npcMythDestiny) {
+      // ── Synergy: pistol stacks make the shotgun ──
+      if ((aiState.npcMythVulnStacks ?? 0) >= 2 && dist < 190) {
+        if (this.castAbility('myth-shotgun', buildContext(aimX, aimY))) return 'myth-shotgun';
+      }
+      // ── Synergy: a held or stunned body cannot sidestep a slow rocket ──
+      if (aiState.npcMythTipStunLive || target.stunnedUntil > Date.now() || target.earthStunnedUntil > time) {
+        if (this.castAbility('myth-rocket', buildContext(aimX, aimY))) return 'myth-rocket';
+      }
+      if (!skipSpecials && dist > 260) {
+        if (this.castAbility('myth-rifle', buildContext(aimX, aimY))) return 'myth-rifle';
+      }
+      if (!skipSpecials && dist > 120 && dist < 300) {
+        if (this.castAbility('myth-grenades', buildContext(lead.x, lead.y))) return 'myth-grenades';
+      }
+      if (!skipSpecials && dist < 160) {
+        if (this.castAbility('myth-shotgun', buildContext(aimX, aimY))) return 'myth-shotgun';
+      }
+      if (dist > 320 && Math.random() < 0.5) {
+        if (this.castAbility('myth-rocket', buildContext(lead.x, lead.y))) return 'myth-rocket';
+      }
+      if (this.castAbility('myth-pistol', buildContext(lead.x, lead.y))) return 'myth-pistol';
+      return null;
+    }
+
+    // ── Synergy: a star-mace stun is a free slash ──
+    if (aiState.npcMythTipStunLive && dist < 170) {
+      if (this.castAbility('myth-truth', buildContext(aimX, aimY))) return 'myth-truth';
+    }
+    // ── Synergy: taking a beating is what Determination is for ──
+    if ((aiState.npcMythTakenRecent ?? 0) >= 28 && !aiState.npcMythDetermined) {
+      if (this.castAbility('myth-determination', buildContext(aimX, aimY))) return 'myth-determination';
+    }
+    // The ultimate: with shards banked (nothing to spend them on in there) and someone to shoot.
+    if (!skipSpecials && dist < 420 && hpRatio > 0.2 && (aiState.npcMythShards ?? 0) <= 1 && !aiState.npcMythBeastLive) {
+      if (this.castAbility('myth-destiny', buildContext(aimX, aimY))) return 'myth-destiny';
+    }
+    // The beast: mid range, aimed through the target, so the kit can walk the bot into its path.
+    if (!skipSpecials && !aiState.npcMythBeastLive && dist > 120 && dist < 380) {
+      if (this.castAbility('myth-beast', buildContext(aimX, aimY))) return 'myth-beast';
+    }
+    // The slash: inside its arc.
+    if (!skipSpecials && dist < 150) {
+      if (this.castAbility('myth-truth', buildContext(aimX, aimY))) return 'myth-truth';
+    }
+    // Determination to walk through a crowd that is about to jeer.
+    if (!skipSpecials && hpRatio < 0.4 && !aiState.npcMythDetermined && dist < 200) {
+      if (this.castAbility('myth-determination', buildContext(aimX, aimY))) return 'myth-determination';
+    }
+    // The whip: inside its reach, aimed so the tip lands when the crowd is close to a shard.
+    if (dist < 215) {
+      const tipAim = aiState.npcMythCheerClose || Math.random() < 0.5;
+      const a = Phaser.Math.Angle.Between(this.x, this.y, lead.x, lead.y);
+      const ax = tipAim ? this.x + Math.cos(a) * 194 : lead.x;
+      const ay = tipAim ? this.y + Math.sin(a) * 194 : lead.y;
+      if (this.castAbility('myth-whip', buildContext(ax, ay))) return 'myth-whip';
     }
     return null;
   }
@@ -3158,6 +3356,12 @@ export class NpcOpponent extends Fighter {
     // On stage the kit is playing the solo; nothing else can be pressed.
     if (aiState.npcSoundSoloing) return null;
 
+    // ── R+ synergy: cash the Harmony recast at the regeneration's peak. Free, never skipped.
+    if (aiState.npcSoundHarmonyRelease) {
+      buildContext(target.x, target.y).soundCast('harmony-release', target.x, target.y);
+      return null;
+    }
+
     // ── Synergy: detonate the Out of Tune the last slam left. Free, so it is never skipped.
     if (aiState.npcSoundDetonate) {
       buildContext(target.x, target.y).soundCast('fermata-detonate', target.x, target.y);
@@ -3167,9 +3371,19 @@ export class NpcOpponent extends Fighter {
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
     if (skipSpecials) return null;
 
+    // ── R+ synergy: the kit has brought the baton home — R now tunes up instead of slamming.
+    if (aiState.npcSoundHarmonyReady && this.castAbility('fermata', buildContext(target.x, target.y))) return 'fermata';
+
     // Hum until the song matches what the kit wants for the moment.
     if (aiState.npcSoundWantedSong && aiState.npcSoundWantedSong !== aiState.npcSoundSong
       && this.castAbility('hum', buildContext(target.x, target.y))) return 'hum';
+
+    // ── Q+ aftermath: deaf after the gong, nothing would land — keep the cooldowns for later.
+    if (aiState.npcSoundDeaf) return null;
+
+    // ── E+ synergy: the player is dancing and cannot hit back — close in and slam.
+    if (aiState.npcSoundVictimDancing && dist < 320
+      && this.castAbility('fermata', buildContext(target.x, target.y))) return 'fermata';
 
     // Call of the Void — the solo hits wherever they are, so it is worth playing whenever it is up.
     if (this.castAbility('call-of-the-void', buildContext(target.x, target.y))) return 'call-of-the-void';
@@ -3291,29 +3505,20 @@ export class NpcOpponent extends Fighter {
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     if (!skipSpecials) {
-      // 1. Plant — maintain 2 defensive plants near self, 1 offensive near enemy
-      if (aiState.plantCount < 2) {
-        const px = this.x + Phaser.Math.Between(-60, 60);
-        const py = this.y + Phaser.Math.Between(-60, 60);
-        if (this.castAbility('plant', buildContext(px, py))) return 'plant';
-      } else if (aiState.plantCount < 3 && dist < 300) {
-        const px = target.x + Phaser.Math.Between(-40, 40);
-        const py = target.y + Phaser.Math.Between(-40, 40);
-        if (this.castAbility('plant', buildContext(px, py))) return 'plant';
-      }
+      // 1. Synergy — Root Shield the plant the enemy is chewing through.
+      const shield = aiState.npcLifeShieldAt;
+      if (shield && this.castAbility('thorns', buildContext(shield.x, shield.y))) return 'thorns';
 
-      // 2. Thorns — enemy is near a plant
-      if (aiState.enemyNearPlant && aiState.plantCount > 0) {
-        if (this.castAbility('thorns', buildContext(this.x, this.y))) return 'thorns';
-      }
+      // 2. Synergy — Fertilize when the wave would catch two or more of its own plants.
+      if (aiState.npcLifeFertilize && this.castAbility('grow', buildContext(this.x, this.y))) return 'grow';
 
-      // 3. Grow — heal when low HP and has plants
-      if (hpRatio < 0.65 && aiState.plantCount > 0) {
-        if (this.castAbility('grow', buildContext(this.x, this.y))) return 'grow';
-      }
+      // 3. Plant whatever the kit's plan calls for (Helicopter when pressed, a Sprout in range,
+      //    a Pitcher among its attackers, a Lotus when hurt, else the missing seed).
+      const at = aiState.npcLifePlantAt;
+      if (at && this.castAbility('plant', buildContext(at.x, at.y))) return 'plant';
 
-      // 4. Thorn Drag — close range engagement
-      if (dist < 300 && hpRatio > 0.30) {
+      // 4. Thrive! — close range, with a garden to hide behind.
+      if (dist < 300 && hpRatio > 0.30 && aiState.plantCount >= 2) {
         if (this.castAbility('thorn-drag', buildContext(target.x, target.y))) return 'thorn-drag';
       }
     }

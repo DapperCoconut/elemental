@@ -4,8 +4,9 @@ import { ElementCodex } from '../AbilityCodex';
  * Sound — a marching-band drum major (reworked 2026-10-15).
  *
  * Verified against `src/elements/sound.ts` and `kits/SoundKit.ts`; every number is a constant at
- * the top of the kit. Sound has no shop upgrades and no mastery since the rework — both were
- * retired and new ones are owed. The Harmony and Bass perks were rewritten for the new kit.
+ * the top of the kit. The five shop upgrades (2026-10-16) are constants in the kit's "Shop upgrades"
+ * block. Sound has no mastery since the rework — one is owed. The Harmony and Bass perks were
+ * rewritten for the new kit.
  */
 const sound: ElementCodex = {
   identity:
@@ -66,6 +67,18 @@ const sound: ElementCodex = {
         { tag: 'utility', label: 'Leash', detail: 'Follows the cursor, up to 170px from you.' },
         { tag: 'movement', label: 'Travel', detail: '280px/s at no spin, up to 920px/s at full spin (×1.3 with Staccato).' },
       ],
+      upgrade: {
+        basics:
+          'Musical Perfection: a small bar of richer gold sits in the middle of the metronome\'s gold '
+          + 'window, 0.07 seconds wide. A beat played inside it spins the baton up 22% instead of 13%. '
+          + 'And your baton hits you now too, in a good way: when it touches you (within 30px) you get '
+          + '+35% move speed for 0.55 seconds. Once per touch — the baton has to leave you before it '
+          + 'can do it again, and never more than once every 0.9 seconds.',
+        effects: [
+          { tag: 'buff', label: 'Perfect', detail: '+22% spin for a beat in the 0.07s sliver in the middle of the window.', requiresUpgrade: 'click' },
+          { tag: 'movement', label: 'Tempo', detail: '+35% move speed for 0.55s when your own baton touches you. Once per touch, 0.9s apart.', requiresUpgrade: 'click' },
+        ],
+      },
       notes: [
         'The baton hits wherever it is — park it on somebody and keep the beat.',
         'A faint ring around you shows how far it can reach.',
@@ -83,6 +96,15 @@ const sound: ElementCodex = {
         { tag: 'damage', label: 'The wave', detail: '30 damage to every enemy within 180px at the end of the dance.' },
       ],
       notes: ['The trail of music is only a picture — the damage is all in the wave.'],
+      upgrade: {
+        basics:
+          'Infectious Moves: everyone the wave hits catches the rhythm and dances for 2 seconds. A '
+          + 'dancer can still walk, run and dodge, but cannot use a single ability. Husks keep coming '
+          + 'at you, but do not bite or shoot until they stop.',
+        effects: [
+          { tag: 'control', label: 'Dance', detail: '2s: free to move, unable to attack.', requiresUpgrade: 'e' },
+        ],
+      },
     },
 
     fermata: {
@@ -100,6 +122,23 @@ const sound: ElementCodex = {
         { tag: 'control', label: 'Detonate', detail: '25 damage and a 0.5s stun to every target still out of tune.' },
       ],
       notes: ['Your baton is left where you slammed it.', 'With the Bass perk, a slam while Staccato plays also lays a row of water charges.'],
+      upgrade: {
+        basics:
+          'Harmony: press R while your baton is right on top of you (within 36px) and, instead of the '
+          + 'dash and slam, you get In Tune. An echo of the baton circles you 62px out, hitting anything '
+          + 'it passes for 6 (each target at most every 0.45s), and your soul song plays 50% stronger. In '
+          + 'Tune also heals you: 12 HP a second to begin with, falling by 2 HP every second — at 6 '
+          + 'seconds it is giving nothing, and after that it hurts you instead. Press R again to end it '
+          + 'with a burst worth the net of everything it has done so far: the most (36) right at the '
+          + 'turn, less after it, and past 12 seconds the burst hurts. If you never recast, it ends '
+          + 'itself at 14 seconds with no burst. The cooldown is paid when you tune up.',
+        effects: [
+          { tag: 'summon', label: 'Echo baton', detail: 'Orbits 62px out, 6 damage per pass, 0.45s per target.', requiresUpgrade: 'r' },
+          { tag: 'buff', label: 'In Tune', detail: 'Your soul song is ×1.5 as strong.', requiresUpgrade: 'r' },
+          { tag: 'heal', label: 'Regeneration', detail: '12 − 2 × seconds HP a second: healing for 6s, then hurting. Ends at 14s.', requiresUpgrade: 'r' },
+          { tag: 'heal', label: 'Recast', detail: 'A burst equal to the net HP In Tune has given — 36 at best, negative if you wait too long.', requiresUpgrade: 'r' },
+        ],
+      },
     },
 
     hum: {
@@ -116,6 +155,19 @@ const sound: ElementCodex = {
         { tag: 'buff', label: 'Smooth', detail: '20% damage resistance and 3 HP per second.' },
       ],
       notes: ['Only one song plays at a time.'],
+      upgrade: {
+        basics:
+          'Practice Makes Perfect: every beat you hit on the metronome practises the song you are '
+          + 'humming. Every 5 beats is a level, up to level 10, and each level makes that song\'s '
+          + 'effects 8% stronger for the rest of the round (up to 80%). The three songs level '
+          + 'separately. A small tab just above the metronome bar shows the song you are playing, its '
+          + 'level and the progress to the next one, and a practised song throws off more sparkles and '
+          + 'notes the higher it goes.',
+        effects: [
+          { tag: 'buff', label: 'Levels', detail: '1 level per 5 beats hit, up to 10. Each level: the song\'s bonuses ×(1 + 0.08 × level).', requiresUpgrade: 'f' },
+          { tag: 'utility', label: 'Separate', detail: 'Staccato, Melody and Smooth each keep their own level for the round.', requiresUpgrade: 'f' },
+        ],
+      },
     },
 
     'call-of-the-void': {
@@ -137,6 +189,20 @@ const sound: ElementCodex = {
         'A new chart is written every solo.',
         'A slur that changes line gives you 0.16s to make the switch.',
       ],
+      upgrade: {
+        basics:
+          'Big Finish!: hold Space during the solo to speed it up — the tempo climbs by 0.12× every '
+          + 'second you hold it, up to double speed, and it never comes back down. The notes come faster '
+          + 'and the solo ends sooner. When the solo ends (or you bow out) you strike a huge gong: every '
+          + 'enemy takes up to 150 damage, scaled by your flair — how far you sped it up, nothing at 1× '
+          + 'and the full 150 at 2×. Never speed up, and there is no gong at all. The gong leaves you '
+          + 'Deaf for 8 seconds: nothing you do deals any damage. Space does not dodge on stage.',
+        effects: [
+          { tag: 'utility', label: 'Speed up', detail: 'Hold Space: +0.12× tempo a second, up to 2×. Never slows back down.', requiresUpgrade: 'q' },
+          { tag: 'damage', label: 'The gong', detail: '150 × flair to every enemy, where flair = tempo − 1.', requiresUpgrade: 'q' },
+          { tag: 'cost', label: 'Deaf', detail: '8s after the gong: all your damage is 0.', requiresUpgrade: 'q' },
+        ],
+      },
     },
   },
 
