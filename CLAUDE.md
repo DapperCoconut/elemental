@@ -22,7 +22,11 @@ The code is managed by git.
 BootScene → TitleScene → MenuScene → ArenaScene → GameOverScene → TitleScene
                        ↗ ShopScene
                        ↗ LabScene
+TitleScene → RankedScene → RankedBanScene → RankedSelectScene → ArenaScene ⇄ RankedIntermissionScene (best of 3)
 ```
+
+- **TitleScene**: a hub of four category doors (BATTLE / ADVENTURE / SIEGE / WORKSHOP), each opening an in-scene sub-panel of mode cards (`categories()` is the one list of destinations), plus the ranked "flex" plate.
+- **Ranked**: `src/data/RankedData.ts` owns the ladder (Bronze–Diamond III/II/I + Excelsius), RP, the save, bans, and `rankedDifficulty(step)` (interpolated `DifficultyConfig`). The `RankedSeries` object rides in ArenaScene's `ranked` scene data and is handed back to `RankedIntermissionScene`, which scores it and relaunches via `startRankedGame()`. Badges are drawn by `src/ui/RankBadges.ts` (`addRankBadge`).
 
 - **BootScene**: Runs once. Generates *all* sprite textures dynamically via Phaser's graphics API — there are no image assets. Every element icon and projectile shape is drawn in code here.
 - **MenuScene**: Three-phase UI — pick player element, pick enemy element, pick difficulty. Also where mutations are selected.

@@ -853,6 +853,49 @@ export class SoundFx extends FxBase {
   // Drawn into a Graphics the caller already owns, because these ride on live gameplay state.
 
   /** The fermata: an arc over a dot — "hold this note". Gold, with a soft halo behind it. */
+  /**
+   * Sound Mastery — Forte Piano landing: a black-lacquer crater, splintered case boards and ivory
+   * keys spraying out, and a ring of every string sounding at once.
+   */
+  pianoCrash(x: number, y: number, radius: number, charge: number, depth = 9): void {
+    const bits = Array.from({ length: 14 }, (_, i) => ({
+      ang: (i / 14) * TAU + Math.random() * 0.3,
+      v: 90 + Math.random() * 140,
+      spin: (Math.random() - 0.5) * 14,
+      ivory: i % 3 !== 0,
+      len: 6 + Math.random() * 7,
+    }));
+    this.anim(depth, 720, (g, t) => {
+      const fade = 1 - t * t;
+      // The dent in the floor.
+      g.fillStyle(this.tint(SOUND.shade), 0.55 * fade);
+      g.fillEllipse(x, y + 6, radius * 1.5, radius * 0.55);
+      // Strings: rings of gold that snap outward.
+      for (let k = 0; k < 3; k++) {
+        const u = Phaser.Math.Clamp(t * 1.4 - k * 0.12, 0, 1);
+        if (u <= 0) continue;
+        g.lineStyle(3 - u * 2, this.tint(k === 1 ? SOUND.goldHi : SOUND.gold), (1 - u) * (0.5 + charge * 0.5));
+        g.strokeEllipse(x, y + 4, (radius * 0.5 + radius * 1.6 * easeOut(u)) * 1.4, (radius * 0.5 + radius * 1.6 * easeOut(u)) * 0.6);
+      }
+      // Splinters and keys.
+      for (const b of bits) {
+        const d = b.v * easeOut(t);
+        const bx = x + Math.cos(b.ang) * d;
+        const by = y + Math.sin(b.ang) * d * 0.6 - 70 * Math.sin(Math.PI * Math.min(1, t * 1.3));
+        const a = b.ang + b.spin * t;
+        const c = Math.cos(a), sn = Math.sin(a);
+        const w = b.ivory ? 3.2 : 2.2;
+        g.fillStyle(this.tint(b.ivory ? SOUND.ivory : SOUND.night), fade);
+        fillPts(g, [
+          { x: bx - c * b.len - sn * w, y: by - sn * b.len + c * w },
+          { x: bx + c * b.len - sn * w, y: by + sn * b.len + c * w },
+          { x: bx + c * b.len + sn * w, y: by + sn * b.len - c * w },
+          { x: bx - c * b.len + sn * w, y: by - sn * b.len - c * w },
+        ]);
+      }
+    });
+  }
+
   static drawFermata(
     g: Phaser.GameObjects.Graphics, tint: SoundColorFn,
     x: number, y: number, size: number, color: number, alpha = 1,
@@ -1375,6 +1418,233 @@ export class SoundFx extends FxBase {
     g.fillCircle(hx - 2.5, hy - 3, 2);
     void t;
   }
+}
+
+// ── Forte Piano (Sound Mastery) ──────────────────────────────────────────
+
+/**
+ * The grand piano's keyboard, relative to where the drum major sits (the anchor): eight white keys
+ * in a row below them, five black keys over the cracks. Shared by the kit (to read which key a
+ * click landed on) and the painter, so the two can never disagree.
+ */
+export const PIANO = {
+  whiteKeys: 8,
+  keyW: 26,
+  keyH: 58,
+  /** Gap from the anchor down to the top of the keys. */
+  top: 30,
+  blackW: 15,
+  blackH: 34,
+  /** Black keys sit after these white keys: C#, D#, F#, G#, A#. */
+  blackAfter: [0, 1, 3, 4, 5],
+} as const;
+
+/** Semitones above middle C for every key the piano has: 8 white, then the 5 black. */
+export const PIANO_SEMIS = [0, 2, 4, 5, 7, 9, 11, 12, 1, 3, 6, 8, 10];
+
+/** Which key a point lands on: 0–7 a white key, 8–12 a black one, −1 off the keyboard. */
+export function pianoKeyAt(px: number, py: number, ax: number, ay: number): number {
+  const left = ax - (PIANO.whiteKeys * PIANO.keyW) / 2;
+  const top = ay + PIANO.top;
+  if (py < top || py > top + PIANO.keyH || px < left || px > left + PIANO.whiteKeys * PIANO.keyW) return -1;
+  if (py <= top + PIANO.blackH) {
+    for (let i = 0; i < PIANO.blackAfter.length; i++) {
+      const bx = left + (PIANO.blackAfter[i] + 1) * PIANO.keyW;
+      if (Math.abs(px - bx) <= PIANO.blackW / 2) return PIANO.whiteKeys + i;
+    }
+  }
+  return Math.min(PIANO.whiteKeys - 1, Math.floor((px - left) / PIANO.keyW));
+}
+
+/**
+ * The grand piano the drum major sits at: a black-lacquer case behind them with the lid propped
+ * open on its stick and the gold strings showing, the fallboard, the keys in front, and a charge
+ * gauge — a gold rule along the top of the case that fills as the tune gets sweeter. `flash` is a
+ * 0–1 glow per key (13 entries), set when a key is struck. `lift` 0 → 1 raises the whole thing off
+ * the floor for the fling.
+ */
+export function drawPiano(
+  g: Phaser.GameObjects.Graphics, tint: SoundColorFn, ax: number, ay: number,
+  flash: readonly number[], charge: number, t: number, alpha = 1, lift = 0,
+): void {
+  if (alpha <= 0.01) return;
+  const A = alpha;
+  const y0 = ay - lift * 60;
+  const kw = PIANO.keyW, n = PIANO.whiteKeys;
+  const left = ax - (n * kw) / 2, right = left + n * kw;
+  const kt = y0 + PIANO.top, kb = kt + PIANO.keyH;
+  const caseL = left - 12, caseR = right + 12;
+  // Floor shadow.
+  g.fillStyle(tint(SOUND.shade), A * 0.4 * (1 - lift * 0.6));
+  g.fillEllipse(ax, ay + PIANO.top + PIANO.keyH + 14, (caseR - caseL) * (1 - lift * 0.3), 16);
+  // Legs, turned and gilded at the feet.
+  for (const lx of [caseL + 10, caseR - 10]) {
+    g.fillStyle(tint(SOUND.night), A);
+    g.fillRect(lx - 4, kb, 8, 16);
+    g.fillStyle(tint(SOUND.goldShade), A);
+    g.fillRect(lx - 5, kb + 14, 10, 3);
+  }
+  // The lid, propped open on its stick behind the player.
+  const lidTop = y0 - 92;
+  g.fillStyle(tint(SOUND.night), A);
+  fillPts(g, [{ x: caseL, y: y0 - 40 }, { x: caseR - 30, y: lidTop }, { x: caseR, y: lidTop + 8 }, { x: caseR, y: y0 - 40 }]);
+  g.fillStyle(tint(SOUND.steelDark), A * 0.5);
+  fillPts(g, [{ x: caseL + 18, y: y0 - 42 }, { x: caseR - 32, y: lidTop + 4 }, { x: caseR - 22, y: lidTop + 7 }, { x: caseL + 40, y: y0 - 42 }]);
+  g.lineStyle(2, tint(SOUND.woodHi), A);
+  g.lineBetween(caseR - 50, y0 - 40, caseR - 42, lidTop + 16);
+  // The case: lacquer black with a sheen, and the gold strings through the open top.
+  g.fillStyle(tint(SOUND.night), A);
+  g.fillRoundedRect(caseL, y0 - 44, caseR - caseL, kt - (y0 - 44) + 4, 6);
+  g.fillStyle(tint(SOUND.steelDark), A * 0.35);
+  g.fillRoundedRect(caseL + 4, y0 - 41, caseR - caseL - 8, 6, 3);
+  g.lineStyle(1, tint(SOUND.gold), A * 0.55);
+  for (let i = 0; i < 9; i++) {
+    const sx = caseL + 16 + i * ((caseR - caseL - 32) / 8);
+    g.lineBetween(sx, y0 - 34, sx + 6, kt - 8);
+  }
+  // The charge gauge: a gold rule along the rim, brightening as it fills.
+  const gw = caseR - caseL - 20;
+  g.fillStyle(tint(SOUND.shade), A);
+  g.fillRoundedRect(caseL + 10, y0 - 54, gw, 6, 3);
+  if (charge > 0.01) {
+    g.fillStyle(tint(charge >= 0.6 ? SOUND.goldRich : SOUND.gold), A);
+    g.fillRoundedRect(caseL + 10, y0 - 54, Math.max(6, gw * charge), 6, 3);
+    g.fillStyle(tint(SOUND.goldHi), A * (0.4 + 0.3 * Math.sin(t * 8)));
+    g.fillRect(caseL + 12, y0 - 53, Math.max(2, gw * charge - 4), 1.5);
+  }
+  g.lineStyle(1, tint(SOUND.goldHi), A * 0.8);
+  g.strokeRoundedRect(caseL + 10, y0 - 54, gw, 6, 3);
+  // The 60% tick, where the crash starts to put people out of tune.
+  g.lineStyle(1.4, tint(SOUND.sour), A * 0.9);
+  g.lineBetween(caseL + 10 + gw * 0.6, y0 - 56, caseL + 10 + gw * 0.6, y0 - 46);
+  // The fallboard with a gold maker's line over the keys.
+  g.fillStyle(tint(SOUND.night), A);
+  g.fillRect(left - 4, kt - 8, right - left + 8, 8);
+  g.lineStyle(1, tint(SOUND.gold), A * 0.8);
+  g.lineBetween(ax - 22, kt - 4, ax + 22, kt - 4);
+  // White keys.
+  for (let i = 0; i < n; i++) {
+    const kx = left + i * kw;
+    const f = flash[i] ?? 0;
+    g.fillStyle(tint(SOUND.gloveShade), A);
+    g.fillRect(kx + 1, kt, kw - 2, PIANO.keyH);
+    g.fillStyle(tint(f > 0 ? SOUND.goldHi : SOUND.ivory), A);
+    g.fillRect(kx + 1, kt + (f > 0 ? 2 : 0), kw - 2, PIANO.keyH - 4);
+    if (f > 0) {
+      g.fillStyle(tint(SOUND.gold), A * f * 0.6);
+      g.fillRect(kx + 1, kt, kw - 2, PIANO.keyH);
+    }
+    // The note name, faint, at the foot of each key.
+    g.fillStyle(tint(SOUND.steel), A * 0.6);
+    g.fillCircle(kx + kw / 2, kb - 8, i === 0 || i === n - 1 ? 2.4 : 1.4);
+  }
+  // Black keys over the cracks.
+  for (let i = 0; i < PIANO.blackAfter.length; i++) {
+    const bx = left + (PIANO.blackAfter[i] + 1) * kw;
+    const f = flash[n + i] ?? 0;
+    g.fillStyle(tint(SOUND.shade), A);
+    g.fillRect(bx - PIANO.blackW / 2, kt, PIANO.blackW, PIANO.blackH);
+    g.fillStyle(tint(f > 0 ? SOUND.steel : SOUND.night), A);
+    g.fillRect(bx - PIANO.blackW / 2 + 1.5, kt, PIANO.blackW - 3, PIANO.blackH - 4);
+    g.fillStyle(tint(SOUND.steelDark), A * 0.8);
+    g.fillRect(bx - PIANO.blackW / 2 + 3, kt + 2, 2, PIANO.blackH - 10);
+  }
+  // Key slip: a gold line along the front.
+  g.lineStyle(1.2, tint(SOUND.goldShade), A);
+  g.lineBetween(left - 4, kb, right + 4, kb);
+}
+
+/**
+ * The flung piano in the air, seen from below at a tumble: a compact lacquered grand silhouette
+ * with its curved bentside, the lid flapping and the legs out. `s` scales it (small up high).
+ */
+export function drawPianoAirborne(
+  g: Phaser.GameObjects.Graphics, tint: SoundColorFn, x: number, y: number, s: number, rot: number, t: number, alpha = 1,
+): void {
+  if (alpha <= 0.01) return;
+  const c = Math.cos(rot), sn = Math.sin(rot);
+  const at = (lx: number, ly: number): Pt => ({ x: x + (lx * c - ly * sn) * s, y: y + (lx * sn + ly * c) * s });
+  // Legs.
+  g.lineStyle(4 * s, tint(SOUND.night), alpha);
+  for (const lx of [-34, 30, 6]) { const a = at(lx, 14), b = at(lx, 32); g.lineBetween(a.x, a.y, b.x, b.y); }
+  // The body: straight spine, curved bentside, and the keyboard end.
+  const body: Pt[] = [at(-44, -16), at(10, -18)];
+  for (let i = 0; i <= 8; i++) {
+    const u = i / 8;
+    body.push(at(10 + Math.sin(u * Math.PI) * 32, -18 + u * 34));
+  }
+  body.push(at(-44, 16));
+  g.fillStyle(tint(SOUND.night), alpha);
+  fillPts(g, body);
+  g.fillStyle(tint(SOUND.steelDark), alpha * 0.5);
+  fillPts(g, [at(-40, -13), at(8, -14), at(8, -9), at(-40, -8)]);
+  // The keys along the front edge.
+  g.fillStyle(tint(SOUND.ivory), alpha);
+  fillPts(g, [at(-50, -14), at(-44, -14), at(-44, 14), at(-50, 14)]);
+  g.lineStyle(1 * s, tint(SOUND.night), alpha);
+  for (let k = -10; k <= 10; k += 5) { const a = at(-50, k), b = at(-44, k); g.lineBetween(a.x, a.y, b.x, b.y); }
+  // The lid, flapping open.
+  const flap = 0.4 + Math.sin(t * 14) * 0.25;
+  const hinge = at(-30, -18);
+  const tip = at(-30 + 40 * Math.cos(flap), -18 - 34 * Math.sin(flap));
+  g.lineStyle(5 * s, tint(SOUND.night), alpha);
+  g.lineBetween(hinge.x, hinge.y, tip.x, tip.y);
+  g.lineStyle(1.2 * s, tint(SOUND.gold), alpha * 0.8);
+  g.lineBetween(hinge.x, hinge.y - 2 * s, tip.x, tip.y - 2 * s);
+}
+
+/**
+ * Where the piano is coming down: a shadow that grows and darkens as it falls, ringed by a dashed
+ * gold circle the size of the crash. `k` 0 → 1 over the flight; `locked` once it stops following
+ * the cursor (the ring turns sour and stops breathing).
+ */
+export function drawPianoTarget(
+  g: Phaser.GameObjects.Graphics, tint: SoundColorFn, x: number, y: number, radius: number, k: number, locked: boolean, t: number, alpha = 1,
+): void {
+  if (alpha <= 0.01) return;
+  g.fillStyle(tint(SOUND.shade), alpha * (0.15 + 0.45 * k));
+  g.fillEllipse(x, y + 4, radius * (0.6 + 0.9 * k), radius * (0.24 + 0.36 * k));
+  const breathe = locked ? 0 : Math.sin(t * 6) * 3;
+  const segs = 18;
+  g.lineStyle(2, tint(locked ? SOUND.sour : SOUND.gold), alpha * (0.5 + 0.4 * k));
+  for (let i = 0; i < segs; i += 1) {
+    if (i % 2) continue;
+    const a0 = (i / segs) * TAU + t * (locked ? 0 : 0.8), a1 = ((i + 1) / segs) * TAU + t * (locked ? 0 : 0.8);
+    g.beginPath();
+    g.arc(x, y, radius + breathe, a0, a1, false);
+    g.strokePath();
+  }
+  // A falling-note marker over the centre.
+  g.fillStyle(tint(locked ? SOUND.sour : SOUND.goldHi), alpha * (0.6 + 0.4 * k));
+  musicNote(g, x, y - 6 - (1 - k) * 10, 6, 0.2, { flags: 2 });
+}
+
+// ── Autotune toggle (Sound Mastery) ──────────────────────────────────────
+
+/**
+ * The little switch under the HP bar: a velvet pill in a gold frame, a song-coloured track and a
+ * brass knob that sits right when Autotune is on.
+ */
+export function drawAutotuneToggle(
+  g: Phaser.GameObjects.Graphics, tint: SoundColorFn, cx: number, cy: number, w: number, h: number,
+  on: boolean, songColor: number, hover: number,
+): void {
+  const L = cx - w / 2, T = cy - h / 2;
+  g.fillStyle(0x000000, 0.35);
+  g.fillRoundedRect(L + 1, T + 2, w, h, h / 2);
+  g.fillStyle(tint(SOUND.maroonDeep), 0.94);
+  g.fillRoundedRect(L, T, w, h, h / 2);
+  g.lineStyle(1.2, tint(SOUND.gold), 0.75 + hover * 0.25);
+  g.strokeRoundedRect(L, T, w, h, h / 2);
+  // The switch at the right end.
+  const sw = 26, sx = L + w - sw - 4, sy = cy;
+  g.fillStyle(tint(on ? songColor : SOUND.steelDark), on ? 0.9 : 0.8);
+  g.fillRoundedRect(sx, sy - (h - 6) / 2, sw, h - 6, (h - 6) / 2);
+  const kx = on ? sx + sw - (h - 6) / 2 : sx + (h - 6) / 2;
+  g.fillStyle(tint(SOUND.brassShade), 1);
+  g.fillCircle(kx, sy, (h - 6) / 2 + 1);
+  g.fillStyle(tint(on ? SOUND.brassHi : SOUND.steel), 1);
+  g.fillCircle(kx - 0.6, sy - 0.6, (h - 6) / 2 - 1);
 }
 
 // ── SoundAvatar ───────────────────────────────────────────────────────────

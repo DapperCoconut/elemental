@@ -4,6 +4,7 @@ import { CastContext } from '../Ability';
 import {
   SOUND, SONG_COLORS, SONG_NAMES, SONG_ORDER, SONG_PALE, SoulSong, SoundAvatar, SoundColorFn, SoundFx,
   musicNote, musicNoteLayered,
+  PIANO, PIANO_SEMIS, pianoKeyAt, drawPiano, drawPianoAirborne, drawPianoTarget, drawAutotuneToggle,
 } from './SoundVisuals';
 import { CustomStatus } from './StatusHudKit';
 import { meterGain } from '../../combat/Meters';
@@ -27,6 +28,7 @@ export interface SoundArenaApi {
   readonly width: number;
   readonly height: number;
   readonly isOnline: boolean;
+  readonly isInvasion: boolean;
   /** The bot's difficulty rung, 1–5 — how often it keeps time on the metronome and the solo. */
   readonly npcLevel: number;
   readonly masteryActive: boolean;
@@ -45,6 +47,14 @@ export interface SoundArenaApi {
   soundColor(owner: Owner, base: number): number;
   /** Online: presses that are not cooldown casts travel as pseudo-cast ids. */
   broadcastMasteryCast(id: string): void;
+  /** Which mastery enhancement each side dropped over an R/F/Q slot, or null. */
+  masteryBindFor(slot: string): string | null;
+  npcMasteryBindFor(slot: string): string | null;
+  /** Mastery progress. Gated on the element by the adapter, so the kit records unconditionally. */
+  recordMasteryStat(key: string, amount: number): void;
+  /** The player's HP bar (centre y and height) — Autotune's switch hangs just under it. */
+  readonly hpBarY: number;
+  readonly hpBarH: number;
 }
 
 // ── Passive: the metronome ────────────────────────────────────────────────
@@ -186,6 +196,62 @@ const GONG_WINDUP_MS = 560;
 const GONG_MS = 1600;
 const DEAF_MS = 8000;
 
+// ── Mastery ───────────────────────────────────────────────────────────────
+
+const PIANO_ID = 'forte-piano';
+/** From the crash, not the cast — the five seconds at the keys and the flight come first. */
+const PIANO_COOLDOWN_MS = 12000;
+const PIANO_PLAY_MS = 5000;
+const PIANO_FLIGHT_MS = 2000;
+/** The drop stops following the cursor this long before it lands — the dodge window. */
+const PIANO_LOCK_MS = 450;
+const PIANO_RADIUS = 90;
+const PIANO_DMG_MIN = 20;
+const PIANO_DMG_MAX = 110;
+/** Charge from which the crash leaves everyone it crushes out of tune. */
+const PIANO_TUNE_AT = 0.6;
+const PIANO_DETONATE_DMG = 30;
+/** Charge a perfectly melodious note is worth; a sour one takes a little back. */
+const PIANO_CHARGE_PER_NOTE = 0.085;
+const PIANO_SOUR_AT = 0.45;
+const PIANO_SOUR_COST = 0.12;
+/** Two keys this close together is mashing, not playing. */
+const PIANO_MASH_MS = 110;
+/** Ending on a C (either one) resolves the tune. */
+const PIANO_CADENCE = 0.08;
+/** How sweet each interval sounds, by scale steps apart (0 = the same key, 7 = the octave). */
+const INTERVAL_SCORE = [0.35, 1, 0.95, 0.55, 0.85, 0.5, 0.3, 0.9];
+/** The anchor is kept this far inside the field, so the keys and the lid stay on screen. */
+const PIANO_EDGE_X = 124;
+const PIANO_EDGE_TOP = 112;
+const PIANO_EDGE_BOTTOM = 210;
+/** Dissonance — out of tune from a Fermata and the piano at once: a bleed, ticked. */
+const DISSONANCE_TICK_MS = 500;
+const DISSONANCE_TICK_DMG = 3;
+/** The bot plays: how steady its rhythm is and how often it picks a sweet interval, by rung. */
+const NPC_PIANO_GAP_MS = 400;
+const NPC_PIANO_SWEET = [0.4, 0.52, 0.64, 0.76, 0.88];
+const NPC_PIANO_RANGE = 460;
+
+// Autotune
+const AUTOTUNE_LOW_HP = 0.35;
+const AUTOTUNE_HIGH_HP = 0.6;
+/** "Fighting distance": a little past the baton's reach. */
+const AUTOTUNE_CLOSE = BATON_RANGE + 40;
+const AUTOTUNE_CHECK_MS = 300;
+/** Once it has switched, it holds the new song this long before it will switch again. */
+const AUTOTUNE_HOLD_MS = 1200;
+/** A song picked by hand with F is left alone this long. */
+const AUTOTUNE_MANUAL_MS = 3000;
+const TOGGLE_W = 124;
+const TOGGLE_H = 16;
+
+/**
+ * The Autotune switch. Module-level so it survives `reset()`: flicked off once, it stays off for
+ * the rest of the session rather than springing back on every match.
+ */
+let autotuneOn = true;
+
 // ── Types ─────────────────────────────────────────────────────────────────
 
 type NoteKind = 'quarter' | 'eighth' | 'sixteenth' | 'slur';
@@ -235,6 +301,28 @@ interface Dash {
 
 interface Gong { x: number; y: number; dir: 1 | -1; start: number; struck: boolean; flair: number }
 
+/** Sound Mastery — the grand piano: at the keys, then in the air. */
+interface Piano {
+  phase: 'play' | 'fly';
+  /** Where the drum major sits — the piano is built round this. */
+  x: number; y: number;
+  /** When the current phase began (scene time). */
+  start: number;
+  charge: number;
+  /** White keys played, as scale steps 0–7, and when. */
+  notes: { deg: number; at: number }[];
+  lastGap: number;
+  /** 0–1 glow per key: the 8 white, then the 5 black. */
+  flash: number[];
+  /** The drop point, following the cursor until it locks. */
+  tx: number; ty: number;
+  locked: boolean;
+  /** Bot: when it plays its next key. */
+  npcNextAt: number;
+  /** Online: the relay counter, so every key gets an id of its own past the cast dedupe. */
+  seq: number;
+}
+
 interface BassCharge { x: number; y: number; owner: Owner; armedAt: number; explodeAt: number }
 
 interface Side {
@@ -260,7 +348,8 @@ interface Side {
   // Fermata
   dash: Dash | null;
   grabUntil: number;
-  tuned: Set<Fighter>;
+  /** Everyone this side's slam put out of tune, and when that stack runs out (Date.now). */
+  tuned: Map<Fighter, number>;
   // Songs
   regenAccum: number;
   resOwned: boolean;
@@ -289,6 +378,19 @@ interface Side {
   // Q+ Big Finish
   gong: Gong | null;
   deafUntil: number;
+  // Mastery — Forte Piano
+  piano: Piano | null;
+  /** The last crash (scene time). Starts a cooldown in the past so it is ready. */
+  pianoAt: number;
+  /** Everyone the piano put out of tune, and when that stack runs out (Date.now). */
+  pianoTuned: Map<Fighter, number>;
+  /** Dissonance: each double-stacked victim's next bleed tick and when it started (scene time). */
+  dissonance: Map<Fighter, { next: number; since: number }>;
+  // Mastery — Autotune
+  autotuneAt: number;
+  autotuneHoldUntil: number;
+  /** All three songs maxed has been counted toward the mastery this match. */
+  songsMaxedSeen: boolean;
 }
 
 function freshSide(): Side {
@@ -298,13 +400,15 @@ function freshSide(): Side {
     bx: 0, by: 0, rot: 0, aimX: 0, aimY: 0, batonHits: new Map(), batonPlaced: false,
     npcBeat: -1, npcBeatHit: false, npcBeatAt: 0,
     danceStart: 0, danceUntil: 0, trail: [],
-    dash: null, grabUntil: 0, tuned: new Set(),
+    dash: null, grabUntil: 0, tuned: new Map(),
     regenAccum: 0, resOwned: false, path: [], walkAccum: 0,
     solo: null,
     selfTouching: false, selfTapUntil: 0, selfTapReadyAt: 0,
     inTune: false, inTuneStart: 0, tuneNet: 0, tuneAccum: 0, echoAng: 0, echoX: 0, echoY: 0, echoHits: new Map(),
     practice: { staccato: 0, melody: 0, smooth: 0 }, netLevel: 0, sparkleAt: 0,
     gong: null, deafUntil: 0,
+    piano: null, pianoAt: -PIANO_COOLDOWN_MS, pianoTuned: new Map(), dissonance: new Map(),
+    autotuneAt: 0, autotuneHoldUntil: 0, songsMaxedSeen: false,
   };
 }
 
@@ -327,6 +431,7 @@ export class SoundKit {
   private songLabel: Phaser.GameObjects.Text | null = null;
   private soloLabel: Phaser.GameObjects.Text | null = null;
   private practiceLabel: Phaser.GameObjects.Text | null = null;
+  private autotuneLabel: Phaser.GameObjects.Text | null = null;
   private vizT = 0;
 
   private sides: Record<Owner, Side> = { player: freshSide(), npc: freshSide() };
@@ -450,8 +555,14 @@ export class SoundKit {
 
   // ── Public accessors ──────────────────────────────────────────────────
 
-  /** True while the player is on the stage and cannot move. */
-  isPerforming(): boolean { return this.sides.player.solo !== null; }
+  /** True while the player is on the stage (or at the piano) and cannot move. */
+  isPerforming(): boolean { return this.onStage('player'); }
+
+  /** Rooted and busy with an instrument: the solo, or seated at the piano. */
+  private onStage(owner: Owner): boolean {
+    const s = this.sides[owner];
+    return s.solo !== null || s.piano?.phase === 'play';
+  }
 
   getPlayerSpeedMult(): number { return this.speedMult('player'); }
 
@@ -479,8 +590,8 @@ export class SoundKit {
     this.npcAvatar?.destroy(); this.npcAvatar = null;
     for (const g of [this.groundGfx, this.airGfx, this.stageGfx, this.hudGfx]) g?.destroy();
     this.groundGfx = null; this.airGfx = null; this.stageGfx = null; this.hudGfx = null;
-    for (const t of [this.hudLabel, this.songLabel, this.soloLabel, this.practiceLabel]) t?.destroy();
-    this.hudLabel = null; this.songLabel = null; this.soloLabel = null; this.practiceLabel = null;
+    for (const t of [this.hudLabel, this.songLabel, this.soloLabel, this.practiceLabel, this.autotuneLabel]) t?.destroy();
+    this.hudLabel = null; this.songLabel = null; this.soloLabel = null; this.practiceLabel = null; this.autotuneLabel = null;
     this.vizT = 0;
     // The old fighters (and any absorber hung on them) died with the old match.
     this.sides = { player: freshSide(), npc: freshSide() };
@@ -515,9 +626,25 @@ export class SoundKit {
     const justDown = down && !this.pointerWasDown;
     this.pointerWasDown = down;
 
+    // Mastery: the Autotune switch under the HP bar eats the click that lands on it.
+    if (justDown && this.masteryOn('player') && this.overAutotuneToggle(mouseX, mouseY)) {
+      autotuneOn = !autotuneOn;
+      Sfx.play(autotuneOn ? 'ui-toggle-on' : 'ui-toggle-off');
+      if (autotuneOn) s.autotuneHoldUntil = 0;
+      return;
+    }
+    // Mastery: whichever of R/F/Q Forte Piano was dropped on is the piano's key now.
+    const bound = this.pianoSlot('player');
+    const boundKey = bound === 'r' ? rKey : bound === 'f' ? fKey : bound === 'q' ? qKey : null;
+    if (s.piano?.phase === 'play') {
+      if (justDown) this.pianoClick('player', mouseX, mouseY);
+      if (boundKey && Phaser.Input.Keyboard.JustDown(boundKey)) this.flingPiano('player');
+      return;
+    }
+
     if (s.solo) {
       this.soloInput(time, justDown, down);
-      if (Phaser.Input.Keyboard.JustDown(qKey)) this.endSolo('player', true, true);
+      if (bound !== 'q' && Phaser.Input.Keyboard.JustDown(qKey)) this.endSolo('player', true, true);
       return;
     }
     if (s.dash) return;
@@ -525,15 +652,20 @@ export class SoundKit {
     const ctx = () => this.arena.buildPlayerContext(mouseX, mouseY);
     if (justDown) player.castAbility('baton', ctx());
     if (Phaser.Input.Keyboard.JustDown(eKey)) player.castAbility('crescendo', ctx());
-    if (Phaser.Input.Keyboard.JustDown(rKey)) {
+    if (boundKey && Phaser.Input.Keyboard.JustDown(boundKey)) {
+      // The piano's recast pops its own Out of Tune first — free, and it outranks a fresh piano.
+      if (this.tunedAlive('player', 'piano')) this.detonate('player', 'piano');
+      else this.tryPiano('player');
+    }
+    if (bound !== 'r' && Phaser.Input.Keyboard.JustDown(rKey)) {
       // Harmony's recast comes first — its timing is the whole game. Then the detonation, which is
       // free and outranks a fresh slam: anyone still out of tune gets it.
       if (s.inTune) this.releaseInTune('player');
       else if (this.tunedAlive('player')) this.detonate('player');
       else player.castAbility('fermata', ctx());
     }
-    if (Phaser.Input.Keyboard.JustDown(fKey)) player.castAbility('hum', ctx());
-    if (Phaser.Input.Keyboard.JustDown(qKey)) player.castAbility('call-of-the-void', ctx());
+    if (bound !== 'f' && Phaser.Input.Keyboard.JustDown(fKey)) player.castAbility('hum', ctx());
+    if (bound !== 'q' && Phaser.Input.Keyboard.JustDown(qKey)) player.castAbility('call-of-the-void', ctx());
   }
 
   /** Every ability of the element lands here, from `ctx.soundCast`, for either side. */
@@ -563,6 +695,7 @@ export class SoundKit {
       case 'call-of-the-void': this.startSolo(owner); break;
       // The bot's free recast — not an ability, so it never goes through castAbility.
       case 'fermata-detonate': if (owner === 'npc') this.doNpcDetonate(); break;
+      case PIANO_ID: if (owner === 'npc') this.tryPiano('npc'); break;
       case 'harmony-release': if (owner === 'npc' && !this.isReplica(owner)) this.releaseInTune('npc'); break;
     }
   }
@@ -577,6 +710,10 @@ export class SoundKit {
       s.netLevel = Phaser.Math.Clamp(Math.floor(Number(lvl) || 0), 0, PRACTICE_MAX_LEVEL);
     } else if (id === 'sound-detonate') {
       this.detonate('npc');
+    } else if (id === 'sound-piano-detonate') {
+      this.detonate('npc', 'piano');
+    } else if (id.startsWith('sound-piano') || id.startsWith('sound-song:')) {
+      this.replayMastery(id);
     } else if (id === 'sound-solo-end') {
       this.endSolo('npc', false);
     } else if (id === 'sound-fermata') {
@@ -621,6 +758,7 @@ export class SoundKit {
       const perfect = beat === idx && this.up(owner, 'click') && Math.abs(phase - PERFECT_AT) <= PERFECT_MS / 2;
       s.spin = Math.min(1, s.spin + (perfect ? SPIN_PER_PERFECT : SPIN_PER_HIT));
       s.combo++;
+      this.record(owner, 'metronomeHits');
       this.fx(owner).batonFlourish(s.bx, s.by - 10, perfect ? SOUND.goldRich : SONG_COLORS[s.song]);
       if (perfect) {
         this.fx(owner).sparkle(s.bx, s.by - 12, 6, 22, 11, SOUND.goldRichHi);
@@ -704,7 +842,7 @@ export class SoundKit {
     const d = Math.hypot(dx, dy);
     if (d > BATON_RANGE) { tx = f.x + dx / d * BATON_RANGE; ty = f.y + dy / d * BATON_RANGE; }
 
-    if (s.solo) { tx = f.x - 18; ty = f.y + 12; }
+    if (this.onStage(owner)) { tx = f.x - 18; ty = f.y + 12; }
     if (s.dash) {
       // In hand: the baton rides the glove through the dash.
       const ha = Math.atan2(s.dash.aimY - f.y, s.dash.aimX - f.x);
@@ -728,7 +866,7 @@ export class SoundKit {
 
     // Musical Perfection: tapping yourself with the baton is a short burst of speed — once per
     // touch, so a baton parked on top of you gives one and has to leave before it gives another.
-    if (this.up(owner, 'click') && !s.solo && !s.dash) {
+    if (this.up(owner, 'click') && !this.onStage(owner) && !s.dash) {
       const touching = Phaser.Math.Distance.Between(s.bx, s.by, f.x, f.y) <= SELF_TAP_R;
       if (touching && !s.selfTouching && time >= s.selfTapReadyAt) {
         s.selfTapUntil = time + SELF_TAP_MS;
@@ -740,8 +878,8 @@ export class SoundKit {
       s.selfTouching = touching;
     }
 
-    // Contact damage — not while it is in hand, and not on the stage.
-    if (s.solo || s.dash || time < s.grabUntil) return;
+    // Contact damage — not while it is in hand, and not on the stage (or at the piano).
+    if (this.onStage(owner) || s.dash || time < s.grabUntil) return;
     for (const t of this.targets(owner)) {
       if (Phaser.Math.Distance.Between(s.bx, s.by, t.x, t.y) > BATON_HIT_R + 16) continue;
       if (time - (s.batonHits.get(t) ?? -Infinity) < BATON_REHIT_MS) continue;
@@ -861,9 +999,11 @@ export class SoundKit {
       const inLine = along >= -10 && along <= SLAM_LEN && across <= SLAM_HALF_W + 14;
       if (!inLine && Math.hypot(rx, ry) > SLAM_RADIUS + 14) continue;
       this.strike(owner, t, SLAM_DMG, ix, iy);
+      // A replica only keeps the books on our player (so its detonation knows who it popped);
+      // the tune itself arrives by the status mirror.
+      s.tuned.set(t, Date.now() + TUNE_MS);
       if (this.isReplica(owner) && t === this.arena.player) continue;
       t.outOfTuneUntil = Math.max(t.outOfTuneUntil, Date.now() + TUNE_MS);
-      s.tuned.add(t);
       tuned++;
       this.announce(t.x, t.y - 44, '♭ OUT OF TUNE', SOUND.sour, 11);
     }
@@ -875,60 +1015,104 @@ export class SoundKit {
     }
   }
 
-  private tunedAlive(owner: Owner): boolean {
+  private tunedAlive(owner: Owner, kind: 'fermata' | 'piano' = 'fermata'): boolean {
     const now = Date.now();
-    for (const t of this.sides[owner].tuned) if (this.alive(t) && t.outOfTuneUntil > now) return true;
+    const s = this.sides[owner];
+    for (const [t, until] of kind === 'fermata' ? s.tuned : s.pianoTuned) if (this.alive(t) && until > now) return true;
     return false;
   }
 
-  /**
-   * Recast: every fighter this side put out of tune is detonated — damage, a short stun, and
-   * notes sprouting out of them. Free, so it relays as a pseudo-cast rather than a cooldown.
-   */
-  private detonate(owner: Owner): void {
+  /** Both stacks live on `t`: a Fermata's and a Forte Piano's from this side. */
+  private isDissonant(owner: Owner, t: Fighter): boolean {
     const s = this.sides[owner];
     const now = Date.now();
-    const victims = [...s.tuned].filter((t) => this.alive(t) && t.outOfTuneUntil > now);
+    return (s.tuned.get(t) ?? 0) > now && (s.pianoTuned.get(t) ?? 0) > now;
+  }
+
+  /**
+   * Recast: every fighter this side put out of tune (with a Fermata, or with the piano) is
+   * detonated — damage, a short stun, and notes sprouting out of them. Free, so it relays as a
+   * pseudo-cast rather than a cooldown. A victim wearing **both** stacks has both go off at once,
+   * whichever recast it was.
+   */
+  private detonate(owner: Owner, kind: 'fermata' | 'piano' = 'fermata'): void {
+    const s = this.sides[owner];
+    const now = Date.now();
+    const book = kind === 'fermata' ? s.tuned : s.pianoTuned;
+    const other = kind === 'fermata' ? s.pianoTuned : s.tuned;
+    const victims = [...book].filter(([t, until]) => this.alive(t) && until > now).map(([t]) => t);
     // The peer's detonation: our player is the one wearing it. The damage and the stun arrive by
     // relay; what has to happen here is the picture, and the tune coming off — a mirror only
     // ever extends a timer, so nothing else would ever shorten it.
     if (this.isReplica(owner)) {
       const { player } = this.arena;
-      if (player.outOfTuneUntil > now) {
+      // Our books on the peer's hits are only as good as our copy of where they landed, so the
+      // tune comes off unless all we know of is the *other* kind of stack on our player.
+      const otherOnly = (other.get(player) ?? 0) > now && !((book.get(player) ?? 0) > now);
+      if (player.outOfTuneUntil > now && !otherOnly) {
         player.outOfTuneUntil = 0;
+        player.soundDissonantUntil = 0;
         this.nfx.sprout(player.x, player.y - 4, SOUND.gold);
       }
-      for (const t of victims) { if (t !== player) { t.outOfTuneUntil = 0; this.nfx.sprout(t.x, t.y - 4, SOUND.gold); } }
-      s.tuned.clear();
+      for (const t of victims) { if (t !== player) this.nfx.sprout(t.x, t.y - 4, SOUND.gold); }
+      book.delete(player); other.delete(player);
+      for (const t of victims) { book.delete(t); other.delete(t); }
       return;
     }
+    let doubles = 0;
     for (const t of victims) {
       const x = t.x, y = t.y;
-      this.strike(owner, t, DETONATE_DMG, x, y);
+      const both = (other.get(t) ?? 0) > now;
+      const dmg = (kind === 'fermata' ? DETONATE_DMG : PIANO_DETONATE_DMG)
+        + (both ? (kind === 'fermata' ? PIANO_DETONATE_DMG : DETONATE_DMG) : 0);
+      this.strike(owner, t, dmg, x, y);
       this.stun(owner, t, DETONATE_STUN_MS);
       t.outOfTuneUntil = 0;
+      t.soundDissonantUntil = 0;
+      book.delete(t);
+      other.delete(t);
+      s.dissonance.delete(t);
       this.fx(owner).sprout(x, y - 4, SOUND.gold);
-      this.announce(x, y - 48, '♪ RESOLVED', SOUND.goldHi, 11);
+      if (both) {
+        doubles++;
+        this.fx(owner).sprout(x + 10, y - 10, SOUND.goldRich);
+        this.fx(owner).ripple(x, y, 10, 60, SOUND.goldRich, 420, 3, 8, 8);
+        this.announce(x, y - 48, `♪♪ DOUBLE RESOLVE ${Math.round(dmg * this.dmgMult(owner))}`, SOUND.goldRichHi, 12);
+      } else {
+        this.announce(x, y - 48, '♪ RESOLVED', SOUND.goldHi, 11);
+      }
+      this.record(owner, 'tuneDetonations');
     }
-    s.tuned.clear();
     const f = this.fighter(owner);
     this.avatar(owner)?.play('clap', undefined, 360);
-    Sfx.playAt('holy-chord', f.x, { rate: 1.4, volume: 0.7 });
-    if (owner === 'player') this.arena.broadcastMasteryCast('sound-detonate');
+    Sfx.playAt('holy-chord', f.x, { rate: doubles > 0 ? 1.1 : 1.4, volume: 0.7 });
+    if (owner === 'player') this.arena.broadcastMasteryCast(kind === 'fermata' ? 'sound-detonate' : 'sound-piano-detonate');
   }
 
-  /** Bot: the detonation is worth pressing once the victim has been sour long enough to matter. */
-  npcDetonateReady(): boolean {
+  /**
+   * Bot: whether a stack of this kind is worth popping now — about to run out, or sour long enough
+   * to have made them misfire. Double-stacked, it waits for the Dissonance bleed to do its work.
+   */
+  private npcWantsDetonate(kind: 'fermata' | 'piano'): boolean {
     if (this.arena.isOnline) return false;
+    const s = this.sides.npc;
     const now = Date.now();
-    for (const t of this.sides.npc.tuned) {
-      if (!this.alive(t) || t.outOfTuneUntil <= now) continue;
-      const left = t.outOfTuneUntil - now;
-      // Either it is about to run out, or it has had a few seconds to make them misfire.
-      if (left < 1500 || left < TUNE_MS - 3500) return true;
+    for (const [t, until] of kind === 'fermata' ? s.tuned : s.pianoTuned) {
+      if (!this.alive(t) || until <= now) continue;
+      const left = until - now;
+      if (left < 1500) return true;
+      if (this.isDissonant('npc', t)) {
+        const d = s.dissonance.get(t);
+        if (d && this.now - d.since >= 3000) return true;
+        continue;
+      }
+      if (left < TUNE_MS - 3500) return true;
     }
     return false;
   }
+
+  /** Bot: the detonation is worth pressing once the victim has been sour long enough to matter. */
+  npcDetonateReady(): boolean { return this.npcWantsDetonate('fermata'); }
 
   /** Bot side of the free recast — reached through `ctx.soundCast('fermata-detonate')`. */
   doNpcDetonate(): void {
@@ -1043,17 +1227,28 @@ export class SoundKit {
 
   private cycleSong(owner: Owner): void {
     const s = this.sides[owner];
+    // Autotune leaves a song picked by hand alone for a moment.
+    if (this.masteryOn(owner)) s.autotuneHoldUntil = this.now + AUTOTUNE_MANUAL_MS;
+    this.setSong(owner, SONG_ORDER[(SONG_ORDER.indexOf(s.song) + 1) % SONG_ORDER.length], false);
+  }
+
+  /** Change the soul song — by F, or by Autotune (`auto`), which relays it as an absolute. */
+  private setSong(owner: Owner, next: SoulSong, auto: boolean): void {
+    const s = this.sides[owner];
     const f = this.fighter(owner);
-    const next = SONG_ORDER[(SONG_ORDER.indexOf(s.song) + 1) % SONG_ORDER.length];
     s.song = next;
+    if (!this.alive(f)) return;
     this.fx(owner).notes(f.x, f.y - 16, 6, { speed: 90, size: 7, life: 760, color: SONG_COLORS[next], rise: 40, angle: -Math.PI / 2, spread: 1.2 });
     this.fx(owner).ripple(f.x, f.y, 10, 40, SONG_COLORS[next], 360, 3, 7, 7);
     this.avatar(owner)?.play('flex', undefined, 360);
-    this.announce(f.x, f.y - 52, `♪ ${SONG_NAMES[next]}`, SONG_COLORS[next], 11);
+    this.announce(f.x, f.y - 52, auto ? `♪ AUTOTUNE · ${SONG_NAMES[next]}` : `♪ ${SONG_NAMES[next]}`, SONG_COLORS[next], 11);
+    if (auto && owner === 'player' && this.arena.isOnline) this.arena.broadcastMasteryCast(`sound-song:${next}`);
   }
 
   /** Bot: the song this bot wants right now. The kit decides; the rotation presses until it matches. */
   npcWantedSong(): SoulSong {
+    // With the mastery on, Autotune picks the song — the rotation never needs to press Hum.
+    if (this.masteryOn('npc')) return this.sides.npc.song;
     const { npc, player } = this.arena;
     const hp = npc.maxHp > 0 ? npc.hp / npc.maxHp : 1;
     if (this.isDeaf('npc')) return hp < 0.5 ? 'smooth' : 'melody';
@@ -1095,6 +1290,11 @@ export class SoundKit {
     s.practice[s.song]++;
     const after = this.songLevel(owner);
     if (after <= before) return;
+    // Mastery progress: all three songs taken to the top in one match.
+    if (owner === 'player' && !s.songsMaxedSeen && SONG_ORDER.every((song) => this.songLevel(owner, song) >= PRACTICE_MAX_LEVEL)) {
+      s.songsMaxedSeen = true;
+      this.record(owner, 'songsMaxed');
+    }
     const f = this.fighter(owner);
     if (!this.alive(f)) return;
     this.fx(owner).notes(f.x, f.y - 16, 4 + after, { speed: 110, size: 6, life: 800, color: SONG_COLORS[s.song], rise: 50, angle: -Math.PI / 2, spread: 1.5 });
@@ -1383,6 +1583,7 @@ export class SoundKit {
     if (!solo) return;
     solo.hits++;
     solo.combo++;
+    this.record(owner, 'voidNotes');
     const f = this.fighter(owner);
     let target: Fighter | null = null;
     let bd = Infinity;
@@ -1443,7 +1644,7 @@ export class SoundKit {
   }
 
   /** Bot: on stage, the rotation stands down — the kit is playing the solo. */
-  npcSoloing(): boolean { return this.sides.npc.solo !== null; }
+  npcSoloing(): boolean { return this.onStage('npc'); }
 
   // ── Bot: upgrade synergies (all side-effect-free reads) ──
 
@@ -1482,6 +1683,381 @@ export class SoundKit {
     return !this.arena.isOnline && this.up('npc', 'e') && player.soundDanceUntil > Date.now();
   }
 
+  // ── Mastery ───────────────────────────────────────────────────────────
+
+  /** Whether Element Mastery is on for whichever side is asking, and they are the drum major. */
+  private masteryOn(owner: Owner): boolean {
+    return this.arena.isSound(owner) && (owner === 'player' ? this.arena.masteryActive : this.arena.npcMasteryActive);
+  }
+
+  /** Which slot Forte Piano was dropped on, or null. */
+  private pianoSlot(owner: Owner): 'r' | 'f' | 'q' | null {
+    if (!this.masteryOn(owner)) return null;
+    for (const k of ['r', 'f', 'q'] as const) {
+      const bind = owner === 'player' ? this.arena.masteryBindFor(k) : this.arena.npcMasteryBindFor(k);
+      if (bind === PIANO_ID) return k;
+    }
+    return null;
+  }
+
+  /**
+   * Mastery progress. Only ever the player's — the grind is the human's, not the bot's — and not
+   * gated on the mastery being on, since earning it is the point.
+   */
+  private record(owner: Owner, key: string, amount = 1): void {
+    if (owner === 'player' && this.arena.isSound('player')) this.arena.recordMasteryStat(key, amount);
+  }
+
+  // ── Autotune ──
+
+  /** Where the switch sits: centred, just under the HP bar's housing. */
+  private toggleRect(): { cx: number; cy: number } {
+    return { cx: this.arena.width / 2, cy: this.arena.hpBarY + this.arena.hpBarH / 2 + 18 };
+  }
+
+  private overAutotuneToggle(x: number, y: number): boolean {
+    const { cx, cy } = this.toggleRect();
+    return Math.abs(x - cx) <= TOGGLE_W / 2 + 2 && Math.abs(y - cy) <= TOGGLE_H / 2 + 3;
+  }
+
+  /** The song the moment calls for, or null where Autotune leaves it alone. */
+  private autotuneWants(owner: Owner): SoulSong | null {
+    const f = this.fighter(owner);
+    const hp = f.maxHp > 0 ? f.hp / f.maxHp : 1;
+    if (hp < AUTOTUNE_LOW_HP) return 'smooth';
+    let near = Infinity;
+    for (const t of this.targets(owner)) near = Math.min(near, Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y));
+    if (near <= AUTOTUNE_CLOSE) return 'staccato';
+    if (hp >= AUTOTUNE_HIGH_HP) return 'melody';
+    return null;
+  }
+
+  /**
+   * Passive: the soul song follows the situation. Runs on the singer's own machine only — online
+   * the change travels as an absolute `sound-song:` relay. The bot's is always on.
+   */
+  private updateAutotune(owner: Owner, time: number): void {
+    if (!this.masteryOn(owner) || this.isReplica(owner)) return;
+    if (owner === 'player' && !autotuneOn) return;
+    const s = this.sides[owner];
+    if (s.solo || time < s.autotuneAt || time < s.autotuneHoldUntil || !this.alive(this.fighter(owner))) return;
+    s.autotuneAt = time + AUTOTUNE_CHECK_MS;
+    const want = this.autotuneWants(owner);
+    if (!want || want === s.song) return;
+    s.autotuneHoldUntil = time + AUTOTUNE_HOLD_MS;
+    this.setSong(owner, want, true);
+  }
+
+  // ── Forte Piano ──
+
+  /**
+   * Forte Piano, from the bound key, the bot, or an online peer's replay. It never goes through
+   * `castAbility` (the enhancement is not in the element's ability list), so the refusals that
+   * gate every other key are repeated here.
+   */
+  private tryPiano(owner: Owner): boolean {
+    const f = this.fighter(owner);
+    const s = this.sides[owner];
+    if (!this.alive(f) || s.piano) return false;
+    if (!this.isReplica(owner)) {
+      const wall = Date.now();
+      if (wall < f.disarmedUntil || wall < f.chickenUntil || wall < f.silencedUntil || wall < f.stunnedUntil) return false;
+      if (this.now - s.pianoAt < PIANO_COOLDOWN_MS) return false;
+      if (s.solo || s.dash) return false;
+    }
+    // Pull up to a spot where the whole instrument fits on the field.
+    const W = this.arena.width, H = this.arena.height;
+    const ax = this.isReplica(owner) ? f.x : Phaser.Math.Clamp(f.x, PIANO_EDGE_X, W - PIANO_EDGE_X);
+    const ay = this.isReplica(owner) ? f.y : Phaser.Math.Clamp(f.y, PIANO_EDGE_TOP, H - PIANO_EDGE_BOTTOM);
+    s.piano = {
+      phase: 'play', x: ax, y: ay, start: this.now, charge: 0, notes: [], lastGap: 0,
+      flash: new Array(PIANO_SEMIS.length).fill(0), tx: ax, ty: ay, locked: false,
+      npcNextAt: this.now + 500, seq: 0,
+    };
+    s.danceUntil = 0;
+    this.endInTune(owner, 0);
+    this.fx(owner).sparkle(ax, ay, 10, 60, 10, SOUND.goldHi);
+    this.fx(owner).ripple(ax, ay, 14, 90, SOUND.gold, 520, 3, 9, 9);
+    this.announce(ax, ay - 110, '🎹 FORTE PIANO', SOUND.goldHi, 13);
+    Sfx.playAt('piano-key', ax, { rate: 1, volume: 0.6 });
+    if (owner === 'player') this.arena.broadcastMasteryCast('sound-piano');
+    return true;
+  }
+
+  /** A click while seated: which key it hit, if any. */
+  private pianoClick(owner: Owner, x: number, y: number): void {
+    const p = this.sides[owner].piano;
+    if (!p || p.phase !== 'play') return;
+    const key = pianoKeyAt(x, y, p.x, p.y);
+    if (key >= 0) this.playKey(owner, key);
+  }
+
+  /**
+   * One key struck. White keys score by how sweetly they follow the last one — the interval, and
+   * whether the rhythm holds — and feed the charge. Black keys sound, but count for nothing.
+   */
+  private playKey(owner: Owner, key: number): void {
+    const s = this.sides[owner];
+    const p = s.piano;
+    if (!p || p.phase !== 'play') return;
+    const now = this.now;
+    p.flash[key] = 1;
+    const left = p.x - (PIANO.whiteKeys * PIANO.keyW) / 2;
+    const white = key < PIANO.whiteKeys;
+    const kx = white
+      ? left + (key + 0.5) * PIANO.keyW
+      : left + (PIANO.blackAfter[key - PIANO.whiteKeys] + 1) * PIANO.keyW;
+    const ky = p.y + PIANO.top + 10;
+    Sfx.playAt('piano-key', kx, { rate: Math.pow(2, PIANO_SEMIS[key] / 12), volume: white ? 0.75 : 0.4 });
+    if (owner === 'player' && this.arena.isOnline) this.arena.broadcastMasteryCast(`sound-piano-key:${key}:${p.seq++}`);
+    if (!white) {
+      this.fx(owner).notes(kx, ky - 12, 1, { speed: 30, size: 4, life: 500, color: SOUND.steel, rise: 20 });
+      return;
+    }
+    // The replica sounds the keys; its charge arrives with the fling.
+    if (this.isReplica(owner)) {
+      this.fx(owner).notes(kx, ky - 14, 1, { speed: 40, size: 5, life: 600, color: SOUND.goldHi, rise: 30 });
+      return;
+    }
+    const q = this.scoreNote(p, key, now);
+    p.notes.push({ deg: key, at: now });
+    if (q >= PIANO_SOUR_AT) p.charge = Math.min(1, p.charge + q * PIANO_CHARGE_PER_NOTE);
+    else p.charge = Math.max(0, p.charge - (PIANO_SOUR_AT - q) * PIANO_SOUR_COST);
+    const sweet = q >= 0.9;
+    const sour = q < PIANO_SOUR_AT;
+    this.fx(owner).notes(kx, ky - 14, sweet ? 3 : 1, {
+      speed: sweet ? 70 : 40, size: sweet ? 6 : 5, life: 700,
+      color: sour ? SOUND.sour : sweet ? SOUND.goldRich : SOUND.goldHi, rise: 36,
+    });
+    if (sweet) this.fx(owner).sparkle(kx, ky - 16, 3, 14, 11, SOUND.goldRichHi);
+    if (sour) this.fx(owner).misfire(kx, ky - 6);
+  }
+
+  /** How melodious a white key is after the ones before it, about 0–1.25. */
+  private scoreNote(p: Piano, deg: number, at: number): number {
+    const prev = p.notes[p.notes.length - 1];
+    if (!prev) return deg === 0 || deg === 7 ? 0.9 : 0.6;
+    const gap = at - prev.at;
+    if (gap < PIANO_MASH_MS) return 0.1;
+    let q = INTERVAL_SCORE[Math.abs(deg - prev.deg)] ?? 0.3;
+    // The same key three times running is a drone, not a tune.
+    const prev2 = p.notes[p.notes.length - 2];
+    if (deg === prev.deg && prev2 && prev2.deg === deg) q = 0.1;
+    // In time: the same gap as the last, or half or double it.
+    if (p.lastGap > 0) {
+      const r = gap / p.lastGap;
+      if ([0.5, 1, 2].some((m) => Math.abs(r - m) <= m * 0.2)) q += 0.25;
+    }
+    p.lastGap = gap;
+    return q;
+  }
+
+  /** Up off the floor and into the air — the five seconds are over, or the key was pressed again. */
+  private flingPiano(owner: Owner, netCharge?: number): void {
+    const s = this.sides[owner];
+    const p = s.piano;
+    if (!p || p.phase !== 'play') return;
+    if (netCharge !== undefined) p.charge = netCharge;
+    else if (p.notes.length >= 4) {
+      // Ending on a C resolves the tune.
+      const last = p.notes[p.notes.length - 1].deg;
+      if (last === 0 || last === 7) p.charge = Math.min(1, p.charge + PIANO_CADENCE);
+    }
+    p.phase = 'fly';
+    p.start = this.now;
+    p.tx = s.aimX; p.ty = s.aimY;
+    const f = this.fighter(owner);
+    this.avatar(owner)?.play('raise', undefined, 500);
+    this.fx(owner).ripple(p.x, p.y, 16, 110, SOUND.goldHi, 480, 3, 10, 9);
+    this.fx(owner).notes(p.x, p.y - 30, 8, { speed: 150, size: 7, life: 900, color: SOUND.gold, rise: 60, angle: -Math.PI / 2, spread: 1.2 });
+    this.announce(p.x, p.y - 110, `🎹 FORTE! ${Math.round(p.charge * 100)}%`, p.charge >= PIANO_TUNE_AT ? SOUND.goldRichHi : SOUND.goldHi, 13);
+    Sfx.playAt('whoosh', this.alive(f) ? f.x : p.x, { rate: 0.6, volume: 0.9 });
+    if (owner === 'player' && this.arena.isOnline) this.arena.broadcastMasteryCast(`sound-piano-fling:${Math.round(p.charge * 100)}`);
+  }
+
+  /** Seated: rooted at the keys, the bot playing its own tune. In the air: steering, then the crash. */
+  private updatePiano(owner: Owner, time: number, delta: number): void {
+    const s = this.sides[owner];
+    const p = s.piano;
+    if (!p) return;
+    const f = this.fighter(owner);
+    for (let i = 0; i < p.flash.length; i++) p.flash[i] = Math.max(0, p.flash[i] - delta / 220);
+    if (p.phase === 'play') {
+      if (!this.alive(f)) { s.piano = null; return; }
+      if (!this.isReplica(owner)) {
+        (f.body as Phaser.Physics.Arcade.Body | null)?.reset(p.x, p.y);
+        if (owner === 'npc') this.botPlay(p, time);
+        if (time - p.start >= PIANO_PLAY_MS) this.flingPiano(owner);
+      } else if (time - p.start >= PIANO_PLAY_MS + 1500) {
+        // The fling relay never came: let it go up on our own clock.
+        this.flingPiano(owner);
+      }
+      return;
+    }
+    // In the air: the drop point follows the cursor (the bot's follows the player) until it locks.
+    const el = time - p.start;
+    if (!p.locked) {
+      if (owner === 'npc' && !this.arena.isOnline) { p.tx = this.arena.player.x; p.ty = this.arena.player.y; }
+      else { p.tx = s.aimX; p.ty = s.aimY; }
+      p.tx = Phaser.Math.Clamp(p.tx, 20, this.arena.width - 20);
+      p.ty = Phaser.Math.Clamp(p.ty, 20, this.arena.height - 20);
+      if (el >= PIANO_FLIGHT_MS - PIANO_LOCK_MS) p.locked = true;
+    }
+    if (this.isReplica(owner)) {
+      // The peer's crash lands where their relay says; this only waits for it.
+      if (el >= PIANO_FLIGHT_MS + 1500) s.piano = null;
+      return;
+    }
+    if (el >= PIANO_FLIGHT_MS) this.crashPiano(owner, p.tx, p.ty, p.charge);
+  }
+
+  /** The bot at the keys: a steady beat, and a sweet interval as often as its rung allows. */
+  private botPlay(p: Piano, time: number): void {
+    if (time < p.npcNextAt || time - p.start > PIANO_PLAY_MS - 150) return;
+    const lvl = Phaser.Math.Clamp(this.arena.npcLevel, 1, 5);
+    const prev = p.notes[p.notes.length - 1];
+    let key: number;
+    if (!prev) key = Math.random() < 0.5 ? 0 : 7;
+    else if (Math.random() < NPC_PIANO_SWEET[lvl - 1]) {
+      const steps = [1, 2, 4, -1, -2, -4, 7, -7].filter((d) => prev.deg + d >= 0 && prev.deg + d < PIANO.whiteKeys);
+      key = prev.deg + steps[Math.floor(Math.random() * steps.length)];
+    } else key = Math.floor(Math.random() * PIANO.whiteKeys);
+    // Near the end, a sharp bot comes home to a C.
+    if (time - p.start > PIANO_PLAY_MS - 700 && Math.random() < lvl / 5) key = prev && prev.deg >= 4 ? 7 : 0;
+    this.playKey('npc', key);
+    p.npcNextAt = time + NPC_PIANO_GAP_MS + (Math.random() - 0.5) * (6 - lvl) * 70;
+  }
+
+  /** Down it comes: damage by charge, and at high charge everyone under it out of tune. */
+  private crashPiano(owner: Owner, x: number, y: number, charge: number): void {
+    const s = this.sides[owner];
+    s.piano = null;
+    s.pianoAt = this.now;
+    const dmg = Math.round(PIANO_DMG_MIN + (PIANO_DMG_MAX - PIANO_DMG_MIN) * charge);
+    const tunes = charge >= PIANO_TUNE_AT;
+    let hit = 0;
+    for (const t of this.targets(owner)) {
+      if (Phaser.Math.Distance.Between(x, y, t.x, t.y) > PIANO_RADIUS + 14) continue;
+      hit++;
+      this.strike(owner, t, dmg, x, y);
+      if (!tunes) continue;
+      // A replica keeps the books on our player too, so its detonation knows who it popped.
+      s.pianoTuned.set(t, Date.now() + TUNE_MS);
+      if (this.isReplica(owner) && t === this.arena.player) continue;
+      t.outOfTuneUntil = Math.max(t.outOfTuneUntil, Date.now() + TUNE_MS);
+      this.announce(t.x, t.y - 44, this.isDissonant(owner, t) ? '♭♭ DISSONANT' : '♭ OUT OF TUNE', SOUND.sour, 11);
+    }
+    const fx = this.fx(owner);
+    fx.pianoCrash(x, y, PIANO_RADIUS, charge);
+    fx.boom(x, y, PIANO_RADIUS * (0.8 + charge * 0.4), { color: tunes ? SOUND.goldRich : SOUND.gold, petals: 10, notes: 6 + Math.round(charge * 6), duration: 560 });
+    fx.shatter(x, y, 30, 10, 9, SOUND.ivory);
+    this.arena.scene.cameras.main.shake(220, 0.006 + charge * 0.008);
+    Sfx.playAt('piano-crash', x, { volume: 0.9 });
+    Sfx.playAt('stone-slam', x, { rate: 0.7, volume: 0.8 });
+    this.announce(x, y - 64, hit > 0 ? `🎹 CRASH! ${Math.round(dmg * this.dmgMult(owner))}` : '🎹 CRASH!', tunes ? SOUND.goldRichHi : SOUND.goldHi, 15);
+    if (owner === 'player' && this.arena.isOnline) {
+      this.arena.broadcastMasteryCast(`sound-piano-land:${Math.round(charge * 100)}:${Math.round(x)}:${Math.round(y)}`);
+    }
+  }
+
+  /**
+   * Dissonance: out of tune from both a Fermata and the piano. The victim moves slower (the
+   * mirrored `soundDissonantUntil`, read by every mover) and bleeds until a detonation — or until
+   * either stack runs out. Ticked on the attacker's machine; the bleed is attacker-authoritative.
+   */
+  private updateDissonance(owner: Owner, time: number): void {
+    const s = this.sides[owner];
+    if (this.isReplica(owner)) return;
+    const now = Date.now();
+    for (const [t, until] of s.tuned) if (until <= now || !this.alive(t)) s.tuned.delete(t);
+    for (const [t, until] of s.pianoTuned) if (until <= now || !this.alive(t)) s.pianoTuned.delete(t);
+    for (const [t, until] of s.pianoTuned) {
+      const fu = s.tuned.get(t) ?? 0;
+      if (fu <= now) continue;
+      const ends = Math.min(until, fu);
+      t.soundDissonantUntil = Math.max(t.soundDissonantUntil, ends);
+      let d = s.dissonance.get(t);
+      if (!d) {
+        d = { next: time + DISSONANCE_TICK_MS, since: time };
+        s.dissonance.set(t, d);
+        this.announce(t.x, t.y - 62, '♭♭ DISSONANCE', SOUND.sour, 12);
+        this.fx(owner).misfire(t.x, t.y);
+      }
+      if (time >= d.next) {
+        d.next = time + DISSONANCE_TICK_MS;
+        this.strike(owner, t, DISSONANCE_TICK_DMG, t.x, t.y);
+      }
+    }
+    for (const t of s.dissonance.keys()) if (!this.isDissonant(owner, t)) s.dissonance.delete(t);
+  }
+
+  /** Online: the peer's piano, key by key, and their Autotune's songs. */
+  private replayMastery(id: string): void {
+    const s = this.sides.npc;
+    if (id === 'sound-piano') { this.tryPiano('npc'); return; }
+    if (id.startsWith('sound-song:')) {
+      const song = id.slice('sound-song:'.length) as SoulSong;
+      if (SONG_ORDER.includes(song) && song !== s.song) this.setSong('npc', song, true);
+      return;
+    }
+    const parts = id.split(':');
+    if (parts[0] === 'sound-piano-key') {
+      const key = Phaser.Math.Clamp(Math.floor(Number(parts[1]) || 0), 0, PIANO_SEMIS.length - 1);
+      this.playKey('npc', key);
+    } else if (parts[0] === 'sound-piano-fling') {
+      this.flingPiano('npc', Phaser.Math.Clamp(Number(parts[1]) / 100 || 0, 0, 1));
+    } else if (parts[0] === 'sound-piano-land') {
+      const charge = Phaser.Math.Clamp(Number(parts[1]) / 100 || 0, 0, 1);
+      const x = Number(parts[2]), y = Number(parts[3]);
+      if (Number.isFinite(x) && Number.isFinite(y)) this.crashPiano('npc', x, y, charge);
+    }
+  }
+
+  /**
+   * The bot's half of Forte Piano, fired here rather than from `NpcOpponent` (the rotation only
+   * has to leave the bound key alone and stand down while it is seated). The synergy it is cast
+   * for: a player the bot has already slammed out of tune — the crash makes it a double stack,
+   * Dissonance. Its own recast is kit-fired too, held while the Dissonance bleed works.
+   */
+  private updateNpcMastery(): void {
+    if (this.arena.isOnline || this.arena.isInvasion || !this.pianoSlot('npc')) return;
+    const n = this.arena.npc;
+    const p = this.arena.player;
+    const s = this.sides.npc;
+    if (!this.alive(n) || !this.alive(p)) return;
+    if (this.tunedAlive('npc', 'piano') && this.npcWantsDetonate('piano')) { this.detonate('npc', 'piano'); return; }
+    if (s.piano || s.solo || s.dash || this.now - s.pianoAt < PIANO_COOLDOWN_MS) return;
+    const wall = Date.now();
+    if (wall < n.disarmedUntil || wall < n.stunnedUntil || wall < n.silencedUntil) return;
+    const dist = Phaser.Math.Distance.Between(n.x, n.y, p.x, p.y);
+    if (dist > NPC_PIANO_RANGE) return;
+    const slammed = (s.tuned.get(p) ?? 0) > wall + PIANO_PLAY_MS + PIANO_FLIGHT_MS * 0.5;
+    // Five seconds rooted at the keys is a risk up close; it only sits down with room, or for the combo.
+    const roomy = dist > 200 && n.hp / Math.max(1, n.maxHp) > 0.45;
+    if (slammed || (roomy && Math.random() < 0.004)) this.tryPiano('npc');
+  }
+
+  /** Bot synergy: the player wears the piano's Out of Tune but not a slam's — a Fermata makes it Dissonance. */
+  npcWantsDoubleStack(): boolean {
+    if (this.arena.isOnline) return false;
+    const s = this.sides.npc;
+    const p = this.arena.player;
+    const now = Date.now();
+    return (s.pianoTuned.get(p) ?? 0) > now + 1000 && (s.tuned.get(p) ?? 0) <= now;
+  }
+
+  /** Which slot the bot gave up for Forte Piano, so its rotation leaves that key alone. */
+  npcPianoSlot(): 'r' | 'f' | 'q' | undefined {
+    return this.pianoSlot('npc') ?? undefined;
+  }
+
+  /** The mastery card: empty while the piano is out, filling from the crash. */
+  getPianoCooldownRatio(): number {
+    const s = this.sides.player;
+    if (s.piano) return 0;
+    return Phaser.Math.Clamp((this.now - s.pianoAt) / PIANO_COOLDOWN_MS, 0, 1);
+  }
+
   // ── Per-frame update ─────────────────────────────────────────────────
 
   update(time: number, delta: number, isPlayerSound: boolean, isNpcSound: boolean): void {
@@ -1497,6 +2073,7 @@ export class SoundKit {
         if (this.sides[owner].solo) this.endSolo(owner, false);
         this.endInTune(owner, 0);
         this.sides[owner].gong = null;
+        this.sides[owner].piano = null;
         continue;
       }
       const f = this.fighter(owner);
@@ -1510,6 +2087,9 @@ export class SoundKit {
       this.updateInTune(owner, time, delta);
       this.updateSolo(owner, time, delta);
       this.updateGong(owner, time);
+      this.updatePiano(owner, time, delta);
+      this.updateDissonance(owner, time);
+      this.updateAutotune(owner, time);
       if (this.alive(f)) { this.trackPath(owner); this.emitPractice(owner, time); }
     }
     if (isPlayerSound) {
@@ -1523,6 +2103,7 @@ export class SoundKit {
       } else this.harmonyStacks = 0;
       this.updateResonator(time);
     }
+    if (isNpcSound) this.updateNpcMastery();
     this.updateBassCharges(time);
     this.updateStuns();
     this.watchMisfires();
@@ -1606,6 +2187,7 @@ export class SoundKit {
         SoundFx.drawGong(st, col, s.gong.x, s.gong.y, s.gong.dir, this.vizT, k, Math.max(0.001, ring) * (s.gong.struck ? 1 : 0), s.gong.flair, fade);
       }
       if (this.isDeaf(owner)) SoundFx.drawDeaf(a, col, f.x, f.y - 30, this.vizT, vis * Math.min(1, (s.deafUntil - time) / 400));
+      if (s.piano) this.paintPiano(st, a, owner, s.piano, time);
       this.paintFollowers(a, owner);
     }
 
@@ -1625,6 +2207,10 @@ export class SoundKit {
       seen.add(f);
       const left = f.outOfTuneUntil - now;
       SoundFx.drawOutOfTune(a, this.pcol, f.x, f.y, this.vizT, Math.min(1, left / 400) * (f.forceInvisible ? 0 : 1));
+      // Dissonance: a second sour line beating against the first.
+      if (f.soundDissonantUntil > now) {
+        SoundFx.drawOutOfTune(a, this.pcol, f.x + 3, f.y - 12, this.vizT * 1.37 + 0.5, (f.forceInvisible ? 0 : 0.85));
+      }
     }
 
     for (const c of this.bassCharges) {
@@ -1744,6 +2330,7 @@ export class SoundKit {
         .setOrigin(0.5).setDepth(23);
     }
 
+    this.paintAutotuneToggle(g);
     if (s.solo) {
       this.hudLabel.setVisible(false);
       this.songLabel.setVisible(false);
@@ -1877,6 +2464,51 @@ export class SoundKit {
     g.fillCircle(jx, y + 1, 1.4);
     this.songLabel.setPosition(jx, y).setText(`${SONG_NAMES[s.song]}${s.combo >= 2 ? `\n×${s.combo}` : ''}`)
       .setColor(`#${col(songCol).toString(16).padStart(6, '0')}`);
+  }
+
+  /** Mastery: the Autotune switch under the HP bar — only there while the mastery is on. */
+  private paintAutotuneToggle(g: Phaser.GameObjects.Graphics): void {
+    if (!this.masteryOn('player')) { this.autotuneLabel?.setVisible(false); return; }
+    const { cx, cy } = this.toggleRect();
+    const s = this.sides.player;
+    const ptr = this.arena.scene.input.activePointer;
+    const hover = ptr && this.overAutotuneToggle(ptr.worldX, ptr.worldY) ? 1 : 0;
+    drawAutotuneToggle(g, this.pcol, cx, cy, TOGGLE_W, TOGGLE_H, autotuneOn, SONG_COLORS[s.song], hover);
+    if (!this.autotuneLabel) {
+      this.autotuneLabel = this.arena.scene.add.text(0, 0, '', {
+        fontSize: '9px', fontFamily: FONT_DISPLAY, color: '#ffe8a6', stroke: '#1a0508', strokeThickness: 2,
+      }).setOrigin(0.5).setDepth(23);
+    }
+    this.autotuneLabel.setVisible(true).setPosition(cx - 15, cy)
+      .setText(autotuneOn ? '♪ AUTOTUNE ON' : '♪ AUTOTUNE OFF')
+      .setColor(autotuneOn ? '#ffe8a6' : '#8a90a6');
+  }
+
+  /** The grand piano at the keys, or the piano in the air and the shadow it is falling into. */
+  private paintPiano(st: Phaser.GameObjects.Graphics, a: Phaser.GameObjects.Graphics, owner: Owner, p: Piano, time: number): void {
+    const col = this.col(owner);
+    const el = time - p.start;
+    if (p.phase === 'play') {
+      drawPiano(st, col, p.x, p.y, p.flash, p.charge, this.vizT);
+      // Seconds left at the keys, in a little gold count over the lid.
+      const left = Math.max(0, PIANO_PLAY_MS - el) / PIANO_PLAY_MS;
+      st.lineStyle(2, col(SOUND.goldHi), 0.85);
+      st.beginPath();
+      st.arc(p.x + 98, p.y - 70, 7, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * left, false);
+      st.strokePath();
+      return;
+    }
+    const k = Phaser.Math.Clamp(el / PIANO_FLIGHT_MS, 0, 1);
+    drawPianoTarget(st, col, p.tx, p.ty, PIANO_RADIUS, k, p.locked, this.vizT);
+    // Up off the floor for the first fifth, gone above the field, then down onto the mark.
+    if (k < 0.22) {
+      const u = k / 0.22;
+      drawPiano(st, col, p.x, p.y, p.flash, p.charge, this.vizT, 1 - u, u * 3);
+      drawPianoAirborne(a, col, p.x, p.y - 60 - u * u * 420, 1.6 - u * 0.6, u * 2.5, this.vizT);
+    } else if (k > 0.78) {
+      const u = (k - 0.78) / 0.22;
+      drawPianoAirborne(a, col, p.tx, p.ty - (1 - u * u) * 480, 0.7 + u * 0.9, (1 - u) * 3 + 0.2, this.vizT);
+    }
   }
 
   /** The level tab: song name and level on the left, ten pips filling on the right. */
@@ -2094,6 +2726,14 @@ export class SoundKit {
       name: 'Deaf', emoji: '🔇', color: this.pcol(SOUND.steel), priority: 129,
       description: 'Your ears are still ringing from the gong. Nothing you do deals damage.',
       until: s.deafUntil,
+    } : null);
+    const pi = s.piano;
+    this.arena.setStatusIndicator('sound-piano', pi ? {
+      name: 'Forte Piano', emoji: '🎹', color: this.pcol(pi.charge >= PIANO_TUNE_AT ? SOUND.goldRich : SOUND.gold), priority: 131,
+      description: pi.phase === 'play'
+        ? `At the keys — click the white ones. Charge ${Math.round(pi.charge * 100)}%: the crash will hit for ${Math.round(PIANO_DMG_MIN + (PIANO_DMG_MAX - PIANO_DMG_MIN) * pi.charge)}${pi.charge >= PIANO_TUNE_AT ? ' and leave them Out of Tune' : ''}.`
+        : 'In the air — it comes down on your cursor.',
+      count: Math.round(pi.charge * 100), suffix: '%',
     } : null);
     this.arena.setStatusIndicator('sound-tempo', time < s.selfTapUntil ? {
       name: 'Tempo', emoji: '⏩', color: this.pcol(SOUND.goldRich), priority: 130,

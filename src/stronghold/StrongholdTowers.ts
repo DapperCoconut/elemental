@@ -404,6 +404,7 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
       f: { areaMult: 1.3, note: 'practice makes perfect' },
       q: { damageMult: 1.5, note: 'big finish!' },
     },
+    mastery: { ...ab(60, 12000, { kind: 'splash', radius: 100, color: 0xf0c04e, delayMs: 2000, shape: 'crater' }, 'Forte Piano: a grand piano flung into the air crashes down on the pack 2s later.', { rider: { slow: { mult: 0.6, ms: 3000 } } }), name: 'Forte Piano' },
   },
   light: {
     tiers: ['Glimmer', 'Beam', 'Radiance', 'Brilliance', 'Supernova'],

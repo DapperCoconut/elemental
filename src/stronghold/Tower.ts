@@ -120,7 +120,7 @@ export class Tower {
     this.masteryOn = PlayerData.isMasteryEnabled(elementId) && !!def.mastery && !!getMasteryDef(elementId)
       // Gold and Harvest replaced elements whose retired masteries may have left the flag on, and
       // Psychic's, Magnet's and Radiation's masteries were redone outright.
-      && ((elementId !== 'fortune' && elementId !== 'gluttony' && elementId !== 'psychic' && elementId !== 'magnet' && elementId !== 'radiation' && elementId !== 'passion') || isMasteryComplete(elementId));
+      && ((elementId !== 'fortune' && elementId !== 'gluttony' && elementId !== 'psychic' && elementId !== 'magnet' && elementId !== 'radiation' && elementId !== 'passion' && elementId !== 'sound') || isMasteryComplete(elementId));
     const perkId = PlayerData.getEquippedPerk(elementId);
     this.perkName = perkLoadoutLabel(perkId);
     this.ownedUpgrades = new Set(

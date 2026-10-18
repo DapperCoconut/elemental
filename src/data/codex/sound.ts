@@ -5,7 +5,7 @@ import { ElementCodex } from '../AbilityCodex';
  *
  * Verified against `src/elements/sound.ts` and `kits/SoundKit.ts`; every number is a constant at
  * the top of the kit. The five shop upgrades (2026-10-16) are constants in the kit's "Shop upgrades"
- * block. Sound has no mastery since the rework — one is owed. The Harmony and Bass perks were
+ * block. The mastery (2026-10-18, Autotune + Forte Piano) is the kit's "Mastery" block. The Harmony and Bass perks were
  * rewritten for the new kit.
  */
 const sound: ElementCodex = {
@@ -203,6 +203,59 @@ const sound: ElementCodex = {
           { tag: 'cost', label: 'Deaf', detail: '8s after the gong: all your damage is 0.', requiresUpgrade: 'q' },
         ],
       },
+    },
+  },
+
+  mastery: {
+    autotune: {
+      basics:
+        'Your soul song changes itself to whatever the moment calls for, checked about three times a '
+        + 'second. Under 35% HP it is always Smooth, wherever the enemy is. Otherwise, with an enemy in '
+        + 'fighting distance (210px — just past the baton\'s reach) it is Staccato, and with every enemy '
+        + 'further off and you at 60% HP or more it is Melody. Anywhere in between it leaves the song '
+        + 'alone. Once it switches it holds the new song for 1.2 seconds, and a song you pick yourself '
+        + 'with F is left alone for 3. A switch right under your HP bar turns it on and off.',
+      cast: 'Passive. Click the AUTOTUNE switch under the HP bar to turn it off or back on — it stays the way you left it between matches.',
+      effects: [
+        { tag: 'buff', label: 'Low HP', detail: 'Under 35% HP: Smooth, always.' },
+        { tag: 'buff', label: 'Close', detail: 'An enemy within 210px: Staccato.' },
+        { tag: 'buff', label: 'Far and healthy', detail: 'No enemy within 210px and 60%+ HP: Melody.' },
+      ],
+      notes: [
+        'It does not change songs on the solo stage.',
+        'With Forte Piano bound over F you have no Hum at all — Autotune is how the song changes.',
+        'Online, each change it makes travels to the other player as the song itself, so both screens agree.',
+      ],
+    },
+    'forte-piano': {
+      basics:
+        'Sit down at a grand piano for 5 seconds — rooted, the baton out of play. Eight white keys sit '
+        + 'in front of you (the five black keys sound, but do not count). Click them to play: every white '
+        + 'key scores by how sweetly it follows the last — a step, a third, a fifth or the octave sound '
+        + 'good; the same key over and over, wide awkward leaps and mashing (two keys under 0.11s apart) '
+        + 'sound sour and take charge back. Keeping the same gap between notes (or half or double it) '
+        + 'adds a bonus. Ending on either C after at least four notes resolves the tune for +8% charge. '
+        + 'A perfectly sweet, in-time note is worth about 10%. Then you fling the piano into the air: '
+        + '2 seconds later it crashes down on your cursor — it follows the cursor until the last 0.45s — '
+        + 'for 20 damage at no charge up to 110 at full, in a 90px radius. At 60% charge or more, '
+        + 'everyone it crushes is Out of Tune for 8 seconds, and pressing the key again detonates them '
+        + 'for 30 and a 0.5s stun. An enemy out of tune from both a Fermata and the piano is Dissonant: '
+        + '40% slower and bleeding 6 HP a second until it is detonated or a stack runs out — and either '
+        + 'recast (R or the piano key) sets both stacks off at once, for 55. Bindable to R, F or Q. '
+        + '12 second cooldown, from the crash.',
+      cast: 'The bound key (R, F or Q). Click the white keys while seated; press the key again to fling early, and again after the crash to detonate.',
+      effects: [
+        { tag: 'resource', label: 'At the keys', detail: '5s rooted. Melodious white keys build charge; black keys count for nothing.' },
+        { tag: 'damage', label: 'The crash', detail: '20 → 110 by charge in 90px, 2s after the fling, on the cursor.' },
+        { tag: 'debuff', label: 'Out of Tune', detail: 'At 60%+ charge: 8s Out of Tune. Recast: 30 + 0.5s stun.' },
+        { tag: 'dot', label: 'Dissonance', detail: 'A Fermata stack and a piano stack together: −40% speed, 6 HP/s, both detonate at once (55).' },
+      ],
+      notes: [
+        'Slam first, then crash the piano on them: the Dissonance bleed runs until you choose to cash it.',
+        'You are not protected while you play. Sit down with room to spare.',
+        'Binding it over R gives up Fermata — and with it the double stack.',
+        'A Sound NPC on Nightmare binds it over Hum and lets Autotune pick its songs; it sits down at the piano right after a slam, for the Dissonance.',
+      ],
     },
   },
 

@@ -369,6 +369,12 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     write: (f, t) => { f.soundDanceUntil = t; },
   },
   {
+    id: 'sound-dissonant', name: 'Dissonance', emoji: '🎹', color: 0x8f8a1c, priority: 17.7, kind: 'timer',
+    description: 'Out of tune twice over — a Fermata and a Forte Piano both. You move 40% slower and bleed health until a Sound player detonates it, and then both stacks go off at once.',
+    read: (f) => f.soundDissonantUntil,
+    write: (f, t) => { f.soundDissonantUntil = t; },
+  },
+  {
     id: 'devotion-slow', name: 'Holy Fire', emoji: '🔥', color: 0xffd54a, priority: 43.7, kind: 'timer',
     description: 'Burned by a pillar of yellow fire from the sky. You move 40% slower.',
     read: (f) => f.devotionSlowUntil,

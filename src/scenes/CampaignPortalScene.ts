@@ -17,9 +17,17 @@ export class CampaignPortalScene extends Phaser.Scene {
     super({ key: 'CampaignPortalScene' });
   }
 
-  init(data: { slotIdx: 0 | 1 | 2; realm?: 'abstract' | 'corrupt' }): void {
+  /**
+   * The scene this modal was launched over. The world map by default; the free-roam
+   * campaign towns launch it from their realm portal, and crossing from there walks
+   * straight into the new realm's root town instead of opening its map.
+   */
+  private callerKey = 'CampaignWorldMapScene';
+
+  init(data: { slotIdx: 0 | 1 | 2; realm?: 'abstract' | 'corrupt'; callerKey?: string }): void {
     this.slotIdx = data?.slotIdx ?? 0;
     this.realm = data?.realm ?? 'abstract';
+    this.callerKey = data?.callerKey ?? 'CampaignWorldMapScene';
   }
 
   create(): void {
@@ -139,6 +147,18 @@ export class CampaignPortalScene extends Phaser.Scene {
           this.cameras.main.flash(420, corrupt ? 220 : 157, corrupt ? 40 : 92, corrupt ? 40 : 255);
           this.input.keyboard!.removeAllListeners();
           this.time.delayedCall(520, () => {
+            if (this.callerKey === 'CampaignWorldScene') {
+              // From a town's portal: step through into the new realm's root town.
+              this.scene.stop('CampaignWorldScene');
+              this.scene.stop();
+              this.scene.start('CampaignWorldScene', {
+                slotIdx: this.slotIdx,
+                worldId: corrupt ? 'ruin' : 'electricity',
+                fromWorldId: corrupt ? 'electricity' : 'fire',
+                spawn: 'portal',
+              });
+              return;
+            }
             this.scene.stop('CampaignWorldMapScene');
             this.scene.stop();
             this.scene.start('CampaignWorldMapScene', {
@@ -162,6 +182,6 @@ export class CampaignPortalScene extends Phaser.Scene {
 
   private close(): void {
     this.scene.stop();
-    this.scene.resume('CampaignWorldMapScene');
+    this.scene.resume(this.callerKey);
   }
 }

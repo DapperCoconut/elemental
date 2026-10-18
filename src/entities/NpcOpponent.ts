@@ -813,6 +813,13 @@ export interface NpcAiState {
   npcSoundHarmonyRelease?: boolean;
   npcSoundDeaf?: boolean;
   npcSoundVictimDancing?: boolean;
+  /**
+   * Sound Mastery. The slot Forte Piano was bound over — the rotation leaves that key alone (the kit
+   * plays the piano) — and the double-stack synergy: the player wears the piano's Out of Tune but
+   * not a slam's, so a Fermata now makes it Dissonance.
+   */
+  npcSoundPianoSlot?: 'r' | 'f' | 'q';
+  npcSoundDoubleStack?: boolean;
 
   /**
    * Conquest: the square the bot is walking to in order to place its next building. Every
@@ -3475,25 +3482,33 @@ export class NpcOpponent extends Fighter {
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
     if (skipSpecials) return null;
 
+    // Mastery: the key Forte Piano was bound over is the kit's now.
+    const bound = aiState.npcSoundPianoSlot;
+    const canR = bound !== 'r', canF = bound !== 'f', canQ = bound !== 'q';
+
+    // ── Mastery synergy: the piano left them out of tune — slam them for the double stack.
+    if (canR && aiState.npcSoundDoubleStack && dist < 300
+      && this.castAbility('fermata', buildContext(target.x, target.y))) return 'fermata';
+
     // ── R+ synergy: the kit has brought the baton home — R now tunes up instead of slamming.
-    if (aiState.npcSoundHarmonyReady && this.castAbility('fermata', buildContext(target.x, target.y))) return 'fermata';
+    if (canR && aiState.npcSoundHarmonyReady && this.castAbility('fermata', buildContext(target.x, target.y))) return 'fermata';
 
     // Hum until the song matches what the kit wants for the moment.
-    if (aiState.npcSoundWantedSong && aiState.npcSoundWantedSong !== aiState.npcSoundSong
+    if (canF && aiState.npcSoundWantedSong && aiState.npcSoundWantedSong !== aiState.npcSoundSong
       && this.castAbility('hum', buildContext(target.x, target.y))) return 'hum';
 
     // ── Q+ aftermath: deaf after the gong, nothing would land — keep the cooldowns for later.
     if (aiState.npcSoundDeaf) return null;
 
     // ── E+ synergy: the player is dancing and cannot hit back — close in and slam.
-    if (aiState.npcSoundVictimDancing && dist < 320
+    if (canR && aiState.npcSoundVictimDancing && dist < 320
       && this.castAbility('fermata', buildContext(target.x, target.y))) return 'fermata';
 
     // Call of the Void — the solo hits wherever they are, so it is worth playing whenever it is up.
-    if (this.castAbility('call-of-the-void', buildContext(target.x, target.y))) return 'call-of-the-void';
+    if (canQ && this.castAbility('call-of-the-void', buildContext(target.x, target.y))) return 'call-of-the-void';
 
     // Fermata — dash to the baton and slam, when the target is near the baton's reach.
-    if (dist < 230 && this.castAbility('fermata', buildContext(target.x, target.y))) return 'fermata';
+    if (canR && dist < 230 && this.castAbility('fermata', buildContext(target.x, target.y))) return 'fermata';
 
     // Crescendo — dance in close so the wave lands at the end of it.
     if (dist < 260 && this.castAbility('crescendo', buildContext(target.x, target.y))) return 'crescendo';

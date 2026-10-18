@@ -8,7 +8,8 @@ import { CityHud } from './CityHud';
 import { CityLoadoutApi, DraftCard, DraftOverlay, rollDraft, mutationName } from './CityDraft';
 import { cityLaneLabel, cityWarningText } from './CityDirector';
 import { ALT_ULT_SLOT } from '../../data/AltUlts';
-import { WAVE_BANNER_Y } from '../InvasionKit';
+import { WAVE_BANNER_Y, ROOM_WARNING_MS } from '../InvasionKit';
+import { CityRelics } from './CityRelics';
 import { CityDream } from './CityDream';
 import { CityMutations } from './CityMutations';
 import type { Husk } from '../Husk';
@@ -25,6 +26,8 @@ export interface CityGuestHost {
   showFloatingText(x: number, y: number, text: string, color: string): void;
   /** The husk replicas the guest can hit. */
   livingHusks(): Husk[];
+  /** The arena's projectile group, for the projectile artifacts. */
+  readonly projectiles: Phaser.Physics.Arcade.Group | null;
 }
 
 interface BotReplica {
@@ -54,6 +57,8 @@ export class CityGuest {
   private dream: CityDream;
   /** The guest's own mutations. */
   readonly mutations: CityMutations;
+  /** The guest's own drafted items and artifacts, run here against the replicas. */
+  readonly relics: CityRelics;
 
   constructor(private host: CityGuestHost) {
     this.map = new CityMap(host.scene, { onRoomChanged: (room) => { this.refreshVisibility(); host.onRoomChanged(room); } });
@@ -74,6 +79,17 @@ export class CityGuest {
       showFloatingText: (x, y, t, c) => host.showFloatingText(x, y, t, c),
       authoritative: false,
     });
+    this.relics = new CityRelics({
+      get scene() { return host.scene; },
+      get player() { return host.player; },
+      get projectiles() { return host.projectiles; },
+      foes: () => host.livingHusks().filter((h) => h.roomIndex === map.currentRoom),
+      // Husk shots are the host's; the guest's ghost copies are not slowed or read.
+      foeShots: () => [],
+      showFloatingText: (x, y, t, c) => host.showFloatingText(x, y, t, c),
+      authoritative: false,
+      coop: true,
+    });
   }
 
   get currentRoom(): number { return this.map.currentRoom; }
@@ -84,6 +100,7 @@ export class CityGuest {
     this.draft.close();
     this.dream.destroy();
     this.mutations.destroy();
+    this.relics.destroy();
     this.hud.destroy();
     this.fxG.destroy();
     for (const b of this.bots) b.bot.destroy();
@@ -151,6 +168,7 @@ export class CityGuest {
     if (this.core) this.dream.onHealth(this.core.hp / Math.max(1, this.core.maxHp));
     this.hud.paint(this.host.loadout, this.host.player.element.abilities, this.mutations.active);
     this.mutations.update(time, delta);
+    this.relics.update(delta);
 
     const view = this.map.currentRoom;
     for (const rep of this.bots) {
@@ -188,6 +206,8 @@ export class CityGuest {
     this.lanes = lanes;
     this.map.setTargets(lanes);
     const scene = this.host.scene;
+    // The guest gets no wave-start message; the husks arrive one warning after this one.
+    scene.time.delayedCall(ROOM_WARNING_MS, () => this.relics.onWaveBegan());
     const text = scene.add.text(scene.scale.width / 2, WAVE_BANNER_Y, cityWarningText(wave, lanes), {
       fontSize: '20px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
       color: '#ffcc66', stroke: '#1d2e0f', strokeThickness: 4,
@@ -199,6 +219,8 @@ export class CityGuest {
   openDraft(wave: number): void {
     this.dream.onWaveHeld(wave);
     if (wave === 20) this.dream.saved();
+    // Items refill what they spend (shields, dodge, revive) every wave held.
+    this.relics.onWaveCleared();
     const loadout = this.host.loadout;
     this.lanes = [];
     this.map.setTargets([]);
@@ -207,6 +229,7 @@ export class CityGuest {
       loadout,
       mutationTaken: (id) => this.mutations.has(id),
       mutationStarred: (id) => this.mutations.isStarred(id),
+      relics: this.relics,
     });
     if (cards.length === 0) { this.host.sendPick('none', ''); return; }
     void this.draft.open(cards, wave, []).then((card) => this.keep(card, loadout));
@@ -228,6 +251,9 @@ export class CityGuest {
       case 'boon':
         if (card.id === 'vigor') { p.increaseMaxHp(60); p.heal(p.maxHp); }
         break;
+      // The guest's own, on the guest's sim — the host only hears the news.
+      case 'item': this.relics.takeItem(card.id); break;
+      case 'artifact': this.relics.takeArtifact(card.id); break;
       default: break;
     }
     this.host.showFloatingText(p.x, p.y - 60, `${card.emoji} ${card.title}`, '#ffe9a8');

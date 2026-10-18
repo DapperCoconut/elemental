@@ -22,6 +22,7 @@ import { TagTeamState, isPledgeFight, freshRealityTagTeam } from '../data/FightF
 import { allSelectableElements } from '../data/ElementRoster';
 import { getWorldBossDef } from '../boss/bosses';
 import { Music } from '../audio';
+import { setTownAvatarElement } from '../campaign/town/TownWalker';
 
 const GAUNTLET_EXCLUDED_MUTATIONS = new Set(['boss', 'raid', 'golf']);
 
@@ -178,6 +179,8 @@ export class CampaignElementSelectScene extends Phaser.Scene {
     }
 
     this.scene.stop('CampaignWorldScene');
+    // The campaign towns are walked by whoever was last taken into a fight.
+    setTownAvatarElement(elementId);
 
     // Reality: the pick either walks into the trials or takes the next life
     // in the chapel. Nothing campaign-shaped applies.

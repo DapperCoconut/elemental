@@ -8,6 +8,9 @@ import { MUTATIONS } from '../../data/Mutations';
 import { Sfx } from '../../audio';
 import { C, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix, addCardPlate } from '../../ui';
 import { draftableMutations, playerMutationDesc } from './CityMutations';
+import { describeEffect, getItem } from '../../data/Items';
+import { getArtifact } from '../../data/Artifacts';
+import { artifactCardDesc, itemCardTag } from './CityRelics';
 
 /**
  * The City's wave-end draft. Every cleared wave puts five cards on the table
@@ -20,12 +23,14 @@ import { draftableMutations, playerMutationDesc } from './CityMutations';
  *   mutation  a mutation on yourself, for the rest of the run (twice = ★)
  *   mastery   your element's mastery, if you have earned it
  *   alt-ult   your alternate ultimate replaces Q for the run      — rarest
+ *   item      a campaign shop item, for the run  ┐ only once every ability
+ *   artifact  a Vault artifact, for the run      ┘ card has been taken
  *
  * Only what is unlocked can show up. If the table would be short (late in a
  * run, everything taken), plain boons fill it.
  */
 
-export type DraftKind = 'ability' | 'upgrade' | 'perk' | 'mutation' | 'mastery' | 'alt-ult' | 'boon';
+export type DraftKind = 'ability' | 'upgrade' | 'perk' | 'mutation' | 'mastery' | 'alt-ult' | 'item' | 'artifact' | 'boon';
 
 export interface DraftCard {
   kind: DraftKind;
@@ -38,7 +43,7 @@ export interface DraftCard {
 
 /** Relative odds of each kind turning up in a slot. */
 const KIND_WEIGHT: Record<Exclude<DraftKind, 'boon'>, number> = {
-  ability: 34, upgrade: 26, perk: 16, mutation: 12, mastery: 8, 'alt-ult': 4,
+  ability: 34, upgrade: 26, perk: 16, mutation: 12, mastery: 8, 'alt-ult': 4, item: 14, artifact: 6,
 };
 
 const KIND_STYLE: Record<DraftKind, { color: number; label: string }> = {
@@ -48,6 +53,8 @@ const KIND_STYLE: Record<DraftKind, { color: number; label: string }> = {
   mutation: { color: C.blood, label: 'MUTATION' },
   mastery: { color: 0xffaa00, label: 'MASTERY' },
   'alt-ult': { color: C.arcane, label: 'ALT ULTIMATE' },
+  item: { color: 0xe8b84a, label: 'ITEM' },
+  artifact: { color: 0xa66bff, label: 'ARTIFACT' },
   boon: { color: C.steel, label: 'BOON' },
 };
 
@@ -71,6 +78,13 @@ export interface DraftContext {
   loadout: CityLoadoutApi;
   mutationTaken(id: string): boolean;
   mutationStarred(id: string): boolean;
+  /** Campaign items + Vault artifacts for this run. Absent → neither kind is ever offered. */
+  relics?: {
+    /** Item ids to draw from (already excludes ones held). */
+    itemCandidates(elementId: string): string[];
+    /** Artifact ids to draw from (already excludes ones held or barred in the City). */
+    artifactCandidates(): string[];
+  };
 }
 
 /** Roll five (or fewer, padded with boons) distinct cards. */
@@ -82,6 +96,8 @@ export function rollDraft(ctx: DraftContext, count = 5): DraftCard[] {
     mutation: mutationCards(ctx),
     mastery: masteryCards(ctx),
     'alt-ult': altUltCards(ctx),
+    item: itemCards(ctx),
+    artifact: artifactCards(ctx),
   };
   const out: DraftCard[] = [];
   for (let i = 0; i < count; i++) {
@@ -162,6 +178,33 @@ function altUltCards(ctx: DraftContext): DraftCard[] {
   if (ctx.loadout.activeUpgrades().includes(ALT_ULT_SLOT) || sealedKeys(ctx).has('Q')) return [];
   const a = ALT_ULTS[el];
   return [{ kind: 'alt-ult', id: el, emoji: a.emoji, title: `Q · ${a.name}`, desc: `Replaces ${a.baseName} for the rest of the run. ${a.description}` }];
+}
+
+/** Items and artifacts are the late table: nothing until every ability card has been taken. */
+function relicsOpen(ctx: DraftContext): boolean {
+  return !!ctx.relics && ctx.loadout.abilityKeys().every((a) => !a.locked);
+}
+
+function itemCards(ctx: DraftContext): DraftCard[] {
+  if (!relicsOpen(ctx)) return [];
+  return ctx.relics!.itemCandidates(ctx.loadout.elementId).flatMap((id) => {
+    const def = getItem(id);
+    if (!def) return [];
+    return [{
+      kind: 'item' as const, id, emoji: def.emoji, title: def.name,
+      // Tag first: the effect list can run long enough to be clipped at the card's foot.
+      desc: `${itemCardTag(def.effect)}\n${describeEffect(def.effect).join(' · ')}`,
+    }];
+  });
+}
+
+function artifactCards(ctx: DraftContext): DraftCard[] {
+  if (!relicsOpen(ctx)) return [];
+  return ctx.relics!.artifactCandidates().flatMap((id) => {
+    const def = getArtifact(id);
+    if (!def) return [];
+    return [{ kind: 'artifact' as const, id, emoji: def.emoji, title: def.name, desc: `PERMANENT\n${artifactCardDesc(id)}` }];
+  });
 }
 
 function boonCards(): DraftCard[] {

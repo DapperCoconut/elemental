@@ -1,17 +1,37 @@
 import Phaser from 'phaser';
-import type { Player } from '../../entities/Player';
 import type { Fighter } from '../../entities/Fighter';
 import { Projectile } from '../../combat/Projectile';
 import { ARTIFACTS, ArtifactPowerId, getArtifact } from '../../data/Artifacts';
 
+/** Run mode: an enemy shot that is not a `Projectile` (a husk's gob), as the kit needs to see it. */
+export interface FoeShot {
+  /** Stable identity for the shot's lifetime (the kit keys weak sets on it). */
+  readonly key: object;
+  readonly x: number;
+  readonly y: number;
+  /** Multiply its velocity (Molasses Lens). */
+  scaleSpeed(mult: number): void;
+}
+
 export interface ArtifactsArenaApi {
   get scene(): Phaser.Scene;
-  get player(): Player;
-  get npc(): Fighter;
-  get projectiles(): Phaser.Physics.Arcade.Group;
+  get player(): Fighter;
+  /** The 1v1 opponent. Never read in run mode (see `foes`). */
+  readonly npc?: Fighter;
+  get projectiles(): Phaser.Physics.Arcade.Group | null;
   /** Same chokepoint ItemsKit writes through, so speed sources compose. */
   applyPlayerSpeedMult(f: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
+  /**
+   * Run mode (City invasion): every foe the player can currently reach. When present the kit
+   * never touches `npc`: single-target powers pick the nearest (or the last-hit) foe, area
+   * powers hit every foe inside, hits dealt arrive through `onHitDealt`, the Mirror shell goes
+   * on `player.relicAbsorbers`, and the Kingmaker Crown ticks once per wave held instead of
+   * every 20s (a city night lasts far longer than a duel).
+   */
+  foes?(): Fighter[];
+  /** Run mode: enemy shots that are not Projectiles (Molasses Lens, Bullet Ballet). */
+  foeShots?(): FoeShot[];
 }
 
 const HUD_DEPTH = 22;
@@ -73,9 +93,9 @@ export class ArtifactsKit {
   private seenPlayerShots = new WeakSet<Phaser.GameObjects.GameObject>();
   private noFork = new WeakSet<Phaser.GameObjects.GameObject>();
   private pendingSplits: { proj: Projectile; at: number }[] = [];
-  private slowedShots = new WeakSet<Phaser.GameObjects.GameObject>();
-  private graceNear = new WeakSet<Phaser.GameObjects.GameObject>();
-  private graceCredited = new WeakSet<Phaser.GameObjects.GameObject>();
+  private slowedShots = new WeakSet<object>();
+  private graceNear = new WeakSet<object>();
+  private graceCredited = new WeakSet<object>();
 
   // Static Braid
   private hitCount = 0;
@@ -122,9 +142,56 @@ export class ArtifactsKit {
   private trailPool = 0;
   private trailG: Phaser.GameObjects.Graphics | null = null;
 
+  // Run mode
+  private lastVictim: Fighter | null = null;
+  private frozenFoe: Fighter | null = null;
+  private bulwarkFn: ((amount: number) => boolean) | null = null;
+  private bulwarkOn: Fighter | null = null;
+  private hooked = { dealt: false, taken: false, bulwark: false, recursion: false };
+
   constructor(private api: ArtifactsArenaApi) {}
 
+  private get runMode(): boolean { return !!this.api.foes; }
+
+  /** Every foe a power may touch right now. */
+  private foeList(): Fighter[] {
+    if (this.api.foes) return this.api.foes().filter((f) => f.active && f.hp > 0);
+    const npc = this.api.npc;
+    return npc && npc.active && npc.hp > 0 ? [npc] : [];
+  }
+
+  private nearestFoe(x: number, y: number, reach = Infinity): Fighter | null {
+    let best: Fighter | null = null;
+    let bestD = reach;
+    for (const f of this.foeList()) {
+      const d = Phaser.Math.Distance.Between(x, y, f.x, f.y);
+      if (d <= bestD) { bestD = d; best = f; }
+    }
+    return best;
+  }
+
+  /** The single target of a one-target power: the 1v1 npc, or in a run the last foe hit (else the nearest). */
+  private mainFoe(): Fighter | null {
+    if (!this.runMode) return this.foeList()[0] ?? null;
+    const v = this.lastVictim;
+    if (v && v.active && v.hp > 0) return v;
+    const { player } = this.api;
+    return this.nearestFoe(player.x, player.y);
+  }
+
   reset(): void {
+    if (this.bulwarkFn && this.bulwarkOn) {
+      this.bulwarkOn.relicAbsorbers = this.bulwarkOn.relicAbsorbers.filter((f) => f !== this.bulwarkFn);
+    }
+    this.bulwarkFn = null;
+    this.bulwarkOn = null;
+    this.lastVictim = null;
+    this.frozenFoe = null;
+    this.snareFoe = null;
+    this.hooked = { dealt: false, taken: false, bulwark: false, recursion: false };
+    if (this.runMode) {
+      for (const g of [this.hudText, this.haloG, this.rimeG, this.snareG, this.shellG, this.trailG]) if (g?.scene) g.destroy();
+    }
     this.active.clear();
     this.elapsedMs = 0;
     // GameObjects do not survive a scene restart — drop every handle so the next arm()
@@ -183,47 +250,95 @@ export class ArtifactsKit {
       if (def) this.active.add(def.power);
     }
     if (this.active.size === 0) return;
-
-    if (this.has('staticBraid') || this.has('rimeBrand')) this.hookHitsDealt();
-    if (this.has('grudgeLedger')) this.hookHitsTaken();
-    if (this.has('mirrorBulwark')) {
-      this.hookBulwark();
-      this.shellReady = true;
-    }
-    if (this.has('recursionLoop')) this.hookRecursion();
-    if (this.has('leechHalo')) this.haloG = this.api.scene.add.graphics().setDepth(GROUND_DEPTH);
-    if (this.has('emberTrail')) this.trailG = this.api.scene.add.graphics().setDepth(GROUND_DEPTH);
-    if (this.has('gravitySnare')) this.snareG = this.api.scene.add.graphics().setDepth(FX_DEPTH);
-    if (this.has('mirrorBulwark')) this.shellG = this.api.scene.add.graphics().setDepth(FX_DEPTH);
-    if (this.has('rimeBrand')) this.rimeG = this.api.scene.add.graphics().setDepth(FX_DEPTH);
-
-    this.buildHud();
+    this.installPowers();
 
     const label = [...armed].map((id) => getArtifact(id)?.emoji ?? '').filter(Boolean).join(' ');
     const { player } = this.api;
     this.api.showFloatingText(player.x, player.y - 62, label, '#ffd970');
   }
 
+  /**
+   * Run mode: switch one artifact on mid-run (a City draft card). It stays on until `reset()`.
+   * Returns false for an unknown or already-active one.
+   */
+  activate(id: string): boolean {
+    const def = getArtifact(id);
+    if (!def || this.active.has(def.power)) return false;
+    this.active.add(def.power);
+    // A power switched on mid-run starts its clocks from now, not from the run's first frame.
+    const now = this.elapsedMs;
+    if (def.power === 'grudgeLedger') this.ledgerNextAt = now + LEDGER_PERIOD_MS;
+    if (def.power === 'gravitySnare') this.snareNextAt = now + SNARE_PERIOD_MS;
+    if (def.power === 'kingmaker') this.crownNextAt = now + CROWN_PERIOD_MS;
+    this.installPowers();
+    return true;
+  }
+
+  isActive(id: string): boolean {
+    const def = getArtifact(id);
+    return !!def && this.active.has(def.power);
+  }
+
+  /** Hooks and graphics, each installed once, so `activate` can call this again. */
+  private installPowers(): void {
+    const scene = this.api.scene;
+    if ((this.has('staticBraid') || this.has('rimeBrand')) && !this.hooked.dealt) {
+      this.hooked.dealt = true;
+      if (!this.runMode) this.hookHitsDealt();
+    }
+    if (this.has('grudgeLedger') && !this.hooked.taken) { this.hooked.taken = true; this.hookHitsTaken(); }
+    if (this.has('mirrorBulwark') && !this.hooked.bulwark) {
+      this.hooked.bulwark = true;
+      this.hookBulwark();
+      this.shellReady = true;
+    }
+    if (this.has('recursionLoop') && !this.hooked.recursion) { this.hooked.recursion = true; this.hookRecursion(); }
+    if (this.has('leechHalo') && !this.haloG?.active) this.haloG = scene.add.graphics().setDepth(GROUND_DEPTH);
+    if (this.has('emberTrail') && !this.trailG?.active) this.trailG = scene.add.graphics().setDepth(GROUND_DEPTH);
+    if (this.has('gravitySnare') && !this.snareG?.active) this.snareG = scene.add.graphics().setDepth(FX_DEPTH);
+    if (this.has('mirrorBulwark') && !this.shellG?.active) this.shellG = scene.add.graphics().setDepth(FX_DEPTH);
+    if (this.has('rimeBrand') && !this.rimeG?.active) this.rimeG = scene.add.graphics().setDepth(FX_DEPTH);
+    if (!this.hudText?.active) this.buildHud();
+    else this.refreshHud();
+  }
+
+  /** Run mode: the local player's hit landed on `victim`. */
+  onHitDealt(amount: number, victim: Fighter): void {
+    if (amount <= 0) return;
+    this.lastVictim = victim;
+    this.countHit(victim);
+  }
+
+  /** Run mode: a wave was held. The Kingmaker Crown's clock is waves, not seconds, in a run. */
+  onWaveCleared(): void {
+    if (this.has('kingmaker') && this.api.player.active && this.api.player.hp > 0) this.crownTick();
+  }
+
   // ── Callback hooks (chained, never replaced) ──────────────────────
 
   private hookHitsDealt(): void {
-    const { npc } = this.api;
+    const npc = this.api.npc;
+    if (!npc) return;
     const prev = npc.onDamaged;
     npc.onDamaged = (amount: number) => {
       prev?.(amount);
       if (amount <= 0) return;
-      if (this.has('staticBraid')) {
-        this.hitCount++;
-        if (this.hitCount % BRAID_EVERY === 0) this.pendingNovas++;
-      }
-      if (this.has('rimeBrand') && this.elapsedMs >= this.frozenUntil) {
-        // Stacks expire as a block rather than individually — one timer, one read.
-        if (this.elapsedMs - this.rimeLastAt > RIME_FADE_MS) this.rimeStacks = 0;
-        this.rimeLastAt = this.elapsedMs;
-        this.rimeStacks++;
-        if (this.rimeStacks >= RIME_TO_FREEZE) this.freeze();
-      }
+      this.countHit(npc);
     };
+  }
+
+  private countHit(victim: Fighter): void {
+    if (this.has('staticBraid')) {
+      this.hitCount++;
+      if (this.hitCount % BRAID_EVERY === 0) this.pendingNovas++;
+    }
+    if (this.has('rimeBrand') && this.elapsedMs >= this.frozenUntil) {
+      // Stacks expire as a block rather than individually — one timer, one read.
+      if (this.elapsedMs - this.rimeLastAt > RIME_FADE_MS) this.rimeStacks = 0;
+      this.rimeLastAt = this.elapsedMs;
+      this.rimeStacks++;
+      if (this.rimeStacks >= RIME_TO_FREEZE) this.freeze(victim);
+    }
   }
 
   private hookHitsTaken(): void {
@@ -237,21 +352,33 @@ export class ArtifactsKit {
 
   private hookBulwark(): void {
     const { player } = this.api;
+    if (this.runMode) {
+      const fn = (amount: number): boolean => this.bulwarkAbsorb(amount);
+      this.bulwarkFn = fn;
+      this.bulwarkOn = player;
+      player.relicAbsorbers.push(fn);
+      return;
+    }
     const prev = player.damageAbsorber;
     player.damageAbsorber = (amount: number) => {
       if (prev && prev(amount)) return true;
-      if (!this.shellReady || amount <= 0 || player.hp <= 0) return false;
-      this.shellReady = false;
-      this.shellNextAt = this.elapsedMs + BULWARK_PERIOD_MS;
-      // The reflection is *deferred*: dealing damage from inside the victim's own absorber
-      // re-enters `takeDamage` on the other fighter mid-hit, and that is how a kit ends up
-      // reading half-written state. `update` pays it out on the next frame instead.
-      this.pendingReflect += amount;
-      player.reduceCooldowns(BULWARK_REFUND_MS);
-      this.api.showFloatingText(player.x, player.y - 46, '🪞 MIRRORED', '#eef3fa');
-      this.api.scene.cameras.main.flash(140, 220, 230, 245);
-      return true;
+      return this.bulwarkAbsorb(amount);
     };
+  }
+
+  private bulwarkAbsorb(amount: number): boolean {
+    const { player } = this.api;
+    if (!this.shellReady || amount <= 0 || player.hp <= 0) return false;
+    this.shellReady = false;
+    this.shellNextAt = this.elapsedMs + BULWARK_PERIOD_MS;
+    // The reflection is *deferred*: dealing damage from inside the victim's own absorber
+    // re-enters `takeDamage` on the other fighter mid-hit, and that is how a kit ends up
+    // reading half-written state. `update` pays it out on the next frame instead.
+    this.pendingReflect += amount;
+    player.reduceCooldowns(BULWARK_REFUND_MS);
+    this.api.showFloatingText(player.x, player.y - 46, '🪞 MIRRORED', '#eef3fa');
+    this.api.scene.cameras.main.flash(140, 220, 230, 245);
+    return true;
   }
 
   private hookRecursion(): void {
@@ -274,7 +401,7 @@ export class ArtifactsKit {
   update(dt: number): void {
     if (this.active.size === 0) return;
     this.elapsedMs += dt;
-    const { player, npc } = this.api;
+    const { player } = this.api;
     const alive = player.active && player.hp > 0;
 
     this.updateProjectiles(dt);
@@ -282,7 +409,8 @@ export class ArtifactsKit {
     if (this.pendingReflect > 0) {
       const amount = Math.round(this.pendingReflect);
       this.pendingReflect = 0;
-      if (npc.active && npc.hp > 0 && amount > 0) npc.takeDamage(amount);
+      const back = this.runMode ? this.nearestFoe(player.x, player.y, 320) : this.mainFoe();
+      if (back && amount > 0) back.takeDamage(amount);
     }
 
     while (this.pendingNovas > 0) {
@@ -298,7 +426,7 @@ export class ArtifactsKit {
     if (this.has('gravitySnare') && alive) this.updateSnare();
     if (this.has('mirrorBulwark')) this.updateBulwark();
     if (this.has('emberTrail')) this.updateTrail(dt);
-    if (this.has('kingmaker') && alive) this.updateCrown();
+    if (this.has('kingmaker') && alive && !this.runMode) this.updateCrown();
 
     this.refreshHud();
   }
@@ -316,21 +444,35 @@ export class ArtifactsKit {
     const ballet = this.has('bulletBallet');
     if (!ricochet && !split && !homing && !molasses && !ballet) return;
 
-    const { scene, npc, projectiles } = this.api;
+    const { scene, projectiles } = this.api;
     const wb = scene.physics.world.bounds;
     const seconds = dt / 1000;
+
+    // Run mode: husk shots are not Projectiles, so the two enemy-shot powers read them here.
+    if (this.runMode && (molasses || ballet)) {
+      for (const shot of this.api.foeShots?.() ?? []) {
+        if (molasses && !this.slowedShots.has(shot.key)) {
+          this.slowedShots.add(shot.key);
+          shot.scaleSpeed(MOLASSES_MULT);
+        }
+        if (ballet) this.trackGrace(shot.key, shot.x, shot.y);
+      }
+    }
+    if (!projectiles) return;
+    const single = this.runMode ? null : this.mainFoe();
 
     for (const go of projectiles.getChildren() as Projectile[]) {
       if (!go.active || !go.body) continue;
       const body = go.body as Phaser.Physics.Arcade.Body;
 
       if (!go.isFromPlayer) {
+        if (this.runMode) continue;
         if (molasses && !this.slowedShots.has(go)) {
           this.slowedShots.add(go);
           body.velocity.scale(MOLASSES_MULT);
           go.setAlpha(0.85);
         }
-        if (ballet) this.trackGrace(go);
+        if (ballet) this.trackGrace(go, go.x, go.y);
         continue;
       }
 
@@ -339,10 +481,11 @@ export class ArtifactsKit {
         if (!this.noFork.has(go)) this.pendingSplits.push({ proj: go, at: this.elapsedMs + SPLIT_DELAY_MS });
       }
 
-      if (homing && npc.active && npc.hp > 0) {
+      const seek = homing ? (single ?? this.nearestFoe(go.x, go.y, 600)) : null;
+      if (seek) {
         const speed = body.velocity.length();
         if (speed > 1) {
-          const want = Math.atan2(npc.y - go.y, npc.x - go.x);
+          const want = Math.atan2(seek.y - go.y, seek.x - go.x);
           const have = Math.atan2(body.velocity.y, body.velocity.x);
           const turn = Phaser.Math.Clamp(
             Phaser.Math.Angle.Wrap(want - have), -HOMING_RATE * seconds, HOMING_RATE * seconds,
@@ -393,6 +536,7 @@ export class ArtifactsKit {
   private fork(p: Projectile): void {
     if (!p.active || !p.body) return;
     const { scene, projectiles } = this.api;
+    if (!projectiles) return;
     const body = p.body as Phaser.Physics.Arcade.Body;
     const speed = body.velocity.length();
     if (speed < 1) return;
@@ -418,8 +562,9 @@ export class ArtifactsKit {
   }
 
   private fireBraidNova(): void {
-    const { scene, npc } = this.api;
-    if (!npc.active || npc.hp <= 0) return;
+    const { scene } = this.api;
+    const npc = this.mainFoe();
+    if (!npc) return;
     const x = npc.x;
     const y = npc.y;
 
@@ -444,20 +589,27 @@ export class ArtifactsKit {
     const ring = scene.add.circle(x, y, 170, 0xffee00, 0.28).setDepth(FX_DEPTH).setScale(0.2);
     scene.tweens.add({ targets: ring, scale: 1, alpha: 0, duration: 340, onComplete: () => ring.destroy() });
 
-    npc.takeDamage(45);
-    npc.earthStunnedUntil = Math.max(npc.earthStunnedUntil, scene.time.now + 350);
+    // In a run the 170px ring is real: everything inside it is struck, not just the target.
+    const struck = this.runMode
+      ? this.foeList().filter((f) => Phaser.Math.Distance.Between(x, y, f.x, f.y) <= 170)
+      : [npc];
+    for (const f of struck) {
+      f.takeDamage(45);
+      f.earthStunnedUntil = Math.max(f.earthStunnedUntil, scene.time.now + 350);
+    }
     this.api.showFloatingText(x, y - 40, '⚡ BRAID', '#ffee66');
   }
 
   private updateHalo(dt: number): void {
-    const { player, npc } = this.api;
+    const { player } = this.api;
     const g = this.haloG;
     if (!g || !g.active) return;
     g.clear();
     if (!player.active || player.hp <= 0) return;
 
-    const inside = npc.active && npc.hp > 0
-      && Phaser.Math.Distance.Between(player.x, player.y, npc.x, npc.y) <= HALO_RADIUS;
+    const drained = this.foeList()
+      .filter((f) => Phaser.Math.Distance.Between(player.x, player.y, f.x, f.y) <= HALO_RADIUS);
+    const inside = drained.length > 0;
 
     // A ring of tendrils that reach further and redden when there is something to drain.
     const pulse = 1 + Math.sin(this.elapsedMs / 260) * 0.03;
@@ -477,21 +629,24 @@ export class ArtifactsKit {
     }
 
     if (!inside) return;
-    // A thread from the victim back to the player while it drains.
+    // A thread from each victim back to the player while it drains.
     g.lineStyle(2.5, 0xff2a3c, 0.55);
-    g.beginPath(); g.moveTo(npc.x, npc.y); g.lineTo(player.x, player.y); g.strokePath();
+    for (const f of drained) { g.beginPath(); g.moveTo(f.x, f.y); g.lineTo(player.x, player.y); g.strokePath(); }
 
     this.leechPool += (HALO_DPS * dt) / 1000;
     const whole = Math.floor(this.leechPool);
     if (whole >= 1) {
       this.leechPool -= whole;
-      npc.takeDamage(whole);
-      player.heal(whole);
+      for (const f of drained) f.takeDamage(whole);
+      player.heal(whole * drained.length);
     }
   }
 
-  private freeze(): void {
-    const { scene, npc } = this.api;
+  private freeze(npc: Fighter): void {
+    const { scene } = this.api;
+    // One block of ice at a time: the previous one thaws as the next one forms.
+    if (this.frozenFoe && this.frozenFoe !== npc) this.frozenFoe.artifactIncomingMult = 1;
+    this.frozenFoe = npc;
     this.rimeStacks = 0;
     this.frozenUntil = this.elapsedMs + FREEZE_MS;
     npc.artifactIncomingMult = FREEZE_VULN;
@@ -501,18 +656,19 @@ export class ArtifactsKit {
   }
 
   private updateRime(): void {
-    const { npc } = this.api;
     const g = this.rimeG;
     if (this.frozenUntil > 0 && this.elapsedMs >= this.frozenUntil) {
       this.frozenUntil = 0;
-      npc.artifactIncomingMult = 1;
+      if (this.frozenFoe) this.frozenFoe.artifactIncomingMult = 1;
+      this.frozenFoe = null;
     }
     if (this.rimeStacks > 0 && this.elapsedMs - this.rimeLastAt > RIME_FADE_MS) this.rimeStacks = 0;
     if (!g || !g.active) return;
     g.clear();
-    if (!npc.active || npc.hp <= 0) return;
-
     const frozen = this.elapsedMs < this.frozenUntil;
+    const npc = frozen && this.frozenFoe ? this.frozenFoe : this.mainFoe();
+    if (!npc || !npc.active || npc.hp <= 0) return;
+
     if (frozen) {
       // A rough ice shell: six facets around the body, lit at the top.
       g.fillStyle(0x9fd8ff, 0.28);
@@ -542,12 +698,15 @@ export class ArtifactsKit {
   }
 
   private updateLedger(): void {
-    const { scene, npc } = this.api;
+    const { scene } = this.api;
     if (this.elapsedMs < this.ledgerNextAt) return;
     this.ledgerNextAt = this.elapsedMs + LEDGER_PERIOD_MS;
     const owed = Math.round(this.ledger * LEDGER_SHARE);
+    const npc = this.runMode ? this.nearestFoe(this.api.player.x, this.api.player.y) : this.mainFoe();
+    // In a run an empty street keeps the page open rather than tearing up the debt.
+    if (this.runMode && !npc) return;
     this.ledger = 0;
-    if (owed <= 0 || !npc.active || npc.hp <= 0) return;
+    if (owed <= 0 || !npc) return;
 
     // The page tears itself out and lands on them.
     const page = scene.add.rectangle(this.api.player.x, this.api.player.y, 22, 28, 0xf2ead6, 0.9)
@@ -573,10 +732,10 @@ export class ArtifactsKit {
     this.wrathApplied = want;
   }
 
-  private trackGrace(p: Projectile): void {
+  private trackGrace(p: object, px: number, py: number): void {
     const { player } = this.api;
     if (this.graceCredited.has(p)) return;
-    const d = Phaser.Math.Distance.Between(player.x, player.y, p.x, p.y);
+    const d = Phaser.Math.Distance.Between(player.x, player.y, px, py);
     if (d <= GRACE_RADIUS) { this.graceNear.add(p); return; }
     if (d < GRACE_CLEAR || !this.graceNear.has(p)) return;
     // It came inside a hand's breadth and left again without touching us.
@@ -601,12 +760,16 @@ export class ArtifactsKit {
     }
   }
 
+  private snareFoe: Fighter | null = null;
+
   private updateSnare(): void {
-    const { scene, player, npc } = this.api;
+    const { scene, player } = this.api;
     const g = this.snareG;
+    const held = this.snareFoe;
     if (g && g.active) {
       g.clear();
-      if (this.elapsedMs < this.snareFlashUntil && npc.active) {
+      if (this.elapsedMs < this.snareFlashUntil && held && held.active) {
+        const npc = held;
         // A web tightening around them.
         const k = 1 - (this.snareFlashUntil - this.elapsedMs) / SNARE_ROOT_MS;
         g.lineStyle(2, 0xb98cff, 0.75);
@@ -626,7 +789,9 @@ export class ArtifactsKit {
 
     if (this.elapsedMs < this.snareNextAt) return;
     this.snareNextAt = this.elapsedMs + SNARE_PERIOD_MS;
-    if (!npc.active || npc.hp <= 0) return;
+    const npc = this.runMode ? this.nearestFoe(player.x, player.y, 520) : this.mainFoe();
+    if (!npc) return;
+    this.snareFoe = npc;
 
     const nx = npc.x + (player.x - npc.x) * 0.5;
     const ny = npc.y + (player.y - npc.y) * 0.5;
@@ -663,7 +828,7 @@ export class ArtifactsKit {
   }
 
   private updateTrail(dt: number): void {
-    const { player, npc } = this.api;
+    const { player } = this.api;
     if (player.active && player.hp > 0 && this.elapsedMs >= this.trailNextAt) {
       this.trailNextAt = this.elapsedMs + 180;
       this.trail.push({ x: player.x, y: player.y, bornAt: this.elapsedMs });
@@ -691,16 +856,15 @@ export class ArtifactsKit {
       }
     }
 
-    if (!npc.active || npc.hp <= 0) return;
-    const standing = this.trail.some(
-      (p) => Phaser.Math.Distance.Between(p.x, p.y, npc.x, npc.y) <= TRAIL_RADIUS,
-    );
-    if (!standing) return;
+    const burning = this.foeList().filter((f) => this.trail.some(
+      (p) => Phaser.Math.Distance.Between(p.x, p.y, f.x, f.y) <= TRAIL_RADIUS,
+    ));
+    if (burning.length === 0) return;
     this.trailPool += (TRAIL_DPS * dt) / 1000;
     const whole = Math.floor(this.trailPool);
     if (whole >= 1) {
       this.trailPool -= whole;
-      npc.takeDamage(whole);
+      for (const f of burning) f.takeDamage(whole);
     }
   }
 
@@ -708,6 +872,11 @@ export class ArtifactsKit {
     const { player } = this.api;
     if (this.elapsedMs < this.crownNextAt) return;
     this.crownNextAt = this.elapsedMs + CROWN_PERIOD_MS;
+    this.crownTick();
+  }
+
+  private crownTick(): void {
+    const { player } = this.api;
     this.crownStacks++;
     player.cardOutgoingDamageMult *= 1.08;
     this.api.applyPlayerSpeedMult(1.05);

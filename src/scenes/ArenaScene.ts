@@ -491,6 +491,8 @@ export class ArenaScene extends Phaser.Scene {
   private gameEnded = false;
   private playerSpeedMult = 1;
   private gauntletState: import('../data/GauntletData').GauntletState | null = null;
+  /** Ranked best-of-3 series in flight — scored by RankedIntermissionScene, not here. */
+  private rankedSeries: import('../data/RankedData').RankedSeries | null = null;
   private gauntletSpeedMult = 1;
   // Card-system state (reset each match start)
   private cardCrippleActive = false;
@@ -952,7 +954,7 @@ export class ArenaScene extends Phaser.Scene {
     super({ key: 'ArenaScene' });
   }
 
-  create(data: { elementId: string; enemyElementId?: string; difficulty?: number; mutations?: string[]; starredMutations?: string[]; mode?: string; invasionDifficulty?: string; invasionMap?: 'city' | 'mansion'; invasionParty?: number; gauntlet?: import('../data/GauntletData').GauntletState; playerPerk?: string | null; npcPerk?: string | null; npcLoadout?: import('../data/NpcLoadout').NpcLoadout; campaign?: { slot: 0 | 1 | 2; worldId: string; fightId: string; isChallenge: boolean; hardMode?: boolean }; quantumBond?: [string, string]; npcQuantumBond?: [string, string]; hpMult?: number; npcOutgoingDamageMult?: number; bounty?: { key: string; reward: number }; bossHard?: boolean; bossId?: string; tagTeam?: TagTeamState; secretMode?: string; secretMap?: string; duoEnemyElementId?: string; secretTag?: SecretTagState; stabilize?: { result: string }; reality?: RealityRunPayload; online?: { isHost: boolean; npcUpgrades?: string[]; npcMasteryBinds?: Record<string, string>; npcMasteryOn?: boolean; npcSkin?: string | null } }): void {
+  create(data: { elementId: string; enemyElementId?: string; difficulty?: number; mutations?: string[]; starredMutations?: string[]; mode?: string; invasionDifficulty?: string; invasionMap?: 'city' | 'mansion'; invasionParty?: number; gauntlet?: import('../data/GauntletData').GauntletState; playerPerk?: string | null; npcPerk?: string | null; npcLoadout?: import('../data/NpcLoadout').NpcLoadout; campaign?: { slot: 0 | 1 | 2; worldId: string; fightId: string; isChallenge: boolean; hardMode?: boolean }; quantumBond?: [string, string]; npcQuantumBond?: [string, string]; hpMult?: number; npcOutgoingDamageMult?: number; bounty?: { key: string; reward: number }; bossHard?: boolean; bossId?: string; tagTeam?: TagTeamState; secretMode?: string; secretMap?: string; duoEnemyElementId?: string; secretTag?: SecretTagState; stabilize?: { result: string }; reality?: RealityRunPayload; online?: { isHost: boolean; npcUpgrades?: string[]; npcMasteryBinds?: Record<string, string>; npcMasteryOn?: boolean; npcSkin?: string | null }; ranked?: import('../data/RankedData').RankedSeries; npcDifficulty?: DifficultyConfig }): void {
     this.selectedElementId = data.elementId ?? 'fire';
     // ── Secret modes ────────────────────────────────────────────────
     this.secretMode = data.secretMode ?? null;
@@ -1014,8 +1016,10 @@ export class ArenaScene extends Phaser.Scene {
     // Online: the "NPC" is a remote human replica — neutral stats matching a Player, no AI fuzz.
     const difficultyConfig: DifficultyConfig = this.isOnline
       ? { level: 3, label: 'PvP', hp: 200 * HP_SCALE, speed: 200, aimOffsetDeg: 0, dodgeRange: 0, castSkipChance: 0 }
-      : DIFFICULTY_PRESETS[difficultyLevel - 1];
+      : (data.npcDifficulty ?? DIFFICULTY_PRESETS[difficultyLevel - 1]);
     this.npcDifficulty = difficultyConfig;
+    // Ranked: a best-of-3 series rides through untouched and is handed back at the end.
+    this.rankedSeries = data.ranked ?? null;
 
     this.playerElement = ELEMENT_MAP[this.elementId] ?? fireElement;
     // An alternate ultimate rides in the upgrade list (ALT_ULT_SLOT); the npc's list is already
@@ -1409,7 +1413,8 @@ export class ArenaScene extends Phaser.Scene {
     this.subterfugeMasteryOn = PlayerData.isMasteryEnabled('subterfuge');
     this.plasmaMasteryOn = PlayerData.isMasteryEnabled('plasma');
     this.huntMasteryOn = PlayerData.isMasteryEnabled('hunt');
-    this.soundMasteryOn = PlayerData.isMasteryEnabled('sound');
+    // Sound's old mastery (Audience Participation) may have left the flag on; the drum major's must be earned.
+    this.soundMasteryOn = PlayerData.isMasteryEnabled('sound') && isMasteryComplete('sound');
     this.silenceMasteryOn = PlayerData.isMasteryEnabled('silence');
     this.illusionMasteryOn = PlayerData.isMasteryEnabled('illusion');
     this.duneMasteryOn = PlayerData.isMasteryEnabled('dune');
@@ -1704,6 +1709,14 @@ export class ArenaScene extends Phaser.Scene {
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         soundColor: (owner, base) => arena.skinsKit.soundColor(owner, base),
         broadcastMasteryCast: (id) => arena.broadcastMasteryCast(id),
+        get isInvasion() { return arena.isInvasion; },
+        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
+        recordMasteryStat: (key, amount) => {
+          if (arena.elementId === 'sound') PlayerData.addMasteryStat('sound', key, amount);
+        },
+        get hpBarY() { return arena.hpBarY; },
+        get hpBarH() { return arena.hpBarH; },
       };
       this.soundKit = new SoundKit(soundApi);
     }
@@ -4463,6 +4476,7 @@ export class ArenaScene extends Phaser.Scene {
             arena.pointerInputLatched = true;
             arena.input.once('pointerup', () => { arena.pointerInputLatched = false; });
           },
+          get projectiles() { return arena.projectiles; },
         };
         this.invasionKit = new InvasionKit(invasionApi);
       }
@@ -9393,6 +9407,8 @@ export class ArenaScene extends Phaser.Scene {
           online: true,
           onlineReason: this.onlineEndReason ?? undefined,
         });
+      } else if (this.rankedSeries) {
+        this.scene.start('RankedIntermissionScene', { ranked: this.rankedSeries, playerWon });
       } else if (this.gauntletState) {
         const gs = this.gauntletState;
         const isInfinity = gs.gauntletElement === INFINITY_GAUNTLET_ID;
@@ -10463,6 +10479,9 @@ export class ArenaScene extends Phaser.Scene {
     // ── Devotion Q+: the yellow-fire pillars. Online the opponent's copy reaches us in `spd`. ──
     if (!this.isOnline) this.playerSpeedMult *= this.player.devotionSlowMult();
     this.npcSpeedMult *= this.npc.devotionSlowMult();
+    // ── Sound Mastery: Dissonance, two Out of Tune stacks. Online it reaches us in `spd` too. ──
+    if (!this.isOnline) this.playerSpeedMult *= this.player.soundDissonanceSlowMult();
+    this.npcSpeedMult *= this.npc.soundDissonanceSlowMult();
 
     // ── Light Mastery — Unstoppable: no slow and no hard control sticks ──
     // Runs after every other speed contribution (Purge included) so it always wins.
@@ -11163,6 +11182,8 @@ export class ArenaScene extends Phaser.Scene {
       npcSoundHarmonyRelease: this.soundKit.npcHarmonyRelease(),
       npcSoundDeaf: this.soundKit.npcDeaf(),
       npcSoundVictimDancing: this.soundKit.npcVictimDancing(),
+      npcSoundPianoSlot: this.soundKit.npcPianoSlot(),
+      npcSoundDoubleStack: this.soundKit.npcWantsDoubleStack(),
       // Devotion: faith decides everything, and the kit computes every synergy cast point.
       npcDevotionFaith: this.passionKit.faithRatio(this.player),
       npcDevotionRiding: this.passionKit.isRiding('npc'),
@@ -11851,6 +11872,8 @@ export class ArenaScene extends Phaser.Scene {
         entry.fill.setSize(entry.maxWidth * this.radiationKit.getDummyCooldownRatio(), entry.fill.height);
       } else if (entry.abilityId === ARK_ID) {
         entry.fill.setSize(entry.maxWidth * this.passionKit.getArkCooldownRatio(), entry.fill.height);
+      } else if (entry.abilityId === 'forte-piano') {
+        entry.fill.setSize(entry.maxWidth * this.soundKit.getPianoCooldownRatio(), entry.fill.height);
       } else if (entry.abilityId === 'mag-lev') {
         entry.fill.setSize(entry.maxWidth * this.magnetKit.getMagLevCooldownRatio(), entry.fill.height);
       } else if (this.elementId === 'magnet' && entry.abilityId.startsWith('magnet-')) {

@@ -120,6 +120,12 @@ const NPC_MASTERY_BINDS: Record<string, { enhId: string; slot: MasterySlot }> = 
   // the rotation marks — and doubles as its escape, kicked off by a Repulse. Nails, Repulse and the
   // mech, which the rotation's synergies are built on, all survive.
   magnet: { enhId: 'mag-lev', slot: 'f' },
+  // Sound gives up Hum. Autotune (the mastery passive) picks the soul song the moment calls for —
+  // which is all the bot's Hum was ever pressed for — so the F key is free for the piano. The kit
+  // fires it at a target the bot has already put out of tune with a slam, for the Dissonance
+  // double stack. Fermata, the solo and the dance, which the rotation's synergies are built on,
+  // all survive.
+  sound: { enhId: 'forte-piano', slot: 'f' },
   // Devotion (id `passion`) gives up Mount Crucifix. At range the crucifix is a wall planted between
   // them so the shots fired across it pay faith; the Ark does that job with the player's own aim —
   // set on their sightline every shot they line up at the bot is a stare, and past half faith it is

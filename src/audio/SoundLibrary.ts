@@ -1033,6 +1033,18 @@ export const SOUNDS: Record<string, SoundRecipe> = {
     noise(1.6, { gain: 0.1, color: 'white', filter: { type: 'highpass', freq: 3000 }, attack: 0.5, release: 1.0 }),
   ], { minGap: 700, important: true }),
 
+  // Sound Mastery — Forte Piano. One key at middle C; the kit plays the others by `rate`.
+  'piano-key': fx([
+    ...stack(262, 0.9, [1, 2, 3], { gain: 0.1, wave: 'triangle', attack: 0.003, release: 0.8, reverb: 0.35 }),
+    noise(0.03, { gain: 0.04, filter: { type: 'highpass', freq: 2600 } }),
+  ], { minGap: 30 }),
+  // ...and the whole instrument landing: a splintering crash and every string at once.
+  'piano-crash': fx([
+    ...stack(98, 1.6, [1, 1.06, 1.5, 2.12, 3], { gain: 0.1, wave: 'triangle', attack: 0.002, release: 1.4, reverb: 0.6 }),
+    noise(0.35, { gain: 0.18, color: 'pink', filter: { type: 'lowpass', freq: 2200 } }),
+    drop(140, 45, 0.5, { gain: 0.2, release: 0.4 }),
+  ], { minGap: 300 }),
+
   'holy-chord': fx([
     ...stack(523, 1.6, [1, 1.25, 1.5, 2], { gain: 0.12, wave: 'triangle', attack: 0.2, release: 1.1, reverb: 0.7 }),
   ], { minGap: 400 }),

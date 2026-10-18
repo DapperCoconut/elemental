@@ -2143,6 +2143,55 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       },
     ],
   },
+  // Sound. The marching-band rework (2026-10-15) retired Audience Participation / Compose; this is
+  // the drum major's own (2026-10-18). Its stat keys are new, and `soundMasteryOn` checks
+  // completion, because the old mastery may have left the flag on.
+  sound: {
+    elementId: 'sound',
+    name: 'Sound Mastery',
+    enhancedEmoji: '🎹',
+    enhancedColor: 0xf0c04e,
+    requirements: [
+      {
+        key: 'metronomeHits',
+        label: 'Keeping Time',
+        howTo: 'Hit the metronome 100 times — click while the note is in the gold window',
+        target: 100,
+      },
+      {
+        key: 'voidNotes',
+        label: 'First Chair',
+        howTo: 'Play 25 notes successfully in Call of the Void (Q)',
+        target: 25,
+      },
+      {
+        key: 'songsMaxed',
+        label: 'Repertoire',
+        howTo: 'Max out all 3 soul songs in one game — level 10 Staccato, Melody and Smooth (needs the F+ Practice Makes Perfect upgrade)',
+        target: 1,
+      },
+      {
+        key: 'tuneDetonations',
+        label: 'Resolution',
+        howTo: 'Detonate 25 Out of Tune enemies',
+        target: 25,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'autotune',
+        name: 'Autotune',
+        description: 'Passive: your soul song changes itself to whatever the moment calls for.\n\n• **Low on health** (under 35%) — always **Smooth**, wherever the enemy is.\n• **In fighting distance** of an enemy — **Staccato**.\n• **Far from every enemy and healthy** (60%+) — **Melody**.\n\nAnywhere in between it leaves the song alone, and a song you pick yourself with F is respected for 3 seconds. A switch **right below your HP bar** turns Autotune on and off.',
+      },
+      {
+        id: 'forte-piano',
+        name: 'Forte Piano',
+        bindable: true,
+        hudDescription: 'Sit at a grand piano for 5s and click its 8 white keys — the more melodious, the more charge. Then fling it: 2s later it crashes on your cursor, harder the more charge. High charge leaves them Out of Tune; recast to detonate',
+        description: 'Sit down at a **grand piano** for **5 seconds**. Eight real white keys appear in front of you (the black keys are there too, but they do not count) — **click them to play**. The more **melodious** the tune, the more **charge** the piano builds: steps, thirds, fifths and octaves sound good, a steady rhythm sounds better, mashing sounds awful, and ending on a C resolves it.\n\nThen you pick the piano up and **fling it into the air**. **2 seconds** later it comes **crashing down on your cursor** — the more charge, the harder it hits (20 up to 110).\n\nAt **high charge** (60%+) everyone it crushes is left **Out of Tune** — **recast** to detonate them.\n\n**Two stacks**: an enemy out of tune from both a Fermata *and* the piano is **Dissonant** — 40% slower and bleeding health until it is detonated, and then **both stacks go off at once**.\n\nRecast while seated to fling early. 12 second cooldown, from the crash.',
+      },
+    ],
+  },
   // Magnet. The scrap rework (2026-10-15) retired Metal Detector / Mag-Lev board; this is the
   // mastery built for the new kit (2026-10-17). Its stat keys are new, so an old save's progress
   // does not carry over — and `magnetMasteryOn` checks completion, because the old flag may linger.

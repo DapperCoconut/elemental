@@ -11,6 +11,10 @@ import { CityLoadoutApi, DraftCard, DraftOverlay, rollDraft, mutationName } from
 import { ALT_ULT_SLOT } from '../../data/AltUlts';
 import { CityHud } from './CityHud';
 import { CityDream } from './CityDream';
+import { CityRelics } from './CityRelics';
+import type { FoeShot } from '../../elements/kits/ArtifactsKit';
+import { getItem } from '../../data/Items';
+import { getArtifact } from '../../data/Artifacts';
 import type { NetCityState } from '../../network/NetworkManager';
 
 /** Waves until the city is saved; after that the night simply goes on. */
@@ -57,6 +61,10 @@ export interface CityHost {
   /** The local player's drafted loadout (null if the arena has none to offer). */
   readonly loadout: CityLoadoutApi | null;
   latchPointer(): void;
+  /** The arena's projectile group (the player's shots), for the projectile artifacts. */
+  readonly projectiles: Phaser.Physics.Arcade.Group | null;
+  /** The husk shots in flight in `room`. */
+  huskShots(room: number): FoeShot[];
 }
 
 export interface CityRunOptions {
@@ -97,6 +105,9 @@ export class CityDirector {
   private dream: CityDream | null = null;
   /** The opening lines are still up — the first wave waits on them. */
   private introPending = false;
+  /** Campaign items + Vault artifacts the local player has drafted (the late table). */
+  readonly relics: CityRelics;
+  private coop = false;
 
   constructor(private host: CityHost, readonly map: CityMap) {
     const dir = this;
@@ -119,6 +130,16 @@ export class CityDirector {
       showFloatingText: (x, y, t, c) => host.showFloatingText(x, y, t, c),
       authoritative: true,
     });
+    this.relics = new CityRelics({
+      get scene() { return host.scene; },
+      get player() { return host.player; },
+      get projectiles() { return host.projectiles; },
+      foes: () => host.livingHusks().filter((h) => h.roomIndex === map.currentRoom),
+      foeShots: () => host.huskShots(map.currentRoom),
+      showFloatingText: (x, y, t, c) => host.showFloatingText(x, y, t, c),
+      authoritative: true,
+      get coop() { return dir.coop; },
+    });
   }
 
   get allElement(): AllElement | null { return this.core; }
@@ -137,8 +158,10 @@ export class CityDirector {
     const at = this.map.allElementPos();
     this.core = new AllElement(this.host.scene, at.x, at.y);
     const humans = Phaser.Math.Clamp(opts.humans ?? 1, 1, 2);
+    this.coop = humans === 2;
     this.companions.reset(this.partySize - humans, humans === 1);
     this.mutations.reset();
+    this.relics.reset();
     this.draft.close();
     this.buildHud();
     this.dream?.destroy();
@@ -169,6 +192,7 @@ export class CityDirector {
       loadout,
       mutationTaken: (id) => this.mutations.has(id),
       mutationStarred: (id) => this.mutations.isStarred(id),
+      relics: this.relics,
     });
     if (cards.length === 0) { done(); return; }
     void this.draft.open(cards, wave, notes).then((card) => {
@@ -218,6 +242,14 @@ export class CityDirector {
         say(`🧬 ${starred ? '★ ' : ''}${mutationName(card.id).toUpperCase()} — YOU MUTATE`, '#ff7788');
         break;
       }
+      case 'item':
+        this.relics.takeItem(card.id);
+        say(`${card.emoji} ${card.title.toUpperCase()}`, '#ffd46a');
+        break;
+      case 'artifact':
+        this.relics.takeArtifact(card.id);
+        say(`${card.emoji} ${card.title.toUpperCase()}`, '#c9a0ff');
+        break;
       default:
         if (card.id === 'vigor') { p.increaseMaxHp(60); p.heal(p.maxHp); }
         else this.applyShared('boon', card.id);
@@ -243,6 +275,12 @@ export class CityDirector {
       const p = this.host.player;
       this.host.showFloatingText(p.x, p.y - 76, `ALLY MUTATES: ${mutationName(id).toUpperCase()}`, '#ff7788');
     }
+    // An item or artifact is the guest's own, run on the guest's sim — only the news reaches us.
+    if (kind === 'item' || kind === 'artifact') {
+      const def = kind === 'item' ? getItem(id) : getArtifact(id);
+      const p = this.host.player;
+      if (def) this.host.showFloatingText(p.x, p.y - 76, `ALLY TAKES ${def.emoji} ${def.name.toUpperCase()}`, '#ffd46a');
+    }
   }
 
   /** Co-op snapshot of everything the guest draws but cannot simulate. */
@@ -261,9 +299,14 @@ export class CityDirector {
   // ── Mutations ─────────────────────────────────────────────────────
 
   /** A hit from the local player landed (bot and relayed hits are filtered out by the caller). */
-  onHuskHit(h: Husk, amount: number): void { this.mutations.onHuskHit(h, amount); }
-  /** Walk speed from the player's mutations, pulled by InvasionKit. */
-  playerSpeedMult(): number { return this.mutations.speedMult(); }
+  onHuskHit(h: Husk, amount: number): void {
+    this.mutations.onHuskHit(h, amount);
+    this.relics.onHitDealt(h, amount);
+  }
+  /** Walk speed from the player's mutations, items and artifacts, pulled by InvasionKit. */
+  playerSpeedMult(): number { return this.mutations.speedMult() * this.relics.speedMult; }
+  /** A new wave is under way (opening invincibility from items). */
+  onWaveBegan(): void { this.relics.onWaveBegan(); }
 
   get isPlayerDowned(): boolean { return this.companions.isPlayerDowned; }
 
@@ -274,6 +317,7 @@ export class CityDirector {
     this.dream?.destroy();
     this.dream = null;
     this.mutations.destroy();
+    this.relics.destroy();
     this.companions.destroyAll();
     this.core?.destroy();
     this.core = null;
@@ -358,6 +402,8 @@ export class CityDirector {
   /** Wave-clear bookkeeping. Returns bonus shards on top of the usual pay. */
   onWaveCleared(wave: number): number {
     this.companions.onWaveCleared();
+    // Items refill what they spend (shields, dodge, revive) every wave held.
+    this.relics.onWaveCleared();
     this.dream?.onWaveHeld(wave);
     if (wave === CITY_FINAL_WAVE && !this.savedBannerShown) this.dream?.saved();
     if (wave === CITY_FINAL_WAVE && !this.savedBannerShown) {
@@ -408,6 +454,7 @@ export class CityDirector {
     if (this.companions.isPlayerDowned && !this.wasDowned) this.dream?.downed();
     this.wasDowned = this.companions.isPlayerDowned;
     this.mutations.update(time, delta);
+    this.relics.update(delta);
 
     // The lanes empty onto Main Street. Anything in a lane with nobody to bite
     // walks to its gate and steps through; anything on Main Street goes for the

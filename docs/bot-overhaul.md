@@ -422,6 +422,14 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   read first of all. F+ — passive, levels from the bot's own beats. Q+ — kit-played: the solo speeds up
   to tempo `1 + 0.16·level` unless the bot is under 35% HP; `npcSoundDeaf` → the rotation stands down
   after Hum (wanted song becomes Melody, or Smooth under 50%).
+  **Mastery (2026-10-18)** — Nightmare binds Forte Piano over F (Hum). Autotune runs kit-side
+  for the bot, so `npcSoundWantedSong` just echoes the song playing. `npcSoundPianoSlot` → the
+  rotation leaves that key alone; `npcSoundSoloing` is also true while seated at the piano. The kit
+  sits down (`updateNpcMastery`) when the player still has a long Fermata stack (the crash makes it
+  Dissonance) or, rarely, with room (>200px, >45% HP); it plays steady sweet intervals by rung and
+  aims the drop at the player, locking 0.45s out. `npcSoundDoubleStack` (piano stack, no slam
+  stack) → Fermata inside 300px, read first. Detonations (both kinds, `npcWantsDetonate`) hold
+  ≥3s on a Dissonant victim so the bleed works before the double pop.
 
 - **Harvest (id `gluttony`, 2026-10-15 rework replacing the chef), steps 3–5.**
   `doGluttonyAbilities` was rewritten around GluttonyKit's fields, all checked before the

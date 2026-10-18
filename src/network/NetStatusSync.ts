@@ -40,7 +40,7 @@ const MIRRORED_TIMERS = new Set([
   'high-gravity', 'inverted', 'exposed', 'purged', 'heal-block', 'dark-link', 'oily',
   'gold-heart', 'midas', 'stalked', 'stunned', 'out-of-tune',
   'rad-mutated', 'over-radiated', 'devotion-slow', 'gold-hex', 'gold-statue', 'harvest-poison',
-  'sound-dance', 'dream-nightmare', 'dream-clawed', 'turned-around',
+  'sound-dance', 'sound-dissonant', 'dream-nightmare', 'dream-clawed', 'turned-around',
 ]);
 
 const TIMER_DESCRIPTORS: StatusDescriptor[] = STATUS_DESCRIPTORS

@@ -424,8 +424,8 @@ export class GameOverScene extends Phaser.Scene {
       } else if (isStabilise) {
         this.scene.start('DisgracedLabScene', { tab: 'synthesis' });
       } else if (data.campaign?.worldId === 'amalgam') {
-        // The finale has no world scene — it hangs off the corrupt map.
-        this.scene.start('CampaignWorldMapScene', { slotIdx: data.campaign.slot, mode: 'corrupt' });
+        // The finale has no world of its own — its pit is in Ruin Town's square.
+        this.scene.start('CampaignWorldScene', { worldId: 'ruin', slotIdx: data.campaign.slot });
       } else if (data.campaign) {
         this.scene.start('CampaignWorldScene', {
           worldId: data.campaign!.worldId,

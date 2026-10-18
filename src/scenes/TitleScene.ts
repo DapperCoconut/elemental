@@ -10,12 +10,27 @@ import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addBackdrop, addButton, addChip, addIconButton, addToggle, showToast,
   addFeatureCard, drawIcon, fillDiamond, drawGlow, IconName,
+  addScrim, addPanel, drawMeter, fillNotchedGradient, strokeNotched, tintPlate,
 } from '../ui';
-import { Music } from '../audio';
+import * as Ranked from '../data/RankedData';
+import { addRankBadge, rankMetal } from '../ui/RankBadges';
+import { Music, Sfx } from '../audio';
 
 /** Logo colours at 0 and 100 clicks — the title bleeds from ember to blood-red. */
 const LOGO_COLD = 0xff8a2b;
 const LOGO_HOT = 0xff1133;
+
+/** One mode inside a category sub-panel. */
+interface HubMode {
+  label: string; kicker: string; blurb: string; icon: IconName; status: string;
+  accent: number; badge?: string; action: (() => void) | null;
+}
+
+/** One of the four doors on the title screen. */
+interface HubCategory {
+  label: string; kicker: string; blurb: string; icon: IconName; accent: number;
+  modes: HubMode[];
+}
 
 /** The five base elements, set into the engraved rail under the menu. */
 const SIGIL_ELEMENTS: Array<{ icon: IconName; color: number }> = [
@@ -27,6 +42,9 @@ const SIGIL_ELEMENTS: Array<{ icon: IconName; color: number }> = [
 ];
 
 export class TitleScene extends Phaser.Scene {
+  /** Everything the open category sub-panel owns; empty when no panel is up. */
+  private overlayObjects: Phaser.GameObjects.GameObject[] = [];
+
   constructor() {
     super({ key: 'TitleScene' });
   }
@@ -35,11 +53,18 @@ export class TitleScene extends Phaser.Scene {
     Music.play('title');
     const { width, height } = this.scale;
     const cx = width / 2;
+    // A ranked series walked out of mid-way (pause → quit, a reload) is settled here.
+    const forfeit = Ranked.resolveAbandonedSeries();
+    if (forfeit) {
+      this.time.delayedCall(400, () => showToast(this,
+        `RANKED SERIES ABANDONED — FORFEIT\n${forfeit.delta} RP${forfeit.demoted ? '  ·  DEMOTED' : ''}`,
+        { accent: C.blood, holdMs: 3600 }));
+    }
 
     addBackdrop(this, { accent: C.ember, variant: 'rays', motes: 26 });
 
     // ── Wordmark ────────────────────────────────────────────────────
-    const titleY = 112;
+    const titleY = 100;
     this.buildFlourishes(cx, titleY);
 
     const title = this.add.text(cx, titleY, 'ELEMENTAL', {
@@ -55,113 +80,22 @@ export class TitleScene extends Phaser.Scene {
       fontSize: '12px', fontFamily: FONT_UI, color: T.dim, letterSpacing: 4,
     }).setOrigin(0.5).setDepth(DEPTH.content);
 
-    // ── Navigation cards ────────────────────────────────────────────
-    // A row of dossiers built like the element roster's — glyph in a lit well, name,
-    // archetype line, one line of what it is, and the prompt — but squared off rather than
-    // leaning. The old grid was six wide plates whose only picture was an emoji nailed to
-    // the left edge.
-    const gauntletUnlocked = PlayerData.isGauntletUnlocked();
-    const tiles: Array<{
-      label: string; kicker: string; blurb: string; icon: IconName; status: string;
-      accent: number; action: (() => void) | null;
-    }> = [
-      {
-        label: 'PLAY', kicker: 'Duel', icon: 'sword', accent: C.verdant,
-        blurb: 'One element against another. Settle it.',
-        status: '▶  FIGHT',
-        // Explicit {} (not omitted) — Phaser only overwrites scene data when the
-        // argument is truthy, so omitting it here would leak a stale
-        // { mode: 'invasion' } from a previous visit to the INVASION button.
-        action: () => this.scene.start('MenuScene', {}),
-      },
-      {
-        label: 'CAMPAIGN', kicker: 'Journey', icon: 'map', accent: C.ember,
-        blurb: 'Forty-seven Sovereigns, world by world.',
-        status: '▶  TRAVEL',
-        action: () => this.scene.start('CampaignSlotSelectScene'),
-      },
-      {
-        label: 'INVASION', kicker: 'Siege', icon: 'husk', accent: C.corrupt,
-        blurb: 'Hold the mansion against the husks.',
-        status: '▶  HOLD',
-        action: () => this.scene.start('MenuScene', { mode: 'invasion' }),
-      },
-      {
-        label: 'STRONGHOLD', kicker: 'Defense', icon: 'castle', accent: 0x60a5fa,
-        blurb: 'Your elements as towers. Hold the road.',
-        status: '▶  BUILD',
-        action: () => this.scene.start('StrongholdSetupScene'),
-      },
-      {
-        label: 'SHOP', kicker: 'Trade', icon: 'shard', accent: C.frost,
-        blurb: 'Turn shards into ability upgrades.',
-        status: '▶  BROWSE',
-        action: () => this.scene.start('ShopScene'),
-      },
-      {
-        label: 'LAB', kicker: 'Forge', icon: 'flask', accent: C.arcane,
-        blurb: 'Fuse elements. Forge perks.',
-        status: '▶  ENTER',
-        action: () => this.scene.start('LabScene'),
-      },
-      {
-        label: 'GAUNTLETS', kicker: 'Trial', icon: gauntletUnlocked ? 'trophy' : 'lock',
-        accent: C.gold,
-        blurb: gauntletUnlocked
-          ? 'Six fights, one life, no second chances.'
-          : `Sealed until you buy the key — ${GAUNTLET_COST} shards.`,
-        status: gauntletUnlocked ? '▶  RUN IT' : 'LOCKED',
-        action: gauntletUnlocked ? () => this.scene.start('GauntletSelectScene') : null,
-      },
-    ];
+    // ── Category hub ────────────────────────────────────────────────
+    // Four big doors instead of seven narrow plates and a rail: each opens a sub-panel of
+    // its modes. The old rank was a tight fit at seven, and Ranked would have made eight.
+    this.overlayObjects = [];
+    this.buildCategoryHub(cx, 298);
 
-    // Seven destinations in one rank: the plates slimmed from 148 to 128 so the row still
-    // clears both edges with a margin.
-    const cardW = 128;
-    const cardH = 186;
-    const cardGap = 7;
-    const gridW = tiles.length * cardW + (tiles.length - 1) * cardGap;
-    const startX = cx - gridW / 2 + cardW / 2;
-    const cardY = 344;
-
-    tiles.forEach((tile, i) => {
-      addFeatureCard(this, {
-        x: startX + i * (cardW + cardGap),
-        y: cardY, w: cardW, h: cardH,
-        // Upright rectangles here rather than the roster's leaning plates: the
-        // main menu is a fixed rank of destinations, not a roster to scroll.
-        skew: 0,
-        accent: tile.accent,
-        icon: tile.icon,
-        title: tile.label,
-        kicker: tile.kicker,
-        blurb: tile.blurb,
-        status: tile.status,
-        locked: !tile.action,
-        depth: DEPTH.panel,
-        onClick: () => tile.action?.(),
-      });
-    });
-
-    // ── Online battle rail ──────────────────────────────────────────
-    const onlineY = cardY + cardH / 2 + 40;
-    addButton(this, {
-      x: cx, y: onlineY, w: gridW, h: 50,
-      label: 'ONLINE BATTLE',
-      sublabel: 'Challenge a friend over a peer-to-peer link',
-      iconArt: 'globe',
-      accent: 0x2ee6c0,
-      variant: 'solid',
-      fontSize: 19,
-      align: 'left',
-      cut: 12,
-      onClick: () => this.scene.start('OnlineLobbyScene'),
-    });
+    // ── Ranked flex ────────────────────────────────────────────────
+    // Your badge, rank and RP, right on the title screen — and a door to the ladder.
+    this.buildRankedFlex(cx, 462);
 
     // ── Rune bar ────────────────────────────────────────────────────
     // The five base elements set into an engraved rail. Fills the space under
     // the menu and quietly states what the game is about.
-    this.buildRuneBar(cx, 552);
+    this.buildRuneBar(cx, 556);
+
+    this.input.keyboard!.on('keydown-ESC', () => this.closeCategory());
 
     // ── Corner chrome ───────────────────────────────────────────────
     addIconButton(this, {
@@ -220,6 +154,271 @@ export class TitleScene extends Phaser.Scene {
 
     // Cheat-mode toggle, bottom right — only once the logo has been unlocked
     if (Cheats.isUnlocked()) this.buildCheatToggle(width, height);
+  }
+
+  // ── Category hub ────────────────────────────────────────────────────
+
+  private categories(): HubCategory[] {
+    const gauntletUnlocked = PlayerData.isGauntletUnlocked();
+    const rp = Ranked.getProfile();
+    return [
+      {
+        label: 'BATTLE', kicker: 'Duel  ·  Ranked  ·  Online', icon: 'sword', accent: C.verdant,
+        blurb: 'Element against element. Settle it.',
+        modes: [
+          {
+            label: 'DUEL', kicker: 'Versus bot', icon: 'sword', accent: C.verdant,
+            blurb: 'Pick both elements and a difficulty. One fight.',
+            status: '▶  FIGHT',
+            // Explicit {} (not omitted) — Phaser only overwrites scene data when the
+            // argument is truthy, so omitting it here would leak a stale
+            // { mode: 'invasion' } from a previous visit to the INVASION button.
+            action: () => this.scene.start('MenuScene', {}),
+          },
+          {
+            label: 'RANKED', kicker: 'Best of three', icon: 'crown', accent: rp.tier.color,
+            blurb: 'Ban five, climb six tiers, Bronze to Excelsius.',
+            status: '▶  CLIMB', badge: rp.name.toUpperCase(),
+            action: () => this.scene.start('RankedScene'),
+          },
+          {
+            label: 'ONLINE', kicker: 'Peer to peer', icon: 'globe', accent: 0x2ee6c0,
+            blurb: 'Challenge a friend over a direct link.',
+            status: '▶  CONNECT',
+            action: () => this.scene.start('OnlineLobbyScene'),
+          },
+        ],
+      },
+      {
+        label: 'ADVENTURE', kicker: 'Campaign  ·  Gauntlets', icon: 'map', accent: C.ember,
+        blurb: 'Worlds to cross and trials to survive.',
+        modes: [
+          {
+            label: 'CAMPAIGN', kicker: 'Journey', icon: 'map', accent: C.ember,
+            blurb: 'Forty-seven Sovereigns, world by world.',
+            status: '▶  TRAVEL',
+            action: () => this.scene.start('CampaignSlotSelectScene'),
+          },
+          {
+            label: 'GAUNTLETS', kicker: 'Trial', icon: gauntletUnlocked ? 'trophy' : 'lock',
+            accent: C.gold,
+            blurb: gauntletUnlocked
+              ? 'Six fights, one life, no second chances.'
+              : `Sealed until you buy the key — ${GAUNTLET_COST} shards.`,
+            status: gauntletUnlocked ? '▶  RUN IT' : 'LOCKED',
+            action: gauntletUnlocked ? () => this.scene.start('GauntletSelectScene') : null,
+          },
+        ],
+      },
+      {
+        label: 'SIEGE', kicker: 'Invasion  ·  Stronghold', icon: 'castle', accent: C.corrupt,
+        blurb: 'Hold the line against the tide.',
+        modes: [
+          {
+            label: 'INVASION', kicker: 'Co-op siege', icon: 'husk', accent: C.corrupt,
+            blurb: 'Hold the city against the husks.',
+            status: '▶  HOLD',
+            action: () => this.scene.start('MenuScene', { mode: 'invasion' }),
+          },
+          {
+            label: 'STRONGHOLD', kicker: 'Defense', icon: 'castle', accent: 0x60a5fa,
+            blurb: 'Your elements as towers. Hold the road.',
+            status: '▶  BUILD',
+            action: () => this.scene.start('StrongholdSetupScene'),
+          },
+        ],
+      },
+      {
+        label: 'WORKSHOP', kicker: 'Shop  ·  Lab  ·  Trophies', icon: 'anvil', accent: C.arcane,
+        blurb: 'Upgrade, fuse, forge and show off.',
+        modes: [
+          {
+            label: 'SHOP', kicker: 'Trade', icon: 'shard', accent: C.frost,
+            blurb: 'Turn shards into ability upgrades.',
+            status: '▶  BROWSE',
+            action: () => this.scene.start('ShopScene'),
+          },
+          {
+            label: 'LAB', kicker: 'Forge', icon: 'flask', accent: C.arcane,
+            blurb: 'Fuse elements. Forge perks.',
+            status: '▶  ENTER',
+            action: () => this.scene.start('LabScene'),
+          },
+          {
+            label: 'TROPHIES', kicker: 'Achievements', icon: 'trophy', accent: C.gold,
+            blurb: 'Every feat, and the skins they earned.',
+            status: '▶  VIEW',
+            action: () => this.scene.start('AchievementsScene'),
+          },
+        ],
+      },
+    ];
+  }
+
+  private buildCategoryHub(cx: number, cy: number): void {
+    const cats = this.categories();
+    const cardW = 196;
+    const cardH = 214;
+    const gap = 16;
+    const total = cats.length * cardW + (cats.length - 1) * gap;
+    const x0 = cx - total / 2 + cardW / 2;
+    cats.forEach((cat, i) => {
+      addFeatureCard(this, {
+        x: x0 + i * (cardW + gap), y: cy, w: cardW, h: cardH,
+        skew: 0,
+        accent: cat.accent,
+        icon: cat.icon,
+        title: cat.label,
+        kicker: cat.kicker,
+        blurb: cat.blurb,
+        status: `▶  ${cat.modes.length} MODES`,
+        depth: DEPTH.panel,
+        onClick: () => this.openCategory(cat),
+      });
+    });
+  }
+
+  /** The category's sub-panel: a scrim, a titled plate, its modes as cards, and a way back. */
+  private openCategory(cat: HubCategory): void {
+    this.closeCategory();
+    const { width } = this.scale;
+    const cx = width / 2;
+    const cardW = 200;
+    const cardH = 244;
+    const gap = 18;
+    const n = cat.modes.length;
+    const panelW = Math.max(560, n * cardW + (n - 1) * gap + 80);
+    const panelH = 384;
+    const panelY = 340;
+    const out = this.overlayObjects;
+
+    const scrim = addScrim(this, 0.8, DEPTH.overlay);
+    scrim.on('pointerdown', () => this.closeCategory());
+    out.push(scrim);
+
+    const panel = addPanel(this, {
+      x: cx, y: panelY, w: panelW, h: panelH, accent: cat.accent, depth: DEPTH.modal,
+      title: cat.label, subtitle: cat.kicker.toUpperCase(), titleIcon: cat.icon, glow: 0.45, brackets: true,
+    });
+    out.push(panel.g, ...panel.objects);
+    // Swallows clicks on the plate itself, so only the scrim outside it closes the panel.
+    out.push(this.add.rectangle(cx, panelY, panelW, panelH, 0xffffff, 0)
+      .setDepth(DEPTH.modal).setInteractive());
+
+    const x0 = cx - ((n - 1) * (cardW + gap)) / 2;
+    const cardY = panel.contentTop + 16 + cardH / 2;
+    cat.modes.forEach((mode, i) => {
+      const card = addFeatureCard(this, {
+        x: x0 + i * (cardW + gap), y: cardY, w: cardW, h: cardH,
+        accent: mode.accent,
+        icon: mode.icon,
+        title: mode.label,
+        kicker: mode.kicker,
+        blurb: mode.blurb,
+        status: mode.status,
+        badge: mode.badge,
+        badgeAccent: mode.accent,
+        locked: !mode.action,
+        depth: DEPTH.modalContent,
+        onClick: () => mode.action?.(),
+      });
+      out.push(...card.objects);
+      // A little entrance: each card rises in after the one before it.
+      for (const o of card.objects) {
+        const go = o as Phaser.GameObjects.Components.Alpha & Phaser.GameObjects.GameObject;
+        if (typeof go.setAlpha === 'function') {
+          go.setAlpha(0);
+          this.tweens.add({ targets: go, alpha: 1, duration: 200, delay: 60 + i * 70 });
+        }
+      }
+    });
+
+    const backBtn = addButton(this, {
+      x: cx, y: panel.bottom - 4, w: 170, h: 32, label: 'BACK', sublabel: undefined,
+      iconArt: 'chevronLeft', accent: C.steel, variant: 'quiet', fontSize: 12,
+      depth: DEPTH.modalContent + 2, cut: 8,
+      onClick: () => this.closeCategory(),
+    });
+    out.push(backBtn.container);
+    out.push(this.add.text(cx + 100, panel.bottom - 4, 'ESC', {
+      fontSize: '9px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 2,
+    }).setOrigin(0, 0.5).setDepth(DEPTH.modalContent + 2));
+  }
+
+  private closeCategory(): void {
+    for (const o of this.overlayObjects) {
+      if (o.active) o.destroy();
+    }
+    this.overlayObjects = [];
+  }
+
+  // ── Ranked flex ─────────────────────────────────────────────────────
+
+  /**
+   * A wide plate under the hub: the player's live badge, rank name, RP bar and record.
+   * Clicking it opens the ranked lobby.
+   */
+  private buildRankedFlex(cx: number, cy: number): void {
+    const p = Ranked.getProfile();
+    const accent = p.tier.color;
+    const metal = rankMetal(p.tierIndex);
+    const w = 452;
+    const h = 80;
+    const left = cx - w / 2;
+    const top = cy - h / 2;
+
+    const plate = this.add.graphics().setDepth(DEPTH.panel);
+    const paint = (hot: boolean): void => {
+      plate.clear();
+      if (hot) drawGlow(plate, left, top, w, h, accent, 0.55, 5, 3, 12);
+      fillNotchedGradient(plate, left, top, w, h,
+        mix(tintPlate(accent, hot ? 0.34 : 0.22), 0xffffff, 0.04), mix(tintPlate(accent, 0.1), 0x000000, 0.5),
+        1, 12);
+      strokeNotched(plate, left, top, w, h, hot ? mix(accent, 0xffffff, 0.4) : accent, hot ? 1 : 0.75, hot ? 2.5 : 1.6, 12);
+      strokeNotched(plate, left + 5, top + 5, w - 10, h - 10, accent, 0.16, 1, 9);
+      // Badge well.
+      plate.fillStyle(C.void_, 0.6);
+      plate.fillCircle(left + 52, cy, 36);
+      plate.lineStyle(1, accent, 0.35);
+      plate.strokeCircle(left + 52, cy, 36);
+    };
+    paint(false);
+
+    const badge = addRankBadge(this, { x: left + 52, y: cy - 2, size: 30, step: p.step, depth: DEPTH.panel + 2 });
+
+    this.add.text(left + 102, cy - 24, p.seriesWins + p.seriesLosses === 0 ? 'RANKED  ·  UNPLAYED' : 'RANKED', {
+      fontSize: '9px', fontFamily: FONT_DISPLAY, color: T.dim, letterSpacing: 3,
+    }).setOrigin(0, 0.5).setDepth(DEPTH.content);
+    this.add.text(left + 102, cy - 5, p.name.toUpperCase(), {
+      fontSize: '21px', fontFamily: FONT_DISPLAY, letterSpacing: 2,
+      color: hex(mix(accent, 0xffffff, 0.5)), stroke: hex(mix(accent, 0x000000, 0.82)), strokeThickness: 4,
+    }).setOrigin(0, 0.5).setDepth(DEPTH.content);
+
+    const summit = p.step >= Ranked.EXCELSIUS_STEP;
+    const bar = this.add.graphics().setDepth(DEPTH.content);
+    drawMeter(bar, left + 102, cy + 15, 196, 9, summit ? 1 : p.rp / p.rpToClear, metal.light);
+    this.add.text(left + 306, cy + 19, summit ? `${p.rp.toLocaleString()} RP` : `${p.rp}/${p.rpToClear} RP`, {
+      fontSize: '10px', fontFamily: FONT_DISPLAY, color: hex(mix(accent, 0xffffff, 0.4)), letterSpacing: 1,
+    }).setOrigin(0, 0.5).setDepth(DEPTH.content);
+
+    this.add.text(left + w - 18, cy - 14, `${p.seriesWins}W  ·  ${p.seriesLosses}L`, {
+      fontSize: '12px', fontFamily: FONT_DISPLAY, color: T.normal, letterSpacing: 1,
+    }).setOrigin(1, 0.5).setDepth(DEPTH.content);
+    const prompt = this.add.text(left + w - 18, cy + 8, 'CLIMB  ▶', {
+      fontSize: '12px', fontFamily: FONT_DISPLAY, color: hex(mix(accent, 0xffffff, 0.5)), letterSpacing: 2,
+    }).setOrigin(1, 0.5).setDepth(DEPTH.content);
+
+    const hit = this.add.rectangle(cx, cy, w, h, 0xffffff, 0)
+      .setDepth(DEPTH.content + 3).setInteractive({ useHandCursor: true });
+    hit.on('pointerover', () => {
+      paint(true); prompt.setColor('#ffffff'); Sfx.hover();
+      this.tweens.add({ targets: badge, scale: 1.12, duration: 160, ease: 'Back.easeOut' });
+    });
+    hit.on('pointerout', () => {
+      paint(false); prompt.setColor(hex(mix(accent, 0xffffff, 0.5)));
+      this.tweens.add({ targets: badge, scale: 1, duration: 160 });
+    });
+    hit.on('pointerdown', () => { Sfx.click(); this.scene.start('RankedScene'); });
   }
 
   // ── The crack in the world ──────────────────────────────────────────

@@ -372,7 +372,7 @@ export class Husk extends Fighter {
   }
 
   private get moveSpeed(): number {
-    let spd = this.speed * this.walkSpeedMult * this.purgeSpeedMult * this.effectSpeedMult * this.despressSlowMult() * this.overRadiatedSpeedMult() * this.devotionSlowMult() * this.premoveSlowMult() * this.goldSpeedMult * this.magnetSlowMult;
+    let spd = this.speed * this.walkSpeedMult * this.purgeSpeedMult * this.effectSpeedMult * this.despressSlowMult() * this.overRadiatedSpeedMult() * this.devotionSlowMult() * this.soundDissonanceSlowMult() * this.premoveSlowMult() * this.goldSpeedMult * this.magnetSlowMult;
     if (this.frostStacks > 0) spd *= Math.max(0.2, 1 - this.frostStacks * 0.1);
     return spd;
   }

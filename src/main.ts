@@ -28,6 +28,10 @@ import { ConquestMenuScene } from './scenes/ConquestMenuScene';
 import { DialogueScene } from './scenes/DialogueScene';
 import { StrongholdSetupScene } from './scenes/StrongholdSetupScene';
 import { StrongholdScene } from './scenes/StrongholdScene';
+import { RankedScene } from './scenes/RankedScene';
+import { RankedBanScene } from './scenes/RankedBanScene';
+import { RankedSelectScene } from './scenes/RankedSelectScene';
+import { RankedIntermissionScene } from './scenes/RankedIntermissionScene';
 import { installFastGraphics } from './render/FastGraphics';
 import { installSuperSampling, maskLogicalSize, LOGICAL_WIDTH, LOGICAL_HEIGHT, RENDER_SCALE } from './render/SuperSample';
 
@@ -50,7 +54,7 @@ const config: Phaser.Types.Core.GameConfig = {
       debug: false,
     },
   },
-  scene: [BootScene, TitleScene, MenuScene, ShopScene, LabScene, ArenaScene, GameOverScene, GauntletSelectScene, GauntletIntermediaryScene, PauseMenuScene, CampaignSlotSelectScene, CampaignWorldMapScene, CampaignWorldScene, CampaignFightMenuScene, CampaignShopScene, CampaignPortalScene, CampaignElementSelectScene, GauntletElementSelectScene, InventoryScene, VaultScene, OnlineLobbyScene, AchievementsScene, DisgracedLabScene, QuantumLabScene, AudioSettingsScene, ConquestMenuScene, DialogueScene, StrongholdSetupScene, StrongholdScene],
+  scene: [BootScene, TitleScene, MenuScene, ShopScene, LabScene, ArenaScene, GameOverScene, GauntletSelectScene, GauntletIntermediaryScene, PauseMenuScene, CampaignSlotSelectScene, CampaignWorldMapScene, CampaignWorldScene, CampaignFightMenuScene, CampaignShopScene, CampaignPortalScene, CampaignElementSelectScene, GauntletElementSelectScene, InventoryScene, VaultScene, OnlineLobbyScene, AchievementsScene, DisgracedLabScene, QuantumLabScene, AudioSettingsScene, ConquestMenuScene, DialogueScene, StrongholdSetupScene, StrongholdScene, RankedScene, RankedBanScene, RankedSelectScene, RankedIntermissionScene],
 };
 
 const game = new Phaser.Game(config);

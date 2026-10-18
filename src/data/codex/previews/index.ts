@@ -915,6 +915,8 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'fate:perk:paper': fate.perkPaper,
   'sound:perk:harmony': sound.perkHarmony,
   'sound:perk:bass': sound.perkBass,
+  'sound:mastery:autotune': sound.masteryAutotune,
+  'sound:mastery:forte-piano': sound.masteryFortePiano,
   'technology:perk:adrenaline': technology.perkAdrenaline,
   'silence:perk:hymn': silence.perkHymn,
   'silence:perk:torture': silence.perkTorture,

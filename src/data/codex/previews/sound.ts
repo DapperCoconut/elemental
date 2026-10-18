@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import {
   SOUND, SONG_COLORS, SONG_NAMES, SONG_ORDER, SONG_PALE, SoundAvatar, SoundFx, musicNote, musicNoteLayered,
+  PIANO, drawPiano, drawPianoAirborne, drawPianoTarget, drawAutotuneToggle,
 } from '../../../elements/kits/SoundVisuals';
 
 /**
@@ -702,6 +703,137 @@ export const callOfTheVoidUpgraded: PreviewScript = {
       float(ctx, sx + 70, sy - 70, 'BONG!', hex(SOUND.goldRichHi), 16);
       deafUntil = 4160 + 2600;
       ctx.at(300, () => float(ctx, sx, sy - 46, '🔇 DEAF — 0 damage', hex(SOUND.steel), 10));
+    });
+  },
+};
+
+// ══ Mastery ════════════════════════════════════════════════════════════
+
+export const masteryAutotune: PreviewScript = {
+  duration: 8000,
+  scale: 0.9,
+  caption: 'Autotune — the song picks itself: Melody when far and healthy, Staccato in fighting distance, Smooth whenever HP is low. A switch under the HP bar turns it off',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    av.setMastered(true);
+    const foe = { x: ctx.cx + 230, y: ctx.cy };
+    dummyAt(ctx, foe);
+    let song: (typeof SONG_ORDER)[number] = 'melody';
+    let hp = 1;
+    av.setSong(SONG_COLORS.melody, SONG_PALE.melody);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(18));
+    ctx.onFrame((_dt, el) => {
+      g.clear();
+      drawAutotuneToggle(g, ctx.tint, ctx.cx, 22, 124, 16, true, SONG_COLORS[song], 0);
+      // A small HP bar over the drum major, draining for the last act.
+      const c = ctx.casterAt();
+      g.fillStyle(ctx.tint(SOUND.night), 0.9); g.fillRect(c.x - 24, c.y - 70, 48, 6);
+      g.fillStyle(hp < 0.35 ? 0xdd4444 : 0x22dd55, 1); g.fillRect(c.x - 24, c.y - 70, 48 * hp, 6);
+      void el;
+    });
+    const set = (next: typeof song): void => {
+      song = next;
+      av.setSong(SONG_COLORS[next], SONG_PALE[next]);
+      av.play('flex', undefined, 360);
+      const c = ctx.casterAt();
+      fx.ripple(c.x, c.y, 10, 40, SONG_COLORS[next], 360, 3, 7, 7);
+      fx.notes(c.x, c.y - 16, 6, { speed: 90, size: 7, color: SONG_COLORS[next], rise: 40, angle: -Math.PI / 2, spread: 1.2 });
+      float(ctx, c.x, c.y - 52, `♪ AUTOTUNE · ${SONG_NAMES[next]}`, hex(SONG_COLORS[next]));
+    };
+    // Walk in from afar (Melody), close the gap (Staccato), get hurt and back off (Smooth).
+    ctx.moveCaster(ctx.cx - 260, ctx.cy);
+    ctx.at(600, () => ctx.glideCaster({ to: { x: foe.x - 150, y: foe.y }, ms: 1800, ease: 'out' }));
+    ctx.at(2100, () => set('staccato'));
+    ctx.at(3600, () => { hp = 0.3; float(ctx, ctx.casterAt().x, ctx.casterAt().y - 30, '−40', '#ff6677', 12); });
+    ctx.at(3800, () => set('smooth'));
+    ctx.at(4400, () => ctx.glideCaster({ to: { x: ctx.cx - 260, y: ctx.cy }, ms: 1800, ease: 'out' }));
+    ctx.at(5000, () => { hp = 0.45; });
+    ctx.at(6000, () => { hp = 0.7; });
+    ctx.at(6300, () => set('melody'));
+  },
+};
+
+export const masteryFortePiano: PreviewScript = {
+  duration: 10500,
+  scale: 0.8,
+  caption: 'Forte Piano — 5s at a grand piano: melodious keys charge it. Fling it, and 2s later it crashes on the cursor (20–110). At 60%+ they are Out of Tune; with a Fermata stack too they are Dissonant — slowed, bleeding, and both stacks detonate at once',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    av.setMastered(true);
+    const seat = { x: ctx.cx - 150, y: ctx.cy - 20 };
+    const foe = { x: ctx.cx + 200, y: ctx.cy + 40 };
+    dummyAt(ctx, foe);
+    ctx.moveCaster(seat.x, seat.y);
+    const st = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const flash = new Array(13).fill(0);
+    let charge = 0;
+    let phase: 'play' | 'fly' | 'done' = 'play';
+    let flyAt = 0;
+    let tuned = false;
+    let dissonant = false;
+    // A tune that climbs and comes home to C: C E G E F A G C.
+    const tune = [0, 2, 4, 2, 3, 5, 4, 7];
+    const left = seat.x - (PIANO.whiteKeys * PIANO.keyW) / 2;
+    tune.forEach((k, i) => ctx.at(500 + i * 520, () => {
+      flash[k] = 1;
+      charge = Math.min(1, charge + 0.105);
+      const kx = left + (k + 0.5) * PIANO.keyW;
+      fx.notes(kx, seat.y + PIANO.top - 4, 2, { speed: 60, size: 6, life: 700, color: SOUND.goldRich, rise: 36 });
+    }));
+    ctx.at(4900, () => {
+      charge = Math.min(1, charge + 0.08);
+      phase = 'fly';
+      flyAt = 4900;
+      av.play('raise', undefined, 500);
+      float(ctx, seat.x, seat.y - 100, `🎹 FORTE! ${Math.round(charge * 100)}%`, hex(SOUND.goldRichHi), 13);
+    });
+    ctx.at(6900, () => {
+      phase = 'done';
+      fx.pianoCrash(foe.x, foe.y, 90, charge);
+      fx.boom(foe.x, foe.y, 100, { color: SOUND.goldRich, petals: 10, notes: 10, duration: 560 });
+      float(ctx, foe.x, foe.y - 64, `🎹 CRASH! ${Math.round(20 + 90 * charge)}`, hex(SOUND.goldRichHi), 14);
+      tuned = true;
+      float(ctx, foe.x, foe.y - 40, '♭ OUT OF TUNE', hex(SOUND.sour));
+    });
+    // The slam lands on top: two stacks, Dissonance.
+    ctx.at(7700, () => {
+      fx.slam(foe.x - 40, foe.y, 0, 90, 30, SOUND.maroonHi);
+      dissonant = true;
+      float(ctx, foe.x, foe.y - 62, '♭♭ DISSONANCE', hex(SOUND.sour), 12);
+    });
+    for (const at of [8300, 8800]) ctx.at(at, () => float(ctx, foe.x + 14, foe.y - 30, '3', hex(SOUND.sour), 10));
+    ctx.at(9300, () => {
+      tuned = false; dissonant = false;
+      av.play('clap', undefined, 360);
+      fx.sprout(foe.x, foe.y - 4, SOUND.gold);
+      fx.sprout(foe.x + 10, foe.y - 10, SOUND.goldRich);
+      float(ctx, foe.x, foe.y - 48, '♪♪ DOUBLE RESOLVE 55', hex(SOUND.goldRichHi), 12);
+    });
+    ctx.onFrame((dt, el) => {
+      const t = el / 1000;
+      for (let i = 0; i < flash.length; i++) flash[i] = Math.max(0, flash[i] - dt / 220);
+      st.clear();
+      air.clear();
+      if (phase === 'play') {
+        ctx.moveCaster(seat.x, seat.y);
+        drawPiano(st, ctx.tint, seat.x, seat.y, flash, charge, t);
+      } else if (phase === 'fly') {
+        const k = Phaser.Math.Clamp((el - flyAt) / 2000, 0, 1);
+        // The cursor sweeps onto the dummy, then the mark locks.
+        const tx = Phaser.Math.Linear(ctx.cx, foe.x, Math.min(1, k * 1.6));
+        drawPianoTarget(st, ctx.tint, tx, foe.y, 90, k, k > 0.78, t);
+        if (k < 0.22) {
+          const u = k / 0.22;
+          drawPiano(st, ctx.tint, seat.x, seat.y, flash, charge, t, 1 - u, u * 3);
+          drawPianoAirborne(air, ctx.tint, seat.x, seat.y - 60 - u * u * 300, 1.4 - u * 0.5, u * 2.5, t);
+        } else if (k > 0.78) {
+          const u = (k - 0.78) / 0.22;
+          drawPianoAirborne(air, ctx.tint, tx, foe.y - (1 - u * u) * 300, 0.7 + u * 0.8, (1 - u) * 3 + 0.2, t);
+        }
+      }
+      if (tuned) SoundFx.drawOutOfTune(air, ctx.tint, foe.x, foe.y, t, 1);
+      if (dissonant) SoundFx.drawOutOfTune(air, ctx.tint, foe.x + 3, foe.y - 12, t * 1.37 + 0.5, 0.85);
     });
   },
 };

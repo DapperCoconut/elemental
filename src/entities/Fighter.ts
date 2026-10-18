@@ -517,6 +517,12 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   public soundDanceUntil = 0;
   /**
+   * Sound Mastery: out of tune twice over — a Fermata's and a Forte Piano's at once. Slower (see
+   * `soundDissonanceSlowMult`) and bleeding until either stack is detonated. The bleed is the
+   * Sound kit's; this is the slow every mover reads.
+   */
+  public soundDissonantUntil = 0;
+  /**
    * A multiplier on the *physics body only*, leaving the sprite the size it looks (Cloth's
    * scarf; first added for Radiation's retired X-Ray Vision). Its own field rather than a share of `sizeMult` because the two mean
    * different things — a target lit up by an X-ray is easier to hit without becoming bigger —
@@ -713,6 +719,13 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public effectSplitUntil = 0;
   /** If set, called with the damage amount before shields; return true to absorb the hit entirely. */
   public damageAbsorber: ((amount: number) => boolean) | null = null;
+  /**
+   * Run-long absorbers consulted right after `damageAbsorber` (City invasion relics: an item's
+   * revive, an artifact's mirror shell). A list rather than a chained `damageAbsorber` because
+   * element kits clear that slot to null all the time, and a relic has to outlive hours of that.
+   * The owner removes its own entries on reset.
+   */
+  public relicAbsorbers: Array<(amount: number) => boolean> = [];
   /**
    * Clay's Fuse: a hit counter rather than a health pool. Runs before invincibility, pierce and
    * every multiplier because the fused body counts *attacks* — a needle and a meteor each wear
@@ -1014,6 +1027,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   private notePress(abilityId: string): void {
     this.lastPressAbilityId = abilityId;
     this.lastPressAt = Date.now();
+  }
+
+  /** Movement factor from Sound Mastery's Dissonance (two Out of Tune stacks), for every mover. */
+  soundDissonanceSlowMult(): number {
+    return Date.now() < this.soundDissonantUntil ? 0.6 : 1;
   }
 
   /** Movement factor from Devotion's yellow-fire pillars (Q+), for every mover. */
@@ -1373,6 +1391,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     }
 
     if (!pierce && this.damageAbsorber && this.damageAbsorber(amount)) return;
+    if (!pierce && this.relicAbsorbers.length > 0 && this.relicAbsorbers.some((f) => f(amount))) return;
 
     if (!pierce && this.shieldCharges > 0) {
       this.shieldCharges--;

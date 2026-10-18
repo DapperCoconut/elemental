@@ -165,6 +165,8 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'magnet-mecha': ['electric-charge', 0.6],
   // Magnet Mastery: the kit plays the track going down itself.
   'mag-lev': null,
+  // Sound Mastery: the kit plays every key of the piano itself.
+  'forte-piano': null,
   'ark-of-the-covenant': null,
 
   // ── Fate ──

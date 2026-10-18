@@ -423,10 +423,11 @@ export class CampaignFightMenuScene extends Phaser.Scene {
    * be started fresh instead.
    */
   private close(): void {
-    // The Amalgam has no world scene behind it — it is opened straight off the
-    // corrupt map, so that is where backing out belongs.
+    // The Amalgam has no world of its own — its pit is in the square of Ruin Town (the
+    // corrupt realm's root), so backing out walks you back there, beside the pit.
     if (this.worldId === 'amalgam') {
-      this.scene.start('CampaignWorldMapScene', { slotIdx: this.slotIdx, mode: 'corrupt' });
+      this.scene.stop('CampaignWorldScene');
+      this.scene.start('CampaignWorldScene', { worldId: 'ruin', slotIdx: this.slotIdx });
       return;
     }
     if (this.scene.isPaused('CampaignWorldScene')) {

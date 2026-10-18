@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import type { FoeShot } from '../elements/kits/ArtifactsKit';
 import { Husk, HuskWorld, BossAoeOpts, BossShotOpts } from './Husk';
 import { Fighter } from '../entities/Fighter';
 import { Projectile } from '../combat/Projectile';
@@ -79,12 +80,14 @@ export interface InvasionArenaApi {
   readonly cityLoadout?: CityLoadoutApi | null;
   /** Swallow the rest of a click that landed on a menu, so it can't also cast. */
   latchPointer?(): void;
+  /** The arena's projectile group — City relics (the projectile artifacts) walk it. */
+  readonly projectiles?: Phaser.Physics.Arcade.Group;
 }
 
 const INTERMISSION_MS = 2600;
 const FIRST_WAVE_DELAY_MS = 2500;
 /** How long the "husks are coming for THE KITCHEN" warning gives you to walk there. */
-const ROOM_WARNING_MS = 5200;
+export const ROOM_WARNING_MS = 5200;
 
 /** Wave a Life player must clear for the Plants vs Zombies achievement (and the Wither skin). */
 const PLANTS_VS_ZOMBIES_WAVE = 8;
@@ -477,6 +480,8 @@ export class InvasionKit implements HuskWorld, EffectWorld {
           get wave() { return kit.wave; },
           get loadout() { return kit.arena.cityLoadout ?? null; },
           latchPointer: () => this.arena.latchPointer?.(),
+          get projectiles() { return kit.arena.projectiles ?? null; },
+          huskShots: (room) => this.huskShotsIn(room),
         }, this.cityMap);
       }
     } else {
@@ -1037,6 +1042,7 @@ export class InvasionKit implements HuskWorld, EffectWorld {
       : isBossWave(this.wave) ? rollBossVariant(Math.random, this.wave) : null;
     this.nextSpawnAt = time;
     this.observatory?.onWaveBegan();
+    this.city?.onWaveBegan();
 
     if (!this.waveBanner) return;
     this.waveBanner.setText(`WAVE ${this.wave}`).setFontSize(28).setColor('#88cc44').setAlpha(1);
@@ -1583,6 +1589,19 @@ export class InvasionKit implements HuskWorld, EffectWorld {
   }
 
   // ── HuskWorld (variant world-effects) ────────────────────────────
+
+  /** City relics: the husk shots in flight in `room`, as the artifact kit sees them. */
+  huskShotsIn(room: number): FoeShot[] {
+    return this.shots.filter((s) => s.room === room).map((s) => ({
+      key: s,
+      x: s.gfx.x,
+      y: s.gfx.y,
+      scaleSpeed: (mult: number) => { s.vx *= mult; s.vy *= mult; s.gfx.setAlpha(0.85); },
+    }));
+  }
+
+  /** The arena's projectile group, for a co-op guest's City relics. */
+  get playerProjectiles(): Phaser.Physics.Arcade.Group | null { return this.arena.projectiles ?? null; }
 
   fireShot(from: Husk, tx: number, ty: number, damage: number): void {
     const scene = this.arena.scene;

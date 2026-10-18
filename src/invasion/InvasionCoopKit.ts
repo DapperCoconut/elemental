@@ -247,10 +247,11 @@ export class InvasionCoopKit {
         latchPointer: () => this.api.latchPointer(),
         showFloatingText: (x, y, t, c) => this.api.showFloatingText(x, y, t, c),
         livingHusks: () => this.api.invasionKit.livingHusks(),
+        get projectiles() { return api.invasionKit.playerProjectiles; },
       });
       this.api.invasionKit.setGuestRoom(this.guestCity.currentRoom);
       const guestCity = this.guestCity;
-      this.api.invasionKit.guestMutationSpeed = () => guestCity.mutations.speedMult();
+      this.api.invasionKit.guestMutationSpeed = () => guestCity.mutations.speedMult() * guestCity.relics.speedMult;
       this.replicaFxG?.destroy();
       this.replicaFxG = this.api.scene.add.graphics().setDepth(3.5);
       this.api.invasionKit.guestRelay = null;
@@ -777,6 +778,7 @@ export class InvasionCoopKit {
         husk.onGhostDamage = (amount) => {
           Net.send({ t: 'huskDamage', id: hs.id, amount });
           this.guestCity?.mutations.onHuskHit(husk, amount);
+          this.guestCity?.relics.onHitDealt(husk, amount);
           if (husk.visible) this.api.spawnDamageNumber(husk.x, husk.y - 20, amount);
         };
         husk.onGhostStatus = (s) => Net.send({ t: 'huskStatus', id: hs.id, s });
