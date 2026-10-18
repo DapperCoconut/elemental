@@ -297,6 +297,12 @@ export interface NpcAiState {
     nightmareReady: boolean;
     pillowFresh: boolean;
     leechOut: boolean;
+    /** R+: feathers are in an awake target, so every round it lands also adds drowsiness. */
+    featherShots: boolean;
+    /** R+ in a dream: the claw's scratches add to every hit after them, so it goes first. */
+    clawFirst: boolean;
+    /** Mastery: the key the music box was bound over — the kit fires it, the rotation skips it. */
+    boxSlot?: 'r' | 'f' | 'q';
   };
   /** Walk to a sleeper to Delve into its dream, or to a leech of ours to pull it back out. */
   dreamSeekPoint?: { x: number; y: number };
@@ -352,6 +358,16 @@ export interface NpcAiState {
   npcWaxTargetPoisoned?: boolean;
   /** Click+ is ranged, so the foil may be pressed outside its melee reach. */
   npcWaxRangedClick?: boolean;
+  /**
+   * Wax Mastery: the slot Smoke-out was bound over. The kit works the smoker itself; the AI only
+   * has to stop spending a key that no longer belongs to it.
+   */
+  npcWaxSmokeSlot?: 'r' | 'f' | 'q';
+  /**
+   * Wax synergy (mastery): an own smoke cloud a hurt bot is not standing in. Inside it the bot is
+   * invisible and 20% evasive, so it outranks the candle as a place to fall back to.
+   */
+  waxSmokePoint?: { x: number; y: number };
   // Chalk
   /** A drawing window is already open — starting a second one would throw the first away. */
   npcChalkDrawing?: boolean;
@@ -602,6 +618,8 @@ export interface NpcAiState {
   npcMarrowInflammation?: number;
   /** Dendricles has transformed: F is a T-cell summon, not a strike. */
   npcMarrowTcellArmed?: boolean;
+  /** Mastery: the key Brainstem was bound over. The kit fires it; the rotation leaves it alone. */
+  npcMarrowBrainstemSlot?: 'r' | 'f' | 'q';
 
   // Tempest
   /** Off the floor: every key is its airborne form, and F does nothing. */
@@ -635,6 +653,22 @@ export interface NpcAiState {
    * *into* it — the passive's 12 on top of the burst's 10. The kit owns the geometry.
    */
   npcTempestWallShot?: { x: number; y: number };
+  /**
+   * R+ Float: the centre of a live front to drift over while airborne, so it holds the bot's
+   * height between bursts. Overrides the airborne drift the way the current point does on foot.
+   */
+  tempestFloatPoint?: { x: number; y: number };
+  /** E+: airborne with a foe under it — a hop now drops a thundercloud on them. */
+  npcTempestCloudShot?: boolean;
+  /** F+: time to fly with no current in reach — F makes a Cyclone where it stands. */
+  npcTempestCycloneReady?: boolean;
+  /** Mastery: the key Gale Uppercut was bound over. The kit throws it; the rotation leaves it alone. */
+  npcTempestUppercutSlot?: 'r' | 'f' | 'q';
+  /**
+   * Mastery synergy: a foe its uppercut has in the air, inside a burst's reach. A Click on them
+   * now juggles them higher — and the height is the slam's damage.
+   */
+  tempestJuggleShot?: { x: number; y: number };
 
   // Myth
   /** Echo Shards in hand, 0–3. The kit spends them itself; the routine only times the base casts around them. */
@@ -662,6 +696,15 @@ export interface NpcAiState {
    * path where it will be run over and flip for 20% speed. Offered only while the flip is possible.
    */
   mythFlipPoint?: { x: number; y: number };
+  /** Mastery: the key Wormhole was bound over. The kit throws it; the rotation leaves it alone. */
+  npcMythWormSlot?: 'r' | 'f' | 'q';
+  /** Mastery: Indomitable's last stand is running — 75 damage or death, so it never backs off. */
+  npcMythLastStand?: boolean;
+  /**
+   * Mastery synergy: its Wormhole's captive is about to come back out. Stand beside the red
+   * portal, and Excalibur is waiting when they do.
+   */
+  mythPortalPoint?: { x: number; y: number };
 
   // Psychic
   /**
@@ -981,7 +1024,10 @@ export class NpcOpponent extends Fighter {
     // ── State transitions ─────────────────────────────────────────
     // Retreat is a *window*, not a mode: a hurt bot peels off for a beat or two while
     // its cooldowns breathe, then finds its courage again — it never runs forever.
+    // Myth's last stand: 75 damage in eight seconds or death. Running buys nothing.
+    if (aiState.npcMythLastStand) this.retreatUntil = 0;
     if (
+      !aiState.npcMythLastStand &&
       time >= this.retreatUntil && time >= this.nextRetreatAt &&
       hpRatio < prof.retreatHp && dist < prof.range[1] + 80
     ) {
@@ -1339,7 +1385,7 @@ export class NpcOpponent extends Fighter {
       // pull back into the light would fight the chase every time it stepped out to fence.
       const hurt = this.hp / this.maxHp < 0.6;
       const seek = aiState.npcWaxSelfBombs ? { x: target.x, y: target.y }
-        : aiState.waxHiveRedeemPoint ?? (hurt ? aiState.waxCandlePoint : undefined);
+        : aiState.waxHiveRedeemPoint ?? aiState.waxSmokePoint ?? (hurt ? aiState.waxCandlePoint : undefined);
       if (seek) {
         const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
         const stop = aiState.npcWaxSelfBombs ? 110 : 60;
@@ -1382,8 +1428,8 @@ export class NpcOpponent extends Fighter {
     // ── Tempest: walking to a current ────────────────────────────
     // Offered by the kit on its own flight schedule. Soft: it stops offering the point the
     // moment the bot launches, so this never fights the airborne drift.
-    if (aiState.tempestCurrentPoint) {
-      const seek = aiState.tempestCurrentPoint;
+    if (aiState.tempestCurrentPoint || aiState.tempestFloatPoint) {
+      const seek = (aiState.tempestCurrentPoint ?? aiState.tempestFloatPoint)!;
       const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
       if (d > 30) {
         const a = Phaser.Math.Angle.Between(this.x, this.y, seek.x, seek.y);
@@ -1395,9 +1441,10 @@ export class NpcOpponent extends Fighter {
 
     // ── Myth: stepping into its own beast's path ─────────────────
     // Offered only while a flip is possible and the point is on the way, so the vault for
-    // 20% speed is deliberate rather than an accident of chasing.
-    if (aiState.mythFlipPoint) {
-      const seek = aiState.mythFlipPoint;
+    // 20% speed is deliberate rather than an accident of chasing. The mastery's portal point
+    // (waiting beside its own Wormhole for the captive to come out) uses the same walk.
+    if (aiState.mythFlipPoint || aiState.mythPortalPoint) {
+      const seek = (aiState.mythPortalPoint ?? aiState.mythFlipPoint)!;
       const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
       if (d > 16) {
         const a = Phaser.Math.Angle.Between(this.x, this.y, seek.x, seek.y);
@@ -2189,16 +2236,22 @@ export class NpcOpponent extends Fighter {
     }
     // ── Synergy: something is about to land — parry it (the kit spends the riposte) ──
     // A reaction, so it is rolled on difficulty: an Easy bot reads the swing far less often.
-    if (aiState.npcMythParryCue && !aiState.npcMythParrying && !aiState.npcMythIndomitable
+    if (aiState.npcMythParryCue && !aiState.npcMythParrying && !aiState.npcMythIndomitable && aiState.npcMythWormSlot !== 'r'
         && Math.random() < 0.25 + 0.15 * this.difficulty.level) {
       if (this.castAbility('myth-determination', buildContext(aimX, aimY))) return 'myth-determination';
     }
+    // Mastery: the key Wormhole was bound over is the kit's now.
+    const worm = aiState.npcMythWormSlot;
+    // ── Synergy (mastery): the last stand — the true-damage slash is the fastest 75 there is ──
+    if (aiState.npcMythLastStand && dist < 170) {
+      if (this.castAbility('myth-truth', buildContext(aimX, aimY))) return 'myth-truth';
+    }
     // The ultimate: with shards banked (nothing to spend them on in there) and someone to shoot.
-    if (!skipSpecials && dist < 420 && hpRatio > 0.2 && (aiState.npcMythShards ?? 0) <= 1 && !aiState.npcMythBeastLive) {
+    if (worm !== 'q' && !skipSpecials && dist < 420 && hpRatio > 0.2 && (aiState.npcMythShards ?? 0) <= 1 && !aiState.npcMythBeastLive) {
       if (this.castAbility('myth-destiny', buildContext(aimX, aimY))) return 'myth-destiny';
     }
     // The beast: mid range, aimed through the target, so the kit can walk the bot into its path.
-    if (!skipSpecials && !aiState.npcMythBeastLive && dist > 120 && dist < 380) {
+    if (worm !== 'f' && !skipSpecials && !aiState.npcMythBeastLive && dist > 120 && dist < 380) {
       if (this.castAbility('myth-beast', buildContext(aimX, aimY))) return 'myth-beast';
     }
     // The slash: inside its arc.
@@ -2245,10 +2298,22 @@ export class NpcOpponent extends Fighter {
     const charges = aiState.npcTempestCharges ?? 0;
     const lead = this.difficulty.level >= 4 ? { x: this.leadX, y: this.leadY } : { x: aimX, y: aimY };
 
+    // Mastery: the key Gale Uppercut was bound over is the kit's now.
+    const bound = aiState.npcTempestUppercutSlot;
+    // ── Synergy (mastery): a foe the uppercut threw — juggle them higher ──
+    if (aiState.tempestJuggleShot && charges > 0 && !aiState.npcTempestGrabbing) {
+      const j = aiState.tempestJuggleShot;
+      if (this.castAbility('tempest-gale', buildContext(j.x, j.y))) return 'tempest-gale';
+    }
+
     if (aiState.npcTempestAirborne) {
       // ── Synergy: a front of its own under it ──
-      if (aiState.npcTempestCanSlam && dist < 460) {
+      if (bound !== 'r' && aiState.npcTempestCanSlam && dist < 460) {
         if (this.castAbility('tempest-front', buildContext(aimX, aimY))) return 'tempest-front';
+      }
+      // ── Synergy (E+): a foe under it — the hop drops a thundercloud on them ──
+      if (aiState.npcTempestCloudShot && !aiState.npcTempestGrabbing) {
+        if (this.castAbility('tempest-kick', buildContext(aimX, aimY))) return 'tempest-kick';
       }
       // ── Synergy: the big lift, bought in the last 80px of the fall ──
       if (aiState.npcTempestLandingSoon && charges > 0 && !aiState.npcTempestGrabbing) {
@@ -2265,7 +2330,7 @@ export class NpcOpponent extends Fighter {
         if (this.castAbility('tempest-kick', buildContext(aimX, aimY))) return 'tempest-kick';
       }
       // A target underneath: the dive, and the Eye. The only reason to come down early.
-      if (!skipSpecials && dist < 150 && !aiState.npcTempestEyeLive) {
+      if (bound !== 'q' && !skipSpecials && dist < 150 && !aiState.npcTempestEyeLive) {
         if (this.castAbility('tempest-forecast', buildContext(aimX, aimY))) return 'tempest-forecast';
       }
       if (charges > 0 && dist < 400) {
@@ -2280,22 +2345,26 @@ export class NpcOpponent extends Fighter {
       if (this.castAbility('tempest-gale', buildContext(w.x, w.y))) return 'tempest-gale';
     }
     // F only ever where the kit walked it to.
-    if (aiState.tempestCurrentPoint) {
+    if (bound !== 'f' && aiState.tempestCurrentPoint) {
       const c = aiState.tempestCurrentPoint;
       if (Phaser.Math.Distance.Between(this.x, this.y, c.x, c.y) <= 70) {
         if (this.castAbility('tempest-updraft', buildContext(aimX, aimY))) return 'tempest-updraft';
       }
+    }
+    // ── Synergy (F+): no current in reach on its flight schedule — make a Cyclone ──
+    if (bound !== 'f' && aiState.npcTempestCycloneReady && !aiState.tempestCurrentPoint) {
+      if (this.castAbility('tempest-updraft', buildContext(aimX, aimY))) return 'tempest-updraft';
     }
     // The kick: inside its roll, and more so when the click is empty.
     if (!skipSpecials && dist < 160 && (charges === 0 || Math.random() < 0.6)) {
       if (this.castAbility('tempest-kick', buildContext(aimX, aimY))) return 'tempest-kick';
     }
     // The grapple: mid range, where the dash lands on them rather than past them.
-    if (!skipSpecials && dist > 90 && dist < 380 && !aiState.npcTempestEyeLive) {
+    if (bound !== 'q' && !skipSpecials && dist > 90 && dist < 380 && !aiState.npcTempestEyeLive) {
       if (this.castAbility('tempest-forecast', buildContext(aimX, aimY))) return 'tempest-forecast';
     }
     // A front toward the target: a highway now, and something to slam onto from the air later.
-    if (!skipSpecials && (aiState.npcTempestFronts ?? 0) < 2 && dist > 150 && dist < 420) {
+    if (bound !== 'r' && !skipSpecials && (aiState.npcTempestFronts ?? 0) < 2 && dist > 150 && dist < 420) {
       if (this.castAbility('tempest-front', buildContext(aimX, aimY))) return 'tempest-front';
     }
     if (charges > 0 && dist < 420) {
@@ -2332,20 +2401,24 @@ export class NpcOpponent extends Fighter {
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
     const cells = aiState.npcMarrowCells ?? 0;
     const full = cells >= 5;
+    // Mastery: the key Brainstem was bound over is the kit's now.
+    const bound = aiState.npcMarrowBrainstemSlot;
 
     // ── Q ──
     // Five mast cells that home and then detonate. They cost no socket, so the only question is
     // whether it is worth spending: in range it is 125 damage, and out of range it is still a
     // full fever bar — which is why a bot whose inflammation has run dry casts it anyway.
     const fever = aiState.npcMarrowInflammation ?? 0;
-    if (!skipSpecials && (aiState.npcMarrowMasts ?? 0) === 0 && (dist < 520 || fever < 30)) {
+    if (bound !== 'q' && !skipSpecials && (aiState.npcMarrowMasts ?? 0) === 0 && (dist < 520 || fever < 30)) {
       if (this.castAbility('marrow-mastacre', buildContext(aimX, aimY))) return 'marrow-mastacre';
     }
 
     // ── F ──
     // Armed, it is a T-cell and worth a socket. Unarmed it is a short-range strike that is only
     // worth pressing in somebody's face, where all five tentacles land and arm the next one.
-    if (aiState.npcMarrowTcellArmed) {
+    if (bound === 'f') {
+      // Given up for Brainstem.
+    } else if (aiState.npcMarrowTcellArmed) {
       if (!full && this.castAbility('marrow-dendricles', buildContext(aimX, aimY))) return 'marrow-dendricles';
     } else if (dist < 150) {
       if (this.castAbility('marrow-dendricles', buildContext(aimX, aimY))) return 'marrow-dendricles';
@@ -2362,7 +2435,7 @@ export class NpcOpponent extends Fighter {
 
     // ── R ──
     // Cheap, fast, hits hardest, and leaves a web where it falls. The bot's default spend.
-    if (!skipSpecials) {
+    if (bound !== 'r' && !skipSpecials) {
       if (this.castAbility('marrow-neutralize', buildContext(aimX, aimY))) return 'marrow-neutralize';
     }
     if (this.castAbility('marrow-macrosma', buildContext(aimX, aimY))) return 'marrow-macrosma';
@@ -3017,11 +3090,13 @@ export class NpcOpponent extends Fighter {
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
     const ranged = !!aiState.npcWaxRangedClick;
     const inReach = dist < 200;
+    // Mastery: the key Smoke-out was bound over is the kit's now.
+    const bound = aiState.npcWaxSmokeSlot;
 
     // ── Synergy: feed the hive ──
     // Bees fired through an own hive with room are stored and come back five to one. The
     // hive sits between the fighters, so most of a cone fired at it reaches the target anyway.
-    if (aiState.waxHiveFeedPoint) {
+    if (aiState.waxHiveFeedPoint && bound !== 'f') {
       const h = aiState.waxHiveFeedPoint;
       if (this.castAbility('wax-swarm', buildContext(h.x, h.y))) return 'wax-swarm';
     }
@@ -3039,16 +3114,16 @@ export class NpcOpponent extends Fighter {
       // A candle at its own feet once the fight is close enough that it will be fought in the
       // light: armour now, and longer bees later. Planted far away it would only pull the bot
       // out of the fight.
-      if (!aiState.npcWaxInCandle && (aiState.npcWaxCandles ?? 0) < 2 && dist < 260) {
+      if (bound !== 'r' && !aiState.npcWaxInCandle && (aiState.npcWaxCandles ?? 0) < 2 && dist < 260) {
         if (this.castAbility('wax-candle-mount', buildContext(this.x, this.y))) return 'wax-candle-mount';
       }
       // A hive between the fighters, where the next Swarm will pass through it.
-      if ((aiState.npcWaxHives ?? 0) === 0 && dist > 120) {
+      if (bound !== 'f' && (aiState.npcWaxHives ?? 0) === 0 && dist > 120) {
         const f = Math.min(0.45, 150 / Math.max(1, dist));
         if (this.castAbility('wax-hive-hearth', buildContext(this.x + (target.x - this.x) * f, this.y + (target.y - this.y) * f))) return 'wax-hive-hearth';
       }
       // Bombs want a lane short enough to stick.
-      if ((aiState.npcWaxBombsOut ?? 0) === 0 && dist < 380 && !aiState.npcWaxBombLaneBlocked) {
+      if (bound !== 'q' && (aiState.npcWaxBombsOut ?? 0) === 0 && dist < 380 && !aiState.npcWaxBombLaneBlocked) {
         if (this.castAbility('wax-sticky-bombs', buildContext(this.leadX, this.leadY))) return 'wax-sticky-bombs';
       }
       if (dist < 430) {
@@ -3212,13 +3287,21 @@ export class NpcOpponent extends Fighter {
     const info = aiState.npcDream;
     if (!info) return null;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-    const cast = (id: string): string | null => (this.castAbility(id, buildContext(aimX, aimY)) ? id : null);
+    // Mastery: the key the music box was bound over belongs to the kit, which winds and throws it.
+    const slotOf: Record<string, 'r' | 'f' | 'q'> = { 'dream-pillow-fight': 'r', 'dream-sleep-tight': 'f', 'dream-nightmare': 'q' };
+    const cast = (id: string): string | null => {
+      if (info.boxSlot && slotOf[id] === info.boxSlot) return null;
+      return this.castAbility(id, buildContext(aimX, aimY)) ? id : null;
+    };
 
     if (info.inDream) {
       // Synergy: the dream runs on their drowsiness — surface, top it up, come back.
       if (info.shouldSurface) return cast('dream-delve');
-      // Synergy: a dream Nightmare lets its stalker loose on top of the usual one.
+      // Synergy: a dream Nightmare lets its stalker loose on top of the usual one (and with Q+
+      // holds their meter still, so the dream stops running out).
       if (!skipSpecials && info.nightmareReady) { const c = cast('dream-nightmare'); if (c) return c; }
+      // Synergy (R+): scratches first — every one adds to every pistol round after it.
+      if (info.clawFirst && dist < 120) { const c = cast('dream-pillow-fight'); if (c) return c; }
       if (!info.leechOut && dist < 480) { const c = cast('dream-sleep-tight'); if (c) return c; }
       if (dist < 110) { const c = cast('dream-pillow-fight'); if (c) return c; }
       if (info.canFire && dist < 520) return cast('dream-sandmen');
@@ -3239,6 +3322,8 @@ export class NpcOpponent extends Fighter {
 
     // Synergy: the pillow's big dose only lands on a fresh meter, so it opens.
     if (info.pillowFresh && dist < 100) { const c = cast('dream-pillow-fight'); if (c) return c; }
+    // Synergy (R+): feathers in them turn every Sandmen round into a little more drowsiness.
+    if (info.featherShots && info.canFire && dist < 520) return cast('dream-sandmen');
     // The dagger is worth more the sleepier they already are, and a hit halves its cooldown.
     if (dist < 560) { const c = cast('dream-sleep-tight'); if (c) return c; }
     if (dist < 100) { const c = cast('dream-pillow-fight'); if (c) return c; }

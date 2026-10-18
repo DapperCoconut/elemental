@@ -382,6 +382,13 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'dream:dream-pillow-fight': dream.pillowFight,
   'dream:dream-sleep-tight': dream.sleepTight,
   'dream:dream-nightmare': dream.nightmare,
+  'dream:dream-sandmen:up': dream.sandmenUpgraded,
+  'dream:dream-delve:up': dream.delveUpgraded,
+  'dream:dream-pillow-fight:up': dream.pillowUpgraded,
+  'dream:dream-sleep-tight:up': dream.sleepTightUpgraded,
+  'dream:dream-nightmare:up': dream.nightmareUpgraded,
+  'dream:mastery:dream-dreamcatcher': dream.masteryCatcher,
+  'dream:mastery:dream-music-box': dream.masteryMusicBox,
 
   // ── Psychic ──
   'psychic:psychic-en-passant': psychic.enPassant,
@@ -430,6 +437,8 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'wax:wax-sticky-bombs': wax.stickyBombs,
   'wax:wax-sticky-bombs:up': wax.stickyBombsUpgraded,
   'wax:passive:wax-works': wax.waxWorks,
+  'wax:mastery:wax-honey-shell': wax.masteryHoneyShell,
+  'wax:mastery:wax-smoke-out': wax.masterySmokeOut,
 
   // ── Clay ──
   'clay:clay-slam': clay.slam,
@@ -491,6 +500,8 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'marrow:marrow-dendricles:up': marrow.dendriclesUpgraded,
   'marrow:marrow-mastacre': marrow.mastacre,
   'marrow:marrow-mastacre:up': marrow.mastacreUpgraded,
+  'marrow:mastery:marrow-cellular-defense': marrow.masteryCellularDefense,
+  'marrow:mastery:marrow-brainstem': marrow.masteryBrainstem,
 
   // ── Tempest ──
   'tempest:tempest-gale': tempest.galeBurst,
@@ -499,7 +510,14 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'tempest:tempest-updraft': tempest.updraft,
   'tempest:tempest-forecast': tempest.finalForecast,
   'tempest:passive:wall-slam': tempest.wallSlam,
+  'tempest:tempest-gale:up': tempest.galeUpgraded,
+  'tempest:tempest-kick:up': tempest.kickUpgraded,
+  'tempest:tempest-front:up': tempest.frontUpgraded,
+  'tempest:tempest-updraft:up': tempest.updraftUpgraded,
+  'tempest:tempest-forecast:up': tempest.forecastUpgraded,
   'tempest:passive:flight': tempest.flight,
+  'tempest:mastery:tempest-unrelenting-storm': tempest.masteryStorm,
+  'tempest:mastery:tempest-gale-uppercut': tempest.masteryUppercut,
 
   // ── Myth ── (the tray five, then Final Destiny's five guns)
   'myth:myth-whip': myth.cosmicWhip,
@@ -520,6 +538,8 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'myth:myth-beast:up': myth.beastUpgraded,
   'myth:myth-destiny:up': myth.destinyUpgraded,
   'myth:myth-rocket:up': myth.destinyUpgraded,
+  'myth:mastery:myth-last-stand': myth.masteryLastStand,
+  'myth:mastery:myth-wormhole': myth.masteryWormhole,
 
   // ── Justice ── (ground five, then the flight five)
   'justice:justice-stab': justice.stab,

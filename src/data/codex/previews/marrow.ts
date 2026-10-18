@@ -2,7 +2,8 @@ import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import {
   CELL_TINT, CellKind, MRW, MarrowAvatar, MarrowFx, antibody, bcell, boneShaft, cellGlyph,
-  cytokine, dendrite, killerT, macrophage, mastCell, netWeb, neutrophil, tcell,
+  cytokine, dendrite, killerT, macrophage, marrowFlower, mastCell, nerveTether, netWeb, neutrophil,
+  tcell, wallCell,
 } from '../../../elements/kits/MarrowVisuals';
 
 /**
@@ -1299,5 +1300,203 @@ export const inflammation: PreviewScript = {
     for (let i = 0; i < 8; i++) hit(6200 + i * 420);
     ctx.at(9800, () => readout.setText('at a full bar: 4 HP a second on you, 3 on every cell, and +30% speed'));
     ctx.at(12500, () => { macros = 0; readout.setText('and fifty seconds of it left once the macrophages are gone'); });
+  },
+};
+
+// ══ Mastery — Cellular Defense ════════════════════════════════════════
+
+export const masteryCellularDefense: PreviewScript = {
+  duration: 11000,
+  scale: 0.85,
+  caption: 'Cellular Defense — a wall of bone cells lines the arena. Each dead one is +3 inflammation; below 35% HP the wall heals you',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new MarrowAvatar(ctx.scene, ctx.tint));
+    const rig = host(av);
+    av.setFacing(0);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#f1e7d0', 11);
+    const gauge = label(ctx, ctx.w * 0.5, ctx.h - 16, '#ff8a6b', 10);
+    const shooter = { x: ctx.cx - 150, y: ctx.cy + 40 };
+    dummyAt(ctx, shooter);
+
+    // The wall: a ring of bricks round the inside of the box, the way the kit lays them.
+    const S = 18;
+    const P = 20;
+    const walls: { x: number; y: number; hp: number; seed: number; hurt: number }[] = [];
+    const x0 = 30, x1 = ctx.w - 30, y0 = 34, y1 = ctx.h - 34;
+    const nx = Math.round((x1 - x0) / P);
+    const ny = Math.round((y1 - y0) / P);
+    for (let i = 0; i <= nx; i++) {
+      const x = x0 + ((x1 - x0) * i) / nx;
+      walls.push({ x, y: y0, hp: 40, seed: Math.random() * 999, hurt: 0 });
+      walls.push({ x, y: y1, hp: 40, seed: Math.random() * 999, hurt: 0 });
+    }
+    for (let j = 1; j < ny; j++) {
+      const y = y0 + ((y1 - y0) * j) / ny;
+      walls.push({ x: x0, y, hp: 40, seed: Math.random() * 999, hurt: 0 });
+      walls.push({ x: x1, y, hp: 40, seed: Math.random() * 999, hurt: 0 });
+    }
+    const total = walls.length;
+    const shots: { x: number; y: number; vx: number; vy: number }[] = [];
+    let fever = 10;
+    let hp = 0.62;
+    let regen = 0;
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const bar = ctx.adopt(ctx.scene.add.graphics().setDepth(10));
+
+    ctx.onFrame((delta, elapsed) => {
+      const dt = delta / 1000;
+      const t = elapsed / 1000;
+      fever = Math.max(0, fever - 2 * dt);
+      g.clear();
+      air.clear();
+      for (const w of walls) {
+        w.hurt = Math.max(0, w.hurt - dt * 3);
+        wallCell(g, ctx.tint, w.x, w.y, S, 1, { t, seed: w.seed, hp: w.hp / 40, hurt: w.hurt, red: fever / 100 * 0.35 });
+      }
+      for (let i = shots.length - 1; i >= 0; i--) {
+        const sh = shots[i];
+        sh.x += sh.vx * dt;
+        sh.y += sh.vy * dt;
+        const w = walls.find((c) => Math.abs(c.x - sh.x) <= S / 2 + 3 && Math.abs(c.y - sh.y) <= S / 2 + 3);
+        if (w) {
+          shots.splice(i, 1);
+          w.hp -= 20;
+          w.hurt = 1;
+          if (w.hp <= 0) {
+            walls.splice(walls.indexOf(w), 1);
+            fever = Math.min(100, fever + 3);
+            ctx.capture(() => fx.lyse(w.x, w.y, MRW.bone, 13));
+            float(ctx, w.x, w.y - 20, '🔥 +3', hex(MRW.inflameLit), 11);
+          }
+          continue;
+        }
+        if (sh.x < 0 || sh.x > ctx.w || sh.y < 0 || sh.y > ctx.h) { shots.splice(i, 1); continue; }
+        air.fillStyle(0xffd27a, 1);
+        air.fillCircle(sh.x, sh.y, 4);
+      }
+      if (hp < 0.35) {
+        regen += 8 * (walls.length / total) * dt;
+        if (regen >= 4) {
+          regen -= 4;
+          hp = Math.min(1, hp + 4 / 400);
+          float(ctx, ctx.cx + 16, ctx.cy - 30, '+4', '#33dd66', 11);
+          ctx.capture(() => fx.serum(ctx.cx, ctx.cy + 6, 3, 16, 480));
+        }
+      }
+      bar.clear();
+      const bx = ctx.cx - 26;
+      const by = ctx.cy - 38;
+      bar.fillStyle(0x111111, 0.85); bar.fillRect(bx - 1, by - 1, 54, 9);
+      bar.fillStyle(hp < 0.35 ? 0xff5a4a : 0xffcc00, 1); bar.fillRect(bx, by, 52 * hp, 7);
+      rig?.setInflammation(fever / 100);
+      gauge.setText(`🧱 WALL ${walls.length}/${total}   ·   inflammation ${Math.round(fever)}/100`
+        + (hp < 0.35 ? `   ·   +${(8 * walls.length / total).toFixed(1)} HP/s from the wall` : ''));
+    });
+
+    // The enemy sprays wide: what misses the host flies into the wall and is spent on it.
+    const volley = (ms: number): void => ctx.at(ms, () => {
+      for (let k = 0; k < 5; k++) {
+        const a = Math.atan2(ctx.cy - shooter.y, ctx.cx - shooter.x) + Math.PI + (k - 2) * 0.35 + (Math.random() - 0.5) * 0.1;
+        shots.push({ x: shooter.x, y: shooter.y, vx: Math.cos(a) * 420, vy: Math.sin(a) * 420 });
+      }
+    });
+    ctx.at(200, () => readout.setText('Mastered, the arena is bricked in with your cells — 40 HP each'));
+    for (let i = 0; i < 6; i++) volley(900 + i * 650);
+    ctx.at(2600, () => readout.setText('shots that reach the border are spent on the wall — every dead brick is +3 fever'));
+    ctx.at(5600, () => {
+      hp = 0.28;
+      float(ctx, ctx.cx, ctx.cy - 52, '-130', '#ffb3aa', 14);
+      readout.setText('drop under 35% HP and the wall keeps you alive — 8 HP/s at a full wall');
+    });
+    ctx.at(8600, () => readout.setText('the fewer bricks are left standing, the less it heals. They never grow back'));
+  },
+};
+
+// ══ Mastery — Brainstem ═══════════════════════════════════════════════
+
+export const masteryBrainstem: PreviewScript = {
+  duration: 12000,
+  scale: 0.85,
+  caption: 'Brainstem — ride the cell nearest your cursor and fight as it. You are an invincible bone flower until it dies',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const home = { x: ctx.w * 0.2, y: ctx.cy };
+    ctx.useAvatar(() => new MarrowAvatar(ctx.scene, ctx.tint));
+    ctx.moveCaster(home.x, home.y, { facing: 0 });
+    const victim = { x: ctx.w * 0.82, y: ctx.cy + 10 };
+    dummyAt(ctx, victim);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#ffb3d8', 11);
+
+    const macro = makeCell('macrophage', home.x + 40, home.y - 40);
+    const neut = makeCell('neutrophil', home.x + 30, home.y + 46);
+    let riding = false;
+    let bloom = 0;
+    let cursor = { x: macro.x + 10, y: macro.y };
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const cur = ctx.adopt(ctx.scene.add.graphics().setDepth(12));
+
+    ctx.onFrame((delta, elapsed) => {
+      const dt = delta / 1000;
+      const t = elapsed / 1000;
+      macro.anim = Math.max(0, macro.anim - dt * 2.6);
+      bloom = Phaser.Math.Clamp(bloom + (riding ? 1 : -1) * delta / 380, 0, 1);
+      ctx.moveCaster(home.x, home.y, { alpha: 1 - bloom });
+      g.clear();
+      // The other cell keeps its own legs, drifting round the host.
+      const orbit = t * 0.9 + neut.seed;
+      step(neut, home.x + Math.cos(orbit) * 46, home.y + Math.sin(orbit) * 30, 100, dt);
+      drawCell(ctx, g, neut, t);
+      if (riding) {
+        // WASD: the player walks the macrophage straight at the dummy and bites.
+        const d = Phaser.Math.Distance.Between(macro.x, macro.y, victim.x, victim.y);
+        if (d > 44) {
+          const a = Math.atan2(victim.y - macro.y, victim.x - macro.x);
+          macro.x += Math.cos(a) * 95 * dt;
+          macro.y += Math.sin(a) * 95 * dt;
+        } else if (elapsed >= macro.next) {
+          macro.next = elapsed + 1100;
+          macro.anim = 1;
+          float(ctx, victim.x + (Math.random() - 0.5) * 20, victim.y - 26, '15', '#ffffff', 13);
+          float(ctx, home.x, home.y - 40, '💉 +5', hex(MRW.serum), 11);
+          ctx.capture(() => fx.bite(victim.x, victim.y, Math.PI, 22));
+        }
+        macro.ang = Math.atan2(victim.y - macro.y, victim.x - macro.x);
+        nerveTether(g, ctx.tint, home.x, home.y, macro.x, macro.y, bloom, { t });
+        cursor = { x: victim.x - 10, y: victim.y - 10 };
+      }
+      if (macro.hp > 0) drawCell(ctx, g, macro, t);
+      marrowFlower(g, ctx.tint, home.x, home.y, 1, { t, open: bloom });
+      // The cursor.
+      cur.clear();
+      cur.lineStyle(1.5, 0xffffff, 0.85);
+      cur.strokeCircle(cursor.x, cursor.y, 6);
+      cur.lineBetween(cursor.x - 9, cursor.y, cursor.x + 9, cursor.y);
+      cur.lineBetween(cursor.x, cursor.y - 9, cursor.x, cursor.y + 9);
+    });
+
+    ctx.at(300, () => readout.setText('two cells out — the cursor is on the macrophage'));
+    ctx.at(1500, () => {
+      riding = true;
+      macro.next = 0;
+      ctx.capture(() => fx.serum(home.x, home.y, 12, 34, 760));
+      float(ctx, home.x, home.y - 54, '🧠 BRAINSTEM', hex(MRW.mastLit), 13);
+      readout.setText('the host folds into a bone flower — rooted and invincible');
+    });
+    ctx.at(3200, () => readout.setText('WASD walks the cell, Click is its attack: the macrophage bites and feeds you'));
+    ctx.at(4400, () => {
+      for (let i = 0; i < 3; i++) {
+        ctx.at(i * 260, () => float(ctx, home.x + (Math.random() - 0.5) * 20, home.y - 30, 'IMMUNE', '#f1e7d0', 11));
+      }
+      readout.setText('shots at the flower do nothing');
+    });
+    ctx.at(8400, () => {
+      macro.hp = 0;
+      riding = false;
+      ctx.capture(() => fx.lyse(macro.x, macro.y, CELL_TINT.macrophage, 20));
+      float(ctx, home.x, home.y - 50, '🦴 BACK IN THE BONE', hex(MRW.bone), 12);
+      readout.setText('when the cell dies the ride is over — 30 second cooldown from here');
+    });
   },
 };

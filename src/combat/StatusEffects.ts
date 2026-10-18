@@ -458,6 +458,12 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     write: (f, t) => { f.dreamClawedUntil = t; },
   },
   {
+    id: 'dream-paralysis', name: 'Sleep Paralysis', emoji: '🫥', color: 0x8a1f4a, priority: 46.94, kind: 'timer',
+    description: 'A nightmare left you unable to stir: your drowsiness cannot go down at all — not by wearing off, not by sleeping it off — and you move 20% slower until it lets go.',
+    read: (f) => f.dreamParalysisUntil,
+    write: (f, t) => { f.dreamParalysisUntil = t; },
+  },
+  {
     id: 'harvest-poison', name: 'Rot Poison', emoji: '🧪', color: 0x8fd14f, priority: 46.75, kind: 'timer',
     description: 'Splashed by a shattered crow vial. You take 4 damage a second until it wears off; every vial that hits you adds another 4.',
     read: (f) => f.harvestPoisonUntil,

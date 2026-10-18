@@ -3,9 +3,10 @@ import { ElementCodex } from '../AbilityCodex';
 /**
  * Tempest — a storm with a second axis.
  *
- * Verified against `src/elements/tempest.ts` and `kits/TempestKit.ts`. Tempest has no shop
- * upgrades, perks or mastery enhancements yet; every figure below is a constant at the top of the
- * kit. Every key has a floor form and an airborne form, and both are documented on the one entry.
+ * Verified against `src/elements/tempest.ts` and `kits/TempestKit.ts`. Tempest has its five shop
+ * upgrades (2026-10-18) and its mastery (2026-10-18, the kit's "Mastery" block) but no perks yet;
+ * every figure below is a constant at the top of the kit. Every key has a floor form and an airborne form, and both are documented
+ * on the one entry.
  */
 const tempest: ElementCodex = {
   identity:
@@ -55,7 +56,7 @@ const tempest: ElementCodex = {
         { tag: 'utility', label: 'Your keys change', detail: 'Click lifts you when it catches you, E is a hop, R drops you onto a front, Q is a dive. F does nothing in the air.' },
       ],
       notes: [
-        'The rig is drawn up to 0.55px higher per px of height, and is clamped so it never leaves the top of the screen; the shadow and the chevron ladder under it show the real gap.',
+        'The rig is drawn 0.55px higher per px of height. There is no ceiling: climb far enough and you fly off the top of the screen, where a pin on the edge (with your gauge) shows where you are. The shadow and the chevron ladder under you show the real gap.',
         'Your hitbox and health bar stay on the floor where your shadow is. Being airborne changes what may hit you, not where you are.',
       ],
     },
@@ -83,6 +84,17 @@ const tempest: ElementCodex = {
         'The faint ring at your cursor while the shot flies is where it will go off.',
         'It is a registered projectile: anything that steals or intercepts shots can take it.',
       ],
+      upgrade: {
+        basics:
+          'Hailstorm: the burst is thrown as a hailstone. It deals 13 instead of 10, and wherever it goes off '
+          + 'it shatters into 6 splinters of ice shrapnel that fly 170px outward at 520 px/s, each dealing 4 '
+          + 'to the first enemy it meets. Everything else — the shove, the lift, the charges — is unchanged.',
+        effects: [
+          { tag: 'damage', label: 'The stone', detail: '13 damage in the 72px blast instead of 10.', requiresUpgrade: 'click' },
+          { tag: 'damage', label: 'Shrapnel', detail: '6 splinters fanned all the way round, 520 px/s, 170px range. 4 damage each to the first enemy they touch (18px).', requiresUpgrade: 'click' },
+          { tag: 'utility', label: 'Point blank', detail: 'A body at the centre of the blast takes the stone and most of the shrapnel: up to 13 + 24.', requiresUpgrade: 'click' },
+        ],
+      },
     },
 
     'tempest-kick': {
@@ -104,6 +116,19 @@ const tempest: ElementCodex = {
         'Roll through someone who is between you and a wall and the kick is 15 + 12.',
         'The hop plus a well-timed self-burst is how you stay up long enough for a front slam.',
       ],
+      upgrade: {
+        basics:
+          'Shocking Acceleration: the roll leaves a trail of static electricity along its whole path for 5 '
+          + 'seconds. Anyone standing on it (within 22px) takes 5 every half second. Airborne, the hop instead '
+          + 'leaves a thundercloud where you were for 5 seconds; once a second it strikes everyone within 150px '
+          + 'of it for 8.',
+        effects: [
+          { tag: 'area', label: 'Static trail', detail: 'Along the roll, 44px wide, for 5s. A floor hazard: airborne bodies are safe.', requiresUpgrade: 'e' },
+          { tag: 'damage', label: 'The static', detail: '5 damage every 0.5s to each enemy standing on it.', requiresUpgrade: 'e' },
+          { tag: 'summon', label: 'Airborne — thundercloud', detail: 'Left over the floor where you hopped, for 5s.', requiresUpgrade: 'e' },
+          { tag: 'damage', label: 'Airborne — strikes', detail: '8 damage to everyone within 150px of the cloud, every second — up to 5 strikes.', requiresUpgrade: 'e' },
+        ],
+      },
     },
 
     'tempest-front': {
@@ -130,6 +155,17 @@ const tempest: ElementCodex = {
         'Two fronts is two slams: each one you drop onto sends you higher, and the second is worth more than the first.',
         'Fronts are floor — a summon purge does not raze them, and a raze does not stop them.',
       ],
+      upgrade: {
+        basics:
+          'Float: while you are airborne over a live front, you do not lose height. Gravity keeps slowing a '
+          + 'climb but never turns it into a fall, so you hang where you peaked for as long as you stay over the '
+          + 'lane. A dive, a slam or a grapple crash still comes down as normal.',
+        effects: [
+          { tag: 'movement', label: 'Hover', detail: 'Over any live front, airborne: downward speed is held at 0. Bursts, hops and bounces still lift you.', requiresUpgrade: 'r' },
+          { tag: 'utility', label: 'Exceptions', detail: 'Diving (Q), slamming (R) or crashing out of the grapple ignores it.', requiresUpgrade: 'r' },
+          { tag: 'utility', label: 'The tell', detail: 'A cushion of wind under you and a Float status. Hovering over one front is how you bank height for a slam onto the other.', requiresUpgrade: 'r' },
+        ],
+      },
     },
 
     'tempest-updraft': {
@@ -150,6 +186,16 @@ const tempest: ElementCodex = {
         'The bot walks to a current on its own schedule — a Tempest opponent will go up roughly every 6–7 seconds.',
         'A current is also an escape: nothing melee can follow you up.',
       ],
+      upgrade: {
+        basics:
+          'Cyclone: press F with no current in reach and you spin up a cyclone where you stand and ride it — '
+          + 'an 880 px/s launch instead of a current\'s 640 — but Updraft then goes on double cooldown (2.4s). '
+          + 'Near a current, F rides the current as normal.',
+        effects: [
+          { tag: 'movement', label: 'The cyclone', detail: '880 px/s upward from anywhere on the floor with no current within 80px.', requiresUpgrade: 'f' },
+          { tag: 'cost', label: 'Double cooldown', detail: 'A cyclone puts Updraft on 2× its cooldown.', requiresUpgrade: 'f' },
+        ],
+      },
     },
 
     'tempest-forecast': {
@@ -177,6 +223,69 @@ const tempest: ElementCodex = {
         'The Eye of the Storm is a tell, not a buff: a huge electric eye painted over your body for exactly as long as someone is bouncing.',
         'Bodies that cannot be moved (Unbreakable, Unstoppable) cannot be grappled and are not caught by the currents.',
         'The grappled body is drawn on the floor with a shadow ladder under it — its hitbox never leaves the ground, so it can still be shot while held.',
+      ],
+      upgrade: {
+        basics:
+          'Herald of Doom: the moment you dive (Q in the air) or start coming down from the grapple, you cut in '
+          + 'on the broadcast — the Tempest at the weather map, a 5-day forecast of skulls and DEATH, and a ticker '
+          + 'crawling underneath. When you land, the weather goes wild for 12 seconds: lightning strikes at random '
+          + '(warned, 12 in 50px), hail falls from the top of the screen (5 a stone), gales make every gain of '
+          + 'height 40% bigger, and the rain leaves puddles that slow anyone standing in them by 40%.',
+        effects: [
+          { tag: 'utility', label: 'The forecast', detail: 'A 2.6s broadcast over the top of the screen. It pauses nothing.', requiresUpgrade: 'q' },
+          { tag: 'damage', label: 'Lightning', detail: 'About every 0.7s, half of them near an enemy: 0.45s warning ring, then 12 to everyone within 50px.', requiresUpgrade: 'q' },
+          { tag: 'damage', label: 'Hail', detail: 'A stone from the top edge every 0.15s, a quarter dropped over an enemy: 5 to the first enemy it hits.', requiresUpgrade: 'q' },
+          { tag: 'buff', label: 'Gales', detail: 'Every gain of elevation — launches, bursts, hops, slam bounces — is 1.4× while the weather lasts. Anyone\'s, not just yours.', requiresUpgrade: 'q' },
+          { tag: 'control', label: 'Rain puddles', detail: 'One every 0.55s, 42px, lasting 5s: 40% slower while standing in one. Airborne bodies are safe.', requiresUpgrade: 'q' },
+          { tag: 'cost', label: 'Duration', detail: '12s from the landing. Another Herald landing restarts the clock.', requiresUpgrade: 'q' },
+        ],
+      },
+    },
+  },
+
+  mastery: {
+    'tempest-unrelenting-storm': {
+      basics:
+        'Your storm never lifts. For the whole match a very tame version of Herald of Doom\'s weather hangs '
+        + 'over the arena: every 5.5 to 11.5 seconds a thunderbolt drops on a random spot (warned first, 12 '
+        + 'damage to a foe under it), now and then a hailstone falls from the top of the screen (5 damage), '
+        + 'and up to two rain puddles lie on the floor, slowing foes who wade through them. A light breeze '
+        + 'pushes every enemy toward the right of the screen; it never pushes you. None of it adds elevation. '
+        + 'A bank of cloud lines the top of the arena, and it turns black and starts to flicker with lightning '
+        + 'while anyone\'s Herald weather is live.',
+      cast: 'Passive. Always on while Tempest Mastery is enabled and Tempest is the element being played.',
+      effects: [
+        { tag: 'damage', label: 'Stray bolts', detail: 'One every 5.5–11.5s, on a random spot, never aimed. 12 to foes inside 50px of it, after a warning on the floor.' },
+        { tag: 'damage', label: 'Spotty hail', detail: 'A roll every ~1.1s, and about half of them fall: 5 to a foe a stone lands on.' },
+        { tag: 'control', label: 'Puddles', detail: 'At most two at a time, 6.5s each: foes inside are 40% slower.' },
+        { tag: 'control', label: 'The breeze', detail: '42px a second toward the right of the screen, on every foe that is not already being thrown, shoved or held. You are never pushed.' },
+        { tag: 'area', label: 'The cloud bank', detail: 'Hangs about 40px deep along the top edge all match; darkens, thickens and crackles during Herald of Doom.' },
+      ],
+      notes: [
+        'It is not Herald of Doom: no gales, so launches stay their normal size.',
+        'A foe standing still drifts right on their own. Keep the walls on that side in mind for Wall Slam.',
+      ],
+    },
+    'tempest-gale-uppercut': {
+      basics:
+        'Dash 250px toward the cursor and drive an uppercut into the first enemy you meet. It deals only 8 '
+        + 'damage, but it throws them into the air. While they are up they cannot move — they hang where they '
+        + 'were hit, drawn higher the higher they go — and they come down under the same gravity a flier '
+        + 'does, only with no top speed short of a dive. When they hit the floor they take 6 to 60 damage, '
+        + 'by how fast they were falling. Burst a Gale Burst (Click) on them while they are up and they go '
+        + '360 higher every time — a juggle is a bigger slam.',
+      cast: 'Press the bound key (R, F or Q) to dash at the cursor. 9 second cooldown from the press.',
+      effects: [
+        { tag: 'movement', label: 'The dash', detail: '250px in 0.22s toward the cursor; stops on the first enemy within 46px.' },
+        { tag: 'damage', label: 'Uppercut', detail: '8 damage on contact.' },
+        { tag: 'control', label: 'Thrown', detail: 'Launched at 720 upward speed: about 1.4s up and the same down, unable to move. Melee and floor hazards cannot reach a body in the air.' },
+        { tag: 'damage', label: 'The slam', detail: '6 + 54 × (landing speed ÷ 1500): about 31 from one uppercut, 45+ after a couple of juggles, 60 at most.' },
+        { tag: 'buff', label: 'Juggle', detail: 'A Gale Burst that goes off within 80px of the thrown body adds 360 upward speed. Herald weather makes it 40% more.' },
+      ],
+      notes: [
+        'Another Tempest is thrown on its own height sim: its own landing is the slam, and it is credited to you.',
+        'Anything that cannot be moved (bosses, Unstoppable bodies) takes the 8 and stays on the floor.',
+        'A Tempest NPC on Nightmare binds it over Summon Front, throws it at foes inside the dash, and spends its Click juggling them.',
       ],
     },
   },

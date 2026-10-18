@@ -174,6 +174,16 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    * so an unlimited number of attached bees can stack without borrowing another kit's field.
    */
   public waxIncomingMult = 1;
+  /**
+   * Wax Mastery. `waxSmokeDodge` (Smoke-out) is the chance a hit is lost in the smoke while the
+   * fighter stands in its own cloud; `waxHoneyShell` (Honey Shell) eats the next hit of 30 or more
+   * whole. Both are rolled on the body's own machine — WaxKit never arms them on a replica — and
+   * each has a counter so the kit can see it happen and say so.
+   */
+  public waxSmokeDodge = 0;
+  public waxSmokeDodges = 0;
+  public waxHoneyShell = false;
+  public waxHoneyShellPops = 0;
   /** Clay Mastery — Bedrock: 0.8 while the fighter stands within 175px of its own golem. Rewritten every frame by ClayKit. */
   public clayIncomingMult = 1;
   /**
@@ -241,6 +251,22 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    * slowed through the kit's own speed mults instead.
    */
   public magnetSlowMult = 1;
+  /**
+   * Tempest Q+ (Herald of Doom): standing in a storm puddle. Written every frame by TempestKit
+   * (its one writer), read by Husk.moveSpeed; the duel pair is slowed through the kit's own speed
+   * mults instead.
+   */
+  public tempestSlowMult = 1;
+  /**
+   * Dream: the claw's slow and Sleep Paralysis' (Q+). Written every frame by DreamKit (its one
+   * writer), read by Husk.moveSpeed; the duel pair is slowed through the kit's own speed mults.
+   */
+  public dreamSlowMult = 1;
+  /**
+   * Dream E+ (Lucid Dream): the chance a hit misses a dreamer who has dreamt themselves stronger.
+   * Rolled on the body's own machine, like the cloak's; DreamKit is its one writer.
+   */
+  public dreamLucidDodge = 0;
   public goldCloakDodges = 0;
   /**
    * Ruin (Unstoppable Decay): 1.1^stacks of rot on this fighter, times 0.9^stacks carried by
@@ -445,6 +471,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public dreamNightmareUntil = 0;
   /** Dream (dreaming R, the claw swipe): scene-time expiry of the slow it leaves. */
   public dreamClawedUntil = 0;
+  /**
+   * Dream Q+ (Sleep Paralysis): scene-time expiry of the window a Nightmare leaves behind, in
+   * which the victim's drowsiness cannot go down at all and they move 20% slower.
+   */
+  public dreamParalysisUntil = 0;
   /**
    * Sand (Sand Barrier, R+): the veil of sand a parkouring Sand player is wrapped in. Its own
    * field for the same reason — SandKit rewrites it every frame off the state of the course.
@@ -1290,6 +1321,23 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     // own machine (a replica's chance is always 0), so a relayed hit is dodged by the victim.
     if (!pierce && !opts?.selfInflicted && amount > 0 && this.goldCloakDodge > 0 && Math.random() < this.goldCloakDodge) {
       this.goldCloakDodges++;
+      this.lastIncomingDamage = 0;
+      return;
+    }
+    // Dream E+ — a dreamer who has dreamt themselves quicker. Same rules: the victim rolls.
+    if (!pierce && !opts?.selfInflicted && amount > 0 && this.dreamLucidDodge > 0 && Math.random() < this.dreamLucidDodge) {
+      this.lastIncomingDamage = 0;
+      return;
+    }
+    // Wax Mastery — Smoke-out, then Honey Shell. Same rules as the cloak above: the victim rolls.
+    if (!pierce && !opts?.selfInflicted && amount > 0 && this.waxSmokeDodge > 0 && Math.random() < this.waxSmokeDodge) {
+      this.waxSmokeDodges++;
+      this.lastIncomingDamage = 0;
+      return;
+    }
+    if (!pierce && !opts?.selfInflicted && amount >= 30 && this.waxHoneyShell) {
+      this.waxHoneyShell = false;
+      this.waxHoneyShellPops++;
       this.lastIncomingDamage = 0;
       return;
     }

@@ -496,7 +496,7 @@ export class OnlineLobbyScene extends Phaser.Scene {
     // old save, and Psychic's mastery was redone; the arena gates those three on the new mastery
     // being finished, so the lobby does too.
     this.mySel.masteryOn = PlayerData.isMasteryEnabled(elementId)
-      && ((elementId !== 'fortune' && elementId !== 'gluttony' && elementId !== 'psychic' && elementId !== 'magnet' && elementId !== 'radiation' && elementId !== 'passion' && elementId !== 'sound') || isMasteryComplete(elementId));
+      && ((elementId !== 'fortune' && elementId !== 'gluttony' && elementId !== 'psychic' && elementId !== 'magnet' && elementId !== 'radiation' && elementId !== 'passion' && elementId !== 'sound' && elementId !== 'dream') || isMasteryComplete(elementId));
     this.mySel.masteryBinds = this.mySel.masteryOn ? PlayerData.getMasteryBinds(elementId) : {};
     this.mySel.skin = PlayerData.getEquippedSkin(elementId);
 

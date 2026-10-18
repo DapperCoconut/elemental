@@ -629,15 +629,13 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
       q: ab(60, 16000, { kind: 'zone', radius: 110, ms: 3000, color: 0x331155, shape: 'rune' }, 'Nightmare: darkness and terror — the pack takes more from everything.', { rider: { weaken: { mult: 1.25, ms: 3000 } } }),
     },
     upgrades: {
-      // Dream's shop upgrades and mastery were retired with the 2026-10-17 rework; these
-      // placeholders keep the tower's ladder whole until new ones land.
-      click: { damageMult: 1.3, note: 'heavier rounds' },
-      e: { damageMult: 1.3, note: 'deeper dreams' },
-      r: { rider: { freeze: 1400 }, note: 'softer pillow' },
-      f: { cooldownMult: 0.75, note: 'quicker hands' },
-      q: { damageMult: 1.3, note: 'worse nightmares' },
+      click: { damageMult: 1.3, countAdd: 1, note: 'amnesia — the rest of the clip, thrown' },
+      e: { damageMult: 1.4, areaMult: 1.2, note: 'lucid dream — spikes and red mist in their dream' },
+      r: { rider: { freeze: 1400 }, note: 'unending comfort — feathers that keep them drowsy' },
+      f: { cooldownMult: 0.75, rider: { freeze: 2400 }, note: 'sleeping pills — the dagger stays in' },
+      q: { damageMult: 1.3, rider: { slow: { mult: 0.8, ms: 5000 } }, note: 'sleep paralysis — they cannot stir' },
     },
-    mastery: { ...ab(0, 14000, { kind: 'rally', radius: 220, ms: 10000, damageMult: 1.3, color: 0x8b5cf6 }, 'Dreamwalk: the towers around it fight as if in a dream.'), name: 'Dreamwalk' },
+    mastery: { ...ab(0, 12000, { kind: 'zone', radius: 110, ms: 12000, color: 0x8b5cf6, shape: 'rune' }, 'Music-box: a lullaby on the path — the pack slows to a sleepy shuffle while it plays.', { rider: { slow: { mult: 0.6, ms: 600 } } }), name: 'Music-box' },
   },
 
   // ── Unstable ──────────────────────────────────────────────────────────
@@ -869,6 +867,7 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
       f: { damageMult: 1.5, note: 'killer t' },
       q: { damageMult: 1.5, areaMult: 1.2, note: 'autoimmunity' },
     },
+    mastery: { ...ab(30, 20000, { kind: 'summon', ms: 12000, color: 0xd1435c, attackMs: 700, attackRange: 90, label: '🧠' }, 'Brainstem: the tower puts its mind into a cell and walks it down the path to fight.'), name: 'Brainstem' },
   },
   tempest: {
     tiers: ['Breeze', 'Squall', 'Gale', 'Cyclone', 'Hurricane'],
@@ -881,12 +880,13 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
       q: ab(40, 20000, { kind: 'splash', radius: 160, color: 0xfff3a6, shape: 'burst' }, 'Final Forecast: the Eye opens — a dive-speed landing that bounces the whole pack off the walls.', { rider: { stun: 1500, knockback: 150 } }),
     },
     upgrades: {
-      click: { countAdd: 1, note: 'second charge' },
-      e: { damageMult: 1.4, note: 'longer roll' },
-      r: { areaMult: 1.4, note: 'wider front' },
-      f: { damageMult: 1.5, note: 'higher current' },
-      q: { areaMult: 1.3, rider: { stun: 2200 }, note: 'eye of the storm' },
+      click: { damageMult: 1.3, countAdd: 1, note: 'hailstorm — the stone shatters into shrapnel' },
+      e: { damageMult: 1.4, rider: { knockback: 110, slow: { mult: 0.7, ms: 1000 } }, note: 'shocking acceleration — a trail of static' },
+      r: { areaMult: 1.4, note: 'float — the front holds the pack up longer' },
+      f: { damageMult: 1.5, cooldownMult: 0.8, note: 'cyclone — a current wherever it likes' },
+      q: { areaMult: 1.3, rider: { stun: 2200 }, note: 'herald of doom — the weather turns' },
     },
+    mastery: { ...ab(14, 9000, { kind: 'splash', radius: 80, color: 0xf4f9ff, shape: 'burst' }, 'Gale Uppercut: a fist of wind throws the pack into the air — they hit the path again hard.', { rider: { stun: 1400, knockback: 30 } }), name: 'Gale Uppercut' },
   },
   myth: {
     tiers: ['Tale', 'Fable', 'Legend', 'Saga', 'Myth'],
@@ -905,6 +905,7 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
       f: { damageMult: 1.4, note: 'Beyonders: a rider throwing spears' },
       q: { areaMult: 1.3, damageMult: 1.3, note: 'Slayer: every gun\'s second act' },
     },
+    mastery: { ...ab(10, 20000, { kind: 'zone', radius: 110, ms: 8000, color: 0xff4a5e, shape: 'rune' }, 'Wormhole: a red portal opens on the path — husks that walk into it are lost to the Lands of Myth for a while.', { rider: { stun: 3000, slow: { mult: 0.5, ms: 1500 } } }), name: 'Wormhole' },
   },
   cloth: {
     tiers: ['Thread', 'Stitch', 'Weave', 'Tapestry', 'Loom'],
@@ -1041,7 +1042,7 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
       f: { damageMult: 1.4, note: 'honey making' },
       q: { damageMult: 1.5, note: 'rule beetanica' },
     },
-    mastery: { ...ab(12, 10000, { kind: 'zone', radius: 120, ms: 6000, color: 0xffcc55, shape: 'fire' }, 'Candlelight: hot wax over the path.', { rider: { burn: 1500 } }), name: 'Candlelight' },
+    mastery: { ...ab(0, 11000, { kind: 'zone', radius: 130, ms: 7000, color: 0x8c8172, shape: 'puddle' }, 'Smoke-out: a smoker cloud over the path — husks inside blunder about blind.', { rider: { slow: { mult: 0.5, ms: 1200 }, expose: 1200 } }), name: 'Smoke-out' },
   },
   clay: {
     tiers: ['Lump', 'Mould', 'Kiln', 'Golem', 'Bedrock'],

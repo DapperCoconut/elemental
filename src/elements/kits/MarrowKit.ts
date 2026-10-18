@@ -9,7 +9,8 @@ import { Sfx } from '../../audio';
 import { FONT_DISPLAY } from '../../ui/Theme';
 import {
   CELL_TINT, CellKind, MRW, MarrowAvatar, MarrowColorFn, MarrowFx, antibody, bcell, boneShaft,
-  cellGlyph, cytokine, dendrite, killerT, macrophage, mastCell, netWeb, neutrophil, tcell,
+  cellGlyph, cytokine, dendrite, killerT, macrophage, marrowFlower, mastCell, nerveTether, netWeb,
+  neutrophil, tcell, wallCell,
 } from './MarrowVisuals';
 import { meterGain } from '../../combat/Meters';
 
@@ -175,7 +176,48 @@ const AUTO_RATE = 0.7;
 /** What a red cell's strike does to your own body and your own cells standing in it. */
 const AUTO_SPLASH = 0.5;
 
+// ── Mastery: Cellular Defense (passive) ──────────────────────────────────────
+/** One square osteocyte, edge to edge round the whole arena. */
+const WALL_SIZE = 22;
+const WALL_PITCH = 24;
+const WALL_HP = 40;
+/** What each one is worth to the fever when it dies. */
+const WALL_INFLAM = 3;
+/** An enemy pressed into a live brick grinds it down at this rate. */
+const WALL_GRIND_DPS = 20;
+/** Below this share of max HP the wall starts paying out — `WALL_REGEN` a second at a full wall. */
+const WALL_LOW_HP = 0.35;
+const WALL_REGEN = 8;
+
+// ── Mastery: Brainstem (bindable) ────────────────────────────────────────────
+const BRAIN_ID = 'marrow-brainstem';
+/** "Until it dies" — but a well-fed macrophage could outlive the match, so it is capped. */
+const BRAIN_MAX_MS = 12000;
+/** Counted from the moment control ends, not from the cast. */
+const BRAIN_COOLDOWN_MS = 30000;
+/** Click while driving a cell: how far past its own reach it will still find a body to hit. */
+const BRAIN_REACH_SLACK = 14;
+/** A swing at nothing still costs a beat. */
+const BRAIN_WHIFF_MS = 320;
+/** The bot reaches for it when it is losing and has something worth riding. */
+const NPC_BRAIN_HP = 0.5;
+const NPC_BRAIN_CELL_HP = 40;
+
+/** "Reach 75% inflammation" — counted on the way up; the bar has to fall back under 60 to count again. */
+const FEVER_PEAK = 75;
+const FEVER_REARM = 60;
+
 // ── World objects ────────────────────────────────────────────────────────────
+
+/** Mastery — one brick of the Cellular Defense wall. Not a summon: it takes no socket. */
+interface WallCell {
+  owner: Owner;
+  x: number;
+  y: number;
+  hp: number;
+  seed: number;
+  hurt: number;
+}
 
 interface AntiShot {
   owner: Owner;
@@ -325,6 +367,26 @@ interface Side {
   killerTarget: Summon | null;
   /** Q+ — when the autoimmune response ends. */
   autoUntil: number;
+  /** Mastery stat: the bar is above the 75 line and has not yet fallen back under 60. */
+  feverPeaked: boolean;
+  /** Mastery — Cellular Defense: the wall has been raised this match, and how big it was. */
+  wallRaised: boolean;
+  wallTotal: number;
+  wallRegenAccum: number;
+  /** Mastery — Brainstem: the cell the host is riding, when that ends, and when it may again. */
+  brain: Summon | null;
+  brainUntil: number;
+  brainReadyAt: number;
+  /** This kit set the host invincible, so only this kit takes it back off. */
+  brainInvincible: boolean;
+  /** Where the flower took root, so the host cannot be pushed off it. */
+  rootX: number;
+  rootY: number;
+  /** The player's WASD while driving a cell, -1..1 per axis. */
+  steerX: number;
+  steerY: number;
+  /** 0–1, lerped: how far the host has turned into the flower. */
+  bloom: number;
 }
 
 function makeSide(owner: Owner): Side {
@@ -332,6 +394,9 @@ function makeSide(owner: Owner): Side {
     owner, aimX: 0, aimY: 0,
     inflammation: 0, lastRaw: -1, hitAccum: 0, regenAccum: 0, tcellArmed: false,
     bcellReadyAt: 0, killerWindowUntil: 0, killerTarget: null, autoUntil: 0,
+    feverPeaked: false, wallRaised: false, wallTotal: 0, wallRegenAccum: 0,
+    brain: null, brainUntil: 0, brainReadyAt: 0, brainInvincible: false,
+    rootX: 0, rootY: 0, steerX: 0, steerY: 0, bloom: 0,
   };
 }
 
@@ -356,6 +421,13 @@ export interface MarrowArenaApi {
   get rKey(): Phaser.Input.Keyboard.Key;
   get fKey(): Phaser.Input.Keyboard.Key;
   get qKey(): Phaser.Input.Keyboard.Key;
+  /** WASD — only read while Brainstem has the player driving a cell instead of the host. */
+  get wKey(): Phaser.Input.Keyboard.Key;
+  get aKey(): Phaser.Input.Keyboard.Key;
+  get sKey(): Phaser.Input.Keyboard.Key;
+  get dKey(): Phaser.Input.Keyboard.Key;
+  get isOnline(): boolean;
+  get isInvasion(): boolean;
   get elementId(): string;
   get npcElementId(): string;
   get width(): number;
@@ -377,6 +449,13 @@ export interface MarrowArenaApi {
   hasUpgrade(owner: Owner, slot: string): boolean;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
+  /** Which mastery enhancement each side dropped over an R/F/Q slot, or null. */
+  masteryBindFor(slot: string): string | null;
+  npcMasteryBindFor(slot: string): string | null;
+  /** Mastery progress. Gated on the element by the adapter, so the kit records unconditionally. */
+  recordMasteryStat(key: string, amount: number): void;
+  /** Online: a Brainstem press the peer's sim has to replay. */
+  broadcast(id: string): void;
 }
 
 // ── MarrowKit ────────────────────────────────────────────────────────────────
@@ -412,6 +491,7 @@ export class MarrowKit implements SummonPurgeTarget {
   private bcells: BCell[] = [];
   private cytos: Cyto[] = [];
   private vulns: Vuln[] = [];
+  private walls: WallCell[] = [];
 
   constructor(api: MarrowArenaApi) {
     this.api = api;
@@ -549,6 +629,7 @@ export class MarrowKit implements SummonPurgeTarget {
         s.lastRaw = f.rawDamageTaken;
         s.inflammation = INFLAM_MAX;
         this.payInflammation(owner, dt);
+        this.trackFeverPeak(owner);
         continue;
       }
 
@@ -571,6 +652,18 @@ export class MarrowKit implements SummonPurgeTarget {
       s.inflammation = Phaser.Math.Clamp(s.inflammation + swing * dt, 0, INFLAM_MAX);
 
       this.payInflammation(owner, dt);
+      this.trackFeverPeak(owner);
+    }
+  }
+
+  /** Mastery stat: one count per climb over the 75 line. Autoimmunity's pinned 100 is one climb. */
+  private trackFeverPeak(owner: Owner): void {
+    const s = this.sides[owner];
+    if (!s.feverPeaked && s.inflammation >= FEVER_PEAK) {
+      s.feverPeaked = true;
+      this.record(owner, 'feverPeaks');
+    } else if (s.feverPeaked && s.inflammation < FEVER_REARM) {
+      s.feverPeaked = false;
     }
   }
 
@@ -597,7 +690,13 @@ export class MarrowKit implements SummonPurgeTarget {
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
   reset(): void {
+    // Brainstem's invincibility is written onto the bodies, so it has to be handed back first.
+    for (const owner of BOTH) {
+      const f = this.fighter(owner);
+      if (this.sides[owner].brainInvincible && f) f.isInvincible = false;
+    }
     this.sides = { player: makeSide('player'), npc: makeSide('npc') };
+    this.walls = [];
     for (const s of this.shots) if (s.reg) this.api.projectileRegistry.remove(s.reg);
     this.shots = [];
     this.stuck = [];
@@ -632,6 +731,18 @@ export class MarrowKit implements SummonPurgeTarget {
 
     const p = this.api.player;
     if (!this.alive(p)) return;
+
+    // Mastery — Brainstem. While the host is a flower, the keyboard and the click belong to the
+    // cell it is riding: WASD walks it, Click is its attack, and the bound key lets go early.
+    const brainSlot = this.brainSlot('player');
+    if (s.brain) {
+      s.steerX = (this.api.dKey.isDown ? 1 : 0) - (this.api.aKey.isDown ? 1 : 0);
+      s.steerY = (this.api.sKey.isDown ? 1 : 0) - (this.api.wKey.isDown ? 1 : 0);
+      if (pointer.isDown) this.brainAttack(s.brain);
+      if (brainSlot && Phaser.Input.Keyboard.JustDown(this.slotKey(brainSlot))) this.endBrainstem('player');
+      return;
+    }
+
     const ctx = this.api.buildPlayerContext(mouseX, mouseY);
 
     // The click auto-fires on a held button. Its own 440ms cooldown is the rate limiter, so
@@ -642,9 +753,19 @@ export class MarrowKit implements SummonPurgeTarget {
       p.castAbility('marrow-antibody', ctx);
     }
     if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('marrow-macrosma', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('marrow-neutralize', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('marrow-dendricles', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('marrow-mastacre', ctx);
+    // Mastery: whichever of R/F/Q Brainstem was dropped on stops being its own ability.
+    if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) {
+      if (brainSlot === 'r') this.tryBrainstem('player', mouseX, mouseY);
+      else p.castAbility('marrow-neutralize', ctx);
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) {
+      if (brainSlot === 'f') this.tryBrainstem('player', mouseX, mouseY);
+      else p.castAbility('marrow-dendricles', ctx);
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) {
+      if (brainSlot === 'q') this.tryBrainstem('player', mouseX, mouseY);
+      else p.castAbility('marrow-mastacre', ctx);
+    }
   }
 
   // ── Ability entry points (called from build*Context) ───────────────────────
@@ -893,6 +1014,7 @@ export class MarrowKit implements SummonPurgeTarget {
 
     const f = this.fighter(v.owner);
     this.side(v.owner).tcellArmed = true;
+    this.record(v.owner, 'tcellsArmed');
     this.fx(v.owner).serum(f.x, f.y - 10, 8, 26, 700);
     if (v.owner === 'player') {
       this.api.showFloatingText(f.x, f.y - 58, `🧬 ${best}/5 — T-CELL READY`, this.hex(MRW.tcellLit));
@@ -987,6 +1109,7 @@ export class MarrowKit implements SummonPurgeTarget {
     });
     this.avatar(owner)?.play('flex');
     this.fx(owner).serum(f.x, f.y, 5, 20, 520);
+    this.record(owner, 'cellsSummoned');
     return true;
   }
 
@@ -1013,6 +1136,9 @@ export class MarrowKit implements SummonPurgeTarget {
     this.updateVolleys();
     this.updateKillerWindow();
     this.updateLashes();
+    this.updateWalls(delta);
+    this.updateBrainstem(delta);
+    this.updateNpcMastery();
     this.updateAvatars(delta, playerIs, npcIs);
 
     this.paintGround();
@@ -1026,7 +1152,7 @@ export class MarrowKit implements SummonPurgeTarget {
     return this.shots.length > 0 || this.stuck.length > 0 || this.summons.length > 0
       || this.masts.length > 0 || this.nets.length > 0 || this.lashes.length > 0
       || this.volleys.length > 0 || this.bcells.length > 0 || this.cytos.length > 0
-      || this.vulns.length > 0;
+      || this.vulns.length > 0 || this.walls.length > 0 || !!this.sides.player.brain || !!this.sides.npc.brain;
   }
 
   private ensureLayers(): void {
@@ -1116,6 +1242,7 @@ export class MarrowKit implements SummonPurgeTarget {
    * projectiles use.
    */
   private shootCells(): void {
+    this.shootWalls();
     if (this.summons.length === 0 && this.masts.length === 0 && this.bcells.length === 0) return;
     const bodies: { owner: Owner; x: number; y: number; r: number; hit: (dmg: number) => void }[] = [];
     for (const c of this.summons) {
@@ -1173,6 +1300,15 @@ export class MarrowKit implements SummonPurgeTarget {
         : c.kind === 'neutrophil' ? NEUT_SPEED
           : c.kind === 'killer' ? KILLER_SPEED : TCELL_SPEED;
       const speed = base * c.spdMult * (1 + INFLAM_SPEED * this.heat(c.owner)) * (auto ? AUTO_SPEED : 1);
+
+      // Mastery — Brainstem: the player is driving this one. The bot's and a peer's ridden cell
+      // keep their own legs; only a local human has WASD to read.
+      if (c.owner === 'player' && this.sides.player.brain === c && this.api.elementId === 'marrow') {
+        this.driveCell(c, speed, dt);
+        if (c.kind === 'macrophage' && this.now >= c.nextDevourAt) this.devour(c);
+        if (c.kind === 'neutrophil' && this.up(c.owner, 'r') && this.now >= c.nextCytoAt) this.cytokineBlast(c);
+        continue;
+      }
 
       // A T-cell nurses the board — unless the fever has turned, in which case nobody nurses:
       // it drops whoever it was propping up and goes to bite something like everything else.
@@ -1421,8 +1557,11 @@ export class MarrowKit implements SummonPurgeTarget {
     c.ang = Math.atan2(p.y - c.y, p.x - c.x);
     c.reach = Math.min(1, c.reach + dt * 4);
     if (c.reach < 1 || this.now < c.nextActionAt) return;
+    if (!this.handOff(c, p)) c.help = null;
+  }
 
-    // ── The hand-off ──
+  /** The hand-off: the buff (once) and a top-up (for less every time). False if `p` needed neither. */
+  private handOff(c: Summon, p: Summon): boolean {
     c.nextActionAt = this.now + TCELL_HELP_MS;
     let did = false;
     if (!p.buffed) {
@@ -1439,9 +1578,10 @@ export class MarrowKit implements SummonPurgeTarget {
       did = true;
       this.api.showFloatingText(p.x, p.y - 16, `💚 +${amount}`, this.hex(MRW.serum));
     }
-    if (!did) { c.help = null; return; }
+    if (!did) return false;
     this.fx(c.owner).serum(p.x, p.y, 6, 20, 520);
     Sfx.playAt('heal', p.x, { volume: 0.45, rate: 1.35 });
+    return true;
   }
 
   /** Unbuffed first, then whoever is furthest from full. Never itself. */
@@ -1462,6 +1602,7 @@ export class MarrowKit implements SummonPurgeTarget {
     const i = this.summons.indexOf(c);
     if (i < 0) return;
     this.summons.splice(i, 1);
+    // A ridden cell dying is the end of the ride — `updateBrainstem` sees it gone next frame.
     this.fx(c.owner).lyse(c.x, c.y, CELL_TINT[c.kind], c.kind === 'macrophage' ? 20 : 14);
     Sfx.playAt('slime-splat', c.x, { volume: 0.5, rate: 1.2 });
     this.janitorTidy(c.owner);
@@ -1651,6 +1792,8 @@ export class MarrowKit implements SummonPurgeTarget {
       if (Phaser.Math.Distance.Between(m.x, m.y, t.x, t.y) > MAST_BLAST_R + 8 * t.sizeMult) continue;
       t.takeDamage(dmg);
       this.api.spawnHitFlash(t.x, t.y, MRW.mastLit);
+      // Mastery stat: the blast is what put them down.
+      if (t.hp <= 0) this.record(m.owner, 'mastacreKills');
     }
     // Q+ — a red mast cell does not check whose blast radius it is standing in.
     if (auto) {
@@ -1706,6 +1849,373 @@ export class MarrowKit implements SummonPurgeTarget {
     }
   }
 
+  // ── Mastery ────────────────────────────────────────────────────────────────
+
+  /** Whether Element Mastery is on for whichever side is asking, and they are Marrow. */
+  private masteryOn(owner: Owner): boolean {
+    return this.isMarrow(owner) && (owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
+  }
+
+  /** Which slot Brainstem was dropped on, or null. */
+  private brainSlot(owner: Owner): 'r' | 'f' | 'q' | null {
+    if (!this.masteryOn(owner)) return null;
+    for (const sl of ['r', 'f', 'q'] as const) {
+      const bind = owner === 'player' ? this.api.masteryBindFor(sl) : this.api.npcMasteryBindFor(sl);
+      if (bind === BRAIN_ID) return sl;
+    }
+    return null;
+  }
+
+  private slotKey(slot: 'r' | 'f' | 'q'): Phaser.Input.Keyboard.Key {
+    return slot === 'r' ? this.api.rKey : slot === 'f' ? this.api.fKey : this.api.qKey;
+  }
+
+  /**
+   * Mastery progress. Only ever the player's — the grind is the human's, not the bot's — and not
+   * gated on the mastery being on, since earning it is the point.
+   */
+  private record(owner: Owner, key: string, amount = 1): void {
+    if (owner === 'player' && this.isMarrow('player')) this.api.recordMasteryStat(key, amount);
+  }
+
+  /** An online opponent's sim is only a replica: its clocks and its legs live on its own machine. */
+  private isReplica(owner: Owner): boolean {
+    return owner === 'npc' && this.api.isOnline;
+  }
+
+  // ── Cellular Defense (passive) ──
+
+  /**
+   * Brick the arena in, once a match. One osteocyte every 24px round the inside of the border,
+   * edge to edge. In a mastered mirror the second wall is laid one row further in, so the two
+   * never sit on top of each other.
+   */
+  private raiseWall(owner: Owner): void {
+    const s = this.sides[owner];
+    s.wallRaised = true;
+    const row = owner === 'npc' && this.masteryOn('player') ? 1 : 0;
+    const inset = WALL_SIZE / 2 + 1 + row * WALL_PITCH;
+    const x0 = this.left + inset;
+    const x1 = this.right - inset;
+    const y0 = this.top + inset;
+    const y1 = this.bottom - inset;
+    const push = (x: number, y: number): void => {
+      this.walls.push({ owner, x, y, hp: WALL_HP, seed: Math.random() * 999, hurt: 0 });
+    };
+    const nx = Math.max(1, Math.round((x1 - x0) / WALL_PITCH));
+    const ny = Math.max(1, Math.round((y1 - y0) / WALL_PITCH));
+    for (let i = 0; i <= nx; i++) {
+      const x = x0 + ((x1 - x0) * i) / nx;
+      push(x, y0);
+      push(x, y1);
+    }
+    for (let j = 1; j < ny; j++) {
+      const y = y0 + ((y1 - y0) * j) / ny;
+      push(x0, y);
+      push(x1, y);
+    }
+    s.wallTotal = this.walls.filter((w) => w.owner === owner).length;
+  }
+
+  private wallsOf(owner: Owner): number {
+    let n = 0;
+    for (const w of this.walls) if (w.owner === owner) n++;
+    return n;
+  }
+
+  /** A brick is gone. It is a cell dying, so the fever is fed for it. */
+  private wallDied(w: WallCell): void {
+    this.fx(w.owner).lyse(w.x, w.y, MRW.bone, 13);
+    Sfx.playAt('bone', w.x, { volume: 0.35, rate: 1.3 + Math.random() * 0.3 });
+    this.addInflammation(w.owner, WALL_INFLAM);
+  }
+
+  /**
+   * The wall, per frame: raise it, bury it with its keeper, let enemies lean on it (and grind it
+   * down doing so), and pay the low-HP regeneration off however much of it is still standing.
+   */
+  private updateWalls(delta: number): void {
+    const dt = delta / 1000;
+    for (const owner of BOTH) {
+      const s = this.sides[owner];
+      const on = this.masteryOn(owner) && this.alive(this.fighter(owner));
+      if (on && !s.wallRaised) this.raiseWall(owner);
+      if (!on && this.wallsOf(owner) > 0) this.walls = this.walls.filter((w) => w.owner !== owner);
+    }
+    if (this.walls.length === 0) return;
+
+    const half = WALL_SIZE / 2;
+    for (let i = this.walls.length - 1; i >= 0; i--) {
+      const w = this.walls[i];
+      w.hurt = Math.max(0, w.hurt - dt * 3);
+      // It is a wall: a body of the other side cannot stand in it. Pushed out the inner face, and
+      // the brick it is pressed into is worn down while it leans there. A streamed online body is
+      // left to its own sim, which has this same wall on it.
+      for (const t of this.targetsOf(w.owner)) {
+        if (t === this.api.npc && this.isReplica('npc')) continue;
+        const r = 14 * t.sizeMult;
+        const dx = t.x - w.x;
+        const dy = t.y - w.y;
+        if (Math.abs(dx) >= half + r || Math.abs(dy) >= half + r) continue;
+        const body = t.body as Phaser.Physics.Arcade.Body | null;
+        // Out along whichever axis faces into the arena from this brick.
+        const cx = this.api.width / 2;
+        const cy = this.api.height / 2;
+        const edgeX = Math.abs(w.x - cx) / (this.api.width / 2);
+        const edgeY = Math.abs(w.y - cy) / (this.api.height / 2);
+        if (edgeX >= edgeY) {
+          const dir = w.x < cx ? 1 : -1;
+          t.x = w.x + dir * (half + r);
+          if (body && Math.sign(body.velocity.x) === -dir) body.velocity.x = 0;
+        } else {
+          const dir = w.y < cy ? 1 : -1;
+          t.y = w.y + dir * (half + r);
+          if (body && Math.sign(body.velocity.y) === -dir) body.velocity.y = 0;
+        }
+        w.hp -= WALL_GRIND_DPS * dt;
+        w.hurt = Math.max(w.hurt, 0.5);
+      }
+      if (w.hp > 0) continue;
+      this.walls.splice(i, 1);
+      this.wallDied(w);
+    }
+
+    // Regeneration at low HP, scaled by the share of the wall still alive.
+    for (const owner of BOTH) {
+      const s = this.sides[owner];
+      const f = this.fighter(owner);
+      if (!this.masteryOn(owner) || this.isReplica(owner) || !this.alive(f) || s.wallTotal <= 0) continue;
+      if (f.hp >= f.maxHp * WALL_LOW_HP) { s.wallRegenAccum = 0; continue; }
+      s.wallRegenAccum += WALL_REGEN * (this.wallsOf(owner) / s.wallTotal) * dt;
+      const whole = Math.floor(s.wallRegenAccum);
+      if (whole <= 0) continue;
+      s.wallRegenAccum -= whole;
+      f.heal(whole);
+      if (Math.random() < 0.3) this.fx(owner).serum(f.x, f.y + 6, 3, 16, 480);
+    }
+  }
+
+  /**
+   * The wall takes fire like every other cell: any shot of the other side's that reaches the
+   * border band and touches a brick is spent on it. Only shots already near an edge are tested,
+   * since that is the only place a brick can be.
+   */
+  private shootWalls(): void {
+    if (this.walls.length === 0) return;
+    const band = WALL_SIZE + WALL_PITCH + 6;
+    const half = WALL_SIZE / 2 + 3;
+    for (const obj of this.api.projectiles.getChildren()) {
+      const p = obj as Projectile;
+      if (!p.active || p.isHeal) continue;
+      if (p.x > this.left + band && p.x < this.right - band && p.y > this.top + band && p.y < this.bottom - band) continue;
+      const shooter: Owner = p.isFromPlayer ? 'player' : 'npc';
+      const w = this.walls.find((c) => c.owner !== shooter
+        && Math.abs(p.x - c.x) <= half && Math.abs(p.y - c.y) <= half);
+      if (!w) continue;
+      w.hp -= Math.max(5, p.damage ?? 10);
+      w.hurt = 1;
+      p.destroy();
+    }
+    for (const w of this.walls) {
+      for (const rp of this.api.projectileRegistry.within(this.other(w.owner), w.x, w.y, WALL_SIZE * 0.7)) {
+        w.hp -= Math.max(5, rp.damage);
+        w.hurt = 1;
+        this.api.projectileRegistry.steal(rp);
+        break;
+      }
+    }
+  }
+
+  // ── Brainstem (bindable) ──
+
+  /**
+   * Brainstem, from the bound key, the bot, or an online peer's replay. Takes the cell nearest
+   * `tx, ty`. It never goes through `castAbility` — the enhancement is not in the element's
+   * ability list — so the refusals that gate every other key are repeated here. A replica pays
+   * nothing: its cooldown lives on its own machine.
+   */
+  private tryBrainstem(owner: Owner, tx: number, ty: number): boolean {
+    const f = this.fighter(owner);
+    const s = this.side(owner);
+    if (!this.alive(f) || s.brain) return false;
+    if (!this.isReplica(owner)) {
+      const wall = Date.now();
+      if (wall < f.disarmedUntil || wall < f.chickenUntil || wall < f.silencedUntil || wall < f.stunnedUntil) return false;
+      if (this.now < s.brainReadyAt) return false;
+    }
+    let cell: Summon | null = null;
+    let best = Infinity;
+    for (const c of this.mine(owner)) {
+      const d = Phaser.Math.Distance.Between(c.x, c.y, tx, ty);
+      if (d < best) { best = d; cell = c; }
+    }
+    if (!cell) {
+      if (owner === 'player') {
+        this.api.showFloatingText(f.x, f.y - 46, '🧠 NO CELL TO TAKE', this.hex(MRW.boneShade));
+        Sfx.playAt('ui-denied', f.x, { volume: 0.55 });
+      }
+      return false;
+    }
+    this.startBrainstem(owner, cell);
+    if (owner === 'player') this.api.broadcast(`${BRAIN_ID}:${Math.round(cell.x)}:${Math.round(cell.y)}`);
+    return true;
+  }
+
+  private startBrainstem(owner: Owner, cell: Summon): void {
+    const f = this.fighter(owner);
+    const s = this.side(owner);
+    s.brain = cell;
+    s.brainUntil = this.now + BRAIN_MAX_MS;
+    s.rootX = f.x;
+    s.rootY = f.y;
+    s.steerX = 0;
+    s.steerY = 0;
+    if (!f.isInvincible) { f.isInvincible = true; s.brainInvincible = true; }
+    this.ensureLayers();
+    this.fx(owner).serum(f.x, f.y, 12, 34, 760);
+    this.fx(owner).lyse(cell.x, cell.y, MRW.mastLit, 18);
+    this.api.showFloatingText(f.x, f.y - 54, '🧠 BRAINSTEM', this.hex(MRW.mastLit));
+    this.api.showFloatingText(cell.x, cell.y - 32, `🧠 ${KIND_NAME[cell.kind].toUpperCase()}`, this.hex(MRW.mastLit));
+    Sfx.playAt('status-buff', f.x, { volume: 0.8, rate: 0.6 });
+    Sfx.playAt('bone', f.x, { volume: 0.6, rate: 0.8 });
+  }
+
+  /** The ride is over — the cell died, the clock ran out, or the bound key let go. */
+  private endBrainstem(owner: Owner, announce = true): void {
+    const s = this.side(owner);
+    if (!s.brain) return;
+    const f = this.fighter(owner);
+    s.brain = null;
+    s.steerX = 0;
+    s.steerY = 0;
+    if (s.brainInvincible && f) f.isInvincible = false;
+    s.brainInvincible = false;
+    s.brainReadyAt = this.now + BRAIN_COOLDOWN_MS;
+    if (owner === 'player') this.api.broadcast(`${BRAIN_ID}-end`);
+    if (!announce || !this.alive(f)) return;
+    this.fx(owner).serum(f.x, f.y, 8, 26, 560);
+    if (owner === 'player') this.api.showFloatingText(f.x, f.y - 50, '🦴 BACK IN THE BONE', this.hex(MRW.bone));
+    Sfx.playAt('bone', f.x, { volume: 0.6, rate: 1.1 });
+  }
+
+  /** Bloom, the ride's end conditions, and the flower holding its ground. */
+  private updateBrainstem(delta: number): void {
+    for (const owner of BOTH) {
+      const s = this.sides[owner];
+      s.bloom = Phaser.Math.Clamp(s.bloom + (s.brain ? 1 : -1) * delta / 380, 0, 1);
+      if (!s.brain) continue;
+      const f = this.fighter(owner);
+      const c = s.brain;
+      if (!this.alive(f) || !this.masteryOn(owner) || !this.summons.includes(c) || c.hp <= 0
+          || (!this.isReplica(owner) && this.now >= s.brainUntil)) {
+        this.endBrainstem(owner);
+        continue;
+      }
+      // Something else (a timer elsewhere in the arena) may have cleared the flag mid-ride.
+      if (!f.isInvincible) { f.isInvincible = true; s.brainInvincible = true; }
+      // Rooted: a flower does not get knocked across the room. A peer's host is streamed.
+      if (this.isReplica(owner)) continue;
+      if (Phaser.Math.Distance.Between(f.x, f.y, s.rootX, s.rootY) > 1) {
+        const body = f.body as Phaser.Physics.Arcade.Body | null;
+        if (body) body.reset(s.rootX, s.rootY); else f.setPosition(s.rootX, s.rootY);
+      }
+    }
+  }
+
+  /** WASD on the ridden cell, at the cell's own speed; it faces the cursor. */
+  private driveCell(c: Summon, speed: number, dt: number): void {
+    const s = this.sides.player;
+    c.reach = Math.max(0, c.reach - dt * 3);
+    c.help = null;
+    c.target = null;
+    const len = Math.hypot(s.steerX, s.steerY);
+    if (len > 0) {
+      c.x = Phaser.Math.Clamp(c.x + (s.steerX / len) * speed * dt, this.left, this.right);
+      c.y = Phaser.Math.Clamp(c.y + (s.steerY / len) * speed * dt, this.top, this.bottom);
+    }
+    c.ang = Math.atan2(s.aimY - c.y, s.aimX - c.x);
+  }
+
+  /**
+   * Click while riding: the cell's own attack, on whatever is nearest inside its reach. A
+   * T-cell's "attack" is its hand-off, onto the nearest cell of yours it can touch; a killer T
+   * with its lunge ready throws the lunge instead of the jab.
+   */
+  private brainAttack(c: Summon): void {
+    if (this.now < c.nextActionAt) return;
+    if (c.kind === 'tcell') {
+      let p: Summon | null = null;
+      let best = TCELL_REACH + BRAIN_REACH_SLACK;
+      for (const o of this.summons) {
+        if (o === c || o.owner !== c.owner || o.hp <= 0) continue;
+        const d = Phaser.Math.Distance.Between(c.x, c.y, o.x, o.y);
+        if (d <= best) { best = d; p = o; }
+      }
+      if (p) {
+        c.ang = Math.atan2(p.y - c.y, p.x - c.x);
+        c.reach = 1;
+        c.help = p;
+        this.handOff(c, p);
+      } else {
+        c.nextActionAt = this.now + BRAIN_WHIFF_MS;
+      }
+      return;
+    }
+    let t: Fighter | null = null;
+    let best = Infinity;
+    for (const e of this.targetsOf(c.owner)) {
+      const d = Phaser.Math.Distance.Between(c.x, c.y, e.x, e.y);
+      if (d < best) { best = d; t = e; }
+    }
+    if (t && c.kind === 'killer' && this.now >= c.nextDashAt && best <= KILLER_DASH_DIST + KILLER_DASH_R) {
+      this.killerDash(c, t);
+      c.nextActionAt = this.now + BRAIN_WHIFF_MS;
+      return;
+    }
+    if (t && best <= this.cellReach(c) + 8 * t.sizeMult + BRAIN_REACH_SLACK) {
+      this.cellAttack(c, t);
+      return;
+    }
+    c.anim = 1;
+    c.nextActionAt = this.now + BRAIN_WHIFF_MS;
+    Sfx.playAt('whoosh', c.x, { volume: 0.25, rate: 1.6 });
+  }
+
+  /**
+   * The bot's half of Brainstem: losing, and with a cell worth riding, it turns into the flower
+   * and lets that cell fight on. The cell keeps its own AI — the point for the bot is the
+   * invincible host. Driven here, not from `NpcOpponent`; the rotation only has to leave the key.
+   */
+  private updateNpcMastery(): void {
+    if (this.api.isOnline || this.api.isInvasion || !this.brainSlot('npc')) return;
+    const n = this.api.npc;
+    const s = this.sides.npc;
+    if (!this.alive(n) || s.brain || this.now < s.brainReadyAt) return;
+    if (n.hp > n.maxHp * NPC_BRAIN_HP) return;
+    let pick: Summon | null = null;
+    for (const c of this.mine('npc')) {
+      if (c.kind === 'tcell' || c.hp < NPC_BRAIN_CELL_HP) continue;
+      if (!pick || c.hp > pick.hp) pick = c;
+    }
+    if (pick) this.tryBrainstem('npc', pick.x, pick.y);
+  }
+
+  /** Online: the peer took (or let go of) one of their cells. The cell position rides in the id. */
+  replayNet(id: string): void {
+    if (id === `${BRAIN_ID}-end`) { this.endBrainstem('npc'); return; }
+    if (!id.startsWith(`${BRAIN_ID}:`)) return;
+    const [, xs, ys] = id.split(':');
+    this.tryBrainstem('npc', Number(xs) || 0, Number(ys) || 0);
+  }
+
+  /** Brainstem: the bot is a flower, so its AI stands down until the ride ends. */
+  locksNpc(): boolean { return !!this.sides.npc.brain; }
+
+  /** Which slot the bot gave up for Brainstem, so its rotation leaves that key alone. */
+  npcBrainstemSlot(): 'r' | 'f' | 'q' | undefined {
+    return this.brainSlot('npc') ?? undefined;
+  }
+
   // ── Avatars ────────────────────────────────────────────────────────────────
 
   private updateAvatars(delta: number, playerIs: boolean, npcIs: boolean): void {
@@ -1732,7 +2242,8 @@ export class MarrowKit implements SummonPurgeTarget {
       av.setBrood(this.mine(owner).length / MAX_SUMMONS);
       av.setMastered(owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
       av.setIntensity(this.heat(owner) > 0.6 ? 1.3 : 1);
-      av.update(delta, f.x, f.y, f.alpha);
+      // Brainstem: the host folds away into the flower `paintAir` draws in its place.
+      av.update(delta, f.x, f.y, f.alpha * (1 - s.bloom));
     }
   }
 
@@ -1762,6 +2273,14 @@ export class MarrowKit implements SummonPurgeTarget {
     for (const b of this.bcells) {
       g.fillStyle(this.col(b.owner)(MRW.ink), 0.28);
       g.fillEllipse(b.x, b.y + 12, 20, 6);
+    }
+
+    // Mastery — the Cellular Defense wall. Reddened with the fever, so a hot wall reads as one.
+    for (const w of this.walls) {
+      wallCell(g, this.col(w.owner), w.x, w.y, WALL_SIZE, 1, {
+        t: this.vizT, seed: w.seed, hp: w.hp / WALL_HP, hurt: w.hurt,
+        red: this.isAuto(w.owner) ? 1 : this.heat(w.owner) * 0.35,
+      });
     }
   }
 
@@ -1807,6 +2326,18 @@ export class MarrowKit implements SummonPurgeTarget {
     for (const p of this.cytos) {
       cytokine(g, this.col(p.owner), p.x, p.y, Math.atan2(p.vy, p.vx), 1,
         { seed: p.seed, t: this.vizT });
+    }
+
+    // Mastery — Brainstem: the flower where the host stood, and the nerve out to its cell.
+    for (const owner of BOTH) {
+      const s = this.sides[owner];
+      if (s.bloom <= 0) continue;
+      const f = this.fighter(owner);
+      if (!f?.active) continue;
+      if (s.brain) {
+        nerveTether(g, this.col(owner), f.x, f.y, s.brain.x, s.brain.y, s.bloom, { t: this.vizT });
+      }
+      marrowFlower(g, this.col(owner), f.x, f.y, f.alpha, { t: this.vizT, open: s.bloom });
     }
 
     for (const c of this.summons) {
@@ -2012,7 +2543,9 @@ export class MarrowKit implements SummonPurgeTarget {
       + (s.tcellArmed ? '   ·   F: T-CELL READY' : '')
       + (killerLeft > 0 ? `   ·   ⚔️ F AGAIN: KILLER T (${(killerLeft / 1000).toFixed(1)}s)` : '')
       + (this.bcascade('player')
-        ? `   ·   🟡 B-CELL ${bcellLeft > 0 ? `${(bcellLeft / 1000).toFixed(1)}s` : 'READY'}` : ''),
+        ? `   ·   🟡 B-CELL ${bcellLeft > 0 ? `${(bcellLeft / 1000).toFixed(1)}s` : 'READY'}` : '')
+      + (s.wallTotal > 0 ? `   ·   🧱 WALL ${this.wallsOf('player')}/${s.wallTotal}` : '')
+      + (s.brain ? `   ·   🧠 RIDING ${KIND_NAME[s.brain.kind].toUpperCase()} ${((s.brainUntil - this.now) / 1000).toFixed(1)}s` : ''),
     );
     this.hudLabel.setColor(auto ? '#ff3b3b' : k > 0.66 ? '#ff8a6b' : '#f1e7d0');
   }
@@ -2078,6 +2611,27 @@ export class MarrowKit implements SummonPurgeTarget {
         + `bite heals it and you ${MACRO_BITE_HEAL + ANTI_HEAL_BONUS * marked} instead of `
         + `${MACRO_BITE_HEAL}. Ten of them is double damage from the whole board.`,
       count: marked, suffix: `/${ANTI_PER_VICTIM}`, priority: 125,
+    } : null);
+
+    // ── The mastery ──
+    const wallsUp = this.wallsOf('player');
+    const lowHp = playerIs && p.hp < p.maxHp * WALL_LOW_HP;
+    const wallRegen = s.wallTotal > 0 ? WALL_REGEN * (wallsUp / s.wallTotal) : 0;
+    this.api.setStatusIndicator('marrow-wall', playerIs && s.wallTotal > 0 ? {
+      name: 'Cellular Defense', emoji: '🧱', color: MRW.bone,
+      description: `${wallsUp} of ${s.wallTotal} wall cells still standing. Enemy shots that reach the `
+        + `border are spent on them, enemies cannot walk through them, and each one that dies is worth `
+        + `${WALL_INFLAM} inflammation. Below ${Math.round(WALL_LOW_HP * 100)}% HP the wall heals you `
+        + `${wallRegen.toFixed(1)} HP a second${lowHp ? ' — and it is doing so now' : ''}.`,
+      count: wallsUp, suffix: `/${s.wallTotal}`, priority: 123,
+    } : null);
+
+    this.api.setStatusIndicator('marrow-brainstem', playerIs && s.brain ? {
+      name: 'Brainstem', emoji: '🧠', color: MRW.mastLit,
+      description: `You are riding your ${KIND_NAME[s.brain.kind]}: WASD walks it, Click is its attack, `
+        + 'and the bound key lets go. Your body is a bone flower until it ends — rooted, and nothing '
+        + 'can hurt it. It ends when the cell dies.',
+      until: s.brainUntil, priority: 132,
     } : null);
 
     // ── The upgrades ──
@@ -2147,6 +2701,8 @@ export class MarrowKit implements SummonPurgeTarget {
    */
   private speedMultFor(f: Fighter, owner: Owner): number {
     if (!f) return 1;
+    // Brainstem: the host is a flower, and flowers do not walk.
+    if (this.sides[owner].brain) return 0;
     let mult = 1;
     if (this.isMarrow(owner)) mult *= 1 + INFLAM_SPEED * this.heat(owner);
     if (this.inHostileNet(f)) mult *= NET_SLOW;
@@ -2163,6 +2719,13 @@ export class MarrowKit implements SummonPurgeTarget {
   getBarRatio(abilityId: string, time: number): number {
     const p = this.api.player;
     const s = this.sides.player;
+    // Brainstem: empty while riding, then its own 30 seconds from the moment the ride ended —
+    // held short of full while there is no cell on the board to take.
+    if (abilityId === BRAIN_ID) {
+      if (s.brain) return 0;
+      const cd = Phaser.Math.Clamp(1 - (s.brainReadyAt - this.now) / BRAIN_COOLDOWN_MS, 0, 1);
+      return this.mine('player').length > 0 ? cd : Math.min(cd, 0.95);
+    }
     // Armed, F is a summon rather than a strike: show it as ready even mid-cooldown so the
     // transform is visible on the card and not only in the tray.
     if (abilityId === 'marrow-dendricles' && (s.tcellArmed || s.killerWindowUntil > time)) return 0;
@@ -2213,6 +2776,14 @@ export class MarrowKit implements SummonPurgeTarget {
       if (!near(m.x, m.y)) continue;
       this.masts.splice(i, 1);
       this.fx(m.owner).lyse(m.x, m.y, MRW.mast, 16);
+    }
+    // Mastery — the wall is cells too, and a razed brick is a dead one: the fever still pays.
+    for (let i = this.walls.length - 1; i >= 0; i--) {
+      const w = this.walls[i];
+      if (w.owner === exceptOwner) continue;
+      if (!near(w.x, w.y)) continue;
+      this.walls.splice(i, 1);
+      this.wallDied(w);
     }
 
     // Any T-cell that was walking to a patient that just went is now walking to a corpse.

@@ -238,7 +238,36 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   composition, not a spam), `npcMarrowMasts` (a second Mastacre over a live one is wasted),
   `npcMarrowInflammation` (the fever; a dry bar makes Q worth casting out of range just for the
   heat) and `npcMarrowTcellArmed` (F has transformed into a T-cell summon, which is the only time
-  it is worth a socket). No movement-profile retune and no mastery bind — Marrow has no mastery.
+  it is worth a socket). No movement-profile retune.
+  **Mastery (2026-10-18):** Nightmare binds Brainstem over Q (Mastacre). Cellular Defense needs no
+  bot work (the wall is raised by the kit). Brainstem is kit-fired in `MarrowKit.updateNpcMastery`
+  — under 50% HP with a macrophage/killer T of 40+ HP, it rides the healthiest one; the ridden cell
+  keeps its own AI and the bot's value is the invincible flower. `npcMarrowBrainstemSlot` makes the
+  rotation leave the bound key alone, and `marrowKit.locksNpc()` sets `isLocked` while it rides.
+
+- **Wax mastery (2026-10-18).** Nightmare binds Smoke-out over F (Hive Hearth); `npcWaxSmokeSlot`
+  makes `doWaxAbilities` skip the hive build and the hive-feed Swarm (and would skip R/Q if rebound).
+  Honey Shell needs no bot work. The smoker is kit-fired in `WaxKit.updateNpcSmoke` for its two
+  synergies: wearing Rule Beetanica and still out of blast range, it smokes ahead (the chase carries
+  the payload in under cover); under 55% HP and not in its smoke, it smokes its own feet.
+  `waxSmokePoint` (an own cloud ≥60px a hurt bot is not inside) slots into the Wax seek chain after
+  the hive redeem and before the candle. A player hidden in their smoke — or behind a cloud on the
+  bot's sight line (`waxKit.hidesFrom`) — sets `targetInvisible`, so the bot falls back to blind
+  wander like it does against Silence.
+- **Tempest mastery (2026-10-18).** Nightmare binds Gale Uppercut over R (Summon Front);
+  `npcTempestUppercutSlot` makes `doTempestAbilities` skip the front lay and the front slam (and F/Q
+  if rebound). Unrelenting Storm needs no bot work. The uppercut is kit-fired in
+  `TempestKit.updateNpcUppercut` at a foe inside the 250px dash. Synergy: `tempestJuggleShot` (a
+  body its uppercut threw, not in the last 60px of the fall, inside 420px, with a charge) is checked
+  first in both rotations — Click on it juggles it higher, and height is the slam's damage.
+- **Myth mastery (2026-10-18).** Nightmare binds Wormhole over F (Beast of Myth); `npcMythWormSlot`
+  makes `doMythAbilities` skip the beast (and the parry/Destiny if rebound). Wormhole is kit-fired in
+  `MythKit.updateBotWormhole` (foe in 60–416px, led a little, never in Destiny). Synergies:
+  `mythPortalPoint` walks the bot beside its red portal for the last 2.6s of the trap so Truth
+  Breaker is waiting at the exit (shares the flip-point seek block); `npcMythLastStand` (Indomitable
+  running) cancels the retreat window and puts the true-damage slash first — 75 in 8s or death.
+  A player in the bot's wormhole sets `targetInvisible`; a bot in the player's sets `isLocked`
+  (`mythKit.isTrapped`).
 
 - **Cloth (2026-08-16), built to the contract rather than retrofitted.** Cloth replaced Marrow
   outright, so `doClothAbilities` was written against the synergy contract from the first line
@@ -467,7 +496,19 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   first when `nightmareReady` (it adds the walking stalker); a leech when none is out (the seek
   point walks it to the leech to pull it); claw up close; pistols. The kit gives the bot its
   own recoil at half the kick, tamed continuously. Movement profile unchanged (assassin
-  100–240px). Upgrades and mastery were retired with the rework — none to wire yet.
+  100–240px).
+  **Upgrades + mastery (2026-10-18).** Readers on `npcDream`: `featherShots` (R+: feathers in an
+  awake target → Sandmen first, every round adds drowsiness), `clawFirst` (R+ in a dream: claw
+  before the pistols while the victim has <2 scratches, every scratch is +3 on every hit),
+  `boxSlot` (the rotation skips the key the music box is bound over). Kit-fired, offline only:
+  `updateNpcAmnesia` (Click+: throws a magazine with ≥12 rounds at an awake foe inside 320px —
+  never a sleeper; in a dream only with both pistol rounds loaded), `updateNpcLucid` (E+: switches
+  on what the sleep left can pay for — all but Split at ≥70 or while Sleep Paralysis holds the
+  meter, Spikes+Empower at ≥45, Empower at ≥28, none below), `updateNpcBox` (mastery: winds 3.5–5s
+  over a sleeper — the lullaby's 4/s outpaces the 5/s burn's net — or 1.5–3s over a ≥35 drowsy
+  foe). Q+ needs nothing new: the dream branch already opens on Nightmare, which now also stops the
+  dream's clock. F+'s dropped leech is walked to by the existing seek point. Nightmare bots bind
+  the music box over F (`NpcLoadout`).
 
 - **Devotion (id `passion`, 2026-10-15 rework replacing the charmer), steps 3–5.**
   `doPassionAbilities` reads one kit-published bundle, `npcDevotion` (from
@@ -517,6 +558,17 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   `lifeSeekPoint` (a ripe Lotus orb within 300px → a soft walk to eat it, like Gold's seek).
   Online, the human opponent's pick arrives as a `life-seed:<id>` pseudo-cast and overrides the
   plan. Steps 1–2 still owed: Life's upgrades and Reap are player-only.
+- **Tempest shop upgrades (2026-10-18), step 3 extras.** All five are kit-internal and gated on
+  `api.hasUpgrade('npc', slot)` (= `hasNpcUpgrade`), so a Hard+ bot plays them for free; three
+  new synergies are published by the kit and checked before the rotation. `cloudShot('npc')` →
+  `npcTempestCloudShot`: airborne with a foe within 120px and no cloud of its own up → E (the
+  hop drops the E+ thundercloud on them). `cycloneReady('npc')` → `npcTempestCycloneReady`: on
+  its flight schedule with no current within 80px (and none offered within 480) → F makes an F+
+  Cyclone. `floatPoint('npc')` → `tempestFloatPoint`: airborne with R+ → a soft steer over the
+  nearest live front (shares the current-point movement override), and while hovering
+  `canFrontSlam` only offers the slam if a foe is inside that front. Q+ needs no bot logic (the
+  dive/crash it already plays triggers the Herald), but `currentSeek`/`cycloneReady` ignore the
+  flight schedule while any Herald weather is live, because every launch is 1.4× then.
 
 ## Gotchas (learned the hard way — read before each batch)
 

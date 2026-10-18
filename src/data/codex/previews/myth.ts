@@ -3,7 +3,8 @@ import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import {
   GunKind, MYTH, MythAvatar, MythFx, beast as paintBeast, cloud as paintCloud, crowdFigure, gun as paintGun,
   jitter, portal as paintPortal, rift as paintRift, shard as paintShard, spear as paintSpear, beyonder as paintBeyonder,
-  star, starMace, voidDisc, whip as paintWhip,
+  star, starMace, voidDisc, whip as paintWhip, lastStandAura, mythRealm, realmBolt, realmBrute, realmCaptive, realmLancer,
+  realmSpearman, realmStalker, trapPortal, wormDisc,
 } from '../../../elements/kits/MythVisuals';
 
 /**
@@ -861,5 +862,148 @@ export const destinyUpgraded: PreviewScript = {
     ctx.at(9300, () => { spend(); float(ctx, ctx.cx, ctx.cy - 50, 'RE-AIMED  ×2', hex(MYTH.gold)); });
     ctx.at(9700, () => { fx.explosion(d.x, d.y, 150, 10); float(ctx, d.x, d.y - 32, '50  DIRECT HIT', hex(MYTH.gold), 12); });
     ctx.at(10600, () => { rig(av)?.setGun(null); rig(av)?.setHold(null); });
+  },
+};
+
+// ══ MASTERY ═══════════════════════════════════════════════════════════
+
+export const masteryLastStand: PreviewScript = {
+  duration: 8400,
+  scale: 0.9,
+  caption: 'Indomitable — the killing hit leaves you at 1 HP for 8s. Deal 75 in that time and the crowd gives you a second breath at full health (shown sped up)',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new MythAvatar(ctx.scene, ctx.tint));
+    av.setMastered(true);
+    av.setFacing(ctx.aim);
+    const d: Dummy = { x: ctx.cx + 120, y: ctx.cy, alive: true, stunUntil: 0, hp: 100 };
+    dummyAt(ctx, d);
+    const readout = label(ctx, ctx.w * 0.5, 12, hex(MYTH.red), 11);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    let live = false;
+    let dealt = 0;
+    let hp = 0.18;
+    ctx.onFrame((_dl, elapsed) => {
+      g.clear();
+      const c = ctx.casterAt();
+      if (live) lastStandAura(g, ctx.tint, c.x, c.y, elapsed / 1000, 1, dealt / 75);
+      // A little health bar under the caster.
+      g.fillStyle(0x000000, 0.7); g.fillRect(c.x - 26, c.y + 26, 52, 6);
+      g.fillStyle(live ? 0xff4a5e : 0x6bdc6b, 1); g.fillRect(c.x - 25, c.y + 27, 50 * hp, 4);
+    });
+    ctx.at(300, () => readout.setText('the hit that should kill you…'));
+    ctx.at(900, () => ctx.fly({ texture: 'proj-fire', from: { x: ctx.tx, y: ctx.ty }, to: ctx.casterAt(), speed: 620, onHit: () => {
+      hp = 0.01; live = true;
+      fx.ring(ctx.casterAt().x, ctx.casterAt().y, 10, 90, 600, MYTH.red, 4, 10);
+      float(ctx, ctx.casterAt().x, ctx.casterAt().y - 50, 'INDOMITABLE — DEAL 75', hex(MYTH.red), 12);
+      readout.setText('…leaves you at 1 HP, enraged, for 8 seconds');
+    } }));
+    const strike = (ms: number, dmg: number) => ctx.at(ms, () => {
+      if (!live) return;
+      av.play('sweep', ctx.aim, 300);
+      fx.slash(ctx.casterAt().x, ctx.casterAt().y, ctx.aim, 150, Math.PI / 4);
+      dealt += dmg;
+      float(ctx, d.x, d.y - 30, `${dmg}`, '#ffd166', 12);
+    });
+    strike(2200, 22);
+    strike(3100, 32);
+    ctx.at(3400, () => readout.setText('deal 75 damage before it runs out'));
+    strike(4200, 24);
+    ctx.at(5400, () => {
+      live = false; hp = 1;
+      fx.ring(ctx.casterAt().x, ctx.casterAt().y, 10, 110, 700, MYTH.gold, 4, 10);
+      fx.starSpray(ctx.casterAt().x, ctx.casterAt().y, 18, 80, 800, 10, MYTH.gold);
+      float(ctx, ctx.casterAt().x, ctx.casterAt().y - 56, 'SECOND BREATH!', hex(MYTH.gold), 13);
+      readout.setText('the crowd gives you a second breath — full health. Once a match');
+    });
+  },
+};
+
+export const masteryWormhole: PreviewScript = {
+  duration: 9600,
+  scale: 0.9,
+  caption: 'Wormhole — a portal thrown forward. Its catch is trapped in the Lands of Myth for 8s with beasts and beyonders; stand by the red portal to peer in',
+  run(ctx) {
+    const av = ctx.useAvatar(() => new MythAvatar(ctx.scene, ctx.tint));
+    av.setMastered(true);
+    av.setFacing(ctx.aim);
+    const fx = fxOf(ctx);
+    const d: Dummy = { x: ctx.cx + 200, y: ctx.cy, alive: true, stunUntil: 0, hp: 100 };
+    dummyAt(ctx, d);
+    const readout = label(ctx, ctx.w * 0.5, ctx.h - 14, hex(MYTH.haze), 10);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    // The realm window: drawn in its own 960×640 space and scaled into the corner of the box.
+    const win = ctx.adopt(ctx.scene.add.graphics().setDepth(14));
+    const frame = ctx.adopt(ctx.scene.add.graphics().setDepth(15));
+    const worm = { x: ctx.cx + 20, y: ctx.cy, flying: false, caughtAt: -1 };
+    const capt = { x: 480, y: 440, face: 1 };
+    const foes = [
+      { kind: 'brute', x: 220, y: 470 }, { kind: 'stalker', x: 760, y: 400 },
+      { kind: 'lancer', x: 820, y: 560 }, { kind: 'spearman', x: 300, y: 330 },
+    ];
+    const bolts: { x: number; y: number; a: number }[] = [];
+    let peek = false;
+    ctx.onFrame((delta, elapsed) => {
+      const dt = delta / 1000;
+      const t = elapsed / 1000;
+      g.clear(); win.clear(); frame.clear();
+      if (worm.flying) {
+        worm.x += 440 * dt;
+        wormDisc(g, ctx.tint, worm.x, worm.y, 0, t, 3);
+        if (worm.x >= d.x) {
+          worm.flying = false; worm.caughtAt = elapsed; d.alive = false;
+          fx.ring(d.x, d.y, 4, 70, 520, MYTH.red, 4, 10);
+          float(ctx, d.x, d.y - 50, 'TRAPPED', hex(MYTH.red), 12);
+        }
+      }
+      if (worm.caughtAt >= 0) {
+        const remain = Math.max(0, 1 - (elapsed - worm.caughtAt) / 6000);
+        trapPortal(g, ctx.tint, d.x, d.y, t, Math.min(1, (elapsed - worm.caughtAt) / 260), remain, peek);
+        if (peek) {
+          const sc = 0.2;
+          const ox = d.x - 96;
+          const oy = d.y - 128 - 60;
+          win.setPosition(ox, oy).setScale(sc);
+          mythRealm(win, ctx.tint, 960, 640, 150, t, 9);
+          capt.x += Math.sin(t * 1.3) * 60 * dt;
+          capt.face = Math.cos(t * 1.3) > 0 ? 1 : -1;
+          for (const f of foes) {
+            const a = Math.atan2(capt.y - f.y, capt.x - f.x);
+            const sp = f.kind === 'stalker' ? 90 : f.kind === 'brute' ? 25 : 45;
+            if (Math.hypot(capt.x - f.x, capt.y - f.y) > 90) { f.x += Math.cos(a) * sp * dt; f.y += Math.sin(a) * sp * dt; }
+            const face = capt.x > f.x ? 1 : -1;
+            if (f.kind === 'brute') realmBrute(win, ctx.tint, f.x, f.y, face, t, 0, 0, 0.8);
+            else if (f.kind === 'stalker') realmStalker(win, ctx.tint, f.x, f.y, face, t, 0, 0.6);
+            else if (f.kind === 'lancer') realmLancer(win, ctx.tint, f.x, f.y, face, t, (t % 1.8) / 1.8, 0, 1, a + Math.PI);
+            else realmSpearman(win, ctx.tint, f.x, f.y, face, t, Math.max(0, Math.sin(t * 4)), 0, 0.9);
+          }
+          if (Math.floor(t * 2) !== Math.floor((t - dt) * 2)) bolts.push({ x: capt.x, y: capt.y, a: Math.atan2(foes[1].y - capt.y, foes[1].x - capt.x) });
+          for (let i = bolts.length - 1; i >= 0; i--) {
+            const b = bolts[i];
+            b.x += Math.cos(b.a) * 560 * dt; b.y += Math.sin(b.a) * 560 * dt;
+            realmBolt(win, b.x, b.y, b.a, 0x6bb6ff);
+            if (b.x < 0 || b.x > 960 || b.y < 0 || b.y > 640) bolts.splice(i, 1);
+          }
+          realmCaptive(win, capt.x, capt.y, 0x6bb6ff, capt.face, t, 0);
+          frame.lineStyle(4, ctx.tint(MYTH.void), 0.9);
+          frame.strokeRoundedRect(ox - 2, oy - 2, 960 * sc + 4, 640 * sc + 4, 6);
+          frame.lineStyle(1.5, ctx.tint(MYTH.red), 0.95);
+          frame.strokeRoundedRect(ox - 2, oy - 2, 960 * sc + 4, 640 * sc + 4, 6);
+        }
+        if (remain <= 0 && !d.alive) {
+          d.alive = true; worm.caughtAt = -1; peek = false;
+          fx.ring(d.x, d.y, 50, 6, 420, MYTH.red, 3, 10);
+          float(ctx, d.x, d.y - 50, 'BACK FROM THE LANDS OF MYTH', hex(MYTH.haze), 11);
+        }
+      }
+    });
+    ctx.at(300, () => readout.setText('throw a portal straight ahead'));
+    ctx.at(700, () => { worm.flying = true; av.play('punch', ctx.aim, 300); fx.ring(ctx.cx, ctx.cy, 6, 44, 380, MYTH.iris, 3, 9); });
+    ctx.at(1500, () => readout.setText('whoever it catches is gone for 8 seconds — the portal stays, red'));
+    ctx.at(2600, () => ctx.glideCaster({ to: { x: d.x - 90, y: d.y + 40 }, ms: 600, ease: 'out', onDone: () => {
+      peek = true;
+      readout.setText('stand by it to peer into the Lands of Myth: beasts and beyonders, and more always come');
+    } }));
+    ctx.at(8800, () => ctx.glideCaster({ to: { x: ctx.cx, y: ctx.cy }, ms: 500, ease: 'out' }));
   },
 };

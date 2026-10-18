@@ -4,8 +4,9 @@ import { ElementCodex } from '../AbilityCodex';
  * Dream — the sandman with two little guns.
  *
  * Verified against `src/elements/dream.ts` and `kits/DreamKit.ts`; the numbers are the
- * constants at the top of the kit. Dream has no shop upgrades and no mastery right now — the
- * old ones went with the 2026-10-17 rework and new ones are owed.
+ * constants at the top of the kit (the shop upgrades' and the mastery's have their own blocks
+ * there). The pendulum's upgrades and Dream Duel went with the 2026-10-17 rework; these are the
+ * sandman's own, from 2026-10-18.
  */
 const dream: ElementCodex = {
   identity:
@@ -62,6 +63,21 @@ const dream: ElementCodex = {
         'In a dream, Click is the dream pistols: 30 explosive damage in a 54px blast, exactly at the crosshair (or the first body before it), 2 rounds, a 1.5s reload (shortened by the dream), and roughly 66px of kick a shot.',
         'The bot fights its recoil as it goes and kicks half as hard, but its decision tick limits how fast it fires.',
       ],
+      upgrade: {
+        basics:
+          'Amnesia: right-click to throw whatever is left in the magazine at the crosshair. It tumbles there at '
+          + '820px a second and goes off: anybody within about 28px of the burst takes 1.5 for every round that '
+          + 'was left (45 off a full magazine), and every round is flung out in a ring — 640px a second, out to '
+          + '250px — for 4 damage to the first enemy each one meets. Throwing it starts the 5-second reload, and '
+          + 'you need rounds left (and not to be reloading) to throw at all. In a dream it is the pistols\' rounds '
+          + 'thrown as one: a 115px blast of 30 damage, or 75 if both rounds were still loaded, and a pistol reload.',
+        effects: [
+          { tag: 'damage', label: 'The clip', detail: '1.5 per round left to anybody under the burst — 45 from a full 30.', requiresUpgrade: 'click' },
+          { tag: 'damage', label: 'The rounds', detail: 'One per round left, thrown out in a ring: 4 to the first enemy each meets, out to 250px.', requiresUpgrade: 'click' },
+          { tag: 'cost', label: 'Reload', detail: 'Starts the 5s reload (1.5s in a dream). Needs at least 1 round and no reload running.', requiresUpgrade: 'click' },
+          { tag: 'damage', label: 'Dreaming: both barrels', detail: '30 damage in 115px, or 75 with both pistol rounds still in.', requiresUpgrade: 'click' },
+        ],
+      },
     },
 
     'dream-delve': {
@@ -87,6 +103,24 @@ const dream: ElementCodex = {
         'Online, both machines dream the same world. In Invasion the dream is laid over the map instead of replacing it, because the walls still matter.',
         'Leeches and walking nightmares stay in the dream when it ends.',
       ],
+      upgrade: {
+        basics:
+          'Lucid Dream: inside their dream a panel of five switches opens across the top of the screen. Click one '
+          + 'to turn it on or off; they stay how you left them for the rest of the match. Split puts a seam down '
+          + 'the middle of the dream that they cannot cross and you can. Spikes raises seven patches of thorns '
+          + 'that rise and sink on their own clocks — 8 damage every half second they stand in a raised one. '
+          + 'Empower makes you 20% faster and gives you a 20% chance to dodge any hit. Red Mist lines the edges '
+          + 'with a 70px bank of fog that deals 5 every 0.4 seconds they spend in it. Shrink pulls the walls in '
+          + 'to 62% of the arena, for both of you. Every switch that is on makes them burn their sleep 25% faster.',
+        effects: [
+          { tag: 'control', label: 'Split', detail: 'A seam down the middle: they are held on the side they were on, 22px from it. You walk straight through.', requiresUpgrade: 'e' },
+          { tag: 'damage', label: 'Spikes', detail: '7 patches, 26px, up for about half of every 2.6s: 8 every 0.5s to them while they stand in a raised one.', requiresUpgrade: 'e' },
+          { tag: 'buff', label: 'Empower', detail: '+20% move speed and a 20% dodge chance for you, on top of Dreamwalking.', requiresUpgrade: 'e' },
+          { tag: 'damage', label: 'Red Mist', detail: 'A 70px band along every edge: 5 every 0.4s they spend in it.', requiresUpgrade: 'e' },
+          { tag: 'area', label: 'Shrink', detail: 'The dream\'s floor shrinks to 62% of its width and height, round its middle. Both of you are held inside.', requiresUpgrade: 'e' },
+          { tag: 'cost', label: 'They wake faster', detail: '+25% sleep burn per switch that is on — all five is 2.25×. The HUD\'s countdown includes it.', requiresUpgrade: 'e' },
+        ],
+      },
     },
 
     'dream-pillow-fight': {
@@ -108,6 +142,20 @@ const dream: ElementCodex = {
         'Open with it — the big dose only lands on a fresh meter.',
         'Topping up a sleeper with it is how you buy a longer dream.',
       ],
+      upgrade: {
+        basics:
+          'Unending Comfort: every pillow hit — a tuck-in included — leaves 1 to 3 feathers in them, each for 8 '
+          + 'seconds, six at most. While they are feathered, every attack of yours that lands on them adds 1.5 '
+          + 'drowsiness per feather (at most once every 0.35 seconds, so a Sandmen spray pays about three times '
+          + 'a second). In a dream the claw leaves 1 to 3 scratches instead, each for 8 seconds, six at most: every '
+          + 'attack you land on them in there deals 3 more per scratch. Scratches stay in the dream when it ends.',
+        effects: [
+          { tag: 'debuff', label: 'Feathers', detail: '1–3 per pillow hit, 8s each, up to 6.', requiresUpgrade: 'r' },
+          { tag: 'debuff', label: 'Drowsy hits', detail: '+1.5 drowsiness per feather on every attack that lands, at most every 0.35s.', requiresUpgrade: 'r' },
+          { tag: 'debuff', label: 'Dreaming: scratches', detail: '1–3 per claw, 8s each, up to 6.', requiresUpgrade: 'r' },
+          { tag: 'damage', label: 'Dreaming: open wounds', detail: '+3 damage per scratch on every attack — not on ticking damage like the leech\'s feeding or a nightmare.', requiresUpgrade: 'r' },
+        ],
+      },
     },
 
     'dream-sleep-tight': {
@@ -132,6 +180,19 @@ const dream: ElementCodex = {
         'The higher their meter, the more it adds — it is the finisher that tips them over.',
         'Online, a pulled leech is relayed so it disappears on the other screen too.',
       ],
+      upgrade: {
+        basics:
+          'Sleeping Pills: the dagger stays in whoever it hits for 4 seconds, dosing them with 6 drowsiness a '
+          + 'second — 24 on top of the hit. A fresh dagger in the same body replaces the old one. In a dream the '
+          + 'leech bites for 30 instead of 22 and feeds at 5 a second instead of 3; and when it has fed for its '
+          + 'full 8 seconds it drops off and lies there for 12 seconds more, still full, and you only have to come '
+          + 'within 90px of it to pull it in.',
+        effects: [
+          { tag: 'debuff', label: 'The pill', detail: '6 drowsiness a second for 4s from a dagger left in them.', requiresUpgrade: 'f' },
+          { tag: 'damage', label: 'Dreaming: a hungrier leech', detail: 'Bites for 30, feeds 5 a second.', requiresUpgrade: 'f' },
+          { tag: 'heal', label: 'Dreaming: fed full', detail: 'After 8s it drops and waits 12s; walk within 90px (not 52) to pull it out and heal for everything it ate.', requiresUpgrade: 'f' },
+        ],
+      },
     },
 
     'dream-nightmare': {
@@ -155,6 +216,60 @@ const dream: ElementCodex = {
       notes: [
         'Out here it costs sleep, so it is best saved for the dream, where the stalker doubles it.',
         'The vulnerability rides with the darkness: anything else that lands in those 3 seconds lands harder.',
+      ],
+      upgrade: {
+        basics:
+          'Sleep Paralysis: once Nightmare has taken its 15, their drowsiness cannot go down at all for 5 '
+          + 'seconds — it does not wear off and a sleeper does not burn it — and they move 20% slower. The walking '
+          + 'nightmare catching them does it again. Used inside a dream, the dream itself becomes a nightmare for '
+          + 'those 5 seconds: the same place gone evil — the candy rotted, the clocks bleeding, the sea drowned to '
+          + 'bones, something under the bed, the carnival closed for good — framed in red mist.',
+        effects: [
+          { tag: 'control', label: 'Held still', detail: 'No drowsiness lost for 5s after the 15 is taken — a dream stops running out.', requiresUpgrade: 'q' },
+          { tag: 'debuff', label: 'Paralysed', detail: '20% slower for the same 5s.', requiresUpgrade: 'q' },
+          { tag: 'utility', label: 'The nightmare world', detail: 'Inside a dream the world turns to its evil version for as long as the paralysis holds.', requiresUpgrade: 'q' },
+        ],
+      },
+    },
+  },
+
+  mastery: {
+    'dream-dreamcatcher': {
+      basics:
+        'A large dreamcatcher is slung on your back. While you are inside somebody\'s dream, every 0.7 seconds '
+        + 'there is a 35% chance they let a dream slip: a small orb that flies to you and is caught in the web. '
+        + 'If they are in a nightmare at that moment, the orb is red. A caught dream takes 5 seconds to digest — '
+        + 'you can see it swelling in the web — and then pays out: a good (green) dream heals 10, a nightmare '
+        + '(red) is +10% damage on everything you do for 10 seconds, stacking up to five.',
+      cast: 'Passive. Always on while Dream Mastery is enabled and Dream is the element being played.',
+      effects: [
+        { tag: 'utility', label: 'Dreams slip out', detail: '35% every 0.7s while you are in their dream — about one every 2 seconds.' },
+        { tag: 'heal', label: 'A good dream', detail: 'Heals 10, 5 seconds after it was caught.' },
+        { tag: 'buff', label: 'A nightmare', detail: 'Red while they are in a nightmare: +10% damage for 10s, up to +50%.' },
+        { tag: 'utility', label: 'Digesting', detail: 'Every caught dream sits in the web for 5 seconds first, even after you surface.' },
+      ],
+      notes: [
+        'Nightmare inside a dream turns the catch red for 3 seconds — that is how the damage is farmed.',
+        'The dreamcatcher replaces the mastered moon behind the head; the ring of moons overhead stays.',
+      ],
+    },
+    'dream-music-box': {
+      basics:
+        'Hold the bound key to wind up a music box — every second wound is 4 seconds of music, up to 20 seconds '
+        + 'after a 5-second wind, at which point it throws itself. Let go to lob it to your cursor; it lands '
+        + 'about half a second later, opens, and plays a lullaby across 110px: everybody of theirs standing in it '
+        + 'gains 4 drowsiness a second. A tap still plays for 2 seconds. Two of your boxes can play at once; a '
+        + 'third replaces the oldest. 12 second cooldown from the throw.',
+      cast: 'Hold the bound key (R, F or Q), release to throw at the cursor. 12s cooldown.',
+      effects: [
+        { tag: 'utility', label: 'Winding', detail: '4s of music per second held: 2s at the least, 20s after the full 5s wind, which throws it.' },
+        { tag: 'debuff', label: 'Lullaby', detail: '+4 drowsiness a second to every enemy within 110px of the box.' },
+        { tag: 'control', label: 'Holding a sleeper', detail: 'A sleeper burns 5 a second — a lullaby over one leaves it burning 1.' },
+        { tag: 'cost', label: 'Cooldown', detail: '12 seconds from the throw. Falling asleep while winding drops the box.' },
+      ],
+      notes: [
+        'Somebody whose dream you are in is not here to hear it — it only reaches bodies in the waking world.',
+        'A Dream NPC on Nightmare binds it over Sleep Tight, winds it long over a sleeper and short over a drowsy foe.',
       ],
     },
   },

@@ -2094,6 +2094,242 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       },
     ],
   },
+  // Marrow (test element, restored 2026-10-12). Its first mastery — there is no retired one under it.
+  marrow: {
+    elementId: 'marrow',
+    name: 'Marrow Mastery',
+    enhancedEmoji: '🧠',
+    enhancedColor: 0xd1435c,
+    requirements: [
+      {
+        key: 'mastacreKills',
+        label: 'Degranulated',
+        howTo: 'Kill an enemy with the blast of a Mastacre (Q) mast cell',
+        target: 1,
+      },
+      {
+        key: 'cellsSummoned',
+        label: 'Immune Response',
+        howTo: 'Summon 25 immune cells into the bone bar — macrophages, neutrophils and T-cells all count',
+        target: 25,
+      },
+      {
+        key: 'feverPeaks',
+        label: 'Running a Fever',
+        howTo: 'Push your inflammation to 75 or more, 5 times — it has to fall back under 60 before the next one counts',
+        target: 5,
+      },
+      {
+        key: 'tcellsArmed',
+        label: 'Antigen Presented',
+        howTo: 'Activate the T-cell 5 times by landing 4 of Dendricles\' (F) 5 tentacles on one enemy',
+        target: 5,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'marrow-cellular-defense',
+        name: 'Cellular Defense',
+        description: 'Passive: the arena is **bricked in with your cells**. A wall of square bone cells lines every edge, edge to edge — dozens of them, **40 HP each**. Enemy shots that reach the border are spent on them, and enemies cannot walk through them; leaning on one grinds it down.\n\nEvery wall cell that dies hands you **3 inflammation**. And below **35% HP** the wall keeps you alive: you regenerate up to **8 HP a second**, scaled by how much of the wall is still standing. They never come back — keep them alive.',
+      },
+      {
+        id: 'marrow-brainstem',
+        name: 'Brainstem',
+        bindable: true,
+        hudDescription: 'Ride the cell nearest your cursor: WASD walks it, Click is its attack. You become an invincible bone flower until it dies',
+        description: 'Take over **the summon nearest your cursor** and fight as it. **WASD walks the cell, Click is its attack** — a macrophage bites and feeds, a neutrophil stabs, a killer T throws its lunge when it is ready, and a T-cell hands its buff to the nearest cell it can touch.\n\nWhile you are out, your body folds into a **bone flower**: rooted to the spot and **invincible**. The ride lasts **until the cell dies** (at most 12 seconds), or press the bound key again to let go.\n\nNo cell on the board, no ride. **30 second cooldown**, counted from when the ride ends.',
+      },
+    ],
+  },
+  // Wax (test element, 2026-10-12). Its first mastery — it shipped without one.
+  wax: {
+    elementId: 'wax',
+    name: 'Wax Mastery',
+    enhancedEmoji: '🍯',
+    enhancedColor: 0x5fb6ff,
+    requirements: [
+      {
+        key: 'stings',
+        label: 'Stinger',
+        howTo: 'Sting enemies 150 times — every Stinger Strikes (Click) thrust, dart and stinger that lands counts',
+        target: 150,
+      },
+      {
+        key: 'fullHives',
+        label: 'Harvest',
+        howTo: 'Harvest 5 full bee hives — a Hive Hearth (F) with all five cells filled, cashed in any way',
+        target: 5,
+      },
+      {
+        key: 'selfBombBlasts',
+        label: 'Rule Beetanica',
+        howTo: 'Blow up enemies with the bombs strapped to yourself 3 times (Sticky Bombs Q+, hold Q)',
+        target: 3,
+      },
+      {
+        key: 'candleSeconds',
+        label: 'Candlelit',
+        howTo: 'Stand in the light of your own Candle Mount (R) candles for 100 seconds in total',
+        target: 100,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'wax-honey-shell',
+        name: 'Honey Shell',
+        description: 'Passive: you start every match **sealed in honey comb**. The shell **blocks the next attack of 30 damage or more** outright — anything smaller goes straight through and leaves it standing.\n\nOnce it cracks it **re-forms 8 seconds later**, as many times as you can make it crack.',
+      },
+      {
+        id: 'wax-smoke-out',
+        name: 'Smoke-out',
+        bindable: true,
+        hudDescription: 'Hold to smoke a cloud in front of you that grows while you feed it. In it: invisible, 20% dodge. Enemies cannot see through it',
+        description: 'Hold the bound key to work the smoker: a **cloud of smoke** builds in front of you and **grows for as long as you hold**. Walk away from it and the smoke starts **a new cloud** in front of you instead.\n\nStanding in your own smoke you are **invisible** and **20% of hits are lost in it**. **Enemies cannot see through the smoke — you can.** Clouds hang for 9 seconds after you stop feeding them.\n\nThe smoker holds **5 seconds** of smoke and refills while it is out.',
+      },
+    ],
+  },
+  // Dream (the sandman, 2026-10-17 rework). Its new mastery, 2026-10-18 — Dream Duel went with
+  // the pendulum, so this one has to be earned again (see `dreamMasteryOn`).
+  dream: {
+    elementId: 'dream',
+    name: 'Dream Mastery',
+    enhancedEmoji: '🕸️',
+    enhancedColor: 0xa87b52,
+    requirements: [
+      {
+        key: 'sleeps',
+        label: 'Lights Out',
+        howTo: 'Put enemies to sleep 25 times',
+        target: 25,
+      },
+      {
+        key: 'dreamKills',
+        label: 'Never Woke Up',
+        howTo: 'Kill 10 enemies while you are inside their dream',
+        target: 10,
+      },
+      {
+        key: 'nightmares',
+        label: 'Bad Dreams',
+        howTo: 'Give enemies a nightmare 10 times — the walking nightmare catching them counts',
+        target: 10,
+      },
+      {
+        key: 'reloads',
+        label: 'Sandman\'s Hours',
+        howTo: 'Reload 50 times — Sandmen, the dream pistols, and every Amnesia throw count',
+        target: 50,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'dream-dreamcatcher',
+        name: 'Dreamcatcher',
+        description: 'Passive: a **large dreamcatcher** is slung on your back. While you are inside somebody\'s dream, they sometimes let a dream slip — a small **green orb, a good dream**, that flies to you and is caught in the web. If they are **in a nightmare** the orbs come out **red** instead.\n\nA caught dream takes **5 seconds to digest**. A good dream then **heals 10**; a nightmare is **+10% damage for 10 seconds**, stacking up to five.',
+      },
+      {
+        id: 'dream-music-box',
+        name: 'Music-box',
+        bindable: true,
+        hudDescription: 'Hold to wind a music box, release to throw it. Its lullaby makes anyone standing in it drowsy — up to 20s after a 5s wind',
+        description: 'Hold the bound key to **wind up a music box** — the longer you wind it, the longer it plays. Let go to **throw it to your cursor**, where it opens and plays a lullaby: everyone standing in its reach grows **a little drowsy**, 4 every second.\n\nFive seconds of winding is the most it takes — **20 seconds of music** — and at five seconds it throws itself. **12 second cooldown.**',
+      },
+    ],
+  },
+  // Tempest (test element, 2026-10-12). Its first mastery — it shipped without one.
+  tempest: {
+    elementId: 'tempest',
+    name: 'Tempest Mastery',
+    enhancedEmoji: '🌩️',
+    enhancedColor: 0x4f6d99,
+    requirements: [
+      {
+        key: 'wallBlasts',
+        label: 'Wall Slam',
+        howTo: 'Blast enemies into a wall 25 times — every Wall Slam counts, the Eye of the Storm\'s bounces included',
+        target: 25,
+      },
+      {
+        key: 'airSeconds',
+        label: 'Frequent Flyer',
+        howTo: 'Spend 60 seconds in the air in total, over as many flights as it takes',
+        target: 60,
+      },
+      {
+        key: 'slamKills',
+        label: 'Grounded',
+        howTo: 'Kill an enemy by slamming them into the ground — the crash of a Final Forecast (Q) grapple',
+        target: 1,
+      },
+      {
+        key: 'forecastKills',
+        label: 'As Forecast',
+        howTo: 'Kill an enemy during your forecasted storm 3 times — the weather Herald of Doom (Q+) brings',
+        target: 3,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'tempest-unrelenting-storm',
+        name: 'Unrelenting Storm',
+        description: 'Passive: **your storm never lifts**. A very tame Herald\'s weather hangs over every match — a **rare, random thunderstrike**, a **spotty fall of hail**, **a few rain puddles**, and a **light breeze that pushes enemies toward the right of the screen** (never you). It gives no extra elevation.\n\nA bank of cloud lines the top of the arena the whole time, and it **turns dark and dangerous** while your Herald of Doom weather is live.',
+      },
+      {
+        id: 'tempest-gale-uppercut',
+        name: 'Gale Uppercut',
+        bindable: true,
+        hudDescription: 'Dash and uppercut: 8 damage, and the enemy is thrown into the air. Click juggles them higher; the floor hurts the faster they hit it',
+        description: 'Dash forward and drive a **deadly uppercut** into the first enemy you meet. It only deals **8 damage** — but it **launches them into the air**, where they cannot move until they come down.\n\nWhen they hit the floor they take damage **by how fast they were falling**: up to **60**. A **Click** that bursts on them while they are up **juggles them higher**, and higher is harder.\n\n**9 second cooldown.**',
+      },
+    ],
+  },
+  // Myth (test element, 2026-10-15). Its first mastery — it shipped without one.
+  myth: {
+    elementId: 'myth',
+    name: 'Myth Mastery',
+    enhancedEmoji: '🌀',
+    enhancedColor: 0xff4a5e,
+    requirements: [
+      {
+        key: 'shardsSpent',
+        label: 'Echoes',
+        howTo: 'Spend 25 Echo Shards, on any of their second acts',
+        target: 25,
+      },
+      {
+        key: 'fpsDamage',
+        label: 'First Person',
+        howTo: 'Deal 250 damage in Final Destiny\'s (Q) first person, over as many casts as it takes',
+        target: 250,
+      },
+      {
+        key: 'parries',
+        label: 'Turned Aside',
+        howTo: 'Parry 25 hits with Parry (R)',
+        target: 25,
+      },
+      {
+        key: 'excaliburSlashes',
+        label: 'Excalibur',
+        howTo: 'Slash enemies with Excalibur 25 times — Truth Breaker (E), its dash and the riposte all count',
+        target: 25,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'myth-last-stand',
+        name: 'Indomitable',
+        description: 'Passive: the hit that should kill you **leaves you at 1 HP** instead, enraged and running red, **for 8 seconds**. Nothing can take that last point.\n\nDeal **75 damage** in those eight seconds and **the crowd gives you a second breath**: you are back up at **full health**. Fall short, and you fall.\n\n**Once a match.**',
+      },
+      {
+        id: 'myth-wormhole',
+        name: 'Wormhole',
+        bindable: true,
+        hudDescription: 'Throw a portal forward. Whoever it catches is trapped in the Lands of Myth for 8s, fighting beasts and beyonders. Stand by the red portal to peer in',
+        description: 'Launch a **portal** straight ahead. The first enemy it catches is **trapped in the Lands of Myth for 8 seconds** — gone from the arena, untouchable, and fighting for their life on a starry plain of obsidian against **tanky slow beasts, fast small ones, mounted beyonders that throw spears and beyonders on foot that stab**. They can kill them; **more always come**.\n\nThe portal **stays on the field, glowing red**, until they come back out of it. **Stand next to it to peer in** and watch.\n\n**20 second cooldown.**',
+      },
+    ],
+  },
   // Gold. The element id is `fortune` (it replaced the shopkeeper of that name); the shopkeeper's
   // Battle Pass / Drive by Flex mastery was retired with it on 2026-10-15, and its stat keys
   // (`coinsEarned` and friends) are deliberately not reused.

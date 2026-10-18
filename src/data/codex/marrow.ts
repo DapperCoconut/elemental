@@ -4,8 +4,8 @@ import { ElementCodex } from '../AbilityCodex';
  * Marrow — an immune system with a host attached, and a fever it wants you to start.
  *
  * Verified against `src/elements/marrow.ts` and `kits/MarrowKit.ts`. Marrow has five corrupt shop
- * upgrades and no perks or mastery enhancements; every figure below is a constant at the top of
- * the kit.
+ * upgrades and no perks; its mastery (2026-10-18) is the "Mastery" block of the kit. Every figure
+ * below is a constant at the top of the kit.
  */
 const marrow: ElementCodex = {
   identity:
@@ -275,6 +275,54 @@ const marrow: ElementCodex = {
         'The five seconds are the whole tell. Mastacre thrown at a fleeing target is 0 damage and still a full inflammation bar, which is often the reason to cast it.',
         'A full bar right after a Mastacre is 4 HP a second and +30% speed for the next fifty seconds — the ultimate is at least as much a buff as it is a nuke.',
         'They inherit the fever\'s haste like everything else, so casting it at 100 inflammation makes them meaningfully harder to outrun.',
+      ],
+    },
+  },
+
+  mastery: {
+    'marrow-cellular-defense': {
+      basics:
+        'The first frame of the match bricks the arena in: a wall of square bone cells, one every 24px '
+        + 'along the inside of every edge, edge to edge — over a hundred of them on the standard arena, '
+        + '40 HP each. Any enemy shot that reaches the border and touches one is spent on it for at '
+        + 'least 5, and enemies cannot walk through them; one leaning on a cell grinds it down at 20 '
+        + 'HP a second. Every wall cell that dies is worth 3 inflammation. Below 35% HP you regenerate '
+        + 'up to 8 HP a second, scaled by the share of the wall still standing. They never grow back.',
+      cast: 'Passive. Always on while Marrow Mastery is enabled and Marrow is the element being played.',
+      effects: [
+        { tag: 'summon', label: 'The wall', detail: 'One square bone cell every 24px round the inside of the arena border, edge to edge. 40 HP each. Raised once a match; dead ones never come back.' },
+        { tag: 'utility', label: 'Stops shots', detail: 'Any enemy shot that reaches a wall cell is spent on it — at least 5 damage to the cell, and the shot is gone.' },
+        { tag: 'control', label: 'Stops bodies', detail: 'Enemies cannot walk into the wall. One pressed against a cell is pushed back out and grinds that cell down at 20 HP a second.' },
+        { tag: 'resource', label: 'Dying feeds the fever', detail: '+3 inflammation for every wall cell that dies, however it died.' },
+        { tag: 'heal', label: 'Last line', detail: 'Below 35% HP: up to 8 HP a second, times the share of the wall still alive — 4 HP a second with half the wall left.' },
+      ],
+      notes: [
+        'The wall is not in the bone bar and takes no socket. Things that raze a board — Ruin\'s spikes, a rival macrophage — raze bricks too, and each still pays its 3 inflammation.',
+        'The bricks are reddened by your fever, so a hot wall is visible from across the arena.',
+        'In a Marrow mirror with both sides mastered, the opponent\'s wall is laid one row further in.',
+      ],
+    },
+    'marrow-brainstem': {
+      basics:
+        'Takes over the summon nearest your cursor. WASD walks the cell at its own speed and Click is '
+        + 'its attack on the nearest enemy in reach: a macrophage bites and feeds you, a neutrophil '
+        + 'stabs, a killer T throws its lunge when it is ready and jabs otherwise, and a T-cell hands '
+        + 'its buff and top-up to the nearest of your cells it can touch. Meanwhile your body is a '
+        + 'rooted, invincible bone flower. It ends when the cell dies, after 12 seconds, or when you '
+        + 'press the bound key again. Needs a cell on the board. 30 second cooldown from the end.',
+      cast: 'The bound key (R, F or Q) takes the cell nearest the cursor; the same key lets go. 30 second cooldown, counted from when the ride ends.',
+      effects: [
+        { tag: 'summon', label: 'Ride a cell', detail: 'The summon in the bone bar nearest your cursor. Mast cells and B-cells cannot be taken. No cell, no cast — and no cooldown spent.' },
+        { tag: 'movement', label: 'Your legs are its legs', detail: 'WASD walks the cell at its own speed, fever haste and T-cell buff included. It faces your cursor.' },
+        { tag: 'damage', label: 'Your click is its attack', detail: 'Its own strike on the nearest enemy within its reach (+14px): macrophage 15 and a feed, neutrophil 25, killer T 28 — or its 22 lunge when that is ready. A swing at nothing costs 0.32s.' },
+        { tag: 'buff', label: 'A T-cell nurses', detail: 'Riding a T-cell, Click hands its buff and top-up to the nearest of your cells within 48px.' },
+        { tag: 'shield', label: 'The flower', detail: 'Your body is a bone flower for the whole ride: rooted where it stood and invincible.' },
+        { tag: 'cost', label: 'Until it dies', detail: 'Ends when the cell dies, at 12 seconds, or on a second press of the bound key. 30 second cooldown from the end.' },
+      ],
+      notes: [
+        'The other four cells keep fighting on their own while you drive the fifth.',
+        'Macrosma\'s devour and the R+ cytokine spray still go off on their own while you ride those cells.',
+        'A Marrow NPC on Nightmare binds it over Mastacre and takes a macrophage or killer T when it drops under half health.',
       ],
     },
   },

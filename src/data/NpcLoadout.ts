@@ -109,6 +109,31 @@ const NPC_MASTERY_BINDS: Record<string, { enhId: string; slot: MasterySlot }> = 
   // shotgun is the same corruption-feeding pressure at range, aimed in one press. The bite and the
   // execute — the two the rotation's synergies are built on — both survive.
   gluttony: { enhId: 'corrupt-predation', slot: 'r' },
+  // Marrow gives up Mastacre. The mast cells' value is a fever bar the Cellular Defense wall
+  // already feeds every time a brick dies, and Brainstem — fired by the kit when the bot is losing
+  // and has a macrophage or killer worth riding — turns the board it builds into an invincible
+  // stall. Macrosma, Neutralize and Dendricles, the T-cell synergy included, all survive.
+  marrow: { enhId: 'marrow-brainstem', slot: 'q' },
+  // Wax gives up Hive Hearth. The hive is a long economy — fill it, walk back, cash it in — that
+  // the bot only half plays; Smoke-out is fired by the kit for its two synergies (cover for a bot
+  // wearing Rule Beetanica, a hiding place for a losing one) and the seek walks it back in. The
+  // candle and the bombs, and the bomb-banks-the-candle combo, all survive.
+  wax: { enhId: 'wax-smoke-out', slot: 'f' },
+  // Tempest gives up Summon Front. The front's two synergies (the slam, and Float with R+) are
+  // the airborne half of a kit the bot already plays from the current; Gale Uppercut, thrown by
+  // the kit and juggled by the rotation's Click, is a second way to get a foe off the floor that
+  // pays out in the same height. The current, the kick, the grapple and the wall all survive.
+  tempest: { enhId: 'tempest-gale-uppercut', slot: 'r' },
+  // Dream gives up Sleep Tight. The dagger is the finisher that tips a drowsy foe over, and the
+  // music box — wound and thrown by the kit — does the same job slowly and, over a sleeper, holds
+  // them under for as long as it plays. The pillow, Delve and Nightmare — the bedtime-then-dream
+  // rhythm the rotation is built on — all survive.
+  dream: { enhId: 'dream-music-box', slot: 'f' },
+  // Myth gives up the Beast of Myth. The beast's flip is a walk the bot half makes; the Wormhole,
+  // thrown by the kit, takes the target out of the fight for eight seconds while the realm feeds
+  // the crowd, and the portal point walks the bot to the exit with Excalibur ready. The parry,
+  // its riposte, the slash and Final Destiny all survive.
+  myth: { enhId: 'myth-wormhole', slot: 'f' },
   // Gold (id `fortune`) gives up Midas Curse. The curse's value is a long chase across the floor it
   // lays, which the bot only half plays; Rags to Riches turns the purse the rest of its rotation
   // already fills into permanent damage, fired by the kit the moment it can be afforded. The heart

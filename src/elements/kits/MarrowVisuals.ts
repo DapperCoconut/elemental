@@ -836,6 +836,200 @@ export function cellGlyph(
   }
 }
 
+// ── Mastery ───────────────────────────────────────────────────────────────
+
+/**
+ * Mastery — one osteocyte of the Cellular Defense wall. The only square thing in the kit, and
+ * that is the tell: every other cell is a membrane, this one is a brick. Bone-coloured, with a
+ * marrow nucleus and canaliculi threading out to the bricks either side, so a run of them reads
+ * as one living wall rather than a row of tiles. `hp` 0–1 cracks it and sinks it into shadow.
+ */
+export function wallCell(
+  g: Phaser.GameObjects.Graphics,
+  tint0: MarrowColorFn,
+  x: number, y: number, size: number, alpha: number,
+  { t = 0, seed = 0, hp = 1, hurt = 0, red = 0, dark = 1 } = {},
+): void {
+  const tint = redden(tint0, red);
+  const h = size / 2;
+  const k = Phaser.Math.Clamp(hp, 0, 1);
+  const sink = 0.72 + 0.28 * k;
+  const r = size * 0.22;
+
+  g.fillStyle(shade(tint(MRW.ink), dark), alpha * 0.55);
+  g.fillRoundedRect(x - h - 1.5, y - h - 1.5, size + 3, size + 3, r + 1);
+  g.fillStyle(shade(tint(MRW.boneDeep), dark * sink), alpha);
+  g.fillRoundedRect(x - h, y - h, size, size, r);
+  g.fillStyle(shade(tint(MRW.bone), dark * sink), alpha);
+  g.fillRoundedRect(x - h + 1.5, y - h + 1.5, size - 3, size - 3, r * 0.8);
+  // The lit top face, so the wall has a top and a front.
+  g.fillStyle(shade(tint(MRW.serum), dark), alpha * 0.45 * sink);
+  g.fillRoundedRect(x - h + 3, y - h + 2.5, size - 6, size * 0.18, 1.5);
+
+  // Canaliculi: hairlines out of the nucleus toward the neighbours.
+  g.lineStyle(0.8, shade(tint(MRW.boneShade), dark), alpha * 0.85);
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * TAU + (jitter(seed, i) - 0.5) * 0.6;
+    g.lineBetween(x, y, x + Math.cos(a) * h * 0.9, y + Math.sin(a) * h * 0.9);
+  }
+
+  // The nucleus: marrow under bone, beating a little out of step with its neighbours.
+  const beat = 0.5 + 0.5 * Math.sin(t * 3.2 + seed);
+  g.fillStyle(shade(tint(MRW.marrowDeep), dark), alpha);
+  g.fillEllipse(x, y + 0.5, size * 0.44, size * 0.36);
+  g.fillStyle(shade(tint(MRW.marrow), dark), alpha * (0.8 + beat * 0.2));
+  g.fillEllipse(x, y, size * 0.32, size * 0.26);
+  g.fillStyle(shade(tint(MRW.marrowLit), dark), alpha * 0.7);
+  g.fillCircle(x - size * 0.06, y - size * 0.05, size * 0.06);
+
+  // Damage is cracks, deeper and more of them the lower it is.
+  if (k < 0.75) {
+    g.lineStyle(1, shade(tint(MRW.ink), dark), alpha * 0.8);
+    const n = k < 0.35 ? 3 : k < 0.55 ? 2 : 1;
+    for (let i = 0; i < n; i++) {
+      const sx = x - h + 2 + jitter(seed, 20 + i) * (size - 4);
+      const sy = y - h + 1;
+      g.beginPath();
+      g.moveTo(sx, sy);
+      g.lineTo(sx + (jitter(seed, 30 + i) - 0.5) * 6, sy + size * 0.32);
+      g.lineTo(sx + (jitter(seed, 40 + i) - 0.5) * 8, sy + size * 0.58);
+      g.strokePath();
+    }
+  }
+
+  if (hurt > 0) {
+    g.fillStyle(shade(tint(MRW.serum), dark), alpha * hurt * 0.6);
+    g.fillRoundedRect(x - h, y - h, size, size, r);
+  }
+}
+
+/**
+ * Mastery — Brainstem. What the host becomes while its mind is out in one of its cells: a bone
+ * flower. Five petals of bone round a marrow heart, a ring of stamen-like vertebrae, roots of
+ * marrow into the floor. `open` 0→1 is the bloom, so the turn into it and out of it animate.
+ */
+export function marrowFlower(
+  g: Phaser.GameObjects.Graphics,
+  tint: MarrowColorFn,
+  x: number, y: number, alpha: number,
+  { t = 0, open = 1, dark = 1 } = {},
+): void {
+  const k = easeOut(Phaser.Math.Clamp(open, 0, 1));
+  if (k <= 0.01) return;
+  const a = alpha * Math.min(1, k * 1.6);
+
+  // Roots into the floor and the halo of invulnerability underneath them.
+  g.fillStyle(shade(tint(MRW.marrowDeep), dark), a * 0.35);
+  g.fillEllipse(x, y + 14, 58 * k, 18 * k);
+  g.lineStyle(2, shade(tint(MRW.marrowDeep), dark), a * 0.8);
+  for (let i = 0; i < 6; i++) {
+    const ra = Math.PI * 0.15 + (i / 5) * Math.PI * 0.7;
+    const len = (14 + (i % 2) * 8) * k;
+    g.beginPath();
+    g.moveTo(x, y + 8);
+    g.lineTo(x + Math.cos(ra) * len * 0.6, y + 10 + Math.sin(ra) * len * 0.3);
+    g.lineTo(x + Math.cos(ra) * len, y + 12 + Math.sin(ra) * len * 0.45);
+    g.strokePath();
+  }
+  g.lineStyle(2, shade(tint(MRW.serum), dark), a * (0.25 + 0.15 * Math.sin(t * 3)));
+  g.strokeCircle(x, y, 30 * k);
+
+  // Petals: five long bone blades, each with a marrow vein down the middle. They breathe.
+  for (let i = 0; i < 5; i++) {
+    const pa = -Math.PI / 2 + (i / 5) * TAU + Math.sin(t * 1.3 + i) * 0.05;
+    const len = 24 * k * (1 + 0.04 * Math.sin(t * 2 + i));
+    const wid = 9 * k;
+    const ca = Math.cos(pa), sa = Math.sin(pa);
+    const tip = pt(x, y, ca, sa, len, 0);
+    const l = pt(x, y, ca, sa, len * 0.45, -wid);
+    const r = pt(x, y, ca, sa, len * 0.45, wid);
+    g.fillStyle(shade(tint(MRW.boneDeep), dark), a);
+    g.fillTriangle(x, y, l.x, l.y, tip.x, tip.y);
+    g.fillTriangle(x, y, r.x, r.y, tip.x, tip.y);
+    const l2 = pt(x, y, ca, sa, len * 0.45, -wid * 0.72);
+    const r2 = pt(x, y, ca, sa, len * 0.45, wid * 0.72);
+    const tip2 = pt(x, y, ca, sa, len * 0.9, 0);
+    g.fillStyle(shade(tint(MRW.bone), dark), a);
+    g.fillTriangle(x, y, l2.x, l2.y, tip2.x, tip2.y);
+    g.fillTriangle(x, y, r2.x, r2.y, tip2.x, tip2.y);
+    g.lineStyle(1.4, shade(tint(MRW.marrow), dark), a * 0.85);
+    const vein = pt(x, y, ca, sa, len * 0.75, 0);
+    g.lineBetween(x, y, vein.x, vein.y);
+  }
+  // Inner ring of small vertebra-petals, offset from the big ones.
+  for (let i = 0; i < 5; i++) {
+    const pa = -Math.PI / 2 + ((i + 0.5) / 5) * TAU - t * 0.4;
+    const px = x + Math.cos(pa) * 10 * k;
+    const py = y + Math.sin(pa) * 10 * k;
+    g.fillStyle(shade(tint(MRW.boneShade), dark), a);
+    g.fillEllipse(px, py, 7 * k, 5 * k);
+    g.fillStyle(shade(tint(MRW.marrowLit), dark), a * 0.9);
+    g.fillCircle(px, py, 1.3 * k);
+  }
+  // The heart: the marrow, beating.
+  const beat = Math.pow(Math.max(0, Math.sin(t * 4.2)), 6);
+  g.fillStyle(shade(tint(MRW.marrowDeep), dark), a);
+  g.fillCircle(x, y, 8 * k);
+  g.fillStyle(shade(tint(MRW.marrow), dark), a);
+  g.fillCircle(x, y, (6 + beat * 1.2) * k);
+  g.fillStyle(shade(tint(MRW.marrowLit), dark), a * (0.6 + beat * 0.4));
+  g.fillCircle(x - 1.5 * k, y - 1.5 * k, 2.2 * k);
+}
+
+/**
+ * Mastery — Brainstem. The nerve from the flower to the cell it is driving: a sagging spinal
+ * cord of vertebra beads with a signal running down it, and a little brainstem crown over the
+ * possessed cell so it can be told apart from the other four at a glance.
+ */
+export function nerveTether(
+  g: Phaser.GameObjects.Graphics,
+  tint: MarrowColorFn,
+  x0: number, y0: number, x1: number, y1: number, alpha: number,
+  { t = 0, dark = 1 } = {},
+): void {
+  const d = Phaser.Math.Distance.Between(x0, y0, x1, y1);
+  const n = Math.max(4, Math.min(28, Math.round(d / 18)));
+  const sag = Math.min(40, d * 0.12);
+  const at = (u: number): { x: number; y: number } => ({
+    x: x0 + (x1 - x0) * u,
+    y: y0 + (y1 - y0) * u + Math.sin(u * Math.PI) * sag + Math.sin(t * 3 + u * 9) * 2,
+  });
+  g.lineStyle(3, shade(tint(MRW.marrowDeep), dark), alpha * 0.55);
+  g.beginPath();
+  for (let i = 0; i <= n; i++) {
+    const p = at(i / n);
+    if (i === 0) g.moveTo(p.x, p.y); else g.lineTo(p.x, p.y);
+  }
+  g.strokePath();
+  for (let i = 1; i < n; i++) {
+    const p = at(i / n);
+    g.fillStyle(shade(tint(MRW.boneShade), dark), alpha * 0.85);
+    g.fillEllipse(p.x, p.y, 4.6, 3.4);
+  }
+  // The signal: two pulses running flower → cell.
+  for (let s = 0; s < 2; s++) {
+    const u = ((t * 0.9 + s * 0.5) % 1);
+    const p = at(u);
+    g.fillStyle(shade(tint(MRW.inflameLit), dark), alpha * (1 - u * 0.4));
+    g.fillCircle(p.x, p.y, 2.6);
+  }
+
+  // The crown over the cell: a little brain on a stalk.
+  const cx = x1;
+  const cy = y1 - 30 + Math.sin(t * 2.4) * 1.5;
+  g.lineStyle(1.6, shade(tint(MRW.boneShade), dark), alpha);
+  g.lineBetween(cx, cy + 6, cx, y1 - 18);
+  g.fillStyle(shade(tint(MRW.marrowDeep), dark), alpha);
+  g.fillEllipse(cx, cy, 15, 11);
+  g.fillStyle(shade(tint(MRW.mastLit), dark), alpha);
+  g.fillEllipse(cx - 2.6, cy - 0.5, 7, 8.4);
+  g.fillEllipse(cx + 2.6, cy - 0.5, 7, 8.4);
+  g.lineStyle(0.8, shade(tint(MRW.marrowDeep), dark), alpha * 0.9);
+  g.lineBetween(cx, cy - 4.6, cx, cy + 3.6);
+  g.beginPath(); g.arc(cx - 3, cy - 1, 2.2, Math.PI * 0.2, Math.PI * 1.2); g.strokePath();
+  g.beginPath(); g.arc(cx + 3, cy + 0.5, 2.2, Math.PI * 1.2, Math.PI * 2.2); g.strokePath();
+}
+
 // ── Fx ────────────────────────────────────────────────────────────────────
 
 export class MarrowFx extends FxBase {

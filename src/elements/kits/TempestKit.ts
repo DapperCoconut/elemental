@@ -5,8 +5,9 @@ import type { CustomStatus } from './StatusHudKit';
 import type { ProjectileRegistry, RegisteredProjectile } from '../../combat/ProjectileRegistry';
 import { Sfx } from '../../audio';
 import {
-  TMP, TempestAvatar, TempestColorFn, TempestFx, boltPip, current as paintCurrent, fallGauge, frontLane,
-  gustLayered, lightning, liftShadow, swirl,
+  TMP, HeraldBroadcast, TempestAvatar, TempestColorFn, TempestFx, boltPip, chevron, current as paintCurrent, fallGauge,
+  frontLane, gustLayered, hailStone, iceShard, knockTag, lightning, liftShadow, rainPuddle, staticTrail, stormBank, stormSky, swirl,
+  thunderCloud,
 } from './TempestVisuals';
 
 type Owner = 'player' | 'npc';
@@ -111,6 +112,75 @@ const PONG_SPEED = 540;
 const PONG_BOUNCES = 3;
 const PONG_MAX_MS = 7000;
 
+// ── Shop upgrades ────────────────────────────────────────────────────────────
+/** Click+ Hailstorm: the stone hits a little harder and bursts into shrapnel where it goes off. */
+const HAIL_DAMAGE = 13;
+const SHRAPNEL_COUNT = 6;
+const SHRAPNEL_DAMAGE = 4;
+const SHRAPNEL_SPEED = 520;
+const SHRAPNEL_RANGE = 170;
+const SHRAPNEL_HIT_R = 18;
+/** E+ Shocking Acceleration: the roll's static trail, and the airborne hop's thundercloud. */
+const STATIC_MS = 5000;
+const STATIC_HALF_W = 22;
+const STATIC_STEP = 26;
+const STATIC_DAMAGE = 5;
+const STATIC_TICK_MS = 500;
+const CLOUD_MS = 5000;
+const CLOUD_R = 150;
+const CLOUD_LIFT = 110;
+const CLOUD_STRIKE_MS = 1000;
+const CLOUD_STRIKE_DAMAGE = 8;
+/** F+ Cyclone: made where you stand when no current is in reach. */
+const CYCLONE_VZ = 880;
+const CYCLONE_CD_MULT = 2;
+/** Q+ Herald of Doom: the broadcast, then twelve seconds of the weather it forecast. */
+const HERALD_MS = 2600;
+const WEATHER_MS = 12000;
+const WX_FADE_MS = 900;
+const WX_BOLT_MS = 700;
+const WX_BOLT_WARN_MS = 450;
+const WX_BOLT_R = 50;
+const WX_BOLT_DAMAGE = 12;
+const WX_HAIL_MS = 150;
+const WX_HAIL_SPEED = 460;
+const WX_HAIL_DRIFT = 70;
+const WX_HAIL_HIT_R = 18;
+const WX_HAIL_DAMAGE = 5;
+/** Gales: every gain of elevation, by anyone, is this much bigger while the weather lasts. */
+const WX_LIFT_MULT = 1.4;
+const WX_PUDDLE_MS = 550;
+const PUDDLE_LIFE_MS = 5000;
+const PUDDLE_R = 42;
+const PUDDLE_SLOW = 0.6;
+
+// ── Mastery ──────────────────────────────────────────────────────────────────
+export const UPPERCUT_ID = 'tempest-gale-uppercut';
+/** Gale Uppercut: a short dash, a small hit, and the body it lands on thrown into the air. */
+const UPPERCUT_CD_MS = 9000;
+const UPPERCUT_DASH = 250;
+const UPPERCUT_DASH_MS = 220;
+const UPPERCUT_HIT_R = 46;
+const UPPERCUT_DAMAGE = 8;
+const UPPERCUT_VZ = 720;
+/** A thrown body has no terminal speed short of a dive, so a juggle that went high comes down hard. */
+const KNOCK_TERMINAL = 1600;
+/** A Click that catches a thrown body buys it this much more height. */
+const KNOCK_BOOST = 360;
+/** The fall: read off the speed at impact, like a landing. */
+const KNOCK_FALL_MIN = 6;
+const KNOCK_FALL_SPAN = 54;
+const KNOCK_FALL_FULL = 1500;
+/** Unrelenting Storm: the Herald's weather, tamed and left on for the whole match. */
+const AMB_BOLT_MS = 5500;
+const AMB_BOLT_SPAN_MS = 6000;
+const AMB_HAIL_MS = 1100;
+const AMB_PUDDLE_MS = 7000;
+const AMB_PUDDLE_MAX = 2;
+const AMB_PUDDLE_LIFE_MS = 6500;
+/** The breeze: px/s to the right of the screen, on the storm's foes only. */
+const BREEZE = 42;
+
 export interface TempestArenaApi {
   get scene(): Phaser.Scene;
   get player(): Fighter;
@@ -135,6 +205,17 @@ export interface TempestArenaApi {
   setStatusIndicator(id: string, status: CustomStatus | null): void;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
+  /** This side owns the shop upgrade for `slot` (the player's loadout, or a bot/remote one). */
+  hasUpgrade(owner: Owner, slot: string): boolean;
+  /** The mastery enhancement bound over `slot`, for the player and for the opponent. */
+  masteryBindFor(slot: string): string | null;
+  npcMasteryBindFor(slot: string): string | null;
+  /** Credits the local player's mastery progress (the adapter only counts it while they are Tempest). */
+  recordMasteryStat(key: string, amount: number): void;
+  /** Online: relay a mastery press that never touches a cooldown. */
+  broadcast(id: string): void;
+  /** Online PvP: the npc is the opponent's replica, so the bot's own decisions are not made here. */
+  get isOnline(): boolean;
 }
 
 interface GaleShot {
@@ -143,6 +224,8 @@ interface GaleShot {
   tx: number; ty: number;
   seed: number;
   reg: RegisteredProjectile | null;
+  /** Click+ Hailstorm: thrown as a hailstone. */
+  hail: boolean;
 }
 
 /** A knockback this kit owns. The passive only counts walls hit under one of these. */
@@ -190,6 +273,75 @@ interface Slam {
   start: number; until: number;
 }
 
+/** Click+: one splinter of a burst hailstone. */
+interface Shrapnel {
+  owner: Owner;
+  x: number; y: number; vx: number; vy: number;
+  travelled: number;
+  seed: number;
+}
+
+/** E+: the static a roll lays behind it. Points are added as the roll travels. */
+interface StaticLine {
+  owner: Owner;
+  pts: { x: number; y: number }[];
+  until: number;
+  seed: number;
+  lastTick: Map<Fighter, number>;
+}
+
+/** E+: the thundercloud an airborne hop leaves. Strikes its whole circle on a clock. */
+interface Cloud {
+  owner: Owner;
+  x: number; y: number;
+  bornAt: number; until: number;
+  nextStrikeAt: number;
+  seed: number;
+}
+
+/** Q+: a bolt out of the Herald's sky, warned before it lands. */
+interface Bolt {
+  owner: Owner;
+  x: number; y: number;
+  at: number;
+}
+
+/** Q+: a hailstone falling from the top of the screen. */
+interface Hail {
+  owner: Owner;
+  x: number; y: number; vx: number; vy: number;
+  rot: number; seed: number;
+}
+
+/** Q+: a slowing puddle the rain leaves. */
+interface Puddle {
+  owner: Owner;
+  x: number; y: number;
+  bornAt: number; until: number;
+  seed: number;
+  /** Mastery: left by the Unrelenting Storm rather than the Herald's weather. */
+  ambient?: boolean;
+}
+
+/**
+ * Mastery — Gale Uppercut: a body that is not a Tempest, thrown into the air. Height is simulated
+ * here like a flier's, but a victim has no rig of ours to lift, so the *body* is lifted: held at
+ * its anchor, raised by the drawn height, and dropped back onto it on landing.
+ */
+interface Knock {
+  owner: Owner;
+  victim: Fighter;
+  z: number; vz: number;
+  ax: number; ay: number;
+  boosts: number;
+}
+
+interface Weather {
+  owner: Owner;
+  start: number; until: number;
+  nextBolt: number; nextHail: number; nextPuddle: number;
+}
+
 interface Side {
   aimX: number; aimY: number;
   z: number; vz: number;
@@ -206,9 +358,23 @@ interface Side {
   /** The in-air Q: falling at dive speed, with the currents waiting at the bottom. */
   diving: boolean;
   wallSlamAt: Map<Fighter, number>;
+  /** E+: the static line the roll in progress is laying. */
+  laying: StaticLine | null;
+  /** Q+: the Herald has already gone out for this fall — the weather comes when it lands. */
+  heralded: boolean;
   /** Bot only: when it next goes looking for a current. */
   nextFlightAt: number;
   eyeWasOpen: boolean;
+  // Mastery
+  /** Gale Uppercut's dash, and when it was last thrown. */
+  upDashUntil: number; upDashVx: number; upDashVy: number;
+  upLastAt: number;
+  /** A Tempest thrown by a foe's uppercut: whose it was, so the landing hurts and is credited. */
+  knockedBy: Owner | null;
+  /** Unrelenting Storm's clocks (0 until the storm first runs). */
+  ambBolt: number; ambHail: number; ambPuddle: number;
+  /** Airborne time not yet banked as a whole second of the mastery stat. */
+  airMs: number;
 }
 
 function makeSide(): Side {
@@ -220,8 +386,15 @@ function makeSide(): Side {
     dashUntil: 0, dashVx: 0, dashVy: 0,
     grab: null, slam: null, diving: false,
     wallSlamAt: new Map(),
+    laying: null,
+    heralded: false,
     nextFlightAt: 2500,
     eyeWasOpen: false,
+    upDashUntil: 0, upDashVx: 0, upDashVy: 0,
+    upLastAt: -Infinity,
+    knockedBy: null,
+    ambBolt: 0, ambHail: 0, ambPuddle: 0,
+    airMs: 0,
   };
 }
 
@@ -250,6 +423,22 @@ export class TempestKit {
   private currents: Current[] = [];
   private respawnAt: number[] = [];
   private pongs: Pong[] = [];
+  private shrapnel: Shrapnel[] = [];
+  private statics: StaticLine[] = [];
+  private clouds: Cloud[] = [];
+  private bolts: Bolt[] = [];
+  private hail: Hail[] = [];
+  private puddles: Puddle[] = [];
+  private weathers: Weather[] = [];
+  /** Mastery: bodies Gale Uppercut has in the air. */
+  private knocks: Knock[] = [];
+  /** Mastery: foes already carrying the kill-during-the-forecast listener this match. */
+  private watched = new WeakSet<Fighter>();
+  /** Mastery: how far the storm bank is faded in, and how dark it has turned. */
+  private bankK = 0;
+  private bankDark = 0;
+  /** Bodies a puddle slowed last frame, so they can be handed back their speed. */
+  private slowed = new Set<Fighter>();
   private pointerWasDown = false;
   private vizT = 0;
 
@@ -261,6 +450,8 @@ export class TempestKit {
   private npcAvatar: TempestAvatar | null = null;
   private groundGfx: Phaser.GameObjects.Graphics | null = null;
   private airGfx: Phaser.GameObjects.Graphics | null = null;
+  /** Q+: the weather over the whole screen. */
+  private skyGfx: Phaser.GameObjects.Graphics | null = null;
 
   constructor(api: TempestArenaApi) {
     this.api = api;
@@ -298,6 +489,16 @@ export class TempestKit {
     return null;
   }
 
+  /** This side is a Tempest and owns the upgrade for `slot`. */
+  private up(owner: Owner, slot: string): boolean {
+    return this.is(owner) && this.api.hasUpgrade(owner, slot);
+  }
+
+  /** Q+ gales: every elevation gain is bigger while anyone's Herald weather is live. */
+  private liftMult(): number {
+    return this.weathers.some((w) => this.now < w.until) ? WX_LIFT_MULT : 1;
+  }
+
   private refund(f: Fighter | null, abilityId: string): void {
     if (f?.active) f.resetCooldown(abilityId);
   }
@@ -326,12 +527,14 @@ export class TempestKit {
     return null;
   }
 
-  /** The rig's drawn position: lifted by altitude, clamped so the character never leaves the screen. */
+  /**
+   * The rig's drawn position: lifted by altitude. There is no ceiling — climb high enough and the
+   * character flies off the top of the screen, and `paintAir` pins a marker to the edge instead.
+   */
   private rigAt(owner: Owner): { x: number; y: number; lift: number } {
     const f = this.fighter(owner);
     const s = this.side(owner);
-    const b = this.api.bounds;
-    const lift = Math.max(0, Math.min(s.z * LIFT, f.y - (b.y + 44)));
+    const lift = Math.max(0, s.z * LIFT);
     return { x: f.x, y: f.y - lift, lift };
   }
 
@@ -340,15 +543,18 @@ export class TempestKit {
     const o = this.ownerOf(f);
     if (o) {
       const s = this.side(o);
-      if (s.rollUntil > this.now || s.dashUntil > this.now || s.slam) return true;
+      if (s.rollUntil > this.now || s.dashUntil > this.now || s.upDashUntil > this.now || s.slam) return true;
     }
-    return this.pongs.some((p) => p.victim === f) || BOTH.some((o2) => this.sides[o2].grab?.victim === f);
+    return this.pongs.some((p) => p.victim === f) || BOTH.some((o2) => this.sides[o2].grab?.victim === f)
+      || this.knocks.some((k) => k.victim === f);
   }
 
   /** A knockback this kit owns. Replaces any shove already on the body. */
   private shove(owner: Owner, victim: Fighter, vx: number, vy: number, ms: number): void {
     if (victim.knockbackImmune || victim.unstoppable) return;
     if (this.pongs.some((p) => p.victim === victim)) return;
+    // A body in the air is held where it was thrown; a shove would drag it out from under its own fall.
+    if (this.knocks.some((k) => k.victim === victim)) return;
     const i = this.shoves.findIndex((s) => s.victim === victim);
     if (i >= 0) this.shoves.splice(i, 1);
     this.shoves.push({ owner, victim, vx, vy, until: this.now + ms, ms });
@@ -365,12 +571,27 @@ export class TempestKit {
     this.currents = [];
     this.respawnAt = [];
     this.pongs = [];
+    this.shrapnel = [];
+    this.statics = [];
+    this.clouds = [];
+    this.bolts = [];
+    this.hail = [];
+    this.puddles = [];
+    this.weathers = [];
+    // Bodies are rebuilt per match, so a thrown one is only forgotten, never written back.
+    this.knocks = [];
+    this.watched = new WeakSet();
+    this.bankK = 0;
+    this.bankDark = 0;
+    for (const f of this.slowed) f.tempestSlowMult = 1;
+    this.slowed.clear();
     this.pointerWasDown = false;
     this.vizT = 0;
     this.playerAvatar?.destroy(); this.playerAvatar = null;
     this.npcAvatar?.destroy(); this.npcAvatar = null;
     this.groundGfx?.destroy(); this.groundGfx = null;
     this.airGfx?.destroy(); this.airGfx = null;
+    this.skyGfx?.destroy(); this.skyGfx = null;
   }
 
   // ── Input ──────────────────────────────────────────────────────────────────
@@ -392,9 +613,17 @@ export class TempestKit {
     // One burst per press: two charges held down would otherwise go in one frame.
     if (clicked) p.castAbility('tempest-gale', ctx);
     if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('tempest-kick', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('tempest-front', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('tempest-updraft', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('tempest-forecast', ctx);
+    // Mastery: the key Gale Uppercut was dropped on is the uppercut's, not the ability under it.
+    const up = this.uppercutSlot('player');
+    if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) {
+      if (up === 'r') this.doUppercut('player', mouseX, mouseY); else p.castAbility('tempest-front', ctx);
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) {
+      if (up === 'f') this.doUppercut('player', mouseX, mouseY); else p.castAbility('tempest-updraft', ctx);
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) {
+      if (up === 'q') this.doUppercut('player', mouseX, mouseY); else p.castAbility('tempest-forecast', ctx);
+    }
   }
 
   // ── Ability entry points (called from build*Context) ───────────────────────
@@ -414,13 +643,13 @@ export class TempestKit {
       owner,
       x: f.x + Math.cos(ang) * Math.min(18, dist), y: f.y + Math.sin(ang) * Math.min(18, dist),
       vx: Math.cos(ang) * GALE_SPEED, vy: Math.sin(ang) * GALE_SPEED,
-      tx, ty, seed: Math.random() * 999, reg: null,
+      tx, ty, seed: Math.random() * 999, reg: null, hail: this.up(owner, 'click'),
     };
     const reg: RegisteredProjectile = {
       owner,
       getX: () => shot.x,
       getY: () => shot.y,
-      damage: GALE_DAMAGE,
+      damage: this.up(owner, 'click') ? HAIL_DAMAGE : GALE_DAMAGE,
       steal: () => {
         const i = this.shots.indexOf(shot);
         if (i >= 0) this.shots.splice(i, 1);
@@ -446,10 +675,18 @@ export class TempestKit {
     s.walked = 0;
 
     if (s.airborne) {
-      s.vz = Math.max(s.vz, 0) + KICK_BOOST;
+      s.vz = Math.max(s.vz, 0) + KICK_BOOST * this.liftMult();
       this.fx(owner).burst(f.x, f.y + 10, 46, { boost: true });
       this.avatar(owner)?.play('raise', undefined, 420);
       this.text(owner, f.x, f.y - 76, '⬆ KICK', TMP.white);
+      if (this.up(owner, 'e')) {
+        this.clouds.push({
+          owner, x: f.x, y: f.y, bornAt: this.now, until: this.now + CLOUD_MS,
+          nextStrikeAt: this.now + CLOUD_STRIKE_MS, seed: Math.random() * 999,
+        });
+        Sfx.playAt('thunder', f.x, { rate: 1.4, volume: 0.5 });
+        this.text(owner, f.x, f.y - 96, '⛈ THUNDERCLOUD', TMP.bolt);
+      }
       return;
     }
     const ang = Math.atan2(ty - f.y, tx - f.x);
@@ -461,6 +698,11 @@ export class TempestKit {
     s.trailAccum = 0;
     s.dodgeUntil = s.rollUntil + KICK_DODGE_TAIL_MS;
     if (!s.dodgeGiven) { f.dodgeChance += KICK_DODGE; s.dodgeGiven = true; }
+    if (this.up(owner, 'e')) {
+      s.laying = { owner, pts: [{ x: f.x, y: f.y }], until: this.now + STATIC_MS, seed: Math.random() * 999, lastTick: new Map() };
+      this.statics.push(s.laying);
+      Sfx.playAt('zap', f.x, { rate: 1.2, volume: 0.5 });
+    }
     this.fx(owner).burst(f.x, f.y, 34);
     this.avatar(owner)?.play('dash', ang);
   }
@@ -504,6 +746,17 @@ export class TempestKit {
     const s = this.side(owner);
     if (s.airborne) { this.deny(owner, 'tempest-updraft', 'ALREADY AIRBORNE'); return; }
     const c = this.nearestCurrent(f.x, f.y, CURRENT_REACH);
+    if (!c && this.up(owner, 'f')) {
+      // F+ Cyclone: no current to ride, so make one — a stronger one, on a doubled cooldown.
+      f.scaleStampedCooldown('tempest-updraft', CYCLONE_CD_MULT);
+      this.launch(owner, CYCLONE_VZ);
+      s.nextFlightAt = this.now + 6500;
+      this.fx(owner).cyclone(f.x, f.y);
+      Sfx.playAt('whoosh', f.x, { rate: 0.6, volume: 1 });
+      this.avatar(owner)?.play('raise');
+      this.text(owner, f.x, f.y - 70, '🌪 CYCLONE', TMP.white);
+      return;
+    }
     if (!c) { this.deny(owner, 'tempest-updraft', '🌀 NO CURRENT'); return; }
     this.currents.splice(this.currents.indexOf(c), 1);
     this.respawnAt.push(this.now + CURRENT_RESPAWN_MS);
@@ -533,6 +786,7 @@ export class TempestKit {
       this.avatar(owner)?.play('slam', Math.PI / 2, 400);
       this.text(owner, f.x, f.y - 70, '☄ DIVE', TMP.white);
       Sfx.playAt('whoosh', f.x, { rate: 0.8, volume: 0.9 });
+      this.herald(owner);
       return;
     }
     if (s.grab) { this.deny(owner, 'tempest-forecast', 'HOLDING'); return; }
@@ -551,8 +805,16 @@ export class TempestKit {
     const s = this.side(owner);
     s.airborne = true;
     s.z = Math.max(s.z, 1);
-    s.vz = Math.max(s.vz, 0) + vz;
+    s.vz = Math.max(s.vz, 0) + vz * this.liftMult();
     Sfx.playAt('jump', this.fighter(owner).x, { rate: 0.85, volume: 0.9 });
+  }
+
+  /** R+ Float: airborne over a live front, on your own steam (not diving, slamming or crashing). */
+  private floating(owner: Owner): boolean {
+    const s = this.side(owner);
+    if (!s.airborne || s.diving || s.slam || s.grab?.crashing || !this.up(owner, 'r')) return false;
+    const f = this.fighter(owner);
+    return this.fronts.some((fr) => fr.fadeAt === 0 && this.inFront(fr, f.x, f.y));
   }
 
   private updateHeights(delta: number): void {
@@ -583,11 +845,14 @@ export class TempestKit {
           this.avatar(owner)?.play('slam', Math.PI / 2, 400);
           this.text(owner, f.x, f.y - 70, '☄ CRASH', TMP.white);
           Sfx.playAt('whoosh', f.x, { rate: 0.75, volume: 1 });
+          this.herald(owner);
         }
       } else {
         s.vz -= GRAVITY * dt;
         if (!s.diving && !grab?.crashing) s.vz = Math.max(s.vz, -TERMINAL);
       }
+      // Float: a front underneath holds you where you are. Climbing still works; falling does not.
+      if (s.vz < 0 && this.floating(owner)) s.vz = 0;
       s.z += s.vz * dt;
       if (s.z <= 0) this.land(owner, -s.vz);
     }
@@ -631,7 +896,7 @@ export class TempestKit {
     if (i >= 0) this.fronts.splice(i, 1);
     // And back up, higher than you started.
     const peak = sl.fromZ * SLAM_BOUNCE_MULT + SLAM_BOUNCE_MIN;
-    s.vz = Math.sqrt(2 * GRAVITY * peak);
+    s.vz = Math.sqrt(2 * GRAVITY * peak) * this.liftMult();
     s.z = 1;
     s.slam = null;
     s.charges = GALE_MAX_CHARGES;
@@ -654,6 +919,8 @@ export class TempestKit {
     s.airborne = false;
     const dived = s.diving;
     s.diving = false;
+    const heralded = s.heralded;
+    s.heralded = false;
     const k = Phaser.Math.Clamp(speed / LAND_SPEED_FULL, 0, 1);
     const r = LAND_R_MIN + LAND_R_SPAN * k;
     const dmg = Math.round(LAND_DAMAGE_MIN + LAND_DAMAGE_SPAN * k);
@@ -672,6 +939,8 @@ export class TempestKit {
       }
       t.takeDamage(total, { aoe: true });
       this.api.spawnHitFlash(t.x, t.y, TMP.white);
+      // Mastery stat: the crash that finished whoever was held — slammed into the ground.
+      if (grab && t === grab.victim && !this.alive(t) && owner === 'player') this.api.recordMasteryStat('slamKills', 1);
       const a = d > 1 ? Math.atan2(t.y - f.y, t.x - f.x) : Math.random() * Math.PI * 2;
       this.shove(owner, t, Math.cos(a) * LAND_SHOVE, Math.sin(a) * LAND_SHOVE, LAND_SHOVE_MS);
       if (dived && d <= PONG_R) this.startPong(owner, t, a);
@@ -681,6 +950,11 @@ export class TempestKit {
       this.releaseGrab(owner);
     }
     this.text(owner, f.x, f.y - 60, `💥 LANDING ${dmg}`);
+    if (heralded) this.startWeather(owner);
+    // Mastery: a Tempest a foe uppercut comes down on its own landing, and that landing hurts.
+    const by = s.knockedBy;
+    s.knockedBy = null;
+    if (by && this.alive(f)) this.knockDamage(by, f, speed, f.x, f.y);
   }
 
   // ── Gale Burst ─────────────────────────────────────────────────────────────
@@ -725,15 +999,17 @@ export class TempestKit {
         && Phaser.Math.Distance.Between(shot.x, shot.y, f.x, f.y) <= GALE_R + 8) {
       boost = true;
       big = !!this.nearWall(shot.x, shot.y, GALE_NEAR_WALL) || (s.vz < 0 && s.z < GALE_NEAR_FLOOR);
-      s.vz = Math.max(s.vz, 0) + (big ? GALE_BOOST_BIG : GALE_BOOST);
+      s.vz = Math.max(s.vz, 0) + (big ? GALE_BOOST_BIG : GALE_BOOST) * this.liftMult();
       this.text(owner, f.x, f.y - 76, big ? '⬆⬆ BIG BOOST' : '⬆ BOOST', TMP.white);
     }
     this.fx(owner).burst(shot.x, shot.y, GALE_R, { boost, big });
     Sfx.playAt('gust', shot.x, { rate: big ? 0.9 : 1.2, volume: 0.8 });
+    this.juggle(owner, shot.x, shot.y);
+    if (shot.hail) this.shatterHail(owner, shot.x, shot.y, Math.atan2(shot.vy, shot.vx));
     for (const t of this.foes(owner)) {
       const d = Phaser.Math.Distance.Between(shot.x, shot.y, t.x, t.y);
       if (d > GALE_R) continue;
-      t.takeDamage(GALE_DAMAGE, { aoe: true });
+      t.takeDamage(shot.hail ? HAIL_DAMAGE : GALE_DAMAGE, { aoe: true });
       this.api.spawnHitFlash(t.x, t.y, TMP.white);
       const a = d > 1 ? Math.atan2(t.y - shot.y, t.x - shot.x) : Math.atan2(shot.vy, shot.vx);
       this.shove(owner, t, Math.cos(a) * GALE_SHOVE, Math.sin(a) * GALE_SHOVE, GALE_SHOVE_MS);
@@ -768,7 +1044,13 @@ export class TempestKit {
     for (const owner of BOTH) {
       const s = this.side(owner);
       const f = this.fighter(owner);
-      if (!this.alive(f)) { s.rollUntil = 0; continue; }
+      if (!this.alive(f)) { s.rollUntil = 0; s.laying = null; continue; }
+      if (s.laying) {
+        // E+: the static goes down behind the roll, one point every STATIC_STEP px.
+        const last = s.laying.pts[s.laying.pts.length - 1];
+        if (Phaser.Math.Distance.Between(last.x, last.y, f.x, f.y) >= STATIC_STEP) s.laying.pts.push({ x: f.x, y: f.y });
+        if (s.rollUntil <= this.now) s.laying = null;
+      }
       if (s.rollUntil > this.now) {
         this.body(f).setVelocity(s.rollVx, s.rollVy);
         s.trailAccum += delta;
@@ -903,6 +1185,7 @@ export class TempestKit {
     if (this.now - last < WALL_CD_MS) return;
     s.wallSlamAt.set(victim, this.now);
     victim.takeDamage(WALL_DAMAGE);
+    if (owner === 'player') this.api.recordMasteryStat('wallBlasts', 1);
     this.api.spawnHitFlash(victim.x, victim.y, TMP.white);
     Sfx.playAt('stone-slam', victim.x, { rate: 1.4, volume: 0.7 });
     this.text(owner, victim.x, victim.y - 44, `🧱 WALL SLAM ${WALL_DAMAGE}`, TMP.white);
@@ -1041,6 +1324,500 @@ export class TempestKit {
     this.currents.push({ x, y, bornAt: this.now, diesAt: this.now + CURRENT_LIFE_MS, seed: Math.random() * 999 });
   }
 
+  // ── Shop upgrades ──────────────────────────────────────────────────────────
+
+  /** Click+ Hailstorm: the stone bursts into shrapnel, fanned around the way it was flying. */
+  private shatterHail(owner: Owner, x: number, y: number, ang: number): void {
+    for (let i = 0; i < SHRAPNEL_COUNT; i++) {
+      const a = ang + (i / SHRAPNEL_COUNT) * Math.PI * 2 + (Math.random() - 0.5) * 0.3;
+      this.shrapnel.push({
+        owner, x, y, vx: Math.cos(a) * SHRAPNEL_SPEED, vy: Math.sin(a) * SHRAPNEL_SPEED,
+        travelled: 0, seed: Math.random() * 999,
+      });
+    }
+    this.fx(owner).shatter(x, y, GALE_R);
+    Sfx.playAt('ice-shatter', x, { rate: 1.15, volume: 0.6 });
+  }
+
+  /** Q+ Herald of Doom: cut in on the broadcast. Once per fall; the weather follows the landing. */
+  private herald(owner: Owner): void {
+    const s = this.side(owner);
+    if (s.heralded || !this.up(owner, 'q')) return;
+    s.heralded = true;
+    new HeraldBroadcast(this.api.scene, this.col(owner)).play(this.api.width, HERALD_MS);
+    Sfx.playAt('thunder', this.fighter(owner).x, { rate: 0.8, volume: 0.8 });
+  }
+
+  private startWeather(owner: Owner): void {
+    const f = this.fighter(owner);
+    // A second Herald from the same storm just extends the first.
+    const old = this.weathers.find((w) => w.owner === owner);
+    if (old) { old.until = this.now + WEATHER_MS; return; }
+    this.weathers.push({
+      owner, start: this.now, until: this.now + WEATHER_MS,
+      nextBolt: this.now + 400, nextHail: this.now, nextPuddle: this.now + 300,
+    });
+    this.api.scene.cameras.main.flash(220, 255, 250, 210);
+    Sfx.playAt('thunder', f.x, { rate: 0.6, volume: 1 });
+    Sfx.playAt('rain', f.x, { volume: 0.7 });
+    this.text(owner, f.x, f.y - 112, '⛈ THE WEATHER TURNS', TMP.bolt);
+  }
+
+  /** A point to drop something on: half the time on a foe (give or take), otherwise anywhere. */
+  private weatherPoint(owner: Owner, pad: number): { x: number; y: number } {
+    const b = this.api.bounds;
+    const foes = this.foes(owner);
+    if (foes.length > 0 && Math.random() < 0.5) {
+      const t = foes[Math.floor(Math.random() * foes.length)];
+      return {
+        x: Phaser.Math.Clamp(t.x + (Math.random() - 0.5) * 70, b.x + pad, b.right - pad),
+        y: Phaser.Math.Clamp(t.y + (Math.random() - 0.5) * 70, b.y + pad, b.bottom - pad),
+      };
+    }
+    return { x: Phaser.Math.FloatBetween(b.x + pad, b.right - pad), y: Phaser.Math.FloatBetween(b.y + pad, b.bottom - pad) };
+  }
+
+  private updateUpgrades(delta: number): void {
+    const dt = delta / 1000;
+    const b = this.api.bounds;
+
+    // Click+ — shrapnel: one hit and it is spent; it melts at the end of its range or a wall.
+    for (let i = this.shrapnel.length - 1; i >= 0; i--) {
+      const sh = this.shrapnel[i];
+      sh.x += sh.vx * dt;
+      sh.y += sh.vy * dt;
+      sh.travelled += SHRAPNEL_SPEED * dt;
+      const out = sh.x < b.x || sh.x > b.right || sh.y < b.y || sh.y > b.bottom;
+      const hit = this.foes(sh.owner).find((t) => Phaser.Math.Distance.Between(sh.x, sh.y, t.x, t.y) <= SHRAPNEL_HIT_R);
+      if (hit) {
+        hit.takeDamage(SHRAPNEL_DAMAGE);
+        this.api.spawnHitFlash(hit.x, hit.y, TMP.ice);
+        Sfx.playAt('ice-shard', hit.x, { volume: 0.4 });
+      }
+      if (hit || out || sh.travelled >= SHRAPNEL_RANGE) this.shrapnel.splice(i, 1);
+    }
+
+    // E+ — static lines bite whoever stands on them, every half second each. Floor only.
+    for (let i = this.statics.length - 1; i >= 0; i--) {
+      const st = this.statics[i];
+      if (this.now >= st.until) { this.statics.splice(i, 1); continue; }
+      for (const t of this.foes(st.owner)) {
+        if (t.levitating || !this.onLine(st.pts, t.x, t.y, STATIC_HALF_W)) continue;
+        const last = st.lastTick.get(t) ?? -Infinity;
+        if (this.now - last < STATIC_TICK_MS) continue;
+        st.lastTick.set(t, this.now);
+        t.takeDamage(STATIC_DAMAGE);
+        this.fx(st.owner).staticZap(t.x, t.y);
+        Sfx.playAt('zap', t.x, { rate: 1.4, volume: 0.35 });
+        this.text(st.owner, t.x, t.y - 40, `⚡ STATIC ${STATIC_DAMAGE}`, TMP.bolt);
+      }
+    }
+
+    // E+ — thunderclouds strike their whole circle on a clock.
+    for (let i = this.clouds.length - 1; i >= 0; i--) {
+      const c = this.clouds[i];
+      if (this.now >= c.until) { this.clouds.splice(i, 1); continue; }
+      if (this.now < c.nextStrikeAt) continue;
+      c.nextStrikeAt += CLOUD_STRIKE_MS;
+      const fx = this.fx(c.owner);
+      fx.strike(c.x, c.y, CLOUD_R * 0.45, c.y - CLOUD_LIFT);
+      fx.ring(c.x, c.y, 20, CLOUD_R, 340, TMP.bolt, 2.5, 4);
+      for (let k = 0; k < 3; k++) {
+        const a = Math.random() * Math.PI * 2;
+        const d = CLOUD_R * (0.4 + Math.random() * 0.55);
+        fx.strike(c.x + Math.cos(a) * d, c.y + Math.sin(a) * d * 0.6, 22, c.y - CLOUD_LIFT);
+      }
+      Sfx.playAt('thunder', c.x, { rate: 1.3, volume: 0.6 });
+      for (const t of this.foes(c.owner)) {
+        if (Phaser.Math.Distance.Between(c.x, c.y, t.x, t.y) > CLOUD_R) continue;
+        t.takeDamage(CLOUD_STRIKE_DAMAGE, { aoe: true });
+        this.api.spawnHitFlash(t.x, t.y, TMP.bolt);
+        this.text(c.owner, t.x, t.y - 40, `⛈ ${CLOUD_STRIKE_DAMAGE}`, TMP.bolt);
+      }
+    }
+
+    // Q+ — the Herald's weather: bolts, hail and puddles on their own clocks while it lasts.
+    for (let i = this.weathers.length - 1; i >= 0; i--) {
+      const w = this.weathers[i];
+      // Kept a moment past the end so the sky can fade out.
+      if (this.now >= w.until + WX_FADE_MS) { this.weathers.splice(i, 1); continue; }
+      if (this.now >= w.until) continue;
+      while (this.now >= w.nextBolt) {
+        w.nextBolt += WX_BOLT_MS * (0.7 + Math.random() * 0.6);
+        const p = this.weatherPoint(w.owner, 30);
+        this.bolts.push({ owner: w.owner, x: p.x, y: p.y, at: this.now + WX_BOLT_WARN_MS });
+        this.fx(w.owner).strikeWarn(p.x, p.y, WX_BOLT_R, WX_BOLT_WARN_MS);
+      }
+      while (this.now >= w.nextHail) {
+        w.nextHail += WX_HAIL_MS;
+        const foes = this.foes(w.owner);
+        // A quarter of the hail is dropped over somebody; the rest falls where it falls.
+        const over = foes.length > 0 && Math.random() < 0.25 ? foes[Math.floor(Math.random() * foes.length)] : null;
+        const x = over ? over.x - WX_HAIL_DRIFT * ((over.y - b.y) / WX_HAIL_SPEED) + (Math.random() - 0.5) * 40
+          : Phaser.Math.FloatBetween(b.x - 60, b.right);
+        this.hail.push({
+          owner: w.owner, x, y: b.y - 12,
+          vx: WX_HAIL_DRIFT, vy: WX_HAIL_SPEED * (0.9 + Math.random() * 0.2),
+          rot: Math.random() * 6, seed: Math.random() * 999,
+        });
+      }
+      while (this.now >= w.nextPuddle) {
+        w.nextPuddle += WX_PUDDLE_MS;
+        const p = this.weatherPoint(w.owner, PUDDLE_R);
+        this.puddles.push({ owner: w.owner, x: p.x, y: p.y, bornAt: this.now, until: this.now + PUDDLE_LIFE_MS, seed: Math.random() * 999 });
+      }
+    }
+
+    for (let i = this.bolts.length - 1; i >= 0; i--) {
+      const bo = this.bolts[i];
+      if (this.now < bo.at) continue;
+      this.bolts.splice(i, 1);
+      this.fx(bo.owner).strike(bo.x, bo.y, WX_BOLT_R, b.y - 40);
+      Sfx.playAt('thunder', bo.x, { rate: 1.5, volume: 0.45 });
+      for (const t of this.foes(bo.owner)) {
+        if (Phaser.Math.Distance.Between(bo.x, bo.y, t.x, t.y) > WX_BOLT_R) continue;
+        t.takeDamage(WX_BOLT_DAMAGE, { aoe: true });
+        this.api.spawnHitFlash(t.x, t.y, TMP.bolt);
+        this.text(bo.owner, t.x, t.y - 40, `⚡ ${WX_BOLT_DAMAGE}`, TMP.bolt);
+      }
+    }
+
+    for (let i = this.hail.length - 1; i >= 0; i--) {
+      const h = this.hail[i];
+      h.x += h.vx * dt;
+      h.y += h.vy * dt;
+      h.rot += dt * 5;
+      if (h.y > b.bottom + 12) { this.hail.splice(i, 1); continue; }
+      if (h.y < b.y) continue;
+      const hit = this.foes(h.owner).find((t) => Phaser.Math.Distance.Between(h.x, h.y, t.x, t.y) <= WX_HAIL_HIT_R);
+      if (!hit) continue;
+      this.hail.splice(i, 1);
+      hit.takeDamage(WX_HAIL_DAMAGE);
+      this.api.spawnHitFlash(hit.x, hit.y, TMP.ice);
+      this.fx(h.owner).shatter(h.x, h.y, 22);
+      Sfx.playAt('ice-shard', hit.x, { rate: 1.2, volume: 0.4 });
+      this.text(h.owner, hit.x, hit.y - 40, `🧊 HAIL ${WX_HAIL_DAMAGE}`, TMP.ice);
+    }
+
+    // Puddles slow whoever is standing in one: the duel pair through the speed mults below,
+    // husks through `tempestSlowMult`, which this kit is the only writer of.
+    for (let i = this.puddles.length - 1; i >= 0; i--) {
+      if (this.now >= this.puddles[i].until) this.puddles.splice(i, 1);
+    }
+    const nowSlowed = new Set<Fighter>();
+    for (const pd of this.puddles) {
+      for (const t of this.foes(pd.owner)) {
+        if (t.levitating || t.unstoppable) continue;
+        const dx = (t.x - pd.x) / PUDDLE_R;
+        const dy = (t.y - pd.y) / (PUDDLE_R * 0.625);
+        if (dx * dx + dy * dy <= 1) nowSlowed.add(t);
+      }
+    }
+    for (const f of this.slowed) if (!nowSlowed.has(f)) f.tempestSlowMult = 1;
+    for (const f of nowSlowed) f.tempestSlowMult = PUDDLE_SLOW;
+    this.slowed = nowSlowed;
+  }
+
+  /** Within `halfW` of the polyline `pts`. */
+  private onLine(pts: { x: number; y: number }[], x: number, y: number, halfW: number): boolean {
+    if (pts.length === 1) return Phaser.Math.Distance.Between(pts[0].x, pts[0].y, x, y) <= halfW;
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1];
+      const c = pts[i];
+      const dx = c.x - a.x;
+      const dy = c.y - a.y;
+      const L = dx * dx + dy * dy || 1;
+      const k = Phaser.Math.Clamp(((x - a.x) * dx + (y - a.y) * dy) / L, 0, 1);
+      if (Phaser.Math.Distance.Between(a.x + dx * k, a.y + dy * k, x, y) <= halfW) return true;
+    }
+    return false;
+  }
+
+  // ── Mastery ────────────────────────────────────────────────────────────────
+
+  private masteryOn(owner: Owner): boolean {
+    return this.is(owner) && (owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
+  }
+
+  /** Which slot Gale Uppercut was dropped on, or null. */
+  private uppercutSlot(owner: Owner): 'r' | 'f' | 'q' | null {
+    if (!this.masteryOn(owner)) return null;
+    for (const sl of ['r', 'f', 'q'] as const) {
+      const bind = owner === 'player' ? this.api.masteryBindFor(sl) : this.api.npcMasteryBindFor(sl);
+      if (bind === UPPERCUT_ID) return sl;
+    }
+    return null;
+  }
+
+  private uppercutReady(owner: Owner): boolean {
+    return this.now - this.side(owner).upLastAt >= UPPERCUT_CD_MS;
+  }
+
+  /**
+   * Gale Uppercut — dash at the aim and drive a fist of wind up under the first foe met. Small
+   * damage; the point is the throw (see `uppercut`). Its own clock, so it is relayed rather than
+   * cast: a relayed press (`relayed`) skips the clock, the peer's machine already checked it.
+   */
+  doUppercut(owner: Owner, tx: number, ty: number, relayed = false): void {
+    const f = this.fighter(owner);
+    const s = this.side(owner);
+    if (!this.alive(f)) return;
+    if (!relayed && !this.uppercutReady(owner)) {
+      const left = Math.ceil((UPPERCUT_CD_MS - (this.now - s.upLastAt)) / 1000);
+      this.deny(owner, '', `🌪 UPPERCUT ${left}s`);
+      return;
+    }
+    if (s.slam || s.grab) { this.deny(owner, '', s.grab ? 'HOLDING' : 'SLAMMING'); return; }
+    s.aimX = tx; s.aimY = ty;
+    s.upLastAt = this.now;
+    const ang = Math.atan2(ty - f.y, tx - f.x);
+    const speed = UPPERCUT_DASH / (UPPERCUT_DASH_MS / 1000);
+    s.upDashUntil = this.now + UPPERCUT_DASH_MS;
+    s.upDashVx = Math.cos(ang) * speed;
+    s.upDashVy = Math.sin(ang) * speed;
+    s.rollUntil = 0;
+    s.dashUntil = 0;
+    this.fx(owner).burst(f.x, f.y, 28);
+    this.avatar(owner)?.play('dash', ang, UPPERCUT_DASH_MS + 60);
+    Sfx.playAt('whoosh', f.x, { rate: 1.15, volume: 0.85 });
+    if (owner === 'player') this.api.broadcast(UPPERCUT_ID);
+  }
+
+  private updateUppercuts(delta: number): void {
+    for (const owner of BOTH) {
+      const s = this.side(owner);
+      if (s.upDashUntil <= 0) continue;
+      const f = this.fighter(owner);
+      if (!this.alive(f) || this.now >= s.upDashUntil) {
+        if (f?.active && this.now >= s.upDashUntil) this.body(f).setVelocity(0, 0);
+        s.upDashUntil = 0;
+        continue;
+      }
+      this.body(f).setVelocity(s.upDashVx, s.upDashVy);
+      s.trailAccum += delta;
+      if (s.trailAccum >= 40) {
+        s.trailAccum = 0;
+        this.fx(owner).streak(f.x, f.y, Math.atan2(s.upDashVy, s.upDashVx), 38);
+      }
+      const victim = this.foes(owner).find((t) => !this.knocks.some((k) => k.victim === t)
+        && Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) <= UPPERCUT_HIT_R);
+      if (!victim) continue;
+      s.upDashUntil = 0;
+      this.body(f).setVelocity(0, 0);
+      this.uppercut(owner, victim);
+    }
+  }
+
+  /** The fist lands: a small hit, and the body goes up. */
+  private uppercut(owner: Owner, victim: Fighter): void {
+    victim.takeDamage(UPPERCUT_DAMAGE);
+    this.api.spawnHitFlash(victim.x, victim.y, TMP.white);
+    this.fx(owner).uppercut(victim.x, victim.y);
+    this.avatar(owner)?.play('raise', undefined, 420);
+    Sfx.playAt('hit-heavy', victim.x, { rate: 1.25, volume: 0.85 });
+    Sfx.playAt('gust', victim.x, { rate: 0.8, volume: 0.8 });
+    if (!this.alive(victim)) return;
+    if (victim.knockbackImmune || victim.unstoppable) {
+      this.text(owner, victim.x, victim.y - 44, 'UNMOVABLE', TMP.gust);
+      return;
+    }
+    this.endPong(victim);
+    const si = this.shoves.findIndex((sh) => sh.victim === victim);
+    if (si >= 0) this.shoves.splice(si, 1);
+    const vz = UPPERCUT_VZ * this.liftMult();
+    const vo = this.ownerOf(victim);
+    if (vo && this.is(vo)) {
+      // Another Tempest: its own height sim carries it, and its own landing is the slam.
+      const vs = this.side(vo);
+      vs.airborne = true;
+      vs.z = Math.max(vs.z, 1);
+      vs.vz = Math.max(vs.vz, 0) + vz;
+      vs.knockedBy = owner;
+    } else {
+      const old = this.knocks.find((k) => k.victim === victim);
+      if (old) old.vz = Math.max(old.vz, 0) + vz;
+      else this.knocks.push({ owner, victim, z: 1, vz, ax: victim.x, ay: victim.y, boosts: 0 });
+    }
+    this.text(owner, victim.x, victim.y - 48, `🌪 UPPERCUT ${UPPERCUT_DAMAGE}`, TMP.white);
+  }
+
+  /** A Gale Burst going off under a body this side threw: it goes higher. */
+  private juggle(owner: Owner, x: number, y: number): void {
+    for (const k of this.knocks) {
+      if (k.owner !== owner || !this.alive(k.victim)) continue;
+      if (Phaser.Math.Distance.Between(x, y, k.victim.x, k.victim.y) > GALE_R + 8) continue;
+      k.vz = Math.max(k.vz, 0) + KNOCK_BOOST * this.liftMult();
+      k.boosts += 1;
+      this.text(owner, k.victim.x, k.victim.y - 52, '⬆ JUGGLED', TMP.white);
+    }
+    for (const vo of BOTH) {
+      const vs = this.side(vo);
+      if (vs.knockedBy !== owner || !vs.airborne) continue;
+      const v = this.fighter(vo);
+      if (!this.alive(v) || Phaser.Math.Distance.Between(x, y, v.x, v.y) > GALE_R + 8) continue;
+      vs.vz = Math.max(vs.vz, 0) + KNOCK_BOOST * this.liftMult();
+      this.text(owner, v.x, v.y - 52, '⬆ JUGGLED', TMP.white);
+    }
+  }
+
+  /** The bodies Gale Uppercut threw: up under one gravity, held at the anchor, and dropped. */
+  private updateKnocks(delta: number): void {
+    const dt = delta / 1000;
+    const b = this.api.bounds;
+    for (let i = this.knocks.length - 1; i >= 0; i--) {
+      const k = this.knocks[i];
+      const v = k.victim;
+      if (!v.active || v.hp <= 0) {
+        if (v.active) { v.airborne = false; v.levitating = false; }
+        this.knocks.splice(i, 1);
+        continue;
+      }
+      k.vz -= GRAVITY * dt;
+      k.vz = Math.max(k.vz, -KNOCK_TERMINAL);
+      k.z += k.vz * dt;
+      // Online, an opponent's replica is placed by their own stream (their machine lifts them off
+      // the relayed uppercut); here the fall is only timed, so the slam can be dealt and relayed.
+      const ghost = this.api.isOnline && v === this.api.npc;
+      if (k.z <= 0) {
+        this.knocks.splice(i, 1);
+        if (!ghost) {
+          this.body(v).reset(k.ax, k.ay);
+          v.airborne = false;
+          v.levitating = false;
+        }
+        this.knockDamage(k.owner, v, -k.vz, k.ax, k.ay);
+        continue;
+      }
+      if (ghost) continue;
+      // Off the floor: melee and floor hazards cannot reach it, same as a flier.
+      v.airborne = true;
+      v.levitating = true;
+      this.body(v).reset(k.ax, k.ay - this.knockLift(k, b));
+    }
+  }
+
+  /** How far a thrown body is drawn above its anchor: its height, but never off the top of the arena. */
+  private knockLift(k: Knock, b: Phaser.Geom.Rectangle): number {
+    return Math.min(k.z * LIFT, Math.max(0, k.ay - b.y - 24));
+  }
+
+  /** A thrown body meets the floor: the slam is read off how fast it was falling. */
+  private knockDamage(owner: Owner, v: Fighter, speed: number, x: number, y: number): void {
+    const k = Phaser.Math.Clamp(speed / KNOCK_FALL_FULL, 0, 1);
+    const dmg = Math.round(KNOCK_FALL_MIN + KNOCK_FALL_SPAN * k);
+    v.takeDamage(dmg, { aoe: true });
+    this.api.spawnHitFlash(v.x, v.y, TMP.white);
+    this.fx(owner).knockSlam(x, y, k);
+    this.api.scene.cameras.main.shake(80 + k * 160, 0.002 + k * 0.005);
+    Sfx.playAt('stone-slam', x, { rate: 1.2 - k * 0.4, volume: 0.6 + k * 0.4 });
+    this.text(owner, x, y - 50, `💥 SLAMMED ${dmg}`, TMP.white);
+    if (!this.alive(v) && owner === 'player') this.api.recordMasteryStat('slamKills', 1);
+  }
+
+  /**
+   * Unrelenting Storm. A very tame Herald's weather on for the whole match: a rare bolt out of a
+   * clear patch, a hailstone now and then, a couple of puddles, and a breeze that leans every foe
+   * toward the right of the screen. It never touches the lift multiplier — no extra elevation.
+   */
+  private updateStorm(delta: number): void {
+    const dt = delta / 1000;
+    const b = this.api.bounds;
+    let any = false;
+    for (const owner of BOTH) {
+      if (!this.masteryOn(owner) || !this.alive(this.fighter(owner))) continue;
+      any = true;
+      const s = this.side(owner);
+      if (s.ambBolt === 0) {
+        s.ambBolt = this.now + AMB_BOLT_MS * 0.5 + Math.random() * AMB_BOLT_SPAN_MS;
+        s.ambHail = this.now + AMB_HAIL_MS;
+        s.ambPuddle = this.now + 2500;
+      }
+      if (this.now >= s.ambBolt) {
+        s.ambBolt = this.now + AMB_BOLT_MS + Math.random() * AMB_BOLT_SPAN_MS;
+        // Rare and random: it is not aimed at anybody.
+        const x = Phaser.Math.FloatBetween(b.x + 40, b.right - 40);
+        const y = Phaser.Math.FloatBetween(b.y + 60, b.bottom - 40);
+        this.bolts.push({ owner, x, y, at: this.now + WX_BOLT_WARN_MS * 1.6 });
+        this.fx(owner).strikeWarn(x, y, WX_BOLT_R, WX_BOLT_WARN_MS * 1.6);
+      }
+      if (this.now >= s.ambHail) {
+        s.ambHail = this.now + AMB_HAIL_MS * (0.5 + Math.random());
+        // Spotty: as often as not the cloud holds it.
+        if (Math.random() < 0.55) {
+          this.hail.push({
+            owner, x: Phaser.Math.FloatBetween(b.x - 40, b.right), y: b.y - 12,
+            vx: WX_HAIL_DRIFT * 0.6, vy: WX_HAIL_SPEED * (0.85 + Math.random() * 0.2),
+            rot: Math.random() * 6, seed: Math.random() * 999,
+          });
+        }
+      }
+      if (this.now >= s.ambPuddle) {
+        s.ambPuddle = this.now + AMB_PUDDLE_MS * (0.7 + Math.random() * 0.6);
+        if (this.puddles.filter((pd) => pd.owner === owner && pd.ambient).length < AMB_PUDDLE_MAX) {
+          this.puddles.push({
+            owner, x: Phaser.Math.FloatBetween(b.x + PUDDLE_R, b.right - PUDDLE_R),
+            y: Phaser.Math.FloatBetween(b.y + 70, b.bottom - PUDDLE_R),
+            bornAt: this.now, until: this.now + AMB_PUDDLE_LIFE_MS, seed: Math.random() * 999, ambient: true,
+          });
+        }
+      }
+      // The breeze. A nudge to the position rather than the velocity, so a body nobody is
+      // steering this frame drifts at the breeze's speed instead of building it up.
+      for (const t of this.foes(owner)) {
+        if (t.knockbackImmune || t.unstoppable || this.bodyDriven(t) || this.shoves.some((sh) => sh.victim === t)) continue;
+        t.x = Math.min(b.right - 18, t.x + BREEZE * dt);
+      }
+    }
+    // The bank: in with the storm, and dark while anyone's Herald weather is live.
+    const target = any ? 1 : 0;
+    this.bankK += (target - this.bankK) * Math.min(1, dt * 2);
+    const darkT = this.weatherLive() ? 1 : 0;
+    this.bankDark += (darkT - this.bankDark) * Math.min(1, dt * 1.5);
+  }
+
+  /** The four mastery stats that are not counted where their hit lands. */
+  private updateMasteryStats(delta: number): void {
+    if (!this.is('player')) return;
+    const s = this.sides.player;
+    if (s.airborne && this.alive(this.api.player)) {
+      s.airMs += delta;
+      // Banked a whole second at a time, so the save is written once a second, not every frame.
+      while (s.airMs >= 1000) { s.airMs -= 1000; this.api.recordMasteryStat('airSeconds', 1); }
+    }
+    // A kill inside your own forecast storm (Herald of Doom, Q+): every foe gets a listener once,
+    // and the storm is checked at the moment of death, not when the listener went on.
+    for (const t of this.api.enemies) {
+      if (!t || !t.active || this.watched.has(t)) continue;
+      this.watched.add(t);
+      t.once('defeated', () => {
+        if (this.is('player') && this.weathers.some((w) => w.owner === 'player' && this.now < w.until)) {
+          this.api.recordMasteryStat('forecastKills', 1);
+        }
+      });
+    }
+  }
+
+  /**
+   * The bot's uppercut. Fired here because it runs off the kit's own clock: on a foe inside the
+   * dash with nothing better going on, and above all on one already standing by a wall — the
+   * throw holds them there for the juggle and the slam.
+   */
+  private updateNpcUppercut(): void {
+    if (this.api.isOnline || !this.uppercutSlot('npc') || !this.uppercutReady('npc')) return;
+    const s = this.sides.npc;
+    const f = this.api.npc;
+    if (!this.alive(f) || s.grab || s.slam || s.diving || s.rollUntil > this.now || s.dashUntil > this.now) return;
+    const t = this.foes('npc')[0];
+    if (!t || this.knocks.some((k) => k.victim === t)) return;
+    if (Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) > UPPERCUT_DASH + 20) return;
+    this.doUppercut('npc', t.x, t.y);
+  }
+
+  /** Online: the opponent threw an uppercut; their replica dashes after it on this machine. */
+  replayNet(id: string, tx: number, ty: number): void {
+    if (id === UPPERCUT_ID) this.doUppercut('npc', tx, ty, true);
+  }
+
   // ── Per frame ──────────────────────────────────────────────────────────────
 
   update(time: number, delta: number): void {
@@ -1057,21 +1834,31 @@ export class TempestKit {
     this.updateShots(delta);
     this.updateRolls(delta);
     this.updateDashes(delta);
+    this.updateUppercuts(delta);
     this.updateHeights(delta);
+    this.updateKnocks(delta);
     this.updateGrabs();
     this.updateShoves();
     this.updatePongs();
     this.updateFronts();
+    this.updateUpgrades(delta);
+    this.updateStorm(delta);
+    this.updateMasteryStats(delta);
+    this.updateNpcUppercut();
     this.updateFlags();
     this.updateAvatars(delta, playerIs, npcIs);
 
     this.paintGround();
     this.paintAir();
+    this.paintSky();
     this.pushStatuses(playerIs);
   }
 
   private hasLiveState(): boolean {
     return this.shots.length > 0 || this.shoves.length > 0 || this.pongs.length > 0
+      || this.shrapnel.length > 0 || this.statics.length > 0 || this.clouds.length > 0 || this.bolts.length > 0
+      || this.hail.length > 0 || this.puddles.length > 0 || this.weathers.length > 0 || this.slowed.size > 0
+      || this.knocks.length > 0 || this.bankK > 0.01
       || BOTH.some((o) => this.sides[o].airborne || this.sides[o].grab !== null || this.sides[o].dodgeGiven);
   }
 
@@ -1080,6 +1867,8 @@ export class TempestKit {
     // Fighters are depth 5. Fronts and currents are floor; shots and gauges ride over the bodies.
     if (!this.groundGfx) this.groundGfx = scene.add.graphics().setDepth(4);
     if (!this.airGfx) this.airGfx = scene.add.graphics().setDepth(9);
+    // The Herald's weather sits over the fight but under the HUD.
+    if (!this.skyGfx) this.skyGfx = scene.add.graphics().setDepth(12);
   }
 
   /** The Flight passive is two flags on the body, written here every frame. */
@@ -1087,6 +1876,8 @@ export class TempestKit {
     for (const owner of BOTH) {
       const f = this.fighter(owner);
       if (!f || !f.active) continue;
+      // A body Gale Uppercut threw keeps the flags `updateKnocks` gave it.
+      if (this.knocks.some((k) => k.victim === f)) continue;
       const s = this.side(owner);
       if (s.airborne) {
         f.airborne = true;
@@ -1138,6 +1929,16 @@ export class TempestKit {
     g.clear();
     const t = this.vizT;
 
+    for (const pd of this.puddles) {
+      const born = Phaser.Math.Clamp((this.now - pd.bornAt) / 300, 0, 1);
+      const fade = Phaser.Math.Clamp((pd.until - this.now) / 600, 0, 1);
+      rainPuddle(g, this.col(pd.owner), pd.x, pd.y, PUDDLE_R * (0.6 + born * 0.4), fade, t, pd.seed);
+    }
+    for (const st of this.statics) {
+      const fade = Phaser.Math.Clamp((st.until - this.now) / 700, 0, 1);
+      staticTrail(g, this.col(st.owner), st.pts, STATIC_HALF_W, fade, t, st.seed);
+    }
+
     for (const c of this.currents) {
       const life = Phaser.Math.Clamp((c.diesAt - this.now) / 1200, 0, 1);
       const born = Phaser.Math.Clamp((this.now - c.bornAt) / 400, 0, 1);
@@ -1160,6 +1961,12 @@ export class TempestKit {
         liftShadow(g, this.col(owner), v.x, v.y, rig.lift, v.alpha);
       }
     }
+    // Mastery: a thrown body's shadow stays on its anchor while the body itself is lifted.
+    const b = this.api.bounds;
+    for (const k of this.knocks) {
+      if (!this.alive(k.victim)) continue;
+      liftShadow(g, this.col(k.owner), k.ax, k.ay, this.knockLift(k, b), 1);
+    }
   }
 
   private paintAir(): void {
@@ -1172,15 +1979,33 @@ export class TempestKit {
       const ang = Math.atan2(s.vy, s.vx);
       gustLayered(g, this.col(s.owner), s.x - Math.cos(ang) * 30, s.y - Math.sin(ang) * 30, ang, 46, 7, 0.95,
         { phase: t * 10, seed: s.seed, curl: 0.6 });
-      g.fillStyle(this.col(s.owner)(TMP.white), 0.9);
-      g.fillCircle(s.x, s.y, 5);
-      g.fillStyle(this.col(s.owner)(TMP.sky), 0.35);
-      g.fillCircle(s.x, s.y, 9);
+      if (s.hail) {
+        hailStone(g, this.col(s.owner), s.x, s.y, 8, t * 9 + s.seed, 1, s.seed);
+      } else {
+        g.fillStyle(this.col(s.owner)(TMP.white), 0.9);
+        g.fillCircle(s.x, s.y, 5);
+        g.fillStyle(this.col(s.owner)(TMP.sky), 0.35);
+        g.fillCircle(s.x, s.y, 9);
+      }
       // The point it will go off at: a faint ring at the cursor, so the player can see the fuse.
       g.lineStyle(1.2, this.col(s.owner)(TMP.gust), 0.3);
       g.strokeCircle(s.tx, s.ty, GALE_R * 0.5);
     }
 
+    for (const sh of this.shrapnel) {
+      iceShard(g, this.col(sh.owner), sh.x, sh.y, Math.atan2(sh.vy, sh.vx), 11, 1 - (sh.travelled / SHRAPNEL_RANGE) * 0.5);
+    }
+    for (const c of this.clouds) {
+      const born = Phaser.Math.Clamp((this.now - c.bornAt) / 350, 0, 1);
+      const fade = Phaser.Math.Clamp((c.until - this.now) / 500, 0, 1);
+      const charge = 1 - Phaser.Math.Clamp((c.nextStrikeAt - this.now) / CLOUD_STRIKE_MS, 0, 1);
+      thunderCloud(g, this.col(c.owner), c.x, c.y, CLOUD_R, CLOUD_LIFT * (0.5 + born * 0.5), born * fade, t, charge, c.seed);
+    }
+    for (const h of this.hail) {
+      hailStone(g, this.col(h.owner), h.x, h.y, 6, h.rot, 0.95, h.seed);
+    }
+
+    const b = this.api.bounds;
     for (const owner of BOTH) {
       const s = this.side(owner);
       const f = this.fighter(owner);
@@ -1189,7 +2014,32 @@ export class TempestKit {
       // The acceleration bar, to the right of the character.
       const speedK = s.vz < 0 ? Math.min(1, -s.vz / LAND_SPEED_FULL) : 0;
       const heightK = Math.min(1, s.z / 520);
-      fallGauge(g, this.col(owner), rig.x + 42, rig.y, speedK, heightK, 0.95);
+      // No ceiling: above the top of the screen the character is a pin on the edge, gauge and all.
+      const off = rig.y < b.y + 10;
+      if (off) {
+        const px = rig.x;
+        const py = b.y + 22;
+        const c = this.col(owner);
+        g.fillStyle(c(TMP.ink), 0.8);
+        g.fillCircle(px, py, 13);
+        g.fillStyle(c(TMP.storm), 1);
+        g.fillCircle(px, py, 10);
+        g.fillStyle(c(TMP.sky), 1);
+        g.fillCircle(px - 2, py - 2, 6);
+        for (let i = 0; i < 3; i++) {
+          const k = (t * 1.5 + i / 3) % 1;
+          chevron(g, c(TMP.white), px, py - 16 - k * 8, 6, 3, (1 - k) * 0.9, 2);
+        }
+        fallGauge(g, c, px + 26, py + 34, speedK, heightK, 0.95);
+      } else {
+        fallGauge(g, this.col(owner), rig.x + 42, rig.y, speedK, heightK, 0.95);
+      }
+      // R+ Float: a cushion of wind under a body a front is holding up.
+      if (this.floating(owner) && !off) {
+        swirl(g, this.col(owner)(TMP.gust), rig.x, rig.y + 22, 26, 0.7, { arms: 4, turns: 0.6, phase: t * 6, squash: 0.35 });
+        g.lineStyle(1.6, this.col(owner)(TMP.white), 0.5 + Math.sin(t * 8) * 0.2);
+        g.strokeEllipse(rig.x, rig.y + 24, 50, 12);
+      }
       // Rising air under a body that is going up.
       if (s.vz > 60) {
         swirl(g, this.col(owner)(TMP.white), rig.x, rig.y + 26, 22, 0.5, { arms: 3, turns: 0.8, phase: -t * 8, squash: 0.5 });
@@ -1220,6 +2070,24 @@ export class TempestKit {
       }
     }
 
+    // Mastery: the bodies Gale Uppercut threw — wind under them on the way up, a tag over them,
+    // and a pin on the top edge for one thrown higher than the arena can draw.
+    for (const k of this.knocks) {
+      const v = k.victim;
+      if (!this.alive(v)) continue;
+      const rising = k.vz > 0;
+      const fallK = rising ? 0 : Math.min(1, -k.vz / KNOCK_FALL_FULL);
+      if (rising) swirl(g, this.col(k.owner)(TMP.white), v.x, v.y + 24, 20, 0.55, { arms: 3, turns: 0.8, phase: -t * 9, squash: 0.5 });
+      else gustLayered(g, this.col(k.owner), v.x, v.y - 30, -Math.PI / 2, 26 + fallK * 30, 4, 0.5 * fallK, { phase: t * 9, seed: k.boosts });
+      knockTag(g, this.col(k.owner), v.x, v.y - 44, rising, fallK, k.boosts, 0.95);
+      if (k.z * LIFT > this.knockLift(k, b) + 4) {
+        for (let i = 0; i < 3; i++) {
+          const q = (t * 1.5 + i / 3) % 1;
+          chevron(g, this.col(k.owner)(TMP.white), v.x, v.y - 60 - q * 8, 6, 3, (1 - q) * 0.9, 2);
+        }
+      }
+    }
+
     // Ping-pong victims trail wind and carry a crackle; their bounce count rides over them.
     for (const p of this.pongs) {
       const v = p.victim;
@@ -1241,6 +2109,27 @@ export class TempestKit {
       for (let i = 0; i < PONG_BOUNCES; i++) {
         boltPip(g, this.col(p.owner), v.x - 10 + i * 10, v.y - 38, i < p.bounces, 0.95);
       }
+    }
+  }
+
+  /** Q+: the Herald's weather over the whole arena, faded in and out with it. */
+  private paintSky(): void {
+    const g = this.skyGfx;
+    if (!g) return;
+    g.clear();
+    let k = 0;
+    let owner: Owner = 'player';
+    for (const w of this.weathers) {
+      const inK = Phaser.Math.Clamp((this.now - w.start) / WX_FADE_MS, 0, 1);
+      const outK = Phaser.Math.Clamp((w.until + WX_FADE_MS - this.now) / WX_FADE_MS, 0, 1);
+      if (Math.min(inK, outK) > k) { k = Math.min(inK, outK); owner = w.owner; }
+    }
+    if (k > 0) stormSky(g, this.col(owner), this.api.width, this.api.height, this.vizT, k);
+    // Mastery — Unrelenting Storm: the bank along the top, turning black under the Herald.
+    if (this.bankK > 0.01) {
+      const b = this.api.bounds;
+      const bankOwner: Owner = this.masteryOn('player') ? 'player' : 'npc';
+      stormBank(g, this.col(bankOwner), b.x, b.right, b.y, this.vizT, this.bankDark, this.bankK);
     }
   }
 
@@ -1274,7 +2163,39 @@ export class TempestKit {
       description: 'Your dive left them bouncing between the walls. Every wall they hit is a Wall Slam for 12; the currents end on the third.',
       count: PONG_BOUNCES - Math.min(...myPongs.map((q) => q.bounces)),
     } : null);
+    set('tempest-float', playerIs && this.floating('player') ? {
+      name: 'Float', emoji: '🎈', color: TMP.gust,
+      description: 'A front is holding you up: you do not lose height while you stay over it. You can still climb.',
+    } : null);
+    const myWx = this.weathers.find((w) => w.owner === 'player' && this.now < w.until);
+    set('tempest-weather', playerIs && myWx ? {
+      name: 'Herald of Doom', emoji: '⛈️', color: TMP.bolt,
+      description: 'Your weather: lightning, hail from the top of the screen and slowing puddles hit your foes, and gales make every gain of height 40% bigger.',
+      until: myWx.until,
+    } : null);
+    set('tempest-storm', playerIs && this.masteryOn('player') ? {
+      name: 'Unrelenting Storm', emoji: '🌩️', color: TMP.cloudLit,
+      description: 'Your storm never lifts: a rare bolt, the odd hailstone and a few puddles hit your foes, and a breeze leans them toward the right of the screen. It turns black while your Herald\'s weather is live.',
+    } : null);
+    const upSlot = this.uppercutSlot('player');
+    set('tempest-uppercut', playerIs && upSlot && !this.uppercutReady('player') ? {
+      name: 'Gale Uppercut', emoji: '🌪️', color: TMP.white,
+      description: 'Recharging. Throw a foe into the air, juggle them higher with Click, and they take damage when they hit the floor.',
+      until: this.side('player').upLastAt + UPPERCUT_CD_MS,
+    } : null);
     // The player on the receiving end.
+    const thrown = this.knocks.find((k) => k.victim === p) ?? null;
+    set('tempest-thrown', thrown ? {
+      name: 'Thrown', emoji: '🌪️', color: TMP.white,
+      description: 'Uppercut into the air. You cannot move until you come down, and the floor hurts more the faster you hit it.',
+      count: Math.round(thrown.z), suffix: 'px', priority: 30,
+    } : null);
+    const soaked = this.slowed.has(p);
+    set('tempest-puddle', soaked ? {
+      name: 'Rain Puddle', emoji: '💧', color: TMP.rain,
+      description: 'Wading through a storm puddle: 40% slower until you step out.',
+      priority: 20,
+    } : null);
     const held = BOTH.some((o) => this.sides[o].grab?.victim === p);
     set('tempest-held', held ? {
       name: 'Grappled', emoji: '🌪️', color: TMP.sky,
@@ -1293,12 +2214,20 @@ export class TempestKit {
   // ── Readers for ArenaScene ─────────────────────────────────────────────────
 
   /** Half speed in the air — the drift the user picked over free flight. */
-  getPlayerSpeedMult(): number { return this.sides.player.airborne ? AIR_SPEED_MULT : 1; }
-  getNpcSpeedMult(): number { return this.sides.npc.airborne ? AIR_SPEED_MULT : 1; }
+  // Puddles (Q+) slow the duel pair here; husks read `tempestSlowMult` themselves.
+  getPlayerSpeedMult(): number {
+    return (this.sides.player.airborne ? AIR_SPEED_MULT : 1) * (this.slowed.has(this.api.player) ? PUDDLE_SLOW : 1);
+  }
+  getNpcSpeedMult(): number {
+    return (this.sides.npc.airborne ? AIR_SPEED_MULT : 1) * (this.slowed.has(this.api.npc) ? PUDDLE_SLOW : 1);
+  }
 
   getBarRatio(abilityId: string, time: number): number {
     const p = this.api.player;
     const s = this.sides.player;
+    if (abilityId === UPPERCUT_ID) {
+      return Phaser.Math.Clamp(1 - (this.now - s.upLastAt) / UPPERCUT_CD_MS, 0, 1);
+    }
     if (abilityId === 'tempest-gale') {
       // Charges, not a cooldown: the card drains as they are spent and fills as you walk.
       if (s.charges >= GALE_MAX_CHARGES) return 0;
@@ -1320,12 +2249,62 @@ export class TempestKit {
   isGrabbing(owner: Owner): boolean { return this.sides[owner].grab !== null; }
   eyeLive(owner: Owner): boolean { return this.pongs.some((p) => p.owner === owner); }
 
-  /** Airborne, free, with a front of its own to drop onto. */
+  /**
+   * Airborne, free, with a front of its own to drop onto. With Float (R+) a front it is hovering
+   * over is worth more as a perch than as a slam, so then it is only offered with a foe in it.
+   */
   canFrontSlam(owner: Owner): boolean {
     const s = this.sides[owner];
     const f = this.fighter(owner);
-    return s.airborne && !s.slam && !s.grab && this.alive(f) && this.nearestFront(owner, f.x, f.y) !== null;
+    if (!s.airborne || s.slam || s.grab || !this.alive(f)) return false;
+    const fr = this.nearestFront(owner, f.x, f.y);
+    if (!fr) return false;
+    if (this.floating(owner)) return this.foes(owner).some((t) => this.inFront(fr, t.x, t.y));
+    return true;
   }
+
+  /**
+   * R+ Float: the centre of the live front the bot should drift over while airborne, so the
+   * front holds it up between bursts. Null without the upgrade, without a front in reach, or
+   * once it has committed to a dive, slam or crash.
+   */
+  floatPoint(owner: Owner): { x: number; y: number } | null {
+    const s = this.sides[owner];
+    const f = this.fighter(owner);
+    if (!this.up(owner, 'r') || !s.airborne || s.diving || s.slam || s.grab || !this.alive(f)) return null;
+    let best: { x: number; y: number } | null = null;
+    let bd = 360;
+    for (const fr of this.fronts) {
+      if (fr.fadeAt !== 0) continue;
+      const cx = fr.x + Math.cos(fr.ang) * FRONT_LEN / 2;
+      const cy = fr.y + Math.sin(fr.ang) * FRONT_LEN / 2;
+      const d = Phaser.Math.Distance.Between(f.x, f.y, cx, cy);
+      if (d < bd) { bd = d; best = { x: cx, y: cy }; }
+    }
+    return best;
+  }
+
+  /** E+: airborne with a foe under it — a hop now drops a thundercloud on them. */
+  cloudShot(owner: Owner): boolean {
+    const s = this.sides[owner];
+    const f = this.fighter(owner);
+    if (!this.up(owner, 'e') || !s.airborne || s.slam || !this.alive(f)) return false;
+    if (this.clouds.some((c) => c.owner === owner)) return false;
+    return this.foes(owner).some((t) => Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) <= CLOUD_R * 0.8);
+  }
+
+  /** F+: time to fly and no current in reach — make a Cyclone where it stands. */
+  cycloneReady(owner: Owner): boolean {
+    const s = this.sides[owner];
+    const f = this.fighter(owner);
+    if (!this.up(owner, 'f') || !this.alive(f) || s.airborne || s.grab || s.rollUntil > this.now) return false;
+    if (this.now < s.nextFlightAt && !this.weatherLive()) return false;
+    if (this.pongs.some((p) => p.victim === f)) return false;
+    return !this.nearestCurrent(f.x, f.y, CURRENT_REACH);
+  }
+
+  /** Q+: someone's Herald weather is live — every launch is 40% bigger, so it is time to be in the air. */
+  weatherLive(): boolean { return this.weathers.some((w) => this.now < w.until); }
 
   /** Falling and close to the floor: a burst on itself right now is the big boost. */
   landingSoon(owner: Owner): boolean {
@@ -1337,10 +2316,32 @@ export class TempestKit {
   currentSeek(owner: Owner): { x: number; y: number } | null {
     const s = this.sides[owner];
     const f = this.fighter(owner);
-    if (!this.alive(f) || s.airborne || s.grab || s.rollUntil > this.now || this.now < s.nextFlightAt) return null;
+    if (!this.alive(f) || s.airborne || s.grab || s.rollUntil > this.now) return null;
+    if (this.now < s.nextFlightAt && !this.weatherLive()) return null;
     if (this.pongs.some((p) => p.victim === f)) return null;
     const c = this.nearestCurrent(f.x, f.y, 480);
     return c ? { x: c.x, y: c.y } : null;
+  }
+
+  /** Mastery: the key Gale Uppercut was bound over. The kit throws it; the rotation leaves that key alone. */
+  npcUppercutSlot(): 'r' | 'f' | 'q' | undefined { return this.uppercutSlot('npc') ?? undefined; }
+
+  /**
+   * Mastery synergy: a body this side's uppercut has in the air, inside a burst's reach, with a
+   * charge to spend — a Click on it now juggles it higher, and higher is the slam's damage.
+   */
+  juggleShot(owner: Owner): { x: number; y: number } | null {
+    const s = this.sides[owner];
+    const f = this.fighter(owner);
+    if (!this.alive(f) || s.charges <= 0) return null;
+    for (const k of this.knocks) {
+      if (k.owner !== owner || !this.alive(k.victim)) continue;
+      // Not in the last stretch of the fall, where a burst would land after the body does.
+      if (k.vz < 0 && k.z < 60) continue;
+      if (Phaser.Math.Distance.Between(f.x, f.y, k.victim.x, k.victim.y) > 420) continue;
+      return { x: k.victim.x, y: k.victim.y };
+    }
+    return null;
   }
 
   /** A foe standing close enough to a wall that a burst on them is also a Wall Slam. */

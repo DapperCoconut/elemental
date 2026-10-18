@@ -45,6 +45,10 @@ export const WAX = {
   /** Gilt for the mastered apiarist's crown. */
   gilt: 0xffd23a,
   giltDeep: 0xa8740e,
+  /** Mastery — Smoke-out: the beekeeper's smoker. Warm greys, so the smoke still reads as burnt wax. */
+  smokeDeep: 0x4a4136,
+  smoke: 0x8c8172,
+  smokeLit: 0xd8cfbd,
 } as const;
 
 /** Deterministic 0–1 noise so a candle's drips or a hive's bands never boil between frames. */
@@ -492,6 +496,113 @@ export function drawPuddle(
   }
 }
 
+/**
+ * Mastery — a Smoke-out cloud: a heap of soot-grey puffs, rolling slowly, lit on their upper
+ * edges. `own` is the caster's view of their own smoke — thin enough to see through, with a
+ * dotted comb rim so the caster can tell where the cover ends. Everyone else gets the heap at
+ * full density: they cannot see through it, and that is the ability.
+ */
+export function drawSmokeCloud(
+  g: Phaser.GameObjects.Graphics, tint: WaxColorFn, x: number, y: number, r: number, t: number, seed: number, alpha: number, own: boolean,
+): void {
+  const dens = own ? 0.26 : 0.9;
+  const a = alpha * dens;
+  const puffs = 11;
+  // The dark underside first, so every lit puff sits on something.
+  g.fillStyle(tint(WAX.smokeDeep), a * 0.9);
+  g.fillEllipse(x, y + r * 0.12, r * 1.9, r * 1.55);
+  for (let i = 0; i < puffs; i++) {
+    const ang = (i / puffs) * TAU + t * 0.12 * (i % 2 ? 1 : -1) + wnoise(seed, i) * 0.6;
+    const d = r * (0.42 + wnoise(seed, i + 20) * 0.22) + Math.sin(t * 0.9 + i * 1.3) * r * 0.04;
+    const pr = r * (0.36 + wnoise(seed, i + 40) * 0.16) * (1 + Math.sin(t * 1.3 + i) * 0.05);
+    const px = x + Math.cos(ang) * d, py = y + Math.sin(ang) * d * 0.82;
+    g.fillStyle(tint(WAX.smoke), a);
+    g.fillCircle(px, py, pr);
+    // Lit from above: a lighter cap on each puff's upper edge.
+    g.fillStyle(tint(WAX.smokeLit), a * 0.45);
+    g.fillCircle(px - pr * 0.18, py - pr * 0.3, pr * 0.55);
+  }
+  g.fillStyle(tint(WAX.smoke), a);
+  g.fillCircle(x, y, r * 0.6);
+  g.fillStyle(tint(WAX.smokeLit), a * 0.35);
+  g.fillCircle(x - r * 0.12, y - r * 0.2, r * 0.36);
+  // Wisps curling off the top, so a still cloud still moves.
+  for (let i = 0; i < 4; i++) {
+    const ph = (t * 0.22 + wnoise(seed, 60 + i)) % 1;
+    const wx = x + (wnoise(seed, 70 + i) - 0.5) * r * 1.3 + Math.sin(t * 1.7 + i) * 6;
+    const wy = y - r * 0.55 - ph * r * 0.6;
+    g.fillStyle(tint(WAX.smokeLit), a * 0.6 * (1 - ph));
+    g.fillCircle(wx, wy, r * 0.12 * (1 + ph));
+  }
+  if (own) {
+    g.lineStyle(1.2, tint(WAX.smokeLit), alpha * 0.4);
+    const cells = Phaser.Math.Clamp(Math.round(r / 7), 10, 26);
+    for (let i = 0; i < cells; i++) {
+      const ang = (i / cells) * TAU + t * 0.15;
+      strokeComb(g, x + Math.cos(ang) * r, y + Math.sin(ang) * r * 0.82, 3, ang);
+    }
+  }
+}
+
+/** Mastery — the smoker's stream: puffs riding from the hand out to the cloud being fed. */
+export function drawSmokerStream(
+  g: Phaser.GameObjects.Graphics, tint: WaxColorFn, x1: number, y1: number, x2: number, y2: number, t: number, alpha = 1,
+): void {
+  for (let i = 0; i < 7; i++) {
+    const ph = (t * 1.6 + i / 7) % 1;
+    const px = Phaser.Math.Linear(x1, x2, ph) + Math.sin(t * 6 + i * 2) * 4 * ph;
+    const py = Phaser.Math.Linear(y1, y2, ph) - ph * 6;
+    g.fillStyle(tint(WAX.smoke), alpha * 0.7 * (1 - ph * 0.6));
+    g.fillCircle(px, py, 3 + ph * 9);
+    g.fillStyle(tint(WAX.smokeLit), alpha * 0.4 * (1 - ph));
+    g.fillCircle(px - 1, py - 2, 1.5 + ph * 4);
+  }
+}
+
+/**
+ * Mastery — the Honey Shell: a dome of honey comb closed round the body, glossy, with a slow
+ * run of honey down its sides. `regrow` 0→1 draws the shell re-forming — the comb cells set one
+ * by one round the rim — instead of the finished dome.
+ */
+export function drawHoneyShell(
+  g: Phaser.GameObjects.Graphics, tint: WaxColorFn, x: number, y: number, t: number, alpha = 1, regrow = 1,
+): void {
+  const r = 31 + Math.sin(t * 2.2) * 1.2;
+  const cells = 16;
+  if (regrow < 1) {
+    // Re-forming: only the rim, cell by cell, faint.
+    const set = Math.floor(regrow * cells);
+    for (let i = 0; i < cells; i++) {
+      const ang = -Math.PI / 2 + (i / cells) * TAU;
+      g.fillStyle(tint(i < set ? WAX.honey : WAX.deep), alpha * (i < set ? 0.55 : 0.18));
+      combCell(g, x + Math.cos(ang) * r, y + 2 + Math.sin(ang) * r * 0.9, 3.4, ang);
+    }
+    return;
+  }
+  g.fillStyle(tint(WAX.honey), alpha * 0.16);
+  g.fillEllipse(x, y + 2, r * 2, r * 1.8);
+  g.lineStyle(2, tint(WAX.honeyLit), alpha * 0.6);
+  g.strokeEllipse(x, y + 2, r * 2, r * 1.8);
+  // The comb lattice, fixed on the dome (it does not turn — it is a shell, not an aura).
+  g.lineStyle(1, tint(WAX.honeyLit), alpha * 0.32);
+  for (let i = 0; i < cells; i++) {
+    const ang = -Math.PI / 2 + (i / cells) * TAU;
+    strokeComb(g, x + Math.cos(ang) * r * 0.82, y + 2 + Math.sin(ang) * r * 0.74, 4.6, ang);
+  }
+  for (let i = 0; i < cells; i++) {
+    const ang = -Math.PI / 2 + (i / cells) * TAU;
+    g.fillStyle(tint(WAX.honey), alpha * 0.75);
+    combCell(g, x + Math.cos(ang) * r, y + 2 + Math.sin(ang) * r * 0.9, 3.4, ang);
+  }
+  // The gloss: a highlight across the upper left, and honey running off the low edge.
+  g.fillStyle(tint(WAX.cream), alpha * 0.4);
+  g.fillEllipse(x - r * 0.4, y - r * 0.5, r * 0.7, r * 0.22);
+  for (let i = 0; i < 2; i++) {
+    const sag = (t * 0.35 + i * 0.5) % 1;
+    waxDrip(g, tint, x - 12 + i * 24, y + r * 0.8, 9, 2, WAX.honey, alpha * 0.8 * (1 - sag * 0.7), sag);
+  }
+}
+
 // ── Fx ─────────────────────────────────────────────────────────────────────
 
 export class WaxFx extends FxBase {
@@ -630,6 +741,44 @@ export class WaxFx extends FxBase {
       for (const c of cells) {
         g.fillStyle(this.tint(WAX.wax), (1 - t) * 0.9);
         combCell(g, x + Math.cos(c.a) * c.v * e * 0.6, y + Math.sin(c.a) * c.v * e * 0.5 + 50 * t * t, 4.5 * (1 - t * 0.5), c.spin + t * 4);
+      }
+    });
+  }
+
+  /** Mastery — the Honey Shell cracking: comb shards flying off and a splash of honey. */
+  shellCrack(x: number, y: number, depth = 15): void {
+    this.honeyBurst(x, y, 54, depth);
+    const shards = Array.from({ length: 10 }, (_, i) => ({ a: (i / 10) * TAU + Math.random() * 0.3, v: 70 + Math.random() * 80, spin: Math.random() * 6 }));
+    this.anim(depth + 1, 520, (g, t) => {
+      const e = easeOut(t);
+      for (const c of shards) {
+        g.fillStyle(this.tint(WAX.honeyLit), (1 - t) * 0.95);
+        combCell(g, x + Math.cos(c.a) * (31 + c.v * e * 0.5), y + Math.sin(c.a) * (28 + c.v * e * 0.45) + 40 * t * t, 3.4 * (1 - t * 0.4), c.spin + t * 5);
+      }
+    });
+  }
+
+  /** Mastery — the Honey Shell setting again: a ring of cells closing in on the body. */
+  shellForm(x: number, y: number, depth = 15): void {
+    this.anim(depth, 380, (g, t) => {
+      const e = easeOut(t);
+      const r = 52 - 21 * e;
+      for (let i = 0; i < 16; i++) {
+        const ang = (i / 16) * TAU;
+        g.fillStyle(this.tint(WAX.honey), 0.85 * (0.3 + 0.7 * t));
+        combCell(g, x + Math.cos(ang) * r, y + 2 + Math.sin(ang) * r * 0.9, 3.4, ang);
+      }
+    });
+  }
+
+  /** Mastery — a hit lost in the smoke: a grey swirl where the body was meant to be. */
+  smokeDodge(x: number, y: number, depth = 15): void {
+    this.anim(depth, 360, (g, t) => {
+      const e = easeOut(t);
+      for (let i = 0; i < 6; i++) {
+        const ang = (i / 6) * TAU + t * 3;
+        g.fillStyle(this.tint(WAX.smokeLit), (1 - t) * 0.7);
+        g.fillCircle(x + Math.cos(ang) * (8 + 20 * e), y + Math.sin(ang) * (6 + 14 * e), 5 * (1 - t * 0.5));
       }
     });
   }

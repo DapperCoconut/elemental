@@ -2,7 +2,7 @@ import { ElementCodex } from '../AbilityCodex';
 
 /**
  * Wax — verified against `src/elements/wax.ts`, `kits/WaxKit.ts` and the wax block of
- * `data/Upgrades.ts`. There is no Wax mastery yet.
+ * `data/Upgrades.ts`. The mastery (2026-10-18) is the "Mastery" block of the kit.
  */
 const wax: ElementCodex = {
   identity:
@@ -160,6 +160,47 @@ const wax: ElementCodex = {
           { tag: 'cost', label: 'A third', detail: 'You take 48 of it yourself.', requiresUpgrade: 'q' },
         ],
       },
+    },
+  },
+
+  mastery: {
+    'wax-honey-shell': {
+      basics:
+        'You start every match inside a dome of honey comb. The first attack of 30 damage or more to '
+        + 'reach you breaks on the shell instead — all of it, nothing gets through. Anything under 30 '
+        + 'goes straight through to you and leaves the shell standing. Eight seconds after it cracks it '
+        + 'sets again, and it keeps doing that for the whole match.',
+      cast: 'Passive. Always on while Wax Mastery is enabled and Wax is the element being played.',
+      effects: [
+        { tag: 'shield', label: 'The shell', detail: 'Blocks one whole attack of 30 or more, measured before your armour. Smaller hits pass through without touching it.' },
+        { tag: 'utility', label: 'Re-forms', detail: '8 seconds after it cracks, from the moment of the crack.' },
+      ],
+      notes: [
+        'Piercing and true damage go through the shell, as they go through every block.',
+        'Pick your fights by it: an opponent\'s chip damage never spends it, so their big hit is the one that is wasted.',
+        'Online, the shell is checked on your own machine, so the opponent may see a number pop that never reached you.',
+      ],
+    },
+    'wax-smoke-out': {
+      basics:
+        'Hold the bound key to work the smoker. A cloud of smoke starts 70px in front of you and grows '
+        + 'for as long as you hold, from 34px up to 170px across. Walk more than 50px past its edge and '
+        + 'the smoke starts a new cloud in front of you instead. Standing in your own smoke you are '
+        + 'invisible to enemies and 20% of the hits aimed at you are lost in it. Your own clouds are thin '
+        + 'on your screen; to everyone else they are solid, and they hide whatever is in or behind them.',
+      cast: 'Hold the bound key (R, F or Q). The smoker holds 5 seconds of smoke, needs 1 to light, and refills at 0.4 a second while it is out.',
+      effects: [
+        { tag: 'utility', label: 'A growing cloud', detail: 'Starts at 34px, grows 42px a second while fed, up to 170px. Lingers 9 seconds after you stop feeding it. Four clouds at most; a fifth replaces the oldest.' },
+        { tag: 'movement', label: 'Moves with you', detail: 'Walk more than 50px past the edge of the cloud you are feeding and the smoke starts a fresh one ahead of you.' },
+        { tag: 'buff', label: 'Invisible', detail: 'Inside 85% of one of your clouds, enemies cannot see you: bots lose you and wander, husks walk past.' },
+        { tag: 'shield', label: 'Lost in the smoke', detail: '20% of hits that reach you while you stand in your smoke never land.' },
+        { tag: 'control', label: 'One-way', detail: 'Enemies see your clouds as solid smoke; you see through them. A bot cannot see you through a cloud between you, either.' },
+      ],
+      notes: [
+        'Invisible is not untouchable: anything that hits the spot you are standing in still hits you.',
+        'Smoke in front of a strapped Rule Beetanica is the walk-in: they cannot see the payload coming.',
+        'A Wax NPC on Nightmare binds it over Hive Hearth, smokes ahead of itself to carry strapped bombs in, and smokes its own feet when it is losing.',
+      ],
     },
   },
 };

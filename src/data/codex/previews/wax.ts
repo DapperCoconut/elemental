@@ -2,8 +2,8 @@ import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import {
-  WAX, WaxAvatar, WaxFx, drawBee, drawCandle, drawCandleAura, drawDart, drawGrapple, drawHive, drawPoisonTell,
-  drawPuddle, drawStickyBomb,
+  WAX, WaxAvatar, WaxFx, drawBee, drawCandle, drawCandleAura, drawDart, drawGrapple, drawHive, drawHoneyShell, drawPoisonTell,
+  drawPuddle, drawSmokeCloud, drawSmokerStream, drawStickyBomb,
 } from '../../../elements/kits/WaxVisuals';
 
 /**
@@ -420,6 +420,74 @@ export const waxWorks: PreviewScript = {
       if (candle) { drawCandleAura(ground, ctx.tint, cx, cy, 90, t, 1); drawCandle(g, ctx.tint, cx, cy, 1, t, 3, true); }
       if (banked > 0) drawCandleAura(ground, ctx.tint, ctx.cx, ctx.cy, 90, t + 3, 0.8);
       if (hive) drawHive(g, ctx.tint, hx, hy, cells, 5, null, t, 2);
+    });
+  },
+};
+
+// ── Mastery ──────────────────────────────────────────────────────────────
+
+/** A pop-up anywhere in the box (`tick` only speaks over the target). */
+function say(ctx: PreviewCtx, x: number, y: number, text: string, color: string): void {
+  const t = ctx.adopt(ctx.scene.add.text(x, y, text, {
+    fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color, stroke: '#1a1208', strokeThickness: 3,
+  }).setOrigin(0.5).setDepth(17));
+  ctx.scene.tweens.add({ targets: t, y: t.y - 22, alpha: 0, duration: 1000, onComplete: () => t.destroy() });
+}
+
+export const masteryHoneyShell: PreviewScript = {
+  duration: 5600,
+  caption: 'Honey Shell — the next hit of 30 or more breaks on the comb; chip damage goes through. Re-forms 8s later (shown sped up)',
+  run(ctx) {
+    const { fx, av, g } = stage(ctx);
+    av.setMastered(true);
+    let up = true;
+    let crackedAt = -1;
+    const regrowMs = 2600;
+    ctx.at(700, () => ctx.fly({ texture: 'proj-fire', from: { x: ctx.tx, y: ctx.ty }, to: { x: ctx.cx, y: ctx.cy }, speed: 520, onHit: () => say(ctx, ctx.cx, ctx.cy - 46, '8 — UNDER 30, THROUGH', '#ff9c7a') }));
+    ctx.at(1900, () => ctx.fly({ texture: 'proj-fire', from: { x: ctx.tx, y: ctx.ty - 6 }, to: { x: ctx.cx, y: ctx.cy }, speed: 620, onHit: () => {
+      up = false;
+      crackedAt = 1900 + Math.round(Phaser.Math.Distance.Between(ctx.tx, ctx.ty, ctx.cx, ctx.cy) / 0.62);
+      fx.shellCrack(ctx.cx, ctx.cy);
+      say(ctx, ctx.cx, ctx.cy - 50, '🍯 34 BLOCKED', '#ffbf3c');
+    } }));
+    ctx.onFrame((_dt, elapsed) => {
+      g.clear();
+      const t = elapsed / 1000;
+      if (!up && crackedAt > 0 && elapsed >= crackedAt + regrowMs) { up = true; fx.shellForm(ctx.cx, ctx.cy); say(ctx, ctx.cx, ctx.cy - 50, 'SHELL SET', '#ffefad'); }
+      const regrow = up ? 1 : crackedAt < 0 ? 0 : Phaser.Math.Clamp((elapsed - crackedAt) / regrowMs, 0, 0.999);
+      drawHoneyShell(g, ctx.tint, ctx.cx, ctx.cy, t, 1, regrow);
+    });
+  },
+};
+
+export const masterySmokeOut: PreviewScript = {
+  duration: 7600,
+  caption: 'Smoke-out — hold to grow a cloud ahead of you. Inside: invisible, 20% of hits lost. You see through it; they see a wall',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    av.setMastered(true);
+    const sg = ctx.adopt(ctx.scene.add.graphics().setDepth(15.5));
+    const cloud = { x: ctx.cx + 70, y: ctx.cy, r: 34 };
+    let feeding = false;
+    let lastFed = 0;
+    let hidden = false;
+    let theirView = false;
+    ctx.at(300, () => { feeding = true; av.play('sweep', ctx.aim); });
+    ctx.at(2500, () => { feeding = false; lastFed = 2500; });
+    ctx.at(2600, () => ctx.glideCaster({ to: { x: cloud.x, y: cloud.y }, ms: 520, ease: 'out', onDone: () => { hidden = true; say(ctx, cloud.x, cloud.y - 60, 'INVISIBLE', '#d8cfbd'); } }));
+    ctx.at(3500, () => ctx.fly({ texture: 'proj-fire', from: { x: ctx.tx, y: ctx.ty }, to: { x: cloud.x, y: cloud.y }, speed: 560, onHit: () => { fx.smokeDodge(cloud.x, cloud.y); say(ctx, cloud.x, cloud.y - 44, '🌫️ LOST IN THE SMOKE', '#d8cfbd'); } }));
+    ctx.at(4900, () => { theirView = true; say(ctx, ctx.w * 0.5, 22, 'THEIR SCREEN', '#ffefad'); });
+    ctx.at(6600, () => { theirView = false; });
+    ctx.onFrame((dt, elapsed) => {
+      sg.clear();
+      const t = elapsed / 1000;
+      if (elapsed < 300) return;
+      if (feeding) { cloud.r = Math.min(170, cloud.r + 42 * dt / 1000); lastFed = elapsed; }
+      const at = ctx.casterAt();
+      if (hidden) ctx.moveCaster(at.x, at.y, { alpha: theirView ? 0 : 0.4 });
+      const life = Phaser.Math.Clamp((lastFed + 9000 - elapsed) / 1500, 0, 1);
+      if (feeding) drawSmokerStream(sg, ctx.tint, at.x + 18, at.y, cloud.x, cloud.y, t, 0.5);
+      drawSmokeCloud(sg, ctx.tint, cloud.x, cloud.y, cloud.r, t, 4.2, life, !theirView);
     });
   },
 };

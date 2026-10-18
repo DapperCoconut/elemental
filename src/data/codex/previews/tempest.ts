@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import {
-  TMP, TempestAvatar, TempestFx, current as paintCurrent, fallGauge, frontLane, gustLayered, lightning,
-  liftShadow,
+  TMP, HeraldBroadcast, TempestAvatar, TempestFx, current as paintCurrent, fallGauge, frontLane, gustLayered, hailStone,
+  iceShard, knockTag, lightning, liftShadow, rainPuddle, staticTrail, stormBank, stormSky, swirl, thunderCloud,
 } from '../../../elements/kits/TempestVisuals';
 
 /**
@@ -584,5 +584,504 @@ export const flight: PreviewScript = {
     ctx.at(3300, () => { shot.on = true; shot.x = ctx.w - 20; shot.y = ctx.cy - Math.min(fl.z * 0.55, fl.gy - 44); readout.setText('a shot does not'); });
     ctx.at(4400, () => readout.setText('the arrow is your fall speed, the ticks are your height'));
     ctx.at(6000, () => readout.setText('the landing: 6 to 40 damage in 70 to 140px, by how fast you came down'));
+  },
+};
+
+// ══ Shop upgrades ═════════════════════════════════════════════════════
+
+/** A body in the air for the upgrade loops: the caster glided up off its shadow, gauge alongside. */
+interface Air { z: number; vz: number; on: boolean; gx: number; gy: number; hover: boolean }
+
+function flyFrame(ctx: PreviewCtx, g: Phaser.GameObjects.Graphics, ag: Phaser.GameObjects.Graphics, f: Air, dt: number,
+  storm: TempestAvatar | null, onLand?: (k: number) => void): void {
+  if (!f.on) return;
+  f.vz -= 520 * dt;
+  f.vz = Math.max(f.vz, -900);
+  if (f.hover && f.vz < 0) f.vz = 0;
+  f.z += f.vz * dt;
+  if (f.z <= 0) {
+    f.on = false; f.z = 0;
+    const k = Math.min(1, -f.vz / 1500);
+    storm?.setAir(false); storm?.setFall(0);
+    ctx.moveCaster(f.gx, f.gy);
+    onLand?.(k);
+    return;
+  }
+  const lift = Math.min(f.z * 0.55, f.gy - 30);
+  ctx.moveCaster(f.gx, f.gy - lift);
+  liftShadow(g, ctx.tint, f.gx, f.gy, lift, 1);
+  const speedK = f.vz < 0 ? Math.min(1, -f.vz / 1500) : 0;
+  fallGauge(ag, ctx.tint, f.gx + 42, f.gy - lift, speedK, Math.min(1, f.z / 520), 0.95);
+  storm?.setAir(true); storm?.setFall(speedK);
+}
+
+export const galeUpgraded: PreviewScript = {
+  duration: 8000,
+  scale: 0.9,
+  caption: 'Click+ Hailstorm — a hailstone for 13 that shatters into 6 splinters of shrapnel, 4 each.',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new TempestAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const d: Dummy = { x: ctx.cx + 250, y: ctx.cy, vx: 0, vy: 0, alive: true, lift: 0 };
+    dummyAt(ctx, d);
+    const readout = label(ctx, ctx.w * 0.5, 12, hex(TMP.ice), 11);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const shots: { x: number; y: number; tx: number; ty: number; seed: number }[] = [];
+    const shards: { x: number; y: number; vx: number; vy: number; left: number; hit: boolean }[] = [];
+
+    ctx.onFrame((delta, elapsed) => {
+      const dt = delta / 1000;
+      const t = elapsed / 1000;
+      g.clear();
+      slide(ctx, d, dt);
+      for (let i = shots.length - 1; i >= 0; i--) {
+        const s = shots[i];
+        const ang = Math.atan2(s.ty - s.y, s.tx - s.x);
+        const step = 780 * dt;
+        if (Math.hypot(s.tx - s.x, s.ty - s.y) <= step) {
+          shots.splice(i, 1);
+          fx.burst(s.tx, s.ty, 72);
+          fx.shatter(s.tx, s.ty, 72);
+          for (let k = 0; k < 6; k++) {
+            const a = ang + (k / 6) * Math.PI * 2;
+            shards.push({ x: s.tx, y: s.ty, vx: Math.cos(a) * 520, vy: Math.sin(a) * 520, left: 170, hit: false });
+          }
+          if (Math.hypot(d.x - s.tx, d.y - s.ty) <= 72) {
+            const a = Math.atan2(d.y - s.ty, d.x - s.tx);
+            d.vx = Math.cos(a) * 620; d.vy = Math.sin(a) * 620;
+            float(ctx, d.x, d.y - 30, '13', '#ffb3aa', 12);
+          }
+          continue;
+        }
+        s.x += Math.cos(ang) * step; s.y += Math.sin(ang) * step;
+        gustLayered(g, ctx.tint, s.x - Math.cos(ang) * 30, s.y - Math.sin(ang) * 30, ang, 46, 7, 0.95, { phase: t * 10, seed: s.seed, curl: 0.6 });
+        hailStone(g, ctx.tint, s.x, s.y, 8, t * 9, 1, s.seed);
+      }
+      for (let i = shards.length - 1; i >= 0; i--) {
+        const sh = shards[i];
+        sh.x += sh.vx * dt; sh.y += sh.vy * dt; sh.left -= 520 * dt;
+        if (!sh.hit && Math.hypot(sh.x - d.x, sh.y - d.y) <= 18) {
+          sh.hit = true;
+          float(ctx, d.x + (Math.random() - 0.5) * 20, d.y - 44, '4', hex(TMP.ice), 11);
+        }
+        if (sh.hit || sh.left <= 0) { shards.splice(i, 1); continue; }
+        iceShard(g, ctx.tint, sh.x, sh.y, Math.atan2(sh.vy, sh.vx), 11, 0.5 + sh.left / 340);
+      }
+    });
+
+    const press = (ms: number, short: number) => ctx.at(ms, () => {
+      const a = Math.atan2(d.y - ctx.cy, d.x - ctx.cx);
+      const dist = Math.hypot(d.x - ctx.cx, d.y - ctx.cy) - short;
+      shots.push({ x: ctx.cx + Math.cos(a) * 18, y: ctx.cy + Math.sin(a) * 18, tx: ctx.cx + Math.cos(a) * dist, ty: ctx.cy + Math.sin(a) * dist, seed: Math.random() * 999 });
+      av.play('punch', a);
+    });
+    ctx.at(200, () => readout.setText('the burst is a hailstone now — 13 instead of 10'));
+    press(700, 50);
+    ctx.at(1500, () => readout.setText('where it goes off it shatters: 6 splinters, 170px, 4 to the first body each meets'));
+    ctx.at(3600, () => { d.x = ctx.cx + 250; d.y = ctx.cy; d.vx = 0; d.vy = 0; });
+    press(4200, 110);
+    ctx.at(4300, () => readout.setText('go off short of them and the shrapnel still finds them'));
+  },
+};
+
+export const kickUpgraded: PreviewScript = {
+  duration: 11000,
+  scale: 0.8,
+  caption: 'E+ Shocking Acceleration — the roll leaves 5s of static (5 every 0.5s). In the air, the hop leaves a thundercloud (8 a second, 150px).',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new TempestAvatar(ctx.scene, ctx.tint));
+    const storm = rig(av);
+    av.setFacing(ctx.aim);
+    const d: Dummy = { x: ctx.cx + 150, y: ctx.cy - 70, vx: 0, vy: 0, alive: true, lift: 0 };
+    dummyAt(ctx, d);
+    const readout = label(ctx, ctx.w * 0.5, 12, hex(TMP.bolt), 11);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    const ag = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const trail: { x: number; y: number }[] = [];
+    let trailUntil = 0;
+    let laying = false;
+    let lastTick = -Infinity;
+    let walkVy = 0;
+    const cloud = { on: false, x: 0, y: 0, until: 0, next: 0 };
+    const air: Air = { z: 0, vz: 0, on: false, gx: ctx.cx, gy: ctx.cy, hover: false };
+
+    ctx.onFrame((delta, elapsed) => {
+      const dt = delta / 1000;
+      const t = elapsed / 1000;
+      g.clear(); ag.clear();
+      const c = ctx.casterAt();
+      if (laying) {
+        const last = trail[trail.length - 1];
+        if (!last || Math.hypot(last.x - c.x, last.y - c.y) >= 26) trail.push({ x: c.x, y: c.y });
+      }
+      if (elapsed < trailUntil) {
+        staticTrail(g, ctx.tint, trail, 22, Phaser.Math.Clamp((trailUntil - elapsed) / 700, 0, 1), t, 3);
+        const near = trail.some((p) => Math.hypot(p.x - d.x, p.y - d.y) <= 26);
+        if (near && elapsed - lastTick >= 500) {
+          lastTick = elapsed;
+          fx.staticZap(d.x, d.y);
+          float(ctx, d.x, d.y - 30, '5', hex(TMP.bolt), 11);
+        }
+      }
+      d.y += walkVy * dt;
+      if (cloud.on) {
+        if (elapsed >= cloud.until) cloud.on = false;
+        else {
+          const charge = 1 - Phaser.Math.Clamp((cloud.next - elapsed) / 1000, 0, 1);
+          thunderCloud(ag, ctx.tint, cloud.x, cloud.y, 110, 70, 1, t, charge, 5);
+          if (elapsed >= cloud.next) {
+            cloud.next += 1000;
+            fx.strike(cloud.x, cloud.y, 50, cloud.y - 70);
+            fx.ring(cloud.x, cloud.y, 20, 110, 340, TMP.bolt, 2.5, 4);
+            if (Math.hypot(d.x - cloud.x, d.y - cloud.y) <= 110) float(ctx, d.x, d.y - 30, '8', hex(TMP.bolt), 12);
+          }
+        }
+      }
+      flyFrame(ctx, g, ag, air, dt, storm, (k) => fx.landing(air.gx, air.gy, 70 + 70 * k, k));
+    });
+
+    ctx.at(300, () => readout.setText('the roll lays static along its whole path'));
+    ctx.at(800, () => {
+      laying = true; trail.length = 0; trailUntil = 800 + 320 + 5000;
+      fx.burst(ctx.cx, ctx.cy, 34);
+      av.play('dash', ctx.aim);
+      ctx.glideCaster({ to: { x: ctx.cx + 300, y: ctx.cy }, ms: 320, ease: 'out', onDone: () => { laying = false; } });
+    });
+    ctx.at(1500, () => { readout.setText('anyone standing on it takes 5 every half second, for 5 seconds'); walkVy = 60; });
+    ctx.at(3600, () => { walkVy = 0; });
+    ctx.at(5000, () => {
+      const c = ctx.casterAt();
+      air.on = true; air.vz = 640; air.gx = c.x; air.gy = c.y;
+      fx.launch(c.x, c.y); av.setHold('ride');
+      d.x = c.x - 60; d.y = c.y; d.vx = 0; d.vy = 0;
+      readout.setText('in the air the hop leaves a thundercloud instead');
+    });
+    ctx.at(5900, () => {
+      air.vz = Math.max(air.vz, 0) + 520;
+      fx.burst(air.gx, air.gy + 10, 46, { boost: true });
+      av.play('raise', undefined, 420);
+      cloud.on = true; cloud.x = air.gx; cloud.y = air.gy; cloud.until = 5900 + 5000; cloud.next = 5900 + 1000;
+    });
+    ctx.at(7000, () => readout.setText('every second it strikes everything within 150px for 8'));
+    ctx.at(9000, () => { av.setHold(null); });
+    ctx.at(10400, () => ctx.glideCaster({ to: { x: ctx.cx, y: ctx.cy }, ms: 500, ease: 'out' }));
+  },
+};
+
+export const frontUpgraded: PreviewScript = {
+  duration: 10000,
+  scale: 0.8,
+  caption: 'R+ Float — airborne over a front, you stop losing height. Climbing still works.',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new TempestAvatar(ctx.scene, ctx.tint));
+    const storm = rig(av);
+    av.setFacing(ctx.aim);
+    const readout = label(ctx, ctx.w * 0.5, 12, hex(TMP.gust), 11);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    const ag = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const front = { on: false, x: ctx.cx + 40, y: ctx.cy, ang: 0, bornAt: 0 };
+    const air: Air = { z: 0, vz: 0, on: false, gx: ctx.cx, gy: ctx.cy, hover: false };
+    let driftVx = 0;
+
+    ctx.onFrame((delta, elapsed) => {
+      const dt = delta / 1000;
+      const t = elapsed / 1000;
+      g.clear(); ag.clear();
+      if (front.on) frontLane(g, ctx.tint, front.x, front.y, front.ang, 360 * Phaser.Math.Clamp((elapsed - front.bornAt) / 360, 0, 1), 58, 1, { t, seed: 4 });
+      air.gx += driftVx * dt;
+      air.hover = front.on && air.on && air.gx >= front.x - 20 && air.gx <= front.x + 380;
+      flyFrame(ctx, g, ag, air, dt, storm, (k) => { fx.landing(air.gx, air.gy, 70 + 70 * k, k); av.setHold(null); });
+      if (air.hover) {
+        const lift = Math.min(air.z * 0.55, air.gy - 30);
+        swirl(ag, ctx.tint(TMP.gust), air.gx, air.gy - lift + 22, 26, 0.7, { arms: 4, turns: 0.6, phase: t * 6, squash: 0.35 });
+        ag.lineStyle(1.6, ctx.tint(TMP.white), 0.5 + Math.sin(t * 8) * 0.2);
+        ag.strokeEllipse(air.gx, air.gy - lift + 24, 50, 12);
+      }
+    });
+
+    ctx.at(300, () => {
+      front.on = true; front.bornAt = 300;
+      fx.frontPlace(front.x, front.y, 0, 360, 58);
+      av.play('sweep', 0);
+      readout.setText('a front on the floor…');
+    });
+    ctx.at(1100, () => {
+      air.on = true; air.vz = 640; air.gx = ctx.cx; air.gy = ctx.cy;
+      fx.launch(ctx.cx, ctx.cy); av.setHold('ride');
+      readout.setText('…and once you are over it in the air, you stop coming down');
+    });
+    ctx.at(3600, () => {
+      air.vz = Math.max(air.vz, 0) + 380;
+      fx.burst(air.gx, air.gy - 20, 72, { boost: true });
+      readout.setText('you can still climb — a burst lifts you, and the front holds the new height');
+    });
+    ctx.at(6400, () => { driftVx = -110; readout.setText('drift off the lane and gravity takes over again'); });
+    ctx.at(8200, () => { driftVx = 0; });
+    ctx.at(9300, () => ctx.glideCaster({ to: { x: ctx.cx, y: ctx.cy }, ms: 500, ease: 'out' }));
+  },
+};
+
+export const updraftUpgraded: PreviewScript = {
+  duration: 8000,
+  scale: 0.8,
+  caption: 'F+ Cyclone — no current in reach? Spin up a cyclone and ride it: 880 px/s instead of 640, on double cooldown.',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new TempestAvatar(ctx.scene, ctx.tint));
+    const storm = rig(av);
+    av.setFacing(ctx.aim);
+    const readout = label(ctx, ctx.w * 0.5, 12, hex(TMP.gust), 11);
+    const peak = label(ctx, ctx.w * 0.5, ctx.h - 16, hex(TMP.white), 10);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    const ag = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const air: Air = { z: 0, vz: 0, on: false, gx: ctx.cx, gy: ctx.cy, hover: false };
+    let top = 0;
+
+    ctx.onFrame((delta) => {
+      const dt = delta / 1000;
+      g.clear(); ag.clear();
+      flyFrame(ctx, g, ag, air, dt, storm, (k) => { fx.landing(air.gx, air.gy, 70 + 70 * k, k); av.setHold(null); });
+      if (air.on) { top = Math.max(top, air.z); peak.setText(`height ${Math.round(air.z)}px   ·   peak ${Math.round(top)}px`); }
+    });
+
+    ctx.at(300, () => readout.setText('no current anywhere near — F anyway'));
+    ctx.at(1000, () => {
+      air.on = true; air.vz = 880; air.gx = ctx.cx; air.gy = ctx.cy; top = 0;
+      fx.cyclone(ctx.cx, ctx.cy);
+      av.play('raise'); av.setHold('ride');
+      float(ctx, ctx.cx, ctx.cy - 70, 'CYCLONE', hex(TMP.white));
+      readout.setText('a cyclone where you stand: 880 px/s, about 740px up — a current is 390');
+    });
+    ctx.at(4800, () => readout.setText('the price: Updraft goes on double cooldown'));
+  },
+};
+
+export const forecastUpgraded: PreviewScript = {
+  duration: 16000,
+  scale: 0.6,
+  caption: 'Q+ Herald of Doom — dive and you cut to the forecast: DEATH, all week. Land, and the weather goes wild for 12 seconds.',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new TempestAvatar(ctx.scene, ctx.tint));
+    const storm = rig(av);
+    av.setFacing(ctx.aim);
+    const d: Dummy = { x: ctx.cx + 300, y: ctx.cy, vx: 0, vy: 0, alive: true, lift: 0 };
+    dummyAt(ctx, d);
+    const readout = label(ctx, ctx.w * 0.5, ctx.h - 14, hex(TMP.bolt), 12);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    const ag = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const sky = ctx.adopt(ctx.scene.add.graphics().setDepth(12));
+    const air: Air = { z: 0, vz: 0, on: false, gx: ctx.cx, gy: ctx.cy, hover: false };
+    let diving = false;
+    let wxStart = -1;
+    const hail: { x: number; y: number; seed: number }[] = [];
+    const puddles: { x: number; y: number; bornAt: number; seed: number }[] = [];
+    let nextHail = 0;
+    let nextBolt = 0;
+    let nextPuddle = 0;
+
+    ctx.onFrame((delta, elapsed) => {
+      const dt = delta / 1000;
+      const t = elapsed / 1000;
+      g.clear(); ag.clear(); sky.clear();
+      slide(ctx, d, dt);
+      if (air.on && diving) air.vz = Math.min(air.vz, -1500);
+      if (air.on) {
+        air.vz -= 520 * dt;
+        if (!diving) air.vz = Math.max(air.vz, -900);
+        air.z += air.vz * dt;
+        if (air.z <= 0) {
+          air.on = false; air.z = 0; diving = false;
+          storm?.setAir(false); storm?.setFall(0); av.setHold(null);
+          ctx.moveCaster(air.gx, air.gy);
+          fx.landing(air.gx, air.gy, 140, 1);
+          float(ctx, air.gx, air.gy - 60, 'LANDING 40', hex(TMP.gust));
+          wxStart = elapsed;
+          nextHail = nextBolt = nextPuddle = elapsed;
+          readout.setText('…and the weather turns: lightning, hail from the top, gales and slowing rain');
+        } else {
+          const lift = Math.min(air.z * 0.55, air.gy - 30);
+          ctx.moveCaster(air.gx, air.gy - lift);
+          liftShadow(g, ctx.tint, air.gx, air.gy, lift, 1);
+          storm?.setAir(true); storm?.setFall(air.vz < 0 ? Math.min(1, -air.vz / 1500) : 0);
+        }
+      }
+      if (wxStart >= 0) {
+        const age = elapsed - wxStart;
+        const k = Math.min(1, age / 900) * Phaser.Math.Clamp((wxStart + 12000 + 900 - elapsed) / 900, 0, 1);
+        const live = age < 12000;
+        for (const p of puddles) {
+          const fade = Phaser.Math.Clamp((p.bornAt + 5000 - elapsed) / 600, 0, 1);
+          rainPuddle(g, ctx.tint, p.x, p.y, 42, fade, t, p.seed);
+        }
+        if (live && elapsed >= nextPuddle) {
+          nextPuddle += 550;
+          puddles.push({ x: 40 + Math.random() * (ctx.w - 80), y: ctx.h * 0.45 + Math.random() * ctx.h * 0.45, bornAt: elapsed, seed: Math.random() * 99 });
+        }
+        if (live && elapsed >= nextBolt) {
+          nextBolt += 700;
+          const near = Math.random() < 0.5;
+          const x = near ? d.x + (Math.random() - 0.5) * 70 : 40 + Math.random() * (ctx.w - 80);
+          const y = near ? d.y + (Math.random() - 0.5) * 50 : ctx.h * 0.4 + Math.random() * ctx.h * 0.5;
+          fx.strikeWarn(x, y, 50, 450);
+          ctx.at(450, () => {
+            fx.strike(x, y, 50, -20);
+            if (Math.hypot(d.x - x, d.y - y) <= 50) float(ctx, d.x, d.y - 34, '12', hex(TMP.bolt), 12);
+          });
+        }
+        if (live && elapsed >= nextHail) {
+          nextHail += 150;
+          hail.push({ x: Math.random() * ctx.w - 30, y: -10, seed: Math.random() * 99 });
+        }
+        for (let i = hail.length - 1; i >= 0; i--) {
+          const h = hail[i];
+          h.x += 70 * dt; h.y += 460 * dt;
+          if (Math.hypot(h.x - d.x, h.y - d.y) <= 18) {
+            hail.splice(i, 1); fx.shatter(h.x, h.y, 22); float(ctx, d.x, d.y - 40, '5', hex(TMP.ice), 11);
+            continue;
+          }
+          if (h.y > ctx.h + 10) { hail.splice(i, 1); continue; }
+          hailStone(ag, ctx.tint, h.x, h.y, 6, t * 5 + h.seed, 0.95, h.seed);
+        }
+        if (k > 0) stormSky(sky, ctx.tint, ctx.w, ctx.h, t, k);
+      }
+    });
+
+    ctx.at(300, () => {
+      air.on = true; air.vz = 640; air.gx = ctx.cx; air.gy = ctx.cy;
+      fx.launch(ctx.cx, ctx.cy); av.setHold('ride');
+      readout.setText('in the air, Q is the dive…');
+    });
+    ctx.at(1500, () => {
+      diving = true;
+      av.play('slam', Math.PI / 2, 400);
+      new HeraldBroadcast(ctx.scene, ctx.tint).setSink(ctx.sink).play(ctx.w, 2600, 24, { scale: 0.8, top: 6 });
+      readout.setText('…and you cut in on the forecast: five days of DEATH');
+    });
+    ctx.at(9000, () => readout.setText('gales make every gain of height 40% bigger while it lasts — yours and theirs'));
+  },
+};
+
+// ══ MASTERY ═══════════════════════════════════════════════════════════
+
+export const masteryStorm: PreviewScript = {
+  duration: 9000,
+  scale: 0.9,
+  caption: 'Unrelenting Storm — a tame storm all match: a rare bolt, spotty hail, a few puddles, and a breeze that leans foes right. It turns black under Herald of Doom',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new TempestAvatar(ctx.scene, ctx.tint));
+    av.setMastered(true);
+    av.setFacing(ctx.aim);
+    const d: Dummy = { x: ctx.cx + 120, y: ctx.cy + 10, vx: 0, vy: 0, alive: true, lift: 0 };
+    dummyAt(ctx, d);
+    const readout = label(ctx, ctx.w * 0.5, ctx.h - 14, hex(TMP.gust), 10);
+    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    const sky = ctx.adopt(ctx.scene.add.graphics().setDepth(12));
+    const hail: { x: number; y: number; vy: number; rot: number; seed: number }[] = [];
+    const puddle = { x: ctx.cx - 110, y: ctx.cy + 40 };
+    let dark = 0;
+    let darkT = 0;
+    ctx.onFrame((delta, elapsed) => {
+      const dt = delta / 1000;
+      const t = elapsed / 1000;
+      ground.clear();
+      sky.clear();
+      rainPuddle(ground, ctx.tint, puddle.x, puddle.y, 38, 1, t, 3);
+      // The breeze: the dummy leans right, and is put back when it reaches the edge of the box.
+      d.x += 42 * dt * (darkT ? 1.6 : 1);
+      if (d.x > ctx.w - 24) d.x = ctx.cx + 60;
+      gustLayered(ground, ctx.tint, d.x - 40, d.y + 4, 0, 34, 3, 0.35, { phase: t * 6, seed: 4 });
+      for (let i = hail.length - 1; i >= 0; i--) {
+        const h = hail[i];
+        h.y += h.vy * dt;
+        h.x += 30 * dt;
+        h.rot += dt * 5;
+        hailStone(sky, ctx.tint, h.x, h.y, 6, h.rot, 0.95, h.seed);
+        if (Math.hypot(h.x - d.x, h.y - d.y) < 18) { hail.splice(i, 1); fx.shatter(h.x, h.y, 22); float(ctx, d.x, d.y - 34, 'HAIL 5', hex(TMP.ice)); continue; }
+        if (h.y > ctx.h + 10) hail.splice(i, 1);
+      }
+      dark += (darkT - dark) * Math.min(1, dt * 1.5);
+      if (dark > 0.05) stormSky(sky, ctx.tint, ctx.w, ctx.h, t, dark * 0.8);
+      stormBank(sky, ctx.tint, 0, ctx.w, 0, t, dark, 1);
+    });
+    const dropHail = (ms: number, x: number) => ctx.at(ms, () => hail.push({ x, y: -10, vy: 420, rot: 0, seed: ms }));
+    ctx.at(200, () => readout.setText('the cloud bank hangs over every match, and a breeze leans your foes right'));
+    dropHail(1200, ctx.cx + 60);
+    dropHail(2600, ctx.cx - 40);
+    ctx.at(2400, () => readout.setText('the odd hailstone, a couple of puddles…'));
+    ctx.at(3600, () => { fx.strikeWarn(ctx.cx - 30, ctx.cy - 20, 50, 700); readout.setText('…and a rare bolt, dropped anywhere'); });
+    ctx.at(4300, () => fx.strike(ctx.cx - 30, ctx.cy - 20, 50, 20));
+    ctx.at(5600, () => { darkT = 1; readout.setText('under your Herald of Doom the clouds turn dark and dangerous'); });
+    dropHail(6400, d.x - 10);
+    ctx.at(8400, () => { darkT = 0; });
+  },
+};
+
+export const masteryUppercut: PreviewScript = {
+  duration: 8000,
+  scale: 0.9,
+  caption: 'Gale Uppercut — dash and uppercut for 8, and they are thrown into the air. Click juggles them higher; the floor does up to 60',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new TempestAvatar(ctx.scene, ctx.tint));
+    av.setMastered(true);
+    av.setFacing(ctx.aim);
+    const anchor = { x: ctx.cx + 170, y: ctx.cy + 50 };
+    const d: Dummy = { x: anchor.x, y: anchor.y, vx: 0, vy: 0, alive: true, lift: 0 };
+    dummyAt(ctx, d);
+    const readout = label(ctx, ctx.w * 0.5, 12, hex(TMP.gust), 11);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    let z = 0;
+    let vz = 0;
+    let up = false;
+    let boosts = 0;
+    ctx.onFrame((delta, elapsed) => {
+      const dt = delta / 1000;
+      g.clear();
+      if (up) {
+        vz -= 520 * dt;
+        z += vz * dt;
+        if (z <= 0) {
+          up = false;
+          const k = Math.min(1, -vz / 1500);
+          const dmg = Math.round(6 + 54 * k);
+          z = 0;
+          fx.knockSlam(anchor.x, anchor.y, k);
+          float(ctx, anchor.x, anchor.y - 40, `SLAMMED ${dmg}`, hex(TMP.white), 12);
+        }
+      }
+      d.lift = Math.min(z * 0.55, anchor.y - 30);
+      d.x = anchor.x;
+      d.y = anchor.y;
+      if (up) knockTag(g, ctx.tint, d.x, d.y - d.lift - 44, vz > 0, vz < 0 ? Math.min(1, -vz / 1500) : 0, boosts, 0.95);
+      if (up && vz > 0) swirl(g, ctx.tint(TMP.white), d.x, d.y - d.lift + 24, 20, 0.55, { arms: 3, turns: 0.8, phase: -elapsed / 110, squash: 0.5 });
+    });
+    ctx.at(300, () => readout.setText('a short dash at the cursor…'));
+    ctx.at(700, () => {
+      av.play('dash', ctx.aim);
+      fx.burst(ctx.cx, ctx.cy, 28);
+      ctx.glideCaster({ to: { x: anchor.x - 40, y: anchor.y }, ms: 220, ease: 'out', onDone: () => {
+        fx.uppercut(anchor.x, anchor.y);
+        av.play('raise', undefined, 420);
+        float(ctx, anchor.x, anchor.y - 34, 'UPPERCUT 8', hex(TMP.white), 12);
+        up = true; vz = 720; z = 1;
+        readout.setText('…an uppercut for 8, and they are thrown into the air');
+      } });
+    });
+    const juggle = (ms: number) => ctx.at(ms, () => {
+      if (!up) return;
+      fx.burst(d.x, d.y - d.lift, 72, { boost: true });
+      vz = Math.max(vz, 0) + 360; boosts++;
+      float(ctx, d.x, d.y - d.lift - 50, 'JUGGLED', hex(TMP.white));
+      readout.setText('Click on them while they are up: higher');
+    });
+    juggle(1900);
+    juggle(3000);
+    ctx.at(4300, () => readout.setText('the floor hurts by how fast they hit it — up to 60'));
+    ctx.at(7200, () => ctx.glideCaster({ to: { x: ctx.cx, y: ctx.cy }, ms: 500, ease: 'out' }));
   },
 };

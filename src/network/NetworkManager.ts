@@ -4,7 +4,7 @@ import type { NetStatusEntry } from './NetStatusSync';
 import type { NetConquestSnap } from '../elements/kits/ConquestKit';
 
 /** Bump when the wire protocol or gameplay sync changes incompatibly. */
-export const NET_PROTOCOL_VERSION = 46;
+export const NET_PROTOCOL_VERSION = 47;
 
 /** Lobby selection payload exchanged while both players pick loadouts. */
 export interface NetSelection {

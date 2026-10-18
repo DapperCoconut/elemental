@@ -9,7 +9,8 @@ import { BanterLine, BanterSet, banterFor } from '../../data/MythBanter';
 import {
   GunKind, MYTH, MythAvatar, MythColorFn, MythFx, beast as paintBeast, beyonder, bubble as paintBubble, cloud as paintCloud,
   crowdFigure, jitter, pinpricks, portal as paintPortal, redBlast, buttImpact, spentGrenade, stunCrown, rift as paintRift, shard as paintShard, spear, star, starMace, voidDisc,
-  whip as paintWhip,
+  whip as paintWhip, lastStandAura, mythRealm, realmBolt, realmBrute, realmCaptive, realmLancer, realmSpearman, realmStalker,
+  trapPortal, wormDisc,
 } from './MythVisuals';
 import { MythView, ViewEntity } from './MythView';
 
@@ -173,6 +174,47 @@ const CLOUD_MS = 5000;
 
 const FIGHTER_R = 20;
 
+// ── Mastery ──────────────────────────────────────────────────────────────────
+/** The passive's enhancement id (its name is Indomitable) and the bindable's. */
+export const LAST_STAND_ID = 'myth-last-stand';
+export const WORMHOLE_ID = 'myth-wormhole';
+/** Indomitable: eight seconds at 1 HP, and the damage that buys the crowd's second breath. */
+const STAND_MS = 8000;
+const STAND_GOAL = 75;
+/** Wormhole: the portal thrown forward, and the eight seconds a catch spends in the Lands of Myth. */
+const WORM_CD_MS = 20000;
+const WORM_SPEED = 440;
+const WORM_RANGE = 520;
+const WORM_R = 24;
+const WORM_FADE_MS = 520;
+const TRAP_MS = 8000;
+/** How close its Myth must stand to the red portal to see inside. */
+const PEER_R = 110;
+/** The realm is its own 960×640 space; the floor starts at the horizon. */
+const REALM_W = 960;
+const REALM_H = 640;
+const REALM_HORIZON = 150;
+const REALM_KEEP = 4;
+const REALM_MAX = 7;
+const REALM_SPAWN_MS = 700;
+const REALM_EXTRA_MS = 2600;
+const CAPTIVE_SPEED_HUMAN = 210;
+const CAPTIVE_SPEED_AI = 175;
+const CAPTIVE_SHOT_MS = 280;
+const CAPTIVE_SHOT_MS_AI = 520;
+const CAPTIVE_SHOT_SPEED = 560;
+const CAPTIVE_SHOT_DAMAGE = 10;
+const LANCE_SPEED = 380;
+const LANCE_DAMAGE = 6;
+type RealmKind = 'brute' | 'stalker' | 'lancer' | 'spearman';
+/** The things that live there: tanky slow beasts, fast small ones, and beyonders mounted and on foot. */
+const REALM_STATS: Record<RealmKind, { hp: number; speed: number; reach: number; damage: number; gapMs: number; r: number }> = {
+  brute: { hp: 70, speed: 55, reach: 50, damage: 12, gapMs: 1300, r: 30 },
+  stalker: { hp: 14, speed: 190, reach: 26, damage: 4, gapMs: 550, r: 14 },
+  lancer: { hp: 34, speed: 150, reach: 0, damage: LANCE_DAMAGE, gapMs: 1800, r: 24 },
+  spearman: { hp: 28, speed: 105, reach: 58, damage: 8, gapMs: 1000, r: 16 },
+};
+
 /** The ids the kit relays for presses that never touch a cooldown (and the parry landing). */
 export const MYTH_NET_IDS = [
   'myth-whip-plus', 'myth-truth-plus', 'myth-beast-recall',
@@ -216,6 +258,11 @@ export interface MythArenaApi {
   hasUpgrade(owner: Owner, slot: string): boolean;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
+  /** The mastery enhancement bound over `slot`, for the player and for the opponent. */
+  masteryBindFor(slot: string): string | null;
+  npcMasteryBindFor(slot: string): string | null;
+  /** Credits the local player's mastery progress (the adapter only counts it while they are Myth). */
+  recordMasteryStat(key: string, amount: number): void;
 }
 
 interface Tally { at: number; amount: number }
@@ -260,6 +307,59 @@ interface Spear { owner: Owner; x: number; y: number; vx: number; vy: number; bo
 interface Barrage { owner: Owner; x: number; y: number; born: number; until: number; nextTickAt: number; seed: number }
 /** Q+: a salvo's landing points, still smoking, for the red second blast. */
 interface SpentSalvo { points: { x: number; y: number }[]; until: number }
+
+/** Mastery: the wormhole, flying, then standing red over whoever it caught. */
+interface Worm {
+  owner: Owner;
+  x: number; y: number; vx: number; vy: number;
+  travelled: number;
+  seed: number;
+  trap: Trap | null;
+  /** The moment it fizzled or let its captive go; it fades for `WORM_FADE_MS` after. */
+  doneAt: number;
+}
+
+/** Something living in the Lands of Myth. */
+interface RealmFoe {
+  kind: RealmKind;
+  x: number; y: number;
+  hp: number;
+  nextAt: number;
+  /** When it last swung or threw, and when it was last hit — both 0 → 1 cues for the painters. */
+  atkAt: number; hitAt: number;
+  face: number;
+  seed: number;
+}
+
+/** A shot in the realm: the captive's bolts at the foes, the mounted beyonders' spears at the captive. */
+interface RealmShot { x: number; y: number; vx: number; vy: number; born: number; mine: boolean }
+
+/**
+ * Mastery: somebody the wormhole took. Out of the arena — hidden, untouchable and held at the
+ * portal — and fighting for eight seconds in the realm, which is simulated here in its own space.
+ */
+interface Trap {
+  owner: Owner;
+  victim: Fighter;
+  worm: Worm;
+  start: number; until: number;
+  /** The captive's position in the realm, and where it last moved. */
+  rx: number; ry: number; face: number;
+  foes: RealmFoe[];
+  shots: RealmShot[];
+  puffs: { x: number; y: number; at: number }[];
+  nextSpawnAt: number; nextExtraAt: number; nextShotAt: number;
+  hurtAt: number;
+  kills: number;
+  /** The captive is the local player: a full-screen realm and their own hands on it. */
+  local: boolean;
+  /** The captive is an online replica: their own machine runs their realm; this one only draws it. */
+  display: boolean;
+  /** The local captive's input, latched by `handleTrappedInput`. */
+  aimX: number; aimY: number; fire: boolean;
+  color: number;
+  seed: number;
+}
 
 interface Side {
   aimX: number; aimY: number;
@@ -326,6 +426,14 @@ interface Side {
   /** Q+ Slayer: when the last butt slam and the last second blast went off, for the frame's cues. */
   buttAt: number;
   blastAt: number;
+  // Mastery
+  /** Indomitable: owed, being lived, or spent for the match. */
+  stand: 'armed' | 'live' | 'spent';
+  standUntil: number;
+  standDealt: number;
+  /** This kit holds the death floor on the body (so it only ever takes back its own). */
+  floored: boolean;
+  wormLastAt: number;
 }
 
 function makeSide(): Side {
@@ -345,6 +453,7 @@ function makeSide(): Side {
     riftSpeedUntil: 0,
     nextSpearAt: 0, beyonder: null,
     rapidUntil: 0, spent: null, rifleChain: false, hitMark: 0, headMark: 0, pitch: 0, buttAt: -Infinity, blastAt: -Infinity,
+    stand: 'armed', standUntil: 0, standDealt: 0, floored: false, wormLastAt: -Infinity,
   };
 }
 
@@ -400,6 +509,13 @@ export class MythKit {
   private rifts: Rift[] = [];
   private spears: Spear[] = [];
   private barrages: Barrage[] = [];
+  /** Mastery: wormholes in flight or standing red, and the captives they hold. */
+  private worms: Worm[] = [];
+  private traps: Trap[] = [];
+  private realmGfx: Phaser.GameObjects.Graphics | null = null;
+  private realmFrameGfx: Phaser.GameObjects.Graphics | null = null;
+  private realmText: Phaser.GameObjects.Text | null = null;
+  private rageGfx: Phaser.GameObjects.Graphics | null = null;
   /** The crowd's frenzy, whoever earned it — a paint state, like `cheerUntil`. */
   private frenzyUntil = 0;
   /** First person: mouse travel since the last frame, read off raw `movementX`. */
@@ -561,7 +677,16 @@ export class MythKit {
   private hit(owner: Owner, t: Fighter, dmg: number, o: { trueDamage?: boolean; aoe?: boolean; noTally?: boolean } = {}): void {
     if (!this.alive(t) || dmg <= 0) return;
     t.takeDamage(Math.round(dmg), { pierce: o.trueDamage, trueDamage: o.trueDamage, aoe: o.aoe });
-    if (!o.noTally) this.side(owner).dealt.push({ at: this.now, amount: dmg });
+    if (!o.noTally) this.tally(owner, dmg);
+    // Mastery stat: damage dealt from first person.
+    if (owner === 'player' && this.sides.player.destinyLive) this.api.recordMasteryStat('fpsDamage', Math.round(dmg));
+  }
+
+  /** Damage this side dealt, for the crowd's cheer and for Indomitable's second breath. */
+  private tally(owner: Owner, dmg: number): void {
+    const s = this.side(owner);
+    s.dealt.push({ at: this.now, amount: dmg });
+    if (s.stand === 'live') s.standDealt += dmg;
   }
 
   /** A stun this kit owns. Skipped for a replica's effects on us — the relay carries them. */
@@ -579,6 +704,7 @@ export class MythKit {
     const s = this.side(owner);
     if (s.shards <= 0) { this.deny(owner, null, 'NO ECHO SHARD'); return false; }
     s.shards -= 1;
+    if (owner === 'player') this.api.recordMasteryStat('shardsSpent', 1);
     const f = this.fighter(owner);
     if (this.alive(f)) {
       this.fx(owner).starSpray(f.x, f.y - 40, 6, 24, 380, 12, MYTH.shard);
@@ -625,6 +751,12 @@ export class MythKit {
     this.maces = []; this.beasts = []; this.bullets = []; this.grenades = []; this.rockets = []; this.clouds = [];
     this.crowdStars = []; this.rifts = []; this.spears = []; this.barrages = []; this.frenzyUntil = 0;
     this.fpsBursts = [];
+    // Captives belong to bodies rebuilt per match: forget them, never write back onto them.
+    this.worms = []; this.traps = [];
+    this.realmGfx?.destroy(); this.realmGfx = null;
+    this.realmFrameGfx?.destroy(); this.realmFrameGfx = null;
+    this.realmText?.destroy(); this.realmText = null;
+    this.rageGfx?.destroy(); this.rageGfx = null;
     this.pointerWasDown = false; this.rightWasDown = false;
     this.vizT = 0; this.matchT = 0; this.cheerUntil = 0; this.booUntil = 0;
     this.spectators = [];
@@ -697,19 +829,23 @@ export class MythKit {
       if (this.now < s.truthWindowUntil && s.shards > 0) this.doTruthPlus('player', mouseX, mouseY);
       else p.castAbility('myth-truth', ctx);
     }
-    if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) {
+    // Mastery: the key Wormhole was dropped on throws the portal, not the ability under it.
+    const worm = this.wormSlot('player');
+    const wormKey = worm === 'r' ? this.api.rKey : worm === 'f' ? this.api.fKey : worm === 'q' ? this.api.qKey : null;
+    if (wormKey && Phaser.Input.Keyboard.JustDown(wormKey)) this.doWormhole('player', mouseX, mouseY);
+    if (worm !== 'r' && Phaser.Input.Keyboard.JustDown(this.api.rKey)) {
       // After a parry lands: the riposte. After one whiffs (R+): another parry. Else the parry.
       if (this.riposteReady('player') && s.shards > 0) this.doRiposte('player');
       else if (this.reparryReady('player') && s.shards > 0) this.doReparry('player');
       else p.castAbility('myth-determination', ctx);
     }
-    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) {
+    if (worm !== 'f' && Phaser.Input.Keyboard.JustDown(this.api.fKey)) {
       const b = this.beastOf('player');
       if (b && !b.returning && s.shards > 0) this.doBeastRecall('player');
       else if (this.beyonderReady('player') && s.shards > 0) this.doBarrage('player', mouseX, mouseY);
       else p.castAbility('myth-beast', ctx);
     }
-    if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('myth-destiny', ctx);
+    if (worm !== 'q' && Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('myth-destiny', ctx);
   }
 
   private pointerWasDownBefore = false;
@@ -723,11 +859,13 @@ export class MythKit {
 
   /** First person: WASD walks relative to where you look. ArenaScene hands over the body while this is true. */
   ownsPlayerMovement(): boolean {
-    return this.api.elementId === 'myth' && this.sides.player.destinyLive;
+    return (this.api.elementId === 'myth' && this.sides.player.destinyLive) || this.ownsPlayerInput();
   }
 
   /** The velocity for this frame, given the fighter's speed already multiplied through. */
   playerVelocity(speed: number): { vx: number; vy: number } {
+    // A captive's body waits at the portal; WASD walks them through the realm instead.
+    if (this.ownsPlayerInput()) return { vx: 0, vy: 0 };
     const s = this.sides.player;
     let fwd = 0;
     let strafe = 0;
@@ -819,6 +957,7 @@ export class MythKit {
       const da = Phaser.Math.Angle.Wrap(Math.atan2(t.y - f.y, t.x - f.x) - ang);
       if (Math.abs(da) > TRUTH_HALF + (r / Math.max(1, d))) continue;
       this.hit(owner, t, TRUTH_DAMAGE, { trueDamage: true });
+      this.excaliburStat(owner);
       this.api.spawnHitFlash(t.x, t.y, this.col(owner)(MYTH.gold));
       if (!any) this.text(owner, t.x, t.y - 44, 'TRUE', MYTH.gold);
       any = true;
@@ -939,6 +1078,7 @@ export class MythKit {
     s.riposteUntil = this.now + RIPOSTE_WINDOW_MS;
     s.indomitableUntil = Math.max(s.indomitableUntil, this.now + INDOMITABLE_MS);
     this.relay(owner, 'myth-parry-hit');
+    if (owner === 'player') this.api.recordMasteryStat('parries', 1);
     const fx = this.fx(owner);
     fx.ring(f.x, f.y, 10, 64, 420, MYTH.gold, 4, 10);
     fx.starSpray(f.x, f.y, 12, 52, 520, 10, MYTH.gold);
@@ -975,6 +1115,7 @@ export class MythKit {
     this.relay(owner, 'myth-riposte');
     const ang = Math.atan2(t.y - f.y, t.x - f.x);
     this.hit(owner, t, RIPOSTE_DAMAGE, { trueDamage: true });
+    this.excaliburStat(owner);
     const fx = this.fx(owner);
     fx.dashTrail(f.x, f.y, t.x, t.y);
     fx.slash(t.x, t.y, ang, 70, Math.PI / 3, 10);
@@ -1461,12 +1602,699 @@ export class MythKit {
     return true;
   }
 
+  // ── Mastery ────────────────────────────────────────────────────────────────
+
+  private excaliburStat(owner: Owner): void {
+    if (owner === 'player') this.api.recordMasteryStat('excaliburSlashes', 1);
+  }
+
+  /** Which slot Wormhole was dropped on, or null. */
+  private wormSlot(owner: Owner): 'r' | 'f' | 'q' | null {
+    if (!this.is(owner) || !this.masteryOn(owner)) return null;
+    for (const sl of ['r', 'f', 'q'] as const) {
+      const bind = owner === 'player' ? this.api.masteryBindFor(sl) : this.api.npcMasteryBindFor(sl);
+      if (bind === WORMHOLE_ID) return sl;
+    }
+    return null;
+  }
+
+  private wormReady(owner: Owner): boolean {
+    return this.now - this.side(owner).wormLastAt >= WORM_CD_MS;
+  }
+
+  /**
+   * Indomitable. While it is owed the kit holds a death floor of 1 on the body, written fresh
+   * every frame so a mastery switched off — or a body that is not Myth any more — never keeps
+   * it. The hit that should have killed is caught at 1 HP; that starts eight enraged seconds.
+   * Deal 75 inside them and the crowd gives a second breath at full health. Fail, and the death
+   * the floor held off arrives. Once a match.
+   */
+  private updateStand(): void {
+    for (const owner of BOTH) {
+      const s = this.side(owner);
+      const f = this.fighter(owner);
+      if (!f) continue;
+      const owed = this.is(owner) && this.masteryOn(owner) && s.stand !== 'spent' && f.active;
+      if (owed) {
+        f.minHpFloor = Math.max(f.minHpFloor, 1);
+        s.floored = true;
+      } else if (s.floored) {
+        if (f.active) f.minHpFloor = 0;
+        s.floored = false;
+      }
+      if (s.stand === 'armed' && owed && f.hp > 0 && f.hp <= 1) this.beginStand(owner);
+      if (s.stand !== 'live') continue;
+      if (this.isReplica(owner)) {
+        // Their own machine decides how it ends; this is only a fallback if the word never comes.
+        if (this.now >= s.standUntil + 2500) s.stand = 'spent';
+      } else if (this.now >= s.standUntil) {
+        this.endStand(owner, s.standDealt >= STAND_GOAL);
+      }
+    }
+  }
+
+  private beginStand(owner: Owner): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (s.stand !== 'armed') return;
+    s.stand = 'live';
+    s.standUntil = this.now + STAND_MS;
+    s.standDealt = 0;
+    this.relay(owner, 'myth-stand');
+    this.avatar(owner)?.setDetermined(true);
+    this.avatar(owner)?.play('flex', undefined, 500);
+    const fx = this.fx(owner);
+    fx.ring(f.x, f.y, 10, 90, 600, MYTH.red, 4, 10);
+    fx.starSpray(f.x, f.y, 14, 60, 600, 10, MYTH.red);
+    this.booUntil = 0;
+    this.cheerUntil = this.now + CHEER_MS;
+    this.shake(260, 0.006);
+    Sfx.playAt('roar', f.x, { rate: 1.3, volume: 0.8 });
+    Sfx.playAt('status-debuff', f.x, { rate: 0.6, volume: 0.8 });
+    this.text(owner, f.x, f.y - 70, `INDOMITABLE — DEAL ${STAND_GOAL}`, MYTH.red);
+  }
+
+  /** The eight seconds are up: a second breath, or the death they were holding off. */
+  private endStand(owner: Owner, breath: boolean): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    s.stand = 'spent';
+    this.avatar(owner)?.setDetermined(this.now < s.indomitableUntil);
+    if (f.active) f.minHpFloor = 0;
+    s.floored = false;
+    if (breath) {
+      this.relay(owner, 'myth-stand-breath');
+      if (f.active) f.hp = f.maxHp;
+      const fx = this.fx(owner);
+      fx.ring(f.x, f.y, 10, 110, 700, MYTH.gold, 4, 10);
+      fx.starSpray(f.x, f.y, 18, 80, 800, 10, MYTH.gold);
+      fx.shardGain(f.x, f.y);
+      this.cheerUntil = this.now + CHEER_MS * 1.5;
+      this.shake(200, 0.004);
+      Sfx.playAt('reward-big', f.x, { rate: 1.0, volume: 0.9 });
+      this.text(owner, f.x, f.y - 74, 'SECOND BREATH!', MYTH.gold);
+      return;
+    }
+    this.relay(owner, 'myth-stand-fall');
+    this.booUntil = this.now + BOO_MS;
+    this.text(owner, f.x, f.y - 70, 'THE LEGEND FALLS', MYTH.red);
+    // The death the floor held off. Nothing to resolve but the health itself.
+    if (f.active && !f.immortal && f.hp > 0) {
+      f.hp = 0;
+      f.emit('defeated');
+      Sfx.playAt(f.isPlayerFighter ? 'death-player' : 'death-npc', f.x);
+    }
+  }
+
+  /**
+   * Wormhole — a portal thrown straight ahead. It flies until it catches someone, hits a wall or
+   * runs out of reach; a catch stands it upright and red where it is, with the foe inside. Its
+   * own clock, so it is relayed rather than cast; `relayed` skips the clock (the peer checked it).
+   */
+  doWormhole(owner: Owner, tx: number, ty: number, relayed = false): void {
+    const f = this.fighter(owner);
+    const s = this.side(owner);
+    if (!this.alive(f)) return;
+    if (s.destinyLive) { this.deny(owner, null, 'NOT IN FINAL DESTINY'); return; }
+    if (this.worms.some((w) => w.owner === owner && w.doneAt === 0)) { this.deny(owner, null, 'PORTAL ALREADY OPEN'); return; }
+    if (!relayed && !this.wormReady(owner)) {
+      this.deny(owner, null, `WORMHOLE ${Math.ceil((WORM_CD_MS - (this.now - s.wormLastAt)) / 1000)}s`);
+      return;
+    }
+    s.wormLastAt = this.now;
+    s.aimX = tx; s.aimY = ty;
+    const ang = Math.atan2(ty - f.y, tx - f.x);
+    this.worms.push({
+      owner, x: f.x + Math.cos(ang) * 24, y: f.y + Math.sin(ang) * 24,
+      vx: Math.cos(ang) * WORM_SPEED, vy: Math.sin(ang) * WORM_SPEED,
+      travelled: 0, seed: Math.random() * 999, trap: null, doneAt: 0,
+    });
+    this.relay(owner, WORMHOLE_ID);
+    this.avatar(owner)?.play('punch', ang, 300);
+    this.fx(owner).ring(f.x, f.y, 6, 44, 380, MYTH.iris, 3, 9);
+    Sfx.playAt('portal', f.x, { rate: 1.2, volume: 0.9 });
+    this.text(owner, f.x, f.y - 50, 'WORMHOLE', MYTH.iris);
+  }
+
+  private updateWorms(delta: number): void {
+    const dt = delta / 1000;
+    for (let i = this.worms.length - 1; i >= 0; i--) {
+      const w = this.worms[i];
+      if (w.doneAt > 0) {
+        if (this.now - w.doneAt >= WORM_FADE_MS) this.worms.splice(i, 1);
+        continue;
+      }
+      if (w.trap) continue;
+      w.x += w.vx * dt;
+      w.y += w.vy * dt;
+      w.travelled += WORM_SPEED * dt;
+      if (w.travelled >= WORM_RANGE || this.offArena(w.x, w.y)) {
+        w.doneAt = this.now;
+        this.fx(w.owner).ring(w.x, w.y, 24, 4, 320, MYTH.haze, 2.5, 9);
+        Sfx.playAt('ghost-wail', w.x, { rate: 1.4, volume: 0.4 });
+        continue;
+      }
+      // A replica's portal only catches us when its owner's machine says it did.
+      if (this.isReplica(w.owner)) continue;
+      const t = this.foes(w.owner).find((q) => !this.traps.some((tr) => tr.victim === q)
+        && Math.hypot(q.x - w.x, q.y - w.y) <= WORM_R + FIGHTER_R * (q.sizeMult || 1));
+      if (t) this.catchIn(w, t);
+    }
+  }
+
+  /** The portal closes on a body. Anything that cannot be moved bounces it off instead. */
+  private catchIn(w: Worm, t: Fighter): void {
+    if (t.unstoppable || t.knockbackImmune) {
+      w.doneAt = this.now;
+      this.fx(w.owner).ring(w.x, w.y, 6, 40, 300, MYTH.haze, 2.5, 9);
+      this.text(w.owner, t.x, t.y - 44, 'UNMOVABLE', MYTH.haze);
+      return;
+    }
+    if (w.owner === 'player') this.api.broadcastMasteryCast('myth-wormhole-catch');
+    const local = t === this.api.player;
+    const display = this.isReplica('npc') && t === this.api.npc;
+    const ownerF = this.fighter(w.owner);
+    const trap: Trap = {
+      owner: w.owner, victim: t, worm: w, start: this.now, until: this.now + TRAP_MS,
+      rx: REALM_W / 2, ry: (REALM_HORIZON + REALM_H) / 2 + 40, face: 1,
+      foes: [], shots: [], puffs: [],
+      nextSpawnAt: this.now + 250, nextExtraAt: this.now + REALM_EXTRA_MS, nextShotAt: this.now + 400,
+      hurtAt: -Infinity, kills: 0, local, display, aimX: REALM_W / 2 + 100, aimY: REALM_H / 2, fire: false,
+      color: t.element?.color ?? 0xdddddd, seed: Math.random() * 999,
+    };
+    w.trap = trap;
+    w.x = t.x; w.y = t.y;
+    this.traps.push(trap);
+    for (let i = 0; i < 3; i++) this.spawnRealmFoe(trap);
+    this.hideCaptive(trap, true);
+    const fx = this.fx(w.owner);
+    fx.ring(w.x, w.y, 4, 70, 520, MYTH.red, 4, 10);
+    fx.starSpray(w.x, w.y, 12, 50, 600, 10, MYTH.red);
+    Sfx.playAt('portal', w.x, { rate: 0.7, volume: 1 });
+    Sfx.playAt('roar', w.x, { rate: 0.8, volume: 0.6 });
+    this.shake(200, 0.004);
+    if (local) this.api.showFloatingText(t.x, t.y - 50, 'TAKEN TO THE LANDS OF MYTH', this.hex(MYTH.red));
+    else this.text(w.owner, w.x, w.y - 60, 'TRAPPED IN THE LANDS OF MYTH', MYTH.red);
+    if (this.alive(ownerF)) this.avatar(w.owner)?.play('flex', undefined, 400);
+  }
+
+  /**
+   * The captive leaves the arena: hidden, untouchable (`isInvincible`, which the realm lifts
+   * around its own hits) and, unless it is the local player or an online replica, stunned — the
+   * one control every bot and husk already honours. Coming back undoes exactly that.
+   */
+  private hideCaptive(trap: Trap, on: boolean): void {
+    const v = trap.victim;
+    if (!v.active) return;
+    if (on) {
+      v.isInvincible = true;
+      v.forceInvisible = true;
+      v.setAlpha(0);
+      v.setHealthBarVisible(false);
+      const until = Date.now() + TRAP_MS;
+      if (!trap.display) v.disarmedUntil = Math.max(v.disarmedUntil, until);
+      if (!trap.local && !trap.display) v.stunnedUntil = Math.max(v.stunnedUntil, until);
+      return;
+    }
+    v.isInvincible = false;
+    v.forceInvisible = false;
+    v.setAlpha(1);
+    v.setHealthBarVisible(true);
+    const now = Date.now();
+    if (!trap.display) v.disarmedUntil = Math.min(v.disarmedUntil, now);
+    if (!trap.local && !trap.display) v.stunnedUntil = Math.min(v.stunnedUntil, now);
+  }
+
+  private updateTraps(delta: number): void {
+    const dt = Math.min(0.05, delta / 1000);
+    for (let i = this.traps.length - 1; i >= 0; i--) {
+      const tr = this.traps[i];
+      const v = tr.victim;
+      if (!v.active || v.hp <= 0) { this.endTrap(tr, false); continue; }
+      if (this.now >= tr.until) { this.endTrap(tr, true); continue; }
+      // Anything else that touched these flags this frame (a dodge ending, a flash) is overruled.
+      v.isInvincible = true;
+      v.forceInvisible = true;
+      if (v.alpha !== 0) v.setAlpha(0);
+      v.setHealthBarVisible(false);
+      if (!tr.display) {
+        const body = this.body(v);
+        body.reset(tr.worm.x, tr.worm.y);
+      }
+      this.stepRealm(tr, dt);
+    }
+  }
+
+  private endTrap(tr: Trap, escaped: boolean): void {
+    const i = this.traps.indexOf(tr);
+    if (i >= 0) this.traps.splice(i, 1);
+    this.hideCaptive(tr, false);
+    tr.worm.trap = null;
+    tr.worm.doneAt = this.now;
+    if (!escaped) return;
+    const v = tr.victim;
+    const fx = this.fx(tr.owner);
+    fx.ring(tr.worm.x, tr.worm.y, 50, 6, 420, MYTH.red, 3, 10);
+    fx.starSpray(tr.worm.x, tr.worm.y, 10, 44, 500, 10, MYTH.haze);
+    Sfx.playAt('portal', tr.worm.x, { rate: 1.3, volume: 0.8 });
+    if (tr.local) this.api.showFloatingText(v.x, v.y - 50, `BACK FROM THE LANDS OF MYTH (${tr.kills} slain)`, this.hex(MYTH.haze));
+    else this.text(tr.owner, v.x, v.y - 56, 'BACK FROM THE LANDS OF MYTH', MYTH.haze);
+  }
+
+  /** A new thing out of the dark at the edge of the realm. */
+  private spawnRealmFoe(tr: Trap): void {
+    const r = Math.random();
+    const kind: RealmKind = r < 0.2 ? 'brute' : r < 0.55 ? 'stalker' : r < 0.78 ? 'spearman' : 'lancer';
+    const edge = Math.floor(Math.random() * 3);
+    const x = edge === 0 ? 20 : edge === 1 ? REALM_W - 20 : Phaser.Math.FloatBetween(40, REALM_W - 40);
+    const y = edge === 2 ? REALM_HORIZON + 24 : Phaser.Math.FloatBetween(REALM_HORIZON + 30, REALM_H - 30);
+    tr.foes.push({
+      kind, x, y, hp: REALM_STATS[kind].hp, nextAt: this.now + 500 + Math.random() * 600,
+      atkAt: -Infinity, hitAt: -Infinity, face: x < tr.rx ? 1 : -1, seed: Math.random() * 999,
+    });
+  }
+
+  /** One frame of the Lands of Myth. */
+  private stepRealm(tr: Trap, dt: number): void {
+    const near = (): RealmFoe | null => {
+      let best: RealmFoe | null = null;
+      let bd = Infinity;
+      for (const q of tr.foes) {
+        const d = Math.hypot(q.x - tr.rx, q.y - tr.ry);
+        if (d < bd) { bd = d; best = q; }
+      }
+      return best;
+    };
+    // ── The captive ──
+    let mx = 0;
+    let my = 0;
+    if (tr.local) {
+      if (this.api.dKey.isDown) mx += 1;
+      if (this.api.aKey.isDown) mx -= 1;
+      if (this.api.sKey.isDown) my += 1;
+      if (this.api.wKey.isDown) my -= 1;
+      const l = Math.hypot(mx, my) || 1;
+      mx = (mx / l) * CAPTIVE_SPEED_HUMAN;
+      my = (my / l) * CAPTIVE_SPEED_HUMAN;
+      if (tr.fire && this.now >= tr.nextShotAt) {
+        tr.nextShotAt = this.now + CAPTIVE_SHOT_MS;
+        this.realmShoot(tr, tr.aimX, tr.aimY);
+      }
+    } else {
+      // A bot or a husk fights for itself: backs off from anything at its throat, closes on
+      // anything far, circles anything in between, and shoots the nearest thing it can see.
+      const q = near();
+      if (q) {
+        const d = Math.hypot(q.x - tr.rx, q.y - tr.ry) || 1;
+        const ux = (tr.rx - q.x) / d;
+        const uy = (tr.ry - q.y) / d;
+        if (d < 90) { mx = ux; my = uy; } else if (d > 280) { mx = -ux; my = -uy; } else { mx = -uy; my = ux; }
+        mx *= CAPTIVE_SPEED_AI;
+        my *= CAPTIVE_SPEED_AI;
+        if (this.now >= tr.nextShotAt) {
+          tr.nextShotAt = this.now + CAPTIVE_SHOT_MS_AI;
+          this.realmShoot(tr, q.x, q.y - 12);
+        }
+      }
+    }
+    tr.rx = Phaser.Math.Clamp(tr.rx + mx * dt, 30, REALM_W - 30);
+    tr.ry = Phaser.Math.Clamp(tr.ry + my * dt, REALM_HORIZON + 30, REALM_H - 24);
+    if (Math.abs(mx) > 1) tr.face = mx > 0 ? 1 : -1;
+
+    // ── What lives there ──
+    for (const q of tr.foes) {
+      const st = REALM_STATS[q.kind];
+      const dx = tr.rx - q.x;
+      const dy = tr.ry - q.y;
+      const d = Math.hypot(dx, dy) || 1;
+      q.face = dx >= 0 ? 1 : -1;
+      let vx = 0;
+      let vy = 0;
+      if (q.kind === 'lancer') {
+        // Rides at a throwing distance and circles; the spear does the work.
+        if (d < 200) { vx = -dx / d; vy = -dy / d; } else if (d > 290) { vx = dx / d; vy = dy / d; } else { vx = -dy / d; vy = dx / d; }
+        if (this.now >= q.nextAt && d < 420) {
+          q.nextAt = this.now + st.gapMs;
+          q.atkAt = this.now;
+          const a = Math.atan2(tr.ry - 6 - (q.y - 50), tr.rx - q.x);
+          tr.shots.push({ x: q.x, y: q.y - 50, vx: Math.cos(a) * LANCE_SPEED, vy: Math.sin(a) * LANCE_SPEED, born: this.now, mine: false });
+        }
+      } else if (d > st.reach * 0.8) {
+        vx = dx / d;
+        vy = dy / d;
+        if (q.kind === 'stalker') { const w = Math.sin(this.now / 120 + q.seed) * 0.6; vx -= vy * w; vy += (dx / d) * w; }
+      }
+      if (q.kind !== 'lancer' && d <= st.reach && this.now >= q.nextAt) {
+        q.nextAt = this.now + st.gapMs;
+        q.atkAt = this.now;
+        this.realmHurt(tr, st.damage);
+      }
+      q.x = Phaser.Math.Clamp(q.x + vx * st.speed * dt, 16, REALM_W - 16);
+      q.y = Phaser.Math.Clamp(q.y + vy * st.speed * dt, REALM_HORIZON + 20, REALM_H - 14);
+    }
+
+    // ── Shots ──
+    for (let i = tr.shots.length - 1; i >= 0; i--) {
+      const sh = tr.shots[i];
+      sh.x += sh.vx * dt;
+      sh.y += sh.vy * dt;
+      let gone = this.now - sh.born > 1400 || sh.x < -20 || sh.x > REALM_W + 20 || sh.y < 0 || sh.y > REALM_H + 20;
+      if (!gone && sh.mine) {
+        const q = tr.foes.find((f) => Math.hypot(f.x - sh.x, f.y - REALM_STATS[f.kind].r - sh.y) <= REALM_STATS[f.kind].r);
+        if (q) {
+          gone = true;
+          q.hp -= CAPTIVE_SHOT_DAMAGE;
+          q.hitAt = this.now;
+          if (q.hp <= 0) {
+            tr.foes.splice(tr.foes.indexOf(q), 1);
+            tr.puffs.push({ x: q.x, y: q.y - REALM_STATS[q.kind].r, at: this.now });
+            tr.kills += 1;
+          }
+        }
+      } else if (!gone && Math.hypot(tr.rx - sh.x, tr.ry - sh.y) <= 18) {
+        gone = true;
+        this.realmHurt(tr, LANCE_DAMAGE);
+      }
+      if (gone) tr.shots.splice(i, 1);
+    }
+    tr.puffs = tr.puffs.filter((p) => this.now - p.at < 500);
+
+    // ── More always come ──
+    if (tr.foes.length < REALM_KEEP && this.now >= tr.nextSpawnAt) {
+      tr.nextSpawnAt = this.now + REALM_SPAWN_MS;
+      this.spawnRealmFoe(tr);
+    }
+    if (tr.foes.length < REALM_MAX && this.now >= tr.nextExtraAt) {
+      tr.nextExtraAt = this.now + REALM_EXTRA_MS;
+      this.spawnRealmFoe(tr);
+    }
+  }
+
+  private realmShoot(tr: Trap, x: number, y: number): void {
+    const a = Math.atan2(y - tr.ry, x - tr.rx);
+    tr.shots.push({ x: tr.rx + Math.cos(a) * 18, y: tr.ry + Math.sin(a) * 18, vx: Math.cos(a) * CAPTIVE_SHOT_SPEED, vy: Math.sin(a) * CAPTIVE_SHOT_SPEED, born: this.now, mine: true });
+  }
+
+  /**
+   * The realm hurts the captive for real. The captive is held `isInvincible` against the arena,
+   * so the guard is lifted around this one hit. Online, the captive's own machine runs the realm:
+   * a local captive takes it as self-inflicted (the attacker cannot see the realm to relay it),
+   * and a replica captive is only drawn here.
+   */
+  private realmHurt(tr: Trap, dmg: number): void {
+    tr.hurtAt = this.now;
+    if (tr.display) return;
+    const v = tr.victim;
+    if (!this.alive(v)) return;
+    v.isInvincible = false;
+    v.takeDamage(dmg, tr.local && this.api.isOnline ? { selfInflicted: true } : undefined);
+    v.isInvincible = true;
+    if (!this.isReplica(tr.owner)) this.tally(tr.owner, dmg);
+  }
+
+  /** The local player is in the Lands of Myth: their keys and mouse are the realm's, not the arena's. */
+  ownsPlayerInput(): boolean {
+    return this.traps.some((t) => t.local);
+  }
+
+  /** Latch the captive's mouse each frame (WASD is read straight off the keys in the realm step). */
+  handleTrappedInput(pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
+    const tr = this.traps.find((t) => t.local);
+    if (!tr) return;
+    const cam = this.api.scene.cameras.main;
+    const vs = cam.worldView.width / this.api.width || 1;
+    // Full screen, the realm is drawn 1:1 over the view.
+    tr.aimX = (mouseX - cam.worldView.x) / vs;
+    tr.aimY = (mouseY - cam.worldView.y) / vs;
+    tr.fire = pointer.isDown;
+  }
+
+  /** Online: the opponent's wormhole and last stand, as their own machine decided them. */
+  private replayMastery(id: string, tx: number, ty: number): boolean {
+    const s = this.sides.npc;
+    if (id === WORMHOLE_ID) { this.doWormhole('npc', tx, ty, true); return true; }
+    if (id === 'myth-wormhole-catch') {
+      let w = this.worms.find((q) => q.owner === 'npc' && q.doneAt === 0 && !q.trap) ?? null;
+      const n = this.api.npc;
+      if (!w && n) {
+        w = { owner: 'npc', x: n.x, y: n.y, vx: 0, vy: 0, travelled: 0, seed: Math.random() * 999, trap: null, doneAt: 0 };
+        this.worms.push(w);
+      }
+      if (w && this.alive(this.api.player) && !this.traps.some((t) => t.victim === this.api.player)) this.catchIn(w, this.api.player);
+      return true;
+    }
+    if (id === 'myth-stand') { if (s.stand === 'armed') this.beginStand('npc'); return true; }
+    if (id === 'myth-stand-breath' || id === 'myth-stand-fall') {
+      const f = this.api.npc;
+      if (s.stand === 'armed') this.beginStand('npc');
+      s.stand = 'spent';
+      if (f?.active) f.minHpFloor = 0;
+      s.floored = false;
+      this.avatar('npc')?.setDetermined(false);
+      if (f && id === 'myth-stand-breath') {
+        this.fx('npc').ring(f.x, f.y, 10, 110, 700, MYTH.gold, 4, 10);
+        this.fx('npc').starSpray(f.x, f.y, 18, 80, 800, 10, MYTH.gold);
+        this.cheerUntil = this.now + CHEER_MS * 1.5;
+        Sfx.playAt('reward-big', f.x, { volume: 0.7 });
+      }
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * The bot's wormhole, off the kit's own clock: at a foe in front of it and inside the throw,
+   * and never during Final Destiny. Not online — there the npc is a person.
+   */
+  private updateBotWormhole(): void {
+    if (this.api.isOnline || !this.wormSlot('npc') || !this.wormReady('npc')) return;
+    const s = this.sides.npc;
+    const f = this.api.npc;
+    if (!this.alive(f) || s.destinyLive || this.worms.some((w) => w.owner === 'npc' && w.doneAt === 0)) return;
+    const t = this.foes('npc')[0];
+    if (!t || t.unstoppable || t.knockbackImmune) return;
+    const d = Math.hypot(t.x - f.x, t.y - f.y);
+    if (d > WORM_RANGE * 0.8 || d < 60) return;
+    // Lead the throw a little at range.
+    const lead = d / WORM_SPEED;
+    const tb = t.body as Phaser.Physics.Arcade.Body | null;
+    this.doWormhole('npc', t.x + (tb?.velocity.x ?? 0) * lead * 0.6, t.y + (tb?.velocity.y ?? 0) * lead * 0.6);
+  }
+
+  // ── Mastery painting ───────────────────────────────────────────────────────
+
+  private paintMastery(): void {
+    const g = this.airGfx;
+    if (!g) return;
+    const t = this.vizT;
+    for (const w of this.worms) {
+      const fade = w.doneAt > 0 ? 1 - Phaser.Math.Clamp((this.now - w.doneAt) / WORM_FADE_MS, 0, 1) : 1;
+      if (fade <= 0) continue;
+      if (w.trap) {
+        const tr = w.trap;
+        const open = Phaser.Math.Clamp((this.now - tr.start) / 260, 0, 1);
+        const remain = Phaser.Math.Clamp((tr.until - this.now) / TRAP_MS, 0, 1);
+        trapPortal(g, this.col(w.owner), w.x, w.y, t, open, remain, this.peeking(tr));
+      } else if (w.doneAt > 0) {
+        trapPortal(g, this.col(w.owner), w.x, w.y, t, fade, 0, false);
+      } else {
+        wormDisc(g, this.col(w.owner), w.x, w.y, Math.atan2(w.vy, w.vx), t, w.seed, 1);
+      }
+    }
+    // Indomitable: the red fire, and the breath meter.
+    for (const owner of BOTH) {
+      const s = this.side(owner);
+      const f = this.fighter(owner);
+      if (s.stand !== 'live' || !this.alive(f)) continue;
+      lastStandAura(g, this.col(owner), f.x, f.y, t, 1, s.standDealt / STAND_GOAL);
+    }
+  }
+
+  /** The local player is the Myth who owns this trap and is standing close enough to look in. */
+  private peeking(tr: Trap): boolean {
+    const p = this.api.player;
+    return tr.owner === 'player' && this.alive(p) && Math.hypot(p.x - tr.worm.x, p.y - tr.worm.y) <= PEER_R;
+  }
+
+  /**
+   * The Lands of Myth, drawn for whoever should see them: full screen for a local captive, or a
+   * window over the portal for its Myth peering in. Screen space, offset by the camera's view so
+   * it holds still on a scrolling map, and over everything including Final Destiny's frame.
+   */
+  private paintRealm(): void {
+    const local = this.traps.find((t) => t.local) ?? null;
+    const peek = local ? null : (this.traps.find((t) => this.peeking(t)) ?? null);
+    const tr = local ?? peek;
+    // The last stand's red screen, for the local player.
+    this.paintRage();
+    if (!tr) {
+      this.realmGfx?.setVisible(false);
+      this.realmFrameGfx?.setVisible(false);
+      this.realmText?.setVisible(false);
+      return;
+    }
+    const { scene } = this.api;
+    if (!this.realmGfx) this.realmGfx = scene.add.graphics().setDepth(19.95);
+    if (!this.realmFrameGfx) this.realmFrameGfx = scene.add.graphics().setDepth(19.96);
+    if (!this.realmText) {
+      this.realmText = scene.add.text(0, 0, '', {
+        fontFamily: FONT_UI, fontSize: '14px', color: '#ffd166', stroke: '#05030c', strokeThickness: 4,
+      }).setOrigin(0.5, 0).setDepth(19.97);
+    }
+    const g = this.realmGfx.setVisible(true);
+    const fg = this.realmFrameGfx.setVisible(true);
+    const label = this.realmText.setVisible(true);
+    const cam = scene.cameras.main;
+    const vs = cam.worldView.width / this.api.width || 1;
+    const W = this.api.width;
+    const H = this.api.height;
+    let ox = 0;
+    let oy = 0;
+    let sc = 1;
+    if (!local) {
+      // A window above the portal, a third of the screen across.
+      sc = 0.34;
+      const ww = REALM_W * sc;
+      const wh = REALM_H * sc;
+      const sx = (tr.worm.x - cam.worldView.x) / vs;
+      const sy = (tr.worm.y - cam.worldView.y) / vs;
+      ox = Phaser.Math.Clamp(sx - ww / 2, 8, W - ww - 8);
+      oy = Phaser.Math.Clamp(sy - wh - 70, 8, H - wh - 8);
+    } else {
+      sc = W / REALM_W;
+    }
+    g.setPosition(cam.worldView.x + ox * vs, cam.worldView.y + oy * vs).setScale(sc * vs);
+    fg.setPosition(cam.worldView.x, cam.worldView.y).setScale(vs);
+    label.setScale(vs);
+    g.clear();
+    fg.clear();
+    this.drawRealm(g, tr);
+
+    const remain = Math.max(0, tr.until - this.now);
+    const remainK = remain / TRAP_MS;
+    const col = this.col(tr.owner);
+    if (local) {
+      // A vignette, a title, the time left and the captive's own health.
+      for (let i = 0; i < 6; i++) {
+        fg.lineStyle(26 - i * 4, col(MYTH.void), 0.16 + i * 0.05);
+        fg.strokeRect(i * 4, i * 4, W - i * 8, H - i * 8);
+      }
+      fg.fillStyle(col(MYTH.void), 0.75);
+      fg.fillRoundedRect(W / 2 - 170, 10, 340, 46, 10);
+      fg.lineStyle(1.5, col(MYTH.red), 0.9);
+      fg.strokeRoundedRect(W / 2 - 170, 10, 340, 46, 10);
+      fg.fillStyle(col(MYTH.red), 0.9);
+      fg.fillRect(W / 2 - 150, 44, 300 * remainK, 5);
+      const v = tr.victim;
+      const hpK = v.maxHp > 0 ? v.hp / v.maxHp : 0;
+      fg.fillStyle(0x000000, 0.7);
+      fg.fillRect(W / 2 - 101, H - 31, 202, 12);
+      fg.fillStyle(0x6bdc6b, 1);
+      fg.fillRect(W / 2 - 100, H - 30, 200 * hpK, 10);
+      label.setPosition(cam.worldView.x + (W / 2) * vs, cam.worldView.y + 15 * vs);
+      label.setText(`THE LANDS OF MYTH — ${(remain / 1000).toFixed(1)}s   ·   WASD move · Click strike · ${tr.kills} slain`);
+      label.setFontSize(13);
+    } else {
+      const ww = REALM_W * sc;
+      const wh = REALM_H * sc;
+      fg.lineStyle(6, col(MYTH.void), 0.9);
+      fg.strokeRoundedRect(ox - 3, oy - 3, ww + 6, wh + 6, 8);
+      fg.lineStyle(2, col(MYTH.red), 0.95);
+      fg.strokeRoundedRect(ox - 3, oy - 3, ww + 6, wh + 6, 8);
+      fg.fillStyle(col(MYTH.red), 0.9);
+      fg.fillRect(ox, oy + wh - 4, ww * remainK, 4);
+      // A thread of red from the window down to the portal it looks through.
+      const sx = (tr.worm.x - cam.worldView.x) / vs;
+      const sy = (tr.worm.y - cam.worldView.y) / vs;
+      fg.lineStyle(1.5, col(MYTH.red), 0.5);
+      fg.lineBetween(Phaser.Math.Clamp(sx, ox, ox + ww), oy + wh + 3, sx, sy - 40);
+      label.setPosition(cam.worldView.x + (ox + ww / 2) * vs, cam.worldView.y + (oy + 4) * vs);
+      label.setText(`PEERING IN — ${(remain / 1000).toFixed(1)}s`);
+      label.setFontSize(11);
+    }
+  }
+
+  /** The realm itself, in its own 960×640 space (the Graphics carries the transform). */
+  private drawRealm(g: Phaser.GameObjects.Graphics, tr: Trap): void {
+    const t = this.vizT;
+    const col = this.col(tr.owner);
+    mythRealm(g, col, REALM_W, REALM_H, REALM_HORIZON, t, tr.seed);
+    // Back to front by their feet, so nearer things overlap farther ones.
+    const bodies: { y: number; draw: () => void }[] = [];
+    for (const q of tr.foes) {
+      const hit = Phaser.Math.Clamp(1 - (this.now - q.hitAt) / 160, 0, 1);
+      const atk = Phaser.Math.Clamp(1 - (this.now - q.atkAt) / 320, 0, 1);
+      const hp = q.hp / REALM_STATS[q.kind].hp;
+      bodies.push({
+        y: q.y,
+        draw: () => {
+          if (q.kind === 'brute') realmBrute(g, col, q.x, q.y, q.face, t + q.seed, hit, atk, hp);
+          else if (q.kind === 'stalker') realmStalker(g, col, q.x, q.y, q.face, t + q.seed, hit, hp);
+          else if (q.kind === 'lancer') realmLancer(g, col, q.x, q.y, q.face, t + q.seed, atk, hit, hp, Math.atan2(tr.ry - q.y, tr.rx - q.x));
+          else realmSpearman(g, col, q.x, q.y, q.face, t + q.seed, atk, hit, hp);
+        },
+      });
+    }
+    const hurt = Phaser.Math.Clamp(1 - (this.now - tr.hurtAt) / 220, 0, 1);
+    bodies.push({ y: tr.ry + 16, draw: () => realmCaptive(g, tr.rx, tr.ry, tr.color, tr.face, t, hurt) });
+    bodies.sort((a, b) => a.y - b.y);
+    for (const b of bodies) b.draw();
+    for (const sh of tr.shots) {
+      const a = Math.atan2(sh.vy, sh.vx);
+      if (sh.mine) realmBolt(g, sh.x, sh.y, a, tr.color);
+      else spear(g, col, sh.x, sh.y, a, 30, 1);
+    }
+    for (const p of tr.puffs) {
+      const k = (this.now - p.at) / 500;
+      g.fillStyle(col(MYTH.haze), (1 - k) * 0.6);
+      g.fillCircle(p.x, p.y, 10 + k * 26);
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        star(g, p.x + Math.cos(a) * (8 + k * 30), p.y + Math.sin(a) * (8 + k * 30), 3 * (1 - k), col(MYTH.star), 1 - k, { points: 4 });
+      }
+    }
+    // Where the captive came in, behind them on the plain: the red portal back to the arena.
+    trapPortal(g, col, REALM_W / 2, REALM_H / 2 + 40, t, 0.8, Phaser.Math.Clamp((tr.until - this.now) / TRAP_MS, 0, 1), false);
+  }
+
+  /** Indomitable on the local player: the edges of the screen run red with the time left. */
+  private paintRage(): void {
+    const s = this.sides.player;
+    const on = this.is('player') && s.stand === 'live';
+    if (!on) { this.rageGfx?.setVisible(false); return; }
+    if (!this.rageGfx) this.rageGfx = this.api.scene.add.graphics().setDepth(19.94);
+    const g = this.rageGfx.setVisible(true);
+    const cam = this.api.scene.cameras.main;
+    const vs = cam.worldView.width / this.api.width || 1;
+    g.setPosition(cam.worldView.x, cam.worldView.y).setScale(vs);
+    g.clear();
+    const W = this.api.width;
+    const H = this.api.height;
+    const pulse = 0.5 + 0.5 * Math.sin(this.vizT * 7);
+    g.fillStyle(this.col('player')(MYTH.red), 0.06 + pulse * 0.04);
+    g.fillRect(0, 0, W, H);
+    for (let i = 0; i < 7; i++) {
+      g.lineStyle(30 - i * 4, this.col('player')(MYTH.red), (0.05 + i * 0.03) * (0.7 + pulse * 0.3));
+      g.strokeRect(i * 4, i * 4, W - i * 8, H - i * 8);
+    }
+    // The breath meter across the bottom: what is dealt, against the 75 that buys it.
+    const k = Math.min(1, s.standDealt / STAND_GOAL);
+    const left = Math.max(0, s.standUntil - this.now) / STAND_MS;
+    g.fillStyle(0x000000, 0.6);
+    g.fillRoundedRect(W / 2 - 132, H - 58, 264, 22, 8);
+    g.fillStyle(this.col('player')(k >= 1 ? MYTH.gold : MYTH.red), 0.95);
+    g.fillRoundedRect(W / 2 - 128, H - 54, 256 * k, 9, 4);
+    g.fillStyle(this.col('player')(MYTH.haze), 0.8);
+    g.fillRect(W / 2 - 128, H - 42, 256 * left, 3);
+  }
+
   // ── Online replay ──────────────────────────────────────────────────────────
 
   /** The opponent pressed one of the shard recasts; the replica follows. */
   replayNet(id: string, tx: number, ty: number): void {
     // The replica's shards are its own tally and may lag; a relayed press is the truth.
     const s = this.sides.npc;
+    if (this.replayMastery(id, tx, ty)) return;
     if (id === 'myth-parry-hit') {
       // The parry landed on their machine: the replica turns Indomitable. The stun on us
       // arrives through the status mirror.
@@ -1529,15 +2357,21 @@ export class MythKit {
     this.updateRockets(delta);
     this.updateClouds();
     this.updateDestiny(delta);
+    this.updateStand();
+    this.updateWorms(delta);
+    this.updateTraps(delta);
     this.updateBotRecasts();
+    this.updateBotWormhole();
     this.updateAvatars(delta, playerIs, npcIs);
     this.updateBanter(delta, playerIs, npcIs);
 
     this.paintCrowd();
     this.paintGround();
     this.paintAir();
+    this.paintMastery();
     this.paintHeads(playerIs, npcIs);
     this.paintView(delta);
+    this.paintRealm();
     this.pushStatuses(playerIs);
   }
 
@@ -1545,6 +2379,8 @@ export class MythKit {
     return this.maces.length > 0 || this.beasts.length > 0 || this.bullets.length > 0 || this.grenades.length > 0
       || this.rockets.length > 0 || this.clouds.length > 0 || this.bubble !== null
       || this.crowdStars.length > 0 || this.rifts.length > 0 || this.spears.length > 0 || this.barrages.length > 0
+      || this.worms.length > 0 || this.traps.length > 0
+      || BOTH.some((o) => this.sides[o].stand === 'live' || this.sides[o].floored)
       || BOTH.some((o) => this.sides[o].indomLive || this.sides[o].parryUntil > 0 || this.sides[o].destinyLive || this.sides[o].stunHeld.size > 0);
   }
 
@@ -1747,6 +2583,7 @@ export class MythKit {
         if (Math.hypot(t.x - f.x, t.y - f.y) > TRUTH_DASH_HIT_R + r) continue;
         s.dashHit.add(t);
         this.hit(owner, t, TRUTH_DASH_DAMAGE, { trueDamage: true });
+        this.excaliburStat(owner);
         this.api.spawnHitFlash(t.x, t.y, this.col(owner)(MYTH.gold));
         this.fx(owner).slash(t.x, t.y, Math.atan2(s.dashVy, s.dashVx), 60, Math.PI / 3, 10);
         this.text(owner, t.x, t.y - 44, 'TRUE', MYTH.gold);
@@ -2810,6 +3647,24 @@ export class MythKit {
       description: 'First person. WASD walks where you look, the cursor turns you, and the five keys are five guns.',
       until: s.destinyUntil,
     } : null);
+    set('myth-last-stand', playerIs && s.stand === 'live' ? {
+      name: 'Indomitable', emoji: '🩸', color: MYTH.red,
+      description: `You should be dead. Held at 1 HP — deal ${STAND_GOAL} damage before this runs out and the crowd gives you a second breath at full health. Fail and you fall.`,
+      until: s.standUntil, count: Math.min(STAND_GOAL, Math.round(s.standDealt)), suffix: `/${STAND_GOAL}`, priority: 160,
+    } : null);
+    const myTrap = this.traps.find((t) => t.owner === 'player') ?? null;
+    set('myth-wormhole', playerIs && myTrap ? {
+      name: 'Wormhole', emoji: '🌀', color: MYTH.red,
+      description: 'A foe is trapped in the Lands of Myth. Stand next to the red portal to peer in. They come out where it stands.',
+      until: myTrap.until,
+    } : null);
+    // The player on the receiving end of a wormhole.
+    const caught = this.traps.find((t) => t.local) ?? null;
+    set('myth-trapped', caught ? {
+      name: 'Lands of Myth', emoji: '🌀', color: MYTH.red,
+      description: 'Trapped beyond the wormhole: beasts and beyonders keep coming. WASD to move, Click to strike. You are sent back when the portal lets go.',
+      until: caught.until, priority: 40,
+    } : null);
     // The player on the receiving end of a beast.
     const held = this.beasts.some((b) => b.doneAt === 0 && b.grabbed.has(this.api.player));
     set('myth-caught', held ? {
@@ -2836,6 +3691,10 @@ export class MythKit {
     void time;
     const p = this.api.player;
     const s = this.sides.player;
+    if (abilityId === WORMHOLE_ID) {
+      if (this.traps.some((t) => t.owner === 'player')) return 1;
+      return Phaser.Math.Clamp(1 - (this.now - s.wormLastAt) / WORM_CD_MS, 0, 1);
+    }
     if (s.destinyLive) {
       const gun: Record<string, string> = {
         'myth-whip': 'myth-pistol', 'myth-truth': 'myth-shotgun', 'myth-determination': 'myth-grenades',
@@ -2892,6 +3751,25 @@ export class MythKit {
     return false;
   }
   destinyLive(owner: Owner): boolean { return this.side(owner).destinyLive; }
+
+  /** Mastery: the key Wormhole was bound over. The kit throws it; the rotation leaves that key alone. */
+  npcWormSlot(): 'r' | 'f' | 'q' | undefined { return this.wormSlot('npc') ?? undefined; }
+  /** Mastery: Indomitable's eight seconds are running — there is nothing left to retreat for. */
+  standLive(owner: Owner): boolean { return this.side(owner).stand === 'live'; }
+  /** This body is in the Lands of Myth: out of the arena, untouchable and not acting. */
+  isTrapped(f: Fighter): boolean { return this.traps.some((t) => t.victim === f); }
+
+  /**
+   * Mastery synergy: this side's captive is about to come back out of its red portal. The point
+   * beside the portal to be standing on when they do — Excalibur's arc is waiting there.
+   */
+  portalPoint(owner: Owner): { x: number; y: number } | null {
+    const tr = this.traps.find((t) => t.owner === owner);
+    const f = this.fighter(owner);
+    if (!tr || !this.alive(f) || tr.until - this.now > 2600) return null;
+    const a = Math.atan2(f.y - tr.worm.y, f.x - tr.worm.x);
+    return { x: tr.worm.x + Math.cos(a) * 70, y: tr.worm.y + Math.sin(a) * 70 };
+  }
   beastLive(owner: Owner): boolean { return this.beastOf(owner) !== null; }
 
   /** Damage taken by this side in the last 1.5s — the cue to press R. */

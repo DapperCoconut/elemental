@@ -6,7 +6,7 @@ import { SummonPurgeTarget } from '../../combat/SummonPurge';
 import { Sfx } from '../../audio';
 import {
   WAX, WaxAvatar, WaxColorFn, WaxFx, combCell, strokeComb, drawStrapGauge, drawBee, drawCandle, drawCandleAura, drawDart, drawGrapple,
-  drawHive, drawPoisonTell, drawPuddle, drawStickyBomb,
+  drawHive, drawHoneyShell, drawPoisonTell, drawPuddle, drawSmokeCloud, drawSmokerStream, drawStickyBomb,
 } from './WaxVisuals';
 
 /**
@@ -22,7 +22,11 @@ import {
  * The shop upgrades reach into every one of those (ranged darts, elite bees, melting armour,
  * honey, and strapping the bombs to yourself), and the bombs reach back into the candles and
  * hives: a bomb that hits your own candle banks its aura; one that hits your own hive cashes
- * it in violently. There is no mastery yet.
+ * it in violently.
+ *
+ * The mastery (2026-10-18) is the "Mastery" block: Honey Shell, a passive dome that eats the next
+ * hit of 30 or more and re-forms eight seconds later, and Smoke-out, a held smoker that grows a
+ * cloud in front of you — invisible and 20% evasive while you stand in it, opaque to everyone else.
  *
  * Nothing here is a sprite. Bees, bombs, darts, candles and hives are records painted every
  * frame into three Graphics layers (floor, objects, air) through the painters in WaxVisuals,
@@ -120,6 +124,34 @@ const SELF_BOMB_SHARE = 0.33;
 const SELF_BOMB_RADIUS = 165;
 const SELF_BOMB_ARM_MS = 650;
 
+// ── Mastery ──
+const SMOKE_ID = 'wax-smoke-out';
+const SMOKE_END_ID = 'wax-smoke-end';
+const SHELL_POP_ID = 'wax-honey-pop';
+const SHELL_UP_ID = 'wax-honey-up';
+/** Honey Shell: re-forms this long after it cracks. The 30-damage floor lives in `Fighter.takeDamage`. */
+const SHELL_REGROW_MS = 8000;
+/** Smoke-out: seconds of smoke in the smoker, how much a press needs, and how fast it refills. */
+const SMOKE_FUEL_MAX = 5;
+const SMOKE_FUEL_MIN = 1;
+const SMOKE_FUEL_REGEN = 0.4;
+const SMOKE_START_R = 34;
+const SMOKE_MAX_R = 170;
+const SMOKE_GROW_PER_SEC = 42;
+/** A new cloud is started this far ahead of the smoker, along the aim. */
+const SMOKE_AHEAD = 70;
+/** Walk further than this past a cloud's edge and the smoke starts a new cloud instead. */
+const SMOKE_LEASH = 50;
+const SMOKE_LINGER_MS = 9000;
+const SMOKE_FADE_MS = 1500;
+const SMOKE_MAX_CLOUDS = 4;
+/** Inside this share of a cloud's radius, you are in it. */
+const SMOKE_HIDE_FRAC = 0.85;
+/** A sight line passing within this share of a cloud's radius is blocked by it. */
+const SMOKE_SIGHT_FRAC = 0.7;
+const SMOKE_DODGE = 0.2;
+const NPC_SMOKE_HP = 0.55;
+
 interface Barrage {
   owner: Owner;
   angle: number;
@@ -212,6 +244,9 @@ interface Bomb {
   launchedAt: number;
 }
 
+/** Mastery — a Smoke-out cloud. Grows while it is the one being fed; lingers once it is not. */
+interface Cloud { owner: Owner; x: number; y: number; r: number; fedAt: number; seed: number }
+
 interface Shove { target: Fighter; vx: number; vy: number; until: number }
 interface Pull { owner: Owner; target: Fighter; until: number }
 interface Puddle { owner: Owner; kind: 'hot' | 'honey'; x: number; y: number; r: number; until: number; tickAt: number; seed: number }
@@ -227,6 +262,25 @@ interface SideState {
   qHoldStart: number;
   qHoldFired: boolean;
   lastBombLaunchAt: number;
+  // ── Mastery ──
+  /** Smoke-out: the smoker is going, what is left in it, and the cloud it is feeding. */
+  smoking: boolean;
+  fuel: number;
+  feeding: Cloud | null;
+  /** How far ahead of the body a new cloud starts. The bot shortens it to smoke its own feet. */
+  smokeAhead: number;
+  npcSmokeUntil: number;
+  /** The body is hidden in its own smoke this frame — so the hide can be undone on the way out. */
+  hidden: boolean;
+  dodgesSeen: number;
+  /** Honey Shell: armed once per match, then re-formed off `shellReadyAt` after every crack. */
+  shellSeeded: boolean;
+  shellReadyAt: number;
+  shellPopsSeen: number;
+  /** An online replica's shell, as the owner last said it was. Paint only — it blocks nothing here. */
+  shellUp: boolean;
+  /** Mastery stat: milliseconds stood in candlelight, banked a whole second at a time. */
+  candleMs: number;
 }
 
 export interface WaxArenaApi {
@@ -254,10 +308,21 @@ export interface WaxArenaApi {
   hasNpcUpgrade(slot: string): boolean;
   /** Online: the player's off-cooldown presses the opponent's sim has to replay. */
   broadcastSpecialCast(id: string): void;
+  get masteryActive(): boolean;
+  get npcMasteryActive(): boolean;
+  /** Which mastery enhancement each side dropped over an R/F/Q slot, or null. */
+  masteryBindFor(slot: string): string | null;
+  npcMasteryBindFor(slot: string): string | null;
+  /** Mastery progress. Gated on the element by the adapter, so the kit records unconditionally. */
+  recordMasteryStat(key: string, amount: number): void;
 }
 
 function makeSide(): SideState {
-  return { bankedAuras: [], shields: [], melting: [], qHolding: false, qHoldStart: 0, qHoldFired: false, lastBombLaunchAt: 0 };
+  return {
+    bankedAuras: [], shields: [], melting: [], qHolding: false, qHoldStart: 0, qHoldFired: false, lastBombLaunchAt: 0,
+    smoking: false, fuel: SMOKE_FUEL_MAX, feeding: null, smokeAhead: SMOKE_AHEAD, npcSmokeUntil: 0, hidden: false, dodgesSeen: 0,
+    shellSeeded: false, shellReadyAt: 0, shellPopsSeen: 0, shellUp: false, candleMs: 0,
+  };
 }
 
 function segmentDistanceSq(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
@@ -289,6 +354,8 @@ export class WaxKit implements SummonPurgeTarget {
   private bombs: Bomb[] = [];
   private shoves: Shove[] = [];
   private pulls: Pull[] = [];
+  private clouds: Cloud[] = [];
+  private smokeGfx: Phaser.GameObjects.Graphics | null = null;
   private groundGfx: Phaser.GameObjects.Graphics | null = null;
   private objectGfx: Phaser.GameObjects.Graphics | null = null;
   private airGfx: Phaser.GameObjects.Graphics | null = null;
@@ -364,7 +431,11 @@ export class WaxKit implements SummonPurgeTarget {
     this.hooked.clear();
     for (const owner of ['player', 'npc'] as Owner[]) {
       const f = this.fighter(owner);
-      if (f) f.waxIncomingMult = 1;
+      if (!f) continue;
+      f.waxIncomingMult = 1;
+      f.waxSmokeDodge = 0;
+      f.waxHoneyShell = false;
+      if (this.sides[owner].hidden) this.applyHidden(owner, false);
     }
     if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
     if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
@@ -379,6 +450,8 @@ export class WaxKit implements SummonPurgeTarget {
     this.bombs = [];
     this.shoves = [];
     this.pulls = [];
+    this.clouds = [];
+    this.smokeGfx?.destroy(); this.smokeGfx = null;
     this.groundGfx?.destroy(); this.groundGfx = null;
     this.objectGfx?.destroy(); this.objectGfx = null;
     this.airGfx?.destroy(); this.airGfx = null;
@@ -399,13 +472,17 @@ export class WaxKit implements SummonPurgeTarget {
     const ctx = this.api.buildPlayerContext(mouseX, mouseY);
     if (pointer.isDown && !this.api.pointerWasDown) p.castAbility('wax-stinger-strikes', ctx);
     if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('wax-swarm', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('wax-candle-mount', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) {
+    // Mastery: whichever of R/F/Q Smoke-out was dropped on is the smoker's now, held not tapped.
+    const smokeSlot = this.smokeSlot('player');
+    if (smokeSlot) this.handleSmokeKey(this.slotKey(smokeSlot));
+    if (smokeSlot !== 'r' && Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('wax-candle-mount', ctx);
+    if (smokeSlot !== 'f' && Phaser.Input.Keyboard.JustDown(this.api.fKey)) {
       // Beside a hive, F is the redemption and costs nothing; otherwise it is the build.
       const near = this.nearestRedeemableHive('player');
       if (near) this.redeemHive(near, false);
       else p.castAbility('wax-hive-hearth', ctx);
     }
+    if (smokeSlot === 'q') return;
     if (this.up('player', 'q')) {
       // Rule Beetanica: a two-second hold straps the bombs on; a tap is the ordinary Q.
       if (this.api.qKey.isDown) {
@@ -547,7 +624,7 @@ export class WaxKit implements SummonPurgeTarget {
   update(time: number, delta: number): void {
     const live = this.api.elementId === 'wax' || this.api.npcElementId === 'wax'
       || this.barrages.length + this.darts.length + this.poisons.length + this.bees.length + this.candles.length
-        + this.hives.length + this.puddles.length + this.bombs.length + this.shoves.length + this.pulls.length > 0;
+        + this.hives.length + this.puddles.length + this.bombs.length + this.shoves.length + this.pulls.length + this.clouds.length > 0;
     if (!live) { this.updateAvatars(time, delta); return; }
     const dt = Math.min(delta, 80) / 1000;
     this.t += dt;
@@ -565,6 +642,7 @@ export class WaxKit implements SummonPurgeTarget {
     this.updateShoves(time, dt);
     this.updatePulls(time, dt);
     this.updateBotHands(time);
+    this.updateMastery(time, dt);
     this.updateMultipliers(time);
     this.updateHud(time);
     this.paint(time);
@@ -575,6 +653,7 @@ export class WaxKit implements SummonPurgeTarget {
     void time;
     if (this.api.elementId === 'wax' && player?.active) {
       if (!this.playerAvatar) this.playerAvatar = new WaxAvatar(scene, this.pcol);
+      this.playerAvatar.setMastered(this.api.masteryActive);
       this.playerAvatar.setFacing(this.aimOf('player'));
       this.playerAvatar.setIntensity(this.selfBombs('player').length > 0 ? 1.3 : 1);
       if (!this.barrages.some((b) => b.owner === 'player')) { this.playerAvatar.fence(false); this.playerAvatar.releaseLunge(); }
@@ -585,6 +664,7 @@ export class WaxKit implements SummonPurgeTarget {
     }
     if (this.api.npcElementId === 'wax' && npc?.active) {
       if (!this.npcAvatar) this.npcAvatar = new WaxAvatar(scene, this.ncol);
+      this.npcAvatar.setMastered(this.api.npcMasteryActive);
       this.npcAvatar.setFacing(this.aimOf('npc'));
       this.npcAvatar.setIntensity(this.selfBombs('npc').length > 0 ? 1.3 : 1);
       if (!this.barrages.some((b) => b.owner === 'npc')) { this.npcAvatar.fence(false); this.npcAvatar.releaseLunge(); }
@@ -653,6 +733,7 @@ export class WaxKit implements SummonPurgeTarget {
       const width = STINGER_HALF_WIDTH + 22 * Math.max(0, target.sizeMult - 1);
       if (segmentDistanceSq(target.x, target.y, f.x, f.y, ex, ey) > width * width) continue;
       this.hit(b.owner, target, STINGER_DAMAGE, b, f.x, f.y);
+      this.record(b.owner, 'stings');
       this.api.spawnHitFlash(target.x, target.y, WAX.pale);
       b.hits.set(target, (b.hits.get(target) ?? 0) + 1);
     }
@@ -667,6 +748,7 @@ export class WaxKit implements SummonPurgeTarget {
       if (!target.active || target.hp <= 0) continue;
       if (segmentDistanceSq(target.x, target.y, f.x, f.y, ex, ey) > (STINGER_HALF_WIDTH + 9) ** 2) continue;
       this.hit(b.owner, target, STINGER_FINAL_DAMAGE, b, f.x, f.y);
+      this.record(b.owner, 'stings');
       this.applyPoison(b.owner, target);
       this.shoves.push({ target, vx: Math.cos(b.angle) * STINGER_SHOVE_SPEED, vy: Math.sin(b.angle) * STINGER_SHOVE_SPEED, until: this.now + SHOVE_MS });
       this.fx(b.owner).sting(target.x, target.y, b.angle);
@@ -708,12 +790,14 @@ export class WaxKit implements SummonPurgeTarget {
       if (target) {
         if (d.kind === 'grapple') {
           this.hit(d.owner, target, GRAPPLE_DAMAGE, d, d.x, d.y);
+          this.record(d.owner, 'stings');
           this.pulls.push({ owner: d.owner, target, until: time + GRAPPLE_PULL_MS });
           this.fx(d.owner).sting(target.x, target.y, Math.atan2(d.vy, d.vx));
           this.announce(target.x, target.y - 44, '🪝 GRAPPLED', '#ffefad');
           Sfx.playAt('spear-hit', target.x, { rate: 0.82, volume: 0.75 });
         } else {
           this.hit(d.owner, target, DART_DAMAGE, d, d.x, d.y);
+          this.record(d.owner, 'stings');
           const v = d.volley!;
           const n = (v.hits.get(target) ?? 0) + 1;
           v.hits.set(target, n);
@@ -828,6 +912,8 @@ export class WaxKit implements SummonPurgeTarget {
     if (idx < 0) return;
     this.hives.splice(idx, 1);
     const owner = hive.owner;
+    // Mastery stat: a full comb harvested, however it was cashed in.
+    if (hive.cells >= HIVE_CELLS) this.record(owner, 'fullHives');
     const orbit = Math.max(1, hive.cells) * 5;
     const shield = hive.cells <= 0 ? 0 : hive.cells <= 2 ? 1 : hive.cells <= 4 ? 2 : 3;
     this.spawnOrbitBees(owner, orbit);
@@ -1098,9 +1184,12 @@ export class WaxKit implements SummonPurgeTarget {
     this.bombs = this.bombs.filter((b) => b.owner !== owner || b.state !== 'self');
     // The strapped bombs' own +25% must not inflate the one-third share below.
     this.updateMultipliers(this.now);
+    let caught = 0;
     for (const t of this.targetsOf(owner)) {
-      if (Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) <= SELF_BOMB_RADIUS) this.hit(owner, t, damage, f, f.x, f.y);
+      if (Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) <= SELF_BOMB_RADIUS) { this.hit(owner, t, damage, f, f.x, f.y); caught++; }
     }
+    // Mastery stat: one per payload that actually caught someone.
+    if (caught > 0) this.record(owner, 'selfBombBlasts');
     for (const c of [...this.candles]) {
       if (c.owner === owner && Phaser.Math.Distance.Between(f.x, f.y, c.x, c.y) <= SELF_BOMB_RADIUS) this.explodeCandle(c, owner);
     }
@@ -1224,10 +1313,24 @@ export class WaxKit implements SummonPurgeTarget {
       name: 'Strapping Bombs', emoji: '⏳', color: WAX.wax, count: Math.max(1, Math.ceil(charge * 10)), priority: 115,
       description: `Hold Q — ${Math.round(charge * 100)}%`,
     } : null);
+    // ── The mastery ──
+    const p = this.api.player;
+    const shellOn = this.masteryOn('player');
+    this.api.setStatusIndicator('wax-honey-shell', shellOn && p.waxHoneyShell ? {
+      name: 'Honey Shell', emoji: '🍯', color: WAX.honey, count: 1, priority: 116,
+      description: 'The next hit of 30 or more breaks on the shell instead of you.',
+    } : shellOn && s.shellReadyAt > time ? {
+      name: 'Shell Re-forming', emoji: '🍯', color: WAX.deep, count: 1, priority: 116, until: s.shellReadyAt,
+      description: 'The Honey Shell sets again when the timer runs out.',
+    } : null);
+    this.api.setStatusIndicator('wax-smoke', s.hidden ? {
+      name: 'Smoke-out', emoji: '🌫️', color: WAX.smoke, count: 1, priority: 117,
+      description: `Hidden in your own smoke: enemies cannot see you, and ${Math.round(SMOKE_DODGE * 100)}% of hits are lost in it.`,
+    } : null);
   }
 
   private clearHud(): void {
-    for (const id of ['wax-candles', 'wax-shield', 'wax-melting-point', 'wax-beetanica']) this.api.setStatusIndicator(id, null);
+    for (const id of ['wax-candles', 'wax-shield', 'wax-melting-point', 'wax-beetanica', 'wax-honey-shell', 'wax-smoke']) this.api.setStatusIndicator(id, null);
   }
 
   // ── Painting ──────────────────────────────────────────────────────────────
@@ -1236,6 +1339,8 @@ export class WaxKit implements SummonPurgeTarget {
     if (!this.groundGfx?.active) this.groundGfx = this.api.scene.add.graphics().setDepth(3);
     if (!this.objectGfx?.active) this.objectGfx = this.api.scene.add.graphics().setDepth(4.5);
     if (!this.airGfx?.active) this.airGfx = this.api.scene.add.graphics().setDepth(15);
+    // Smoke sits over the bees and bodies, so what is in an enemy's cloud is actually covered.
+    if (!this.smokeGfx?.active) this.smokeGfx = this.api.scene.add.graphics().setDepth(15.5);
   }
 
   private paint(time: number): void {
@@ -1294,12 +1399,284 @@ export class WaxKit implements SummonPurgeTarget {
     for (const p of this.poisons) {
       if (p.target.active) drawPoisonTell(air, this.tint(p.owner), p.target.x, p.target.y, t, p.stacks);
     }
+    this.paintMastery(time, air);
     for (const owner of ['player', 'npc'] as Owner[]) {
       const s = this.side(owner);
       if (!s.qHolding || s.qHoldFired || !this.isWax(owner)) continue;
       const f = this.fighter(owner);
       const ratio = Phaser.Math.Clamp((time - s.qHoldStart) / BOMB_HOLD_MS, 0, 1);
       drawStrapGauge(air, this.tint(owner), f.x, f.y, ratio, t);
+    }
+  }
+
+  // ── Mastery ───────────────────────────────────────────────────────────────
+
+  /** Whether Element Mastery is on for whichever side is asking, and they are Wax. */
+  private masteryOn(owner: Owner): boolean {
+    return this.isWax(owner) && (owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
+  }
+
+  /** An online opponent (or co-op ally) in the npc slot: its body is played on the other machine. */
+  private isReplica(owner: Owner): boolean {
+    return owner === 'npc' && !this.api.npcAutonomous;
+  }
+
+  /** Which slot Smoke-out was dropped on, or null. */
+  private smokeSlot(owner: Owner): 'r' | 'f' | 'q' | null {
+    if (!this.masteryOn(owner)) return null;
+    for (const sl of ['r', 'f', 'q'] as const) {
+      const bind = owner === 'player' ? this.api.masteryBindFor(sl) : this.api.npcMasteryBindFor(sl);
+      if (bind === SMOKE_ID) return sl;
+    }
+    return null;
+  }
+
+  private slotKey(slot: 'r' | 'f' | 'q'): Phaser.Input.Keyboard.Key {
+    return slot === 'r' ? this.api.rKey : slot === 'f' ? this.api.fKey : this.api.qKey;
+  }
+
+  /**
+   * Mastery progress. Only ever the player's — the grind is the human's, not the bot's — and not
+   * gated on the mastery being on, since earning it is the point.
+   */
+  private record(owner: Owner, key: string, amount = 1): void {
+    if (owner === 'player' && this.isWax('player')) this.api.recordMasteryStat(key, amount);
+  }
+
+  /** The bound key is held, not tapped: the press lights the smoker, letting go puts it out. */
+  private handleSmokeKey(key: Phaser.Input.Keyboard.Key): void {
+    const s = this.side('player');
+    if (key.isDown) {
+      if (!s.smoking && Phaser.Input.Keyboard.JustDown(key) && s.fuel >= SMOKE_FUEL_MIN) this.startSmoke('player');
+    } else if (s.smoking) {
+      this.stopSmoke('player');
+    }
+  }
+
+  private startSmoke(owner: Owner, ahead = SMOKE_AHEAD, tx?: number, ty?: number): void {
+    const s = this.side(owner);
+    s.smoking = true;
+    s.smokeAhead = ahead;
+    this.spawnCloud(owner, tx, ty);
+  }
+
+  private stopSmoke(owner: Owner): void {
+    const s = this.side(owner);
+    if (!s.smoking) return;
+    s.smoking = false;
+    s.feeding = null;
+    if (owner === 'player') this.api.broadcastSpecialCast(SMOKE_END_ID);
+  }
+
+  /** A fresh cloud ahead of the smoker. The owner decides when; a replica only ever hears about it. */
+  private spawnCloud(owner: Owner, tx?: number, ty?: number): void {
+    const f = this.fighter(owner);
+    const s = this.side(owner);
+    const a = tx !== undefined && ty !== undefined ? Math.atan2(ty - f.y, tx - f.x) : this.aimOf(owner);
+    const cloud: Cloud = {
+      owner, x: this.clampX(f.x + Math.cos(a) * s.smokeAhead), y: this.clampY(f.y + Math.sin(a) * s.smokeAhead),
+      r: SMOKE_START_R, fedAt: this.now, seed: Math.random() * 100,
+    };
+    this.clouds.push(cloud);
+    const mine = this.clouds.filter((c) => c.owner === owner);
+    if (mine.length > SMOKE_MAX_CLOUDS) this.clouds.splice(this.clouds.indexOf(mine[0]), 1);
+    s.feeding = cloud;
+    this.avatar(owner)?.play('sweep', a);
+    if (owner === 'player') this.api.broadcastSpecialCast(SMOKE_ID);
+    Sfx.playAt('whoosh', f.x, { rate: 0.7, volume: 0.45 });
+  }
+
+  /** Inside one of its own clouds. Hiding is for Wax only: a cloud outlives an element swap. */
+  private inOwnSmoke(owner: Owner): boolean {
+    const f = this.fighter(owner);
+    if (!this.isWax(owner) || !f?.active || f.hp <= 0) return false;
+    return this.clouds.some((c) => c.owner === owner && Phaser.Math.Distance.Between(f.x, f.y, c.x, c.y) <= c.r * SMOKE_HIDE_FRAC);
+  }
+
+  /** A hidden body is see-through on its owner's screen, and simply gone on everyone else's. */
+  private applyHidden(owner: Owner, hidden: boolean): void {
+    const f = this.fighter(owner);
+    const s = this.side(owner);
+    // An online replica's visibility is the wire's (OnlineKit applies `inv`).
+    if (!f || (owner === 'npc' && f.netGhost)) { s.hidden = hidden; return; }
+    if (hidden) {
+      if (owner === 'player') {
+        f.setAlpha(0.4);
+      } else {
+        f.forceInvisible = true;
+        f.setAlpha(0);
+        f.setHealthBarVisible(false);
+      }
+    } else if (s.hidden && f.active) {
+      if (owner === 'npc') { f.forceInvisible = false; f.setHealthBarVisible(true); }
+      f.setAlpha(1);
+    }
+    s.hidden = hidden;
+  }
+
+  private updateMastery(time: number, dt: number): void {
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const f = this.fighter(owner);
+      const s = this.side(owner);
+      if (!f) continue;
+      const alive = f.active && f.hp > 0;
+      const on = this.masteryOn(owner) && alive;
+      const replica = this.isReplica(owner);
+
+      // ── Smoke-out ──
+      if (s.smoking && (!on || (!replica && s.fuel <= 0))) this.stopSmoke(owner);
+      if (s.smoking) {
+        if (!replica) s.fuel = Math.max(0, s.fuel - dt);
+        let c = s.feeding;
+        if (c && !this.clouds.includes(c)) c = s.feeding = null;
+        // Walked off: the smoke starts a new cloud rather than stretching the old one after you.
+        if (!replica && (!c || Phaser.Math.Distance.Between(f.x, f.y, c.x, c.y) > c.r + SMOKE_LEASH)) {
+          this.spawnCloud(owner);
+          c = s.feeding;
+        }
+        if (c) {
+          c.r = Math.min(SMOKE_MAX_R, c.r + SMOKE_GROW_PER_SEC * dt);
+          c.fedAt = time;
+        }
+      } else if (!replica) {
+        s.fuel = Math.min(SMOKE_FUEL_MAX, s.fuel + SMOKE_FUEL_REGEN * dt);
+      }
+
+      const hidden = this.inOwnSmoke(owner);
+      if (hidden || s.hidden) this.applyHidden(owner, hidden);
+      if (!replica) f.waxSmokeDodge = hidden ? SMOKE_DODGE : 0;
+      if (f.waxSmokeDodges > s.dodgesSeen) {
+        this.fx(owner).smokeDodge(f.x, f.y);
+        if (owner === 'player') this.announce(f.x, f.y - 44, '🌫️ LOST IN THE SMOKE', '#d8cfbd');
+      }
+      s.dodgesSeen = f.waxSmokeDodges;
+
+      // ── Honey Shell ──
+      if (replica) {
+        // The owner's sim does the blocking; this one only paints what it was told.
+        if (!s.shellSeeded && on) { s.shellSeeded = true; s.shellUp = true; }
+      } else if (!on) {
+        f.waxHoneyShell = false;
+      } else {
+        if (!s.shellSeeded) {
+          s.shellSeeded = true;
+          s.shellPopsSeen = f.waxHoneyShellPops;
+          f.waxHoneyShell = true;
+        }
+        if (f.waxHoneyShellPops > s.shellPopsSeen) {
+          s.shellPopsSeen = f.waxHoneyShellPops;
+          s.shellReadyAt = time + SHELL_REGROW_MS;
+          this.fx(owner).shellCrack(f.x, f.y);
+          this.announce(f.x, f.y - 50, '🍯 HONEY SHELL', '#ffbf3c', 12);
+          Sfx.playAt('shield-break', f.x, { rate: 1.3, volume: 0.6 });
+          if (owner === 'player') this.api.broadcastSpecialCast(SHELL_POP_ID);
+        }
+        if (!f.waxHoneyShell && time >= s.shellReadyAt) {
+          f.waxHoneyShell = true;
+          this.fx(owner).shellForm(f.x, f.y);
+          Sfx.playAt('pickup', f.x, { rate: 0.8, volume: 0.45 });
+          if (owner === 'player') this.api.broadcastSpecialCast(SHELL_UP_ID);
+        }
+      }
+    }
+
+    for (let i = this.clouds.length - 1; i >= 0; i--) {
+      if (time >= this.clouds[i].fedAt + SMOKE_LINGER_MS) this.clouds.splice(i, 1);
+    }
+
+    // Mastery stat: time stood in a planted candle's light (a banked aura is not a candle).
+    if (this.isWax('player')) {
+      const p = this.api.player;
+      const s = this.side('player');
+      if (p.active && p.hp > 0 && this.candles.some((c) => c.owner === 'player' && Phaser.Math.Distance.Between(p.x, p.y, c.x, c.y) <= CANDLE_RADIUS)) {
+        s.candleMs += dt * 1000;
+        if (s.candleMs >= 1000) {
+          const whole = Math.floor(s.candleMs / 1000);
+          s.candleMs -= whole * 1000;
+          this.record('player', 'candleSeconds', whole);
+        }
+      }
+    }
+
+    this.updateNpcSmoke(time);
+  }
+
+  /**
+   * The bot's hand on the smoker. Two reasons to light it, both synergies: wearing Rule Beetanica
+   * it walks the payload in under cover (the cloud goes ahead, toward the target, and the chase
+   * carries it in); losing, it smokes its own feet and stands in it. Driven here, not from
+   * `NpcOpponent` — the rotation only has to leave the key alone, and the seek walks it back in.
+   */
+  private updateNpcSmoke(time: number): void {
+    if (!this.api.npcAutonomous || !this.smokeSlot('npc')) return;
+    const n = this.api.npc;
+    const s = this.side('npc');
+    if (!n.active || n.hp <= 0) return;
+    if (s.smoking) {
+      if (time >= s.npcSmokeUntil) this.stopSmoke('npc');
+      return;
+    }
+    if (s.fuel < 2.5) return;
+    const t = this.nearestTarget('npc', n.x, n.y);
+    if (!t) return;
+    const d = Phaser.Math.Distance.Between(n.x, n.y, t.x, t.y);
+    const strapped = this.selfBombs('npc').length > 0;
+    if (strapped && d > SELF_BOMB_RADIUS * 0.8) {
+      this.startSmoke('npc', SMOKE_AHEAD);
+      s.npcSmokeUntil = time + Phaser.Math.Between(2000, 3000);
+    } else if (n.hp < n.maxHp * NPC_SMOKE_HP && !this.inOwnSmoke('npc') && d < 380) {
+      this.startSmoke('npc', 18);
+      s.npcSmokeUntil = time + Phaser.Math.Between(1800, 2800);
+    }
+  }
+
+  /** Online: the peer's smoker, and their shell, as their own sim decided them. */
+  replayNet(id: string, tx: number, ty: number): void {
+    const s = this.side('npc');
+    if (id === SMOKE_ID) {
+      s.smoking = true;
+      s.smokeAhead = SMOKE_AHEAD;
+      this.spawnCloud('npc', tx, ty);
+    } else if (id === SMOKE_END_ID) {
+      s.smoking = false;
+      s.feeding = null;
+    } else if (id === SHELL_POP_ID) {
+      s.shellSeeded = true;
+      s.shellUp = false;
+      s.shellReadyAt = this.now + SHELL_REGROW_MS;
+      this.fx('npc').shellCrack(this.api.npc.x, this.api.npc.y);
+    } else if (id === SHELL_UP_ID) {
+      s.shellSeeded = true;
+      s.shellUp = true;
+      this.fx('npc').shellForm(this.api.npc.x, this.api.npc.y);
+    }
+  }
+
+  private paintMastery(time: number, air: Phaser.GameObjects.Graphics): void {
+    const sg = this.smokeGfx!;
+    sg.clear();
+    const t = this.t;
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      if (!this.isWax(owner)) continue;
+      const f = this.fighter(owner);
+      const s = this.side(owner);
+      if (!f.active || f.hp <= 0) continue;
+      // The shell is not drawn on a body that is hiding — it would give the body away.
+      const shown = owner === 'player' || !s.hidden;
+      if (this.masteryOn(owner) && shown) {
+        const up = this.isReplica(owner) ? s.shellUp : f.waxHoneyShell;
+        const regrow = up ? 1 : Phaser.Math.Clamp(1 - (s.shellReadyAt - time) / SHELL_REGROW_MS, 0, 0.999);
+        drawHoneyShell(air, this.tint(owner), f.x, f.y, t, owner === 'player' && s.hidden ? 0.5 : 1, regrow);
+      }
+      if (s.smoking && s.feeding) {
+        const a = Math.atan2(s.feeding.y - f.y, s.feeding.x - f.x);
+        drawSmokerStream(sg, this.tint(owner), f.x + Math.cos(a) * 18, f.y + Math.sin(a) * 18, s.feeding.x, s.feeding.y, t, owner === 'player' ? 0.5 : 1);
+      }
+    }
+    for (const c of this.clouds) {
+      const life = Phaser.Math.Clamp((c.fedAt + SMOKE_LINGER_MS - time) / SMOKE_FADE_MS, 0, 1);
+      // The local screen's own clouds are see-through; everyone else's are a wall.
+      drawSmokeCloud(sg, this.tint(c.owner), c.x, c.y, c.r * (0.9 + 0.1 * life), t + c.seed, c.seed, life, c.owner === 'player');
     }
   }
 
@@ -1359,6 +1736,33 @@ export class WaxKit implements SummonPurgeTarget {
     return this.hives.some((h) => h.owner === owner && h.cells < HIVE_CELLS
       && segmentDistanceSq(h.x, h.y, f.x, f.y, t.x, t.y) <= (HIVE_R + 30) ** 2);
   }
+  /** Mastery — Smoke-out: `owner` is standing in its own smoke, where no enemy can see it. */
+  isSmokeHidden(owner: Owner): boolean { return this.inOwnSmoke(owner); }
+  /**
+   * Mastery — Smoke-out: `viewer` cannot see `owner` — it is in its smoke, or a cloud of its sits
+   * on the sight line (and the viewer is not standing in that cloud itself).
+   */
+  hidesFrom(owner: Owner, viewer: Fighter | null): boolean {
+    if (this.inOwnSmoke(owner)) return true;
+    const f = this.fighter(owner);
+    if (!viewer || !this.isWax(owner) || !f?.active) return false;
+    return this.clouds.some((c) => c.owner === owner
+      && Phaser.Math.Distance.Between(viewer.x, viewer.y, c.x, c.y) > c.r
+      && segmentDistanceSq(c.x, c.y, viewer.x, viewer.y, f.x, f.y) <= (c.r * SMOKE_SIGHT_FRAC) ** 2);
+  }
+  /** The slot the bot gave up for Smoke-out, so its rotation leaves that key alone. */
+  npcSmokeSlot(): 'r' | 'f' | 'q' | undefined { return this.smokeSlot('npc') ?? undefined; }
+  /** Wax synergy (mastery): an own cloud a hurt bot is not standing in — somewhere to hide. */
+  smokePoint(owner: Owner): { x: number; y: number } | null {
+    const f = this.fighter(owner);
+    if (!f?.active || this.inOwnSmoke(owner) || f.hp >= f.maxHp * NPC_SMOKE_HP) return null;
+    const mine = this.clouds.filter((c) => c.owner === owner && c.r >= 60)
+      .sort((a, b) => Phaser.Math.Distance.Squared(f.x, f.y, a.x, a.y) - Phaser.Math.Distance.Squared(f.x, f.y, b.x, b.y));
+    return mine[0] ? { x: mine[0].x, y: mine[0].y } : null;
+  }
+  /** HUD: Smoke-out's card is the smoker's fuel, not a cooldown. */
+  getSmokeRatio(): number { return this.side('player').fuel / SMOKE_FUEL_MAX; }
+
   /** An own hive worth walking back to; the kit redeems it on arrival. */
   hiveRedeemPoint(owner: Owner): { x: number; y: number } | null {
     const h = this.hives.find((hv) => hv.owner === owner && (hv.cells >= 3 || (this.up(owner, 'f') && hv.honey >= 20)));

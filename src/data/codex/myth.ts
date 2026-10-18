@@ -4,8 +4,8 @@ import { ElementCodex } from '../AbilityCodex';
  * Myth — the ultimate element.
  *
  * Verified against `src/elements/myth.ts` and `kits/MythKit.ts`. Myth has its five shop upgrades
- * (2026-10-17) but no perks or mastery enhancements yet; every figure below is a constant at the
- * top of the kit. The
+ * (2026-10-17) and its mastery (2026-10-18, the kit's "Mastery" block) but no perks yet; every
+ * figure below is a constant at the top of the kit. The
  * tray is five keys; Final Destiny re-arms the same five as guns, and those five are documented
  * as their own entries.
  */
@@ -293,6 +293,51 @@ const myth: ElementCodex = {
       ],
       upgrade: SLAYER,
       notes: ['Fire it at a body the beast or the mace is holding; the bot does exactly that.'],
+    },
+  },
+
+  mastery: {
+    'myth-last-stand': {
+      basics:
+        'The hit that should kill you leaves you at 1 HP instead — and nothing can take that last point for '
+        + 'the next 8 seconds. You burn red and the screen runs red at the edges, with a meter across the '
+        + 'bottom. Deal 75 damage before the eight seconds are out and the crowd gives you a second breath: '
+        + 'you are back up at full health. Fall short and the death it held off arrives. It happens once a '
+        + 'match, whichever way it ends.',
+      cast: 'Passive. Always on while Myth Mastery is enabled and Myth is the element being played.',
+      effects: [
+        { tag: 'shield', label: 'Held at 1 HP', detail: 'Health cannot fall below 1 while Indomitable is owed or running. Every hit still lands and shows its number.' },
+        { tag: 'resource', label: 'The goal', detail: '75 damage dealt in the 8 seconds, by anything of yours — whip, slash, guns, beast, crowd stars excepted.' },
+        { tag: 'heal', label: 'Second breath', detail: 'Reach 75 and you return to full health when the eight seconds end.' },
+        { tag: 'cost', label: 'Or you fall', detail: 'Short of 75 at the end and you are defeated on the spot.' },
+      ],
+      notes: [
+        'Once per match: after a second breath, the next death is a real one.',
+        'Damage done inside the Lands of Myth by your Wormhole counts toward the 75.',
+        'A Myth NPC in its last stand stops retreating and goes for Truth Breaker\'s true damage.',
+      ],
+    },
+    'myth-wormhole': {
+      basics:
+        'Throw a portal straight ahead: it flies 520px, and the first enemy it touches is taken. They vanish '
+        + 'from the arena for 8 seconds — untouchable and unable to act there — and the portal stands where it '
+        + 'caught them, glowing red, until they come back out of it. Meanwhile they are fighting on a starry '
+        + 'plain of obsidian against things that never stop coming: tanky slow brutes, fast little stalkers, '
+        + 'mounted beyonders that throw spears and beyonders on foot that stab. The damage is real. Stand '
+        + 'within 110px of the red portal and a window opens above it so you can watch.',
+      cast: 'Press the bound key (R, F or Q) to throw at the cursor. 20 second cooldown from the throw. One portal at a time, and not during Final Destiny.',
+      effects: [
+        { tag: 'control', label: 'Trapped', detail: '8 seconds out of the arena: hidden, untouchable, no abilities. They come back where the portal stands.' },
+        { tag: 'damage', label: 'The Lands of Myth', detail: 'Brute 12 a hit (slow, 70 HP), stalker 4 (fast, 14 HP), spearman 8 (28 HP), mounted beyonder 6 a spear (34 HP). Four at least, up to seven.' },
+        { tag: 'utility', label: 'Fighting back', detail: 'The captive strikes with a bolt for 10 — WASD and Click for a player, on its own for a bot or a husk. More always spawn.' },
+        { tag: 'utility', label: 'Peer in', detail: 'Stand within 110px of your red portal to see the realm in a window over it.' },
+        { tag: 'resource', label: 'The crowd watches', detail: 'What the realm does to them counts as your damage for the crowd\'s cheer.' },
+      ],
+      notes: [
+        'Anything that cannot be moved (bosses, Unstoppable bodies) bounces the portal off.',
+        'Online, the captive\'s own machine runs their realm; what you see through the portal is your side\'s copy of it.',
+        'A Myth NPC on Nightmare binds it over the Beast of Myth, throws it at you in range, and waits beside the portal for you to come out.',
+      ],
     },
   },
 };

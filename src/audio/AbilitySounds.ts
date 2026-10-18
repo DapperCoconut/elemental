@@ -354,6 +354,16 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'marrow-neutralize': ['spore', 0.85, 1.25],
   'marrow-dendricles': ['whip', 0.9, 1.15],
   'marrow-mastacre': ['bubble', 1.0, 0.75],
+  // Marrow Mastery: the kit voices the take-over and the let-go itself.
+  'marrow-brainstem': null,
+  // Wax Mastery: the smoker is held, and the kit voices each new cloud itself.
+  'wax-smoke-out': null,
+  // Tempest Mastery: the kit voices the dash and the throw itself.
+  'tempest-gale-uppercut': null,
+  // Dream Mastery: the music box is held, and the kit voices the throw and the landing itself.
+  'dream-music-box': null,
+  // Myth Mastery: the kit voices the portal, the catch and the release itself.
+  'myth-wormhole': null,
   // ── Cloth ──
   // Nothing here is a weapon being swung: four of the five are something wet being released,
   // so the set is a flick, two spawns, a whip and a swarm of fuses being lit.

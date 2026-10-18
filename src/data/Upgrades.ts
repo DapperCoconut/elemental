@@ -2278,6 +2278,98 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
       },
     ],
   },
+  // Dream (the sandman, 2026-10-17 rework). Its new five, 2026-10-18 — the pendulum's went with it.
+  {
+    elementId: 'dream',
+    upgrades: [
+      {
+        slot: 'click',
+        displayKey: 'Click',
+        name: 'Amnesia',
+        description: 'Right-click to throw the rest of your magazine at your cursor. It goes off where it lands: whoever is right under it takes 1.5 for every round left in it, and every round is thrown out in a ring for 4 damage to the first enemy each one meets. You have to reload afterwards, and you need ammo left to throw. In a dream it is one big blast instead — 30 damage in a wide area, or 75 if both pistol rounds were still loaded.',
+        price: 100,
+        currency: 'corrupt',
+      },
+      {
+        slot: 'e',
+        displayKey: 'E',
+        name: 'Lucid Dream',
+        description: 'Inside their dream a panel opens at the top of the screen, and you can bend their dream to your will: split it down the middle (they cannot cross, you can), raise spikes from the floor, make yourself 20% faster with a 20% chance to dodge, line the edges with red mist that hurts them, or shrink the whole dream. Every switch you turn on makes them wake 25% faster.',
+        price: 200,
+        currency: 'corrupt',
+      },
+      {
+        slot: 'r',
+        displayKey: 'R',
+        name: 'Unending Comfort',
+        description: 'Pillow hits leave 1 to 3 feathers in the enemy for 8 seconds. While they are in, every attack you land on them adds a little drowsiness — 1.5 for every feather. In a dream, the claw leaves 1 to 3 scratches instead, for 8 seconds: every attack you land in there deals 3 more for every scratch.',
+        price: 350,
+        currency: 'corrupt',
+      },
+      {
+        slot: 'f',
+        displayKey: 'F',
+        name: 'Sleeping Pills',
+        description: 'Sleep Tight\'s dagger sticks in the enemy, dosing them with 6 drowsiness a second for 4 seconds. In a dream the leech bites harder (30, then 5 a second), and when it has fed for its full 8 seconds it drops to the ground and waits there for 12 seconds, where it is much easier to pick back up.',
+        price: 500,
+        currency: 'corrupt',
+      },
+      {
+        slot: 'q',
+        displayKey: 'Q',
+        name: 'Sleep Paralysis',
+        description: 'After Nightmare takes its 15, their drowsiness cannot go down at all for 5 seconds — no wearing off, no sleeping it off — and they move 20% slower. Used inside a dream, the dream itself turns into a nightmare for those 5 seconds: an evil version of the same place.',
+        price: 750,
+        currency: 'corrupt',
+      },
+    ],
+  },
+  // Tempest (test element). Its first five, 2026-10-18.
+  {
+    elementId: 'tempest',
+    upgrades: [
+      {
+        slot: 'click',
+        displayKey: 'Click',
+        name: 'Hailstorm',
+        description: 'Gale Burst throws a hailstone instead: 13 damage instead of 10, and where it goes off it shatters into 6 splinters of ice shrapnel that fly 170px outward, 4 damage to the first enemy each one meets.',
+        price: 100,
+        currency: 'corrupt',
+      },
+      {
+        slot: 'e',
+        displayKey: 'E',
+        name: 'Shocking Acceleration',
+        description: 'Kick Blast\'s roll leaves a trail of static behind it for 5 seconds: anyone standing on it takes 5 every half second. Airborne, the hop instead leaves a thundercloud where you were for 5 seconds, striking everything within 150px of it for 8 every second.',
+        price: 200,
+        currency: 'corrupt',
+      },
+      {
+        slot: 'r',
+        displayKey: 'R',
+        name: 'Float',
+        description: 'While you are airborne over a front, you do not lose height — gravity stops pulling until you leave it. You can still climb.',
+        price: 350,
+        currency: 'corrupt',
+      },
+      {
+        slot: 'f',
+        displayKey: 'F',
+        name: 'Cyclone',
+        description: 'Press F with no current in reach and you spin up a cyclone where you stand and ride it — a stronger updraft than a current (880 px/s instead of 640), but Updraft goes on double cooldown.',
+        price: 500,
+        currency: 'corrupt',
+      },
+      {
+        slot: 'q',
+        displayKey: 'Q',
+        name: 'Herald of Doom',
+        description: 'Diving with Q, or coming down from Final Forecast\'s grapple, cuts to your weather forecast: five days of DEATH. When you land, the weather goes wild for 12 seconds — lightning strikes at random (12), hail falls from the top of the screen (5 each), gales make every gain of height 40% bigger, and the rain leaves puddles that slow by 40%.',
+        price: 750,
+        currency: 'corrupt',
+      },
+    ],
+  },
 ];
 
 export function getElementUpgrades(elementId: string): UpgradeDef[] {

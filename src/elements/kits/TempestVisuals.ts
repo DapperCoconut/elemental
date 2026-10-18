@@ -47,6 +47,14 @@ export const TMP = {
   dust: 0x8794a8,
   /** The fall-speed arrow at full tilt. */
   red: 0xff4a3d,
+  /** Upgrades — hail and its shrapnel. */
+  ice: 0xc4ecff,
+  iceDeep: 0x5aa6d6,
+  /** Upgrades — thunderheads, rain and the puddles it leaves. */
+  cloud: 0x2a3552,
+  cloudLit: 0x6a7fa8,
+  rain: 0x8fb4e8,
+  puddle: 0x2c4e86,
 };
 
 /** Deterministic 0–1 noise, so a streak keeps its shape between frames. */
@@ -239,6 +247,456 @@ export function current(
     const k = (t * 0.6 + i / 4 + jitter(seed, i) * 0.2) % 1;
     const cx = x + (jitter(seed, i + 4) - 0.5) * r * 0.9;
     chevron(g, tint(TMP.white), cx, y - k * 52 - 4, 6 + k * 3, 4, alpha * (1 - k) * 0.8 * life, 2);
+  }
+}
+
+// ── Upgrade painters ─────────────────────────────────────────────────────
+// The shop upgrades bring the rest of the weather: ice, static, thunderheads and rain. Wind is
+// still the base material — hail is wind that froze, static is wind that rubbed itself raw.
+
+/** A hailstone: a faceted lump of ice with a frosted rim and two lit facets. */
+export function hailStone(
+  g: Phaser.GameObjects.Graphics, tint: TempestColorFn, x: number, y: number, r: number, rot: number, alpha: number, seed = 0,
+): void {
+  const N = 7;
+  const pts: Phaser.Geom.Point[] = [];
+  for (let i = 0; i < N; i++) {
+    const a = rot + (i / N) * TAU;
+    const rr = r * (0.78 + jitter(seed, i) * 0.32);
+    pts.push(new Phaser.Geom.Point(x + Math.cos(a) * rr, y + Math.sin(a) * rr));
+  }
+  g.fillStyle(tint(TMP.ice), alpha * 0.25);
+  g.fillCircle(x, y, r * 1.6);
+  g.fillStyle(tint(TMP.iceDeep), alpha);
+  g.fillPoints(pts, true);
+  g.fillStyle(tint(TMP.ice), alpha);
+  g.fillPoints(pts.map((p) => new Phaser.Geom.Point(x + (p.x - x) * 0.78 - r * 0.08, y + (p.y - y) * 0.78 - r * 0.1)), true);
+  // Two facets catching the light, and a cracked seam across the middle.
+  g.fillStyle(tint(TMP.white), alpha * 0.9);
+  g.fillTriangle(x - r * 0.45, y - r * 0.15, x - r * 0.05, y - r * 0.55, x + r * 0.05, y - r * 0.1);
+  g.fillStyle(tint(TMP.white), alpha * 0.5);
+  g.fillTriangle(x + r * 0.1, y + r * 0.05, x + r * 0.5, y - r * 0.2, x + r * 0.35, y + r * 0.3);
+  g.lineStyle(1, tint(TMP.iceDeep), alpha * 0.8);
+  g.lineBetween(x - r * 0.6, y + r * 0.2, x + r * 0.55, y + r * 0.05);
+}
+
+/** One splinter of ice shrapnel, pointing along `ang`. */
+export function iceShard(
+  g: Phaser.GameObjects.Graphics, tint: TempestColorFn, x: number, y: number, ang: number, len: number, alpha: number,
+): void {
+  const ca = Math.cos(ang);
+  const sa = Math.sin(ang);
+  const w = len * 0.28;
+  const tip = new Phaser.Geom.Point(x + ca * len * 0.6, y + sa * len * 0.6);
+  const l = new Phaser.Geom.Point(x - ca * len * 0.4 - sa * w, y - sa * len * 0.4 + ca * w);
+  const r = new Phaser.Geom.Point(x - ca * len * 0.4 + sa * w, y - sa * len * 0.4 - ca * w);
+  // A frost trail behind it.
+  g.lineStyle(w * 1.2, tint(TMP.ice), alpha * 0.25);
+  g.lineBetween(x - ca * len * 1.4, y - sa * len * 1.4, x, y);
+  g.fillStyle(tint(TMP.iceDeep), alpha);
+  g.fillTriangle(tip.x, tip.y, l.x, l.y, r.x, r.y);
+  g.fillStyle(tint(TMP.white), alpha * 0.85);
+  g.fillTriangle(tip.x, tip.y, l.x, l.y, x - ca * len * 0.2, y - sa * len * 0.2);
+}
+
+/**
+ * A static trail along `pts`: a faint singed band with arcs crackling between the points. `t`
+ * re-rolls the arcs, so it fizzes; `alpha` fades it out at the end of its life.
+ */
+export function staticTrail(
+  g: Phaser.GameObjects.Graphics, tint: TempestColorFn, pts: { x: number; y: number }[], halfW: number, alpha: number, t: number, seed = 0,
+): void {
+  if (pts.length < 2) return;
+  g.lineStyle(halfW * 2, tint(TMP.slate), alpha * 0.22);
+  g.beginPath();
+  g.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+  g.strokePath();
+  g.lineStyle(halfW * 0.8, tint(TMP.bolt), alpha * 0.12);
+  g.strokePath();
+  const n = Math.floor(t * 16);
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1];
+    const b = pts[i];
+    if (jitter(seed + n, i) < 0.35) continue;
+    lightning(g, tint(TMP.bolt), a.x, a.y, b.x, b.y, halfW * 0.7, 1.4, alpha * 0.85, seed + n * 7 + i);
+    // A spark kicked up off the floor now and then.
+    if (jitter(seed + n, i + 50) > 0.8) {
+      g.fillStyle(tint(TMP.boltHot), alpha);
+      g.fillCircle(b.x + (jitter(seed + n, i + 3) - 0.5) * halfW, b.y - 4 - jitter(seed + n, i + 4) * 8, 1.4);
+    }
+  }
+}
+
+/** A puff of cloud: four overlapping circles, shaded underneath and lit on top. */
+function cloudPuff(g: Phaser.GameObjects.Graphics, tint: TempestColorFn, x: number, y: number, r: number, alpha: number): void {
+  g.fillStyle(tint(TMP.ink), alpha * 0.55);
+  g.fillEllipse(x, y + r * 0.45, r * 3.4, r * 1.2);
+  g.fillStyle(tint(TMP.cloud), alpha);
+  g.fillCircle(x - r * 0.95, y + r * 0.15, r * 0.75);
+  g.fillCircle(x + r * 0.95, y + r * 0.2, r * 0.7);
+  g.fillCircle(x, y - r * 0.15, r);
+  g.fillStyle(tint(TMP.cloudLit), alpha * 0.8);
+  g.fillCircle(x - r * 0.25, y - r * 0.45, r * 0.55);
+  g.fillCircle(x + r * 0.65, y - r * 0.05, r * 0.38);
+}
+
+/**
+ * A thundercloud hanging `lift` px over `(x, y)`: the strike circle `r` on the floor under it, a
+ * cluster of puffs, rain falling to the floor and a flicker inside when it is about to strike.
+ * `charge` 0–1 is how close the next strike is.
+ */
+export function thunderCloud(
+  g: Phaser.GameObjects.Graphics, tint: TempestColorFn,
+  x: number, y: number, r: number, lift: number, alpha: number, t: number, charge: number, seed = 0,
+): void {
+  // The reach on the floor.
+  g.fillStyle(tint(TMP.cloud), alpha * 0.12);
+  g.fillEllipse(x, y, r * 2, r * 1.2);
+  g.lineStyle(1.4, tint(TMP.bolt), alpha * (0.25 + charge * 0.35));
+  g.strokeEllipse(x, y, r * 2, r * 1.2);
+  const cy = y - lift;
+  // Rain under the cloud.
+  for (let i = 0; i < 14; i++) {
+    const k = (t * 1.8 + jitter(seed, i)) % 1;
+    const rx = x + (jitter(seed, i + 20) - 0.5) * r * 1.1;
+    const ry = cy + 10 + k * lift;
+    g.lineStyle(1, tint(TMP.rain), alpha * 0.5 * (1 - k * 0.5));
+    g.lineBetween(rx, ry, rx - 2, ry + 9);
+  }
+  const drift = Math.sin(t * 0.9 + seed) * 4;
+  cloudPuff(g, tint, x - 26 + drift, cy + 4, 15, alpha);
+  cloudPuff(g, tint, x + 24 + drift, cy + 6, 14, alpha);
+  cloudPuff(g, tint, x + drift, cy - 6, 20, alpha);
+  // The charge, glowing through the bottom of the cloud.
+  if (charge > 0.6) {
+    const f = (charge - 0.6) / 0.4;
+    g.fillStyle(tint(TMP.bolt), alpha * f * (0.25 + 0.25 * Math.sin(t * 40)));
+    g.fillEllipse(x + drift, cy + 8, 50, 14);
+  }
+}
+
+/** A rain puddle: a dark pool with rings spreading out of it where the drops land. */
+export function rainPuddle(
+  g: Phaser.GameObjects.Graphics, tint: TempestColorFn, x: number, y: number, r: number, alpha: number, t: number, seed = 0,
+): void {
+  g.fillStyle(tint(TMP.puddle), alpha * 0.45);
+  g.fillEllipse(x, y, r * 2, r * 1.25);
+  g.fillStyle(tint(TMP.rain), alpha * 0.18);
+  g.fillEllipse(x - r * 0.2, y - r * 0.15, r * 1.1, r * 0.55);
+  g.lineStyle(1.2, tint(TMP.rain), alpha * 0.45);
+  g.strokeEllipse(x, y, r * 2, r * 1.25);
+  for (let i = 0; i < 3; i++) {
+    const k = (t * 0.9 + i / 3 + jitter(seed, i) * 0.3) % 1;
+    const rx = x + (jitter(seed, i + 7) - 0.5) * r;
+    const ry = y + (jitter(seed, i + 9) - 0.5) * r * 0.5;
+    g.lineStyle(1, tint(TMP.white), alpha * (1 - k) * 0.6);
+    g.strokeEllipse(rx, ry, 4 + k * 18, 2 + k * 10);
+  }
+}
+
+/**
+ * The Herald's weather over the whole arena: the sky darkens, rain slants across everything and
+ * gales tear through sideways. `k` fades it in and out; `w`, `h` is the logical arena.
+ */
+export function stormSky(
+  g: Phaser.GameObjects.Graphics, tint: TempestColorFn, w: number, h: number, t: number, k: number,
+): void {
+  g.fillStyle(tint(TMP.ink), 0.22 * k);
+  g.fillRect(0, 0, w, h);
+  for (let i = 0; i < 90; i++) {
+    const s = jitter(31, i);
+    const sp = 1.4 + jitter(32, i) * 0.8;
+    const yy = ((t * sp + s) % 1) * (h + 60) - 30;
+    const xx = ((jitter(33, i) * w + t * 140) % (w + 40)) - 20 - (yy / h) * 30;
+    g.lineStyle(1, tint(TMP.rain), 0.4 * k);
+    g.lineBetween(xx, yy, xx - 5, yy + 15);
+  }
+  // Gales: long ribbons of wind blowing across the screen.
+  for (let i = 0; i < 5; i++) {
+    const kk = (t * 0.55 + i / 5 + jitter(34, i) * 0.2) % 1;
+    const yy = h * (0.12 + jitter(35, i) * 0.76);
+    gustLayered(g, tint, -160 + kk * (w + 320), yy, 0.08, 150, 5, 0.32 * k * Math.sin(kk * Math.PI),
+      { phase: t * 6 + i, seed: 40 + i, curl: 0.3 });
+  }
+}
+
+/**
+ * Mastery — Unrelenting Storm: the bank of cloud that hangs along the top of the arena for the
+ * whole match. Grey and lit from above while it idles; `dark` 0–1 (the Herald's weather) lowers
+ * it, blackens it, thickens it and sets lightning walking through its belly. `k` fades the whole
+ * bank in and out, and `x0`–`x1` at `y` is the top edge it hangs from.
+ */
+export function stormBank(
+  g: Phaser.GameObjects.Graphics, tint: TempestColorFn, x0: number, x1: number, y: number, t: number, dark: number, k: number,
+): void {
+  if (k <= 0) return;
+  const w = x1 - x0;
+  const drop = 10 + dark * 18;
+  // The shade it throws on the floor under it, deepening with the weather.
+  g.fillStyle(tint(TMP.shadow), k * (0.12 + dark * 0.2));
+  g.fillRect(x0, y, w, drop + 26);
+  const n = Math.ceil(w / 52) + 1;
+  for (let layer = 0; layer < 2; layer++) {
+    for (let i = 0; i < n; i++) {
+      const seed = 71 + layer * 37;
+      const drift = ((t * (6 + layer * 4)) % 52) * (layer ? -1 : 1);
+      const x = x0 + i * 52 + drift + (jitter(seed, i) - 0.5) * 18;
+      if (x < x0 - 40 || x > x1 + 40) continue;
+      const r = (12 + jitter(seed, i + 9) * 9) * (1 + dark * 0.45);
+      const yy = y + drop * (layer ? 0.55 : 1) - 4 + Math.sin(t * 0.7 + i) * 2;
+      // Grey to near-black: lerp the two cloud colours toward ink as the weather turns.
+      g.fillStyle(tint(mix(TMP.cloudLit, TMP.ink, dark * 0.85)), k * (layer ? 0.5 : 0.85) * 0.55);
+      g.fillEllipse(x, yy + r * 0.5, r * 3.2, r * 1.1);
+      g.fillStyle(tint(mix(TMP.cloud, TMP.ink, dark * 0.7)), k * (layer ? 0.55 : 0.92));
+      g.fillCircle(x - r * 0.9, yy + r * 0.1, r * 0.72);
+      g.fillCircle(x + r * 0.9, yy + r * 0.15, r * 0.68);
+      g.fillCircle(x, yy - r * 0.2, r);
+      g.fillStyle(tint(mix(TMP.cloudLit, TMP.slate, dark)), k * (layer ? 0.4 : 0.75) * (1 - dark * 0.55));
+      g.fillCircle(x - r * 0.25, yy - r * 0.5, r * 0.5);
+    }
+  }
+  // Rain hanging from the belly: a few strands at idle, a curtain in the Herald's weather.
+  const strands = Math.round(10 + dark * 40);
+  for (let i = 0; i < strands; i++) {
+    const kk = (t * (1.6 + jitter(74, i)) + jitter(75, i)) % 1;
+    const rx = x0 + jitter(76, i) * w;
+    const ry = y + drop + 8 + kk * (30 + dark * 40);
+    g.lineStyle(1, tint(TMP.rain), k * (0.35 + dark * 0.3) * (1 - kk));
+    g.lineBetween(rx, ry, rx - 2, ry + 8);
+  }
+  // Lightning walking through the cloud once it has turned.
+  if (dark > 0.35) {
+    const beat = Math.floor(t * 3);
+    for (let i = 0; i < 2; i++) {
+      const on = jitter(beat, i) > 0.45;
+      if (!on) continue;
+      const lx = x0 + jitter(beat + 3, i) * w;
+      const ly = y + drop * 0.6;
+      lightning(g, tint(TMP.bolt), lx, ly, lx + (jitter(beat, i + 5) - 0.5) * 160, ly + (jitter(beat, i + 6) - 0.2) * 14, 7,
+        1.6, k * (dark - 0.35) * 1.4, beat * 7 + i);
+      g.fillStyle(tint(TMP.bolt), k * dark * 0.18);
+      g.fillEllipse(lx, ly, 120, 26);
+    }
+  }
+}
+
+/**
+ * Gale Uppercut: a body thrown into the air. The tag rides over it — a little storm-slate pill with
+ * an arrow that points up while it climbs and down (reddening) while it falls, and `boosts` pips
+ * for every Click that has juggled it higher.
+ */
+export function knockTag(
+  g: Phaser.GameObjects.Graphics, tint: TempestColorFn, x: number, y: number, rising: boolean, fallK: number,
+  boosts: number, alpha: number,
+): void {
+  g.fillStyle(tint(TMP.ink), alpha * 0.72);
+  g.fillRoundedRect(x - 15, y - 9, 30, 18, 9);
+  g.lineStyle(1, tint(TMP.gust), alpha * 0.55);
+  g.strokeRoundedRect(x - 15, y - 9, 30, 18, 9);
+  const c = rising ? tint(TMP.white) : tint(mix(TMP.white, TMP.red, fallK));
+  chevron(g, c, x - 5, y + (rising ? 2 : -2), 5, rising ? 3 : -3, alpha, 2);
+  chevron(g, c, x - 5, y + (rising ? -2 : 2), 5, rising ? 3 : -3, alpha * 0.6, 2);
+  for (let i = 0; i < Math.min(3, boosts); i++) {
+    g.fillStyle(tint(TMP.bolt), alpha);
+    g.fillCircle(x + 4 + i * 4.5, y, 1.8);
+  }
+}
+
+/** A skull in a forecast card. */
+function skull(g: Phaser.GameObjects.Graphics, x: number, y: number, r: number, alpha: number): void {
+  g.fillStyle(0xf2f0e6, alpha);
+  g.fillCircle(x, y, r);
+  g.fillRoundedRect(x - r * 0.6, y + r * 0.4, r * 1.2, r * 0.75, r * 0.2);
+  g.fillStyle(0x111111, alpha);
+  g.fillCircle(x - r * 0.4, y + r * 0.05, r * 0.3);
+  g.fillCircle(x + r * 0.4, y + r * 0.05, r * 0.3);
+  g.fillTriangle(x, y + r * 0.3, x - r * 0.13, y + r * 0.55, x + r * 0.13, y + r * 0.55);
+  for (let i = -1; i <= 1; i++) g.fillRect(x + i * r * 0.3 - 0.6, y + r * 0.75, 1.2, r * 0.35);
+}
+
+const HERALD_TICKER =
+  '⚠ BREAKING: SEVERE STORM WARNING IN EFFECT  •  TOTAL ANNIHILATION EXPECTED BY THIS AFTERNOON  •  '
+  + 'SEEK SHELTER IMMEDIATELY  •  THERE IS NO SHELTER  •  HAIL THE SIZE OF REGRETS  •  '
+  + 'WINDS GUSTING TO "YES"  •  CHANCE OF DOOM: 100%  •  ';
+
+/**
+ * Herald of Doom: the Tempest cuts in on the broadcast. A screen-space TV segment slides down
+ * over the top of the arena — the storm orb in a tie at the weather map with a pointer, the
+ * channel bug, a 5-day forecast of nothing but skulls and DEATH, and a red BREAKING ticker
+ * crawling across the bottom. Purely a tell: it does not pause anything, and the weather it
+ * forecasts starts when the slam lands.
+ */
+export class HeraldBroadcast extends FxBase {
+  constructor(scene: Phaser.Scene, tint: TempestColorFn = (c) => c) {
+    super(scene, tint);
+  }
+
+  /**
+   * `screenW` centres it; `scale` and `top` let a preview box fit the whole segment. The set is
+   * drawn in its own 470×268 space and placed by moving and scaling the Graphics and the texts.
+   */
+  play(screenW: number, ms = 2600, depth = 24, { scale = 1, top = 14 } = {}): void {
+    const W = 470;
+    const H = 268;
+    const x0 = 0;
+    const left = screenW / 2 - (W * scale) / 2;
+    const tint = this.tint;
+    const g = this.gfx(depth).setScrollFactor(0).setScale(scale);
+    const txt = (s: string, size: number, color: string, extra: Phaser.Types.GameObjects.Text.TextStyle = {}): Phaser.GameObjects.Text => {
+      const o = this.scene.add.text(0, 0, s, {
+        fontSize: `${size}px`, fontFamily: 'Arial Black', color, ...extra,
+      }).setScrollFactor(0).setDepth(depth + 0.02);
+      this.sink?.(o);
+      return o;
+    };
+    const channel = txt('⛈ TEMPEST 7  STORM WATCH', 11, '#f4f9ff');
+    const live = txt('● LIVE', 10, '#ff4a3d');
+    const headline = txt('EXTENDED FORECAST', 12, '#fff3a6');
+    const days = ['MON', 'TUE', 'WED', 'THU', 'FRI'].map((d) => txt(d, 9, '#c9e3ff').setOrigin(0.5));
+    const deaths = days.map(() => txt('DEATH', 9, '#ff4a3d').setOrigin(0.5));
+    const breaking = txt('BREAKING', 10, '#ffffff');
+    // The crawl is one Text per word: Phaser's Text renderer ignores crops, so a word is simply
+    // hidden whenever it is not wholly inside the band.
+    const words = HERALD_TICKER.split(' ').filter(Boolean).map((w) => txt(w, 10, '#ffffff', { fontFamily: 'Arial' }));
+    const wordX: number[] = [];
+    let tickerW = 0;
+    for (const w of words) { wordX.push(tickerW); tickerW += w.width + 4; }
+    const all = [channel, live, headline, ...days, ...deaths, breaking, ...words];
+    const start = this.scene.time.now;
+
+    this.scene.tweens.addCounter({
+      from: 0, to: 1, duration: ms,
+      onUpdate: (tw) => {
+        if (!g.active) return;
+        const t = Number(tw.getValue());
+        const sec = (this.scene.time.now - start) / 1000;
+        // Slides down, holds, slides back up.
+        const inK = easeOut(Math.min(1, t / 0.12));
+        const outK = t > 0.88 ? easeOut((t - 0.88) / 0.12) : 0;
+        const slideY = top - ((1 - inK) + outK) * (H + 30) * scale;
+        const y0 = 0;
+        g.setPosition(left, slideY);
+        // Texts are laid out in the set's own space too, then carried to the screen.
+        const at = (o: Phaser.GameObjects.Text, lx: number, ly: number): Phaser.GameObjects.Text =>
+          o.setPosition(left + lx * scale, slideY + ly * scale).setScale(scale);
+        g.clear();
+        // The set: a bezel, a studio-blue backdrop.
+        g.fillStyle(0x05070d, 0.92);
+        g.fillRoundedRect(x0 - 6, y0 - 6, W + 12, H + 12, 10);
+        g.fillStyle(0x16233f, 1);
+        g.fillRect(x0, y0, W, H);
+        g.fillStyle(0x1f3360, 1);
+        g.fillRect(x0, y0, W, 26);
+        // The map: the arena as a little green-grey board under a red storm spiral.
+        const mx = x0 + 170;
+        const my = y0 + 40;
+        const mw = 284;
+        const mh = 104;
+        g.fillStyle(0x2f4a3a, 1);
+        g.fillRect(mx, my, mw, mh);
+        g.lineStyle(1, 0x557a62, 0.8);
+        for (let i = 1; i < 6; i++) g.lineBetween(mx + (mw * i) / 6, my, mx + (mw * i) / 6, my + mh);
+        for (let i = 1; i < 3; i++) g.lineBetween(mx, my + (mh * i) / 3, mx + mw, my + mh * i / 3);
+        g.fillStyle(0xff4a3d, 0.25);
+        g.fillCircle(mx + mw * 0.55, my + mh * 0.5, 54);
+        swirl(g, 0xff4a3d, mx + mw * 0.55, my + mh * 0.5, 50, 0.95, { arms: 4, turns: 1.2, phase: -sec * 5, width: 3 });
+        swirl(g, 0xffd166, mx + mw * 0.55, my + mh * 0.5, 30, 0.8, { arms: 3, turns: 1, phase: -sec * 7, width: 2 });
+        for (let i = 0; i < 3; i++) {
+          const a = sec * 3 + i * 2.1;
+          lightning(g, 0xfff3a6, mx + mw * 0.55, my + mh * 0.5, mx + mw * 0.55 + Math.cos(a) * 60, my + mh * 0.5 + Math.sin(a) * 40,
+            6, 1.5, 0.8, Math.floor(sec * 12) + i);
+        }
+        g.lineStyle(2, 0x0b1020, 1);
+        g.strokeRect(mx, my, mw, mh);
+        // The forecaster: the storm orb in a tie, cloud ring and all, pointing at the map.
+        const fx = x0 + 82;
+        const fy = y0 + 112;
+        const bob = Math.sin(sec * 5) * 2;
+        g.fillStyle(0x0b1020, 1);
+        g.fillRoundedRect(fx - 46, fy + 30, 92, 70, 18);
+        g.fillStyle(0x23314f, 1);
+        g.fillRoundedRect(fx - 42, fy + 32, 84, 66, 16);
+        g.fillStyle(0xf4f9ff, 1);
+        g.fillTriangle(fx - 12, fy + 32, fx + 12, fy + 32, fx, fy + 52);
+        g.fillStyle(0xff4a3d, 1);
+        g.fillTriangle(fx - 5, fy + 34, fx + 5, fy + 34, fx, fy + 42);
+        g.fillTriangle(fx - 6, fy + 42, fx + 6, fy + 42, fx, fy + 66);
+        g.fillStyle(tint(TMP.deep), 1);
+        g.fillCircle(fx, fy + bob, 34);
+        g.fillStyle(tint(TMP.storm), 1);
+        g.fillCircle(fx, fy + bob, 30);
+        g.fillStyle(tint(TMP.sky), 0.8);
+        g.fillCircle(fx - 6, fy - 6 + bob, 18);
+        swirl(g, tint(TMP.gust), fx, fy + bob, 24, 0.35, { arms: 3, turns: 0.8, phase: sec * 1.5, width: 1.6 });
+        for (let i = 0; i < 6; i++) {
+          const a = sec * 1.4 + (i / 6) * TAU;
+          const px = fx + Math.cos(a) * 34;
+          const py = fy - 36 + Math.sin(a) * 7 + bob;
+          g.fillStyle(tint(Math.sin(a) > 0 ? TMP.white : TMP.gust), 0.95);
+          g.fillCircle(px, py, 7);
+        }
+        // The eyes, fixed on the camera, and a grim little smile.
+        for (const s of [-1, 1]) {
+          g.fillStyle(0xf4f9ff, 1);
+          g.fillCircle(fx + s * 11, fy - 2 + bob, 7);
+          g.fillStyle(0x050a14, 1);
+          g.fillCircle(fx + s * 11 + 1.5, fy - 1 + bob, 3.4);
+        }
+        g.lineStyle(2, 0x050a14, 1);
+        g.beginPath();
+        g.arc(fx, fy + 10 + bob, 9, 0.2, Math.PI - 0.2);
+        g.strokePath();
+        // A ball hand on a pointer, tapping the storm.
+        const tap = Math.sin(sec * 9) * 6;
+        const hx = fx + 44;
+        const hy = fy + 22 + bob;
+        g.lineStyle(3, 0x8a6a3a, 1);
+        g.lineBetween(hx, hy, mx + mw * 0.55 - 30 + tap, my + mh * 0.5 + 6);
+        g.fillStyle(0xffffff, 1);
+        g.fillCircle(mx + mw * 0.55 - 30 + tap, my + mh * 0.5 + 6, 2.5);
+        g.fillStyle(tint(TMP.sky), 1);
+        g.fillCircle(hx, hy, 8);
+        g.fillStyle(tint(TMP.white), 1);
+        g.fillCircle(hx - 2, hy - 2, 4);
+        // The five-day forecast.
+        const cy = y0 + 172;
+        for (let i = 0; i < 5; i++) {
+          const cx = mx + 2 + i * 57;
+          g.fillStyle(0x0b1020, 0.9);
+          g.fillRoundedRect(cx, cy, 52, 62, 6);
+          g.lineStyle(1, 0x3d5a8c, 1);
+          g.strokeRoundedRect(cx, cy, 52, 62, 6);
+          skull(g, cx + 26, cy + 30 + Math.sin(sec * 6 + i) * 1.5, 10, 1);
+          at(days[i], cx + 26, cy + 9);
+          at(deaths[i], cx + 26, cy + 53);
+        }
+        // The ticker.
+        const ty = y0 + H - 22;
+        g.fillStyle(0x0b1020, 1);
+        g.fillRect(x0, ty, W, 22);
+        g.fillStyle(0xc81e1e, 1);
+        g.fillRect(x0, ty, 74, 22);
+        g.fillTriangle(x0 + 74, ty, x0 + 84, ty + 11, x0 + 74, ty + 22);
+        at(channel, x0 + 10, y0 + 6);
+        const blink = Math.floor(sec * 2.5) % 2 === 0;
+        at(live, x0 + W - 52, y0 + 7).setAlpha(blink ? 1 : 0.35);
+        at(headline, mx, cy - 20);
+        at(breaking, x0 + 8, ty + 5);
+        // Crawl right to left through the band.
+        const scroll = sec * 120;
+        const bandX = x0 + 90;
+        const bandW = W - 96;
+        for (let i = 0; i < words.length; i++) {
+          const wx = (((wordX[i] - scroll) % tickerW) + tickerW) % tickerW;
+          at(words[i], bandX + wx, ty + 4).setVisible(wx + words[i].width <= bandW);
+        }
+      },
+      onComplete: () => {
+        g.destroy();
+        for (const o of all) o.destroy();
+      },
+    });
   }
 }
 
@@ -491,6 +949,132 @@ export class TempestFx extends FxBase {
         const a = (i / 8) * TAU + seed;
         const d = 30 + easeOut(t) * 70;
         lightning(g, this.tint(TMP.bolt), x, y, x + Math.cos(a) * d, y + Math.sin(a) * d, 8, 1.8, (1 - t) * 0.9, seed + i + Math.floor(t * 12));
+      }
+    });
+  }
+
+  // ── Upgrades ─────────────────────────────────────────────────────────
+
+  /** A hailstone breaking: a frosty flash, a ring of rime and a few chips tumbling out. */
+  shatter(x: number, y: number, r: number): void {
+    this.flashIn(x, y, r * 0.4, TMP.white, TMP.ice, 10);
+    this.ring(x, y, r * 0.2, r * 0.8, 300, TMP.ice, 2.5);
+    const chips = Array.from({ length: 7 }, (_, i) => ({ a: (i / 7) * TAU + Math.random(), d: r * (0.5 + Math.random() * 0.4) }));
+    this.anim(9, 360, (g, t) => {
+      const e = easeOut(t);
+      for (const c of chips) {
+        iceShard(g, this.tint, x + Math.cos(c.a) * c.d * e, y + Math.sin(c.a) * c.d * e, c.a + t * 4, 7, 1 - t);
+      }
+    });
+  }
+
+  /** The warning before a bolt: a ring tightening on the spot it will hit. */
+  strikeWarn(x: number, y: number, r: number, ms: number): void {
+    this.anim(4, ms, (g, t) => {
+      g.fillStyle(this.tint(TMP.bolt), 0.08 + t * 0.14);
+      g.fillEllipse(x, y, r * 2, r * 1.2);
+      g.lineStyle(1.6, this.tint(TMP.bolt), 0.4 + t * 0.5);
+      g.strokeEllipse(x, y, r * 2 * (1.6 - t * 0.6), r * 1.2 * (1.6 - t * 0.6));
+    });
+  }
+
+  /** A bolt out of the sky onto `(x, y)`: a white column, a forked crown and a scorch. */
+  strike(x: number, y: number, r: number, fromY = y - 420): void {
+    const seed = Math.random() * 999;
+    this.flashIn(x, y, r * 0.8, TMP.boltHot, TMP.bolt, 10);
+    this.ring(x, y, 6, r * 1.1, 320, TMP.bolt, 2.5);
+    this.anim(10, 260, (g, t) => {
+      const a = (1 - t);
+      lightning(g, this.tint(TMP.bolt), x + (jitter(seed, 1) - 0.5) * 40, fromY, x, y, 22, 6 * a, 0.35 * a, seed + Math.floor(t * 10));
+      lightning(g, this.tint(TMP.boltHot), x + (jitter(seed, 1) - 0.5) * 40, fromY, x, y, 22, 2.4 * a, a, seed + Math.floor(t * 10));
+      for (let i = 0; i < 3; i++) {
+        const ang = Math.PI + (i + 0.5) / 3 * Math.PI;
+        lightning(g, this.tint(TMP.bolt), x, y, x + Math.cos(ang) * r, y + Math.sin(ang) * r * 0.5 + r * 0.4, 6, 1.4, a * 0.8, seed + i + 9);
+      }
+    });
+    this.anim(4, 900, (g, t) => {
+      g.fillStyle(this.tint(TMP.shadow), (1 - t) * 0.45);
+      g.fillEllipse(x, y, r * 1.2, r * 0.7);
+    });
+  }
+
+  /** The Cyclone: a tall funnel spun up out of the floor where the Tempest stands. */
+  cyclone(x: number, y: number): void {
+    const seed = Math.random() * 999;
+    this.flashIn(x, y, 26, TMP.white, TMP.sky, 9);
+    this.anim(9, 900, (g, t) => {
+      const e = easeOut(t);
+      const fade = 1 - t;
+      for (let i = 0; i < 7; i++) {
+        const k = i / 6;
+        const yy = y - k * 170 * e;
+        const rr = 16 + k * 46;
+        swirl(g, this.tint(i % 2 ? TMP.gust : TMP.white), x + Math.sin(t * 9 + i) * 6 * k, yy, rr, fade * (0.8 - k * 0.3),
+          { arms: 3, turns: 0.7, phase: -t * 14 + i + seed, width: 2.4 - k, squash: 0.35 });
+      }
+      g.lineStyle(2.4, this.tint(TMP.white), fade * 0.7);
+      g.strokeEllipse(x, y, 70 + e * 30, 24 + e * 10);
+    });
+    this.dust(x, y, 10, 60, 600);
+  }
+
+  /**
+   * Gale Uppercut landing: a fist of wind driven up under the body — a flash, a column of gusts
+   * climbing out of the floor, rising chevrons and a ring thrown flat around the feet.
+   */
+  uppercut(x: number, y: number): void {
+    const seed = Math.random() * 999;
+    this.flashIn(x, y, 22, TMP.white, TMP.sky, 10);
+    this.ring(x, y + 8, 8, 64, 340, TMP.gust, 3, 4);
+    this.anim(9, 520, (g, t) => {
+      const e = easeOut(t);
+      const fade = 1 - t;
+      for (let i = 0; i < 5; i++) {
+        const k = i / 4;
+        gustLayered(g, this.tint, x + (jitter(seed, i) - 0.5) * 22, y + 14 - k * 30 * e, -Math.PI / 2 + (jitter(seed, i + 5) - 0.5) * 0.5,
+          60 + e * 90, 6 - k * 2, fade * (0.95 - k * 0.3), { phase: t * 10 + i, seed: seed + i, curl: 0.5 });
+      }
+      for (let i = 0; i < 4; i++) {
+        const k = (t * 1.6 + i / 4) % 1;
+        chevron(g, this.tint(TMP.white), x + (i - 1.5) * 10, y - 20 - k * 90, 8, 5, fade * (1 - k), 2.4);
+      }
+    });
+    this.dust(x, y, 8, 50, 480);
+  }
+
+  /** A launched body slammed back into the floor: a crater ring, cracks and dust. */
+  knockSlam(x: number, y: number, k: number): void {
+    const seed = Math.random() * 999;
+    this.flashIn(x, y, 20 + k * 20, TMP.white, TMP.storm, 9);
+    this.ring(x, y, 10, 50 + k * 50, 380, TMP.white, 3.5, 4);
+    this.anim(4, 900, (g, t) => {
+      const fade = 1 - t;
+      g.fillStyle(this.tint(TMP.shadow), fade * 0.5);
+      g.fillEllipse(x, y + 12, 50 + k * 30, 18 + k * 8);
+      g.lineStyle(2, this.tint(TMP.dust), fade * 0.8);
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * TAU + seed;
+        const r1 = 14 + k * 10;
+        const r2 = r1 + 14 + jitter(seed, i) * (18 + k * 20);
+        const mx = x + Math.cos(a + 0.2) * (r1 + r2) / 2;
+        const my = y + 12 + Math.sin(a + 0.2) * (r1 + r2) / 4;
+        g.beginPath();
+        g.moveTo(x + Math.cos(a) * r1, y + 12 + Math.sin(a) * r1 * 0.5);
+        g.lineTo(mx, my);
+        g.lineTo(x + Math.cos(a) * r2, y + 12 + Math.sin(a) * r2 * 0.5);
+        g.strokePath();
+      }
+    });
+    this.dust(x, y, 10, 50 + k * 40, 600);
+  }
+
+  /** A static trail biting a body. */
+  staticZap(x: number, y: number): void {
+    const seed = Math.random() * 999;
+    this.anim(10, 200, (g, t) => {
+      for (let i = 0; i < 3; i++) {
+        const a = (i / 3) * TAU + seed;
+        lightning(g, this.tint(TMP.bolt), x, y + 12, x + Math.cos(a) * 18, y + Math.sin(a) * 14 - 6, 5, 1.4, 1 - t, seed + i);
       }
     });
   }

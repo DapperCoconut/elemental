@@ -806,6 +806,329 @@ export function muzzleFlash(g: Phaser.GameObjects.Graphics, tint: MythColorFn, x
   star(g, x, y, size * (0.8 - t * 0.3), tint(MYTH.white), a, { points: 4, rot: Math.PI / 4 });
 }
 
+// ── Mastery: Indomitable and the Wormhole ───────────────────────────────────
+
+/** The obsidian of the Lands of Myth: near-black glass with a cold violet sheen. */
+const OBSIDIAN = 0x0c0814;
+const OBSIDIAN_LIT = 0x2a2140;
+const BLOOD = 0xb3122e;
+
+/**
+ * Indomitable: the last stand. Red fire licking up round the body, a red rim, and an arc that
+ * fills toward the 75 damage that buys the second breath (`progress` 0–1). `k` fades it.
+ */
+export function lastStandAura(
+  g: Phaser.GameObjects.Graphics, tint: MythColorFn, x: number, y: number, t: number, k: number, progress: number,
+): void {
+  if (k <= 0) return;
+  const pulse = 0.6 + 0.4 * Math.sin(t * 9);
+  g.fillStyle(tint(MYTH.red), k * 0.16 * pulse);
+  g.fillCircle(x, y, 36);
+  // Tongues of red flame, rising and falling round the rim.
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * TAU + t * 0.8;
+    const h = 10 + 8 * Math.sin(t * 11 + i * 2.1);
+    const bx = x + Math.cos(a) * 22;
+    const by = y + Math.sin(a) * 22;
+    g.fillStyle(tint(i % 2 ? MYTH.red : BLOOD), k * 0.75);
+    g.fillTriangle(bx - Math.sin(a) * 4, by + Math.cos(a) * 4, bx + Math.sin(a) * 4, by - Math.cos(a) * 4,
+      bx + Math.cos(a) * h, by + Math.sin(a) * h - 4);
+  }
+  g.lineStyle(2, tint(MYTH.red), k * 0.9);
+  g.strokeCircle(x, y, 22);
+  // The breath meter.
+  g.lineStyle(4, tint(MYTH.void), k * 0.75);
+  g.strokeCircle(x, y, 30);
+  if (progress > 0) {
+    g.lineStyle(3, tint(progress >= 1 ? MYTH.gold : MYTH.red), k);
+    g.beginPath();
+    g.arc(x, y, 30, -Math.PI / 2, -Math.PI / 2 + Math.min(1, progress) * TAU);
+    g.strokePath();
+  }
+}
+
+/** The wormhole in flight: a spinning disc of void, stars dragged behind it into a tail. */
+export function wormDisc(
+  g: Phaser.GameObjects.Graphics, tint: MythColorFn, x: number, y: number, ang: number, t: number, seed: number, alpha = 1,
+): void {
+  for (let i = 0; i < 7; i++) {
+    const k = i / 7;
+    const d = 10 + k * 46;
+    const wob = Math.sin(t * 9 + i * 1.3) * 6 * k;
+    const px = x - Math.cos(ang) * d - Math.sin(ang) * wob;
+    const py = y - Math.sin(ang) * d + Math.cos(ang) * wob;
+    g.fillStyle(tint(i % 2 ? MYTH.starBlue : MYTH.star), alpha * (1 - k) * 0.9);
+    g.fillCircle(px, py, 2.2 * (1 - k) + 0.6);
+  }
+  g.fillStyle(tint(MYTH.iris), alpha * 0.25);
+  g.fillCircle(x, y, 30);
+  voidDisc(g, tint, x, y, 21, alpha, seed, t * 3, 9);
+  // Two arms of starlight wound into it, turning.
+  for (let arm = 0; arm < 2; arm++) {
+    for (let i = 0; i < 6; i++) {
+      const a = t * 5 + arm * Math.PI + i * 0.45;
+      const r = 20 - i * 3;
+      g.fillStyle(tint(MYTH.haze), alpha * (0.9 - i * 0.12));
+      g.fillCircle(x + Math.cos(a) * r, y + Math.sin(a) * r, 1.6);
+    }
+  }
+}
+
+/**
+ * The trap: a portal stood upright where the wormhole caught someone, gone red with them inside.
+ * Red rim, a red-black well, ember stars sucked inward, and the time they have left as an arc
+ * (`remainK` 1 → 0). `peek` lights it up while its Myth is standing close enough to look in.
+ */
+export function trapPortal(
+  g: Phaser.GameObjects.Graphics, tint: MythColorFn, x: number, y: number, t: number, open: number, remainK: number, peek: boolean,
+): void {
+  const w = 26 * open;
+  const h = 44 * open;
+  g.fillStyle(tint(MYTH.red), 0.14 + (peek ? 0.12 : 0));
+  g.fillEllipse(x, y, w * 3.4, h * 2.8);
+  g.fillStyle(tint(BLOOD), 1);
+  g.fillEllipse(x, y, w * 2, h * 2);
+  g.fillStyle(tint(MYTH.void), 1);
+  g.fillEllipse(x, y, w * 1.62, h * 1.7);
+  for (let i = 0; i < 12; i++) {
+    const k = (t * 0.7 + i / 12) % 1;
+    const a = i * 2.39 + t * 2;
+    const rr = (1 - k);
+    g.fillStyle(tint(i % 3 ? MYTH.red : MYTH.gold), 0.9 * rr);
+    g.fillCircle(x + Math.cos(a) * w * 0.8 * rr, y + Math.sin(a) * h * 0.82 * rr, 1.8 * rr + 0.4);
+  }
+  g.lineStyle(2, tint(MYTH.red), 0.95);
+  g.strokeEllipse(x, y, w * 2, h * 2);
+  if (remainK > 0) {
+    g.lineStyle(3, tint(peek ? MYTH.gold : MYTH.haze), 0.9);
+    g.beginPath();
+    g.arc(x, y, h + 10, -Math.PI / 2, -Math.PI / 2 + remainK * TAU);
+    g.strokePath();
+  }
+  if (peek) {
+    g.lineStyle(1.5, tint(MYTH.gold), 0.5 + 0.3 * Math.sin(t * 6));
+    g.strokeEllipse(x, y, w * 2.6, h * 2.4);
+  }
+}
+
+/**
+ * The Lands of Myth, in their own 960×640 space: a starry sky over a black horizon of spires,
+ * and a plain of obsidian plates catching violet light. `horizon` is where the floor starts.
+ */
+export function mythRealm(
+  g: Phaser.GameObjects.Graphics, tint: MythColorFn, w: number, h: number, horizon: number, t: number, seed: number,
+): void {
+  g.fillStyle(tint(MYTH.void), 1);
+  g.fillRect(0, 0, w, h);
+  // Nebula smears in the sky.
+  for (let i = 0; i < 4; i++) {
+    g.fillStyle(tint(i % 2 ? MYTH.violet : MYTH.dusk), 0.35);
+    g.fillEllipse(jitter(seed, i) * w, horizon * (0.25 + jitter(seed, i + 4) * 0.5), 260 + jitter(seed, i + 8) * 200, 60 + jitter(seed, i + 9) * 50);
+  }
+  for (let i = 0; i < 90; i++) {
+    const tw = 0.45 + 0.55 * Math.sin(t * (1 + jitter(seed, i + 30)) + i);
+    const sx = jitter(seed, i + 40) * w;
+    const sy = jitter(seed, i + 50) * (horizon - 6);
+    if (jitter(seed, i + 60) > 0.86) star(g, sx, sy, 3, tint(MYTH.starBlue), tw, { points: 4 });
+    else { g.fillStyle(tint(MYTH.star), tw * 0.9); g.fillCircle(sx, sy, 1); }
+  }
+  // Spires on the horizon.
+  g.fillStyle(tint(OBSIDIAN), 1);
+  for (let i = 0; i < 14; i++) {
+    const cx = (i + jitter(seed, i + 70) * 0.6) * (w / 13);
+    const sh = 30 + jitter(seed, i + 80) * 70;
+    const sw = 14 + jitter(seed, i + 90) * 22;
+    g.fillTriangle(cx - sw, horizon, cx + sw, horizon, cx + (jitter(seed, i + 95) - 0.5) * 10, horizon - sh);
+  }
+  // The plain: a field of obsidian plates, each a jittered quad with a lit edge.
+  g.fillStyle(tint(OBSIDIAN), 1);
+  g.fillRect(0, horizon, w, h - horizon);
+  const cols = 8;
+  const rows = 5;
+  const pw = w / cols;
+  const ph = (h - horizon) / rows;
+  const corner = (cx: number, cy: number): Phaser.Geom.Point => P(
+    cx * pw + (cx > 0 && cx < cols ? (jitter(seed + cx, cy) - 0.5) * pw * 0.4 : 0),
+    horizon + cy * ph + (cy > 0 && cy < rows ? (jitter(seed + cy, cx + 20) - 0.5) * ph * 0.4 : 0),
+  );
+  for (let ry = 0; ry < rows; ry++) {
+    for (let rx = 0; rx < cols; rx++) {
+      const quad = [corner(rx, ry), corner(rx + 1, ry), corner(rx + 1, ry + 1), corner(rx, ry + 1)];
+      const sheen = jitter(seed, rx * 7 + ry * 13);
+      g.fillStyle(tint(mix(OBSIDIAN, OBSIDIAN_LIT, sheen * 0.7)), 1);
+      g.fillPoints(quad, true);
+      g.lineStyle(1.4, tint(MYTH.violet), 0.85);
+      g.strokePoints(quad, true, true);
+      // A glint sliding across the glass.
+      const gk = (t * 0.12 + sheen) % 1;
+      g.lineStyle(1, tint(MYTH.haze), 0.35 * Math.sin(gk * Math.PI));
+      g.lineBetween(quad[0].x + (quad[1].x - quad[0].x) * gk, quad[0].y + 3, quad[3].x + (quad[2].x - quad[3].x) * gk, quad[3].y - 3);
+    }
+  }
+}
+
+/** A body's little health bar in the realm. */
+function realmBar(g: Phaser.GameObjects.Graphics, x: number, y: number, k: number, w: number): void {
+  g.fillStyle(0x000000, 0.7);
+  g.fillRect(x - w / 2 - 1, y - 1, w + 2, 5);
+  g.fillStyle(0xff4a5e, 1);
+  g.fillRect(x - w / 2, y, w * Phaser.Math.Clamp(k, 0, 1), 3);
+}
+
+/**
+ * A brute of the realm: tanky and slow. A hunched obsidian bulk on four stumps, a crest of glass
+ * plates down its back, swept horns and a pair of red ember eyes. `atk` 0–1 is a head-down slam.
+ */
+export function realmBrute(
+  g: Phaser.GameObjects.Graphics, tint: MythColorFn, x: number, y: number, face: number, t: number, hit: number, atk: number,
+  hp: number,
+): void {
+  const step = Math.sin(t * 5);
+  g.fillStyle(tint(MYTH.void), 0.55);
+  g.fillEllipse(x, y + 2, 62, 14);
+  g.fillStyle(tint(OBSIDIAN), 1);
+  for (const lx of [-18, -7, 8, 19]) g.fillRect(x + lx * face - 4, y - 14 + (lx % 2 ? step : -step) * 2, 8, 16);
+  const by = y - 26 + atk * 6;
+  g.fillStyle(tint(hit > 0 ? 0x5a1020 : OBSIDIAN_LIT), 1);
+  g.fillEllipse(x, by, 58, 34);
+  g.lineStyle(1.5, tint(MYTH.violet), 1);
+  g.strokeEllipse(x, by, 58, 34);
+  for (let i = 0; i < 4; i++) {
+    const px = x + (-14 + i * 9) * face;
+    g.fillStyle(tint(MYTH.haze), 0.8);
+    g.fillTriangle(px - 4, by - 12, px + 4, by - 12, px + 1 * face, by - 24 - (i % 2) * 4);
+  }
+  const hx = x + 28 * face + atk * 8 * face;
+  const hy = by + 2 + atk * 8;
+  g.fillStyle(tint(OBSIDIAN), 1);
+  g.fillCircle(hx, hy, 13);
+  g.lineStyle(1.2, tint(MYTH.violet), 1);
+  g.strokeCircle(hx, hy, 13);
+  g.fillStyle(tint(MYTH.haze), 0.95);
+  g.fillTriangle(hx - 3 * face, hy - 9, hx + 3 * face, hy - 10, hx - 14 * face, hy - 22);
+  g.fillTriangle(hx + 2 * face, hy - 8, hx + 8 * face, hy - 9, hx + 2 * face, hy - 24);
+  g.fillStyle(tint(MYTH.red), 1);
+  g.fillCircle(hx + 5 * face, hy - 2, 2.4);
+  g.fillCircle(hx + 9 * face, hy - 1, 1.8);
+  realmBar(g, x, y - 58, hp, 40);
+}
+
+/** A stalker: small and fast. A low, lean void hound with star eyes, a stretched gait and a whip tail. */
+export function realmStalker(
+  g: Phaser.GameObjects.Graphics, tint: MythColorFn, x: number, y: number, face: number, t: number, hit: number, hp: number,
+): void {
+  const gait = Math.sin(t * 18);
+  g.fillStyle(tint(MYTH.void), 0.5);
+  g.fillEllipse(x, y + 1, 30, 7);
+  g.lineStyle(2.4, tint(OBSIDIAN), 1);
+  g.lineBetween(x - 7 * face, y - 8, x - 10 * face + gait * 4, y);
+  g.lineBetween(x + 7 * face, y - 8, x + 10 * face - gait * 4, y);
+  g.fillStyle(tint(hit > 0 ? 0x5a1020 : OBSIDIAN_LIT), 1);
+  g.fillEllipse(x, y - 11, 28, 11);
+  g.lineStyle(1, tint(MYTH.violet), 1);
+  g.strokeEllipse(x, y - 11, 28, 11);
+  g.lineStyle(1.6, tint(MYTH.violet), 1);
+  g.beginPath();
+  g.moveTo(x - 13 * face, y - 12);
+  g.lineTo(x - 20 * face, y - 18 + gait * 3);
+  g.lineTo(x - 27 * face, y - 15 - gait * 2);
+  g.strokePath();
+  g.fillStyle(tint(OBSIDIAN), 1);
+  g.fillTriangle(x + 10 * face, y - 17, x + 22 * face, y - 12, x + 10 * face, y - 7);
+  g.fillTriangle(x + 9 * face, y - 16, x + 12 * face, y - 24, x + 15 * face, y - 15);
+  star(g, x + 15 * face, y - 13, 2.4, tint(MYTH.starBlue), 1, { points: 4, rot: t * 4 });
+  realmBar(g, x, y - 32, hp, 22);
+}
+
+/**
+ * A mounted beyonder: a beyonder standing in the stirrups of a void steed — a long-legged
+ * shadow horse with a mane of stars — spear cocked to throw (`throwK`).
+ */
+export function realmLancer(
+  g: Phaser.GameObjects.Graphics, tint: MythColorFn, x: number, y: number, face: number, t: number, throwK: number,
+  hit: number, hp: number, aimAng: number,
+): void {
+  const gallop = t * 12;
+  g.fillStyle(tint(MYTH.void), 0.5);
+  g.fillEllipse(x, y + 1, 56, 11);
+  for (let i = 0; i < 4; i++) {
+    const lx = x + (-15 + i * 10) * face;
+    const sw = Math.sin(gallop + i * 1.6) * 6;
+    g.lineStyle(3, tint(OBSIDIAN), 1);
+    g.lineBetween(lx, y - 16, lx + sw, y - 1);
+  }
+  g.fillStyle(tint(hit > 0 ? 0x5a1020 : OBSIDIAN_LIT), 1);
+  g.fillEllipse(x, y - 21, 46, 18);
+  g.lineStyle(1.2, tint(MYTH.violet), 1);
+  g.strokeEllipse(x, y - 21, 46, 18);
+  // Neck and head.
+  g.fillStyle(tint(OBSIDIAN), 1);
+  g.fillPoints([P(x + 14 * face, y - 26), P(x + 26 * face, y - 42), P(x + 34 * face, y - 38), P(x + 22 * face, y - 20)], true);
+  g.fillEllipse(x + 32 * face, y - 40, 14, 8);
+  for (let i = 0; i < 5; i++) {
+    g.fillStyle(tint(i % 2 ? MYTH.starBlue : MYTH.star), 0.8);
+    g.fillCircle(x + (17 + i * 3) * face, y - 30 - i * 2.6 + Math.sin(gallop + i) * 1.2, 1.2);
+  }
+  g.fillStyle(tint(MYTH.red), 1);
+  g.fillCircle(x + 34 * face, y - 41, 1.4);
+  beyonder(g, tint, x - 2 * face, y - 26, aimAng, 1, t, throwK);
+  realmBar(g, x, y - 78, hp, 30);
+}
+
+/** A beyonder on foot, stabbing (`stabK` 0–1 thrusts the spear out along the facing). */
+export function realmSpearman(
+  g: Phaser.GameObjects.Graphics, tint: MythColorFn, x: number, y: number, face: number, t: number, stabK: number,
+  hit: number, hp: number,
+): void {
+  if (hit > 0) { g.fillStyle(tint(MYTH.red), 0.3 * hit); g.fillEllipse(x, y - 16, 36, 48); }
+  beyonder(g, tint, x, y, face > 0 ? 0 : Math.PI, 1, t, stabK);
+  if (stabK > 0.2) {
+    const reach = 18 + stabK * 26;
+    spear(g, tint, x + reach * face, y - 22, face > 0 ? 0 : Math.PI, 30, stabK);
+  }
+  realmBar(g, x, y - 50, hp, 24);
+}
+
+/**
+ * Whoever the wormhole took, drawn in the realm: we have no rig of theirs to borrow here, so an
+ * orb in their element's colour with a frightened pair of eyes, flashing red when hurt.
+ */
+export function realmCaptive(
+  g: Phaser.GameObjects.Graphics, x: number, y: number, color: number, face: number, t: number, hurt: number,
+): void {
+  g.fillStyle(0x000000, 0.45);
+  g.fillEllipse(x, y + 16, 34, 10);
+  const bob = Math.sin(t * 6) * 1.5;
+  g.fillStyle(mix(color, 0x000000, 0.45), 1);
+  g.fillCircle(x, y + bob, 17);
+  g.fillStyle(color, 1);
+  g.fillCircle(x, y + bob, 14);
+  g.fillStyle(mix(color, 0xffffff, 0.5), 0.8);
+  g.fillCircle(x - 5, y - 5 + bob, 5);
+  g.fillStyle(0xffffff, 1);
+  g.fillCircle(x - 4 + face * 2, y - 2 + bob, 3.6);
+  g.fillCircle(x + 5 + face * 2, y - 2 + bob, 3.6);
+  g.fillStyle(0x111111, 1);
+  g.fillCircle(x - 4 + face * 3, y - 2 + bob, 1.8);
+  g.fillCircle(x + 5 + face * 3, y - 2 + bob, 1.8);
+  if (hurt > 0) {
+    g.fillStyle(0xff2a3c, hurt * 0.45);
+    g.fillCircle(x, y + bob, 19);
+  }
+}
+
+/** The captive's strike in the realm: a bolt of their own colour with a white core. */
+export function realmBolt(g: Phaser.GameObjects.Graphics, x: number, y: number, ang: number, color: number): void {
+  const tx = x - Math.cos(ang) * 16;
+  const ty = y - Math.sin(ang) * 16;
+  g.lineStyle(5, color, 0.45);
+  g.lineBetween(tx, ty, x, y);
+  g.lineStyle(2, 0xffffff, 0.95);
+  g.lineBetween(tx + Math.cos(ang) * 6, ty + Math.sin(ang) * 6, x, y);
+  g.fillStyle(0xffffff, 1);
+  g.fillCircle(x, y, 2.6);
+}
+
 // ── One-shot effects ────────────────────────────────────────────────────────
 
 export class MythFx extends FxBase {

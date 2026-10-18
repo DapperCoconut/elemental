@@ -5,12 +5,16 @@ import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
 import {
-  DRM, DREAM_WORLDS, DreamAvatar, DreamColorFn, DreamFx, DreamWorldView,
-  dreamLeech, nightmareBeast, nightmareDarkness, sleepDagger, sleepMeter, sleepyZ, star,
+  DRM, DREAM_ORB, DREAM_WORLDS, DreamAvatar, DreamColorFn, DreamFx, DreamWorldView, LucidPanel,
+  ammoClip, dreamLeech, dreamOrb, dreamShrink, dreamSpikes, dreamSplit, lullabyZone, musicBox,
+  nightmareBeast, nightmareDarkness, redMistBand, scratchMarks, sleepDagger, sleepMeter, sleepyZ,
+  star, stuckFeather,
 } from './DreamVisuals';
 import { meterGain } from '../../combat/Meters';
 
 type Owner = 'player' | 'npc';
+
+const TAU_K = Math.PI * 2;
 
 // ── Tuning ───────────────────────────────────────────────────────────────────
 
@@ -108,6 +112,93 @@ const BEAST_JITTER = 0.6;
 const BEAST_CATCH_R = 30;
 const BEAST_LIFE_MS = 10000;
 
+// ── Shop upgrades ────────────────────────────────────────────────────────────
+
+// Click+ — Amnesia
+const AMNESIA_SPEED = 820;
+/** A body this close to where the clip goes off takes the whole clip rather than its pellets. */
+const AMNESIA_CORE_R = 28;
+const AMNESIA_CORE_PER_ROUND = 1.5;
+const AMNESIA_PELLET_SPEED = 640;
+const AMNESIA_PELLET_RANGE = 250;
+const AMNESIA_PELLET_DAMAGE = 4;
+const AMNESIA_BLAST_R = 64;
+// Click+ in a dream — the pistols' rounds thrown as one
+const AMNESIA_DREAM_R = 115;
+const AMNESIA_DREAM_ONE = 30;
+const AMNESIA_DREAM_TWO = 75;
+
+// E+ — Lucid Dream. Bits of the mask, in the panel's order.
+const LUCID_SPLIT = 1 << 0;
+const LUCID_SPIKES = 1 << 1;
+const LUCID_BUFF = 1 << 2;
+const LUCID_MIST = 1 << 3;
+const LUCID_SHRINK = 1 << 4;
+const LUCID_BUTTONS = [
+  { key: 'split', emoji: '🪞', name: 'SPLIT' },
+  { key: 'spikes', emoji: '🗡️', name: 'SPIKES' },
+  { key: 'buff', emoji: '✨', name: 'EMPOWER' },
+  { key: 'mist', emoji: '🩸', name: 'RED MIST' },
+  { key: 'shrink', emoji: '🔲', name: 'SHRINK' },
+];
+/** Every switch that is on makes the sleeper burn their drowsiness this much faster. */
+const LUCID_WAKE_PER = 0.25;
+const LUCID_SPLIT_PAD = 22;
+const LUCID_SPIKE_PATCHES = 7;
+const LUCID_SPIKE_R = 26;
+const LUCID_SPIKE_PERIOD_MS = 2600;
+const LUCID_SPIKE_DAMAGE = 8;
+const LUCID_SPIKE_GAP_MS = 500;
+const LUCID_BUFF_SPEED = 1.2;
+const LUCID_BUFF_DODGE = 0.2;
+const LUCID_MIST_BAND = 70;
+const LUCID_MIST_DAMAGE = 5;
+const LUCID_MIST_GAP_MS = 400;
+const LUCID_SHRINK_K = 0.62;
+
+// R+ — Unending Comfort
+const FEATHER_MS = 8000;
+const FEATHER_MAX = 6;
+/** Drowsiness per feather, every time one of your attacks lands — at most this often. */
+const FEATHER_DROWSY = 1.5;
+const FEATHER_GAP_MS = 350;
+const SCRATCH_MS = 8000;
+const SCRATCH_MAX = 6;
+const SCRATCH_BONUS = 3;
+
+// F+ — Sleeping Pills
+const PILL_MS = 4000;
+const PILL_DROWSY_PER_SEC = 6;
+const LEECH_UP_DAMAGE = 30;
+const LEECH_UP_DRAIN = 5;
+const LEECH_DROP_MS = 12000;
+const LEECH_DROP_PICKUP_R = 90;
+
+// Q+ — Sleep Paralysis
+const PARALYSIS_MS = 5000;
+const PARALYSIS_SLOW = 0.8;
+
+// ── Mastery ──────────────────────────────────────────────────────────────────
+
+const BOX_ID = 'dream-music-box';
+/** Held longer than this, the box throws itself. */
+const BOX_MAX_CHARGE_MS = 5000;
+const BOX_MAX_MS = 20000;
+const BOX_MIN_MS = 2000;
+const BOX_CD_MS = 12000;
+const BOX_FLIGHT_MS = 450;
+const BOX_R = 110;
+const BOX_DROWSY_PER_SEC = 4;
+const BOX_MAX_LIVE = 2;
+// Dreamcatcher
+const ORB_ROLL_MS = 700;
+const ORB_CHANCE = 0.35;
+const ORB_DIGEST_MS = 5000;
+const ORB_HEAL = 10;
+const MIGHT_MS = 10000;
+const MIGHT_PER = 0.1;
+const MIGHT_MAX = 5;
+
 /** The tray's second set of names, for while the local dreamer is inside somebody's dream. */
 const DREAM_CARDS: Record<string, { name: string; desc: string }> = {
   'dream-sandmen': { name: 'Dream Pistols', desc: '30 explosive a shot, perfect aim. 2 rounds, then reload — and brutal kick.' },
@@ -168,7 +259,77 @@ interface Realm {
   casterHome: { x: number; y: number };
   victimHome: { x: number; y: number };
   startedAt: number;
+  /** The waking world this dream is laid over — what Lucid Dream splits, shrinks and lines. */
+  box: { x: number; y: number; w: number; h: number };
+  /** Lucid Dream's split: the side of the seam the foe is kept on, once it has been decided. */
+  splitSide: number;
+  spikeNextAt: number;
+  mistNextAt: number;
 }
+
+/** Amnesia: a magazine in the air. */
+interface Clip {
+  owner: Owner;
+  sx: number; sy: number;
+  tx: number; ty: number;
+  t0: number;
+  dur: number;
+  rounds: number;
+  dream: boolean;
+  spin: number;
+}
+
+/** Amnesia: one round thrown out of the clip when it goes off. */
+interface Pellet {
+  owner: Owner;
+  x: number; y: number;
+  vx: number; vy: number;
+  travelled: number;
+  skip: Set<Fighter>;
+}
+
+/** Sleeping Pills: a dagger left in somebody, still dosing them. */
+interface Pill {
+  owner: Owner;
+  victim: Fighter;
+  ox: number; oy: number;
+  ang: number;
+  until: number;
+}
+
+/** Unending Comfort: what is stuck in a body. */
+interface Marks {
+  feathers: { until: number; ang: number; ox: number; oy: number }[];
+  scratches: number[];
+  featherAt: number;
+}
+
+/** Mastery: a music box, in the air and then playing. */
+interface MusicBox {
+  owner: Owner;
+  sx: number; sy: number;
+  x: number; y: number;
+  t0: number;
+  landed: boolean;
+  until: number;
+  dur: number;
+}
+
+/** Mastery: a dream drawn out of a sleeper, on its way to the dreamcatcher. */
+interface Orb {
+  owner: Owner;
+  x: number; y: number;
+  vx: number; vy: number;
+  bad: boolean;
+}
+
+interface Catcher {
+  digest: { bad: boolean; readyAt: number }[];
+  might: number[];
+  nextRollAt: number;
+}
+
+function makeCatcher(): Catcher { return { digest: [], might: [], nextRollAt: 0 }; }
 
 interface Dagger {
   owner: Owner;
@@ -190,6 +351,8 @@ interface Leech {
   dealt: number;
   drainAccum: number;
   until: number;
+  /** Sleeping Pills: a leech that fed itself full and fell off — easier to pick back up. */
+  dropped: boolean;
 }
 
 interface Beast {
@@ -221,6 +384,12 @@ export interface DreamNpcInfo {
   pillowFresh: boolean;
   /** A leech of the bot's is out (stuck or lying about). */
   leechOut: boolean;
+  /** R+: feathers are in an awake target — every round adds drowsiness, so shoot. */
+  featherShots: boolean;
+  /** R+ in a dream: scratch them before the pistols, every scratch adds 3 to every hit. */
+  clawFirst: boolean;
+  /** Mastery: the key the music box was bound over, which the rotation leaves alone. */
+  boxSlot?: 'r' | 'f' | 'q';
 }
 
 // ── Arena API ────────────────────────────────────────────────────────────────
@@ -252,6 +421,12 @@ export interface DreamArenaApi {
   broadcast(id: string): void;
   /** Rename one tray card — the dream turns every key but E into something else. */
   relabelCard(abilityId: string, name: string, desc: string): void;
+  hasUpgrade(owner: Owner, slot: string): boolean;
+  get masteryActive(): boolean;
+  get npcMasteryActive(): boolean;
+  masteryBindFor(slot: string): string | null;
+  npcMasteryBindFor(slot: string): string | null;
+  recordMasteryStat(key: string, amount: number): void;
 }
 
 // ── DreamKit ─────────────────────────────────────────────────────────────────
@@ -313,6 +488,29 @@ export class DreamKit {
   /** Throttle for the "why didn't that work" labels. */
   private deniedAt = 0;
 
+  // ── Upgrades + mastery ──
+  private clips: Clip[] = [];
+  private pellets: Pellet[] = [];
+  private pills: Pill[] = [];
+  private marks = new Map<Fighter, Marks>();
+  private lucid: Record<Owner, number> = { player: 0, npc: 0 };
+  private panel: LucidPanel | null = null;
+  private panelHover = -1;
+  /** A press that landed on the panel holds the guns until it is let go. */
+  private panelLatch = false;
+  private leftWasDown = false;
+  private rightWasDown = false;
+  /** Lucid Dream's floor (spikes, the seam, the dark) and its mist, world space. */
+  private floorGfx: Phaser.GameObjects.Graphics | null = null;
+  private topGfx: Phaser.GameObjects.Graphics | null = null;
+  private boxes: MusicBox[] = [];
+  private winds: Partial<Record<Owner, { startAt: number; planMs: number }>> = {};
+  private boxLastAt: Record<Owner, number> = { player: -BOX_CD_MS, npc: -BOX_CD_MS };
+  private orbs: Orb[] = [];
+  private catchers: Record<Owner, Catcher> = { player: makeCatcher(), npc: makeCatcher() };
+  private npcAmnesiaAt = 0;
+  private npcLucidAt = 0;
+
   constructor(api: DreamArenaApi) {
     this.api = api;
     this.pcol = (base) => api.dreamColor('player', base);
@@ -338,6 +536,67 @@ export class DreamKit {
   private remote(owner: Owner): boolean { return owner === 'npc' && this.api.isOnline; }
   private alive(f: Fighter | null | undefined): f is Fighter { return !!f && f.active && f.hp > 0; }
   private avatar(owner: Owner): DreamAvatar | null { return owner === 'player' ? this.playerAvatar : this.npcAvatar; }
+
+  /** This side is a Dream and owns the upgrade for `slot`. */
+  private up(owner: Owner, slot: string): boolean {
+    return this.isDream(owner) && this.api.hasUpgrade(owner, slot);
+  }
+
+  private masteryOn(owner: Owner): boolean {
+    return this.isDream(owner) && (owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
+  }
+
+  /** Which slot the music box was dropped on, or null. */
+  private boxSlot(owner: Owner): 'r' | 'f' | 'q' | null {
+    if (!this.masteryOn(owner)) return null;
+    for (const sl of ['r', 'f', 'q'] as const) {
+      const bind = owner === 'player' ? this.api.masteryBindFor(sl) : this.api.npcMasteryBindFor(sl);
+      if (bind === BOX_ID) return sl;
+    }
+    return null;
+  }
+
+  /** How many of a list of expiry times are still running. */
+  private live(list: { until: number }[] | number[]): number {
+    let n = 0;
+    for (const e of list) if ((typeof e === 'number' ? e : e.until) > this.now) n++;
+    return n;
+  }
+
+  private marksOf(f: Fighter): Marks {
+    let m = this.marks.get(f);
+    if (!m) { m = { feathers: [], scratches: [], featherAt: -1e9 }; this.marks.set(f, m); }
+    return m;
+  }
+
+  /** Mastery requirement: every magazine refilled counts, however it was emptied. */
+  private noteReload(owner: Owner): void {
+    if (owner === 'player') this.api.recordMasteryStat('reloads', 1);
+  }
+
+  /** Mastery: the red dreams the dreamcatcher has digested, as a damage multiplier. */
+  private might(owner: Owner): number {
+    return 1 + MIGHT_PER * Math.min(MIGHT_MAX, this.live(this.catchers[owner].might));
+  }
+
+  /** Lucid Dream's switches that are actually shaping a dream of this side's right now. */
+  private lucidMask(owner: Owner): number {
+    return this.realms[owner] && this.up(owner, 'e') ? this.lucid[owner] : 0;
+  }
+
+  private static bits(mask: number): number {
+    let n = 0;
+    for (let m = mask; m; m &= m - 1) n++;
+    return n;
+  }
+
+  /** How much faster than usual this body is burning its sleep — Lucid Dream's price. */
+  private burnMult(f: Fighter): number {
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      if (this.realms[owner]?.victim === f) return 1 + LUCID_WAKE_PER * DreamKit.bits(this.lucidMask(owner));
+    }
+    return 1;
+  }
 
   private rec(f: Fighter): SleepRec {
     let r = this.recs.get(f);
@@ -386,9 +645,31 @@ export class DreamKit {
     this.api.scene.input.setDefaultCursor('default');
   }
 
-  /** Dream's damage, with the waking world's rule attached: hurting a sleeper wakes them. */
-  private strike(t: Fighter, amount: number): void {
-    t.takeDamage(amount);
+  /**
+   * Dream's damage. `dot` marks the ticking kind (a nightmare, a leech feeding, Lucid Dream's
+   * hazards), which the R+ marks leave alone — feathers and scratches only answer attacks.
+   */
+  private strike(t: Fighter, amount: number, by: Owner, dot = false): void {
+    let dmg = amount * this.might(by);
+    if (!dot) {
+      const m = this.marks.get(t);
+      if (m) {
+        // Scratches only exist inside the dream, and every one adds to every attack in there.
+        const sc = this.live(m.scratches);
+        if (sc > 0) dmg += SCRATCH_BONUS * sc;
+        const fe = this.live(m.feathers);
+        if (fe > 0 && this.now - m.featherAt >= FEATHER_GAP_MS) {
+          m.featherAt = this.now;
+          this.addDrowsy(t, FEATHER_DROWSY * fe, by);
+        }
+      }
+    }
+    const wasAlive = t.hp > 0;
+    t.takeDamage(dmg);
+    // Mastery requirement: a dream they never woke up from.
+    if (wasAlive && t.hp <= 0 && by === 'player' && this.realms.player?.victim === t) {
+      this.api.recordMasteryStat('dreamKills', 1);
+    }
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
@@ -412,6 +693,25 @@ export class DreamKit {
     this.cardsDreaming = false;
     this.deniedAt = 0;
     this.vizT = 0;
+    this.clips = [];
+    this.pellets = [];
+    this.pills = [];
+    this.marks.clear();
+    this.lucid = { player: 0, npc: 0 };
+    this.panel?.destroy(); this.panel = null;
+    this.panelHover = -1;
+    this.panelLatch = false;
+    this.leftWasDown = false;
+    this.rightWasDown = false;
+    this.floorGfx?.destroy(); this.floorGfx = null;
+    this.topGfx?.destroy(); this.topGfx = null;
+    this.boxes = [];
+    this.winds = {};
+    this.boxLastAt = { player: -BOX_CD_MS, npc: -BOX_CD_MS };
+    this.orbs = [];
+    this.catchers = { player: makeCatcher(), npc: makeCatcher() };
+    this.npcAmnesiaAt = 0;
+    this.npcLucidAt = 0;
 
     this.playerAvatar?.destroy(); this.playerAvatar = null;
     this.npcAvatar?.destroy(); this.npcAvatar = null;
@@ -430,6 +730,9 @@ export class DreamKit {
       f.dreamNetAsleep = false;
       f.dreamNightmareUntil = 0;
       f.dreamClawedUntil = 0;
+      f.dreamParalysisUntil = 0;
+      f.dreamSlowMult = 1;
+      f.dreamLucidDodge = 0;
       f.dreamIncomingMult = 1;
       f.dreamCooldownMult = 1;
     }
@@ -443,6 +746,12 @@ export class DreamKit {
     this.lastAimX = mouseX;
     this.lastAimY = mouseY;
     const p = this.api.player;
+    const leftClicked = pointer.isDown && !this.leftWasDown;
+    this.leftWasDown = pointer.isDown;
+    const right = pointer.rightButtonDown();
+    const rightClicked = right && !this.rightWasDown;
+    this.rightWasDown = right;
+    if (!pointer.isDown) this.panelLatch = false;
     if (!this.alive(p)) return;
     // Asleep in the waking world: the controls are not yours.
     if (p.dreamAsleep && !this.isDreaming(p)) return;
@@ -451,7 +760,23 @@ export class DreamKit {
     const ctx = this.api.buildPlayerContext(aim.x, aim.y);
     const realm = this.realms.player;
 
-    if (pointer.isDown && this.canFire('player')) p.castAbility('dream-sandmen', ctx);
+    // E+ Lucid Dream: a click on the panel flips a switch and never fires a gun.
+    this.panelHover = -1;
+    if (realm && this.up('player', 'e') && this.panel) {
+      const cam = this.api.scene.cameras.main;
+      this.panelHover = this.panel.hit(mouseX - cam.scrollX, mouseY - cam.scrollY);
+      if (leftClicked && this.panelHover >= 0) {
+        this.toggleLucid(this.panelHover);
+        this.panelLatch = true;
+      }
+    }
+
+    if (pointer.isDown && !this.panelLatch && this.canFire('player')) p.castAbility('dream-sandmen', ctx);
+    // Click+ Amnesia: right-click throws whatever is left in the guns.
+    if (rightClicked && this.up('player', 'click')) {
+      if (this.canAmnesia('player')) this.throwAmnesia('player', aim.x, aim.y);
+      else this.deny('⌛ NOTHING LEFT TO THROW');
+    }
 
     if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) {
       if (realm) {
@@ -462,12 +787,25 @@ export class DreamKit {
         this.deny('💤 NOBODY ASLEEP NEARBY');
       }
     }
-    if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('dream-pillow-fight', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('dream-sleep-tight', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) {
+    // Mastery: the key the music box was dropped on winds the box instead.
+    const box = this.boxSlot('player');
+    if (box) this.handleBoxKey(box === 'r' ? this.api.rKey : box === 'f' ? this.api.fKey : this.api.qKey);
+    if (box !== 'r' && Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('dream-pillow-fight', ctx);
+    if (box !== 'f' && Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('dream-sleep-tight', ctx);
+    if (box !== 'q' && Phaser.Input.Keyboard.JustDown(this.api.qKey)) {
       if (this.nightmareTarget('player')) p.castAbility('dream-nightmare', ctx);
       else if (p.getCooldownRatio('dream-nightmare') >= 1) this.deny(`👁️ NEEDS ${NIGHTMARE_MIN_DROWSY}% DROWSY`);
     }
+  }
+
+  /** Held: wind. Let go (or hold past five seconds): throw. The key is read raw, never JustDown. */
+  private handleBoxKey(key: Phaser.Input.Keyboard.Key): void {
+    const w = this.winds.player;
+    if (key.isDown && !w) {
+      if (this.boxReady('player')) this.winds.player = { startAt: this.now, planMs: BOX_MAX_CHARGE_MS };
+      return;
+    }
+    if (w && !key.isDown) this.releaseBox('player', this.lastAimX, this.lastAimY);
   }
 
   /** Where this side is really pointing: the mouse (or the bot's aim) plus the recoil. */
@@ -563,7 +901,7 @@ export class DreamKit {
     const ex = mz.x + Math.cos(ang) * reach, ey = mz.y + Math.sin(ang) * reach;
     const hit = this.rayHit(owner, mz.x, mz.y, ex, ey);
     if (hit.t) {
-      this.strike(hit.t, SANDMEN_DAMAGE);
+      this.strike(hit.t, SANDMEN_DAMAGE, owner);
       this.syncDamage(hit.t);
     }
     this.fx(owner).sandShot(mz.x, mz.y, hit.x, hit.y, !!hit.t);
@@ -577,6 +915,7 @@ export class DreamKit {
     if (g.mag <= 0) {
       g.reloadUntil = this.now + SANDMEN_RELOAD_MS;
       g.mag = SANDMEN_MAG;
+      this.noteReload(owner);
       Sfx.playAt('reload', f.x, { rate: 0.8, volume: 0.6 });
       if (owner === 'player') this.announce(f.x, f.y - 46, '⌛ RELOADING', '#f0d48a', 10);
     }
@@ -595,7 +934,7 @@ export class DreamKit {
     Sfx.playAt('explosion-small', hit.x, { rate: 1.3, volume: 0.55 });
     for (const t of this.targetsOf(owner)) {
       if (Phaser.Math.Distance.Between(t.x, t.y, hit.x, hit.y) > PISTOL_BLAST_R + HIT_R * 0.5) continue;
-      this.strike(t, PISTOL_DAMAGE);
+      this.strike(t, PISTOL_DAMAGE, owner);
       this.syncDamage(t);
       this.api.spawnHitFlash(t.x, t.y, DRM.pistol);
     }
@@ -610,6 +949,7 @@ export class DreamKit {
     if (g.pistolMag <= 0) {
       g.pistolReloadUntil = this.now + PISTOL_RELOAD_MS * f.dreamCooldownMult;
       g.pistolMag = PISTOL_MAG;
+      this.noteReload(owner);
       Sfx.playAt('reload', f.x, { rate: 0.6, volume: 0.7 });
     }
   }
@@ -665,12 +1005,26 @@ export class DreamKit {
     if (owner === 'player' && this.api.isOnline) this.api.broadcast('dream-surface');
   }
 
-  /** Online: the opponent's own presses that never touch a cooldown. */
+  /**
+   * Online: the opponent's own presses that never touch a cooldown — surfacing, a pulled leech,
+   * Amnesia's throw, a Lucid Dream switch and the music box. Whatever they need rides in the id.
+   */
   replayNet(id: string): void {
-    if (id === 'dream-surface') {
+    const [head, ...args] = id.split(':');
+    const n = args.map((a) => Number(a) || 0);
+    // Online every coordinate is mirrored left-to-right, and these ones ride in the id.
+    const mx = (x: number): number => this.bounds().width - x;
+    if (head === 'dream-surface') {
       if (this.realms.npc) this.exitRealm('npc', 'surface');
-    } else if (id === 'dream-leech-off') {
+    } else if (head === 'dream-leech-off') {
       this.leeches = this.leeches.filter((l) => l.owner !== 'npc');
+    } else if (head === 'dream-amnesia') {
+      this.launchClip('npc', mx(n[2]), n[3], n[0], n[1] === 1);
+    } else if (head === 'dream-lucid') {
+      this.lucid.npc = n[0];
+    } else if (head === 'dream-box') {
+      this.boxLastAt.npc = this.now;
+      this.spawnBox('npc', mx(n[1]), n[2], n[0]);
     }
   }
 
@@ -681,11 +1035,19 @@ export class DreamKit {
       ? this.delveCount % DREAM_WORLDS.length
       : (this.delveCount + Math.floor(Math.random() * DREAM_WORLDS.length)) % DREAM_WORLDS.length;
     this.delveCount++;
+    // The arena is the dream's floor; in Invasion the map scrolls, so it is whatever the camera
+    // was showing when they went under.
+    const wb = this.bounds();
+    const cam = this.api.scene.cameras.main;
+    const box = this.api.isInvasion
+      ? { x: cam.scrollX, y: cam.scrollY, w: this.api.width, h: this.api.height }
+      : { x: wb.x, y: wb.y, w: wb.width, h: wb.height };
     const realm: Realm = {
       owner, victim, world,
       casterHome: { x: f.x, y: f.y },
       victimHome: { x: victim.x, y: victim.y },
       startedAt: this.now,
+      box, splitSide: 0, spikeNextAt: 0, mistNextAt: 0,
     };
     this.realms[owner] = realm;
     // Their sleep is still running out here — it is only the body that is up and about now.
@@ -733,9 +1095,12 @@ export class DreamKit {
       this.fx(owner).delveSwirl(f.x, f.y, true);
     }
     f.dreamCooldownMult = 1;
-    // Whatever was dreamt stays in the dream.
+    f.dreamLucidDodge = 0;
+    // Whatever was dreamt stays in the dream — the claw's scratches included.
     this.leeches = this.leeches.filter((l) => l.owner !== owner);
     this.beasts = this.beasts.filter((b) => b.owner !== owner);
+    const vm = this.marks.get(v);
+    if (vm) vm.scratches = [];
 
     if (this.view && (f === this.api.player || v === this.api.player)) {
       this.view.close();
@@ -764,12 +1129,14 @@ export class DreamKit {
       if (t.dreamAsleep) {
         // A sleeper gets tucked in, not hit: no damage, so nothing wakes them.
         this.addDrowsy(t, PILLOW_DROWSY, owner);
-        continue;
+      } else {
+        const fresh = t.dreamDrowsy <= PILLOW_FRESH_AT;
+        this.strike(t, PILLOW_DAMAGE, owner);
+        this.addDrowsy(t, fresh ? PILLOW_FRESH_DROWSY : PILLOW_DROWSY, owner);
+        if (fresh) this.announce(t.x, t.y - 46, '🥱 YAWN', '#bfd0ff', 10);
       }
-      const fresh = t.dreamDrowsy <= PILLOW_FRESH_AT;
-      this.strike(t, PILLOW_DAMAGE);
-      this.addDrowsy(t, fresh ? PILLOW_FRESH_DROWSY : PILLOW_DROWSY, owner);
-      if (fresh) this.announce(t.x, t.y - 46, '🥱 YAWN', '#bfd0ff', 10);
+      // R+ Unending Comfort: a few feathers stay behind in them.
+      if (this.up(owner, 'r')) this.stickFeathers(t, ang);
     }
   }
 
@@ -778,10 +1145,30 @@ export class DreamKit {
     this.avatar(owner)?.play('sweep', ang);
     Sfx.playAt('claw', f.x, { rate: 0.9, volume: 0.8 });
     for (const t of this.inArc(owner, f, ang, CLAW_REACH, CLAW_HALF_ARC)) {
-      this.strike(t, CLAW_DAMAGE);
+      this.strike(t, CLAW_DAMAGE, owner);
       this.syncDamage(t);
       t.dreamClawedUntil = Math.max(t.dreamClawedUntil, this.now + CLAW_SLOW_MS);
       this.api.spawnHitFlash(t.x, t.y, DRM.claw);
+      // R+ in a dream: the claw leaves scratches, and every scratch makes every hit worse.
+      if (this.up(owner, 'r')) {
+        const m = this.marksOf(t);
+        m.scratches = m.scratches.filter((u) => u > this.now);
+        const add = Phaser.Math.Between(1, 3);
+        for (let i = 0; i < add && m.scratches.length < SCRATCH_MAX; i++) m.scratches.push(this.now + SCRATCH_MS);
+        this.announce(t.x, t.y - 46, `🩸 ${m.scratches.length} SCRATCH${m.scratches.length > 1 ? 'ES' : ''}`, '#ff7aa8', 10);
+      }
+    }
+  }
+
+  /** R+: 1–3 feathers left in a body, each for 8 seconds, at most six in at once. */
+  private stickFeathers(t: Fighter, ang: number): void {
+    const m = this.marksOf(t);
+    m.feathers = m.feathers.filter((e) => e.until > this.now);
+    const add = Phaser.Math.Between(1, 3);
+    for (let i = 0; i < add && m.feathers.length < FEATHER_MAX; i++) {
+      // Driven in on the side the pillow came from, at a jaunty angle.
+      const a = ang + Math.PI + (Math.random() - 0.5) * 2.2;
+      m.feathers.push({ until: this.now + FEATHER_MS, ang: a, ox: Math.cos(a) * 12, oy: Math.sin(a) * 10 });
     }
   }
 
@@ -807,7 +1194,7 @@ export class DreamKit {
       this.leeches.push({
         owner, state: 'flying', x: sx, y: sy,
         vx: Math.cos(ang) * LEECH_SPEED, vy: Math.sin(ang) * LEECH_SPEED, travelled: 0,
-        victim: null, ox: 0, oy: 0, ang, dealt: 0, drainAccum: 0, until: 0,
+        victim: null, ox: 0, oy: 0, ang, dealt: 0, drainAccum: 0, until: 0, dropped: false,
       });
       Sfx.playAt('whoosh', f.x, { rate: 0.6, volume: 0.6 });
       return;
@@ -840,10 +1227,16 @@ export class DreamKit {
     const f = this.fighter(d.owner);
     const sleepy = Phaser.Math.Clamp(t.dreamDrowsy / DROWSY_MAX, 0, 1);
     // A sleeper is not stabbed — only sung to.
-    if (!t.dreamAsleep) this.strike(t, DAGGER_DAMAGE);
+    if (!t.dreamAsleep) this.strike(t, DAGGER_DAMAGE, d.owner);
     this.addDrowsy(t, DAGGER_DROWSY + DAGGER_DROWSY_BONUS * sleepy, d.owner);
     this.fx(d.owner).stardust(t.x, t.y, 6, 20, 520, 8);
     this.api.spawnHitFlash(t.x, t.y, DRM.blade);
+    // F+ Sleeping Pills: the dagger stays in, and keeps dosing them while it does.
+    if (this.up(d.owner, 'f')) {
+      const a = Math.atan2(d.vy, d.vx);
+      this.pills = this.pills.filter((p) => p.victim !== t || p.owner !== d.owner);
+      this.pills.push({ owner: d.owner, victim: t, ox: -Math.cos(a) * 10, oy: -Math.sin(a) * 8, ang: a, until: this.now + PILL_MS });
+    }
     if (this.alive(f)) {
       const cd = (f.element.abilities.find((a) => a.id === 'dream-sleep-tight')?.cooldown ?? 6000) * f.dreamCooldownMult;
       f.reduceCooldown('dream-sleep-tight', cd * 0.5);
@@ -866,9 +1259,10 @@ export class DreamKit {
           l.ox = (l.x - t.x) * 0.7;
           l.oy = (l.y - t.y) * 0.7;
           l.until = this.now + LEECH_LIFE_MS;
-          this.strike(t, LEECH_DAMAGE);
+          const bite = this.up(l.owner, 'f') ? LEECH_UP_DAMAGE : LEECH_DAMAGE;
+          this.strike(t, bite, l.owner);
           this.syncDamage(t);
-          l.dealt += LEECH_DAMAGE;
+          l.dealt += bite;
           this.api.spawnHitFlash(t.x, t.y, DRM.leechBelly);
           this.announce(t.x, t.y - 44, '🪱 LATCHED ON', '#ff7ab0', 10);
         } else if (l.travelled > LEECH_RANGE || !b.contains(l.x, l.y)) {
@@ -884,18 +1278,27 @@ export class DreamKit {
         l.drainAccum += delta;
         while (l.drainAccum >= LEECH_DRAIN_MS) {
           l.drainAccum -= LEECH_DRAIN_MS;
-          this.strike(v, LEECH_DRAIN);
-          l.dealt += LEECH_DRAIN;
+          const drain = this.up(l.owner, 'f') ? LEECH_UP_DRAIN : LEECH_DRAIN;
+          this.strike(v, drain, l.owner, true);
+          l.dealt += drain;
         }
       }
       if (l.state !== 'flying' && this.now >= l.until) {
-        if (l.state === 'stuck') l.state = 'ground';
+        if (l.state === 'stuck' && this.up(l.owner, 'f')) {
+          // F+: fed full, it lets go and lies there for you to come and collect.
+          l.state = 'ground';
+          l.victim = null;
+          l.dropped = true;
+          l.until = this.now + LEECH_DROP_MS;
+          this.announce(l.x, l.y - 30, '🪱 FULL', '#ff9cc8', 10);
+          continue;
+        }
         this.leeches.splice(i, 1);
         continue;
       }
       // Pulling it back out: walk up to wherever it is.
       if (l.state !== 'flying' && this.alive(caster) && !this.remote(l.owner)
-        && Phaser.Math.Distance.Between(caster.x, caster.y, l.x, l.y) <= LEECH_PICKUP_R) {
+        && Phaser.Math.Distance.Between(caster.x, caster.y, l.x, l.y) <= (l.dropped ? LEECH_DROP_PICKUP_R : LEECH_PICKUP_R)) {
         this.pullLeech(l, caster);
         this.leeches.splice(i, 1);
       }
@@ -958,6 +1361,9 @@ export class DreamKit {
     t.dreamNightmareUntil = this.now + NIGHTMARE_MS;
     r.nightmareBy = owner;
     r.nightmareAccum = 0;
+    // Q+ Sleep Paralysis: for a while after, nothing lets their drowsiness go down.
+    if (this.up(owner, 'q')) t.dreamParalysisUntil = Math.max(t.dreamParalysisUntil, this.now + PARALYSIS_MS);
+    if (owner === 'player' && t !== this.api.player) this.api.recordMasteryStat('nightmares', 1);
     this.fx(owner).ring(t.x, t.y, 10, 70, DRM.dread, 520, 5, 8);
     this.api.spawnHitFlash(t.x, t.y, DRM.dread);
     this.announce(t.x, t.y - 52, '👁️ NIGHTMARE', '#ff3b6b', 13);
@@ -995,6 +1401,447 @@ export class DreamKit {
     }
   }
 
+  // ── Click+: Amnesia ────────────────────────────────────────────────────────
+
+  /** Side-effect free: whether this side has rounds left to throw (and is not mid-reload). */
+  private canAmnesia(owner: Owner): boolean {
+    const f = this.fighter(owner);
+    if (!this.up(owner, 'click') || !this.alive(f)) return false;
+    const g = this.guns[owner];
+    if (this.realms[owner]) return this.now >= g.pistolReloadUntil && g.pistolMag > 0;
+    return this.now >= g.reloadUntil && g.mag > 0;
+  }
+
+  /** Throw the rest of the magazine at (tx, ty) and start the reload it costs. */
+  private throwAmnesia(owner: Owner, tx: number, ty: number): void {
+    const f = this.fighter(owner);
+    const g = this.guns[owner];
+    const dream = !!this.realms[owner];
+    let rounds: number;
+    if (dream) {
+      rounds = g.pistolMag;
+      g.pistolMag = PISTOL_MAG;
+      g.pistolReloadUntil = this.now + PISTOL_RELOAD_MS * f.dreamCooldownMult;
+    } else {
+      rounds = g.mag;
+      g.mag = SANDMEN_MAG;
+      g.reloadUntil = this.now + SANDMEN_RELOAD_MS;
+      if (owner === 'player') this.announce(f.x, f.y - 46, '⌛ RELOADING', '#f0d48a', 10);
+    }
+    this.noteReload(owner);
+    Sfx.playAt('reload', f.x, { rate: 0.7, volume: 0.6 });
+    this.launchClip(owner, tx, ty, rounds, dream);
+    if (owner === 'player' && this.api.isOnline) {
+      this.api.broadcast(`dream-amnesia:${rounds}:${dream ? 1 : 0}:${Math.round(tx)}:${Math.round(ty)}`);
+    }
+  }
+
+  private launchClip(owner: Owner, tx: number, ty: number, rounds: number, dream: boolean): void {
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    const d = Phaser.Math.Distance.Between(f.x, f.y, tx, ty);
+    this.clips.push({
+      owner, sx: f.x, sy: f.y, tx, ty, t0: this.now, dur: Math.max(160, (d / AMNESIA_SPEED) * 1000),
+      rounds, dream, spin: (Math.random() < 0.5 ? -1 : 1) * (14 + Math.random() * 6),
+    });
+    this.avatar(owner)?.play('punch', Math.atan2(ty - f.y, tx - f.x));
+    Sfx.playAt('whoosh', f.x, { rate: 1.2, volume: 0.6 });
+  }
+
+  private updateClips(dt: number): void {
+    for (let i = this.clips.length - 1; i >= 0; i--) {
+      const c = this.clips[i];
+      if (this.now - c.t0 < c.dur) continue;
+      this.clips.splice(i, 1);
+      if (c.dream) this.amnesiaDreamBurst(c);
+      else this.amnesiaBurst(c);
+    }
+    const b = this.bounds();
+    for (let i = this.pellets.length - 1; i >= 0; i--) {
+      const p = this.pellets[i];
+      const step = AMNESIA_PELLET_SPEED * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.travelled += step;
+      let done = p.travelled > AMNESIA_PELLET_RANGE || !b.contains(p.x, p.y);
+      if (!done) {
+        for (const t of this.targetsOf(p.owner)) {
+          if (p.skip.has(t)) continue;
+          if (Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) > HIT_R * (t.scaleX || 1) + 3) continue;
+          this.strike(t, AMNESIA_PELLET_DAMAGE, p.owner);
+          this.syncDamage(t);
+          this.fx(p.owner).sandShot(p.x - p.vx * 0.02, p.y - p.vy * 0.02, t.x, t.y, true);
+          done = true;
+          break;
+        }
+      }
+      if (done) this.pellets.splice(i, 1);
+    }
+  }
+
+  /**
+   * The clip goes off. Whoever is right under it takes the whole magazine at once; everyone
+   * else is in the way of the rounds it throws out in every direction.
+   */
+  private amnesiaBurst(c: Clip): void {
+    const fx = this.fx(c.owner);
+    fx.flash(c.tx, c.ty, AMNESIA_BLAST_R * 0.6);
+    fx.ring(c.tx, c.ty, 8, AMNESIA_BLAST_R, DRM.sand, 380, 5, 8);
+    fx.stardust(c.tx, c.ty, 10, 40, 700, 8);
+    Sfx.playAt('explosion-small', c.tx, { rate: 1.1, volume: 0.7 });
+    this.api.scene.cameras.main.shake(90, 0.003);
+    const core = new Set<Fighter>();
+    for (const t of this.targetsOf(c.owner)) {
+      if (Phaser.Math.Distance.Between(t.x, t.y, c.tx, c.ty) > AMNESIA_CORE_R + HIT_R * 0.5) continue;
+      core.add(t);
+      this.strike(t, c.rounds * AMNESIA_CORE_PER_ROUND, c.owner);
+      this.syncDamage(t);
+      this.api.spawnHitFlash(t.x, t.y, DRM.sand);
+    }
+    const off = Math.random() * TAU_K;
+    for (let i = 0; i < c.rounds; i++) {
+      const a = off + (i / c.rounds) * TAU_K + (Math.random() - 0.5) * 0.12;
+      this.pellets.push({
+        owner: c.owner,
+        x: c.tx + Math.cos(a) * AMNESIA_CORE_R, y: c.ty + Math.sin(a) * AMNESIA_CORE_R,
+        vx: Math.cos(a) * AMNESIA_PELLET_SPEED, vy: Math.sin(a) * AMNESIA_PELLET_SPEED,
+        travelled: 0, skip: core,
+      });
+    }
+    if (c.owner === 'player' && c.rounds > 0) this.announce(c.tx, c.ty - 30, `💥 ${c.rounds} ROUNDS`, '#f0d48a', 11);
+  }
+
+  /** In a dream there is no clip to scatter — both pistols' rounds go off as one big star. */
+  private amnesiaDreamBurst(c: Clip): void {
+    const both = c.rounds >= PISTOL_MAG;
+    const dmg = both ? AMNESIA_DREAM_TWO : AMNESIA_DREAM_ONE;
+    const fx = this.fx(c.owner);
+    fx.starBurst(c.tx, c.ty, AMNESIA_DREAM_R);
+    fx.ring(c.tx, c.ty, 12, AMNESIA_DREAM_R + 20, both ? DRM.star : DRM.purple, 520, 7, 9);
+    fx.flash(c.tx, c.ty, AMNESIA_DREAM_R * 0.5);
+    Sfx.playAt('explosion', c.tx, { rate: 1.2, volume: 0.75 });
+    this.api.scene.cameras.main.shake(both ? 180 : 110, both ? 0.007 : 0.004);
+    for (const t of this.targetsOf(c.owner)) {
+      if (Phaser.Math.Distance.Between(t.x, t.y, c.tx, c.ty) > AMNESIA_DREAM_R + HIT_R * 0.5) continue;
+      this.strike(t, dmg, c.owner);
+      this.syncDamage(t);
+      this.api.spawnHitFlash(t.x, t.y, DRM.pistol);
+    }
+    this.announce(c.tx, c.ty - 34, both ? '💥 BOTH BARRELS' : '💥 AMNESIA', both ? '#fff4c2' : '#c9b8ff', both ? 13 : 11);
+  }
+
+  // ── E+: Lucid Dream ────────────────────────────────────────────────────────
+
+  private toggleLucid(i: number): void {
+    this.lucid.player ^= 1 << i;
+    const on = (this.lucid.player & (1 << i)) !== 0;
+    const p = this.api.player;
+    this.announce(p.x, p.y - 48, `${LUCID_BUTTONS[i].emoji} ${LUCID_BUTTONS[i].name} ${on ? 'ON' : 'OFF'}`, on ? '#fff4c2' : '#a99bd6', 11);
+    Sfx.playAt('dream-chime', p.x, { rate: on ? 1.4 : 1.0, volume: 0.5 });
+    if (this.api.isOnline) this.api.broadcast(`dream-lucid:${this.lucid.player}`);
+  }
+
+  /** The dream's walkable floor once Lucid Dream has shrunk it (or the whole box if not). */
+  private lucidFloor(owner: Owner, realm: Realm): { x: number; y: number; w: number; h: number } {
+    const b = realm.box;
+    if (!(this.lucidMask(owner) & LUCID_SHRINK)) return b;
+    const w = b.w * LUCID_SHRINK_K, h = b.h * LUCID_SHRINK_K;
+    return { x: b.x + (b.w - w) / 2, y: b.y + (b.h - h) / 2, w, h };
+  }
+
+  /** Where Lucid Dream's spike patches sit, and how far out of the floor each one is (0–1). */
+  private spikePatches(owner: Owner, realm: Realm): { x: number; y: number; up: number }[] {
+    const fl = this.lucidFloor(owner, realm);
+    const out: { x: number; y: number; up: number }[] = [];
+    for (let i = 0; i < LUCID_SPIKE_PATCHES; i++) {
+      const hx = DreamKit.hash(i * 3 + realm.world * 11), hy = DreamKit.hash(i * 7 + 5 + realm.world * 13);
+      // The opponent's dream is laid out on their machine, which this one sees mirrored.
+      const ux = this.remote(owner) ? 1 - hx : hx;
+      const x = fl.x + 50 + ux * (fl.w - 100), y = fl.y + 50 + hy * (fl.h - 100);
+      // Up for a little over half of every cycle, each patch on its own phase.
+      const ph = ((this.now / LUCID_SPIKE_PERIOD_MS) + DreamKit.hash(i + 40)) % 1;
+      const up = ph < 0.35 ? 0 : ph < 0.45 ? (ph - 0.35) / 0.1 : ph < 0.88 ? 1 : 1 - (ph - 0.88) / 0.12;
+      out.push({ x, y, up });
+    }
+    return out;
+  }
+
+  private static hash(i: number): number {
+    const v = Math.sin(i * 127.1 + 311.7) * 43758.5453;
+    return v - Math.floor(v);
+  }
+
+  /** May this sim move this body? Online each sim only moves its own fighter; husks are left alone online. */
+  private mayMove(x: Fighter): boolean {
+    if (!this.api.isOnline) return true;
+    return x === this.api.player;
+  }
+
+  private clampInto(f: Fighter, r: { x: number; y: number; w: number; h: number }, pad: number): void {
+    const x = Phaser.Math.Clamp(f.x, r.x + pad, r.x + r.w - pad);
+    const y = Phaser.Math.Clamp(f.y, r.y + pad, r.y + r.h - pad);
+    const hitX = x !== f.x, hitY = y !== f.y;
+    if (!hitX && !hitY) return;
+    f.setPosition(x, y);
+    const b = this.body(f);
+    if (b && hitX) b.setVelocityX(0);
+    if (b && hitY) b.setVelocityY(0);
+  }
+
+  /** The five switches, every frame, for one side's dream. */
+  private updateLucid(owner: Owner): void {
+    const realm = this.realms[owner];
+    const f = this.fighter(owner);
+    if (!realm || !this.alive(f)) return;
+    const mask = this.lucidMask(owner);
+    const v = realm.victim;
+    // Empowered: the dodge is rolled on the dreamer's own machine, so a replica never holds one.
+    f.dreamLucidDodge = (mask & LUCID_BUFF) && !this.remote(owner) ? LUCID_BUFF_DODGE : 0;
+    if (!mask || !this.alive(v)) return;
+    const fl = this.lucidFloor(owner, realm);
+    if (mask & LUCID_SHRINK) {
+      if (this.mayMove(v)) this.clampInto(v, fl, 18);
+      if (this.mayMove(f)) this.clampInto(f, fl, 18);
+    }
+    if (mask & LUCID_SPLIT) {
+      const mid = realm.box.x + realm.box.w / 2;
+      if (!realm.splitSide) realm.splitSide = v.x < mid ? -1 : 1;
+      if (this.mayMove(v)) {
+        const lo = realm.splitSide < 0 ? -1e9 : mid + LUCID_SPLIT_PAD;
+        const hi = realm.splitSide < 0 ? mid - LUCID_SPLIT_PAD : 1e9;
+        if (v.x < lo || v.x > hi) {
+          v.setPosition(Phaser.Math.Clamp(v.x, lo, hi), v.y);
+          this.body(v)?.setVelocityX(0);
+        }
+      }
+    }
+    if ((mask & LUCID_SPIKES) && this.now >= realm.spikeNextAt) {
+      const on = this.spikePatches(owner, realm).some((p) => p.up > 0.6
+        && Phaser.Math.Distance.Between(p.x, p.y, v.x, v.y) <= LUCID_SPIKE_R + HIT_R * 0.6);
+      if (on) {
+        realm.spikeNextAt = this.now + LUCID_SPIKE_GAP_MS;
+        this.strike(v, LUCID_SPIKE_DAMAGE, owner, true);
+        this.api.spawnHitFlash(v.x, v.y, DRM.violet);
+      }
+    }
+    if ((mask & LUCID_MIST) && this.now >= realm.mistNextAt) {
+      const inMist = v.x < fl.x + LUCID_MIST_BAND || v.x > fl.x + fl.w - LUCID_MIST_BAND
+        || v.y < fl.y + LUCID_MIST_BAND || v.y > fl.y + fl.h - LUCID_MIST_BAND;
+      if (inMist) {
+        realm.mistNextAt = this.now + LUCID_MIST_GAP_MS;
+        this.strike(v, LUCID_MIST_DAMAGE, owner, true);
+      }
+    }
+  }
+
+  /**
+   * The bot's Lucid Dream: switches on what the sleep it has left can pay for, and off again as
+   * the dream runs low — every switch is drowsiness spent faster.
+   */
+  private updateNpcLucid(): void {
+    if (this.api.isOnline || !this.up('npc', 'e') || this.now < this.npcLucidAt) return;
+    const realm = this.realms.npc;
+    if (!realm) return;
+    this.npcLucidAt = this.now + 700;
+    const d = realm.victim.dreamDrowsy;
+    const paralysed = realm.victim.dreamParalysisUntil > this.now;
+    // While Sleep Paralysis holds the meter still the switches cost nothing — throw them all on.
+    this.lucid.npc = paralysed || d >= 70 ? (LUCID_SPIKES | LUCID_BUFF | LUCID_MIST | LUCID_SHRINK)
+      : d >= 45 ? (LUCID_SPIKES | LUCID_BUFF)
+      : d >= 28 ? LUCID_BUFF : 0;
+  }
+
+  // ── F+: Sleeping Pills ─────────────────────────────────────────────────────
+
+  private updatePills(dt: number): void {
+    this.pills = this.pills.filter((p) => {
+      if (this.now >= p.until || !this.alive(p.victim)) return false;
+      this.addDrowsy(p.victim, PILL_DROWSY_PER_SEC * dt, p.owner);
+      return true;
+    });
+  }
+
+  // ── Mastery: the music box ─────────────────────────────────────────────────
+
+  private boxReady(owner: Owner): boolean {
+    return !!this.boxSlot(owner) && this.now - this.boxLastAt[owner] >= BOX_CD_MS;
+  }
+
+  private releaseBox(owner: Owner, tx: number, ty: number): void {
+    const w = this.winds[owner];
+    delete this.winds[owner];
+    if (!w) return;
+    const charge = Phaser.Math.Clamp((this.now - w.startAt) / BOX_MAX_CHARGE_MS, 0, 1);
+    const dur = Math.round(Math.max(BOX_MIN_MS, charge * BOX_MAX_MS));
+    this.boxLastAt[owner] = this.now;
+    this.spawnBox(owner, tx, ty, dur);
+    if (owner === 'player' && this.api.isOnline) {
+      this.api.broadcast(`dream-box:${dur}:${Math.round(tx)}:${Math.round(ty)}`);
+    }
+  }
+
+  private spawnBox(owner: Owner, tx: number, ty: number, dur: number): void {
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    const b = this.bounds();
+    const x = Phaser.Math.Clamp(tx, b.x + 20, b.right - 20), y = Phaser.Math.Clamp(ty, b.y + 20, b.bottom - 20);
+    const mine = this.boxes.filter((m) => m.owner === owner);
+    if (mine.length >= BOX_MAX_LIVE) this.boxes.splice(this.boxes.indexOf(mine[0]), 1);
+    this.boxes.push({ owner, sx: f.x, sy: f.y, x, y, t0: this.now, landed: false, until: 0, dur });
+    this.avatar(owner)?.play('punch', Math.atan2(y - f.y, x - f.x));
+    Sfx.playAt('whoosh', f.x, { rate: 0.9, volume: 0.6 });
+  }
+
+  private updateBoxes(dt: number): void {
+    // A winding interrupted by sleep is dropped; one held to the end throws itself.
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const w = this.winds[owner];
+      if (!w) continue;
+      const f = this.fighter(owner);
+      if (!this.alive(f) || !this.boxSlot(owner) || (f.dreamAsleep && !this.isDreaming(f))) { delete this.winds[owner]; continue; }
+      if (this.now - w.startAt >= w.planMs) {
+        const aim = owner === 'player' ? { x: this.lastAimX, y: this.lastAimY } : this.npcBoxAim();
+        this.releaseBox(owner, aim.x, aim.y);
+      }
+    }
+    this.boxes = this.boxes.filter((m) => {
+      if (!m.landed) {
+        if (this.now - m.t0 < BOX_FLIGHT_MS) return true;
+        m.landed = true;
+        m.until = this.now + m.dur;
+        this.fx(m.owner).ring(m.x, m.y, 10, BOX_R, DRM.purple, 600, 4, 6);
+        this.fx(m.owner).stardust(m.x, m.y, 8, 30, 700, 7);
+        Sfx.playAt('dream-chime', m.x, { rate: 1.25, volume: 0.7 });
+      }
+      if (this.now >= m.until) {
+        this.fx(m.owner).stardust(m.x, m.y, 6, 26, 600, 7);
+        return false;
+      }
+      for (const t of this.targetsOf(m.owner)) {
+        if (Phaser.Math.Distance.Between(t.x, t.y, m.x, m.y) <= BOX_R) this.addDrowsy(t, BOX_DROWSY_PER_SEC * dt, m.owner);
+      }
+      return true;
+    });
+  }
+
+  private npcBoxAim(): { x: number; y: number } {
+    const t = this.targetsOf('npc')[0];
+    const npc = this.api.npc;
+    return t ? { x: t.x, y: t.y } : { x: npc.x + 1, y: npc.y };
+  }
+
+  /**
+   * The bot's music box, fired here because it runs off the kit's own clock. Its synergy: a
+   * lullaby over a sleeper outpaces the sleep's burn, so it holds them under for as long as the
+   * box plays — and over a drowsy foe it is a slow, steady push the rest of the kit tips over.
+   */
+  private updateNpcBox(): void {
+    if (this.api.isOnline || this.winds.npc || !this.boxReady('npc')) return;
+    const npc = this.api.npc;
+    const t = this.targetsOf('npc')[0];
+    if (!this.alive(npc) || !t || (npc.dreamAsleep && !this.isDreaming(npc))) return;
+    const d = Phaser.Math.Distance.Between(npc.x, npc.y, t.x, t.y);
+    const sleeper = t.dreamAsleep && !this.isDreaming(t) && d < 420;
+    const drowsy = !t.dreamAsleep && t.dreamDrowsy >= 35 && d < 360;
+    if (!sleeper && !drowsy) return;
+    // A sleeper is worth the long wind; a drowsy foe gets a quicker one before they walk out.
+    const plan = sleeper ? 3500 + Math.random() * 1500 : 1500 + Math.random() * 1500;
+    this.winds.npc = { startAt: this.now, planMs: plan };
+  }
+
+  // ── Mastery: the Dreamcatcher ──────────────────────────────────────────────
+
+  /** Where on a dreamer the dreamcatcher hangs — slung behind, away from the aim. */
+  private catcherAt(owner: Owner): { x: number; y: number } {
+    const f = this.fighter(owner);
+    const aim = this.aimFor(owner);
+    const back = Math.atan2(aim.y - f.y, aim.x - f.x) + Math.PI;
+    return { x: f.x + Math.cos(back) * 15, y: f.y - 8 + Math.sin(back) * 9 };
+  }
+
+  private updateCatcher(owner: Owner, dt: number): void {
+    const c = this.catchers[owner];
+    const f = this.fighter(owner);
+    const realm = this.realms[owner];
+    // Only the dreamer's own sim draws dreams out — the buff is theirs, and a replica's heal
+    // would only fight the health stream.
+    if (realm && this.masteryOn(owner) && !this.remote(owner) && this.alive(f) && this.alive(realm.victim)
+      && this.now >= c.nextRollAt) {
+      c.nextRollAt = this.now + ORB_ROLL_MS;
+      if (Math.random() < ORB_CHANCE) {
+        const v = realm.victim;
+        const bad = v.dreamNightmareUntil > this.now;
+        const a = Math.random() * TAU_K;
+        this.orbs.push({ owner, x: v.x, y: v.y - 10, vx: Math.cos(a) * 120, vy: Math.sin(a) * 120 - 80, bad });
+        this.fx(owner).stardust(v.x, v.y - 10, 3, 14, 420, 8);
+      }
+    }
+    // Orbs home in on the hoop.
+    for (let i = this.orbs.length - 1; i >= 0; i--) {
+      const o = this.orbs[i];
+      if (o.owner !== owner) continue;
+      if (!this.alive(f)) { this.orbs.splice(i, 1); continue; }
+      const at = this.catcherAt(owner);
+      const dx = at.x - o.x, dy = at.y - o.y;
+      const d = Math.hypot(dx, dy) || 1;
+      if (d < 12) {
+        this.orbs.splice(i, 1);
+        c.digest.push({ bad: o.bad, readyAt: this.now + ORB_DIGEST_MS });
+        Sfx.playAt('dream-chime', f.x, { rate: o.bad ? 0.7 : 1.6, volume: 0.35 });
+        continue;
+      }
+      const acc = 900;
+      o.vx += (dx / d) * acc * dt;
+      o.vy += (dy / d) * acc * dt;
+      const sp = Math.hypot(o.vx, o.vy);
+      const max = 420;
+      if (sp > max) { o.vx *= max / sp; o.vy *= max / sp; }
+      o.x += o.vx * dt;
+      o.y += o.vy * dt;
+    }
+    // Digested dreams pay out.
+    for (let i = c.digest.length - 1; i >= 0; i--) {
+      const dg = c.digest[i];
+      if (this.now < dg.readyAt) continue;
+      c.digest.splice(i, 1);
+      if (!this.alive(f)) continue;
+      if (dg.bad) {
+        c.might = c.might.filter((u) => u > this.now);
+        if (c.might.length >= MIGHT_MAX) c.might.shift();
+        c.might.push(this.now + MIGHT_MS);
+        this.announce(f.x, f.y - 50, `🔴 NIGHTMARE FUEL ×${c.might.length}`, '#ff6b7f', 11);
+        this.fx(owner).ring(f.x, f.y, 10, 46, DREAM_ORB.bad, 420, 4, 8);
+      } else {
+        f.heal(ORB_HEAL);
+        this.announce(f.x, f.y - 50, `🟢 SWEET DREAM +${ORB_HEAL}`, '#7af2a6', 11);
+        this.fx(owner).ring(f.x, f.y, 10, 46, DREAM_ORB.good, 420, 4, 8);
+      }
+    }
+  }
+
+  // ── Bot: the shop upgrades it has to fire itself ───────────────────────────
+
+  /**
+   * Amnesia for the bot. Out here it throws a magazine that still has plenty in it at a foe who
+   * is awake (rounds would wake a sleeper); in a dream, only with both pistols loaded, for the
+   * bigger star.
+   */
+  private updateNpcAmnesia(): void {
+    if (this.api.isOnline || this.now < this.npcAmnesiaAt || !this.canAmnesia('npc')) return;
+    this.npcAmnesiaAt = this.now + 1200;
+    const npc = this.api.npc;
+    const realm = this.realms.npc;
+    const t = realm?.victim ?? this.targetsOf('npc')[0];
+    if (!this.alive(npc) || !this.alive(t)) return;
+    const d = Phaser.Math.Distance.Between(npc.x, npc.y, t.x, t.y);
+    const g = this.guns.npc;
+    const go = realm ? g.pistolMag >= PISTOL_MAG && d < 380
+      : !t.dreamAsleep && g.mag >= 12 && d < 320;
+    if (!go || Math.random() < 0.4) return;
+    this.npcAmnesiaAt = this.now + 4000 + Math.random() * 2500;
+    this.throwAmnesia('npc', t.x, t.y);
+  }
+
   // ── Drowsiness ─────────────────────────────────────────────────────────────
 
   private addDrowsy(t: Fighter, amount: number, by: Owner): void {
@@ -1023,6 +1870,7 @@ export class DreamKit {
     this.fx(by).zzzPuff(t.x, t.y);
     this.fx(by).ring(t.x, t.y, 10, 70, DRM.purple, 620, 5, 7);
     this.announce(t.x, t.y - 50, '😴 ASLEEP', '#a78bfa', 13);
+    if (by === 'player' && t !== this.api.player) this.api.recordMasteryStat('sleeps', 1);
     Sfx.playAt('dream-chime', t.x, { rate: 0.85, volume: 0.8 });
   }
 
@@ -1072,7 +1920,7 @@ export class DreamKit {
         r.nightmareAccum += delta;
         while (r.nightmareAccum >= NIGHTMARE_TICK_MS) {
           r.nightmareAccum -= NIGHTMARE_TICK_MS;
-          this.strike(f, NIGHTMARE_TICK_DAMAGE);
+          this.strike(f, NIGHTMARE_TICK_DAMAGE, r.nightmareBy, true);
           // A nightmare is not an alarm clock: its own damage must not wake its host.
           r.lastRaw = f.rawDamageTaken;
         }
@@ -1089,9 +1937,11 @@ export class DreamKit {
         r.nightmareAccum = 0;
       }
 
+      // Q+: paralysed, the meter cannot go down at all — not by sleeping, not by wearing off.
+      const paralysed = f.dreamParalysisUntil > now;
       // ── Sleep ──
       if (f.dreamAsleep) {
-        f.dreamDrowsy -= SLEEP_BURN_PER_SEC * dt;
+        if (!paralysed) f.dreamDrowsy -= SLEEP_BURN_PER_SEC * this.burnMult(f) * dt;
         if (f.dreamDrowsy <= 0) { this.wake(f, 'natural'); continue; }
         if (this.isDreaming(f)) continue;
         this.body(f)?.setVelocity(0, 0);
@@ -1099,7 +1949,7 @@ export class DreamKit {
         f.applyDisarm(160);
         continue;
       }
-      if (f.dreamDrowsy > 0 && now - r.lastGainAt > DROWSY_IDLE_MS) {
+      if (!paralysed && f.dreamDrowsy > 0 && now - r.lastGainAt > DROWSY_IDLE_MS) {
         f.dreamDrowsy = Math.max(0, f.dreamDrowsy - DROWSY_DECAY_PER_SEC * dt);
       }
     }
@@ -1127,12 +1977,32 @@ export class DreamKit {
 
     if (playerIs) this.updateRecoil('player', dt);
     if (npcIs) this.updateRecoil('npc', dt);
+    if (npcIs) {
+      this.updateNpcAmnesia();
+      this.updateNpcLucid();
+      this.updateNpcBox();
+    }
+    this.updateLucid('player');
+    this.updateLucid('npc');
     this.updateDaggers(dt);
+    this.updateClips(dt);
     this.updateLeeches(dt, delta);
+    this.updatePills(dt);
     this.updateBeasts();
+    this.updateBoxes(dt);
+    this.updateCatcher('player', dt);
+    this.updateCatcher('npc', dt);
     this.updateSleepers(delta);
+    for (const f of this.tracked()) f.dreamSlowMult = this.slowOf(f);
     this.updateCards(playerIs);
 
+    // Q+ Sleep Paralysis: the dream on this screen turns into its nightmare while it holds.
+    if (this.view) {
+      const local = this.api.player;
+      const realm = (['player', 'npc'] as Owner[]).map((o) => this.realms[o])
+        .find((r) => !!r && (this.fighter(r.owner) === local || r.victim === local));
+      this.view.setNightmare(!!realm && realm.victim.dreamParalysisUntil > this.now);
+    }
     this.view?.update(delta);
     this.fading = this.fading.filter((v) => {
       if (v.update(delta)) return true;
@@ -1141,8 +2011,10 @@ export class DreamKit {
     });
 
     this.updateAvatars(delta, playerIs, npcIs);
+    this.paintFloor();
     this.paintAir();
     this.paintOverhead();
+    this.paintPanel(playerIs);
     this.paintDarkness();
     this.paintCursor(playerIs);
     this.paintHud(playerIs);
@@ -1155,6 +2027,8 @@ export class DreamKit {
     if (!this.overheadGfx) this.overheadGfx = scene.add.graphics().setDepth(16);
     if (!this.darkGfx) this.darkGfx = scene.add.graphics().setDepth(13.6).setScrollFactor(0);
     if (!this.cursorGfx) this.cursorGfx = scene.add.graphics().setDepth(30);
+    if (!this.floorGfx) this.floorGfx = scene.add.graphics().setDepth(0.7);
+    if (!this.topGfx) this.topGfx = scene.add.graphics().setDepth(13.2);
   }
 
   /** Rename the tray for the dream, and back again, only on the frames it changes. */
@@ -1194,6 +2068,11 @@ export class DreamKit {
       av.setDrowsy(f.dreamAsleep ? 1 : Phaser.Math.Clamp(f.dreamDrowsy / DROWSY_MAX, 0, 1));
       const firing = this.now - this.guns[owner].lastShotAt < 200;
       av.setHold(firing ? 'spray' : null, ang);
+      av.setMastered(this.masteryOn(owner));
+      const c = this.catchers[owner];
+      av.setCatcher(c.digest.slice(-6).map((d) => ({ bad: d.bad, k: 1 - Phaser.Math.Clamp((d.readyAt - this.now) / ORB_DIGEST_MS, 0, 1) })));
+      const w = this.winds[owner];
+      av.setWinding(w ? Phaser.Math.Clamp((this.now - w.startAt) / BOX_MAX_CHARGE_MS, 0, 1) : -1);
       av.update(delta, f.x, f.y, f.forceInvisible ? 0 : f.alpha);
     };
     drive('player', player, playerIs);
@@ -1202,11 +2081,98 @@ export class DreamKit {
 
   // ── Painters ───────────────────────────────────────────────────────────────
 
+  /**
+   * The floor layer: the music boxes' lullabies, and Lucid Dream's reshaping of whichever dream
+   * is on this screen — the dark that has eaten its edges, the seam, the spikes and the mist.
+   */
+  private paintFloor(): void {
+    const g = this.floorGfx;
+    const top = this.topGfx;
+    if (!g || !top) return;
+    g.clear();
+    top.clear();
+    const t = this.vizT;
+    for (const m of this.boxes) {
+      if (!m.landed) continue;
+      const left = Phaser.Math.Clamp((m.until - this.now) / m.dur, 0, 1);
+      lullabyZone(g, this.col(m.owner), m.x, m.y, BOX_R, t, left, Math.min(1, (m.until - this.now) / 400));
+    }
+    const local = this.api.player;
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const realm = this.realms[owner];
+      if (!realm || (this.fighter(owner) !== local && realm.victim !== local)) continue;
+      const mask = this.lucidMask(owner);
+      if (!mask) continue;
+      const tint = this.col(owner);
+      const b = realm.box;
+      const fl = this.lucidFloor(owner, realm);
+      if (mask & LUCID_SHRINK) dreamShrink(g, tint, b.x, b.y, b.w, b.h, fl.x, fl.y, fl.w, fl.h, t);
+      if (mask & LUCID_SPIKES) {
+        for (const sp of this.spikePatches(owner, realm)) dreamSpikes(g, tint, sp.x, sp.y, LUCID_SPIKE_R, sp.up, t);
+      }
+      if (mask & LUCID_SPLIT) {
+        const mid = b.x + b.w / 2;
+        const side = realm.splitSide || (realm.victim.x < mid ? -1 : 1);
+        // The wall is on the foe's side of the seam: it faces them.
+        dreamSplit(g, tint, mid, fl.y, fl.y + fl.h, side < 0 ? 1 : -1, t);
+      }
+      if (mask & LUCID_MIST) redMistBand(top, tint, fl.x, fl.y, fl.w, fl.h, LUCID_MIST_BAND, t);
+    }
+  }
+
   private paintAir(): void {
     const g = this.airGfx;
     if (!g) return;
     g.clear();
     const t = this.vizT;
+    // Amnesia: clips tumbling to the cursor, then the rounds they scatter.
+    for (const c of this.clips) {
+      const u = Phaser.Math.Clamp((this.now - c.t0) / c.dur, 0, 1);
+      const x = c.sx + (c.tx - c.sx) * u, y = c.sy + (c.ty - c.sy) * u - Math.sin(u * Math.PI) * 26;
+      const fill = c.dream ? c.rounds / PISTOL_MAG : c.rounds / SANDMEN_MAG;
+      ammoClip(g, this.col(c.owner), x, y, u * c.spin, fill, 1, c.dream);
+    }
+    for (const p of this.pellets) {
+      const a = Math.atan2(p.vy, p.vx);
+      g.lineStyle(2, this.col(p.owner)(DRM.sandDeep), 0.5);
+      g.lineBetween(p.x - Math.cos(a) * 12, p.y - Math.sin(a) * 12, p.x, p.y);
+      g.fillStyle(this.col(p.owner)(DRM.sand), 1);
+      g.fillCircle(p.x, p.y, 2);
+    }
+    // R+: what is stuck in everybody.
+    for (const [f, m] of this.marks) {
+      if (!this.alive(f) || f.forceInvisible) continue;
+      for (const fe of m.feathers) {
+        if (fe.until <= this.now) continue;
+        const fade = Math.min(1, (fe.until - this.now) / 600);
+        stuckFeather(g, this.col('player'), f.x + fe.ox, f.y + fe.oy, fe.ang, t, fade);
+      }
+      const sc = this.live(m.scratches);
+      if (sc > 0) scratchMarks(g, this.col('player'), f.x, f.y, sc, t, 0.9);
+    }
+    // F+: daggers left in, and the drowsiness seeping out of them.
+    for (const p of this.pills) {
+      const v = p.victim;
+      if (!this.alive(v)) continue;
+      const fade = Math.min(1, (p.until - this.now) / 400);
+      sleepDagger(g, this.col(p.owner), v.x + p.ox, v.y + p.oy, p.ang, fade, 18);
+      const ph = (t * 0.8 + p.ang) % 1;
+      g.fillStyle(this.col(p.owner)(DRM.sky), 0.55 * (1 - ph) * fade);
+      g.fillCircle(v.x + p.ox - Math.cos(p.ang) * 6, v.y + p.oy - 4 - ph * 16, 2 + ph * 2);
+    }
+    // Mastery: music boxes, in the air and playing; dreams flying to the hoop.
+    for (const m of this.boxes) {
+      const tint = this.col(m.owner);
+      if (!m.landed) {
+        const u = Phaser.Math.Clamp((this.now - m.t0) / BOX_FLIGHT_MS, 0, 1);
+        const x = m.sx + (m.x - m.sx) * u, y = m.sy + (m.y - m.sy) * u - Math.sin(u * Math.PI) * 60;
+        musicBox(g, tint, x, y, t, 0.1, u * 12, 1, 0.9 + Math.sin(u * Math.PI) * 0.25);
+      } else {
+        const fade = Math.min(1, (m.until - this.now) / 400);
+        musicBox(g, tint, m.x, m.y, t, 1, t * 3, fade, 1);
+      }
+    }
+    for (const o of this.orbs) dreamOrb(g, this.col(o.owner), o.x, o.y, o.bad, t, 1, 5);
     for (const d of this.daggers) {
       const a = Math.atan2(d.vy, d.vx);
       g.lineStyle(2, this.col(d.owner)(DRM.pale), 0.35);
@@ -1220,8 +2186,8 @@ export class DreamKit {
       dreamLeech(g, this.col(l.owner), l.x, l.y, a, t, fade, l.state === 'stuck', fat);
       // The cue to come and get it: a soft ring when it is worth pulling.
       if (l.state !== 'flying' && l.owner === 'player') {
-        g.lineStyle(1.5, this.pcol(DRM.leechBelly), 0.35 + 0.2 * Math.sin(t * 5));
-        g.strokeCircle(l.x, l.y, LEECH_PICKUP_R * 0.6);
+        g.lineStyle(l.dropped ? 2.2 : 1.5, this.pcol(DRM.leechBelly), 0.35 + 0.2 * Math.sin(t * 5));
+        g.strokeCircle(l.x, l.y, (l.dropped ? LEECH_DROP_PICKUP_R : LEECH_PICKUP_R) * 0.6);
       }
     }
     for (const b of this.beasts) {
@@ -1345,10 +2311,23 @@ export class DreamKit {
         fontSize: '12px', fontFamily: FONT_DISPLAY, color: '#e9ddff', stroke: '#0b0620', strokeThickness: 4,
       }).setOrigin(0.5).setDepth(21).setScrollFactor(0);
     }
-    const left = Math.max(0, realm.victim.dreamDrowsy / SLEEP_BURN_PER_SEC);
+    const left = Math.max(0, realm.victim.dreamDrowsy / (SLEEP_BURN_PER_SEC * this.burnMult(realm.victim)));
+    const held = realm.victim.dreamParalysisUntil > this.now;
     this.hudLabel.setVisible(true);
-    this.hudLabel.setText(`💭 ${DREAM_WORLDS[realm.world].name.toUpperCase()} — ${left.toFixed(1)}s OF DREAM LEFT   ·   E TO SURFACE`);
-    this.hudLabel.setColor(left < 4 ? '#ff9cc8' : '#e9ddff');
+    this.hudLabel.setText(`💭 ${DREAM_WORLDS[realm.world].name.toUpperCase()} — ${left.toFixed(1)}s OF DREAM LEFT${held ? ' (HELD)' : ''}   ·   E TO SURFACE`);
+    this.hudLabel.setColor(held ? '#ff6b7f' : left < 4 ? '#ff9cc8' : '#e9ddff');
+  }
+
+  /** E+: the Lucid Dream panel, for the local dreamer only. */
+  private paintPanel(playerIs: boolean): void {
+    const show = playerIs && !!this.realms.player && this.up('player', 'e');
+    if (!show) {
+      this.panel?.setVisible(false);
+      return;
+    }
+    if (!this.panel) this.panel = new LucidPanel(this.api.scene, this.pcol, this.api.width, LUCID_BUTTONS);
+    this.panel.setVisible(true);
+    this.panel.paint(this.lucid.player, this.panelHover, this.burnMult(this.realms.player!.victim), this.vizT);
   }
 
   /** The dreamer's own buff, for the top-right tray. The victim's effects are Fighter descriptors. */
@@ -1365,6 +2344,42 @@ export class DreamKit {
       description: `Both Sandmen are being refilled — ${SANDMEN_MAG} rounds, ${SANDMEN_RELOAD_MS / 1000} seconds.`,
       until: gun.reloadUntil, priority: 111,
     } : null);
+
+    // Mastery.
+    const c = this.catchers.player;
+    const mightN = this.live(c.might);
+    this.api.setStatusIndicator('dream-catcher', playerIs && c.digest.length > 0 ? {
+      name: 'Dreamcatcher', emoji: '🕸️', color: DRM.hoop,
+      description: `Dreams caught and digesting: ${c.digest.filter((d) => !d.bad).length} good, ${c.digest.filter((d) => d.bad).length} nightmares. Each pays out ${ORB_DIGEST_MS / 1000}s after it was caught — a good dream heals ${ORB_HEAL}, a nightmare is +${Math.round(MIGHT_PER * 100)}% damage for ${MIGHT_MS / 1000}s.`,
+      count: c.digest.length, priority: 110,
+    } : null);
+    this.api.setStatusIndicator('dream-might', playerIs && mightN > 0 ? {
+      name: 'Nightmare Fuel', emoji: '🔴', color: DREAM_ORB.bad,
+      description: `Digested nightmares: +${Math.round(MIGHT_PER * 100)}% damage each, up to ${MIGHT_MAX}. Each lasts ${MIGHT_MS / 1000}s.`,
+      count: mightN, until: Math.max(...c.might), priority: 109,
+    } : null);
+    const boxed = playerIs && !!this.boxSlot('player') && !this.winds.player && !this.boxReady('player');
+    this.api.setStatusIndicator('dream-box', boxed ? {
+      name: 'Music-box', emoji: '🎶', color: DRM.purple,
+      description: 'Winding up again. Hold the bound key to wind it — the longer, the longer it plays — and let go to throw it.',
+      until: this.boxLastAt.player + BOX_CD_MS, priority: 108,
+    } : null);
+
+    // R+ on the local player, from another Dream.
+    const me = this.api.player;
+    const mm = this.marks.get(me);
+    const fe = mm ? this.live(mm.feathers) : 0;
+    const sc = mm ? this.live(mm.scratches) : 0;
+    this.api.setStatusIndicator('dream-feathers', fe > 0 ? {
+      name: 'Feathered', emoji: '🪶', color: DRM.pillow,
+      description: `Pillow feathers stuck in you. Every attack a Dream lands on you adds ${FEATHER_DROWSY} drowsiness per feather.`,
+      count: fe, priority: 30,
+    } : null);
+    this.api.setStatusIndicator('dream-scratches', sc > 0 ? {
+      name: 'Scratched', emoji: '🩸', color: DRM.claw,
+      description: `Claw scratches from inside the dream: every attack in here deals ${SCRATCH_BONUS} more per scratch.`,
+      count: sc, priority: 30,
+    } : null);
   }
 
   // ── Accessors read by ArenaScene / the NPC ─────────────────────────────────
@@ -1378,9 +2393,18 @@ export class DreamKit {
     if (!f) return 1;
     let mult = 1;
     if (this.realms[owner]) mult *= DREAM_SPEED_MULT;
+    if (this.lucidMask(owner) & LUCID_BUFF) mult *= LUCID_BUFF_SPEED;
     // Online the slow on our own body already arrives as the opponent's speed relay.
     const relayed = owner === 'player' && this.api.isOnline;
-    if (!relayed && f.dreamClawedUntil > this.now) mult *= CLAW_SLOW_MULT;
+    if (!relayed) mult *= this.slowOf(f);
+    return mult;
+  }
+
+  /** The claw's slow and Sleep Paralysis', on any body. */
+  private slowOf(f: Fighter): number {
+    let mult = 1;
+    if (f.dreamClawedUntil > this.now) mult *= CLAW_SLOW_MULT;
+    if (f.dreamParalysisUntil > this.now) mult *= PARALYSIS_SLOW;
     return mult;
   }
 
@@ -1417,6 +2441,9 @@ export class DreamKit {
       nightmareReady: !!this.nightmareTarget('npc'),
       pillowFresh: !realm && drowsy <= PILLOW_FRESH_AT,
       leechOut: this.leeches.some((l) => l.owner === 'npc'),
+      featherShots: !realm && !!t && !t.dreamAsleep && this.up('npc', 'r') && this.live(this.marks.get(t)?.feathers ?? []) > 0,
+      clawFirst: !!realm && this.up('npc', 'r') && this.live(this.marks.get(realm.victim)?.scratches ?? []) < 2,
+      boxSlot: this.boxSlot('npc') ?? undefined,
     };
   }
 
@@ -1448,6 +2475,11 @@ export class DreamKit {
    */
   getBarRatio(abilityId: string, time: number): number {
     void time;
+    if (abilityId === BOX_ID) {
+      const w = this.winds.player;
+      if (w) return Phaser.Math.Clamp((this.now - w.startAt) / BOX_MAX_CHARGE_MS, 0, 1);
+      return Phaser.Math.Clamp((this.now - this.boxLastAt.player) / BOX_CD_MS, 0, 1);
+    }
     if (abilityId === 'dream-sandmen') {
       const g = this.guns.player;
       if (this.realms.player) {
