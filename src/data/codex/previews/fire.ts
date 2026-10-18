@@ -252,3 +252,59 @@ export const flameNukeUpgraded: PreviewScript = {
     });
   },
 };
+
+/**
+ * Supernova (alternate Q): the rooted beam, swinging slowly from above the dummy down onto it,
+ * the heat bar filling over the caster, then the detonation racing down the beam's length.
+ */
+export const supernova: PreviewScript = {
+  duration: 7400,
+  scale: 0.8,
+  caption: 'Alt Q — rooted beam, 45/s, turns slowly; 6s detonates for 70 and burns you for 60',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(6));
+    const hud = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const len = ctx.w * 0.62;
+    const start = 300, dur = 6000;
+    let angle = ctx.aim - 0.9;
+    ctx.at(start, () => { av.play('raise', ctx.aim, 300); fx.bloom(ctx.cx, ctx.cy, 80, 12); });
+    ctx.onFrame((dt, elapsed) => {
+      g.clear(); hud.clear();
+      const t = elapsed - start;
+      if (t < 0 || t > dur) return;
+      // The same slow swing the kit allows: 0.85 rad/s toward the target.
+      const diff = ctx.aim - angle;
+      angle += Phaser.Math.Clamp(diff, -0.85 * dt / 1000, 0.85 * dt / 1000);
+      av.setHold('spray', angle);
+      const heat = t / dur;
+      const cos = Math.cos(angle), sin = Math.sin(angle);
+      const x0 = ctx.cx + cos * 24, y0 = ctx.cy + sin * 24;
+      const x1 = x0 + cos * len, y1 = y0 + sin * len;
+      const swell = 1 + heat * 0.35;
+      const bands: Array<[number, number, number]> = [[46, FIRE.deep, 0.2], [30, FIRE.orange, 0.5], [17, FIRE.yellow, 0.85], [6, FIRE.white, 0.95]];
+      bands.forEach(([w, c, a], i) => {
+        g.lineStyle(w * swell * (1 + Math.sin(elapsed / 1000 * (14 + i * 5)) * 0.08), ctx.tint(c), a);
+        g.lineBetween(x0, y0, x1, y1);
+      });
+      g.fillStyle(ctx.tint(FIRE.white), 0.9);
+      g.fillCircle(x0, y0, 8 * swell);
+      g.fillStyle(ctx.tint(FIRE.amber), 0.45);
+      g.fillCircle(x1, y1, 24 * swell);
+      // Heat bar over the caster.
+      hud.fillStyle(0x000000, 0.6);
+      hud.fillRoundedRect(ctx.cx - 30, ctx.cy - 60, 60, 11, 3);
+      hud.fillStyle(heat > 0.8 && Math.sin(elapsed / 40) > 0 ? 0xffffff : ctx.tint(heat > 0.6 ? FIRE.red : FIRE.yellow), 1);
+      hud.fillRoundedRect(ctx.cx - 28, ctx.cy - 58, 56 * heat, 7, 2);
+    });
+    ctx.at(start + dur, () => {
+      av.setHold(null);
+      const cos = Math.cos(ctx.aim), sin = Math.sin(ctx.aim);
+      for (let i = 0; i <= 5; i++) {
+        const k = i / 5;
+        ctx.at(i * 55, () => fx.explosion(ctx.cx + cos * (24 + len * k), ctx.cy + sin * (24 + len * k), 50, { shards: 8, smoke: 1 }));
+      }
+      fx.bloom(ctx.cx, ctx.cy, 90, 12);
+    });
+  },
+};

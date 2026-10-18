@@ -4,7 +4,7 @@ import { Ability, CastContext } from './Ability';
 /**
  * Myth — the ultimate element. A test element, reachable only from a cheat-mode save for now.
  *
- * A black void pricked with stars, holding Excalibur behind his back. A crowd rings the arena
+ * A black void pricked with stars, holding Excalibur behind its back. A crowd rings the arena
  * and pays out **Echo Shards** for a good show: every ability can be recast with a shard for a
  * stronger second act (right-click for the whip), as many times as there are shards to spend.
  * Truth Breaker is **true damage** — nothing on the other side can block it. The ultimate drops
@@ -31,12 +31,13 @@ const truthBreaker: Ability = {
   cast(ctx: CastContext) { ctx.mythTruth(ctx.targetX, ctx.targetY); },
 };
 
-const determination: Ability = {
+// Id kept from the Determination era (2026-10-15) so saves, relays and the codex keys stay put.
+const parry: Ability = {
   id: 'myth-determination',
-  name: 'Determination',
-  description: 'Decide you will not fall: invincible for 1.5 seconds, then immune to stuns and slows for 3 more. Recast with an Echo Shard to add 5 seconds to the immunity and run 25% faster for all of it.',
+  name: 'Parry',
+  description: 'Hold Excalibur out for 0.5s. The next hit in that time is turned aside: whoever dealt it is stunned for 2 seconds and you turn Indomitable for 8 — stuns and slows do nothing to you. R again with an Echo Shard after a parry lands to slash that foe for 35 true damage.',
   displayKey: 'R',
-  cooldown: 14000,
+  cooldown: 9000,
   cast(ctx: CastContext) { ctx.mythDetermination(); },
 };
 
@@ -52,7 +53,7 @@ const beastOfMyth: Ability = {
 const finalDestiny: Ability = {
   id: 'myth-destiny',
   name: 'Final Destiny',
-  description: 'See the fight through your own eyes for 15 seconds: the arena in first person, with a pistol, a shotgun, grenades, a hunter rifle and a shadow rocket on the five keys. WASD walks where you look, the cursor aims and turns you.',
+  description: 'See the fight through your own eyes for 15 seconds: the arena in first person, with a pistol, a shotgun, grenades, a hunter rifle and a shadow rocket on the five keys. The mouse turns the camera and the crosshair stays in the centre; WASD walks where you look.',
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 30000,
@@ -113,5 +114,5 @@ export const mythElement: Element = {
   emoji: '🌠',
   // The first five are the tray. 5–9 are the Final Destiny guns: kept in the array so
   // `castAbility` owns their cooldowns, sounds and online relay like any other ability.
-  abilities: [cosmicWhip, truthBreaker, determination, beastOfMyth, finalDestiny, pistol, shotgun, grenades, hunterRifle, shadowRocket],
+  abilities: [cosmicWhip, truthBreaker, parry, beastOfMyth, finalDestiny, pistol, shotgun, grenades, hunterRifle, shadowRocket],
 };

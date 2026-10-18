@@ -40,7 +40,7 @@ const MIRRORED_TIMERS = new Set([
   'high-gravity', 'inverted', 'exposed', 'purged', 'heal-block', 'dark-link', 'oily',
   'gold-heart', 'midas', 'stalked', 'stunned', 'out-of-tune',
   'rad-mutated', 'over-radiated', 'devotion-slow', 'gold-hex', 'gold-statue', 'harvest-poison',
-  'sound-dance',
+  'sound-dance', 'dream-nightmare', 'dream-clawed', 'turned-around',
 ]);
 
 const TIMER_DESCRIPTORS: StatusDescriptor[] = STATUS_DESCRIPTORS
@@ -92,6 +92,14 @@ const NUMERIC_FIELDS: NetNumericField[] = [
     apply: (f, v) => { if (v > 0) f.healInvertedUntil = Math.max(f.healInvertedUntil, Date.now() + v); },
     clear: (f) => { f.healInvertedUntil = 0; },
   },
+  // Illusion Bomb Dance: which way the view is turned rides with the timer above. Only ever
+  // adopted when we are not already turned, so a refresh never re-rolls our camera.
+  {
+    i: 'vturn',
+    read: (f) => f.viewTurnQuarter,
+    apply: (f, v) => { if (v > 0 && f.viewTurnQuarter <= 0) f.viewTurnQuarter = Math.round(v); },
+    clear: (f) => { f.viewTurnQuarter = 0; },
+  },
   { i: 'vuln', read: (f) => (f.vulnerableNextHit ? 1 : 0), apply: (f, v) => { if (v > 0) f.vulnerableNextHit = true; }, clear: (f) => { f.vulnerableNextHit = false; } },
   // Myth's pistol stacks: the count rides with its own expiry, like Despress.
   {
@@ -117,6 +125,11 @@ const NUMERIC_FIELDS: NetNumericField[] = [
   // Devotion's faith: decided on the priest's sim; a mirror only ever raises it.
   { i: 'fth', read: (f) => f.devotionFaith, apply: (f, v) => { f.devotionFaith = Math.max(f.devotionFaith, v); }, clear: () => {} },
   { i: 'hcorr', read: (f) => f.harvestCorruption, apply: (f, v) => { f.harvestCorruption = Math.max(f.harvestCorruption, v); }, clear: () => {} },
+  // Dream: drowsiness and sleep are decided on the dreamer's sim. They land in their own fields,
+  // and DreamKit folds them in — it has to be able to ignore a report that was already stale
+  // when it arrived, or the hit that woke a sleeper here would be undone a tick later.
+  { i: 'ddrw', read: (f) => f.dreamDrowsy, apply: (f, v) => { f.dreamNetDrowsy = v; }, clear: (f) => { f.dreamNetDrowsy = 0; } },
+  { i: 'dslp', read: (f) => (f.dreamAsleep ? 1 : 0), apply: (f, v) => { f.dreamNetAsleep = v > 0; }, clear: (f) => { f.dreamNetAsleep = false; } },
   { i: 'frost', read: (f) => f.frostStacks, apply: applyFrost, clear: (f) => { f.frostStacks = 0; f.frostStackTimers.length = 0; } },
   { i: 'vfrost', read: (f) => f.voidFrostStacks, apply: applyVoidFrost, clear: (f) => { f.voidFrostStacks = 0; f.voidFrostStackTimers.length = 0; } },
   { i: 'pfrost', read: (f) => f.permafrostStacks, apply: (f, v) => { f.permafrostStacks = Math.max(f.permafrostStacks, v); }, clear: () => {} },

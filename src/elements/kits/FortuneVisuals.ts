@@ -1225,6 +1225,57 @@ export class FortuneFx extends FxBase {
     this.scene.time.delayedCall(400, () => this.sparkle(toX, toY, 3, 8, 260, 12));
   }
 
+  /**
+   * Mastery — Rags to Riches: the purse goes up as a spray of coins, they fall back into the body,
+   * and a gilding wave washes over it. Bigger with every stack.
+   */
+  ragsToRiches(x: number, y: number, level: number): void {
+    const k = Math.min(1.6, 1 + level * 0.1);
+    const coins = Array.from({ length: 10 }, (_, i) => ({
+      a: -Math.PI / 2 + (i / 9 - 0.5) * 2.4 + (Math.random() - 0.5) * 0.3,
+      h: 46 + Math.random() * 30, spin: Math.random() * TAU,
+    }));
+    this.anim(15, 700, (g, t) => {
+      for (const c of coins) {
+        // Up and out, then pulled back into him.
+        const out = Math.sin(Math.min(1, t * 1.6) * Math.PI * 0.5) * (1 - easeIn(Math.max(0, (t - 0.45) / 0.55)));
+        const px = x + Math.cos(c.a) * c.h * out * k;
+        const py = y + Math.sin(c.a) * c.h * out * k;
+        goldCoin(g, this.tint, px, py, 4.2, c.spin + t * 16, 1 - Math.max(0, t - 0.85) / 0.15);
+      }
+    });
+    this.scene.time.delayedCall(380, () => {
+      this.flashIn(x, y, 26 * k, FOR.hot, FOR.gold, 14);
+      this.ring(x, y, 12, 74 * k, 560, FOR.gold, 4, 13);
+      this.ring(x, y, 8, 52 * k, 460, FOR.goldLit, 2.5, 13);
+      // The gilding wave: a bright band sweeping down the body.
+      this.anim(14, 420, (g, t) => {
+        const yy = y - 22 + t * 44;
+        const w = Math.sqrt(Math.max(0, 22 * 22 - (yy - y) * (yy - y))) * 2;
+        g.fillStyle(this.tint(FOR.hot), (1 - t) * 0.85);
+        g.fillRect(x - w / 2, yy - 2.5, w, 5);
+      });
+      this.sparkle(x, y, 10, 40 * k, 620, 15);
+    });
+  }
+
+  /** Mastery — Gilded Augment kicking in: a ring of gold closing on the body. */
+  augmentStart(x: number, y: number): void {
+    this.ring(x, y, 48, 18, 380, FOR.goldLit, 3, 13);
+    this.sparkle(x, y, 6, 26, 420, 15);
+  }
+
+  /** Gilded Augment at work: a coin melting into a rising glint over the body. */
+  augmentMote(x: number, y: number): void {
+    const ox = (Math.random() - 0.5) * 30;
+    const oy = (Math.random() - 0.5) * 16;
+    this.anim(14, 520, (g, t) => {
+      const e = easeOut(t);
+      goldCoin(g, this.tint, x + ox, y + oy + 10 - e * 26, 3.2 * (1 - t * 0.6), t * 12, 1 - t);
+      twinkle(g, this.tint(FOR.hot), x + ox, y + oy - e * 30, 2.4 * (1 - t), 1 - t);
+    });
+  }
+
   /** A coin or statue collected: it streaks up into the collector as a column of glints. */
   pickup(x: number, y: number): void {
     this.anim(14, 360, (g, t) => {
@@ -1413,6 +1464,15 @@ const FORTUNE_AVATAR: AvatarSpec = {
  * Philosopher's Stone is set on the goggle bridge; the vial turns blood-red; gilded lens rims and
  * lit lenses, gold eyes, wider coronas and a richer glow.
  */
+/**
+ * Rags to Riches plates, in the order they gild: [dx, dy, radius, rotation]. The lower body goes
+ * first; the face band (eyes sit about y-4) is left clear so the rig still reads.
+ */
+const GILD_PLATES: [number, number, number, number][] = [
+  [8, 10, 5.5, 0.3], [-9, 4, 5, 1.1], [0, 15, 4.6, 0.7], [15, 3, 3.8, 0.2],
+  [-14, -5, 4, 0.9], [-3, 7, 4.4, 1.6], [15, -8, 3.4, 0.5], [-11, 13, 3.8, 1.3],
+];
+
 export class FortuneAvatar extends BaseAvatar {
   private glowHand = 0;
   private glowTarget = 0;
@@ -1421,6 +1481,8 @@ export class FortuneAvatar extends BaseAvatar {
   /** 0..1 while the cane is being thrust (dash gesture). */
   private thrust = 0;
   private thrustAngle = 0;
+  /** Rags to Riches stacks. */
+  private gilding = 0;
 
   constructor(scene: Phaser.Scene, tint: FortuneColorFn, depth = 6) {
     super(scene, tint, depth, FORTUNE_AVATAR);
@@ -1435,6 +1497,9 @@ export class FortuneAvatar extends BaseAvatar {
 
   /** 0–1: purse fullness. Drives the under-glow and the goggle-lens glint. */
   setGold(v: number): void { this.wealthTarget = Phaser.Math.Clamp(v, 0, 1); }
+
+  /** Mastery — Rags to Riches stacks: how many plates of the body have turned to solid gold. */
+  setGilding(level: number): void { this.gilding = Math.max(0, Math.floor(level)); }
 
   play(gesture: ArmGesture, angle?: number, duration?: number): void {
     if (gesture === 'dash') {
@@ -1502,6 +1567,49 @@ export class FortuneAvatar extends BaseAvatar {
     g.fillRect(vx - 1.6, vy - 2.4, 3.2, 1.8);
     g.fillStyle(this.tint(FOR.hot), alpha * 0.8);
     g.fillRect(vx - 1.2, vy, 0.9, 3);
+
+    if (this.gilding > 0) this.drawGilding(g, x, y, alpha);
+  }
+
+  /**
+   * Rags to Riches: the soft orb turning to minted metal, a plate at a time. Each stack sets one
+   * more polished ingot-plate into the body — hard brass seam, mirror-bright face, a specular
+   * streak that sweeps across it — filling the lower body first and climbing toward the goggles.
+   * Past the eighth plate the seams fuse and the whole body takes a slow running sheen.
+   */
+  private drawGilding(g: Phaser.GameObjects.Graphics, x: number, y: number, alpha: number): void {
+    const n = Math.min(GILD_PLATES.length, this.gilding);
+    for (let i = 0; i < n; i++) {
+      const [px, py, r, rot] = GILD_PLATES[i];
+      const cx = x + px, cy = y + py;
+      const pts: Phaser.Geom.Point[] = [];
+      for (let k = 0; k < 6; k++) {
+        const a = rot + (k / 6) * TAU;
+        const rr = r * (0.85 + jitter(i * 7 + 3, k) * 0.3);
+        pts.push(P(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr));
+      }
+      g.fillStyle(this.tint(FOR.brass), alpha);
+      g.fillPoints(pts.map((p) => P(cx + (p.x - cx) * 1.18, cy + (p.y - cy) * 1.18)), true);
+      g.fillStyle(this.tint(FOR.goldLit), alpha);
+      g.fillPoints(pts, true);
+      // The polish: a hot streak that sweeps across each plate in turn.
+      const sweep = ((this.t * 0.6 + i * 0.17) % 1.6) - 0.3;
+      if (sweep > 0 && sweep < 1) {
+        const sx = cx - r + sweep * r * 2;
+        g.lineStyle(1.6, this.tint(FOR.hot), alpha * 0.9 * Math.sin(sweep * Math.PI));
+        g.lineBetween(sx - r * 0.3, cy + r * 0.55, sx + r * 0.3, cy - r * 0.55);
+      }
+      g.fillStyle(this.tint(FOR.hot), alpha * 0.8);
+      g.fillCircle(cx - r * 0.35, cy - r * 0.35, Math.max(0.8, r * 0.18));
+    }
+    if (this.gilding > GILD_PLATES.length) {
+      // Fully minted: one slow band of light rolls down the whole orb.
+      const u = (this.t * 0.35) % 1;
+      const yy = y - 20 + u * 40;
+      const w = Math.sqrt(Math.max(0, 20 * 20 - (yy - y) * (yy - y))) * 2;
+      g.fillStyle(this.tint(FOR.hot), alpha * 0.45);
+      g.fillRect(x - w / 2, yy - 1.5, w, 3);
+    }
   }
 
   /** Mastered: a ring of minted coins circling the alchemist, flipping as they go. */

@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import {
-  ChessKind, PSY, PsychicAvatar, PsychicFx, chessPiece, focusMandala, heavenlyAura, mightAura,
-  moveGuide, queenCrown, queueCard, rideWard, sightSquare, snareRune, strideAura,
+  ChessKind, OUTPLAY, PSY, PsychicAvatar, PsychicFx, chessPiece, heavenlyAura, mightAura,
+  moveGuide, outplayedAura, premoveClock, queenCrown, queueCard, rideWard, sightSquare, strideAura,
 } from '../../../elements/kits/PsychicVisuals';
 
 /**
@@ -828,133 +828,136 @@ export const openedEyes: PreviewScript = {
   },
 };
 
-// ══ MASTERY — Predictor's Snare ═══════════════════════════════════════
+// ══ MASTERY — Outplayed ═══════════════════════════════════════════════
 
-export const masterySnare: PreviewScript = {
+export const masteryOutplayed: PreviewScript = {
   duration: 12000,
   scale: 0.9,
-  caption: "Mastery passive — Space puts you where they will be in 2 seconds, and leaves a closed eye there",
+  caption: 'Mastery passive — the further behind you they fall (in %), the longer their cooldowns run',
   run(ctx) {
-    const fx = fxOf(ctx);
     const av = ctx.useAvatar(() => new PsychicAvatar(ctx.scene, ctx.tint));
-    av.setFacing(ctx.aim);
-    monk(av)?.setFocus(0.8);
-
-    const enemy = { x: ctx.w * 0.46, y: ctx.cy - 34 };
-    const vel = { x: 104, y: 30 };
+    av.setFacing(0);
+    monk(av)?.setFocus(0.6);
+    const enemy = { x: ctx.w * 0.66, y: ctx.cy };
     dummyAt(ctx, enemy, 5);
     const readout = label(ctx, ctx.w * 0.5, 12, hex(PSY.gold), 11);
-    const runes: { x: number; y: number; born: number; spent: boolean }[] = [];
-    let marker = { x: enemy.x, y: enemy.y };
+    const tag = label(ctx, enemy.x, enemy.y + 46, hex(OUTPLAY.lit), 11);
+    const hp = { me: 1, them: 1 };
+    let tier = 0;
 
-    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(2));
-    ctx.onFrame((dt, elapsed) => {
-      ground.clear();
+    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
+    const bars = ctx.adopt(ctx.scene.add.graphics().setDepth(16));
+    ctx.onFrame((_dt, elapsed) => {
       const t = elapsed / 1000;
-      const s = dt / 1000;
-      enemy.x += vel.x * s; enemy.y += vel.y * s;
-      if (enemy.x > ctx.w - 70 || enemy.x < 70) vel.x *= -1;
-      if (enemy.y > ctx.h - 44 || enemy.y < 44) vel.y *= -1;
-      let px = enemy.x, py = enemy.y, vx = vel.x, vy = vel.y;
-      for (let i = 0; i < 20; i++) {
-        px = Phaser.Math.Clamp(px + vx * 0.1, 32, ctx.w - 32);
-        py = Phaser.Math.Clamp(py + vy * 0.1, 32, ctx.h - 32);
-        vx *= 0.97; vy *= 0.97;
-      }
-      marker = { x: px, y: py };
-      ground.lineStyle(1.4, ctx.tint(PSY.gold), 0.6);
-      ground.strokeCircle(marker.x, marker.y, 14 + Math.sin(t * 5) * 2);
-
-      for (const r of runes) {
-        if (r.spent) continue;
-        const life = Phaser.Math.Clamp((14 - (elapsed - r.born) / 1000) / 1.2, 0, 1);
-        snareRune(ground, ctx.tint, r.x, r.y, 20, 0.9 * life,
-          t + r.born, Phaser.Math.Clamp((elapsed - r.born) / 260, 0, 1));
-        if (elapsed - r.born < 260) continue;
-        if (Phaser.Math.Distance.Between(r.x, r.y, enemy.x, enemy.y) > 42) continue;
-        r.spent = true;
-        ctx.capture(() => fx.snareTrip(r.x, r.y));
-        float(ctx, enemy.x, enemy.y - 46, '🧿 SNARED  15', hex(PSY.gold), 12);
-      }
+      ground.clear();
+      bars.clear();
+      outplayedAura(ground, ctx.tint, enemy.x, enemy.y, tier, 0.9, t, 2.3);
+      const bar = (x: number, y: number, frac: number, col: number): void => {
+        bars.fillStyle(0x0b0b0d, 0.85); bars.fillRect(x - 26, y, 52, 6);
+        bars.fillStyle(col, 1); bars.fillRect(x - 25, y + 1, 50 * frac, 4);
+      };
+      const me = ctx.casterAt();
+      bar(me.x, me.y - 36, hp.me, 0x5be37a);
+      bar(enemy.x, enemy.y - 36, hp.them, 0xe35b5b);
+      const gap = (hp.me - hp.them) * 100;
+      tier = gap >= 75 ? 3 : gap >= 50 ? 2 : gap >= 25 ? 1 : 0;
+      tag.setText(tier ? `cooldowns +${[0, 10, 25, 33][tier]}%` : '');
+    });
+    const drop = (at: number, to: number): void => ctx.at(at, () => {
+      const from = hp.them;
+      ctx.scene.tweens.addCounter({
+        from: from * 100, to: to * 100, duration: 600,
+        onUpdate: (tw) => { hp.them = (tw.getValue() ?? 0) / 100; },
+      });
     });
 
-    const dash = (at: number): void => ctx.at(at, () => {
-      const from = ctx.casterAt();
-      const to = { x: marker.x, y: marker.y };
-      ctx.capture(() => fx.snare(from.x, from.y, to.x, to.y));
-      ctx.moveCaster(to.x, to.y);
-      runes.push({ x: to.x, y: to.y, born: at, spent: false });
-      float(ctx, to.x, to.y - 54, '🧿 SNARE SET', hex(PSY.gold), 11);
+    ctx.at(300, () => readout.setText('both of you on 100% — nothing to read yet'));
+    drop(1400, 0.72);
+    ctx.at(2200, () => {
+      float(ctx, enemy.x, enemy.y - 58, '♟ OUTPLAYED +10% CD', hex(OUTPLAY.lit), 11);
+      readout.setText('25 points behind you: every cooldown of theirs runs 10% longer');
     });
-
-    ctx.at(400, () => readout.setText('the gold ring is where they will be standing in two seconds'));
-    dash(1800);
-    ctx.at(2200, () => readout.setText('Space — no travel at all. You are simply already there'));
-    ctx.at(3600, () => readout.setText('and a closed eye is left on the spot, lid down, for 14 seconds'));
-    dash(5200);
-    dash(7000);
-    ctx.at(7600, () => readout.setText('six at once, every one on ground they told you they were walking'));
-    ctx.at(9600, () => readout.setText('15 damage each, spent the moment it fires'));
-    ctx.at(11000, () => readout.setText('stand still and there is no marker and no teleport. That is the counter'));
+    drop(4400, 0.46);
+    ctx.at(5200, () => {
+      float(ctx, enemy.x, enemy.y - 58, '♟ OUTPLAYED +25% CD', hex(OUTPLAY.lit), 11);
+      readout.setText('50 points: 25% longer, and the aura grows a second ring');
+    });
+    drop(7400, 0.2);
+    ctx.at(8200, () => {
+      float(ctx, enemy.x, enemy.y - 58, '♟ OUTPLAYED +33% CD', hex(OUTPLAY.hot), 12);
+      readout.setText('75 points: 33% longer — and they can see it on themselves');
+    });
+    ctx.at(10200, () => readout.setText('percent, not points: a tank at 300/400 is as far behind as a duellist at 75/100'));
   },
 };
 
-// ══ MASTERY — Utter Focus ═════════════════════════════════════════════
+// ══ MASTERY — Pre-move ════════════════════════════════════════════════
 
-export const masteryUtterFocus: PreviewScript = {
-  duration: 12000,
+export const masteryPremove: PreviewScript = {
+  duration: 13000,
   scale: 0.9,
-  caption: 'Mastery — 8s with your eyes shut: everything they press is held 5 seconds instead of 2',
+  caption: 'Mastery — call their next key. If they press it within 1.5s: burst, stun, and a slow or a longer cooldown',
   run(ctx) {
     const fx = fxOf(ctx);
     const av = ctx.useAvatar(() => new PsychicAvatar(ctx.scene, ctx.tint));
-    av.setFacing(ctx.aim);
-    monk(av)?.setFocus(1);
-    const enemy = { x: ctx.w * 0.62, y: ctx.cy };
+    av.setFacing(0);
+    monk(av)?.setFocus(0.8);
+    const enemy = { x: ctx.w * 0.64, y: ctx.cy + 20 };
+    const vel = { x: 0, y: 0 };
     dummyAt(ctx, enemy, 5);
     const readout = label(ctx, ctx.w * 0.5, 12, hex(PSY.gold), 11);
-    const queue: { key: string; name: string; big: boolean; due: number; pressed: number }[] = [];
-    const win = { left: 0 };
+    const key = label(ctx, 0, 0, hex(PSY.gold), 10);
+    const clock = { on: false, choosing: false, until: 0, text: '?' };
     let now = 0;
 
-    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(2));
+    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(16));
     ctx.onFrame((dt, elapsed) => {
-      ground.clear();
       now = elapsed;
-      if (win.left > 0) win.left = Math.max(0, win.left - dt);
-      if (win.left > 0) focusMandala(ground, ctx.tint, ctx.cx, ctx.cy, 52, win.left / 8000, elapsed / 1000);
+      air.clear();
+      enemy.x = Phaser.Math.Clamp(enemy.x + vel.x * dt / 1000, 60, ctx.w - 60);
+      enemy.y = Phaser.Math.Clamp(enemy.y + vel.y * dt / 1000, 40, ctx.h - 40);
+      const me = ctx.casterAt();
+      if (clock.on) {
+        const fuse = clock.choosing ? 1 : Phaser.Math.Clamp((clock.until - now) / 1500, 0, 1);
+        premoveClock(air, ctx.tint, me.x - 50, me.y - 40, fuse, clock.choosing, 0.95, elapsed / 1000);
+        key.setPosition(me.x - 39, me.y - 40).setText(clock.choosing ? '?' : clock.text).setVisible(true);
+      } else {
+        key.setVisible(false);
+      }
     });
-    queueStack(ctx, () => queue.map((e) => ({
-      key: e.key, name: e.name, big: e.big,
-      left: Phaser.Math.Clamp((e.due - now) / (e.due - e.pressed), 0, 1),
-    })));
-    const press = (at: number, key: string, name: string, hold: number, big = false): void => {
-      ctx.at(at, () => { queue.push({ key, name, big, due: at + hold, pressed: at }); queue.sort((a, b) => a.due - b.due); });
-      ctx.at(at + hold, () => { queue.shift(); });
-    };
+    const cast = (at: number): void => ctx.at(at, () => {
+      clock.on = true; clock.choosing = true;
+      av.play('raise');
+      float(ctx, ctx.casterAt().x, ctx.casterAt().y - 70, '♟ PRE-MOVE', hex(OUTPLAY.lit), 12);
+    });
+    const choose = (at: number, k: string): void => ctx.at(at, () => {
+      clock.choosing = false; clock.text = k; clock.until = at + 1500;
+      const me = ctx.casterAt();
+      ctx.capture(() => fx.premoveSet(me.x, me.y));
+      float(ctx, me.x, me.y - 70, `♟ PREDICTED: ${k}`, hex(PSY.gold), 12);
+    });
+    const spring = (at: number, k: string, extra: string): void => ctx.at(at, () => {
+      clock.on = false;
+      ctx.capture(() => fx.premovePunish(enemy.x, enemy.y));
+      float(ctx, enemy.x, enemy.y - 64, `♟ PRE-MOVED: ${k}`, hex(OUTPLAY.hot), 12);
+      float(ctx, enemy.x + 26, enemy.y - 30, '25', hex(PSY.stress), 13);
+      ctx.at(at + 250, () => float(ctx, enemy.x, enemy.y - 44, extra, hex(OUTPLAY.lit), 11));
+    });
 
-    ctx.at(300, () => readout.setText('eyes open: their presses are held two seconds'));
-    press(700, 'Click', 'Fireball', 2000);
-    ctx.at(2600, () => {
-      win.left = 8000;
-      monk(av)?.setBlind(true);
-      ctx.capture(() => fx.focus(ctx.cx, ctx.cy));
-      float(ctx, ctx.cx, ctx.cy - 54, '🧿 UTTER FOCUS', hex(PSY.gold), 13);
-      readout.setText('eyes shut: every press is held the full five seconds');
-    });
-    press(3200, 'E', 'Flame Wall', 5000);
-    press(3700, 'R', 'Pressure Bomb', 5000);
-    press(4300, 'Q', 'Inferno', 5000, true);
-    ctx.at(6000, () => {
-      win.left = Math.max(0, win.left - 500);
-      float(ctx, ctx.cx + 22, ctx.cy - 40, '−0.5s FOCUS', hex(PSY.stress), 11);
-      readout.setText('being hit is the price: half a second off the window, per hit');
-    });
-    ctx.at(10600, () => {
-      win.left = 0;
-      monk(av)?.setBlind(false);
-      float(ctx, ctx.cx, ctx.cy - 46, '👁️ EYES OPEN', hex(PSY.violetLit), 11);
-      readout.setText('online, their movement keys are held the same five seconds');
-    });
+    ctx.at(200, () => readout.setText('Pre-move: the next key YOU press is your call'));
+    cast(900);
+    ctx.at(1700, () => readout.setText('they have been strafing on W and S… so press W'));
+    choose(2300, 'W');
+    ctx.at(2700, () => { vel.y = -110; readout.setText('they press W inside the 1.5 seconds'); });
+    spring(2800, 'W', '🐌 −30% SPEED');
+    ctx.at(2800, () => { vel.y = 0; });
+    ctx.at(3400, () => { vel.y = -40; readout.setText('25 damage, a light stun, and 30% slower for 3 seconds'); });
+    ctx.at(4800, () => { vel.y = 0; });
+    cast(6400);
+    ctx.at(6800, () => readout.setText('this time, call their ultimate'));
+    choose(7400, 'Q');
+    ctx.at(8300, () => readout.setText('an ability key: the cast they just made runs 50% longer, and so does the next for 8s'));
+    spring(8400, 'Q', '⏳ INFERNO +50% CD');
+    ctx.at(11000, () => readout.setText('only you see which key you called — they only see the clock running'));
   },
 };

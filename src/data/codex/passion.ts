@@ -4,8 +4,8 @@ import { ElementCodex } from '../AbilityCodex';
  * Devotion — the holy priest (element id `passion`, kept from the charmer it replaced).
  *
  * Verified against `src/elements/passion.ts` and `kits/PassionKit.ts`. The five shop upgrades
- * (2026-10-16) are constants in the kit's "Shop upgrades" block. Devotion has no mastery yet — one
- * is owed — and no perks. Every number below is a constant at the top of the kit.
+ * (2026-10-16) are constants in the kit's "Shop upgrades" block and the mastery (2026-10-17) in
+ * its "Mastery" block. Devotion has no perks. Every number below is a constant at the top of the kit.
  */
 const passion: ElementCodex = {
   identity:
@@ -202,6 +202,53 @@ const passion: ElementCodex = {
       notes: [
         'A burning mark shows where you will land for the last 0.7 seconds of the ride — aim it at them.',
         'Stepping off the line before the chariot arrives cancels the ride but not the chariot.',
+      ],
+    },
+  },
+
+  mastery: {
+    'pray-always': {
+      basics:
+        'Every 8 seconds you say a prayer of your own accord: your hands come together, a little '
+        + 'prayer rises off you, and a ring of light over your head closes as it waits. Five seconds '
+        + 'later it is answered with one of three gifts, at random: Shelter (25% less damage for 5 '
+        + 'seconds), Mercy (heal 50 HP) or Revelation (a ray of light out of the sky gives the '
+        + 'nearest enemy 35 faith at once). Mercy is never sent at full health, and Revelation never '
+        + 'when there is nobody to shine on.',
+      cast: 'Passive. Always on while Devotion Mastery is enabled and Devotion is the element being played.',
+      effects: [
+        { tag: 'shield', label: 'Shelter', detail: '25% less damage taken for 5 seconds.' },
+        { tag: 'heal', label: 'Mercy', detail: 'Heal 50 HP.' },
+        { tag: 'resource', label: 'Revelation', detail: '35 faith to the nearest enemy, through any shield.' },
+      ],
+      notes: [
+        'A prayer is never said from the chariot — it waits until you are back on the ground.',
+        'Shelter stacks with the 20% softening you get from a believer at half faith.',
+        'Online the answer is rolled on the priest\'s own machine and both screens show the same gift.',
+      ],
+    },
+    'ark-of-the-covenant': {
+      basics:
+        'Set down the golden box of legend at the cursor, up to 380px away. For 12 seconds, every '
+        + 'enemy within 640px whose look falls on it gains 5 faith a second. A bot or a husk under '
+        + 'half faith tries to look away — and its aim goes with its eyes, turning up to 16° off the '
+        + 'Ark. Over half faith the Ark pulls the other way: their sight is drawn 5°–14° toward it, '
+        + 'more the more devout they are. A player never looks away, but once past half they feel '
+        + 'the pull too — their aim bends toward the Ark, and a small gold ring shows where it has '
+        + 'actually gone. Bindable to R, F or Q. 18s cooldown.',
+      cast: 'The bound key (R, F or Q). Placed toward the cursor.',
+      effects: [
+        { tag: 'summon', label: 'The Ark', detail: 'One at a time; 12 seconds. Its own sight-lines show who is looking.' },
+        { tag: 'resource', label: 'Stare', detail: '5 faith a second to anyone looking within about 18° of it.' },
+        { tag: 'debuff', label: 'Averted eyes', detail: 'Bots and husks under 50% faith aim up to 16° away from it.' },
+        { tag: 'control', label: 'Drawn in', detail: 'Over 50% faith: aim pulled 5°–14° toward it — players included.' },
+      ],
+      notes: [
+        'Put it between you and them: a player aiming at you is staring through it.',
+        'Past half faith, put it off to the side instead — the pull drags their aim off you, and the dragged aim is still a stare.',
+        'Binding it over a key takes that key\'s second job too (the pocket crucifix\'s pick-up and set-down on F).',
+        'A Devotion NPC on Nightmare binds it over Mount Crucifix and plays it exactly that way.',
+        'Online the faith is counted on the priest\'s machine, from the facing the other player\'s machine sends.',
       ],
     },
   },

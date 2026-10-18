@@ -2,7 +2,8 @@ import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import {
   GunKind, MYTH, MythAvatar, MythFx, beast as paintBeast, cloud as paintCloud, crowdFigure, gun as paintGun,
-  jitter, portal as paintPortal, shard as paintShard, star, starMace, voidDisc, whip as paintWhip,
+  jitter, portal as paintPortal, rift as paintRift, shard as paintShard, spear as paintSpear, beyonder as paintBeyonder,
+  star, starMace, voidDisc, whip as paintWhip,
 } from '../../../elements/kits/MythVisuals';
 
 /**
@@ -200,62 +201,103 @@ export const truthBreaker: PreviewScript = {
   },
 };
 
-// ══ R — Determination ═════════════════════════════════════════════════
+// ══ R — Parry ═════════════════════════════════════════════════════════
+
+/** A shot the dummy throws at the caster, and what happens when it gets there. */
+interface Shot { x: number; y: number; vx: number }
+
+/**
+ * The parry loop's shared stage: a dummy that fires at the caster, the sword-out window, and a
+ * hook for what a shot does when it arrives. Outskilled's preview runs on the same stage.
+ */
+function parryStage(ctx: PreviewCtx) {
+  const fx = fxOf(ctx);
+  const av = ctx.useAvatar(() => new MythAvatar(ctx.scene, ctx.tint));
+  av.setFacing(ctx.aim);
+  const d: Dummy = { x: ctx.cx + 170, y: ctx.cy, alive: true, stunUntil: 0, hp: 100 };
+  dummyAt(ctx, d);
+  const readout = label(ctx, ctx.w * 0.5, 12, hex(MYTH.gold), 11);
+  const st = { shards: 1, parryUntil: 0, indomUntil: 0, elapsed: 0 };
+  shardsOver(ctx, () => st.shards);
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+  const shots: Shot[] = [];
+  let onArrive: (parried: boolean) => void = () => {};
+  ctx.onFrame((delta, elapsed) => {
+    st.elapsed = elapsed;
+    g.clear();
+    const c = ctx.casterAt();
+    for (let i = shots.length - 1; i >= 0; i--) {
+      const sh = shots[i];
+      sh.x += sh.vx * delta / 1000;
+      g.fillStyle(0xff6644, 1); g.fillCircle(sh.x, sh.y, 5);
+      g.fillStyle(0xffc9a8, 0.8); g.fillCircle(sh.x + 2, sh.y - 1, 2);
+      if (sh.x <= c.x + 22) { shots.splice(i, 1); onArrive(elapsed < st.parryUntil); }
+    }
+    if (elapsed < st.parryUntil) {
+      // The window: a bright guard arc on the side the sword faces, closing as it runs out.
+      const k = (st.parryUntil - elapsed) / 500;
+      g.lineStyle(3, ctx.tint(MYTH.gold), 0.4 + 0.5 * k);
+      g.beginPath(); g.arc(c.x, c.y, 30, ctx.aim - 1.1 * k - 0.2, ctx.aim + 1.1 * k + 0.2); g.strokePath();
+    }
+    if (elapsed < st.indomUntil) {
+      g.lineStyle(2, ctx.tint(MYTH.gold), 0.35 + 0.2 * Math.sin(elapsed / 110));
+      g.strokeCircle(c.x, c.y, 34);
+    }
+  });
+  const raise = (at: number, text = 'PARRY') => ctx.at(at, () => {
+    st.parryUntil = at + 500;
+    rig(av)?.setBlade(true); rig(av)?.setEye(true); rig(av)?.setHold('brace');
+    av.play('sweep', ctx.aim, 200);
+    float(ctx, ctx.cx, ctx.cy - 50, text, hex(MYTH.gold));
+  });
+  const lower = () => { st.parryUntil = 0; rig(av)?.setBlade(false); rig(av)?.setEye(false); rig(av)?.setHold(null); };
+  const fire = (at: number) => ctx.at(at, () => shots.push({ x: d.x - 20, y: d.y, vx: -520 }));
+  /** A parry that caught the shot: the stun, Indomitable, and the riposte window. */
+  const land = () => {
+    lower();
+    st.indomUntil = st.elapsed + 8000;
+    d.stunUntil = st.elapsed + 2000;
+    rig(av)?.setDetermined(true);
+    av.play('flex', undefined, 500);
+    fx.ring(ctx.cx, ctx.cy, 10, 64, 420, MYTH.gold, 4, 10);
+    fx.starSpray(ctx.cx, ctx.cy, 12, 52, 520, 10, MYTH.gold);
+    fx.tipHit(ctx.cx + Math.cos(ctx.aim) * 24, ctx.cy + Math.sin(ctx.aim) * 24);
+    fx.ring(d.x, d.y, 8, 40, 380, MYTH.red, 3, 10);
+    float(ctx, ctx.cx, ctx.cy - 60, 'PARRIED!  INDOMITABLE', hex(MYTH.gold));
+    float(ctx, d.x, d.y - 44, 'STUNNED', hex(MYTH.red));
+  };
+  const riposte = (at: number) => ctx.at(at, () => {
+    st.shards = Math.max(0, st.shards - 1);
+    rig(av)?.setBlade(true);
+    av.play('sweep', ctx.aim, 300);
+    fx.dashTrail(ctx.cx, ctx.cy, d.x, d.y);
+    fx.slash(d.x, d.y, ctx.aim, 70, Math.PI / 3, 10);
+    float(ctx, d.x, d.y - 46, 'RIPOSTE 35 TRUE', hex(MYTH.gold), 12);
+    ctx.scene.time.delayedCall(500, () => rig(av)?.setBlade(false));
+  });
+  return { fx, av, d, readout, st, raise, lower, fire, land, riposte, setArrive: (fn: (parried: boolean) => void) => { onArrive = fn; } };
+}
 
 export const determination: PreviewScript = {
-  duration: 9500,
+  duration: 9000,
   scale: 0.9,
-  caption: 'R — invincible for 1.5s, then immune to stuns and slows for 3s. R again with a shard: +5s and 25% speed.',
+  caption: 'R — Parry: the sword out for 0.5s. A hit inside it is turned aside: the attacker is stunned 2s and you are Indomitable for 8. R again with a shard: a 35 true-damage riposte.',
   run(ctx) {
-    const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new MythAvatar(ctx.scene, ctx.tint));
-    av.setFacing(ctx.aim);
-    const d: Dummy = { x: ctx.cx + 170, y: ctx.cy, alive: true, stunUntil: 0, hp: 100 };
-    dummyAt(ctx, d);
-    const readout = label(ctx, ctx.w * 0.5, 12, hex(MYTH.gold), 11);
-    let shards = 1;
-    shardsOver(ctx, () => shards);
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
-    let invulnUntil = 0;
-    let immuneUntil = 0;
-    let plus = false;
-    const shots: { x: number; y: number; vx: number }[] = [];
-
-    ctx.onFrame((delta, elapsed) => {
-      g.clear();
-      const c = ctx.casterAt();
-      for (let i = shots.length - 1; i >= 0; i--) {
-        const s = shots[i];
-        s.x += s.vx * delta / 1000;
-        g.fillStyle(0xff6644, 1); g.fillCircle(s.x, s.y, 5);
-        if (s.x <= c.x + 20) {
-          shots.splice(i, 1);
-          if (elapsed < invulnUntil) { fx.ring(c.x, c.y, 20, 36, 200, MYTH.gold, 2, 10); float(ctx, c.x, c.y - 50, 'IMMUNE', hex(MYTH.gold)); }
-          else if (elapsed < immuneUntil) { float(ctx, c.x, c.y - 50, 'STUN RESISTED', hex(MYTH.gold)); }
-          else { float(ctx, c.x, c.y - 50, '-15', '#ff8866', 12); }
-        }
-      }
-      if (elapsed < immuneUntil) {
-        const k = elapsed < invulnUntil ? 1 : 0.5;
-        g.lineStyle(2, ctx.tint(MYTH.gold), 0.4 + 0.3 * Math.sin(elapsed / 90) * k);
-        g.strokeCircle(c.x, c.y, 28 + 4 * k);
-      }
+    const P = parryStage(ctx);
+    P.setArrive((parried) => {
+      if (parried) P.land();
+      else if (P.st.elapsed < P.st.indomUntil) float(ctx, ctx.cx, ctx.cy - 50, 'SLOW RESISTED', hex(MYTH.gold));
+      else float(ctx, ctx.cx, ctx.cy - 50, '-15', '#ff8866', 12);
     });
-
-    const fire = (at: number) => ctx.at(at, () => shots.push({ x: d.x - 20, y: d.y, vx: -520 }));
-    ctx.at(300, () => readout.setText('the oath: nothing lands for a second and a half'));
-    ctx.at(700, () => { invulnUntil = 700 + 1500; immuneUntil = invulnUntil + 3000; rig(av)?.setDetermined(true); av.play('flex', undefined, 600); fx.determination(ctx.cx, ctx.cy); float(ctx, ctx.cx, ctx.cy - 60, 'DETERMINED', hex(MYTH.gold)); });
-    fire(1000); fire(1500);
-    ctx.at(2400, () => readout.setText('then three seconds immune to every stun, root and slow'));
-    fire(2800);
-    ctx.at(3400, () => readout.setText('R again with a shard: five more seconds, and 25% faster'));
-    ctx.at(3900, () => { shards = 0; plus = true; immuneUntil += 5000; fx.ring(ctx.cx, ctx.cy, 14, 60, 500, MYTH.gold, 3, 10); float(ctx, ctx.cx, ctx.cy - 60, '+5s  +25% SPEED', hex(MYTH.gold)); });
-    ctx.at(4600, () => { ctx.glideCaster({ to: { x: ctx.cx - 70, y: ctx.cy + 30 }, ms: 900, ease: 'out' }); });
-    fire(5200);
-    ctx.at(6000, () => { ctx.glideCaster({ to: { x: ctx.cx, y: ctx.cy }, ms: 900, ease: 'out' }); });
-    ctx.at(7200, () => readout.setText(plus ? 'stuns and slows bounce off for the whole stretch' : ''));
-    fire(7600);
-    ctx.at(9100, () => { rig(av)?.setDetermined(false); });
+    ctx.at(200, () => P.readout.setText('raise the sword just as the shot arrives'));
+    P.fire(500); P.raise(810);
+    ctx.at(1400, () => P.lower());
+    ctx.at(1900, () => P.readout.setText('the attacker is stunned; you are Indomitable for 8s'));
+    ctx.at(3300, () => P.readout.setText('R again with a shard inside 3s: the riposte'));
+    P.riposte(3900);
+    ctx.at(5200, () => P.readout.setText('stuns and slows do nothing while Indomitable lasts'));
+    P.fire(5600);
+    ctx.at(8600, () => { rig(P.av)?.setDetermined(false); });
   },
 };
 
@@ -554,7 +596,7 @@ export const echoShards: PreviewScript = {
     const rows: { key: string; what: string; x: number }[] = [
       { key: 'RIGHT-CLICK', what: 'phantom maces, 8s', x: ctx.w * 0.18 },
       { key: 'E AGAIN', what: 'true-damage dash, 32', x: ctx.w * 0.4 },
-      { key: 'R AGAIN', what: '+5s immunity, +25% speed', x: ctx.w * 0.62 },
+      { key: 'R AGAIN', what: 'riposte after a parry, 35 true', x: ctx.w * 0.62 },
       { key: 'F AGAIN', what: 'beast comes home', x: ctx.w * 0.84 },
     ];
     const labels = rows.map((r) => {
@@ -584,5 +626,240 @@ export const echoShards: PreviewScript = {
     spend(4000, 2, '+5s  +25% SPEED');
     ctx.at(5200, () => readout.setText('none left: the fourth press is refused, the base ability is untouched'));
     ctx.at(5600, () => { labels[3].setColor(hex(MYTH.red)); float(ctx, ctx.cx, ctx.cy - 66, 'NO ECHO SHARD', hex(MYTH.haze)); });
+  },
+};
+
+// ══ Shop upgrades ══════════════════════════════════════════════════════
+
+export const whipUpgraded: PreviewScript = {
+  duration: 9000,
+  scale: 0.9,
+  caption: 'Click+ Unquenched — five shards held instead of three; two cheers inside 10s and the crowd goes wild, throwing stars at your foe.',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new MythAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const d: Dummy = { x: ctx.cx + 150, y: ctx.cy, alive: true, stunUntil: 0, hp: 100 };
+    dummyAt(ctx, d);
+    const readout = label(ctx, ctx.w * 0.5, 30, hex(MYTH.shard), 11);
+    let shards = 3;
+    shardsOver(ctx, () => shards);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
+    const sg = ctx.adopt(ctx.scene.add.graphics().setDepth(11));
+    let cheerUntil = 0;
+    let frenzyUntil = 0;
+    let nextThrow = 0;
+    const thrown: { x: number; y: number; vx: number; vy: number; rot: number }[] = [];
+    const seats: { x: number; y: number; seed: number }[] = [];
+    for (let x = 12; x < ctx.w - 8; x += 21) { seats.push({ x, y: 10, seed: x }); seats.push({ x: x + 10, y: ctx.h - 8, seed: x + 7 }); }
+    ctx.onFrame((delta, elapsed) => {
+      g.clear(); sg.clear();
+      const t = elapsed / 1000;
+      const wild = elapsed < frenzyUntil;
+      const cheer = wild || elapsed < cheerUntil;
+      for (const sp of seats) {
+        const j = jitter(23, sp.seed);
+        const bounce = cheer ? Math.max(0, Math.sin(t * (wild ? 13 : 9) + j * 6.28)) * (wild ? 2 : 1) : 0.08 + 0.06 * Math.sin(t * 1.3 + j * 6);
+        const lit = cheer ? 0.5 + 0.5 * Math.sin(t * 12 + j * 9) : 0;
+        crowdFigure(g, sp.x, sp.y, 6.5, jitter(17, sp.seed) > 0.55 ? MYTH.crowdLit : MYTH.crowdDark, lit, bounce, cheer ? 1 : 0, 0.95);
+      }
+      if (wild && elapsed >= nextThrow) {
+        nextThrow = elapsed + 450;
+        const src = seats[Math.floor(Math.random() * seats.length)];
+        const a = Math.atan2(d.y - src.y, d.x - src.x);
+        thrown.push({ x: src.x, y: src.y, vx: Math.cos(a) * 400, vy: Math.sin(a) * 400, rot: 0 });
+      }
+      for (let i = thrown.length - 1; i >= 0; i--) {
+        const s = thrown[i];
+        s.x += s.vx * delta / 1000; s.y += s.vy * delta / 1000; s.rot += delta / 90;
+        star(sg, s.x, s.y, 5, ctx.tint(MYTH.star), 1, { points: 5, rot: s.rot });
+        if (Math.hypot(s.x - d.x, s.y - d.y) < 18) { thrown.splice(i, 1); float(ctx, d.x, d.y - 30, '3', hex(MYTH.star), 11); fx.graze(d.x, d.y); }
+      }
+    });
+    const cheerAt = (at: number) => ctx.at(at, () => {
+      av.play('sweep', ctx.aim, 280); fx.tipHit(d.x, d.y); float(ctx, d.x, d.y - 32, '24', '#ffb3aa', 12);
+      cheerUntil = at + 2600; shards = Math.min(5, shards + 1); fx.shardGain(ctx.cx, ctx.cy);
+      float(ctx, ctx.cx, ctx.cy - 66, `ECHO SHARD  ${shards}/5`, hex(MYTH.shard));
+    });
+    ctx.at(200, () => readout.setText('the hand holds five now, not three'));
+    cheerAt(900);
+    ctx.at(2400, () => readout.setText('win the crowd again inside ten seconds...'));
+    cheerAt(3200);
+    ctx.at(3300, () => { frenzyUntil = 3300 + 6000; readout.setText('...and it goes wild: stars over the wall, 3 each'); float(ctx, ctx.cx, ctx.cy - 86, 'FRENZY', hex(MYTH.gold), 13); });
+  },
+};
+
+export const truthUpgraded: PreviewScript = {
+  duration: 9000,
+  scale: 0.9,
+  caption: 'E+ World Shatter — the slash and the dash leave rifts. Cross one for 30% speed and Indomitable for 3s; it recharges for 8s. A spent shard relights them all.',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new MythAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const readout = label(ctx, ctx.w * 0.5, 12, hex(MYTH.haze), 11);
+    let shards = 1;
+    shardsOver(ctx, () => shards);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
+    const rifts: { x0: number; y0: number; x1: number; y1: number; born: number; usedAt: number; seed: number }[] = [];
+    let buffUntil = 0;
+    ctx.onFrame((_delta, elapsed) => {
+      g.clear();
+      for (const r of rifts) {
+        const open = Math.min(1, (elapsed - r.born) / 300);
+        const ready = r.usedAt === 0 || elapsed - r.usedAt >= 8000;
+        paintRift(g, ctx.tint, r.x0, r.y0, r.x1, r.y1, r.seed, elapsed / 1000, 1, ready, open);
+      }
+      if (elapsed < buffUntil) {
+        const c = ctx.casterAt();
+        g.lineStyle(2, ctx.tint(MYTH.gold), 0.5); g.strokeCircle(c.x, c.y, 32);
+      }
+    });
+    const slashAt = (at: number, x: number, y: number) => ctx.at(at, () => {
+      rig(av)?.setBlade(true); av.play('sweep', ctx.aim, 260);
+      fx.slash(x, y, ctx.aim, 150, Math.PI / 4, 10);
+      const px = -Math.sin(ctx.aim) * 70; const py = Math.cos(ctx.aim) * 70;
+      const mx = x + Math.cos(ctx.aim) * 90; const my = y + Math.sin(ctx.aim) * 90;
+      rifts.push({ x0: mx - px, y0: my - py, x1: mx + px, y1: my + py, born: at, usedAt: 0, seed: at });
+      ctx.scene.time.delayedCall(450, () => rig(av)?.setBlade(false));
+    });
+    const cross = (at: number, i: number) => ctx.at(at, () => {
+      rifts[i].usedAt = at; buffUntil = at + 3000;
+      const c = ctx.casterAt();
+      fx.ring(c.x, c.y, 8, 46, 380, MYTH.gold, 3, 10);
+      float(ctx, c.x, c.y - 52, 'INDOMITABLE  +30%', hex(MYTH.gold));
+    });
+    ctx.at(200, () => readout.setText('Truth Breaker cracks the floor where it lands'));
+    slashAt(500, ctx.cx - 60, ctx.cy);
+    ctx.at(1500, () => { readout.setText('walk across a rift: 30% speed, Indomitable for 3s'); ctx.glideCaster({ to: { x: ctx.cx + 90, y: ctx.cy }, ms: 900, ease: 'out' }); });
+    cross(2000, 0);
+    ctx.at(3200, () => readout.setText('it goes dark for 8 seconds...'));
+    ctx.at(4400, () => { readout.setText('...unless an Echo Shard is spent on anything'); shards = 0; fx.shardGain(ctx.casterAt().x, ctx.casterAt().y); for (const r of rifts) r.usedAt = 0; float(ctx, ctx.cx, ctx.cy - 70, 'RIFTS RELIT', hex(MYTH.haze)); });
+    ctx.at(5600, () => ctx.glideCaster({ to: { x: ctx.cx - 60, y: ctx.cy }, ms: 900, ease: 'out' }));
+    cross(6000, 0);
+    ctx.at(7600, () => ctx.glideCaster({ to: { x: ctx.cx, y: ctx.cy }, ms: 700, ease: 'out' }));
+  },
+};
+
+export const determinationUpgraded: PreviewScript = {
+  duration: 8000,
+  scale: 0.9,
+  caption: 'R+ Outskilled — a parry that catches nothing can be bought back: R again with a shard inside 1.5s raises the sword again at once.',
+  run(ctx) {
+    const P = parryStage(ctx);
+    P.st.shards = 2;
+    P.setArrive((parried) => {
+      if (parried) P.land();
+      else float(ctx, ctx.cx, ctx.cy - 50, '-15', '#ff8866', 12);
+    });
+    ctx.at(200, () => P.readout.setText('too early — the window closes before the shot lands'));
+    P.raise(400);
+    ctx.at(900, () => { P.lower(); float(ctx, ctx.cx, ctx.cy - 70, 'MISSED — R + SHARD TO RE-PARRY', hex(MYTH.haze), 10); });
+    P.fire(1000);
+    ctx.at(1250, () => { P.st.shards -= 1; P.fx.ring(ctx.cx, ctx.cy, 8, 40, 300, MYTH.haze, 2.5, 10); P.readout.setText('Outskilled: a shard, and the sword is straight back up'); });
+    P.raise(1260, 'OUTSKILLED — PARRY AGAIN');
+    ctx.at(1800, () => P.lower());
+    ctx.at(3200, () => P.readout.setText('a landed parry still pays the riposte'));
+    P.riposte(3700);
+    ctx.at(7600, () => rig(P.av)?.setDetermined(false));
+  },
+};
+
+export const beastUpgraded: PreviewScript = {
+  duration: 9000,
+  scale: 0.9,
+  caption: 'F+ Beyonders — the beast\'s rider throws spears at the nearest foe, 6 every 1.2s. After a recall, F with a shard: a 3s spear barrage on a 130px patch.',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new MythAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const d: Dummy = { x: ctx.cx + 170, y: ctx.cy + 20, alive: true, stunUntil: 0, hp: 100 };
+    dummyAt(ctx, d);
+    const readout = label(ctx, ctx.w * 0.5, 12, hex(MYTH.red), 11);
+    let shards = 1;
+    shardsOver(ctx, () => shards);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(8));
+    const portal = { x: ctx.cx - 70, y: ctx.cy - 30 };
+    let throwK = 0;
+    let barrageUntil = 0;
+    let nextTick = 0;
+    const spears: { x: number; y: number; vx: number; vy: number; life: number; fromBarrage: boolean }[] = [];
+    ctx.onFrame((delta, elapsed) => {
+      g.clear();
+      const t = elapsed / 1000;
+      throwK = Math.max(0, throwK - delta / 300);
+      paintPortal(g, ctx.tint, portal.x, portal.y, 0, 1, t, 7);
+      paintBeyonder(g, ctx.tint, portal.x, portal.y - 18, Math.atan2(d.y - portal.y, d.x - portal.x), 1, t, throwK);
+      if (elapsed < barrageUntil) {
+        g.lineStyle(2, ctx.tint(MYTH.red), 0.35); g.strokeCircle(d.x, d.y, 65);
+        if (elapsed >= nextTick) {
+          nextTick = elapsed + 250;
+          for (let i = 0; i < 3; i++) {
+            const ox = d.x + (Math.random() - 0.5) * 110; const oy = d.y + (Math.random() - 0.5) * 110;
+            spears.push({ x: ox - 60, y: oy - 200, vx: 240, vy: 800, life: 250, fromBarrage: true });
+          }
+          float(ctx, d.x + (Math.random() - 0.5) * 30, d.y - 34, '3', hex(MYTH.red), 11);
+        }
+      }
+      for (let i = spears.length - 1; i >= 0; i--) {
+        const sp = spears[i];
+        sp.x += sp.vx * delta / 1000; sp.y += sp.vy * delta / 1000; sp.life -= delta;
+        paintSpear(g, ctx.tint, sp.x, sp.y, Math.atan2(sp.vy, sp.vx), 34, 1);
+        if (sp.fromBarrage ? sp.life <= 0 : Math.hypot(sp.x - d.x, sp.y - d.y) < 18) {
+          spears.splice(i, 1);
+          fx.spearLand(sp.x, sp.y);
+          if (!sp.fromBarrage) float(ctx, d.x, d.y - 32, '6', hex(MYTH.red), 12);
+        }
+      }
+    });
+    const throwAt = (at: number) => ctx.at(at, () => {
+      throwK = 1;
+      const a = Math.atan2(d.y - portal.y, d.x - portal.x);
+      spears.push({ x: portal.x, y: portal.y - 22, vx: Math.cos(a) * 620, vy: Math.sin(a) * 620, life: 800, fromBarrage: false });
+    });
+    ctx.at(200, () => readout.setText('the rider: a spear at the nearest foe every 1.2s'));
+    throwAt(600); throwAt(1800); throwAt(3000);
+    ctx.at(3800, () => readout.setText('after a recall it waits at the portal for 8s'));
+    ctx.at(4800, () => { shards = 0; barrageUntil = 4800 + 3000; nextTick = 4800; readout.setText('F with a shard: BARRAGE — 3 every 0.25s for 3s'); fx.ring(portal.x, portal.y, 10, 50, 400, MYTH.red, 3, 10); });
+  },
+};
+
+export const destinyUpgraded: PreviewScript = {
+  duration: 11000,
+  scale: 0.9,
+  caption: 'Q+ Slayer — every gun gets a second act for a shard: rapid pistol, gun-butt stun, a red second blast, headshot-chained rifle, and a re-aimed rocket.',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new MythAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    rig(av)?.setHold('brace');
+    const d: Dummy = { x: ctx.cx + 150, y: ctx.cy, alive: true, stunUntil: 0, hp: 100 };
+    dummyAt(ctx, d);
+    const readout = label(ctx, ctx.w * 0.5, 12, hex(MYTH.gold), 11);
+    let shards = 5;
+    shardsOver(ctx, () => shards);
+    const spend = () => { shards = Math.max(0, shards - 1); };
+    const gunAt = (at: number, k: GunKind) => ctx.at(at, () => rig(av)?.setGun(k));
+    const shot = () => { rig(av)?.recoil(); fx.muzzle(ctx.cx, ctx.cy, ctx.aim, 8); fx.tracer(ctx.cx + 22, ctx.cy, d.x, d.y); };
+    gunAt(200, 'pistol');
+    ctx.at(300, () => { spend(); readout.setText('right-click: 5s of the pistol at double rate'); float(ctx, ctx.cx, ctx.cy - 50, 'RAPID FIRE', hex(MYTH.gold)); });
+    for (let at = 500; at < 2000; at += 180) ctx.at(at, () => { shot(); float(ctx, d.x, d.y - 30, '8', '#ffb3aa', 11); });
+    gunAt(2200, 'shotgun');
+    ctx.at(2300, () => { readout.setText('E on cooldown: the gun butt — 8 and a 3s stun'); ctx.glideCaster({ to: { x: d.x - 60, y: d.y }, ms: 400, ease: 'out' }); });
+    ctx.at(2800, () => { spend(); const c = ctx.casterAt(); av.play('sweep', ctx.aim, 260); fx.slash(c.x, c.y, ctx.aim, 78, Phaser.Math.DegToRad(50), 10); d.stunUntil = 2800 + 3000; float(ctx, d.x, d.y - 34, '8  STUNNED', hex(MYTH.red), 12); });
+    ctx.at(3300, () => ctx.glideCaster({ to: { x: ctx.cx, y: ctx.cy }, ms: 500, ease: 'out' }));
+    gunAt(3900, 'launcher');
+    const pts = [-1, 0, 1].map((i) => ({ x: d.x + i * 40, y: d.y + i * 26 }));
+    ctx.at(4000, () => { readout.setText('R on cooldown: the spent grenades blow again, red and bigger'); rig(av)?.recoil(); for (const p of pts) fx.explosion(p.x, p.y, 72, 9); });
+    ctx.at(4900, () => { spend(); for (const p of pts) fx.redExplosion(p.x, p.y, 104); float(ctx, d.x, d.y - 34, '18 × 3', hex(MYTH.red), 12); });
+    gunAt(5800, 'rifle');
+    ctx.at(5900, () => readout.setText('F on cooldown: the rifle back — and every headshot refreshes it'));
+    ctx.at(6300, () => { spend(); float(ctx, ctx.cx, ctx.cy - 50, 'RIFLE READY', hex(MYTH.gold)); });
+    for (const at of [6600, 7200, 7800]) ctx.at(at, () => { rig(av)?.recoil(); fx.muzzle(ctx.cx, ctx.cy, ctx.aim, 12); fx.tracer(ctx.cx + 24, ctx.cy, ctx.w, ctx.cy); fx.headshot(d.x, d.y); float(ctx, d.x, d.y - 32, '39  HEADSHOT — READY', hex(MYTH.gold), 11); });
+    gunAt(8600, 'rocket');
+    ctx.at(8700, () => { readout.setText('Q on cooldown: the rocket turns onto the crosshair at double speed'); rig(av)?.recoil(); fx.muzzle(ctx.cx, ctx.cy, ctx.aim, 18); });
+    ctx.at(9300, () => { spend(); float(ctx, ctx.cx, ctx.cy - 50, 'RE-AIMED  ×2', hex(MYTH.gold)); });
+    ctx.at(9700, () => { fx.explosion(d.x, d.y, 150, 10); float(ctx, d.x, d.y - 32, '50  DIRECT HIT', hex(MYTH.gold), 12); });
+    ctx.at(10600, () => { rig(av)?.setGun(null); rig(av)?.setHold(null); });
   },
 };

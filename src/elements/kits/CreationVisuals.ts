@@ -437,43 +437,6 @@ export function drawWrench(g: Phaser.GameObjects.Graphics, tint: CreationColorFn
   wrenchShape(g, tint, 0, 0, 0, 1, 1);
 }
 
-/** A nail: flat head, tapering shaft, ground point. */
-export function drawNail(g: Phaser.GameObjects.Graphics, tint: CreationColorFn): void {
-  g.clear();
-  g.fillStyle(tint(CREATION.steel), 1);
-  forgedShard(g, -6, 0, 0, 16, 2.2);
-  g.fillStyle(tint(CREATION.silver), 1);
-  g.fillRect(-7.5, -3.4, 3, 6.8);
-  g.fillStyle(tint(CREATION.white), 0.7);
-  g.fillRect(-7.5, -3.4, 3, 1.6);
-  g.fillStyle(tint(CREATION.white), 0.5);
-  g.fillRect(-4, -0.8, 10, 0.9);
-}
-
-/** A circular saw blade: hardened teeth, a scored plate and an arbor collar. */
-export function drawSaw(g: Phaser.GameObjects.Graphics, tint: CreationColorFn, r = 22): void {
-  g.clear();
-  const teeth = 12;
-  for (let i = 0; i < teeth; i++) {
-    const a = (i / teeth) * TAU;
-    g.fillStyle(tint(CREATION.silver), 1);
-    forgedShard(g, Math.cos(a) * r * 0.6, Math.sin(a) * r * 0.6, a, r * 0.5, r * 0.14, r * 0.12);
-  }
-  g.fillStyle(tint(CREATION.steel), 1);
-  g.fillCircle(0, 0, r * 0.66);
-  g.lineStyle(1.5, tint(CREATION.soot), 0.5);
-  for (let i = 0; i < 3; i++) g.strokeCircle(0, 0, r * (0.28 + i * 0.16));
-  // Three lightening slots — a plain disc looks like a coin, slots make it a blade.
-  g.fillStyle(tint(CREATION.soot), 0.85);
-  for (let i = 0; i < 3; i++) {
-    const a = (i / 3) * TAU;
-    forgedShard(g, Math.cos(a) * r * 0.3, Math.sin(a) * r * 0.3, a + 1.2, r * 0.3, r * 0.07);
-  }
-  g.fillStyle(tint(CREATION.brass), 1);
-  g.fillCircle(0, 0, r * 0.2);
-  rivet(g, tint, 0, 0, r * 0.13);
-}
-
 /**
  * An Automaton: a squat clockwork drum on two stubby legs, with a single lit eye and a
  * wind-up key turning on its back. Redrawn each frame — `t` drives the waddle and the key.
@@ -580,6 +543,161 @@ export function drawSpikedPanel(
   }
   g.lineStyle(2, tint(invincible ? CREATION.nexusLit : CREATION.ember), 0.95);
   g.strokeRect(-hw, -hh, w, h);
+}
+
+
+// ── Q — Self-Destruct ─────────────────────────────────────────────────────
+
+/**
+ * The comical remote, centred on 0,0 and standing upright: a chunky steel brick with a
+ * hazard-striped skirt, a whip antenna with a blinking tip, two little knobs, and one enormous
+ * red dome button under a brass collar. `press` 0→1 drives the dome down into the collar.
+ */
+export function drawSelfDestructRemote(
+  g: Phaser.GameObjects.Graphics, tint: CreationColorFn, press: number, t: number, alpha = 1,
+): void {
+  const w = 22, h = 30;
+  // Antenna first so the body overlaps its root.
+  g.lineStyle(1.6, tint(CREATION.silver), alpha);
+  g.lineBetween(-w / 2 + 4, -h / 2 + 2, -w / 2 - 2, -h / 2 - 16);
+  const tip = Math.sin(t * 14) > 0 ? 1 : 0.4;
+  g.fillStyle(tint(0xff2233), alpha * tip);
+  g.fillCircle(-w / 2 - 2, -h / 2 - 16, 2.6);
+  // Body: sooty shell, steel face, lit top edge.
+  g.fillStyle(tint(0x000000), alpha * 0.35);
+  g.fillRoundedRect(-w / 2 + 2, -h / 2 + 3, w, h, 4);
+  g.fillStyle(tint(CREATION.soot), alpha);
+  g.fillRoundedRect(-w / 2 - 1, -h / 2 - 1, w + 2, h + 2, 5);
+  g.fillStyle(tint(CREATION.steel), alpha);
+  g.fillRoundedRect(-w / 2, -h / 2, w, h, 4);
+  g.fillStyle(tint(CREATION.silver), alpha * 0.7);
+  g.fillRect(-w / 2 + 2, -h / 2 + 1.5, w - 4, 1.5);
+  // Hazard skirt along the bottom.
+  for (let i = 0; i < 6; i++) {
+    const x0 = -w / 2 + i * (w / 5) - 2;
+    g.fillStyle(tint(i % 2 === 0 ? CREATION.gold : CREATION.soot), alpha);
+    g.beginPath();
+    g.moveTo(Math.max(-w / 2, x0), h / 2 - 7);
+    g.lineTo(Math.min(w / 2, x0 + 4.4), h / 2 - 7);
+    g.lineTo(Math.min(w / 2, x0 + 2), h / 2 - 1.5);
+    g.lineTo(Math.max(-w / 2, x0 - 2.4), h / 2 - 1.5);
+    g.closePath();
+    g.fillPath();
+  }
+  // Knobs and a status LED.
+  rivet(g, tint, -w / 2 + 5, h / 2 - 11, 2, alpha);
+  rivet(g, tint, w / 2 - 5, h / 2 - 11, 2, alpha);
+  g.fillStyle(tint(press > 0.5 ? 0xff3344 : 0x66ff66), alpha);
+  g.fillCircle(0, h / 2 - 11, 1.6);
+  // The button: brass collar, red dome that sinks and darkens as it is pushed.
+  const by = -3;
+  g.fillStyle(tint(CREATION.bronze), alpha);
+  g.fillCircle(0, by, 9);
+  g.fillStyle(tint(CREATION.brass), alpha);
+  g.fillCircle(0, by, 7.6);
+  const sink = press * 2.2;
+  g.fillStyle(tint(press > 0.5 ? 0xaa1111 : 0xdd1a1a), alpha);
+  g.fillCircle(0, by + sink, 6.6 - press * 0.8);
+  g.fillStyle(tint(0xff5555), alpha * (1 - press * 0.6));
+  g.fillCircle(-1.6, by - 1.6 + sink, 3);
+  g.fillStyle(tint(CREATION.white), alpha * 0.8 * (1 - press));
+  g.fillCircle(-2.4, by - 2.6 + sink, 1.3);
+}
+
+/** Fixed crack paths for the ruined Nexus, so they don't crawl from frame to frame. */
+const NEXUS_RUIN_CRACKS = [0.35, 1.6, 2.7, 3.9, 5.2].map((a, i) => ({
+  a,
+  pts: [0, 0.35, 0.6, 0.85, 1].map((f, k) => ({ f, off: k === 0 ? 0 : ((i * 7 + k * 3) % 5 - 2) * 2.4 })),
+}));
+
+/**
+ * The Nexus after Self-Destruct: a scorch on the floor, a cracked ash-grey plinth, a gear
+ * knocked off its axle, ember veins still glowing in the cracks, a dead core and smoke curling
+ * off it. `repair` 0→1 is the rebuild: the embers cool, a brass progress ring closes round the
+ * plinth, and the core starts to flicker pink again just before it powers back on.
+ */
+export function drawNexusRuin(
+  g: Phaser.GameObjects.Graphics, tint: CreationColorFn, x: number, y: number, t: number, repair: number,
+): void {
+  const ash = 0x4a4440, ashLit = 0x6e6660, char = 0x1a1412;
+  // Scorch.
+  g.fillStyle(tint(char), 0.45);
+  g.fillEllipse(x, y + 4, 128, 92);
+  g.fillStyle(tint(char), 0.35);
+  g.fillEllipse(x, y + 4, 96, 70);
+  // Plinth, chipped: an octagon of ash with two bites taken out of the rim.
+  const oct = (r: number) => {
+    g.beginPath();
+    for (let i = 0; i <= 8; i++) {
+      const a = (i / 8) * TAU + Math.PI / 8;
+      const bite = i === 2 || i === 5 ? 0.78 : 1;
+      const px = x + Math.cos(a) * r * bite, py = y + Math.sin(a) * r * bite;
+      if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
+    }
+    g.closePath();
+  };
+  g.fillStyle(tint(char), 1); oct(40); g.fillPath();
+  g.fillStyle(tint(ash), 1); oct(35); g.fillPath();
+  g.lineStyle(2, tint(ashLit), 0.7); oct(37); g.strokePath();
+  // The big gear lies knocked off-centre and tilted; the small one is gone entirely.
+  drawGear(g, tint, x + 9, y + 6, 24, 14, 0.4, char, ash, 0.95);
+  // Ember veins in the cracks.
+  const glow = (0.55 + 0.35 * Math.sin(t * 5)) * (1 - repair * 0.75);
+  for (const c of NEXUS_RUIN_CRACKS) {
+    const cos = Math.cos(c.a), sin = Math.sin(c.a);
+    g.lineStyle(2.2, tint(CREATION.ember), glow);
+    g.beginPath();
+    c.pts.forEach((p, k) => {
+      const r = 6 + p.f * 30;
+      const px = x + cos * r - sin * p.off, py = y + sin * r + cos * p.off;
+      if (k === 0) g.moveTo(px, py); else g.lineTo(px, py);
+    });
+    g.strokePath();
+  }
+  // Dead core; it starts to flicker back to life over the last stretch of the rebuild.
+  g.fillStyle(tint(char), 1);
+  g.fillCircle(x, y, 9);
+  g.fillStyle(tint(ashLit), 0.8);
+  g.fillCircle(x - 2, y - 2, 3);
+  if (repair > 0.7 && Math.random() < (repair - 0.7) * 3) {
+    g.fillStyle(tint(CREATION.nexus), 0.7);
+    g.fillCircle(x, y, 7);
+    g.fillStyle(tint(CREATION.nexusLit), 0.8);
+    g.fillCircle(x, y, 4);
+  }
+  // Smoke curling off it.
+  for (let i = 0; i < 4; i++) {
+    const k = ((t * 0.45 + i / 4) % 1);
+    const sx = x + Math.sin(t * 1.3 + i * 2) * 8 + (i - 1.5) * 9;
+    const sy = y - 8 - k * 70;
+    g.fillStyle(tint(0x3a3634), 0.42 * (1 - k) * (1 - repair * 0.5));
+    g.fillCircle(sx, sy, 6 + k * 14);
+  }
+  // Rebuild progress: a brass ring of dashes closing round the plinth.
+  const dashes = 24;
+  for (let i = 0; i < dashes; i++) {
+    const a0 = -Math.PI / 2 + (i / dashes) * TAU;
+    const on = i / dashes < repair;
+    g.lineStyle(3, tint(on ? CREATION.brass : char), on ? 0.9 : 0.4);
+    g.beginPath(); g.arc(x, y, 48, a0, a0 + (TAU / dashes) * 0.6, false); g.strokePath();
+  }
+}
+
+/**
+ * One bit of torn scrap — grey plate, not forge copper, so the shrapnel littering the floor
+ * reads as wreckage rather than as Creation's own stock. Soot shell, steel body, silver bevel.
+ */
+export function scrapShard(
+  g: Phaser.GameObjects.Graphics, tint: CreationColorFn,
+  cx: number, cy: number, angle: number, len: number, halfW: number, bend: number, alpha: number,
+): void {
+  g.fillStyle(tint(CREATION.soot), alpha * 0.85);
+  forgedShard(g, cx, cy, angle, len, halfW, bend);
+  g.fillStyle(tint(CREATION.steel), alpha);
+  forgedShard(g, cx, cy, angle, len * 0.86, halfW * 0.68, bend * 0.8);
+  const px = -Math.sin(angle), py = Math.cos(angle);
+  g.fillStyle(tint(CREATION.silver), alpha * 0.9);
+  forgedShard(g, cx + px * halfW * 0.3, cy + py * halfW * 0.3, angle, len * 0.66, halfW * 0.2, bend * 0.5);
 }
 
 /** A brewed potion resting on the Nexus: shouldered flask, cork, liquid line, bubbles. */
@@ -1102,97 +1220,74 @@ export class CreationFx extends FxBase {
     });
   }
 
-  /** A sheet of sawdust motes drifting across a region — the Workshop's air. */
-  sawdust(x: number, y: number, w: number, h: number, count: number, depth = 1): void {
-    const motes = Array.from({ length: count }, () => ({
-      x: x + (Math.random() - 0.5) * w,
-      y: y + (Math.random() - 0.5) * h,
-      r: 1 + Math.random() * 2,
-      vx: (Math.random() - 0.5) * 22,
-      vy: -8 - Math.random() * 20,
-      delay: Math.random() * 0.4,
-    }));
-    this.anim(depth, 1600, (g, t) => {
-      for (const m of motes) {
-        const lt = (t - m.delay) / (1 - m.delay);
-        if (lt <= 0) continue;
-        const fade = Math.sin(lt * Math.PI);
-        g.fillStyle(this.tint(CREATION.tan), 0.4 * fade);
-        g.fillCircle(m.x + m.vx * lt * 1.6, m.y + m.vy * lt * 1.6, m.r);
+  /**
+   * Q — Self-Destruct's orbital strike on one target. Two acts on one Graphics: first the lock
+   * (counter-rotating brackets closing in, a crosshair and a blinking red pip, a hair-thin
+   * guide laser dropping from the top of the screen), then the beam itself — a fat column of
+   * nexus light slamming down with a white core, scan bands racing down it and a splash ring
+   * where it meets the floor. The kit detonates the target exactly when the lock ends. `at` is
+   * read every frame, so the strike follows a target that is still moving.
+   */
+  orbitalStrike(at: () => { x: number; y: number }, radius: number, lockMs: number, beamMs: number, depth = 12): void {
+    const total = lockMs + beamMs;
+    const lockT = lockMs / total;
+    const top = -40;
+    this.anim(depth, total, (g, t) => {
+      const { x, y } = at();
+      if (t < lockT) {
+        const lt = t / lockT;
+        const r = radius * (1.5 - easeOut(lt) * 0.85);
+        const blink = Math.sin(lt * 34) > 0 ? 1 : 0.35;
+        // Guide laser, flickering harder as the lock closes.
+        g.lineStyle(1.2 + lt * 1.6, this.tint(0xff3344), (0.25 + lt * 0.45) * (0.7 + Math.random() * 0.3));
+        g.lineBetween(x, top, x, y);
+        // Brackets: four arcs that rotate one way while the inner four rotate the other.
+        for (let k = 0; k < 4; k++) {
+          const a = (k / 4) * TAU + lt * 2.4;
+          g.lineStyle(2.4, this.tint(0xff3344), 0.85);
+          g.beginPath(); g.arc(x, y, r, a, a + 0.9, false); g.strokePath();
+          const b = (k / 4) * TAU - lt * 3.1 + 0.4;
+          g.lineStyle(1.4, this.tint(CREATION.gold), 0.7);
+          g.beginPath(); g.arc(x, y, r * 0.62, b, b + 0.6, false); g.strokePath();
+        }
+        // Crosshair ticks and the pip.
+        g.lineStyle(1.6, this.tint(0xff3344), 0.8);
+        for (let k = 0; k < 4; k++) {
+          const a = (k / 4) * TAU;
+          g.lineBetween(x + Math.cos(a) * r * 0.3, y + Math.sin(a) * r * 0.3,
+            x + Math.cos(a) * r * 1.15, y + Math.sin(a) * r * 1.15);
+        }
+        g.fillStyle(this.tint(0xff2233), blink);
+        g.fillCircle(x, y, 3.5);
+        g.fillStyle(this.tint(CREATION.white), blink * 0.8);
+        g.fillCircle(x - 1, y - 1, 1.3);
+        return;
       }
+      const bt = (t - lockT) / (1 - lockT);
+      // Slams in at full width, then thins and fades out.
+      const slam = bt < 0.12 ? bt / 0.12 : 1;
+      const fade = bt < 0.55 ? 1 : 1 - (bt - 0.55) / 0.45;
+      const w = radius * (0.95 - bt * 0.55) * slam;
+      g.fillStyle(this.tint(CREATION.nexus), 0.28 * fade);
+      g.fillRect(x - w * 1.5, top, w * 3, y - top);
+      g.fillStyle(this.tint(CREATION.nexusLit), 0.65 * fade);
+      g.fillRect(x - w * 0.75, top, w * 1.5, y - top);
+      g.fillStyle(this.tint(CREATION.white), 0.95 * fade);
+      g.fillRect(x - w * 0.28, top, w * 0.56, y - top);
+      // Scan bands racing down the column.
+      for (let k = 0; k < 4; k++) {
+        const by = top + (((bt * 3.2 + k / 4) % 1) * (y - top));
+        g.fillStyle(this.tint(CREATION.white), 0.55 * fade);
+        g.fillRect(x - w * 0.9, by, w * 1.8, 3);
+      }
+      // Where it meets the floor: a squashed splash and a hot ring rolling out.
+      g.fillStyle(this.tint(CREATION.nexusLit), 0.6 * fade);
+      g.fillEllipse(x, y, w * 3.4, w * 1.3);
+      g.fillStyle(this.tint(CREATION.white), 0.85 * fade);
+      g.fillEllipse(x, y, w * 1.6, w * 0.6);
+      g.lineStyle(3 * fade, this.tint(CREATION.spark), 0.8 * fade);
+      g.strokeEllipse(x, y, radius * (1 + bt * 1.6) * 2, radius * (1 + bt * 1.6) * 0.8);
     });
-  }
-}
-
-// ── CreationForge ─────────────────────────────────────────────────────────
-
-/**
- * The persistent ring of forge heat and orbiting stock around a fighter — worn by whoever has
- * the Workshop up. Driven by whoever owns it: call `update` every frame with the position.
- */
-export class CreationForge {
-  private g: Phaser.GameObjects.Graphics;
-  private t = 0;
-  private sparkAccum = 0;
-  private parts: { ang: number; dist: number; len: number; w: number; speed: number; plank: boolean }[];
-
-  constructor(
-    private scene: Phaser.Scene,
-    private tint: CreationColorFn,
-    private radius: number,
-    private intensity: number,
-    depth = 3,
-    count = 9,
-  ) {
-    this.g = scene.add.graphics().setDepth(depth);
-    this.parts = Array.from({ length: count }, (_, i) => ({
-      ang: (i / count) * TAU,
-      dist: 0.75 + Math.random() * 0.35,
-      len: 0.5 + Math.random() * 0.4,
-      w: 0.09 + Math.random() * 0.05,
-      speed: 0.7 + Math.random() * 0.6,
-      plank: i % 3 === 0,
-    }));
-  }
-
-  setIntensity(v: number): void { this.intensity = v; }
-
-  update(delta: number, x: number, y: number, alpha = 1): void {
-    if (!this.g.active) return;
-    this.t += delta / 1000;
-    const g = this.g;
-    g.clear();
-    if (alpha <= 0.02) return;
-
-    const spin = this.t * 0.85;
-    g.fillStyle(this.tint(CREATION.copper), 0.18 * this.intensity * alpha);
-    g.fillCircle(x, y, this.radius * (0.9 + Math.sin(this.t * 4) * 0.05));
-
-    // Stock orbiting the smith, waiting to be used.
-    for (const p of this.parts) {
-      const a = p.ang + spin * p.speed;
-      const wob = Math.sin(this.t * 3 + p.ang);
-      const d = this.radius * p.dist * (1 + wob * 0.06);
-      const px = x + Math.cos(a) * d, py = y + Math.sin(a) * d * 0.72;
-      const len = this.radius * p.len * this.intensity;
-      if (p.plank) craftPlank(g, this.tint, px, py, a + Math.PI / 2, len, this.radius * p.w, 0.7 * alpha);
-      else forgedShardLayered(g, this.tint, px, py, a + Math.PI / 2, len, this.radius * p.w, wob * 4, 0.7 * alpha);
-    }
-
-    this.sparkAccum += delta;
-    const interval = 300 / Math.max(0.4, this.intensity);
-    if (this.sparkAccum >= interval) {
-      this.sparkAccum = 0;
-      new CreationFx(this.scene, this.tint).sparks(
-        x + (Math.random() - 0.5) * this.radius * 1.2,
-        y + (Math.random() - 0.5) * this.radius * 0.7,
-        1, { speed: 26, size: 2, life: 620, gravity: -60, depth: 4 },
-      );
-    }
-  }
-
-  destroy(): void {
-    this.g.destroy();
   }
 }
 
@@ -2268,104 +2363,6 @@ export function drawMechHpGauge(
     rivet(g, tint, rx, ry, 1.3, alpha);
   }
   drawGear(g, tint, l - 6, y, 5, 7, t * 1.6, CREATION.bronze, CREATION.brass, alpha);
-}
-
-/**
- * Ultimate Invention's three sliders as an inventor's control console: a riveted iron panel
- * with a blueprint-blue inset, each slider a recessed brass slot with graduation ticks, a
- * coloured fill and a lever knob; the instability timer reads off a nixie-style readout with a
- * pressure needle. Layout matches the hit-test in CreationKit (track rows at `y0 + i*rowH + 6`).
- */
-export function drawInventionPanel(
-  g: Phaser.GameObjects.Graphics, tint: CreationColorFn,
-  x0: number, y0: number, trackW: number, rowH: number,
-  vals: number[], colors: number[], timerFrac: number, dragging: number, t: number,
-): void {
-  const padL = 12, padR = 14;
-  const left = x0 - padL, top = y0 - 26;
-  const w = trackW + padL + padR;
-  const h = rowH * 3 + 44;
-  // Panel.
-  g.fillStyle(tint(0x000000), 0.4);
-  g.fillRoundedRect(left + 3, top + 4, w, h, 6);
-  g.fillStyle(tint(CREATION.iron), 0.97);
-  g.fillRoundedRect(left, top, w, h, 6);
-  g.fillStyle(tint(0x13233a), 0.95);
-  g.fillRoundedRect(left + 4, top + 4, w - 8, h - 8, 4);
-  // Blueprint grid.
-  g.lineStyle(1, tint(0x2c4a72), 0.45);
-  for (let gx = left + 10; gx < left + w - 6; gx += 10) {
-    g.beginPath(); g.moveTo(gx, top + 5); g.lineTo(gx, top + h - 5); g.strokePath();
-  }
-  for (let gy = top + 10; gy < top + h - 6; gy += 10) {
-    g.beginPath(); g.moveTo(left + 5, gy); g.lineTo(left + w - 5, gy); g.strokePath();
-  }
-  g.lineStyle(1.5, tint(CREATION.brass), 0.85);
-  g.strokeRoundedRect(left + 0.75, top + 0.75, w - 1.5, h - 1.5, 6);
-  for (const [rx, ry] of [[left + 5, top + 5], [left + w - 5, top + 5], [left + 5, top + h - 5], [left + w - 5, top + h - 5]]) {
-    rivet(g, tint, rx, ry, 2, 1);
-  }
-
-  for (let i = 0; i < 3; i++) {
-    const cy = y0 + i * rowH + 6;
-    const v = Phaser.Math.Clamp(vals[i] ?? 0, 0, 1);
-    const col = colors[i];
-    // Slot.
-    g.fillStyle(tint(CREATION.soot), 1);
-    g.fillRoundedRect(x0 - 2, cy - 5, trackW + 4, 10, 4);
-    g.lineStyle(1, tint(CREATION.bronze), 0.9);
-    g.strokeRoundedRect(x0 - 2, cy - 5, trackW + 4, 10, 4);
-    // Graduations.
-    for (let k = 0; k <= 10; k++) {
-      const tx = x0 + (k / 10) * trackW;
-      g.lineStyle(1, tint(CREATION.tan), k % 5 === 0 ? 0.8 : 0.4);
-      g.beginPath(); g.moveTo(tx, cy + 6); g.lineTo(tx, cy + (k % 5 === 0 ? 10 : 8)); g.strokePath();
-    }
-    // Fill.
-    if (v > 0.001) {
-      g.fillStyle(tint(col), 0.9);
-      g.fillRoundedRect(x0, cy - 3, v * trackW, 6, 3);
-      g.fillStyle(tint(CREATION.white), 0.35);
-      g.fillRect(x0 + 2, cy - 2.4, Math.max(0, v * trackW - 4), 1.3);
-    }
-    // Lever knob: brass stem with a coloured ball, glowing while dragged.
-    const kx = x0 + v * trackW;
-    const active = dragging === i;
-    if (active) {
-      g.fillStyle(tint(col), 0.3 + 0.15 * Math.sin(t * 12));
-      g.fillCircle(kx, cy, 12);
-    }
-    g.fillStyle(tint(CREATION.soot), 0.7);
-    g.fillRoundedRect(kx - 4, cy - 9 + 1, 8, 18, 3);
-    g.fillStyle(tint(CREATION.brass), 1);
-    g.fillRoundedRect(kx - 4, cy - 9, 8, 18, 3);
-    g.fillStyle(tint(CREATION.spark), 0.8);
-    g.fillRect(kx - 2.6, cy - 7.5, 1.4, 15);
-    g.lineStyle(1, tint(CREATION.soot), 0.8);
-    for (const oy of [-4, 0, 4]) { g.beginPath(); g.moveTo(kx - 2.5, cy + oy); g.lineTo(kx + 2.5, cy + oy); g.strokePath(); }
-    g.fillStyle(tint(col), 1);
-    g.fillCircle(kx, cy - 11, 3);
-    g.fillStyle(tint(CREATION.white), 0.8);
-    g.fillCircle(kx - 1, cy - 12, 1);
-  }
-
-  // Instability readout: a pressure dial whose needle sweeps toward red as the timer drains.
-  const dx = x0 + trackW - 8, dy = y0 + 3 * rowH + 6;
-  const tf = Phaser.Math.Clamp(timerFrac, 0, 1);
-  g.fillStyle(tint(CREATION.soot), 1);
-  g.fillCircle(dx, dy, 9);
-  g.lineStyle(1.4, tint(CREATION.brass), 1);
-  g.strokeCircle(dx, dy, 9);
-  // 270° sweep with the gap at the bottom: red zone at the empty end, gold the rest.
-  g.lineStyle(2.2, tint(0xff3333), 0.9);
-  g.beginPath(); g.arc(dx, dy, 6.5, Math.PI * 0.75, Math.PI * 1.1, false); g.strokePath();
-  g.lineStyle(2.2, tint(CREATION.gold), 0.7);
-  g.beginPath(); g.arc(dx, dy, 6.5, Math.PI * 1.1, Math.PI * 2.25, false); g.strokePath();
-  const na = Math.PI * 0.75 + Math.PI * 1.5 * tf + (tf < 0.25 ? Math.sin(t * 30) * 0.06 : 0);
-  g.lineStyle(1.4, tint(CREATION.white), 1);
-  g.beginPath(); g.moveTo(dx, dy); g.lineTo(dx + Math.cos(na) * 7.5, dy + Math.sin(na) * 7.5); g.strokePath();
-  g.fillStyle(tint(CREATION.brass), 1);
-  g.fillCircle(dx, dy, 1.8);
 }
 
 /** An engraved brass nameplate screwed to the floor under the Nexus. */

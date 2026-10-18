@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import type { InvasionMap, MapRoomMeta } from './InvasionMap';
 
 /**
  * The mansion the invasion defends: a central hall with four rooms off it.
@@ -83,7 +84,7 @@ export interface MansionHooks {
   onRoomChanged?: (room: number) => void;
 }
 
-export class Mansion {
+export class Mansion implements InvasionMap {
   /** HP per room index; the hall (0) can be invaded but never damaged. */
   hp: number[] = [];
   lost: boolean[] = [];
@@ -137,6 +138,10 @@ export class Mansion {
   }
 
   get isApocalypse(): boolean { return this.apocalypse; }
+
+  roomMeta(room: number): MapRoomMeta {
+    return ROOM_META[room] ?? ROOM_META[HALL_ROOM];
+  }
 
   /**
    * The eye in the cellar has opened. The corner wings unfold, every room is

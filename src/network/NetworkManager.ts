@@ -4,7 +4,7 @@ import type { NetStatusEntry } from './NetStatusSync';
 import type { NetConquestSnap } from '../elements/kits/ConquestKit';
 
 /** Bump when the wire protocol or gameplay sync changes incompatibly. */
-export const NET_PROTOCOL_VERSION = 39;
+export const NET_PROTOCOL_VERSION = 45;
 
 /** Lobby selection payload exchanged while both players pick loadouts. */
 export interface NetSelection {
@@ -74,10 +74,10 @@ export type NetIllusionMsg =
   // Illusionist → victim: F+ Re-Trick — I swapped into the clone, which stood here. The victim
   // ends the Guise silently, so the body they were chasing simply becomes real.
   | { t: 'ill'; k: 'retrick'; x: number; y: number }
-  // Attacker → victim: a Blade Dance dagger found you, and you are now over there. Sent
-  // rather than resolved locally because a replica's position belongs to the peer's state
-  // stream — moving our copy would simply be undone by their next packet.
-  | { t: 'ill'; k: 'blink'; x: number; y: number }
+  // Illusionist → victim: Reality Shift (mastery) fired. Decided on the illusionist's sim, the
+  // only one that sees every hit they take; the jump itself rides their state stream, so this
+  // carries only the flash and, mid-Dance, the Bomb Dance volley the shift throws.
+  | { t: 'ill'; k: 'shift' }
   // Victim → illusionist: I clicked on your face. Resolved entirely on the illusionist's sim,
   // because the whole ability is that the person reaching does not know what they will find:
   // a mask comes off, and an empty face costs them 15.
@@ -108,13 +108,13 @@ export type NetPsychicMsg =
   // Psychic → victim (F upgrade, Castle): I swapped with my rook `id`; it came down at (x, y),
   // where I was standing. My body is streamed; the rook's new square and its slam are not.
   | { t: 'psy'; k: 'castle'; id: number; x: number; y: number }
-  // Psychic → victim (mastery, ≈2 Hz while it runs): Utter Focus. `ms` is how much of the window
-  // is *left* rather than how long it was, because every hit the psychic takes shortens it.
-  // 0 ends it. The victim's own sim is what actually holds their casts and their movement keys.
-  | { t: 'psy'; k: 'utter'; ms: number }
-  // Victim → psychic (≈6 Hz while focused): where my buffered movement keys are actually going
-  // to take me, as a flat [x0,y0,x1,y1,…].
-  | { t: 'psy'; k: 'route'; pts: number[] };
+  // Psychic → victim (mastery, Pre-move): I have predicted your `key` ('click', 'e', 'r', 'f',
+  // 'q', 'space', 'w', 'a', 's' or 'd'). Your own sim watches your keys for the next `ms` and
+  // punishes the first press of it.
+  | { t: 'psy'; k: 'premove'; key: string; ms: number }
+  // Victim → psychic: your Pre-move caught me pressing `key`. My sim has already stunned, slowed
+  // and stretched my own cooldown; your sim deals the burst, so the damage stays attacker-side.
+  | { t: 'psy'; k: 'premoved'; key: string };
 
 /**
  * Conquest ships its whole board rather than events.
@@ -160,16 +160,45 @@ export interface NetMansionState {
   tn?: number;
 }
 
+/** Host → guest: the City's state inside huskSnap (City co-op only). */
+export interface NetCityState {
+  /** The All-Element's health and max. */
+  hp: number;
+  mhp: number;
+  /** Lanes the current wave is pouring out of. */
+  ln: number[];
+  /** The bots, in party order. */
+  b: NetBotState[];
+  /** Drafted mutations, each id prefixed with '*' once starred. */
+  cu: string[];
+}
+
+/** One bot party member, as the guest needs to draw it. */
+export interface NetBotState {
+  e: string;
+  x: number;
+  y: number;
+  hp: number;
+  mhp: number;
+  r: number;
+  d: boolean;
+  f: number;
+  /** Bumped every attack, so the guest can play a swing for each one. */
+  a: number;
+}
+
 export type NetMatchMode = 'pvp' | 'invasion';
 
 export type NetMsg =
   | { t: 'hello'; version: number }
   | { t: 'sel'; elementId: string | null; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; skin?: string | null; bond?: string[] | null; ready: boolean }
-  | { t: 'mode'; mode: NetMatchMode; invasionDifficulty: string }
+  | { t: 'mode'; mode: NetMatchMode; invasionDifficulty: string; invasionMap?: 'city' | 'mansion'; invasionParty?: number }
   | {
       t: 'start';
       mode: NetMatchMode;
       invasionDifficulty?: string;
+      invasionMap?: 'city' | 'mansion';
+      invasionParty?: number;
       hostSel: { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; skin?: string | null; bond?: string[] | null };
       guestSel: { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; skin?: string | null; bond?: string[] | null };
     }
@@ -196,7 +225,13 @@ export type NetMsg =
   | { t: 'ping'; ts: number }
   | { t: 'pong'; ts: number }
   // ── Invasion co-op (host → guest unless noted) ──────────────────
-  | { t: 'huskSnap'; wave: number; shards: number; remaining: number; husks: NetHuskState[]; m?: NetMansionState }
+  | { t: 'huskSnap'; wave: number; shards: number; remaining: number; husks: NetHuskState[]; m?: NetMansionState; c?: NetCityState }
+  // Host → guest (City): a wave was announced out of these lanes.
+  | { t: 'cityWarn'; wave: number; lanes: number[] }
+  // Guest → host (City): the guest kept this draft card. Mutations and boons land on the
+  // host's sim; the rest were already applied to the guest's own loadout. Also tells the
+  // host the guest is done drafting, so the next wave can start.
+  | { t: 'cityPick'; kind: string; id: string }
   // Host → guest: a wave was announced — show the target-room warning.
   | { t: 'waveWarn'; wave: number; room: number }
   // Host → guest: a room fell. The snap's mansion state seals it; this shows the banner.

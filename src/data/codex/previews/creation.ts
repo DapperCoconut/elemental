@@ -3,8 +3,8 @@ import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import {
   CREATION, CREATION_TIER_COLORS, CreationAvatar, CreationFx, CreationNexus, CreationMechRig,
-  MechArmKind, blueprintFrame, drawAutomaton, drawBolt, drawDagger, drawFlask, drawNail,
-  drawSaw, drawSpeedPad, drawSpikedPanel, drawWrench, plankPanel,
+  MechArmKind, blueprintFrame, drawAutomaton, drawBolt, drawDagger, drawFlask, drawNexusRuin,
+  drawSelfDestructRemote, drawSpeedPad, drawSpikedPanel, drawWrench, plankPanel, scrapShard,
 } from '../../../elements/kits/CreationVisuals';
 import { CREATION_POTIONS, CreationPotionKind } from '../../../elements/kits/CreationKit';
 
@@ -12,7 +12,7 @@ import { CREATION_POTIONS, CreationPotionKind } from '../../../elements/kits/Cre
  * Creation's showcases.
  *
  * Creation puts more standing furniture in the arena than any other element — the Nexus, walls,
- * pads, spike blocks, crates, a piloted mech — and all of it is drawn by `CreationVisuals`
+ * pads, spike blocks, a piloted mech — and all of it is drawn by `CreationVisuals`
  * classes and statics that the kit repaints from its own state. These loops drive the same
  * ones: `CreationNexus` and `CreationMechRig` are the real rigs, and every wall here is a
  * `plankPanel` at the size the kit would have built.
@@ -575,146 +575,146 @@ export const createBlockUpgraded: PreviewScript = {
   },
 };
 
-// ══ Q — Workshop ══════════════════════════════════════════════════════
+// ══ Q — Self-Destruct ═════════════════════════════════════════════════
 
-/** The boarded floor the Workshop lays over the whole arena. */
-function workshopFloor(ctx: PreviewCtx, on: () => boolean): void {
-  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(0));
-  ctx.onFrame(() => {
+/** The comical remote held up over the caster's head, its button going down at `pressAt`. */
+function remoteProp(ctx: PreviewCtx, born: number, pressAt: number): void {
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(12));
+  ctx.onFrame((_dt, elapsed) => {
     g.clear();
-    if (!on()) return;
-    plankPanel(g, ctx.tint, ctx.w, ctx.h, 0.34, { boardH: 46, frame: 6 });
-    g.setPosition(ctx.w / 2, ctx.h / 2);
+    const el = elapsed - born;
+    if (el < 0 || elapsed > pressAt + 380) return;
+    const press = Phaser.Math.Clamp((elapsed - (pressAt - 140)) / 120, 0, 1);
+    const rise = Phaser.Math.Clamp(el / 160, 0, 1);
+    const fade = elapsed > pressAt + 220 ? 1 - (elapsed - pressAt - 220) / 160 : 1;
+    drawSelfDestructRemote(g, ctx.tint, press, elapsed / 1000, Math.max(0, fade) * rise);
+    g.setPosition(ctx.cx + 4, ctx.cy - 30 - rise * 16 + press * 3).setRotation(Math.sin(el / 70) * 0.06);
   });
 }
 
-export const workshop: PreviewScript = {
-  duration: 7000,
-  scale: 0.9,
-  caption: 'Q — 30 seconds of your own shop floor: +25% speed and you walk over your own walls',
+/** A Create block that stands from `born` until the beam takes it at `until`. */
+function bomb(ctx: PreviewCtx, o: { x: number; y: number; w: number; h: number; born: number; until: number }): void {
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+  ctx.onFrame((_dt, elapsed) => {
+    g.clear();
+    if (elapsed < o.born || elapsed >= o.until) return;
+    plankPanel(g, ctx.tint, o.w, o.h, 0.92);
+    g.setPosition(o.x, o.y);
+  });
+}
+
+/** The real Nexus rig until `until`, then the ashen ruin repairing for 8s. */
+function nexusThenAsh(ctx: PreviewCtx, x: number, y: number, until: number): void {
+  const rig = ctx.capture(() => new CreationNexus(ctx.scene, ctx.tint, x, y, 3));
+  const ash = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
+  let gone = false;
+  ctx.onFrame((dt, elapsed) => {
+    if (elapsed < until) { ctx.capture(() => rig.update(dt)); return; }
+    if (!gone) { gone = true; rig.destroy(); }
+    ash.clear();
+    drawNexusRuin(ash, ctx.tint, x, y, elapsed / 1000, Phaser.Math.Clamp((elapsed - until) / 8000, 0, 1));
+  });
+}
+
+/** Floor scrap round a detonation, cut up by whoever walks over it. */
+function scrapField(ctx: PreviewCtx, x: number, y: number, count: number, span: number, born: number, mark: Mark): void {
+  const pieces = Array.from({ length: count }, () => {
+    const a = Math.random() * Math.PI * 2, d = Math.sqrt(Math.random()) * span;
+    return { x: x + Math.cos(a) * d, y: y + Math.sin(a) * d, ang: Math.random() * Math.PI * 2,
+      len: 7 + Math.random() * 7, w: 1.8 + Math.random() * 1.6, live: true };
+  });
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(2));
+  let cutReady = 0;
+  ctx.onFrame((_dt, elapsed) => {
+    g.clear();
+    if (elapsed < born) return;
+    for (const p of pieces) {
+      if (!p.live) continue;
+      if (elapsed >= cutReady && Math.abs(p.x - mark.x) < 16 && Math.abs(p.y - mark.y) < 16) {
+        p.live = false;
+        cutReady = elapsed + 140;
+        float(ctx, mark.x, mark.y - 28, '4', '#ffb3aa');
+        continue;
+      }
+      scrapShard(g, ctx.tint, p.x, p.y, p.ang, p.len, p.w, 0, 1);
+    }
+  });
+}
+
+/** One target: reticle and beam via the real `orbitalStrike`, then the blast on the lock's end. */
+function strike(
+  ctx: PreviewCtx, fx: CreationFx, at: number, x: number, y: number, radius: number,
+  boom: () => void,
+): void {
+  ctx.at(at, () => fx.orbitalStrike(() => ({ x, y }), Math.min(70, radius * 0.45), 380, 420));
+  ctx.at(at + 380, boom);
+}
+
+export const selfDestruct: PreviewScript = {
+  duration: 8000,
+  scale: 0.85,
+  caption: 'Q — push the button: an orbital beam blows up every wall, mech and the Nexus you built',
   run(ctx) {
     const { fx, av } = stage(ctx, { noDummy: true });
     const mark: Mark = { x: ctx.tx, y: ctx.ty };
     movingDummy(ctx, mark);
-    let on = false;
-    workshopFloor(ctx, () => on);
+    const press = 1100;
+    const w1 = { x: ctx.tx - 40, y: ctx.ty - 50 }, w2 = { x: ctx.tx + 30, y: ctx.ty + 54 };
+    const nx = ctx.cx - 110, ny = ctx.cy + 30;
+    bomb(ctx, { ...w1, w: 80, h: 30, born: 0, until: press + 380 });
+    bomb(ctx, { ...w2, w: 30, h: 90, born: 0, until: press + 490 });
+    nexusThenAsh(ctx, nx, ny, press + 600);
 
-    const wx = ctx.cx + 150, wy = ctx.cy;
-    wall(ctx, { x: wx, y: wy, w: 40, h: 100, born: 0, hp: () => 1 });
-
-    ctx.at(700, () => {
-      on = true;
-      av.play('raise');
-      fx.hammerStrike(ctx.cx, ctx.cy + 18, Math.PI / 2, 1.6);
-      fx.ring(ctx.cx, ctx.cy, 20, Math.max(ctx.w, ctx.h) * 0.75, CREATION.tan, 620, 8, 1);
-      fx.sawdust(ctx.w / 2, ctx.h / 2, ctx.w, ctx.h, 40);
-      fx.gearPulse(ctx.cx, ctx.cy, 60, 700, CREATION.gold, 5);
-      float(ctx, ctx.cx, ctx.cy - 40, '🔨 WORKSHOP', '#d9a066');
+    ctx.at(600, () => { av.play('raise', undefined, 700); float(ctx, ctx.cx, ctx.cy - 70, '📡 SELF-DESTRUCT', '#ff4455'); });
+    remoteProp(ctx, 600, press);
+    strike(ctx, fx, press, w1.x, w1.y, 80, () => {
+      fx.explosion(w1.x, w1.y, 80, { shards: 18, smoke: 3, core: CREATION.ember });
+      fx.shrapnel(w1.x, w1.y, 14, 90, 8);
+      float(ctx, mark.x, mark.y - 30, '15', '#ffb3aa');
     });
-    ctx.at(1400, () => float(ctx, ctx.cx, ctx.cy - 44, '+25% SPEED', '#ffe98a'));
-    // A footprint stamped every 70ms behind whoever owns the floor.
-    ctx.onFrame((_dt, elapsed) => {
-      if (!on || elapsed % 280 > 20) return;
-      fx.sawdust(ctx.cx + 20, ctx.cy + 14, 24, 10, 3);
+    strike(ctx, fx, press + 110, w2.x, w2.y, 84, () => {
+      fx.explosion(w2.x, w2.y, 84, { shards: 18, smoke: 3, core: CREATION.ember });
+      fx.shrapnel(w2.x, w2.y, 12, 90, 8);
+      float(ctx, mark.x + 20, mark.y - 44, '4 4 4 shrapnel', '#d0d6e8');
     });
-    ctx.at(2600, () => float(ctx, wx, wy - 62, 'you walk through your own', '#a6f0c2'));
-    ctx.at(4000, () => float(ctx, mark.x, mark.y - 34, 'theirs still stops them', '#ff9c9c'));
-    ctx.at(5400, () => float(ctx, ctx.cx, ctx.cy - 44, '30s up, 45s cooldown', '#8a8ab0'));
+    strike(ctx, fx, press + 220, nx, ny, 185, () => {
+      fx.explosion(nx, ny, 150, { shards: 30, smoke: 7, core: CREATION.nexus, duration: 900 });
+      fx.gearPulse(nx, ny, 90, 900, CREATION.nexusLit, 8);
+      float(ctx, nx, ny - 80, '💥 NEXUS DESTROYED', '#ff3399');
+    });
+    ctx.at(press + 1200, () => float(ctx, nx, ny - 64, '30 + 🔥 alight', '#ff7733'));
+    ctx.at(press + 2600, () => float(ctx, nx, ny - 64, 'ash for 8s', '#aaa49e'));
+    ctx.at(press + 4400, () => float(ctx, ctx.cx, ctx.cy - 44, '40s cooldown', '#8a8ab0'));
   },
 };
 
-export const workshopUpgraded: PreviewScript = {
-  duration: 8600,
-  scale: 0.9,
-  caption: 'Ultimate Invention — three sliders that make the workshop better and its timer shorter',
+export const selfDestructUpgraded: PreviewScript = {
+  duration: 8000,
+  scale: 0.85,
+  caption: 'Scrapnel — every wreck litters the floor with scrap: 4 a piece to whoever walks on it',
   run(ctx) {
     const { fx, av } = stage(ctx, { noDummy: true });
-    const mark: Mark = { x: ctx.tx + 60, y: ctx.ty };
+    const mark: Mark = { x: ctx.tx + 70, y: ctx.ty - 60 };
     movingDummy(ctx, mark);
-    let on = false;
-    workshopFloor(ctx, () => on);
-
-    // The panel: three sliders and the unstable timer, in the kit's own layout.
-    const vals = [0, 0, 0];
-    const panel = ctx.adopt(ctx.scene.add.graphics().setDepth(20));
-    const names = ['Danger', 'Bias', 'Clutter'];
-    const cols = [0xff5544, 0xffcc33, 0x88aaff];
-    const texts = names.map((n, i) => ctx.adopt(ctx.scene.add.text(20, 60 + i * 34, n, {
-      fontSize: '12px', fontFamily: 'Arial', color: '#ffffff',
-    }).setDepth(21).setVisible(false)));
-    const timer = ctx.adopt(ctx.scene.add.text(20, 168, '', {
-      fontSize: '16px', fontFamily: 'Arial', fontStyle: 'bold', color: '#ff3333',
-    }).setDepth(21));
-    let left = 30000;
-    ctx.onFrame((dt) => {
-      panel.clear();
-      if (!on) { timer.setText(''); return; }
-      for (const t of texts) t.setVisible(true);
-      for (let i = 0; i < 3; i++) {
-        const y = 79 + i * 34;
-        panel.fillStyle(0x222228, 0.9);
-        panel.fillRect(20, y - 4, 160, 8);
-        panel.fillStyle(cols[i], 0.9);
-        panel.fillRect(20, y - 4, 160 * vals[i], 8);
-        panel.fillStyle(0xffffff, 1);
-        panel.fillRect(20 + 160 * vals[i] - 5, y - 9, 10, 18);
-      }
-      // Instability: 1 + 1.5× the sum of the three sliders.
-      left -= dt * (1 + (vals[0] + vals[1] + vals[2]) * 1.5);
-      timer.setText(`${Math.max(0, left / 1000).toFixed(1)}s`);
+    const press = 1000;
+    const w = { x: ctx.tx, y: ctx.ty };
+    bomb(ctx, { ...w, w: 110, h: 50, born: 0, until: press + 380 });
+    ctx.at(500, () => { av.play('raise', undefined, 700); float(ctx, ctx.cx, ctx.cy - 70, '📡 SELF-DESTRUCT', '#ff4455'); });
+    remoteProp(ctx, 500, press);
+    strike(ctx, fx, press, w.x, w.y, 96, () => {
+      fx.explosion(w.x, w.y, 96, { shards: 20, smoke: 3, core: CREATION.ember });
+      fx.shrapnel(w.x, w.y, 16, 90, 8);
     });
-
-    ctx.at(500, () => {
-      on = true;
-      av.play('raise');
-      fx.sawdust(ctx.w / 2, ctx.h / 2, ctx.w, ctx.h, 40);
-      float(ctx, ctx.cx, ctx.cy - 40, '🔨 WORKSHOP', '#d9a066');
+    scrapField(ctx, w.x, w.y, 42, 100, press + 380, mark);
+    ctx.at(press + 900, () => float(ctx, w.x, w.y - 70, 'SCRAPNEL', '#d0d6e8'));
+    // The dummy walks straight through the carpet and gets cut on the way.
+    ctx.onFrame((_dt, elapsed) => {
+      if (elapsed < press + 1500) return;
+      const k = Phaser.Math.Clamp((elapsed - press - 1500) / 3600, 0, 1);
+      mark.x = ctx.tx + 70 - k * 150;
+      mark.y = ctx.ty - 60 + k * 120;
     });
-    ctx.at(1300, () => { vals[0] = 0.85; float(ctx, ctx.cx, ctx.cy - 44, 'DANGER ↑', '#ff5544'); });
-    ctx.at(2600, () => { vals[1] = 0.8; float(ctx, ctx.cx, ctx.cy - 44, 'BIAS ↑ +60% dmg', '#ffcc33'); });
-    ctx.at(4200, () => { vals[2] = 0.5; float(ctx, ctx.cx, ctx.cy - 44, 'CLUTTER ↑', '#88aaff'); });
-
-    // Danger: a saw across the floor, then a nail volley.
-    const saw = ctx.adopt(ctx.scene.add.graphics().setDepth(6));
-    drawSaw(saw, ctx.tint, 22);
-    saw.setVisible(false);
-    let sawX = -24;
-    ctx.onFrame((dt, elapsed) => {
-      if (elapsed < 1700) return;
-      saw.setVisible(true);
-      sawX += 300 * (dt / 1000);
-      if (sawX > ctx.w + 40) sawX = -24;
-      saw.setPosition(sawX, ctx.cy + 46).setRotation(elapsed / 90);
-    });
-    ctx.at(2900, () => float(ctx, mark.x, mark.y + 40, '25 (saw)', '#ffb3aa'));
-    ctx.at(5000, () => {
-      for (let i = 0; i < 5; i++) {
-        const g = ctx.adopt(ctx.scene.add.graphics().setDepth(6));
-        drawNail(g, ctx.tint);
-        const a = Math.PI + (i - 2) * Phaser.Math.DegToRad(14);
-        g.setRotation(a);
-        const born = 5000;
-        ctx.onFrame((_dt, elapsed) => {
-          if (elapsed < born) return;
-          const d = 380 * ((elapsed - born) / 1000);
-          g.setPosition(ctx.w + 10 + Math.cos(a) * d, ctx.cy - 20 + Math.sin(a) * d);
-        });
-      }
-      fx.muzzleFlash(ctx.w + 10, ctx.cy - 20, Math.PI, 1.2);
-      float(ctx, mark.x, mark.y - 30, '10 × 5 (nails)', '#ffb3aa');
-    });
-
-    // Clutter: rings of 46px crates that stop their shots and never block you.
-    ctx.at(4200, () => {
-      for (let x = 24; x <= ctx.w - 24; x += 52) {
-        for (const y of [24, ctx.h - 24]) {
-          const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
-          plankPanel(g, ctx.tint, 46, 46, 0.95, { boardH: 15 });
-          g.setPosition(x, y);
-        }
-      }
-    });
-    ctx.at(6400, () => float(ctx, ctx.cx, ctx.cy - 44, 'timer burns 5.5× at max', '#ff3333'));
+    ctx.at(press + 5600, () => float(ctx, ctx.cx, ctx.cy - 44, 'pieces lie 14s', '#8a8ab0'));
   },
 };
 
@@ -798,25 +798,32 @@ export const passiveBrews: PreviewScript = {
 export const perkAutomaton: PreviewScript = {
   duration: 7000,
   scale: 0.9,
-  caption: 'Automaton — the Workshop winds up 3 bots for 10s: 12 damage a shoulder, twice a second',
+  caption: 'Automaton — the rebuilt Nexus turns out 3 bots for 20s: 12 damage a shoulder, twice a second',
   run(ctx) {
     const { fx, av } = stage(ctx, { noDummy: true });
+    void av;
     const mark: Mark = { x: ctx.tx, y: ctx.ty };
     movingDummy(ctx, mark);
-    let on = false;
-    workshopFloor(ctx, () => on);
+    // The Nexus finishing its repair after a Self-Destruct, then powering back on.
+    const nx = ctx.cx - 90, ny = ctx.cy + 20;
+    const ash = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
+    let rig: CreationNexus | null = null;
+    ctx.onFrame((dt, elapsed) => {
+      ash.clear();
+      if (!rig) drawNexusRuin(ash, ctx.tint, nx, ny, elapsed / 1000, 0.8 + 0.2 * Math.min(1, elapsed / 500));
+      else ctx.capture(() => rig!.update(dt));
+    });
 
     ctx.at(500, () => {
-      on = true;
-      av.play('raise');
-      fx.sawdust(ctx.w / 2, ctx.h / 2, ctx.w, ctx.h, 40);
-      float(ctx, ctx.cx, ctx.cy - 40, '🔨 WORKSHOP', '#d9a066');
+      rig = ctx.capture(() => new CreationNexus(ctx.scene, ctx.tint, nx, ny, 3));
+      fx.gearPulse(nx, ny, 46, 700, CREATION.nexusLit, 5);
+      float(ctx, nx, ny - 64, '🤖 3 AUTOMATONS', '#c9a0ff');
       // Three bots, wandering at 60 px/s and bouncing off the walls.
       for (let i = 0; i < 3; i++) {
         const g = ctx.adopt(ctx.scene.add.graphics().setDepth(5));
         const a = Math.random() * Math.PI * 2;
         const bot = {
-          x: 60 + Math.random() * (ctx.w - 120), y: 40 + Math.random() * (ctx.h - 80),
+          x: nx + Math.cos(a) * 46, y: ny + Math.sin(a) * 46,
           vx: Math.cos(a) * 60, vy: Math.sin(a) * 60, t: Math.random() * 6, next: 0,
         };
         fx.gearPulse(bot.x, bot.y, 20, 420, CREATION.brass, 6);
@@ -836,7 +843,7 @@ export const perkAutomaton: PreviewScript = {
         });
       }
     });
-    ctx.at(5800, () => float(ctx, ctx.cx, ctx.cy - 44, 'they wind down after 10s', '#8a8ab0'));
+    ctx.at(5800, () => float(ctx, ctx.cx, ctx.cy - 44, 'the next Self-Destruct blows them up too', '#8a8ab0'));
   },
 };
 

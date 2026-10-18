@@ -3,7 +3,8 @@ import * as PlayerData from '../data/PlayerData';
 import { getElementUpgrades } from '../data/Upgrades';
 import { isCheatMode } from '../data/Cheats';
 import { Element } from '../elements/Element';
-import { getPerksForElement, getPerkById, ALL_PERKS } from '../data/Perks';
+import { getPerksForElement, getPerkById, ALL_PERKS, perkSlotsFor } from '../data/Perks';
+import { ALT_ULTS } from '../data/AltUlts';
 import { getSkinsForElement, isSkinUnlocked, skinUnlockHint } from '../data/Skins';
 import { AbilityVariantSet, getAbilityVariants } from '../data/AbilityVariants';
 import {
@@ -18,7 +19,6 @@ import {
 import {
   ELEMENT_DATA_MAP, ELEMENT_FORM_TABS, allSelectableElements, findElementDef,
 } from '../data/ElementRoster';
-import { dreamBoons, dreamSummary, dreamableElementIds } from '../data/DreamBuffs';
 import {
   BEYOND_JUSTICE_RANK, COMBO_KIND_LABELS, ComboKind, JUSTICE_COMBOS, STYLE_RANKS, combosOfKind,
 } from '../data/JusticeCombos';
@@ -39,7 +39,7 @@ import {
 } from './AbilityPreview';
 
 /** Which page of the info screen is showing. */
-type InfoTab = 'abilities' | 'perks' | 'mastery' | 'build' | 'journal' | 'dreambook' | 'lawbook';
+type InfoTab = 'abilities' | 'perks' | 'mastery' | 'build' | 'journal' | 'lawbook';
 
 /** What the left rail currently has selected. */
 type InfoSelection =
@@ -187,7 +187,6 @@ export class ElementPanels {
     if (!element) return;
     if (this.infoTab === 'build' && elementId !== 'creation') this.infoTab = 'abilities';
     if (this.infoTab === 'journal' && elementId !== 'paper') this.infoTab = 'abilities';
-    if (this.infoTab === 'dreambook' && elementId !== 'dream') this.infoTab = 'abilities';
     if (this.infoTab === 'lawbook' && elementId !== 'justice') this.infoTab = 'abilities';
     if (this.infoTab === 'mastery' && !getMasteryDef(elementId)) this.infoTab = 'abilities';
 
@@ -214,9 +213,8 @@ export class ElementPanels {
     if (getMasteryDef(elementId)) tabs.push({ id: 'mastery', label: '★ MASTERY', accent: C.gold });
     if (elementId === 'creation') tabs.push({ id: 'build', label: '🔨 BUILD', accent: 0xcc6622 });
     if (elementId === 'paper') tabs.push({ id: 'journal', label: '📖 JOURNAL', accent: 0xe8c65c });
-    // The two mastery reference tables. Both are far too long to live in a dossier pane, and
-    // both are the thing their mastery is actually *about* — see DreamBuffs and JusticeCombos.
-    if (elementId === 'dream') tabs.push({ id: 'dreambook', label: '🌠 DREAM JOURNAL', accent: 0x8b5cf6 });
+    // The mastery reference table. Far too long to live in a dossier pane, and the thing the
+    // mastery is actually *about* — see JusticeCombos.
     if (elementId === 'justice') tabs.push({ id: 'lawbook', label: '⚖ RULES OF LAW', accent: 0xf0d68a });
 
     const tabW = 116, tabH = 24, tabGap = 5;
@@ -264,11 +262,6 @@ export class ElementPanels {
     if (this.infoTab === 'journal') {
       this.renderScrollingSection(width, height, cx, divY + 10,
         (c, colX, colW, y) => this.renderPaperJournal(c, cx, colX, colW, y, width, height));
-      return;
-    }
-    if (this.infoTab === 'dreambook') {
-      this.renderScrollingSection(width, height, cx, divY + 10,
-        (c, colX, colW, y) => this.renderDreamJournal(c, cx, colX, colW, y, width, height));
       return;
     }
     if (this.infoTab === 'lawbook') {
@@ -430,12 +423,11 @@ export class ElementPanels {
     }
 
     if (perks.length) {
-      const equipped = PlayerData.getEquippedPerk(elementId);
       for (const pk of perks) {
         const unlocked = PlayerData.isPerkUnlocked(elementId, pk.id);
         card({
           badge: pk.emoji, badgeColor: '#ffffff', title: pk.name,
-          sub: equipped === pk.id ? '✓ equipped' : unlocked ? 'crafted' : '🔒 not crafted',
+          sub: PlayerData.isPerkEquipped(elementId, pk.id) ? '✓ equipped' : unlocked ? 'crafted' : '🔒 not crafted',
           accent: C.arcane, on: sel.kind === 'perk' && sel.id === pk.id,
           pick: () => onPick({ kind: 'perk', id: pk.id }),
         });
@@ -503,7 +495,7 @@ export class ElementPanels {
     const subtitle = ability
       ? (ability.cooldown >= 1000 ? `${ability.cooldown / 1000}s cooldown` : 'no cooldown')
       : passive ? 'always on — not bound to a key'
-      : perk ? (PlayerData.getEquippedPerk(elementId) === perk.id ? '✓ equipped'
+      : perk ? (PlayerData.isPerkEquipped(elementId, perk.id) ? '✓ equipped'
         : PlayerData.isPerkUnlocked(elementId, perk.id) ? 'crafted — not equipped' : '🔒 not crafted yet')
       : enh ? (PlayerData.isMasteryEnabled(elementId)
         ? (enh.bindable ? 'mastery active — bindable to a key' : 'mastery active — passive')
@@ -895,92 +887,6 @@ export class ElementPanels {
             wordWrap: { width: colW - 62 }, lineSpacing: 2,
           });
         container.add([title, badge, body]);
-        y += 15 + body.height + 8;
-      }
-      y += 6;
-    }
-
-    return y + 10;
-  }
-
-  /**
-   * Renders Dream's Dream Journal tab — every boon Lifelong Dream can hand out. Returns innerY.
-   *
-   * One collapsed row per element, forty-eight of them, for the reason the Paper journal has
-   * them: every boon of every element expanded at once is two hundred rows of text and nobody
-   * reads that. The one-line summary on a collapsed row is computed from the boons themselves
-   * (`dreamSummary`), so it cannot drift away from what the ability actually gives you.
-   */
-  private renderDreamJournal(
-    container: Phaser.GameObjects.Container,
-    cx: number, colX: number, colW: number, startY: number,
-    width: number, height: number,
-  ): number {
-    let y = startY;
-    const ids = dreamableElementIds();
-
-    const hdr = this.scene.add.text(cx, y, `— THE DREAM JOURNAL · ${ids.length} ELEMENTS —`, {
-      fontSize: '11px', fontFamily: FONT_DISPLAY, color: '#8b5cf6',
-    }).setOrigin(0.5);
-    container.add(hdr);
-    y += 22;
-
-    const intro = this.scene.add.text(colX + 14, y,
-      'Lifelong Dream asks you to name an element and then hold the thought for ten seconds — '
-      + 'two more every time you are hit. When the counter reaches zero you are given every '
-      + 'standing buff that element could ever be given, all at once, for the rest of the match. '
-      + 'You keep your own five keys; what you take is its statline. Dream and Quantum are the '
-      + 'only two missing: you already are one, and the other is not an element but a pair of '
-      + 'them. Tap a row to read it.', {
-        fontSize: '10px', fontFamily: FONT_UI, color: '#a89cc8',
-        wordWrap: { width: colW - 28 }, lineSpacing: 3,
-      });
-    container.add(intro);
-    y += intro.height + 14;
-
-    for (const id of ids) {
-      const def = findElementDef(id);
-      const boons = dreamBoons(id);
-      const color = def?.color ?? C.arcane;
-      const hexColor = '#' + color.toString(16).padStart(6, '0');
-      const expanded = this.expandedJournal.has(`dream:${id}`);
-      const rowH = 32;
-
-      const rowBg = this.overlayRow(cx, y + rowH / 2, colW, rowH - 4, color).g;
-      const nameText = this.scene.add.text(colX + 16, y + 11,
-        `${def?.emoji ?? '❔'}  ${(def?.name ?? id).toUpperCase()}`, {
-          fontSize: '12px', fontFamily: FONT_DISPLAY, color: hexColor,
-        }).setOrigin(0, 0.5);
-      const sum = this.scene.add.text(colX + 16, y + 24, dreamSummary(id), {
-        fontSize: '8px', fontFamily: FONT_UI, color: '#6b7285',
-      }).setOrigin(0, 0.5);
-      const count = this.scene.add.text(colX + colW - 16, y + rowH / 2,
-        `${boons.length} boon${boons.length === 1 ? '' : 's'}`, {
-          fontSize: '9px', fontFamily: FONT_DISPLAY, color: '#776f8a',
-        }).setOrigin(1, 0.5);
-
-      const hit = this.scene.add.rectangle(cx, y + rowH / 2, colW, rowH - 4, 0xffffff, 0)
-        .setInteractive({ useHandCursor: true });
-      hit.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
-        ptr.event.stopPropagation();
-        const key = `dream:${id}`;
-        if (expanded) this.expandedJournal.delete(key); else this.expandedJournal.add(key);
-        Sfx.play('ui-click');
-        this.showElementInfo('dream', width, height, cx);
-      });
-      container.add([rowBg, nameText, sum, count, hit]);
-      y += rowH + 4;
-
-      if (!expanded) continue;
-      for (const b of boons) {
-        const title = this.scene.add.text(colX + 30, y, `${b.emoji} ${b.name}`, {
-          fontSize: '11px', fontFamily: FONT_DISPLAY, color: '#e9dcff',
-        });
-        const body = this.scene.add.text(colX + 30, y + 15, b.blurb, {
-          fontSize: '9px', fontFamily: FONT_UI, color: '#9a92b0',
-          wordWrap: { width: colW - 62 }, lineSpacing: 2,
-        });
-        container.add([title, body]);
         y += 15 + body.height + 8;
       }
       y += 6;
@@ -1847,8 +1753,46 @@ export class ElementPanels {
     }
     innerY += 12;
 
+    // ── ULTIMATE (alternate Q — only once it is unlocked) ─────────────
+    const altUlt = ALT_ULTS[elementId];
+    if (altUlt && PlayerData.isAltUltUnlocked(elementId)) {
+      sectionHdr('— ULTIMATE —', '#ff9944');
+      const altOn = PlayerData.isAltUltEquipped(elementId);
+      const choices: Array<{ label: string; on: boolean; pick: boolean }> = [
+        { label: `[Q] ${altUlt.baseName}  ·  base`, on: !altOn, pick: false },
+        { label: `[Q] ${altUlt.emoji} ${altUlt.name}  ·  alternate`, on: altOn, pick: true },
+      ];
+      for (const ch of choices) {
+        const rowH = 30;
+        const rowLocalY = innerY + rowH / 2;
+        const row = this.overlayRow(cx, rowLocalY, COL_W, rowH - 4, ch.on ? C.verdant : C.steel, !ch.on);
+        const lbl = this.scene.add.text(COL_X + 14, rowLocalY, `${ch.label}${ch.on ? '  ✓' : ''}`, {
+          fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+          color: ch.on ? '#88ff88' : '#bbbbcc',
+        }).setOrigin(0, 0.5);
+        const rowHit = this.overlayRowHit(cx, rowLocalY, COL_W, rowH - 4);
+        rowHit
+          .on('pointerover', () => row.paint(true))
+          .on('pointerout',  () => row.paint(false))
+          .on('pointerdown', () => {
+            if (!inView(rowLocalY)) return;
+            PlayerData.setAltUltEquipped(elementId, ch.pick);
+            rebuild();
+          });
+        scrollContainer.add([row.g, lbl, rowHit]);
+        innerY += rowH + 2;
+      }
+      const blurb = this.scene.add.text(COL_X + 14, innerY + 2, altUlt.description, {
+        fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#998877',
+        wordWrap: { width: COL_W - 28 },
+      });
+      scrollContainer.add(blurb);
+      innerY += blurb.height + 14;
+    }
+
     // ── PERK ────────────────────────────────────────────────────────
-    sectionHdr('— PERK —', '#cc88ff');
+    const slots = perkSlotsFor(elementId);
+    sectionHdr(slots > 1 ? `— PERKS (pick ${slots}) —` : '— PERK —', '#cc88ff');
     const perks = getPerksForElement(elementId);
     if (perks.length === 0) {
       const noPerks = this.scene.add.text(cx, innerY + 8, 'No perks are craftable for this element yet.', {
@@ -1857,12 +1801,12 @@ export class ElementPanels {
       scrollContainer.add(noPerks);
       innerY += 30;
     } else {
-      const equippedId = PlayerData.getEquippedPerk(elementId);
+      const equippedIds = PlayerData.getEquippedPerkIds(elementId);
 
       // "None" row
       {
         const rowH = 30;
-        const isEquipped = equippedId === null;
+        const isEquipped = equippedIds.length === 0;
         const rowLocalY = innerY + rowH / 2;
         const row = this.overlayRow(cx, rowLocalY, COL_W, rowH - 4,
           isEquipped ? C.verdant : C.steel, !isEquipped);
@@ -1885,7 +1829,7 @@ export class ElementPanels {
 
       for (const perk of perks) {
         const unlocked = PlayerData.isPerkUnlocked(elementId, perk.id);
-        const isEquipped = equippedId === perk.id;
+        const isEquipped = equippedIds.includes(perk.id);
         const alpha = unlocked ? 1 : 0.45;
         const rowH = 30;
         const rowLocalY = innerY + rowH / 2;
@@ -1897,7 +1841,10 @@ export class ElementPanels {
             fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
             color: isEquipped ? '#88ff88' : (unlocked ? '#eecfff' : '#555566'),
           }).setOrigin(0, 0.5).setAlpha(alpha);
-        const recipeStr = perk.ingredients.map((r) => ELEM_EMOJI[r] ?? r).join(' + ');
+        // Element perks have no recipe yet — they only come from cheats for now.
+        const recipeStr = perk.tier === 'element'
+          ? (unlocked ? '' : 'cheats only')
+          : perk.ingredients.map((r) => ELEM_EMOJI[r] ?? r).join(' + ');
         const recipeLbl = this.scene.add.text(COL_X + COL_W - 14, rowLocalY, recipeStr, {
           fontSize: '10px', color: unlocked ? '#886633' : '#332222',
         }).setOrigin(1, 0.5).setAlpha(alpha);
@@ -1911,7 +1858,7 @@ export class ElementPanels {
             .on('pointerout',  () => row.paint(false))
             .on('pointerdown', () => {
               if (!inView(rowLocalY)) return;
-              PlayerData.equipPerk(elementId, isEquipped ? null : perk.id);
+              PlayerData.togglePerkEquipped(elementId, perk.id);
               rebuild();
             });
         }
@@ -2266,7 +2213,7 @@ export class ElementPanels {
 
       for (const perk of allTierPerks) {
         const unlocked = PlayerData.isPerkUnlocked(perk.elementId, perk.id);
-        const equipped  = PlayerData.getEquippedPerk(perk.elementId) === perk.id;
+        const equipped  = PlayerData.isPerkEquipped(perk.elementId, perk.id);
         const alpha = unlocked ? 1.0 : 0.35;
 
         const rowBgFill = 0;

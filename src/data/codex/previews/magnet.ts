@@ -3,7 +3,7 @@ import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import {
   MAGNET, MagnetAvatar, MagnetFx, drawChargedAura, drawCoin, drawCoinFragment, drawCoinShot, drawCrackle,
-  drawGatherPile, drawLockLine, drawMagnetHalo, drawMagnetized, drawNail, drawOrbitRing,
+  drawFieldFlick, drawGatherPile, drawLockLine, drawMagTrack, drawMagnetHalo, drawMagneticField, drawMagnetized, drawNail, drawOrbitRing,
   drawScrap, drawSpikeFlying, drawSpikeHover, drawSpikePlanted, megaMechTint,
 } from '../../../elements/kits/MagnetVisuals';
 import { MagnetMech } from '../../../elements/kits/MagnetMech';
@@ -809,5 +809,182 @@ export const mechaUpgraded: PreviewScript = {
     key(7300, 'avalanche');
     key(9300, 'destruct');
     ctx.at(10000, () => ctx.moveCaster(ctx.cx, ctx.cy, { alpha: 1 }));
+  },
+};
+
+// ══ Mastery ════════════════════════════════════════════════════════════
+
+const FIELD_R = 72;
+const FIELD_DEFLECT = Phaser.Math.DegToRad(2);
+const MAGLEV_PATCHES = 16;
+const MAGLEV_STEP_MS = 60;
+const MAGLEV_SPACING = 34;
+const MAGLEV_PATCH_R = 30;
+
+export const masteryField: PreviewScript = {
+  duration: 7000,
+  scale: 0.9,
+  caption: 'Magnetic Field — a faint blue field round you: every enemy shot that enters it is bent 2° away from you, once',
+  run(ctx) {
+    const { av } = stage(ctx);
+    (av as MagnetAvatar).setMastered(true);
+    const shooter = { x: ctx.cx + 300, y: ctx.cy };
+    dummyAt(ctx, shooter);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
+    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const shots: Array<{ x: number; y: number; vx: number; vy: number; bent: boolean; done: boolean }> = [];
+    const flicks: Array<{ x: number; y: number; a: number; at: number }> = [];
+    ctx.onFrame((dt, e) => {
+      const s = dt / 1000;
+      const t = e / 1000;
+      const c = ctx.casterAt();
+      g.clear();
+      air.clear();
+      drawMagneticField(g, ctx.tint, c.x, c.y, FIELD_R, t);
+      for (let i = shots.length - 1; i >= 0; i--) {
+        const sh = shots[i];
+        sh.x += sh.vx * s; sh.y += sh.vy * s;
+        const d = Phaser.Math.Distance.Between(sh.x, sh.y, c.x, c.y);
+        if (!sh.bent && d <= FIELD_R) {
+          // Away from the centre, never toward it.
+          sh.bent = true;
+          const rel = Phaser.Math.Angle.Wrap(Math.atan2(c.y - sh.y, c.x - sh.x) - Math.atan2(sh.vy, sh.vx));
+          const turn = rel > 0 ? -FIELD_DEFLECT : FIELD_DEFLECT;
+          const co = Math.cos(turn), sn = Math.sin(turn);
+          const vx = sh.vx * co - sh.vy * sn;
+          sh.vy = sh.vx * sn + sh.vy * co;
+          sh.vx = vx;
+          flicks.push({ x: sh.x, y: sh.y, a: Math.atan2(sh.vy, sh.vx), at: e });
+        }
+        if (!sh.done && d < 18) {
+          sh.done = true;
+          float(ctx, c.x, c.y - 34, 'HIT', '#ff6677', 12);
+          shots.splice(i, 1);
+          continue;
+        }
+        if (!sh.done && sh.x < c.x - 20) {
+          sh.done = true;
+          float(ctx, c.x, c.y - 48, 'SLIPS PAST', hex(MAGNET.sky), 11);
+        }
+        if (sh.x < -20) { shots.splice(i, 1); continue; }
+        air.fillStyle(0xff6677, 0.35); air.fillCircle(sh.x, sh.y, 8);
+        air.fillStyle(0xffccd2, 1); air.fillCircle(sh.x, sh.y, 4);
+      }
+      for (let i = flicks.length - 1; i >= 0; i--) {
+        const k = (e - flicks[i].at) / 260;
+        if (k >= 1) { flicks.splice(i, 1); continue; }
+        drawFieldFlick(air, ctx.tint, flicks[i].x, flicks[i].y, flicks[i].a, k);
+      }
+    });
+    // Two shots that would have clipped the body slide past; one dead-centre still lands.
+    const fire = (ms: number, off: number): void => ctx.at(ms, () => {
+      const c = ctx.casterAt();
+      const a = Math.atan2(c.y + off - shooter.y, c.x - shooter.x);
+      shots.push({ x: shooter.x - 18, y: shooter.y, vx: Math.cos(a) * 520, vy: Math.sin(a) * 520, bent: false, done: false });
+    });
+    fire(500, 17);
+    fire(2000, -17);
+    fire(3500, 16.5);
+    fire(5000, 0);
+  },
+};
+
+export const masteryMagLev: PreviewScript = {
+  duration: 9000,
+  scale: 0.85,
+  caption: 'Mag-Lev — lay a steerable track of maglev ground for 10s: float on it 50% faster, nailed or magnetised foes crawl, coins hang over it, and Repulse it to fly backward',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    (av as MagnetAvatar).setMastered(true);
+    const start = { x: ctx.cx - 250, y: ctx.cy + 30 };
+    ctx.moveCaster(start.x, start.y);
+    const foe = { x: ctx.cx + 130, y: ctx.cy - 40 };
+    dummyAt(ctx, foe);
+    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
+    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const patches: Array<{ x: number; y: number; seed: number }> = [];
+    let laying = -1;
+    let last = { ...start };
+    const coins: Array<{ x: number; y: number; air: number; spin: number }> = [];
+    const shots: Array<{ x: number; y: number; vx: number; vy: number; life: number }> = [];
+    const onTrack = (x: number, y: number): boolean => patches.some((p) => Phaser.Math.Distance.Between(p.x, p.y, x, y) <= MAGLEV_PATCH_R);
+    let held = false;
+    ctx.onFrame((dt, e) => {
+      const s = dt / 1000;
+      const t = e / 1000;
+      // The "cursor": straight out, then swept up toward the foe — the track follows it.
+      if (laying >= 0 && patches.length < MAGLEV_PATCHES && e >= laying + patches.length * MAGLEV_STEP_MS) {
+        const aim = patches.length < 7 ? { x: ctx.cx + 300, y: start.y } : { x: foe.x + 40, y: foe.y - 60 };
+        const a = Math.atan2(aim.y - last.y, aim.x - last.x);
+        const step = patches.length === 0 ? 0 : MAGLEV_SPACING;
+        last = { x: last.x + Math.cos(a) * step, y: last.y + Math.sin(a) * step };
+        patches.push({ ...last, seed: Math.random() * 10 });
+        fx.sparks(last.x, last.y, 3, -Math.PI / 2, 10, MAGNET.rose);
+      }
+      ground.clear();
+      air.clear();
+      drawMagTrack(ground, ctx.tint, patches.map((p) => ({ ...p, life: 1 })), MAGLEV_PATCH_R, t);
+      const c = ctx.casterAt();
+      drawMagneticField(ground, ctx.tint, c.x, c.y, FIELD_R, t);
+      if (onTrack(c.x, c.y) && patches.length > 0) {
+        ground.fillStyle(ctx.tint(MAGNET.shadow), 0.35);
+        ground.fillEllipse(c.x, c.y + 20, 30, 9);
+      }
+      // The nailed foe walks across the track — and crawls while it is on it.
+      const slow = onTrack(foe.x, foe.y);
+      if (slow !== held && patches.length > 0) {
+        held = slow;
+        if (slow) float(ctx, foe.x, foe.y - 40, 'HELD −50%', hex(MAGNET.rose), 11);
+      }
+      foe.y = Math.min(ctx.h - 40, foe.y + (slow ? 14 : 28) * s);
+      drawNail(air, ctx.tint, foe.x - 10, foe.y - 4, 0.4, 'stuck', c.x, c.y, t);
+      for (const coin of coins) {
+        const over = onTrack(coin.x, coin.y);
+        if (!(over && coin.air >= 1500)) coin.air += dt;
+        coin.spin += (over ? 1.5 : 16) * s;
+        const k = Phaser.Math.Clamp(coin.air / COIN_AIR_MS, 0, 1);
+        const z = 4 * COIN_PEAK * k * (1 - k) + (over && coin.air >= 1500 ? 4 + Math.sin(t * 3) * 3 : 0);
+        drawCoin(air, ctx.tint, coin.x, coin.y, z, coin.spin, over, t);
+      }
+      for (let i = shots.length - 1; i >= 0; i--) {
+        const sh = shots[i];
+        sh.x += sh.vx * s; sh.y += sh.vy * s; sh.life -= dt;
+        if (sh.life <= 0) { shots.splice(i, 1); continue; }
+        drawCoinShot(air, ctx.tint, sh.x, sh.y, Math.atan2(sh.vy, sh.vx), t);
+      }
+    });
+    ctx.at(300, () => {
+      laying = 300;
+      av.play('slam', 0, 360);
+      fx.flash(start.x, start.y, 34, 10, MAGNET.rose);
+      float(ctx, start.x, start.y - 46, '🚄 MAG-LEV', hex(MAGNET.rose), 12);
+    });
+    // Ride it out at +50%, flipping coins onto the track as it goes.
+    ctx.at(1500, () => {
+      float(ctx, start.x + 40, start.y - 50, 'FLOATING +50%', hex(MAGNET.rose), 11);
+      ctx.glideCaster({ to: { x: start.x + 200, y: start.y }, ms: 900, ease: 'linear' });
+    });
+    for (const at of [1600, 1900, 2200]) {
+      ctx.at(at, () => {
+        const c = ctx.casterAt();
+        av.play('punch', -Math.PI / 2, 200);
+        coins.push({ x: c.x, y: c.y, air: 0, spin: Math.random() * 3 });
+      });
+    }
+    ctx.at(3400, () => float(ctx, start.x + 100, start.y - 110, 'COINS NEVER LAND', hex(MAGNET.gold), 11));
+    // Repulse into the track: the coins go one way and the magnet goes the other.
+    ctx.at(5200, () => {
+      const c = ctx.casterAt();
+      const ang = Math.PI;
+      fx.repulse(c.x, c.y, ang, REPULSE_R, REPULSE_HALF, MAGNET.blue);
+      av.play('clap', ang, 300);
+      for (const coin of coins.splice(0)) {
+        const k = Phaser.Math.Clamp(coin.air / COIN_AIR_MS, 0, 1);
+        shots.push({ x: coin.x, y: coin.y - 4 * COIN_PEAK * k * (1 - k), vx: Math.cos(ang) * COIN_SHOT_SPEED, vy: 0, life: 1100 });
+      }
+      fx.sparks(c.x, c.y, 10, 0, 14, MAGNET.rose);
+      float(ctx, c.x, c.y - 40, 'MAG KICK', hex(MAGNET.rose), 12);
+      ctx.glideCaster({ to: { x: Math.min(ctx.w - 40, c.x + 313), y: c.y }, ms: 320, ease: 'out' });
+    });
   },
 };

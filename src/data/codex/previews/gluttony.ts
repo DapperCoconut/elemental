@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import {
   GluttonyAvatar, HAR, HarvestFx, MoldCell, cookDish, corruptHeart, corruptionVeil, crowShape, fleshChunk, moldLayer,
-  moldWorm, poisonVial, rotBullet, seedShape, sickleShape, sickleTrail,
+  moldWorm, poisonVial, predationPellet, rotBullet, seedShape, sickleShape, sickleTrail,
 } from '../../../elements/kits/GluttonyVisuals';
 
 /**
@@ -766,5 +766,125 @@ export const corruptHp: PreviewScript = {
       ctx.capture(() => fx.splatter(ctx.cx, ctx.cy, 6, 22, 380, 10));
       pool = Math.max(0, pool - 40);
     });
+  },
+};
+
+// ══ Mastery ════════════════════════════════════════════════════════════
+
+/** Invasive Species: harmful effects on you are what makes you grow back. */
+export const masteryInvasive: PreviewScript = {
+  duration: 8000,
+  scale: 0.9,
+  caption: 'Invasive Species — while any harmful effect is on you, you regenerate 2 HP a second',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new GluttonyAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#e2b0ff', 11);
+    const tag = label(ctx, ctx.cx, ctx.cy + 34, '#9be35a', 10);
+    const bar = ctx.adopt(ctx.scene.add.graphics().setDepth(10));
+    let hp = 0.42;
+    let debuffUntil = 0;
+    let nextTick = 0;
+    ctx.onFrame((_dt, e) => {
+      const on = e < debuffUntil;
+      tag.setText(on ? '🧪 POISONED  ·  🦠 REGROWING' : '');
+      if (on && e >= nextTick) {
+        nextTick = e + 1000;
+        hp = Math.min(1, hp + 0.04);
+        float(ctx, ctx.cx + 18, ctx.cy - 30, '+2', '#33dd66', 11);
+      }
+      bar.clear();
+      const bx = ctx.cx - 26;
+      const by = ctx.cy - 38;
+      bar.fillStyle(0x111111, 0.85); bar.fillRect(bx - 1, by - 1, 54, 9);
+      bar.fillStyle(0xffcc00, 1); bar.fillRect(bx, by, 52 * hp, 7);
+      if (on) {
+        // The rot creeping in where the poison is: a sickly green halo with purple motes rising.
+        bar.lineStyle(1.6, 0x8fd14f, 0.5 + 0.2 * Math.sin(e / 160));
+        bar.strokeCircle(ctx.cx, ctx.cy, 28);
+        for (let i = 0; i < 4; i++) {
+          const u = ((e / 1000) * 0.6 + i * 0.25) % 1;
+          bar.fillStyle(ctx.tint(HAR.purpleLit), 1 - u);
+          bar.fillCircle(ctx.cx + Math.sin(i * 2.1 + e / 400) * 18, ctx.cy + 12 - u * 42, 1.8);
+        }
+      }
+    });
+    ctx.at(500, () => {
+      debuffUntil = 5200;
+      nextTick = 1500;
+      ctx.capture(() => fx.vialShatter(ctx.cx, ctx.cy, 40));
+      ctx.capture(() => fx.ring(ctx.cx, ctx.cy, 6, 30, 420, HAR.purpleLit, 2, 6));
+      readout.setText('a poison lands on you — and the rot takes it as a reason to grow');
+    });
+    ctx.at(5400, () => readout.setText('nothing harmful left on you: the regrowth stops'));
+  },
+};
+
+/** Corrupt Predation: 50 Corrupt HP fired as a long-range shotgun that sows where it hits. */
+export const masteryPredation: PreviewScript = {
+  duration: 9000,
+  scale: 0.9,
+  caption: 'Corrupt Predation — spend 50 Corrupt HP on a 12-pellet shotgun, 5 each. Every hit corrupts, and the volley plants seeds where it lands',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new GluttonyAvatar(ctx.scene, ctx.tint));
+    const from = { x: ctx.w * 0.18, y: ctx.cy };
+    const victim = { x: ctx.w * 0.84, y: ctx.cy - 6 };
+    ctx.moveCaster(from.x, from.y, { facing: 0 });
+    const readout = label(ctx, ctx.w * 0.5, 12, '#e2b0ff', 11);
+    const pool = label(ctx, from.x, from.y + 36, hex(HAR.purpleLit), 10);
+    let rot = 0;
+    dummyAt(ctx, victim, () => rot);
+    const seeds: { x: number; y: number; at: number }[] = [];
+    const mold = moldGrid(ctx, seeds, 48, 0.9);
+    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(2.2));
+    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    let corruptHp = 130;
+    const pellets: { x: number; y: number; vx: number; vy: number }[] = [];
+    ctx.onFrame((dt, e) => {
+      pool.setText(`🫀 ${corruptHp} CORRUPT HP`);
+      crow(av)?.setRot(corruptHp / 400);
+      ground.clear();
+      moldLayer(ground, ctx.tint, mold.cells(), CELL, e / 1000, 0.92, victim);
+      for (const sd of seeds) if (e >= sd.at) seedShape(ground, ctx.tint, sd.x, sd.y, sd.x * 0.1, 3.2, 0.95, Math.min(1, (e - sd.at) / 1500));
+      air.clear();
+      for (let i = pellets.length - 1; i >= 0; i--) {
+        const p = pellets[i];
+        p.x += p.vx * dt / 1000;
+        p.y += p.vy * dt / 1000;
+        if (Phaser.Math.Distance.Between(p.x, p.y, victim.x, victim.y) < 20) {
+          pellets.splice(i, 1);
+          rot = Math.min(1, rot + 0.04);
+          float(ctx, victim.x + (Math.random() - 0.5) * 24, victim.y - 26 - Math.random() * 10, '5', '#ffffff', 10);
+          ctx.capture(() => fx.rotBulletHit(victim.x, victim.y, 0));
+          if (!seeds.some((s) => Math.abs(s.x - victim.x) < 30 && e - s.at < 600)) {
+            seeds.push({ x: victim.x + (Math.random() - 0.5) * 16, y: victim.y + 8, at: e });
+          }
+          continue;
+        }
+        if (p.x > ctx.w + 20) { pellets.splice(i, 1); continue; }
+        predationPellet(air, ctx.tint, p.x, p.y, Math.atan2(p.vy, p.vx), 1);
+      }
+    });
+    const fire = (ms: number): void => ctx.at(ms, () => {
+      corruptHp -= 50;
+      const ang = Math.atan2(victim.y - from.y, victim.x - from.x);
+      const mx = from.x + Math.cos(ang) * 24;
+      const my = from.y + Math.sin(ang) * 24;
+      for (let i = 0; i < 12; i++) {
+        const a = ang + ((i + 0.5) / 12 - 0.5) * (5 * Math.PI / 180);
+        const v = 900 * (0.9 + Math.random() * 0.2);
+        pellets.push({ x: mx, y: my, vx: Math.cos(a) * v, vy: Math.sin(a) * v });
+      }
+      crow(av)?.play('punch', ang);
+      ctx.capture(() => fx.predationBlast(from.x, from.y, mx, my, ang));
+      float(ctx, from.x, from.y - 50, '-50 CORRUPT HP', hex(HAR.purpleLit), 11);
+    });
+    fire(600);
+    ctx.at(800, () => readout.setText('twelve pellets in a tight cone — each one corrupts what it hits'));
+    ctx.at(2600, () => readout.setText('and where they landed, the rot takes root'));
+    fire(5200);
+    ctx.at(5400, () => readout.setText('more Corrupt HP, another volley — feeding the mold under them'));
   },
 };

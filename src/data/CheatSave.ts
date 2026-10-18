@@ -12,6 +12,7 @@ import { ALL_UPGRADES } from './Upgrades';
 import { isUpgradeUnlocked } from './UpgradeUnlocks';
 import { ALL_PERKS } from './Perks';
 import { DIVINE_PERKS } from './DivinePerks';
+import { ALT_ULTS } from './AltUlts';
 import { MUTATIONS } from './Mutations';
 import { MASTERY_DEFS, MASTERY_SLOTS, isMasteryComplete } from './Mastery';
 import { getFightNodes } from './Worlds';
@@ -78,6 +79,9 @@ function maxOutCurrentProfile(): void {
     for (const perk of el.perks) PlayerData.unlockPerk(el.elementId, perk.id);
   }
   for (const perk of DIVINE_PERKS) PlayerData.unlockPerk(perk.elementId, perk.id);
+
+  // ── Alternate ultimates (unlocked, not swapped in — that is a choice too) ──
+  for (const elementId of Object.keys(ALT_ULTS)) PlayerData.unlockAltUlt(elementId);
 
   // ── The Disgraced King: door open, laboratory found ────────────────
   PlayerData.markKingDefeated();
@@ -253,6 +257,9 @@ export function verifyCheatSave(): string[] {
     }
     for (const perk of DIVINE_PERKS) {
       want(PlayerData.isPerkUnlocked(perk.elementId, perk.id), `divine perk ${perk.id} locked`);
+    }
+    for (const elementId of Object.keys(ALT_ULTS)) {
+      want(PlayerData.isAltUltUnlocked(elementId), `alternate ultimate ${elementId} locked`);
     }
     for (const m of MUTATIONS) want(PlayerData.isMutationUnlocked(m.id), `mutation ${m.id} locked`);
     for (const a of ACHIEVEMENTS) want(PlayerData.isAchievementUnlocked(a.id), `achievement ${a.id} locked`);

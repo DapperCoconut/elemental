@@ -34,6 +34,8 @@ export interface SoulArenaApi {
   readonly elementId: string;
   readonly npcElementId: string;
   readonly isInvasion: boolean;
+  /** Campaign finale: the npc slot is The Amalgam, which Turn hurts instead of converting. */
+  readonly isAmalgamBoss: boolean;
   readonly width: number;
   readonly height: number;
   hasUpgrade(slot: string): boolean;
@@ -59,8 +61,6 @@ export interface SoulArenaApi {
 }
 
 // ── Mastery: Strength in Numbers passive + Grave Mistake bindable ─────────────
-const AMALGAM_RESIST_PER = 0.05;
-const AMALGAM_RESIST_CAP = 0.75;
 const ALPHA_HP = 200;
 const ALPHA_BITE_DMG = 20;
 const ALPHA_SPEED = 85;
@@ -160,50 +160,34 @@ interface Corpse {
   maxHp: number;
   variant?: HuskVariantDef;
   angered?: boolean;
-  inflamed?: boolean;
+  /** Mastery — the Corpse Prince. Never dropped off the queue, never turned, always comes back. */
+  prince?: boolean;
 }
 
 interface Amalgam {
   husk: Husk;
   owner: Owner;
   waypoint: { x: number; y: number } | null;
-  burning: boolean;
   baseBiteDamage: number;
   dashBiteDamage: number;
   nextDashAt: number;
   dashUntil: number;
-  nextEmberAt: number;
   /** The drawn creature. The husk sprite underneath it is hidden — this *is* the amalgam. */
   body: SoulAmalgamBody;
-  burnTickAccum: number;
   meleeTickAccum: number;
   /** Carrion Call (F+): timestamp until which +speed/+damage is active. */
   carrionUntil: number;
   nextTrailAt: number;
   variant: HuskVariantDef;
   angered: boolean;
-  inflamed: boolean;
-  /** Inflamed: cumulative damage taken since the last 20-dmg ember release. */
-  damageAccum: number;
+  /** Mastery — the Corpse Prince: crowned, sword in hand, back in the queue 12s after it falls. */
+  prince?: boolean;
   /** Grave Mistake: the friendly alpha fires a periodic cone. */
   isAlpha?: boolean;
   alphaNextConeAt?: number;
-  /** Live veil of wisps while Hell's Torment (or Carrion Call) has hold of it. */
+  /** Live veil of wisps while Carrion Call has hold of it. */
   shroud: SoulShroud | null;
   /** Own clock for the stitch seam and aura art. */
-  t: number;
-}
-
-interface Ember {
-  /** Repainted every frame — a burning scrap of spirit with its tail streaming behind it. */
-  sprite: Phaser.GameObjects.Graphics;
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  owner: Owner;
-  expiresAt: number;
-  big: boolean;
   t: number;
 }
 
@@ -230,8 +214,6 @@ interface SoulShot {
 // ── Tuning ────────────────────────────────────────────────────────────────────
 
 const CORPSE_CAP_BASE = 5;
-/** Plain corpses a soul user starts every match with. */
-const STARTING_CORPSES = 2;
 
 // ── Click: Lantern of the Damned ─────────────────────────────────
 const LANTERN_SPEED = 330;
@@ -383,28 +365,22 @@ const CARRION_SPEED_MULT = 1.5;
 const CARRION_DMG_MULT = 1.5;
 const CARRION_TRAIL_INTERVAL_MS = 80;
 
-const TORMENT_SELF_DPS = 5;
-const TORMENT_EMBER_COUNT = 3;
-const TORMENT_EMBER_DMG = 5;
-const TORMENT_AOE_RADIUS = 60;
-const TORMENT_AOE_DMG = 15;
-const TORMENT_DEATH_EMBER_COUNT = 12;
-const TORMENT_DEATH_AOE_RADIUS = 120;
-const TORMENT_DEATH_AOE_DMG = 30;
-const FIRE_DOT_MS = 3000;
-const EMBER_SPEED = 260;
-const EMBER_LIFETIME_MS = 1200;
-const EMBER_HIT_RADIUS = 24;
+/** Soul's standing ward: while any Amalgam stands, 20% of every hit on you lands on one of them. */
+const TANK_SHARE = 0.2;
 
-const INFLAMED_HP = 100;
-const INFLAMED_BITE_DMG = 15;
-const INFLAMED_DASH_DMG = 20;
-const INFLAMED_DAMAGE_THRESHOLD = 20;
-const INFLAMED_DEATH_EMBER_COUNT = 20;
-const INFLAMED_DEATH_AOE_RADIUS = 170;
-const INFLAMED_DEATH_AOE_DMG = 45;
-/** HUD only — the corpse-queue icon for an Inflamed corpse. The body itself is drawn, not tinted. */
-const INFLAMED_ICON_TINT = 0x882222;
+const TURN_RADIUS = 240;
+/** The Amalgam (campaign finale) cannot be turned; Turn tears this fraction of its current HP. */
+const TURN_BOSS_FRAC = 0.5;
+/** We are Legion (Q+): the turned rise with this much extra max HP and the Carrion Call buff. */
+const LEGION_BONUS_HP = 25;
+
+/** Mastery — Corpse Prince: a crowned, sword-bearing amalgam that is never lost for good. */
+const PRINCE_HP = 120;
+const PRINCE_SWORD_DMG = 14;
+const PRINCE_LUNGE_DMG = 22;
+const PRINCE_SPEED = 120;
+const PRINCE_RETURN_MS = 12000;
+const PRINCE_ICON_TINT = 0xffd24a;
 
 const WARD_RADIUS = 220;
 const WARD_MIN_AMALGAMS = 2;
@@ -423,12 +399,14 @@ const HUD_Y = 52;
  * Soul: Lantern of the Damned wisps and a charged soul beam (Click / right click) that grow
  * stronger with every zombie they kill, a 5-slot corpse queue fed by Grave zombies (and real
  * Invasion husk kills), Amalgam allies raised from that queue, Death Whistle recalls + heals
- * them, and Hell's Torment burns them out in a blaze of embers. Amalgams and grave zombies are
+ * them, and Turn steals every hostile body nearby. While any Amalgam stands it takes 20% of every
+ * hit aimed at its caster. Amalgams and grave zombies are
  * plain `Husk` instances SoulKit owns and ticks manually — never added to `arena.enemies`.
  *
  * Upgrades layer on: Soul Lord kill milestones (Click+), decay clouds (E+), graveyard tiers
- * (R+), a temporary speed+damage buff off Death Whistle (F+), and a burnt "Inflamed" amalgam
- * tier reborn from Hell's Torment kills (Q+).
+ * (R+), a temporary speed+damage buff off Death Whistle (F+), and turned bodies rising with
+ * +25 HP and that same buff (Q+, We are Legion). Mastery adds the Corpse Prince — a crowned
+ * amalgam that starts in the queue and returns to it 12s after every death — and Grave Mistake.
  */
 export class SoulKit {
   // ── Visuals ───────────────────────────────────────────────────────────
@@ -440,7 +418,7 @@ export class SoulKit {
   /** The soul character rig (spirit arms, eyes, torn cowl) for each soul fighter. */
   private playerAvatar: SoulAvatar | null = null;
   private npcAvatar: SoulAvatar | null = null;
-  /** Soul Mastery — Strength in Numbers: an always-on veil while mastery is enabled. */
+  /** Soul Mastery: an always-on veil while mastery is enabled — the mastered tell. */
   private masteryShroud: SoulShroud | null = null;
   /** Last aim point, cached in handleInput so the per-frame avatar update can face it. */
   private aimX = 0;
@@ -469,11 +447,18 @@ export class SoulKit {
   private graves: Grave[] = [];
   private graveZombies: GraveZombie[] = [];
   private amalgams: Amalgam[] = [];
-  private embers: Ember[] = [];
   private soulShots: SoulShot[] = [];
 
-  // ── Mastery: Strength in Numbers + Grave Mistake ──────────────────────
-  private soulGreyLines: Phaser.GameObjects.Graphics | null = null;
+  // ── Mastery: Corpse Prince + Grave Mistake ────────────────────────────
+  /** When a fallen prince is due back in its side's queue (0 = not away). */
+  private princeReturnAt: Record<Owner, number> = { player: 0, npc: 0 };
+  /**
+   * Starting corpses are seeded on the first frame, not in reset(): ArenaScene resets the kit
+   * before it reads this match's mastery toggle, and the prince depends on it.
+   */
+  private seeded = false;
+  /** Fighters whose 'damaged' event already routes the Amalgam share (fighters are rebuilt per match). */
+  private tankHooked = new WeakSet<Fighter>();
   private alphaState: 'none' | 'hostile' | 'defeated' = 'none';
   private alphaHusk: Husk | null = null;
   /** The loose alpha wears the same drawn creature as the amalgams, in angered shades. */
@@ -505,8 +490,6 @@ export class SoulKit {
     this.ncol = (base) => arena.soulColor('npc', base);
     this.pfx = new SoulFx(arena.scene, this.pcol);
     this.nfx = new SoulFx(arena.scene, this.ncol);
-    // The first match after load never sees reset(), so seed it here too.
-    this.seedStartingCorpses();
   }
 
   /** Colour mapper for a side. */
@@ -560,13 +543,11 @@ export class SoulKit {
       if (rec.husk.scene) rec.husk.destroy();
     }
     this.amalgams = [];
-    for (const e of this.embers) e.sprite.destroy();
-    this.embers = [];
     for (const s of this.soulShots) s.gfx.destroy();
     this.soulShots = [];
 
-    // Mastery — Strength in Numbers + Grave Mistake
-    this.soulGreyLines?.destroy(); this.soulGreyLines = null;
+    // Mastery — Corpse Prince + Grave Mistake
+    this.princeReturnAt = { player: 0, npc: 0 };
     if (this.alphaHusk?.scene) this.alphaHusk.destroy();
     this.alphaHusk = null;
     this.alphaBody?.destroy(); this.alphaBody = null;
@@ -575,7 +556,7 @@ export class SoulKit {
     this.soulAntiHealUntil = 0;
     this.soulScreechLastCastAt = -SOUL_SCREECH_COOLDOWN_MS;
     this.corpseQueue = { player: [], npc: [] };
-    this.seedStartingCorpses();
+    this.seeded = false;
     for (const t of this.hudIcons) t.destroy();
     this.hudIcons = [];
     this.hudBodyCount?.destroy(); this.hudBodyCount = null;
@@ -585,6 +566,8 @@ export class SoulKit {
     // "clear it only if the value still looks like mine" guess against a shared field.
     this.arena.player.wardIncomingMult = 1;
     this.arena.npc.wardIncomingMult = 1;
+    this.arena.player.soulTankIncomingMult = 1;
+    this.arena.npc.soulTankIncomingMult = 1;
   }
 
   // ── Public accessors ───────────────────────────────────────────────────
@@ -655,12 +638,13 @@ export class SoulKit {
     if (graveSlot !== 'e' && Phaser.Input.Keyboard.JustDown(eKey)) player.castAbility('soul-arise', ctx());
     if (graveSlot !== 'r' && Phaser.Input.Keyboard.JustDown(rKey)) player.castAbility('soul-grave', ctx());
     if (graveSlot !== 'f' && Phaser.Input.Keyboard.JustDown(fKey)) player.castAbility('soul-death-whistle', ctx());
-    if (graveSlot !== 'q' && Phaser.Input.Keyboard.JustDown(qKey)) player.castAbility('soul-hells-torment', ctx());
+    if (graveSlot !== 'q' && Phaser.Input.Keyboard.JustDown(qKey)) player.castAbility('soul-turn', ctx());
   }
 
   // ── Per-frame update ────────────────────────────────────────────────
 
   update(time: number, delta: number): void {
+    if (!this.seeded) { this.seeded = true; this.seedStartingCorpses(); }
     this.updateAvatars(time, delta);
     this.updateLanterns(time, delta);
     this.updateBeams(time, delta);
@@ -670,9 +654,9 @@ export class SoulKit {
     this.updateGraves(time, delta);
     this.updateGraveZombies(time, delta);
     this.updateAmalgams(time, delta);
-    this.updateEmbers(time, delta);
     this.updateSoulShots(time, delta);
-    this.updateStrengthInNumbers();
+    this.updatePrinceReturn(time);
+    this.updateSoulTank();
     this.updateAlpha(time, delta);
     this.updateAlphaAllies(time);
     this.updateWardPerk();
@@ -1108,6 +1092,23 @@ export class SoulKit {
    * stand on one line from the npc, or when Soul Lord 10 would hemorrhage the opponent standing
    * next to its own risen. Returns the aim point, or null. Side-effect free.
    */
+  /**
+   * Bot synergy for Turn: what a cast from the npc's spot would take right now. Its own grave
+   * zombies count 1 (they become Amalgams), the player's grave zombies 1, the player's Amalgams 2
+   * (a body taken off them and put on us). Princes are never counted. Side-effect free.
+   */
+  npcTurnValue(): number {
+    if (this.arena.npcElementId !== 'soul') return 0;
+    const npc = this.arena.npc;
+    if (!npc.active || npc.hp <= 0) return 0;
+    const near = (h: Husk): boolean => h.active && h.hp > 0
+      && Phaser.Math.Distance.Between(npc.x, npc.y, h.x, h.y) <= TURN_RADIUS;
+    let v = 0;
+    for (const gz of this.graveZombies) if (near(gz.husk)) v += 1;
+    for (const rec of this.amalgams) if (rec.owner === 'player' && !rec.prince && near(rec.husk)) v += rec.isAlpha ? 3 : 2;
+    return v;
+  }
+
   npcBeamAim(): { x: number; y: number } | null {
     const { npc } = this.arena;
     const now = this.arena.scene.time.now;
@@ -1148,7 +1149,7 @@ export class SoulKit {
     }
     const corpse = queue.shift()!;
     this.avatar(owner)?.play('raise', undefined, 700);
-    fx.soulRise(caster.x, caster.y + 6, 46, 620, 5, corpse.inflamed ? TORMENT_TONES : tones);
+    fx.soulRise(caster.x, caster.y + 6, corpse.prince ? 64 : 46, 620, 5, corpse.prince ? GOLD_TONES : tones);
     this.spawnAmalgam(owner, corpse);
   }
 
@@ -1267,30 +1268,131 @@ export class SoulKit {
     }
   }
 
-  doHellsTorment(owner: Owner): void {
+  /**
+   * Turn (Q): every hostile body within reach changes sides on the spot. The enemy's Amalgams
+   * and grave zombies, your own grave zombies and a loose Grave Mistake Alpha all rise again as
+   * this side's Amalgams, keeping their HP, tier and variant. A Corpse Prince is never turned.
+   * The Amalgam boss is the one thing too big to take: it loses half its current health instead.
+   *
+   * Turned bodies are deliberately exempt from `SOUL_HUSK_CAP` — the ultimate's payout is taking
+   * the other side's crew, and refusing it at the ceiling would make the button dead exactly
+   * when the enemy is strongest. Arise still refuses until the count drops back under it.
+   */
+  doTurn(owner: Owner): void {
     const caster = this.fighterOf(owner);
     const fx = this.fx(owner);
-    let count = 0;
-    const now = this.arena.scene.time.now;
-    // The ultimate: both arms thrust up and held while the fire takes hold.
-    this.avatar(owner)?.play('raise');
-    for (const rec of this.amalgams) {
-      if (rec.owner === owner && rec.husk.active && rec.husk.hp > 0) {
-        if (!rec.burning && owner === 'player') this.arena.recordMasteryStat('tormentBurns', 1);
-        rec.burning = true;
-        rec.nextEmberAt = now;
-        // Ignition burst on the frame each one catches.
-        fx.bloom(rec.husk.x, rec.husk.y, 26, 8, 5, TORMENT_TONES);
-        fx.ring(rec.husk.x, rec.husk.y, 6, 46, SOUL.ember, 380, 3.5, 5);
-        count++;
+    const tones = this.tonesOf(owner);
+    const cx = caster.x, cy = caster.y;
+    const inReach = (x: number, y: number): boolean => Phaser.Math.Distance.Between(cx, cy, x, y) <= TURN_RADIUS;
+    // Both hands out, palms up — the command that calls them over.
+    this.avatar(owner)?.play('raise', undefined, 700);
+    fx.shriek(cx, cy, TURN_RADIUS, 760, 8, tones);
+    fx.ring(cx, cy, TURN_RADIUS, 16, tones.glow, 620, 4, 6);
+    fx.motes(cx, cy, 8, TURN_RADIUS * 0.7, 6, tones);
+
+    const legion = owner === 'player' ? this.arena.hasUpgrade('q') : this.arena.hasNpcUpgrade('q');
+    let turned = 0;
+    const turnOne = (fromX: number, fromY: number, corpse: Corpse, hp: number): void => {
+      // A thread from the caster to the body, then it comes up again in the caster's colours.
+      fx.tether(cx, cy, fromX, fromY, 420, 5, tones);
+      fx.soulRise(fromX, fromY + 6, 44, 560, 5, tones);
+      fx.wisps(fromX, fromY, 6, { speed: 80, size: 2.8, life: 560, rise: -36, depth: 7, tones });
+      const bonus = legion ? LEGION_BONUS_HP : 0;
+      const rec = this.spawnAmalgam(owner, { ...corpse, maxHp: corpse.maxHp + bonus }, { x: fromX, y: fromY, hp: hp + bonus, quiet: true });
+      if (legion) this.applyCarrion(rec, this.arena.scene.time.now, false);
+      turned++;
+    };
+
+    // In Invasion the other side is a co-op ally, so only this side's own bodies are fair game.
+    const coop = this.arena.isInvasion;
+    // Grave zombies: the enemy's, and this side's own (they hunt their raiser until turned).
+    for (const gz of [...this.graveZombies]) {
+      const h = gz.husk;
+      if ((coop && gz.owner !== owner) || !h.active || h.hp <= 0 || !inReach(h.x, h.y)) continue;
+      const corpse: Corpse = { maxHp: h.maxHp, variant: gz.variant.id !== 'basic' ? gz.variant : undefined, angered: gz.angered || undefined };
+      const x = h.x, y = h.y, hp = h.hp;
+      this.removeGraveZombieQuietly(gz);
+      turnOne(x, y, corpse, hp);
+    }
+    // The enemy's Amalgams.
+    for (const rec of [...this.amalgams]) {
+      const h = rec.husk;
+      if (coop || rec.owner === owner || rec.prince || !h.active || h.hp <= 0 || !inReach(h.x, h.y)) continue;
+      const corpse: Corpse = { maxHp: h.maxHp, variant: rec.variant.id !== 'basic' ? rec.variant : undefined, angered: rec.angered || undefined };
+      const x = h.x, y = h.y, hp = h.hp;
+      if (rec.isAlpha) {
+        // An enemy's friendly Alpha changes hands whole rather than shrinking into a plain body.
+        this.removeAmalgamQuietly(rec);
+        this.spawnFriendlyAlpha(owner, { x, y, hp, legion });
+        turned++;
+        continue;
+      }
+      this.removeAmalgamQuietly(rec);
+      turnOne(x, y, corpse, hp);
+    }
+    // A loose Grave Mistake Alpha: turning it counts as beating it — Soul Screech unlocks.
+    const alpha = owner === 'player' ? this.looseAlpha() : null;
+    if (alpha && inReach(alpha.x, alpha.y)) {
+      const x = alpha.x, y = alpha.y, hp = alpha.hp;
+      fx.tether(cx, cy, x, y, 420, 6, tones);
+      this.alphaBody?.collapse(); this.alphaBody = null;
+      alpha.removeAllListeners('defeated');
+      if (alpha.scene) alpha.destroy();
+      this.alphaHusk = null;
+      this.alphaState = 'defeated';
+      this.spawnFriendlyAlpha('player', { x, y, hp, legion });
+      this.arena.showFloatingText(x, y - 50, '💀 ALPHA TURNED — SOUL SCREECH UNLOCKED', '#cc88ff');
+      turned++;
+    }
+
+    // The Amalgam boss is made of more than this can hold. It pays in flesh instead.
+    if (owner === 'player' && this.arena.isAmalgamBoss) {
+      const boss = this.arena.npc;
+      if (boss.active && boss.hp > 0 && Phaser.Math.Distance.Between(cx, cy, boss.x, boss.y) <= TURN_RADIUS + 40) {
+        const dmg = Math.max(1, Math.round(boss.hp * TURN_BOSS_FRAC));
+        fx.tether(cx, cy, boss.x, boss.y, 520, 7, tones);
+        fx.immolate(boss.x, boss.y, 90, { tones, wisps: 16, motes: 6, duration: 640 });
+        this.arena.scene.cameras.main.shake(260, 0.008);
+        boss.takeDamage(dmg, { pierce: true });
+        this.arena.showFloatingText(boss.x, boss.y - 70, '🔄 IT WILL NOT TURN — HALF TORN AWAY', '#ff6a7a');
       }
     }
-    if (count > 0) {
-      // The command itself lands as a front rolling off the caster.
-      fx.ring(caster.x, caster.y, 14, 120, SOUL.flame, 520, 5, 6);
-      fx.wisps(caster.x, caster.y, 10, { speed: 150, size: 3.4, life: 700, rise: -50, depth: 6, tones: TORMENT_TONES });
-      this.arena.showFloatingText(caster.x, caster.y - 44, "🔥 HELL'S TORMENT", '#ff4411');
+
+    if (turned > 0) {
+      if (owner === 'player') this.arena.recordMasteryStat('amalgamsTurned', turned);
+      this.arena.showFloatingText(cx, cy - 46, legion ? `🔄 WE ARE LEGION — ${turned} TURNED` : `🔄 ${turned} TURNED`, legion ? '#ff5577' : '#cc99ff');
+    } else if (owner === 'player' && !this.arena.isAmalgamBoss) {
+      this.arena.showFloatingText(cx, cy - 46, '🔄 NOTHING TO TURN', '#775588');
     }
+  }
+
+  /** Takes a grave zombie off the field with no corpse, no decay cloud and no death blast. */
+  private removeGraveZombieQuietly(gz: GraveZombie): void {
+    const i = this.graveZombies.indexOf(gz);
+    if (i !== -1) this.graveZombies.splice(i, 1);
+    gz.auraGfx?.destroy();
+    gz.husk.removeAllListeners('defeated');
+    if (gz.husk.scene) gz.husk.destroy();
+  }
+
+  /** Takes an Amalgam off the field with none of its death consequences (it is changing sides). */
+  private removeAmalgamQuietly(rec: Amalgam): void {
+    const i = this.amalgams.indexOf(rec);
+    if (i !== -1) this.amalgams.splice(i, 1);
+    rec.body.destroy();
+    rec.shroud?.destroy();
+    rec.husk.removeAllListeners('defeated');
+    rec.husk.removeAllListeners('damaged');
+    if (rec.husk.scene) rec.husk.destroy();
+  }
+
+  /** Carrion Call's buff — from the F+ whistle, or from We are Legion on a turned body. */
+  private applyCarrion(rec: Amalgam, time: number, announce = true): void {
+    const husk = rec.husk;
+    rec.carrionUntil = time + CARRION_BUFF_MS;
+    husk.walkSpeedMult = CARRION_SPEED_MULT;
+    if (rec.dashUntil === 0) husk.biteDamage = this.effectiveDamage(rec, rec.baseBiteDamage, time);
+    if (announce) this.arena.showFloatingText(husk.x, husk.y - 46, '🩸 CARRION CALL', '#ff3333');
   }
 
   // ── Corpse queue ─────────────────────────────────────────────────────
@@ -1300,27 +1402,100 @@ export class SoulKit {
     return CORPSE_CAP_BASE;
   }
 
-  /** A soul user walks in with two plain corpses already queued, so the first Arise is ready. */
+  /**
+   * A soul user walks in with an empty queue — every body is earned. The one exception is
+   * Soul Mastery's Corpse Prince, who is already waiting at the front.
+   */
   private seedStartingCorpses(): void {
     for (const owner of ['player', 'npc'] as Owner[]) {
       const isSoul = owner === 'player' ? this.arena.elementId === 'soul' : this.arena.npcElementId === 'soul';
-      if (!isSoul) continue;
-      for (let i = 0; i < STARTING_CORPSES; i++) this.pushCorpse(owner, { maxHp: GRAVE_ZOMBIE_HP });
+      if (!isSoul || !this.masteryOn(owner)) continue;
+      this.pushCorpse(owner, { maxHp: PRINCE_HP, prince: true });
     }
+  }
+
+  private masteryOn(owner: Owner): boolean {
+    return owner === 'player' ? this.arena.masteryActive : this.arena.npcMasteryActive;
   }
 
   private pushCorpse(owner: Owner, corpse: Corpse): void {
     const queue = this.corpseQueue[owner];
     queue.unshift({ ...corpse, maxHp: Math.max(1, Math.round(corpse.maxHp)) });
     const cap = this.corpseCap(owner);
-    if (queue.length > cap) queue.length = cap;
+    // Overflow drops the oldest body — but never the prince, who is only ever away on a timer.
+    while (queue.length > cap) {
+      let drop = queue.length - 1;
+      while (drop >= 0 && queue[drop].prince) drop--;
+      if (drop < 0) break;
+      queue.splice(drop, 1);
+    }
+  }
+
+  /** Mastery — Corpse Prince: twelve seconds after he falls, he is back at the front of the queue. */
+  private updatePrinceReturn(time: number): void {
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const at = this.princeReturnAt[owner];
+      if (at === 0 || time < at) continue;
+      this.princeReturnAt[owner] = 0;
+      if (!this.masteryOn(owner)) continue;
+      this.pushCorpse(owner, { maxHp: PRINCE_HP, prince: true });
+      const caster = this.fighterOf(owner);
+      if (caster.active) {
+        this.fx(owner).soulRise(caster.x, caster.y + 4, 40, 520, 4, GOLD_TONES);
+        if (owner === 'player') this.arena.showFloatingText(caster.x, caster.y - 52, '👑 THE PRINCE AWAITS', '#ffd24a');
+      }
+    }
+  }
+
+  /** Seconds until the fallen prince is back in the queue, or 0 — read by the HUD. */
+  princeReturnIn(owner: Owner, time: number): number {
+    const at = this.princeReturnAt[owner];
+    return at > time ? Math.ceil((at - time) / 1000) : 0;
+  }
+
+  /**
+   * Your Amalgams take 20% of every hit aimed at you. The multiplier is written on both fighters
+   * every frame (this kit is its only writer), and the hit's own 'damaged' event hands the share
+   * to the standing Amalgam nearest the caster. Online, both sims run this over their own copy of
+   * the crew: the attacker's replica takes the reduced hit, and each machine hurts its own copy.
+   */
+  private updateSoulTank(): void {
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const f = this.fighterOf(owner);
+      if (!f) continue;
+      const isSoul = owner === 'player' ? this.arena.elementId === 'soul' : this.arena.npcElementId === 'soul';
+      f.soulTankIncomingMult = isSoul && this.amalgamCount(owner) > 0 ? 1 - TANK_SHARE : 1;
+      if (isSoul && !this.tankHooked.has(f)) {
+        this.tankHooked.add(f);
+        f.on('damaged', (amount: number) => this.shareHit(f, amount));
+      }
+    }
+  }
+
+  private shareHit(f: Fighter, amount: number): void {
+    if (amount <= 0 || f.soulTankIncomingMult >= 1) return;
+    const owner: Owner | null = f === this.arena.player ? 'player' : f === this.arena.npc ? 'npc' : null;
+    if (!owner) return;
+    let best: Amalgam | null = null;
+    let bestD = Infinity;
+    for (const rec of this.amalgams) {
+      if (rec.owner !== owner || !rec.husk.active || rec.husk.hp <= 0) continue;
+      const d = Phaser.Math.Distance.Between(f.x, f.y, rec.husk.x, rec.husk.y);
+      if (d < bestD) { bestD = d; best = rec; }
+    }
+    if (!best) return;
+    // `amount` is what got through at 80%, so the Amalgam's 20% of the original is a quarter of it.
+    const share = Math.max(1, Math.round(amount * TANK_SHARE / (1 - TANK_SHARE)));
+    const h = best.husk;
+    this.fx(owner).tether(f.x, f.y, h.x, h.y, 220, 3, this.tonesOf(owner));
+    h.takeDamage(share);
   }
 
   // ── Amalgams ─────────────────────────────────────────────────────────
 
   /** The shades an amalgam's flesh is painted in — its tier wins over whose it is. */
   private amalgamTones(rec: Amalgam): SoulTones {
-    if (rec.inflamed || rec.burning) return TORMENT_TONES;
+    if (rec.prince) return GOLD_TONES;
     if (rec.angered) return ANGERED_TONES;
     return this.tonesOf(rec.owner);
   }
@@ -1330,37 +1505,42 @@ export class SoulKit {
    * stays alive (it owns the physics body, the health bar and every status field) — it just
    * isn't what you look at any more.
    */
-  private buildAmalgamBody(husk: Husk, owner: Owner, variant: HuskVariantDef, isAlpha = false): SoulAmalgamBody {
+  private buildAmalgamBody(husk: Husk, owner: Owner, variant: HuskVariantDef, isAlpha = false, prince = false): SoulAmalgamBody {
     husk.setVisible(false);
     return new SoulAmalgamBody(this.arena.scene, this.col(owner), {
       size: AMALGAM_BODY_SIZE * husk.sizeMult,
       fleshColor: variant.id !== 'basic' ? variant.color : undefined,
       quirk: variant.quirk,
       alpha: isAlpha,
+      prince,
       depth: 6,
     });
   }
 
-  private spawnAmalgam(owner: Owner, corpse: Corpse): void {
+  /**
+   * Raises a corpse as this side's Amalgam. Arise raises it beside the caster at full health;
+   * Turn passes `at` to raise it where the body already stood, at the health it already had.
+   */
+  private spawnAmalgam(
+    owner: Owner, corpse: Corpse, at?: { x: number; y: number; hp: number; quiet?: boolean },
+  ): Amalgam {
     const caster = this.fighterOf(owner);
     const scene = this.arena.scene;
-    const ox = caster.x + (Math.random() - 0.5) * 50;
-    const oy = caster.y + (Math.random() - 0.5) * 50;
+    const ox = at ? at.x : caster.x + (Math.random() - 0.5) * 50;
+    const oy = at ? at.y : caster.y + (Math.random() - 0.5) * 50;
 
-    const inflamed = !!corpse.inflamed;
-    const variant = inflamed ? BASIC_HUSK : (corpse.variant ?? BASIC_HUSK);
-    const angered = !!corpse.angered;
+    const prince = !!corpse.prince;
+    const variant = prince ? BASIC_HUSK : (corpse.variant ?? BASIC_HUSK);
+    const angered = !prince && !!corpse.angered;
 
-    let maxHp = Math.max(10, corpse.maxHp);
+    const maxHp = Math.max(10, corpse.maxHp);
     let biteDmg: number;
     let dashDmg: number;
     let speed: number;
-
-    if (inflamed) {
-      maxHp = INFLAMED_HP;
-      biteDmg = INFLAMED_BITE_DMG;
-      dashDmg = INFLAMED_DASH_DMG;
-      speed = AMALGAM_SPEED;
+    if (prince) {
+      biteDmg = PRINCE_SWORD_DMG;
+      dashDmg = PRINCE_LUNGE_DMG;
+      speed = PRINCE_SPEED;
     } else {
       biteDmg = Math.max(1, Math.round(AMALGAM_BITE_DMG * variant.damageMult));
       dashDmg = Math.max(1, Math.round(AMALGAM_DASH_BITE_DMG * variant.damageMult));
@@ -1369,29 +1549,27 @@ export class SoulKit {
 
     const husk = new Husk(scene, ox, oy, maxHp, Math.round(speed), biteDmg, AMALGAM_BITE_CD_MS, variant);
     husk.world = this.huskWorld;
+    if (at) husk.hp = Phaser.Math.Clamp(Math.round(at.hp), 1, maxHp);
     husk.onBite = (dmg, target) => {
       target.takeDamage(dmg);
       if (owner === 'player') this.arena.recordMasteryStat('amalgamDamage', dmg);
     };
-    if (owner === 'player') this.arena.recordMasteryStat('amalgamsSummoned', 1);
+    if (owner === 'player' && !at) this.arena.recordMasteryStat('amalgamsSummoned', 1);
 
     const now = scene.time.now;
     const rec: Amalgam = {
-      husk, owner, waypoint: null, burning: false,
+      husk, owner, waypoint: null,
       baseBiteDamage: biteDmg,
       dashBiteDamage: dashDmg,
       nextDashAt: now + AMALGAM_DASH_INTERVAL_MIN_MS + Math.random() * (AMALGAM_DASH_INTERVAL_MAX_MS - AMALGAM_DASH_INTERVAL_MIN_MS),
       dashUntil: 0,
-      nextEmberAt: 0,
-      body: this.buildAmalgamBody(husk, owner, variant),
-      burnTickAccum: 0,
+      body: this.buildAmalgamBody(husk, owner, variant, false, prince),
       meleeTickAccum: 0,
       carrionUntil: 0,
       nextTrailAt: 0,
       variant,
       angered,
-      inflamed,
-      damageAccum: 0,
+      prince: prince || undefined,
       shroud: null,
       t: Math.random() * 10,
     };
@@ -1399,20 +1577,16 @@ export class SoulKit {
     husk.on('damaged', (amount: number) => {
       if (amount <= 0 || !husk.active) return;
       this.arena.spawnDamageNumber(husk.x, husk.y - 20, amount);
-      if (rec.inflamed) {
-        rec.damageAccum += amount;
-        while (rec.damageAccum >= INFLAMED_DAMAGE_THRESHOLD && husk.active && husk.hp > 0) {
-          rec.damageAccum -= INFLAMED_DAMAGE_THRESHOLD;
-          this.emitTormentTick(rec);
-        }
-      }
     });
     this.amalgams.push(rec);
-    const label = inflamed ? '🔥 THE INFLAMED RISES'
-      : angered ? '🧟 ANGERED AMALGAM RISES'
-      : variant.id !== 'basic' ? `🧟 ${variant.name.toUpperCase()} RECRUITED`
-      : '🧟 AMALGAM RISES';
-    this.arena.showFloatingText(caster.x, caster.y - 44, label, inflamed ? '#ff5522' : '#9966cc');
+    if (!at?.quiet) {
+      const label = prince ? '👑 THE CORPSE PRINCE RISES'
+        : angered ? '🧟 ANGERED AMALGAM RISES'
+        : variant.id !== 'basic' ? `🧟 ${variant.name.toUpperCase()} RECRUITED`
+        : '🧟 AMALGAM RISES';
+      this.arena.showFloatingText(caster.x, caster.y - 44, label, prince ? '#ffd24a' : '#9966cc');
+    }
+    return rec;
   }
 
   private effectiveDamage(rec: Amalgam, base: number, time: number): number {
@@ -1470,23 +1644,18 @@ export class SoulKit {
         aim: hunted ? Math.atan2(hunted.y - husk.y, hunted.x - husk.x) : null,
         tones,
         dashing: rec.dashUntil > 0,
-        burning: rec.burning,
-        inflamed: rec.inflamed,
         angered: rec.angered,
       });
 
-      // A burning or buffed amalgam wears a live veil, so its state reads at a glance.
-      const wantShroud = rec.burning || rec.carrionUntil > time;
+      // A buffed amalgam wears a live veil, so its state reads at a glance.
+      const wantShroud = rec.carrionUntil > time;
       if (wantShroud && !rec.shroud) {
-        rec.shroud = new SoulShroud(scene, col, rec.burning ? TORMENT_TONES : ANGERED_TONES, size * 1.5, 0.9, 5, 6);
+        rec.shroud = new SoulShroud(scene, col, ANGERED_TONES, size * 1.5, 0.9, 5, 6);
       } else if (!wantShroud && rec.shroud) {
         rec.shroud.destroy();
         rec.shroud = null;
       }
-      if (rec.shroud) {
-        rec.shroud.setTones(rec.burning ? TORMENT_TONES : ANGERED_TONES);
-        rec.shroud.update(delta, husk.x, husk.y, husk.alpha);
-      }
+      if (rec.shroud) rec.shroud.update(delta, husk.x, husk.y, husk.alpha);
 
       const body = husk.body as Phaser.Physics.Arcade.Body;
 
@@ -1504,12 +1673,7 @@ export class SoulKit {
           } else {
             this.arena.showFloatingText(husk.x, husk.y - 30, '🚫 ANTI-HEAL', '#ff5555');
           }
-          if (rec.owner === 'player' && this.arena.hasUpgrade('f')) {
-            rec.carrionUntil = time + CARRION_BUFF_MS;
-            husk.walkSpeedMult = CARRION_SPEED_MULT;
-            if (rec.dashUntil === 0) husk.biteDamage = this.effectiveDamage(rec, rec.baseBiteDamage, time);
-            this.arena.showFloatingText(husk.x, husk.y - 46, '🩸 CARRION CALL', '#ff3333');
-          }
+          if (rec.owner === 'player' && this.arena.hasUpgrade('f')) this.applyCarrion(rec, time);
           rec.waypoint = null;
         } else {
           body.setVelocity((dx / dist) * husk.speed, (dy / dist) * husk.speed);
@@ -1519,7 +1683,7 @@ export class SoulKit {
         husk.update(targets, time, delta);
 
         // Recruited invasion variants fight with their own AI (kiting/charging/healing).
-        // The dash-burst flourish is only for plain/angered amalgams.
+        // The dash-burst flourish is only for plain/angered amalgams (and the prince's lunge).
         if (rec.variant.id === 'basic') {
           if (time >= rec.nextDashAt && rec.dashUntil === 0 && targets.length > 0) {
             const target = this.nearestOf(targets, husk.x, husk.y);
@@ -1588,18 +1752,6 @@ export class SoulKit {
         }
       }
 
-      // Hell's Torment burn.
-      if (rec.burning && husk.active) {
-        rec.burnTickAccum += delta;
-        while (rec.burnTickAccum >= 1000 && husk.hp > 0) {
-          rec.burnTickAccum -= 1000;
-          husk.takeDamage(TORMENT_SELF_DPS);
-        }
-        if (husk.active && husk.hp > 0 && time >= rec.nextEmberAt) {
-          rec.nextEmberAt = time + 1000;
-          this.emitTormentTick(rec);
-        }
-      }
     }
   }
 
@@ -1616,42 +1768,16 @@ export class SoulKit {
     // Cruel Offering (E+): every one of your risen leaves its rot where it fell.
     if (rec.owner === 'player' && this.arena.hasUpgrade('e')) this.spawnDecayCloud(rec.owner, husk.x, husk.y);
 
-    if (rec.burning) {
-      const radius = rec.inflamed ? INFLAMED_DEATH_AOE_RADIUS : TORMENT_DEATH_AOE_RADIUS;
-      const dmg = rec.inflamed ? INFLAMED_DEATH_AOE_DMG : TORMENT_DEATH_AOE_DMG;
-      const emberCount = rec.inflamed ? INFLAMED_DEATH_EMBER_COUNT : TORMENT_DEATH_EMBER_COUNT;
-      this.emitEmbers(rec.owner, husk.x, husk.y, emberCount, true);
-      // An Inflamed goes off harder than a plain torment kill, so the *content* scales too.
-      fx.immolate(husk.x, husk.y, radius * 0.62, {
-        tones: TORMENT_TONES,
-        wisps: rec.inflamed ? 18 : 11,
-        motes: rec.inflamed ? 7 : 4,
-        duration: rec.inflamed ? 640 : 480,
-      });
-      this.arena.scene.cameras.main.shake(rec.inflamed ? 220 : 140, rec.inflamed ? 0.008 : 0.004);
-      this.dealSoulAoe(husk.x, husk.y, radius, dmg, rec.owner);
-      this.applyDotToFoesInRadius(rec.owner, husk.x, husk.y, radius);
-      this.arena.showFloatingText(husk.x, husk.y - 30, '💥 IMMOLATED', '#ff6622');
-
-      if (!rec.inflamed && rec.owner === 'player' && this.arena.hasUpgrade('q')) {
-        this.pushCorpse(rec.owner, { maxHp: INFLAMED_HP, inflamed: true });
-        this.arena.showFloatingText(husk.x, husk.y - 50, '😈 INFLAMED', '#ff3333');
+    // Even a quiet death gives the spirit back: it comes apart into wisps and drifts off.
+    const tones = this.amalgamTones(rec);
+    fx.wisps(husk.x, husk.y, rec.prince ? 10 : 7, { speed: 70, size: 3, life: 720, rise: -46, depth: 6, tones });
+    fx.stain(husk.x, husk.y, 22, 1, tones);
+    // Mastery — the prince is never lost, only away.
+    if (rec.prince) {
+      this.princeReturnAt[rec.owner] = this.arena.scene.time.now + PRINCE_RETURN_MS;
+      if (rec.owner === 'player') {
+        this.arena.showFloatingText(husk.x, husk.y - 34, `👑 THE PRINCE FALLS — BACK IN ${PRINCE_RETURN_MS / 1000}s`, '#ffd24a');
       }
-    } else if (rec.inflamed) {
-      // The Inflamed always detonate on death, torment or not.
-      this.emitEmbers(rec.owner, husk.x, husk.y, INFLAMED_DEATH_EMBER_COUNT, true);
-      fx.immolate(husk.x, husk.y, INFLAMED_DEATH_AOE_RADIUS * 0.62, {
-        tones: TORMENT_TONES, wisps: 18, motes: 7, duration: 640,
-      });
-      this.arena.scene.cameras.main.shake(220, 0.008);
-      this.dealSoulAoe(husk.x, husk.y, INFLAMED_DEATH_AOE_RADIUS, INFLAMED_DEATH_AOE_DMG, rec.owner);
-      this.applyDotToFoesInRadius(rec.owner, husk.x, husk.y, INFLAMED_DEATH_AOE_RADIUS);
-      this.arena.showFloatingText(husk.x, husk.y - 30, '💥 IMMOLATED', '#ff6622');
-    } else {
-      // Even a quiet death gives the spirit back: it comes apart into wisps and drifts off.
-      const tones = this.tonesOf(rec.owner);
-      fx.wisps(husk.x, husk.y, 7, { speed: 70, size: 3, life: 720, rise: -46, depth: 6, tones });
-      fx.stain(husk.x, husk.y, 22, 1, tones);
     }
 
     if (rec.variant.explodes) this.emitBlast(husk.x, husk.y, Math.round(husk.biteDamage * 2), this.foesOf(rec.owner), rec.owner);
@@ -1661,43 +1787,6 @@ export class SoulKit {
       targets: husk, alpha: 0, scaleX: 0.3, scaleY: 0.3, duration: 350,
       onComplete: () => { if (husk.scene) husk.destroy(); },
     });
-  }
-
-  private emitTormentTick(rec: Amalgam): void {
-    const husk = rec.husk;
-    const fx = this.fx(rec.owner);
-    this.emitEmbers(rec.owner, husk.x, husk.y, TORMENT_EMBER_COUNT, false);
-    // The once-a-second cough of fire: a front plus a rosette, not a bare damage call.
-    fx.ring(husk.x, husk.y, 10, TORMENT_AOE_RADIUS, SOUL.ember, 420, 4, 5);
-    fx.wispBloom(husk.x, husk.y, TORMENT_AOE_RADIUS * 0.5, 400, 5, TORMENT_TONES);
-    this.dealSoulAoe(husk.x, husk.y, TORMENT_AOE_RADIUS, TORMENT_AOE_DMG, rec.owner);
-    this.applyDotToFoesInRadius(rec.owner, husk.x, husk.y, TORMENT_AOE_RADIUS);
-  }
-
-  // ── Mastery — Strength in Numbers passive ─────────────────────────────
-
-  private updateStrengthInNumbers(): void {
-    if (!this.arena.masteryActive) {
-      if (this.soulGreyLines) { this.soulGreyLines.clear(); }
-      return;
-    }
-    const mine = this.amalgams.filter((a) => a.owner === 'player' && a.husk.active && a.husk.hp > 0);
-    const resist = Math.min(AMALGAM_RESIST_CAP, AMALGAM_RESIST_PER * Math.max(0, mine.length - 1));
-    const mult = 1 - resist;
-    for (const a of mine) a.husk.incomingDamageMultiplier = mult;
-    if (!this.soulGreyLines) this.soulGreyLines = this.arena.scene.add.graphics().setDepth(2);
-    const g = this.soulGreyLines;
-    g.clear();
-    // Each bond thickens and brightens as the resist climbs, so the passive's strength is a
-    // visual quantity rather than a number you have to remember.
-    const strength = resist / AMALGAM_RESIST_CAP;
-    const t = this.arena.scene.time.now / 1000;
-    for (let i = 0; i < mine.length; i++) {
-      for (let j = i + 1; j < mine.length; j++) {
-        SoulFx.drawBond(g, this.pcol, this.tonesOf('player'),
-          mine[i].husk.x, mine[i].husk.y, mine[j].husk.x, mine[j].husk.y, t + i + j, strength);
-      }
-    }
   }
 
   // ── Mastery — Grave Mistake ───────────────────────────────────────────
@@ -1813,45 +1902,51 @@ export class SoulKit {
     this.alphaHusk = null;
     this.alphaState = 'defeated';
     this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 50, '💀 ALPHA SLAIN — SOUL SCREECH UNLOCKED', '#cc88ff');
-    this.spawnFriendlyAlpha();
+    this.spawnFriendlyAlpha('player');
   }
 
   /**
-   * The Alpha you beat, joining you. Deliberately exempt from `SOUL_HUSK_CAP`: it is the payout
-   * for killing a 200 HP horror rather than something you can raise on demand, and it replaced a
-   * body that was already on the field.
+   * The Alpha you beat (or Turned), joining you. Deliberately exempt from `SOUL_HUSK_CAP`: it is
+   * the payout for beating a 200 HP horror rather than something you can raise on demand, and it
+   * replaced a body that was already on the field. Turn passes `at` to keep it where it stood,
+   * at the health it had — and can hand an enemy's friendly Alpha to the npc side too.
    */
-  private spawnFriendlyAlpha(): void {
+  private spawnFriendlyAlpha(owner: Owner, at?: { x: number; y: number; hp: number; legion?: boolean }): void {
     const scene = this.arena.scene;
-    const caster = this.arena.player;
-    const ox = caster.x + (Math.random() - 0.5) * 50, oy = caster.y + (Math.random() - 0.5) * 50;
-    const husk = new Husk(scene, ox, oy, ALPHA_HP, ALPHA_SPEED, ALPHA_BITE_DMG, 1000, BASIC_HUSK);
+    const caster = this.fighterOf(owner);
+    const tones = this.tonesOf(owner);
+    const ox = at ? at.x : caster.x + (Math.random() - 0.5) * 50;
+    const oy = at ? at.y : caster.y + (Math.random() - 0.5) * 50;
+    const bonus = at?.legion ? LEGION_BONUS_HP : 0;
+    const husk = new Husk(scene, ox, oy, ALPHA_HP + bonus, ALPHA_SPEED, ALPHA_BITE_DMG, 1000, BASIC_HUSK);
     husk.sizeMult = 2.1; husk.applySizeMult();
     husk.world = this.huskWorld;
+    if (at) husk.hp = Phaser.Math.Clamp(Math.round(at.hp + bonus), 1, husk.maxHp);
     husk.onBite = (dmg, target) => {
       target.takeDamage(dmg);
-      this.arena.recordMasteryStat('amalgamDamage', dmg);
+      if (owner === 'player') this.arena.recordMasteryStat('amalgamDamage', dmg);
     };
-    this.pfx.soulRise(ox, oy + 8, 76, 780, 5, this.tonesOf('player'));
-    this.pfx.bloom(ox, oy, 40, 11, 5, this.tonesOf('player'));
+    this.fx(owner).soulRise(ox, oy + 8, 76, 780, 5, tones);
+    this.fx(owner).bloom(ox, oy, 40, 11, 5, tones);
     const now = scene.time.now;
     const rec: Amalgam = {
-      husk, owner: 'player', waypoint: null, burning: false,
+      husk, owner, waypoint: null,
       baseBiteDamage: ALPHA_BITE_DMG, dashBiteDamage: ALPHA_BITE_DMG,
-      nextDashAt: now + 99999, dashUntil: 0, nextEmberAt: 0,
-      body: this.buildAmalgamBody(husk, 'player', BASIC_HUSK, true),
-      burnTickAccum: 0, meleeTickAccum: 0, carrionUntil: 0, nextTrailAt: 0,
-      variant: BASIC_HUSK, angered: false, inflamed: false, damageAccum: 0,
+      nextDashAt: now + 99999, dashUntil: 0,
+      body: this.buildAmalgamBody(husk, owner, BASIC_HUSK, true),
+      meleeTickAccum: 0, carrionUntil: 0, nextTrailAt: 0,
+      variant: BASIC_HUSK, angered: false,
       shroud: null, t: 0,
       isAlpha: true, alphaNextConeAt: now + ALPHA_CONE_INTERVAL_MS,
     };
     husk.once('defeated', () => this.onAmalgamDefeated(rec));
     this.amalgams.push(rec);
-    this.arena.recordMasteryStat('amalgamsSummoned', 1);
+    if (at?.legion) this.applyCarrion(rec, now, false);
+    if (owner === 'player' && !at) this.arena.recordMasteryStat('amalgamsSummoned', 1);
     this.arena.showFloatingText(ox, oy - 46, '🧟 ALPHA JOINS YOU', '#cc88ff');
   }
 
-  private fireAlphaCone(from: Husk, target: Fighter, hitsCaster: boolean, antiHeal: boolean): void {
+  private fireAlphaCone(from: Husk, target: Fighter, hitsCaster: boolean, antiHeal: boolean, owner: Owner = 'player'): void {
     const scene = this.arena.scene;
     const base = Math.atan2(target.y - from.y, target.x - from.x);
     const spread = Phaser.Math.DegToRad(42);
@@ -1864,7 +1959,7 @@ export class SoulKit {
       this.soulShots.push({
         gfx: scene.add.graphics().setDepth(7), x: from.x, y: from.y,
         vx: Math.cos(ang) * SOUL_SHOT_SPEED, vy: Math.sin(ang) * SOUL_SHOT_SPEED,
-        damage: ALPHA_CONE_DAMAGE, owner: 'player', hitsCaster, antiHeal,
+        damage: ALPHA_CONE_DAMAGE, owner, hitsCaster, antiHeal,
         tones: ROT_TONES, t: Math.random() * 6,
         expiresAt: scene.time.now + SOUL_SHOT_LIFETIME_MS,
       });
@@ -1903,11 +1998,12 @@ export class SoulKit {
   /** The friendly alpha keeps its powerful cone blast, aimed at the opposing fighter. */
   private updateAlphaAllies(time: number): void {
     for (const rec of this.amalgams) {
-      if (!rec.isAlpha || rec.owner !== 'player' || !rec.husk.active || rec.husk.hp <= 0) continue;
+      if (!rec.isAlpha || !rec.husk.active || rec.husk.hp <= 0) continue;
       if (time < (rec.alphaNextConeAt ?? 0)) continue;
       rec.alphaNextConeAt = time + ALPHA_CONE_INTERVAL_MS;
-      const foe = this.arena.npc;
-      if (foe.active && foe.hp > 0) this.fireAlphaCone(rec.husk, foe, false, false);
+      if (this.arena.isInvasion) continue;
+      const foe = rec.owner === 'player' ? this.arena.npc : this.arena.player;
+      if (foe.active && foe.hp > 0) this.fireAlphaCone(rec.husk, foe, false, false, rec.owner);
     }
   }
 
@@ -2200,59 +2296,6 @@ export class SoulKit {
     return this.inDecay('player', npc.x, npc.y) ? DECAY_SLOW_MULT : 1;
   }
 
-  // ── Embers (Hell's Torment) ──────────────────────────────────────────
-
-  private emitEmbers(owner: Owner, x: number, y: number, count: number, big: boolean): void {
-    const scene = this.arena.scene;
-    for (let i = 0; i < count; i++) {
-      const ang = Math.random() * Math.PI * 2;
-      this.embers.push({
-        sprite: scene.add.graphics().setDepth(7), x, y,
-        vx: Math.cos(ang) * EMBER_SPEED, vy: Math.sin(ang) * EMBER_SPEED,
-        owner, expiresAt: scene.time.now + EMBER_LIFETIME_MS, big,
-        t: Math.random() * 6,
-      });
-    }
-  }
-
-  private updateEmbers(time: number, delta: number): void {
-    const W = this.arena.width, H = this.arena.height;
-    for (let i = this.embers.length - 1; i >= 0; i--) {
-      const e = this.embers[i];
-      if (time >= e.expiresAt) { e.sprite.destroy(); this.embers.splice(i, 1); continue; }
-      e.x += e.vx * delta / 1000;
-      e.y += e.vy * delta / 1000;
-      e.t += delta / 1000;
-      e.sprite.clear();
-      SoulFx.drawEmber(e.sprite, this.col(e.owner), e.x, e.y, Math.atan2(e.vy, e.vx), e.big ? 6 : 4, e.t, e.big);
-      if (e.x < 0 || e.x > W || e.y < 0 || e.y > H) { e.sprite.destroy(); this.embers.splice(i, 1); continue; }
-
-      let hit = false;
-      for (const f of this.foesOf(e.owner)) {
-        if (Phaser.Math.Distance.Between(e.x, e.y, f.x, f.y) <= EMBER_HIT_RADIUS) {
-          f.takeDamage(TORMENT_EMBER_DMG);
-          f.burningUntil = Math.max(f.burningUntil, time + FIRE_DOT_MS);
-          this.arena.spawnHitFlash(f.x, f.y, 0xff6622);
-          this.fx(e.owner).wisps(e.x, e.y, e.big ? 6 : 3, {
-            speed: 90, size: 2.6, life: 420, rise: -22, depth: 7, tones: TORMENT_TONES,
-          });
-          hit = true;
-          break;
-        }
-      }
-      if (hit) { e.sprite.destroy(); this.embers.splice(i, 1); }
-    }
-  }
-
-  private applyDotToFoesInRadius(owner: Owner, x: number, y: number, radius: number): void {
-    const now = this.arena.scene.time.now;
-    for (const f of this.foesOf(owner)) {
-      if (Phaser.Math.Distance.Between(x, y, f.x, f.y) <= radius) {
-        f.burningUntil = Math.max(f.burningUntil, now + FIRE_DOT_MS);
-      }
-    }
-  }
-
   // ── Ward perk (Soul) ─────────────────────────────────────────────────
 
   private updateWardPerk(): void {
@@ -2302,13 +2345,15 @@ export class SoulKit {
         continue;
       }
       icon.setTexture(huskTextureKey(corpse.variant ?? BASIC_HUSK)).setAlpha(1);
-      if (corpse.inflamed) icon.setTint(INFLAMED_ICON_TINT);
+      if (corpse.prince) icon.setTint(PRINCE_ICON_TINT);
       else if (corpse.angered) icon.setTint(0xff4444);
       else icon.clearTint();
     }
     // Bodies standing, against the cap — turns red at the ceiling, which is when Arise refuses.
     const bodies = this.huskCount('player');
-    this.hudBodyCount?.setText(`🧟 ${bodies}/${SOUL_HUSK_CAP}`)
+    // Corpse Prince: while he is away, how long until he is back in the queue.
+    const princeIn = this.princeReturnIn('player', this.arena.scene.time.now);
+    this.hudBodyCount?.setText(`🧟 ${bodies}/${SOUL_HUSK_CAP}${princeIn > 0 ? `  👑 ${princeIn}s` : ''}`)
       .setColor(bodies >= SOUL_HUSK_CAP ? '#ff7777' : '#9977bb');
     // Kills, and — with Soul Lord — how many more until the next power.
     const k = this.kills.player;
@@ -2393,7 +2438,7 @@ export class SoulKit {
         g.lineTo(sx - hw + inset, sh);
         g.closePath();
       };
-      const glowCol = corpse?.inflamed ? SOUL.ember : corpse?.angered ? SOUL.blood : gold ? SOUL.gold : SOUL.orchid;
+      const glowCol = corpse?.prince ? SOUL.gold : corpse?.angered ? SOUL.blood : gold ? SOUL.gold : SOUL.orchid;
       coffin(0);
       g.fillStyle(0x07030c, 1);
       g.fillPath();
@@ -2407,7 +2452,7 @@ export class SoulKit {
           const ph = (now * 0.9 + w / 3 + i * 0.37) % 1;
           const wy = ttop - ph * 12;
           const wx = sx + Math.sin(ph * 7 + i) * 3;
-          g.fillStyle(corpse.inflamed ? SOUL.cinder : gold ? SOUL.sun : SOUL.lilac, (1 - ph) * 0.7);
+          g.fillStyle(corpse.prince ? SOUL.sun : gold ? SOUL.sun : SOUL.lilac, (1 - ph) * 0.7);
           g.fillCircle(wx, wy, 2.2 * (1 - ph) + 0.6);
         }
       }
@@ -2454,7 +2499,7 @@ export class SoulKit {
 
   /**
    * Owner AoE that also reaches the loose alpha. ArenaScene's own AoE only sweeps the fighters
-   * and husks it owns, so a kit-side sweep is the only way the alpha eats a Torment blast.
+   * and husks it owns, so a kit-side sweep is the only way the alpha eats a soul blast.
    */
   private dealSoulAoe(x: number, y: number, radius: number, damage: number, owner: Owner): void {
     this.arena.dealAoeDamageFromOwner(x, y, radius, damage, owner);
@@ -2470,7 +2515,7 @@ export class SoulKit {
    *
    * The risen are husks rather than plain records, so they are killed through their own death
    * path instead of being spliced out from under it — a summon that skipped `defeated` would
-   * leave its aura Graphics and its corpse bookkeeping behind, and a burning amalgam owes the
+   * leave its aura Graphics and its corpse bookkeeping behind, and an amalgam owes the
    * arena its death blast on the way out. The Alpha is left alone: it turns on whoever raised
    * it, which makes it an enemy rather than a summon.
    */

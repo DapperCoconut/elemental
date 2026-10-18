@@ -102,42 +102,43 @@ const illusion: ElementCodex = {
     'illusion-veil': {
       basics:
         'Hangs a 164px by 26px pane 78px out along the cursor, standing across your aim rather than '
-        + 'along it, clamped inside the arena. It never moves again — it does not follow you and stepping '
-        + 'away does not take it with you — and any projectile crossing it leaves 30° off true, with the '
-        + 'side a fresh coin flip per shot so a stream of shots through one pane fans rather than '
-        + 'curving. A given pane touches a given projectile exactly once however long it spends inside, '
-        + 'though two panes each get their own go at the same bullet. It is symmetrical by design: your '
-        + 'own Crack Shots come out just as crooked as theirs, which is what makes the pane a placement '
-        + 'decision rather than a free wall. 6 seconds, fading over its last 0.32s. 9s cooldown.',
+        + 'along it, clamped inside the arena. It never moves again. What it does to a shot depends on '
+        + 'whose shot it is. Anybody else\'s projectile leaves 10° off true, on a fresh coin flip per shot. '
+        + 'Your own pass straight through — and each of your Crack Shots comes out with five illusion '
+        + 'bullets: four fanned at 11° and 22° either side of it and a fifth trailing straight behind, '
+        + 'drawn as the same red dart. Illusions hurt nobody and fade at the wall, but anything that '
+        + 'hits one — an enemy shot, a blast, a husk\'s spit, even your own bullets — cracks it, and the '
+        + 'crack pays 10 to the nearest enemy exactly as a wall crack does. 6 seconds, fading over its '
+        + 'last 0.32s. 9s cooldown.',
       cast: 'E. Hung 78px out along the cursor, standing across your aim rather than along it, and clamped to stay inside the arena. 9s cooldown.',
       effects: [
         { tag: 'summon', label: 'The pane', detail: '164px long and 26px thick, standing perpendicular to the direction you were aiming. It never moves again — it does not follow you, and stepping away from it does not take it with you.' },
-        { tag: 'control', label: 'The kick', detail: 'Any projectile crossing it leaves 30° off true. The side is a fresh coin flip per shot, so a stream of shots through one pane fans rather than curving.' },
-        { tag: 'utility', label: 'Once each', detail: 'A given pane touches a given projectile exactly once, however long it spends inside — otherwise a slow shot crawling through would spiral. Two panes each get their own go at the same bullet.' },
-        { tag: 'cost', label: 'Yours too', detail: 'Symmetrical by design. Your own Crack Shots come out of it just as crooked as theirs, which is what makes the pane a placement decision instead of a free wall.' },
-        { tag: 'area', label: 'Lifetime', detail: '6 seconds, fading over its last 0.32s so it never blinks out mid-fight, then a collapsing ring where it stood.' },
+        { tag: 'control', label: 'Their shots', detail: 'Any enemy projectile crossing it leaves 10° off true. The side is a fresh coin flip per shot, so a stream through one pane fans rather than curving.' },
+        { tag: 'summon', label: 'Your shots', detail: 'Pass straight through. Each Crack Shot comes out with 5 illusion bullets — at ±11° and ±22°, and one trailing straight behind at 80% speed — drawn as the same dart, so the real one is never the odd one out.' },
+        { tag: 'damage', label: 'Cracking an illusion', detail: 'An illusion hurts nobody, but anything that hits it — an enemy shot (which it stops), a blast, a husk shot, or one of your own bullets after its first 0.22s — cracks it for a hitscan 10 on the nearest enemy.' },
+        { tag: 'utility', label: 'Once each', detail: 'A given pane touches a given projectile exactly once, however long it spends inside. Two panes each get their own go at the same bullet.' },
+        { tag: 'area', label: 'Lifetime', detail: '6 seconds, fading over its last 0.32s so it never blinks out mid-fight. Illusions last up to 1.8s and simply fade at a wall.' },
       ],
       upgrade: {
         basics:
-          'A pane splits your bullets instead of deflecting them: two full 20-damage Crack Shots at the '
-          + 'same 760 px/s, leaving at roughly 25.7° either side of the incoming heading. A bullet may be '
-          + 'split once in its life and a copy may never be split, so one shot through one pane is exactly '
-          + 'two shots and shooting the same bullet through a second pane does nothing more. Both halves '
-          + 'are tracked shots, so both pay the 10-damage wall crack if they reach an edge — the same press '
-          + 'can be worth 20 twice and 10 twice. A split bullet is never also deflected, so with this owned '
-          + 'your own panes stop being a liability and start being a doubler.',
+          'Walk through one of your own panes and it is spent — it turns grey — and your Crack Shots '
+          + 'fire in pairs: two full bullets side by side, 9px either side of the aim line, on the same '
+          + 'heading. The pairs last for as long as you stand in the pane and 3 seconds after you step '
+          + 'out. A spent pane can never double anything again, but it still bends their shots and still '
+          + 'fans yours — so a pair fired back through it is two bullets and ten illusions. With Bomb '
+          + 'Dance owned, Duplication also doubles every Dance volley to 24 bombs.',
         effects: [
-          { tag: 'damage', label: 'Two bullets', detail: 'Each is a full 20-damage Crack Shot at the same 760 px/s, leaving at roughly 25.7° either side of the incoming heading.', requiresUpgrade: 'e' },
-          { tag: 'utility', label: 'Once per bullet, ever', detail: 'A bullet may be split once in its life and a copy may never be split. One shot through one pane is exactly two shots, and shooting the same bullet through a second pane does nothing more.', requiresUpgrade: 'e' },
-          { tag: 'damage', label: 'Two cracks', detail: 'Both halves are tracked shots, so both pay the 10-damage wall crack if they reach an edge — the same press can be worth 20 twice and 10 twice.', requiresUpgrade: 'e' },
-          { tag: 'utility', label: 'Instead of, not as well as', detail: 'A split bullet is never also deflected, so with this upgrade owned your own panes stop being a liability for Crack Shot and start being a doubler.', requiresUpgrade: 'e' },
+          { tag: 'buff', label: 'Walk through it', detail: 'Crossing one of your own unspent panes turns your Crack Shot into two bullets side by side, 9px either side of the aim line.', requiresUpgrade: 'e' },
+          { tag: 'utility', label: 'How long', detail: 'For as long as you stand in the pane, then 3 seconds after you leave it.', requiresUpgrade: 'e' },
+          { tag: 'cost', label: 'Spent', detail: 'The pane turns grey and can never give Duplication again. It still bends enemy shots and still fans your own.', requiresUpgrade: 'e' },
+          { tag: 'damage', label: 'Doubled volleys', detail: 'With Bomb Dance owned, every Dance teleport taken while Duplication runs throws 24 bombs instead of 12.', requiresUpgrade: 'e' },
         ],
       },
       notes: [
-        'Only group projectiles are bent. This element\'s own Blade Dance daggers are kit-owned objects and sail straight through their own panes.',
-        'While a Guise is up the opponent\'s screen does not draw your panes at all — they still bend, and they reappear when the clone fades.',
-        'It bends every element\'s shots, which is worth remembering against kits that fire in volleys — an Air splice or a Gunpowder burst through a pane arrives as a mess.',
-        'A pane is a structure, so Ruin\'s Spikes of Ruin can tear it down. Anything it already bent keeps its new heading; the kick was applied, and the pane was only ever the thing that applied it.',
+        'Only group projectiles are bent or fanned. Bomb Dance bombs are kit-owned and sail straight through panes.',
+        'The illusions are a trap for the opponent as much as a decoy: every one they shoot down cracks back at them for 10. Your own Crack Shots can pop them too, once they have flown clear of the real bullet.',
+        'While a Guise is up the opponent\'s screen does not draw your panes or your illusions — they still work, and reappear when the clone fades.',
+        'A pane is a structure, so Ruin\'s Spikes of Ruin can tear it down. Anything it already bent keeps its new heading.',
       ],
     },
 
@@ -184,7 +185,7 @@ const illusion: ElementCodex = {
         + 'walking pace. Bots and husks target the clone automatically. It cannot die but it banks '
         + 'everything that hits it, and when it fades 20% of that is dealt to the enemy nearest it. '
         + 'While it is out everything you throw is invisible on the opponent\'s screen too — bullets, '
-        + 'cracks, daggers, Phantoms, even your Veils, which reappear when the 3 seconds end. 12s cooldown.',
+        + 'cracks, bombs, Phantoms, even your Veils, which reappear when the 3 seconds end. 12s cooldown.',
       cast: 'F. Instant; the clone starts where you stand and walks to the cursor. 12s cooldown.',
       effects: [
         { tag: 'buff', label: 'Small and quick', detail: 'Size ×0.2 (hitbox included) and movement ×1.35 for 3 seconds.' },
@@ -231,26 +232,29 @@ const illusion: ElementCodex = {
       ],
       upgrade: {
         basics:
-          'Every hop taken without having been hit since the last one throws a fan of 10 daggers across a '
-          + '60° cone at 660 px/s, 15 damage each, spent on the first body within 26px and gone after 1.5 '
-          + 'seconds or at the arena edge. A landed dagger reflects its victim through the middle of the '
-          + 'arena — your position mirrored — clamped 58px inside the border so nobody lands in a wall. The '
-          + 'clean condition is measured against your total damage taken as it stood at the previous hop, '
-          + 'and the ultimate\'s opening counts as the first teleport, so the very first hop can already pay '
-          + 'out. The fan is centred on the nearest enemy, or on your cursor if there is nobody left alive '
-          + 'to aim at.',
+          'Every hop taken without having been hit since the last one throws 12 bombs in a loose 120° '
+          + 'cone at the nearest enemy, each at 210–290 px/s on its own wander — a turn rate re-rolled '
+          + 'every quarter to half second, with a gentle pull back towards the target — so they loop and '
+          + 'spiral rather than fly straight, and bounce off the walls rather than leave. A bomb goes off '
+          + 'when an enemy comes within 44px: 14 damage to everyone within 105px, and everyone caught is '
+          + 'turned around — their camera swung a random quarter, half or three-quarter turn for 2.6 '
+          + 'seconds (a bot or husk walks off at that angle instead). A bomb that finds nobody in about '
+          + '4 seconds fizzles. Every Relocate pressed during the Dance throws another volley with no '
+          + 'clean condition, and so does a mastered Reality Shift; while Duplication runs, every volley '
+          + 'is 24.',
         effects: [
-          { tag: 'damage', label: 'The fan', detail: '10 daggers across a 60° cone at 660 px/s, 15 damage each, spent on the first body within 26px, and gone after 1.5 seconds or at the arena edge.', requiresUpgrade: 'q' },
-          { tag: 'control', label: 'Cast across', detail: 'A landed dagger reflects the victim through the middle of the arena — your position mirrored — clamped 58px inside the border so nobody lands in a wall.', requiresUpgrade: 'q' },
-          { tag: 'utility', label: 'The clean condition', detail: 'Measured against your total damage taken as it stood at the previous hop. The ultimate\'s opening counts as the first teleport, so the very first hop can already pay out.', requiresUpgrade: 'q' },
-          { tag: 'utility', label: 'Aim', detail: 'The fan is centred on the nearest enemy, or on your cursor if there is nobody left alive to aim at.', requiresUpgrade: 'q' },
+          { tag: 'damage', label: 'The volley', detail: '12 bombs in a loose 120° cone at the nearest enemy, 210–290 px/s, each wandering on its own re-rolled turn rate with a gentle pull back at the target. They bounce off walls and fizzle after about 4 seconds.', requiresUpgrade: 'q' },
+          { tag: 'area', label: 'The blast', detail: 'Goes off within 44px of an enemy: 14 damage to everyone within 105px. Illusion bullets inside it crack too.', requiresUpgrade: 'q' },
+          { tag: 'control', label: 'Turned around', detail: 'Everyone caught has their view swung a random quarter, half or three-quarter turn for 2.6s. A fresh turn rolls the direction; another blast only refreshes the clock. A quarter turn zooms out so the arena still fits.', requiresUpgrade: 'q' },
+          { tag: 'utility', label: 'The clean condition', detail: 'Hops pay only if you have not been hit since the previous one (the ultimate\'s opening counts as the first). A Relocate or a Reality Shift during the Dance pays regardless.', requiresUpgrade: 'q' },
+          { tag: 'damage', label: 'With Duplication', detail: 'Every volley thrown while Duplication is running is 24 bombs.', requiresUpgrade: 'q' },
         ],
       },
       notes: [
-        'Against a single opponent the fan rarely pays ten times: the first dagger to land throws them across the arena, and the remaining nine are usually left crossing empty floor — though at 660 px/s over 1.5s they cover about 990px, so a second one catching up is possible.',
-        'The clean check reads raw damage taken, which counts every point aimed at you including hits your shields ate outright. A blocked shot still cancels the next fan.',
-        'The reposition is the real payload. Ten daggers is 150 on paper; what actually wins the round is putting somebody diagonally opposite you with your ultimate still running.',
-        'Online, a dagger landing on a replica asks their sim to move them rather than moving the copy here — the opponent\'s position is theirs to own.',
+        'Relocate stops being an escape and becomes the attack: 5s cooldown, 20 seconds of Dance, so up to four extra volleys on top of the hops.',
+        'The clean check reads raw damage taken, which counts every point aimed at you including hits your shields ate outright. A blocked shot still cancels the next hop\'s volley — but not a pressed Relocate\'s.',
+        'Being turned around changes nothing about where things are, only which way the screen faces. WASD still moves you the way the world points, which is exactly what makes it hard.',
+        'Online the turn reaches the opponent\'s real screen through the status mirror, and only the thrower\'s sim resolves a bomb — the other screen draws the volley but never bills it twice.',
       ],
     },
   },
@@ -258,24 +262,22 @@ const illusion: ElementCodex = {
   mastery: {
     'reality-shift': {
       basics:
-        'Four doors open, one at the centre of each wall, 52px in from the edge and 80×60px. Touching '
-        + 'within 34px of the centre puts you through one of the other three at random, arriving 72px '
-        + 'past it into the room so a trip can never chain into a second one. There is no cast, no '
-        + 'cooldown bar and no key — only a 0.7s wait before the doors will take you again. A gateway '
-        + 'taken while Illusion Dance is running throws a full extra fan of 10 daggers at 15 apiece, on '
-        + 'top of whatever the Dance\'s own hop was going to do. The opponent cannot use them: standing in '
-        + 'one does nothing for them at all.',
+        'Take 50 damage inside any 2.5-second window and you teleport to a random corner on your own — '
+        + 'the same never-the-nearest-corner jump as Relocate, with no key, no cast and no cooldown bar. '
+        + 'The tally reads raw damage taken, so blasts, beams, bleeds and shots all count the same, and '
+        + 'it starts over from nothing after a shift, which cannot fire again for 1.5 seconds. It is a '
+        + 'teleport like any other: during Illusion Dance with Bomb Dance owned it throws a volley of '
+        + '12 bombs, or 24 while Duplication is running.',
       effects: [
-        { tag: 'movement', label: 'The four doors', detail: 'One at the centre of each wall, 52px in from the edge, 80×60px. Touch within 34px of the centre and you are through.' },
-        { tag: 'movement', label: 'Where you come out', detail: 'A random one of the other three, and you arrive 72px past it into the room — never inside the arch, so a trip can never chain into a second one.' },
-        { tag: 'utility', label: 'The only limit', detail: '0.7s before the doors will take you again. There is no cast, no cooldown bar and no key.' },
-        { tag: 'damage', label: 'Mid-Dance', detail: 'A gateway taken while Illusion Dance is running throws a full extra fan of 10 daggers at 15 apiece, on top of whatever the Dance\'s own 3-second hop was going to do.' },
-        { tag: 'utility', label: 'Yours alone', detail: 'The opponent cannot use them. Standing in one does nothing for them at all.' },
+        { tag: 'movement', label: 'The shift', detail: '50 damage inside 2.5s throws you to a random corner — never the one you are nearest. No key, no cast.' },
+        { tag: 'utility', label: 'The tally', detail: 'Raw damage taken, from any source. It resets after each shift, and a shift cannot fire again for 1.5s.' },
+        { tag: 'damage', label: 'Mid-Dance', detail: 'With Bomb Dance owned, a shift during Illusion Dance throws a volley — 12 bombs, 24 under Duplication.' },
+        { tag: 'utility', label: 'Shown in the tray', detail: 'The Reality Shift status counts how much of the 50 you have taken in the current window.' },
       ],
       notes: [
-        'Four doors on the walls means the arena no longer has a far side. A zoner whose whole problem was being cornered now has an exit in every direction at all times.',
-        'It counts towards the Never There requirement exactly as Relocate does — but you cannot grind the requirement on it, because you need the mastery before the doors exist.',
-        'The doors brighten and a mask fades in inside the arch as you approach, so walking into one is never a surprise. Bots have them too on Nightmare, and will occasionally vanish through one by accident while kiting.',
+        'It is a burst-damage answer: a combo that would have killed you lands half of itself and the rest hits an empty spot.',
+        'It counts towards the Never There requirement exactly as Relocate does — but you need the mastery before it exists.',
+        'Online the shift is decided on the illusionist\'s own sim, the only one that sees every hit they take, and the other screen is told.',
       ],
     },
     masquerade: {

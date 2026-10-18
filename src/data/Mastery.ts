@@ -570,17 +570,17 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         target: 1000,
       },
       {
-        key: 'tormentBurns',
-        label: 'Tormentor',
-        howTo: 'Set amalgams ablaze with Hell\'s Torment (Q)',
-        target: 25,
+        key: 'amalgamsTurned',
+        label: 'Turncoat',
+        howTo: 'Turn hostile bodies to your side with Turn (Q)',
+        target: 50,
       },
     ],
     enhancements: [
       {
-        id: 'strength-in-numbers',
-        name: 'Strength in Numbers',
-        description: 'Passive: your amalgams are linked by faint grey threads. Every other amalgam on the field grants each of them 5% damage resistance — 10% each with all three slots filled with amalgams rather than with grave zombies you have not killed yet.',
+        id: 'corpse-prince',
+        name: 'Corpse Prince',
+        description: 'Passive: you start every match with a special corpse at the front of your queue — the Corpse Prince, an amalgam that still looks human, crowned and carrying a sword. 120 HP, a 14-damage sword and a 22-damage lunge. He cannot be Turned, never falls off a full queue, and when he dies he returns to your queue 12 seconds later — a permanent defender, on a cooldown.',
       },
       {
         id: 'grave-mistake',
@@ -898,9 +898,10 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         target: 200,
       },
       {
+        // Key kept from the Workshop days so progress already banked still counts.
         key: 'workshopKills',
-        label: 'Home Advantage',
-        howTo: 'Kill entities while your Workshop (Q) is up',
+        label: 'Demolition Expert',
+        howTo: 'Kill entities with Self-Destruct (Q) blasts, shrapnel or Scrapnel',
         target: 5,
       },
     ],
@@ -1349,19 +1350,19 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       {
         key: 'veilDeflects',
         label: 'Bent Light',
-        howTo: 'Deflect enemy projectiles with your Illusion Veil (E) — a pane kicks each shot that crosses it 30° off',
+        howTo: 'Deflect enemy projectiles with your Illusion Veil (E) — a pane kicks each enemy shot that crosses it 10° off',
         target: 100,
       },
       {
         key: 'danceBladeHits',
-        label: 'Knife Show',
-        howTo: 'Hit entities with Blade Dance daggers — the fan a clean Dance hop throws (needs the Q+ upgrade)',
+        label: 'Party Tricks',
+        howTo: 'Catch entities in Bomb Dance blasts — the volley a Dance teleport throws (needs the Q+ upgrade)',
         target: 25,
       },
       {
         key: 'teleports',
         label: 'Never There',
-        howTo: 'Teleport — Relocate (R), a Dance hop, and, once mastered, a Reality Shift gateway all count',
+        howTo: 'Teleport — Relocate (R), a Dance hop, and, once mastered, a Reality Shift all count',
         target: 150,
       },
       {
@@ -1375,7 +1376,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       {
         id: 'reality-shift',
         name: 'Reality Shift',
-        description: 'Passive: four gateways stand in the middle of each of the four walls. Walk into one and you come out of a different one, chosen at random — no cast, no cooldown, no key. Only you can use them; to anyone else they are scenery. Step through one while Illusion Dance is running and you throw an extra round of knives on arrival, on top of whatever the Dance was already going to do.',
+        description: 'Passive: take 50 damage inside 2.5 seconds and you are not there any more — you teleport to a random corner on your own, no key and no cooldown bar (the tally starts over, and it cannot fire again for 1.5s). A shift is a teleport like any other: during Illusion Dance with Bomb Dance owned it throws a volley of bombs, doubled while Duplication is running.',
       },
       {
         id: 'masquerade',
@@ -1681,50 +1682,46 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
   psychic: {
     elementId: 'psychic',
     name: 'Psychic Mastery',
-    enhancedEmoji: '🧿',
-    enhancedColor: 0xffd166,
+    enhancedEmoji: '♟️',
+    enhancedColor: 0xb98cff,
     requirements: [
       {
-        key: 'stressDealt',
-        label: 'Under Pressure',
-        howTo: 'Inflict stress on entities — every point from a lash, a Migraine, a snare or a coma banking counts',
-        target: 500,
+        key: 'pieceSmashes',
+        label: 'Material Advantage',
+        howTo: 'Smash enemies with chess pieces — every hit from a pawn, a bishop or rook slide, a knight landing, a queen move or a castle slam counts',
+        target: 100,
       },
       {
-        key: 'castsDenied',
-        label: 'Nothing Happens',
-        howTo: "Take an ability off the front of an enemy's queue with Mind Control (E) — every seizure counts one",
-        target: 50,
-      },
-      {
-        key: 'bestDetonation',
-        label: 'All At Once',
-        howTo: 'Release 150 stress off a single body in one piece — a single qualifying detonation completes this permanently',
-        target: 150,
-        isBest: true,
-      },
-      {
-        key: 'fullMigraines',
-        label: 'Wound All The Way',
-        howTo: "Land a fully-wound Migraine (F) — the whole 5 seconds of the wind-up, on at least one body (needs the F+ Mind's Focus upgrade)",
+        key: 'castles',
+        label: 'King Safety',
+        howTo: 'Castle with a rook (F) — needs the F+ Castle upgrade',
         target: 15,
+      },
+      {
+        key: 'queenCheckmates',
+        label: 'Long Live The Queen',
+        howTo: 'Checkmate foes as the queen: let a reign run its course with them under 15% health (needs the Q+ Checkmate upgrade)',
+        target: 3,
+      },
+      {
+        key: 'rookCaptures',
+        label: 'Rook Takes',
+        howTo: 'Destroy chess pieces by sliding a rook through them — yours, theirs, and enemy pawns all count',
+        target: 20,
       },
     ],
     enhancements: [
       {
-        id: 'predictors-snare',
-        name: "Predictor's Snare",
-        description: 'Passive: your dash stops being a dash. Press Space and you are simply *there* — standing on the exact spot the enemy was going to be in two seconds, before they are.\n\nAnd you do not arrive empty-handed. A small closed eye is left burnt into the floor where you landed. It lies there with its lid down for 14 seconds, and the moment the enemy walks over it — which is what they were about to do — it opens and deals them 15 damage. Up to six of them can be on the floor at once, and every one of them is a place the enemy has already told you they are going.\n\nThe counterplay is the same one the whole element has: the marker only exists while they are walking somewhere. Stand still and there is nowhere to arrive, and the dash is an ordinary dash again.',
+        id: 'outplayed',
+        name: 'Outplayed',
+        description: 'Passive: an enemy who is losing starts to play slower. Their health is measured against yours in **percent**, not in points — a tank on 300 of 400 is exactly as far behind as a duellist on 75 of 100.\n\n• **25 points** behind you (you on 100%, them on 75%): their cooldowns run **10% longer**.\n• **50 points** behind: **25% longer**.\n• **75 points** behind: **33% longer**.\n\nA **purple aura** surrounds them while it holds, and it grows louder with every step — a ring of chess squares, then a second counter-turning ring and a full checker band, then a crown of chevrons closing in on them. Close the gap and it lifts.',
       },
       {
-        id: 'utter-focus',
-        name: 'Utter Focus',
+        id: 'pre-move',
+        name: 'Pre-move',
         bindable: true,
-        // Mind Control is the entire payoff of a longer queue — five seconds of held casts with
-        // nothing able to reach into them is a window that reads well and does nothing.
-        excludeSlots: ['e'],
-        hudDescription: 'Close your eyes for 8s: everything they press is held 5 seconds instead of 2',
-        description: 'Shut your eyes and stop looking at the present altogether.\n\nFor 8 seconds the two seconds you are ahead becomes **five**: every ability they press is held for the full five before it is allowed to happen, and the queue over your head grows to match.\n\nAgainst another person there is a third delay on top of those two: their **movement keys** are held back by the same five seconds. What they are pressing now is what their body will do five seconds from now, so for the first stretch of the window they do not move at all and after that they walk the route you have already been shown.\n\nThe price is that you are reading rather than watching. Every hit that lands on you during the window knocks half a second off it, so a psychic who is being pressured gets far less of it than one who opened the window from behind cover. 26 second cooldown.',
+        hudDescription: 'Call a key: the next one you press. If they press it in the next 1.5s — 25 damage, a stun, and a slow or a longer cooldown',
+        description: 'Make your move before they make theirs. Press Pre-move and a chess clock appears beside your head; **the next key you press is your prediction** — Click, E, R, F, Q, Space or any of W/A/S/D. Your press still does whatever it normally does.\n\nFrom that moment, if the enemy presses **that same key** within **1.5 seconds**, they are punished:\n\n• **25 damage** in a burst, and a **light stun** (0.6s).\n• If it was an **ability key**, that ability\'s cooldown runs **50% longer** — the cast they just made and every cast of it for the next 8 seconds.\n• If it was a **movement key** (Space included), they move **30% slower** for 3 seconds.\n\nOnly you can see which key you called; they only see that the clock is running. Bots get read too — their keys are the way they move, the abilities they reach for and (for Space) their dodges. 14 second cooldown; if you do not choose within 4 seconds it lapses.',
       },
     ],
   },
@@ -1997,53 +1994,8 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
   },
   // Fortune Mastery (Battle Pass / Drive by Flex) was retired with the 2026-10-15 Gold rework;
   // a new one is owed.
-  dream: {
-    elementId: 'dream',
-    name: 'Dream Mastery',
-    enhancedEmoji: '🌠',
-    enhancedColor: 0x8b5cf6,
-    requirements: [
-      {
-        key: 'sleepsInduced',
-        label: 'One Hundred and Fifty Nights',
-        howTo: 'Put an entity all the way under. The pendulum filling their meter, a pillow tipping them over the edge, a cannon shell, or the flying bob knocking somebody out cold — every one of them counts once',
-        target: 150,
-      },
-      {
-        key: 'healedHp',
-        label: 'Rest Cure',
-        howTo: 'Heal 500 health by any means the element has: standing still, sleeping in the oasis, walking over a full dreamcatcher, a Good Dream\'s regeneration, or a fort you are resting inside',
-        target: 500,
-      },
-      {
-        key: 'cannonHits',
-        label: 'Fifty Shots at the Sky',
-        howTo: 'Land a cosmic cannon shell on an entity. The cannon is the crown of a level-5 Pillow Fort, so this needs the E⁺ upgrade and a fort fed five times',
-        target: 50,
-      },
-      {
-        key: 'realityShard',
-        label: 'The Dreamer\'s Shard',
-        howTo: 'Somewhere behind a crack in the world, a creator waits at a piano. End what he began — and when he splits himself in two, put the burning half down first. What is left will be a dream',
-        target: 1,
-        isBest: true,
-      },
-    ],
-    enhancements: [
-      {
-        id: 'dream-duel',
-        name: 'Dream Duel',
-        description: 'Passive: **stand perfectly still while the enemy is asleep and press Space.**\n\nBoth of your spirits come out. Two pale shapes step out of two standing bodies, each still joined to the meat it left by a thread, and neither can go further from itself than the ring drawn on the floor says it can. That ring is the whole arena of the duel.\n\nWhile it lasts:\n\n**They cannot attack.** Not slowed, not disarmed — a spirit has nothing to attack *with*. All they can do is move, and moving is the only thing that will save them.\n\n**You cannot be hurt.** Nothing reaches a body nobody is standing in.\n\n**You cannot heal either.** Rest stops paying, the dreamcatchers stop giving, the regeneration stops — a spirit is not resting, it is hunting. Whatever health you walked in with is the health you walk out with.\n\n**They sleep three seconds longer than they would have.** The duel does not merely happen during their nap, it extends it.\n\nAnd your tray changes. The five keys go away and two take their place:\n\n**Click — Haunt.** Three red bolts forward, half a second apart, 5 each.\n**E — Spirit Tear.** One enormous white thing, moving barely faster than a walk, piercing everything it touches for 10 — with two smaller ones orbiting it that hit for 5 apiece.\n\nThat is the whole duel: you fire, and all they can do is dodge.',
-      },
-      {
-        id: 'lifelong-dream',
-        name: 'Lifelong Dream',
-        bindable: true,
-        hudDescription: 'Pick an element and hold the thought for 10 seconds — +2 every time you are hit. When the counter reaches zero you are given every buff that element could ever have',
-        description: 'Press it and the fight stops being the thing on screen: a search box opens with **48 elements** in it — everything in the game except Dream, which you already are, and Quantum, which is not one element but two.\n\nPick one. **Random** is the top row if you would rather not choose.\n\nA counter appears over your head at **10 seconds** and starts coming down. It is not a cast time and you are not locked: you fight the whole way through it. But **every time you are hit, two seconds go back on**, so the dream is a thing you have to protect rather than a thing you have to wait for. Somebody who keeps landing on you can hold it open forever.\n\nWhen it reaches zero the dream **comes true**, and you are given every standing buff the element you named could ever be given — not its keys, you keep your own, but its whole statline at once, for the rest of the match. Fire is a flame body that burns anything touching you, immunity to every tick in the game, and a fifteen percent crit rate. Earth is a damage cap, a shield, and a body nothing can shove. Justice is a health floor of one. Light simply cannot be stunned.\n\nThe full table is on the **Dream Journal** page of this element\'s info screen — all forty-eight of them, written out.\n\n**One dream a match.** 40 second cooldown on the picker, but it does not matter: once a dream has come true, that is the one you have.',
-      },
-    ],
-  },
+  // Dream Mastery (Dream Duel / Lifelong Dream) was retired with the 2026-10-17 sandman rework;
+  // a new one is owed.
   justice: {
     elementId: 'justice',
     name: 'Justice Mastery',
@@ -2093,6 +2045,251 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
     ],
   },
   // Sound's mastery was retired with the 2026-10-15 marching-band rework; a new one is owed.
+  // Harvest. The element id is `gluttony` (it replaced the chef of that name); the chef's
+  // Snacking / Chef's Friend mastery was retired with it on 2026-10-15.
+  gluttony: {
+    elementId: 'gluttony',
+    name: 'Harvest Mastery',
+    enhancedEmoji: '🌾',
+    enhancedColor: 0x7a2fb0,
+    requirements: [
+      {
+        key: 'moldCoverBest',
+        label: 'Blight the Land',
+        howTo: 'Infect 75% of the map with your mold in a single game — Sow Corruption (E) everywhere and let it spread',
+        target: 75,
+        isBest: true,
+      },
+      {
+        key: 'heartsHarvested',
+        label: 'Heartless',
+        howTo: 'Cut corrupt hearts out of your mold with the Sickle (Click)',
+        target: 25,
+      },
+      {
+        key: 'enemiesPoisoned',
+        label: 'Poisoner',
+        howTo: 'Splash enemies with poison vials dropped by your crows (needs the R+ Poison Payload corrupt upgrade)',
+        target: 50,
+      },
+      {
+        key: 'mealsCooked',
+        label: 'Delicious',
+        howTo: 'Cook dishes out of Corrupt Flesh on the cooking menu (needs the F+ Corrupt Cooking corrupt upgrade)',
+        target: 15,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'invasive-species',
+        name: 'Invasive Species',
+        description: 'Passive: rot thrives on what would kill anything else. While **any harmful status effect** is on you — a burn, a poison, a slow, a stun, Corruption, a heal block, any debuff at all — you regenerate **2 HP a second**.',
+      },
+      {
+        id: 'corrupt-predation',
+        name: 'Corrupt Predation',
+        bindable: true,
+        hudDescription: 'Spend 50 Corrupt HP: a long-range shotgun of 12 rot pellets, 5 each. Every pellet that hits corrupts and plants a corrupt seed',
+        description: 'Pull **50 Corrupt HP** out of the sack and fire it as a **long-range shotgun**: **12 pellets** of rot in a tight cone about **5°** wide, **5 damage** each, out to 720px.\n\nEvery pellet that hits a foe puts **Corruption** on them, and the volley leaves **corrupt seeds** where it landed — new colonies of mold that grow right under whoever you shot, to feed the rest of the kit.\n\nNo Corrupt HP, no shot: the card holds short of full until you have 50 to spend. 3 second cooldown.',
+      },
+    ],
+  },
+  // Gold. The element id is `fortune` (it replaced the shopkeeper of that name); the shopkeeper's
+  // Battle Pass / Drive by Flex mastery was retired with it on 2026-10-15, and its stat keys
+  // (`coinsEarned` and friends) are deliberately not reused.
+  fortune: {
+    elementId: 'fortune',
+    name: 'Gold Mastery',
+    enhancedEmoji: '👑',
+    enhancedColor: 0xf0c33c,
+    requirements: [
+      {
+        key: 'goldMade',
+        label: 'Prospector',
+        howTo: 'Earn 100 gold — stand in your Gold Plume, gild hearts, walk Midas floor and pick up coins',
+        target: 100,
+      },
+      {
+        key: 'jewelsBought',
+        label: 'Artisan',
+        howTo: 'Buy jeweled cards from Advance (needs the E+ Artisan corrupt upgrade)',
+        target: 10,
+      },
+      {
+        key: 'heartAttacks',
+        label: 'Cardiologist',
+        howTo: 'Give enemies heart attacks with Heart of Gold (F)',
+        target: 20,
+      },
+      {
+        key: 'statuesBroken',
+        label: 'Iconoclast',
+        howTo: 'Break open golden statues by hitting them before they melt (needs the Q+ Full Metal Alchemy corrupt upgrade)',
+        target: 5,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'gilded-augment',
+        name: 'Gilded Augment',
+        description: 'Passive: the purse pays for your life. Drop below **30% HP** and the alchemist starts **spending gold to heal**, automatically — **16 HP a second** — and moves **30% faster** while it works, until you are back to 55%.\n\nIt starts cheap (about **2 gold a second**) and gets **dearer the longer it runs**: the price climbs every second it has to keep you standing. Run out of gold and it stops.',
+      },
+      {
+        id: 'rags-to-riches',
+        name: 'Rags to Riches',
+        bindable: true,
+        hudDescription: 'Needs 20 gold. Spend ALL of it: your body turns further to gold — +20% damage, +50% gold earned, and Gilded Augment heals more for less. Stacks forever',
+        description: 'Empty the purse — **every coin**, not just twenty — and turn a little more of yourself into gold. **Needs at least 20 gold.**\n\nEach time, for the rest of the match:\n\n• **+20% damage** on everything the kit does.\n• **+50% gold** from every source.\n• **Gilded Augment** heals **35% faster** and costs **25% less**.\n\nIt can be used **again and again**, and every use stacks — the body gilds a plate at a time until there is very little alchemist left. The trade is always the same: everything you have now, for more of everything later.',
+      },
+    ],
+  },
+  // Magnet. The scrap rework (2026-10-15) retired Metal Detector / Mag-Lev board; this is the
+  // mastery built for the new kit (2026-10-17). Its stat keys are new, so an old save's progress
+  // does not carry over — and `magnetMasteryOn` checks completion, because the old flag may linger.
+  magnet: {
+    elementId: 'magnet',
+    name: 'Magnet Mastery',
+    enhancedEmoji: '🚄',
+    enhancedColor: 0xff3344,
+    requirements: [
+      {
+        key: 'coinHits',
+        label: 'Pocket Change',
+        howTo: 'Hit foes 100 times with coins — Repulsed coin shots and Shatter Shot fragments both count',
+        target: 100,
+      },
+      {
+        key: 'scrapBlocks',
+        label: 'Scrap Shield',
+        howTo: 'Block 10 projectiles with your orbiting scrap',
+        target: 10,
+      },
+      {
+        key: 'nailedRepulses',
+        label: 'Hammer and Tongs',
+        howTo: 'Shove nailed foes with Repulse (E) 25 times',
+        target: 25,
+      },
+      {
+        key: 'mechKills',
+        label: 'Scrap Heap',
+        howTo: 'Destroy 10 foes while piloting the Mecha Massacre mech (Q)',
+        target: 10,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'magnetic-field',
+        name: 'Magnetic Field',
+        description: 'Passive: a very faint blue field hangs round you. Every enemy projectile that enters it is **bent 2°** off its line, away from your centre — not much, but a shot that would have clipped you now goes by.',
+      },
+      {
+        id: 'mag-lev',
+        name: 'Mag-Lev',
+        bindable: true,
+        hudDescription: 'Lay a steerable track of crackling maglev ground for 10s: you float on it 50% faster, magnetised/nailed foes on it move 50% slower, coins over it never land, Repulse it to fly backward',
+        description: 'Magnetise the ground. A track of **crackling red energy** runs out from your feet toward the cursor — and keeps following the cursor while it is laid, so you can **steer it** round corners, like Shadow\'s tentacle wall. The ground stays magnetised for **10 seconds**.\n\nOn your maglev ground:\n\n• **You float** — like Magic\'s Levitate, the floor\'s own hazards cannot touch you — and move **50% faster**.\n• **Magnetised foes move 50% slower** (a nail in them counts).\n• **Coins never touch the ground** — a coin over the track hangs in the air until the magnetism wears off.\n• **Repulse (E) the ground** and it throws *you*: you fly backward, away from where you aimed.\n\n14 second cooldown.',
+      },
+    ],
+  },
+  // Devotion (id `passion`). The charmer's Attraction/Perfume mastery was retired with it; this is
+  // the priest's (2026-10-17). Its stat keys are new, and `passionMasteryOn` checks completion,
+  // because the old mastery may have left the flag on.
+  passion: {
+    elementId: 'passion',
+    name: 'Devotion Mastery',
+    enhancedEmoji: '🕊️',
+    enhancedColor: 0xe8b93a,
+    requirements: [
+      {
+        key: 'souls',
+        label: 'Shepherd',
+        howTo: 'Convert 50 souls — every foe whose faith bar fills counts',
+        target: 50,
+      },
+      {
+        key: 'chariotRides',
+        label: 'Swing Low',
+        howTo: 'Be carried off by your own Ascendance chariot (Q) 3 times',
+        target: 3,
+      },
+      {
+        key: 'holyWaterFaith',
+        label: 'Baptism of Fire',
+        howTo: 'Burn foes for 150 faith in total with Holy Water (E)',
+        target: 150,
+      },
+      {
+        key: 'grenadeHits',
+        label: 'Count to Three',
+        howTo: 'Catch 10 foes in Holy Hand Grenade (R) blasts',
+        target: 10,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'pray-always',
+        name: 'Pray Always',
+        description: 'Passive: every **8 seconds** you say a prayer of your own accord — your hands come together and a little prayer hangs over your head — and **5 seconds** later it is answered with one of:\n\n• **Shelter** — 25% less damage for 5 seconds.\n• **Mercy** — heal 50 HP.\n• **Revelation** — a ray of light from the sky gives the nearest enemy **35 faith** at once.\n\nMercy is never sent at full health, nor Revelation with nobody to shine on.',
+      },
+      {
+        id: 'ark-of-the-covenant',
+        name: 'Ark of the Covenant',
+        bindable: true,
+        hudDescription: 'Set down the Ark for 12s: foes who look toward it gain faith slowly. Under half faith they try to look away; over half their sight — and a player\'s aim — is pulled toward it',
+        description: 'Set down the golden box of legend, up to 380px away. For **12 seconds**, every enemy who **looks toward it** gains faith slowly (5 a second).\n\n• **Under 50% faith**, enemies try to **avert their eyes** — and their aim goes with them.\n• **Over 50% faith**, their sight is **pulled toward the Ark**, a little more the more devout they are. That includes a player: their aim bends toward it.\n\nPlayers never avert their eyes; they only feel the pull once they are past half. 18 second cooldown.',
+      },
+    ],
+  },
+  // Radiation. The 2026-10-15 rework retired Sniper's Instinct / Gamma Tether; this is the mastery
+  // built for the new kit (2026-10-17). Its stat keys are new, and `radiationMasteryOn` checks
+  // completion, because the old mastery may have left the flag on.
+  radiation: {
+    elementId: 'radiation',
+    name: 'Radiation Mastery',
+    enhancedEmoji: '🩻',
+    enhancedColor: 0x7cff3d,
+    requirements: [
+      {
+        key: 'snipes',
+        label: 'Marksman',
+        howTo: 'Snipe enemies 50 times — every confirmed Railgun shot counts',
+        target: 50,
+      },
+      {
+        key: 'flickHits',
+        label: 'No-Scope',
+        howTo: 'Land 5 Flick Shots (needs the Click+ Flick Shot corrupt upgrade)',
+        target: 5,
+      },
+      {
+        key: 'mutations',
+        label: 'Mad Scientist',
+        howTo: 'Mutate 20 enemies with the hot Rod Baton (needs the F+ Mutation corrupt upgrade)',
+        target: 20,
+      },
+      {
+        key: 'barrageHits',
+        label: 'Suppressing Fire',
+        howTo: 'Hit 35 enemies with your Barrage (E) — each burst that lands counts once',
+        target: 35,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'x-ray-vision',
+        name: 'X-Ray Vision',
+        description: 'Passive: you see straight through them. Every enemy carries a **green outline** on your screen — and the outline does not care whether they are visible. Stealthed, camouflaged, faded or hiding, **you can see where they are**.',
+      },
+      {
+        id: 'test-dummy',
+        name: 'Test Dummy',
+        bindable: true,
+        hudDescription: 'Throw out a 25 HP test dummy tied to you by a green link. Until it dies you cannot be hurt — every hit runs down the link into it — and bots switch to attacking it',
+        description: 'Throw out a **crash-test dummy**, tied to you by a faint **green link**. It has **25 HP**.\n\nUntil the dummy dies, **you cannot be hurt**: every hit that would land on you runs down the link and into the dummy instead. Bots and husks know it — they **switch to attacking the dummy**, and shots that hit it stop there.\n\nIt stands for 12 seconds if nobody breaks it, and it takes your own airdrop for you, like the bunker does.\n\n16 second cooldown.',
+      },
+    ],
+  },
 };
 
 export function getMasteryDef(elementId: string): MasteryDef | undefined {

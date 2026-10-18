@@ -6,7 +6,8 @@ import type { Projectile } from '../../combat/Projectile';
 import { Sfx } from '../../audio';
 import {
   RAD, RadiationAvatar, RadiationColorFn, RadiationFx, barrageCone, bunkerTurret, dropFootprint,
-  falloutBunker, falloutPuddle, doseCells, flareRound, geigerDial, geigerTracer, lockReticle, trefoil, uraniumRod,
+  dummyLink, falloutBunker, falloutPuddle, doseCells, flareRound, geigerDial, geigerTracer, lockReticle,
+  testDummy, trefoil, uraniumRod, xrayOutline,
 } from './RadiationVisuals';
 
 type Owner = 'player' | 'npc';
@@ -115,6 +116,26 @@ const PUDDLE_SPOTS: [number, number, number][] = [
   [0.46, 0.8, 44], [0.58, 0.18, 40], [0.13, 0.4, 42], [0.87, 0.46, 44], [0.38, 0.52, 36],
   [0.64, 0.56, 38],
 ];
+
+// ── Mastery ──────────────────────────────────────────────────────────────────
+const DUMMY_ID = 'test-dummy';
+const DUMMY_HP = 25;
+/** A dummy nobody breaks comes down on its own after this long. */
+const DUMMY_MS = 12_000;
+const DUMMY_COOLDOWN_MS = 16_000;
+/** How far it can be thrown, and how long it is in the air. */
+const DUMMY_RANGE = 230;
+const DUMMY_THROW_MS = 380;
+/** The dummy's body, for shots and blasts that reach it. Centred a little above its feet. */
+const DUMMY_HIT_R = 18;
+const DUMMY_LIFT_Y = 4;
+/** Invasion husk shots carry no damage figure the kit can read, so each one costs this. */
+const DUMMY_HUSK_SHOT = 6;
+/** One cell of the dummy's counter is this many HP — five cells for 25. */
+const DUMMY_CELL_HP = 5;
+/** The bot throws it when it drops below this much HP with the target this close. */
+const NPC_DUMMY_HURT = 0.6;
+const NPC_DUMMY_HURT_RANGE = 320;
 
 /**
  * Closest point on the segment (ax,ay)→(bx,by) to (px,py).
@@ -228,6 +249,25 @@ interface Swing {
   hot: boolean;
 }
 
+/** Mastery — Test Dummy: thrown, then standing on its base until it is broken or times out. */
+interface TestDummy {
+  owner: Owner;
+  fromX: number;
+  fromY: number;
+  x: number;
+  y: number;
+  thrownAt: number;
+  landsAt: number;
+  landed: boolean;
+  hp: number;
+  until: number;
+  /** 0–1, decayed per frame — the plate flaring where the link just dumped a hit into it. */
+  hit: number;
+  seed: number;
+  /** Online, the owner's sim: the HP last relayed to the peer, so a change is sent once. */
+  sentHp: number;
+}
+
 interface Side {
   owner: Owner;
   aimX: number;
@@ -248,6 +288,12 @@ interface Side {
   awayAt: number;
   /** The bot's facing, read off its walk — offline it has no cursor to flick. */
   face: number;
+  /** Mastery — the Test Dummy standing for this side, and when it was last thrown (scene time). */
+  dummy: TestDummy | null;
+  dummyAt: number;
+  /** The absorber the dummy installed, and whatever it took the slot from — see `installAbsorber`. */
+  dummyAbsorber: ((amount: number) => boolean) | null;
+  dummyPrevAbsorber: ((amount: number) => boolean) | null;
 }
 
 function makeSide(owner: Owner): Side {
@@ -255,6 +301,8 @@ function makeSide(owner: Owner): Side {
     owner, aimX: 0, aimY: 0, stuck: new Map(),
     barrage: null, bunker: null, absorber: null, prevAbsorber: null,
     flares: null, swing: null, awayAt: -Infinity, face: 0,
+    // Thrown "long ago", so the first match's dummy is ready — the kit's clock is absolute.
+    dummy: null, dummyAt: -Infinity, dummyAbsorber: null, dummyPrevAbsorber: null,
   };
 }
 
@@ -290,6 +338,20 @@ export interface RadiationArenaApi {
   setStatusIndicator(id: string, status: CustomStatus | null): void;
   /** Shop upgrades: the player's own, or the opponent's (a bot's loadout, a remote handshake). */
   hasUpgrade(owner: Owner, slot: string): boolean;
+  get isInvasion(): boolean;
+  /** Invasion: only husks in the room being played are real to the player. */
+  isTargetable(f: Fighter): boolean;
+
+  // ── Mastery ──
+  readonly masteryActive: boolean;
+  readonly npcMasteryActive: boolean;
+  /** Which mastery enhancement each side dropped over an R/F/Q slot, or null. */
+  masteryBindFor(slot: string): string | null;
+  npcMasteryBindFor(slot: string): string | null;
+  /** Mastery progress. Gated on the element by the adapter, so the kit records unconditionally. */
+  recordMasteryStat(key: string, amount: number): void;
+  /** Online: relay a press that never touches a cooldown (see `replayNet`). */
+  broadcast(id: string): void;
 }
 
 // ── RadiationKit ─────────────────────────────────────────────────────────────
@@ -344,6 +406,10 @@ export class RadiationKit {
   private puddleTickAt = new Map<Fighter, number>();
   /** Fighters whose `hitboxMult` currently carries the Mutation factor. */
   private grown = new Set<Fighter>();
+  /** Mastery — the stand-in an AI chases while a side's dummy is up. See `decoyOf`. */
+  private decoys: Record<Owner, Fighter | null> = { player: null, npc: null };
+  /** Online: a counter on the relayed dummy-HP ids, so two equal values are never deduped. */
+  private dummySeq = 0;
 
   constructor(api: RadiationArenaApi) {
     this.api = api;
@@ -441,6 +507,9 @@ export class RadiationKit {
 
   reset(): void {
     for (const owner of BOTH) this.dropBunker(owner, true);
+    for (const owner of BOTH) this.dropDummy(owner, true);
+    this.decoys = { player: null, npc: null };
+    this.dummySeq = 0;
     for (const f of this.allFighters()) {
       if (!f) continue;
       f.healInvertedUntil = 0;
@@ -474,6 +543,7 @@ export class RadiationKit {
     this.api.setStatusIndicator('radiation-flares', null);
     this.api.setStatusIndicator('radiation-barrage', null);
     this.api.setStatusIndicator('radiation-bunker', null);
+    this.api.setStatusIndicator('radiation-dummy', null);
   }
 
   private ensureLayers(): void {
@@ -563,9 +633,13 @@ export class RadiationKit {
     const ctx = this.api.buildPlayerContext(mouseX, mouseY);
     if (pointer.isDown) p.castAbility('radiation-railgun', ctx);
     if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('radiation-barrage', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('radiation-bunker', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('radiation-baton', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('radiation-extermination', ctx);
+    // Mastery: whichever of R/F/Q the Test Dummy was dropped on stops being its own ability.
+    const bound = this.dummySlot('player');
+    const keys = { r: this.api.rKey, f: this.api.fKey, q: this.api.qKey };
+    if (bound && Phaser.Input.Keyboard.JustDown(keys[bound])) this.tryTestDummy('player', mouseX, mouseY);
+    if (bound !== 'r' && Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('radiation-bunker', ctx);
+    if (bound !== 'f' && Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('radiation-baton', ctx);
+    if (bound !== 'q' && Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('radiation-extermination', ctx);
   }
 
   // ── Ability entry points (called from build*Context) ───────────────────────
@@ -774,6 +848,7 @@ export class RadiationKit {
   private onFlickHit(owner: Owner, victim: Fighter, ang: number): void {
     if (!this.alive(victim)) return;
     victim.takeDamage(FLICK_DAMAGE);
+    this.record(owner, 'flickHits');
     this.api.spawnHitFlash(victim.x, victim.y, this.col(owner)(RAD.hot));
     this.fx(owner).flickHit(victim.x, victim.y, ang);
     this.api.showFloatingText(victim.x, victim.y - 66, '✦ FLICK SHOT', this.hex(RAD.hotLit));
@@ -821,6 +896,7 @@ export class RadiationKit {
     this.avatar(owner)?.ping();
 
     victim.takeDamage(RAIL_DAMAGE);
+    this.record(owner, 'snipes');
     this.api.spawnHitFlash(victim.x, victim.y, this.col(owner)(RAD.core));
     this.irradiate(victim, owner, IRRADIATED_MS, true);
     this.api.showFloatingText(victim.x, victim.y - 62, '☢ CONFIRMED', this.hex(RAD.core));
@@ -908,6 +984,12 @@ export class RadiationKit {
     if (this.sheltered(a.owner)) {
       this.api.showFloatingText(caster.x, caster.y - 60, '☢ THE BUNKER HELD', this.hex(RAD.neonLit));
       this.breakBunker(a.owner);
+      return;
+    }
+    // Mastery: a standing Test Dummy takes it down the link, exactly as it takes everything else.
+    if (this.dummyStanding(a.owner)) {
+      this.api.showFloatingText(caster.x, caster.y - 60, '🎯 THE DUMMY TOOK IT', this.hex(RAD.hazard));
+      if (!this.isReplica(a.owner)) this.breakDummy(a.owner);
       return;
     }
     caster.applySelfDamage(AIRDROP_DAMAGE);
@@ -1066,6 +1148,8 @@ export class RadiationKit {
     this.avatar(owner)?.play('punch', ang, 90);
     const hot = this.isIrradiated(victim);
     victim.takeDamage(hot ? BARRAGE_HOT_DAMAGE : BARRAGE_DAMAGE);
+    // Mastery progress: one enemy hit by one burst, counted on its first round.
+    if (i === 0) this.record(owner, 'barrageHits');
     this.api.spawnHitFlash(victim.x, victim.y, this.col(owner)(hot ? RAD.hazard : RAD.neon));
     Sfx.playAt('musket', victim.x, { rate: 1.5 + Math.min(i, 8) * 0.06, volume: 0.55 });
   }
@@ -1337,6 +1421,7 @@ export class RadiationKit {
     if (!this.alive(victim)) return;
     this.cleanse(victim);
     victim.radMutatedUntil = Math.max(victim.radMutatedUntil, Date.now() + MUTATION_MS);
+    this.record(by, 'mutations');
     this.fx(by).mutate(victim.x, victim.y);
     this.api.showFloatingText(victim.x, victim.y - 66, '🧬 MUTATED', this.hex(RAD.neonLit));
     Sfx.playAt('status-poison', victim.x, { rate: 0.7, volume: 0.85 });
@@ -1400,6 +1485,293 @@ export class RadiationKit {
     }
   }
 
+  // ── Mastery ────────────────────────────────────────────────────────────
+
+  /** Whether Element Mastery is on for whichever side is asking, and they are Radiation. */
+  private masteryOn(owner: Owner): boolean {
+    return this.isRadiation(owner) && (owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
+  }
+
+  /** Online, the npc is somebody else's sim: its dummy is a picture, its HP arrives by relay. */
+  private isReplica(owner: Owner): boolean {
+    return owner === 'npc' && this.api.isOnline;
+  }
+
+  /** Which slot the Test Dummy was dropped on, or null. */
+  private dummySlot(owner: Owner): 'r' | 'f' | 'q' | null {
+    if (!this.masteryOn(owner)) return null;
+    for (const k of ['r', 'f', 'q'] as const) {
+      const bind = owner === 'player' ? this.api.masteryBindFor(k) : this.api.npcMasteryBindFor(k);
+      if (bind === DUMMY_ID) return k;
+    }
+    return null;
+  }
+
+  /**
+   * Mastery progress. Only ever the player's — the grind is the human's, not the bot's — and not
+   * gated on the mastery being on, since earning it is the point.
+   */
+  private record(owner: Owner, key: string, amount = 1): void {
+    if (owner === 'player' && this.isRadiation('player')) this.api.recordMasteryStat(key, amount);
+  }
+
+  private dummyStanding(owner: Owner): boolean {
+    const d = this.side(owner).dummy;
+    return !!d && d.hp > 0;
+  }
+
+  /** Where the dummy is right now — partway along its throw while it is still in the air. */
+  private dummyPos(d: TestDummy): { x: number; y: number; lift: number; u: number } {
+    const u = Phaser.Math.Clamp((this.now - d.thrownAt) / DUMMY_THROW_MS, 0, 1);
+    return {
+      x: Phaser.Math.Linear(d.fromX, d.x, u),
+      y: Phaser.Math.Linear(d.fromY, d.y, u),
+      lift: Math.sin(u * Math.PI) * 46,
+      u,
+    };
+  }
+
+  /**
+   * Test Dummy, from the bound key, the bot, or an online peer's replay. It never goes through
+   * `castAbility` (the enhancement is not in the element's ability list), so the refusals that
+   * gate every other key are repeated here.
+   */
+  private tryTestDummy(owner: Owner, tx: number, ty: number): boolean {
+    const f = this.fighter(owner);
+    const s = this.side(owner);
+    if (!this.alive(f)) return false;
+    if (!this.isReplica(owner)) {
+      const wall = Date.now();
+      if (wall < f.disarmedUntil || wall < f.chickenUntil || wall < f.silencedUntil || wall < f.stunnedUntil) return false;
+      if (this.stunned.has(f)) return false;
+      if (this.now - s.dummyAt < DUMMY_COOLDOWN_MS) return false;
+    }
+    this.ensureLayers();
+    this.ensureAvatars();
+    this.dropDummy(owner, true);
+    s.dummyAt = this.now;
+
+    const a = Math.atan2(ty - f.y, tx - f.x);
+    const reach = Math.min(DUMMY_RANGE, Math.hypot(tx - f.x, ty - f.y));
+    const x = Phaser.Math.Clamp(f.x + Math.cos(a) * reach, this.left + 14, this.right - 14);
+    const y = Phaser.Math.Clamp(f.y + Math.sin(a) * reach, this.top + 26, this.bottom - 20);
+    s.dummy = {
+      owner, fromX: f.x, fromY: f.y, x, y,
+      thrownAt: this.now, landsAt: this.now + DUMMY_THROW_MS, landed: false,
+      hp: DUMMY_HP, until: this.now + DUMMY_MS, hit: 0, seed: Math.random() * 999, sentHp: DUMMY_HP,
+    };
+    // A replica's hits are decided on its owner's machine, so only a real side claims the slot.
+    if (!this.isReplica(owner)) this.installDummyAbsorber(owner);
+    this.decoys[owner] = null;
+
+    this.avatar(owner)?.play('punch', a, 320);
+    this.avatar(owner)?.ping();
+    this.api.showFloatingText(f.x, f.y - 52, '🎯 TEST DUMMY', this.hex(RAD.hazard));
+    Sfx.playAt('whoosh', f.x, { rate: 0.8, volume: 0.7 });
+    if (owner === 'player') this.api.broadcast(DUMMY_ID);
+    return true;
+  }
+
+  /**
+   * Claim the fighter's absorber slot for the dummy, chained exactly like the bunker's: while
+   * the dummy stands every hit is handed to it, and once it is down the hit falls through to
+   * whatever held the slot before.
+   */
+  private installDummyAbsorber(owner: Owner): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (!f || s.dummyAbsorber) return;
+    const prev = f.damageAbsorber;
+    const mine = (amount: number): boolean => {
+      if (this.dummyStanding(owner)) {
+        this.damageDummy(owner, amount);
+        return true;
+      }
+      return prev ? prev(amount) : false;
+    };
+    s.dummyPrevAbsorber = prev;
+    s.dummyAbsorber = mine;
+    f.damageAbsorber = mine;
+  }
+
+  private damageDummy(owner: Owner, amount: number): void {
+    const d = this.side(owner).dummy;
+    if (!d || d.hp <= 0) return;
+    const dmg = Math.max(0, amount);
+    d.hp -= dmg;
+    d.hit = 1;
+    const p = this.dummyPos(d);
+    if (dmg >= 1) this.api.showFloatingText(p.x, p.y - p.lift - 34, `🎯 ${Math.round(dmg)}`, this.hex(RAD.hazard));
+    Sfx.playAt('hit-light', p.x, { rate: 1.3, volume: 0.6 });
+    if (d.hp <= 0) this.breakDummy(owner);
+  }
+
+  private breakDummy(owner: Owner): void {
+    const d = this.side(owner).dummy;
+    if (!d) return;
+    const p = this.dummyPos(d);
+    this.fx(owner).dummyBreak(p.x, p.y - p.lift);
+    this.api.showFloatingText(p.x, p.y - p.lift - 46, '✖ DUMMY DOWN', this.hex(RAD.hazard));
+    Sfx.playAt('explosion-small', p.x, { rate: 1.4, volume: 0.7 });
+    if (owner === 'player') this.api.broadcast('rad-dummy-down');
+    this.dropDummy(owner, true);
+  }
+
+  /** Take the dummy away and hand the absorber slot back if nobody has claimed it since. */
+  private dropDummy(owner: Owner, silent = false): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (s.dummyAbsorber && f && f.damageAbsorber === s.dummyAbsorber) f.damageAbsorber = s.dummyPrevAbsorber;
+    s.dummyAbsorber = null;
+    s.dummyPrevAbsorber = null;
+    const d = s.dummy;
+    s.dummy = null;
+    this.decoys[owner] = null;
+    if (!d || silent) return;
+    const p = this.dummyPos(d);
+    this.fx(owner).dummyBreak(p.x, p.y - p.lift);
+    Sfx.playAt('status-expire', p.x, { rate: 0.9, volume: 0.6 });
+  }
+
+  /**
+   * Per frame: land, expire, and stop enemy shots that hit the dummy. A shot it stops is a hit on
+   * its owner — handed to `takeDamage`, which the link then pours into the dummy (and which, on an
+   * online replica, is forwarded to the owner's machine like any other hit).
+   */
+  private updateDummies(delta: number): void {
+    for (const owner of BOTH) {
+      const s = this.side(owner);
+      const d = s.dummy;
+      if (!d) continue;
+      d.hit = Math.max(0, d.hit - delta / 240);
+      const self = this.fighter(owner);
+      if (!this.alive(self) || this.now >= d.until) { this.dropDummy(owner); continue; }
+      if (this.now < d.landsAt) continue;
+      if (!d.landed) {
+        d.landed = true;
+        this.fx(owner).dummyLand(d.x, d.y);
+        Sfx.playAt('stone-rise', d.x, { rate: 1.5, volume: 0.5 });
+      }
+
+      // Online, the owner tells the peer what the dummy has left.
+      if (owner === 'player' && this.api.isOnline) {
+        const hp = Math.max(0, Math.ceil(d.hp));
+        if (hp !== d.sentHp) {
+          d.sentHp = hp;
+          this.api.broadcast(`rad-dummy-hp:${hp}:${this.dummySeq++}`);
+        }
+      }
+
+      // In co-op the npc slot is an ally, whose dummy has no business stopping our shots.
+      if (owner === 'npc' && this.api.isInvasion) continue;
+      const cy = d.y - DUMMY_LIFT_Y;
+      const group = this.api.projectiles;
+      if (group) {
+        for (const go of group.getChildren()) {
+          const p = go as Projectile;
+          if (!p.active) continue;
+          if (p.isFromPlayer === (owner === 'player')) continue;
+          if (Phaser.Math.Distance.Between(p.x, p.y, d.x, cy) > DUMMY_HIT_R + 6) continue;
+          p.setActive(false).setVisible(false);
+          this.fx(owner).bunkerHit(p.x, p.y, Math.atan2(p.y - cy, p.x - d.x));
+          self.takeDamage(p.damage ?? 0);
+          if (!s.dummy) break;
+        }
+      }
+      if (owner === 'player') {
+        for (let i = 0; i < 6 && s.dummy && this.api.blockHuskShot(d.x, cy, DUMMY_HIT_R + 6); i++) {
+          this.fx(owner).bunkerHit(d.x, cy - DUMMY_HIT_R, -Math.PI / 2);
+          this.damageDummy(owner, DUMMY_HUSK_SHOT);
+        }
+      }
+    }
+  }
+
+  /** The link and the dummy, on the floor layer under the fighters. */
+  private paintDummies(g: Phaser.GameObjects.Graphics): void {
+    for (const owner of BOTH) {
+      const d = this.side(owner).dummy;
+      if (!d) continue;
+      const f = this.fighter(owner);
+      const tint = this.col(owner);
+      const p = this.dummyPos(d);
+      const fade = Phaser.Math.Clamp((d.until - this.now) / 400, 0, 1);
+      if (this.alive(f)) {
+        dummyLink(g, tint, f.x, f.y + 4, p.x, p.y - p.lift - 2, 0.85 * fade * f.alpha, this.vizT, d.hit);
+      }
+      testDummy(g, tint, p.x, p.y, 0.98 * fade, this.vizT, {
+        hp: Phaser.Math.Clamp(d.hp / DUMMY_HP, 0, 1),
+        hit: d.hit,
+        lift: p.lift,
+        tumble: p.u < 1 ? p.u * TAU * 2 : 0,
+        seed: d.seed,
+      });
+      if (p.u >= 1) {
+        doseCells(g, tint, p.x, p.y - 34, Math.ceil(Math.max(0, d.hp) / DUMMY_CELL_HP),
+          DUMMY_HP / DUMMY_CELL_HP, 0.4 + d.hit * 0.6, this.vizT);
+      }
+    }
+  }
+
+  /**
+   * What an AI chases instead of this side's fighter while its dummy stands: the real fighter,
+   * standing where the dummy is. Reads of `x`, `y` and `body.velocity` answer for the dummy; a
+   * `takeDamage` lands on the dummy; every write is swallowed, so a slow or a bleed meant for
+   * the dummy goes nowhere. Everything else still reads through. Same shape as Illusion's Guise.
+   */
+  private decoyOf(owner: Owner): Fighter | null {
+    const d = this.side(owner).dummy;
+    if (!d || d.hp <= 0) return null;
+    const real = this.fighter(owner);
+    if (!real) return null;
+    const cached = this.decoys[owner];
+    if (cached) return cached;
+    const kit = this;
+    const realBody = real.body as Phaser.Physics.Arcade.Body;
+    const body = new Proxy(realBody, {
+      get(t, k) {
+        if (k === 'velocity') return new Phaser.Math.Vector2(0, 0);
+        const v = Reflect.get(t, k, t);
+        return typeof v === 'function' ? () => undefined : v;
+      },
+      set() { return true; },
+    });
+    const decoy = new Proxy(real, {
+      get(t, k) {
+        const cur = kit.side(owner).dummy;
+        if (cur && k === 'x') return kit.dummyPos(cur).x;
+        if (cur && k === 'y') return kit.dummyPos(cur).y - DUMMY_LIFT_Y;
+        if (k === 'body') return body;
+        if (k === 'takeDamage') return (amount: number) => kit.damageDummy(owner, amount);
+        return Reflect.get(t, k, t);
+      },
+      set() { return true; },
+    });
+    this.decoys[owner] = decoy;
+    return decoy;
+  }
+
+  /**
+   * The bot's Test Dummy, fired by the kit. Three reasons, the first two the kit's own synergies:
+   * its airdrop is falling with no bunker round it (the bunker is the slot it gave up — the dummy
+   * takes the self-hit instead), the flare gun is out and five rounds have to be placed from
+   * close, or it is hurt and pressed. Thrown between itself and the target, where shots land.
+   */
+  private updateNpcMastery(): void {
+    if (this.api.isOnline || this.api.isInvasion || !this.dummySlot('npc')) return;
+    const n = this.api.npc;
+    const p = this.api.player;
+    const s = this.sides.npc;
+    if (!this.alive(n) || !this.alive(p) || s.dummy || s.barrage) return;
+    if (this.now - s.dummyAt < DUMMY_COOLDOWN_MS) return;
+    const dist = Phaser.Math.Distance.Between(n.x, n.y, p.x, p.y);
+    const drop = this.airdrop?.owner === 'npc' && !this.sheltered('npc');
+    const flaring = !!s.flares && dist < 460;
+    const pressed = n.hp / Math.max(1, n.maxHp) < NPC_DUMMY_HURT && dist < NPC_DUMMY_HURT_RANGE;
+    if (!drop && !flaring && !pressed) return;
+    this.tryTestDummy('npc', n.x + (p.x - n.x) * 0.45, n.y + (p.y - n.y) * 0.45);
+  }
+
   // ── Per-frame ──────────────────────────────────────────────────────────────
 
   update(time: number, delta: number): void {
@@ -1407,7 +1779,8 @@ export class RadiationKit {
     const playerIs = this.isRadiation('player');
     const npcIs = this.isRadiation('npc');
     const anyState = this.rounds.length || this.irradiated.size || this.stunned.size || this.airdrop
-      || this.sides.player.bunker || this.sides.npc.bunker || this.puddles.length || this.grown.size;
+      || this.sides.player.bunker || this.sides.npc.bunker || this.puddles.length || this.grown.size
+      || this.sides.player.dummy || this.sides.npc.dummy;
     if (!playerIs && !npcIs && !anyState) return;
 
     this.ensureLayers();
@@ -1425,6 +1798,8 @@ export class RadiationKit {
     this.updateAirdrop();
     this.updatePuddles();
     this.updateAfflictions();
+    this.updateDummies(delta);
+    this.updateNpcMastery();
 
     this.paintGround();
     this.paintAir();
@@ -1463,6 +1838,8 @@ export class RadiationKit {
       }
     }
 
+    this.paintDummies(g);
+
     const a = this.airdrop;
     if (a) {
       const k = Phaser.Math.Clamp(1 - (a.landsAt - this.now) / AIRDROP_TELL_MS, 0, 1);
@@ -1475,6 +1852,15 @@ export class RadiationKit {
     const g = this.airGfx;
     if (!g) return;
     g.clear();
+
+    // ── Mastery — X-Ray Vision: every enemy outlined, seen or not ──
+    if (this.masteryOn('player')) {
+      let i = 0;
+      for (const t of this.targetsOf('player')) {
+        if (!this.api.isTargetable(t)) continue;
+        xrayOutline(g, this.pcol, t.x, t.y, BODY_R + this.swell(t) + 4, 0.9, this.vizT, i++ * 2.7);
+      }
+    }
 
     // ── Barrage cones and their lock ──
     for (const owner of BOTH) {
@@ -1573,6 +1959,7 @@ export class RadiationKit {
       const av = this.avatar(owner);
       if (!av) continue;
       const f = this.fighter(owner);
+      av.setMastered(this.masteryOn(owner));
       if (!this.alive(f)) { av.update(delta, f?.x ?? 0, f?.y ?? 0, 0); continue; }
       const s = this.side(owner);
       const b = s.barrage;
@@ -1615,6 +2002,14 @@ export class RadiationKit {
         : 'Your bunker is standing. Get back inside it to be safe.',
       count: Math.max(0, Math.ceil(bk.hp)), suffix: ' HP',
       until: bk.until,
+    } : null);
+
+    const dm = s.dummy;
+    this.api.setStatusIndicator('radiation-dummy', playerIs && dm && dm.hp > 0 ? {
+      name: 'Test Dummy', emoji: '🎯', color: RAD.hazard, priority: 143,
+      description: 'Your test dummy is standing. You cannot be hurt — every hit runs down the link into it instead. When it breaks, you are back on the line.',
+      count: Math.max(0, Math.ceil(dm.hp)), suffix: ' HP',
+      until: dm.until,
     } : null);
 
     const fl = s.flares;
@@ -1678,7 +2073,7 @@ export class RadiationKit {
    * A bunker standing round them when it lands takes the self-hit for them.
    */
   needsCover(owner: Owner): boolean {
-    return !!this.airdrop && this.airdrop.owner === owner && !this.sheltered(owner);
+    return !!this.airdrop && this.airdrop.owner === owner && !this.sheltered(owner) && !this.dummyStanding(owner);
   }
 
   /** True while that side is inside its own standing bunker. */
@@ -1712,5 +2107,78 @@ export class RadiationKit {
     if (!this.up(owner, 'f')) return false;
     if (this.up(owner, 'q') && this.airdrop?.owner === owner) return true;
     return !!this.side(owner).bunker?.turrets;
+  }
+
+  // ── Mastery accessors ──────────────────────────────────────────────────
+
+  /**
+   * Online: one of the opponent's presses that never touches a cooldown — the dummy itself, and
+   * what their machine says it has left.
+   */
+  replayNet(id: string, tx: number, ty: number): void {
+    if (id === DUMMY_ID) { this.tryTestDummy('npc', tx, ty); return; }
+    if (id === 'rad-dummy-down') { this.breakDummy('npc'); return; }
+    if (id.startsWith('rad-dummy-hp:')) {
+      const d = this.sides.npc.dummy;
+      const hp = Number(id.split(':')[1]);
+      if (d && Number.isFinite(hp) && hp < d.hp) { d.hp = hp; d.hit = 1; }
+    }
+  }
+
+  /** What the npc AI should chase this frame instead of the player: their dummy, or null. */
+  npcDecoyTarget(): Fighter | null { return this.decoyOf('player'); }
+
+  /** Invasion: the husks' view of who is in the room — the player swapped for their dummy. */
+  huskTargetsView(list: Fighter[]): Fighter[] {
+    const decoy = this.decoyOf('player');
+    if (!decoy) return list;
+    return list.map((f) => (f === this.api.player ? decoy : f));
+  }
+
+  /** Invasion: a husk hit that was aimed at the decoy. True when the dummy took it. */
+  absorbDecoyHit(target: Fighter, amount: number): boolean {
+    if (!this.dummyStanding('player') || target !== this.decoys.player) return false;
+    this.damageDummy('player', amount);
+    return true;
+  }
+
+  /**
+   * ArenaScene's AoE chokepoint: a blast owned by `owner` that reaches the *other* side's dummy
+   * is a hit on that side, through the link — unless the blast already reached their body, which
+   * the scene resolves itself (and the link then carries anyway).
+   */
+  notifyAoe(cx: number, cy: number, radius: number, damage: number, owner: Owner): void {
+    const victim: Owner = owner === 'player' ? 'npc' : 'player';
+    if (victim === 'npc' && this.api.isInvasion) return;
+    const d = this.side(victim).dummy;
+    if (!d || d.hp <= 0 || this.now < d.landsAt) return;
+    if (Phaser.Math.Distance.Between(cx, cy, d.x, d.y - DUMMY_LIFT_Y) > radius + DUMMY_HIT_R) return;
+    const f = this.fighter(victim);
+    if (!this.alive(f) || Phaser.Math.Distance.Between(cx, cy, f.x, f.y) <= radius) return;
+    f.takeDamage(damage);
+  }
+
+  /** The mastery card. */
+  getDummyCooldownRatio(): number {
+    return Phaser.Math.Clamp((this.now - this.sides.player.dummyAt) / DUMMY_COOLDOWN_MS, 0, 1);
+  }
+
+  /** Which slot the bot gave up for the Test Dummy, so its rotation leaves that key alone. */
+  npcDummySlot(): 'r' | 'f' | 'q' | undefined {
+    return this.dummySlot('npc') ?? undefined;
+  }
+
+  /**
+   * Whether the bot's dummy is ready or already standing — its cover for the airdrop when the
+   * dummy took the bunker's slot, so the ultimate is only drawn with one of the two in hand.
+   */
+  npcDummyCoverReady(): boolean {
+    const s = this.sides.npc;
+    return !!s.dummy || this.now - s.dummyAt >= DUMMY_COOLDOWN_MS;
+  }
+
+  /** X-Ray Vision: that side sees through stealth, so an invisible target is not invisible to it. */
+  seesInvisible(owner: Owner): boolean {
+    return this.masteryOn(owner);
   }
 }

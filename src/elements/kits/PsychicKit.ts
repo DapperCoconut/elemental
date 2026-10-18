@@ -8,12 +8,17 @@ import type { SummonPurgeTarget } from '../../combat/SummonPurge';
 import type { FormRevertTarget } from '../../combat/FormRevert';
 import { Sfx } from '../../audio';
 import {
-  ChessKind, PSY, PsychicAvatar, PsychicColorFn, PsychicFx, chessPiece, focusMandala, heavenlyAura,
-  mightAura, moveGuide, queenCrown, queueCard, rideWard, sightSquare, snareRune, strideAura,
+  ChessKind, OUTPLAY, PSY, PsychicAvatar, PsychicColorFn, PsychicFx, chessPiece, heavenlyAura,
+  mightAura, moveGuide, outplayedAura, premoveClock, queenCrown, queueCard, rideWard, sightSquare,
+  strideAura,
 } from './PsychicVisuals';
 
 type Owner = 'player' | 'npc';
 type PieceKind = 'bishop' | 'knight' | 'rook';
+/** Every key a Pre-move can be laid on. */
+type PremoveKey = 'click' | 'e' | 'r' | 'f' | 'q' | 'space' | 'w' | 'a' | 's' | 'd';
+const PREMOVE_KEYS: PremoveKey[] = ['click', 'e', 'r', 'f', 'q', 'space', 'w', 'a', 's', 'd'];
+const MOVE_KEYS: PremoveKey[] = ['space', 'w', 'a', 's', 'd'];
 
 const ARENA_PAD = 32;
 const BOTH: Owner[] = ['player', 'npc'];
@@ -120,25 +125,37 @@ const NPC_RIDE_ESCAPE_HP = 0.5;
 const NPC_RIDE_ESCAPE_RANGE = 160;
 
 // ── Mastery ──────────────────────────────────────────────────────────────────
-/** Predictor's Snare: what a closed eye deals to whoever walks over it. */
-const SNARE_DAMAGE = 15;
-const SNARE_R = 20;
-const SNARE_LIFE_MS = 14_000;
-const SNARE_ARM_MS = 260;
-const SNARE_MAX = 6;
-/** Below this a route is not worth teleporting onto. */
-const SNARE_MIN_DIST = 24;
-const UTTER_ID = 'utter-focus';
-const UTTER_MS = 8000;
-const UTTER_FORESIGHT_MS = 5000;
-const UTTER_HIT_COST_MS = 500;
-const UTTER_COOLDOWN_MS = 26_000;
-const UTTER_RELAY_MS = 500;
-const ROUTE_RELAY_MS = 160;
-const ROUTE_POINTS = 10;
-const ROUTE_STALE_MS = 700;
-const NPC_UTTER_CHECK_MS = 250;
-const NPC_UTTER_RANGE = 300;
+/**
+ * Outplayed (passive): how many health-percentage points behind the psychic an enemy has to be,
+ * and how much longer their cooldowns run once they are. Points, not raw HP — a tank on 300 of
+ * 400 is as far behind as a duellist on 75 of 100.
+ */
+const OUTPLAYED_TIERS: { gap: number; mult: number }[] = [
+  { gap: 75, mult: 1.33 },
+  { gap: 50, mult: 1.25 },
+  { gap: 25, mult: 1.1 },
+];
+const PREMOVE_ID = 'pre-move';
+const PREMOVE_COOLDOWN_MS = 14_000;
+/** How long the psychic has to choose the key before the pre-move lapses unspent. */
+const PREMOVE_CHOOSE_MS = 4000;
+/** How long the prediction stands once it is made. */
+const PREMOVE_WINDOW_MS = 1500;
+const PREMOVE_DAMAGE = 25;
+const PREMOVE_STUN_MS = 600;
+/** The ability they pressed: this much longer, now and for every cast of it for a while. */
+const PREMOVE_CD_MULT = 1.5;
+const PREMOVE_CD_MS = 8000;
+/** A movement key (Space included): 30% slower for this long — `Fighter.premoveSlowMult`. */
+const PREMOVE_SLOW_MS = 3000;
+/** A body with no keys "presses" a direction when its velocity starts going that way this fast. */
+const PRESS_SPEED = 45;
+/** The bot's read of the player: presses older than this are forgotten. */
+const PRESS_MEMORY_MS = 4000;
+const NPC_PREMOVE_CHECK_MS = 300;
+const NPC_PREMOVE_RANGE = 460;
+/** The bot only predicts once it has seen at least this much (recency-weighted) pressing. */
+const NPC_PREMOVE_MIN_READ = 1.5;
 
 /** How often the bot re-plans which piece to move where. */
 const NPC_PLAN_MS = 120;
@@ -236,13 +253,13 @@ interface Ride {
   saved: boolean;
 }
 
-interface Snare {
-  x: number;
-  y: number;
-  by: Owner;
-  until: number;
-  armedAt: number;
-  seed: number;
+/** Edge state for one body's keys, so a press can be told from a hold. */
+interface PressTrack {
+  down: Record<PremoveKey, boolean>;
+  /** `Fighter.lastPressAt` as last seen. */
+  pressAt: number;
+  /** A husk's attack clock as last seen — a husk's attack is its Click. */
+  atk: number;
 }
 
 interface Side {
@@ -259,11 +276,14 @@ interface Side {
   queenMove: Move | null;
   /** Rook captures: auras worn without the piece, each with its own clock. */
   stolen: { kind: PieceKind; until: number }[];
-  utterUntil: number;
-  utterCastAt: number;
-  utterRaw: number;
-  utterRelayAt: number;
-  npcUtterCheckAt: number;
+  /** Pre-move: when it was last cast (its cooldown runs from here). */
+  premoveCastAt: number;
+  /** Cast and waiting for its key until this scene time; 0 when not choosing. */
+  premoveChoosingUntil: number;
+  /** The key predicted, and until when it stands. */
+  premoveKey: PremoveKey | null;
+  premoveUntil: number;
+  npcPremoveCheckAt: number;
   ride: Ride | null;
   /** Sight Lines: when each body was last billed by this side's squares. */
   sightHitAt: Map<Fighter, number>;
@@ -273,7 +293,8 @@ function makeSide(owner: Owner): Side {
   return {
     owner, aimX: 0, aimY: 0, serial: 0, selected: -1,
     queenUntil: 0, queenReadyAt: 0, queenMove: null, stolen: [], ride: null, sightHitAt: new Map(),
-    utterUntil: 0, utterCastAt: -UTTER_COOLDOWN_MS, utterRaw: 0, utterRelayAt: 0, npcUtterCheckAt: 0,
+    premoveCastAt: -PREMOVE_COOLDOWN_MS, premoveChoosingUntil: 0, premoveKey: null, premoveUntil: 0,
+    npcPremoveCheckAt: 0,
   };
 }
 
@@ -326,6 +347,14 @@ export interface PsychicArenaApi {
   get npcMasteryActive(): boolean;
   masteryBindFor(slot: string): string | null;
   npcMasteryBindFor(slot: string): string | null;
+  recordMasteryStat(key: string, amount: number): void;
+  /** The rest of the local player's keys, for Pre-move — which has to read every one of them. */
+  get wKey(): Phaser.Input.Keyboard.Key;
+  get aKey(): Phaser.Input.Keyboard.Key;
+  get sKey(): Phaser.Input.Keyboard.Key;
+  get dKey(): Phaser.Input.Keyboard.Key;
+  get spaceKey(): Phaser.Input.Keyboard.Key;
+  get pointer(): Phaser.Input.Pointer;
 }
 
 // ── PsychicKit ───────────────────────────────────────────────────────────────
@@ -393,7 +422,6 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
   private foreseen = new Set<Fighter>();
   private pieces: Piece[] = [];
   private pawns: Pawn[] = [];
-  private snares: Snare[] = [];
   private squares: SightSquare[] = [];
   /** Observed velocity per body, for bodies with no AI plan to replay (husks, replicas). */
   private seen = new Map<Fighter, { x: number; y: number; vx: number; vy: number; at: number }>();
@@ -404,12 +432,21 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
   private npcPlan: NpcPlan | null = null;
   private npcPlanAt = 0;
 
-  // Utter Focus, on the machine being read.
-  private moveBuffer: { at: number; vx: number; vy: number }[] = [];
-  private movePlayed = { vx: 0, vy: 0 };
-  private lastRouteRelayAt = 0;
-  private netRoute: { x: number; y: number }[] = [];
-  private netRouteAt = 0;
+  // Mastery.
+  /** Key edge state per watched body, refreshed every frame while anybody has Pre-move bound. */
+  private tracks = new Map<Fighter, PressTrack>();
+  /** This frame's fresh presses, per watched body. */
+  private framePresses = new Map<Fighter, PremoveKey[]>();
+  /** The bot psychic's read on the player: their recent presses. */
+  private pressLog: { key: PremoveKey; at: number }[] = [];
+  /** Pre-move's light stun: bodies this sim holds still, until scene time. */
+  private stuns = new Map<Fighter, number>();
+  /** Outplayed on husks: the share of `attackIntervalMult` this kit has folded in, per husk. */
+  private outplayedHusk = new Map<Fighter, number>();
+  /** Outplayed tier last frame, per body — for the call-out when it climbs. */
+  private outplayedSeen = new Map<Fighter, number>();
+  /** The local player's own sprung Pre-move: which ability is stretched, for the tray. */
+  private premovedMe: { name: string; until: number } | null = null;
   /** Online: the opponent's own report of their queue, soonest first. */
   private netQueue: { id: string; left: number }[] = [];
   private netQueueAt = 0;
@@ -512,18 +549,20 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
     this.queues.clear();
     this.pieces = [];
     this.pawns = [];
-    this.snares = [];
     this.squares = [];
     this.seen.clear();
     this.wasDown = false;
     this.pressMode = null;
     this.npcPlan = null;
     this.npcPlanAt = 0;
-    this.moveBuffer = [];
-    this.movePlayed = { vx: 0, vy: 0 };
-    this.lastRouteRelayAt = 0;
-    this.netRoute = [];
-    this.netRouteAt = 0;
+    for (const [f, k] of this.outplayedHusk) if (f.active && k > 0) f.attackIntervalMult /= k;
+    this.outplayedHusk.clear();
+    this.outplayedSeen.clear();
+    this.tracks.clear();
+    this.framePresses.clear();
+    this.pressLog = [];
+    this.stuns.clear();
+    this.premovedMe = null;
     this.sides = { player: makeSide('player'), npc: makeSide('npc') };
     this.netQueue = [];
     this.netQueueAt = 0;
@@ -537,7 +576,7 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
       f.psychicIncomingMult = 1;
       f.castDelayMs = 0;
       f.queueDelayedCast = null;
-      f.moveInputDelayMs = 0;
+      f.psychicCooldownMult = 1;
     }
 
     this.playerAvatar?.destroy(); this.playerAvatar = null;
@@ -553,7 +592,8 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
     this.ghostsUsed = 0;
 
     for (const id of ['psychic-foresight', 'psychic-grace', 'psychic-stride', 'psychic-might',
-      'psychic-queen', 'psychic-utter', 'psychic-held']) {
+      'psychic-queen', 'psychic-premove', 'psychic-outplayed', 'psychic-outplayed-me', 'psychic-premoved',
+      'psychic-premove-threat']) {
       this.api.setStatusIndicator(id, null);
     }
   }
@@ -565,27 +605,18 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
       && (owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
   }
 
-  /** Which of R/F/Q Utter Focus was dropped on, or null. */
-  private utterSlot(owner: Owner): 'r' | 'f' | 'q' | null {
+  /** Which of R/F/Q Pre-move was dropped on, or null. */
+  private premoveSlot(owner: Owner): 'r' | 'f' | 'q' | null {
     if (!this.masteryOn(owner)) return null;
     for (const s of ['r', 'f', 'q'] as const) {
       const bind = owner === 'player' ? this.api.masteryBindFor(s) : this.api.npcMasteryBindFor(s);
-      if (bind === UTTER_ID) return s;
+      if (bind === PREMOVE_ID) return s;
     }
     return null;
   }
 
   private keyFor(slot: 'r' | 'f' | 'q'): Phaser.Input.Keyboard.Key {
     return slot === 'r' ? this.api.rKey : slot === 'f' ? this.api.fKey : this.api.qKey;
-  }
-
-  private focused(owner: Owner): boolean {
-    return this.now < this.side(owner).utterUntil;
-  }
-
-  /** How long everything aimed at that psychic is held for right now. */
-  private foresightMs(owner: Owner): number {
-    return this.focused(owner) ? UTTER_FORESIGHT_MS : FORESIGHT_MS;
   }
 
   /** That side's psychic owns the shop upgrade in `slot`. */
@@ -646,8 +677,8 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
 
     const ctx = this.api.buildPlayerContext(mouseX, mouseY);
 
-    const bound = this.utterSlot('player');
-    if (bound && Phaser.Input.Keyboard.JustDown(this.keyFor(bound))) this.tryCastUtter('player');
+    const bound = this.premoveSlot('player');
+    if (bound && Phaser.Input.Keyboard.JustDown(this.keyFor(bound))) this.tryCastPremove('player');
 
     if (pressed) {
       this.pressMode = 'spent';
@@ -899,6 +930,7 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
       if (this.segDist(ax, ay, bx, by, t.x, t.y) > SLIDE_HIT_R + this.bodyR(t)) continue;
       m.hit.add(t);
       t.takeDamage(dmg);
+      this.smash(owner);
       this.fx(owner).pieceHit(t.x, t.y, ang);
       this.api.spawnHitFlash(t.x, t.y, this.col(owner)(PSY.gold));
       Sfx.playAt('hit-heavy', t.x, { rate: 1.1, volume: 0.7 });
@@ -918,6 +950,7 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
       if (spared?.has(t)) continue;
       if (Phaser.Math.Distance.Between(x, y, t.x, t.y) > r + this.bodyR(t) * 0.5) continue;
       t.takeDamage(dmg);
+      this.smash(owner);
       this.api.spawnHitFlash(t.x, t.y, this.col(owner)(PSY.violetLit));
     }
   }
@@ -934,6 +967,7 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
       if (this.segDist(ax, ay, bx, by, o.x, o.y) > CAPTURE_R) continue;
       this.pieces.splice(i, 1);
       this.dropSelection(o);
+      if (rook.owner === 'player') this.api.recordMasteryStat('rookCaptures', 1);
       const s = this.side(rook.owner);
       s.stolen.push({ kind: o.kind, until: this.now + STOLEN_AURA_MS });
       this.fx(rook.owner).capture(o.x, o.y);
@@ -948,6 +982,7 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
       if (pw.owner === rook.owner) continue;
       if (this.segDist(ax, ay, bx, by, pw.x, pw.y) > CAPTURE_R) continue;
       this.pawns.splice(i, 1);
+      if (rook.owner === 'player') this.api.recordMasteryStat('rookCaptures', 1);
       this.fx(rook.owner).capture(pw.x, pw.y);
     }
   }
@@ -1007,6 +1042,7 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
           if (this.segDist(pw.x, pw.y, nx, ny, t.x, t.y) > PAWN_TOUCH_R + this.bodyR(t)) continue;
           pw.touched.add(t);
           t.takeDamage(PAWN_TOUCH_DAMAGE);
+          this.smash(pw.owner);
           this.api.spawnHitFlash(t.x, t.y, this.col(pw.owner)(PSY.violetLit));
         }
         pw.x = nx;
@@ -1054,6 +1090,7 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
       if (!caught) continue;
       any = true;
       t.takeDamage(PAWN_STRIKE_DAMAGE);
+      this.smash(pw.owner);
       this.fx(pw.owner).pieceHit(t.x, t.y, pw.ang);
       this.api.spawnHitFlash(t.x, t.y, this.col(pw.owner)(PSY.gold));
     }
@@ -1220,6 +1257,7 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
     if (!this.isNetReplica(f)) this.body(f).reset(rook.x, rook.y);
     this.fx(owner).summonPiece(rook.x, rook.y);
     this.landCastle(owner, rook, kx, ky);
+    if (owner === 'player') this.api.recordMasteryStat('castles', 1);
     if (owner === 'player' && this.api.isOnline) {
       this.api.sendPsychicMsg({ t: 'psy', k: 'castle', id: rook.id, x: Math.round(kx), y: Math.round(ky) });
     }
@@ -1245,6 +1283,7 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
     for (const t of this.targetsOf(owner)) {
       if (Phaser.Math.Distance.Between(rook.x, rook.y, t.x, t.y) > CASTLE_R + this.bodyR(t) * 0.5) continue;
       t.takeDamage(CASTLE_DAMAGE);
+      this.smash(owner);
       this.api.spawnHitFlash(t.x, t.y, this.col(owner)(PSY.stress));
     }
   }
@@ -1264,6 +1303,8 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
       this.fx(owner).checkmate(t.x, t.y);
       this.api.showFloatingText(t.x, t.y - 72, '♚ CHECKMATE', this.hex(PSY.gold));
       t.takeDamage(t.hp, { trueDamage: true });
+      // The reign ran its course, so every checkmate is one delivered as the queen.
+      if (owner === 'player') this.api.recordMasteryStat('queenCheckmates', 1);
     }
     if (!any) return;
     Sfx.playAt('status-curse', this.fighter(owner).x, { rate: 0.8, volume: 0.9 });
@@ -1471,10 +1512,10 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
   private updateForesight(): void {
     const want = new Map<Fighter, number>();
     if (this.isPsychic('npc') && this.alive(this.api.npc) && !this.api.isInvasion) {
-      want.set(this.api.player, this.foresightMs('npc'));
+      want.set(this.api.player, FORESIGHT_MS);
     }
     if (this.isPsychic('player') && this.alive(this.api.player) && !this.api.isOnline) {
-      for (const f of this.targetsOf('player')) want.set(f, this.foresightMs('player'));
+      for (const f of this.targetsOf('player')) want.set(f, FORESIGHT_MS);
     }
     for (const f of [...this.foreseen]) {
       if (!want.has(f)) this.releaseForesight(f, true);
@@ -1544,7 +1585,7 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
         const ms = Math.max(0, e.left - since);
         out.push({
           key: a?.displayKey ?? '?', name: a?.name ?? e.id, big: !!a?.isUltimate,
-          left: ms / this.foresightMs('player'), secs: ms / 1000, at: ms,
+          left: ms / FORESIGHT_MS, secs: ms / 1000, at: ms,
         });
       }
     } else {
@@ -1619,21 +1660,28 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
         if (rook) this.landCastle('npc', rook, msg.x, msg.y);
         break;
       }
-      case 'utter': {
+      case 'premove': {
+        // Their prediction, armed against us on our own sim — the one that can read our keys.
         const s = this.sides.npc;
-        if (msg.ms <= 0) { this.endUtter('npc'); break; }
-        const wasOpen = s.utterUntil > 0;
-        s.utterUntil = this.now + msg.ms;
-        if (!wasOpen) this.beginUtter('npc', msg.ms);
+        if (!this.isPsychic('npc')) break;
+        s.premoveChoosingUntil = 0;
+        s.premoveKey = PREMOVE_KEYS.includes(msg.key as PremoveKey) ? msg.key as PremoveKey : null;
+        s.premoveUntil = this.now + Math.min(PREMOVE_WINDOW_MS, Math.max(0, msg.ms));
+        // Primed now, so a key we were already holding does not count as a press.
+        this.tracks.delete(this.api.player);
         break;
       }
-      case 'route':
-        this.netRoute = [];
-        for (let i = 0; i + 1 < msg.pts.length; i += 2) {
-          this.netRoute.push({ x: msg.pts[i], y: msg.pts[i + 1] });
-        }
-        this.netRouteAt = this.now;
+      case 'premoved': {
+        // Our prediction caught them on their machine. The stun, the slow and the cooldown are
+        // already theirs; the burst is ours to deal, so it rides the normal damage relay.
+        const t = this.api.npc;
+        const s = this.sides.player;
+        s.premoveKey = null;
+        s.premoveUntil = 0;
+        if (!this.alive(t) || !this.isPsychic('player')) break;
+        this.premoveBurst('player', t, msg.key as PremoveKey);
         break;
+      }
       default:
         break;
     }
@@ -1674,14 +1722,9 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
    * For a bot this is not a guess: `NpcOpponent.movementPlan` hands over the exact locomotion
    * rule it is following this tick, and it is replayed forward against the player's current
    * position. A body with no plan (a replica, a husk) falls back to dead reckoning off the
-   * velocity it has actually been moving at — unless Utter Focus is holding a remote
-   * opponent's feet, in which case their own machine has sent the route and it is used verbatim.
+   * velocity it has actually been moving at.
    */
   private projectPath(f: Fighter, ms: number): { x: number; y: number }[] {
-    if (this.isNetReplica(f) && this.now - this.netRouteAt < ROUTE_STALE_MS && this.netRoute.length > 2) {
-      const n = Math.max(2, Math.round((ms / UTTER_FORESIGHT_MS) * this.netRoute.length));
-      return [{ x: f.x, y: f.y }, ...this.netRoute.slice(0, n)];
-    }
     const steps = Math.max(4, Math.round(ms / PATH_STEP_MS));
     const dt = ms / 1000 / steps;
     const pts: { x: number; y: number }[] = [{ x: f.x, y: f.y }];
@@ -1725,252 +1768,365 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
     return Phaser.Math.Distance.Between(end.x, end.y, f.x, f.y) < minDist ? null : end;
   }
 
-  // ── Predictor's Snare (mastery passive) ────────────────────────────────────
+  // ── Mastery: requirements ──────────────────────────────────────────────────
+
+  /** Every hit a piece, a pawn or the queen lands for the player is one smash. */
+  private smash(owner: Owner): void {
+    if (owner === 'player') this.api.recordMasteryStat('pieceSmashes', 1);
+  }
+
+  // ── Outplayed (mastery passive) ────────────────────────────────────────────
+
+  /** 0 when they are not far enough behind, else 1–3. */
+  private outplayedTier(owner: Owner, t: Fighter): number {
+    const f = this.fighter(owner);
+    if (!this.masteryOn(owner) || !this.alive(f) || !this.alive(t) || f.maxHp <= 0 || t.maxHp <= 0) return 0;
+    const gap = (f.hp / f.maxHp - t.hp / t.maxHp) * 100;
+    for (let i = 0; i < OUTPLAYED_TIERS.length; i++) {
+      if (gap >= OUTPLAYED_TIERS[i].gap) return OUTPLAYED_TIERS.length - i;
+    }
+    return 0;
+  }
+
+  private outplayedMult(tier: number): number {
+    return tier > 0 ? OUTPLAYED_TIERS[OUTPLAYED_TIERS.length - tier].mult : 1;
+  }
 
   /**
-   * The dash, replaced: Space puts the psychic on the spot the nearest enemy's route ends at
-   * (the end of the foresight window), and leaves a closed eye there. Refuses — leaving an
-   * ordinary dash — when nobody has a route worth arriving at.
+   * Rewritten onto every body each frame. A fighter's cooldowns read `psychicCooldownMult`; a
+   * husk has no cooldowns, only an attack cadence, so its share of `attackIntervalMult` is
+   * tracked and swapped rather than written over (other kits own the rest of that field).
+   *
+   * Online, the victim's sim never writes it on itself: the psychic's machine writes it on its
+   * replica of us and it arrives as the `cd` vital, the same way every attacker-side cooldown
+   * factor does. The tier is still worked out here, for the aura and the tray.
    */
-  trySnareDash(): boolean {
-    if (!this.masteryOn('player')) return false;
-    const p = this.api.player;
-    if (!this.alive(p)) return false;
-
-    let dest: { x: number; y: number } | null = null;
-    let bestD = Infinity;
-    for (const t of this.targetsOf('player')) {
-      const d = this.futureOf(t, this.foresightMs('player'), SNARE_MIN_DIST);
-      if (!d) continue;
-      const dist = Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y);
-      if (dist >= bestD) continue;
-      bestD = dist;
-      dest = d;
+  private applyOutplayed(): void {
+    const want = new Map<Fighter, number>();
+    for (const owner of BOTH) {
+      if (!this.masteryOn(owner)) continue;
+      for (const t of this.targetsOf(owner)) {
+        const tier = this.outplayedTier(owner, t);
+        const prev = this.outplayedSeen.get(t) ?? 0;
+        if (tier > prev && this.alive(t)) {
+          this.ensureLayers();
+          const pct = Math.round((this.outplayedMult(tier) - 1) * 100);
+          this.api.showFloatingText(t.x, t.y - 62, `♟ OUTPLAYED +${pct}% CD`, this.hex(OUTPLAY.lit));
+          this.fx(owner).mote(t.x, t.y - 10);
+        }
+        this.outplayedSeen.set(t, tier);
+        if (owner === 'npc' && this.api.isOnline) continue;
+        want.set(t, Math.max(want.get(t) ?? 1, this.outplayedMult(tier)));
+      }
     }
-    if (!dest) return false;
+    for (const f of this.allFighters()) {
+      if (!f) continue;
+      const m = want.get(f) ?? 1;
+      if (f === this.api.player || f === this.api.npc) {
+        f.psychicCooldownMult = m;
+        continue;
+      }
+      const had = this.outplayedHusk.get(f) ?? 1;
+      if (had !== m && f.active) f.attackIntervalMult *= m / had;
+      if (m === 1) this.outplayedHusk.delete(f);
+      else this.outplayedHusk.set(f, m);
+    }
+    // Husks that have left the field take their share with them.
+    for (const f of [...this.outplayedHusk.keys()]) if (!f.active) this.outplayedHusk.delete(f);
+    for (const f of [...this.outplayedSeen.keys()]) if (!f.active) this.outplayedSeen.delete(f);
+  }
 
-    this.ensureLayers();
-    const x = this.clampX(dest.x);
-    const y = this.clampY(dest.y);
-    const fromX = p.x;
-    const fromY = p.y;
-    this.body(p).reset(x, y);
-    this.pfx.snare(fromX, fromY, x, y);
-    Sfx.playAt('teleport', x, { rate: 1.2, volume: 0.8 });
-    this.plantSnare('player', x, y);
-    this.api.showFloatingText(x, y - 50, '🧿 SNARE SET', this.hex(PSY.gold));
+  // ── Pre-move (mastery ability): reading keys ───────────────────────────────
+
+  /**
+   * The keys a body is holding this frame. The local player's are their real keys; anything else
+   * (a bot, a husk) has no keys, so its "keys" are read off what it is doing — the direction it
+   * is moving, and a bot's projectile dodge for Space. Its ability presses come in separately
+   * through `Fighter.lastPressAt`, which is stamped at the press, before any Opened Eyes queue.
+   */
+  private keysDown(f: Fighter): Record<PremoveKey, boolean> {
+    if (f === this.api.player) {
+      const { api } = this;
+      return {
+        click: api.pointer.leftButtonDown(), e: api.eKey.isDown, r: api.rKey.isDown, f: api.fKey.isDown,
+        q: api.qKey.isDown, space: api.spaceKey.isDown,
+        w: api.wKey.isDown, a: api.aKey.isDown, s: api.sKey.isDown, d: api.dKey.isDown,
+      };
+    }
+    const v = this.velocityOf(f);
+    return {
+      click: false, e: false, r: false, f: false, q: false,
+      space: Date.now() - f.dodgingAt < 120,
+      w: v.y < -PRESS_SPEED, a: v.x < -PRESS_SPEED, s: v.y > PRESS_SPEED, d: v.x > PRESS_SPEED,
+    };
+  }
+
+  /** A husk's attack clock. Husks are not `NpcOpponent`s and press nothing; their attack is their Click. */
+  private huskAttackClock(f: Fighter): number {
+    if (f === this.api.player || f === this.api.npc) return 0;
+    const h = f as unknown as { nextAttackAt?: number; nextBiteAt?: number };
+    return Math.max(h.nextAttackAt ?? 0, h.nextBiteAt ?? 0);
+  }
+
+  /** The key an ability of this body's is pressed on. */
+  private keyOfAbility(f: Fighter, abilityId: string): PremoveKey | null {
+    const a = f.element.abilities.find((ab) => ab.id === abilityId);
+    const k = a?.displayKey.toLowerCase();
+    return k && PREMOVE_KEYS.includes(k as PremoveKey) ? k as PremoveKey : null;
+  }
+
+  /** Fresh presses since last frame. A body seen for the first time is only primed. */
+  private readPresses(f: Fighter): PremoveKey[] {
+    const down = this.keysDown(f);
+    const atk = this.huskAttackClock(f);
+    const tr = this.tracks.get(f);
+    if (!tr) {
+      this.tracks.set(f, { down, pressAt: f.lastPressAt, atk });
+      return [];
+    }
+    const out: PremoveKey[] = [];
+    for (const k of PREMOVE_KEYS) if (down[k] && !tr.down[k]) out.push(k);
+    if (f !== this.api.player) {
+      if (f.lastPressAt > tr.pressAt) {
+        const k = this.keyOfAbility(f, f.lastPressAbilityId);
+        if (k && !out.includes(k)) out.push(k);
+      }
+      if (atk > tr.atk && !out.includes('click')) out.push('click');
+    }
+    tr.down = down;
+    tr.pressAt = f.lastPressAt;
+    tr.atk = atk;
+    return out;
+  }
+
+  /**
+   * Who needs their keys read this frame: the local psychic (to choose), and whoever a psychic
+   * with Pre-move bound could be predicting. A body that drops out of the watch loses its edge
+   * state, so it is primed afresh — a key held across the gap is never mistaken for a press.
+   */
+  private trackPresses(): void {
+    this.framePresses.clear();
+    const watch = new Set<Fighter>();
+    if (this.premoveSlot('player')) {
+      watch.add(this.api.player);
+      for (const t of this.targetsOf('player')) if (!this.isNetReplica(t)) watch.add(t);
+    }
+    if (this.premoveSlot('npc')) for (const t of this.targetsOf('npc')) watch.add(t);
+    for (const f of [...this.tracks.keys()]) if (!watch.has(f) || !this.alive(f)) this.tracks.delete(f);
+    for (const f of watch) {
+      if (!this.alive(f)) continue;
+      const keys = this.readPresses(f);
+      if (keys.length) this.framePresses.set(f, keys);
+    }
+    // The bot's read on the player, offline only — online there is no bot.
+    if (this.premoveSlot('npc') && !this.api.isOnline) {
+      for (const k of this.framePresses.get(this.api.player) ?? []) this.pressLog.push({ key: k, at: this.now });
+      while (this.pressLog.length && this.now - this.pressLog[0].at > PRESS_MEMORY_MS) this.pressLog.shift();
+    }
+  }
+
+  // ── Pre-move (mastery ability): the cast ───────────────────────────────────
+
+  private premoveReady(owner: Owner): boolean {
+    const s = this.side(owner);
+    return this.now - s.premoveCastAt >= PREMOVE_COOLDOWN_MS && !s.premoveChoosingUntil && !s.premoveKey;
+  }
+
+  private tryCastPremove(owner: Owner): boolean {
+    const f = this.fighter(owner);
+    if (!this.alive(f) || !this.premoveReady(owner)) return false;
+    const wall = Date.now();
+    if (wall < f.disarmedUntil || wall < f.silencedUntil || wall < f.chickenUntil || wall < f.stunnedUntil) return false;
+    this.beginPremove(owner);
+    // The cooldown is the kit's own; `triggerCooldown` is only how the cast gets onto the wire.
+    // Online it reaches the opponent as an unknown id and lands in `replayNpcMastery`.
+    if (owner === 'player') f.triggerCooldown(PREMOVE_ID);
     return true;
   }
 
-  private plantSnare(owner: Owner, x: number, y: number): void {
-    const mine = this.snares.filter((s) => s.by === owner);
-    if (mine.length >= SNARE_MAX) this.snares.splice(this.snares.indexOf(mine[0]), 1);
-    this.snares.push({
-      x, y, by: owner,
-      until: this.now + SNARE_LIFE_MS,
-      armedAt: this.now + SNARE_ARM_MS,
-      seed: Math.random() * 999,
-    });
+  private beginPremove(owner: Owner): void {
+    const f = this.fighter(owner);
+    const s = this.side(owner);
+    s.premoveCastAt = this.now;
+    s.premoveChoosingUntil = this.now + PREMOVE_CHOOSE_MS;
+    s.premoveKey = null;
+    s.premoveUntil = 0;
+    if (!this.alive(f)) return;
+    this.ensureLayers();
+    this.avatar(owner)?.play('raise');
+    Sfx.playAt('clock-tick', f.x, { rate: 1.3, volume: 0.8 });
+    this.api.showFloatingText(f.x, f.y - 70, '♟ PRE-MOVE', this.hex(OUTPLAY.lit));
   }
 
-  private updateSnares(): void {
-    for (let i = this.snares.length - 1; i >= 0; i--) {
-      const s = this.snares[i];
-      if (this.now >= s.until) { this.snares.splice(i, 1); continue; }
-      if (this.now < s.armedAt) continue;
-      for (const v of this.targetsOf(s.by)) {
-        if (Phaser.Math.Distance.Between(s.x, s.y, v.x, v.y) > SNARE_R + this.bodyR(v)) continue;
-        this.snares.splice(i, 1);
-        this.ensureLayers();
-        this.fx(s.by).snareTrip(s.x, s.y);
-        Sfx.playAt('torment', s.x, { rate: 1.5, volume: 0.6 });
-        v.takeDamage(SNARE_DAMAGE);
-        this.api.spawnHitFlash(v.x, v.y, this.col(s.by)(PSY.gold));
-        this.api.showFloatingText(v.x, v.y - 46, '🧿 SNARED', this.hex(PSY.gold));
+  /** Online replay: the remote psychic cast Pre-move and is choosing. Only the tell is drawn. */
+  doNpcPremoveCast(): void {
+    if (!this.isPsychic('npc') || this.sides.npc.premoveKey) return;
+    this.beginPremove('npc');
+  }
+
+  /** The prediction is made: from now, the first press of `key` is punished. */
+  private choosePremove(owner: Owner, key: PremoveKey): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    s.premoveChoosingUntil = 0;
+    s.premoveKey = key;
+    s.premoveUntil = this.now + PREMOVE_WINDOW_MS;
+    // Primed now: a key the enemy is already holding has not been pressed.
+    for (const t of this.targetsOf(owner)) this.tracks.delete(t);
+    if (this.alive(f)) {
+      this.fx(owner).premoveSet(f.x, f.y);
+      Sfx.playAt('clock-tick', f.x, { rate: 0.8, volume: 0.9 });
+      // Only the psychic who made it is told which key it is.
+      if (owner === 'player') {
+        this.api.showFloatingText(f.x, f.y - 70, `♟ PREDICTED: ${this.keyLabel(key)}`, this.hex(PSY.gold));
+      }
+    }
+    if (owner === 'player' && this.api.isOnline && this.alive(this.api.npc)) {
+      this.api.sendPsychicMsg({ t: 'psy', k: 'premove', key, ms: PREMOVE_WINDOW_MS });
+    }
+  }
+
+  private keyLabel(key: PremoveKey): string {
+    return key === 'click' ? 'CLICK' : key === 'space' ? 'SPACE' : key.toUpperCase();
+  }
+
+  /**
+   * The punishment, on the sim that owns the victim: the light stun, and either a slow (a
+   * movement key) or the ability they pressed running long. The burst itself is dealt by the
+   * psychic's sim — locally that is this one; online the victim reports back with `premoved`.
+   */
+  private springPremove(owner: Owner, v: Fighter, key: PremoveKey): void {
+    const s = this.side(owner);
+    s.premoveKey = null;
+    s.premoveUntil = 0;
+    this.ensureLayers();
+    const wall = Date.now();
+    this.stun(v, PREMOVE_STUN_MS);
+    if (MOVE_KEYS.includes(key)) {
+      if (!v.unstoppable) v.premoveSlowUntil = Math.max(v.premoveSlowUntil, wall + PREMOVE_SLOW_MS);
+      this.api.showFloatingText(v.x, v.y - 44, '🐌 −30% SPEED', this.hex(OUTPLAY.lit));
+    } else {
+      const hit = v.element.abilities.filter((a) => a.displayKey.toLowerCase() === key);
+      for (const a of hit) v.penalizeCooldown(a.id, PREMOVE_CD_MULT, PREMOVE_CD_MS);
+      if (hit.length) {
+        this.api.showFloatingText(v.x, v.y - 44, `⏳ ${hit[0].name.toUpperCase()} +50% CD`, this.hex(OUTPLAY.lit));
+        if (v === this.api.player) this.premovedMe = { name: hit[0].name, until: this.now + PREMOVE_CD_MS };
+      }
+    }
+    if (owner === 'npc' && this.api.isOnline) {
+      // Their sim deals the burst against its copy of us; we only draw it.
+      this.fx(owner).premovePunish(v.x, v.y);
+      this.api.showFloatingText(v.x, v.y - 64, `♟ PRE-MOVED: ${this.keyLabel(key)}`, this.hex(OUTPLAY.hot));
+      Sfx.playAt('status-curse', v.x, { rate: 1.2, volume: 0.9 });
+      this.api.sendPsychicMsg({ t: 'psy', k: 'premoved', key });
+      return;
+    }
+    this.premoveBurst(owner, v, key);
+  }
+
+  /** The damage half of a sprung Pre-move, always on the psychic's own sim. */
+  private premoveBurst(owner: Owner, v: Fighter, key: PremoveKey): void {
+    this.ensureLayers();
+    this.fx(owner).premovePunish(v.x, v.y);
+    Sfx.playAt('status-curse', v.x, { rate: 1.2, volume: 0.9 });
+    this.api.scene.cameras.main.shake(120, 0.003);
+    this.api.showFloatingText(v.x, v.y - 64, `♟ PRE-MOVED: ${this.keyLabel(key)}`, this.hex(OUTPLAY.hot));
+    v.takeDamage(PREMOVE_DAMAGE);
+    this.api.spawnHitFlash(v.x, v.y, this.col(owner)(OUTPLAY.hot));
+  }
+
+  /**
+   * The light stun: a cast lock, the generic `stunnedUntil` and, for a body this sim moves, a
+   * post-movement hold. A replica's stun belongs to its own machine.
+   */
+  private stun(f: Fighter, ms: number): void {
+    if (this.isNetReplica(f) || f.unstoppable) return;
+    this.stuns.set(f, Math.max(this.stuns.get(f) ?? 0, this.now + ms));
+    f.applyDisarm(ms);
+    f.stunnedUntil = Math.max(f.stunnedUntil, Date.now() + ms);
+    if (f !== this.api.player) f.earthStunnedUntil = Math.max(f.earthStunnedUntil, this.now + ms);
+  }
+
+  private updateStuns(): void {
+    for (const [f, until] of [...this.stuns]) {
+      if (this.now < until && f.active) { (f.body as Phaser.Physics.Arcade.Body | null)?.setVelocity(0, 0); continue; }
+      this.stuns.delete(f);
+    }
+  }
+
+  /** Choosing, arming and springing — for both sides, every frame. */
+  private updatePremove(): void {
+    for (const owner of BOTH) {
+      const s = this.side(owner);
+      const f = this.fighter(owner);
+      if (!this.isPsychic(owner) || !this.alive(f)) {
+        s.premoveChoosingUntil = 0;
+        s.premoveKey = null;
+        continue;
+      }
+      if (s.premoveChoosingUntil) {
+        if (this.now >= s.premoveChoosingUntil) {
+          s.premoveChoosingUntil = 0;
+          if (owner === 'player') this.api.showFloatingText(f.x, f.y - 60, 'PRE-MOVE LAPSED', this.hex(PSY.violet));
+        } else if (owner === 'player' && this.now > s.premoveCastAt) {
+          // The first key pressed after the cast is the prediction. The press still does what
+          // it always does — Pre-move only listens to it.
+          const k = this.framePresses.get(f)?.[0];
+          if (k) this.choosePremove('player', k);
+        }
+        continue;
+      }
+      if (!s.premoveKey) continue;
+      if (this.now >= s.premoveUntil) {
+        s.premoveKey = null;
+        if (owner === 'player') this.api.showFloatingText(f.x, f.y - 60, 'NOT THIS TIME', this.hex(PSY.violet));
+        continue;
+      }
+      for (const t of this.targetsOf(owner)) {
+        // A replica's keys are read on its own machine, which reports back with `premoved`.
+        if (this.isNetReplica(t)) continue;
+        if (!this.framePresses.get(t)?.includes(s.premoveKey)) continue;
+        this.springPremove(owner, t, s.premoveKey);
         break;
       }
     }
   }
 
-  // ── Utter Focus (mastery ability) ──────────────────────────────────────────
-
-  private tryCastUtter(owner: Owner): void {
-    const f = this.fighter(owner);
-    const s = this.side(owner);
-    if (!this.alive(f)) return;
-    const wall = Date.now();
-    if (wall < f.disarmedUntil || wall < f.silencedUntil || wall < f.chickenUntil) return;
-    if (this.focused(owner)) {
-      if (owner === 'player') {
-        this.api.showFloatingText(f.x, f.y - 46, 'ALREADY FOCUSED', this.hex(PSY.violetLit));
-      }
-      return;
-    }
-    if (this.now - s.utterCastAt < UTTER_COOLDOWN_MS) return;
-    this.beginUtter(owner);
-    // `triggerCooldown` is both what the ability card counts down from and what puts the cast on
-    // the wire — online it reaches the opponent as an unknown id and lands in `replayNpcMastery`.
-    if (owner === 'player') f.triggerCooldown(UTTER_ID);
-  }
-
-  private beginUtter(owner: Owner, ms = UTTER_MS): void {
-    const f = this.fighter(owner);
-    const s = this.side(owner);
-    s.utterUntil = this.now + ms;
-    s.utterCastAt = this.now;
-    s.utterRaw = f?.rawDamageTaken ?? 0;
-    s.utterRelayAt = 0;
-    if (!this.alive(f)) return;
-    this.ensureLayers();
-    this.avatar(owner)?.setBlind(true);
-    this.avatar(owner)?.play('raise');
-    this.fx(owner).focus(f.x, f.y);
-    Sfx.playAt('status-curse', f.x, { rate: 0.6, volume: 0.9 });
-    this.api.showFloatingText(f.x, f.y - 54, '🧿 UTTER FOCUS', this.hex(PSY.gold));
-    this.api.showFloatingText(f.x, f.y - 36, `${UTTER_FORESIGHT_MS / 1000}s AHEAD`, this.hex(PSY.violetLit));
-  }
-
-  /** Online replay: the remote psychic pressed their bound key. */
-  doNpcUtterFocus(): void {
-    if (this.focused('npc')) return;
-    this.beginUtter('npc');
-  }
-
-  private endUtter(owner: Owner): void {
-    const s = this.side(owner);
-    if (!s.utterUntil) return;
-    s.utterUntil = 0;
-    const f = this.fighter(owner);
-    if (this.alive(f)) {
-      this.avatar(owner)?.setBlind(false);
-      this.api.showFloatingText(f.x, f.y - 46, '👁️ EYES OPEN', this.hex(PSY.violetLit));
-      Sfx.playAt('status-expire', f.x, { rate: 1.1, volume: 0.6 });
-    }
-    if (owner === 'npc') this.releaseHeldMovement();
-    if (this.shouldRelayUtter(owner)) {
-      this.api.sendPsychicMsg({ t: 'psy', k: 'utter', ms: 0 });
-      s.utterRelayAt = this.now;
-    }
-  }
-
-  private shouldRelayUtter(owner: Owner): boolean {
-    return owner === 'player' && this.api.isOnline && this.alive(this.api.npc);
-  }
-
-  /** The window per frame: every frame he is hit costs half a second, and online it heartbeats. */
-  private updateUtter(): void {
-    for (const owner of BOTH) {
-      const s = this.side(owner);
-      if (!s.utterUntil) continue;
-      const f = this.fighter(owner);
-      if (!this.alive(f) || !this.isPsychic(owner)) { this.endUtter(owner); continue; }
-      const raw = f.rawDamageTaken;
-      if (raw > s.utterRaw + 0.5) {
-        s.utterUntil -= UTTER_HIT_COST_MS;
-        this.fx(owner).mote(f.x, f.y - 20);
-        this.api.showFloatingText(f.x + 22, f.y - 40, `−${UTTER_HIT_COST_MS / 1000}s FOCUS`, this.hex(PSY.stress));
-      }
-      s.utterRaw = raw;
-      if (this.now >= s.utterUntil) { this.endUtter(owner); continue; }
-      if (this.shouldRelayUtter(owner) && this.now - s.utterRelayAt >= UTTER_RELAY_MS) {
-        s.utterRelayAt = this.now;
-        this.api.sendPsychicMsg({ t: 'psy', k: 'utter', ms: Math.round(s.utterUntil - this.now) });
-      }
-    }
-  }
-
-  /** The bot opens the window when the target is close, or already has something queued. */
+  /**
+   * The bot casts Pre-move off its own clock, and predicts from what it has watched the player
+   * do: every press of the last few seconds, weighted toward the recent ones. A player who
+   * strafes on A/D gets A or D called; one who spams Click gets Click called.
+   */
   private updateNpcMastery(): void {
     const s = this.sides.npc;
-    if (!this.utterSlot('npc') || this.api.isOnline) return;
-    if (this.now < s.npcUtterCheckAt) return;
-    s.npcUtterCheckAt = this.now + NPC_UTTER_CHECK_MS;
+    if (!this.premoveSlot('npc') || this.api.isOnline) return;
+    if (this.now < s.npcPremoveCheckAt) return;
+    s.npcPremoveCheckAt = this.now + NPC_PREMOVE_CHECK_MS;
     const f = this.api.npc;
-    if (!this.alive(f)) return;
-    if (this.focused('npc') || this.now - s.utterCastAt < UTTER_COOLDOWN_MS) return;
     const t = this.nearestTarget('npc');
-    if (!t) return;
-    const near = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) <= NPC_UTTER_RANGE;
-    if (!near && !this.queues.get(t)?.length) return;
-    this.tryCastUtter('npc');
+    if (!this.alive(f) || !t || !this.premoveReady('npc')) return;
+    if (Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) > NPC_PREMOVE_RANGE) return;
+    const key = this.npcPremovePrediction();
+    if (!key) return;
+    if (!this.tryCastPremove('npc')) return;
+    this.choosePremove('npc', key);
   }
 
-  // ── Utter Focus, on the machine being read ─────────────────────────────────
-
-  private moveDelayMs(): number {
-    if (!this.api.isOnline || this.api.isInvasion || !this.isPsychic('npc') || !this.focused('npc')) return 0;
-    return UTTER_FORESIGHT_MS;
-  }
-
-  /** Hold this frame's movement, and hand back whatever was pressed a window ago. */
-  delayMovement(vx: number, vy: number): { vx: number; vy: number } {
-    const delay = this.moveDelayMs();
-    if (delay <= 0) {
-      this.releaseHeldMovement();
-      return { vx, vy };
+  /** The bot's best guess at the player's next key, or null when it has not seen enough. */
+  private npcPremovePrediction(): PremoveKey | null {
+    const weight = new Map<PremoveKey, number>();
+    let total = 0;
+    for (const e of this.pressLog) {
+      const w = 1 - (this.now - e.at) / PRESS_MEMORY_MS;
+      if (w <= 0) continue;
+      weight.set(e.key, (weight.get(e.key) ?? 0) + w);
+      total += w;
     }
-    this.api.player.moveInputDelayMs = delay;
-    this.moveBuffer.push({ at: this.now, vx, vy });
-    while (this.moveBuffer.length && this.now - this.moveBuffer[0].at >= delay) {
-      const done = this.moveBuffer.shift() as { at: number; vx: number; vy: number };
-      this.movePlayed = { vx: done.vx, vy: done.vy };
-    }
-    return this.movePlayed;
-  }
-
-  private releaseHeldMovement(): void {
-    if (this.api.player) this.api.player.moveInputDelayMs = 0;
-    if (!this.moveBuffer.length && !this.movePlayed.vx && !this.movePlayed.vy) return;
-    this.moveBuffer.length = 0;
-    this.movePlayed = { vx: 0, vy: 0 };
-  }
-
-  /** …and tell the psychic where those held keys are taking us. */
-  private relayRoute(): void {
-    const delay = this.moveDelayMs();
-    if (delay <= 0) return;
-    if (this.now - this.lastRouteRelayAt < ROUTE_RELAY_MS) return;
-    this.lastRouteRelayAt = this.now;
-    const p = this.api.player;
-    if (!this.alive(p)) return;
-
-    const buf = this.moveBuffer;
-    const segs: { vx: number; vy: number; until: number }[] = [];
-    const end = this.now + delay;
-    if (!buf.length) {
-      segs.push({ vx: this.movePlayed.vx, vy: this.movePlayed.vy, until: end });
-    } else {
-      segs.push({ vx: this.movePlayed.vx, vy: this.movePlayed.vy, until: buf[0].at + delay });
-      for (let i = 0; i < buf.length - 1; i++) {
-        segs.push({ vx: buf[i].vx, vy: buf[i].vy, until: buf[i + 1].at + delay });
-      }
-      const last = buf[buf.length - 1];
-      segs.push({ vx: last.vx, vy: last.vy, until: end });
-    }
-
-    const pts: number[] = [];
-    const step = delay / ROUTE_POINTS;
-    let x = p.x;
-    let y = p.y;
-    let t = this.now;
-    let si = 0;
-    for (let i = 1; i <= ROUTE_POINTS; i++) {
-      const to = this.now + step * i;
-      while (t < to) {
-        const seg = segs[si];
-        const cut = Math.min(to, seg.until);
-        if (cut > t) {
-          x = this.clampX(x + seg.vx * ((cut - t) / 1000));
-          y = this.clampY(y + seg.vy * ((cut - t) / 1000));
-          t = cut;
-        }
-        if (t < seg.until) break;
-        if (si >= segs.length - 1) { t = to; break; }
-        si++;
-      }
-      pts.push(Math.round(x), Math.round(y));
-    }
-    this.api.sendPsychicMsg({ t: 'psy', k: 'route', pts });
+    if (total < NPC_PREMOVE_MIN_READ) return null;
+    let best: PremoveKey | null = null;
+    let bestW = 0;
+    for (const [k, w] of weight) if (w > bestW) { bestW = w; best = k; }
+    return best;
   }
 
   // ── Per-frame ──────────────────────────────────────────────────────────────
@@ -1980,7 +2136,7 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
     const playerIs = this.isPsychic('player');
     const npcIs = this.isPsychic('npc');
     const anyState = this.queues.size || this.foreseen.size || this.pieces.length || this.pawns.length
-      || this.snares.length || this.sides.player.utterUntil || this.sides.npc.utterUntil
+      || this.stuns.size || this.outplayedHusk.size || this.sides.player.premoveKey || this.sides.npc.premoveKey
       || this.sides.player.queenUntil || this.sides.npc.queenUntil || this.squares.length
       || this.sides.player.ride || this.sides.npc.ride;
     if (!playerIs && !npcIs && !anyState) return;
@@ -1990,7 +2146,8 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
     this.vizT += delta / 1000;
 
     this.observe();
-    this.updateUtter();
+    this.trackPresses();
+    this.updatePremove();
     this.updateNpcMastery();
     this.updateForesight();
     this.updateQueues();
@@ -2000,10 +2157,10 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
     this.updateSquares();
     this.updateQueens();
     this.applyAuras();
-    this.updateSnares();
+    this.applyOutplayed();
+    this.updateStuns();
     this.planNpc();
     this.relayQueue();
-    this.relayRoute();
 
     this.paintGround();
     this.paintPieces();
@@ -2039,20 +2196,13 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
       else mightAura(g, tint, pc.x, pc.y, AURA_R, a, this.vizT + pc.seed);
     }
 
-    // Predictor's Snare (mastery): both sides' runes.
-    for (const s of this.snares) {
-      const life = Phaser.Math.Clamp((s.until - this.now) / 1200, 0, 1);
-      const arm = Phaser.Math.Clamp(1 - (s.armedAt - this.now) / SNARE_ARM_MS, 0, 1);
-      snareRune(g, this.col(s.by), s.x, s.y, SNARE_R, 0.9 * life, this.vizT + s.seed, arm);
-    }
-
-    // Utter Focus (mastery): the mandala under whoever has his eyes shut.
+    // Outplayed (mastery): the purple aura on every enemy who is far enough behind.
     for (const owner of BOTH) {
-      if (!this.focused(owner)) continue;
-      const f = this.fighter(owner);
-      if (!this.alive(f)) continue;
-      focusMandala(g, this.col(owner), f.x, f.y, 52,
-        (this.side(owner).utterUntil - this.now) / UTTER_MS, this.vizT);
+      if (!this.masteryOn(owner)) continue;
+      for (const t of this.targetsOf(owner)) {
+        const tier = this.outplayedSeen.get(t) ?? 0;
+        if (tier > 0) outplayedAura(g, this.col(owner), t.x, t.y, tier, 0.9, this.vizT, owner === 'player' ? 1.7 : 4.1);
+      }
     }
 
     // The queen: a gold court under her, in every one of the eight directions she can go.
@@ -2203,6 +2353,24 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
       if (r && this.alive(r.who)) rideWard(g, this.col(owner), r.who.x, r.who.y, 0.9, this.vizT);
     }
 
+    // ── Pre-move: the chess clock beside the head ──
+    // To the left, clear of the queue cards stacked above. Only its own psychic sees the key;
+    // everybody else sees that a key has been called and how long it stands.
+    for (const owner of BOTH) {
+      const ps = this.side(owner);
+      if (!ps.premoveChoosingUntil && !ps.premoveKey) continue;
+      const f = this.fighter(owner);
+      if (!this.alive(f)) continue;
+      const cx = f.x - 50;
+      const cy = f.y - 40;
+      const choosing = !!ps.premoveChoosingUntil;
+      const fuse = choosing ? 1 : Phaser.Math.Clamp((ps.premoveUntil - this.now) / PREMOVE_WINDOW_MS, 0, 1);
+      premoveClock(g, this.col(owner), cx, cy, fuse, choosing, 0.95, this.vizT);
+      const k = !choosing && owner === 'player' ? ps.premoveKey : null;
+      const text = !k ? '?' : k === 'click' ? 'M1' : k === 'space' ? 'SP' : k.toUpperCase();
+      this.label(text, cx + 11, cy, text.length > 1 ? 8 : 10, this.hex(choosing ? OUTPLAY.lit : PSY.gold), true);
+    }
+
     // ── The crown ──
     for (const owner of BOTH) {
       if (!this.queen(owner)) continue;
@@ -2286,7 +2454,6 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
       av.setFacing(Math.atan2(s.aimY - f.y, s.aimX - f.x));
       const mine = this.pieces.filter((p) => p.owner === owner).length;
       av.setFocus(Math.min(1, 0.2 + this.heldCount(owner) * 0.2 + mine * 0.12 + (this.queen(owner) ? 0.4 : 0)));
-      av.setBlind(this.focused(owner));
       av.setMastered(owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
       av.update(delta, f.x, f.y, f.alpha);
     }
@@ -2300,7 +2467,7 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
     const secs = (ms: number): string => `${Math.round(ms / 100) / 10}`;
     this.api.setStatusIndicator('psychic-foresight', playerIs && held > 0 ? {
       name: 'Opened Eyes', emoji: '👁️', color: PSY.gold, priority: 152,
-      description: `Everything they press is held ${secs(this.foresightMs('player'))} seconds before it happens. The cards over your head are what is coming — the bottom one goes off first.`,
+      description: `Everything they press is held ${secs(FORESIGHT_MS)} seconds before it happens. The cards over your head are what is coming — the bottom one goes off first.`,
       count: held,
     } : (npcIs && p.castDelayMs > 0 ? {
       name: 'Foreseen', emoji: '👁️', color: PSY.violet, priority: 8,
@@ -2333,19 +2500,49 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
       until: this.sides.player.queenUntil,
     } : null);
 
+    // ── Mastery ──
     const ps = this.sides.player;
-    this.api.setStatusIndicator('psychic-utter', playerIs && this.focused('player') ? {
-      name: 'Utter Focus', emoji: '🧿', color: PSY.gold, priority: 153,
-      description: `Your eyes are shut and everything they press is held ${UTTER_FORESIGHT_MS / 1000} seconds instead of ${FORESIGHT_MS / 1000}. Online their movement keys are held the same ${UTTER_FORESIGHT_MS / 1000} seconds. Every hit that lands on you takes ${UTTER_HIT_COST_MS / 1000}s off it.`,
-      until: ps.utterUntil,
+    const ns = this.sides.npc;
+    this.api.setStatusIndicator('psychic-premove', playerIs && (ps.premoveChoosingUntil || ps.premoveKey) ? (
+      ps.premoveKey ? {
+        name: 'Pre-move', emoji: '♟️', color: OUTPLAY.lit, priority: 153,
+        description: `You have called ${this.keyLabel(ps.premoveKey)}. The first time they press it before the clock runs out, they take ${PREMOVE_DAMAGE} damage, are stunned, and either slow down (a movement key) or have that ability's cooldown run 50% longer.`,
+        until: ps.premoveUntil,
+      } : {
+        name: 'Pre-move', emoji: '♟️', color: OUTPLAY.lit, priority: 153,
+        description: 'Press the key you think they will press next — any of Click, E, R, F, Q, Space or W/A/S/D. Your press still does what it always does.',
+        until: ps.premoveChoosingUntil,
+      }) : null);
+
+    let worst = 0;
+    if (playerIs && this.masteryOn('player')) {
+      for (const t of this.targetsOf('player')) worst = Math.max(worst, this.outplayedSeen.get(t) ?? 0);
+    }
+    this.api.setStatusIndicator('psychic-outplayed', worst > 0 ? {
+      name: 'Outplayed', emoji: '♟️', color: OUTPLAY.mid, priority: 151,
+      description: `They are losing harder than you are. Their cooldowns run ${Math.round((this.outplayedMult(worst) - 1) * 100)}% longer — 10% at 25 points of health behind you, 25% at 50, 33% at 75.`,
     } : null);
 
-    this.api.setStatusIndicator('psychic-held', npcIs && this.focused('npc') ? {
-      name: 'Held', emoji: '🧿', color: PSY.stress, priority: 3,
-      description: p.moveInputDelayMs > 0
-        ? `They have closed their eyes. Everything you press — abilities *and* movement — is being held for ${UTTER_FORESIGHT_MS / 1000} seconds before your body does it. Hit them: every hit shortens it by ${UTTER_HIT_COST_MS / 1000}s.`
-        : `They have closed their eyes. Everything you cast is held ${UTTER_FORESIGHT_MS / 1000} seconds. Hit them: every hit shortens it by ${UTTER_HIT_COST_MS / 1000}s.`,
-      until: this.sides.npc.utterUntil,
+    const meTier = npcIs && this.masteryOn('npc') ? this.outplayedSeen.get(p) ?? 0 : 0;
+    this.api.setStatusIndicator('psychic-outplayed-me', meTier > 0 ? {
+      name: 'Outplayed', emoji: '♟️', color: OUTPLAY.mid, priority: 9,
+      description: `You are far enough behind the psychic on health that your cooldowns run ${Math.round((this.outplayedMult(meTier) - 1) * 100)}% longer. Close the gap and it lifts.`,
+    } : null);
+
+    this.api.setStatusIndicator('psychic-premove-threat', npcIs && (ns.premoveChoosingUntil || ns.premoveKey) ? {
+      name: 'Pre-move', emoji: '♟️', color: OUTPLAY.hot, priority: 7,
+      description: ns.premoveKey
+        ? 'They have called one of your keys. Press it before their clock runs out and you are punished — but they will not tell you which.'
+        : 'They are choosing which of your keys to call. Whatever you press next is what they are trying to read.',
+      until: ns.premoveKey ? ns.premoveUntil : ns.premoveChoosingUntil,
+    } : null);
+
+    const pm = this.premovedMe && this.now < this.premovedMe.until ? this.premovedMe : null;
+    if (!pm) this.premovedMe = null;
+    this.api.setStatusIndicator('psychic-premoved', pm ? {
+      name: 'Pre-moved', emoji: '⏳', color: OUTPLAY.hot, priority: 10,
+      description: `They read your ${pm.name}. Its cooldown runs 50% longer until this ends.`,
+      until: pm.until,
     } : null);
   }
 
@@ -2353,16 +2550,20 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
 
   /** Knight auras, pulled by ArenaScene. The queen has no legs at all. */
   getPlayerSpeedMult(): number {
-    if (!this.isPsychic('player')) return 1;
-    return this.queen('player') ? 0 : this.speedMult('player');
+    // A sprung Pre-move on a movement key. Ours to apply even online: it was sprung on this sim.
+    const slow = this.api.player?.premoveSlowMult() ?? 1;
+    if (!this.isPsychic('player')) return slow;
+    return this.queen('player') ? 0 : this.speedMult('player') * slow;
   }
 
   getNpcSpeedMult(): number {
     // An online replica's movement is streamed from the machine that owns it, which has
     // already applied its own auras (and its own lack of legs). Applying them again here would
     // freeze the copy of a crowned queen where she was standing.
-    if (!this.isPsychic('npc') || this.api.isOnline) return 1;
-    return this.queen('npc') ? 0 : this.speedMult('npc');
+    if (this.api.isOnline) return 1;
+    const slow = this.api.npc?.premoveSlowMult() ?? 1;
+    if (!this.isPsychic('npc')) return slow;
+    return this.queen('npc') ? 0 : this.speedMult('npc') * slow;
   }
 
   /** The move the bot's click should make this tick, if any. */
@@ -2389,18 +2590,19 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
   }
 
   npcMasterySlot(): 'r' | 'f' | 'q' | undefined {
-    return this.utterSlot('npc') ?? undefined;
+    return this.premoveSlot('npc') ?? undefined;
   }
 
   /**
    * Ability tray fill. The Queen card shows the crown's remaining time while it is worn, and
-   * Utter Focus its window and then its cooldown.
+   * Pre-move its choosing/armed window and then its cooldown.
    */
   getBarRatio(abilityId: string, time: number): number {
     const s = this.sides.player;
-    if (abilityId === UTTER_ID) {
-      if (time < s.utterUntil) return 0.1 + 0.9 * Phaser.Math.Clamp((s.utterUntil - time) / UTTER_MS, 0, 1);
-      return Phaser.Math.Clamp((time - s.utterCastAt) / UTTER_COOLDOWN_MS, 0, 1);
+    if (abilityId === PREMOVE_ID) {
+      if (s.premoveChoosingUntil) return 0.1 + 0.9 * Phaser.Math.Clamp((s.premoveChoosingUntil - time) / PREMOVE_CHOOSE_MS, 0, 1);
+      if (s.premoveKey) return 0.1 + 0.9 * Phaser.Math.Clamp((s.premoveUntil - time) / PREMOVE_WINDOW_MS, 0, 1);
+      return Phaser.Math.Clamp((time - s.premoveCastAt) / PREMOVE_COOLDOWN_MS, 0, 1);
     }
     if (abilityId === 'psychic-queen' && time < s.queenUntil) {
       return 0.1 + 0.9 * Phaser.Math.Clamp((s.queenUntil - time) / QUEEN_MS, 0, 1);

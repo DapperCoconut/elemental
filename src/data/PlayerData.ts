@@ -1,5 +1,7 @@
 import { saveKey, isCheatMode } from './Cheats';
 import { isProgressLocked } from './ProgressLock';
+import { getPerksForElement, perkSlotsFor, splitPerkIds, PERK_SEP } from './Perks';
+import { ALT_ULT_SLOT, hasAltUlt } from './AltUlts';
 
 const STORAGE_BASE = 'elemental_save';
 
@@ -96,6 +98,10 @@ interface SaveData {
   realityKillOrder: '' | 'chaos-first' | 'order-first';
   /** Stronghold (tower defense): furthest wave cleared, per difficulty id. */
   strongholdBest: Record<string, number>;
+  /** Element ids whose alternate ultimate has been unlocked (cheats only for now). */
+  altUltsUnlocked: string[];
+  /** Element ids that fight with the alternate ultimate in place of their base Q. */
+  altUltsEquipped: string[];
 }
 
 /** A forge waiting on its three-on-three. */
@@ -269,6 +275,8 @@ function load(): SaveData {
         realityDefeated: parsed.realityDefeated ?? false,
         realityKillOrder: parsed.realityKillOrder ?? '',
         strongholdBest: parsed.strongholdBest ?? {},
+        altUltsUnlocked: parsed.altUltsUnlocked ?? [],
+        altUltsEquipped: parsed.altUltsEquipped ?? [],
       };
       if (!d.migratedSubterfugeId) {
         migrateSubterfugeId(d);
@@ -283,11 +291,12 @@ function load(): SaveData {
         // Same rule as above: stamped to disk inside load(), or it would fire again next read.
         save(d);
       }
-      // Sanity: clear equipped perk if no longer unlocked
+      // Sanity: clear equipped perk if no longer unlocked. A two-slot element stores both ids
+      // joined (see PERK_SEP), so each half is checked; a half that lapsed is dropped alone.
       for (const el of Object.keys(d.equippedPerks)) {
-        if (!(d.unlockedPerks[el] ?? []).includes(d.equippedPerks[el])) {
-          delete d.equippedPerks[el];
-        }
+        const kept = splitPerkIds(d.equippedPerks[el]).filter((id) => (d.unlockedPerks[el] ?? []).includes(id));
+        if (kept.length === 0) delete d.equippedPerks[el];
+        else d.equippedPerks[el] = kept.join(PERK_SEP);
       }
       return d;
     }
@@ -295,7 +304,7 @@ function load(): SaveData {
     // corrupted save — start fresh
   }
   // A save that never existed has nothing to migrate — born already stamped.
-  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], labLevel: 0, corruptShards: 0, huskJournal: [], apocalypseSeen: false, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {}, achievements: [], equippedSkins: {}, divineNuclei: 0, kingDefeated: false, devourerDefeated: false, devourerChoice: '', bountyRerollOffset: 0, completedBountyKeys: [], passionQTaps: 0, passionQCensored: false, paperJournal: {}, quantumBond: [], quantumResearched: [], quantumResearching: '', quantumQuestProgress: {}, migratedSubterfugeId: true, restoredMagmaChalk: true, screwdriverFound: false, screwdriverPage: -1, screwsRemoved: {}, secretModesUnlocked: [], pendingUnstable: null, deathsByElement: {}, realityFountainLit: false, realityIntroSeen: false, realityDefeated: false, realityKillOrder: '', strongholdBest: {} };
+  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], labLevel: 0, corruptShards: 0, huskJournal: [], apocalypseSeen: false, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {}, achievements: [], equippedSkins: {}, divineNuclei: 0, kingDefeated: false, devourerDefeated: false, devourerChoice: '', bountyRerollOffset: 0, completedBountyKeys: [], passionQTaps: 0, passionQCensored: false, paperJournal: {}, quantumBond: [], quantumResearched: [], quantumResearching: '', quantumQuestProgress: {}, migratedSubterfugeId: true, restoredMagmaChalk: true, screwdriverFound: false, screwdriverPage: -1, screwsRemoved: {}, secretModesUnlocked: [], pendingUnstable: null, deathsByElement: {}, realityFountainLit: false, realityIntroSeen: false, realityDefeated: false, realityKillOrder: '', strongholdBest: {}, altUltsUnlocked: [], altUltsEquipped: [] };
 }
 
 function save(data: SaveData): void {
@@ -353,8 +362,39 @@ export function toggleUpgrade(elementId: string, slot: string): void {
   save(data);
 }
 
+/**
+ * The upgrade slots a fight loads for this element. An equipped alternate ultimate rides in
+ * this list as the pseudo-slot `alt-q` (ALT_ULT_SLOT) — every fight, the online lobby and a
+ * quantum swap already carry upgrade lists end to end, so the choice reaches both sims free.
+ */
 export function getActiveUpgrades(elementId: string): string[] {
-  return load().active[elementId] ?? [];
+  const d = load();
+  const active = d.active[elementId] ?? [];
+  return isAltUltEquipped(elementId) ? [...active, ALT_ULT_SLOT] : active;
+}
+
+export function isAltUltUnlocked(elementId: string): boolean {
+  return load().altUltsUnlocked.includes(elementId) && hasAltUlt(elementId);
+}
+
+export function unlockAltUlt(elementId: string): void {
+  const data = load();
+  if (data.altUltsUnlocked.includes(elementId)) return;
+  data.altUltsUnlocked.push(elementId);
+  save(data);
+}
+
+/** True when this element fights with its alternate ultimate (and still owns it). */
+export function isAltUltEquipped(elementId: string): boolean {
+  const d = load();
+  return d.altUltsEquipped.includes(elementId) && d.altUltsUnlocked.includes(elementId) && hasAltUlt(elementId);
+}
+
+export function setAltUltEquipped(elementId: string, on: boolean): void {
+  const data = load();
+  data.altUltsEquipped = data.altUltsEquipped.filter((id) => id !== elementId);
+  if (on) data.altUltsEquipped.push(elementId);
+  save(data);
 }
 
 export function getNuclei(): number {
@@ -411,8 +451,41 @@ export function getTotalForgedPerkCount(): number {
   return total;
 }
 
+/**
+ * The equipped perk as fights receive it. An element with two perk slots stores both ids
+ * joined by PERK_SEP, and that joined string is what travels through every scene payload and
+ * the online lobby untouched — `ArenaScene.hasPerk` splits it. Retired perks still sitting in
+ * an old save are filtered out here rather than deleted from it.
+ */
 export function getEquippedPerk(elementId: string): string | null {
-  return load().equippedPerks[elementId] ?? null;
+  const ids = getEquippedPerkIds(elementId);
+  return ids.length > 0 ? ids.join(PERK_SEP) : null;
+}
+
+/** Each equipped perk id on its own (at most `perkSlotsFor(elementId)` of them). */
+export function getEquippedPerkIds(elementId: string): string[] {
+  const live = new Set(getPerksForElement(elementId).map((p) => p.id));
+  return splitPerkIds(load().equippedPerks[elementId] ?? null)
+    .filter((id) => live.has(id))
+    .slice(0, perkSlotsFor(elementId));
+}
+
+export function isPerkEquipped(elementId: string, perkId: string): boolean {
+  return getEquippedPerkIds(elementId).includes(perkId);
+}
+
+/**
+ * Click a perk row: unequip it if it is on, otherwise equip it — into a free slot, or in place
+ * of the oldest pick once every slot is full. One-slot elements behave exactly as before.
+ */
+export function togglePerkEquipped(elementId: string, perkId: string): void {
+  const ids = getEquippedPerkIds(elementId);
+  if (ids.includes(perkId)) {
+    equipPerk(elementId, ids.filter((id) => id !== perkId).join(PERK_SEP) || null);
+    return;
+  }
+  const next = [...ids, perkId].slice(-perkSlotsFor(elementId));
+  equipPerk(elementId, next.join(PERK_SEP));
 }
 
 export function equipPerk(elementId: string, perkId: string | null): void {
@@ -683,6 +756,8 @@ export function getMasteryBinds(elementId: string): Record<string, string> {
   void _e;
   // Ice's two bindables merged into one form-switching slot; an old Icicle Impale bind reads as it.
   for (const s of Object.keys(binds)) if (binds[s] === 'icicle-impale') binds[s] = 'curling-stone';
+  // Psychic's mastery was redone: an old Utter Focus bind reads as its replacement, Pre-move.
+  for (const s of Object.keys(binds)) if (binds[s] === 'utter-focus') binds[s] = 'pre-move';
   return binds;
 }
 

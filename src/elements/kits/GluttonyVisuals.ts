@@ -507,6 +507,25 @@ export function rotBullet(
   g.fillCircle(x - 1, y - 1, 1.8);
 }
 
+/**
+ * Mastery — Corrupt Predation: one pellet of rot shot. A long, hard slug of purple with a glowing
+ * nose and a smear of rot streaming behind it, so a volley reads as a spray of streaks.
+ */
+export function predationPellet(
+  g: Phaser.GameObjects.Graphics, tint: HarvestColorFn, x: number, y: number, ang: number, alpha: number,
+): void {
+  const c = Math.cos(ang);
+  const s = Math.sin(ang);
+  g.lineStyle(3.2, tint(HAR.rotDeep), alpha * 0.55);
+  g.lineBetween(x - c * 22, y - s * 22, x, y);
+  g.lineStyle(1.8, tint(HAR.purpleLit), alpha * 0.85);
+  g.lineBetween(x - c * 13, y - s * 13, x, y);
+  g.fillStyle(tint(HAR.purple), alpha);
+  g.fillEllipse(x, y, 7, 4.2);
+  g.fillStyle(tint(HAR.glow), alpha);
+  g.fillCircle(x + c * 1.5, y + s * 1.5, 1.7);
+}
+
 /** R+ Poison Payload: a stoppered glass vial of green rot hanging from a crow's feet. */
 export function poisonVial(
   g: Phaser.GameObjects.Graphics, tint: HarvestColorFn, x: number, y: number, swing: number, alpha: number,
@@ -946,6 +965,56 @@ export class HarvestFx extends FxBase {
   /** A worm going back under: a wet slap and a ring. */
   wormSink(x: number, y: number): void {
     this.splatter(x, y, 4, 12, 300, 4);
+  }
+
+  /**
+   * Mastery — Corrupt Predation going off: the Corrupt HP pulled out of the sack into the hand,
+   * then a cone of rot and straw blown out of the muzzle point, and a puff of smoke hanging there.
+   */
+  predationBlast(fromX: number, fromY: number, x: number, y: number, ang: number): void {
+    // The rot drawn out of the body into the shot.
+    const pulls = Array.from({ length: 6 }, () => ({ a: Math.random() * TAU, d: 16 + Math.random() * 12 }));
+    this.anim(10, 200, (g, t) => {
+      for (const b of pulls) {
+        const sx = fromX + Math.cos(b.a) * b.d;
+        const sy = fromY + Math.sin(b.a) * b.d;
+        const px = sx + (x - sx) * easeIn(t);
+        const py = sy + (y - sy) * easeIn(t);
+        g.fillStyle(this.tint(HAR.purpleLit), 1 - t * 0.5);
+        g.fillCircle(px, py, 2.2 * (1 - t) + 0.8);
+      }
+    });
+    this.flashIn(x, y, 18, HAR.glow, HAR.purple, 11);
+    // The muzzle cone: two layered wedges that flare and fade.
+    this.anim(10, 220, (g, t) => {
+      const len = 46 + t * 30;
+      const half = 0.32 * (1 - t * 0.4);
+      for (const [col, k, a] of [[HAR.purple, 1, 0.55], [HAR.glow, 0.6, 0.8]] as [number, number, number][]) {
+        g.fillStyle(this.tint(col), (1 - t) * a);
+        g.fillTriangle(
+          x, y,
+          x + Math.cos(ang - half * k) * len * k, y + Math.sin(ang - half * k) * len * k,
+          x + Math.cos(ang + half * k) * len * k, y + Math.sin(ang + half * k) * len * k,
+        );
+      }
+    });
+    // Straw wadding and rot flung after the shot.
+    this.splatter(x, y, 7, 46, 420, 10, ang);
+    const straws = Array.from({ length: 5 }, () => ({ a: ang + (Math.random() - 0.5) * 0.9, d: 20 + Math.random() * 40, s: Math.random() * 6 }));
+    this.anim(10, 520, (g, t) => {
+      const e = easeOut(t);
+      for (const b of straws) {
+        const bx = x + Math.cos(b.a) * b.d * e;
+        const by = y + Math.sin(b.a) * b.d * e + t * t * 10;
+        const sa = b.s + t * 9;
+        g.lineStyle(1.3, this.tint(HAR.strawLit), 1 - t);
+        g.lineBetween(bx - Math.cos(sa) * 3, by - Math.sin(sa) * 3, bx + Math.cos(sa) * 3, by + Math.sin(sa) * 3);
+      }
+    });
+    this.anim(8, 700, (g, t) => {
+      g.fillStyle(this.tint(HAR.rotDeep), (1 - t) * 0.35);
+      g.fillCircle(x + Math.cos(ang) * t * 14, y + Math.sin(ang) * t * 14 - t * 10, 8 + t * 14);
+    });
   }
 
   /** A worm's gob landing. */

@@ -6,10 +6,11 @@ import { Sfx } from '../../audio';
 import type { CustomStatus } from './StatusHudKit';
 import {
   MAGNET, MagnetAvatar, MagnetColorFn, MagnetFx, drawChargedAura, drawCoin, drawCoinFragment, drawCoinShot,
-  drawCrackle, drawGatherPile, drawLockLine, drawMagnetHalo, drawMagnetized, drawNail, drawOrbitRing, drawScrap,
-  drawSpikeFlying, drawSpikeHover, drawSpikePlanted, megaMechTint,
+  drawCrackle, drawFieldFlick, drawGatherPile, drawLockLine, drawMagTrack, drawMagnetHalo, drawMagneticField, drawMagnetized,
+  drawNail, drawOrbitRing, drawScrap, drawSpikeFlying, drawSpikeHover, drawSpikePlanted, megaMechTint,
 } from './MagnetVisuals';
 import { MagnetMech, MechAttack } from './MagnetMech';
+import { getEnhancement } from '../../data/Mastery';
 
 type Owner = 'player' | 'npc';
 const BOTH: readonly Owner[] = ['player', 'npc'];
@@ -132,6 +133,31 @@ const CHARGE_AURA_GAP_MS = 600;
 const SHIELD_ZAP_R = 140;
 const SHIELD_ZAP_GAP_MS = 1100;
 
+// Mastery
+/** Magnetic Field (passive): enemy shots entering this circle are bent once, away from the body. */
+const FIELD_R = 72;
+const FIELD_DEFLECT = Phaser.Math.DegToRad(2);
+const FLICK_MS = 260;
+/** Mag-Lev (bindable): a steerable track of magnetised floor. */
+const MAGLEV_ID = 'mag-lev';
+const MAGLEV_COOLDOWN_MS = 14000;
+const MAGLEV_PATCHES = 16;
+const MAGLEV_STEP_MS = 60;
+const MAGLEV_SPACING = 34;
+const MAGLEV_PATCH_R = 30;
+const MAGLEV_LIFE_MS = 10000;
+/** Riding your own track. */
+const MAGLEV_SPEED_MULT = 1.5;
+/** A magnetised (or nailed) foe on your track. */
+const MAGLEV_SLOW_MULT = 0.5;
+/** Repulsing the track throws you backward. */
+const MAGLEV_KICK_SPEED = 980;
+const MAGLEV_KICK_MS = 320;
+/** The bot's reasons: a marked target this close, or this hurt and this close for the kick. */
+const NPC_MAGLEV_MARKED_RANGE = 440;
+const NPC_MAGLEV_KICK_HP = 0.35;
+const NPC_MAGLEV_KICK_RANGE = 240;
+
 // ── World objects ─────────────────────────────────────────────────────────
 
 interface Coin {
@@ -142,7 +168,27 @@ interface Coin {
   air: number;
   x: number; y: number; z: number;
   spin: number; spinRate: number;
+  /** Mastery: hanging over its owner's maglev ground, and not coming down until it goes dead. */
+  magHeld: boolean;
 }
+
+/** Mag-Lev: one stretch of magnetised floor. */
+interface MagPatch { x: number; y: number; bornAt: number; seed: number }
+
+/** Mag-Lev: one cast's track, laid a patch at a time toward wherever its owner is aiming. */
+interface MagTrack {
+  owner: Owner;
+  patches: MagPatch[];
+  /** Patches still to lay. A replica's arrive one message at a time instead. */
+  pending: number;
+  nextAt: number;
+  lastX: number; lastY: number;
+  /** The cast's aim, for the first patch (before the cursor has moved). */
+  seedX: number; seedY: number;
+}
+
+/** A shot the Magnetic Field just turned aside. Visual only. */
+interface Flick { owner: Owner; x: number; y: number; angle: number; at: number }
 
 interface CoinShot {
   owner: Owner; x: number; y: number; vx: number; vy: number; until: number;
@@ -229,12 +275,16 @@ interface Side {
   chargedUntil: number;
   nextAuraZapAt: number;
   nextShieldZapAt: number;
+  /** Mastery — the last Mag-Lev (scene time). Starts a cooldown in the past so it is ready. */
+  maglevAt: number;
+  /** Standing on our own maglev ground this frame: we wrote `levitating`, so we take it back. */
+  floating: boolean;
 }
 
 const makeSide = (): Side => ({
   aimX: 0, aimY: 0, hover: false, gatherUntil: 0, nextBitAt: 0, mech: null, piloting: false,
   preHp: 0, prevAbsorber: null, pod: null, motion: null, nextZapAt: 0,
-  chargedUntil: 0, nextAuraZapAt: 0, nextShieldZapAt: 0,
+  chargedUntil: 0, nextAuraZapAt: 0, nextShieldZapAt: 0, maglevAt: -MAGLEV_COOLDOWN_MS, floating: false,
 });
 
 /** Mech key per ability slot, in tray order. */
@@ -289,6 +339,16 @@ export interface MagnetArenaApi {
   broadcast(id: string): void;
   /** `(owner, base) => displayed` — the owner's skin, or the identity. */
   magnetColor(owner: Owner, base: number): number;
+  /** Invasion: bend each husk shot entering the circle once by `rad`. Returns how many. */
+  deflectHuskShots(x: number, y: number, r: number, rad: number, seen: WeakSet<object>): number;
+  // ── Mastery ──
+  readonly masteryActive: boolean;
+  readonly npcMasteryActive: boolean;
+  /** Which mastery enhancement each side dropped over an R/F/Q slot, or null. */
+  masteryBindFor(slot: string): string | null;
+  npcMasteryBindFor(slot: string): string | null;
+  /** Mastery progress. Gated on the element by the adapter, so the kit records unconditionally. */
+  recordMasteryStat(key: string, amount: number): void;
 }
 
 // ── MagnetKit ─────────────────────────────────────────────────────────────
@@ -342,6 +402,13 @@ export class MagnetKit {
   private megaFx: Partial<Record<Owner, MagnetFx>> = {};
   private shoves = new Map<Fighter, { vx: number; vy: number; until: number }>();
   private stuns = new Map<Fighter, number>();
+  /** Mastery — Mag-Lev tracks, both sides. */
+  private tracks: MagTrack[] = [];
+  /** Mastery — shots the Magnetic Field has already bent (each is bent once). */
+  private fieldSeen = new WeakSet<object>();
+  private flicks: Flick[] = [];
+  /** Who is held back on whose track this frame — the duel pair's speed mults read it. */
+  private maglevSlowed = new Set<Fighter>();
   private wasDown = false;
   private downAt = 0;
   private cardsSwapped = false;
@@ -457,6 +524,10 @@ export class MagnetKit {
     this.magnetized.clear();
     this.shoves.clear();
     this.stuns.clear();
+    this.tracks = [];
+    this.fieldSeen = new WeakSet();
+    this.flicks = [];
+    this.maglevSlowed.clear();
     this.wasDown = false;
     this.downAt = 0;
     this.cardsSwapped = false;
@@ -465,7 +536,7 @@ export class MagnetKit {
     this.npcAvatar?.destroy(); this.npcAvatar = null;
     this.groundGfx?.destroy(); this.groundGfx = null;
     this.airGfx?.destroy(); this.airGfx = null;
-    for (const id of ['magnet-coins', 'magnet-scrap', 'magnet-nailed', 'magnet-mech', 'magnet-magnetized', 'magnet-charged']) {
+    for (const id of ['magnet-coins', 'magnet-scrap', 'magnet-nailed', 'magnet-mech', 'magnet-magnetized', 'magnet-charged', 'magnet-maglev', 'magnet-maglev-slow']) {
       this.arena.setStatusIndicator(id, null);
     }
   }
@@ -521,7 +592,14 @@ export class MagnetKit {
 
     if (Phaser.Input.Keyboard.JustDown(eKey)) player.castAbility('magnet-repulse', ctx());
 
-    if (Phaser.Input.Keyboard.JustDown(rKey)) {
+    // Mastery: whichever of R/F/Q Mag-Lev was dropped on stops being its own ability — second
+    // jobs (the rip-out, the zip) included.
+    const bound = this.magLevSlot('player');
+    for (const [k, key] of [['r', rKey], ['f', fKey], ['q', qKey]] as const) {
+      if (bound === k && Phaser.Input.Keyboard.JustDown(key)) this.tryMagLev('player', mouseX, mouseY);
+    }
+
+    if (bound !== 'r' && Phaser.Input.Keyboard.JustDown(rKey)) {
       if (this.nails.some((n) => n.owner === 'player' && n.state === 'stuck')) {
         this.doRecall('player');
         this.arena.broadcast('magnet-recall');
@@ -530,7 +608,7 @@ export class MagnetKit {
       }
     }
 
-    if (Phaser.Input.Keyboard.JustDown(fKey)) {
+    if (bound !== 'f' && Phaser.Input.Keyboard.JustDown(fKey)) {
       if (this.zipTarget('player', mouseX, mouseY)) {
         this.doZip('player', mouseX, mouseY);
         this.arena.broadcast('magnet-zip');
@@ -539,7 +617,7 @@ export class MagnetKit {
       }
     }
 
-    if (Phaser.Input.Keyboard.JustDown(qKey)) player.castAbility('magnet-mecha', ctx());
+    if (bound !== 'q' && Phaser.Input.Keyboard.JustDown(qKey)) player.castAbility('magnet-mecha', ctx());
   }
 
   private setHover(owner: Owner, on: boolean): void {
@@ -586,7 +664,13 @@ export class MagnetKit {
         if (sp) Object.assign(sp, this.clampSpike('npc', tx, ty));
         break;
       }
+      case MAGLEV_ID: this.tryMagLev('npc', tx, ty); break;
       default:
+        // Mag-Lev: each patch of their track, laid toward where their cursor was at that moment.
+        if (id.startsWith('maglev-step:')) {
+          const tr = this.tracks.filter((k) => k.owner === 'npc').pop();
+          if (tr && tr.pending > 0) this.growTrack(tr, tx, ty);
+        }
         if (id.startsWith('mecha-')) {
           const a = id.slice(6) as MechAttack;
           if (s.mech?.active && s.mech.use(a, this.now, tx, ty) && a === 'destruct') this.ejectPilot('npc');
@@ -608,7 +692,7 @@ export class MagnetKit {
     const ang = Math.atan2(ty - f.y, tx - f.x);
     this.coins.push({
       owner, sx: f.x, sy: f.y, lx: f.x, ly: f.y, air: 0, x: f.x, y: f.y, z: 0,
-      spin: Math.random() * Math.PI, spinRate: 14 + Math.random() * 6,
+      spin: Math.random() * Math.PI, spinRate: 14 + Math.random() * 6, magHeld: false,
     });
     this.avatar(owner)?.play('punch', ang, 220);
     this.fx(owner).sparks(f.x, f.y - 10, 3, -Math.PI / 2, 10, MAGNET.goldHi);
@@ -683,6 +767,16 @@ export class MagnetKit {
       Sfx.playAt('dash', f.x, { volume: 0.5 });
     }
 
+    // Mastery — Mag-Lev: the wave hits your own maglev ground and the ground pushes back.
+    if (this.trackInCone(owner, f, ang)) {
+      if (!this.isReplica(owner)) {
+        s.motion = { kind: 'dash', vx: -cos * MAGLEV_KICK_SPEED, vy: -sin * MAGLEV_KICK_SPEED, until: this.now + MAGLEV_KICK_MS, tx: 0, ty: 0 };
+      }
+      fx.sparks(f.x, f.y, 10, ang + Math.PI, 14, MAGNET.rose);
+      this.announce(f.x, f.y - 40, 'MAG KICK', MAGNET.rose);
+      Sfx.playAt('whoosh', f.x, { rate: 1.3, volume: 0.6 });
+    }
+
     // Nailed bodies are shoved from much further away — the nail in them is the handle.
     const storm = this.up(owner, 'r');
     const magnetize = this.up(owner, 'e');
@@ -699,6 +793,7 @@ export class MagnetKit {
         fx.grasp(f.x, f.y, t.x, t.y, MAGNET.blue, 300);
         if (storm) this.hit(owner, t, NAILSTORM_SHOVE_DAMAGE * nailed, MAGNET.gold);
         this.announce(t.x, t.y - 30, storm && nailed > 1 ? `REPULSED ×${nailed}` : 'REPULSED', MAGNET.sky);
+        this.record(owner, 'nailedRepulses');
         if (magnetize) this.magnetize(owner, t, MAGNETIZE_MS + (storm ? NAILSTORM_MAGNETIZE_PER_NAIL * nailed : 0));
       } else if (magnetize && touched) {
         // E+ Magnetize: the wave itself leaves a charge in anyone it washes over.
@@ -945,7 +1040,12 @@ export class MagnetKit {
       tint: mega ? megaMechTint(this.col(owner)) : this.col(owner),
       fx: mega ? this.megaFxOf(owner) : this.fx(owner),
       targets: () => this.targetsOf(owner),
-      hit: (t, dmg) => this.hit(owner, t, dmg, mega ? red(MAGNET.neon) : MAGNET.neon),
+      hit: (t, dmg) => {
+        const was = t.active && t.hp > 0;
+        this.hit(owner, t, dmg, mega ? red(MAGNET.neon) : MAGNET.neon);
+        // Mastery progress: a foe the mech finished off.
+        if (was && t.hp <= 0) this.record(owner, 'mechKills');
+      },
       stun: (t, ms) => this.stun(owner, t, ms),
       push: (t, vx, vy, ms) => this.shove(owner, t, vx, vy, ms),
       carry: (t, x) => {
@@ -1031,8 +1131,10 @@ export class MagnetKit {
       } else {
         if (idx >= original.length) return;
         const ab = original[idx];
-        bar.lbl?.setText(`[${ab.displayKey}] ${ab.name}`);
-        bar.desc?.setText(ab.description);
+        // A slot Mag-Lev was bound over goes back to being Mag-Lev's card.
+        const enh = this.magLevSlot('player') === ab.displayKey.toLowerCase() ? getEnhancement('magnet', MAGLEV_ID) : undefined;
+        bar.lbl?.setText(`[${ab.displayKey}] ${enh ? enh.name : ab.name}`);
+        bar.desc?.setText(enh ? enh.hudDescription ?? enh.description : ab.description);
       }
     });
   }
@@ -1076,6 +1178,9 @@ export class MagnetKit {
     this.updateSpikes(dt);
     this.updateScraps(dt);
     this.updateCharge();
+    this.updateMagLev();
+    this.updateField();
+    this.updateNpcMastery();
     this.updateMagnetized();
     this.updateMotions();
     this.updateShoves();
@@ -1147,7 +1252,10 @@ export class MagnetKit {
   private updateCoins(delta: number): void {
     for (let i = this.coins.length - 1; i >= 0; i--) {
       const c = this.coins[i];
-      const held = this.sides[c.owner].hover;
+      // Mastery — Mag-Lev: a coin over its owner's track rises to its peak and stays up there (or,
+      // already falling when the track arrived, stays where it was) until the ground goes dead.
+      c.magHeld = c.air >= COIN_AIR_MS * 0.5 && this.onTrack(c.owner, c.x, c.y);
+      const held = this.sides[c.owner].hover || c.magHeld;
       if (!held) {
         c.air += delta;
         c.spin += c.spinRate * (delta / 1000);
@@ -1188,6 +1296,7 @@ export class MagnetKit {
         for (const t of this.targetsOf(s.owner)) {
           if (Phaser.Math.Distance.Between(s.x, s.y, t.x, t.y) > this.bodyR(t) + 8) continue;
           this.hit(s.owner, t, COIN_SHOT_DAMAGE, MAGNET.gold);
+          this.record(s.owner, 'coinHits');
           this.fx(s.owner).sparks(s.x, s.y, 4, Math.atan2(s.vy, s.vx) + Math.PI, 10, MAGNET.goldHi);
           gone = true;
           break;
@@ -1250,6 +1359,7 @@ export class MagnetKit {
         for (const t of this.targetsOf(fr.owner)) {
           if (Phaser.Math.Distance.Between(fr.x, fr.y, t.x, t.y) > this.bodyR(t) + 5) continue;
           this.hit(fr.owner, t, FRAGMENT_DAMAGE, MAGNET.gold);
+          this.record(fr.owner, 'coinHits');
           this.fx(fr.owner).sparks(fr.x, fr.y, 2, Math.atan2(fr.vy, fr.vx) + Math.PI, 10, MAGNET.goldHi);
           gone = true;
           break;
@@ -1525,11 +1635,13 @@ export class MagnetKit {
     if (best) {
       this.fx(owner).zap(src.x, src.y, best.x, best.y);
       best.setActive(false).setVisible(false);
+      this.record(owner, 'scrapBlocks');
       return true;
     }
     if (owner === 'player' && this.arena.blockHuskShot(f.x, f.y, SHIELD_ZAP_R)) {
       const a = Math.atan2(src.y - f.y, src.x - f.x);
       this.fx(owner).zap(src.x, src.y, src.x + Math.cos(a) * 70, src.y + Math.sin(a) * 70);
+      this.record(owner, 'scrapBlocks');
       return true;
     }
     return false;
@@ -1574,11 +1686,13 @@ export class MagnetKit {
         p.setActive(false).setVisible(false);
         this.fx(owner).sparks(s.x, s.y, 5, Math.atan2(s.y - p.y, s.x - p.x), 10, MAGNET.sky);
         this.fx(owner).shrapnel(s.x, s.y, 3, { speed: 140, size: 7, color: MAGNET.gunHi });
+        this.record(owner, 'scrapBlocks');
         return true;
       }
     }
     if (owner === 'player' && this.arena.blockHuskShot(s.x, s.y, 14)) {
       this.fx(owner).sparks(s.x, s.y, 5, 0, 10, MAGNET.sky);
+      this.record(owner, 'scrapBlocks');
       return true;
     }
     return false;
@@ -1637,6 +1751,219 @@ export class MagnetKit {
     }
   }
 
+  // ── Mastery ────────────────────────────────────────────────────────────
+
+  /** Whether Element Mastery is on for whichever side is asking, and they are the magnet. */
+  private masteryOn(owner: Owner): boolean {
+    return this.isMagnet(owner) && (owner === 'player' ? this.arena.masteryActive : this.arena.npcMasteryActive);
+  }
+
+  /** Which slot Mag-Lev was dropped on, or null. */
+  private magLevSlot(owner: Owner): 'r' | 'f' | 'q' | null {
+    if (!this.masteryOn(owner)) return null;
+    for (const k of ['r', 'f', 'q'] as const) {
+      const bind = owner === 'player' ? this.arena.masteryBindFor(k) : this.arena.npcMasteryBindFor(k);
+      if (bind === MAGLEV_ID) return k;
+    }
+    return null;
+  }
+
+  /**
+   * Mastery progress. Only ever the player's — the grind is the human's, not the bot's — and not
+   * gated on the mastery being on, since earning it is the point.
+   */
+  private record(owner: Owner, key: string, amount = 1): void {
+    if (owner === 'player' && this.isMagnet('player')) this.arena.recordMasteryStat(key, amount);
+  }
+
+  /**
+   * Mag-Lev, from the bound key, the bot, or an online peer's replay. It never goes through
+   * `castAbility` (the enhancement is not in the element's ability list), so the refusals that
+   * gate every other key are repeated here. A replica's track is laid by its relayed steps.
+   */
+  private tryMagLev(owner: Owner, tx: number, ty: number): boolean {
+    const f = this.fighter(owner);
+    const s = this.sides[owner];
+    if (!this.alive(f)) return false;
+    if (!this.isReplica(owner)) {
+      const wall = Date.now();
+      if (wall < f.disarmedUntil || wall < f.chickenUntil || wall < f.silencedUntil || wall < f.stunnedUntil) return false;
+      if (this.now - s.maglevAt < MAGLEV_COOLDOWN_MS) return false;
+      if (s.gatherUntil > 0 || s.piloting) return false;
+    }
+    s.maglevAt = this.now;
+    this.tracks.push({
+      owner, patches: [], pending: MAGLEV_PATCHES, nextAt: this.now,
+      lastX: f.x, lastY: f.y, seedX: tx, seedY: ty,
+    });
+    const a = Math.atan2(ty - f.y, tx - f.x);
+    this.avatar(owner)?.play('slam', a, 360);
+    this.fx(owner).flash(f.x, f.y, 34, 10, MAGNET.rose);
+    this.fx(owner).sparks(f.x, f.y, 10, a, 18, MAGNET.rose);
+    this.announce(f.x, f.y - 46, '🚄 MAG-LEV', MAGNET.rose);
+    Sfx.playAt('electric-charge', f.x, { rate: 0.8, volume: 0.55 });
+    if (owner === 'player') this.arena.broadcast(MAGLEV_ID);
+    return true;
+  }
+
+  /**
+   * Lay the next patch of a track, one step from the last toward `(ax, ay)` — the owner's cursor
+   * right now, so the track follows it like Shadow's tentacle wall. The very first patch goes
+   * toward the cast's aim, and a cursor sitting on the end keeps the track going straight.
+   */
+  private growTrack(tr: MagTrack, ax: number, ay: number): void {
+    if (tr.patches.length === 0) { ax = tr.seedX; ay = tr.seedY; }
+    const dx = ax - tr.lastX, dy = ay - tr.lastY;
+    const n = tr.patches.length;
+    const ang = dx * dx + dy * dy < 16
+      ? (n > 1 ? Math.atan2(tr.lastY - tr.patches[n - 2].y, tr.lastX - tr.patches[n - 2].x) : 0)
+      : Math.atan2(dy, dx);
+    const step = n === 0 ? 0 : MAGLEV_SPACING;
+    const x = Phaser.Math.Clamp(tr.lastX + Math.cos(ang) * step, this.left, this.right);
+    const y = Phaser.Math.Clamp(tr.lastY + Math.sin(ang) * step, this.top, this.bottom);
+    tr.patches.push({ x, y, bornAt: this.now, seed: Math.random() * 10 });
+    tr.lastX = x;
+    tr.lastY = y;
+    tr.pending--;
+    tr.nextAt = this.now + MAGLEV_STEP_MS;
+    this.fx(tr.owner).sparks(x, y, 3, -Math.PI / 2, 10, MAGNET.rose);
+  }
+
+  /** Is `(x, y)` on a live patch of `owner`'s maglev ground? */
+  private onTrack(owner: Owner, x: number, y: number, slack = 0): boolean {
+    const r = MAGLEV_PATCH_R + slack;
+    for (const tr of this.tracks) {
+      if (tr.owner !== owner) continue;
+      for (const p of tr.patches) {
+        const dx = p.x - x, dy = p.y - y;
+        if (dx * dx + dy * dy <= r * r) return true;
+      }
+    }
+    return false;
+  }
+
+  /** Does a Repulse from `f` toward `angle` wash over any of `owner`'s maglev ground? */
+  private trackInCone(owner: Owner, f: Fighter, angle: number): boolean {
+    for (const tr of this.tracks) {
+      if (tr.owner !== owner) continue;
+      for (const p of tr.patches) if (this.inCone(f, angle, p.x, p.y, MAGLEV_PATCH_R * 0.6)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Lay the tracks, let old ground go dead, and work out who is on whose: an owner on their own
+   * ground floats (the `levitating` flag — Magic's Levitate) and is sped up through `speedFor`; a
+   * magnetised or nailed foe on it is held back — husks through `magnetSlowMult`, the duel pair
+   * through the speed mults.
+   */
+  private updateMagLev(): void {
+    const now = this.now;
+    for (let i = this.tracks.length - 1; i >= 0; i--) {
+      const tr = this.tracks[i];
+      if (!this.isReplica(tr.owner)) {
+        const s = this.sides[tr.owner];
+        while (tr.pending > 0 && now >= tr.nextAt) {
+          this.growTrack(tr, s.aimX, s.aimY);
+          if (tr.owner === 'player') this.arena.broadcast(`maglev-step:${MAGLEV_PATCHES - tr.pending}`);
+        }
+      }
+      tr.patches = tr.patches.filter((p) => now - p.bornAt < MAGLEV_LIFE_MS);
+      // A replica's track that never got its steps is dropped once it would have gone dead anyway.
+      if (tr.patches.length === 0 && (tr.pending <= 0 || now - tr.nextAt > MAGLEV_LIFE_MS)) this.tracks.splice(i, 1);
+    }
+
+    this.maglevSlowed.clear();
+    for (const owner of BOTH) {
+      const f = this.fighter(owner);
+      const s = this.sides[owner];
+      const riding = this.alive(f) && !s.piloting && this.onTrack(owner, f.x, f.y);
+      if (riding) {
+        f.levitating = true;
+        s.floating = true;
+      } else if (s.floating) {
+        if (f) f.levitating = false;
+        s.floating = false;
+      }
+      if (this.tracks.length === 0) continue;
+      for (const t of this.targetsOf(owner)) {
+        if (!this.onTrack(owner, t.x, t.y)) continue;
+        if (this.isMagnetized(owner, t) || this.nailsIn(owner, t) > 0) this.maglevSlowed.add(t);
+      }
+    }
+    for (const f of this.allFighters()) {
+      f.magnetSlowMult = this.maglevSlowed.has(f) ? MAGLEV_SLOW_MULT : 1;
+    }
+  }
+
+  /**
+   * Magnetic Field: every enemy shot that crosses into the field is turned 2° — once — away from
+   * the body. Deterministic (away from the centre, never a coin flip), so an online opponent's
+   * sim bends it the same way ours does.
+   */
+  private updateField(): void {
+    const now = this.now;
+    this.flicks = this.flicks.filter((k) => now - k.at < FLICK_MS);
+    for (const owner of BOTH) {
+      if (!this.masteryOn(owner)) continue;
+      const f = this.fighter(owner);
+      if (!this.alive(f) || this.sides[owner].piloting || f.forceInvisible) continue;
+      const { projectiles } = this.arena;
+      if (projectiles) {
+        for (const go of projectiles.getChildren()) {
+          const p = go as Projectile;
+          if (!p.active || p.isFromPlayer === (owner === 'player') || this.fieldSeen.has(p)) continue;
+          const dx = f.x - p.x, dy = f.y - p.y;
+          if (dx * dx + dy * dy > FIELD_R * FIELD_R) continue;
+          this.fieldSeen.add(p);
+          const body = p.body as Phaser.Physics.Arcade.Body | null;
+          if (!body) continue;
+          const vx = body.velocity.x, vy = body.velocity.y;
+          if (vx === 0 && vy === 0) continue;
+          const rel = Phaser.Math.Angle.Wrap(Math.atan2(dy, dx) - Math.atan2(vy, vx));
+          const turn = rel > 0 ? -FIELD_DEFLECT : FIELD_DEFLECT;
+          const c = Math.cos(turn), sn = Math.sin(turn);
+          body.setVelocity(vx * c - vy * sn, vx * sn + vy * c);
+          p.setRotation(p.rotation + turn);
+          this.flicks.push({ owner, x: p.x, y: p.y, angle: Math.atan2(body.velocity.y, body.velocity.x), at: now });
+        }
+      }
+      if (owner === 'player' && this.arena.isInvasion) this.arena.deflectHuskShots(f.x, f.y, FIELD_R, FIELD_DEFLECT, this.fieldSeen);
+    }
+  }
+
+  /**
+   * The bot's half of Mag-Lev, fired here rather than from `NpcOpponent` (the rotation only has to
+   * leave the bound key alone). The synergy it is cast for: a target the bot has already
+   * magnetised or nailed — the track is laid at them (its aim is the target), and on it they crawl
+   * at half speed while the bot rides it in at +50%. Hurt and cornered, it lays one to kick off
+   * (see {@link npcRepulseAt}).
+   */
+  private updateNpcMastery(): void {
+    if (this.arena.isOnline || this.arena.isInvasion || !this.magLevSlot('npc')) return;
+    const n = this.arena.npc;
+    const p = this.arena.player;
+    const s = this.sides.npc;
+    if (!this.alive(n) || !this.alive(p) || this.npcBusy()) return;
+    if (this.now - s.maglevAt < MAGLEV_COOLDOWN_MS) return;
+    if (this.tracks.some((tr) => tr.owner === 'npc')) return;
+    const dist = Phaser.Math.Distance.Between(n.x, n.y, p.x, p.y);
+    const marked = this.isMagnetized('npc', p) || this.nailsIn('npc', p) > 0;
+    const cornered = n.hp / Math.max(1, n.maxHp) < NPC_MAGLEV_KICK_HP && dist < NPC_MAGLEV_KICK_RANGE
+      && n.getCooldownRatio('magnet-repulse') >= 1;
+    if ((marked && dist < NPC_MAGLEV_MARKED_RANGE) || cornered) this.tryMagLev('npc', p.x, p.y);
+  }
+
+  /** The mastery card. */
+  getMagLevCooldownRatio(): number {
+    return Phaser.Math.Clamp((this.now - this.sides.player.maglevAt) / MAGLEV_COOLDOWN_MS, 0, 1);
+  }
+
+  /** Which slot the bot gave up for Mag-Lev, so its rotation leaves that key alone. */
+  npcMagLevSlot(): 'r' | 'f' | 'q' | undefined {
+    return this.magLevSlot('npc') ?? undefined;
+  }
+
   // ── Painting ───────────────────────────────────────────────────────────
 
   private paint(): void {
@@ -1646,12 +1973,28 @@ export class MagnetKit {
       && this.fragments.length === 0 && this.magnetized.size === 0
       && this.sides.player.chargedUntil <= now0 && this.sides.npc.chargedUntil <= now0
       && this.sides.player.gatherUntil <= 0 && this.sides.npc.gatherUntil <= 0
-      && !this.sides.player.pod && !this.sides.npc.pod;
+      && !this.sides.player.pod && !this.sides.npc.pod
+      && this.tracks.length === 0 && this.flicks.length === 0 && !this.masteryOn('player') && !this.masteryOn('npc');
     if (idle && !this.groundGfx && !this.airGfx) return;
     const t = this.vizT;
     const now = this.now;
     const g = this.ground();
     g.clear();
+    // Mastery — Mag-Lev tracks, under everything else on the floor.
+    for (const tr of this.tracks) {
+      const pts = tr.patches.map((p) => ({ x: p.x, y: p.y, seed: p.seed, life: 1 - (now - p.bornAt) / MAGLEV_LIFE_MS }));
+      drawMagTrack(g, this.col(tr.owner), pts, MAGLEV_PATCH_R, t);
+    }
+    // Mastery — the Magnetic Field, and a shadow under a body floating on its track.
+    for (const owner of BOTH) {
+      const f = this.fighter(owner);
+      if (!this.alive(f) || f.forceInvisible || this.sides[owner].piloting) continue;
+      if (this.masteryOn(owner)) drawMagneticField(g, this.col(owner), f.x, f.y, FIELD_R, t);
+      if (this.sides[owner].floating) {
+        g.fillStyle(this.col(owner)(MAGNET.shadow), 0.35);
+        g.fillEllipse(f.x, f.y + 20, 30, 9);
+      }
+    }
     for (const sp of this.spikes) {
       if (sp.state !== 'planted') continue;
       drawSpikePlanted(g, this.col(sp.owner), sp.x, sp.y, t, !sp.zipped, (sp.until - now) / SPIKE_LIFE_MS);
@@ -1702,7 +2045,12 @@ export class MagnetKit {
       if (sp.state === 'planted' && sp.live) drawCrackle(a, this.col(sp.owner), sp.x, sp.y - 44, 16, t, 0.85);
     }
     for (const c of this.coins) {
-      drawCoin(a, this.col(c.owner), c.x, c.y, c.z, c.spin, this.sides[c.owner].hover, t);
+      // Held by the track: a slow bob in the field instead of a dead stop.
+      const z = c.magHeld ? c.z + 4 + Math.sin(t * 3 + c.spinRate) * 3 : c.z;
+      drawCoin(a, this.col(c.owner), c.x, c.y, z, c.spin, this.sides[c.owner].hover || c.magHeld, t);
+    }
+    for (const k of this.flicks) {
+      drawFieldFlick(a, this.col(k.owner), k.x, k.y, k.angle, (now - k.at) / FLICK_MS);
     }
     for (const s of this.coinShots) {
       if (s.lock) drawLockLine(a, this.col(s.owner), s.x, s.y, s.lock.x, s.lock.y, t);
@@ -1755,12 +2103,14 @@ export class MagnetKit {
       const s = this.sides[owner];
       av.setFacing(Math.atan2(s.aimY - f.y, s.aimX - f.x));
       av.setIntensity(s.gatherUntil > 0 ? 1.3 : this.orbitOf(owner).length > 0 ? 1.12 : 1);
-      av.setMastered(false);
+      av.setMastered(this.masteryOn(owner));
       // Single owner of setHold: a held toss braces both hands on the field; a zip or a dash
       // throws the arms out; the gather reaches up for the scrap.
       av.setHold(s.gatherUntil > 0 ? 'charge' : s.motion ? 'ride' : s.hover ? 'brace' : null);
       const hidden = f.forceInvisible || s.piloting;
-      av.update(delta, f.x, f.y, hidden ? 0 : f.alpha);
+      // Floating on a maglev track: the rig rides a little off the floor, bobbing.
+      const lift = s.floating ? 6 + Math.sin(this.vizT * 4) * 2 : 0;
+      av.update(delta, f.x, f.y - lift, hidden ? 0 : f.alpha);
     }
   }
 
@@ -1794,6 +2144,15 @@ export class MagnetKit {
       name: 'Magnetized', emoji: '🧲', color: MAGNET.rose, priority: 61, until: mag.until,
       description: 'Their Repulse left a charge in you. Their coins, nails and spikes lock straight onto you, any of their shots passing close bends into you, and their coin fragments all fly at you.',
     } : null);
+    const riding = playerIs && this.sides.player.floating;
+    this.arena.setStatusIndicator('magnet-maglev', riding ? {
+      name: 'Mag-Lev', emoji: '🚄', color: MAGNET.rose, priority: 153,
+      description: `Magnet Mastery: you are floating on your own maglev ground — ${Math.round((MAGLEV_SPEED_MULT - 1) * 100)}% faster, and the floor's own hazards cannot touch you. Repulse (E) the track to fly backward.`,
+    } : null);
+    this.arena.setStatusIndicator('magnet-maglev-slow', p && this.maglevSlowed.has(p) ? {
+      name: 'Held on the Track', emoji: '🧲', color: MAGNET.red, priority: 62,
+      description: `You are magnetised and standing on their maglev ground: ${Math.round((1 - MAGLEV_SLOW_MULT) * 100)}% slower until you step off it.`,
+    } : null);
     const ch = this.sides.player.chargedUntil;
     this.arena.setStatusIndicator('magnet-charged', playerIs && this.now < ch ? {
       name: 'Charged', emoji: '⚡', color: MAGNET.live, priority: 152, until: ch,
@@ -1806,22 +2165,27 @@ export class MagnetKit {
   private speedFor(owner: Owner): number {
     const s = this.sides[owner];
     if (s.gatherUntil > 0 || s.piloting) return 0;
-    return this.now < s.chargedUntil ? CHARGE_SPEED_MULT : 1;
+    return (this.now < s.chargedUntil ? CHARGE_SPEED_MULT : 1) * (s.floating ? MAGLEV_SPEED_MULT : 1);
   }
 
-  /** Rooted while gathering or piloting; stopped while stunned. Pulled by ArenaScene. */
+  /**
+   * Rooted while gathering or piloting; stopped while stunned; held back on the other side's
+   * maglev ground. Pulled by ArenaScene. Online the slow is worked out here, on the victim's sim.
+   */
   getPlayerSpeedMult(): number {
     const p = this.arena.player;
     if (p && this.stunned(p)) return 0;
-    return this.isMagnet('player') ? this.speedFor('player') : 1;
+    const slow = p && this.maglevSlowed.has(p) ? MAGLEV_SLOW_MULT : 1;
+    return slow * (this.isMagnet('player') ? this.speedFor('player') : 1);
   }
 
   getNpcSpeedMult(): number {
     const n = this.arena.npc;
     if (n && this.stunned(n)) return 0;
     // An online replica's motion is streamed; rooting it here would freeze the picture.
-    if (!this.isMagnet('npc') || this.arena.isOnline) return 1;
-    return this.speedFor('npc');
+    if (this.arena.isOnline) return 1;
+    const slow = n && this.maglevSlowed.has(n) ? MAGLEV_SLOW_MULT : 1;
+    return slow * (this.isMagnet('npc') ? this.speedFor('npc') : 1);
   }
 
   /** Ability tray fill. In the mech the cards are the mech's keys; out of it, a free second job reads as ready. */
@@ -1879,6 +2243,9 @@ export class MagnetKit {
     }
     // R+ Nailstorm: every nail in them is another handle — and 4 more damage on the shove.
     if (this.up('npc', 'r') && dist < REPULSE_PUSH_RANGE && this.nailsIn('npc', p) >= 2) worth += 2;
+    // Mastery — Mag-Lev: hurt and close, a Repulse into its own maglev ground throws the bot
+    // backward, away from the target it is aiming at.
+    if (n.hp / Math.max(1, n.maxHp) < NPC_MAGLEV_KICK_HP && dist < NPC_MAGLEV_KICK_RANGE && this.trackInCone('npc', n, ang)) worth += 3;
     return worth >= 2 ? { x: p.x, y: p.y } : undefined;
   }
 

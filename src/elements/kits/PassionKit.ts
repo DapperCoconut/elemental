@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { Fighter } from '../../entities/Fighter';
+import { Fighter, GAZE_AVERT_CONE } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
 import { Sfx } from '../../audio';
@@ -9,7 +9,7 @@ import type { SummonPurgeTarget } from '../../combat/SummonPurge';
 import {
   DEV, PassionAvatar, PassionColorFn, PassionFx, ascendBand, chariot, crashMark,
   crucifixAura, crucifixPost, faithBar, firePillar, glory, halo, handGrenade, holyWaterPuddle,
-  pillarCrosshair, skyPriest, vial,
+  pillarCrosshair, skyPriest, vial, arkGround, arkOfCovenant, gazeThread, prayerSigil, blessingShell,
 } from './PassionVisuals';
 import { meterGain } from '../../combat/Meters';
 import { measureDebuffs } from '../../combat/StatusEffects';
@@ -148,6 +148,43 @@ const PILLAR_SLOW_MS = 1500;
 const NPC_PILLAR_FIRST_MS = 1200;
 const NPC_PILLAR_EVERY_MS = 2000;
 
+// ── Mastery ──────────────────────────────────────────────────────────────────
+/** Pray Always: a prayer every 8s, answered 5s after it is said. */
+const PRAYER_EVERY_MS = 8000;
+const PRAYER_ANSWER_MS = 5000;
+/** How long the priest's hands stay pressed together after a prayer is said. */
+const PRAYER_POSE_MS = 700;
+const BLESS_ARMOUR_MULT = 0.75;
+const BLESS_ARMOUR_MS = 5000;
+const BLESS_HEAL = 50;
+const BLESS_RAY_FAITH = 35;
+const ANSWERS = ['armour', 'heal', 'ray'] as const;
+type Answer = typeof ANSWERS[number];
+/** Ark of the Covenant (R/F/Q). */
+export const ARK_ID = 'ark-of-the-covenant';
+const ARK_COOLDOWN_MS = 18000;
+const ARK_MS = 12000;
+const ARK_RANGE = 380;
+/** The chest's half-width, which is also how wide it looks from afar. */
+const ARK_R = 26;
+/** Beyond this nobody is looking at it — they cannot make it out. */
+const ARK_SIGHT_RANGE = 640;
+/** A look within this of the Ark's edge is a stare. */
+const ARK_STARE_HALF = Phaser.Math.DegToRad(18);
+const ARK_FAITH_PER_SEC = 5;
+const ARK_TEXT_MS = 1000;
+/** Over half faith the Ark pulls the believer's sight this far toward it, more as faith rises. */
+const GAZE_PULL_MIN = Phaser.Math.DegToRad(5);
+const GAZE_PULL_MAX = Phaser.Math.DegToRad(14);
+/** Under half faith a bot or husk tries to look this far away from it. */
+const GAZE_AVERT = Phaser.Math.DegToRad(16);
+/** How long one frame's gaze write lasts — a little past a frame, so it lapses on its own. */
+const GAZE_HOLD_MS = 250;
+/** The bot's Ark placement: how far along the line to the player, and the angle off it at 50%+. */
+const NPC_ARK_ALONG = 0.45;
+const NPC_ARK_OFFSET = Phaser.Math.DegToRad(32);
+const NPC_ARK_THINK_MS = 500;
+
 // ── World objects ────────────────────────────────────────────────────────────
 
 interface Letter {
@@ -218,6 +255,19 @@ interface Crucifix {
   raised: boolean;
 }
 
+/** Mastery — the Ark of the Covenant, set down on the floor. */
+interface Ark {
+  owner: Owner;
+  x: number;
+  y: number;
+  bornAt: number;
+  diesAt: number;
+  /** 0–1, eased toward 1 while somebody stares at it — the light it gives off. */
+  stare: number;
+  /** Per-watcher pop-up throttle. */
+  nextText: Map<Fighter, number>;
+}
+
 /** Q+ — a pillar of yellow fire dropped from the sky ride. */
 interface Pillar {
   owner: Owner;
@@ -270,6 +320,18 @@ interface Side {
   nextPillarAt: number;
   /** F+: the bot's next pocket-crucifix decision. */
   nextPocketAt: number;
+  // Mastery — Pray Always
+  /** The next prayer, or 0 until mastery first sees this side. */
+  prayAt: number;
+  /** When the prayer said last is answered, or 0 when none is waiting. */
+  answerAt: number;
+  prayPoseUntil: number;
+  /** The armour answer's end (scene time). */
+  blessUntil: number;
+  // Mastery — Ark of the Covenant
+  /** The last Ark (scene time). Starts a cooldown in the past so it is ready. */
+  arkAt: number;
+  nextArkThinkAt: number;
   // Aim
   aimX: number;
   aimY: number;
@@ -284,6 +346,8 @@ function makeSide(owner: Owner): Side {
     chariotRolling: false, struck: [],
     rideUntil: 0, rideX: 0, rideY: 0, rideOwnsInvincible: false,
     skyRide: false, pillarsLeft: 0, nextPillarAt: 0, nextPocketAt: 0,
+    prayAt: 0, answerAt: 0, prayPoseUntil: 0, blessUntil: 0,
+    arkAt: -ARK_COOLDOWN_MS, nextArkThinkAt: 0,
     aimX: 0, aimY: 0,
   };
 }
@@ -334,6 +398,13 @@ export interface PassionArenaApi {
   setStatusIndicator(id: string, status: CustomStatus | null): void;
   get masteryActive(): boolean;
   get npcMasteryActive(): boolean;
+  /** Which mastery enhancement each side dropped over an R/F/Q slot, or null. */
+  masteryBindFor(slot: string): string | null;
+  npcMasteryBindFor(slot: string): string | null;
+  /** Mastery progress. Gated on the element by the adapter, so the kit records unconditionally. */
+  recordMasteryStat(key: string, amount: number): void;
+  /** The real cursor in world space, before any Ark has bent it. */
+  get pointer(): { x: number; y: number };
   /** Pseudo-casts relayed to the peer: the sermon's charge and the chariot's crash point. */
   broadcastMasteryCast(enhId: string): void;
 }
@@ -380,6 +451,12 @@ export class PassionKit implements SummonPurgeTarget {
   private nextPruneAt = 0;
   /** Victim → time of the last passive pop-up, so "+2" shows once a second rather than per frame. */
   private passiveTextAt = new Map<Fighter, number>();
+  /** Mastery — at most one Ark per side. */
+  private arks: Ark[] = [];
+  /** Mastery — this frame's sight-lines to an Ark, for the painter: who, whose Ark, and the bend. */
+  private gazes: { owner: Owner; ark: Ark; f: Fighter; pull: number }[] = [];
+  /** Mastery progress: holy-water faith not yet recorded as a whole point. */
+  private waterFaithBank = 0;
 
   constructor(api: PassionArenaApi) {
     this.api = api;
@@ -493,9 +570,9 @@ export class PassionKit implements SummonPurgeTarget {
    * `passive` marks the 25% self-fill, which is not an attack and so does not get the 75%
    * stage's +25%. `icon` tags the pop-up; the number in it is what actually landed.
    */
-  private addFaith(owner: Owner, victim: Fighter, amount: number, icon?: string, passive = false): void {
-    if (amount <= 0 || !this.alive(victim) || !this.authority(owner)) return;
-    if (this.converted.has(victim)) return;
+  private addFaith(owner: Owner, victim: Fighter, amount: number, icon?: string, passive = false): number {
+    if (amount <= 0 || !this.alive(victim) || !this.authority(owner)) return 0;
+    if (this.converted.has(victim)) return 0;
     const cap = this.capOf(victim);
     let mult = 1;
     if (!passive && this.stageOf(victim.devotionFaith / cap) >= 3) mult = DEVOUT_FAITH_MULT;
@@ -509,6 +586,7 @@ export class PassionKit implements SummonPurgeTarget {
         this.hex(mult > 1 ? DEV.white : DEV.holy));
     }
     if (victim.devotionFaith >= cap) this.convert(owner, victim);
+    return applied;
   }
 
   /**
@@ -520,6 +598,7 @@ export class PassionKit implements SummonPurgeTarget {
   private convert(owner: Owner, victim: Fighter): void {
     if (this.converted.has(victim)) return;
     this.converted.add(victim);
+    this.record(owner, 'souls');
     victim.devotionFaith = this.capOf(victim);
     this.fx(owner).convert(victim.x, victim.y);
     this.api.showFloatingText(victim.x, victim.y - 56, '✝️ CONVERTED', this.hex(DEV.white));
@@ -541,6 +620,8 @@ export class PassionKit implements SummonPurgeTarget {
         if (s.rideOwnsInvincible) f.isInvincible = false;
         if (s.rideUntil > 0) { f.forceInvisible = false; if (f.active) f.setAlpha(1); }
         f.devotionFaith = 0;
+        f.gazeTurnRad = 0;
+        f.gazeUntil = 0;
       }
     }
     for (const l of this.letters) {
@@ -561,6 +642,9 @@ export class PassionKit implements SummonPurgeTarget {
     this.disarmed.clear();
     this.pillars = [];
     this.passiveTextAt.clear();
+    this.arks = [];
+    this.gazes = [];
+    this.waterFaithBank = 0;
     this.vizT = 0;
 
     this.playerAvatar?.destroy(); this.playerAvatar = null;
@@ -591,6 +675,12 @@ export class PassionKit implements SummonPurgeTarget {
 
     const p = this.api.player;
     const ctx = (): CastContext => this.api.buildPlayerContext(mouseX, mouseY);
+    // Mastery: whichever of R/F/Q the Ark was dropped on is the Ark's key now — the pocket
+    // crucifix's pick-up and set-down included.
+    const bound = this.arkSlot('player');
+    for (const [k, key] of [['r', this.api.rKey], ['f', this.api.fKey], ['q', this.api.qKey]] as const) {
+      if (bound === k && Phaser.Input.Keyboard.JustDown(key)) this.tryArk('player', mouseX, mouseY);
+    }
 
     // F+ Pocket Crucifix: with the cross in hand, the click brandishes it instead of preaching.
     const held = this.crucifixes.find((c) => c.owner === 'player' && c.held);
@@ -624,11 +714,11 @@ export class PassionKit implements SummonPurgeTarget {
       if (s.waterCharges > 0) p.castAbility('passion-holy-water', ctx());
       else this.api.showFloatingText(p.x, p.y - 44, '💧 NO HOLY WATER', this.hex(DEV.water));
     }
-    if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('passion-grenade', ctx());
-    if (Phaser.Input.Keyboard.JustDown(this.api.fKey) && !this.pocketPress('player')) {
+    if (bound !== 'r' && Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('passion-grenade', ctx());
+    if (bound !== 'f' && Phaser.Input.Keyboard.JustDown(this.api.fKey) && !this.pocketPress('player')) {
       p.castAbility('passion-crucifix', ctx());
     }
-    if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('passion-ascendance', ctx());
+    if (bound !== 'q' && Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('passion-ascendance', ctx());
   }
 
   // ── Ability entry points (called from build*Context) ───────────────────────
@@ -875,7 +965,14 @@ export class PassionKit implements SummonPurgeTarget {
       case 'devotion-raise': this.setRaised('npc', true); break;
       case 'devotion-lower': this.setRaised('npc', false); break;
       case 'devotion-pillar': this.firePillar('npc', tx, ty); break;
-      default: break;
+      case 'devotion-pray': this.sayPrayer('npc'); break;
+      default:
+        // Mastery: the peer's prayer was answered — their sim rolled which way.
+        if (id.startsWith('devotion-answer:')) {
+          const k = id.slice('devotion-answer:'.length) as Answer;
+          if ((ANSWERS as readonly string[]).includes(k)) this.answerPrayer('npc', k);
+        }
+        break;
     }
   }
 
@@ -887,7 +984,7 @@ export class PassionKit implements SummonPurgeTarget {
     // World objects outlive their caster's element only for as long as they would anyway — but a
     // match with no Devotion in it has none to tick.
     if (!playerIs && !npcIs && !this.letters.length && !this.puddles.length && !this.grenades.length
-      && !this.crucifixes.length && !this.pillars.length && !this.disarmed.size) return;
+      && !this.crucifixes.length && !this.pillars.length && !this.disarmed.size && !this.arks.length) return;
 
     this.vizT += delta / 1000;
     this.ensureLayers();
@@ -903,8 +1000,11 @@ export class PassionKit implements SummonPurgeTarget {
       this.updateArmour(owner, targets);
       this.updateAscend(owner, time, delta);
       this.updateRide(owner, time);
+      this.updatePrayer(owner, time);
     }
     this.updateNpcPocket(time);
+    this.updateArks(time, dt);
+    this.updateNpcMastery(time);
 
     this.updateLetters(time, dt);
     this.updateDisarmed();
@@ -920,6 +1020,7 @@ export class PassionKit implements SummonPurgeTarget {
     this.paintGround();
     this.paintAir(time);
     this.paintFaces();
+    this.paintMastery();
     this.pushStatuses(playerIs, time);
   }
 
@@ -997,7 +1098,9 @@ export class PassionKit implements SummonPurgeTarget {
       const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
       if (d < nd) { nd = d; nearest = t; }
     }
-    const mult = nearest && this.stageOf(this.faithRatio(nearest)) >= 2 ? FAITHFUL_DAMAGE_MULT : 1;
+    let mult = nearest && this.stageOf(this.faithRatio(nearest)) >= 2 ? FAITHFUL_DAMAGE_MULT : 1;
+    // Mastery — a prayer answered with armour. Same single writer, so it rides `dm` online too.
+    if (this.side(owner).blessUntil > this.now) mult *= BLESS_ARMOUR_MULT;
     if (f.passionIncomingMult !== mult) f.passionIncomingMult = mult;
   }
 
@@ -1053,6 +1156,7 @@ export class PassionKit implements SummonPurgeTarget {
     s.rideUntil = this.now + (s.skyRide ? SKY_RIDE_MS : RIDE_MS);
     s.rideX = f.x;
     s.rideY = f.y;
+    this.record(owner, 'chariotRides');
     this.fx(owner).liftOff(f.x, f.y);
     this.api.showFloatingText(f.x, f.y - 56, s.skyRide ? '🙌 TAKEN UP · 🔥×3' : '🙌 TAKEN UP', this.hex(DEV.fireHot));
     if (owner === 'player' || !this.api.isOnline) {
@@ -1258,7 +1362,12 @@ export class PassionKit implements SummonPurgeTarget {
           p.inside.add(t);
           if (this.up(p.owner, 'e')) this.purgeSins(p.owner, t);
         }
-        this.addFaith(p.owner, t, PUDDLE_FAITH_PER_SEC * dt);
+        const landed = this.addFaith(p.owner, t, PUDDLE_FAITH_PER_SEC * dt);
+        if (p.owner === 'player' && landed > 0) {
+          this.waterFaithBank += landed;
+          const whole = Math.floor(this.waterFaithBank);
+          if (whole > 0) { this.waterFaithBank -= whole; this.record('player', 'holyWaterFaith', whole); }
+        }
         if (time >= (p.nextText.get(t) ?? 0) && this.authority(p.owner)) {
           p.nextText.set(t, time + PUDDLE_TEXT_MS);
           this.api.showFloatingText(t.x - 14, t.y - 34, `+${PUDDLE_FAITH_PER_SEC} 💧`, this.hex(DEV.water));
@@ -1336,6 +1445,7 @@ export class PassionKit implements SummonPurgeTarget {
       for (const t of this.targetsOf(gr.owner)) {
         if (Phaser.Math.Distance.Between(gr.x, gr.y, t.x, t.y) > BURST_R + 14) continue;
         this.addFaith(gr.owner, t, BURST_FAITH * share, '💥');
+        this.record(gr.owner, 'grenadeHits');
       }
       // R+ Repentance: it survives its own blast and leaps at the enemy, twice.
       if (gr.stage < REPENT_FAITH.length - 1 && this.up(gr.owner, 'r')) {
@@ -1537,6 +1647,7 @@ export class PassionKit implements SummonPurgeTarget {
     for (const f of [...this.caps.keys()]) if (!f.active) this.caps.delete(f);
     for (const f of [...this.stages.keys()]) if (!f.active) this.stages.delete(f);
     for (const f of [...this.passiveTextAt.keys()]) if (!f.active) this.passiveTextAt.delete(f);
+    for (const a of this.arks) for (const f of [...a.nextText.keys()]) if (!f.active) a.nextText.delete(f);
     for (const p of this.puddles) {
       for (const f of [...p.nextText.keys()]) if (!f.active) p.nextText.delete(f);
       for (const f of [...p.inside]) if (!f.active) p.inside.delete(f);
@@ -1563,7 +1674,8 @@ export class PassionKit implements SummonPurgeTarget {
         ? Phaser.Math.Clamp((this.now - s.chargeStartedAt) / SERMON_CHARGE_MS, 0, 1) : 0;
       av.setPreach(preach);
       const raised = this.crucifixes.some((c) => c.owner === owner && c.held && c.raised);
-      av.setHold(s.chargeStartedAt > 0 ? 'brace' : raised ? 'reach' : null);
+      // Mastery: hands pressed together for a moment as each prayer is said.
+      av.setHold(s.chargeStartedAt > 0 || s.prayPoseUntil > this.now ? 'brace' : raised ? 'reach' : null);
       av.setIntensity(1 + preach * 0.3);
       av.setMastered(owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
       av.update(delta, f.x, f.y, f.alpha);
@@ -1747,6 +1859,31 @@ export class PassionKit implements SummonPurgeTarget {
       ...(s.skyRide ? { count: s.pillarsLeft } : {}),
     } : null);
 
+    // Mastery — Pray Always, the armour it answers with, and (as the believer) the Ark's pull.
+    const praying = playerIsDevotion && this.masteryOn('player');
+    this.api.setStatusIndicator('passion-prayer', praying ? (s.answerAt > time ? {
+      name: 'Prayer Said', emoji: '🙏', color: DEV.pale,
+      description: 'Your prayer is rising. It will be answered with shelter (25% less damage for 5s), '
+        + `mercy (+${BLESS_HEAL} HP) or revelation (a ray of light: ${BLESS_RAY_FAITH} faith to the nearest enemy).`,
+      until: s.answerAt, priority: 62,
+    } : {
+      name: 'Pray Always', emoji: '📿', color: DEV.ochre,
+      description: `Every ${PRAYER_EVERY_MS / 1000}s you say a prayer of your own accord; it is answered `
+        + `${PRAYER_ANSWER_MS / 1000}s later.`,
+      ...(s.prayAt > time ? { until: s.prayAt } : {}), priority: 40,
+    }) : null);
+    this.api.setStatusIndicator('passion-shelter', praying && s.blessUntil > time ? {
+      name: 'Shelter', emoji: '🛡️', color: DEV.gold,
+      description: `A prayer answered: you take ${Math.round((1 - BLESS_ARMOUR_MULT) * 100)}% less damage.`,
+      until: s.blessUntil, priority: 99,
+    } : null);
+    this.api.setStatusIndicator('passion-ark-gaze', p.gazeTurnRad > 0 && p.gazeUntil > Date.now() ? {
+      name: 'Drawn to the Ark', emoji: '👁️', color: DEV.gold,
+      description: 'Your faith is past half and the Ark is pulling your sight toward it — your aim '
+        + 'bends its way (the small gold ring is where you are really aiming). Looking at it gives you faith.',
+      priority: 97,
+    } : null);
+
     const c = playerIsDevotion ? this.crucifixes.find((x) => x.owner === 'player') : undefined;
     this.api.setStatusIndicator('passion-crucifix', c ? {
       name: c.held ? (c.raised ? 'Crucifix Raised' : 'Crucifix in Hand') : 'Crucifix', emoji: '✝️', color: DEV.gold,
@@ -1758,6 +1895,314 @@ export class PassionKit implements SummonPurgeTarget {
           + 'it gives them 1 faith. Plant another to move it.',
       priority: 58,
     } : null);
+  }
+
+  // ── Mastery ────────────────────────────────────────────────────────────────
+
+  /** Whether Element Mastery is on for whichever side is asking, and they are Devotion. */
+  private masteryOn(owner: Owner): boolean {
+    return this.isDevotion(owner) && (owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
+  }
+
+  /** Which slot the Ark was dropped on, or null. */
+  private arkSlot(owner: Owner): 'r' | 'f' | 'q' | null {
+    if (!this.masteryOn(owner)) return null;
+    for (const k of ['r', 'f', 'q'] as const) {
+      const bind = owner === 'player' ? this.api.masteryBindFor(k) : this.api.npcMasteryBindFor(k);
+      if (bind === ARK_ID) return k;
+    }
+    return null;
+  }
+
+  /**
+   * Mastery progress. Only ever the player's — the grind is the human's, not the bot's — and not
+   * gated on the mastery being on, since earning it is the point.
+   */
+  private record(owner: Owner, key: string, amount = 1): void {
+    if (owner === 'player' && this.isDevotion('player')) this.api.recordMasteryStat(key, amount);
+  }
+
+  /**
+   * Pray Always. Every 8 seconds the priest says a prayer, and 5 seconds later it is answered.
+   * Only the priest's own sim keeps the clock and rolls the answer; the peer's prayers arrive as
+   * `devotion-pray` / `devotion-answer:<k>` and are only drawn here (their armour rides `dm`,
+   * their heal is their own HP, and their ray's faith was added on their machine).
+   */
+  private updatePrayer(owner: Owner, time: number): void {
+    const s = this.side(owner);
+    if (!this.masteryOn(owner)) { s.prayAt = 0; s.answerAt = 0; return; }
+    if (!this.authority(owner)) {
+      // A lost answer must not leave the sigil hanging over their head.
+      if (s.answerAt > 0 && time > s.answerAt + 1500) s.answerAt = 0;
+      return;
+    }
+    if (!this.alive(this.fighter(owner))) return;
+    if (s.prayAt === 0) s.prayAt = time + PRAYER_EVERY_MS;
+    if (s.answerAt > 0 && time >= s.answerAt) this.answerPrayer(owner, this.pickAnswer(owner));
+    // Nobody hears a prayer said from the chariot; it is said the moment the priest is down.
+    if (time >= s.prayAt && s.rideUntil <= 0) {
+      s.prayAt = time + PRAYER_EVERY_MS;
+      this.sayPrayer(owner);
+    }
+  }
+
+  private sayPrayer(owner: Owner): void {
+    const f = this.fighter(owner);
+    const s = this.side(owner);
+    if (!this.alive(f)) return;
+    s.prayPoseUntil = this.now + PRAYER_POSE_MS;
+    s.answerAt = this.now + PRAYER_ANSWER_MS;
+    this.fx(owner).pray(f.x, f.y);
+    this.api.showFloatingText(f.x, f.y - 70, '🙏 A PRAYER…', this.hex(DEV.pale));
+    Sfx.playAt('incantation', f.x, { volume: 0.35, rate: 1.5 });
+    if (owner === 'player') this.api.broadcastMasteryCast('devotion-pray');
+  }
+
+  /** Whichever answers would do something right now: no heal at full health, no ray with nobody to hit. */
+  private pickAnswer(owner: Owner): Answer {
+    const f = this.fighter(owner);
+    const options = ANSWERS.filter((k) => (k !== 'heal' || f.hp < f.maxHp - 1)
+      && (k !== 'ray' || this.nearestTarget(owner) !== null));
+    const pool = options.length ? options : ANSWERS;
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+
+  private nearestTarget(owner: Owner): Fighter | null {
+    const f = this.fighter(owner);
+    let best: Fighter | null = null;
+    let bd = Infinity;
+    for (const t of this.targetsOf(owner)) {
+      const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
+      if (d < bd) { bd = d; best = t; }
+    }
+    return best;
+  }
+
+  private answerPrayer(owner: Owner, k: Answer): void {
+    const f = this.fighter(owner);
+    const s = this.side(owner);
+    s.answerAt = 0;
+    if (!this.alive(f)) return;
+    if (owner === 'player') this.api.broadcastMasteryCast(`devotion-answer:${k}`);
+    Sfx.playAt('holy-chord', f.x, { volume: 0.55, rate: 1.35 });
+    if (k === 'armour') {
+      s.blessUntil = this.now + BLESS_ARMOUR_MS;
+      this.fx(owner).answerArmour(f.x, f.y);
+      this.api.showFloatingText(f.x, f.y - 70, '🛡️ ANSWERED: SHELTER', this.hex(DEV.gold));
+      return;
+    }
+    if (k === 'heal') {
+      if (this.authority(owner)) f.heal(BLESS_HEAL);
+      this.fx(owner).answerHeal(f.x, f.y);
+      this.api.showFloatingText(f.x, f.y - 70, '💛 ANSWERED: MERCY', this.hex(DEV.pale));
+      return;
+    }
+    const t = this.nearestTarget(owner);
+    this.api.showFloatingText(f.x, f.y - 70, '☀️ ANSWERED: REVELATION', this.hex(DEV.white));
+    if (!t) return;
+    this.fx(owner).heavenRay(t.x, t.y);
+    this.addFaith(owner, t, BLESS_RAY_FAITH, '☀️');
+  }
+
+  /**
+   * Ark of the Covenant, from the bound key, the bot, or an online peer's replay. It never goes
+   * through `castAbility` (the enhancement is not in the element's ability list), so the refusals
+   * that gate every other key are repeated here. A replica's Ark is trusted: their sim checked.
+   */
+  private tryArk(owner: Owner, tx: number, ty: number): boolean {
+    const f = this.fighter(owner);
+    const s = this.side(owner);
+    if (!this.alive(f)) return false;
+    if (this.authority(owner)) {
+      if (s.rideUntil > 0 || !this.canAct(f, false)) return false;
+      if (this.now - s.arkAt < ARK_COOLDOWN_MS) return false;
+    }
+    s.arkAt = this.now;
+    const ang = Math.atan2(ty - f.y, tx - f.x);
+    const d = Math.min(ARK_RANGE, Phaser.Math.Distance.Between(f.x, f.y, tx, ty));
+    const x = Phaser.Math.Clamp(f.x + Math.cos(ang) * d, this.left + 30, this.right - 30);
+    const y = Phaser.Math.Clamp(f.y + Math.sin(ang) * d, this.top + 40, this.bottom - 10);
+    const old = this.arks.findIndex((a) => a.owner === owner);
+    if (old >= 0) {
+      const a = this.arks[old];
+      this.fx(owner).sparkle(a.x, a.y - 20, 10, 30, DEV.gold, 600);
+      this.arks.splice(old, 1);
+    }
+    this.arks.push({ owner, x, y, bornAt: this.now, diesAt: this.now + ARK_MS, stare: 0, nextText: new Map() });
+    this.avatar(owner)?.play('slam', ang);
+    this.fx(owner).arkLand(x, y);
+    this.api.showFloatingText(x, y - 64, '✨ ARK OF THE COVENANT', this.hex(DEV.gold));
+    Sfx.playAt('holy-chord', x, { volume: 0.75, rate: 0.75 });
+    this.api.scene.time.delayedCall(220, () => Sfx.playAt('stone-slam', x, { volume: 0.6, rate: 0.9 }));
+    if (owner === 'player') this.api.broadcastMasteryCast(ARK_ID);
+    return true;
+  }
+
+  /** Online: the peer set their Ark down. */
+  replayArk(tx: number, ty: number): void {
+    if (this.isDevotion('npc')) this.tryArk('npc', tx, ty);
+  }
+
+  /**
+   * Which way `t` is looking, the Ark's bend included. The local player looks at their cursor;
+   * an online peer's facing is mirrored in (their own sim bent it); a bot or husk looks at whoever
+   * it is fighting — the priest.
+   */
+  private lookOf(owner: Owner, t: Fighter): number {
+    if (this.api.isOnline && t === this.api.npc) return t.facingAngle;
+    let base: number;
+    if (t === this.api.player) {
+      const c = this.api.pointer;
+      base = Math.atan2(c.y - t.y, c.x - t.x);
+    } else {
+      const f = this.fighter(owner);
+      base = Math.atan2(f.y - t.y, f.x - t.x);
+    }
+    return t.bendGaze(base);
+  }
+
+  /**
+   * The Ark at work. For everyone who can make it out: their sight is bent on the sim that owns
+   * their aim (over half faith it is pulled toward the Ark; under half a bot or husk tries to
+   * look away, a player does not), and anyone whose look then falls on it gains faith slowly.
+   */
+  private updateArks(time: number, dt: number): void {
+    for (let i = this.arks.length - 1; i >= 0; i--) {
+      if (time >= this.arks[i].diesAt) this.arks.splice(i, 1);
+    }
+    this.gazes = [];
+    const wall = Date.now();
+    for (const a of this.arks) {
+      if (!this.isDevotion(a.owner)) continue;
+      const ax = a.x;
+      const ay = a.y - 14;
+      let watched = false;
+      for (const t of this.targetsOf(a.owner)) {
+        const d = Phaser.Math.Distance.Between(t.x, t.y, ax, ay);
+        if (d > ARK_SIGHT_RANGE || d < 1) continue;
+        const ownsAim = !(this.api.isOnline && t === this.api.npc);
+        if (ownsAim) {
+          const ratio = this.faithRatio(t);
+          let turn = 0;
+          if (ratio >= 0.5) turn = Phaser.Math.Linear(GAZE_PULL_MIN, GAZE_PULL_MAX, Phaser.Math.Clamp((ratio - 0.5) / 0.5, 0, 1));
+          else if (t !== this.api.player) turn = -GAZE_AVERT;
+          t.gazeX = ax;
+          t.gazeY = ay;
+          t.gazeTurnRad = turn;
+          t.gazeUntil = wall + GAZE_HOLD_MS;
+        }
+        const look = this.lookOf(a.owner, t);
+        // Online the priest's machine reads our look off the facing we send.
+        if (ownsAim && t === this.api.player && this.api.isOnline
+          && this.api.elementId !== 'silence' && this.api.elementId !== 'radiation') {
+          t.facingAngle = look;
+        }
+        const off = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(ay - t.y, ax - t.x) - look));
+        const turnNow = t.gazeUntil > wall ? t.gazeTurnRad : 0;
+        if (off > ARK_STARE_HALF + Math.atan2(ARK_R, d)) {
+          if (turnNow < 0 && off < GAZE_AVERT_CONE + GAZE_AVERT) this.gazes.push({ owner: a.owner, ark: a, f: t, pull: -1 });
+          continue;
+        }
+        watched = true;
+        this.gazes.push({ owner: a.owner, ark: a, f: t, pull: 0.3 + 0.7 * Math.max(0, turnNow) / GAZE_PULL_MAX });
+        const landed = this.addFaith(a.owner, t, ARK_FAITH_PER_SEC * dt);
+        if (landed > 0 && time >= (a.nextText.get(t) ?? 0)) {
+          a.nextText.set(t, time + ARK_TEXT_MS);
+          this.api.showFloatingText(t.x - 12, t.y - 34, `+${ARK_FAITH_PER_SEC} 👁️`, this.hex(DEV.gold));
+        }
+      }
+      a.stare += ((watched ? 1 : 0) - a.stare) * Math.min(1, dt * 4);
+    }
+  }
+
+  /**
+   * The bot's Ark, fired by the kit (Mag-Lev style) since the enhancement is not in the ability
+   * list the AI casts from. Offline duels only; online the peer presses their own key.
+   */
+  private updateNpcMastery(time: number): void {
+    if (this.api.isOnline || this.api.isInvasion || !this.arkSlot('npc')) return;
+    const s = this.sides.npc;
+    if (time < s.nextArkThinkAt) return;
+    s.nextArkThinkAt = time + NPC_ARK_THINK_MS;
+    if (this.now - s.arkAt < ARK_COOLDOWN_MS || s.rideUntil > 0) return;
+    const pt = this.npcArkPoint();
+    if (pt) this.tryArk('npc', pt.x, pt.y);
+  }
+
+  /**
+   * Where the bot's Ark goes. Side-effect free. The synergy is the gaze itself: a player aims at
+   * the bot, so under half faith the Ark goes *on that line* — every shot they line up is a stare.
+   * Over half their sight is pulled toward it, so it goes *off* the line instead: the pull drags
+   * their aim off the bot, and the dragged aim is still a stare.
+   */
+  private npcArkPoint(): { x: number; y: number } | null {
+    const npc = this.api.npc;
+    const p = this.api.player;
+    if (!this.alive(npc) || !this.alive(p)) return null;
+    const dist = Phaser.Math.Distance.Between(npc.x, npc.y, p.x, p.y);
+    if (dist < 120 || dist > ARK_SIGHT_RANGE + 80) return null;
+    if (this.faithRatio(p) < 0.5) {
+      const along = Math.min(dist * NPC_ARK_ALONG, ARK_RANGE);
+      const a = Math.atan2(p.y - npc.y, p.x - npc.x);
+      return { x: npc.x + Math.cos(a) * along, y: npc.y + Math.sin(a) * along };
+    }
+    const fromPlayer = Math.atan2(npc.y - p.y, npc.x - p.x) + (Math.random() < 0.5 ? -1 : 1) * NPC_ARK_OFFSET;
+    return { x: p.x + Math.cos(fromPlayer) * dist * 0.6, y: p.y + Math.sin(fromPlayer) * dist * 0.6 };
+  }
+
+  /** The mastery card. */
+  getArkCooldownRatio(): number {
+    return Phaser.Math.Clamp((this.now - this.sides.player.arkAt) / ARK_COOLDOWN_MS, 0, 1);
+  }
+
+  /** Which slot the bot gave up for the Ark, so its rotation leaves that key alone. */
+  npcArkSlot(): 'r' | 'f' | 'q' | undefined {
+    return this.arkSlot('npc') ?? undefined;
+  }
+
+  /** The Ark, the sight-lines to it, the prayer waiting over the priest and the armour round them. */
+  private paintMastery(): void {
+    const ground = this.groundGfx;
+    const air = this.airGfx;
+    const face = this.faceGfx;
+    if (!ground || !air || !face) return;
+    const t = this.vizT;
+    const now = this.now;
+    for (const a of this.arks) {
+      const rise = (now - a.bornAt) / 260;
+      const fade = Phaser.Math.Clamp((a.diesAt - now) / 500, 0, 1);
+      arkGround(ground, this.col(a.owner), a.x, a.y, 34, rise, t, a.stare, fade);
+      arkOfCovenant(air, this.col(a.owner), a.x, a.y, rise, t, a.stare, fade);
+    }
+    for (const gz of this.gazes) {
+      gazeThread(ground, this.col(gz.owner), gz.f.x, gz.f.y - 6, gz.ark.x, gz.ark.y - 14, gz.pull, t, gz.f.alpha);
+    }
+    for (const owner of BOTH) {
+      if (!this.masteryOn(owner)) continue;
+      const f = this.fighter(owner);
+      const s = this.side(owner);
+      if (!this.alive(f) || s.rideUntil > 0 || f.alpha < 0.05) continue;
+      if (s.answerAt > now) {
+        const wait = 1 - (s.answerAt - now) / PRAYER_ANSWER_MS;
+        prayerSigil(face, this.col(owner), f.x, f.y - 68, wait, t, f.alpha);
+      }
+      if (s.blessUntil > now) {
+        blessingShell(air, this.col(owner), f.x, f.y, t, f.alpha * Phaser.Math.Clamp((s.blessUntil - now) / 400, 0, 1));
+      }
+    }
+    // Your own sight, pulled: a small gold ring where your aim has actually gone.
+    const p = this.api.player;
+    if (this.alive(p) && p.gazeTurnRad > 0 && p.gazeUntil > Date.now()) {
+      const c = this.api.pointer;
+      const b = p.bendGazePoint(c.x, c.y);
+      const tint = this.col(this.isDevotion('npc') ? 'npc' : 'player');
+      face.lineStyle(1, tint(DEV.gold), 0.45);
+      face.lineBetween(c.x, c.y, b.x, b.y);
+      face.lineStyle(2, tint(DEV.holy), 0.85);
+      face.strokeCircle(b.x, b.y, 6);
+      face.fillStyle(tint(DEV.white), 0.9);
+      face.fillCircle(b.x, b.y, 1.6);
+    }
   }
 
   // ── SummonPurgeTarget ──────────────────────────────────────────────────────
@@ -1776,6 +2221,15 @@ export class PassionKit implements SummonPurgeTarget {
       razed++;
       report?.(c.x, c.y);
       this.fx(c.owner).sparkle(c.x, c.y - 40, 10, 30, DEV.pale, 600);
+    }
+    // The Ark is a thing somebody set down, too.
+    for (let i = this.arks.length - 1; i >= 0; i--) {
+      const a = this.arks[i];
+      if (a.owner === exceptOwner || Phaser.Math.Distance.Between(x, y, a.x, a.y) > radius) continue;
+      this.arks.splice(i, 1);
+      razed++;
+      report?.(a.x, a.y);
+      this.fx(a.owner).sparkle(a.x, a.y - 20, 12, 34, DEV.gold, 700);
     }
     return razed;
   }

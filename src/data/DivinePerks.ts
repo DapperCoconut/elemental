@@ -235,16 +235,6 @@ export const DIVINE_PERKS: PerkDef[] = [
     elementId: 'electricity',
   },
   {
-    id: 'molten',
-    name: 'Molten',
-    emoji: '🌋',
-    color: 0xff5522,
-    description: 'Your Pressure Bomb hits 20% harder but sears you with a burn each time. Flame Nuke becomes an eruption: a screen-wide mushroom cloud for 100 damage to everyone including you, leaving the arena strewn with magma.',
-    ingredients: ['earth', 'fate'],
-    tier: 'divine',
-    elementId: 'fire',
-  },
-  {
     id: 'gold',
     name: 'Gold',
     emoji: '🗡️',

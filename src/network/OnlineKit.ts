@@ -23,7 +23,7 @@ export interface OnlineArenaApi {
   onTechMsg(msg: NetTechMsg): void;
   /** Silence upgrades: remote silence event (positions already un-mirrored). */
   onSilenceMsg(msg: NetSilenceMsg): void;
-  /** Illusion: blink, mask, grab and the Guise clone (positions already un-mirrored). */
+  /** Illusion: shift, mask, grab and the Guise clone (positions already un-mirrored). */
   onIllusionMsg(msg: NetIllusionMsg): void;
   /** Psychic: either half of the foreknowledge relay — their queue, or their hands on ours. */
   onPsychicMsg(msg: NetPsychicMsg): void;
@@ -332,7 +332,7 @@ export class OnlineKit {
       t: 'fx',
       e: collectNetStatuses(npc, now, this.api.gameNow()),
       spd: Math.round(Math.min(1, this.api.npcSpeedMult()) * 1000) / 1000,
-      cd: Math.round(Math.max(1, npc.cooldownMult * npc.goldCooldownMult) * 1000) / 1000,
+      cd: Math.round(Math.max(1, npc.cooldownMult * npc.goldCooldownMult * npc.psychicCooldownMult) * 1000) / 1000,
     });
   }
 
@@ -493,21 +493,20 @@ export class OnlineKit {
         }
         break;
       case 'ill':
-        // The clone, the swap and a dagger's throw carry positions, which mirror like every
-        // other coordinate. The mask and the grab carry none.
-        if (msg.k === 'clone' || msg.k === 'retrick' || msg.k === 'blink') {
+        // The clone and the swap carry positions, which mirror like every other coordinate.
+        // The mask, the grab and the shift carry none.
+        if (msg.k === 'clone' || msg.k === 'retrick') {
           this.api.onIllusionMsg({ ...msg, x: this.mirrorX(msg.x) });
         } else {
           this.api.onIllusionMsg(msg);
         }
         break;
       case 'psy':
-        // Piece moves, queen slides, castling and the Utter Focus route carry positions, which
-        // mirror like every other coordinate. The queue and the focus heartbeat carry none.
+        // Piece moves, queen slides and castling carry positions, which mirror like every other
+        // coordinate. The queue and Pre-move carry none — and Pre-move's keys are not mirrored:
+        // the prediction is of the key pressed, not of the direction it moves you on screen.
         if (msg.k === 'move' || msg.k === 'qmove' || msg.k === 'castle') {
           this.api.onPsychicMsg({ ...msg, x: this.mirrorX(msg.x) });
-        } else if (msg.k === 'route') {
-          this.api.onPsychicMsg({ ...msg, pts: msg.pts.map((v, i) => (i % 2 === 0 ? this.mirrorX(v) : v)) });
         } else {
           this.api.onPsychicMsg(msg);
         }

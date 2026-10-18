@@ -8,7 +8,7 @@ import { HealthBar } from '../../combat/HealthBar';
 import { Sfx } from '../../audio';
 import {
   ILL, IllusionAvatar, IllusionColorFn, IllusionFx,
-  gateway, illusionDagger, phantomFigure, warpPane,
+  illusionBomb, phantomFigure, spentTint, warpPane,
 } from './IllusionVisuals';
 
 type Owner = 'player' | 'npc';
@@ -30,8 +30,25 @@ const VEIL_MS = 6000;
 const VEIL_STANDOFF = 78;
 const VEIL_HALF_LEN = 82;
 const VEIL_HALF_THICK = 13;
-/** Radians a shot is kicked by. Sign is a coin flip per shot, per pane. */
-const VEIL_DEFLECT = Math.PI / 6;
+/** Radians an enemy shot is kicked by. Sign is a coin flip per shot, per pane. */
+const VEIL_DEFLECT = Math.PI / 18;
+/**
+ * The illusion bullets a pane spins off one of its owner's Crack Shots: four fanned either side
+ * of the real one and a fifth trailing straight behind it, so the real bullet is never the
+ * obvious odd one out. Degrees off the real heading, and a speed scale for each.
+ */
+const DECOY_FAN: Array<{ deg: number; speed: number }> = [
+  { deg: -22, speed: 1 }, { deg: -11, speed: 0.94 }, { deg: 11, speed: 0.94 }, { deg: 22, speed: 1 },
+  { deg: 0, speed: 0.8 },
+];
+const DECOY_LIFE_MS = 1800;
+/** How close anything has to come to an illusion bullet to count as hitting it. */
+const DECOY_HIT_R = 12;
+/**
+ * The owner's own shots can pop their own illusions too — "any source" — but not in the first
+ * moment of their life, when the real bullet they split from is still lying on top of them.
+ */
+const DECOY_ARM_MS = 220;
 
 // ── Relocate (R) / Illusion Dance (Q) ────────────────────────────────────────
 /** How far inside a corner you actually land, so you never arrive stuck in the wall. */
@@ -58,22 +75,6 @@ const CLONE_BOT_RANGE = 210;
 
 const ARENA_PAD = 32;
 
-// ── Mastery: Reality Shift (passive) ─────────────────────────────────────────
-/** How far in from its wall a doorway stands. Far enough that nobody clips the world edge. */
-const GATE_INSET = 52;
-const GATE_HALF_W = 40;
-const GATE_HALF_H = 30;
-/** How close the owner's centre has to get to the arch before they are through it. */
-const GATE_R = 34;
-/**
- * How far past the far doorway you actually arrive. Larger than `GATE_R`, so you are never
- * standing inside the thing you just came out of — otherwise a single walk-in would chain
- * across every gateway on the map in four frames.
- */
-const GATE_ARRIVE_PUSH = 72;
-/** Belt and braces on top of that: no second trip for this long. */
-const GATE_RELOCK_MS = 700;
-
 // ── Mastery: Masquerade (bindable) ───────────────────────────────────────────
 const MASK_COOLDOWN_MS = 14000;
 /** What the mask is worth. Also the number the opponent's damage indicators are divided by. */
@@ -96,8 +97,12 @@ const NPC_MASK_OPENING_MS = 3500;
 const NPC_MASK_REGRIP_MS = 2500;
 
 // ── Duplication (E+) ─────────────────────────────────────────────────────────
-/** Radians either side of the incoming heading the two halves leave on. */
-const DUP_SPREAD = Math.PI / 7;
+/** How long the doubled Crack Shot lasts once you step back out of the pane you spent. */
+const DUP_MS = 3000;
+/** How far either side of the aim line the two bullets of a doubled shot leave from. */
+const DUP_OFFSET = 9;
+/** Slack across a pane's thickness for "walked through it" — roughly a body's radius. */
+const DUP_WALK_SLACK = 16;
 
 // ── Phantom (R+) ─────────────────────────────────────────────────────────────
 const PHANTOM_FUSE_MS = 1000;
@@ -110,15 +115,37 @@ const PHANTOM_SLOW_MULT = 0.7;
 const RETRICK_MS = 10000;
 const RETRICK_MULT = 1.25;
 
-// ── Blade Dance (Q+) ─────────────────────────────────────────────────────────
-const BLADE_COUNT = 10;
-const BLADE_DAMAGE = 15;
-const BLADE_SPEED = 660;
-/** Total width of the fan. */
-const BLADE_SPREAD = Math.PI / 3;
-const BLADE_LIFE_MS = 1500;
-const BLADE_HIT_R = 26;
-const BLADE_SIZE = 13;
+// ── Bomb Dance (Q+) ──────────────────────────────────────────────────────────
+const BOMB_COUNT = 12;
+const BOMB_DAMAGE = 14;
+const BOMB_SPEED_MIN = 210;
+const BOMB_SPEED_MAX = 290;
+/** Half-width of the cone the volley leaves in, around the line to the enemy. */
+const BOMB_SPREAD = Math.PI / 3;
+/** The fastest a bomb's wander can swing it, in radians a second, either way. */
+const BOMB_TURN_MAX = 4.6;
+/** How hard each bomb is pulled back towards the enemy, in radians a second. */
+const BOMB_HOMING = 1.1;
+const BOMB_LIFE_MS = 4200;
+/** How close an enemy has to come before a bomb goes off… */
+const BOMB_TRIGGER_R = 44;
+/** …and how far the blast reaches when it does. */
+const BOMB_AOE_R = 105;
+const BOMB_SIZE = 9;
+/** How long a blast leaves its victims facing the wrong way. */
+const TURN_MS = 2600;
+/**
+ * Online: a remote illusionist's teleport arrives on the state stream a moment after the cast
+ * that caused it, so their bombs wait this long to leave from where they actually landed.
+ */
+const BOMB_REMOTE_DELAY_MS = 160;
+
+// ── Mastery: Reality Shift (passive) ─────────────────────────────────────────
+/** This much damage inside the window and you are somewhere else. */
+const SHIFT_DAMAGE = 50;
+const SHIFT_WINDOW_MS = 2500;
+/** After a shift, the tally starts again from nothing and cannot fire for this long. */
+const SHIFT_LOCK_MS = 1500;
 
 // ── World objects ────────────────────────────────────────────────────────────
 
@@ -132,8 +159,6 @@ interface Shot {
    * is three or four full hits for one click.
    */
   through: Set<Fighter>;
-  /** Duplication (E+): true for a copy, and for the original that made one. Splits once only. */
-  split: boolean;
 }
 
 /** A pane of warped space. Immutable once hung — it never moves with its caster. */
@@ -144,8 +169,33 @@ interface Veil {
   ang: number;
   until: number;
   seed: number;
-  /** One kick per shot per pane, or a projectile crawling through would spiral. */
+  /** One kick (or one fan of illusions) per shot per pane, or a slow shot would spiral. */
   bent: Set<Projectile>;
+  /**
+   * E+ (Duplication): its owner has walked through it and spent it. Drawn grey from then on,
+   * and it can never double anybody's shots again — it still bends and still fans.
+   */
+  consumed: boolean;
+}
+
+/**
+ * An illusion bullet: the five a pane throws off alongside one of its owner's Crack Shots.
+ * Kit-owned rather than a group `Projectile`, so nothing in the game can be hurt by one — but
+ * anything that hurts one (a shot, a blast, a husk's spit, even its owner's own bullets) cracks
+ * it, and the crack pays out exactly as a real bullet's wall crack does.
+ */
+interface Decoy {
+  owner: Owner;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  ang: number;
+  bornAt: number;
+  diesAt: number;
+  /** The real bullet it was split from, which lies on top of it at birth and must not pop it. */
+  parent: Projectile | null;
+  img: Phaser.GameObjects.Image;
 }
 
 /**
@@ -175,17 +225,31 @@ interface Mark {
   until: number;
 }
 
-/** One Blade Dance dagger in flight. Kit-owned, so a Guise can keep it off the other screen. */
-interface Blade {
+/**
+ * One Bomb Dance bomb. Kit-owned, so a Guise can keep it off the other screen. It flies roughly
+ * at the enemy but never straight: its heading wanders on a turn rate that is re-rolled every
+ * fraction of a second, with a gentle pull back towards the target so the volley as a whole
+ * still arrives.
+ */
+interface Bomb {
   owner: Owner;
   x: number;
   y: number;
-  vx: number;
-  vy: number;
-  ang: number;
+  heading: number;
+  speed: number;
+  turn: number;
+  nextTurnAt: number;
   diesAt: number;
-  /** A dagger is spent on the first body it finds, but the set keeps a miss honest. */
-  hit: Set<Fighter>;
+  seed: number;
+  /** Online, a remote illusionist's bombs are drawn but never resolved — their sim does that. */
+  live: boolean;
+}
+
+/** Online: a remote illusionist's volley, waiting for their teleport to reach us. */
+interface PendingVolley {
+  owner: Owner;
+  count: number;
+  at: number;
 }
 
 interface Side {
@@ -195,7 +259,7 @@ interface Side {
   /** Latched so the flag can be handed back exactly once when the dance ends. */
   phaseInstalled: boolean;
   /**
-   * Blade Dance (Q+): `rawDamageTaken` as it stood at the last hop. The upgrade fires when the
+   * Bomb Dance (Q+): `rawDamageTaken` as it stood at the last hop. The upgrade fires when the
    * next hop arrives and this number hasn't moved — which is what "without taking any damage
    * since the last teleport" means, measured at the one place every hit in the game is tallied.
    */
@@ -204,8 +268,16 @@ interface Side {
   masked: boolean;
   /** When the mask went on. The 14s cooldown runs from here, not from when it came off. */
   maskCastAt: number;
-  /** Reality Shift (mastery): the earliest this side may take another gateway. */
-  gateLockUntil: number;
+  /** Reality Shift (mastery): recent hits, newest last, for the 50-in-2.5s tally. */
+  shiftLog: Array<{ t: number; amt: number }>;
+  /** `rawDamageTaken` as it stood last frame; -1 before the first look. */
+  shiftRaw: number;
+  /** …and the earliest the passive may fire again. */
+  shiftLockUntil: number;
+  /** E+ (Duplication): Crack Shots come out in pairs until here. */
+  dupUntil: number;
+  /** The pane this side spent, held on to while they are still standing in it. */
+  dupVeil: Veil | null;
   /** Guise (F): when the clone fades. 0 when no clone is out. */
   guiseUntil: number;
   /** Latched so the fighter's size, alpha and visibility are handed back exactly once. */
@@ -230,7 +302,8 @@ function makeSide(owner: Owner): Side {
     owner, danceUntil: 0, nextHopAt: 0, phaseInstalled: false, damageMark: 0,
     // Ready on the first frame of a match: readiness is measured against `scene.time.now`,
     // which is already large by the time a kit is built, so 0 would lock the key out.
-    masked: false, maskCastAt: -MASK_COOLDOWN_MS, gateLockUntil: 0,
+    masked: false, maskCastAt: -MASK_COOLDOWN_MS,
+    shiftLog: [], shiftRaw: -1, shiftLockUntil: 0, dupUntil: 0, dupVeil: null,
     guiseUntil: 0, guiseInstalled: false, cloneX: 0, cloneY: 0, cloneVx: 0, cloneVy: 0,
     cloneStored: 0, cloneTexture: '', cloneScale: 1, cloneSentAt: 0, retrickUntil: 0,
   };
@@ -298,7 +371,7 @@ export class IllusionKit {
   private npcAvatar: IllusionAvatar | null = null;
   /** Panes and afterimages: under the fighters, over the shared projectile layer. */
   private fieldGfx: Phaser.GameObjects.Graphics | null = null;
-  /** Blade Dance daggers: over the fighters, so a fan of them is unmissable. */
+  /** Bomb Dance bombs: over the fighters, so a volley of them is unmissable. */
   private airGfx: Phaser.GameObjects.Graphics | null = null;
   /**
    * The opponent's effects while their Guise is up: a real `IllusionFx` whose every graphic is
@@ -318,7 +391,24 @@ export class IllusionKit {
   private shots: Shot[] = [];
   private veils: Veil[] = [];
   private phantoms: Phantom[] = [];
-  private blades: Blade[] = [];
+  private decoyShots: Decoy[] = [];
+  private bombs: Bomb[] = [];
+  private pendingVolleys: PendingVolley[] = [];
+  /**
+   * Everybody a Bomb Dance blast has turned around. Kept so the turn can be handed back (its
+   * quarter zeroed) when it lapses, and so a bot or husk's walking can be turned with it.
+   */
+  private turned = new Set<Fighter>();
+  /**
+   * The velocity this kit last wrote onto each turned body. An AI that sets its velocity every
+   * frame gets turned every frame; one that left last frame's alone must not be turned twice.
+   */
+  private turnedVel = new Map<Fighter, { x: number; y: number }>();
+  /** The local camera's turn and the zoom factor that fits the arena inside it while sideways. */
+  private camRot = 0;
+  private camZoomF = 1;
+  /** The camera those were written onto — a restarted scene has a fresh one to leave alone. */
+  private camRef: Phaser.Cameras.Scene2D.Camera | null = null;
   private marks = new Map<Fighter, Mark>();
   /**
    * Every fighter this kit wrote `illusionIncomingMult` onto last frame. Rewriting from
@@ -350,7 +440,6 @@ export class IllusionKit {
   private npcMaskAt = 0;
   /** Per-side reach cooldown. Without it a spam-clicker takes 15 a frame off an empty face. */
   private grabLockUntil: Record<Owner, number> = { player: 0, npc: 0 };
-  private gateSeed = Math.random() * 999;
 
   constructor(api: IllusionArenaApi) {
     this.api = api;
@@ -462,7 +551,14 @@ export class IllusionKit {
     this.shots = [];
     this.veils = [];
     this.phantoms = [];
-    this.blades = [];
+    for (const d of this.decoyShots) d.img.destroy();
+    this.decoyShots = [];
+    this.bombs = [];
+    this.pendingVolleys = [];
+    for (const f of this.turned) { f.viewTurnedUntil = 0; f.viewTurnQuarter = 0; }
+    this.turned.clear();
+    this.turnedVel.clear();
+    this.restoreCamera();
     this.aimX = 0;
     this.aimY = 0;
     this.npcAimX = 0;
@@ -473,7 +569,6 @@ export class IllusionKit {
     this.prevPointerDown = false;
     this.npcMaskAt = 0;
     this.grabLockUntil = { player: 0, npc: 0 };
-    this.gateSeed = Math.random() * 999;
 
     this.playerAvatar?.destroy(); this.playerAvatar = null;
     this.npcAvatar?.destroy(); this.npcAvatar = null;
@@ -523,21 +618,31 @@ export class IllusionKit {
     const ang = Math.atan2(ty - f.y, tx - f.x);
     const sx = f.x + Math.cos(ang) * 26;
     const sy = f.y + Math.sin(ang) * 26;
-    this.spawnShot(owner, sx, sy, ang, false);
+    if (this.dupActive(owner)) {
+      // E+ (Duplication): two bullets side by side on the same heading, one either side of the
+      // aim line — a pair, not a spread, so both still go where you pointed.
+      const px = -Math.sin(ang) * DUP_OFFSET;
+      const py = Math.cos(ang) * DUP_OFFSET;
+      this.spawnShot(owner, sx + px, sy + py, ang);
+      this.spawnShot(owner, sx - px, sy - py, ang);
+      this.fx(owner).split(sx, sy, ang, 0.18, ILL.spark);
+    } else {
+      this.spawnShot(owner, sx, sy, ang);
+    }
 
     this.avatar(owner)?.play('punch', ang);
     this.fx(owner).shards(sx, sy, 3, 16, ILL.crimson, 260, 6);
   }
 
-  /** One bullet, tracked. Shared by the ability and by Duplication's copy. */
-  private spawnShot(owner: Owner, x: number, y: number, ang: number, split: boolean): Shot {
+  /** One bullet, tracked. Shared by the ability and by Duplication's pair. */
+  private spawnShot(owner: Owner, x: number, y: number, ang: number): Shot {
     const proj = new Projectile(this.api.scene, x, y, 'proj-illusion-crack', SHOT_DAMAGE, owner === 'player');
     proj.setRotation(ang);
     this.api.projectiles.add(proj);
     proj.launch(Math.cos(ang) * SHOT_SPEED, Math.sin(ang) * SHOT_SPEED);
     // Guise: a bullet out of nowhere is the whole point. It still flies and still hurts.
     if (this.hides(owner)) proj.setAlpha(0);
-    const shot: Shot = { owner, proj, through: new Set(), split };
+    const shot: Shot = { owner, proj, through: new Set() };
     this.shots.push(shot);
     return shot;
   }
@@ -583,7 +688,7 @@ export class IllusionKit {
     // The pane stands across the aim, not along it — you hang it between yourself and them.
     this.veils.push({
       owner, x, y, ang: ang + Math.PI / 2, until: this.now + VEIL_MS,
-      seed: Math.random() * 999, bent: new Set(),
+      seed: Math.random() * 999, bent: new Set(), consumed: false,
     });
 
     this.avatar(owner)?.play('sweep', ang);
@@ -597,10 +702,14 @@ export class IllusionKit {
     const f = this.fighter(owner);
     const fromX = f?.x ?? 0;
     const fromY = f?.y ?? 0;
-    const leaves = !!f && f.active && f.hp > 0 && this.up(owner, 'r');
+    const alive = !!f && f.active && f.hp > 0;
+    const leaves = alive && this.up(owner, 'r');
     this.teleportToCorner(owner, true);
     // R+ (Phantom): the understudy stays where the real one was standing.
     if (leaves) this.dropPhantom(owner, fromX, fromY);
+    // Q+ (Bomb Dance): a Relocate taken mid-Dance is one more teleport, and every teleport in
+    // the Dance throws a volley — this one with no clean-hop condition, because it was pressed.
+    if (alive && this.isDancing(owner)) this.danceVolley(owner);
   }
 
   /**
@@ -1045,94 +1154,64 @@ export class IllusionKit {
     this.avatar(owner)?.play('dash');
     this.avatar(owner)?.setScattered(true);
     if (announce) this.say(owner, to.x, to.y - 46, '✨ RELOCATE', this.hex(ILL.violet));
-    // Recorded unconditionally, mastery or not — this is how the mastery is earned. Both the
-    // R and the Dance's own hops come through here, and the gateways record their own.
+    // Recorded unconditionally, mastery or not — this is how the mastery is earned. The R, the
+    // Dance's own hops and a mastered Reality Shift all come through here.
     if (owner === 'player') this.api.recordMasteryStat('teleports', 1);
   }
 
   // ── Mastery: Reality Shift ─────────────────────────────────────────────────
 
-  /** Whether this side is a mastered illusionist, and therefore owns the four doorways. */
+  /** Whether this side is a mastered illusionist, and therefore shifts out of a beating. */
   private hasRealityShift(owner: Owner): boolean {
     return owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive && this.isIllusion('npc');
   }
 
+  /** How much of the 50 this side has taken inside the current window. */
+  private shiftTally(owner: Owner, time: number): number {
+    let sum = 0;
+    for (const e of this.side(owner).shiftLog) if (time - e.t <= SHIFT_WINDOW_MS) sum += e.amt;
+    return sum;
+  }
+
   /**
-   * The four doorways: one standing in the middle of each wall, facing into the room.
-   * Recomputed rather than cached because the arena's size is a live value — a World Shift map
-   * or a resize would otherwise leave the arches hanging in the wrong place all match.
+   * Take 50 inside two and a half seconds and you are in a random corner. Read off
+   * `rawDamageTaken`, the one tally every hit in the game is billed against, so blasts, beams,
+   * bleeds and shots all count the same.
+   *
+   * A remote illusionist's tally belongs to their sim — it is the only one that sees every hit
+   * they take — so ours never fires it for them; it tells us with `k:'shift'` instead.
    */
-  private gates(): Array<{ x: number; y: number; inward: number }> {
-    const cx = (this.left + this.right) / 2;
-    const cy = (this.top + this.bottom) / 2;
-    return [
-      { x: cx, y: this.top + GATE_INSET, inward: Math.PI / 2 },
-      { x: cx, y: this.bottom - GATE_INSET, inward: -Math.PI / 2 },
-      { x: this.left + GATE_INSET, y: cy, inward: 0 },
-      { x: this.right - GATE_INSET, y: cy, inward: Math.PI },
-    ];
-  }
-
-  /** 0–1 for how close this side's owner is to walking into a given doorway. Paint only. */
-  private gateCharge(g: { x: number; y: number }): number {
-    let best = 0;
+  private updateShift(time: number): void {
     for (const owner of ['player', 'npc'] as Owner[]) {
       if (!this.hasRealityShift(owner)) continue;
+      if (owner === 'npc' && this.api.isOnline) continue;
       const f = this.fighter(owner);
       if (!f || !f.active || f.hp <= 0) continue;
-      const d = Phaser.Math.Distance.Between(f.x, f.y, g.x, g.y);
-      best = Math.max(best, Phaser.Math.Clamp(1 - (d - GATE_R) / 110, 0, 1));
-    }
-    return best;
-  }
-
-  private updateGates(time: number): void {
-    for (const owner of ['player', 'npc'] as Owner[]) {
-      if (!this.hasRealityShift(owner)) continue;
       const s = this.side(owner);
-      if (time < s.gateLockUntil) continue;
-      const f = this.fighter(owner);
-      if (!f || !f.active || f.hp <= 0) continue;
 
-      const gs = this.gates();
-      const at = gs.findIndex((g) => Phaser.Math.Distance.Between(f.x, f.y, g.x, g.y) <= GATE_R);
-      if (at < 0) continue;
-      const others = gs.filter((_, i) => i !== at);
-      this.stepThroughGate(owner, gs[at], others[Math.floor(Math.random() * others.length)], time);
+      const raw = f.rawDamageTaken;
+      if (s.shiftRaw < 0) s.shiftRaw = raw;
+      const took = raw - s.shiftRaw;
+      s.shiftRaw = raw;
+      if (took > 0) s.shiftLog.push({ t: time, amt: took });
+      while (s.shiftLog.length && time - s.shiftLog[0].t > SHIFT_WINDOW_MS) s.shiftLog.shift();
+
+      if (time < s.shiftLockUntil || this.shiftTally(owner, time) < SHIFT_DAMAGE) continue;
+      s.shiftLog = [];
+      s.shiftLockUntil = time + SHIFT_LOCK_MS;
+      this.realityShift(owner);
+      if (owner === 'player' && this.api.isOnline) this.api.sendIllusionMsg({ t: 'ill', k: 'shift' });
     }
   }
 
-  /** In one doorway, out of another. The only teleport in the kit that nobody has to press. */
-  private stepThroughGate(
-    owner: Owner,
-    from: { x: number; y: number },
-    to: { x: number; y: number; inward: number },
-    time: number,
-  ): void {
+  /** Out of the beating and into a corner — and, mid-Dance, one more volley of bombs. */
+  private realityShift(owner: Owner): void {
     const f = this.fighter(owner);
-    const s = this.side(owner);
-    s.gateLockUntil = time + GATE_RELOCK_MS;
-
-    // Arrive *past* the far arch rather than inside it, or the trip would immediately chain.
-    const ax = Phaser.Math.Clamp(to.x + Math.cos(to.inward) * GATE_ARRIVE_PUSH, this.left + 24, this.right - 24);
-    const ay = Phaser.Math.Clamp(to.y + Math.sin(to.inward) * GATE_ARRIVE_PUSH, this.top + 24, this.bottom - 24);
-
-    const fx = this.fx(owner);
-    fx.blinkOut(from.x, from.y, ILL.warp);
-    fx.ring(from.x, from.y, 8, GATE_HALF_W + 18, ILL.cyan, 380);
-    // Online: a replica's position belongs to the peer's state stream — same rule as Relocate.
-    if (!(owner === 'npc' && this.api.isOnline)) this.body(f).reset(ax, ay);
-    fx.blinkIn(ax, ay, ILL.magenta);
-    fx.ring(ax, ay, GATE_HALF_W + 18, 10, ILL.violet, 420);
-    this.sfx(owner, 'blink', ax, { volume: 0.7, rate: 1.15 });
-    this.avatar(owner)?.play('dash');
-    this.avatar(owner)?.setScattered(true);
-    this.say(owner, ax, ay - 48, '🚪 REALITY SHIFT', this.hex(ILL.warp));
-    if (owner === 'player') this.api.recordMasteryStat('teleports', 1);
-
-    // The passive's whole reason to exist mid-ultimate: a gateway taken during the Dance is a
-    // free extra fan of knives, on top of whatever the Dance's own hop was going to throw.
-    if (this.side(owner).danceUntil > time) this.bladeDance(owner);
+    if (!f || !f.active || f.hp <= 0) return;
+    this.teleportToCorner(owner, false);
+    this.fx(owner).ring(f.x, f.y, 10, 54, ILL.warp, 420);
+    this.say(owner, f.x, f.y - 48, '🚪 REALITY SHIFT', this.hex(ILL.warp));
+    if (this.isDancing(owner)) this.danceVolley(owner);
   }
 
   // ── Mastery: Masquerade ────────────────────────────────────────────────────
@@ -1322,21 +1401,28 @@ export class IllusionKit {
     // Phantom marks and a Guise outlive their caster's presence in a match (an online opponent
     // can mark you and then die), so their bookkeeping has to run even when neither side is
     // Illusion — a mark left un-expired would leave a body soft for the rest of the fight.
+    // A Bomb Dance turn is the same: the local camera has to be handed back even after the
+    // illusionist who turned it has gone.
     if (!playerIs && !npcIs && this.marks.size === 0 && this.touched.size === 0
-        && !this.guised('player') && !this.guised('npc')) return;
+        && !this.guised('player') && !this.guised('npc')
+        && this.turned.size === 0 && this.camRot === 0 && this.camZoomF === 1
+        && this.api.player?.viewTurnedUntil <= time) return;
 
     this.vizT += delta / 1000;
     this.ensureLayers();
 
     this.updateShots(time);
     this.updateVeils(time);
+    this.updateDecoys(time, delta);
     this.updateGuise(time, delta);
     this.updatePhantoms(time);
-    this.updateBlades(time, delta);
-    this.updateGates(time);
+    this.updateVolleys(time);
+    this.updateBombs(time, delta);
+    this.updateShift(time);
     this.updateMasquerade(time);
     for (const owner of ['player', 'npc'] as Owner[]) this.updateDance(owner, time);
     this.updateMarks(time);
+    this.updateTurned(time, delta);
     this.refreshIncoming(time);
     this.updateAvatars(delta, playerIs, npcIs);
     this.updateClones(delta);
@@ -1349,7 +1435,7 @@ export class IllusionKit {
   private ensureLayers(): void {
     const { scene } = this.api;
     // Fighters are depth 5. The panes belong behind them (they are in the floor's plane and
-    // must never hide a character); the daggers belong in front.
+    // must never hide a character); the bombs belong in front.
     if (!this.fieldGfx) this.fieldGfx = scene.add.graphics().setDepth(4);
     if (!this.airGfx) this.airGfx = scene.add.graphics().setDepth(8);
   }
@@ -1408,34 +1494,77 @@ export class IllusionKit {
     for (let i = this.veils.length - 1; i >= 0; i--) {
       const v = this.veils[i];
       if (time >= v.until) {
-        this.fx(v.owner).ring(v.x, v.y, VEIL_HALF_LEN, 14, ILL.warp, 320);
+        this.fx(v.owner).ring(v.x, v.y, VEIL_HALF_LEN, 14, v.consumed ? ILL.ghost : ILL.warp, 320);
         this.veils.splice(i, 1);
         continue;
       }
       this.bendThrough(v);
     }
+    for (const owner of ['player', 'npc'] as Owner[]) this.updateDuplication(owner, time);
+  }
+
+  /** Whether a point is inside a pane, with some slack across its thickness. */
+  private inPane(v: Veil, x: number, y: number, slack: number): boolean {
+    const ca = Math.cos(-v.ang);
+    const sa = Math.sin(-v.ang);
+    const dx = x - v.x;
+    const dy = y - v.y;
+    const along = dx * ca - dy * sa;
+    const across = dx * sa + dy * ca;
+    return Math.abs(along) <= VEIL_HALF_LEN && Math.abs(across) <= VEIL_HALF_THICK + slack;
   }
 
   /**
-   * Anything crossing the pane comes out crooked — including the caster's own shots. That is
-   * deliberate: a wall that only inconveniences the opponent would be a free block, and this
-   * element already has one of those. Making it symmetrical turns the pane into a placement
-   * decision rather than a button.
+   * E+ (Duplication): walking through one of your own panes spends it — it goes grey — and your
+   * Crack Shots come out in pairs for as long as you stand in it and three seconds after you
+   * leave. A spent pane never doubles anything again, but still bends and still fans.
+   */
+  private updateDuplication(owner: Owner, time: number): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (!f || !f.active || f.hp <= 0) { s.dupVeil = null; return; }
+
+    // Still standing in the pane you spent: the three seconds have not started yet.
+    if (s.dupVeil) {
+      if (this.veils.includes(s.dupVeil) && this.inPane(s.dupVeil, f.x, f.y, DUP_WALK_SLACK)) {
+        s.dupUntil = time + DUP_MS;
+        return;
+      }
+      s.dupVeil = null;
+    }
+    if (!this.isIllusion(owner) || !this.up(owner, 'e')) return;
+
+    const v = this.veils.find((p) => p.owner === owner && !p.consumed
+      && this.inPane(p, f.x, f.y, DUP_WALK_SLACK));
+    if (!v) return;
+    v.consumed = true;
+    s.dupVeil = v;
+    s.dupUntil = time + DUP_MS;
+    this.fx(owner).ring(f.x, f.y, 8, 44, ILL.spark, 340);
+    this.fx(owner).shards(v.x, v.y, 8, VEIL_HALF_LEN * 0.6, ILL.ghost, 420, 6);
+    this.sfx(owner, 'blink', f.x, { volume: 0.5, rate: 1.4 });
+    this.say(owner, f.x, f.y - 50, '✂️ DUPLICATION', this.hex(ILL.spark));
+  }
+
+  /** True while this side's Crack Shots come out in pairs. */
+  private dupActive(owner: Owner): boolean {
+    return this.side(owner).dupUntil > this.now;
+  }
+
+  /**
+   * What a pane does to a shot depends on whose shot it is.
+   *
+   * Somebody else's comes out 10° crooked, on a fresh coin flip. The owner's own shots pass
+   * straight — and one of their Crack Shots comes out with five illusion bullets fanned around
+   * it, none of which can hurt anyone but every one of which cracks for 10 if anything hurts it.
    */
   private bendThrough(v: Veil): void {
-    const ca = Math.cos(-v.ang);
-    const sa = Math.sin(-v.ang);
+    const ownerIsPlayer = v.owner === 'player';
     for (const child of this.api.projectiles.getChildren()) {
       const proj = child as Projectile;
       if (!proj.active || !proj.body) continue;
       if (v.bent.has(proj)) continue;
-
-      // Into the pane's own frame: along its length, and across its thickness.
-      const dx = proj.x - v.x;
-      const dy = proj.y - v.y;
-      const along = dx * ca - dy * sa;
-      const across = dx * sa + dy * ca;
-      if (Math.abs(along) > VEIL_HALF_LEN || Math.abs(across) > VEIL_HALF_THICK) continue;
+      if (!this.inPane(v, proj.x, proj.y, 0)) continue;
 
       const body = proj.body as Phaser.Physics.Arcade.Body;
       const speed = Math.hypot(body.velocity.x, body.velocity.y);
@@ -1443,22 +1572,9 @@ export class IllusionKit {
       const heading = Math.atan2(body.velocity.y, body.velocity.x);
       v.bent.add(proj);
 
-      // E+ (Duplication): a Crack Shot doesn't come out of a pane bent, it comes out twice.
-      // The pane still only touches a given bullet once, and a copy may not be copied — so
-      // one shot through one pane is exactly two shots, however long it spends inside.
-      const shot = this.shots.find((sh) => sh.proj === proj);
-      if (shot && !shot.split && this.up(shot.owner, 'e')) {
-        shot.split = true;
-        const outA = heading + DUP_SPREAD;
-        const outB = heading - DUP_SPREAD;
-        body.setVelocity(Math.cos(outA) * speed, Math.sin(outA) * speed);
-        proj.setRotation(outA);
-        const copy = this.spawnShot(shot.owner, proj.x, proj.y, outB, true);
-        // The copy is born inside the pane it was born from, so it has to be pre-forgiven
-        // or the same pane would immediately bend the thing it just made.
-        v.bent.add(copy.proj);
-        this.fx(v.owner).split(proj.x, proj.y, heading, DUP_SPREAD);
-        if (!this.hides(v.owner)) this.api.spawnHitFlash(proj.x, proj.y, ILL.spark);
+      if (proj.isFromPlayer === ownerIsPlayer) {
+        const shot = this.shots.find((sh) => sh.proj === proj);
+        if (shot) this.spawnDecoys(v, proj, heading, speed);
         continue;
       }
 
@@ -1469,11 +1585,99 @@ export class IllusionKit {
 
       this.fx(v.owner).shards(proj.x, proj.y, 4, 14, ILL.warp, 300, 6);
       if (!this.hides(v.owner)) this.api.spawnHitFlash(proj.x, proj.y, ILL.warp);
-      // Only somebody else's shot counts towards the mastery. The pane bending your own
-      // bullets is the ability working as designed, but firing into your own pane on a loop
-      // would be a grind rather than a skill, so it is worth nothing.
-      if (v.owner === 'player' && !proj.isFromPlayer) this.api.recordMasteryStat('veilDeflects', 1);
+      if (v.owner === 'player') this.api.recordMasteryStat('veilDeflects', 1);
     }
+  }
+
+  // ── Illusion bullets ───────────────────────────────────────────────────────
+
+  private spawnDecoys(v: Veil, parent: Projectile, heading: number, speed: number): void {
+    const { scene } = this.api;
+    const now = this.now;
+    const hidden = this.hides(v.owner);
+    for (const d of DECOY_FAN) {
+      const ang = heading + Phaser.Math.DegToRad(d.deg);
+      const sp = speed * d.speed;
+      // The same dart as the real thing. Telling them apart is meant to be the hard part.
+      const img = scene.add.image(parent.x, parent.y, 'proj-illusion-crack')
+        .setRotation(ang).setDepth(parent.depth).setAlpha(hidden ? 0 : 0.92);
+      this.decoyShots.push({
+        owner: v.owner, x: parent.x, y: parent.y,
+        vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, ang,
+        bornAt: now, diesAt: now + DECOY_LIFE_MS, parent, img,
+      });
+    }
+    this.fx(v.owner).split(parent.x, parent.y, heading, Phaser.Math.DegToRad(22), ILL.crimson);
+    this.fx(v.owner).shards(parent.x, parent.y, 5, 18, ILL.warp, 300, 6);
+    this.sfx(v.owner, 'blink', parent.x, { volume: 0.35, rate: 1.8 });
+  }
+
+  /**
+   * Illusion bullets in flight. Each one is popped by anything that would have hurt it: a
+   * projectile of either side's (an enemy's is stopped by it; the owner's own sails on), and —
+   * from `notifyAoe`, `tryHitClone` and the bombs — every blast and husk shot. At a wall or at
+   * the end of its life it simply fades: only being hit makes it crack.
+   */
+  private updateDecoys(time: number, delta: number): void {
+    if (this.decoyShots.length === 0) return;
+    const dt = delta / 1000;
+    const projs = this.api.projectiles.getChildren() as Projectile[];
+    for (let i = this.decoyShots.length - 1; i >= 0; i--) {
+      const d = this.decoyShots[i];
+      d.x += d.vx * dt;
+      d.y += d.vy * dt;
+
+      const out = d.x <= this.left + WALL_MARGIN || d.x >= this.right - WALL_MARGIN
+        || d.y <= this.top + WALL_MARGIN || d.y >= this.bottom - WALL_MARGIN;
+      if (out || time >= d.diesAt) {
+        this.fx(d.owner).shards(d.x, d.y, 4, 14, ILL.ghost, 280, 6);
+        d.img.destroy();
+        this.decoyShots.splice(i, 1);
+        continue;
+      }
+
+      const ownerIsPlayer = d.owner === 'player';
+      let hit: Projectile | null = null;
+      for (const p of projs) {
+        if (!p.active || !p.body || p.isHeal || p === d.parent) continue;
+        const own = p.isFromPlayer === ownerIsPlayer;
+        if (own && time < d.bornAt + DECOY_ARM_MS) continue;
+        if (Phaser.Math.Distance.Between(p.x, p.y, d.x, d.y) > DECOY_HIT_R + 6) continue;
+        hit = p;
+        break;
+      }
+      if (hit) {
+        // Somebody else's shot spends itself on the illusion; the owner's own carries on.
+        if (hit.isFromPlayer !== ownerIsPlayer) hit.destroy();
+        this.popDecoy(i);
+        continue;
+      }
+
+      d.img.setPosition(d.x, d.y);
+      if (!this.hides(d.owner)) d.img.setAlpha(0.8 + Math.sin(time * 0.04 + i) * 0.12);
+      else d.img.setAlpha(0);
+    }
+  }
+
+  /** An illusion bullet took a hit: it cracks, and the crack goes after its owner's enemy. */
+  private popDecoy(i: number): void {
+    const d = this.decoyShots[i];
+    if (!d) return;
+    this.decoyShots.splice(i, 1);
+    d.img.destroy();
+    this.crack(d.owner, d.x, d.y, d.ang + Math.PI);
+  }
+
+  /** Every illusion bullet inside a circle, popped — the way a blast reaches them. */
+  private popDecoysIn(x: number, y: number, radius: number): number {
+    let n = 0;
+    for (let i = this.decoyShots.length - 1; i >= 0; i--) {
+      const d = this.decoyShots[i];
+      if (Phaser.Math.Distance.Between(x, y, d.x, d.y) > radius + DECOY_HIT_R) continue;
+      this.popDecoy(i);
+      n++;
+    }
+    return n;
   }
 
   // ── Guise: Ruin Second Skin ────────────────────────────────────────────────
@@ -1521,19 +1725,43 @@ export class IllusionKit {
 
     if (time >= s.nextHopAt) {
       s.nextHopAt = time + DANCE_HOP_MS;
-      // Q+ (Blade Dance): decided before the jump, thrown after it — the fan has to come out
+      // Q+ (Bomb Dance): decided before the jump, thrown after it — the volley has to come out
       // of where the illusionist arrives, not out of where they left.
-      const clean = !!f && this.up(owner, 'q') && f.rawDamageTaken <= s.damageMark;
+      const clean = !!f && f.rawDamageTaken <= s.damageMark;
       this.teleportToCorner(owner, false);
-      if (clean) this.bladeDance(owner);
+      if (clean) this.danceVolley(owner);
       if (f) s.damageMark = f.rawDamageTaken;
     }
   }
 
-  // ── Blade Dance (Q+) ───────────────────────────────────────────────────────
+  // ── Bomb Dance (Q+) ────────────────────────────────────────────────────────
 
-  /** Five daggers, fanned at whoever is nearest, thrown the instant the dancer lands. */
-  private bladeDance(owner: Owner): void {
+  /**
+   * One Dance teleport's worth of bombs, if this side owns the upgrade: twelve, or twenty-four
+   * while Duplication is running. A remote illusionist's volley waits a beat so it leaves from
+   * where their state stream says they landed, not from where they were.
+   */
+  private danceVolley(owner: Owner): void {
+    if (!this.up(owner, 'q')) return;
+    const count = BOMB_COUNT * (this.dupActive(owner) ? 2 : 1);
+    if (owner === 'npc' && this.api.isOnline) {
+      this.pendingVolleys.push({ owner, count, at: this.now + BOMB_REMOTE_DELAY_MS });
+      return;
+    }
+    this.throwBombs(owner, count);
+  }
+
+  private updateVolleys(time: number): void {
+    for (let i = this.pendingVolleys.length - 1; i >= 0; i--) {
+      const v = this.pendingVolleys[i];
+      if (time < v.at) continue;
+      this.pendingVolleys.splice(i, 1);
+      this.throwBombs(v.owner, v.count);
+    }
+  }
+
+  /** The volley itself: a loose cone at whoever is nearest, every bomb on its own wander. */
+  private throwBombs(owner: Owner, count: number): void {
     const f = this.fighter(owner);
     if (!f || !f.active || f.hp <= 0) return;
 
@@ -1542,86 +1770,201 @@ export class IllusionKit {
     const base = target
       ? Math.atan2(target.y - f.y, target.x - f.x)
       : Math.atan2(aim.y - f.y, aim.x - f.x);
+    // Resolved only on the sim the bombs really belong to — see `Bomb.live`.
+    const live = !(owner === 'npc' && (this.api.isOnline || this.api.isInvasion));
 
-    for (let i = 0; i < BLADE_COUNT; i++) {
-      const spread = (i / (BLADE_COUNT - 1) - 0.5) * BLADE_SPREAD;
-      const ang = base + spread;
-      this.blades.push({
+    for (let i = 0; i < count; i++) {
+      const heading = base + (Math.random() * 2 - 1) * BOMB_SPREAD;
+      this.bombs.push({
         owner,
-        x: f.x + Math.cos(ang) * 24,
-        y: f.y + Math.sin(ang) * 24,
-        vx: Math.cos(ang) * BLADE_SPEED,
-        vy: Math.sin(ang) * BLADE_SPEED,
-        ang,
-        diesAt: this.now + BLADE_LIFE_MS,
-        hit: new Set(),
+        x: f.x + Math.cos(heading) * 20,
+        y: f.y + Math.sin(heading) * 20,
+        heading,
+        speed: BOMB_SPEED_MIN + Math.random() * (BOMB_SPEED_MAX - BOMB_SPEED_MIN),
+        turn: (Math.random() * 2 - 1) * BOMB_TURN_MAX,
+        nextTurnAt: this.now + 200 + Math.random() * 500,
+        diesAt: this.now + BOMB_LIFE_MS * (0.85 + Math.random() * 0.3),
+        seed: Math.random() * 999,
+        live,
       });
     }
 
-    this.avatar(owner)?.play('sweep', base);
-    this.fx(owner).ring(f.x, f.y, 10, 62, ILL.magenta, 380);
-    this.sfx(owner, 'crystal-shatter', f.x, { volume: 0.6, rate: 0.9 });
-    this.say(owner, f.x, f.y - 54, '🗡️ BLADE DANCE', this.hex(ILL.violet));
+    this.avatar(owner)?.play('raise');
+    this.fx(owner).ring(f.x, f.y, 10, 70, ILL.magenta, 420);
+    this.sfx(owner, 'crystal-shatter', f.x, { volume: 0.55, rate: 0.75 });
+    this.say(owner, f.x, f.y - 54, count > BOMB_COUNT ? `💣 BOMB DANCE ×${count}` : '💣 BOMB DANCE', this.hex(ILL.magenta));
   }
 
-  private updateBlades(time: number, delta: number): void {
+  private updateBombs(time: number, delta: number): void {
+    if (this.bombs.length === 0) return;
     const dt = delta / 1000;
-    for (let i = this.blades.length - 1; i >= 0; i--) {
-      const b = this.blades[i];
-      b.x += b.vx * dt;
-      b.y += b.vy * dt;
+    for (let i = this.bombs.length - 1; i >= 0; i--) {
+      const b = this.bombs[i];
 
-      let landed = false;
-      for (const t of this.targetsOf(b.owner)) {
-        if (b.hit.has(t)) continue;
-        if (Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) > BLADE_HIT_R) continue;
-        b.hit.add(t);
-        t.takeDamage(BLADE_DAMAGE);
-        this.api.spawnHitFlash(t.x, t.y, ILL.violet);
-        this.fx(b.owner).stab(t.x, t.y, b.ang);
-        if (b.owner === 'player') this.api.recordMasteryStat('danceBladeHits', 1);
-        this.castAcross(b.owner, t);
-        landed = true;
-        break;
+      // The wander: a turn rate re-rolled every fraction of a second, so each bomb loops and
+      // corkscrews on its own — plus a gentle pull back at the target, so the volley still lands.
+      if (time >= b.nextTurnAt) {
+        b.turn = (Math.random() * 2 - 1) * BOMB_TURN_MAX;
+        b.nextTurnAt = time + 250 + Math.random() * 550;
+      }
+      const foe = this.nearestTarget(b.owner, b.x, b.y);
+      let pull = 0;
+      if (foe) {
+        const want = Math.atan2(foe.y - b.y, foe.x - b.x);
+        pull = Phaser.Math.Angle.Wrap(want - b.heading) * BOMB_HOMING;
+      }
+      b.heading += (b.turn + pull) * dt;
+      b.x += Math.cos(b.heading) * b.speed * dt;
+      b.y += Math.sin(b.heading) * b.speed * dt;
+
+      // Walls turn them back in rather than eat them.
+      if (b.x < this.left + 8 || b.x > this.right - 8) {
+        b.heading = Math.PI - b.heading;
+        b.x = Phaser.Math.Clamp(b.x, this.left + 8, this.right - 8);
+      }
+      if (b.y < this.top + 8 || b.y > this.bottom - 8) {
+        b.heading = -b.heading;
+        b.y = Phaser.Math.Clamp(b.y, this.top + 8, this.bottom - 8);
       }
 
-      const spent = landed || time >= b.diesAt
-        || b.x < this.left || b.x > this.right || b.y < this.top || b.y > this.bottom;
-      if (spent) {
-        if (!landed) this.fx(b.owner).shards(b.x, b.y, 4, 18, ILL.violet, 300, 8);
-        this.blades.splice(i, 1);
+      const close = foe && Phaser.Math.Distance.Between(b.x, b.y, foe.x, foe.y)
+        <= BOMB_TRIGGER_R * Math.max(0.6, foe.sizeMult * foe.shapeSizeMult);
+      if (close) {
+        this.bombs.splice(i, 1);
+        this.detonateBomb(b);
+        continue;
       }
+      if (time >= b.diesAt) {
+        // A dud: it never found anybody, so it fizzles rather than going off.
+        this.fx(b.owner).shards(b.x, b.y, 5, 20, ILL.violet, 320, 8);
+        this.bombs.splice(i, 1);
+      }
+    }
+  }
+
+  /** The nearest thing this side's bombs are allowed to go off on. */
+  private nearestTarget(owner: Owner, x: number, y: number): Fighter | null {
+    let best: Fighter | null = null;
+    let bestD = Infinity;
+    for (const t of this.targetsOf(owner)) {
+      const d = Phaser.Math.Distance.Between(x, y, t.x, t.y);
+      if (d < bestD) { bestD = d; best = t; }
+    }
+    return best;
+  }
+
+  /**
+   * Boom: 14 to everyone in 105px, and everyone it catches is turned around — their camera
+   * swung a random quarter, half or three-quarter turn for 2.6s. Illusion bullets inside the
+   * blast pop too, whoever's they are.
+   */
+  private detonateBomb(b: Bomb): void {
+    const fx = this.fx(b.owner);
+    fx.bombBlast(b.x, b.y, BOMB_AOE_R);
+    this.sfx(b.owner, 'crystal-shatter', b.x, { volume: 0.5, rate: 0.6 });
+    if (!b.live) return;
+
+    for (const t of this.targetsOf(b.owner)) {
+      if (Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) > BOMB_AOE_R) continue;
+      t.takeDamage(BOMB_DAMAGE);
+      this.api.spawnHitFlash(t.x, t.y, ILL.magenta);
+      if (b.owner === 'player') this.api.recordMasteryStat('danceBladeHits', 1);
+      this.turnAround(b.owner, t);
+    }
+    this.popDecoysIn(b.x, b.y, BOMB_AOE_R);
+  }
+
+  /**
+   * Face the wrong way. A fresh turn rolls a new direction; a body already turned only has
+   * its clock refreshed — a dozen blasts re-rolling the camera a dozen times would just be noise.
+   */
+  private turnAround(owner: Owner, t: Fighter): void {
+    const now = this.now;
+    const fresh = t.viewTurnedUntil <= now || t.viewTurnQuarter <= 0;
+    if (fresh) t.viewTurnQuarter = 1 + Math.floor(Math.random() * 3);
+    t.viewTurnedUntil = Math.max(t.viewTurnedUntil, now + TURN_MS);
+    this.turned.add(t);
+    if (fresh) {
+      this.fx(owner).turnSwirl(t.x, t.y);
+      this.api.showFloatingText(t.x, t.y - 46, '🌀 TURNED AROUND', this.hex(ILL.magenta));
     }
   }
 
   /**
-   * Straight across from the thrower: their position reflected through the middle of the
-   * arena, inset so nobody ever arrives standing in a wall. The farthest point from someone
-   * inside a rectangle is a corner, but a corner is also a place a fight can be resumed from
-   * — reflecting instead puts the victim exactly opposite, which is the readable version.
+   * Everybody currently turned. The local player's turn is a camera turn (`updateCamera`); a
+   * bot or a husk has no screen, so the honest equivalent is its walking — whatever direction
+   * its AI picked this frame comes out turned by the same angle. A remote opponent's replica
+   * is left alone: its position is their state stream's, and the turn reaches their real
+   * screen through the status mirror.
    */
-  private castAcross(owner: Owner, victim: Fighter): void {
-    const f = this.fighter(owner);
-    if (!f) return;
-    const tx = Phaser.Math.Clamp(this.api.width - f.x, this.left + CORNER_INSET, this.right - CORNER_INSET);
-    const ty = Phaser.Math.Clamp(this.api.height - f.y, this.top + CORNER_INSET, this.bottom - CORNER_INSET);
+  private updateTurned(time: number, delta: number): void {
+    const p = this.api.player;
+    // The mirror can turn the local player without this sim ever having thrown anything.
+    if (p && p.viewTurnedUntil > time && p.viewTurnQuarter > 0) this.turned.add(p);
 
-    const fx = this.fx(owner);
-    fx.blinkOut(victim.x, victim.y, ILL.crimson);
-
-    if (owner === 'player' && this.api.isOnline && victim === this.api.npc) {
-      // A replica's position belongs to the peer's state stream, so the move is asked for
-      // rather than performed — their sim is the only place it can actually happen.
-      this.api.sendIllusionMsg({ t: 'ill', k: 'blink', x: tx, y: ty });
-    } else if (!(owner === 'npc' && this.api.isOnline)) {
-      // Online, the opponent's own sim already threw this dagger and relayed the result;
-      // replaying the throw locally must not move us a second time.
-      this.body(victim).reset(tx, ty);
+    for (const f of [...this.turned]) {
+      if (!f.active || f.hp <= 0 || f.viewTurnedUntil <= time) {
+        f.viewTurnQuarter = 0;
+        this.turned.delete(f);
+        this.turnedVel.delete(f);
+        continue;
+      }
+      if (f === p || (f === this.api.npc && this.api.isOnline)) continue;
+      const body = f.body as Phaser.Physics.Arcade.Body | null;
+      if (!body) continue;
+      const last = this.turnedVel.get(f);
+      const vx = body.velocity.x;
+      const vy = body.velocity.y;
+      // Untouched since we turned it last frame: turning it again would spin it in place.
+      if (last && Math.abs(last.x - vx) < 0.5 && Math.abs(last.y - vy) < 0.5) continue;
+      const a = f.viewTurnQuarter * (Math.PI / 2);
+      const ca = Math.cos(a);
+      const sa = Math.sin(a);
+      const nx = vx * ca - vy * sa;
+      const ny = vx * sa + vy * ca;
+      body.setVelocity(nx, ny);
+      this.turnedVel.set(f, { x: nx, y: ny });
     }
+    this.updateCamera(delta);
+  }
 
-    fx.blinkIn(tx, ty, ILL.violet);
-    this.sfx(owner, 'blink', tx, { volume: 0.8, rate: 0.85 });
-    this.say(owner, tx, ty - 46, '🗡️ CAST ACROSS', this.hex(ILL.violet));
+  /**
+   * The local player turned around: the whole view swings to the rolled direction and back.
+   * A quarter turn puts a 3:2 arena on its side, so it also zooms out until it fits.
+   * The zoom is applied as a ratio on top of whatever else has the camera, so a Silence maze
+   * zoom underneath survives it.
+   */
+  private updateCamera(delta: number): void {
+    const p = this.api.player;
+    const cam = this.api.scene.cameras.main;
+    if (!cam) return;
+    const on = !!p && p.active && p.viewTurnedUntil > this.now && p.viewTurnQuarter > 0;
+    const goalRot = on ? p.viewTurnQuarter * (Math.PI / 2) : 0;
+    const goalZoom = on && p.viewTurnQuarter % 2 === 1 ? this.api.height / this.api.width : 1;
+    if (this.camRot === goalRot && this.camZoomF === goalZoom) return;
+
+    const k = 1 - Math.exp(-(delta / 1000) * 7);
+    let rot = this.camRot + (goalRot - this.camRot) * k;
+    let zf = this.camZoomF + (goalZoom - this.camZoomF) * k;
+    if (Math.abs(goalRot - rot) < 0.003) rot = goalRot;
+    if (Math.abs(goalZoom - zf) < 0.002) zf = goalZoom;
+    if (this.camRef !== cam) { this.camRef = cam; this.camRot = 0; this.camZoomF = 1; }
+    cam.setRotation(rot);
+    cam.setZoom((cam.zoom / this.camZoomF) * zf);
+    this.camRot = rot;
+    this.camZoomF = zf;
+  }
+
+  /** Hand the camera back untouched. */
+  private restoreCamera(): void {
+    const cam = this.api.scene.cameras?.main;
+    if (cam && cam === this.camRef && (this.camRot !== 0 || this.camZoomF !== 1)) {
+      cam.setRotation(0);
+      cam.setZoom(cam.zoom / this.camZoomF);
+    }
+    this.camRot = 0;
+    this.camZoomF = 1;
+    this.camRef = null;
   }
 
   // ── Online: what the other sim tells us ────────────────────────────────────
@@ -1631,13 +1974,17 @@ export class IllusionKit {
     const p = this.api.player;
     if (!p || !p.active || p.hp <= 0) return;
 
-    // A dagger found us on their sim. Our position is ours to change, so this is the only
-    // place the throw can actually land.
-    if (msg.k === 'blink') {
-      this.pfx.blinkOut(p.x, p.y, ILL.crimson);
-      this.body(p).reset(msg.x, msg.y);
-      this.pfx.blinkIn(msg.x, msg.y, ILL.violet);
-      this.api.showFloatingText(msg.x, msg.y - 46, '🗡️ CAST ACROSS', this.hex(ILL.violet));
+    // Their Reality Shift fired on their sim — the only one that saw every hit they took. The
+    // jump itself arrives on their state stream; this carries the flash, and the bombs a shift
+    // mid-Dance throws (which `danceVolley` holds back until the jump has reached us).
+    if (msg.k === 'shift') {
+      const n = this.api.npc;
+      this.ensureLayers();
+      if (n && n.active) {
+        this.nfx.blinkOut(n.x, n.y, ILL.violet);
+        this.say('npc', n.x, n.y - 48, '🚪 REALITY SHIFT', this.hex(ILL.warp));
+      }
+      if (this.isDancing('npc')) this.danceVolley('npc');
       return;
     }
 
@@ -1735,27 +2082,15 @@ export class IllusionKit {
     if (!g) return;
     g.clear();
 
-    // Reality Shift's four doorways. Drawn for everyone — they are scenery, and a mastered
-    // illusionist having four exits is information the opponent is entitled to. Only the
-    // illusionist can actually walk through one.
-    for (const owner of ['player', 'npc'] as Owner[]) {
-      if (!this.hasRealityShift(owner)) continue;
-      const tint = this.col(owner);
-      this.gates().forEach((gate, i) => {
-        gateway(g, tint, gate.x, gate.y, gate.inward, GATE_HALF_W, GATE_HALF_H,
-          this.vizT, 0.9, this.gateCharge(gate), this.gateSeed + i * 17);
-      });
-      // One set of doors per match: if both sides are Illusion they share the same four.
-      break;
-    }
-
     for (const v of this.veils) {
       // Guise: the opponent's panes go dark while they are hidden, and come back after.
       if (this.hides(v.owner)) continue;
       // Fades over its last third of a second, so it never blinks out of existence.
       const fade = Phaser.Math.Clamp((v.until - time) / 320, 0, 1);
-      warpPane(g, this.col(v.owner), v.x, v.y, v.ang, VEIL_HALF_LEN, VEIL_HALF_THICK,
-        this.vizT, fade, v.seed);
+      // E+: a pane its owner has walked through and spent goes grey.
+      const tint = v.consumed ? spentTint(this.col(v.owner)) : this.col(v.owner);
+      warpPane(g, tint, v.x, v.y, v.ang, VEIL_HALF_LEN, VEIL_HALF_THICK,
+        this.vizT, fade * (v.consumed ? 0.8 : 1), v.seed);
     }
 
     // Phantoms stand on the floor plane with the panes — they are scenery the opponent has
@@ -1767,22 +2102,18 @@ export class IllusionKit {
     }
   }
 
-  /** Blade Dance daggers, over the fighters. */
+  /** Bomb Dance bombs, over the fighters. */
   private paintAir(time: number): void {
     const g = this.airGfx;
     if (!g) return;
     g.clear();
-    void time;
 
-    // Daggers, over everything: five of them crossing an arena has to be unmissable.
-    for (const b of this.blades) {
+    for (const b of this.bombs) {
       if (this.hides(b.owner)) continue;
-      const tint = this.col(b.owner);
-      for (let i = 2; i >= 1; i--) {
-        illusionDagger(g, tint, b.x - (b.vx / BLADE_SPEED) * i * 9, b.y - (b.vy / BLADE_SPEED) * i * 9,
-          b.ang, BLADE_SIZE * (1 - i * 0.16), 0.2 / i);
-      }
-      illusionDagger(g, tint, b.x, b.y, b.ang, BLADE_SIZE, 1);
+      // The fuse burns down over the bomb's life, so a volley that has been wandering a while
+      // visibly reads as about to give up.
+      const life = Phaser.Math.Clamp((b.diesAt - time) / BOMB_LIFE_MS, 0, 1);
+      illusionBomb(g, this.col(b.owner), b.x, b.y, BOMB_SIZE, b.heading + this.vizT * 3, this.vizT, life, 1, b.seed);
     }
   }
 
@@ -1793,7 +2124,9 @@ export class IllusionKit {
 
     this.api.setStatusIndicator('illusion-dance', playerIsIllusion && s.danceUntil > time ? {
       name: 'Illusion Dance', emoji: '🎭', color: ILL.magenta,
-      description: 'Projectiles pass straight through you, and you are thrown to a new corner every 3 seconds. Blasts, beams and contact damage still land.',
+      description: this.up('player', 'q')
+        ? 'Projectiles pass straight through you, and you are thrown to a new corner every 3 seconds — a clean hop throws 12 bombs, and so does every Relocate you take. Blasts, beams and contact damage still land.'
+        : 'Projectiles pass straight through you, and you are thrown to a new corner every 3 seconds. Blasts, beams and contact damage still land.',
       until: s.danceUntil, priority: 100,
     } : null);
 
@@ -1805,16 +2138,24 @@ export class IllusionKit {
       priority: 102,
     } : null);
 
-    this.api.setStatusIndicator('illusion-gateways', playerIsIllusion && this.api.masteryActive ? {
+    this.api.setStatusIndicator('illusion-reality-shift', playerIsIllusion && this.api.masteryActive ? {
       name: 'Reality Shift', emoji: '🚪', color: ILL.warp,
-      description: 'Four gateways stand against the middle of each wall. Walk into one and you come out of another at random — no cast, no cooldown. Only you can use them. Take one mid-Illusion Dance and you throw an extra round of knives on arrival.',
-      priority: 150,
+      description: `Take ${SHIFT_DAMAGE} damage inside ${SHIFT_WINDOW_MS / 1000}s and you are thrown to a random corner on your own. Mid-Illusion Dance, with Bomb Dance, the shift throws a volley of bombs too. The count is what you have taken in the window.`,
+      count: Math.round(this.shiftTally('player', time)), priority: 150,
+    } : null);
+
+    this.api.setStatusIndicator('illusion-duplication', playerIsIllusion && s.dupUntil > time ? {
+      name: 'Duplication', emoji: '✂️', color: ILL.spark,
+      description: 'You walked through your own Veil: every Crack Shot fires two bullets, and a Dance teleport throws twice the bombs. Lasts 3s after you step out of the pane.',
+      until: s.dupVeil ? undefined : s.dupUntil, priority: 104,
     } : null);
 
     const myVeil = this.veils.find((v) => v.owner === 'player');
     this.api.setStatusIndicator('illusion-veil', playerIsIllusion && myVeil ? {
       name: 'Illusion Veil', emoji: '🌫️', color: ILL.warp,
-      description: 'A pane of warped space is hanging out there. Every shot that crosses it — including your own — comes out 30° off.',
+      description: this.up('player', 'e') && !myVeil?.consumed
+        ? 'A pane of warped space is hanging out there. Enemy shots that cross it come out 10° off; your Crack Shots come out with five illusion bullets. Walk through it to double your shots.'
+        : 'A pane of warped space is hanging out there. Enemy shots that cross it come out 10° off; your Crack Shots come out with five illusion bullets that crack for 10 if anything hits them.',
       until: myVeil.until, priority: 116,
     } : null);
 
@@ -1878,6 +2219,36 @@ export class IllusionKit {
   }
 
   /**
+   * Bot synergy (E+ Duplication): one of its own unspent panes is close enough to walk through
+   * for doubled shots — and, mid-Dance, doubled bombs. The point to walk to, or null.
+   * Side-effect-free.
+   */
+  npcVeilWalkPoint(): { x: number; y: number } | null {
+    if (this.api.isOnline || !this.isIllusion('npc') || !this.up('npc', 'e')) return null;
+    if (this.dupActive('npc')) return null;
+    const n = this.api.npc;
+    if (!n || !n.active || n.hp <= 0) return null;
+    let best: Veil | null = null;
+    let bestD = 280;
+    for (const v of this.veils) {
+      if (v.owner !== 'npc' || v.consumed || v.until - this.now < 600) continue;
+      const d = Phaser.Math.Distance.Between(n.x, n.y, v.x, v.y);
+      if (d < bestD) { bestD = d; best = v; }
+    }
+    return best ? { x: best.x, y: best.y } : null;
+  }
+
+  /**
+   * Bot synergy (Q+ Bomb Dance): a Relocate now is a free volley. Held back while there is an
+   * unspent pane nearby to walk through first, because doubled the volley is twice the bombs.
+   * Side-effect-free.
+   */
+  npcDanceRelocateReady(): boolean {
+    if (this.api.isOnline || !this.isDancing('npc') || !this.up('npc', 'q')) return false;
+    return this.dupActive('npc') || !this.npcVeilWalkPoint();
+  }
+
+  /**
    * What the npc AI should chase this frame instead of the player: the player's Guise clone,
    * or null when there is no Guise. Bots are meant to be fooled by it — that is the ability.
    */
@@ -1897,8 +2268,17 @@ export class IllusionKit {
     return true;
   }
 
-  /** Invasion: a husk shot passing through the player's clone. True when it stopped there. */
+  /**
+   * Invasion: a husk shot passing through the player's clone, or through an illusion bullet
+   * (which it cracks). True when it stopped there.
+   */
   tryHitClone(x: number, y: number, radius: number, damage: number): boolean {
+    for (let i = this.decoyShots.length - 1; i >= 0; i--) {
+      const d = this.decoyShots[i];
+      if (Phaser.Math.Distance.Between(x, y, d.x, d.y) > radius + DECOY_HIT_R) continue;
+      this.popDecoy(i);
+      return true;
+    }
     if (!this.onClone('player', x, y, radius)) return false;
     this.cloneAbsorb('player', damage);
     return true;
@@ -1910,6 +2290,8 @@ export class IllusionKit {
    * blast on the clone does nothing to the tiny body standing somewhere else.
    */
   notifyAoe(cx: number, cy: number, radius: number, damage: number, owner: Owner): void {
+    // Any blast at all cracks the illusion bullets inside it — theirs, or the owner's own.
+    if (this.decoyShots.length) this.popDecoysIn(cx, cy, radius);
     const victim: Owner = owner === 'player' ? 'npc' : 'player';
     if (this.onClone(victim, cx, cy, radius - CLONE_HIT_R)) this.cloneAbsorb(victim, damage);
   }
@@ -1970,8 +2352,8 @@ export class IllusionKit {
    * Ruin's Spikes of Ruin (see `combat/SummonPurge.ts`).
    * Warp panes and un-detonated Phantoms — the two things this element plants and leaves
    * standing. Anything already bent by a pane keeps its new heading: the kick has already
-   * been applied, and the pane was only ever the thing that applied it. Daggers are shots in
-   * flight rather than structures, and a Guise clone is a form (see `revertForms`), so the
+   * been applied, and the pane was only ever the thing that applied it. Bombs and illusion
+   * bullets are shots in flight rather than structures, and a Guise clone is a form (see `revertForms`), so the
    * spikes never touch either.
    */
   purgeSummons(

@@ -31,11 +31,11 @@ interface PreviewAmalgam {
 /** One Amalgam, drawn by the kit's own body class and driven at whatever the script sets. */
 function amalgam(
   ctx: PreviewCtx,
-  o: { x: number; y: number; size?: number; alpha?: boolean; born?: number },
+  o: { x: number; y: number; size?: number; alpha?: boolean; prince?: boolean; born?: number },
 ): PreviewAmalgam {
   const a: PreviewAmalgam = { x: o.x, y: o.y, vx: 0, vy: 0, hp: 1, maxHp: 1, st: {} };
   const body = ctx.capture(() => new SoulAmalgamBody(ctx.scene, ctx.tint, {
-    size: o.size ?? 19, alpha: o.alpha, depth: 6,
+    size: o.size ?? 19, alpha: o.alpha, prince: o.prince, depth: 6,
   }));
   ctx.onFrame((dt, elapsed) => {
     if (elapsed < (o.born ?? 0)) return;
@@ -567,93 +567,63 @@ export const deathWhistleUpgraded: PreviewScript = {
   },
 };
 
-export const hellsTorment: PreviewScript = {
-  duration: 6400,
-  scale: 0.9,
-  caption: 'Q — every Amalgam burns at 5 dmg/s: 15 in 60px each second, then a 120px burst',
-  run(ctx) {
-    const { fx, av } = stage(ctx);
-    const crew = [
-      amalgam(ctx, { x: ctx.cx + 110, y: ctx.cy - 40 }),
-      amalgam(ctx, { x: ctx.cx + 170, y: ctx.cy + 40 }),
-      amalgam(ctx, { x: ctx.cx + 230, y: ctx.cy - 20 }),
-    ];
+/**
+ * Turn's shared loop: three hostile bodies close in, the shriek goes out, and each is hauled
+ * over on a thread and comes up in your colours, turning on the dummy. `legion` adds the Q+ tell.
+ */
+function turnLoop(ctx: PreviewCtx, legion: boolean): void {
+  const { fx, av } = stage(ctx);
+  const crew = [
+    amalgam(ctx, { x: ctx.cx + 150, y: ctx.cy - 70 }),
+    amalgam(ctx, { x: ctx.cx + 190, y: ctx.cy + 50 }),
+    amalgam(ctx, { x: ctx.cx - 130, y: ctx.cy + 40 }),
+  ];
+  let turned = false;
+  for (const c of crew) c.st.tones = ROT_TONES;
+  ctx.onFrame((dt) => {
+    for (const c of crew) {
+      // Before the shriek they shamble at you; after it they go for the dummy.
+      const tx = turned ? ctx.tx : ctx.cx, ty = turned ? ctx.ty : ctx.cy;
+      const ang = Math.atan2(ty - c.y, tx - c.x);
+      const sp = turned && legion ? 170 : 115;
+      c.vx = Math.cos(ang) * sp; c.vy = Math.sin(ang) * sp;
+      if (Phaser.Math.Distance.Between(c.x, c.y, tx, ty) > 40) {
+        c.x += c.vx * (dt / 1000) * 0.35; c.y += c.vy * (dt / 1000) * 0.35;
+      }
+    }
+  });
+  ctx.at(1300, () => {
+    av.play('raise', ctx.aim, 700);
+    fx.shriek(ctx.cx, ctx.cy, 200, 760, 8, SPIRIT_TONES);
+    fx.ring(ctx.cx, ctx.cy, 200, 16, SOUL.orchid, 620, 4, 6);
+    crew.forEach((c, i) => ctx.at(120 + i * 110, () => {
+      fx.tether(ctx.cx, ctx.cy, c.x, c.y, 420, 5, SPIRIT_TONES);
+      fx.soulRise(c.x, c.y + 6, 44, 560, 5, SPIRIT_TONES);
+      c.st.tones = legion ? ANGERED_TONES : SPIRIT_TONES;
+      if (legion) {
+        c.st.angered = true;
+        pop(ctx, c.x, c.y - 30, '+25 HP · 🩸', '#ff4455');
+      }
+    }));
     ctx.at(500, () => {
-      av.play('raise', ctx.aim, 800);
-      fx.ring(ctx.cx, ctx.cy, 12, 260, SOUL.flame, 620, 5, 5);
-      for (const a of crew) {
-        a.st.burning = true;
-        fx.immolate(a.x, a.y, 34);
-      }
-      // One AOE and three embers off every burning body, once a second.
-      for (let s = 1; s <= 4; s++) {
-        ctx.at(s * 1000, () => {
-          for (const a of crew) {
-            fx.ring(a.x, a.y, 8, 60, SOUL.ember, 380, 3, 5);
-            fx.wisps(a.x, a.y, 3, { speed: 140, life: 520, depth: 6 });
-            const t = ctx.adopt(ctx.scene.add.text(a.x, a.y - 30, '15', {
-              fontSize: '11px', fontFamily: 'Arial Black', color: '#ff6622',
-            }).setOrigin(0.5).setDepth(12));
-            ctx.scene.tweens.add({ targets: t, y: t.y - 16, alpha: 0, duration: 800 });
-          }
-        });
-      }
-      // Then the flames finish them: a 120px burst each.
-      crew.forEach((a, i) => ctx.at(4200 + i * 300, () => {
-        fx.immolate(a.x, a.y, 120, { wisps: 12 });
-        fx.ring(a.x, a.y, 14, 120, SOUL.flame, 520, 5, 6);
-        a.x = -999;
-      }));
+      turned = true;
+      pop(ctx, ctx.cx, ctx.cy - 50, legion ? '🔄 WE ARE LEGION — 3 TURNED' : '🔄 3 TURNED', legion ? '#ff5577' : '#cc99ff', 12);
     });
-  },
+  });
+}
+
+export const turn: PreviewScript = {
+  duration: 5600,
+  scale: 0.9,
+  caption: 'Q — every hostile amalgam and zombie within 240px turns and fights for you',
+  run(ctx) { turnLoop(ctx, false); },
 };
 
-export const hellsTormentUpgraded: PreviewScript = {
-  duration: 6400,
+export const turnUpgraded: PreviewScript = {
+  duration: 5600,
   scale: 0.9,
-  caption: 'Unending Hell — the burnt come back as the Inflamed: 100 HP, 15 bite, a 45-damage death',
-  run(ctx) {
-    const { fx, av } = stage(ctx);
-    let queued = 0;
-    corpseQueue(ctx, () => queued);
-    const a = amalgam(ctx, { x: ctx.cx + 140, y: ctx.cy });
-    ctx.at(400, () => {
-      av.play('raise', ctx.aim, 800);
-      a.st.burning = true;
-      fx.immolate(a.x, a.y, 34);
-    });
-    // It burns down, and instead of being gone it is filed back into the queue.
-    ctx.at(1800, () => {
-      fx.immolate(a.x, a.y, 120, { wisps: 12 });
-      a.x = -999;
-      queued = 1;
-      const t = ctx.adopt(ctx.scene.add.text(ctx.cx + 140, ctx.cy - 40, '🔥 THE INFLAMED', {
-        fontSize: '11px', fontFamily: 'Arial Black', color: '#ff4411',
-      }).setOrigin(0.5).setDepth(12));
-      ctx.scene.tweens.add({ targets: t, y: t.y - 14, alpha: 0, duration: 1800 });
-    });
-    // Raised again, scarred, venting heat every 20 damage it takes.
-    ctx.at(3000, () => {
-      queued = 0;
-      const b = amalgam(ctx, { x: ctx.cx + 160, y: ctx.cy + 10, born: 3000 });
-      b.st.inflamed = true;
-      fx.soulRise(b.x, b.y, 60, 620, 5, TORMENT_TONES);
-      [900, 1600, 2300].forEach((at) => ctx.at(at, () => {
-        fx.wisps(b.x, b.y, 5, { speed: 150, life: 520, depth: 6 });
-        fx.ring(b.x, b.y, 8, 60, SOUL.ember, 340, 3, 5);
-      }));
-      // And its death: 20 embers and 45 damage across 170px.
-      ctx.at(2900, () => {
-        fx.immolate(b.x, b.y, 170, { wisps: 20 });
-        fx.ring(b.x, b.y, 18, 170, SOUL.flame, 620, 6, 6);
-        const t = ctx.adopt(ctx.scene.add.text(b.x, b.y - 40, '45', {
-          fontSize: '14px', fontFamily: 'Arial Black', color: '#ff4411',
-        }).setOrigin(0.5).setDepth(12));
-        ctx.scene.tweens.add({ targets: t, y: t.y - 22, alpha: 0, duration: 1200 });
-        b.x = -999;
-      });
-    });
-  },
+  caption: 'We are Legion — the turned rise with +25 HP and Carrion Call already on them',
+  run(ctx) { turnLoop(ctx, true); },
 };
 
 // ══ PASSIVES ══════════════════════════════════════════════════════════
@@ -872,37 +842,59 @@ export const perkCallOfTheVoid: PreviewScript = {
 
 // ══ MASTERY ═══════════════════════════════════════════════════════════
 
-export const masteryStrengthInNumbers: PreviewScript = {
-  duration: 6000,
+export const masteryCorpsePrince: PreviewScript = {
+  duration: 7200,
   scale: 0.9,
-  caption: 'Mastery passive — 5% resistance per OTHER Amalgam alive, to a 75% cap at sixteen',
+  caption: 'Mastery passive — the Corpse Prince starts in your queue, and comes back 12s after he falls',
   run(ctx) {
-    const { fx } = stage(ctx, { noDummy: true });
-    const crew: PreviewAmalgam[] = [];
-    const links = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
-    const label = ctx.adopt(ctx.scene.add.text(ctx.cx + 170, ctx.cy - 70, '', {
-      fontSize: '11px', fontFamily: 'Arial Black', color: '#bfe8ff',
-    }).setOrigin(0.5).setDepth(11));
-    ctx.onFrame((_dt, elapsed) => {
-      links.clear();
-      const resist = Math.min(0.75, Math.max(0, crew.length - 1) * 0.05);
-      label.setText(crew.length ? `${crew.length} AMALGAMS  ·  ${Math.round(resist * 100)}% RESIST` : '');
-      // The grey threads that make the bonus legible on the field.
-      for (let i = 0; i < crew.length; i++) {
-        for (let j = i + 1; j < crew.length; j++) {
-          SoulFx.drawBond(links, ctx.tint, SPIRIT_TONES, crew[i].x, crew[i].y, crew[j].x, crew[j].y, elapsed / 1000, 0.5);
-        }
-      }
+    const { fx, av } = stage(ctx);
+    let held = 1;
+    corpseQueue(ctx, () => held);
+    // The prince's corpse sits gold at the front of the queue.
+    const crown = ctx.adopt(ctx.scene.add.graphics().setDepth(11));
+    ctx.onFrame(() => {
+      crown.clear();
+      if (held < 1) return;
+      crown.lineStyle(2, ctx.tint(SOUL.gold), 1);
+      crown.strokeRoundedRect(14, 10, 22, 22, 5);
     });
-    // Raised one at a time, the resistance climbing with each.
-    for (let i = 0; i < 8; i++) {
-      ctx.at(400 + i * 620, () => {
-        const a = (i / 8) * Math.PI * 2;
-        const x = ctx.cx + 180 + Math.cos(a) * 100, y = ctx.cy + Math.sin(a) * 76;
-        fx.soulRise(x, y, 44, 480, 5, SPIRIT_TONES);
-        crew.push(amalgam(ctx, { x, y, born: 400 + i * 620 }));
-      });
-    }
+    let prince: PreviewAmalgam | null = null;
+    let fallen = false;
+    ctx.at(500, () => {
+      av.play('raise', ctx.aim, 600);
+      held = 0;
+      const x = ctx.cx + 60, y = ctx.cy + 10;
+      fx.soulRise(x, y, 64, 620, 5, GOLD_TONES);
+      prince = amalgam(ctx, { x, y, prince: true, born: 500 });
+      prince.st.tones = GOLD_TONES;
+      pop(ctx, x, y - 40, '👑 THE CORPSE PRINCE RISES', '#ffd24a');
+    });
+    ctx.onFrame((dt, elapsed) => {
+      const p = prince;
+      if (!p || fallen) return;
+      const ang = Math.atan2(ctx.ty - p.y, ctx.tx - p.x);
+      p.vx = Math.cos(ang) * 120; p.vy = Math.sin(ang) * 120;
+      if (Phaser.Math.Distance.Between(p.x, p.y, ctx.tx, ctx.ty) > 46) {
+        p.x += p.vx * (dt / 1000) * 0.4; p.y += p.vy * (dt / 1000) * 0.4;
+      }
+      // A lunge every so often once he is on top of it.
+      p.st.dashing = elapsed % 1400 < 260 && Phaser.Math.Distance.Between(p.x, p.y, ctx.tx, ctx.ty) < 60;
+    });
+    [2000, 2700, 3400].forEach((at) => ctx.at(at, () => pop(ctx, ctx.tx, ctx.ty - 30, at === 3400 ? '22' : '14', '#ffe07a')));
+    ctx.at(4000, () => {
+      const p = prince;
+      if (!p) return;
+      fallen = true;
+      fx.wisps(p.x, p.y, 10, { speed: 70, size: 3, life: 720, rise: -46, depth: 6, tones: GOLD_TONES });
+      pop(ctx, p.x, p.y - 34, '👑 THE PRINCE FALLS — BACK IN 12s', '#ffd24a');
+      p.x = -999;
+    });
+    // The real wait is 12 seconds; the loop skips ahead to the return.
+    ctx.at(6000, () => {
+      held = 1;
+      fx.soulRise(ctx.cx, ctx.cy + 4, 40, 520, 4, GOLD_TONES);
+      pop(ctx, ctx.cx, ctx.cy - 52, '👑 THE PRINCE AWAITS', '#ffd24a');
+    });
   },
 };
 

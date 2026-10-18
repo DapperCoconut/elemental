@@ -297,6 +297,12 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     write: (f, t) => { f.highGravityUntil = t; },
   },
   {
+    id: 'turned-around', name: 'Turned Around', emoji: '🌀', color: 0xff4dd2, priority: 36, kind: 'timer',
+    description: 'A Bomb Dance blast spun you round — your whole view is turned the wrong way until it rights itself.',
+    read: (f) => (f.viewTurnQuarter > 0 ? f.viewTurnedUntil : 0),
+    write: (f, t) => { f.viewTurnedUntil = t; },
+  },
+  {
     id: 'inverted', name: 'Inverted', emoji: '🔄', color: 0x9966ff, priority: 36, kind: 'timer',
     description: 'Your movement keys are mirrored — every direction goes the opposite way.',
     read: (f) => f.invertedControlsUntil,
@@ -369,6 +375,12 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     write: (f, t) => { f.devotionSlowUntil = t; },
   },
   {
+    id: 'premove-slow', name: 'Pre-moved', emoji: '♟️', color: 0xb98cff, priority: 43.8, kind: 'timer',
+    description: 'A psychic saw that step coming and punished it. You move 30% slower.',
+    read: (f) => f.premoveSlowUntil,
+    write: (f, t) => { f.premoveSlowUntil = t; },
+  },
+  {
     id: 'dark-link', name: 'Torture Link', emoji: '🕸️', color: 0x663388, priority: 44, kind: 'timer',
     description: 'Linked to your attacker — damage you take heals them.',
     read: (f) => f.darkLinkedUntil,
@@ -414,6 +426,30 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     id: 'devotion-faith', name: 'Faith', emoji: '🙏', color: 0xf5e08a, priority: 46.7, kind: 'amount',
     description: 'The priest\'s faith is in you, and nothing takes it out. At 200 you are converted on the spot — no shield or armour saves you. At 25% it fills on its own, 2 a second; at 50% your blows land 20% softer on the priest; at 75% you are drawn toward their holy water and every attack fills it 25% faster.',
     read: (f) => Math.round(f.devotionFaith),
+  },
+  {
+    id: 'dream-drowsy', name: 'Drowsy', emoji: '🥱', color: 0x8b9dff, priority: 46.9, kind: 'amount',
+    description: 'The dreamer is putting you to sleep. At 100 you fall asleep where you stand. It wears off slowly — 3 a second, once nothing has added to it for 4 seconds.',
+    read: (f) => (f.dreamAsleep ? 0 : Math.round(f.dreamDrowsy)),
+    suffix: '%',
+  },
+  {
+    id: 'dream-asleep', name: 'Asleep', emoji: '😴', color: 0x5b3fd4, priority: 46.91, kind: 'amount',
+    description: 'Fast asleep: you cannot move or cast. Sleep burns 5 drowsiness a second and you wake when it runs out — or the moment anything damages you. While the dreamer is inside your dream you are awake in there, and nothing that happens in it wakes you out here.',
+    read: (f) => (f.dreamAsleep ? Math.max(1, Math.round(f.dreamDrowsy)) : 0),
+    suffix: '%',
+  },
+  {
+    id: 'dream-nightmare', name: 'Nightmare', emoji: '👁️', color: 0xff3b6b, priority: 46.92, kind: 'timer',
+    description: 'A nightmare has you. You cannot see past arm\'s reach, you are panicking, it is eating 20 health a second, and you take 25% more damage from everything else until it lets go.',
+    read: (f) => f.dreamNightmareUntil,
+    write: (f, t) => { f.dreamNightmareUntil = t; },
+  },
+  {
+    id: 'dream-clawed', name: 'Clawed', emoji: '🩸', color: 0xd2266b, priority: 46.93, kind: 'timer',
+    description: 'Raked by something in a dream. You move 45% slower until it wears off.',
+    read: (f) => f.dreamClawedUntil,
+    write: (f, t) => { f.dreamClawedUntil = t; },
   },
   {
     id: 'harvest-poison', name: 'Rot Poison', emoji: '🧪', color: 0x8fd14f, priority: 46.75, kind: 'timer',
@@ -760,6 +796,18 @@ export function stretchAllEffects(
  */
 export function isDebuff(desc: StatusDescriptor): boolean {
   return desc.priority < 100;
+}
+
+/**
+ * Whether anything harmful is on the fighter right now — any debuff-band descriptor the tray would
+ * show. Allocation-free, so a passive can ask it every few frames.
+ */
+export function hasDebuff(f: Fighter, nowWall: number, nowGame: number): boolean {
+  for (const desc of STATUS_DESCRIPTORS) {
+    if (!isDebuff(desc)) continue;
+    if (isActive(desc, desc.read(f), nowWall, nowGame)) return true;
+  }
+  return false;
 }
 
 /**

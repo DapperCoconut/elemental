@@ -20,13 +20,22 @@ export interface CastContext {
   /** Fire Mastery: same as dealAoeDamage but tracks zombie kills for the Nuclear Cleansing challenge (player-only). */
   dealFlameNukeDamage: (cx: number, cy: number, radius: number, damage: number) => void;
   /**
-   * Molten perk (divine): Flame Nuke's detonation is replaced by a screen-wide eruption owned
-   * by FireKit. Optional — only fire's Q reaches for it, so the other CastContext implementers
-   * are free to leave it out.
+   * Fire's per-element perks and its alternate ultimate. All optional — only fire's own
+   * abilities reach for them, and a context without a FireKit behind it (raids) simply skips
+   * the perk effect.
    */
-  fireMoltenEruption?: () => void;
-  /** Molten perk (divine): burn the caster for the hotter Pressure Bomb they just threw. */
-  fireScorchCaster?: () => void;
+  /** Supernova (fire alt Q): root the caster and open the beam. FireKit owns it from here. */
+  fireSupernova?: () => void;
+  /** Outgoing damage factor fire's abilities apply for this caster (Blaze + Melt = 1.5). */
+  fireDamageMult?: () => number;
+  /** Alcohol perk: a random aim error in radians for a caster who has been drinking (0 sober). */
+  fireAimJitter?: () => number;
+  /** Alcohol perk: lay Flame Dash's booze trail between the two points. */
+  fireBoozeTrail?: (x0: number, y0: number, x1: number, y1: number) => void;
+  /** Melt perk (bots): the click is a short gout of flame that leaves a pool, not a fireball. */
+  fireMeltPuff?: (tx: number, ty: number) => void;
+  /** Alcohol perk: a blast at this point lights any of the caster's booze inside it. */
+  fireIgniteBooze?: (x: number, y: number, radius: number) => void;
   /**
    * Pressure Bomb's fuse: FireKit plants the charge, marks the ground red and detonates it
    * 1.5s later (scattering bomblets with Cluster Bomb, R+). Optional — only fire's R reaches
@@ -99,7 +108,7 @@ export interface CastContext {
   soulArise: () => void;
   soulGrave: (tx: number, ty: number) => void;
   soulDeathWhistle: (tx: number, ty: number) => void;
-  soulHellsTorment: () => void;
+  soulTurn: () => void;
   // Hunt — human form
   huntCrossbow: (tx: number, ty: number) => void;
   /** `chargeMs` is the E+ Mine Blast hold; 0 for the uncharged cone. */
@@ -143,7 +152,8 @@ export interface CastContext {
   creationBolt: (tx: number, ty: number, tier: 'copper' | 'silver' | 'gold') => void;
   creationWrench: (tx: number, ty: number) => void;
   creationBlock: (x: number, y: number, w: number, h: number) => void;
-  creationWorkshop: () => void;
+  /** Q — Self-Destruct. Returns false (nothing to blow up) without side effects. */
+  creationSelfDestruct: () => boolean;
   // Fate (alt-life)
   fateThrowCard: (tx: number, ty: number) => void;
   fateReroll: () => void;
@@ -228,15 +238,13 @@ export interface CastContext {
   justicePillar: (tx: number, ty: number) => void;
   justiceDescend: () => void;
   justiceSeraphim: () => void;
-  // Dream (divine: the Devourer of Kings, spared)
-  dreamTrance: () => void;
+  // Dream (divine: the Devourer of Kings, spared). Each one is a waking/dreaming pair — the kit
+  // decides which by whether the caster is in somebody's dream.
+  dreamSandmen: (tx: number, ty: number) => void;
+  dreamDelve: () => void;
   dreamPillowFight: (tx: number, ty: number) => void;
-  dreamDreamcatcher: () => void;
-  dreamNightmare: () => void;
-  dreamOasis: () => void;
-  /** Dream Mastery — Dream Duel: the spirit's two keys, live only while a duel is running. */
-  dreamHaunt: (tx: number, ty: number) => void;
-  dreamSpiritTear: (tx: number, ty: number) => void;
+  dreamSleepTight: (tx: number, ty: number) => void;
+  dreamNightmare: (tx: number, ty: number) => void;
   // Chalk (test element: cheat mode only for now)
   // Wax (test element: cheat mode only for now)
   waxStingerStrikes: (tx: number, ty: number) => void;

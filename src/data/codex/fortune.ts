@@ -4,9 +4,9 @@ import { ElementCodex } from '../AbilityCodex';
  * Gold — the alchemist (element id `fortune`, kept from the shopkeeper it replaced).
  *
  * Verified against `src/elements/fortune.ts` and `kits/FortuneKit.ts`. The five shop upgrades
- * (2026-10-16) are constants in the kit's "Shop upgrades" block. Gold has no mastery yet — the
- * shopkeeper's was retired with the 2026-10-15 rework — and no perks. Every number below is a
- * constant at the top of the kit.
+ * (2026-10-16) are constants in the kit's "Shop upgrades" block and the mastery (2026-10-17) in
+ * its "Mastery" block — the shopkeeper's was retired with the 2026-10-15 rework. No perks. Every
+ * number below is a constant at the top of the kit.
  */
 const fortune: ElementCodex = {
   identity:
@@ -225,6 +225,49 @@ const fortune: ElementCodex = {
         'Coins and statues last 25 seconds on the floor.',
         'In Invasion a shot only counts as the cursed husk\'s if it is first seen within 70px of it, and summons are not transmuted (husks build nothing).',
         'Online both machines see the curse: your opponent\'s own shots turn to coins on their screen too.',
+      ],
+    },
+  },
+
+  mastery: {
+    'gilded-augment': {
+      basics:
+        'When your HP falls below 30%, the purse starts paying for it: you heal 16 HP a second and move '
+        + '30% faster, automatically, until you are back up to 55%. It is not free. It starts at about 2 '
+        + 'gold a second and the price climbs the whole time it runs — after 2.5 seconds it costs double, '
+        + 'after 5 seconds triple — so a long rescue empties a purse fast. When the gold runs out, it '
+        + 'stops. Every Rags to Riches stack makes it heal 35% faster and cost 25% less.',
+      cast: 'Passive. Always on while Gold Mastery is enabled and Gold is the element being played.',
+      effects: [
+        { tag: 'heal', label: 'Bought back', detail: '16 HP a second from below 30% HP until 55%, while you have gold.' },
+        { tag: 'buff', label: 'Running on gold', detail: '+30% movement speed while it heals.' },
+        { tag: 'cost', label: 'Dearer every second', detail: '~2 gold a second at first, +100% more every 2.5 seconds it keeps running.' },
+      ],
+      notes: [
+        'Each stretch of healing starts at the cheap price again — the climb only counts the current one.',
+        'Advance and Rags to Riches spend the same purse, so what you keep in it is your safety net.',
+        'A Gold NPC on Nightmare is saved by it the same way.',
+      ],
+    },
+    'rags-to-riches': {
+      basics:
+        'Needs at least 20 gold, and spends all of it — every coin in the purse, not just twenty. In '
+        + 'return a little more of your body turns to solid gold, for the rest of the match: +20% damage '
+        + 'on everything Gold does, +50% gold from every source, and Gilded Augment heals 35% faster for '
+        + '25% less. It stacks without limit; each use sets another gold plate into the body. '
+        + 'Bindable to R, F or Q. 1.5s cooldown.',
+      cast: 'The bound key (R, F or Q). Instant. Needs 20 gold and spends the whole purse.',
+      effects: [
+        { tag: 'cost', label: 'Everything', detail: 'Empties the purse. Refused below 20 gold.' },
+        { tag: 'buff', label: 'Gilded', detail: '+20% damage per stack, for the match.' },
+        { tag: 'resource', label: 'Richer', detail: '+50% gold earned per stack, added to Greed.' },
+        { tag: 'heal', label: 'Better augment', detail: 'Gilded Augment heals 35% faster and costs 25% less per stack.' },
+      ],
+      notes: [
+        'Cash in at exactly 20 and you lose nothing to spare; wait for 40 and the stack costs you an Advance.',
+        'The extra gold from earlier stacks makes the next 20 come faster — the element snowballs.',
+        'A Gold NPC on Nightmare binds it over Midas Curse, saves every other purse for it, and cashes in only while above half health.',
+        'Online the stack reaches your opponent\'s screen, so their copy of your rig gilds too.',
       ],
     },
   },

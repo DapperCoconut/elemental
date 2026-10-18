@@ -1010,6 +1010,104 @@ export function drawChargedAura(
 }
 
 /**
+ * Mastery — Magnetic Field: the faint blue field the mastered magnet carries. Barely there on
+ * purpose — a wash, a thin rim, and two slow pole arcs going round it — so it reads as a
+ * property of the body rather than another effect on the floor.
+ */
+export function drawMagneticField(
+  g: Phaser.GameObjects.Graphics, tint: MagnetColorFn,
+  x: number, y: number, r: number, t: number, alpha = 1,
+): void {
+  g.fillStyle(tint(MAGNET.blue), alpha * (0.045 + 0.015 * Math.sin(t * 2.2)));
+  g.fillCircle(x, y, r);
+  g.lineStyle(1, tint(MAGNET.sky), alpha * 0.14);
+  g.strokeCircle(x, y, r);
+  const s0 = t * 0.9;
+  g.lineStyle(1.6, tint(MAGNET.sky), alpha * 0.22);
+  g.beginPath(); g.arc(x, y, r - 3, s0, s0 + 0.9, false); g.strokePath();
+  g.beginPath(); g.arc(x, y, r - 3, s0 + Math.PI, s0 + Math.PI + 0.9, false); g.strokePath();
+}
+
+/** The field turning one shot aside: a short blue flick along the shot's new line. */
+export function drawFieldFlick(
+  g: Phaser.GameObjects.Graphics, tint: MagnetColorFn,
+  x: number, y: number, angle: number, k: number,
+): void {
+  const len = 16 * (1 - k);
+  g.lineStyle(2, tint(MAGNET.sky), 0.7 * (1 - k));
+  g.lineBetween(x - Math.cos(angle) * len, y - Math.sin(angle) * len, x + Math.cos(angle) * len * 0.4, y + Math.sin(angle) * len * 0.4);
+  g.lineStyle(1, tint(MAGNET.chrome), 0.8 * (1 - k));
+  g.strokeCircle(x, y, 3 + 6 * k);
+}
+
+/**
+ * Mastery — Mag-Lev: a run of magnetised floor, painted as a maglev track. A dull red bed under
+ * every patch, two crimson rails laid along the run with dark cross-ties, a bright pulse riding
+ * the rails, and red current crackling over the top. `life` (1 → 0) per point flickers a stretch
+ * in its last fifth, so the player can see the ground about to go dead.
+ */
+export function drawMagTrack(
+  g: Phaser.GameObjects.Graphics, tint: MagnetColorFn,
+  pts: ReadonlyArray<{ x: number; y: number; life: number; seed: number }>, r: number, t: number, alpha = 1,
+): void {
+  if (pts.length === 0) return;
+  const fade = (p: { life: number; seed: number }): number =>
+    alpha * Math.min(1, p.life * 8) * (p.life < 0.2 ? 0.4 + 0.6 * Math.abs(Math.sin(t * 11 + p.seed)) : 1);
+  // The bed: a red glow with a scorched core.
+  for (const p of pts) {
+    const a = fade(p);
+    g.fillStyle(tint(MAGNET.red), a * (0.15 + 0.04 * Math.sin(t * 5 + p.seed)));
+    g.fillCircle(p.x, p.y, r);
+    g.fillStyle(tint(MAGNET.shadow), a * 0.22);
+    g.fillCircle(p.x, p.y, r * 0.68);
+  }
+  // Rails and ties along the run.
+  const rail = r * 0.42;
+  for (let i = 1; i < pts.length; i++) {
+    const p0 = pts[i - 1], p1 = pts[i];
+    const a = Math.min(fade(p0), fade(p1));
+    const ang = Math.atan2(p1.y - p0.y, p1.x - p0.x);
+    const nx = -Math.sin(ang) * rail, ny = Math.cos(ang) * rail;
+    const mx = (p0.x + p1.x) / 2, my = (p0.y + p1.y) / 2;
+    g.lineStyle(2.4, tint(MAGNET.dark), a * 0.8);
+    g.lineBetween(mx - nx * 1.3, my - ny * 1.3, mx + nx * 1.3, my + ny * 1.3);
+    for (const k of [-1, 1]) {
+      g.lineStyle(3.2, tint(MAGNET.red), a * 0.9);
+      g.lineBetween(p0.x + nx * k, p0.y + ny * k, p1.x + nx * k, p1.y + ny * k);
+      g.lineStyle(1, tint(MAGNET.blush), a * 0.75);
+      g.lineBetween(p0.x + nx * k, p0.y + ny * k, p1.x + nx * k, p1.y + ny * k);
+    }
+    // The pulse: a hot bead running the rails from the near end to the far.
+    const u = (t * 2.4 - i * 0.18) % 1;
+    const ux = Phaser.Math.Linear(p0.x, p1.x, u < 0 ? u + 1 : u), uy = Phaser.Math.Linear(p0.y, p1.y, u < 0 ? u + 1 : u);
+    g.fillStyle(tint(MAGNET.blush), a * 0.85);
+    g.fillCircle(ux + nx, uy + ny, 1.8);
+    g.fillCircle(ux - nx, uy - ny, 1.8);
+  }
+  if (pts.length === 1) {
+    const p = pts[0];
+    g.lineStyle(2.4, tint(MAGNET.red), fade(p) * 0.8);
+    g.strokeCircle(p.x, p.y, rail);
+  }
+  // Current crackling over the top, re-rolled every frame.
+  for (const p of pts) {
+    const a = fade(p);
+    if (Math.random() < 0.45) continue;
+    const a0 = Math.random() * TAU;
+    const line: Pt[] = [];
+    for (let k = 0; k < 4; k++) {
+      const ang = a0 + k * 0.5;
+      const rr = r * (0.3 + Math.random() * 0.6);
+      line.push({ x: p.x + Math.cos(ang) * rr, y: p.y + Math.sin(ang) * rr });
+    }
+    g.lineStyle(1.8, tint(MAGNET.rose), a * 0.85);
+    strokePts(g, line);
+    g.lineStyle(0.8, tint(MAGNET.white), a * 0.9);
+    strokePts(g, line);
+  }
+}
+
+/**
  * Q+ Mega Mechancements: the mech's palette turned from cobalt to crimson. Everything the mech
  * paints in its blues (plate, trim, visor, the current in its rail) is swapped for a matching red
  * before the owner's skin is applied; the rest of the palette passes through.

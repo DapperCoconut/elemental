@@ -4,8 +4,8 @@ import { ElementCodex } from '../AbilityCodex';
  * Harvest — the scarecrow (element id `gluttony`, kept from the chef it replaced).
  *
  * Verified against `src/elements/gluttony.ts` and `kits/GluttonyKit.ts`. The five shop upgrades
- * (2026-10-16) are constants in the kit's "Shop upgrades" block. Harvest has no mastery yet — the
- * chef's was retired with the 2026-10-15 rework — and no perks. Every number below is a constant
+ * (2026-10-16) are constants in the kit's "Shop upgrades" block; the mastery (2026-10-17) is in its
+ * "Mastery" block — the chef's was retired with the 2026-10-15 rework. No perks. Every number below is a constant
  * at the top of the kit.
  */
 const gluttony: ElementCodex = {
@@ -232,6 +232,46 @@ const gluttony: ElementCodex = {
       notes: [
         'The line is checked after the swing\'s own damage lands, so a cut that pushes them under it still kills.',
         'The vulnerability shows in the victim\'s tray as Reaped.',
+      ],
+    },
+  },
+
+  mastery: {
+    'invasive-species': {
+      basics:
+        'While any harmful status effect is on you, you regenerate 2 HP a second. Anything in the '
+        + 'debuff half of your status tray counts — a burn, a poison, a slow, a stun, a disarm, '
+        + 'Corruption, Reaped, an opponent\'s heal block — and the regrowth stops the moment the last '
+        + 'one is gone. The tray is checked four times a second.',
+      cast: 'Passive. Always on while Harvest Mastery is enabled and Harvest is the element being played.',
+      effects: [
+        { tag: 'heal', label: 'Regrowth', detail: '2 HP a second while any harmful status effect is on you.' },
+        { tag: 'utility', label: 'Anything harmful', detail: 'Every debuff in your status tray counts — damage over time, slows, stuns, disarms, Corruption, Reaped, a heal block.' },
+      ],
+      notes: [
+        'A heal block still blocks it: Consume\'s bite turns the regrowth on and stops it landing at the same time.',
+        'A Harvest NPC on Nightmare regrows the same way.',
+      ],
+    },
+    'corrupt-predation': {
+      basics:
+        'Spends 50 Corrupt HP and fires 12 pellets of rot in a cone 5° wide toward the cursor, out to '
+        + '720px. Each pellet stops in the first enemy it meets for 5 damage — 60 if the whole volley '
+        + 'lands — and puts 4 Corruption on them. Wherever the volley hits, it plants a corrupt seed '
+        + '(one per spot, however many pellets land there), and the seed grows into a colony of mold '
+        + 'right under whoever you shot, counting toward your seed limit like any other. With less '
+        + 'than 50 Corrupt HP it will not fire. Bindable to R, F or Q. 3s cooldown.',
+      cast: 'The bound key (R, F or Q), toward the cursor. Costs 50 Corrupt HP. 3 second cooldown.',
+      effects: [
+        { tag: 'cost', label: 'Paid in rot', detail: '50 Corrupt HP per volley. Without it the shot does not fire.' },
+        { tag: 'damage', label: 'Twelve pellets', detail: '5 each in a 5° cone, 720px of range. Each stops in the first enemy it meets.' },
+        { tag: 'debuff', label: 'Corrupting', detail: '+4 Corruption per pellet — up to 48 from one full volley.' },
+        { tag: 'summon', label: 'Seeds the hit', detail: 'Every spot the volley lands plants a corrupt seed there, growing new mold under the target.' },
+      ],
+      notes: [
+        'It is how you put mold where your enemy is instead of where you are standing — sow at range, then let the rot do the rest.',
+        'Every pellet still heals you off the target\'s corruption, so the later pellets of a volley heal more than the first.',
+        'A Harvest NPC on Nightmare binds it over Feeding Frenzy and fires it whenever it has the Corrupt HP and you are in range.',
       ],
     },
   },

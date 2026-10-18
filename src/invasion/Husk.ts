@@ -3,6 +3,7 @@ import { Fighter } from '../entities/Fighter';
 import { Element } from '../elements/Element';
 import { HuskVariantDef, BASIC_HUSK, huskTextureKey } from './HuskVariants';
 import { BossBrain } from './InvasionBosses';
+import { HuskLook } from './HuskLook';
 import type { HuskStatus } from './InvasionKit';
 
 // Minimal element — husks have no abilities, they just shamble and bite.
@@ -161,6 +162,27 @@ export class Husk extends Fighter {
   public roomIndex = 0;
   /** Killing this pays no shards (decoys, echo splits, soul re-rises). */
   public noRewardKill = false;
+  /**
+   * City invasion: where to walk when nobody is in reach — the lane's gate, then
+   * the All-Element. Written every frame by the CityDirector; null everywhere else.
+   */
+  public marchTo: { x: number; y: number } | null = null;
+  /**
+   * City: hits that aren't the local player's — a bot's swing, a co-op partner's
+   * relayed hit. They skip the local player's mutations (the damage share written
+   * to `mutationIncomingMult`, lifesteal, slows). Depth > 0 while one lands.
+   */
+  static foreignHitDepth = 0;
+
+  takeForeignDamage(amount: number): void {
+    Husk.foreignHitDepth++;
+    try {
+      this.takeDamage(amount / (this.mutationIncomingMult || 1));
+    } finally {
+      Husk.foreignHitDepth--;
+    }
+  }
+
   /** Elemental effect buffs (Time haste, Passion thrall, Subterfuge reveal…). */
   public effectSpeedMult = 1;
   public effectHasteUntil = 0;
@@ -188,6 +210,31 @@ export class Husk extends Fighter {
       this.sizeMult = variant.sizeMult;
       this.applySizeMult();
     }
+  }
+
+  /** The dead element player this husk wears (invasion only; null = its baked body). */
+  private look: HuskLook | null = null;
+
+  /** Invasion: rise as a dead element player rather than the baked blob. */
+  dress(): void {
+    if (!this.look) this.look = HuskLook.tryDress(this);
+  }
+
+  /** Subterfuge's impostor: wear a plain husk's face (on) or its own (off). */
+  setDisguise(on: boolean): void {
+    if (this.look) this.look.setDisguise(on);
+    else this.setTexture(huskTextureKey(on ? BASIC_HUSK : this.variant));
+  }
+
+  preUpdate(time: number, delta: number): void {
+    super.preUpdate(time, delta);
+    this.look?.update(delta);
+  }
+
+  destroy(fromScene?: boolean): void {
+    this.look?.destroy();
+    this.look = null;
+    super.destroy(fromScene);
   }
 
   update(targets: Fighter[], time: number, delta: number): void {
@@ -254,6 +301,14 @@ export class Husk extends Fighter {
 
     // Chase whichever viable (alive, not downed) target is nearest.
     const viable = targets.filter((t) => t.active && t.hp > 0 && !t.downed);
+    if (viable.length === 0 && this.marchTo) {
+      const body = this.body as Phaser.Physics.Arcade.Body;
+      const dx = this.marchTo.x - this.x;
+      const dy = this.marchTo.y - this.y;
+      const d = Math.hypot(dx, dy) || 1;
+      body.setVelocity((dx / d) * this.moveSpeed, (dy / d) * this.moveSpeed);
+      return;
+    }
     if (viable.length === 0) {
       // Nobody visible (Silence stealth): shamble around aimlessly, and with
       // stalkers on the field fire blind shots hoping to clip one.
@@ -317,7 +372,7 @@ export class Husk extends Fighter {
   }
 
   private get moveSpeed(): number {
-    let spd = this.speed * this.walkSpeedMult * this.purgeSpeedMult * this.effectSpeedMult * this.despressSlowMult() * this.overRadiatedSpeedMult() * this.devotionSlowMult() * this.goldSpeedMult;
+    let spd = this.speed * this.walkSpeedMult * this.purgeSpeedMult * this.effectSpeedMult * this.despressSlowMult() * this.overRadiatedSpeedMult() * this.devotionSlowMult() * this.premoveSlowMult() * this.goldSpeedMult * this.magnetSlowMult;
     if (this.frostStacks > 0) spd *= Math.max(0.2, 1 - this.frostStacks * 0.1);
     return spd;
   }
@@ -373,6 +428,10 @@ export class Husk extends Fighter {
   private jitteredAim(tx: number, ty: number, time: number): { x: number; y: number } {
     let offsetDeg = time < this.aimOffsetBonusUntil ? this.aimOffsetBonusDeg : 0;
     if (Date.now() < this.hallucinatingUntil && Math.random() < 0.2) offsetDeg += 50;
+    // Devotion Mastery: an Ark in sight pulls the aim toward it, or the husk looks away.
+    const bent = this.bendGazePoint(tx, ty);
+    tx = bent.x;
+    ty = bent.y;
     if (offsetDeg <= 0) return { x: tx, y: ty };
     const dist = Math.hypot(tx - this.x, ty - this.y) || 1;
     const baseAngle = Math.atan2(ty - this.y, tx - this.x);
@@ -400,6 +459,7 @@ export class Husk extends Fighter {
     if (Date.now() < this.hallucinatingUntil && Math.random() < 0.2) return;
     // Out of tune (Sound's Fermata): a quarter of bites misfire.
     if (Date.now() < this.outOfTuneUntil && Math.random() < 0.25) { this.lastTuneMissAt = Date.now(); return; }
+    this.look?.onBite(target.x, target.y);
     this.onBite?.(Math.round(this.biteDamage * damageMult * this.effectDamageMult), target);
   }
 

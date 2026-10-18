@@ -6,6 +6,9 @@ import { Husk } from './Husk';
 import { InvasionKit, InvasionDifficultyDef, INVASION_DIFFICULTIES, WAVE_LABEL_Y, WAVE_BANNER_Y, formatWaveLabel, InvasionFx } from './InvasionKit';
 import { huskVariantFromIndex, huskVariantIndex } from './HuskVariants';
 import { Mansion, ROOM_META, ROOM_COUNT } from './Mansion';
+import { CityGuest } from './city/CityGuest';
+import type { CityRunOptions } from './city/CityDirector';
+import type { CityLoadoutApi } from './city/CityDraft';
 
 /** Narrow surface the invasion co-op kit needs from ArenaScene. */
 export interface InvasionCoopArenaApi {
@@ -25,7 +28,13 @@ export interface InvasionCoopArenaApi {
   spawnHitFlash(x: number, y: number, color: number): void;
   /** End the co-op run and show the results screen. */
   endCoopRun(wavesCompleted: number, shardsEarned: number): void;
+  /** City: the local player's drafted loadout. */
+  readonly cityLoadout: CityLoadoutApi | null;
+  latchPointer(): void;
 }
+
+/** A downed defender in a City run stands back up at the plinth after this long. */
+const CITY_RESPAWN_MS = 15000;
 
 const STATE_SEND_INTERVAL_MS = 50;   // 20 Hz — ally position/vitals
 const SNAP_SEND_INTERVAL_MS = 100;   // 10 Hz — husk batch (host → guest)
@@ -104,6 +113,12 @@ export class InvasionCoopKit {
   private guestWarnedWave = -1;
   /** Guest-side mansion: layout, doors and minimap; HP fed from the host's snaps. */
   private guestMansion: Mansion | null = null;
+  /** City co-op: the run's options (null on a mansion run). */
+  private city: CityRunOptions | null = null;
+  /** City co-op, guest side: its own map, the All-Element and the bots, drawn from snaps. */
+  private guestCity: CityGuest | null = null;
+  /** City: when the local player went down, for the plinth's fifteen-second stand-up. */
+  private localDownedAt = 0;
   /** Guest-side cosmetic layer: orbitals/auras on replicas the host simulates. */
   private replicaFxG: Phaser.GameObjects.Graphics | null = null;
   private orbitAngle = 0;
@@ -123,6 +138,7 @@ export class InvasionCoopKit {
   private readonly onLocalDefeated = () => {
     if (this.localDowned || this.matchEnded) return;
     this.localDowned = true;
+    this.localDownedAt = this.api.scene.time.now;
     this.api.player.downed = true;
     this.reviveProgress = 0;
     this.downedBanner?.setVisible(true);
@@ -173,14 +189,22 @@ export class InvasionCoopKit {
     onCorruption: (room: number, kind: 'seeded' | 'taken' | 'cleansed') => {
       Net.send({ t: 'corrupt', room, kind });
     },
+    onCityWave: (wave: number, lanes: number[]) => {
+      Net.send({ t: 'cityWarn', wave, lanes });
+    },
   };
 
   constructor(private api: InvasionCoopArenaApi) {}
 
+  /** Mutable so a City run can drop the mansion's flat ×2 — the City scales by party size itself. */
+
   /** (Re)initialise for a fresh co-op run. Called from ArenaScene.create(). */
-  reset(isHost: boolean, difficulty: InvasionDifficultyDef): void {
+  reset(isHost: boolean, difficulty: InvasionDifficultyDef, city: CityRunOptions | null = null): void {
     this.detach();
     this.isHost = isHost;
+    this.city = city;
+    // The City counts the second human in its own party maths.
+    this.hostHooks.spawnMultiplier = city ? 1 : 2;
     this.difficulty = difficulty;
     this.remote = null;
     this.castQueue = [];
@@ -208,7 +232,32 @@ export class InvasionCoopKit {
 
     // The guest walks its own copy of the mansion (layout and travel are
     // deterministic); only room HP/loss/target arrive from the host's snaps.
-    if (!isHost) {
+    if (!isHost && city) {
+      const api = this.api;
+      this.guestCity = new CityGuest({
+        get scene() { return api.scene; },
+        get player() { return api.player; },
+        get loadout() { return api.cityLoadout; },
+        onRoomChanged: (room) => {
+          this.api.invasionKit.setGuestRoom(room);
+          this.refreshReplicaVisibility();
+          this.sendState(true);
+        },
+        sendPick: (kind, id) => Net.send({ t: 'cityPick', kind, id }),
+        latchPointer: () => this.api.latchPointer(),
+        showFloatingText: (x, y, t, c) => this.api.showFloatingText(x, y, t, c),
+        livingHusks: () => this.api.invasionKit.livingHusks(),
+      });
+      this.api.invasionKit.setGuestRoom(this.guestCity.currentRoom);
+      const guestCity = this.guestCity;
+      this.api.invasionKit.guestMutationSpeed = () => guestCity.mutations.speedMult();
+      this.replicaFxG?.destroy();
+      this.replicaFxG = this.api.scene.add.graphics().setDepth(3.5);
+      this.api.invasionKit.guestRelay = null;
+      this.api.invasionKit.guestMansionHook = null;
+      this.api.invasionKit.guestOverlayProbe = () => !!this.guestCity?.isDraftOpen;
+      this.api.invasionKit.prepareGuestContents(true);
+    } else if (!isHost) {
       if (!this.guestMansion) {
         this.guestMansion = new Mansion(this.api.scene, {
           onRoomChanged: (room) => {
@@ -254,7 +303,7 @@ export class InvasionCoopKit {
     this.buildHud();
 
     if (isHost) {
-      this.api.invasionKit.reset(difficulty, this.hostHooks);
+      this.api.invasionKit.reset(difficulty, this.hostHooks, null, city ? { ...city, humans: 2 } : null);
     }
 
     this.sendState(true);
@@ -275,12 +324,16 @@ export class InvasionCoopKit {
     }
     this.guestMansion?.destroyHud();
     this.guestMansion = null;
+    this.guestCity?.destroy();
+    this.guestCity = null;
+    if (this.api.invasionKit) this.api.invasionKit.guestMutationSpeed = null;
     this.replicaFxG?.destroy();
     this.replicaFxG = null;
     if (this.api.invasionKit) {
       this.api.invasionKit.allyProbe = null;
       this.api.invasionKit.guestRelay = null;
       this.api.invasionKit.guestMansionHook = null;
+      this.api.invasionKit.guestOverlayProbe = null;
       if (!this.isHost) this.api.invasionKit.destroyContents();
     }
     this.destroyHud();
@@ -290,7 +343,7 @@ export class InvasionCoopKit {
   private myRoom(): number {
     return this.isHost
       ? this.api.invasionKit.currentRoom()
-      : (this.guestMansion?.currentRoom ?? 0);
+      : (this.guestCity?.currentRoom ?? this.guestMansion?.currentRoom ?? 0);
   }
 
   /** Per-frame update. */
@@ -302,12 +355,19 @@ export class InvasionCoopKit {
     if (this.isHost) {
       this.api.invasionKit.update(time, delta);
       this.sendHuskSnap();
-      if (this.localDowned && this.allyDowned) this.finishCoopRun();
+      // In the City only the All-Element can lose the run; a downed pair just waits on the plinth.
+      if (this.localDowned && this.allyDowned && !this.city) this.finishCoopRun();
     } else {
       this.interpolateHuskReplicas();
       this.updateGhostShots(delta);
       // Guest mansion: door travel, door pulses and the minimap husk counts.
-      if (this.guestMansion) {
+      if (this.guestCity) {
+        const counts = new Array<number>(ROOM_COUNT).fill(0);
+        for (const rep of this.huskReplicas.values()) {
+          if (rep.husk.active) counts[rep.husk.roomIndex] = (counts[rep.husk.roomIndex] ?? 0) + 1;
+        }
+        this.guestCity.update(time, delta, counts);
+      } else if (this.guestMansion) {
         const counts = new Array<number>(ROOM_COUNT).fill(0);
         for (const rep of this.huskReplicas.values()) {
           if (rep.husk.active) counts[rep.husk.roomIndex] = (counts[rep.husk.roomIndex] ?? 0) + 1;
@@ -328,6 +388,23 @@ export class InvasionCoopKit {
     }
 
     this.updateRevive(delta);
+    if (this.city) this.tickCityRespawn(time);
+  }
+
+  /**
+   * City: nobody came, so the All-Element stands its defender back up beside
+   * the plinth. Each side runs its own clock for its own player.
+   */
+  private tickCityRespawn(time: number): void {
+    if (!this.localDowned) return;
+    const left = Math.max(0, CITY_RESPAWN_MS - (time - this.localDownedAt));
+    this.downedBanner?.setText(`⚠ DOWNED — your ally can revive you, or the plinth will in ${Math.ceil(left / 1000)}s`);
+    if (left > 0) return;
+    if (this.isHost) this.api.invasionKit.jumpToMainStreet();
+    else this.guestCity?.jumpHome();
+    const p = this.api.player;
+    (p.body as Phaser.Physics.Arcade.Body | null)?.reset(this.api.scene.scale.width / 2, this.api.scene.scale.height * 0.2 + 90);
+    this.onRevived();
   }
 
   /** Replays at most one queued ally cast through the NPC cast path. */
@@ -431,7 +508,8 @@ export class InvasionCoopKit {
       // the host's instead of ticking up as the wave trickles in.
       remaining: this.api.invasionKit.remainingThisWave,
       husks,
-      m: this.api.invasionKit.mansionState(),
+      m: this.city ? undefined : this.api.invasionKit.mansionState(),
+      c: this.api.invasionKit.cityState(),
     });
   }
 
@@ -679,6 +757,7 @@ export class InvasionCoopKit {
       }
       if (msg.m.tn !== undefined) this.api.invasionKit.applyRemoteTonics(msg.m.tn);
     }
+    if (msg.c) this.guestCity?.applySnap(msg.c);
     this.updateGuestHud();
 
     const myRoom = this.myRoom();
@@ -689,6 +768,7 @@ export class InvasionCoopKit {
       if (!rep) {
         const variant = huskVariantFromIndex(hs.v ?? 0);
         const husk = new Husk(this.api.scene, hs.x, hs.y, hs.maxHp, 0, 0, 950, variant);
+        husk.dress();
         husk.netId = hs.id;
         husk.netGhost = true;
         husk.hp = hs.hp;
@@ -696,6 +776,7 @@ export class InvasionCoopKit {
         if (hs.p) husk.setTint(0xaa1133);
         husk.onGhostDamage = (amount) => {
           Net.send({ t: 'huskDamage', id: hs.id, amount });
+          this.guestCity?.mutations.onHuskHit(husk, amount);
           if (husk.visible) this.api.spawnDamageNumber(husk.x, husk.y - 20, amount);
         };
         husk.onGhostStatus = (s) => Net.send({ t: 'huskStatus', id: hs.id, s });
@@ -783,7 +864,14 @@ export class InvasionCoopKit {
           this.shards += msg.bonus;
           this.updateGuestHud();
           this.api.showFloatingText(this.api.player.x, this.api.player.y - 50, `WAVE ${msg.wave} CLEARED  +${msg.bonus} 🩸`, '#88ff44');
+          this.guestCity?.openDraft(msg.wave);
         }
+        break;
+      case 'cityWarn':
+        if (!this.isHost) this.guestCity?.showWarning(msg.wave, msg.lanes);
+        break;
+      case 'cityPick':
+        if (this.isHost) this.api.invasionKit.noteAllyPick(msg.kind, msg.id);
         break;
       case 'huskDamage':
         if (this.isHost) this.api.invasionKit.applyNetworkDamage(msg.id, msg.amount);
@@ -901,7 +989,8 @@ export class InvasionCoopKit {
 
   private updateGuestHud(): void {
     const target = this.guestMansion?.targetRoom ?? -1;
-    const roomName = target >= 0 ? `${ROOM_META[target].emoji} ${ROOM_META[target].name}` : undefined;
+    const roomName = this.guestCity ? this.guestCity.laneLabel
+      : target >= 0 ? `${ROOM_META[target].emoji} ${ROOM_META[target].name}` : undefined;
     this.waveLabel?.setText(formatWaveLabel(this.wave, this.remaining, roomName));
     this.shardLabel?.setText(`🩸 ${this.shards}`);
   }

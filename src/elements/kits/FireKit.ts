@@ -4,7 +4,7 @@ import { Projectile } from '../../combat/Projectile';
 import { CastContext } from '../Ability';
 import { CustomStatus } from './StatusHudKit';
 import { Sfx } from '../../audio';
-import { ArmGesture, FireAvatar, FireColorFn, FireFx, FireWreath, FIRE, bombMarker } from './FireVisuals';
+import { ArmGesture, FireAvatar, FireColorFn, FireFx, FireWreath, FIRE, bombMarker, flameTongue } from './FireVisuals';
 import { BaseAvatar } from './ElementVisuals';
 import { makeSkinAvatar } from './skins/SkinAvatars';
 
@@ -57,6 +57,8 @@ interface PressureCharge {
   radius: number;
   /** Cluster shells throw bomblets when they blow; the bomblets themselves do not. */
   cluster: boolean;
+  /** Ash: the blast catches its own thrower too. */
+  selfHarm: boolean;
   owner: 'player' | 'npc';
   /** Ground reticle, redrawn every frame from how much fuse is left. */
   marker: Phaser.GameObjects.Graphics;
@@ -71,43 +73,100 @@ const NPC_GESTURES: Record<string, ArmGesture> = {
   'pressure-bomb': 'slam',
   'flame-body': 'flex',
   'flame-nuke': 'raise',
+  'supernova': 'raise',
 };
 
-// ── Molten (divine perk) ─────────────────────────────────────────────────
-// Not to be confused with Fire Mastery's "molten fire" DOT above — this is the earth+fate perk.
-/** How long the hotter Pressure Bomb burns the hand that threw it. */
-const MOLTEN_SELF_BURN_MS = 3000;
-/** The eruption: screen-wide, and it does not care who is standing where. */
-const MOLTEN_ERUPTION_DAMAGE = 100;
-const MAGMA_COUNT = 9;
-const MAGMA_RADIUS = 62;
-const MAGMA_LIFE_MS = 14000;
-const MAGMA_TICK_MS = 500;
-const MAGMA_TICK_DAMAGE = 5;
+// ── Supernova (alternate Q) ──────────────────────────────────────────────
+const NOVA_DURATION_MS = 6000;
+const NOVA_LENGTH = 470;
+/** Palms sit this far out along the aim, so the beam leaves the hands rather than the chest. */
+const NOVA_PALM_OFFSET = 24;
+const NOVA_HALF_WIDTH = 20;
+const NOVA_HIT_PAD = 16;
+/** "Very poor turning radius": radians per second the beam may swing toward the aim. */
+const NOVA_TURN_RATE = 0.85;
+const NOVA_TICK_MS = 200;
+const NOVA_TICK_DAMAGE = 9;           // 45 a second
+/** Self-burn per second at full heat; heat climbs linearly over the 6s. */
+const NOVA_SELF_DPS_MAX = 8;
+const NOVA_BLAST_DAMAGE = 70;
+const NOVA_BLAST_REACH = 60;          // perpendicular reach of the detonation either side of the beam
+const NOVA_BLAST_SELF = 60;
+const NOVA_POOLS = 4;
+/** Online: how often the owner re-sends where the beam is being pulled. */
+const NOVA_NET_AIM_MS = 150;
+/** Bots let go once they drop under this share of their health. */
+const NOVA_BOT_BAIL_HP = 0.3;
 
-/** A pool of magma left standing after a Molten eruption. Burns anyone but its owner. */
-interface MagmaPool {
-  /** Body of the pool, plus the brighter crust that pulses on top of it. */
-  sprite: Phaser.GameObjects.Arc;
-  crust: Phaser.GameObjects.Arc;
+/** A live Supernova beam. Owner-agnostic: the NPC's (bot or online replica) runs here too. */
+interface Nova {
+  owner: 'player' | 'npc';
+  angle: number;
+  startedAt: number;
+  /** Where the beam is being pulled toward — the cursor, the bot's target, or a relayed aim. */
+  pullX: number; pullY: number;
+  tickAccum: number;
+  /** Fractional self-burn waiting to add up to a whole point. */
+  selfAccum: number;
+  netAccum: number;
+  /** Beam body, redrawn every frame. */
+  g: Phaser.GameObjects.Graphics;
+}
+
+// ── Flame pools (Melt's flamethrower and Supernova's detonation) ─────────
+const MELT_RANGE = 240;               // 180 × 1.33
+const MELT_POOL_EVERY_MS = 260;
+const MELT_POOL_RADIUS = 30;
+const MELT_POOL_LIFE_MS = 2600;
+const MELT_POOL_CAP = 14;
+const POOL_TICK_MS = 400;
+
+/** A pool of standing flame. Burns anyone but its owner. */
+interface FlamePool {
   x: number; y: number;
   radius: number;
+  bornAt: number;
   expiresAt: number;
   tickAccum: number;
+  damage: number;
   owner: 'player' | 'npc';
+  /** Per-pool phase so neighbouring pools never flicker in step. */
+  seed: number;
 }
 
-interface AlcoholPuddle {
-  sprite: Phaser.GameObjects.Arc;
+// ── Radiate ───────────────────────────────────────────────────────────────
+const RADIATE_RADIUS = 90;
+const RADIATE_TICK_MS = 333;           // 1 a tick = 3 a second; 2 a tick with mastery
+
+// ── Alcohol (booze trail) ─────────────────────────────────────────────────
+const BOOZE_PUDDLES = 4;
+const BOOZE_RADIUS = 36;
+const BOOZE_LIFE_MS = 7000;
+/** Once lit, a puddle burns for at most this long before it is spent. */
+const BOOZE_BURN_LIFE_MS = 4000;
+const BOOZE_RESIST = 0.8;
+/** Continuous time inside before the drink starts throwing your aim off. */
+const BOOZE_DRIFT_AFTER_MS = 2000;
+const BOOZE_DRIFT_DEG = 22;
+const BOOZE_BURN_TICK_MS = 500;
+const BOOZE_BURN_DAMAGE = 4;
+
+interface BoozePuddle {
   x: number; y: number;
   radius: number;
+  bornAt: number;
   expiresAt: number;
   ignited: boolean;
-  ignitedAura: Phaser.GameObjects.Arc | null;
-  igniteTickAccum: number;
+  tickAccum: number;
   owner: 'player' | 'npc';
-  enemyTimeIn: Map<Fighter, number>;
+  seed: number;
 }
+
+// ── Ash ───────────────────────────────────────────────────────────────────
+const ASH_DAMAGE_MULT = 1.25;
+const ASH_RANGE_MULT = 1.33;
+/** Share of a charge's damage that comes back on the thrower if they stand in it. */
+const ASH_SELF_SHARE = 0.5;
 
 // ── FireArenaApi ──────────────────────────────────────────────────────────
 
@@ -126,6 +185,10 @@ export interface FireArenaApi {
   readonly width: number;
   readonly height: number;
   readonly masteryActive: boolean;
+  /** Online PvP: the npc is a remote human's replica, not a bot. */
+  readonly isOnline: boolean;
+  /** The player's burn lives on the arena (playerBurningUntil), not on the Fighter. */
+  readonly playerBurning: boolean;
   /** Mastery enhancement id bound over the given ability slot, or null if that slot is unchanged. */
   masteryBindFor(slot: string): string | null;
   /** Online: broadcast a bindable mastery cast so the peer's sim replays it. */
@@ -196,25 +259,30 @@ export class FireKit {
   private npcFlameBodyWreath: FireWreath | null = null;
   private npcEnhancedFlameBody = false;
 
-  // ── Alcohol perk state ────────────────────────────────────────────────
-  private alcoholFlaskCount = 0;
-  private alcoholFlaskVisual: Phaser.GameObjects.Text | null = null;
   /**
-   * The kit's little in-world HUD — the sun seal over Exposed targets and the flask carried
-   * at the hip. One Graphics, wiped at the top of every `update`, so nothing it shows can
+   * The kit's little in-world HUD — the sun seal over Exposed targets, the Supernova heat bar,
+   * the Radiate haze. One Graphics, wiped at the top of every `update`, so nothing it shows can
    * outlive the frame that drew it.
    */
   private hudG: Phaser.GameObjects.Graphics | null = null;
   private hudT = 0;
-  private alcoholEHoldStart = 0;
-  private alcoholEWasDown = false;
-  private alcoholPuddles: AlcoholPuddle[] = [];
-  private alcoholHeatAura: Phaser.GameObjects.Arc | null = null;
-  private alcoholHeatAuraTickAccum = 0;
-  private alcoholFlyingFlask: { sprite: Phaser.GameObjects.Arc; targetX: number; targetY: number; arriveAt: number } | null = null;
+  /** Ground layer for flame pools and booze — under the fighters, redrawn every frame. */
+  private groundG: Phaser.GameObjects.Graphics | null = null;
 
-  // ── Molten (divine perk) state ──────────────────────────────────────────
-  private magmaPools: MagmaPool[] = [];
+  // ── Perk state ────────────────────────────────────────────────────────
+  private flamePools: FlamePool[] = [];
+  private meltPoolAccum = 0;
+  private boozePuddles: BoozePuddle[] = [];
+  /** Continuous time each fighter has spent wading in booze (cleared the moment they step out). */
+  private boozeWade = new Map<Fighter, number>();
+  private radiateAccum = 0;
+  private npcRadiateAccum = 0;
+  /** Which fighters this kit has written perk multipliers onto, so they can be handed back. */
+  private perkMultsWritten = new Set<Fighter>();
+
+  // ── Supernova state ───────────────────────────────────────────────────
+  private playerNova: Nova | null = null;
+  private npcNova: Nova | null = null;
 
   // ── Fire Mastery state ──────────────────────────────────────────────────
   private burningBodyWreath: FireWreath | null = null;
@@ -259,7 +327,22 @@ export class FireKit {
   }
   isEnhancedFlameBody(): boolean { return this.enhancedFlameBody; }
   isNpcFlameBodyActive(): boolean { return this.npcFlameBodyActive; }
-  getAlcoholPuddles(): AlcoholPuddle[] { return this.alcoholPuddles; }
+
+  /** Player movement factor this kit owns: Flame Body doubles it, a Supernova roots it. */
+  getPlayerSpeedMult(): number {
+    if (this.playerNova) return 0;
+    return this.flameBodyActive ? 2 : 1;
+  }
+
+  /** The npc's equivalent; null when the kit has no say (so the arena's own chain decides). */
+  getNpcSpeedMult(): number | null {
+    if (this.npcNova) return 0;
+    return this.npcFlameBodyActive ? 2 : null;
+  }
+
+  isSupernovaActive(owner: 'player' | 'npc'): boolean {
+    return (owner === 'player' ? this.playerNova : this.npcNova) !== null;
+  }
 
   reset(): void {
     // Visuals — every GameObject dies with the old scene run, so rebuild lazily in update().
@@ -293,19 +376,24 @@ export class FireKit {
     if (this.npcFlameBodyWreath) { this.npcFlameBodyWreath.destroy(); this.npcFlameBodyWreath = null; }
     this.npcEnhancedFlameBody = false;
 
-    // Alcohol perk
-    this.alcoholFlaskCount = 0;
-    if (this.alcoholFlaskVisual) { this.alcoholFlaskVisual.destroy(); this.alcoholFlaskVisual = null; }
-    this.alcoholEHoldStart = 0;
-    this.alcoholEWasDown = false;
-    for (const p of this.alcoholPuddles) { p.sprite.destroy(); p.ignitedAura?.destroy(); }
-    this.alcoholPuddles = [];
-    for (const m of this.magmaPools) { m.sprite.destroy(); m.crust.destroy(); }
-    this.magmaPools = [];
-    if (this.alcoholHeatAura) { this.alcoholHeatAura.destroy(); this.alcoholHeatAura = null; }
-    this.alcoholHeatAuraTickAccum = 0;
-    if (this.alcoholFlyingFlask) { this.alcoholFlyingFlask.sprite.destroy(); this.alcoholFlyingFlask = null; }
+    // Perks
     if (this.hudG) { this.hudG.destroy(); this.hudG = null; }
+    if (this.groundG) { this.groundG.destroy(); this.groundG = null; }
+    this.flamePools = [];
+    this.meltPoolAccum = 0;
+    this.boozePuddles = [];
+    this.boozeWade.clear();
+    this.radiateAccum = 0;
+    this.npcRadiateAccum = 0;
+    // Fighters are rebuilt every match, so the multipliers die with the old bodies; a bond
+    // swap mid-match is handled in update() instead.
+    this.perkMultsWritten.clear();
+
+    // Supernova
+    this.playerNova?.g.destroy();
+    this.playerNova = null;
+    this.npcNova?.g.destroy();
+    this.npcNova = null;
 
     // Fire Mastery
     if (this.burningBodyWreath) { this.burningBodyWreath.destroy(); this.burningBodyWreath = null; }
@@ -321,11 +409,18 @@ export class FireKit {
     this.hudT += delta / 1000;
     if (!this.hudG || !this.hudG.active) this.hudG = scene.add.graphics().setDepth(9);
     this.hudG.clear();
+    if (!this.groundG || !this.groundG.active) this.groundG = scene.add.graphics().setDepth(2);
+    this.groundG.clear();
 
     this.updateAvatars(delta, isPlayerFire, isNpcFire);
     this.updateFireballTrails(delta);
-    // Owner-agnostic: an eruption's magma outlives the frame either side set it down on.
-    this.updateMagma(time, delta);
+    // Owner-agnostic: pools, booze and beams outlive the frame either side set them down on.
+    this.updateFlamePools(time, delta);
+    this.updateBooze(time, delta);
+    this.updateNova(this.playerNova, time, delta);
+    this.updateNova(this.npcNova, time, delta);
+    this.updatePerkMults(isPlayerFire, isNpcFire);
+    this.updateRadiate(delta, isPlayerFire, isNpcFire);
     // Same for planted charges — a fuse belongs to whoever lit it, not to whoever is fire.
     this.updatePressureCharges(time);
 
@@ -340,12 +435,11 @@ export class FireKit {
 
       // Flame body ticks (self-damage every 250ms — only for unupgraded base form, not in flame puddle)
       if (this.flameBodyActive) {
-        if (!this.enhancedFlameBody && !this.isPlayerInFlamePuddle(time)) {
+        if (!this.enhancedFlameBody) {
           this.flameBodyTickAccum += delta;
           if (this.flameBodyTickAccum >= 250) {
             this.flameBodyTickAccum -= 250;
-            const intoxicated = player.intoxicatedUntil > time;
-            player.applySelfDamage(intoxicated ? 4 : 2);
+            player.applySelfDamage(2);
           }
         }
         this.flameBodyWreath?.update(delta, player.x, player.y, player.alpha);
@@ -373,10 +467,13 @@ export class FireKit {
         const { x: fx, y: fy, visual } = this.flameChargePending;
         this.flameChargePending = null;
         visual.destroy();
-        const radius = 220;
-        this.arena.dealFlameNukeDamage(fx, fy, radius, 80);
+        // Ash: a fatter charge over a wider blast, and it bites its owner 25% harder.
+        const ash = this.arena.hasPerk('player', 'fire-ash');
+        const radius = Math.round(220 * (ash ? ASH_RANGE_MULT : 1));
+        this.arena.dealFlameNukeDamage(fx, fy, radius, this.scaled('player', ash ? 100 : 80));
+        this.igniteBooze('player', fx, fy, radius);
         if (Phaser.Math.Distance.Between(fx, fy, player.x, player.y) <= radius) {
-          player.applySelfDamage(80);
+          player.applySelfDamage(ash ? 100 : 80);
           this.arena.showFloatingText(player.x, player.y - 28, '🔥 Self-Dmg!', '#ff4400');
           // Oops achievement: blew yourself up with your own Flame Charge.
           if (player.hp <= 0) this.arena.unlockAchievement('oops');
@@ -385,11 +482,6 @@ export class FireKit {
         this.pfx.firePillar(fx, fy, 52, 170);
         scene.cameras.main.shake(320, 0.010);
         this.arena.showFloatingText(fx, fy - 28, '💥 Flame Charge!', '#ff6600');
-      }
-
-      // Alcohol perk updates
-      if (this.arena.hasPerk('player', 'alcohol')) {
-        this.updateAlcohol(time, delta, player, scene);
       }
 
       // Fire Mastery — Burning Body: always-on passive while mastery is enabled
@@ -405,7 +497,7 @@ export class FireKit {
           for (const t of this.arena.enemies) {
             if (!t.active || t.hp <= 0) continue;
             if (Phaser.Math.Distance.Between(player.x, player.y, t.x, t.y) <= 50) {
-              t.takeDamage(3, { fireDot: true });
+              t.takeDamage(this.scaled('player', 3), { fireDot: true });
               this.arena.spawnHitFlash(t.x, t.y, this.pcol(FIRE.ember));
               this.pfx.embers(t.x, t.y, 2, { speed: 70, size: 2.6, life: 380 });
             }
@@ -507,30 +599,42 @@ export class FireKit {
     const aimAngle = Math.atan2(mouseY - player.y, mouseX - player.x);
 
     if (!nukeChanneling) {
+      // ── Supernova: while the beam is open, Q closes it and nothing else answers ──
+      if (this.playerNova) {
+        if (Phaser.Input.Keyboard.JustDown(qKey)) {
+          this.stopNova('player');
+          this.arena.broadcastMasteryCast('fire-nova-stop');
+        }
+        this.playerAvatar?.setHold('spray', this.playerNova.angle);
+        this.firePointerWasDown = pointer.isDown;
+        return;
+      }
+
       // ── Click: Fireball / Flamethrower ────────────────────────────
-      if (pointer.isDown) {
+      // Blaze drops the hold, Melt drops the tap; both together drop the click entirely.
+      const blaze = this.arena.hasPerk('player', 'fire-blaze');
+      const melt = this.arena.hasPerk('player', 'fire-melt');
+      // Alcohol: a drink too many and the hands wander.
+      const sprayAngle = aimAngle + this.aimJitter(player);
+      if (pointer.isDown && !(blaze && melt)) {
         const justPressed = !this.firePointerWasDown;
         this.flamethrowerHoldMs += delta;
-        if (justPressed) {
+        if (justPressed && !melt) {
           // Arms jab first so the throw reads as coming out of a hand.
           if (player.castAbility('fireball', playerCtx)) this.playerAvatar?.play('punch', aimAngle);
-          if (this.arena.hasPerk('player', 'alcohol')) {
-            this.igniteAlcoholPuddlesNear(mouseX, mouseY, 60, scene);
-          }
-        } else if (this.flamethrowerHoldMs > 120) {
-          this.playerAvatar?.setHold('spray', aimAngle);
+        } else if (!blaze && (melt || this.flamethrowerHoldMs > 120)) {
+          this.playerAvatar?.setHold('spray', sprayAngle);
+          const range = melt ? MELT_RANGE : 180;
           this.flamethrowerTickAccum += delta;
           if (this.flamethrowerTickAccum >= 100) {
             this.flamethrowerTickAccum -= 100;
-            const dirX = mouseX - player.x;
-            const dirY = mouseY - player.y;
-            const dirLen = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
+            const dirX = Math.cos(sprayAngle);
+            const dirY = Math.sin(sprayAngle);
             for (const t of this.arena.enemies) {
               if (!t.active || t.hp <= 0) continue;
               const dist = Phaser.Math.Distance.Between(player.x, player.y, t.x, t.y);
-              if (dist <= 180) {
-                const dot = (dirX / dirLen) * ((t.x - player.x) / dist)
-                          + (dirY / dirLen) * ((t.y - player.y) / dist);
+              if (dist <= range) {
+                const dot = dirX * ((t.x - player.x) / dist) + dirY * ((t.y - player.y) / dist);
                 if (dot > 0.866) {
                   const ftDmg = this.enhancedFlameBody ? 8 : 4;
                   t.takeDamage(ftDmg);
@@ -543,79 +647,56 @@ export class FireKit {
                 }
               }
             }
-            this.pfx.flameJet(player.x, player.y, aimAngle, this.enhancedFlameBody ? 190 : 160);
-            if (this.arena.hasPerk('player', 'alcohol')) {
-              this.igniteAlcoholPuddlesNear(mouseX, mouseY, 40, scene);
+            this.pfx.flameJet(player.x, player.y, sprayAngle, (this.enhancedFlameBody ? 190 : 160) * (melt ? MELT_RANGE / 180 : 1));
+          }
+          // Melt: the spray leaves burning slag where it lands.
+          if (melt) {
+            this.meltPoolAccum += delta;
+            if (this.meltPoolAccum >= MELT_POOL_EVERY_MS) {
+              this.meltPoolAccum = 0;
+              const reach = Math.min(range * 0.85, Phaser.Math.Distance.Between(player.x, player.y, mouseX, mouseY));
+              this.dropMeltPool('player', player.x + Math.cos(sprayAngle) * reach, player.y + Math.sin(sprayAngle) * reach);
             }
           }
         }
       } else {
         this.flamethrowerHoldMs = 0;
         this.flamethrowerTickAccum = 0;
+        this.meltPoolAccum = MELT_POOL_EVERY_MS;
         this.playerAvatar?.setHold(null);
       }
 
-      // ── E: Flame Dash / Drink Up! (Alcohol perk) ─────────────────
+      // ── E: Flame Dash ─────────────────────────────────────────────
       const eJustDown = Phaser.Input.Keyboard.JustDown(eKey);
-      const eJustUp = this.alcoholEWasDown && !eKey.isDown;
 
       if (hwSlot === 'e') {
         if (eJustDown) this.tryCastHeatwave(time, mouseX, mouseY);
-      } else if (this.arena.hasPerk('player', 'alcohol')) {
-        if (eJustDown) this.alcoholEHoldStart = time;
-        if (eJustUp && this.alcoholEHoldStart > 0) {
-          const heldMs = time - this.alcoholEHoldStart;
-          this.alcoholEHoldStart = 0;
-
-          if (player.getCooldownRatio('flame-dash') >= 1) {
-            player.triggerCooldown('flame-dash');
-
-            if (this.alcoholFlaskCount === 0) {
-              // No flask: pick up a new one
-              this.alcoholFlaskCount = 1;
-              this.playerAvatar?.play('clap', aimAngle);
-              this.arena.showFloatingText(player.x, player.y - 30, '🍺 Flask!', '#c97a3a');
-            } else if (heldMs >= 250) {
-              // Hold ≥250ms with flask: throw puddle
-              this.alcoholFlaskCount = 0;
-              this.playerAvatar?.play('punch', aimAngle);
-              this.throwAlcoholFlask(time, scene, player);
-            } else {
-              // Tap with flask: drink (consume flask)
-              this.alcoholFlaskCount = 0;
-              this.playerAvatar?.play('flex');
-              this.drinkAlcohol(time, player);
-            }
-          }
-        }
-      } else {
-        if (eJustDown) {
-          const dashStartX = player.x;
-          const dashStartY = player.y;
-          const dashed = player.castAbility('flame-dash', playerCtx);
-          if (dashed) this.playerAvatar?.play('dash', aimAngle);
-          if (dashed && this.arena.hasUpgrade('e')) {
-            // Propulsion: spawn 4 explosions sampled during the 280ms dash
-            for (let i = 1; i <= 4; i++) {
-              scene.time.delayedCall(i * 70, () => {
-                if (!player.active) return;
-                const t = i / 4;
-                const ex = dashStartX + (player.x - dashStartX) * t;
-                const ey = dashStartY + (player.y - dashStartY) * t;
-                for (const enemy of this.arena.enemies) {
-                  if (!enemy.active || enemy.hp <= 0) continue;
-                  if (Phaser.Math.Distance.Between(ex, ey, enemy.x, enemy.y) <= 50) {
-                    enemy.takeDamage(Phaser.Math.Between(5, 8));
-                    this.arena.spawnHitFlash(enemy.x, enemy.y, this.pcol(FIRE.orange));
-                  }
+      } else if (eJustDown) {
+        const dashStartX = player.x;
+        const dashStartY = player.y;
+        const dashed = player.castAbility('flame-dash', playerCtx);
+        if (dashed) this.playerAvatar?.play('dash', aimAngle);
+        // Propulsion (E+): explosions sampled along the dash — unless Alcohol has swapped every
+        // explosion on the dash for booze.
+        if (dashed && this.arena.hasUpgrade('e') && !this.arena.hasPerk('player', 'fire-alcohol')) {
+          for (let i = 1; i <= 4; i++) {
+            scene.time.delayedCall(i * 70, () => {
+              if (!player.active) return;
+              const t = i / 4;
+              const ex = dashStartX + (player.x - dashStartX) * t;
+              const ey = dashStartY + (player.y - dashStartY) * t;
+              for (const enemy of this.arena.enemies) {
+                if (!enemy.active || enemy.hp <= 0) continue;
+                if (Phaser.Math.Distance.Between(ex, ey, enemy.x, enemy.y) <= 50) {
+                  enemy.takeDamage(this.scaled('player', Phaser.Math.Between(5, 8)));
+                  this.arena.spawnHitFlash(enemy.x, enemy.y, this.pcol(FIRE.orange));
                 }
-                this.pfx.explosion(ex, ey, 50, { shards: 6, smoke: 0, scorch: false, duration: 300, depth: 4 });
-              });
-            }
+              }
+              this.pfx.explosion(ex, ey, 50, { shards: 6, smoke: 0, scorch: false, duration: 300, depth: 4 });
+            });
           }
         }
       }
-      this.alcoholEWasDown = eKey.isDown;
 
       // ── R: Pressure Bomb (Cluster Bomb with R+) ───────────────────
       // The upgrade changes what the charge does when it goes off, not how it is thrown,
@@ -653,6 +734,9 @@ export class FireKit {
       if (Phaser.Input.Keyboard.JustDown(qKey)) {
         if (hwSlot === 'q') {
           this.tryCastHeatwave(time, mouseX, mouseY);
+        } else if (this.hasSupernova(player)) {
+          // Alternate ultimate: Flame Nuke (and its Q+ Flame Charge) is not on this body at all.
+          if (player.castAbility('supernova', playerCtx)) this.playerAvatar?.play('raise', aimAngle, 300);
         } else if (this.arena.hasUpgrade('q') && (this.flameBodyActive || this.enhancedFlameBody) && player.getCooldownRatio('flame-nuke') >= 1) {
           if (!this.flameChargeWaiting && !this.flameChargePending) {
             this.flameChargeWaiting = true;
@@ -854,60 +938,6 @@ export class FireKit {
   }
 
   /**
-   * The carried flask (Alcohol perk): a round-bellied glass bottle with a cork, its amber
-   * contents sloshing with the fighter's step, and a spark of light on the glass.
-   */
-  private paintFlask(g: Phaser.GameObjects.Graphics, x: number, y: number): void {
-    const t = this.hudT;
-    const tilt = Math.sin(t * 2.4) * 0.12;
-    const cos = Math.cos(tilt), sin = Math.sin(tilt);
-    const P = (dx: number, dy: number) => ({ x: x + dx * cos - dy * sin, y: y + dx * sin + dy * cos });
-    // Shadow under the bottle.
-    g.fillStyle(0x000000, 0.25);
-    g.fillEllipse(x + 1, y + 9, 14, 4);
-    // Belly glass.
-    const belly = P(0, 3);
-    g.fillStyle(0x3a2410, 0.85);
-    g.fillCircle(belly.x, belly.y, 7.4);
-    // Liquid: lower part of the belly, surface wobbling.
-    const slosh = Math.sin(t * 5.2) * 1.4;
-    g.fillStyle(0xc97a3a, 0.95);
-    g.beginPath();
-    const lvl = 0.6;
-    for (let i = 0; i <= 14; i++) {
-      const a = Math.PI * (i / 14);
-      const p = P(Math.cos(a) * 6.4, 3 + Math.sin(a) * 6.4);
-      if (i === 0) g.moveTo(p.x, p.y); else g.lineTo(p.x, p.y);
-    }
-    const l1 = P(-6.2, 3 + lvl - slosh), l2 = P(6.2, 3 + lvl + slosh);
-    g.lineTo(l1.x, l1.y);
-    g.lineTo(l2.x, l2.y);
-    g.closePath();
-    g.fillPath();
-    g.lineStyle(1, 0xffcc88, 0.8);
-    g.lineBetween(l1.x, l1.y, l2.x, l2.y);
-    // Neck + cork.
-    const n0 = P(0, -4), n1 = P(0, -9);
-    g.lineStyle(4.2, 0x3a2410, 0.9);
-    g.lineBetween(n0.x, n0.y, n1.x, n1.y);
-    g.lineStyle(2.4, 0xc97a3a, 0.5);
-    g.lineBetween(n0.x, n0.y, n1.x, n1.y);
-    const cork = P(0, -11);
-    g.fillStyle(0x8a5a2a, 1);
-    g.fillRoundedRect(cork.x - 2.6, cork.y - 2.4, 5.2, 4, 1.2);
-    // Glass rim + glint.
-    g.lineStyle(1.2, 0xffe0b0, 0.75);
-    g.strokeCircle(belly.x, belly.y, 7.4);
-    const glint = P(-3, 0);
-    g.fillStyle(0xffffff, 0.75);
-    g.fillCircle(glint.x, glint.y, 1.6);
-    // A wisp of fumes off the cork.
-    const f = (t * 0.8) % 1;
-    g.fillStyle(this.pcol(FIRE.amber), 0.35 * (1 - f));
-    g.fillCircle(cork.x + Math.sin(t * 3) * 2, cork.y - 3 - f * 10, 1.6 + f * 2);
-  }
-
-  /**
    * Per-frame upkeep for the Heatwave debuff chain: the sun icon over exposed targets,
    * the burn → molten upgrade, and the molten DOT tick.
    */
@@ -994,266 +1024,635 @@ export class FireKit {
     void time;
   }
 
-  // ── Alcohol perk helpers ──────────────────────────────────────────────
+  // ── Perk plumbing ─────────────────────────────────────────────────────
 
-  private drinkAlcohol(time: number, player: Fighter): void {
-    if (player.intoxicatedUntil > time) {
-      // Already intoxicated: reset timer, bank extra slowness
-      player.intoxicatedUntil = time + 6000;
-      player.intoxicationPendingSlowExtra += 2000;
-      this.arena.showFloatingText(player.x, player.y - 30, '🍺 Another round...', '#c97a3a');
-    } else {
-      player.intoxicatedUntil = time + 6000;
-      player.incomingDamageMultiplier = 0.75;
-      this.arena.showFloatingText(player.x, player.y - 30, '🍺 Intoxicated!', '#c97a3a');
-    }
+  private fighterOf(owner: 'player' | 'npc'): Fighter {
+    return owner === 'player' ? this.arena.player : this.arena.npc;
   }
 
-  private throwAlcoholFlask(time: number, scene: Phaser.Scene, player: Fighter): void {
-    const angle = Math.atan2(
-      (this.arena.npc.y - player.y),
-      (this.arena.npc.x - player.x),
-    );
-    const dist = 167;
-    const targetX = player.x + Math.cos(angle) * dist;
-    const targetY = player.y + Math.sin(angle) * dist;
-    const sprite = scene.add.circle(player.x, player.y, 7, 0xc97a3a, 0.9).setDepth(6);
-    sprite.setStrokeStyle(2, 0xffcc88, 0.8);
-    this.alcoholFlyingFlask = { sprite, targetX, targetY, arriveAt: time + 700 };
-    scene.tweens.add({ targets: sprite, x: targetX, y: targetY, duration: 700, ease: 'Linear' });
-    this.arena.showFloatingText(player.x, player.y - 30, '🍺 Thrown!', '#c97a3a');
+  /** Who a fire effect owned by `owner` is allowed to hurt. */
+  private victimsOf(owner: 'player' | 'npc'): Fighter[] {
+    return owner === 'player' ? this.arena.enemies : [this.arena.player];
   }
 
-  private spawnAlcoholPuddle(time: number, x: number, y: number, owner: 'player' | 'npc', scene: Phaser.Scene): void {
-    const sprite = scene.add.circle(x, y, 120, 0xc97a3a, 0.35).setDepth(2);
-    sprite.setStrokeStyle(3, 0xffcc88, 0.5);
-    this.alcoholPuddles.push({
-      sprite, x, y, radius: 120,
-      expiresAt: time + 6000,
-      ignited: false,
-      ignitedAura: null,
-      igniteTickAccum: 0,
-      owner,
-      enemyTimeIn: new Map(),
-    });
+  /** Blaze + Melt together: no click at all, in exchange for a faster, harder-hitting kit. */
+  private hasInferno(owner: 'player' | 'npc'): boolean {
+    return this.arena.hasPerk(owner, 'fire-blaze') && this.arena.hasPerk(owner, 'fire-melt');
   }
 
-  igniteAlcoholPuddlesNear(cx: number, cy: number, range: number, scene: Phaser.Scene): void {
-    for (const p of this.alcoholPuddles) {
-      if (p.ignited) continue;
-      if (Phaser.Math.Distance.Between(cx, cy, p.x, p.y) <= range + p.radius) {
-        p.ignited = true;
-        p.sprite.setFillStyle(0xff4400, 0.4);
-        p.sprite.setStrokeStyle(3, 0xff6600, 0.8);
-        if (p.ignitedAura) p.ignitedAura.destroy();
-        p.ignitedAura = scene.add.circle(p.x, p.y, p.radius * 0.9, 0xff4400, 0.2).setDepth(2);
-        scene.tweens.add({ targets: p.ignitedAura, alpha: 0.05, yoyo: true, repeat: -1, duration: 400 });
-      }
-    }
+  /** Outgoing damage factor fire's abilities use for this owner (CastContext.fireDamageMult). */
+  damageMult(owner: 'player' | 'npc'): number {
+    return this.hasInferno(owner) ? 1.5 : 1;
   }
 
-  private updateAlcohol(time: number, delta: number, player: Fighter, scene: Phaser.Scene): void {
-    // Flask visual — shown while player holds a flask
-    if (this.alcoholFlaskCount > 0) {
-      if (this.hudG && !player.forceInvisible) this.paintFlask(this.hudG, player.x + 18, player.y - 18);
-    } else {
-      if (this.alcoholFlaskVisual) { this.alcoholFlaskVisual.destroy(); this.alcoholFlaskVisual = null; }
-    }
-
-    // Flying flask landing
-    if (this.alcoholFlyingFlask && time >= this.alcoholFlyingFlask.arriveAt) {
-      const { targetX: tx, targetY: ty, sprite } = this.alcoholFlyingFlask;
-      sprite.destroy();
-      this.alcoholFlyingFlask = null;
-      this.spawnAlcoholPuddle(time, tx, ty, 'player', scene);
-    }
-
-    // Intoxication expiry → slow
-    if (player.intoxicatedUntil > 0 && time >= player.intoxicatedUntil) {
-      player.intoxicatedUntil = 0;
-      player.incomingDamageMultiplier = 1;
-      player.intoxicationSlowUntil = time + 2000 + player.intoxicationPendingSlowExtra;
-      player.intoxicationPendingSlowExtra = 0;
-      this.arena.showFloatingText(player.x, player.y - 30, '🌀 Hangover!', '#8888ff');
-    }
-
-    // Heat aura while intoxicated + flame body/affinity
-    const intoxicated = player.intoxicatedUntil > time;
-    if (intoxicated && this.flameBodyActive) {
-      if (!this.alcoholHeatAura) {
-        this.alcoholHeatAura = scene.add.circle(player.x, player.y, 50, 0xff5500, 0.3).setDepth(3);
-        scene.tweens.add({ targets: this.alcoholHeatAura, alpha: 0.1, yoyo: true, repeat: -1, duration: 300 });
-      }
-      this.alcoholHeatAura.setPosition(player.x, player.y);
-      // Tick damage to enemies in heat aura
-      this.alcoholHeatAuraTickAccum += delta;
-      if (this.alcoholHeatAuraTickAccum >= 333) {
-        this.alcoholHeatAuraTickAccum -= 333;
-        for (const t of this.arena.enemies) {
-          if (!t.active || t.hp <= 0) continue;
-          if (Phaser.Math.Distance.Between(player.x, player.y, t.x, t.y) <= 50) {
-            t.takeDamage(2);
-            this.arena.spawnHitFlash(t.x, t.y, 0xff5500);
-          }
-        }
-      }
-    } else if (this.alcoholHeatAura) {
-      this.alcoholHeatAura.destroy();
-      this.alcoholHeatAura = null;
-      this.alcoholHeatAuraTickAccum = 0;
-    }
-
-    // Alcohol puddles update
-    for (let i = this.alcoholPuddles.length - 1; i >= 0; i--) {
-      const p = this.alcoholPuddles[i];
-      if (time >= p.expiresAt) {
-        p.sprite.destroy();
-        p.ignitedAura?.destroy();
-        this.alcoholPuddles.splice(i, 1);
-        continue;
-      }
-
-      if (p.ignited) {
-        // Flame puddle: burn enemies in radius
-        p.igniteTickAccum += delta;
-        if (p.igniteTickAccum >= 500) {
-          p.igniteTickAccum -= 500;
-          for (const t of this.arena.enemies) {
-            if (!t.active || t.hp <= 0) continue;
-            if (Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) <= p.radius) {
-              t.oilyBurnUntil = Math.max(t.oilyBurnUntil, time + 5000);
-              t.takeDamage(3, { source: p, sourceX: p.x, sourceY: p.y });
-              this.arena.spawnHitFlash(t.x, t.y, 0xff4400);
-            }
-          }
-        }
-        // Caster in flame puddle: negate self-damage (handled in main update by isPlayerInFlamePuddle)
-      } else {
-        // Unignited: confuse enemies standing inside ≥2s; intoxicate player inside
-        for (const t of this.arena.enemies) {
-          if (!t.active || t.hp <= 0) continue;
-          const dist = Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y);
-          if (dist <= p.radius) {
-            const prev = p.enemyTimeIn.get(t) ?? 0;
-            const newTime = prev + delta;
-            p.enemyTimeIn.set(t, newTime);
-            if (newTime >= 2000 && prev < 2000) {
-              t.slimeConfusedUntil = time + 4000;
-              this.arena.showFloatingText(t.x, t.y - 20, '😵 Confused!', '#c97a3a');
-            }
-          } else {
-            p.enemyTimeIn.delete(t);
-          }
-        }
-        // Caster standing inside: top up intoxication
-        if (p.owner === 'player' && Phaser.Math.Distance.Between(p.x, p.y, player.x, player.y) <= p.radius) {
-          player.intoxicatedUntil = Math.max(player.intoxicatedUntil, time + 1000);
-          if (player.incomingDamageMultiplier > 0.75) player.incomingDamageMultiplier = 0.75;
-        }
-      }
-
-      // Ignition by fireball/flamethrower nearby (proximity check against player's attack position)
-      // This is done externally via igniteAlcoholPuddlesNear calls in handleInput
-    }
+  private scaled(owner: 'player' | 'npc', base: number): number {
+    return Math.round(base * this.damageMult(owner));
   }
 
-  // ── Molten (divine perk) ─────────────────────────────────────────────────
+  /** True when this body carries Supernova in its Q slot instead of Flame Nuke. */
+  private hasSupernova(f: Fighter): boolean {
+    return f.element.abilities.some((a) => a.id === 'supernova');
+  }
 
   /**
-   * Molten's Flame Nuke: not an explosion at a point but an eruption under the whole arena.
-   * 100 damage lands screen-wide on *everyone*, the caster included — there is no outrunning
-   * it and no aiming it — and the floor is left strewn with magma that keeps burning whoever
-   * the caster was fighting.
+   * Alcohol's drift as an aim error in radians — 0 for a sober fighter. Read off the same
+   * aimOffsetBonus fields every other "your aim is off" effect uses, so the status tray and the
+   * bots' own aim already understand it.
    */
-  doMoltenEruption(owner: 'player' | 'npc'): void {
-    const { scene } = this.arena;
-    const time = scene.time.now;
-    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
-    const fx = owner === 'player' ? this.pfx : this.nfx;
-    const col = owner === 'player' ? this.pcol : this.ncol;
-    const cx = caster.x, cy = caster.y;
-
-    // ── The cloud: a column punched up out of the floor, a cap boiling out at the top of it,
-    //    and two fronts rolling away across the ground.
-    fx.firePillar(cx, cy, 84, 320);
-    fx.explosion(cx, cy, 300, { shards: 44, smoke: 16, duration: 900 });
-    scene.time.delayedCall(140, () => {
-      // The cap — three blooms stacked at the head of the column, widest last.
-      fx.bloom(cx, cy - 250, 150, 18);
-      fx.smoke(cx, cy - 250, 14, 170);
-      fx.ring(cx, cy - 250, 40, 260, FIRE.gold, 700, 9, 8);
-    });
-    scene.time.delayedCall(90, () => fx.ring(cx, cy, 60, 900, FIRE.orange, 900, 12, 3));
-    scene.time.delayedCall(260, () => fx.ring(cx, cy, 40, 1100, FIRE.deep, 1100, 7, 3));
-    scene.time.delayedCall(320, () =>
-      fx.embers(cx, cy, 40, { speed: 620, size: 5, life: 1400, rise: 140 }));
-    scene.cameras.main.shake(900, 0.03);
-    scene.cameras.main.flash(320, 255, 150, 60);
-
-    // ── The damage: screen-wide, no falloff, no exceptions.
-    const victims = owner === 'player' ? this.arena.enemies : [this.arena.player];
-    for (const v of victims) {
-      if (!v?.active || v.hp <= 0) continue;
-      v.takeDamage(MOLTEN_ERUPTION_DAMAGE);
-      this.arena.spawnHitFlash(v.x, v.y, col(FIRE.orange));
-    }
-    // The caster is standing on it too. Self-inflicted: it is the cost of the ability, not a hit.
-    Fighter.asNonAllyDamage(() =>
-      caster.takeDamage(MOLTEN_ERUPTION_DAMAGE, { selfInflicted: true }));
-    this.arena.showFloatingText(cx, cy - 60, '🌋 ERUPTION', '#ff5522');
-
-    // ── The floor: magma scattered across the whole arena, one pool near the caster.
-    const W = this.arena.width, H = this.arena.height;
-    const pad = 60;
-    for (let i = 0; i < MAGMA_COUNT; i++) {
-      const mx = i === 0 ? cx : Phaser.Math.Between(pad, W - pad);
-      const my = i === 0 ? cy : Phaser.Math.Between(pad, H - pad);
-      this.spawnMagmaPool(time, mx, my, owner);
-    }
+  private aimJitter(f: Fighter): number {
+    if (this.arena.scene.time.now >= f.aimOffsetBonusUntil || f.aimOffsetBonusDeg <= 0) return 0;
+    return (Math.random() * 2 - 1) * f.aimOffsetBonusDeg * (Math.PI / 180);
   }
 
-  private spawnMagmaPool(time: number, x: number, y: number, owner: 'player' | 'npc'): void {
-    const { scene } = this.arena;
-    const col = owner === 'player' ? this.pcol : this.ncol;
-    const sprite = scene.add.circle(x, y, MAGMA_RADIUS, col(FIRE.ember), 0.5).setDepth(2);
-    sprite.setStrokeStyle(3, col(FIRE.red), 0.7);
-    // The crust breathes, so a pool reads as live rock rather than a painted disc.
-    const crust = scene.add.circle(x, y, MAGMA_RADIUS * 0.62, col(FIRE.gold), 0.45).setDepth(2);
-    scene.tweens.add({
-      targets: crust, alpha: 0.18, scale: 0.82, yoyo: true, repeat: -1,
-      duration: 620 + Math.random() * 240, ease: 'Sine.easeInOut',
-    });
-    this.magmaPools.push({
-      sprite, crust, x, y, radius: MAGMA_RADIUS,
-      expiresAt: time + MAGMA_LIFE_MS, tickAccum: 0, owner,
-    });
+  /** CastContext.fireAimJitter — only the owning sim jitters, so a relayed cast never jitters twice. */
+  castAimJitter(owner: 'player' | 'npc'): number {
+    if (owner === 'npc') return 0;   // the bot's aim already folds the drift in; a replica's aim is relayed
+    return this.aimJitter(this.arena.player);
   }
 
-  private updateMagma(time: number, delta: number): void {
-    for (let i = this.magmaPools.length - 1; i >= 0; i--) {
-      const m = this.magmaPools[i];
-      if (time >= m.expiresAt) {
-        m.sprite.destroy();
-        m.crust.destroy();
-        this.magmaPools.splice(i, 1);
+  /**
+   * Blaze + Melt halve every cooldown and Alcohol's resistance — written onto the fighters
+   * every frame by their owning side, and handed back the frame that side stops being fire.
+   */
+  private updatePerkMults(isPlayerFire: boolean, isNpcFire: boolean): void {
+    const time = this.arena.scene.time.now;
+    const sides: Array<['player' | 'npc', boolean]> = [['player', isPlayerFire], ['npc', isNpcFire]];
+    for (const [owner, isFire] of sides) {
+      const f = this.fighterOf(owner);
+      if (!f) continue;
+      if (!isFire) {
+        if (this.perkMultsWritten.has(f)) {
+          f.perkCooldownMult = 1;
+          f.perkIncomingMult = 1;
+          this.perkMultsWritten.delete(f);
+        }
         continue;
       }
-      // Cooling: the pool dims over its last third rather than blinking out.
-      const left = (m.expiresAt - time) / MAGMA_LIFE_MS;
-      m.sprite.setAlpha(0.5 * Math.min(1, left * 3));
+      this.perkMultsWritten.add(f);
+      f.perkCooldownMult = this.hasInferno(owner) ? 0.5 : 1;
+      const inBooze = this.arena.hasPerk(owner, 'fire-alcohol') && this.boozePuddles.some((p) =>
+        p.owner === owner && time < p.expiresAt && Phaser.Math.Distance.Between(p.x, p.y, f.x, f.y) <= p.radius);
+      f.perkIncomingMult = inBooze ? BOOZE_RESIST : 1;
+    }
+    if (isPlayerFire && this.arena.player) {
+      const p = this.arena.player;
+      this.arena.setStatusIndicator('fire-inferno', this.hasInferno('player') ? {
+        name: 'Inferno', emoji: '🔥', color: 0xff5500, priority: 117,
+        description: 'Blaze + Melt: no click at all, but every ability recharges twice as fast and hits 50% harder.',
+      } : null);
+      this.arena.setStatusIndicator('fire-booze', p.perkIncomingMult < 1 ? {
+        name: 'Liquid Courage', emoji: '🍺', color: 0xc97a3a, priority: 116,
+        description: 'Standing in your own booze: 20% less damage taken. Stay more than 2 seconds and your aim starts to drift.',
+      } : null);
+    }
+  }
 
-      m.tickAccum += delta;
-      if (m.tickAccum < MAGMA_TICK_MS) continue;
-      m.tickAccum -= MAGMA_TICK_MS;
-      const victims = m.owner === 'player' ? this.arena.enemies : [this.arena.player];
-      for (const v of victims) {
+  // ── Blaze: the fireball's on-hit side ─────────────────────────────────
+
+  /**
+   * Called for every fireball that lands (either side's). Returns the damage it should deal and
+   * applies its burn: Blaze hits burning targets 50% harder, and with Flameshredder (Click+) a
+   * Blaze fireball ignites molten fire instead of a normal burn.
+   */
+  onFireballHit(proj: Projectile, target: Fighter, damage: number, clickUpgrade: boolean): number {
+    const time = this.arena.scene.time.now;
+    const blaze = !!(proj as Projectile & { fireBlaze?: boolean }).fireBlaze;
+    const alight = target.burningUntil > time || target.moltenUntil > time
+      || (target === this.arena.player && this.arena.playerBurning);
+    const out = blaze && alight ? Math.round(damage * 1.5) : damage;
+    if (clickUpgrade) {
+      const until = time + Math.round(3000 * target.statusDurMult);
+      if (blaze) {
+        target.moltenUntil = Math.max(target.moltenUntil, until);
+      } else {
+        target.burningUntil = Math.max(target.burningUntil, until);
+      }
+    }
+    if (blaze && alight) {
+      (proj.isFromPlayer ? this.pfx : this.nfx).embers(target.x, target.y, 5, { speed: 150, size: 3, life: 380 });
+    }
+    return out;
+  }
+
+  // ── Melt: flame pools ─────────────────────────────────────────────────
+
+  private dropMeltPool(owner: 'player' | 'npc', x: number, y: number): void {
+    const mine = this.flamePools.filter((p) => p.owner === owner && p.radius === MELT_POOL_RADIUS);
+    if (mine.length >= MELT_POOL_CAP) this.flamePools.splice(this.flamePools.indexOf(mine[0]), 1);
+    this.spawnFlamePool(owner, x, y, MELT_POOL_RADIUS, MELT_POOL_LIFE_MS, this.scaled(owner, 2));
+  }
+
+  private spawnFlamePool(owner: 'player' | 'npc', x: number, y: number, radius: number, lifeMs: number, damage: number): void {
+    const time = this.arena.scene.time.now;
+    const pad = 16;
+    x = Phaser.Math.Clamp(x, pad, this.arena.width - pad);
+    y = Phaser.Math.Clamp(y, pad, this.arena.height - pad);
+    this.flamePools.push({
+      x, y, radius, bornAt: time, expiresAt: time + lifeMs, tickAccum: 0, damage, owner,
+      seed: Math.random() * 100,
+    });
+  }
+
+  /**
+   * A bot with Melt has no hold to spray with, so each "click" is a short gout instead: a cone
+   * puff that drops one pool where it lands. Owner-agnostic, but only bots ever reach it.
+   */
+  doMeltPuff(owner: 'player' | 'npc', tx: number, ty: number): void {
+    const caster = this.fighterOf(owner);
+    if (!caster?.active) return;
+    const time = this.arena.scene.time.now;
+    const ang = Math.atan2(ty - caster.y, tx - caster.x);
+    const cos = Math.cos(ang), sin = Math.sin(ang);
+    for (const t of this.victimsOf(owner)) {
+      if (!t?.active || t.hp <= 0) continue;
+      const d = Phaser.Math.Distance.Between(caster.x, caster.y, t.x, t.y);
+      if (d > MELT_RANGE || d === 0) continue;
+      if (cos * ((t.x - caster.x) / d) + sin * ((t.y - caster.y) / d) <= 0.866) continue;
+      t.takeDamage(this.scaled(owner, 8));
+      t.burningUntil = Math.max(t.burningUntil, time + Math.round(2000 * t.statusDurMult));
+      this.arena.spawnHitFlash(t.x, t.y, this.arena.fireColor(owner, 0xff5500));
+    }
+    const fx = owner === 'player' ? this.pfx : this.nfx;
+    fx.flameJet(caster.x, caster.y, ang, 200);
+    const reach = Math.min(MELT_RANGE * 0.85, Phaser.Math.Distance.Between(caster.x, caster.y, tx, ty));
+    this.dropMeltPool(owner, caster.x + cos * reach, caster.y + sin * reach);
+  }
+
+  private updateFlamePools(time: number, delta: number): void {
+    const g = this.groundG;
+    for (let i = this.flamePools.length - 1; i >= 0; i--) {
+      const p = this.flamePools[i];
+      if (time >= p.expiresAt) { this.flamePools.splice(i, 1); continue; }
+      if (g) this.paintFlamePool(g, p, time);
+      p.tickAccum += delta;
+      if (p.tickAccum < POOL_TICK_MS) continue;
+      p.tickAccum -= POOL_TICK_MS;
+      for (const v of this.victimsOf(p.owner)) {
         if (!v?.active || v.hp <= 0) continue;
-        if (Phaser.Math.Distance.Between(m.x, m.y, v.x, v.y) > m.radius) continue;
-        v.takeDamage(MAGMA_TICK_DAMAGE, { source: m, sourceX: m.x, sourceY: m.y });
+        if (Phaser.Math.Distance.Between(p.x, p.y, v.x, v.y) > p.radius + 10) continue;
+        v.takeDamage(p.damage, { source: p, sourceX: p.x, sourceY: p.y, fireDot: true });
+        v.burningUntil = Math.max(v.burningUntil, time + Math.round(1500 * v.statusDurMult));
+        this.arena.spawnHitFlash(v.x, v.y, 0xff6600);
+      }
+    }
+  }
+
+  /**
+   * A pool of standing fire: a charred rim, a molten bed that cools to embers over its last
+   * third, and a ring of flame tongues licking up out of it, each on its own flicker.
+   */
+  private paintFlamePool(g: Phaser.GameObjects.Graphics, p: FlamePool, time: number): void {
+    const c = p.owner === 'player' ? this.pcol : this.ncol;
+    const life = (p.expiresAt - time) / (p.expiresAt - p.bornAt);
+    const grow = Math.min(1, (time - p.bornAt) / 160);
+    const fade = Math.min(1, life * 3);
+    const r = p.radius * grow;
+    const t = time / 1000 + p.seed;
+    // Scorched rim, then the bed.
+    g.fillStyle(0x1a0804, 0.45 * fade);
+    g.fillEllipse(p.x, p.y + 2, r * 2.15, r * 1.5);
+    g.fillStyle(c(FIRE.ember), 0.75 * fade);
+    g.fillEllipse(p.x, p.y, r * 1.9, r * 1.3);
+    g.fillStyle(c(FIRE.core), 0.6 * fade);
+    g.fillEllipse(p.x, p.y, r * 1.35, r * 0.9);
+    g.fillStyle(c(FIRE.gold), (0.35 + 0.15 * Math.sin(t * 7)) * fade);
+    g.fillEllipse(p.x - r * 0.1, p.y - r * 0.05, r * 0.7, r * 0.42);
+    // Tongues: rising out of the bed, swaying, longest at the back so it reads as depth.
+    const n = Math.max(4, Math.round(r / 6));
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * Math.PI * 2 + p.seed;
+      const bx = p.x + Math.cos(a) * r * 0.55;
+      const by = p.y + Math.sin(a) * r * 0.35;
+      const flick = 0.6 + 0.4 * Math.sin(t * 9 + k * 2.3);
+      const len = (6 + r * 0.45) * flick * fade;
+      g.fillStyle(c(k % 2 ? FIRE.orange : FIRE.amber), 0.8 * fade);
+      flameTongue(g, bx, by, -Math.PI / 2 + Math.sin(t * 3 + k) * 0.25, len, 3 + r * 0.06, Math.sin(t * 5 + k) * 3);
+      g.fillStyle(c(FIRE.yellow), 0.7 * fade);
+      flameTongue(g, bx, by, -Math.PI / 2, len * 0.5, 1.6 + r * 0.03, 0);
+    }
+  }
+
+  // ── Radiate: the heat aura ────────────────────────────────────────────
+
+  private updateRadiate(delta: number, isPlayerFire: boolean, isNpcFire: boolean): void {
+    const sides: Array<['player' | 'npc', boolean]> = [['player', isPlayerFire], ['npc', isNpcFire]];
+    for (const [owner, isFire] of sides) {
+      if (!isFire || !this.arena.hasPerk(owner, 'fire-radiate')) continue;
+      const f = this.fighterOf(owner);
+      if (!f?.active || f.hp <= 0) continue;
+      const hot = owner === 'player' && this.arena.masteryActive;
+      if (this.hudG && f.alpha > 0.05) this.paintRadiate(this.hudG, owner, f.x, f.y, hot);
+      const acc = (owner === 'player' ? this.radiateAccum : this.npcRadiateAccum) + delta;
+      const ticks = Math.floor(acc / RADIATE_TICK_MS);
+      if (owner === 'player') this.radiateAccum = acc - ticks * RADIATE_TICK_MS;
+      else this.npcRadiateAccum = acc - ticks * RADIATE_TICK_MS;
+      if (ticks === 0) continue;
+      const fx = owner === 'player' ? this.pfx : this.nfx;
+      for (const t of this.victimsOf(owner)) {
+        if (!t?.active || t.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) > RADIATE_RADIUS) continue;
+        t.takeDamage(this.scaled(owner, (hot ? 2 : 1) * ticks), { fireDot: true });
+        fx.embers(t.x, t.y - 6, 1, { speed: 40, size: 2.2, life: 360, rise: 22 });
+      }
+    }
+  }
+
+  /**
+   * Radiate's haze: a faint heat disc with a wavering rim that breathes, and motes of heat
+   * drifting up through it. With mastery the rim runs hotter and doubles up.
+   */
+  private paintRadiate(g: Phaser.GameObjects.Graphics, owner: 'player' | 'npc', x: number, y: number, hot: boolean): void {
+    const c = owner === 'player' ? this.pcol : this.ncol;
+    const t = this.hudT;
+    g.fillStyle(c(FIRE.amber), hot ? 0.09 : 0.06);
+    g.fillCircle(x, y, RADIATE_RADIUS);
+    const rims = hot ? 2 : 1;
+    for (let k = 0; k < rims; k++) {
+      const R = RADIATE_RADIUS - k * 9;
+      g.lineStyle(k === 0 ? 2 : 1.4, c(k === 0 ? FIRE.gold : FIRE.red), hot ? 0.5 : 0.32);
+      g.beginPath();
+      for (let i = 0; i <= 48; i++) {
+        const a = (i / 48) * Math.PI * 2;
+        const w = Math.sin(a * 6 + t * (3 + k)) * 2.6 + Math.sin(a * 11 - t * 4.2) * 1.4;
+        const px = x + Math.cos(a) * (R + w), py = y + Math.sin(a) * (R + w);
+        if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
+      }
+      g.strokePath();
+    }
+    // Heat motes: rise from the floor of the aura and fade out near the top.
+    for (let i = 0; i < 8; i++) {
+      const ph = (t * 0.55 + i / 8) % 1;
+      const a = i * 2.4;
+      const mx = x + Math.cos(a) * RADIATE_RADIUS * 0.7 + Math.sin(t * 2 + i) * 4;
+      const my = y + Math.sin(a) * RADIATE_RADIUS * 0.45 - ph * 34;
+      g.fillStyle(c(i % 2 ? FIRE.yellow : FIRE.amber), 0.55 * (1 - ph));
+      g.fillCircle(mx, my, 1.6 + (1 - ph) * 1.4);
+    }
+  }
+
+  // ── Alcohol: the booze trail ──────────────────────────────────────────
+
+  /** CastContext.fireBoozeTrail — Flame Dash's path, soaked in spirits. */
+  layBoozeTrail(owner: 'player' | 'npc', x0: number, y0: number, x1: number, y1: number): void {
+    const time = this.arena.scene.time.now;
+    const pad = 20;
+    for (let i = 0; i < BOOZE_PUDDLES; i++) {
+      const t = i / (BOOZE_PUDDLES - 1);
+      this.boozePuddles.push({
+        x: Phaser.Math.Clamp(x0 + (x1 - x0) * t + (Math.random() - 0.5) * 10, pad, this.arena.width - pad),
+        y: Phaser.Math.Clamp(y0 + (y1 - y0) * t + (Math.random() - 0.5) * 10, pad, this.arena.height - pad),
+        radius: BOOZE_RADIUS * (0.85 + Math.random() * 0.3),
+        bornAt: time + i * 50, expiresAt: time + BOOZE_LIFE_MS, ignited: false, tickAccum: 0, owner,
+        seed: Math.random() * 100,
+      });
+    }
+    const f = this.fighterOf(owner);
+    if (f) this.arena.showFloatingText(x0, y0 - 24, '🍺 Splash!', '#c97a3a');
+  }
+
+  /** A blast from `owner` at (x, y) lights every puddle of their booze it reaches. */
+  igniteBooze(owner: 'player' | 'npc', x: number, y: number, radius: number): void {
+    const time = this.arena.scene.time.now;
+    let lit = 0;
+    for (const p of this.boozePuddles) {
+      if (p.owner !== owner || p.ignited || time >= p.expiresAt) continue;
+      if (Phaser.Math.Distance.Between(x, y, p.x, p.y) > radius + p.radius) continue;
+      p.ignited = true;
+      p.expiresAt = Math.min(p.expiresAt, time + BOOZE_BURN_LIFE_MS);
+      p.tickAccum = BOOZE_BURN_TICK_MS;   // the first lick lands the moment it catches
+      (owner === 'player' ? this.pfx : this.nfx).bloom(p.x, p.y, p.radius * 1.6, 8);
+      lit++;
+    }
+    if (lit > 0) this.arena.showFloatingText(x, y - 40, '🔥 Booze ignited!', '#ff8833');
+  }
+
+  private updateBooze(time: number, delta: number): void {
+    const g = this.groundG;
+    const inside = new Set<Fighter>();
+    for (let i = this.boozePuddles.length - 1; i >= 0; i--) {
+      const p = this.boozePuddles[i];
+      if (time >= p.expiresAt) { this.boozePuddles.splice(i, 1); continue; }
+      if (time < p.bornAt) continue;
+      if (g) this.paintBooze(g, p, time);
+      // Anyone wading in it — owner and enemies alike — is drinking.
+      for (const f of [this.arena.player, this.arena.npc, ...this.arena.enemies]) {
+        if (!f?.active || f.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(p.x, p.y, f.x, f.y) <= p.radius) inside.add(f);
+      }
+      if (!p.ignited) continue;
+      p.tickAccum += delta;
+      if (p.tickAccum < BOOZE_BURN_TICK_MS) continue;
+      p.tickAccum -= BOOZE_BURN_TICK_MS;
+      for (const v of this.victimsOf(p.owner)) {
+        if (!v?.active || v.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(p.x, p.y, v.x, v.y) > p.radius) continue;
+        v.takeDamage(this.scaled(p.owner, BOOZE_BURN_DAMAGE), { source: p, sourceX: p.x, sourceY: p.y, fireDot: true });
         v.burningUntil = Math.max(v.burningUntil, time + Math.round(2000 * v.statusDurMult));
         this.arena.spawnHitFlash(v.x, v.y, 0xff6600);
       }
     }
+    // The drift: continuous time inside, reset the moment they step out.
+    for (const f of [...this.boozeWade.keys()]) if (!inside.has(f)) this.boozeWade.delete(f);
+    for (const f of inside) {
+      const was = this.boozeWade.get(f) ?? 0;
+      const now = was + delta;
+      this.boozeWade.set(f, now);
+      if (now < BOOZE_DRIFT_AFTER_MS) continue;
+      f.aimOffsetBonusDeg = Math.max(f.aimOffsetBonusUntil > time ? f.aimOffsetBonusDeg : 0, BOOZE_DRIFT_DEG);
+      f.aimOffsetBonusUntil = Math.max(f.aimOffsetBonusUntil, time + 1500);
+      if (was < BOOZE_DRIFT_AFTER_MS) this.arena.showFloatingText(f.x, f.y - 30, '🥴 Tipsy!', '#c97a3a');
+    }
+  }
+
+  /**
+   * A puddle of spirits: a glossy amber spill with a darker edge, slow ripples crossing it and a
+   * highlight sliding over the surface. Once lit it burns blue at the base and orange above.
+   */
+  private paintBooze(g: Phaser.GameObjects.Graphics, p: BoozePuddle, time: number): void {
+    const c = p.owner === 'player' ? this.pcol : this.ncol;
+    const grow = Math.min(1, (time - p.bornAt) / 200);
+    const fade = Math.min(1, (p.expiresAt - time) / 900);
+    const r = p.radius * grow;
+    const t = time / 1000 + p.seed;
+    g.fillStyle(0x5a3510, 0.4 * fade);
+    g.fillEllipse(p.x, p.y + 1, r * 2.1, r * 1.45);
+    g.fillStyle(0xc97a3a, 0.45 * fade);
+    g.fillEllipse(p.x, p.y, r * 1.9, r * 1.28);
+    // Ripples spreading from the middle.
+    for (let k = 0; k < 2; k++) {
+      const ph = (t * 0.6 + k * 0.5) % 1;
+      g.lineStyle(1.2, 0xffd9a0, 0.35 * (1 - ph) * fade);
+      g.strokeEllipse(p.x, p.y, r * 1.8 * ph, r * 1.2 * ph);
+    }
+    // Sheen.
+    g.fillStyle(0xfff0d0, 0.35 * fade);
+    g.fillEllipse(p.x - r * 0.3 + Math.sin(t) * r * 0.15, p.y - r * 0.2, r * 0.55, r * 0.18);
+    if (!p.ignited) return;
+    // Burning: a blue alcohol flame hugging the surface, orange tongues above it.
+    g.fillStyle(0x4466ff, (0.28 + 0.1 * Math.sin(t * 11)) * fade);
+    g.fillEllipse(p.x, p.y, r * 1.7, r * 1.1);
+    const n = Math.max(5, Math.round(r / 6));
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * Math.PI * 2 + p.seed;
+      const bx = p.x + Math.cos(a) * r * 0.6;
+      const by = p.y + Math.sin(a) * r * 0.4;
+      const len = (8 + r * 0.5) * (0.55 + 0.45 * Math.sin(t * 10 + k * 1.7)) * fade;
+      g.fillStyle(c(k % 2 ? FIRE.orange : FIRE.gold), 0.75 * fade);
+      flameTongue(g, bx, by, -Math.PI / 2 + Math.sin(t * 4 + k) * 0.3, len, 3.2, Math.sin(t * 6 + k) * 3);
+    }
+  }
+
+  /**
+   * Bot synergy (Alcohol → Pressure Bomb): where to plant a charge so it lights the bot's own
+   * booze with its target standing in it, or null. Side-effect-free.
+   */
+  npcBoozeBombTarget(): { x: number; y: number } | null {
+    if (!this.arena.hasPerk('npc', 'fire-alcohol')) return null;
+    const time = this.arena.scene.time.now;
+    const target = this.arena.player;
+    if (!target?.active) return null;
+    for (const p of this.boozePuddles) {
+      if (p.owner !== 'npc' || p.ignited || time >= p.expiresAt - 800) continue;
+      if (Phaser.Math.Distance.Between(p.x, p.y, target.x, target.y) <= p.radius + 20) return { x: p.x, y: p.y };
+    }
+    return null;
+  }
+
+  // ── Supernova (alternate ultimate) ────────────────────────────────────
+
+  /** CastContext.fireSupernova — open the beam. Cooldown was already stamped by castAbility. */
+  startNova(owner: 'player' | 'npc', aimX: number, aimY: number): void {
+    const f = this.fighterOf(owner);
+    if (!f?.active) return;
+    if (owner === 'player' ? this.playerNova : this.npcNova) return;
+    const scene = this.arena.scene;
+    const nova: Nova = {
+      owner,
+      angle: Math.atan2(aimY - f.y, aimX - f.x),
+      startedAt: scene.time.now,
+      pullX: aimX, pullY: aimY,
+      tickAccum: 0, selfAccum: 0, netAccum: 0,
+      g: scene.add.graphics().setDepth(6),
+    };
+    if (owner === 'player') this.playerNova = nova; else this.npcNova = nova;
+    (f.body as Phaser.Physics.Arcade.Body | null)?.setVelocity(0, 0);
+    const fx = owner === 'player' ? this.pfx : this.nfx;
+    fx.bloom(f.x, f.y, 80, 12);
+    fx.ring(f.x, f.y, 10, 90, FIRE.pale, 320, 5, 7);
+    this.arena.showFloatingText(f.x, f.y - 46, '☄️ SUPERNOVA', '#ffcc44');
+  }
+
+  /** End a beam early (Q again, a bot bailing, a relayed stop, or its caster going down). */
+  stopNova(owner: 'player' | 'npc'): void {
+    const nova = owner === 'player' ? this.playerNova : this.npcNova;
+    if (!nova) return;
+    nova.g.destroy();
+    if (owner === 'player') {
+      this.playerNova = null;
+      this.playerAvatar?.setHold(null);
+      this.arena.setStatusIndicator('fire-supernova', null);
+    } else {
+      this.npcNova = null;
+      this.npcAvatar?.setHold(null);
+    }
+  }
+
+  /** Beam endpoints for this frame: palms → tip. */
+  private novaSegment(nova: Nova, f: Fighter): { x0: number; y0: number; x1: number; y1: number } {
+    const cos = Math.cos(nova.angle), sin = Math.sin(nova.angle);
+    const x0 = f.x + cos * NOVA_PALM_OFFSET, y0 = f.y + sin * NOVA_PALM_OFFSET;
+    return { x0, y0, x1: x0 + cos * NOVA_LENGTH, y1: y0 + sin * NOVA_LENGTH };
+  }
+
+  /** Distance from a point to the beam's centre line, and how far along it the point sits. */
+  private beamLocal(nova: Nova, f: Fighter, x: number, y: number): { along: number; perp: number } {
+    const seg = this.novaSegment(nova, f);
+    const cos = Math.cos(nova.angle), sin = Math.sin(nova.angle);
+    const dx = x - seg.x0, dy = y - seg.y0;
+    return { along: dx * cos + dy * sin, perp: Math.abs(-dx * sin + dy * cos) };
+  }
+
+  private updateNova(nova: Nova | null, time: number, delta: number): void {
+    if (!nova) return;
+    const owner = nova.owner;
+    const f = this.fighterOf(owner);
+    // A felled, stunned or frozen caster lets go.
+    if (!f?.active || f.hp <= 0 || f.stunnedUntil > time || f.frozenUntil > time) { this.stopNova(owner); return; }
+    const isReplica = owner === 'npc' && this.arena.isOnline;
+
+    // Where the beam is being pulled: the cursor, or the bot's quarry. A replica's pull point
+    // arrives over the wire (fire-nova-aim).
+    if (owner === 'player') { nova.pullX = this.aimX; nova.pullY = this.aimY; }
+    else if (!isReplica) { nova.pullX = this.arena.player.x; nova.pullY = this.arena.player.y; }
+    const want = Math.atan2(nova.pullY - f.y, nova.pullX - f.x);
+    const diff = Phaser.Math.Angle.Wrap(want - nova.angle);
+    const maxTurn = NOVA_TURN_RATE * (delta / 1000);
+    nova.angle += Phaser.Math.Clamp(diff, -maxTurn, maxTurn);
+    (f.body as Phaser.Physics.Arcade.Body | null)?.setVelocity(0, 0);
+
+    const elapsed = time - nova.startedAt;
+    const heat = Phaser.Math.Clamp(elapsed / NOVA_DURATION_MS, 0, 1);
+    this.paintNova(nova, f, heat, time);
+    (owner === 'player' ? this.playerAvatar : this.npcAvatar)?.setHold('spray', nova.angle);
+
+    // Online: keep the peer's replica of the beam pointing where ours points.
+    if (owner === 'player' && this.arena.isOnline) {
+      nova.netAccum += delta;
+      if (nova.netAccum >= NOVA_NET_AIM_MS) { nova.netAccum = 0; this.arena.broadcastMasteryCast('fire-nova-aim'); }
+    }
+
+    // Damage ticks.
+    nova.tickAccum += delta;
+    while (nova.tickAccum >= NOVA_TICK_MS) {
+      nova.tickAccum -= NOVA_TICK_MS;
+      for (const t of this.victimsOf(owner)) {
+        if (!t?.active || t.hp <= 0) continue;
+        const { along, perp } = this.beamLocal(nova, f, t.x, t.y);
+        if (along < -NOVA_HIT_PAD || along > NOVA_LENGTH + NOVA_HIT_PAD) continue;
+        if (perp > NOVA_HALF_WIDTH + NOVA_HIT_PAD) continue;
+        t.takeDamage(this.scaled(owner, NOVA_TICK_DAMAGE));
+        t.burningUntil = Math.max(t.burningUntil, time + Math.round(1500 * t.statusDurMult));
+        this.arena.spawnHitFlash(t.x, t.y, this.arena.fireColor(owner, FIRE.amber));
+      }
+    }
+
+    // The heat: self-burn climbs with the bar. The replica's body is owned by the other sim.
+    if (!isReplica) {
+      nova.selfAccum += NOVA_SELF_DPS_MAX * heat * (delta / 1000);
+      if (nova.selfAccum >= 1) {
+        const n = Math.floor(nova.selfAccum);
+        nova.selfAccum -= n;
+        f.applySelfDamage(n);
+      }
+    }
+    if (owner === 'player') {
+      this.arena.setStatusIndicator('fire-supernova', {
+        name: 'Supernova', emoji: '☄️', color: 0xffaa22, priority: 119,
+        description: `Rooted, beam open — heat ${Math.round(heat * 100)}%. Press Q to stop; hold to 6s and it detonates.`,
+      });
+    }
+    // Bots let go before the heat kills them.
+    if (owner === 'npc' && !isReplica && f.hp / f.maxHp < NOVA_BOT_BAIL_HP) { this.stopNova(owner); return; }
+
+    if (elapsed >= NOVA_DURATION_MS) this.detonateNova(nova, f);
+  }
+
+  /** The full six seconds: the beam bursts along its whole length and leaves fire behind. */
+  private detonateNova(nova: Nova, f: Fighter): void {
+    const owner = nova.owner;
+    const scene = this.arena.scene;
+    const time = scene.time.now;
+    const seg = this.novaSegment(nova, f);
+    const fx = owner === 'player' ? this.pfx : this.nfx;
+    const isReplica = owner === 'npc' && this.arena.isOnline;
+
+    for (const t of this.victimsOf(owner)) {
+      if (!t?.active || t.hp <= 0) continue;
+      const { along, perp } = this.beamLocal(nova, f, t.x, t.y);
+      if (along < -NOVA_BLAST_REACH || along > NOVA_LENGTH + NOVA_BLAST_REACH || perp > NOVA_BLAST_REACH) continue;
+      t.takeDamage(this.scaled(owner, NOVA_BLAST_DAMAGE), { aoe: true });
+      t.burningUntil = Math.max(t.burningUntil, time + Math.round(3000 * t.statusDurMult));
+      this.arena.spawnHitFlash(t.x, t.y, this.arena.fireColor(owner, FIRE.orange));
+    }
+    // A chain of blasts racing out from the palms to the tip.
+    const steps = 6;
+    for (let i = 0; i <= steps; i++) {
+      const k = i / steps;
+      const ex = seg.x0 + (seg.x1 - seg.x0) * k, ey = seg.y0 + (seg.y1 - seg.y0) * k;
+      scene.time.delayedCall(i * 55, () => fx.explosion(ex, ey, 58, { shards: 10, smoke: 2, duration: 420 }));
+    }
+    for (let i = 0; i < NOVA_POOLS; i++) {
+      const k = (i + 0.5) / NOVA_POOLS;
+      this.spawnFlamePool(owner, seg.x0 + (seg.x1 - seg.x0) * k, seg.y0 + (seg.y1 - seg.y0) * k, 46, 5000, this.scaled(owner, 5));
+    }
+    // Booze along the beam goes up with it.
+    for (let i = 0; i <= 4; i++) {
+      const k = i / 4;
+      this.igniteBooze(owner, seg.x0 + (seg.x1 - seg.x0) * k, seg.y0 + (seg.y1 - seg.y0) * k, NOVA_BLAST_REACH);
+    }
+    fx.firePillar(seg.x1, seg.y1, 50, 180);
+    fx.bloom(f.x, f.y, 110, 14);
+    scene.cameras.main.shake(380, 0.012);
+    scene.cameras.main.flash(140, 255, 200, 120);
+    Sfx.playAt('explosion-large', f.x, { volume: 0.9 });
+    if (!isReplica) {
+      Fighter.asNonAllyDamage(() => f.takeDamage(NOVA_BLAST_SELF, { selfInflicted: true }));
+      this.arena.showFloatingText(f.x, f.y - 40, '☄️ SUPERNOVA!', '#ffcc44');
+    }
+    this.stopNova(owner);
+  }
+
+  /**
+   * The beam: four stacked bands from a wide red haze to a white-hot spine, each breathing at
+   * its own rate, a corona at the palms, a splash where it ends, sparks peeling off its length —
+   * and the heat bar hung over the caster, yellow running to red and flashing near the end.
+   */
+  private paintNova(nova: Nova, f: Fighter, heat: number, time: number): void {
+    const g = nova.g;
+    const c = nova.owner === 'player' ? this.pcol : this.ncol;
+    const fx = nova.owner === 'player' ? this.pfx : this.nfx;
+    const seg = this.novaSegment(nova, f);
+    const t = time / 1000;
+    g.clear();
+    const swell = 1 + heat * 0.35;
+    const bands: Array<[number, number, number]> = [
+      [46, FIRE.deep, 0.2],
+      [30, FIRE.orange, 0.5],
+      [17, FIRE.yellow, 0.85],
+      [6, FIRE.white, 0.95],
+    ];
+    bands.forEach(([w, col, a], i) => {
+      const width = w * swell * (1 + Math.sin(t * (14 + i * 5) + i) * 0.08);
+      g.lineStyle(width, c(col), a);
+      g.lineBetween(seg.x0, seg.y0, seg.x1, seg.y1);
+    });
+    // Ripples travelling down the beam.
+    const cos = Math.cos(nova.angle), sin = Math.sin(nova.angle);
+    for (let k = 0; k < 6; k++) {
+      const d = ((t * 620 + k * (NOVA_LENGTH / 6)) % NOVA_LENGTH);
+      const px = seg.x0 + cos * d, py = seg.y0 + sin * d;
+      g.fillStyle(c(FIRE.pale), 0.55);
+      g.fillEllipse(px, py, 10 * swell, 26 * swell);
+    }
+    // Palm corona and tip splash.
+    g.fillStyle(c(FIRE.gold), 0.5);
+    g.fillCircle(seg.x0, seg.y0, 18 * swell + Math.sin(t * 20) * 2);
+    g.fillStyle(c(FIRE.white), 0.9);
+    g.fillCircle(seg.x0, seg.y0, 8 * swell);
+    g.fillStyle(c(FIRE.amber), 0.45);
+    g.fillCircle(seg.x1, seg.y1, 26 * swell + Math.sin(t * 17) * 4);
+    g.fillStyle(c(FIRE.yellow), 0.6);
+    g.fillCircle(seg.x1, seg.y1, 13 * swell);
+    if (Math.random() < 0.35) {
+      const d = Math.random() * NOVA_LENGTH;
+      fx.embers(seg.x0 + cos * d, seg.y0 + sin * d, 1, { angle: nova.angle + (Math.random() < 0.5 ? 1.57 : -1.57), spread: 0.5, speed: 90, size: 2.6, life: 340, depth: 7 });
+    }
+
+    // Heat bar over the caster.
+    const hud = this.hudG;
+    if (!hud) return;
+    const bw = 56, bh = 7, bx = f.x - bw / 2, by = f.y - 58;
+    const hot = heat > 0.8 && Math.sin(t * 24) > 0;
+    hud.fillStyle(0x000000, 0.6);
+    hud.fillRoundedRect(bx - 2, by - 2, bw + 4, bh + 4, 3);
+    const col = Phaser.Display.Color.Interpolate.ColorWithColor(
+      Phaser.Display.Color.ValueToColor(c(FIRE.yellow)), Phaser.Display.Color.ValueToColor(c(FIRE.red)), 100, Math.round(heat * 100));
+    hud.fillStyle(hot ? 0xffffff : Phaser.Display.Color.GetColor(col.r, col.g, col.b), 1);
+    hud.fillRoundedRect(bx, by, Math.max(2, bw * heat), bh, 2);
+    // Tick marks for each second, and a little flame riding the leading edge.
+    hud.lineStyle(1, 0x000000, 0.5);
+    for (let i = 1; i < 6; i++) hud.lineBetween(bx + (bw * i) / 6, by, bx + (bw * i) / 6, by + bh);
+    hud.fillStyle(c(FIRE.amber), 0.95);
+    flameTongue(hud, bx + bw * heat, by + 1, -Math.PI / 2, 9 + Math.sin(t * 18) * 2, 3, 0);
+  }
+
+  /**
+   * Online replay of the peer's fire actions that bypass `castAbility` (pseudo-casts prefixed
+   * `fire-`): where their beam is being pulled, and the press that closes it.
+   */
+  replayNet(id: string, tx: number, ty: number): void {
+    if (id === 'fire-nova-aim' && this.npcNova) { this.npcNova.pullX = tx; this.npcNova.pullY = ty; }
+    else if (id === 'fire-nova-stop') this.stopNova('npc');
   }
 
   // ── Pressure Bomb ───────────────────────────────────────────────────────
@@ -1266,19 +1665,24 @@ export class FireKit {
   lobPressureBomb(x: number, y: number, damage: number, owner: 'player' | 'npc'): void {
     const cluster = owner === 'player' && this.arena.hasUpgrade('r');
     const fx = owner === 'player' ? this.pfx : this.nfx;
-    this.plantCharge(x, y, damage, PRESSURE_RADIUS, PRESSURE_FUSE_MS, cluster, owner, 1);
+    // Ash: a heavier charge over a wider blast that no longer cares who planted it.
+    const ash = this.arena.hasPerk(owner, 'fire-ash');
+    this.plantCharge(
+      x, y, ash ? Math.round(damage * ASH_DAMAGE_MULT) : damage,
+      Math.round(PRESSURE_RADIUS * (ash ? ASH_RANGE_MULT : 1)), PRESSURE_FUSE_MS, cluster, ash, owner, 1,
+    );
     // The charge landing: a puff of embers where it comes to rest.
     fx.embers(x, y, 7, { speed: 95, size: 2.8, life: 420, rise: 12, depth: 4 });
   }
 
   private plantCharge(
     x: number, y: number, damage: number, radius: number, fuseMs: number,
-    cluster: boolean, owner: 'player' | 'npc', markerScale: number,
+    cluster: boolean, selfHarm: boolean, owner: 'player' | 'npc', markerScale: number,
   ): void {
     const marker = this.arena.scene.add.graphics().setDepth(3);
     this.pressureCharges.push({
       x, y, fireAt: this.arena.scene.time.now + fuseMs, fuseMs,
-      damage, radius, cluster, owner, marker, markerScale,
+      damage, radius, cluster, selfHarm, owner, marker, markerScale,
     });
   }
 
@@ -1303,15 +1707,22 @@ export class FireKit {
 
     if (c.owner === 'player') {
       this.arena.damagePlayerTargets(c.x, c.y, c.radius, c.damage, col(FIRE.amber));
-      // Alcohol perk: the blast lights any spirits pooled inside it.
-      if (this.arena.hasPerk('player', 'alcohol')) {
-        this.igniteAlcoholPuddlesNear(c.x, c.y, c.radius + 20, scene);
-      }
     } else {
       const v = this.arena.player;
       if (v?.active && v.hp > 0 && Phaser.Math.Distance.Between(c.x, c.y, v.x, v.y) <= c.radius) {
         v.takeDamage(c.damage, { source: c, sourceX: c.x, sourceY: c.y });
         this.arena.spawnHitFlash(v.x, v.y, col(FIRE.amber));
+      }
+    }
+
+    // Alcohol: the blast lights any of the thrower's spirits pooled inside it.
+    this.igniteBooze(c.owner, c.x, c.y, c.radius);
+    // Ash: the thrower is not exempt. Their own sim decides — a replica's body is the peer's.
+    if (c.selfHarm && !(c.owner === 'npc' && this.arena.isOnline)) {
+      const self = this.fighterOf(c.owner);
+      if (self?.active && self.hp > 0 && Phaser.Math.Distance.Between(c.x, c.y, self.x, self.y) <= c.radius) {
+        Fighter.asNonAllyDamage(() => self.takeDamage(Math.round(c.damage * ASH_SELF_SHARE), { selfInflicted: true }));
+        this.arena.showFloatingText(self.x, self.y - 30, '🌫️ Caught in it!', '#bbaa99');
       }
     }
 
@@ -1340,27 +1751,12 @@ export class FireKit {
       const by = Phaser.Math.Clamp(c.y + Math.sin(ang) * dist, pad, this.arena.height - pad);
       // The throw itself: a spray of embers out of the crater along each bomblet's line.
       fx.embers(c.x, c.y, 4, { angle: ang, spread: 0.22, speed: dist * 2.2, size: 2.6, life: 300, rise: 10, depth: 5 });
-      this.plantCharge(bx, by, CLUSTER_DAMAGE, CLUSTER_RADIUS,
-        CLUSTER_FUSE_MS + i * CLUSTER_STAGGER_MS, false, c.owner, 0.72);
+      // Ash: bigger, stronger bomblets that carry the same disregard for their thrower.
+      this.plantCharge(bx, by,
+        this.scaled(c.owner, Math.round(CLUSTER_DAMAGE * (c.selfHarm ? ASH_DAMAGE_MULT : 1))),
+        Math.round(CLUSTER_RADIUS * (c.selfHarm ? ASH_RANGE_MULT : 1)),
+        CLUSTER_FUSE_MS + i * CLUSTER_STAGGER_MS, false, c.selfHarm, c.owner, 0.72);
     }
     if (c.owner === 'player') this.arena.showFloatingText(c.x, c.y - 36, '💣 Cluster!', '#ff7733');
-  }
-
-  /** Molten's Pressure Bomb sears the hand that threw it. Called from the fire ability itself. */
-  scorchCaster(owner: 'player' | 'npc'): void {
-    const f = owner === 'player' ? this.arena.player : this.arena.npc;
-    if (!f?.active) return;
-    const time = this.arena.scene.time.now;
-    f.burningUntil = Math.max(f.burningUntil, time + MOLTEN_SELF_BURN_MS);
-    (owner === 'player' ? this.pfx : this.nfx).embers(f.x, f.y, 6, { speed: 130, size: 3, life: 420 });
-    this.arena.showFloatingText(f.x, f.y - 30, '🔥 Backdraft', '#ff8844');
-  }
-
-  isPlayerInFlamePuddle(time: number): boolean {
-    const { player } = this.arena;
-    return this.alcoholPuddles.some(p =>
-      p.ignited && time < p.expiresAt &&
-      Phaser.Math.Distance.Between(p.x, p.y, player.x, player.y) <= p.radius
-    );
   }
 }

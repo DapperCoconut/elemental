@@ -50,16 +50,15 @@ const createBlock: Ability = {
   },
 };
 
-const mazeOfDoom: Ability = {
-  // id kept as 'maze-of-doom' for cooldown/color/AI wiring; this is now the Workshop.
-  id: 'maze-of-doom',
-  name: 'Workshop',
-  description: 'Convert the arena into a wooden workshop for 30s: walk on top of your own barriers, gain +25% speed, and leave an afterimage trail. 45s CD.',
+const selfDestruct: Ability = {
+  id: 'self-destruct',
+  name: 'Self-Destruct',
+  description: 'Push the big red button: an orbital beam blows up everything you have built. Walls, pads and mechs explode (15–25) and burst into shrapnel (4 each); the Nexus explodes biggest of all (30, sets foes alight) and lies in ash for 8s before it can be used again. 40s CD.',
   displayKey: 'Q',
   isUltimate: true,
-  cooldown: 45000,
+  cooldown: 40000,
   cast(ctx: CastContext) {
-    ctx.creationWorkshop();
+    ctx.creationSelfDestruct();
   },
 };
 
@@ -68,5 +67,5 @@ export const creationElement: Element = {
   name: 'Creation',
   color: 0xcc6622,
   emoji: '⚒️',
-  abilities: [daggerSpray, chargedBolt, wrenchInYourPlans, createBlock, mazeOfDoom],
+  abilities: [daggerSpray, chargedBolt, wrenchInYourPlans, createBlock, selfDestruct],
 };

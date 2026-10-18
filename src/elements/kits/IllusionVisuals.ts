@@ -561,6 +561,77 @@ export function illusionDagger(
   g.lineBetween(x - ca * size * 0.5, y - sa * size * 0.5, x - ca * size * 0.95, y - sa * size * 0.95);
 }
 
+/**
+ * A spent Veil's palette: whatever the pane would have been, put through the owner's skin and
+ * then drained to its own brightness in grey. Wrapping the tint rather than adding a "spent"
+ * branch to the painter keeps one pane drawing routine.
+ */
+export function spentTint(tint: IllusionColorFn): IllusionColorFn {
+  return (base: number) => {
+    const c = tint(base);
+    const r = (c >> 16) & 0xff;
+    const g = (c >> 8) & 0xff;
+    const b = c & 0xff;
+    const l = Math.round(Phaser.Math.Clamp(0.3 * r + 0.59 * g + 0.11 * b, 40, 200));
+    return (l << 16) | (l << 8) | l;
+  };
+}
+
+/**
+ * A Bomb Dance bomb: a harlequin ball — four diamond panels in violet and magenta turning on
+ * the body, a void-dark rim, a pale glint — with a short fuse whose spark stutters. The fuse
+ * shortens as `life` runs out, so a volley that has wandered for a while reads as spent.
+ */
+export function illusionBomb(
+  g: Phaser.GameObjects.Graphics,
+  tint: IllusionColorFn,
+  x: number, y: number, r: number, spin: number, t: number, life: number, alpha: number, seed: number,
+): void {
+  // Ghost pass first, a few pixels behind — nothing in this element is ever only in one place.
+  const gx = x - Math.cos(spin) * 3;
+  const gy = y - Math.sin(spin) * 3;
+  g.fillStyle(tint(ILL.magenta), alpha * 0.18);
+  g.fillCircle(gx, gy, r * 1.55);
+
+  g.fillStyle(tint(ILL.voidDeep), alpha);
+  g.fillCircle(x, y, r);
+  for (let i = 0; i < 4; i++) {
+    const a = spin + (i / 4) * TAU;
+    const ca = Math.cos(a);
+    const sa = Math.sin(a);
+    const out = r * 0.86;
+    const side = r * 0.42;
+    const mx = x + ca * out * 0.5;
+    const my = y + sa * out * 0.5;
+    g.fillStyle(tint(i % 2 === 0 ? ILL.violet : ILL.magenta), alpha * 0.95);
+    g.fillPoints([
+      new Phaser.Geom.Point(x + ca * 1.5, y + sa * 1.5),
+      new Phaser.Geom.Point(mx - sa * side, my + ca * side),
+      new Phaser.Geom.Point(x + ca * out, y + sa * out),
+      new Phaser.Geom.Point(mx + sa * side, my - ca * side),
+    ], true);
+  }
+  g.lineStyle(1.6, tint(ILL.voidDark), alpha);
+  g.strokeCircle(x, y, r);
+  g.fillStyle(tint(ILL.spark), alpha * 0.75);
+  g.fillCircle(x - r * 0.35, y - r * 0.4, r * 0.18);
+
+  // The fuse, leaving the crown and curling with the spin.
+  const len = r * (0.5 + life * 0.9);
+  const fa = -Math.PI / 2 + Math.sin(spin * 0.5) * 0.4;
+  const fx0 = x + Math.cos(fa) * r;
+  const fy0 = y + Math.sin(fa) * r;
+  const fx1 = fx0 + Math.cos(fa + 0.5) * len;
+  const fy1 = fy0 + Math.sin(fa + 0.5) * len;
+  g.lineStyle(1.8, tint(ILL.ghost), alpha * 0.9);
+  g.lineBetween(fx0, fy0, fx1, fy1);
+  const flick = 0.6 + 0.4 * Math.abs(Math.sin(t * 31 + seed));
+  g.fillStyle(tint(ILL.crimson), alpha * flick);
+  g.fillCircle(fx1, fy1, 2.6 * flick + 0.8);
+  g.fillStyle(tint(ILL.spark), alpha * flick);
+  g.fillCircle(fx1, fy1, 1.2);
+}
+
 // ── Fx ────────────────────────────────────────────────────────────────────
 
 export class IllusionFx extends FxBase {
@@ -707,6 +778,65 @@ export class IllusionFx extends FxBase {
       harlequinMask(g, this.tint, x, y - 2, 8.5 * (1 + e * 0.5), a * 0.7, ILL.crimson);
     });
     this.shards(x, y, 11, radius * 0.8, ILL.crimson, 620, depth);
+  }
+
+  /**
+   * A Bomb Dance bomb going off: a hard white flash, a violet blast disc, a magenta shock ring,
+   * and the harlequin panels thrown outward as spinning diamonds.
+   */
+  bombBlast(x: number, y: number, radius: number, depth = 10): void {
+    const seed = Math.random() * 999;
+    this.flashIn(x, y, 24, ILL.spark, ILL.magenta, depth + 1);
+    this.anim(depth, 560, (g, t) => {
+      const e = easeOut(t);
+      const a = 1 - t;
+      g.fillStyle(this.tint(ILL.violetDim), a * 0.3);
+      g.fillCircle(x, y, radius * (0.3 + e * 0.75));
+      g.lineStyle(3.4 * a + 0.8, this.tint(ILL.magenta), a * 0.9);
+      g.strokeCircle(x, y, radius * (0.25 + e * 0.8));
+      g.lineStyle(1.6, this.tint(ILL.spark), a * 0.6);
+      g.strokeCircle(x, y, radius * (0.15 + e * 0.6));
+      for (let i = 0; i < 8; i++) {
+        const ang = (i / 8) * TAU + jitter(seed, i) * 0.6;
+        const d = radius * (0.2 + e * (0.65 + jitter(seed, 10 + i) * 0.35));
+        const px = x + Math.cos(ang) * d;
+        const py = y + Math.sin(ang) * d;
+        const s = 5 * a + 1.5;
+        const sp = ang + t * 9;
+        g.fillStyle(this.tint(i % 2 === 0 ? ILL.violet : ILL.magenta), a * 0.9);
+        g.fillPoints([
+          new Phaser.Geom.Point(px + Math.cos(sp) * s, py + Math.sin(sp) * s),
+          new Phaser.Geom.Point(px - Math.sin(sp) * s * 0.55, py + Math.cos(sp) * s * 0.55),
+          new Phaser.Geom.Point(px - Math.cos(sp) * s, py - Math.sin(sp) * s),
+          new Phaser.Geom.Point(px + Math.sin(sp) * s * 0.55, py - Math.cos(sp) * s * 0.55),
+        ], true);
+      }
+    });
+    this.shards(x, y, 9, radius * 0.7, ILL.magenta, 520, depth);
+  }
+
+  /** Somebody turned around: three spiral arms winding in on them, the way the view swings. */
+  turnSwirl(x: number, y: number, depth = 11): void {
+    this.anim(depth, 620, (g, t) => {
+      const a = 1 - t;
+      for (let arm = 0; arm < 3; arm++) {
+        let px = 0;
+        let py = 0;
+        for (let i = 0; i <= 12; i++) {
+          const u = i / 12;
+          const ang = arm * (TAU / 3) + u * 3.2 + t * 6;
+          const rr = 44 * (1 - u * 0.7) * (1 - t * 0.4);
+          const cx = x + Math.cos(ang) * rr;
+          const cy = y + Math.sin(ang) * rr;
+          if (i > 0) {
+            g.lineStyle(2.2 * a * (0.4 + u) + 0.4, this.tint(arm === 0 ? ILL.spark : ILL.magenta), a * 0.85 * u);
+            g.lineBetween(px, py, cx, cy);
+          }
+          px = cx;
+          py = cy;
+        }
+      }
+    });
   }
 
   /** A dagger arriving. Short, hard, and pointed the way it was travelling. */

@@ -2,8 +2,8 @@ import Phaser from 'phaser';
 import * as PlayerData from '../data/PlayerData';
 import { ELEMENT_DATA_MAP, findElementDef } from '../data/ElementRoster';
 import { ALL_UPGRADES } from '../data/Upgrades';
-import { getPerkById } from '../data/Perks';
-import { getMasteryDef } from '../data/Mastery';
+import { perkLoadoutLabel } from '../data/Perks';
+import { getMasteryDef, isMasteryComplete } from '../data/Mastery';
 import { makeElementAvatar, elementBodyTexture } from '../elements/kits/ElementAvatars';
 import { ArmGesture, BaseAvatar } from '../elements/kits/ElementVisuals';
 import { fillHex, strokeHex, mix } from '../ui';
@@ -117,9 +117,12 @@ export class Tower {
     const ed = findElementDef(elementId);
     this.color = ed?.color ?? 0xffffff;
     this.name = ed?.name ?? elementId;
-    this.masteryOn = PlayerData.isMasteryEnabled(elementId) && !!def.mastery && !!getMasteryDef(elementId);
+    this.masteryOn = PlayerData.isMasteryEnabled(elementId) && !!def.mastery && !!getMasteryDef(elementId)
+      // Gold and Harvest replaced elements whose retired masteries may have left the flag on, and
+      // Psychic's, Magnet's and Radiation's masteries were redone outright.
+      && ((elementId !== 'fortune' && elementId !== 'gluttony' && elementId !== 'psychic' && elementId !== 'magnet' && elementId !== 'radiation' && elementId !== 'passion') || isMasteryComplete(elementId));
     const perkId = PlayerData.getEquippedPerk(elementId);
-    this.perkName = perkId ? (getPerkById(perkId)?.name ?? null) : null;
+    this.perkName = perkLoadoutLabel(perkId);
     this.ownedUpgrades = new Set(
       TOWER_SLOTS.filter((s) => PlayerData.isUpgradeActive(elementId, s) && def.upgrades[s]),
     );

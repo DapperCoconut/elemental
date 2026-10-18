@@ -37,14 +37,14 @@ const soulDeathWhistle: Ability = {
   cast(ctx: CastContext) { ctx.soulDeathWhistle(ctx.targetX, ctx.targetY); },
 };
 
-const soulHellsTorment: Ability = {
-  id: 'soul-hells-torment',
-  name: "Hell's Torment",
-  description: 'Ignite every Amalgam you control: they burn for 5 dmg/s, spraying embers and a fiery AOE around themselves each second, and detonate in a huge blast of embers when the flames finally consume them.',
+const soulTurn: Ability = {
+  id: 'soul-turn',
+  name: 'Turn',
+  description: 'Every hostile amalgam and zombie within 240px of you instantly turns and fights for you as one of your own Amalgams — the enemy\'s risen, your own grave zombies, even a loose Alpha. A Corpse Prince is too proud to turn. The Amalgam itself cannot be turned: it takes 50% of its current health as damage instead.',
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 20000,
-  cast(ctx: CastContext) { ctx.soulHellsTorment(); },
+  cast(ctx: CastContext) { ctx.soulTurn(); },
 };
 
 export const soulElement: Element = {
@@ -52,5 +52,5 @@ export const soulElement: Element = {
   name: 'Soul',
   color: 0xccaaff,
   emoji: '👻',
-  abilities: [soulLantern, soulArise, soulGrave, soulDeathWhistle, soulHellsTorment],
+  abilities: [soulLantern, soulArise, soulGrave, soulDeathWhistle, soulTurn],
 };

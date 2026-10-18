@@ -6,12 +6,13 @@ import { CustomStatus } from './StatusHudKit';
 import { seedEffectSnapshot, stretchNewEffects } from '../../combat/StatusEffects';
 import {
   ArmGesture, ArmHold, CREATION, CREATION_TIER_COLORS, CreationAvatar, CreationColorFn,
-  CreationForge, CreationFx, CreationMechRig, CreationNexus, MECH_ARM_TONES, MechArmKind,
+  CreationFx, CreationMechRig, CreationNexus, MECH_ARM_TONES, MechArmKind,
   MechArmView, blueprintFrame, craftPlank, drawAutomaton, drawBolt, drawDagger, drawFlask,
-  drawNail, drawSaw, drawSpeedPad, drawSpikedPanel, drawWrench, forgedShard, plankPanel, rivet,
-  wrenchShape, drawMechHpGauge, drawInventionPanel, drawNexusPlaque,
+  drawSpeedPad, drawSpikedPanel, drawWrench, forgedShard, plankPanel, rivet,
+  wrenchShape, drawMechHpGauge, drawNexusPlaque, drawNexusRuin, drawSelfDestructRemote, scrapShard,
 } from './CreationVisuals';
-import { FONT_DISPLAY, FONT_UI } from '../../ui/Theme';
+import { FONT_DISPLAY } from '../../ui/Theme';
+import { Sfx } from '../../audio';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -127,35 +128,38 @@ export interface CreationBlocker {
   hpBg: Phaser.GameObjects.Rectangle;
 }
 
-/** Ultimate Invention clutter: a crate ring box. Walk-through for its owner, solid for the foe. */
-export interface CreationCrate {
-  rect: Phaser.GameObjects.Graphics;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  owner: 'player' | 'npc';
-  expireAt: number;
-  spiked?: boolean;
-  spikeAccum?: number;
-}
-
-/** Ultimate Invention hazard: a saw sliding horizontally across the workshop. */
-export interface CreationSaw {
-  sprite: Phaser.GameObjects.Graphics;
-  x: number; y: number;
-  vx: number;
-  owner: 'player' | 'npc';
-  hitSet: Set<string>;
-}
-
-/** Ultimate Invention hazard: a nail flying inward from a workshop edge. */
-export interface CreationNail {
-  sprite: Phaser.GameObjects.Graphics;
+/** Q — Self-Destruct: a bit of wreckage flung out of a detonated build or mech. */
+export interface CreationShrapnel {
   x: number; y: number;
   vx: number; vy: number;
-  damage: number;
+  ang: number; spin: number;
+  len: number; w: number;
+  age: number;
   owner: 'player' | 'npc';
+}
+
+/** Q+ Scrapnel: a bit of wreckage lying on the floor, waiting to cut the first foe across it. */
+export interface CreationScrap {
+  x: number; y: number;
+  ang: number; len: number; w: number; bend: number;
+  expireAt: number;
+  owner: 'player' | 'npc';
+}
+
+/** Something Self-Destruct has locked an orbital beam onto. */
+type SelfDestructTarget =
+  | { kind: 'blocker'; ref: CreationBlocker }
+  | { kind: 'pad'; ref: CreationSpeedPad }
+  | { kind: 'spiked'; ref: CreationSpikedBlock }
+  | { kind: 'bot'; ref: CreationAutomaton }
+  | { kind: 'mech'; ref: CreationMech }
+  | { kind: 'nexus' };
+
+/** The remote held up overhead while Self-Destruct winds up. */
+interface SelfDestructRemote {
+  gfx: Phaser.GameObjects.Graphics;
+  owner: 'player' | 'npc';
+  start: number;
 }
 
 export interface CreationSpeedPad {
@@ -177,7 +181,7 @@ export interface CreationSpikedBlock {
   hpBg: Phaser.GameObjects.Rectangle;
   owner: 'player' | 'npc';
   tickAccum: number;
-  invincible: boolean; // true for maze-spawned spiked blocks
+  invincible: boolean;
 }
 
 /**
@@ -232,7 +236,7 @@ export interface CreationMedOrb {
 }
 
 /**
- * Automaton perk: a clockwork bot the Workshop turns out, which patrols the floor it was
+ * Automaton perk: a clockwork bot the rebuilt Nexus turns out after Self-Destruct, which patrols the floor it was
  * built on and shoulder-charges whoever it runs into. It runs on a wind-up, so crossing the
  * nexus tops it back up — that is the only way to keep one past its first twenty seconds.
  */
@@ -314,11 +318,40 @@ export const CREATION_MECH_ARM_INFO: Record<MechArmKind, { name: string; emoji: 
   overclock: { name: 'Overclock Arm', emoji: '⚙️', effect: '+25% mech speed, supercharges the other arm, and steel-plates everything you build.' },
 };
 
-/** Creation Q+ Ultimate Invention slider panel layout (screen-space, top-left). */
-const INVENTION_SLIDER_X = 20;
-const INVENTION_SLIDER_Y = 74;
-const INVENTION_SLIDER_W = 160;
-const INVENTION_SLIDER_ROW = 34;
+// ── Q — Self-Destruct / Q+ Scrapnel ──
+/** Remote out → button pushed. */
+const SD_REMOTE_MS = 440;
+/** Reticle lock on each target before its beam lands and it goes up. */
+const SD_LOCK_MS = 380;
+/** How long the beam column hangs around after the detonation. */
+const SD_BEAM_MS = 420;
+/** Gap between successive beams, so a field of builds goes up as a chain, not all at once. */
+const SD_STAGGER_MS = 110;
+const SD_WALL_DAMAGE = 15;
+const SD_PAD_DAMAGE = 10;
+const SD_BOT_RADIUS = 66;
+const SD_BOT_DAMAGE = 10;
+const SD_MECH_RADIUS = 125;
+const SD_MECH_DAMAGE = 25;
+const SD_NEXUS_RADIUS = 185;
+const SD_NEXUS_DAMAGE = 30;
+const SD_NEXUS_BURN_MS = 4000;
+/** The ashen Nexus is out of action this long before it powers back on. */
+const NEXUS_ASH_MS = 8000;
+/** Generous body slack on every blast, so a fighter brushing the edge still gets caught. */
+const SD_BODY_SLACK = 16;
+const SHRAPNEL_DAMAGE = 4;
+const SHRAPNEL_SPEED = 340;
+const SHRAPNEL_LIFE_MS = 720;
+const SHRAPNEL_HIT_R = 18;
+const SCRAP_DAMAGE = 4;
+const SCRAP_LIFE_MS = 14000;
+const SCRAP_HIT_R = 16;
+/** A foe walking a carpet of scrap is cut once per this long, not by every piece at once. */
+const SCRAP_CUT_CD_MS = 140;
+/** Burn on the player from an npc-owned Nexus blast (ArenaScene only ticks the enemies' burn). */
+const SD_SCORCH_TICK_MS = 500;
+const SD_SCORCH_DAMAGE = 3;
 
 // ── Mastery ──────────────────────────────────────────────────────────────
 
@@ -406,8 +439,6 @@ export class CreationKit {
   /** The artisan rig (forge hands, gripped hammer, gear crown) for each creation fighter. */
   private playerAvatar: CreationAvatar | null = null;
   private npcAvatar: CreationAvatar | null = null;
-  /** Ring of orbiting stock worn by whoever has the Workshop up. */
-  private workshopForge: CreationForge | null = null;
   /**
    * The always-on tell for live potions and mortar hexes: one Graphics per side carrying a
    * little bottle per effect. The status tray only covers the local player, and only in the
@@ -466,35 +497,28 @@ export class CreationKit {
   private creatWrenches: CreationWrench[] = [];
   // Persistent world objects
   private creatBlockers: CreationBlocker[] = [];
-  private creatSaws: CreationSaw[] = [];
-  private creatNails: CreationNail[] = [];
-  // Stun applied by Ultimate Invention hazards
-  private creatPlayerStunUntil = 0;
-  private creatNpcStunUntil = 0;
-  // Q Workshop
-  private creatWorkshopEnd = 0;
-  private creatWorkshopOwner: 'player' | 'npc' = 'player';
-  private creatWorkshopOverlay: Phaser.GameObjects.Graphics | null = null;
-  private creatWorkshopTrailAccum = 0;
-  private creatWorkshopTrail: Phaser.GameObjects.Graphics[] = [];
-  // Q+ Ultimate Invention sliders
-  private creatInventionActive = false;
-  private creatInventionTimer = 0;
-  private creatSliderDanger = 0;
-  private creatSliderBias = 0;
-  private creatSliderClutter = 0;
-  private creatInventionUi: Array<{ destroy: () => void }> = [];
-  private creatSliderFills: Phaser.GameObjects.Rectangle[] = [];
-  private creatSliderHandles: Phaser.GameObjects.Rectangle[] = [];
-  private creatInventionTimerText: Phaser.GameObjects.Text | null = null;
-  /** The inventor's console the three sliders are painted on. */
-  private creatInventionPanel: Phaser.GameObjects.Graphics | null = null;
-  private creatInventionDragSlider = -1;
-  private creatSawAccum = 0;
-  private creatNailAccum = 0;
-  private creatBiasHealAccum = 0;
-  private creatClutterBoxes: CreationCrate[] = [];
-  private creatClutterLevel = -1;
+  // Q — Self-Destruct
+  /** Bumped on every reset so a beam scheduled last match can never land in this one. */
+  private sdEpoch = 0;
+  private sdRemotes: SelfDestructRemote[] = [];
+  private creatShrapnel: CreationShrapnel[] = [];
+  private shrapnelGfx: Phaser.GameObjects.Graphics | null = null;
+  // Q+ Scrapnel
+  private creatScrap: CreationScrap[] = [];
+  private scrapGfx: Phaser.GameObjects.Graphics | null = null;
+  private scrapDirty = false;
+  private scrapFadeAccum = 0;
+  private scrapCutReadyAt = new WeakMap<Fighter, number>();
+  /** The ashen Nexus while it repairs, and who blew it up (their Automaton perk staffs the rebuild). */
+  private nexusAsh: Phaser.GameObjects.Graphics | null = null;
+  private nexusAshStart = 0;
+  private nexusAshOwner: 'player' | 'npc' | null = null;
+  /** Burn on the player from an npc-owned Nexus blast. */
+  private playerScorchUntil = 0;
+  private playerScorchAccum = 0;
+  /** Whether the tray is showing the scorch, and for which expiry (a re-ignite refreshes it). */
+  private playerScorchShown = false;
+  private playerScorchShownUntil = 0;
 
   // Creation upgrades
   private creatLastCraftKey: string | null = null;
@@ -550,10 +574,7 @@ export class CreationKit {
   /** Where the current dash started — the trail is drawn from here to where it lands. */
   private dashFromX = 0;
   private dashFromY = 0;
-  /** Enemies already wired up for the workshopKills requirement this match. */
-  private workshopTrackedEnemies = new WeakSet<Fighter>();
-
-  /** Automaton perk (Creation): wandering clockwork bots spawned by the Workshop. */
+  /** Automaton perk (Creation): clockwork bots the Nexus turns out when it rebuilds after Self-Destruct. */
   private automatons: CreationAutomaton[] = [];
 
   constructor(private api: CreationArenaApi) {
@@ -601,7 +622,6 @@ export class CreationKit {
     // Visuals — every GameObject dies with the old scene run, so rebuild lazily in update().
     if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
     if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
-    if (this.workshopForge) { this.workshopForge.destroy(); this.workshopForge = null; }
     for (const side of ['player', 'npc'] as const) {
       if (this.brewAura[side]) { this.brewAura[side]!.destroy(); this.brewAura[side] = null; }
     }
@@ -639,23 +659,20 @@ export class CreationKit {
     this.wrenchedSides.clear();
     for (const bl of this.creatBlockers) { bl.rect.destroy(); bl.hpBar.destroy(); bl.hpBg.destroy(); }
     this.creatBlockers = [];
-    for (const s of this.creatSaws) s.sprite.destroy();
-    this.creatSaws = [];
-    for (const n of this.creatNails) n.sprite.destroy();
-    this.creatNails = [];
-    this.creatPlayerStunUntil = 0; this.creatNpcStunUntil = 0;
-    this.creatWorkshopEnd = 0;
-    if (this.creatWorkshopOverlay) { this.creatWorkshopOverlay.destroy(); this.creatWorkshopOverlay = null; }
-    this.creatWorkshopTrailAccum = 0;
-    for (const t of this.creatWorkshopTrail) t.destroy();
-    this.creatWorkshopTrail = [];
-    this.creatInventionActive = false; this.creatInventionTimer = 0;
-    this.creatSliderDanger = 0; this.creatSliderBias = 0; this.creatSliderClutter = 0;
-    this.creatInventionDragSlider = -1;
-    this.teardownInventionUi();
-    this.creatSawAccum = 0; this.creatNailAccum = 0; this.creatBiasHealAccum = 0;
-    for (const b of this.creatClutterBoxes) b.rect.destroy();
-    this.creatClutterBoxes = []; this.creatClutterLevel = -1;
+    this.sdEpoch++;
+    for (const r of this.sdRemotes) r.gfx.destroy();
+    this.sdRemotes = [];
+    this.creatShrapnel = [];
+    if (this.shrapnelGfx) { this.shrapnelGfx.destroy(); this.shrapnelGfx = null; }
+    this.creatScrap = [];
+    if (this.scrapGfx) { this.scrapGfx.destroy(); this.scrapGfx = null; }
+    this.scrapDirty = false; this.scrapFadeAccum = 0;
+    this.scrapCutReadyAt = new WeakMap<Fighter, number>();
+    if (this.nexusAsh) { this.nexusAsh.destroy(); this.nexusAsh = null; }
+    this.nexusAshStart = 0; this.nexusAshOwner = null;
+    this.playerScorchUntil = 0; this.playerScorchAccum = 0;
+    this.playerScorchShown = false; this.playerScorchShownUntil = 0;
+    this.api.setStatusIndicator('creation-scorch', null);
 
     // Creation upgrade reset
     this.creatLastCraftKey = null; this.creatBoltElectroMode = false;
@@ -697,7 +714,6 @@ export class CreationKit {
     this.creatHexReloadOn = { player: false, npc: false };
     this.prevDodging = false;
     this.dashFromX = 0; this.dashFromY = 0;
-    this.workshopTrackedEnemies = new WeakSet<Fighter>();
   }
 
   /**
@@ -1042,34 +1058,390 @@ export class CreationKit {
     }
   }
 
-  // Q — Workshop: the "maze" ctx name is legacy; it now builds a 30s wooden workshop.
-  spawnWorkshop(owner: 'player' | 'npc'): void {
-    const time = this.scene.time.now;
-    const W = this.api.width, H = this.api.height;
-    this.creatWorkshopEnd = time + 30000;
-    this.creatWorkshopOwner = owner;
-    if (!this.creatWorkshopOverlay) {
-      // A boarded floor laid over the whole arena, below the fighters: planks with grain,
-      // a rivet at each corner, and a heavy frame around the edge.
-      const floor = this.add.graphics().setDepth(0);
-      floor.setPosition(W / 2, H / 2);
-      plankPanel(floor, this.col(owner), W, H, 0.34, { boardH: 46, frame: 6 });
-      this.creatWorkshopOverlay = floor;
-    }
-    const caster = owner === 'player' ? this.player : this.npc;
-    const fx = this.fx(owner);
-    // The floor gets hammered down: a strike at the caster, boards flashing in, dust everywhere.
-    fx.hammerStrike(caster.x, caster.y + 18, Math.PI / 2, 1.6);
-    fx.ring(caster.x, caster.y, 20, Math.max(W, H) * 0.75, CREATION.tan, 620, 8, 1);
-    fx.sawdust(W / 2, H / 2, W, H, 40);
-    fx.gearPulse(caster.x, caster.y, 60, 700, CREATION.gold, 5);
-    this.gesture(owner, 'raise');
-    this.api.showFloatingText(caster.x, caster.y - 40, '🔨 WORKSHOP', '#d9a066');
-    // Q+ Ultimate Invention: draggable danger/bias/clutter sliders + an unstable timer.
-    if (owner === 'player' && this.api.hasUpgrade('q')) this.startUltimateInvention();
-    // Automaton perk: spawn 3 wandering bots
-    if (this.api.hasPerk(owner, 'automaton')) this.spawnAutomatons(owner, 3);
+  // ── Q — Self-Destruct ────────────────────────────────────────────
+
+  /** Whether an upgrade slot is owned by this side. */
+  private up(owner: 'player' | 'npc', slot: string): boolean {
+    return owner === 'player' ? this.api.hasUpgrade(slot) : this.api.hasNpcUpgrade(slot);
   }
+
+  /** Everyone this side's blasts and shrapnel are allowed to hurt. */
+  private foes(owner: 'player' | 'npc'): Fighter[] {
+    return owner === 'player' ? this.api.enemies : [this.player];
+  }
+
+  /**
+   * Everything this side has made that an orbital beam can find: its walls, its Build Mode pads
+   * and spike blocks, its automatons, the mech, and — last, as the finale — the Nexus. The Nexus
+   * is one shared machine, so either side's remote can blow it, but not while it is still ash.
+   */
+  private selfDestructTargets(owner: 'player' | 'npc'): SelfDestructTarget[] {
+    const out: SelfDestructTarget[] = [];
+    for (const ref of this.creatBlockers) if (ref.owner === owner) out.push({ kind: 'blocker', ref });
+    for (const ref of this.creatSpeedPads) if (ref.owner === owner) out.push({ kind: 'pad', ref });
+    for (const ref of this.creatSpikedBlocks) if (ref.owner === owner) out.push({ kind: 'spiked', ref });
+    for (const ref of this.automatons) if (ref.owner === owner) out.push({ kind: 'bot', ref });
+    if (owner === 'player' && this.creatMech) out.push({ kind: 'mech', ref: this.creatMech });
+    if (this.nexusRig) out.push({ kind: 'nexus' });
+    return out;
+  }
+
+  /** True when pushing the button would blow up at least one thing. */
+  canSelfDestruct(owner: 'player' | 'npc'): boolean {
+    return this.selfDestructTargets(owner).length > 0;
+  }
+
+  /** Where a target is right now, and how big a hole it leaves. */
+  private targetPos(t: SelfDestructTarget): { x: number; y: number } {
+    if (t.kind === 'nexus') return { x: this.nexusX, y: this.nexusY };
+    return { x: t.ref.x, y: t.ref.y };
+  }
+
+  private targetRadius(t: SelfDestructTarget): number {
+    switch (t.kind) {
+      case 'nexus': return SD_NEXUS_RADIUS;
+      case 'mech': return SD_MECH_RADIUS;
+      case 'bot': return SD_BOT_RADIUS;
+      default: return Phaser.Math.Clamp(48 + Math.max(t.ref.w, t.ref.h) * 0.4, 58, 140);
+    }
+  }
+
+  /**
+   * Bot synergy: true when Self-Destruct is worth pressing for the npc right now — the player is
+   * standing inside the blast of something the npc built (or of the Nexus). Pure read.
+   */
+  npcSelfDestructReady(): boolean {
+    const p = this.player;
+    if (!p.active || p.hp <= 0) return false;
+    for (const t of this.selfDestructTargets('npc')) {
+      const { x, y } = this.targetPos(t);
+      // The beam takes most of a second to land, so only count a target the player is well inside.
+      if (Phaser.Math.Distance.Between(x, y, p.x, p.y) <= this.targetRadius(t) * 0.85) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Q — pull out the remote and push the big red button. Every target is locked by an orbital
+   * reticle in turn, and blows the moment its beam lands. Returns false (and does nothing) when
+   * there is nothing to blow up, so the caller can refuse without burning the cooldown.
+   */
+  selfDestruct(owner: 'player' | 'npc'): boolean {
+    if (!this.canSelfDestruct(owner)) return false;
+    const caster = owner === 'player' ? this.player : this.npc;
+    const epoch = this.sdEpoch;
+    this.gesture(owner, 'raise', undefined, SD_REMOTE_MS + 260);
+    this.sdRemotes.push({ gfx: this.add.graphics().setDepth(12), owner, start: this.scene.time.now });
+    this.api.showFloatingText(caster.x, caster.y - 58, '📡 SELF-DESTRUCT', '#ff4455');
+
+    this.scene.time.delayedCall(SD_REMOTE_MS, () => {
+      if (epoch !== this.sdEpoch) return;
+      // Snapshot at the click: anything built after the button went down is safe.
+      const targets = this.selfDestructTargets(owner);
+      const fx = this.fx(owner);
+      this.scene.cameras.main.shake(120, 0.003);
+      targets.forEach((t, i) => {
+        const radius = this.targetRadius(t);
+        const delay = i * SD_STAGGER_MS;
+        // The beam tracks its target, so a walking bot or a piloted mech can't step out of it.
+        let last = this.targetPos(t);
+        const at = () => (this.targetAlive(t) ? (last = this.targetPos(t)) : last);
+        this.scene.time.delayedCall(delay, () => {
+          if (epoch !== this.sdEpoch) return;
+          fx.orbitalStrike(at, Math.min(70, radius * 0.45), SD_LOCK_MS, SD_BEAM_MS);
+          this.scene.time.delayedCall(SD_LOCK_MS - 60, () => {
+            if (epoch === this.sdEpoch) Sfx.playAt('beam-fire', at().x, { volume: 0.45 });
+          });
+        });
+        this.scene.time.delayedCall(delay + SD_LOCK_MS, () => {
+          if (epoch !== this.sdEpoch) return;
+          this.detonate(t, owner);
+        });
+      });
+    });
+    return true;
+  }
+
+  /** Still standing? A beam that arrives after its target was already wrecked just scorches the floor. */
+  private targetAlive(t: SelfDestructTarget): boolean {
+    switch (t.kind) {
+      case 'blocker': return this.creatBlockers.includes(t.ref);
+      case 'pad': return this.creatSpeedPads.includes(t.ref);
+      case 'spiked': return this.creatSpikedBlocks.includes(t.ref);
+      case 'bot': return this.automatons.includes(t.ref);
+      case 'mech': return this.creatMech === t.ref;
+      case 'nexus': return !!this.nexusRig;
+    }
+  }
+
+  /** The beam lands: take the target off the board and turn it into a blast and a cloud of scrap. */
+  private detonate(t: SelfDestructTarget, owner: 'player' | 'npc'): void {
+    const fx = this.fx(owner);
+    if (!this.targetAlive(t)) {
+      const { x, y } = this.targetPos(t);
+      fx.ring(x, y, 4, 40, CREATION.nexusLit, 320, 3, 6);
+      return;
+    }
+    if (t.kind === 'nexus') { this.detonateNexus(owner); return; }
+
+    const { x, y } = this.targetPos(t);
+    const radius = this.targetRadius(t);
+    let damage = SD_WALL_DAMAGE, burst = 12, scrap = 18, span = 40;
+    switch (t.kind) {
+      case 'blocker':
+      case 'pad':
+      case 'spiked': {
+        const r = t.ref;
+        r.rect.destroy(); r.hpBar.destroy(); r.hpBg.destroy();
+        const list: Array<{ x: number; y: number }> = t.kind === 'blocker' ? this.creatBlockers
+          : t.kind === 'pad' ? this.creatSpeedPads : this.creatSpikedBlocks;
+        list.splice(list.indexOf(r), 1);
+        if (t.kind === 'pad') damage = SD_PAD_DAMAGE;
+        burst = Phaser.Math.Clamp(Math.round((r.w + r.h) / 10), 10, 28);
+        scrap = Phaser.Math.Clamp(Math.round((r.w + r.h) / 6) + 12, 18, 48);
+        span = Math.max(r.w, r.h) / 2 + 20;
+        break;
+      }
+      case 'bot':
+        t.ref.gfx.destroy();
+        this.automatons.splice(this.automatons.indexOf(t.ref), 1);
+        damage = SD_BOT_DAMAGE; burst = 10; scrap = 16; span = 24;
+        break;
+      case 'mech':
+        // Its own wreck path throws the pilot clear and starts the Nexus rebuilding.
+        this.wreckMech();
+        damage = SD_MECH_DAMAGE; burst = 28; scrap = 52; span = 50;
+        break;
+    }
+
+    fx.explosion(x, y, radius, { shards: 10 + burst, smoke: 3, core: CREATION.ember });
+    Sfx.playAt(t.kind === 'mech' ? 'explosion-large' : t.kind === 'bot' ? 'explosion-small' : 'explosion-medium', x, { volume: 0.75 });
+    this.scene.cameras.main.shake(140, 0.005);
+    this.blast(owner, x, y, radius, damage, CREATION.ember);
+    this.spawnShrapnelBurst(owner, x, y, burst, span * 0.5);
+    if (this.up(owner, 'q')) this.scatterScrap(owner, x, y, scrap, span);
+  }
+
+  /**
+   * The finale: the Nexus goes up in a blast bigger than anything else on the board and sets
+   * everyone near it alight. Whatever was brewing, loaded or waiting on its shelf is lost, and
+   * it lies there as ash until it powers back on 8 seconds later. It throws no shrapnel.
+   */
+  private detonateNexus(owner: 'player' | 'npc'): void {
+    const x = this.nexusX, y = this.nexusY;
+    const fx = this.fx(owner);
+    for (const p of this.creatPotions) { fx.shrapnel(p.x, p.y, 7, 26, 8); p.gfx.destroy(); }
+    this.creatPotions = [];
+    for (const b of this.nexusBolts) b.icon.destroy();
+    this.nexusBolts = [];
+    this.creatCraftInProgress = false;
+    this.nexusRig?.destroy(); this.nexusRig = null;
+    this.nexusLabel?.destroy(); this.nexusLabel = null;
+    this.nexusPlaque?.destroy(); this.nexusPlaque = null;
+
+    fx.explosion(x, y, SD_NEXUS_RADIUS, { shards: 30, smoke: 7, core: CREATION.nexus, duration: 900 });
+    fx.gearPulse(x, y, 90, 900, CREATION.nexusLit, 8);
+    this.scene.time.delayedCall(120, () => fx.ring(x, y, 20, SD_NEXUS_RADIUS * 1.3, CREATION.nexus, 700, 7, 9));
+    this.scene.cameras.main.shake(380, 0.012);
+    Sfx.playAt('explosion-large', x, { volume: 1 });
+    this.api.showFloatingText(x, y - 80, '💥 NEXUS DESTROYED', '#ff3399');
+    this.blast(owner, x, y, SD_NEXUS_RADIUS, SD_NEXUS_DAMAGE, CREATION.nexus, SD_NEXUS_BURN_MS);
+
+    this.nexusAsh?.destroy();
+    this.nexusAsh = this.add.graphics().setDepth(3);
+    this.nexusAshStart = this.scene.time.now;
+    this.nexusAshOwner = owner;
+    this.nexusRebuildAt = this.scene.time.now + NEXUS_ASH_MS;
+  }
+
+  /** Damage (and optionally ignite) every foe of `owner` inside the blast. */
+  private blast(owner: 'player' | 'npc', x: number, y: number, radius: number, damage: number, color: number, burnMs = 0): void {
+    const time = this.scene.time.now;
+    for (const t of this.foes(owner)) {
+      if (!t.active || t.hp <= 0) continue;
+      if (Phaser.Math.Distance.Between(x, y, t.x, t.y) > radius + SD_BODY_SLACK) continue;
+      this.hitFoe(owner, t, damage, color);
+      if (burnMs <= 0 || t.hp <= 0) continue;
+      if (owner === 'player') {
+        t.burningUntil = Math.max(t.burningUntil, time + Math.round(burnMs * t.statusDurMult));
+      } else {
+        this.playerScorchUntil = Math.max(this.playerScorchUntil, time + Math.round(burnMs * t.statusDurMult));
+      }
+      this.api.showFloatingText(t.x, t.y - 46, '🔥 ALIGHT', '#ff7733');
+    }
+  }
+
+  /** One hit from anything Self-Destruct made. Kills count toward Creation Mastery. */
+  private hitFoe(owner: 'player' | 'npc', t: Fighter, damage: number, color: number): void {
+    t.takeDamage(damage);
+    this.api.spawnHitFlash(t.x, t.y, color);
+    if (owner === 'player' && t.hp <= 0) this.api.recordMasteryStat('workshopKills', 1);
+  }
+
+  /** A ring of wreckage flung outward from a detonation. */
+  private spawnShrapnelBurst(owner: 'player' | 'npc', x: number, y: number, count: number, startR: number): void {
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
+      const v = SHRAPNEL_SPEED * (0.7 + Math.random() * 0.6);
+      this.creatShrapnel.push({
+        x: x + Math.cos(a) * startR, y: y + Math.sin(a) * startR,
+        vx: Math.cos(a) * v, vy: Math.sin(a) * v,
+        ang: a, spin: (Math.random() - 0.5) * 24,
+        len: 8 + Math.random() * 7, w: 2 + Math.random() * 1.6,
+        age: 0, owner,
+      });
+    }
+  }
+
+  /** Q+ Scrapnel: litter the floor round a detonation with a heap of sharp wreckage. */
+  private scatterScrap(owner: 'player' | 'npc', x: number, y: number, count: number, span: number): void {
+    const W = this.api.width, H = this.api.height;
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const d = Math.sqrt(Math.random()) * (span + 46);
+      this.dropScrap(owner, Phaser.Math.Clamp(x + Math.cos(a) * d, 8, W - 8), Phaser.Math.Clamp(y + Math.sin(a) * d, 8, H - 8));
+    }
+  }
+
+  private dropScrap(owner: 'player' | 'npc', x: number, y: number): void {
+    this.creatScrap.push({
+      x, y, ang: Math.random() * Math.PI * 2,
+      len: 7 + Math.random() * 7, w: 1.8 + Math.random() * 1.6, bend: (Math.random() - 0.5) * 4,
+      expireAt: this.scene.time.now + SCRAP_LIFE_MS, owner,
+    });
+    this.scrapDirty = true;
+  }
+
+  /** Flying shrapnel: fly, slow, cut the first foe it meets — and, under Q+, land as scrap. */
+  private updateShrapnel(delta: number): void {
+    if (this.creatShrapnel.length === 0) {
+      if (this.shrapnelGfx) { this.shrapnelGfx.destroy(); this.shrapnelGfx = null; }
+      return;
+    }
+    if (!this.shrapnelGfx) this.shrapnelGfx = this.add.graphics().setDepth(8);
+    const g = this.shrapnelGfx;
+    g.clear();
+    const dt = delta / 1000;
+    for (let i = this.creatShrapnel.length - 1; i >= 0; i--) {
+      const s = this.creatShrapnel[i];
+      s.age += delta;
+      const slow = 1 - (s.age / SHRAPNEL_LIFE_MS) * 0.75;
+      s.x += s.vx * slow * dt;
+      s.y += s.vy * slow * dt;
+      s.ang += s.spin * slow * dt;
+      let hit = false;
+      for (const t of this.foes(s.owner)) {
+        if (!t.active || t.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(s.x, s.y, t.x, t.y) > SHRAPNEL_HIT_R) continue;
+        this.hitFoe(s.owner, t, SHRAPNEL_DAMAGE, CREATION.steel);
+        this.fx(s.owner).sparks(s.x, s.y, 3, { angle: Math.atan2(-s.vy, -s.vx), spread: 0.8, speed: 120, size: 1.8, life: 300, depth: 8 });
+        hit = true;
+        break;
+      }
+      if (hit) { this.creatShrapnel.splice(i, 1); continue; }
+      if (s.age >= SHRAPNEL_LIFE_MS) {
+        if (this.up(s.owner, 'q')) this.dropScrap(s.owner, Phaser.Math.Clamp(s.x, 8, this.api.width - 8), Phaser.Math.Clamp(s.y, 8, this.api.height - 8));
+        this.creatShrapnel.splice(i, 1);
+        continue;
+      }
+      // Streak behind it while it is still moving fast, then the tumbling shard itself.
+      const tint = this.col(s.owner);
+      g.lineStyle(1.6, tint(CREATION.spark), 0.45 * slow);
+      g.lineBetween(s.x - s.vx * slow * 0.03, s.y - s.vy * slow * 0.03, s.x, s.y);
+      scrapShard(g, tint, s.x, s.y, s.ang, s.len, s.w, 0, 1);
+    }
+  }
+
+  /**
+   * Q+ Scrapnel on the floor: each piece cuts the first foe across it for 4 and is gone. One
+   * Graphics for the whole carpet, repainted only when it changes (or while pieces fade out).
+   */
+  private updateScrap(time: number, delta: number): void {
+    if (this.creatScrap.length === 0) {
+      if (this.scrapGfx) { this.scrapGfx.destroy(); this.scrapGfx = null; }
+      return;
+    }
+    for (let i = this.creatScrap.length - 1; i >= 0; i--) {
+      const s = this.creatScrap[i];
+      if (time >= s.expireAt) { this.creatScrap.splice(i, 1); this.scrapDirty = true; continue; }
+      for (const t of this.foes(s.owner)) {
+        if (!t.active || t.hp <= 0) continue;
+        if (time < (this.scrapCutReadyAt.get(t) ?? 0)) continue;
+        if (Math.abs(t.x - s.x) > SCRAP_HIT_R || Math.abs(t.y - s.y) > SCRAP_HIT_R) continue;
+        this.scrapCutReadyAt.set(t, time + SCRAP_CUT_CD_MS);
+        this.hitFoe(s.owner, t, SCRAP_DAMAGE, CREATION.steel);
+        this.fx(s.owner).sparks(s.x, s.y, 3, { speed: 90, size: 1.6, life: 260, depth: 6 });
+        this.creatScrap.splice(i, 1);
+        this.scrapDirty = true;
+        break;
+      }
+    }
+    // Pieces in their last second fade, so repaint a few times a second while any are fading.
+    this.scrapFadeAccum += delta;
+    if (this.scrapFadeAccum >= 100) {
+      this.scrapFadeAccum = 0;
+      if (this.creatScrap.some((s) => s.expireAt - time < 1000)) this.scrapDirty = true;
+    }
+    if (!this.scrapDirty) return;
+    this.scrapDirty = false;
+    if (!this.scrapGfx) this.scrapGfx = this.add.graphics().setDepth(2);
+    const g = this.scrapGfx;
+    g.clear();
+    for (const s of this.creatScrap) {
+      const a = Phaser.Math.Clamp((s.expireAt - time) / 1000, 0, 1);
+      scrapShard(g, this.col(s.owner), s.x, s.y, s.ang, s.len, s.w, s.bend, a);
+    }
+  }
+
+  /** The remote held up overhead, its button going down at the end of the wind-up. */
+  private updateRemotes(time: number): void {
+    for (let i = this.sdRemotes.length - 1; i >= 0; i--) {
+      const r = this.sdRemotes[i];
+      const el = time - r.start;
+      const caster = r.owner === 'player' ? this.player : this.npc;
+      if (el >= SD_REMOTE_MS + 380 || !caster.active) { r.gfx.destroy(); this.sdRemotes.splice(i, 1); continue; }
+      const press = Phaser.Math.Clamp((el - (SD_REMOTE_MS - 140)) / 120, 0, 1);
+      const rise = Phaser.Math.Clamp(el / 160, 0, 1);
+      const fade = el > SD_REMOTE_MS + 220 ? 1 - (el - SD_REMOTE_MS - 220) / 160 : 1;
+      r.gfx.clear();
+      drawSelfDestructRemote(r.gfx, this.col(r.owner), press, time / 1000, Math.max(0, fade) * rise);
+      r.gfx.setPosition(caster.x + 4, caster.y - 30 - rise * 16 + press * 3).setRotation(Math.sin(el / 70) * 0.06);
+    }
+  }
+
+  /** The ashen Nexus smouldering while it repairs, then powering back on. */
+  private updateNexusAsh(time: number): void {
+    if (!this.nexusAsh) return;
+    if (this.nexusRig || time >= this.nexusRebuildAt) { this.nexusAsh.destroy(); this.nexusAsh = null; return; }
+    const repair = Phaser.Math.Clamp((time - this.nexusAshStart) / NEXUS_ASH_MS, 0, 1);
+    this.nexusAsh.clear();
+    drawNexusRuin(this.nexusAsh, this.pcol, this.nexusX, this.nexusY, time / 1000, repair);
+  }
+
+  /** Burn from an npc-owned Nexus blast, ticking on the player the way ArenaScene ticks the enemies'. */
+  private updatePlayerScorch(time: number, delta: number): void {
+    if (time >= this.playerScorchUntil) {
+      if (this.playerScorchShown) { this.playerScorchShown = false; this.api.setStatusIndicator('creation-scorch', null); }
+      this.playerScorchAccum = 0;
+      return;
+    }
+    if (!this.playerScorchShown || this.playerScorchShownUntil !== this.playerScorchUntil) {
+      this.playerScorchShown = true;
+      this.playerScorchShownUntil = this.playerScorchUntil;
+      this.api.setStatusIndicator('creation-scorch', {
+        name: 'Alight', emoji: '🔥', color: 0xff7733, until: this.playerScorchUntil, priority: 40,
+        description: `Set alight by the exploding Nexus: ${SD_SCORCH_DAMAGE} damage every half second.`,
+      });
+    }
+    this.playerScorchAccum += delta;
+    while (this.playerScorchAccum >= SD_SCORCH_TICK_MS) {
+      this.playerScorchAccum -= SD_SCORCH_TICK_MS;
+      if (!this.player.active || this.player.hp <= 0) break;
+      this.player.takeDamage(SD_SCORCH_DAMAGE, { fireDot: true });
+      this.api.spawnHitFlash(this.player.x, this.player.y, 0xff7733);
+    }
+  }
+
 
   // ── Nexus crafting ───────────────────────────────────────────────
 
@@ -1332,280 +1704,6 @@ export class CreationKit {
     }
   }
 
-  private updateCreationWorkshop(time: number, delta: number): void {
-    if (time >= this.creatWorkshopEnd) {
-      if (this.creatWorkshopOverlay) { this.creatWorkshopOverlay.destroy(); this.creatWorkshopOverlay = null; }
-      for (const t of this.creatWorkshopTrail) t.destroy();
-      this.creatWorkshopTrail = [];
-      if (this.creatInventionActive) this.endUltimateInvention();
-      return;
-    }
-    // Sawdust footprints stamped behind the workshop owner — the floor is theirs, and the
-    // trail is the read on which side that is.
-    const walker = this.creatWorkshopOwner === 'player' ? this.player : this.npc;
-    const tint = this.col(this.creatWorkshopOwner);
-    this.creatWorkshopTrailAccum += delta;
-    if (this.creatWorkshopTrailAccum >= 70) {
-      this.creatWorkshopTrailAccum = 0;
-      const step = this.add.graphics().setDepth(1);
-      const vel = (walker.body as Phaser.Physics.Arcade.Body | null)?.velocity;
-      const ang = Math.atan2(vel?.y ?? 0, vel?.x ?? 1);
-      for (let i = 0; i < 5; i++) {
-        const a = ang + (i - 2) * 0.6;
-        craftPlank(step, tint, Math.cos(a) * 9, Math.sin(a) * 9, a, 12, 2.6, 0.7);
-      }
-      rivet(step, tint, 0, 0, 3);
-      step.setPosition(walker.x, walker.y + 6).setScale(1, 0.55);
-      this.tweens.add({ targets: step, alpha: 0, duration: 620, onComplete: () => step.destroy() });
-      this.creatWorkshopTrail.push(step);
-    }
-    this.creatWorkshopTrail = this.creatWorkshopTrail.filter((t) => t.active);
-  }
-
-  // ── Q+ Ultimate Invention ────────────────────────────────────────
-
-  private startUltimateInvention(): void {
-    this.teardownInventionUi();
-    this.creatInventionActive = true;
-    this.creatInventionTimer = 30000;
-    this.creatSliderDanger = 0; this.creatSliderBias = 0; this.creatSliderClutter = 0;
-    this.creatClutterLevel = -1;
-    this.creatSawAccum = 0; this.creatNailAccum = 0; this.creatBiasHealAccum = 0;
-    this.creatInventionDragSlider = -1;
-    const labels = ['Danger', 'Bias', 'Clutter'];
-    const x0 = INVENTION_SLIDER_X, y0 = INVENTION_SLIDER_Y, rowH = INVENTION_SLIDER_ROW;
-    // One console Graphics, repainted each frame in updateInventionSliderInput; only the text
-    // stays as separate objects.
-    this.creatInventionPanel = this.add.graphics().setScrollFactor(0).setDepth(60);
-    this.creatInventionUi.push(this.creatInventionPanel);
-    const title = this.add.text(x0 - 4, y0 - 22, 'INVENTION', {
-      fontFamily: FONT_DISPLAY, fontSize: '10px', color: '#ffdd88', stroke: '#2a1206', strokeThickness: 3,
-    }).setScrollFactor(0).setDepth(62);
-    this.creatInventionUi.push(title);
-    for (let i = 0; i < 3; i++) {
-      const y = y0 + i * rowH;
-      const lbl = this.add.text(x0, y - 9, labels[i].toUpperCase(), {
-        fontFamily: FONT_UI, fontSize: '10px', fontStyle: 'bold', color: '#e8f0ff', stroke: '#0a1424', strokeThickness: 3,
-      }).setScrollFactor(0).setDepth(62).setOrigin(0, 0.5);
-      this.creatInventionUi.push(lbl);
-    }
-    this.creatInventionTimerText = this.add.text(x0, y0 + 3 * rowH + 6, '30.0s', {
-      fontFamily: FONT_DISPLAY, fontSize: '15px', color: '#ff5544', stroke: '#1a0604', strokeThickness: 4,
-    }).setScrollFactor(0).setDepth(62).setOrigin(0, 0.5);
-    this.creatInventionUi.push(this.creatInventionTimerText);
-  }
-
-  private teardownInventionUi(): void {
-    for (const o of this.creatInventionUi) o.destroy();
-    this.creatInventionUi = [];
-    this.creatSliderFills = [];
-    this.creatSliderHandles = [];
-    this.creatInventionTimerText = null;
-    this.creatInventionPanel = null;
-  }
-
-  private endUltimateInvention(): void {
-    this.creatInventionActive = false;
-    this.teardownInventionUi();
-    for (const b of this.creatClutterBoxes) b.rect.destroy();
-    this.creatClutterBoxes = []; this.creatClutterLevel = -1;
-    this.creatSliderDanger = 0; this.creatSliderBias = 0; this.creatSliderClutter = 0;
-    this.creatInventionDragSlider = -1;
-    this.player.outgoingDamageMult = 1;
-  }
-
-  /** Read pointer drags over the three sliders. Returns true if a slider is being dragged. */
-  private updateInventionSliderInput(pointer: Phaser.Input.Pointer): boolean {
-    if (!this.creatInventionActive) return false;
-    const x0 = INVENTION_SLIDER_X, y0 = INVENTION_SLIDER_Y, trackW = INVENTION_SLIDER_W, rowH = INVENTION_SLIDER_ROW;
-    const px = pointer.worldX, py = pointer.worldY;
-    if (pointer.isDown) {
-      if (this.creatInventionDragSlider < 0) {
-        for (let i = 0; i < 3; i++) {
-          const y = y0 + i * rowH + 6;
-          if (px >= x0 - 14 && px <= x0 + trackW + 14 && Math.abs(py - y) <= 15) { this.creatInventionDragSlider = i; break; }
-        }
-      }
-      if (this.creatInventionDragSlider >= 0) {
-        const v = Phaser.Math.Clamp((px - x0) / trackW, 0, 1);
-        if (this.creatInventionDragSlider === 0) this.creatSliderDanger = v;
-        else if (this.creatInventionDragSlider === 1) this.creatSliderBias = v;
-        else this.creatSliderClutter = v;
-      }
-    } else {
-      this.creatInventionDragSlider = -1;
-    }
-    const vals = [this.creatSliderDanger, this.creatSliderBias, this.creatSliderClutter];
-    for (let i = 0; i < 3; i++) {
-      if (this.creatSliderFills[i]) this.creatSliderFills[i].setSize(vals[i] * trackW, 8);
-      if (this.creatSliderHandles[i]) this.creatSliderHandles[i].setX(x0 + vals[i] * trackW);
-    }
-    if (this.creatInventionPanel) {
-      this.creatInventionPanel.clear();
-      drawInventionPanel(this.creatInventionPanel, this.pcol, x0, y0, trackW, rowH, vals,
-        [0xff5544, 0xffcc33, 0x88aaff], this.creatInventionTimer / 30000, this.creatInventionDragSlider,
-        this.scene.time.now / 1000);
-    }
-    return this.creatInventionDragSlider >= 0;
-  }
-
-  private updateUltimateInvention(time: number, delta: number): void {
-    if (!this.creatInventionActive) return;
-    // Instability: raised sliders drain the timer faster.
-    const instability = 1 + (this.creatSliderDanger + this.creatSliderBias + this.creatSliderClutter) * 1.5;
-    this.creatInventionTimer -= delta * instability;
-    if (this.creatInventionTimerText) this.creatInventionTimerText.setText(`${Math.max(0, this.creatInventionTimer / 1000).toFixed(1)}s`);
-    if (this.creatInventionTimer <= 0) { this.endUltimateInvention(); return; }
-    // Danger: saws + nail bursts, more frequent at higher danger.
-    if (this.creatSliderDanger > 0) {
-      this.creatSawAccum += delta;
-      if (this.creatSawAccum >= 4000 - this.creatSliderDanger * 2600) { this.creatSawAccum = 0; this.spawnCreationSaw('player'); }
-      this.creatNailAccum += delta;
-      if (this.creatNailAccum >= 3500 - this.creatSliderDanger * 2200) { this.creatNailAccum = 0; this.spawnCreationNailBurst('player'); }
-    }
-    // Bias: passive 3 HP/s heal above 50%.
-    if (this.creatSliderBias > 0.5) {
-      this.creatBiasHealAccum += delta;
-      if (this.creatBiasHealAccum >= 1000) { this.creatBiasHealAccum -= 1000; this.player.heal(3); this.api.showFloatingText(this.player.x, this.player.y - 34, '+3', '#ffcc33'); }
-    } else {
-      this.creatBiasHealAccum = 0;
-    }
-    // Clutter: rebuild boxes when the tier changes.
-    const clutterLevel = Math.round(this.creatSliderClutter * 4);
-    if (clutterLevel !== this.creatClutterLevel) { this.creatClutterLevel = clutterLevel; this.rebuildClutterBoxes(clutterLevel); }
-    void time;
-  }
-
-  private spawnCreationSaw(owner: 'player' | 'npc'): void {
-    const W = this.api.width, H = this.api.height;
-    const fromLeft = Math.random() < 0.5;
-    const y = 80 + Math.random() * (H - 160);
-    const x = fromLeft ? -24 : W + 24;
-    const vx = (fromLeft ? 1 : -1) * (240 + Math.random() * 140);
-    const g = this.add.graphics().setDepth(6);
-    drawSaw(g, this.col(owner), 22);
-    g.setPosition(x, y);
-    this.creatSaws.push({ sprite: g, x, y, vx, owner, hitSet: new Set() });
-  }
-
-  private updateCreationSaws(delta: number): void {
-    const W = this.api.width;
-    for (let si = this.creatSaws.length - 1; si >= 0; si--) {
-      const s = this.creatSaws[si];
-      s.x += s.vx * (delta / 1000);
-      s.sprite.setPosition(s.x, s.y);
-      s.sprite.rotation += 12 * (delta / 1000);
-      if (s.x < -40 || s.x > W + 40) { s.sprite.destroy(); this.creatSaws.splice(si, 1); continue; }
-      for (const en of (s.owner === 'player' ? this.api.enemies : [this.player])) {
-        if (!en.active || en.hp <= 0) continue;
-        const tId = en === this.player ? 'player' : String(this.api.enemies.indexOf(en as Fighter));
-        if (!s.hitSet.has(tId) && Phaser.Math.Distance.Between(s.x, s.y, en.x, en.y) <= 30) {
-          en.takeDamage(25);
-          this.api.spawnHitFlash(en.x, en.y, CREATION.silver);
-          // A blade that bites throws a spray of sparks off the contact point.
-          this.fx(s.owner).sparks(en.x, en.y, 12,
-            { angle: s.vx > 0 ? 0 : Math.PI, spread: 1.1, speed: 240, size: 2.6, life: 480, depth: 7 });
-          s.hitSet.add(tId);
-        }
-      }
-    }
-  }
-
-  private spawnCreationNailBurst(owner: 'player' | 'npc'): void {
-    const W = this.api.width, H = this.api.height;
-    const side = Math.floor(Math.random() * 4);
-    let ox = 0, oy = 0, baseAng = 0;
-    if (side === 0) { ox = -10; oy = 60 + Math.random() * (H - 120); baseAng = 0; }
-    else if (side === 1) { ox = W + 10; oy = 60 + Math.random() * (H - 120); baseAng = Math.PI; }
-    else if (side === 2) { ox = 60 + Math.random() * (W - 120); oy = -10; baseAng = Math.PI / 2; }
-    else { ox = 60 + Math.random() * (W - 120); oy = H + 10; baseAng = -Math.PI / 2; }
-    const speed = 380;
-    const tint = this.col(owner);
-    for (let i = 0; i < 5; i++) {
-      const a = baseAng + (i - 2) * Phaser.Math.DegToRad(14);
-      const spr = this.add.graphics().setDepth(6);
-      drawNail(spr, tint);
-      spr.setPosition(ox, oy).setRotation(a);
-      this.creatNails.push({ sprite: spr, x: ox, y: oy, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed, damage: 10, owner });
-    }
-    // A nail gun going off just off screen.
-    this.fx(owner).muzzleFlash(ox, oy, baseAng, 1.2);
-  }
-
-  private updateCreationNails(delta: number): void {
-    const W = this.api.width, H = this.api.height;
-    for (let ni = this.creatNails.length - 1; ni >= 0; ni--) {
-      const n = this.creatNails[ni];
-      n.x += n.vx * (delta / 1000);
-      n.y += n.vy * (delta / 1000);
-      n.sprite.setPosition(n.x, n.y);
-      if (n.x < -30 || n.x > W + 30 || n.y < -30 || n.y > H + 30) { n.sprite.destroy(); this.creatNails.splice(ni, 1); continue; }
-      let hit = false;
-      for (const en of (n.owner === 'player' ? this.api.enemies : [this.player])) {
-        if (!en.active || en.hp <= 0) continue;
-        if (Phaser.Math.Distance.Between(n.x, n.y, en.x, en.y) <= 18) {
-          en.takeDamage(n.damage);
-          this.api.spawnHitFlash(en.x, en.y, CREATION.silver);
-          this.fx(n.owner).sparks(n.x, n.y, 5,
-            { angle: Math.atan2(-n.vy, -n.vx), spread: 0.8, speed: 150, size: 1.8, life: 340, depth: 7 });
-          hit = true; break;
-        }
-      }
-      if (hit) { n.sprite.destroy(); this.creatNails.splice(ni, 1); }
-    }
-  }
-
-  private rebuildClutterBoxes(level: number): void {
-    for (const b of this.creatClutterBoxes) b.rect.destroy();
-    this.creatClutterBoxes = [];
-    if (level <= 0) return;
-    const W = this.api.width, H = this.api.height;
-    const owner = this.creatWorkshopOwner;
-    const box = 46, gap = box + 6;
-    const expireAt = this.creatWorkshopEnd;
-    for (let r = 0; r < level; r++) {
-      const inset = 24 + r * gap;
-      for (let x = inset; x <= W - inset; x += gap) {
-        this.pushClutterBox(x, inset, box, owner, expireAt);
-        this.pushClutterBox(x, H - inset, box, owner, expireAt);
-      }
-      for (let y = inset + gap; y <= H - inset - gap; y += gap) {
-        this.pushClutterBox(inset, y, box, owner, expireAt);
-        this.pushClutterBox(W - inset, y, box, owner, expireAt);
-      }
-    }
-  }
-
-  private pushClutterBox(x: number, y: number, size: number, owner: 'player' | 'npc', expireAt: number): void {
-    // Keep the nexus reachable.
-    if (this.nexusRig && Math.abs(x - this.nexusX) < size && Math.abs(y - this.nexusY) < size) return;
-    const rect = this.add.graphics().setDepth(4);
-    plankPanel(rect, this.col(owner), size, size, 0.95, { boardH: 15 });
-    rect.setPosition(x, y);
-    this.creatClutterBoxes.push({ rect, x, y, w: size, h: size, owner, expireAt, spiked: false, spikeAccum: 0 });
-  }
-
-  private updateCreationClutter(time: number): void {
-    if (this.creatClutterBoxes.length === 0) return;
-    const owner = this.creatWorkshopOwner;
-    const enemyBody = (owner === 'player' ? this.npc : this.player).body as Phaser.Physics.Arcade.Body;
-    const allProj = this.api.projectiles.getChildren() as Projectile[];
-    for (let i = this.creatClutterBoxes.length - 1; i >= 0; i--) {
-      const b = this.creatClutterBoxes[i];
-      if (time >= b.expireAt) { b.rect.destroy(); this.creatClutterBoxes.splice(i, 1); continue; }
-      for (const proj of allProj) {
-        if (!proj.active) continue;
-        const isEnemyProj = owner === 'player' ? !proj.isFromPlayer : proj.isFromPlayer;
-        if (!isEnemyProj) continue;
-        if (Math.abs(proj.x - b.x) <= b.w / 2 && Math.abs(proj.y - b.y) <= b.h / 2) {
-          proj.setActive(false).setVisible(false);
-          (proj.body as Phaser.Physics.Arcade.Body).stop();
-        }
-      }
-      this.api.pushFighterOutOfRect(enemyBody, b.x, b.y, b.w, b.h);
-    }
-  }
-
   // ── Speed multipliers ────────────────────────────────────────────
 
   /** Creation's contribution to the player's speed multiplier, given ArenaScene's base value. */
@@ -1618,21 +1716,16 @@ export class CreationKit {
       mult *= MECH_SPEED_MULT;
       for (const a of this.creatMech.arms) if (a.kind === 'overclock') mult *= OVERCLOCK_SPEED_MULT;
     }
-    // Q Workshop: +25% while active
-    if (time < this.creatWorkshopEnd && this.creatWorkshopOwner === 'player') mult *= 1.25;
     // Speed Potion: +50%
     if (time < (this.creatPotionEnds.get('player|speed') ?? 0)) mult *= 1.5;
-    // Ultimate Invention — Bias slider: scaling speed
-    if (this.creatInventionActive && this.creatSliderBias > 0) mult *= 1 + this.creatSliderBias * 0.75;
     // Leaden (mortar hex): half speed
     if (time < (this.creatHexEnds.get('player|speed') ?? 0)) mult *= 0.5;
     return mult;
   }
 
-  /** Creation's contribution to the npc's speed multiplier (Workshop + Speed Potion). */
+  /** Creation's contribution to the npc's speed multiplier (Speed Potion, Leaden hex). */
   computeNpcSpeedMult(time: number, base: number): number {
     let mult = base;
-    if (time < this.creatWorkshopEnd && this.creatWorkshopOwner === 'npc') mult *= 1.25;
     if (time < (this.creatPotionEnds.get('npc|speed') ?? 0)) mult *= 1.5;
     if (time < (this.creatHexEnds.get('npc|speed') ?? 0)) mult *= 0.5;
     return mult;
@@ -1802,29 +1895,11 @@ export class CreationKit {
     this.pfx.ring(x, y, 4, 34, CREATION.spark, 300, 3, 5);
   }
 
-  /**
-   * Requirement tracking for `workshopKills` — register each live enemy the first time it is
-   * seen during the player's Workshop, then check the workshop is *still* up when it dies.
-   */
-  private trackWorkshopKills(time: number): void {
-    if (this.creatWorkshopOwner !== 'player' || time >= this.creatWorkshopEnd) return;
-    for (const enemy of this.api.enemies) {
-      if (!enemy.active || enemy.hp <= 0 || this.workshopTrackedEnemies.has(enemy)) continue;
-      this.workshopTrackedEnemies.add(enemy);
-      enemy.once('defeated', () => {
-        if (this.creatWorkshopOwner === 'player' && this.scene.time.now < this.creatWorkshopEnd) {
-          this.api.recordMasteryStat('workshopKills', 1);
-        }
-      });
-    }
-  }
-
   // ── Avatars, aura and automatons ─────────────────────────────────
 
   /**
-   * Builds (on first frame) and drives the artisan avatar for whichever fighters are creation,
-   * plus the workshop forge ring worn by whoever has the Workshop up. The player faces the
-   * cursor; the npc faces whoever it is fighting.
+   * Builds (on first frame) and drives the artisan avatar for whichever fighters are creation.
+   * The player faces the cursor; the npc faces whoever it is fighting.
    */
   private updateAvatars(time: number, delta: number): void {
     const { scene, player, npc, elementId, npcElementId } = this.api;
@@ -1833,9 +1908,8 @@ export class CreationKit {
       if (!this.playerAvatar) this.playerAvatar = new CreationAvatar(scene, this.pcol);
       const av = this.playerAvatar;
       av.setFacing(Math.atan2(this.api.aimY - player.y, this.api.aimX - player.x));
-      // Workshop up, or a mech at your back, is the smith at full stretch.
-      const workshop = time < this.creatWorkshopEnd && this.creatWorkshopOwner === 'player';
-      av.setIntensity(workshop ? 1.35 : this.creatMech ? 1.15 : 1);
+      // A mech at your back is the smith at full stretch.
+      av.setIntensity(this.creatMech ? 1.15 : 1);
       av.setMastered(this.api.masteryActive);
       av.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
     } else if (this.playerAvatar) {
@@ -1847,44 +1921,29 @@ export class CreationKit {
       if (!this.npcAvatar) this.npcAvatar = new CreationAvatar(scene, this.ncol);
       const av = this.npcAvatar;
       av.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
-      av.setIntensity(time < this.creatWorkshopEnd && this.creatWorkshopOwner === 'npc' ? 1.35 : 1);
       av.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
     } else if (this.npcAvatar) {
       this.npcAvatar.destroy();
       this.npcAvatar = null;
     }
-
-    // The Workshop stance: raw stock orbiting whoever owns the floor.
-    if (time < this.creatWorkshopEnd) {
-      const owner = this.creatWorkshopOwner;
-      const walker = owner === 'player' ? this.player : this.npc;
-      if (!this.workshopForge) this.workshopForge = new CreationForge(scene, this.col(owner), 34, 1, 2);
-      this.workshopForge.update(delta, walker.x, walker.y, walker.forceInvisible ? 0 : walker.alpha);
-    } else if (this.workshopForge) {
-      this.workshopForge.destroy();
-      this.workshopForge = null;
-    }
   }
 
   // ── Automaton perk ───────────────────────────────────────────────
 
-  /** Workshop + the Automaton perk: wind up three bots and let them loose on the floor. */
   /**
-   * The Workshop's staff. They march out of the caster rather than materialising around the
-   * arena — the floor was just hammered down under his feet, and the machines walking off it
-   * is the whole read. Their clock is capped by the workshop's own, so the floor never
-   * outlives its staff or the other way round.
+   * Self-Destruct + the Automaton perk: the Nexus comes back online with a fresh staff. They
+   * march out of the rebuilt machine rather than materialising around the arena — the walk off
+   * the pedestal is the whole read.
    */
-  private spawnAutomatons(owner: 'player' | 'npc', count: number): void {
+  private spawnAutomatons(owner: 'player' | 'npc', count: number, fromX: number, fromY: number): void {
     const W = this.api.width, H = this.api.height;
     const now = this.scene.time.now;
-    const expireAt = Math.min(now + AUTOMATON_LIFETIME_MS, this.creatWorkshopEnd);
-    const caster = owner === 'player' ? this.player : this.npc;
+    const expireAt = now + AUTOMATON_LIFETIME_MS;
     for (let i = 0; i < count; i++) {
-      // Fanned evenly off the caster so three do not walk the same line.
+      // Fanned evenly off the Nexus so three do not walk the same line.
       const angle = (i / count) * Math.PI * 2 + Math.random() * 0.6;
-      const ax = Phaser.Math.Clamp(caster.x + Math.cos(angle) * 46, 20, W - 20);
-      const ay = Phaser.Math.Clamp(caster.y + Math.sin(angle) * 46, 20, H - 20);
+      const ax = Phaser.Math.Clamp(fromX + Math.cos(angle) * 46, 20, W - 20);
+      const ay = Phaser.Math.Clamp(fromY + Math.sin(angle) * 46, 20, H - 20);
       const gfx = this.add.graphics().setDepth(5);
       gfx.setPosition(ax, ay);
       this.automatons.push({
@@ -1895,7 +1954,7 @@ export class CreationKit {
       this.fx(owner).gearPulse(ax, ay, 20, 420, CREATION.brass, 6);
     }
     if (owner === 'player') {
-      this.api.showFloatingText(caster.x, caster.y - 56, `🤖 ${count} AUTOMATONS`, '#c9a0ff');
+      this.api.showFloatingText(fromX, fromY - 64, `🤖 ${count} AUTOMATONS`, '#c9a0ff');
     }
   }
 
@@ -1922,7 +1981,7 @@ export class CreationKit {
       if (a.owner === 'player' && this.nexusRig && time >= a.serviceReadyAt
           && Phaser.Math.Distance.Between(a.x, a.y, this.nexusX, this.nexusY) <= AUTOMATON_SERVICE_RADIUS) {
         a.serviceReadyAt = time + AUTOMATON_SERVICE_MS;
-        a.expireAt = Math.min(time + AUTOMATON_LIFETIME_MS, this.creatWorkshopEnd);
+        a.expireAt = time + AUTOMATON_LIFETIME_MS;
         this.fx(a.owner).gearPulse(a.x, a.y, 26, 380, CREATION.gold, 6);
         this.api.showFloatingText(a.x, a.y - 24, '🔧 WOUND UP', '#d9a066');
       }
@@ -2276,15 +2335,13 @@ export class CreationKit {
   // ── Input ────────────────────────────────────────────────────────
 
   handleInput(time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number, playerCtx: CastContext): void {
-    // Q+ Ultimate Invention sliders steal the pointer while being dragged.
-    const draggingSlider = this.updateInventionSliderInput(pointer);
     // Mastery — Mortar Command replaces whichever of R/F/Q it is bound over, but only
     // outside Build Mode: in there the slot keeps doing its build job.
     const mortarSlot = this.mortarSlot();
 
     if (!this.creatBuildMode) {
       // Click — Dagger Spray: hold to add more daggers (up to 5), release to fire
-      if (pointer.isDown && !this.creatDaggerHolding && !draggingSlider) {
+      if (pointer.isDown && !this.creatDaggerHolding) {
         if (this.player.getCooldownRatio('dagger-spray') >= 1) {
           this.creatDaggerHolding = true;
           this.creatDaggerHoldStart = time;
@@ -2653,9 +2710,14 @@ export class CreationKit {
           }
         }
       }
-      // Q — Maze of Doom
-      if (mortarSlot !== 'q' && Phaser.Input.Keyboard.JustDown(this.api.qKey)) {
-        this.player.castAbility('maze-of-doom', playerCtx);
+      // Q — Self-Destruct. Refuses without burning the cooldown when nothing is standing to blow.
+      if (mortarSlot !== 'q' && Phaser.Input.Keyboard.JustDown(this.api.qKey)
+          && this.player.getCooldownRatio('self-destruct') >= 1) {
+        if (this.canSelfDestruct('player')) {
+          this.player.castAbility('self-destruct', playerCtx);
+        } else {
+          this.api.showFloatingText(this.player.x, this.player.y - 46, 'NOTHING TO BLOW UP', '#aa8866');
+        }
       }
     }
   }
@@ -2709,12 +2771,12 @@ export class CreationKit {
     let id = abilityId;
     if (id === 'mortar-command') {
       const slot = this.mortarSlot();
-      id = slot === 'r' ? 'wrench-plans' : slot === 'f' ? 'creation-block' : 'maze-of-doom';
+      id = slot === 'r' ? 'wrench-plans' : slot === 'f' ? 'creation-block' : 'self-destruct';
     }
     const cd = id === 'dagger-spray' ? { at: this.creatBuildNewBlockCdUntil, len: 2000 }
       : id === 'charged-bolt' ? { at: this.creatBuildLaunchCdUntil, len: 5000 }
       : id === 'wrench-plans' ? { at: this.creatBuildSpeedPadCdUntil, len: 6000 }
-      : id === 'maze-of-doom' ? { at: this.creatBuildSpikedCdUntil, len: 20000 }
+      : id === 'self-destruct' ? { at: this.creatBuildSpikedCdUntil, len: 20000 }
       // F is the exit toggle — always available, so it always reads full.
       : id === 'creation-block' ? null
       : undefined;
@@ -2730,7 +2792,7 @@ export class CreationKit {
   // ── Per-frame ────────────────────────────────────────────────────
 
   update(time: number, delta: number): void {
-    // 0. Character rigs, the workshop stance, and the live-effect tell on both fighters.
+    // 0. Character rigs and the live-effect tell on both fighters.
     this.updateAvatars(time, delta);
     this.updateBrewAuras(time, delta);
     // Trails come off the back of everything in flight, on one shared ~45ms accumulator.
@@ -2897,18 +2959,23 @@ export class CreationKit {
     this.updateWrenches(time, delta, emitTrails);
     this.updateWrenchDebuffs();
 
-    // 5. Workshop (owner-agnostic) + the bots the Automaton perk lets it spawn
-    this.updateCreationWorkshop(time, delta);
+    // 5. Q — Self-Destruct: remotes, flying shrapnel, Q+ floor scrap, the ashen Nexus, and the
+    //    bots the Automaton perk turns out when it rebuilds. All owner-agnostic.
+    this.updateRemotes(time);
+    this.updateShrapnel(delta);
+    this.updateScrap(time, delta);
+    this.updateNexusAsh(time);
+    this.updatePlayerScorch(time, delta);
     this.updateAutomatons(time, delta);
-    this.trackWorkshopKills(time);
-    // Hazard stun enforcement
-    if (time < this.creatNpcStunUntil) this.api.npcSpeedMult = 0;
-    if (time < this.creatPlayerStunUntil && !this.api.isDodging) (this.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-    // Bias slider outgoing damage on the creation player
-    if (this.api.elementId === 'creation') {
-      this.player.outgoingDamageMult = this.creatInventionActive && this.creatSliderBias > 0
-        ? 1 + this.creatSliderBias * 0.75
-        : 1;
+    // The Nexus rebuilding itself — after its mech was wrecked, or after Self-Destruct blew it.
+    if (this.nexusRebuildAt > 0 && time >= this.nexusRebuildAt && !this.nexusRig) {
+      this.nexusRebuildAt = 0;
+      this.spawnNexus(this.nexusX, this.nexusY);
+      const staffer = this.nexusAshOwner;
+      this.nexusAshOwner = null;
+      if (staffer && this.api.hasPerk(staffer, 'automaton')) {
+        this.spawnAutomatons(staffer, AUTOMATON_COUNT, this.nexusX, this.nexusY);
+      }
     }
 
     // 6 & 7. Blocker and maze wall projectile absorption + movement push-out
@@ -2964,34 +3031,18 @@ export class CreationKit {
         }
       }
       if (bi < this.creatBlockers.length) {
-        // Push both fighters out — except the Workshop owner walks on their own barriers.
-        const workshopWalker = this.scene.time.now < this.creatWorkshopEnd ? this.creatWorkshopOwner : null;
-        if (!(workshopWalker === 'player' && bl.owner === 'player')) {
-          this.api.pushFighterOutOfRect(this.player.body as Phaser.Physics.Arcade.Body, bl.x, bl.y, bl.w, bl.h);
-        }
-        if (!(workshopWalker === 'npc' && bl.owner === 'npc')) {
-          this.api.pushFighterOutOfRect(this.npc.body as Phaser.Physics.Arcade.Body, bl.x, bl.y, bl.w, bl.h);
-        }
+        // Push both fighters out.
+        this.api.pushFighterOutOfRect(this.player.body as Phaser.Physics.Arcade.Body, bl.x, bl.y, bl.w, bl.h);
+        this.api.pushFighterOutOfRect(this.npc.body as Phaser.Physics.Arcade.Body, bl.x, bl.y, bl.w, bl.h);
       }
     }
     if (this.api.elementId === 'creation') {
       // Mastery — Springboard: drop a pad wherever the dash ended.
       this.updateSpringboard(time);
 
-      // 8. Q+ Ultimate Invention: sliders, hazards, clutter (player-only)
-      this.updateUltimateInvention(time, delta);
-      this.updateCreationSaws(delta);
-      this.updateCreationNails(delta);
-      this.updateCreationClutter(time);
-
       // 9. R+ mech: the walker, its arms, and the repair orbs a med core throws
       this.updateMech(time, delta);
       this.updateMedOrbs(time, delta);
-      // The Nexus rebuilding itself after its mech was wrecked.
-      if (this.nexusRebuildAt > 0 && time >= this.nexusRebuildAt && !this.nexusRig) {
-        this.nexusRebuildAt = 0;
-        this.spawnNexus(this.nexusX, this.nexusY);
-      }
 
       // 10. Speed pads (F+ Build Mode)
       for (let spi = this.creatSpeedPads.length - 1; spi >= 0; spi--) {
@@ -3131,8 +3182,7 @@ export class CreationKit {
 
   /**
    * Ruin's Spikes of Ruin (see `combat/SummonPurge.ts`).
-   * Everything built in the workshop and left standing: automatons, blockers, maze walls,
-   * clutter, speed pads and spiked blocks. The Nexus itself is left alone — it is the caster's
+   * Everything built and left standing: automatons, blockers, speed pads and spiked blocks. The Nexus itself is left alone — it is the caster's
    * own fixture rather than a placed structure, and it owns a rebuild timer and a potion economy
    * that only its own death path knows how to unwind.
    */
@@ -3166,7 +3216,6 @@ export class CreationKit {
       razed++;
     }
     dropRects(this.creatBlockers);
-    dropRects(this.creatClutterBoxes);
     dropRects(this.creatSpeedPads);
     dropRects(this.creatSpikedBlocks);
     return razed;

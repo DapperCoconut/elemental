@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
 import * as PlayerData from '../data/PlayerData';
+import { isMasteryComplete } from '../data/Mastery';
 import { openBondPicker } from '../ui';
-import { getPerksForElement, getPerkById } from '../data/Perks';
+import { getPerksForElement, perkLoadoutBadge } from '../data/Perks';
 import { Net, NetMsg, NetStatus, NetMatchMode } from '../network/NetworkManager';
 import { INVASION_DIFFICULTIES } from '../invasion/InvasionKit';
 import { allSelectableElements, findElementDef } from '../data/ElementRoster';
@@ -39,6 +40,10 @@ export class OnlineLobbyScene extends Phaser.Scene {
 
   private roomMode: NetMatchMode = 'pvp';
   private roomInvasionDifficulty = 'normal';
+  /** Co-op map (City or the legacy Mansion) and, for the City, the party size bots fill out to. */
+  private roomInvasionMap: 'city' | 'mansion' = 'city';
+  private roomInvasionParty = 3;
+  private mapLabel: Phaser.GameObjects.Text | null = null;
   private pvpPaint: ((state: 'idle' | 'hover' | 'active') => void) | null = null;
   private coopPaint: ((state: 'idle' | 'hover' | 'active') => void) | null = null;
   private diffLabel: Phaser.GameObjects.Text | null = null;
@@ -82,6 +87,8 @@ export class OnlineLobbyScene extends Phaser.Scene {
     this.oppInLobby = false;
     this.roomMode = 'pvp';
     this.roomInvasionDifficulty = 'normal';
+    this.roomInvasionMap = 'city';
+    this.roomInvasionParty = 3;
     this.joinCode = '';
     this.joinError = '';
     this.toastText = null;
@@ -325,6 +332,14 @@ export class OnlineLobbyScene extends Phaser.Scene {
     this.diffLabel = this.addPhaseText(cx + 200, 122, '', {
       fontSize: '12px', fontFamily: FONT_DISPLAY, color: T.gold, letterSpacing: 1,
     }).setOrigin(0.5);
+    // Map + party: one label the host clicks through — City ×2/×3/×4, then the Mansion.
+    this.mapLabel = this.addPhaseText(cx + 340, 122, '', {
+      fontSize: '12px', fontFamily: FONT_DISPLAY, color: T.bright, letterSpacing: 1,
+    }).setOrigin(0.5);
+    if (Net.isHost) {
+      this.mapLabel.setInteractive({ useHandCursor: true })
+        .on('pointerdown', () => this.cycleInvasionMap());
+    }
 
     // ── My panel (left) ─────────────────────────────
     const panelY = 148;
@@ -477,7 +492,11 @@ export class OnlineLobbyScene extends Phaser.Scene {
     if (this.mySel.elementId !== elementId) this.mySel.bond = null;
     this.mySel.elementId = elementId;
     this.mySel.upgrades = PlayerData.getActiveUpgrades(elementId);
-    this.mySel.masteryOn = PlayerData.isMasteryEnabled(elementId);
+    // Gold and Harvest replaced elements whose retired masteries may have left the flag on in an
+    // old save, and Psychic's mastery was redone; the arena gates those three on the new mastery
+    // being finished, so the lobby does too.
+    this.mySel.masteryOn = PlayerData.isMasteryEnabled(elementId)
+      && ((elementId !== 'fortune' && elementId !== 'gluttony' && elementId !== 'psychic' && elementId !== 'magnet' && elementId !== 'radiation' && elementId !== 'passion') || isMasteryComplete(elementId));
     this.mySel.masteryBinds = this.mySel.masteryOn ? PlayerData.getMasteryBinds(elementId) : {};
     this.mySel.skin = PlayerData.getEquippedSkin(elementId);
 
@@ -489,7 +508,11 @@ export class OnlineLobbyScene extends Phaser.Scene {
         .filter((p) => unlockedIds.includes(p.id))
         .map((p) => ({ id: p.id as string | null, name: `${p.emoji ?? ''} ${p.name}`.trim() })),
     ];
+    // A two-slot element's saved pair is offered as one more entry, so it can be taken online.
     const equipped = PlayerData.getEquippedPerk(elementId);
+    if (equipped && !this.perkList.some((p) => p.id === equipped)) {
+      this.perkList.push({ id: equipped, name: perkLoadoutBadge(equipped) ?? equipped });
+    }
     this.perkIdx = Math.max(0, this.perkList.findIndex((p) => p.id === equipped));
     this.mySel.perkId = this.perkList[this.perkIdx].id;
 
@@ -547,8 +570,7 @@ export class OnlineLobbyScene extends Phaser.Scene {
         const el = this.oppSel.elementId ? findElementDef(this.oppSel.elementId) : null;
         this.setOppPortrait(el?.id ?? null, 'waiting');
         oppName.setText(el ? `${el.emoji}  ${el.name}` : 'Choosing…');
-        const perk = this.oppSel.perkId ? getPerkById(this.oppSel.perkId) : null;
-        oppPerk.setText(perk ? `${perk.emoji ?? ''} ${perk.name}`.trim() : 'No perk');
+        oppPerk.setText(perkLoadoutBadge(this.oppSel.perkId) ?? 'No perk');
         if (this.oppSel.ready) {
           oppReady.setText('✔ READY').setColor('#66ff66');
         } else {
@@ -577,12 +599,33 @@ export class OnlineLobbyScene extends Phaser.Scene {
     if (this.oppPanelHeader?.active) {
       this.oppPanelHeader.setText(this.roomMode === 'invasion' ? 'ALLY' : 'OPPONENT');
     }
+    if (this.mapLabel?.active) {
+      this.mapLabel.setVisible(this.roomMode === 'invasion').setText(this.roomInvasionMap === 'city'
+        ? `🏙️ CITY · ${this.roomInvasionParty} DEFENDERS` : '🏚️ MANSION');
+    }
+  }
+
+  private sendRoomMode(): void {
+    Net.send({
+      t: 'mode', mode: this.roomMode, invasionDifficulty: this.roomInvasionDifficulty,
+      invasionMap: this.roomInvasionMap, invasionParty: this.roomInvasionParty,
+    });
+  }
+
+  /** City with 2 → 3 → 4 defenders (bots fill the seats past the two of you), then the Mansion. */
+  private cycleInvasionMap(): void {
+    if (!Net.isHost || this.phase !== 'room') return;
+    if (this.roomInvasionMap === 'mansion') { this.roomInvasionMap = 'city'; this.roomInvasionParty = 2; }
+    else if (this.roomInvasionParty < 4) this.roomInvasionParty++;
+    else this.roomInvasionMap = 'mansion';
+    this.sendRoomMode();
+    this.refreshRoomWidgets();
   }
 
   private setRoomMode(mode: NetMatchMode): void {
     if (!Net.isHost || this.phase !== 'room') return;
     this.roomMode = mode;
-    Net.send({ t: 'mode', mode: this.roomMode, invasionDifficulty: this.roomInvasionDifficulty });
+    this.sendRoomMode();
     this.refreshRoomWidgets();
   }
 
@@ -590,7 +633,7 @@ export class OnlineLobbyScene extends Phaser.Scene {
     if (!Net.isHost || this.phase !== 'room') return;
     const idx = Math.max(0, INVASION_DIFFICULTIES.findIndex((d) => d.id === this.roomInvasionDifficulty));
     this.roomInvasionDifficulty = INVASION_DIFFICULTIES[(idx + dir + INVASION_DIFFICULTIES.length) % INVASION_DIFFICULTIES.length].id;
-    Net.send({ t: 'mode', mode: this.roomMode, invasionDifficulty: this.roomInvasionDifficulty });
+    this.sendRoomMode();
     this.refreshRoomWidgets();
   }
 
@@ -604,6 +647,8 @@ export class OnlineLobbyScene extends Phaser.Scene {
       t: 'start',
       mode: this.roomMode,
       invasionDifficulty: this.roomMode === 'invasion' ? this.roomInvasionDifficulty : undefined,
+      invasionMap: this.roomInvasionMap,
+      invasionParty: this.roomInvasionParty,
       hostSel: { elementId: this.mySel.elementId, perkId: this.mySel.perkId, upgrades: this.mySel.upgrades, masteryBinds: this.mySel.masteryBinds, masteryOn: this.mySel.masteryOn, skin: this.mySel.skin, bond: this.mySel.bond },
       guestSel: { elementId: this.oppSel.elementId, perkId: this.oppSel.perkId, upgrades: this.oppSel.upgrades, masteryBinds: this.oppSel.masteryBinds, masteryOn: this.oppSel.masteryOn, skin: this.oppSel.skin, bond: this.oppSel.bond },
     });
@@ -632,6 +677,8 @@ export class OnlineLobbyScene extends Phaser.Scene {
       npcPerk: theirs.perkId,
       mode: isCoop ? 'invasion' : undefined,
       invasionDifficulty: isCoop ? this.roomInvasionDifficulty : undefined,
+      invasionMap: isCoop ? this.roomInvasionMap : undefined,
+      invasionParty: isCoop ? this.roomInvasionParty : undefined,
       online: {
         isHost: Net.isHost,
         npcUpgrades: theirs.upgrades ?? [],
@@ -662,6 +709,8 @@ export class OnlineLobbyScene extends Phaser.Scene {
         if (!Net.isHost) {
           this.roomMode = msg.mode;
           this.roomInvasionDifficulty = msg.invasionDifficulty;
+          this.roomInvasionMap = msg.invasionMap ?? 'mansion';
+          this.roomInvasionParty = msg.invasionParty ?? 2;
           this.refreshRoomWidgets();
         }
         break;
@@ -669,6 +718,8 @@ export class OnlineLobbyScene extends Phaser.Scene {
         if (!Net.isHost && msg.guestSel.elementId && msg.hostSel.elementId) {
           this.roomMode = msg.mode;
           this.roomInvasionDifficulty = msg.invasionDifficulty ?? 'normal';
+          this.roomInvasionMap = msg.invasionMap ?? 'mansion';
+          this.roomInvasionParty = msg.invasionParty ?? 2;
           this.startMatch(
             msg.guestSel as { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; skin?: string | null; bond?: string[] | null },
             msg.hostSel as { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; skin?: string | null; bond?: string[] | null },

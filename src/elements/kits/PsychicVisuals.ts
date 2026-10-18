@@ -1066,6 +1066,143 @@ export function rideWard(
   }
 }
 
+// ── Mastery: Outplayed + Pre-move ─────────────────────────────────────────
+
+/**
+ * The mastery's one colour off the chessboard. Outplayed is the only thing in the kit painted on
+ * the *enemy*, and it had to be unmistakably not one of the psychic's own ivory-and-gold shapes.
+ */
+export const OUTPLAY = {
+  deep: 0x2a0f4a,
+  mid: 0x7b35e0,
+  lit: 0xb98cff,
+  hot: 0xf07bff,
+};
+
+/**
+ * Outplayed (mastery passive): the aura on an enemy who is losing. `tier` is 1–3 and every tier
+ * adds a layer rather than just turning one up, so the three are told apart at a glance:
+ *
+ * 1. A low violet haze and one slow ring with four chess-square studs on it.
+ * 2. A second ring turning the other way, and the studs become a full checker band.
+ * 3. A crown of eight chevrons pointing *in* at them, sparks, and the whole thing throbbing.
+ */
+export function outplayedAura(
+  g: Phaser.GameObjects.Graphics,
+  tint: PsychicColorFn,
+  x: number, y: number, tier: number, alpha: number, t: number, seed: number,
+): void {
+  if (tier <= 0 || alpha <= 0) return;
+  const throb = tier >= 3 ? 0.5 + 0.5 * Math.sin(t * 9) : 0.5 + 0.5 * Math.sin(t * 3);
+  const r = 30 + tier * 3;
+  // Haze, wider and stronger every tier.
+  g.fillStyle(tint(OUTPLAY.deep), alpha * (0.18 + tier * 0.06));
+  g.fillCircle(x, y, r + 10 + tier * 3);
+  g.fillStyle(tint(OUTPLAY.mid), alpha * (0.06 + tier * 0.04 + throb * 0.04));
+  g.fillCircle(x, y, r + 2);
+
+  // Ring one, with its studs.
+  const a1 = t * 0.8 + seed;
+  g.lineStyle(1.6 + tier * 0.4, tint(OUTPLAY.lit), alpha * (0.5 + 0.15 * throb));
+  g.strokeCircle(x, y, r);
+  const studs = tier >= 2 ? 16 : 4;
+  for (let i = 0; i < studs; i++) {
+    const a = a1 + (i / studs) * TAU;
+    const sx = x + Math.cos(a) * r;
+    const sy = y + Math.sin(a) * r;
+    const s = tier >= 2 ? 2.6 : 3.4;
+    g.fillStyle(tint(i % 2 ? OUTPLAY.deep : OUTPLAY.lit), alpha * 0.95);
+    g.fillRect(sx - s, sy - s, s * 2, s * 2);
+  }
+
+  if (tier >= 2) {
+    // Ring two, counter-turning, broken into four arcs.
+    const r2 = r + 8;
+    const a2 = -t * 1.3 + seed * 2;
+    g.lineStyle(1.4, tint(OUTPLAY.mid), alpha * 0.75);
+    for (let i = 0; i < 4; i++) {
+      const s = a2 + (i / 4) * TAU;
+      g.beginPath();
+      g.arc(x, y, r2, s, s + TAU / 8, false);
+      g.strokePath();
+    }
+  }
+
+  if (tier >= 3) {
+    // Eight chevrons closing in on them, and sparks shed off the rim.
+    const r3 = r + 18 - throb * 4;
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * TAU + t * 0.4;
+      const cx = x + Math.cos(a) * r3;
+      const cy = y + Math.sin(a) * r3;
+      const px = Math.cos(a + Math.PI / 2) * 5;
+      const py = Math.sin(a + Math.PI / 2) * 5;
+      const ix = -Math.cos(a) * 6;
+      const iy = -Math.sin(a) * 6;
+      g.lineStyle(2.2, tint(OUTPLAY.hot), alpha * (0.6 + 0.4 * throb));
+      g.lineBetween(cx + px, cy + py, cx + ix, cy + iy);
+      g.lineBetween(cx - px, cy - py, cx + ix, cy + iy);
+    }
+    for (let i = 0; i < 6; i++) {
+      const k = ((t * 0.9 + jitter(seed, i)) % 1);
+      const a = jitter(seed, i + 9) * TAU + t * 0.2;
+      const d = r + 4 + k * 22;
+      g.fillStyle(tint(i % 2 ? OUTPLAY.hot : OUTPLAY.lit), alpha * (1 - k) * 0.9);
+      g.fillCircle(x + Math.cos(a) * d, y + Math.sin(a) * d - k * 10, 1.8 * (1 - k) + 0.6);
+    }
+  }
+}
+
+/**
+ * Pre-move (mastery ability): the chess clock over the psychic's head. While he is still
+ * choosing, both faces are blank and the plunger bobs; once a key is chosen, the right face
+ * carries it (the kit draws the letter on top) and the flag on the left face falls as the
+ * 1.5 seconds run out. `fuse` is the fraction still to run, 1 → 0.
+ */
+export function premoveClock(
+  g: Phaser.GameObjects.Graphics,
+  tint: PsychicColorFn,
+  x: number, y: number, fuse: number, choosing: boolean, alpha: number, t: number,
+): void {
+  const w = 44;
+  const h = 20;
+  // The case.
+  g.fillStyle(tint(PSY.ink), alpha * 0.9);
+  g.fillRoundedRect(x - w / 2, y - h / 2, w, h, 4);
+  g.lineStyle(1.4, tint(choosing ? OUTPLAY.lit : PSY.gold), alpha);
+  g.strokeRoundedRect(x - w / 2, y - h / 2, w, h, 4);
+  // The two faces.
+  for (const side of [-1, 1]) {
+    const cx = x + side * 11;
+    g.fillStyle(tint(side < 0 ? PSY.robe : PSY.robeDeep), alpha);
+    g.fillCircle(cx, y, 7.5);
+    g.lineStyle(1, tint(PSY.violetLit), alpha * 0.8);
+    g.strokeCircle(cx, y, 7.5);
+  }
+  // The left face's hand sweeps the fuse; its flag falls at the end.
+  const lx = x - 11;
+  if (!choosing) {
+    const a = -Math.PI / 2 + (1 - fuse) * TAU;
+    g.lineStyle(1.6, tint(PSY.gold), alpha);
+    g.lineBetween(lx, y, lx + Math.cos(a) * 6, y + Math.sin(a) * 6);
+    g.fillStyle(tint(fuse < 0.25 ? PSY.stress : OUTPLAY.mid), alpha);
+    g.fillTriangle(lx + 3, y - 7 + (1 - fuse) * 4, lx + 7, y - 9 + (1 - fuse) * 4, lx + 7, y - 5 + (1 - fuse) * 4);
+  } else {
+    g.fillStyle(tint(OUTPLAY.lit), alpha * (0.5 + 0.5 * Math.sin(t * 8)));
+    g.fillCircle(lx, y, 2);
+  }
+  // The plungers: the pressed one is down.
+  const bob = choosing ? Math.abs(Math.sin(t * 6)) * 2 : 0;
+  g.fillStyle(tint(PSY.gold), alpha);
+  g.fillRect(x - 15, y - h / 2 - 4 + (choosing ? bob : 2), 8, 3);
+  g.fillRect(x + 7, y - h / 2 - 4 + (choosing ? 2 - bob : 0), 8, 3);
+  if (choosing) {
+    // A violet halo saying "press something".
+    g.lineStyle(1.2, tint(OUTPLAY.lit), alpha * (0.35 + 0.35 * Math.sin(t * 8)));
+    g.strokeRoundedRect(x - w / 2 - 3, y - h / 2 - 3, w + 6, h + 6, 6);
+  }
+}
+
 // ── Fx ────────────────────────────────────────────────────────────────────
 
 /** Psychic's one-shot effects. Everything sustained is painted per-frame by the kit instead. */
@@ -1513,6 +1650,63 @@ export class PsychicFx extends FxBase {
       g.lineBetween(x - 3, cy - 6, x + 2, cy + 2);
       g.lineStyle(3 * (1 - t) + 0.6, this.tint(PSY.gold), (1 - t) * 0.8);
       g.strokeCircle(x, y, 18 + e * 46);
+    });
+  }
+
+  /** Pre-move chosen: the clock is struck, and a ring of violet squares flicks out from him. */
+  premoveSet(x: number, y: number, depth = 16): void {
+    this.flashIn(x, y - 54, 14, PSY.aether, OUTPLAY.lit, depth);
+    this.anim(depth, 520, (g, t) => {
+      const e = easeOut(t);
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * TAU + e * 0.6;
+        const d = 18 + e * 46;
+        const s = 4 * (1 - t) + 1;
+        g.fillStyle(this.tint(i % 2 ? OUTPLAY.deep : OUTPLAY.lit), (1 - t) * 0.9);
+        g.fillRect(x + Math.cos(a) * d - s, y + Math.sin(a) * d - s, s * 2, s * 2);
+      }
+      g.lineStyle(2 * (1 - t) + 0.6, this.tint(OUTPLAY.mid), (1 - t) * 0.8);
+      g.strokeCircle(x, y, 20 + e * 40);
+    });
+  }
+
+  /**
+   * Pre-move sprung: the press they made, punished. A checkerboard snaps shut around them —
+   * four quarter-squares slamming in from the corners — then a violet burst and a cracked key
+   * cap where the press was.
+   */
+  premovePunish(x: number, y: number, depth = 17): void {
+    this.flashIn(x, y, 30, PSY.aether, OUTPLAY.hot, depth);
+    this.anim(depth, 700, (g, t) => {
+      const shut = easeIn(Math.min(1, t * 3));
+      const e = easeOut(t);
+      const fade = 1 - t;
+      // The board closing.
+      const open = 46 * (1 - shut) + 10;
+      for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+        const cx = x + sx * open;
+        const cy = y + sy * open;
+        g.fillStyle(this.tint((sx * sy) > 0 ? OUTPLAY.deep : OUTPLAY.lit), fade * 0.85);
+        g.fillRect(cx - 9, cy - 9, 18, 18);
+        g.lineStyle(1, this.tint(OUTPLAY.hot), fade);
+        g.strokeRect(cx - 9, cy - 9, 18, 18);
+      }
+      // The burst.
+      g.lineStyle(4 * fade + 0.8, this.tint(OUTPLAY.hot), fade * 0.9);
+      g.strokeCircle(x, y, 14 + e * 58);
+      g.lineStyle(2 * fade + 0.4, this.tint(OUTPLAY.lit), fade * 0.7);
+      g.strokeCircle(x, y, 8 + e * 38);
+      // Shards of the key they pressed.
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * TAU + 0.3;
+        const d = 10 + e * 34;
+        g.fillStyle(this.tint(i % 2 ? PSY.aether : OUTPLAY.mid), fade);
+        g.fillTriangle(
+          x + Math.cos(a) * d, y + Math.sin(a) * d,
+          x + Math.cos(a + 0.25) * (d - 6), y + Math.sin(a + 0.25) * (d - 6),
+          x + Math.cos(a - 0.25) * (d - 6), y + Math.sin(a - 0.25) * (d - 6),
+        );
+      }
     });
   }
 

@@ -13,8 +13,42 @@ export interface PerkDef {
    * table (DivinePerks.ts) but share this shape, so once forged they flow
    * through unlockPerk / the perk book / the element-select strip unchanged.
    */
-  tier: 'triple' | 'quad' | 'penta' | 'abstract-triple' | 'divine';
+  tier: 'triple' | 'quad' | 'penta' | 'abstract-triple' | 'divine' | 'element';
   elementId: string;
+}
+
+/**
+ * Elements whose perks have had the per-element overhaul: five perks of their own (tier
+ * `element`, no recipe — cheats only for now) and two equip slots instead of one. Everything
+ * else keeps its Lab-forged perks and a single slot until its own turn comes.
+ */
+const TWO_SLOT_ELEMENTS = new Set(['fire']);
+
+/** How many perks this element may equip at once. */
+export function perkSlotsFor(elementId: string): number {
+  return TWO_SLOT_ELEMENTS.has(elementId) ? 2 : 1;
+}
+
+/** Separator between the ids of a two-slot loadout, as saved and as sent to a fight. */
+export const PERK_SEP = '+';
+
+/** A saved/sent perk loadout broken back into its ids ('' and null are both "none"). */
+export function splitPerkIds(joined: string | null | undefined): string[] {
+  return joined ? joined.split(PERK_SEP).filter((id) => id.length > 0) : [];
+}
+
+/** Display name for a loadout string — "Blaze + Melt" for two, the name for one. */
+export function perkLoadoutLabel(joined: string | null | undefined): string | null {
+  const defs = splitPerkIds(joined).map((id) => getPerkById(id)).filter((p): p is PerkDef => !!p);
+  if (defs.length === 0) return null;
+  return defs.map((p) => p.name).join(' + ');
+}
+
+/** Emoji + name for a loadout string, for the strips that print both. */
+export function perkLoadoutBadge(joined: string | null | undefined): string | null {
+  const defs = splitPerkIds(joined).map((id) => getPerkById(id)).filter((p): p is PerkDef => !!p);
+  if (defs.length === 0) return null;
+  return defs.map((p) => `${p.emoji} ${p.name}`).join(' + ');
 }
 
 export interface ElementPerks {
@@ -23,6 +57,65 @@ export interface ElementPerks {
 }
 
 export const ALL_PERKS: ElementPerks[] = [
+  // ── Element perks (the per-element overhaul — cheats only for now) ──────
+  // Fire's old perks (Alcohol from the Lab, Molten from the Disgraced Lab) were retired for
+  // these. Saves that forged them keep the record; the ids simply no longer resolve.
+  {
+    elementId: 'fire',
+    perks: [
+      {
+        id: 'fire-blaze',
+        name: 'Blaze',
+        emoji: '🔥',
+        color: 0xff7722,
+        description: 'Hold-click Flamethrower is gone. In return your fireballs fly 45% faster and hit 50% harder against anything already burning — and with Flameshredder (Click+) they set foes alight with molten fire instead of a normal burn. Equipped with Melt, you lose both clicks but every ability recharges twice as fast and hits 50% harder.',
+        ingredients: [],
+        tier: 'element',
+        elementId: 'fire',
+      },
+      {
+        id: 'fire-melt',
+        name: 'Melt',
+        emoji: '🫠',
+        color: 0xff9933,
+        description: 'The tap Fireball is gone — only the hold-click Flamethrower is left. It reaches 33% farther and leaves pools of flame where it lands, burning foes who walk through them. Equipped with Blaze, you lose both clicks but every ability recharges twice as fast and hits 50% harder.',
+        ingredients: [],
+        tier: 'element',
+        elementId: 'fire',
+      },
+      {
+        id: 'fire-ash',
+        name: 'Ash',
+        emoji: '🌫️',
+        color: 0x998877,
+        description: 'Pressure Bomb and Flame Charge (Q+ only) deal 25% more damage over 33% more range — but Pressure Bomb can now catch you in its blast, and Flame Charge burns you 25% harder. Cluster Bomb (R+) bomblets are bigger and stronger too, and they can hurt you as well.',
+        ingredients: [],
+        tier: 'element',
+        elementId: 'fire',
+      },
+      {
+        id: 'fire-radiate',
+        name: 'Radiate',
+        emoji: '♨️',
+        color: 0xffaa44,
+        description: 'You give off a constant aura of heat that burns every enemy near you for light damage over time. With Fire Mastery enabled the aura burns twice as hot.',
+        ingredients: [],
+        tier: 'element',
+        elementId: 'fire',
+      },
+      {
+        id: 'fire-alcohol',
+        name: 'Alcohol',
+        emoji: '🍺',
+        color: 0xc97a3a,
+        description: 'Flame Dash leaves a trail of booze instead of explosions. Standing in it gives you 20% damage resistance, but linger more than 2 seconds and your shots start to drift. Foes who wade in get the same drift. Catch the booze in a Pressure Bomb or Flame Nuke and it burns — then it scorches every enemy who steps in it.',
+        ingredients: [],
+        tier: 'element',
+        elementId: 'fire',
+      },
+    ],
+  },
+
   // ── Triple perks (Lab Level 2, 2 nuclei) ─────────────────────────────────
   {
     elementId: 'oil',
@@ -99,14 +192,13 @@ export const ALL_PERKS: ElementPerks[] = [
     elementId: 'creation',
     perks: [
       {
-        // Automaton was written for Maze of Doom, which the Nexus rework deleted. The Workshop
-        // is the Q it left behind, and a floor being hammered down is a better excuse for
-        // machines walking off it than a maze ever was.
+        // Automaton was written for Maze of Doom, then hung off the Workshop; both are gone. Now
+        // the Nexus staffs itself when it powers back on after Self-Destruct blew it up.
         id: 'automaton',
         name: 'Automaton',
         emoji: '🤖',
         color: 0x8833cc,
-        description: 'The Workshop builds its own staff: 3 automatons march off the new floor and patrol it for 20s, ramming for 12 (0.5s per automaton). They repair on your nexus and wind down when the workshop does.',
+        description: 'When your Nexus powers back on after Self-Destruct, 3 automatons march out of it and patrol for 20s, ramming for 12 (0.5s per automaton). They repair on your nexus — and they are yours to blow up with the next Self-Destruct.',
         ingredients: ['fire', 'life', 'earth'],
         tier: 'triple',
         elementId: 'creation',
@@ -367,21 +459,6 @@ export const ALL_PERKS: ElementPerks[] = [
   },
 
   // ── Quad perks (Lab Level 3, 5 nuclei) ───────────────────────────────────
-  {
-    elementId: 'fire',
-    perks: [
-      {
-        id: 'alcohol',
-        name: 'Alcohol',
-        emoji: '🍺',
-        color: 0xc97a3a,
-        description: "Flame Dash → Drink Up! Tap E (no flask): get a flask. Tap E (with flask): drink — 25% less damage for 6s, then 50% slow for 2s (extra drinks stack slow penalty). Hold E ≥250ms (with flask): throw an alcohol puddle. Enemies in puddle 2s+ get confused; fire hits ignite it into a flame DOT. Flame Body + intoxicated: heat aura damages nearby enemies.",
-        ingredients: ['fire', 'water', 'life', 'air'],
-        tier: 'quad',
-        elementId: 'fire',
-      },
-    ],
-  },
   {
     elementId: 'crystal',
     perks: [

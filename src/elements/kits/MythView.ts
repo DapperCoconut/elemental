@@ -60,6 +60,8 @@ export type ViewEntity = ViewSprite | ViewDraw;
 export interface ViewCamera {
   x: number; y: number;
   yaw: number;
+  /** Look up (+) or down (−): px the horizon sits below its rest line. The kit clamps it to the view's limits. */
+  pitch: number;
   /** 0–1 walking bob phase, in radians. */
   bob: number;
   /** The frame's bounds — the walls. */
@@ -69,8 +71,6 @@ export interface ViewCamera {
 export interface ViewHud {
   gun: GunKind;
   recoil: number;
-  /** Where the cursor is on screen, which is where the shots go. */
-  mouseX: number; mouseY: number;
   /** Seconds left in the form. */
   secondsLeft: number;
   /** The crowd's state: 0 seated, 1 jumping; and whether they are jeering. */
@@ -78,11 +78,35 @@ export interface ViewHud {
   crowdArms: number;
   /** A flash across the whole frame — being hit. 0–1. */
   hurt: number;
+  /** A gun just landed (1 → 0): the hit marker on the crosshair. */
+  hitMark: number;
+  /** A rifle headshot just landed (1 → 0): the gold marker, the banner and the ring. */
+  headMark: number;
+  /** The mouse is captured. When it is not, a prompt says how to capture it. */
+  locked: boolean;
+  /** Q+ Slayer states worth showing next to the gun's name. */
+  rapid: boolean;
+  chain: boolean;
+  /** Echo Shards held, and the hand size — the over-head pips are under the frame. */
+  shards: number;
+  shardMax: number;
+  /** Slayer's gun-butt slam (1 → 0): the shotgun swings stock-first across the frame. */
+  butt: number;
+  /** Slayer's second grenade blast (1 → 0): the frame flushes red. */
+  blast: number;
+  /** The kit's latest word to the player (world text is under the frame), with its fade. */
+  toast: { text: string; color: number; a: number } | null;
 }
+
+/** How much bigger than their drawn size the guns sit in the frame. */
+const GUN_SCALE = 1.8;
 
 interface SkyStar { a: number; e: number; r: number; blue: boolean }
 
 export class MythView {
+  /** How far the horizon may travel for looking up / down, in px. */
+  static readonly PITCH_UP = 220;
+  static readonly PITCH_DOWN = 200;
   private scene: Phaser.Scene;
   private tint: MythColorFn;
   private W: number;
@@ -94,6 +118,9 @@ export class MythView {
   private hud: Phaser.GameObjects.Graphics | null = null;
   private timerText: Phaser.GameObjects.Text | null = null;
   private gunText: Phaser.GameObjects.Text | null = null;
+  private headText: Phaser.GameObjects.Text | null = null;
+  private lockText: Phaser.GameObjects.Text | null = null;
+  private toastText: Phaser.GameObjects.Text | null = null;
   private labels: Phaser.GameObjects.Text[] = [];
   private stars: SkyStar[] = [];
   private t = 0;
@@ -122,9 +149,18 @@ export class MythView {
     this.timerText = s.add.text(this.W / 2, 51, '', {
       fontSize: '13px', fontFamily: FONT_DISPLAY, color: '#fff6d5', stroke: '#05030c', strokeThickness: 3,
     }).setOrigin(0.5).setDepth(19.9);
-    this.gunText = s.add.text(this.W - 24, this.H - 118, '', {
+    this.gunText = s.add.text(this.W - 24, 96, '', {
       fontSize: '12px', fontFamily: FONT_DISPLAY, color: '#b39dff', stroke: '#05030c', strokeThickness: 3,
     }).setOrigin(1, 0.5).setDepth(19.9);
+    this.headText = s.add.text(this.W / 2, this.H / 2 - 70, 'HEADSHOT', {
+      fontSize: '26px', fontFamily: FONT_DISPLAY, color: '#ffd166', stroke: '#05030c', strokeThickness: 5,
+    }).setOrigin(0.5).setDepth(19.92).setVisible(false);
+    this.lockText = s.add.text(this.W / 2, this.H / 2 + 46, 'CLICK TO CAPTURE THE MOUSE', {
+      fontSize: '11px', fontFamily: FONT_DISPLAY, color: '#fff6d5', stroke: '#05030c', strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(19.9).setVisible(false);
+    this.toastText = s.add.text(this.W / 2, this.H / 2 + 74, '', {
+      fontSize: '15px', fontFamily: FONT_DISPLAY, color: '#fff6d5', stroke: '#05030c', strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(19.91).setVisible(false);
   }
 
   hide(): void {
@@ -135,6 +171,9 @@ export class MythView {
     this.hud?.destroy(); this.hud = null;
     this.timerText?.destroy(); this.timerText = null;
     this.gunText?.destroy(); this.gunText = null;
+    this.headText?.destroy(); this.headText = null;
+    this.lockText?.destroy(); this.lockText = null;
+    this.toastText?.destroy(); this.toastText = null;
     for (const im of this.images) im.destroy();
     this.images = [];
     for (const g of this.draws) g.destroy();
@@ -157,7 +196,7 @@ export class MythView {
   }
 
   private horizon(cam: ViewCamera): number {
-    return this.H * HORIZON_K + Math.sin(cam.bob) * 3;
+    return this.H * HORIZON_K + cam.pitch + Math.sin(cam.bob) * 3;
   }
 
   /** Clip a camera-space segment to the near plane. Null when wholly behind. */
@@ -373,8 +412,8 @@ export class MythView {
     o.clear();
     g.clear();
     // Vignette: four soft bands. Being hit flushes it red.
-    const vig = 0.42 + hud.hurt * 0.3;
-    const vc = hud.hurt > 0.05 ? this.tint(MYTH.red) : this.tint(MYTH.void);
+    const vig = 0.42 + Math.max(hud.hurt, hud.blast) * 0.3;
+    const vc = hud.hurt > 0.05 || hud.blast > 0.05 ? this.tint(MYTH.red) : this.tint(MYTH.void);
     for (let i = 0; i < 5; i++) {
       const k = i / 5;
       o.fillStyle(vc, vig * (1 - k) * 0.35);
@@ -383,14 +422,76 @@ export class MythView {
       o.fillRect(0, 0, 14 + i * 12, H);
       o.fillRect(W - 14 - i * 12, 0, 14 + i * 12, H);
     }
-    // The gun, swaying with the walk and kicking with the shot.
-    const swayX = Math.sin(cam.bob) * 5;
-    const swayY = Math.abs(Math.cos(cam.bob)) * 4;
-    const gx = W * 0.74 + swayX;
-    const gy = H * 0.92 + swayY;
-    const m = gun(g, this.tint, hud.gun, gx, gy, hud.recoil, this.t);
-    if (hud.recoil > 0.55) muzzleFlash(g, this.tint, m.x, m.y, 16 + hud.recoil * 10, 1 - (hud.recoil - 0.55) / 0.45);
-    crosshair(g, hud.mouseX, hud.mouseY, hud.recoil * 6, this.tint(MYTH.star));
+    // The gun, big in the lower right, swaying with the walk and kicking with the shot. A soft
+    // halo behind it keeps the dark metal off the dark floor.
+    const swayX = Math.sin(cam.bob) * 7;
+    const swayY = Math.abs(Math.cos(cam.bob)) * 6;
+    // The butt slam: a quick arc — the gun lunges toward the crosshair and swings stock-first,
+    // then falls back. `swing` rises and falls across the animation.
+    const swing = hud.butt > 0 ? Math.sin(Math.PI * (1 - hud.butt)) : 0;
+    const gx = W * 0.71 + swayX - swing * W * 0.17;
+    // Above the ability tray (which sits over the frame at the bottom), not behind it.
+    const gy = H - 74 + swayY - swing * H * 0.16;
+    g.fillStyle(this.tint(MYTH.iris), 0.1);
+    g.fillEllipse(gx - 70, gy - 70, 360, 220);
+    g.fillStyle(this.tint(MYTH.haze), 0.06);
+    g.fillEllipse(gx - 60, gy - 60, 240, 140);
+    const m = gun(g, this.tint, hud.gun, gx, gy, hud.butt > 0 ? 0 : hud.recoil, this.t, GUN_SCALE, swing * 1.5);
+    if (hud.butt > 0 && hud.butt < 0.7) {
+      // The connect: speed lines raking in toward the crosshair and a white crack under it.
+      const k = 1 - hud.butt / 0.7;
+      const a = Math.min(1, hud.butt * 2.2);
+      g.lineStyle(3, this.tint(MYTH.white), a * 0.7);
+      for (let i = 0; i < 9; i++) {
+        const ang = Math.PI * 0.15 + (i / 8) * Math.PI * 0.75;
+        const r0 = 60 + k * 30;
+        const r1 = 150 + k * 90;
+        g.lineBetween(W / 2 + Math.cos(ang) * r0, H / 2 + Math.sin(ang) * r0, W / 2 + Math.cos(ang) * r1, H / 2 + Math.sin(ang) * r1);
+      }
+      star(g, W / 2, H / 2 + 26, 30 + k * 30, this.tint(MYTH.white), a * 0.8, { points: 8, inner: 0.25, rot: 0.2 });
+    }
+    if (hud.blast > 0) {
+      // The second blast: a red flush over the whole frame, hot at first.
+      g.fillStyle(this.tint(MYTH.red), hud.blast * hud.blast * 0.28);
+      g.fillRect(0, 0, W, H);
+    }
+    if (hud.butt <= 0 && hud.recoil > 0.55) muzzleFlash(g, this.tint, m.x, m.y, (16 + hud.recoil * 10) * 1.4, 1 - (hud.recoil - 0.55) / 0.45);
+    // The crosshair never moves: the centre of the screen is where every shot goes.
+    const cx = W / 2;
+    const cy = H / 2;
+    crosshair(g, cx, cy, hud.recoil * 6, this.tint(hud.headMark > 0.05 ? MYTH.gold : MYTH.star));
+    if (hud.hitMark > 0.02) {
+      // The hit marker: four short slashes on the diagonals.
+      const a = hud.hitMark;
+      const c = this.tint(hud.headMark > 0.05 ? MYTH.gold : MYTH.white);
+      g.lineStyle(2.5, c, a);
+      for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) g.lineBetween(cx + dx * 7, cy + dy * 7, cx + dx * 15, cy + dy * 15);
+    }
+    if (hud.headMark > 0.02) {
+      // The headshot: a big gold X, a crown of stars and an expanding ring, and the banner.
+      const a = Math.min(1, hud.headMark * 1.6);
+      const k = 1 - hud.headMark;
+      g.lineStyle(4, this.tint(MYTH.gold), a);
+      for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) g.lineBetween(cx + dx * 10, cy + dy * 10, cx + dx * 24, cy + dy * 24);
+      g.lineStyle(2, this.tint(MYTH.gold), a * 0.8);
+      g.strokeCircle(cx, cy, 20 + k * 70);
+      for (let i = 0; i < 5; i++) {
+        const ang = -Math.PI / 2 + (i - 2) * 0.32;
+        star(g, cx + Math.cos(ang) * 40, cy + Math.sin(ang) * 40 - k * 10, 6, this.tint(MYTH.gold), a, { points: 5, rot: -Math.PI / 2 });
+      }
+      this.headText?.setVisible(true).setAlpha(a).setScale(1 + 0.25 * (1 - Math.min(1, k * 4)));
+    } else {
+      this.headText?.setVisible(false);
+    }
+    this.lockText?.setVisible(!hud.locked);
+    if (this.toastText) {
+      if (hud.toast && hud.toast.a > 0.01) {
+        this.toastText.setText(hud.toast.text).setColor(`#${hud.toast.color.toString(16).padStart(6, '0')}`)
+          .setAlpha(hud.toast.a).setVisible(true);
+      } else {
+        this.toastText.setVisible(false);
+      }
+    }
     // The form's clock: a band of night sky in a gold-filigreed void plate, burning down from
     // the right, a star at each end and a comet riding the burning edge.
     const bw = 220;
@@ -434,16 +535,27 @@ export class MythView {
     star(g, L + bw + 7, 64.5, 4, this.tint(MYTH.gold), 0.9, { points: 4 });
     this.timerText?.setText(`FINAL DESTINY  ${hud.secondsLeft.toFixed(1)}s`);
     const name = { pistol: 'PISTOL', shotgun: 'SHOTGUN', launcher: 'GRENADE BARRAGE', rifle: 'HUNTER RIFLE', rocket: 'SHADOW ROCKET' }[hud.gun];
-    this.gunText?.setText(name);
+    this.gunText?.setText(`${name}${hud.rapid ? '  · RAPID' : ''}${hud.chain ? '  · CHAIN' : ''}`);
     // A void plate under the gun's name, edged in violet with a gold star on the leading end.
     if (this.gunText) {
       const tw = this.gunText.width;
-      const ty = this.H - 118;
+      const ty = 96;
       g.fillStyle(this.tint(MYTH.void), 0.7);
       g.fillRoundedRect(W - 24 - tw - 22, ty - 12, tw + 32, 24, 8);
       g.lineStyle(1, this.tint(MYTH.iris), 0.7);
       g.strokeRoundedRect(W - 24 - tw - 22, ty - 12, tw + 32, 24, 8);
       star(g, W - 24 - tw - 11, ty, 4.5, this.tint(MYTH.gold), 0.95, { points: 4, rot: this.t });
+    }
+    // The Echo Shards under it, right-aligned: a lit star for each held, a faint socket for each empty.
+    for (let i = 0; i < hud.shardMax; i++) {
+      const sx = W - 34 - i * 22;
+      if (i < hud.shards) {
+        g.fillStyle(this.tint(MYTH.shard), 0.18);
+        g.fillCircle(sx, 124, 10);
+        star(g, sx, 124, 7, this.tint(MYTH.shard), 1, { points: 4, rot: this.t * 0.6 + i });
+      } else {
+        star(g, sx, 124, 6, this.tint(MYTH.iris), 0.3, { points: 4 });
+      }
     }
   }
 

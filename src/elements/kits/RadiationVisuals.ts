@@ -753,6 +753,214 @@ export function falloutPuddle(
   }
 }
 
+// ── Mastery ───────────────────────────────────────────────────────────────
+
+/** The crash-test quadrant target — four quarters, alternating ink and hazard. */
+function quadrantMark(
+  g: Phaser.GameObjects.Graphics, tint: RadiationColorFn,
+  x: number, y: number, r: number, rot: number, alpha: number,
+): void {
+  g.fillStyle(tint(RAD.ink), alpha);
+  g.fillCircle(x, y, r + 0.9);
+  for (let q = 0; q < 4; q++) {
+    g.fillStyle(tint(q % 2 ? RAD.ink : RAD.hazard), alpha);
+    g.slice(x, y, r, rot + (q * Math.PI) / 2, rot + ((q + 1) * Math.PI) / 2, false);
+    g.fillPath();
+  }
+}
+
+/**
+ * Mastery — Test Dummy. A crash-test mannequin in hazard yellow bolted to a lead base: quadrant
+ * targets on the head and hips, a trefoil stencilled on the chest, black joint pins at the knees
+ * and elbows. The material rule still holds — as it loses HP the yellow cracks open along seams
+ * and the green shows through, and it never glows anywhere else.
+ *
+ * `lift` raises it off its base (the throw), `tumble` spins it about its middle while it flies,
+ * `hit` (0–1) flashes it where the link has just dumped a hit into it, and `hp` (0–1) drives the
+ * cracks.
+ */
+export function testDummy(
+  g: Phaser.GameObjects.Graphics, tint: RadiationColorFn,
+  x: number, y: number, alpha: number, t: number,
+  o: { hp: number; hit: number; lift: number; tumble: number; seed: number },
+): void {
+  const cy = y - o.lift;
+  const rot = o.tumble;
+  const c = Math.cos(rot), s = Math.sin(rot);
+  const P = (px: number, py: number): Phaser.Geom.Point =>
+    new Phaser.Geom.Point(x + px * c - py * s, cy + px * s + py * c);
+  const poly = (pts: [number, number][], color: number, a: number): void => {
+    g.fillStyle(tint(color), alpha * a);
+    g.fillPoints(pts.map(([px, py]) => P(px, py)), true);
+  };
+  const dot = (px: number, py: number, r: number, color: number, a = 1): void => {
+    const p = P(px, py);
+    g.fillStyle(tint(color), alpha * a);
+    g.fillCircle(p.x, p.y, r);
+  };
+
+  // Shadow on the floor, shrinking as it rises; the lead base only once it has landed.
+  const ground = Phaser.Math.Clamp(1 - o.lift / 60, 0, 1);
+  g.fillStyle(tint(RAD.ink), alpha * 0.35 * ground);
+  g.fillEllipse(x, y + 17, 30 * (0.5 + ground * 0.5), 8 * (0.5 + ground * 0.5));
+  if (o.lift < 1 && Math.abs(rot) < 0.01) {
+    g.fillStyle(tint(RAD.ink), alpha);
+    g.fillEllipse(x, y + 17, 26, 8);
+    g.fillStyle(tint(RAD.lead), alpha);
+    g.fillEllipse(x, y + 16, 22, 6);
+    g.fillStyle(tint(RAD.leadLit), alpha * 0.8);
+    g.fillEllipse(x - 3, y + 15, 10, 2.2);
+    g.fillStyle(tint(RAD.ink), alpha);
+    g.fillRect(x - 1.6, y + 9, 3.2, 7);
+  }
+
+  const yellow = RAD.hazard;
+  const dark = RAD.hazardDeep;
+  // Legs, with knee pins.
+  for (const side of [-1, 1]) {
+    poly([[side * 2, 3], [side * 7, 3], [side * 6.4, 15], [side * 2.4, 15]], RAD.ink, 1);
+    poly([[side * 2.8, 3.8], [side * 6.2, 3.8], [side * 5.6, 14.2], [side * 3.2, 14.2]], yellow, 1);
+    poly([[side * 2.8, 3.8], [side * 3.8, 3.8], [side * 3.6, 14.2], [side * 3.2, 14.2]], dark, 0.7);
+    dot(side * 4.4, 9, 1.3, RAD.ink);
+  }
+  // Arms hanging off the shoulders, elbow pins.
+  for (const side of [-1, 1]) {
+    poly([[side * 9, -8], [side * 12.4, -7], [side * 12.6, 3], [side * 9.6, 3.4]], RAD.ink, 1);
+    poly([[side * 9.6, -7.2], [side * 11.8, -6.4], [side * 12, 2.4], [side * 10.2, 2.6]], yellow, 1);
+    dot(side * 11, -2, 1.1, RAD.ink);
+    dot(side * 11.2, 3.6, 1.7, dark);
+  }
+  // Torso: ink outline, yellow plate, a darker flank so it reads round.
+  poly([[-9.6, -10], [9.6, -10], [8.4, 4.4], [-8.4, 4.4]], RAD.ink, 1);
+  poly([[-8.6, -9], [8.6, -9], [7.6, 3.6], [-7.6, 3.6]], yellow, 1);
+  poly([[4.6, -9], [8.6, -9], [7.6, 3.6], [4, 3.6]], dark, 0.55);
+  // A black belt with the hip target, and the trefoil stencilled on the chest.
+  poly([[-8, 1], [8, 1], [7.7, 3.4], [-7.7, 3.4]], RAD.ink, 0.9);
+  const hip = P(0, 2.2);
+  quadrantMark(g, tint, hip.x, hip.y, 2.2, rot, alpha);
+  const chest = P(0, -4.4);
+  g.fillStyle(tint(RAD.ink), alpha * 0.85);
+  g.fillCircle(chest.x, chest.y, 4.4);
+  trefoil(g, tint, chest.x, chest.y, 3.8, alpha * 0.9, { phase: rot, color: yellow });
+  // Neck bolt and head, with the side-of-head quadrant target.
+  poly([[-2, -12.6], [2, -12.6], [2, -9.6], [-2, -9.6]], RAD.lead, 1);
+  const head = P(0, -17.4);
+  g.fillStyle(tint(RAD.ink), alpha);
+  g.fillCircle(head.x, head.y, 6.8);
+  g.fillStyle(tint(yellow), alpha);
+  g.fillCircle(head.x, head.y, 5.9);
+  g.fillStyle(tint(dark), alpha * 0.45);
+  g.slice(head.x, head.y, 5.9, rot - 0.9, rot + 0.9, false);
+  g.fillPath();
+  const ear = P(-1.4, -17.6);
+  quadrantMark(g, tint, ear.x, ear.y, 2.5, rot, alpha);
+
+  // Damage: seams cracking open, each one leaking the green.
+  const cracks = Math.min(5, Math.floor((1 - o.hp) * 5.5));
+  for (let i = 0; i < cracks; i++) {
+    const ax = (jitter(o.seed, i) - 0.5) * 14;
+    const ay = -14 + jitter(o.seed, 10 + i) * 20;
+    const bx = ax + (jitter(o.seed, 20 + i) - 0.5) * 9;
+    const by = ay + 3 + jitter(o.seed, 30 + i) * 5;
+    const a = P(ax, ay), m = P((ax + bx) / 2 + 1.5, (ay + by) / 2), b = P(bx, by);
+    g.lineStyle(1.8, tint(RAD.ink), alpha);
+    g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(m.x, m.y); g.lineTo(b.x, b.y); g.strokePath();
+    g.lineStyle(0.9, tint(RAD.neon), alpha * (0.65 + 0.35 * Math.sin(t * 7 + i)));
+    g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(m.x, m.y); g.lineTo(b.x, b.y); g.strokePath();
+  }
+
+  // A hit coming down the link: the whole plate flares and a green ring kicks off it.
+  if (o.hit > 0.02) {
+    g.fillStyle(tint(RAD.wash), alpha * o.hit * 0.45);
+    g.fillCircle(x, cy - 4, 14);
+    g.lineStyle(2 * o.hit, tint(RAD.neonLit), alpha * o.hit);
+    g.strokeCircle(x, cy - 4, 16 + (1 - o.hit) * 10);
+  }
+}
+
+/**
+ * Mastery — the link from the caster to their Test Dummy. Deliberately faint: a thin neon thread
+ * with a slow sag and wobble, beads of charge drifting along it toward the dummy (that is the
+ * direction a hit travels), and a brighter surge riding it for a moment after one has.
+ */
+export function dummyLink(
+  g: Phaser.GameObjects.Graphics, tint: RadiationColorFn,
+  x0: number, y0: number, x1: number, y1: number, alpha: number, t: number, surge: number,
+): void {
+  const dx = x1 - x0, dy = y1 - y0;
+  const len = Math.hypot(dx, dy);
+  if (len < 4) return;
+  const nx = -dy / len, ny = dx / len;
+  const steps = Math.max(6, Math.ceil(len / 14));
+  const at = (u: number): { x: number; y: number } => {
+    const sag = Math.sin(u * Math.PI) * Math.min(18, len * 0.08);
+    const wob = Math.sin(u * 9 + t * 3.2) * 1.6 * Math.sin(u * Math.PI);
+    return { x: x0 + dx * u + nx * wob, y: y0 + dy * u + sag + ny * wob };
+  };
+  const stroke = (w: number, color: number, a: number): void => {
+    g.lineStyle(w, tint(color), a);
+    g.beginPath();
+    for (let i = 0; i <= steps; i++) {
+      const p = at(i / steps);
+      if (i === 0) g.moveTo(p.x, p.y); else g.lineTo(p.x, p.y);
+    }
+    g.strokePath();
+  };
+  stroke(4 + surge * 3, RAD.neonDeep, alpha * (0.14 + surge * 0.25));
+  stroke(1 + surge, RAD.neon, alpha * (0.32 + surge * 0.55));
+  const beads = Math.max(2, Math.floor(len / 70));
+  for (let i = 0; i < beads; i++) {
+    const u = ((t * 0.45 + i / beads) % 1);
+    const p = at(u);
+    g.fillStyle(tint(RAD.neonLit), alpha * (0.35 + surge * 0.5) * Math.sin(u * Math.PI));
+    g.fillCircle(p.x, p.y, 1.6 + surge * 1.4);
+  }
+}
+
+/**
+ * Mastery — X-Ray Vision. The outline every enemy carries on the radiologist's screen: a hard
+ * neon contour hugging the body, scanner brackets above and below, a band sweeping down through
+ * it, and the faint bones of whoever is inside. It is drawn regardless of the body's own alpha,
+ * which is the whole passive — an invisible target is an outline walking about on its own.
+ */
+export function xrayOutline(
+  g: Phaser.GameObjects.Graphics, tint: RadiationColorFn,
+  x: number, y: number, r: number, alpha: number, t: number, seed: number,
+): void {
+  // The contour: a soft wide pass under a hard thin one.
+  g.lineStyle(5, tint(RAD.neonDeep), alpha * 0.28);
+  g.strokeCircle(x, y, r);
+  g.lineStyle(1.5, tint(RAD.neon), alpha * (0.8 + 0.2 * Math.sin(t * 4 + seed)));
+  g.strokeCircle(x, y, r);
+  // Scanner brackets.
+  g.lineStyle(1.4, tint(RAD.neonLit), alpha * 0.85);
+  for (const sy of [-1, 1]) {
+    for (const sx of [-1, 1]) {
+      const bx = x + sx * (r + 3) * 0.72, by = y + sy * (r + 3) * 0.72;
+      g.lineBetween(bx, by, bx - sx * 5, by);
+      g.lineBetween(bx, by, bx, by - sy * 5);
+    }
+  }
+  // Bones: a spine, three pairs of ribs, a skull.
+  const bone = alpha * 0.32;
+  g.lineStyle(1.2, tint(RAD.neonLit), bone);
+  g.lineBetween(x, y - r * 0.45, x, y + r * 0.55);
+  for (let i = 0; i < 3; i++) {
+    const ry = y - r * 0.2 + i * r * 0.22;
+    const w = r * (0.5 - i * 0.07);
+    g.beginPath();
+    g.arc(x, ry, w, Math.PI * 0.15, Math.PI * 0.85, false);
+    g.strokePath();
+  }
+  g.strokeCircle(x, y - r * 0.62, r * 0.22);
+  // The scan band: one bright chord that sweeps down through the body and wraps.
+  const u = (t * 0.8 + seed * 0.13) % 1;
+  const sy = y - r + u * r * 2;
+  const half = Math.sqrt(Math.max(0, r * r - (sy - y) * (sy - y)));
+  g.lineStyle(1.2, tint(RAD.wash), alpha * 0.5 * Math.sin(u * Math.PI));
+  g.lineBetween(x - half, sy, x + half, sy);
+}
+
 // ── Fx ────────────────────────────────────────────────────────────────────
 
 /** Radiation's one-shot effects. Everything sustained is painted per-frame by the kit instead. */
@@ -1016,6 +1224,52 @@ export class RadiationFx extends FxBase {
         g.fillStyle(this.tint(i % 2 ? RAD.neonLit : RAD.neon), (1 - t) * 0.8);
         g.fillCircle(x + Math.cos(a) * d, y + Math.sin(a) * d * 0.78 - Math.sin(t * Math.PI) * 10, 3 * (1 - t) + 0.8);
       }
+    });
+  }
+
+  // ── Mastery ──
+
+  /** Test Dummy landing on its base: a dust skirt and the lead plate ringing. */
+  dummyLand(x: number, y: number, depth = 17): void {
+    const seed = Math.random() * 999;
+    this.anim(depth, 420, (g, t) => {
+      const e = easeOut(t);
+      g.lineStyle(3 * (1 - t) + 0.5, this.tint(RAD.leadLit), (1 - t) * 0.85);
+      g.strokeEllipse(x, y + 16, 26 + e * 40, 8 + e * 12);
+      for (let i = 0; i < 8; i++) {
+        const a = jitter(seed, i) * TAU;
+        const d = 10 + e * (12 + jitter(seed, 10 + i) * 18);
+        g.fillStyle(this.tint(i % 3 ? RAD.leadLit : RAD.hazard), (1 - t) * 0.75);
+        g.fillCircle(x + Math.cos(a) * d, y + 16 + Math.sin(a) * d * 0.35, 2.2 * (1 - t) + 0.5);
+      }
+    });
+  }
+
+  /** Test Dummy broken: yellow plates thrown off, the link snapping back, a green breath out. */
+  dummyBreak(x: number, y: number, depth = 17): void {
+    const seed = Math.random() * 999;
+    this.flashIn(x, y, 24, RAD.neonLit, RAD.hazard, depth);
+    this.anim(depth, 680, (g, t) => {
+      const e = easeOut(t);
+      for (let i = 0; i < 10; i++) {
+        const a = (i / 10) * TAU + (jitter(seed, i) - 0.5) * 0.6;
+        const d = e * (18 + jitter(seed, 20 + i) * 30);
+        const px = x + Math.cos(a) * d;
+        const py = y - 4 + Math.sin(a) * d + t * t * 24;
+        const r = a + t * 8;
+        const w = 4 + jitter(seed, 40 + i) * 3;
+        g.fillStyle(this.tint(RAD.ink), (1 - t));
+        g.fillPoints([
+          new Phaser.Geom.Point(px + Math.cos(r) * w, py + Math.sin(r) * w),
+          new Phaser.Geom.Point(px + Math.cos(r + 2.2) * w * 0.8, py + Math.sin(r + 2.2) * w * 0.8),
+          new Phaser.Geom.Point(px + Math.cos(r + 4) * w * 0.9, py + Math.sin(r + 4) * w * 0.9),
+        ], true);
+        g.fillStyle(this.tint(i % 3 ? RAD.hazard : RAD.neon), (1 - t) * 0.95);
+        g.fillCircle(px, py, w * 0.45);
+      }
+      g.lineStyle(2 * (1 - t), this.tint(RAD.neon), (1 - t) * 0.7);
+      g.strokeCircle(x, y - 4, 10 + e * 26);
+      trefoil(g, this.tint, x, y - 4, 10 * (0.6 + e), (1 - t) * 0.4, { phase: t * 3 });
     });
   }
 

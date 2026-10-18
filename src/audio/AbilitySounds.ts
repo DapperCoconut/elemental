@@ -27,6 +27,8 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'pressure-bomb': ['flame-burst', 0.75, 0.5],
   'flame-body': ['inferno', 1.15, 0.6],
   'flame-nuke': 'explosion-large',
+  // The beam opening — FireKit plays the detonation itself if it lasts the full six seconds.
+  'supernova': ['beam-fire', 0.7, 0.9],
 
   // ── Water ──
   'water-cut': 'water-jet',
@@ -90,7 +92,7 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'soul-arise': 'ghost-wail',
   'soul-grave': 'bone',
   'soul-death-whistle': 'whistle',
-  'soul-hells-torment': 'torment',
+  'soul-turn': 'ghost-wail',
 
   // ── Time (element id `sand`) ──
   'time-barrage': ['sand', 1.5, 0.85],
@@ -161,6 +163,9 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'magnet-nail': 'nail',
   'magnet-spike': ['magnet-pull', 1.2, 0.8],
   'magnet-mecha': ['electric-charge', 0.6],
+  // Magnet Mastery: the kit plays the track going down itself.
+  'mag-lev': null,
+  'ark-of-the-covenant': null,
 
   // ── Fate ──
   'fate-card-throw': 'card-throw',
@@ -242,17 +247,17 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'charged-bolt': ['beam-fire', 1.3, 0.85],
   'wrench-plans': 'gear-turn',
   'creation-block': 'craft-complete',
-  'maze-of-doom': ['anvil', 0.7, 1.25],
+  // The button going down — CreationKit plays each beam and detonation itself.
+  'self-destruct': ['beam-charge', 1.4, 0.7],
 
   // ── Dream ──
-  'dream-trance': 'dream-chime',
+  // Sandmen fire eight a second, so the crack is pitched up and kept quiet; the dream pistols
+  // add their own blast on top in the kit.
+  'dream-sandmen': ['musket', 2.3, 0.22],
+  'dream-delve': ['dream-chime', 0.8, 1],
   'dream-pillow-fight': 'pillow',
-  'dream-dreamcatcher': ['dream-chime', 1.3, 0.9],
+  'dream-sleep-tight': ['crossbow', 1.5, 0.7],
   'dream-nightmare': 'nightmare',
-  'dream-oasis': ['holy-chord', 0.9, 1.1],
-  // The spirit's two keys. Both are a wail rather than a chime — a duel is a haunting.
-  'dream-haunt': ['ghost-wail', 1.35, 0.5],
-  'dream-spirit-tear': ['ghost-wail', 0.55, 0.9],
 
   // ── Chalk ──
   'chalk-ward': ['sand', 1.5, 0.7],
@@ -316,6 +321,8 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'fortune-plume': ['whoosh', 0.6, 0.85],
   'fortune-heart': ['hit-heavy', 0.55, 1.3],
   'fortune-midas': ['beam-charge', 0.95, 0.7],
+  // Gold Mastery: the kit plays the purse going up itself.
+  'rags-to-riches': null,
 
   // ── Tempest ──
   'tempest-gale': ['gust', 1.3, 0.75],
@@ -373,6 +380,8 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'radiation-bunker': ['stone-rise', 0.8, 0.95],
   'radiation-baton': ['flail-swing', 0.85, 1.0],
   'radiation-extermination': ['reload', 0.85, 1.1],
+  // Radiation Mastery: the kit plays the throw itself.
+  'test-dummy': null,
 
   // ── Bind ──
   // Nothing here is cast by the character; it is all asked for, so four of the five are chords
@@ -408,6 +417,8 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'harvest-frenzy': null,
   'harvest-consume': null,
   'harvest-reap': null,
+  // Harvest Mastery: the kit plays the shotgun's own blast.
+  'corrupt-predation': null,
 
   // ── Death ──
   // Four of the five deal no damage, so none of them gets an impact sound — they get a drain,
@@ -473,7 +484,7 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'resonance': 'sonic-pulse',
   'kinetic-shield': ['shield-up', 1.15],
   'gravity-aura': ['black-hole', 1.6, 0.7],
-  'strength-in-numbers': 'status-buff',
+  'corpse-prince': 'status-buff',
   'reputation-repair': 'curse-cast',
   'cycle': 'card-shuffle',
   'syringe-shot': ['stab', 1.45, 0.9],
@@ -530,8 +541,8 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'delay-the-inevitable': ['clock-tick', 0.95, 0.42],
   'chalk-smudge': ['claw', 0.5, 1.5],
   'living-chalk': ['mutate', 0.85, 1.1],
-  'predictors-snare': ['teleport', 0.8, 1.2],
-  'utter-focus': ['status-curse', 0.9, 0.6],
+  // Pre-move voices itself (the clock strike, then the punish) on the kit's own clock.
+  'pre-move': null,
   'camo-fade': ['smoke', 0.7, 0.75],
   'release-the-kraken': ['roar', 1.0, 0.45],
   // The market goes up like the other three placements, a shade brighter — it is a stall rather

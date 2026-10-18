@@ -181,6 +181,27 @@ const STATUE_MELT_MS = 1000;
 const STATUE_VULN = 2;
 const STATUE_COINS = 3;
 
+// ── Mastery ──────────────────────────────────────────────────────────────────
+// Gilded Augment (passive): low on health, the purse heals you — dearer every second it runs.
+const AUGMENT_AT = 0.3;
+const AUGMENT_TO = 0.55;
+const AUGMENT_HPS = 16;
+/** Gold a second when it starts; the price grows by this much again every `AUGMENT_RAMP_SEC`. */
+const AUGMENT_GOLD_PER_SEC = 2;
+const AUGMENT_RAMP_SEC = 2.5;
+const AUGMENT_SPEED = 1.3;
+// Rags to Riches (bindable): spend the whole purse to gild a little more of the body. Stacks.
+const RAGS_ID = 'rags-to-riches';
+const RAGS_MIN_GOLD = 20;
+/** Short, so a mashed key never spends a purse twice — the 20 gold is the real gate. */
+const RAGS_COOLDOWN_MS = 1500;
+const RAGS_MIGHT = 0.2;
+const RAGS_GREED = 0.5;
+const RAGS_AUGMENT_HEAL = 0.35;
+const RAGS_AUGMENT_DISCOUNT = 0.75;
+/** The bot only cashes in a purse it can spare: above this share of its HP, not saving for a heal. */
+const NPC_RAGS_HP = 0.5;
+
 // ── Bot ──────────────────────────────────────────────────────────────────────
 const NPC_PLUME_SEEK_R = 280;
 const NPC_LOOT_SEEK_R = 300;
@@ -348,6 +369,18 @@ interface Side {
   popAt: number;
   lunge: Lunge | null;
   glow: number;
+  // ── Mastery ──
+  /** Rags to Riches stacks: how much of the body is gold. */
+  riches: number;
+  /** Last Rags to Riches (scene time). Starts a cooldown in the past so it is ready. */
+  ragsAt: number;
+  /** Gilded Augment is healing right now, and since when (the price climbs with it). */
+  augment: boolean;
+  augmentSince: number;
+  /** Gold owed to the augment, paid a whole coin at a time. */
+  augmentDebt: number;
+  /** Gold the augment has spent since the last "-N" pop. */
+  spent: number;
 }
 
 function emptyStats(): Record<StatKind, number> {
@@ -359,6 +392,7 @@ function makeSide(owner: Owner): Side {
     owner, gold: 0, frac: 0, aimX: 0, aimY: 0, stats: emptyStats(), plain: emptyStats(), gems: [],
     ruby: emptyStats(), vigorApplied: 0, pileRollAt: 0, cloaked: false, offer: null,
     floorMs: 0, onFloor: false, pop: 0, popAt: 0, lunge: null, glow: 0,
+    riches: 0, ragsAt: -RAGS_COOLDOWN_MS, augment: false, augmentSince: 0, augmentDebt: 0, spent: 0,
   };
 }
 
@@ -398,6 +432,14 @@ export interface FortuneArenaApi {
   hasUpgrade(owner: Owner, slot: string): boolean;
   /** Online: a pseudo-cast id for an action that never goes through `castAbility`. */
   broadcastMasteryCast(id: string): void;
+  // ── Mastery ──
+  get masteryActive(): boolean;
+  get npcMasteryActive(): boolean;
+  /** Which mastery enhancement each side dropped over an R/F/Q slot, or null. */
+  masteryBindFor(slot: string): string | null;
+  npcMasteryBindFor(slot: string): string | null;
+  /** Mastery progress. Gated on the element by the adapter, so the kit records unconditionally. */
+  recordMasteryStat(key: string, amount: number): void;
 }
 
 // ── FortuneKit ───────────────────────────────────────────────────────────────
@@ -542,7 +584,11 @@ export class FortuneKit {
     return Phaser.Math.Distance.Between(ax + dx * u, ay + dy * u, px, py);
   }
 
-  private might(owner: Owner): number { return 1 + MIGHT_STEP * this.side(owner).stats.might; }
+  /** Might picks and Rags to Riches stacks: every point of damage the kit deals goes through here. */
+  private might(owner: Owner): number {
+    const s = this.side(owner);
+    return (1 + MIGHT_STEP * s.stats.might) * (1 + RAGS_MIGHT * s.riches);
+  }
 
   /** A shop upgrade, only ever true for an alchemist. */
   private up(owner: Owner, slot: string): boolean {
@@ -561,30 +607,36 @@ export class FortuneKit {
 
   // ── The purse ──────────────────────────────────────────────────────────────
 
-  /** Pay `owner`. Greed multiplies every source. */
+  /** Pay `owner`. Greed (and Rags to Riches) multiplies every source. */
   private earn(owner: Owner, amount: number): void {
     if (amount <= 0) return;
     const s = this.side(owner);
-    s.frac += amount * (1 + GREED_STEP * s.stats.greed);
+    s.frac += amount * (1 + GREED_STEP * s.stats.greed + RAGS_GREED * s.riches);
     const whole = Math.floor(s.frac);
     if (whole <= 0) return;
     s.frac -= whole;
     s.gold += whole;
     s.pop += whole;
+    this.record(owner, 'goldMade', whole);
   }
 
   /** Flush pooled "+N" pops over each alchemist's head. */
   private flushPops(): void {
     for (const owner of BOTH) {
       const s = this.side(owner);
-      if (s.pop <= 0 || this.now < s.popAt) continue;
+      if ((s.pop <= 0 && s.spent <= 0) || this.now < s.popAt) continue;
       const f = this.fighter(owner);
       if (this.alive(f) && this.isGold(owner)) {
-        this.announce(f.x + 18, f.y - 34, `+${s.pop} 🪙`, FOR.goldLit, 11);
-        this.fx(owner).goldGain(f.x, f.y - 10, s.pop);
-        Sfx.playAt('money', f.x, { rate: 1.3 + Math.random() * 0.2, volume: 0.35 });
+        if (s.pop > 0) {
+          this.announce(f.x + 18, f.y - 34, `+${s.pop} 🪙`, FOR.goldLit, 11);
+          this.fx(owner).goldGain(f.x, f.y - 10, s.pop);
+          Sfx.playAt('money', f.x, { rate: 1.3 + Math.random() * 0.2, volume: 0.35 });
+        }
+        // Mastery: what Gilded Augment just paid for your life.
+        if (s.spent > 0) this.announce(f.x - 18, f.y - 34, `-${s.spent} 🪙`, FOR.gold, 11);
       }
       s.pop = 0;
+      s.spent = 0;
       s.popAt = this.now + POP_MS;
     }
   }
@@ -640,6 +692,8 @@ export class FortuneKit {
     this.api.setStatusIndicator('gold-floor', null);
     this.api.setStatusIndicator('gold-cloak', null);
     this.api.setStatusIndicator('gold-ruby', null);
+    this.api.setStatusIndicator('gold-augment', null);
+    this.api.setStatusIndicator('gold-riches', null);
     for (const st of STATS) this.api.setStatusIndicator(`gold-stat-${st.kind}`, null);
   }
 
@@ -709,10 +763,19 @@ export class FortuneKit {
         p.castAbility('fortune-advance', ctx);
       }
     }
-    if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('fortune-plume', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('fortune-heart', ctx);
+    // Mastery: whichever of R/F/Q Rags to Riches was dropped on stops being its own ability.
+    const bound = this.ragsSlot('player');
+    if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) {
+      if (bound === 'r') this.tryRags('player');
+      else p.castAbility('fortune-plume', ctx);
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) {
+      if (bound === 'f') this.tryRags('player');
+      else p.castAbility('fortune-heart', ctx);
+    }
     if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) {
-      if (this.midasTarget('player', mouseX, mouseY)) p.castAbility('fortune-midas', ctx);
+      if (bound === 'q') this.tryRags('player');
+      else if (this.midasTarget('player', mouseX, mouseY)) p.castAbility('fortune-midas', ctx);
       else this.announce(p.x, p.y - 46, 'NO TARGET', FOR.blood, 11);
     }
   }
@@ -899,8 +962,12 @@ export class FortuneKit {
     const line = this.cardLine(owner, card);
     s.gold -= card.price;
     s.offer = null;
-    if (card.jewel) s.gems.push({ kind: card.kind, jewel: card.jewel, at: this.now });
-    else s.plain[card.kind]++;
+    if (card.jewel) {
+      s.gems.push({ kind: card.kind, jewel: card.jewel, at: this.now });
+      this.record(owner, 'jewelsBought');
+    } else {
+      s.plain[card.kind]++;
+    }
     this.recompute(owner);
     const f = this.fighter(owner);
     const def = STAT_BY_KIND.get(card.kind)!;
@@ -1057,6 +1124,8 @@ export class FortuneKit {
     this.updateLoot();
     this.updateFloor(delta);
     this.updateOffers();
+    this.updateAugment(delta);
+    this.updateNpcMastery();
     this.updateSelf(dt);
     this.flushPops();
 
@@ -1380,6 +1449,7 @@ export class FortuneKit {
 
   private heartAttack(by: Owner, f: Fighter): void {
     f.takeDamage(HEART_ATTACK_DAMAGE * this.might(by));
+    this.record(by, 'heartAttacks');
     this.stun(f, HEART_STUN_MS);
     this.fx(by).heartAttack(f.x, f.y);
     this.announce(f.x, f.y - 56, '💔 HEART ATTACK', FOR.bloodLit, 15);
@@ -1528,6 +1598,7 @@ export class FortuneKit {
       const gone = !v.active || v.hp <= 0;
       if (!gone && st.live && !st.hit && v.rawDamageTaken > st.raw + 0.01) {
         st.hit = true;
+        this.record(st.by, 'statuesBroken');
         this.fx(st.by).statueCrack(v.x, v.y);
         this.announce(v.x, v.y - 44, 'CRACKED', FOR.brass, 11);
       }
@@ -1666,6 +1737,147 @@ export class FortuneKit {
     f.increaseMaxHp(-d);
     if (f.hp > f.maxHp) f.hp = f.maxHp;
     this.vigorCuts.set(f, had + d);
+  }
+
+  // ── Mastery ────────────────────────────────────────────────────────────────
+
+  /** Whether Element Mastery is on for whichever side is asking, and they are the alchemist. */
+  private masteryOn(owner: Owner): boolean {
+    return this.isGold(owner) && (owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
+  }
+
+  /** Which slot Rags to Riches was dropped on, or null. */
+  private ragsSlot(owner: Owner): 'r' | 'f' | 'q' | null {
+    if (!this.masteryOn(owner)) return null;
+    for (const k of ['r', 'f', 'q'] as const) {
+      const bind = owner === 'player' ? this.api.masteryBindFor(k) : this.api.npcMasteryBindFor(k);
+      if (bind === RAGS_ID) return k;
+    }
+    return null;
+  }
+
+  /**
+   * Mastery progress. Only ever the player's — the grind is the human's, not the bot's — and not
+   * gated on the mastery being on, since earning it is the point.
+   */
+  private record(owner: Owner, key: string, amount = 1): void {
+    if (owner === 'player' && this.isGold('player')) this.api.recordMasteryStat(key, amount);
+  }
+
+  /**
+   * Rags to Riches, from the bound key, the bot, or an online peer's replay.
+   *
+   * It never goes through `castAbility` — the enhancement is not in the element's ability list —
+   * so the refusals that gate every other key are repeated here. A replica pays nothing (its purse
+   * is on its own machine); the stack is counted here so its damage and its body match.
+   */
+  private tryRags(owner: Owner): boolean {
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return false;
+    const s = this.side(owner);
+    let paid = 0;
+    if (!this.isReplica(owner)) {
+      const wall = Date.now();
+      if (wall < f.disarmedUntil || wall < f.chickenUntil || wall < f.silencedUntil || wall < f.stunnedUntil) return false;
+      if (this.now - s.ragsAt < RAGS_COOLDOWN_MS) return false;
+      if (s.gold < RAGS_MIN_GOLD) {
+        if (owner === 'player') {
+          this.announce(f.x, f.y - 46, `NEED ${RAGS_MIN_GOLD} GOLD`, FOR.blood, 11);
+          Sfx.playAt('ui-click', f.x, { rate: 0.7, volume: 0.4 });
+        }
+        return false;
+      }
+      paid = s.gold;
+      s.gold = 0;
+      s.frac = 0;
+    }
+    s.ragsAt = this.now;
+    s.riches++;
+    this.ensureLayers();
+    this.fx(owner).ragsToRiches(f.x, f.y, s.riches);
+    this.avatar(owner)?.play('flex');
+    this.announce(f.x, f.y - 58, s.riches > 1 ? `👑 RAGS TO RICHES ×${s.riches}` : '👑 RAGS TO RICHES', FOR.goldLit, 15);
+    if (paid > 0) this.announce(f.x, f.y - 42, `-${paid} 🪙`, FOR.gold, 11);
+    Sfx.playAt('money', f.x, { rate: 0.55, volume: 1 });
+    Sfx.playAt('beam-charge', f.x, { rate: 1.4, volume: 0.5 });
+    if (owner === 'player' && this.api.isOnline) this.api.broadcastMasteryCast(RAGS_ID);
+    return true;
+  }
+
+  /** Online: the opponent cashed in their purse. */
+  replayRags(): void {
+    this.tryRags('npc');
+  }
+
+  /**
+   * Gilded Augment: below 30% the purse starts paying for HP, until 55% or until it is empty. The
+   * price per second climbs the longer one stretch of healing runs; Rags to Riches stacks make it
+   * heal faster and cost less. Runs on the body's own machine — a replica's heals arrive as HP.
+   */
+  private updateAugment(delta: number): void {
+    const dt = delta / 1000;
+    for (const owner of BOTH) {
+      const s = this.side(owner);
+      const f = this.fighter(owner);
+      const was = s.augment;
+      if (!this.masteryOn(owner) || this.isReplica(owner) || !this.alive(f)) {
+        s.augment = false;
+        continue;
+      }
+      const ratio = f.hp / Math.max(1, f.maxHp);
+      const broke = s.gold <= 0 && s.augmentDebt < 1;
+      if (was) s.augment = ratio < AUGMENT_TO && !broke;
+      else s.augment = ratio < AUGMENT_AT && s.gold > 0;
+      if (!s.augment) {
+        if (was && broke) this.announce(f.x, f.y - 46, 'OUT OF GOLD', FOR.blood, 11);
+        s.augmentDebt = 0;
+        continue;
+      }
+      if (!was) {
+        s.augmentSince = this.now;
+        this.fx(owner).augmentStart(f.x, f.y);
+        this.announce(f.x, f.y - 56, '✨ GILDED AUGMENT', FOR.goldLit, 13);
+        Sfx.playAt('money', f.x, { rate: 0.8, volume: 0.7 });
+      }
+      const running = (this.now - s.augmentSince) / 1000;
+      const rate = AUGMENT_GOLD_PER_SEC * (1 + running / AUGMENT_RAMP_SEC) * Math.pow(RAGS_AUGMENT_DISCOUNT, s.riches);
+      s.augmentDebt += rate * dt;
+      while (s.augmentDebt >= 1 && s.gold > 0) {
+        s.augmentDebt -= 1;
+        s.gold -= 1;
+        s.spent += 1;
+      }
+      f.heal(AUGMENT_HPS * (1 + RAGS_AUGMENT_HEAL * s.riches) * dt);
+      if (Math.random() < dt * 8) this.fx(owner).augmentMote(f.x, f.y);
+    }
+  }
+
+  /**
+   * The bot's half of Rags to Riches: the moment it holds 20 gold and is healthy enough not to need
+   * that gold for Gilded Augment, it cashes in. Driven here, not from `NpcOpponent` — the rotation
+   * only has to leave the bound key alone (and `npcCanAdvance` saves every other purse for this).
+   */
+  private updateNpcMastery(): void {
+    if (this.api.isOnline || this.api.isInvasion || !this.ragsSlot('npc')) return;
+    const n = this.api.npc;
+    const s = this.sides.npc;
+    if (!this.alive(n) || s.offer || s.augment || s.gold < RAGS_MIN_GOLD) return;
+    if (n.hp / Math.max(1, n.maxHp) < NPC_RAGS_HP) return;
+    if (this.now - s.ragsAt < RAGS_COOLDOWN_MS) return;
+    this.tryRags('npc');
+  }
+
+  /** The mastery card: held short of full until the purse holds 20 gold to throw away. */
+  getRagsCooldownRatio(): number {
+    const s = this.sides.player;
+    const cd = Phaser.Math.Clamp((this.now - s.ragsAt) / RAGS_COOLDOWN_MS, 0, 1);
+    const paid = Phaser.Math.Clamp(s.gold / RAGS_MIN_GOLD, 0, 1);
+    return Math.min(cd, paid >= 1 ? 1 : paid * 0.95);
+  }
+
+  /** Which slot the bot gave up for Rags to Riches, so its rotation leaves that key alone. */
+  npcRagsSlot(): 'r' | 'f' | 'q' | undefined {
+    return this.ragsSlot('npc') ?? undefined;
   }
 
   // ── Painting ───────────────────────────────────────────────────────────────
@@ -1852,7 +2064,8 @@ export class FortuneKit {
       av.setFacing(Math.atan2(s.aimY - f.y, s.aimX - f.x));
       av.setGlowHand(Math.max(s.glow, s.offer ? 0.7 : 0));
       av.setGold(Math.min(1, s.gold / 30));
-      av.setMastered(false);
+      av.setMastered(this.masteryOn(owner));
+      av.setGilding(s.riches);
       av.update(delta, f.x, f.y, f.alpha);
     }
   }
@@ -1881,6 +2094,15 @@ export class FortuneKit {
       name: 'Glittery Cloak', emoji: '✨', color: FOR.goldLit, priority: 151.5,
       description: `Standing in your own glittery plume: ${Math.round(CLOAK_DODGE * 100)}% of incoming attacks miss you.`,
     } : null);
+    this.api.setStatusIndicator('gold-augment', playerIs && s.augment ? {
+      name: 'Gilded Augment', emoji: '✨', color: FOR.goldLit, priority: 151.2,
+      description: `Gold Mastery: the purse is paying for your life — ${Math.round(AUGMENT_HPS * (1 + RAGS_AUGMENT_HEAL * s.riches))} HP a second and ${Math.round((AUGMENT_SPEED - 1) * 100)}% faster, until you are back to ${Math.round(AUGMENT_TO * 100)}%. The price climbs the longer it runs.`,
+    } : null);
+    this.api.setStatusIndicator('gold-riches', playerIs && s.riches > 0 ? {
+      name: 'Rags to Riches', emoji: '👑', color: FOR.gold, priority: 151.8,
+      description: `Gold Mastery: ${s.riches} plate${s.riches > 1 ? 's' : ''} of you are solid gold — +${Math.round(RAGS_MIGHT * 100 * s.riches)}% damage, +${Math.round(RAGS_GREED * 100 * s.riches)}% gold, and Gilded Augment heals ${Math.round(RAGS_AUGMENT_HEAL * 100 * s.riches)}% more for ${Math.round((1 - Math.pow(RAGS_AUGMENT_DISCOUNT, s.riches)) * 100)}% less.`,
+      count: s.riches,
+    } : null);
     const rubies = RUBY_KINDS.filter((k) => s.ruby[k] > 0);
     this.api.setStatusIndicator('gold-ruby', playerIs && rubies.length ? {
       name: 'Ruby Curses', emoji: '♦️', color: FOR.bloodLit, priority: 152.5,
@@ -1893,10 +2115,10 @@ export class FortuneKit {
 
   private speedFor(owner: Owner): number {
     const s = this.side(owner);
-    return (1 + STRIDE_STEP * s.stats.stride) * (s.onFloor ? FLOOR_SPEED : 1);
+    return (1 + STRIDE_STEP * s.stats.stride) * (s.onFloor ? FLOOR_SPEED : 1) * (s.augment ? AUGMENT_SPEED : 1);
   }
 
-  /** Stride, the gold floor and a heart attack, pulled by ArenaScene's speed block. */
+  /** Stride, the gold floor, Gilded Augment and a heart attack, pulled by ArenaScene's speed block. */
   getPlayerSpeedMult(): number {
     const p = this.api.player;
     if (!p) return 1;
@@ -1921,7 +2143,13 @@ export class FortuneKit {
   /** True while the bot can afford Advance and is not already choosing. */
   npcCanAdvance(): boolean {
     const s = this.sides.npc;
-    return !s.offer && s.gold >= ADVANCE_COST;
+    if (s.offer || s.gold < ADVANCE_COST) return false;
+    // Mastery: every other purse is saved up for Rags to Riches instead of spent ten at a time.
+    if (this.ragsSlot('npc')) {
+      const picks = STATS.reduce((n, st) => n + s.plain[st.kind], 0) + s.gems.length;
+      if (s.riches * 2 <= picks) return false;
+    }
+    return true;
   }
 
   npcLunging(): boolean { return !!this.sides.npc.lunge; }

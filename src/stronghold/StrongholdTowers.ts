@@ -243,14 +243,14 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
       e: ab(14, 7000, { kind: 'summon', ms: 10000, color: 0xccaaff, attackMs: 800, attackRange: 80, label: '👻' }, 'Arise! A fallen husk stands up for your side.'),
       r: ab(10, 9000, { kind: 'summon', ms: 14000, color: 0x8855cc, attackMs: 1500, attackRange: 120, label: '🪦' }, 'A headstone that spits out grave zombies.'),
       f: ab(22, 6000, { kind: 'splash', radius: 110, color: 0xddbbff, shape: 'burst' }, 'Death Whistle: every amalgam rushes the point.'),
-      q: ab(12, 17000, { kind: 'zone', radius: 140, ms: 6000, color: 0x663399, shape: 'fire' }, "Hell's Torment: ghostfire over the path for 6s."),
+      q: ab(16, 17000, { kind: 'summon', ms: 9000, color: 0x9955ee, attackMs: 700, attackRange: 110, label: '🔄' }, 'Turn: a husk on the path is turned and fights for you.'),
     },
     upgrades: {
       click: { damageMult: 1.5, note: 'possession' },
       e: { rider: { toxic: { ms: 4000, dps: 2 } }, note: 'cruel offering — decay clouds' },
       r: { damageMult: 1.3, note: 'restless ground' },
       f: { damageMult: 1.5, note: 'carrion call' },
-      q: { cooldownMult: 0.8, note: 'unending hell' },
+      q: { damageMult: 1.5, note: 'we are legion — turned bodies come up blooded' },
     },
     mastery: { ...ab(40, 14000, { kind: 'summon', ms: 9000, color: 0x7744aa, attackMs: 600, attackRange: 100, label: '🐺' }, 'Grave Mistake: an Alpha stalks the path.'), name: 'Grave Mistake' },
   },
@@ -319,14 +319,14 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
       e: ab(15, 2800, { kind: 'bolt', color: 0xffcc33, speed: 700, size: 1.1 }, 'A charged gold bolt.'),
       r: ab(20, 5000, { kind: 'bolt', color: 0xaaaaaa, speed: 440, pierce: 3, size: 1.2 }, 'A spinning wrench — every husk it hits is weakened.', { rider: { weaken: { mult: 1.25, ms: 5000 } } }),
       f: ab(0, 7000, { kind: 'barrier', ms: 6000, hp: 140, color: 0xbb8844, label: '🧱' }, 'Create: a block across the path.'),
-      q: ab(10, 18000, { kind: 'summon', ms: 15000, color: 0xcc6622, attackMs: 500, attackRange: 150, label: '⚙️' }, 'Workshop: a saw-throwing automaton for 15s.'),
+      q: ab(60, 18000, { kind: 'splash', radius: 150, color: 0xff3399, delayMs: 800, shape: 'strike' }, 'Self-Destruct: an orbital beam blows a crater in the pack and sets it alight.', { rider: { burn: 4000 } }),
     },
     upgrades: {
       click: { pierceAdd: 2, note: 'blade split' },
       e: { rider: { stun: 500 }, note: 'electro bolt' },
       r: { damageMult: 1.5, note: 'nexus awakening' },
       f: { damageMult: 1.5, note: 'build mode' },
-      q: { damageMult: 1.3, note: 'ultimate invention' },
+      q: { damageMult: 1.3, note: 'scrapnel' },
     },
     mastery: { ...ab(20, 7000, { kind: 'bolt', color: 0xff3399, speed: 380, lob: true, splash: 80, splashMult: 1 }, 'Mortar Command: the Nexus lobs potions.', { rider: { slow: { mult: 0.6, ms: 2500 } } }), name: 'Mortar Command' },
   },
@@ -424,7 +424,7 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
     },
     mastery: { ...ab(30, 9000, { kind: 'bolt', texture: 'proj-light-triangle', color: 0xff8800, speed: 800, pierce: 5 }, 'Killer Kebab: a lance that skewers the line.'), name: 'Killer Kebab' },
   },
-  // Magnet: the 2026-10-15 scrap rework; shop upgrades 2026-10-16. No mastery yet.
+  // Magnet: the 2026-10-15 scrap rework; shop upgrades 2026-10-16; mastery 2026-10-17.
   magnet: {
     tiers: ['Lodestone', 'Coil', 'Dynamo', 'Polar', 'Magnetar'],
     cost: 95, range: 210,
@@ -442,6 +442,7 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
       f: { damageMult: 1.3, rider: { stun: 400, chance: 0.3 }, note: 'electromagnet' },
       q: { damageMult: 1.5, note: 'mega mechancements' },
     },
+    mastery: { ...ab(4, 12000, { kind: 'zone', radius: 95, ms: 10000, color: 0xff3344, shape: 'rune' }, 'Mag-Lev: a crackling maglev track holds the lane at half speed for 10s.', { rider: { slow: { mult: 0.5, ms: 600 } } }), name: 'Mag-Lev' },
   },
   metal: {
     tiers: ['Iron', 'Steel', 'Forge', 'Anvil', 'Adamant'],
@@ -620,20 +621,22 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
     tiers: ['Doze', 'Slumber', 'Reverie', 'Lucid', 'Nightmare'],
     cost: 110, range: 220,
     abilities: {
-      click: ab(6, 400, { kind: 'aura', radius: 150, color: 0x8b5cf6 }, 'Trance: the pendulum swings and the husks grow sleepy.', { rider: { slow: { mult: 0.85, ms: 600 } } }),
-      e: ab(25, 3000, { kind: 'nova', radius: 100, color: 0xccbbff }, 'Pillow Fight: hits hardest on the drowsy.'),
-      r: ab(10, 8000, { kind: 'summon', ms: 12000, color: 0x8b5cf6, attackMs: 2000, attackRange: 120, label: '🕸️' }, 'Dreamcatcher: pulls dreams out of husks.'),
-      f: ab(5, 6000, { kind: 'zone', radius: 100, ms: 10000, color: 0x331155, shape: 'rune' }, 'Nightmare: 5 a second for 10s.'),
-      q: ab(0, 18000, { kind: 'splash', radius: 170, color: 0xeeddff, shape: 'ring' }, 'Oasis: the whole stretch falls asleep.', { rider: { freeze: 2500 } }),
+      click: ab(4, 250, { kind: 'bolt', color: 0xd7b25a, speed: 1400, count: 2, spread: 0.12, size: 0.6 }, 'Sandmen: two little guns, turn about, at whatever walks past.'),
+      e: ab(30, 7000, { kind: 'splash', radius: 70, color: 0x7b4dff, shape: 'ring' }, 'Delve: steps into a sleeper\'s dream and fires the dream pistols.'),
+      r: ab(6, 2600, { kind: 'nova', radius: 90, color: 0xbfd0ff }, 'Pillow Fight: the husks grow drowsy and stop for a moment.', { rider: { freeze: 900 } }),
+      f: ab(8, 3000, { kind: 'bolt', color: 0xc8d4ff, speed: 1150, size: 0.5 }, 'Sleep Tight: a fast little dagger that sends one husk to sleep.', { rider: { freeze: 1800 } }),
+      q: ab(60, 16000, { kind: 'zone', radius: 110, ms: 3000, color: 0x331155, shape: 'rune' }, 'Nightmare: darkness and terror — the pack takes more from everything.', { rider: { weaken: { mult: 1.25, ms: 3000 } } }),
     },
     upgrades: {
-      click: { damageMult: 1.5, note: 'knocked out' },
-      e: { damageMult: 1.3, note: 'pillow fort' },
-      r: { damageMult: 1.4, note: 'good dreams' },
-      f: { rider: { weaken: { mult: 1.15, ms: 5000 } }, note: 'phobia' },
-      q: { rider: { freeze: 3500 }, note: 'night terrors' },
+      // Dream's shop upgrades and mastery were retired with the 2026-10-17 rework; these
+      // placeholders keep the tower's ladder whole until new ones land.
+      click: { damageMult: 1.3, note: 'heavier rounds' },
+      e: { damageMult: 1.3, note: 'deeper dreams' },
+      r: { rider: { freeze: 1400 }, note: 'softer pillow' },
+      f: { cooldownMult: 0.75, note: 'quicker hands' },
+      q: { damageMult: 1.3, note: 'worse nightmares' },
     },
-    mastery: { ...ab(0, 14000, { kind: 'rally', radius: 220, ms: 10000, damageMult: 1.3, color: 0x8b5cf6 }, 'Lifelong Dream: a held thought that grows stronger.'), name: 'Lifelong Dream' },
+    mastery: { ...ab(0, 14000, { kind: 'rally', radius: 220, ms: 10000, damageMult: 1.3, color: 0x8b5cf6 }, 'Dreamwalk: the towers around it fight as if in a dream.'), name: 'Dreamwalk' },
   },
 
   // ── Unstable ──────────────────────────────────────────────────────────
@@ -680,17 +683,17 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
     cost: 100, range: 250,
     abilities: {
       click: ab(20, 900, { kind: 'bolt', texture: 'proj-illusion-crack', color: 0xb45cff, speed: 820, size: 0.8 }, 'Crack Shot: a fast red bullet.'),
-      e: ab(0, 8000, { kind: 'rally', radius: 160, ms: 5000, damageMult: 1.3, color: 0xcc88ff }, 'Illusion Veil: shots through the pane hit harder.'),
+      e: ab(0, 8000, { kind: 'rally', radius: 160, ms: 5000, damageMult: 1.3, color: 0xcc88ff }, 'Illusion Veil: shots through the pane come out with illusions that crack — they hit harder.'),
       r: ab(0, 7000, { kind: 'splash', radius: 80, color: 0xb45cff, shape: 'ring' }, 'Relocate: the pack is somewhere else — further back.', { rider: { knockback: 140 } }),
       f: ab(12, 9000, { kind: 'zone', radius: 120, ms: 3000, color: 0xb45cff, shape: 'rune' }, 'Guise: a decoy holds the pack where it stands, then pays back what it took.', { rider: { slow: { mult: 0.35, ms: 600 } } }),
-      q: ab(10, 18000, { kind: 'bolt', color: 0xb45cff, speed: 700, count: 10, spread: 1.2, pierce: 2, size: 0.6 }, 'Illusion Dance: ten daggers from nowhere.'),
+      q: ab(10, 18000, { kind: 'bolt', color: 0xb45cff, speed: 700, count: 10, spread: 1.2, pierce: 2, size: 0.6 }, 'Illusion Dance: a volley from nowhere.'),
     },
     upgrades: {
       click: { pierceAdd: 5, note: 'immersion breaker' },
-      e: { countAdd: 1, damageMult: 1.1, note: 'duplication' },
+      e: { damageMult: 1.15, cooldownMult: 0.85, note: 'duplication — doubled shots' },
       r: { damageMult: 1, rider: { knockback: 140, stun: 600 }, note: 'phantom' },
       f: { damageMult: 1.25, note: 're-trick' },
-      q: { countAdd: 5, note: 'blade dance' },
+      q: { countAdd: 2, rider: { knockback: 60, stun: 500 }, note: 'bomb dance — blasts that turn the pack around' },
     },
     mastery: { ...ab(0, 12000, { kind: 'rally', radius: 1, ms: 8000, damageMult: 1.5, color: 0x5a189a }, 'Masquerade: masked, the tower hits 50% harder.'), name: 'Masquerade' },
   },
@@ -787,6 +790,8 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
       f: { areaMult: 1.2, cooldownMult: 0.7, note: 'Pocket Crucifix: the cross goes up wherever it is needed' },
       q: { damageMult: 1.3, rider: { slow: { mult: 0.6, ms: 1500 } }, note: 'Pillars of Fire: yellow fire falls with the chariot' },
     },
+    // Mastery 2026-10-17: the Ark of the Covenant — husks that look on it falter and are drawn in.
+    mastery: { ...ab(5, 18000, { kind: 'zone', radius: 120, ms: 12000, color: 0xe8b93a, shape: 'rune' }, 'Ark of the Covenant: husks that look on it slow to stare, and the devout are drawn in.', { rider: { slow: { mult: 0.65, ms: 700 }, weaken: { mult: 1.15, ms: 3000 } } }), name: 'Ark of the Covenant' },
   },
   paper: {
     tiers: ['Leaf', 'Page', 'Chapter', 'Volume', 'Library'],
@@ -826,7 +831,7 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
     },
     mastery: { ...ab(0, 14000, { kind: 'rally', radius: 1, ms: 8000, fireRateMult: 1.5, damageMult: 1.2, color: 0xb9902e }, 'Delay the Inevitable: eight seconds back on the clock.'), name: 'Delay The Inevitable' },
   },
-  // `fortune` is Gold, the alchemist. No mastery since the 2026-10-15 rework; upgrades re-themed 2026-10-16.
+  // `fortune` is Gold, the alchemist. Upgrades re-themed 2026-10-16; mastery 2026-10-17.
   fortune: {
     tiers: ['Lead', 'Copper', 'Silver', 'Gold', 'Philosopher'],
     cost: 100, range: 220,
@@ -844,6 +849,7 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
       f: { damageMult: 1.2, note: 'gold hex' },
       q: { damageMult: 1, cooldownMult: 0.8, note: 'full metal alchemy' },
     },
+    mastery: { ...ab(0, 20000, { kind: 'rally', radius: 1, ms: 20000, fireRateMult: 1.1, damageMult: 1.2, color: 0xf0c33c }, 'Rags to Riches: the alchemist gilds himself — +20% damage, near enough for good.'), name: 'Rags to Riches' },
   },
   marrow: {
     tiers: ['Stem Cell', 'Marrow', 'Ribcage', 'Fever', 'Pandemic'],
@@ -887,16 +893,16 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
     abilities: {
       click: ab(12, 650, { kind: 'line', length: 180, width: 44, color: 0x7d5cff }, 'Cosmic Whip: a lash down the path; the star mace at the tip stuns whatever it lands on.', { rider: { stun: 500 } }),
       e: ab(22, 6000, { kind: 'splash', radius: 90, color: 0xffd166, shape: 'strike' }, 'Truth Breaker: a true-damage slash that ignores every husk\'s armour.'),
-      r: ab(0, 14000, { kind: 'rally', radius: 150, ms: 4500, fireRateMult: 1.4, damageMult: 1.15, color: 0xffc83d }, 'Determination: the towers nearby decide to win — faster and harder for a while.'),
+      r: ab(10, 9000, { kind: 'splash', radius: 110, color: 0xffc83d, shape: 'strike' }, 'Parry: Excalibur turns the pack aside — every husk near the tower is stunned for 2s.', { rider: { stun: 2000 } }),
       f: ab(8, 16000, { kind: 'line', length: 300, width: 70, color: 0x3b2a6b }, 'Beast of Myth: the beast pours down the path, chewing everything in it and dragging it back.', { rider: { slow: { mult: 0.4, ms: 1200 } } }),
       q: ab(30, 30000, { kind: 'splash', radius: 150, color: 0xff4a5e, shape: 'burst' }, 'Shadow Rocket of Doom: one slow rocket, one enormous blast, and a cloud that lingers.', { rider: { stun: 800 } }),
     },
     upgrades: {
-      click: { damageMult: 1.3, note: 'phantom maces' },
-      e: { damageMult: 1.45, note: 'truth dash' },
-      r: { areaMult: 1.3, cooldownMult: 0.8, note: 'longer oath' },
-      f: { damageMult: 1.4, note: 'recalled beast' },
-      q: { areaMult: 1.3, damageMult: 1.2, note: 'direct hit' },
+      click: { damageMult: 1.3, note: 'Unquenched: the crowd throws stars too' },
+      e: { damageMult: 1.3, rider: { slow: { mult: 0.6, ms: 3000 } }, note: 'World Shatter: the slash leaves a rift' },
+      r: { cooldownMult: 0.65, note: 'Outskilled: the sword is back up sooner' },
+      f: { damageMult: 1.4, note: 'Beyonders: a rider throwing spears' },
+      q: { areaMult: 1.3, damageMult: 1.3, note: 'Slayer: every gun\'s second act' },
     },
   },
   cloth: {
@@ -935,8 +941,9 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
       f: { damageMult: 1.2, areaMult: 1.25, note: 'Castle: a slam where the rook comes down' },
       q: { cooldownMult: 0.8, note: 'Checkmate: a quicker coronation' },
     },
-    mastery: { ...ab(0, 14000, { kind: 'rally', radius: 230, ms: 8000, fireRateMult: 1.3, damageMult: 1.3, color: 0xffd166 }, 'Utter Focus: the future opens for every tower nearby.'), name: 'Utter Focus' },
+    mastery: { ...ab(25, 7000, { kind: 'splash', radius: 70, color: 0xb98cff, delayMs: 600, shape: 'burst' }, 'Pre-move: the tower calls the square a husk is about to step on — a burst, a stun and a slow when it does.', { rider: { stun: 600, slow: { mult: 0.7, ms: 3000 } } }), name: 'Pre-move' },
   },
+  // Radiation: the 2026-10-15 rework; shop upgrades 2026-10-16; mastery 2026-10-17.
   radiation: {
     tiers: ['Trace', 'Dose', 'Fallout', 'Meltdown', 'Half-Life'],
     cost: 100, range: 250,
@@ -954,6 +961,7 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
       f: { damageMult: 1.25, areaMult: 1.25, note: 'Mutation: swollen husks are easier to hit' },
       q: { areaMult: 1.3, rider: { toxic: { ms: 9000, dps: 7 }, slow: { mult: 0.5, ms: 3000 } }, note: 'Complete Annihilation: fallout puddles, over-radiated husks' },
     },
+    mastery: { ...ab(0, 14000, { kind: 'barrier', ms: 12000, hp: 25, color: 0xe0b52a, label: '🎯' }, 'Test Dummy: a crash-test dummy the lane stops to beat on.'), name: 'Test Dummy' },
   },
   bind: {
     tiers: ['Knot', 'Shackle', 'Idol', 'Covenant', 'Broken God'],
@@ -993,7 +1001,7 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
     },
     mastery: { ...ab(0, 12000, { kind: 'barrier', ms: 9000, hp: 220, color: 0x2b8b76, label: '🟩' }, 'Oobleck: a slab everything sticks in.'), name: 'Oobleck' },
   },
-  // Harvest (id `gluttony`). Upgrades re-themed 2026-10-16; no mastery yet.
+  // Harvest (id `gluttony`). Upgrades re-themed 2026-10-16; mastery 2026-10-17.
   gluttony: {
     tiers: ['Seedling', 'Sprout', 'Blight', 'Rot', 'Reaper'],
     cost: 95, range: 200,
@@ -1011,6 +1019,7 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
       f: { damageMult: 1.2, note: 'corrupt cooking' },
       q: { cooldownMult: 0.6, note: 'endless harvest' },
     },
+    mastery: { ...ab(5, 3000, { kind: 'bolt', color: 0xb45cf0, speed: 900, count: 12, spread: 0.09 }, 'Corrupt Predation: a long-range blast of twelve rot pellets that leaves the pack corrupted.', { rider: { weaken: { mult: 1.15, ms: 4000 } } }), name: 'Corrupt Predation' },
   },
 
   // ── Vault ─────────────────────────────────────────────────────────────

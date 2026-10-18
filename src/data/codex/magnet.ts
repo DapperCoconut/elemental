@@ -5,7 +5,7 @@ import { ElementCodex } from '../AbilityCodex';
  *
  * Verified against `src/elements/magnet.ts`, `kits/MagnetKit.ts` and `kits/MagnetMech.ts`; every
  * number is a constant at the top of one of those two kits. Shop upgrades (Shatter Shot, Magnetize,
- * Nailstorm, Electromagnet, Mega Mechancements) landed 2026-10-16; the mastery is still owed. The
+ * Nailstorm, Electromagnet, Mega Mechancements) landed 2026-10-16; the mastery (Magnetic Field + Mag-Lev) on 2026-10-17. The
  * Blade perk was rewritten for the new kit.
  */
 const magnet: ElementCodex = {
@@ -247,6 +247,51 @@ const magnet: ElementCodex = {
         { tag: 'summon', label: 'More scrap', detail: 'Shatters into 5 shards instead of 3.' },
       ],
       notes: ['The perk\'s ingredients are electricity, acid, fate and light.'],
+    },
+  },
+
+  mastery: {
+    'magnetic-field': {
+      basics:
+        'A very faint blue field hangs round you, 72px out. Every enemy projectile that crosses into '
+        + 'it is bent 2° off its line — once — away from your centre. It is a small nudge, not a '
+        + 'shield: a shot aimed dead at you still lands, but one that would only have clipped you '
+        + 'slides past.',
+      cast: 'Passive. Always on while Magnet Mastery is enabled and Magnet is the element being played.',
+      effects: [
+        { tag: 'shield', label: 'Bent aside', detail: 'Enemy shots entering 72px are turned 2° away from you, once each.' },
+      ],
+      notes: [
+        'The field always bends a shot away from your centre, never toward it, so it can only help.',
+        'It is off while you pilot the mech.',
+        'In Invasion husk shots are bent too. Online, both machines bend the same shot the same way.',
+      ],
+    },
+    'mag-lev': {
+      basics:
+        'Magnetise the ground. A track of crackling red maglev ground runs out from your feet, a patch '
+        + 'at a time, toward the cursor — and it keeps following the cursor while it is laid, so you '
+        + 'can steer it like Shadow\'s tentacle wall. Sixteen 30px patches, 34px apart. The ground stays '
+        + 'magnetised for 10 seconds. On it you float — like Magic\'s Levitate, the floor\'s own hazards '
+        + 'cannot touch you — and move 50% faster. A foe on it who is magnetised (by E+ Magnetize) or '
+        + 'carrying one of your nails moves 50% slower. A coin over the track never lands: it rises to '
+        + 'its peak and hangs there until the ground goes dead. And Repulse the track — let the cone '
+        + 'touch it — and it throws you backward, away from where you aimed. Bindable to R, F or Q. '
+        + '14s cooldown.',
+      cast: 'The bound key (R, F or Q). Steer the track with the cursor while it lays.',
+      effects: [
+        { tag: 'area', label: 'Maglev ground', detail: '16 patches of 30px, steered by the cursor; 10s.' },
+        { tag: 'buff', label: 'Float', detail: 'On your track: +50% speed, and floor hazards skip you.' },
+        { tag: 'control', label: 'Held', detail: 'Magnetised or nailed foes on your track: −50% speed.' },
+        { tag: 'utility', label: 'Hanging coins', detail: 'Coins over the track do not land until it goes dead.' },
+        { tag: 'movement', label: 'Mag Kick', detail: 'Repulse that touches your track throws you backward (980px/s for 0.32s).' },
+      ],
+      notes: [
+        'Lay it under a nailed foe, then walk the coins over it: they hang there until Repulse fires them.',
+        'The kick and the Repulse happen together — fire the coins forward and fly out the back.',
+        'Binding it over a key takes that key\'s second job too (the nail rip-out on R, the zip on F).',
+        'A Magnet NPC on Nightmare binds it over Steel Spike and lays it at targets it has nailed or magnetised; hurt and cornered, it kicks off it.',
+      ],
     },
   },
 };

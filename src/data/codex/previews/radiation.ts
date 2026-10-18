@@ -1,8 +1,9 @@
 import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import {
-  RAD, RadiationAvatar, RadiationFx, barrageCone, bunkerTurret, dropFootprint, falloutBunker,
-  falloutPuddle, flareRound, geigerTracer, lockReticle, trefoil, uraniumRod,
+  RAD, RadiationAvatar, RadiationFx, barrageCone, bunkerTurret, doseCells, dropFootprint, dummyLink,
+  falloutBunker, falloutPuddle, flareRound, geigerTracer, lockReticle, testDummy, trefoil, uraniumRod,
+  xrayOutline,
 } from '../../../elements/kits/RadiationVisuals';
 
 /**
@@ -921,5 +922,158 @@ export const irradiated: PreviewScript = {
     ctx.at(6200, () => readout.setText('a second dose refreshes the window — there is no stack'));
     ctx.at(8200, () => readout.setText('and it is what turns Barrage up to 8 a round and the Rod Baton into a stun'));
     ctx.onFrame((dt) => { if (dose.left > 0) dose.left -= (dt / 1000) / 10; });
+  },
+};
+
+// ══ MASTERY ═══════════════════════════════════════════════════════════
+
+/** A plain enemy body with its own alpha, so stealth can be shown fading it out. */
+function fadingFoe(ctx: PreviewCtx, at: { x: number; y: number; alpha: number }): void {
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+  ctx.onFrame(() => {
+    g.clear();
+    const a = at.alpha;
+    if (a <= 0.01) return;
+    g.fillStyle(0x2b2f3d, a); g.fillCircle(at.x, at.y, 17);
+    g.fillStyle(0x3c4254, a); g.fillCircle(at.x, at.y, 13);
+    g.fillStyle(0x8e97ad, 0.9 * a);
+    g.fillCircle(at.x - 5, at.y - 4, 3.2); g.fillCircle(at.x + 5, at.y - 4, 3.2);
+  });
+}
+
+export const masteryXray: PreviewScript = {
+  duration: 9000,
+  scale: 0.9,
+  caption: 'X-Ray Vision — every enemy carries a green outline on your screen, and the outline stays when they turn invisible',
+  run(ctx) {
+    const av = ctx.useAvatar(() => new RadiationAvatar(ctx.scene, ctx.tint));
+    suit(av)?.setMastered(true);
+    const foe = { x: ctx.cx + 160, y: ctx.cy, alpha: 1 };
+    fadingFoe(ctx, foe);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#7cff3d', 11);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(16));
+    ctx.onFrame((dt, elapsed) => {
+      const t = elapsed / 1000;
+      // A slow figure-eight so the outline is seen to follow a moving body.
+      foe.x = ctx.cx + 150 + Math.sin(t * 0.9) * 70;
+      foe.y = ctx.cy + Math.sin(t * 1.8) * 45;
+      const c = ctx.casterAt();
+      av.setFacing(Math.atan2(foe.y - c.y, foe.x - c.x));
+      if (elapsed > 2600 && elapsed < 7600) foe.alpha = Math.max(0, foe.alpha - dt / 600);
+      else if (elapsed >= 7600) foe.alpha = Math.min(1, foe.alpha + dt / 600);
+      g.clear();
+      xrayOutline(g, ctx.tint, foe.x, foe.y, 26, 0.9, t, 1.3);
+    });
+    ctx.at(300, () => readout.setText('every enemy wears a green outline on your screen'));
+    ctx.at(2600, () => {
+      float(ctx, foe.x, foe.y - 44, 'STEALTH', '#9aa3b8', 11);
+      readout.setText('they go invisible — the outline does not care');
+    });
+    ctx.at(5000, () => readout.setText('stealth, camouflage, fading out: you still see where they are'));
+    ctx.at(7600, () => readout.setText('a Radiation bot with the mastery is not fooled either'));
+  },
+};
+
+export const masteryDummy: PreviewScript = {
+  duration: 11000,
+  scale: 0.85,
+  caption: 'Test Dummy — throw a 25 HP dummy on a green link: until it dies you cannot be hurt, and bots switch to shooting it',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new RadiationAvatar(ctx.scene, ctx.tint));
+    suit(av)?.setMastered(true);
+    const shooter = { x: ctx.cx + 300, y: ctx.cy };
+    dummyAt(ctx, shooter);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#e0b52a', 11);
+
+    const DUMMY_HP = 25;
+    const dm = { on: false, x: ctx.cx + 110, y: ctx.cy + 50, fromX: 0, fromY: 0, at: 0, hp: DUMMY_HP, hit: 0 };
+    const pos = (elapsed: number): { x: number; y: number; lift: number; u: number } => {
+      const u = Phaser.Math.Clamp((elapsed - dm.at) / 380, 0, 1);
+      return {
+        x: Phaser.Math.Linear(dm.fromX, dm.x, u), y: Phaser.Math.Linear(dm.fromY, dm.y, u),
+        lift: Math.sin(u * Math.PI) * 46, u,
+      };
+    };
+    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
+    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(16));
+    const shots: { x: number; y: number; vx: number; vy: number; done: boolean }[] = [];
+    let now = 0;
+
+    const hurtDummy = (n: number): void => {
+      const p = pos(now);
+      dm.hp -= n; dm.hit = 1;
+      float(ctx, p.x, p.y - 40, `🎯 ${n}`, hex(RAD.hazard), 12);
+      if (dm.hp <= 0) {
+        dm.on = false;
+        ctx.capture(() => fx.dummyBreak(p.x, p.y));
+        float(ctx, p.x, p.y - 54, '✖ DUMMY DOWN', hex(RAD.hazard), 12);
+        readout.setText('at 0 HP it breaks, and you are back on the line');
+      }
+    };
+
+    ctx.onFrame((dt, elapsed) => {
+      now = elapsed;
+      const t = elapsed / 1000;
+      const c = ctx.casterAt();
+      ground.clear();
+      air.clear();
+      dm.hit = Math.max(0, dm.hit - dt / 240);
+      if (dm.on) {
+        const p = pos(elapsed);
+        dummyLink(ground, ctx.tint, c.x, c.y + 4, p.x, p.y - p.lift - 2, 0.85, t, dm.hit);
+        testDummy(ground, ctx.tint, p.x, p.y, 0.98, t, {
+          hp: Math.max(0, dm.hp / DUMMY_HP), hit: dm.hit, lift: p.lift, tumble: p.u < 1 ? p.u * Math.PI * 4 : 0, seed: 4.2,
+        });
+        if (p.u >= 1) doseCells(ground, ctx.tint, p.x, p.y - 34, Math.ceil(Math.max(0, dm.hp) / 5), 5, 0.4 + dm.hit * 0.6, t);
+      }
+      for (const sh of shots) {
+        if (sh.done) continue;
+        sh.x += sh.vx * (dt / 1000);
+        sh.y += sh.vy * (dt / 1000);
+        if (dm.on && pos(elapsed).u >= 1 && Phaser.Math.Distance.Between(sh.x, sh.y, dm.x, dm.y - 4) < 22) {
+          sh.done = true;
+          ctx.capture(() => fx.bunkerHit(sh.x, sh.y, 0));
+          hurtDummy(5);
+          continue;
+        }
+        if (Phaser.Math.Distance.Between(sh.x, sh.y, c.x, c.y) < 20) {
+          sh.done = true;
+          if (dm.on) { hurtDummy(5); readout.setText('a hit that reaches you runs down the link instead'); }
+          else float(ctx, c.x, c.y - 36, '-5', '#ff6677', 12);
+          continue;
+        }
+        if (sh.x < -20) sh.done = true;
+        air.fillStyle(0xff7a59, 0.95); air.fillCircle(sh.x, sh.y, 6);
+        air.fillStyle(0xffe1d4, 0.9); air.fillCircle(sh.x, sh.y, 2.6);
+      }
+    });
+
+    // The shooter aims at whatever it thinks is the target: you, then the dummy once it stands.
+    const fire = (at: number, atDummy: boolean): void => ctx.at(at, () => {
+      const c = ctx.casterAt();
+      const tx = atDummy && dm.on ? dm.x : c.x;
+      const ty = atDummy && dm.on ? dm.y - 4 : c.y;
+      const a = Math.atan2(ty - shooter.y, tx - (shooter.x - 18));
+      shots.push({ x: shooter.x - 18, y: shooter.y, vx: Math.cos(a) * 480, vy: Math.sin(a) * 480, done: false });
+    });
+
+    ctx.at(300, () => readout.setText('the bot is shooting at you'));
+    fire(500, false);
+    ctx.at(1500, () => {
+      const c = ctx.casterAt();
+      dm.on = true; dm.hp = DUMMY_HP; dm.at = 1500; dm.fromX = c.x; dm.fromY = c.y;
+      av.play('punch', Math.atan2(dm.y - c.y, dm.x - c.x), 320);
+      float(ctx, c.x, c.y - 52, '🎯 TEST DUMMY', hex(RAD.hazard), 12);
+      readout.setText('throw the dummy — it is tied to you by a faint green link');
+    });
+    ctx.at(1880, () => ctx.capture(() => fx.dummyLand(dm.x, dm.y)));
+    ctx.at(2600, () => readout.setText('the bot switches targets: the dummy, not you'));
+    for (let i = 0; i < 3; i++) fire(2800 + i * 700, true);
+    fire(5100, false);
+    fire(6100, true);
+    fire(7600, false);
+    fire(8800, false);
+    ctx.at(9800, () => readout.setText('25 HP, 12 seconds, and it takes your own airdrop for you'));
   },
 };

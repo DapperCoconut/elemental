@@ -186,14 +186,14 @@ const creation: ElementCodex = {
         'Hold F, drag out a rectangle up to 200×200px and release to build a 125 HP wall — the ability '
         + 'card still says 25, and it is 250 while an Overclock mech arm is running. Enemy projectiles '
         + 'entering it are destroyed and subtract their own damage from its health, while your own shots '
-        + 'pass through untouched. It pushes both fighters out, including you, unless your Workshop is '
-        + 'up, in which case you walk over your own barriers freely. Anything under 12px on a side is '
-        + 'discarded. 3s cooldown, paid on release.',
+        + 'pass through untouched. It pushes both fighters out, including you. Anything under 12px on a '
+        + 'side is discarded. 3s cooldown, paid on release. Every wall you stand up is also a bomb for '
+        + 'Self-Destruct (Q).',
       cast: 'Hold F and drag out a rectangle; release to build it. Anything under 12px on a side is discarded.',
       effects: [
         { tag: 'summon', label: 'The wall', detail: '125 HP, up to 200×200px. The ability card still says 25 HP; the kit builds it at 125, and at 250 while an Overclock mech arm is running.' },
         { tag: 'shield', label: 'Shot trap', detail: 'Enemy projectiles entering it are destroyed and subtract their own damage from the wall\'s health. Your own shots pass through untouched.' },
-        { tag: 'control', label: 'Solid', detail: 'Both fighters are pushed out of it — including you, unless your Workshop is up, in which case you walk over your own barriers freely.' },
+        { tag: 'control', label: 'Solid', detail: 'Both fighters are pushed out of it — including you.' },
         { tag: 'utility', label: 'Availability', detail: '3s cooldown, paid on release.' },
       ],
       upgrade: {
@@ -214,53 +214,54 @@ const creation: ElementCodex = {
         ],
       },
       notes: [
-        'Build Mode has no Create, no bolts, no wrench and no Workshop — you give up the whole element for as long as you are in it.',
+        'Build Mode has no Create, no bolts, no wrench and no Self-Destruct (Q builds spike blocks in there) — you give up the whole element for as long as you are in it.',
         'Mortar Command deliberately does not take over a slot while you are in Build Mode; the build ability keeps the key.',
         'Walls, pads and spike blocks all count toward Creation Mastery\'s Contractor requirement (200 needed).',
         'An Overclock mech arm doubles every structure\'s health: 250 walls, 80 pads, 100 spike blocks.',
       ],
     },
 
-    'maze-of-doom': {
+    'self-destruct': {
       basics:
-        'Thirty seconds of home ground: +25% move speed throughout, and your own Create blocks stop '
-        + 'pushing you out while theirs still stop them. The whole arena gets a boarded overlay and you '
-        + 'stamp a sawdust footprint every 70ms as you walk. 45s cooldown, so it is up for 30 of every 45 '
-        + 'seconds at best.',
-      cast: 'Q. Instant, no aim.',
+        'Pull out a comical remote and push the big red button. After a 0.44s wind-up every wall, '
+        + 'speed pad, spike block, automaton and mech you own — and the Nexus — gets an orbital reticle, '
+        + 'one after another 0.11s apart, and blows up 0.38s after its reticle appears. Walls and pads '
+        + 'explode for 15 (pads 10) in a 58–140px blast that grows with their size; a mech explodes for '
+        + '25 in 125px and throws its pilot clear; an automaton pops for 10 in 66px. Each one also '
+        + 'flings 10–28 bits of shrapnel outward (4 damage each, first foe hit). The Nexus goes last and '
+        + 'biggest: 30 damage in 185px, sets everything it catches alight for 4s, smashes every bottle '
+        + 'and loaded bolt on it, and lies in ash for 8 seconds — no loading, brewing, drinking, Mortar '
+        + 'Command or Awakening — before it powers back on. 40s cooldown.',
+      cast: 'Q. Instant, no aim. Refuses without spending the cooldown if you have nothing standing to blow up.',
       effects: [
-        { tag: 'buff', label: 'Home ground', detail: '+25% move speed for the full 30 seconds.' },
-        { tag: 'movement', label: 'Your own walls stop blocking you', detail: 'The Workshop owner is exempt from being pushed out of their own Create blocks. Theirs still stop them.' },
-        { tag: 'area', label: 'The floor', detail: 'A boarded overlay across the whole arena, plus a sawdust footprint stamped every 70ms as you walk.' },
-        { tag: 'utility', label: 'Availability', detail: '45s cooldown, so it is up for 30 of every 45 seconds at best.' },
+        { tag: 'damage', label: 'Walls, pads and spike blocks', detail: '15 damage (speed pads 10) in a blast of 48px + 40% of the build\'s longest side, clamped to 58–140px.' },
+        { tag: 'damage', label: 'Mech', detail: '25 damage in 125px. The mech is wrecked as if it had run out of HP — the pilot is thrown clear, unhurt, and the Nexus rebuilds 4s later as usual.' },
+        { tag: 'damage', label: 'Automatons', detail: '10 damage in 66px each.' },
+        { tag: 'damage', label: 'Shrapnel', detail: 'Every wall, pad, mech and automaton flings 10–28 shards outward (more for bigger builds, 28 for a mech). Each cuts the first foe it meets for 4.' },
+        { tag: 'damage', label: 'The Nexus', detail: '30 damage in 185px and every foe caught is set alight for 4 seconds. It throws no shrapnel.' },
+        { tag: 'cost', label: 'Ash', detail: 'The Nexus is out of action for 8 seconds: bottles on it and loaded bolts are lost, nothing can be loaded, brewed or drunk, and Mortar Command and Nexus Awakening have nothing to work with.' },
+        { tag: 'utility', label: 'Order', detail: 'Builds first, then automatons, then the mech, then the Nexus — 0.11s apart, so a field of walls goes up as a chain. Anything built after the button goes down is safe.' },
+        { tag: 'utility', label: 'Availability', detail: '40s cooldown.' },
       ],
       upgrade: {
         basics:
-          'Q becomes a slider panel — Danger, Bias and Clutter — and the Workshop runs on an unstable '
-          + 'timer instead of a fixed 30 seconds: it starts at 30 and drains at 1 + 1.5× the sum of the '
-          + 'three sliders, so all three at maximum burns it at 5.5× and lasts about 5.5 real seconds. '
-          + 'Danger sends a spinning saw across the arena every 4s at zero and every 1.4s at maximum for 25 '
-          + 'damage to each enemy as it passes, plus a 5-nail volley from a random edge every 3.5s down to '
-          + 'every 1.3s at 10 damage a nail at 380 px/s. Bias gives up to +75% outgoing damage and +75% '
-          + 'move speed straight off the slider, and above halfway also heals you 3 HP a second. Clutter '
-          + 'builds up to 4 concentric rings of 46px crates, inset 24px and then every 52px, which destroy '
-          + 'enemy projectiles on contact and push the enemy out while you walk through freely — and never '
-          + 'sit on top of the Nexus, however high it is pushed.',
+          'Scrapnel: everything Self-Destruct blows up also litters the floor with a heap of scrap — '
+          + '18–48 pieces round a wall or pad (more for bigger builds), 52 round a mech, 16 round an '
+          + 'automaton — and every flung shard that does not hit anybody lands as one more piece. Each '
+          + 'piece cuts the first foe across it for 4 and is gone; a foe wading through a carpet of it is '
+          + 'cut at most once every 0.14s. Pieces lie for 14 seconds. The Nexus leaves none.',
         effects: [
-          { tag: 'cost', label: 'The unstable timer', detail: 'Starts at 30s and drains at 1 + 1.5× the sum of the three sliders. All three at maximum burns it at 5.5× — about 5.5 real seconds.', requiresUpgrade: 'q' },
-          { tag: 'damage', label: 'Danger — saws', detail: 'A spinning saw crosses the arena every 4s at zero and every 1.4s at maximum, dealing 25 damage to each enemy once as it passes.', requiresUpgrade: 'q' },
-          { tag: 'damage', label: 'Danger — nail bursts', detail: 'A 5-nail volley from a random edge every 3.5s at zero, every 1.3s at maximum. 10 damage per nail at 380 px/s.', requiresUpgrade: 'q' },
-          { tag: 'buff', label: 'Bias — output and footspeed', detail: 'Up to +75% outgoing damage and +75% move speed, scaling straight off the slider.', requiresUpgrade: 'q' },
-          { tag: 'heal', label: 'Bias — regeneration', detail: 'Above the halfway mark it also heals you 3 HP every second.', requiresUpgrade: 'q' },
-          { tag: 'summon', label: 'Clutter — crates', detail: 'Up to 4 concentric rings of 46px crates inset 24px and then every 52px. They destroy enemy projectiles on contact and push the enemy out; you walk through them freely.', requiresUpgrade: 'q' },
-          { tag: 'utility', label: 'The Nexus stays reachable', detail: 'Crates are never placed on top of the Nexus, however high Clutter is pushed.', requiresUpgrade: 'q' },
+          { tag: 'damage', label: 'Floor scrap', detail: 'Each piece deals 4 to the first foe across it and is used up. At most one cut per foe every 0.14s.', requiresUpgrade: 'q' },
+          { tag: 'area', label: 'A ton of it', detail: '18–48 pieces per wall or pad, 52 per mech, 16 per automaton, plus every flung shard that misses.', requiresUpgrade: 'q' },
+          { tag: 'utility', label: 'Lifetime', detail: '14 seconds, fading over the last one.', requiresUpgrade: 'q' },
+          { tag: 'cost', label: 'Not the Nexus', detail: 'The Nexus explosion leaves no scrap.', requiresUpgrade: 'q' },
         ],
       },
       notes: [
-        'This upgrade used to be Enhanced Maze, back when Q was Maze of Doom. That ability is gone; the shop card now names the slider panel described above.',
-        'The saws and nails are yours and only ever hit the other side, so Danger is pure profit apart from the timer it burns.',
-        'The panel is screen-space and draggable with the mouse; dragging a slider does not fire Dagger Spray.',
-        'Kills made while your Workshop is up count toward Creation Mastery\'s Home Advantage requirement (5 needed).',
+        'Q used to be the Workshop (and before that Maze of Doom); Q+ used to be Ultimate Invention. Both are gone.',
+        'Every Create wall is a bomb waiting for the button: build on top of them, then push it.',
+        'Blasts, shrapnel and Scrapnel only ever hurt the other side.',
+        'Kills from blasts, shrapnel and Scrapnel count toward Creation Mastery\'s Demolition Expert requirement (5 needed).',
       ],
     },
   },
@@ -268,21 +269,21 @@ const creation: ElementCodex = {
   perks: {
     automaton: {
       basics:
-        'Casting the Workshop marches 3 automatons out of you, fanned evenly around your feet. Each '
-        + 'runs for 20 seconds — or until the Workshop\'s own 30 runs out, whichever comes first — '
-        + 'wandering at 60 px/s and bouncing off the arena edges. Each deals 12 damage to anyone within '
-        + '24px on its own 0.5s cooldown, so three in the same place is 36 damage every half second. One '
-        + 'that wanders within 34px of your Nexus is wound back up to a fresh 20 seconds.',
-      cast: 'Automatic — 3 of them march out the moment the Workshop (Q) is cast.',
+        'When your Nexus powers back on after Self-Destruct blew it up, 3 automatons march out of it, '
+        + 'fanned evenly round the pedestal. Each runs for 20 seconds, wandering at 60 px/s and bouncing '
+        + 'off the arena edges, and deals 12 damage to anyone within 24px on its own 0.5s cooldown, so '
+        + 'three in the same place is 36 damage every half second. One that wanders within 34px of your '
+        + 'Nexus is wound back up to a fresh 20 seconds.',
+      cast: 'Automatic — 3 of them march out the moment the Nexus finishes repairing after Self-Destruct (Q).',
       effects: [
-        { tag: 'summon', label: 'The bots', detail: '3 automatons fanned around you, each running 20 seconds and wandering at 60 px/s.' },
+        { tag: 'summon', label: 'The bots', detail: '3 automatons fanned round the Nexus, each running 20 seconds and wandering at 60 px/s.' },
         { tag: 'damage', label: 'Contact', detail: '12 damage to anyone within 24px, with a 0.5 second cooldown per bot — three bots in the same place is 36 damage every half second.' },
         { tag: 'utility', label: 'Servicing', detail: 'Passing within 34px of your Nexus resets that bot to a fresh 20 seconds, at most once every 8 seconds per bot.' },
-        { tag: 'cost', label: 'They die with the floor', detail: 'No automaton can outlive the Workshop that built it, however recently it was wound up.' },
+        { tag: 'damage', label: 'Ammunition', detail: 'They are yours, so the next Self-Destruct blows them up too — 10 damage and a burst of shrapnel each.' },
       ],
       notes: [
-        'This perk used to hang off Maze of Doom. That ability is gone; the Workshop is the Q it left behind, and the bots now march off the floor it hammers down.',
-        'They wander rather than hunt, so the Nexus servicing is the only steering you get — a bot that happens to patrol near the core outlasts the rest by a wide margin.',
+        'This perk used to hang off Maze of Doom, then the Workshop. Both are gone; the bots now come with the rebuilt Nexus.',
+        'Only a Nexus that Self-Destruct blew up staffs itself — one rebuilding after a wrecked mech does not.',
       ],
     },
   },

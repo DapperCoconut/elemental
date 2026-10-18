@@ -464,10 +464,10 @@ const JOURNAL_ELEMENTS: Record<string, JournalElement> = {
     pages: [
       ['Asleep', 'You lost consciousness, not health. The health went afterwards, at its leisure.'],
       ['Stay Awake', 'Drowsiness builds while you are passive. Passive is the one thing you cannot afford.'],
-      ['Sleep Debt', 'It accumulates across the whole fight and never resets on its own.'],
+      ['Sleep Debt', 'It drains slowly once nothing is adding to it. Every quiet second pays a little back.'],
       ['Between Lulls', 'Its pressure comes in waves and the trough is long. Act in the trough.'],
       ['Damage Wakes You', 'Taking a hit is a tool. Sometimes the cheapest way out is to be hit.'],
-      ['Break the Pendulum', 'What it swings needs room and rhythm. Deny either and it is inert.'],
+      ['The Dream Ends', 'Inside your dream it cannot wake you, but your sleep still runs out. Survive it.'],
     ],
   },
   chalk: {
@@ -499,7 +499,7 @@ const JOURNAL_ELEMENTS: Record<string, JournalElement> = {
       ['Do Not Commit', 'Every big swing you took went into empty air. Jab until you are certain.'],
       ['Folded', 'What it did to your shape was not cosmetic. It changed what could hit you.'],
       ['Find the Real One', 'Only one of them affects the world. Watch the floor, not the figures.'],
-      ['Through the Pane', 'Its warps are two-way. Use its own geometry to arrive somewhere it did not plan for.'],
+      ['Through the Pane', 'Past its pane, one bullet in six is real. Do not shoot the others — every ghost you hit cracks back at you.'],
       ['Between Tricks', 'It is exposed for a beat every time the illusion resets.'],
     ],
   },

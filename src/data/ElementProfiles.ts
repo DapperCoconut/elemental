@@ -197,8 +197,8 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
   },
   dream: {
     archetype: 'Sandman',
-    blurb: 'Stack sleepiness, then cash it in. A second body steps out of you for the duel.',
-    complexity: 5,
+    blurb: 'Two kicking little guns and a pillow. Put them to sleep, then step into their dream.',
+    complexity: 4,
   },
 
   // ── Finale ──────────────────────────────────────────────────────────
@@ -289,7 +289,7 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
   // ── The Vault ───────────────────────────────────────────────────────
   illusion: {
     archetype: 'Phantom',
-    blurb: 'Nothing is where it looks. Veils bend every shot that crosses them, and you blink between corners.',
+    blurb: 'Nothing is where it looks. Veils bend their shots and fill the air with fake ones of yours, and you blink between corners.',
     complexity: 3,
   },
   conquest: {

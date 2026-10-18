@@ -209,49 +209,46 @@ const psychic: ElementCodex = {
   },
 
   mastery: {
-    'predictors-snare': {
+    outplayed: {
       basics:
-        'Space stops being a dash and becomes a teleport to where the nearest living enemy will be '
-        + 'standing when the foresight window runs out — 2 seconds ahead, or 5 under Utter Focus — '
-        + 'clamped to the arena\'s 32px margin. Direction is ignored. A closed eye is left on the '
-        + 'landing spot, arming after 0.26s and lying there 14 seconds, dealing 15 damage to the first '
-        + 'enemy whose body comes within 20px of it and then spent. Six can be on the floor at once; a '
-        + 'seventh rubs out the oldest. If nobody is going anywhere (their projection ends under 24px '
-        + 'away) it is an ordinary dash. No cooldown of its own — it rides the dodge\'s. Not available '
-        + 'while crowned: the Queen has no Space at all.',
-      cast: 'Space. Replaces the ordinary dash while Psychic Mastery is on.',
+        'Compares your health percentage with every enemy\'s, every frame. When they are 25 '
+        + 'percentage points or more behind you their cooldowns run 10% longer; 50 points, 25% longer; '
+        + '75 points, 33% longer. Percent, not raw HP. It applies to every cooldown they start while it '
+        + 'holds and lifts the moment the gap closes. On husks, which have no cooldowns, it slows their '
+        + 'attack cadence by the same factor. A purple aura on the enemy shows the tier.',
+      cast: 'Passive. Always on while Psychic Mastery is enabled.',
       effects: [
-        { tag: 'movement', label: 'Where you land', detail: 'Where the nearest living enemy will be standing at the end of the foresight window (2s, or 5s under Utter Focus).' },
-        { tag: 'summon', label: 'The rune', detail: 'A closed eye left on the landing spot. Arms after 0.26s, lies there 14 seconds.' },
-        { tag: 'damage', label: 'What it does', detail: '15 damage to the first enemy whose body comes within 20px of it. Spent the moment it fires.' },
-        { tag: 'area', label: 'How many', detail: '6 on the floor at once; a 7th rubs out the oldest.' },
-        { tag: 'utility', label: 'When it refuses', detail: 'Nobody has a projection ending more than 24px away — then it is an ordinary dash.' },
+        { tag: 'debuff', label: '25 points behind', detail: 'Their cooldowns run 10% longer.' },
+        { tag: 'debuff', label: '50 points behind', detail: 'Their cooldowns run 25% longer.' },
+        { tag: 'debuff', label: '75 points behind', detail: 'Their cooldowns run 33% longer.' },
+        { tag: 'utility', label: 'The aura', detail: 'One ring of chess squares at the first tier, a second counter-turning ring at the second, a crown of chevrons and sparks at the third.' },
       ],
       notes: [
-        'This mastery predates the chess rework and is due to be redesigned; it still works as written.',
-        'Standing still beats it completely: no projection, no teleport, no rune.',
-        'A bot has no Space dash, so a bot psychic never plants a rune.',
+        'Measured against your own health: a psychic who is losing too gets nothing from it.',
+        'Online the slowdown is written on the opponent by your machine and reaches theirs with the other cooldown factors.',
       ],
     },
-    'utter-focus': {
+    'pre-move': {
       basics:
-        'Eight seconds with your eyes shut, in which every ability aimed at you is held 5 seconds '
-        + 'instead of 2 (casts already queued keep the window they were pressed under). Against a real '
-        + 'opponent online their movement keys are buffered by the same 5 seconds on their own machine '
-        + 'and the resulting route is relayed back, so Predictor\'s Snare lands on a fact rather than an '
-        + 'estimate. Every frame in which damage lands on you takes 0.5s off the window. Bindable to R, '
-        + 'F or Q — never E. 26s cooldown.',
-      cast: 'The bound key (R, F or Q — never E). Instant. 26s cooldown, counted from the press.',
+        'Cast it and a chess clock appears beside you; the next key you press — Click, E, R, F, Q, '
+        + 'Space or W/A/S/D — is your prediction (the press still does what it normally does). For '
+        + 'the next 1.5 seconds, the first time an enemy presses that key they take 25 damage and a '
+        + '0.6s stun. An ability key also makes that ability\'s cooldown 50% longer — the one just '
+        + 'started and every cast of it for 8 seconds. A movement key (Space included) slows them 30% '
+        + 'for 3 seconds. Only fresh presses count: a key already held when you call it does not. '
+        + 'Choose within 4 seconds or it lapses. Bindable to R, F or Q. 14s cooldown.',
+      cast: 'The bound key (R, F or Q), then any key to make the call.',
       effects: [
-        { tag: 'control', label: 'The delay', detail: 'Every ability cast at you resolves 5 seconds after the press instead of 2.' },
-        { tag: 'control', label: 'Held feet (online only)', detail: 'A real opponent\'s movement keys are buffered by the same 5 seconds; for the first 5 seconds they do not move at all.' },
-        { tag: 'cost', label: 'Being hit shortens it', detail: 'Every frame in which any damage lands on you takes 0.5s off the window.' },
-        { tag: 'utility', label: 'Blind', detail: 'Your third eye is drawn shut for the duration — the tell they have to read.' },
+        { tag: 'damage', label: 'Burst', detail: '25 damage to whoever pressed the called key.' },
+        { tag: 'control', label: 'Stun', detail: '0.6 seconds: no moving, no casting.' },
+        { tag: 'debuff', label: 'Ability key', detail: 'That ability\'s cooldown runs 50% longer, now and for every cast of it in the next 8 seconds.' },
+        { tag: 'debuff', label: 'Movement key', detail: 'W, A, S, D or Space: 30% slower for 3 seconds.' },
+        { tag: 'utility', label: 'Hidden call', detail: 'Only you see the key; they see a clock with a question mark on it.' },
       ],
       notes: [
-        'This mastery predates the chess rework and is due to be redesigned; it still works as written.',
+        'Bots are read too: their "keys" are the directions they start moving in, the abilities they cast and, for Space, their projectile dodges. A husk\'s attack is its Click.',
+        'A bot psychic predicts from what it has watched you press over the last few seconds.',
         'Binding it over R, F or Q gives up the Knight, Rook or Queen for the match.',
-        'A Space dodge is not a movement key and is not held — the way out of the buffered feet.',
       ],
     },
   },

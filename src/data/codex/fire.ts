@@ -145,26 +145,87 @@ const fire: ElementCodex = {
           { tag: 'damage', label: 'Fuse and blast', detail: '3s fuse, then 80 damage — and it damages the caster too. There is no safe placement, only distance.', requiresUpgrade: 'q' },
         ],
       },
-      notes: [
-        'Under the Molten divine perk the channel opens a vent instead: a screen-wide eruption for 100 damage that also catches the caster, leaving 9 magma pools of 62px that tick 5 damage every 0.5s for 14s.',
+    },
+    // Alternate ultimate — swapped in for Flame Nuke from the customize panel (cheats only for now).
+    supernova: {
+      basics:
+        'The alternate ultimate, in place of Flame Nuke. You root yourself and pour a beam of fire from '
+        + 'your palms: 470px long, 45 damage a second to everything in it, but it swings toward the '
+        + 'cursor at only 0.85 radians a second. A heat bar climbs over you and burns you harder the '
+        + 'longer you hold it. Press Q again to let go — or hold all 6 seconds and the beam detonates.',
+      cast: 'Q (when equipped as the alternate). Q again stops it early. 30s cooldown.',
+      noUpgrade: true,
+      effects: [
+        { tag: 'damage', label: 'The beam', detail: '9 damage every 0.2s — 45 a second — to everything inside a 40px band out to 470px, plus a 1.5s burn.' },
+        { tag: 'cost', label: 'Rooted', detail: 'You cannot move or use any other ability while the beam is open. Being stunned or frozen ends it.' },
+        { tag: 'utility', label: 'Poor turning', detail: 'The beam turns toward the cursor at 0.85 radians (about 49°) a second — lead your target.' },
+        { tag: 'cost', label: 'Heat', detail: 'Self-burn rises from 0 to 8 HP a second over the 6s — about 24 HP if you hold it all the way.' },
+        { tag: 'area', label: 'Detonation', detail: 'At 6s the beam bursts: 70 damage to everything within 60px of its length, a 3s burn, and 4 flame pools (46px, 5 damage every 0.4s for 5s).' },
+        { tag: 'cost', label: 'Backlash', detail: 'The detonation sears you for 60.' },
       ],
     },
   },
 
   perks: {
-    alcohol: {
+    'fire-blaze': {
       basics:
-        'Replaces Flame Dash with a drink. E fetches a flask, E again drinks it: 25% less damage taken '
-        + 'for 6 seconds, then a 50% slow for 2 seconds the moment it expires. While intoxicated Flame '
-        + 'Body burns you twice as fast (16 HP a second) but grows a 50px aura dealing 2 damage every '
-        + '0.333s, and Flame Dash loses its 18-damage launch blast entirely.',
-      cast: 'E with no flask fetches one. E with a flask drinks it.',
+        'Trades the hold-click Flamethrower away for a better fireball: 45% faster, 50% more damage '
+        + 'against anything already burning, and with Flameshredder (Click+) it ignites molten fire '
+        + 'instead of a normal burn.',
       effects: [
-        { tag: 'buff', label: 'Drink Up!', detail: '25% less damage taken for 6s.' },
-        { tag: 'cost', label: 'The comedown', detail: 'A 50% slow for 2s the moment the 6s expire.' },
-        { tag: 'cost', label: 'Burns harder', detail: "Flame Body's self-damage doubles to 4 per 0.25s — 16 HP a second — while intoxicated." },
-        { tag: 'cost', label: 'No launch burst', detail: 'Flame Dash loses its 18 damage origin blast entirely. The perk trades the whole offensive half of E away.' },
-        { tag: 'dot', label: 'Heat aura', detail: 'While intoxicated AND lit by Flame Body, a 50px aura deals 2 damage every 0.333s — 6 a second — to everything standing in it. The only contact damage Flame Body ever has outside mastery.' },
+        { tag: 'cost', label: 'No Flamethrower', detail: 'Holding click no longer sprays — every press is just a fireball.' },
+        { tag: 'utility', label: 'Faster shot', detail: 'Fireballs fly at 760 px/s instead of 520.' },
+        { tag: 'damage', label: 'Kindling', detail: '30 damage instead of 20 against a target that is burning or molten.' },
+        { tag: 'dot', label: 'Molten fire', detail: 'With Flameshredder, a hit ignites molten fire (5 damage per second) for 3s instead of the normal burn.', requiresUpgrade: 'click' },
+      ],
+      notes: [
+        'Equipped with Melt: no click at all, but every cooldown is halved (×0.5) and fire abilities deal 50% more damage.',
+      ],
+    },
+    'fire-melt': {
+      basics:
+        'Trades the tap Fireball away for a better Flamethrower: it starts the instant you press, reaches '
+        + '33% farther and drops pools of flame where it lands.',
+      effects: [
+        { tag: 'cost', label: 'No Fireball', detail: 'A click no longer throws a fireball — click and hold sprays straight away.' },
+        { tag: 'area', label: 'Reach', detail: 'Flamethrower range 240px instead of 180, in the same 30° cone.' },
+        { tag: 'dot', label: 'Flame pools', detail: 'A 30px pool every 0.26s of spraying, lasting 2.6s: 2 damage every 0.4s plus a 1.5s burn. Up to 14 at once.' },
+      ],
+      notes: [
+        'Equipped with Blaze: no click at all, but every cooldown is halved (×0.5) and fire abilities deal 50% more damage.',
+        'A bot with Melt swaps its fireball for a short gout: 8 damage in the cone and one pool.',
+      ],
+    },
+    'fire-ash': {
+      basics:
+        'Bigger bombs that do not care who threw them. Pressure Bomb, Flame Charge (Q+) and Cluster Bomb '
+        + 'bomblets hit 25% harder over 33% more range — and every one of them can now catch you.',
+      effects: [
+        { tag: 'damage', label: 'Pressure Bomb', detail: '40 damage over 133px instead of 32 over 100px.' },
+        { tag: 'cost', label: 'Self-harm', detail: 'Standing in your own Pressure Bomb or bomblet blast costs you half its damage.' },
+        { tag: 'damage', label: 'Flame Charge', detail: '100 damage over 293px instead of 80 over 220px — and it burns you for 100 instead of 80.', requiresUpgrade: 'q' },
+        { tag: 'area', label: 'Cluster Bomb', detail: 'Bomblets deal 15 over 73px instead of 12 over 55px, and can hurt you too.', requiresUpgrade: 'r' },
+      ],
+    },
+    'fire-radiate': {
+      basics:
+        'A constant aura of heat around you that burns every enemy within 90px for light damage over '
+        + 'time — twice as hot with Fire Mastery enabled.',
+      effects: [
+        { tag: 'dot', label: 'Heat aura', detail: '1 damage every 0.333s — 3 a second — to every enemy within 90px. Always on, no key, no cost.' },
+        { tag: 'dot', label: 'Mastery', detail: 'With Fire Mastery enabled: 2 every 0.333s — 6 a second.', requiresMastery: true },
+      ],
+    },
+    'fire-alcohol': {
+      basics:
+        'Flame Dash leaves a trail of booze instead of explosions. Standing in your booze makes you 20% '
+        + 'tougher, but linger and your aim drifts — and foes who wade in drift too. Light it with a '
+        + 'Pressure Bomb or Flame Nuke and it burns every enemy who steps in.',
+      effects: [
+        { tag: 'area', label: 'Booze trail', detail: 'Four 36px puddles along the dash, lasting 7s. Replaces the dash\'s 18-damage launch blast and its E+ explosions.' },
+        { tag: 'buff', label: 'Liquid courage', detail: '20% less damage taken while you stand in your own booze.' },
+        { tag: 'debuff', label: 'Tipsy', detail: 'After 2s of standing in booze — you or an enemy — aim drifts by up to 22° until 1.5s after stepping out.' },
+        { tag: 'dot', label: 'Lit', detail: 'A Pressure Bomb, Flame Nuke, Flame Charge or Supernova blast lights booze it reaches: 4 damage every 0.5s plus a 2s burn to enemies inside, for up to 4s.' },
       ],
     },
   },

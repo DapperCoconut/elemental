@@ -5,7 +5,7 @@ import { MUTATIONS, activeMutationIds, starredMutationIds, clearMutationSelectio
 import { clearConsumedItems } from '../data/Items';
 import * as PlayerData from '../data/PlayerData';
 import { applyKonamiCheat } from '../data/CheatSave';
-import { getPerksForElement, getPerkById } from '../data/Perks';
+import { getPerksForElement, perkLoadoutBadge } from '../data/Perks';
 import { buildNpcLoadout } from '../data/NpcLoadout';
 import { INVASION_DIFFICULTIES, InvasionDifficultyId } from '../invasion/InvasionKit';
 import { Bounty, difficultyLabel } from '../data/Bounties';
@@ -75,6 +75,10 @@ export class MenuScene extends Phaser.Scene {
    */
   private stabilize: PlayerData.PendingUnstableForge | null = null;
   private invasionDifficultyId: InvasionDifficultyId = 'normal';
+  /** The City is Invasion's main map; the mansion stays as the legacy one. */
+  private invasionMap: 'city' | 'mansion' = 'city';
+  /** City only: defenders including bots, 2–4. */
+  private invasionParty = 2;
 
   /** The info / mastery / customize / dictionary overlays behind the element cards. */
   private panels!: ElementPanels;
@@ -369,12 +373,12 @@ export class MenuScene extends Phaser.Scene {
     if (playerEl) {
       const masteryOn = PlayerData.isMasteryEnabled(playerEl.id);
       const perkId = PlayerData.getEquippedPerk(playerEl.id);
-      const perk = perkId ? getPerkById(perkId) : null;
+      const perkBadge = perkLoadoutBadge(perkId);
       // Restates the loadout that is actually going into the fight, so the
       // mastery/perk toggles a step back are visibly in effect.
       const bits = [`${playerEl.emoji}  ${playerEl.name.toUpperCase()}`];
       if (masteryOn) bits.push('★ MASTERY ON');
-      if (perk) bits.push(`${perk.emoji} ${perk.name.toUpperCase()}`);
+      if (perkBadge) bits.push(perkBadge.toUpperCase());
       const indicator = this.add.text(cx, 206, bits.join('   ·   '), {
         fontSize: '14px', fontFamily: FONT_DISPLAY, color: T.gold, letterSpacing: 1.5,
       }).setOrigin(0.5).setDepth(DEPTH.content);
@@ -575,6 +579,8 @@ export class MenuScene extends Phaser.Scene {
     });
     updateSelection();
 
+    this.renderInvasionMapRows(cx);
+
     // START button
     const startBtn = addButton(this, {
       x: cx, y: height - 74, w: 300, h: 56,
@@ -585,12 +591,74 @@ export class MenuScene extends Phaser.Scene {
           elementId: this.playerChoice,
           mode: 'invasion',
           invasionDifficulty: this.invasionDifficultyId,
+          invasionMap: this.invasionMap,
+          invasionParty: this.invasionParty,
           playerPerk: PlayerData.getEquippedPerk(this.playerChoice ?? ''),
         });
       },
     });
     startBtn.pulse();
     this.phaseObjects.push(startBtn.container);
+  }
+
+  /**
+   * MAP (City / Mansion) and PARTY (2–4, City only) rows under the difficulty
+   * tiles. Same repaint-driven tiles as the difficulty row: picking one re-lights
+   * the whole row so exactly one reads as active.
+   */
+  private renderInvasionMapRows(cx: number): void {
+    const row = <V extends string | number>(
+      y: number, label: string, accent: number,
+      options: Array<{ value: V; text: string }>,
+      get: () => V, set: (v: V) => void,
+    ): { refresh: () => void; objects: Phaser.GameObjects.GameObject[] } => {
+      const objects: Phaser.GameObjects.GameObject[] = [];
+      objects.push(addSectionLabel(this, { x: cx, y, text: label, accent, width: 420 }));
+      const bw = options.length > 2 ? 92 : 152, bh = 36, gap = 12;
+      const total = options.length * bw + (options.length - 1) * gap;
+      const tiles: Array<{ value: V; paint: (s: 'idle' | 'hover' | 'active') => void; lbl: Phaser.GameObjects.Text }> = [];
+      const refresh = (): void => {
+        for (const t of tiles) {
+          const on = t.value === get();
+          t.paint(on ? 'active' : 'idle');
+          t.lbl.setColor(on ? '#ffffff' : T.dim);
+        }
+      };
+      options.forEach((opt, i) => {
+        const bx = cx - total / 2 + bw / 2 + i * (bw + gap);
+        const by = y + 34;
+        const plate = addCardPlate(this, { x: bx, y: by, w: bw, h: bh, accent, cut: 8 });
+        const lbl = this.add.text(bx, by, opt.text, {
+          fontSize: '12px', fontFamily: FONT_DISPLAY, color: T.dim, letterSpacing: 1.2,
+        }).setOrigin(0.5).setDepth(DEPTH.content);
+        const hit = this.add.rectangle(bx, by, bw, bh, 0xffffff, 0)
+          .setDepth(DEPTH.content + 1).setInteractive({ useHandCursor: true });
+        hit.on('pointerover', () => { if (opt.value !== get()) plate.paint('hover'); });
+        hit.on('pointerout', () => { if (opt.value !== get()) plate.paint('idle'); });
+        hit.on('pointerdown', () => { set(opt.value); refresh(); });
+        tiles.push({ value: opt.value, paint: plate.paint, lbl });
+        objects.push(plate.g, lbl, hit);
+      });
+      refresh();
+      return { refresh, objects };
+    };
+
+    const party = row<number>(450, 'PARTY  ·  BOTS FILL THE EMPTY SLOTS', C.arcane,
+      [2, 3, 4].map((n) => ({ value: n, text: `${n} DEFENDERS` })),
+      () => this.invasionParty, (v) => { this.invasionParty = v; });
+    const setPartyEnabled = (on: boolean): void => {
+      for (const o of party.objects) {
+        (o as unknown as Phaser.GameObjects.Components.Alpha).setAlpha?.(on ? 1 : 0.3);
+        if (o instanceof Phaser.GameObjects.Rectangle) {
+          if (on) o.setInteractive({ useHandCursor: true }); else o.disableInteractive();
+        }
+      }
+    };
+    const map = row<'city' | 'mansion'>(370, 'MAP', C.ember,
+      [{ value: 'city', text: '🏙️ THE CITY' }, { value: 'mansion', text: '🏚️ THE MANSION' }],
+      () => this.invasionMap, (v) => { this.invasionMap = v; setPartyEnabled(v === 'city'); });
+    setPartyEnabled(this.invasionMap === 'city');
+    this.phaseObjects.push(...map.objects, ...party.objects);
   }
 
   private renderDifficultyPhase(width: number, height: number, cx: number): void {

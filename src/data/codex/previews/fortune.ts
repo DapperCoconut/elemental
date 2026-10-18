@@ -527,6 +527,111 @@ export const thePurse: PreviewScript = {
   },
 };
 
+// ══ Mastery ═══════════════════════════════════════════════════════════
+
+/** Gilded Augment: below 30% HP the purse heals you, dearer every second it runs. */
+export const masteryAugment: PreviewScript = {
+  duration: 9000,
+  scale: 0.9,
+  caption: 'Gilded Augment — below 30% HP, spend gold to heal 16 HP a second and run 30% faster. The price climbs the longer it runs',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    alch(av)?.setMastered(true);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#e8dcb8', 11);
+    const rate = label(ctx, ctx.cx, ctx.cy + 36, hex(FOR.goldLit), 10);
+    let gold = 30;
+    purse(ctx, () => gold);
+    const bar = ctx.adopt(ctx.scene.add.graphics().setDepth(10));
+    let hp = 0.6;
+    let since = -1;
+    let debt = 0;
+    let spent = 0;
+    let popAt = 0;
+    ctx.onFrame((dt, e) => {
+      const s = dt / 1000;
+      if (e > 600 && e < 1400) hp = Math.max(0.24, hp - s * 0.5);
+      const healing = since >= 0 ? hp < 0.55 && gold > 0 : hp < 0.3 && gold > 0 && e > 1400;
+      if (healing && since < 0) {
+        since = e;
+        ctx.capture(() => fx.augmentStart(ctx.cx, ctx.cy));
+        float(ctx, ctx.cx, ctx.cy - 54, '✨ GILDED AUGMENT', hex(FOR.goldLit), 12);
+      }
+      if (!healing) since = -1;
+      if (healing) {
+        const run = (e - since) / 1000;
+        const r = 2 * (1 + run / 2.5);
+        rate.setText(`${r.toFixed(1)} 🪙/s`);
+        debt += r * s;
+        while (debt >= 1 && gold > 0) { debt--; gold--; spent++; }
+        hp = Math.min(1, hp + (16 / 400) * s);
+        if (Math.random() < s * 8) ctx.capture(() => fx.augmentMote(ctx.cx, ctx.cy));
+        if (e >= popAt && spent > 0) {
+          popAt = e + 600;
+          float(ctx, ctx.cx - 18, ctx.cy - 34, `-${spent} 🪙`, hex(FOR.gold), 11);
+          spent = 0;
+        }
+      } else {
+        rate.setText('');
+      }
+      bar.clear();
+      const bx = ctx.cx - 26;
+      const by = ctx.cy - 38;
+      bar.fillStyle(0x111111, 0.85); bar.fillRect(bx - 1, by - 1, 54, 9);
+      bar.fillStyle(hp < 0.3 ? 0xff5a5a : 0xffcc00, 1); bar.fillRect(bx, by, 52 * hp, 7);
+      bar.lineStyle(1, 0xffffff, 0.5); bar.lineBetween(bx + 52 * 0.3, by - 2, bx + 52 * 0.3, by + 9);
+    });
+    ctx.at(700, () => readout.setText('a heavy hit takes you under 30%...'));
+    ctx.at(1600, () => readout.setText('...and the purse starts buying it back: 16 HP a second, 30% faster'));
+    ctx.at(4400, () => readout.setText('the longer it has to keep you standing, the more each second costs'));
+  },
+};
+
+/** Rags to Riches: the whole purse for another plate of solid gold, again and again. */
+export const masteryRags: PreviewScript = {
+  duration: 10000,
+  scale: 0.9,
+  caption: 'Rags to Riches — needs 20 gold, spends all of it: +20% damage, +50% gold and a stronger Gilded Augment, for good. Stacks',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    alch(av)?.setMastered(true);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#e8dcb8', 11);
+    const stats = label(ctx, ctx.cx, ctx.cy + 40, hex(FOR.goldLit), 10);
+    let gold = 0;
+    let riches = 0;
+    purse(ctx, () => gold);
+    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
+    ctx.onFrame((dt, e) => {
+      ground.clear();
+      goldPlume(ground, ctx.tint, ctx.cx, ctx.cy, PLUME_R * 0.9, 0.7, e / 1000, 5);
+      // Plume pay, sped up for the showcase, and richer with every stack.
+      gold += 8 * (1 + 0.5 * riches) * dt / 1000;
+      alch(av)?.setGold(Math.min(1, gold / 30));
+      alch(av)?.setGilding(riches);
+      stats.setText(riches ? `+${riches * 20}% damage · +${riches * 50}% gold` : '');
+    });
+    const cash = (ms: number): void => ctx.at(ms, () => {
+      const paid = Math.floor(gold);
+      gold = 0;
+      riches++;
+      ctx.capture(() => fx.ragsToRiches(ctx.cx, ctx.cy, riches));
+      alch(av)?.play('flex');
+      float(ctx, ctx.cx, ctx.cy - 56, riches > 1 ? `👑 RAGS TO RICHES ×${riches}` : '👑 RAGS TO RICHES', hex(FOR.goldLit), 13);
+      float(ctx, ctx.cx, ctx.cy - 40, `-${paid} 🪙`, hex(FOR.gold), 11);
+    });
+    ctx.at(200, () => readout.setText('the purse fills to twenty...'));
+    cash(2700);
+    ctx.at(2900, () => readout.setText('...and all of it goes: a plate of the body turns to solid gold'));
+    cash(5000);
+    cash(6800);
+    cash(8400);
+    ctx.at(5200, () => readout.setText('every stack fills the next purse faster — and gilds a little more of him'));
+  },
+};
+
 // ══ Shop upgrades ══════════════════════════════════════════════════════
 
 export const frayUpgraded: PreviewScript = {

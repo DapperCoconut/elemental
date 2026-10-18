@@ -62,6 +62,22 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
 
 ## Partial passes landed outside a batch
 
+- **Creation (2026-10-17 Q rework: Self-Destruct + Scrapnel), part of steps 3 and 4.** The Workshop
+  is gone; Q is `self-destruct`. Synergy field `npcCreationDetonate` (`CreationKit.npcSelfDestructReady`:
+  the player stands inside 85% of the blast radius of an npc-owned wall, automaton, or the Nexus) is
+  checked first in `doCreationAbilities`. Set-up half of the same synergy: when Self-Destruct is ≥90%
+  recharged and the player is within 220px, the bot drops a Create wall 80% of the way to them so
+  there is something to blow. Q+ Scrapnel is gated on `hasNpcUpgrade('q')`. The mech stays player-only.
+
+- **Fire (2026-10-16 perk overhaul + Supernova), part of step 3.** Fire's five element perks
+  reach bots too (difficulty ≥ 4 rolls one from `getPerksForElement`). Synergy field
+  `npcFireBoozeBombAt` (Alcohol → Pressure Bomb: the target is wading in the bot's own booze, so
+  a charge on the puddle lights it under them) is checked first in `doFireAbilities`.
+  `npcFireNoClick` stops a Blaze + Melt bot falling back on a click it does not have; a Melt bot's
+  fireball becomes `FireKit.doMeltPuff` (a gout plus one pool). Supernova (alt Q, only present when
+  the npc element carries it through `ALT_ULT_SLOT`) is cast at 90–400px above 55% HP; while it is
+  open `isLocked` is true, and the kit lets go for the bot under 30% HP.
+
 - **Magma (2026-08-12 mastery; 2026-10-13 F/Q rework), steps 2 and 4, part of 3.** Magma
   Mastery shipped first: `npcMasteryActive` drives `setMastered` on the npc avatar, and
   `MagmaKit.updateNpcSaw` is the kit-side cast path for Magma Saw (a private hold/release
@@ -167,6 +183,16 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   (F+ would strip a dose the turrets or the falling drop still need → hold the hot rod). Trigger
   Happy needs no field: the kit steers the cone through the sustained fire, and the existing stun
   synergy is what makes it un-walkable.
+  **Mastery (2026-10-17).** Nightmare binds Test Dummy over R (Fallout Bunker goes). The kit throws
+  it itself (`updateNpcMastery`, offline only), halfway toward the target, for three reasons: its
+  own airdrop is falling with no bunker round it (the dummy eats the 200 self-hit — the bunker
+  synergy, moved), the flare gun is out within 460px (place all five unhurtable), or below 60% HP
+  with the target within 320px. Fields: `npcRadiationDummySlot` (the rotation skips the bound key —
+  every bunker/baton/flare cast checks it) and `npcRadiationDummyCoverReady` (with the dummy in the
+  bunker's slot, Q is only drawn while the dummy is ready or standing). `needsCover` is false while
+  a dummy stands. X-Ray Vision clears `targetInvisible` for a radiation-mastery bot. The player's
+  own dummy is a decoy for bots (`radiationKit.npcDecoyTarget()`, after Illusion's in the
+  `npcTarget` chain) and husks (`huskTargetsView`/`absorbDecoyHit`).
 
 - **Radiation (2026-08-12), step 2 + step 4 only.** Radiation Mastery shipped, so the kit now has
   its npc half. `npcMasteryActive` already drove `setMastered` on the npc avatar, and the Sniper's
@@ -243,7 +269,21 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   the clone is <450ms from fading, or the player is within 130px of the real body and the clone
   is safer), executed first via `ctx.illusionRetrick()` because the recast bypasses `castAbility`.
   `NPC_MASTERY_BINDS.illusion` moved from F to **R** so a mastered bot keeps Guise.
+- **Illusion E/E+/Q+/mastery rework (2026-10-17).** Two new synergies, both kit-computed:
+  **Veil → Duplication** is `illusionSeekPoint` (`IllusionKit.npcVeilWalkPoint()` — an own unspent
+  pane within 280px, null once Duplication is live), a hard seek in the movement block next to
+  Dream's; **Dance → Relocate** is `npcIllusionDanceBombs` (`npcDanceRelocateReady()` — every
+  teleport mid-Dance throws a Bomb Dance volley, held back while a pane is there to walk through
+  first so the volley is doubled), checked right after Re-Trick. The 10° veil and the five
+  illusion bullets need nothing from the AI: the bot's veil already hangs between it and the
+  player, so its own Crack Shots cross it. Reality Shift is automatic (50 damage in 2.5s).
 
+- **Soul (2026-10-17), Q → Turn (Hell's Torment deleted), Q+ → We are Legion, mastery passive →
+  Corpse Prince.** `SoulKit.npcTurnValue()` → `npcSoulTurnValue`: what a Turn from the bot's spot
+  would take right now (own/enemy grave zombies 1, enemy Amalgams 2, an enemy Alpha 3, princes 0).
+  `doSoulAbilities` checks it before the generic rotation and casts at ≥3, or ≥2 below 60% HP. The
+  prince needs no AI — it is seeded into the queue and the existing "Arise whenever a corpse is
+  queued" branch raises it. Soul no longer starts with corpses, so the opening grave matters more.
 - **Soul (2026-10-15), Click → Lantern of the Damned + soul beam, Click+ → Soul Lord.** Siphon
   and Possession are gone. `SoulKit.npcLanternTarget()` → `npcSoulLanternTarget` (nearest own grave
   zombie within 360px) replaces `npcSoulDrainPoint`: own zombies are now both the corpse supply and
@@ -303,6 +343,15 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   (checked before attacking moves, so a hurt bot does not ride into them). Checkmate (Q+)
   publishes `npcPsychicCheckmate` (target ≤40% HP) and the AI crowns on it regardless of the
   board. Insight Move and Sight Lines are automatic in the kit.
+  **Mastery (2026-10-17 redo — Outplayed + Pre-move):** Outplayed is passive and needs no AI.
+  Pre-move is kit-fired in `updateNpcMastery` (Nightmare binds it over R; the rotation reads
+  `npcPsychicMasterySlot` to stop pressing the Knight). The bot predicts from a 4-second,
+  recency-weighted log of the player's fresh key presses (`pressLog`, filled by
+  `trackPresses`) and only casts inside 460px once it has seen ≥1.5 weighted presses. As a
+  *victim*, a bot's "keys" are read off its body: the direction its velocity starts going
+  (W/A/S/D), `Fighter.lastPressAt` for abilities (stamped at the press, before the Opened Eyes
+  queue) and `Fighter.dodgingAt` for Space. Synergy: the 0.6s stun leaves the target
+  stationary, so `planNpc`'s led slide/blast lands on it without a dedicated field.
 
 - **Gold (id `fortune`, 2026-10-15 rework), steps 3–5.** The shopkeeper was replaced by an
   alchemist and `doFortuneAbilities` rewritten around kit-published fields. Synergies checked
@@ -318,6 +367,10 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   Full Metal Alchemy (Q+) publishes `npcGoldStatueHold` (its statue is up, uncracked, and the bot is
   short of an Advance) → `doFortuneAbilities` returns before anything else so the statue melts into
   its 3 coins, which `goldSeekPoint` then walks it to.
+  **Mastery (2026-10-17):** Nightmare binds Rags to Riches over Q (Midas Curse). The kit fires it
+  in `updateNpcMastery` once 20 gold is banked and the bot is above half HP (the gold is its Gilded
+  Augment heal otherwise); `npcCanAdvance` saves every other purse for it (riches×2 ≤ picks → save).
+  The rotation reads `npcGoldRagsSlot` and leaves the bound key alone. Gilded Augment runs itself.
 
 - **Magnet (2026-10-15 scrap rework), steps 3–4; movement profile untouched.** Rods, Magnetize,
   Protect and Atom Smasher are gone; `doMagnetAbilities` was rewritten around MagnetKit's fields,
@@ -332,7 +385,7 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   target so they hang inside the next cone; `npcMagnetSpikeAt` leads by 0.8s of velocity.
   `npcMagnetBusy` (gathering/piloting) returns null — the kit pilots the npc mech itself in
   `npcPilot` (smash on a 0.31s lead, rail/cannon off cooldown, avalanche after 3s, self-destruct
-  with 1.2s left). No mastery yet.
+  with 1.2s left).
   **Shop upgrades (2026-10-16)** ride the same fields, so `doMagnetAbilities` is unchanged; every
   extra is gated on `up('npc', slot)` inside the kit. Magnetize (E+): `npcMagnetRepulseAt` scores
   +1 for catching an unmagnetised target in the cone, +1 more if a coin/nail/spike of the bot's is
@@ -340,6 +393,14 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   2+ nails in a target within 340px, and `npcMagnetRecall` rips the instant all 3 are in.
   Electromagnet (F+): `npcMagnetZipTo` also rides a live spike within 145px of the target from
   160px+ out, so the Charged aura lands on them. Shatter Shot and Mega Mechancements need no play.
+  **Mastery (2026-10-17).** Nightmare binds Mag-Lev over F (Steel Spike and its zip go with it).
+  The kit fires it in `updateNpcMastery` — the track's aim is the target — when the target is
+  magnetised or nailed by the bot within 440px (synergy: on the track they move at half speed while
+  the bot rides it at +50%), or when the bot is under 35% HP within 240px with Repulse ready. The
+  second case pays off through `npcMagnetRepulseAt`: +3 when hurt, close, and its own track lies in
+  the cone, so the Repulse kicks the bot backward off the ground (Mag Kick). Coins tossed while
+  standing on the track hang over it until that Repulse fires them. The rotation reads
+  `npcMagnetMagLevSlot` and skips the bound key (and its second job). Magnetic Field runs itself.
 
 - **Sound (2026-10-15 marching-band rework), steps 3–5.** The violin/boombox/bugle/Coda kit is
   gone, and with it `npcSoundHarmonizeIn` / `npcSoundComposeSlot`. SoundKit now runs the bot's
@@ -374,13 +435,32 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   ≥55%-corrupted target, sickle under 460px. `harvestSeekPoint` walks it into the middle of
   its own mold while the target is 120–420px away and off the rot, so the chase happens on
   the mold. The kit picks the bot's sickle curl at random per throw (no right mouse button).
-  Movement profile: brawler 90–240px, retreat at 20%. No mastery yet.
+  Movement profile: brawler 90–240px, retreat at 20%.
   **Upgrades (2026-10-16):** Click+ Recursive and E+ Vile Rot are passive (the kit re-aims the
   second loop at the target and rolls the grabs/worms itself). R+ Poison Payload and F+ Corrupt
   Cooking are kit-played, Conquest-style, in `GluttonyKit.updateNpcUpgradePlay`: the bot lets go
   of the vials the frame a vial-carrying crow is over its target, and cooks the Vile Feast the
   moment it has 3 flesh, Meat Broth at 2 below 50% health, Jerky below 35%. Q+ Endless Harvest
   needs no AI: `npcHarvestCanExecute` already lines up the killing swing.
+  **Mastery (2026-10-17):** Nightmare binds Corrupt Predation over R (Feeding Frenzy). Invasive
+  Species is passive. The shotgun is kit-fired in `GluttonyKit.updateNpcMastery` the moment the
+  bot has 50 Corrupt HP, the cooldown is up and its target is within 520px — Corrupt HP comes
+  from the hearts `npcHarvestHeartAim` already cuts, so that synergy feeds it. The rotation reads
+  `npcHarvestPredationSlot` and leaves the bound key alone.
+- **Dream (2026-10-17 sandman rework replacing the pendulum), steps 3–5.** One info object,
+  `npcDream` (`DreamKit.npcAiInfo`, side-effect free), plus `dreamSeekPoint`. In the waking
+  world: a sleeping target is never shot (Sandmen damage wakes it) — the bot tops the meter up
+  with pillow/dagger while it is under 75 (both refuse to hurt a sleeper), then casts Delve once
+  `delveReady`; `dreamSeekPoint` walks it to a sleeper with ≥45 drowsiness until it is inside
+  ~120px. Awake: pillow opens on `pillowFresh` (≤10, the +34 dose), the dagger goes whenever
+  it is up (more drowsiness the sleepier they are, half cooldown on a hit), Sandmen while
+  `canFire`, Nightmare only as a finisher below 40% HP (out here it costs 15 sleep). In a
+  dream: `shouldSurface` (<22 drowsiness left) → E out to top up and come back; Nightmare
+  first when `nightmareReady` (it adds the walking stalker); a leech when none is out (the seek
+  point walks it to the leech to pull it); claw up close; pistols. The kit gives the bot its
+  own recoil at half the kick, tamed continuously. Movement profile unchanged (assassin
+  100–240px). Upgrades and mastery were retired with the rework — none to wire yet.
+
 - **Devotion (id `passion`, 2026-10-15 rework replacing the charmer), steps 3–5.**
   `doPassionAbilities` reads one kit-published bundle, `npcDevotion` (from
   `PassionKit.npcOpportunities()`), and checks it before the rotation: `ascendNow` (target
@@ -392,7 +472,7 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   Ascendance wind-up `holdLineY` steers the bot vertically onto its own line so it gets picked
   up. `npcDevotionRiding` blocks casting while it is off the field. The kit chooses the bot's
   sermon charge (full when the target is pinned or ≥75% faith). Movement profile kept from
-  Passion: skirmisher 150–290px. No mastery exists yet.
+  Passion: skirmisher 150–290px.
   **Upgrades (2026-10-16):** Click+ Disarming Words, E+ Purge Sins and R+ Repentance are
   passive on the bot's own casts (its letters bless the player's shots, its puddles purge, its
   grenade leaps on its own) — nothing to decide. F+ Pocket Crucifix and Q+ Pillars of Fire
@@ -402,6 +482,16 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   lowers and sets it down once they are past 220px; on a sky ride `updateRide` drops a pillar on
   the player's lead 1.2s in and every 2s after. A bot holding the cross does not preach (its
   sermon cast is a no-op, matching the player's click).
+  **Mastery (2026-10-17).** Pray Always is passive (the kit keeps the bot's 8s prayer clock and
+  rolls its answer). Nightmare binds the Ark of the Covenant over F (Mount Crucifix and the
+  pocket crucifix go with it); `doPassionAbilities` reads `npcDevotionArkSlot` and skips that
+  key's synergy and rotation casts. The kit fires the Ark in `updateNpcMastery` from
+  `npcArkPoint()` (side-effect free), 120–720px from the player: under 50% faith on the
+  player's sightline 45% of the way (their aim at the bot is a stare), over 50% 32° off that
+  line (the pull drags their aim off the bot and the dragged aim still stares). As a *victim*,
+  every bot and husk averts its aim up to 16° from an enemy Ark under 50% faith and is pulled
+  5°–14° toward it over — `Fighter.bendGaze`, read in `NpcOpponent`'s two aim angles and
+  `Husk.jitteredAim`.
 
 - **Life (2026-10-16 garden rework — eight new seeds), steps 3–4; movement profile untouched.**
   Rose, Nurse Lily and Cotton are gone; the bed is Sunflower (3s solar link), Nightcap (poison
@@ -440,7 +530,8 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   meter clears) plus arrival damping. Any kit steering that can disagree with doAI
   about the body needs the same shape: one owner at a time, hysteresis on the
   handover, damped arrivals.
-- **NpcAiState reads must be side-effect-free** (one documented exception:
-  `npcDreamMayCatch`). Getters must not consume charges or pacing gates.
+- **NpcAiState reads must be side-effect-free.** Getters must not consume charges or pacing
+  gates. (Dream's old `npcDreamMayCatch` was the one exception; it went with the 2026-10-17
+  rework.)
 - **`hasNpcUpgrade` semantics**: empty outside online matches and Hard+ solo 1v1 — do
   not re-add `isOnline` gates to anything downstream of it.

@@ -86,6 +86,7 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'fire:flame-body:up': fire.flameBodyUpgraded,
   'fire:flame-nuke': fire.flameNuke,
   'fire:flame-nuke:up': fire.flameNukeUpgraded,
+  'fire:supernova': fire.supernova,
 
   // ── Water ──
   'water:water-cut': water.waterCut,
@@ -206,8 +207,8 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'soul:soul-grave:up': soul.graveUpgraded,
   'soul:soul-death-whistle': soul.deathWhistle,
   'soul:soul-death-whistle:up': soul.deathWhistleUpgraded,
-  'soul:soul-hells-torment': soul.hellsTorment,
-  'soul:soul-hells-torment:up': soul.hellsTormentUpgraded,
+  'soul:soul-turn': soul.turn,
+  'soul:soul-turn:up': soul.turnUpgraded,
 
   // ── Hunt (three forms; keyed by ability id, since the keys repeat) ──
   'hunt:hunt-crossbow': hunt.crossbow,
@@ -274,8 +275,8 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'creation:wrench-plans:up': creation.wrenchPlansUpgraded,
   'creation:creation-block': creation.createBlock,
   'creation:creation-block:up': creation.createBlockUpgraded,
-  'creation:maze-of-doom': creation.workshop,
-  'creation:maze-of-doom:up': creation.workshopUpgraded,
+  'creation:self-destruct': creation.selfDestruct,
+  'creation:self-destruct:up': creation.selfDestructUpgraded,
 
   // ── Electricity ──
   'electricity:electro-ball': electricity.electroBall,
@@ -322,6 +323,10 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'magnet:magnet-nail:up': magnet.nailUpgraded,
   'magnet:magnet-spike:up': magnet.spikeUpgraded,
   'magnet:magnet-mecha:up': magnet.mechaUpgraded,
+  'magnet:mastery:magnetic-field': magnet.masteryField,
+  'magnet:mastery:mag-lev': magnet.masteryMagLev,
+  'passion:mastery:pray-always': passion.masteryPray,
+  'passion:mastery:ark-of-the-covenant': passion.masteryArk,
 
   // ── Metal ──
   'metal:metal-slash': metal.metalSlash,
@@ -372,15 +377,11 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'magic:magic-necronomicon:up': magic.necronomiconUpgraded,
 
   // ── Dream ──
-  'dream:dream-trance': dream.trance,
+  'dream:dream-sandmen': dream.sandmen,
+  'dream:dream-delve': dream.delve,
   'dream:dream-pillow-fight': dream.pillowFight,
-  'dream:dream-dreamcatcher': dream.dreamcatcher,
+  'dream:dream-sleep-tight': dream.sleepTight,
   'dream:dream-nightmare': dream.nightmare,
-  'dream:dream-oasis': dream.oasis,
-  'dream:dream-haunt': dream.haunt,
-  'dream:dream-spirit-tear': dream.spiritTear,
-  'dream:mastery:dream-duel': dream.dreamDuel,
-  'dream:mastery:lifelong-dream': dream.lifelongDream,
 
   // ── Psychic ──
   'psychic:psychic-en-passant': psychic.enPassant,
@@ -405,6 +406,8 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'radiation:radiation-bunker:up': radiation.bunkerUpgraded,
   'radiation:radiation-baton:up': radiation.batonUpgraded,
   'radiation:radiation-extermination:up': radiation.exterminationUpgraded,
+  'radiation:mastery:x-ray-vision': radiation.masteryXray,
+  'radiation:mastery:test-dummy': radiation.masteryDummy,
 
   // ── Magma ──
   'magma:magma-plume': magma.plume,
@@ -456,6 +459,8 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'fortune:fortune-plume': fortune.goldPlumeShow,
   'fortune:fortune-heart': fortune.heartOfGold,
   'fortune:fortune-midas': fortune.midasCurse,
+  'fortune:mastery:gilded-augment': fortune.masteryAugment,
+  'fortune:mastery:rags-to-riches': fortune.masteryRags,
   'fortune:fortune-fray:up': fortune.frayUpgraded,
   'fortune:fortune-advance:up': fortune.advanceUpgraded,
   'fortune:fortune-plume:up': fortune.goldPlumeUpgraded,
@@ -509,6 +514,12 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'myth:myth-rocket': myth.shadowRocket,
   'myth:passive:the-crowd': myth.theCrowd,
   'myth:passive:echo-shards': myth.echoShards,
+  'myth:myth-whip:up': myth.whipUpgraded,
+  'myth:myth-truth:up': myth.truthUpgraded,
+  'myth:myth-determination:up': myth.determinationUpgraded,
+  'myth:myth-beast:up': myth.beastUpgraded,
+  'myth:myth-destiny:up': myth.destinyUpgraded,
+  'myth:myth-rocket:up': myth.destinyUpgraded,
 
   // ── Justice ── (ground five, then the flight five)
   'justice:justice-stab': justice.stab,
@@ -530,6 +541,8 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'gluttony:harvest-frenzy': gluttony.frenzy,
   'gluttony:harvest-consume': gluttony.consume,
   'gluttony:harvest-reap': gluttony.reap,
+  'gluttony:mastery:invasive-species': gluttony.masteryInvasive,
+  'gluttony:mastery:corrupt-predation': gluttony.masteryPredation,
   'gluttony:harvest-sickle:up': gluttony.sickleUpgraded,
   'gluttony:harvest-sow:up': gluttony.sowUpgraded,
   'gluttony:harvest-frenzy:up': gluttony.frenzyUpgraded,
@@ -783,12 +796,10 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'gunpowder:passive:the-arsenal': gunpowder.passiveTheArsenal,
   'magic:passive:the-spell-wheel': magic.passiveTheSpellWheel,
   'magic:passive:darkness': magic.passiveDarkness,
-  'dream:passive:sleepiness': dream.passiveSleepiness,
-  'dream:passive:cosmic-cursor': dream.passiveCosmicCursor,
-  'dream:passive:rest': dream.passiveRest,
+  'dream:passive:drowsiness': dream.passiveDrowsiness,
   'psychic:passive:opened-eyes': psychic.openedEyes,
-  'psychic:mastery:predictors-snare': psychic.masterySnare,
-  'psychic:mastery:utter-focus': psychic.masteryUtterFocus,
+  'psychic:mastery:outplayed': psychic.masteryOutplayed,
+  'psychic:mastery:pre-move': psychic.masteryPremove,
   'radiation:passive:irradiated': radiation.irradiated,
   'magma:passive:pressure': magma.pressure,
   'magma:passive:lava-on-the-floor': magma.lavaOnTheFloor,
@@ -929,7 +940,7 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'growth:mastery:syringe-shot': growth.masterySyringeShot,
   'crystal:mastery:resonance': crystal.masteryResonance,
   'crystal:mastery:crystal-shredder': crystal.masteryCrystalShredder,
-  'soul:mastery:strength-in-numbers': soul.masteryStrengthInNumbers,
+  'soul:mastery:corpse-prince': soul.masteryCorpsePrince,
   'soul:mastery:grave-mistake': soul.masteryGraveMistake,
   'hunt:mastery:weak-points': hunt.masteryWeakPoints,
   'hunt:mastery:beastling': hunt.masteryBeastling,

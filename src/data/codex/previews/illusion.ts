@@ -3,7 +3,7 @@ import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import {
   ILL, IllusionAvatar, IllusionFx,
-  gateway, illusionDagger, phantomFigure, warpPane,
+  illusionBomb, phantomFigure, spentTint, warpPane,
 } from '../../../elements/kits/IllusionVisuals';
 
 /**
@@ -26,16 +26,25 @@ import {
 const SHOT_SPEED = 760;
 const VEIL_HALF_LEN = 82;
 const VEIL_HALF_THICK = 13;
-const VEIL_DEFLECT = Math.PI / 6;
-const DUP_SPREAD = Math.PI / 7;
+const VEIL_DEFLECT = Math.PI / 18;
+const DECOY_FAN: Array<{ deg: number; speed: number }> = [
+  { deg: -22, speed: 1 }, { deg: -11, speed: 0.94 }, { deg: 11, speed: 0.94 }, { deg: 22, speed: 1 },
+  { deg: 0, speed: 0.8 },
+];
+const DUP_OFFSET = 9;
 const VEIL_STANDOFF = 78;
 const GUISE_SIZE = 0.2;
 const GUISE_SELF_ALPHA = 0.38;
 const GUISE_PAYOUT = 0.2;
-const BLADE_COUNT = 10;
-const BLADE_SPEED = 660;
-const BLADE_SPREAD = Math.PI / 3;
-const BLADE_SIZE = 13;
+const BOMB_COUNT = 12;
+const BOMB_SPREAD = Math.PI / 3;
+const BOMB_TURN_MAX = 4.6;
+const BOMB_HOMING = 1.1;
+const BOMB_TRIGGER_R = 44;
+const BOMB_AOE_R = 105;
+const BOMB_SIZE = 9;
+const BOMB_DAMAGE = 14;
+const SHIFT_DAMAGE = 50;
 const PHANTOM_FUSE_MS = 1000;
 const PHANTOM_RADIUS = 100;
 
@@ -247,16 +256,91 @@ function throughPane(
   });
 }
 
+/** Run `fn` once, `ms` from now — `ctx.at` only takes times measured from the loop's start. */
+function later(ctx: PreviewCtx, ms: number, fn: () => void): void {
+  let left = ms;
+  let done = false;
+  ctx.onFrame((dt) => {
+    if (done) return;
+    left -= dt;
+    if (left > 0) return;
+    done = true;
+    fn();
+  });
+}
+
+/**
+ * Illusion bullets, on a little integrator of their own: the same dart as the real thing,
+ * flown in a straight line until they fade at the box edge — or until `pop` cracks one.
+ */
+function decoyField(ctx: PreviewCtx, fx: IllusionFx, foe: Mark): {
+  fan: (at: Mark, heading: number) => void;
+  /** Where decoy `i` of the most recent fan will be `ms` from now. */
+  predict: (i: number, ms: number) => Mark | null;
+  pop: (i: number) => void;
+} {
+  interface D { x: number; y: number; vx: number; vy: number; img: Phaser.GameObjects.Image; dead: boolean }
+  let last: D[] = [];
+  const all: D[] = [];
+  ctx.onFrame((dt) => {
+    const s = dt / 1000;
+    for (const d of all) {
+      if (d.dead) continue;
+      d.x += d.vx * s;
+      d.y += d.vy * s;
+      if (d.x < 6 || d.x > ctx.w - 6 || d.y < 6 || d.y > ctx.h - 6) {
+        d.dead = true;
+        d.img.setVisible(false);
+        fx.shards(d.x, d.y, 4, 14, ILL.ghost, 280, 6);
+        continue;
+      }
+      d.img.setPosition(d.x, d.y);
+    }
+  });
+  return {
+    fan(at, heading) {
+      last = DECOY_FAN.map((f) => {
+        const ang = heading + Phaser.Math.DegToRad(f.deg);
+        const img = ctx.adopt(ctx.scene.add.image(at.x, at.y, 'proj-illusion-crack')
+          .setRotation(ang).setDepth(7).setAlpha(0.9));
+        const d: D = {
+          x: at.x, y: at.y, vx: Math.cos(ang) * SHOT_SPEED * f.speed, vy: Math.sin(ang) * SHOT_SPEED * f.speed,
+          img, dead: false,
+        };
+        all.push(d);
+        return d;
+      });
+      fx.split(at.x, at.y, heading, Phaser.Math.DegToRad(22), ILL.crimson);
+      tick(ctx, at.x, at.y - 34, '×5 ILLUSIONS', ILL.warp);
+    },
+    predict(i, ms) {
+      const d = last[i];
+      if (!d) return null;
+      return { x: d.x + d.vx * ms / 1000, y: d.y + d.vy * ms / 1000 };
+    },
+    pop(i) {
+      const d = last[i];
+      if (!d || d.dead) return;
+      d.dead = true;
+      d.img.setVisible(false);
+      fx.wallCrack(d.x, d.y, Math.atan2(d.vy, d.vx) + Math.PI, ILL.crimson);
+      fx.crackBeam(d.x, d.y, foe.x, foe.y, ILL.crimson);
+      tick(ctx, foe.x, foe.y - 26, '10', ILL.crimson);
+    },
+  };
+}
+
 export const veil: PreviewScript = {
   duration: 6600,
   scale: 0.9,
   bodyTexture: '',
-  caption: 'E — a 164px pane for 6s. Every shot across it leaves 30° off, yours included',
+  caption: 'E — their shots leave 10° off; yours pass straight with five illusions that crack for 10 if hit',
   run(ctx) {
     const home = { x: ctx.w * 0.2, y: ctx.h * 0.5, alpha: 1 };
     const { fx, av } = drivenCaster(ctx, () => home);
     const foe = { x: ctx.w * 0.86, y: ctx.h * 0.5 };
     dummyAt(ctx, foe);
+    const decoys = decoyField(ctx, fx, foe);
 
     const at = { x: home.x + VEIL_STANDOFF, y: home.y };
     ctx.at(300, () => {
@@ -269,19 +353,38 @@ export const veil: PreviewScript = {
     pane(ctx, at, ctx.aim + Math.PI / 2, 6000, 300);
 
     const muzzle = { x: home.x + 26, y: home.y };
-    // Yours, kicked one way…
+    // Yours: straight through, and five more come out with it.
     ctx.at(1100, () => {
       av.play('punch', ctx.aim);
-      throughPane(ctx, fx, muzzle, { x: at.x, y: at.y }, ctx.aim, VEIL_DEFLECT);
+      ctx.fly({
+        texture: 'proj-illusion-crack', from: muzzle, to: { x: at.x, y: at.y }, speed: SHOT_SPEED,
+        onHit: () => {
+          decoys.fan(at, ctx.aim);
+          ctx.fly({
+            texture: 'proj-illusion-crack', from: { x: at.x, y: at.y }, to: { x: foe.x - 14, y: foe.y },
+            speed: SHOT_SPEED, onHit: () => tick(ctx, foe.x, foe.y - 40, '20', ILL.crimson),
+          });
+          // …and the dummy shoots at the wrong one. Its bullet stops on the illusion, and the
+          // illusion cracks back at it.
+          const hitIn = 260;
+          const p = decoys.predict(3, hitIn);
+          if (!p) return;
+          const from = { x: foe.x - 24, y: foe.y + 10 };
+          const travel = Phaser.Math.Distance.Between(from.x, from.y, p.x, p.y) / SHOT_SPEED * 1000;
+          const wait = Math.max(0, hitIn - travel);
+          later(ctx, wait, () => ctx.fly({
+            texture: 'proj-illusion-crack', from, to: p, speed: SHOT_SPEED,
+            onHit: () => decoys.pop(3),
+          }));
+        },
+      });
     });
-    // …theirs, kicked the other, because the pane does not know whose shot it is…
-    ctx.at(2900, () => {
+    // Theirs, crossing the pane, come out crooked.
+    ctx.at(3300, () => {
       throughPane(ctx, fx, { x: foe.x - 26, y: foe.y }, { x: at.x, y: at.y }, Math.PI, VEIL_DEFLECT);
     });
-    // …and yours again, on a fresh coin flip.
-    ctx.at(4500, () => {
-      av.play('punch', ctx.aim);
-      throughPane(ctx, fx, muzzle, { x: at.x, y: at.y }, ctx.aim, -VEIL_DEFLECT);
+    ctx.at(4600, () => {
+      throughPane(ctx, fx, { x: foe.x - 26, y: foe.y }, { x: at.x, y: at.y }, Math.PI, -VEIL_DEFLECT);
     });
 
     ctx.at(6300, () => fx.ring(at.x, at.y, VEIL_HALF_LEN, 14, ILL.warp, 320));
@@ -289,43 +392,60 @@ export const veil: PreviewScript = {
 };
 
 export const veilUpgraded: PreviewScript = {
-  duration: 5200,
+  duration: 5600,
   scale: 0.9,
   bodyTexture: '',
-  caption: 'Duplication — a Crack Shot crosses the pane as two, ±25.7°, and both can crack',
+  caption: 'Duplication — walk through your own pane: it greys out, and every Crack Shot fires two for 3s',
   run(ctx) {
-    const home = { x: ctx.w * 0.2, y: ctx.h * 0.5, alpha: 1 };
+    const home = { x: ctx.w * 0.14, y: ctx.h * 0.5, alpha: 1 };
     const { fx, av } = drivenCaster(ctx, () => home);
     const foe = { x: ctx.w * 0.86, y: ctx.h * 0.5 };
     dummyAt(ctx, foe);
 
     const at = { x: home.x + VEIL_STANDOFF, y: home.y };
+    let spent = false;
     ctx.at(200, () => {
       av.play('sweep', ctx.aim);
       fx.ring(at.x, at.y, 12, VEIL_HALF_LEN, ILL.warp, 420);
     });
-    pane(ctx, at, ctx.aim + Math.PI / 2, 5000, 200);
-
-    const muzzle = { x: home.x + 26, y: home.y };
-    ctx.at(1100, () => {
-      av.play('punch', ctx.aim);
-      ctx.fly({
-        texture: 'proj-illusion-crack', from: muzzle, to: { x: at.x, y: at.y }, speed: SHOT_SPEED,
-        onHit: () => {
-          fx.split(at.x, at.y, ctx.aim, DUP_SPREAD);
-          tick(ctx, at.x, at.y - 34, '✂️ ×2', ILL.spark);
-          for (const side of [1, -1]) {
-            const out = ctx.aim + DUP_SPREAD * side;
-            const wall = edgePoint(ctx, at.x, at.y, out);
-            ctx.fly({
-              texture: 'proj-illusion-crack', from: { x: at.x, y: at.y }, to: wall, speed: SHOT_SPEED,
-              // Both halves are tracked shots, so both pay the wall's 10.
-              onHit: () => crackWall(ctx, fx, wall, foe),
-            });
-          }
-        },
-      });
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    ctx.onFrame((_dt, elapsed) => {
+      g.clear();
+      if (elapsed < 200) return;
+      const tint = spent ? spentTint(ctx.tint) : ctx.tint;
+      warpPane(g, tint, at.x, at.y, ctx.aim + Math.PI / 2, VEIL_HALF_LEN, VEIL_HALF_THICK,
+        elapsed / 1000, spent ? 0.8 : 1, 137);
     });
+
+    // Walk through it.
+    const startX = home.x;
+    const endX = at.x + 70;
+    ctx.onFrame((_dt, elapsed) => {
+      const t = Phaser.Math.Clamp((elapsed - 900) / 900, 0, 1);
+      home.x = startX + (endX - startX) * t;
+      if (!spent && Math.abs(home.x - at.x) <= VEIL_HALF_THICK + 16) {
+        spent = true;
+        fx.ring(home.x, home.y, 8, 44, ILL.spark, 340);
+        fx.shards(at.x, at.y, 8, VEIL_HALF_LEN * 0.6, ILL.ghost, 420, 6);
+        tick(ctx, home.x, home.y - 50, '✂️ DUPLICATION', ILL.spark);
+      }
+    });
+
+    const pair = (): void => {
+      av.play('punch', ctx.aim);
+      const mx = home.x + 26;
+      for (const side of [1, -1]) {
+        ctx.fly({
+          texture: 'proj-illusion-crack', from: { x: mx, y: home.y + DUP_OFFSET * side },
+          to: { x: foe.x - 12, y: foe.y + DUP_OFFSET * side }, speed: SHOT_SPEED,
+          onHit: () => tick(ctx, foe.x + side * 10, foe.y - 36 - (side > 0 ? 0 : 14), '20', ILL.crimson),
+        });
+      }
+      fx.split(mx, home.y, ctx.aim, 0.18, ILL.spark);
+    };
+    ctx.at(2300, pair);
+    ctx.at(3300, pair);
+    ctx.at(4300, pair);
   },
 };
 
@@ -646,188 +766,167 @@ export const dance: PreviewScript = {
   },
 };
 
+/**
+ * Bomb Dance bombs on the preview box, flown with the kit's own wander: a re-rolled turn rate
+ * plus a gentle pull at the dummy, bouncing off the box walls, going off within 44px.
+ */
+function bombField(ctx: PreviewCtx, fx: IllusionFx, foe: Mark): (from: Mark, count: number) => void {
+  interface B { x: number; y: number; h: number; sp: number; turn: number; next: number; dies: number; seed: number }
+  const bombs: B[] = [];
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(11));
+  let clock = 0;
+  let turnedUntil = 0;
+  ctx.onFrame((dt) => {
+    const s = dt / 1000;
+    clock += dt;
+    g.clear();
+    for (let i = bombs.length - 1; i >= 0; i--) {
+      const b = bombs[i];
+      if (clock >= b.next) { b.turn = (Math.random() * 2 - 1) * BOMB_TURN_MAX; b.next = clock + 250 + Math.random() * 550; }
+      const want = Math.atan2(foe.y - b.y, foe.x - b.x);
+      b.h += (b.turn + Phaser.Math.Angle.Wrap(want - b.h) * BOMB_HOMING) * s;
+      b.x += Math.cos(b.h) * b.sp * s;
+      b.y += Math.sin(b.h) * b.sp * s;
+      if (b.x < 8 || b.x > ctx.w - 8) { b.h = Math.PI - b.h; b.x = Phaser.Math.Clamp(b.x, 8, ctx.w - 8); }
+      if (b.y < 8 || b.y > ctx.h - 8) { b.h = -b.h; b.y = Phaser.Math.Clamp(b.y, 8, ctx.h - 8); }
+      if (Phaser.Math.Distance.Between(b.x, b.y, foe.x, foe.y) <= BOMB_TRIGGER_R) {
+        bombs.splice(i, 1);
+        fx.bombBlast(b.x, b.y, BOMB_AOE_R);
+        tick(ctx, foe.x + (Math.random() - 0.5) * 24, foe.y - 30, String(BOMB_DAMAGE), ILL.magenta);
+        if (clock >= turnedUntil) {
+          fx.turnSwirl(foe.x, foe.y);
+          tick(ctx, foe.x, foe.y - 52, '🌀 TURNED AROUND', ILL.magenta);
+        }
+        turnedUntil = clock + 2600;
+        continue;
+      }
+      if (clock >= b.dies) { fx.shards(b.x, b.y, 5, 20, ILL.violet, 320, 8); bombs.splice(i, 1); continue; }
+      const life = Phaser.Math.Clamp((b.dies - clock) / 4200, 0, 1);
+      illusionBomb(g, ctx.tint, b.x, b.y, BOMB_SIZE, b.h + clock / 333, clock / 1000, life, 1, b.seed);
+    }
+  });
+  return (from, count) => {
+    const base = Math.atan2(foe.y - from.y, foe.x - from.x);
+    for (let i = 0; i < count; i++) {
+      const h = base + (Math.random() * 2 - 1) * BOMB_SPREAD;
+      bombs.push({
+        x: from.x + Math.cos(h) * 20, y: from.y + Math.sin(h) * 20, h,
+        sp: 210 + Math.random() * 80, turn: (Math.random() * 2 - 1) * BOMB_TURN_MAX,
+        next: clock + 200 + Math.random() * 500, dies: clock + 4200 * (0.85 + Math.random() * 0.3),
+        seed: Math.random() * 999,
+      });
+    }
+    fx.ring(from.x, from.y, 10, 70, ILL.magenta, 420);
+  };
+}
+
 export const danceUpgraded: PreviewScript = {
-  duration: 8000,
+  duration: 9000,
   scale: 0.9,
   bodyTexture: '',
-  caption: 'Blade Dance — land a clean hop and arrive throwing 10 daggers for 15, each one a one-way ticket',
+  caption: 'Bomb Dance — a clean hop, or any Relocate mid-Dance, throws 12 spiralling bombs that turn them around',
   run(ctx) {
     const corners = cornerSet(ctx);
     const here = { x: ctx.w * 0.28, y: ctx.h * 0.62, alpha: 1 };
     const { fx, av } = drivenCaster(ctx, () => here);
     const iav = av instanceof IllusionAvatar ? av : null;
-    const foe = { x: ctx.w * 0.66, y: ctx.h * 0.3 };
+    const foe = { x: ctx.w * 0.6, y: ctx.h * 0.42 };
     dummyAt(ctx, foe);
+    const throwBombs = bombField(ctx, fx, foe);
 
     ctx.at(200, () => { iav?.setEchoes(6); iav?.setScattered(true); });
 
-    interface Blade { x: number; y: number; vx: number; vy: number; ang: number; dead: boolean }
-    const blades: Blade[] = [];
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(11));
-    ctx.onFrame((dt) => {
-      const s = dt / 1000;
-      g.clear();
-      for (const b of blades) {
-        if (b.dead) continue;
-        b.x += b.vx * s;
-        b.y += b.vy * s;
-        if (Phaser.Math.Distance.Between(b.x, b.y, foe.x, foe.y) <= 26) {
-          b.dead = true;
-          fx.stab(foe.x, foe.y, b.ang);
-          tick(ctx, foe.x, foe.y - 30, '15', ILL.violet);
-          // Reflected through the middle of the arena — the thrower's position, mirrored.
-          const to = { x: ctx.w - here.x, y: ctx.h - here.y };
-          fx.blinkOut(foe.x, foe.y, ILL.crimson);
-          foe.x = to.x;
-          foe.y = to.y;
-          fx.blinkIn(to.x, to.y, ILL.violet);
-          tick(ctx, to.x, to.y - 40, '🗡️ CAST ACROSS', ILL.violet);
-          continue;
-        }
-        if (b.x < 0 || b.x > ctx.w || b.y < 0 || b.y > ctx.h) { b.dead = true; continue; }
-        for (let i = 2; i >= 1; i--) {
-          illusionDagger(g, ctx.tint, b.x - Math.cos(b.ang) * i * 9, b.y - Math.sin(b.ang) * i * 9,
-            b.ang, BLADE_SIZE * (1 - i * 0.16), 0.2 / i);
-        }
-        illusionDagger(g, ctx.tint, b.x, b.y, b.ang, BLADE_SIZE, 1);
-      }
-    });
-
-    const hop = (to: Mark, clean: boolean): void => {
+    const hop = (to: Mark, label: string | null): void => {
       fx.blinkOut(here.x, here.y, ILL.violet);
       here.x = to.x;
       here.y = to.y;
       fx.blinkIn(to.x, to.y, ILL.magenta);
       av.play('dash');
-      if (!clean) { tick(ctx, to.x, to.y - 44, '✗ WAS HIT — NO FAN', ILL.ghost); return; }
-      const base = Math.atan2(foe.y - to.y, foe.x - to.x);
-      for (let i = 0; i < BLADE_COUNT; i++) {
-        const ang = base + (i / (BLADE_COUNT - 1) - 0.5) * BLADE_SPREAD;
-        blades.push({
-          x: to.x + Math.cos(ang) * 24, y: to.y + Math.sin(ang) * 24,
-          vx: Math.cos(ang) * BLADE_SPEED, vy: Math.sin(ang) * BLADE_SPEED, ang, dead: false,
-        });
-      }
-      av.play('sweep', base);
-      fx.ring(to.x, to.y, 10, 62, ILL.magenta, 380);
-      tick(ctx, to.x, to.y - 50, '🗡️ BLADE DANCE', ILL.violet);
+      if (!label) { tick(ctx, to.x, to.y - 44, '✗ WAS HIT — NO BOMBS', ILL.ghost); return; }
+      av.play('raise');
+      throwBombs(to, BOMB_COUNT);
+      tick(ctx, to.x, to.y - 50, label, ILL.magenta);
     };
 
-    ctx.at(1200, () => hop(corners[1], true));
-    // Between hops, something lands — so the next teleport pays nothing.
+    ctx.at(900, () => hop(corners[1], '💣 BOMB DANCE'));
+    // Between hops, something lands — so the next timed hop pays nothing…
     ctx.at(3400, () => {
       fx.shards(here.x, here.y, 6, 26, ILL.crimson, 380, 10);
       tick(ctx, here.x, here.y - 32, 'HIT', ILL.crimson);
     });
-    ctx.at(4400, () => hop(corners[2], false));
-    ctx.at(7000, () => hop(corners[3], true));
+    ctx.at(3900, () => hop(corners[2], null));
+    // …but a Relocate pressed mid-Dance always does.
+    ctx.at(5600, () => hop(corners[3], 'R → 💣 BOMB DANCE'));
   },
 };
 
 // ── Mastery ───────────────────────────────────────────────────────────
 
-const GATE_HALF_W = 40;
-const GATE_HALF_H = 30;
-const GATE_R = 34;
-
-/** The four doorways, scaled onto the preview box's own walls rather than the arena's. */
-function gateSet(ctx: PreviewCtx): Array<{ x: number; y: number; inward: number }> {
-  const inset = 40;
-  return [
-    { x: ctx.w / 2, y: inset, inward: Math.PI / 2 },
-    { x: ctx.w / 2, y: ctx.h - inset, inward: -Math.PI / 2 },
-    { x: inset, y: ctx.h / 2, inward: 0 },
-    { x: ctx.w - inset, y: ctx.h / 2, inward: Math.PI },
-  ];
-}
-
 export const masteryRealityShift: PreviewScript = {
-  duration: 8600,
+  duration: 9000,
   scale: 0.86,
   bodyTexture: '',
-  caption: 'Four doors on the walls — walk into one, come out of another, and mid-Dance arrive throwing',
+  caption: 'Take 50 inside 2.5s and you are thrown to a corner — and mid-Dance the shift throws bombs',
   run(ctx) {
-    const gates = gateSet(ctx);
-    const here = { x: ctx.w * 0.5, y: ctx.h * 0.5, alpha: 1 };
+    const corners = cornerSet(ctx);
+    const here = { x: ctx.w * 0.42, y: ctx.h * 0.55, alpha: 1 };
     const { fx, av } = drivenCaster(ctx, () => here);
     const iav = av instanceof IllusionAvatar ? av : null;
-    const foe = { x: ctx.w * 0.72, y: ctx.h * 0.7 };
+    const foe = { x: ctx.w * 0.72, y: ctx.h * 0.4 };
     dummyAt(ctx, foe);
+    const throwBombs = bombField(ctx, fx, foe);
 
-    // The arches, brightening as the illusionist closes on them — the same charge the kit
-    // feeds `gateway`, so the "this is about to take you" read is identical in both places.
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
-    ctx.onFrame((_dt, elapsed) => {
-      g.clear();
-      gates.forEach((gate, i) => {
-        const d = Phaser.Math.Distance.Between(here.x, here.y, gate.x, gate.y);
-        const charge = Phaser.Math.Clamp(1 - (d - GATE_R) / 110, 0, 1);
-        gateway(g, ctx.tint, gate.x, gate.y, gate.inward, GATE_HALF_W, GATE_HALF_H,
-          elapsed / 1000, 0.95, charge, 31 + i * 17);
-      });
+    // The tally, drawn as a bar over the illusionist so the 50 is legible.
+    let tally = 0;
+    const bar = ctx.adopt(ctx.scene.add.graphics().setDepth(12));
+    ctx.onFrame(() => {
+      bar.clear();
+      const w = 54;
+      bar.fillStyle(ILL.voidDark, 0.7);
+      bar.fillRect(here.x - w / 2, here.y + 30, w, 5);
+      bar.fillStyle(ctx.tint(ILL.warp), 0.95);
+      bar.fillRect(here.x - w / 2, here.y + 30, w * Math.min(1, tally / SHIFT_DAMAGE), 5);
     });
 
-    // The knives a mid-Dance trip throws, run on the same little integrator the Q+ loop uses.
-    interface Blade { x: number; y: number; vx: number; vy: number; ang: number; dead: boolean }
-    const blades: Blade[] = [];
-    const bg = ctx.adopt(ctx.scene.add.graphics().setDepth(11));
-    ctx.onFrame((dt) => {
-      const s = dt / 1000;
-      bg.clear();
-      for (const b of blades) {
-        if (b.dead) continue;
-        b.x += b.vx * s;
-        b.y += b.vy * s;
-        if (Phaser.Math.Distance.Between(b.x, b.y, foe.x, foe.y) <= 26) {
-          b.dead = true;
-          fx.stab(foe.x, foe.y, b.ang);
-          tick(ctx, foe.x, foe.y - 30, '15', ILL.violet);
-          continue;
-        }
-        if (b.x < 0 || b.x > ctx.w || b.y < 0 || b.y > ctx.h) { b.dead = true; continue; }
-        illusionDagger(bg, ctx.tint, b.x, b.y, b.ang, BLADE_SIZE, 1);
-      }
-    });
-
-    /** Walk in, come out somewhere else — and throw, if the Dance is running. */
-    const step = (from: number, to: number, dancing: boolean): void => {
-      const gate = gates[to];
-      here.x = gates[from].x;
-      here.y = gates[from].y;
-      fx.blinkOut(here.x, here.y, ILL.warp);
-      fx.ring(here.x, here.y, 8, GATE_HALF_W + 18, ILL.cyan, 380);
-      here.x = Phaser.Math.Clamp(gate.x + Math.cos(gate.inward) * 72, 30, ctx.w - 30);
-      here.y = Phaser.Math.Clamp(gate.y + Math.sin(gate.inward) * 72, 30, ctx.h - 30);
-      fx.blinkIn(here.x, here.y, ILL.magenta);
-      fx.ring(here.x, here.y, GATE_HALF_W + 18, 10, ILL.violet, 420);
+    let dancing = false;
+    const shift = (): void => {
+      tally = 0;
+      const skip = nearestIndex(corners, here);
+      const to = corners.filter((_, i) => i !== skip)[Math.floor(Math.random() * 3)];
+      fx.blinkOut(here.x, here.y, ILL.violet);
+      here.x = to.x;
+      here.y = to.y;
+      fx.blinkIn(to.x, to.y, ILL.magenta);
+      fx.ring(to.x, to.y, 10, 54, ILL.warp, 420);
       av.play('dash');
       iav?.setScattered(true);
-      tick(ctx, here.x, here.y - 44, '🚪 REALITY SHIFT', ILL.warp);
-      if (!dancing) return;
-      const base = Math.atan2(foe.y - here.y, foe.x - here.x);
-      for (let i = 0; i < BLADE_COUNT; i++) {
-        const ang = base + (i / (BLADE_COUNT - 1) - 0.5) * BLADE_SPREAD;
-        blades.push({
-          x: here.x + Math.cos(ang) * 24, y: here.y + Math.sin(ang) * 24,
-          vx: Math.cos(ang) * BLADE_SPEED, vy: Math.sin(ang) * BLADE_SPEED, ang, dead: false,
-        });
+      tick(ctx, to.x, to.y - 48, '🚪 REALITY SHIFT', ILL.warp);
+      if (dancing) {
+        throwBombs(to, BOMB_COUNT);
+        tick(ctx, to.x, to.y - 66, '💣 + A VOLLEY', ILL.magenta);
       }
-      av.play('sweep', base);
-      fx.ring(here.x, here.y, 10, 62, ILL.magenta, 380);
-      tick(ctx, here.x, here.y - 66, '🗡️ + AN EXTRA ROUND', ILL.violet);
+    };
+    const hit = (n: number): void => {
+      fx.shards(here.x, here.y, 6, 24, ILL.crimson, 340, 10);
+      fx.crackBeam(foe.x, foe.y, here.x, here.y, ILL.crimson);
+      tick(ctx, here.x + (Math.random() - 0.5) * 20, here.y - 30, String(n), ILL.crimson);
+      tally += n;
+      if (tally >= SHIFT_DAMAGE) later(ctx, 80, shift);
     };
 
-    ctx.at(900, () => step(2, 3, false));
-    ctx.at(2600, () => step(3, 0, false));
-    // …and then the ultimate goes on, and every door becomes a knife rack.
-    ctx.at(4200, () => {
+    // A beating: 18 + 16 + 20 inside a second and a half.
+    ctx.at(800, () => hit(18));
+    ctx.at(1300, () => hit(16));
+    ctx.at(1800, () => hit(20));
+    // …then the ultimate goes on, and the next beating comes with bombs.
+    ctx.at(3400, () => {
+      dancing = true;
       iav?.setEchoes(6);
-      iav?.setScattered(true);
       fx.ring(here.x, here.y, 14, 130, ILL.violet, 620);
       tick(ctx, here.x, here.y - 50, '🎭 ILLUSION DANCE', ILL.magenta);
     });
-    ctx.at(5400, () => step(0, 1, true));
-    ctx.at(7200, () => step(1, 2, true));
+    ctx.at(4400, () => hit(25));
+    ctx.at(4900, () => hit(28));
   },
 };
 

@@ -551,17 +551,17 @@ export const MYTH_BANTER: Record<string, BanterSet> = {
   dream: {
     opener: [
       m('Dream. The element earned by sparing the Devourer of Kings. I know that mercy well.'),
-      f('A pendulum off one hand. You get sleepy while I pace. That is my whole game.'),
-      m('A pillow to a sleeping head is the biggest hit in your kit. The crowd finds it hilarious.'),
-      f('A sleeping opponent is not playing the game. Nothing is funnier than that.'),
+      f('Two little guns and a pillow. You get sleepy, and then I come and visit.'),
+      m('You will not hurt me while I sleep. The crowd has worked out what you do instead.'),
+      f('I step inside. In there you are awake, and nothing I do will wake you up.'),
     ],
     mid: [
       m('I will not sleep, Sandman. The stars never do.'),
-      f('Everyone says that. The dreamcatcher is already up.'),
+      f('Everyone says that. Your meter says otherwise.'),
     ],
     closer: [
       m('Every dream ends in waking. This is the waking.'),
-      f('The nightmare makes the waking land twice. Sweet dreams.'),
+      f('Then I will see you in the next one. Sleep tight.'),
     ],
   },
 

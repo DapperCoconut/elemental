@@ -716,6 +716,227 @@ export function skyPriest(
   g.fillCircle(x - 1.5, y - 1.5, 3.5);
 }
 
+// ── Mastery ───────────────────────────────────────────────────────────────
+
+/**
+ * Mastery — the Ark of the Covenant's ground: a pool of gold light under the chest with faint
+ * sight-lines combed outward round it, so the floor reads "look here" from across the arena.
+ * `stare` (0–1) brightens it while somebody is looking straight at it.
+ */
+export function arkGround(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  x: number, y: number, r: number, rise: number, t: number, stare: number, alpha = 1,
+): void {
+  const k = easeOut(Phaser.Math.Clamp(rise, 0, 1)) * alpha;
+  if (k <= 0.01) return;
+  g.fillStyle(tint(DEV.gold), k * (0.08 + stare * 0.08));
+  g.fillEllipse(x, y + 6, r * 2.6, r * 1.1);
+  g.fillStyle(tint(DEV.pale), k * (0.1 + stare * 0.1));
+  g.fillEllipse(x, y + 6, r * 1.6, r * 0.64);
+  // Twenty-four short rays lying on the floor, turning very slowly.
+  for (let i = 0; i < 24; i++) {
+    const a = (i / 24) * TAU + t * 0.06;
+    const r0 = r * 1.05;
+    const len = r * (0.35 + 0.2 * Math.sin(t * 2 + i * 1.7)) * (1 + stare * 0.4);
+    const ex = x + Math.cos(a) * r0 * 1.3;
+    const ey = y + 6 + Math.sin(a) * r0 * 0.55;
+    holyRay(g, tint, ex, ey, Math.atan2(Math.sin(a) * 0.42, Math.cos(a)), len, 1.4, DEV.holy, k * (0.28 + stare * 0.2));
+  }
+}
+
+/**
+ * Mastery — the Ark itself: a gold-plated chest seen from a little above, a crown moulding round
+ * its lid, two acacia carrying poles through gold rings along its sides, and on the mercy seat two
+ * kneeling cherubim whose swept wings meet over the middle. Light pours up between the wingtips.
+ * `rise` (0–1) sets it down from above; `stare` (0–1) brightens the light while it is watched.
+ */
+export function arkOfCovenant(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  x: number, y: number, rise: number, t: number, stare: number, alpha = 1, scale = 1,
+): void {
+  const e = easeOut(Phaser.Math.Clamp(rise, 0, 1));
+  if (e <= 0.01 || alpha <= 0.01) return;
+  const s = scale;
+  const by = y - (1 - e) * 60;
+  const a = alpha * Math.min(1, e * 1.5);
+  const W = 26 * s;
+  const H = 16 * s;
+  const D = 8 * s;
+  const top = by - H;
+
+  // Shadow.
+  g.fillStyle(tint(DEV.ink), a * 0.35 * e);
+  g.fillEllipse(x + 3, y + 3, W * 2.6, 10 * s);
+
+  // Carrying poles — the far one behind the chest.
+  const pole = (py: number, lit: number): void => {
+    g.fillStyle(tint(DEV.woodDeep), a);
+    g.fillRect(x - W * 1.45, py - 1.8 * s, W * 2.9, 3.6 * s);
+    g.fillStyle(tint(DEV.wood), a * lit);
+    g.fillRect(x - W * 1.45, py - 1.8 * s, W * 2.9, 1.5 * s);
+    g.fillStyle(tint(DEV.gold), a);
+    g.fillCircle(x - W * 1.45, py, 2 * s);
+    g.fillCircle(x + W * 1.45, py, 2 * s);
+  };
+  pole(by - H * 0.55 - D * 0.6, 0.6);
+
+  // The lid's top face (a parallelogram leaning back) and the front face.
+  const lidPts = [
+    new Phaser.Geom.Point(x - W, top), new Phaser.Geom.Point(x + W, top),
+    new Phaser.Geom.Point(x + W - D * 0.4, top - D), new Phaser.Geom.Point(x - W + D * 0.4, top - D),
+  ];
+  g.fillStyle(tint(DEV.ochre), a);
+  g.fillRect(x - W, top, W * 2, H);
+  // Front face: a gold plate with a darker inset panel and a pale highlight down its left.
+  g.fillStyle(tint(DEV.gold), a);
+  g.fillRect(x - W + 1.5 * s, top + 1.5 * s, W * 2 - 3 * s, H - 3 * s);
+  g.fillStyle(tint(DEV.ochre), a * 0.8);
+  g.fillRect(x - W * 0.72, top + H * 0.28, W * 1.44, H * 0.46);
+  g.lineStyle(1, tint(DEV.pale), a * 0.9);
+  g.strokeRect(x - W * 0.72, top + H * 0.28, W * 1.44, H * 0.46);
+  g.fillStyle(tint(DEV.pale), a * 0.6);
+  g.fillRect(x - W + 1.5 * s, top + 1.5 * s, 2.6 * s, H - 3 * s);
+  // A small cross on the inset panel.
+  cross(g, tint, x, top + H * 0.52, 4.6 * s, 0, DEV.pale, a, DEV.umber);
+  // Feet.
+  g.fillStyle(tint(DEV.ochre), a);
+  g.fillRect(x - W, by, 5 * s, 3 * s);
+  g.fillRect(x + W - 5 * s, by, 5 * s, 3 * s);
+  // Lid and its crown moulding.
+  g.fillStyle(tint(DEV.holy), a);
+  g.fillPoints(lidPts, true);
+  g.lineStyle(1.6 * s, tint(DEV.white), a * 0.85);
+  g.lineBetween(x - W, top, x + W, top);
+  g.lineStyle(1, tint(DEV.umber), a * 0.6);
+  g.strokeRect(x - W, top, W * 2, H);
+
+  // The near pole, in front of the chest.
+  pole(by - H * 0.45, 1);
+
+  // The cherubim: kneeling at each end of the lid, facing in, wings swept up to meet overhead.
+  const seatY = top - D * 0.5;
+  const glow = 0.6 + 0.4 * Math.sin(t * 2.2);
+  // Light pouring up between the wingtips first, so the wings frame it.
+  for (let i = 0; i < 5; i++) {
+    const ang = -Math.PI / 2 + (i - 2) * 0.16;
+    holyRayLayered(g, tint, x + (i - 2) * 2 * s, seatY - 4 * s, ang,
+      (26 + stare * 26 + glow * 6) * s * (i === 2 ? 1.25 : 1), 3 * s, a * (0.45 + stare * 0.4));
+  }
+  for (const side of [-1, 1]) {
+    const cx = x + side * W * 0.62;
+    // Body: a small kneeling figure.
+    g.fillStyle(tint(DEV.ochre), a);
+    g.fillEllipse(cx, seatY - 3 * s, 7 * s, 9 * s);
+    g.fillStyle(tint(DEV.gold), a);
+    g.fillCircle(cx, seatY - 9 * s, 3 * s);
+    g.fillStyle(tint(DEV.pale), a * 0.8);
+    g.fillCircle(cx - side * 1 * s, seatY - 9.6 * s, 1.2 * s);
+    // Wing: a swept fan of three feathers from the shoulder toward the centre, tips meeting.
+    for (let f = 0; f < 3; f++) {
+      const len = (18 - f * 4) * s;
+      const ang = -Math.PI / 2 - side * (0.55 + f * 0.32);
+      const base = new Phaser.Geom.Point(cx, seatY - 6 * s);
+      const tip = new Phaser.Geom.Point(base.x + Math.cos(ang) * len, base.y + Math.sin(ang) * len);
+      const nx = -Math.sin(ang) * 3 * s;
+      const ny = Math.cos(ang) * 3 * s;
+      g.fillStyle(tint(f === 0 ? DEV.pale : DEV.gold), a);
+      g.fillPoints([
+        new Phaser.Geom.Point(base.x + nx, base.y + ny), tip,
+        new Phaser.Geom.Point(base.x - nx, base.y - ny),
+      ], true);
+      g.lineStyle(0.8, tint(DEV.umber), a * 0.5);
+      g.lineBetween(base.x, base.y, tip.x, tip.y);
+    }
+  }
+  // The glow where the wings meet.
+  g.fillStyle(tint(DEV.white), a * (0.5 + 0.4 * glow + stare * 0.3));
+  g.fillCircle(x, seatY - 10 * s, (3 + stare * 2) * s);
+}
+
+/**
+ * Mastery — a line of sight being drawn to the Ark: a dotted gold thread from the watcher's eyes
+ * toward it, its dots crawling inward. `pull` thickens it; a negative `pull` (averting) breaks it
+ * into a short, fading stub.
+ */
+export function gazeThread(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  fx: number, fy: number, tx: number, ty: number, pull: number, t: number, alpha = 1,
+): void {
+  const d = Math.hypot(tx - fx, ty - fy);
+  if (d < 20 || alpha <= 0.01) return;
+  const ux = (tx - fx) / d;
+  const uy = (ty - fy) / d;
+  const reach = pull < 0 ? Math.min(d, 60) : d - 18;
+  const step = 12;
+  const phase = (t * 40) % step;
+  for (let s = 14 + phase; s < reach; s += step) {
+    const k = s / d;
+    const fade = pull < 0 ? 1 - s / reach : 0.5 + 0.5 * k;
+    g.fillStyle(tint(pull < 0 ? DEV.ochre : DEV.holy), alpha * fade * (0.35 + Math.abs(pull) * 0.5));
+    g.fillCircle(fx + ux * s, fy + uy * s, 1.3 + Math.max(0, pull) * 1.4);
+  }
+}
+
+/**
+ * Mastery — Pray Always: a prayer in the air over the priest's head while it waits for its
+ * answer. Two small hands pressed together inside a ring of light that closes (`wait` 0→1) as the
+ * answer comes near.
+ */
+export function prayerSigil(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  x: number, y: number, wait: number, t: number, alpha = 1,
+): void {
+  if (alpha <= 0.01) return;
+  const bob = Math.sin(t * 3) * 1.5;
+  const cy = y + bob;
+  g.fillStyle(tint(DEV.holy), alpha * 0.16);
+  g.fillCircle(x, cy, 11);
+  // The ring closes clockwise from the top.
+  g.lineStyle(2, tint(DEV.gold), alpha * 0.35);
+  g.strokeCircle(x, cy, 10);
+  g.lineStyle(2, tint(DEV.white), alpha * 0.95);
+  g.beginPath();
+  g.arc(x, cy, 10, -Math.PI / 2, -Math.PI / 2 + TAU * Phaser.Math.Clamp(wait, 0, 1), false);
+  g.strokePath();
+  // Praying hands: two leaning palms meeting at the fingertips.
+  for (const side of [-1, 1]) {
+    g.fillStyle(tint(side < 0 ? DEV.pale : DEV.holy), alpha);
+    g.fillPoints([
+      new Phaser.Geom.Point(x, cy - 6),
+      new Phaser.Geom.Point(x + side * 3.6, cy + 1),
+      new Phaser.Geom.Point(x + side * 3, cy + 5.5),
+      new Phaser.Geom.Point(x, cy + 5),
+    ], true);
+  }
+  g.lineStyle(0.8, tint(DEV.umber), alpha * 0.7);
+  g.lineBetween(x, cy - 6, x, cy + 5);
+  // Motes drifting up off it: the prayer going heavenward.
+  for (let i = 0; i < 3; i++) {
+    const k = (t * 0.7 + i / 3) % 1;
+    g.fillStyle(tint(DEV.white), alpha * (1 - k) * 0.8);
+    g.fillCircle(x + Math.sin(k * 7 + i) * 4, cy - 12 - k * 22, 1.3);
+  }
+}
+
+/** Mastery — Pray Always's armour answer: a faint shell of light round the priest, crosses on it. */
+export function blessingShell(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  x: number, y: number, t: number, alpha = 1,
+): void {
+  if (alpha <= 0.01) return;
+  const r = 30 + Math.sin(t * 3) * 1.2;
+  g.fillStyle(tint(DEV.pale), alpha * 0.08);
+  g.fillCircle(x, y, r);
+  g.lineStyle(2.4, tint(DEV.gold), alpha * 0.45);
+  g.strokeCircle(x, y, r);
+  g.lineStyle(1, tint(DEV.white), alpha * 0.7);
+  g.strokeCircle(x, y, r - 1.5);
+  for (let i = 0; i < 4; i++) {
+    const a = t * 0.9 + (i / 4) * TAU;
+    cross(g, tint, x + Math.cos(a) * r, y + Math.sin(a) * r, 4.4, 0, DEV.white, alpha * 0.85, DEV.gold);
+  }
+}
+
 // ── Fx ────────────────────────────────────────────────────────────────────
 
 export class PassionFx extends FxBase {
@@ -995,6 +1216,71 @@ export class PassionFx extends FxBase {
       cross(g, this.tint, x, y - 10 - t * 60, 16 + t * 6, 0, DEV.white, fade, DEV.gold);
     });
     this.sparkle(x, y, 16, 50, DEV.white, 1100);
+  }
+
+  /** Mastery — the Ark set down: it drops from above, a ring and a burst of glints as it lands. */
+  arkLand(x: number, y: number): void {
+    this.scene.time.delayedCall(220, () => {
+      this.flashIn(x, y - 14, 22, DEV.white, DEV.gold, 10);
+      this.ring(x, y, 12, 110, DEV.gold, 700, 9);
+      this.sparkle(x, y - 20, 12, 40, DEV.pale, 800);
+    });
+  }
+
+  /** Mastery — Pray Always: the prayer leaves the priest, a column of motes rising off them. */
+  pray(x: number, y: number): void {
+    this.anim(11, 900, (g, t) => {
+      const fade = 1 - t;
+      for (let i = 0; i < 7; i++) {
+        const k = Phaser.Math.Clamp(t * 1.4 - i * 0.06, 0, 1);
+        g.fillStyle(this.tint(i % 2 ? DEV.pale : DEV.white), fade * (1 - k) * 0.9);
+        g.fillCircle(x + Math.sin(i * 2.1 + t * 6) * 6, y - 20 - k * 90, 2 - k);
+      }
+      holyRay(g, this.tint, x, y - 18, -Math.PI / 2, 30 + easeOut(t) * 60, 3, DEV.holy, fade * 0.5);
+    });
+  }
+
+  /** Mastery — the prayer answered with armour: the shell slams shut round the priest. */
+  answerArmour(x: number, y: number): void {
+    this.flashIn(x, y, 30, DEV.white, DEV.gold, 11);
+    this.ring(x, y, 50, 30, DEV.gold, 420, 11);
+  }
+
+  /** Mastery — the prayer answered with a heal: light rains down on the priest. */
+  answerHeal(x: number, y: number): void {
+    this.anim(11, 800, (g, t) => {
+      const fade = 1 - t;
+      for (let i = 0; i < 9; i++) {
+        const k = (t * 1.6 + i / 9) % 1;
+        const px = x + (jitter(i, 3) - 0.5) * 44;
+        g.fillStyle(this.tint(DEV.white), fade * (1 - k));
+        g.fillCircle(px, y - 50 + k * 50, 1.8);
+        g.lineStyle(1, this.tint(DEV.holy), fade * (1 - k) * 0.8);
+        g.lineBetween(px, y - 62 + k * 50, px, y - 50 + k * 50);
+      }
+      g.fillStyle(this.tint(DEV.pale), fade * 0.18);
+      g.fillCircle(x, y, 24 + t * 10);
+    });
+    this.sparkle(x, y, 10, 30, DEV.white, 800);
+  }
+
+  /**
+   * Mastery — the prayer answered with faith: a ray of light straight down out of the sky onto
+   * the enemy, a glory blooming where it lands.
+   */
+  heavenRay(x: number, y: number): void {
+    this.anim(12, 900, (g, t) => {
+      const open = easeOut(Math.min(1, t * 4));
+      const fade = t < 0.6 ? 1 : 1 - (t - 0.6) / 0.4;
+      const w = 14 * open;
+      g.fillStyle(this.tint(DEV.holy), fade * 0.28);
+      g.fillRect(x - w * 1.7, y - 700, w * 3.4, 700);
+      g.fillStyle(this.tint(DEV.white), fade * 0.6);
+      g.fillRect(x - w * 0.45, y - 700, w * 0.9, 700);
+      glory(g, this.tint, x, y, 10, 18 + t * 26, 10, t * 0.8, fade * 0.8, 2.4);
+    });
+    this.flashIn(x, y, 20, DEV.white, DEV.holy, 12);
+    this.sparkle(x, y, 12, 40, DEV.white, 900);
   }
 }
 

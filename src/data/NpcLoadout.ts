@@ -73,11 +73,9 @@ const NPC_MASTERY_BINDS: Record<string, { enhId: string; slot: MasterySlot }> = 
   // bot to guess. The two clock abilities and the permanent amputation all survive.
   death: { enhId: 'delay-the-inevitable', slot: 'r' },
   chalk: { enhId: 'living-chalk', slot: 'f' },
-  // Psychic gives up Dodge Destiny. The window it takes instead is the same trade made better:
-  // 1.25 seconds of nothing landing versus five seconds of nothing landing *yet* — and the bot
-  // was only ever pressing R because it could see a queue, which is exactly what Utter Focus
-  // makes longer. The charge, the seizure and the payout all survive.
-  psychic: { enhId: 'utter-focus', slot: 'r' },
+  // Psychic gives up the Knight. Pre-move is a read on the player, which is the one thing a bot
+  // psychic can do better than its pieces: it has been watching every key they pressed.
+  psychic: { enhId: 'pre-move', slot: 'r' },
   // Depths gives up Eutrophication. It is the one ability in the kit that helps the player as
   // much as the bot — twelve real heals scattered where either side can reach them — and a
   // state machine is bad at deciding when that trade is worth making. The kraken does the same
@@ -106,7 +104,34 @@ const NPC_MASTERY_BINDS: Record<string, { enhId: string; slot: MasterySlot }> = 
   // rotation a real reason to press Solidify up close, which it otherwise never has. Q is refused
   // by `excludeSlots`, and the balls and the gum barrage are the two the bot already wins with.
   gum: { enhId: 'oobleck', slot: 'f' },
-  // Gold (id `fortune`) has no mastery since its 2026-10-15 rework, so nothing to bind.
+  // Harvest (id `gluttony`) gives up Feeding Frenzy. The crows are the one ability whose value is
+  // all in where a cursor steers them, and a bot's drifting orbit centre plays them worst; the
+  // shotgun is the same corruption-feeding pressure at range, aimed in one press. The bite and the
+  // execute — the two the rotation's synergies are built on — both survive.
+  gluttony: { enhId: 'corrupt-predation', slot: 'r' },
+  // Gold (id `fortune`) gives up Midas Curse. The curse's value is a long chase across the floor it
+  // lays, which the bot only half plays; Rags to Riches turns the purse the rest of its rotation
+  // already fills into permanent damage, fired by the kit the moment it can be afforded. The heart
+  // and the plume — the synergy the rotation is built on — both survive.
+  fortune: { enhId: 'rags-to-riches', slot: 'q' },
+  // Magnet gives up Steel Spike (and its zip). The spike's value is a cursor dragged over a moving
+  // target and a ride timed to it, which the bot plays loosely; Mag-Lev is fired by the kit at a
+  // target the bot has already nailed or magnetised — the track slows exactly the bodies the rest of
+  // the rotation marks — and doubles as its escape, kicked off by a Repulse. Nails, Repulse and the
+  // mech, which the rotation's synergies are built on, all survive.
+  magnet: { enhId: 'mag-lev', slot: 'f' },
+  // Devotion (id `passion`) gives up Mount Crucifix. At range the crucifix is a wall planted between
+  // them so the shots fired across it pay faith; the Ark does that job with the player's own aim —
+  // set on their sightline every shot they line up at the bot is a stare, and past half faith it is
+  // set off the line so the pull drags their aim off the bot. Holy water, the grenade and the
+  // chariot, which the rotation's synergies are built on, all survive.
+  passion: { enhId: 'ark-of-the-covenant', slot: 'f' },
+  // Radiation gives up Fallout Bunker. The bunker is cover the bot has to stand still inside; the
+  // Test Dummy is the same "nothing can hurt me" trade that it can keep walking with, it takes the
+  // airdrop's self-hit exactly as the bunker did (the kit throws it as the drop falls), and it pulls
+  // fire off the bot while the flare gun is out. The rod and the flares, which the rotation's
+  // synergies are built on, both survive.
+  radiation: { enhId: 'test-dummy', slot: 'r' },
 };
 
 /** Upgrade slots granted per difficulty level. Below Hard a bot fights bare. */

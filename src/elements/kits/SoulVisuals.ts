@@ -1036,6 +1036,11 @@ export interface AmalgamBodySpec {
   quirk?: AmalgamQuirk;
   /** Alpha amalgam: a heavier mass with more heads, more arms and a second seam. */
   alpha?: boolean;
+  /**
+   * Soul Mastery's Corpse Prince: an amalgam that still stands like a man — one head with a
+   * face rather than a maw, a slim upright frame, a torn cape, a crown and a sword in hand.
+   */
+  prince?: boolean;
   depth?: number;
 }
 
@@ -1134,6 +1139,8 @@ export class SoulAmalgamBody {
   private travel = 0;
   private eyeAng = 0;
   private last: AmalgamBodyState | null = null;
+  /** Prince: where the sword hand ended up this frame, and the forearm's heading. */
+  private swordHand: { x: number; y: number; ang: number } | null = null;
 
   constructor(
     private scene: Phaser.Scene,
@@ -1148,6 +1155,7 @@ export class SoulAmalgamBody {
 
   /** Rolls the creature: a torso, two shoulders, its heads, its arms and its seam. */
   private build(): void {
+    if (this.spec.prince) { this.buildPrince(); return; }
     const big = !!this.spec.alpha;
     const lean = this.spec.quirk === 'lean';
     const lobe = (ox: number, oy: number, r: number, lit = false): Lobe => ({ ox, oy, r, lit, phase: Math.random() * TAU });
@@ -1187,6 +1195,22 @@ export class SoulAmalgamBody {
     const flip = Math.random() < 0.5 ? -1 : 1;
     this.seams.push({ x1: -0.62 * flip, y1: -0.22, cx: 0, cy: 0.1, x2: 0.5 * flip, y2: 0.62, stitches: 4 });
     if (big) this.seams.push({ x1: 0.66 * flip, y1: -0.3, cx: 0.35 * flip, cy: -0.05, x2: 0.12 * flip, y2: 0.35, stitches: 3 });
+  }
+
+  /**
+   * The prince keeps a man's proportions: a narrow upright torso, square shoulders, one head
+   * set where a head belongs, two arms, and a single neat seam — the only sign of what he is.
+   */
+  private buildPrince(): void {
+    const lobe = (ox: number, oy: number, r: number): Lobe => ({ ox, oy, r, lit: false, phase: Math.random() * TAU });
+    this.lobes.push(lobe(0, 0.18, 0.66));
+    this.lobes.push(lobe(0, -0.3, 0.56));
+    this.lobes.push(lobe(-0.44, -0.4, 0.3));
+    this.lobes.push(lobe(0.44, -0.4, 0.3));
+    this.heads.push({ ox: 0, oy: -1.02, r: 0.4, phase: Math.random() * TAU, main: true });
+    const arm = (side: -1 | 1): Limb => ({ side, back: false, oy: -0.32, len: 1.1, thick: 0.12, phase: Math.random() * TAU });
+    this.limbs.push(arm(-1), arm(1));
+    this.seams.push({ x1: -0.42, y1: -0.5, cx: -0.05, cy: 0.05, x2: 0.3, y2: 0.62, stitches: 4 });
   }
 
   update(delta: number, st: AmalgamBodyState): void {
@@ -1251,6 +1275,7 @@ export class SoulAmalgamBody {
     u.fillEllipse(gx, gy + S * 0.04, S * 1.3, S * 0.4);
 
     if (st.dashing) this.drawSmear(g, st, S, a, tx);
+    if (this.spec.prince) this.drawPrinceCape(g, st, S, a, tx);
     for (const l of this.limbs) if (l.back) this.drawLimb(g, st, l, S, a, tx);
     this.drawMass(g, st, S, a, tx);
     this.drawSeams(g, st, S, a, tx);
@@ -1260,6 +1285,107 @@ export class SoulAmalgamBody {
     for (const l of this.limbs) if (!l.back) this.drawLimb(g, st, l, S, a, tx);
     if (st.angered) this.drawAngeredRim(g, S, a, tx);
     if (this.spec.alpha) SoulFx.drawAlphaCrown(g, this.tint, st.tones, ...tx(0, -0.1), S * 0.95, this.t, !!st.angered);
+    if (this.spec.prince) {
+      this.drawPrinceSword(g, st, S, a);
+      this.drawPrinceCrown(g, S, a, tx);
+    }
+  }
+
+  /** A short torn cape hanging off the prince's shoulders, swaying against his walk. */
+  private drawPrinceCape(
+    g: Phaser.GameObjects.Graphics, st: AmalgamBodyState, S: number, a: number,
+    tx: (ox: number, oy: number) => [number, number],
+  ): void {
+    const sway = Math.sin(this.walk * TAU) * 0.08 - this.leanX * 0.18;
+    const pts: [number, number][] = [
+      tx(-0.5, -0.5), tx(0.5, -0.5),
+      tx(0.66 + sway, 0.78), tx(0.34 + sway, 0.64), tx(0.12 + sway, 0.86),
+      tx(-0.16 + sway, 0.66), tx(-0.4 + sway, 0.88), tx(-0.66 + sway, 0.74),
+    ];
+    const fill = (color: number, alpha: number, grow: number): void => {
+      g.fillStyle(this.tint(color), alpha);
+      g.beginPath();
+      g.moveTo(pts[0][0], pts[0][1] - grow);
+      for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1] + (i > 1 ? grow : -grow));
+      g.closePath();
+      g.fillPath();
+    };
+    fill(st.tones.shroud, a, Math.max(1, S * 0.08));
+    fill(SOUL.blood, a * 0.55, 0);
+  }
+
+  /** The crown: a gold band with five points and a bead on each, set on the one head. */
+  private drawPrinceCrown(
+    g: Phaser.GameObjects.Graphics, S: number, a: number,
+    tx: (ox: number, oy: number) => [number, number],
+  ): void {
+    const head = this.heads[0];
+    const bob = Math.sin(this.walk * TAU + head.phase) * 0.03;
+    const [hx, hy] = tx(head.ox, head.oy + bob);
+    const r = head.r * S;
+    const w = r * 1.5, baseY = hy - r * 0.62, bandH = r * 0.32;
+    const spikes = 5;
+    const outline = (grow: number, color: number, alpha: number): void => {
+      g.fillStyle(this.tint(color), alpha);
+      g.beginPath();
+      g.moveTo(hx - w / 2 - grow, baseY + bandH + grow);
+      g.lineTo(hx - w / 2 - grow, baseY - grow);
+      for (let i = 0; i < spikes; i++) {
+        const f0 = i / spikes, f1 = (i + 0.5) / spikes, f2 = (i + 1) / spikes;
+        const tall = i === 2 ? 1.25 : 1;
+        g.lineTo(hx - w / 2 + w * f0, baseY - grow);
+        g.lineTo(hx - w / 2 + w * f1, baseY - r * 0.62 * tall - grow * 1.6);
+        g.lineTo(hx - w / 2 + w * f2, baseY - grow);
+      }
+      g.lineTo(hx + w / 2 + grow, baseY + bandH + grow);
+      g.closePath();
+      g.fillPath();
+    };
+    outline(Math.max(1, S * 0.06), SOUL.void, a);
+    outline(0, SOUL.gold, a);
+    g.fillStyle(this.tint(SOUL.sun), a * 0.8);
+    g.fillRect(hx - w / 2, baseY + bandH * 0.15, w, bandH * 0.3);
+    const glint = 0.5 + 0.5 * Math.sin(this.t * 3);
+    for (let i = 0; i < spikes; i++) {
+      const tall = i === 2 ? 1.25 : 1;
+      const px = hx - w / 2 + w * ((i + 0.5) / spikes);
+      const py = baseY - r * 0.62 * tall;
+      g.fillStyle(this.tint(i === 2 ? SOUL.blood : SOUL.sun), a);
+      g.fillCircle(px, py, Math.max(1, r * 0.1));
+    }
+    g.fillStyle(this.tint(SOUL.blood), a * (0.7 + 0.3 * glint));
+    g.fillCircle(hx, baseY + bandH * 0.5, Math.max(1, r * 0.12));
+  }
+
+  /** The sword: crossguard in the right hand, blade along the forearm's line, a cold edge. */
+  private drawPrinceSword(g: Phaser.GameObjects.Graphics, st: AmalgamBodyState, S: number, a: number): void {
+    const h = this.swordHand;
+    if (!h) return;
+    // Held point-up at rest; it swings out level with the arm on a lunge.
+    const ang = st.dashing ? h.ang : h.ang - Math.PI * 0.42 * (Math.cos(h.ang) >= 0 ? 1 : -1);
+    const len = S * 1.55;
+    const cos = Math.cos(ang), sin = Math.sin(ang);
+    const tipX = h.x + cos * len, tipY = h.y + sin * len;
+    const w = Math.max(1.4, S * 0.1);
+    // Blade: dark edge, steel, then a bright fuller down the middle.
+    g.lineStyle(w * 2 + 2, this.tint(SOUL.void), a);
+    g.lineBetween(h.x, h.y, tipX, tipY);
+    g.lineStyle(w * 2, this.tint(0xc8d0e0), a);
+    g.lineBetween(h.x, h.y, tipX, tipY);
+    g.lineStyle(Math.max(1, w * 0.6), this.tint(0xffffff), a * 0.75);
+    g.lineBetween(h.x + cos * len * 0.15, h.y + sin * len * 0.15, tipX - cos * w, tipY - sin * w);
+    if (st.dashing) {
+      g.lineStyle(w * 3, this.tint(st.tones.glow), a * 0.35);
+      g.lineBetween(h.x, h.y, tipX, tipY);
+    }
+    // Crossguard and pommel in gold.
+    const px = -sin * S * 0.36, py = cos * S * 0.36;
+    g.lineStyle(w * 1.6 + 2, this.tint(SOUL.void), a);
+    g.lineBetween(h.x + px, h.y + py, h.x - px, h.y - py);
+    g.lineStyle(w * 1.6, this.tint(SOUL.gold), a);
+    g.lineBetween(h.x + px, h.y + py, h.x - px, h.y - py);
+    g.fillStyle(this.tint(SOUL.gold), a);
+    g.fillCircle(h.x - cos * S * 0.22, h.y - sin * S * 0.22, w * 1.1);
   }
 
   private lobeR(l: Lobe, S: number): number {
@@ -1388,13 +1514,23 @@ export class SoulAmalgamBody {
     g.fillStyle(this.tint(tones.glow), a * 0.3);
     g.fillEllipse(x - r * 0.2, y - r * 0.38, r * 1.1, r * 0.6);
 
-    // Mouth: one dark slot with three bone teeth along its top edge.
     const my = y + r * 0.48;
-    g.fillStyle(this.tint(SOUL.void), a * 0.9);
-    g.fillEllipse(x, my, r * 0.8, r * 0.5 * jaw);
-    g.fillStyle(this.tint(SOUL.bone), a * 0.95);
-    for (let i = 0; i < 3; i++) {
-      g.fillRect(x - r * 0.28 + i * r * 0.22, my - r * 0.24 * jaw, r * 0.12, r * 0.18 * jaw);
+    if (this.spec.prince) {
+      // Still a face: a pale cheek, a straight grim mouth, a stitch across the jaw.
+      g.fillStyle(this.tint(SOUL.bone), a * 0.22);
+      g.fillEllipse(x, y + r * 0.2, r * 1.3, r * 1.1);
+      g.lineStyle(Math.max(1, r * 0.12), this.tint(SOUL.void), a * 0.9);
+      g.lineBetween(x - r * 0.3, my - r * 0.05, x + r * 0.3, my - r * 0.05);
+      g.lineStyle(Math.max(1, r * 0.08), this.tint(SOUL.bone), a * 0.8);
+      g.lineBetween(x + r * 0.45, y + r * 0.1, x + r * 0.2, y + r * 0.6);
+    } else {
+      // Mouth: one dark slot with three bone teeth along its top edge.
+      g.fillStyle(this.tint(SOUL.void), a * 0.9);
+      g.fillEllipse(x, my, r * 0.8, r * 0.5 * jaw);
+      g.fillStyle(this.tint(SOUL.bone), a * 0.95);
+      for (let i = 0; i < 3; i++) {
+        g.fillRect(x - r * 0.28 + i * r * 0.22, my - r * 0.24 * jaw, r * 0.12, r * 0.18 * jaw);
+      }
     }
 
     // Sockets, with pips shifted toward the prey. Blinks on a per-head clock.
@@ -1471,6 +1607,11 @@ export class SoulAmalgamBody {
     g.fillStyle(fill, a);
     g.fillCircle(x1, y1, w);
     g.fillCircle(x2, y2, w * 1.25);
+    if (this.spec.prince && l.side === 1) {
+      // A sword hand, not a claw: the grip is drawn by drawPrinceSword over the top of it.
+      this.swordHand = { x: x2, y: y2, ang: fore };
+      return;
+    }
     // Claws: three small bone hooks off the hand.
     g.fillStyle(this.tint(SOUL.bone), a * 0.95);
     for (let i = -1; i <= 1; i++) {

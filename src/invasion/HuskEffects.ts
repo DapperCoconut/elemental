@@ -164,7 +164,7 @@ export class HuskEffectEngine {
       case 'metal': husk.incomingDamageMultiplier *= 0.65; break;
       case 'subterfuge':
         // Wears a plain husk's face until you get close enough to matter.
-        if (v.id !== 'decoy') husk.setTexture(huskTextureKey(BASIC_HUSK));
+        if (v.id !== 'decoy') husk.setDisguise(true);
         break;
       case 'illusion':
         if (v.id !== 'decoy') this.spawnDecoys(husk);
@@ -539,7 +539,7 @@ export class HuskEffectEngine {
         if (!st.revealed && nearest
           && Phaser.Math.Distance.Between(husk.x, husk.y, nearest.x, nearest.y) < 170) {
           st.revealed = true;
-          husk.setTexture(huskTextureKey(husk.variant));
+          husk.setDisguise(false);
           husk.effectSpeedMult = 1.5;
           husk.effectHasteUntil = Number.MAX_SAFE_INTEGER;
           if (inView) this.world.showFloatingText(husk.x, husk.y - 34, '🕴️ AN IMPOSTOR!', '#ff6677');

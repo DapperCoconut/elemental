@@ -3,6 +3,7 @@ import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import {
   DEV, PassionAvatar, PassionFx, ascendBand, chariot, crashMark, crucifixAura, crucifixPost,
   faithBar, firePillar, glory, halo, handGrenade, holyWaterPuddle, pillarCrosshair, skyPriest, vial,
+  arkGround, arkOfCovenant, blessingShell, gazeThread, prayerSigil,
 } from '../../../elements/kits/PassionVisuals';
 
 /**
@@ -736,6 +737,144 @@ export const ascendanceUpgraded: PreviewScript = {
         pillarCrosshair(air, ctx.tint, aim.x, aim.y, 46, left, 3, t);
       }
       if (e > 8500 && e < 9200) crashMark(air, ctx.tint, enemy.x - 14, enemy.y + 8, CRASH_R, (e - 8500) / 700, t);
+    });
+  },
+};
+
+// ══ MASTERY ════════════════════════════════════════════════════════════
+
+const PRAYER_ANSWER_MS = 5000;
+const ARK_FAITH_PER_SEC = 5;
+const GAZE_PULL_MAX = Phaser.Math.DegToRad(14);
+
+export const masteryPray: PreviewScript = {
+  duration: 8000,
+  scale: 0.9,
+  caption: 'Pray Always — every 8s a prayer of your own accord; 5s later it is answered: Shelter (−25% damage 5s), Mercy (+50 HP) or Revelation (35 faith)',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new PassionAvatar(ctx.scene, ctx.tint));
+    priest(av)?.setMastered(true);
+    av.setFacing(0);
+    const readout = label(ctx, ctx.w * 0.5, 12, hex(DEV.gold), 11);
+    const enemy = { x: ctx.cx + 230, y: ctx.cy };
+    let faith = 70;
+    believer(ctx, enemy, () => faith);
+    const face = ctx.adopt(ctx.scene.add.graphics().setDepth(11));
+    const answer = (['armour', 'heal', 'ray'] as const)[Math.floor(Math.random() * 3)];
+    let saidAt = -1;
+    let shelterUntil = -1;
+    ctx.at(300, () => {
+      saidAt = 300;
+      readout.setText('a prayer, said of its own accord');
+      priest(av)?.setHold('brace');
+      const c = ctx.casterAt();
+      ctx.capture(() => fx.pray(c.x, c.y));
+      float(ctx, c.x, c.y - 70, '🙏 A PRAYER…', hex(DEV.pale), 12);
+    });
+    ctx.at(1000, () => priest(av)?.setHold(null));
+    ctx.at(1600, () => readout.setText('…rising, while the ring closes'));
+    ctx.at(300 + PRAYER_ANSWER_MS, () => {
+      saidAt = -1;
+      const c = ctx.casterAt();
+      if (answer === 'armour') {
+        readout.setText('answered: Shelter — 25% less damage for 5s');
+        shelterUntil = 300 + PRAYER_ANSWER_MS + 2400;
+        ctx.capture(() => fx.answerArmour(c.x, c.y));
+        float(ctx, c.x, c.y - 70, '🛡️ ANSWERED: SHELTER', hex(DEV.gold), 12);
+      } else if (answer === 'heal') {
+        readout.setText('answered: Mercy — 50 HP');
+        ctx.capture(() => fx.answerHeal(c.x, c.y));
+        float(ctx, c.x, c.y - 70, '💛 ANSWERED: MERCY', hex(DEV.pale), 12);
+        float(ctx, c.x + 18, c.y - 40, '+50', '#7dff8a', 13);
+      } else {
+        readout.setText('answered: Revelation — a ray of light, 35 faith');
+        ctx.capture(() => fx.heavenRay(enemy.x, enemy.y));
+        faith += 35;
+        float(ctx, c.x, c.y - 70, '☀️ ANSWERED: REVELATION', hex(DEV.white), 12);
+        float(ctx, enemy.x, enemy.y - 34, '+35 ☀️', hex(DEV.holy), 13);
+      }
+    });
+    ctx.onFrame((_dt, e) => {
+      const t = e / 1000;
+      const c = ctx.casterAt();
+      face.clear();
+      if (saidAt >= 0) prayerSigil(face, ctx.tint, c.x, c.y - 68, (e - saidAt) / PRAYER_ANSWER_MS, t);
+      if (e < shelterUntil) blessingShell(face, ctx.tint, c.x, c.y, t, Phaser.Math.Clamp((shelterUntil - e) / 400, 0, 1));
+    });
+  },
+};
+
+export const masteryArk: PreviewScript = {
+  duration: 9500,
+  scale: 0.85,
+  caption: 'Ark of the Covenant — foes who look toward it gain faith. Under half they try to look away; over half their sight (and a player\'s aim) is pulled toward it',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new PassionAvatar(ctx.scene, ctx.tint));
+    priest(av)?.setMastered(true);
+    const start = { x: ctx.cx - 240, y: ctx.cy + 10 };
+    ctx.moveCaster(start.x, start.y);
+    av.setFacing(0);
+    const readout = label(ctx, ctx.w * 0.5, 12, hex(DEV.gold), 11);
+    const enemy = { x: ctx.cx + 220, y: ctx.cy + 10 };
+    let faith = 70;
+    believer(ctx, enemy, () => faith);
+    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
+    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const ark = { x: ctx.cx - 20, y: ctx.cy + 18 };
+    let placed = -1;
+    let stare = 0;
+    let nextTick = 0;
+    const shots: { x: number; y: number; vx: number; vy: number }[] = [];
+    ctx.at(300, () => {
+      placed = 300;
+      readout.setText('set it down on their sightline');
+      av.play('slam', 0);
+      ctx.capture(() => fx.arkLand(ark.x, ark.y));
+      float(ctx, ark.x, ark.y - 64, '✨ ARK OF THE COVENANT', hex(DEV.gold), 12);
+    });
+    ctx.at(1300, () => readout.setText('under half faith they try to look away — but aiming at you, they keep seeing it'));
+    ctx.at(5000, () => readout.setText('past half, their sight is drawn to it — and their aim goes too'));
+    for (const at of [5800, 6700, 7600, 8500]) {
+      ctx.at(at, () => {
+        // Aimed at the priest; bent toward the Ark by the pull.
+        const c = ctx.casterAt();
+        const want = Math.atan2(c.y - enemy.y, c.x - enemy.x);
+        const toArk = Math.atan2(ark.y - 14 - enemy.y, ark.x - enemy.x);
+        const diff = Phaser.Math.Angle.Wrap(toArk - want);
+        const a = want + Math.sign(diff) * Math.min(Math.abs(diff), GAZE_PULL_MAX);
+        shots.push({ x: enemy.x - 16, y: enemy.y, vx: Math.cos(a) * 380, vy: Math.sin(a) * 380 });
+      });
+    }
+    ctx.onFrame((dt, e) => {
+      const s = dt / 1000;
+      const t = e / 1000;
+      ground.clear();
+      air.clear();
+      if (placed < 0) return;
+      const rise = (e - placed) / 260;
+      // In the second half the believer has stepped off the line, so only the pull keeps them looking.
+      if (e > 5000) enemy.y = Math.max(ctx.cy - 70, enemy.y - 40 * s);
+      const devout = faith >= 100;
+      stare += (1 - stare) * Math.min(1, s * 4);
+      arkGround(ground, ctx.tint, ark.x, ark.y, 34, rise, t, stare);
+      gazeThread(ground, ctx.tint, enemy.x, enemy.y - 6, ark.x, ark.y - 14,
+        e < 1300 ? 0.3 : devout ? 1 : -1, t);
+      arkOfCovenant(air, ctx.tint, ark.x, ark.y, rise, t, stare);
+      if (e >= nextTick && e > 800) {
+        nextTick = e + 1000;
+        faith += e > 5000 ? 30 : ARK_FAITH_PER_SEC;
+        float(ctx, enemy.x - 12, enemy.y - 34, `+${ARK_FAITH_PER_SEC} 👁️`, hex(DEV.gold), 12);
+      }
+      for (let i = shots.length - 1; i >= 0; i--) {
+        const sh = shots[i];
+        sh.x += sh.vx * s;
+        sh.y += sh.vy * s;
+        if (sh.x < start.x - 80) { shots.splice(i, 1); continue; }
+        air.fillStyle(0x9aa3b8, 0.35); air.fillCircle(sh.x, sh.y, 7);
+        air.fillStyle(0xdde2ee, 1); air.fillCircle(sh.x, sh.y, 3.5);
+      }
     });
   },
 };

@@ -231,18 +231,6 @@ export const ELEMENT_FORM_TABS: Record<string,
       hint: '+33% speed and +20% damage taken, for 2 Willpower a second. F lands you again.',
     },
   ],
-  // The spirit's two keys only exist while Dream Mastery's Dream Duel is running, so the
-  // second tab is a form the element cannot enter at all until the mastery is unlocked.
-  dream: [
-    {
-      label: '🌙 AWAKE', accent: 0x8b5cf6, text: '#d8e2ff',
-      hint: 'The five waking keys. The pendulum stacks sleepiness; everything else spends it.',
-    },
-    {
-      label: '👻 DUEL', accent: 0xe4f1ff, text: '#e4f1ff',
-      hint: 'Dream Mastery only. Space while standing still and the enemy is asleep — both spirits come out and the tray becomes these two.',
-    },
-  ],
 };
 
 /**

@@ -435,6 +435,8 @@ export function rollLightningVariant(
   difficultyId: string,
   rand: () => number,
   theme: InvasionTheme | null = null,
+  /** City invasion: the run's rolled families. Already difficulty-filtered, so it replaces the category gate. */
+  pool: Set<string> | null = null,
 ): HuskVariantDef | null {
   const chance = Math.min(
     theme ? 0.92 : 0.88,
@@ -448,7 +450,9 @@ export function rollLightningVariant(
   for (const v of ELEMENTAL_HUSK_VARIANTS) {
     const ok = theme
       ? theme.kin.has(v.elementId!) && wave >= v.minWave
-      : allowed.has(v.category!) && wave >= v.minWave;
+      : pool
+        ? pool.has(v.elementId!) && wave >= v.minWave
+        : allowed.has(v.category!) && wave >= v.minWave;
     const w = ok
       ? tierWeight(v.tier!, wave) * (theme
         ? (v.elementId === theme.elementId ? 3 : 1)

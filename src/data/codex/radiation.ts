@@ -212,6 +212,49 @@ const radiation: ElementCodex = {
       ],
     },
   },
+
+  mastery: {
+    'x-ray-vision': {
+      basics:
+        'You see straight through them. Every enemy carries a green outline on your screen — a neon '
+        + 'contour round the body, scanner brackets, the faint bones inside and a scan line sweeping '
+        + 'down through it. The outline is drawn whatever the body itself is doing, so a target that '
+        + 'has gone invisible (Silence stealth, Depths camouflage, a Technology shelter, anything that '
+        + 'fades a fighter out) is still an outline walking about.',
+      cast: 'Passive. Always on while Radiation Mastery is enabled and Radiation is the element being played.',
+      effects: [
+        { tag: 'utility', label: 'Outlined', detail: 'Every enemy on your screen has a green outline, visible or not.' },
+      ],
+      notes: [
+        'It only shows you where they are. It does not make them targetable by anything that could not already hit them.',
+        'A Radiation bot with the mastery is not fooled by invisibility either: it keeps fighting instead of wandering.',
+        'In Invasion only the husks in the room you are in are outlined.',
+      ],
+    },
+    'test-dummy': {
+      basics:
+        'Throw out a crash-test dummy — up to 230px toward the cursor — tied to you by a faint green '
+        + 'link. It has 25 HP. Until it dies you cannot be hurt: every hit that would land on you runs '
+        + 'down the link and into the dummy instead, from any source. Bots and husks switch to '
+        + 'attacking the dummy, enemy shots that hit it stop there, and blasts that reach it count as '
+        + 'hits on you (so they go into the dummy too). It stands for 12 seconds if nobody breaks it. '
+        + 'Like the Fallout Bunker, it also takes your own airdrop\'s 200 for you — and breaks doing it. '
+        + 'Bindable to R, F or Q. 16s cooldown.',
+      cast: 'The bound key (R, F or Q). It is thrown toward the cursor.',
+      effects: [
+        { tag: 'summon', label: 'The dummy', detail: '25 HP, thrown up to 230px; stands for 12 seconds.' },
+        { tag: 'shield', label: 'The link', detail: 'While it stands, every hit on you goes into the dummy instead.' },
+        { tag: 'control', label: 'Decoy', detail: 'Bots and husks target the dummy; enemy shots that hit it stop there.' },
+        { tag: 'utility', label: 'Cover', detail: 'Your own airdrop\'s self-hit lands on the dummy and breaks it.' },
+      ],
+      notes: [
+        'The killing hit is absorbed too — however big it is, the dummy takes all of it.',
+        'Throw it between you and them: shots aimed at you hit it on the way.',
+        'Pair it with the flare gun — you can walk right up and place all five flares without being hurt.',
+        'A Radiation NPC on Nightmare binds it over Fallout Bunker and throws it as its airdrop falls, while its flare gun is out, or when it is hurt and pressed.',
+      ],
+    },
+  },
 };
 
 export default radiation;

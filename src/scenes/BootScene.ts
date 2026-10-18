@@ -2520,8 +2520,8 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('proj-justice-spear', 32, 17);
     gfx.clear();
 
-    // Dream — a crescent moon over a piece of night sky, with the pendulum's cord hanging
-    // off it. DreamKit paints the character rig over the top of this per-frame, so the
+    // Dream — a crescent moon over a piece of night sky, with a little hourglass of the
+    // sandman's sand hanging off it. DreamKit paints the character rig over the top of this per-frame, so the
     // sprite only has to read as "Dream" on the element cards.
     gfx.fillStyle(0x0b0620, 1);
     gfx.fillCircle(24, 24, 21);
@@ -2542,11 +2542,14 @@ export class BootScene extends Phaser.Scene {
       gfx.fillStyle(0xd8e2ff, 1);
       gfx.fillCircle(sx, sy, sr);
     }
-    // The pendulum's cord and bob, hanging out of the crescent's horn.
+    // A tiny hourglass of gold sand, hanging out of the crescent's horn.
     gfx.lineStyle(1.2, 0xd8e2ff, 1);
-    gfx.lineBetween(26, 30, 29, 39);
-    gfx.fillStyle(0x8b5cf6, 1);
-    gfx.fillCircle(29, 40, 3.4);
+    gfx.lineBetween(26, 30, 29, 34);
+    gfx.fillStyle(0xd7b25a, 1);
+    gfx.fillTriangle(25.5, 34, 32.5, 34, 29, 38.5);
+    gfx.fillTriangle(25.5, 43, 32.5, 43, 29, 38.5);
+    gfx.fillStyle(0xf0d48a, 1);
+    gfx.fillTriangle(27, 42, 31, 42, 29, 39.5);
     gfx.generateTexture('elem-dream', 48, 48);
     gfx.clear();
 

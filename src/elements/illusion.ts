@@ -6,7 +6,7 @@ import { Ability, CastContext } from './Ability';
  *
  * Every other element asks where the enemy is. Illusion asks where the enemy *thinks* things
  * are, and then spends its whole kit making that answer wrong: a bullet that pays out even
- * when it misses, a pane of space that bends whatever crosses it, two different ways of not
+ * when it misses, a pane of space that bends their shots and multiplies yours, two different ways of not
  * being where you were a moment ago, and a clone that draws the fire while you are not there at all.
  *
  * The consequence is an element with almost no sustained pressure and enormous positional
@@ -27,7 +27,7 @@ const crackShot: Ability = {
 const veil: Ability = {
   id: 'illusion-veil',
   name: 'Illusion Veil',
-  description: 'Hang a pane of warped space in front of you for 6s. Any shot that crosses it — theirs or yours — comes out 30° off, left or right.',
+  description: 'Hang a pane of warped space in front of you for 6s. Enemy shots that cross it come out 10° off, left or right. Your Crack Shots pass straight through — with five illusion bullets fanned around them. Illusions hurt nobody, but anything that hits one cracks it, sending a crack at the enemy for 10.',
   displayKey: 'E',
   cooldown: 9000,
   cast(ctx: CastContext) { ctx.illusionVeil(ctx.targetX, ctx.targetY); },

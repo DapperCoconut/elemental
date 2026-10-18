@@ -2,11 +2,11 @@ import Phaser from 'phaser';
 import { Fighter, DamageOpts } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
-import { stealBuffs } from '../../combat/StatusEffects';
+import { hasDebuff, stealBuffs } from '../../combat/StatusEffects';
 import { Sfx } from '../../audio';
 import {
   CookDish, GluttonyAvatar, HAR, HarvestColorFn, HarvestFx, MoldCell, cookDish, corruptHeart, corruptionVeil,
-  crowShape, fleshChunk, moldLayer, moldWorm, poisonVial, rotBullet, seedShape, sickleShape, sickleTrail,
+  crowShape, fleshChunk, moldLayer, moldWorm, poisonVial, predationPellet, rotBullet, seedShape, sickleShape, sickleTrail,
 } from './GluttonyVisuals';
 
 type Owner = 'player' | 'npc';
@@ -150,8 +150,31 @@ const MENU_W = 118;
 const MENU_H = 46;
 const MENU_GAP = 8;
 
+// ── Mastery ──────────────────────────────────────────────────────────────────
+// Invasive Species (passive): regeneration while anything harmful is on you.
+const INVASIVE_REGEN_PER_SEC = 2;
+/** How often the tray is re-read for a debuff — the check walks every descriptor. */
+const INVASIVE_CHECK_MS = 250;
+// Corrupt Predation (bindable): a long-range shotgun paid for in Corrupt HP.
+const PREDATION_ID = 'corrupt-predation';
+const PREDATION_COST = 50;
+const PREDATION_COOLDOWN_MS = 3000;
+const PELLETS = 12;
+const PELLET_DAMAGE = 5;
+/** The whole cone, edge to edge. */
+const PELLET_SPREAD = (5 * Math.PI) / 180;
+const PELLET_SPEED = 900;
+const PELLET_RANGE = 720;
+const PELLET_R = 4;
+const PELLET_CORRUPTION = 4;
+/** Pellets of one volley that land this close together plant one seed between them, not several. */
+const PELLET_SEED_GAP = 30;
+/** "Infected" for the mastery's coverage requirement: mold far enough along to spread. */
+const COVER_AT = MOLD_SPREAD_AT;
+
 // ── Bot ──────────────────────────────────────────────────────────────────────
 const NPC_HEART_AIM_R = LOOP_MAX;
+const NPC_PREDATION_RANGE = 520;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -201,6 +224,18 @@ interface VialDrop {
   x: number;
   y: number;
   at: number;
+}
+
+/** Mastery — Corrupt Predation: one pellet of the volley. */
+interface Pellet {
+  owner: Owner;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  travelled: number;
+  /** Where this volley has already planted, shared by every pellet in it. */
+  planted: { x: number; y: number }[];
 }
 
 /** Every vial that splashed a body is one stack of 4/s, each with its own clock. */
@@ -274,6 +309,13 @@ interface Side {
   brothUntil: number;
   jerky: number[];
   jerkyFrac: number;
+  // ── Mastery ──
+  /** Corrupt Predation's last volley (scene time). Starts a cooldown in the past so it is ready. */
+  predationAt: number;
+  /** Invasive Species: whether the regen is running, when the tray is next read, the heal owed. */
+  invasive: boolean;
+  invasiveCheckAt: number;
+  invasiveFrac: number;
 }
 
 function makeSide(owner: Owner): Side {
@@ -281,6 +323,7 @@ function makeSide(owner: Owner): Side {
     owner, aimX: 0, aimY: 0, arc: 1, flesh: 0, heartRegenUntil: 0, corruptFrac: 0, healFrac: 0,
     stolenDmg: 1, stolenSpeed: 1, stolenUntil: 0, heartTimer: 0, swing: null,
     wormTimer: 0, brothUntil: 0, jerky: [], jerkyFrac: 0,
+    predationAt: -PREDATION_COOLDOWN_MS, invasive: false, invasiveCheckAt: 0, invasiveFrac: 0,
   };
 }
 
@@ -324,6 +367,15 @@ export interface GluttonyArenaApi {
   broadcast(id: string): void;
   /** The player's shop upgrade, or the opponent's (online handshake / Hard+ bot loadout). */
   hasUpgrade(owner: Owner, slot: string): boolean;
+  // ── Mastery ──
+  get masteryActive(): boolean;
+  get npcMasteryActive(): boolean;
+  /** Which mastery enhancement each side dropped over an R/F/Q slot, or null. */
+  masteryBindFor(slot: string): string | null;
+  npcMasteryBindFor(slot: string): string | null;
+  /** Mastery progress. Gated on the element by the adapter, so the kit records unconditionally. */
+  recordMasteryStat(key: string, amount: number): void;
+  recordMasteryBest(key: string, value: number): void;
 }
 
 // ── GluttonyKit ──────────────────────────────────────────────────────────────
@@ -400,6 +452,11 @@ export class GluttonyKit {
   private menuTexts: Phaser.GameObjects.Text[] = [];
   private wasLeft = false;
   private pressSpent = false;
+
+  // ── Mastery ──
+  private pellets: Pellet[] = [];
+  /** The best share of the map this match's mold has covered, in whole percent, already recorded. */
+  private coverBest = 0;
 
   constructor(api: GluttonyArenaApi) {
     this.api = api;
@@ -581,6 +638,8 @@ export class GluttonyKit {
     this.menuGfx?.destroy(); this.menuGfx = null;
     for (const t of this.menuTexts) t.destroy();
     this.menuTexts = [];
+    this.pellets = [];
+    this.coverBest = 0;
 
     for (const f of this.allFighters()) {
       f.gluttonyIncomingMult = 1;
@@ -601,6 +660,7 @@ export class GluttonyKit {
     this.api.setStatusIndicator('harvest-arc', null);
     this.api.setStatusIndicator('harvest-broth', null);
     this.api.setStatusIndicator('harvest-jerky', null);
+    this.api.setStatusIndicator('harvest-invasive', null);
   }
 
   private ensureLayers(): void {
@@ -657,14 +717,23 @@ export class GluttonyKit {
     }
 
     const ctx = this.api.buildPlayerContext(mouseX, mouseY);
+    // Mastery: whichever of R/F/Q Corrupt Predation was dropped on stops being its own ability.
+    const bound = this.predationSlot('player');
     if (left && !this.pressSpent) p.castAbility('harvest-sickle', ctx);
     if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('harvest-sow', ctx);
     if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) {
       // R+ Poison Payload: while the crows still carry their vials, R lets go of them instead.
-      if (!this.dropVials('player')) p.castAbility('harvest-frenzy', ctx);
+      if (bound === 'r') this.tryPredation('player', mouseX, mouseY);
+      else if (!this.dropVials('player')) p.castAbility('harvest-frenzy', ctx);
     }
-    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('harvest-consume', ctx);
-    if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('harvest-reap', ctx);
+    if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) {
+      if (bound === 'f') this.tryPredation('player', mouseX, mouseY);
+      else p.castAbility('harvest-consume', ctx);
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) {
+      if (bound === 'q') this.tryPredation('player', mouseX, mouseY);
+      else p.castAbility('harvest-reap', ctx);
+    }
   }
 
   private flipArc(owner: Owner): void {
@@ -741,13 +810,7 @@ export class GluttonyKit {
       this.seeds.push({ owner, x, y, born: this.now + SEED_FLIGHT_MS });
       this.fx(owner).seedFlight(f.x, f.y, x, y, SEED_FLIGHT_MS + i * 25);
     }
-    // The oldest colonies of this owner wither to make room.
-    let mine = this.seeds.filter((sd) => sd.owner === owner).length;
-    while (mine > SEEDS_MAX) {
-      const i = this.seeds.findIndex((sd) => sd.owner === owner);
-      this.seeds.splice(i, 1);
-      mine--;
-    }
+    this.trimSeeds(owner);
     this.fx(owner).sowCast(f.x, f.y);
     this.avatar(owner)?.setHold(null);
     this.avatar(owner)?.play('flex');
@@ -846,7 +909,7 @@ export class GluttonyKit {
     const npcIs = this.isHarvest('npc');
     const anyState = this.sickles.length || this.seeds.length || this.hearts.length || this.flocks.length
       || this.reaped.size || this.api.player?.harvestCorruption || this.worms.length || this.shots.length
-      || this.poisons.size || this.stuns.size || this.drops.length;
+      || this.poisons.size || this.stuns.size || this.drops.length || this.pellets.length;
     if (!playerIs && !npcIs && !anyState) return;
 
     this.ensureLayers();
@@ -872,6 +935,10 @@ export class GluttonyKit {
     this.updateCooking(dt);
     this.updateNpcUpgradePlay();
     this.updateStuns();
+    // Mastery.
+    this.updateInvasive(dt);
+    this.updatePellets(dt);
+    this.updateNpcMastery();
 
     this.paint();
     this.paintMenu(playerIs);
@@ -1005,6 +1072,7 @@ export class GluttonyKit {
     if (!this.alive(f)) return;
     this.addCorruptHp(owner, HEART_CORRUPT_HP);
     this.side(owner).heartRegenUntil = this.now + HEART_REGEN_MS;
+    this.record(owner, 'heartsHarvested');
     this.fx(owner).corruptGain(f.x, f.y, HEART_CORRUPT_HP);
     this.announce(f.x, f.y - 48, `+${HEART_CORRUPT_HP} CORRUPT HP`, HAR.purpleLit, 13);
   }
@@ -1073,6 +1141,7 @@ export class GluttonyKit {
         }
       }
     }
+    this.recordCoverage();
   }
 
   /** How grown `owner`'s mold is under (x, y). */
@@ -1427,6 +1496,7 @@ export class GluttonyKit {
       this.poisons.set(t, p);
     }
     p.stacks.push(this.now + POISON_MS);
+    if (!this.isReplica(owner)) this.record(owner, 'enemiesPoisoned');
     t.harvestPoisonUntil = Math.max(t.harvestPoisonUntil, Date.now() + POISON_MS);
     this.announce(t.x, t.y - 40, `🧪 POISONED ×${p.stacks.length}`, 0x9be35a, 11);
   }
@@ -1485,6 +1555,7 @@ export class GluttonyKit {
     }
     this.serve(owner, i);
     this.relay(owner, `harvest-cook:${i}`);
+    this.record(owner, 'mealsCooked');
     return true;
   }
 
@@ -1592,6 +1663,189 @@ export class GluttonyKit {
     }
   }
 
+  // ── Mastery ────────────────────────────────────────────────────────────────
+
+  /** Whether Element Mastery is on for whichever side is asking, and they are Harvest. */
+  private masteryOn(owner: Owner): boolean {
+    return this.isHarvest(owner) && (owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
+  }
+
+  /** Which slot Corrupt Predation was dropped on, or null. */
+  private predationSlot(owner: Owner): 'r' | 'f' | 'q' | null {
+    if (!this.masteryOn(owner)) return null;
+    for (const s of ['r', 'f', 'q'] as const) {
+      const bind = owner === 'player' ? this.api.masteryBindFor(s) : this.api.npcMasteryBindFor(s);
+      if (bind === PREDATION_ID) return s;
+    }
+    return null;
+  }
+
+  /**
+   * Mastery progress. Only ever the player's — the grind is the human's, not the bot's — and not
+   * gated on the mastery being on, since earning it is the point.
+   */
+  private record(owner: Owner, key: string, amount = 1): void {
+    if (owner === 'player' && this.isHarvest('player')) this.api.recordMasteryStat(key, amount);
+  }
+
+  /** "Infect 75% of the map": the player's mold coverage, written only when the whole percent rises. */
+  private recordCoverage(): void {
+    if (!this.grids || !this.isHarvest('player')) return;
+    const g = this.grids.player;
+    let n = 0;
+    for (let k = 0; k < g.length; k++) if (g[k] >= COVER_AT) n++;
+    const pct = Math.floor((n / g.length) * 100);
+    if (pct <= this.coverBest) return;
+    this.coverBest = pct;
+    this.api.recordMasteryBest('moldCoverBest', pct);
+  }
+
+  /**
+   * Invasive Species: while anything harmful is on the scarecrow, it regrows — 2 HP a second.
+   * The tray is read a few times a second; the heal is paid per frame in whole points.
+   */
+  private updateInvasive(dt: number): void {
+    for (const owner of BOTH) {
+      const s = this.side(owner);
+      const f = this.fighter(owner);
+      if (!this.masteryOn(owner) || this.isReplica(owner) || !this.alive(f)) {
+        s.invasive = false;
+        continue;
+      }
+      if (this.now >= s.invasiveCheckAt) {
+        s.invasiveCheckAt = this.now + INVASIVE_CHECK_MS;
+        const was = s.invasive;
+        s.invasive = hasDebuff(f, Date.now(), this.now);
+        if (s.invasive && !was) this.fx(owner).ring(f.x, f.y, 6, 30, 420, HAR.purpleLit, 2, 6);
+      }
+      if (!s.invasive) continue;
+      s.invasiveFrac += INVASIVE_REGEN_PER_SEC * dt;
+      const whole = Math.floor(s.invasiveFrac);
+      if (whole > 0) {
+        s.invasiveFrac -= whole;
+        f.heal(whole);
+      }
+    }
+  }
+
+  /**
+   * Corrupt Predation, from the bound key, the bot, or an online peer's replay.
+   *
+   * It never goes through `castAbility` — the enhancement is not in the element's ability list —
+   * so the refusals that gate every other key are repeated here. A replica pays nothing: its
+   * Corrupt HP and its cooldown live on its own machine.
+   */
+  private tryPredation(owner: Owner, tx: number, ty: number): boolean {
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return false;
+    const s = this.side(owner);
+    const replica = this.isReplica(owner);
+    if (!replica) {
+      const wall = Date.now();
+      if (wall < f.disarmedUntil || wall < f.chickenUntil || wall < f.silencedUntil || wall < f.stunnedUntil) return false;
+      if (this.now - s.predationAt < PREDATION_COOLDOWN_MS) return false;
+      if (f.corruptHp < PREDATION_COST) {
+        if (owner === 'player') {
+          this.announce(f.x, f.y - 46, `NEED ${PREDATION_COST} CORRUPT HP`, HAR.purpleLit, 11);
+          Sfx.playAt('ui-click', f.x, { rate: 0.7, volume: 0.4 });
+        }
+        return false;
+      }
+      f.corruptHp -= PREDATION_COST;
+    }
+    s.predationAt = this.now;
+    this.ensureLayers();
+    const ang = Math.atan2(ty - f.y, tx - f.x);
+    const mx = f.x + Math.cos(ang) * 24;
+    const my = f.y + Math.sin(ang) * 24;
+    const planted: { x: number; y: number }[] = [];
+    for (let i = 0; i < PELLETS; i++) {
+      // Spread evenly across the cone, each nudged a little, at slightly different speeds.
+      const u = (i + 0.5) / PELLETS - 0.5;
+      const a = ang + u * PELLET_SPREAD + (Math.random() - 0.5) * (PELLET_SPREAD / PELLETS);
+      const v = PELLET_SPEED * (0.9 + Math.random() * 0.2);
+      this.pellets.push({ owner, x: mx, y: my, vx: Math.cos(a) * v, vy: Math.sin(a) * v, travelled: 0, planted });
+    }
+    this.fx(owner).predationBlast(f.x, f.y, mx, my, ang);
+    this.avatar(owner)?.play('punch', ang);
+    Sfx.playAt('hit-heavy', f.x, { rate: 0.7, volume: 0.9 });
+    Sfx.playAt('splash', f.x, { rate: 0.5, volume: 0.5 });
+    if (owner === 'player') this.api.broadcast(PREDATION_ID);
+    return true;
+  }
+
+  /** Online: the opponent fired Corrupt Predation at `tx, ty`. */
+  replayPredation(tx: number, ty: number): void {
+    this.tryPredation('npc', tx, ty);
+  }
+
+  /**
+   * The volley in flight. A pellet stops in the first body it meets: the owner's sim deals the 5
+   * (a replica's pellets are scenery for that), and both sims put the rot on and plant the seed, so
+   * the mold the victim's machine grows is the one the owner's does.
+   */
+  private updatePellets(dt: number): void {
+    const W = this.api.width;
+    const H = this.api.height;
+    for (let i = this.pellets.length - 1; i >= 0; i--) {
+      const b = this.pellets[i];
+      const px = b.x;
+      const py = b.y;
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      b.travelled += Math.hypot(b.vx, b.vy) * dt;
+      let gone = b.travelled >= PELLET_RANGE || b.x < -20 || b.y < -20 || b.x > W + 20 || b.y > H + 20;
+      if (!gone) {
+        for (const t of this.targetsOf(b.owner)) {
+          if (this.segDist(px, py, b.x, b.y, t.x, t.y) > PELLET_R + this.bodyR(t)) continue;
+          if (!this.isReplica(b.owner)) this.hit(b.owner, t, PELLET_DAMAGE, { sourceX: px, sourceY: py });
+          this.corrupt(t, PELLET_CORRUPTION);
+          this.fx(b.owner).rotBulletHit(t.x, t.y, Math.atan2(b.vy, b.vx));
+          this.plantFromPellet(b, t);
+          gone = true;
+          break;
+        }
+      }
+      if (gone) this.pellets.splice(i, 1);
+    }
+  }
+
+  /** A pellet that found a body leaves a seed behind it — one per spot per volley. */
+  private plantFromPellet(b: Pellet, t: Fighter): void {
+    const x = Phaser.Math.Clamp(t.x, ARENA_PAD, this.api.width - ARENA_PAD);
+    const y = Phaser.Math.Clamp(t.y + 6, ARENA_PAD, this.api.height - ARENA_PAD);
+    if (b.planted.some((p) => Phaser.Math.Distance.Between(p.x, p.y, x, y) < PELLET_SEED_GAP)) return;
+    b.planted.push({ x, y });
+    this.ensureGrids();
+    this.seeds.push({ owner: b.owner, x, y, born: this.now });
+    this.trimSeeds(b.owner);
+    this.fx(b.owner).splatter(x, y, 4, 14, 320, 4);
+  }
+
+  /** The oldest colonies of `owner` wither to make room. */
+  private trimSeeds(owner: Owner): void {
+    let mine = this.seeds.filter((sd) => sd.owner === owner).length;
+    while (mine > SEEDS_MAX) {
+      const i = this.seeds.findIndex((sd) => sd.owner === owner);
+      this.seeds.splice(i, 1);
+      mine--;
+    }
+  }
+
+  /**
+   * The bot's half of Corrupt Predation: the moment it can pay and its target is in range, it
+   * fires. Driven here, not from `NpcOpponent` — the rotation only has to leave the bound key alone.
+   */
+  private updateNpcMastery(): void {
+    if (this.api.isOnline || this.api.isInvasion || !this.predationSlot('npc')) return;
+    const n = this.api.npc;
+    const t = this.targetsOf('npc')[0];
+    if (!this.alive(n) || !t || n.corruptHp < PREDATION_COST) return;
+    if (this.now - this.sides.npc.predationAt < PREDATION_COOLDOWN_MS) return;
+    if (Phaser.Math.Distance.Between(n.x, n.y, t.x, t.y) > NPC_PREDATION_RANGE) return;
+    this.tryPredation('npc', t.x, t.y);
+  }
+
   // ── Painting ───────────────────────────────────────────────────────────────
 
   private paint(): void {
@@ -1640,6 +1894,7 @@ export class GluttonyKit {
     }
 
     for (const b of this.shots) rotBullet(ag, this.col(b.owner), b.x, b.y, Math.atan2(b.vy, b.vx), 1);
+    for (const b of this.pellets) predationPellet(ag, this.col(b.owner), b.x, b.y, Math.atan2(b.vy, b.vx), 1);
     for (const sk of this.sickles) {
       if (sk.recursed) {
         // Click+ Recursive: the second loop burns purple.
@@ -1684,7 +1939,7 @@ export class GluttonyKit {
       av.setFacing(Math.atan2(s.aimY - f.y, s.aimX - f.x));
       av.setRot(f.corruptHp / Math.max(1, f.maxHp));
       av.setSickleOut(this.sickles.some((sk) => sk.owner === owner));
-      av.setMastered(false);
+      av.setMastered(this.masteryOn(owner));
       av.update(delta, f.x, f.y, f.alpha);
     }
   }
@@ -1709,6 +1964,10 @@ export class GluttonyKit {
       description: `Corrupt Cooking: healing ${Math.round((JERKY_HEAL / (JERKY_MS / 1000)) * 10) / 10} a second per strip.`,
       count: s.jerky.length,
     } : null);
+    this.api.setStatusIndicator('harvest-invasive', playerIs && s.invasive ? {
+      name: 'Invasive Species', emoji: '🦠', color: HAR.purpleLit, priority: 155,
+      description: `Harvest Mastery: something harmful is on you, so you regenerate ${INVASIVE_REGEN_PER_SEC} HP a second.`,
+    } : null);
     const stolen = playerIs && this.now < s.stolenUntil;
     this.api.setStatusIndicator('harvest-stolen', stolen ? {
       name: 'Stolen Strength', emoji: '🩸', color: HAR.glow, priority: 151,
@@ -1732,6 +1991,19 @@ export class GluttonyKit {
     // An online replica's motion is streamed; its own boosts already happened on its machine.
     if (!this.isHarvest('npc') || this.api.isOnline) return 1;
     return this.now < s.stolenUntil ? s.stolenSpeed : 1;
+  }
+
+  /** The mastery card: the cooldown, held short of full while there is not 50 Corrupt HP to pay with. */
+  getPredationCooldownRatio(): number {
+    const s = this.sides.player;
+    const cd = Phaser.Math.Clamp((this.now - s.predationAt) / PREDATION_COOLDOWN_MS, 0, 1);
+    const paid = Phaser.Math.Clamp(this.api.player.corruptHp / PREDATION_COST, 0, 1);
+    return Math.min(cd, paid >= 1 ? 1 : paid * 0.95);
+  }
+
+  /** Which slot the bot gave up for Corrupt Predation, so its rotation leaves that key alone. */
+  npcPredationSlot(): 'r' | 'f' | 'q' | undefined {
+    return this.predationSlot('npc') ?? undefined;
   }
 
   /** A heart of the bot's own the sickle can reach: aim there and the loop's far side cuts it. */
