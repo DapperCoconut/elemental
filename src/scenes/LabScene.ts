@@ -144,9 +144,11 @@ export class LabScene extends Phaser.Scene {
 
     // ── The bench: alchemist, flask, vials, the big red button ──
     this.alchemist = new Alchemist(this, 150, BENCH_Y - 4, { scale: 0.9, depth: DEPTH.panel + 2 });
+    // The bubble sits over his head in the top-left (x ≤ 250): clear of the flask, the vials
+    // and the result cards, which all live right of x = 250.
     const m = this.alchemist.mouth();
     this.bubble = new SpeechBubble(this, {
-      anchorX: m.x, anchorY: m.y, side: 'right', width: 225, accent: accent,
+      anchorX: m.x - 22, anchorY: m.y - 72, side: 'right', width: 190, offsetX: -120, accent: accent,
       depth: DEPTH.modal + 60, onTalk: (on) => this.alchemist?.setTalking(on),
     });
 

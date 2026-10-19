@@ -119,9 +119,18 @@ export class LabBench {
     const g = scene.add.graphics();
     const emoji = scene.add.text(0, -VIAL_H * 0.42, el.emoji, { fontSize: '15px' }).setOrigin(0.5);
     const container = scene.add.container(x, y, [g, emoji]).setDepth(DEPTH.content);
-    container.setSize(VIAL_S * 2.6, VIAL_H + 14);
-    // The container's hit area is centred on its origin; the vial stands above it.
-    container.setInteractive(new Phaser.Geom.Rectangle(-VIAL_S * 1.3, -VIAL_H - 8, VIAL_S * 2.6, VIAL_H + 14), Phaser.Geom.Rectangle.Contains);
+    // The whole bottle is the grab, with a margin: cork to foot, a finger's width either side.
+    // Phaser tests a Container's hit area after adding its display origin (half its size) to
+    // the local point, so the rectangle is declared in that shifted space: a box of (w, h)
+    // whose top-left is the bottle's top-left plus (w / 2, h / 2).
+    const hitW = VIAL_S * 3.2;
+    const hitH = VIAL_H + 24;
+    const bottleTop = -VIAL_H - 14;
+    container.setSize(hitW, hitH);
+    container.setInteractive(
+      new Phaser.Geom.Rectangle(0, bottleTop + hitH / 2, hitW, hitH),
+      Phaser.Geom.Rectangle.Contains,
+    );
     scene.input.setDraggable(container);
     const vial: Vial = { el, shape: VIAL_SHAPE_FOR[el.id] ?? 'round', container, g, homeX: x, homeY: y, lit: 0, litTarget: 0 };
     this.vials.push(vial);

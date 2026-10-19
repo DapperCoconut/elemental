@@ -167,9 +167,11 @@ export class ShopScene extends Phaser.Scene {
     this.maybeDrawScrewdriver();
 
     // The keeper, and his opening line — a quote on whatever just happened, or the stock.
+    // The bubble hangs over his head in the right-wall column (x ≥ 735), which nothing else
+    // uses: the shelves end at 640, the purchase card stops at 720, the chips sit above 70.
     const m = this.keeper!.mouth();
     this.bubble = new SpeechBubble(this, {
-      anchorX: m.x, anchorY: m.y, side: 'left', place: 'below', width: 320, accent: C.gold,
+      anchorX: m.x + 40, anchorY: m.y - 58, side: 'left', width: 210, offsetX: 162, accent: C.gold,
       depth: DEPTH.modalContent + 5, onTalk: (on) => this.keeper?.setTalking(on),
     });
     const opener = this.openingLine ?? [this.stockLine(page)];
@@ -561,7 +563,8 @@ export class ShopScene extends Phaser.Scene {
   private openDetail(item: ShopItem): void {
     this.closeDetail();
     const { width } = this.scale;
-    const cx = width / 2;
+    // The card's centre, not the screen's — see the modal below.
+    const cx = width / 2 - 40;
 
     const owned = item.status === 'active' || item.status === 'shelved' || item.status === 'owned';
     const locked = item.status === 'locked';
@@ -573,8 +576,9 @@ export class ShopScene extends Phaser.Scene {
     const accent = item.status === 'active' ? C.verdant : item.status === 'shelved' ? C.blood : locked || soon ? C.steel : item.color;
     const elName = item.elementId ? (findElementDef(item.elementId)?.name ?? item.elementId) : null;
 
+    // Sat left of centre so the keeper's bubble (over his head, x ≥ 735) never covers the card.
     const modal = addModal(this, {
-      w: 560, h: 380, accent, glow: 0.5,
+      x: cx - 40, w: 560, h: 380, accent, glow: 0.5,
       title: elName ? `${elName.toUpperCase()}   ·   [ ${item.slotLabel} ]` : item.name.toUpperCase(),
       onScrimClick: () => this.closeDetail(),
     });
@@ -770,9 +774,9 @@ export class ShopScene extends Phaser.Scene {
   private showScrewdriverFound(): void {
     this.closeDetail();
     const { width } = this.scale;
-    const cx = width / 2;
+    const cx = width / 2 - 40;
     const modal = addModal(this, {
-      w: 520, h: 316, accent: C.gold, glow: 0.6, title: '🪛  YOU PICKED SOMETHING UP',
+      x: cx, w: 520, h: 316, accent: C.gold, glow: 0.6, title: '🪛  YOU PICKED SOMETHING UP',
       onScrimClick: () => this.closeDetail(),
     });
     this.detailObjects.push(modal.scrim, ...modal.objects);

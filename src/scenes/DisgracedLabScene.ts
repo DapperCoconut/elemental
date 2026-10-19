@@ -174,9 +174,11 @@ export class DisgracedLabScene extends Phaser.Scene {
     bench.fillStyle(mix(UNSTABLE, 0x000000, 0.4), 0.3); bench.fillEllipse(640, BENCH_Y + 7, 34, 6);
 
     this.ghost = new Alchemist(this, 150, BENCH_Y - 4, { scale: 0.9, depth: DEPTH.panel + 2, spectral: true });
+    // The bubble sits over his head in the top-left (x ≤ 250): clear of the flask, the vials
+    // and the result cards, which all live right of x = 250.
     const m = this.ghost.mouth();
     this.bubble = new SpeechBubble(this, {
-      anchorX: m.x, anchorY: m.y, side: 'right', width: 225, accent: DECAY,
+      anchorX: m.x - 22, anchorY: m.y - 72, side: 'right', width: 190, offsetX: -120, accent: DECAY,
       depth: DEPTH.modal + 60, onTalk: (on) => this.ghost?.setTalking(on),
     });
     this.bench = new LabBench(this, {

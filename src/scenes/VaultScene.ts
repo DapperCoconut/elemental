@@ -61,6 +61,8 @@ export class VaultScene extends Phaser.Scene {
   private revealing = false;
   private keeper: VaultKeeper | null = null;
   private bubble: SpeechBubble | null = null;
+  /** What the keeper says about the chest just opened, once its card is taken. */
+  private ledgerLine: string | null = null;
 
   constructor() {
     super({ key: 'VaultScene' });
@@ -71,6 +73,7 @@ export class VaultScene extends Phaser.Scene {
     this.mode = data?.mode ?? 'normal';
     this.page = Phaser.Math.Clamp(data?.page ?? 0, 0, VAULT_PAGE_COUNT - 1);
     this.openingLine = data?.say ?? null;
+    this.ledgerLine = null;
     this.keeper = null;
     this.bubble = null;
   }
@@ -428,9 +431,10 @@ export class VaultScene extends Phaser.Scene {
       maxLines: Math.max(3, Math.floor((bodyBottom - bodyTop) / lineH)),
     }).setOrigin(0.5, 0).setDepth(depth));
 
-    // The keeper reads the ledger entry out loud.
+    // The keeper reads the ledger entry out loud once the card is taken — spoken over it, the
+    // bubble would sit across the card's text.
     const chestNo = chest.mimic ? `Mimic ${chest.index + 1}` : `Chest ${chest.page * CHESTS_PER_PAGE + chest.index + 1}`;
-    this.bubble?.say([`${chestNo}: ${card.title}. ${chest.cost} key${chest.cost === 1 ? '' : 's'}. ${CP.getKeys(this.slotIdx)} left.`], { hold: 2000 });
+    this.ledgerLine = `${chestNo}: ${card.title}. ${chest.cost} key${chest.cost === 1 ? '' : 's'}. ${CP.getKeys(this.slotIdx)} left. Next lid?`;
 
     const btn = addButton(this, {
       x: cx, y: height - 62, w: 220, h: 46, label: 'TAKE IT', icon: '✦', accent: C.verdant, variant: 'solid', fontSize: 17, depth,
@@ -448,7 +452,7 @@ export class VaultScene extends Phaser.Scene {
     // The tab counters and the key chip both moved, so the page is rebuilt wholesale.
     this.scene.restart({
       slotIdx: this.slotIdx, mode: this.mode, page: this.page,
-      say: [`Keys: ${CP.getKeys(this.slotIdx)}. Next lid?`],
+      say: [this.ledgerLine ?? `Keys: ${CP.getKeys(this.slotIdx)}. Next lid?`],
     } as VaultInit);
   }
 }
