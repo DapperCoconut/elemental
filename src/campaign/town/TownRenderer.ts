@@ -216,12 +216,9 @@ export class TownRenderer {
       g.strokeRect(i * 7, i * 7, W - i * 14, H - i * 14);
     }
 
+    // Bakes at 1:1 — the supersampling patch (render/SuperSample.ts) leaves a texture's
+    // private camera alone, so no detaching is needed here.
     const rt = this.scene.add.renderTexture(0, 0, W, H).setOrigin(0, 0).setDepth(Z_GROUND);
-    // The supersampling patch (render/SuperSample.ts) post-scales every camera that has a
-    // camera manager by 2× — and a DynamicTexture's private camera gets one from the system
-    // scene, so the ground would bake at double size. Detach it: this camera only ever
-    // renders into the texture, at 1:1.
-    (rt.camera as unknown as { cameraManager?: unknown }).cameraManager = undefined;
     rt.draw(g);
     g.destroy();
   }

@@ -3,7 +3,7 @@ import { Fighter } from '../../entities/Fighter';
 import { HealthBar } from '../../combat/HealthBar';
 import {
   ArmGesture, ECHO, EchoAura, EchoAuraStyle, EchoAvatar, EchoColorFn, EchoFx,
-  chirpRing, echoChirpLayered, eyeGlyph,
+  chirpRing, echoChirpLayered, eyeGlyph, shockwaveHits,
 } from './EchoVisuals';
 
 // ── Arena API ────────────────────────────────────────────────────────────────
@@ -1096,9 +1096,9 @@ export class EchoKit {
       p.x = Phaser.Math.Clamp(p.x, MARGIN, W - MARGIN);
       p.y = Phaser.Math.Clamp(p.y, MARGIN, H - MARGIN);
 
-      // Damage check
+      // Damage check — the whole crescent connects, not just its crest.
       const enemy = p.owner === 'player' ? this.arena.npc : this.arena.player;
-      if (enemy.hp > 0 && Phaser.Math.Distance.Between(p.x, p.y, enemy.x, enemy.y) <= 28) {
+      if (enemy.hp > 0 && shockwaveHits(p.x, p.y, Math.atan2(p.vy, p.vx), enemy.x, enemy.y)) {
         enemy.takeDamage(18);
         this.arena.spawnHitFlash(enemy.x, enemy.y, ECHO.lilac);
         // The wavefront collapses on them, harder the further it had travelled to get there.

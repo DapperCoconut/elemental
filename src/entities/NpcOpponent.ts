@@ -215,6 +215,17 @@ export interface NpcAiState {
   npcWaterBubbleSplash?: boolean;
   playerFrostStacks?: number;
   iceBlockActive?: boolean;
+  /** Ice: the slot Curling Bomb is bound over, so the bot leaves that base ability alone. */
+  npcIceBombSlot?: 'r' | 'f' | 'q';
+  /**
+   * Curling Bomb synergy: a spike through the bot's own bomb lights it and sends it on into the
+   * player — where to aim that spike (IceKit-owned; null without a bomb on the line).
+   */
+  npcIceBombAim?: { x: number; y: number } | null;
+  /** Air: the slot Weather Cycle is bound over, so the bot leaves that base ability alone. */
+  npcAirWeatherSlot?: 'r' | 'f' | 'q';
+  /** Crystal: the slot Crystal Shredder is bound over, so the bot leaves that base ability alone. */
+  npcCrystalShredderSlot?: 'r' | 'f' | 'q';
   npcGrowthDna?: number;
   npcGrowthHasNestOrClone?: boolean;
   crystalNodeCount?: number;
@@ -3790,10 +3801,12 @@ export class NpcOpponent extends Fighter {
     if (aiState.airTornadoActive) return null;
 
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    // Mastery: the key Weather Cycle was bound over is the kit's now (it fires from AirKit).
+    const weather = aiState.npcAirWeatherSlot;
 
     if (!skipSpecials) {
       // 1. Wind Breaker — only worth it with the target already inside the funnel's reach.
-      if (dist < 140) {
+      if (weather !== 'q' && dist < 140) {
         if (this.castAbility('wind-breaker', buildContext(target.x, target.y))) return 'wind-breaker';
       }
 
@@ -3804,13 +3817,15 @@ export class NpcOpponent extends Fighter {
       }
 
       // 3. Gale Glaive — parked on the target at mid range, where it has time to grind.
-      if (dist > 90 && dist < 520) {
+      if (weather !== 'r' && dist > 90 && dist < 520) {
         if (this.castAbility('gale-glaive', buildContext(target.x, target.y))) return 'gale-glaive';
       }
 
       // 4. Sky Grapple — closing tool when far, escape when hurt. Either way it banks dodge,
       //    which is the only defence air has.
-      if (dist > 260) {
+      if (weather === 'f') {
+        // Bound over: no hook this match.
+      } else if (dist > 260) {
         if (this.castAbility('sky-grapple', buildContext(target.x, target.y))) return 'sky-grapple';
       } else if (hpRatio < 0.35 && aiState.airWindDodge < 0.3) {
         const away = Phaser.Math.Angle.Between(target.x, target.y, this.x, this.y);
@@ -4049,10 +4064,20 @@ export class NpcOpponent extends Fighter {
     const sharpY = this.y + Math.sin(sharpAngle) * dist;
 
     const playerFrostStacks = aiState.playerFrostStacks ?? 0;
+    // Mastery: the key Curling Bomb was bound over is the kit's now (the bomb is set down from IceKit).
+    const bomb = aiState.npcIceBombSlot;
+
+    // ── Synergy: a spike through the bomb is a launch ──
+    // The kit has a bomb sitting on the line to the player: the spike lights the wick and sends
+    // it on into them. Taken first, skip roll or not — the frost it brings is the whole kit.
+    if (aiState.npcIceBombAim) {
+      const a = aiState.npcIceBombAim;
+      if (this.castAbility('ice-spike', buildContext(a.x, a.y))) return 'ice-spike';
+    }
 
     if (!skipSpecials) {
       // 1. Frozen Solid — highest priority, aim at player
-      if (dist < 500) {
+      if (bomb !== 'q' && dist < 500) {
         if (this.castAbility('frozen-solid', buildContext(target.x, target.y))) return 'frozen-solid';
       }
 
@@ -4062,14 +4087,16 @@ export class NpcOpponent extends Fighter {
       }
 
       // 3. Block Up — toggle on when low HP
-      if (hpRatio < 0.55 && !aiState.iceBlockActive) {
+      if (bomb === 'r') {
+        // Bound over: no armour this match.
+      } else if (hpRatio < 0.55 && !aiState.iceBlockActive) {
         if (this.castAbility('block-up', buildContext(this.x, this.y))) return 'block-up';
       } else if (hpRatio >= 0.70 && aiState.iceBlockActive) {
         if (this.castAbility('block-up', buildContext(this.x, this.y))) return 'block-up';
       }
 
       // 4. Skate — escape when player is close
-      if (dist < 200) {
+      if (bomb !== 'f' && dist < 200) {
         if (this.castAbility('skate', buildContext(this.x, this.y))) return 'skate';
       }
     }
@@ -4209,14 +4236,17 @@ export class NpcOpponent extends Fighter {
     const sharpX = this.x + Math.cos(sharpAngle) * dist;
     const sharpY = this.y + Math.sin(sharpAngle) * dist;
 
+    // Mastery: the key Crystal Shredder was bound over is the kit's now (it is thrown from CrystalKit).
+    const shredder = aiState.npcCrystalShredderSlot;
+
     if (!skipSpecials) {
       // 1. Trick of the Light — when low HP
-      if (hpRatio < 0.55) {
+      if (shredder !== 'q' && hpRatio < 0.55) {
         if (this.castAbility('crystal-trick', buildContext(this.x, this.y))) return 'crystal-trick';
       }
 
       // 2. Atune — when in range, stop/redirect shards in flight
-      if (dist < 380) {
+      if (shredder !== 'r' && dist < 380) {
         if (this.castAbility('crystal-atune', buildContext(target.x, target.y))) return 'crystal-atune';
       }
 
@@ -4228,7 +4258,7 @@ export class NpcOpponent extends Fighter {
       }
 
       // 4. Portal — place occasionally
-      if (this.castAbility('crystal-portal', buildContext(
+      if (shredder !== 'f' && this.castAbility('crystal-portal', buildContext(
         this.x + (Math.random() - 0.5) * 200,
         this.y + (Math.random() - 0.5) * 200,
       ))) return 'crystal-portal';

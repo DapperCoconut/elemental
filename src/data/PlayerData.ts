@@ -775,8 +775,10 @@ export function getMasteryBinds(elementId: string): Record<string, string> {
   // E can no longer be replaced; an old save's E bind is ignored rather than deleted.
   const { e: _e, ...binds } = load().masteryBinds[elementId] ?? {};
   void _e;
-  // Ice's two bindables merged into one form-switching slot; an old Icicle Impale bind reads as it.
-  for (const s of Object.keys(binds)) if (binds[s] === 'icicle-impale') binds[s] = 'curling-stone';
+  // Ice's mastery was redone as the Curling Bomb; the old Curling Stone / Icicle Impale binds read as it.
+  for (const s of Object.keys(binds)) if (binds[s] === 'icicle-impale' || binds[s] === 'curling-stone') binds[s] = 'curling-bomb';
+  // Air's mastery was redone as the Weather Cycle; an old Winds of Change bind reads as it.
+  for (const s of Object.keys(binds)) if (binds[s] === 'winds-of-change') binds[s] = 'weather-cycle';
   // Psychic's mastery was redone: an old Utter Focus bind reads as its replacement, Pre-move.
   for (const s of Object.keys(binds)) if (binds[s] === 'utter-focus') binds[s] = 'pre-move';
   return binds;

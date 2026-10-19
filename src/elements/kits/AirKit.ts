@@ -5,6 +5,7 @@ import { AIR, AirAvatar, AirColorFn, AirDraft, AirFx, ArmGesture, ArmHold } from
 import { BaseAvatar } from './ElementVisuals';
 import { makeSkinAvatar } from './skins/SkinAvatars';
 import { meterGain } from '../../combat/Meters';
+import { Sfx } from '../../audio';
 
 type Owner = 'player' | 'npc';
 
@@ -23,8 +24,6 @@ const GLAIVE_DODGE = 0.15;
 const EXPERT_PAIR_DODGE = 0.15;
 /** Q+ (Eye of the Storm): every attack that lands during the tornado. */
 const EYE_DODGE = 0.10;
-/** Winds of Change (mastery bindable). */
-const WINDS_DODGE = 0.20;
 
 // ── Wind Splice (Click) ───────────────────────────────────────────────────────
 
@@ -100,7 +99,26 @@ const MOMENTUM_PER_SEC = 0.05;
 const MOMENTUM_MAX = 1.0;
 /** What one hit taken knocks off the momentum. */
 const MOMENTUM_HIT_LOSS = 0.10;
-const WINDS_COOLDOWN_MS = 25000;
+/** Weather Cycle (mastery bindable): the winds record for this long, then play it all back. */
+const WEATHER_ID = 'weather-cycle';
+const WEATHER_COOLDOWN_MS = 30000;
+const WEATHER_RECORD_MS = 5000;
+/** Bot: the cycle is opened with the player this close, so the five seconds record a real exchange. */
+const NPC_WEATHER_RANGE = 320;
+
+/** The five abilities the cycle can record, and the key each is known by to the sound layer. */
+type WeatherCastId = 'wind-splice' | 'spin-dance' | 'gale-glaive' | 'sky-grapple' | 'wind-breaker';
+const WEATHER_KEYS: Record<WeatherCastId, string> = {
+  'wind-splice': 'Click', 'spin-dance': 'E', 'gale-glaive': 'R', 'sky-grapple': 'F', 'wind-breaker': 'Q',
+};
+
+/** One recorded press: which ability, how far into the window, and where it was aimed. */
+interface WeatherCast {
+  id: WeatherCastId;
+  at: number;
+  tx: number;
+  ty: number;
+}
 /** Wind dodge at which the Sharpshooter achievement (and the Sand skin) unlocks. */
 const PERFECT_DODGE = 1.0;
 
@@ -145,9 +163,13 @@ export interface AirArenaApi {
   buildPlayerContext(x: number, y: number): CastContext;
   /** Mastery enhancement id bound over the given ability slot, or null if that slot is unchanged. */
   masteryBindFor(slot: string): string | null;
-  /** Online: broadcast a bindable mastery cast so the peer's sim replays it. */
-  broadcastMasteryCast(enhId: string): void;
   recordMasteryStat(key: string, amount: number): void;
+  /** True when the opponent is air with Element Mastery on (a Nightmare bot or an online peer). */
+  readonly npcMasteryActive: boolean;
+  /** The opponent's mastery bind over `slot`, or null — drives the bot's own Weather Cycle. */
+  npcMasteryBindFor(slot: string): string | null;
+  /** True when the opponent is driven by the local AI rather than replayed from a peer. */
+  readonly npcAutonomous: boolean;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   spawnDamageNumber(x: number, y: number, amount: number): void;
   spawnHitFlash(x: number, y: number, color: number): void;
@@ -238,8 +260,18 @@ interface Side {
   momentum: number;
   /** Last seen `rawDamageTaken`, so a hit can be detected without an event subscription. */
   lastRawTaken: number;
-  /** Winds of Change's own cooldown (mastery bindables never touch the ability table). */
-  windsLastCastAt: number;
+  /** Weather Cycle's own cooldown (mastery bindables never touch the ability table). */
+  weatherLastCastAt: number;
+  /** When the recording window closes; 0 while the winds are not listening. */
+  weatherUntil: number;
+  /** Every press made inside the window, in order. */
+  weatherLog: WeatherCast[];
+  /** The log being played back, consumed from the front; null when nothing is replaying. */
+  weatherReplay: WeatherCast[] | null;
+  /** When the playback began, so each cast lands on the beat it was recorded on. */
+  weatherReplayAt: number;
+  /** True for the duration of one replayed cast, so the replay never records itself. */
+  weatherReplaying: boolean;
 }
 
 function makeSide(owner: Owner): Side {
@@ -258,7 +290,12 @@ function makeSide(owner: Owner): Side {
     ledger: [],
     momentum: 0,
     lastRawTaken: 0,
-    windsLastCastAt: -Infinity,
+    weatherLastCastAt: -Infinity,
+    weatherUntil: 0,
+    weatherLog: [],
+    weatherReplay: null,
+    weatherReplayAt: 0,
+    weatherReplaying: false,
   };
 }
 
@@ -490,17 +527,17 @@ export class AirKit {
 
     const ctx = this.arena.buildPlayerContext(mouseX, mouseY);
 
-    // Winds of Change, wherever the player bound it. It is read *first*, and every base branch
+    // Weather Cycle, wherever the player bound it. It is read *first*, and every base branch
     // below asks `slotFree` before it asks `JustDown`: `JustDown` consumes the key's
     // just-pressed flag, so a base branch that tested the key first would swallow the press on
     // the bound slot and then refuse the cast — leaving the mastery unpressable.
-    const windsSlot = this.windsSlot();
-    if (windsSlot) {
-      const key = windsSlot === 'e' ? this.arena.eKey
-        : windsSlot === 'r' ? this.arena.rKey
-          : windsSlot === 'q' ? this.arena.qKey
+    const weatherSlot = this.weatherSlot();
+    if (weatherSlot) {
+      const key = weatherSlot === 'e' ? this.arena.eKey
+        : weatherSlot === 'r' ? this.arena.rKey
+          : weatherSlot === 'q' ? this.arena.qKey
             : this.arena.fKey;
-      if (Phaser.Input.Keyboard.JustDown(key)) this.tryWindsOfChange(time);
+      if (Phaser.Input.Keyboard.JustDown(key)) this.tryWeatherCycle(time);
     }
 
     if (pointer.isDown) p.castAbility('wind-splice', ctx);
@@ -522,15 +559,24 @@ export class AirKit {
 
   /** False when a mastery bindable has taken this slot over for the match. */
   private slotFree(slot: string): boolean {
-    return this.arena.masteryBindFor(slot) !== 'winds-of-change';
+    return this.arena.masteryBindFor(slot) !== WEATHER_ID;
   }
 
-  private windsSlot(): string | null {
+  private weatherSlot(): string | null {
     if (!this.arena.masteryActive) return null;
     for (const slot of ['e', 'r', 'f', 'q']) {
-      if (this.arena.masteryBindFor(slot) === 'winds-of-change') return slot;
+      if (this.arena.masteryBindFor(slot) === WEATHER_ID) return slot;
     }
     return null;
+  }
+
+  /** The slot the bot's Weather Cycle is bound over, so the AI leaves that base ability alone. */
+  npcWeatherSlot(): 'r' | 'f' | 'q' | undefined {
+    if (!this.arena.npcMasteryActive) return undefined;
+    for (const sl of ['r', 'f', 'q'] as const) {
+      if (this.arena.npcMasteryBindFor(sl) === WEATHER_ID) return sl;
+    }
+    return undefined;
   }
 
   /**
@@ -551,6 +597,8 @@ export class AirKit {
     this.updateTornado(time, dt);
     this.updateLaunches(time, dt);
     this.updateHawks(time, delta);
+    this.tickWeather(time);
+    this.updateNpcWeather(time);
 
     // Mirror both pools onto the fighters so the status tray (and anything else generic) can
     // read them without knowing air exists.
@@ -683,6 +731,7 @@ export class AirKit {
   doSplice(owner: Owner, tx: number, ty: number): void {
     const f = this.fighter(owner);
     if (!this.alive(f)) return;
+    this.noteCast(owner, 'wind-splice', tx, ty);
     const s = this.sides[owner];
     const ang = this.aimOf(owner, tx, ty);
     const fx = this.fx(owner);
@@ -785,6 +834,8 @@ export class AirKit {
   private resolveSpin(owner: Owner, tx: number, ty: number, chargeCast: boolean): void {
     const f = this.fighter(owner);
     if (!this.alive(f)) return;
+    // Only a real press is recorded: the free Whirlwind spin comes back with its splice anyway.
+    if (chargeCast) this.noteCast(owner, 'spin-dance', tx, ty);
     const s = this.sides[owner];
     const fx = this.fx(owner);
     const ang = this.aimOf(owner, tx, ty);
@@ -856,6 +907,7 @@ export class AirKit {
   doGaleGlaive(owner: Owner, tx: number, ty: number): void {
     const f = this.fighter(owner);
     if (!this.alive(f)) return;
+    this.noteCast(owner, 'gale-glaive', tx, ty);
     const ang = this.aimOf(owner, tx, ty);
 
     this.avatar(owner)?.play('punch', ang);
@@ -976,6 +1028,7 @@ export class AirKit {
   doSkyGrapple(owner: Owner, tx: number, ty: number): void {
     const f = this.fighter(owner);
     if (!this.alive(f)) return;
+    this.noteCast(owner, 'sky-grapple', tx, ty);
 
     // Hawk perk: F stops being a hook and becomes a bird that hauls *them* instead of her.
     if (owner === 'player' && this.arena.hasPerk('player', 'hawk')) {
@@ -1062,6 +1115,7 @@ export class AirKit {
   doWindBreaker(owner: Owner, tx: number, ty: number): void {
     const f = this.fighter(owner);
     if (!this.alive(f)) return;
+    this.noteCast(owner, 'wind-breaker', tx, ty);
     const s = this.sides[owner];
     const fx = this.fx(owner);
 
@@ -1206,35 +1260,132 @@ export class AirKit {
     }
   }
 
-  // ── Mastery: Winds of Change ─────────────────────────────────────────────
+  // ── Mastery: Weather Cycle ───────────────────────────────────────────────
 
-  private tryWindsOfChange(time: number): void {
+  private tryWeatherCycle(time: number): void {
     const s = this.sides.player;
-    if (time - s.windsLastCastAt < WINDS_COOLDOWN_MS) return;
-    // Stamped before the refresh runs, so the 25s clock is already ticking by the time
-    // anything comes off cooldown — Winds can never hand itself back.
-    s.windsLastCastAt = time;
-    this.doWindsOfChange('player');
-    this.arena.broadcastMasteryCast('winds-of-change');
+    if (time - s.weatherLastCastAt < WEATHER_COOLDOWN_MS) return;
+    s.weatherLastCastAt = time;
+    // Stamped on the fighter for the sound and the online relay; the peer's sim opens the same
+    // window on its replica through `doWeatherCycle('npc')`.
+    this.arena.player.triggerCooldown(WEATHER_ID);
+    this.doWeatherCycle('player');
   }
 
-  /** Blossom on the wind: everything comes back at once, and the dodge pool grows with it. */
-  doWindsOfChange(owner: Owner): void {
+  /**
+   * The winds close in and listen. For five seconds every press is written down; when the
+   * window shuts, the whole sequence is danced again on the same beats, cooldowns be damned.
+   */
+  doWeatherCycle(owner: Owner): void {
     const f = this.fighter(owner);
     if (!this.alive(f)) return;
-    // Its own id is held back: the kit clock above is the real gate, and this keeps any
-    // stamp the online relay may have left from being wiped as well.
-    f.clearAllCooldowns('winds-of-change');
-    this.sides[owner].spinCharges = this.maxSpinCharges(owner);
-    this.avatar(owner)?.play('flex');
-    this.fx(owner).petalBurst(f.x, f.y, 90, 16);
-    this.arena.showFloatingText(f.x, f.y - 56, '🌸 WINDS OF CHANGE!', '#ffd2e4');
-    this.addDodge(owner, WINDS_DODGE, 'WINDS');
+    const s = this.sides[owner];
+    s.weatherUntil = this.now + WEATHER_RECORD_MS;
+    s.weatherLog = [];
+    s.weatherReplay = null;
+    const fx = this.fx(owner);
+    this.avatar(owner)?.play('raise', this.aimOf(owner), 520);
+    fx.ring(f.x, f.y, 20, 150, AIR.cyan, 520, 5, 6);
+    fx.motes(f.x, f.y, 22, { speed: 200, life: 700, swirl: 2.2 });
+    fx.haze(f.x, f.y, 5, 60, 4);
+    this.arena.showFloatingText(f.x, f.y - 56, '🌀 WEATHER CYCLE', '#bbe8ff');
   }
 
-  /** 0–1 cooldown fill for the Winds of Change HUD card. */
-  getWindsCooldownRatio(time: number): number {
-    return Math.min(1, (time - this.sides.player.windsLastCastAt) / WINDS_COOLDOWN_MS);
+  /** A press inside the window goes into the log, stamped with its beat and its aim. */
+  private noteCast(owner: Owner, id: WeatherCastId, tx: number, ty: number): void {
+    const s = this.sides[owner];
+    if (s.weatherReplaying || s.weatherUntil === 0 || this.now >= s.weatherUntil) return;
+    s.weatherLog.push({ id, at: this.now - (s.weatherUntil - WEATHER_RECORD_MS), tx, ty });
+    const f = this.fighter(owner);
+    if (owner === 'player' && this.alive(f)) {
+      this.arena.showFloatingText(f.x, f.y - 48, `🌀 ${s.weatherLog.length}`, '#bbe8ff');
+    }
+  }
+
+  /** Closes a finished window into a replay, and plays each recorded cast back on its beat. */
+  private tickWeather(time: number): void {
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const s = this.sides[owner];
+      const f = this.fighter(owner);
+      if (s.weatherUntil > 0 && time >= s.weatherUntil) {
+        s.weatherUntil = 0;
+        if (s.weatherLog.length > 0 && this.alive(f)) {
+          s.weatherReplay = s.weatherLog;
+          s.weatherReplayAt = time;
+          // The winds let go: everything they held is thrown back out.
+          this.avatar(owner)?.play('flex');
+          this.fx(owner).ring(f.x, f.y, 24, 190, AIR.white, 560, 5, 6);
+          this.fx(owner).motes(f.x, f.y, 26, { speed: 240, life: 800, swirl: -2.2 });
+          this.arena.showFloatingText(f.x, f.y - 56, `🌀 CYCLE ×${s.weatherLog.length}`, '#ffffff');
+        } else if (this.alive(f)) {
+          this.arena.showFloatingText(f.x, f.y - 56, '🌀 NOTHING TO REPEAT', '#8899aa');
+        }
+        s.weatherLog = [];
+      }
+      if (!s.weatherReplay) continue;
+      if (!this.alive(f)) { s.weatherReplay = null; continue; }
+      const elapsed = time - s.weatherReplayAt;
+      while (s.weatherReplay && s.weatherReplay.length > 0 && s.weatherReplay[0].at <= elapsed) {
+        const c = s.weatherReplay.shift()!;
+        this.replayCast(owner, c);
+      }
+      if (s.weatherReplay && s.weatherReplay.length === 0) s.weatherReplay = null;
+    }
+  }
+
+  /**
+   * One cast danced again. It goes straight to the kit's entry points, so no cooldown is asked
+   * or paid. The player re-aims each repeat at the live cursor and a bot at its target; an
+   * online peer's replay keeps its recorded aims, since their cursor never crosses the wire.
+   */
+  private replayCast(owner: Owner, c: WeatherCast): void {
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    const s = this.sides[owner];
+    let tx = c.tx, ty = c.ty;
+    if (owner === 'player') {
+      tx = this.arena.pointerX; ty = this.arena.pointerY;
+    } else if (this.arena.npcAutonomous) {
+      const p = this.arena.player;
+      if (this.alive(p)) { tx = p.x; ty = p.y; }
+    }
+    s.weatherReplaying = true;
+    switch (c.id) {
+      case 'wind-splice': this.doSplice(owner, tx, ty); break;
+      case 'spin-dance': this.resolveSpin(owner, tx, ty, true); break;
+      case 'gale-glaive': this.doGaleGlaive(owner, tx, ty); break;
+      case 'sky-grapple': this.doSkyGrapple(owner, tx, ty); break;
+      case 'wind-breaker': this.doWindBreaker(owner, tx, ty); break;
+    }
+    s.weatherReplaying = false;
+    // Off the ability table entirely, so the cast's sound has to be asked for by hand.
+    Sfx.ability(c.id, 'air', WEATHER_KEYS[c.id], { isPlayer: owner === 'player', x: f.x });
+    this.fx(owner).motes(f.x, f.y, 6, { speed: 160, life: 420 });
+  }
+
+  /** True while the winds are listening to, or dancing back, this side's presses. */
+  isWeatherCycling(owner: Owner): boolean {
+    const s = this.sides[owner];
+    return (s.weatherUntil > 0 && this.now < s.weatherUntil) || s.weatherReplay !== null;
+  }
+
+  /** Nightmare bot: opens the cycle at close range, where the next five seconds will be busy. */
+  private updateNpcWeather(time: number): void {
+    if (!this.arena.npcAutonomous || !this.arena.isNpcAir || !this.npcWeatherSlot()) return;
+    const s = this.sides.npc;
+    if (time - s.weatherLastCastAt < WEATHER_COOLDOWN_MS || this.isWeatherCycling('npc')) return;
+    const { npc, player } = this.arena;
+    if (!this.alive(npc) || !this.alive(player)) return;
+    if (Phaser.Math.Distance.Between(npc.x, npc.y, player.x, player.y) > NPC_WEATHER_RANGE) return;
+    s.weatherLastCastAt = time;
+    // Stamped so the cast sounds like one; the bot has no peer to relay it to.
+    npc.triggerCooldown(WEATHER_ID);
+    this.doWeatherCycle('npc');
+  }
+
+  /** 0–1 cooldown fill for the Weather Cycle HUD card. */
+  getWeatherCooldownRatio(time: number): number {
+    return Math.min(1, (time - this.sides.player.weatherLastCastAt) / WEATHER_COOLDOWN_MS);
   }
 
   // ── Public accessors read by ArenaScene ──────────────────────────────────
@@ -1442,6 +1593,19 @@ export class AirKit {
       if (h.g.active) {
         h.g.clear();
         AirFx.drawHawk(h.g, this.pcol, h.x, h.y, Math.atan2(h.vy, h.vx), h.t);
+      }
+    }
+
+    // Weather Cycle: the ring of wind listening round a dancer, then unwinding as it plays back.
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const s = this.sides[owner];
+      const f = this.fighter(owner);
+      if (!this.alive(f)) continue;
+      if (s.weatherUntil > 0 && this.now < s.weatherUntil) {
+        const progress = 1 - (s.weatherUntil - this.now) / WEATHER_RECORD_MS;
+        AirFx.drawWeatherRing(air, this.col(owner), f.x, f.y, 52, this.vizT, progress, false, 1);
+      } else if (s.weatherReplay) {
+        AirFx.drawWeatherRing(air, this.col(owner), f.x, f.y, 58, this.vizT, 1, true, 0.9);
       }
     }
   }

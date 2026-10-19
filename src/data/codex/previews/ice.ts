@@ -650,57 +650,63 @@ export const masteryIcicleImpale: PreviewScript = {
   },
 };
 
-export const masteryCurlingStone: PreviewScript = {
-  duration: 6000,
+export const masteryCurlingBomb: PreviewScript = {
+  duration: 5200,
   scale: 0.9,
-  caption: 'Mastery — shoot the stone to load and shove it: 30 damage bare, 60 at 5 frost',
+  caption: 'Mastery — set the bomb down, shoot it to launch it: 1.5s later, 35 damage, +2 frost, slow thaw',
   run(ctx) {
     const { fx, av } = stage(ctx);
-    const stone = { x: ctx.cx + 70, y: ctx.cy + 16, vx: 0, spin: 0, stacks: 0 };
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
-    const label = ctx.adopt(ctx.scene.add.text(0, 0, '', {
-      fontSize: '11px', fontFamily: 'Arial', color: '#aaddff',
-    }).setOrigin(0.5).setDepth(11));
-    ctx.onFrame((dt) => {
-      // Real behaviour: it coasts, it drags, and below 26 px/s it is harmless furniture.
-      stone.x += stone.vx * (dt / 1000);
-      stone.vx *= Math.pow(0.35, dt / 1000);
-      stone.spin += stone.vx * (dt / 1000) * 0.05;
+    const bomb = { x: ctx.cx + 62, y: ctx.cy, vx: 0, spin: 0, litAt: -1, gone: false };
+    let stacks = 0;
+    frostLabel(ctx, { x: ctx.tx, y: ctx.ty - 44, read: () => stacks });
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(5));
+    ctx.onFrame((dt, elapsed) => {
       g.clear();
-      g.fillStyle(ctx.tint(ICE.steel), 0.95);
-      g.fillCircle(stone.x, stone.y, 18);
-      g.fillStyle(ctx.tint(stone.stacks >= 5 ? ICE.white : ICE.frost), 0.9);
-      g.fillCircle(stone.x, stone.y, 13 - stone.stacks * 0.6);
-      // The rime crust thickens with every layer frozen on.
-      g.lineStyle(1.5 + stone.stacks * 0.6, ctx.tint(ICE.pale), 0.85);
-      g.strokeCircle(stone.x, stone.y, 18);
-      g.lineStyle(2.5, ctx.tint(ICE.deep), 0.9);
-      g.lineBetween(stone.x, stone.y, stone.x + Math.cos(stone.spin) * 12, stone.y + Math.sin(stone.spin) * 12);
-      label.setPosition(stone.x, stone.y - 32).setText(stone.stacks > 0 ? `❄️×${stone.stacks}` : '');
+      if (elapsed < 400 || bomb.gone) return;
+      // Real behaviour: 330 px/s off the shot, drag 0.9/s, a 1.5s wick.
+      bomb.x += bomb.vx * (dt / 1000);
+      bomb.vx *= Math.exp(-0.9 * (dt / 1000));
+      bomb.spin += bomb.vx * (dt / 1000) * 0.03;
+      const fuse = bomb.litAt < 0 ? -1 : Math.min(1, (elapsed - bomb.litAt) / 1500);
+      IceFx.drawCurlingBomb(g, ctx.tint, FROST_TONES, bomb.x, bomb.y, bomb.spin, elapsed / 1000, fuse, false);
     });
-    // Five shots, each loading a layer and shoving harder than the last.
-    for (let i = 0; i < 5; i++) {
-      ctx.at(400 + i * 520, () => {
-        av.play('punch', ctx.aim);
-        const sx = ctx.cx + 30;
-        fx.muzzleFrost(sx, ctx.cy, ctx.aim, 0.9, 8);
-        const target = { x: stone.x, y: stone.y };
-        ctx.fly({
-          texture: 'proj-ice', from: { x: sx, y: ctx.cy }, to: target, speed: 520,
-          onHit: () => {
-            stone.stacks = Math.min(5, stone.stacks + 1);
-            // 150 base push, +62 a stack — the loaded stone travels three times as far.
-            stone.vx = 150 + stone.stacks * 62;
-            fx.flash(stone.x, stone.y, 20);
-            fx.shards(stone.x, stone.y, 3 + stone.stacks, { speed: 80, size: 2.4, life: 400, fall: 26, depth: 7 });
-          },
-        });
+    // Set down in front of the caster.
+    ctx.at(400, () => {
+      av.play('raise', ctx.aim, 420);
+      fx.bloom(bomb.x, bomb.y, 26, 8, 4);
+      fx.rime(bomb.x, bomb.y, 28, 1);
+    });
+    // One spike lights it and sends it the way the shot was going.
+    ctx.at(1300, () => {
+      av.play('punch', ctx.aim);
+      const sx = ctx.cx + 30;
+      fx.muzzleFrost(sx, ctx.cy, ctx.aim, 0.9, 8);
+      ctx.fly({
+        texture: 'proj-ice', from: { x: sx, y: ctx.cy }, to: { x: bomb.x, y: bomb.y }, speed: 520,
+        onHit: () => {
+          bomb.litAt = 1300 + 180;
+          bomb.vx = 330;
+          fx.flash(bomb.x, bomb.y - 16, 12, 8);
+          fx.shards(bomb.x, bomb.y, 5, { angle: ctx.aim, spread: 0.7, speed: 110, size: 2.6, life: 340, fall: 24, depth: 7 });
+          const t = ctx.adopt(ctx.scene.add.text(bomb.x, bomb.y - 32, '🔥 LIT', {
+            fontSize: '11px', fontFamily: 'Arial Black', color: '#aaddff',
+          }).setOrigin(0.5).setDepth(12));
+          ctx.scene.tweens.add({ targets: t, y: t.y - 14, alpha: 0, duration: 900 });
+        },
       });
-    }
-    // The slam, once it is loaded: 60 damage and a shove, once per second per target.
-    ctx.at(3400, () => {
-      fx.shatter(ctx.tx, ctx.ty, 70, { shards: 14, vapor: 2, duration: 440 });
-      fx.ring(ctx.tx, ctx.ty, 8, 56, ICE.white, 420, 4, 8);
+    });
+    // The blast: damage, two stacks, and the slow thaw.
+    ctx.at(2980, () => {
+      bomb.gone = true;
+      fx.flash(bomb.x, bomb.y, 66, 8);
+      fx.shatter(bomb.x, bomb.y, 88, { shards: 20, vapor: 4, duration: 560 });
+      fx.ring(bomb.x, bomb.y, 10, 126, ICE.frost, 420, 5, 8);
+      fx.rime(bomb.x, bomb.y, 77, 1);
+      stacks = 2;
+      const t = ctx.adopt(ctx.scene.add.text(ctx.tx, ctx.ty - 66, '35 · ❄️ +2 · SLOW THAW', {
+        fontSize: '11px', fontFamily: 'Arial Black', color: '#ffb3aa',
+      }).setOrigin(0.5).setDepth(12));
+      ctx.scene.tweens.add({ targets: t, y: t.y - 14, alpha: 0, duration: 1800 });
     });
   },
 };

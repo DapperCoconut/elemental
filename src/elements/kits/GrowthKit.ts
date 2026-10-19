@@ -132,8 +132,8 @@ type CloneVariant = 'yellow' | 'blue' | 'red';
 // ── Constants ────────────────────────────────────────────────────────────
 
 const DNA_CAP = 10;
-const DNA_PICKUP_RADIUS = 26;
-const DNA_PICKUP_LIFESPAN = 8000;
+/** How long a freshly precipitated strand takes to fly home and bank. */
+const DNA_FLIGHT_MS = 320;
 const DNA_THRESHOLD = 25;
 
 const BACT_DAMAGE = 12;
@@ -372,12 +372,6 @@ interface PendingSpore {
   spawnAt: number;
 }
 
-interface DnaPickup {
-  gfx: Phaser.GameObjects.Text;
-  x: number; y: number;
-  owner: Owner;
-  expiresAt: number;
-}
 
 interface Nest {
   /** Redrawn every frame — the sac beats and its yolk brightens as the clone gestates. */
@@ -524,7 +518,8 @@ export class GrowthKit {
   private floorViruses: FloorVirus[] = [];
   private spores: SporeWall[] = [];
   private pendingSpores: PendingSpore[] = [];
-  private dnaPickups: DnaPickup[] = [];
+  /** Strands in flight to their owner's bank; destroyed on reset so a restart never pays stale DNA. */
+  private dnaStrands: { gfx: Phaser.GameObjects.Text; tween: Phaser.Tweens.Tween }[] = [];
   private nests: Nest[] = [];
   private clones: Clone[] = [];
   private puddles: SoupPuddle[] = [];
@@ -638,8 +633,8 @@ export class GrowthKit {
     for (const s of this.spores) s.gfx.destroy();
     this.spores = [];
     this.pendingSpores = [];
-    for (const p of this.dnaPickups) p.gfx.destroy();
-    this.dnaPickups = [];
+    for (const s of this.dnaStrands) { s.tween.remove(); s.gfx.destroy(); }
+    this.dnaStrands = [];
     for (const n of this.nests) n.gfx.destroy();
     this.nests = [];
     for (const c of this.clones) this.destroyCloneVisuals(c);
@@ -1335,7 +1330,6 @@ export class GrowthKit {
     this.updateFloorViruses(time);
     this.updatePendingSpores(time);
     this.updateSpores(time, delta);
-    this.updateDnaPickups(time);
     this.updateNests(time, delta);
     this.updateClones(time, delta);
     this.updateContactDamage(time);
@@ -2345,7 +2339,7 @@ export class GrowthKit {
     return false;
   }
 
-  // ── DNA accumulation + pickups ─────────────────────────────────────
+  // ── DNA accumulation ─────────────────────────────────────────────────
 
   private registerDamage(owner: Owner, target: Fighter, amount: number): void {
     if (amount <= 0) return;
@@ -2354,45 +2348,40 @@ export class GrowthKit {
     const threshold = this.dnaThreshold(owner);
     while (total >= threshold) {
       total -= threshold;
-      this.spawnDnaPickup(target.x, target.y, owner);
+      this.spawnDnaStrand(target.x, target.y, owner);
     }
     map.set(target, total);
   }
 
-  private spawnDnaPickup(x: number, y: number, owner: Owner): void {
+  /**
+   * A strand precipitates where the damage landed and flies straight into its owner's bank —
+   * nothing lies on the floor, nothing has to be walked to, nothing rots. The flight chases the
+   * owner's live position so a moving fighter is still met.
+   */
+  private spawnDnaStrand(x: number, y: number, owner: Owner): void {
     const { scene } = this.arena;
-    const jx = x + (Math.random() * 30 - 15);
-    const jy = y + (Math.random() * 30 - 15);
-    const gfx = scene.add.text(jx, jy, '🧬', { fontSize: '16px' }).setOrigin(0.5).setDepth(9);
-
-    // Sweating: DNA flies straight to you.
-    if (owner === 'player' && this.lvl(this.fighterBody, 'sweating') > 0) {
-      const p = this.arena.player;
-      scene.tweens.add({
-        targets: gfx, x: p.x, y: p.y, scale: 0.5, duration: 260, ease: 'Cubic.in',
-        onComplete: () => { gfx.destroy(); this.addDna(owner, 1); },
-      });
-      return;
-    }
-
-    scene.tweens.add({ targets: gfx, y: jy - 6, yoyo: true, repeat: -1, duration: 500 });
-    this.dnaPickups.push({ gfx, x: jx, y: jy, owner, expiresAt: scene.time.now + DNA_PICKUP_LIFESPAN });
-  }
-
-  private updateDnaPickups(time: number): void {
-    const sweatingNow = this.lvl(this.fighterBody, 'sweating') > 0;
-    for (let i = this.dnaPickups.length - 1; i >= 0; i--) {
-      const p = this.dnaPickups[i];
-      if (time >= p.expiresAt) { p.gfx.destroy(); this.dnaPickups.splice(i, 1); continue; }
-      const collector = p.owner === 'player' ? this.arena.player : this.arena.npc;
-      if (!collector.active) continue;
-      const d = Phaser.Math.Distance.Between(p.x, p.y, collector.x, collector.y);
-      if (d <= DNA_PICKUP_RADIUS || (p.owner === 'player' && sweatingNow)) {
-        p.gfx.destroy();
-        this.dnaPickups.splice(i, 1);
-        this.addDna(p.owner, 1);
-      }
-    }
+    const sx = x + (Math.random() * 30 - 15);
+    const sy = y + (Math.random() * 30 - 15);
+    const gfx = scene.add.text(sx, sy, '🧬', { fontSize: '16px' }).setOrigin(0.5).setDepth(9);
+    const home = owner === 'player' ? this.arena.player : this.arena.npc;
+    const flight = { t: 0 };
+    const finish = () => {
+      const i = this.dnaStrands.findIndex((s) => s.gfx === gfx);
+      if (i >= 0) this.dnaStrands.splice(i, 1);
+      gfx.destroy();
+      this.addDna(owner, 1);
+    };
+    const tween = scene.tweens.add({
+      targets: flight, t: 1, duration: DNA_FLIGHT_MS, ease: 'Cubic.in',
+      onUpdate: () => {
+        if (!gfx.active) return;
+        const k = flight.t;
+        gfx.setPosition(sx + (home.x - sx) * k, sy + (home.y - 8 - sy) * k);
+        gfx.setScale(1 - 0.5 * k);
+      },
+      onComplete: finish,
+    });
+    this.dnaStrands.push({ gfx, tween });
   }
 
   private addDna(owner: Owner, amount: number): void {

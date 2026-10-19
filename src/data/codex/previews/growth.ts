@@ -547,7 +547,7 @@ export const auxiliaryGrowthUpgraded: PreviewScript = {
 
 export const passiveDna: PreviewScript = {
   duration: 6000,
-  caption: 'Passive — 1 DNA per 25 damage dealt, 8s on the floor to collect it, 10 held at most',
+  caption: 'Passive — 1 DNA per 25 damage dealt, flies straight into the bank, 10 held at most',
   run(ctx) {
     const { fx, av } = stage(ctx);
     let dealt = 0;
@@ -578,8 +578,8 @@ export const passiveDna: PreviewScript = {
               dealt -= 25;
               const dx = ctx.tx - 30, dy = ctx.ty + 24;
               dnaDrop(ctx, { x: dx, y: dy, born: 300 + i * 800 + 300 });
-              // You still have to go and get it.
-              ctx.at(700, () => { fx.creep(dx, dy, ctx.cx, ctx.cy, 4, CULTURE_TONES); held += 1; });
+              // It flies home on its own — no walk, no pickup.
+              ctx.at(120, () => { fx.creep(dx, dy, ctx.cx, ctx.cy, 4, CULTURE_TONES); held += 1; });
             }
           },
         });

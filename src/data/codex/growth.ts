@@ -19,19 +19,18 @@ const growth: ElementCodex = {
       emoji: '🧬',
       name: 'DNA',
       basics:
-        'Growth\'s currency. One strand drops for every 25 damage you deal — 5% less per tier of '
-        + 'Enhanced Brain, down to 21.25 at three tiers — and lies where it fell, picked up within 26px '
-        + 'and rotting away after 8 seconds. You can hold 10 at most, so banking beyond that is throwing '
-        + 'income away. It buys Evolve tiers at 1, 2 and 3 DNA, ultimates at 6, and Auxiliary Growth at a '
-        + 'flat 8.',
+        'Growth\'s currency. One strand precipitates for every 25 damage you deal — 5% less per tier of '
+        + 'Enhanced Brain, down to 21.25 at three tiers — and flies straight into your bank from wherever '
+        + 'the hit landed. Nothing lies on the floor and nothing has to be walked to. You can hold 10 at '
+        + 'most, so banking beyond that is throwing income away. It buys Evolve tiers at 1, 2 and 3 DNA, '
+        + 'ultimates at 6, and Auxiliary Growth at a flat 8.',
       effects: [
         { tag: 'resource', label: 'Earning', detail: 'One DNA drops for every 25 damage you deal. Enhanced Brain shaves 5% off that threshold per tier — 21.25 damage at three tiers.' },
-        { tag: 'resource', label: 'Collecting', detail: 'Strands lie where they fell, picked up within 26px, and rot away after 8s if you do not go for them.' },
+        { tag: 'resource', label: 'Collecting', detail: 'Every strand flies straight into your bank from wherever the hit landed, however far away. There is no pickup and no rot.' },
         { tag: 'resource', label: 'The wallet', detail: 'Capped at 10 DNA held. There is no point banking beyond that — spend it or lose the income.' },
         { tag: 'utility', label: 'What it buys', detail: 'Evolve tiers (1 DNA for the first, 2 for the second, 3 for the third), ultimates at 6, and Auxiliary Growth at a flat 8.' },
       ],
       notes: [
-        'Sweating (the Efficiency ultimate) collects DNA instantly from anywhere, which removes the walk entirely.',
         'The Mitosis secret upgrade gives every drop a 20% chance to pay 2 instead of 1.',
       ],
     },
@@ -111,12 +110,12 @@ const growth: ElementCodex = {
           + 'Apex, 3 with both — and only after that path\'s row-4 node is maxed. Claws replaces the click '
           + 'inside 90px with a 35-damage swipe across a 120° arc. Chitin Shell is a 75 HP carapace that '
           + 'regrows in full 15 seconds after every break, indefinitely. Sweating banks up to 3 charges '
-          + 'each of Virus and Spore Spray and collects DNA instantly from anywhere on the map.',
+          + 'each of Virus and Spore Spray.',
         effects: [
           { tag: 'utility', label: 'One per body', detail: 'Ultimates cost a flat 6 DNA (5 with any Fast Evolution, 4 with Apex, 3 with both), need that path\'s row-4 node maxed first, and only one can be owned per body per match.', requiresUpgrade: 'e' },
           { tag: 'damage', label: 'Claws (Offensive)', detail: 'Clicking within 90px swipes for 35 damage across a 120° arc instead of launching a bacterium.', requiresUpgrade: 'e' },
           { tag: 'shield', label: 'Chitin Shell (Defensive)', detail: 'A brown carapace worth 75 shield HP. Once broken it regrows in full 15s later, indefinitely.', requiresUpgrade: 'e' },
-          { tag: 'resource', label: 'Sweating (Efficiency)', detail: 'Bank up to 3 charges each of Virus and Spore Spray, and collect DNA instantly from anywhere on the map.', requiresUpgrade: 'e' },
+          { tag: 'resource', label: 'Sweating (Efficiency)', detail: 'Bank up to 3 charges each of Virus and Spore Spray.', requiresUpgrade: 'e' },
         ],
       },
       notes: [

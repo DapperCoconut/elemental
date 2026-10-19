@@ -930,6 +930,48 @@ export class AirFx extends FxBase {
   }
 
   /**
+   * Weather Cycle: a ring of wind wrapped round the dancer at waist height. Recording, the
+   * curls orbit one way and a band at the feet fills as the window runs down; playing back, they
+   * run the other way, brighter and looser — the same weather, rewound.
+   */
+  static drawWeatherRing(
+    g: Phaser.GameObjects.Graphics, tint: AirColorFn,
+    x: number, y: number, radius: number, t: number, progress: number, replay: boolean, alpha: number,
+  ): void {
+    const dir = replay ? -1 : 1;
+    const curls = 9;
+    for (let i = 0; i < curls; i++) {
+      const a = dir * t * (replay ? 3.4 : 2.6) + (i / curls) * TAU;
+      const wob = Math.sin(t * 4 + i * 1.7) * radius * 0.08;
+      const r = radius + wob + (replay ? Math.sin(t * 6 + i) * 6 : 0);
+      const cx = x + Math.cos(a) * r;
+      const cy = y - 6 + Math.sin(a) * r * 0.55;
+      // Front curls pass in front of the body and read brighter; the back ones sit behind.
+      const near = 0.5 + 0.5 * Math.sin(a);
+      windCurlLayered(
+        g, tint, cx, cy, a + dir * Math.PI * 0.5,
+        22 + near * 10, 4 + near * 3, 1.6 * dir, alpha * (0.3 + 0.55 * near) * (replay ? 1.1 : 1),
+      );
+    }
+
+    // Dust stirred at the feet, and the band that shows how much of the window is left.
+    g.lineStyle(2, tint(replay ? AIR.mist : AIR.sky), 0.35 * alpha);
+    g.strokeEllipse(x, y + 6, radius * 2.1, radius * 1.1);
+    g.lineStyle(3, tint(replay ? AIR.white : AIR.cyan), 0.85 * alpha);
+    g.beginPath();
+    g.arc(x, y + 6, radius * 0.72, -Math.PI / 2, -Math.PI / 2 + TAU * Phaser.Math.Clamp(progress, 0.001, 1), false);
+    g.strokePath();
+
+    // Motes caught in the ring, riding it round.
+    for (let i = 0; i < 7; i++) {
+      const a = dir * t * 5 + i * 0.9;
+      const rr = radius * (0.55 + 0.3 * Math.sin(t * 3 + i));
+      g.fillStyle(tint(AIR.white), 0.55 * alpha);
+      g.fillCircle(x + Math.cos(a) * rr, y - 12 + Math.sin(a) * rr * 0.55 - Math.sin(t * 2 + i) * 6, 1.6);
+    }
+  }
+
+  /**
    * The Hawk perk's bird, painted into a caller-owned Graphics each frame: a raptor cut out of
    * moving air, wings beating on `t`, with a wake curling off its tail.
    */

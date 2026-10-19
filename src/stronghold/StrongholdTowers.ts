@@ -96,7 +96,7 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
       f: { damageMult: 1, rider: { knockback: 140 }, note: 'final flight — a harder throw' },
       q: { areaMult: 1.25, note: 'a wider tornado' },
     },
-    mastery: { ...ab(0, 9000, { kind: 'rally', radius: 200, ms: 4000, fireRateMult: 1.5, color: 0xccddff }, 'Winds of Change: nearby towers reload much faster.'), name: 'Winds of Change' },
+    mastery: { ...ab(0, 10000, { kind: 'rally', radius: 200, ms: 5000, fireRateMult: 2, color: 0xbbe8ff }, 'Weather Cycle: nearby towers fire their last five seconds over again.'), name: 'Weather Cycle' },
   },
   earth: {
     tiers: ['Pebble', 'Boulder', 'Bulwark', 'Mountain', 'Titan'],
@@ -174,7 +174,7 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
       f: { areaMult: 1.3, note: 'a longer skate trail' },
       q: { damageMult: 1.25, note: 'shatter strike' },
     },
-    mastery: { ...ab(50, 9000, { kind: 'bolt', color: 0xffffff, speed: 300, size: 1.6, pierce: 3, texture: 'proj-ice' }, 'Icicle Impale: a great icicle skewers the line.', { rider: { frost: 2 } }), name: 'Icicle Impale' },
+    mastery: { ...ab(35, 9000, { kind: 'splash', radius: 110, color: 0x88ccff, delayMs: 1500, shape: 'crater' }, 'Curling Bomb: a bomb slides onto the path and blows 1.5s later, frosting the pack.', { rider: { frost: 2 } }), name: 'Curling Bomb' },
   },
   subterfuge: {
     tiers: ['Pickpocket', 'Cutpurse', 'Racketeer', 'Kingpin', 'Shadow Cabinet'],
@@ -582,7 +582,7 @@ export const TOWER_DEFS: Record<string, TowerDef> = {
     tiers: ['Murmur', 'Reverb', 'Resonance', 'Sonar', 'Cacophony'],
     cost: 90, range: 240,
     abilities: {
-      click: ab(12, 700, { kind: 'bolt', color: 0xccccff, speed: 560, pierce: 2, size: 1.1 }, 'Echolocation: a white rectangle that bounces.'),
+      click: ab(12, 700, { kind: 'bolt', color: 0xccccff, speed: 560, pierce: 2, size: 1.1 }, 'Echolocation: a wide shockwave that bounces.'),
       e: ab(30, 4000, { kind: 'splash', radius: 70, color: 0xddddff, shape: 'burst' }, 'Guess: an AoE on the pack, revealing them.', { rider: { expose: 3000 } }),
       r: ab(6, 500, { kind: 'aura', radius: 130, color: 0xeeeeff }, 'Lantern: light the husks cannot stand in.'),
       f: ab(14, 3000, { kind: 'line', length: 200, width: 30, color: 0x9999cc }, 'Bat Form: a dash-attach along the path.'),

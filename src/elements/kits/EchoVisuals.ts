@@ -51,6 +51,31 @@ export const ECHO = {
 
 export interface Pt { x: number; y: number }
 
+/**
+ * The Echolocation shockwave's geometry, shared by its painter and its hit test. The front is an
+ * arc of radius `reach` swung from a focus that far behind the shot point, spanning ±`spread`
+ * radians, `thick` deep — roughly 110px from horn to horn.
+ */
+export const SHOCK = { reach: 58, spread: 1.15, thick: 16 } as const;
+
+/**
+ * Whether a body of radius `bodyR` at (tx, ty) is on the shockwave whose crest is at (x, y)
+ * travelling along `angle`. Pure geometry: the band around the crescent's arc, within its sweep.
+ */
+export function shockwaveHits(
+  x: number, y: number, angle: number, tx: number, ty: number, bodyR = 14,
+): boolean {
+  const fx = x - Math.cos(angle) * SHOCK.reach;
+  const fy = y - Math.sin(angle) * SHOCK.reach;
+  const dx = tx - fx, dy = ty - fy;
+  // Nearest point of the arc to the body: its own bearing, clamped to the sweep (so past a horn
+  // it is the horn tip itself), then a plain circle test against that point.
+  const off = Phaser.Math.Clamp(Phaser.Math.Angle.Wrap(Math.atan2(dy, dx) - angle), -SHOCK.spread, SHOCK.spread);
+  const ax = fx + Math.cos(angle + off) * SHOCK.reach;
+  const ay = fy + Math.sin(angle + off) * SHOCK.reach;
+  return Math.hypot(tx - ax, ty - ay) <= SHOCK.thick * 0.6 + bodyR;
+}
+
 // ── Path helpers ──────────────────────────────────────────────────────────
 
 function fillPts(g: Phaser.GameObjects.Graphics, pts: Pt[]): void {
@@ -623,29 +648,36 @@ export class EchoFx extends FxBase {
   // bolt's bounce count, a summon's health, how long a line has left before it goes off.
 
   /**
-   * The Echolocation bolt: a stack of three chirps riding one focus point, wavefronts wider and
-   * fainter the further back they are, plus a bright core the enemy actually has to dodge.
-   * Bounces stack extra membrane lobes onto it, so a shot that has been round the room twice is
-   * visibly a nastier thing than one just fired.
+   * The Echolocation shockwave: one wide crescent whose crest rides the shot point and whose
+   * horns sweep back either side of it, with two fainter, wider wakes trailing behind. Its
+   * hitbox is the crescent itself (`shockwaveHits`), so what you see is what connects — a body
+   * anywhere along the front, not just at the point, is caught. Bounces stack extra membrane
+   * lobes onto it, so a shot that has been round the room twice is visibly a nastier thing
+   * than one just fired.
    */
   static drawBolt(
     g: Phaser.GameObjects.Graphics, tint: EchoColorFn,
     x: number, y: number, angle: number, bounces: number, t: number,
   ): void {
-    const lobes = 3 + Math.min(3, bounces);
-    for (let i = 3; i >= 1; i--) {
-      const back = i * 9;
-      echoChirpLayered(g, tint, x - Math.cos(angle) * back, y - Math.sin(angle) * back, angle,
-        7 + i * 3, 0.62 + i * 0.12, 10 - i * 1.6,
-        i === 1 ? ECHO.lilac : ECHO.mist, 0.5 - i * 0.1, lobes, i * 0.9, false);
+    const lobes = 4 + Math.min(3, bounces);
+    const cos = Math.cos(angle), sin = Math.sin(angle);
+    // The focus every crescent is swung from sits `reach` behind the crest.
+    const fx = x - cos * SHOCK.reach, fy = y - sin * SHOCK.reach;
+    for (let i = 2; i >= 1; i--) {
+      const back = i * 11;
+      echoChirpLayered(g, tint, fx - cos * back, fy - sin * back, angle,
+        SHOCK.reach + i * 4, SHOCK.spread + i * 0.06, SHOCK.thick * (0.9 - i * 0.15),
+        i === 1 ? ECHO.lilac : ECHO.mist, 0.55 - i * 0.14, lobes, i * 0.9, false);
     }
-    echoChirpLayered(g, tint, x, y, angle, 11, 0.6, 12, ECHO.ghost, 0.95, lobes, 0);
+    echoChirpLayered(g, tint, fx, fy, angle, SHOCK.reach, SHOCK.spread, SHOCK.thick,
+      ECHO.ghost, 0.95, lobes, 0);
+    // The crest itself pulses — the point the whole front is being driven from.
     g.fillStyle(tint(ECHO.white), 0.6 + 0.3 * Math.sin(t * 16));
-    g.fillCircle(x, y, 3.4);
+    g.fillCircle(x, y, 3.6);
     // Every bounce hangs another bead off the back of it.
     for (let i = 0; i < bounces; i++) {
       const a = angle + Math.PI + (i - bounces / 2) * 0.5;
-      mote(g, tint, x + Math.cos(a) * 13, y + Math.sin(a) * 13, 1.6, ECHO.pale, 0.7);
+      mote(g, tint, x + Math.cos(a) * 15, y + Math.sin(a) * 15, 1.6, ECHO.pale, 0.7);
     }
   }
 

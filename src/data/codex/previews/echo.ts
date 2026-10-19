@@ -3,6 +3,7 @@ import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import {
   ECHO, EchoAvatar, EchoFx, batSilhouette, chirpRing, echoChirpLayered, eyeGlyph, lanternGlyph,
+  shockwaveHits,
 } from '../../../elements/kits/EchoVisuals';
 
 /**
@@ -27,7 +28,6 @@ import {
 
 const SHOT_SPEED = 440;
 const SHOT_DAMAGE = 18;
-const SHOT_HIT_R = 28;
 const SHOT_MAX_BOUNCES = 5;
 const SHOT_BOUNCE_GATE_MS = 500;
 
@@ -248,7 +248,7 @@ function shoutLoop(ctx: PreviewCtx, opts: { relocation: boolean }): void {
       p.x = Phaser.Math.Clamp(p.x, 10, ctx.w - 10);
       p.y = Phaser.Math.Clamp(p.y, 10, ctx.h - 10);
 
-      if (Phaser.Math.Distance.Between(p.x, p.y, foe.x, foe.y) <= SHOT_HIT_R) {
+      if (shockwaveHits(p.x, p.y, Math.atan2(p.vy, p.vx), foe.x, foe.y)) {
         p.dead = true;
         // The collapse is bigger the further it had travelled to get there.
         s.fx.boom(p.x, p.y, 46 + p.bounces * 6, {

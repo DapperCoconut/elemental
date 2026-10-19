@@ -539,6 +539,11 @@ export class TechnologyKit {
     return this.dragGrabbed?.kind === 'fighter' && this.dragGrabbed.ref === this.arena.npc;
   }
 
+  /** Drag mode is on for the player: the left button grabs and drops, it does not fire. */
+  isPlayerDragMode(): boolean {
+    return this.dragActive.player;
+  }
+
   /** Remote tech event from the online peer, routed via OnlineKit → ArenaScene. */
   handleNetMsg(msg: NetTechMsg): void {
     switch (msg.k) {

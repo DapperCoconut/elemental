@@ -34,7 +34,7 @@ const ice: ElementCodex = {
       ],
       notes: [
         'The curve runs on you as well. Ice mirrors are a race to see whose ❄️ count is higher when the beams come out.',
-        'Icicle Impale is the only thing that pushes past 5 — up to 7, which is ×1.60 and ×1.75.',
+        'Nothing pushes past 5 — but a Curling Bomb makes every stack after it last 10s instead of 8.',
       ],
     },
     {
@@ -81,7 +81,7 @@ const ice: ElementCodex = {
       },
       notes: [
         'Buying this upgrade changes the click for good: the first press of a hold fires the spike, everything after it is slush. Tapping still gets you spikes at the normal rate.',
-        'The spray also shoves a Curling Stone, so a mastery build can drive the stone with the same button it maintains frost with.',
+        'The spray also lights and steers a Curling Bomb, so a mastery build can send the bomb with the same button it maintains frost with.',
       ],
     },
 
@@ -268,36 +268,30 @@ const ice: ElementCodex = {
         'Passive — no bind and no key. In a one-on-one match it never fires; it is entirely an Invasion and world-boss enhancement.',
       ],
     },
-    'curling-stone': {
+    'curling-bomb': {
       basics:
-        'A bindable 18px stone that stands 20 seconds with a 32px contact radius, bouncing off walls '
-        + 'and driven by your own shots. Each shot that reaches it shoves it and loads 1 frost stack, to '
-        + 'a maximum of 5. It slams for 30 damage at 0 stacks scaling +20% per stack to 60 at 5, pushes '
-        + '150 at 0 stacks and +62 per stack, and can only hit the same fighter once a second. Below 26 '
-        + 'px/s it counts as parked and is harmless. Crossing one of your own Skate trails accelerates it '
-        + '×3.2 and drops its drag to 0.4, so a trail laid ahead of it is a launch ramp. 25s cooldown.\n\n'
-        + 'The same slot casts Icicle Impale while you are in Black Ice: a 900 px/s charge for 150ms — '
-        + 'about 135px — that impales the first enemy within 34px. Once the impaled target has taken 50 '
-        + 'more damage the icicle bursts for 2 bonus stacks that ignore the 5-stack ceiling up to a hard '
-        + 'maximum of 7, and while it is live every stack on them lasts 10 seconds instead of 8. 6s cooldown. '
-        + 'The two keep separate cooldowns, and the card renames itself when you change form.',
-      cast: 'Bindable to R, F or Q. Normal form summons a stone in front of you; Black Ice dashes and impales the first enemy hit.',
+        'A bindable 15px bomb set down 62px in front of you. It is inert until one of your own shots '
+        + 'strikes it: that lights a 1.5s wick and launches it at 330 px/s the way the shot was going, '
+        + 'drag easing it down over about 260px, bouncing off the arena walls. Any later shot steers it '
+        + 'along that shot\'s line without touching the wick. When it goes off it deals 35 damage inside '
+        + '110px, lands 2 frost stacks on everyone in the ring, adds 2 seconds to every stack they were '
+        + 'already carrying, and marks them for the rest of the match so that every stack they take from '
+        + 'then on lasts 10 seconds instead of 8. In Black Ice the bomb turns black and the blast throws '
+        + 'void frost. Unlit, it melts after 20 seconds. 20s cooldown.',
+      cast: 'Bindable to R, F or Q. Sets the bomb down in front of you; shoot it to light and launch it.',
       effects: [
-        { tag: 'summon', label: 'The stone', detail: 'An 18px slab standing 20s, with a 32px contact radius. It bounces off the arena walls and spins visibly as it rolls.' },
-        { tag: 'resource', label: 'Loading it', detail: 'Each of your shots that reaches the stone shoves it and adds 1 frost stack, up to 5. Void frost counts identically. A piercing spike only counts once per shot.' },
-        { tag: 'damage', label: 'The slam', detail: '30 damage at 0 stacks, scaling +20% per stack to 60 at 5. Each fighter can only be hit once per second by the same stone.' },
-        { tag: 'movement', label: 'The shove', detail: '150 push at 0 stacks, +62 per stack — a fully loaded stone is shoved more than three times as far by the same shot.' },
-        { tag: 'utility', label: 'Parked is harmless', detail: 'Below 26 px/s the stone counts as stopped: it deals no damage and takes no chips. It is a hazard only while moving.' },
-        { tag: 'movement', label: 'On your own ice', detail: 'A stone that crosses one of your Skate trails accelerates by ×3.2 and its drag drops to 0.4 — a trail laid ahead of the stone is a launch ramp.' },
-        { tag: 'utility', label: 'Availability', detail: '25s cooldown, so there is rarely more than one stone in play.' },
-        { tag: 'movement', label: 'Black Ice: Icicle Impale', detail: 'In Black Ice the slot dashes instead — 900 px/s for 150ms, impaling the first enemy within 34px.' },
-        { tag: 'debuff', label: 'Shatter payload', detail: 'Once the impaled target has taken 50 more damage, the icicle bursts for 2 bonus void frost stacks, past the 5-stack cap up to 7.' },
-        { tag: 'debuff', label: 'Slower decay', detail: 'While the icicle is live, every frost or void stack applied to that target lasts 10s instead of 8.' },
-        { tag: 'utility', label: 'Two cooldowns', detail: 'Curling Stone (25s) and Icicle Impale (6s) cool down separately; the card shows whichever your form will cast.' },
+        { tag: 'summon', label: 'The bomb', detail: 'A 15px bomb set down 62px ahead of you. It bounces off the arena walls and, unlit, melts after 20s.' },
+        { tag: 'movement', label: 'Lighting it', detail: 'Your first shot to strike it lights the wick and launches it at 330 px/s along the shot\'s line. A piercing spike only counts once.' },
+        { tag: 'movement', label: 'Steering it', detail: 'Any later shot re-launches it along that shot\'s line at full speed; the wick keeps burning.' },
+        { tag: 'damage', label: 'The blast', detail: '1.5s after it is lit: 35 damage to everyone within 110px.' },
+        { tag: 'debuff', label: 'Frost payload', detail: '2 frost stacks on everyone in the blast, up to the usual 5. Void frost in Black Ice.' },
+        { tag: 'debuff', label: 'Slow thaw', detail: 'Every stack they already carried gets 2 more seconds, and for the rest of the match every stack they take lasts 10s instead of 8.' },
+        { tag: 'utility', label: 'Availability', detail: '20s cooldown, and one bomb at a time — a fresh one replaces the old.' },
       ],
       notes: [
-        'Slush Thrower nudges the stone too, which is the cheapest way to keep it rolling without spending spike cooldowns.',
-        'The stone is owner-agnostic in the simulation, so an online opponent\'s stone rolls on your screen exactly as it does on theirs.',
+        'Slush Thrower lights and steers the bomb too, which is the cheapest way to send it without spending a spike.',
+        'The slow thaw is per fighter and permanent for the match; Frost Blast still clears the stacks themselves.',
+        'The bomb is owner-agnostic in the simulation, so an online opponent\'s bomb runs on your screen exactly as it does on theirs.',
       ],
     },
   },

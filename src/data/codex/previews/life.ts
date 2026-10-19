@@ -51,7 +51,7 @@ export const petalShotgun: PreviewScript = {
 
 export const petalShotgunUpgraded: PreviewScript = {
   duration: 1500,
-  caption: 'Petal Burst — five petals at 5 damage, a much wider fan',
+  caption: 'Petal Burst — five petals at 8 damage, a much wider fan',
   run(ctx) {
     const { fx, av } = stage(ctx);
     ctx.addDummy();

@@ -30,13 +30,14 @@ export interface NpcLoadout {
 const NPC_MASTERY_BINDS: Record<string, { enhId: string; slot: MasterySlot }> = {
   fire: { enhId: 'heatwave', slot: 'f' },
   water: { enhId: 'siphon', slot: 'f' },
-  air: { enhId: 'winds-of-change', slot: 'f' },
+  air: { enhId: 'weather-cycle', slot: 'f' },
   oil: { enhId: 'turret', slot: 'f' },
   life: { enhId: 'reap', slot: 'f' },
   earth: { enhId: 'dust-screen', slot: 'f' },
   shadow: { enhId: 'shadow-beacon', slot: 'f' },
-  ice: { enhId: 'curling-stone', slot: 'r' },
-  crystal: { enhId: 'crystal-shredder', slot: 'f' },
+  ice: { enhId: 'curling-bomb', slot: 'r' },
+  // Over Q rather than F: the chakram's kidnapping needs the bot's portals, which live on F.
+  crystal: { enhId: 'crystal-shredder', slot: 'q' },
   electricity: { enhId: 'kinetic-bomb', slot: 'f' },
   gravity: { enhId: 'starfall', slot: 'f' },
   sand: { enhId: 'time-bomb', slot: 'f' },

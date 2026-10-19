@@ -50,7 +50,7 @@ export const GROWTH_EVOLVE_NODES: GrowthEvolveNodeDef[] = [
   { id: 'fast-evolution', path: 'efficiency', row: 4, name: 'Fast Evolution', description: 'Right-click sells an upgrade for 50/75/100% DNA back per tier; row 4-5 upgrades cost 1 less DNA' },
   {
     id: 'sweating', path: 'efficiency', row: 5, isUltimate: true, name: 'Sweating',
-    description: 'Bank up to 3 charges of Virus (R) and Spore Spray (F), and DNA is collected instantly from anywhere.',
+    description: 'Bank up to 3 charges of Virus (R) and Spore Spray (F).',
   },
 ];
 

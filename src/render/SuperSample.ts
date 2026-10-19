@@ -15,15 +15,19 @@ export const LOGICAL_HEIGHT = 640;
 export const RENDER_SCALE = 2;
 
 type Cam = Phaser.Cameras.Scene2D.Camera & {
-  cameraManager?: unknown;
+  /** Set by `BaseCamera.setScene`: true for cameras the scene's CameraManager owns. */
+  isSceneCamera?: boolean;
   matrix: Phaser.GameObjects.Components.TransformMatrix;
 };
 
 /** Patches camera and text prototypes. Must run before `new Phaser.Game()`. */
 export function installSuperSampling(): void {
-  // Only scene cameras are patched (they have a cameraManager). The internal
-  // BaseCamera instances Phaser uses for RenderTextures and generateTexture
-  // keep stock behaviour.
+  // Only scene cameras are patched. A RenderTexture / DynamicTexture owns a
+  // private Scene2D.Camera too (attached to the system scene with
+  // `isSceneCamera = false`) that renders *into* the texture at 1:1 — scaling
+  // that one would bake every fog eraser and ground texture at double size and
+  // off-centre. Note it still gets a `cameraManager` from the system scene, so
+  // that field is not a usable gate; `isSceneCamera` is.
   const camProto = Phaser.Cameras.Scene2D.Camera.prototype as unknown as {
     preRender(this: Cam): void;
     getWorldPoint(this: Cam, x: number, y: number, output?: Phaser.Math.Vector2): Phaser.Math.Vector2;
@@ -31,7 +35,7 @@ export function installSuperSampling(): void {
 
   const origPreRender = camProto.preRender;
   camProto.preRender = function (this: Cam): void {
-    if (!this.cameraManager) {
+    if (!this.isSceneCamera) {
       origPreRender.call(this);
       return;
     }
@@ -48,7 +52,7 @@ export function installSuperSampling(): void {
 
   const origGetWorldPoint = camProto.getWorldPoint;
   camProto.getWorldPoint = function (this: Cam, x, y, output) {
-    if (!this.cameraManager) return origGetWorldPoint.call(this, x, y, output);
+    if (!this.isSceneCamera) return origGetWorldPoint.call(this, x, y, output);
     // Stock getWorldPoint mixes the matrix with this.zoom, which no longer
     // agrees with the scaled matrix — invert the matrix itself instead.
     const out = output ?? new Phaser.Math.Vector2();

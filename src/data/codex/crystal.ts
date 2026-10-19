@@ -224,19 +224,25 @@ const crystal: ElementCodex = {
       basics:
         'A bindable chakram thrown to the cursor at 260 px/s, spinning at 3.2 radians a second, that '
         + 'parks where it arrives. It deals 2 damage per shard it carries, within 15px, consuming that '
-        + 'shard — 24 damage from a full 12. Recasting Atune throws an idle chakram back out at your '
-        + 'current cursor, so the disc is reusable while it still has shards, and with Trick of the Light '
-        + 'every clone throws a mini chakram of 4 shards as well, tripling the shredding. 14s cooldown.',
-      cast: 'Bindable to R, F or Q. Flies to the cursor and stops there.',
+        + 'shard — 24 damage from a full 12. Any enemy a blade bites while the disc is moving is caught '
+        + 'and carried at the hub until it lands, so the throw drags them to your cursor; if the disc '
+        + 'crosses one of your own Crystal Portals on the way it comes out of the other gate with them. '
+        + 'Recasting Atune throws an idle chakram back out at your current cursor, taking anyone standing '
+        + 'in its hub along, and with Trick of the Light every clone throws a mini chakram of 4 shards as '
+        + 'well. 14s cooldown.',
+      cast: 'Bindable to R, F or Q. Flies to the cursor and stops there, dropping whoever it caught.',
       effects: [
         { tag: 'damage', label: 'Per shard', detail: '2 damage per shard, within 15px of it, and that shard is consumed. 12 shards is 24 damage if every one connects.' },
         { tag: 'movement', label: 'The throw', detail: '260 px/s to the cursor, rotating at 3.2 radians a second, then it parks where it arrived.' },
-        { tag: 'utility', label: 'Re-throwing it', detail: 'Recasting Atune launches an idle chakram back out toward your current cursor — the disc is reusable while it has shards.' },
+        { tag: 'debuff', label: 'The grab', detail: 'An enemy bitten by a blade while the disc is moving is carried at its hub, unable to move, until it lands. Unstoppable and knockback-immune fighters cannot be caught.' },
+        { tag: 'movement', label: 'Through portals', detail: 'A moving chakram that touches one of your own portals comes out of the other, carrying its captives with it — the gate does not collapse on them — and flies on toward its mark.' },
+        { tag: 'utility', label: 'Re-throwing it', detail: 'Recasting Atune launches an idle chakram back out toward your current cursor, grabbing anyone standing in its hub — the enemy it just set down included.' },
         { tag: 'summon', label: 'With Trick of the Light', detail: 'Each clone also throws a mini chakram carrying 4 shards, so a Q window triples the shredding.' },
         { tag: 'utility', label: 'Availability', detail: '14s cooldown.' },
       ],
       notes: [
         'A parked chakram is not harmless — an enemy walking into it still loses shards into themselves.',
+        'Throw at a portal with the enemy on the line and the disc catches them on the way through: they arrive at the far gate, you do not have to.',
       ],
     },
   },

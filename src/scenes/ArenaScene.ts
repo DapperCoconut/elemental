@@ -523,6 +523,14 @@ export class ArenaScene extends Phaser.Scene {
   // input is suppressed until the button is released once, so no click-bound
   // ability auto-fires on the opening frames. Cleared by a one-shot pointerup.
   private pointerInputLatched = false;
+  // Held-click auto-fire: a plain click ability (no HOLD tag) re-casts for as long as the left
+  // button stays down. Every kit reads its own press edge off the pointer, so rather than
+  // teaching each one, the frame the ability comes off cooldown masks the button up for one
+  // update — every kit then sees a fresh press on the next. `armed` is set while the ability
+  // is cooling and spent by the pulse, so a kit that declines the cast is not pulsed again
+  // until the next real cast; `pulsed` remembers to put the button back after dispatch.
+  private clickAutoFireArmed = false;
+  private clickAutoFirePulsed = false;
   private nukeChanneling = false;
   private nukeChannelEnd = 0;
   private nukeLockStartTime = 0;
@@ -1121,6 +1129,8 @@ export class ArenaScene extends Phaser.Scene {
     if (this.pointerInputLatched) {
       this.input.once('pointerup', () => { this.pointerInputLatched = false; });
     }
+    this.clickAutoFireArmed = false;
+    this.clickAutoFirePulsed = false;
     this.nukeChanneling = false;
     this.nukeChannelEnd = 0;
 
@@ -1592,10 +1602,12 @@ export class ArenaScene extends Phaser.Scene {
         get worldBounds() { return arena.physics.world.bounds; },
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         masteryBindFor: (slot) => arena.masteryBindForElement('air', slot),
-        broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         recordMasteryStat: (key, amount) => {
           if (arena.playerIs('air')) PlayerData.addMasteryStat('air', key, amount);
         },
+        get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'air'; },
+        npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
+        get npcAutonomous() { return !arena.isOnline; },
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         spawnDamageNumber: (x, y, amount) => arena.spawnDamageNumber(x, y, amount),
         spawnHitFlash: (x, y, color) => arena.spawnHitFlash(x, y, color),
@@ -1788,7 +1800,9 @@ export class ArenaScene extends Phaser.Scene {
         recordMasteryStat: (key, amount) => {
           if (arena.playerIs('ice')) PlayerData.addMasteryStat('ice', key, amount);
         },
-        setAbilityCardLabel: (id, name, description) => arena.setAbilityCardLabel(id, name, description),
+        get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'ice'; },
+        npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
+        get npcAutonomous() { return !arena.isOnline; },
       };
       this.iceKit = new IceKit(iceApi);
     }
@@ -1822,6 +1836,9 @@ export class ArenaScene extends Phaser.Scene {
         recordMasteryStat: (key, amount) => {
           if (arena.playerIs('crystal')) PlayerData.addMasteryStat('crystal', key, amount);
         },
+        get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'crystal'; },
+        npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
+        get npcAutonomous() { return !arena.isOnline; },
       };
       this.crystalKit = new CrystalKit(crystalApi);
     }
@@ -5309,8 +5326,8 @@ export class ArenaScene extends Phaser.Scene {
       case 'magma-saw-off':
         if (this.npcElement.id === 'magma') this.magmaKit.doNpcSawOff();
         break;
-      case 'winds-of-change':
-        if (this.npcElement.id === 'air') this.airKit.doWindsOfChange('npc');
+      case 'weather-cycle':
+        if (this.npcElement.id === 'air') this.airKit.doWeatherCycle('npc');
         break;
       case 'transmogrify':
         if (this.npcElement.id === 'magic') this.magicKit.doNpcTransmogrify(tx, ty);
@@ -5318,11 +5335,8 @@ export class ArenaScene extends Phaser.Scene {
       case 'shadow-beacon':
         if (this.npcElement.id === 'shadow') this.shadowKit.doNpcShadowBeacon(tx, ty);
         break;
-      case 'icicle-impale':
-        if (this.npcElement.id === 'ice') this.iceKit.doNpcIcicleImpale();
-        break;
-      case 'curling-stone':
-        if (this.npcElement.id === 'ice') this.iceKit.doNpcCurlingStone(tx, ty);
+      case 'curling-bomb':
+        if (this.npcElement.id === 'ice') this.iceKit.doNpcCurlingBomb(tx, ty);
         break;
       case 'crystal-shredder':
         if (this.npcElement.id === 'crystal') this.crystalKit.doNpcShredder(tx, ty);
@@ -5643,7 +5657,8 @@ export class ArenaScene extends Phaser.Scene {
       'gale-glaive':    0xb4854a,
       'sky-grapple':    0x6699cc,
       'wind-breaker':   0x2255aa,
-      'winds-of-change': 0xffd2e4,
+      'weather-cycle':  0xbbe8ff,
+      'curling-bomb':   0x88ccff,
       'stab':           0xaa8844,
       'shield-up':      0x997744,
       'shield-slam':    0xbb9955,
@@ -10240,6 +10255,41 @@ export class ArenaScene extends Phaser.Scene {
     this.showFloatingText(this.player.x, this.player.y - 28, '🩸 Bleeding!', '#ff2222');
   }
 
+  /**
+   * Held-click auto-fire. While the left button is down and the live element's click ability
+   * carries no HOLD tag, the frame its cooldown completes masks the button up for one update;
+   * `update()` restores it after dispatch, so every kit — whichever way it tracks its press
+   * edge — reads the next frame as a new click and casts again. Armed only once the ability
+   * has actually gone on cooldown under the held button, so a click the kit refuses (a form
+   * that has no click, a channel in progress) is not pulsed every other frame.
+   */
+  private clickAutoFireMask(pointer: Phaser.Input.Pointer): void {
+    if (!pointer.isDown || !pointer.leftButtonDown()) {
+      this.clickAutoFireArmed = false;
+      return;
+    }
+    const click = this.playerElement.abilities.find((a) => a.displayKey === 'Click');
+    // Clicks whose button is also a drag (press picks up, release drops) must never see a
+    // fake release: Conquest's board, and Technology's Web Drag while it is on.
+    const dragClick = !click || click.id === 'conquest-banner'
+      || (this.elementId === 'technology' && this.techKit.isPlayerDragMode());
+    if (dragClick || abilityTags(click.id).includes('hold')) {
+      this.clickAutoFireArmed = false;
+      return;
+    }
+    if (this.player.getCooldownRatio(click.id, click) < 1) {
+      this.clickAutoFireArmed = true;
+      return;
+    }
+    // Ready. A real press this frame (button up last frame) is the kit's to handle; a button
+    // that was already held gets the one-frame gap.
+    if (!this.clickAutoFireArmed || !this.pointerWasDown) return;
+    this.clickAutoFireArmed = false;
+    this.clickAutoFirePulsed = true;
+    pointer.isDown = false;
+    pointer.buttons &= ~1;
+  }
+
   // ── Update loop ──────────────────────────────────────────────────
 
   update(time: number, delta: number): void {
@@ -10278,6 +10328,9 @@ export class ArenaScene extends Phaser.Scene {
       pointer.isDown = false;
       pointer.buttons &= ~1;
     }
+
+    // Holding the left button re-casts a plain click ability each time it is ready.
+    this.clickAutoFireMask(pointer);
 
     // Online: broadcast our state and interpolate the remote replica
     if (this.isOnline) this.onlineKit?.update();
@@ -11137,6 +11190,13 @@ export class ArenaScene extends Phaser.Scene {
     this.fortuneKit.handleInput(time, pointer, mouseX, mouseY);
     this.pointerWasDown = pointer.isDown;
     this.rightPointerWasDown = pointer.rightButtonDown();
+    // The auto-fire pulse masked a button that is really still down: put it back now that
+    // `pointerWasDown` has recorded the gap, so the next frame reads as a fresh press.
+    if (this.clickAutoFirePulsed) {
+      this.clickAutoFirePulsed = false;
+      pointer.isDown = true;
+      pointer.buttons |= 1;
+    }
 
     // ── Water world effects (rig, pools, springs, Splash downpour) ───
     if (this.playerIs('water') || this.npcElement.id === 'water') {
@@ -11330,7 +11390,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── NPC AI ───────────────────────────────────────────────────
     const aiState: NpcAiState = {
-      isLocked: this.npcNukeChanneling || this.npc.frozenUntil > time || (this.npc.magicChainBound && time < this.npc.magicChainBoundEnd) || time < this.silenceKit.getNpcYankUntil() || (this.airKit.isNpcHawkDragged() || this.airKit.isNpcSwept()) || (this.npcElement.id === 'rubber' && this.rubberKit.isBounceFormActive('npc')) || this.waterKit.isNpcSplit() || this.npc.chickenUntil > Date.now() || this.techKit.isNpcDragged() || this.justiceKit.isLocked('npc') || this.justiceKit.isOnTrial(this.npc) || this.justiceKit.isBeingKicked(this.npc) || this.dreamKit.locksNpcAi() || this.sandKit.locksNpcAbilities() || this.fireKit.isSupernovaActive('npc') || this.marrowKit.locksNpc() || this.mythKit.isTrapped(this.npc),
+      isLocked: this.npcNukeChanneling || this.npc.frozenUntil > time || (this.npc.magicChainBound && time < this.npc.magicChainBoundEnd) || time < this.silenceKit.getNpcYankUntil() || (this.airKit.isNpcHawkDragged() || this.airKit.isNpcSwept()) || (this.npcElement.id === 'rubber' && this.rubberKit.isBounceFormActive('npc')) || this.waterKit.isNpcSplit() || this.npc.chickenUntil > Date.now() || this.techKit.isNpcDragged() || this.crystalKit.isCarried(this.npc) || this.justiceKit.isLocked('npc') || this.justiceKit.isOnTrial(this.npc) || this.justiceKit.isBeingKicked(this.npc) || this.dreamKit.locksNpcAi() || this.sandKit.locksNpcAbilities() || this.fireKit.isSupernovaActive('npc') || this.marrowKit.locksNpc() || this.mythKit.isTrapped(this.npc),
       hasActiveGeyser: this.geysers.some((g) => g.owner === 'npc'),
       flameBodyActive: this.fireKit.isNpcFlameBodyActive(),
       // Fire: a charge that would light the bot's own booze around its target (Alcohol → R),
@@ -11366,6 +11426,10 @@ export class ArenaScene extends Phaser.Scene {
       npcWaterBubbleSplash: this.waterKit.npcBubbleSplashReady(),
       playerFrostStacks: this.iceKit.getPlayerFrostStacks(),
       iceBlockActive: this.iceKit.isNpcBlockUpActive(),
+      npcIceBombSlot: this.iceKit.npcBombSlot(),
+      npcIceBombAim: this.iceKit.npcBombShotAim(),
+      npcAirWeatherSlot: this.airKit.npcWeatherSlot(),
+      npcCrystalShredderSlot: this.crystalKit.npcShredderSlot(),
       npcGrowthDna: this.growthKit.getDna('npc'),
       npcGrowthHasNestOrClone: this.growthKit.hasNest('npc') || this.growthKit.hasClone('npc'),
       crystalNodeCount: this.crystalKit.getNpcCrystalNodeCount(),
@@ -11783,8 +11847,6 @@ export class ArenaScene extends Phaser.Scene {
     // ── Ice per-frame ─────────────────────────────────────────────
     if (this.playerIs('ice') || this.npcElement.id === 'ice') {
       this.iceKit.update(time, delta, this.playerIs('ice'), this.npcElement.id === 'ice');
-      // Online: opponent is ice — replay their Icicle Impale dash + track its icicle on us.
-      if (!this.playerIs('ice') && this.npcElement.id === 'ice') this.iceKit.updateNpc(time);
     }
 
     // ── Frozen NPC override (ice element) ────────────────────────
@@ -12199,10 +12261,8 @@ export class ArenaScene extends Phaser.Scene {
         entry.fill.setSize(entry.maxWidth * this.earthKit.getDustScreenCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'shadow-beacon') {
         entry.fill.setSize(entry.maxWidth * this.shadowKit.getShadowBeaconCooldownRatio(time), entry.fill.height);
-      } else if (entry.abilityId === 'icicle-impale') {
-        entry.fill.setSize(entry.maxWidth * this.iceKit.getIcicleImpaleCooldownRatio(time), entry.fill.height);
-      } else if (entry.abilityId === 'curling-stone') {
-        entry.fill.setSize(entry.maxWidth * this.iceKit.getMasterySlotCooldownRatio(time), entry.fill.height);
+      } else if (entry.abilityId === 'curling-bomb') {
+        entry.fill.setSize(entry.maxWidth * this.iceKit.getCurlingBombCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'kinetic-bomb') {
         entry.fill.setSize(entry.maxWidth * this.electricityKit.getKineticBombCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'starfall') {
@@ -12374,8 +12434,8 @@ export class ArenaScene extends Phaser.Scene {
       } else if (entry.abilityId === 'wind-breaker' && this.airKit.isTornadoActive('player')) {
         // While she *is* the tornado the card reads as held, not as recharging.
         entry.fill.setSize(entry.maxWidth, entry.fill.height);
-      } else if (entry.abilityId === 'winds-of-change') {
-        entry.fill.setSize(entry.maxWidth * this.airKit.getWindsCooldownRatio(time), entry.fill.height);
+      } else if (entry.abilityId === 'weather-cycle') {
+        entry.fill.setSize(entry.maxWidth * this.airKit.getWeatherCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'grav-bomb') {
         if (this.gravityKit.isGravBombHolding()) {
           entry.fill.setSize(entry.maxWidth * this.player.chargeRatio, entry.fill.height);

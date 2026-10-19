@@ -604,6 +604,24 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   over R in `NpcLoadout`; the bot scribbles black over the player's F/Q/E cards, then white on
   its own tray.
 
+- **Ice / Air / Crystal masteries (2026-10-18), step 2 + step 4 only.** Ice's bindable is now
+  **Curling Bomb** (`curling-bomb`, Curling Stone and Icicle Impale deleted; old binds migrate in
+  `PlayerData.getMasteryBinds`). Nightmare binds it over R; `npcIceBombSlot` makes `doIceAbilities`
+  skip Block Up (and Skate/Frozen Solid if rebound). The bomb is kit-fired in `IceKit.updateNpcBomb`
+  (player 140–420px away, no own bomb out). Synergy `npcIceBombAim` (`IceKit.npcBombShotAim`: an
+  own bomb on the line to the player, 35° cone, player beyond it) is checked first — the spike
+  lights the wick and sends the bomb on into them, or steers a lit one back. Air's bindable is now
+  **Weather Cycle** (`weather-cycle`, Winds of Change deleted); Nightmare binds it over F and
+  `npcAirWeatherSlot` skips Sky Grapple (R/Q if rebound). It is kit-fired in
+  `AirKit.updateNpcWeather` inside 320px; the kit records the bot's own `do*` casts for 5s and
+  replays them re-aimed at the player's live position. Crystal Shredder now grabs: a blade that
+  bites a fighter while the disc is moving carries them at the hub (through the owner's portals)
+  until it lands; a carried npc is `isLocked` (`crystalKit.isCarried`). Nightmare's bind moved
+  from F to **Q** so the bot keeps its portals; `npcCrystalShredderSlot` skips Trick of the Light.
+  Kit-fired in `CrystalKit.updateNpcShredder` with the synergy inside `npcShredderAim`: if an own
+  gate stands 20–260px beyond the player on the same line (14°), the throw is aimed at the gate so
+  the blades catch the player on the way and come out of the other gate with them.
+
 ## Gotchas (learned the hard way — read before each batch)
 
 - **The reaction tick shrinks per-frame random gates ~10×.** Old routines rolled

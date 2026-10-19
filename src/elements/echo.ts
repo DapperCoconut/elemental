@@ -9,7 +9,7 @@ export const echoElement: Element = {
     {
       id: 'echo-shot',
       name: 'Echolocation',
-      description: 'Fire a white rectangle that bounces off walls up to 5 times.',
+      description: 'Shout a wide shockwave that bounces off walls up to 5 times.',
       displayKey: 'Click',
       cooldown: 2000,
       cast(ctx) { ctx.echoEcholocation(ctx.targetX, ctx.targetY); },

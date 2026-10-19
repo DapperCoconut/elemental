@@ -100,6 +100,12 @@ export interface CrystalArenaApi {
   /** Mastery enhancement id bound over the given ability slot, or null if that slot is unchanged. */
   masteryBindFor(slot: string): string | null;
   recordMasteryStat(key: string, amount: number): void;
+  /** True when the opponent is crystal with Element Mastery on (a Nightmare bot or an online peer). */
+  get npcMasteryActive(): boolean;
+  /** The opponent's mastery bind over `slot`, or null — drives the bot's own Crystal Shredder. */
+  npcMasteryBindFor(slot: string): string | null;
+  /** True when the opponent is driven by the local AI rather than replayed from a peer. */
+  readonly npcAutonomous: boolean;
 }
 
 interface CrystalShredder {
@@ -121,6 +127,13 @@ interface CrystalShredder {
   trailAccum: number;
   /** 'player' chakrams shred enemies; 'npc' (online replay) shreds the local player. */
   owner: 'player' | 'npc';
+  /**
+   * Fighters the blades have caught. They ride at the hub for as long as the chakram is
+   * moving — through portals, to the cursor — and are let go where it lands.
+   */
+  carried: Fighter[];
+  /** Last time it went through a portal, so it cannot bounce straight back through. */
+  lastPortalTime: number;
 }
 
 // ── CrystalKit ────────────────────────────────────────────────────────────
@@ -180,6 +193,13 @@ export class CrystalKit {
   private shredders: CrystalShredder[] = [];         // Crystal Shredder bindable (player + Trick of the Light minis)
   private shredderLastCastAt = -Infinity;
   private shredderRelaunchRequested = false;         // Atune (R) requests an idle shredder be relaunched at the cursor
+  private npcShredderLastCastAt = -Infinity;         // the bot's own chakram clock
+  /**
+   * Fighters a chakram just carried through the owner's portal, and until when. The gate
+   * collapse that punishes an intruder has to look the other way for them, or every carry
+   * through a portal would end in the portal blowing up on arrival.
+   */
+  private portalGrace = new Map<Fighter, number>();
 
   constructor(private arena: CrystalArenaApi) {
     this.pcol = (base) => arena.crystalColor('player', base);
@@ -308,10 +328,12 @@ export class CrystalKit {
 
     this.shardOverloadArmed = false;
     this.resonanceSpeedUntil = -99999;
-    for (const s of this.shredders) s.gfx.destroy();
+    for (const s of this.shredders) { this.releaseCarried(s); s.gfx.destroy(); }
     this.shredders = [];
     this.shredderLastCastAt = -Infinity;
+    this.npcShredderLastCastAt = -Infinity;
     this.shredderRelaunchRequested = false;
+    this.portalGrace.clear();
   }
 
   handleInput(time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
@@ -601,7 +623,10 @@ export class CrystalKit {
     if (this.arena.elementId === 'crystal' && this.crystalPortals.some((p) => p.owner === 'player')) {
       const playerPortals = this.crystalPortals.filter((p) => p.owner === 'player');
       let portalTriggered = false;
+      // A chakram delivering the npc through the gate is not an intrusion.
+      const spared = this.isCarried(npc) || time < (this.portalGrace.get(npc) ?? -Infinity);
       for (const gate of playerPortals) {
+        if (spared) break;
         if (Phaser.Math.Distance.Between(npc.x, npc.y, gate.x, gate.y) <= 25) {
           portalTriggered = true; break;
         }
@@ -785,6 +810,7 @@ export class CrystalKit {
 
     // Shredders tick for both owners so an online opponent's chakram can shred our local player.
     this.updateShredders(time, delta, mouseX, mouseY);
+    this.updateNpcShredder(time);
   }
 
   // ── Public do* methods — called from ArenaScene context builders ───────
@@ -1289,7 +1315,54 @@ export class CrystalKit {
     this.arena.showFloatingText(player.x, player.y - 30, '🔷 CRYSTAL SHREDDER', '#88eeff');
   }
 
-  /** Online replay: the remote crystal player cast Crystal Shredder — hurl a chakram at us. */
+  /** The slot the bot's Crystal Shredder is bound over, so the AI leaves that base ability alone. */
+  npcShredderSlot(): 'r' | 'f' | 'q' | undefined {
+    if (!this.arena.npcMasteryActive) return undefined;
+    for (const sl of ['r', 'f', 'q'] as const) {
+      if (this.arena.npcMasteryBindFor(sl) === 'crystal-shredder') return sl;
+    }
+    return undefined;
+  }
+
+  /**
+   * Bot synergy — a chakram through a gate is a kidnapping. Where the bot should throw: the
+   * player, unless one of its own gates stands a little beyond them on the same line, in which
+   * case the gate itself — the blades catch the player on the way and come out of the other
+   * gate with them. Null when there is no one to throw at. Side-effect-free.
+   */
+  private npcShredderAim(): { x: number; y: number } | null {
+    const { npc, player } = this.arena;
+    if (!player.active || player.hp <= 0) return null;
+    const dPlayer = Phaser.Math.Distance.Between(npc.x, npc.y, player.x, player.y);
+    if (dPlayer < 60 || dPlayer > 420) return null;
+    const toPlayer = Math.atan2(player.y - npc.y, player.x - npc.x);
+    if (this.npcCrystalPortals.length === 2) {
+      for (const gate of this.npcCrystalPortals) {
+        const dGate = Phaser.Math.Distance.Between(npc.x, npc.y, gate.x, gate.y);
+        if (dGate <= dPlayer + 20 || dGate > dPlayer + 260) continue;
+        const toGate = Math.atan2(gate.y - npc.y, gate.x - npc.x);
+        if (Math.abs(Phaser.Math.Angle.Wrap(toGate - toPlayer)) > Phaser.Math.DegToRad(14)) continue;
+        return { x: gate.x, y: gate.y };
+      }
+    }
+    return { x: player.x, y: player.y };
+  }
+
+  /** Nightmare bot: throws its chakram whenever it is up and there is a line to throw along. */
+  private updateNpcShredder(time: number): void {
+    if (!this.arena.npcAutonomous || this.arena.npcElementId !== 'crystal' || !this.npcShredderSlot()) return;
+    if (time - this.npcShredderLastCastAt < CrystalKit.SHREDDER_COOLDOWN_MS) return;
+    const { npc } = this.arena;
+    if (!npc.active || npc.hp <= 0) return;
+    const aim = this.npcShredderAim();
+    if (!aim) return;
+    this.npcShredderLastCastAt = time;
+    // Stamped so the cast sounds like one; the bot has no peer to relay it to.
+    npc.triggerCooldown('crystal-shredder');
+    this.doNpcShredder(aim.x, aim.y);
+  }
+
+  /** Online replay and the bot's own cast: the opposing crystal player threw a chakram at us. */
   doNpcShredder(tx: number, ty: number): void {
     const { npc } = this.arena;
     this.clearShredders('npc');
@@ -1302,6 +1375,7 @@ export class CrystalKit {
     this.shredders = this.shredders.filter((s) => {
       if (s.owner !== owner) return true;
       // Recasting recalls the old chakram — it comes apart rather than blinking out.
+      this.releaseCarried(s);
       this.fx(owner).shatter(s.x, s.y, s.radius * 2, {
         shards: 8, dust: 1, duration: 300, splinter: false, tones: this.shredderTones(owner),
       });
@@ -1325,7 +1399,81 @@ export class CrystalKit {
       spawnAt: scene.time.now,
       trailAccum: 0,
       owner,
+      carried: [],
+      lastPortalTime: -99999,
     });
+  }
+
+  /** True while `f` is riding one of the chakrams — it cannot move or act for itself. */
+  isCarried(f: Fighter): boolean {
+    return this.shredders.some((s) => s.carried.includes(f));
+  }
+
+  /** The blades bite in and the chakram takes the body with it. */
+  private grab(s: CrystalShredder, t: Fighter): void {
+    if (s.carried.includes(t) || t.unstoppable || t.knockbackImmune) return;
+    // A fighter already riding another chakram stays with that one.
+    if (this.isCarried(t)) return;
+    s.carried.push(t);
+    const tones = this.shredderTones(s.owner);
+    this.fx(s.owner).glint(t.x, t.y, s.radius * 2.2, 11, tones, s.angle);
+    this.fx(s.owner).shards(t.x, t.y, 6, { spread: Math.PI, speed: 120, size: 2.4, life: 360, fall: 24, depth: 10, tones });
+    this.arena.showFloatingText(t.x, t.y - 34, '🔷 CAUGHT', '#cc88ff');
+  }
+
+  /** Everyone riding `s` is set down where it is. */
+  private releaseCarried(s: CrystalShredder): void {
+    for (const t of s.carried) {
+      if (!t.active) continue;
+      (t.body as Phaser.Physics.Arcade.Body | null)?.setVelocity(0, 0);
+      this.fx(s.owner).dust(t.x, t.y, 4, s.radius, 8, this.shredderTones(s.owner));
+    }
+    s.carried = [];
+  }
+
+  /** The carried ride at the hub: position is the last word, so nothing else gets a vote. */
+  private holdCarried(s: CrystalShredder): void {
+    for (let i = s.carried.length - 1; i >= 0; i--) {
+      const t = s.carried[i];
+      if (!t.active || t.hp <= 0) { s.carried.splice(i, 1); continue; }
+      t.setPosition(s.x, s.y);
+      (t.body as Phaser.Physics.Arcade.Body | null)?.setVelocity(0, 0);
+    }
+  }
+
+  /** The gates a chakram of this owner can fly through. */
+  private portalsFor(owner: 'player' | 'npc'): CrystalPortalGate[] {
+    return owner === 'player' ? this.crystalPortals.filter((p) => p.owner === 'player') : this.npcCrystalPortals;
+  }
+
+  /**
+   * A moving chakram that touches one of its owner's gates comes out of the other one, with
+   * everything it is carrying, and carries on toward its mark from there.
+   */
+  private shredderThroughPortal(s: CrystalShredder, time: number): void {
+    if (time - s.lastPortalTime < 500) return;
+    const gates = this.portalsFor(s.owner);
+    if (gates.length < 2) return;
+    for (let pi = 0; pi < 2; pi++) {
+      const gate = gates[pi];
+      if (Phaser.Math.Distance.Between(s.x, s.y, gate.x, gate.y) > 22) continue;
+      const other = gates[1 - pi];
+      const tones = this.shredderTones(s.owner);
+      this.fx(s.owner).translate(gate.x, gate.y, other.x, other.y, 6, tones);
+      s.x = other.x; s.y = other.y;
+      s.lastPortalTime = time;
+      for (const t of s.carried) {
+        this.portalGrace.set(t, time + 900);
+        this.arena.showFloatingText(t.x, t.y - 34, '🌀 PULLED THROUGH', '#cc88ff');
+      }
+      // Re-aim at the mark from the far side; if it came out on top of it, it has arrived.
+      const dx = s.targetX - s.x, dy = s.targetY - s.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < 4) { s.vx = 0; s.vy = 0; }
+      else { s.vx = (dx / dist) * CrystalKit.SHREDDER_SPEED; s.vy = (dy / dist) * CrystalKit.SHREDDER_SPEED; }
+      this.holdCarried(s);
+      break;
+    }
   }
 
   private updateShredders(time: number, delta: number, mouseX: number, mouseY: number): void {
@@ -1340,6 +1488,11 @@ export class CrystalKit {
         s.vy = (rdy / rlen) * CrystalKit.SHREDDER_SPEED;
         s.targetX = mouseX; s.targetY = mouseY;
         s.moving = true;
+        // Anyone standing in the hub — including whoever it just set down — goes with it.
+        for (const t of this.arena.enemies) {
+          if (!t.active || t.hp <= 0) continue;
+          if (Phaser.Math.Distance.Between(s.x, s.y, t.x, t.y) <= s.radius + 10) this.grab(s, t);
+        }
         // Atune snapping it back out is its own moment, not a silent state change.
         this.pfx.glint(s.x, s.y, s.radius * 2.6, 10, this.shredderTones('player'), Math.atan2(rdy, rdx));
         this.pfx.refract(s.x, s.y, mouseX, mouseY, 7, this.shredderTones('player'));
@@ -1355,12 +1508,15 @@ export class CrystalKit {
       if (s.moving) {
         s.x += s.vx * (delta / 1000);
         s.y += s.vy * (delta / 1000);
+        this.shredderThroughPortal(s, time);
         const toX = s.targetX - s.x, toY = s.targetY - s.y;
         if ((toX * s.vx + toY * s.vy) <= 0) {
           s.x = s.targetX; s.y = s.targetY;
           s.vx = 0; s.vy = 0;
           s.moving = false;
-          // Landing: it bites into the floor and settles.
+          // Landing: it bites into the floor and settles, and whatever it carried is dropped here.
+          this.holdCarried(s);
+          this.releaseCarried(s);
           this.fx(s.owner).ring(s.x, s.y, s.radius * 0.4, s.radius * 2.2, tones.lit, 380, 4, 8);
           this.fx(s.owner).splinters(s.x, s.y, s.radius * 1.4, 2, tones);
         }
@@ -1388,6 +1544,8 @@ export class CrystalKit {
           t.takeDamage(2);
           this.arena.spawnHitFlash(t.x, t.y, CRYSTAL.prism);
           s.shardsAlive[i] = false;
+          // A blade in them is a hook: while the chakram is travelling it takes them along.
+          if (s.moving) this.grab(s, t);
           // A blade doesn't disappear — it snaps off into the wound it just cut.
           this.fx(s.owner).glint(sx, sy, s.radius * 1.6, 11, tones, ang);
           this.fx(s.owner).shards(sx, sy, 4, {
@@ -1397,6 +1555,8 @@ export class CrystalKit {
           break;
         }
       }
+
+      if (s.moving) this.holdCarried(s);
 
       // Repaint from scratch: hub, blades, motion blur and the parked reticle all live here.
       s.gfx.clear();
@@ -1408,6 +1568,7 @@ export class CrystalKit {
 
       if (!s.shardsAlive.some(Boolean)) {
         // The last blade going means the whole chakram comes apart, hub included.
+        this.releaseCarried(s);
         this.fx(s.owner).shatter(s.x, s.y, s.radius * 2.6, {
           shards: 14, dust: 2, duration: 420, tones,
         });

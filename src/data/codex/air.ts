@@ -201,17 +201,23 @@ const air: ElementCodex = {
         'Because the wind dodge voids a hit outright rather than reducing it, a dodged blow does not break the dance — the two mastery-era systems are built to compound.',
       ],
     },
-    'winds-of-change': {
+    'weather-cycle': {
       basics:
-        'A bindable reset: every ability comes off cooldown at once, Spin Dance refills all of its '
-        + 'charges — both, with Expert Dancer — and you bank +20 wind dodge on top of whatever you had '
-        + 'already earned. 25s cooldown.',
-      cast: 'Bindable to R, F or Q.',
+        'A bindable recording. For 5 seconds the winds close in and every press you make — Wind '
+        + 'Splice, Spin Dance, Gale Glaive, Sky Grapple, Wind Breaker — is written down with its beat. '
+        + 'When the window shuts, the whole sequence is danced again in order, on the same beats, each '
+        + 'cast re-aimed at where your cursor is then. The replay goes straight to the abilities: it '
+        + 'ignores every cooldown and charge, and pays none. 30s cooldown.',
+      cast: 'Bindable to R, F or Q. Opens the 5s window; the playback starts the moment it closes.',
       effects: [
-        { tag: 'buff', label: 'Full reset', detail: 'Every ability comes off cooldown at once.' },
-        { tag: 'resource', label: 'Refilled spins', detail: 'Spin Dance refills all of its charges — both of them with Expert Dancer.' },
-        { tag: 'shield', label: 'Banked dodge', detail: '+20 wind dodge on top of whatever you had already earned.' },
-        { tag: 'utility', label: 'Availability', detail: '25s cooldown.' },
+        { tag: 'buff', label: 'The window', detail: '5 seconds of listening. Only real presses are recorded — the free Whirlwind spin is not, since it comes back with its splice.' },
+        { tag: 'buff', label: 'The playback', detail: 'Every recorded cast again, in order and on its original beat, aimed at your live cursor.' },
+        { tag: 'utility', label: 'Cooldown independent', detail: 'The replay never checks or spends a cooldown or a Spin Dance charge — your real ones keep ticking underneath.' },
+        { tag: 'utility', label: 'Availability', detail: '30s cooldown. An empty window plays nothing back.' },
+      ],
+      notes: [
+        'A Wind Breaker in the window means a second Wind Breaker on the replay, funnel and all.',
+        'Online, the opponent\'s replay runs on the aims they recorded; your own re-aims at your cursor.',
       ],
     },
   },

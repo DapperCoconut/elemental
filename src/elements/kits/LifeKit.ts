@@ -164,7 +164,7 @@ const LIVING_FOLLOW_DIST = 40;
 /** The seeds that work for their owner rather than on the enemy, so they walk the other way. */
 const LIVING_FOLLOWERS: SeedType[] = ['lotus', 'pitcher'];
 
-/** Petal Burst (click upgrade): 5 petals at 5 dmg, wider cone than the base 3×8. */
+/** Petal Burst (click upgrade): 5 petals at 8 dmg, wider cone than the base 3×8. */
 const SAKURA_ANGLES = [-24, -12, 0, 12, 24];
 
 /** Which arm gesture the rig plays for each ability, on both sides. */
@@ -1341,7 +1341,7 @@ export class LifeKit {
         const angle = aim + deg * (Math.PI / 180);
         const sx = player.x + Math.cos(angle) * spawnDist;
         const sy = player.y + Math.sin(angle) * spawnDist;
-        const proj = new Projectile(this.api.scene, sx, sy, 'proj-sakura', 5, true);
+        const proj = new Projectile(this.api.scene, sx, sy, 'proj-sakura', 8, true);
         proj.setTint(this.pcol(LIFE.blossom));
         (proj as any).isSakura = true;
         this.api.projectiles.add(proj);

@@ -53,10 +53,10 @@ const life: ElementCodex = {
       ],
       upgrade: {
         basics:
-          'Five petals instead of three, at 5 damage each: 25 at point blank against the old 24, and far '
+          'Five petals instead of three, still 8 damage each: 40 at point blank against the old 24, and far '
           + 'more forgiving of aim.',
         effects: [
-          { tag: 'damage', label: 'Five petals', detail: '5 petals per shot at 5 damage each — 25 at point blank, against 24 from three, but far more forgiving of aim.', requiresUpgrade: 'click' },
+          { tag: 'damage', label: 'Five petals', detail: '5 petals per shot at 8 damage each — 40 at point blank, against 24 from three, and far more forgiving of aim.', requiresUpgrade: 'click' },
         ],
       },
     },

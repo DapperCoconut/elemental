@@ -597,7 +597,7 @@ export const masteryResonance: PreviewScript = {
 export const masteryCrystalShredder: PreviewScript = {
   duration: 5600,
   scale: 0.9,
-  caption: 'Mastery — a chakram of 12 shards at 260 px/s; each shard that touches is 2 damage, gone',
+  caption: 'Mastery — a chakram of 12 shards at 260 px/s; a blade that bites catches them and carries them to the cursor',
   run(ctx) {
     const { fx, av } = stage(ctx);
     const blades = Array.from({ length: 12 }, () => true);
@@ -621,6 +621,8 @@ export const masteryCrystalShredder: PreviewScript = {
       p.moving = true;
       fx.ring(p.x, p.y, 6, 40, CRYSTAL.prism, 380, 3, 6);
     });
+    // The first blade to bite is a hook: the dummy is caught and rides at the hub.
+    ctx.at(1600, () => pop(ctx, ctx.tx, ctx.ty - 30, '🔷 CAUGHT', '#cc88ff'));
     // Shards breaking off one at a time as they touch — 2 damage each, then gone.
     for (let i = 0; i < 12; i++) {
       ctx.at(1600 + i * 220, () => {

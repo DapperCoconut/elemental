@@ -45,15 +45,6 @@ export interface IceArenaZone {
   isVoid: boolean; owner: 'player' | 'npc';
 }
 
-/** Ice Mastery — Icicle Impale: a live icicle tracking damage taken by its host toward the shatter threshold. */
-interface IceIcicle {
-  target: Fighter;
-  sprite: Phaser.GameObjects.Graphics;
-  lastHp: number;
-  damageTaken: number;
-  isVoid: boolean;
-}
-
 /**
  * Snow perk — a turret packed out of snow where Frozen Solid used to freeze. It holds no
  * ammunition of its own: every frost stack shot into it is one round it can throw back.
@@ -82,34 +73,29 @@ interface Snowball {
 }
 
 /**
- * Ice Mastery — Curling Stone: a slab parked on the floor that its owner shoves around by
- * shooting it. Every shot freezes another layer onto it, and the frost is what makes it
- * dangerous: more stacks means a longer, faster slide and a heavier hit.
+ * Ice Mastery — Curling Bomb: a packed-ice bomb set down in front of its owner. It is inert
+ * until one of the owner's own shots strikes it: that lights the wick and launches it the way
+ * the shot was travelling, and a second and a half later it goes off — damage, two stacks, and
+ * a permanently slower thaw on everyone it catches. Black Ice paints it void and it throws
+ * void frost instead.
  */
-interface CurlingStone {
+interface CurlingBomb {
   gfx: Phaser.GameObjects.Graphics;
   x: number; y: number;
   vx: number; vy: number;
-  /** Accumulated roll, so the handle and rime crust turn as it travels. */
+  /** Accumulated roll, so the band and rime turn as it travels. */
   spin: number;
-  stacks: number;
   isVoid: boolean;
   owner: 'player' | 'npc';
+  /** An unlit bomb melts away at this time. */
   expiresAt: number;
-  /** Per-target gate, so one pass through a crowd can't hit the same fighter twice. */
-  hitCooldowns: Map<Fighter, number>;
-  /** Shots that already shoved this stone — a piercing spike passes through but only counts once. */
-  shoved: WeakSet<Phaser.GameObjects.GameObject>;
+  /** Set the moment a shot lights the wick; the blast goes off at this time. */
+  detonateAt: number | null;
+  /** Shots that already struck this bomb — a piercing spike passes through but only counts once. */
+  struck: WeakSet<Phaser.GameObjects.GameObject>;
   chipAccum: number;
 }
 
-const ICICLE_IMPALE_COOLDOWN_MS = 6000;
-const ICICLE_DASH_SPEED = 900;
-const ICICLE_DASH_DURATION_MS = 150;
-const ICICLE_HIT_RADIUS = 34;
-const ICICLE_SHATTER_DAMAGE_THRESHOLD = 50;
-const ICICLE_EXTENDED_STACK_MS = 10000;
-const ICICLE_STACK_HARD_CAP = 7;
 const BIG_HIT_THRESHOLD = 50;
 
 // ── Snow perk (divine) ───────────────────────────────────────────────────────
@@ -124,23 +110,25 @@ const SNOW_BALL_DAMAGE = 15;
 const SNOW_SLOW_MULT = 0.5;
 const SNOW_SLOW_MS = 3000;
 
-const CURLING_COOLDOWN_MS = 25000;
-const CURLING_LIFETIME_MS = 20000;
-/** Half-width of the slab, used for wall bounces and for catching shots. */
-const CURLING_RADIUS = 18;
-const CURLING_HIT_RADIUS = 32;
-const CURLING_HIT_COOLDOWN_MS = 1000;
-const CURLING_BASE_DAMAGE = 30;
-const CURLING_DAMAGE_PER_STACK = 0.2;
-const CURLING_MAX_STACKS = 5;
-/** Velocity one shot adds. Deliberately small — an unfrosted stone barely budges. */
-const CURLING_BASE_PUSH = 150;
-const CURLING_PUSH_PER_STACK = 62;
-/** Speed below which the stone counts as parked (no damage, no chips). */
-const CURLING_MOVING_SPEED = 26;
-/** A Skate trail is frictionless glass — the stone screams across it. */
-const CURLING_SKATE_SPEED_MULT = 3.2;
-const CURLING_SKATE_DRAG = 0.4;
+const CURLING_BOMB_COOLDOWN_MS = 20000;
+/** An unlit bomb melts after this long. */
+const CURLING_BOMB_LIFETIME_MS = 20000;
+/** Half-width of the bomb, used for wall bounces and for catching shots. */
+const CURLING_BOMB_RADIUS = 15;
+const CURLING_BOMB_FUSE_MS = 1500;
+const CURLING_BOMB_LAUNCH_SPEED = 330;
+/** Drag on a lit bomb — it runs most of the fuse before it slows, about 260px in all. */
+const CURLING_BOMB_DRAG = 0.9;
+const CURLING_BOMB_BLAST_RADIUS = 110;
+const CURLING_BOMB_DAMAGE = 35;
+const CURLING_BOMB_STACKS = 2;
+/** Every frost or void stack lasts this long... */
+const FROST_STACK_MS = 8000;
+/** ...plus this, for the rest of the match, on anyone a Curling Bomb has caught. */
+const CURLING_BOMB_THAW_BONUS_MS = 2000;
+/** Bot: the bomb is set down with the player this far away, and lit by the next spike. */
+const NPC_BOMB_MIN_RANGE = 140;
+const NPC_BOMB_MAX_RANGE = 420;
 
 // ── IceArenaApi ──────────────────────────────────────────────────────────────
 
@@ -171,8 +159,12 @@ export interface IceArenaApi {
   /** Mastery enhancement id bound over the given ability slot, or null if that slot is unchanged. */
   masteryBindFor(slot: string): string | null;
   recordMasteryStat(key: string, amount: number): void;
-  /** Rename the bound mastery card in place — the one slot is a different ability per form. */
-  setAbilityCardLabel(abilityId: string, name: string, description: string): void;
+  /** True when the opponent is ice with Element Mastery on (a Nightmare bot or an online peer). */
+  get npcMasteryActive(): boolean;
+  /** The opponent's mastery bind over `slot`, or null — drives the bot's own Curling Bomb. */
+  npcMasteryBindFor(slot: string): string | null;
+  /** True when the opponent is driven by the local AI rather than replayed from a peer. */
+  readonly npcAutonomous: boolean;
 }
 
 // ── IceKit ───────────────────────────────────────────────────────────────────
@@ -238,24 +230,13 @@ export class IceKit {
   // ── Ice Mastery — Viral Frost passive ───────────────────────────────
   private viralFrostCooldowns: Map<Fighter, number> = new Map();
 
-  // ── Ice Mastery — Icicle Impale ─────────────────────────────────────
-  private icicleImpales: IceIcicle[] = [];
-  private icicleImpaleLastCastAt = -999999;
-  private icicleDashActive = false;
-  private icicleDashUntil = 0;
-  private icicleDashVx = 0;
-  private icicleDashVy = 0;
-  private icicleDashHitThisDash = false;
-  // Online mirror: the opponent's Icicle Impale dash replayed on this victim sim. We can't
-  // drive the dead-reckoned npc's velocity, so we just watch for it to reach us and impale.
-  private npcIcicleDashActive = false;
-  private npcIcicleDashUntil = 0;
-  private npcIcicleDashHit = false;
-
-  // ── Ice Mastery — Curling Stone ─────────────────────────────────────
-  /** At most one stone per owner; the npc entry only exists for an online peer's cast. */
-  private curlingStones: CurlingStone[] = [];
-  private curlingLastCastAt = -999999;
+  // ── Ice Mastery — Curling Bomb ──────────────────────────────────────
+  /** At most one bomb per owner; the npc entry exists for a bot's or an online peer's cast. */
+  private curlingBombs: CurlingBomb[] = [];
+  private curlingBombLastCastAt = -999999;
+  private npcBombLastCastAt = -999999;
+  /** Fighters a Curling Bomb has caught: their frost thaws 2s slower for the rest of the match. */
+  private slowThaw = new WeakSet<Fighter>();
 
   // ── Snow perk — turrets, their rounds, and who they have slowed ─────
   private snowTurrets: SnowTurret[] = [];
@@ -286,14 +267,9 @@ export class IceKit {
   getPlayerSkaterHeading(): number { return this.playerSkaterHeading; }
   getPlayerSkaterSpeed(): number { return this.playerSkaterSpeed; }
 
-  /** 0 = just cast, 1 = ready. Drives the HUD bar when Icicle Impale is bound to a slot. */
-  getIcicleImpaleCooldownRatio(time: number): number {
-    return Math.min(1, (time - this.icicleImpaleLastCastAt) / ICICLE_IMPALE_COOLDOWN_MS);
-  }
-
-  /** 0 = just cast, 1 = ready. Drives the HUD bar when Curling Stone is bound to a slot. */
-  getCurlingStoneCooldownRatio(time: number): number {
-    return Math.min(1, (time - this.curlingLastCastAt) / CURLING_COOLDOWN_MS);
+  /** 0 = just cast, 1 = ready. Drives the HUD bar when Curling Bomb is bound to a slot. */
+  getCurlingBombCooldownRatio(time: number): number {
+    return Math.min(1, (time - this.curlingBombLastCastAt) / CURLING_BOMB_COOLDOWN_MS);
   }
 
   /** Combined multiplier contribution (frost/permafrost slow, block-up slow, own-trail boost, Rink perk) for the NPC. */
@@ -351,7 +327,6 @@ export class IceKit {
     this.icyTrails = [];
     this.playerBlackIceMorphActive = false;
     if (this.playerBlackIceArmor) { this.playerBlackIceArmor.destroy(); this.playerBlackIceArmor = null; }
-    this.masteryCardBlackIce = null;
     this.playerIceSpeedBoostUntil = 0;
     this.playerSlushLastTick = 0;
     this.playerSkateRecentUntil = 0;
@@ -362,20 +337,11 @@ export class IceKit {
     this.iceArenas.forEach((a) => a.gfx.destroy());
     this.iceArenas = [];
     this.viralFrostCooldowns.clear();
-    this.icicleImpales.forEach((ic) => ic.sprite.destroy());
-    this.icicleImpales = [];
-    this.icicleImpaleLastCastAt = -999999;
-    this.npcIcicleDashActive = false;
-    this.npcIcicleDashUntil = 0;
-    this.npcIcicleDashHit = false;
-    this.icicleDashActive = false;
-    this.icicleDashUntil = 0;
-    this.icicleDashVx = 0;
-    this.icicleDashVy = 0;
-    this.icicleDashHitThisDash = false;
-    this.curlingStones.forEach((s) => s.gfx.destroy());
-    this.curlingStones = [];
-    this.curlingLastCastAt = -999999;
+    this.curlingBombs.forEach((b) => b.gfx.destroy());
+    this.curlingBombs = [];
+    this.curlingBombLastCastAt = -999999;
+    this.npcBombLastCastAt = -999999;
+    this.slowThaw = new WeakSet();
     this.snowTurrets.forEach((t) => { t.gfx.destroy(); t.ammoLabel?.destroy(); });
     this.snowTurrets = [];
     this.snowballs.forEach((b) => b.gfx.destroy());
@@ -396,8 +362,9 @@ export class IceKit {
     this.updateAvatars(delta, isPlayerIce, isNpcIce);
     this.updateSpikeTrails(delta);
     this.updateFrozenShells(time);
-    // Owner-agnostic, so an online peer's stone rolls on this sim too.
-    this.updateCurlingStones(time, delta);
+    // Owner-agnostic, so a bot's or an online peer's bomb runs on this sim too.
+    this.updateCurlingBombs(time, delta);
+    if (isNpcIce) this.updateNpcBomb(time);
     this.updateSnowTurrets(time, delta);
 
     // Icy trail ticks: slow enemy + inflict frost/void-frost stacks + F+ owner speed boost
@@ -514,29 +481,6 @@ export class IceKit {
         }
       }
 
-      // Icicle Impale: dash movement + on-hit impale
-      if (this.icicleDashActive) {
-        const dashBody = player.body as Phaser.Physics.Arcade.Body;
-        if (time >= this.icicleDashUntil) {
-          this.icicleDashActive = false;
-          dashBody.setVelocity(0, 0);
-        } else {
-          dashBody.setVelocity(this.icicleDashVx, this.icicleDashVy);
-          if (!this.icicleDashHitThisDash) {
-            for (const t of enemies) {
-              if (!t.active || t.hp <= 0) continue;
-              if (Phaser.Math.Distance.Between(player.x, player.y, t.x, t.y) <= ICICLE_HIT_RADIUS) {
-                this.icicleDashHitThisDash = true;
-                this.impaleTarget(t);
-                break;
-              }
-            }
-          }
-        }
-      }
-
-      // Icicle Impale: live icicles track damage taken by their host, then shatter at threshold
-      this.tickIcicleImpales();
     }
 
     // Ice arena ticks (Skate-in-BlockUp / Skate-in-BlackIce)
@@ -569,7 +513,7 @@ export class IceKit {
             }
           } else {
             if (Date.now() >= t.frostImmuneUntil) {
-              if (t.frostStacks < 5) t.frostStackTimers.push(Date.now() + (this.isImpaled(t) ? ICICLE_EXTENDED_STACK_MS : 8000));
+              if (t.frostStacks < 5) t.frostStackTimers.push(Date.now() + this.stackMsFor(t));
               t.frostStacks = Math.max(t.frostStacks, Math.min(5, t.frostStacks + 1));
               t.incomingDamageMultiplier = this.frostDamageMultiplier(t.frostStacks);
             }
@@ -686,7 +630,6 @@ export class IceKit {
       const aimY = this.aimY || player.y;
       this.playerAvatar.setFacing(Math.atan2(aimY - player.y, aimX - player.x));
       this.playerAvatar.setVoid(this.playerBlackIceMorphActive);
-      this.syncMasteryCard();
       // Skating and armouring up are the character working at full stretch.
       this.playerAvatar.setIntensity(
         this.playerSkaterActive ? 1.4 : (this.playerBlockUpActive || this.playerBlackIceMorphActive) ? 1.25 : 1,
@@ -1162,9 +1105,9 @@ export class IceKit {
     return 1.0;
   }
 
-  /** Ice Mastery — Icicle Impale: true while `f` currently carries a live (unshattered) icicle. */
-  private isImpaled(f: Fighter): boolean {
-    return this.icicleImpales.some((ic) => ic.target === f);
+  /** How long a fresh stack lasts on `f`: 8s, or 10s for good once a Curling Bomb has caught them. */
+  private stackMsFor(f: Fighter): number {
+    return FROST_STACK_MS + (this.slowThaw.has(f) ? CURLING_BOMB_THAW_BONUS_MS : 0);
   }
 
   /** Ice Mastery requirement: deal over 50 damage in a single hit, 5 times. */
@@ -1176,7 +1119,6 @@ export class IceKit {
    * Public: applies one frost (or void-frost) stack to any fighter — used by InvasionKit for husk
    * status effects. Defaults to whichever type Black Ice Morph implies; pass `forceVoid` to apply a
    * specific type regardless of morph state (used by Viral Frost to mirror the spreading source).
-   * Never stomps a stack count already elevated past 5 by an Icicle Impale shatter.
    */
   addFrostStackTo(f: Fighter, forceVoid?: boolean): void {
     // Ruin's Combo Breaker halves every meter in the game, and a frost stack is one — carried
@@ -1186,7 +1128,7 @@ export class IceKit {
     const froster = f === this.arena.player ? this.arena.npc : this.arena.player;
     if (meterStep(froster, 'frost') <= 0) return;
     const useVoid = forceVoid ?? this.playerBlackIceMorphActive;
-    const stackMs = this.isImpaled(f) ? ICICLE_EXTENDED_STACK_MS : 8000;
+    const stackMs = this.stackMsFor(f);
     if (useVoid) {
       if (Date.now() < f.voidImmuneUntil) return;
       if (f.voidFrostStacks < 5) f.voidFrostStackTimers.push(Date.now() + stackMs);
@@ -1221,7 +1163,7 @@ export class IceKit {
     } else {
       const player = this.arena.player;
       if (Date.now() < player.frostImmuneUntil) return;
-      if (this.playerFrostStacks < 5) this.playerFrostStackTimers.push(Date.now() + 8000);
+      if (this.playerFrostStacks < 5) this.playerFrostStackTimers.push(Date.now() + this.stackMsFor(player));
       this.playerFrostStacks = Math.min(5, this.playerFrostStacks + 1);
       const baseMult = this.frostDamageMultiplier(this.playerFrostStacks);
       player.incomingDamageMultiplier = this.playerBlackIceMorphActive ? baseMult * 1.25 : baseMult;
@@ -1299,7 +1241,7 @@ export class IceKit {
       player.x + Math.cos(baseAngle) * range * 0.6, player.y + Math.sin(baseAngle) * range * 0.6,
       3, { angle: baseAngle, spread: halfAngleRad, speed: 90, size: 2.6, life: 340, fall: 28, depth: 8, isVoid: isBlackIce },
     );
-    this.slushNudgeCurlingStone(baseAngle, range, halfAngleCos);
+    this.slushNudgeCurlingBomb(baseAngle, range, halfAngleCos);
 
     for (const t of enemies) {
       if (!t.active || t.hp <= 0) continue;
@@ -1313,11 +1255,11 @@ export class IceKit {
 
       if (isBlackIce) {
         if (t.voidFrostStackTimers.length > 0) {
-          const freshExpiry = Date.now() + 8000;
+          const freshExpiry = Date.now() + this.stackMsFor(t);
           t.voidFrostStackTimers = t.voidFrostStackTimers.map(() => freshExpiry);
         }
       } else if (t.frostStackTimers.length > 0) {
-        const freshExpiry = Date.now() + 8000;
+        const freshExpiry = Date.now() + this.stackMsFor(t);
         t.frostStackTimers = t.frostStackTimers.map(() => freshExpiry);
       }
     }
@@ -1335,7 +1277,7 @@ export class IceKit {
     }
   }
 
-  // ── Ice Mastery: Icicle Impale ──────────────────────────────────────
+  // ── Ice Mastery: bound slot ─────────────────────────────────────────
 
   /**
    * Fires whichever mastery ability is bound over `slot` and reports whether the slot was
@@ -1345,155 +1287,11 @@ export class IceKit {
   private castMasteryBind(slot: 'e' | 'r' | 'f' | 'q', time: number): boolean {
     if (!this.arena.masteryActive) return false;
     switch (this.arena.masteryBindFor(slot)) {
-      // One slot, two abilities: Curling Stone in normal form, Icicle Impale in Black Ice.
-      case 'icicle-impale':
-      case 'curling-stone':
-        if (this.playerBlackIceMorphActive) this.tryCastIcicleImpale(time);
-        else this.tryCastCurlingStone(time);
+      case 'curling-bomb':
+        this.tryCastCurlingBomb(time);
         return true;
       default: return false;
     }
-  }
-
-  /** 0 = just cast, 1 = ready — for whichever ability the merged mastery slot holds right now. */
-  getMasterySlotCooldownRatio(time: number): number {
-    return this.playerBlackIceMorphActive
-      ? this.getIcicleImpaleCooldownRatio(time)
-      : this.getCurlingStoneCooldownRatio(time);
-  }
-
-  /** Last form the merged mastery card was labelled for, so it is only renamed on a change. */
-  private masteryCardBlackIce: boolean | null = null;
-
-  /** Keep the mastery card's name in step with the form — it is a different ability in each. */
-  private syncMasteryCard(): void {
-    if (!this.arena.masteryActive) return;
-    const blackIce = this.playerBlackIceMorphActive;
-    if (blackIce === this.masteryCardBlackIce) return;
-    this.masteryCardBlackIce = blackIce;
-    this.arena.setAbilityCardLabel('curling-stone',
-      blackIce ? 'Icicle Impale' : 'Curling Stone',
-      blackIce ? 'Dash and impale — shatters into bonus frost after 50 damage' : 'Summon a stone — shoot it to send it sliding');
-  }
-
-  private tryCastIcicleImpale(time: number): void {
-    if (time - this.icicleImpaleLastCastAt < ICICLE_IMPALE_COOLDOWN_MS) return;
-    this.icicleImpaleLastCastAt = time;
-    const { player, scene } = this.arena;
-    player.triggerCooldown('icicle-impale');
-    const ptr = scene.input.activePointer;
-    const angle = Math.atan2(ptr.worldY - player.y, ptr.worldX - player.x);
-    this.icicleDashActive = true;
-    this.icicleDashUntil = time + ICICLE_DASH_DURATION_MS;
-    this.icicleDashVx = Math.cos(angle) * ICICLE_DASH_SPEED;
-    this.icicleDashVy = Math.sin(angle) * ICICLE_DASH_SPEED;
-    this.icicleDashHitThisDash = false;
-    // Wind up and fling: a blade-carved corridor along the whole dash path.
-    this.playerAvatar?.play('dash', angle);
-    this.pfx.wake(
-      player.x, player.y,
-      player.x + Math.cos(angle) * ICICLE_DASH_SPEED * (ICICLE_DASH_DURATION_MS / 1000),
-      player.y + Math.sin(angle) * ICICLE_DASH_SPEED * (ICICLE_DASH_DURATION_MS / 1000),
-      5, this.playerBlackIceMorphActive,
-    );
-    this.arena.showFloatingText(player.x, player.y - 30, '🧊 ICICLE IMPALE', '#aaddff');
-  }
-
-  /** Live icicles track damage taken by their host and shatter at the threshold. Owner-agnostic. */
-  private tickIcicleImpales(): void {
-    for (let ii = this.icicleImpales.length - 1; ii >= 0; ii--) {
-      const ic = this.icicleImpales[ii];
-      if (!ic.target.active || ic.target.hp <= 0) {
-        ic.sprite.destroy();
-        this.icicleImpales.splice(ii, 1);
-        continue;
-      }
-      this.drawIcicle(ic.sprite, ic.target.x, ic.target.y, ic.isVoid, ic.damageTaken / ICICLE_SHATTER_DAMAGE_THRESHOLD);
-      const dmgSinceLast = Math.max(0, ic.lastHp - ic.target.hp);
-      ic.lastHp = ic.target.hp;
-      if (dmgSinceLast > 0) {
-        ic.damageTaken += dmgSinceLast;
-        if (ic.damageTaken >= ICICLE_SHATTER_DAMAGE_THRESHOLD) {
-          this.shatterIcicle(ic);
-          ic.sprite.destroy();
-          this.icicleImpales.splice(ii, 1);
-        }
-      }
-    }
-  }
-
-  /** Online replay: the remote ice player cast Icicle Impale — impale us as their dash reaches us. */
-  doNpcIcicleImpale(): void {
-    this.npcIcicleDashActive = true;
-    this.npcIcicleDashUntil = this.arena.scene.time.now + ICICLE_DASH_DURATION_MS;
-    this.npcIcicleDashHit = false;
-  }
-
-  /** Online: opponent is ice — watch their replayed dash for impact and track live icicles on us. */
-  updateNpc(time: number): void {
-    const { npc, player } = this.arena;
-    if (this.npcIcicleDashActive) {
-      if (time >= this.npcIcicleDashUntil) {
-        this.npcIcicleDashActive = false;
-      } else if (!this.npcIcicleDashHit && player.active && player.hp > 0
-        && Phaser.Math.Distance.Between(npc.x, npc.y, player.x, player.y) <= ICICLE_HIT_RADIUS) {
-        this.npcIcicleDashHit = true;
-        this.impaleTarget(player);
-      }
-    }
-    this.tickIcicleImpales();
-  }
-
-  private impaleTarget(target: Fighter): void {
-    const scene = this.arena.scene;
-    // Drop any existing icicle already tracking this target — a fresh impale replaces it.
-    const existingIdx = this.icicleImpales.findIndex((ic) => ic.target === target);
-    if (existingIdx >= 0) {
-      this.icicleImpales[existingIdx].sprite.destroy();
-      this.icicleImpales.splice(existingIdx, 1);
-    }
-    const isVoid = target.voidFrostStacks > 0;
-    const sprite = scene.add.graphics().setDepth(11);
-    this.drawIcicle(sprite, target.x, target.y, isVoid, 0);
-    this.icicleImpales.push({ target, sprite, lastHp: target.hp, damageTaken: 0, isVoid });
-    this.arena.spawnHitFlash(target.x, target.y, isVoid ? ICE.voidGlow : ICE.teal);
-    // The spike is driven in from above, so the impact throws chips out of the wound.
-    this.pfx.icePillar(target.x, target.y - 8, 14, 46, 10, isVoid);
-    this.pfx.shards(target.x, target.y, 10, { speed: 150, size: 3, life: 460, fall: 44, depth: 10, isVoid });
-    scene.cameras.main.shake(140, 0.005);
-    this.arena.showFloatingText(target.x, target.y - 30, '🧊 IMPALED', '#aaddff');
-  }
-
-  /** `charge` is 0–1 toward the shatter threshold and fills the band on the shaft. */
-  private drawIcicle(g: Phaser.GameObjects.Graphics, x: number, y: number, isVoid: boolean, charge: number): void {
-    g.clear();
-    IceFx.drawIcicle(g, this.pcol, tonesFor(isVoid), x, y, this.arena.scene.time.now / 1000, charge);
-  }
-
-  private shatterIcicle(ic: IceIcicle): void {
-    const t = ic.target;
-    const useVoid = t.voidFrostStacks > 0 || (t.frostStacks === 0 && ic.isVoid);
-    const fresh = Date.now() + ICICLE_EXTENDED_STACK_MS;
-    // Combo Breaker again, on the two-stack shatter — see `addFrostStackTo`.
-    const froster = t === this.arena.player ? this.arena.npc : this.arena.player;
-    if (useVoid) {
-      const add = meterStep(froster, 'frost',
-        Math.min(2, Math.max(0, ICICLE_STACK_HARD_CAP - t.voidFrostStacks)));
-      for (let i = 0; i < add; i++) t.voidFrostStackTimers.push(fresh);
-      t.voidFrostStacks = Math.min(ICICLE_STACK_HARD_CAP, t.voidFrostStacks + add);
-      t.incomingDamageMultiplier = this.frostDamageMultiplier(t.voidFrostStacks);
-    } else {
-      const add = meterStep(froster, 'frost',
-        Math.min(2, Math.max(0, ICICLE_STACK_HARD_CAP - t.frostStacks)));
-      for (let i = 0; i < add; i++) t.frostStackTimers.push(fresh);
-      t.frostStacks = Math.min(ICICLE_STACK_HARD_CAP, t.frostStacks + add);
-      t.incomingDamageMultiplier = this.frostDamageMultiplier(t.frostStacks);
-    }
-    this.arena.spawnHitFlash(t.x, t.y, useVoid ? ICE.voidGlow : ICE.teal);
-    // The icicle bursts rather than fading — this is the payoff the charge band promised.
-    this.pfx.shatter(t.x, t.y, 78, { shards: 16, vapor: 2, duration: 480, isVoid: useVoid });
-    this.arena.scene.cameras.main.shake(220, 0.007);
-    this.arena.showFloatingText(t.x, t.y - 30, '💥 SHATTER', '#aaddff');
   }
 
   // ── Snow perk: the snowball turret ──────────────────────────────────
@@ -1802,165 +1600,196 @@ export class IceKit {
     }
   }
 
-  // ── Ice Mastery: Curling Stone ──────────────────────────────────────
+  // ── Ice Mastery: Curling Bomb ───────────────────────────────────────
 
-  private tryCastCurlingStone(time: number): void {
-    if (time - this.curlingLastCastAt < CURLING_COOLDOWN_MS) return;
-    this.curlingLastCastAt = time;
+  private tryCastCurlingBomb(time: number): void {
+    if (time - this.curlingBombLastCastAt < CURLING_BOMB_COOLDOWN_MS) return;
+    this.curlingBombLastCastAt = time;
     const { player, scene } = this.arena;
-    // triggerCooldown already broadcasts the cast id online; the peer replays via doNpcCurlingStone.
-    player.triggerCooldown('curling-stone');
+    // triggerCooldown already broadcasts the cast id online; the peer replays via doNpcCurlingBomb.
+    player.triggerCooldown('curling-bomb');
     const ptr = scene.input.activePointer;
     const angle = Math.atan2(ptr.worldY - player.y, ptr.worldX - player.x);
-    // Both arms shove it out in front — the stone is set down, not thrown.
+    // Both arms set it down in front — the bomb is placed, not thrown.
     this.playerAvatar?.play('raise', angle, 420);
-    this.spawnCurlingStone(
-      player.x + Math.cos(angle) * 62, player.y + Math.sin(angle) * 62, 'player',
+    this.spawnCurlingBomb(player.x + Math.cos(angle) * 62, player.y + Math.sin(angle) * 62, 'player');
+    this.arena.showFloatingText(
+      player.x, player.y - 30, '💣 CURLING BOMB', this.playerBlackIceMorphActive ? '#cc88ff' : '#aaddff',
     );
-    this.arena.showFloatingText(player.x, player.y - 30, '🥌 CURLING STONE', '#aaddff');
   }
 
-  /** Online replay: the remote ice player summoned their stone, so it exists on this sim too. */
-  doNpcCurlingStone(tx: number, ty: number): void {
+  /** Online replay and the bot's own cast: the opposing ice player set their bomb down. */
+  doNpcCurlingBomb(tx: number, ty: number): void {
     const { npc } = this.arena;
     const angle = Math.atan2(ty - npc.y, tx - npc.x);
     this.npcAvatar?.play('raise', angle, 420);
-    this.spawnCurlingStone(npc.x + Math.cos(angle) * 62, npc.y + Math.sin(angle) * 62, 'npc');
+    this.spawnCurlingBomb(npc.x + Math.cos(angle) * 62, npc.y + Math.sin(angle) * 62, 'npc');
   }
 
-  private spawnCurlingStone(x: number, y: number, owner: 'player' | 'npc'): void {
-    const { scene } = this.arena;
-    // One stone per owner — a fresh summon replaces whatever is still sliding around.
-    const existing = this.curlingStones.findIndex((s) => s.owner === owner);
-    if (existing >= 0) {
-      this.curlingStones[existing].gfx.destroy();
-      this.curlingStones.splice(existing, 1);
+  /** The slot the bot's Curling Bomb is bound over, so the AI leaves that base ability alone. */
+  npcBombSlot(): 'r' | 'f' | 'q' | undefined {
+    if (!this.arena.npcMasteryActive) return undefined;
+    for (const sl of ['r', 'f', 'q'] as const) {
+      if (this.arena.npcMasteryBindFor(sl) === 'curling-bomb') return sl;
     }
-    const wb = scene.physics.world.bounds;
-    const isVoid = owner === 'player' && this.playerBlackIceMorphActive;
-    const sx = Phaser.Math.Clamp(x, wb.x + CURLING_RADIUS, wb.right - CURLING_RADIUS);
-    const sy = Phaser.Math.Clamp(y, wb.y + CURLING_RADIUS, wb.bottom - CURLING_RADIUS);
-    this.curlingStones.push({
-      gfx: scene.add.graphics().setDepth(5),
-      x: sx, y: sy, vx: 0, vy: 0, spin: 0, stacks: 0, isVoid, owner,
-      expiresAt: scene.time.now + CURLING_LIFETIME_MS,
-      hitCooldowns: new Map(), shoved: new WeakSet(), chipAccum: 0,
-    });
-    // It lands with weight: plates slamming together and rime spidering out from underneath.
-    const fx = this.fx(owner);
-    fx.bloom(sx, sy, 30, 9, 4, isVoid);
-    fx.rime(sx, sy, 32, 1, isVoid);
-    scene.cameras.main.shake(130, 0.004);
+    return undefined;
   }
 
   /**
-   * Slide, bounce, crush. Owner-agnostic: the player's stone answers to their shots and hurts
-   * the enemies, an online peer's stone answers to theirs and hurts us.
+   * Bot synergy — a shot through the bomb is a launch. Where the bot's next spike should go:
+   * its own bomb, whenever the player stands beyond it inside a 35° cone, so the spike lights
+   * the wick and sends the bomb on into them (or steers a lit one back onto them). Null when
+   * there is no bomb or the line through it misses. Side-effect-free.
    */
-  private updateCurlingStones(time: number, delta: number): void {
-    if (this.curlingStones.length === 0) return;
-    const { player, enemies, scene } = this.arena;
+  npcBombShotAim(): { x: number; y: number } | null {
+    const bomb = this.curlingBombs.find((b) => b.owner === 'npc');
+    if (!bomb) return null;
+    const { npc, player } = this.arena;
+    if (!player.active || player.hp <= 0) return null;
+    const dBomb = Phaser.Math.Distance.Between(npc.x, npc.y, bomb.x, bomb.y);
+    const dPlayer = Phaser.Math.Distance.Between(npc.x, npc.y, player.x, player.y);
+    if (dPlayer <= dBomb + 20) return null;
+    const toBomb = Math.atan2(bomb.y - npc.y, bomb.x - npc.x);
+    const toPlayer = Math.atan2(player.y - npc.y, player.x - npc.x);
+    if (Math.abs(Phaser.Math.Angle.Wrap(toPlayer - toBomb)) > Phaser.Math.DegToRad(35)) return null;
+    return { x: bomb.x, y: bomb.y };
+  }
+
+  /** Nightmare bot: sets its bomb down ahead of itself when the player is in launch range. */
+  private updateNpcBomb(time: number): void {
+    if (!this.arena.npcAutonomous || !this.npcBombSlot()) return;
+    if (time - this.npcBombLastCastAt < CURLING_BOMB_COOLDOWN_MS) return;
+    const { npc, player } = this.arena;
+    if (!npc.active || npc.hp <= 0 || !player.active || player.hp <= 0) return;
+    if (this.curlingBombs.some((b) => b.owner === 'npc')) return;
+    const d = Phaser.Math.Distance.Between(npc.x, npc.y, player.x, player.y);
+    if (d < NPC_BOMB_MIN_RANGE || d > NPC_BOMB_MAX_RANGE) return;
+    this.npcBombLastCastAt = time;
+    // Stamped so the cast sounds like one; the bot has no peer to relay it to.
+    npc.triggerCooldown('curling-bomb');
+    this.doNpcCurlingBomb(player.x, player.y);
+  }
+
+  private spawnCurlingBomb(x: number, y: number, owner: 'player' | 'npc'): void {
+    const { scene } = this.arena;
+    // One bomb per owner — a fresh one replaces whatever is still sitting there.
+    const existing = this.curlingBombs.findIndex((b) => b.owner === owner);
+    if (existing >= 0) {
+      this.curlingBombs[existing].gfx.destroy();
+      this.curlingBombs.splice(existing, 1);
+    }
+    const wb = scene.physics.world.bounds;
+    const isVoid = owner === 'player' && this.playerBlackIceMorphActive;
+    const bx = Phaser.Math.Clamp(x, wb.x + CURLING_BOMB_RADIUS, wb.right - CURLING_BOMB_RADIUS);
+    const by = Phaser.Math.Clamp(y, wb.y + CURLING_BOMB_RADIUS, wb.bottom - CURLING_BOMB_RADIUS);
+    this.curlingBombs.push({
+      gfx: scene.add.graphics().setDepth(5),
+      x: bx, y: by, vx: 0, vy: 0, spin: 0, isVoid, owner,
+      expiresAt: scene.time.now + CURLING_BOMB_LIFETIME_MS,
+      detonateAt: null, struck: new WeakSet(), chipAccum: 0,
+    });
+    // It lands with weight: a crust of rime spidering out from underneath.
+    const fx = this.fx(owner);
+    fx.bloom(bx, by, 26, 8, 4, isVoid);
+    fx.rime(bx, by, 28, 1, isVoid);
+    scene.cameras.main.shake(110, 0.003);
+  }
+
+  /**
+   * Light, slide, bounce, blow. Owner-agnostic: the player's bomb answers to their shots and
+   * hurts the enemies, the opponent's bomb answers to theirs and hurts us.
+   */
+  private updateCurlingBombs(time: number, delta: number): void {
+    if (this.curlingBombs.length === 0) return;
+    const { scene } = this.arena;
     const wb = scene.physics.world.bounds;
     const dt = delta / 1000;
 
-    for (let si = this.curlingStones.length - 1; si >= 0; si--) {
-      const stone = this.curlingStones[si];
-      const tones = tonesFor(stone.isVoid);
-      const fx = this.fx(stone.owner);
+    for (let bi = this.curlingBombs.length - 1; bi >= 0; bi--) {
+      const bomb = this.curlingBombs[bi];
+      const tones = tonesFor(bomb.isVoid);
+      const fx = this.fx(bomb.owner);
 
-      if (time >= stone.expiresAt) {
-        fx.shatter(stone.x, stone.y, 62, { shards: 15, vapor: 2, duration: 470, isVoid: stone.isVoid });
-        stone.gfx.destroy();
-        this.curlingStones.splice(si, 1);
+      if (bomb.detonateAt !== null && time >= bomb.detonateAt) {
+        this.detonateCurlingBomb(bomb);
+        bomb.gfx.destroy();
+        this.curlingBombs.splice(bi, 1);
+        continue;
+      }
+      if (bomb.detonateAt === null && time >= bomb.expiresAt) {
+        // Never lit: it simply melts.
+        fx.vapor(bomb.x, bomb.y, 5, 26, 4, bomb.isVoid);
+        fx.shatter(bomb.x, bomb.y, 40, { shards: 8, vapor: 2, duration: 420, isVoid: bomb.isVoid });
+        bomb.gfx.destroy();
+        this.curlingBombs.splice(bi, 1);
         continue;
       }
 
-      // Shots shove it. A piercing spike carries on through, but only counts once.
+      // Shots light it, and a later shot steers a lit bomb the way it was struck. A piercing
+      // spike carries on through, but only counts once.
       for (const child of this.arena.projectiles.getChildren()) {
         const proj = child as Projectile;
-        if (!proj.active || proj.isFromPlayer !== (stone.owner === 'player')) continue;
-        if (stone.shoved.has(proj)) continue;
-        if (Phaser.Math.Distance.Between(proj.x, proj.y, stone.x, stone.y) > CURLING_RADIUS + 8) continue;
-        stone.shoved.add(proj);
-        this.shoveCurlingStone(stone, proj.x, proj.y, this.projAngle(proj));
+        if (!proj.active || proj.isFromPlayer !== (bomb.owner === 'player')) continue;
+        if (bomb.struck.has(proj)) continue;
+        if (Phaser.Math.Distance.Between(proj.x, proj.y, bomb.x, bomb.y) > CURLING_BOMB_RADIUS + 8) continue;
+        bomb.struck.add(proj);
+        this.launchCurlingBomb(bomb, time, proj.x, proj.y, this.projAngle(proj));
       }
 
-      // A Skate trail turns the floor to glass: barely any drag and a huge speed multiplier.
-      const onSkate = this.icyTrails.some((t) => t.owner === stone.owner && t.skater
-        && Phaser.Math.Distance.Between(t.x, t.y, stone.x, stone.y) <= t.radius);
-      const speed = Math.hypot(stone.vx, stone.vy);
-      const speedMult = onSkate ? CURLING_SKATE_SPEED_MULT : 1;
-
+      const speed = Math.hypot(bomb.vx, bomb.vy);
       if (speed > 1) {
-        stone.x += stone.vx * speedMult * dt;
-        stone.y += stone.vy * speedMult * dt;
-        stone.spin += speed * speedMult * dt * 0.022;
-
-        // Frost is what carries it: each stack shaves the drag as well as raising the push.
-        const drag = onSkate ? CURLING_SKATE_DRAG : Math.max(1.7, 4.5 - stone.stacks * 0.45);
-        const decay = Math.exp(-drag * dt);
-        stone.vx *= decay;
-        stone.vy *= decay;
-        if (Math.hypot(stone.vx, stone.vy) < 6) { stone.vx = 0; stone.vy = 0; }
+        bomb.x += bomb.vx * dt;
+        bomb.y += bomb.vy * dt;
+        bomb.spin += speed * dt * 0.03;
+        const decay = Math.exp(-CURLING_BOMB_DRAG * dt);
+        bomb.vx *= decay;
+        bomb.vy *= decay;
+        if (Math.hypot(bomb.vx, bomb.vy) < 6) { bomb.vx = 0; bomb.vy = 0; }
       }
 
-      // Walls: the stone rebounds off them, losing a little on each rail.
+      // Walls: it rebounds, losing a little on each rail.
       let bounced = false;
-      if (stone.x <= wb.x + CURLING_RADIUS) {
-        stone.x = wb.x + CURLING_RADIUS; stone.vx = Math.abs(stone.vx) * 0.86; bounced = true;
-      } else if (stone.x >= wb.right - CURLING_RADIUS) {
-        stone.x = wb.right - CURLING_RADIUS; stone.vx = -Math.abs(stone.vx) * 0.86; bounced = true;
+      if (bomb.x <= wb.x + CURLING_BOMB_RADIUS) {
+        bomb.x = wb.x + CURLING_BOMB_RADIUS; bomb.vx = Math.abs(bomb.vx) * 0.86; bounced = true;
+      } else if (bomb.x >= wb.right - CURLING_BOMB_RADIUS) {
+        bomb.x = wb.right - CURLING_BOMB_RADIUS; bomb.vx = -Math.abs(bomb.vx) * 0.86; bounced = true;
       }
-      if (stone.y <= wb.y + CURLING_RADIUS) {
-        stone.y = wb.y + CURLING_RADIUS; stone.vy = Math.abs(stone.vy) * 0.86; bounced = true;
-      } else if (stone.y >= wb.bottom - CURLING_RADIUS) {
-        stone.y = wb.bottom - CURLING_RADIUS; stone.vy = -Math.abs(stone.vy) * 0.86; bounced = true;
+      if (bomb.y <= wb.y + CURLING_BOMB_RADIUS) {
+        bomb.y = wb.y + CURLING_BOMB_RADIUS; bomb.vy = Math.abs(bomb.vy) * 0.86; bounced = true;
+      } else if (bomb.y >= wb.bottom - CURLING_BOMB_RADIUS) {
+        bomb.y = wb.bottom - CURLING_BOMB_RADIUS; bomb.vy = -Math.abs(bomb.vy) * 0.86; bounced = true;
       }
       if (bounced && speed > 60) {
-        fx.shards(stone.x, stone.y, 5, {
-          speed: 120, size: 2.8, life: 360, fall: 26, depth: 7, isVoid: stone.isVoid,
+        fx.shards(bomb.x, bomb.y, 5, {
+          speed: 120, size: 2.8, life: 360, fall: 26, depth: 7, isVoid: bomb.isVoid,
         });
-        fx.ring(stone.x, stone.y, 5, 28, tones.lit, 260, 3, 6);
+        fx.ring(bomb.x, bomb.y, 5, 28, tones.lit, 260, 3, 6);
       }
 
-      // Chips flying off the back edge while it runs.
-      if (speed > CURLING_MOVING_SPEED) {
-        stone.chipAccum += delta;
-        if (stone.chipAccum >= (onSkate ? 45 : 95)) {
-          stone.chipAccum = 0;
-          fx.shards(stone.x, stone.y + 6, onSkate ? 3 : 2, {
-            angle: Math.atan2(-stone.vy, -stone.vx), spread: 0.5,
-            speed: 70, size: 2.4, life: 320, fall: 12, depth: 4, isVoid: stone.isVoid,
+      // Sparks spitting off the wick while it burns, and chips off the back while it runs.
+      if (bomb.detonateAt !== null) {
+        bomb.chipAccum += delta;
+        if (bomb.chipAccum >= 70) {
+          bomb.chipAccum = 0;
+          fx.shards(bomb.x, bomb.y - 20, 2, {
+            angle: -Math.PI / 2, spread: 1.1, speed: 70, size: 1.8, life: 240, fall: -8, depth: 8, isVoid: bomb.isVoid,
           });
-        }
-
-        const damage = Math.round(CURLING_BASE_DAMAGE * (1 + stone.stacks * CURLING_DAMAGE_PER_STACK));
-        const targets: Fighter[] = stone.owner === 'player' ? enemies : [player];
-        for (const t of targets) {
-          if (!t.active || t.hp <= 0) continue;
-          if (time < (stone.hitCooldowns.get(t) ?? 0)) continue;
-          if (Phaser.Math.Distance.Between(stone.x, stone.y, t.x, t.y) > CURLING_HIT_RADIUS) continue;
-          stone.hitCooldowns.set(t, time + CURLING_HIT_COOLDOWN_MS);
-          t.takeDamage(damage);
-          if (stone.owner === 'player') this.recordBigHit(damage);
-          this.arena.spawnHitFlash(t.x, t.y, stone.isVoid ? ICE.voidGlow : ICE.sky);
-          fx.shatter(t.x, t.y, 46, {
-            shards: 10, vapor: 1, rime: false, duration: 310, isVoid: stone.isVoid,
-          });
-          scene.cameras.main.shake(150, 0.005);
-          this.arena.showFloatingText(t.x, t.y - 34, '🥌 CRUSHED', stone.isVoid ? '#cc88ff' : '#aaddff');
-          // It keeps going, but the collision takes the legs out of the slide.
-          stone.vx *= 0.55;
-          stone.vy *= 0.55;
+          if (speed > 30) {
+            fx.shards(bomb.x, bomb.y + 6, 2, {
+              angle: Math.atan2(-bomb.vy, -bomb.vx), spread: 0.5,
+              speed: 70, size: 2.4, life: 320, fall: 12, depth: 4, isVoid: bomb.isVoid,
+            });
+          }
         }
       }
 
-      const left = stone.expiresAt - time;
-      stone.gfx.clear();
-      IceFx.drawCurlingStone(
-        stone.gfx, this.col(stone.owner), tones,
-        stone.x, stone.y, stone.spin, time / 1000, stone.stacks,
-        left < 1500 ? Math.max(0.2, left / 1500) : 1,
+      const fuse = bomb.detonateAt === null ? -1 : 1 - Math.max(0, bomb.detonateAt - time) / CURLING_BOMB_FUSE_MS;
+      const left = bomb.expiresAt - time;
+      bomb.gfx.clear();
+      IceFx.drawCurlingBomb(
+        bomb.gfx, this.col(bomb.owner), tones,
+        bomb.x, bomb.y, bomb.spin, time / 1000, fuse, bomb.isVoid,
+        bomb.detonateAt === null && left < 1500 ? Math.max(0.2, left / 1500) : 1,
       );
     }
   }
@@ -1973,42 +1802,88 @@ export class IceKit {
   }
 
   /**
-   * One shot's worth of shove. The stone takes on whichever frost its owner is currently
-   * throwing, so void frost reads and behaves identically to light frost here.
+   * One shot's worth of launch. The first strike lights the wick and starts the fuse; every
+   * strike sends the bomb off the way the shot was going. The bomb takes on whichever frost
+   * its owner is throwing right now, so Black Ice turns it void mid-slide.
    */
-  private shoveCurlingStone(stone: CurlingStone, hitX: number, hitY: number, angle: number): void {
-    if (stone.owner === 'player') stone.isVoid = this.playerBlackIceMorphActive;
-    if (stone.stacks < CURLING_MAX_STACKS) stone.stacks++;
-    const push = CURLING_BASE_PUSH + stone.stacks * CURLING_PUSH_PER_STACK;
-    stone.vx += Math.cos(angle) * push;
-    stone.vy += Math.sin(angle) * push;
+  private launchCurlingBomb(bomb: CurlingBomb, time: number, hitX: number, hitY: number, angle: number): void {
+    if (bomb.owner === 'player') bomb.isVoid = this.playerBlackIceMorphActive;
+    const first = bomb.detonateAt === null;
+    if (first) bomb.detonateAt = time + CURLING_BOMB_FUSE_MS;
+    bomb.vx = Math.cos(angle) * CURLING_BOMB_LAUNCH_SPEED;
+    bomb.vy = Math.sin(angle) * CURLING_BOMB_LAUNCH_SPEED;
 
-    const tones = tonesFor(stone.isVoid);
-    const fx = this.fx(stone.owner);
-    this.arena.spawnHitFlash(hitX, hitY, stone.isVoid ? ICE.voidGlow : ICE.frost);
-    fx.shards(stone.x, stone.y, 4, {
-      angle, spread: 0.8, speed: 95, size: 2.6, life: 340, fall: 24, depth: 7, isVoid: stone.isVoid,
+    const tones = tonesFor(bomb.isVoid);
+    const fx = this.fx(bomb.owner);
+    this.arena.spawnHitFlash(hitX, hitY, bomb.isVoid ? ICE.voidGlow : ICE.frost);
+    fx.shards(bomb.x, bomb.y, 5, {
+      angle, spread: 0.7, speed: 110, size: 2.6, life: 340, fall: 24, depth: 7, isVoid: bomb.isVoid,
     });
-    fx.ring(stone.x, stone.y, 6, 24 + stone.stacks * 5, tones.lit, 260, 3, 6);
-    if (stone.owner === 'player') {
-      this.arena.showFloatingText(stone.x, stone.y - 30, `❄️×${stone.stacks}`, '#aaddff');
+    fx.ring(bomb.x, bomb.y, 6, 30, tones.lit, 260, 3, 6);
+    if (first) {
+      // The wick catches: a flare at the top of the bomb, not at the point of impact.
+      fx.flash(bomb.x, bomb.y - 16, 12, 8, bomb.isVoid);
+      if (bomb.owner === 'player') {
+        this.arena.showFloatingText(bomb.x, bomb.y - 32, '🔥 LIT', bomb.isVoid ? '#cc88ff' : '#aaddff');
+      }
     }
   }
 
-  /** Click+ Slush Thrower has no projectile to shove with, so the spray itself nudges the stone. */
-  private slushNudgeCurlingStone(baseAngle: number, range: number, halfAngleCos: number): void {
-    const { player } = this.arena;
-    const stone = this.curlingStones.find((s) => s.owner === 'player');
-    if (!stone) return;
-    const dist = Phaser.Math.Distance.Between(player.x, player.y, stone.x, stone.y);
+  /** Click+ Slush Thrower has no projectile to strike with, so the spray itself lights and steers the bomb. */
+  private slushNudgeCurlingBomb(baseAngle: number, range: number, halfAngleCos: number): void {
+    const { player, scene } = this.arena;
+    const bomb = this.curlingBombs.find((b) => b.owner === 'player');
+    if (!bomb) return;
+    const dist = Phaser.Math.Distance.Between(player.x, player.y, bomb.x, bomb.y);
     if (dist > range || dist < 1) return;
-    const dot = (Math.cos(baseAngle) * (stone.x - player.x) + Math.sin(baseAngle) * (stone.y - player.y)) / dist;
+    const dot = (Math.cos(baseAngle) * (bomb.x - player.x) + Math.sin(baseAngle) * (bomb.y - player.y)) / dist;
     if (dot < halfAngleCos) return;
-    // A fifth of a shot's shove per tick, and no stack — slush only refreshes frost, it never adds.
-    stone.isVoid = this.playerBlackIceMorphActive;
-    const push = (CURLING_BASE_PUSH + stone.stacks * CURLING_PUSH_PER_STACK) * 0.2;
-    stone.vx += Math.cos(baseAngle) * push;
-    stone.vy += Math.sin(baseAngle) * push;
+    this.launchCurlingBomb(bomb, scene.time.now, bomb.x, bomb.y, baseAngle);
+  }
+
+  /** The blast: damage, two stacks, and the slow thaw, on everyone inside the radius. */
+  private detonateCurlingBomb(bomb: CurlingBomb): void {
+    const { player, enemies, scene } = this.arena;
+    const fx = this.fx(bomb.owner);
+    const tones = tonesFor(bomb.isVoid);
+    fx.flash(bomb.x, bomb.y, CURLING_BOMB_BLAST_RADIUS * 0.6, 8, bomb.isVoid);
+    fx.shatter(bomb.x, bomb.y, CURLING_BOMB_BLAST_RADIUS * 0.8, {
+      shards: 20, vapor: 4, duration: 560, isVoid: bomb.isVoid,
+    });
+    fx.ring(bomb.x, bomb.y, 10, CURLING_BOMB_BLAST_RADIUS * 1.15, tones.lit, 420, 5, 8);
+    fx.rime(bomb.x, bomb.y, CURLING_BOMB_BLAST_RADIUS * 0.7, 1, bomb.isVoid);
+    fx.vapor(bomb.x, bomb.y, 8, CURLING_BOMB_BLAST_RADIUS * 0.5, 4, bomb.isVoid);
+    scene.cameras.main.shake(220, 0.007);
+
+    const targets: Fighter[] = bomb.owner === 'player' ? enemies : [player];
+    for (const t of targets) {
+      if (!t.active || t.hp <= 0) continue;
+      if (Phaser.Math.Distance.Between(bomb.x, bomb.y, t.x, t.y) > CURLING_BOMB_BLAST_RADIUS) continue;
+      t.takeDamage(CURLING_BOMB_DAMAGE);
+      this.arena.spawnHitFlash(t.x, t.y, bomb.isVoid ? ICE.voidGlow : ICE.sky);
+      this.catchInBlast(t, bomb);
+    }
+  }
+
+  /**
+   * What the blast leaves on a fighter: every stack they already carry gets two more seconds,
+   * every stack they are given from now on lasts ten instead of eight, and two fresh stacks of
+   * the bomb's own frost land on top.
+   */
+  private catchInBlast(t: Fighter, bomb: CurlingBomb): void {
+    const { player } = this.arena;
+    this.slowThaw.add(t);
+    if (t === player) {
+      this.playerFrostStackTimers = this.playerFrostStackTimers.map((ts) => ts + CURLING_BOMB_THAW_BONUS_MS);
+      for (let i = 0; i < CURLING_BOMB_STACKS; i++) this.addFrostStack('player');
+    } else {
+      t.frostStackTimers = t.frostStackTimers.map((ts) => ts + CURLING_BOMB_THAW_BONUS_MS);
+      t.voidFrostStackTimers = t.voidFrostStackTimers.map((ts) => ts + CURLING_BOMB_THAW_BONUS_MS);
+      for (let i = 0; i < CURLING_BOMB_STACKS; i++) this.addFrostStackTo(t, bomb.isVoid);
+    }
+    this.arena.showFloatingText(
+      t.x, t.y - 34, bomb.isVoid ? '🖤 +2 · SLOW THAW' : '❄️ +2 · SLOW THAW', bomb.isVoid ? '#cc88ff' : '#aaddff',
+    );
   }
 
   private spawnIcyTrail(x: number, y: number, owner: 'player' | 'npc', opts?: { skater?: boolean }): void {

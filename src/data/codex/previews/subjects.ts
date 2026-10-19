@@ -522,34 +522,47 @@ export const lifeMasteryReap: PreviewScript = {
   },
 };
 
-export const airMasteryWindsOfChange: PreviewScript = {
-  duration: 3800,
-  caption: 'Mastery — everything off cooldown, spins refilled, +20 wind dodge',
+export const airMasteryWeatherCycle: PreviewScript = {
+  duration: 5400,
+  caption: 'Mastery — the winds record 5s of presses, then dance them all back, no cooldowns asked',
   run(ctx) {
     const { fx, av } = airStage(ctx);
-    let pool = 0.3;
-    meter(ctx, { x: ctx.cx - 46, y: ctx.cy - 54, w: 92, color: AIR.cyan, read: () => pool });
-    ctx.at(500, () => {
-      av.play('raise', ctx.aim, 700);
-      fx.petalBurst(ctx.cx, ctx.cy, 150, 26);
-      fx.ring(ctx.cx, ctx.cy, 20, 190, AIR.blossom, 620, 6, 6);
-      ctx.at(140, () => fx.ring(ctx.cx, ctx.cy, 16, 240, AIR.white, 700, 4, 6));
-      fx.motes(ctx.cx, ctx.cy, 26, { speed: 240, life: 800 });
-      pool = 0.5;
-      // Five cooldown pips snapping back to full — the actual content of the ability.
-      const pips = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
-      ctx.onFrame((_dt, elapsed) => {
-        const t = Phaser.Math.Clamp((elapsed - 500) / 600, 0, 1);
-        pips.clear();
-        for (let i = 0; i < 5; i++) {
-          const bx = ctx.cx - 52 + i * 26;
-          pips.fillStyle(0x0b0d16, 0.9);
-          pips.fillRoundedRect(bx, ctx.cy + 42, 20, 8, 3);
-          pips.fillStyle(ctx.tint(AIR.frost), 0.95);
-          pips.fillRoundedRect(bx + 1, ctx.cy + 43, 18 * Math.min(1, t * (1 + i * 0.3)), 6, 2);
-        }
-      });
+    const RECORD_AT = 400, RECORD_MS = 2200;
+    const ring = ctx.adopt(ctx.scene.add.graphics().setDepth(8));
+    const count = ctx.adopt(ctx.scene.add.text(ctx.cx, ctx.cy - 60, '', {
+      fontSize: '12px', fontFamily: 'Arial Black', color: '#bbe8ff',
+    }).setOrigin(0.5).setDepth(12));
+    ctx.onFrame((_dt, elapsed) => {
+      ring.clear();
+      if (elapsed < RECORD_AT) return;
+      const recording = elapsed < RECORD_AT + RECORD_MS;
+      const replaying = !recording && elapsed < RECORD_AT + RECORD_MS * 2 + 200;
+      if (recording) {
+        AirFx.drawWeatherRing(ring, ctx.tint, ctx.cx, ctx.cy, 52, elapsed / 1000, (elapsed - RECORD_AT) / RECORD_MS, false, 1);
+      } else if (replaying) {
+        AirFx.drawWeatherRing(ring, ctx.tint, ctx.cx, ctx.cy, 58, elapsed / 1000, 1, true, 0.9);
+      }
     });
+    // The window opens.
+    ctx.at(RECORD_AT, () => {
+      av.play('raise', ctx.aim, 520);
+      fx.ring(ctx.cx, ctx.cy, 20, 150, AIR.cyan, 520, 5, 6);
+      fx.motes(ctx.cx, ctx.cy, 22, { speed: 200, life: 700, swirl: 2.2 });
+    });
+    // Two presses inside it: a splice and a spin, each written down.
+    const splice = () => { av.play('sweep', ctx.aim); fx.fanCut(ctx.cx, ctx.cy, ctx.aim, 100, 0.95); fx.muzzleGust(ctx.cx + 20, ctx.cy, ctx.aim); };
+    const spin = () => { av.play('sweep', ctx.aim); fx.spinFlourish(ctx.cx, ctx.cy, 115); };
+    ctx.at(RECORD_AT + 500, () => { splice(); count.setText('🌀 1'); });
+    ctx.at(RECORD_AT + 1400, () => { spin(); count.setText('🌀 2'); });
+    // The window shuts and the winds let go — the same two, on the same beats.
+    ctx.at(RECORD_AT + RECORD_MS, () => {
+      av.play('flex');
+      fx.ring(ctx.cx, ctx.cy, 24, 190, AIR.white, 560, 5, 6);
+      fx.motes(ctx.cx, ctx.cy, 26, { speed: 240, life: 800, swirl: -2.2 });
+      count.setText('🌀 CYCLE ×2').setColor('#ffffff');
+    });
+    ctx.at(RECORD_AT + RECORD_MS + 500, () => { splice(); fx.motes(ctx.cx, ctx.cy, 6, { speed: 160, life: 420 }); });
+    ctx.at(RECORD_AT + RECORD_MS + 1400, () => { spin(); fx.motes(ctx.cx, ctx.cy, 6, { speed: 160, life: 420 }); count.setText(''); });
   },
 };
 

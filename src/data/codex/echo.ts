@@ -63,15 +63,16 @@ const echo: ElementCodex = {
   abilities: {
     'echo-shot': {
       basics:
-        'Shouts a wavefront at the cursor: 18 damage to anything within 28px, spent on the first body '
-        + 'it reaches, travelling 440 px/s and bouncing off the arena edges up to 5 times before it dies, '
+        'Shouts a shockwave at the cursor: a crescent about 110px from horn to horn that deals 18 damage '
+        + 'to the first body anywhere along its front, travelling 440 px/s and bouncing off the arena '
+        + 'edges up to 5 times before it dies, '
         + 'with each bounce gated at 0.5s so a corner cannot eat two at once. Every bounce throws a chirp '
         + 'back off the wall it hit and knocks three motes loose, which is genuinely readable information '
         + 'about where the walls are in the dark, and the collapse that lands is bigger the further it '
         + 'came — 46px plus 6 per bounce — so the shape tells you how far the shot had gone. 2s cooldown.',
       cast: 'Click, aimed at the cursor. 2s cooldown.',
       effects: [
-        { tag: 'damage', label: 'The hit', detail: '18 damage to anything within 28px of it. The shout is spent on the first body it reaches.' },
+        { tag: 'damage', label: 'The hit', detail: '18 damage to the first body anywhere along the front — a crescent about 110px wide and 16px deep, so what you see is what connects. The shout is spent on that first body.' },
         { tag: 'area', label: 'The flight', detail: '440 px/s, bouncing off the arena edges up to 5 times before it dies. Each bounce is gated at 0.5s so a corner cannot eat two at once.' },
         { tag: 'utility', label: 'It maps the room', detail: 'Every bounce throws a chirp back off the wall it hit and knocks three motes loose, which is genuinely readable information about where the walls are in the dark.' },
         { tag: 'utility', label: 'The collapse scales with travel', detail: 'The wavefront that lands is bigger the further it came — 46px plus 6 per bounce, with more arcs and a longer ring. Cosmetic, but it tells you how far the shot had gone.' },

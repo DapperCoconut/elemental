@@ -37,6 +37,8 @@ export const ICE = {
   voidBody: 0x6622aa,
   voidGlow: 0x9900ff,
   voidPale: 0xcc88ff,
+  /** The Curling Bomb's casing in Black Ice: true black, lit only by its void core. */
+  black: 0x0a0612,
 } as const;
 
 /** One coherent set of shades. `shell → body → facet → lit` runs dark to bright. */
@@ -676,43 +678,93 @@ export class IceFx extends FxBase {
   }
 
   /**
-   * The impaling icicle: a long spike driven down through a target, with a cracked entry wound
-   * and a bead of meltwater running off the point. Painted into a caller-owned Graphics because
-   * the kit already redraws it every frame at a moving position.
+   * The curling bomb: a squat iron-banded sphere of packed ice with a wick coiled out of the
+   * top. Unlit it sits dark and rimed; once a shot lights it the wick burns down toward the body
+   * and the core glows brighter the closer it is to going off. Black Ice paints the casing true
+   * black with a violet core. `fuse` is -1 while unlit, else 0→1 as the wick burns down.
+   *
+   * Painted into a caller-owned Graphics because the kit already repaints it every frame.
    */
-  static drawIcicle(
+  static drawCurlingBomb(
     g: Phaser.GameObjects.Graphics, tint: IceColorFn, tones: IceTones,
-    x: number, y: number, t: number, charge: number,
+    x: number, y: number, spin: number, t: number, fuse: number, isVoid: boolean, alpha = 1,
   ): void {
-    // Shard points *down* into the target, so it is drawn from above the head downward.
-    const sway = Math.sin(t * 2.2) * 0.05;
-    g.fillStyle(tint(tones.shell), 0.5);
-    iceShard(g, x, y - 52, Math.PI / 2 + sway, 34, 9, 0.5);
-    g.fillStyle(tint(tones.body), 0.96);
-    iceShard(g, x, y - 50, Math.PI / 2 + sway, 30, 6.6, 0.5);
-    g.fillStyle(tint(tones.lit), 0.85);
-    iceShard(g, x - 1.5, y - 48, Math.PI / 2 + sway, 24, 2.6, 0.3);
+    const R = 15;
+    const lit = fuse >= 0;
+    const near = lit ? Phaser.Math.Clamp(fuse, 0, 1) : 0;
+    const pulse = 0.5 + 0.5 * Math.sin(t * (lit ? 7 + near * 22 : 2.2));
 
-    // Charge band: fills as the host takes damage, so the shatter is telegraphed.
-    const bandY = y - 44;
-    g.fillStyle(tint(tones.shell), 0.75);
-    g.fillRect(x - 9, bandY, 18, 2.6);
-    g.fillStyle(tint(tones.spark), 0.9);
-    g.fillRect(x - 9, bandY, 18 * Phaser.Math.Clamp(charge, 0, 1), 2.6);
+    // Shadow pooled under the sphere — it is heavy, and it sits *on* the floor.
+    g.fillStyle(tint(ICE.abyss), 0.4 * alpha);
+    g.fillEllipse(x, y + 10, R * 2.1, R * 0.8);
 
-    // Cracked entry wound where it went in.
-    g.lineStyle(1.4, tint(tones.lit), 0.75);
+    // Casing: black in the void, deep ice otherwise, with a darker lower hemisphere for mass.
+    const body = isVoid ? ICE.black : ICE.deep;
+    g.fillStyle(tint(isVoid ? ICE.black : ICE.abyss), 0.97 * alpha);
+    g.fillCircle(x, y + 1.5, R);
+    g.fillStyle(tint(body), 0.97 * alpha);
+    g.fillCircle(x, y - 1, R * 0.96);
+
+    // Iron band round the equator, riveted, turning with the roll.
+    g.lineStyle(2.8, tint(isVoid ? ICE.voidDeep : ICE.abyss), 0.95 * alpha);
+    g.strokeEllipse(x, y + Math.sin(spin) * 2, R * 1.9, R * 0.72);
     for (let i = 0; i < 4; i++) {
-      const a = (i / 4) * TAU + 0.5;
-      g.beginPath();
-      g.moveTo(x, y - 20);
-      g.lineTo(x + Math.cos(a) * 8, y - 20 + Math.sin(a) * 5);
-      g.strokePath();
+      const a = spin + i * (Math.PI / 2);
+      g.fillStyle(tint(tones.lit), 0.7 * alpha);
+      g.fillCircle(x + Math.cos(a) * R * 0.9, y + Math.sin(spin) * 2 + Math.sin(a) * R * 0.34, 1.6);
     }
-    // Bead of melt running off the point.
-    const drip = (t * 0.9) % 1;
-    g.fillStyle(tint(tones.lit), 0.7 * (1 - drip));
-    g.fillCircle(x, y - 18 + drip * 10, 1.8 * (1 - drip * 0.5));
+
+    // Rime crust over the top half, shards leaning out with the roll.
+    for (let i = 0; i < 5; i++) {
+      const a = -Math.PI * 0.95 + i * 0.47 + Math.sin(t * 1.3 + i) * 0.04 + spin * 0.15;
+      const px = x + Math.cos(a) * R * 0.78;
+      const py = y - 1 + Math.sin(a) * R * 0.78;
+      g.fillStyle(tint(tones.facet), 0.8 * alpha);
+      iceShard(g, px, py, a, 7.5, 3.2, 0.5);
+      g.fillStyle(tint(tones.lit), 0.75 * alpha);
+      iceShard(g, px, py, a, 4.5, 1.3, 0.3);
+    }
+
+    // Core: a faint cold glow unlit, swelling and strobing as the fuse burns down.
+    g.fillStyle(tint(isVoid ? ICE.voidGlow : tones.lit), (0.12 + near * 0.6) * (0.55 + 0.45 * pulse) * alpha);
+    g.fillCircle(x, y - 1, R * 0.5 + near * R * 0.35);
+    g.fillStyle(tint(tones.spark), 0.32 * alpha);
+    g.fillEllipse(x - R * 0.36, y - R * 0.45, R * 0.5, R * 0.28);
+
+    // Wick: coils out of the top; the burnt-down length is gone.
+    const wickLen = 15 * (lit ? 1 - near : 1);
+    const wick = (f: number) => ({ x: x + Math.sin(f * 2.8) * 6 * f + 1, y: y - R + 1 - wickLen * f });
+    g.lineStyle(2.4, tint(0x5a4630), 0.95 * alpha);
+    g.beginPath();
+    g.moveTo(x + 1, y - R + 1);
+    for (let i = 1; i <= 6; i++) { const p = wick(i / 6); g.lineTo(p.x, p.y); }
+    g.strokePath();
+    g.fillStyle(tint(ICE.abyss), 0.9 * alpha);
+    g.fillCircle(x + 1, y - R + 1, 3);
+
+    if (lit) {
+      // The ember at the end of the wick, spitting a few lines of light.
+      const e = wick(1);
+      g.fillStyle(tint(isVoid ? ICE.voidPale : ICE.white), 0.95 * alpha);
+      g.fillCircle(e.x, e.y, 2.2 + pulse * 1.4);
+      g.fillStyle(tint(isVoid ? ICE.voidGlow : ICE.sky), 0.5 * alpha);
+      g.fillCircle(e.x, e.y, 4 + pulse * 2);
+      g.lineStyle(1.2, tint(isVoid ? ICE.voidPale : ICE.white), 0.8 * pulse * alpha);
+      for (let i = 0; i < 4; i++) {
+        const a = t * 9 + i * (Math.PI / 2);
+        g.lineBetween(e.x, e.y, e.x + Math.cos(a) * (4 + pulse * 3), e.y + Math.sin(a) * (4 + pulse * 3));
+      }
+      // Last stretch of the fuse: a warning rim strobing out from the casing.
+      if (near > 0.55) {
+        const warn = (near - 0.55) / 0.45;
+        g.lineStyle(1.6, tint(tones.lit), warn * pulse * 0.9 * alpha);
+        g.strokeCircle(x, y, R * 1.5 + pulse * 5 + warn * 4);
+      }
+    }
+
+    // Cold breathing off the casing.
+    g.lineStyle(1.2, tint(tones.lit), 0.14 * (0.5 + 0.5 * Math.sin(t * 3.1)) * alpha);
+    g.strokeEllipse(x, y - 1, R * 2.3, R * 1.8);
   }
 
   /**
@@ -805,68 +857,6 @@ export class IceFx extends FxBase {
     g.fillCircle(x - 2, y - 2.4, 4);
     g.fillStyle(tint(tones.spark), 0.8);
     g.fillCircle(x - 3 + Math.sin(t * 9) * 0.6, y - 3.4, 1.8);
-  }
-
-  /**
-   * The curling stone: a squat granite slab seen in three-quarter view, with a polished running
-   * band around its base, a bolted handle across the top, and a crust of rime that thickens with
-   * every frost stack it has taken on. The handle and the crust turn with `spin` so the stone
-   * visibly *rolls* as it slides — a disc sliding without rotation reads as a hovering token.
-   *
-   * Painted into a caller-owned Graphics because the kit already repaints it every frame.
-   */
-  static drawCurlingStone(
-    g: Phaser.GameObjects.Graphics, tint: IceColorFn, tones: IceTones,
-    x: number, y: number, spin: number, t: number, stacks: number, alpha = 1,
-  ): void {
-    const R = 17;
-
-    // Shadow pooled under the slab — it's heavy, and it needs to sit *on* the floor.
-    g.fillStyle(tint(ICE.abyss), 0.4 * alpha);
-    g.fillEllipse(x, y + 8, R * 2.1, R * 0.9);
-
-    // Granite body: a dark drum, drawn as a lower rim plus an upper face so it has thickness.
-    g.fillStyle(tint(ICE.abyss), 0.96 * alpha);
-    g.fillEllipse(x, y + 1, R * 2, R * 1.5);
-    g.fillStyle(tint(tones.shell), 0.9 * alpha);
-    g.fillEllipse(x, y - 3, R * 1.94, R * 1.42);
-    // Running band: the polished ring the stone actually rides on.
-    g.lineStyle(3, tint(tones.body), 0.8 * alpha);
-    g.strokeEllipse(x, y + 3, R * 1.92, R * 1.24);
-    // Top face, brighter and set back, with an off-centre sheen.
-    g.fillStyle(tint(tones.body), 0.85 * alpha);
-    g.fillEllipse(x, y - 6, R * 1.52, R * 1.02);
-    g.fillStyle(tint(tones.facet), 0.45 * alpha);
-    g.fillEllipse(x - R * 0.3, y - 8, R * 0.78, R * 0.44);
-
-    // Rime crust: one shard per frost stack, growing off the rim and turning with the stone.
-    for (let i = 0; i < stacks; i++) {
-      const a = spin + (i / Math.max(1, stacks)) * TAU;
-      const px = x + Math.cos(a) * R * 0.95;
-      const py = y - 2 + Math.sin(a) * R * 0.66;
-      g.fillStyle(tint(tones.facet), 0.75 * alpha);
-      iceShard(g, px, py, a, 8 + stacks * 1.9, 3.4, 0.5);
-      g.fillStyle(tint(tones.lit), 0.8 * alpha);
-      iceShard(g, px, py, a, 5 + stacks * 1.2, 1.4, 0.3);
-    }
-
-    // Handle: a bolt through the middle and a grip bar swinging round as the stone rolls.
-    const hx = Math.cos(spin) * R * 0.5;
-    const hy = Math.sin(spin) * R * 0.3;
-    g.lineStyle(3.4, tint(tones.shell), 0.95 * alpha);
-    g.lineBetween(x - hx, y - 11 - hy, x + hx, y - 11 + hy);
-    g.fillStyle(tint(tones.lit), 0.95 * alpha);
-    g.fillCircle(x + hx, y - 11 + hy, 3.2);
-    g.fillCircle(x - hx, y - 11 - hy, 3.2);
-    g.fillStyle(tint(tones.body), alpha);
-    g.fillCircle(x, y - 12, 4.4);
-    g.fillStyle(tint(tones.spark), 0.9 * alpha);
-    g.fillCircle(x - 1.5, y - 13.4, 1.7);
-
-    // Cold breathing off the stone, tighter and brighter the more frost it holds.
-    const pulse = 0.5 + 0.5 * Math.sin(t * 3.1);
-    g.lineStyle(1.4, tint(tones.lit), (0.12 + stacks * 0.08) * pulse * alpha);
-    g.strokeEllipse(x, y - 2, R * (2.25 + pulse * 0.35), R * (1.65 + pulse * 0.25));
   }
 
   /**

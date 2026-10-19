@@ -103,7 +103,7 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
         slot: 'click',
         displayKey: 'Click',
         name: 'Petal Burst',
-        description: '5 petals per shot at 5 damage each',
+        description: '5 petals per shot at 8 damage each',
         price: 10,
       },
       {
