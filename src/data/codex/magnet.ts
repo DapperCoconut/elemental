@@ -5,7 +5,7 @@ import { ElementCodex } from '../AbilityCodex';
  *
  * Verified against `src/elements/magnet.ts`, `kits/MagnetKit.ts` and `kits/MagnetMech.ts`; every
  * number is a constant at the top of one of those two kits. Shop upgrades (Shatter Shot, Magnetize,
- * Nailstorm, Electromagnet, Mega Mechancements) landed 2026-10-16; the mastery (Magnetic Field + Mag-Lev) on 2026-10-17. The
+ * Nailstorm, Electromagnet, Mega Mechancements — now Salvage Salvo, 2026-10-18) landed 2026-10-16; the mastery (Magnetic Field + Mag-Lev) on 2026-10-17. The
  * Blade perk was rewritten for the new kit.
  */
 const magnet: ElementCodex = {
@@ -192,20 +192,22 @@ const magnet: ElementCodex = {
 
     'magnet-mecha': {
       basics:
-        'Stand still for 3 seconds while shards of scrap stream in from every edge of the screen and '
+        'Stand still for 7.5 seconds while shards of scrap stream in from every edge of the screen and '
         + 'pile up on you — you can be hit and you cannot move. Then you become a mech too big for the '
         + 'arena for 15 seconds: only its cockpit (over the edge) and its arms (down the sides) fit. '
-        + 'You are untouchable and rooted, and your keys become the mech\'s: Click a hydraulic smash '
+        + 'You are rooted, and your body stays behind as the mech\'s glowing core: anything that hits '
+        + 'it costs the mech 0.05s of its life per point of damage instead of hurting you. Your keys '
+        + 'become the mech\'s: Click a hydraulic smash '
         + '(20 in 96px, and 3 chunks of scrap fall 2s later for 10), E a live rail down the arena at '
         + 'the cursor (15 per second to anyone on it, 8s), R a scrap avalanche across the whole arena '
         + '(25, carried to the far wall for 30 more and a 0.7s stun, then 50 pieces of scrap rain down '
         + 'for 12), F a visor cannon dragged with the cursor for 4s (5 every 0.2s, leaving burning slag '
         + 'that deals 5 every 0.5s), and Q self-destruct — you are ejected and 20 blasts (20 each) walk '
         + 'across the arena. Your health is put back to what it was when the mech arrived.',
-      cast: 'Q. 3s rooted wind-up, then 15s as the mech. 50s cooldown.',
+      cast: 'Q. 7.5s rooted wind-up, then 15s as the mech. 50s cooldown.',
       effects: [
-        { tag: 'cost', label: 'Wind-up', detail: '3s standing still, vulnerable.' },
-        { tag: 'shield', label: 'Pilot', detail: 'Hidden, untouchable and rooted for 15s. Health restored to its value on entry.' },
+        { tag: 'cost', label: 'Wind-up', detail: '7.5s standing still, vulnerable.' },
+        { tag: 'shield', label: 'Core', detail: 'Your hidden body is the core: each point of damage on it takes 0.05s off the mech. Health restored to its value on entry.' },
         { tag: 'damage', label: 'Smash (Click)', detail: '20 within 96px; 3 scrap chunks land 2s later for 10 within 46px. 1.4s cooldown.' },
         { tag: 'damage', label: 'Mag Rail (E)', detail: '15 per second to anyone within 26px of the rail, for 8s. 5s cooldown.' },
         { tag: 'control', label: 'Avalanche (R)', detail: '25 on contact, carried to the far wall: 30 and a 0.7s stun there. Then 50 scrap pieces rain for 12 each. 13s cooldown.' },
@@ -214,19 +216,25 @@ const magnet: ElementCodex = {
       ],
       upgrade: {
         basics:
-          'Mega Mechancements: the mech comes out red — crimson plate, war-horns and a gold chevron '
-          + 'on the cockpit, a red visor and red current in its rail — and everything it does is '
-          + 'bigger. Hydraulic Smash deals 30 in 120px and kicks up 5 chunks (14 each), on a 1s '
-          + 'cooldown. Mag Rail deals 22 a second across 38px either side, every 4s. Scrap Avalanche '
-          + 'deals 35, then 45 and a 1.2s stun at the wall, and its rain hits for 16; 11s cooldown. Visor '
-          + 'Cannon ticks for 7 in a wider 46px beam and its slag for 7; 8.5s cooldown. Self-Destruct '
-          + 'sets off 30 blasts of 25 (90px).',
+          'Salvage Salvo: while the scrap gathers, four menus hang round you — Head above, Core below, '
+          + 'an arm on each side — and you click one part from each. Heads: Camo Military (every 3.2s '
+          + 'four rockets fall on your foes, 12 each in 56px), Flaming Furnace (the red mech: every key '
+          + 'hits harder, wider and recharges faster, as the old Mega Mechancements did, and every hit '
+          + 'leaves a burning puddle that deals 4 every 0.5s for 4s) or Junkyard Scrapper (Self-Destruct '
+          + 'sets off 32 blasts of 28 in 95px and drops 3 TNT crates; Repulse throws a crate, which '
+          + 'bursts for 22 in 90px, scatters 6 bomblets of 10, and each of those scatters 3 more of 5). '
+          + 'Cores: Calm (cooldowns 40% longer, the mech lasts 22.5s), Urgent (cooldowns 40% shorter, 9s) '
+          + 'or Base (normal numbers, and the core cannot be hurt). Arms, each side on its own: Slammer '
+          + '(a spiked mace — the smash deals 10 more in a 10% wider ring), Launcher (5 rockets at the '
+          + 'cursor, 9 each in 46px) or Saw (a blade that grinds under the cursor for 1.3s, 4 every '
+          + '0.14s in 62px). Clicks alternate between the arms. The Furnace head adds 35% to the Launcher '
+          + 'and the Saw. Your picks are kept for the next mech.',
         effects: [
-          { tag: 'damage', label: 'Smash', detail: '30 in 120px, 5 chunks of 14. 1s cooldown.', requiresUpgrade: 'q' },
-          { tag: 'damage', label: 'Mag Rail', detail: '22 per second, 38px either side. 4s cooldown.', requiresUpgrade: 'q' },
-          { tag: 'control', label: 'Avalanche', detail: '35, then 45 + 1.2s stun at the wall; rain 16. 11s cooldown.', requiresUpgrade: 'q' },
-          { tag: 'dot', label: 'Visor Cannon', detail: '7 every 0.2s in 46px; slag 7 every 0.5s. 8.5s cooldown.', requiresUpgrade: 'q' },
-          { tag: 'damage', label: 'Self-Destruct', detail: '30 blasts of 25 in 90px.', requiresUpgrade: 'q' },
+          { tag: 'damage', label: 'Camo Military', detail: 'Every 3.2s: 4 rockets of 12 in 56px on your foes.', requiresUpgrade: 'q' },
+          { tag: 'damage', label: 'Flaming Furnace', detail: 'The red mech (smash 30/120px, rail 22, avalanche 35/45, cannon 7, faster keys); hits leave fire, 4 every 0.5s for 4s.', requiresUpgrade: 'q' },
+          { tag: 'damage', label: 'Junkyard Scrapper', detail: 'Self-Destruct: 32 blasts of 28 in 95px, and 3 TNT crates. Repulsed crate: 22 → 6×10 → 18×5 cluster.', requiresUpgrade: 'q' },
+          { tag: 'buff', label: 'Cores', detail: 'Calm: cooldowns ×1.4, 22.5s. Urgent: cooldowns ×0.6, 9s. Base: normal, core cannot be hurt.', requiresUpgrade: 'q' },
+          { tag: 'damage', label: 'Arms', detail: 'Slammer: smash +10, 10% wider. Launcher: 5 rockets of 9. Saw: 4 every 0.14s for 1.3s. Clicks alternate arms.', requiresUpgrade: 'q' },
         ],
       },
       notes: [

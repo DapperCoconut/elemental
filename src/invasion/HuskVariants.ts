@@ -150,7 +150,7 @@ export const HUSK_FAMILIES: HuskFamily[] = [
   { elementId: 'subterfuge', name: 'Subterfuge', emoji: '🕴️', color: 0xcc2233, category: 'abstract', behavior: 'melee', marker: 'dagger', quirk: 'lean', hp: 1, speed: 1.1, damage: 1.3 },
 
   // ── Corrupt — MASOCHISTIC only ───────────────────────────────────
-  { elementId: 'chalk', name: 'Chalk', emoji: '🖍️', color: 0xf4f1e6, category: 'corrupt', behavior: 'medic', marker: 'scribble', quirk: 'halo', hp: 1, speed: 1, damage: 0.6, preferredRange: 300 },
+  { elementId: 'chalk', name: 'Paint', emoji: '🖌️', color: 0xe0457b, category: 'corrupt', behavior: 'medic', marker: 'scribble', quirk: 'halo', hp: 1, speed: 1, damage: 0.6, preferredRange: 300 },
   { elementId: 'magma', name: 'Magma', emoji: '🌋', color: 0xff5a1e, category: 'corrupt', behavior: 'melee', marker: 'flame', quirk: 'horns', hp: 1.3, speed: 0.8, damage: 1.2 },
   { elementId: 'illusion', name: 'Illusion', emoji: '🎭', color: 0xb45cff, category: 'corrupt', behavior: 'melee', marker: 'mask', quirk: 'lean', hp: 0.9, speed: 1.05, damage: 1 },
   { elementId: 'depths', name: 'Depths', emoji: '🐟', color: 0x0e8f9c, category: 'corrupt', behavior: 'ranged', marker: 'wave', quirk: 'sac', hp: 1.1, speed: 0.95, damage: 0.75, preferredRange: 280 },

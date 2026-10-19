@@ -63,10 +63,22 @@ Four screens pick an element for a fight: `MenuScene`, `CampaignElementSelectSce
 - `src/ui/ElementSelectGrid.ts` — `renderElementGrid(scene, opts)` draws the paged card grid. Each card is a leaning plate carrying a complexity star rating, the name + archetype, a live character portrait, a one-line blurb, and the select prompt, with ℹ info / M mastery / CUSTOMIZE hanging off it. **No emoji on a card** — the portrait is the element's identity. Returns the objects it made; the caller destroys them on its next render.
 - `src/data/ElementProfiles.ts` — the per-element `archetype`, `blurb` and 1–5 `complexity` rating the cards print. A new element needs an entry here or it falls back to an "unknown" dossier.
 - `src/ui/ElementPortrait.ts` — the live portrait: the real `elem-<id>` body with the element's real rig standing on it (mastered silhouette and equipped skin included), inside a scaled, masked container. Not a GameObject — the grid hands it out on a Zone handle that destroys it.
-- `src/elements/kits/ElementAvatars.ts` — element id → its `BaseAvatar` factory, for anything that must build a rig for an id it does not know at author time. Mind the two id traps: `sand` is Time and `dune` is Sand; `slime` is Acid and `gum` is Slime.
+- `src/elements/kits/ElementAvatars.ts` — element id → its `BaseAvatar` factory, for anything that must build a rig for an id it does not know at author time. Mind the id traps: `sand` is Time and `dune` is Sand; `slime` is Acid and `gum` is Slime; `chalk` is Paint.
 - `src/ui/ElementPanels.ts` — the four full-screen overlays behind those buttons. Construct one per scene with a redraw callback: `new ElementPanels(this, () => this.renderElements())`.
 
 The lobby draws its own compact tile grid (it lives inside a panel), but still reads `allSelectableElements()`.
+
+### Menu Dioramas
+
+The workshop menus are drawn rooms with a character in them, not plates of text: the Shop (a goblin behind his counter, wares standing on shelves, hanging arrow signs to page, a floor vent down to the boss door), the Lab and the Disgraced Lab (an alchemist — the King's is his ghost — pouring vials into a flask that explodes on a bad mix), the Vault (a keeper at his lectern), the Entanglement Lab, the trophy hall and the campaign kit bag. They share:
+
+- `src/ui/Woodwork.ts` — planks, shelves, hanging signs, price tags.
+- `src/ui/SpeechBubble.ts` — the typewriter bubble (non-blocking; `place`, `offsetX/Y`) and `addHoverLabel`.
+- `src/ui/ItemArt.ts` — procedural wares: `itemKindFor(slot, name)` picks a silhouette per ability slot, tinted by the element.
+- `src/ui/Glassware.ts` + `src/ui/LabBench.ts` — ten vial shapes keyed by element (`VIAL_SHAPE_FOR`), the flask, and the pour → heat → succeed/explode flow both labs run on.
+- `src/ui/characters/` — `MenuCharacter` (update loop, mood, talk flag, blink, pointer-look, `flip`) and the rigs: `Shopkeeper`, `Alchemist` (`spectral` for the ghost), `VaultKeeper`.
+
+**Dialogue is business only.** A character states prices, what a thing does, asks whether to buy, and reports results ("Fire + Water → Oil. One nucleus spent, 3 left."). No banter, jokes or lore. `.shot-menu.mjs <Scene> '<init json>' <tag> [steps.json]` screenshots a menu with deterministic frames for checking layout.
 
 ### ElementKit Pattern
 
@@ -108,6 +120,16 @@ this.[element]Kit.handleInput(dt);
 this.[element]Kit.update(dt);
 ```
 
+### Quantum and the `playerIs` gate
+
+Quantum is a five-slot loadout: each key carries one *entangled* element's ability for that same key, and a key press re-keys the player onto that slot's element before the kit sees it (`QuantumKit.routeInput`). Every element in the loadout is **live at once** for passives, forms, auras and mastery, so:
+
+- In ArenaScene, a per-element gate is `this.playerIs('x')` (true for the live element *and* anything Quantum carries), never `this.elementId === 'x'`. The only two places that must know the *live* element — the `handleInput` else-if chain and the speed-multiplier chain — read `elementId` directly.
+- A kit adapter reports `get elementId() { return arena.liveElementFor('x'); }`, `hasUpgrade: (slot) => arena.hasUpgradeFor('x', slot)` and `masteryBindFor: (slot) => arena.masteryBindForElement('x', slot)`, so a carried kit sees itself as the player's element and reads its own upgrades and binds. Keys and the pointer go through `arena.keyFor('x', arena.eKey)` / `arena.pointerFor('x')`: the live element's kit gets the real input, a carried kit gets an inert stand-in (never down, aim still valid), so a press for one slot cannot also drive a held ability in another kit's `update()`.
+- **What a slot brings is Quantum's call, never the element's own page** (`QuantumLoadout.ts` resolves it): plain Quantum carries base abilities only — no upgrades, no perks, no masteries (`loadoutPerkIds` is empty, `playerPerkId` null). Third State (Quantum's one shop upgrade, `hasThirdState()`) adds a per-slot upgrade switch (`upgradesFor(lo, id)` is what `hasUpgradeFor` and `activeUpgrades` read) and makes Quantum's own kit slottable. Quantum Mastery (`MASTERY_DEFS.quantum`, `lo.mastered`) adds: a borrowed passive (`lo.passive`, that element joins `carriedElements` and `masteryOnFor` reports it mastered), a **sixth key G** (`lo.sixth = {elementId, enhId, over}`, routed by `QuantumKit.routeInput` as live slot `'x6'`; `quantumBindFor` reports the enhancement bound over `over` and `keyFor` hands that kit `gKey` in place of its `over` key while `quantumLiveSlot === 'x6'`), and an alternate-Q toggle (`lo.altQ`, rides as `alt-q` in `upgradesFor`). Mastery flags are set by `applyMasteryFlags()` and re-run on every routed press, because the sixth key's element is only mastered while reached through G.
+- Rigs: every carried kit stands a player rig up; `BaseAvatar.rigFilter` (installed by ArenaScene) hides all but the body element's. Kit HUDs are not yet de-conflicted — that is the open follow-up.
+- Entanglement research lives in `src/data/QuantumBonds.ts` (per element, three quests) and `QuantumLabScene`; the loadout in `src/data/QuantumLoadout.ts`; the customization page is `ElementPanels.showQuantumCustomizeScreen` (abilities + upgrade switches + ultimate + mastery, with chip pickers), separate from the generic per-element page.
+
 ### NPC AI
 
 `NpcOpponent.doAI()` runs every frame and returns the ability ID that was cast (or `null`). It:
@@ -135,6 +157,7 @@ ArenaScene reacts to certain returned cast IDs in the `npcCastId` block (e.g. `i
 - Two independent shield systems: `shieldCharges` (blocks one full hit) and `shieldHp` (absorbs damage numerically).
 - `damageAbsorber`: optional callback `(amount) => boolean` that intercepts hits before shield logic — used by Time element's Remain ability.
 - `cooldownMult`: scales all cooldown durations (set to ~0 during Timeless, 0.5 after Rebirth mutation).
+- **Ultimate charge**: a Q ability with a cooldown ≥ 5s is paid for in points, not time (`ultCharge`, `isChargedUltimate`, `ultCost` = 60 + 6/s of the old cooldown, scaled by every cooldown mult). Points = damage dealt + taken, credited through `Fighter.creditUltDamage` (wired in ArenaScene). `castAbility`/`getCooldownRatio`/`resetCooldown`/`reduceCooldown(s)` all speak charge for those ids, so kits need no changes. Resource-charged Qs opt out via `SELF_CHARGED_ULTIMATES`. Only the two duellists have it on (`ultChargeEnabled`); a `netGhost` replica is never gated.
 
 ### State in ArenaScene
 
@@ -144,6 +167,10 @@ ArenaScene carries a large amount of per-element private state (auras, timers, a
 - Shared world objects (arrays): `puddles`, `geysers`, `timePuddles`, `icyTrails`, etc. — each entry has `owner: 'player' | 'npc'` to determine who it affects.
 
 All mutable state must be reset in `create()` (which runs on every match start).
+
+### Ability Tray
+
+The in-match tray prints no descriptions: each card is a keycap, the name, and RMB / HOLD / RECAST tags from `src/data/AbilityTags.ts` (keep it current when an ability's controls change), plus a charge readout on a charged ultimate. `UI.AbilityCardFace` draws it; kits still write the hidden `lbl`/`desc` texts and the face re-reads `lbl` ("E  Name" / "[E] Name"), so tags only show while the card carries its own ability's name.
 
 ### Data Layer
 

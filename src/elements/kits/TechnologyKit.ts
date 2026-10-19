@@ -77,14 +77,26 @@ const WEBDRAG_GRAB_RADIUS = 42;
 
 // ── Surf the web! (F+) ────────────────────────────────────────────────────
 const SURF_POPUP_LIFETIME_MS = 6000;
-const BROWSER_W = 470;
-const BROWSER_H = 340;
-const COIN_DMG = 1;
-const COIN_SPEED = 330;
-const BAGEL_COST = 10;
-const MOUSE_COST = 20;
-const FACTORY_COST = 35;
-const WHEEL_SPIN_COST = 5;
+// The PainClicker window: one skull to click, four one-time upgrades down its side.
+const PAIN_WIN_W = 300;
+const PAIN_WIN_H = 196;
+const PAIN_BAR_H = 22;
+const PAIN_DIVIDER_DX = 152;
+const PAIN_SKULL_DX = 78;
+const PAIN_SKULL_DY = 112;
+const PAIN_BTN_DX = 224;
+const PAIN_BTN_DY0 = 50;
+const PAIN_BTN_STEP = 38;
+const PAIN_BTN_W = 132;
+const PAIN_BTN_H = 32;
+/** Each bought once. `perSec` is pain (coins AND damage) generated every second. */
+const PAIN_UPGRADES = [
+  { id: 'harder', name: 'Harder clicks', blurb: '2/click', cost: 50, perSec: 0 },
+  { id: 'farm', name: 'Pain farm', blurb: '+1/s', cost: 100, perSec: 1 },
+  { id: 'factory', name: 'Pain factory', blurb: '+3/s', cost: 250, perSec: 3 },
+  { id: 'soulution', name: 'The Soulution', blurb: '+10/s', cost: 500, perSec: 10 },
+] as const;
+type PainUpgradeId = (typeof PAIN_UPGRADES)[number]['id'];
 
 // ── Admin Console (Q) ─────────────────────────────────────────────────────
 const ADMIN_WINDOW_MS = 8000;
@@ -169,7 +181,8 @@ function freshAdminState(): AdminState {
   };
 }
 
-type DragGrab = { kind: 'fighter'; ref: Fighter } | { kind: 'cord'; ref: CordState } | { kind: 'ad'; ref: AdBox };
+type DragGrab = { kind: 'fighter'; ref: Fighter } | { kind: 'cord'; ref: CordState } | { kind: 'ad'; ref: AdBox }
+  | { kind: 'window'; offX: number; offY: number };
 
 // ── Palware state ─────────────────────────────────────────────────────────
 
@@ -214,12 +227,6 @@ interface ThrownBullet {
   owner: Owner;
   x: number; y: number; vx: number; vy: number;
   damage: number;
-}
-
-interface CoinProj {
-  owner: Owner;
-  x: number; y: number; vx: number; vy: number;
-  reg: RegisteredProjectile;
 }
 
 interface TrojanState {
@@ -351,8 +358,6 @@ export class TechnologyKit {
   private crunchers: Array<{
     x: number; y: number; vx: number; vy: number;
     owner: Owner; damage: number; traveled: number; trailAccum: number;
-    /** Gaming mouse (F+): an RGB cruncher cycles hue instead of wearing the element colour. */
-    rgb: boolean;
     reg: RegisteredProjectile;
   }> = [];
 
@@ -396,17 +401,19 @@ export class TechnologyKit {
   private surfPopupUntil = 0;
   private surfPopupBounds: { x: number; y: number; w: number; h: number } | null = null;
   private browserObjs: Phaser.GameObjects.GameObject[] = [];
-  private browserContentObjs: Phaser.GameObjects.GameObject[] = [];
+  /** Texts and hit rects pinned to the window, re-placed whenever web drag moves it. */
+  private browserAnchors: Array<{ o: Phaser.GameObjects.Text | Phaser.GameObjects.Rectangle; dx: number; dy: number }> = [];
   private browserOpen = false;
-  private browserCoins = 0;
-  private browserFactory = false;
-  private browserCoinAccum = 0;
-  private browserCoinText: Phaser.GameObjects.Text | null = null;
-  private wheelSpinning = false;
-  private coinProjs: CoinProj[] = [];
-  private gamingMouseStacks: Record<Owner, number> = { player: 0, npc: 0 };
-  private dmgBuffUntil: Record<Owner, number> = { player: 0, npc: 0 };
-  private wheelSpeedUntil = 0;
+  /** The window's top-left, screen space. */
+  private browserX = 0;
+  private browserY = 0;
+  private painCoins = 0;
+  private painOwned = new Set<PainUpgradeId>();
+  private painAutoAccum = 0;
+  private painCoinText: Phaser.GameObjects.Text | null = null;
+  private painRateText: Phaser.GameObjects.Text | null = null;
+  private painUpgradeLabels = new Map<PainUpgradeId, Phaser.GameObjects.Text>();
+  private skullPunchAt = -9999;
 
   // Admin Console
   private admin: Record<Owner, AdminState> = { player: freshAdminState(), npc: freshAdminState() };
@@ -426,7 +433,6 @@ export class TechnologyKit {
 
   // Security Breach (Q+)
   private breachTimes: Record<Owner, number[]> = { player: [], npc: [] };
-  private adminJackpot: Record<Owner, boolean> = { player: false, npc: false };
 
   // Mastery requirement tracking
   private cruncherStreak = 0;
@@ -517,8 +523,7 @@ export class TechnologyKit {
   // ── Public accessors ──────────────────────────────────────────────────
 
   isPlayerSheltered(): boolean {
-    // The browser window is deliberately NOT shelter any more: browsing is a menu, so the
-    // Fighter menu guard cuts hits to 5% instead of the ad shelter hiding you outright.
+    // The PainClicker window (F+) is no shelter at all — you keep fighting while it is open.
     return this.ads.some((ad) => ad.owner === 'player' && this.rectContains(ad, this.arena.player.x, this.arena.player.y));
   }
 
@@ -536,7 +541,6 @@ export class TechnologyKit {
 
   /** Remote tech event from the online peer, routed via OnlineKit → ArenaScene. */
   handleNetMsg(msg: NetTechMsg): void {
-    const now = this.arena.scene.time.now;
     switch (msg.k) {
       case 'malware':
         this.spawnMalware('npc', msg.kind);
@@ -546,9 +550,6 @@ export class TechnologyKit {
         if (t) t.dir = this.steerDir(msg.d);
         break;
       }
-      case 'door':
-        this.spawnCoinBurst('npc', this.arena.npc.x, this.arena.npc.y, msg.coins);
-        break;
       case 'quiz': {
         const m = this.malware.player;
         if (m?.kind === 'clippy') {
@@ -556,15 +557,6 @@ export class TechnologyKit {
         }
         break;
       }
-      case 'mouse':
-        this.gamingMouseStacks.npc = msg.stacks;
-        break;
-      case 'buff':
-        this.dmgBuffUntil.npc = now + msg.ms;
-        break;
-      case 'jackpot':
-        this.adminJackpot.npc = true;
-        break;
       case 'bytefuse': {
         // The remote caster clicked their bomb — trim our replica's fuse to match.
         const bomb = this.byteBombs.find((b) => b.owner === 'npc');
@@ -657,15 +649,9 @@ export class TechnologyKit {
 
     this.closeSurfPopup();
     this.destroyBrowser();
-    this.browserCoins = 0;
-    this.browserFactory = false;
-    this.browserCoinAccum = 0;
-    this.wheelSpinning = false;
-    for (const c of this.coinProjs) this.arena.projReg.remove(c.reg);
-    this.coinProjs = [];
-    this.gamingMouseStacks = { player: 0, npc: 0 };
-    this.dmgBuffUntil = { player: 0, npc: 0 };
-    this.wheelSpeedUntil = 0;
+    this.painCoins = 0;
+    this.painOwned.clear();
+    this.painAutoAccum = 0;
 
     for (const o of OWNERS) {
       const st = this.admin[o];
@@ -686,7 +672,6 @@ export class TechnologyKit {
     this.chrome = [];
 
     this.breachTimes = { player: [], npc: [] };
-    this.adminJackpot = { player: false, npc: false };
 
     this.cruncherStreak = 0;
 
@@ -743,7 +728,8 @@ export class TechnologyKit {
       this.byteBombPointerWasDown = pointer.leftButtonDown();
     } else {
       const disarmed = Date.now() < player.disarmedUntil;
-      const overUi = this.browserOpen || this.isPointerOverSurfPopup(mouseX, mouseY);
+      // The window is small and you keep fighting round it: only a click ON it stays out of the arena.
+      const overUi = this.isPointerOverBrowser(mouseX, mouseY) || this.isPointerOverSurfPopup(mouseX, mouseY);
       // A click that lands on your own Byte-Bomb trims its fuse instead of firing a cruncher.
       const trimmedFuse = !overUi && this.handleByteBombClick(pointer, mouseX, mouseY);
       if (!disarmed && !overUi && !trimmedFuse && pointer.leftButtonDown()) this.doTechCruncherFire('player', mouseX, mouseY);
@@ -793,8 +779,7 @@ export class TechnologyKit {
     this.updateWebDrag(time);
     this.updateMalware(time, delta);
     this.updateThrownBullets(time, delta);
-    this.updateBrowser(time, delta);
-    this.updateCoinProjs(time, delta);
+    this.updateBrowser(delta);
     this.updateAdmin(time);
     this.updateJail(time);
     this.updateVpn(time, delta);
@@ -887,7 +872,7 @@ export class TechnologyKit {
     ui.clear();
 
     this.paintFirewall(floor, t);
-    this.paintCrunchers(world, time, t);
+    this.paintCrunchers(world, t);
     this.paintCords(world, t);
     this.paintByteBombs(world, floor, time);
     this.paintMalware(world, t);
@@ -897,7 +882,7 @@ export class TechnologyKit {
     this.paintJail(ui, time, t);
   }
 
-  /** The odds and ends: stolen rounds the goose is throwing back, and loose browser coins. */
+  /** The odds and ends: stolen rounds the goose is throwing back. */
   private paintLoose(g: Phaser.GameObjects.Graphics): void {
     for (const b of this.thrownBullets) {
       const ang = Math.atan2(b.vy, b.vx);
@@ -910,29 +895,17 @@ export class TechnologyKit {
       g.fillStyle(tint(TECH.white), 0.85);
       g.fillCircle(b.x - 1.4, b.y - 1.6, 1.8);
     }
-    for (const c of this.coinProjs) {
-      const tint = this.col(c.owner);
-      // Coins spin edge-on and back, so a scatter of them shimmers instead of sliding.
-      const spin = Math.abs(Math.cos(c.x * 0.06 + c.y * 0.06));
-      g.fillStyle(tint(TECH.gold), 1);
-      g.fillEllipse(c.x, c.y, 10 * spin + 2, 10);
-      g.lineStyle(1.2, tint(TECH.night), 0.7);
-      g.strokeEllipse(c.x, c.y, 10 * spin + 2, 10);
-    }
   }
 
-  /** The colour a cruncher is wearing this frame. Gaming mice (F+) cycle hue; the rest don't. */
-  private cruncherColor(c: { owner: Owner; rgb: boolean }, time: number, i: number): number {
-    if (!c.rgb) return c.owner === 'player' ? TECH.phosphor : TECH.cyan;
-    const hue = ((time / 4) + i * 40) % 360;
-    return Phaser.Display.Color.HSLToColor(hue / 360, 1, 0.6).color;
+  /** The colour a cruncher wears. */
+  private cruncherColor(owner: Owner): number {
+    return owner === 'player' ? TECH.phosphor : TECH.cyan;
   }
 
-  private paintCrunchers(g: Phaser.GameObjects.Graphics, time: number, t: number): void {
-    for (let i = 0; i < this.crunchers.length; i++) {
-      const c = this.crunchers[i];
+  private paintCrunchers(g: Phaser.GameObjects.Graphics, t: number): void {
+    for (const c of this.crunchers) {
       TechnologyFx.drawCruncher(g, this.col(c.owner), c.x, c.y, Math.atan2(c.vy, c.vx), t,
-        this.cruncherColor(c, time, i), 1);
+        this.cruncherColor(c.owner), 1);
     }
   }
 
@@ -1112,12 +1085,11 @@ export class TechnologyKit {
     }
   }
 
-  /** Wheel of Fortune speed buff + the VPN mastery ramp — read in ArenaScene's speed-mult block. */
+  /** The VPN mastery ramp + the Adrenaline dose — read in ArenaScene's speed-mult block. */
   getPlayerSpeedMult(): number {
     const time = this.arena.scene.time.now;
-    const wheel = time < this.wheelSpeedUntil ? 1.5 : 1;
     const adrenaline = 1 + this.adrenalineStacksFor('player', time) * ADRENALINE_SPEED_PER_STACK;
-    return wheel * (1 + this.vpnRamp * VPN_MAX_BONUS) * adrenaline;
+    return (1 + this.vpnRamp * VPN_MAX_BONUS) * adrenaline;
   }
 
   private updateShelter(owner: Owner): void {
@@ -1145,15 +1117,12 @@ export class TechnologyKit {
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     const angle = Math.atan2(ty - caster.y, tx - caster.x);
     const speed = CRUNCHER_BASE_SPEED * (1 + this.cruncherSpeed[owner] / 100);
-    const mouseMult = 1 + this.gamingMouseStacks[owner] * 0.1;
-    const buffMult = time < this.dmgBuffUntil[owner] ? 1.25 : 1;
-    const damage = CRUNCHER_BASE_DAMAGE * (1 + this.cruncherDmg[owner] / 100) * mouseMult * buffMult;
+    const damage = CRUNCHER_BASE_DAMAGE * (1 + this.cruncherDmg[owner] / 100);
     this.gesture(owner, 'tech-cruncher', angle);
     const entry = {
       x: caster.x, y: caster.y,
       vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
       owner, damage, traveled: 0, trailAccum: 0,
-      rgb: this.gamingMouseStacks[owner] > 0,
       reg: null as unknown as RegisteredProjectile,
     };
     entry.reg = {
@@ -1273,7 +1242,7 @@ export class TechnologyKit {
         // Emitted out of the back of the shot, not off its centre.
         const back = Math.atan2(-c.vy, -c.vx);
         this.spawnBinaryTrail(c.owner, c.x + Math.cos(back) * 12, c.y + Math.sin(back) * 12,
-          this.cruncherColor(c, time, i));
+          this.cruncherColor(c.owner));
       }
 
       let hitTarget: Fighter | null = null;
@@ -1285,7 +1254,6 @@ export class TechnologyKit {
       if (hitTarget) {
         hitTarget.takeDamage(c.damage);
         this.arena.spawnHitFlash(hitTarget.x, hitTarget.y, 0x33ff88);
-        this.arena.spawnDamageNumber(hitTarget.x, hitTarget.y, c.damage);
         this.bumpCruncher(c.owner, true);
         this.noteCruncherResolved(c.owner, true);
         this.removeCruncher(i);
@@ -2087,7 +2055,10 @@ export class TechnologyKit {
     const justUp = !isDown && this.dragPointerWasDown;
     this.dragPointerWasDown = isDown;
 
-    if (justDown && !this.dragGrabbed && !this.browserOpen && !this.isPointerOverSurfPopup(mouseX, mouseY)) {
+    if (justDown && !this.dragGrabbed && this.isPointerOverBrowserGrip(mouseX, mouseY)) {
+      // Surf the web! (F+): the PainClicker window is draggable by its title bar.
+      this.dragGrabbed = { kind: 'window', offX: mouseX - this.browserX, offY: mouseY - this.browserY };
+    } else if (justDown && !this.dragGrabbed && !this.isPointerOverBrowser(mouseX, mouseY) && !this.isPointerOverSurfPopup(mouseX, mouseY)) {
       if (Phaser.Math.Distance.Between(mouseX, mouseY, this.arena.npc.x, this.arena.npc.y) <= WEBDRAG_GRAB_RADIUS) {
         this.dragGrabbed = { kind: 'fighter', ref: this.arena.npc };
       } else if (this.cords.player && Phaser.Math.Distance.Between(mouseX, mouseY, this.cords.player.x, this.cords.player.y) <= WEBDRAG_GRAB_RADIUS) {
@@ -2102,6 +2073,8 @@ export class TechnologyKit {
       if (this.dragGrabbed.kind === 'fighter') {
         this.dragGrabbed.ref.setPosition(mouseX, mouseY);
         (this.dragGrabbed.ref.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
+      } else if (this.dragGrabbed.kind === 'window') {
+        this.moveBrowser(mouseX - this.dragGrabbed.offX, mouseY - this.dragGrabbed.offY);
       } else if (this.dragGrabbed.kind === 'cord') {
         this.dragGrabbed.ref.x = mouseX;
         this.dragGrabbed.ref.y = mouseY;
@@ -2169,363 +2142,233 @@ export class TechnologyKit {
     this.surfPopupUntil = 0;
   }
 
-  private browserCenter(): { cx: number; cy: number } {
+  // ── PainClicker — the Surf the web! (F+) window ─────────────────────
+
+  private isPointerOverBrowser(x: number, y: number): boolean {
+    return this.browserOpen
+      && x >= this.browserX && x <= this.browserX + PAIN_WIN_W
+      && y >= this.browserY && y <= this.browserY + PAIN_WIN_H;
+  }
+
+  /** The title bar is the grip web drag takes hold of (the close box excluded). */
+  private isPointerOverBrowserGrip(x: number, y: number): boolean {
+    return this.isPointerOverBrowser(x, y) && y <= this.browserY + PAIN_BAR_H + 2
+      && x < this.browserX + PAIN_WIN_W - 24;
+  }
+
+  /** Pin a text or hit rect to the window at an offset from its top-left. */
+  private anchorToBrowser<T extends Phaser.GameObjects.Text | Phaser.GameObjects.Rectangle>(o: T, dx: number, dy: number): T {
+    o.setPosition(this.browserX + dx, this.browserY + dy);
+    this.browserAnchors.push({ o, dx, dy });
+    this.browserObjs.push(o);
+    return o;
+  }
+
+  private moveBrowser(x: number, y: number): void {
     const { width: W, height: H } = this.arena.scene.scale;
-    return { cx: W / 2, cy: H / 2 - 10 };
+    this.browserX = Phaser.Math.Clamp(x, 0, W - PAIN_WIN_W);
+    this.browserY = Phaser.Math.Clamp(y, 0, H - PAIN_WIN_H);
+    for (const a of this.browserAnchors) a.o.setPosition(this.browserX + a.dx, this.browserY + a.dy);
+  }
+
+  private painPerSecond(): number {
+    let n = 0;
+    for (const u of PAIN_UPGRADES) if (this.painOwned.has(u.id)) n += u.perSec;
+    return n;
+  }
+
+  private painPerClick(): number {
+    return this.painOwned.has('harder') ? 2 : 1;
   }
 
   private openBrowser(): void {
     if (this.browserOpen) return;
     this.browserOpen = true;
-    this.browserCoins = 0;
-    this.browserFactory = false;
-    this.browserCoinAccum = 0;
+    this.painCoins = 0;
+    this.painOwned.clear();
+    this.painAutoAccum = 0;
+    this.skullPunchAt = -9999;
     const scene = this.arena.scene;
-    const { cx, cy } = this.browserCenter();
+    const { width: W, height: H } = scene.scale;
+    this.browserX = W - PAIN_WIN_W - 16;
+    this.browserY = H / 2 - PAIN_WIN_H / 2 - 30;
 
-    // A late-90s browser on a CRT: chrome window, a navigation strip with back/forward/reload
-    // glyphs and the URL well, a coin wallet chip in the title bar, and a status bar at the foot
-    // with a throbbing "loading" globe.
-    const x0 = cx - BROWSER_W / 2, y0 = cy - BROWSER_H / 2;
-    const frame = this.addChrome(44, (cg, ct) => {
-      crtWindow(cg, this.pcol, x0, y0, BROWSER_W, BROWSER_H, ct, {
-        bezel: TECH.slate, bar: TECH.adBlue, screen: 0x10101e, glow: TECH.cyan, barH: 28,
-      });
-      // nav strip
-      cg.fillStyle(this.pcol(TECH.steel), 1);
-      cg.fillRect(x0 + 6, y0 + 32, BROWSER_W - 12, 20);
-      cg.fillStyle(this.pcol(TECH.night), 1);
-      cg.fillRoundedRect(x0 + 12, y0 + 33, BROWSER_W - 24, 18, 3);
-      cg.lineStyle(1, this.pcol(TECH.wire), 0.6);
-      cg.strokeRoundedRect(x0 + 12, y0 + 33, BROWSER_W - 24, 18, 3);
-      // padlock-ish secure glyph at the left of the URL well
-      cg.fillStyle(this.pcol(TECH.phosphorDim), 1);
-      cg.fillRect(x0 + 15, y0 + 40, 5, 5);
-      cg.lineStyle(1.2, this.pcol(TECH.phosphorDim), 1);
-      cg.strokeCircle(x0 + 17.5, y0 + 39, 2);
-      // wallet chip behind the coin counter
-      cg.fillStyle(this.pcol(TECH.night), 0.85);
-      cg.fillRoundedRect(x0 + BROWSER_W - 108, y0 + 6, 52, 17, 4);
-      cg.lineStyle(1, this.pcol(TECH.amber), 0.7);
-      cg.strokeRoundedRect(x0 + BROWSER_W - 108, y0 + 6, 52, 17, 4);
-      // status bar
-      const sy = y0 + BROWSER_H - 15;
-      cg.fillStyle(this.pcol(TECH.steel), 1);
-      cg.fillRect(x0 + 6, sy, BROWSER_W - 12, 10);
-      const gx = x0 + BROWSER_W - 16, gy = sy + 5;
-      cg.fillStyle(this.pcol(TECH.cyan), 0.6 + 0.4 * Math.sin(ct * 5));
-      cg.fillCircle(gx, gy, 4);
-      cg.lineStyle(1, this.pcol(TECH.night), 0.8);
-      cg.strokeEllipse(gx, gy, 3 + 2 * Math.abs(Math.sin(ct * 2)), 8);
-      cg.lineBetween(gx - 4, gy, gx + 4, gy);
-      const load = (ct * 0.4) % 1;
-      cg.fillStyle(this.pcol(TECH.phosphorDim), 0.8);
-      cg.fillRect(x0 + 10, sy + 3, (BROWSER_W - 44) * load, 4);
+    const close = this.anchorToBrowser(this.hitRect(0, 0, 18, 18, 47), PAIN_WIN_W - 13, 14);
+    close.on('pointerdown', () => this.destroyBrowser());
+    const skull = this.anchorToBrowser(this.hitRect(0, 0, 96, 100), PAIN_SKULL_DX, PAIN_SKULL_DY);
+    skull.on('pointerdown', () => {
+      this.skullPunchAt = scene.time.now;
+      this.inflictPain(this.painPerClick(), true);
     });
-    const title = scene.add.text(x0 + 12, y0 + 18, '🌐 NetScape Explorer', { fontSize: '13px', color: '#e6f0ff', fontFamily: FONT_MONO, fontStyle: 'bold', stroke: '#0a1218', strokeThickness: 2 }).setOrigin(0, 0.5).setDepth(46).setScrollFactor(0);
-    const url = scene.add.text(x0 + 26, y0 + 42, 'https://totally.legit.web', { fontSize: '11px', color: '#88dd99', fontFamily: FONT_MONO }).setOrigin(0, 0.5).setDepth(46).setScrollFactor(0);
-    this.browserCoinText = scene.add.text(x0 + BROWSER_W - 60, y0 + 15, '🪙 0', { fontSize: '12px', color: '#ffdd66', fontFamily: FONT_MONO, fontStyle: 'bold', stroke: '#0a1218', strokeThickness: 2 }).setOrigin(1, 0.5).setDepth(46).setScrollFactor(0);
-    this.browserObjs = [frame, title, url, this.browserCoinText];
-    this.showBrowserHome();
+    const buyRects = PAIN_UPGRADES.map((u, i) => {
+      const r = this.anchorToBrowser(this.hitRect(0, 0, PAIN_BTN_W, PAIN_BTN_H), PAIN_BTN_DX, PAIN_BTN_DY0 + i * PAIN_BTN_STEP);
+      r.on('pointerdown', () => this.buyPainUpgrade(u.id));
+      return r;
+    });
+
+    // A grubby little CRT window: plum title bar, the skull on the left pane, the shop column on
+    // the right. While web drag is live the title bar breathes mint — that is where you grab it.
+    const frame = this.addChrome(44, (cg, ct) => {
+      const x0 = this.browserX, y0 = this.browserY;
+      crtWindow(cg, this.pcol, x0, y0, PAIN_WIN_W, PAIN_WIN_H, ct, {
+        bezel: TECH.slate, bar: TECH.plum, screen: 0x12080e, glow: TECH.alert, barH: PAIN_BAR_H,
+      });
+      if (this.dragActive.player) {
+        cg.lineStyle(1.6, this.pcol(TECH.mint), 0.5 + 0.35 * Math.sin(ct * 6));
+        cg.strokeRoundedRect(x0 + 3, y0 + 3, PAIN_WIN_W - 6, PAIN_BAR_H, 3);
+      }
+      if (close.getData('hover')) {
+        cg.lineStyle(1.5, this.pcol(TECH.white), 0.8);
+        cg.strokeRect(x0 + PAIN_WIN_W - 22, y0 + 5, 18, 18);
+      }
+      // the pane divider
+      cg.lineStyle(1, this.pcol(TECH.wire), 0.3);
+      cg.lineBetween(x0 + PAIN_DIVIDER_DX, y0 + PAIN_BAR_H + 10, x0 + PAIN_DIVIDER_DX, y0 + PAIN_WIN_H - 12);
+      PAIN_UPGRADES.forEach((u, i) => {
+        const owned = this.painOwned.has(u.id);
+        const color = owned ? 0x225533 : this.painCoins >= u.cost ? 0x7a2233 : 0x3a2a33;
+        crtButton(cg, this.pcol, x0 + PAIN_BTN_DX, y0 + PAIN_BTN_DY0 + i * PAIN_BTN_STEP, PAIN_BTN_W, PAIN_BTN_H,
+          color, !owned && !!buyRects[i].getData('hover'), ct);
+      });
+      const punch = Math.max(0, 1 - (scene.time.now - this.skullPunchAt) / 140);
+      this.drawPainSkull(cg, x0 + PAIN_SKULL_DX, y0 + PAIN_SKULL_DY, 1 - 0.12 * punch, ct, !!skull.getData('hover'));
+    });
+    this.browserObjs.push(frame);
+
+    const txt = (s: string, size: number, color: string): Phaser.GameObjects.Text =>
+      scene.add.text(0, 0, s, { fontSize: `${size}px`, color, fontFamily: FONT_MONO, fontStyle: 'bold', align: 'center', stroke: '#0a1218', strokeThickness: 2 })
+        .setDepth(46).setScrollFactor(0);
+    this.anchorToBrowser(txt('💀 PainClicker.exe', 12, '#ffd6e0').setOrigin(0, 0.5), 10, 14);
+    this.painCoinText = this.anchorToBrowser(txt('', 13, '#ff8899').setOrigin(0.5), PAIN_SKULL_DX, PAIN_BAR_H + 16);
+    this.painRateText = this.anchorToBrowser(txt('', 10, '#bb8899').setOrigin(0.5), PAIN_SKULL_DX, PAIN_WIN_H - 18);
+    this.painUpgradeLabels.clear();
+    PAIN_UPGRADES.forEach((u, i) => {
+      const lbl = this.anchorToBrowser(txt('', 10, '#ffffff').setOrigin(0.5), PAIN_BTN_DX, PAIN_BTN_DY0 + i * PAIN_BTN_STEP);
+      this.painUpgradeLabels.set(u.id, lbl);
+    });
+    this.refreshPainTexts();
   }
 
-  /** Full teardown of the window UI (does not fire the Door effect). */
+  /** The skull: a bone cranium with a cracked crown, red-lit sockets, and a row of teeth. */
+  private drawPainSkull(g: Phaser.GameObjects.Graphics, cx: number, cy: number, s: number, t: number, hover: boolean): void {
+    const c = this.pcol;
+    const bone = 0xe8dcc4, boneShade = 0xb8a88a, socket = 0x1a0a10;
+    g.fillStyle(c(TECH.alert), (hover ? 0.16 : 0.09) + 0.04 * Math.sin(t * 3));
+    g.fillCircle(cx, cy, 50 * s);
+    // jaw under the cranium, then the cranium over its top edge
+    g.fillStyle(c(boneShade), 1);
+    g.fillRoundedRect(cx - 21 * s, cy + 6 * s, 42 * s, 26 * s, 7 * s);
+    g.fillStyle(c(bone), 1);
+    g.fillRoundedRect(cx - 19 * s, cy + 6 * s, 38 * s, 22 * s, 6 * s);
+    g.fillCircle(cx, cy - 8 * s, 33 * s);
+    g.fillStyle(c(boneShade), 0.55);
+    g.fillEllipse(cx, cy + 10 * s, 52 * s, 12 * s);
+    g.fillStyle(c(TECH.white), 0.35);
+    g.fillEllipse(cx - 11 * s, cy - 26 * s, 20 * s, 9 * s);
+    // eye sockets with their glow
+    const glow = 0.65 + 0.35 * Math.sin(t * 5);
+    for (const side of [-1, 1]) {
+      const ex = cx + side * 13 * s, ey = cy - 5 * s;
+      g.fillStyle(c(socket), 1);
+      g.fillEllipse(ex, ey, 19 * s, 16 * s);
+      g.fillStyle(c(TECH.alert), 0.3 * glow);
+      g.fillCircle(ex, ey + 1 * s, 6 * s);
+      g.fillStyle(c(TECH.alert), glow);
+      g.fillCircle(ex, ey + 1 * s, 3 * s);
+    }
+    // nose, a notch of a triangle
+    g.fillStyle(c(socket), 1);
+    g.fillTriangle(cx, cy + 3 * s, cx - 4.5 * s, cy + 12 * s, cx + 4.5 * s, cy + 12 * s);
+    // teeth
+    g.lineStyle(1.2 * s, c(socket), 0.85);
+    g.lineBetween(cx - 15 * s, cy + 19 * s, cx + 15 * s, cy + 19 * s);
+    for (let k = -2; k <= 2; k++) g.lineBetween(cx + k * 6 * s, cy + 14 * s, cx + k * 6 * s, cy + 25 * s);
+    // the crack down the crown
+    g.lineStyle(1.4 * s, c(socket), 0.75);
+    g.beginPath();
+    g.moveTo(cx + 4 * s, cy - 40 * s);
+    g.lineTo(cx + 9 * s, cy - 31 * s);
+    g.lineTo(cx + 5 * s, cy - 25 * s);
+    g.lineTo(cx + 11 * s, cy - 18 * s);
+    g.strokePath();
+    g.lineStyle(1.5, c(TECH.night), 0.8);
+    g.strokeCircle(cx, cy - 8 * s, 33 * s);
+  }
+
+  /** One dose of pain: `n` coins in the wallet and `n` damage on the nearest enemy. */
+  private inflictPain(n: number, fromClick: boolean): void {
+    const player = this.arena.player;
+    this.gainPainCoins(n);
+    const target = this.nearestEnemyOf('player', player.x, player.y);
+    if (target) {
+      target.takeDamage(n);
+      this.arena.spawnHitFlash(target.x, target.y, 0xff3355);
+    }
+    const sx = this.browserX + PAIN_SKULL_DX + (fromClick ? Phaser.Math.Between(-24, 24) : 0);
+    const sy = this.browserY + PAIN_SKULL_DY - 40;
+    this.popBrowserText(sx, sy, `+${n} 💀`, fromClick ? '#ff8899' : '#ffbb66');
+    this.refreshPainTexts();
+  }
+
+  private buyPainUpgrade(id: PainUpgradeId): void {
+    const u = PAIN_UPGRADES.find((p) => p.id === id);
+    if (!u || this.painOwned.has(id)) return;
+    const bx = this.browserX + PAIN_BTN_DX;
+    const by = this.browserY + PAIN_BTN_DY0 + PAIN_UPGRADES.indexOf(u) * PAIN_BTN_STEP;
+    if (this.painCoins < u.cost) {
+      this.popBrowserText(bx, by - 16, 'Not enough pain!', '#ff6666');
+      return;
+    }
+    this.painCoins -= u.cost;
+    this.painOwned.add(id);
+    this.popBrowserText(bx, by - 16, `${u.name}!`, '#88ffaa');
+    this.refreshPainTexts();
+  }
+
+  private refreshPainTexts(): void {
+    this.painCoinText?.setText(`💀 ${this.painCoins}`);
+    this.painRateText?.setText(`${this.painPerClick()}/click · ${this.painPerSecond()}/s`);
+    for (const u of PAIN_UPGRADES) {
+      const owned = this.painOwned.has(u.id);
+      this.painUpgradeLabels.get(u.id)?.setText(owned ? `✔ ${u.name}` : `${u.name}\n${u.blurb} · ${u.cost}💀`);
+    }
+  }
+
+  /** A little screen-space pop that rises off the window (above it — world floating text sits under). */
+  private popBrowserText(x: number, y: number, msg: string, color: string): void {
+    const t = this.arena.scene.add.text(x, y, msg, { fontSize: '12px', color, fontFamily: FONT_MONO, fontStyle: 'bold', stroke: '#0a1218', strokeThickness: 3 })
+      .setOrigin(0.5).setDepth(48).setScrollFactor(0);
+    this.arena.scene.tweens.add({ targets: t, y: y - 22, alpha: 0, duration: 700, onComplete: () => t.destroy() });
+  }
+
+  /** Full teardown of the window. */
   private destroyBrowser(): void {
-    for (const o of this.browserContentObjs) o.destroy();
-    this.browserContentObjs = [];
     for (const o of this.browserObjs) o.destroy();
     this.browserObjs = [];
-    this.browserCoinText = null;
+    this.browserAnchors = [];
+    this.painCoinText = null;
+    this.painRateText = null;
+    this.painUpgradeLabels.clear();
     this.browserOpen = false;
-    this.wheelSpinning = false;
+    if (this.dragGrabbed?.kind === 'window') this.dragGrabbed = null;
   }
 
-  private clearBrowserContent(): void {
-    for (const o of this.browserContentObjs) o.destroy();
-    this.browserContentObjs = [];
-    this.wheelSpinning = false;
-  }
-
-  private mkBrowserButton(x: number, y: number, w: number, h: number, label: string, color: number, cb: () => void): Phaser.GameObjects.GameObject[] {
-    const scene = this.arena.scene;
-    const rect = this.hitRect(x, y, w, h);
-    const cap = this.addChrome(45, (cg, ct) => crtButton(cg, this.pcol, x, y, w, h, color, !!rect.getData('hover'), ct));
-    const lbl = scene.add.text(x, y, label, {
-      fontSize: '13px', color: '#ffffff', fontFamily: FONT_MONO, fontStyle: 'bold', align: 'center',
-      stroke: '#0a1218', strokeThickness: 3,
-    }).setOrigin(0.5).setDepth(46).setScrollFactor(0);
-    rect.on('pointerdown', cb);
-    return [cap, rect, lbl];
-  }
-
-  private mkExitButton(): Phaser.GameObjects.GameObject[] {
-    const { cx, cy } = this.browserCenter();
-    return this.mkBrowserButton(cx - BROWSER_W / 2 + 44, cy + BROWSER_H / 2 - 24, 64, 22, '← back', 0x444466, () => this.showBrowserHome());
-  }
-
-  private updateBrowserCoinText(): void {
-    this.browserCoinText?.setText(`🪙 ${this.browserCoins}`);
-  }
-
-  /** Every coin earned on the web — clicker, factory or wheel — counts toward the mastery. */
-  private gainBrowserCoins(n: number): void {
+  /** Every pain coin earned — clicked or farmed — counts toward the mastery. */
+  private gainPainCoins(n: number): void {
     if (n <= 0) return;
-    // Ruin's Combo Breaker halves every meter in the game — the coin counter included.
-    this.browserCoins += meterGain(this.arena.player, n);
+    // Ruin's Combo Breaker halves every meter in the game — the pain wallet included.
+    this.painCoins += meterGain(this.arena.player, n);
     this.arena.recordMasteryStat('webCoins', n);
   }
 
-  private showBrowserHome(): void {
-    this.clearBrowserContent();
-    const { cx, cy } = this.browserCenter();
-    const bw = 190, bh = 54;
-    this.browserContentObjs = [
-      ...this.mkBrowserButton(cx - 105, cy - 24, bw, bh, '🪙 Coin clicker', 0x555522, () => this.showCoinClicker()),
-      ...this.mkBrowserButton(cx + 105, cy - 24, bw, bh, '🥯 Grub-Shop', 0x225544, () => this.showGrubShop()),
-      ...this.mkBrowserButton(cx - 105, cy + 44, bw, bh, '🎡 Wheel of fortune', 0x442266, () => this.showWheel()),
-      ...this.mkBrowserButton(cx + 105, cy + 44, bw, bh, '🚪 Door', 0x662222, () => this.doorExit()),
-    ];
-  }
-
-  private showCoinClicker(): void {
-    this.clearBrowserContent();
-    const scene = this.arena.scene;
-    const { cx, cy } = this.browserCenter();
-    const coin = scene.add.text(cx, cy + 14, '🪙', { fontSize: '84px' }).setOrigin(0.5).setDepth(46).setScrollFactor(0)
-      .setInteractive({ useHandCursor: true });
-    coin.on('pointerdown', () => {
-      this.gainBrowserCoins(1);
-      this.updateBrowserCoinText();
-      scene.tweens.add({ targets: coin, scaleX: 1.15, scaleY: 1.15, duration: 60, yoyo: true });
-    });
-    const hint = scene.add.text(cx, cy - 52, 'Click the coin!', { fontSize: '14px', color: '#ffdd66', fontFamily: FONT_MONO, fontStyle: 'bold', stroke: '#0a1218', strokeThickness: 3 }).setOrigin(0.5).setDepth(46).setScrollFactor(0);
-    // A spotlight of turning gold rays behind the coin, so the clicker reads as a prize.
-    const rays = this.addChrome(45, (cg, ct) => {
-      cg.fillStyle(this.pcol(TECH.amber), 0.12);
-      cg.fillCircle(cx, cy + 14, 58);
-      for (let k = 0; k < 12; k++) {
-        const a = ct * 0.6 + (k / 12) * Math.PI * 2;
-        cg.fillStyle(this.pcol(TECH.gold), 0.14);
-        cg.fillTriangle(cx, cy + 14,
-          cx + Math.cos(a - 0.12) * 70, cy + 14 + Math.sin(a - 0.12) * 70,
-          cx + Math.cos(a + 0.12) * 70, cy + 14 + Math.sin(a + 0.12) * 70);
-      }
-    });
-    this.browserContentObjs = [rays, coin, hint, ...this.mkExitButton()];
-  }
-
-  private showGrubShop(): void {
-    this.clearBrowserContent();
-    const { cx, cy } = this.browserCenter();
-    const items: Array<{ label: string; cost: number; buy: () => void }> = [
-      {
-        label: `💿 CD bagel — heal 25 (${BAGEL_COST}c)`,
-        cost: BAGEL_COST,
-        buy: () => {
-          this.arena.player.heal(25);
-          this.arena.spawnFloatingText(this.arena.player.x, this.arena.player.y - 40, '💿 +25', '#66ff88');
-        },
-      },
-      {
-        label: `🖱️ Gaming mouse — RGB +10% dmg (${MOUSE_COST}c)`,
-        cost: MOUSE_COST,
-        buy: () => {
-          this.gamingMouseStacks.player++;
-          if (this.arena.isOnline) this.arena.sendTechMsg({ t: 'tech', k: 'mouse', stacks: this.gamingMouseStacks.player });
-          this.arena.spawnFloatingText(this.arena.player.x, this.arena.player.y - 40, `🖱️ RGB x${this.gamingMouseStacks.player}`, '#ff66ff');
-        },
-      },
-      {
-        label: `🏭 Coin factory — +1c/s (${FACTORY_COST}c)`,
-        cost: FACTORY_COST,
-        buy: () => { this.browserFactory = true; },
-      },
-    ];
-    const objs: Phaser.GameObjects.GameObject[] = [];
-    items.forEach((item, i) => {
-      objs.push(...this.mkBrowserButton(cx, cy - 34 + i * 44, BROWSER_W - 60, 36, item.label, 0x225544, () => {
-        if (this.browserCoins < item.cost) {
-          this.flashBrowserMsg('Not enough coins!');
-          return;
-        }
-        this.browserCoins -= item.cost;
-        this.updateBrowserCoinText();
-        item.buy();
-        this.flashBrowserMsg('Purchased!');
-      }));
-    });
-    this.browserContentObjs = [...objs, ...this.mkExitButton()];
-  }
-
-  private flashBrowserMsg(msg: string): void {
-    const { cx, cy } = this.browserCenter();
-    const t = this.arena.scene.add.text(cx, cy + BROWSER_H / 2 - 46, msg, { fontSize: '12px', color: '#ffff88', fontFamily: FONT_MONO, fontStyle: 'bold', stroke: '#0a1218', strokeThickness: 3 }).setOrigin(0.5).setDepth(47).setScrollFactor(0);
-    this.browserContentObjs.push(t);
-    this.arena.scene.tweens.add({ targets: t, alpha: 0, duration: 1200, onComplete: () => t.destroy() });
-  }
-
-  private showWheel(): void {
-    this.clearBrowserContent();
-    const scene = this.arena.scene;
-    const { cx, cy } = this.browserCenter();
-    const wheel = scene.add.text(cx, cy + 4, '🎡', { fontSize: '64px' }).setOrigin(0.5).setDepth(46).setScrollFactor(0);
-    const result = scene.add.text(cx, cy - 52, `Spin for ${WHEEL_SPIN_COST} coins!`, { fontSize: '14px', color: '#ddaaff', fontFamily: FONT_MONO, fontStyle: 'bold', stroke: '#0a1218', strokeThickness: 3 }).setOrigin(0.5).setDepth(46).setScrollFactor(0);
-    const spinBtn = this.mkBrowserButton(cx + BROWSER_W / 2 - 70, cy + BROWSER_H / 2 - 24, 100, 22, `SPIN (${WHEEL_SPIN_COST}c)`, 0x663388, () => {
-      if (this.wheelSpinning) return;
-      if (this.browserCoins < WHEEL_SPIN_COST) { this.flashBrowserMsg('Not enough coins!'); return; }
-      this.browserCoins -= WHEEL_SPIN_COST;
-      this.updateBrowserCoinText();
-      this.spinWheel(wheel, result);
-    });
-    this.browserContentObjs = [wheel, result, ...spinBtn, ...this.mkExitButton()];
-  }
-
-  private spinWheel(wheel: Phaser.GameObjects.Text, result: Phaser.GameObjects.Text): void {
-    const scene = this.arena.scene;
-    this.wheelSpinning = true;
-    scene.tweens.add({ targets: wheel, angle: 720, duration: 1000, onComplete: () => wheel.setAngle(0) });
-    const cycle = ['Win!', 'Lose', 'Heal!', 'Buff', 'Big Win!', 'Big Heal', '???'];
-    let tick = 0;
-    const cycler = scene.time.addEvent({
-      repeat: 9,
-      delay: 100,
-      callback: () => { result.setText(cycle[tick++ % cycle.length]); },
-    });
-    scene.time.delayedCall(1050, () => {
-      cycler.remove();
-      this.wheelSpinning = false;
-      if (!this.browserOpen || !result.active) return;
-      this.applyWheelOutcome(result);
-    });
-  }
-
-  private applyWheelOutcome(result: Phaser.GameObjects.Text): void {
-    const now = this.arena.scene.time.now;
-    const player = this.arena.player;
-    if (Math.random() < 0.01) {
-      this.adminJackpot.player = true;
-      if (this.arena.isOnline) this.arena.sendTechMsg({ t: 'tech', k: 'jackpot' });
-      result.setText('💥 JACKPOT! Admin = 999');
-      result.setColor('#ffdd00');
-      this.arena.scene.cameras.main.shake(300, 0.006);
-      return;
-    }
-    result.setColor('#ddaaff');
-    const roll = Phaser.Math.Between(0, 7);
-    switch (roll) {
-      case 0:
-        this.gainBrowserCoins(10);
-        result.setText('Win! +10 coins');
-        break;
-      case 1:
-        this.gainBrowserCoins(25);
-        result.setText('Big Win! +25 coins');
-        break;
-      case 2:
-        this.browserCoins = Math.max(0, this.browserCoins - 10);
-        result.setText('Lose… -10 coins');
-        break;
-      case 3:
-        this.browserCoins = Math.max(0, this.browserCoins - 25);
-        result.setText('Big Lose… -25 coins');
-        break;
-      case 4:
-        player.heal(20);
-        result.setText('Heal! +20 HP');
-        break;
-      case 5:
-        player.heal(50);
-        result.setText('Big Heal! +50 HP');
-        break;
-      case 6:
-        this.wheelSpeedUntil = now + 5000;
-        result.setText('Buff! +50% speed (5s)');
-        break;
-      case 7:
-        this.wheelSpeedUntil = now + 12000;
-        this.dmgBuffUntil.player = now + 12000;
-        if (this.arena.isOnline) this.arena.sendTechMsg({ t: 'tech', k: 'buff', ms: 12000 });
-        result.setText('Big Buff! speed+dmg (12s)');
-        break;
-    }
-    this.updateBrowserCoinText();
-  }
-
-  private doorExit(): void {
-    const coins = this.browserCoins;
-    const { cx, cy } = this.browserCenter();
-    this.destroyBrowser();
-    this.browserCoins = 0;
-    this.browserFactory = false;
-
-    // Explosion flash where the window was.
-    const burst = this.arena.scene.add.circle(cx, cy, 40, 0xffaa44, 0.8).setDepth(46).setScrollFactor(0);
-    this.arena.scene.tweens.add({ targets: burst, scaleX: 4, scaleY: 4, alpha: 0, duration: 350, onComplete: () => burst.destroy() });
-    this.arena.scene.cameras.main.shake(200, 0.005);
-
-    this.spawnCoinBurst('player', this.arena.player.x, this.arena.player.y, coins);
-    if (this.arena.isOnline) this.arena.sendTechMsg({ t: 'tech', k: 'door', coins });
-  }
-
-  private spawnCoinBurst(owner: Owner, x: number, y: number, count: number): void {
-    for (let i = 0; i < count; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const speed = COIN_SPEED * Phaser.Math.FloatBetween(0.7, 1.3);
-      const entry: CoinProj = {
-        owner,
-        x, y,
-        vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
-        reg: null as unknown as RegisteredProjectile,
-      };
-      entry.reg = {
-        owner,
-        getX: () => entry.x,
-        getY: () => entry.y,
-        damage: COIN_DMG,
-        steal: () => {
-          const idx = this.coinProjs.indexOf(entry);
-          if (idx >= 0) this.coinProjs.splice(idx, 1);
-        },
-      };
-      this.coinProjs.push(entry);
-      this.arena.projReg.add(entry.reg);
-    }
-    if (count > 0) this.arena.spawnFloatingText(x, y - 40, `💥 ${count} coins!`, '#ffdd44');
-  }
-
-  private updateCoinProjs(time: number, delta: number): void {
-    void time;
-    const { width: W, height: H } = this.arena.scene.scale;
-    for (let i = this.coinProjs.length - 1; i >= 0; i--) {
-      const c = this.coinProjs[i];
-      c.x += c.vx * delta / 1000;
-      c.y += c.vy * delta / 1000;
-      const hit = this.enemiesOf(c.owner).find((f) => Phaser.Math.Distance.Between(c.x, c.y, f.x, f.y) <= 22);
-      const out = c.x < -20 || c.x > W + 20 || c.y < -20 || c.y > H + 20;
-      if (hit) {
-        hit.takeDamage(COIN_DMG);
-        this.arena.spawnHitFlash(hit.x, hit.y, 0xffdd44);
-      }
-      if (hit || out) {
-        this.arena.projReg.remove(c.reg);
-        this.coinProjs.splice(i, 1);
-      }
-    }
-  }
-
-  private updateBrowser(time: number, delta: number): void {
-    void time;
-    // The browser window is a menu: while it is open, incoming damage lands at 5%
-    // (Fighter.menuGuards) — it no longer counts as ad shelter.
-    this.arena.player.setMenuGuard('tech-browser', this.browserOpen);
+  private updateBrowser(delta: number): void {
     if (!this.browserOpen) return;
-    if (this.browserFactory) {
-      this.browserCoinAccum += delta;
-      while (this.browserCoinAccum >= 1000) {
-        this.browserCoinAccum -= 1000;
-        this.gainBrowserCoins(1);
-      }
-      this.updateBrowserCoinText();
+    const perSec = this.painPerSecond();
+    if (perSec <= 0) return;
+    this.painAutoAccum += delta;
+    while (this.painAutoAccum >= 1000) {
+      this.painAutoAccum -= 1000;
+      this.inflictPain(perSec, false);
     }
   }
 
@@ -2548,7 +2391,7 @@ export class TechnologyKit {
     this.fx(owner).glitch(caster.x, caster.y, 70, 60, TECH.amber, 520, D_UI);
     st.active = true;
     st.endAt = now + ADMIN_WINDOW_MS;
-    st.points = this.adminJackpot[owner] ? 999 : 0;
+    st.points = 0;
     st.target = randomBinaryString(ADMIN_STRING_LEN);
     st.cursor = 0;
     st.nextTypeAt = now + Phaser.Math.Between(250, 450);
@@ -2700,7 +2543,6 @@ export class TechnologyKit {
     if (points >= ADMIN_TIERS[2]) {
       enemy.takeDamage(35);
       this.arena.spawnHitFlash(enemy.x, enemy.y, 0xff4444);
-      this.arena.spawnDamageNumber(enemy.x, enemy.y, 35);
       lines.push(';kill');
     }
     if (points >= ADMIN_TIERS[3]) {

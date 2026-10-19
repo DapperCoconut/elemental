@@ -1,6 +1,6 @@
 import { Fighter, DamageOpts } from '../entities/Fighter';
 import { CastContext } from '../elements/Ability';
-import { Net, NetIllusionMsg, NetMsg, NetPsychicMsg, NetSilenceMsg, NetTechMsg } from './NetworkManager';
+import { Net, NetIllusionMsg, NetMsg, NetPaintMsg, NetPsychicMsg, NetSilenceMsg, NetTechMsg } from './NetworkManager';
 import { applyNetStatuses, collectNetStatuses } from './NetStatusSync';
 import type { NetConquestSnap } from '../elements/kits/ConquestKit';
 
@@ -27,6 +27,7 @@ export interface OnlineArenaApi {
   onIllusionMsg(msg: NetIllusionMsg): void;
   /** Psychic: either half of the foreknowledge relay — their queue, or their hands on ours. */
   onPsychicMsg(msg: NetPsychicMsg): void;
+  onPaintMsg(msg: NetPaintMsg): void;
   /** Conquest: our own board to broadcast, or null when neither side is playing it. */
   conquestSnapshot(): NetConquestSnap | null;
   /** Conquest: the opponent's board, to be applied to the npc side (columns not yet mirrored). */
@@ -511,6 +512,26 @@ export class OnlineKit {
           this.api.onPsychicMsg(msg);
         }
         break;
+      case 'pnt': {
+        // Floor dabs mirror like every coordinate. A Splotch shape is in the shot's own frame and
+        // a Still Life is about its subject, so mirroring the world flips their sideways axis.
+        if (msg.k === 'pts') {
+          const d = msg.d.slice();
+          for (let i = 0; i + 3 < d.length; i += 4) d[i] = this.mirrorX(d[i]);
+          this.api.onPaintMsg({ ...msg, d });
+        } else if (msg.k === 'brush') {
+          const d = msg.d.slice();
+          for (let i = 1; i < d.length; i += 3) d[i] = -d[i];
+          this.api.onPaintMsg({ ...msg, d });
+        } else if (msg.k === 'still') {
+          const d = msg.d.slice();
+          for (let i = 0; i + 3 < d.length; i += 4) d[i] = -d[i];
+          this.api.onPaintMsg({ ...msg, d });
+        } else {
+          this.api.onPaintMsg(msg);
+        }
+        break;
+      }
       default:
         break;
     }

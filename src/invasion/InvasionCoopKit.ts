@@ -7,6 +7,8 @@ import { InvasionKit, InvasionDifficultyDef, INVASION_DIFFICULTIES, WAVE_LABEL_Y
 import { huskVariantFromIndex, huskVariantIndex } from './HuskVariants';
 import { Mansion, ROOM_META, ROOM_COUNT } from './Mansion';
 import { CityGuest } from './city/CityGuest';
+import { Companion } from './city/Companions';
+import { ELEMENT_MAP } from '../elements/ElementRegistry';
 import type { CityRunOptions } from './city/CityDirector';
 import type { CityLoadoutApi } from './city/CityDraft';
 
@@ -14,7 +16,7 @@ import type { CityLoadoutApi } from './city/CityDraft';
 export interface InvasionCoopArenaApi {
   readonly scene: Phaser.Scene;
   readonly player: Fighter;
-  /** The parked 1v1 NPC slot, repurposed here as the ally replica. */
+  /** The parked 1v1 NPC slot, repurposed here as the first ally's full replica. */
   readonly npc: Fighter;
   readonly enemies: Fighter[];
   /** Host: the real wave/husk simulation. Guest: unused except onProjectileHitHusk. */
@@ -53,6 +55,39 @@ interface RemoteState {
   recvAt: number;
 }
 
+/** A co-op partner past the first: who they are and what they look like. */
+export interface CoopAllySpec {
+  slot: number;
+  elementId: string;
+  skin: string | null;
+}
+
+/** Who sits where in a co-op run, from the lobby's `start`. */
+export interface CoopParty {
+  /** The player the `npc` slot replicates in full (their kit replayed). */
+  npcSlot: number;
+  /** Everyone else: lighter replicas wearing their element's body and rig. */
+  extras: CoopAllySpec[];
+}
+
+/**
+ * One other human. The first is the arena's `npc` — a full fighter whose casts replay through
+ * its kit. The engine is two-sided, so the rest are Companion-bodied stand-ins: the right body
+ * and rig, a swing for every cast, a health bar, and a hitbox husks can chase and bite (the
+ * bite is forwarded to whoever it belongs to). Their real damage is dealt on their own sims.
+ */
+interface Ally {
+  slot: number;
+  fighter: Fighter;
+  /** Set for a light replica; null for the npc slot's full one. */
+  light: Companion | null;
+  remote: RemoteState | null;
+  room: number;
+  downed: boolean;
+  /** Left the run (disconnected). Their replica is hidden and no longer a target. */
+  gone: boolean;
+}
+
 interface HuskReplica {
   husk: Husk;
   targetX: number;
@@ -89,7 +124,8 @@ interface GhostShot {
 export class InvasionCoopKit {
   private isHost = false;
   private difficulty: InvasionDifficultyDef = INVASION_DIFFICULTIES[0];
-  private remote: RemoteState | null = null;
+  private allies: Ally[] = [];
+  private party: CoopParty = { npcSlot: 1, extras: [] };
   private castQueue: Array<{ id: string; tx: number; ty: number }> = [];
   private lastCastSent = new Map<string, number>();
   private lastStateSentAt = 0;
@@ -99,7 +135,8 @@ export class InvasionCoopKit {
   private attached = false;
 
   private localDowned = false;
-  private allyDowned = false;
+  /** Who we are reviving, and how far along. Progress resets when the target changes. */
+  private reviveSlot = -1;
   private reviveProgress = 0;
 
   private huskReplicas = new Map<number, HuskReplica>();
@@ -107,8 +144,6 @@ export class InvasionCoopKit {
   private wave = 0;
   private shards = 0;
   private remaining = 0;
-  /** The room the OTHER player is standing in (from their state packets). */
-  private remoteRoom = 0;
   /** Last wave the guest has already shown a warning for — a split wave warns twice. */
   private guestWarnedWave = -1;
   /** Guest-side mansion: layout, doors and minimap; HP fed from the host's snaps. */
@@ -130,8 +165,9 @@ export class InvasionCoopKit {
   private leaveBtn: Phaser.GameObjects.Rectangle | null = null;
   private leaveLabel: Phaser.GameObjects.Text | null = null;
 
-  private readonly msgHandler = (msg: NetMsg) => this.onMessage(msg);
+  private readonly msgHandler = (msg: NetMsg, from: number) => this.onMessage(msg, from);
   private readonly statusHandler = () => this.onStatusChange();
+  private readonly peersHandler = () => this.onPeersChanged();
   private readonly onPlayerDamaged = (amount: number) => {
     if (amount > 0 && !this.matchEnded) Net.send({ t: 'hit', amount });
   };
@@ -142,7 +178,7 @@ export class InvasionCoopKit {
     this.api.player.downed = true;
     this.reviveProgress = 0;
     this.downedBanner?.setVisible(true);
-    this.api.showFloatingText(this.api.player.x, this.api.player.y - 50, 'DOWNED! Your ally must revive you', '#ff6666');
+    this.api.showFloatingText(this.api.player.x, this.api.player.y - 50, 'DOWNED! An ally must revive you', '#ff6666');
     this.sendState(true);
   };
   private readonly onPlayerCast = (abilityId: string) => {
@@ -157,11 +193,16 @@ export class InvasionCoopKit {
   /** Host-only hooks wired into InvasionKit — see InvasionCoopHooks. */
   private readonly hostHooks = {
     spawnMultiplier: 2,
-    extraTargets: (): Fighter[] => [this.api.npc],
-    onAllyBite: (damage: number, x: number, y: number) => {
-      Net.send({ t: 'allyBite', damage });
-      this.api.spawnHitFlash(x, y, 0x88aa33);
+    extraTargets: (room: number): Fighter[] => this.allies
+      .filter((a) => !a.gone && a.room === room)
+      .map((a) => a.fighter),
+    onAllyBite: (target: Fighter, damage: number, x: number, y: number) => {
+      const ally = this.allies.find((a) => a.fighter === target);
+      if (!ally || ally.gone) return;
+      Net.sendTo(ally.slot, { t: 'allyBite', damage });
+      if (ally.room === this.myRoom()) this.api.spawnHitFlash(x, y, 0x88aa33);
     },
+    allySlots: (): number[] => this.allies.filter((a) => !a.gone).map((a) => a.slot),
     onHuskDefeated: (husk: Husk, reward: number) => {
       Net.send({ t: 'huskDeath', id: husk.netId, reward, x: husk.x, y: husk.y });
     },
@@ -199,14 +240,15 @@ export class InvasionCoopKit {
   /** Mutable so a City run can drop the mansion's flat ×2 — the City scales by party size itself. */
 
   /** (Re)initialise for a fresh co-op run. Called from ArenaScene.create(). */
-  reset(isHost: boolean, difficulty: InvasionDifficultyDef, city: CityRunOptions | null = null): void {
+  reset(isHost: boolean, difficulty: InvasionDifficultyDef, city: CityRunOptions | null = null, party?: CoopParty): void {
     this.detach();
     this.isHost = isHost;
     this.city = city;
-    // The City counts the second human in its own party maths.
-    this.hostHooks.spawnMultiplier = city ? 1 : 2;
+    this.party = party ?? { npcSlot: isHost ? 1 : 0, extras: [] };
+    const humans = 2 + this.party.extras.length;
+    // The City counts the extra humans in its own party maths; the mansion just sends more.
+    this.hostHooks.spawnMultiplier = city ? 1 : humans;
     this.difficulty = difficulty;
-    this.remote = null;
     this.castQueue = [];
     this.lastCastSent.clear();
     this.lastStateSentAt = 0;
@@ -214,21 +256,24 @@ export class InvasionCoopKit {
     this.matchEnded = false;
     this.runEndSent = false;
     this.localDowned = false;
-    this.allyDowned = false;
+    this.reviveSlot = -1;
     this.reviveProgress = 0;
     this.wave = 0;
     this.shards = 0;
     this.remaining = 0;
-    this.remoteRoom = 0;
     this.guestWarnedWave = -1;
+    this.buildAllies();
 
     for (const rep of this.huskReplicas.values()) { this.api.removeEnemy(rep.husk); rep.husk.destroy(); }
     this.huskReplicas.clear();
     for (const s of this.ghostShots) s.gfx.destroy();
     this.ghostShots = [];
 
-    // Either side may reach the other's torch; one accessor serves both.
-    this.api.invasionKit.allyProbe = () => ({ fighter: this.api.npc, room: this.remoteRoom });
+    // Either side may reach an ally's torch — the first one standing in our room.
+    this.api.invasionKit.allyProbe = () => {
+      const a = this.allies.find((x) => !x.gone && x.room === this.myRoom());
+      return a ? { fighter: a.fighter, room: a.room } : null;
+    };
 
     // The guest walks its own copy of the mansion (layout and travel are
     // deterministic); only room HP/loss/target arrive from the host's snaps.
@@ -299,12 +344,13 @@ export class InvasionCoopKit {
     this.api.player.on('defeated', this.onLocalDefeated);
     Net.onMessage(this.msgHandler);
     Net.onStatus(this.statusHandler);
+    Net.onPeers(this.peersHandler);
     this.attached = true;
 
     this.buildHud();
 
     if (isHost) {
-      this.api.invasionKit.reset(difficulty, this.hostHooks, null, city ? { ...city, humans: 2 } : null);
+      this.api.invasionKit.reset(difficulty, this.hostHooks, null, city ? { ...city, humans } : null);
     }
 
     this.sendState(true);
@@ -316,6 +362,7 @@ export class InvasionCoopKit {
       this.attached = false;
       Net.offMessage(this.msgHandler);
       Net.offStatus(this.statusHandler);
+      Net.offPeers(this.peersHandler);
       if (this.api.player) {
         this.api.player.allyDamageBlocked = false;
         this.api.player.onCastStamp = null;
@@ -323,6 +370,7 @@ export class InvasionCoopKit {
         this.api.player.off('defeated', this.onLocalDefeated);
       }
     }
+    this.destroyLightAllies();
     this.guestMansion?.destroyHud();
     this.guestMansion = null;
     this.guestCity?.destroy();
@@ -351,13 +399,13 @@ export class InvasionCoopKit {
   update(time: number, delta: number): void {
     if (this.matchEnded) return;
     this.sendState(false);
-    this.interpolateAlly();
+    for (const a of this.allies) this.interpolateAlly(a);
 
     if (this.isHost) {
       this.api.invasionKit.update(time, delta);
       this.sendHuskSnap();
-      // In the City only the All-Element can lose the run; a downed pair just waits on the plinth.
-      if (this.localDowned && this.allyDowned && !this.city) this.finishCoopRun();
+      // In the City only the All-Element can lose the run; a downed party just waits on the plinth.
+      if (!this.city && this.localDowned && this.allies.every((a) => a.gone || a.downed)) this.finishCoopRun();
     } else {
       this.interpolateHuskReplicas();
       this.updateGhostShots(delta);
@@ -381,12 +429,8 @@ export class InvasionCoopKit {
       this.api.invasionKit.updateGuestContents(time, delta);
     }
 
-    // The ally replica only shows when you're both in the same room.
-    const sameRoom = this.remoteRoom === this.myRoom();
-    if (this.api.npc.visible !== sameRoom) {
-      this.api.npc.setVisible(sameRoom);
-      this.api.npc.setHealthBarVisible(sameRoom);
-    }
+    // An ally only shows when you're both in the same room.
+    this.updateAllyVisibility(delta);
 
     this.updateRevive(delta);
     if (this.city) this.tickCityRespawn(time);
@@ -399,7 +443,7 @@ export class InvasionCoopKit {
   private tickCityRespawn(time: number): void {
     if (!this.localDowned) return;
     const left = Math.max(0, CITY_RESPAWN_MS - (time - this.localDownedAt));
-    this.downedBanner?.setText(`⚠ DOWNED — your ally can revive you, or the plinth will in ${Math.ceil(left / 1000)}s`);
+    this.downedBanner?.setText(`⚠ DOWNED — an ally can revive you, or the plinth will in ${Math.ceil(left / 1000)}s`);
     if (left > 0) return;
     if (this.isHost) this.api.invasionKit.jumpToMainStreet();
     else this.guestCity?.jumpHome();
@@ -413,6 +457,10 @@ export class InvasionCoopKit {
     if (this.matchEnded) return null;
     const cast = this.castQueue.shift();
     if (!cast) return null;
+    // An ally in another room is casting at husks we can't see — replaying it here would
+    // throw their fireballs across our screen. Their real damage lands on their own sim.
+    const primary = this.primaryAlly();
+    if (!primary || primary.gone || primary.room !== this.myRoom()) return null;
     const npc = this.api.npc;
     const ability = npc.element.abilities.find((a) => a.id === cast.id);
     if (!ability) return null;
@@ -439,6 +487,98 @@ export class InvasionCoopKit {
 
   isPlayerDowned(): boolean {
     return this.localDowned;
+  }
+
+  /**
+   * True while the npc slot's ally is somewhere we can't see (another room, or gone). The
+   * arena hides that fighter's rig with it — the sprite alone is not the whole character.
+   */
+  isNpcAllyHidden(): boolean {
+    const a = this.primaryAlly();
+    return !a || a.gone || a.room !== this.myRoom();
+  }
+
+  // ── Allies ───────────────────────────────────────────────────────
+
+  private primaryAlly(): Ally | undefined {
+    return this.allies.find((a) => a.light === null);
+  }
+
+  /** The npc slot plus one light replica per extra player. */
+  private buildAllies(): void {
+    this.destroyLightAllies();
+    const scene = this.api.scene;
+    const { width, height } = scene.scale;
+    this.allies = [{
+      slot: this.party.npcSlot, fighter: this.api.npc, light: null, remote: null,
+      room: 0, downed: false, gone: false,
+    }];
+    this.party.extras.forEach((spec, i) => {
+      const c = new Companion(scene, width / 2 + (i - 0.5) * 60, height / 2 + 40, spec.elementId, i);
+      c.netGhost = true;
+      c.roomIndex = 0;
+      const name = ELEMENT_MAP[spec.elementId]?.name ?? spec.elementId;
+      c.nameTag.setText(`P${spec.slot + 1} · ${name.toUpperCase()}`);
+      this.allies.push({
+        slot: spec.slot, fighter: c, light: c, remote: null,
+        room: 0, downed: false, gone: false,
+      });
+    });
+  }
+
+  private destroyLightAllies(): void {
+    for (const a of this.allies) a.light?.destroy();
+    this.allies = this.allies.filter((a) => a.light === null);
+  }
+
+  /** Room gate for every ally, plus the light replicas' rigs and name tags. */
+  private updateAllyVisibility(delta: number): void {
+    const room = this.myRoom();
+    for (const a of this.allies) {
+      const on = !a.gone && a.room === room;
+      const f = a.fighter;
+      if (f.visible !== on) {
+        f.setVisible(on);
+        f.setHealthBarVisible(on);
+      }
+      const c = a.light;
+      if (!c) continue;
+      c.roomIndex = a.room;
+      c.downed = a.downed;
+      c.setAngle(a.downed ? 90 : 0);
+      c.nameTag.setVisible(on).setPosition(c.x, c.y - 44);
+      if (on) c.setAlpha(c.bodyless ? 0 : (a.downed ? 0.5 : 1));
+      c.avatar?.setFacing(c.facingAngle);
+      c.avatar?.update(delta, c.x, c.y, on ? (a.downed ? 0.45 : 1) : 0);
+    }
+  }
+
+  /** A light replica's ally cast something: a swing and a flash where they aimed. */
+  private playLightCast(a: Ally, tx: number, ty: number): void {
+    const c = a.light;
+    if (!c || a.gone || a.room !== this.myRoom()) return;
+    const ang = Math.atan2(ty - c.y, tx - c.x);
+    c.facingAngle = ang;
+    c.avatar?.play('punch', ang);
+    const fx = this.api.scene.add.circle(c.x + Math.cos(ang) * 26, c.y + Math.sin(ang) * 26, 20, c.tint, 0.55).setDepth(6);
+    this.api.scene.tweens.add({ targets: fx, scale: 1.8, alpha: 0, duration: 260, onComplete: () => fx.destroy() });
+  }
+
+  /** Somebody left the room. Their replica stops being a target; their pending draft is waived. */
+  private onPeersChanged(): void {
+    if (this.matchEnded) return;
+    const live = new Set(Net.slots);
+    for (const a of this.allies) {
+      if (a.gone || live.has(a.slot)) continue;
+      a.gone = true;
+      a.downed = false;
+      a.fighter.setVisible(false);
+      a.fighter.setHealthBarVisible(false);
+      a.light?.nameTag.setVisible(false);
+      if (a.light) a.light.avatar?.update(0, a.light.x, a.light.y, 0);
+      this.api.showFloatingText(this.api.player.x, this.api.player.y - 60, `PLAYER ${a.slot + 1} LEFT THE RUN`, '#ffaa66');
+      if (this.isHost) this.api.invasionKit.noteAllyPick(a.slot, 'none', '');
+    }
   }
 
   /** Called by ArenaScene when the match ends for any reason. */
@@ -514,10 +654,10 @@ export class InvasionCoopKit {
     });
   }
 
-  private interpolateAlly(): void {
-    const remote = this.remote;
-    const npc = this.api.npc;
-    if (!remote || !npc.active) return;
+  private interpolateAlly(ally: Ally): void {
+    const remote = ally.remote;
+    const npc = ally.fighter;
+    if (!remote || !npc.active || ally.gone) return;
     const body = npc.body as Phaser.Physics.Arcade.Body | null;
     if (!body) return;
 
@@ -602,8 +742,8 @@ export class InvasionCoopKit {
       s.gfx.setVisible(s.room === room);
       // Pop it on contact so the visual lands with the host's damage report,
       // rather than sailing on through whoever it just hit.
-      const hit = s.room === room && [this.api.player, this.api.npc].some((f) =>
-        f.active && f.hp > 0 && Phaser.Math.Distance.Between(s.gfx.x, s.gfx.y, f.x, f.y) <= 22 + 22 * f.sizeMult);
+      const hit = s.room === room && [this.api.player, ...this.allies.filter((a) => !a.gone && a.room === room).map((a) => a.fighter)]
+        .some((f) => f.active && f.hp > 0 && Phaser.Math.Distance.Between(s.gfx.x, s.gfx.y, f.x, f.y) <= 22 + 22 * f.sizeMult);
       if (hit || now >= s.expiresAt) {
         s.gfx.destroy();
         this.ghostShots.splice(i, 1);
@@ -699,33 +839,47 @@ export class InvasionCoopKit {
   }
 
   private updateRevive(delta: number): void {
-    if (this.localDowned || !this.allyDowned) {
+    const room = this.myRoom();
+    const downed = this.localDowned ? [] : this.allies.filter((a) => !a.gone && a.downed);
+    if (downed.length === 0) {
+      this.reviveSlot = -1;
       this.reviveProgress = 0;
       this.reviveHint?.setText('');
       return;
     }
     // Rooms share screen coordinates, so a bare distance check could "revive
-    // through a wall" — the two of you must actually be in the same room.
-    if (this.remoteRoom !== this.myRoom()) {
+    // through a wall" — you must actually be in the same room.
+    const here = downed.filter((a) => a.room === room);
+    if (here.length === 0) {
+      this.reviveSlot = -1;
       this.reviveProgress = 0;
-      this.reviveHint?.setText('Your ally is down in another room!');
+      this.reviveHint?.setText(downed.length > 1 ? 'Allies are down in other rooms!' : 'An ally is down in another room!');
       return;
     }
-    const dist = Phaser.Math.Distance.Between(this.api.player.x, this.api.player.y, this.api.npc.x, this.api.npc.y);
-    if (dist > REVIVE_RADIUS) {
+    const p = this.api.player;
+    let near: Ally | null = null;
+    let best = REVIVE_RADIUS;
+    for (const a of here) {
+      const d = Phaser.Math.Distance.Between(p.x, p.y, a.fighter.x, a.fighter.y);
+      if (d <= best) { best = d; near = a; }
+    }
+    if (!near) {
+      this.reviveSlot = -1;
       this.reviveProgress = 0;
-      this.reviveHint?.setText('Stand by your downed ally to revive them');
+      this.reviveHint?.setText('Stand by a downed ally to revive them');
       return;
     }
+    if (near.slot !== this.reviveSlot) { this.reviveSlot = near.slot; this.reviveProgress = 0; }
     this.reviveProgress += delta;
     const pct = Math.min(100, Math.round((this.reviveProgress / REVIVE_DURATION_MS) * 100));
-    this.reviveHint?.setText(`REVIVING ALLY… ${pct}%`);
+    this.reviveHint?.setText(`REVIVING P${near.slot + 1}… ${pct}%`);
     if (this.reviveProgress >= REVIVE_DURATION_MS) {
       this.reviveProgress = 0;
-      Net.send({ t: 'revived' });
-      this.allyDowned = false;
-      this.api.npc.downed = false;
-      this.api.showFloatingText(this.api.npc.x, this.api.npc.y - 40, 'ALLY REVIVED!', '#66ff88');
+      this.reviveSlot = -1;
+      Net.sendTo(near.slot, { t: 'revived' });
+      near.downed = false;
+      near.fighter.downed = false;
+      this.api.showFloatingText(near.fighter.x, near.fighter.y - 40, 'ALLY REVIVED!', '#66ff88');
     }
   }
 
@@ -815,9 +969,9 @@ export class InvasionCoopKit {
   private applyHuskDeath(id: number, reward: number, x: number, y: number): void {
     this.shards += reward;
     this.updateGuestHud();
-    this.api.showFloatingText(x, y - 30, `+${reward} 🩸`, '#cc44ff');
-
     const rep = this.huskReplicas.get(id);
+    // A kill in another room pays the shared purse, but its pop-up stays over there.
+    if (reward > 0 && rep && rep.husk.roomIndex === this.myRoom()) this.api.showFloatingText(x, y - 30, `+${reward} 🩸`, '#cc44ff');
     if (!rep) return;
     this.huskReplicas.delete(id);
     const husk = rep.husk;
@@ -834,25 +988,31 @@ export class InvasionCoopKit {
     });
   }
 
-  private onMessage(msg: NetMsg): void {
+  private onMessage(msg: NetMsg, from: number): void {
     if (this.matchEnded) return;
+    const ally = this.allies.find((a) => a.slot === from && !a.gone);
     switch (msg.t) {
       case 'state': {
-        this.remote = { x: msg.x, y: msg.y, vx: msg.vx, vy: msg.vy, recvAt: Date.now() };
-        this.api.npc.netSyncVitals(msg.hp, msg.maxHp, msg.shieldHp, msg.shieldCharges);
-        this.allyDowned = msg.downed ?? false;
-        this.api.npc.downed = this.allyDowned;
-        this.remoteRoom = msg.room ?? 0;
-        if (msg.fa !== undefined) this.api.npc.facingAngle = msg.fa;
-        if (this.isHost) this.api.invasionKit.setAllyRoom(this.remoteRoom);
+        if (!ally) break;
+        ally.remote = { x: msg.x, y: msg.y, vx: msg.vx, vy: msg.vy, recvAt: Date.now() };
+        ally.fighter.netSyncVitals(msg.hp, msg.maxHp, msg.shieldHp, msg.shieldCharges);
+        ally.downed = msg.downed ?? false;
+        ally.fighter.downed = ally.downed;
+        const moved = ally.room !== (msg.room ?? 0);
+        ally.room = msg.room ?? 0;
+        if (msg.fa !== undefined) ally.fighter.facingAngle = msg.fa;
+        // Walking out mid-cast: whatever the full replica still had queued belongs to the old room.
+        if (moved && !ally.light) this.castQueue = [];
         break;
       }
       case 'cast':
-        this.castQueue.push({ id: msg.id, tx: msg.tx, ty: msg.ty });
+        if (!ally) break;
+        if (ally.light) this.playLightCast(ally, msg.tx, msg.ty);
+        else this.castQueue.push({ id: msg.id, tx: msg.tx, ty: msg.ty });
         break;
       case 'hit': {
-        const npc = this.api.npc;
-        if (npc.active) this.api.spawnDamageNumber(npc.x, npc.y - 34, msg.amount);
+        const f = ally?.fighter;
+        if (f?.active && f.visible) this.api.spawnDamageNumber(f.x, f.y - 34, msg.amount);
         break;
       }
       case 'huskSnap':
@@ -873,7 +1033,7 @@ export class InvasionCoopKit {
         if (!this.isHost) this.guestCity?.showWarning(msg.wave, msg.lanes);
         break;
       case 'cityPick':
-        if (this.isHost) this.api.invasionKit.noteAllyPick(msg.kind, msg.id);
+        if (this.isHost) this.api.invasionKit.noteAllyPick(from, msg.kind, msg.id);
         break;
       case 'huskDamage':
         if (this.isHost) this.api.invasionKit.applyNetworkDamage(msg.id, msg.amount);
@@ -914,10 +1074,13 @@ export class InvasionCoopKit {
       // Either player can open the eye; both houses fall in together.
       case 'apoc':
         this.api.invasionKit.beginApocalypse();
+        // A guest woke it: the host passes the news on to everyone else.
+        if (this.isHost) this.forwardFrom(from, msg);
         break;
-      // The shelf is shared. Whoever took the bottle, it is gone for both.
+      // The shelf is shared. Whoever took the bottle, it is gone for everyone.
       case 'tonic':
         this.api.invasionKit.noteTonicTaken(msg.slot);
+        if (this.isHost) this.forwardFrom(from, msg);
         break;
       case 'corrupt':
         if (!this.isHost) this.api.invasionKit.showCorruptionBanner(msg.room, msg.kind);
@@ -940,6 +1103,11 @@ export class InvasionCoopKit {
       default:
         break;
     }
+  }
+
+  /** Host: hand a guest's shared-world news to every other guest. */
+  private forwardFrom(from: number, msg: NetMsg): void {
+    for (const s of Net.otherSlots) if (s !== from) Net.sendTo(s, msg);
   }
 
   private onStatusChange(): void {

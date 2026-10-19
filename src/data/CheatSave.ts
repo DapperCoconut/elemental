@@ -127,13 +127,6 @@ function maxOutCurrentProfile(): void {
     });
   }
 
-  // ── Quantum: an element with no bond has no abilities at all ───────
-  // Every pair reads as researched in cheat mode, but the carried bond is still a stored
-  // choice — leave it empty and picking Quantum drops you into a fight with nothing.
-  if (!PlayerData.getQuantumBond()) {
-    PlayerData.setQuantumBond(PlayerData.STARTER_BOND[0], PlayerData.STARTER_BOND[1]);
-  }
-
   // ── Passion's Exhibition toggle (found by tapping, not by playing) ──
   for (let i = 0; i < PlayerData.PASSION_Q_TAPS_REQUIRED; i++) PlayerData.tapPassionQ();
 }
@@ -277,7 +270,6 @@ export function verifyCheatSave(): string[] {
     for (const mode of SECRET_MODES) {
       want(PlayerData.isSecretModeUnlocked(mode.id), `secret mode ${mode.id} still bolted down`);
     }
-    want(PlayerData.getQuantumBond() !== null, 'Quantum carries no bond');
     want(PlayerData.isPassionQUnlocked(), "Passion's Q toggle locked");
 
     // ── Campaign ─────────────────────────────────────────────────────

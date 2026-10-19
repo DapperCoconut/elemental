@@ -16,7 +16,7 @@ import {
 import {
   CNQ, ConquestAvatar, ConquestColorFn, ConquestFx, barbarianKing, barracksBody,
   barricadeBody, buildingHpBar, contestTile, fireballOrb, gridCell, hasteRing, linkChain,
-  marketBody, revengeBomb, soldier, territoryTile, townCenterBody, townColor, turretBody,
+  marketBody, revengeBomb, soldier, territoryTile, townCenterBody, townColor, turretBody, turretShot,
   wizardTroop,
 } from './ConquestVisuals';
 import { meterGain } from '../../combat/Meters';
@@ -3658,10 +3658,7 @@ export class ConquestKit implements ConquestMenuHost {
         }
         continue;
       }
-      g.fillStyle(c(p.head ? CNQ.blood : CNQ.tracer), 0.9);
-      g.fillCircle(p.x, p.y, p.head ? 4 : 3);
-      g.fillStyle(c(CNQ.muzzle), 0.7);
-      g.fillCircle(p.x - p.vx * 0.006, p.y - p.vy * 0.006, 1.8);
+      turretShot(g, c, p.x, p.y, p.vx, p.vy, !!p.head, 1);
     }
 
     // Wizard Tower orbs, waiting over their domes. Drawn over the fighters rather than under

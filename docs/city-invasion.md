@@ -46,17 +46,36 @@ through `Husk.setDisguise`.
 off, R/F/Q `Key.enabled = false` (re-enabled at every create — Key objects survive restarts).
 The draft writes back through `ArenaScene.cityLoadout()`.
 
-## Co-op (protocol v40)
-Lobby label cycles City ×2/×3/×4 → Mansion. `huskSnap.c` carries core HP, lanes, bots, curses;
-`cityWarn` announces lanes; `cityPick` (guest → host) relays the guest's kept card and releases
-the host's wave gate (30 s timeout). A relayed mutation pick only shows a note on the host; `huskSnap.c.cu`
-still carries the host's mutations but the guest ignores it. Both humans down does not end a City run; each side's plinth
-stands its own player back up after 15 s.
+## Co-op (protocol v50 — up to 4 humans, 2026-10-18)
+Lobby label cycles City ×N…×4 (N = humans in the room, never fewer seats than humans) → Mansion.
+`huskSnap.c` carries core HP, lanes, bots, curses; `cityWarn` announces lanes; `cityPick`
+(guest → host) relays each guest's kept card, and the host's wave gate waits on every guest
+still in the run (`InvasionCoopHooks.allySlots()`, 30 s timeout; a guest who leaves is waived).
+A relayed mutation pick only shows a note on the host; `huskSnap.c.cu` still carries the host's
+mutations but guests ignore it. All humans down does not end a City run; each side's plinth stands
+its own player back up after 15 s.
+
+**Networking.** `NetworkManager` is a star: the host holds one PeerJS link per guest (slots 1–3),
+every handler gets `(msg, from)`. The host relays `state`/`cast`/`hit`/`sel`/`lobby`/`qswap` to
+the other guests as `{t:'relay', from, m}`; `Net.sendTo(slot, msg)` targets one player (a guest's
+goes via the host). `peers` tells each guest its slot; `Net.onPeers` fires on join/leave;
+`Net.locked` turns joiners away mid-match. PvP still needs exactly two.
+
+**Allies.** The engine is two-sided, so each sim gives its `npc` slot to the lowest other slot (a
+full replica, kit casts replayed) and every further human gets a light `Companion`-bodied replica
+(body + rig, a swing per cast, health bar, husk target). Husk bites on any ally go to that ally's
+slot (`onAllyBite(target, …)`), slows only ever touch the local player (`slowPlayer(…, target)`).
+
+**Rooms.** `ArenaScene.reachableEnemies` is the room gate for everything the local player can hit:
+every kit adapter's `enemies` and the AoE helpers read it, so nothing reaches a husk in another
+room. Allies in another room are hidden (sprite, health bar, name tag, rig via `rigFilter`), the
+full replica's casts are not replayed, and their hit flashes / kill pop-ups stay in their room.
 
 ## Known gaps
 - Draft picks are not relayed as loadout changes, so the peer's replica of you keeps casting with
   your starting (bare) loadout.
-- Bots don't revive humans in co-op, and the guest can't revive a downed bot.
+- Bots don't revive humans in co-op, and guests can't revive a downed bot.
+- Light replicas (the 3rd/4th human on your screen) show a swing per cast, not the real ability art.
 - Mid-run mastery flips the flag and the binds; masteries that set up state only at match start
   may not take full effect.
 - Kits that bypass the key objects (none known) would ignore the R/F/Q seals.

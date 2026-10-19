@@ -1,26 +1,34 @@
 import Phaser from 'phaser';
 import * as PlayerData from '../data/PlayerData';
 import { isCheatMode } from '../data/Cheats';
-import { findRecipe } from '../data/Recipes';
+import { findRecipe, Recipe } from '../data/Recipes';
 import { ABSTRACT_ELEMENT_IDS, ABSTRACT_ELEMENT_UNLOCK_MAP } from '../data/AbstractElements';
 import { findPerkRecipe, findQuadPerkRecipe, findPentaPerkRecipe, findAbstractTriplePerkRecipe, PerkDef, ALL_PERKS } from '../data/Perks';
 import { DIVINE_PERKS } from '../data/DivinePerks';
 import { findElementDef } from '../data/ElementRoster';
 import {
-  C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix, tintPlate,
-  addBackdrop, addBackButton, addButton, addChip, addHeaderBar, addIconButton, addSectionLabel,
-  addTabs, addRowPlate, addWell, addModal, addElementCrest, UiButton,
-  ALL_CORNERS, fillHex, strokeHex, fillDiamond, fillNotchedGradient, strokeNotched, drawGlow,
+  C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
+  addBackButton, addButton, addChip, addHeaderBar, addIconButton,
+  addTabs, addRowPlate, addModal, addElementCrest,
 } from '../ui';
+import { LabBench } from '../ui/LabBench';
+import { drawPlank, WOOD } from '../ui/Woodwork';
+import { SpeechBubble } from '../ui/SpeechBubble';
+import { Alchemist } from '../ui/characters/Alchemist';
 import { Music, Sfx } from '../audio';
 
-/** Per-mode accent — the whole screen re-lights when you change forge mode. */
-const MODE_ACCENT: Record<'elements' | 'perks' | 'quad-perks' | 'penta-perks', number> = {
+type LabMode = 'elements' | 'perks' | 'quad-perks' | 'penta-perks';
+
+/** Per-mode accent — the chalkboard re-lights when you change forge mode. */
+const MODE_ACCENT: Record<LabMode, number> = {
   'elements': 0x9d5cff,
   'perks': 0x4fc3ff,
   'quad-perks': 0xffaa44,
   'penta-perks': 0xd946ef,
 };
+
+/** How many vials the flask takes in each mode. */
+const CAPACITY: Record<LabMode, number> = { 'elements': 2, 'perks': 3, 'quad-perks': 4, 'penta-perks': 5 };
 
 /** A forge ingredient. */
 interface LabElement { id: string; name: string; emoji: string; color: number }
@@ -41,46 +49,39 @@ const ALL_ABSTRACT_ELEMENTS: LabElement[] = [
   { id: 'light',       name: 'Light',       emoji: '✨', color: 0xfff4a8 },
 ];
 
-const SLOT_W = 100;
-const SLOT_H = 100;
+/** What pressing COMBINE amounts to, decided before anything is animated. */
+type Outcome =
+  | { kind: 'say'; say: string; mood: 'thinking' | 'grumpy' }
+  | { kind: 'explode'; say: string }
+  | { kind: 'element'; recipe: Recipe; say: string }
+  | { kind: 'perk'; perk: PerkDef; say: string };
+
+const FLASK_X = 480;
+const FLASK_Y = 338;
+const BENCH_Y = 446;
+const VIAL_H = 58;
 
 export class LabScene extends Phaser.Scene {
-  private labMode: 'elements' | 'perks' | 'quad-perks' | 'penta-perks' = 'elements';
+  private labMode: LabMode = 'elements';
+  /** The flask, the vials and every animation between them. */
+  private bench!: LabBench;
 
-  private slot1Id: string | null = null;
-  private slot2Id: string | null = null;
-  private slot3Id: string | null = null;
-  private slot4Id: string | null = null;
-  private slot5Id: string | null = null;
-  private slot1Visual: Phaser.GameObjects.Container | null = null;
-  private slot2Visual: Phaser.GameObjects.Container | null = null;
-  private slot3Visual: Phaser.GameObjects.Container | null = null;
-  private slot4Visual: Phaser.GameObjects.Container | null = null;
-  private slot5Visual: Phaser.GameObjects.Container | null = null;
-  private nucleiText!: Phaser.GameObjects.Text;
-  private messageText!: Phaser.GameObjects.Text;
-  private mergeButton: UiButton | null = null;
+  private alchemist: Alchemist | null = null;
+  private bubble: SpeechBubble | null = null;
+  private nucleiChip!: { setValue: (v: string) => void };
+  private combineLabel!: Phaser.GameObjects.Text;
   private perkBookObjects: Phaser.GameObjects.GameObject[] = [];
   private perkBookScrollHandler: (...args: unknown[]) => void = () => {};
-
-  // Slot positions (set in create)
-  private slot1X = 0;
-  private slot1Y = 0;
-  private slot2X = 0;
-  private slot2Y = 0;
-  private slot3X = 0;
-  private slot3Y = 0;
-  private slot4X = 0;
-  private slot4Y = 0;
-  private slot5X = 0;
-  private slot5Y = 0;
 
   constructor() {
     super({ key: 'LabScene' });
   }
 
-  init(data: { labMode?: 'elements' | 'perks' | 'quad-perks' | 'penta-perks' }): void {
+  init(data: { labMode?: LabMode }): void {
     this.labMode = data?.labMode ?? 'elements';
+    this.alchemist = null;
+    this.bubble = null;
+    this.perkBookObjects = [];
   }
 
   create(): void {
@@ -88,77 +89,49 @@ export class LabScene extends Phaser.Scene {
     const { width, height } = this.scale;
     const cx = width / 2;
     const accent = MODE_ACCENT[this.labMode];
-
     const labLevel = PlayerData.getLabLevel();
-    addBackdrop(this, { accent, variant: 'lattice', motes: 20 });
 
-    addHeaderBar(this, {
-      title: '⚗  LAB',
-      subtitle: labLevel === 0 ? 'BASE LAB' : `LAB LEVEL ${labLevel}`,
-      accent,
-      height: 66,
-    });
+    this.paintRoom(width, height, accent, labLevel);
 
     const back = () => this.scene.start('TitleScene');
     addBackButton(this, back);
     this.input.keyboard!.on('keydown-ESC', back);
 
-    // The King's own lab is below this one. Nothing hints at it until he is
-    // dead — after that the floor is quietly marked.
+    // The King's own lab is below this one. Nothing hints at it until he is dead — after
+    // that the floor is quietly marked.
     if (PlayerData.isKingDefeated()) {
-      const markY = height - 20;
-      const prompt = this.add.text(cx, markY, '◈   P R E S S   S P A C E   ◈', {
-        fontSize: '10px', fontFamily: FONT_DISPLAY,
-        color: hex(mix(C.corrupt, 0x000000, 0.25)), letterSpacing: 4,
+      const prompt = this.add.text(cx, height - 16, '◈   P R E S S   S P A C E   ◈', {
+        fontSize: '10px', fontFamily: FONT_DISPLAY, color: hex(mix(C.corrupt, 0x000000, 0.25)), letterSpacing: 4,
       }).setOrigin(0.5).setDepth(DEPTH.content);
-      this.tweens.add({
-        targets: prompt, alpha: { from: 0.35, to: 1 },
-        duration: 2000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
-      });
+      this.tweens.add({ targets: prompt, alpha: { from: 0.35, to: 1 }, duration: 2000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
       this.input.keyboard!.on('keydown-SPACE', () => {
         this.cameras.main.fade(280, 0, 0, 0);
         this.time.delayedCall(300, () => this.scene.start('DisgracedLabScene'));
       });
     }
 
-    // The Entanglement Lab, where Quantum is taught a new pair. Reachable whenever Quantum
-    // is owned — a bond is researched here rather than fused from nuclei upstairs.
-    // Cheat mode counts as unlocked here for the same reason the rosters treat it that way:
-    // an existing cheat profile predates the grant and will never be topped up on its own.
+    // The Entanglement Lab, where Quantum is taught a new element. Cheat mode counts as
+    // unlocked for the same reason the rosters treat it that way.
     if (PlayerData.isElementUnlocked('quantum') || isCheatMode()) {
       addButton(this, {
-        x: 92, y: height - 34, w: 150, h: 32,
-        label: '⚛ ENTANGLEMENT',
-        accent: 0x7df9ff, fontSize: 11,
+        x: 96, y: height - 36, w: 150, h: 32, label: '⚛ ENTANGLEMENT', accent: 0x7df9ff, fontSize: 11,
         onClick: () => this.scene.start('QuantumLabScene'),
       });
     }
 
-    // Nucleus counter (top right)
-    this.nucleiText = this.add.text(width - 60, 26, '', {
-      fontSize: '17px', fontFamily: FONT_DISPLAY,
-      color: hex(mix(C.arcane, 0xffffff, 0.5)), letterSpacing: 1,
-    }).setOrigin(1, 0.5).setDepth(DEPTH.content);
-    this.refreshNuclei();
-
+    this.nucleiChip = addChip(this, {
+      x: width - 60, y: 26, icon: '⚛️', value: `×${PlayerData.getNuclei()}`, accent: C.arcane, originX: 1,
+    });
     addIconButton(this, {
       x: width - 32, y: 26, r: 17, icon: '📖', accent: C.arcane, tooltip: 'Perk dictionary',
       onClick: () => this.showPerkBook(),
     });
 
-    // ── Mode toggle (ELEMENTS | PERKS | QUAD | PENTA) ──────────
-    const canPerks = labLevel >= 2;
-    const canQuad  = labLevel >= 3;
-    const canPenta = labLevel >= 4;
-    const tabY = 88;
-
-    const tabModes: Array<'elements' | 'perks' | 'quad-perks' | 'penta-perks'> = [
-      'elements', 'perks', 'quad-perks', 'penta-perks',
-    ];
-    const tabUnlocked = [true, canPerks, canQuad, canPenta];
-
+    // ── Mode tabs, chalked under the board ──
+    const tabModes: LabMode[] = ['elements', 'perks', 'quad-perks', 'penta-perks'];
+    const tabUnlocked = [true, labLevel >= 2, labLevel >= 3, labLevel >= 4];
     addTabs(this, {
-      x: cx, y: tabY, tabW: 96, tabH: 30,
+      x: cx, y: 150, tabW: 96, tabH: 28,
       active: tabModes.indexOf(this.labMode),
       tabs: tabModes.map((mode, idx) => ({
         label: ['ELEMENTS', 'PERKS', 'QUAD', 'PENTA'][idx],
@@ -166,249 +139,163 @@ export class LabScene extends Phaser.Scene {
         disabled: !tabUnlocked[idx],
         hint: tabUnlocked[idx] ? undefined : `LV.${idx + 1}`,
       })),
-      onSelect: (idx) => {
-        if (this.labMode !== tabModes[idx]) this.scene.restart({ labMode: tabModes[idx] });
+      onSelect: (idx) => { if (this.labMode !== tabModes[idx]) this.scene.restart({ labMode: tabModes[idx] }); },
+    });
+
+    // ── The bench: alchemist, flask, vials, the big red button ──
+    this.alchemist = new Alchemist(this, 150, BENCH_Y - 4, { scale: 0.9, depth: DEPTH.panel + 2 });
+    const m = this.alchemist.mouth();
+    this.bubble = new SpeechBubble(this, {
+      anchorX: m.x, anchorY: m.y, side: 'right', width: 225, accent: accent,
+      depth: DEPTH.modal + 60, onTalk: (on) => this.alchemist?.setTalking(on),
+    });
+
+    this.bench = new LabBench(this, {
+      flaskX: FLASK_X, flaskY: FLASK_Y, capacity: CAPACITY[this.labMode],
+      elements: this.getAvailableElements(),
+      fullLine: 'Flask is full. Press COMBINE, or click the flask to empty it.',
+      say: (line) => { this.alchemist?.setMood('grumpy', 1500); this.bubble?.say([line]); },
+      onPoured: (el, _poured, left) => {
+        this.alchemist?.setMood('pleased', 1200);
+        this.refreshNuclei();
+        this.bubble?.say([left > 0 ? `${el.name} in. ${left} more.` : `${el.name} in. The flask is full — press COMBINE.`]);
       },
+      onEmptied: () => { this.refreshNuclei(); this.bubble?.say(['Flask emptied. Nothing spent.']); },
     });
 
-    // Instructions
-    const instructionText =
-      this.labMode === 'perks'      ? 'Drag 3 elements (base or abstract) into the slots, then FORGE PERK (2–4 ⚛️)' :
-      this.labMode === 'quad-perks' ? 'Drag 4 elements (base or abstract) into the slots, then FORGE QUAD PERK (5 ⚛️)' :
-      this.labMode === 'penta-perks'? 'Drag 5 elements (base or abstract) into the slots, then FORGE PENTA PERK (10 ⚛️)' :
-                                         'Drag elements into the merge slots, then press MERGE';
-    this.add.text(cx, tabY + 30, instructionText, {
-      fontSize: '11px', fontFamily: FONT_UI, color: T.dim, letterSpacing: 0.5,
-    }).setOrigin(0.5).setDepth(DEPTH.content);
+    this.buildVials(width);
+    this.buildCombineButton(cx, accent);
 
-    // ── Base element circles (draggable) ──────────────────────────
-    const circleY = 200;
+    this.time.delayedCall(350, () => this.bubble?.say([this.openingLine()], { silent: true }));
+  }
 
-    addSectionLabel(this, { x: cx, y: 138, text: 'BASE ELEMENTS', accent, width: 560 });
+  update(_time: number, delta: number): void {
+    this.bench.update(delta);
+  }
 
-    // Draw base elements
-    const baseCount = BASE_ELEMENTS.length;
-    const baseTotalW = baseCount * 100 + (baseCount - 1) * 20;
-    const baseStartX = cx - baseTotalW / 2 + 50;
-    BASE_ELEMENTS.forEach((el, i) => {
-      const ox = baseStartX + i * 120;
-      const container = this.createElementCircle(el.id, el.name, el.emoji, el.color, ox, circleY);
-      this.makeCircleDraggable(container, el.id, ox, circleY);
-    });
+  // ── The room ───────────────────────────────────────────────────────
 
-    let slotY: number;
-
-    if (this.labMode === 'elements') {
-      // Draw abstract elements (if any are unlocked)
-      const unlockedAbstract = this.getUnlockedAbstractElements();
-      if (unlockedAbstract.length > 0) {
-        const absY = circleY + 120;
-        const absTotalW = unlockedAbstract.length * 100 + (unlockedAbstract.length - 1) * 20;
-        const absStartX = cx - absTotalW / 2 + 50;
-
-        addSectionLabel(this, { x: cx, y: circleY + 75, text: 'ABSTRACT ELEMENTS', accent: C.corrupt, width: 560 });
-
-        unlockedAbstract.forEach((el, i) => {
-          const ox = absStartX + i * 120;
-          const container = this.createElementCircle(el.id, el.name, el.emoji, el.color, ox, absY, true);
-          this.makeCircleDraggable(container, el.id, ox, absY);
-        });
-        slotY = 460;
-      } else {
-        slotY = 380;
+  /** Slate tiles, a chalkboard with the title and the instruction, the bench, a wall shelf. */
+  private paintRoom(width: number, height: number, accent: number, labLevel: number): void {
+    const g = this.add.graphics().setDepth(DEPTH.backdrop);
+    g.fillStyle(0x0d1216, 1); g.fillRect(0, 0, width, height);
+    // Tiles, offset every other row, grout dark.
+    const tw = 48;
+    const th = 30;
+    for (let row = 0; row * th < BENCH_Y; row++) {
+      for (let col = -1; col * tw < width + tw; col++) {
+        const x = col * tw + (row % 2 ? tw / 2 : 0);
+        const y = row * th;
+        const h = Math.sin((row * 7 + col * 13) * 12.9898) * 43758.5453;
+        const u = h - Math.floor(h);
+        g.fillStyle(mix(0x1c2a30, 0x24363c, u), 1);
+        g.fillRect(x + 1, y + 1, tw - 2, th - 2);
+        g.fillStyle(0xffffff, 0.04); g.fillRect(x + 1, y + 1, tw - 2, 1.5);
       }
-
-      // Two merge slots
-      this.slot1X = cx - 90;
-      this.slot1Y = slotY;
-      this.slot2X = cx + 90;
-      this.slot2Y = slotY;
-
-      this.drawSlot(this.slot1X, this.slot1Y, SLOT_W, SLOT_H, accent, 1);
-      this.drawSlot(this.slot2X, this.slot2Y, SLOT_W, SLOT_H, accent, 2);
-      this.drawJoiner(cx, slotY, accent);
-
-    } else if (this.labMode === 'perks') {
-      // Perk mode: show abstract elements below base elements, then three slots
-      const unlockedAbstract = this.getUnlockedAbstractElements();
-      if (unlockedAbstract.length > 0) {
-        const absY = circleY + 110;
-        const absTotalW = unlockedAbstract.length * 100 + (unlockedAbstract.length - 1) * 20;
-        const absStartX = cx - absTotalW / 2 + 50;
-
-        addSectionLabel(this, { x: cx, y: circleY + 65, text: 'ABSTRACT ELEMENTS', accent: C.corrupt, width: 560 });
-
-        unlockedAbstract.forEach((el, i) => {
-          const ox = absStartX + i * 120;
-          const container = this.createElementCircle(el.id, el.name, el.emoji, el.color, ox, absY, true);
-          this.makeCircleDraggable(container, el.id, ox, absY);
-        });
-        slotY = 450;
-      } else {
-        slotY = 360;
-      }
-
-      this.slot1X = cx - 160;
-      this.slot1Y = slotY;
-      this.slot2X = cx;
-      this.slot2Y = slotY;
-      this.slot3X = cx + 160;
-      this.slot3Y = slotY;
-
-      for (let i = 0; i < 3; i++) {
-        const sx = [this.slot1X, this.slot2X, this.slot3X][i];
-        this.drawSlot(sx, slotY, SLOT_W, SLOT_H, accent, i + 1);
-      }
-      this.drawJoiner(cx - 80, slotY, accent);
-      this.drawJoiner(cx + 80, slotY, accent);
-
-    } else if (this.labMode === 'quad-perks') {
-      // Quad-perk mode: show abstract elements then four slots
-      const unlockedAbstract = this.getUnlockedAbstractElements();
-      if (unlockedAbstract.length > 0) {
-        const absY = circleY + 110;
-        const absTotalW = unlockedAbstract.length * 100 + (unlockedAbstract.length - 1) * 20;
-        const absStartX = cx - absTotalW / 2 + 50;
-        addSectionLabel(this, { x: cx, y: circleY + 65, text: 'ABSTRACT ELEMENTS', accent: C.corrupt, width: 560 });
-        unlockedAbstract.forEach((el, i) => {
-          const ox = absStartX + i * 120;
-          const container = this.createElementCircle(el.id, el.name, el.emoji, el.color, ox, absY, true);
-          this.makeCircleDraggable(container, el.id, ox, absY);
-        });
-        slotY = 450;
-      } else {
-        slotY = 360;
-      }
-
-      this.slot1X = cx - 180;
-      this.slot1Y = slotY;
-      this.slot2X = cx - 60;
-      this.slot2Y = slotY;
-      this.slot3X = cx + 60;
-      this.slot3Y = slotY;
-      this.slot4X = cx + 180;
-      this.slot4Y = slotY;
-
-      for (let i = 0; i < 4; i++) {
-        const sx = [this.slot1X, this.slot2X, this.slot3X, this.slot4X][i];
-        this.drawSlot(sx, slotY, SLOT_W, SLOT_H, accent, i + 1);
-      }
-      for (let i = 0; i < 3; i++) {
-        const sx = [this.slot1X, this.slot2X, this.slot3X][i];
-        this.drawJoiner(sx + 60, slotY, accent, 9);
-      }
-
-      this.add.text(cx, slotY + 72, 'ANY 4 ELEMENTS — BASE OR ABSTRACT', {
-        fontSize: '10px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 2,
-      }).setOrigin(0.5).setDepth(DEPTH.content);
-
-    } else {
-      // Penta-perk mode: show abstract elements then five slots (tighter spacing)
-      const unlockedAbstract = this.getUnlockedAbstractElements();
-      if (unlockedAbstract.length > 0) {
-        const absY = circleY + 110;
-        const absTotalW = unlockedAbstract.length * 100 + (unlockedAbstract.length - 1) * 20;
-        const absStartX = cx - absTotalW / 2 + 50;
-        addSectionLabel(this, { x: cx, y: circleY + 65, text: 'ABSTRACT ELEMENTS', accent: C.corrupt, width: 560 });
-        unlockedAbstract.forEach((el, i) => {
-          const ox = absStartX + i * 120;
-          const container = this.createElementCircle(el.id, el.name, el.emoji, el.color, ox, absY, true);
-          this.makeCircleDraggable(container, el.id, ox, absY);
-        });
-        slotY = 450;
-      } else {
-        slotY = 360;
-      }
-
-      const pentaSpacing = 110;
-      this.slot1X = cx - pentaSpacing * 2;
-      this.slot2X = cx - pentaSpacing;
-      this.slot3X = cx;
-      this.slot4X = cx + pentaSpacing;
-      this.slot5X = cx + pentaSpacing * 2;
-      this.slot1Y = this.slot2Y = this.slot3Y = this.slot4Y = this.slot5Y = slotY;
-
-      const pentaSlotXs = [this.slot1X, this.slot2X, this.slot3X, this.slot4X, this.slot5X];
-      for (let i = 0; i < 5; i++) {
-        this.drawSlot(pentaSlotXs[i], slotY, 88, SLOT_H, accent, i + 1);
-      }
-      for (let i = 0; i < 4; i++) {
-        this.drawJoiner(pentaSlotXs[i] + pentaSpacing / 2, slotY, accent, 8);
-      }
-
-      this.add.text(cx, slotY + 72, 'ANY 5 ELEMENTS — BASE OR ABSTRACT', {
-        fontSize: '10px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 2,
-      }).setOrigin(0.5).setDepth(DEPTH.content);
+    }
+    // Light falls from above the bench; the top of the wall darkens.
+    for (let k = 0; k < 14; k++) { g.fillStyle(0x000000, 0.05); g.fillRect(0, k * 10, width, 10); }
+    for (let k = 10; k >= 1; k--) { g.fillStyle(accent, 0.012); g.fillCircle(FLASK_X, FLASK_Y, k * 30); }
+    // Floor below the bench front: dark boards.
+    g.fillStyle(0x0a0d10, 1); g.fillRect(0, BENCH_Y, width, height - BENCH_Y);
+    // Vignette.
+    for (let k = 0; k < 18; k++) {
+      g.fillStyle(0x000000, 0.04 * (1 - k / 18));
+      g.fillRect(k * 5, 0, 5, height); g.fillRect(width - k * 5 - 5, 0, 5, height);
+      g.fillRect(0, height - k * 5 - 5, width, 5);
     }
 
-    // ── MERGE / FORGE button ──────────────────────────────────────
-    const mergeY = slotY + (this.labMode === 'elements' ? 84 : 104);
-    const btnLabel =
-      this.labMode === 'penta-perks' ? 'FORGE PENTA PERK' :
-      this.labMode === 'quad-perks'  ? 'FORGE QUAD PERK' :
-      this.labMode === 'perks'       ? 'FORGE PERK' :
-                                       'MERGE';
-    const btnCost =
-      this.labMode === 'penta-perks' ? '10 ⚛️' :
-      this.labMode === 'quad-perks'  ? '5 ⚛️' :
-      this.labMode === 'perks'       ? '2–4 ⚛️' :
-                                       '1 ⚛️';
+    // ── Chalkboard ──
+    const bx = width / 2;
+    const bw = 540;
+    const bh = 104;
+    const by = 72;
+    const b = this.add.graphics().setDepth(DEPTH.panel);
+    g.fillStyle(0x000000, 0.4); g.fillRect(bx - bw / 2 + 4, by - bh / 2 + 6, bw, bh);
+    drawPlank(b, bx - bw / 2 - 8, by - bh / 2 - 8, bw + 16, 8, { seed: 1 });
+    drawPlank(b, bx - bw / 2 - 8, by + bh / 2, bw + 16, 8, { seed: 2 });
+    drawPlank(b, bx - bw / 2 - 8, by - bh / 2, 8, bh, { seed: 3, vertical: true });
+    drawPlank(b, bx + bw / 2, by - bh / 2, 8, bh, { seed: 4, vertical: true });
+    b.fillStyle(0x1f3a2e, 1); b.fillRect(bx - bw / 2, by - bh / 2, bw, bh);
+    // Chalk dust and half-erased ghosts of old formulas.
+    for (let i = 0; i < 9; i++) {
+      const h = Math.sin(i * 91.7) * 43758.5453;
+      const u = h - Math.floor(h);
+      b.fillStyle(0xffffff, 0.035); b.fillEllipse(bx - bw / 2 + u * bw, by - bh / 2 + ((u * 3.7) % 1) * bh, 40 + u * 60, 10);
+    }
+    b.lineStyle(1, 0xffffff, 0.08);
+    for (let i = 0; i < 4; i++) {
+      const y = by - bh / 2 + 14 + i * 24;
+      b.lineBetween(bx - bw / 2 + 12, y, bx - bw / 2 + 12 + 60 + (i * 37) % 80, y + (i % 2 ? 2 : -2));
+    }
+    // Chalk tray with a stub of chalk.
+    b.fillStyle(WOOD.dark, 1); b.fillRect(bx - 90, by + bh / 2 + 8, 180, 6);
+    b.fillStyle(0xf1ece0, 1); b.fillRect(bx + 40, by + bh / 2 + 4, 16, 5);
+    b.fillStyle(mix(accent, 0xffffff, 0.5), 1); b.fillRect(bx + 62, by + bh / 2 + 4, 12, 5);
 
-    this.mergeButton = addButton(this, {
-      x: cx, y: mergeY, w: 320, h: 54,
-      label: btnLabel, icon: '⚡', trailing: btnCost,
-      trailingColor: hex(mix(accent, 0xffffff, 0.4)),
-      accent, variant: 'solid', fontSize: 17, align: 'left',
-      onClick: () => {
-        if (this.labMode === 'penta-perks') this.attemptPentaPerkForge();
-        else if (this.labMode === 'quad-perks') this.attemptQuadPerkForge();
-        else if (this.labMode === 'perks') this.attemptPerkForge();
-        else this.attemptMerge();
-      },
-    });
-    // Message text (result / error feedback)
-    this.messageText = this.add.text(cx, mergeY + 48, '', {
-      fontSize: '13px', fontFamily: FONT_DISPLAY, color: T.gold,
-      align: 'center', letterSpacing: 0.5, lineSpacing: 4,
-    }).setOrigin(0.5).setDepth(DEPTH.content + 5);
+    this.add.text(bx, by - 30, labLevel === 0 ? 'THE LAB' : `THE LAB  ·  LEVEL ${labLevel}`, {
+      fontSize: '22px', fontFamily: FONT_DISPLAY, color: '#f1ece0', letterSpacing: 4,
+    }).setOrigin(0.5).setDepth(DEPTH.content).setAlpha(0.92);
+    const chalkAccent = hex(mix(accent, 0xffffff, 0.55));
+    this.add.text(bx, by + 2, this.instruction(), {
+      fontSize: '13px', fontFamily: FONT_UI, color: chalkAccent, align: 'center', wordWrap: { width: bw - 40 },
+    }).setOrigin(0.5).setDepth(DEPTH.content).setAlpha(0.9);
+    this.add.text(bx, by + 30, `${CAPACITY[this.labMode]} VIALS  →  COMBINE  ·  ${this.costLine()}`, {
+      fontSize: '10px', fontFamily: FONT_DISPLAY, color: '#cfd8d0', letterSpacing: 2,
+    }).setOrigin(0.5).setDepth(DEPTH.content).setAlpha(0.75);
+
+    // ── Bench ──
+    const bench = this.add.graphics().setDepth(DEPTH.panel + 3);
+    drawPlank(bench, -4, BENCH_Y, width + 8, 18, { seed: 21, lit: 0.12, nails: false });
+    bench.fillStyle(WOOD.dark, 1); bench.fillRect(-4, BENCH_Y + 18, width + 8, 4);
+    drawPlank(bench, -4, BENCH_Y + 22, width + 8, height - BENCH_Y - 22, { seed: 22, lit: -0.2 });
+    // Drawers along the front, with brass pulls.
+    for (const dx of [250, 640, 790]) {
+      bench.fillStyle(0x000000, 0.3); bench.fillRoundedRect(dx - 56, BENCH_Y + 40, 112, 44, 3);
+      bench.lineStyle(1, WOOD.lit, 0.35); bench.strokeRoundedRect(dx - 52, BENCH_Y + 44, 104, 36, 2);
+      bench.fillStyle(0xc89a3c, 1); bench.fillRoundedRect(dx - 10, BENCH_Y + 60, 20, 5, 2);
+    }
+    // Stains and a scorch on the bench top around the flask.
+    bench.fillStyle(0x000000, 0.25); bench.fillEllipse(FLASK_X, BENCH_Y + 8, 150, 12);
+    bench.fillStyle(mix(accent, 0x000000, 0.5), 0.25); bench.fillEllipse(FLASK_X - 90, BENCH_Y + 9, 30, 6);
+    bench.fillStyle(0x3a6a2a, 0.3); bench.fillEllipse(610, BENCH_Y + 7, 22, 5);
+    // Open notebook and a quill on the left of the flask, by the alchemist's hand.
+    bench.fillStyle(0xe6d7b0, 1); bench.fillRect(286, BENCH_Y - 10, 70, 12);
+    bench.fillStyle(0xd0c09a, 1); bench.fillRect(321, BENCH_Y - 10, 35, 12);
+    bench.lineStyle(1, 0x4a3a2a, 0.6);
+    for (let i = 0; i < 3; i++) { bench.lineBetween(292, BENCH_Y - 7 + i * 3, 316, BENCH_Y - 7 + i * 3); bench.lineBetween(326, BENCH_Y - 7 + i * 3, 350, BENCH_Y - 7 + i * 3); }
+    bench.lineStyle(2, 0x2a2a3a, 1); bench.lineBetween(360, BENCH_Y - 2, 384, BENCH_Y - 26);
   }
 
-  // ── Slot chrome ──────────────────────────────────────────────
-
-  /** Empty ingredient socket: a recessed notched plate with a hex ghost. */
-  private drawSlot(x: number, y: number, w: number, h: number, accent: number, index: number): void {
-    const g = this.add.graphics().setDepth(DEPTH.panel);
-    const left = x - w / 2;
-    const top = y - h / 2;
-
-    fillNotchedGradient(g, left, top, w, h,
-      mix(C.well, accent, 0.06), mix(C.void_, accent, 0.03), 1, 12, ALL_CORNERS, 12);
-    strokeNotched(g, left, top, w, h, accent, 0.7, 2, 12, ALL_CORNERS);
-    strokeNotched(g, left + 5, top + 5, w - 10, h - 10, accent, 0.16, 1, 8, ALL_CORNERS);
-
-    // Ghost hexagon marking where a gem will land.
-    strokeHex(g, x, y - 6, 22, accent, 0.22, 1);
-
-    this.add.text(x, y + h / 2 - 13, `SLOT ${index}`, {
-      fontSize: '9px', fontFamily: FONT_DISPLAY,
-      color: hex(mix(accent, 0x000000, 0.35)), letterSpacing: 1.5,
-    }).setOrigin(0.5).setDepth(DEPTH.panel + 1);
+  private instruction(): string {
+    switch (this.labMode) {
+      case 'perks': return 'Pour three vials — base or abstract — and press COMBINE to forge a perk.';
+      case 'quad-perks': return 'Pour four vials — base or abstract — and press COMBINE for a quad perk.';
+      case 'penta-perks': return 'Pour all five and press COMBINE for a penta perk.';
+      default: return 'Pour two vials into the flask and press COMBINE.';
+    }
   }
 
-  /** The "+" between two sockets, drawn as an accent cross with a diamond. */
-  private drawJoiner(x: number, y: number, accent: number, size = 11): void {
-    const g = this.add.graphics().setDepth(DEPTH.panel + 1);
-    g.lineStyle(3, accent, 0.75);
-    g.beginPath(); g.moveTo(x - size, y); g.lineTo(x + size, y); g.strokePath();
-    g.beginPath(); g.moveTo(x, y - size); g.lineTo(x, y + size); g.strokePath();
-    fillDiamond(g, x, y, 3.5, mix(accent, 0xffffff, 0.6), 1);
+  private costLine(): string {
+    switch (this.labMode) {
+      case 'perks': return '2–4 ⚛️';
+      case 'quad-perks': return '5 ⚛️';
+      case 'penta-perks': return '10 ⚛️';
+      default: return '1 ⚛️  (3 ⚛️ ABSTRACT)';
+    }
   }
 
-  // ── Helpers ──────────────────────────────────────────────────
-
-  private getAvailableElements(): LabElement[] {
-    return [...BASE_ELEMENTS, ...this.getUnlockedAbstractElements()];
+  private openingLine(): string {
+    const n = PlayerData.getNuclei();
+    switch (this.labMode) {
+      case 'perks': return `Perk mode. Three vials, then COMBINE. Two nuclei for a base perk, four with an abstract in it. You have ${n}.`;
+      case 'quad-perks': return `Quad perks. Four vials, five nuclei each. You have ${n}.`;
+      case 'penta-perks': return `Penta perks. All five vials, ten nuclei each. You have ${n}.`;
+      default: return `Nuclei: ${n}. Pour two vials into the flask and press COMBINE. One nucleus a mix, three for two abstracts.`;
+    }
   }
+
+  // ── Vials ──────────────────────────────────────────────────────────
 
   private getUnlockedAbstractElements(): LabElement[] {
     const completed = PlayerData.getCompletedGauntlets();
@@ -418,450 +305,269 @@ export class LabScene extends Phaser.Scene {
     });
   }
 
-  /**
-   * A draggable element token: a cut gem in the element's own colour, with an
-   * abstract variant that gets a second corrupt-violet ring.
-   */
-  private createElementCircle(
-    id: string, name: string, emoji: string, color: number,
-    x: number, y: number, isAbstract = false,
-  ): Phaser.GameObjects.Container {
-    void id;
-    const g = this.add.graphics();
-
-    for (let k = 5; k >= 1; k--) {
-      g.fillStyle(color, 0.05);
-      g.fillCircle(0, 0, 26 + k * 4);
-    }
-    fillHex(g, 0, 0, 34, mix(color, 0x000000, 0.55), 0.95);
-    fillHex(g, 0, 0, 30, mix(color, 0x000000, 0.25), 0.95);
-    strokeHex(g, 0, 0, 34, mix(color, 0xffffff, 0.35), 0.95, 2);
-    strokeHex(g, 0, 0, 27, mix(color, 0xffffff, 0.6), 0.3, 1);
-    if (isAbstract) strokeHex(g, 0, 0, 39, C.corrupt, 0.7, 2);
-
-    const label = this.add.text(0, -5, emoji, { fontSize: '23px' }).setOrigin(0.5);
-    const nameLbl = this.add.text(0, 19, name.toUpperCase(), {
-      fontSize: '8px', fontFamily: FONT_DISPLAY, color: T.bright, letterSpacing: 1,
-    }).setOrigin(0.5);
-
-    // Resting tokens sit just above the socket plates so a layout shift can
-    // never bury one behind a socket.
-    return this.add.container(x, y, [g, label, nameLbl]).setDepth(DEPTH.panel + 2);
+  private getAvailableElements(): LabElement[] {
+    return [...BASE_ELEMENTS, ...this.getUnlockedAbstractElements()];
   }
 
-  private makeCircleDraggable(
-    container: Phaser.GameObjects.Container,
-    elementId: string,
-    originX: number,
-    originY: number,
-  ): void {
-    container.setSize(80, 80);
-    container.setInteractive({ useHandCursor: true });
-    this.input.setDraggable(container);
+  /** Base vials in a rack on the bench; abstract vials on a wall shelf above them. */
+  private buildVials(width: number): void {
+    const rackLeft = 590;
+    const rackW = width - rackLeft - 40;
+    const step = rackW / BASE_ELEMENTS.length;
+    // The rack: a plank with holes the vials stand in.
+    const rack = this.add.graphics().setDepth(DEPTH.panel + 4);
+    drawPlank(rack, rackLeft, BENCH_Y - 22, rackW, 10, { seed: 31, lit: 0.05 });
+    for (let i = 0; i < BASE_ELEMENTS.length; i++) {
+      rack.fillStyle(0x0a0806, 1); rack.fillEllipse(rackLeft + step * (i + 0.5), BENCH_Y - 17, 24, 7);
+    }
+    for (const lx of [rackLeft + 8, rackLeft + rackW - 8]) {
+      rack.fillStyle(WOOD.dark, 1); rack.fillRect(lx - 3, BENCH_Y - 14, 6, 14);
+    }
+    BASE_ELEMENTS.forEach((el, i) => this.bench.addVial(el, rackLeft + step * (i + 0.5), BENCH_Y - 18));
 
-    let dragging = false;
-
-    // A dragged token floats above everything, seated gems included.
-    container.on('dragstart', () => { dragging = true; Sfx.play('ui-drag'); container.setDepth(DEPTH.content); });
-
-    container.on('drag', (_ptr: Phaser.Input.Pointer, dragX: number, dragY: number) => {
-      container.setPosition(dragX, dragY);
-    });
-
-    container.on('dragend', () => {
-      dragging = false;
-      container.setDepth(DEPTH.panel + 2);
-      const cx = container.x;
-      const cy = container.y;
-
-      const inSlot1 = Math.abs(cx - this.slot1X) <= SLOT_W / 2 && Math.abs(cy - this.slot1Y) <= SLOT_H / 2;
-      const inSlot2 = Math.abs(cx - this.slot2X) <= SLOT_W / 2 && Math.abs(cy - this.slot2Y) <= SLOT_H / 2;
-      const inSlot3 = (this.labMode === 'perks' || this.labMode === 'quad-perks' || this.labMode === 'penta-perks') &&
-        Math.abs(cx - this.slot3X) <= SLOT_W / 2 && Math.abs(cy - this.slot3Y) <= SLOT_H / 2;
-      const inSlot4 = (this.labMode === 'quad-perks' || this.labMode === 'penta-perks') &&
-        Math.abs(cx - this.slot4X) <= SLOT_W / 2 && Math.abs(cy - this.slot4Y) <= SLOT_H / 2;
-      const inSlot5 = this.labMode === 'penta-perks' &&
-        Math.abs(cx - this.slot5X) <= SLOT_W / 2 && Math.abs(cy - this.slot5Y) <= SLOT_H / 2;
-
-      if (inSlot1) {
-        this.setSlot(1, elementId);
-      } else if (inSlot2) {
-        this.setSlot(2, elementId);
-      } else if (inSlot3) {
-        this.setSlot(3, elementId);
-      } else if (inSlot4) {
-        this.setSlot(4, elementId);
-      } else if (inSlot5) {
-        this.setSlot(5, elementId);
+    const abstract = this.getUnlockedAbstractElements();
+    if (abstract.length > 0) {
+      const shelfY = 300;
+      const shelf = this.add.graphics().setDepth(DEPTH.panel);
+      for (let i = 0; i < 5; i++) { shelf.fillStyle(0x000000, 0.1 * (1 - i / 5)); shelf.fillRect(rackLeft, shelfY + 10 + i * 2, rackW, 2); }
+      drawPlank(shelf, rackLeft, shelfY, rackW, 10, { seed: 32 });
+      shelf.fillStyle(WOOD.dark, 1); shelf.fillRect(rackLeft, shelfY + 10, rackW, 3);
+      for (const bx of [rackLeft + 20, rackLeft + rackW - 20]) {
+        shelf.lineStyle(3, 0x3b3a44, 1); shelf.beginPath(); shelf.moveTo(bx, shelfY + 12); shelf.lineTo(bx, shelfY + 30); shelf.lineTo(bx + 14, shelfY + 12); shelf.strokePath();
       }
-      container.setPosition(originX, originY);
-    });
-
-    void dragging;
-  }
-
-  private setSlot(slot: 1 | 2 | 3 | 4 | 5, elementId: string): void {
-    // Only a token that actually lands in a slot makes the seating sound; a
-    // drag that falls short just snaps home silently.
-    Sfx.play('ui-drop');
-
-    const all = this.getAvailableElements();
-    const el = all.find((e) => e.id === elementId)!;
-
-    if (slot === 1) {
-      this.slot1Id = elementId;
-      if (this.slot1Visual) this.slot1Visual.destroy();
-      this.slot1Visual = this.buildSlotVisual(el, this.slot1X, this.slot1Y, slot);
-    } else if (slot === 2) {
-      this.slot2Id = elementId;
-      if (this.slot2Visual) this.slot2Visual.destroy();
-      this.slot2Visual = this.buildSlotVisual(el, this.slot2X, this.slot2Y, slot);
-    } else if (slot === 3) {
-      this.slot3Id = elementId;
-      if (this.slot3Visual) this.slot3Visual.destroy();
-      this.slot3Visual = this.buildSlotVisual(el, this.slot3X, this.slot3Y, slot);
-    } else if (slot === 4) {
-      this.slot4Id = elementId;
-      if (this.slot4Visual) this.slot4Visual.destroy();
-      this.slot4Visual = this.buildSlotVisual(el, this.slot4X, this.slot4Y, slot);
-    } else {
-      this.slot5Id = elementId;
-      if (this.slot5Visual) this.slot5Visual.destroy();
-      this.slot5Visual = this.buildSlotVisual(el, this.slot5X, this.slot5Y, slot);
+      this.add.text(rackLeft + rackW / 2, shelfY - VIAL_H - 30, 'ABSTRACT', {
+        fontSize: '9px', fontFamily: FONT_DISPLAY, color: hex(mix(C.corrupt, 0xffffff, 0.3)), letterSpacing: 3,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+      const astep = rackW / Math.max(abstract.length, 3);
+      abstract.forEach((el, i) => this.bench.addVial(el, rackLeft + astep * (i + 0.5), shelfY - 1));
     }
-    this.updateMergeButtonLabel();
   }
 
-  private buildSlotVisual(
-    el: LabElement,
-    x: number, y: number,
-    slot: 1 | 2 | 3 | 4 | 5,
-  ): Phaser.GameObjects.Container {
-    const isAbs = ABSTRACT_ELEMENT_IDS.includes(el.id);
-    const g = this.add.graphics();
-    drawGlow(g, -30, -30, 60, 60, el.color, 0.5, 4, 3, 14);
-    fillHex(g, 0, 0, 31, mix(el.color, 0x000000, 0.5), 0.97);
-    fillHex(g, 0, 0, 27, mix(el.color, 0x000000, 0.2), 0.97);
-    strokeHex(g, 0, 0, 31, mix(el.color, 0xffffff, 0.45), 1, 2);
-    if (isAbs) strokeHex(g, 0, 0, 36, C.corrupt, 0.8, 2);
+  // ── Combine ────────────────────────────────────────────────────────
 
-    const emoji = this.add.text(0, -4, el.emoji, { fontSize: '21px' }).setOrigin(0.5);
-    const name = this.add.text(0, 17, el.name.toUpperCase(), {
-      fontSize: '8px', fontFamily: FONT_DISPLAY, color: T.bright, letterSpacing: 1,
-    }).setOrigin(0.5);
+  /** The big red button on the bench front. */
+  private buildCombineButton(cx: number, accent: number): void {
+    const bx = cx;
+    const by = BENCH_Y + 96;
+    const g = this.add.graphics().setDepth(DEPTH.content);
+    const paint = (down: number, lit: number): void => {
+      g.clear();
+      // Brass plate screwed to the drawer front.
+      g.fillStyle(0x000000, 0.35); g.fillRoundedRect(bx - 68, by - 48, 136, 100, 8);
+      g.fillStyle(0x8a6a2a, 1); g.fillRoundedRect(bx - 66, by - 50, 132, 100, 8);
+      g.fillStyle(0xc89a3c, 1); g.fillRoundedRect(bx - 62, by - 46, 124, 92, 6);
+      g.lineStyle(1, 0xf0d48a, 0.5); g.strokeRoundedRect(bx - 58, by - 42, 116, 84, 5);
+      for (const [sx, sy] of [[bx - 56, by - 40], [bx + 56, by - 40], [bx - 56, by + 40], [bx + 56, by + 40]]) {
+        g.fillStyle(0x3b3a44, 1); g.fillCircle(sx, sy, 2.4);
+        g.fillStyle(0x9a9aae, 1); g.fillRect(sx - 2, sy - 0.5, 4, 1);
+      }
+      // The button: a fat red dome in a dark well, sinking when pressed.
+      g.fillStyle(0x1a0a0a, 1); g.fillCircle(bx, by - 8, 32);
+      const r = 28 - down * 2;
+      const dy = down * 4;
+      g.fillStyle(mix(C.blood, 0x000000, 0.45), 1); g.fillCircle(bx, by - 8 + dy + 3, r);
+      g.fillStyle(mix(C.blood, 0xffffff, lit * 0.2), 1); g.fillCircle(bx, by - 8 + dy, r);
+      g.fillStyle(mix(C.blood, 0xffffff, 0.35 + lit * 0.2), 1); g.fillCircle(bx - 6, by - 16 + dy, r * 0.5);
+      g.fillStyle(0xffffff, 0.75); g.fillEllipse(bx - 10, by - 20 + dy, 10, 5);
+      for (let k = 3; k >= 1; k--) { g.fillStyle(accent, 0.05 * lit); g.fillCircle(bx, by - 8, 34 + k * 8); }
+    };
+    paint(0, 0);
+    this.combineLabel = this.add.text(bx, by + 32, `COMBINE  ·  ${this.combineCost()}`, {
+      fontSize: '10px', fontFamily: FONT_DISPLAY, color: '#2a1a08', letterSpacing: 2,
+    }).setOrigin(0.5).setDepth(DEPTH.content + 1);
 
-    // Click the seated gem to eject it.
-    const hit = this.add.circle(0, 0, 32, 0xffffff, 0).setInteractive({ useHandCursor: true });
-    // Above the socket plate (DEPTH.panel) and its caption, but below a token
-    // being dragged (depth 20) so one can still be dropped over a filled slot.
-    const container = this.add.container(x, y, [g, emoji, name, hit]).setDepth(DEPTH.panel + 5);
+    const hit = this.add.circle(bx, by - 8, 34, 0xffffff, 0).setDepth(DEPTH.content + 2).setInteractive({ useHandCursor: true });
+    hit.on('pointerover', () => { paint(0, 1); Sfx.play('ui-hover'); });
+    hit.on('pointerout', () => paint(0, 0));
     hit.on('pointerdown', () => {
-      if (slot === 1) { this.slot1Id = null; if (this.slot1Visual) { this.slot1Visual.destroy(); this.slot1Visual = null; } }
-      else if (slot === 2) { this.slot2Id = null; if (this.slot2Visual) { this.slot2Visual.destroy(); this.slot2Visual = null; } }
-      else if (slot === 3) { this.slot3Id = null; if (this.slot3Visual) { this.slot3Visual.destroy(); this.slot3Visual = null; } }
-      else if (slot === 4) { this.slot4Id = null; if (this.slot4Visual) { this.slot4Visual.destroy(); this.slot4Visual = null; } }
-      else { this.slot5Id = null; if (this.slot5Visual) { this.slot5Visual.destroy(); this.slot5Visual = null; } }
-      this.updateMergeButtonLabel();
+      paint(1, 1);
+      this.time.delayedCall(140, () => paint(0, 1));
+      this.combine();
     });
-    return container;
   }
 
-  /**
-   * Element mode is the only one whose price moves with the ingredients, so the
-   * forge button's trailing cost is re-stamped whenever a socket changes.
-   */
-  private updateMergeButtonLabel(): void {
-    if (!this.mergeButton || this.labMode !== 'elements') return;
-    const cost = this.getMergeCost();
-    this.mergeButton.setTrailing(`${cost ?? 1} ⚛️`);
-  }
-
-  private getMergeCost(): number | null {
-    if (!this.slot1Id || !this.slot2Id) return null;
-    const a1 = ABSTRACT_ELEMENT_IDS.includes(this.slot1Id);
-    const a2 = ABSTRACT_ELEMENT_IDS.includes(this.slot2Id);
-    if (a1 && a2) return 3;
-    return 1;
-  }
-
-  private attemptMerge(): void {
-    this.messageText.setText('');
-
-    if (!this.slot1Id || !this.slot2Id) {
-      this.showMessage('Place elements in both slots first.', '#ff8888');
-      return;
+  /** The nuclei the current flask would cost, for the label under the button. */
+  private combineCost(): string {
+    switch (this.labMode) {
+      case 'perks': return '2–4 ⚛️';
+      case 'quad-perks': return '5 ⚛️';
+      case 'penta-perks': return '10 ⚛️';
+      default: {
+        const abs = this.bench.poured.filter((id) => ABSTRACT_ELEMENT_IDS.includes(id)).length;
+        return abs === 2 ? '3 ⚛️' : '1 ⚛️';
+      }
     }
+  }
 
-    const a1 = ABSTRACT_ELEMENT_IDS.includes(this.slot1Id);
-    const a2 = ABSTRACT_ELEMENT_IDS.includes(this.slot2Id);
+  private names(ids: string[]): string {
+    return ids.map((id) => this.getAvailableElements().find((e) => e.id === id)?.name ?? id).join(' + ');
+  }
 
-    // Mixed base + abstract: fails and wastes 1 nucleus
-    if (a1 !== a2) {
-      if (!PlayerData.spendNucleus()) {
-        this.showMessage('Need an Elemental Nucleus (buy from Shop).', '#ff8888');
-        return;
-      }
-      this.refreshNuclei();
-      this.showMessage('⚡ Incompatible elements — 1 Nucleus wasted!', '#ff6644');
-      return;
+  /** Decide what the flask makes — and pay for it — without animating anything yet. */
+  private evaluate(): Outcome {
+    const cap = CAPACITY[this.labMode];
+    const ids = this.bench.poured;
+    if (ids.length < cap) {
+      return { kind: 'say', mood: 'thinking', say: `${cap - ids.length} more vial${cap - ids.length === 1 ? '' : 's'} first.` };
     }
+    const have = PlayerData.getNuclei();
+    const broke = (cost: number): Outcome => ({ kind: 'say', mood: 'grumpy', say: `That mix needs ${cost} nucle${cost === 1 ? 'us' : 'i'}. You have ${have}. The shop sells them.` });
 
-    // Abstract + Abstract: requires Lab Level 1, costs 3 nuclei
-    if (a1 && a2) {
-      if (PlayerData.getLabLevel() < 1) {
-        this.showMessage('Requires Lab Level 1 (upgrade in Shop).', '#ff8888');
-        return;
+    if (this.labMode === 'elements') {
+      const [a, b] = ids;
+      const a1 = ABSTRACT_ELEMENT_IDS.includes(a);
+      const a2 = ABSTRACT_ELEMENT_IDS.includes(b);
+      // Mixed base + abstract: fails and wastes 1 nucleus.
+      if (a1 !== a2) {
+        if (!PlayerData.spendNucleus()) return broke(1);
+        this.refreshNuclei();
+        return { kind: 'explode', say: `${this.names(ids)}: base and abstract don't mix. One nucleus wasted. ${PlayerData.getNuclei()} left.` };
       }
-      const recipe = findRecipe(this.slot1Id, this.slot2Id);
-      if (!recipe) {
-        this.showMessage('No combination found for these elements.', '#ff8888');
-        return;
+      if (a1 && a2 && PlayerData.getLabLevel() < 1) {
+        return { kind: 'say', mood: 'grumpy', say: 'Abstract fusion needs Lab level 1. The shop sells it.' };
       }
+      const recipe = findRecipe(a, b);
+      if (!recipe) return { kind: 'explode', say: `${this.names(ids)} → nothing. No recipe. Nothing spent.` };
       if (PlayerData.isElementUnlocked(recipe.result)) {
-        this.showMessage(`${recipe.resultEmoji} ${recipe.resultName} already discovered!`, '#ffcc44');
-        return;
+        return { kind: 'say', mood: 'thinking', say: `${this.names(ids)} → ${recipe.resultName}. Already discovered. Nothing spent.` };
       }
-      if (!PlayerData.spendNuclei(3)) {
-        this.showMessage('Need 3 Elemental Nuclei for abstract fusion.', '#ff8888');
-        return;
-      }
+      const cost = a1 && a2 ? 3 : 1;
+      if (!PlayerData.spendNuclei(cost)) return broke(cost);
       PlayerData.unlockElement(recipe.result);
       this.refreshNuclei();
-      this.showDiscoveryPopup(recipe.result, recipe.resultName, recipe.resultEmoji);
-      return;
+      return { kind: 'element', recipe, say: `${this.names(ids)} → ${recipe.resultName}. ${cost} nucle${cost === 1 ? 'us' : 'i'} spent, ${PlayerData.getNuclei()} left.` };
     }
 
-    // Base + Base: 1 nucleus (normal)
-    const recipe = findRecipe(this.slot1Id, this.slot2Id);
-    if (!recipe) {
-      this.showMessage('No combination found for these elements.', '#ff8888');
-      return;
+    let recipe: PerkDef | undefined;
+    let cost: number;
+    if (this.labMode === 'perks') {
+      const baseRecipe = findPerkRecipe(ids[0], ids[1], ids[2]);
+      recipe = baseRecipe ?? findAbstractTriplePerkRecipe(ids[0], ids[1], ids[2]);
+      cost = baseRecipe ? 2 : 4;
+    } else if (this.labMode === 'quad-perks') {
+      recipe = findQuadPerkRecipe(ids[0], ids[1], ids[2], ids[3]);
+      cost = 5;
+    } else {
+      recipe = findPentaPerkRecipe(ids[0], ids[1], ids[2], ids[3], ids[4]);
+      cost = 10;
     }
-
-    if (PlayerData.isElementUnlocked(recipe.result)) {
-      this.showMessage(`${recipe.resultEmoji} ${recipe.resultName} already discovered!`, '#ffcc44');
-      return;
-    }
-
-    if (!PlayerData.spendNucleus()) {
-      this.showMessage('Need an Elemental Nucleus (buy from Shop).', '#ff8888');
-      return;
-    }
-
-    PlayerData.unlockElement(recipe.result);
-    this.refreshNuclei();
-    this.showDiscoveryPopup(recipe.result, recipe.resultName, recipe.resultEmoji);
-  }
-
-  private attemptPerkForge(): void {
-    this.messageText.setText('');
-
-    if (!this.slot1Id || !this.slot2Id || !this.slot3Id) {
-      this.showMessage('Place 3 elements in all slots first.', '#ff8888');
-      return;
-    }
-
-    // Try base triple perk first (2 nuclei), then abstract triple perk (4 nuclei)
-    const baseRecipe = findPerkRecipe(this.slot1Id, this.slot2Id, this.slot3Id);
-    const absRecipe  = findAbstractTriplePerkRecipe(this.slot1Id, this.slot2Id, this.slot3Id);
-    const recipe = baseRecipe ?? absRecipe;
-    if (!recipe) {
-      this.showMessage('No perk matches these elements.', '#ff8888');
-      return;
-    }
-
+    if (!recipe) return { kind: 'explode', say: `${this.names(ids)} → no perk. Nothing spent.` };
     if (PlayerData.isPerkUnlocked(recipe.elementId, recipe.id)) {
-      this.showMessage(`${recipe.emoji} ${recipe.name} already forged!`, '#ffcc44');
-      return;
+      return { kind: 'say', mood: 'thinking', say: `${recipe.name}. Already forged. Nothing spent.` };
     }
-
-    const cost = baseRecipe ? 2 : 4;
-    if (!PlayerData.spendNuclei(cost)) {
-      this.showMessage(`Need ${cost} Elemental Nuclei to forge this perk.`, '#ff8888');
-      return;
-    }
-
+    if (!PlayerData.spendNuclei(cost)) return broke(cost);
     PlayerData.unlockPerk(recipe.elementId, recipe.id);
     this.refreshNuclei();
-    this.showPerkDiscoveryPopup(recipe);
+    return { kind: 'perk', perk: recipe, say: `${this.names(ids)} → ${recipe.name}. ${cost} nuclei spent, ${PlayerData.getNuclei()} left.` };
   }
 
-  private attemptQuadPerkForge(): void {
-    this.messageText.setText('');
-
-    if (!this.slot1Id || !this.slot2Id || !this.slot3Id || !this.slot4Id) {
-      this.showMessage('Place base elements in all 4 slots first.', '#ff8888');
+  private combine(): void {
+    if (this.bench.busy) return;
+    const outcome = this.evaluate();
+    if (outcome.kind === 'say') {
+      Sfx.play('ui-denied');
+      this.alchemist?.setMood(outcome.mood, 1800);
+      this.bubble?.say([outcome.say]);
       return;
     }
+    this.bubble?.hide();
+    this.alchemist?.lookAt(FLASK_X, FLASK_Y);
+    // Heat the flask: the burner comes up and the mix boils for a beat before it resolves.
+    this.bench.heatThen(() => {
+      if (outcome.kind === 'explode') {
+        this.alchemist?.blacken(1);
+        this.bench.explode(() => this.bubble?.say([outcome.say], { hold: 1200 }));
+        return;
+      }
+      const color = outcome.kind === 'element' ? (findElementDef(outcome.recipe.result)?.color ?? C.arcane) : MODE_ACCENT[this.labMode];
+      this.alchemist?.setMood('pleased', 3000);
+      this.bench.succeed(color, () => {
+        if (outcome.kind === 'element') this.showDiscoveryPopup(outcome.recipe.result, outcome.recipe.resultName, outcome.recipe.resultEmoji);
+        else this.showPerkDiscoveryPopup(outcome.perk);
+        this.bubble?.say([outcome.say], { hold: 1500 });
+      });
+    });
+  }
 
-    const recipe = findQuadPerkRecipe(this.slot1Id, this.slot2Id, this.slot3Id, this.slot4Id);
-    if (!recipe) {
-      this.showMessage('No quad perk matches these elements.', '#ff8888');
-      return;
-    }
+  private refreshNuclei(): void {
+    this.nucleiChip.setValue(`×${PlayerData.getNuclei()}`);
+    this.combineLabel?.setText(`COMBINE  ·  ${this.combineCost()}`);
+  }
 
-    if (PlayerData.isPerkUnlocked(recipe.elementId, recipe.id)) {
-      this.showMessage(`${recipe.emoji} ${recipe.name} already forged!`, '#ffcc44');
-      return;
-    }
-
-    if (!PlayerData.spendNuclei(5)) {
-      this.showMessage('Need 5 Elemental Nuclei to forge a quad perk.', '#ff8888');
-      return;
-    }
-
-    PlayerData.unlockPerk(recipe.elementId, recipe.id);
+  /** Clear the bench after a card is dismissed. */
+  private resetBench(): void {
+    this.bench.reset();
     this.refreshNuclei();
-    this.showPerkDiscoveryPopup(recipe);
   }
 
-  private attemptPentaPerkForge(): void {
-    this.messageText.setText('');
-
-    if (!this.slot1Id || !this.slot2Id || !this.slot3Id || !this.slot4Id || !this.slot5Id) {
-      this.showMessage('Place base elements in all 5 slots first.', '#ff8888');
-      return;
-    }
-
-    const recipe = findPentaPerkRecipe(this.slot1Id, this.slot2Id, this.slot3Id, this.slot4Id, this.slot5Id);
-    if (!recipe) {
-      this.showMessage('No penta perk matches these elements.', '#ff8888');
-      return;
-    }
-
-    if (PlayerData.isPerkUnlocked(recipe.elementId, recipe.id)) {
-      this.showMessage(`${recipe.emoji} ${recipe.name} already forged!`, '#ffcc44');
-      return;
-    }
-
-    if (!PlayerData.spendNuclei(10)) {
-      this.showMessage('Need 10 Elemental Nuclei to forge a penta perk.', '#ff8888');
-      return;
-    }
-
-    PlayerData.unlockPerk(recipe.elementId, recipe.id);
-    this.refreshNuclei();
-    this.showPerkDiscoveryPopup(recipe);
-  }
-
-  private showMessage(text: string, color: string): void {
-    // The colour already encodes the outcome: red is a refusal, gold is a nudge.
-    Sfx.play(color === '#ff8888' || color === '#ff6644' ? 'ui-denied' : 'ui-toast');
-    this.messageText.setText(text).setColor(color);
-    this.time.delayedCall(3000, () => { if (this.messageText.active) this.messageText.setText(''); });
-  }
+  // ── Cards ──────────────────────────────────────────────────────────
 
   /**
    * The payoff moment for a fusion: the element you just made, standing in the frame.
-   *
-   * It used to be a bare rectangle with a sparkle emoji and the element's own emoji beside
-   * its name — the one screen in the game where a *picture* of the thing was the entire
-   * point, and it showed a sticker instead.
    */
   private showDiscoveryPopup(elementId: string, name: string, emoji: string): void {
-    Sfx.play('unlock');
-    const { width, height } = this.scale;
+    const { width } = this.scale;
     const cx = width / 2;
     const accent = findElementDef(elementId)?.color ?? C.arcane;
     const objects: Phaser.GameObjects.GameObject[] = [];
 
     const modal = addModal(this, {
-      w: 460, h: 344, accent, glow: 0.6,
-      title: '✨  NEW ELEMENT DISCOVERED',
-      depth: DEPTH.modal + 40,
+      w: 460, h: 344, accent, glow: 0.6, title: '✨  NEW ELEMENT DISCOVERED', depth: DEPTH.modal + 40,
     });
     objects.push(modal.scrim, ...modal.objects);
 
     const crest = addElementCrest(this, {
-      x: cx, y: modal.contentTop + 78, w: 172, h: 138,
-      elementId, name: `${emoji}  ${name}`, accent,
-      mastered: PlayerData.isMasteryEnabled(elementId),
-      depth: DEPTH.modal + 41, portraitScale: 0.78,
+      x: cx, y: modal.contentTop + 78, w: 172, h: 138, elementId, name: `${emoji}  ${name}`, accent,
+      mastered: PlayerData.isMasteryEnabled(elementId), depth: DEPTH.modal + 41, portraitScale: 0.78,
     });
     objects.push(...crest.objects);
 
     objects.push(this.add.text(cx, modal.contentTop + 168, `${emoji}  ${name.toUpperCase()}`, {
-      fontSize: '28px', fontFamily: FONT_DISPLAY,
-      color: hex(mix(accent, 0xffffff, 0.6)), letterSpacing: 2,
+      fontSize: '28px', fontFamily: FONT_DISPLAY, color: hex(mix(accent, 0xffffff, 0.6)), letterSpacing: 2,
       stroke: hex(mix(accent, 0x000000, 0.8)), strokeThickness: 4,
     }).setOrigin(0.5).setDepth(DEPTH.modal + 42));
-
     objects.push(this.add.text(cx, modal.contentTop + 196, 'Now available in Element Select', {
       fontSize: '12px', fontFamily: FONT_UI, color: T.dim, letterSpacing: 1,
     }).setOrigin(0.5).setDepth(DEPTH.modal + 42));
 
     objects.push(addButton(this, {
-      x: cx, y: modal.bottom - 38, w: 180, h: 44,
-      label: 'CONTINUE', icon: '✔', accent, variant: 'solid', fontSize: 15,
+      x: cx, y: modal.bottom - 38, w: 180, h: 44, label: 'CONTINUE', icon: '✔', accent, variant: 'solid', fontSize: 15,
       depth: DEPTH.modal + 42,
-      onClick: () => {
-        for (const o of objects) o.destroy();
-        this.slot1Id = null;
-        this.slot2Id = null;
-        if (this.slot1Visual) { this.slot1Visual.destroy(); this.slot1Visual = null; }
-        if (this.slot2Visual) { this.slot2Visual.destroy(); this.slot2Visual = null; }
-      },
+      onClick: () => { for (const o of objects) o.destroy(); this.resetBench(); },
     }).container);
   }
 
   /** The same moment for a forged perk — a struck sigil rather than a character. */
   private showPerkDiscoveryPopup(perk: PerkDef): void {
-    Sfx.play('unlock');
-    const { width, height } = this.scale;
+    const { width } = this.scale;
     const cx = width / 2;
-    void height;
-
     const isPenta = perk.tier === 'penta';
     const isQuad = perk.tier === 'quad';
     const isAbstract = perk.tier === 'abstract-triple';
     const accent = isPenta ? 0xcc44ff : isQuad ? 0xffaa44 : isAbstract ? 0xcc66ff : 0x44aaff;
-    const heading = isPenta ? 'PENTA PERK FORGED'
-      : isQuad ? 'QUAD PERK FORGED'
-      : isAbstract ? 'ABSTRACT PERK FORGED'
-      : 'NEW PERK FORGED';
+    const heading = isPenta ? 'PENTA PERK FORGED' : isQuad ? 'QUAD PERK FORGED' : isAbstract ? 'ABSTRACT PERK FORGED' : 'NEW PERK FORGED';
 
     const objects: Phaser.GameObjects.GameObject[] = [];
-    const modal = addModal(this, {
-      w: 480, h: 342, accent, glow: 0.6,
-      title: `${perk.emoji}  ${heading}`,
-      depth: DEPTH.modal + 40,
-    });
+    const modal = addModal(this, { w: 480, h: 342, accent, glow: 0.6, title: `${perk.emoji}  ${heading}`, depth: DEPTH.modal + 40 });
     objects.push(modal.scrim, ...modal.objects);
-
-    objects.push(this.add.text(cx, modal.contentTop + 50, perk.emoji, { fontSize: '46px' })
-      .setOrigin(0.5).setDepth(DEPTH.modal + 42));
-
+    objects.push(this.add.text(cx, modal.contentTop + 50, perk.emoji, { fontSize: '46px' }).setOrigin(0.5).setDepth(DEPTH.modal + 42));
     objects.push(this.add.text(cx, modal.contentTop + 104, perk.name.toUpperCase(), {
-      fontSize: '24px', fontFamily: FONT_DISPLAY,
-      color: hex(mix(accent, 0xffffff, 0.6)), letterSpacing: 1.5,
-      align: 'center', wordWrap: { width: 400 },
+      fontSize: '24px', fontFamily: FONT_DISPLAY, color: hex(mix(accent, 0xffffff, 0.6)), letterSpacing: 1.5, align: 'center', wordWrap: { width: 400 },
     }).setOrigin(0.5).setDepth(DEPTH.modal + 42));
-
     objects.push(this.add.text(cx, modal.contentTop + 134, perk.description, {
-      fontSize: '13px', fontFamily: FONT_UI, color: T.normal,
-      align: 'center', wordWrap: { width: 380 }, lineSpacing: 5,
+      fontSize: '13px', fontFamily: FONT_UI, color: T.normal, align: 'center', wordWrap: { width: 380 }, lineSpacing: 5,
     }).setOrigin(0.5, 0).setDepth(DEPTH.modal + 42));
-
     objects.push(this.add.text(cx, modal.bottom - 74, `Equip on ${perk.elementId.toUpperCase()} in Element Select`, {
       fontSize: '11px', fontFamily: FONT_UI, color: T.faint, letterSpacing: 1,
     }).setOrigin(0.5).setDepth(DEPTH.modal + 42));
-
     objects.push(addButton(this, {
-      x: cx, y: modal.bottom - 36, w: 180, h: 42,
-      label: 'CONTINUE', icon: '✔', accent, variant: 'solid', fontSize: 15,
+      x: cx, y: modal.bottom - 36, w: 180, h: 42, label: 'CONTINUE', icon: '✔', accent, variant: 'solid', fontSize: 15,
       depth: DEPTH.modal + 42,
-      onClick: () => {
-        for (const o of objects) o.destroy();
-        this.slot1Id = null; this.slot2Id = null; this.slot3Id = null;
-        this.slot4Id = null; this.slot5Id = null;
-        if (this.slot1Visual) { this.slot1Visual.destroy(); this.slot1Visual = null; }
-        if (this.slot2Visual) { this.slot2Visual.destroy(); this.slot2Visual = null; }
-        if (this.slot3Visual) { this.slot3Visual.destroy(); this.slot3Visual = null; }
-        if (this.slot4Visual) { this.slot4Visual.destroy(); this.slot4Visual = null; }
-        if (this.slot5Visual) { this.slot5Visual.destroy(); this.slot5Visual = null; }
-      },
+      onClick: () => { for (const o of objects) o.destroy(); this.resetBench(); },
     }).container);
   }
+
+  // ── Perk book ──────────────────────────────────────────────────────
 
   private showPerkBook(): void {
     this.closePerkBook();
@@ -877,165 +583,102 @@ export class LabScene extends Phaser.Scene {
     const SCROLL_BOT = height - 52;
     const SCROLL_H = SCROLL_BOT - SCROLL_TOP;
 
-    // ── Fixed background + header ──
-    const bg = this.add.rectangle(cx, height / 2, width, height, 0x04040c, 0.97)
-      .setDepth(50).setInteractive();
+    const bg = this.add.rectangle(cx, height / 2, width, height, 0x04040c, 0.97).setDepth(50).setInteractive();
     this.perkBookObjects.push(bg);
 
     const headerBar = addHeaderBar(this, {
-      title: '📖  PERK DICTIONARY',
-      subtitle: 'CRAFT PERKS IN THE LAB TO EQUIP THEM ON AN ELEMENT',
-      accent: C.arcane,
-      height: 74,
-      depth: 54,
+      title: '📖  PERK DICTIONARY', subtitle: 'CRAFT PERKS IN THE LAB TO EQUIP THEM ON AN ELEMENT', accent: C.arcane, height: 74, depth: 54,
     });
     this.perkBookObjects.push(headerBar.g, headerBar.titleText);
     if (headerBar.subtitleText) this.perkBookObjects.push(headerBar.subtitleText);
 
-    // ── Scrollable container ──
     const scrollContainer = this.add.container(0, SCROLL_TOP).setDepth(51);
     this.perkBookObjects.push(scrollContainer);
-
     const maskGfx = this.add.graphics();
     maskGfx.fillStyle(0xffffff, 1);
     maskGfx.fillRect(0, SCROLL_TOP, width, SCROLL_H);
-    const mask = maskGfx.createGeometryMask();
-    scrollContainer.setMask(mask);
+    scrollContainer.setMask(maskGfx.createGeometryMask());
     this.perkBookObjects.push(maskGfx);
 
     const COL_X = 40;
     const COL_W = width - 80;
-    const NAME_Y  = 10;
-    const DESC_Y  = 28;
+    const NAME_Y = 10;
+    const DESC_Y = 28;
     const ROW_PAD = 10;
     let innerY = 8;
 
-    const tiers: Array<'triple' | 'abstract-triple' | 'quad' | 'penta' | 'divine'> =
-      ['triple', 'abstract-triple', 'quad', 'penta', 'divine'];
+    const tiers: Array<'triple' | 'abstract-triple' | 'quad' | 'penta' | 'divine'> = ['triple', 'abstract-triple', 'quad', 'penta', 'divine'];
     for (const tier of tiers) {
-      // Divine perks live in their own table (they are forged downstairs, not
-      // here), but they read identically once unlocked, so the book lists them
-      // alongside everything else.
-      const allTierPerks = tier === 'divine'
-        ? DIVINE_PERKS
-        : ALL_PERKS.flatMap((ep) => ep.perks.filter((p) => p.tier === tier));
+      // Divine perks live in their own table (they are forged downstairs), but read identically.
+      const allTierPerks = tier === 'divine' ? DIVINE_PERKS : ALL_PERKS.flatMap((ep) => ep.perks.filter((p) => p.tier === tier));
       if (allTierPerks.length === 0) continue;
 
-      const tierLabel = tier === 'triple'
-        ? '— TRIPLE PERKS  (Lab Level 2 · 2 ⚛️) —'
-        : tier === 'abstract-triple'
-          ? '— ABSTRACT PERKS  (Lab Level 2 · 4 ⚛️) —'
-          : tier === 'quad'
-            ? '— QUAD PERKS  (Lab Level 3 · 5 ⚛️)  ·  Perkaholic Mutation —'
-            : tier === 'penta'
-              ? '— PENTA PERKS  (Penta Synthesis · 10 ⚛️) —'
-              : '— DIVINE PERKS  (Disgraced Lab · 1 💠) —';
+      const tierLabel = tier === 'triple' ? '— TRIPLE PERKS  (Lab Level 2 · 2 ⚛️) —'
+        : tier === 'abstract-triple' ? '— ABSTRACT PERKS  (Lab Level 2 · 4 ⚛️) —'
+        : tier === 'quad' ? '— QUAD PERKS  (Lab Level 3 · 5 ⚛️)  ·  Perkaholic Mutation —'
+        : tier === 'penta' ? '— PENTA PERKS  (Penta Synthesis · 10 ⚛️) —'
+        : '— DIVINE PERKS  (Disgraced Lab · 1 💠) —';
       const tierColor = tier === 'divine' ? hex(mix(C.corrupt, 0xffffff, 0.6))
         : tier === 'penta' ? hex(mix(C.corrupt, 0xffffff, 0.4))
         : tier === 'quad' ? T.gold
         : tier === 'abstract-triple' ? hex(mix(C.arcane, 0xffffff, 0.4))
         : hex(mix(C.frost, 0xffffff, 0.3));
 
-      const tierHdr = this.add.text(cx, innerY, tierLabel, {
-        fontSize: '10px', fontFamily: FONT_DISPLAY, color: tierColor, letterSpacing: 2,
-      }).setOrigin(0.5);
-      scrollContainer.add(tierHdr);
+      scrollContainer.add(this.add.text(cx, innerY, tierLabel, { fontSize: '10px', fontFamily: FONT_DISPLAY, color: tierColor, letterSpacing: 2 }).setOrigin(0.5));
       innerY += 20;
 
       for (const perk of allTierPerks) {
         const unlocked = PlayerData.isPerkUnlocked(perk.elementId, perk.id);
-        const equipped  = PlayerData.getEquippedPerk(perk.elementId) === perk.id;
+        const equipped = PlayerData.getEquippedPerk(perk.elementId) === perk.id;
         const alpha = unlocked ? 1.0 : 0.35;
+        const tierAccent = tier === 'penta' || tier === 'divine' ? C.corrupt : tier === 'quad' ? C.gold : tier === 'abstract-triple' ? C.arcane : C.frost;
 
-        const tierAccent = tier === 'penta' || tier === 'divine' ? C.corrupt
-          : tier === 'quad' ? C.gold
-          : tier === 'abstract-triple' ? C.arcane
-          : C.frost;
-
-        // Create description first to measure its wrapped height
         const descText = this.add.text(COL_X + 12, innerY + DESC_Y, perk.description, {
-          fontSize: '9px', fontFamily: FONT_UI,
-          color: unlocked ? T.dim : T.ghost,
-          wordWrap: { width: COL_W - 24 },
+          fontSize: '9px', fontFamily: FONT_UI, color: unlocked ? T.dim : T.ghost, wordWrap: { width: COL_W - 24 },
         }).setAlpha(alpha);
-
         const rowH = DESC_Y + descText.height + ROW_PAD;
-
-        const row = addRowPlate(this, {
-          x: cx, y: innerY + rowH / 2, w: COL_W, h: rowH - 2,
-          accent: tierAccent, muted: !unlocked,
-        });
-
+        const row = addRowPlate(this, { x: cx, y: innerY + rowH / 2, w: COL_W, h: rowH - 2, accent: tierAccent, muted: !unlocked });
         const nameText = this.add.text(COL_X + 12, innerY + NAME_Y, `${perk.emoji} ${perk.name}`, {
-          fontSize: '13px', fontFamily: FONT_DISPLAY,
-          color: unlocked ? T.bright : T.faint, letterSpacing: 0.5,
+          fontSize: '13px', fontFamily: FONT_DISPLAY, color: unlocked ? T.bright : T.faint, letterSpacing: 0.5,
         }).setAlpha(alpha);
-
         const recipeStr = perk.ingredients.map((r) => ELEM_EMOJI[r] ?? r).join('  +  ');
-        const recipeText = this.add.text(COL_X + COL_W - 10, innerY + NAME_Y, recipeStr, {
-          fontSize: '11px', color: unlocked ? T.normal : T.ghost,
-        }).setOrigin(1, 0).setAlpha(alpha);
-
-        // Add in back-to-front order (plate first so texts render over it)
+        const recipeText = this.add.text(COL_X + COL_W - 10, innerY + NAME_Y, recipeStr, { fontSize: '11px', color: unlocked ? T.normal : T.ghost }).setOrigin(1, 0).setAlpha(alpha);
         scrollContainer.add([row.g, nameText, recipeText, descText]);
-
         if (equipped) {
-          const eqLbl = this.add.text(COL_X + 10 + nameText.width + 6, innerY + NAME_Y + 1, '✓', {
-            fontSize: '11px', fontFamily: 'Arial', color: '#88ff88',
-          });
-          scrollContainer.add(eqLbl);
+          scrollContainer.add(this.add.text(COL_X + 10 + nameText.width + 6, innerY + NAME_Y + 1, '✓', { fontSize: '11px', fontFamily: 'Arial', color: '#88ff88' }));
         } else if (!unlocked) {
-          const lockLbl = this.add.text(COL_X + 10 + nameText.width + 6, innerY + NAME_Y + 1, '🔒', {
-            fontSize: '10px',
-          });
-          scrollContainer.add(lockLbl);
+          scrollContainer.add(this.add.text(COL_X + 10 + nameText.width + 6, innerY + NAME_Y + 1, '🔒', { fontSize: '10px' }));
         }
-
         innerY += rowH + 3;
       }
-
       innerY += 14;
     }
 
-    // ── Scroll logic ──
     const totalContentH = innerY;
     let scrollY = 0;
     const maxScroll = Math.max(0, totalContentH - SCROLL_H);
-
     const doScroll = (delta: number) => {
       scrollY = Phaser.Math.Clamp(scrollY + delta, 0, maxScroll);
       scrollContainer.setY(SCROLL_TOP - scrollY);
     };
-
-    this.perkBookScrollHandler = (_ptr: unknown, _over: unknown, _dx: unknown, deltaY: unknown) => {
-      doScroll((deltaY as number) * 0.5);
-    };
+    this.perkBookScrollHandler = (_ptr: unknown, _over: unknown, _dx: unknown, deltaY: unknown) => { doScroll((deltaY as number) * 0.5); };
     this.input.on('wheel', this.perkBookScrollHandler);
 
     if (maxScroll > 0) {
-      const hint = this.add.text(width - 16, SCROLL_BOT - 4, 'scroll ▼', {
+      this.perkBookObjects.push(this.add.text(width - 16, SCROLL_BOT - 4, 'scroll ▼', {
         fontSize: '9px', fontFamily: FONT_UI, color: T.ghost, letterSpacing: 1,
-      }).setOrigin(1, 1).setDepth(56);
-      this.perkBookObjects.push(hint);
+      }).setOrigin(1, 1).setDepth(56));
     }
 
-    // ── Fixed back button ──
-    const backBtn = addButton(this, {
-      x: 66, y: 37, w: 100, h: 34,
-      label: 'BACK', icon: '◄', fontSize: 13, variant: 'quiet', accent: C.arcane,
-      depth: 56, cut: 8,
+    this.perkBookObjects.push(addButton(this, {
+      x: 66, y: 37, w: 100, h: 34, label: 'BACK', icon: '◄', fontSize: 13, variant: 'quiet', accent: C.arcane, depth: 56, cut: 8,
       onClick: () => this.closePerkBook(),
-    });
-    this.perkBookObjects.push(backBtn.container);
+    }).container);
   }
 
   private closePerkBook(): void {
     this.input.off('wheel', this.perkBookScrollHandler);
     this.perkBookObjects.forEach((o) => o.destroy());
     this.perkBookObjects = [];
-  }
-
-  private refreshNuclei(): void {
-    this.nucleiText.setText(`⚛️  ×${PlayerData.getNuclei()}`);
   }
 }

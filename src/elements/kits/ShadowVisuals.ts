@@ -34,6 +34,9 @@ export const SHADOW = {
   white: 0xffffff,
   /** Watcher eyes and the tripwire barbs — the one warm note the element is allowed. */
   blood: 0xcc2244,
+  /** Venom perk only: the poison sheen on a venom trap and the drip off whoever it bit. */
+  venom: 0x77cc33,
+  bile: 0x2d4a12,
 } as const;
 
 // ── The primitive ─────────────────────────────────────────────────────────
@@ -194,6 +197,8 @@ export interface WispOpts {
   depth?: number;
   /** Pixels the motes climb over their life. Negative to make them sink. */
   rise?: number;
+  /** Mote colour in place of the lilac/violet mix (a SHADOW palette entry). */
+  color?: number;
 }
 
 // ── ShadowFx ──────────────────────────────────────────────────────────────
@@ -326,7 +331,7 @@ export class ShadowFx extends FxBase {
         const stretch = Math.hypot(ex - bx, ey - by);
         const fade = 1 - lt * lt;
         const ang = stretch > 0.4 ? Math.atan2(ey - by, ex - bx) : Math.atan2(p.sin, p.cos);
-        g.fillStyle(this.tint(p.bright ? SHADOW.lilac : SHADOW.violet), 0.85 * fade);
+        g.fillStyle(this.tint(opts.color ?? (p.bright ? SHADOW.lilac : SHADOW.violet)), 0.85 * fade);
         shadowTendril(g, bx, by, ang, stretch + p.r * 2, p.r * fade, p.curl * stretch * 0.4);
         g.fillStyle(this.tint(SHADOW.abyss), 0.7 * fade);
         g.fillCircle(bx, by, p.r * fade * 0.5);
@@ -752,6 +757,119 @@ export class ShadowFx extends FxBase {
     }
     g.fillStyle(tint(SHADOW.abyss), 0.6 * alpha);
     g.fillCircle(x2, y2, 7);
+  }
+
+  /**
+   * A shadow caltrop: four obsidian spikes on a knot of dark, one always pointing up. Seen
+   * from above that is three splayed feet and a centre point catching the light, which is
+   * what makes it read as "don't step here" at game scale. `spin` turns it in flight; on the
+   * ground pass the resting angle. `crippling` (Click+) barbs every spike with a blood hook.
+   */
+  static drawCaltrop(
+    g: Phaser.GameObjects.Graphics, tint: ShadowColorFn,
+    x: number, y: number, size: number, spin: number, alpha: number,
+    opts: { crippling?: boolean; grounded?: boolean; t?: number } = {},
+  ): void {
+    const t = opts.t ?? 0;
+    if (opts.grounded) {
+      // A smear of dark under it, so it sits on the floor instead of floating over it.
+      g.fillStyle(tint(SHADOW.abyss), 0.35 * alpha);
+      g.fillEllipse(x, y + size * 0.35, size * 2.4, size * 0.9);
+    }
+    for (let i = 0; i < 3; i++) {
+      const a = spin + (i / 3) * TAU;
+      const tipX = x + Math.cos(a) * size * 1.15;
+      const tipY = y + Math.sin(a) * size * 1.15 * 0.8;
+      const px = -Math.sin(a) * size * 0.3;
+      const py = Math.cos(a) * size * 0.3 * 0.8;
+      g.fillStyle(tint(i === 0 ? SHADOW.plum : SHADOW.violet), 0.98 * alpha);
+      g.beginPath();
+      g.moveTo(x + px, y + py);
+      g.lineTo(tipX, tipY);
+      g.lineTo(x - px, y - py);
+      g.closePath();
+      g.fillPath();
+      g.lineStyle(1.2, tint(SHADOW.lilac), 0.75 * alpha);
+      g.lineBetween(x, y, tipX, tipY);
+      if (opts.crippling) {
+        // A hooked barb two thirds down the spike — it bites in and stays in.
+        const bx = x + Math.cos(a) * size * 0.75;
+        const by = y + Math.sin(a) * size * 0.75 * 0.8;
+        g.lineStyle(1.4, tint(SHADOW.blood), 0.9 * alpha);
+        g.lineBetween(bx, by, bx + Math.cos(a + 2.2) * size * 0.4, by + Math.sin(a + 2.2) * size * 0.32);
+      }
+    }
+    // The upright spike, seen end-on: a bright point over a dark knot.
+    g.fillStyle(tint(SHADOW.abyss), 0.95 * alpha);
+    g.fillCircle(x, y, size * 0.42);
+    const glint = 0.55 + 0.45 * Math.sin(t * 5 + x * 0.05);
+    g.fillStyle(tint(opts.crippling ? SHADOW.blood : SHADOW.mauve), (0.5 + 0.4 * glint) * alpha);
+    g.fillCircle(x, y - size * 0.12, size * 0.2);
+  }
+
+  /**
+   * Grim Gloom: purple fog lying over the whole arena. Slow banks of murk roll across it and a
+   * few eyes open and shut in the gloom. Drawn into a caller-owned Graphics every frame; the
+   * kit gives it a depth under the fighters so the fog reads as ground cover, not a curtain.
+   */
+  static drawGloomFog(
+    g: Phaser.GameObjects.Graphics, tint: ShadowColorFn,
+    w: number, h: number, t: number, alpha: number,
+  ): void {
+    g.fillStyle(tint(SHADOW.pitch), 0.34 * alpha);
+    g.fillRect(0, 0, w, h);
+    // Fog banks: big soft ellipses drifting on their own slow loops.
+    for (let i = 0; i < 14; i++) {
+      const fx = ((i * 137 + t * (12 + (i % 4) * 5)) % (w + 240)) - 120;
+      const fy = (i * 83) % h + Math.sin(t * 0.4 + i) * 22;
+      const rw = 150 + (i % 5) * 40;
+      const rh = 60 + (i % 3) * 26;
+      g.fillStyle(tint(i % 3 === 0 ? SHADOW.orchid : SHADOW.violet), (0.12 + 0.05 * Math.sin(t * 0.8 + i)) * alpha);
+      g.fillEllipse(fx, fy, rw, rh);
+      g.fillStyle(tint(SHADOW.plum), 0.08 * alpha);
+      g.fillEllipse(fx + rw * 0.2, fy - rh * 0.15, rw * 0.6, rh * 0.55);
+    }
+    // Eyes in the murk, surfacing on their own beat.
+    for (let i = 0; i < 6; i++) {
+      const blink = Math.sin(t * 0.9 + i * 1.9);
+      if (blink < 0.4) continue;
+      const ex = (i * 211 + 90) % w;
+      const ey = (i * 157 + 70) % h;
+      g.fillStyle(tint(SHADOW.mauve), 0.55 * alpha * blink);
+      g.fillEllipse(ex, ey, 14, 5 * blink);
+      g.fillEllipse(ex + 22, ey + 1, 14, 5 * blink);
+      g.fillStyle(tint(SHADOW.abyss), 0.9 * alpha * blink);
+      g.fillCircle(ex, ey, 1.8);
+      g.fillCircle(ex + 22, ey + 1, 1.8);
+    }
+  }
+
+  /**
+   * A gloom tentacle erupting under a target: a ring of floor cracking open, then a fat barbed
+   * limb rising out of it and whipping over. `k` runs 0 → 1 over the whole strike: the warning
+   * crack fills 0–0.35, the limb rises and lashes 0.35–0.7, then it sinks back.
+   */
+  static drawGloomTentacle(
+    g: Phaser.GameObjects.Graphics, tint: ShadowColorFn,
+    x: number, y: number, k: number, t: number, seed: number,
+  ): void {
+    const warn = Math.min(1, k / 0.35);
+    // The warning: a pool opening where they stand. This is the dodge window.
+    g.fillStyle(tint(SHADOW.abyss), 0.55 * warn);
+    g.fillEllipse(x, y + 4, 46 * warn, 18 * warn);
+    g.lineStyle(2, tint(SHADOW.blood), 0.7 * warn * (k < 0.35 ? 0.6 + 0.4 * Math.sin(t * 30) : 1));
+    g.strokeEllipse(x, y + 4, 50 * warn, 20 * warn);
+    if (k < 0.35) return;
+    const rise = k < 0.7 ? (k - 0.35) / 0.35 : Math.max(0, 1 - (k - 0.7) / 0.3);
+    const lash = Math.sin(Math.min(1, (k - 0.35) / 0.35) * Math.PI) * 0.9;
+    for (let i = 0; i < 3; i++) {
+      const a = -Math.PI / 2 + (i - 1) * 0.5 + (i === 1 ? lash * (seed > 0.5 ? 1 : -1) : 0);
+      shadowTendrilLayered(
+        g, tint, x + (i - 1) * 9, y + 4, a, (i === 1 ? 64 : 34) * rise, (i === 1 ? 9 : 5) * Math.max(0.3, rise),
+        Math.sin(t * 4 + i + seed * 6) * 10 * rise, 1, 6 * rise, t * 5 + i,
+        { barbs: i === 1 ? 4 : 2 },
+      );
+    }
   }
 }
 

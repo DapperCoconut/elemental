@@ -81,7 +81,7 @@ export interface HuskWorld {
   /** Direct damage on a fighter the boss has hold of. */
   bossHit?(from: Husk, target: Fighter, amount: number, color: number): void;
   /** Slow the local player (chains, drowsiness). */
-  bossSlow?(mult: number, ms: number): void;
+  bossSlow?(mult: number, ms: number, target: Fighter): void;
   /** Shout a move name over the boss. */
   bossSay?(from: Husk, text: string, colorHex: string): void;
   /** Play a one-shot sound, but only if the listener is in the boss's room. */
@@ -372,7 +372,7 @@ export class Husk extends Fighter {
   }
 
   private get moveSpeed(): number {
-    let spd = this.speed * this.walkSpeedMult * this.purgeSpeedMult * this.effectSpeedMult * this.despressSlowMult() * this.overRadiatedSpeedMult() * this.devotionSlowMult() * this.soundDissonanceSlowMult() * this.premoveSlowMult() * this.goldSpeedMult * this.magnetSlowMult * this.tempestSlowMult * this.dreamSlowMult;
+    let spd = this.speed * this.walkSpeedMult * this.purgeSpeedMult * this.effectSpeedMult * this.despressSlowMult() * this.overRadiatedSpeedMult() * this.devotionSlowMult() * this.soundDissonanceSlowMult() * this.premoveSlowMult() * this.goldSpeedMult * this.magnetSlowMult * this.tempestSlowMult * this.dreamSlowMult * this.paintSlowMult;
     if (this.frostStacks > 0) spd *= Math.max(0.2, 1 - this.frostStacks * 0.1);
     return spd;
   }

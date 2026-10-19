@@ -1574,12 +1574,6 @@ export class MenuScene extends Phaser.Scene {
     Sfx.play('ui-equip');
     if (this.selectionPhase === 'player') {
       this.playerChoice = elementId;
-      // Quantum walks into the fight carrying whatever bond its customization screen built —
-      // the pair is loadout, like a perk or a skin, not a question asked at the door. A save
-      // that has never opened that screen still owns the granted starter pair.
-      if (elementId === 'quantum' && !PlayerData.getQuantumBond()) {
-        PlayerData.setQuantumBond(PlayerData.STARTER_BOND[0], PlayerData.STARTER_BOND[1]);
-      }
       if (this.isInvasion || this.isBoss || this.bounty) {
         // These modes have no enemy to pick — the fight is already decided.
         this.selectionPhase = 'difficulty';

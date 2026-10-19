@@ -9,7 +9,8 @@ import {
   drawCrackle, drawFieldFlick, drawGatherPile, drawLockLine, drawMagTrack, drawMagnetHalo, drawMagneticField, drawMagnetized,
   drawNail, drawOrbitRing, drawScrap, drawSpikeFlying, drawSpikeHover, drawSpikePlanted, megaMechTint,
 } from './MagnetVisuals';
-import { MagnetMech, MechAttack } from './MagnetMech';
+import { MagnetMech, MechAttack, MechBuild } from './MagnetMech';
+import { SalvoCrates, SalvoPart, SalvoPicker, applyPick, defaultBuild, drawMechCore, randomBuild } from './MagnetSalvo';
 import { getEnhancement } from '../../data/Mastery';
 
 type Owner = 'player' | 'npc';
@@ -77,7 +78,9 @@ const SCRAP_DASH_SPEED = 900;
 const SCRAP_DASH_MS = 260;
 
 // Q — Mecha Massacre
-const GATHER_MS = 3000;
+const GATHER_MS = 7500;
+/** Every point of damage the mech's core takes costs the mech this much of its life. */
+const CORE_MS_PER_DAMAGE = 50;
 
 // Perks
 /** Blade: the spike is a sword — a launched one hits twice as hard and breaks into five. */
@@ -275,6 +278,16 @@ interface Side {
   chargedUntil: number;
   nextAuraZapAt: number;
   nextShieldZapAt: number;
+  /** Q+ Salvage Salvo: the parts picked for the next mech (kept between mechs). */
+  build: MechBuild;
+  /** The mech body was up last frame — catches it falling on its own (timeout or a drained core). */
+  mechLive: boolean;
+  /** Core hits not yet shown as a floating number, and when the last one was shown. */
+  coreDrainPending: number;
+  coreShownAt: number;
+  coreFlashUntil: number;
+  /** The pilot's damage absorber while the core can be hurt. Built once per mech. */
+  coreAbsorber: ((amount: number) => boolean) | null;
   /** Mastery — the last Mag-Lev (scene time). Starts a cooldown in the past so it is ready. */
   maglevAt: number;
   /** Standing on our own maglev ground this frame: we wrote `levitating`, so we take it back. */
@@ -285,6 +298,7 @@ const makeSide = (): Side => ({
   aimX: 0, aimY: 0, hover: false, gatherUntil: 0, nextBitAt: 0, mech: null, piloting: false,
   preHp: 0, prevAbsorber: null, pod: null, motion: null, nextZapAt: 0,
   chargedUntil: 0, nextAuraZapAt: 0, nextShieldZapAt: 0, maglevAt: -MAGLEV_COOLDOWN_MS, floating: false,
+  build: defaultBuild(), mechLive: false, coreDrainPending: 0, coreShownAt: 0, coreFlashUntil: 0, coreAbsorber: null,
 });
 
 /** Mech key per ability slot, in tray order. */
@@ -398,8 +412,12 @@ export class MagnetKit {
   private fragments: Fragment[] = [];
   /** E+ Magnetize: who is magnetised, by which side, until when. */
   private magnetized = new Map<Fighter, { by: Owner; until: number }>();
-  /** Q+ Mega Mechancements: each side's Fx in the red mech palette, built on first use. */
+  /** Q+ Salvage Salvo (Furnace head): each side's Fx in the red mech palette, built on first use. */
   private megaFx: Partial<Record<Owner, MagnetFx>> = {};
+  /** Q+ Salvage Salvo: the part menus round the gathering player, and the Junkyard's TNT. */
+  private picker: SalvoPicker | null = null;
+  private crates: SalvoCrates;
+  private salvoSeq = 0;
   private shoves = new Map<Fighter, { vx: number; vy: number; until: number }>();
   private stuns = new Map<Fighter, number>();
   /** Mastery — Mag-Lev tracks, both sides. */
@@ -418,6 +436,17 @@ export class MagnetKit {
     this.ncol = (base) => arena.magnetColor('npc', base);
     this.pfx = new MagnetFx(arena.scene, this.pcol);
     this.nfx = new MagnetFx(arena.scene, this.ncol);
+    this.crates = new SalvoCrates({
+      get scene() { return arena.scene; },
+      get width() { return arena.width; },
+      get height() { return arena.height; },
+      targets: (owner) => this.targetsOf(owner),
+      hit: (owner, t, dmg) => this.hit(owner, t, dmg, MAGNET.amber),
+      fx: (owner) => this.fx(owner),
+      col: (owner) => this.col(owner),
+      bodyR: (f) => this.bodyR(f),
+      announce: (x, y, text, color) => this.announce(x, y, text, color),
+    });
   }
 
   // ── Small helpers ──────────────────────────────────────────────────────
@@ -514,6 +543,8 @@ export class MagnetKit {
       s.mech?.destroy();
     }
     this.sides = { player: makeSide(), npc: makeSide() };
+    this.picker?.destroy(); this.picker = null;
+    this.crates.reset();
     this.coins = [];
     this.coinShots = [];
     this.nails = [];
@@ -583,8 +614,17 @@ export class MagnetKit {
       for (const [hit, a] of keys) if (hit) this.mechKey('player', a, mouseX, mouseY);
       return;
     }
-    // Rooted and busy while the scrap gathers.
-    if (s.gatherUntil > 0) return;
+    // Rooted and busy while the scrap gathers — Q+ Salvage Salvo picks its parts meanwhile.
+    if (s.gatherUntil > 0) {
+      const pick = pressed && this.picker ? this.picker.click(mouseX, mouseY) : null;
+      if (pick) {
+        applyPick(s.build, pick.part, pick.idx);
+        Sfx.playAt('ui-click', player.x, { volume: 0.5 });
+        // A sequence number keeps two quick identical picks from being deduped as one cast.
+        this.arena.broadcast(`salvo-pick:${++this.salvoSeq}:${pick.part}:${pick.idx}`);
+      }
+      return;
+    }
 
     const ctx = (): CastContext => this.arena.buildPlayerContext(mouseX, mouseY);
     if (pressed) player.castAbility('magnet-coin', ctx());
@@ -671,7 +711,15 @@ export class MagnetKit {
           const tr = this.tracks.filter((k) => k.owner === 'npc').pop();
           if (tr && tr.pending > 0) this.growTrack(tr, tx, ty);
         }
-        if (id.startsWith('mecha-')) {
+        if (id.startsWith('salvo-pick:')) {
+          // salvo-pick:<seq>:<part>:<idx>
+          const [, , part, idx] = id.split(':');
+          applyPick(s.build, part as SalvoPart, Number(idx));
+        }
+        if (id === 'mecha-end') {
+          // Their mech ran out (or its core was drained) on their machine.
+          if (s.mech?.active) s.mech.end(this.now, false);
+        } else if (id.startsWith('mecha-')) {
           const a = id.slice(6) as MechAttack;
           if (s.mech?.active && s.mech.use(a, this.now, tx, ty) && a === 'destruct') this.ejectPilot('npc');
         }
@@ -725,6 +773,12 @@ export class MagnetKit {
       fired++;
     }
     if (fired > 0) Sfx.playAt('money', f.x, { rate: 1.5, volume: 0.4 });
+
+    // Q+ Salvage Salvo: Junkyard TNT crates in the cone are thrown.
+    if (this.crates.repulse(owner, (x, y) => this.inCone(f, ang, x, y, 18), ang) > 0) {
+      this.announce(f.x, f.y - 40, 'TNT AWAY!', MAGNET.amber);
+      Sfx.playAt('whoosh', f.x, { rate: 0.7, volume: 0.6 });
+    }
 
     // Planted spikes in the cone become javelins.
     for (const sp of this.spikes) {
@@ -1017,6 +1071,8 @@ export class MagnetKit {
     s.gatherUntil = this.now + GATHER_MS;
     s.nextBitAt = this.now;
     s.motion = null;
+    // Q+ Salvage Salvo: the bot bolts on whatever it fancies; a replica's picks come over the wire.
+    if (owner === 'npc' && this.up('npc', 'q') && !this.isReplica('npc')) s.build = randomBuild();
     this.setHover(owner, false);
     this.avatar(owner)?.play('raise', -Math.PI / 2, GATHER_MS);
     this.announce(f.x, f.y - 46, 'SCRAP INCOMING', MAGNET.neon);
@@ -1030,8 +1086,11 @@ export class MagnetKit {
     const f = this.fighter(owner);
     s.gatherUntil = 0;
     s.mech?.destroy();
-    // Q+ Mega Mechancements: the red mech — its own palette, its own (bigger) numbers.
-    const mega = this.up(owner, 'q');
+    if (owner === 'player') { this.picker?.destroy(); this.picker = null; }
+    // Q+ Salvage Salvo: the picked parts. A Furnace head is the red mech — its own palette, its
+    // own (bigger) numbers.
+    const build: MechBuild | null = this.up(owner, 'q') ? { ...s.build } : null;
+    const mega = build?.head === 'furnace';
     const red = megaMechTint((c) => c);
     s.mech = new MagnetMech({
       scene: this.arena.scene,
@@ -1055,11 +1114,14 @@ export class MagnetKit {
       },
       announce: (x, y, text, color) => this.announce(x, y, text, mega ? red(color) : color),
       shake: (ms, k) => this.arena.scene.cameras.main.shake(ms, k),
-    }, owner === 'npc', this.now, mega);
+    }, owner === 'npc', this.now, build);
     s.piloting = true;
+    s.mechLive = true;
     s.preHp = f.hp;
     s.prevAbsorber = f.damageAbsorber;
-    this.hidePilot(f);
+    s.coreDrainPending = 0;
+    s.coreAbsorber = s.mech.coreHurtable ? (amount) => { this.coreHit(owner, amount); return true; } : null;
+    this.hidePilot(owner, f);
     if (owner === 'player') this.swapCards(true);
   }
 
@@ -1067,14 +1129,37 @@ export class MagnetKit {
     return (this.megaFx[owner] ??= new MagnetFx(this.arena.scene, megaMechTint(this.col(owner))));
   }
 
-  /** The pilot is the mech now: hidden, rooted and untouchable — reasserted every frame. */
-  private hidePilot(f: Fighter): void {
+  /**
+   * The pilot is the mech now: hidden and rooted — reasserted every frame. Their body is the mech's
+   * core: hits on it cost the mech time instead of health (unless a Salvage Salvo Base core makes
+   * it untouchable).
+   */
+  private hidePilot(owner: Owner, f: Fighter): void {
+    const s = this.sides[owner];
     f.forceInvisible = true;
     f.setAlpha(0);
     f.setHealthBarVisible(false);
-    f.isInvincible = true;
-    f.damageAbsorber = () => true;
+    f.isInvincible = !s.coreAbsorber;
+    f.damageAbsorber = s.coreAbsorber ?? (() => true);
     (f.body as Phaser.Physics.Arcade.Body | null)?.setVelocity(0, 0);
+  }
+
+  /** A hit on the mech's core: the mech loses time, shown as one floating number every so often. */
+  private coreHit(owner: Owner, amount: number): void {
+    const s = this.sides[owner];
+    if (!s.mech?.active || amount <= 0) return;
+    s.mech.drain(amount * CORE_MS_PER_DAMAGE);
+    s.coreDrainPending += amount * CORE_MS_PER_DAMAGE;
+    s.coreFlashUntil = this.now + 160;
+  }
+
+  /** Floating text for the core's drained time, batched so a beam reads as a few numbers. */
+  private showCoreDrain(owner: Owner, f: Fighter): void {
+    const s = this.sides[owner];
+    if (s.coreDrainPending <= 0 || this.now - s.coreShownAt < 260) return;
+    this.announce(f.x, f.y - 34, `CORE HIT −${(s.coreDrainPending / 1000).toFixed(1)}s`, MAGNET.rose);
+    s.coreDrainPending = 0;
+    s.coreShownAt = this.now;
   }
 
   /** Bring the pilot back. `landed` = after a Self-Destruct pod touches down. */
@@ -1090,6 +1175,7 @@ export class MagnetKit {
     f.isInvincible = false;
     f.damageAbsorber = s.prevAbsorber;
     s.prevAbsorber = null;
+    s.coreAbsorber = null;
     // A detour, not a heal — but it never costs you anything either. The replica's health is
     // streamed from its own machine.
     if (!this.isReplica(owner) && f.active) f.hp = Math.max(1, Math.min(f.maxHp, s.preHp));
@@ -1115,6 +1201,9 @@ export class MagnetKit {
       (f.body as Phaser.Physics.Arcade.Body | null)?.reset(lx, ly);
     }
     s.pod = { sx: from.x, sy: from.y, lx: f.x, ly: f.y, startAt: this.now, landAt: this.now + 620 };
+    s.mechLive = false;
+    // Q+ Salvage Salvo, Junkyard Scrapper: the wreck leaves its TNT behind.
+    if (s.mech?.build?.head === 'junkyard') this.crates.drop(owner);
     if (owner === 'player') this.swapCards(false);
   }
 
@@ -1171,6 +1260,7 @@ export class MagnetKit {
     }
     this.updateGather();
     this.updateMechs(delta);
+    this.crates.update(dt);
     this.updateCoins(delta);
     this.updateCoinShots(dt);
     this.updateFragments(dt);
@@ -1193,6 +1283,16 @@ export class MagnetKit {
   private updateGather(): void {
     const now = this.now;
     const { width: W, height: H } = this.arena;
+    // Q+ Salvage Salvo: the part menus hang round the player for as long as the gather runs.
+    const ps = this.sides.player;
+    const picking = ps.gatherUntil > 0 && this.up('player', 'q') && this.alive(this.arena.player);
+    if (picking) {
+      this.picker ??= new SalvoPicker(this.arena.scene, W, H);
+      this.picker.update(this.arena.player.x, this.arena.player.y, ps.aimX, ps.aimY, ps.build, ps.gatherUntil - now);
+    } else if (this.picker) {
+      this.picker.destroy();
+      this.picker = null;
+    }
     for (const owner of BOTH) {
       const s = this.sides[owner];
       if (s.gatherUntil <= 0) continue;
@@ -1224,12 +1324,18 @@ export class MagnetKit {
           ? { x: this.arena.player.x, y: this.arena.player.y }
           : { x: s.aimX, y: s.aimY };
         s.mech.update(now, delta, aim.x, aim.y);
+        if (s.mechLive && !s.mech.active) {
+          s.mechLive = false;
+          // Ran out (or its core was drained) on our machine — the replica's own clock may disagree.
+          if (owner === 'player') this.arena.broadcast('mecha-end');
+        }
         if (s.piloting && !s.mech.active && !s.pod) this.restorePilot(owner, false);
         if (s.mech.done) { s.mech.destroy(); s.mech = null; }
       }
       if (s.piloting && f) {
         if (!f.active) { this.restorePilot(owner, false); continue; }
-        this.hidePilot(f);
+        this.hidePilot(owner, f);
+        this.showCoreDrain(owner, f);
         if (s.pod && now >= s.pod.landAt) this.restorePilot(owner, true);
       }
     }
@@ -1974,7 +2080,8 @@ export class MagnetKit {
       && this.sides.player.chargedUntil <= now0 && this.sides.npc.chargedUntil <= now0
       && this.sides.player.gatherUntil <= 0 && this.sides.npc.gatherUntil <= 0
       && !this.sides.player.pod && !this.sides.npc.pod
-      && this.tracks.length === 0 && this.flicks.length === 0 && !this.masteryOn('player') && !this.masteryOn('npc');
+      && this.tracks.length === 0 && this.flicks.length === 0 && !this.masteryOn('player') && !this.masteryOn('npc')
+      && this.crates.idle && !this.sides.player.piloting && !this.sides.npc.piloting;
     if (idle && !this.groundGfx && !this.airGfx) return;
     const t = this.vizT;
     const now = this.now;
@@ -2006,9 +2113,13 @@ export class MagnetKit {
       const s = this.sides[owner];
       const f = this.fighter(owner);
       if (s.gatherUntil > 0 && this.alive(f)) {
-        // Q+ Mega Mechancements: the pile is already red.
-        const tint = this.up(owner, 'q') ? megaMechTint(this.col(owner)) : this.col(owner);
+        // Q+ Salvage Salvo, Furnace head: the pile is already red.
+        const tint = this.up(owner, 'q') && s.build.head === 'furnace' ? megaMechTint(this.col(owner)) : this.col(owner);
         drawGatherPile(g, tint, f.x, f.y, 1 - (s.gatherUntil - now) / GATHER_MS, t);
+      }
+      // The mech's core, sitting where its pilot gathered it.
+      if (s.piloting && s.mech?.active && !s.pod && f?.active) {
+        drawMechCore(g, this.col(owner), f.x, f.y, s.mech.build?.core ?? null, s.mech.coreHurtable, now < s.coreFlashUntil, t);
       }
       // F+ Electromagnet: the charge from a live spike.
       if (now < s.chargedUntil && this.alive(f) && !s.piloting && !f.forceInvisible) {
@@ -2018,6 +2129,7 @@ export class MagnetKit {
 
     const a = this.air();
     a.clear();
+    this.crates.paint(g, a, t);
     for (const owner of BOTH) {
       const f = this.fighter(owner);
       if (this.orbitOf(owner).length > 0 && this.alive(f)) drawOrbitRing(a, this.col(owner), f.x, f.y, ORBIT_R, t);
@@ -2132,12 +2244,15 @@ export class MagnetKit {
       description: `A magnet nail is in you. Their Repulse can shove you from ${REPULSE_PUSH_RANGE}px, and ripping it out deals ${NAIL_RIP_DAMAGE}. Falls out on its own after ${NAIL_STUCK_MS / 1000}s.`,
     } : null);
     const mech = this.sides.player.mech;
+    const core = mech?.coreHurtable
+      ? `Your body is the mech's core: every hit on it costs the mech ${CORE_MS_PER_DAMAGE / 1000}s per point of damage.`
+      : 'Its Base core cannot be hurt.';
     this.arena.setStatusIndicator('magnet-mech', playerIs && this.sides.player.piloting && mech?.active ? {
-      name: mech.mega ? 'Mega Mecha Massacre' : 'Mecha Massacre', emoji: '🤖', color: mech.mega ? 0xff4f5e : MAGNET.neon,
+      name: mech.build ? 'Salvage Salvo' : 'Mecha Massacre', emoji: '🤖', color: mech.furnace ? 0xff4f5e : MAGNET.neon,
       priority: 149, until: mech.until,
-      description: mech.mega
-        ? 'You are the red mech: untouchable and rooted, and every key hits harder, wider and longer. Click smash, E rail, R avalanche, F cannon, Q self-destruct.'
-        : 'You are the mech: untouchable and rooted. Click smash, E rail, R avalanche, F cannon, Q self-destruct.',
+      description: mech.build
+        ? `You are the mech you built (${mech.build.head ?? 'plain'} head, ${mech.build.core} core, ${mech.build.left} left arm, ${mech.build.right} right arm). Rooted. Click alternates arms, E rail, R avalanche, F cannon, Q self-destruct. ${core}`
+        : `You are the mech: rooted. Click smash, E rail, R avalanche, F cannon, Q self-destruct. ${core}`,
     } : null);
     const mag = this.magnetized.get(p);
     this.arena.setStatusIndicator('magnet-magnetized', mag && mag.by === 'npc' && this.now < mag.until ? {
@@ -2195,7 +2310,7 @@ export class MagnetKit {
     if (s.piloting && s.mech?.active) {
       const k = MECH_KEYS[abilityId];
       if (!k) return 1;
-      if (k === 'destruct') return Phaser.Math.Clamp((s.mech.until - this.now) / 15000, 0, 1);
+      if (k === 'destruct') return Phaser.Math.Clamp((s.mech.until - this.now) / s.mech.duration, 0, 1);
       return s.mech.readyRatio(k, this.now);
     }
     if (abilityId === 'magnet-nail' && this.nails.some((n) => n.owner === 'player' && n.state === 'stuck')) return 1;
@@ -2226,6 +2341,8 @@ export class MagnetKit {
     for (const c of this.coins) {
       if (c.owner === 'npc' && (this.inCone(n, ang, c.x, c.y - c.z, 12) || this.inCone(n, ang, c.x, c.y, 12))) worth += 1;
     }
+    // Q+ Salvage Salvo: Junkyard TNT in front of the bot is the best thing to throw.
+    worth += 3 * this.crates.countIn('npc', (x, y) => this.inCone(n, ang, x, y, 18));
     for (const sp of this.spikes) {
       if (sp.owner === 'npc' && sp.state === 'planted' && this.inCone(n, ang, sp.x, sp.y, 20)) worth += 3;
     }

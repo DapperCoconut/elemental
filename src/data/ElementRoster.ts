@@ -272,7 +272,7 @@ export const UNSTABLE_ELEMENTS: ElementDef[] = [
   { id: 'ruin', name: 'Ruin', emoji: '🧱', color: 0xc4392c, available: true },
   { id: 'cloth', name: 'Cloth', emoji: '🧣', color: 0xd1435c, available: true },
   { id: 'magma', name: 'Magma', emoji: '🌋', color: 0xff5a1e, available: true },
-  { id: 'chalk', name: 'Chalk', emoji: '🖍️', color: 0xf4f1e6, available: true },
+  { id: 'chalk', name: 'Paint', emoji: '🖌️', color: 0xe0457b, available: true },
   { id: 'paper', name: 'Paper', emoji: '📄', color: 0xf2ead6, available: true },
   { id: 'bind', name: 'Bind', emoji: '⛓️', color: 0xe0b743, available: true },
   { id: 'dune', name: 'Sand', emoji: '🏜️', color: 0xe8c87a, available: true },

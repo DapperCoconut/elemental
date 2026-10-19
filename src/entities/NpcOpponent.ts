@@ -203,6 +203,16 @@ export interface NpcAiState {
   npcEarthRocksActive?: boolean;
   oilDroneCount?: number;
   shadowPlayerSnared?: boolean;
+  /**
+   * Grim Gloom synergy: while the bot's own gloom is up, where to throw caltrops so the player
+   * is pinned in place for the tentacles (ShadowKit-owned; null without a gloom).
+   */
+  npcShadowGloomCaltropAim?: { x: number; y: number } | null;
+  /**
+   * Bubble Barrage synergy: the player is wearing 2+ of the bot's bubbles, so a Splash downpour
+   * on them hits every bubble too (WaterKit-owned; the puddle tick feeds the bubbles).
+   */
+  npcWaterBubbleSplash?: boolean;
   playerFrostStacks?: number;
   iceBlockActive?: boolean;
   npcGrowthDna?: number;
@@ -368,19 +378,19 @@ export interface NpcAiState {
    * invisible and 20% evasive, so it outranks the candle as a place to fall back to.
    */
   waxSmokePoint?: { x: number; y: number };
-  // Chalk
-  /** A drawing window is already open — starting a second one would throw the first away. */
-  npcChalkDrawing?: boolean;
-  npcChalkShieldHp?: number;
-  npcChalkMasterpiece?: boolean;
-  /** No blue line on the floor, so Perma-Chalk is worth spending. */
-  npcChalkMayPerma?: boolean;
+  // Paint (element id `chalk`)
+  /** A window, a Masterpiece or a Still Life is in progress — the bot's hands are full. */
+  npcPaintBusy?: boolean;
+  npcPaintMasterpiece?: boolean;
   /**
-   * Chalk Mastery — the slot Living Chalk has taken over. The enhancement is not in
-   * `element.abilities`, so the kit casts it off its own timer; all the AI has to do is stop
-   * spending a key that no longer belongs to it.
+   * Synergy: the player is the bot's Still Life right now — a big (and maybe slowed) target, so
+   * orange and splotches are at their best. Published by the kit.
    */
-  npcChalkLivingSlot?: 'e' | 'r' | 'f' | 'q' | null;
+  npcPaintTargetStilled?: boolean;
+  /** Synergy: hostile shots bearing down on the bot — a Congealed wall eats them. */
+  npcPaintShotsIncoming?: number;
+  /** Paint Mastery — the slot Yin-Yang has taken over. The kit casts it on its own clock. */
+  npcPaintYinYangSlot?: 'e' | 'r' | 'f' | 'q' | null;
   // Magma
   npcMagmaBloat?: boolean;
   npcMagmaVolcanoes?: number;
@@ -433,6 +443,8 @@ export interface NpcAiState {
    * element in the game whose AI sometimes deliberately shoots away from you.
    */
   npcMagmaChargeTarget?: { x: number; y: number };
+  /** Light (F+ Javelin Burst): a ramp sits inside Light Trick's radius — popping it fires 12 javelins. */
+  npcLightTrickRamp?: boolean;
   /**
    * Magma Mastery: a saw is out. The kit runs the whole thing off its own timer, so all the
    * routine has to do is stop layering casts on top of a tool it is already holding.
@@ -3063,13 +3075,6 @@ export class NpcOpponent extends Fighter {
   }
 
   /**
-   * Chalk. Only one drawing window can be open at a time and opening a second throws away
-   * whatever the first had drawn, so every decision here is gated on `npcChalkDrawing` —
-   * the AI commits to a stroke and lets it finish. Beyond that the order is simply cost:
-   * the ward is free and constant, the fuse is worth laying at range, the blue line goes
-   * down once and stays, and the shield and the Masterpiece are held for trouble.
-   */
-  /**
    * Wax. The kit is an economy: candles make bees live longer, hives turn bees into more bees,
    * bombs cash both in. So the rotation is build first (a candle at its feet, a hive between
    * them), feed the hive with Swarm, walk back to it when it is worth something, and spend the
@@ -3216,6 +3221,13 @@ export class NpcOpponent extends Fighter {
     return null;
   }
 
+  /**
+   * Paint. One window at a time, so everything waits on `npcPaintBusy`. The kit's own synergies
+   * come first: a target that is already the bot's Still Life is big and slow, so the orange
+   * fuse goes straight under it; shots bearing down get a wall painted across them. Then the
+   * ordinary rotation — Still Life to set up, orange at range, splotches as the filler, and the
+   * Masterpiece saved for trouble.
+   */
   private doChalkAbilities(
     target: Fighter,
     buildContext: (tX: number, tY: number) => CastContext,
@@ -3228,37 +3240,38 @@ export class NpcOpponent extends Fighter {
   ): string | null {
     void target;
     void time;
-    // Mid-stroke: hands are busy. The kit is already driving the phantom cursor.
-    if (aiState.npcChalkDrawing || aiState.npcChalkMasterpiece) return null;
+    if (aiState.npcPaintBusy || aiState.npcPaintMasterpiece) return null;
 
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-    // Chalk Mastery: whichever key Living Chalk was bound over is not this bot's to spend. The
-    // kit casts the enhancement itself off a private timer.
-    const taken = aiState.npcChalkLivingSlot ?? null;
+    // Paint Mastery: Yin-Yang owns its key; the kit casts it.
+    const taken = aiState.npcPaintYinYangSlot ?? null;
+    const ctx = () => buildContext(aimX, aimY);
 
-    // Eight seconds of untouchable is the answer to losing, so it is spent on losing.
-    if (!skipSpecials && taken !== 'q' && hpRatio < 0.4) {
-      if (this.castAbility('chalk-masterpiece', buildContext(aimX, aimY))) return 'chalk-masterpiece';
+    // Synergy: the player is our picture — a huge, slow hitbox. Fuse it.
+    if (aiState.npcPaintTargetStilled && taken !== 'e') {
+      if (this.castAbility('paint-orange', ctx())) return 'paint-orange';
     }
-
-    // The shield is worth having up whenever something is close enough to be stopped by it.
-    if (!skipSpecials && taken !== 'f' && (aiState.npcChalkShieldHp ?? 0) <= 0 && (dist < 260 || hpRatio < 0.65)) {
-      if (this.castAbility('chalk-shield', buildContext(aimX, aimY))) return 'chalk-shield';
+    // Synergy: shots incoming — a wall across them.
+    if (!skipSpecials && taken !== 'r' && (aiState.npcPaintShotsIncoming ?? 0) >= 2) {
+      if (this.castAbility('paint-congeal', ctx())) return 'paint-congeal';
     }
-
-    // The blue line is drawn between us, so closing the gap means walking over it.
-    if (!skipSpecials && taken !== 'r' && aiState.npcChalkMayPerma) {
-      if (this.castAbility('chalk-perma', buildContext(aimX, aimY))) return 'chalk-perma';
+    // Eight untouchable seconds are the answer to losing.
+    if (!skipSpecials && taken !== 'q' && (hpRatio < 0.45 || (dist < 260 && hpRatio < 0.7))) {
+      if (this.castAbility('paint-masterpiece', ctx())) return 'paint-masterpiece';
     }
-
-    // The fuse needs the three seconds it takes to draw and burn, so it wants distance.
-    if (!skipSpecials && taken !== 'e' && dist > 150) {
-      if (this.castAbility('chalk-explosive', buildContext(aimX, aimY))) return 'chalk-explosive';
+    // Set up: turn them into something big before spending the fuse.
+    if (!skipSpecials && taken !== 'f' && dist < 420) {
+      if (this.castAbility('paint-still-life', ctx())) return 'paint-still-life';
     }
-
-    // The ward is the filler: short, cheap, and scribbled straight onto their feet.
-    if (dist < 420) {
-      if (this.castAbility('chalk-ward', buildContext(aimX, aimY))) return 'chalk-ward';
+    if (!skipSpecials && taken !== 'e' && dist > 140) {
+      if (this.castAbility('paint-orange', ctx())) return 'paint-orange';
+    }
+    // A wall to keep a rusher off.
+    if (!skipSpecials && taken !== 'r' && dist < 200) {
+      if (this.castAbility('paint-congeal', ctx())) return 'paint-congeal';
+    }
+    if (dist < 520) {
+      if (this.castAbility('paint-splotch', ctx())) return 'paint-splotch';
     }
     return null;
   }
@@ -3678,9 +3691,20 @@ export class NpcOpponent extends Fighter {
   ): string | null {
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
+    // 0. Synergy: our bubbles are on them — rain Splash pools under them so every tick also
+    // strikes each bubble, which passes half of it on.
+    if (aiState.npcWaterBubbleSplash && dist < 340) {
+      if (this.castAbility('splash', buildContext(target.x, target.y))) return 'splash';
+    }
+
     if (!skipSpecials) {
-      // 1. Pain Rain — medium range, decent HP
-      if (dist < 380 && hpRatio > 0.25) {
+      // 1. Ultimate. Bubble Barrage (alternate Q) is a forward cone, so it wants them close.
+      if (this.element.abilities.some((a) => a.id === 'bubble-barrage')) {
+        if (dist < 300) {
+          if (this.castAbility('bubble-barrage', buildContext(target.x, target.y))) return 'bubble-barrage';
+        }
+      } else if (dist < 380 && hpRatio > 0.25) {
+        // Pain Rain — medium range, decent HP
         if (this.castAbility('pain-rain', buildContext(aimX, aimY))) return 'pain-rain';
       }
 
@@ -3872,7 +3896,9 @@ export class NpcOpponent extends Fighter {
   ): string | null {
     // Light Lance (car-mode) is always active for an NPC playing Light — see LightKit.update().
     // NPC Light AI just decides when to cast the other 4 abilities; LightKit reacts to npcCastId.
-    void target; void aiState;
+    void target;
+    // Synergy (F+): a ramp is in reach of the trick — pop it into a javelin burst, near the target or not.
+    if (aiState.npcLightTrickRamp && this.castAbility('light-trick', buildContext(aimX, aimY))) return 'light-trick';
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
     if (!skipSpecials) {
@@ -3948,42 +3974,56 @@ export class NpcOpponent extends Fighter {
     hpRatio: number,
     aimX: number,
     aimY: number,
-    _aiState: NpcAiState,
+    aiState: NpcAiState,
     angleToTarget: number,
   ): string | null {
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
-    // Tight aim for dark-drain (10% of normal offset)
+    // Tight aim for the caltrops (10% of normal offset)
     const sharpOffsetRad = (Math.random() * 2 - 1) * (this.difficulty.aimOffsetDeg + (time < this.aimOffsetBonusUntil ? this.aimOffsetBonusDeg : 0)) * 0.1 * (Math.PI / 180);
     const sharpAngle = angleToTarget + sharpOffsetRad;
-    const sharpX = this.x + Math.cos(sharpAngle) * dist;
-    const sharpY = this.y + Math.sin(sharpAngle) * dist;
+    // Caltrops are thrown where the target is going to be standing, not at their chest:
+    // lead a moving target by the throw's flight time.
+    const lead = 0.3;
+    const leadX = target.x + (target.body?.velocity.x ?? 0) * lead;
+    const leadY = target.y + (target.body?.velocity.y ?? 0) * lead;
+    const leadDist = Phaser.Math.Distance.Between(this.x, this.y, leadX, leadY);
+    const sharpX = this.x + Math.cos(sharpAngle) * leadDist;
+    const sharpY = this.y + Math.sin(sharpAngle) * leadDist;
+    void aimX; void aimY; void hpRatio;
+
+    // 0. Synergy: our own Grim Gloom is up — salt the floor under them so they stand still for
+    // the tentacles (Crippling Spikes stacks the slow; the gloom feeds on stillness).
+    const gloomAim = aiState.npcShadowGloomCaltropAim;
+    if (gloomAim && dist < 360) {
+      if (this.castAbility('shadow-caltrop', buildContext(gloomAim.x, gloomAim.y))) return 'shadow-caltrop';
+    }
 
     if (!skipSpecials) {
-      // 1. Tentacle Wall — grow a spiked wall toward the player from mid range
+      // 1. Grim Gloom (alternate Q) — the fog is the whole arena, so it only needs a fight on.
+      if (dist < 450 && this.element.abilities.some((a) => a.id === 'grim-gloom')) {
+        if (this.castAbility('grim-gloom', buildContext(target.x, target.y))) return 'grim-gloom';
+      }
+
+      // 2. Tentacle Wall — grow a spiked wall toward the player from mid range
       if (dist > 90 && dist < 340) {
         if (this.castAbility('tentacle-wall', buildContext(target.x, target.y))) return 'tentacle-wall';
       }
 
-      // 2. Tentacle — extend toward player when in attack range
+      // 3. Tentacle — extend toward player when in attack range
       if (dist < 280) {
         if (this.castAbility('tentacle', buildContext(target.x, target.y))) return 'tentacle';
       }
 
-      // 3. Snap Trap — place at own feet occasionally
+      // 4. Snap Trap — placed at our feet, aimed at the player (a claymore faces the aim)
       if (dist < 200) {
-        if (this.castAbility('snap-trap', buildContext(this.x, this.y))) return 'snap-trap';
-      }
-
-      // 4. Dark bomb — sharp aim
-      if (dist < 400) {
-        if (this.castAbility('dark-drain', buildContext(sharpX, sharpY))) return 'dark-drain';
+        if (this.castAbility('snap-trap', buildContext(target.x, target.y))) return 'snap-trap';
       }
     }
 
-    // Default: dark bomb — sharp aim
-    if (dist < 500) {
-      if (this.castAbility('dark-drain', buildContext(sharpX, sharpY))) return 'dark-drain';
+    // Default: caltrops — sharp aim, led
+    if (dist < 420) {
+      if (this.castAbility('shadow-caltrop', buildContext(sharpX, sharpY))) return 'shadow-caltrop';
     }
 
     return null;

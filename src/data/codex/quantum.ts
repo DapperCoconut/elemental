@@ -1,67 +1,71 @@
 import { ElementCodex } from '../AbilityCodex';
 
 /**
- * Quantum — the element that is two other elements, and the third thing they can become.
+ * Quantum — the element built out of other elements' abilities.
  *
- * Verified against `src/elements/quantum.ts`, `kits/QuantumKit.ts` (the bond, the collapse and
- * instability) and `kits/QuantumCoreKit.ts` (the five abilities). Quantum has no perks and no
- * mastery; it sells exactly one upgrade — Third State, filed under the Click slot — and that
- * upgrade is what makes the five abilities below reachable at all.
+ * Verified against `src/elements/quantum.ts`, `kits/QuantumKit.ts` (key routing, the npc's
+ * rotation and instability), `data/QuantumLoadout.ts` (the slot table) and
+ * `kits/QuantumCoreKit.ts` (the five abilities below). Quantum has no perks. It sells exactly
+ * one upgrade — Third State, filed under the Click slot — which makes its own five abilities
+ * slottable and lets each slot's upgrade be switched on; its mastery is three permissions on the
+ * customization page rather than a passive and a bindable of its own.
  */
 const quantum: ElementCodex = {
   identity:
-    'Quantum is the only element with no subject matter. Before the fight you bond two other '
-    + 'elements together in the Entanglement Lab; in the fight, your dodge collapses the bond onto '
-    + 'the other half — the same body, the same health, the same status effects, a completely '
-    + 'different five keys. Everything the half you left behind put into the world keeps running '
-    + 'while you are the other one. The price is Quantum Instability: every hit you take makes you '
-    + 'more fragile, and collapsing while unstable tears at you. Buy Third State and the coin '
-    + 'becomes a three-sided one, whose third face is a kit that does nothing but split things in '
-    + 'half — including itself.',
+    'Quantum is the only element with no subject matter. Each of its five keys carries another '
+    + 'element\'s ability for that key — Fire\'s Click, Ice\'s E, Gravity\'s R — chosen on its '
+    + 'customization page from whatever you have entangled in the Entanglement Lab. Pressing a key '
+    + 'makes you that key\'s element for the cast: the same body, the same health, the same status '
+    + 'effects, a different kit under your hands. Everything the elements you are not currently '
+    + 'wearing put into the world keeps running. The price is Quantum Instability: every hit you '
+    + 'take makes you more fragile. Buy Third State and Quantum\'s own kit — one that does nothing '
+    + 'but split things in half, including itself — joins the list of things you can slot.',
 
   passives: [
     {
       emoji: '⚛️',
-      name: 'Bonded',
+      name: 'Entangled',
       basics:
-        'Quantum is two elements on one body. The pair is chosen before the fight and researched one '
-        + 'bond at a time in the Entanglement Lab, and each half brings its own five abilities, its own '
-        + 'upgrades, its own mastery and its own skin. Health, shields, status effects and cooldown '
-        + 'timers are shared, so a swap changes what you can do and never what has been done to you. The '
-        + 'half you are not wearing keeps running: a fire pool keeps burning, a turret keeps firing, a '
-        + 'summon keeps hunting while you are off being the other element. Cooldown timestamps are per '
-        + 'ability id on one body, so a cooldown you started as one half is still running when you come '
-        + 'back to it.',
+        'Quantum is up to five elements on one body. Each key — Click, E, R, F, Q — carries one '
+        + 'element\'s ability for that same key, chosen on the customization page; an element has to be '
+        + 'entangled in the Entanglement Lab first, one at a time, and Fire and Water come entangled. '
+        + 'A slot carries the ability and nothing else — no upgrade, no perk, no mastery — until Third '
+        + 'State lets its upgrade be switched on and Quantum Mastery lends it a passive, a sixth key and an '
+        + 'alternate Q. Health, shields, status effects and cooldown timers are shared, so a shift '
+        + 'changes what you can do and never what has been done to you. The elements you are not wearing '
+        + 'keep running: a fire pool keeps burning, a turret keeps firing, a summon keeps hunting while '
+        + 'you are off being another one.',
       effects: [
-        { tag: 'utility', label: 'Two kits', detail: 'The pair is chosen before the fight and researched one bond at a time in the Entanglement Lab. Each half brings its own 5 abilities, its own upgrades, its own mastery and its own skin.' },
-        { tag: 'utility', label: 'One body', detail: 'Health, shields, status effects and cooldown timers are shared. A swap changes what you can do, never what has been done to you.' },
-        { tag: 'summon', label: 'The dormant half keeps running', detail: 'Everything the half you are not wearing left in the world is still ticked every frame — a fire pool keeps burning, a turret keeps firing, a summon keeps hunting, while you are off being the other element.' },
-        { tag: 'utility', label: 'Cooldowns carry', detail: 'Timestamps are per ability id on one body, so a cooldown you started as one half is still running when you come back to it.' },
+        { tag: 'utility', label: 'Five keys, five elements', detail: 'Each key carries one entangled element\'s ability for that same key. The fight opens as Click\'s element. The body never changes: Quantum always wears its own character, whatever is live.' },
+        { tag: 'utility', label: 'Abilities only', detail: 'A slot brings the base ability alone: no upgrade, no perk, no mastery. Third State switches upgrades on per slot; Quantum Mastery is the only mastery a loadout carries.' },
+        { tag: 'utility', label: 'One body', detail: 'Health, shields, status effects and cooldown timers are shared. A shift changes what you can do, never what has been done to you.' },
+        { tag: 'summon', label: 'The dormant elements keep running', detail: 'Everything an element you are not wearing left in the world is still ticked every frame — a fire pool keeps burning, a turret keeps firing, a summon keeps hunting.' },
+        { tag: 'utility', label: 'Cooldowns carry', detail: 'Timestamps are per ability id on one body, so a cooldown you started on one key is still running when you come back to it.' },
       ],
       notes: [
         'The element is granted for finishing the campaign — it is the sealed 43rd element behind the Amalgam.',
-        'An enemy Quantum rotates on a rhythm rather than in reaction to you: about every 16 seconds on the easiest difficulty down to every 5.5 on Nightmare, plus one out-of-rhythm swap when it drops below 45% health.',
-        'A bot never owns Third State, because it has no save to buy it from. An online opponent can, and their third stop is adopted the first time you see them wearing it.',
+        'An enemy Quantum has no keys to route: it carries three random elements and rotates through them on a rhythm, about every 16 seconds on the easiest difficulty down to every 5.5 on Nightmare, plus one out-of-rhythm swap when it drops below 45% health.',
+        'Anything that needs you to *stay* one element — a form, an aura, a held charge — ends the moment you press another element\'s key.',
       ],
     },
     {
       emoji: '🔄',
-      name: 'Collapse',
+      name: 'Shift',
       basics:
-        'Dodging is the swap. It advances the cycle by one and re-keys you instantly — two stops '
-        + 'normally, first element then second, or three with Third State: first, second, Quantum, then '
-        + 'back to first. The dash itself is unaffected, and the 380ms collapse ring is decoration; the '
-        + 're-key happens on the frame you dodge. Anything the half you just left put in the world stays '
-        + 'there and keeps working, because the collapse changes your kit and not the arena.',
+        'Pressing a key is the swap. A fresh E, R, F or Q makes you the element that owns that key '
+        + 'before the press reaches it, so the ability casts exactly as it would on its own element; '
+        + 'holding the mouse with no key pressed makes you Click\'s element. The re-key is instant and '
+        + 'the 380ms ring is decoration. Dodging is only a dodge. A shift costs nothing and leaves your '
+        + 'body as it is — Quantum always looks like Quantum; instability is the whole price.',
       effects: [
-        { tag: 'movement', label: 'On dodge', detail: 'Dodging advances the cycle by one and re-keys you instantly. The dash is unaffected.' },
-        { tag: 'utility', label: 'The cycle', detail: 'Two stops normally — first element, second element — and three with Third State: first, second, Quantum, then back to first.' },
-        { tag: 'utility', label: 'It is instant', detail: 'The 380ms collapse ring is decoration. The re-key happens on the frame you dodge.' },
-        { tag: 'utility', label: 'Nothing is left behind', detail: 'Anything the half you just left put in the world stays there and keeps working — the collapse changes your kit, not the arena.' },
+        { tag: 'utility', label: 'On key press', detail: 'A fresh E/R/F/Q makes you that key\'s element before the press reaches it. Holding the mouse with no key pressed makes you Click\'s element.' },
+        { tag: 'utility', label: 'It is instant', detail: 'The 380ms ring is decoration. The re-key happens on the frame you press.' },
+        { tag: 'utility', label: 'Nothing is left behind', detail: 'Anything the element you just left put in the world stays there and keeps working — the shift changes your kit, not the arena.' },
+        { tag: 'utility', label: 'Free', detail: 'A shift never costs health, whatever your instability — yours or an enemy Quantum\'s.' },
       ],
       notes: [
-        'Because the swap rides the dodge, a Quantum on cooldown for its dodge cannot change shape at all.',
-        'A Quantum with no bond simply dodges like anybody else.',
+        'Two keys in one frame: the later one wins.',
+        'Abilities stay on their own key — an element\'s E can only ever sit on E.',
       ],
     },
     {
@@ -80,26 +84,8 @@ const quantum: ElementCodex = {
         { tag: 'utility', label: 'What does not count', detail: 'A hit fully eaten by a shield charge, a damage absorber or flat reduction adds nothing — the counter only sees damage that got through.' },
       ],
       notes: [
-        'An enemy Quantum pays exactly what you do; the bot is subject to the same counter and will refuse a swap it cannot afford.',
-        'The status box hides itself entirely at zero and turns red at 40, which is the threshold where a collapse starts costing health.',
-      ],
-    },
-    {
-      emoji: '⚠️',
-      name: 'Torn Collapse',
-      basics:
-        'Collapsing at 40 instability or above costs you 25 damage. The swap itself always succeeds, '
-        + 'and the figure does not scale — it is a flat 25 at 40 and a flat 25 at the cap. It is booked '
-        + 'as self-damage, so it lands in online matches too rather than being filtered out by the damage '
-        + 'relay.',
-      effects: [
-        { tag: 'cost', label: 'The tear', detail: '25 damage to yourself for collapsing at 40 instability or above. The swap itself always succeeds.' },
-        { tag: 'utility', label: 'Self-inflicted', detail: 'It is booked as self-damage, so it lands in online matches too rather than being filtered out by the damage relay.' },
-        { tag: 'utility', label: 'It does not scale', detail: 'Flat 25 at 40 instability and flat 25 at the 50 cap — there is no worse version of it to be afraid of.' },
-      ],
-      notes: [
-        'Forty instability is forty hits taken inside the decay window. Rotating on a rhythm keeps you well clear of it; rotating in a panic is what costs.',
-        'The 25 goes through your own instability multiplier like anything else, so a torn collapse at the cap really costs closer to 38.',
+        'An enemy Quantum pays exactly what you do: the same counter, the same decay, nothing more.',
+        'The status box hides itself entirely at zero and turns red at 40 as a warning.',
       ],
     },
   ],
@@ -130,20 +116,20 @@ const quantum: ElementCodex = {
       ],
       upgrade: {
         basics:
-          'Adds a third stop to the collapse cycle — first element, second element, Quantum — and without '
-          + 'it this entire ability list is unreachable. The Quantum form\'s five keys are Atom Splicers on '
+          'Makes Quantum itself an element you can slot — without it this entire ability list is '
+          + 'unreachable. Quantum\'s five keys are Atom Splicers on '
           + 'Click (five permanent blades, 8 a cut, driven out to 112px and 5.4 rad/s while held), Ability '
           + 'Split on E (the next ability you cast has its cooldown halved, and the charge survives a '
-          + 'collapse), Arena Split on R (a seam down the middle of the room for 15 seconds that the enemy '
+          + 'shift), Arena Split on R (a seam down the middle of the room for 15 seconds that the enemy '
           + 'cannot cross and no shot from either side survives), Effect Split on F (every effect on you '
           + 'halved in strength and stretched to 2.5× its remaining duration), and Quantum Parasite on Q (a '
           + 'ten-bead worm that bites for 35 and becomes two worms every time anybody cuts it). It costs '
           + '2000 shards and is filed under the Click slot, which is why the shop\'s other four Quantum '
           + 'plates read COMING SOON.',
         effects: [
-          { tag: 'utility', label: 'A third stop', detail: 'The dodge cycles first element → second element → Quantum → first element. Without it, this whole ability list is unreachable.' },
+          { tag: 'utility', label: 'Slottable', detail: 'Quantum\'s own kit joins the roster on the customization page, key for key. Without it, this whole ability list is unreachable.' },
           { tag: 'damage', label: 'Atom Splicers', detail: 'Click: five permanent blades on a 48px orbit, 8 a cut, driven out to 112px and 5.4 rad/s while held.' },
-          { tag: 'buff', label: 'Ability Split', detail: 'E: the next ability you cast has its cooldown halved — and the charge survives a collapse.' },
+          { tag: 'buff', label: 'Ability Split', detail: 'E: the next ability you cast has its cooldown halved — and the charge survives a shift.' },
           { tag: 'control', label: 'Arena Split', detail: 'R: a seam down the middle of the room for 15s that the enemy cannot cross and no shot from either side survives.' },
           { tag: 'buff', label: 'Effect Split', detail: 'F: every effect on you halved in strength and stretched to 2.5× its remaining duration.' },
           { tag: 'summon', label: 'Quantum Parasite', detail: 'Q: a ten-bead worm that bites for 35 and becomes two worms every time anybody cuts it.' },
@@ -155,20 +141,20 @@ const quantum: ElementCodex = {
     'quantum-ability-split': {
       basics:
         'The next ability you cast runs at ×0.5 of its own cooldown — a 30-second ultimate comes back '
-        + 'in 15. The charge is held on the fighter rather than the kit, so it crosses a bond swap '
+        + 'in 15. The charge is held on the fighter rather than the kit, so it crosses a shift '
         + 'intact, and it is spent by the very next stamped cast whatever that is, announced with "⚛️ '
         + 'Halved!" as it goes. Atom Splicers cannot spend it, so holding the mouse button while the '
         + 'charge is up is safe. 11s cooldown.',
       cast: 'E. No aim, no channel. The charge waits until you cast something. 11s cooldown.',
       effects: [
         { tag: 'buff', label: 'The halving', detail: 'The next ability you cast runs at ×0.5 of its own cooldown — a 30-second ultimate comes back in 15.' },
-        { tag: 'utility', label: 'It survives a collapse', detail: 'The charge is held on the fighter, not the kit, so it crosses a bond swap intact.' },
+        { tag: 'utility', label: 'It survives a shift', detail: 'The charge is held on the fighter, not the kit, so it crosses a shift intact.' },
         { tag: 'utility', label: 'Spent once', detail: 'Consumed by the very next stamped cast, whatever that is, and announced with "⚛️ Halved!" as it goes.' },
         { tag: 'utility', label: 'The exemption', detail: 'Atom Splicers cannot spend it. Holding the mouse button while the charge is up is safe.' },
       ],
       notes: [
         'It cannot eat its own cooldown: E is already stamped by the time the charge is set.',
-        'The whole value of this is what you point it at. Halving a 900ms Click is nothing; halving the other half of your bond\'s ultimate is 15 or 20 seconds of a fight.',
+        'The whole value of this is what you point it at. Halving a 900ms Click is nothing; halving another element\'s ultimate is 15 or 20 seconds of a fight.',
         'Nothing but casting spends it — it has no timer of its own and will sit on you indefinitely.',
       ],
     },
@@ -247,6 +233,41 @@ const quantum: ElementCodex = {
         'It is also the reason shooting one is a mistake for the enemy, and there is no way for them to tell the difference in the moment.',
         'A cut next to the mouth leaves a single bead. That bead is the mouth, which cannot be killed, so it carries on as a one-bead parasite until its timer runs out.',
         'The parasites are summons and can be purged — Ruin\'s Spikes of Ruin will clear them. The blades and the seam are not summons and survive it.',
+      ],
+    },
+  },
+  mastery: {
+    'borrowed-passive': {
+      basics:
+        'Always on, no key. One mastery passive from any entangled element whose mastery you have '
+        + 'completed — picked on the customization page — rides along on every loadout, exactly as '
+        + 'it would on its own element: Fire\'s Burning Body, Air\'s dodge, Earth\'s Unbreakable.',
+      effects: [
+        { tag: 'buff', label: 'One passive', detail: 'Exactly one element\'s mastery passive, chosen from entangled elements whose mastery is complete. It is always on, whichever element you are wearing.' },
+        { tag: 'utility', label: 'Not that element\'s bindable', detail: 'Only the passive half comes along. The element\'s mastery ability is a separate pick — the sixth key.' },
+      ],
+      notes: [
+        'The element lending the passive does not need to sit on any of the five keys.',
+      ],
+    },
+    'sixth-slot': {
+      basics:
+        'A sixth key, G. It carries any mastery ability from any entangled element whose mastery you '
+        + 'have completed. Pressing G makes you that element for the cast, the way the five slots do, and '
+        + 'the ability keeps its own cooldown and its own rules.',
+      cast: 'Press G. The arena hands the lending kit the G key in place of the key its ability is normally bound over (F where allowed, else R, else Q).',
+      effects: [
+        { tag: 'utility', label: 'Any mastery ability', detail: 'Every bindable enhancement of every entangled, mastered element is on offer — one at a time.' },
+        { tag: 'utility', label: 'Its own key', detail: 'The five slots keep their base abilities. If the lending element also sits on the key the ability binds over, that key still casts the base ability and G casts the mastery one.' },
+        { tag: 'buff', label: 'Mastered while live', detail: 'The lending element counts as mastered while it is the element you reached through G, so its passive is on for that stretch.' },
+      ],
+    },
+    'alternate-collapse': {
+      basics:
+        'Your Q slot can be switched to its element\'s alternate ultimate, when that element has one '
+        + 'unlocked. A toggle on the customization page, read each fight.',
+      effects: [
+        { tag: 'utility', label: 'Alternate Q', detail: 'The Q slot casts the element\'s alternate ultimate in place of its base one. Needs the alternate unlocked on that element.' },
       ],
     },
   },

@@ -139,9 +139,59 @@ const water: ElementCodex = {
         ],
       },
     },
+    // Alternate ultimate — swapped in for Pain Rain from the customize panel (cheats only for now).
+    'bubble-barrage': {
+      basics:
+        'The alternate ultimate, in place of Pain Rain. You blow 20 bubbles in a cone in front of you, '
+        + 'streaming out over about half a second, slowing as they drift. A bubble that touches a foe '
+        + 'sticks to them — up to 4 on one foe — and a bubble that reaches a foe already wearing 4 pops '
+        + 'on them for 8 damage instead. Each bubble has 75 HP, and every point of damage it takes passes '
+        + 'on to its wearer at 50%: splash, blasts and puddles that catch a bubbled foe hit them and every '
+        + 'bubble on them. 36s cooldown.',
+      cast: 'Q (when equipped as the alternate). Aimed at the cursor. 36s cooldown.',
+      noUpgrade: true,
+      effects: [
+        { tag: 'area', label: 'The volley', detail: '20 bubbles over ~0.56s, inside about 31° either side of your aim, at 240–380 px/s and slowing; free bubbles pop after 1.8–2.1s.' },
+        { tag: 'debuff', label: 'Clinging', detail: 'Up to 4 bubbles orbit one foe for 10s each. A bubble arriving at a foe already wearing 4 pops on them for 8 damage.' },
+        { tag: 'damage', label: 'Pass-through', detail: 'Each bubble has 75 HP. An area hit that reaches a bubble damages it too, and 50% of what it absorbs lands on its wearer — four bubbles can turn a 10-damage blast into 30.' },
+        { tag: 'utility', label: 'What counts', detail: 'Every area hit counts — the arena AoE chokepoint, Pain Rain drops, Splashy splashes, Poseidon waves and each 0.25s puddle tick. Single-target shots do not hit bubbles.' },
+      ],
+    },
   },
 
   perks: {
+    'water-drippy': {
+      basics:
+        'You drip as you walk. Every 46px you move leaves a 20px puddle behind you for 2.6 seconds. '
+        + 'They are ordinary Splash pools — they slow foes by half and tick 2 damage every 0.25s.',
+      cast: 'Passive. Walk.',
+      effects: [
+        { tag: 'area', label: 'Trail', detail: 'A 20px pool every 46px walked, lasting 2.6s. At most 16 at once; the oldest dries up first.' },
+        { tag: 'dot', label: 'Wet ground', detail: 'Each drip ticks 2 damage per 0.25s and halves the speed of any foe standing in it.' },
+      ],
+    },
+    'water-splashy': {
+      basics:
+        'Every puddle you make is 50% bigger — Splash, the Tidal Pool, Squall Splashes and Drippy. And '
+        + 'Water Cut splashes when it lands: everything else within 64px of the target takes 4 damage.',
+      cast: 'Passive.',
+      effects: [
+        { tag: 'area', label: 'Bigger pools', detail: 'Every pool you lay is 1.5× as wide: Splash 54px, Tidal Pool 81px, Squall 81px, drips 30px.' },
+        { tag: 'damage', label: 'Splash damage', detail: 'A Water Cut hit deals 4 damage to everything else within 64px of its target — and to every bubble on the target.' },
+      ],
+    },
+    'water-poseidon': {
+      basics:
+        'Water Cut becomes a small wave that shoves foes back 16px. Your dodge becomes a wave you ride: '
+        + 'twice as long, 15% faster, and 12 damage to anyone you ride into. And every ultimate you cast '
+        + 'sends a great wave across the whole arena, crashing into every foe for 25 damage.',
+      cast: 'Passive. Changes Click, Space and Q.',
+      effects: [
+        { tag: 'utility', label: 'Wave cuts', detail: 'Each Water Cut hit shoves its target 16px along the shot.' },
+        { tag: 'damage', label: 'Wave ride', detail: 'Dodging rides a wave for 0.56s (i-frames still 0.28s) at 1.15× dodge speed, hitting anyone within 42px for 12 damage and throwing them aside.' },
+        { tag: 'damage', label: "Poseidon's wave", detail: 'Casting Pain Rain or Bubble Barrage sends a wave across the arena in ~1.1s: 25 damage to every foe it crosses, and 25 to each bubble they wear.' },
+      ],
+    },
     stalagmite: {
       basics:
         'Splash stops making puddles and makes stalagmites: heavy damage on contact in place of the '

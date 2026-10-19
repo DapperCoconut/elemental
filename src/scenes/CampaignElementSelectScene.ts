@@ -4,7 +4,7 @@ import { WORLDS } from '../data/Worlds';
 import * as PlayerData from '../data/PlayerData';
 import { ElementDef, findElementDef } from '../data/ElementRoster';
 import {
-  C, addBackdrop, addBackButton, addTitle, ElementPanels, openBondPicker, renderElementGrid,
+  C, addBackdrop, addBackButton, addTitle, ElementPanels, renderElementGrid,
 } from '../ui';
 import {
   GauntletState,
@@ -27,8 +27,6 @@ import { setTownAvatarElement } from '../campaign/town/TownWalker';
 const GAUNTLET_EXCLUDED_MUTATIONS = new Set(['boss', 'raid', 'golf']);
 
 export class CampaignElementSelectScene extends Phaser.Scene {
-  /** Set once the bond modal has answered, so re-entry does not reopen it. */
-  private bondChosen = false;
   private worldId = 'fire';
   private nodeId = 'fire-fight-1';
   private isChallenge = false;
@@ -167,16 +165,6 @@ export class CampaignElementSelectScene extends Phaser.Scene {
   }
 
   private selectElement(elementId: string): void {
-    // Quantum is two elements, and which two has to be settled before anything is launched.
-    // The picker writes the choice to the save; ArenaScene reads it from there.
-    if (elementId === 'quantum' && !this.bondChosen) {
-      openBondPicker(this, (a, b) => {
-        PlayerData.setQuantumBond(a, b);
-        this.bondChosen = true;
-        this.selectElement(elementId);
-      });
-      return;
-    }
 
     this.scene.stop('CampaignWorldScene');
     // The campaign towns are walked by whoever was last taken into a fight.

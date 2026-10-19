@@ -1451,6 +1451,31 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('elem-quantum', 48, 48);
     gfx.clear();
 
+    // quantum-body — the fighter a Quantum wears all fight, whichever element is live. Just
+    // the orb: the shells, electrons and ghosting are QuantumAvatar's, drawn live round it, so
+    // the face stays clear and nothing here has to read at icon size.
+    gfx.fillStyle(0x0b2d40, 1);
+    gfx.fillCircle(24, 24, 22);
+    gfx.fillStyle(0x0f4560, 1);
+    gfx.fillCircle(23, 22.5, 18);
+    gfx.fillStyle(0x146a8a, 0.9);
+    gfx.fillCircle(22, 21, 12.5);
+    // A nucleus low in the belly, below the eyes, so the brightest point never sits on the face.
+    gfx.fillStyle(0x7df9ff, 0.35);
+    gfx.fillCircle(24, 32, 7);
+    gfx.fillStyle(0xeaffff, 0.9);
+    gfx.fillCircle(24, 32, 3);
+    gfx.lineStyle(2.5, 0x7df9ff, 0.95);
+    gfx.strokeCircle(24, 24, 21);
+    gfx.lineStyle(1.6, 0xb07dff, 0.55);
+    gfx.beginPath();
+    gfx.arc(24, 24, 18.5, Math.PI * 0.15, Math.PI * 0.85);
+    gfx.strokePath();
+    gfx.fillStyle(0xffffff, 0.75);
+    gfx.fillEllipse(16.5, 13.5, 8, 4.5);
+    gfx.generateTexture('quantum-body', 48, 48);
+    gfx.clear();
+
     // Fate's card pellets. Each one is a cut card rather than a bead: a dark edge, a coloured
     // face inset inside it, and a bright sheen down one flank — the same read as the full-size
     // cards FateVisuals draws, shrunk to bullet scale.
@@ -2553,9 +2578,9 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('elem-dream', 48, 48);
     gfx.clear();
 
-    // Chalk — a plain slate orb with a chalk-dust rim light: the blackboard is the body's
-    // colour, not a picture printed on it. The stick in the rig's hand says "chalk".
-    bakeOrb(gfx, { rim: 0x14181b, shell: 0x1e2629, body: 0x2a3336, mid: 0x34403f, core: 0x46534f, light: 0xcfc9b8, glint: 0xf4f1e6 });
+    // Paint (id `chalk`) — a warm canvas-linen orb, rose at the rim. The spatter, beret and
+    // brush are the rig's; the body is just the canvas they are all painted on.
+    bakeOrb(gfx, { rim: 0x7a2a48, shell: 0xb5576f, body: 0xe4d4b6, mid: 0xeee2c8, core: 0xf6eedc, light: 0xfffaf0, glint: 0xffffff });
     gfx.generateTexture('elem-chalk', 48, 48);
     gfx.clear();
 

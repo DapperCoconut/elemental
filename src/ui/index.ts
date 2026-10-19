@@ -12,7 +12,6 @@ export * from './Panel';
 export * from './Button';
 export * from './Slider';
 export * from './Text';
-export * from './BondPicker';
 export * from './ElementPanels';
 export * from './ElementPortrait';
 export * from './ElementSelectGrid';

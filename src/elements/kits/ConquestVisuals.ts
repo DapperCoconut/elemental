@@ -145,10 +145,163 @@ export function contestTile(
   g.fillRect(x + 4, y + size - 6, (size - 8) * progress, 3);
 }
 
+// ── Shared shading ────────────────────────────────────────────────────────
+//
+// Everything below is built the way the fighters are: a dark rim, a body, a lit band and one
+// glint (`bakeOrb` in BootScene). Shading is mixed *after* the skin mapper has run, so a remapped
+// palette still gets its own rims and highlights rather than the original element's.
+
+function mix(a: number, b: number, k: number): number {
+  const ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
+  const br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;
+  return (Math.round(ar + (br - ar) * k) << 16) | (Math.round(ag + (bg - ag) * k) << 8) | Math.round(ab + (bb - ab) * k);
+}
+const dark = (c: number, k: number): number => mix(c, 0x000000, k);
+const light = (c: number, k: number): number => mix(c, 0xffffff, k);
+
+/** The soft contact shadow every object on the board sits on. */
+function groundShadow(g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number, alpha: number): void {
+  g.fillStyle(0x000000, alpha * 0.18);
+  g.fillEllipse(x, y, w * 1.15, h * 1.3);
+  g.fillStyle(0x000000, alpha * 0.22);
+  g.fillEllipse(x, y, w * 0.8, h * 0.85);
+}
+
+/** A miniature of the fighters' orb: rim → shell → body → lit core, a rim light and a glint. */
+function orb(g: Phaser.GameObjects.Graphics, x: number, y: number, r: number, base: number, alpha: number): void {
+  g.fillStyle(dark(base, 0.55), alpha);
+  g.fillCircle(x, y, r);
+  g.fillStyle(dark(base, 0.18), alpha);
+  g.fillCircle(x, y, r * 0.86);
+  g.fillStyle(base, alpha);
+  g.fillCircle(x, y + r * 0.06, r * 0.7);
+  g.fillStyle(light(base, 0.22), alpha);
+  g.fillCircle(x, y + r * 0.16, r * 0.5);
+  g.fillStyle(light(base, 0.45), alpha * 0.6);
+  g.fillEllipse(x, y + r * 0.5, r * 0.9, r * 0.36);
+  if (r >= 6) {
+    g.lineStyle(Math.max(1, r * 0.1), light(base, 0.55), alpha * 0.6);
+    g.beginPath();
+    g.arc(x, y, r * 0.8, Math.PI * 1.15, Math.PI * 1.85);
+    g.strokePath();
+  }
+  g.fillStyle(0xffffff, alpha * 0.8);
+  g.fillEllipse(x - r * 0.32, y - r * 0.36, r * 0.4, r * 0.24);
+}
+
+/** A ball hand: rim and a lit centre, like the fighters' own. */
+function ballHand(g: Phaser.GameObjects.Graphics, x: number, y: number, r: number, base: number, alpha: number): void {
+  g.fillStyle(dark(base, 0.5), alpha);
+  g.fillCircle(x, y, r);
+  g.fillStyle(light(base, 0.12), alpha);
+  g.fillCircle(x, y - r * 0.08, r * 0.72);
+  g.fillStyle(0xffffff, alpha * 0.55);
+  g.fillCircle(x - r * 0.3, y - r * 0.3, r * 0.26);
+}
+
+/** Two eyes looking along `ang`. `glow` swaps the pupils for lit sockets (wizards, a raging king). */
+function troopEyes(
+  g: Phaser.GameObjects.Graphics, x: number, y: number, r: number, ang: number,
+  alpha: number, glow?: number,
+): void {
+  const ca = Math.cos(ang), sa = Math.sin(ang);
+  const er = r * 0.24;
+  const sep = r * 0.36;
+  const lx = ca * r * 0.2, ly = sa * r * 0.12;
+  for (const side of [-1, 1]) {
+    const ex = x + side * sep + lx;
+    const ey = y + ly;
+    if (glow !== undefined) {
+      g.fillStyle(glow, alpha * 0.35);
+      g.fillCircle(ex, ey, er * 1.7);
+      g.fillStyle(glow, alpha);
+      g.fillCircle(ex, ey, er * 0.85);
+      g.fillStyle(0xffffff, alpha * 0.85);
+      g.fillCircle(ex, ey, er * 0.4);
+      continue;
+    }
+    g.fillStyle(0xffffff, alpha);
+    g.fillCircle(ex, ey, er);
+    g.fillStyle(0x16121e, alpha);
+    g.fillCircle(ex + ca * er * 0.35, ey + sa * er * 0.3, er * 0.62);
+  }
+}
+
+/** A chunky rounded block — the stone and timber every building is assembled from. */
+function block(
+  g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number,
+  base: number, alpha: number, round = 2.5,
+): void {
+  const r = Math.min(round, w / 2 - 0.1, h / 2 - 0.1);
+  g.fillStyle(dark(base, 0.55), alpha);
+  g.fillRoundedRect(x - 1, y - 1, w + 2, h + 2, r + 1);
+  g.fillStyle(base, alpha);
+  g.fillRoundedRect(x, y, w, h, r);
+  // Lit top face and a shaded foot, so a block reads as a solid rather than a sticker.
+  g.fillStyle(light(base, 0.28), alpha);
+  g.fillRoundedRect(x + 0.5, y + 0.5, w - 1, Math.max(1, h * 0.26), Math.min(r, h * 0.12));
+  g.fillStyle(dark(base, 0.18), alpha);
+  g.fillRect(x + r * 0.5, y + h * 0.78, w - r, h * 0.2);
+}
+
+/** A conical roof: rim, body, a lit left face, an eave band and a glint near the point. */
+function cone(
+  g: Phaser.GameObjects.Graphics, cx: number, baseY: number, halfW: number, h: number,
+  base: number, alpha: number,
+): void {
+  const top = baseY - h;
+  g.fillStyle(dark(base, 0.55), alpha);
+  g.fillTriangle(cx - halfW - 1.4, baseY + 1, cx + halfW + 1.4, baseY + 1, cx, top - 1.6);
+  g.fillStyle(base, alpha);
+  g.fillTriangle(cx - halfW, baseY, cx + halfW, baseY, cx, top);
+  g.fillStyle(light(base, 0.24), alpha);
+  g.fillTriangle(cx - halfW, baseY, cx - halfW * 0.15, baseY, cx, top);
+  g.fillStyle(dark(base, 0.3), alpha);
+  g.fillEllipse(cx, baseY, halfW * 2.1, Math.max(2, h * 0.14));
+  g.fillStyle(0xffffff, alpha * 0.6);
+  g.fillCircle(cx - halfW * 0.18, top + h * 0.28, Math.max(0.8, halfW * 0.12));
+}
+
+/** A banner hanging off a wall, swallow-tailed at the bottom. */
+function hangingBanner(
+  g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number,
+  base: number, trim: number, alpha: number,
+): void {
+  g.fillStyle(dark(base, 0.5), alpha);
+  g.fillPoints([
+    { x: x - w / 2 - 0.8, y: y - 0.8 }, { x: x + w / 2 + 0.8, y: y - 0.8 },
+    { x: x + w / 2 + 0.8, y: y + h + 0.8 }, { x, y: y + h * 0.72 }, { x: x - w / 2 - 0.8, y: y + h + 0.8 },
+  ], true);
+  g.fillStyle(base, alpha);
+  g.fillPoints([
+    { x: x - w / 2, y }, { x: x + w / 2, y }, { x: x + w / 2, y: y + h }, { x, y: y + h * 0.74 }, { x: x - w / 2, y: y + h },
+  ], true);
+  g.fillStyle(light(base, 0.25), alpha);
+  g.fillRect(x - w / 2, y, w * 0.32, h * 0.85);
+  g.fillStyle(trim, alpha);
+  g.fillCircle(x, y + h * 0.36, w * 0.2);
+}
+
+/** A lit window or doorway, its warmth breathing on `t` so a living town never looks painted on. */
+function glowWindow(
+  g: Phaser.GameObjects.Graphics, x: number, y: number, w: number, h: number,
+  t: number, seed: number, alpha: number,
+): void {
+  const flick = 0.8 + 0.2 * Math.sin(t * 5.3 + seed * 2.1) * Math.sin(t * 3.1 + seed);
+  g.fillStyle(0x1a1008, alpha);
+  g.fillRect(x - w / 2 - 0.8, y - 0.8, w + 1.6, h + 1.6);
+  g.fillCircle(x, y, w / 2 + 0.8);
+  g.fillStyle(CNQ.tracer, alpha * flick);
+  g.fillRect(x - w / 2, y, w, h);
+  g.fillCircle(x, y, w / 2);
+  g.fillStyle(CNQ.muzzle, alpha * flick * 0.8);
+  g.fillRect(x - w * 0.18, y, w * 0.36, h * 0.8);
+}
+
 /**
- * The town center. A stepped ziggurat with a dome and a standard on top — deliberately the
- * tallest, widest silhouette on the board, since it is the one thing that can never be killed
- * and the player should never mistake it for something they have to defend.
+ * The town center: a keep. A curtain wall with a lit gatehouse, two corner towers and a tall
+ * central tower whose roof and flag carry the town's colour — deliberately the tallest, widest
+ * silhouette on the board, since it is the one thing that can never be killed.
  */
 export function townCenterBody(
   g: Phaser.GameObjects.Graphics,
@@ -156,44 +309,81 @@ export function townCenterBody(
   x: number, y: number, s: number,
   color: number, t: number, alpha: number,
 ): void {
-  const w = s * 0.86;
-  // Three receding tiers.
-  for (let i = 0; i < 3; i++) {
-    const tw = w * (1 - i * 0.22);
-    const th = s * 0.16;
-    const ty = y + s * 0.34 - i * th;
-    g.fillStyle(tint(i % 2 === 0 ? CNQ.stone : CNQ.stoneDark), alpha);
-    g.fillRect(x - tw / 2, ty - th, tw, th);
-    g.lineStyle(1.2, tint(CNQ.stoneDark), alpha * 0.8);
-    g.strokeRect(x - tw / 2, ty - th, tw, th);
-  }
-  // Dome, tinted to the town's colour — the ownership read at a distance.
-  const domeY = y - s * 0.16;
-  g.fillStyle(tint(color), alpha);
-  g.beginPath();
-  g.arc(x, domeY, w * 0.26, Math.PI, TAU, false);
-  g.closePath();
-  g.fillPath();
-  g.fillStyle(tint(CNQ.parchment), alpha * 0.35);
-  g.beginPath();
-  g.arc(x - w * 0.06, domeY, w * 0.16, Math.PI, TAU, false);
-  g.closePath();
-  g.fillPath();
+  const stone = tint(CNQ.stone);
+  const stoneDk = tint(CNQ.stoneDark);
+  const col = tint(color);
+  groundShadow(g, x, y + s * 0.34, s * 0.92, s * 0.2, alpha);
 
-  // The standard, with a pennant that stirs.
-  const poleTop = domeY - s * 0.42;
-  g.lineStyle(2, tint(CNQ.timberDark), alpha);
-  g.lineBetween(x, domeY - w * 0.24, x, poleTop);
-  const flap = Math.sin(t * 3.2) * s * 0.05;
-  g.fillStyle(tint(color), alpha);
-  g.fillTriangle(x, poleTop, x + s * 0.26, poleTop + s * 0.07 + flap, x, poleTop + s * 0.15);
-  g.fillStyle(tint(CNQ.gold), alpha * 0.9);
-  g.fillCircle(x, poleTop - 2, 2.4);
+  // Central keep, behind the curtain wall.
+  const kw = s * 0.3;
+  block(g, x - kw / 2, y - s * 0.22, kw, s * 0.32, mix(stone, stoneDk, 0.2), alpha, 2);
+  glowWindow(g, x, y - s * 0.14, s * 0.07, s * 0.07, t, 1, alpha);
+  cone(g, x, y - s * 0.21, kw * 0.62, s * 0.3, col, alpha);
+
+  // Flag on the keep's point, with a pennant that waves in two segments.
+  const poleBase = y - s * 0.5;
+  const poleTop = poleBase - s * 0.13;
+  g.lineStyle(2.4, dark(tint(CNQ.timberDark), 0.3), alpha);
+  g.lineBetween(x, poleBase, x, poleTop);
+  const w1 = Math.sin(t * 3.2) * s * 0.03;
+  const w2 = Math.sin(t * 3.2 - 1.1) * s * 0.05;
+  const fl = s * 0.24;
+  g.fillStyle(dark(col, 0.45), alpha);
+  g.fillPoints([
+    { x, y: poleTop - 0.8 }, { x: x + fl * 0.5, y: poleTop + w1 - 0.8 }, { x: x + fl + 1, y: poleTop + s * 0.05 + w2 },
+    { x: x + fl * 0.5, y: poleTop + s * 0.11 + w1 + 0.8 }, { x, y: poleTop + s * 0.12 + 0.8 },
+  ], true);
+  g.fillStyle(col, alpha);
+  g.fillPoints([
+    { x, y: poleTop }, { x: x + fl * 0.5, y: poleTop + w1 }, { x: x + fl, y: poleTop + s * 0.05 + w2 },
+    { x: x + fl * 0.5, y: poleTop + s * 0.11 + w1 }, { x, y: poleTop + s * 0.12 },
+  ], true);
+  g.fillStyle(light(col, 0.3), alpha);
+  g.fillTriangle(x, poleTop, x + fl * 0.5, poleTop + w1, x, poleTop + s * 0.05);
+  orb(g, x, poleTop - 1.5, 2.6, tint(CNQ.gold), alpha);
+
+  // Curtain wall with merlons along the top.
+  const ww = s * 0.74;
+  const wTop = y + s * 0.04;
+  block(g, x - ww / 2, wTop, ww, s * 0.3, stone, alpha, 2.5);
+  for (let i = 0; i < 6; i++) {
+    const mx = x - ww / 2 + s * 0.04 + i * ((ww - s * 0.08 - s * 0.075) / 5);
+    block(g, mx, wTop - s * 0.06, s * 0.075, s * 0.07, stone, alpha, 1.2);
+  }
+  // Mortar lines on the wall face.
+  g.lineStyle(1, stoneDk, alpha * 0.45);
+  g.lineBetween(x - ww / 2 + 3, wTop + s * 0.15, x + ww / 2 - 3, wTop + s * 0.15);
+  for (let i = 0; i < 4; i++) {
+    const lx = x - ww / 2 + ww * (0.15 + i * 0.24);
+    g.lineBetween(lx, wTop + s * 0.15, lx, wTop + s * 0.28);
+  }
+
+  // Gatehouse: an arched doorway glowing from inside, behind a portcullis.
+  const gw = s * 0.16;
+  const gy = wTop + s * 0.12;
+  glowWindow(g, x, gy, gw, s * 0.18, t, 3, alpha);
+  g.lineStyle(1.1, tint(CNQ.ironDark), alpha * 0.9);
+  for (let i = -1; i <= 1; i++) g.lineBetween(x + i * gw * 0.28, gy - gw * 0.4, x + i * gw * 0.28, gy + s * 0.18);
+  g.lineBetween(x - gw / 2, gy + s * 0.06, x + gw / 2, gy + s * 0.06);
+
+  // Banners either side of the gate.
+  hangingBanner(g, x - s * 0.19, wTop + s * 0.04, s * 0.09, s * 0.17, col, tint(CNQ.gold), alpha);
+  hangingBanner(g, x + s * 0.19, wTop + s * 0.04, s * 0.09, s * 0.17, col, tint(CNQ.gold), alpha);
+
+  // Corner towers, over the wall's ends.
+  for (const side of [-1, 1]) {
+    const tx = x + side * s * 0.37;
+    const tw = s * 0.17;
+    block(g, tx - tw / 2, y - s * 0.08, tw, s * 0.43, stone, alpha, 2);
+    glowWindow(g, tx, y + s * 0.02, s * 0.045, s * 0.06, t, 5 + side, alpha);
+    cone(g, tx, y - s * 0.07, tw * 0.68, s * 0.2, col, alpha);
+  }
 }
 
 /**
- * A barracks: a longhouse with a pitched roof and a training-yard door. The roof ridge is the
- * whole silhouette read — it's the only building with a triangle on top.
+ * A barracks: a log longhouse under a hipped roof in the town colour, with a shield and crossed
+ * spears over the door and a weapon rack against the wall. The broad hipped roof is the
+ * silhouette read — no other building is wider than it is tall with a slope on top.
  */
 export function barracksBody(
   g: Phaser.GameObjects.Graphics,
@@ -201,35 +391,102 @@ export function barracksBody(
   x: number, y: number, s: number,
   color: number, alpha: number,
 ): void {
-  const w = s * 0.78;
-  const h = s * 0.42;
-  const top = y - h * 0.1;
-  g.fillStyle(tint(CNQ.timber), alpha);
-  g.fillRect(x - w / 2, top, w, h);
-  g.lineStyle(1.4, tint(CNQ.timberDark), alpha);
-  g.strokeRect(x - w / 2, top, w, h);
-  // Two planks across the front.
-  for (let i = 1; i <= 2; i++) {
-    g.lineStyle(1, tint(CNQ.timberDark), alpha * 0.6);
-    g.lineBetween(x - w / 2, top + (h * i) / 3, x + w / 2, top + (h * i) / 3);
+  const timber = tint(CNQ.timber);
+  const timberDk = tint(CNQ.timberDark);
+  const col = tint(color);
+  const steel = tint(CNQ.steel);
+  groundShadow(g, x, y + s * 0.3, s * 0.88, s * 0.18, alpha);
+
+  // Log walls: three stacked logs, each its own rounded block, with round log-ends at the corners.
+  const w = s * 0.74;
+  const top = y - s * 0.04;
+  const lh = s * 0.11;
+  for (let i = 0; i < 3; i++) {
+    block(g, x - w / 2, top + i * lh, w, lh, i % 2 === 0 ? timber : mix(timber, timberDk, 0.15), alpha, lh / 2);
   }
-  // Roof, in the town colour.
-  g.fillStyle(tint(color), alpha);
-  g.fillTriangle(x - w * 0.62, top, x + w * 0.62, top, x, top - s * 0.26);
-  g.lineStyle(1.2, tint(CNQ.stoneDark), alpha * 0.7);
-  g.strokeTriangle(x - w * 0.62, top, x + w * 0.62, top, x, top - s * 0.26);
-  // The door soldiers walk out of.
-  g.fillStyle(tint(CNQ.timberDark), alpha);
-  g.fillRect(x - w * 0.12, top + h * 0.4, w * 0.24, h * 0.6);
-  // Crossed weapons over the door — the icon that says "this makes troops".
-  g.lineStyle(1.6, tint(CNQ.steel), alpha * 0.9);
-  g.lineBetween(x - w * 0.2, top + h * 0.12, x + w * 0.2, top + h * 0.34);
-  g.lineBetween(x + w * 0.2, top + h * 0.12, x - w * 0.2, top + h * 0.34);
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 3; i++) {
+      const ex = x + side * (w / 2 + 0.5);
+      const ey = top + i * lh + lh / 2;
+      g.fillStyle(dark(timber, 0.5), alpha);
+      g.fillCircle(ex, ey, lh * 0.52);
+      g.fillStyle(light(timber, 0.3), alpha);
+      g.fillCircle(ex, ey, lh * 0.36);
+      g.lineStyle(0.8, timberDk, alpha * 0.7);
+      g.strokeCircle(ex, ey, lh * 0.18);
+    }
+  }
+
+  // Hipped roof in the town colour, with two rows of shingles and a lit ridge.
+  const eave = top + 1;
+  const rw = w * 0.62;
+  const ridge = top - s * 0.25;
+  const roof = (c: number, grow: number): void => {
+    g.fillStyle(c, alpha);
+    g.fillPoints([
+      { x: x - rw - grow - 4, y: eave + grow }, { x: x + rw + grow + 4, y: eave + grow },
+      { x: x + rw * 0.55 + grow, y: ridge - grow }, { x: x - rw * 0.55 - grow, y: ridge - grow },
+    ], true);
+  };
+  roof(dark(col, 0.55), 1.4);
+  roof(col, 0);
+  g.fillStyle(light(col, 0.22), alpha);
+  g.fillPoints([
+    { x: x - rw - 4, y: eave }, { x: x - rw * 0.2, y: eave },
+    { x: x - rw * 0.15, y: ridge }, { x: x - rw * 0.55, y: ridge },
+  ], true);
+  g.lineStyle(1, dark(col, 0.35), alpha * 0.7);
+  for (let i = 1; i <= 2; i++) {
+    const k = i / 3;
+    const ry = eave + (ridge - eave) * k;
+    const half = (rw + 4) + (rw * 0.55 - rw - 4) * k;
+    g.lineBetween(x - half, ry, x + half, ry);
+  }
+  g.fillStyle(light(col, 0.45), alpha);
+  g.fillRoundedRect(x - rw * 0.55, ridge - 1.6, rw * 1.1, 3, 1.4);
+
+  // Door: a dark arch in a timber frame.
+  const dw = s * 0.15;
+  const dy = top + lh * 0.9;
+  g.fillStyle(dark(timber, 0.55), alpha);
+  g.fillRoundedRect(x - dw / 2 - 1.2, dy - 1.2, dw + 2.4, s * 0.25 + 1.2, { tl: dw / 2 + 1, tr: dw / 2 + 1, bl: 0, br: 0 });
+  g.fillStyle(0x1a1008, alpha);
+  g.fillRoundedRect(x - dw / 2, dy, dw, s * 0.24, { tl: dw / 2, tr: dw / 2, bl: 0, br: 0 });
+  g.lineStyle(0.9, timberDk, alpha * 0.8);
+  g.lineBetween(x, dy + 1, x, dy + s * 0.24);
+
+  // Crossed spears and a round shield on the eave over the door — "this makes soldiers".
+  const sy = eave - s * 0.08;
+  for (const side of [-1, 1]) {
+    const x0 = x - side * s * 0.13, y0 = sy + s * 0.06;
+    const x1 = x + side * s * 0.13, y1 = sy - s * 0.08;
+    g.lineStyle(2.2, dark(timberDk, 0.3), alpha);
+    g.lineBetween(x0, y0, x1, y1);
+    g.lineStyle(1.1, timber, alpha);
+    g.lineBetween(x0, y0, x1, y1);
+    g.fillStyle(dark(steel, 0.45), alpha);
+    g.fillTriangle(x1 + side * 3.6, y1 - 3, x1 - 2, y1 - 0.4, x1 + side * 0.4, y1 + 2.4);
+    g.fillStyle(steel, alpha);
+    g.fillTriangle(x1 + side * 3, y1 - 2.4, x1 - 1.2, y1 - 0.2, x1 + side * 0.4, y1 + 1.6);
+  }
+  orb(g, x, sy, s * 0.075, steel, alpha);
+  g.fillStyle(col, alpha);
+  g.fillCircle(x, sy + 0.3, s * 0.035);
+
+  // A weapon rack against the right wall: two spear points over the eave line.
+  for (let i = 0; i < 2; i++) {
+    const rx = x + w * 0.3 + i * 3.6;
+    g.lineStyle(1.6, dark(timberDk, 0.3), alpha);
+    g.lineBetween(rx, top + lh * 2.4, rx + 1.2, top - s * 0.06);
+    g.fillStyle(steel, alpha);
+    g.fillTriangle(rx - 1.5, top - s * 0.05, rx + 3.2, top - s * 0.05, rx + 1.4, top - s * 0.12);
+  }
 }
 
 /**
- * A turret: a squat stone drum with a barrel that actually points where it is about to shoot.
- * `ang` is live, so a player can see which of their turrets has acquired something.
+ * A turret: a stone drum with a crenellated top and a gun-orb in the town colour riding it, the
+ * barrel aimed where it is about to shoot. `ang` is live, so a player can see which of their
+ * turrets has acquired something, and `recoil` (0–1) kicks the barrel back along its own axis.
  */
 export function turretBody(
   g: Phaser.GameObjects.Graphics,
@@ -237,40 +494,94 @@ export function turretBody(
   x: number, y: number, s: number,
   color: number, ang: number, recoil: number, alpha: number,
 ): void {
-  const r = s * 0.28;
-  // Base drum.
-  g.fillStyle(tint(CNQ.stoneDark), alpha);
-  g.fillEllipse(x, y + r * 0.5, r * 2.2, r * 1.1);
-  g.fillStyle(tint(CNQ.stone), alpha);
-  g.fillCircle(x, y, r);
-  g.lineStyle(1.4, tint(CNQ.stoneDark), alpha);
-  g.strokeCircle(x, y, r);
-  // Crenellations around the rim.
-  for (let i = 0; i < 8; i++) {
-    const a = (i / 8) * TAU;
-    g.fillStyle(tint(CNQ.stoneDark), alpha * 0.85);
-    g.fillCircle(x + Math.cos(a) * r, y + Math.sin(a) * r, 2.1);
+  const stone = tint(CNQ.stone);
+  const stoneDk = tint(CNQ.stoneDark);
+  const col = tint(color);
+  const iron = tint(CNQ.iron);
+  const ironDk = tint(CNQ.ironDark);
+  const r = s * 0.29;
+  const topY = y - s * 0.02;
+  const footY = y + s * 0.18;
+  groundShadow(g, x, footY + s * 0.04, r * 2.5, s * 0.16, alpha);
+
+  // The drum: a rimmed cylinder — side wall, then the lit top face as an ellipse.
+  g.fillStyle(dark(stone, 0.55), alpha);
+  g.fillEllipse(x, footY, r * 2 + 2.4, r * 0.9 + 2.4);
+  g.fillRect(x - r - 1.2, topY, r * 2 + 2.4, footY - topY);
+  g.fillStyle(mix(stone, stoneDk, 0.3), alpha);
+  g.fillEllipse(x, footY, r * 2, r * 0.9);
+  g.fillRect(x - r, topY, r * 2, footY - topY);
+  g.fillStyle(light(stone, 0.12), alpha);
+  g.fillRect(x - r * 0.75, topY, r * 0.5, footY - topY + r * 0.3);
+  g.lineStyle(1, stoneDk, alpha * 0.5);
+  g.lineBetween(x - r, topY + (footY - topY) * 0.5, x + r, topY + (footY - topY) * 0.5);
+  g.lineBetween(x - r * 0.3, topY + (footY - topY) * 0.5, x - r * 0.3, footY + r * 0.3);
+  g.lineBetween(x + r * 0.45, topY, x + r * 0.45, topY + (footY - topY) * 0.5);
+  g.fillStyle(dark(stone, 0.5), alpha);
+  g.fillEllipse(x, topY, r * 2 + 2.4, r * 0.9 + 2.4);
+  g.fillStyle(light(stone, 0.2), alpha);
+  g.fillEllipse(x, topY, r * 2, r * 0.9);
+  g.fillStyle(dark(stone, 0.25), alpha);
+  g.fillEllipse(x, topY + 0.8, r * 1.5, r * 0.6);
+
+  // Merlons round the rim — the back half first, the head over them, the front half last.
+  const merlon = (a: number): void => {
+    const mx = x + Math.cos(a) * r * 0.92;
+    const my = topY + Math.sin(a) * r * 0.42;
+    block(g, mx - 2.6, my - 4.4, 5.2, 5, stone, alpha, 1.2);
+  };
+  const N = 8;
+  for (let i = 0; i < N; i++) {
+    const a = (i / N) * TAU + 0.2;
+    if (Math.sin(a) < 0) merlon(a);
   }
-  // The barrel, kicked back along its own axis by `recoil` (0–1).
-  const back = -recoil * 4;
-  const bl = s * 0.42;
+
+  // The gun: a barrel off an orb mount. Behind the orb when it is aimed up the screen.
+  const hy = topY - s * 0.06;
   const ca = Math.cos(ang), sa = Math.sin(ang);
-  const bx = x + ca * back, by = y + sa * back;
-  g.lineStyle(6, tint(CNQ.ironDark), alpha);
-  g.lineBetween(bx, by, bx + ca * bl, by + sa * bl);
-  g.lineStyle(3, tint(CNQ.iron), alpha);
-  g.lineBetween(bx, by, bx + ca * bl, by + sa * bl);
-  // Turret cap in the town colour, so ownership survives the barrel covering the drum.
-  g.fillStyle(tint(color), alpha);
-  g.fillCircle(x, y, r * 0.44);
-  g.fillStyle(tint(CNQ.parchment), alpha * 0.4);
-  g.fillCircle(x - r * 0.14, y - r * 0.14, r * 0.18);
+  const back = -recoil * 4;
+  const bx = x + ca * back, by = hy + sa * back;
+  const bl = s * 0.38;
+  const barrel = (): void => {
+    const ex = bx + ca * bl, ey = by + sa * bl;
+    g.lineStyle(7.4, dark(ironDk, 0.4), alpha);
+    g.lineBetween(bx, by, ex, ey);
+    g.lineStyle(5, ironDk, alpha);
+    g.lineBetween(bx, by, ex, ey);
+    g.lineStyle(1.6, light(iron, 0.3), alpha * 0.8);
+    g.lineBetween(bx - sa * 1.2, by + ca * 1.2 - 1, ex - sa * 1.2, ey + ca * 1.2 - 1);
+    // Reinforcing band and the muzzle ring.
+    const mbx = bx + ca * bl * 0.55, mby = by + sa * bl * 0.55;
+    g.fillStyle(iron, alpha);
+    g.fillCircle(mbx, mby, 3.2);
+    g.fillStyle(dark(ironDk, 0.4), alpha);
+    g.fillCircle(ex, ey, 4.2);
+    g.fillStyle(iron, alpha);
+    g.fillCircle(ex, ey, 3.4);
+    g.fillStyle(0x0c0a10, alpha);
+    g.fillCircle(ex + ca * 0.6, ey + sa * 0.6, 1.9);
+  };
+  if (sa < 0) barrel();
+  orb(g, x, hy, s * 0.15, col, alpha);
+  // A gunsight lens on the orb, glowing toward the target — the "it has seen you" tell.
+  const lx = x + ca * s * 0.07, ly = hy + sa * s * 0.05 - 1;
+  g.fillStyle(tint(CNQ.ember), alpha * 0.4);
+  g.fillCircle(lx, ly, 3);
+  g.fillStyle(tint(CNQ.emberCore), alpha);
+  g.fillCircle(lx, ly, 1.5);
+  if (sa >= 0) barrel();
+
+  for (let i = 0; i < N; i++) {
+    const a = (i / N) * TAU + 0.2;
+    if (Math.sin(a) >= 0) merlon(a);
+  }
 }
 
 /**
- * A barricade: a run of staggered blocks with a coping stone across the top. Deliberately the
- * lowest silhouette of the three, because it is the one you are meant to build *next to*
- * things rather than look at.
+ * A barricade: two courses of chunky rounded stones under a town-coloured cloth draped along the
+ * top. Deliberately the lowest silhouette, because it is the one you are meant to build *next to*
+ * things rather than look at. Spiked Walls plants iron stakes along the crown — the one upgrade
+ * that changes the outline.
  */
 export function barricadeBody(
   g: Phaser.GameObjects.Graphics,
@@ -278,46 +589,75 @@ export function barricadeBody(
   x: number, y: number, s: number,
   color: number, spiked: boolean, alpha: number,
 ): void {
+  const stone = tint(CNQ.stone);
+  const stoneDk = tint(CNQ.stoneDark);
+  const col = tint(color);
   const w = s * 0.82;
-  const h = s * 0.34;
-  const top = y - h * 0.3;
-  const rows = 3;
-  const rh = h / rows;
-  for (let r = 0; r < rows; r++) {
-    const cols = r % 2 === 0 ? 3 : 4;
-    const cw = w / cols;
-    for (let c = 0; c < cols; c++) {
-      const bx = x - w / 2 + c * cw;
-      const by = top + r * rh;
-      g.fillStyle(tint((r + c) % 2 === 0 ? CNQ.stone : CNQ.stoneDark), alpha);
-      g.fillRect(bx + 0.6, by + 0.6, cw - 1.2, rh - 1.2);
-    }
-  }
-  // Coping stone in the town colour.
-  g.fillStyle(tint(color), alpha);
-  g.fillRect(x - w * 0.54, top - 3.4, w * 1.08, 3.4);
-  g.lineStyle(1.2, tint(CNQ.stoneDark), alpha * 0.8);
-  g.strokeRect(x - w * 0.54, top - 3.4, w * 1.08, 3.4);
+  const rh = s * 0.14;
+  const top = y - s * 0.06;
+  groundShadow(g, x, top + rh * 2 + 2, w * 1.05, s * 0.16, alpha);
 
   if (spiked) {
-    // Iron spikes along the crown — the one upgrade that changes the silhouette.
+    // Stakes behind the cloth, so they read as driven into the wall's crown.
+    const iron = tint(CNQ.iron);
     for (let i = 0; i < 5; i++) {
-      const sx = x - w * 0.42 + (i * w * 0.84) / 4;
-      g.fillStyle(tint(CNQ.iron), alpha);
-      g.fillTriangle(sx - 2.6, top - 3.4, sx + 2.6, top - 3.4, sx, top - 11);
-      g.fillStyle(tint(CNQ.blood), alpha * 0.6);
-      g.fillTriangle(sx - 1, top - 7, sx + 1, top - 7, sx, top - 11);
+      const sx = x - w * 0.4 + (i * w * 0.8) / 4;
+      const lean = (i - 2) * 1.1;
+      const tipX = sx + lean, tipY = top - s * 0.17;
+      g.fillStyle(dark(iron, 0.55), alpha);
+      g.fillTriangle(sx - 3.4, top + 1, sx + 3.4, top + 1, tipX, tipY - 1.6);
+      g.fillStyle(iron, alpha);
+      g.fillTriangle(sx - 2.4, top, sx + 2.4, top, tipX, tipY);
+      g.fillStyle(light(iron, 0.4), alpha);
+      g.fillTriangle(sx - 2.4, top, sx - 0.4, top, tipX, tipY);
+      g.fillStyle(tint(CNQ.blood), alpha * 0.85);
+      g.fillTriangle(tipX - 1.1, tipY + 4, tipX + 1.1, tipY + 4, tipX, tipY);
     }
   }
+
+  // Two staggered courses of stones.
+  const course = (row: number, n: number, off: number): void => {
+    const cw = w / n;
+    for (let c = 0; c < n; c++) {
+      const bx = x - w / 2 + off + c * cw;
+      const bw = Math.min(cw - 1.6, x + w / 2 - bx);
+      if (bw < 4) continue;
+      const tone = jitter(row * 7 + c, 3) < 0.5 ? stone : mix(stone, stoneDk, 0.22);
+      block(g, bx + 0.8, top + row * rh + 0.8, bw, rh - 1.6, tone, alpha, 3);
+    }
+  };
+  course(1, 4, 0);
+  course(0, 4, w / 8);
+  block(g, x - w / 2 + 0.8, top + 0.8, w / 8 - 1.6, rh - 1.6, mix(stone, stoneDk, 0.12), alpha, 2.5);
+
+  // The cloth: a band along the top with three scalloped drops in the town colour.
+  const cy = top - 2;
+  const drops = 3;
+  const dw = w * 0.9 / drops;
+  g.fillStyle(dark(col, 0.5), alpha);
+  g.fillRoundedRect(x - w * 0.47 - 1, cy - 1, w * 0.94 + 2, 5, 2.4);
+  for (let i = 0; i < drops; i++) {
+    g.fillEllipse(x - w * 0.45 + dw * (i + 0.5), cy + 4, dw + 1.6, s * 0.12 + 1.6);
+  }
+  g.fillStyle(col, alpha);
+  for (let i = 0; i < drops; i++) {
+    g.fillEllipse(x - w * 0.45 + dw * (i + 0.5), cy + 4, dw, s * 0.12);
+  }
+  g.fillRoundedRect(x - w * 0.47, cy, w * 0.94, 4, 2);
+  g.fillStyle(light(col, 0.3), alpha);
+  g.fillRoundedRect(x - w * 0.47, cy, w * 0.94, 1.6, 0.8);
+  g.fillStyle(tint(CNQ.gold), alpha);
+  for (let i = 0; i < drops; i++) g.fillCircle(x - w * 0.45 + dw * (i + 0.5), cy + 5.4, 1.5);
 }
 
 /**
- * A market: a striped awning over a counter, with a coin sign hanging off the post.
+ * A market: a striped awning over a counter of crates, with a coin sign swinging off its post and
+ * a lantern under the eave.
  *
  * The silhouette rule again — it is the only building with a *scalloped* top edge, so a stall
- * never reads as a barracks' pitched roof or a barricade's flat coping at a glance. Two things
- * on it are live: a vault with money in it grows a strongbox on the counter with the coin
- * stack rising out of it, and a stall running Propaganda wears a speaking-trumpet over the post.
+ * never reads as a barracks' roof or a barricade's flat coping at a glance. Two things on it are
+ * live: a vault with money in it grows a strongbox on the counter with the coin stack rising out of
+ * it, and a stall running Propaganda wears a speaking-trumpet over the post.
  */
 export function marketBody(
   g: Phaser.GameObjects.Graphics,
@@ -327,64 +667,99 @@ export function marketBody(
   o: { vault: number; propaganda: boolean; t: number },
   alpha: number,
 ): void {
+  const timber = tint(CNQ.timber);
+  const timberDk = tint(CNQ.timberDark);
+  const col = tint(color);
+  const parch = tint(CNQ.parchment);
+  const gold = tint(CNQ.gold);
   const w = s * 0.8;
   const counterY = y + s * 0.2;
   const awningY = y - s * 0.12;
+  groundShadow(g, x, counterY + s * 0.1, w * 1.05, s * 0.16, alpha);
 
   // Posts.
-  g.lineStyle(2.2, tint(CNQ.timberDark), alpha);
-  g.lineBetween(x - w * 0.44, awningY, x - w * 0.44, counterY + s * 0.1);
-  g.lineBetween(x + w * 0.44, awningY, x + w * 0.44, counterY + s * 0.1);
-
-  // Counter: a plank with produce crates stacked behind it.
-  g.fillStyle(tint(CNQ.timber), alpha);
-  g.fillRect(x - w * 0.5, counterY - s * 0.05, w, s * 0.1);
-  g.lineStyle(1.1, tint(CNQ.timberDark), alpha * 0.85);
-  g.strokeRect(x - w * 0.5, counterY - s * 0.05, w, s * 0.1);
-  for (let i = 0; i < 3; i++) {
-    const cw = s * 0.15;
-    const cx = x - w * 0.3 + i * cw * 1.35;
-    g.fillStyle(tint(i % 2 === 0 ? CNQ.timberDark : CNQ.timber), alpha * 0.9);
-    g.fillRect(cx - cw / 2, counterY - s * 0.05 - cw * 0.72, cw, cw * 0.72);
-    g.lineStyle(0.9, tint(CNQ.timberDark), alpha * 0.7);
-    g.lineBetween(cx - cw / 2, counterY - s * 0.05 - cw * 0.36, cx + cw / 2, counterY - s * 0.05 - cw * 0.36);
+  for (const side of [-1, 1]) {
+    const px = x + side * w * 0.44;
+    g.lineStyle(4, dark(timberDk, 0.35), alpha);
+    g.lineBetween(px, awningY, px, counterY + s * 0.1);
+    g.lineStyle(2.2, timber, alpha);
+    g.lineBetween(px, awningY, px, counterY + s * 0.1);
   }
 
-  // The awning: five scallops in the town colour, alternating with parchment stripes.
+  // Crates of produce behind the counter, each topped with fruit.
+  const produce = [tint(CNQ.blood), gold, tint(CNQ.mend)];
+  for (let i = 0; i < 3; i++) {
+    const cw = s * 0.16;
+    const cx = x - w * 0.3 + i * cw * 1.3;
+    const top = counterY - s * 0.05 - cw * 0.7;
+    for (let k = 0; k < 3; k++) orb(g, cx - cw * 0.26 + k * cw * 0.26, top - 0.5, cw * 0.17, produce[i], alpha);
+    block(g, cx - cw / 2, top, cw, cw * 0.72, i % 2 === 0 ? timber : mix(timber, timberDk, 0.25), alpha, 1.5);
+    g.lineStyle(0.9, timberDk, alpha * 0.7);
+    g.lineBetween(cx - cw / 2 + 1, top + cw * 0.38, cx + cw / 2 - 1, top + cw * 0.38);
+  }
+  // Counter plank.
+  block(g, x - w * 0.5, counterY - s * 0.05, w, s * 0.11, timber, alpha, 2);
+
+  // The awning: five scallops alternating town colour and parchment, with a rimmed edge.
   const bays = 5;
   const bw = w * 1.06 / bays;
+  const aTop = awningY - s * 0.14;
+  g.fillStyle(dark(col, 0.55), alpha);
+  g.fillRoundedRect(x - w * 0.53 - 1.2, aTop - 1.2, w * 1.06 + 2.4, s * 0.14 + 2, 2);
+  for (let i = 0; i < bays; i++) g.fillEllipse(x - w * 0.53 + i * bw + bw / 2, awningY, bw + 2.2, bw * 0.9 + 2.2);
   for (let i = 0; i < bays; i++) {
     const bx = x - w * 0.53 + i * bw;
-    g.fillStyle(tint(i % 2 === 0 ? color : CNQ.parchment), alpha * (i % 2 === 0 ? 0.95 : 0.8));
-    g.fillRect(bx, awningY - s * 0.14, bw, s * 0.14);
-    // The scallop hanging under each bay. Drawn as a whole ellipse rather than a half — the top
-    // half lands inside the bay it belongs to, in the same colour, so only the bulge shows.
+    const c = i % 2 === 0 ? col : parch;
+    g.fillStyle(c, alpha);
+    g.fillRect(bx, aTop, bw, s * 0.14);
+    // The scallop under each bay — a whole ellipse, whose top half lands inside its own bay.
     g.fillEllipse(bx + bw / 2, awningY, bw, bw * 0.9);
+    g.fillStyle(light(c, 0.3), alpha);
+    g.fillRect(bx, aTop, bw, s * 0.035);
   }
-  g.lineStyle(1.2, tint(CNQ.timberDark), alpha * 0.8);
-  g.lineBetween(x - w * 0.53, awningY - s * 0.14, x + w * 0.53, awningY - s * 0.14);
 
-  // The sign: a coin on a bracket, which is the whole read of "this building is money".
-  const sy = awningY - s * 0.26;
-  g.lineStyle(1.4, tint(CNQ.timberDark), alpha * 0.9);
-  g.lineBetween(x, awningY - s * 0.14, x, sy);
-  g.fillStyle(tint(CNQ.gold), alpha);
-  g.fillCircle(x, sy - s * 0.05, s * 0.09);
-  g.fillStyle(tint(CNQ.goldDeep), alpha * 0.9);
-  g.fillCircle(x, sy - s * 0.05, s * 0.05);
+  // A lantern hung under the eave.
+  const lx = x - w * 0.22, ly = awningY + s * 0.1;
+  const flick = 0.8 + 0.2 * Math.sin(o.t * 6.1) * Math.sin(o.t * 2.3);
+  g.lineStyle(1, timberDk, alpha);
+  g.lineBetween(lx, awningY + 2, lx, ly - 3);
+  g.fillStyle(tint(CNQ.tracer), alpha * 0.25 * flick);
+  g.fillCircle(lx, ly, 7);
+  g.fillStyle(dark(timberDk, 0.3), alpha);
+  g.fillRoundedRect(lx - 2.8, ly - 3.6, 5.6, 7, 1.6);
+  g.fillStyle(tint(CNQ.muzzle), alpha * flick);
+  g.fillRoundedRect(lx - 1.8, ly - 2.6, 3.6, 5, 1.2);
 
-  // Securities: a strongbox on the counter, with the stack standing as high as the vault is full.
+  // The sign: a gold coin swinging on a bracket — the whole read of "this building is money".
+  const sy = aTop - s * 0.04;
+  const swing = Math.sin(o.t * 1.8) * 0.25;
+  g.lineStyle(1.6, dark(timberDk, 0.3), alpha);
+  g.lineBetween(x, aTop, x, sy);
+  g.lineBetween(x - s * 0.08, sy, x + s * 0.08, sy);
+  const cx = x + Math.sin(swing) * s * 0.1, cy = sy + Math.cos(swing) * s * 0.1;
+  g.lineStyle(0.9, timberDk, alpha);
+  g.lineBetween(x, sy, cx, cy - s * 0.06);
+  orb(g, cx, cy, s * 0.085, gold, alpha);
+  g.lineStyle(1.2, tint(CNQ.goldDeep), alpha * 0.9);
+  g.strokeCircle(cx, cy + 0.4, s * 0.045);
+
+  // Securities: a strongbox on the counter, the stack standing as high as the vault is full.
   if (o.vault > 0) {
     const fill = Phaser.Math.Clamp(o.vault / 200, 0, 1);
     const boxW = s * 0.26;
     const boxY = counterY - s * 0.05;
-    g.fillStyle(tint(CNQ.ironDark), alpha);
-    g.fillRect(x + w * 0.12, boxY - s * 0.12, boxW, s * 0.12);
-    g.fillStyle(tint(CNQ.iron), alpha * 0.9);
-    g.fillRect(x + w * 0.12, boxY - s * 0.12, boxW, s * 0.03);
+    const bx = x + w * 0.12;
+    block(g, bx, boxY - s * 0.12, boxW, s * 0.12, tint(CNQ.ironDark), alpha, 1.5);
+    g.fillStyle(gold, alpha);
+    g.fillRect(bx + boxW / 2 - 1.2, boxY - s * 0.09, 2.4, 3);
     for (let i = 0; i < Math.max(1, Math.round(fill * 4)); i++) {
-      g.fillStyle(tint(CNQ.gold), alpha * 0.95);
-      g.fillEllipse(x + w * 0.12 + boxW / 2, boxY - s * 0.13 - i * s * 0.045, s * 0.16, s * 0.05);
+      const ey = boxY - s * 0.13 - i * s * 0.045;
+      g.fillStyle(tint(CNQ.goldDeep), alpha);
+      g.fillEllipse(bx + boxW / 2, ey + 1, s * 0.17, s * 0.055);
+      g.fillStyle(gold, alpha);
+      g.fillEllipse(bx + boxW / 2, ey, s * 0.16, s * 0.045);
+      g.fillStyle(0xffffff, alpha * 0.5);
+      g.fillEllipse(bx + boxW / 2 - s * 0.03, ey - 0.4, s * 0.05, s * 0.015);
     }
   }
 
@@ -393,22 +768,224 @@ export function marketBody(
     const pulse = 0.6 + 0.4 * Math.sin(o.t * 6);
     const hx = x - w * 0.44;
     const hy = awningY - s * 0.08;
-    g.fillStyle(tint(CNQ.crimson), alpha);
-    g.fillTriangle(hx, hy, hx - s * 0.2, hy - s * 0.09, hx - s * 0.2, hy + s * 0.09);
-    g.fillStyle(tint(CNQ.gold), alpha * 0.9);
+    const crim = tint(CNQ.crimson);
+    g.fillStyle(dark(crim, 0.5), alpha);
+    g.fillTriangle(hx + 1, hy, hx - s * 0.21, hy - s * 0.1, hx - s * 0.21, hy + s * 0.1);
+    g.fillStyle(crim, alpha);
+    g.fillTriangle(hx, hy, hx - s * 0.2, hy - s * 0.085, hx - s * 0.2, hy + s * 0.085);
+    g.fillStyle(light(crim, 0.3), alpha);
+    g.fillTriangle(hx, hy, hx - s * 0.2, hy - s * 0.085, hx - s * 0.2, hy - s * 0.02);
+    g.fillStyle(gold, alpha * 0.9);
     g.fillCircle(hx, hy, s * 0.03);
     for (let i = 1; i <= 2; i++) {
-      g.lineStyle(1.4, tint(CNQ.crimson), alpha * pulse * (0.7 / i));
-      g.strokeCircle(hx - s * 0.2, hy, s * (0.1 + i * 0.09));
+      g.lineStyle(1.6, crim, alpha * pulse * (0.7 / i));
+      g.beginPath();
+      g.arc(hx - s * 0.2, hy, s * (0.08 + i * 0.08), Math.PI * 0.7, Math.PI * 1.3);
+      g.strokePath();
     }
   }
 }
 
+// ── Troops ────────────────────────────────────────────────────────────────
+
+type TroopHat = 'helm' | 'wizard' | 'crown';
+type TroopWeapon = 'spear' | 'staff' | 'axe';
+interface TroopLook {
+  hat: TroopHat;
+  weapon: TroopWeapon;
+  /** Lit eye colour; plain pupils when absent. */
+  eyeGlow?: number;
+  /** Staff-orb colour (wizards) — arcane, or ember once the Academy has burned. */
+  magic?: number;
+  magicCore?: number;
+  /** Drawn behind the body: the king's cape. */
+  cape?: boolean;
+}
+
 /**
- * One soldier. A body, a helmet, and a weapon held out along `ang` — small enough that five of
- * them fit in a 64px square without becoming a blob, which is the whole constraint.
- *
- * `march` is a free-running phase so a stack of soldiers never stands in lockstep.
+ * The one rig every soldier is built on — a miniature of the fighters themselves: an orb body in
+ * the town colour, two eyes that look where it is about to strike, and two ball hands, one of them
+ * holding the weapon out along `ang`. Rank is a hat and a weapon on top of that, never a new body,
+ * so a promoted soldier still reads as *that soldier, changed*.
+ */
+function troopRig(
+  g: Phaser.GameObjects.Graphics,
+  tint: ConquestColorFn,
+  x: number, y: number,
+  color: number, ang: number, march: number, s: number, alpha: number,
+  look: TroopLook,
+): void {
+  const r = 4.7 * s;
+  const bob = Math.abs(Math.sin(march)) * -1.4 * s;
+  const cy = y + bob - s;
+  const body = tint(color);
+  const ca = Math.cos(ang), sa = Math.sin(ang);
+  groundShadow(g, x, y + 4.6 * s, 10 * s, 3.2 * s, alpha);
+
+  if (look.cape) {
+    const blood = tint(CNQ.blood);
+    const sway = Math.sin(march * 0.8) * 2 * s;
+    const pts = [
+      { x: x - r * 0.9, y: cy - r * 0.2 }, { x: x + r * 0.9, y: cy - r * 0.2 },
+      { x: x + r * 1.2 + sway, y: cy + r * 1.15 }, { x: x + r * 0.4 + sway, y: cy + r * 1.35 },
+      { x: x - r * 0.4 + sway, y: cy + r * 1.2 }, { x: x - r * 1.2 + sway, y: cy + r * 1.35 },
+    ];
+    g.fillStyle(dark(blood, 0.5), alpha);
+    g.fillPoints(pts.map((p) => ({ x: p.x + (p.x < x ? -1 : 1), y: p.y + 1 })), true);
+    g.fillStyle(blood, alpha);
+    g.fillPoints(pts, true);
+    g.fillStyle(light(blood, 0.2), alpha);
+    g.fillTriangle(pts[0].x, pts[0].y, x - r * 0.3, cy - r * 0.2, pts[5].x, pts[5].y);
+  }
+
+  // The weapon hand sits on the facing side; the other swings with the march.
+  const hx = x + ca * r * 1.05, hy = cy + sa * r * 0.6 + r * 0.3;
+  const ox = x - ca * r * 0.95, oy = cy + r * 0.5 + Math.sin(march + Math.PI) * 0.7 * s;
+  const weaponBehind = sa < -0.25;
+
+  const weapon = (): void => {
+    if (look.weapon === 'spear') {
+      const bx = hx - ca * 3.5 * s, by = hy - sa * 3.5 * s + 1.5 * s;
+      const tx = hx + ca * 8 * s, ty = hy + sa * 8 * s - 2.6 * s;
+      g.lineStyle(2.4 * s, dark(tint(CNQ.timberDark), 0.3), alpha);
+      g.lineBetween(bx, by, tx, ty);
+      g.lineStyle(1.2 * s, tint(CNQ.timber), alpha);
+      g.lineBetween(bx, by, tx, ty);
+      const da = Math.atan2(ty - by, tx - bx);
+      const dc = Math.cos(da), ds = Math.sin(da);
+      const px = -ds, py = dc;
+      const steel = tint(CNQ.steel);
+      g.fillStyle(dark(steel, 0.5), alpha);
+      g.fillTriangle(tx + dc * 4.6 * s, ty + ds * 4.6 * s, tx + px * 2 * s - dc * s, ty + py * 2 * s - ds * s, tx - px * 2 * s - dc * s, ty - py * 2 * s - ds * s);
+      g.fillStyle(steel, alpha);
+      g.fillTriangle(tx + dc * 3.8 * s, ty + ds * 3.8 * s, tx + px * 1.3 * s, ty + py * 1.3 * s, tx - px * 1.3 * s, ty - py * 1.3 * s);
+    } else if (look.weapon === 'staff') {
+      const top = { x: hx + ca * 1.5 * s, y: hy - 8 * s };
+      g.lineStyle(2.4 * s, dark(tint(CNQ.timberDark), 0.3), alpha);
+      g.lineBetween(hx - ca * s, hy + 3 * s, top.x, top.y);
+      g.lineStyle(1.2 * s, tint(CNQ.timber), alpha);
+      g.lineBetween(hx - ca * s, hy + 3 * s, top.x, top.y);
+      const pulse = 0.7 + 0.3 * Math.sin(march * 2.2);
+      const m = look.magic ?? tint(CNQ.arcane);
+      g.fillStyle(m, alpha * 0.22 * pulse);
+      g.fillCircle(top.x, top.y - 1.5 * s, 6.5 * s);
+      g.fillStyle(m, alpha * 0.4 * pulse);
+      g.fillCircle(top.x, top.y - 1.5 * s, 4.2 * s);
+      orb(g, top.x, top.y - 1.5 * s, 2.6 * s, m, alpha);
+      g.fillStyle(look.magicCore ?? 0xffffff, alpha * 0.9);
+      g.fillCircle(top.x, top.y - 1.5 * s, 0.9 * s);
+    } else {
+      // A bearded axe, haft along the facing, the crescent head on the far side of the hand.
+      const tx = hx + ca * 6 * s, ty = hy + sa * 6 * s - 3 * s;
+      g.lineStyle(2.4 * s, dark(tint(CNQ.timberDark), 0.3), alpha);
+      g.lineBetween(hx - ca * 2 * s, hy + s, tx, ty);
+      g.lineStyle(1.2 * s, tint(CNQ.timber), alpha);
+      g.lineBetween(hx - ca * 2 * s, hy + s, tx, ty);
+      const da = Math.atan2(ty - hy, tx - hx);
+      const px = -Math.sin(da), py = Math.cos(da);
+      const flip = ca >= 0 ? -1 : 1;
+      const steel = tint(CNQ.steel);
+      const head = (grow: number, c: number): void => {
+        g.fillStyle(c, alpha);
+        g.fillPoints([
+          { x: tx - Math.cos(da) * (1.6 * s + grow), y: ty - Math.sin(da) * (1.6 * s + grow) },
+          { x: tx + px * flip * (4.6 * s + grow) - Math.cos(da) * 3 * s, y: ty + py * flip * (4.6 * s + grow) - Math.sin(da) * 3 * s },
+          { x: tx + px * flip * (5.2 * s + grow), y: ty + py * flip * (5.2 * s + grow) },
+          { x: tx + px * flip * (4.6 * s + grow) + Math.cos(da) * 3 * s, y: ty + py * flip * (4.6 * s + grow) + Math.sin(da) * 3 * s },
+          { x: tx + Math.cos(da) * (1.6 * s + grow), y: ty + Math.sin(da) * (1.6 * s + grow) },
+        ], true);
+      };
+      head(0.8, dark(steel, 0.5));
+      head(0, steel);
+    }
+  };
+
+  if (weaponBehind) weapon();
+  ballHand(g, ox, oy, r * 0.36, body, alpha);
+  orb(g, x, cy, r, body, alpha);
+  troopEyes(g, x, cy + r * 0.12, r, ang, alpha, look.eyeGlow);
+
+  if (look.hat === 'helm') {
+    // A kettle helm: steel dome, wide brim, and a crest stripe in the town colour.
+    const steel = tint(CNQ.steel);
+    const hy0 = cy - r * 0.2;
+    g.fillStyle(dark(steel, 0.5), alpha);
+    g.fillEllipse(x, hy0, r * 2.35, r * 0.62);
+    g.beginPath();
+    g.arc(x, hy0, r * 0.84, Math.PI, TAU, false);
+    g.closePath();
+    g.fillPath();
+    g.fillStyle(steel, alpha);
+    g.fillEllipse(x, hy0, r * 2.1, r * 0.42);
+    g.beginPath();
+    g.arc(x, hy0 - 0.3, r * 0.72, Math.PI, TAU, false);
+    g.closePath();
+    g.fillPath();
+    g.fillStyle(light(body, 0.15), alpha);
+    g.fillRect(x - r * 0.12, hy0 - r * 0.78, r * 0.24, r * 0.6);
+    g.fillStyle(0xffffff, alpha * 0.7);
+    g.fillEllipse(x - r * 0.35, hy0 - r * 0.4, r * 0.3, r * 0.18);
+  } else if (look.hat === 'wizard') {
+    // A pointed hat with a bent tip, a band of trim and a star on the band.
+    const deep = tint(CNQ.arcaneDeep);
+    const m = look.magic ?? tint(CNQ.arcane);
+    const by = cy - r * 0.32;
+    const lean = ca * r * 0.4;
+    const pts = [
+      { x: x - r * 0.78, y: by }, { x: x + r * 0.78, y: by },
+      { x: x + r * 0.32 + lean * 0.5, y: by - r * 1.3 },
+      { x: x + r * 0.9 + lean, y: by - r * 2.1 },
+      { x: x - r * 0.1 + lean * 0.5, y: by - r * 1.25 },
+    ];
+    g.fillStyle(dark(deep, 0.5), alpha);
+    g.fillEllipse(x, by, r * 2.5, r * 0.7);
+    g.fillPoints(pts.map((p) => ({ x: p.x + (p.x < x ? -0.8 : 0.8), y: p.y - 0.6 })), true);
+    g.fillStyle(deep, alpha);
+    g.fillEllipse(x, by, r * 2.3, r * 0.52);
+    g.fillPoints(pts, true);
+    g.fillStyle(light(deep, 0.25), alpha);
+    g.fillTriangle(pts[0].x, pts[0].y, x - r * 0.1, by, pts[4].x, pts[4].y);
+    g.fillStyle(m, alpha);
+    g.fillRect(x - r * 0.72, by - r * 0.32, r * 1.44, r * 0.26);
+    g.fillStyle(look.magicCore ?? 0xffffff, alpha);
+    g.fillCircle(pts[3].x, pts[3].y, Math.max(0.8, r * 0.14));
+  } else {
+    // A gold crown with two curled horns — the king is the only troop with a crown.
+    const gold = tint(CNQ.gold);
+    const horn = tint(CNQ.parchment);
+    const cy0 = cy - r * 0.55;
+    for (const side of [-1, 1]) {
+      const base = { x: x + side * r * 0.62, y: cy0 };
+      const tip = { x: x + side * r * 1.25, y: cy0 - r * 0.95 };
+      g.fillStyle(dark(horn, 0.5), alpha);
+      g.fillTriangle(base.x - side * 1.6, base.y + 1, base.x + side * 2.6, base.y + 0.6, tip.x + side, tip.y - 1);
+      g.fillStyle(horn, alpha);
+      g.fillTriangle(base.x - side * 1, base.y, base.x + side * 1.8, base.y, tip.x, tip.y);
+    }
+    g.fillStyle(dark(gold, 0.5), alpha);
+    g.fillRect(x - r * 0.62 - 1, cy0 - r * 0.24 - 1, r * 1.24 + 2, r * 0.36 + 2);
+    for (let i = -1; i <= 1; i++) {
+      g.fillTriangle(x + i * r * 0.4 - r * 0.24, cy0 - r * 0.2, x + i * r * 0.4 + r * 0.24, cy0 - r * 0.2, x + i * r * 0.4, cy0 - r * (i === 0 ? 0.82 : 0.6));
+    }
+    g.fillStyle(gold, alpha);
+    g.fillRect(x - r * 0.62, cy0 - r * 0.24, r * 1.24, r * 0.36);
+    for (let i = -1; i <= 1; i++) {
+      g.fillTriangle(x + i * r * 0.4 - r * 0.18, cy0 - r * 0.2, x + i * r * 0.4 + r * 0.18, cy0 - r * 0.2, x + i * r * 0.4, cy0 - r * (i === 0 ? 0.72 : 0.52));
+    }
+    g.fillStyle(light(gold, 0.4), alpha);
+    g.fillRect(x - r * 0.62, cy0 - r * 0.24, r * 1.24, r * 0.1);
+    g.fillStyle(body, alpha);
+    g.fillCircle(x, cy0 - r * 0.06, r * 0.13);
+  }
+
+  if (!weaponBehind) weapon();
+  ballHand(g, hx, hy, r * 0.36, body, alpha);
+}
+
+/**
+ * One soldier. Small enough that five of them fit in a 64px square without becoming a blob,
+ * which is the whole constraint. `march` is a free-running phase so a stack never steps in
+ * lockstep.
  */
 export function soldier(
   g: Phaser.GameObjects.Graphics,
@@ -416,37 +993,13 @@ export function soldier(
   x: number, y: number,
   color: number, ang: number, march: number, scale: number, alpha: number,
 ): void {
-  const s = scale;
-  const bob = Math.sin(march) * 1.2 * s;
-  const cy = y + bob;
-  // Shadow, so a soldier reads as standing on the square rather than floating over it.
-  g.fillStyle(0x000000, alpha * 0.25);
-  g.fillEllipse(x, y + 6 * s, 9 * s, 3.4 * s);
-  // Body — a tabard in the town colour over a dark under-layer.
-  g.fillStyle(tint(CNQ.ironDark), alpha);
-  g.fillRect(x - 3.2 * s, cy - 3 * s, 6.4 * s, 8 * s);
-  g.fillStyle(tint(color), alpha);
-  g.fillRect(x - 2.4 * s, cy - 2.6 * s, 4.8 * s, 6 * s);
-  // Head and helmet.
-  g.fillStyle(tint(CNQ.flesh), alpha);
-  g.fillCircle(x, cy - 5.4 * s, 2.6 * s);
-  g.fillStyle(tint(CNQ.steel), alpha);
-  g.beginPath();
-  g.arc(x, cy - 5.6 * s, 3 * s, Math.PI, TAU, false);
-  g.closePath();
-  g.fillPath();
-  // Weapon, out along the facing.
-  const ca = Math.cos(ang), sa = Math.sin(ang);
-  g.lineStyle(1.4 * s, tint(CNQ.timberDark), alpha);
-  g.lineBetween(x + ca * 2 * s, cy, x + ca * 9 * s, cy + sa * 7 * s - 2 * s);
-  g.fillStyle(tint(CNQ.steel), alpha);
-  g.fillCircle(x + ca * 9 * s, cy + sa * 7 * s - 2 * s, 1.8 * s);
+  troopRig(g, tint, x, y, color, ang, march, scale, alpha, { hat: 'helm', weapon: 'spear' });
 }
 
 /**
- * The Barbarian King. Same rig as a soldier at twice the size, plus the two things that have to
- * be readable instantly: a horned crown, and — once he has drunk — a red aura, since a doubled
- * attack speed is otherwise invisible.
+ * The Barbarian King. The soldier's rig at twice the size, crowned and horned, caped, swinging an
+ * axe — and, once he has drunk, wreathed in a flickering red aura with eyes lit to match, since a
+ * doubled attack speed is otherwise invisible.
  */
 export function barbarianKing(
   g: Phaser.GameObjects.Graphics,
@@ -454,33 +1007,33 @@ export function barbarianKing(
   x: number, y: number,
   color: number, ang: number, march: number, enraged: boolean, alpha: number,
 ): void {
+  const blood = tint(CNQ.blood);
   if (enraged) {
     const pulse = 0.7 + 0.3 * Math.sin(march * 3);
-    g.fillStyle(tint(CNQ.blood), alpha * 0.22 * pulse);
-    g.fillCircle(x, y - 4, 22);
+    g.fillStyle(blood, alpha * 0.16 * pulse);
+    g.fillCircle(x, y - 4, 24);
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 9) * TAU + march * 0.6;
+      const reach = 17 + Math.sin(march * 5 + i * 2.3) * 4;
+      g.fillStyle(i % 2 === 0 ? blood : tint(CNQ.ember), alpha * 0.45 * pulse);
+      g.fillTriangle(
+        x + Math.cos(a - 0.22) * 11, y - 4 + Math.sin(a - 0.22) * 11,
+        x + Math.cos(a + 0.22) * 11, y - 4 + Math.sin(a + 0.22) * 11,
+        x + Math.cos(a) * reach, y - 4 + Math.sin(a) * reach,
+      );
+    }
   }
-  soldier(g, tint, x, y, color, ang, march, 2.1, alpha);
-  const bob = Math.sin(march) * 2.5;
-  // Horned crown over the helmet.
-  const hy = y + bob - 15;
-  g.fillStyle(tint(CNQ.gold), alpha);
-  g.fillRect(x - 6, hy - 1.4, 12, 3);
-  for (let i = -1; i <= 1; i += 2) {
-    g.fillTriangle(x + i * 5.5, hy, x + i * 9.5, hy - 7, x + i * 4, hy - 5.5);
-  }
-  g.fillStyle(tint(color), alpha);
-  g.fillCircle(x, hy - 3.2, 2);
-  // A cape, so the king has a footprint even standing still.
-  g.fillStyle(tint(CNQ.blood), alpha * 0.9);
-  const sway = Math.sin(march * 0.8) * 2;
-  g.fillTriangle(x - 5, y + bob - 8, x + 5, y + bob - 8, x + sway, y + bob + 10);
+  troopRig(g, tint, x, y, color, ang, march, 2.1, alpha, {
+    hat: 'crown', weapon: 'axe', cape: true,
+    eyeGlow: enraged ? tint(CNQ.ember) : undefined,
+  });
 }
 
 /**
- * A wizard — a soldier the Wizard School has promoted. Built on the same rig so the promotion
- * reads as *that soldier, changed* rather than a new unit type: same size, same bob, same tabard
- * colour. What is new is a pointed hood, a staff instead of a spear, and an orb whose glow is the
- * only thing at three squares' distance that says this one outranges everything else on the board.
+ * A wizard — a soldier the Wizard School has promoted. Same rig, same size, same bob, same body
+ * colour; what is new is a pointed hat, lit eyes and a staff whose glowing orb is the only thing
+ * at three squares' distance that says this one outranges everything else on the board. Academy
+ * of Ash turns the arcane trim to embers.
  */
 export function wizardTroop(
   g: Phaser.GameObjects.Graphics,
@@ -488,46 +1041,11 @@ export function wizardTroop(
   x: number, y: number,
   color: number, ang: number, march: number, ashen: boolean, alpha: number,
 ): void {
-  const bob = Math.sin(march) * 1.2;
-  const cy = y + bob;
-  const ca = Math.cos(ang), sa = Math.sin(ang);
-
-  g.fillStyle(0x000000, alpha * 0.25);
-  g.fillEllipse(x, y + 6, 9, 3.4);
-
-  // Robe: a trapezoid rather than the soldier's rectangle, so the silhouette differs at a glance.
-  g.fillStyle(tint(CNQ.arcaneDeep), alpha);
-  g.fillTriangle(x - 6, cy + 5.4, x + 6, cy + 5.4, x, cy - 4);
-  g.fillStyle(tint(color), alpha * 0.95);
-  g.fillTriangle(x - 4, cy + 5, x + 4, cy + 5, x, cy - 3);
-  // A sash of arcane trim down the front.
-  g.fillStyle(tint(ashen ? CNQ.ember : CNQ.arcane), alpha * 0.9);
-  g.fillTriangle(x - 1.2, cy + 5, x + 1.2, cy + 5, x, cy - 2);
-
-  // Pointed hood, brim and all.
-  g.fillStyle(tint(CNQ.arcaneDeep), alpha);
-  g.fillTriangle(x - 4.4, cy - 4.2, x + 4.4, cy - 4.2, x + ca * 1.5, cy - 12.5);
-  g.fillStyle(tint(CNQ.arcane), alpha * 0.9);
-  g.fillTriangle(x - 3, cy - 4.6, x + 3, cy - 4.6, x + ca * 1.2, cy - 10.5);
-  // The face under it is a shadow with two lit eyes — never skin, so a wizard never reads as a
-  // soldier who happens to be wearing a hat.
-  g.fillStyle(0x120c1c, alpha * 0.9);
-  g.fillCircle(x, cy - 5.2, 2.4);
-  g.fillStyle(tint(ashen ? CNQ.emberCore : CNQ.arcane), alpha);
-  g.fillCircle(x - 1, cy - 5.4, 0.75);
-  g.fillCircle(x + 1, cy - 5.4, 0.75);
-
-  // Staff, held out along the facing, with the orb at its head.
-  const sx = x + ca * 6.5, sy = cy + sa * 5 - 1.5;
-  g.lineStyle(1.6, tint(CNQ.timberDark), alpha);
-  g.lineBetween(x + ca * 2, cy, sx, sy - 6);
-  const pulse = 0.7 + 0.3 * Math.sin(march * 2.2);
-  g.fillStyle(tint(ashen ? CNQ.ember : CNQ.arcane), alpha * 0.3 * pulse);
-  g.fillCircle(sx, sy - 7, 6.5);
-  g.fillStyle(tint(ashen ? CNQ.ember : CNQ.arcane), alpha);
-  g.fillCircle(sx, sy - 7, 3);
-  g.fillStyle(tint(ashen ? CNQ.emberCore : CNQ.parchment), alpha * 0.85);
-  g.fillCircle(sx - 0.8, sy - 7.8, 1.3);
+  const magic = tint(ashen ? CNQ.ember : CNQ.arcane);
+  const core = tint(ashen ? CNQ.emberCore : CNQ.parchment);
+  troopRig(g, tint, x, y, color, ang, march, 1, alpha, {
+    hat: 'wizard', weapon: 'staff', eyeGlow: magic, magic, magicCore: core,
+  });
 }
 
 /**
@@ -576,19 +1094,54 @@ export function revengeBomb(
   tint: ConquestColorFn,
   x: number, y: number, spin: number, alpha: number,
 ): void {
-  g.fillStyle(tint(CNQ.ironDark), alpha);
-  g.fillCircle(x, y, 5.5);
-  g.fillStyle(tint(CNQ.iron), alpha * 0.7);
-  g.fillCircle(x - 1.6, y - 1.6, 2.2);
+  groundShadow(g, x, y + 8, 10, 3, alpha * 0.7);
+  orb(g, x, y, 6, tint(CNQ.ironDark), alpha);
+  // An iron band round the middle, turning with the spin.
+  g.lineStyle(1.4, tint(CNQ.iron), alpha * 0.8);
+  g.beginPath();
+  g.arc(x, y, 4.6, spin, spin + Math.PI * 0.9);
+  g.strokePath();
   // Fuse, whipping behind the spin, with a spark on the end.
   const fa = spin;
-  const fx = x + Math.cos(fa) * 8, fy = y + Math.sin(fa) * 8;
-  g.lineStyle(1.4, tint(CNQ.timberDark), alpha * 0.9);
-  g.lineBetween(x + Math.cos(fa) * 4, y + Math.sin(fa) * 4, fx, fy);
+  const fx = x + Math.cos(fa) * 9, fy = y + Math.sin(fa) * 9;
+  g.lineStyle(1.6, tint(CNQ.timberDark), alpha * 0.9);
+  g.lineBetween(x + Math.cos(fa) * 5, y + Math.sin(fa) * 5, fx, fy);
+  g.fillStyle(tint(CNQ.ember), alpha * 0.4);
+  g.fillCircle(fx, fy, 4.4);
   g.fillStyle(tint(CNQ.emberCore), alpha);
   g.fillCircle(fx, fy, 2 + Math.sin(spin * 9) * 0.6);
-  g.fillStyle(tint(CNQ.ember), alpha * 0.4);
-  g.fillCircle(fx, fy, 4);
+  for (let i = 0; i < 3; i++) {
+    const a = spin * 3 + i * 2.1;
+    g.fillStyle(tint(CNQ.muzzle), alpha * 0.8);
+    g.fillCircle(fx + Math.cos(a) * 3.4, fy + Math.sin(a) * 3.4, 0.8);
+  }
+}
+
+/**
+ * A turret round in flight: a tapered tracer streak out of the back of the shot and a lit slug
+ * at its head. A Headhunter round is red and fatter, so a lethal turret announces itself.
+ */
+export function turretShot(
+  g: Phaser.GameObjects.Graphics,
+  tint: ConquestColorFn,
+  x: number, y: number, vx: number, vy: number, head: boolean, alpha: number,
+): void {
+  const sp = Math.hypot(vx, vy) || 1;
+  const ux = vx / sp, uy = vy / sp;
+  const px = -uy, py = ux;
+  const len = head ? 16 : 13;
+  const w = head ? 2.6 : 2;
+  const c = tint(head ? CNQ.blood : CNQ.tracer);
+  g.fillStyle(c, alpha * 0.45);
+  g.fillTriangle(x + px * w, y + py * w, x - px * w, y - py * w, x - ux * len, y - uy * len);
+  g.fillStyle(tint(CNQ.muzzle), alpha * 0.7);
+  g.fillTriangle(x + px * w * 0.5, y + py * w * 0.5, x - px * w * 0.5, y - py * w * 0.5, x - ux * len * 0.6, y - uy * len * 0.6);
+  g.fillStyle(c, alpha * 0.3);
+  g.fillCircle(x, y, w * 2.2);
+  g.fillStyle(dark(c, 0.4), alpha);
+  g.fillCircle(x, y, w * 1.3);
+  g.fillStyle(light(c, 0.5), alpha);
+  g.fillCircle(x, y, w * 0.9);
 }
 
 /**

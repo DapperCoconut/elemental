@@ -156,6 +156,13 @@ const GESTURE_MS: Record<ArmGesture, number> = {
  * (`applyMastery`). Everything else — poses, gestures, holds, blinking, squash — is here.
  */
 export abstract class BaseAvatar {
+  /**
+   * A veto on drawing, consulted every frame with the rig's anchor point. ArenaScene installs
+   * one for a Quantum fight: several kits each stand a rig up on the one player body, and only
+   * the body element's may show. Null (the default) means every rig draws as normal.
+   */
+  static rigFilter: ((avatar: BaseAvatar, x: number, y: number) => boolean) | null = null;
+
   private armObjs: Phaser.GameObjects.Container[] = [];
   private eyeObjs: { white: Phaser.GameObjects.Arc; pupil: Phaser.GameObjects.Arc }[] = [];
   /** Soft under-glow. Separate Graphics from `extras` because one Graphics has one depth. */
@@ -295,7 +302,7 @@ export abstract class BaseAvatar {
     }
     this.orbit += dt * (this.intensity > 1 ? 2.4 : 0.35);
 
-    const visible = alpha > 0.02;
+    const visible = alpha > 0.02 && (BaseAvatar.rigFilter === null || BaseAvatar.rigFilter(this, x, y));
     for (const c of this.armObjs) c.setVisible(visible);
     for (const e of this.eyeObjs) { e.white.setVisible(visible); e.pupil.setVisible(visible); }
 
@@ -351,6 +358,7 @@ export abstract class BaseAvatar {
       const ey = y + (-4 + Math.sin(look) * 2.0 + bob) * rs;
       e.white.setPosition(ex, ey);
       e.white.setScale(rs, open * rs);
+      e.white.setVisible(visible);
       e.white.setAlpha(alpha);
       e.pupil.setPosition(ex + Math.cos(look) * 1.8 * rs, ey + Math.sin(look) * 1.6 * rs);
       e.pupil.setScale(rs, open * rs);

@@ -78,7 +78,12 @@ export interface CastContext {
   placeFirewall: (x: number, y: number) => void;
   startOverdrive: (x: number, y: number) => void;
   // Shadow
-  launchDarkBomb: (x: number, y: number) => void;
+  /** Shadow Caltrops (Click): throw one caltrop (two with the Shinobi perk) at the point. */
+  throwCaltrop: (x: number, y: number) => void;
+  /** Bubble Barrage (water alt Q): blow the cone of bubbles. Optional — raids have no WaterKit. */
+  waterBubbleBarrage?: () => void;
+  /** Grim Gloom (shadow alt Q): cover the arena in fog. Optional — raids have no ShadowKit. */
+  shadowGrimGloom?: () => void;
   // Ice
   fireIceSpike: (targetX: number, targetY: number) => void;
   fireFrostBlast: (targetX: number, targetY: number) => void;
@@ -245,7 +250,6 @@ export interface CastContext {
   dreamPillowFight: (tx: number, ty: number) => void;
   dreamSleepTight: (tx: number, ty: number) => void;
   dreamNightmare: (tx: number, ty: number) => void;
-  // Chalk (test element: cheat mode only for now)
   // Wax (test element: cheat mode only for now)
   waxStingerStrikes: (tx: number, ty: number) => void;
   waxSwarm: (tx: number, ty: number) => void;
@@ -258,11 +262,12 @@ export interface CastContext {
   clayClot: () => void;
   claySlink: (tx: number, ty: number) => void;
   clayFuse: () => void;
-  chalkWard: () => void;
-  chalkExplosive: () => void;
-  chalkPerma: () => void;
-  chalkShield: () => void;
-  chalkMasterpiece: () => void;
+  // Paint (element id `chalk`)
+  paintSplotch: (tx: number, ty: number) => void;
+  paintOrange: () => void;
+  paintCongeal: () => void;
+  paintStillLife: () => void;
+  paintMasterpiece: () => void;
   // Magma
   magmaPlume: (tx: number, ty: number) => void;
   magmaVolcano: (tx: number, ty: number) => void;

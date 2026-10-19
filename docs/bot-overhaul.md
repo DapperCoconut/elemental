@@ -77,6 +77,20 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   fireball becomes `FireKit.doMeltPuff` (a gout plus one pool). Supernova (alt Q, only present when
   the npc element carries it through `ALT_ULT_SLOT`) is cast at 90–400px above 55% HP; while it is
   open `isLocked` is true, and the kit lets go for the bot under 30% HP.
+- **Water (2026-10-18 Bubble Barrage + Drippy/Splashy/Poseidon).** Synergy field
+  `npcWaterBubbleSplash` (WaterKit → `WaterTides.npcBubbleSplashReady`: the player wears 2+ of
+  the bot's bubbles) is checked first in `doWaterAbilities` and casts Splash on the player —
+  every puddle tick also strikes each bubble, which passes 50% on. Bubble Barrage (alt Q, only
+  when the npc element carries it) is cast under 300px in place of Pain Rain. The perks need no
+  bot logic (Drippy/Splashy/Poseidon's wave fire off movement, hits and the ult cast id).
+- **Shadow (2026-10-18 caltrops + trap perks + Grim Gloom), part of step 3.** Click is now
+  Shadow Caltrops (`shadow-caltrop`), thrown at a velocity-led point. Synergy field
+  `npcShadowGloomCaltropAim` (Grim Gloom + caltrops: while the bot's own gloom is up, salting
+  the player's feet keeps them still, and stillness is what the gloom's tentacles strike) is
+  checked first in `doShadowAbilities`. Grim Gloom (alt Q, only when the npc element carries
+  it) is cast under 450px. R is cast with the player as the aim so a Vantablack claymore faces
+  them; a bot carrying several trap perks picks a random trap per plant inside the kit
+  (`trapKindFor`). The bot still never casts Black Hole.
 
 - **Magma (2026-08-12 mastery; 2026-10-13 F/Q rework), steps 2 and 4, part of 3.** Magma
   Mastery shipped first: `npcMasteryActive` drives `setMastered` on the npc avatar, and
@@ -421,7 +435,14 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   already in flight (it locks the moment they are magnetised). Nailstorm (R+): +2 to Repulse with
   2+ nails in a target within 340px, and `npcMagnetRecall` rips the instant all 3 are in.
   Electromagnet (F+): `npcMagnetZipTo` also rides a live spike within 145px of the target from
-  160px+ out, so the Charged aura lands on them. Shatter Shot and Mega Mechancements need no play.
+  160px+ out, so the Charged aura lands on them. Shatter Shot needs no play.
+  **Q rework (2026-10-18): 7.5s gather, hurtable core, Q+ Salvage Salvo.** The bot's hidden body is
+  the mech's core (each damage point = 50ms off the mech); `npcPilot` still self-destructs under
+  1.2s left, which a drained core reaches sooner. Salvage Salvo: the bot rolls `randomBuild()` at
+  the start of its gather (any head/core/arms); the kit pilots every arm through `use('smash')`
+  (Clicks alternate arms; the Saw grinds on the npc's aim = the target). Junkyard synergy: its
+  self-destruct drops 3 TNT crates, and `npcMagnetRepulseAt` scores +3 per crate in the cone, so
+  the next Repulse throws them at the target.
   **Mastery (2026-10-17).** Nightmare binds Mag-Lev over F (Steel Spike and its zip go with it).
   The kit fires it in `updateNpcMastery` — the track's aim is the target — when the target is
   magnetised or nailed by the bot within 440px (synergy: on the track they move at half speed while
@@ -569,6 +590,19 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   `canFrontSlam` only offers the slam if a foe is inside that front. Q+ needs no bot logic (the
   dive/crash it already plays triggers the Herald), but `currentSeek`/`cycloneReady` ignore the
   flight schedule while any Herald weather is live, because every launch is 1.4× then.
+- **Paint (2026-10-18 Chalk → Paint rework, id still `chalk`), steps 3–4.** Canvases are filled
+  from templates (`npcBrushTemplate` — bar / dart / plain, once per match; `npcStillTemplate` — a
+  90px hollow ring for the biggest hitbox), coloured when the bot owns the Click+/F+ upgrade. The
+  floor is painted by the phantom cursor in `PaintKit.advanceCursor`: orange is circled over the
+  player's feet — a full 1.15-lap loop when it owns E+, which is how the Paint Bucket synergy is
+  executed — walls are swept across the bot→player line (R+ colour from `npcWallPaint`: green
+  under 50% HP, else red), and the Masterpiece goes blue under itself, red under the player, green
+  under itself again when hurt. Synergy fields checked first in `doChalkAbilities`:
+  `npcPaintTargetStilled` (the player is the bot's Still Life → orange under the big slowed
+  target) and `npcPaintShotsIncoming` (≥2 hostile shots inbound → a wall). Yin-Yang is cast by the
+  kit on its own clock (`updateNpcYinYang`, when ≥2 of the player's bars are cooling) and bound
+  over R in `NpcLoadout`; the bot scribbles black over the player's F/Q/E cards, then white on
+  its own tray.
 
 ## Gotchas (learned the hard way — read before each batch)
 

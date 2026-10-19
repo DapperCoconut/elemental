@@ -344,50 +344,129 @@ export function corruptionVeil(
   g.fillCircle(x + Math.sin(x) * 6, y + 20 + dt * 14, 1.6 + k);
 }
 
-/** The great scythe: a long shaft and a huge hooked blade. Used by the rig and by Reaping Hour. */
+/**
+ * The great scythe. Used by the rig (slung across its back, or swung in Reaping Hour) and by
+ * the previews.
+ *
+ * `(gx, gy)` is the butt of the snath, which runs `len` along `shaftAng` with the gentle bow a
+ * real snath has, two nibs (the grips) sticking off it, and a steel tang collar at the top. The
+ * blade comes off the collar toward `side` (+1 / -1 of the shaft's perpendicular) and curls by
+ * `curl` — a wide heel at the collar tapering to a point, the thick back on the outside of the
+ * curve and the lit edge on the inside, with a fuller down the middle. `curl` defaults to
+ * `side`, which is what the old hooked blade did; the rig passes the opposite so the blade can
+ * arc down over the far shoulder.
+ */
 export function scytheShape(
   g: Phaser.GameObjects.Graphics, tint: HarvestColorFn, gx: number, gy: number, shaftAng: number, len: number,
-  bladeLen: number, side: number, alpha: number, edgeGlow = 0,
+  bladeLen: number, side: number, alpha: number, edgeGlow = 0, curl = side,
 ): void {
-  const ex = gx + Math.cos(shaftAng) * len;
-  const ey = gy + Math.sin(shaftAng) * len;
-  const bx = gx - Math.cos(shaftAng) * len * 0.25;
-  const by = gy - Math.sin(shaftAng) * len * 0.25;
-  g.lineStyle(4.4, tint(HAR.ink), alpha);
-  g.lineBetween(bx, by, ex, ey);
-  g.lineStyle(3, tint(HAR.wood), alpha);
-  g.lineBetween(bx, by, ex, ey);
-  g.lineStyle(1, tint(HAR.woodLit), alpha * 0.8);
-  g.lineBetween(bx, by - 0.8, ex, ey - 0.8);
-  // Straw lashing where the blade is bound on.
-  g.fillStyle(tint(HAR.straw), alpha);
-  g.fillCircle(ex, ey, 3.2);
-  // The blade sweeps back from the top of the shaft, perpendicular, curving toward the grip.
-  const perp = shaftAng + side * Math.PI / 2;
-  const outer: Phaser.Geom.Point[] = [];
-  const inner: Phaser.Geom.Point[] = [];
-  for (let i = 0; i <= 12; i++) {
-    const u = i / 12;
-    const a = perp - side * u * 0.95;
-    const w = bladeLen * u;
-    const thick = (1 - u) * bladeLen * 0.16 + 1;
-    const cx = ex + Math.cos(a) * w * 1.0;
-    const cy = ey + Math.sin(a) * w * 1.0;
-    outer.push(P(cx + Math.cos(shaftAng) * thick * 0.4, cy + Math.sin(shaftAng) * thick * 0.4));
-    inner.push(P(cx - Math.cos(shaftAng) * thick, cy - Math.sin(shaftAng) * thick));
+  const c = Math.cos(shaftAng);
+  const s = Math.sin(shaftAng);
+  // ── Snath: a bowed shaft, sampled so the bow can be stroked as one polyline ──
+  const N = 8;
+  const shaft: Phaser.Geom.Point[] = [];
+  for (let i = 0; i <= N; i++) {
+    const u = i / N;
+    const bow = Math.sin(u * Math.PI) * len * 0.07 * side;
+    shaft.push(P(gx + c * u * len - s * bow, gy + s * u * len + c * bow));
   }
+  const stroke = (w: number, color: number, a: number, dx = 0, dy = 0): void => {
+    g.lineStyle(w, color, a);
+    g.beginPath();
+    g.moveTo(shaft[0].x + dx, shaft[0].y + dy);
+    for (let i = 1; i < shaft.length; i++) g.lineTo(shaft[i].x + dx, shaft[i].y + dy);
+    g.strokePath();
+  };
+  stroke(5, tint(HAR.ink), alpha);
+  stroke(3.2, tint(HAR.wood), alpha);
+  stroke(1, tint(HAR.woodLit), alpha * 0.75, -s * 0.9, c * 0.9);
+  // Iron shoe on the butt.
   g.fillStyle(tint(HAR.steelDark), alpha);
-  g.fillPoints([...outer, ...inner.slice().reverse()], true);
-  g.lineStyle(1.6, tint(HAR.steelLit), alpha);
+  g.fillCircle(shaft[0].x, shaft[0].y, 2.6);
+  // ── Nibs: two short grips pegged into the shaft on the inside of the bow ──
+  for (const u of [0.36, 0.62]) {
+    const i = Math.round(u * N);
+    const p = shaft[i];
+    const nx = -s * -side;
+    const ny = c * -side;
+    const nl = len * 0.13;
+    g.lineStyle(3.4, tint(HAR.ink), alpha);
+    g.lineBetween(p.x, p.y, p.x + nx * nl, p.y + ny * nl);
+    g.lineStyle(2, tint(HAR.woodLit), alpha);
+    g.lineBetween(p.x, p.y, p.x + nx * nl, p.y + ny * nl);
+    g.fillStyle(tint(HAR.wood), alpha);
+    g.fillCircle(p.x + nx * nl, p.y + ny * nl, 2.2);
+    g.fillStyle(tint(HAR.straw), alpha * 0.9);
+    g.fillCircle(p.x + nx * 2, p.y + ny * 2, 1.6);
+  }
+  // ── Tang collar: a steel ring where the blade is bolted on, lashed with straw ──
+  const E = shaft[N];
+  g.fillStyle(tint(HAR.steel), alpha);
+  g.fillCircle(E.x, E.y, 3.8);
+  g.fillStyle(tint(HAR.steelDark), alpha);
+  g.fillCircle(E.x, E.y, 2.2);
+  g.fillStyle(tint(HAR.steelLit), alpha * 0.9);
+  g.fillCircle(E.x - 1, E.y - 1, 0.9);
+  g.lineStyle(1.2, tint(HAR.straw), alpha * 0.9);
+  g.lineBetween(E.x - c * 4 - s * 3.5, E.y - s * 4 + c * 3.5, E.x - c * 7 + s * 3.5, E.y - s * 7 - c * 3.5);
+  g.lineBetween(E.x - c * 6 - s * 3.5, E.y - s * 6 + c * 3.5, E.x - c * 9 + s * 3.5, E.y - s * 9 - c * 3.5);
+  // ── Blade ──
+  const perp = shaftAng + side * Math.PI / 2;
+  const M = 14;
+  const spine: Phaser.Geom.Point[] = [];
+  for (let i = 0; i <= M; i++) {
+    const u = i / M;
+    const a = perp - curl * u * 0.95;
+    spine.push(P(E.x + Math.cos(a) * bladeLen * u, E.y + Math.sin(a) * bladeLen * u));
+  }
+  const back: Phaser.Geom.Point[] = [];
+  const edge: Phaser.Geom.Point[] = [];
+  const fuller: Phaser.Geom.Point[] = [];
+  for (let i = 0; i <= M; i++) {
+    const u = i / M;
+    // Local normal from the neighbouring spine samples, so the width follows the curl.
+    const p0 = spine[Math.max(0, i - 1)];
+    const p1 = spine[Math.min(M, i + 1)];
+    const tl = Math.hypot(p1.x - p0.x, p1.y - p0.y) || 1;
+    // The normal that points back down the snath — that is where the edge is.
+    let nx = -(p1.y - p0.y) / tl;
+    let ny = (p1.x - p0.x) / tl;
+    if (nx * c + ny * s > 0) { nx = -nx; ny = -ny; }
+    // A heel that is wider than the collar, a belly, then a long taper to the point.
+    const heel = Math.min(1, u * 6);
+    const thick = (bladeLen * 0.24 * (1 - u) * (1 + 0.35 * Math.sin(u * Math.PI)) + 0.8) * heel;
+    const sp = spine[i];
+    back.push(P(sp.x - nx * thick * 0.3, sp.y - ny * thick * 0.3));
+    edge.push(P(sp.x + nx * thick, sp.y + ny * thick));
+    fuller.push(P(sp.x + nx * thick * 0.35, sp.y + ny * thick * 0.35));
+  }
+  // Ink outline, steel body, the lit back ridge, the fuller, and the edge itself.
+  g.lineStyle(2.2, tint(HAR.ink), alpha);
+  g.strokePoints([...back, ...edge.slice().reverse()], true);
+  g.fillStyle(tint(HAR.steelDark), alpha);
+  g.fillPoints([...back, ...edge.slice().reverse()], true);
+  g.fillStyle(tint(HAR.steel), alpha * 0.75);
+  g.fillPoints([...back.slice(0, 11), ...fuller.slice(0, 11).reverse()], true);
+  g.lineStyle(1, tint(HAR.ink), alpha * 0.7);
   g.beginPath();
-  g.moveTo(inner[0].x, inner[0].y);
-  for (const p of inner) g.lineTo(p.x, p.y);
+  g.moveTo(fuller[1].x, fuller[1].y);
+  for (let i = 2; i < 11; i++) g.lineTo(fuller[i].x, fuller[i].y);
   g.strokePath();
+  g.lineStyle(1.8, tint(HAR.steelLit), alpha);
+  g.beginPath();
+  g.moveTo(edge[1].x, edge[1].y);
+  for (let i = 2; i < edge.length; i++) g.lineTo(edge[i].x, edge[i].y);
+  g.strokePath();
+  // A film of rot pooled in the heel, and two nicks in the edge — it has been used.
+  g.fillStyle(tint(HAR.purple), alpha * 0.5);
+  g.fillCircle(fuller[2].x, fuller[2].y, bladeLen * 0.06);
+  g.fillStyle(tint(HAR.ink), alpha);
+  for (const i of [5, 9]) g.fillTriangle(edge[i].x, edge[i].y, edge[i + 1].x, edge[i + 1].y, fuller[i].x * 0.5 + edge[i].x * 0.5, fuller[i].y * 0.5 + edge[i].y * 0.5);
   if (edgeGlow > 0) {
     g.lineStyle(3 + edgeGlow * 3, tint(HAR.purpleLit), alpha * edgeGlow * 0.6);
     g.beginPath();
-    g.moveTo(inner[0].x, inner[0].y);
-    for (const p of inner) g.lineTo(p.x, p.y);
+    g.moveTo(edge[1].x, edge[1].y);
+    for (let i = 2; i < edge.length; i++) g.lineTo(edge[i].x, edge[i].y);
     g.strokePath();
   }
 }
@@ -1115,8 +1194,10 @@ const HARVEST_AVATAR: AvatarSpec = {
  * The scarecrow: a plain dark burlap orb (the baked `elem-gluttony`) that *is* the sack — the one
  * accessory is the knot at the crown, the sack's gathered top tied off with a cord and straw
  * spilling out of it. The face is the secondary touch: two cut eye-holes (the base rig's eyes,
- * black with a purple pupil) over a wide, stitched, purple grin that drools. The scythe is held,
- * not worn — a long shaft resting against the right hand with the blade hanging over the head.
+ * black with a purple pupil) over a wide, stitched, purple grin that drools. The scythe is worn,
+ * not held — slung across its back on a leather strap, snath running from the off hip up past
+ * the far shoulder, the blade arcing down over that shoulder. It only comes off the back for
+ * Reaping Hour.
  *
  * Mastered (no mastery exists yet, but the tell is ready): a crow perches on the knot, a purple
  * crop-circle ring turns under the feet with spores rising off the sack, the eye-holes glow
@@ -1217,6 +1298,30 @@ export class GluttonyAvatar extends BaseAvatar {
       g.lineBetween(cx - 1.2, cy - 1.2, cx + 1.2, cy + 1.2);
       g.lineBetween(cx - 1.2, cy + 1.2, cx + 1.2, cy - 1.2);
     }
+    // The scythe's strap: a leather band across the sack from the far shoulder to the near hip,
+    // with a buckle where it crosses the seam. It is the tell that the thing on its back is
+    // *worn* rather than floating behind it.
+    if (this.swing <= 0) {
+      const face = Math.cos(this.facing) >= 0 ? 1 : -1;
+      const sx0 = x + face * 13;
+      const sy0 = y - 13;
+      const sx1 = x - face * 12;
+      const sy1 = y + 14;
+      g.lineStyle(4.2, this.tint(HAR.ink), alpha * 0.95);
+      g.lineBetween(sx0, sy0, sx1, sy1);
+      g.lineStyle(2.4, this.tint(HAR.wood), alpha);
+      g.lineBetween(sx0, sy0, sx1, sy1);
+      g.lineStyle(0.8, this.tint(HAR.woodLit), alpha * 0.6);
+      g.lineBetween(sx0 + 0.6, sy0 - 0.6, sx1 + 0.6, sy1 - 0.6);
+      const bx = (sx0 + sx1) / 2 + face * 2;
+      const by = (sy0 + sy1) / 2 - 2;
+      g.fillStyle(this.tint(HAR.steel), alpha);
+      g.fillRect(bx - 3, by - 2.6, 6, 5.2);
+      g.fillStyle(this.tint(HAR.ink), alpha);
+      g.fillRect(bx - 1.8, by - 1.4, 3.6, 2.8);
+      g.fillStyle(this.tint(HAR.steelLit), alpha * 0.8);
+      g.fillRect(bx - 3, by - 2.6, 6, 1);
+    }
     // The cinched neck: a cord around the base with straw stuffing poking out below.
     g.lineStyle(2.2, this.tint(HAR.ink), alpha * 0.9);
     g.beginPath();
@@ -1248,10 +1353,26 @@ export class GluttonyAvatar extends BaseAvatar {
   }
 
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    void alpha;
     const k = this.intensity * (this.mastered ? 1.15 : 1);
     g.fillStyle(this.tint(HAR.rotDeep), a * 0.5 * k);
     g.fillEllipse(x, y + 18, 46 * k, 14 * k);
+    // ── The scythe, slung across the back ──
+    // This layer sits under the sprite, so the sack hides the middle of the snath and only the
+    // butt below the hip and the collar-and-blade above the far shoulder show — which is exactly
+    // what a thing strapped to a back looks like. Reaping Hour takes it off the back (see
+    // `drawExtras`), so it is not drawn here while the swing runs.
+    if (this.swing <= 0) {
+      const m = this.mastered;
+      const face = Math.cos(this.facing) >= 0 ? 1 : -1;
+      // The collar clears the crown and the blade curls only gently, so the whole blade rides
+      // above the head instead of dipping back behind it; the butt pokes out past the hip.
+      const bob = Math.sin(this.t * 1.6) * 0.02;
+      const bx = x - face * 20;
+      const by = y + 30;
+      const ang = Math.atan2(-72, face * 26) + bob;
+      scytheShape(g, this.tint, bx, by, ang, 80, m ? 40 : 34, -face, alpha,
+        (m ? 0.7 + 0.2 * Math.sin(this.t * 4) : 0.12) + this.rot * 0.4, face * 0.55);
+    }
     if (this.rot > 0.02) {
       g.fillStyle(this.tint(HAR.purple), a * (0.12 + this.rot * 0.25));
       g.fillCircle(x, y, 26 + this.rot * 8);
@@ -1278,19 +1399,17 @@ export class GluttonyAvatar extends BaseAvatar {
     const lean = Math.cos(this.facing) * 1.6;
     const crown = y - 18;
 
-    // ── The scythe, carried in the right hand: shaft down and back, blade looming overhead ──
+    // ── Reaping Hour: the scythe comes off the back and sweeps through the swing ──
+    // Both hands take the snath — the butt in the right hand, the sweep driven from it — and
+    // the blade leads the arc. Idle, the scythe is on the back (`drawGlow`), not here.
     const hx = this.armX[1];
     const hy = this.armY[1];
-    if (Number.isFinite(hx)) {
-      const face = Math.cos(this.facing) >= 0 ? 1 : -1;
-      if (this.swing > 0) {
-        const u = 1 - this.swing;
-        const sweep = this.swingAngle - this.swingSide * 1.3 + this.swingSide * 2.6 * easeOut(Math.min(1, u * 1.6));
-        scytheShape(g, this.tint, hx, hy, sweep, 50, 34, this.swingSide, alpha, this.swing);
-      } else {
-        const shaft = -Math.PI / 2 - face * 0.32 + Math.sin(this.t * 1.6) * 0.03;
-        scytheShape(g, this.tint, hx + face * 2, hy + 14, shaft, 52, m ? 34 : 28, -face, alpha * 0.98, (m ? 0.75 + 0.2 * Math.sin(this.t * 4) : 0.15) + this.rot * 0.4);
-      }
+    if (Number.isFinite(hx) && this.swing > 0) {
+      const u = 1 - this.swing;
+      const draw = Math.min(1, u * 4);
+      const sweep = this.swingAngle - this.swingSide * 1.3 + this.swingSide * 2.6 * easeOut(Math.min(1, u * 1.6));
+      scytheShape(g, this.tint, hx - Math.cos(sweep) * 10, hy - Math.sin(sweep) * 10, sweep, 48 + draw * 12,
+        (m ? 38 : 32) * (0.4 + 0.6 * draw), this.swingSide, alpha, Math.max(this.swing, m ? 0.6 : 0.3), -this.swingSide);
     }
 
     // ── The sickle in the left hand, hanging blade-down — gone while it is in the air ──

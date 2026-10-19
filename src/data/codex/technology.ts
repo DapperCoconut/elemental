@@ -167,21 +167,22 @@ const technology: ElementCodex = {
       ],
       upgrade: {
         basics:
-          'F becomes a browser window instead. Browsing counts as being in a menu — hits reach you at '
-          + '5% of their damage while the page is open, so it still blunts a burst without being a wall, and coins are clicked '
-          + 'out of the page to spend in the Grub-Shop — a bagel at 10, a mouse at 20, a factory at 35 — '
-          + 'with a Wheel of Fortune spin at 5. Taking The Door explodes the window and launches every coin '
-          + 'you were holding as a projectile at 1 damage each, 330 px/s.',
+          'Web Drag also offers to surf the web. Yes opens PainClicker: a small window with one skull in it, '
+          + 'and you keep moving, shooting and casting while it is open. Every click on the skull deals 1 damage '
+          + 'to the nearest enemy and earns 1 pain coin. Pain buys four upgrades, each once: Harder clicks (50) '
+          + 'makes a click worth 2, Pain farm (100) generates 1 a second, Pain factory (250) 3 a second and '
+          + 'The Soulution (500) 10 a second — and every pain coin generated is a point of damage too. Web drag '
+          + 'moves the window by its title bar, and the X in the corner closes it, upgrades and wallet with it.',
         effects: [
-          { tag: 'shield', label: 'In a menu', detail: 'While the browser is open, incoming damage lands at 5% — the standard menu rule, so browsing blunts a burst without being outright protection.', requiresUpgrade: 'f' },
-          { tag: 'resource', label: 'Coins', detail: 'Clicked out of the page. They buy things from the Grub-Shop — a bagel at 10, a mouse at 20, a factory at 35 — and a Wheel of Fortune spin costs 5.', requiresUpgrade: 'f' },
-          { tag: 'damage', label: 'The Door', detail: 'Taking it explodes the window and launches every coin you were holding as a projectile — 1 damage each at 330 px/s.', requiresUpgrade: 'f' },
+          { tag: 'damage', label: 'The skull', detail: 'Each click: 1 damage to the nearest enemy and 1 pain coin (2 and 2 with Harder clicks).', requiresUpgrade: 'f' },
+          { tag: 'resource', label: 'Pain coins', detail: 'Harder clicks 50 · Pain farm 100 (+1/s) · Pain factory 250 (+3/s) · The Soulution 500 (+10/s). Each is bought once; the generators stack to 14 damage a second.', requiresUpgrade: 'f' },
+          { tag: 'utility', label: 'The window', detail: 'Not a menu and not shelter — you fight on around it. Drag it by the title bar during web drag; the X closes it.', requiresUpgrade: 'f' },
         ],
       },
       notes: [
         'Dragging the enemy is the headline, but dragging your own parked cord head is the more reliable play: it lets a missed Upload be walked onto somebody.',
-        'The mastery requirement Coin Farmer is 500 coins collected inside the browser, so the minigame is trained rather than skipped.',
-        'The 5% menu rate while the browser is open means opening it is still a reasonable answer to an incoming ultimate — you eat a twentieth of it.',
+        'The mastery requirement Coin Farmer is 500 pain coins collected in PainClicker, so the minigame is trained rather than skipped.',
+        'Closing the window throws away every upgrade bought in it, so a fully built clicker is worth keeping open and dragging out of the way.',
       ],
     },
 

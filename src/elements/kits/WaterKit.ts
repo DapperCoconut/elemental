@@ -5,6 +5,7 @@ import { CastContext } from '../Ability';
 import { ArmGesture, WaterAvatar, WaterColorFn, WaterFx, WaterSurf, WATER, waterRibbon, waterRibbonLayered } from './WaterVisuals';
 import { BaseAvatar } from './ElementVisuals';
 import { makeSkinAvatar } from './skins/SkinAvatars';
+import { WaterTides } from './WaterTides';
 
 // ── Shared Geyser type (exported so ArenaScene can import instead of redefining) ──
 
@@ -44,6 +45,7 @@ const NPC_GESTURES: Record<string, ArmGesture> = {
   'geyser': 'slam',
   'pressure-dagger': 'punch',
   'pain-rain': 'raise',
+  'bubble-barrage': 'sweep',
 };
 
 /** An ArenaScene puddle. Structurally identical to ArenaScene's own `Puddle`. */
@@ -75,6 +77,11 @@ export interface WaterArenaApi {
   readonly enemies: Fighter[];
   readonly scene: Phaser.Scene;
   readonly projectiles: Phaser.Physics.Arcade.Group;
+  readonly isInvasion: boolean;
+  /** False for an Invasion husk that can't be hit right now. */
+  isTargetable(f: Fighter): boolean;
+  /** The arena's AoE chokepoint (which also reaches bubbles, stalkers, decoys…). */
+  dealAoeDamageFromOwner(x: number, y: number, r: number, dmg: number, owner: 'player' | 'npc', except?: Fighter): void;
   readonly eKey: Phaser.Input.Keyboard.Key;
   readonly rKey: Phaser.Input.Keyboard.Key;
   readonly fKey: Phaser.Input.Keyboard.Key;
@@ -135,6 +142,8 @@ export class WaterKit {
   private daggerGfx: Phaser.GameObjects.Graphics | null = null;
   private splitGfx: Phaser.GameObjects.Graphics | null = null;
   private siphonPullAccum = 0;
+  /** Bubble Barrage and the Drippy / Splashy / Poseidon perks. */
+  private readonly tides: WaterTides;
 
   // -- Dehydration --
   private dehydration = new Map<Fighter, number>();
@@ -213,6 +222,12 @@ export class WaterKit {
     this.ncol = (base) => arena.waterColor('npc', base);
     this.pfx = new WaterFx(arena.scene, this.pcol);
     this.nfx = new WaterFx(arena.scene, this.ncol);
+    this.tides = new WaterTides(
+      arena,
+      (o) => (o === 'player' ? this.pcol : this.ncol),
+      (o) => (o === 'player' ? this.pfx : this.nfx),
+      (o, x, y, radius, ms) => this.spawnOwnedPool(o, x, y, radius, ms),
+    );
   }
 
   reset(): void {
@@ -269,6 +284,7 @@ export class WaterKit {
     if (this.npcSiphonGfx) { this.npcSiphonGfx.destroy(); this.npcSiphonGfx = null; }
     this.npcSiphonSeen.clear();
     this.slipstreamActive = false;
+    this.tides.reset();
   }
 
   update(time: number, delta: number): void {
@@ -284,6 +300,7 @@ export class WaterKit {
     this.updateGeyserArt();
     this.updateDaggerCharge(time);
     this.updateDehydrationBars();
+    this.tides.update(time, delta);
 
     // -- Player side --
     if (isPlayerWater) {
@@ -450,9 +467,16 @@ export class WaterKit {
         if (player.castAbility('geyser', playerCtx)) this.playerAvatar?.play('slam', aim);
       }
       if (siphonSlot !== 'q' && qDown) {
-        if (player.castAbility('pain-rain', playerCtx)) {
-          this.playerAvatar?.play('raise', aim, 1200);
-          this.replenishGeyserCharges();
+        // Bubble Barrage rides in place of Pain Rain when the alternate Q is equipped.
+        const ult = player.element.abilities.some((a) => a.id === 'bubble-barrage') ? 'bubble-barrage' : 'pain-rain';
+        if (player.castAbility(ult, playerCtx)) {
+          if (ult === 'pain-rain') {
+            this.playerAvatar?.play('raise', aim, 1200);
+            this.replenishGeyserCharges();
+          } else {
+            this.playerAvatar?.play('sweep', aim);
+          }
+          this.tides.onUltimate('player', mouseX);
         }
       }
     }
@@ -560,6 +584,7 @@ export class WaterKit {
       this.npcSplashActiveUntil = time + 2000;
       this.npcSplashDropAccum = 0;
     }
+    if (id === 'pain-rain' || id === 'bubble-barrage') this.tides.onUltimate('npc', player.x);
 
     const gesture = NPC_GESTURES[id];
     if (gesture) {
@@ -844,7 +869,7 @@ export class WaterKit {
       return;
     }
 
-    const radius = isFinal ? 54 : 36;
+    const radius = (isFinal ? 54 : 36) * this.tides.poolScale('player');
     const duration = isFinal ? 5000 : 1000;
     const g = scene.add.graphics().setDepth(2);
     const p: WaterPuddleLike = {
@@ -885,7 +910,7 @@ export class WaterKit {
     const g = scene.add.graphics().setDepth(2);
     const p: WaterPuddleLike = {
       sprite: g, expiresAt: time + 1000,
-      x: sx, y: sy, radius: 36, tickAccum: 0, owner: 'npc', kind: 'puddle',
+      x: sx, y: sy, radius: 36 * this.tides.poolScale('npc'), tickAccum: 0, owner: 'npc', kind: 'puddle',
     };
     this.arena.puddles.push(p);
     this.trackPool(p, g, 'npc');
@@ -944,15 +969,44 @@ export class WaterKit {
 
   /** Squall Splashes (Q+): a drop that lands hard enough to leave a 5s tidal pool behind. */
   spawnSquallPool(x: number, y: number): void {
+    const scale = this.tides.poolScale('player');
+    this.spawnOwnedPool('player', x, y, 54 * scale, 5000);
+    this.pfx.crown(x, y, 58 * scale, 12, 3);
+    this.pfx.ring(x, y, 10, 92 * scale, WATER.foam, 420, 4, 4);
+  }
+
+  /** A plain water pool for that side: pushed into the shared puddle list and painted live. */
+  private spawnOwnedPool(owner: 'player' | 'npc', x: number, y: number, radius: number, ms: number): WaterPuddleLike {
     const g = this.arena.scene.add.graphics().setDepth(2);
     const p: WaterPuddleLike = {
-      sprite: g, expiresAt: this.arena.scene.time.now + 5000,
-      x, y, radius: 54, tickAccum: 0, owner: 'player', kind: 'puddle',
+      sprite: g, expiresAt: this.arena.scene.time.now + ms,
+      x, y, radius, tickAccum: 0, owner, kind: 'puddle',
     };
     this.arena.puddles.push(p);
-    this.trackPool(p, g, 'player');
-    this.pfx.crown(x, y, 58, 12, 3);
-    this.pfx.ring(x, y, 10, 92, WATER.foam, 420, 4, 4);
+    this.trackPool(p, g, owner);
+    return p;
+  }
+
+  // ── Bubble Barrage + perks (WaterTides) — arena hooks ───────────────────
+
+  /** Bubble Barrage (alt Q) cast, from either side's CastContext. */
+  doBubbleBarrage(owner: 'player' | 'npc', tx: number, ty: number): void {
+    this.tides.doBubbleBarrage(owner, tx, ty);
+  }
+
+  /** An area hit landed — bubbles latched inside it take it too. */
+  notifyAoe(cx: number, cy: number, radius: number, damage: number, owner: 'player' | 'npc'): void {
+    this.tides.notifyAoe(cx, cy, radius, damage, owner);
+  }
+
+  /** Poseidon: the player dodged. Returns the ride's speed mult and length, or null without the perk. */
+  startWaveRide(): { speedMult: number; ms: number } | null {
+    return this.tides.startWaveRide() ? { speedMult: this.tides.rideSpeedMult, ms: this.tides.rideMs } : null;
+  }
+
+  /** Bot synergy: the player wears 2+ of the bot's bubbles, so a Splash downpour pays double. */
+  npcBubbleSplashReady(): boolean {
+    return this.arena.isNpcWater() && this.tides.npcBubbleSplashReady();
   }
 
   // ── Pressure Dagger visuals ──────────────────────────────────────────────
@@ -1089,10 +1143,11 @@ export class WaterKit {
   }
 
   // Called from water-cut hit path in applyProjectileToNpc
-  onWaterCutHit(target: Fighter, _attacker: 'player' | 'npc'): void {
+  onWaterCutHit(target: Fighter, attacker: 'player' | 'npc', proj?: Projectile): void {
     // Every cut lands wet, upgraded or not — the dehydration stack is the upgrade's bit.
-    this.pfx.splash(target.x, target.y, 34, { drops: 7, mist: 0, wet: false, duration: 240, depth: 8 });
-    if (!this.arena.hasUpgrade('click')) return;
+    (attacker === 'player' ? this.pfx : this.nfx).splash(target.x, target.y, 34, { drops: 7, mist: 0, wet: false, duration: 240, depth: 8 });
+    this.tides.onCutLanded(target, attacker, proj);
+    if (attacker !== 'player' || !this.arena.hasUpgrade('click')) return;
     this.applyDehydration(target, 2);
   }
 

@@ -47,10 +47,14 @@ interface SaveData {
   passionQTaps: number;                // taps on Passion's Q row in the info panel — 10 unlocks the toggle
   passionQCensored: boolean;           // whether that toggle is currently on
   paperJournal: Record<string, PaperJournalRecord>; // enemy elementId -> fights won/lost as Paper
-  quantumBond: string[];               // the two elementIds Quantum currently carries, [] if none
-  quantumResearched: string[];         // bond keys ("a+b", sorted) whose research is finished
-  quantumResearching: string;          // the one bond key being worked on now, '' if none
-  quantumQuestProgress: Record<string, number>; // "<bondKey>:<questId>" -> count so far
+  quantumSlots: Record<string, string>; // Quantum: slot key (click/e/r/f/q) -> the elementId whose ability sits on it
+  quantumResearched: string[];         // elementIds whose entanglement research is finished (pre-rework: "a+b" bond keys)
+  quantumResearching: string;          // the one elementId being worked on now, '' if none
+  quantumQuestProgress: Record<string, number>; // "<elementId>:<questId>" -> count so far
+  quantumUpgrades: Record<string, boolean>; // Quantum: slot key -> that slot's ability upgrade is switched on (needs Third State)
+  quantumPassive: string;              // Quantum mastery: the elementId whose mastery passive rides along, '' if none
+  quantumSixth: string;                // Quantum mastery: "<elementId>:<enhId>" on the sixth (G) key, '' if empty
+  quantumAltQ: boolean;                // Quantum mastery: the Q slot casts its element's alternate ultimate
   /**
    * Set once `migrateSubterfugeId` has run on this save. It must never run twice: after the
    * rename landed, `quantum` is a live element id again, and a second pass would hand the real
@@ -199,7 +203,7 @@ function restoreMagmaChalkIds(d: SaveData): void {
     d.masteryEnabled, d.masteryBinds, d.equippedSkins, d.paperJournal, d.deathsByElement,
   ];
   const lists: Array<string[]> = [
-    d.unlockedElements, d.gauntletsCompleted, d.gauntletsCompletedHard, d.quantumBond,
+    d.unlockedElements, d.gauntletsCompleted, d.gauntletsCompletedHard, d.quantumResearched,
   ];
   for (const [WRONG, REAL] of PAIRS) {
     for (const rec of records) {
@@ -218,6 +222,19 @@ function restoreMagmaChalkIds(d: SaveData): void {
       if (at >= 0 && !d.pendingUnstable.ingredients.includes(REAL)) d.pendingUnstable.ingredients[at] = REAL;
     }
   }
+}
+
+/**
+ * Quantum research used to unlock *pairs* ("fire+water"); it now unlocks single elements.
+ * Any old pair key counts as both of its halves researched — nobody loses an element they had
+ * already earned a bond for. Idempotent: element ids never contain '+'.
+ */
+function migrateEntanglements(list: string[]): string[] {
+  const out: string[] = [];
+  for (const key of list) {
+    for (const id of key.split('+')) if (id && !out.includes(id)) out.push(id);
+  }
+  return out;
 }
 
 function load(): SaveData {
@@ -258,10 +275,14 @@ function load(): SaveData {
         passionQTaps: parsed.passionQTaps ?? 0,
         passionQCensored: parsed.passionQCensored ?? false,
         paperJournal: parsed.paperJournal ?? {},
-        quantumBond: parsed.quantumBond ?? [],
-        quantumResearched: parsed.quantumResearched ?? [],
-        quantumResearching: parsed.quantumResearching ?? '',
+        quantumSlots: parsed.quantumSlots ?? {},
+        quantumResearched: migrateEntanglements(parsed.quantumResearched ?? []),
+        quantumResearching: (parsed.quantumResearching ?? '').includes('+') ? '' : (parsed.quantumResearching ?? ''),
         quantumQuestProgress: parsed.quantumQuestProgress ?? {},
+        quantumUpgrades: parsed.quantumUpgrades ?? {},
+        quantumPassive: parsed.quantumPassive ?? '',
+        quantumSixth: parsed.quantumSixth ?? '',
+        quantumAltQ: parsed.quantumAltQ ?? false,
         migratedSubterfugeId: parsed.migratedSubterfugeId ?? false,
         restoredMagmaChalk: parsed.restoredMagmaChalk ?? false,
         screwdriverFound: parsed.screwdriverFound ?? false,
@@ -304,7 +325,7 @@ function load(): SaveData {
     // corrupted save — start fresh
   }
   // A save that never existed has nothing to migrate — born already stamped.
-  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], labLevel: 0, corruptShards: 0, huskJournal: [], apocalypseSeen: false, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {}, achievements: [], equippedSkins: {}, divineNuclei: 0, kingDefeated: false, devourerDefeated: false, devourerChoice: '', bountyRerollOffset: 0, completedBountyKeys: [], passionQTaps: 0, passionQCensored: false, paperJournal: {}, quantumBond: [], quantumResearched: [], quantumResearching: '', quantumQuestProgress: {}, migratedSubterfugeId: true, restoredMagmaChalk: true, screwdriverFound: false, screwdriverPage: -1, screwsRemoved: {}, secretModesUnlocked: [], pendingUnstable: null, deathsByElement: {}, realityFountainLit: false, realityIntroSeen: false, realityDefeated: false, realityKillOrder: '', strongholdBest: {}, altUltsUnlocked: [], altUltsEquipped: [] };
+  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], labLevel: 0, corruptShards: 0, huskJournal: [], apocalypseSeen: false, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {}, achievements: [], equippedSkins: {}, divineNuclei: 0, kingDefeated: false, devourerDefeated: false, devourerChoice: '', bountyRerollOffset: 0, completedBountyKeys: [], passionQTaps: 0, passionQCensored: false, paperJournal: {}, quantumSlots: {}, quantumResearched: [], quantumResearching: '', quantumQuestProgress: {}, quantumUpgrades: {}, quantumPassive: '', quantumSixth: '', quantumAltQ: false, migratedSubterfugeId: true, restoredMagmaChalk: true, screwdriverFound: false, screwdriverPage: -1, screwsRemoved: {}, secretModesUnlocked: [], pendingUnstable: null, deathsByElement: {}, realityFountainLit: false, realityIntroSeen: false, realityDefeated: false, realityKillOrder: '', strongholdBest: {}, altUltsUnlocked: [], altUltsEquipped: [] };
 }
 
 function save(data: SaveData): void {
@@ -1105,95 +1126,134 @@ export function setEquippedSkin(elementId: string, skinId: string | null): void 
   save(data);
 }
 
-// ── Quantum bonds ────────────────────────────────────────────────────
+// ── Quantum: the loadout and entanglement research ───────────────────
 
 /**
- * A bond is an unordered pair, so it is keyed by its two element ids sorted and joined —
- * `fire+water` is the same bond as `water+fire`. Every lookup below goes through this, so
- * nothing downstream has to care which order the player picked them in.
+ * The raw slot table — slot key -> elementId. Slots never written are missing; the shape the
+ * arena consumes is resolved in `QuantumLoadout.ts`, which fills the gaps.
  */
-export function bondKey(a: string, b: string): string {
-  return [a, b].sort().join('+');
+export function getQuantumSlots(): Record<string, string> {
+  return { ...load().quantumSlots };
 }
 
-/** The two elements Quantum is currently carrying, or null if no bond is set. */
-export function getQuantumBond(): [string, string] | null {
-  const bond = load().quantumBond;
-  return bond.length === 2 ? [bond[0], bond[1]] : null;
-}
-
-/**
- * Sets the carried bond. Order is preserved here on purpose even though the key is not:
- * the first element is the half the player spawns as, which is a real choice.
- */
-export function setQuantumBond(a: string, b: string): void {
+export function setQuantumSlot(slot: string, elementId: string): void {
   const data = load();
-  data.quantumBond = [a, b];
-  save(data);
-}
-
-export function clearQuantumBond(): void {
-  const data = load();
-  data.quantumBond = [];
+  data.quantumSlots = { ...data.quantumSlots, [slot]: elementId };
   save(data);
 }
 
 /**
- * Fire+Water is granted, not researched. Quantum with nothing bonded is an element with no
- * abilities, so there has to be one pair that is always available — and the two elements
+ * The raw per-slot upgrade switches. Whether a switch *counts* — Third State owned, the slot's
+ * element owns that upgrade — is resolved in `QuantumLoadout.ts`; the save only remembers the
+ * player's choice, so switching a slot's element and back does not lose it.
+ */
+export function isQuantumUpgradeOn(slot: string): boolean {
+  return load().quantumUpgrades[slot] ?? false;
+}
+
+export function setQuantumUpgradeOn(slot: string, on: boolean): void {
+  const data = load();
+  data.quantumUpgrades = { ...data.quantumUpgrades, [slot]: on };
+  save(data);
+}
+
+/** Quantum mastery: the element whose mastery passive the loadout borrows, or null. Raw — validated in `QuantumLoadout.ts`. */
+export function getQuantumPassive(): string | null {
+  return load().quantumPassive || null;
+}
+
+export function setQuantumPassive(elementId: string | null): void {
+  const data = load();
+  data.quantumPassive = elementId ?? '';
+  save(data);
+}
+
+/** Quantum mastery: the mastery ability on the sixth key, or null. Raw — validated in `QuantumLoadout.ts`. */
+export function getQuantumSixth(): { elementId: string; enhId: string } | null {
+  const raw = load().quantumSixth;
+  const at = raw.indexOf(':');
+  if (at <= 0) return null;
+  return { elementId: raw.slice(0, at), enhId: raw.slice(at + 1) };
+}
+
+export function setQuantumSixth(pick: { elementId: string; enhId: string } | null): void {
+  const data = load();
+  data.quantumSixth = pick ? `${pick.elementId}:${pick.enhId}` : '';
+  save(data);
+}
+
+/** Quantum mastery: whether the Q slot is in alternate-ultimate mode. Raw — needs the Q element to have one unlocked. */
+export function isQuantumAltQ(): boolean {
+  return load().quantumAltQ;
+}
+
+export function setQuantumAltQ(on: boolean): void {
+  const data = load();
+  data.quantumAltQ = on;
+  save(data);
+}
+
+/**
+ * Fire and Water are granted, not researched. A Quantum with nothing entangled is an element
+ * with no abilities, so something has to be available from the start — and the two elements
  * every save owns are the only honest candidates.
  */
-export const STARTER_BOND: [string, string] = ['fire', 'water'];
+export const STARTER_ENTANGLED: readonly string[] = ['fire', 'water'];
 
-export function isBondResearched(a: string, b: string): boolean {
-  // A cheat profile is supposed to have everything, and there are on the order of twelve
-  // hundred pairs — far too many to write into a save. Answering yes is the same grant
-  // without the storage, and it is what makes the bond roster usable for testing.
+/** Whether Quantum may put this element's abilities on its keys. */
+export function isElementEntangled(elementId: string): boolean {
+  // A cheat profile is supposed to have everything; answering yes is the grant without the
+  // storage, and it is what makes the slot roster usable for testing.
   if (isCheatMode()) return true;
-  const key = bondKey(a, b);
-  if (key === bondKey(STARTER_BOND[0], STARTER_BOND[1])) return true;
-  return load().quantumResearched.includes(key);
+  if (STARTER_ENTANGLED.includes(elementId)) return true;
+  return load().quantumResearched.includes(elementId);
 }
 
-export function getResearchedBonds(): string[] {
-  return [...load().quantumResearched];
+export function getEntangledElements(): string[] {
+  return [...new Set([...STARTER_ENTANGLED, ...load().quantumResearched])];
 }
 
-/** The bond currently being researched, or null. Only ever one at a time. */
-export function getResearchingBond(): string | null {
+/** The element currently being researched, or null. Only ever one at a time. */
+export function getResearchingElement(): string | null {
   return load().quantumResearching || null;
 }
 
 /**
- * Picks the bond to work on. Switching away does *not* wipe the progress already banked
- * on the old one — quest counts are keyed by bond, so coming back resumes where it left off.
+ * Picks the element to work on. Switching away does *not* wipe the progress already banked
+ * on the old one — quest counts are keyed by element, so coming back resumes where it left off.
  */
-export function setResearchingBond(key: string | null): void {
+export function setResearchingElement(elementId: string | null): void {
   const data = load();
-  data.quantumResearching = key ?? '';
+  data.quantumResearching = elementId ?? '';
   save(data);
 }
 
-export function getBondQuestProgress(key: string, questId: string): number {
-  return load().quantumQuestProgress[`${key}:${questId}`] ?? 0;
+export function getEntangleQuestProgress(elementId: string, questId: string): number {
+  return load().quantumQuestProgress[`${elementId}:${questId}`] ?? 0;
 }
 
-/** Adds to one quest's tally. Only counts toward the bond currently being researched. */
-export function addBondQuestProgress(key: string, questId: string, amount: number): void {
+/** Adds to one quest's tally. Only counts toward the element currently being researched. */
+export function addEntangleQuestProgress(elementId: string, questId: string, amount: number): void {
   if (amount <= 0) return;
   const data = load();
-  if (data.quantumResearching !== key) return;
-  const at = `${key}:${questId}`;
+  if (data.quantumResearching !== elementId) return;
+  const at = `${elementId}:${questId}`;
   data.quantumQuestProgress[at] = (data.quantumQuestProgress[at] ?? 0) + amount;
   save(data);
 }
 
-/** Marks a bond researched and clears it as the active research slot. Idempotent. */
-export function completeBondResearch(key: string): void {
+/** Marks an element entangled and clears it as the active research slot. Idempotent. */
+export function completeEntanglement(elementId: string): void {
   const data = load();
-  if (!data.quantumResearched.includes(key)) data.quantumResearched.push(key);
-  if (data.quantumResearching === key) data.quantumResearching = '';
+  if (!data.quantumResearched.includes(elementId)) data.quantumResearched.push(elementId);
+  if (data.quantumResearching === elementId) data.quantumResearching = '';
   save(data);
+  noteEntangledCount();
+}
+
+/** Quantum's mastery counts entangled elements; banked as a best so an old save catches up on any call. */
+export function noteEntangledCount(): void {
+  recordMasteryBest('quantum', 'entangled', getEntangledElements().length);
 }
 
 // ── Stronghold ───────────────────────────────────────────────────────

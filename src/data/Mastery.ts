@@ -324,7 +324,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       {
         key: 'healedHp',
         label: 'Umbral Vitality',
-        howTo: 'Heal HP — standing in your own shadow pools (and Q+ Void Singularity) both count',
+        howTo: 'Heal HP by any means — Q+ Void Singularity and your own shadow pools both count',
         target: 500,
       },
       {
@@ -342,7 +342,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       {
         key: 'blackHoleKills',
         label: 'Event Horizon',
-        howTo: 'Kill enemies while they are trapped inside your Black Hole (Q)',
+        howTo: 'Kill enemies while your Black Hole (Q) or Grim Gloom is up',
         target: 25,
       },
     ],
@@ -995,7 +995,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       {
         key: 'webCoins',
         label: 'Coin Farmer',
-        howTo: 'Collect coins inside the Surf the web! (F+) browser',
+        howTo: 'Collect pain coins in the Surf the web! (F+) PainClicker',
         target: 500,
       },
     ],
@@ -1585,47 +1585,48 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
   },
   chalk: {
     elementId: 'chalk',
-    name: 'Chalk Mastery',
-    enhancedEmoji: '🕷️',
-    enhancedColor: 0x8a8fa0,
+    name: 'Paint Mastery',
+    enhancedEmoji: '☯️',
+    enhancedColor: 0xfaf8f0,
     requirements: [
       {
-        key: 'blastDamage',
-        label: 'Detonation Artist',
-        howTo: 'Deal 300 damage with Chalk Ward (Click) and Explosive Chalk (E) — every white sheet, every link of a red line and every enclosure counts',
-        target: 300,
-      },
-      {
-        key: 'permaBlocks',
-        label: 'The Blue Wall',
-        howTo: 'Rub shots out of the air with the blue line — every projectile Perma-Block eats counts one (needs the R+ Perma-Block upgrade)',
+        key: 'wallBlocks',
+        label: 'Set Like Stone',
+        howTo: 'Block 50 projectiles with Congealed Paint (R) — shots, splotches and paint chip pellets all count',
         target: 50,
       },
       {
-        key: 'shieldAbsorbed',
-        label: 'Behind The Ring',
-        howTo: 'Have a Chalk Shield (F) eat 200 damage for you — blocked shots, absorbed hits and bodies grinding on it all count',
-        target: 200,
+        key: 'stillLifes',
+        label: 'Life Drawing',
+        howTo: 'Turn 10 enemies into a Still Life (F)',
+        target: 10,
       },
       {
-        key: 'burnDamage',
-        label: 'Ground In',
-        howTo: 'Deal 200 damage by burning entities standing on your chalk — Masterpiece orange and the blue line',
-        target: 200,
+        key: 'mpKills',
+        label: 'Gallery Opening',
+        howTo: 'Kill 3 enemies with red Masterpiece (Q) paint',
+        target: 3,
+      },
+      {
+        key: 'orangeHits',
+        label: 'Volatile',
+        howTo: 'Blow up 45 enemies with Volatile Orange (E) — each enemy a line damages counts once',
+        target: 45,
       },
     ],
     enhancements: [
       {
-        id: 'chalk-smudge',
-        name: 'Chalk Smudge',
-        description: 'Passive: your hand is not as clean as it looks. Every few metres of chalk you lay down leaves a smudge behind it — and a moment later the smudge grows six little legs and walks off the line to go and find whoever you were drawing at.\n\nWhat a smudge is depends entirely on what it was smudged off. White ones bite for 8 and are gone. Red ones do not bite at all: they burst for 15 in a 46px circle. Blue ones are rare, because the blue line is only half a second long — but a blue smudge never dies. It bites for 8 every 1.4 seconds and then goes looking for the next one, for the rest of the match.\n\nSmudges shed from a Chalk Shield window are a different animal: long chalk bars on legs that patrol around you and eat shots out of the air. With Supreme Shield you can smudge them in any of the three sticks — red bars block *and* burst, and blue bars are permanent walls that never run out of blocks.\n\nAnd during a Masterpiece the palette decides what crawls off it. Green smudges do not attack at all — they follow you instead, healing 5 a second inside 74px, and fade after 8 seconds. Orange ones bite for 15 and set fire. Teal ones are 2.6× faster. Crimson ones are less than half speed and hit for 25.\n\nOne smudge per 9 marks of chalk (one per 22 for the blue line), 24 on the floor at once.',
+        id: 'paint-unfinished',
+        name: 'Unfinished Study',
+        description: 'Passive: still on the easel. This passive is coming in a later update and does nothing yet.',
       },
       {
-        id: 'living-chalk',
-        name: 'Living Chalk',
+        id: 'yin-yang',
+        name: 'Yin-Yang',
         bindable: true,
-        hudDescription: 'A circle in front of you to draw in for 3s — whatever you draw stands up and hunts. Shapes decide what it is',
-        description: 'A small circle opens on the floor in front of you, and for three seconds your cursor may draw inside it and nowhere else. A moment after your hand comes off the board, the drawing stands up on legs and goes looking for somebody.\n\nIt starts at 35 health, 15 damage a bite, and it is *made of what you drew*. The shapes in it are the build:\n\n• Triangles — +10 damage each.\n• Circles — +34 speed each.\n• Squares — +20 health each.\n\nThey do not have to be neat. A closed loop is read for how round it is and which of its corner counts is strongest, so a wonky three-sided scribble is a triangle and a wobbly ring is a circle. Draw several and they all count.\n\nThe stick matters as much as the shape. The window starts in green, and the three keys you did not bind this over swap you into Explosive Chalk (more damage — up to +60% if the whole thing is red), Perma-Chalk (up to double health) or Chalk Shield (up to 45 points of shield on it that soak shots before its health does).\n\nOnly one of yours may be alive at a time; casting again rubs out the last one. It lives 30 seconds or until something kills it. 21 second cooldown.',
+        excludeSlots: ['e'],
+        hudDescription: '3.5s to paint the ability bars — white on yours recharges them faster, black on theirs slower',
+        description: 'For three and a half seconds your brush paints on cooldown bars instead of the floor. Hold the mouse over your own ability bars to paint them white, or over your opponent\'s — their tray appears at the top of the screen — to paint them black.\n\nOnly the bars you painted are touched. A fully white bar recharges twice as fast; a fully black one recharges at half speed. A few strokes is a little; covering the whole bar is the most.\n\nThe paint flakes off 30 seconds after it was laid. In Invasion there is no opponent tray, so black paint goes on the horde\'s one bar and slows every husk\'s attacks instead.\n\n40 second cooldown.',
       },
     ],
   },
@@ -2572,6 +2573,60 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         bindable: true,
         hudDescription: 'Throw out a 25 HP test dummy tied to you by a green link. Until it dies you cannot be hurt — every hit runs down the link into it — and bots switch to attacking it',
         description: 'Throw out a **crash-test dummy**, tied to you by a faint **green link**. It has **25 HP**.\n\nUntil the dummy dies, **you cannot be hurt**: every hit that would land on you runs down the link and into the dummy instead. Bots and husks know it — they **switch to attacking the dummy**, and shots that hit it stop there.\n\nIt stands for 12 seconds if nobody breaks it, and it takes your own airdrop for you, like the bunker does.\n\n16 second cooldown.',
+      },
+    ],
+  },
+  // Quantum's mastery is unlike every other: its three enhancements are not a passive and a
+  // bindable of Quantum's own but three *permissions* on the customization page — see
+  // `QuantumLoadout.ts`. None of them is bindable, so the generic mastery loadout section
+  // (drag a chip onto R/F/Q) stays empty for it; the sixth key is a slot of its own.
+  quantum: {
+    elementId: 'quantum',
+    name: 'Quantum Mastery',
+    enhancedEmoji: '🌀',
+    enhancedColor: 0x2a7f8a,
+    requirements: [
+      {
+        key: 'entangled',
+        label: 'Many Worlds',
+        howTo: 'Entangle 8 elements in the Entanglement Lab (Fire and Water count)',
+        target: 8,
+        isBest: true,
+      },
+      {
+        key: 'shifts',
+        label: 'Collapse',
+        howTo: "Shift element 250 times mid-fight by pressing another slot's key",
+        target: 250,
+      },
+      {
+        key: 'wins',
+        label: 'Superposition',
+        howTo: 'Win 10 fights as Quantum',
+        target: 10,
+      },
+      {
+        key: 'spreadWins',
+        label: 'Full Spread',
+        howTo: 'Win 5 fights as Quantum having used all five slots in the fight',
+        target: 5,
+      },
+    ],
+    enhancements: [
+      {
+        id: 'borrowed-passive',
+        name: 'Borrowed Passive',
+        description: "Carry one mastery passive from any entangled element whose mastery you have completed — Fire's Burning Body, Air's dodge, whichever one you choose on Quantum's customization page. It is always on, like it would be on its own element.",
+      },
+      {
+        id: 'sixth-slot',
+        name: 'Sixth Slot',
+        description: 'A sixth key, G, carrying any mastery ability from any entangled element whose mastery you have completed. Pressing G makes you that element for the cast, exactly as the five slots do; the ability keeps its own cooldown.',
+      },
+      {
+        id: 'alternate-collapse',
+        name: 'Alternate Collapse',
+        description: "Your Q slot can be switched to its element's alternate ultimate, when that element has one unlocked.",
       },
     ],
   },

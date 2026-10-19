@@ -29,6 +29,10 @@ import { fillDiamond } from './Shapes';
 import { Sfx } from '../audio';
 import { Ability } from '../elements/Ability';
 import {
+  QUANTUM_SLOTS, QuantumLoadout, QuantumSlot, SIXTH_SLOT_KEY, getQuantumLoadout, isSlotElementAllowed,
+  passiveEnhancements, slotAbility, slotUpgradeOwned,
+} from '../data/QuantumLoadout';
+import {
   CodexEffect, PassiveCodexEntry, SubjectCodexEntry, TAG_STYLE,
   codexCoverage, getAbilityCodex, getMasteryCodex, getPassiveCodex, getPerkCodex,
   passiveSlug, usesLegacyPassives,
@@ -83,12 +87,8 @@ export class ElementPanels {
   /** Redraw the host's element cards — mastery toggles and skins change what a card shows. */
   private onDirty: () => void;
 
-  /** Quantum only: the half of the bond the customization page is currently loading out. */
-  private customizeHalf: string | null = null;
-  /** True while the customization page has been handed over to the bond builder. */
-  private bondEditing = false;
-  /** First half clicked in the bond builder, waiting for its partner. */
-  private bondDraftFirst: string | null = null;
+  /** Quantum only: the picker that currently owns the customization page — a slot's, the sixth key's, or the passive's. */
+  private slotEditing: QuantumSlot | 'x6' | 'passive' | null = null;
   // Preserves scroll position across showCustomizeScreen rebuilds triggered by toggles/equips.
   private customizeScrollY = 0;
   // Preserves scroll position across showMasteryScreen rebuilds triggered by bind/clear actions.
@@ -131,11 +131,10 @@ export class ElementPanels {
     this.showMasteryScreen(elementId, width, height, cx);
   }
 
-  /** Opens the customization page from the top, with any half-built bond discarded. */
+  /** Opens the customization page from the top, with any open slot picker closed. */
   openCustomize(elementId: string, width: number, height: number, cx: number): void {
     this.customizeScrollY = 0;
-    this.bondEditing = false;
-    this.bondDraftFirst = null;
+    this.slotEditing = null;
     this.showCustomizeScreen(elementId, width, height, cx);
   }
 
@@ -1474,32 +1473,20 @@ export class ElementPanels {
    * Every action persists immediately via PlayerData and rebuilds the overlay in place
    * (scroll offset preserved via customizeScrollY, like the mastery screen does).
    */
-  /**
-   * `screenId` is the card that was clicked; `elementId` below is whose loadout is actually
-   * being edited. They differ only for Quantum, which owns no mastery, perk, upgrade or skin
-   * of its own — it fights as the two elements it carries, so its page is a pair of tabs over
-   * those halves' loadouts rather than four empty sections.
-   */
-  showCustomizeScreen(screenId: string, width: number, height: number, cx: number): void {
+  /** Quantum's page is its loadout, not a mastery/perk/upgrade/skin sheet — it gets its own builder. */
+  showCustomizeScreen(elementId: string, width: number, height: number, cx: number): void {
+    if (elementId === 'quantum') {
+      this.showQuantumCustomizeScreen(width, height, cx);
+      return;
+    }
     this.closeElementInfo();
 
-    const element = ELEMENT_DATA_MAP[screenId];
+    const element = ELEMENT_DATA_MAP[elementId];
     if (!element) return;
-
-    // Falls back to the starter bond so the page still works on a save that has never
-    // walked through the bond phase — that pair is granted, so it is always a real loadout.
-    const bond = screenId === 'quantum'
-      ? (PlayerData.getQuantumBond() ?? PlayerData.STARTER_BOND)
-      : null;
-    if (bond && (this.customizeHalf === null || !bond.includes(this.customizeHalf))) {
-      this.customizeHalf = bond[0];
-    }
-    const elementId = bond ? this.customizeHalf as string : screenId;
-    const dataElement = ELEMENT_DATA_MAP[elementId] ?? element;
-    const elemColor = '#' + dataElement.color.toString(16).padStart(6, '0');
+    const elemColor = '#' + element.color.toString(16).padStart(6, '0');
 
     const HDR_BOT = 84;
-    const SCROLL_TOP = bond ? 130 : 96;
+    const SCROLL_TOP = 96;
     const SCROLL_BOT = height - 44;
     const SCROLL_H = SCROLL_BOT - SCROLL_TOP;
 
@@ -1514,10 +1501,7 @@ export class ElementPanels {
     }).setOrigin(0.5).setDepth(51);
     this.infoOverlayObjects.push(header);
 
-    const halfName = (id: string) => ELEMENT_DATA_MAP[id]?.name ?? id;
-    const subHdr = this.scene.add.text(cx, 62, bond
-      ? `— carrying ${halfName(bond[0])} + ${halfName(bond[1])} · load out each half —`
-      : '— mastery · perk · upgrades · skin —', {
+    const subHdr = this.scene.add.text(cx, 62, '— mastery · perk · upgrades · skin —', {
       fontSize: '11px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#555577',
     }).setOrigin(0.5).setDepth(51);
     this.infoOverlayObjects.push(subHdr);
@@ -1531,50 +1515,10 @@ export class ElementPanels {
       label: 'BACK', icon: '◄', fontSize: 12, variant: 'quiet', accent: C.arcane,
       depth: 56, cut: 8,
       onClick: () => {
-        this.bondEditing = false;
-        this.bondDraftFirst = null;
         this.closeElementInfo();
         this.onDirty();
       },
     }).container);
-
-    // ── Bond half tabs (Quantum only) — fixed above the scroll window ───
-    if (bond) {
-      const tabW = 188, tabH = 28, tabGap = 10;
-      const totalW = bond.length * tabW + (bond.length - 1) * tabGap;
-      bond.forEach((halfId, hi) => {
-        const tx = cx - totalW / 2 + tabW / 2 + hi * (tabW + tabGap);
-        const ty = 106;
-        const selected = halfId === elementId;
-        const halfEl = ELEMENT_DATA_MAP[halfId];
-        const accent = halfEl?.color ?? C.arcane;
-        const plate = addCardPlate(this.scene, {
-          x: tx, y: ty, w: tabW, h: tabH, accent, cut: 8, depth: 55, muted: !selected,
-        });
-        if (selected) plate.paint('active');
-        const lbl = this.scene.add.text(tx, ty,
-          `${halfEl?.emoji ?? '◆'}  ${halfName(halfId).toUpperCase()}${hi === 0 ? '  (start)' : ''}`, {
-            fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
-            color: selected ? hex(mix(accent, 0xffffff, 0.6)) : '#666677',
-          }).setOrigin(0.5).setDepth(57);
-        const hit = this.scene.add.rectangle(tx, ty, tabW, tabH, 0xffffff, 0)
-          .setDepth(56).setInteractive({ useHandCursor: true });
-        hit
-          .on('pointerover', () => { if (!selected) plate.paint('hover'); })
-          .on('pointerout', () => plate.paint(selected ? 'active' : 'idle'))
-          .on('pointerdown', () => {
-            if (selected) return;
-            this.customizeHalf = halfId;
-            this.customizeScrollY = 0;
-            // Switching halves is a loadout action, so it leaves the bond builder.
-            this.bondEditing = false;
-            this.bondDraftFirst = null;
-            this.showCustomizeScreen(screenId, width, height, cx);
-          });
-        this.infoOverlayObjects.push(plate.g, lbl, hit);
-      });
-    }
-
     const scrollContainer = this.scene.add.container(0, SCROLL_TOP).setDepth(51);
     this.infoOverlayObjects.push(scrollContainer);
 
@@ -1588,7 +1532,7 @@ export class ElementPanels {
     const COL_W = width - 80;
     let innerY = 4;
 
-    const rebuild = () => this.showCustomizeScreen(screenId, width, height, cx);
+    const rebuild = () => this.showCustomizeScreen(elementId, width, height, cx);
     const inView = (localY: number) => this.isInScrollWindow(scrollContainer, localY, SCROLL_TOP, SCROLL_BOT);
 
     const sectionHdr = (text: string, color: string) => {
@@ -1599,11 +1543,7 @@ export class ElementPanels {
       innerY += 20;
     };
 
-    /**
-     * Closes out the page: scroll extent, wheel handler and the overflow hint. Declared
-     * rather than inlined at the bottom because the bond builder returns early — while it is
-     * open it *is* the page, and the loadout sections below it would only be in the way.
-     */
+    /** Closes out the page: scroll extent, wheel handler and the overflow hint. */
     const finishScroll = (): void => {
       const maxScroll = Math.max(0, innerY - SCROLL_H);
       let scrollY = Phaser.Math.Clamp(this.customizeScrollY, 0, maxScroll);
@@ -1629,130 +1569,12 @@ export class ElementPanels {
       electricity: '⚡', slime: '🟢', fate: '🃏', sound: '🔊', light: '✨',
     };
 
-    // ── BOND (Quantum only) ─────────────────────────────────────────
-    // The pair Quantum carries is built here, not at the element roster: it is loadout, and
-    // it belongs next to the mastery, perk and skin of the two halves it decides.
-    if (bond) {
-      sectionHdr('— BOND —', '#7df9ff');
-
-      if (this.bondEditing) {
-        innerY = this.renderBondBuilder(scrollContainer, cx, COL_X, COL_W, innerY, inView, rebuild);
-        finishScroll();
-        return;
-      }
-
-      const rowH = 46;
-      const rowLocalY = innerY + rowH / 2;
-      const rowBg = this.overlayRow(cx, rowLocalY, COL_W, rowH - 6, 0x7df9ff).g;
-      const ea = ELEMENT_DATA_MAP[bond[0]];
-      const eb = ELEMENT_DATA_MAP[bond[1]];
-      const pairLbl = this.scene.add.text(COL_X + 14, rowLocalY,
-        `${ea?.emoji ?? '◆'} ${halfName(bond[0]).toUpperCase()}   ⇄   ${eb?.emoji ?? '◆'} ${halfName(bond[1]).toUpperCase()}`, {
-          fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#9fdde6',
-        }).setOrigin(0, 0.5);
-      scrollContainer.add([rowBg, pairLbl]);
-
-      // Two buttons on the right of the carried row: flip which half you spawn as, or
-      // throw the pair away and build another.
-      const mkBtn = (label: string, xRight: number, w: number, onClick: () => void) => {
-        const bx = COL_X + COL_W - xRight - w / 2;
-        const b = this.scene.add.rectangle(bx, rowLocalY, w, 24, 0x11333a, 0.95)
-          .setStrokeStyle(2, 0x3f8f9c, 0.9).setInteractive({ useHandCursor: true });
-        const l = this.scene.add.text(bx, rowLocalY, label, {
-          fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#9fdde6',
-        }).setOrigin(0.5);
-        b.on('pointerover', () => b.setStrokeStyle(2, 0xffffff, 1))
-          .on('pointerout',  () => b.setStrokeStyle(2, 0x3f8f9c, 0.9))
-          .on('pointerdown', () => { if (inView(rowLocalY)) onClick(); });
-        scrollContainer.add([b, l]);
-      };
-      mkBtn('⇄ SWAP START', 118, 104, () => {
-        PlayerData.setQuantumBond(bond[1], bond[0]);
-        this.customizeHalf = bond[1];
-        rebuild();
-      });
-      mkBtn('CHANGE ▸', 14, 92, () => {
-        this.bondEditing = true;
-        this.bondDraftFirst = null;
-        this.customizeScrollY = 0;
-        rebuild();
-      });
-      innerY += rowH;
-
-      const caption = this.scene.add.text(COL_X + 14, innerY + 2,
-        `Fights start as ${halfName(bond[0])} — dodge collapses to ${halfName(bond[1])} and back. `
-        + 'Each half keeps its own mastery, perk, upgrades and skin below.', {
-          fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#556677',
-          wordWrap: { width: COL_W - 28 }, lineSpacing: 2,
-        });
-      scrollContainer.add(caption);
-      innerY += caption.height + 16;
-    }
-
     // ── MASTERY ─────────────────────────────────────────────────────
     sectionHdr('— MASTERY —', '#ffcc00');
-    const masteryDef = getMasteryDef(elementId);
-    if (!masteryDef) {
-      const soon = this.scene.add.text(cx, innerY + 8, 'Mastery for this element is coming soon.', {
-        fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#555577',
-      }).setOrigin(0.5);
-      scrollContainer.add(soon);
-      innerY += 30;
-    } else {
-      const complete = isMasteryComplete(elementId);
-      const enabled = PlayerData.isMasteryEnabled(elementId);
-      const rowH = 44;
-      const rowBg = this.overlayRow(cx, innerY + rowH / 2, COL_W, rowH - 6, C.gold, !enabled).g;
-      const nameText = this.scene.add.text(COL_X + 14, innerY + rowH / 2 - 3, `${masteryDef.enhancedEmoji} ${masteryDef.name}`, {
-        fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: complete ? '#ffcc00' : '#777788',
-      }).setOrigin(0, 0.5);
-      scrollContainer.add([rowBg, nameText]);
-
-      if (!complete) {
-        const lockLbl = this.scene.add.text(COL_X + COL_W - 14, innerY + rowH / 2 - 3, '🔒 Complete challenges to unlock', {
-          fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#665533',
-        }).setOrigin(1, 0.5);
-        scrollContainer.add(lockLbl);
-      } else {
-        const rowLocalY = innerY + rowH / 2;
-        const tglW = 110, tglH = 26;
-        const tglX = COL_X + COL_W - 14 - tglW / 2;
-        const tglBg = this.scene.add.rectangle(tglX, rowLocalY - 3, tglW, tglH,
-          enabled ? 0x225533 : 0x333344, 0.95)
-          .setStrokeStyle(2, enabled ? 0x44cc66 : 0x555577, 0.9)
-          .setInteractive({ useHandCursor: true });
-        const tglLbl = this.scene.add.text(tglX, rowLocalY - 3, enabled ? '✓ ENABLED' : 'DISABLED', {
-          fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
-          color: enabled ? '#88ff88' : '#8888aa',
-        }).setOrigin(0.5);
-        tglBg
-          .on('pointerover', () => tglBg.setStrokeStyle(2, 0xffffff, 1))
-          .on('pointerout',  () => tglBg.setStrokeStyle(2, enabled ? 0x44cc66 : 0x555577, 0.9))
-          .on('pointerdown', () => {
-            if (!inView(rowLocalY)) return;
-            PlayerData.setMasteryEnabled(elementId, !enabled);
-            rebuild();
-          });
-        scrollContainer.add([tglBg, tglLbl]);
-      }
-      innerY += rowH;
-
-      const link = this.scene.add.text(COL_X + 14, innerY + 4, 'View challenges & mastery loadout ▸', {
-        fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#66ccff',
-      }).setInteractive({ useHandCursor: true });
-      const linkLocalY = innerY + 4;
-      link.on('pointerover', () => link.setColor('#aaeeff'));
-      link.on('pointerout',  () => link.setColor('#66ccff'));
-      link.on('pointerdown', () => {
-        if (!inView(linkLocalY)) return;
-        this.masteryScrollY = 0;
-        this.showMasteryScreen(elementId, width, height, cx);
-      });
-      scrollContainer.add(link);
-      innerY += 26;
-    }
+    innerY = this.renderMasterySection({
+      container: scrollContainer, elementId, cx, colX: COL_X, colW: COL_W, innerY, width, height, inView, rebuild,
+    });
     innerY += 12;
-
     // ── ULTIMATE (alternate Q — only once it is unlocked) ─────────────
     const altUlt = ALT_ULTS[elementId];
     if (altUlt && PlayerData.isAltUltUnlocked(elementId)) {
@@ -2038,106 +1860,593 @@ export class ElementPanels {
   }
 
   /**
-   * Quantum's bond builder, drawn into the customization page's scroll container.
-   *
-   * Two picks, one roster each time: the first half is anything that appears in a researched
-   * pair, the second is filtered to that half's researched partners — so there is no way to
-   * walk into a dead end. The first pick is the half you spawn as, which is why it is asked
-   * for first rather than sorted out afterwards. Returns the new content height.
+   * The MASTERY section's body, shared by every element's page and Quantum's: the enable
+   * toggle (or the lock) and the link to the challenges page. Returns the new innerY.
    */
-  private renderBondBuilder(
+  private renderMasterySection(opts: {
+    container: Phaser.GameObjects.Container; elementId: string; cx: number; colX: number; colW: number;
+    innerY: number; width: number; height: number; inView: (localY: number) => boolean; rebuild: () => void;
+  }): number {
+    const { container: scrollContainer, elementId, cx, colX: COL_X, colW: COL_W, width, height, inView, rebuild } = opts;
+    let innerY = opts.innerY;
+    const masteryDef = getMasteryDef(elementId);
+    if (!masteryDef) {
+      const soon = this.scene.add.text(cx, innerY + 8, 'Mastery for this element is coming soon.', {
+        fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#555577',
+      }).setOrigin(0.5);
+      scrollContainer.add(soon);
+      innerY += 30;
+    } else {
+      const complete = isMasteryComplete(elementId);
+      const enabled = PlayerData.isMasteryEnabled(elementId);
+      const rowH = 44;
+      const rowBg = this.overlayRow(cx, innerY + rowH / 2, COL_W, rowH - 6, C.gold, !enabled).g;
+      const nameText = this.scene.add.text(COL_X + 14, innerY + rowH / 2 - 3, `${masteryDef.enhancedEmoji} ${masteryDef.name}`, {
+        fontSize: '13px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: complete ? '#ffcc00' : '#777788',
+      }).setOrigin(0, 0.5);
+      scrollContainer.add([rowBg, nameText]);
+
+      if (!complete) {
+        const lockLbl = this.scene.add.text(COL_X + COL_W - 14, innerY + rowH / 2 - 3, '🔒 Complete challenges to unlock', {
+          fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#665533',
+        }).setOrigin(1, 0.5);
+        scrollContainer.add(lockLbl);
+      } else {
+        const rowLocalY = innerY + rowH / 2;
+        const tglW = 110, tglH = 26;
+        const tglX = COL_X + COL_W - 14 - tglW / 2;
+        const tglBg = this.scene.add.rectangle(tglX, rowLocalY - 3, tglW, tglH,
+          enabled ? 0x225533 : 0x333344, 0.95)
+          .setStrokeStyle(2, enabled ? 0x44cc66 : 0x555577, 0.9)
+          .setInteractive({ useHandCursor: true });
+        const tglLbl = this.scene.add.text(tglX, rowLocalY - 3, enabled ? '✓ ENABLED' : 'DISABLED', {
+          fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+          color: enabled ? '#88ff88' : '#8888aa',
+        }).setOrigin(0.5);
+        tglBg
+          .on('pointerover', () => tglBg.setStrokeStyle(2, 0xffffff, 1))
+          .on('pointerout',  () => tglBg.setStrokeStyle(2, enabled ? 0x44cc66 : 0x555577, 0.9))
+          .on('pointerdown', () => {
+            if (!inView(rowLocalY)) return;
+            PlayerData.setMasteryEnabled(elementId, !enabled);
+            rebuild();
+          });
+        scrollContainer.add([tglBg, tglLbl]);
+      }
+      innerY += rowH;
+
+      const link = this.scene.add.text(COL_X + 14, innerY + 4, 'View challenges & mastery loadout ▸', {
+        fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#66ccff',
+      }).setInteractive({ useHandCursor: true });
+      const linkLocalY = innerY + 4;
+      link.on('pointerover', () => link.setColor('#aaeeff'));
+      link.on('pointerout',  () => link.setColor('#66ccff'));
+      link.on('pointerdown', () => {
+        if (!inView(linkLocalY)) return;
+        this.masteryScrollY = 0;
+        this.showMasteryScreen(elementId, width, height, cx);
+      });
+      scrollContainer.add(link);
+      innerY += 26;
+    }
+    return innerY;
+  }
+
+  // ── Quantum ──────────────────────────────────────────────────────
+
+  /**
+   * Quantum's customization page. Quantum owns no mastery passive, perk, upgrade or skin of
+   * its own to toggle, so its page is its loadout: the five keys and what sits on each, with
+   * Third State's per-slot upgrade switches and Quantum Mastery's three additions — the
+   * borrowed passive, the sixth key, the alternate Q — appearing as they are earned. Which of
+   * those count is decided in `QuantumLoadout.ts`; this page only shows and edits the choices.
+   */
+  private showQuantumCustomizeScreen(width: number, height: number, cx: number): void {
+    this.closeElementInfo();
+    const element = ELEMENT_DATA_MAP.quantum;
+    if (!element) return;
+    const lo = getQuantumLoadout();
+    const Q = '#7df9ff';
+
+    const HDR_BOT = 84;
+    const SCROLL_TOP = 96;
+    const SCROLL_BOT = height - 44;
+    const SCROLL_H = SCROLL_BOT - SCROLL_TOP;
+
+    const bg = this.scene.add.rectangle(cx, height / 2, width, height, 0x04040c, 0.97).setDepth(50);
+    bg.setInteractive();
+    this.infoOverlayObjects.push(bg);
+
+    const header = this.scene.add.text(cx, 34, '⚙  QUANTUM CUSTOMIZATION', {
+      fontSize: '26px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+      color: Q, stroke: '#000000', strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(51);
+    const subtitle = lo.mastered ? '— abilities · upgrades · mastery · ultimate —'
+      : lo.thirdState ? '— abilities · upgrades · mastery —' : '— abilities · mastery —';
+    const subHdr = this.scene.add.text(cx, 62, subtitle, {
+      fontSize: '11px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#555577',
+    }).setOrigin(0.5).setDepth(51);
+    const divLine = this.scene.add.line(cx, HDR_BOT, -width / 2 + 40, 0, width / 2 - 40, 0, C.arcane, 0.45).setDepth(51).setLineWidth(1);
+    this.infoOverlayObjects.push(header, subHdr, divLine);
+
+    this.infoOverlayObjects.push(addButton(this.scene, {
+      x: 66, y: 32, w: 100, h: 32,
+      label: 'BACK', icon: '◄', fontSize: 12, variant: 'quiet', accent: C.arcane,
+      depth: 56, cut: 8,
+      onClick: () => {
+        // A picker's BACK is the picker's cancel; the page's BACK leaves the page.
+        if (this.slotEditing) { this.slotEditing = null; this.showQuantumCustomizeScreen(width, height, cx); return; }
+        this.closeElementInfo();
+        this.onDirty();
+      },
+    }).container);
+
+    const scrollContainer = this.scene.add.container(0, SCROLL_TOP).setDepth(51);
+    this.infoOverlayObjects.push(scrollContainer);
+    const maskGfx = this.scene.add.graphics();
+    maskGfx.fillStyle(0xffffff, 1);
+    maskGfx.fillRect(0, SCROLL_TOP, width, SCROLL_H);
+    scrollContainer.setMask(maskGfx.createGeometryMask());
+    this.infoOverlayObjects.push(maskGfx);
+
+    const COL_X = 40;
+    const COL_W = width - 80;
+    let innerY = 4;
+    const rebuild = () => this.showQuantumCustomizeScreen(width, height, cx);
+    const inView = (localY: number) => this.isInScrollWindow(scrollContainer, localY, SCROLL_TOP, SCROLL_BOT);
+    const sectionHdr = (text: string, color: string) => {
+      const t = this.scene.add.text(cx, innerY, text, {
+        fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color,
+      }).setOrigin(0.5);
+      scrollContainer.add(t);
+      innerY += 20;
+    };
+    const finishScroll = (): void => {
+      const maxScroll = Math.max(0, innerY - SCROLL_H);
+      let scrollY = Phaser.Math.Clamp(this.customizeScrollY, 0, maxScroll);
+      this.customizeScrollY = scrollY;
+      scrollContainer.setY(SCROLL_TOP - scrollY);
+      this.infoScrollHandler = (_ptr: unknown, _over: unknown, _dx: unknown, deltaY: unknown) => {
+        scrollY = Phaser.Math.Clamp(scrollY + (deltaY as number) * 0.5, 0, maxScroll);
+        this.customizeScrollY = scrollY;
+        scrollContainer.setY(SCROLL_TOP - scrollY);
+      };
+      this.scene.input.on('wheel', this.infoScrollHandler);
+      if (maxScroll > 0) {
+        const hint = this.scene.add.text(width - 12, SCROLL_BOT + 6, '▼ scroll for more', {
+          fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#444466',
+        }).setOrigin(1, 0).setDepth(55);
+        this.infoOverlayObjects.push(hint);
+      }
+    };
+
+    // A picker owns the whole page while it is open — the rows it edits would only be in the way.
+    const picker = this.slotEditing;
+    if (picker === 'x6') {
+      sectionHdr(`— SIXTH SLOT  [${SIXTH_SLOT_KEY}] —`, '#ffcc00');
+      innerY = this.renderSixthPicker(scrollContainer, cx, COL_X, COL_W, innerY, lo, inView, rebuild);
+      finishScroll();
+      return;
+    }
+    if (picker === 'passive') {
+      sectionHdr('— BORROWED PASSIVE —', '#ffcc00');
+      innerY = this.renderPassivePicker(scrollContainer, cx, COL_X, COL_W, innerY, lo, inView, rebuild);
+      finishScroll();
+      return;
+    }
+    if (picker) {
+      sectionHdr('— ABILITIES —', Q);
+      innerY = this.renderSlotPicker(scrollContainer, cx, COL_X, COL_W, innerY, picker, lo, inView, rebuild);
+      finishScroll();
+      return;
+    }
+
+    // ── ABILITIES ──
+    sectionHdr('— ABILITIES —', Q);
+    innerY = this.renderQuantumSlots(scrollContainer, cx, COL_X, COL_W, innerY, lo, inView, rebuild);
+
+    // ── ULTIMATE (mastery: the Q slot's alternate) ──
+    if (lo.mastered) {
+      sectionHdr('— ULTIMATE —', '#ff9944');
+      const qEl = lo.slots.q;
+      const altUlt = ALT_ULTS[qEl];
+      const qName = ELEMENT_DATA_MAP[qEl]?.name ?? qEl;
+      if (altUlt && PlayerData.isAltUltUnlocked(qEl)) {
+        const choices: Array<{ label: string; on: boolean; pick: boolean }> = [
+          { label: `[Q] ${altUlt.baseName}  ·  base`, on: !lo.altQ, pick: false },
+          { label: `[Q] ${altUlt.emoji} ${altUlt.name}  ·  alternate`, on: lo.altQ, pick: true },
+        ];
+        for (const ch of choices) {
+          const rowH = 30;
+          const rowLocalY = innerY + rowH / 2;
+          const row = this.overlayRow(cx, rowLocalY, COL_W, rowH - 4, ch.on ? C.verdant : C.steel, !ch.on);
+          const lbl = this.scene.add.text(COL_X + 14, rowLocalY, `${ch.label}${ch.on ? '  ✓' : ''}`, {
+            fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
+            color: ch.on ? '#88ff88' : '#bbbbcc',
+          }).setOrigin(0, 0.5);
+          const rowHit = this.overlayRowHit(cx, rowLocalY, COL_W, rowH - 4);
+          rowHit
+            .on('pointerover', () => row.paint(true))
+            .on('pointerout',  () => row.paint(false))
+            .on('pointerdown', () => {
+              if (!inView(rowLocalY)) return;
+              Sfx.play('ui-equip');
+              PlayerData.setQuantumAltQ(ch.pick);
+              rebuild();
+            });
+          scrollContainer.add([row.g, lbl, rowHit]);
+          innerY += rowH + 2;
+        }
+        const blurb = this.scene.add.text(COL_X + 14, innerY + 2, altUlt.description, {
+          fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#998877',
+          wordWrap: { width: COL_W - 28 },
+        });
+        scrollContainer.add(blurb);
+        innerY += blurb.height + 14;
+      } else {
+        const none = this.scene.add.text(cx, innerY + 8, altUlt
+          ? `${qName}'s alternate ultimate is not unlocked yet — unlock it and it can be switched on here.`
+          : `${qName} has no alternate ultimate. Put an element that does on Q to use one.`, {
+          fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#555577',
+          wordWrap: { width: COL_W - 28 }, align: 'center',
+        }).setOrigin(0.5, 0);
+        scrollContainer.add(none);
+        innerY += none.height + 24;
+      }
+    }
+
+    // ── MASTERY ──
+    sectionHdr('— MASTERY —', '#ffcc00');
+    innerY = this.renderMasterySection({
+      container: scrollContainer, elementId: 'quantum', cx, colX: COL_X, colW: COL_W, innerY, width, height, inView, rebuild,
+    });
+    if (lo.mastered) {
+      // The borrowed passive. The sixth key is a slot, so it lives in the ABILITIES list above.
+      const rowH = 40;
+      const y = innerY + rowH / 2;
+      const pEl = lo.passive ? ELEMENT_DATA_MAP[lo.passive] : null;
+      const accent = pEl?.color ?? 0xffcc00;
+      const rowBg = this.overlayRow(cx, y, COL_W, rowH - 6, accent, !pEl).g;
+      const key = this.scene.add.text(COL_X + 14, y, 'PASSIVE', {
+        fontSize: '11px', fontFamily: FONT_DISPLAY, color: '#ffcc00',
+      }).setOrigin(0, 0.5);
+      const who = this.scene.add.text(COL_X + 92, y, pEl ? `${pEl.emoji} ${pEl.name.toUpperCase()}` : '— none —', {
+        fontSize: '12px', fontFamily: FONT_DISPLAY, color: pEl ? hex(mix(accent, 0xffffff, 0.5)) : '#777788',
+      }).setOrigin(0, 0.5);
+      const names = lo.passive ? passiveEnhancements(lo.passive).map((e) => e.name).join(' + ') : '';
+      const what = this.scene.add.text(COL_X + 250, y, pEl ? names : 'borrow a mastery passive from an entangled, mastered element', {
+        fontSize: '11px', fontFamily: FONT_UI, color: pEl ? '#aab4c0' : '#556677',
+        wordWrap: { width: COL_W - 250 - 120 },
+      }).setOrigin(0, 0.5);
+      scrollContainer.add([rowBg, key, who, what]);
+      this.addChangeButton(scrollContainer, COL_X + COL_W - 14 - 46, y, inView, () => {
+        this.slotEditing = 'passive';
+        this.customizeScrollY = 0;
+        rebuild();
+      });
+      innerY += rowH;
+      const note = this.scene.add.text(COL_X + 14, innerY + 2,
+        `Mastered Quantum carries one borrowed passive, a sixth key [${SIXTH_SLOT_KEY}] for any mastery ability (set it in `
+        + 'the abilities list above), and can switch its Q slot to an alternate ultimate.', {
+          fontSize: '10px', fontFamily: FONT_UI, color: '#556677',
+          wordWrap: { width: COL_W - 28 }, lineSpacing: 2,
+        });
+      scrollContainer.add(note);
+      innerY += note.height + 12;
+    }
+    innerY += 12;
+
+    finishScroll();
+  }
+
+  /** The small cyan `CHANGE ▸` button that ends every editable Quantum row. */
+  private addChangeButton(
+    container: Phaser.GameObjects.Container, x: number, y: number,
+    inView: (localY: number) => boolean, onClick: () => void,
+  ): void {
+    const b = this.scene.add.rectangle(x, y, 92, 24, 0x11333a, 0.95)
+      .setStrokeStyle(2, 0x3f8f9c, 0.9).setInteractive({ useHandCursor: true });
+    const l = this.scene.add.text(x, y, 'CHANGE ▸', {
+      fontSize: '10px', fontFamily: FONT_DISPLAY, color: '#9fdde6',
+    }).setOrigin(0.5);
+    b.on('pointerover', () => b.setStrokeStyle(2, 0xffffff, 1))
+      .on('pointerout',  () => b.setStrokeStyle(2, 0x3f8f9c, 0.9))
+      .on('pointerdown', () => { if (inView(y)) onClick(); });
+    container.add([b, l]);
+  }
+
+  /**
+   * Quantum: one row per key — the element on it, the ability that puts there, Third State's
+   * upgrade switch for it, CHANGE. A mastered Quantum gets the sixth key's row underneath.
+   */
+  private renderQuantumSlots(
     container: Phaser.GameObjects.Container,
     cx: number, colX: number, colW: number, startY: number,
+    lo: QuantumLoadout,
     inView: (localY: number) => boolean,
     rebuild: () => void,
   ): number {
     let innerY = startY;
-    const first = this.bondDraftFirst;
-    const nameOf = (id: string) => ELEMENT_DATA_MAP[id]?.name ?? id;
+    const rowH = 40;
+    const changeX = colX + colW - 14 - 46;
+    const upgX = changeX - 46 - 10 - 35;
 
-    const prompt = this.scene.add.text(colX + 14, innerY, first
-      ? `Pick the second half — paired with ${nameOf(first)}.`
-      : 'Pick the first half. You start every fight as it; dodging collapses to the other.', {
-      fontSize: '11px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#9fdde6',
+    for (const slot of QUANTUM_SLOTS) {
+      const elId = lo.slots[slot];
+      const el = ELEMENT_DATA_MAP[elId];
+      const ab = slotAbility(elId, slot, slot === 'q' && lo.altQ);
+      const y = innerY + rowH / 2;
+      const accent = el?.color ?? 0x7df9ff;
+      const rowBg = this.overlayRow(cx, y, colW, rowH - 6, accent).g;
+      const key = this.scene.add.text(colX + 14, y, slot.toUpperCase(), {
+        fontSize: '11px', fontFamily: FONT_DISPLAY, color: '#7df9ff',
+      }).setOrigin(0, 0.5);
+      const who = this.scene.add.text(colX + 70, y, `${el?.emoji ?? '◆'} ${(el?.name ?? elId).toUpperCase()}`, {
+        fontSize: '12px', fontFamily: FONT_DISPLAY, color: hex(mix(accent, 0xffffff, 0.5)),
+      }).setOrigin(0, 0.5);
+      const what = this.scene.add.text(colX + 230, y, ab ? ab.name : '— no ability on this key —', {
+        fontSize: '11px', fontFamily: FONT_UI, color: ab ? '#aab4c0' : '#664444',
+        wordWrap: { width: upgX - 40 - (colX + 230) },
+      }).setOrigin(0, 0.5);
+      container.add([rowBg, key, who, what]);
+
+      // Third State: the slot's upgrade switch. Quantum's own kit has none to switch.
+      if (lo.thirdState && elId !== 'quantum') {
+        const upg = getElementUpgrades(elId).find((u) => u.slot === slot);
+        if (!upg) {
+          container.add(this.scene.add.text(upgX, y, 'no upgrade', {
+            fontSize: '9px', fontFamily: FONT_UI, color: '#444455',
+          }).setOrigin(0.5));
+        } else if (!slotUpgradeOwned(elId, slot)) {
+          container.add(this.scene.add.text(upgX, y, '🔒 shop', {
+            fontSize: '9px', fontFamily: FONT_UI, color: '#665533',
+          }).setOrigin(0.5));
+        } else {
+          const on = lo.upgrades[slot];
+          const tglBg = this.scene.add.rectangle(upgX, y, 70, 22, on ? 0x225533 : 0x333344, 0.95)
+            .setStrokeStyle(2, on ? 0x44cc66 : 0x555577, 0.9).setInteractive({ useHandCursor: true });
+          const tglLbl = this.scene.add.text(upgX, y, on ? `${slot.toUpperCase()}+ ON` : `${slot.toUpperCase()}+ OFF`, {
+            fontSize: '9px', fontFamily: FONT_DISPLAY, color: on ? '#88ff88' : '#8888aa',
+          }).setOrigin(0.5);
+          tglBg
+            .on('pointerover', () => tglBg.setStrokeStyle(2, 0xffffff, 1))
+            .on('pointerout',  () => tglBg.setStrokeStyle(2, on ? 0x44cc66 : 0x555577, 0.9))
+            .on('pointerdown', () => {
+              if (!inView(y)) return;
+              Sfx.play('ui-click');
+              PlayerData.setQuantumUpgradeOn(slot, !on);
+              rebuild();
+            });
+          container.add([tglBg, tglLbl]);
+        }
+      }
+
+      this.addChangeButton(container, changeX, y, inView, () => {
+        this.slotEditing = slot;
+        this.customizeScrollY = 0;
+        rebuild();
+      });
+      innerY += rowH;
+    }
+
+    // The sixth key — a slot like the others, carrying a mastery ability rather than a base one.
+    if (lo.mastered) {
+      const six = lo.sixth;
+      const el = six ? ELEMENT_DATA_MAP[six.elementId] : null;
+      const enh = six ? getEnhancement(six.elementId, six.enhId) : undefined;
+      const y = innerY + rowH / 2;
+      const accent = el?.color ?? 0xffcc00;
+      const rowBg = this.overlayRow(cx, y, colW, rowH - 6, accent, !six).g;
+      const key = this.scene.add.text(colX + 14, y, SIXTH_SLOT_KEY, {
+        fontSize: '11px', fontFamily: FONT_DISPLAY, color: '#ffcc00',
+      }).setOrigin(0, 0.5);
+      const who = this.scene.add.text(colX + 70, y, el ? `${el.emoji} ${el.name.toUpperCase()}` : '— empty —', {
+        fontSize: '12px', fontFamily: FONT_DISPLAY, color: el ? hex(mix(accent, 0xffffff, 0.5)) : '#777788',
+      }).setOrigin(0, 0.5);
+      const what = this.scene.add.text(colX + 230, y, enh ? `★ ${enh.name}` : 'any mastery ability from an entangled, mastered element', {
+        fontSize: '11px', fontFamily: FONT_UI, color: enh ? '#ffcc88' : '#556677',
+        wordWrap: { width: changeX - 60 - (colX + 230) },
+      }).setOrigin(0, 0.5);
+      container.add([rowBg, key, who, what]);
+      this.addChangeButton(container, changeX, y, inView, () => {
+        this.slotEditing = 'x6';
+        this.customizeScrollY = 0;
+        rebuild();
+      });
+      innerY += rowH;
+    }
+
+    const lines = [
+      "Click's element is the body you wear and what you start as. Pressing a key makes you that key's "
+      + 'element for the cast. Entangle more elements in the Lab ▸ Entanglement Lab.',
+    ];
+    if (!lo.thirdState) {
+      lines.push("Buy Third State in the Shop to switch on these abilities' upgrades and to slot Quantum's own kit.");
+    } else {
+      lines.push('An upgrade switch only appears for abilities whose upgrade you own on their own element.');
+    }
+    const caption = this.scene.add.text(colX + 14, innerY + 2, lines.join('\n'), {
+      fontSize: '10px', fontFamily: FONT_UI, color: '#556677',
+      wordWrap: { width: colW - 28 }, lineSpacing: 2,
+    });
+    container.add(caption);
+    return innerY + caption.height + 16;
+  }
+
+  /** One pick in a chip picker — see `renderChipPicker`. */
+  private renderChipPicker(
+    container: Phaser.GameObjects.Container,
+    cx: number, colX: number, colW: number, startY: number,
+    prompt: string,
+    chips: Array<{ label: string; sub: string; color: number; allowed: boolean; selected: boolean; onPick: () => void }>,
+    footer: string,
+    inView: (localY: number) => boolean,
+    rebuild: () => void,
+  ): number {
+    let innerY = startY;
+    const promptText = this.scene.add.text(colX + 14, innerY, prompt, {
+      fontSize: '11px', fontFamily: FONT_UI, color: '#9fdde6',
       wordWrap: { width: colW - 130 }, lineSpacing: 2,
     });
-    container.add(prompt);
+    container.add(promptText);
 
-    // Cancel steps back one pick at a time — out of the second half to the first, out of the
-    // first to the carried bond, which is never discarded until a new pair is complete.
     const cancelY = innerY + 10;
     const cancelBg = this.scene.add.rectangle(colX + colW - 14 - 46, cancelY, 92, 24, 0x2a1a1a, 0.95)
       .setStrokeStyle(2, 0x774444, 0.9).setInteractive({ useHandCursor: true });
-    const cancelLbl = this.scene.add.text(colX + colW - 14 - 46, cancelY, first ? '◄ FIRST HALF' : '✕ CANCEL', {
-      fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: '#ddaaaa',
+    const cancelLbl = this.scene.add.text(colX + colW - 14 - 46, cancelY, '✕ CANCEL', {
+      fontSize: '10px', fontFamily: FONT_DISPLAY, color: '#ddaaaa',
     }).setOrigin(0.5);
     cancelBg
       .on('pointerover', () => cancelBg.setStrokeStyle(2, 0xffffff, 1))
       .on('pointerout',  () => cancelBg.setStrokeStyle(2, 0x774444, 0.9))
       .on('pointerdown', () => {
         if (!inView(cancelY)) return;
-        if (this.bondDraftFirst) this.bondDraftFirst = null;
-        else this.bondEditing = false;
+        this.slotEditing = null;
         rebuild();
       });
     container.add([cancelBg, cancelLbl]);
-    innerY += Math.max(prompt.height, 24) + 14;
-
-    const roster = allSelectableElements()
-      .filter((e) => e.available && e.id !== 'quantum');
+    innerY += Math.max(promptText.height, 24) + 14;
 
     const COLS = 4;
     const gap = 8;
     const chipW = (colW - (COLS - 1) * gap) / COLS;
-    const chipH = 32;
-    roster.forEach((el, i) => {
+    const chipH = 40;
+    chips.forEach((chip, i) => {
       const col = i % COLS;
       const row = Math.floor(i / COLS);
       const bx = colX + col * (chipW + gap) + chipW / 2;
       const by = innerY + row * (chipH + gap) + chipH / 2;
-      // Greyed rather than hidden: seeing which elements you cannot pair yet is the whole
-      // reason to walk down to the Entanglement Lab.
-      const allowed = this.isBondPartnerAllowed(el.id) && el.id !== first;
-
-      const plate = this.scene.add.rectangle(bx, by, chipW, chipH, allowed ? 0x122029 : 0x15151c, 0.95)
-        .setStrokeStyle(2, allowed ? el.color : 0x333344, allowed ? 0.8 : 0.6);
-      const lbl = this.scene.add.text(bx, by, `${el.emoji} ${el.name.toUpperCase()}`, {
-        fontSize: '10px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
-        color: allowed ? '#ddeeff' : '#444455',
+      const stroke = chip.selected ? 0xffffff : chip.allowed ? chip.color : 0x333344;
+      const plate = this.scene.add.rectangle(bx, by, chipW, chipH,
+        chip.selected ? mix(chip.color, 0x000000, 0.6) : chip.allowed ? 0x122029 : 0x15151c, 0.95)
+        .setStrokeStyle(2, stroke, chip.allowed ? 0.9 : 0.6);
+      const lbl = this.scene.add.text(bx, by - 7, chip.label, {
+        fontSize: '10px', fontFamily: FONT_DISPLAY, color: chip.allowed ? '#ddeeff' : '#444455',
       }).setOrigin(0.5);
-      container.add([plate, lbl]);
+      const sub = this.scene.add.text(bx, by + 8, chip.sub, {
+        fontSize: '9px', fontFamily: FONT_UI, color: chip.selected ? '#ffffff' : chip.allowed ? '#8a9aaa' : '#444455',
+      }).setOrigin(0.5);
+      container.add([plate, lbl, sub]);
 
-      if (!allowed) return;
+      if (!chip.allowed) return;
       const hit = this.scene.add.rectangle(bx, by, chipW, chipH, 0xffffff, 0.001)
         .setInteractive({ useHandCursor: true });
       hit
         .on('pointerover', () => plate.setStrokeStyle(2, 0xffffff, 1))
-        .on('pointerout',  () => plate.setStrokeStyle(2, el.color, 0.8))
+        .on('pointerout',  () => plate.setStrokeStyle(2, stroke, 0.9))
         .on('pointerdown', () => {
           if (!inView(by)) return;
           Sfx.play('ui-equip');
-          if (!this.bondDraftFirst) {
-            this.bondDraftFirst = el.id;
-          } else {
-            PlayerData.setQuantumBond(this.bondDraftFirst, el.id);
-            this.customizeHalf = this.bondDraftFirst;
-            this.bondDraftFirst = null;
-            this.bondEditing = false;
-            this.customizeScrollY = 0;
-          }
+          chip.onPick();
+          this.slotEditing = null;
+          this.customizeScrollY = 0;
           rebuild();
         });
       container.add(hit);
     });
-    innerY += Math.ceil(roster.length / COLS) * (chipH + gap) + 6;
+    innerY += Math.ceil(chips.length / COLS) * (chipH + gap) + 6;
 
-    const footer = this.scene.add.text(cx, innerY, 'Greyed-out elements have no researched pair yet — research bonds in the Lab ▸ Entanglement Lab.', {
-      fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: '#555577',
+    const footerText = this.scene.add.text(cx, innerY, footer, {
+      fontSize: '9px', fontFamily: FONT_UI, color: '#555577', wordWrap: { width: colW - 28 }, align: 'center',
     }).setOrigin(0.5, 0);
-    container.add(footer);
-    innerY += footer.height + 12;
+    container.add(footerText);
+    return innerY + footerText.height + 12;
+  }
 
-    return innerY;
+  /** Quantum: the element roster for one slot, each chip naming the ability it would bring. */
+  private renderSlotPicker(
+    container: Phaser.GameObjects.Container,
+    cx: number, colX: number, colW: number, startY: number,
+    slot: QuantumSlot, lo: QuantumLoadout,
+    inView: (localY: number) => boolean,
+    rebuild: () => void,
+  ): number {
+    // Every element you can take into a fight, plus Quantum's own kit once Third State is
+    // bought. Un-entangled ones are greyed rather than hidden: seeing what you cannot slot yet
+    // is the whole reason to walk down to the Entanglement Lab.
+    const roster = allSelectableElements()
+      .filter((e) => e.available && (e.id !== 'quantum' || isSlotElementAllowed('quantum')));
+    const chips = roster.map((el) => {
+      const ab = slotAbility(el.id, slot, slot === 'q' && lo.altQ);
+      const allowed = isSlotElementAllowed(el.id);
+      return {
+        label: `${el.emoji} ${el.name.toUpperCase()}`,
+        sub: allowed ? (ab?.name ?? '—') : '🔒 not entangled',
+        color: el.color, allowed, selected: lo.slots[slot] === el.id,
+        onPick: () => PlayerData.setQuantumSlot(slot, el.id),
+      };
+    });
+    return this.renderChipPicker(container, cx, colX, colW, startY,
+      `Pick the element whose ${slot.toUpperCase()} ability sits on ${slot.toUpperCase()}.`,
+      chips, 'Greyed-out elements are not entangled yet — research them in the Lab ▸ Entanglement Lab.',
+      inView, rebuild);
+  }
+
+  /**
+   * Quantum Mastery: every mastery ability the sixth key may carry — one chip per bindable
+   * enhancement of every entangled element whose mastery is complete. Entangled elements whose
+   * mastery is not finished show greyed, so the page says what is still to be earned.
+   */
+  private renderSixthPicker(
+    container: Phaser.GameObjects.Container,
+    cx: number, colX: number, colW: number, startY: number,
+    lo: QuantumLoadout,
+    inView: (localY: number) => boolean,
+    rebuild: () => void,
+  ): number {
+    const chips: Array<{ label: string; sub: string; color: number; allowed: boolean; selected: boolean; onPick: () => void }> = [{
+      label: '— EMPTY —', sub: 'nothing on the sixth key', color: 0x777788, allowed: true, selected: !lo.sixth,
+      onPick: () => PlayerData.setQuantumSixth(null),
+    }];
+    for (const el of allSelectableElements()) {
+      if (!el.available || el.id === 'quantum' || !PlayerData.isElementEntangled(el.id)) continue;
+      const bindables = getBindableEnhancements(el.id);
+      if (!bindables.length) continue;
+      const complete = isMasteryComplete(el.id);
+      for (const enh of bindables) {
+        chips.push({
+          label: `${el.emoji} ${el.name.toUpperCase()}`,
+          sub: complete ? `★ ${enh.name}` : '🔒 mastery incomplete',
+          color: el.color, allowed: complete,
+          selected: lo.sixth?.elementId === el.id && lo.sixth?.enhId === enh.id,
+          onPick: () => PlayerData.setQuantumSixth({ elementId: el.id, enhId: enh.id }),
+        });
+      }
+    }
+    return this.renderChipPicker(container, cx, colX, colW, startY,
+      `Pick the mastery ability on ${SIXTH_SLOT_KEY}. Pressing ${SIXTH_SLOT_KEY} makes you its element for the cast.`,
+      chips, 'Only entangled elements whose mastery you have completed can lend an ability. Greyed-out ones are not there yet.',
+      inView, rebuild);
+  }
+
+  /** Quantum Mastery: the element whose mastery passive rides along. */
+  private renderPassivePicker(
+    container: Phaser.GameObjects.Container,
+    cx: number, colX: number, colW: number, startY: number,
+    lo: QuantumLoadout,
+    inView: (localY: number) => boolean,
+    rebuild: () => void,
+  ): number {
+    const chips: Array<{ label: string; sub: string; color: number; allowed: boolean; selected: boolean; onPick: () => void }> = [{
+      label: '— NONE —', sub: 'no borrowed passive', color: 0x777788, allowed: true, selected: !lo.passive,
+      onPick: () => PlayerData.setQuantumPassive(null),
+    }];
+    for (const el of allSelectableElements()) {
+      if (!el.available || el.id === 'quantum' || !PlayerData.isElementEntangled(el.id)) continue;
+      const passives = passiveEnhancements(el.id);
+      if (!passives.length) continue;
+      const complete = isMasteryComplete(el.id);
+      chips.push({
+        label: `${el.emoji} ${el.name.toUpperCase()}`,
+        sub: complete ? passives.map((e) => e.name).join(' + ') : '🔒 mastery incomplete',
+        color: el.color, allowed: complete, selected: lo.passive === el.id,
+        onPick: () => PlayerData.setQuantumPassive(el.id),
+      });
+    }
+    return this.renderChipPicker(container, cx, colX, colW, startY,
+      'Pick the element whose mastery passive you carry. It is always on, as it would be on its own element.',
+      chips, 'Only entangled elements whose mastery you have completed can lend a passive. Greyed-out ones are not there yet.',
+      inView, rebuild);
   }
 
   showPerkDictionary(width: number, height: number, cx: number): void {
@@ -2293,23 +2602,4 @@ export class ElementPanels {
       onClick: () => this.closeElementInfo(),
     }).container);
   }
-
-  private isBondPartnerAllowed(id: string): boolean {
-    if (id === 'quantum') return false;
-    if (this.bondDraftFirst) return PlayerData.isBondResearched(this.bondDraftFirst, id);
-    // A cheat profile is granted every pair without any of them being stored (see
-    // `PlayerData.isBondResearched`), so reading the saved list alone would leave it with two
-    // pickable first halves and a wide-open second roster — ask the same question the second
-    // pick asks. The carried bond is included for the same reason it is in `BondPicker`: a pair
-    // equipped from a fuller roster must not become unpickable here.
-    if (isCheatMode()) return true;
-    const carried = PlayerData.getQuantumBond();
-    const researched = [
-      PlayerData.bondKey(PlayerData.STARTER_BOND[0], PlayerData.STARTER_BOND[1]),
-      ...(carried ? [PlayerData.bondKey(carried[0], carried[1])] : []),
-      ...PlayerData.getResearchedBonds(),
-    ];
-    return researched.some((key) => key.split('+').includes(id));
-  }
-
 }

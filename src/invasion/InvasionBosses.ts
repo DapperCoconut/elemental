@@ -245,7 +245,7 @@ export class BossBrain {
             if (!target.active || target.hp <= 0) return;
             if (Math.hypot(target.x - this.husk.x, target.y - this.husk.y) > reach) return;
             w()?.bossHit?.(this.husk, target, Math.round(this.hit * 1.1), this.color);
-            w()?.bossSlow?.(0.32, 1700 + this.tier * 200);
+            w()?.bossSlow?.(0.32, 1700 + this.tier * 200, target);
           });
         },
       },

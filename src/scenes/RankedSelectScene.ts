@@ -6,7 +6,7 @@ import { getPerksForElement } from '../data/Perks';
 import { buildNpcLoadout } from '../data/NpcLoadout';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
-  addBackdrop, addBackButton, addScrim, ElementPanels, renderElementGrid, openBondPicker,
+  addBackdrop, addBackButton, addScrim, ElementPanels, renderElementGrid,
 } from '../ui';
 import { addRankBadge } from '../ui/RankBadges';
 import { Music, Sfx } from '../audio';
@@ -23,7 +23,6 @@ export class RankedSelectScene extends Phaser.Scene {
   private panels!: ElementPanels;
   private phaseObjects: Phaser.GameObjects.GameObject[] = [];
   private elemPage = 0;
-  private bondChosen = false;
   private launching = false;
 
   constructor() {
@@ -36,7 +35,6 @@ export class RankedSelectScene extends Phaser.Scene {
     this.botBans = [...(data?.botBans ?? [])];
     this.phaseObjects = [];
     this.elemPage = 0;
-    this.bondChosen = false;
     this.launching = false;
 
     const { width } = this.scale;
@@ -98,14 +96,6 @@ export class RankedSelectScene extends Phaser.Scene {
 
   private selectElement(elementId: string): void {
     if (this.launching || this.botBans.includes(elementId)) return;
-    if (elementId === 'quantum' && !this.bondChosen) {
-      openBondPicker(this, (a, b) => {
-        PlayerData.setQuantumBond(a, b);
-        this.bondChosen = true;
-        this.selectElement(elementId);
-      });
-      return;
-    }
     this.launching = true;
 
     const p = Ranked.getProfile();

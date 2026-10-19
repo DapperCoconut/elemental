@@ -4,7 +4,7 @@ import { BaseAvatar, ColorFn } from './ElementVisuals';
 import { AcidAvatar } from './AcidVisuals';
 import { AirAvatar } from './AirVisuals';
 import { BindAvatar } from './BindVisuals';
-import { ChalkAvatar } from './ChalkVisuals';
+import { PaintAvatar } from './PaintVisuals';
 import { WaxAvatar } from './WaxVisuals';
 import { ClayAvatar } from './ClayVisuals';
 import { ConquestAvatar } from './ConquestVisuals';
@@ -54,6 +54,7 @@ import { SoundAvatar } from './SoundVisuals';
 import { SubterfugeAvatar } from './SubterfugeVisuals';
 import { TechnologyAvatar } from './TechnologyVisuals';
 import { TimeAvatar } from './TimeVisuals';
+import { QuantumAvatar } from './QuantumAvatar';
 import { WaterAvatar } from './WaterVisuals';
 
 /**
@@ -121,7 +122,7 @@ const ELEMENT_AVATARS: Record<string, ElementAvatarFactory> = {
   tempest: (s, t) => new TempestAvatar(s, t),
   myth: (s, t) => new MythAvatar(s, t),
   magma: (s, t) => new MagmaAvatar(s, t),
-  chalk: (s, t) => new ChalkAvatar(s, t),
+  chalk: (s, t) => new PaintAvatar(s, t),
   wax: (s, t) => new WaxAvatar(s, t),
   clay: (s, t) => new ClayAvatar(s, t),
   paper: (s, t) => new PaperAvatar(s, t),
@@ -135,9 +136,85 @@ const ELEMENT_AVATARS: Record<string, ElementAvatarFactory> = {
   fortune: (s, t) => new FortuneAvatar(s, t),
   gum: (s, t) => new GumAvatar(s, t),
   gluttony: (s, t) => new GluttonyAvatar(s, t),
+  // Not in AVATAR_CLASSES below on purpose: Quantum's rig is never one of the carried rigs the
+  // arena vetoes on a Quantum body — it is the one that draws in their place.
+  quantum: (s, t) => new QuantumAvatar(s, t),
 };
 
 /** The element's character rig, or null for an element that has no rig of its own. */
+/**
+ * The same table by class, for going the other way: which element does a rig belong to?
+ * Quantum needs it — a loadout can tick five kits at once, each standing its own player rig
+ * up, and only the body element's may show (see `BaseAvatar.rigFilter`). Exact constructor
+ * first, then `instanceof`, so a repainted subclass (a boss's FX rig) still resolves.
+ */
+const AVATAR_CLASSES: Record<string, abstract new (...args: never[]) => BaseAvatar> = {
+  fire: FireAvatar,
+  water: WaterAvatar,
+  life: LifeAvatar,
+  air: AirAvatar,
+  earth: EarthAvatar,
+  oil: OilAvatar,
+  shadow: ShadowAvatar,
+  ice: IceAvatar,
+  growth: GrowthAvatar,
+  crystal: CrystalAvatar,
+  soul: SoulAvatar,
+  hunt: HuntAvatar,
+  sand: TimeAvatar,
+  gravity: GravityAvatar,
+  creation: CreationAvatar,
+  electricity: ElectricityAvatar,
+  slime: AcidAvatar,
+  fate: FateAvatar,
+  sound: SoundAvatar,
+  light: LightAvatar,
+  magnet: MagnetAvatar,
+  metal: MetalAvatar,
+  plasma: PlasmaAvatar,
+  gunpowder: GunpowderAvatar,
+  echo: EchoAvatar,
+  rubber: RubberAvatar,
+  magic: MagicAvatar,
+  technology: TechnologyAvatar,
+  silence: SilenceAvatar,
+  subterfuge: SubterfugeAvatar,
+  justice: JusticeAvatar,
+  dream: DreamAvatar,
+  radiation: RadiationAvatar,
+  depths: DepthsAvatar,
+  psychic: PsychicAvatar,
+  ruin: RuinAvatar,
+  cloth: ClothAvatar,
+  marrow: MarrowAvatar,
+  tempest: TempestAvatar,
+  myth: MythAvatar,
+  magma: MagmaAvatar,
+  chalk: PaintAvatar,
+  wax: WaxAvatar,
+  clay: ClayAvatar,
+  paper: PaperAvatar,
+  bind: BindAvatar,
+  dune: SandAvatar,
+  illusion: IllusionAvatar,
+  conquest: ConquestAvatar,
+  passion: PassionAvatar,
+  death: DeathAvatar,
+  fortune: FortuneAvatar,
+  gum: GumAvatar,
+  gluttony: GluttonyAvatar,
+};
+
+export function avatarElementId(avatar: BaseAvatar): string | null {
+  for (const [id, cls] of Object.entries(AVATAR_CLASSES)) {
+    if (avatar.constructor === cls) return id;
+  }
+  for (const [id, cls] of Object.entries(AVATAR_CLASSES)) {
+    if (avatar instanceof cls) return id;
+  }
+  return null;
+}
+
 export function makeElementAvatar(
   elementId: string, scene: Phaser.Scene, tint: ColorFn,
 ): BaseAvatar | null {
@@ -152,6 +229,7 @@ export function makeElementAvatar(
  * never generates an `elem-` texture for them and asking for one would draw nothing.
  */
 export function elementBodyTexture(scene: Phaser.Scene, elementId: string): string | undefined {
-  const key = `elem-${elementId}`;
+  // Quantum's `elem-` texture is its menu icon (a Bohr atom); the fighter wears a plain orb.
+  const key = elementId === 'quantum' ? 'quantum-body' : `elem-${elementId}`;
   return scene.textures.exists(key) ? key : undefined;
 }

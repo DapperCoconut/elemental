@@ -2,35 +2,29 @@ import { Element } from './Element';
 import { Ability, CastContext } from './Ability';
 
 /**
- * Quantum — the element that is two other elements.
+ * Quantum — the element built out of other elements' abilities.
  *
- * Quantum has no abilities of its own. Before a fight the player bonds two elements
- * together; in the fight, the dodge key collapses the bond onto whichever half is not
- * currently active. Both halves share one body: the same HP, the same status effects,
- * the same shields, the same everything. Only the kit on top of it changes.
- *
- * Because a bond is genuinely *being* the other element rather than borrowing from it,
- * the swap re-keys the whole player side of the arena — upgrades, mastery binds, the
- * equipped skin and the ability tray all follow the active half. That is why the five
- * abilities below are normally unreachable: whichever half is live supplies the tray, and
- * `ArenaScene.playerElement` points at that half, not at this object.
+ * Quantum has no kit of its own in the ordinary sense. Each of its five keys carries one other
+ * element's ability for that same key, chosen on its customization page from whatever the
+ * player has entangled in the Entanglement Lab (`QuantumBonds.ts`, `QuantumLoadout.ts`). In
+ * the fight, pressing a key re-keys the whole player side onto that key's element before the
+ * press reaches it — upgrades, mastery binds, skin — so the ability casts exactly as it would
+ * on its own element (`QuantumKit.routeInput`). One body: the same HP, the same status
+ * effects, the same shields, the same cooldown timestamps across every element carried.
  *
  * ── Third State ──
- * The one upgrade Quantum sells (`Upgrades.ts`, slot `click`) puts a third stop on the
- * cycle: the bond becomes first → second → *Quantum*, and the abilities below are what
- * that third stop is. They are the only abilities in the game that belong to no element's
- * subject matter — every one of them splits something: the caster's own body into a ring
- * of blades, an ability's cooldown, the arena, the effects riding on you, and finally a
- * parasite that answers being cut in half by becoming two parasites. Without the upgrade
- * `QuantumKit` never offers this stop at all and the tray below is never built.
+ * The one upgrade Quantum sells (`Upgrades.ts`, slot `click`) makes Quantum *itself* one of the
+ * elements that can be slotted. The five abilities below are that kit. They are the only
+ * abilities in the game that belong to no element's subject matter — every one of them splits
+ * something: the caster's own body into a ring of blades, an ability's cooldown, the arena,
+ * the effects riding on you, and finally a parasite that answers being cut in half by becoming
+ * two parasites. Without the upgrade nothing can put them on a key.
  *
- * The cost of carrying two kits is Quantum Instability — see `QuantumKit`. Every hit
- * taken adds 1% incoming-damage vulnerability (capped at 50%, decaying 1 per 2s), and
- * swapping while unstable tears at the body that is doing the swapping.
+ * The cost of carrying several kits is Quantum Instability — see `QuantumKit`. Every hit
+ * taken adds 1% incoming-damage vulnerability (capped at 50%, decaying 1 per 2s).
  *
  * Obtained by finishing the campaign: it is the sealed 43rd element behind the Amalgam,
- * granted on the profile when that challenge is cleared (see `GameOverScene`). Bonds are
- * then researched one at a time in the Entanglement Lab — see `QuantumBonds.ts`.
+ * granted on the profile when that challenge is cleared (see `GameOverScene`).
  *
  * Note the id: Subterfuge held `quantum` until this element arrived and took the name
  * back. Saves written before that are migrated in `PlayerData`/`CampaignProgress`.
@@ -48,7 +42,7 @@ const atomSplicers: Ability = {
 const abilitySplit: Ability = {
   id: 'quantum-ability-split',
   name: 'Ability Split',
-  description: 'Halve the cooldown of the next ability you use. The charge sits on your body, not on this kit, so it survives a collapse — arm it here, spend it on the other half of your bond.',
+  description: 'Halve the cooldown of the next ability you use. The charge sits on your body, not on this kit, so it survives a shift — arm it here, spend it on any other key.',
   displayKey: 'E',
   cooldown: 11000,
   cast(ctx: CastContext) { ctx.quantumAbilitySplit(); },
@@ -66,7 +60,7 @@ const arenaSplit: Ability = {
 const effectSplit: Ability = {
   id: 'quantum-effect-split',
   name: 'Effect Split',
-  description: 'Split every effect currently riding on you along its own length: half the strength, two and a half times the duration. Buffs and debuffs alike, and it reaches whatever the other half of your bond left on you.',
+  description: 'Split every effect currently riding on you along its own length: half the strength, two and a half times the duration. Buffs and debuffs alike, and it reaches whatever your other elements left on you.',
   displayKey: 'F',
   cooldown: 15000,
   cast(ctx: CastContext) { ctx.quantumEffectSplit(); },

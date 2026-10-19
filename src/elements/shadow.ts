@@ -1,14 +1,14 @@
 import { Element } from './Element';
 import { Ability, CastContext } from './Ability';
 
-const darkDrain: Ability = {
-  id: 'dark-drain',
-  name: 'Dark Drain',
-  description: 'Tap: dark bomb (10 dmg + leaves a shadow pool). Hold: spawn pools that heal you, damage the enemy and build 3% Hopelessness per second on anyone standing in them.',
+const caltrop: Ability = {
+  id: 'shadow-caltrop',
+  name: 'Shadow Caltrops',
+  description: 'Throw an obsidian caltrop to the cursor. It lies on the ground for up to 8s; the enemy who steps on it takes 5 dmg + 10% Hopelessness. Hold Click to keep throwing.',
   displayKey: 'Click',
-  cooldown: 800,
+  cooldown: 650,
   cast(ctx: CastContext) {
-    ctx.launchDarkBomb(ctx.targetX, ctx.targetY);
+    ctx.throwCaltrop(ctx.targetX, ctx.targetY);
   },
 };
 
@@ -57,10 +57,27 @@ const blackHole: Ability = {
   },
 };
 
+/**
+ * Grim Gloom — shadow's alternate ultimate (swapped in for Black Hole through ALT_ULT_SLOT).
+ * The cast only lays the fog; ShadowKit runs it from there: the passive Hopelessness, the
+ * per-foe "standing still" watch and the tentacles that erupt under anyone who lingers.
+ */
+export const grimGloom: Ability = {
+  id: 'grim-gloom',
+  name: 'Grim Gloom',
+  description: 'Purple fog covers the arena for 8s — foes gain Hopelessness all the while, and anyone who lingers in one spot is struck by tentacles from the floor',
+  displayKey: 'Q',
+  isUltimate: true,
+  cooldown: 32000,
+  cast(ctx: CastContext) {
+    ctx.shadowGrimGloom?.();
+  },
+};
+
 export const shadowElement: Element = {
   id: 'shadow',
   name: 'Shadow',
   color: 0x330044,
   emoji: '🌑',
-  abilities: [darkDrain, tentacle, snapTrap, tentacleWall, blackHole],
+  abilities: [caltrop, tentacle, snapTrap, tentacleWall, blackHole],
 };

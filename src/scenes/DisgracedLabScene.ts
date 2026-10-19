@@ -16,10 +16,14 @@ import { getMutationDef } from '../data/Mutations';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addBackButton, addButton, addChip, addHeaderBar, addTabs, addCardPlate, addPanel, addWell,
-  ALL_CORNERS, fillHex, strokeHex, fillDiamond, fillNotched,
+  ALL_CORNERS, fillDiamond,
   fillNotchedGradient, strokeNotched, drawGlow, drawOrnateRule,
   addElementCrest,
 } from '../ui';
+import { LabBench } from '../ui/LabBench';
+import { drawPlank, WOOD } from '../ui/Woodwork';
+import { SpeechBubble } from '../ui/SpeechBubble';
+import { Alchemist } from '../ui/characters/Alchemist';
 import { Music, Sfx } from '../audio';
 
 /** The lab's own colour — corrupt violet drowned in the dark it was left in. */
@@ -27,8 +31,10 @@ const DECAY = mix(C.corrupt, 0x000000, 0.45);
 /** The second tier runs hotter than the first — a sick green over the violet. */
 const UNSTABLE = 0x7cc93d;
 
-const SLOT_W = 104;
-const SLOT_H = 104;
+const FLASK_X = 480;
+const FLASK_Y = 338;
+const BENCH_Y = 446;
+const VIAL_H = 58;
 
 /** Tabs, by name rather than index — the order on screen has changed once already. */
 export type DisgracedTab = 'forge' | 'synthesis' | 'bounties';
@@ -69,22 +75,12 @@ const ABSTRACT_ELEMENTS: ElementDef[] = [
 export class DisgracedLabScene extends Phaser.Scene {
   private tab: DisgracedTab = 'forge';
 
-  private normalId: string | null = null;
-  private abstractId: string | null = null;
-  private normalVisual: Phaser.GameObjects.Container | null = null;
-  private abstractVisual: Phaser.GameObjects.Container | null = null;
-
-  private normalX = 0;
-  private normalY = 0;
-  private abstractX = 0;
-  private abstractY = 0;
-
-  /** Tier two: three untyped sockets, left to right. */
-  private synthIds: (string | null)[] = [null, null, null];
-  private synthVisuals: (Phaser.GameObjects.Container | null)[] = [null, null, null];
-  private synthX: number[] = [0, 0, 0];
-  private synthY = 0;
-  /** The live read-out under the sockets — what they would make, or why they will not. */
+  /** The cracked flask and the vials, on whichever forge tab is open. */
+  private bench: LabBench | null = null;
+  /** The ghost of the King's chemist, still at his bench. */
+  private ghost: Alchemist | null = null;
+  private bubble: SpeechBubble | null = null;
+  /** The live read-out under the flask — what it would make, or why it will not. */
   private verdictText: Phaser.GameObjects.Text | null = null;
 
   private messageText!: Phaser.GameObjects.Text;
@@ -97,12 +93,9 @@ export class DisgracedLabScene extends Phaser.Scene {
 
   init(data: { tab?: DisgracedTab }): void {
     this.tab = data?.tab ?? 'forge';
-    this.normalId = null;
-    this.abstractId = null;
-    this.normalVisual = null;
-    this.abstractVisual = null;
-    this.synthIds = [null, null, null];
-    this.synthVisuals = [null, null, null];
+    this.bench = null;
+    this.ghost = null;
+    this.bubble = null;
     this.verdictText = null;
     this.countdownText = null;
   }
@@ -156,6 +149,111 @@ export class DisgracedLabScene extends Phaser.Scene {
     if (this.tab === 'forge') this.buildForgeTab(width, height, cx);
     else if (this.tab === 'synthesis') this.buildSynthesisTab(width, height, cx);
     else this.buildBountiesTab(width, height, cx);
+  }
+
+  update(_time: number, delta: number): void {
+    this.bench?.update(delta);
+  }
+
+  // ── The bench ────────────────────────────────────────────────────
+
+  /**
+   * The King's bench: a rotten plank across the room, the ghost of his chemist behind it,
+   * a cracked flask on a tripod, and the vials he left out. `capacity` is how many the flask
+   * takes on this tab; `canPour` is the tab's rule for what may go in.
+   */
+  private buildBench(width: number, capacity: number, canPour: (id: string, poured: string[]) => string | null, fullLine: string): void {
+    const bench = this.add.graphics().setDepth(DEPTH.panel + 3);
+    drawPlank(bench, -4, BENCH_Y, width + 8, 18, { seed: 61, lit: -0.3 });
+    bench.fillStyle(WOOD.dark, 1); bench.fillRect(-4, BENCH_Y + 18, width + 8, 4);
+    drawPlank(bench, -4, BENCH_Y + 22, width + 8, 48, { seed: 62, lit: -0.5 });
+    // Rot: a split down the plank, a missing board, old stains.
+    bench.lineStyle(2, 0x000000, 0.7); bench.lineBetween(300, BENCH_Y + 2, 420, BENCH_Y + 14);
+    bench.fillStyle(0x000000, 0.6); bench.fillRect(880, BENCH_Y + 24, 50, 44);
+    bench.fillStyle(mix(DECAY, 0x000000, 0.3), 0.35); bench.fillEllipse(FLASK_X - 80, BENCH_Y + 8, 60, 8);
+    bench.fillStyle(mix(UNSTABLE, 0x000000, 0.4), 0.3); bench.fillEllipse(640, BENCH_Y + 7, 34, 6);
+
+    this.ghost = new Alchemist(this, 150, BENCH_Y - 4, { scale: 0.9, depth: DEPTH.panel + 2, spectral: true });
+    const m = this.ghost.mouth();
+    this.bubble = new SpeechBubble(this, {
+      anchorX: m.x, anchorY: m.y, side: 'right', width: 225, accent: DECAY,
+      depth: DEPTH.modal + 60, onTalk: (on) => this.ghost?.setTalking(on),
+    });
+    this.bench = new LabBench(this, {
+      flaskX: FLASK_X, flaskY: FLASK_Y, capacity, decayed: true,
+      elements: [...NORMAL_ELEMENTS, ...ABSTRACT_ELEMENTS],
+      canPour, fullLine,
+      say: (line) => { this.ghost?.setMood('grumpy', 1500); this.bubble?.say([line]); },
+      onPoured: (el, _poured, left) => {
+        this.ghost?.setMood('pleased', 1200);
+        this.refreshVerdict();
+        this.bubble?.say([left > 0 ? `${el.name} in. ${left} more.` : `${el.name} in. The flask is full — press FORGE.`]);
+      },
+      onEmptied: () => { this.refreshVerdict(); this.bubble?.say(['Flask emptied. Nothing spent.']); },
+    });
+
+    // Base vials in a rack on the bench; abstract vials on a shelf above. Only the ones this
+    // save has reached stand out — the rest were never here.
+    const rackLeft = 590;
+    const rackW = width - rackLeft - 40;
+    const bases = this.tab === 'synthesis' ? NORMAL_ELEMENTS.filter((e) => UNSTABLE_BASE_IDS.includes(e.id)) : NORMAL_ELEMENTS;
+    const step = rackW / Math.max(bases.length, 1);
+    const rack = this.add.graphics().setDepth(DEPTH.panel + 4);
+    drawPlank(rack, rackLeft, BENCH_Y - 22, rackW, 10, { seed: 63, lit: -0.25 });
+    for (let i = 0; i < bases.length; i++) { rack.fillStyle(0x0a0806, 1); rack.fillEllipse(rackLeft + step * (i + 0.5), BENCH_Y - 17, 24, 7); }
+    bases.forEach((el, i) => this.bench!.addVial(el, rackLeft + step * (i + 0.5), BENCH_Y - 18));
+
+    const abstract = this.unlockedAbstractElements();
+    const shelfY = 300;
+    const shelf = this.add.graphics().setDepth(DEPTH.panel);
+    drawPlank(shelf, rackLeft, shelfY, rackW, 10, { seed: 64, lit: -0.3 });
+    shelf.fillStyle(WOOD.dark, 1); shelf.fillRect(rackLeft, shelfY + 10, rackW, 3);
+    for (const bx of [rackLeft + 20, rackLeft + rackW - 20]) {
+      shelf.lineStyle(3, 0x3b3a44, 1); shelf.beginPath(); shelf.moveTo(bx, shelfY + 12); shelf.lineTo(bx, shelfY + 30); shelf.lineTo(bx + 14, shelfY + 12); shelf.strokePath();
+    }
+    this.add.text(rackLeft + rackW / 2, shelfY - VIAL_H - 30, 'ABSTRACT', {
+      fontSize: '9px', fontFamily: FONT_DISPLAY, color: hex(mix(C.corrupt, 0xffffff, 0.3)), letterSpacing: 3,
+    }).setOrigin(0.5).setDepth(DEPTH.content);
+    if (abstract.length === 0) {
+      this.add.text(rackLeft + rackW / 2, shelfY - 30, 'None unlocked. Complete a Gauntlet.', {
+        fontSize: '10px', fontFamily: FONT_UI, color: T.ghost,
+      }).setOrigin(0.5).setDepth(DEPTH.content);
+    } else {
+      const astep = rackW / Math.max(abstract.length, 3);
+      abstract.forEach((el, i) => this.bench!.addVial(el, rackLeft + astep * (i + 0.5), shelfY - 1));
+    }
+  }
+
+  /** The corroded brass plate with the red button, on the bench front. */
+  private buildForgeButton(cx: number, label: string, accent: number, onPress: () => void): void {
+    const bx = cx;
+    const by = BENCH_Y + 96;
+    const g = this.add.graphics().setDepth(DEPTH.content);
+    const paint = (down: number, lit: number): void => {
+      g.clear();
+      g.fillStyle(0x000000, 0.35); g.fillRoundedRect(bx - 68, by - 48, 136, 100, 8);
+      g.fillStyle(0x4a4a2a, 1); g.fillRoundedRect(bx - 66, by - 50, 132, 100, 8);
+      g.fillStyle(0x7a7a3c, 1); g.fillRoundedRect(bx - 62, by - 46, 124, 92, 6);
+      // Verdigris.
+      g.fillStyle(0x3a8a6a, 0.45); g.fillEllipse(bx - 40, by - 30, 30, 18); g.fillEllipse(bx + 44, by + 30, 24, 14);
+      g.lineStyle(1, 0xa8a860, 0.5); g.strokeRoundedRect(bx - 58, by - 42, 116, 84, 5);
+      g.fillStyle(0x1a0a0a, 1); g.fillCircle(bx, by - 8, 32);
+      const r = 28 - down * 2;
+      const dy = down * 4;
+      g.fillStyle(mix(C.blood, 0x000000, 0.55), 1); g.fillCircle(bx, by - 8 + dy + 3, r);
+      g.fillStyle(mix(mix(C.blood, 0x000000, 0.2), 0xffffff, lit * 0.2), 1); g.fillCircle(bx, by - 8 + dy, r);
+      g.fillStyle(mix(C.blood, 0xffffff, 0.25 + lit * 0.2), 1); g.fillCircle(bx - 6, by - 16 + dy, r * 0.5);
+      g.fillStyle(0xffffff, 0.6); g.fillEllipse(bx - 10, by - 20 + dy, 10, 5);
+      for (let k = 3; k >= 1; k--) { g.fillStyle(accent, 0.05 * lit); g.fillCircle(bx, by - 8, 34 + k * 8); }
+    };
+    paint(0, 0);
+    this.add.text(bx, by + 32, label, {
+      fontSize: '10px', fontFamily: FONT_DISPLAY, color: '#1a1a08', letterSpacing: 2,
+    }).setOrigin(0.5).setDepth(DEPTH.content + 1);
+    const hit = this.add.circle(bx, by - 8, 34, 0xffffff, 0).setDepth(DEPTH.content + 2).setInteractive({ useHandCursor: true });
+    hit.on('pointerover', () => { paint(0, 1); Sfx.play('ui-hover'); });
+    hit.on('pointerout', () => paint(0, 0));
+    hit.on('pointerdown', () => { paint(1, 1); this.time.delayedCall(140, () => paint(0, 1)); onPress(); });
   }
 
   // ── The room ─────────────────────────────────────────────────────
@@ -392,41 +490,24 @@ export class DisgracedLabScene extends Phaser.Scene {
 
   private buildForgeTab(width: number, height: number, cx: number): void {
     void height;
-
     this.add.text(cx, 130, 'ONE ABSTRACT.  ONE NORMAL.  NOTHING ELSE HOLDS.', {
       fontSize: '11px', fontFamily: FONT_DISPLAY, color: hex(mix(C.corrupt, 0xffffff, 0.35)), letterSpacing: 2,
     }).setOrigin(0.5).setDepth(DEPTH.content);
 
-    // ── Ingredient trays ─────────────────────────────────────────
-    const unlockedAbstract = this.unlockedAbstractElements();
+    // The sockets were typed; the flask is too. A second of the same kind is refused at the lip.
+    this.buildBench(width, 2, (id, poured) => {
+      const isAbs = ABSTRACT_ELEMENT_IDS.includes(id);
+      const hasAbs = poured.some((p) => ABSTRACT_ELEMENT_IDS.includes(p));
+      const hasNormal = poured.some((p) => !ABSTRACT_ELEMENT_IDS.includes(p));
+      if (isAbs && hasAbs) return 'One abstract only. The other vial must be normal.';
+      if (!isAbs && hasNormal) return 'One normal only. The other vial must be abstract.';
+      return null;
+    }, 'Flask is full. Press FORGE, or click the flask to empty it.');
 
-    this.buildTray(cx - 236, 168, 'NORMAL', C.frost, NORMAL_ELEMENTS, 5);
-    this.buildTray(cx + 236, 168, 'ABSTRACT', C.corrupt, unlockedAbstract, 5);
-
-    // ── Sockets ──────────────────────────────────────────────────
-    const slotY = 452;
-    this.normalX = cx - 108;
-    this.normalY = slotY;
-    this.abstractX = cx + 108;
-    this.abstractY = slotY;
-
-    this.drawSocket(this.normalX, slotY, C.frost, 'NORMAL');
-    this.drawSocket(this.abstractX, slotY, C.corrupt, 'ABSTRACT');
-
-    // Joiner — a cross with a diamond, matching the Lab upstairs.
-    const jg = this.add.graphics().setDepth(DEPTH.panel + 1);
-    jg.lineStyle(3, DECAY, 0.8);
-    jg.beginPath(); jg.moveTo(cx - 12, slotY); jg.lineTo(cx + 12, slotY); jg.strokePath();
-    jg.beginPath(); jg.moveTo(cx, slotY - 12); jg.lineTo(cx, slotY + 12); jg.strokePath();
-    fillDiamond(jg, cx, slotY, 4, mix(C.corrupt, 0xffffff, 0.6), 1);
-
-    addButton(this, {
-      x: cx, y: slotY + 92, w: 340, h: 52,
-      label: 'FORGE DIVINE PERK', icon: '💠', trailing: '1 💠',
-      trailingColor: hex(mix(C.corrupt, 0xffffff, 0.4)),
-      accent: C.corrupt, variant: 'solid', fontSize: 17, align: 'left',
-      onClick: () => this.attemptDivineForge(),
-    });
+    this.buildForgeButton(cx, 'FORGE  ·  1 💠', C.corrupt, () => this.attemptDivineForge());
+    this.time.delayedCall(350, () => this.bubble?.say([
+      `Divine nuclei: ${PlayerData.getDivineNuclei()}. One normal vial, one abstract, then FORGE. One nucleus a perk.`,
+    ], { silent: true }));
   }
 
   private unlockedAbstractElements(): ElementDef[] {
@@ -437,206 +518,46 @@ export class DisgracedLabScene extends Phaser.Scene {
     });
   }
 
-  /**
-   * A wall rack of ingredient tokens. Normal elements outnumber the sockets
-   * badly, so they are laid out as a grid of small gems that are dragged down
-   * rather than the single row the Lab upstairs uses.
-   */
-  private buildTray(
-    cx: number, top: number, label: string, accent: number,
-    elements: ElementDef[], perRow: number,
-    onDrop?: (elementId: string, x: number, y: number) => void,
-  ): void {
-    this.add.text(cx, top - 18, label, {
-      fontSize: '10px', fontFamily: FONT_DISPLAY, color: hex(mix(accent, 0xffffff, 0.4)), letterSpacing: 3,
-    }).setOrigin(0.5).setDepth(DEPTH.content);
-
-    if (elements.length === 0) {
-      this.add.text(cx, top + 40, 'None unlocked.\nComplete a Gauntlet.', {
-        fontSize: '11px', fontFamily: FONT_UI, color: T.ghost, align: 'center', lineSpacing: 5,
-      }).setOrigin(0.5).setDepth(DEPTH.content);
-      return;
-    }
-
-    const step = 84;
-    const rows = Math.ceil(elements.length / perRow);
-    const gridW = Math.min(perRow, elements.length) * step;
-
-    // Rack plate behind the tokens.
-    const rack = this.add.graphics().setDepth(DEPTH.panel - 1);
-    const rw = gridW + 12;
-    const rh = rows * 74 + 16;
-    fillNotched(rack, cx - rw / 2, top - 8, rw, rh, mix(C.well, accent, 0.05), 0.75, 10, ALL_CORNERS);
-    strokeNotched(rack, cx - rw / 2, top - 8, rw, rh, mix(accent, C.line, 0.5), 0.4, 1, 10, ALL_CORNERS);
-
-    elements.forEach((el, i) => {
-      const row = Math.floor(i / perRow);
-      const col = i % perRow;
-      const inRow = Math.min(perRow, elements.length - row * perRow);
-      const ox = cx - (inRow * step) / 2 + step / 2 + col * step;
-      const oy = top + 24 + row * 74;
-      const token = this.createToken(el, ox, oy);
-      this.makeDraggable(token, el.id, ox, oy, onDrop);
-    });
-  }
-
-  /** A cut gem in the element's colour — the Lab's token, one size down. */
-  private createToken(el: ElementDef, x: number, y: number): Phaser.GameObjects.Container {
-    const g = this.add.graphics();
-    for (let k = 4; k >= 1; k--) {
-      g.fillStyle(el.color, 0.05);
-      g.fillCircle(0, 0, 20 + k * 3);
-    }
-    fillHex(g, 0, 0, 26, mix(el.color, 0x000000, 0.55), 0.95);
-    fillHex(g, 0, 0, 22, mix(el.color, 0x000000, 0.25), 0.95);
-    strokeHex(g, 0, 0, 26, mix(el.color, 0xffffff, 0.35), 0.95, 2);
-    if (ABSTRACT_ELEMENT_IDS.includes(el.id)) strokeHex(g, 0, 0, 30, C.corrupt, 0.7, 2);
-
-    const emoji = this.add.text(0, -4, el.emoji, { fontSize: '18px' }).setOrigin(0.5);
-    const name = this.add.text(0, 15, el.name.toUpperCase(), {
-      fontSize: '7px', fontFamily: FONT_DISPLAY, color: T.bright, letterSpacing: 1,
-    }).setOrigin(0.5);
-
-    return this.add.container(x, y, [g, emoji, name]).setDepth(DEPTH.panel + 2);
-  }
-
-  private makeDraggable(
-    container: Phaser.GameObjects.Container, elementId: string,
-    originX: number, originY: number,
-    onDrop?: (elementId: string, x: number, y: number) => void,
-  ): void {
-    container.setSize(58, 58);
-    container.setInteractive({ useHandCursor: true });
-    this.input.setDraggable(container);
-
-    container.on('dragstart', () => { Sfx.play('ui-drag'); container.setDepth(DEPTH.content + 6); });
-    container.on('drag', (_p: Phaser.Input.Pointer, dx: number, dy: number) => container.setPosition(dx, dy));
-    container.on('dragend', () => {
-      container.setDepth(DEPTH.panel + 2);
-      // Tier two seats its own sockets — the typed pair below is tier one only.
-      if (onDrop) {
-        onDrop(elementId, container.x, container.y);
-        container.setPosition(originX, originY);
-        return;
-      }
-      const isAbstract = ABSTRACT_ELEMENT_IDS.includes(elementId);
-      const inNormal = Math.abs(container.x - this.normalX) <= SLOT_W / 2
-        && Math.abs(container.y - this.normalY) <= SLOT_H / 2;
-      const inAbstract = Math.abs(container.x - this.abstractX) <= SLOT_W / 2
-        && Math.abs(container.y - this.abstractY) <= SLOT_H / 2;
-
-      // The sockets are typed, so a mis-drop is caught here rather than being
-      // allowed through to fail at the forge.
-      if (inNormal) {
-        if (isAbstract) this.showMessage('⚡ That socket takes a NORMAL element.', '#ff8888');
-        else this.seat('normal', elementId);
-      } else if (inAbstract) {
-        if (!isAbstract) this.showMessage('⚡ That socket takes an ABSTRACT element.', '#ff8888');
-        else this.seat('abstract', elementId);
-      }
-      container.setPosition(originX, originY);
-    });
-  }
-
-  /** Empty socket: a recessed notched plate with a ghost hexagon. */
-  private drawSocket(x: number, y: number, accent: number, label: string): void {
-    const g = this.add.graphics().setDepth(DEPTH.panel);
-    const left = x - SLOT_W / 2;
-    const top = y - SLOT_H / 2;
-    fillNotchedGradient(g, left, top, SLOT_W, SLOT_H,
-      mix(C.well, accent, 0.06), mix(C.void_, accent, 0.03), 1, 12, ALL_CORNERS, 12);
-    strokeNotched(g, left, top, SLOT_W, SLOT_H, accent, 0.7, 2, 12, ALL_CORNERS);
-    strokeNotched(g, left + 5, top + 5, SLOT_W - 10, SLOT_H - 10, accent, 0.16, 1, 8, ALL_CORNERS);
-    strokeHex(g, x, y - 6, 22, accent, 0.22, 1);
-    this.add.text(x, y + SLOT_H / 2 - 13, label, {
-      fontSize: '9px', fontFamily: FONT_DISPLAY,
-      color: hex(mix(accent, 0x000000, 0.3)), letterSpacing: 1.5,
-    }).setOrigin(0.5).setDepth(DEPTH.panel + 1);
-  }
-
-  private seat(socket: 'normal' | 'abstract', elementId: string): void {
-    const pool = socket === 'normal' ? NORMAL_ELEMENTS : ABSTRACT_ELEMENTS;
-    const el = pool.find((e) => e.id === elementId);
-    if (!el) return;
-
-    const x = socket === 'normal' ? this.normalX : this.abstractX;
-    const y = socket === 'normal' ? this.normalY : this.abstractY;
-
-    if (socket === 'normal') {
-      this.normalId = elementId;
-      this.normalVisual?.destroy();
-      this.normalVisual = this.buildSeated(el, x, y, socket);
-    } else {
-      this.abstractId = elementId;
-      this.abstractVisual?.destroy();
-      this.abstractVisual = this.buildSeated(el, x, y, socket);
-    }
-    this.messageText.setText('');
-  }
-
-  private buildSeated(
-    el: ElementDef, x: number, y: number, socket: 'normal' | 'abstract',
-  ): Phaser.GameObjects.Container {
-    const g = this.add.graphics();
-    drawGlow(g, -32, -32, 64, 64, el.color, 0.5, 4, 3, 14);
-    fillHex(g, 0, 0, 33, mix(el.color, 0x000000, 0.5), 0.97);
-    fillHex(g, 0, 0, 28, mix(el.color, 0x000000, 0.2), 0.97);
-    strokeHex(g, 0, 0, 33, mix(el.color, 0xffffff, 0.45), 1, 2);
-    if (socket === 'abstract') strokeHex(g, 0, 0, 38, C.corrupt, 0.8, 2);
-
-    const emoji = this.add.text(0, -4, el.emoji, { fontSize: '22px' }).setOrigin(0.5);
-    const name = this.add.text(0, 18, el.name.toUpperCase(), {
-      fontSize: '8px', fontFamily: FONT_DISPLAY, color: T.bright, letterSpacing: 1,
-    }).setOrigin(0.5);
-
-    const hit = this.add.circle(0, 0, 34, 0xffffff, 0).setInteractive({ useHandCursor: true });
-    hit.on('pointerdown', () => {
-      if (socket === 'normal') {
-        this.normalId = null;
-        this.normalVisual?.destroy();
-        this.normalVisual = null;
-      } else {
-        this.abstractId = null;
-        this.abstractVisual?.destroy();
-        this.abstractVisual = null;
-      }
-    });
-
-    return this.add.container(x, y, [g, emoji, name, hit]).setDepth(DEPTH.panel + 5);
+  private nameOf(id: string): string {
+    return findElementDef(id)?.name ?? id;
   }
 
   /**
-   * Forge. Only a complete, correctly-typed pairing can spend a nucleus — an
-   * unstable pairing or a pairing whose perk has not been discovered yet both
-   * leave the player's nuclei untouched.
+   * Forge. Only a complete, correctly-typed pairing can spend a nucleus — a pairing whose
+   * perk is not understood blows up in the ghost's face but costs nothing.
    */
   private attemptDivineForge(): void {
-    this.messageText.setText('');
-
-    if (!this.normalId || !this.abstractId) {
-      this.showMessage('Seat one normal and one abstract element.', '#ff8888');
-      return;
-    }
-
-    const recipe = findDivinePerkRecipe(this.normalId, this.abstractId);
+    const bench = this.bench;
+    if (!bench || bench.busy) return;
+    const [a, b] = bench.poured;
+    const say = (line: string, mood: 'thinking' | 'grumpy' = 'grumpy'): void => {
+      Sfx.play('ui-denied');
+      this.ghost?.setMood(mood, 1800);
+      this.bubble?.say([line]);
+    };
+    if (!a || !b) { say('Two vials first. One normal, one abstract.', 'thinking'); return; }
+    const recipe = findDivinePerkRecipe(a, b);
     if (!recipe) {
-      this.showMessage('This pairing is not yet understood.\nNo Divine Nucleus was spent.', '#ffcc44');
+      this.bubble?.hide();
+      bench.heatThen(() => {
+        this.ghost?.blacken(1);
+        bench.explode(() => this.bubble?.say([`${this.nameOf(a)} + ${this.nameOf(b)}: not understood. No Divine Nucleus spent.`], { hold: 1200 }));
+      });
       return;
     }
-
-    if (PlayerData.isPerkUnlocked(recipe.elementId, recipe.id)) {
-      this.showMessage(`${recipe.emoji} ${recipe.name} already forged!`, '#ffcc44');
-      return;
-    }
-
-    if (!PlayerData.spendDivineNuclei(1)) {
-      this.showMessage('Need a Divine Nucleus. Complete a bounty.', '#ff8888');
-      return;
-    }
+    if (PlayerData.isPerkUnlocked(recipe.elementId, recipe.id)) { say(`${this.nameOf(a)} + ${this.nameOf(b)} → ${recipe.name}. Already forged. Nothing spent.`, 'thinking'); return; }
+    if (!PlayerData.spendDivineNuclei(1)) { say(`That takes a Divine Nucleus. You have ${PlayerData.getDivineNuclei()}. Complete a bounty.`); return; }
 
     PlayerData.unlockPerk(recipe.elementId, recipe.id);
     this.divineChip.setValue(`×${PlayerData.getDivineNuclei()}`);
-    this.showDivinePopup(recipe);
+    this.bubble?.hide();
+    bench.heatThen(() => {
+      this.ghost?.setMood('pleased', 3000);
+      bench.succeed(C.corrupt, () => {
+        this.showDivinePopup(recipe);
+        this.bubble?.say([`${this.nameOf(a)} + ${this.nameOf(b)} → ${recipe.name}. One Divine Nucleus spent, ${PlayerData.getDivineNuclei()} left.`], { hold: 1500 });
+      });
+    });
   }
 
   private showDivinePopup(perk: PerkDef): void {
@@ -645,43 +566,32 @@ export class DisgracedLabScene extends Phaser.Scene {
     const cy = height / 2;
     const objects: Phaser.GameObjects.GameObject[] = [];
 
-    const overlay = this.add.rectangle(cx, cy, width, height, 0x000000, 0.78)
-      .setDepth(DEPTH.overlay).setInteractive();
+    const overlay = this.add.rectangle(cx, cy, width, height, 0x000000, 0.78).setDepth(DEPTH.overlay).setInteractive();
     objects.push(overlay);
 
     const g = this.add.graphics().setDepth(DEPTH.modal);
     drawGlow(g, cx - 200, cy - 130, 400, 260, C.corrupt, 0.7, 6, 4, 14);
-    fillNotchedGradient(g, cx - 200, cy - 130, 400, 260,
-      mix(C.plate, C.corrupt, 0.28), mix(C.void_, C.corrupt, 0.08), 1, 14, ALL_CORNERS, 20);
+    fillNotchedGradient(g, cx - 200, cy - 130, 400, 260, mix(C.plate, C.corrupt, 0.28), mix(C.void_, C.corrupt, 0.08), 1, 14, ALL_CORNERS, 20);
     strokeNotched(g, cx - 200, cy - 130, 400, 260, mix(C.corrupt, 0xffffff, 0.35), 1, 2, 14, ALL_CORNERS);
     drawOrnateRule(g, cx, cy - 46, 160, C.corrupt, 0.8);
     objects.push(g);
 
     objects.push(this.add.text(cx, cy - 92, '💠  DIVINE PERK FORGED', {
-      fontSize: '17px', fontFamily: FONT_DISPLAY,
-      color: hex(mix(C.corrupt, 0xffffff, 0.6)), letterSpacing: 2,
+      fontSize: '17px', fontFamily: FONT_DISPLAY, color: hex(mix(C.corrupt, 0xffffff, 0.6)), letterSpacing: 2,
     }).setOrigin(0.5).setDepth(DEPTH.modalContent));
-
     objects.push(this.add.text(cx, cy - 12, `${perk.emoji}  ${perk.name.toUpperCase()}`, {
       fontSize: '25px', fontFamily: FONT_DISPLAY, color: T.bright,
     }).setOrigin(0.5).setDepth(DEPTH.modalContent));
-
     objects.push(this.add.text(cx, cy + 26, perk.description, {
-      fontSize: '12px', fontFamily: FONT_UI, color: T.normal,
-      align: 'center', wordWrap: { width: 340 }, lineSpacing: 4,
+      fontSize: '12px', fontFamily: FONT_UI, color: T.normal, align: 'center', wordWrap: { width: 340 }, lineSpacing: 4,
     }).setOrigin(0.5, 0).setDepth(DEPTH.modalContent));
 
     const btn = addButton(this, {
-      x: cx, y: cy + 100, w: 160, h: 40,
-      label: 'CONTINUE', accent: C.corrupt, variant: 'solid',
-      fontSize: 14, depth: DEPTH.modalContent,
+      x: cx, y: cy + 100, w: 160, h: 40, label: 'CONTINUE', accent: C.corrupt, variant: 'solid', fontSize: 14, depth: DEPTH.modalContent,
       onClick: () => {
         for (const o of objects) o.destroy();
         btn.destroy();
-        this.normalId = null;
-        this.abstractId = null;
-        this.normalVisual?.destroy(); this.normalVisual = null;
-        this.abstractVisual?.destroy(); this.abstractVisual = null;
+        this.bench?.reset();
       },
     });
   }
@@ -689,12 +599,11 @@ export class DisgracedLabScene extends Phaser.Scene {
   // ── Synthesis tab (tier two) ─────────────────────────────────────
 
   /**
-   * Three untyped sockets and a wager.
+   * Three vials and a wager.
    *
-   * The sockets are deliberately not typed the way tier one's are: "two
-   * abstracts will not hold" is a rule the player is supposed to *find*, so a
-   * second abstract seats happily and is then refused out loud by the read-out
-   * under the bench.
+   * The flask is deliberately not typed the way tier one's is: "two abstracts will not hold"
+   * is a rule the player is supposed to *find*, so a second abstract pours happily and is
+   * then refused out loud by the read-out under the flask — and blows up on the button.
    */
   private buildSynthesisTab(width: number, height: number, cx: number): void {
     const pending = PlayerData.getPendingUnstable();
@@ -710,107 +619,31 @@ export class DisgracedLabScene extends Phaser.Scene {
       fontSize: '11px', fontFamily: FONT_UI, color: T.ghost,
     }).setOrigin(0.5).setDepth(DEPTH.content);
 
-    const baseDefs = NORMAL_ELEMENTS.filter((e) => UNSTABLE_BASE_IDS.includes(e.id));
-    const abstractDefs = this.unlockedAbstractElements();
-    const drop = (id: string, x: number, y: number) => this.seatSynth(id, x, y);
+    this.buildBench(width, 3, () => null, 'Flask is full. Press FORGE, or click the flask to empty it.');
 
-    this.buildTray(cx - 236, 194, 'BASE', C.frost, baseDefs, 5, drop);
-    this.buildTray(cx + 236, 194, 'ABSTRACT', C.corrupt, abstractDefs, 5, drop);
-
-    // ── Sockets ──────────────────────────────────────────────────
-    this.synthY = 376;
-    this.synthX = [cx - 176, cx, cx + 176];
-    for (let i = 0; i < 3; i++) this.drawSocket(this.synthX[i], this.synthY, UNSTABLE, `SOCKET ${i + 1}`);
-
-    for (const jx of [cx - 88, cx + 88]) {
-      const jg = this.add.graphics().setDepth(DEPTH.panel + 1);
-      jg.lineStyle(3, UNSTABLE, 0.7);
-      jg.beginPath(); jg.moveTo(jx - 11, this.synthY); jg.lineTo(jx + 11, this.synthY); jg.strokePath();
-      jg.beginPath(); jg.moveTo(jx, this.synthY - 11); jg.lineTo(jx, this.synthY + 11); jg.strokePath();
-      fillDiamond(jg, jx, this.synthY, 3.5, mix(UNSTABLE, 0xffffff, 0.6), 1);
-    }
-
-    // Live read-out: what the bench would make, or the reason it will not.
-    this.verdictText = this.add.text(cx, this.synthY + 66, '', {
-      fontSize: '13px', fontFamily: FONT_DISPLAY, color: T.ghost,
-      align: 'center', letterSpacing: 1, lineSpacing: 4, wordWrap: { width: width - 140 },
+    // Live read-out, chalked on the bench front beside the button: what the flask would
+    // make, or the reason it will not.
+    const slate = this.add.graphics().setDepth(DEPTH.content - 1);
+    slate.fillStyle(0x000000, 0.4); slate.fillRoundedRect(cx + 94, BENCH_Y + 50, 316, 70, 4);
+    slate.fillStyle(0x1b1f1c, 1); slate.fillRoundedRect(cx + 90, BENCH_Y + 46, 316, 70, 4);
+    slate.lineStyle(1, 0x3a3a30, 1); slate.strokeRoundedRect(cx + 90, BENCH_Y + 46, 316, 70, 4);
+    this.verdictText = this.add.text(cx + 248, BENCH_Y + 58, '', {
+      fontSize: '11px', fontFamily: FONT_DISPLAY, color: T.ghost,
+      align: 'center', letterSpacing: 1, lineSpacing: 4, wordWrap: { width: 300 },
     }).setOrigin(0.5, 0).setDepth(DEPTH.content);
     this.refreshVerdict();
 
-    addButton(this, {
-      x: cx, y: this.synthY + 130, w: 360, h: 52,
-      label: 'FORGE UNSTABLE ELEMENT', icon: '⚗', trailing: '1 💠',
-      trailingColor: hex(mix(C.corrupt, 0xffffff, 0.4)),
-      accent: UNSTABLE, variant: 'solid', fontSize: 16, align: 'left',
-      onClick: () => this.attemptUnstableForge(),
-    });
+    this.buildForgeButton(cx, 'FORGE  ·  1 💠', UNSTABLE, () => this.attemptUnstableForge());
+    this.time.delayedCall(350, () => this.bubble?.say([
+      `Divine nuclei: ${PlayerData.getDivineNuclei()}. Two base vials and one abstract, then FORGE. What comes out, you fight for.`,
+    ], { silent: true }));
   }
 
-  /** Which socket a token was dropped on, or -1. */
-  private synthSocketAt(x: number, y: number): number {
-    for (let i = 0; i < 3; i++) {
-      if (Math.abs(x - this.synthX[i]) <= SLOT_W / 2 && Math.abs(y - this.synthY) <= SLOT_H / 2) return i;
-    }
-    return -1;
-  }
-
-  private seatSynth(elementId: string, x: number, y: number): void {
-    const idx = this.synthSocketAt(x, y);
-    if (idx < 0) return;
-
-    // Dragging a seated element to another socket moves it rather than cloning
-    // it — three copies of Fire is never what anyone meant.
-    const already = this.synthIds.indexOf(elementId);
-    if (already >= 0 && already !== idx) this.clearSynthSocket(already);
-
-    const el = findElementDef(elementId);
-    if (!el) return;
-
-    Sfx.play('ui-drop');
-    this.clearSynthSocket(idx);
-    this.synthIds[idx] = elementId;
-    this.synthVisuals[idx] = this.buildSynthSeated(el, this.synthX[idx], this.synthY, idx);
-    this.messageText.setText('');
-    this.refreshVerdict();
-  }
-
-  private clearSynthSocket(idx: number): void {
-    this.synthIds[idx] = null;
-    this.synthVisuals[idx]?.destroy();
-    this.synthVisuals[idx] = null;
-  }
-
-  private buildSynthSeated(
-    el: { id: string; name: string; emoji: string; color: number },
-    x: number, y: number, idx: number,
-  ): Phaser.GameObjects.Container {
-    const isAbstract = ABSTRACT_ELEMENT_IDS.includes(el.id);
-    const g = this.add.graphics();
-    drawGlow(g, -32, -32, 64, 64, el.color, 0.5, 4, 3, 14);
-    fillHex(g, 0, 0, 33, mix(el.color, 0x000000, 0.5), 0.97);
-    fillHex(g, 0, 0, 28, mix(el.color, 0x000000, 0.2), 0.97);
-    strokeHex(g, 0, 0, 33, mix(el.color, 0xffffff, 0.45), 1, 2);
-    if (isAbstract) strokeHex(g, 0, 0, 38, C.corrupt, 0.8, 2);
-
-    const emoji = this.add.text(0, -4, el.emoji, { fontSize: '22px' }).setOrigin(0.5);
-    const name = this.add.text(0, 18, el.name.toUpperCase(), {
-      fontSize: '8px', fontFamily: FONT_DISPLAY, color: T.bright, letterSpacing: 1,
-    }).setOrigin(0.5);
-
-    const hit = this.add.circle(0, 0, 34, 0xffffff, 0).setInteractive({ useHandCursor: true });
-    hit.on('pointerdown', () => {
-      this.clearSynthSocket(idx);
-      this.refreshVerdict();
-    });
-
-    return this.add.container(x, y, [g, emoji, name, hit]).setDepth(DEPTH.panel + 5);
-  }
-
-  /** Re-stamps the line under the bench from whatever is currently seated. */
+  /** Re-stamps the line under the flask from whatever has been poured. */
   private refreshVerdict(): void {
-    if (!this.verdictText) return;
-    const [a, b, c] = this.synthIds;
-    const attempt = readUnstableSockets(a, b, c);
+    if (!this.verdictText || !this.bench) return;
+    const [a, b, c] = this.bench.poured;
+    const attempt = readUnstableSockets(a ?? null, b ?? null, c ?? null);
 
     if (attempt.recipe) {
       const r = attempt.recipe;
@@ -822,51 +655,55 @@ export class DisgracedLabScene extends Phaser.Scene {
       ).setColor(owned ? T.faint : hex(mix(UNSTABLE, 0xffffff, 0.55)));
       return;
     }
-
     const fault = attempt.fault ?? 'incomplete';
-    this.verdictText
-      .setText(UNSTABLE_FAULT_TEXT[fault])
-      .setColor(fault === 'incomplete' ? T.ghost : '#ff8888');
+    this.verdictText.setText(UNSTABLE_FAULT_TEXT[fault]).setColor(fault === 'incomplete' ? T.ghost : '#ff8888');
   }
 
   /**
-   * Forge. The Divine Nucleus is spent here and only here — everything that can
-   * refuse the bench has already refused it above, so a nucleus is never eaten
-   * by a typo. What it buys is the *right to fight for* the element, not the
-   * element: the forge is recorded as pending and settled by the bout.
+   * Forge. The Divine Nucleus is spent here and only here — every shape that cannot hold
+   * blows up without costing one. What it buys is the *right to fight for* the element, not
+   * the element: the forge is recorded as pending and settled by the bout.
    */
   private attemptUnstableForge(): void {
-    this.messageText.setText('');
-
-    const [a, b, c] = this.synthIds;
-    const attempt = readUnstableSockets(a, b, c);
+    const bench = this.bench;
+    if (!bench || bench.busy) return;
+    const [a, b, c] = bench.poured;
+    const attempt = readUnstableSockets(a ?? null, b ?? null, c ?? null);
+    const say = (line: string, mood: 'thinking' | 'grumpy' = 'grumpy'): void => {
+      Sfx.play('ui-denied');
+      this.ghost?.setMood(mood, 1800);
+      this.bubble?.say([line]);
+    };
     if (!attempt.recipe) {
       const fault = attempt.fault ?? 'incomplete';
-      this.showMessage(UNSTABLE_FAULT_TEXT[fault], fault === 'incomplete' ? '#ffcc44' : '#ff8888');
+      if (fault === 'incomplete') { say('Three vials first. Two base, one abstract.', 'thinking'); return; }
+      // A legal-looking mix that will not hold goes off on the bench. Nothing is spent.
+      this.bubble?.hide();
+      bench.heatThen(() => {
+        this.ghost?.blacken(1);
+        bench.explode(() => this.bubble?.say([`${UNSTABLE_FAULT_TEXT[fault].replace(/\n/g, ' ')} Nothing spent.`], { hold: 1200 }));
+      });
+      this.refreshVerdict();
       return;
     }
-
     const recipe = attempt.recipe;
-    if (PlayerData.isElementUnlocked(recipe.result)) {
-      this.showMessage(`${recipe.resultEmoji} ${recipe.resultName} is already stabilised.`, '#ffcc44');
-      return;
-    }
-    if (PlayerData.getPendingUnstable()) {
-      this.showMessage('A forge is already waiting on you. Settle that one first.', '#ffcc44');
-      return;
-    }
-    if (!PlayerData.spendDivineNuclei(1)) {
-      this.showMessage('Need a Divine Nucleus. Complete a bounty.', '#ff8888');
-      return;
-    }
+    if (PlayerData.isElementUnlocked(recipe.result)) { say(`${recipe.resultName} is already stabilised. Nothing spent.`, 'thinking'); return; }
+    if (PlayerData.getPendingUnstable()) { say('A forge is already waiting on you. Settle that one first.', 'thinking'); return; }
+    if (!PlayerData.spendDivineNuclei(1)) { say(`That takes a Divine Nucleus. You have ${PlayerData.getDivineNuclei()}. Complete a bounty.`); return; }
 
-    // Order matters: the two bases first, the binder last, because that is the
-    // order the three of them will walk onto the floor.
+    // Order matters: the two bases first, the binder last, because that is the order the
+    // three of them will walk onto the floor.
     const ingredients = [...attempt.bases, attempt.abstractId!];
     PlayerData.setPendingUnstable({ result: recipe.result, ingredients });
     this.divineChip.setValue(`×${PlayerData.getDivineNuclei()}`);
-    Sfx.play('unlock');
-    this.showUnstablePopup(recipe, ingredients);
+    this.bubble?.hide();
+    bench.heatThen(() => {
+      this.ghost?.setMood('shocked', 3000);
+      bench.succeed(UNSTABLE, () => {
+        this.showUnstablePopup(recipe, ingredients);
+        this.bubble?.say([`${recipe.resultName}. It will not hold. One Divine Nucleus spent — put all three down to keep it.`], { hold: 1500 });
+      });
+    });
   }
 
   /** The moment the forge fails on purpose. */
@@ -1104,6 +941,7 @@ export class DisgracedLabScene extends Phaser.Scene {
   // ── Shared ───────────────────────────────────────────────────────
 
   private showMessage(text: string, color: string): void {
+    if (this.bubble) { this.bubble.say([text.replace(/\n/g, ' ')]); return; }
     this.messageText.setText(text).setColor(color);
     this.time.delayedCall(3200, () => { if (this.messageText.active) this.messageText.setText(''); });
   }

@@ -23,6 +23,19 @@ import {
 
 export type MechAttack = 'smash' | 'rail' | 'avalanche' | 'cannon' | 'destruct';
 
+/** Q+ Salvage Salvo: the four parts picked during the wind-up. */
+export type MechHead = 'camo' | 'furnace' | 'junkyard';
+export type MechCore = 'calm' | 'urgent' | 'base';
+export type MechArmKind = 'slammer' | 'launcher' | 'saw';
+export interface MechBuild { head: MechHead | null; core: MechCore; left: MechArmKind; right: MechArmKind }
+
+/** Salvage Salvo cores: `cd` scales every mech cooldown, `dur` the mech's lifespan. */
+export const CORE_MODS: Record<MechCore, { cd: number; dur: number }> = {
+  calm: { cd: 1.4, dur: 1.5 },
+  urgent: { cd: 0.6, dur: 0.6 },
+  base: { cd: 1, dur: 1 },
+};
+
 export const MECH_DURATION_MS = 15000;
 /** Cooldown per mech key. Destruct has none — it ends the form. */
 export const MECH_COOLDOWNS: Record<Exclude<MechAttack, 'destruct'>, number> = {
@@ -41,7 +54,39 @@ const PAD = 32;            // arena border inset — keeps effects off the HUD s
 
 const DEBRIS_RADIUS = 46;
 
-/** Every number a mech key deals. Q+ Mega Mechancements swaps the whole table for {@link MEGA_STATS}. */
+// Salvage Salvo parts.
+/** Slammer: the spiked mace hits this much harder, in a slightly wider ring. */
+const SLAMMER_BONUS = 10;
+const SLAMMER_RADIUS_MULT = 1.1;
+/** Launcher: one Click is a barrage of rockets at the cursor. */
+const LAUNCHER_ROCKETS = 5;
+const LAUNCHER_GAP_MS = 70;
+const LAUNCHER_FLIGHT_MS = 320;
+const LAUNCHER_SCATTER = 36;
+const LAUNCHER_DAMAGE = 9;
+const LAUNCHER_RADIUS = 46;
+/** Saw: the blade grinds wherever the cursor is for a while. */
+const SAW_MS = 1300;
+const SAW_TICK_MS = 140;
+const SAW_DAMAGE = 4;
+const SAW_RADIUS = 62;
+const SAW_FOLLOW_SPEED = 900;
+/** Camo head: rockets fall out of the sky every so often. */
+const CAMO_GAP_MS = 3200;
+const CAMO_ROCKETS = 4;
+const CAMO_FALL_MS = 900;
+const CAMO_DAMAGE = 12;
+const CAMO_RADIUS = 56;
+const CAMO_JITTER = 80;
+/** Furnace head: attacks leave burning puddles. */
+const FLAME_MS = 4000;
+const FLAME_TICK_MS = 500;
+const FLAME_DAMAGE = 4;
+const FLAME_MAX = 60;
+/** Furnace boosts every number by this much on top of the slammer/launcher/saw base. */
+const FURNACE_PART_MULT = 1.35;
+
+/** Every number a mech key deals. A Salvage Salvo Furnace head swaps the whole table for {@link MEGA_STATS}. */
 export interface MechStats {
   cooldowns: Record<Exclude<MechAttack, 'destruct'>, number>;
   smashDamage: number; smashRadius: number; smashDebris: number;
@@ -62,7 +107,7 @@ const BASE_STATS: MechStats = {
   blasts: 20, blastDamage: 20, blastRadius: 76,
 };
 
-/** Q+ Mega Mechancements: the red mech. Every key hits harder, wider and longer. */
+/** Q+ Salvage Salvo, Furnace head: the red mech. Every key hits harder, wider and longer. */
 export const MEGA_STATS: MechStats = {
   cooldowns: { smash: 1000, rail: 4000, avalanche: 11000, cannon: 8500 },
   smashDamage: 30, smashRadius: 120, smashDebris: 5,
@@ -94,6 +139,8 @@ export interface MechApi {
 
 interface MechArm {
   side: -1 | 1;
+  /** `fist` = the plain mech's gauntlet; the rest are Salvage Salvo arms. */
+  kind: MechArmKind | 'fist';
   shoulderX: number; shoulderY: number;
   elbowX: number; elbowY: number;
   restX: number; restY: number;
@@ -102,7 +149,9 @@ interface MechArm {
   toX: number; toY: number;
   /** Strike point, in frame. */
   targetX: number; targetY: number;
-  phase: 'rest' | 'raise' | 'strike' | 'recover';
+  phase: 'rest' | 'raise' | 'strike' | 'grind' | 'recover';
+  /** Saw: the next shred tick while grinding. */
+  tickAt: number;
   phaseStart: number;
   phaseEnd: number;
 }
@@ -125,13 +174,25 @@ interface Cannon { until: number; x: number; y: number; nextTickAt: number; next
 
 interface Slag { x: number; y: number; r: number; until: number; seed: number }
 
+/** A rocket — off a Launcher arm, or out of the sky under a Camo head. World coords. */
+interface Rocket {
+  sx: number; sy: number; lx: number; ly: number;
+  startAt: number; landAt: number;
+  dmg: number; radius: number;
+  fromSky: boolean;
+}
+
+/** Furnace head: a puddle of burning slag. */
+interface Flame { x: number; y: number; r: number; until: number; seed: number }
+
 /** Fixed jitter so the plating has a scrapped-together silhouette that does not boil. */
 const JIT = [1.03, 0.94, 1.06, 0.92, 1.08, 0.95, 1.02, 0.93, 1.07, 0.96, 1.01, 0.92, 1.05, 0.97, 1.04, 0.91];
 
 export class MagnetMech {
   /** True while the body is up. World effects keep running after it falls. */
   active = true;
-  readonly until: number;
+  /** When the body falls. Hits to the core pull it closer — see {@link drain}. */
+  until: number;
   private readonly flip: boolean;
   private arms: MechArm[] = [];
   private readyAt: Record<Exclude<MechAttack, 'destruct'>, number> = { smash: 0, rail: 0, avalanche: 0, cannon: 0 };
@@ -143,6 +204,14 @@ export class MagnetMech {
   private slagAccum = 0;
   private blastsLeft = 0;
   private blastNextAt = 0;
+  private rockets: Rocket[] = [];
+  private flames: Flame[] = [];
+  private flameAccum = 0;
+  private nextBarrageAt = 0;
+  /** Salvage Salvo: the arm the next Click goes to. */
+  private nextSide: -1 | 1 = 1;
+  private aimX = 0;
+  private aimY = 0;
 
   // Layers. The body draws over everything on purpose; floor effects stay ≤20 so the ability
   // cards (21–23) are never painted over.
@@ -153,12 +222,32 @@ export class MagnetMech {
   private label: Phaser.GameObjects.Text | null;
 
   private readonly stats: MechStats;
+  /** How long this mech lives at full core (the core's own lifespan). */
+  readonly duration: number;
 
-  /** `mega` = Q+ Mega Mechancements (the red mech, {@link MEGA_STATS}); the red itself is the kit's tint. */
-  constructor(private api: MechApi, flip: boolean, now: number, readonly mega = false) {
+  /**
+   * `build` = Q+ Salvage Salvo's picked parts; null is the plain mech. A Furnace head is the red
+   * mech ({@link MEGA_STATS}); the red itself is the kit's tint.
+   */
+  constructor(private api: MechApi, flip: boolean, now: number, readonly build: MechBuild | null = null) {
     this.flip = flip;
-    this.stats = mega ? MEGA_STATS : BASE_STATS;
-    this.until = now + MECH_DURATION_MS;
+    const base = build?.head === 'furnace' ? MEGA_STATS : BASE_STATS;
+    const core = CORE_MODS[build?.core ?? 'base'];
+    const junk = build?.head === 'junkyard';
+    this.stats = {
+      ...base,
+      cooldowns: {
+        smash: Math.round(base.cooldowns.smash * core.cd), rail: Math.round(base.cooldowns.rail * core.cd),
+        avalanche: Math.round(base.cooldowns.avalanche * core.cd), cannon: Math.round(base.cooldowns.cannon * core.cd),
+      },
+      // Junkyard Scrapper: the self-destruct is far worse.
+      blasts: base.blasts + (junk ? 12 : 0),
+      blastDamage: Math.round(base.blastDamage * (junk ? 1.4 : 1)),
+      blastRadius: Math.round(base.blastRadius * (junk ? 1.25 : 1)),
+    };
+    this.duration = MECH_DURATION_MS * core.dur;
+    this.until = now + this.duration;
+    this.nextBarrageAt = now + 1500;
     const { scene, width: W, height: H } = api;
     this.floorG = scene.add.graphics().setDepth(3);
     this.worldG = scene.add.graphics().setDepth(17);
@@ -173,7 +262,7 @@ export class MagnetMech {
     const lp = this.toWorld(W / 2, 189);
     this.label = scene.add.text(lp.x, lp.y, '', {
       fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
-      color: mega ? '#ff9a88' : '#8fe8ff', stroke: '#07090e', strokeThickness: 4,
+      color: this.furnace ? '#ff9a88' : '#8fe8ff', stroke: '#07090e', strokeThickness: 4,
     }).setOrigin(0.5).setDepth(32);
 
     const mkArm = (side: -1 | 1): MechArm => {
@@ -182,10 +271,10 @@ export class MagnetMech {
       const rx = side < 0 ? 70 : W - 70;
       const ry = H * 0.78;
       return {
-        side, shoulderX: sx, shoulderY: -70, elbowX: ex, elbowY: H * 0.36,
+        side, kind: build ? (side < 0 ? build.left : build.right) : 'fist', shoulderX: sx, shoulderY: -70, elbowX: ex, elbowY: H * 0.36,
         restX: rx, restY: ry, fistX: rx, fistY: ry,
         fromX: rx, fromY: ry, toX: rx, toY: ry, targetX: rx, targetY: ry,
-        phase: 'rest', phaseStart: 0, phaseEnd: 0,
+        phase: 'rest', tickAt: 0, phaseStart: 0, phaseEnd: 0,
       };
     };
     this.arms = [mkArm(-1), mkArm(1)];
@@ -198,7 +287,18 @@ export class MagnetMech {
     }
     const c = this.toWorld(W / 2, 170);
     api.fx.pulse(c.x, c.y, W * 0.45, MAGNET.neon, 900, 29, 14);
-    api.announce(c.x, this.toWorld(W / 2, 240).y, mega ? '🤖 MEGA MECHA MASSACRE!' : '🤖 MECHA MASSACRE!', MAGNET.visor);
+    api.announce(c.x, this.toWorld(W / 2, 240).y, build ? '🤖 SALVAGE SALVO!' : '🤖 MECHA MASSACRE!', MAGNET.visor);
+  }
+
+  /** Q+ Salvage Salvo's Furnace head: the red mech. */
+  get furnace(): boolean { return this.build?.head === 'furnace'; }
+
+  /** The core can be hurt (everything but Salvage Salvo's Base core). */
+  get coreHurtable(): boolean { return this.build?.core !== 'base'; }
+
+  /** A hit on the core: the mech loses `ms` of its remaining life. */
+  drain(ms: number): void {
+    if (this.active) this.until -= ms;
   }
 
   // ── Frame helpers ──────────────────────────────────────────────────────
@@ -242,17 +342,40 @@ export class MagnetMech {
   private smash(time: number, x: number, y: number): boolean {
     const w = this.clampWorld(x, y);
     const f = this.toFrame(w.x, w.y);
-    const preferred = f.x < this.api.width / 2 ? -1 : 1;
+    // Salvage Salvo: Clicks alternate arms (the other one steps in while one is busy).
+    const preferred = this.build ? this.nextSide : f.x < this.api.width / 2 ? -1 : 1;
     const arm = this.arms.find(a => a.side === preferred && a.phase === 'rest')
       ?? this.arms.find(a => a.phase === 'rest');
     if (!arm) return false;
+    if (this.build) this.nextSide = arm.side < 0 ? 1 : -1;
     arm.targetX = f.x; arm.targetY = f.y;
     arm.phase = 'raise';
     arm.phaseStart = time; arm.phaseEnd = time + 200;
     arm.fromX = arm.fistX; arm.fromY = arm.fistY;
-    arm.toX = f.x; arm.toY = f.y - 250;
+    if (arm.kind === 'launcher') {
+      // The pod swings round to point at the spot rather than climbing over it.
+      arm.toX = Phaser.Math.Linear(arm.restX, f.x, 0.3);
+      arm.toY = Phaser.Math.Linear(arm.restY, f.y, 0.3) - 60;
+      arm.phaseEnd = time + 160;
+    } else {
+      arm.toX = f.x; arm.toY = f.y - (arm.kind === 'saw' ? 140 : 250);
+    }
     this.api.shake(160, 0.008);
     return true;
+  }
+
+  /** A Salvage Salvo part number, boosted under a Furnace head. */
+  private part(n: number): number { return this.furnace ? Math.round(n * FURNACE_PART_MULT) : n; }
+
+  /** Furnace head: a burning puddle where an attack landed. */
+  private burn(x: number, y: number, r: number): void {
+    if (!this.furnace) return;
+    this.flames.push({ x, y, r, until: this.api.scene.time.now + FLAME_MS, seed: Math.random() * 10 });
+    while (this.flames.length > FLAME_MAX) this.flames.shift();
+  }
+
+  private fireRocket(sx: number, sy: number, lx: number, ly: number, at: number, ms: number, dmg: number, radius: number, fromSky: boolean): void {
+    this.rockets.push({ sx, sy, lx, ly, startAt: at, landAt: at + ms, dmg, radius, fromSky });
   }
 
   /** E — Mag Rail: an electrified rail driven down the arena at the cursor's column. */
@@ -327,7 +450,7 @@ export class MagnetMech {
   /** Nothing of this mech is left on screen — the kit may drop it. */
   get done(): boolean {
     return !this.active && this.debris.length === 0 && !this.rail && !this.avalanche
-      && this.slag.length === 0 && this.blastsLeft === 0;
+      && this.slag.length === 0 && this.blastsLeft === 0 && this.rockets.length === 0 && this.flames.length === 0;
   }
 
   destroy(): void {
@@ -342,17 +465,20 @@ export class MagnetMech {
   /** `aimX, aimY` steers a live cannon; pass the pilot's cursor (or the bot's target). */
   update(time: number, delta: number, aimX: number, aimY: number): void {
     if (this.active && time >= this.until) this.end(time, false);
+    this.aimX = aimX; this.aimY = aimY;
     if (this.active) {
-      this.updateArms(time);
+      this.updateArms(time, delta);
+      if (this.build?.head === 'camo' && time >= this.nextBarrageAt) this.camoBarrage(time);
       if (this.cannon) this.aimCannon(aimX, aimY);
     }
     this.updateWorld(time, delta);
     this.paint(time);
-    if (this.label) this.label.setText(`🤖 ${this.mega ? 'MEGA MECH' : 'MECH'}  ${Math.max(0, (this.until - time) / 1000).toFixed(1)}s`);
+    if (this.label) this.label.setText(`🤖 ${this.build ? 'SALVO MECH' : 'MECH'}  ${Math.max(0, (this.until - time) / 1000).toFixed(1)}s`);
   }
 
-  private updateArms(time: number): void {
+  private updateArms(time: number, delta: number): void {
     for (const a of this.arms) {
+      if (a.phase === 'grind') { this.grind(a, time, delta); continue; }
       if (a.phase === 'rest') {
         a.fistX = a.restX + Math.sin(time / 780 + a.side) * 5;
         a.fistY = a.restY + Math.sin(time / 560 + a.side) * 7;
@@ -367,9 +493,21 @@ export class MagnetMech {
         a.phase = 'strike';
         a.phaseStart = time; a.phaseEnd = time + 110;
         a.fromX = a.fistX; a.fromY = a.fistY;
-        a.toX = a.targetX; a.toY = a.targetY;
+        if (a.kind === 'launcher') {
+          // The pod kicks back as it fires instead of coming down on the spot.
+          a.toX = Phaser.Math.Linear(a.fistX, a.restX, 0.25); a.toY = a.fistY - 30;
+        } else {
+          a.toX = a.targetX; a.toY = a.targetY;
+        }
       } else if (a.phase === 'strike') {
-        this.smashImpact(a);
+        if (a.kind === 'saw') {
+          a.phase = 'grind';
+          a.phaseStart = time; a.phaseEnd = time + SAW_MS;
+          a.tickAt = time;
+          continue;
+        }
+        if (a.kind === 'launcher') this.launch(a, time);
+        else this.smashImpact(a);
         a.phase = 'recover';
         a.phaseStart = time; a.phaseEnd = time + 480;
         a.fromX = a.fistX; a.fromY = a.fistY;
@@ -380,21 +518,86 @@ export class MagnetMech {
     }
   }
 
+  /** The smash ring for this arm: a Slammer's mace reaches a little wider. */
+  private smashRadius(arm: MechArm): number {
+    return arm.kind === 'slammer' ? Math.round(this.stats.smashRadius * SLAMMER_RADIUS_MULT) : this.stats.smashRadius;
+  }
+
   private smashImpact(arm: MechArm): void {
     const w = this.toWorld(arm.targetX, arm.targetY);
+    const radius = this.smashRadius(arm);
+    const dmg = this.stats.smashDamage + (arm.kind === 'slammer' ? SLAMMER_BONUS : 0);
     this.api.shake(430, 0.032);
     for (const t of this.api.targets()) {
-      if (Phaser.Math.Distance.Between(w.x, w.y, t.x, t.y) > this.stats.smashRadius) continue;
-      this.api.hit(t, this.stats.smashDamage);
+      if (Phaser.Math.Distance.Between(w.x, w.y, t.x, t.y) > radius) continue;
+      this.api.hit(t, dmg);
     }
     this.api.fx.boom(w.x, w.y, 110, { color: MAGNET.neon, depth: 6 });
-    this.api.fx.slam(w.x, w.y, this.stats.smashRadius, MAGNET.sky, 6);
+    this.api.fx.slam(w.x, w.y, radius, MAGNET.sky, 6);
+    this.burn(w.x, w.y, 54);
     // Three lumps of floor and plate kicked up — they come back down 2s later.
     for (let i = 0; i < this.stats.smashDebris; i++) {
       const ang = Math.random() * Math.PI * 2;
       const dist = 90 + Math.random() * 150;
       const l = this.clampWorld(w.x + Math.cos(ang) * dist, w.y + Math.sin(ang) * dist);
       this.spawnDebris(w.x, w.y, l.x, l.y, DEBRIS_FALL_MS, this.stats.debrisDamage, DEBRIS_RADIUS, 12 + Math.random() * 6);
+    }
+  }
+
+  /** Launcher: a barrage of rockets out of the pod at the strike point. */
+  private launch(arm: MechArm, time: number): void {
+    const from = this.toWorld(arm.fistX, arm.fistY);
+    const to = this.toWorld(arm.targetX, arm.targetY);
+    for (let i = 0; i < LAUNCHER_ROCKETS; i++) {
+      const l = this.clampWorld(to.x + (Math.random() - 0.5) * 2 * LAUNCHER_SCATTER, to.y + (Math.random() - 0.5) * 2 * LAUNCHER_SCATTER);
+      this.fireRocket(from.x, from.y, l.x, l.y, time + i * LAUNCHER_GAP_MS, LAUNCHER_FLIGHT_MS, this.part(LAUNCHER_DAMAGE), LAUNCHER_RADIUS, false);
+    }
+    this.api.shake(220, 0.012);
+    this.api.fx.sparks(from.x, from.y, 8, Math.atan2(to.y - from.y, to.x - from.x), 29, MAGNET.amber);
+  }
+
+  /** Saw: the blade follows the cursor and shreds whatever is under it. */
+  private grind(a: MechArm, time: number, delta: number): void {
+    const aim = this.clampWorld(this.aimX, this.aimY);
+    const f = this.toFrame(aim.x, aim.y);
+    const step = SAW_FOLLOW_SPEED * (delta / 1000);
+    const d = Phaser.Math.Distance.Between(a.fistX, a.fistY, f.x, f.y);
+    if (d > 0.5) {
+      const k = Math.min(1, step / d);
+      a.fistX += (f.x - a.fistX) * k;
+      a.fistY += (f.y - a.fistY) * k;
+    }
+    if (time >= a.tickAt) {
+      a.tickAt = time + SAW_TICK_MS;
+      const w = this.toWorld(a.fistX, a.fistY);
+      for (const t of this.api.targets()) {
+        if (Phaser.Math.Distance.Between(w.x, w.y, t.x, t.y) > SAW_RADIUS) continue;
+        this.api.hit(t, this.part(SAW_DAMAGE));
+        this.api.fx.sparks(t.x, t.y, 4, Math.random() * Math.PI * 2, 10, MAGNET.amber);
+      }
+      this.api.fx.sparks(w.x, w.y, 3, Math.random() * Math.PI * 2, 29, MAGNET.goldHi);
+      if (Math.random() < 0.55) this.burn(w.x, w.y, 40);
+      this.api.shake(60, 0.004);
+    }
+    if (time < a.phaseEnd) return;
+    a.phase = 'recover';
+    a.phaseStart = time; a.phaseEnd = time + 480;
+    a.fromX = a.fistX; a.fromY = a.fistY;
+    a.toX = a.restX; a.toY = a.restY;
+  }
+
+  /** Camo head: a salvo out of the sky over whoever this mech may hurt. */
+  private camoBarrage(time: number): void {
+    this.nextBarrageAt = time + CAMO_GAP_MS;
+    const targets = this.api.targets();
+    const { width: W, height: H } = this.api;
+    for (let i = 0; i < CAMO_ROCKETS; i++) {
+      const t = targets.length > 0 ? targets[i % targets.length] : null;
+      const cx = t ? t.x : Phaser.Math.Between(PAD + 60, W - PAD - 60);
+      const cy = t ? t.y : Phaser.Math.Between(PAD + 60, H - PAD - 60);
+      const l = this.clampWorld(cx + (Math.random() - 0.5) * 2 * CAMO_JITTER, cy + (Math.random() - 0.5) * 2 * CAMO_JITTER);
+      const skyY = this.flip ? H + 80 : -80;
+      this.fireRocket(l.x + Phaser.Math.Between(-40, 40), skyY, l.x, l.y, time + i * 160, CAMO_FALL_MS, this.part(CAMO_DAMAGE), CAMO_RADIUS, true);
     }
   }
 
@@ -515,6 +718,33 @@ export class MagnetMech {
       }
     }
 
+    // Rockets: Launcher barrages and Camo salvos.
+    for (let i = this.rockets.length - 1; i >= 0; i--) {
+      const r = this.rockets[i];
+      if (time < r.landAt) continue;
+      this.rockets.splice(i, 1);
+      this.api.fx.boom(r.lx, r.ly, r.radius + 14, { color: MAGNET.amber, depth: 7, shrapnel: 5 });
+      this.api.shake(120, 0.008);
+      for (const t of this.api.targets()) {
+        if (Phaser.Math.Distance.Between(r.lx, r.ly, t.x, t.y) > r.radius) continue;
+        this.api.hit(t, r.dmg);
+      }
+      this.burn(r.lx, r.ly, 34);
+    }
+
+    // Furnace: burning puddles.
+    if (this.flames.length > 0) {
+      this.flames = this.flames.filter(fl => time < fl.until);
+      this.flameAccum += delta;
+      if (this.flameAccum >= FLAME_TICK_MS) {
+        this.flameAccum = 0;
+        for (const t of this.api.targets()) {
+          if (!this.flames.some(fl => Phaser.Math.Distance.Between(t.x, t.y, fl.x, fl.y) <= fl.r)) continue;
+          this.api.hit(t, FLAME_DAMAGE);
+        }
+      }
+    }
+
     // Slag left by the cannon and the blasts.
     if (this.slag.length > 0) {
       this.slag = this.slag.filter(s => time < s.until);
@@ -541,6 +771,7 @@ export class MagnetMech {
         this.api.hit(t, this.stats.blastDamage);
       }
       this.slag.push({ x, y, r: 46, until: time + 9000, seed: Math.random() * 10 });
+      this.burn(x, y, 46);
     }
   }
 
@@ -568,13 +799,52 @@ export class MagnetMech {
     }
     if (this.rail) this.paintRail(fg, this.rail, t);
     for (const a of this.arms) {
+      if (a.phase === 'grind') {
+        // The saw's bite on the floor, scored with fresh cuts.
+        const w = this.toWorld(a.fistX, a.fistY);
+        fg.fillStyle(tint(MAGNET.shadow), 0.4);
+        fg.fillEllipse(w.x, w.y + 6, SAW_RADIUS * 1.6, SAW_RADIUS * 0.7);
+        fg.lineStyle(2, MAGNET.amber, 0.55 + 0.25 * Math.sin(t * 30));
+        fg.strokeCircle(w.x, w.y, SAW_RADIUS);
+        continue;
+      }
       if (a.phase !== 'raise' && a.phase !== 'strike') continue;
       const w = this.toWorld(a.targetX, a.targetY);
       const p = a.phase === 'strike' ? 1 : Phaser.Math.Clamp((time - a.phaseStart) / 200, 0, 1);
       fg.fillStyle(tint(MAGNET.shadow), 0.25 + 0.3 * p);
       fg.fillEllipse(w.x, w.y, 60 + p * 80, (60 + p * 80) * 0.45);
-      fg.lineStyle(3, tint(MAGNET.neon), 0.4 + 0.5 * p);
-      fg.strokeCircle(w.x, w.y, this.stats.smashRadius);
+      fg.lineStyle(3, tint(a.kind === 'launcher' ? MAGNET.amber : MAGNET.neon), 0.4 + 0.5 * p);
+      fg.strokeCircle(w.x, w.y, a.kind === 'launcher' ? LAUNCHER_SCATTER + LAUNCHER_RADIUS
+        : a.kind === 'saw' ? SAW_RADIUS : this.smashRadius(a));
+    }
+    // Furnace puddles: a crust of slag with flame tongues licking off it.
+    for (const fl of this.flames) {
+      const life = Phaser.Math.Clamp((fl.until - time) / 900, 0, 1);
+      fg.fillStyle(0x3a0c04, 0.65 * life);
+      fg.fillCircle(fl.x, fl.y, fl.r);
+      fg.fillStyle(0xff4a12, (0.45 + 0.15 * Math.sin(t * 9 + fl.seed)) * life);
+      fg.fillCircle(fl.x, fl.y, fl.r * 0.74);
+      fg.fillStyle(0xffc24a, (0.45 + 0.25 * Math.sin(t * 13 + fl.seed * 2)) * life);
+      fg.fillCircle(fl.x + Math.sin(t * 3 + fl.seed) * fl.r * 0.15, fl.y, fl.r * 0.36);
+      for (let i = 0; i < 5; i++) {
+        const a = fl.seed + (i / 5) * Math.PI * 2 + t * 0.6;
+        const bx = fl.x + Math.cos(a) * fl.r * 0.6, by = fl.y + Math.sin(a) * fl.r * 0.45;
+        const h = (10 + 8 * Math.sin(t * 11 + i * 1.7 + fl.seed)) * life;
+        fg.fillStyle(0xff7a1a, 0.7 * life);
+        fillPts(fg, [{ x: bx - 5, y: by }, { x: bx + 5, y: by }, { x: bx + Math.sin(t * 7 + i) * 3, y: by - h }]);
+      }
+    }
+    // Rockets on their way: a target ring on the floor where each comes down.
+    for (const r of this.rockets) {
+      if (time < r.startAt) continue;
+      const k = Phaser.Math.Clamp((time - r.startAt) / Math.max(1, r.landAt - r.startAt), 0, 1);
+      fg.fillStyle(tint(MAGNET.shadow), 0.15 + 0.35 * k);
+      fg.fillEllipse(r.lx, r.ly, 14 + 18 * k, (14 + 18 * k) * 0.45);
+      if (!r.fromSky) continue;
+      fg.lineStyle(2, MAGNET.amber, 0.35 + 0.55 * k);
+      fg.strokeCircle(r.lx, r.ly, r.radius);
+      fg.lineBetween(r.lx - r.radius * 0.5, r.ly, r.lx + r.radius * 0.5, r.ly);
+      fg.lineBetween(r.lx, r.ly - r.radius * 0.5, r.lx, r.ly + r.radius * 0.5);
     }
     for (const r of this.debris) {
       const k = Phaser.Math.Clamp((time - r.startAt) / Math.max(1, r.landAt - r.startAt), 0, 1);
@@ -597,6 +867,18 @@ export class MagnetMech {
       drawScrap(wg, tint, x, y, k * r.spin, r.size, r.seed, 'fly', t);
     }
     if (this.avalanche) this.paintAvalanche(wg, this.avalanche, t);
+    for (const r of this.rockets) {
+      if (time < r.startAt) continue;
+      const k = Phaser.Math.Clamp((time - r.startAt) / Math.max(1, r.landAt - r.startAt), 0, 1);
+      const arc = r.fromSky ? 0 : Math.sin(k * Math.PI) * 70;
+      const x = Phaser.Math.Linear(r.sx, r.lx, k);
+      const y = Phaser.Math.Linear(r.sy, r.ly, k) - arc;
+      // Heading: the derivative of the path, so the nose leads the arc.
+      const k2 = Math.min(1, k + 0.03);
+      const x2 = Phaser.Math.Linear(r.sx, r.lx, k2);
+      const y2 = Phaser.Math.Linear(r.sy, r.ly, k2) - (r.fromSky ? 0 : Math.sin(k2 * Math.PI) * 70);
+      drawRocket(wg, tint, x, y, Math.atan2(y2 - y, x2 - x), r.fromSky ? 1.3 : 1, t);
+    }
 
     // Beam and body.
     const bg = this.beamG;
@@ -623,7 +905,7 @@ export class MagnetMech {
     const tint = this.api.tint;
     const cx = this.api.width / 2;
     const left = Math.max(0, this.until - time);
-    const frac = left / MECH_DURATION_MS;
+    const frac = Math.min(1, left / this.duration);
     const PW = 168, PH = 34, L = cx - PW / 2, T = 178;
     g.fillStyle(tint(MAGNET.oil), 1);
     fillPts(g, [{ x: L - 4, y: T }, { x: L + PW + 4, y: T }, { x: L + PW - 4, y: T + PH + 3 }, { x: L + 4, y: T + PH + 3 }]);
@@ -748,8 +1030,26 @@ export class MagnetMech {
       g.fillCircle(vx + s * (30 + p * 30), vy + 60 + p * 40, 8 + p * 10);
     }
 
-    // Q+ Mega Mechancements: swept war-horns off the brow and a gold chevron under the crest.
-    if (this.mega) {
+    // Q+ Salvage Salvo heads.
+    if (this.build?.head === 'camo') this.paintCamo(g, cx, cy, vy, t);
+    if (this.build?.head === 'junkyard') this.paintJunkyard(g, cx, cy, vy, t);
+    // Furnace: swept war-horns off the brow, a gold chevron under the crest, and a firebox grate.
+    if (this.furnace) {
+      const glow = 0.65 + 0.35 * Math.sin(t * 7);
+      g.fillStyle(tint(MAGNET.oil), 1);
+      g.fillRoundedRect(cx - 64, vy + 64, 128, 40, 8);
+      g.fillStyle(0xff5a14, glow);
+      g.fillRoundedRect(cx - 58, vy + 69, 116, 30, 6);
+      g.fillStyle(0xffd060, 0.5 * glow);
+      g.fillEllipse(cx, vy + 88, 90, 14);
+      g.fillStyle(tint(MAGNET.gunMid), 1);
+      for (let i = 0; i < 6; i++) g.fillRect(cx - 55 + i * 21, vy + 66, 6, 36);
+      // Embers spat out of the grate.
+      for (let i = 0; i < 4; i++) {
+        const p = (t * 0.9 + i / 4) % 1;
+        g.fillStyle(0xffaa33, 0.8 * (1 - p));
+        g.fillCircle(cx - 40 + i * 26 + Math.sin(t * 3 + i) * 6, vy + 104 + p * 40, 3 - p * 2);
+      }
       for (const s of [-1, 1]) {
         const base = { x: cx + s * 168, y: cy + 14 };
         const horn: Pt[] = [
@@ -775,6 +1075,70 @@ export class MagnetMech {
     g.lineBetween(cx + 120, cy + 20, cx + 150, cy - 70);
     g.fillStyle(tint(MAGNET.red), Math.sin(t * 6) > 0 ? 1 : 0.25);
     g.fillCircle(cx + 150, cy - 70, 6);
+  }
+
+  /** Camo head: olive blotches over the plate and a rocket rack on each cheek. */
+  private paintCamo(g: Phaser.GameObjects.Graphics, cx: number, cy: number, vy: number, t: number): void {
+    const blots: Array<[number, number, number, number, number]> = [
+      [-150, 20, 70, 34, 0x4b5a2a], [90, 10, 80, 30, 0x6b6a3a], [-40, 140, 64, 26, 0x3a4624],
+      [160, 120, 50, 30, 0x4b5a2a], [-200, 120, 46, 40, 0x6b6a3a], [20, 60, 40, 22, 0x3a4624],
+    ];
+    for (const [ox, oy, w, h, c] of blots) {
+      g.fillStyle(c, 0.85);
+      g.fillEllipse(cx + ox, cy + oy, w, h);
+      g.fillEllipse(cx + ox + w * 0.3, cy + oy + h * 0.25, w * 0.6, h * 0.7);
+    }
+    for (const s of [-1, 1]) {
+      const rx = cx + s * 214, ry = vy - 30;
+      g.fillStyle(this.api.tint(MAGNET.oil), 1);
+      g.fillRect(rx - 30, ry - 6, 60, 50);
+      g.fillStyle(0x4b5a2a, 1);
+      g.fillRect(rx - 27, ry - 3, 54, 44);
+      // Three tubes; a lit warhead in each that is not empty.
+      const since = (this.api.scene.time.now - (this.nextBarrageAt - CAMO_GAP_MS)) / CAMO_GAP_MS;
+      for (let i = 0; i < 3; i++) {
+        const tx = rx - 17 + i * 17;
+        g.fillStyle(this.api.tint(MAGNET.oil), 1); g.fillCircle(tx, ry + 30, 7);
+        if (since > 0.25) { g.fillStyle(MAGNET.red, 1); g.fillCircle(tx, ry + 30, 4.5); }
+      }
+      g.fillStyle(MAGNET.amber, Math.sin(t * 5 + s) > 0 ? 0.9 : 0.3);
+      g.fillCircle(rx + s * 22, ry + 4, 3);
+    }
+  }
+
+  /** Junkyard Scrapper head: rust, a crooked salvage plate and a bundle of TNT strapped on. */
+  private paintJunkyard(g: Phaser.GameObjects.Graphics, cx: number, cy: number, vy: number, t: number): void {
+    const tint = this.api.tint;
+    g.fillStyle(tint(MAGNET.rust), 0.75);
+    g.fillEllipse(cx - 60, cy + 40, 90, 30);
+    g.fillEllipse(cx + 110, cy + 150, 60, 22);
+    g.fillEllipse(cx - 190, cy + 70, 40, 46);
+    // A crooked plate bolted on at an angle, with hazard stripes.
+    const plate: Pt[] = [{ x: cx + 60, y: cy + 4 }, { x: cx + 200, y: cy + 30 }, { x: cx + 190, y: cy + 74 }, { x: cx + 52, y: cy + 50 }];
+    g.fillStyle(tint(MAGNET.gunHi), 1);
+    fillPts(g, plate);
+    for (let i = 0; i < 6; i++) {
+      g.fillStyle(i % 2 === 0 ? MAGNET.amber : tint(MAGNET.oil), 0.9);
+      fillPts(g, [
+        { x: cx + 66 + i * 22, y: cy + 10 + i * 4 }, { x: cx + 80 + i * 22, y: cy + 13 + i * 4 },
+        { x: cx + 72 + i * 22, y: cy + 50 + i * 4 }, { x: cx + 58 + i * 22, y: cy + 47 + i * 4 },
+      ]);
+    }
+    // TNT bundle on the left cheek, fuse sputtering.
+    const bx = cx - 222, by = vy - 34;
+    for (let i = 0; i < 3; i++) {
+      g.fillStyle(0x8a1a12, 1);
+      g.fillRoundedRect(bx - 22 + i * 15, by, 13, 46, 4);
+      g.fillStyle(0xd23a24, 1);
+      g.fillRoundedRect(bx - 20 + i * 15, by + 2, 9, 42, 3);
+    }
+    g.fillStyle(0xd9c27a, 1);
+    g.fillRect(bx - 24, by + 18, 48, 8);
+    g.lineStyle(2, 0x2a1a10, 1);
+    g.lineBetween(bx, by, bx + 6, by - 14);
+    const sp = Math.sin(t * 30) > 0;
+    g.fillStyle(sp ? 0xffee88 : 0xff7a1a, 1);
+    g.fillCircle(bx + 6, by - 15, sp ? 4 : 3);
   }
 
   /** One hydraulic limb segment: a plated sleeve with a piston running along it. */
@@ -837,6 +1201,10 @@ export class MagnetMech {
         g.fillCircle(ex + Math.cos(ang) * 37, ey + Math.sin(ang) * 37, 4);
       }
 
+      if (a.kind === 'slammer') { this.paintMace(g, a, t); continue; }
+      if (a.kind === 'launcher') { this.paintLauncher(g, a, t); continue; }
+      if (a.kind === 'saw') { this.paintSaw(g, a, time); continue; }
+
       // Fist: a squared, plated gauntlet with pole-coloured knuckles (red one hand, blue the other).
       const r = 56;
       const fp: Pt[] = [];
@@ -869,6 +1237,103 @@ export class MagnetMech {
           fieldArc(g, a.fistX + Math.cos(ang) * (r + 4), a.fistY + Math.sin(ang) * (r + 4),
             a.fistX + Math.cos(ang + 1) * (r + 4), a.fistY + Math.sin(ang + 1) * (r + 4), 12, 4, 10);
         }
+      }
+    }
+  }
+
+  /** Slammer: a spiked iron mace on the end of the arm, pole-coloured studs between the spikes. */
+  private paintMace(g: Phaser.GameObjects.Graphics, a: MechArm, t: number): void {
+    const tint = this.api.tint;
+    const r = 50;
+    const spin = a.phase === 'rest' ? t * 0.3 : t * 2;
+    for (let i = 0; i < 10; i++) {
+      const ang = spin + (i / 10) * Math.PI * 2;
+      const c = Math.cos(ang), n = Math.sin(ang);
+      const bx = a.fistX + c * (r - 4), by = a.fistY + n * (r - 4);
+      g.fillStyle(tint(MAGNET.oil), 1);
+      fillPts(g, [
+        { x: bx - n * 13, y: by + c * 13 }, { x: a.fistX + c * (r + 30), y: a.fistY + n * (r + 30) }, { x: bx + n * 13, y: by - c * 13 },
+      ]);
+      g.fillStyle(tint(MAGNET.chrome), 1);
+      fillPts(g, [
+        { x: bx - n * 9, y: by + c * 9 }, { x: a.fistX + c * (r + 25), y: a.fistY + n * (r + 25) }, { x: bx + n * 9, y: by - c * 9 },
+      ]);
+    }
+    g.fillStyle(tint(MAGNET.oil), 1); g.fillCircle(a.fistX, a.fistY, r + 3);
+    g.fillStyle(tint(MAGNET.gunMid), 1); g.fillCircle(a.fistX, a.fistY, r);
+    g.fillStyle(tint(MAGNET.gunHi), 1); g.fillCircle(a.fistX - 12, a.fistY - 12, r * 0.5);
+    const pole = a.side < 0 ? MAGNET.red : MAGNET.blue;
+    for (let i = 0; i < 5; i++) {
+      const ang = spin + ((i + 0.5) / 5) * Math.PI * 2;
+      g.fillStyle(tint(pole), 1);
+      g.fillCircle(a.fistX + Math.cos(ang) * r * 0.62, a.fistY + Math.sin(ang) * r * 0.62, 7);
+    }
+    g.fillStyle(tint(MAGNET.white), 0.4); g.fillCircle(a.fistX - 16, a.fistY - 18, 8);
+  }
+
+  /** Launcher: a boxy rocket pod, a warhead in every tube that has not just fired. */
+  private paintLauncher(g: Phaser.GameObjects.Graphics, a: MechArm, t: number): void {
+    const tint = this.api.tint;
+    const W2 = 58, H2 = 50;
+    g.fillStyle(tint(MAGNET.oil), 1);
+    g.fillRoundedRect(a.fistX - W2 - 4, a.fistY - H2 - 4, W2 * 2 + 8, H2 * 2 + 8, 12);
+    g.fillStyle(tint(MAGNET.gunMid), 1);
+    g.fillRoundedRect(a.fistX - W2, a.fistY - H2, W2 * 2, H2 * 2, 10);
+    g.fillStyle(tint(MAGNET.gunHi), 1);
+    g.fillRect(a.fistX - W2 + 6, a.fistY - H2 + 6, W2 * 2 - 12, 12);
+    const loaded = a.phase === 'rest' || a.phase === 'raise';
+    for (let row = 0; row < 2; row++) {
+      for (let col = 0; col < 3; col++) {
+        const tx = a.fistX - 34 + col * 34, ty = a.fistY - 4 + row * 32;
+        g.fillStyle(tint(MAGNET.oil), 1); g.fillCircle(tx, ty, 13);
+        g.fillStyle(tint(MAGNET.cobalt), 1); g.fillCircle(tx, ty, 10);
+        if (loaded) {
+          g.fillStyle(MAGNET.red, 1); g.fillCircle(tx, ty, 7);
+          g.fillStyle(MAGNET.white, 0.5); g.fillCircle(tx - 2, ty - 2, 2.5);
+        } else {
+          g.fillStyle(0xff7a1a, 0.5 + 0.4 * Math.sin(t * 30 + col)); g.fillCircle(tx, ty, 6);
+        }
+      }
+    }
+    const pole = a.side < 0 ? MAGNET.red : MAGNET.blue;
+    g.fillStyle(tint(pole), 1);
+    g.fillRect(a.fistX - W2 + 10, a.fistY - H2 + 9, 16, 6);
+  }
+
+  /** Saw: a toothed blade on a hub, screaming round while it grinds. */
+  private paintSaw(g: Phaser.GameObjects.Graphics, a: MechArm, time: number): void {
+    const tint = this.api.tint;
+    const r = 58;
+    const spin = time / (a.phase === 'grind' ? 22 : 260);
+    const teeth = 16;
+    const blade: Pt[] = [];
+    for (let i = 0; i < teeth; i++) {
+      const a0 = spin + (i / teeth) * Math.PI * 2;
+      const a1 = a0 + (Math.PI * 2) / teeth * 0.7;
+      blade.push({ x: a.fistX + Math.cos(a0) * r * 0.86, y: a.fistY + Math.sin(a0) * r * 0.86 });
+      blade.push({ x: a.fistX + Math.cos(a1) * (r + 10), y: a.fistY + Math.sin(a1) * (r + 10) });
+    }
+    g.fillStyle(tint(MAGNET.oil), 1);
+    fillPts(g, blade.map(p => ({ x: a.fistX + (p.x - a.fistX) * 1.05, y: a.fistY + (p.y - a.fistY) * 1.05 })));
+    g.fillStyle(tint(MAGNET.chrome), 1);
+    fillPts(g, blade);
+    g.fillStyle(tint(MAGNET.steel), 1); g.fillCircle(a.fistX, a.fistY, r * 0.72);
+    // Speed streaks on the blade face.
+    g.lineStyle(3, tint(MAGNET.plateHi), 0.8);
+    for (let i = 0; i < 3; i++) {
+      const s0 = spin * 1.3 + (i / 3) * Math.PI * 2;
+      g.beginPath();
+      g.arc(a.fistX, a.fistY, r * 0.55, s0, s0 + 1.1, false);
+      g.strokePath();
+    }
+    g.fillStyle(tint(MAGNET.oil), 1); g.fillCircle(a.fistX, a.fistY, 20);
+    g.fillStyle(tint(a.side < 0 ? MAGNET.red : MAGNET.blue), 1); g.fillCircle(a.fistX, a.fistY, 13);
+    g.fillStyle(tint(MAGNET.chrome), 1); g.fillCircle(a.fistX, a.fistY, 5);
+    if (a.phase === 'grind') {
+      for (let i = 0; i < 6; i++) {
+        const ang = time / 30 + i * 1.3;
+        g.fillStyle(MAGNET.goldHi, 0.85);
+        g.fillCircle(a.fistX + Math.cos(ang) * (r + 14 + (i * 7) % 20), a.fistY + Math.sin(ang) * (r + 14 + (i * 7) % 20), 3);
       }
     }
   }
@@ -950,6 +1415,25 @@ export class MagnetMech {
       g.lineBetween(fx, fy, fx + Math.cos(a) * len, fy + Math.sin(a) * len);
     }
   }
+}
+
+/** A finned rocket with a flame tail, nose along `ang`. */
+function drawRocket(g: Phaser.GameObjects.Graphics, tint: MagnetColorFn, x: number, y: number, ang: number, s: number, t: number): void {
+  const c = Math.cos(ang), n = Math.sin(ang);
+  const p = (fx: number, fy: number): Pt => ({ x: x + c * fx * s - n * fy * s, y: y + n * fx * s + c * fy * s });
+  const flick = 0.75 + 0.25 * Math.sin(t * 40 + x);
+  g.fillStyle(0xff7a1a, 0.8);
+  fillPts(g, [p(-9, -3.5), p(-9 - 14 * flick, 0), p(-9, 3.5)]);
+  g.fillStyle(0xffe08a, 0.9);
+  fillPts(g, [p(-9, -2), p(-9 - 7 * flick, 0), p(-9, 2)]);
+  g.fillStyle(tint(MAGNET.gunHi), 1);
+  fillPts(g, [p(-10, -6), p(-5, -3.5), p(-5, 3.5), p(-10, 6)]);
+  g.fillStyle(tint(MAGNET.steel), 1);
+  fillPts(g, [p(-9, -3.5), p(6, -3.5), p(6, 3.5), p(-9, 3.5)]);
+  g.fillStyle(MAGNET.red, 1);
+  fillPts(g, [p(6, -3.5), p(12, 0), p(6, 3.5)]);
+  g.lineStyle(1, tint(MAGNET.oil), 0.9);
+  strokePts(g, [p(-9, -3.5), p(6, -3.5), p(12, 0), p(6, 3.5), p(-9, 3.5)], true);
 }
 
 function segDist(ax: number, ay: number, bx: number, by: number, px: number, py: number): number {

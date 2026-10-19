@@ -119,7 +119,7 @@ export const DIVINE_PERKS: PerkDef[] = [
     name: 'Death',
     emoji: '💀',
     color: 0x662299,
-    description: 'A trap bar appears above the arena and Snap Trap places whichever trap is selected. Base: the usual jaws. Mine: a triangular charge that blows for 35 damage in an AOE. Grabber: a tentacle seizes anyone close and will not let them stray far from the trap for 5s. Plume: the trap bursts into 10 shadow puddles.',
+    description: 'A trap picker appears under your health bar and Snap Trap places whichever trap is selected. Base: the usual jaws. Mine: a triangular charge that blows for 35 damage in an AOE. Grabber: a tentacle seizes anyone close and will not let them stray far from the trap for 5s. Plume: the trap bursts into 10 shadow puddles.',
     ingredients: ['life', 'fate'],
     tier: 'divine',
     elementId: 'shadow',

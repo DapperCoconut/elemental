@@ -22,7 +22,7 @@ export interface PerkDef {
  * `element`, no recipe — cheats only for now) and two equip slots instead of one. Everything
  * else keeps its Lab-forged perks and a single slot until its own turn comes.
  */
-const TWO_SLOT_ELEMENTS = new Set(['fire']);
+const TWO_SLOT_ELEMENTS = new Set(['fire', 'shadow', 'water']);
 
 /** How many perks this element may equip at once. */
 export function perkSlotsFor(elementId: string): number {
@@ -116,6 +116,65 @@ export const ALL_PERKS: ElementPerks[] = [
     ],
   },
 
+  // Shadow's Void (a Lab triple) was retired for these; String keeps its Lab recipe and its
+  // old id 'plume', so copies forged before the overhaul still equip.
+  {
+    elementId: 'shadow',
+    perks: [
+      {
+        id: 'shadow-venom',
+        name: 'Venom',
+        emoji: '🐍',
+        color: 0x55aa33,
+        description: 'Adds Venom Traps to your trap picker. A venom trap does not stun — it bites for 15 damage, floods the victim with 40% Hopelessness and poisons them for 3 damage a second over 5s.',
+        ingredients: [],
+        tier: 'element',
+        elementId: 'shadow',
+      },
+      {
+        // id kept as 'plume' so previously-forged copies of this perk survive the rework.
+        id: 'plume',
+        name: 'String',
+        emoji: '🧵',
+        color: 0x6633aa,
+        description: 'Adds Snap Stakes to your trap picker. A stake does nothing on its own and lasts twice as long. Every two stakes are joined by a tripline — an enemy crossing it takes 5 dmg, 10% Hopelessness and a 50% slow for 3s. With Tentacle upgraded you can drag stakes around, and the string follows.',
+        ingredients: ['fire', 'water', 'air', 'earth'],
+        tier: 'quad',
+        elementId: 'shadow',
+      },
+      {
+        id: 'shadow-vantablack',
+        name: 'Vantablack',
+        emoji: '⬛',
+        color: 0x111111,
+        description: 'Adds Vantablack Mines to your trap picker: claymores that face the way you were aiming and watch a short cone. The moment a foe steps into that line of sight the mine goes off down the cone for 30 damage and 10% Hopelessness.',
+        ingredients: [],
+        tier: 'element',
+        elementId: 'shadow',
+      },
+      {
+        id: 'shadow-abyss',
+        name: 'Abyss',
+        emoji: '🦑',
+        color: 0x330066,
+        description: 'Tentacle Walls grow 14 tentacles instead of 8 and are studded with spikes — touching one costs 6 more damage and shoves you off it. Your Tentacle (E) reaches 70% farther and holds its catch for 4.5s instead of 3s.',
+        ingredients: [],
+        tier: 'element',
+        elementId: 'shadow',
+      },
+      {
+        id: 'shadow-shinobi',
+        name: 'Shinobi',
+        emoji: '🥷',
+        color: 0x553366,
+        description: 'Click throws two caltrops at once, each a little less accurate. Adds Shinobi Traps to your trap picker: they burst into a ring of caltrops when sprung and slow the victim by 50% for 3s instead of stunning them.',
+        ingredients: [],
+        tier: 'element',
+        elementId: 'shadow',
+      },
+    ],
+  },
+
   // ── Triple perks (Lab Level 2, 2 nuclei) ─────────────────────────────────
   {
     elementId: 'oil',
@@ -129,32 +188,6 @@ export const ALL_PERKS: ElementPerks[] = [
         ingredients: ['fire', 'water', 'life'],
         tier: 'triple',
         elementId: 'oil',
-      },
-    ],
-  },
-  {
-    elementId: 'shadow',
-    perks: [
-      {
-        id: 'void-shade',
-        name: 'Void',
-        emoji: '🌑',
-        color: 0x440066,
-        description: "Shadow's Dark Clouds last 50% longer and are 20% larger.",
-        ingredients: ['fire', 'water', 'air'],
-        tier: 'triple',
-        elementId: 'shadow',
-      },
-      {
-        // id kept as 'plume' so previously-forged copies of this perk survive the rework.
-        id: 'plume',
-        name: 'String',
-        emoji: '🧵',
-        color: 0x6633aa,
-        description: 'Snap Traps become Snap Stakes, which do nothing on their own and last twice as long. Every two stakes are joined by a tripline — an enemy crossing it takes 5 dmg, 10% Hopelessness and a 50% slow for 3s. With Tentacle upgraded you can drag stakes around, and the string follows.',
-        ingredients: ['fire', 'water', 'air', 'earth'],
-        tier: 'quad',
-        elementId: 'shadow',
       },
     ],
   },
@@ -491,9 +524,41 @@ export const ALL_PERKS: ElementPerks[] = [
       },
     ],
   },
+  // Water's overhaul keeps Stalagmite (Lab quad) and Sulphur (Disgraced Lab divine) as they were
+  // and adds three element perks beside them.
   {
     elementId: 'water',
     perks: [
+      {
+        id: 'water-drippy',
+        name: 'Drippy',
+        emoji: '💦',
+        color: 0x55ccff,
+        description: 'You drip as you walk, leaving a trail of small puddles behind you. They last 2.6s and slow and soak any enemy who wades through them, just like Splash pools.',
+        ingredients: [],
+        tier: 'element',
+        elementId: 'water',
+      },
+      {
+        id: 'water-splashy',
+        name: 'Splashy',
+        emoji: '🌊',
+        color: 0x22aaee,
+        description: 'Every puddle you make is 50% bigger — Splash, Tidal Pool, Squall Splashes and Drippy alike. Water Cut also splashes when it lands, dealing 4 damage to everything else within 64px of the target.',
+        ingredients: [],
+        tier: 'element',
+        elementId: 'water',
+      },
+      {
+        id: 'water-poseidon',
+        name: 'Poseidon',
+        emoji: '🔱',
+        color: 0x0066bb,
+        description: 'Water Cut becomes a small wave that nudges foes back. Your dodge becomes a wave you ride — twice as long, a little faster, and it slams 12 damage into anyone in your way. And every ultimate you cast sends a great wave across the whole arena, crashing into every enemy for 25 damage.',
+        ingredients: [],
+        tier: 'element',
+        elementId: 'water',
+      },
       {
         id: 'stalagmite',
         name: 'Stalagmite',

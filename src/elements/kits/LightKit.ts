@@ -28,6 +28,8 @@ export interface LightArenaApi {
   buildPlayerContext(x: number, y: number): CastContext;
   getNearestEnemy(x: number, y: number): Fighter;
   hasUpgrade(slot: string): boolean;
+  /** The opponent's equipped upgrade slots — an online player's loadout or a Hard+ bot's. */
+  hasNpcUpgrade(slot: string): boolean;
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
   /** `(owner, base) => displayed` — the owner's skin, or the identity. */
   lightColor(owner: 'player' | 'npc', base: number): number;
@@ -115,6 +117,15 @@ const DRILL_LIFETIME_MS = 6000;
 /** R must be let go within this long of reaching the ramp (either side of it) to fire the drill. */
 const DRILL_RELEASE_WINDOW_MS = 180;
 
+// ── F+ Javelin Burst ────────────────────────────────────────────────────
+const F_PLUS_JAVELIN_COUNT = 12;
+const F_PLUS_JAVELIN_SPEED = 480;
+
+// ── Q+ Flare-Stream ─────────────────────────────────────────────────────
+const FLARE_TELEPORT_INTERVAL = 10;
+const FLARE_BEAM_LIFETIME_MS = 35000;
+const FLARE_ACCEL_MULT = 3;
+
 // ── Aurora (divine perk) ────────────────────────────────────────────────
 /** Speed handed over for being hit at all, before the size of the hit is counted. */
 const AURORA_BASE_ACCEL = 70;
@@ -177,6 +188,15 @@ interface LightDrill {
   hitTarget: Fighter | null;
   nextStunAt: number;
   nextTickAt: number;
+  until: number;
+}
+
+interface LightFlareBeam {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  owner: 'player' | 'npc';
   until: number;
 }
 
@@ -271,6 +291,11 @@ export class LightKit {
   private rReleasedAt = -Infinity;
   /** A ramp reached with R still held: rides normally unless R is let go inside the window. */
   private pendingDrill: { ramp: LightRamp; until: number } | null = null;
+
+  // ── Q+ Flare-Stream ──────────────────────────────────────────────────────
+  private playerTeleportCount = 0;
+  private npcTeleportCount = 0;
+  private flareBeams: LightFlareBeam[] = [];
 
   // ── Aurora (perk) ────────────────────────────────────────────────────────
   /** Last seen player HP, so a drop can be read as "you were hit" without a damage hook. */
@@ -378,6 +403,10 @@ export class LightKit {
     this.rWasDown = false;
     this.rReleasedAt = -Infinity;
     this.pendingDrill = null;
+
+    this.playerTeleportCount = 0;
+    this.npcTeleportCount = 0;
+    this.flareBeams = [];
 
     this.auroraLastHp = -1;
     this.auroraSurge = 0;
@@ -529,6 +558,7 @@ export class LightKit {
     this.resolvePendingDrill(time);
 
     this.updateStreaks(time);
+    this.updateFlareBeams(time);
     this.updateDrills(time, delta);
 
     // Mastery — Killer Kebab. Runs after the car step so riders land on this frame's lance.
@@ -633,13 +663,19 @@ export class LightKit {
 
     const auroraUp = this.arena.hasPerk('player', 'aurora') && player.active && player.hp > 0;
     const hasGround = this.ramps.length > 0 || this.npcRamps.length > 0
-      || this.streaks.length > 0 || this.flickerGhosts.length > 0
+      || this.streaks.length > 0 || this.flareBeams.length > 0 || this.flickerGhosts.length > 0
       || auroraUp;
     if (hasGround || this.groundGfx) {
       const g = this.ground();
       g.clear();
       // The curtain is worn, so it goes down first and everything else lies over it.
       if (auroraUp) LightFx.drawAurora(g, this.pcol, player.x, player.y, this.vizT, this.auroraSurge);
+      // Flare beams are long-lived road surface, so they sit under the transient streaks.
+      for (const b of this.flareBeams) {
+        const life = Phaser.Math.Clamp((b.until - time) / FLARE_BEAM_LIFETIME_MS, 0, 1);
+        LightFx.drawStreak(g, this.col(b.owner), b.x1, b.y1, b.x2, b.y2, STREAK_THICKNESS * 0.8,
+          LIGHT.ember, 0.25 + life * 0.55, this.vizT);
+      }
       for (const s of this.streaks) {
         const life = Phaser.Math.Clamp((s.until - time) / STREAK_LIFETIME_MS, 0, 1);
         LightFx.drawStreak(g, this.col(s.owner), s.x1, s.y1, s.x2, s.y2, STREAK_THICKNESS,
@@ -791,7 +827,11 @@ export class LightKit {
     const maxTurnStep = turnRate * dtS;
     angle += Phaser.Math.Clamp(diff, -maxTurnStep, maxTurnStep);
 
-    const accelRate = CAR_ACCEL_RATE;
+    // Q+ Flare-Stream: driving along one of your own flare beams triples the accel rate
+    const owner = isPlayer ? 'player' : 'npc';
+    const onFlare = this.flareBeams.length > 0 && this.upgraded(owner, 'q')
+      && this.isOnFlareBeam(owner, body.center.x, body.center.y);
+    const accelRate = onFlare ? CAR_ACCEL_RATE * FLARE_ACCEL_MULT : CAR_ACCEL_RATE;
 
     // Mastery — Unstoppable: the lance bites into the corner, so a hard turn costs far less speed.
     const unstoppable = isPlayer ? this.arena.masteryActive : this.arena.npcMasteryActive;
@@ -1205,11 +1245,48 @@ export class LightKit {
       }
     }
 
-    if (hit) {
+    // F+ Javelin Burst: if the trick also catches a prism ramp — either fighter's — that ramp
+    // fires 12 javelins (owned by the ramp's owner) and both boosts are granted at once.
+    const rampHit = this.upgraded(owner, 'f') ? this.trickRampNear(caster.x, caster.y) : null;
+
+    if (rampHit) {
+      this.launchJavelinBurst(rampHit);
+      fx.boom(rampHit.x, rampHit.y, 70, { color: LIGHT.cyan, shards: 12, mark: false });
+      const boostUntil = time + Math.max(TRICK_BOOST_MS, RAMP_BOOST_MS);
+      if (owner === 'player') this.carBoostUntil = boostUntil; else this.npcCarBoostUntil = boostUntil;
+      this.arena.showFloatingText(caster.x, caster.y - 30, '🌟 JAVELIN BURST', '#66ddff');
+    } else if (hit) {
       if (owner === 'player') this.carBoostUntil = time + TRICK_BOOST_MS;
       else this.npcCarBoostUntil = time + TRICK_BOOST_MS;
       this.arena.showFloatingText(caster.x, caster.y - 30, '✨ LIGHT TRICK', '#fff4a8');
     }
+  }
+
+  private trickRampNear(x: number, y: number): LightRamp | null {
+    for (const r of this.ramps) if (Phaser.Math.Distance.Between(x, y, r.x, r.y) <= TRICK_RADIUS) return r;
+    for (const r of this.npcRamps) if (Phaser.Math.Distance.Between(x, y, r.x, r.y) <= TRICK_RADIUS) return r;
+    return null;
+  }
+
+  private launchJavelinBurst(ramp: LightRamp): void {
+    const { scene, projectiles } = this.arena;
+    const isPlayerOwned = ramp.owner === 'player';
+    for (let i = 0; i < F_PLUS_JAVELIN_COUNT; i++) {
+      const a = (i / F_PLUS_JAVELIN_COUNT) * Math.PI * 2;
+      const proj = new Projectile(scene, ramp.x, ramp.y, 'proj-light-triangle', TRICK_DAMAGE, isPlayerOwned);
+      proj.setTint(LIGHT.cyan);
+      projectiles.add(proj);
+      proj.launch(Math.cos(a) * F_PLUS_JAVELIN_SPEED, Math.sin(a) * F_PLUS_JAVELIN_SPEED);
+    }
+  }
+
+  /**
+   * Bot synergy (F+ Javelin Burst): the bot is standing on a ramp close enough for Light Trick
+   * to pop it. Side-effect-free; the kit owns the radius and the upgrade check.
+   */
+  npcTrickRampReady(): boolean {
+    const npc = this.arena.npc;
+    return this.upgraded('npc', 'f') && this.trickRampNear(npc.x, npc.y) !== null;
   }
 
   // ── Speed 'O' Light ──────────────────────────────────────────────────────
@@ -1283,6 +1360,16 @@ export class LightKit {
     // Each bounce leaves a flare at the wall it came off.
     this.fx(owner).flare(nx, ny, 0.55, 12, LIGHT.white, angle);
 
+    // Q+ Flare-Stream: every 10th teleport leaves a lasting orange beam
+    if (this.upgraded(owner, 'q')) {
+      const count = isPlayer ? ++this.playerTeleportCount : ++this.npcTeleportCount;
+      if (count % FLARE_TELEPORT_INTERVAL === 0) {
+        this.flareBeams.push({ x1: caster.x, y1: caster.y, x2: nx, y2: ny, owner, until: time + FLARE_BEAM_LIFETIME_MS });
+        const length = Math.max(4, Phaser.Math.Distance.Between(caster.x, caster.y, nx, ny));
+        this.fx(owner).sparkle((caster.x + nx) / 2, (caster.y + ny) / 2, 8, length * 0.3, 11, LIGHT.ember);
+      }
+    }
+
     caster.setPosition(nx, ny);
     body.reset(nx, ny);
 
@@ -1317,6 +1404,24 @@ export class LightKit {
         }
       }
     }
+  }
+
+  private updateFlareBeams(time: number): void {
+    for (let i = this.flareBeams.length - 1; i >= 0; i--) {
+      if (time >= this.flareBeams[i].until) this.flareBeams.splice(i, 1);
+    }
+  }
+
+  private isOnFlareBeam(owner: 'player' | 'npc', x: number, y: number): boolean {
+    for (const b of this.flareBeams) {
+      if (b.owner === owner && distToSegment(x, y, b.x1, b.y1, b.x2, b.y2) <= STREAK_HIT_RADIUS) return true;
+    }
+    return false;
+  }
+
+  /** An upgrade read for either side: the player's own loadout, or the opponent's. */
+  private upgraded(owner: 'player' | 'npc', slot: string): boolean {
+    return owner === 'player' ? this.arena.hasUpgrade(slot) : this.arena.hasNpcUpgrade(slot);
   }
 
   // ── Mastery — Killer Kebab ───────────────────────────────────────────────

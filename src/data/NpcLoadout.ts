@@ -72,7 +72,9 @@ const NPC_MASTERY_BINDS: Record<string, { enhId: string; slot: MasterySlot }> = 
   // — and the delay does the same job (half damage taken for eight seconds) without asking the
   // bot to guess. The two clock abilities and the permanent amputation all survive.
   death: { enhId: 'delay-the-inevitable', slot: 'r' },
-  chalk: { enhId: 'living-chalk', slot: 'f' },
+  // Paint gives up Congealed Paint: the wall's whole value is placing a line across a shot that
+  // is actually coming, and Yin-Yang's bar painting is the one thing a bot does as well as anyone.
+  chalk: { enhId: 'yin-yang', slot: 'r' },
   // Psychic gives up the Knight. Pre-move is a read on the player, which is the one thing a bot
   // psychic can do better than its pieces: it has been watching every key they pressed.
   psychic: { enhId: 'pre-move', slot: 'r' },

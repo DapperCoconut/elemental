@@ -3,8 +3,13 @@ import { Fighter } from '../../entities/Fighter';
 import type { CustomStatus } from './StatusHudKit';
 import { Sfx } from '../../audio';
 import { FONT_DISPLAY } from '../../ui/Theme';
+import { QuantumLoadout, QuantumSixth, QuantumSlot, loadoutElements } from '../../data/QuantumLoadout';
+import { QuantumAvatar } from './QuantumAvatar';
 
 type Owner = 'player' | 'npc';
+
+/** Which key the player last routed through: one of the five slots, or `'x6'` for the mastery's sixth key (G). */
+export type QuantumLiveSlot = QuantumSlot | 'x6';
 
 // ── Instability ──────────────────────────────────────────────────────────────
 /** One point of vulnerability per hit taken, regardless of how big the hit was. */
@@ -13,20 +18,18 @@ const INSTABILITY_PER_HIT = 1;
 const INSTABILITY_MAX = 50;
 /** Milliseconds to shed a single point. */
 const INSTABILITY_DECAY_MS = 2000;
-/** Swapping at or above this is what tears — below it the collapse is clean. */
-const UNSTABLE_SWAP_THRESHOLD = 40;
-/** What a torn swap costs the fighter doing it. */
-const UNSTABLE_SWAP_DAMAGE = 25;
+/** At or above this the status box turns red — a warning that hits are landing much harder. */
+const INSTABILITY_WARN = 40;
 
 // ── Collapse (the swap itself) ───────────────────────────────────────────────
 /** How long the collapse ring is on screen. Cosmetic only — the swap itself is instant. */
 const COLLAPSE_MS = 380;
 const COLLAPSE_R = 76;
 
-// ── NPC bond handling ────────────────────────────────────────────────────────
+// ── NPC rotation ─────────────────────────────────────────────────────────────
 /**
- * How often an npc Quantum collapses its bond, by difficulty (1–5). Easy barely uses the
- * second half at all; Nightmare rotates fast enough that both kits are genuinely live.
+ * How often an npc Quantum rotates onto its next element, by difficulty (1–5). Easy barely
+ * leaves its first element; Nightmare rotates fast enough that every kit it carries is live.
  */
 const NPC_SWAP_PERIOD_MS = [16000, 13000, 10000, 7500, 5500];
 /** Random slack either side of the period, so two Quantum npcs never swap in lockstep. */
@@ -34,20 +37,19 @@ const NPC_SWAP_JITTER_MS = 2500;
 /** Below this HP fraction the npc spends its one out-of-rhythm swap. */
 const NPC_PANIC_HP = 0.45;
 
-/** Colour of the bond readout and the collapse ring. Matches `quantumElement.color`. */
+/** Colour of the loadout readout and the shift ring. Matches `quantumElement.color`. */
 const Q_CYAN = 0x7df9ff;
 
 /** HUD geometry. Depth 21–23 is the arena's tray band — see `ArenaScene.createHUD`. */
 const HUD_DEPTH = 23;
-/** Per bond slot, so the plate grows when Third State adds a third stop rather than cramping. */
+/** Per element carried, so the plate grows with the loadout rather than cramping. */
 const HUD_SLOT_W = 86;
 const HUD_H = 40;
 
-/**
- * The id of Quantum's own third stop. It is the element id, not a sentinel: a bond wearing it
- * really is `ELEMENT_MAP['quantum']`, whose five abilities `QuantumCoreKit` supplies.
- */
-const THIRD_STATE = 'quantum';
+/** The one body texture a Quantum wears, whatever element is live — see `QuantumAvatar`. */
+const BODY_TEXTURE = 'quantum-body';
+/** Ability index on the live element (Click, E, R, F, Q) -> the rig's cast gesture. */
+const CAST_GESTURES = ['punch', 'dash', 'sweep', 'clap', 'raise'] as const;
 
 /**
  * The per-frame tick for whichever half is *not* currently being played. Keyed by element id
@@ -66,17 +68,13 @@ export interface QuantumArenaApi {
   /** The half currently being played — already re-keyed, so this is never `'quantum'`. */
   get elementId(): string;
   get npcElementId(): string;
+  /** The live pointer, for the player rig's aim. */
+  get pointer(): Phaser.Input.Pointer;
   /** True when the *player* picked Quantum (as opposed to the npc having it). */
   get playerIsQuantum(): boolean;
   get npcIsQuantum(): boolean;
-  /** 1–5, driving how briskly an npc Quantum rotates its bond. */
+  /** 1–5, driving how briskly an npc Quantum rotates its elements. */
   get npcDifficultyLevel(): number;
-  /**
-   * True when the player owns Quantum's one upgrade, Third State — which is the only thing that
-   * puts a third stop on the cycle. Read once per fight in `setPlayerBond`, because a shop
-   * purchase mid-match is not a thing that can happen.
-   */
-  get playerHasThirdState(): boolean;
   /** Online: the "npc" is a remote human, so nothing local may decide when it swaps. */
   get isOnline(): boolean;
   /**
@@ -87,43 +85,56 @@ export interface QuantumArenaApi {
   applyPlayerElement(id: string): void;
   /** The npc-side equivalent, for an npc Quantum. */
   applyNpcElement(id: string): void;
+  /**
+   * Which key the player's live element was reached through. Called *before* the re-key on
+   * every routed press — the arena keys the sixth slot's mastery bind and the G-for-F key swap
+   * off it, so it has to be current by the time the kit downstream reads its keys.
+   */
+  setLiveSlot(slot: QuantumLiveSlot): void;
+  /** Quantum's own mastery grind — shifts, and the slots used in a fight. */
+  recordMasteryStat(key: string, amount: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   spawnHitFlash(x: number, y: number, color: number): void;
   setStatusIndicator(id: string, status: CustomStatus | null): void;
-  /** Element display names, for the bond readout. */
+  /** Element display names, for the loadout readout. */
   elementName(id: string): string;
   elementColor(id: string): number;
   elementEmoji(id: string): string;
 }
 
 /**
- * QuantumKit — the bond, the swap, and the price of carrying two kits.
+ * QuantumKit — the loadout's key routing, the npc's rotation, and the price of carrying
+ * several kits.
  *
- * Quantum owns no abilities. What it owns is a pair of element ids and a pointer at one of
- * them; the dodge key moves the pointer, and `applyPlayerElement` does the rest. Both halves
- * share one Fighter, so HP, shields, status effects and cooldown timestamps are common by
- * construction — there is no "merge" step because there was never a second body.
+ * Quantum owns no abilities. What it owns is a slot table — key -> element — and a pointer at
+ * whichever element is live; a key press moves the pointer ({@link routeInput}) and
+ * `applyPlayerElement` does the rest. Every element carried shares one Fighter, so HP,
+ * shields, status effects and cooldown timestamps are common by construction — there is no
+ * "merge" step because there was never a second body.
  *
  * The cost is Quantum Instability. Every hit taken adds a point of incoming-damage
- * vulnerability up to 50, and a point bleeds off every two seconds. Collapsing the bond at 40
- * or above tears the body doing it for {@link UNSTABLE_SWAP_DAMAGE}, which is what stops the
- * swap from being a free reset on a bad matchup.
+ * vulnerability up to 50, and a point bleeds off every two seconds.
  *
- * Instability is tracked for both sides: an npc Quantum pays exactly what the player does.
+ * An npc Quantum has no keys to route: it carries a short list of elements and rotates
+ * through them on a rhythm ({@link maybeSwapNpc}), paying the same instability the player
+ * does and nothing more.
  */
 export class QuantumKit {
   private api: QuantumArenaApi;
   private dormantTicks: DormantTicks;
 
-  /** `[first, second]` as the player ordered them. Index 0 is what the fight starts as. */
-  private playerBond: [string, string] | null = null;
-  private npcBond: [string, string] | null = null;
+  /** Slot key -> element. Set once per fight; `playerForms` is derived from it. */
+  private playerSlots: Record<QuantumSlot, string> | null = null;
+  /** Mastered Quantum: the sixth key's mastery ability, routed like a slot of its own. */
+  private playerSixth: QuantumSixth | null = null;
+  /** The slots pressed so far this fight — the Full Spread mastery requirement reads it on a win. */
+  private slotsUsed = new Set<QuantumLiveSlot>();
   /**
-   * Every stop on the cycle in order — the two bonded elements, plus Quantum itself when the
-   * fighter owns Third State. This, not the bond, is what the collapse walks; the bond stays a
-   * pair because that is what the Entanglement Lab researched and what the save records.
+   * Every element the player carries, Click's first — that is the element the fight opens as
+   * and whose body texture the fighter wears. The dormant tick and the readout walk this.
    */
   private playerForms: string[] = [];
+  /** An npc Quantum's rotation, in order. Index 0 is what it starts as. */
   private npcForms: string[] = [];
   private playerIdx = 0;
   private npcIdx = 0;
@@ -133,8 +144,11 @@ export class QuantumKit {
   private decayAccum: Record<Owner, number> = { player: 0, npc: 0 };
   /** Fighters already wired to the `damaged` event, so a restart never double-counts. */
   private tracked = new WeakSet<Fighter>();
+  /** Quantum's own character per side, built the first frame that side is a Quantum. */
+  private avatars: Record<Owner, QuantumAvatar | null> = { player: null, npc: null };
+  private playerMastered = false;
 
-  /** Scene time the npc is next allowed to collapse its bond. */
+  /** Scene time the npc is next allowed to rotate. */
   private npcNextSwapAt = 0;
   /** An npc gets one free "things are going badly" swap per fight, outside its rhythm. */
   private npcPanicSwapUsed = false;
@@ -151,12 +165,13 @@ export class QuantumKit {
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
   /**
-   * Every match start. The bonds come from whoever set up the fight, so they are handed in
+   * Every match start. The loadouts come from whoever set up the fight, so they are handed in
    * rather than read here — see `ArenaScene.create`.
    */
   reset(): void {
-    this.playerBond = null;
-    this.npcBond = null;
+    this.playerSlots = null;
+    this.playerSixth = null;
+    this.slotsUsed = new Set();
     this.playerForms = [];
     this.npcForms = [];
     this.playerIdx = 0;
@@ -166,48 +181,44 @@ export class QuantumKit {
     this.npcNextSwapAt = 0;
     this.npcPanicSwapUsed = false;
     this.tracked = new WeakSet<Fighter>();
+    this.avatars.player?.destroy();
+    this.avatars.npc?.destroy();
+    this.avatars = { player: null, npc: null };
+    this.playerMastered = false;
     this.hud?.destroy(); this.hud = null;
     for (const t of this.hudLabels) t.destroy();
     this.hudLabels = [];
   }
 
-  /** Called from `create()` once the bond for this fight is known. */
-  setPlayerBond(a: string, b: string): void {
-    this.playerBond = [a, b];
-    this.playerForms = this.api.playerHasThirdState ? [a, b, THIRD_STATE] : [a, b];
+  /** Called from `create()` once the loadout for this fight is known. */
+  setPlayerLoadout(lo: QuantumLoadout): void {
+    this.playerSlots = { ...lo.slots };
+    this.playerSixth = lo.sixth;
+    this.playerForms = loadoutElements(lo);
     this.playerIdx = 0;
+    this.playerMastered = lo.mastered;
+  }
+
+  /** How many distinct keys (the five slots and the sixth) the player has routed through this fight. */
+  playerSlotsUsed(): number {
+    return this.slotsUsed.size;
   }
 
   /**
-   * The npc side never grows a third stop of its own: Third State is a shop purchase and a bot
-   * has no save to buy it from. An *online* opponent who owns it is handled the other way
-   * round — their collapses arrive as `qswap` messages naming the element, and
-   * {@link noteNpcSwapped} adopts whatever they became, Quantum included.
+   * An npc Quantum's rotation. A bot is handed a random handful; an online opponent's list is
+   * whatever their lobby selection carried (their loadout's elements, Click's first), and their
+   * shifts then arrive as `qswap` messages — {@link noteNpcSwapped} adopts anything new.
    */
-  setNpcBond(a: string, b: string): void {
-    this.npcBond = [a, b];
-    this.npcForms = [a, b];
+  setNpcForms(forms: string[]): void {
+    this.npcForms = [...new Set(forms)];
     this.npcIdx = 0;
   }
 
   // ── Queries ────────────────────────────────────────────────────────────────
 
-  getPlayerBond(): [string, string] | null {
-    return this.playerBond;
-  }
-
-  getNpcBond(): [string, string] | null {
-    return this.npcBond;
-  }
-
-  /** Every stop the player's cycle visits, in order. Two entries, or three with Third State. */
+  /** Every element the player carries, Click's first. */
   getPlayerForms(): string[] {
     return this.playerForms;
-  }
-
-  /** Which stop the player is on right now. */
-  getPlayerFormIndex(): number {
-    return this.playerIdx;
   }
 
   /** The form the player is currently wearing, or null when the player is not Quantum. */
@@ -216,8 +227,8 @@ export class QuantumKit {
   }
 
   /**
-   * The forms the player is *not* wearing — the ones that need a dormant tick. With Third State
-   * there are two of them, which is exactly why this is a list.
+   * The forms the player is *not* wearing — the ones that need a dormant tick. Up to four of
+   * them with a five-element loadout.
    */
   playerDormantElements(): string[] {
     return this.playerForms.filter((_, i) => i !== this.playerIdx);
@@ -237,33 +248,60 @@ export class QuantumKit {
 
   // ── The swap ───────────────────────────────────────────────────────────────
 
-  /**
-   * Collapses the player's bond onto its other half. Called from `ArenaScene.executeDodge`,
-   * so the swap rides the dodge rather than costing a separate key — the dash still happens
-   * either way, and a Quantum with no bond simply dodges like anyone else.
-   */
-  swapPlayer(): void {
-    if (this.playerForms.length < 2) return;
-    this.playerIdx = (this.playerIdx + 1) % this.playerForms.length;
-    const next = this.playerForms[this.playerIdx];
-    this.api.applyPlayerElement(next);
-    this.onCollapse('player', this.api.player, next);
-  }
-
-  /** The npc-side equivalent, driven by `NpcOpponent`'s dodge. */
+  /** Rotates an npc Quantum onto its next element. Driven by {@link maybeSwapNpc}. */
   swapNpc(): void {
     if (this.npcForms.length < 2) return;
     this.npcIdx = (this.npcIdx + 1) % this.npcForms.length;
     const next = this.npcForms[this.npcIdx];
     this.api.applyNpcElement(next);
-    this.onCollapse('npc', this.api.npc, next);
+    this.onCollapse(this.api.npc, next);
   }
 
   /**
-   * Everything a collapse does beyond the re-key: the ring, the announcement, and the tear
-   * if the body was already unstable when it was asked to be something else.
+   * The player's whole input model, run every frame *before* ArenaScene hands the keys to
+   * the live element's kit. A fresh E/R/F/Q press makes the player the element that owns
+   * that slot; with no fresh press, a held mouse button makes them Click's element. The kit
+   * then sees the very same press and casts as it always does — the re-key is what makes the
+   * generic `this.elementId === 'x'` dispatch pick the right kit.
+   *
+   * The presses are *peeked*, not consumed: `Phaser.Input.Keyboard.JustDown` clears the flag,
+   * and the kit downstream still needs to read it. Two presses in one frame: the later key wins.
+   *
+   * A shift costs nothing in itself; the incoming-damage vulnerability is the whole price.
    */
-  private onCollapse(owner: Owner, who: Fighter, nextId: string): void {
+  routeInput(
+    keys: Record<Exclude<QuantumSlot, 'click'>, Phaser.Input.Keyboard.Key> & { x6: Phaser.Input.Keyboard.Key },
+    pointerDown: boolean,
+  ): void {
+    const slots = this.playerSlots;
+    if (!slots) return;
+    const justDown = (k: Phaser.Input.Keyboard.Key): boolean => (k as unknown as { _justDown: boolean })._justDown;
+    let want: string | null = null;
+    let via: QuantumLiveSlot | null = null;
+    for (const k of ['e', 'r', 'f', 'q'] as const) {
+      if (justDown(keys[k])) { want = slots[k]; via = k; }
+    }
+    // The sixth key only exists with the mastery; without one it is an ordinary unused key.
+    if (this.playerSixth && justDown(keys.x6)) { want = this.playerSixth.elementId; via = 'x6'; }
+    if (!want && pointerDown) { want = slots.click; via = 'click'; }
+    if (!want || !via) return;
+    const at = this.playerForms.indexOf(want);
+    if (at < 0) return;
+    this.slotsUsed.add(via);
+    // The slot is reported even when the element does not change — Fire on F and Fire's
+    // mastery ability on G are the same element reached two ways, and only the slot tells the
+    // arena which of the two the kit should see.
+    this.api.setLiveSlot(via);
+    if (want === this.api.elementId) return;
+    this.playerIdx = at;
+    this.api.applyPlayerElement(want);
+    this.api.recordMasteryStat('shifts', 1);
+    const who = this.api.player;
+    if (who?.active) this.collapseRing(who.x, who.y, this.api.elementColor(want));
+  }
+
+  /** Everything an npc collapse does beyond the re-key: the ring and the announcement. */
+  private onCollapse(who: Fighter, nextId: string): void {
     if (!who?.active) return;
     this.collapseRing(who.x, who.y, this.api.elementColor(nextId));
     Sfx.playAt('teleport', who.x);
@@ -271,14 +309,6 @@ export class QuantumKit {
     const name = this.api.elementName(nextId);
     const emoji = this.api.elementEmoji(nextId);
     this.api.showFloatingText(who.x, who.y - 52, `${emoji} ${name}`, '#7df9ff');
-
-    if (this.instability[owner] >= UNSTABLE_SWAP_THRESHOLD) {
-      // Self-inflicted so the online damage gate lets it through — the peer's sim has no
-      // copy of this hit to relay, and blocking it would delete the ability's whole cost.
-      who.takeDamage(UNSTABLE_SWAP_DAMAGE, { selfInflicted: true });
-      this.api.spawnHitFlash(who.x, who.y, 0xff5577);
-      this.api.showFloatingText(who.x, who.y - 74, `⚛️ Unstable! −${UNSTABLE_SWAP_DAMAGE}`, '#ff5577');
-    }
   }
 
   /** A ring that snaps outward and a counter-ring that closes in — a collapse, not a bloom. */
@@ -317,7 +347,37 @@ export class QuantumKit {
     this.tickInstability('npc', this.api.npc, delta);
     this.maybeSwapNpc(time);
     this.tickDormant(time, delta);
+    this.updateBody('player', this.api.player, delta);
+    this.updateBody('npc', this.api.npc, delta);
     this.drawHud();
+  }
+
+  /**
+   * Keeps a Quantum looking like Quantum. Every carried kit's rig is vetoed at the fighter's
+   * position (ArenaScene's `BaseAvatar.rigFilter`) and this side's own rig drawn instead; and
+   * any element body texture a kit puts on the fighter (Click's at spawn, a form swap, a
+   * restore of a "previous" texture) is put back to the one Quantum body. Non-element textures
+   * — an enemy's polymorph, say — are left alone.
+   */
+  private updateBody(owner: Owner, who: Fighter, delta: number): void {
+    if (!this.carrying(owner) || !who) return;
+    const key = who.texture?.key ?? '';
+    if (who.active && key !== BODY_TEXTURE && (key.startsWith('elem-') || key.startsWith('silence-'))) {
+      who.setTexture(BODY_TEXTURE);
+    }
+    let rig = this.avatars[owner];
+    if (!rig) {
+      rig = this.avatars[owner] = new QuantumAvatar(this.api.scene);
+    }
+    if (owner === 'player') {
+      const p = this.api.pointer;
+      if (p) rig.setFacing(Math.atan2(p.worldY - who.y, p.worldX - who.x));
+      rig.setMastered(this.playerMastered);
+    } else {
+      const foe = this.api.player;
+      if (foe?.active) rig.setFacing(Math.atan2(foe.y - who.y, foe.x - who.x));
+    }
+    rig.update(delta, who.x, who.y, who.active && who.visible ? who.alpha : 0);
   }
 
   /**
@@ -331,19 +391,26 @@ export class QuantumKit {
       this.tracked.add(who);
       who.on('damaged', (amount: number) => {
         if (amount <= 0) return;
-        const carries = owner === 'player' ? this.playerBond : this.npcBond;
-        if (!carries) return;
+        if (!this.carrying(owner)) return;
         this.instability[owner] = Math.min(INSTABILITY_MAX, this.instability[owner] + INSTABILITY_PER_HIT);
       });
+      who.on('cast', (abilityId: string) => {
+        const i = who.element?.abilities.findIndex((a) => a.id === abilityId) ?? -1;
+        this.avatars[owner]?.play(CAST_GESTURES[Math.max(0, Math.min(CAST_GESTURES.length - 1, i))]);
+      });
     };
-    if (this.playerBond) wire('player', this.api.player);
-    if (this.npcBond) wire('npc', this.api.npc);
+    if (this.carrying('player')) wire('player', this.api.player);
+    if (this.carrying('npc')) wire('npc', this.api.npc);
+  }
+
+  /** Whether that side is a Quantum at all. */
+  private carrying(owner: Owner): boolean {
+    return owner === 'player' ? this.playerForms.length > 0 : this.npcForms.length > 0;
   }
 
   /** Bleeds a point every {@link INSTABILITY_DECAY_MS} and pushes the result onto the Fighter. */
   private tickInstability(owner: Owner, who: Fighter, delta: number): void {
-    const bond = owner === 'player' ? this.playerBond : this.npcBond;
-    if (!bond) return;
+    if (!this.carrying(owner)) return;
 
     if (this.instability[owner] > 0) {
       this.decayAccum[owner] += delta;
@@ -370,14 +437,11 @@ export class QuantumKit {
       this.api.setStatusIndicator('quantum-instability', null);
       return;
     }
-    const tearing = v >= UNSTABLE_SWAP_THRESHOLD;
     this.api.setStatusIndicator('quantum-instability', {
       name: 'Instability',
       emoji: '⚛️',
-      color: tearing ? 0xff5577 : Q_CYAN,
-      description: tearing
-        ? `Taking ${v}% more damage. Collapsing the bond now costs ${UNSTABLE_SWAP_DAMAGE} HP.`
-        : `Taking ${v}% more damage. Bleeds off 1 every ${INSTABILITY_DECAY_MS / 1000}s.`,
+      color: v >= INSTABILITY_WARN ? 0xff5577 : Q_CYAN,
+      description: `Taking ${v}% more damage. Bleeds off 1 every ${INSTABILITY_DECAY_MS / 1000}s.`,
       count: v,
       suffix: '%',
       priority: 60,
@@ -385,14 +449,13 @@ export class QuantumKit {
   }
 
   /**
-   * Advances whichever halves are not being played. The tick functions come from ArenaScene
-   * and are the same per-frame work those elements do normally, minus the character rig and
-   * the HUD — see `DormantTicks`.
+   * Advances an npc Quantum's elements that are not being worn. The tick functions come from
+   * ArenaScene and are the same per-frame work those elements do normally, minus the character
+   * rig and the HUD — see `DormantTicks`.
    */
   private tickDormant(time: number, delta: number): void {
-    // One tick per element per frame, however many dormant slots point at it. Third State makes
-    // that a real possibility rather than a theoretical one: with three stops on the player's
-    // cycle and two on the npc's, four dormant slots are live at once.
+    // One tick per element per frame, however many dormant slots point at it — the player's
+    // list and the npc's can overlap.
     const done = new Set<string>();
     const run = (ids: string[]): void => {
       for (const id of ids) {
@@ -401,7 +464,9 @@ export class QuantumKit {
         this.dormantTicks[id]?.(time, delta);
       }
     };
-    if (this.api.playerIsQuantum) run(this.playerDormantElements());
+    // Player side: nothing to do. ArenaScene's per-element gates read `playerIs`, which is
+    // true for every element in the loadout, so the main dispatch already ticks all of them —
+    // forms, auras and passives included. Only an npc Quantum's dormant elements need this.
     if (this.api.npcIsQuantum) run(this.npcDormantElements());
   }
 
@@ -414,12 +479,9 @@ export class QuantumKit {
    * to whatever the player just did would be unreadable, and the player needs to be able to
    * learn "it is about to become the other thing" from watching. The one exception is the
    * panic swap, which fires once when the fight turns against it.
-   *
-   * It will not collapse into a tear it cannot afford — an npc sitting on high instability
-   * waits rather than paying 25 HP, the same call a player would make.
    */
   private maybeSwapNpc(time: number): void {
-    if (!this.npcBond) return;
+    if (this.npcForms.length < 2) return;
     // Online: the opponent is a person. Their collapses arrive as `qswap` messages and land
     // in `noteNpcSwapped` — deciding one for them here would fight the relay.
     if (this.api.isOnline) return;
@@ -440,37 +502,26 @@ export class QuantumKit {
     const panicking = !this.npcPanicSwapUsed && hpRatio < NPC_PANIC_HP;
     if (time < this.npcNextSwapAt && !panicking) return;
 
-    // Would the collapse tear? Pay it only if there is comfortably enough health to.
-    const wouldTear = this.instability.npc >= UNSTABLE_SWAP_THRESHOLD;
-    if (wouldTear && npc.hp <= UNSTABLE_SWAP_DAMAGE * 2) {
-      // Not worth dying to change shape. Check back shortly.
-      this.npcNextSwapAt = time + 1200;
-      return;
-    }
-
     if (panicking) this.npcPanicSwapUsed = true;
     this.swapNpc();
     this.npcNextSwapAt = time + period + (Math.random() * 2 - 1) * NPC_SWAP_JITTER_MS;
   }
 
   /**
-   * Online: the opponent's sim already collapsed their bond and re-keyed their own side, and
+   * Online: the opponent's sim already shifted element and re-keyed their own side, and
    * ArenaScene has just re-keyed our replica of them. All that is left is to move our idea of
    * which half they are wearing, so the dormant tick follows them.
    *
-   * Deliberately does not run {@link onCollapse}: the tear damage was paid on their machine,
-   * and paying it again here would double it.
+   * Only the ring is drawn, the same as for the player's own shifts.
    */
   noteNpcSwapped(elementId: string): void {
-    if (!this.npcBond) {
-      // A peer whose bond we never learned — adopt it from the swap so the readout still works.
-      this.npcBond = [this.api.npcElementId, elementId];
-      this.npcForms = [...this.npcBond];
+    if (!this.npcForms.length) {
+      // A peer whose loadout we never learned — adopt it from the shift so the readout still works.
+      this.npcForms = [this.api.npcElementId, elementId];
       this.npcIdx = 1;
       return;
     }
-    // A peer who owns Third State has a stop we were never told about, since their bond came
-    // over the wire as a pair. Grow the cycle the first time they land on it rather than
+    // Grow the list the first time they land on something we were not told about, rather than
     // ignoring a form we can plainly see them wearing.
     let at = this.npcForms.indexOf(elementId);
     if (at < 0) {
@@ -481,13 +532,12 @@ export class QuantumKit {
     if (this.api.npc?.active) this.collapseRing(this.api.npc.x, this.api.npc.y, this.api.elementColor(elementId));
   }
 
-  // ── Bond readout ───────────────────────────────────────────────────────────
+  // ── Loadout readout ────────────────────────────────────────────────────────
 
   /**
-   * A slot per stop on the cycle, above the ability tray: the live one lit and named, the
-   * dormant ones dimmed. Screen-space, so it does not move with the camera. Two slots normally,
-   * three once Third State is bought — the plate is sized off `playerForms` rather than being a
-   * fixed width, so the third stop widens it instead of squeezing the other two.
+   * A slot per element carried, above the ability tray: the live one lit and named, the
+   * dormant ones dimmed. Screen-space, so it does not move with the camera. The plate is sized
+   * off `playerForms`, so a fuller loadout widens it instead of squeezing the slots.
    */
   private drawHud(): void {
     const forms = this.playerForms;

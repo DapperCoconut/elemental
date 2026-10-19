@@ -1,11 +1,15 @@
 import { Element } from './Element';
 import { Ability } from './Ability';
 import { supernova } from './fire';
+import { grimGloom } from './shadow';
+import { bubbleBarrage } from './water';
 import { ALT_ULT_SLOT } from '../data/AltUlts';
 
 /** Element id → its alternate ultimate. Catalogue text for menus lives in data/AltUlts.ts. */
 const ALT_ULT_ABILITIES: Record<string, Ability> = {
   fire: supernova,
+  shadow: grimGloom,
+  water: bubbleBarrage,
 };
 
 /**

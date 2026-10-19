@@ -352,3 +352,167 @@ export const painRainUpgraded: PreviewScript = {
     });
   },
 };
+
+/** A soap bubble, drawn the way WaterTides paints them in the arena. */
+function drawBubble(g: Phaser.GameObjects.Graphics, ctx: PreviewCtx, x: number, y: number, r: number, t: number, hp = 1): void {
+  g.fillStyle(ctx.tint(WATER.cyan), 0.16);
+  g.fillCircle(x, y, r);
+  g.lineStyle(1.6, ctx.tint(WATER.foam), 0.85);
+  g.strokeCircle(x, y, r);
+  g.lineStyle(1.2, ctx.tint(WATER.sky), 0.55);
+  g.beginPath();
+  g.arc(x, y, r * 0.72, t * 2, t * 2 + 1.4);
+  g.strokePath();
+  g.fillStyle(0xffffff, 0.85);
+  g.fillEllipse(x - r * 0.38, y - r * 0.42, r * 0.55, r * 0.32);
+  if (hp < 1) {
+    g.lineStyle(2, ctx.tint(WATER.pale), 0.85);
+    g.beginPath();
+    g.arc(x, y, r + 3, -Math.PI / 2, -Math.PI / 2 + hp * Math.PI * 2);
+    g.strokePath();
+  }
+}
+
+function pop(ctx: PreviewCtx, x: number, y: number, label: string, color: string): void {
+  const t = ctx.adopt(ctx.scene.add.text(x, y, label, {
+    fontSize: '11px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
+    color, stroke: '#00224d', strokeThickness: 3,
+  }).setOrigin(0.5).setDepth(10));
+  ctx.scene.tweens.add({ targets: t, y: y - 22, alpha: 0, duration: 900 });
+}
+
+export const bubbleBarrage: PreviewScript = {
+  duration: 5600,
+  caption: 'Alt Q — 20 bubbles cling to foes (4 each); a blast on a bubbled foe hits every bubble too',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(7));
+    type B = { x: number; y: number; vx: number; vy: number; slot: number; hp: number; dead: boolean };
+    const bubbles: B[] = [];
+    let worn = 0;
+    ctx.at(250, () => {
+      av.play('sweep', ctx.aim);
+      fx.muzzleSpray(ctx.cx + 26, ctx.cy, ctx.aim, 1.4);
+      for (let i = 0; i < 20; i++) {
+        ctx.at(i * 28, () => {
+          const a = ctx.aim + (Math.random() * 2 - 1) * 0.55;
+          const sp = 240 + Math.random() * 140;
+          bubbles.push({ x: ctx.cx + Math.cos(a) * 24, y: ctx.cy + Math.sin(a) * 24, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, slot: -1, hp: 1, dead: false });
+        });
+      }
+    });
+    // The payoff: one 10-damage blast on the bubbled dummy hits it and all four bubbles.
+    ctx.at(3200, () => {
+      fx.splash(ctx.tx, ctx.ty, 56);
+      pop(ctx, ctx.tx, ctx.ty - 40, '-10 + 4×5 = -30', '#bbeeff');
+      for (const b of bubbles) if (b.slot >= 0) b.hp = 0.87;
+    });
+    ctx.onFrame((dt, elapsed) => {
+      const s = dt / 1000;
+      const t = elapsed / 1000;
+      g.clear();
+      for (const b of bubbles) {
+        if (b.dead) continue;
+        if (b.slot >= 0) {
+          const a = (b.slot / 4) * Math.PI * 2 + t * 0.8;
+          b.x = ctx.tx + Math.cos(a) * 22;
+          b.y = ctx.ty + Math.sin(a) * 19;
+          g.lineStyle(1, ctx.tint(WATER.cyan), 0.35);
+          g.lineBetween(ctx.tx, ctx.ty, b.x, b.y);
+          drawBubble(g, ctx, b.x, b.y, 11, t, b.hp);
+          continue;
+        }
+        const drag = Math.exp(-1.3 * s);
+        b.vx *= drag; b.vy *= drag;
+        b.x += b.vx * s; b.y += b.vy * s - 10 * s;
+        if (Phaser.Math.Distance.Between(b.x, b.y, ctx.tx, ctx.ty) < 29) {
+          if (worn < 4) { b.slot = worn++; fx.ring(b.x, b.y, 4, 18, WATER.foam, 200, 2, 7); if (worn === 4) pop(ctx, ctx.tx, ctx.ty - 46, '🫧 BUBBLED ×4', '#bbeeff'); }
+          else { b.dead = true; fx.ring(b.x, b.y, 5, 27, WATER.foam, 260, 3, 7); pop(ctx, ctx.tx, ctx.ty - 34, '🫧 POP -8', '#ddf6ff'); }
+          continue;
+        }
+        if (Math.hypot(b.vx, b.vy) < 40) { b.dead = true; fx.ring(b.x, b.y, 5, 20, WATER.foam, 200, 2, 7); continue; }
+        drawBubble(g, ctx, b.x, b.y, 9, t);
+      }
+    });
+  },
+};
+
+export const perkDrippy: PreviewScript = {
+  duration: 4200,
+  caption: 'Perk — Drippy: a 20px slowing puddle every 46px you walk, for 2.6s',
+  run(ctx) {
+    const { fx } = stage(ctx);
+    const y = ctx.cy + 30;
+    const x0 = 30, x1 = ctx.w - 40;
+    ctx.at(200, () => ctx.glideCaster({ from: { x: x0, y }, to: { x: x1, y }, ms: 2800, ease: 'linear' }));
+    let last = x0;
+    ctx.onFrame((_dt, elapsed) => {
+      const p = ctx.casterAt();
+      if (elapsed < 200 || p.x - last < 46) return;
+      last = p.x;
+      pool(ctx, p.x, p.y + 6, 20, 2600, elapsed);
+      fx.spray(p.x, p.y + 4, 3, { speed: 60, size: 2.2, life: 320, fall: 18, depth: 4 });
+    });
+  },
+};
+
+export const perkSplashy: PreviewScript = {
+  duration: 3000,
+  caption: 'Perk — Splashy: pools 50% wider, and Water Cut splashes 4 damage within 64px',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    for (let i = 0; i < 3; i++) {
+      ctx.at(250 + i * 600, () => {
+        av.play('punch', ctx.aim);
+        const sx = ctx.cx + 32;
+        fx.muzzleSpray(sx, ctx.cy, ctx.aim, 0.85);
+        ctx.fly({
+          texture: 'proj-water', from: { x: sx, y: ctx.cy }, to: { x: ctx.tx, y: ctx.ty }, speed: 620,
+          onHit: () => {
+            fx.ring(ctx.tx, ctx.ty, 10, 64, WATER.foam, 300, 3, 6);
+            fx.spray(ctx.tx, ctx.ty, 9, { speed: 170, size: 2.6, life: 380, fall: 30, depth: 7 });
+            pop(ctx, ctx.tx, ctx.ty - 36, 'SPLASH 4', '#bbeeff');
+          },
+        });
+      });
+    }
+    pool(ctx, ctx.cx + 40, ctx.cy + 60, 54, 2600, 200);
+  },
+};
+
+export const perkPoseidon: PreviewScript = {
+  duration: 4400,
+  scale: 0.85,
+  caption: "Perk — Poseidon: wave cuts shove, the dodge rides a wave, every ultimate sends a 25-damage wave",
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(8));
+    ctx.at(200, () => {
+      av.play('punch', ctx.aim);
+      ctx.fly({
+        texture: 'proj-water', from: { x: ctx.cx + 32, y: ctx.cy }, to: { x: ctx.tx, y: ctx.ty }, speed: 620,
+        onHit: () => { fx.crown(ctx.tx, ctx.ty, 22, 7, 7); pop(ctx, ctx.tx, ctx.ty - 34, 'SHOVE', '#88ddff'); },
+      });
+    });
+    ctx.at(1300, () => { av.play('raise', ctx.aim, 600); pop(ctx, ctx.cx, ctx.cy - 50, "🔱 POSEIDON'S WAVE", '#55ccff'); });
+    let hit = false;
+    ctx.onFrame((_dt, elapsed) => {
+      g.clear();
+      const t = elapsed - 1500;
+      if (t < 0 || t > 1500) return;
+      const front = -30 + (ctx.w + 90) * (t / 1100);
+      const layers: Array<[number, number, number]> = [[90, WATER.deep, 0.7], [56, WATER.ocean, 0.8], [27, WATER.bright, 0.85]];
+      for (const [w, c, a] of layers) {
+        g.fillStyle(ctx.tint(c), a);
+        g.fillRect(front - w, 0, w, ctx.h);
+      }
+      g.lineStyle(4, ctx.tint(WATER.white), 0.9);
+      g.lineBetween(front, 0, front, ctx.h);
+      if (!hit && front >= ctx.tx) {
+        hit = true;
+        fx.splash(ctx.tx, ctx.ty, 40);
+        pop(ctx, ctx.tx, ctx.ty - 40, '-25', '#bbeeff');
+      }
+    });
+  },
+};

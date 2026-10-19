@@ -58,7 +58,7 @@ const HUSK_TRICKS: Record<string, string> = {
   silence: 'Nearly invisible until it is within two paces of you. Watch the floor.',
   echo: 'Splits on death into two half-real echoes of itself. They fade; they still bite.',
   subterfuge: 'Wears a plain husk\'s face until you are close. Then it is very fast indeed.',
-  chalk: 'Hangs back and redraws its neighbours\' wounds closed.',
+  chalk: 'Hangs back and paints over its neighbours\' wounds.',
   magma: 'Lays burning ground behind it and cooks whatever it bites.',
   illusion: 'Arrives with two lookalikes. Only one of the three is worth a shard.',
   depths: 'Lobs pressure at you, and each shot bursts into a tidepool where it lands.',

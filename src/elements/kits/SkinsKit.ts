@@ -10,6 +10,8 @@ export interface SkinsArenaApi {
   readonly npc: Fighter;
   readonly scene: Phaser.Scene;
   readonly projectiles: Phaser.Physics.Arcade.Group;
+  /** A Quantum side keeps its one body whatever skin the live element has on — no body repaint. */
+  bodyLocked(owner: 'player' | 'npc'): boolean;
 }
 
 type Owner = 'player' | 'npc';
@@ -142,7 +144,7 @@ export class SkinsKit {
    * top/bottom corners keeps a little vertical shading so the body isn't a dead silhouette.
    */
   private paintBody(owner: Owner, fighter: Fighter): void {
-    if (!fighter || !fighter.active) return;
+    if (!fighter || !fighter.active || this.arena.bodyLocked(owner)) return;
     const tint = this.def(owner)?.bodyTint;
     if (tint) fighter.setTintFill(tint[0], tint[0], tint[1], tint[1]);
   }

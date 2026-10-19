@@ -3,19 +3,17 @@ import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import {
   QC, coreAura, cutFlash, orbitShell, parasiteBody, splicerBlade, splitWall, stateBloom,
 } from '../../../elements/kits/QuantumCoreVisuals';
+import { QuantumAvatar } from '../../../elements/kits/QuantumAvatar';
 
 /**
  * Quantum's showcases.
  *
- * The third state has no character rig of its own — the arena draws the plain `elem-quantum`
- * body with `coreAura` under it — and it has no `Fx` class either: every effect it produces is
- * a record in the kit's own `bursts` list, painted by `cutFlash` and `stateBloom`. These loops
- * therefore keep the same records and call the same painters, which is also how the blades
- * (`orbitShell` + `splicerBlade`), the seam (`splitWall`) and the parasite (`parasiteBody`) are
- * drawn here.
- *
- * The bond loops stage fire and water as the two halves, because a collapse has to be shown as
- * two real elements swapping rather than as an abstraction.
+ * The caster is Quantum's one character — the `quantum-body` orb with `QuantumAvatar` round
+ * it — exactly as the arena draws it, whatever element is live; the third state's loops add
+ * `coreAura` under it. The third state has no `Fx` class: every effect it produces is a record
+ * in the kit's own `bursts` list, painted by `cutFlash` and `stateBloom`. These loops keep the
+ * same records and call the same painters, which is also how the blades (`orbitShell` +
+ * `splicerBlade`), the seam (`splitWall`) and the parasite (`parasiteBody`) are drawn here.
  */
 
 // ── Staging ───────────────────────────────────────────────────────────
@@ -51,24 +49,18 @@ function label(ctx: PreviewCtx, x: number, y: number, color: string, size = 11):
 const hex = (c: number): string => `#${c.toString(16).padStart(6, '0')}`;
 
 /**
- * The caster the arena actually draws for the third state: the element body sprite with
- * `coreAura` beneath it, and nothing else. Quantum is the one element with no character rig.
+ * The caster the arena draws for a Quantum: the `quantum-body` orb (each script's
+ * `bodyTexture`) with `QuantumAvatar` round it, carried by the harness off `read()`. It never
+ * changes, whichever element is live. `aura` adds the third state's `coreAura` underneath.
  */
-function coreCaster(ctx: PreviewCtx, read: () => { x: number; y: number; texture?: string }): void {
-  const key = 'elem-quantum';
-  const img = ctx.scene.textures.exists(key)
-    ? ctx.adopt(ctx.scene.add.image(ctx.cx, ctx.cy, key).setDepth(5))
-    : null;
-  const aura = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+function coreCaster(ctx: PreviewCtx, read: () => Mark, aura = true): void {
+  ctx.useAvatar(() => new QuantumAvatar(ctx.scene));
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
   ctx.onFrame((_delta, elapsed) => {
     const s = read();
-    const tex = s.texture ?? key;
-    if (img) {
-      if (img.texture.key !== tex && ctx.scene.textures.exists(tex)) img.setTexture(tex);
-      img.setPosition(s.x, s.y);
-    }
-    aura.clear();
-    if (tex === key) coreAura(aura, s.x, s.y, 18, elapsed / 1000, 0);
+    ctx.moveCaster(s.x, s.y);
+    g.clear();
+    if (aura) coreAura(g, s.x, s.y, 18, elapsed / 1000, 0);
   });
 }
 
@@ -88,7 +80,7 @@ function bursts(ctx: PreviewCtx, list: Burst[], depth = 10): void {
   });
 }
 
-/** The collapse ring the bond draws on every swap: one ring out, one ring in, three orbit ticks. */
+/** The collapse ring a shift draws: one ring out, one ring in, three orbit ticks. */
 function collapseRing(ctx: PreviewCtx, x: number, y: number, tint: number): void {
   const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
   ctx.scene.tweens.addCounter({
@@ -120,7 +112,7 @@ function collapseRing(ctx: PreviewCtx, x: number, y: number, tint: number): void
 export const splicers: PreviewScript = {
   duration: 15000,
   scale: 0.9,
-  bodyTexture: '',
+  bodyTexture: 'quantum-body',
   caption: 'Click — five permanent blades, 8 a cut. Hold to drive them from 48px to 112px.',
   run(ctx) {
     const me = { x: ctx.w * 0.36, y: ctx.h * 0.55 };
@@ -181,10 +173,10 @@ export const splicers: PreviewScript = {
 export const abilitySplit: PreviewScript = {
   duration: 14000,
   scale: 0.9,
-  bodyTexture: '',
+  bodyTexture: 'quantum-body',
   caption: 'E — the next ability you cast comes back in half the time, even after you collapse',
   run(ctx) {
-    const me = { x: ctx.w * 0.34, y: ctx.h * 0.55, texture: 'elem-quantum' };
+    const me = { x: ctx.w * 0.34, y: ctx.h * 0.55 };
     coreCaster(ctx, () => me);
     const readout = label(ctx, ctx.w * 0.5, 12, '#b07dff', 11);
     const gauge = label(ctx, ctx.w * 0.5, ctx.h - 14, '#eaffff', 10);
@@ -207,7 +199,7 @@ export const abilitySplit: PreviewScript = {
         wheel.strokePath();
       }
       gauge.setText(s.armed
-        ? 'armed — waiting for whatever you cast next, whichever half of the bond you are wearing'
+        ? 'armed — waiting for whatever you cast next, whichever element is live'
         : (s.bar > 0
           ? `${s.halved ? 'a 30s ultimate on a 15s clock' : 'a 30s ultimate on its full clock'} — ${(s.bar * (s.halved ? 15 : 30)).toFixed(1)}s left`
           : 'nothing armed'));
@@ -220,7 +212,6 @@ export const abilitySplit: PreviewScript = {
       readout.setText('the charge is banked on your body, not on this kit');
     });
     ctx.at(2600, () => {
-      me.texture = 'elem-fire';
       collapseRing(ctx, me.x, me.y, 0xff6633);
       float(ctx, me.x, me.y - 52, '🔥 Fire', '#7df9ff', 12);
       readout.setText('...which is why it is still there after you have collapsed into something else');
@@ -231,7 +222,7 @@ export const abilitySplit: PreviewScript = {
       s.halved = true;
       list.push({ x: me.x, y: me.y, ang: 0, born: 5000, seed: 8, kind: 'bloom', tint: QC.ghost, r: 52 });
       float(ctx, me.x, me.y - 60, '⚛️ Halved!', hex(QC.ghost), 13);
-      readout.setText('spend it on the other half\'s ultimate: 30 seconds of cooldown becomes 15');
+      readout.setText('spend it on Fire\'s ultimate: 30 seconds of cooldown becomes 15');
     });
     ctx.at(8200, () => readout.setText('spent once, by the very next thing you cast — it has no timer of its own'));
     ctx.at(10600, () => readout.setText('and it cannot eat its own cooldown: E is already stamped by the time the charge is set'));
@@ -244,7 +235,7 @@ export const abilitySplit: PreviewScript = {
 export const arenaSplit: PreviewScript = {
   duration: 15000,
   scale: 0.67,
-  bodyTexture: '',
+  bodyTexture: 'quantum-body',
   caption: 'R — a seam down the middle for 15s: they cannot cross it, and no shot from either side can',
   run(ctx) {
     const me = { x: ctx.w * 0.3, y: ctx.h * 0.5, dir: 1 };
@@ -325,7 +316,7 @@ export const arenaSplit: PreviewScript = {
 export const effectSplit: PreviewScript = {
   duration: 15000,
   scale: 0.9,
-  bodyTexture: '',
+  bodyTexture: 'quantum-body',
   caption: 'F — everything on you at half strength for two and a half times as long. Buffs too.',
   run(ctx) {
     const me = { x: ctx.w * 0.36, y: ctx.h * 0.55 };
@@ -377,7 +368,7 @@ export const effectSplit: PreviewScript = {
     });
     ctx.at(5600, () => readout.setText('×1.50 taken becomes ×1.25, and ×1.40 speed becomes ×1.20. It does not discriminate.'));
     ctx.at(8000, () => readout.setText('so a body carrying something nasty wants this, and a body carrying a big buff does not'));
-    ctx.at(10400, () => readout.setText('it reaches whatever the other half of your bond left on you, too'));
+    ctx.at(10400, () => readout.setText('it reaches whatever your other elements left on you, too'));
     ctx.at(12600, () => readout.setText('on a clean body it is weak rather than wasted: a flat 4 seconds of halved multipliers'));
   },
 };
@@ -387,7 +378,7 @@ export const effectSplit: PreviewScript = {
 export const parasite: PreviewScript = {
   duration: 18000,
   scale: 0.7,
-  bodyTexture: '',
+  bodyTexture: 'quantum-body',
   caption: 'Q — ten beads, 35 a bite, and every cut middle bead leaves two parasites instead of one',
   run(ctx) {
     const me = { x: ctx.w * 0.2, y: ctx.h * 0.72 };
@@ -484,122 +475,110 @@ export const parasite: PreviewScript = {
   },
 };
 
-// ══ PASSIVE — Bonded ══════════════════════════════════════════════════
+// ══ PASSIVE — Entangled ═══════════════════════════════════════════════
 
-export const bonded: PreviewScript = {
-  duration: 16000,
+/** The loadout these two loops stage: one entangled element per key. */
+const LOADOUT = [
+  { key: 'Click', id: 'fire', name: '🔥 Fire', col: 0xff6633 },
+  { key: 'E', id: 'ice', name: '🧊 Ice', col: 0x99ddff },
+  { key: 'R', id: 'gravity', name: '🌀 Gravity', col: 0x9966ff },
+  { key: 'F', id: 'water', name: '💧 Water', col: 0x3399ff },
+  { key: 'Q', id: 'earth', name: '🪨 Earth', col: 0xbb8844 },
+];
+
+/** The loadout readout the kit paints above the tray: the live slot lit, the rest dimmed. */
+function loadoutHud(ctx: PreviewCtx, live: () => number): void {
+  const hud = ctx.adopt(ctx.scene.add.graphics().setDepth(22));
+  const text = LOADOUT.map(() => ctx.adopt(ctx.scene.add.text(0, 0, '', {
+    fontSize: '9px', fontFamily: 'Arial Black', align: 'center',
+  }).setOrigin(0.5).setDepth(23)));
+  ctx.onFrame(() => {
+    hud.clear();
+    const slot = Math.min(76, (ctx.w - 20) / LOADOUT.length);
+    const cx = ctx.w / 2, y = ctx.h - 30, total = slot * LOADOUT.length;
+    hud.fillStyle(0x061014, 0.88);
+    hud.fillRoundedRect(cx - total / 2, y - 18, total, 36, 8);
+    hud.lineStyle(1.5, QC.core, 0.55);
+    hud.strokeRoundedRect(cx - total / 2, y - 18, total, 36, 8);
+    LOADOUT.forEach((f, i) => {
+      const on = i === live();
+      const sx = cx - total / 2 + 4 + i * slot, sw = slot - 6;
+      if (on) { hud.fillStyle(f.col, 0.34); hud.fillRoundedRect(sx, y - 13, sw, 26, 6); }
+      hud.lineStyle(on ? 1.5 : 1, f.col, on ? 0.95 : 0.3);
+      hud.strokeRoundedRect(sx, y - 13, sw, 26, 6);
+      text[i].setPosition(sx + sw / 2, y).setText(`${f.key}\n${f.name}`).setColor(on ? '#ffffff' : '#5d7076');
+    });
+  });
+}
+
+export const entangled: PreviewScript = {
+  duration: 15000,
   scale: 0.9,
-  bodyTexture: '',
-  caption: 'Passive — two elements, one body. The half you are not wearing keeps running.',
+  bodyTexture: 'quantum-body',
+  caption: 'Passive — five keys, five entangled elements, one body that never changes',
   run(ctx) {
-    const me = { x: ctx.w * 0.34, y: ctx.h * 0.58, texture: 'elem-fire' };
-    coreCaster(ctx, () => me);
+    const me = { x: ctx.w * 0.3, y: ctx.h * 0.46 };
+    coreCaster(ctx, () => me, false);
     const readout = label(ctx, ctx.w * 0.5, 12, '#7df9ff', 11);
-    const gauge = label(ctx, ctx.w * 0.5, ctx.h - 14, '#eaffff', 10);
+    const s = { live: 0, pool: false };
+    loadoutHud(ctx, () => s.live);
 
-    // The bond readout the kit paints above the tray: the live stop lit, the dormant one dimmed.
-    const forms = [
-      { id: 'fire', name: '🔥 Fire', col: 0xff6633 },
-      { id: 'water', name: '💧 Water', col: 0x3399ff },
-    ];
-    const idx = { at: 0, hp: 268, pool: true };
-    const hud = ctx.adopt(ctx.scene.add.graphics().setDepth(22));
-    const hudText = forms.map(() => ctx.adopt(ctx.scene.add.text(0, 0, '', {
-      fontSize: '11px', fontFamily: 'Arial Black',
-    }).setOrigin(0.5).setDepth(23)));
+    // The fire pool Click left behind, still burning while another element is live.
     const world = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
-
     ctx.onFrame((_delta, elapsed) => {
-      hud.clear(); world.clear();
-      const cx = ctx.w / 2, y = ctx.h - 46, slot = 86, total = slot * forms.length;
-      hud.fillStyle(0x061014, 0.88);
-      hud.fillRoundedRect(cx - total / 2, y - 20, total, 40, 8);
-      hud.lineStyle(1.5, QC.core, 0.55);
-      hud.strokeRoundedRect(cx - total / 2, y - 20, total, 40, 8);
-      forms.forEach((f, i) => {
-        const live = i === idx.at;
-        const sx = cx - total / 2 + 6 + i * slot;
-        const sw = slot - 8;
-        if (live) { hud.fillStyle(f.col, 0.34); hud.fillRoundedRect(sx, y - 14, sw, 28, 6); }
-        hud.lineStyle(live ? 1.5 : 1, f.col, live ? 0.95 : 0.3);
-        hud.strokeRoundedRect(sx, y - 14, sw, 28, 6);
-        hudText[i].setPosition(sx + sw / 2, y);
-        hudText[i].setText(f.name);
-        hudText[i].setColor(live ? '#ffffff' : '#5d7076');
-      });
-      // The fire pool the first half left behind, still burning while you are water.
-      if (idx.pool) {
-        const t = elapsed / 1000;
-        world.fillStyle(0xff6633, 0.28 + 0.06 * Math.sin(t * 4));
-        world.fillEllipse(ctx.w * 0.68, ctx.h * 0.44, 96, 42);
-        world.fillStyle(0xffbb44, 0.35);
-        world.fillEllipse(ctx.w * 0.68, ctx.h * 0.44, 54, 22);
-      }
-      gauge.setText(`health ${idx.hp}/400 — shared   ·   the dormant half is still being ticked every frame`);
+      world.clear();
+      if (!s.pool) return;
+      const t = elapsed / 1000;
+      world.fillStyle(0xff6633, 0.28 + 0.06 * Math.sin(t * 4));
+      world.fillEllipse(ctx.w * 0.68, ctx.h * 0.42, 96, 40);
+      world.fillStyle(0xffbb44, 0.35);
+      world.fillEllipse(ctx.w * 0.68, ctx.h * 0.42, 54, 20);
     });
 
-    ctx.at(600, () => readout.setText('a bond is two elements you researched in the Entanglement Lab'));
-    ctx.at(2600, () => { idx.pool = true; readout.setText('as fire, you leave a burning pool on the floor'); });
-    ctx.at(5000, () => {
-      idx.at = 1;
-      me.texture = 'elem-water';
-      collapseRing(ctx, me.x, me.y, 0x3399ff);
-      float(ctx, me.x, me.y - 52, '💧 Water', '#7df9ff', 12);
-      readout.setText('collapse, and you are water — with the same health, shields and status effects');
-    });
-    ctx.at(7600, () => readout.setText('and the pool is still burning. The dormant half never stops being simulated.'));
-    ctx.at(10000, () => readout.setText('the shop upgrades, the mastery binds and the equipped skin all follow the half you wear'));
-    ctx.at(12600, () => readout.setText('cooldowns are per ability on one body, so what you started still runs while you are away'));
-    ctx.at(14400, () => readout.setText('an enemy Quantum rotates on a rhythm — 16s down to 5.5s by difficulty — so it can be learnt'));
-  },
-};
-
-// ══ PASSIVE — Collapse ════════════════════════════════════════════════
-
-export const collapse: PreviewScript = {
-  duration: 13000,
-  scale: 0.9,
-  bodyTexture: '',
-  caption: 'Passive — your dodge is the swap, and it is instant',
-  run(ctx) {
-    const me = { x: ctx.w * 0.26, y: ctx.h * 0.55, texture: 'elem-fire' };
-    coreCaster(ctx, () => me);
-    const readout = label(ctx, ctx.w * 0.5, 12, '#7df9ff', 11);
-    const gauge = label(ctx, ctx.w * 0.5, ctx.h - 14, '#eaffff', 10);
-
-    const cycle = [
-      { tex: 'elem-fire', name: '🔥 Fire', col: 0xff6633 },
-      { tex: 'elem-water', name: '💧 Water', col: 0x3399ff },
-      { tex: 'elem-quantum', name: '⚛️ Quantum', col: QC.core },
-    ];
-    const s = { at: 0, third: false, dash: -1 };
-    ctx.onFrame((delta, elapsed) => {
-      // The dash still happens exactly as it would for anybody else.
-      if (elapsed < s.dash) me.x += 520 * (delta / 1000);
-      if (me.x > ctx.w * 0.8) me.x = ctx.w * 0.2;
-      gauge.setText(s.third
-        ? 'with Third State: first → second → Quantum → first'
-        : 'without it: first → second → first');
-    });
-
-    const dodge = (at: number, note: string): void => ctx.at(at, () => {
-      s.at = (s.at + 1) % (s.third ? 3 : 2);
-      const f = cycle[s.at];
-      me.texture = f.tex;
-      s.dash = at + 220;
-      collapseRing(ctx, me.x, me.y, f.col);
-      float(ctx, me.x, me.y - 52, f.name, '#7df9ff', 12);
+    const shift = (at: number, i: number, note: string): void => ctx.at(at, () => {
+      s.live = i;
+      collapseRing(ctx, me.x, me.y, LOADOUT[i].col);
       readout.setText(note);
     });
 
-    ctx.at(400, () => readout.setText('there is no swap key. The dodge is the swap.'));
-    dodge(1400, 'the dash happens exactly as it would for anybody else — you just land as the other half');
-    ctx.at(3400, () => readout.setText('the 380ms collapse ring is decoration; the re-key is on the frame you dodge'));
-    dodge(4400, 'and back again. Nothing you left in the world is disturbed by it.');
-    ctx.at(6400, () => { s.third = true; readout.setText('with Third State bought, the coin has three faces'); });
-    dodge(7400, 'first element...');
-    dodge(9000, '...second element...');
-    dodge(10600, '...and Quantum itself, which finally has a kit of its own');
+    ctx.at(400, () => readout.setText('each key carries one entangled element\'s ability for that same key'));
+    ctx.at(2400, () => { s.pool = true; readout.setText('as Fire on Click, you leave a burning pool'); });
+    shift(4600, 3, 'press F and you are Water — same body, same health, same status effects');
+    ctx.at(7000, () => readout.setText('and the pool is still burning: every element you carry is ticked every frame'));
+    shift(9200, 2, 'R makes you Gravity. The body never changes — it is always Quantum\'s own.');
+    ctx.at(11600, () => readout.setText('a slot brings the base ability only — Third State and Mastery add the rest'));
+    ctx.at(13400, () => readout.setText('cooldowns are per ability on one body, so what you started keeps running'));
+  },
+};
+
+// ══ PASSIVE — Shift ═══════════════════════════════════════════════════
+
+export const shift: PreviewScript = {
+  duration: 13000,
+  scale: 0.9,
+  bodyTexture: 'quantum-body',
+  caption: 'Passive — pressing a key is the swap, and it is instant and free',
+  run(ctx) {
+    const me = { x: ctx.w * 0.34, y: ctx.h * 0.46 };
+    coreCaster(ctx, () => me, false);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#7df9ff', 11);
+    const s = { live: 0 };
+    loadoutHud(ctx, () => s.live);
+
+    const press = (at: number, i: number, note: string): void => ctx.at(at, () => {
+      s.live = i;
+      collapseRing(ctx, me.x, me.y, LOADOUT[i].col);
+      float(ctx, me.x, me.y - 46, `${LOADOUT[i].key} → ${LOADOUT[i].name}`, '#7df9ff', 11);
+      readout.setText(note);
+    });
+
+    ctx.at(300, () => readout.setText('there is no swap key. Every key is one.'));
+    press(1200, 1, 'a fresh E makes you Ice before the press reaches the kit — then it casts as normal');
+    press(3400, 4, 'Q: Earth. The 380ms ring is decoration; the re-key is on the frame you press.');
+    press(5600, 0, 'hold the mouse with no key down and you are back on Click\'s element');
+    press(7800, 2, 'two keys in one frame: the later one wins');
+    ctx.at(10000, () => readout.setText('a shift never costs health — instability is the whole price'));
+    ctx.at(11600, () => readout.setText('and through all of it the body stays the same: Quantum always looks like Quantum'));
   },
 };
 
@@ -608,11 +587,11 @@ export const collapse: PreviewScript = {
 export const instability: PreviewScript = {
   duration: 17000,
   scale: 0.9,
-  bodyTexture: '',
+  bodyTexture: 'quantum-body',
   caption: 'Passive — 1 point a hit, 1% more damage taken per point, capped at 50 and shed 1 per 2s',
   run(ctx) {
     const me = { x: ctx.w * 0.34, y: ctx.h * 0.56 };
-    coreCaster(ctx, () => me);
+    coreCaster(ctx, () => me, false);
     const readout = label(ctx, ctx.w * 0.5, 12, '#ff5577', 11);
     const gauge = label(ctx, ctx.w * 0.5, ctx.h - 14, '#7df9ff', 10);
     const list: Burst[] = [];
@@ -639,66 +618,14 @@ export const instability: PreviewScript = {
       meter.fillRect(x, y, w * (s.v / 50), h);
       meter.lineStyle(1.5, s.v >= 40 ? QC.blood : QC.core, 0.7);
       meter.strokeRect(x, y, w, h);
-      // The 40 mark, which is where a collapse starts costing health.
-      meter.lineStyle(1.5, QC.hot, 0.8);
-      meter.lineBetween(x + w * 0.8, y - 3, x + w * 0.8, y + h + 3);
-      gauge.setText(`instability ${s.v}   ·   taking ${s.v}% more damage   ·   ${s.v >= 40 ? 'a collapse now costs 25 HP' : 'a collapse is clean'}`);
+      gauge.setText(`instability ${s.v}   ·   taking ${s.v}% more damage`);
     });
 
-    ctx.at(400, () => readout.setText('carrying two kits is paid for one hit at a time'));
+    ctx.at(400, () => readout.setText('carrying five kits is paid for one hit at a time'));
     ctx.at(1600, () => { s.hitting = true; readout.setText('one point per hit — it does not matter at all how big the hit was'); });
     ctx.at(6000, () => { s.hitting = false; readout.setText('one point is one percent more damage taken, one for one'); });
     ctx.at(8600, () => readout.setText('it bleeds off at 1 every 2 seconds, so a full 50 takes 100 seconds to clear'));
     ctx.at(11200, () => readout.setText('a hit fully eaten by a shield or an absorber adds nothing — only damage that got through counts'));
     ctx.at(13800, () => readout.setText('at the 50 cap everything in the game hits you half again as hard'));
-  },
-};
-
-// ══ PASSIVE — Torn Collapse ═══════════════════════════════════════════
-
-export const tornCollapse: PreviewScript = {
-  duration: 14000,
-  scale: 0.9,
-  bodyTexture: '',
-  caption: 'Passive — collapse at 40 instability or more and it takes 25 health out of you',
-  run(ctx) {
-    const me = { x: ctx.w * 0.34, y: ctx.h * 0.56, texture: 'elem-fire' };
-    coreCaster(ctx, () => me);
-    const readout = label(ctx, ctx.w * 0.5, 12, '#ff5577', 11);
-    const gauge = label(ctx, ctx.w * 0.5, ctx.h - 14, '#eaffff', 10);
-
-    const s = { v: 12, hp: 300 };
-    const meter = ctx.adopt(ctx.scene.add.graphics().setDepth(22));
-    ctx.onFrame(() => {
-      meter.clear();
-      const x = ctx.w * 0.56, y = ctx.h * 0.4, w = 190, h = 12;
-      meter.fillStyle(QC.dark, 0.9);
-      meter.fillRect(x, y, w, h);
-      meter.fillStyle(s.v >= 40 ? QC.blood : QC.core, 1);
-      meter.fillRect(x, y, w * (s.v / 50), h);
-      meter.lineStyle(1.5, QC.hot, 0.8);
-      meter.lineBetween(x + w * 0.8, y - 3, x + w * 0.8, y + h + 3);
-      gauge.setText(`instability ${s.v}   ·   health ${s.hp}/400   ·   ${s.v >= 40 ? 'the next collapse tears' : 'clean'}`);
-    });
-
-    const swap = (at: number, note: string): void => ctx.at(at, () => {
-      const toQuantum = me.texture !== 'elem-quantum';
-      me.texture = toQuantum ? 'elem-quantum' : 'elem-fire';
-      collapseRing(ctx, me.x, me.y, toQuantum ? QC.core : 0xff6633);
-      float(ctx, me.x, me.y - 52, toQuantum ? '⚛️ Quantum' : '🔥 Fire', '#7df9ff', 12);
-      if (s.v >= 40) {
-        s.hp -= 25;
-        float(ctx, me.x, me.y - 74, '⚛️ Unstable! −25', '#ff5577', 13);
-      }
-      readout.setText(note);
-    });
-
-    ctx.at(400, () => readout.setText('at 12 instability the collapse is clean — the bond is a rhythm you keep'));
-    swap(1600, 'nothing is charged for it, and nothing about the swap is any different');
-    ctx.at(4000, () => { s.v = 44; readout.setText('but forty hits inside the decay window and the body is coming apart'); });
-    swap(6000, 'the collapse still works. It just takes 25 health out of you on the way through.');
-    ctx.at(8400, () => readout.setText('flat 25 at 40 and flat 25 at the cap — there is no worse version to be afraid of'));
-    ctx.at(10600, () => readout.setText('though it goes through your own instability, so at the cap it really costs about 38'));
-    ctx.at(12400, () => readout.setText('the bond is not an escape hatch from a fight going badly. It is a rhythm you keep before it does.'));
   },
 };

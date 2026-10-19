@@ -2,120 +2,48 @@ import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import {
-  CHK, ChalkAvatar, ChalkFx, chalkBlob, chalkEyes, chalkLegs, chalkLine, grain,
-} from '../../../elements/kits/ChalkVisuals';
+  PNT, PAINT_TONE, PaintAvatar, PaintFx, PaintKind, PaintSeg, paintChip, paintLayer, yinYang,
+} from '../../../elements/kits/PaintVisuals';
 
 /**
- * Chalk's showcases.
+ * Paint's showcases (element id `chalk`).
  *
- * There is no projectile in this element at all — every mark on the floor is a Graphics stroke
- * repainted from `ChalkVisuals`, so these loops keep the kit's own `Mark` records (position,
- * previous point, linked, seed) and hand them to `chalkLine`/`chalkBlob` exactly as `paintMark`
- * does. The one real projectile here is the enemy ammunition Perma-Block rubs out, flown with
- * `ctx.fly` on a genuine texture.
- *
- * Every loop drives a `pen`, which is the kit's `feedSession` in miniature: a cursor path, a
- * step in pixels, and a mark laid every time the cursor has travelled that far.
+ * Every dab on the floor is laid with `paintLayer` exactly as the kit lays it — flat coats that
+ * merge seamlessly, a linked dab a stroke from the one before, an unlinked one a blob.
+ * Each loop drives a `pen`: a cursor path and a dab every `step` px, which is the kit's
+ * `feedSession` in miniature.
  *
  * Containment: `ctx.at`/`ctx.onFrame` run outside the harness's capture window, so anything
- * built inside one goes through `ctx.adopt`. `ChalkFx` carries a sticky sink.
+ * built inside one goes through `ctx.adopt`. `PaintFx` carries a sticky sink.
  */
 
 // ── The kit's constants, mirrored ─────────────────────────────────────
 
-const STEP = 12;
-const STEP_MP = 17;
-const LIFT = 96;
+const SHAPE_DAB_R = 5;
+const SPLOTCH_SPEED = 420;
+const ORANGE_DRAW_MS = 2000;
+const ORANGE_FUSE_MS = 800;
+const ORANGE_STAGGER_MS = 50;
+const ORANGE_RADIUS = 38;
+const WALL_DRAW_MS = 1500;
+const MP_BRUSH = 78;
 
-const WARD_DRAW_MS = 1000;
-const WARD_FUSE_MS = 500;
-const WARD_DAMAGE = 10;
-const WARD_STACK_DAMAGE = 5;
-const WARD_MAX_STACKS = 5;
-const WARD_RADIUS = 34;
-const WARD_BOOM_SPACING = 30;
-const WARD_BOOM_MAX = 16;
+interface Pt { x: number; y: number }
+interface FDab { x: number; y: number; px: number; py: number; linked: boolean; seed: number; kind: PaintKind; w: number }
 
-const BOOM_DRAW_MS = 2000;
-const BOOM_FUSE_MS = 1000;
-const BOOM_DAMAGE = 10;
-const BOOM_RADIUS = 40;
-const BOOM_STAGGER_MS = 55;
-const RELEASE_DAMAGE = 25;
-
-const PERMA_DRAW_MS = 500;
-const PERMA_DPS = 30;
-const PERMA_RADIUS = 24;
-const PERMA_BLOCK_R = 20;
-
-const SHIELD_DRAW_MS = 1000;
-const SHIELD_DRAW_SUPREME_MS = 2500;
-const SHIELD_RANGE = 118;
-const SHIELD_MIN_DIST = 30;
-const SHIELD_HP = 125;
-const SHIELD_SPIN = 0.9;
-const SHIELD_NODE_R = 15;
-const SHIELD_PROJ_COST = 8;
-const SHIELD_PUSH_DPS = 12;
-const SHIELD_PUSH_PAD = 14;
-const SUPREME_BOOM_DAMAGE = 14;
-
-const MP_MS = 8000;
-const MP_HEAL_DPS = 9;
-const MP_DAMAGE_DPS = 18;
-const MP_SPEED_MULT = 1.45;
-const MP_TOUCH_R = 26;
-
-const DEBRIS_RADIUS = 56;
-const DEBRIS_MAX = 4;
-
-// Chalk Mastery.
-const SMUDGE_EVERY = 9;
-const SMUDGE_SPEED = 96;
-const SMUDGE_REACH = 24;
-const SMUDGE_DAMAGE = 8;
-const SMUDGE_BOOM_DAMAGE = 15;
-const SMUDGE_BOOM_RADIUS = 46;
-const SMUDGE_BODY_R = 7;
-const SMUDGE_BAR_HALF = 23;
-const SMUDGE_BAR_THICK = 7;
-const SMUDGE_GUARD_R = 64;
-const SMUDGE_GUARD_SPIN = 0.55;
-
-const LIVING_DRAW_MS = 3000;
-const LIVING_WAKE_MS = 900;
-const LIVING_CIRCLE_R = 74;
-const LIVING_HP = 35;
-const LIVING_DAMAGE = 15;
-const LIVING_SPEED = 92;
-const LIVING_BITE_MS = 1100;
-const LIVING_REACH = 30;
-const LIVING_TRI_DAMAGE = 10;
-const LIVING_SQUARE_HP = 20;
-
-// ── Staging ───────────────────────────────────────────────────────────
-
-interface Mark { x: number; y: number }
-
-/** One dab of chalk, carrying exactly the fields `paintMark` reads. */
-interface CMark {
-  x: number; y: number; px: number; py: number; linked: boolean; seed: number; color: number;
-}
-
-function stage(ctx: PreviewCtx, opts?: { noDummy?: boolean }): {
-  fx: ChalkFx; av: BaseAvatar; cav: ChalkAvatar | null;
-} {
-  const fx = ctx.capture(() => new ChalkFx(ctx.scene, ctx.tint).setSink(ctx.sink));
-  const av = ctx.useAvatar(() => new ChalkAvatar(ctx.scene, ctx.tint));
+function stage(ctx: PreviewCtx): { fx: PaintFx; av: BaseAvatar; pav: PaintAvatar | null } {
+  const fx = ctx.capture(() => new PaintFx(ctx.scene, ctx.tint).setSink(ctx.sink));
+  const av = ctx.useAvatar(() => new PaintAvatar(ctx.scene, ctx.tint));
   av.setFacing(ctx.aim);
-  if (!opts?.noDummy) ctx.addDummy();
-  return { fx, av, cav: av instanceof ChalkAvatar ? av : null };
+  return { fx, av, pav: av instanceof PaintAvatar ? av : null };
 }
 
-function dummyAt(ctx: PreviewCtx, m: Mark): void {
+/** A stand-in enemy we can hide (Still Life replaces it with the picture). */
+function dummyAt(ctx: PreviewCtx, m: Pt, shown: () => boolean = () => true): void {
   const g = ctx.adopt(ctx.scene.add.graphics().setDepth(5));
   ctx.onFrame(() => {
     g.clear();
+    if (!shown()) return;
     g.fillStyle(0x2b2f3d, 1);
     g.fillCircle(m.x, m.y, 17);
     g.fillStyle(0x3c4254, 1);
@@ -147,58 +75,50 @@ function tick(ctx: PreviewCtx, x: number, y: number, text: string, color: number
   });
 }
 
-function label(ctx: PreviewCtx, x: number, y: number, text: string, color: number): void {
-  ctx.adopt(ctx.scene.add.text(x, y, text, {
-    fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
-    color: hex(color), align: 'center',
-  }).setOrigin(0.5).setDepth(19));
-}
-
-/** The floor. Paints every mark exactly as `paintMark` does — a run is a line, a dab is a blob. */
-function floor(ctx: PreviewCtx, marks: CMark[], depth = 2): Phaser.GameObjects.Graphics {
+/** The floor, laid exactly as the kit lays it. */
+function floor(ctx: PreviewCtx, dabs: FDab[], depth = 2): void {
   const g = ctx.adopt(ctx.scene.add.graphics().setDepth(depth));
   ctx.onFrame(() => {
     g.clear();
-    for (const m of marks) {
-      if (m.linked) chalkLine(g, ctx.tint, m.px, m.py, m.x, m.y, 3, m.color, 1, m.seed);
-      else chalkBlob(g, ctx.tint, m.x, m.y, 2.6, m.color, 1, m.seed);
-    }
+    paintLayer(g, ctx.tint, dabs.map((d) => ({ x: d.x, y: d.y, px: d.px, py: d.py, linked: d.linked, w: d.w, kind: d.kind })));
   });
-  return g;
 }
 
-/**
- * A drawing window. Walks `path` between `startMs` and `endMs` and lays a mark every time the
- * cursor has travelled `step` px — which is the whole of `feedSession`, minus the fuses.
- */
-function pen(ctx: PreviewCtx, marks: CMark[], o: {
-  startMs: number; endMs: number; step?: number; color: number;
-  path: (t: number) => Mark;
-  onMark?: (m: CMark, index: number) => void;
-  cursor?: boolean;
+/** Canvas-style points as one layer at (`x`, `y`), scale `k`, brush `w`. */
+function ptsLayer(g: Phaser.GameObjects.Graphics, ctx: PreviewCtx, pts: { cx: number; cy: number; kind: PaintKind }[],
+  x: number, y: number, k: number, w: number): void {
+  const segs: PaintSeg[] = pts.map((p, i) => ({
+    x: x + p.cx * k, y: y + p.cy * k,
+    px: x + (pts[i - 1] ?? p).cx * k, py: y + (pts[i - 1] ?? p).cy * k,
+    linked: i > 0, w, kind: p.kind,
+  }));
+  paintLayer(g, ctx.tint, segs);
+}
+
+/** A painting window: walks `path` and lays a dab every `step` px. */
+function pen(ctx: PreviewCtx, dabs: FDab[], o: {
+  startMs: number; endMs: number; step: number; w: number;
+  kind: (t: number) => PaintKind;
+  path: (t: number) => Pt;
+  onDab?: (d: FDab, i: number) => void;
 }): void {
-  const step = o.step ?? STEP;
   let started = false;
   let lx = 0;
   let ly = 0;
   let n = 0;
-  const cur = o.cursor === false ? null : ctx.adopt(ctx.scene.add.graphics().setDepth(12));
+  const cur = ctx.adopt(ctx.scene.add.graphics().setDepth(12));
   ctx.onFrame((_dt, elapsed) => {
-    cur?.clear();
+    cur.clear();
     if (elapsed < o.startMs || elapsed > o.endMs) return;
-    const p = o.path((elapsed - o.startMs) / (o.endMs - o.startMs));
-    if (cur) {
-      // The cursor itself, because in this element the cursor is the weapon.
-      cur.lineStyle(1.4, ctx.tint(o.color), 0.9);
-      cur.strokeCircle(p.x, p.y, 5);
-      cur.lineBetween(p.x - 8, p.y, p.x + 8, p.y);
-      cur.lineBetween(p.x, p.y - 8, p.x, p.y + 8);
-    }
-    if (started && Phaser.Math.Distance.Between(lx, ly, p.x, p.y) < step) return;
-    const linked = started && Phaser.Math.Distance.Between(lx, ly, p.x, p.y) <= LIFT;
-    const m: CMark = { x: p.x, y: p.y, px: lx, py: ly, linked, seed: n * 37.7, color: o.color };
-    marks.push(m);
-    o.onMark?.(m, n);
+    const t = (elapsed - o.startMs) / (o.endMs - o.startMs);
+    const p = o.path(t);
+    const kind = o.kind(t);
+    cur.lineStyle(1.4, ctx.tint(PAINT_TONE[kind]), 0.9);
+    cur.strokeCircle(p.x, p.y, 6);
+    if (started && Phaser.Math.Distance.Between(lx, ly, p.x, p.y) < o.step) return;
+    const d: FDab = { x: p.x, y: p.y, px: lx, py: ly, linked: started, seed: n * 37.7, kind, w: o.w };
+    dabs.push(d);
+    o.onDab?.(d, n);
     n++;
     lx = p.x;
     ly = p.y;
@@ -206,1004 +126,514 @@ function pen(ctx: PreviewCtx, marks: CMark[], o: {
   });
 }
 
-/** A tight scribble over a point — the shape a Ward is supposed to be drawn in. */
-function scribble(at: Mark, r: number): (t: number) => Mark {
-  return (t) => ({
-    x: at.x + Math.cos(t * Math.PI * 6) * r * (0.35 + t * 0.65),
-    y: at.y + Math.sin(t * Math.PI * 6) * r * 0.62 * (0.35 + t * 0.65),
-  });
-}
-
-/** Thin a run down to the bursts actually drawn — 30px apart, at most 16 of them. */
-function thin(run: CMark[]): CMark[] {
-  const shown: CMark[] = [];
-  for (const m of run) {
-    if (shown.length >= WARD_BOOM_MAX) break;
-    if (shown.some((s) => Phaser.Math.Distance.Between(s.x, s.y, m.x, m.y) < WARD_BOOM_SPACING)) continue;
-    shown.push(m);
-  }
-  return shown;
-}
-
-// ── Click — Chalk Ward ────────────────────────────────────────────────
-
-function wardLoop(ctx: PreviewCtx, opts: { debris: boolean }): void {
-  const { fx, av, cav } = stage(ctx, { noDummy: true });
-  const foe = { x: ctx.w * 0.62, y: ctx.cy };
-  dummyAt(ctx, foe);
-
-  const marks: CMark[] = [];
-  floor(ctx, marks);
-  const run: CMark[] = [];
-
-  ctx.at(300, () => {
-    av.play('punch');
-    cav?.setChalk(CHK.white);
-    cav?.setDrawing(true);
-    fx.ring(ctx.cx, ctx.cy, 10, 40, CHK.white, 320);
-  });
-  pen(ctx, marks, {
-    startMs: 300, endMs: 300 + WARD_DRAW_MS, color: CHK.white,
-    path: scribble(foe, 30),
-    onMark: (m) => { run.push(m); if (m.linked) fx.lay(m.px, m.py, m.x, m.y, CHK.white); },
-  });
-  ctx.at(300 + WARD_DRAW_MS, () => cav?.setDrawing(false));
-
-  const clouds: Mark[] = [];
-  const dust = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
-  let cloudsAt = -1;
+/** A flying Splotch, drawn as the kit draws one: the shape's blobs, turned to its heading. */
+function flySplotch(ctx: PreviewCtx, fx: PaintFx, shape: { f: number; l: number; kind: PaintKind }[], from: Pt, to: Pt,
+  atMs: number, onTouch?: () => void): void {
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+  const ang = Math.atan2(to.y - from.y, to.x - from.x);
+  const dist = Phaser.Math.Distance.Between(from.x, from.y, to.x, to.y);
+  const ms = (dist / SPLOTCH_SPEED) * 1000;
+  let touched = false;
   ctx.onFrame((_dt, elapsed) => {
-    dust.clear();
-    if (cloudsAt < 0) return;
-    const life = Phaser.Math.Clamp(1 - (elapsed - cloudsAt) / 4000, 0, 1);
-    if (life <= 0) return;
-    const t = elapsed / 1000;
-    for (const c of clouds) {
-      for (let i = 0; i < 9; i++) {
-        const a = grain(c.x, i) * Math.PI * 2 + t * 0.25;
-        const d = DEBRIS_RADIUS * (0.25 + grain(c.x, i + 40) * 0.7);
-        const r = 7 + grain(c.x, i + 80) * 11;
-        chalkBlob(dust, ctx.tint, c.x + Math.cos(a) * d, c.y + Math.sin(a) * d + Math.sin(t * 1.6 + i) * 3,
-          r, CHK.dust, 0.1 + life * 0.16, c.x + i * 5);
-      }
-      dust.lineStyle(1, ctx.tint(CHK.dust), 0.1 + life * 0.14);
-      dust.strokeCircle(c.x, c.y, DEBRIS_RADIUS);
+    g.clear();
+    const t = (elapsed - atMs) / ms;
+    if (t < 0 || t > 1.4) return;
+    const x = from.x + Math.cos(ang) * dist * t;
+    const y = from.y + Math.sin(ang) * dist * t;
+    const c = Math.cos(ang);
+    const s = Math.sin(ang);
+    let prev: Pt | null = null;
+    const segs: PaintSeg[] = [];
+    for (const d of shape) {
+      const wx = x + d.f * c - d.l * s;
+      const wy = y + d.f * s + d.l * c;
+      const linked = !!prev && Phaser.Math.Distance.Between(prev.x, prev.y, wx, wy) <= SHAPE_DAB_R * 2.6;
+      segs.push({ x: wx, y: wy, px: prev ? prev.x : wx, py: prev ? prev.y : wy, linked, w: SHAPE_DAB_R * 2, kind: d.kind });
+      prev = { x: wx, y: wy };
     }
+    paintLayer(g, ctx.tint, segs);
+    if (!touched && t >= 0.85) { touched = true; onTouch?.(); fx.flecks(to.x, to.y, 4, 14, shape[0].kind, 300); }
   });
-
-  // The whole white run goes up together, half a second after the hand comes off the floor.
-  ctx.at(300 + WARD_DRAW_MS + WARD_FUSE_MS, () => {
-    const shown = thin(run);
-    for (const m of shown) fx.boom(m.x, m.y, WARD_RADIUS, CHK.white);
-    const covered = run.filter((m) => Phaser.Math.Distance.Between(m.x, m.y, foe.x, foe.y) <= WARD_RADIUS).length;
-    const stacks = Math.min(covered, WARD_MAX_STACKS);
-    const amp = opts.debris ? 1 : 1;
-    if (stacks > 0) {
-      tick(ctx, foe.x, foe.y - 30, `${Math.round((WARD_DAMAGE + (stacks - 1) * WARD_STACK_DAMAGE) * amp)}`, CHK.white);
-      tick(ctx, foe.x, foe.y - 54, `💥 WARD ×${stacks}`, CHK.white);
-    }
-    marks.length = 0;
-    run.length = 0;
-    if (!opts.debris) return;
-    const step = Math.max(1, Math.ceil(shown.length / DEBRIS_MAX));
-    for (let i = 0; i < shown.length && clouds.length < DEBRIS_MAX; i += step) {
-      clouds.push({ x: shown[i].x, y: shown[i].y });
-      fx.dust(shown[i].x, shown[i].y, 9, DEBRIS_RADIUS * 0.8, 900, CHK.dust);
-    }
-    cloudsAt = 300 + WARD_DRAW_MS + WARD_FUSE_MS;
-    tick(ctx, ctx.cx, ctx.cy - 52, `🌫️ DEBRIS ×${clouds.length}`, CHK.dust);
-  });
-
-  if (!opts.debris) return;
-  ctx.at(3000, () => tick(ctx, foe.x, foe.y - 40, '38% SLOWER · ×1.5 CHALK', CHK.dust));
-  ctx.at(4000, () => tick(ctx, foe.x, foe.y - 30, '15  ×1.5', CHK.white));
 }
 
-export const ward: PreviewScript = {
-  duration: 3600,
-  caption: 'Click — 1s of white, then all of it at once: 10 damage, +5 per extra mark covering them, 30 max',
-  run(ctx) { wardLoop(ctx, { debris: false }); },
-};
+function blobShape(): { f: number; l: number; kind: PaintKind }[] {
+  const out: { f: number; l: number; kind: PaintKind }[] = [{ f: 0, l: 0, kind: 'black' }];
+  for (let i = 0; i < 7; i++) {
+    const a = (i / 7) * Math.PI * 2;
+    out.push({ f: Math.cos(a) * 6, l: Math.sin(a) * 6, kind: 'black' });
+  }
+  return out;
+}
 
-export const wardUpgraded: PreviewScript = {
-  duration: 5200,
-  caption: 'Chalk Debris — up to 4 clouds for 4s: 38% slower, and ×1.5 from every kind of your chalk',
-  run(ctx) { wardLoop(ctx, { debris: true }); },
-};
+function barShape(colored: boolean): { f: number; l: number; kind: PaintKind }[] {
+  const out: { f: number; l: number; kind: PaintKind }[] = [];
+  for (let i = 0; i <= 16; i++) {
+    const u = i / 16;
+    const kind: PaintKind = !colored ? 'black' : u < 0.6 ? 'red' : u < 0.8 ? 'blue' : 'green';
+    out.push({ f: 0, l: -33 + u * 66, kind });
+  }
+  return out;
+}
 
-// ── E — Explosive Chalk ───────────────────────────────────────────────
+/** A little easel with a picture being painted on it, `prog` 0→1. */
+function easel(g: Phaser.GameObjects.Graphics, ctx: PreviewCtx, x: number, y: number, size: number,
+  pts: { cx: number; cy: number; kind: PaintKind }[], prog: number): void {
+  g.lineStyle(2, ctx.tint(PNT.wood), 1);
+  g.lineBetween(x - 14, y + size / 2 + 12, x - 6, y - size / 2);
+  g.lineBetween(x + 14, y + size / 2 + 12, x + 6, y - size / 2);
+  g.fillStyle(ctx.tint(PNT.woodDark), 1);
+  g.fillRect(x - size / 2 - 2, y - size / 2 - 2, size + 4, size + 4);
+  g.fillStyle(ctx.tint(PNT.canvas), 1);
+  g.fillRect(x - size / 2, y - size / 2, size, size);
+  ptsLayer(g, ctx, pts.slice(0, Math.floor(pts.length * prog)), x, y, 1, 2.4);
+}
 
-export const explosive: PreviewScript = {
-  duration: 6200,
+function ringPts(r: number, colored: boolean): { cx: number; cy: number; kind: PaintKind }[] {
+  const out: { cx: number; cy: number; kind: PaintKind }[] = [];
+  const n = 36;
+  for (let i = 0; i <= n; i++) {
+    const u = i / n;
+    const a = u * Math.PI * 2;
+    out.push({ cx: Math.cos(a) * r, cy: Math.sin(a) * r, kind: !colored ? 'black' : u < 0.45 ? 'red' : u < 0.75 ? 'blue' : 'green' });
+  }
+  return out;
+}
+
+// ── Click — Splotch ───────────────────────────────────────────────────
+
+function splotchLoop(ctx: PreviewCtx, colored: boolean): void {
+  const { fx, av } = stage(ctx);
+  const foe = { x: ctx.w * 0.66, y: ctx.cy };
+  dummyAt(ctx, foe);
+  const shapes = [blobShape(), barShape(colored), colored ? barShape(true) : blobShape()];
+  shapes.forEach((shape, i) => {
+    const at = 300 + i * 900;
+    ctx.at(at, () => av.play('punch'));
+    flySplotch(ctx, fx, shape, { x: ctx.cx + 18, y: ctx.cy }, { x: foe.x + 120, y: foe.y }, at, () => {
+      if (shape.length > 10) {
+        tick(ctx, foe.x, foe.y - 30, colored ? '2  🐌 🧪' : '1', colored ? PNT.red : PNT.black);
+        tick(ctx, foe.x, foe.y - 48, 'WIDE · SOFT', PNT.canvas);
+      } else {
+        tick(ctx, foe.x, foe.y - 30, '4', PNT.rose);
+        tick(ctx, foe.x, foe.y - 48, 'TIGHT · HARD', PNT.canvas);
+      }
+    });
+  });
+}
+
+export const splotch: PreviewScript = {
+  duration: 3400,
   scale: 0.9,
-  caption: 'E — 2s of red, then the line runs end to end in the order you drew it, 10 a blast',
-  run(ctx) {
-    const { fx, av, cav } = stage(ctx, { noDummy: true });
-    const foe = { x: ctx.w * 0.66, y: ctx.cy };
-    dummyAt(ctx, foe);
-
-    const marks: CMark[] = [];
-    floor(ctx, marks);
-    const run: CMark[] = [];
-
-    ctx.at(300, () => {
-      av.play('sweep');
-      cav?.setChalk(CHK.red);
-      cav?.setDrawing(true);
-      fx.ring(ctx.cx, ctx.cy, 10, 46, CHK.red, 360);
-      tick(ctx, ctx.cx, ctx.cy - 44, '🧨 FUSE LAID', CHK.red);
-    });
-    // A line drawn across the floor in front of them, which is what the ability is for.
-    pen(ctx, marks, {
-      startMs: 300, endMs: 300 + BOOM_DRAW_MS, color: CHK.red,
-      path: (t) => ({ x: ctx.w * 0.36 + t * ctx.w * 0.5, y: ctx.cy - 46 + Math.sin(t * 5) * 44 }),
-      onMark: (m) => { run.push(m); if (m.linked) fx.lay(m.px, m.py, m.x, m.y, CHK.red); },
-    });
-    ctx.at(300 + BOOM_DRAW_MS, () => cav?.setDrawing(false));
-
-    // Every mark knows its own turn in advance, 55ms apart, counted from the window closing.
-    let gate = 0;
-    ctx.at(300 + BOOM_DRAW_MS + BOOM_FUSE_MS, () => {
-      run.forEach((m, i) => ctx.at(i * BOOM_STAGGER_MS, () => {
-        fx.boom(m.x, m.y, BOOM_RADIUS, CHK.red);
-        const idx = marks.indexOf(m);
-        if (idx >= 0) marks.splice(idx, 1);
-        if (Phaser.Math.Distance.Between(m.x, m.y, foe.x, foe.y) > BOOM_RADIUS) return;
-        // One blast per body per 180ms, however many marks overlap them.
-        const now = 300 + BOOM_DRAW_MS + BOOM_FUSE_MS + i * BOOM_STAGGER_MS;
-        if (now < gate) return;
-        gate = now + 180;
-        tick(ctx, foe.x, foe.y - 30, `${BOOM_DAMAGE}`, CHK.red);
-      }));
-    });
-    label(ctx, ctx.cx, ctx.h - 12, '55ms between blasts · one hit per body per 180ms', CHK.redDeep);
-  },
+  caption: 'Whatever you painted on the canvas flies, pierces, and shreds whatever it is touching',
+  run: (ctx) => splotchLoop(ctx, false),
 };
 
-export const explosiveUpgraded: PreviewScript = {
-  duration: 7000,
+export const splotchUpgraded: PreviewScript = {
+  duration: 3400,
   scale: 0.9,
-  caption: 'Explosive Release — close the loop and the floor inside it goes up too, 25 flat however big',
-  run(ctx) {
-    const { fx, av, cav } = stage(ctx, { noDummy: true });
-    const foe = { x: ctx.w * 0.6, y: ctx.h * 0.5 };
-    dummyAt(ctx, foe);
+  caption: 'Primary Colours — red hits harder, blue slows, green poisons, by how much of each you used',
+  run: (ctx) => splotchLoop(ctx, true),
+};
 
-    const marks: CMark[] = [];
-    floor(ctx, marks);
-    const run: CMark[] = [];
+// ── E — Volatile Orange ───────────────────────────────────────────────
 
-    ctx.at(300, () => {
-      av.play('sweep');
-      cav?.setChalk(CHK.red);
-      cav?.setDrawing(true);
-      fx.ring(ctx.cx, ctx.cy, 10, 46, CHK.red, 360);
+function orangeLoop(ctx: PreviewCtx, bucket: boolean): void {
+  const { fx, av, pav } = stage(ctx);
+  const foe = { x: ctx.w * 0.64, y: ctx.cy };
+  dummyAt(ctx, foe);
+  const dabs: FDab[] = [];
+  floor(ctx, dabs, 3);
+  const run: FDab[] = [];
+  ctx.at(200, () => { av.play('sweep'); pav?.setPaint('orange'); pav?.setDrawing(true); });
+  pen(ctx, dabs, {
+    startMs: 200, endMs: 200 + ORANGE_DRAW_MS, step: 16, w: 18, kind: () => 'orange',
+    path: bucket
+      ? (t) => ({ x: foe.x + Math.cos(t * Math.PI * 2.15) * 60, y: foe.y + Math.sin(t * Math.PI * 2.15) * 48 })
+      : (t) => ({ x: foe.x - 110 + t * 220, y: foe.y + Math.sin(t * Math.PI * 3) * 30 }),
+    onDab: (d) => run.push(d),
+  });
+  const closeAt = 200 + ORANGE_DRAW_MS;
+  ctx.at(closeAt, () => pav?.setDrawing(false));
+  ctx.at(closeAt + ORANGE_FUSE_MS, () => {
+    run.forEach((d, i) => {
+      ctx.at(closeAt + ORANGE_FUSE_MS + i * ORANGE_STAGGER_MS, () => {
+        fx.boom(d.x, d.y, ORANGE_RADIUS);
+        const k = dabs.indexOf(d);
+        if (k >= 0) dabs.splice(k, 1);
+        if (Phaser.Math.Distance.Between(d.x, d.y, foe.x, foe.y) <= ORANGE_RADIUS && i % 4 === 0) tick(ctx, foe.x, foe.y - 30, '10', PNT.orange);
+      });
     });
-    // A loop that comes back to itself — a shape, not a stripe.
-    const rx = ctx.w * 0.19;
-    const ry = ctx.h * 0.31;
-    pen(ctx, marks, {
-      startMs: 300, endMs: 300 + BOOM_DRAW_MS, color: CHK.red,
-      path: (t) => ({
-        x: foe.x + Math.cos(t * Math.PI * 2 - Math.PI) * rx,
-        y: foe.y + Math.sin(t * Math.PI * 2 - Math.PI) * ry,
-      }),
-      onMark: (m) => { run.push(m); if (m.linked) fx.lay(m.px, m.py, m.x, m.y, CHK.red); },
-    });
-    ctx.at(300 + BOOM_DRAW_MS, () => {
-      cav?.setDrawing(false);
-      tick(ctx, ctx.cx, ctx.cy - 52, '⭕ CLOSED', CHK.red);
-    });
-
-    // The shut-in floor, hatched in red while the line burns round it.
-    let armedFrom = -1;
-    let armedTo = -1;
-    const hatch = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
-    ctx.onFrame((_dt, elapsed) => {
-      hatch.clear();
-      if (armedFrom < 0 || elapsed > armedTo) return;
-      const heat = Phaser.Math.Clamp(1 - (armedTo - elapsed) / 1200, 0, 1);
-      const pulse = 0.55 + 0.45 * Math.sin(elapsed / 1000 * (6 + heat * 22));
-      hatch.lineStyle(1.5, ctx.tint(CHK.red), 0.16 + heat * 0.3 * pulse);
-      for (let y = foe.y - ry; y <= foe.y + ry; y += 14) {
-        for (let x = foe.x - rx; x <= foe.x + rx; x += 22) {
-          const dx = (x + 8 - foe.x) / rx;
-          const dy = (y - foe.y) / ry;
-          if (dx * dx + dy * dy > 1) continue;
-          hatch.lineBetween(x, y + 6, x + 12, y - 6);
+  });
+  if (!bucket) return;
+  ctx.at(closeAt, () => {
+    fx.bucket(ctx.cx, ctx.cy - 10, foe.x, foe.y, 450, () => {
+      fx.splat(foe.x, foe.y, 46, 'orange', 420);
+      tick(ctx, foe.x, foe.y - 56, '🪣 BUCKET', PNT.orange);
+      const fill: FDab[] = [];
+      for (let gx = -48; gx <= 48; gx += 24) {
+        for (let gy = -36; gy <= 36; gy += 24) {
+          if ((gx * gx) / (60 * 60) + (gy * gy) / (48 * 48) > 0.85) continue;
+          const d: FDab = { x: foe.x + gx, y: foe.y + gy, px: 0, py: 0, linked: false, seed: gx * 3 + gy, kind: 'orange', w: 20 };
+          fill.push(d);
+          dabs.push(d);
         }
       }
-    });
-
-    const fireAt = 300 + BOOM_DRAW_MS + BOOM_FUSE_MS;
-    ctx.at(fireAt, () => {
-      armedFrom = fireAt;
-      armedTo = fireAt + run.length * BOOM_STAGGER_MS;
-      run.forEach((m, i) => ctx.at(i * BOOM_STAGGER_MS, () => {
-        fx.boom(m.x, m.y, BOOM_RADIUS, CHK.red);
-        const idx = marks.indexOf(m);
-        if (idx >= 0) marks.splice(idx, 1);
-      }));
-    });
-    // The shape goes last, as the line's own conclusion rather than a second explosion.
-    ctx.at(fireAt + 2200, () => {
-      armedTo = -1;
-      const stride = Math.max(1, Math.floor(run.length / 10));
-      for (let i = 0; i < run.length; i += stride) {
-        fx.boom(run[i].x, run[i].y, BOOM_RADIUS * 0.7, CHK.red, 380);
-      }
-      fx.ring(foe.x, foe.y, 12, 120, CHK.redDeep, 520);
-      fx.dust(foe.x, foe.y, 16, 130, 900, CHK.red);
-      tick(ctx, foe.x, foe.y - 30, `${RELEASE_DAMAGE}`, CHK.red);
-      tick(ctx, foe.x, foe.y - 54, '⭕ ENCLOSED', CHK.red);
-    });
-  },
-};
-
-// ── R — Perma-Chalk ───────────────────────────────────────────────────
-
-/** A blue line, and the burn it puts on anybody standing on it. */
-function permaLine(ctx: PreviewCtx, marks: CMark[], path: (t: number) => Mark, at: number, fx: ChalkFx): CMark[] {
-  const run: CMark[] = [];
-  pen(ctx, marks, {
-    startMs: at, endMs: at + PERMA_DRAW_MS, color: CHK.blue, path,
-    onMark: (m) => { run.push(m); if (m.linked) fx.lay(m.px, m.py, m.x, m.y, CHK.blue); },
-  });
-  return run;
-}
-
-export const perma: PreviewScript = {
-  duration: 6800,
-  scale: 0.9,
-  caption: 'R — 0.5s of blue that never expires, 30/s to anyone on it. Recast rubs the old line out',
-  run(ctx) {
-    const { fx, av, cav } = stage(ctx, { noDummy: true });
-    const foe = { x: ctx.w * 0.58, y: ctx.cy };
-    dummyAt(ctx, foe);
-
-    const marks: CMark[] = [];
-    floor(ctx, marks);
-
-    ctx.at(300, () => {
-      av.play('slam');
-      cav?.setChalk(CHK.blue);
-      cav?.setDrawing(true);
-      fx.ring(ctx.cx, ctx.cy, 10, 44, CHK.blue, 380);
-      tick(ctx, ctx.cx, ctx.cy - 44, '🔵 PERMA-CHALK', CHK.blue);
-    });
-    let first = permaLine(ctx, marks, (t) => ({
-      x: foe.x - 44 + t * 90, y: foe.y - 30 + t * 60,
-    }), 300, fx);
-    ctx.at(300 + PERMA_DRAW_MS, () => cav?.setDrawing(false));
-
-    // The burn, taken as a maximum rather than a sum and carried as a fraction between frames.
-    let acc = 0;
-    let burning = true;
-    ctx.onFrame((dt, elapsed) => {
-      if (!burning || elapsed < 900) return;
-      if (!marks.some((m) => m.color === CHK.blue
-        && Phaser.Math.Distance.Between(m.x, m.y, foe.x, foe.y) <= PERMA_RADIUS)) return;
-      acc += PERMA_DPS * (dt / 1000);
-      const whole = Math.floor(acc);
-      if (whole <= 0) return;
-      acc -= whole;
-      if (Math.random() < 0.35) tick(ctx, foe.x, foe.y - 26, `${whole}`, CHK.blue);
-    });
-
-    // Recast: there is only ever one blue line, so the first one is rubbed out first.
-    ctx.at(4000, () => {
-      burning = false;
-      for (let i = 0; i < first.length; i += 4) fx.dust(first[i].x, first[i].y, 2, 12, 420, CHK.blue);
-      for (const m of first) {
-        const idx = marks.indexOf(m);
-        if (idx >= 0) marks.splice(idx, 1);
-      }
-      first = [];
-      av.play('slam');
-      cav?.setDrawing(true);
-      tick(ctx, ctx.cx, ctx.cy - 44, '🔵 REDRAWN', CHK.blue);
-    });
-    permaLine(ctx, marks, (t) => ({ x: ctx.w * 0.3 + t * 80, y: ctx.cy + 34 }), 4000, fx);
-    ctx.at(4000 + PERMA_DRAW_MS, () => cav?.setDrawing(false));
-  },
-};
-
-export const permaUpgraded: PreviewScript = {
-  duration: 5600,
-  scale: 0.9,
-  caption: 'Perma-Block — every shot that crosses the blue line is rubbed out, and the line is not spent doing it',
-  run(ctx) {
-    const { fx, av, cav } = stage(ctx, { noDummy: true });
-    const foe = { x: ctx.w * 0.78, y: ctx.cy };
-    dummyAt(ctx, foe);
-
-    const marks: CMark[] = [];
-    floor(ctx, marks);
-    ctx.at(200, () => {
-      av.play('slam');
-      cav?.setChalk(CHK.blue);
-      cav?.setDrawing(true);
-      fx.ring(ctx.cx, ctx.cy, 10, 44, CHK.blue, 380);
-    });
-    // A wall drawn across the lane between the two of you.
-    const wall = permaLine(ctx, marks, (t) => ({ x: ctx.w * 0.52, y: ctx.cy - 54 + t * 108 }), 200, fx);
-    ctx.at(200 + PERMA_DRAW_MS, () => cav?.setDrawing(false));
-
-    for (let i = 0; i < 5; i++) {
-      ctx.at(1200 + i * 780, () => {
-        const y = ctx.cy - 40 + (i % 3) * 40;
-        const rec = { x: foe.x - 20, alive: true };
-        ctx.fly({
-          texture: 'proj-fire', from: { x: foe.x - 20, y }, to: { x: ctx.cx, y: ctx.cy }, speed: 420,
-        });
-        ctx.onFrame((dt) => {
-          if (!rec.alive) return;
-          rec.x -= 420 * (dt / 1000);
-          const hit = wall.find((m) => Phaser.Math.Distance.Between(m.x, m.y, rec.x, y) <= PERMA_BLOCK_R);
-          if (!hit) return;
-          rec.alive = false;
-          fx.snap(rec.x, y, CHK.blue);
-          tick(ctx, rec.x, y - 22, '✏️ RUBBED OUT', CHK.blue);
+      fill.forEach((d) => {
+        const wave = (Math.hypot(d.x - foe.x, d.y - foe.y) / 60) * 500;
+        ctx.at(closeAt + 450 + 400 + wave, () => {
+          fx.boom(d.x, d.y, 30);
+          const k = dabs.indexOf(d);
+          if (k >= 0) dabs.splice(k, 1);
         });
       });
-    }
-  },
+    });
+  });
+}
+
+export const orange: PreviewScript = {
+  duration: 5200,
+  scale: 0.9,
+  caption: 'Two seconds of orange, then it goes off from where you started to where you finished',
+  run: (ctx) => orangeLoop(ctx, false),
 };
 
-// ── F — Chalk Shield ──────────────────────────────────────────────────
+export const orangeUpgraded: PreviewScript = {
+  duration: 5200,
+  scale: 0.9,
+  caption: 'Paint Bucket — close the loop and the inside is painted orange and goes off from the middle out',
+  run: (ctx) => orangeLoop(ctx, true),
+};
 
-interface Node { ang: number; dist: number; seed: number; color: number }
+// ── R — Congealed Paint ───────────────────────────────────────────────
 
-function shieldLoop(ctx: PreviewCtx, opts: { supreme: boolean }): void {
-  const { fx, av, cav } = stage(ctx, { noDummy: true });
+function congealLoop(ctx: PreviewCtx, colored: boolean): void {
+  const { fx, av, pav } = stage(ctx);
   const foe = { x: ctx.w * 0.74, y: ctx.cy };
   dummyAt(ctx, foe);
-
-  const drawMs = opts.supreme ? SHIELD_DRAW_SUPREME_MS : SHIELD_DRAW_MS;
-  const marks: CMark[] = [];
-  floor(ctx, marks, 3);
-
-  // The dashed ring you are allowed to draw inside.
-  let ringUntil = -1;
-  const ring = ctx.adopt(ctx.scene.add.graphics().setDepth(7));
-  ctx.onFrame((_dt, elapsed) => {
-    ring.clear();
-    if (elapsed > ringUntil) return;
-    const fade = Phaser.Math.Clamp((ringUntil - elapsed) / 260, 0, 1);
-    for (let i = 0; i < 22; i++) {
-      if (grain(i * 3.3, 1) > 0.82) continue;
-      const a0 = (i / 22) * Math.PI * 2 + (elapsed / 1000) * 0.5;
-      const a1 = a0 + (Math.PI * 2 / 22) * 0.62;
-      ring.lineStyle(2, ctx.tint(CHK.white), 0.5 * fade);
-      ring.lineBetween(ctx.cx + Math.cos(a0) * SHIELD_RANGE, ctx.cy + Math.sin(a0) * SHIELD_RANGE,
-        ctx.cx + Math.cos(a1) * SHIELD_RANGE, ctx.cy + Math.sin(a1) * SHIELD_RANGE);
-    }
+  const wallX = ctx.cx + (foe.x - ctx.cx) * 0.4;
+  const dabs: FDab[] = [];
+  floor(ctx, dabs, 2);
+  ctx.at(200, () => { av.play('slam'); pav?.setPaint('congeal'); pav?.setDrawing(true); });
+  const kind = (t: number): PaintKind => (!colored ? 'congeal' : t < 0.33 ? 'red' : t < 0.66 ? 'blue' : 'green');
+  pen(ctx, dabs, {
+    startMs: 200, endMs: 200 + WALL_DRAW_MS, step: 8, w: 6, kind,
+    path: (t) => ({ x: wallX + Math.sin(t * 7) * 4, y: ctx.cy - 70 + t * 140 }),
+    onDab: (d) => pav?.setPaint(d.kind),
   });
-
-  // A Supreme Shield changes stick part-way through, and the whole run still lifts as one.
-  let stick = CHK.white;
-  ctx.at(200, () => {
-    ringUntil = 200 + drawMs;
-    av.play('flex');
-    cav?.setChalk(CHK.white);
-    cav?.setDrawing(true);
-    fx.ring(ctx.cx, ctx.cy, 16, SHIELD_RANGE, CHK.white, 460);
-    tick(ctx, ctx.cx, ctx.cy - 46, opts.supreme ? '🛡️ DRAW IT — E/R/F' : '🛡️ DRAW YOUR SHIELD', CHK.white);
-  });
-  if (opts.supreme) {
-    ctx.at(200 + drawMs * 0.36, () => {
-      stick = CHK.red;
-      cav?.setChalk(CHK.red);
-      fx.dust(ctx.cx, ctx.cy - 8, 5, 18, 420, CHK.red);
-      tick(ctx, ctx.cx, ctx.cy - 46, '🛡️ EXPLOSIVE', CHK.red);
-    });
-    ctx.at(200 + drawMs * 0.68, () => {
-      stick = CHK.blue;
-      cav?.setChalk(CHK.blue);
-      fx.dust(ctx.cx, ctx.cy - 8, 5, 18, 420, CHK.blue);
-      tick(ctx, ctx.cx, ctx.cy - 46, '🛡️ PERMA', CHK.blue);
-    });
-  }
-
-  const run: CMark[] = [];
-  pen(ctx, marks, {
-    startMs: 200, endMs: 200 + drawMs, color: CHK.white,
-    // A sweep around the artist, pinned inside the ring exactly as the kit pins the cursor.
-    path: (t) => {
-      const a = -Math.PI * 0.9 + t * Math.PI * 1.8;
-      const d = SHIELD_RANGE * (0.72 + Math.sin(t * 7) * 0.2);
-      return { x: ctx.cx + Math.cos(a) * d, y: ctx.cy + Math.sin(a) * d };
-    },
-    onMark: (m) => { m.color = stick; run.push(m); if (m.linked) fx.lay(m.px, m.py, m.x, m.y, stick); },
-  });
-
-  const nodes: Node[] = [];
-  const shield = { hp: 0, max: SHIELD_HP, spin: 0, boom: 0 };
-  const air = ctx.adopt(ctx.scene.add.graphics().setDepth(8));
-  ctx.onFrame((dt, elapsed) => {
-    air.clear();
-    if (!nodes.length) return;
-    shield.spin += (dt / 1000) * SHIELD_SPIN;
-    const ratio = Phaser.Math.Clamp(shield.hp / shield.max, 0, 1);
-    let prevX = 0;
-    let prevY = 0;
-    nodes.forEach((n, i) => {
-      const a = n.ang + shield.spin;
-      const wob = 1 + Math.sin(elapsed / 1000 * 3 + n.seed) * 0.03;
-      const nx = ctx.cx + Math.cos(a) * n.dist * wob;
-      const ny = ctx.cy + Math.sin(a) * n.dist * wob;
-      if (i > 0 && Phaser.Math.Distance.Between(prevX, prevY, nx, ny) < 74) {
-        chalkLine(air, ctx.tint, prevX, prevY, nx, ny, 3, n.color, 0.45 + ratio * 0.45, n.seed);
-      }
-      chalkBlob(air, ctx.tint, nx, ny, 3.4, n.color, 0.55 + ratio * 0.45, n.seed);
-      prevX = nx;
-      prevY = ny;
-    });
-  });
-
-  /** Shed nodes in proportion to the pool, so a shield at 20% actually looks like one. */
-  const chip = (): void => {
-    const want = Math.max(1, Math.round((nodes.length * Math.max(0, shield.hp)) / shield.max));
-    while (nodes.length > want) {
-      const i = Math.floor(Math.random() * nodes.length);
-      const [n] = nodes.splice(i, 1);
-      const a = n.ang + shield.spin;
-      fx.snap(ctx.cx + Math.cos(a) * n.dist, ctx.cy + Math.sin(a) * n.dist, CHK.white);
-    }
-  };
-
-  ctx.at(200 + drawMs, () => {
-    cav?.setDrawing(false);
-    // The window closing is what builds the shield: the run comes off the floor.
-    for (const m of run) {
-      nodes.push({
-        ang: Math.atan2(m.y - ctx.cy, m.x - ctx.cx),
-        dist: Phaser.Math.Clamp(Phaser.Math.Distance.Between(ctx.cx, ctx.cy, m.x, m.y), SHIELD_MIN_DIST, SHIELD_RANGE),
-        seed: m.seed,
-        color: m.color,
+  ctx.at(200 + WALL_DRAW_MS, () => pav?.setDrawing(false));
+  const shots = [{ y: ctx.cy - 45, k: 'red' as PaintKind }, { y: ctx.cy, k: 'blue' as PaintKind }, { y: ctx.cy + 45, k: 'green' as PaintKind }];
+  shots.forEach((s, i) => {
+    const at = 2000 + i * 500;
+    ctx.at(at, () => {
+      ctx.fly({
+        texture: 'proj-fire', from: { x: foe.x, y: s.y }, to: { x: wallX + 8, y: s.y }, speed: 380,
+        onHit: () => {
+          const hitKind: PaintKind = colored ? s.k : 'congeal';
+          fx.snap(wallX + 6, s.y, hitKind);
+          if (!colored) { tick(ctx, wallX, s.y - 20, 'BLOCKED', PNT.congeal); return; }
+          if (hitKind === 'red') tick(ctx, foe.x, foe.y - 30, '8 ↩', PNT.red);
+          else if (hitKind === 'blue') tick(ctx, ctx.cx, ctx.cy - 40, '💨 +35%', PNT.blue);
+          else tick(ctx, ctx.cx, ctx.cy - 40, '+6', PNT.green);
+        },
       });
-      const idx = marks.indexOf(m);
-      if (idx >= 0) marks.splice(idx, 1);
-    }
-    const permaFrac = nodes.filter((n) => n.color === CHK.blue).length / Math.max(1, nodes.length);
-    shield.boom = nodes.filter((n) => n.color === CHK.red).length / Math.max(1, nodes.length);
-    shield.max = Math.round(SHIELD_HP * (1 + (opts.supreme ? permaFrac : 0) * 1.5));
-    shield.hp = shield.max;
-    fx.ring(ctx.cx, ctx.cy, SHIELD_RANGE, SHIELD_RANGE * 0.72, CHK.white, 380);
-    tick(ctx, ctx.cx, ctx.cy - 46, `🛡️ SHIELD ${shield.max}`, CHK.white);
-    if (shield.boom > 0) tick(ctx, ctx.cx, ctx.cy - 64, '💥 ARMED', CHK.red);
-  });
-
-  const payback = (): void => {
-    if (shield.boom <= 0) return;
-    const dmg = Math.max(1, Math.round(SUPREME_BOOM_DAMAGE * shield.boom));
-    fx.boom(foe.x, foe.y, BOOM_RADIUS * 0.8, CHK.red, 360);
-    tick(ctx, foe.x, foe.y - 54, `💥 PAYBACK ${dmg}`, CHK.red);
-  };
-
-  // Shots dying on it, at 8 off the pool each.
-  for (let i = 0; i < 4; i++) {
-    ctx.at(200 + drawMs + 500 + i * 620, () => {
-      if (!nodes.length) return;
-      const n = nodes[Math.floor(nodes.length / 2)];
-      const a = n.ang + shield.spin;
-      const nx = ctx.cx + Math.cos(a) * n.dist;
-      const ny = ctx.cy + Math.sin(a) * n.dist;
-      fx.snap(nx, ny, n.color);
-      shield.hp -= SHIELD_PROJ_COST;
-      payback();
-      chip();
-      tick(ctx, ctx.cx, ctx.cy - 52, `🛡️ ${Math.max(0, Math.round(shield.hp))}`, CHK.white);
-    });
-  }
-  // …and a body leaning on it, at 12 a second.
-  ctx.at(200 + drawMs + 3200, () => {
-    let acc = 0;
-    ctx.onFrame((dt) => {
-      if (!nodes.length) return;
-      const reach = nodes.reduce((m, n) => Math.max(m, n.dist), 0) + SHIELD_PUSH_PAD;
-      foe.x = Math.max(ctx.cx + reach, foe.x - 90 * (dt / 1000));
-      if (foe.x > ctx.cx + reach + 1) return;
-      acc += SHIELD_PUSH_DPS * (dt / 1000);
-      const whole = Math.floor(acc);
-      if (whole <= 0) return;
-      acc -= whole;
-      shield.hp -= whole;
-      chip();
-      if (shield.hp <= 0 && nodes.length) {
-        nodes.length = 0;
-        tick(ctx, ctx.cx, ctx.cy - 48, '🛡️ SHIELD BROKEN', CHK.whiteDim);
-      }
     });
   });
-  label(ctx, ctx.cx, ctx.h - 12, `${SHIELD_NODE_R}px nodes · shots 8 · leaning 12/s`, CHK.whiteDim);
 }
 
-export const shield: PreviewScript = {
-  duration: 7600,
+export const congeal: PreviewScript = {
+  duration: 4200,
   scale: 0.9,
-  caption: 'F — draw inside the ring for 1s and it lifts off the floor: 125 HP that stops shots, hits and bodies',
-  run(ctx) { shieldLoop(ctx, { supreme: false }); },
+  caption: 'A fine brush for 1.5s — the line sets into a wall that stops shots and bodies for 6s',
+  run: (ctx) => congealLoop(ctx, false),
 };
 
-export const shieldUpgraded: PreviewScript = {
-  duration: 9000,
+export const congealUpgraded: PreviewScript = {
+  duration: 4200,
   scale: 0.9,
-  caption: 'Supreme Shield — 2.5s and three sticks: blue raises the pool to ×2.5, red pays 14 back per hit taken',
-  run(ctx) { shieldLoop(ctx, { supreme: true }); },
+  caption: 'Coloured Walls — red answers the shooter, blue speeds you, green heals you',
+  run: (ctx) => congealLoop(ctx, true),
+};
+
+// ── F — Still Life ────────────────────────────────────────────────────
+
+function stillLoop(ctx: PreviewCtx, colored: boolean): void {
+  const { fx, av, pav } = stage(ctx);
+  const foe = { x: ctx.w * 0.66, y: ctx.cy };
+  const DONE = 2200;
+  let transformed = false;
+  dummyAt(ctx, foe, () => !transformed);
+  const pts = ringPts(18, colored);
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(7));
+  const pic = ctx.adopt(ctx.scene.add.graphics().setDepth(6));
+  ctx.at(200, () => { av.play('raise'); pav?.setDrawing(true); });
+  ctx.onFrame((_dt, elapsed) => {
+    g.clear();
+    pic.clear();
+    if (elapsed > 200 && elapsed < DONE) easel(g, ctx, ctx.cx, ctx.cy - 62, 44, pts, (elapsed - 200) / (DONE - 400));
+    if (!transformed) return;
+    const R = 48;
+    pic.fillStyle(ctx.tint(PNT.canvas), 0.16);
+    pic.fillCircle(foe.x, foe.y, R);
+    pic.lineStyle(1, ctx.tint(PNT.canvasDeep), 0.4);
+    pic.strokeCircle(foe.x, foe.y, R);
+    const k = R / 20;
+    ptsLayer(pic, ctx, pts, foe.x, foe.y, k, SHAPE_DAB_R * 2);
+    pic.fillStyle(ctx.tint(PNT.white), 1);
+    pic.fillCircle(foe.x - 5, foe.y - 3, 3);
+    pic.fillCircle(foe.x + 5, foe.y - 3, 3);
+    pic.fillStyle(ctx.tint(PNT.black), 1);
+    pic.fillCircle(foe.x - 4.4, foe.y - 2.6, 1.5);
+    pic.fillCircle(foe.x + 5.6, foe.y - 2.6, 1.5);
+  });
+  ctx.at(DONE, () => {
+    transformed = true;
+    pav?.setDrawing(false);
+    fx.ring(foe.x, foe.y, 8, 70, 'black', 480);
+    tick(ctx, foe.x, foe.y - 70, '🖼️ STILL LIFE', PNT.rose);
+  });
+  ctx.at(DONE + 700, () => tick(ctx, foe.x, foe.y - 60, 'HITBOX 22 → 48px', PNT.canvas));
+  if (colored) {
+    ctx.at(DONE + 1300, () => tick(ctx, foe.x, foe.y - 60, '🐌 SLOWED · 🚫 HEAL', PNT.blue));
+    ctx.at(DONE + 1700, () => {
+      ctx.fly({ texture: 'proj-fire', from: { x: ctx.cx + 20, y: foe.y - 30 }, to: { x: foe.x - 30, y: foe.y - 30 }, speed: 500, onHit: () => tick(ctx, foe.x - 30, foe.y - 50, '×1.5 RED', PNT.red) });
+    });
+  }
+  ctx.at(DONE + 3200, () => { transformed = false; fx.flecks(foe.x, foe.y, 12, 50, 'black', 520); });
+}
+
+export const stillLife: PreviewScript = {
+  duration: 5800,
+  scale: 0.9,
+  caption: 'Paint a picture, and the enemy becomes it — its hitbox is whatever you drew',
+  run: (ctx) => stillLoop(ctx, false),
+};
+
+export const stillLifeUpgraded: PreviewScript = {
+  duration: 5800,
+  scale: 0.9,
+  caption: 'Painted Portrait — red parts take ×1.5, blue slows them, green stops healing and weakens',
+  run: (ctx) => stillLoop(ctx, true),
 };
 
 // ── Q — Masterpiece ───────────────────────────────────────────────────
 
-function masterpieceLoop(ctx: PreviewCtx, opts: { prodigy: boolean }): void {
-  const { fx, av, cav } = stage(ctx, { noDummy: true });
-  const foe = { x: ctx.w * 0.72, y: ctx.h * 0.36 };
+function mpLoop(ctx: PreviewCtx, chips: boolean): void {
+  const { fx, av, pav } = stage(ctx);
+  const foe = { x: ctx.w * 0.66, y: ctx.cy };
   dummyAt(ctx, foe);
-
-  const marks: CMark[] = [];
-  floor(ctx, marks);
-
+  const dabs: FDab[] = [];
+  floor(ctx, dabs, 2);
+  // The picture, in canvas px about the painter: blue under you, a red ring on the foe, green round you.
+  const S = 1.8;
+  const pic: { cx: number; cy: number; kind: PaintKind; linked: boolean }[] = [];
+  const ring = (x: number, y: number, r: number, kind: PaintKind) => {
+    const n = Math.max(4, Math.round((Math.PI * 2 * r) / 20));
+    for (let i = 0; i <= n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      pic.push({ cx: x + Math.cos(a) * r, cy: y + Math.sin(a) * r, kind, linked: i > 0 });
+    }
+  };
+  ring(0, 0, 10, 'blue');
+  const rx = (foe.x - ctx.cx) / S;
+  ring(rx, 0, 16, 'red');
+  ring(0, 0, 32, 'green');
+  const easelG = ctx.adopt(ctx.scene.add.graphics().setDepth(8));
+  const UNVEIL = 2200;
   ctx.at(200, () => {
     av.play('raise');
-    cav?.setChalk(CHK.green);
-    cav?.setDrawing(true);
-    av.setIntensity(1.35);
-    fx.ring(ctx.cx, ctx.cy, 14, 96, CHK.green, 520);
-    fx.ring(ctx.cx, ctx.cy, 14, 120, CHK.orange, 620);
-    fx.ring(ctx.cx, ctx.cy, 14, 144, CHK.teal, 720);
-    tick(ctx, ctx.cx, ctx.cy - 50, '🎨 MASTERPIECE', CHK.teal);
-    tick(ctx, ctx.cx, ctx.cy - 68, '✨ INVINCIBLE 8s', CHK.spark);
+    pav?.setDrawing(true);
+    tick(ctx, ctx.cx, ctx.cy - 50, '🎨 MASTERPIECE', PNT.rose);
   });
-
-  const palette = opts.prodigy
-    ? [CHK.green, CHK.orange, CHK.teal, CHK.crimson]
-    : [CHK.green, CHK.orange, CHK.teal];
-  const names = opts.prodigy
-    ? ['GREEN — HEAL', 'ORANGE — BURN', 'TEAL — SPEED', 'CRIMSON — POWER']
-    : ['GREEN — HEAL', 'ORANGE — BURN', 'TEAL — SPEED'];
-  const tally = palette.map(() => 0);
-  let stick = 0;
-
-  const slice = MP_MS / palette.length;
-  palette.forEach((color, i) => {
-    if (i === 0) return;
-    ctx.at(200 + i * slice, () => {
-      stick = i;
-      cav?.setChalk(color);
-      fx.dust(ctx.cx, ctx.cy - 8, 5, 18, 420, color);
-      tick(ctx, ctx.cx, ctx.cy - 46, `🖍️ ${names[i]}`, color);
+  ctx.onFrame((_dt, elapsed) => {
+    easelG.clear();
+    if (elapsed < 200 || elapsed >= UNVEIL) return;
+    const prog = (elapsed - 200) / (UNVEIL - 400);
+    const k = 44 / 220;
+    easel(easelG, ctx, ctx.cx, ctx.cy - 66, 44, pic.map((p) => ({ cx: p.cx * k * 1.8, cy: p.cy * k * 1.8, kind: p.kind })), prog);
+    const shown = Math.floor(pic.length * Math.min(1, prog));
+    pav?.setPaint(pic[Math.max(0, shown - 1)].kind);
+  });
+  ctx.at(UNVEIL, () => {
+    pav?.setDrawing(false);
+    let prev: FDab | null = null;
+    pic.forEach((p, i) => {
+      const d: FDab = {
+        x: ctx.cx + p.cx * S, y: ctx.cy + p.cy * S, px: prev ? prev.x : 0, py: prev ? prev.y : 0,
+        linked: !!prev && p.linked && prev.kind === p.kind, seed: i * 7.7, kind: p.kind, w: MP_BRUSH,
+      };
+      dabs.push(d);
+      prev = d;
+      if (i % 4 === 0) fx.splat(d.x, d.y, MP_BRUSH * 0.6, d.kind, 420);
     });
+    fx.ring(ctx.cx, ctx.cy, 20, 160, 'red', 520);
+    tick(ctx, ctx.cx, ctx.cy - 60, '🖼️ UNVEILED', PNT.rose);
   });
-
-  // Chalk only flows while the button is held — the kit's own reason the work is not a slab.
-  pen(ctx, marks, {
-    startMs: 200, endMs: 200 + MP_MS, step: STEP_MP, color: CHK.green,
-    path: (t) => {
-      const a = t * Math.PI * 7.5;
-      const d = 34 + Math.sin(t * 12) * 26;
-      const cx = stick === 1 ? foe.x : ctx.cx + 40;
-      const cy = stick === 1 ? foe.y : ctx.cy;
-      return { x: cx + Math.cos(a) * d, y: cy + Math.sin(a) * d * 0.7 };
-    },
-    onMark: (m) => {
-      m.color = palette[stick];
-      tally[stick]++;
-      if (m.linked) fx.lay(m.px, m.py, m.x, m.y, m.color);
-    },
-  });
-
-  // What the colours do to whoever is standing on them.
-  let heal = 0;
-  let burn = 0;
+  ctx.at(UNVEIL + 500, () => tick(ctx, foe.x, foe.y - 30, '18/s', PNT.red));
+  ctx.at(UNVEIL + 1300, () => tick(ctx, foe.x, foe.y - 30, '18/s', PNT.red));
+  ctx.at(UNVEIL + 800, () => tick(ctx, ctx.cx, ctx.cy - 40, '💨 +40% · CD +60%', PNT.blue));
+  ctx.at(UNVEIL + 1700, () => tick(ctx, ctx.cx, ctx.cy - 40, '+10/s · −30%', PNT.green));
+  if (!chips) return;
+  const bugs: { x: number; y: number; kind: 'red' | 'blue' | 'green'; born: number }[] = [];
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+  [2700, 3200, 3700, 4200].forEach((at, i) => ctx.at(at, () => {
+    const src = dabs[Math.floor(dabs.length * (0.2 + i * 0.2)) % Math.max(1, dabs.length)];
+    if (!src) return;
+    const k = src.kind === 'blue' ? 'blue' : src.kind === 'green' ? 'green' : 'red';
+    bugs.push({ x: src.x, y: src.y, kind: k, born: at });
+    fx.flecks(src.x, src.y, 4, 12, src.kind, 300);
+  }));
   ctx.onFrame((dt, elapsed) => {
-    if (elapsed < 200 || elapsed > 200 + MP_MS) return;
-    const onGreen = marks.some((m) => m.color === CHK.green
-      && Phaser.Math.Distance.Between(m.x, m.y, ctx.cx, ctx.cy) <= MP_TOUCH_R);
-    const onOrange = marks.some((m) => m.color === CHK.orange
-      && Phaser.Math.Distance.Between(m.x, m.y, foe.x, foe.y) <= MP_TOUCH_R);
-    if (onGreen) {
-      heal += MP_HEAL_DPS * (dt / 1000);
-      if (heal >= 1) { heal -= 1; if (Math.random() < 0.3) tick(ctx, ctx.cx, ctx.cy - 24, '+1', CHK.green); }
-    }
-    if (onOrange) {
-      burn += MP_DAMAGE_DPS * (dt / 1000);
-      if (burn >= 1) { burn -= 1; if (Math.random() < 0.3) tick(ctx, foe.x, foe.y - 24, '1', CHK.orange); }
+    g.clear();
+    for (const b of bugs) {
+      const goal = b.kind === 'green' ? { x: ctx.cx, y: ctx.cy } : foe;
+      const a = Math.atan2(goal.y - b.y, goal.x - b.x);
+      const d = Phaser.Math.Distance.Between(b.x, b.y, goal.x, goal.y);
+      const sp = b.kind === 'red' ? 200 : b.kind === 'blue' ? 55 : 170;
+      const stop = b.kind === 'blue' ? 120 : 18;
+      if (d > stop) { b.x += Math.cos(a) * sp * dt / 1000; b.y += Math.sin(a) * sp * dt / 1000; }
+      paintChip(g, ctx.tint, b.x, b.y, a, 7, b.kind, elapsed / 60, 1, b.born);
     }
   });
-  ctx.at(200 + slice * 2 + 400, () => tick(ctx, ctx.cx, ctx.cy - 34, `🏃 ×${MP_SPEED_MULT}`, CHK.teal));
-  if (opts.prodigy) {
-    ctx.at(200 + slice * 3 + 400, () => tick(ctx, ctx.cx, ctx.cy - 34, '🖍️ CHALK ×1.5', CHK.crimson));
-  }
-
-  ctx.at(200 + MP_MS, () => {
-    cav?.setDrawing(false);
-    av.setIntensity(1);
-    fx.dust(ctx.cx, ctx.cy, 10, 40, 620, CHK.dust);
-    tick(ctx, ctx.cx, ctx.cy - 48, '🖼️ FINISHED', CHK.teal);
-    if (!opts.prodigy) return;
-    // Prodigy reads the finished work by counting what went into it, mark for mark.
-    let best = 0;
-    tally.forEach((n, i) => { if (n > tally[best]) best = i; });
-    fx.ring(ctx.cx, ctx.cy, 14, 90, palette[best], 620);
-    tick(ctx, ctx.cx, ctx.cy - 66, `🔵 PERMA: ${names[best]}`, palette[best]);
-  });
-  label(ctx, ctx.cx, ctx.h - 12, 'the work stays on the floor for 30s', CHK.whiteDim);
+  ctx.at(4200, () => tick(ctx, ctx.cx, ctx.cy - 60, '🐞 PAINT CHIPS', PNT.red));
 }
 
 export const masterpiece: PreviewScript = {
-  duration: 9200,
+  duration: 5000,
   scale: 0.9,
-  caption: 'Q — 8s invincible, drawing while you hold the mouse: green heals 9/s, orange burns 18/s, teal is ×1.45 speed',
-  run(ctx) { masterpieceLoop(ctx, { prodigy: false }); },
+  caption: 'Paint it on a map of the arena, then it lands on the floor — red burns, blue hastes, green heals',
+  run: (ctx) => mpLoop(ctx, false),
 };
 
 export const masterpieceUpgraded: PreviewScript = {
-  duration: 9600,
+  duration: 5000,
   scale: 0.9,
-  caption: 'Prodigy — crimson makes your chalk ×1.5, and whichever colour you used most is loaded onto the blue line',
-  run(ctx) { masterpieceLoop(ctx, { prodigy: true }); },
+  caption: 'Paint Chips — little paint bugs crawl off the Masterpiece in its colours',
+  run: (ctx) => mpLoop(ctx, true),
 };
 
 // ── Passives ──────────────────────────────────────────────────────────
 
-export const theDrawingWindow: PreviewScript = {
-  duration: 5600,
+export const theCanvas: PreviewScript = {
+  duration: 4400,
   scale: 0.9,
-  caption: 'A mark every 12px of cursor travel — and lifting the pen more than 96px starts a fresh run',
-  run(ctx) {
-    const { fx, av, cav } = stage(ctx, { noDummy: true });
-    const marks: CMark[] = [];
-    floor(ctx, marks);
-
-    ctx.at(200, () => { av.play('punch'); cav?.setChalk(CHK.white); cav?.setDrawing(true); });
-    // One continuous sweep, then a jump wider than the lift threshold, then another sweep —
-    // the break in the line is the whole point of the loop.
-    pen(ctx, marks, {
-      startMs: 200, endMs: 4600, color: CHK.white,
-      path: (t) => {
-        if (t < 0.45) {
-          return { x: ctx.w * 0.3 + t * ctx.w * 0.6, y: ctx.cy - 34 + Math.sin(t * 14) * 22 };
-        }
-        if (t < 0.5) return { x: ctx.w * 0.3 + 0.45 * ctx.w * 0.6, y: ctx.cy - 34 };
-        return { x: ctx.w * 0.34 + (t - 0.5) * ctx.w * 0.9, y: ctx.cy + 36 + Math.sin(t * 14) * 18 };
-      },
-      onMark: (m) => { if (m.linked) fx.lay(m.px, m.py, m.x, m.y, CHK.white); },
+  caption: 'Right-click for a blank canvas — what you paint is what you throw',
+  run: (ctx) => {
+    const { fx, av } = stage(ctx);
+    const foe = { x: ctx.w * 0.72, y: ctx.cy };
+    dummyAt(ctx, foe);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(8));
+    const pts: { cx: number; cy: number; kind: PaintKind }[] = [];
+    for (let i = 0; i <= 16; i++) pts.push({ cx: 0, cy: -30 + i * 3.75, kind: 'black' });
+    ctx.onFrame((_dt, elapsed) => {
+      g.clear();
+      if (elapsed < 200 || elapsed > 2000) return;
+      const x = ctx.w * 0.38;
+      const y = ctx.cy;
+      g.fillStyle(ctx.tint(PNT.woodDark), 1);
+      g.fillRect(x - 46, y - 46, 92, 92);
+      g.fillStyle(ctx.tint(PNT.canvas), 1);
+      g.fillRect(x - 42, y - 42, 84, 84);
+      const shown = Math.floor(pts.length * Phaser.Math.Clamp((elapsed - 300) / 1200, 0, 1));
+      ptsLayer(g, ctx, pts.slice(0, shown), x, y, 1, 10);
     });
-    ctx.at(2400, () => tick(ctx, ctx.w * 0.6, ctx.cy, '✋ PEN LIFTED', CHK.whiteDim));
-    ctx.at(4600, () => cav?.setDrawing(false));
-    label(ctx, ctx.cx, ctx.h - 12, 'one hand, one stick — a live window swallows every other key', CHK.whiteDim);
+    ctx.at(2100, () => av.play('punch'));
+    flySplotch(ctx, fx, barShape(false), { x: ctx.cx + 18, y: ctx.cy }, { x: foe.x + 100, y: foe.y }, 2100,
+      () => tick(ctx, foe.x, foe.y - 30, 'WIDE', PNT.canvas));
+  },
+};
+
+export const paintingTheFloor: PreviewScript = {
+  duration: 4600,
+  scale: 0.9,
+  caption: 'E, R and Q paint the floor under your cursor while their window is open',
+  run: (ctx) => {
+    const { fx, av, pav } = stage(ctx);
+    const dabs: FDab[] = [];
+    floor(ctx, dabs, 2);
+    ctx.at(200, () => { av.play('sweep'); pav?.setPaint('orange'); pav?.setDrawing(true); });
+    pen(ctx, dabs, {
+      startMs: 200, endMs: 1700, step: 16, w: 18, kind: () => 'orange',
+      path: (t) => ({ x: ctx.cx + 60 + t * 200, y: ctx.cy - 40 + Math.sin(t * 8) * 14 }),
+    });
+    ctx.at(1800, () => { av.play('slam'); pav?.setPaint('congeal'); });
+    pen(ctx, dabs, {
+      startMs: 1800, endMs: 3000, step: 8, w: 6, kind: () => 'congeal',
+      path: (t) => ({ x: ctx.cx + 60 + t * 200, y: ctx.cy + 40 }),
+    });
+    ctx.at(3000, () => pav?.setDrawing(false));
+    ctx.at(3300, () => {
+      dabs.filter((d) => d.kind === 'orange').forEach((d, i) => ctx.at(3300 + i * 50, () => {
+        fx.boom(d.x, d.y, ORANGE_RADIUS);
+        const k = dabs.indexOf(d);
+        if (k >= 0) dabs.splice(k, 1);
+      }));
+    });
   },
 };
 
 // ── Mastery ───────────────────────────────────────────────────────────
 
-/** One smear on legs, carrying exactly what `paintCrawlers` reads off a `Smudge`. */
-interface CSmudge {
-  x: number; y: number; ang: number; gait: number; orbit: number; seed: number;
-  color: number; guard: boolean; blocks: number; dead: boolean;
-}
-
-/**
- * The passive's swarm, drawn the way the kit draws it — legs first, then the body, then eyes on
- * the leading edge. Guards are the long bars and everything else is a blob.
- */
-function crawlers(ctx: PreviewCtx, list: CSmudge[]): Phaser.GameObjects.Graphics {
-  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
-  ctx.onFrame(() => {
-    g.clear();
-    for (const sm of list) {
-      if (sm.dead) continue;
-      if (sm.guard) {
-        chalkLegs(g, ctx.tint, sm.x, sm.y, sm.ang, SMUDGE_BAR_HALF * 0.55, 14, sm.gait, sm.color, 0.95, sm.seed);
-        const hx = Math.cos(sm.ang) * SMUDGE_BAR_HALF;
-        const hy = Math.sin(sm.ang) * SMUDGE_BAR_HALF;
-        chalkLine(g, ctx.tint, sm.x - hx, sm.y - hy, sm.x + hx, sm.y + hy,
-          SMUDGE_BAR_THICK, sm.color, 0.95, sm.seed);
-        chalkEyes(g, ctx.tint, sm.x, sm.y, sm.ang + Math.PI / 2, 7, 1.6, 0.95);
-        for (let b = 0; b < sm.blocks; b++) {
-          g.fillStyle(ctx.tint(CHK.dust), 0.8);
-          g.fillCircle(sm.x + Math.cos(sm.ang) * (b - 1) * 7 + Math.cos(sm.ang + Math.PI / 2) * 13,
-            sm.y + Math.sin(sm.ang) * (b - 1) * 7 + Math.sin(sm.ang + Math.PI / 2) * 13, 1.6);
-        }
-        continue;
-      }
-      chalkLegs(g, ctx.tint, sm.x, sm.y, sm.ang, 4.5, 12, sm.gait, sm.color, 0.95, sm.seed);
-      chalkBlob(g, ctx.tint, sm.x, sm.y, SMUDGE_BODY_R, sm.color, 0.95, sm.seed);
-      chalkEyes(g, ctx.tint, sm.x, sm.y, sm.ang, 6, 1.5, 0.95);
-    }
-  });
-  return g;
-}
-
-export const masteryChalkSmudge: PreviewScript = {
-  duration: 7200,
+export const masteryUnfinished: PreviewScript = {
+  duration: 3000,
   scale: 0.9,
-  caption: 'One smudge per 9 marks of chalk — white bites for 8, red bursts for 15, and shield chalk makes bars that eat shots',
-  run(ctx) {
-    const { fx, av, cav } = stage(ctx, { noDummy: true });
-    const foe = { x: ctx.w * 0.78, y: ctx.cy - 20 };
-    dummyAt(ctx, foe);
-
-    const marks: CMark[] = [];
-    floor(ctx, marks);
-    const list: CSmudge[] = [];
-    crawlers(ctx, list);
-
-    // A white run first, then a red one — the two colours whose smudges behave differently.
-    ctx.at(200, () => { av.play('punch'); cav?.setChalk(CHK.white); cav?.setDrawing(true); });
-    pen(ctx, marks, {
-      startMs: 200, endMs: 200 + WARD_DRAW_MS, color: CHK.white,
-      path: (t) => ({ x: ctx.w * 0.2 + t * ctx.w * 0.26, y: ctx.cy + 28 - Math.sin(t * 9) * 26 }),
-      onMark: (m, i) => {
-        if (m.linked) fx.lay(m.px, m.py, m.x, m.y, CHK.white);
-        // Paid for in line, exactly as the kit pays for it.
-        if ((i + 1) % SMUDGE_EVERY) return;
-        list.push({
-          x: m.x, y: m.y, ang: 0, gait: Math.random() * 6, orbit: 0, seed: i * 31.3,
-          color: CHK.white, guard: false, blocks: 0, dead: false,
-        });
-        fx.dust(m.x, m.y, 4, 12, 380, CHK.white);
-      },
-    });
-    ctx.at(200 + WARD_DRAW_MS, () => { cav?.setChalk(CHK.red); });
-    pen(ctx, marks, {
-      startMs: 200 + WARD_DRAW_MS, endMs: 200 + WARD_DRAW_MS + 1400, color: CHK.red,
-      path: (t) => ({ x: ctx.w * 0.2 + t * ctx.w * 0.26, y: ctx.cy - 34 + Math.sin(t * 9) * 22 }),
-      onMark: (m, i) => {
-        if (m.linked) fx.lay(m.px, m.py, m.x, m.y, CHK.red);
-        if ((i + 1) % SMUDGE_EVERY) return;
-        list.push({
-          x: m.x, y: m.y, ang: 0, gait: Math.random() * 6, orbit: 0, seed: 400 + i * 17.7,
-          color: CHK.red, guard: false, blocks: 0, dead: false,
-        });
-        fx.dust(m.x, m.y, 4, 12, 380, CHK.red);
-      },
-    });
-    ctx.at(200 + WARD_DRAW_MS + 1400, () => cav?.setDrawing(false));
-
-    // Two bars, patrolling the artist's own ring rather than hunting.
-    ctx.at(1600, () => {
-      for (let i = 0; i < 2; i++) {
-        list.push({
-          x: ctx.cx, y: ctx.cy, ang: 0, gait: Math.random() * 6, orbit: i * Math.PI, seed: 900 + i * 41,
-          color: CHK.white, guard: true, blocks: 3, dead: false,
-        });
-      }
-      tick(ctx, ctx.cx, ctx.cy - 52, '🕷️ SHIELD BARS', CHK.whiteDim);
-    });
-
-    // Everything walks. Biters walk at the body; bars walk their circle broadside-on.
-    ctx.onFrame((dt) => {
-      const s = dt / 1000;
-      for (const sm of list) {
-        if (sm.dead) continue;
-        sm.gait += s * (5.5 + SMUDGE_SPEED / 24);
-        if (sm.guard) {
-          sm.orbit += s * SMUDGE_GUARD_SPIN;
-          sm.x = Phaser.Math.Linear(sm.x, ctx.cx + Math.cos(sm.orbit) * SMUDGE_GUARD_R, Math.min(1, s * 6));
-          sm.y = Phaser.Math.Linear(sm.y, ctx.cy + Math.sin(sm.orbit) * SMUDGE_GUARD_R, Math.min(1, s * 6));
-          sm.ang = sm.orbit + Math.PI / 2;
-          continue;
-        }
-        sm.ang = Phaser.Math.Angle.RotateTo(sm.ang, Math.atan2(foe.y - sm.y, foe.x - sm.x), s * 7);
-        const d = Phaser.Math.Distance.Between(sm.x, sm.y, foe.x, foe.y);
-        if (d > SMUDGE_REACH) {
-          sm.x += Math.cos(sm.ang) * SMUDGE_SPEED * s;
-          sm.y += Math.sin(sm.ang) * SMUDGE_SPEED * s;
-          continue;
-        }
-        // Arrived. Red bursts and is spent; white bites once and is spent.
-        sm.dead = true;
-        if (sm.color === CHK.red) {
-          fx.boom(sm.x, sm.y, SMUDGE_BOOM_RADIUS, CHK.red);
-          tick(ctx, foe.x, foe.y - 30, `${SMUDGE_BOOM_DAMAGE}`, CHK.red);
-        } else {
-          fx.dust(sm.x, sm.y, 4, 15, 320, CHK.white);
-          tick(ctx, foe.x, foe.y - 30, `${SMUDGE_DAMAGE}`, CHK.white);
-        }
-      }
-    });
-
-    label(ctx, ctx.cx, ctx.h - 12,
-      'blue smudges never die · green ones follow you and heal · teal ×2.6 speed · crimson 25 damage', CHK.blue);
-  },
-};
-
-export const masteryLivingChalk: PreviewScript = {
-  duration: 9600,
-  scale: 0.9,
-  caption: 'Draw inside the circle for 3s — triangles are +10 damage, circles +34 speed, squares +20 health',
-  run(ctx) {
-    const { fx, av, cav } = stage(ctx, { noDummy: true });
-    const foe = { x: ctx.w * 0.86, y: ctx.cy };
-    dummyAt(ctx, foe);
-
-    const ring = { x: ctx.cx + 110, y: ctx.cy };
-    const marks: CMark[] = [];
-    const board = floor(ctx, marks);
-
-    // The circle, standing still on the floor where it opened.
-    let ringUntil = -1;
-    const ringGfx = ctx.adopt(ctx.scene.add.graphics().setDepth(7));
+  caption: 'Unfinished Study — this passive is coming in a later update',
+  run: (ctx) => {
+    stage(ctx);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(7));
     ctx.onFrame((_dt, elapsed) => {
-      ringGfx.clear();
-      if (ringUntil < 0 || elapsed > ringUntil) return;
-      const fade = Phaser.Math.Clamp((ringUntil - elapsed) / 260, 0, 1);
-      for (let i = 0; i < 22; i++) {
-        if (grain(i * 3.3, 1) > 0.82) continue;
-        const a0 = (i / 22) * Math.PI * 2 + elapsed / 2000;
-        const a1 = a0 + (Math.PI * 2 / 22) * 0.62;
-        ringGfx.lineStyle(2, ctx.tint(CHK.green), 0.5 * fade);
-        ringGfx.lineBetween(
-          ring.x + Math.cos(a0) * LIVING_CIRCLE_R, ring.y + Math.sin(a0) * LIVING_CIRCLE_R,
-          ring.x + Math.cos(a1) * LIVING_CIRCLE_R, ring.y + Math.sin(a1) * LIVING_CIRCLE_R,
-        );
-      }
+      g.clear();
+      easel(g, ctx, ctx.w * 0.6, ctx.cy, 70, ringPts(22, false), (elapsed % 3000) / 2400);
     });
-
-    ctx.at(200, () => {
-      av.play('raise');
-      cav?.setChalk(CHK.green);
-      cav?.setDrawing(true);
-      ringUntil = 200 + LIVING_DRAW_MS;
-      fx.ring(ring.x, ring.y, 8, LIVING_CIRCLE_R, CHK.green, 520);
-      tick(ctx, ctx.cx, ctx.cy - 50, '⭕ DRAW IT', CHK.green);
-    });
-
-    // A triangle, then a square — two closed loops, so two reads and two buffs.
-    const tri = (u: number): Mark => {
-      const k = u * 3;
-      const i = Math.floor(k);
-      const t = k - i;
-      const v = (n: number): Mark => ({
-        x: ring.x + Math.cos(-Math.PI / 2 + (n % 3) * (Math.PI * 2 / 3)) * 46,
-        y: ring.y + Math.sin(-Math.PI / 2 + (n % 3) * (Math.PI * 2 / 3)) * 46,
-      });
-      const a = v(i);
-      const b = v(i + 1);
-      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
-    };
-    const sqr = (u: number): Mark => {
-      const k = u * 4;
-      const i = Math.floor(k);
-      const t = k - i;
-      const v = (n: number): Mark => ({
-        x: ring.x + Math.cos(-Math.PI / 4 + (n % 4) * (Math.PI / 2)) * 26,
-        y: ring.y + Math.sin(-Math.PI / 4 + (n % 4) * (Math.PI / 2)) * 26,
-      });
-      const a = v(i);
-      const b = v(i + 1);
-      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
-    };
-    pen(ctx, marks, {
-      startMs: 200, endMs: 200 + LIVING_DRAW_MS * 0.52, color: CHK.green,
-      path: (t) => tri(Phaser.Math.Clamp(t, 0, 0.999)),
-      onMark: (m) => { if (m.linked) fx.lay(m.px, m.py, m.x, m.y, CHK.green); },
-    });
-    ctx.at(200 + LIVING_DRAW_MS * 0.56, () => {
-      cav?.setChalk(CHK.blue);
-      tick(ctx, ctx.cx, ctx.cy - 46, '🖍️ PERMA — TOUGHER', CHK.blue);
-    });
-    pen(ctx, marks, {
-      startMs: 200 + LIVING_DRAW_MS * 0.58, endMs: 200 + LIVING_DRAW_MS, color: CHK.blue,
-      path: (t) => sqr(Phaser.Math.Clamp(t, 0, 0.999)),
-      onMark: (m) => { if (m.linked) fx.lay(m.px, m.py, m.x, m.y, CHK.blue); },
-    });
-
-    // It stands up carrying exactly the marks that were on the floor a moment ago.
-    const body: CMark[] = [];
-    const beast = { x: ring.x, y: ring.y, ang: 0, gait: 0, hp: 0, maxHp: 0, alive: false, radius: 46 };
-    let biteAt = 0;
-    ctx.at(200 + LIVING_DRAW_MS, () => {
-      cav?.setDrawing(false);
-      body.push(...marks.map((m) => ({ ...m })));
-      marks.length = 0;
-      board.clear();
-      // One triangle and one square, read off the two closed loops above.
-      beast.maxHp = Math.round((LIVING_HP + LIVING_SQUARE_HP) * 1.5);
-      beast.hp = beast.maxHp;
-      beast.ang = Math.atan2(foe.y - ring.y, foe.x - ring.x);
-      fx.dust(ring.x, ring.y, 10, 40, 700, CHK.dust);
-      tick(ctx, ring.x, ring.y - 70, '△×1 ▢×1', CHK.teal);
-      tick(ctx, ring.x, ring.y - 52, `🕷️ ${beast.maxHp} HP · ${LIVING_DAMAGE + LIVING_TRI_DAMAGE} DMG`, CHK.green);
-    });
-    ctx.at(200 + LIVING_DRAW_MS + LIVING_WAKE_MS, () => {
-      beast.alive = true;
-      fx.ring(beast.x, beast.y, 10, 60, CHK.green, 620);
-    });
-
-    const beastGfx = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
-    ctx.onFrame((dt, elapsed) => {
-      const s = dt / 1000;
-      beastGfx.clear();
-      if (!body.length) return;
-      const waking = !beast.alive;
-      const rise = Phaser.Math.Clamp(1 - (200 + LIVING_DRAW_MS + LIVING_WAKE_MS - elapsed) / LIVING_WAKE_MS, 0, 1);
-      if (beast.alive) {
-        beast.gait += s * (4.5 + LIVING_SPEED / 30);
-        beast.ang = Phaser.Math.Angle.RotateTo(beast.ang, Math.atan2(foe.y - beast.y, foe.x - beast.x), s * 5);
-        const d = Phaser.Math.Distance.Between(beast.x, beast.y, foe.x, foe.y);
-        if (d > LIVING_REACH) {
-          beast.x += Math.cos(beast.ang) * LIVING_SPEED * s;
-          beast.y += Math.sin(beast.ang) * LIVING_SPEED * s;
-        } else if (elapsed >= biteAt) {
-          biteAt = elapsed + LIVING_BITE_MS;
-          fx.dust(beast.x, beast.y, 6, 20, 340, CHK.dust);
-          tick(ctx, foe.x, foe.y - 30, `${LIVING_DAMAGE + LIVING_TRI_DAMAGE}`, CHK.green);
-        }
-      }
-      const alpha = waking ? 0.45 + rise * 0.55 : 1;
-      const lift = waking ? rise * 6 : 6 + Math.sin(beast.gait) * 1.7;
-      const wob = waking ? (1 - rise) * Math.sin(elapsed / 22) * 3 : Math.sin(beast.gait * 0.9) * 1.3;
-      if (!waking) {
-        chalkLegs(beastGfx, ctx.tint, beast.x, beast.y, beast.ang, beast.radius * 0.45,
-          beast.radius * 0.8 + 6, beast.gait, CHK.dust, 0.85, 7);
-      }
-      // Carried in the pose it was drawn in — the legs do the facing, not the art.
-      for (const p of body) {
-        const x1 = beast.x + (p.x - ring.x) + wob;
-        const y1 = beast.y + (p.y - ring.y) - lift;
-        if (p.linked) {
-          chalkLine(beastGfx, ctx.tint, beast.x + (p.px - ring.x) + wob, beast.y + (p.py - ring.y) - lift,
-            x1, y1, 3, p.color, alpha, p.seed);
-        } else {
-          chalkBlob(beastGfx, ctx.tint, x1, y1, 2.6, p.color, alpha, p.seed);
-        }
-      }
-      chalkEyes(beastGfx, ctx.tint,
-        beast.x + Math.cos(beast.ang) * beast.radius * 0.5,
-        beast.y + Math.sin(beast.ang) * beast.radius * 0.5 - lift, beast.ang, 9, 2.2, alpha);
-      const w = 46;
-      beastGfx.fillStyle(ctx.tint(CHK.slate), 0.8);
-      beastGfx.fillRect(beast.x - w / 2, beast.y + beast.radius * 0.6 + 10, w, 3);
-      beastGfx.fillStyle(ctx.tint(CHK.green), 0.95);
-      beastGfx.fillRect(beast.x - w / 2, beast.y + beast.radius * 0.6 + 10, w, 3);
-    });
-
-    label(ctx, ctx.cx, ctx.h - 12,
-      'red chalk up to ×1.6 damage · blue up to ×2 health · white up to 45 shield', CHK.whiteDim);
+    ctx.at(600, () => tick(ctx, ctx.w * 0.6, ctx.cy - 56, 'COMING SOON', PNT.canvas));
   },
 };
 
-export const standingOnIt: PreviewScript = {
-  duration: 6400,
+export const masteryYinYang: PreviewScript = {
+  duration: 5200,
   scale: 0.9,
-  caption: 'Burn rates are a maximum, never a sum — a dense scribble is a wider trap, not a hotter one',
-  run(ctx) {
-    stage(ctx, { noDummy: true });
-    const thinAt = { x: ctx.w * 0.42, y: ctx.cy };
-    const denseAt = { x: ctx.w * 0.76, y: ctx.cy };
-    dummyAt(ctx, thinAt);
-    dummyAt(ctx, denseAt);
-
-    const marks: CMark[] = [];
-    floor(ctx, marks);
-    // One stroke under the left body, twenty overlapping ones under the right.
-    let lx = thinAt.x - 30;
-    for (let i = 0; i < 6; i++) {
-      const x = thinAt.x - 30 + i * 12;
-      marks.push({ x, y: thinAt.y + 12, px: lx, py: thinAt.y + 12, linked: i > 0, seed: i * 13, color: CHK.blue });
-      lx = x;
-    }
-    let dx = denseAt.x - 30;
-    let dy = denseAt.y;
-    for (let i = 0; i < 46; i++) {
-      const x = denseAt.x + Math.cos(i * 1.1) * 22;
-      const y = denseAt.y + 12 + Math.sin(i * 1.7) * 14;
-      marks.push({ x, y, px: dx, py: dy, linked: i > 0, seed: i * 7, color: CHK.blue });
-      dx = x;
-      dy = y;
-    }
-    label(ctx, thinAt.x, thinAt.y + 40, 'one stroke\n30/s', CHK.blue);
-    label(ctx, denseAt.x, denseAt.y + 40, '46 overlapping marks\nstill 30/s', CHK.blue);
-
-    let a = 0;
-    let b = 0;
-    ctx.onFrame((dt) => {
-      a += PERMA_DPS * (dt / 1000);
-      b += PERMA_DPS * (dt / 1000);
-      if (a >= 15) { a -= 15; tick(ctx, thinAt.x, thinAt.y - 26, '15', CHK.blue); }
-      if (b >= 15) { b -= 15; tick(ctx, denseAt.x, denseAt.y - 26, '15', CHK.blue); }
+  caption: 'Yin-Yang — white on your bars recharges them faster, black on theirs slower',
+  run: (ctx) => {
+    const { av } = stage(ctx);
+    const bars = [
+      { x: ctx.w * 0.4, y: ctx.cy - 50, w: 150, h: 30, kind: 'white' as PaintKind, label: 'YOUR F' },
+      { x: ctx.w * 0.4, y: ctx.cy + 20, w: 150, h: 30, kind: 'black' as PaintKind, label: 'THEIR Q' },
+    ];
+    const dabs: { b: number; u: number; v: number }[] = [];
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(8));
+    ctx.at(200, () => av.play('flex'));
+    let fillA = 0;
+    let fillB = 0;
+    ctx.onFrame((dt, elapsed) => {
+      g.clear();
+      const painting = elapsed > 300 && elapsed < 3000;
+      if (painting && Math.floor(elapsed / 45) !== Math.floor((elapsed - dt) / 45)) {
+        const b = elapsed < 1650 ? 0 : 1;
+        const k = elapsed / 140;
+        dabs.push({ b, u: 0.5 + 0.45 * Math.sin(k * 1.3), v: 0.5 + 0.38 * Math.sin(k * 2.9) });
+      }
+      const covA = Math.min(1, dabs.filter((d) => d.b === 0).length / 26);
+      const covB = Math.min(1, dabs.filter((d) => d.b === 1).length / 26);
+      fillA = (fillA + (dt / 4000) * (1 + covA)) % 1;
+      fillB = (fillB + (dt / 4000) * (1 - 0.5 * covB)) % 1;
+      bars.forEach((r, i) => {
+        g.fillStyle(0x24202c, 0.92);
+        g.fillRoundedRect(r.x, r.y, r.w, r.h, 5);
+        g.fillStyle(i === 0 ? 0x4466aa : 0x5a6a8a, 0.75);
+        g.fillRoundedRect(r.x + 2, r.y + 2, (r.w - 4) * (i === 0 ? fillA : fillB), r.h - 4, 4);
+        g.lineStyle(1.5, 0xd8cbb0, 0.8);
+        g.strokeRoundedRect(r.x, r.y, r.w, r.h, 5);
+      });
+      for (let b = 0; b < bars.length; b++) {
+        const r = bars[b];
+        paintLayer(g, ctx.tint, dabs.filter((d) => d.b === b).map((d) => {
+          const x = r.x + d.u * r.w;
+          const y = r.y + d.v * r.h;
+          return { x, y, px: x, py: y, linked: false, w: 14, kind: r.kind };
+        }), 0.9);
+      }
+      yinYang(g, ctx.tint, ctx.w * 0.4 - 22, ctx.cy - 15, 12, 1, elapsed / 400);
     });
+    ctx.at(1200, () => tick(ctx, bars[0].x + 75, bars[0].y - 12, 'FASTER', PNT.white));
+    ctx.at(2600, () => tick(ctx, bars[1].x + 75, bars[1].y + 44, 'SLOWER', PNT.black));
   },
 };

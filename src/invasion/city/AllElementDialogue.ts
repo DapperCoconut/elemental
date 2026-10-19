@@ -711,19 +711,19 @@ export const DREAM_LINES: Record<string, DreamLines> = {
   },
   chalk: {
     intro: [
-      'Mm. Scribbles. Someone is drawing on the inside of my eyelids. Chalk, of course.',
-      'What you scribble is the ability. Its shape, its length, all of it. A scrawl becomes a weapon.',
-      'Draw on the street. Keep the husks off my plinth. Try not to draw a moustache on me.',
+      'Mm. Turpentine. Someone is painting on the inside of my eyelids. Paint, of course.',
+      'What you paint is what you throw. A line, a blob, a little face. All of it is a weapon.',
+      'Paint the street. Keep the husks off my plinth. Try not to paint a moustache on me.',
     ],
     milestones: [
-      'Five waves. Your circle in the red lane is wobbly. The husks inside it are not.',
-      'Ten. You drew a line across the green gate. They refuse to cross it.',
-      'Fifteen. The whole city is your canvas. The husks are your eraser smudges.',
+      'Five waves. Your orange loop in the red lane is wobbly. The bucket you threw in it was not.',
+      'Ten. You painted a wall across the green gate. They refuse to cross it.',
+      'Fifteen. The whole city is your canvas. The husks are your still lifes.',
     ],
-    hurt: 'They are on me, Chalk. Draw something sharp. Fast.',
-    saved: 'Twenty. The city is saved, and covered in doodles. The night is a blank board. Fill it.',
-    fallen: 'Rubbed out. Clean slate. Nothing left.',
-    downed: 'Smudged, not erased. Get up and redraw yourself.',
+    hurt: 'They are on me, Painter. Paint something sharp. Fast.',
+    saved: 'Twenty. The city is saved, and covered in paint. The night is a blank canvas. Fill it.',
+    fallen: 'Painted over. Blank canvas. Nothing left.',
+    downed: 'Smudged, not finished. Get up and repaint yourself.',
   },
   wax: {
     intro: [

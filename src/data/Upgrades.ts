@@ -260,8 +260,8 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
     elementId: 'shadow',
     upgrades: [
       {
-        slot: 'click', displayKey: 'Click', name: 'Cloud Confusion',
-        description: 'Enemy in your cloud for 3s becomes confused for 3s (random movement, can still attack)',
+        slot: 'click', displayKey: 'Click', name: 'Crippling Spikes',
+        description: 'Caltrops apply a stacking slow when stepped on: 12% per stack, up to 5 stacks (60%). Each new stack refreshes the 3s timer.',
         price: 20,
       },
       {
@@ -769,6 +769,22 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
         price: 350,
         currency: 'corrupt',
       },
+      {
+        slot: 'f',
+        displayKey: 'F',
+        name: 'Javelin Burst',
+        description: "If Light Trick's burst catches a Prism Ramp, that ramp fires 12 evenly-spaced javelins instead of its usual 3-lance cone, and grants both the Trick and Ramp acceleration boosts at once.",
+        price: 500,
+        currency: 'corrupt',
+      },
+      {
+        slot: 'q',
+        displayKey: 'Q',
+        name: 'Flare-Stream',
+        description: "Every 10th teleport during Speed 'O' Light leaves behind a lasting orange beam (35s, uncapped). Standing on one triples your acceleration rate. Enemies are unaffected by it.",
+        price: 750,
+        currency: 'corrupt',
+      },
     ],
   },
   {
@@ -1159,7 +1175,7 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
         slot: 'f',
         displayKey: 'F',
         name: 'Surf the web!',
-        description: 'Web Drag also asks if you want to surf the web. Yes opens a browser (you\'re sheltered while it\'s open): click coins, buy from the Grub-Shop, spin the Wheel of Fortune… or take the Door, exploding the window and launching every coin you held as a projectile.',
+        description: 'Web Drag also asks if you want to surf the web. Yes opens PainClicker, a small window you keep fighting around: every click on its skull deals 1 damage to the enemy and earns 1 pain coin. Spend pain on four one-time upgrades — Harder clicks (50: clicks deal and earn 2), Pain farm (100: +1/s), Pain factory (250: +3/s) and The Soulution (500: +10/s) — where every coin generated is also a point of damage. Web drag moves the window by its title bar; the X closes it.',
         price: 500,
         currency: 'corrupt',
       },
@@ -1269,40 +1285,40 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
       {
         slot: 'click',
         displayKey: 'Click',
-        name: 'Chalk Debris',
-        description: 'When a Ward goes off it leaves up to 4 clouds of chalk dust for 4s. Anyone standing in one is 38% slower and takes 1.5× damage from every kind of your chalk.',
+        name: 'Primary Colours',
+        description: 'The Splotch canvas gets red, blue and green. Red makes the splotch hit harder, blue slows what it touches, green leaves damage over time — the more of a colour in the drawing, the stronger its effect. The ink limit is shared.',
         price: 100,
         currency: 'corrupt',
       },
       {
         slot: 'e',
         displayKey: 'E',
-        name: 'Explosive Release',
-        description: 'Draw the red line back into itself and the ground it encloses goes up with it — 25 dmg to everything inside the shape, however big you made it.',
+        name: 'Paint Bucket',
+        description: 'Close a loop with your orange line and a paint bucket is thrown into it: the whole inside is painted orange and explodes in a wave from the middle out.',
         price: 200,
         currency: 'corrupt',
       },
       {
         slot: 'r',
         displayKey: 'R',
-        name: 'Perma-Block',
-        description: 'Your blue line stops shots. Any projectile that crosses it is rubbed out.',
+        name: 'Coloured Walls',
+        description: 'Press E/R/F mid-wall for red, blue or green (Q for plain). Red burns enemies touching it and hurts whoever shoots it. Blue speeds you up when you touch it and when shots hit it. Green heals you when you touch it, and more when shots hit it.',
         price: 350,
         currency: 'corrupt',
       },
       {
         slot: 'f',
         displayKey: 'F',
-        name: 'Supreme Shield',
-        description: 'Draw the shield for 2.5s instead of 1, and press E / R / F mid-draw to change stick. Red pieces burn whoever hits the shield; blue pieces make it far tougher.',
+        name: 'Painted Portrait',
+        description: 'The Still Life canvas gets red, blue and green. Red parts of the enemy take 50% more from shots that land on them, blue slows the whole enemy down, and green stops them healing and weakens their hits.',
         price: 500,
         currency: 'corrupt',
       },
       {
         slot: 'q',
         displayKey: 'Q',
-        name: 'Prodigy',
-        description: 'Q adds crimson to the palette — standing on it makes your chalk hit 1.5× harder. Whichever chalk you used most during a Masterpiece then enhances your Perma-Chalk until the next one: green heals you, orange adds +2 dmg/s, teal speeds you up, crimson boosts your damage.',
+        name: 'Paint Chips',
+        description: 'Your Masterpiece sheds paint chips — little paint bugs that live 5s. Red chips rush in and nip fast, blue chips hang back and shoot, green chips latch onto you and heal.',
         price: 750,
         currency: 'corrupt',
       },
@@ -1843,8 +1859,8 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
       {
         slot: 'q',
         displayKey: 'Q',
-        name: 'Mega Mechancements',
-        description: 'Mecha Massacre builds the red mech, horned and gold-trimmed. Smash 30 in a wider ring with 5 falling chunks, the rail 22 a second and wider, the avalanche 35 and 45 into the wall with a 1.2s stun, the cannon 7 a tick and wider, and Self-Destruct sets off 30 blasts of 25. Every mech key also recharges faster.',
+        name: 'Salvage Salvo',
+        description: 'Build your mech while the scrap gathers: click a Head (Camo Military: rockets rain on your foes; Flaming Furnace: the red mech, every key stronger, hits leave fire; Junkyard Scrapper: a far deadlier Self-Destruct that drops 3 TNT crates — Repulse one for a double cluster blast), a Core (Calm: slower cooldowns, longer mech; Urgent: faster cooldowns, shorter mech; Base: normal, and the core cannot be hurt) and each Arm (Slammer: a harder spiked smash; Launcher: a rocket barrage at the cursor; Saw: shreds under the cursor). Clicks alternate arms.',
         price: 750,
         currency: 'corrupt',
       },
@@ -2216,18 +2232,19 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
     ],
   },
   {
-    // Quantum owns exactly one upgrade, and it is not an ability upgrade at all: it adds a
-    // third state to the bond. Everything the third state *does* lives in `quantumElement`,
-    // which is why the description below is a summary rather than a slot's worth of detail.
-    // Filed under `click` because the shop is built around the five ability slots and the
-    // splicers are what the third state's Click does — the other four plates read COMING SOON.
+    // Quantum owns exactly one upgrade, and it is not an ability upgrade at all: it makes
+    // Quantum's *own* five abilities available to the loadout's slots. Everything they *do*
+    // lives in `quantumElement`, which is why the description below is a summary rather than a
+    // slot's worth of detail. Filed under `click` because the shop is built around the five
+    // ability slots and the splicers are what Quantum's Click is — the other four plates read
+    // COMING SOON.
     elementId: 'quantum',
     upgrades: [
       {
         slot: 'click',
         displayKey: 'Click',
         name: 'Third State',
-        description: 'Your bond stops being a coin. Dodging now cycles three ways — your first element, your second, and Quantum itself, which finally has a kit of its own: five orbiting Atom Splicers, an Ability Split that halves the cooldown of your next ability (even after you swap back), an Arena Split that walls the enemy into half the room for 15 seconds, an Effect Split that halves the strength of everything on you and stretches it to two and a half times as long, and a ten-segment Quantum Parasite that becomes two parasites every time somebody cuts it in half.',
+        description: 'Quantum finally has a kit of its own, and every piece of it can be slotted onto your keys like any entangled element: five orbiting Atom Splicers, an Ability Split that halves the cooldown of your next ability (whichever element it belongs to), an Arena Split that walls the enemy into half the room for 15 seconds, an Effect Split that halves the strength of everything on you and stretches it to two and a half times as long, and a ten-segment Quantum Parasite that becomes two parasites every time somebody cuts it in half.',
         price: 2000,
       },
     ],

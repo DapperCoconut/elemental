@@ -504,15 +504,58 @@ export const lightTrick: PreviewScript = {
   },
 };
 
+export const lightTrickUpgraded: PreviewScript = {
+  duration: 5600,
+  scale: 0.88,
+  bodyTexture: '',
+  caption: 'Javelin Burst — a trick that catches a ramp fires 12 javelins instead of 3 lances',
+  run(ctx) {
+    const { car, av, fx, air, ground } = drive(ctx, {});
+    accelBar(ctx, car);
+    const ramp = { x: ctx.w * 0.5, y: ctx.cy, angle: 0 };
+    ctx.onFrame((_dt, elapsed) => {
+      ground.clear();
+      LightFx.drawRamp(ground, ctx.tint, ramp.x, ramp.y, ramp.angle, elapsed / 1000);
+    });
+    ctx.onFrame((dt, elapsed) => {
+      stepCar(car, 0, dt, elapsed);
+      air.clear();
+      LightFx.drawLance(air, ctx.tint, car.x, car.y, car.angle, car.ratio, elapsed / 1000, false);
+    });
+
+    ctx.at(1500, () => {
+      av.play('clap');
+      fx.flash(car.x, car.y, 25, 9, LIGHT.pale);
+      fx.ring(car.x, car.y, 10, 50, LIGHT.pale, 320, 4, 8);
+      // The burst catching the ramp: twelve javelins, evenly spaced, all the way round.
+      fx.boom(ramp.x, ramp.y, 70, { color: LIGHT.cyan, shards: 12, mark: false });
+      for (let i = 0; i < 12; i++) {
+        const a = (i / 12) * Math.PI * 2;
+        ctx.fly({
+          texture: 'proj-light-triangle',
+          from: { x: ramp.x, y: ramp.y },
+          to: { x: ramp.x + Math.cos(a) * 900, y: ramp.y + Math.sin(a) * 900 },
+          speed: 480, pierce: true,
+        });
+      }
+      car.boostUntil = 1500 + 1500;
+      float(ctx, car.x, car.y - 34, '🌟 JAVELIN BURST', '#66ddff', 11);
+      float(ctx, ramp.x, ramp.y - 34, '12 × 5', '#66ddff', 11);
+    });
+  },
+};
+
 // ══ Q — Speed 'O' Light ═══════════════════════════════════════════════
 
-/** The ultimate loop runs the real 60ms bounce clock. */
-function speedOLightScript(): PreviewScript {
+/** Both ultimate loops run the real 60ms bounce clock; Q+ is whether every 10th one sticks. */
+function speedOLightScript(flare: boolean): PreviewScript {
   return {
     duration: 8600,
     scale: 0.5,
     bodyTexture: '',
-    caption: "Q — 125 hops at 60ms, each leaving a 15-damage streak, all of it undodgeable",
+    caption: flare
+      ? "Flare-Stream — every 10th hop leaves a 35s beam that triples your acceleration"
+      : "Q — 125 hops at 60ms, each leaving a 15-damage streak, all of it undodgeable",
     run(ctx) {
       const fx = ctx.capture(() => new LightFx(ctx.scene, ctx.tint).setSink(ctx.sink));
       const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
@@ -528,8 +571,12 @@ function speedOLightScript(): PreviewScript {
       const readout = label(ctx, ctx.w * 0.5, 12, '#fff4a8', 11);
 
       const streaks: { x1: number; y1: number; x2: number; y2: number; born: number; hit: boolean }[] = [];
+      const beams: { x1: number; y1: number; x2: number; y2: number }[] = [];
       ctx.onFrame((_dt, elapsed) => {
         ground.clear();
+        for (const b of beams) {
+          LightFx.drawStreak(ground, ctx.tint, b.x1, b.y1, b.x2, b.y2, 18 * 0.8, LIGHT.ember, 0.7, elapsed / 1000);
+        }
         for (let i = streaks.length - 1; i >= 0; i--) {
           const s = streaks[i];
           const life = 1 - (elapsed - s.born) / 900;
@@ -562,6 +609,7 @@ function speedOLightScript(): PreviewScript {
             const s = { x1: pos.x, y1: pos.y, x2: nx, y2: ny, born: now, hit: false };
             streaks.push(s);
             fx.flare(nx, ny, 0.55, 12, LIGHT.white, Math.atan2(ny - pos.y, nx - pos.x));
+            if (flare && hops % 10 === 0) beams.push({ x1: pos.x, y1: pos.y, x2: nx, y2: ny });
             // 15 damage inside 40px of the line, once per target per streak.
             const d = distToSeg(victim.x, victim.y, s.x1, s.y1, s.x2, s.y2);
             if (d <= 40) {
@@ -572,7 +620,7 @@ function speedOLightScript(): PreviewScript {
             pos.x = nx;
             pos.y = ny;
           }
-          readout.setText(`hop ${hops}/125   —   ${dealt} dealt`);
+          readout.setText(`hop ${hops}/125   —   ${dealt} dealt${flare ? `   —   ${beams.length} beams` : ''}`);
         });
       });
     },
@@ -587,7 +635,8 @@ function distToSeg(px: number, py: number, x1: number, y1: number, x2: number, y
   return Phaser.Math.Distance.Between(px, py, x1 + t * dx, y1 + t * dy);
 }
 
-export const speedOLight = speedOLightScript();
+export const speedOLight = speedOLightScript(false);
+export const speedOLightUpgraded = speedOLightScript(true);
 
 // ══ Passive ═══════════════════════════════════════════════════════════
 

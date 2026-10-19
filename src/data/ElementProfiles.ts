@@ -64,7 +64,7 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
   },
   shadow: {
     archetype: 'Stalker',
-    blurb: 'Tentacles, traps and a black hole, every one of them stacking Hopelessness on the same victim.',
+    blurb: 'Caltrops, tentacles, traps and a black hole, every one of them stacking Hopelessness on the same victim.',
     complexity: 2,
   },
   ice: {
@@ -204,7 +204,7 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
   // ── Finale ──────────────────────────────────────────────────────────
   quantum: {
     archetype: 'Entangled',
-    blurb: 'Two bonded elements at once, split across your cooldowns, the arena and every effect you land.',
+    blurb: 'Five keys borrowed from five elements — any you have entangled — on one body.',
     complexity: 5,
   },
 
@@ -255,8 +255,8 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
     complexity: 4,
   },
   chalk: {
-    archetype: 'Artist',
-    blurb: 'Draw with the cursor. What you scribble is the ability — its shape, its length, all of it.',
+    archetype: 'Painter',
+    blurb: 'Paint your own projectile, paint the enemy into a picture, and paint the floor with fuses, walls and a Masterpiece.',
     complexity: 5,
   },
   wax: {

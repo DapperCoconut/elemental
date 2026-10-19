@@ -53,7 +53,6 @@ const UPLOAD_HIT_RADIUS = 22;
 
 const WEBDRAG_DURATION_MS = 6000;
 const WEBDRAG_GRAB_RADIUS = 42;
-const COIN_DMG = 1;
 
 const ADMIN_WINDOW_MS = 8000;
 const ADMIN_STRING_LEN = 6;
@@ -568,63 +567,80 @@ function dragLoop(ctx: PreviewCtx, opts: { surf: boolean }): void {
     return;
   }
 
-  // Surf the web!: a browser window opens in the middle of the fight.
-  let browserFrom = -9999;
-  let coins = 0;
-  const win = ctx.adopt(ctx.scene.add.graphics().setDepth(D_UI + 2));
+  // Surf the web!: a small PainClicker window you keep fighting round. Click the skull, buy upgrades.
+  let winFrom = -9999;
+  let pain = 0;
+  let perClick = 1;
+  let punchAt = -9999;
+  const win = { x: ctx.w * 0.74, y: ctx.h * 0.36 };
+  const win_ = ctx.adopt(ctx.scene.add.graphics().setDepth(D_UI + 2));
   const winText = ctx.adopt(ctx.scene.add.text(0, 0, '', {
     fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
-    color: hex(TECH.amber), align: 'center',
+    color: hex(TECH.alert), align: 'center',
   }).setOrigin(0.5).setDepth(D_UI + 3));
   ctx.onFrame((_dt, elapsed) => {
     const t = elapsed / 1000;
-    win.clear();
+    win_.clear();
     winText.setVisible(false);
-    if (elapsed < browserFrom) return;
-    const bw = Math.min(ctx.w - 30, 260);
-    const bh = Math.min(ctx.h - 40, 150);
-    windowPane(win, ctx.tint, ctx.w / 2, ctx.h / 2, bw, bh, t, 1);
-    // The coins you click out of the page.
-    for (let i = 0; i < 6; i++) {
-      const cx = ctx.w / 2 - bw / 2 + 24 + ((i * 41 + Math.floor(t * 30)) % (bw - 48));
-      const cy = ctx.h / 2 - bh / 2 + 34 + ((i * 29) % (bh - 60));
-      if (i < coins) continue;
-      win.fillStyle(ctx.tint(TECH.gold), 0.95);
-      win.fillCircle(cx, cy, 5);
-      win.fillStyle(ctx.tint(TECH.amber), 0.9);
-      win.fillCircle(cx - 1.4, cy - 1.4, 2);
+    if (elapsed < winFrom) return;
+    const bw = 120, bh = 80;
+    windowPane(win_, ctx.tint, win.x, win.y, bw, bh, t, 1, { body: 0x12080e, bar: TECH.plum, accent: TECH.alert, lines: 0 });
+    // The skull: bone cranium and jaw, two red-lit sockets.
+    const s = 1 - 0.12 * Math.max(0, 1 - (elapsed - punchAt) / 140);
+    const sx = win.x - 26, sy = win.y + 6;
+    win_.fillStyle(ctx.tint(0xe8dcc4), 1);
+    win_.fillCircle(sx, sy - 4 * s, 15 * s);
+    win_.fillRoundedRect(sx - 9 * s, sy + 3 * s, 18 * s, 11 * s, 3 * s);
+    for (const side of [-1, 1]) {
+      win_.fillStyle(ctx.tint(0x1a0a10), 1);
+      win_.fillEllipse(sx + side * 6 * s, sy - 3 * s, 8 * s, 7 * s);
+      win_.fillStyle(ctx.tint(TECH.alert), 0.7 + 0.3 * Math.sin(t * 5));
+      win_.fillCircle(sx + side * 6 * s, sy - 2.5 * s, 1.6 * s);
     }
-    winText.setVisible(true).setPosition(ctx.w / 2, ctx.h / 2 + bh / 2 - 12)
-      .setText(`🪙 ${coins}     HITS LAND AT 5% WHILE OPEN     🚪 the Door`);
+    // The shop column: four one-time buys.
+    for (let i = 0; i < 4; i++) {
+      const owned = i === 0 && perClick === 2;
+      win_.fillStyle(ctx.tint(owned ? 0x225533 : 0x7a2233), 0.95);
+      win_.fillRoundedRect(win.x + 6, win.y - 22 + i * 14, 48, 11, 2);
+    }
+    winText.setVisible(true).setPosition(win.x, win.y + bh / 2 + 9).setText(`💀 ${pain}`);
   });
 
   ctx.at(1400, () => {
-    browserFrom = 1400;
+    winFrom = 1400;
     tick(ctx, ctx.cx, ctx.cy - 40, '🌐 SURF THE WEB?', TECH.cyan);
   });
-  for (let i = 0; i < 5; i++) {
-    ctx.at(2200 + i * 500, () => {
-      coins++;
-      s.fx.bits(ctx.w / 2, ctx.h / 2, 3, { color: TECH.gold, depth: D_UI + 3 });
+  // Click, click, click: every click is a point of damage and a pain coin.
+  for (let i = 0; i < 8; i++) {
+    ctx.at(2000 + i * 300, () => {
+      punchAt = 2000 + i * 300;
+      pain += perClick;
+      s.fx.bits(win.x - 26, win.y + 6, 2, { color: TECH.alert, depth: D_UI + 3 });
+      tick(ctx, foe.x + (Math.random() - 0.5) * 20, foe.y - 12, `${perClick}`, TECH.alert);
     });
   }
-  ctx.at(5400, () => {
-    browserFrom = 99999;
-    s.fx.crash(ctx.w / 2, ctx.h / 2, 70, { depth: D_UI + 3 });
-    tick(ctx, ctx.cx, ctx.cy - 40, '🚪 THE DOOR', TECH.rust);
-    // Every coin you were holding is launched as a projectile.
-    for (let i = 0; i < coins; i++) {
-      const a = Math.atan2(foe.y - ctx.h / 2, foe.x - ctx.w / 2) + (i / coins - 0.5) * 0.7;
-      ctx.at(i * 60, () => {
-        s.fx.packet(ctx.w / 2, ctx.h / 2, ctx.w / 2 + Math.cos(a) * 200, ctx.h / 2 + Math.sin(a) * 200,
-          { color: TECH.gold, depth: D_WORLD });
-        tick(ctx, foe.x + (Math.random() - 0.5) * 20, foe.y - 12, `${COIN_DMG}`, TECH.gold);
-      });
-    }
+  ctx.at(3700, () => {
+    perClick = 2;
+    tick(ctx, win.x + 30, win.y - 36, 'HARDER CLICKS', TECH.phosphor);
+  });
+  // You keep fighting with it open: the click still throws crunchers.
+  ctx.at(4700, () => {
+    s.fx.packet(ctx.cx, ctx.cy, foe.x, foe.y, { color: TECH.phosphor, depth: D_WORLD });
+  });
+  // Web drag picks the window up by its title bar and puts it somewhere else.
+  ctx.onFrame((_dt, elapsed) => {
+    if (elapsed < 5200 || elapsed > 6200) return;
+    const k = (elapsed - 5200) / 1000;
+    win.x = ctx.w * (0.74 - 0.46 * k);
+    win.y = ctx.h * (0.36 - 0.08 * Math.sin(k * Math.PI));
+  });
+  ctx.at(6800, () => {
+    winFrom = 99999;
+    tick(ctx, win.x + 50, win.y - 40, '✕', TECH.alert);
   });
 
   label(ctx, ctx.w * 0.5, ctx.h - 8,
-    'bagel 10 · mouse 20 · factory 35 · a Wheel spin 5 — or take the Door and fire the lot', TECH.wire);
+    'each click: 1 damage + 1 pain · Harder clicks 50 · farm 100 · factory 250 · The Soulution 500', TECH.wire);
 }
 
 export const webDrag: PreviewScript = {
@@ -637,7 +653,7 @@ export const webDrag: PreviewScript = {
 export const webDragUpgraded: PreviewScript = {
   duration: 8000,
   scale: 0.9,
-  caption: 'Surf the web! — a browser opens mid-fight, hits reach you at 5% inside it, and there is a Door',
+  caption: 'Surf the web! — a little PainClicker window: click the skull to hurt them, buy upgrades, drag it aside',
   run(ctx) { dragLoop(ctx, { surf: true }); },
 };
 

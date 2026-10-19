@@ -113,70 +113,114 @@ function despair(ctx: PreviewCtx, o: { x: number; y: number; read: () => number 
 
 // ══ ABILITIES ═════════════════════════════════════════════════════════
 
-export const darkDrain: PreviewScript = {
-  duration: 4200,
-  caption: 'Click tap — a 10 damage implosion that leaves a pool: 5 dmg/s to them, 3.75 HP/s to you',
+/**
+ * One caltrop: tossed in a low tumbling lob (the kit's 300ms flight), then lying on the floor
+ * where it landed. Painted with the kit's own `ShadowFx.drawCaltrop`. Returns a handle the
+ * script uses to spend it when somebody treads on it.
+ */
+function caltrop(
+  ctx: PreviewCtx,
+  o: { from: { x: number; y: number }; to: { x: number; y: number }; at: number; crippling?: boolean },
+): { spend: () => void } {
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+  const spin = (o.to.x * 0.13 + o.to.y * 0.07) % 6.28;
+  let spent = false;
+  ctx.onFrame((_dt, elapsed) => {
+    g.clear();
+    const age = elapsed - o.at;
+    if (age < 0 || spent) return;
+    const k = Math.min(1, age / 300);
+    const x = o.from.x + (o.to.x - o.from.x) * k;
+    const y = o.from.y + (o.to.y - o.from.y) * k;
+    if (k < 1) {
+      ShadowFx.drawCaltrop(g, ctx.tint, x, y - Math.sin(Math.PI * k) * 26, 6, spin + k * 9, 1,
+        { crippling: o.crippling, t: elapsed / 1000 });
+      return;
+    }
+    ShadowFx.drawCaltrop(g, ctx.tint, x, y, 6.5, spin, 1,
+      { crippling: o.crippling, grounded: true, t: elapsed / 1000 });
+  });
+  return { spend: () => { spent = true; } };
+}
+
+/** A small floating readout, the way the arena's floating text rises and fades. */
+function pop(ctx: PreviewCtx, x: number, y: number, text: string, color: string): void {
+  const t = ctx.adopt(ctx.scene.add.text(x, y, text, {
+    fontSize: '11px', fontFamily: 'Arial Black', color,
+  }).setOrigin(0.5).setDepth(12));
+  ctx.scene.tweens.add({ targets: t, y: y - 16, alpha: 0, duration: 1200 });
+}
+
+export const shadowCaltrop: PreviewScript = {
+  duration: 4400,
+  caption: 'Click — a caltrop lies 8s where it lands; treading on it costs 5 damage and 10 Hopelessness',
   run(ctx) {
-    const { fx, av } = stage(ctx);
+    const { fx, av } = stage(ctx, { noDummy: true });
     let hope = 0;
+    // A walker crossing the lane the caltrops were thrown into.
+    const walker = { x: ctx.tx + 40, y: ctx.ty - 60 };
     despair(ctx, { x: ctx.tx, y: ctx.ty, read: () => hope });
-    ctx.at(300, () => {
-      av.play('punch', ctx.aim);
-      fx.muzzleUmbra(ctx.cx + 30, ctx.cy, ctx.aim, 1, 6);
-      flyBomb(ctx, {
-        from: { x: ctx.cx + 30, y: ctx.cy }, to: { x: ctx.tx, y: ctx.ty },
-        onHit: () => {
-          // It implodes rather than exploding — the whole shadow read.
-          fx.implosion(ctx.tx, ctx.ty, 62, { tendrils: 10, gloom: 2, duration: 400 });
-          pool(ctx, { x: ctx.tx, y: ctx.ty, born: 1000 });
-          // 3 Hopelessness a second for as long as they stand in it.
-          ctx.onFrame((dt, elapsed) => { if (elapsed > 1000) hope = Math.min(100, hope + (dt / 1000) * 3); });
-          // And the 0.4s drain tick, at its real rate.
-          for (let i = 1; i <= 7; i++) {
-            ctx.at(i * 400, () => fx.wisps(ctx.tx, ctx.ty, 2, { speed: 30, size: 2.4, life: 520, rise: -18, depth: 4 }));
-          }
-        },
-      });
+    const body = ctx.adopt(ctx.scene.add.graphics().setDepth(5));
+    const hand = { x: ctx.cx + 30, y: ctx.cy };
+    const spots = [{ x: ctx.tx - 30, y: ctx.ty - 6 }, { x: ctx.tx, y: ctx.ty + 4 }, { x: ctx.tx + 30, y: ctx.ty - 2 }];
+    const drops = spots.map((to, i) => {
+      ctx.at(300 + i * 650, () => { av.play('punch', ctx.aim); fx.muzzleUmbra(hand.x, hand.y, ctx.aim, 0.6, 6); });
+      return caltrop(ctx, { from: hand, to, at: 300 + i * 650 });
+    });
+    ctx.onFrame((_dt, elapsed) => {
+      // The walker strolls down through the middle caltrop after the third has landed.
+      const k = Phaser.Math.Clamp((elapsed - 2400) / 1400, 0, 1);
+      walker.x = ctx.tx + 40 - k * 40;
+      walker.y = ctx.ty - 60 + k * 90;
+      body.clear();
+      body.fillStyle(0x2b2f3d, 1); body.fillCircle(walker.x, walker.y, 17);
+      body.fillStyle(0x3c4254, 1); body.fillCircle(walker.x, walker.y, 13);
+    });
+    ctx.at(3050, () => {
+      drops[1].spend();
+      hope += 10;
+      fx.tendrilBurst(spots[1].x, spots[1].y, 18, 4, 6);
+      pop(ctx, spots[1].x, spots[1].y - 30, '-5  🕳️ +10%', '#cc88ff');
     });
   },
 };
 
-export const darkDrainUpgraded: PreviewScript = {
-  duration: 5000,
-  scale: 0.9,
-  caption: 'Cloud Confusion — hold Click to pour a pool every 0.6s; 3s inside one confuses for 3s',
+export const shadowCaltropUpgraded: PreviewScript = {
+  duration: 5200,
+  caption: 'Crippling Spikes — each caltrop trodden on stacks a 12% slow, up to 60%, on a refreshing 3s timer',
   run(ctx) {
-    const { fx, av } = stage(ctx);
-    ctx.at(300, () => {
-      // The pour: hands out along the aim, laying dark at the cursor.
-      av.setHold('spray', ctx.aim);
-      for (let i = 0; i < 5; i++) {
-        const px = ctx.tx - 60 + i * 34;
-        ctx.at(i * 600, () => {
-          pool(ctx, { x: px, y: ctx.ty + 8, born: 300 + i * 600 });
-          fx.ring(px, ctx.ty + 8, 7, 40, SHADOW.lilac, 420, 3, 3);
-        });
-      }
-      ctx.at(3000, () => av.setHold(null));
+    const { fx, av } = stage(ctx, { noDummy: true });
+    const hand = { x: ctx.cx + 30, y: ctx.cy };
+    // A lane of five barbed caltrops, then somebody who has to walk all the way down it.
+    const lane = Array.from({ length: 5 }, (_, i) => ({ x: ctx.tx - 70 + i * 34, y: ctx.ty + Math.sin(i * 1.7) * 8 }));
+    const drops = lane.map((to, i) => {
+      ctx.at(200 + i * 300, () => { av.play('punch', ctx.aim); fx.muzzleUmbra(hand.x, hand.y, ctx.aim, 0.6, 6); });
+      return caltrop(ctx, { from: hand, to, at: 200 + i * 300, crippling: true });
     });
-    // Three continuous seconds in the dark, then the mind goes.
-    ctx.at(3300, () => {
-      fx.gloom(ctx.tx, ctx.ty, 6, 40, 6);
-      const t = ctx.adopt(ctx.scene.add.text(ctx.tx, ctx.ty - 44, '❓ CONFUSED 3s', {
-        fontSize: '11px', fontFamily: 'Arial Black', color: '#cc88ff',
-      }).setOrigin(0.5).setDepth(12));
-      ctx.scene.tweens.add({ targets: t, y: t.y - 12, alpha: 0, duration: 1600 });
-      // Their movement goes random — they can still swing, they just cannot choose where to go.
-      const wander = ctx.adopt(ctx.scene.add.graphics().setDepth(5));
-      ctx.onFrame((_dt, elapsed) => {
-        const k = elapsed - 3300;
-        wander.clear();
-        if (k < 0) return;
-        const wx = ctx.tx + Math.sin(k / 130) * 26 + Math.sin(k / 47) * 9;
-        const wy = ctx.ty + Math.cos(k / 90) * 12;
-        wander.fillStyle(0x2b2f3d, 1); wander.fillCircle(wx, wy, 17);
-        wander.fillStyle(0x3c4254, 1); wander.fillCircle(wx, wy, 13);
-      });
+    const body = ctx.adopt(ctx.scene.add.graphics().setDepth(5));
+    let x = ctx.tx - 110;
+    let stacks = 0;
+    let next = 0;
+    ctx.onFrame((dt, elapsed) => {
+      if (elapsed > 1900) {
+        // Each stack takes 12% off the walk — the slowdown is the showcase.
+        x += (dt / 1000) * 70 * (1 - stacks * 0.12);
+        while (next < lane.length && x >= lane[next].x) {
+          drops[next].spend();
+          stacks = Math.min(5, stacks + 1);
+          fx.tendrilBurst(lane[next].x, lane[next].y, 18, 4, 6);
+          pop(ctx, lane[next].x, lane[next].y - 34, `🦶 CRIPPLED ×${stacks}`, '#cc3355');
+          next++;
+        }
+      }
+      body.clear();
+      body.fillStyle(0x2b2f3d, 1); body.fillCircle(x, ctx.ty, 17);
+      body.fillStyle(0x3c4254, 1); body.fillCircle(x, ctx.ty, 13);
+      // The limp, drawn as a dragging blood-lit hook at their feet.
+      if (stacks > 0) {
+        body.lineStyle(2, ctx.tint(SHADOW.blood), 0.5 + stacks * 0.1);
+        body.strokeEllipse(x, ctx.ty + 14, 26, 8);
+      }
     });
   },
 };
@@ -578,6 +622,48 @@ export const blackHoleUpgraded: PreviewScript = {
 
 // ══ PASSIVES ══════════════════════════════════════════════════════════
 
+export const grimGloom: PreviewScript = {
+  duration: 5600,
+  caption: 'Grim Gloom — 8s of fog: 4 Hopelessness a second, and tentacles strike anyone who lingers 1.1s',
+  run(ctx) {
+    const { fx, av } = stage(ctx, { noDummy: true });
+    let hope = 0;
+    const fog = ctx.adopt(ctx.scene.add.graphics().setDepth(2.5));
+    const strike = ctx.adopt(ctx.scene.add.graphics().setDepth(4.5));
+    const body = ctx.adopt(ctx.scene.add.graphics().setDepth(5));
+    despair(ctx, { x: ctx.tx, y: ctx.ty, read: () => hope });
+    ctx.at(200, () => {
+      av.play('raise', -Math.PI / 2, 600);
+      fx.ring(ctx.cx, ctx.cy, 20, ctx.w * 0.7, SHADOW.orchid, 900, 10, 3);
+      fx.bloom(ctx.cx, ctx.cy, 90, 14);
+    });
+    // The fool stands still for the whole showcase, so the floor opens twice under them.
+    const strikes = [1500, 3500];
+    ctx.onFrame((dt, elapsed) => {
+      const live = elapsed > 200 && elapsed < 5400;
+      const fade = live ? Math.min(1, (elapsed - 200) / 500, (5400 - elapsed) / 800) : 0;
+      fog.clear();
+      if (fade > 0) ShadowFx.drawGloomFog(fog, ctx.tint, ctx.w, ctx.h, elapsed / 1000, fade);
+      if (live) hope = Math.min(100, hope + (dt / 1000) * 4);
+      strike.clear();
+      for (const at of strikes) {
+        const k = (elapsed - at) / 900;
+        if (k >= 0 && k < 1) ShadowFx.drawGloomTentacle(strike, ctx.tint, ctx.tx, ctx.ty, k, elapsed / 1000, at * 0.001);
+      }
+      body.clear();
+      body.fillStyle(0x2b2f3d, 1); body.fillCircle(ctx.tx, ctx.ty, 17);
+      body.fillStyle(0x3c4254, 1); body.fillCircle(ctx.tx, ctx.ty, 13);
+    });
+    for (const at of strikes) {
+      ctx.at(at + 360, () => {
+        hope = Math.min(100, hope + 8);
+        fx.tendrilBurst(ctx.tx, ctx.ty, 30, 7, 6);
+        pop(ctx, ctx.tx, ctx.ty - 34, '🦑 FROM BELOW!  -14', '#cc3355');
+      });
+    }
+  },
+};
+
 export const passiveHopelessness: PreviewScript = {
   duration: 5600,
   caption: 'Passive — 3/s in a pool, −1/s always; every 2 points is 1% off their damage, cap 50%',
@@ -636,30 +722,6 @@ export const passiveShadowPools: PreviewScript = {
 
 // ══ PERKS ═════════════════════════════════════════════════════════════
 
-export const perkVoidShade: PreviewScript = {
-  duration: 4600,
-  caption: 'Perk — pools 43px instead of 36, standing 9s instead of 6',
-  run(ctx) {
-    const { fx } = stage(ctx, { noDummy: true });
-    // The two sizes side by side, drawn at their real radii.
-    pool(ctx, { x: ctx.cx + 30, y: ctx.cy + 10, r: 36, born: 300, life: 6000 });
-    pool(ctx, { x: ctx.tx, y: ctx.ty + 10, r: 43, born: 300, life: 9000 });
-    ctx.at(300, () => {
-      fx.ring(ctx.cx + 30, ctx.cy + 10, 7, 40, SHADOW.lilac, 420, 3, 3);
-      fx.ring(ctx.tx, ctx.ty + 10, 8, 48, SHADOW.lilac, 420, 3, 3);
-      const a = ctx.adopt(ctx.scene.add.text(ctx.cx + 30, ctx.cy - 40, '36px · 6s', {
-        fontSize: '11px', fontFamily: 'Arial Black', color: '#8a8ab0',
-      }).setOrigin(0.5).setDepth(11));
-      const b = ctx.adopt(ctx.scene.add.text(ctx.tx, ctx.ty - 44, '43px · 9s', {
-        fontSize: '11px', fontFamily: 'Arial Black', color: '#cc88ff',
-      }).setOrigin(0.5).setDepth(11));
-      void a; void b;
-    });
-    // 27 Hopelessness out of a full stay instead of 18 — the reason the perk matters.
-    ctx.at(3800, () => fx.gloom(ctx.cx + 30, ctx.cy + 10, 4, 32, 4));
-  },
-};
-
 export const perkString: PreviewScript = {
   duration: 5200,
   caption: 'Perk — stakes are inert; every second one strings a line for 5 damage and a 3s 50% slow',
@@ -703,6 +765,189 @@ export const perkString: PreviewScript = {
         fontSize: '11px', fontFamily: 'Arial Black', color: '#cc88ff',
       }).setOrigin(0.5).setDepth(12));
       ctx.scene.tweens.add({ targets: t, y: t.y - 14, alpha: 0, duration: 1800 });
+    });
+  },
+};
+
+/** A grey stand-in fighter the perk showcases move around by hand. */
+function walkerBody(ctx: PreviewCtx, pos: { x: number; y: number }, tintFor?: () => number | null): void {
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(5));
+  ctx.onFrame(() => {
+    g.clear();
+    const c = tintFor?.() ?? null;
+    g.fillStyle(c ?? 0x2b2f3d, 1); g.fillCircle(pos.x, pos.y, 17);
+    g.fillStyle(0x3c4254, 1); g.fillCircle(pos.x, pos.y, 13);
+  });
+}
+
+export const perkVenom: PreviewScript = {
+  duration: 5200,
+  caption: 'Perk — venom traps: 15 damage, 40% Hopelessness and 3 poison a second for 5s, no stun',
+  run(ctx) {
+    const { fx, av } = stage(ctx, { noDummy: true });
+    let hope = 0;
+    let bit = -1;
+    const trap = { x: ctx.tx - 20, y: ctx.ty };
+    const v = { x: ctx.w - 20, y: ctx.ty };
+    despair(ctx, { x: ctx.tx - 20, y: ctx.ty, read: () => hope });
+    walkerBody(ctx, v, () => (bit >= 0 ? ctx.tint(SHADOW.bile) : null));
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    ctx.onFrame((dt, elapsed) => {
+      g.clear();
+      if (bit < 0 && elapsed > 300) {
+        // The trap: snap jaws with a swelling poison sac on the plate.
+        const swell = 0.5 + 0.5 * Math.sin(elapsed * 0.006);
+        g.fillStyle(ctx.tint(SHADOW.pitch), 0.9); g.fillCircle(trap.x, trap.y, 18);
+        g.lineStyle(1.6, ctx.tint(SHADOW.venom), 0.75); g.strokeCircle(trap.x, trap.y, 17);
+        g.fillStyle(ctx.tint(SHADOW.bile), 0.95); g.fillCircle(trap.x, trap.y, 6 + swell);
+        g.fillStyle(ctx.tint(SHADOW.venom), 0.6 + swell * 0.3); g.fillCircle(trap.x - 1, trap.y - 1.5, 3);
+      }
+      if (elapsed > 900 && bit < 0) v.x = Math.max(trap.x, v.x - (dt / 1000) * 110);
+      if (bit < 0 && v.x <= trap.x + 2) {
+        bit = elapsed;
+        hope += 40;
+        fx.implosion(trap.x, trap.y, 40, { tendrils: 10, gloom: 1, duration: 380 });
+        fx.wisps(v.x, v.y, 8, { speed: 70, size: 3, life: 600, rise: -10, depth: 7, color: SHADOW.venom });
+        pop(ctx, v.x, v.y - 34, '🐍 VENOMED!  -15', '#88dd44');
+      }
+      if (bit >= 0 && elapsed - bit < 5000) {
+        // Not stunned: they keep walking, dripping poison as they go.
+        v.x -= (dt / 1000) * 60;
+        if (Math.floor((elapsed - bit) / 1000) !== Math.floor((elapsed - bit - dt) / 1000)) {
+          pop(ctx, v.x, v.y - 30, '-3', '#88dd44');
+        }
+      }
+    });
+    ctx.at(300, () => { av.play('clap'); fx.ring(trap.x, trap.y, 4, 24, SHADOW.lilac, 340, 3, 3); });
+  },
+};
+
+export const perkVantablack: PreviewScript = {
+  duration: 4800,
+  caption: 'Perk — Vantablack claymores watch a short cone; a foe stepping into it takes 30 down the cone',
+  run(ctx) {
+    const { fx, av } = stage(ctx, { noDummy: true });
+    const mine = { x: ctx.cx + 60, y: ctx.cy };
+    const half = 0.42, sight = 120;
+    const v = { x: mine.x + 130, y: mine.y - 90 };
+    let fired = false;
+    walkerBody(ctx, v);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    ctx.onFrame((dt, elapsed) => {
+      g.clear();
+      if (!fired && elapsed > 300) {
+        g.fillStyle(ctx.tint(SHADOW.blood), 0.07);
+        g.slice(mine.x, mine.y, sight, -half, half, false); g.fillPath();
+        g.lineStyle(1, ctx.tint(SHADOW.blood), 0.4);
+        g.lineBetween(mine.x, mine.y, mine.x + Math.cos(-half) * sight, mine.y + Math.sin(-half) * sight);
+        g.lineBetween(mine.x, mine.y, mine.x + Math.cos(half) * sight, mine.y + Math.sin(half) * sight);
+        const scan = Math.sin(elapsed * 0.004) * half;
+        g.lineStyle(1.4, ctx.tint(SHADOW.blood), 0.55);
+        g.lineBetween(mine.x, mine.y, mine.x + Math.cos(scan) * sight, mine.y + Math.sin(scan) * sight);
+        g.fillStyle(ctx.tint(SHADOW.abyss), 1); g.fillRoundedRect(mine.x - 4, mine.y - 12, 8, 24, 3);
+        g.lineStyle(1.4, ctx.tint(SHADOW.lilac), 0.7); g.strokeRoundedRect(mine.x - 4, mine.y - 12, 8, 24, 3);
+        g.fillStyle(ctx.tint(SHADOW.blood), 0.7 + 0.3 * Math.sin(elapsed * 0.009)); g.fillCircle(mine.x + 3, mine.y, 2.2);
+      }
+      if (elapsed > 1000 && !fired) v.y += (dt / 1000) * 70;
+      if (!fired && elapsed > 1000) {
+        const d = Math.hypot(v.x - mine.x, v.y - mine.y);
+        const ang = Math.atan2(v.y - mine.y, v.x - mine.x);
+        if (d <= sight + 20 && Math.abs(ang) <= half) {
+          fired = true;
+          fx.wisps(mine.x, mine.y, 14, { angle: 0, spread: half, speed: 230, size: 3.2, life: 420, rise: 0, depth: 7 });
+          fx.wisps(mine.x, mine.y, 8, { angle: 0, spread: half * 0.6, speed: 280, size: 2.4, life: 360, rise: 0, depth: 7, color: SHADOW.blood });
+          fx.muzzleUmbra(mine.x, mine.y, 0, 1.8, 7);
+          fx.tendrilBurst(v.x, v.y, 30, 7, 8);
+          pop(ctx, v.x, v.y - 34, '⬛ CLAYMORE!  -30', '#ff5577');
+        }
+      }
+    });
+    ctx.at(300, () => { av.play('clap'); fx.ring(mine.x, mine.y, 4, 24, SHADOW.lilac, 340, 3, 3); });
+  },
+};
+
+export const perkAbyss: PreviewScript = {
+  duration: 4600,
+  scale: 0.85,
+  caption: 'Perk — 14-tentacle walls with spikes that cut for 6 more and shove; E reaches 70% farther',
+  run(ctx) {
+    const { fx, av } = stage(ctx, { noDummy: true });
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(6));
+    const count = 14;
+    const start = { x: ctx.cx + 34, y: ctx.cy + 70 };
+    const v = { x: ctx.cx + 34 + 7 * 18, y: ctx.cy - 70 };
+    let shoved = false;
+    walkerBody(ctx, v);
+    ctx.at(200, () => av.play('slam', ctx.aim));
+    ctx.onFrame((dt, elapsed) => {
+      g.clear();
+      for (let i = 0; i < count; i++) {
+        const born = 300 + i * 55;
+        const grow = Phaser.Math.Clamp((elapsed - born) / 200, 0, 1);
+        if (grow <= 0) continue;
+        // A long diagonal wall across the box.
+        const x = start.x + i * 18, y = start.y - i * 10;
+        const sway = Math.sin(elapsed * 0.005 + i) * 0.16;
+        shadowTendrilLayered(g, ctx.tint, x, y, -Math.PI / 2 + sway, 46 * grow, 10 * grow,
+          Math.sin(elapsed * 0.0032 + i) * 12 * grow, 1, 9 * grow, elapsed * 0.004 + i, { barbs: 5 });
+        g.lineStyle(2, ctx.tint(SHADOW.pale), 0.8 * grow);
+        for (let k = 0; k < 4; k++) {
+          const a = -Math.PI / 2 + (k - 1.5) * 0.9;
+          g.lineBetween(x + Math.cos(a) * 7 * grow, y - 10 + Math.sin(a) * 4,
+            x + Math.cos(a) * 16 * grow, y - 10 + Math.sin(a) * 10);
+        }
+      }
+      if (elapsed > 1600 && !shoved) v.y += (dt / 1000) * 80;
+      if (!shoved && v.y >= ctx.cy - 10) {
+        shoved = true;
+        v.y -= 20;
+        fx.wisps(v.x, v.y, 4, { speed: 70, size: 2.4, life: 340, rise: 14, depth: 7 });
+        pop(ctx, v.x, v.y - 34, '-11  SPIKED', '#cc3355');
+      }
+    });
+  },
+};
+
+export const perkShinobi: PreviewScript = {
+  duration: 5200,
+  caption: 'Perk — two caltrops a throw, and shinobi traps that burst into caltrops and slow instead of stun',
+  run(ctx) {
+    const { fx, av } = stage(ctx, { noDummy: true });
+    const hand = { x: ctx.cx + 30, y: ctx.cy };
+    // Two at once, each a little off the line.
+    ctx.at(300, () => {
+      av.play('punch', ctx.aim);
+      fx.muzzleUmbra(hand.x, hand.y, ctx.aim, 0.6, 6);
+      caltrop(ctx, { from: hand, to: { x: ctx.tx - 40, y: ctx.ty - 34 }, at: 300 });
+      caltrop(ctx, { from: hand, to: { x: ctx.tx - 10, y: ctx.ty + 30 }, at: 300 });
+    });
+    // Then a shinobi trap sprung under a walker, and the ring it throws out.
+    const trap = { x: ctx.tx + 30, y: ctx.ty };
+    const v = { x: ctx.w - 10, y: ctx.ty };
+    let sprung = false;
+    walkerBody(ctx, v);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    ctx.onFrame((dt, elapsed) => {
+      g.clear();
+      if (!sprung && elapsed > 900) {
+        g.fillStyle(ctx.tint(SHADOW.pitch), 0.9); g.fillCircle(trap.x, trap.y, 18);
+        g.lineStyle(1.5, ctx.tint(SHADOW.orchid), 0.8); g.strokeCircle(trap.x, trap.y, 18);
+        for (let i = 0; i < 5; i++) {
+          const a = (i / 5) * Math.PI * 2;
+          ShadowFx.drawCaltrop(g, ctx.tint, trap.x + Math.cos(a) * 13, trap.y + Math.sin(a) * 11, 4, a, 1, { t: elapsed / 1000 });
+        }
+      }
+      if (elapsed > 1500) v.x -= (dt / 1000) * (sprung ? 45 : 90);
+      if (!sprung && v.x <= trap.x + 4) {
+        sprung = true;
+        fx.implosion(trap.x, trap.y, 40, { tendrils: 10, gloom: 1, duration: 380 });
+        for (let i = 0; i < 7; i++) {
+          const a = (i / 7) * Math.PI * 2;
+          const d = 38 + (i % 3) * 24;
+          caltrop(ctx, { from: trap, to: { x: trap.x + Math.cos(a) * d, y: trap.y + Math.sin(a) * d * 0.85 }, at: elapsed });
+        }
+        pop(ctx, v.x, v.y - 34, '🥷 SLOWED!  -20', '#cc88ff');
+      }
     });
   },
 };

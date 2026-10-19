@@ -53,6 +53,68 @@ const TRIPLINE_SLOW_MULT = 0.5;
 const TRIPLINE_SLOW_MS = 3000;
 const TRIPLINE_HIT_CD_MS = 1500;
 
+// ── Shadow Caltrops (Click) tuning ──────────────────────────────────────
+const CALTROP_RANGE = 340;
+const CALTROP_FLIGHT_MS = 300;
+const CALTROP_LIFETIME_MS = 8000;
+const CALTROP_DAMAGE = 5;
+const CALTROP_HOPELESS = 10;
+/** How close a foot has to come to a lying caltrop to tread on it. */
+const CALTROP_TRIGGER_R = 22;
+/** Oldest caltrop of a side is swept away past this many on the floor. */
+const CALTROP_MAX = 18;
+/** Click+ Crippling Spikes: slow per stack, the stack cap, and the refreshing timer. */
+const CRIPPLE_PER_STACK = 0.12;
+const CRIPPLE_MAX_STACKS = 5;
+const CRIPPLE_MS = 3000;
+
+// ── Shinobi perk tuning ─────────────────────────────────────────────────
+/** Angular error on each of the two thrown caltrops, and how far short/long they may land. */
+const SHINOBI_SPREAD = 0.24;
+const SHINOBI_RANGE_JITTER = 30;
+/** Caltrops a sprung shinobi trap throws out, and the ring they land in. */
+const SHINOBI_BURST = 7;
+const SHINOBI_BURST_MIN = 38;
+const SHINOBI_BURST_MAX = 92;
+const SHINOBI_SLOW_MULT = 0.5;
+const SHINOBI_SLOW_MS = 3000;
+
+// ── Venom perk tuning ───────────────────────────────────────────────────
+const VENOM_DAMAGE = 15;
+const VENOM_HOPELESS = 40;
+const VENOM_DOT_PER_SEC = 3;
+const VENOM_DOT_MS = 5000;
+
+// ── Vantablack perk (claymore) tuning ───────────────────────────────────
+/** Half-width of the line of sight, and how far down it the mine can see. */
+const CLAYMORE_HALF_ANGLE = 0.42;
+const CLAYMORE_SIGHT = 120;
+/** The blast goes down the same cone, a little deeper than the mine can see. */
+const CLAYMORE_BLAST = 140;
+const CLAYMORE_DAMAGE = 30;
+const CLAYMORE_HOPELESS = 10;
+
+// ── Abyss perk tuning ───────────────────────────────────────────────────
+const ABYSS_WALL_TENTACLES = 14;
+const ABYSS_SPIKE_DAMAGE = 6;
+const ABYSS_SHOVE = 20;
+const ABYSS_TENTACLE_REACH = 170;
+const ABYSS_TENTACLE_HOOK = 187;
+const ABYSS_TENTACLE_HOLD_MS = 4500;
+
+// ── Grim Gloom (alt Q) tuning ───────────────────────────────────────────
+const GLOOM_DURATION_MS = 8000;
+const GLOOM_HOPELESS_PER_SEC = 4;
+/** A foe who keeps inside this circle for this long has lingered too long. */
+const GLOOM_LINGER_RADIUS = 55;
+const GLOOM_LINGER_MS = 1100;
+/** One strike: warning crack, rise, lash, sink. The hit lands at GLOOM_STRIKE_HIT_AT of it. */
+const GLOOM_STRIKE_MS = 900;
+const GLOOM_STRIKE_HIT_AT = 0.4;
+const GLOOM_STRIKE_RADIUS = 36;
+const GLOOM_STRIKE_DAMAGE = 14;
+const GLOOM_STRIKE_HOPELESS = 8;
+
 // ── Death perk (trap menu) tuning ───────────────────────────────────────
 /** Mine: the charge goes off in a circle rather than biting one victim. */
 const MINE_DAMAGE = 35;
@@ -94,8 +156,7 @@ interface DarkCloud {
 
 /**
  * Something dark in flight — a writhing orb of void trailing a tail of tendrils. One flight
- * model covers all three shapes shadow throws:
- *  - `bomb`    the Click detonation: blast damage, then a pool
+ * model covers both shapes shadow lobs:
  *  - `watcher` an F+ eyed tentacle's despair amplifier: no damage, multiplies hopelessness
  *  - `shell`   a Shadow Beacon mortar round: the beacon owns its own impact, this just flies
  */
@@ -107,15 +168,53 @@ interface DarkBomb {
   spawnAt: number;
   arriveAt: number;
   owner: 'player' | 'npc';
-  mode: 'bomb' | 'watcher' | 'shell';
+  mode: 'watcher' | 'shell';
   mark: Fighter | null;
 }
 
 /**
- * Death perk: which of the four traps Snap Trap is currently loaded with. Without the perk
- * every trap is `base`, which is the jaws Shadow has always placed.
+ * What a planted trap is. `base` is the jaws Shadow has always placed; every other kind comes
+ * from a perk — Death's mine/grabber/plume, Venom, String's stake, Vantablack's claymore and
+ * Shinobi's caltrop pouch. Which one R plants is `trapKindFor`'s call.
  */
-type TrapKind = 'base' | 'mine' | 'grabber' | 'plume';
+type TrapKind = 'base' | 'mine' | 'grabber' | 'plume' | 'venom' | 'stake' | 'claymore' | 'shinobi';
+
+/**
+ * A caltrop in flight or lying on the floor. Every caltrop shares one Graphics per kit (they
+ * are tiny and numerous), so this is pure state.
+ */
+interface Caltrop {
+  x: number; y: number;
+  fromX: number; fromY: number;
+  toX: number; toY: number;
+  spawnAt: number;
+  landAt: number;
+  expiresAt: number;
+  owner: 'player' | 'npc';
+  /** Resting angle once it lands; it tumbles through a few turns on the way. */
+  spin: number;
+  landed: boolean;
+}
+
+/** Grim Gloom: a tentacle erupting under a foe who lingered. */
+interface GloomStrike {
+  x: number; y: number;
+  target: Fighter;
+  spawnAt: number;
+  hit: boolean;
+  seed: number;
+}
+
+interface GrimGloom {
+  owner: 'player' | 'npc';
+  spawnAt: number;
+  until: number;
+  gfx: Phaser.GameObjects.Graphics;
+  strikeGfx: Phaser.GameObjects.Graphics;
+  /** Per foe: the spot they have been keeping to, and since when. */
+  watch: Map<Fighter, { ax: number; ay: number; since: number }>;
+  strikes: GloomStrike[];
+}
 
 interface SnapTrap {
   /** Redrawn every frame — jaws quiver, stakes flutter their tie-off rags. */
@@ -131,8 +230,10 @@ interface SnapTrap {
   owner: 'player' | 'npc';
   /** String perk: this is a Snap Stake — inert on its own, dangerous once strung to a partner. */
   isStake?: boolean;
-  /** Death perk: what this trap does when something steps on it. */
+  /** What this trap does when something steps on it. */
   kind: TrapKind;
+  /** Vantablack claymore: the way it faces — its line of sight runs out from here. */
+  facing?: number;
   /** Grabber: who the tentacle has hold of, and until when. */
   grabbed?: Fighter | null;
   grabUntil?: number;
@@ -171,6 +272,8 @@ interface TentacleWall {
   lastX: number;
   lastY: number;
   watchers: boolean;
+  /** Abyss perk: the limbs are studded with spikes that cut and shove whoever touches them. */
+  abyss: boolean;
 }
 
 interface ShadowBeacon {
@@ -202,6 +305,8 @@ export interface ShadowArenaApi {
   readonly qKey: Phaser.Input.Keyboard.Key;
   readonly nukeChanneling: boolean;
   readonly pointerWasDown: boolean;
+  /** Online PvP: the opponent's slows on us arrive through the status mirror instead. */
+  readonly isOnline: boolean;
   readonly elementId: string;
   readonly npcElementId: string;
   readonly width: number;
@@ -257,9 +362,18 @@ export class ShadowKit {
   private consumeShroud: ShadowShroud | null = null;
   private darkBombs: DarkBomb[] = [];
 
+  // ── Caltrops (both owners) ───────────────────────────────────────────
+  private caltrops: Caltrop[] = [];
+  /** One Graphics paints every caltrop in the arena. Built lazily; dies with the scene run. */
+  private caltropGfx: Phaser.GameObjects.Graphics | null = null;
+  /** Click+ Crippling Spikes: slow stacks per fighter and when they all fall off. */
+  private crippled = new Map<Fighter, { stacks: number; until: number }>();
+  /** Venom trap poison: per fighter, until when and the damage still owed this second. */
+  private venomed = new Map<Fighter, { until: number; acc: number; owner: 'player' | 'npc' }>();
+  /** Grim Gloom, at most one per owner. */
+  private glooms: GrimGloom[] = [];
+
   // ── Player shadow ────────────────────────────────────────────────────
-  private shadowDrainHoldAccum = 0;
-  private shadowDrainCloudAccum = 0;
   private shadowTentacleActive = false;
   private shadowTentacleEnd = 0;
   private shadowTentacleX = 0;
@@ -286,15 +400,21 @@ export class ShadowKit {
   /** Cast-time aim per wall, used only for its first tentacle (before the cursor takes over). */
   private wallAim = new Map<TentacleWall, { x: number; y: number }>();
   private beacons: ShadowBeacon[] = [];
-  /** Fighters currently slowed by a tripline → expiry timestamp. */
+  /** Fighters currently slowed by a tripline or a shinobi trap → expiry timestamp. */
   private slowedUntil = new Map<Fighter, number>();
+  /** Fighters whose walkSpeedMult this kit has lowered, so it can hand them it back. */
+  private walkSlowed = new Set<Fighter>();
   /** Fighters this kit has tinted for hopelessness, so it only clears its own tint. */
   private tinted = new Set<Fighter>();
   private oozeAccum = 0;
 
-  // ── Death perk: trap menu ────────────────────────────────────────────
-  /** Which trap Snap Trap places. Only ever anything but 'base' while Death is equipped. */
+  // ── Trap picker (Death + the trap perks) ─────────────────────────────
+  /** Which trap the picker is set to. Only read while the picker is up. */
   private selectedTrap: TrapKind = 'base';
+  /** Online: the trap the remote shadow last told us it is planting (`shadow-trap:<kind>`). */
+  private npcNetTrap: TrapKind | null = null;
+  /** The kinds the bar was built for, so a loadout change rebuilds it. */
+  private trapBarKey = '';
   private trapBarSlots: Array<{
     kind: TrapKind;
     bg: Phaser.GameObjects.Rectangle;
@@ -309,6 +429,8 @@ export class ShadowKit {
   /** The void-pocket plates behind the trap icons, redrawn every frame. */
   private trapBarGfx: Phaser.GameObjects.Graphics | null = null;
   private trapBarHover: TrapKind | null = null;
+  /** The current press began on the picker, so it must not throw a caltrop. */
+  private pressOnTrapBar = false;
 
   // ── NPC shadow ───────────────────────────────────────────────────────
   private npcShadowTentacleActive = false;
@@ -330,10 +452,6 @@ export class ShadowKit {
   private shadowConsumeActive = false;
   private shadowConsumeEnd = 0;
   private shadowConsumeTickAccum = 0;
-  private shadowConfusionUntil = 0;
-  private shadowConfusionAngle = 0;
-  private shadowConfusionNextChange = 0;
-  private shadowCloudExposureAccum = 0;
   private shadowBHPuddleAccum = 0;
 
   // ── Shadow Mastery ───────────────────────────────────────────────────
@@ -368,13 +486,39 @@ export class ShadowKit {
   getShadowBeaconCooldownRatio(time: number): number {
     return Math.min(1, (time - this.beaconLastCastAt) / BEACON_COOLDOWN_MS);
   }
-  /** Tripline slow contribution for the NPC (1 = unslowed). */
+  /** Tripline / shinobi / crippling slow contribution for the NPC (1 = unslowed). */
   getNpcSpeedMult(time: number): number {
-    return time < (this.slowedUntil.get(this.arena.npc) ?? 0) ? TRIPLINE_SLOW_MULT : 1;
+    return this.slowMultFor(this.arena.npc, time);
   }
-  /** Tripline slow contribution for the player (1 = unslowed). */
+  /**
+   * Tripline / shinobi / crippling slow contribution for the player (1 = unslowed). Online,
+   * the attacker's sim already slows its replica of us and relays it (`netSpeedMult`), so
+   * applying our own copy as well would slow us twice.
+   */
   getPlayerSpeedMult(time: number): number {
-    return time < (this.slowedUntil.get(this.arena.player) ?? 0) ? TRIPLINE_SLOW_MULT : 1;
+    return this.arena.isOnline ? 1 : this.slowMultFor(this.arena.player, time);
+  }
+  /** True while that side's Grim Gloom is up — ArenaScene attributes mastery kills with it. */
+  isGloomActive(owner: 'player' | 'npc'): boolean {
+    return this.glooms.some((g) => g.owner === owner);
+  }
+  /**
+   * Bot synergy: while the bot's own Grim Gloom is up, caltrops thrown at the player's feet
+   * make them stand still (Crippling Spikes stacks them into a crawl), and standing still is
+   * what the gloom's tentacles feed on. Null when there is no gloom to feed.
+   */
+  npcGloomCaltropAim(): { x: number; y: number } | null {
+    if (!this.isGloomActive('npc')) return null;
+    const p = this.arena.player;
+    return p.active && p.hp > 0 ? { x: p.x, y: p.y } : null;
+  }
+
+  /** Every slow this kit owns on one fighter, folded into a single walk multiplier. */
+  private slowMultFor(f: Fighter, time: number): number {
+    let m = time < (this.slowedUntil.get(f) ?? 0) ? Math.min(TRIPLINE_SLOW_MULT, SHINOBI_SLOW_MULT) : 1;
+    const c = this.crippled.get(f);
+    if (c && time < c.until) m = Math.min(m, 1 - c.stacks * CRIPPLE_PER_STACK);
+    return m;
   }
 
   reset(): void {
@@ -388,8 +532,13 @@ export class ShadowKit {
     this.aimX = 0;
     this.aimY = 0;
 
-    this.shadowDrainHoldAccum = 0;
-    this.shadowDrainCloudAccum = 0;
+    this.caltrops = [];
+    this.caltropGfx?.destroy();
+    this.caltropGfx = null;
+    this.crippled.clear();
+    this.venomed.clear();
+    for (const g of this.glooms) { g.gfx.destroy(); g.strikeGfx.destroy(); }
+    this.glooms = [];
     this.shadowTentacleActive = false;
     this.shadowTentacleHooked = false;
     this.shadowTentacleEnd = 0;
@@ -418,7 +567,8 @@ export class ShadowKit {
     this.wallAim.clear();
     for (const b of this.beacons) { b.gfx.destroy(); b.dotGfx.destroy(); }
     this.beacons = [];
-    for (const f of this.slowedUntil.keys()) if (f.active) f.walkSpeedMult = 1;
+    for (const f of this.walkSlowed) if (f.active) f.walkSpeedMult = 1;
+    this.walkSlowed.clear();
     this.slowedUntil.clear();
     for (const f of this.tinted) if (f.active) f.clearTint();
     this.tinted.clear();
@@ -427,6 +577,8 @@ export class ShadowKit {
     // update(), which is also the only place that knows whether this match wants one.
     this.teardownTrapBar();
     this.selectedTrap = 'base';
+    this.npcNetTrap = null;
+    this.pressOnTrapBar = false;
     this.npcShadowTentacleActive = false;
     this.npcShadowTentacleHooked = false;
     this.npcShadowTentacleEnd = 0;
@@ -444,10 +596,6 @@ export class ShadowKit {
     this.shadowConsumeActive = false;
     this.shadowConsumeEnd = 0;
     this.shadowConsumeTickAccum = 0;
-    this.shadowConfusionUntil = 0;
-    this.shadowConfusionAngle = 0;
-    this.shadowConfusionNextChange = 0;
-    this.shadowCloudExposureAccum = 0;
     this.shadowBHPuddleAccum = 0;
     this.sufferingAccum = 0;
     this.lastPlayerHp = -1;
@@ -550,22 +698,48 @@ export class ShadowKit {
     player.hopelessIncomingMult = 1 - Math.min(HOPELESS_DAMAGE_CAP, worstEnemy * HOPELESS_DAMAGE_PER_POINT);
     this.arena.npc.hopelessIncomingMult = 1 - Math.min(HOPELESS_DAMAGE_CAP, player.hopelessness * HOPELESS_DAMAGE_PER_POINT);
 
-    // Tripline slows expire back to normal walk speed.
+    // Tripline / shinobi slows and crippling stacks expire back to normal walk speed. The
+    // 1v1 pair reads these through the speed-mult accessors; walkSpeedMult is for husks.
     for (const [f, until] of this.slowedUntil) {
-      if (time >= until) {
-        if (f.active) f.walkSpeedMult = 1;
-        this.slowedUntil.delete(f);
-      } else if (f.active) {
-        f.walkSpeedMult = Math.min(f.walkSpeedMult, TRIPLINE_SLOW_MULT);
+      if (time >= until) this.slowedUntil.delete(f);
+    }
+    for (const [f, c] of this.crippled) {
+      if (time >= c.until) this.crippled.delete(f);
+    }
+    for (const f of new Set([...this.slowedUntil.keys(), ...this.crippled.keys()])) {
+      if (!f.active) continue;
+      // Already ours: track the slow exactly, so a lifted tripline hands back the difference.
+      const m = this.slowMultFor(f, time);
+      f.walkSpeedMult = this.walkSlowed.has(f) ? m : Math.min(f.walkSpeedMult, m);
+      this.walkSlowed.add(f);
+    }
+    for (const f of this.walkSlowed) {
+      if (this.slowedUntil.has(f) || this.crippled.has(f)) continue;
+      if (f.active) f.walkSpeedMult = 1;
+      this.walkSlowed.delete(f);
+    }
+
+    // Venom trap poison ticks once a second.
+    for (const [f, v] of this.venomed) {
+      if (!f.active || f.hp <= 0 || time >= v.until) { this.venomed.delete(f); continue; }
+      v.acc += VENOM_DOT_PER_SEC * dt;
+      if (v.acc >= VENOM_DOT_PER_SEC) {
+        v.acc -= VENOM_DOT_PER_SEC;
+        f.takeDamage(VENOM_DOT_PER_SEC);
+        this.arena.spawnHitFlash(f.x, f.y, SHADOW.venom);
+      }
+      if (Math.random() < dt * 6) {
+        this.fx(v.owner).wisps(f.x + Phaser.Math.Between(-10, 10), f.y - 4, 1, {
+          angle: Math.PI / 2, spread: 0.4, speed: 20, size: 2.4, life: 520, rise: -14, depth: 7, color: SHADOW.venom,
+        });
       }
     }
   }
 
   private spawnDarkCloud(x: number, y: number, owner: 'player' | 'npc'): void {
     const scene = this.arena.scene;
-    const voidOn = this.arena.hasPerk(owner, 'void-shade');
-    const radius = voidOn ? 43 : 36;
-    const duration = voidOn ? 9000 : 6000;
+    const radius = 36;
+    const duration = 6000;
     this.shadowDarkClouds.push({
       gfx: scene.add.graphics().setDepth(3),
       expiresAt: scene.time.now + duration,
@@ -597,34 +771,108 @@ export class ShadowKit {
 
   // ── Ability-cast methods (invoked via CastContext delegates) ──────────
 
+  // ── Shadow Caltrops (Click) ─────────────────────────────────────────────
+
   /**
-   * The thrown bomb: a writhing orb of void that grows a tail of tendrils as it accelerates,
-   * then implodes. Flight is stepped in `updateDarkBombs` rather than tweened, so the art can
-   * react to the orb's own velocity.
+   * Throw a caltrop at the point (clamped to range). Shinobi throws two, each a little off the
+   * line and a little short or long. Every gesture fires here, so a bot's and an online peer's
+   * throws animate exactly like the player's.
    */
-  doLaunchDarkBomb(x: number, y: number, isPlayer: boolean): void {
-    const scene = this.arena.scene;
-    const caster = isPlayer ? this.arena.player : this.arena.npc;
+  doThrowCaltrop(x: number, y: number, isPlayer: boolean): void {
     const owner: 'player' | 'npc' = isPlayer ? 'player' : 'npc';
+    const caster = isPlayer ? this.arena.player : this.arena.npc;
     const avatar = isPlayer ? this.playerAvatar : this.npcAvatar;
     const angle = Math.atan2(y - caster.y, x - caster.x);
+    const dist = Math.min(CALTROP_RANGE, Phaser.Math.Distance.Between(caster.x, caster.y, x, y));
 
     avatar?.play('punch', angle);
-    // Fire the muzzle out of the hand that actually threw it.
     const hand = avatar?.castHand() ?? { x: caster.x, y: caster.y };
-    this.fx(owner).muzzleUmbra(hand.x, hand.y, angle, 1, 8);
+    this.fx(owner).muzzleUmbra(hand.x, hand.y, angle, 0.6, 8);
 
-    this.darkBombs.push({
-      gfx: scene.add.graphics().setDepth(8),
-      x: caster.x, y: caster.y,
-      fromX: caster.x, fromY: caster.y,
-      toX: x, toY: y,
-      spawnAt: scene.time.now,
-      arriveAt: scene.time.now + 380,
-      owner,
-      mode: 'bomb',
-      mark: null,
+    const throws = this.arena.hasPerk(owner, 'shadow-shinobi')
+      ? [-1, 1].map((side) => ({
+        a: angle + side * SHINOBI_SPREAD * (0.45 + Math.random() * 0.55),
+        d: Math.max(30, dist + Phaser.Math.Between(-SHINOBI_RANGE_JITTER, SHINOBI_RANGE_JITTER)),
+      }))
+      : [{ a: angle, d: dist }];
+    for (const t of throws) {
+      this.spawnCaltrop(owner, hand.x, hand.y,
+        caster.x + Math.cos(t.a) * t.d, caster.y + Math.sin(t.a) * t.d, CALTROP_FLIGHT_MS);
+    }
+  }
+
+  /** Put one caltrop in the air. Past the per-side cap, the oldest one on the floor goes. */
+  private spawnCaltrop(owner: 'player' | 'npc', fromX: number, fromY: number, toX: number, toY: number, flightMs: number): void {
+    const now = this.arena.scene.time.now;
+    const tx = Phaser.Math.Clamp(toX, 14, this.arena.width - 14);
+    const ty = Phaser.Math.Clamp(toY, 24, this.arena.height - 14);
+    const mine = this.caltrops.filter((c) => c.owner === owner);
+    if (mine.length >= CALTROP_MAX) this.caltrops.splice(this.caltrops.indexOf(mine[0]), 1);
+    this.caltrops.push({
+      x: fromX, y: fromY, fromX, fromY, toX: tx, toY: ty,
+      spawnAt: now, landAt: now + flightMs, expiresAt: now + flightMs + CALTROP_LIFETIME_MS,
+      owner, spin: Math.random() * Math.PI * 2, landed: false,
     });
+  }
+
+  private cripplingFor(owner: 'player' | 'npc'): boolean {
+    return owner === 'player' ? this.arena.hasUpgrade('click') : this.arena.hasNpcUpgrade('click');
+  }
+
+  /** Fly, land, trigger, expire and repaint every caltrop in one pass. */
+  private updateCaltrops(time: number): void {
+    const { player, enemies, scene } = this.arena;
+    if (!this.caltropGfx) this.caltropGfx = scene.add.graphics().setDepth(4);
+    const g = this.caltropGfx;
+    g.clear();
+    const t = time / 1000;
+    for (let i = this.caltrops.length - 1; i >= 0; i--) {
+      const c = this.caltrops[i];
+      if (time >= c.expiresAt) { this.caltrops.splice(i, 1); continue; }
+      const crippling = this.cripplingFor(c.owner);
+      if (!c.landed) {
+        const k = Math.min(1, (time - c.spawnAt) / Math.max(1, c.landAt - c.spawnAt));
+        c.x = c.fromX + (c.toX - c.fromX) * k;
+        c.y = c.fromY + (c.toY - c.fromY) * k;
+        // A low lob: it tumbles over at the top of the arc.
+        const lift = Math.sin(Math.PI * k) * 26;
+        g.fillStyle(this.col(c.owner)(SHADOW.abyss), 0.25);
+        g.fillEllipse(c.x, c.y + 4, 10, 4);
+        ShadowFx.drawCaltrop(g, this.col(c.owner), c.x, c.y - lift, 6, c.spin + k * 9, 1, { crippling, t });
+        if (k >= 1) {
+          c.landed = true;
+          c.x = c.toX; c.y = c.toY;
+          this.fx(c.owner).wisps(c.x, c.y, 2, { speed: 30, size: 2, life: 300, rise: 6, depth: 4 });
+        }
+        continue;
+      }
+      // Lying caltrops thin out over their last second instead of popping off.
+      const left = c.expiresAt - time;
+      ShadowFx.drawCaltrop(g, this.col(c.owner), c.x, c.y, 6.5, c.spin, left < 900 ? left / 900 : 1,
+        { crippling, grounded: true, t });
+
+      const victims: Fighter[] = c.owner === 'player' ? enemies : [player];
+      for (const v of victims) {
+        if (!v.active || v.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(c.x, c.y, v.x, v.y) > CALTROP_TRIGGER_R) continue;
+        this.treadOnCaltrop(c, v, time, crippling);
+        this.caltrops.splice(i, 1);
+        break;
+      }
+    }
+  }
+
+  /** Someone stepped on one: a little damage, a lump of despair, and with Click+ a limp. */
+  private treadOnCaltrop(c: Caltrop, v: Fighter, time: number, crippling: boolean): void {
+    v.takeDamage(CALTROP_DAMAGE, { source: c, sourceX: c.x, sourceY: c.y });
+    this.applyHopelessness(v, CALTROP_HOPELESS);
+    this.arena.spawnHitFlash(v.x, v.y, SHADOW.mauve);
+    this.fx(c.owner).tendrilBurst(c.x, c.y, 18, 4, 6);
+    if (!crippling) return;
+    const prev = this.crippled.get(v);
+    const stacks = Math.min(CRIPPLE_MAX_STACKS, (prev && time < prev.until ? prev.stacks : 0) + 1);
+    this.crippled.set(v, { stacks, until: time + Math.round(CRIPPLE_MS * v.statusDurMult) });
+    this.arena.showFloatingText(v.x, v.y - 40, `🦶 CRIPPLED ×${stacks}`, '#cc3355');
   }
 
   /** Steps every bomb in flight, paints it, and detonates the ones that have arrived. */
@@ -669,7 +917,6 @@ export class ShadowKit {
   }
 
   private detonateDarkBomb(b: DarkBomb): void {
-    const { player, enemies, scene } = this.arena;
     const fx = this.fx(b.owner);
 
     // Beacon shells are only being flown here; `fireBeacon` owns their impact.
@@ -683,37 +930,30 @@ export class ShadowKit {
         this.multiplyHopelessness(mark, WATCHER_HOPELESS_MULT);
         this.arena.spawnHitFlash(mark.x, mark.y, SHADOW.blood);
       }
-      return;
     }
-
-    fx.implosion(b.toX, b.toY, 62, { tendrils: 10, gloom: 2, duration: 400 });
-    scene.cameras.main.shake(90, 0.003);
-    const victims: Fighter[] = b.owner === 'player' ? enemies : [player];
-    for (const t of victims) {
-      if (!t.active || t.hp <= 0) continue;
-      if (Phaser.Math.Distance.Between(b.toX, b.toY, t.x, t.y) > 50) continue;
-      t.takeDamage(10);
-      this.arena.spawnHitFlash(t.x, t.y, SHADOW.amethyst);
-    }
-    this.spawnDarkCloud(b.toX, b.toY, b.owner);
   }
 
   doActivateTentacle(x: number, y: number, isPlayer: boolean): void {
     const scene = this.arena.scene;
     const { player, npc, enemies } = this.arena;
+    // Abyss: a longer limb that holds on for longer.
+    const abyss = this.arena.hasPerk(isPlayer ? 'player' : 'npc', 'shadow-abyss');
+    const hookRange = abyss ? ABYSS_TENTACLE_HOOK : 110;
+    const reachMax = abyss ? ABYSS_TENTACLE_REACH : 100;
+    const holdMs = abyss ? ABYSS_TENTACLE_HOLD_MS : 3000;
     if (isPlayer) {
       const hookDist = Phaser.Math.Distance.Between(player.x, player.y, npc.x, npc.y);
       this.shadowTentacleActive = true;
-      this.shadowTentacleHooked = hookDist <= 110;
+      this.shadowTentacleHooked = hookDist <= hookRange;
       // Trap drag: check if a trap/stake is near cursor — extend duration for the drag
       const hasTrapNearby = this.canDragTraps('player') && this.shadowSnapTraps.some(
         t => t.owner === 'player' && !t.triggered &&
              Phaser.Math.Distance.Between(t.x, t.y, x, y) <= 55,
       );
-      this.shadowTentacleEnd = scene.time.now + (this.shadowTentacleHooked ? 3000 : hasTrapNearby ? 3000 : 600);
-      // Tentacle endpoint: toward cursor but clamped to 100px range
+      this.shadowTentacleEnd = scene.time.now + (this.shadowTentacleHooked ? holdMs : hasTrapNearby ? 3000 : 600);
+      // Tentacle endpoint: toward cursor but clamped to the limb's reach
       const angle = Math.atan2(y - player.y, x - player.x);
-      const reach = Math.min(100, Phaser.Math.Distance.Between(player.x, player.y, x, y));
+      const reach = Math.min(reachMax, Phaser.Math.Distance.Between(player.x, player.y, x, y));
       this.shadowTentacleX = player.x + Math.cos(angle) * reach;
       this.shadowTentacleY = player.y + Math.sin(angle) * reach;
       if (!this.shadowTentacleSprite) {
@@ -724,7 +964,7 @@ export class ShadowKit {
       this.pfx.lash(player.x, player.y, angle, reach);
       for (const t of enemies) {
         if (!t.active || t.hp <= 0) continue;
-        if (Phaser.Math.Distance.Between(player.x, player.y, t.x, t.y) <= 110) {
+        if (Phaser.Math.Distance.Between(player.x, player.y, t.x, t.y) <= hookRange) {
           t.takeDamage(10);
           this.applyHopelessness(t, WALL_TENTACLE_HOPELESS);
           this.arena.spawnHitFlash(t.x, t.y, SHADOW.amethyst);
@@ -734,14 +974,14 @@ export class ShadowKit {
     } else {
       const hookDist = Phaser.Math.Distance.Between(npc.x, npc.y, player.x, player.y);
       this.npcShadowTentacleActive = true;
-      this.npcShadowTentacleHooked = hookDist <= 110;
-      this.npcShadowTentacleEnd = scene.time.now + (this.npcShadowTentacleHooked ? 3000 : 600);
+      this.npcShadowTentacleHooked = hookDist <= hookRange;
+      this.npcShadowTentacleEnd = scene.time.now + (this.npcShadowTentacleHooked ? holdMs : 600);
       if (!this.npcShadowTentacleSprite) {
         this.npcShadowTentacleSprite = scene.add.graphics().setDepth(6);
       }
       const npcAim = Math.atan2(player.y - npc.y, player.x - npc.x);
       this.npcAvatar?.play('sweep', npcAim);
-      this.nfx.lash(npc.x, npc.y, npcAim, Math.min(110, hookDist));
+      this.nfx.lash(npc.x, npc.y, npcAim, Math.min(hookRange, hookDist));
       if (this.npcShadowTentacleHooked) {
         player.takeDamage(10);
         this.applyHopelessness(player, WALL_TENTACLE_HOPELESS);
@@ -762,15 +1002,71 @@ export class ShadowKit {
     return has('r') || has('e');
   }
 
-  // ── Death perk: the trap menu ──────────────────────────────────────────
+  // ── Trap picker: Death's traps and the trap perks ──────────────────────
 
-  /** The four traps, in bar order. Blurbs are what the bar says under each icon. */
+  /** Every trap kind, in picker order, with the name and colour its tile carries. */
   private static readonly TRAP_MENU: Array<{ kind: TrapKind; name: string; color: number }> = [
-    { kind: 'base',    name: 'Snap',    color: SHADOW.mauve },
-    { kind: 'mine',    name: 'Mine',    color: SHADOW.blood },
-    { kind: 'grabber', name: 'Grabber', color: SHADOW.lilac },
-    { kind: 'plume',   name: 'Plume',   color: SHADOW.amethyst },
+    { kind: 'base',     name: 'Snap',    color: SHADOW.mauve },
+    { kind: 'venom',    name: 'Venom',   color: SHADOW.venom },
+    { kind: 'stake',    name: 'Stake',   color: SHADOW.lilac },
+    { kind: 'claymore', name: 'Vanta',   color: SHADOW.blood },
+    { kind: 'shinobi',  name: 'Shinobi', color: SHADOW.orchid },
+    { kind: 'mine',     name: 'Mine',    color: SHADOW.blood },
+    { kind: 'grabber',  name: 'Grabber', color: SHADOW.lilac },
+    { kind: 'plume',    name: 'Plume',   color: SHADOW.amethyst },
   ];
+
+  /** The trap each trap perk brings. Death is separate: it brings three at once. */
+  private static readonly TRAP_PERKS: Array<{ perk: string; kind: TrapKind }> = [
+    { perk: 'shadow-venom', kind: 'venom' },
+    { perk: 'plume', kind: 'stake' },
+    { perk: 'shadow-vantablack', kind: 'claymore' },
+    { perk: 'shadow-shinobi', kind: 'shinobi' },
+  ];
+
+  /**
+   * The traps a side can plant, in picker order. One trap perk simply replaces the snap trap.
+   * Two or more (or Death, which brings three) put a picker under the health bar, and the
+   * snap trap is always one of its choices.
+   */
+  private trapOptions(owner: 'player' | 'npc'): TrapKind[] {
+    const kinds = ShadowKit.TRAP_PERKS.filter((t) => this.arena.hasPerk(owner, t.perk)).map((t) => t.kind);
+    const death = this.arena.hasPerk(owner, 'death');
+    if (!death && kinds.length === 1) return kinds;
+    if (death) kinds.push('mine', 'grabber', 'plume');
+    return ['base', ...kinds];
+  }
+
+  /** What R plants for this side right now. */
+  private trapKindFor(owner: 'player' | 'npc'): TrapKind {
+    const opts = this.trapOptions(owner);
+    if (opts.length === 1) return opts[0];
+    if (owner === 'player') return opts.includes(this.selectedTrap) ? this.selectedTrap : 'base';
+    // Online, the remote shadow says what it is planting; a bot just picks.
+    if (this.npcNetTrap && opts.includes(this.npcNetTrap)) return this.npcNetTrap;
+    return opts[Phaser.Math.Between(0, opts.length - 1)];
+  }
+
+  /**
+   * Online: the remote shadow's `shadow-trap:<kind>` pseudo-cast. It is sent after the R cast
+   * it belongs to, so a trap the replay has only just planted is re-planted as the right kind.
+   */
+  noteNpcTrapKind(kind: string, tx: number, ty: number): void {
+    const def = ShadowKit.TRAP_MENU.find((d) => d.kind === kind);
+    if (!def) return;
+    this.npcNetTrap = def.kind;
+    const now = this.arena.scene.time.now;
+    for (let i = this.shadowSnapTraps.length - 1; i >= 0; i--) {
+      const t = this.shadowSnapTraps[i];
+      if (t.owner !== 'npc' || t.triggered || now - t.spawnAt > 1000) continue;
+      if (t.kind === def.kind) return;
+      t.gfx.destroy();
+      if (this.pendingStake.npc === t) this.pendingStake.npc = null;
+      this.shadowSnapTraps.splice(i, 1);
+      this.plantTrap('npc', t.x, t.y, def.kind, Math.atan2(ty - t.y, tx - t.x), false);
+      return;
+    }
+  }
 
   private teardownTrapBar(): void {
     for (const s of this.trapBarSlots) { s.bg.destroy(); s.art.destroy(); s.name.destroy(); }
@@ -778,38 +1074,47 @@ export class ShadowKit {
     this.trapBarGfx?.destroy(); this.trapBarGfx = null;
     this.trapBarHover = null;
     this.trapBarBounds = { x1: 0, y1: 0, x2: 0, y2: 0 };
+    this.trapBarKey = '';
   }
 
-  private buildTrapBar(): void {
+  private static readonly TRAP_SLOT_W = 62;
+  private static readonly TRAP_SLOT_H = 46;
+
+  /** The picker, centred under the health bar. One tile per trap this loadout can plant. */
+  private buildTrapBar(kinds: TrapKind[]): void {
     const scene = this.arena.scene;
-    const slotW = 74;
-    const gap = 8;
-    const menu = ShadowKit.TRAP_MENU;
-    const total = menu.length * slotW + (menu.length - 1) * gap;
+    const slotW = ShadowKit.TRAP_SLOT_W;
+    const slotH = ShadowKit.TRAP_SLOT_H;
+    const gap = 6;
+    const total = kinds.length * slotW + (kinds.length - 1) * gap;
     const startX = this.arena.width / 2 - total / 2 + slotW / 2;
-    const y = 46;
+    const y = this.arena.hpBarY + this.arena.hpBarH / 2 + 12 + slotH / 2;
     this.trapBarBounds = {
-      x1: startX - slotW / 2, y1: y - 28,
-      x2: startX - slotW / 2 + total, y2: y + 28,
+      x1: startX - slotW / 2, y1: y - slotH / 2,
+      x2: startX - slotW / 2 + total, y2: y + slotH / 2,
     };
+    this.trapBarKey = kinds.join(',');
+    if (!kinds.includes(this.selectedTrap)) this.selectedTrap = 'base';
 
     this.trapBarGfx = scene.add.graphics().setDepth(199.5).setScrollFactor(0);
-    for (let i = 0; i < menu.length; i++) {
-      const def = menu[i];
+    for (let i = 0; i < kinds.length; i++) {
+      const def = ShadowKit.TRAP_MENU.find((d) => d.kind === kinds[i])!;
       const x = startX + i * (slotW + gap);
-      // The rect is only the hit area now; the void-pocket plate is painted by paintTrapBar.
-      const bg = scene.add.rectangle(x, y, slotW, 56, SHADOW.pitch, 0.01)
+      // The rect is only the hit area; the void-pocket plate is painted by paintTrapBar.
+      const bg = scene.add.rectangle(x, y, slotW, slotH, SHADOW.pitch, 0.01)
         .setDepth(200)
         .setScrollFactor(0)
         .setInteractive({ useHandCursor: true });
       const art = scene.add.graphics().setDepth(201).setScrollFactor(0);
-      const name = scene.add.text(x, y + 19, def.name.toUpperCase(), {
-        fontSize: '9px', fontFamily: FONT_DISPLAY, color: '#ccaadd', stroke: '#08000f', strokeThickness: 3,
+      const name = scene.add.text(x, y + 15, def.name.toUpperCase(), {
+        fontSize: '8px', fontFamily: FONT_DISPLAY, color: '#ccaadd', stroke: '#08000f', strokeThickness: 3,
       }).setOrigin(0.5).setDepth(201).setScrollFactor(0);
 
       bg.on('pointerdown', () => {
         this.selectedTrap = def.kind;
         this.refreshTrapBar();
+        // Online: tell the peer what our next trap will be before we plant it.
+        this.arena.broadcastMasteryCast(`shadow-trap:${def.kind}`);
       });
       bg.on('pointerover', () => { this.trapBarHover = def.kind; });
       bg.on('pointerout', () => { if (this.trapBarHover === def.kind) this.trapBarHover = null; this.refreshTrapBar(); });
@@ -821,20 +1126,18 @@ export class ShadowKit {
 
   private refreshTrapBar(): void {
     for (const s of this.trapBarSlots) {
-      const def = ShadowKit.TRAP_MENU.find((d) => d.kind === s.kind)!;
-      void def;
-      const sel = s.kind === this.selectedTrap;
-      s.name.setColor(sel ? '#ffffff' : '#9977aa');
+      s.name.setColor(s.kind === this.selectedTrap ? '#ffffff' : '#9977aa');
     }
   }
 
-  /** Repaint the four icons, so each one twitches in the bar exactly as it will on the floor. */
+  /** Repaint the tiles, so each trap twitches in the bar exactly as it will on the floor. */
   private paintTrapBar(time: number): void {
     const g = this.trapBarGfx;
+    const w = ShadowKit.TRAP_SLOT_W, h = ShadowKit.TRAP_SLOT_H;
     if (g) {
       g.clear();
       const b = this.trapBarBounds;
-      // A torn strip of night the four pockets hang in, with tendrils curling off each end.
+      // A torn strip of night the pockets hang in, with tendrils curling off each end.
       g.fillStyle(0x000000, 0.4);
       g.fillRoundedRect(b.x1 - 8, b.y1 - 3, b.x2 - b.x1 + 16, b.y2 - b.y1 + 10, 12);
       g.fillStyle(SHADOW.abyss, 0.88);
@@ -858,7 +1161,7 @@ export class ShadowKit {
         const def = ShadowKit.TRAP_MENU.find((d) => d.kind === s.kind)!;
         const sel = s.kind === this.selectedTrap;
         const hov = s.kind === this.trapBarHover;
-        const w = 74, h = 56, x0 = s.x - w / 2, y0 = s.y - h / 2;
+        const x0 = s.x - w / 2, y0 = s.y - h / 2;
         if (sel) {
           // A selected pocket breathes a violet aura out of its edges.
           const pulse = 0.5 + 0.5 * Math.sin(time / 240);
@@ -874,7 +1177,7 @@ export class ShadowKit {
         for (let k = 0; k < 3; k++) {
           const ph = (time / 1600 + k / 3 + s.x * 0.001) % 1;
           g.fillStyle(def.color, (1 - ph) * (sel ? 0.5 : 0.22));
-          g.fillCircle(x0 + 12 + k * 25 + Math.sin(ph * 6 + k) * 3, y0 + h - 6 - ph * (h - 12), 1.8);
+          g.fillCircle(x0 + 10 + k * 21 + Math.sin(ph * 6 + k) * 3, y0 + h - 6 - ph * (h - 12), 1.8);
         }
         g.lineStyle(sel ? 2.5 : 1.5, def.color, sel ? 1 : hov ? 0.85 : 0.5);
         g.strokeRoundedRect(x0, y0, w, h, 9);
@@ -886,12 +1189,12 @@ export class ShadowKit {
         }
         // Name ribbon under the icon.
         g.fillStyle(sel ? def.color : SHADOW.umbra, sel ? 0.55 : 0.8);
-        g.fillRoundedRect(x0 + 8, s.y + 13, w - 16, 12, 5);
+        g.fillRoundedRect(x0 + 7, s.y + 10, w - 14, 11, 5);
       }
     }
     for (const s of this.trapBarSlots) {
       s.art.clear();
-      this.drawTrapIcon(s.art, s.kind, s.x, s.y - 4, time + s.x * 3, s.kind === this.selectedTrap ? 1 : 0.65);
+      this.drawTrapIcon(s.art, s.kind, s.x, s.y - 5, time + s.x * 3, s.kind === this.selectedTrap ? 1 : 0.65);
     }
   }
 
@@ -912,21 +1215,18 @@ export class ShadowKit {
   ): void {
     const stub: SnapTrap = {
       gfx: g, expiresAt: 0, spawnAt: -1000, phase: x * 0.01,
-      x, y, triggered: false, radius: 15, owner: 'player', kind,
+      x, y, triggered: false, radius: kind === 'stake' ? 8 : 13, owner: 'player', kind,
+      isStake: kind === 'stake', facing: -Math.PI / 2,
     };
     g.setAlpha(alpha);
-    if (kind === 'mine') this.drawMine(stub, time);
-    else if (kind === 'grabber') this.drawGrabber(stub, time);
-    else if (kind === 'plume') this.drawPlumeTrap(stub, time);
-    else this.drawSnapTrap(stub, time);
+    // The bar has no room for a claymore's line of sight; the icon is the mine alone.
+    this.drawTrap(stub, time, true);
   }
 
-  doPlaceSnapTrap(isPlayer: boolean): void {
-    const scene = this.arena.scene;
+  doPlaceSnapTrap(isPlayer: boolean, aimX?: number, aimY?: number): void {
     const { player, npc } = this.arena;
     const owner: 'player' | 'npc' = isPlayer ? 'player' : 'npc';
     const caster = isPlayer ? player : npc;
-    const isStake = this.arena.hasPerk(owner, 'plume');
     const bigTraps = isPlayer ? this.arena.hasUpgrade('r') : this.arena.hasNpcUpgrade('r');
 
     // Hands come together low and shove the thing into the ground.
@@ -935,15 +1235,35 @@ export class ShadowKit {
     fx.ring(caster.x, caster.y, 4, bigTraps ? 34 : 24, SHADOW.lilac, 340, 3, 3);
     fx.wisps(caster.x, caster.y, 4, { speed: 45, size: 2.4, life: 420, rise: -10, depth: 4 });
 
-    if (isStake) {
+    // A claymore faces where it was aimed; without an aim it watches the enemy.
+    const foe = isPlayer ? npc : player;
+    let ax = aimX ?? (isPlayer ? this.aimX : foe.x);
+    let ay = aimY ?? (isPlayer ? this.aimY : foe.y);
+    if (Math.hypot(ax - caster.x, ay - caster.y) < 4) { ax = foe.x; ay = foe.y; }
+    const facing = Math.atan2(ay - caster.y, ax - caster.x);
+
+    const kind = this.trapKindFor(owner);
+    // Online: the peer replays this R as a plain trap; this tells it which kind it really is.
+    if (isPlayer && (kind !== 'base' || this.trapOptions('player').length > 1)) {
+      this.arena.broadcastMasteryCast(`shadow-trap:${kind}`);
+    }
+    this.plantTrap(owner, caster.x, caster.y, kind, facing, true);
+  }
+
+  /** Put a trap of the given kind in the floor. `announce` pops the "SET" readout. */
+  private plantTrap(owner: 'player' | 'npc', x: number, y: number, kind: TrapKind, facing: number, announce: boolean): void {
+    const scene = this.arena.scene;
+    const bigTraps = owner === 'player' ? this.arena.hasUpgrade('r') : this.arena.hasNpcUpgrade('r');
+
+    if (kind === 'stake') {
       // Snap Stake: a bare spike. Harmless until a second stake strings a tripline to it.
       const stake: SnapTrap = {
         gfx: scene.add.graphics().setDepth(4),
         expiresAt: scene.time.now + STAKE_LIFETIME_MS,
         spawnAt: scene.time.now,
         phase: Math.random() * Math.PI * 2,
-        x: caster.x, y: caster.y,
-        triggered: false, radius: 8, owner, isStake: true, kind: 'base',
+        x, y,
+        triggered: false, radius: 8, owner, isStake: true, kind: 'stake',
       };
       this.shadowSnapTraps.push(stake);
       const waiting = this.pendingStake[owner];
@@ -954,34 +1274,28 @@ export class ShadowKit {
           lastTripAt: -Infinity,
         });
         this.pendingStake[owner] = null;
-        this.arena.showFloatingText(caster.x, caster.y - 24, '🧵 STRUNG', '#cc88ff');
+        this.arena.showFloatingText(x, y - 24, '🧵 STRUNG', '#cc88ff');
       } else {
         this.pendingStake[owner] = stake;
       }
       return;
     }
 
-    // Death perk: the bar decides what gets planted. The NPC never has the perk, so its
-    // traps stay the jaws they have always been.
-    const kind: TrapKind = owner === 'player' && this.arena.hasPerk('player', 'death')
-      ? this.selectedTrap
-      : 'base';
-
     this.shadowSnapTraps.push({
       gfx: scene.add.graphics().setDepth(4),
       expiresAt: scene.time.now + 12000,
       spawnAt: scene.time.now,
       phase: Math.random() * Math.PI * 2,
-      x: caster.x, y: caster.y,
-      // A mine is a wider pressure plate than a set of jaws; a grabber reaches further still.
+      x, y,
+      // A grabber reaches further than a set of jaws.
       triggered: false,
       radius: kind === 'grabber' ? (bigTraps ? 40 : 30) : bigTraps ? 27 : 18,
-      owner, kind, grabbed: null, grabUntil: 0,
+      owner, kind, grabbed: null, grabUntil: 0, facing,
     });
 
-    if (kind !== 'base') {
+    if (announce && kind !== 'base') {
       const label = ShadowKit.TRAP_MENU.find((d) => d.kind === kind)!.name;
-      this.arena.showFloatingText(caster.x, caster.y - 30, `☠️ ${label.toUpperCase()} SET`, '#cc88ff');
+      this.arena.showFloatingText(x, y - 30, `☠️ ${label.toUpperCase()} SET`, '#cc88ff');
     }
   }
 
@@ -1209,11 +1523,146 @@ export class ShadowKit {
   }
 
   /** Whichever art this trap wears. Stakes are handled by their own branch upstream. */
-  private drawTrap(t: SnapTrap, time: number): void {
-    if (t.kind === 'mine') this.drawMine(t, time);
+  private drawTrap(t: SnapTrap, time: number, icon = false): void {
+    if (t.isStake) this.drawStake(t, time);
+    else if (t.kind === 'mine') this.drawMine(t, time);
     else if (t.kind === 'grabber') this.drawGrabber(t, time);
     else if (t.kind === 'plume') this.drawPlumeTrap(t, time);
+    else if (t.kind === 'venom') this.drawVenomTrap(t, time);
+    else if (t.kind === 'claymore') this.drawClaymore(t, time, icon);
+    else if (t.kind === 'shinobi') this.drawShinobiTrap(t, time);
     else this.drawSnapTrap(t, time);
+  }
+
+  /**
+   * A Venom Trap: the snap jaws, but the teeth are slick with poison and a sac of it swells
+   * on the plate. It drips a little on its own beat — the tell that this one does not stun.
+   */
+  private drawVenomTrap(t: SnapTrap, time: number): void {
+    this.drawSnapTrap(t, time);
+    const g = t.gfx;
+    const tint = this.col(t.owner);
+    const r = t.radius * Math.min(1, (time - t.spawnAt) / 220);
+    // Poison sheen over the teeth.
+    g.lineStyle(1.6, tint(SHADOW.venom), 0.75);
+    g.strokeCircle(t.x, t.y, r * 0.95);
+    // The venom sac, swelling and easing back.
+    const swell = 0.5 + 0.5 * Math.sin(time * 0.006 + t.phase);
+    g.fillStyle(tint(SHADOW.bile), 0.95);
+    g.fillCircle(t.x, t.y, r * (0.3 + swell * 0.06));
+    g.fillStyle(tint(SHADOW.venom), 0.55 + swell * 0.35);
+    g.fillCircle(t.x - r * 0.06, t.y - r * 0.08, r * 0.16);
+    // Drips off three teeth, falling and fading.
+    for (let i = 0; i < 3; i++) {
+      const a = t.phase + i * 2.1;
+      const ph = ((time / 900) + i / 3) % 1;
+      const dx = t.x + Math.cos(a) * r * 0.9;
+      const dy = t.y + Math.sin(a) * r * 0.9 + ph * 6;
+      g.fillStyle(tint(SHADOW.venom), 0.8 * (1 - ph));
+      g.fillEllipse(dx, dy, 2.4, 3.4);
+    }
+  }
+
+  /**
+   * A Vantablack claymore: a curved black plate on splayed legs, convex face toward the way it
+   * watches, with a faint line of sight fanned out in front of it. `icon` drops the cone, which
+   * would never fit a picker tile.
+   */
+  private drawClaymore(t: SnapTrap, time: number, icon: boolean): void {
+    const g = t.gfx;
+    g.clear();
+    const tint = this.col(t.owner);
+    const grow = Math.min(1, (time - t.spawnAt) / 220);
+    const a = t.facing ?? 0;
+    const cos = Math.cos(a), sin = Math.sin(a);
+    const px = -sin, py = cos;
+    const s = (icon ? 0.9 : 1) * grow;
+
+    if (!icon) {
+      // The line of sight: two dim edges and a sweeping scan line between them.
+      const left = a - CLAYMORE_HALF_ANGLE, right = a + CLAYMORE_HALF_ANGLE;
+      g.fillStyle(tint(SHADOW.blood), 0.06 * grow);
+      g.beginPath();
+      g.moveTo(t.x, t.y);
+      for (let i = 0; i <= 8; i++) {
+        const k = left + (right - left) * (i / 8);
+        g.lineTo(t.x + Math.cos(k) * CLAYMORE_SIGHT, t.y + Math.sin(k) * CLAYMORE_SIGHT);
+      }
+      g.closePath();
+      g.fillPath();
+      g.lineStyle(1, tint(SHADOW.blood), 0.35 * grow);
+      g.lineBetween(t.x, t.y, t.x + Math.cos(left) * CLAYMORE_SIGHT, t.y + Math.sin(left) * CLAYMORE_SIGHT);
+      g.lineBetween(t.x, t.y, t.x + Math.cos(right) * CLAYMORE_SIGHT, t.y + Math.sin(right) * CLAYMORE_SIGHT);
+      const scan = a + Math.sin(time * 0.004 + t.phase) * CLAYMORE_HALF_ANGLE;
+      g.lineStyle(1.4, tint(SHADOW.blood), 0.5 * grow);
+      g.lineBetween(t.x, t.y, t.x + Math.cos(scan) * CLAYMORE_SIGHT, t.y + Math.sin(scan) * CLAYMORE_SIGHT);
+    }
+
+    // Shadow under it, then the legs.
+    g.fillStyle(tint(SHADOW.abyss), 0.35);
+    g.fillEllipse(t.x, t.y + 4 * s, 26 * s, 8 * s);
+    g.lineStyle(2, tint(SHADOW.violet), 0.95);
+    for (const side of [-1, 1]) {
+      g.lineBetween(t.x + px * side * 7 * s, t.y + py * side * 7 * s,
+        t.x + px * side * 11 * s - cos * 6 * s, t.y + py * side * 11 * s - sin * 6 * s + 5 * s);
+    }
+    // The plate: a convex arc of pure black facing forward, with a lilac rim.
+    g.fillStyle(tint(SHADOW.abyss), 1);
+    g.beginPath();
+    for (let i = 0; i <= 10; i++) {
+      const f = i / 10 - 0.5;
+      const bow = Math.cos(f * Math.PI) * 4 * s;
+      g.lineTo(t.x + px * f * 24 * s + cos * bow, t.y + py * f * 24 * s + sin * bow);
+    }
+    for (let i = 10; i >= 0; i--) {
+      const f = i / 10 - 0.5;
+      const bow = Math.cos(f * Math.PI) * 4 * s - 5 * s;
+      g.lineTo(t.x + px * f * 24 * s + cos * bow, t.y + py * f * 24 * s + sin * bow);
+    }
+    g.closePath();
+    g.fillPath();
+    g.lineStyle(1.4, tint(SHADOW.lilac), 0.7);
+    g.strokePath();
+    // "FRONT TOWARD ENEMY": a blood-lit eye on the face, blinking.
+    const blink = 0.5 + 0.5 * Math.sin(time * 0.009 + t.phase);
+    g.fillStyle(tint(SHADOW.blood), 0.5 + blink * 0.5);
+    g.fillCircle(t.x + cos * 3 * s, t.y + sin * 3 * s, 2.2 * s);
+  }
+
+  /** A Shinobi Trap: a dark pouch on a plate, ringed by the caltrops it is about to throw. */
+  private drawShinobiTrap(t: SnapTrap, time: number): void {
+    const g = t.gfx;
+    g.clear();
+    const tint = this.col(t.owner);
+    const r = t.radius * Math.min(1, (time - t.spawnAt) / 220);
+    g.fillStyle(tint(SHADOW.abyss), 0.3);
+    g.fillEllipse(t.x, t.y + r * 0.35, r * 2.2, r * 0.8);
+    g.fillStyle(tint(SHADOW.pitch), 0.9);
+    g.fillCircle(t.x, t.y, r);
+    g.lineStyle(1.5, tint(SHADOW.orchid), 0.8);
+    g.strokeCircle(t.x, t.y, r);
+    // The caltrops it is loaded with, set round the rim, rocking slightly.
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2 + t.phase * 0.2;
+      ShadowFx.drawCaltrop(g, tint, t.x + Math.cos(a) * r * 0.72, t.y + Math.sin(a) * r * 0.72 * 0.85,
+        Math.max(2, r * 0.22), a + Math.sin(time * 0.004 + i) * 0.2, 1, { t: time / 1000 });
+    }
+    // The pouch, tied off at the top.
+    const pulse = 0.5 + 0.5 * Math.sin(time * 0.007 + t.phase);
+    g.fillStyle(tint(SHADOW.umbra), 1);
+    g.fillCircle(t.x, t.y, r * 0.36);
+    g.lineStyle(1.5, tint(SHADOW.mauve), 0.5 + pulse * 0.4);
+    g.strokeCircle(t.x, t.y, r * 0.36);
+    g.lineBetween(t.x - r * 0.12, t.y - r * 0.36, t.x + r * 0.12, t.y - r * 0.48);
+  }
+
+  /** True when a fighter stands in a claymore's line of sight. */
+  private inClaymoreSight(trap: SnapTrap, v: Fighter, range: number): boolean {
+    const d = Phaser.Math.Distance.Between(trap.x, trap.y, v.x, v.y);
+    if (d > range) return false;
+    if (d <= trap.radius + 10) return true;
+    const ang = Math.atan2(v.y - trap.y, v.x - trap.x);
+    return Math.abs(Phaser.Math.Angle.Wrap(ang - (trap.facing ?? 0))) <= CLAYMORE_HALF_ANGLE;
   }
 
   /**
@@ -1281,6 +1730,57 @@ export class ShadowKit {
         }
         this.arena.showFloatingText(trap.x, trap.y - 34, '🕳️ PLUME!', '#aa44ff');
         stun(2000);
+        break;
+      }
+
+      // ── Venom: no stun — a flood of despair and a poison that lingers. ────
+      case 'venom': {
+        trap.triggered = true;
+        victim.takeDamage(VENOM_DAMAGE, { source: trap, sourceX: trap.x, sourceY: trap.y });
+        this.applyHopelessness(victim, VENOM_HOPELESS);
+        this.venomed.set(victim, { until: time + Math.round(VENOM_DOT_MS * victim.statusDurMult), acc: 0, owner });
+        this.arena.spawnHitFlash(victim.x, victim.y, SHADOW.venom);
+        this.snapTrapBite(trap, victim);
+        fx.wisps(victim.x, victim.y, 8, { speed: 70, size: 3, life: 600, rise: -10, depth: 7, color: SHADOW.venom });
+        this.arena.showFloatingText(victim.x, victim.y - 34, '🐍 VENOMED!', '#88dd44');
+        break;
+      }
+
+      // ── Vantablack: the claymore goes off down its line of sight. ─────────
+      case 'claymore': {
+        trap.triggered = true;
+        const victims = owner === 'player' ? this.arena.enemies : [this.arena.player];
+        for (const t of victims) {
+          if (!t.active || t.hp <= 0 || !this.inClaymoreSight(trap, t, CLAYMORE_BLAST)) continue;
+          t.takeDamage(CLAYMORE_DAMAGE, { source: trap, sourceX: trap.x, sourceY: trap.y });
+          this.applyHopelessness(t, CLAYMORE_HOPELESS);
+          this.arena.spawnHitFlash(t.x, t.y, SHADOW.blood);
+          fx.tendrilBurst(t.x, t.y, 30, 7, 8);
+        }
+        // Shrapnel of night fanned down the cone.
+        const a = trap.facing ?? 0;
+        fx.wisps(trap.x, trap.y, 14, { angle: a, spread: CLAYMORE_HALF_ANGLE, speed: CLAYMORE_BLAST * 1.6, size: 3.2, life: 420, rise: 0, depth: 7 });
+        fx.wisps(trap.x, trap.y, 8, { angle: a, spread: CLAYMORE_HALF_ANGLE * 0.6, speed: CLAYMORE_BLAST * 2, size: 2.4, life: 360, rise: 0, depth: 7, color: SHADOW.blood });
+        fx.muzzleUmbra(trap.x, trap.y, a, 1.8, 7);
+        this.arena.scene.cameras.main.shake(160, 0.006);
+        this.arena.showFloatingText(trap.x, trap.y - 30, '⬛ CLAYMORE!', '#ff5577');
+        break;
+      }
+
+      // ── Shinobi: the bite, then a ring of caltrops; a slow, never a stun. ──
+      case 'shinobi': {
+        trap.triggered = true;
+        victim.takeDamage(20, { source: trap, sourceX: trap.x, sourceY: trap.y });
+        this.applyHopelessness(victim, 20);
+        this.arena.spawnHitFlash(victim.x, victim.y, SHADOW.mauve);
+        this.snapTrapBite(trap, victim);
+        this.slowedUntil.set(victim, Math.max(this.slowedUntil.get(victim) ?? 0, time + Math.round(SHINOBI_SLOW_MS * victim.statusDurMult)));
+        for (let i = 0; i < SHINOBI_BURST; i++) {
+          const a = (i / SHINOBI_BURST) * Math.PI * 2 + trap.phase + (Math.random() - 0.5) * 0.4;
+          const d = Phaser.Math.Between(SHINOBI_BURST_MIN, SHINOBI_BURST_MAX);
+          this.spawnCaltrop(owner, trap.x, trap.y, trap.x + Math.cos(a) * d, trap.y + Math.sin(a) * d * 0.85, 260);
+        }
+        this.arena.showFloatingText(victim.x, victim.y - 34, '🥷 SLOWED!', '#cc88ff');
         break;
       }
 
@@ -1366,6 +1866,101 @@ export class ShadowKit {
     scene.cameras.main.shake(260, 0.007);
   }
 
+  // ── Grim Gloom (alternate Q) ───────────────────────────────────────────
+
+  /**
+   * Lay the fog over the whole arena. A recast while one is still up just renews it. Everything
+   * after this — the passive despair, the linger watch, the tentacles — is `updateGlooms`.
+   */
+  doGrimGloom(owner: 'player' | 'npc'): void {
+    const scene = this.arena.scene;
+    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    const now = scene.time.now;
+    let gloom = this.glooms.find((g) => g.owner === owner);
+    if (!gloom) {
+      gloom = {
+        owner, spawnAt: now, until: 0,
+        gfx: scene.add.graphics().setDepth(2.5),
+        strikeGfx: scene.add.graphics().setDepth(4.5),
+        watch: new Map(), strikes: [],
+      };
+      this.glooms.push(gloom);
+    }
+    gloom.until = now + GLOOM_DURATION_MS;
+    // Arms up, and the dark pours out of the caster in every direction at once.
+    (owner === 'player' ? this.playerAvatar : this.npcAvatar)?.play('raise', -Math.PI / 2, 600);
+    const fx = this.fx(owner);
+    fx.ring(caster.x, caster.y, 20, Math.max(this.arena.width, this.arena.height) * 0.7, SHADOW.orchid, 900, 10, 3);
+    fx.gloom(caster.x, caster.y, 8, 60, 6);
+    fx.bloom(caster.x, caster.y, 90, 14);
+    scene.cameras.main.shake(260, 0.006);
+    scene.cameras.main.flash(220, 40, 0, 70);
+    this.arena.showFloatingText(caster.x, caster.y - 40, '🌫️ GRIM GLOOM', '#aa66dd');
+  }
+
+  /** Fog, passive despair, the "you have stood there too long" watch, and the strikes. */
+  private updateGlooms(time: number, delta: number): void {
+    const dt = delta / 1000;
+    const { player, enemies, width, height } = this.arena;
+    for (let gi = this.glooms.length - 1; gi >= 0; gi--) {
+      const gl = this.glooms[gi];
+      const live = time < gl.until;
+      // Strikes already in the air finish even after the fog lifts.
+      if (!live && gl.strikes.length === 0) {
+        gl.gfx.destroy();
+        gl.strikeGfx.destroy();
+        this.glooms.splice(gi, 1);
+        continue;
+      }
+
+      // The fog rolls in over half a second and thins out over its last 800ms.
+      const fade = live
+        ? Math.min(1, (time - gl.spawnAt) / 500, (gl.until - time) / 800)
+        : 0;
+      gl.gfx.clear();
+      if (fade > 0) ShadowFx.drawGloomFog(gl.gfx, this.col(gl.owner), width, height, time / 1000, fade);
+
+      const victims: Fighter[] = gl.owner === 'player' ? enemies : [player];
+      if (live) {
+        for (const v of victims) {
+          if (!v.active || v.hp <= 0) { gl.watch.delete(v); continue; }
+          this.applyHopelessness(v, GLOOM_HOPELESS_PER_SEC * dt, false);
+          // One strike at a time per foe; while it is coming the watch is paused.
+          if (gl.strikes.some((st) => st.target === v)) continue;
+          const w = gl.watch.get(v);
+          if (!w || Phaser.Math.Distance.Between(w.ax, w.ay, v.x, v.y) > GLOOM_LINGER_RADIUS) {
+            gl.watch.set(v, { ax: v.x, ay: v.y, since: time });
+            continue;
+          }
+          if (time - w.since < GLOOM_LINGER_MS) continue;
+          gl.strikes.push({ x: v.x, y: v.y, target: v, spawnAt: time, hit: false, seed: Math.random() });
+          gl.watch.set(v, { ax: v.x, ay: v.y, since: time + GLOOM_STRIKE_MS });
+        }
+      }
+
+      gl.strikeGfx.clear();
+      for (let si = gl.strikes.length - 1; si >= 0; si--) {
+        const st = gl.strikes[si];
+        const k = (time - st.spawnAt) / GLOOM_STRIKE_MS;
+        if (k >= 1) { gl.strikes.splice(si, 1); continue; }
+        ShadowFx.drawGloomTentacle(gl.strikeGfx, this.col(gl.owner), st.x, st.y, k, time / 1000, st.seed);
+        if (st.hit || k < GLOOM_STRIKE_HIT_AT) continue;
+        st.hit = true;
+        const v = st.target;
+        this.fx(gl.owner).tendrilBurst(st.x, st.y, 30, 7, 6);
+        if (!v.active || v.hp <= 0) continue;
+        if (Phaser.Math.Distance.Between(st.x, st.y, v.x, v.y) > GLOOM_STRIKE_RADIUS) {
+          // They read the crack and stepped out of it.
+          continue;
+        }
+        v.takeDamage(GLOOM_STRIKE_DAMAGE, { source: st, sourceX: st.x, sourceY: st.y });
+        this.applyHopelessness(v, GLOOM_STRIKE_HOPELESS);
+        this.arena.spawnHitFlash(v.x, v.y, SHADOW.blood);
+        this.arena.showFloatingText(v.x, v.y - 36, '🦑 FROM BELOW!', '#cc3355');
+      }
+    }
+  }
+
   // ── Tentacle Wall (F) ─────────────────────────────────────────────────
 
   /**
@@ -1377,12 +1972,16 @@ export class ShadowKit {
     const scene = this.arena.scene;
     const owner: 'player' | 'npc' = isPlayer ? 'player' : 'npc';
     const caster = isPlayer ? this.arena.player : this.arena.npc;
+    // Abyss: a much longer wall, every limb of it spiked.
+    const abyss = this.arena.hasPerk(owner, 'shadow-abyss');
+    const count = abyss ? ABYSS_WALL_TENTACLES : WALL_TENTACLE_COUNT;
     this.walls.push({
       tentacles: [],
-      expiresAt: scene.time.now + WALL_DURATION_MS + WALL_TENTACLE_COUNT * WALL_STEP_MS,
+      expiresAt: scene.time.now + WALL_DURATION_MS + count * WALL_STEP_MS,
       owner,
       lastHit: new Map(),
-      pending: WALL_TENTACLE_COUNT,
+      pending: count,
+      abyss,
       nextSpawnAt: scene.time.now,
       lastX: caster.x,
       lastY: caster.y,
@@ -1468,7 +2067,7 @@ export class ShadowKit {
       const victims: Fighter[] = wall.owner === 'player' ? enemies : [player];
       for (const t of wall.tentacles) {
         const grow = Math.min(1, (time - t.spawnAt) / WALL_GROW_MS);
-        this.drawTentacle(t, time, grow, wall.owner);
+        this.drawTentacle(t, time, grow, wall.owner, wall.abyss);
         if (grow < 0.5) continue;
 
         for (const v of victims) {
@@ -1476,10 +2075,11 @@ export class ShadowKit {
           if (Phaser.Math.Distance.Between(t.x, t.y, v.x, v.y) > WALL_HIT_RADIUS) continue;
           if (time - (wall.lastHit.get(v) ?? -Infinity) < WALL_HIT_CD_MS) continue;
           wall.lastHit.set(v, time);
-          v.takeDamage(WALL_TENTACLE_DAMAGE);
+          v.takeDamage(WALL_TENTACLE_DAMAGE + (wall.abyss ? ABYSS_SPIKE_DAMAGE : 0));
           this.applyHopelessness(v, WALL_TENTACLE_HOPELESS);
-          this.arena.spawnHitFlash(v.x, v.y, SHADOW.orchid);
+          this.arena.spawnHitFlash(v.x, v.y, wall.abyss ? SHADOW.blood : SHADOW.orchid);
           this.fx(wall.owner).wisps(v.x, v.y, 3, { speed: 70, size: 2.4, life: 340, rise: 14, depth: 7 });
+          if (wall.abyss) this.abyssShove(v, t.x, t.y);
         }
 
         // F+ Watchers: eyed tentacles lob despair amplifiers at whoever they can see.
@@ -1490,6 +2090,17 @@ export class ShadowKit {
         }
       }
     }
+  }
+
+  /** Abyss: the spikes throw whoever touched them off the limb. */
+  private abyssShove(v: Fighter, fromX: number, fromY: number): void {
+    if (v.unstoppable || v.knockbackImmune) return;
+    const a = Math.atan2(v.y - fromY, v.x - fromX);
+    const body = v.body as Phaser.Physics.Arcade.Body;
+    body.reset(
+      Phaser.Math.Clamp(v.x + Math.cos(a) * ABYSS_SHOVE, 16, this.arena.width - 16),
+      Phaser.Math.Clamp(v.y + Math.sin(a) * ABYSS_SHOVE, 24, this.arena.height - 16),
+    );
   }
 
   /**
@@ -1516,7 +2127,7 @@ export class ShadowKit {
    * its own beat. Watchers grow taller, carry an extra pair of barbs and open a blood-lit eye
    * near the tip that tracks whoever the wall is hunting.
    */
-  private drawTentacle(t: WallTentacle, time: number, grow: number, owner: 'player' | 'npc'): void {
+  private drawTentacle(t: WallTentacle, time: number, grow: number, owner: 'player' | 'npc', abyss = false): void {
     const g = t.gfx;
     g.clear();
     const tint = this.col(owner);
@@ -1538,8 +2149,20 @@ export class ShadowKit {
       -Math.PI / 2 + sway, height, baseW,
       Math.sin(time * 0.0032 + t.phase) * 12 * grow, 1,
       9 * grow, time * 0.004 + t.phase,
-      { barbs: t.eyed ? 5 : 3 },
+      { barbs: t.eyed || abyss ? 5 : 3 },
     );
+
+    if (abyss && grow > 0.5) {
+      // Abyss: bone-pale thorns jutting off the root, the part that actually cuts.
+      g.lineStyle(2, tint(SHADOW.pale), 0.8 * grow);
+      for (let i = 0; i < 4; i++) {
+        const a = -Math.PI / 2 + sway + (i - 1.5) * 0.9;
+        const r0 = 7 * grow, r1 = 16 * grow;
+        const by = t.y + 2 - height * 0.25;
+        g.lineBetween(t.x + Math.cos(a) * r0, by + Math.sin(a) * r0 * 0.6,
+          t.x + Math.cos(a) * r1, by + Math.sin(a) * r1 * 0.6);
+      }
+    }
 
     if (t.eyed && grow > 0.7) {
       // The eye rides the tip, which moves with the sway — pinning it to the root would leave
@@ -1974,10 +2597,11 @@ export class ShadowKit {
     if (!isPlayerShadow && !isNpcShadow) return;
     const { player, npc, enemies, scene } = this.arena;
 
-    // Death perk: the trap bar is built the first frame it is wanted, so it survives a
-    // restart without reset() having to know what this match's loadout is.
-    if (isPlayerShadow && this.arena.hasPerk('player', 'death')) {
-      if (this.trapBarSlots.length === 0) this.buildTrapBar();
+    // The trap picker is built the first frame it is wanted, so it survives a restart without
+    // reset() having to know what this match's loadout is — and rebuilt if the loadout changes.
+    const trapKinds = isPlayerShadow ? this.trapOptions('player') : [];
+    if (trapKinds.length > 1) {
+      if (this.trapBarKey !== trapKinds.join(',')) { this.teardownTrapBar(); this.buildTrapBar(trapKinds); }
       this.paintTrapBar(time);
     } else if (this.trapBarSlots.length > 0) {
       this.teardownTrapBar();
@@ -1986,6 +2610,8 @@ export class ShadowKit {
     this.updateAvatars(delta, isPlayerShadow, isNpcShadow);
     this.checkUnkillable(isPlayerShadow);
     this.updateDarkBombs(time);
+    this.updateCaltrops(time);
+    this.updateGlooms(time, delta);
     this.drawDarkClouds(time);
 
     // Dark cloud ticks (both owners)
@@ -2039,8 +2665,8 @@ export class ShadowKit {
         this.shadowSnapTraps.splice(ti, 1);
         continue;
       }
-      if (trap.isStake) { this.drawStake(trap, time); continue; }
       this.drawTrap(trap, time);
+      if (trap.isStake) continue;
 
       // A grabber that already has hold of something is busy until its hold runs out.
       if (trap.kind === 'grabber' && trap.grabbed) {
@@ -2051,16 +2677,15 @@ export class ShadowKit {
         continue;
       }
 
-      if (trap.owner === 'player') {
-        for (const t of enemies) {
-          if (!t.active || t.hp <= 0) continue;
-          if (Phaser.Math.Distance.Between(trap.x, trap.y, t.x, t.y) <= trap.radius + 10) {
-            this.springTrap(trap, t, time);
-            break;
-          }
-        }
-      } else if (Phaser.Math.Distance.Between(trap.x, trap.y, player.x, player.y) <= trap.radius + 10) {
-        this.springTrap(trap, player, time);
+      // A claymore does not wait to be stepped on: anything in its line of sight sets it off.
+      const springs = (v: Fighter) => trap.kind === 'claymore'
+        ? this.inClaymoreSight(trap, v, CLAYMORE_SIGHT)
+        : Phaser.Math.Distance.Between(trap.x, trap.y, v.x, v.y) <= trap.radius + 10;
+      const victims: Fighter[] = trap.owner === 'player' ? enemies : [player];
+      for (const t of victims) {
+        if (!t.active || t.hp <= 0 || !springs(t)) continue;
+        this.springTrap(trap, t, time);
+        break;
       }
     }
 
@@ -2156,28 +2781,6 @@ export class ShadowKit {
         }
       }
 
-      // Click+ confusion: track NPC exposure to player clouds
-      if (this.arena.hasUpgrade('click')) {
-        const npcInCloud = this.shadowDarkClouds.some(
-          c => c.owner === 'player' && Phaser.Math.Distance.Between(c.x, c.y, npc.x, npc.y) <= c.radius + 14,
-        );
-        if (npcInCloud) {
-          this.shadowCloudExposureAccum += delta;
-          if (this.shadowCloudExposureAccum >= 3000 && time > this.shadowConfusionUntil) {
-            this.shadowConfusionUntil = time + 6000;
-            this.shadowCloudExposureAccum = 0;
-            this.arena.spawnHitFlash(npc.x, npc.y, SHADOW.amethyst);
-            // Snap on application, so the debuff has a moment as well as a state.
-            this.pfx.tendrilBurst(npc.x, npc.y, 36, 8, 8);
-            this.pfx.gloom(npc.x, npc.y - 10, 2, 24, 7);
-            const confTxt = scene.add.text(npc.x, npc.y - 30, '😵 CONFUSED', { fontSize: '11px', color: '#cc44ff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
-            scene.tweens.add({ targets: confTxt, y: confTxt.y - 20, alpha: 0, duration: 1200, onComplete: () => confTxt.destroy() });
-          }
-        } else {
-          this.shadowCloudExposureAccum = Math.max(0, this.shadowCloudExposureAccum - delta * 0.5);
-        }
-      }
-
       // Trap/stake drag: anything near the tentacle endpoint follows it
       if (this.canDragTraps('player') && this.shadowTentacleActive) {
         const tipX = this.shadowTentacleHooked ? npc.x : this.shadowTentacleX;
@@ -2205,8 +2808,9 @@ export class ShadowKit {
         } else {
           if (this.npcShadowTentacleSprite) {
             const angle = Math.atan2(player.y - npc.y, player.x - npc.x);
-            const tipX = this.npcShadowTentacleHooked ? player.x : npc.x + Math.cos(angle) * 100;
-            const tipY = this.npcShadowTentacleHooked ? player.y : npc.y + Math.sin(angle) * 100;
+            const reach = this.arena.hasPerk('npc', 'shadow-abyss') ? ABYSS_TENTACLE_REACH : 100;
+            const tipX = this.npcShadowTentacleHooked ? player.x : npc.x + Math.cos(angle) * reach;
+            const tipY = this.npcShadowTentacleHooked ? player.y : npc.y + Math.sin(angle) * reach;
             this.npcShadowTentacleSprite.clear();
             this.npcAvatar?.setHold('draw', angle);
             ShadowFx.drawTether(
@@ -2334,19 +2938,6 @@ export class ShadowKit {
 
     // Stun from snap trap
     if (time < this.shadowNpcStunnedUntil) nBody.setVelocity(0, 0);
-
-    // Click+ confusion: random movement
-    if (this.arena.hasUpgrade('click') && time < this.shadowConfusionUntil) {
-      if (time >= this.shadowConfusionNextChange) {
-        this.shadowConfusionAngle = Math.random() * Math.PI * 2;
-        this.shadowConfusionNextChange = time + Phaser.Math.Between(400, 800);
-      }
-      const confBody = npc.body as Phaser.Physics.Arcade.Body;
-      confBody.setVelocity(
-        Math.cos(this.shadowConfusionAngle) * 130 * this.arena.npcSpeedMult,
-        Math.sin(this.shadowConfusionAngle) * 130 * this.arena.npcSpeedMult,
-      );
-    }
   }
 
   private distToSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
@@ -2362,6 +2953,7 @@ export class ShadowKit {
   // ── Input ────────────────────────────────────────────────────────────
 
   handleInput(time: number, delta: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
+    void delta;
     if (this.arena.nukeChanneling) return;
     const { player, eKey, rKey, fKey, qKey } = this.arena;
     const playerCtx = this.arena.buildPlayerContext(mouseX, mouseY);
@@ -2369,31 +2961,13 @@ export class ShadowKit {
     this.aimX = mouseX;
     this.aimY = mouseY;
 
-    // Death perk: a click that lands on the trap bar is picking a trap, not attacking.
-    // Held down, it also has to keep the drain from charging up behind the bar.
-    if (this.pointerOnTrapBar(pointer)) {
-      this.shadowDrainHoldAccum = 0;
-      this.shadowDrainCloudAccum = 0;
-    } else if (pointer.isDown) {
-      this.shadowDrainHoldAccum += delta;
-      if (this.shadowDrainHoldAccum >= 300) {
-        // Cloud mode: hands held out along the aim, pouring dark onto the ground.
-        this.playerAvatar?.setHold('spray', Math.atan2(mouseY - player.y, mouseX - player.x));
-        this.shadowDrainCloudAccum += delta;
-        if (this.shadowDrainCloudAccum >= 600) {
-          this.shadowDrainCloudAccum -= 600;
-          this.spawnDarkCloud(mouseX, mouseY, 'player');
-        }
-      }
-    } else {
-      if (this.arena.pointerWasDown && this.shadowDrainHoldAccum < 300) {
-        // Tap: launch dark bomb (the gesture fires inside doLaunchDarkBomb)
-        player.castAbility('dark-drain', playerCtx);
-      }
-      // Only the drain hold owns 'spray'; the tentacle's 'draw' hold must survive this.
-      if (this.shadowDrainHoldAccum >= 300) this.playerAvatar?.setHold(null);
-      this.shadowDrainHoldAccum = 0;
-      this.shadowDrainCloudAccum = 0;
+    // A press that lands on the trap picker is picking a trap, not attacking — and stays that
+    // way until it is let go, even if it drags off the bar.
+    if (pointer.isDown && !this.arena.pointerWasDown) this.pressOnTrapBar = this.pointerOnTrapBar(pointer);
+    if (!pointer.isDown) this.pressOnTrapBar = false;
+    // Held Click keeps throwing caltrops as fast as the cooldown allows.
+    if (pointer.isDown && !this.pressOnTrapBar && !this.pointerOnTrapBar(pointer)) {
+      player.castAbility('shadow-caltrop', playerCtx);
     }
     // Shadow Mastery — Shadow Beacon may be bound over any of E/R/F/Q, suppressing that slot's base ability.
     const beaconSlot = this.arena.masteryActive ? this.beaconSlot() : null;
@@ -2430,13 +3004,15 @@ export class ShadowKit {
     if (beaconSlot === 'q') {
       if (Phaser.Input.Keyboard.JustDown(qKey)) this.tryCastShadowBeacon(time, mouseX, mouseY);
     } else if (Phaser.Input.Keyboard.JustDown(qKey)) {
-      player.castAbility('black-hole', playerCtx);
+      // Black Hole, or Grim Gloom when the alternate ultimate is swapped in.
+      const ult = player.element.abilities.find((a) => a.isUltimate)?.id ?? 'black-hole';
+      player.castAbility(ult, playerCtx);
     }
   }
 
   /**
    * Ruin's Spikes of Ruin (see `combat/SummonPurge.ts`).
-   * Tentacle walls, mortar beacons and snap traps. A trap taken out takes its triplines
+   * Tentacle walls, mortar beacons, caltrops and snap traps. A trap taken out takes its triplines
    * with it — a line with only one end left would hang in the air trailing off a dead stake.
    */
   purgeSummons(
@@ -2468,6 +3044,12 @@ export class ShadowKit {
       b.gfx.destroy();
       b.dotGfx.destroy();
       this.beacons.splice(i, 1);
+      razed++;
+    }
+    for (let i = this.caltrops.length - 1; i >= 0; i--) {
+      const c = this.caltrops[i];
+      if (c.owner === exceptOwner || !c.landed || !near(c.x, c.y)) continue;
+      this.caltrops.splice(i, 1);
       razed++;
     }
     for (let i = this.shadowSnapTraps.length - 1; i >= 0; i--) {

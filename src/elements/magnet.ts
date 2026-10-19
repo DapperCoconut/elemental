@@ -47,7 +47,7 @@ const steelSpike: Ability = {
 const mechaMassacre: Ability = {
   id: 'magnet-mecha',
   name: 'Mecha Massacre',
-  description: 'Stand still 3s as scrap gathers, then pilot a giant mech for 15s',
+  description: 'Stand still 7.5s as scrap gathers, then pilot a giant mech for 15s. Hits on its core shorten it',
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 50000,

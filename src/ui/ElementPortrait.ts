@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
-import { ArmGesture, BaseAvatar } from '../elements/kits/ElementVisuals';
+import { ArmGesture, BaseAvatar, ColorFn } from '../elements/kits/ElementVisuals';
 import { elementBodyTexture, makeElementAvatar } from '../elements/kits/ElementAvatars';
 import { makeSkinAvatar } from '../elements/kits/skins/SkinAvatars';
+import { getSkinDef } from '../data/Skins';
 import { equippedSkin, skinnedColorFn } from './AbilityPreview';
 
 /**
@@ -47,6 +48,11 @@ export class ElementPortrait {
       scale?: number;
       /** Dim the whole portrait — locked and unavailable cards. */
       muted?: boolean;
+      /**
+       * Show a specific skin instead of whatever is equipped — the trophy hall's vitrines
+       * hold the skin an achievement awards. `null` forces the element's own look.
+       */
+      skinId?: string | null;
     },
   ) {
     const { x, y, w, h, depth } = opts;
@@ -83,8 +89,10 @@ export class ElementPortrait {
 
   private build(): void {
     const { elementId } = this.opts;
-    const skin = equippedSkin(elementId);
-    const tint = skinnedColorFn(elementId);
+    const skin = this.opts.skinId !== undefined ? getSkinDef(this.opts.skinId) : equippedSkin(elementId);
+    const tint: ColorFn = this.opts.skinId === undefined
+      ? skinnedColorFn(elementId)
+      : skin?.palette ? ((base) => skin.palette![base] ?? skin.paletteFallback ?? base) : ((c) => c);
 
     // The body sprite first, so the rig's hands and eyes land on top of a torso rather than
     // hanging in the air. Two elements paint their own body instead and have no texture.

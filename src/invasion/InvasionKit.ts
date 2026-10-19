@@ -245,12 +245,14 @@ export type InvasionFx =
  * while the co-op layer handles all networking.
  */
 export interface InvasionCoopHooks {
-  /** Multiplies wave spawn counts (2× for co-op, to balance the extra player). */
+  /** Multiplies wave spawn counts (one share per human in the mansion). */
   spawnMultiplier: number;
-  /** Extra chase/bite targets besides the local player (the ally replica). */
-  extraTargets: () => Fighter[];
-  /** A husk hurt a target that isn't the local player — forward the hit to them. */
-  onAllyBite: (damage: number, x: number, y: number) => void;
+  /** Extra chase/bite targets besides the local player: the ally replicas standing in `room`. */
+  extraTargets: (room: number) => Fighter[];
+  /** A husk hurt `target`, an ally replica — forward the hit to whoever it belongs to. */
+  onAllyBite: (target: Fighter, damage: number, x: number, y: number) => void;
+  /** The player slots of every ally still in the run (the City draft waits on each). */
+  allySlots: () => number[];
   onHuskDefeated: (husk: Husk, reward: number) => void;
   onWaveCleared: (wave: number, bonus: number) => void;
   /** Mirror a one-shot visual onto the guest's screen. */
@@ -343,15 +345,13 @@ export class InvasionKit implements HuskWorld, EffectWorld {
   private city: CityDirector | null = null;
   /** City runs only: the bestiary, opened by clicking the book in the corner. */
   private journalBtn: Phaser.GameObjects.Text | null = null;
-  /** City wave-end draft: our own pick is in / the co-op guest's isn't yet. */
+  /** City wave-end draft: our own pick is in / the co-op guests whose picks aren't yet. */
   private localPickDone = true;
-  private allyPickPending = false;
+  private allyPicksPending = new Set<number>();
   private allyPickDeadline = 0;
   private effects: HuskEffectEngine | null = null;
   /** Co-op guest's current room, injected by InvasionCoopKit for the targetable gate. */
   private guestRoom = -1;
-  /** Co-op host: the ally's current room, from their state packets. */
-  private allyRoom = 0;
 
   /** Elemental hazard slow on the local player (ice bites, oil slicks, gum). */
   private slowMult = 1;
@@ -447,7 +447,6 @@ export class InvasionKit implements HuskWorld, EffectWorld {
     this.lastGnawWarnAt = 0;
     this.ending = false;
     this.guestRoom = -1;
-    this.allyRoom = 0;
     this.slowMult = 1;
     this.slowUntil = 0;
     this.targetRoom2 = -1;
@@ -673,9 +672,9 @@ export class InvasionKit implements HuskWorld, EffectWorld {
   /** City: the local player is down, waiting on a bot or the plinth. Input and movement stop. */
   isPlayerDowned(): boolean { return this.city?.isPlayerDowned ?? false; }
 
-  /** Co-op host: the guest kept a draft card. */
-  noteAllyPick(kind: string, id: string): void {
-    this.allyPickPending = false;
+  /** Co-op host: guest `slot` kept a draft card (or left, with kind 'none'). */
+  noteAllyPick(slot: number, kind: string, id: string): void {
+    this.allyPicksPending.delete(slot);
     this.city?.applyRemotePick(kind, id);
   }
 
@@ -865,7 +864,7 @@ export class InvasionKit implements HuskWorld, EffectWorld {
         this.city.clearLanes();
         this.phaseEndsAt = Infinity;
         this.localPickDone = false;
-        this.allyPickPending = !!this.coopHooks;
+        this.allyPicksPending = new Set(this.coopHooks?.allySlots() ?? []);
         this.allyPickDeadline = time + 30000;
         this.city.beginDraft(this.wave, () => { this.localPickDone = true; });
       }
@@ -879,7 +878,7 @@ export class InvasionKit implements HuskWorld, EffectWorld {
 
     // City: both drafts in (or the ally ran out the clock) → the short rest begins.
     if (this.city && this.phase === 'rest' && this.phaseEndsAt === Infinity && this.localPickDone
-      && (!this.allyPickPending || time >= this.allyPickDeadline)) {
+      && (this.allyPicksPending.size === 0 || time >= this.allyPickDeadline)) {
       this.phaseEndsAt = time + INTERMISSION_MS;
     }
 
@@ -1235,7 +1234,7 @@ export class InvasionKit implements HuskWorld, EffectWorld {
     }
     const out: Fighter[] = [];
     if (playerHere && !this.arena.isSilencePlayerHidden()) out.push(this.arena.player);
-    if (this.coopHooks && this.allyRoom === room) out.push(...this.coopHooks.extraTargets());
+    if (this.coopHooks) out.push(...this.coopHooks.extraTargets(room));
     out.push(...cityTargets);
     return out;
   }
@@ -1264,7 +1263,7 @@ export class InvasionKit implements HuskWorld, EffectWorld {
       this.arena.spawnHitFlash(target.x, target.y, 0x88aa33);
     } else {
       // Co-op: hit the ally, not the local player — forward it to them.
-      this.coopHooks?.onAllyBite(amount, target.x, target.y);
+      this.coopHooks?.onAllyBite(target, amount, target.x, target.y);
     }
   }
 
@@ -1281,11 +1280,6 @@ export class InvasionKit implements HuskWorld, EffectWorld {
   /** Co-op guest: InvasionCoopKit tells the kit which room the guest is viewing. */
   setGuestRoom(room: number): void {
     this.guestRoom = room;
-  }
-
-  /** Co-op host: the ally told us which room they're standing in. */
-  setAllyRoom(room: number): void {
-    this.allyRoom = room;
   }
 
   /**
@@ -1477,7 +1471,7 @@ export class InvasionKit implements HuskWorld, EffectWorld {
     // touches localStorage — this runs on every husk that dies.
     if (!husk.noRewardKill && !this.journalKnown.has(husk.variant.id)) {
       this.journalKnown.add(husk.variant.id);
-      if (PlayerData.recordHuskKill(husk.variant.id)) {
+      if (PlayerData.recordHuskKill(husk.variant.id) && husk.visible) {
         this.arena.showFloatingText(husk.x, husk.y - 46, '📓 NEW JOURNAL ENTRY', '#e4d7b4');
       }
     }
@@ -1497,7 +1491,8 @@ export class InvasionKit implements HuskWorld, EffectWorld {
       this.shards += reward;
       if (husk.visible) this.arena.showFloatingText(husk.x, husk.y - 30, `+${reward} 🩸`, '#cc44ff');
       this.coopHooks?.onHuskDefeated(husk, reward);
-      this.arena.notifyHuskDefeated?.(husk);
+      // A kill a co-op partner made in another room is nothing our kit saw happen.
+      if (this.isHuskTargetable(husk)) this.arena.notifyHuskDefeated?.(husk);
     } else {
       this.coopHooks?.onHuskDefeated(husk, 0);
     }
@@ -1566,7 +1561,8 @@ export class InvasionKit implements HuskWorld, EffectWorld {
     this.arena.showFloatingText(x, y, text, color);
   }
 
-  slowPlayer(mult: number, ms: number): void {
+  slowPlayer(mult: number, ms: number, target: Fighter = this.arena.player): void {
+    if (target !== this.arena.player) return;
     const now = this.arena.scene.time.now;
     if (now >= this.slowUntil) this.slowMult = 1;
     this.slowMult = Math.min(this.slowMult, mult);
@@ -1865,8 +1861,8 @@ export class InvasionKit implements HuskWorld, EffectWorld {
     if (this.inView(from.roomIndex)) this.arena.spawnHitFlash(target.x, target.y, color);
   }
 
-  bossSlow(mult: number, ms: number): void {
-    this.slowPlayer(mult, ms);
+  bossSlow(mult: number, ms: number, target: Fighter): void {
+    this.slowPlayer(mult, ms, target);
   }
 
   bossZone(

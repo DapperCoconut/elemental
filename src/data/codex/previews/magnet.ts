@@ -403,9 +403,9 @@ export const steelSpike: PreviewScript = {
 // ══ Q — Mecha Massacre ═════════════════════════════════════════════════
 
 export const mechaMassacre: PreviewScript = {
-  duration: 12000,
+  duration: 16500,
   scale: 0.55,
-  caption: 'Q — 3s rooted while scrap streams in, then 15s as the mech: smash, rail, cannon, avalanche, self-destruct',
+  caption: 'Q — 7.5s rooted while scrap streams in, then 15s as the mech (hits on its core shorten it): smash, rail, cannon, avalanche, self-destruct',
   run(ctx) {
     const { fx, av } = stage(ctx);
     const target = { x: ctx.w * 0.68, y: ctx.h * 0.62 };
@@ -413,7 +413,7 @@ export const mechaMassacre: PreviewScript = {
     const pile = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
     const bits: Array<{ sx: number; sy: number; at: number; land: number; seed: number }> = [];
     let gathering = true;
-    av.play('raise', -Math.PI / 2, 3000);
+    av.play('raise', -Math.PI / 2, 7500);
     ctx.onFrame((_dt, e) => {
       pile.clear();
       if (!gathering) return;
@@ -426,7 +426,7 @@ export const mechaMassacre: PreviewScript = {
           at: e, land: e + 520 + Math.random() * 260, seed: Math.floor(Math.random() * 50),
         });
       }
-      drawGatherPile(pile, ctx.tint, c.x, c.y, Phaser.Math.Clamp(e / 3000, 0, 1), e / 1000);
+      drawGatherPile(pile, ctx.tint, c.x, c.y, Phaser.Math.Clamp(e / 7500, 0, 1), e / 1000);
       for (const b of bits) {
         if (e > b.land) continue;
         const k = Phaser.Math.Clamp((e - b.at) / (b.land - b.at), 0, 1) ** 2;
@@ -435,7 +435,7 @@ export const mechaMassacre: PreviewScript = {
     });
 
     let mech: MagnetMech | null = null;
-    ctx.at(3000, () => {
+    ctx.at(7500, () => {
       gathering = false;
       ctx.moveCaster(ctx.cx, ctx.cy, { alpha: 0 });
       mech = ctx.capture(() => new MagnetMech({
@@ -455,12 +455,12 @@ export const mechaMassacre: PreviewScript = {
         if (label) float(ctx, target.x, target.y - 34, label, hex(MAGNET.visor), 16);
       });
     };
-    key(3700, 'smash', '20');
-    key(4700, 'rail');
-    key(5600, 'cannon');
-    key(8300, 'avalanche');
-    key(10600, 'destruct');
-    ctx.at(11300, () => ctx.moveCaster(ctx.cx, ctx.cy, { alpha: 1 }));
+    key(8200, 'smash', '20');
+    key(9200, 'rail');
+    key(10100, 'cannon');
+    key(12800, 'avalanche');
+    key(15100, 'destruct');
+    ctx.at(15800, () => ctx.moveCaster(ctx.cx, ctx.cy, { alpha: 1 }));
   },
 };
 
@@ -765,7 +765,7 @@ export const spikeUpgraded: PreviewScript = {
 export const mechaUpgraded: PreviewScript = {
   duration: 10500,
   scale: 0.55,
-  caption: 'Q+ Mega Mechancements — the red mech: every key hits harder, wider and longer',
+  caption: 'Q+ Salvage Salvo — pick a head, core and two arms while the scrap gathers. Here: Furnace head, Urgent core, Launcher + Saw',
   run(ctx) {
     const { av } = stage(ctx);
     const red = megaMechTint(ctx.tint);
@@ -790,7 +790,7 @@ export const mechaUpgraded: PreviewScript = {
         targets: () => [], hit: () => {}, stun: () => {}, push: () => {}, carry: () => {},
         announce: (x, y, text, color) => float(ctx, x, y, text, hex(red(color)), 16),
         shake: () => {},
-      }, false, ctx.scene.time.now, true));
+      }, false, ctx.scene.time.now, { head: 'furnace', core: 'urgent', left: 'launcher', right: 'saw' }));
     });
     ctx.onFrame((dt) => {
       if (mech) mech.update(ctx.scene.time.now, dt, target.x + Math.sin(ctx.scene.time.now / 300) * 80, target.y);
@@ -802,8 +802,9 @@ export const mechaUpgraded: PreviewScript = {
         if (label) float(ctx, target.x, target.y - 34, label, hex(red(MAGNET.visor)), 16);
       });
     };
-    key(2200, 'smash', '30');
-    key(3200, 'smash', '30');
+    ctx.at(600, () => float(ctx, ctx.cx, ctx.cy - 70, 'FURNACE · URGENT · LAUNCHER / SAW', hex(red(MAGNET.visor)), 14));
+    key(2200, 'smash', '🚀');
+    key(3200, 'smash', '🪚');
     key(3900, 'rail', '22/s');
     key(4800, 'cannon');
     key(7300, 'avalanche');

@@ -70,7 +70,7 @@ export interface CityHost {
 export interface CityRunOptions {
   /** Defenders, humans and bots together: 2–4. */
   partySize: number;
-  /** Humans among them (2 in co-op). Bots fill the rest. */
+  /** Humans among them (2–4 in co-op). Bots fill the rest. */
   humans?: number;
 }
 
@@ -148,7 +148,9 @@ export class CityDirector {
   get huskPool(): Set<string> { return this.pool; }
 
   reset(difficultyId: string, opts: CityRunOptions): void {
-    this.partySize = Phaser.Math.Clamp(Math.round(opts.partySize), 2, 4);
+    const humans = Phaser.Math.Clamp(opts.humans ?? 1, 1, 4);
+    // Every human holds a seat; bots only fill what is left.
+    this.partySize = Phaser.Math.Clamp(Math.max(Math.round(opts.partySize), humans), 2, 4);
     this.lanes = [];
     this.laneCursor = 0;
     this.savedBannerShown = false;
@@ -157,8 +159,7 @@ export class CityDirector {
     this.core?.destroy();
     const at = this.map.allElementPos();
     this.core = new AllElement(this.host.scene, at.x, at.y);
-    const humans = Phaser.Math.Clamp(opts.humans ?? 1, 1, 2);
-    this.coop = humans === 2;
+    this.coop = humans >= 2;
     this.companions.reset(this.partySize - humans, humans === 1);
     this.mutations.reset();
     this.relics.reset();

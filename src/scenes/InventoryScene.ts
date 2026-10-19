@@ -1,22 +1,25 @@
 import Phaser from 'phaser';
 import * as CP from '../data/CampaignProgress';
-import { ITEMS, getItem, consumedItemIds, shortDescOf, fullDescOf } from '../data/Items';
+import { ITEMS, ItemDef, getItem, consumedItemIds, shortDescOf, fullDescOf } from '../data/Items';
+import { findElementDef } from '../data/ElementRoster';
+import { drawItem, ItemKind } from '../ui/ItemArt';
 import {
   ARTIFACTS, ArtifactDef, ARTIFACT_COOLDOWN_MS, armedArtifactIds, getArtifact,
 } from '../data/Artifacts';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
-  addButton, addChip, addIconButton, addPanel, addRowPlate, addWell, addBody, fillDiamond,
+  addButton, addChip, addIconButton, addPanel, addWell, addBody,
 } from '../ui';
 import { Music, Sfx } from '../audio';
 
 const ACCENT = 0x2ee6c0;
 const ARTIFACT_ACCENT = 0xffc44d;
 
-/** Rows are shorter than they used to be — the bag holds ten at a time now, not seven. */
-const ROW_H = 48;
-const ROW_PAD = 5;
-const ROW_STRIDE = ROW_H + ROW_PAD;
+/** The bag is a grid of pockets now, four across; a pocket is a leather square with a drawn item in it. */
+const COLS = 4;
+const CELL_H = 124;
+const POCKET_W = 110;
+const POCKET_H = 96;
 
 const TAB_Y = 84;
 const SEARCH_Y = 118;
@@ -29,6 +32,9 @@ type Tab = 'items' | 'artifacts';
 interface Row {
   id: string;
   emoji: string;
+  /** What the pocket shows: the object's silhouette and the colour it is struck in. */
+  kind: ItemKind;
+  color: number;
   name: string;
   /** The one-line mechanical summary shown on the row. */
   summary: string;
@@ -314,6 +320,8 @@ export class InventoryScene extends Phaser.Scene {
           return {
             id: def.id,
             emoji: def.emoji,
+            kind: itemKindFor(def),
+            color: findElementDef(def.elementId)?.color ?? ACCENT,
             name: def.name,
             summary: shortDescOf(def),
             trailing: `×${inventory[def.id] ?? 0}`,
@@ -336,6 +344,8 @@ export class InventoryScene extends Phaser.Scene {
         return {
           id: a.id,
           emoji: a.emoji,
+          kind: artifactKindFor(a.id),
+          color: a.accent,
           name: a.name,
           summary: a.lines[0],
           trailing: armed ? 'ARMED' : cooling ? countdown(readyAt - now) : 'READY',
@@ -348,12 +358,16 @@ export class InventoryScene extends Phaser.Scene {
       });
   }
 
+  private gridRows(): number {
+    return Math.ceil(this.totalRows / COLS);
+  }
+
   private maxScroll(): number {
-    return Math.max(0, this.totalRows * ROW_STRIDE - this.listH + 12);
+    return Math.max(0, this.gridRows() * CELL_H - this.listH + 16);
   }
 
   private thumbHeight(): number {
-    const content = Math.max(1, this.totalRows * ROW_STRIDE);
+    const content = Math.max(1, this.gridRows() * CELL_H);
     return Phaser.Math.Clamp((this.listH / content) * this.listH, 30, this.listH);
   }
 
@@ -393,49 +407,78 @@ export class InventoryScene extends Phaser.Scene {
       return;
     }
 
-    const rowW = this.panelW - 36 - BAR_W - 6;
-    const rowCx = this.panelX + (this.panelW - BAR_W - 6) / 2;
+    // Leather lining behind the pockets: the inside of the bag.
+    const lining = this.add.graphics();
+    const lx = this.panelX + 14;
+    const lw = this.panelW - 28 - BAR_W - 6;
+    lining.fillStyle(0x4a2f1c, 1); lining.fillRoundedRect(lx, listY + 2, lw, listH - 4, 6);
+    for (let i = 0; i < 40; i++) {
+      const h = Math.sin(i * 127.1) * 43758.5453;
+      const u = h - Math.floor(h);
+      lining.fillStyle(0x000000, 0.08); lining.fillEllipse(lx + u * lw, listY + ((u * 7.7) % 1) * listH, 30 + u * 40, 12);
+    }
+    lining.lineStyle(1, 0xc9a86a, 0.35);
+    for (let yy = listY + 10; yy < listY + listH - 8; yy += 7) lining.lineBetween(lx + 6, yy, lx + 6, yy + 3.5);
+    for (let yy = listY + 10; yy < listY + listH - 8; yy += 7) lining.lineBetween(lx + lw - 6, yy, lx + lw - 6, yy + 3.5);
+    this.rowContainer.add(lining);
+
+    const gridLeft = lx + 10;
+    const cellW = (lw - 20) / COLS;
 
     rows.forEach((row, i) => {
-      const y = listY + 6 + i * ROW_STRIDE - this.scrollOffset;
-      // Rows scrolled well clear of the well are not built at all — the bag can hold
-      // sixty items and only ten of them are ever on screen.
-      if (y + ROW_H < listY - ROW_STRIDE || y > listY + listH + ROW_STRIDE) return;
+      const col = i % COLS;
+      const gr = Math.floor(i / COLS);
+      const cx = gridLeft + col * cellW + cellW / 2;
+      const y = listY + 10 + gr * CELL_H - this.scrollOffset;
+      // Pockets scrolled well clear of the well are not built at all — the bag can hold
+      // sixty items and only a dozen of them are ever on screen.
+      if (y + CELL_H < listY - CELL_H || y > listY + listH + CELL_H) return;
 
-      const plate = addRowPlate(this, {
-        x: rowCx, y: y + ROW_H / 2, w: rowW, h: ROW_H,
-        accent: row.accent, depth: DEPTH.overlay + 3,
-      });
+      const pocket = this.add.graphics();
+      const paint = (hot: boolean): void => {
+        pocket.clear();
+        const px = cx - POCKET_W / 2;
+        // A stitched leather flap-pocket, lighter when hovered, dim when the row is muted.
+        pocket.fillStyle(0x000000, 0.35); pocket.fillRoundedRect(px + 3, y + 4, POCKET_W, POCKET_H, 8);
+        pocket.fillStyle(row.muted ? 0x3a3028 : hot ? 0x7a5232 : 0x5c3a1e, 1); pocket.fillRoundedRect(px, y, POCKET_W, POCKET_H, 8);
+        pocket.fillStyle(0x000000, 0.22); pocket.fillRoundedRect(px + 6, y + 6, POCKET_W - 12, POCKET_H - 12, 6);
+        pocket.lineStyle(1, 0xc9a86a, row.muted ? 0.2 : 0.45);
+        for (let k = px + 10; k < px + POCKET_W - 8; k += 7) { pocket.lineBetween(k, y + 3.5, k + 3.5, y + 3.5); pocket.lineBetween(k, y + POCKET_H - 3.5, k + 3.5, y + POCKET_H - 3.5); }
+        for (let k = y + 10; k < y + POCKET_H - 8; k += 7) { pocket.lineBetween(px + 3.5, k, px + 3.5, k + 3.5); pocket.lineBetween(px + POCKET_W - 3.5, k, px + POCKET_W - 3.5, k + 3.5); }
+        // Accent stripe along the top, in the item's colour.
+        pocket.fillStyle(row.accent, row.muted ? 0.3 : 0.8); pocket.fillRoundedRect(px + 10, y + 7, POCKET_W - 20, 3, 1.5);
+        // The object.
+        drawItem(pocket, row.kind, cx, y + POCKET_H / 2 + 2, 22, row.color, { lit: hot ? 0.6 : 0, muted: row.muted, t: 0 });
+        // Count / readiness badge, top right.
+        const bw = Math.max(26, row.trailing.length * 6.5 + 10);
+        pocket.fillStyle(0x15121a, 1); pocket.fillRoundedRect(px + POCKET_W - bw - 2, y - 6, bw + 2, 18, 5);
+        pocket.fillStyle(mix(row.accent, 0x000000, 0.5), 1); pocket.fillRoundedRect(px + POCKET_W - bw - 1, y - 5, bw, 16, 5);
+      };
+      paint(false);
 
-      const hit = this.add.rectangle(rowCx, y + ROW_H / 2, rowW, ROW_H, 0xffffff, 0)
-        .setInteractive({ useHandCursor: true })
-        .on('pointerover', () => plate.paint(true))
-        .on('pointerout', () => plate.paint(false))
-        .on('pointerdown', () => this.openDetail(row.id));
-
-      const left = rowCx - rowW / 2;
+      const px = cx - POCKET_W / 2;
+      const bw = Math.max(26, row.trailing.length * 6.5 + 10);
       const objs: Phaser.GameObjects.GameObject[] = [
-        plate.g,
-        this.add.text(left + 24, y + ROW_H / 2, row.emoji, { fontSize: '22px' })
-          .setOrigin(0.5).setAlpha(row.muted ? 0.5 : 1),
-        this.add.text(left + 46, y + ROW_H / 2 - 9, row.name, {
-          fontSize: '14px', fontFamily: FONT_DISPLAY,
-          color: row.muted ? T.dim : T.bright, letterSpacing: 0.5,
-        }).setOrigin(0, 0.5),
-        this.add.text(left + 46, y + ROW_H / 2 + 10, row.summary, {
-          fontSize: '9.5px', fontFamily: FONT_UI, color: row.muted ? T.ghost : T.dim,
-          wordWrap: { width: rowW - 190 }, maxLines: 1,
-        }).setOrigin(0, 0.5),
-        this.add.text(left + rowW - 16, y + ROW_H / 2 + (row.note ? -8 : 0), row.trailing, {
-          fontSize: '14px', fontFamily: FONT_DISPLAY, color: row.trailingColor,
-        }).setOrigin(1, 0.5),
-        hit,
+        pocket,
+        this.add.text(px + POCKET_W - bw / 2 - 1, y + 3, row.trailing, {
+          fontSize: '9.5px', fontFamily: FONT_DISPLAY, color: row.trailingColor,
+        }).setOrigin(0.5),
+        this.add.text(cx, y + POCKET_H + 10, row.name, {
+          fontSize: '10px', fontFamily: FONT_DISPLAY, color: row.muted ? T.dim : T.bright, letterSpacing: 0.3,
+          wordWrap: { width: cellW - 6 }, align: 'center', maxLines: 1,
+        }).setOrigin(0.5, 0.5),
       ];
       if (row.note) {
-        objs.push(this.add.text(left + rowW - 16, y + ROW_H / 2 + 11, row.note, {
-          fontSize: '8.5px', fontFamily: FONT_DISPLAY, color: row.noteColor, letterSpacing: 1,
-        }).setOrigin(1, 0.5));
+        objs.push(this.add.text(cx, y + POCKET_H + 22, row.note, {
+          fontSize: '7.5px', fontFamily: FONT_DISPLAY, color: row.noteColor, letterSpacing: 1,
+        }).setOrigin(0.5, 0.5));
       }
+      const hit = this.add.rectangle(cx, y + POCKET_H / 2, POCKET_W, POCKET_H, 0xffffff, 0)
+        .setInteractive({ useHandCursor: true })
+        .on('pointerover', () => paint(true))
+        .on('pointerout', () => paint(false))
+        .on('pointerdown', () => this.openDetail(row.id));
+      objs.push(hit);
       this.rowContainer.add(objs);
     });
 
@@ -503,7 +546,7 @@ export class InventoryScene extends Phaser.Scene {
     const depth = DEPTH.overlay + 4;
 
     const objs: Phaser.GameObjects.GameObject[] = [
-      ...this.emblem(cx, midY - 118, def.emoji, ACCENT, depth),
+      ...this.emblem(cx, midY - 118, itemKindFor(def), findElementDef(def.elementId)?.color ?? ACCENT, ACCENT, depth),
       this.add.text(cx, midY - 52, def.name, {
         fontSize: '23px', fontFamily: FONT_DISPLAY, color: T.bright, letterSpacing: 1.5,
       }).setOrigin(0.5).setDepth(depth + 1),
@@ -562,7 +605,7 @@ export class InventoryScene extends Phaser.Scene {
     const body = `${def.flavor}\n\n${def.lines.map((l) => `• ${l}`).join('\n')}\n\n${def.combo}`;
 
     const objs: Phaser.GameObjects.GameObject[] = [
-      ...this.emblem(cx, midY - 132, def.emoji, def.accent, depth),
+      ...this.emblem(cx, midY - 132, artifactKindFor(def.id), def.accent, def.accent, depth),
       this.add.text(cx, midY - 66, def.name, {
         fontSize: '23px', fontFamily: FONT_DISPLAY, color: T.bright, letterSpacing: 1.5,
       }).setOrigin(0.5).setDepth(depth + 1),
@@ -607,17 +650,17 @@ export class InventoryScene extends Phaser.Scene {
     this.detailGroup = objs;
   }
 
-  /** The glyph set in a lit diamond, shared by both detail views. */
-  private emblem(x: number, y: number, glyph: string, accent: number, depth: number): Phaser.GameObjects.GameObject[] {
+  /** The object itself on a little plinth, lit from behind — shared by both detail views. */
+  private emblem(x: number, y: number, kind: ItemKind, color: number, accent: number, depth: number): Phaser.GameObjects.GameObject[] {
     const g = this.add.graphics().setDepth(depth);
     for (let k = 6; k >= 1; k--) {
       g.fillStyle(accent, 0.04);
       g.fillCircle(x, y, 30 + k * 7);
     }
-    fillDiamond(g, x, y, 44, mix(C.plate, accent, 0.2), 0.95);
-    g.lineStyle(2, accent, 0.7);
-    g.strokeCircle(x, y, 44);
-    return [g, this.add.text(x, y, glyph, { fontSize: '44px' }).setOrigin(0.5).setDepth(depth + 1)];
+    g.fillStyle(0x4a2f1c, 1); g.fillRoundedRect(x - 54, y + 46, 108, 10, 3);
+    g.fillStyle(0x2e1a0e, 1); g.fillRect(x - 54, y + 56, 108, 3);
+    drawItem(g, kind, x, y, 44, color, { lit: 0.25 });
+    return [g];
   }
 
   private backButton(x: number, y: number, depth: number): Phaser.GameObjects.GameObject {
@@ -643,6 +686,30 @@ export class InventoryScene extends Phaser.Scene {
     this.scene.stop();
     this.scene.resume(this.callerKey);
   }
+}
+
+/**
+ * Which object an item is drawn as, from what it does: vitals are bottled, offence is a
+ * blade, status work is a wand, sabotage is an idol, triggered behaviours are a scroll,
+ * and anything else is a charm.
+ */
+function itemKindFor(def: ItemDef): ItemKind {
+  const e = def.effect;
+  if (e.maxHp || e.regenPerSecond || e.lifestealFrac || e.reviveHpFrac) return 'potion';
+  if (e.shieldCharges || e.shieldHp) return 'amulet';
+  if (e.damageMult || e.critChance || e.critMult) return 'dagger';
+  if (e.statusDurMult || e.statusDmgMult) return 'wand';
+  if (e.enemyMaxHpMult || e.enemySpeedMult || e.enemyDamageMult) return 'idol';
+  if (e.behaviors?.length) return 'scroll';
+  return 'ring';
+}
+
+/** Artifacts are relics; which relic is a stable hash of the id so the bag never reshuffles. */
+function artifactKindFor(id: string): ItemKind {
+  const kinds: ItemKind[] = ['orb', 'idol', 'crown', 'amulet', 'tome', 'scroll', 'ring'];
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return kinds[h % kinds.length];
 }
 
 /** `4:59` — the readable half of a five-minute cooldown. */

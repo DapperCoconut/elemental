@@ -114,6 +114,19 @@ const magma: ElementCodex = {
         { tag: 'utility', label: 'In the air', detail: 'A glob does nothing for the 260ms it is flying, and its landing ring grows as it falls, so it can be walked out of.' },
         { tag: 'damage', label: 'At the helm', detail: 'Aboard the ship, the click is six cannonballs at 430 px/s for 26 apiece and a 170px shove — see Molten Mutiny.' },
       ],
+      upgrade: {
+        basics:
+          'The five globs become finned artillery shells. Each one detonates where it lands for 10 '
+          + 'damage in a 44px blast, then settles into the same pool it always left — so the fan hits '
+          + 'on arrival as well as denying the floor afterwards. The blast charges any volcano of yours '
+          + 'it catches for 10 on top of the pool\'s own trickle.',
+        effects: [
+          { tag: 'damage', label: 'Shell impact', detail: '10 damage to everything within 44px of each landing point, once per shell — up to 50 from a full fan on a single target standing in the middle of it.', requiresUpgrade: 'click' },
+          { tag: 'resource', label: 'Impact charge', detail: 'Each impact feeds 10 pressure to any volcano of yours inside its 44px, on top of the 16 a second the pool then adds.', requiresUpgrade: 'click' },
+          { tag: 'summon', label: 'Still a pool', detail: 'After the blast the shell settles into an ordinary 27px pool: 34 damage a second for 6 seconds, exactly as the base fan.', requiresUpgrade: 'click' },
+          { tag: 'utility', label: 'Readable', detail: 'A shell\'s landing ring is drawn gold and wider (the 44px blast rather than the 27px pool), so the impact can still be walked out of during the 260ms flight.', requiresUpgrade: 'click' },
+        ],
+      },
       notes: [
         'Overlapping pools do not stack their burn, so throwing the fan into a tight cluster is a waste — the value is in the ground it denies.',
         'Aimed across your own volcano this is the cheapest charge in the kit: no cooldown worth mentioning and up to five pools sitting on it.',
@@ -142,6 +155,19 @@ const magma: ElementCodex = {
         { tag: 'damage', label: 'The collapse', detail: '60 damage and a 120px shove to everything within 150px, plus 40 pressure to every other volcano of yours in the same blast.' },
         { tag: 'summon', label: 'What it leaves', detail: '4 fresh pools scattered 30–100px around the crater, so the ground it was standing on stays hostile for another 6 seconds.' },
       ],
+      upgrade: {
+        basics:
+          'A critical volcano stops refusing pressure. For the 5 seconds it is screaming, every point '
+          + 'you force into it is banked as overfill, up to 250 over the cap, and the collapse pays it '
+          + 'back: +0.7 damage and +0.9px of blast radius per point. A cone you never stop feeding '
+          + 'collapses for 235 damage across 375px instead of 60 across 150.',
+        effects: [
+          { tag: 'resource', label: 'Overfill', detail: 'While critical, pressure past 100 is kept as overfill instead of wasted — up to 250 over. Below critical a full gauge still refuses it, exactly as the base ability.', requiresUpgrade: 'e' },
+          { tag: 'damage', label: 'Bigger collapse', detail: '60 + 0.7 per point of overfill, so 235 at the full 250.', requiresUpgrade: 'e' },
+          { tag: 'area', label: 'Wider collapse', detail: '150px + 0.9px per point of overfill, so 375px at the full 250.', requiresUpgrade: 'e' },
+          { tag: 'utility', label: 'The tell', detail: 'Every whole point of overfill throws a white spark off the cone, and the collapse reads 💥 SUPERCRITICAL with its damage instead of 💥 COLLAPSE.', requiresUpgrade: 'e' },
+        ],
+      },
       notes: [
         'A volcano is only a slow trickle if you ignore it. Fed hard it is roughly six seconds from placement to collapse — the ability\'s real cooldown is how fast you can fill it.',
         'A cannonball from the ship is the fastest fill there is: one round across the cone and it is critical, whatever the gauge read.',
@@ -165,6 +191,21 @@ const magma: ElementCodex = {
         { tag: 'resource', label: 'Charging', detail: '25 pressure to every volcano of yours inside the same 96px.' },
         { tag: 'utility', label: 'The window', detail: '10 seconds. It expires quietly with a puff of smoke if nothing hits you, and the block is not refunded.' },
       ],
+      upgrade: {
+        basics:
+          'Hold R and the bloat refuses to go off. Every hit that lands while you hold is still '
+          + 'blocked outright, but is folded into the charge at 1.5 damage a point instead of popping '
+          + 'it. The window does not run down while held — it refills to the full 10 seconds — and '
+          + 'letting go does not detonate: it re-arms, and the next hit sets off the whole bank. The '
+          + 'burst is 30 plus everything banked, and its radius grows by half the bonus, up to +90px.',
+        effects: [
+          { tag: 'shield', label: 'Hold to swallow', detail: 'While R is held, every hit is refused in full and banked at 1.5 damage per point, with a floating +N for each one.', requiresUpgrade: 'r' },
+          { tag: 'utility', label: 'No clock', detail: 'Holding keeps the 10-second window topped up, so a held bloat never expires. Releasing leaves it fully armed rather than counting down from where it was.', requiresUpgrade: 'r' },
+          { tag: 'damage', label: 'The bomb', detail: '30 + the banked charge to everything inside the burst — swallowing a 40-point hit makes the next pop 90.', requiresUpgrade: 'r' },
+          { tag: 'area', label: 'Wider burst', detail: '96px + half the banked bonus, capped at +90px (186px across a fully loaded bomb).', requiresUpgrade: 'r' },
+          { tag: 'cost', label: 'Unspent charge', detail: 'If the window does run out without a pop, the bank is lost with it.', requiresUpgrade: 'r' },
+        ],
+      },
       notes: [
         'It intercepts before shields, absorbs and armour, so it is the answer to a single enormous hit rather than to sustained chip damage.',
         'It is also the only defensive ability in the kit on foot, and it is a charging tool — standing on your own volcano and taking a hit is 25 free pressure.',
@@ -190,6 +231,23 @@ const magma: ElementCodex = {
         { tag: 'utility', label: 'The charges', detail: 'Two in the gun. One reloads at a time, 3 seconds each, and the F card shows the charges rather than a cooldown.' },
         { tag: 'utility', label: 'From the deck', detail: 'Fired while aboard the ship, the recoil throws you over the side. The ship stays exactly where it was.' },
       ],
+      upgrade: {
+        basics:
+          'The gun holds three charges, and while all three are loaded it builds pressure: 0 to 100% '
+          + 'over 9 seconds, shown as the F card darkening to a deep red. The reading at the press is '
+          + 'folded into the shot — up to 35 damage instead of 15, a harder shove, and up to 440px of '
+          + 'recoil instead of 240. Past 60% you are the shot too, ramming anyone you fly through for '
+          + '18. Leave a full gun alone for 6 more seconds and it overpressures: the card goes smoky '
+          + 'black and the next F bursts in your hands for 35 to you and everyone within 120px.',
+        effects: [
+          { tag: 'utility', label: 'Third charge', detail: 'Three in the gun instead of two. Still one reloading at a time, 3 seconds each.', requiresUpgrade: 'f' },
+          { tag: 'resource', label: 'The gauge', detail: 'Starts the moment the third charge is in and reads full after 9 seconds. Any shot resets it to zero.', requiresUpgrade: 'f' },
+          { tag: 'damage', label: 'Pressurised cone', detail: '15 + 20 × pressure damage (35 at full), shove 60 + 60 × pressure, and the volcano charge rises by the same 20 × pressure.', requiresUpgrade: 'f' },
+          { tag: 'utility', label: 'Longer recoil', detail: '240 + 200 × pressure px of recoil, so 440px off a full gauge, still over 0.38 seconds.', requiresUpgrade: 'f' },
+          { tag: 'damage', label: 'You are the shot', detail: 'At 60% pressure or more, anyone within 34px of you during the recoil takes 18 and a 90px shove, once each per flight.', requiresUpgrade: 'f' },
+          { tag: 'cost', label: 'Overpressure', detail: '6 seconds after the gauge reads full, the next F does not fire: it bursts for 35 damage and a 160px shove to everyone within 120px, 35 to you as well, and 40 pressure to your volcanoes in range. You still recoil.', requiresUpgrade: 'f' },
+        ],
+      },
       notes: [
         'Aiming at somebody and getting away from them are the same press. The ability is as much a disengage as an attack, and the second charge is the second step back.',
         'Pointing it at your own volcano is 15 pressure and a retreat in one motion — the cheapest way in the kit to feed a cone you are standing too close to.',
@@ -223,6 +281,20 @@ const magma: ElementCodex = {
         { tag: 'utility', label: 'Over the side', detail: 'Space dismounts you 50px toward the cursor. The ship holds its position, keeps burning down and keeps stopping shots. Space within 84px of the hull boards again.' },
         { tag: 'summon', label: 'Sinking', detail: 'At 0 hull the ship goes down, leaves 4 pools where it was, and drops you where it stood. Blunder-Boil fired from the deck also puts you over the side.' },
       ],
+      upgrade: {
+        basics:
+          'While the ship floats, a flaming pirate spirit climbs out of the hull every 4–5 seconds, up '
+          + 'to three at a time. Each has 50 health that burns down 8 a second on its own, hovers over '
+          + 'the deck, and every 2–3 seconds lunges up to 240px through the nearest enemy within 360px '
+          + 'for 20 — leaving a line of small, short-lived fire pools along the path it flew.',
+        effects: [
+          { tag: 'summon', label: 'The crew', detail: 'A spirit every 4–5 seconds while the ship is up, mounted or not. Never more than 3 of yours at once.', requiresUpgrade: 'q' },
+          { tag: 'utility', label: 'Lifespan', detail: '50 health, losing 8 a second on its own — a little over 6 seconds if nothing touches it.', requiresUpgrade: 'q' },
+          { tag: 'damage', label: 'The lunge', detail: 'Every 2–3 seconds a spirit dashes up to 240px over 0.32 seconds at the nearest enemy within 360px, dealing 20 and a 50px shove to the first enemy it passes within 22px of — one hit per lunge.', requiresUpgrade: 'q' },
+          { tag: 'cost', label: 'Shootable', detail: 'Enemy projectiles that touch a spirit are stopped and taken out of its 50 health.', requiresUpgrade: 'q' },
+          { tag: 'dot', label: 'Fire trail', detail: 'A 15px pool every 18px along the lunge, lasting 1.4 seconds. They are real pools: 34 damage a second, and they charge your volcanoes.', requiresUpgrade: 'q' },
+        ],
+      },
       notes: [
         'The pendant costs you a fifth of your output for as long as it is on, and a fight is paid for in that currency. Fifty is roughly 250 damage worth of lava, rock and cone — the sooner it goes on, the sooner it pays.',
         'Taking it off discards the charge. The curse keeps its cut: there is no banking a half-filled pendant for later.',

@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
-import { C, mix, lighten, darken, tintPlate } from './Theme';
+import { C, T, FONT_DISPLAY, FONT_UI, hex, mix, lighten, darken, tintPlate } from './Theme';
+import type { AbilityTag } from '../data/AbilityTags';
 import {
   ALL_CORNERS, fillNotched, fillNotchedGradient, strokeNotched, drawSheen, drawGlow,
   drawCornerBrackets, fillDiamond, fillStar,
@@ -23,6 +24,10 @@ export interface TrayCard {
   fill: Phaser.GameObjects.Rectangle;
   maxWidth: number;
   baseFillColor?: number;
+  abilityId?: string;
+  /** The card's label as kits write it ("E  Name", "[E] Name") — hidden; the face reads it. */
+  lbl?: Phaser.GameObjects.Text;
+  face?: AbilityCardFace;
 }
 
 // ── Tray band ─────────────────────────────────────────────────────────
@@ -117,24 +122,218 @@ export function drawAbilityCardPlate(
   strokeNotched(g, x + 3, y + 3, w - 6, h - 6, 0x000000, 0.35, 1, cut - 2);
   strokeNotched(g, x + 4, y + 4, w - 8, h - 8, lighten(accent, 0.3), 0.08, 1, cut - 3);
 
-  // Accent spine down the left and a stripe along the foot.
+  // Accent spine down the left edge — the one bit of colour the plate carries outright.
   g.fillStyle(accent, 0.75);
   g.fillRect(x + 1, y + cut, 2, h - cut * 2);
-  g.lineStyle(1.5, accent, 0.5);
-  g.beginPath(); g.moveTo(x + cut + 4, y + h - 2.5); g.lineTo(x + w - cut - 4, y + h - 2.5); g.strokePath();
-
-  // Rivets sitting in each cut corner.
-  const rv = lighten(frame, 0.35);
-  for (const [rx, ry] of [[x + 4, y + 4], [x + w - 4, y + 4], [x + w - 4, y + h - 4], [x + 4, y + h - 4]]) {
-    g.fillStyle(0x000000, 0.5); g.fillCircle(rx, ry + 0.6, 1.6);
-    g.fillStyle(rv, 0.7); g.fillCircle(rx, ry, 1.3);
-  }
 
   strokeNotched(g, x, y, w, h, frame, bound ? 0.95 : 0.6, 1.5, cut);
   drawSheen(g, x, y, w, h, lighten(frame, 0.7), 0.3, cut);
   if (bound) {
     drawCornerBrackets(g, x - 2, y - 2, w + 4, h + 4, lighten(C.gold, 0.25), 0.9, 1.5, 9, cut + 1);
-    fillStar(g, x + w - 12, y + 9, 4, C.gold, 0.9);
+  }
+}
+
+// ── Ability card text face ────────────────────────────────────────────
+
+/** What the scene knows about the ability on a card: its own name, its tags, whether it is charged. */
+export interface CardFaceInfo {
+  /** The ability's real name. Tags and the ult readout only show while the card says this. */
+  name?: string;
+  tags: readonly AbilityTag[];
+  ult: boolean;
+}
+
+const TAG_STYLE: Record<AbilityTag, { label: string; color: number }> = {
+  rmb: { label: 'RMB', color: 0x5fd0ff },
+  hold: { label: 'HOLD', color: 0xffb84d },
+  recast: { label: 'RECAST', color: 0xc58bff },
+};
+
+const KEY_LABEL = /^\s*\[?(Click|Space|[A-Z0-9])\]?\s+([\s\S]+)$/;
+const KEYCAP = 22;
+const NAME_X = 35;
+
+/**
+ * The words on one ability card: a keycap, the ability's name, and up to three small control
+ * tags (RMB / HOLD / RECAST) under it — no description, which is the Codex's job. An ultimate
+ * paid for in charge gets one more pill, its charge in percent, turning to READY when it is.
+ *
+ * Kits still write the card's label as plain text ("E  Name", "[Click] Titan Smash") on a
+ * hidden `lbl`; the face re-reads that string whenever it changes, so a form that renames the
+ * whole row (Titan Form, the Mech, Build Mode, Final Destiny) needs no new API.
+ */
+export class AbilityCardFace {
+  private readonly key: Phaser.GameObjects.Graphics;
+  private readonly keyText: Phaser.GameObjects.Text;
+  private readonly name: Phaser.GameObjects.Text;
+  private readonly pills: Phaser.GameObjects.Graphics;
+  private readonly pillTexts: Phaser.GameObjects.Text[] = [];
+  private lastLabel: string | null = null;
+  private lastId = '';
+  private lastPct = -1;
+  private keyId = '';
+  private shownTags: readonly AbilityTag[] = [];
+  private isUlt = false;
+  private readonly cy: number;
+
+  constructor(
+    scene: Phaser.Scene,
+    private readonly x0: number,
+    y0: number,
+    private readonly w: number,
+    h: number,
+    private readonly accent: number,
+    private readonly fallbackKey: string,
+    private readonly bound: boolean,
+    private readonly resolve: (abilityId: string) => CardFaceInfo,
+    depth = 23,
+  ) {
+    this.cy = y0 + h / 2;
+    this.key = scene.add.graphics().setDepth(depth);
+    this.keyText = scene.add.text(x0 + 7 + KEYCAP / 2, this.cy - 1, '', {
+      fontSize: '12px', fontFamily: FONT_DISPLAY, color: T.bright,
+    }).setOrigin(0.5).setDepth(depth);
+    this.name = scene.add.text(x0 + NAME_X, this.cy, '', {
+      fontSize: '11px', fontFamily: FONT_DISPLAY, color: bound ? T.gold : T.bright, letterSpacing: 0.4,
+    }).setOrigin(0, 0.5).setDepth(depth);
+    this.pills = scene.add.graphics().setDepth(depth);
+    for (let i = 0; i < 4; i++) {
+      this.pillTexts.push(scene.add.text(0, 0, '', {
+        fontSize: '8px', fontFamily: FONT_UI, color: T.bright, fontStyle: 'bold', letterSpacing: 0.3,
+      }).setOrigin(0, 0.5).setDepth(depth));
+    }
+  }
+
+  /** Every object the face owns — form-swapping trays show and hide these with the row. */
+  objects(): Phaser.GameObjects.GameObject[] {
+    return [this.key, this.keyText, this.name, this.pills, ...this.pillTexts];
+  }
+
+  /** True while this card is an ultimate with its charge full — the overlay gilds it. */
+  get ultReady(): boolean {
+    return this.isUlt && this.lastPct >= 100;
+  }
+
+  /** Re-read the label if a kit changed it, and keep the ult readout current. `ratio` is 0–1. */
+  sync(label: string, abilityId: string, ratio: number): void {
+    if (label !== this.lastLabel || abilityId !== this.lastId) {
+      this.lastLabel = label;
+      this.lastId = abilityId;
+      const m = KEY_LABEL.exec(label);
+      const keyName = m ? m[1] : this.fallbackKey;
+      const name = (m ? m[2] : label).trim();
+      const info = this.resolve(abilityId);
+      // A row a form has renamed is not the ability the tags describe.
+      const own = info.name === undefined || info.name === name;
+      this.shownTags = own ? info.tags : [];
+      this.isUlt = own && info.ult;
+      this.fitName(name);
+      if (keyName !== this.keyId) {
+        this.keyId = keyName;
+        this.drawKeycap();
+      }
+      this.lastPct = -1;
+    }
+    const pct = this.isUlt ? Math.floor(Phaser.Math.Clamp(ratio, 0, 1) * 100 + 0.0001) : -1;
+    if (pct !== this.lastPct) {
+      const wasReady = this.lastPct >= 100;
+      this.lastPct = pct;
+      this.layoutPills();
+      if (this.isUlt && wasReady !== pct >= 100) this.drawKeycap();
+    }
+  }
+
+  private fitName(name: string): void {
+    const avail = this.w - NAME_X - 7;
+    const t = this.name;
+    t.setText(name);
+    for (const size of [11, 10, 9]) {
+      t.setFontSize(size);
+      if (t.width <= avail) return;
+    }
+    let s = name;
+    while (s.length > 1 && t.width > avail) {
+      s = s.slice(0, -1);
+      t.setText(`${s.trimEnd()}…`);
+    }
+  }
+
+  private drawKeycap(): void {
+    const g = this.key;
+    g.clear();
+    const kx = this.x0 + 7;
+    const ky = this.cy - KEYCAP / 2;
+    const ready = this.ultReady;
+    const rim = this.isUlt ? C.gold : lighten(this.accent, 0.25);
+    fillNotched(g, kx, ky + 2, KEYCAP, KEYCAP, 0x000000, 0.5, 5);
+    if (ready) drawGlow(g, kx, ky, KEYCAP, KEYCAP, C.gold, 0.5, 3, 2, 5);
+    fillNotchedGradient(g, kx, ky, KEYCAP, KEYCAP,
+      mix(tintPlate(this.isUlt ? C.gold : this.accent, 0.32), 0xffffff, 0.1),
+      darken(tintPlate(this.isUlt ? C.gold : this.accent, 0.14), 0.45), 1, 5, ALL_CORNERS, 6);
+    // The dished face of the key.
+    fillNotched(g, kx + 3, ky + 2, KEYCAP - 6, KEYCAP - 7, 0xffffff, 0.06, 3);
+    strokeNotched(g, kx, ky, KEYCAP, KEYCAP, rim, ready ? 1 : 0.7, 1.25, 5);
+
+    if (this.keyId === 'Click') {
+      // A little mouse with its left button lit, rather than a word that will not fit.
+      this.keyText.setText('');
+      const mx = kx + KEYCAP / 2;
+      const my = ky + KEYCAP / 2 - 0.5;
+      g.fillStyle(0x0a0a14, 0.9);
+      g.fillRoundedRect(mx - 5, my - 7.5, 10, 15, 5);
+      g.fillStyle(lighten(this.accent, 0.45), 1);
+      g.fillRoundedRect(mx - 5, my - 7.5, 5, 7, { tl: 5, tr: 0, bl: 0, br: 0 });
+      g.lineStyle(1, 0xe8e8ff, 0.85);
+      g.strokeRoundedRect(mx - 5, my - 7.5, 10, 15, 5);
+      g.beginPath(); g.moveTo(mx - 5, my - 0.5); g.lineTo(mx + 5, my - 0.5); g.strokePath();
+      g.beginPath(); g.moveTo(mx, my - 7.5); g.lineTo(mx, my - 0.5); g.strokePath();
+    } else {
+      this.keyText.setText(this.keyId);
+      this.keyText.setFontSize(this.keyId.length > 1 ? 8 : 12);
+      this.keyText.setColor(this.isUlt ? T.gold : T.bright);
+    }
+    if (this.bound) fillStar(g, kx + KEYCAP - 1, ky + 1, 3.5, C.gold, 1);
+  }
+
+  /** The ult pill (if any) leads, then the control tags, all on one row under the name. */
+  private layoutPills(): void {
+    const g = this.pills;
+    g.clear();
+    const items: Array<{ label: string; color: number; strong?: boolean }> = [];
+    if (this.isUlt) {
+      items.push(this.lastPct >= 100
+        ? { label: 'READY', color: C.gold, strong: true }
+        : { label: `${this.lastPct}%`, color: C.gold });
+    }
+    for (const tag of this.shownTags) items.push(TAG_STYLE[tag]);
+
+    // A card with nothing under its name centres the name in the card.
+    this.name.setY(items.length ? this.cy - 7 : this.cy);
+    const rowY = this.cy + 8;
+    const right = this.x0 + this.w - 7;
+    let px = this.x0 + NAME_X;
+    this.pillTexts.forEach((t, i) => {
+      const it = items[i];
+      if (!it) { t.setText(''); return; }
+      t.setText(it.label);
+      const pw = t.width + 6;
+      if (px + pw > right) { t.setText(''); return; }
+      g.fillStyle(it.color, it.strong ? 0.5 : 0.16);
+      g.fillRoundedRect(px, rowY - 6, pw, 12, 3);
+      g.lineStyle(1, it.color, it.strong ? 1 : 0.7);
+      g.strokeRoundedRect(px, rowY - 6, pw, 12, 3);
+      t.setPosition(px + 3, rowY);
+      t.setColor(it.strong ? '#1a1206' : hex(lighten(it.color, 0.35)));
+      px += pw + 3;
+    });
+  }
+
+  setVisible(v: boolean): void {
+    for (const o of this.objects()) (o as unknown as { setVisible(v: boolean): void }).setVisible(v);
+  }
+
+  destroy(): void {
+    for (const o of this.objects()) o.destroy();
   }
 }
 
@@ -175,6 +374,10 @@ export class AbilityTrayFx {
       const f = c.fill;
       if (!f.active || !f.visible) continue;
       this.drawCard(g, c, i, time);
+      if (c.face) {
+        const r = c.maxWidth > 0 ? f.width / c.maxWidth : 0;
+        c.face.sync(c.lbl?.text ?? '', c.abilityId ?? '', r);
+      }
     }
   }
 
@@ -277,6 +480,13 @@ export class AbilityTrayFx {
 
     // Re-stroke the frame on top of the fill so the card edge never disappears under it.
     strokeNotched(g, x0, top, w, h, frame, ready ? 0.85 : 0.5, 1.5, cut);
+
+    // A charged ultimate gets a gold halo on top of the usual ready pulse — it is earned.
+    if (c.face?.ultReady) {
+      const pulse = 0.5 + 0.5 * Math.sin(time * 0.006);
+      strokeNotched(g, x0 - 3, top - 3, w + 6, h + 6, C.gold, 0.35 + 0.45 * pulse, 2, cut + 2);
+      drawGlow(g, x0, top, w, h, C.gold, 0.12 + 0.12 * pulse, 4, 2, cut);
+    }
   }
 
   destroy(): void {

@@ -36,6 +36,7 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'geyser': 'geyser',
   'pressure-dagger': ['water-jet', 1.5, 0.9],
   'pain-rain': 'rain',
+  'bubble-barrage': ['bubble', 0.8, 1],
 
   // ── Air (the wind dancer) ──
   'wind-splice': ['air-snipe', 1.25, 0.75],
@@ -81,11 +82,12 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'metal-clot-armor': ['shield-up', 0.8, 1.1],
 
   // ── Shadow ──
-  'dark-drain': 'dark-drain',
+  'shadow-caltrop': ['chain', 1.4, 0.55],
   'tentacle': 'tentacle',
   'snap-trap': 'trap-snap',
   'tentacle-wall': ['tentacle', 0.7, 1.2],
   'black-hole': 'black-hole',
+  'grim-gloom': ['black-hole', 0.6, 0.9],
 
   // ── Soul ──
   'soul-lantern': 'lantern',
@@ -261,12 +263,13 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'dream-sleep-tight': ['crossbow', 1.5, 0.7],
   'dream-nightmare': 'nightmare',
 
-  // ── Chalk ──
-  'chalk-ward': ['sand', 1.5, 0.7],
-  'chalk-explosive': ['sand', 1.1, 0.8],
-  'chalk-perma': ['sand', 0.85, 0.85],
-  'chalk-shield': 'shield-up',
-  'chalk-masterpiece': ['craft-complete', 1.1],
+  // ── Paint (id `chalk`) ──
+  // Splotch voices itself in the kit (it fires several times a second).
+  'paint-splotch': null,
+  'paint-orange': ['oil-splash', 1.3, 0.6],
+  'paint-congeal': ['slime-splat', 0.7, 0.8],
+  'paint-still-life': ['ui-open', 0.9, 0.9],
+  'paint-masterpiece': ['craft-complete', 1.1],
 
   // ── Magma ──
   'magma-plume': ['sizzle', 0.85, 1.1],
@@ -551,8 +554,8 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'magma-saw': ['engine', 0.7, 1.15],
   'inevitability': ['clock-tick', 0.8, 1.15],
   'delay-the-inevitable': ['clock-tick', 0.95, 0.42],
-  'chalk-smudge': ['claw', 0.5, 1.5],
-  'living-chalk': ['mutate', 0.85, 1.1],
+  // Yin-Yang voices itself in the kit when the bars open.
+  'yin-yang': null,
   // Pre-move voices itself (the clock strike, then the punish) on the kit's own clock.
   'pre-move': null,
   'camo-fade': ['smoke', 0.7, 0.75],

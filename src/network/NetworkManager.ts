@@ -4,7 +4,10 @@ import type { NetStatusEntry } from './NetStatusSync';
 import type { NetConquestSnap } from '../elements/kits/ConquestKit';
 
 /** Bump when the wire protocol or gameplay sync changes incompatibly. */
-export const NET_PROTOCOL_VERSION = 47;
+export const NET_PROTOCOL_VERSION = 51;
+
+/** A co-op room holds the host plus up to three guests. PvP still needs exactly two. */
+export const MAX_PLAYERS = 4;
 
 /** Lobby selection payload exchanged while both players pick loadouts. */
 export interface NetSelection {
@@ -19,10 +22,11 @@ export interface NetSelection {
   /** Equipped skin id for the selected element (null = default look), rendered by the peer. */
   skin: string | null;
   /**
-   * Quantum only: the two element ids this player bonded, in the order they picked. The
-   * peer needs it to build a replica that starts as the right half — and `elementId` above
-   * is already that first half rather than `'quantum'`, so a peer that ignores this field
-   * still gets a fighter that works, just one that never swaps.
+   * Quantum only: the distinct elements this player's loadout carries, Click's first. The
+   * peer needs it to build a replica that starts as the right element — and `elementId` above
+   * is already that first element rather than `'quantum'`, so a peer that ignores this field
+   * still gets a fighter that works, just one that never shifts. Their shifts then arrive as
+   * `qswap` messages.
    */
   bond: string[] | null;
   ready: boolean;
@@ -32,11 +36,7 @@ export interface NetSelection {
 export type NetTechMsg =
   | { t: 'tech'; k: 'malware'; kind: 'goose' | 'clippy' | 'pong' }
   | { t: 'tech'; k: 'steer'; d: 'up' | 'down' | 'left' | 'right' }
-  | { t: 'tech'; k: 'door'; coins: number }
   | { t: 'tech'; k: 'quiz'; pass: boolean }
-  | { t: 'tech'; k: 'mouse'; stacks: number }
-  | { t: 'tech'; k: 'buff'; ms: number }
-  | { t: 'tech'; k: 'jackpot' }
   // Technology Mastery — the caster clicked their Byte-Bomb; shorten the replica's fuse too.
   | { t: 'tech'; k: 'bytefuse' };
 
@@ -117,6 +117,22 @@ export type NetPsychicMsg =
   | { t: 'psy'; k: 'premoved'; key: string };
 
 /**
+ * Paint (element id `chalk`). Everything Paint does is *what the player painted*, which no cast
+ * relay can carry — so the painter streams it. All painter → victim.
+ */
+export type NetPaintMsg =
+  // The Splotch shape every shot of mine now flies as: [forward, right, kind] per blob, world px.
+  | { t: 'pnt'; k: 'brush'; d: number[] }
+  // Dabs I just laid on the floor in my open window (E, R or Q): [x, y, kind, linked] each.
+  | { t: 'pnt'; k: 'pts'; d: number[] }
+  // My window closed — run its fuse / buckets now rather than on your clock.
+  | { t: 'pnt'; k: 'end' }
+  // My Still Life of you: [dx, dy, kind, linked] about your centre, world px.
+  | { t: 'pnt'; k: 'still'; d: number[] }
+  // Yin-Yang: white on my bars and black on yours, [slot, u%, v%] per dab.
+  | { t: 'pnt'; k: 'yy'; own: number[]; foe: number[] };
+
+/**
  * Conquest ships its whole board rather than events.
  *
  * Every other element's online state is a handful of timers, so a relayed cast plus the peer's
@@ -189,6 +205,22 @@ export interface NetBotState {
 
 export type NetMatchMode = 'pvp' | 'invasion';
 
+/** One player's locked-in loadout, as the host's `start` hands it to everyone. */
+export interface NetPartySel {
+  elementId: string;
+  perkId: string | null;
+  upgrades?: string[];
+  masteryBinds?: Record<string, string>;
+  masteryOn?: boolean;
+  skin?: string | null;
+  bond?: string[] | null;
+}
+
+export interface NetPartyMember {
+  slot: number;
+  sel: NetPartySel;
+}
+
 export type NetMsg =
   | { t: 'hello'; version: number }
   | { t: 'sel'; elementId: string | null; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; skin?: string | null; bond?: string[] | null; ready: boolean }
@@ -199,8 +231,8 @@ export type NetMsg =
       invasionDifficulty?: string;
       invasionMap?: 'city' | 'mansion';
       invasionParty?: number;
-      hostSel: { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; skin?: string | null; bond?: string[] | null };
-      guestSel: { elementId: string; perkId: string | null; upgrades?: string[]; masteryBinds?: Record<string, string>; masteryOn?: boolean; skin?: string | null; bond?: string[] | null };
+      /** Every player in the room, by slot (0 = host). */
+      party: NetPartyMember[];
     }
   // inv/fa/st: Silence remaster — invisibility flag, facing angle (radians), stealth meter.
   // dm/fr/dc: the sender's own damage reduction, cap and flat soak, applied by the peer's
@@ -208,6 +240,13 @@ export type NetMsg =
   // room: the mansion room this player is standing in (invasion co-op only).
   | { t: 'state'; x: number; y: number; vx: number; vy: number; hp: number; maxHp: number; shieldHp: number; shieldCharges: number; downed?: boolean; inv?: boolean; fa?: number; st?: number; dm?: number; fr?: number; dc?: number; room?: number }
   | { t: 'cast'; id: string; tx: number; ty: number }
+  // ── Room plumbing (NetworkManager-internal; never reaches a handler) ──
+  // Host → guest: the slots now in the room, and which one is yours.
+  | { t: 'peers'; slots: number[]; you: number }
+  // Host → would-be joiner: the room is full or mid-match.
+  | { t: 'full' }
+  // Host → guest: `m` came from player `from`. Guest → host: deliver `m` to player `to`.
+  | { t: 'relay'; from?: number; to?: number; m: NetMsg }
   | { t: 'hit'; amount: number }
   // Attacker → victim: a hit the attacker's sim resolved against its replica of the
   // victim. All multipliers already applied; the victim runs only its own absorb layers.
@@ -216,7 +255,7 @@ export type NetMsg =
   | { t: 'fx'; e: NetStatusEntry[]; spd: number; cd: number }
   // Attacker → victim: a knockback/pull the attacker's sim applied to its replica.
   | { t: 'push'; vx: number; vy: number; ms: number }
-  // Quantum: the sender collapsed their bond onto the other half. Self-contained on purpose —
+  // Quantum: the sender shifted onto another of their elements. Self-contained on purpose —
   // the receiver re-keys its replica of them wholesale, because a Quantum's upgrades, mastery
   // binds and skin all belong to the half being worn rather than to the fighter.
   | { t: 'qswap'; elementId: string; upgrades: string[]; masteryBinds: Record<string, string>; masteryOn: boolean; skin: string | null }
@@ -258,12 +297,13 @@ export type NetMsg =
   // resolved any damage they represent and reports it via 'allyBite'.
   | { t: 'huskFx'; fx: InvasionFx }
   | { t: 'boss'; name: string; color: string }
-  | { t: 'revived' } // either → either
+  | { t: 'revived' } // reviver → the one revived (sendTo)
   | { t: 'runEnd'; wavesCompleted: number; shardsEarned: number }
   | NetTechMsg
   | NetSilenceMsg
   | NetIllusionMsg
   | NetPsychicMsg
+  | NetPaintMsg
   | NetConquestMsg;
 
 export type NetStatus = 'idle' | 'starting' | 'hosting' | 'joining' | 'connected' | 'error';
@@ -281,30 +321,60 @@ function randomCode(): string {
   return code;
 }
 
-type MsgHandler = (msg: NetMsg) => void;
+/** `from` is the player slot the message came from (0 = host). */
+type MsgHandler = (msg: NetMsg, from: number) => void;
 type StatusHandler = (status: NetStatus, detail?: string) => void;
+/** The room's membership changed (someone joined or left while others stayed). */
+type PeersHandler = (slots: number[]) => void;
 
 /**
- * Singleton wrapper around a single PeerJS 1:1 connection. Lives outside the
- * Phaser scene graph so the connection survives scene transitions
- * (Lobby → Arena → GameOver → Lobby).
+ * Guest → host messages the host passes on to the other guests, tagged with who sent them.
+ * Everything else a guest says is for the host alone (husk damage, draft picks, …).
+ */
+const RELAYED = new Set<NetMsg['t']>(['state', 'cast', 'hit', 'sel', 'lobby', 'qswap']);
+
+/**
+ * Singleton wrapper around the room's PeerJS links. Lives outside the Phaser scene graph so
+ * the connections survive scene transitions (Lobby → Arena → GameOver → Lobby).
+ *
+ * A star: the host holds one link per guest (slots 1–3) and every guest holds one link to the
+ * host (slot 0). A guest's broadcast reaches the other guests through the host, which tags it
+ * with the sender's slot, so every handler is told who a message came from. A 1v1 room is
+ * just the one-guest case.
  */
 class NetworkManager {
   private peer: Peer | null = null;
-  private conn: DataConnection | null = null;
+  /** Host: one link per guest, by slot. Guest: the host's link, at slot 0. */
+  private links = new Map<number, DataConnection>();
+  private latency = new Map<number, number>();
   private msgHandlers = new Set<MsgHandler>();
   private statusHandlers = new Set<StatusHandler>();
+  private peersHandlers = new Set<PeersHandler>();
   private pingTimer: ReturnType<typeof setInterval> | null = null;
 
   public status: NetStatus = 'idle';
   public isHost = false;
   public roomCode: string | null = null;
+  /** Worst round trip among our links. */
   public latencyMs = 0;
   /** Set when the peer reported a protocol version different from ours. */
   public versionMismatch = false;
+  /** Our player slot: 0 for the host, 1–3 for a guest (told by the host). */
+  public mySlot = 0;
+  /** Every slot in the room, ours included, ascending. */
+  public slots: number[] = [];
+  /** Host: a match is running — turn new joiners away. */
+  public locked = false;
 
   get connected(): boolean {
-    return this.status === 'connected' && !!this.conn?.open;
+    if (this.status !== 'connected') return false;
+    for (const c of this.links.values()) if (c.open) return true;
+    return false;
+  }
+
+  /** The other players in the room, ascending. */
+  get otherSlots(): number[] {
+    return this.slots.filter((s) => s !== this.mySlot);
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────
@@ -313,6 +383,8 @@ class NetworkManager {
   host(): void {
     this.disconnect();
     this.isHost = true;
+    this.mySlot = 0;
+    this.slots = [0];
     this.setStatus('starting');
     this.openHostPeer(0);
   }
@@ -330,12 +402,16 @@ class NetworkManager {
 
     peer.on('connection', (conn) => {
       if (this.peer !== peer) return;
-      if (this.conn) {
-        // Lobby is full — politely refuse extra joiners.
-        conn.on('open', () => conn.close());
+      const slot = this.freeSlot();
+      if (slot < 0 || this.locked) {
+        // Full, or a match is on — politely refuse.
+        conn.on('open', () => {
+          try { conn.send({ t: 'full' } satisfies NetMsg); } catch { /* gone already */ }
+          setTimeout(() => conn.close(), 300);
+        });
         return;
       }
-      this.adoptConnection(conn);
+      this.adoptConnection(conn, slot);
     });
 
     peer.on('error', (err) => {
@@ -346,13 +422,25 @@ class NetworkManager {
         this.openHostPeer(attempt + 1);
         return;
       }
+      // A guest's link failing is not the room failing.
+      if (type === 'peer-unavailable' || type === 'webrtc') return;
       this.fail(this.describePeerError(type));
     });
 
     peer.on('disconnected', () => {
-      // Lost signaling server; existing data connection (if any) keeps working.
-      if (this.peer === peer && !this.conn) peer.reconnect();
+      // Lost signaling server; existing data connections keep working, but new
+      // guests could not find us — reconnect so the code stays joinable.
+      if (this.peer === peer && !peer.destroyed) peer.reconnect();
     });
+  }
+
+  /** Lowest unclaimed guest slot, or -1 when the room is full. Pending links hold their slot. */
+  private reserved = new Set<number>();
+  private freeSlot(): number {
+    for (let s = 1; s < MAX_PLAYERS; s++) {
+      if (!this.links.has(s) && !this.reserved.has(s)) return s;
+    }
+    return -1;
   }
 
   /** Join a lobby by room code. */
@@ -372,7 +460,7 @@ class NetworkManager {
         reliable: true,
         serialization: 'json',
       });
-      this.adoptConnection(conn);
+      this.adoptConnection(conn, 0);
     });
 
     peer.on('error', (err) => {
@@ -382,64 +470,148 @@ class NetworkManager {
     });
   }
 
-  private adoptConnection(conn: DataConnection): void {
-    this.conn = conn;
+  /** Host: `slot` is the guest's. Guest: always 0, the host. */
+  private adoptConnection(conn: DataConnection, slot: number): void {
+    if (this.isHost) this.reserved.add(slot);
+    else this.links.set(0, conn);
 
     conn.on('open', () => {
-      if (this.conn !== conn) return;
-      this.versionMismatch = false;
-      this.setStatus('connected');
-      this.send({ t: 'hello', version: NET_PROTOCOL_VERSION });
-      this.startPingLoop();
+      if (this.isHost) {
+        this.reserved.delete(slot);
+        if (this.links.has(slot) || !this.peer) { conn.close(); return; }
+        this.links.set(slot, conn);
+        this.slots = [0, ...[...this.links.keys()].sort((a, b) => a - b)];
+        this.raw(conn, { t: 'hello', version: NET_PROTOCOL_VERSION });
+        this.startPingLoop();
+        if (this.status !== 'connected') {
+          this.versionMismatch = false;
+          this.setStatus('connected');
+        }
+        this.broadcastPeers();
+        this.emitPeers();
+      } else {
+        if (this.links.get(0) !== conn) return;
+        this.versionMismatch = false;
+        this.raw(conn, { t: 'hello', version: NET_PROTOCOL_VERSION });
+        this.startPingLoop();
+        // 'connected' waits for the host's 'peers' — until then we don't know our slot.
+      }
     });
 
     conn.on('data', (data) => {
-      if (this.conn !== conn) return;
+      if (this.isHost ? this.links.get(slot) !== conn : this.links.get(0) !== conn) return;
       const msg = data as NetMsg;
       if (!msg || typeof msg.t !== 'string') return;
-      if (msg.t === 'ping') { this.send({ t: 'pong', ts: msg.ts }); return; }
-      if (msg.t === 'pong') { this.latencyMs = Math.max(0, Date.now() - msg.ts); return; }
-      if (msg.t === 'hello') {
-        this.versionMismatch = msg.version !== NET_PROTOCOL_VERSION;
-        return;
+      switch (msg.t) {
+        case 'ping': this.raw(conn, { t: 'pong', ts: msg.ts }); return;
+        case 'pong':
+          this.latency.set(slot, Math.max(0, Date.now() - msg.ts));
+          this.latencyMs = Math.max(0, ...this.latency.values());
+          return;
+        case 'hello':
+          if (msg.version !== NET_PROTOCOL_VERSION) this.versionMismatch = true;
+          return;
+        case 'full':
+          if (!this.isHost) this.fail('That room is full (or already playing)');
+          return;
+        case 'peers': {
+          if (this.isHost) return;
+          this.mySlot = msg.you;
+          this.slots = [...msg.slots].sort((a, b) => a - b);
+          if (this.status !== 'connected') this.setStatus('connected');
+          else this.emitPeers();
+          return;
+        }
+        case 'relay': {
+          if (this.isHost) {
+            // A guest wants this to reach one particular player.
+            const to = msg.to ?? 0;
+            if (to === 0) this.dispatch(msg.m, slot);
+            else { const c = this.links.get(to); if (c?.open) this.raw(c, { t: 'relay', from: slot, m: msg.m }); }
+          } else {
+            this.dispatch(msg.m, msg.from ?? 0);
+          }
+          return;
+        }
+        default:
+          break;
       }
-      for (const h of [...this.msgHandlers]) h(msg);
+      if (this.isHost && RELAYED.has(msg.t)) {
+        for (const [s, c] of this.links) {
+          if (s !== slot && c.open) this.raw(c, { t: 'relay', from: slot, m: msg });
+        }
+      }
+      this.dispatch(msg, this.isHost ? slot : 0);
     });
 
     const onGone = () => {
-      if (this.conn !== conn) return;
-      this.conn = null;
-      this.stopPingLoop();
-      if (this.isHost && this.peer && !this.peer.destroyed) {
-        // Keep the room open so another (or the same) friend can rejoin.
-        this.setStatus('hosting', 'Opponent disconnected');
+      if (this.isHost) {
+        this.reserved.delete(slot);
+        if (this.links.get(slot) !== conn) return;
+        this.links.delete(slot);
+        this.latency.delete(slot);
+        this.slots = [0, ...[...this.links.keys()].sort((a, b) => a - b)];
+        if (this.links.size === 0) {
+          this.stopPingLoop();
+          // Keep the room open so another (or the same) friend can rejoin.
+          if (this.peer && !this.peer.destroyed) this.setStatus('hosting', 'Your friend disconnected');
+        } else {
+          this.broadcastPeers();
+          this.emitPeers();
+        }
       } else {
-        this.fail('Opponent disconnected');
+        if (this.links.get(0) !== conn) return;
+        this.links.delete(0);
+        this.stopPingLoop();
+        this.fail('The host disconnected');
       }
     };
     conn.on('close', onGone);
     conn.on('error', onGone);
   }
 
+  private dispatch(msg: NetMsg, from: number): void {
+    for (const h of [...this.msgHandlers]) h(msg, from);
+  }
+
+  private broadcastPeers(): void {
+    for (const [s, c] of this.links) {
+      if (c.open) this.raw(c, { t: 'peers', slots: this.slots, you: s });
+    }
+  }
+
+  private emitPeers(): void {
+    for (const h of [...this.peersHandlers]) h(this.slots);
+  }
+
   /** Tear everything down and return to idle. */
   disconnect(): void {
     this.stopPingLoop();
-    if (this.conn) { try { this.conn.close(); } catch { /* already closed */ } }
+    for (const c of this.links.values()) { try { c.close(); } catch { /* already closed */ } }
     if (this.peer) { try { this.peer.destroy(); } catch { /* already destroyed */ } }
-    this.conn = null;
+    this.links.clear();
+    this.latency.clear();
+    this.reserved.clear();
     this.peer = null;
     this.roomCode = null;
     this.isHost = false;
+    this.mySlot = 0;
+    this.slots = [];
+    this.locked = false;
     this.latencyMs = 0;
     this.versionMismatch = false;
     this.status = 'idle';
   }
 
   private fail(detail: string): void {
-    if (this.conn) { try { this.conn.close(); } catch { /* noop */ } }
+    for (const c of this.links.values()) { try { c.close(); } catch { /* noop */ } }
     if (this.peer) { try { this.peer.destroy(); } catch { /* noop */ } }
-    this.conn = null;
+    this.links.clear();
+    this.latency.clear();
+    this.reserved.clear();
     this.peer = null;
+    this.slots = [];
+    this.locked = false;
     this.stopPingLoop();
     this.setStatus('error', detail);
   }
@@ -456,16 +628,34 @@ class NetworkManager {
 
   // ── Messaging ────────────────────────────────────────────────────
 
+  private raw(conn: DataConnection, msg: NetMsg): void {
+    try { conn.send(msg); } catch { /* connection died mid-send */ }
+  }
+
+  /** To everyone else in the room (a guest's goes to the host, which passes the relayed kinds on). */
   send(msg: NetMsg): void {
-    if (this.conn?.open) {
-      try { this.conn.send(msg); } catch { /* connection died mid-send */ }
+    for (const c of this.links.values()) if (c.open) this.raw(c, msg);
+  }
+
+  /** To one player. A guest's message for another guest is carried by the host. */
+  sendTo(slot: number, msg: NetMsg): void {
+    if (slot === this.mySlot) return;
+    if (this.isHost) {
+      const c = this.links.get(slot);
+      if (c?.open) this.raw(c, msg);
+      return;
     }
+    const host = this.links.get(0);
+    if (!host?.open) return;
+    this.raw(host, slot === 0 ? msg : { t: 'relay', to: slot, m: msg });
   }
 
   onMessage(h: MsgHandler): void { this.msgHandlers.add(h); }
   offMessage(h: MsgHandler): void { this.msgHandlers.delete(h); }
   onStatus(h: StatusHandler): void { this.statusHandlers.add(h); }
   offStatus(h: StatusHandler): void { this.statusHandlers.delete(h); }
+  onPeers(h: PeersHandler): void { this.peersHandlers.add(h); }
+  offPeers(h: PeersHandler): void { this.peersHandlers.delete(h); }
 
   private setStatus(s: NetStatus, detail?: string): void {
     this.status = s;
@@ -473,9 +663,9 @@ class NetworkManager {
   }
 
   private startPingLoop(): void {
-    this.stopPingLoop();
+    if (this.pingTimer !== null) return;
     this.pingTimer = setInterval(() => {
-      if (this.conn?.open) this.send({ t: 'ping', ts: Date.now() });
+      for (const c of this.links.values()) if (c.open) this.raw(c, { t: 'ping', ts: Date.now() });
     }, 2000);
   }
 

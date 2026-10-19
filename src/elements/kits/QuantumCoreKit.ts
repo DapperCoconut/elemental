@@ -132,14 +132,14 @@ export interface QuantumCoreArenaApi {
  * QuantumCoreKit — the Third State.
  *
  * Every other element's kit is about a subject: fire burns, water flows, chalk is drawn on the
- * floor. This one has no subject. It is the kit the *bond itself* supplies once the player has
+ * floor. This one has no subject. It is the kit *Quantum itself* supplies once the player has
  * bought Third State, and all five of its abilities do the same thing to five different nouns:
  * they split something in two.
  *
  * - **Atom Splicers** split the caster into a ring of five orbiting blades. Holding drives them
  *   out wide and fast; the damage per cut never changes, so the button buys coverage, not power.
  * - **Ability Split** halves the next cooldown. The charge is banked on `Fighter`, not here, so
- *   it survives a bond collapse — arm it as Quantum, spend it as whatever you become.
+ *   it survives a shift — arm it as Quantum, spend it on whatever key you press next.
  * - **Arena Split** stands a standing wave down the middle of the room. The enemy cannot cross
  *   it and neither can anything either side shoots; the caster walks through freely.
  * - **Effect Split** halves the strength of everything riding on the caster and stretches it to
@@ -232,7 +232,7 @@ export class QuantumCoreKit implements SummonPurgeTarget {
     this.airGfx?.destroy(); this.airGfx = null;
     this.wired = new WeakSet<Fighter>();
 
-    // Both of these live on `Fighter` so they can outlive a bond collapse, which means nothing
+    // Both of these live on `Fighter` so they can outlive a shift, which means nothing
     // else clears them between matches either.
     for (const f of [this.api.player, this.api.npc]) {
       if (!f) continue;
@@ -690,7 +690,7 @@ export class QuantumCoreKit implements SummonPurgeTarget {
       name: 'Ability Split',
       emoji: '⚛️',
       color: QC.ghost,
-      description: 'Your next ability comes back in half the time — whichever half of the bond you are wearing when you use it.',
+      description: 'Your next ability comes back in half the time — whichever element\'s key you press.',
       priority: 118,
     } : null);
 

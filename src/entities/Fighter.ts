@@ -13,6 +13,17 @@ import { Sfx } from '../audio';
 /** Devotion Mastery: an averting fighter only turns away from an Ark it would look within this of. */
 export const GAZE_AVERT_CONE = Phaser.Math.DegToRad(26);
 
+/** A Q with a cooldown under this already has a gate of its own and is not charged. */
+const ULT_MIN_TIMER_MS = 5000;
+/** Ultimate price: a flat floor plus a little for every second of the old cooldown. */
+const ULT_BASE_COST = 60;
+const ULT_COST_PER_SEC = 6;
+/**
+ * Ultimates charged by a resource of their own kit, which keep it: Magma's pendant, Conquest's
+ * Authority, Metal's blood bar — and Myth's rocket, a Final Destiny gun that only wears a Q.
+ */
+const SELF_CHARGED_ULTIMATES = new Set(['magma-mutiny', 'conquest-expansion', 'metal-clot-armor', 'myth-rocket']);
+
 const stationaryTrackers = new WeakMap<object, { x: number; y: number; lastMovedAt: number }>();
 
 function isStationaryFor(source: object, x: number, y: number, thresholdMs: number): boolean {
@@ -561,6 +572,23 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    * without either of them silently handing a swollen hitbox back.
    */
   public hitboxMult = 1;
+  /**
+   * Paint: damage-taken factor the Paint kit owns outright — Masterpiece green's resistance on
+   * the painter, Still Life red's tenderness on its subject. Single writer: rewritten from
+   * scratch every frame, so it never shares `incomingDamageMultiplier` with anyone.
+   */
+  public paintIncomingMult = 1;
+  /**
+   * Paint: walk-speed factor for bodies that read their own speed (husks). The 1v1 pair is
+   * slowed through the kit's pulled speed multipliers instead. Single writer: the Paint kit.
+   */
+  public paintSlowMult = 1;
+  /**
+   * Paint (Still Life F+): the subject's painted-red parts take more from a shot that lands on
+   * them. Installed by the kit while the transformation lasts; asked by the projectile hit paths
+   * with the point the shot struck. Null when nothing is painted on this body.
+   */
+  public paintZoneMult: ((x: number, y: number) => number) | null = null;
   /**
    * Psychic (Migraine): `Date.now()` epoch until which everything this fighter aims goes wide.
    * Applied where `CastContext.targetX/targetY` is built, which is the one place in the game
@@ -1195,6 +1223,29 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public statusDmgMult = 1;
   /** Card: reduces Q-ability cooldowns. Default 1 (Finality card on player). */
   public ultimateCooldownMult = 1;
+
+  /**
+   * Ultimate charge. An ultimate (the Q ability) is not on a timer: it is paid for in points
+   * earned by dealing and taking damage, and a match starts with the bank empty. The price is
+   * read off what the cooldown used to be — {@link ultCost} — so a short ultimate is still a
+   * cheap one, and every cooldown multiplier (Finality, Rebirth, Timeless…) still discounts it.
+   *
+   * Off by default: ArenaScene turns it on for the two duellists. A replica (`netGhost`) is
+   * never gated — its casts are replayed from the peer, who paid for them on their own machine.
+   */
+  public ultChargeEnabled = false;
+  public ultCharge = 0;
+  /**
+   * Ultimates this fighter can reach that are not in `element.abilities` right now — Quantum's
+   * tray carries one element's Q while another element is live. Only read for the bank's cap.
+   */
+  public ultExtraDefs: ReadonlyArray<{ id: string; cooldown: number; displayKey?: string; isUltimate?: boolean }> = [];
+  /**
+   * Who to credit for a hit that just landed on `victim` — wired by ArenaScene, which is the
+   * only one that knows which side every body is on. Called for real hits and for hits on a
+   * replica (the attacker's own sim is where a hit on a remote body is resolved).
+   */
+  public static creditUltDamage: ((victim: Fighter, amount: number) => void) | null = null;
   /** Card: fraction of incoming damage reflected back to the attacker (Thorns card). */
   public reflectFraction = 0;
   /** Card: burn damage multiplier for DOT ticks applied to this fighter (Painful card, set on NPC). */
@@ -1361,7 +1412,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       // Tallied here: after the crit roll (a crit really is a bigger hit) but before every
       // mitigation multiplier on the line below, which is what "damage aimed at you" means.
       this.rawDamageTaken += amount;
-      let mitigation = trueDamage ? 1 : this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.waxIncomingMult * this.clayIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.paperIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.artifactIncomingMult * this.clothIncomingMult * this.marrowIncomingMult * this.gluttonyIncomingMult * this.harvestIncomingMult * this.orderIncomingMult * this.wardIncomingMult * this.soulTankIncomingMult * this.bossWardIncomingMult * this.fortuneIncomingMult * this.dreamIncomingMult * this.duneIncomingMult * this.radiationIncomingMult * this.lifeIncomingMult * this.magicIncomingMult * this.mutationIncomingMult * this.mapArmorMult * this.starIncomingMult * this.earthBiomeIncomingMult * this.perkIncomingMult * this.netDefenseMult;
+      let mitigation = trueDamage ? 1 : this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.waxIncomingMult * this.clayIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.paperIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.artifactIncomingMult * this.clothIncomingMult * this.marrowIncomingMult * this.gluttonyIncomingMult * this.harvestIncomingMult * this.orderIncomingMult * this.wardIncomingMult * this.soulTankIncomingMult * this.bossWardIncomingMult * this.fortuneIncomingMult * this.dreamIncomingMult * this.duneIncomingMult * this.radiationIncomingMult * this.lifeIncomingMult * this.magicIncomingMult * this.mutationIncomingMult * this.mapArmorMult * this.starIncomingMult * this.earthBiomeIncomingMult * this.perkIncomingMult * this.paintIncomingMult * this.netDefenseMult;
       // Ruin's spikes turn armour inside out — 25% less damage taken comes back as 25% more.
       // Only a net *buff* is flipped; a fighter already taking extra damage is left alone.
       if (mitigation < 1 && this.scene.time.now < this.buffsInvertedUntil) mitigation = 2 - mitigation;
@@ -1426,6 +1477,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       // Hit feedback only — vitals come from the network. Report the computed
       // amount so the local owner can forward it to the authoritative peer.
       this.onGhostDamage?.(amount, opts);
+      if (amount > 0 && !opts?.selfInflicted) Fighter.creditUltDamage?.(this, amount);
       // Sound is part of that feedback: without this, landing a hit on a remote
       // opponent would be silent, since the ghost never reaches the real-hit path.
       if (amount > 0 && !isCrit) Sfx.hit(amount, this.x, false);
@@ -1553,6 +1605,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     // never raise one — a floor applied to somebody already under it must not revive them.
     if (!this.immortal) this.hp = Math.max(Math.min(this.minHpFloor, this.hp), this.hp - amount);
     this.emit('damaged', amount);
+    if (amount > 0 && !opts?.selfInflicted) Fighter.creditUltDamage?.(this, amount);
     // A crit already announced itself above with its own, louder sound.
     if (amount > 0 && !isCrit) Sfx.hit(amount, this.x, this.isPlayerFighter);
     if (amount > 0 && this.onDamaged) this.onDamaged(amount);
@@ -1700,7 +1753,9 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     if (now < this.disarmedUntil || now < this.chickenUntil) return false;
     if (now < this.silencedUntil && ability.displayKey !== 'Click') return false;
     if (now < (this.lockouts.get(abilityId)?.until ?? 0)) return false;
-    if (now - (this.cooldowns.get(abilityId) ?? 0) < this.storedCooldown(abilityId, ability)) return false;
+    if (this.isChargedUltimate(ability)) {
+      if (this.ultCharge + 0.001 < this.ultCost(ability)) return false;
+    } else if (now - (this.cooldowns.get(abilityId) ?? 0) < this.storedCooldown(abilityId, ability)) return false;
     this.notePress(abilityId);
 
     // Sound — Out of Tune: a quarter of presses misfire. The cooldown is paid, nothing is cast,
@@ -1708,6 +1763,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     if (now < this.outOfTuneUntil && Math.random() < 0.25) {
       this.cooldowns.set(abilityId, now);
       this.cooldownScales.set(abilityId, 1);
+      this.spendUltCharge(abilityId);
       this.lastTuneMissAt = now;
       return false;
     }
@@ -1718,6 +1774,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     // it, so the world only learns about the ability at the moment it actually happens.
     if (this.castDelayMs > 0 && this.queueDelayedCast) {
       this.cooldowns.set(abilityId, now);
+      this.spendUltCharge(abilityId);
       // The cooldown is paid here, so this is where it is banked — never with a scale left over
       // from the last time this id was stamped.
       this.cooldownScales.set(abilityId, this.cooldownPenalty(abilityId));
@@ -1745,6 +1802,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   private stampCast(abilityId: string): void {
     this.cooldowns.set(abilityId, Date.now());
+    this.spendUltCharge(abilityId);
     // Quantum's Ability Split is spent here rather than at the press, so it lands on whatever
     // ability actually went off — including the charge-and-release ones that never reach
     // `castAbility`. Always written, never merely set, so an id that had a split last time
@@ -1773,6 +1831,69 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** As {@link effectiveCooldown}, including whatever split was banked when this id was stamped. */
   private storedCooldown(abilityId: string, ability: { cooldown: number; isUltimate?: boolean }): number {
     return this.effectiveCooldown(ability) * (this.cooldownScales.get(abilityId) ?? 1);
+  }
+
+  // ── Ultimate charge ───────────────────────────────────────────────
+
+  /**
+   * True when `ability` is an ultimate this fighter pays for in charge rather than time. A Q
+   * with a near-zero cooldown already has a gate of its own (Growth's DNA, Time's bounty, the
+   * Hunt beast's clock), and a few longer ones are charged by their own resource — those keep
+   * the system they were built around.
+   */
+  isChargedUltimate(ability: { id?: string; cooldown: number; displayKey?: string }, id = ability.id): boolean {
+    if (!this.ultChargeEnabled || this.netGhost) return false;
+    if (ability.displayKey !== 'Q' || ability.cooldown < ULT_MIN_TIMER_MS) return false;
+    return !id || !SELF_CHARGED_ULTIMATES.has(id);
+  }
+
+  /** {@link isChargedUltimate} by id, for the tray. Reads `ultExtraDefs` too. */
+  isChargedUltimateId(abilityId: string): boolean {
+    const ability = this.element.abilities.find((a) => a.id === abilityId)
+      ?? this.ultExtraDefs.find((a) => a.id === abilityId);
+    return !!ability && this.isChargedUltimate(ability);
+  }
+
+  /**
+   * Points an ultimate costs: a flat 60 plus 6 for every second its cooldown used to run, so
+   * a 20s ultimate is 180 and a 60s one 420. Scaled by every cooldown multiplier on the body.
+   */
+  ultCost(ability: { cooldown: number; isUltimate?: boolean }): number {
+    const base = ULT_BASE_COST + ULT_COST_PER_SEC * (ability.cooldown / 1000);
+    return ability.cooldown > 0 ? base * (this.effectiveCooldown(ability) / ability.cooldown) : base;
+  }
+
+  /** The bank never holds more than the dearest ultimate in reach — no saving up two casts. */
+  private ultChargeCap(): number {
+    let cap = 0;
+    for (const a of this.element.abilities) if (this.isChargedUltimate(a)) cap = Math.max(cap, this.ultCost(a));
+    for (const a of this.ultExtraDefs) if (this.isChargedUltimate(a)) cap = Math.max(cap, this.ultCost(a));
+    return cap;
+  }
+
+  /** Bank `points` of ultimate charge (1 point = 1 damage dealt or taken). */
+  addUltCharge(points: number): void {
+    if (!this.ultChargeEnabled || this.netGhost || !(points > 0)) return;
+    this.ultCharge = Math.min(this.ultChargeCap(), this.ultCharge + points);
+  }
+
+  /** Pay for `abilityId` out of the bank if it is a charged ultimate. */
+  private spendUltCharge(abilityId: string): void {
+    const ability = this.element.abilities.find((a) => a.id === abilityId);
+    if (!ability || !this.isChargedUltimate(ability)) return;
+    this.ultCharge = Math.max(0, this.ultCharge - this.ultCost(ability));
+  }
+
+  /** 0–1 progress toward affording `ability`. */
+  private ultChargeRatio(ability: { cooldown: number; isUltimate?: boolean }): number {
+    const cost = this.ultCost(ability);
+    return cost <= 0 ? 1 : Math.min(1, this.ultCharge / cost);
+  }
+
+  /** The cooldown-shaped helpers below speak milliseconds; this is their exchange rate. */
+  private ultPointsForMs(ability: { cooldown: number; isUltimate?: boolean }, ms: number): number {
+    const eff = this.effectiveCooldown(ability);
+    return eff > 0 ? (ms / eff) * this.ultCost(ability) : this.ultCost(ability);
   }
 
   /**
@@ -1864,6 +1985,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
 
   /** Reduce remaining cooldown of an ability by byMs milliseconds (cannot make it readier than fully ready). */
   reduceCooldown(abilityId: string, byMs: number): void {
+    const ult = this.element.abilities.find((a) => a.id === abilityId);
+    if (ult && this.isChargedUltimate(ult)) { this.addUltCharge(this.ultPointsForMs(ult, byMs)); return; }
     const stored = this.cooldowns.get(abilityId) ?? 0;
     this.cooldowns.set(abilityId, stored - byMs);
   }
@@ -1875,11 +1998,14 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   restampCooldown(abilityId: string): void {
     this.cooldowns.set(abilityId, Date.now());
+    this.spendUltCharge(abilityId);
   }
 
   /** Make an ability immediately ready (clears its cooldown). */
   resetCooldown(abilityId: string): void {
     this.cooldowns.set(abilityId, 0);
+    const ult = this.element.abilities.find((a) => a.id === abilityId);
+    if (ult && this.isChargedUltimate(ult)) this.ultCharge = Math.max(this.ultCharge, this.ultCost(ult));
   }
 
   /**
@@ -1891,6 +2017,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     const kept = exceptId !== undefined ? this.cooldowns.get(exceptId) : undefined;
     this.cooldowns.clear();
     if (kept !== undefined) this.cooldowns.set(exceptId!, kept);
+    const ult = this.element.abilities.find((a) => a.id !== exceptId && this.isChargedUltimate(a));
+    if (ult) this.ultCharge = Math.max(this.ultCharge, this.ultCost(ult));
   }
 
   /**
@@ -1907,19 +2035,43 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     const now = Date.now();
     for (const [id, stamp] of this.cooldowns) {
       const ability = this.element.abilities.find((a) => a.id === id);
-      if (!ability) continue;
+      if (!ability || this.isChargedUltimate(ability)) continue;
       if (this.storedCooldown(id, ability) - (now - stamp) <= 0) continue;
       this.cooldowns.set(id, Math.min(now, stamp + ms));
     }
   }
 
+  /**
+   * One ability's half of {@link delayCooldowns}: push it `ms` further from ready if it is still
+   * cooling, never past "cast this instant". Paint's Yin-Yang slows only the bars it painted.
+   */
+  delayCooldown(abilityId: string, ms: number): void {
+    if (ms <= 0) return;
+    const stamp = this.cooldowns.get(abilityId);
+    if (stamp === undefined) return;
+    const ability = this.element.abilities.find((a) => a.id === abilityId);
+    if (!ability || this.isChargedUltimate(ability)) return;
+    const now = Date.now();
+    if (this.storedCooldown(abilityId, ability) - (now - stamp) <= 0) return;
+    this.cooldowns.set(abilityId, Math.min(now, stamp + ms));
+  }
+
   reduceCooldowns(ms: number, exceptId?: string): number {
     const now = Date.now();
     let removed = 0;
+    // A charged ultimate has no stamp to pull forward; the same milliseconds buy charge instead.
+    const ult = this.element.abilities.find((a) => a.id !== exceptId && this.isChargedUltimate(a));
+    if (ult && ms > 0) {
+      const before = this.ultCharge;
+      this.addUltCharge(this.ultPointsForMs(ult, ms));
+      const cost = this.ultCost(ult);
+      if (cost > 0) removed += ((this.ultCharge - before) / cost) * this.effectiveCooldown(ult);
+    }
     for (const [id, stamp] of this.cooldowns) {
       if (id === exceptId) continue;
       const ability = this.element.abilities.find((a) => a.id === id);
       if (!ability) continue;
+      if (this.isChargedUltimate(ability)) continue;
       const left = this.storedCooldown(id, ability) - (now - stamp);
       if (left <= 0) continue;
       const take = Math.min(ms, left);
@@ -1930,11 +2082,18 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   }
 
   /** Returns 0 = on cooldown, 1 = ready */
-  getCooldownRatio(abilityId: string): number {
-    const ability = this.element.abilities.find((a) => a.id === abilityId);
+  /**
+   * `def` is for a bar that belongs to an element this fighter is not currently wearing —
+   * Unbound Quantum's tray carries five elements' cards at once, and only one of them is in
+   * `this.element` at any moment.
+   */
+  getCooldownRatio(abilityId: string, def?: { cooldown: number; isUltimate?: boolean; displayKey?: string }): number {
+    const ability = def ?? this.element.abilities.find((a) => a.id === abilityId);
     if (!ability) return 1;
     const elapsed = Date.now() - (this.cooldowns.get(abilityId) ?? 0);
-    const ratio = Math.min(1, elapsed / this.storedCooldown(abilityId, ability));
+    const ratio = this.isChargedUltimate(ability, abilityId)
+      ? this.ultChargeRatio(ability)
+      : Math.min(1, elapsed / this.storedCooldown(abilityId, ability));
     // A lock outranks the cooldown underneath it: whichever has longer to run is what the
     // card should be draining, or a locked ability would show as ready and refuse the press.
     const lock = this.lockouts.get(abilityId);

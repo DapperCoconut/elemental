@@ -26,6 +26,12 @@ const waterCut: Ability = {
     ctx.projectiles.add(proj);
     proj.launch((dx / len) * speed, (dy / len) * speed);
     proj.setRotation(Math.atan2(dy, dx));
+    // Poseidon: the cut rides out as a small wave. WaterKit paints the crest over it and gives
+    // the hit its shove; the texture stays `proj-water` so every water-cut hook still sees it.
+    if (ctx.hasPerk('water-poseidon')) {
+      (proj as Projectile & { waterWave?: boolean }).waterWave = true;
+      proj.setAlpha(0.45);
+    }
 
     fx(ctx).muzzleSpray(sx, sy, Math.atan2(dy, dx), 0.85);
   },
@@ -110,6 +116,27 @@ const painRain: Ability = {
     ctx.scene.time.delayedCall(140, () => f.ring(ctx.casterX, ctx.casterY, 20, 380, WATER.cyan, 700, 5, 5));
     f.mist(ctx.casterX, ctx.casterY, 8, 120, 4);
     ctx.scene.cameras.main.shake(320, 0.007);
+  },
+};
+
+/**
+ * Bubble Barrage — water's alternate ultimate (swapped in for Pain Rain through ALT_ULT_SLOT).
+ * The cast only blows the volley; WaterKit runs it from there: the bubbles' flight, latching up
+ * to 4 on a foe, their 75 HP and the 50% of every hit on them that passes to whoever wears them.
+ */
+export const bubbleBarrage: Ability = {
+  id: 'bubble-barrage',
+  name: 'Bubble Barrage',
+  description: '20 bubbles in a cone stick to foes (4 max each); damage a bubble takes hits its foe at 50%',
+  displayKey: 'Q',
+  isUltimate: true,
+  cooldown: 36000,
+  cast(ctx) {
+    ctx.waterBubbleBarrage?.();
+    const f = fx(ctx);
+    const aim = Math.atan2(ctx.targetY - ctx.casterY, ctx.targetX - ctx.casterX);
+    f.muzzleSpray(ctx.casterX + Math.cos(aim) * 26, ctx.casterY + Math.sin(aim) * 26, aim, 1.4);
+    f.ring(ctx.casterX, ctx.casterY, 14, 70, WATER.foam, 360, 4, 6);
   },
 };
 

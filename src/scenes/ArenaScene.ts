@@ -4,7 +4,7 @@ import { Player } from '../entities/Player';
 import { NpcOpponent, NpcAiState, DIFFICULTY_PRESETS, DifficultyConfig } from '../entities/NpcOpponent';
 import { Husk } from '../invasion/Husk';
 import { InvasionKit, InvasionArenaApi, getInvasionDifficulty } from '../invasion/InvasionKit';
-import { InvasionCoopKit, InvasionCoopArenaApi } from '../invasion/InvasionCoopKit';
+import { InvasionCoopKit, InvasionCoopArenaApi, CoopAllySpec } from '../invasion/InvasionCoopKit';
 import { DisgracedKingKit, DisgracedKingArenaApi, BossOutcome } from '../boss/DisgracedKingKit';
 import { WorldBossKit, WorldBossArenaApi } from '../boss/framework/WorldBossKit';
 import { getWorldBossDef } from '../boss/bosses';
@@ -83,7 +83,12 @@ import { subterfugeElement } from '../elements/subterfuge';
 import { quantumElement } from '../elements/quantum';
 import { ELEMENT_MAP } from '../elements/ElementRegistry';
 import * as QuantumBonds from '../data/QuantumBonds';
-import { QuantumKit, QuantumArenaApi, DormantTicks } from '../elements/kits/QuantumKit';
+import { QuantumKit, QuantumArenaApi, DormantTicks, QuantumLiveSlot } from '../elements/kits/QuantumKit';
+import {
+  getQuantumLoadout, slotAbility, QUANTUM_SLOTS, QuantumLoadout, SIXTH_SLOT_KEY, carriedElements, upgradesFor,
+} from '../data/QuantumLoadout';
+import { BaseAvatar } from '../elements/kits/ElementVisuals';
+import { QuantumAvatar } from '../elements/kits/QuantumAvatar';
 import { QuantumCoreKit, QuantumCoreArenaApi } from '../elements/kits/QuantumCoreKit';
 import { SubterfugeKit, SubterfugeArenaApi } from '../elements/kits/SubterfugeKit';
 import { OilKit, OilArenaApi } from '../elements/kits/OilKit';
@@ -98,7 +103,7 @@ import { HuntKit, HuntArenaApi } from '../elements/kits/HuntKit';
 import { HuntFx } from '../elements/kits/HuntVisuals';
 import { JusticeKit, JusticeArenaApi, JusticeForm } from '../elements/kits/JusticeKit';
 import { DreamKit, DreamArenaApi } from '../elements/kits/DreamKit';
-import { ChalkKit, ChalkArenaApi } from '../elements/kits/ChalkKit';
+import { PaintKit, PaintArenaApi } from '../elements/kits/PaintKit';
 import { WaxKit, WaxArenaApi } from '../elements/kits/WaxKit';
 import { ClayKit, ClayArenaApi } from '../elements/kits/ClayKit';
 import { MagmaKit, MagmaArenaApi } from '../elements/kits/MagmaKit';
@@ -164,6 +169,7 @@ import { computeCurseShardMult } from '../data/GauntletBoosts';
 import { INFINITY_GAUNTLET_ID, infinityHpMult, infinityDmgMult, infinityFightShards, infinityDifficulty, GauntletState, getEffectiveStacks } from '../data/GauntletData';
 import { drawCampaignBackground } from './CampaignBackground';
 import * as UI from '../ui';
+import { abilityTags } from '../data/AbilityTags';
 import { Sfx, Music } from '../audio';
 
 /** `DIFFICULTY_PRESETS[3]` — the "Expert" rung, named for the achievements that gate on it. */
@@ -197,6 +203,10 @@ interface AbilityBarEntry {
   desc?: Phaser.GameObjects.Text;
   baseFillColor?: number;
   lockedIcon?: Phaser.GameObjects.Text;
+  /** Quantum: the card's own ability def, for a cooldown read while another element is live. */
+  ability?: Ability;
+  /** The visible words on the card — `lbl`/`desc` are hidden text the kits write and it reads. */
+  face?: UI.AbilityCardFace;
 }
 
 interface Puddle {
@@ -289,10 +299,10 @@ interface TinkerBuilding {
 
 
 /**
- * What a Quantum with no bond set falls back to, rather than dropping into a fight as an
- * element with no abilities. Fire and Water because they are the two every save owns.
+ * What a bot Quantum rotates through. It has no save to build a loadout from, so it is handed
+ * three of these at random, in a random order — the first is what it opens as.
  */
-const DEFAULT_BOND: [string, string] = ['fire', 'water'];
+const BOT_QUANTUM_POOL = ['fire', 'water', 'life', 'air', 'earth', 'ice', 'electricity', 'shadow', 'metal', 'plasma'];
 
 const ELEMENT_TEXTURES: Record<string, string> = {
   fire:   'elem-fire',
@@ -468,6 +478,8 @@ export class ArenaScene extends Phaser.Scene {
   private eKey!: Phaser.Input.Keyboard.Key;
   private rKey!: Phaser.Input.Keyboard.Key;
   private fKey!: Phaser.Input.Keyboard.Key;
+  /** Quantum Mastery's sixth slot. Unused by any kit directly — see `keyFor`, which hands it over as a kit's R/F/Q. */
+  private gKey!: Phaser.Input.Keyboard.Key;
   private spaceKey!: Phaser.Input.Keyboard.Key;
   /** slot ('e'/'r'/'f'/'q') -> mastery enhancement id bound over that ability this match. */
   private masterySlotBinds: Record<string, string> = {};
@@ -676,8 +688,8 @@ export class ArenaScene extends Phaser.Scene {
   /** Dream — managed by DreamKit. Drowsiness, the Sandmen and their recoil, and Delve's dreams. */
   private dreamKit!: DreamKit;
 
-  /** Chalk (test element) — managed by ChalkKit. Drawing windows, the chalk on the floor and the shield. */
-  private chalkKit!: ChalkKit;
+  /** Paint (element id `chalk`) — managed by PaintKit. Canvases, painted floor, walls and Still Lifes. */
+  private chalkKit!: PaintKit;
   /** Wax (test element) — managed by WaxKit. The foil, the bees, the candles, hives and bombs. */
   private waxKit!: WaxKit;
   /** Clay (test element) — managed by ClayKit. The golem, the drawn shield, the wall run and the fused body. */
@@ -808,19 +820,31 @@ export class ArenaScene extends Phaser.Scene {
 
   // ── Quantum (bonds two elements; the dodge key swaps between them) kit ─
   private quantumKit!: QuantumKit;
-  /** Non-null only when that side picked Quantum. Holds the pair in the chosen order. */
-  private playerBond: [string, string] | null = null;
-  private npcBond: [string, string] | null = null;
+  /** Non-null only when the player picked Quantum: the five-slot loadout. */
+  private playerLoadout: QuantumLoadout | null = null;
+  /**
+   * Quantum: every element the loadout carries. `playerIs(id)` is true for all of them, so a
+   * carried element's forms, auras, passives and mastery keep running while another is live.
+   * Empty for anyone else, which makes `playerIs` an exact `elementId` compare.
+   */
+  private loadoutSet = new Set<string>();
+  /** Quantum: each carried element's active upgrade slots, so a carried kit reads its own. */
+  private loadoutUpgrades = new Map<string, string[]>();
+  /** Quantum: the union of every carried element's equipped perks. Quantum carries none; kept so `hasPerk` stays one shape. */
+  private loadoutPerkIds = new Set<string>();
+  /**
+   * Quantum: the key the live element was reached through. The sixth slot's mastery ability is
+   * only "bound" and its element's mastery only on while this is `'x6'` — see `masteryOnFor`,
+   * `quantumBindFor` and `keyFor`.
+   */
+  private quantumLiveSlot: QuantumLiveSlot = 'click';
+  /** Inert stand-ins handed to carried-but-not-live kits — see `keyFor` / `pointerFor`. */
+  private inertKeys = new Map<Phaser.Input.Keyboard.Key, Phaser.Input.Keyboard.Key>();
+  private inertPointer: Phaser.Input.Pointer | null = null;
+  /** Non-null only when the npc side is Quantum: the elements it rotates through, first = start. */
+  private npcQuantumForms: string[] | null = null;
   /** Kept so a mid-match re-key can re-issue skin loadouts without losing the npc's. */
   private npcSkinId: string | null = null;
-  /** The dormant half's ability tray, hidden until a swap brings it up. */
-  private quantumOtherFills: AbilityBarEntry[] = [];
-  private quantumOtherHudCards: Phaser.GameObjects.GameObject[] = [];
-  private quantumOwnFills: AbilityBarEntry[] = [];
-  private quantumOwnHudCards: Phaser.GameObjects.GameObject[] = [];
-  /** Third State's own tray — built only when the player owns Quantum's upgrade. */
-  private quantumCoreFills: AbilityBarEntry[] = [];
-  private quantumCoreHudCards: Phaser.GameObjects.GameObject[] = [];
 
   // ── Quantum's Third State (the bond's third stop) — managed by QuantumCoreKit ──
   private quantumCoreKit!: QuantumCoreKit;
@@ -959,7 +983,7 @@ export class ArenaScene extends Phaser.Scene {
     super({ key: 'ArenaScene' });
   }
 
-  create(data: { elementId: string; enemyElementId?: string; difficulty?: number; mutations?: string[]; starredMutations?: string[]; mode?: string; invasionDifficulty?: string; invasionMap?: 'city' | 'mansion'; invasionParty?: number; gauntlet?: import('../data/GauntletData').GauntletState; playerPerk?: string | null; npcPerk?: string | null; npcLoadout?: import('../data/NpcLoadout').NpcLoadout; campaign?: { slot: 0 | 1 | 2; worldId: string; fightId: string; isChallenge: boolean; hardMode?: boolean }; quantumBond?: [string, string]; npcQuantumBond?: [string, string]; hpMult?: number; npcOutgoingDamageMult?: number; bounty?: { key: string; reward: number }; bossHard?: boolean; bossId?: string; tagTeam?: TagTeamState; secretMode?: string; secretMap?: string; duoEnemyElementId?: string; secretTag?: SecretTagState; stabilize?: { result: string }; reality?: RealityRunPayload; online?: { isHost: boolean; npcUpgrades?: string[]; npcMasteryBinds?: Record<string, string>; npcMasteryOn?: boolean; npcSkin?: string | null }; ranked?: import('../data/RankedData').RankedSeries; npcDifficulty?: DifficultyConfig }): void {
+  create(data: { elementId: string; enemyElementId?: string; difficulty?: number; mutations?: string[]; starredMutations?: string[]; mode?: string; invasionDifficulty?: string; invasionMap?: 'city' | 'mansion'; invasionParty?: number; gauntlet?: import('../data/GauntletData').GauntletState; playerPerk?: string | null; npcPerk?: string | null; npcLoadout?: import('../data/NpcLoadout').NpcLoadout; campaign?: { slot: 0 | 1 | 2; worldId: string; fightId: string; isChallenge: boolean; hardMode?: boolean }; npcQuantumForms?: string[]; hpMult?: number; npcOutgoingDamageMult?: number; bounty?: { key: string; reward: number }; bossHard?: boolean; bossId?: string; tagTeam?: TagTeamState; secretMode?: string; secretMap?: string; duoEnemyElementId?: string; secretTag?: SecretTagState; stabilize?: { result: string }; reality?: RealityRunPayload; online?: { isHost: boolean; npcUpgrades?: string[]; npcMasteryBinds?: Record<string, string>; npcMasteryOn?: boolean; npcSkin?: string | null; mySlot?: number; npcSlot?: number; extraAllies?: CoopAllySpec[] }; ranked?: import('../data/RankedData').RankedSeries; npcDifficulty?: DifficultyConfig }): void {
     this.selectedElementId = data.elementId ?? 'fire';
     // ── Secret modes ────────────────────────────────────────────────
     this.secretMode = data.secretMode ?? null;
@@ -976,14 +1000,35 @@ export class ArenaScene extends Phaser.Scene {
     // Nothing in a practice bout is written to the save. Set on every entry,
     // both ways, so a mode change can never leave the lock stuck on.
     setProgressLocked(this.dummyPractice);
-    // Quantum is two elements wearing one body: resolve the bond up front and run the whole
-    // of create() as the first half, so every downstream read (upgrades, mastery binds, the
-    // skin, the ability tray, every per-element gate) keys off a real kit rather than off
-    // Quantum, which has none. `applyPlayerElement` does the same job for mid-match swaps.
-    this.playerBond = this.selectedElementId === 'quantum'
-      ? (data.quantumBond ?? PlayerData.getQuantumBond() ?? DEFAULT_BOND)
-      : null;
-    this.elementId = this.playerBond ? this.playerBond[0] : this.selectedElementId;
+    // Quantum is several elements wearing one body: resolve the loadout up front and run the
+    // whole of create() as Click's element, so every downstream read (upgrades, mastery binds,
+    // the skin, the ability tray, every per-element gate) keys off a real kit rather than off
+    // Quantum, which has none. `applyPlayerElement` does the same job for mid-match shifts.
+    this.playerLoadout = this.selectedElementId === 'quantum' ? getQuantumLoadout() : null;
+    this.elementId = this.playerLoadout ? this.playerLoadout.slots.click : this.selectedElementId;
+    // What each carried element brings is Quantum's call, not the element's own page: upgrades
+    // only through Third State's per-slot switches, no perks, and mastery only through Quantum's
+    // own (the borrowed passive and the sixth key) — see `QuantumLoadout.ts`.
+    const lo = this.playerLoadout;
+    this.loadoutSet = new Set(lo ? carriedElements(lo) : []);
+    this.loadoutUpgrades = new Map(lo ? [...this.loadoutSet].map((id) => [id, upgradesFor(lo, id)]) : []);
+    this.loadoutPerkIds = new Set();
+    this.quantumLiveSlot = 'click';
+    // Every carried kit stands its own rig up on the one body; none of them may show — a
+    // Quantum wears QuantumKit's own character all fight, whatever is live. Read lazily, as the
+    // npc's element is only settled further down. Cleared on the way out (it is global).
+    const nearQuantum = (f: Fighter | undefined, x: number, y: number): boolean =>
+      !!f?.active && Math.abs(x - f.x) <= 3 && Math.abs(y - f.y) <= 48;
+    BaseAvatar.rigFilter = (avatar, x, y) => {
+      // Invasion co-op: an ally in another room takes their whole character with them, not
+      // just the sprite. Rooms share coordinates, so our own rig standing on the same spot wins.
+      if (this.invasionCoopKit?.isNpcAllyHidden() && this.isOnline && this.isInvasion
+        && nearQuantum(this.npc, x, y) && !nearQuantum(this.player, x, y)) return false;
+      if (avatar instanceof QuantumAvatar) return true;
+      if (this.playerLoadout && nearQuantum(this.player, x, y)) return false;
+      return !(this.npcSelectedElementId === 'quantum' && nearQuantum(this.npc, x, y));
+    };
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => { BaseAvatar.rigFilter = null; Fighter.creditUltDamage = null; });
     this.isInvasion = data.mode === 'invasion';
     this.isBossFight = data.mode === 'boss';
     this.isBossHard = this.isBossFight && data.bossHard === true;
@@ -1007,15 +1052,14 @@ export class ArenaScene extends Phaser.Scene {
     this.onlineEndReason = null;
     this.onlineForfeitArmedUntil = 0;
     this.campaign = data.campaign ?? null;
-    this.playerPerkId = this.cityRun ? null : this.playerBond
-      ? PlayerData.getEquippedPerk(this.elementId)
-      : (data.playerPerk ?? null);
+    // Quantum carries abilities, not perks — a loadout starts and stays perkless.
+    this.playerPerkId = this.cityRun || this.playerLoadout ? null : (data.playerPerk ?? null);
     this.npcPerkId = this.cityRun ? null : (data.npcPerk ?? null);
-    this.npcSelectedElementId = data.enemyElementId ?? (this.elementId === 'fire' ? 'water' : 'fire');
-    this.npcBond = this.npcSelectedElementId === 'quantum'
-      ? (data.npcQuantumBond ?? DEFAULT_BOND)
+    this.npcSelectedElementId = data.enemyElementId ?? (this.playerIs('fire') ? 'water' : 'fire');
+    this.npcQuantumForms = this.npcSelectedElementId === 'quantum'
+      ? (data.npcQuantumForms ?? Phaser.Utils.Array.Shuffle([...BOT_QUANTUM_POOL]).slice(0, 3))
       : null;
-    const enemyElementId = this.npcBond ? this.npcBond[0] : this.npcSelectedElementId;
+    const enemyElementId = this.npcQuantumForms ? this.npcQuantumForms[0] : this.npcSelectedElementId;
     this.npcElementId = enemyElementId;
     const difficultyLevel = Math.max(1, Math.min(5, data.difficulty ?? 3));
     // Online: the "NPC" is a remote human replica — neutral stats matching a Player, no AI fuzz.
@@ -1038,9 +1082,6 @@ export class ArenaScene extends Phaser.Scene {
     this.isDodging = false;
     this.echoHypersenseNextDodgeAt = 0;
     this.abilityBars = [];
-    this.quantumOwnFills = []; this.quantumOwnHudCards = [];
-    this.quantumOtherFills = []; this.quantumOtherHudCards = [];
-    this.quantumCoreFills = []; this.quantumCoreHudCards = [];
     this.hpBarFill = undefined;
     this.hpBarShield = undefined;
     this.hpBarClotted = undefined;
@@ -1100,20 +1141,20 @@ export class ArenaScene extends Phaser.Scene {
       const soulApi: SoulArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get scene() { return arena as Phaser.Scene; },
         get projectiles() { return arena.projectiles; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
-        get elementId() { return arena.elementId; },
+        get eKey() { return arena.keyFor('soul', arena.eKey); },
+        get rKey() { return arena.keyFor('soul', arena.rKey); },
+        get fKey() { return arena.keyFor('soul', arena.fKey); },
+        get qKey() { return arena.keyFor('soul', arena.qKey); },
+        get elementId() { return arena.liveElementFor('soul'); },
         get npcElementId() { return arena.npcElementId; },
         get isInvasion() { return arena.isInvasion; },
         get isAmalgamBoss() { return arena.worldBossId === 'amalgam'; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('soul', slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
         broadcastMasteryCast: (id) => arena.broadcastMasteryCast(id),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
@@ -1124,11 +1165,11 @@ export class ArenaScene extends Phaser.Scene {
         dealAoeDamageFromOwner: (x, y, r, d, owner) => arena.dealAoeDamageFromOwner(x, y, r, d, owner),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
-        get masteryActive() { return arena.soulMasteryOn && arena.elementId === 'soul'; },
+        get masteryActive() { return arena.soulMasteryOn && arena.playerIs('soul'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'soul'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('soul', slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'soul') PlayerData.addMasteryStat('soul', key, amount);
+          if (arena.playerIs('soul')) PlayerData.addMasteryStat('soul', key, amount);
         },
       };
       this.soulKit = new SoulKit(soulApi);
@@ -1150,20 +1191,20 @@ export class ArenaScene extends Phaser.Scene {
         get scene() { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
+        get enemies() { return arena.reachableEnemies; },
+        get eKey() { return arena.keyFor('hunt', arena.eKey); },
+        get rKey() { return arena.keyFor('hunt', arena.rKey); },
+        get fKey() { return arena.keyFor('hunt', arena.fKey); },
+        get qKey() { return arena.keyFor('hunt', arena.qKey); },
         get pointerWasDown() { return arena.pointerWasDown; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('hunt'); },
         get npcElementId() { return arena.npcElementId; },
         get isDodging() { return arena.isDodging; },
         set isDodging(v: boolean) { arena.isDodging = v; },
         get aimX() { return arena.input.activePointer.worldX; },
         get aimY() { return arena.input.activePointer.worldY; },
         huntColor: (owner, base) => arena.skinsKit.huntColor(owner, base),
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('hunt', slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
@@ -1171,12 +1212,12 @@ export class ArenaScene extends Phaser.Scene {
         getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setHudForm: (form) => arena.huntSetHudForm(form),
-        get masteryActive() { return arena.huntMasteryOn && arena.elementId === 'hunt'; },
+        get masteryActive() { return arena.huntMasteryOn && arena.playerIs('hunt'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'hunt'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('hunt', slot),
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'hunt') PlayerData.addMasteryStat('hunt', key, amount);
+          if (arena.playerIs('hunt')) PlayerData.addMasteryStat('hunt', key, amount);
         },
         setStatusIndicator: (id, status) => arena.setStatusIndicator(id, status),
       };
@@ -1194,25 +1235,25 @@ export class ArenaScene extends Phaser.Scene {
         get npc() { return arena.npc; },
         get scene() { return arena as Phaser.Scene; },
         get projectiles() { return arena.projectiles; },
-        get spaceKey() { return arena.spaceKey; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
+        get spaceKey() { return arena.keyFor('silence', arena.spaceKey); },
+        get eKey() { return arena.keyFor('silence', arena.eKey); },
+        get rKey() { return arena.keyFor('silence', arena.rKey); },
+        get fKey() { return arena.keyFor('silence', arena.fKey); },
+        get qKey() { return arena.keyFor('silence', arena.qKey); },
         get wKey() { return arena.wKey; },
         get aKey() { return arena.aKey; },
         get sKey() { return arena.sKey; },
         get dKey() { return arena.dKey; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
         get isOnline() { return arena.isOnline; },
         get isInvasion() { return arena.isInvasion; },
-        get masteryActive() { return arena.silenceMasteryOn && arena.elementId === 'silence'; },
+        get masteryActive() { return arena.silenceMasteryOn && arena.playerIs('silence'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'silence'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('silence', slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'silence') PlayerData.addMasteryStat('silence', key, amount);
+          if (arena.playerIs('silence')) PlayerData.addMasteryStat('silence', key, amount);
         },
         setStatusIndicator: (id, status) => arena.setStatusIndicator(id, status),
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
@@ -1224,7 +1265,7 @@ export class ArenaScene extends Phaser.Scene {
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
         hasUpgrade: (owner, slot) => owner === 'player'
-          ? arena.elementId === 'silence' && arena.hasUpgrade(slot)
+          ? arena.playerIs('silence') && arena.hasUpgradeFor('silence', slot)
           : arena.isOnline && arena.npcElement.id === 'silence' && arena.npcUpgrades.includes(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         sendSilenceMsg: (msg) => { if (arena.isOnline) Net.send(msg); },
@@ -1244,15 +1285,15 @@ export class ArenaScene extends Phaser.Scene {
       const creationApi: CreationArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get scene(): Phaser.Scene { return arena; },
         get projectiles() { return arena.projectiles; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
-        get spaceKey() { return arena.spaceKey; },
-        get elementId() { return arena.elementId; },
+        get eKey() { return arena.keyFor('creation', arena.eKey); },
+        get rKey() { return arena.keyFor('creation', arena.rKey); },
+        get fKey() { return arena.keyFor('creation', arena.fKey); },
+        get qKey() { return arena.keyFor('creation', arena.qKey); },
+        get spaceKey() { return arena.keyFor('creation', arena.spaceKey); },
+        get elementId() { return arena.liveElementFor('creation'); },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
@@ -1262,7 +1303,7 @@ export class ArenaScene extends Phaser.Scene {
         get aimY() { return arena.input.activePointer.worldY; },
         get npcSpeedMult() { return arena.npcSpeedMult; },
         set npcSpeedMult(v: number) { arena.npcSpeedMult = v; },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('creation', slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
@@ -1272,11 +1313,11 @@ export class ArenaScene extends Phaser.Scene {
         pushFighterOutOfRect: (body, bx, by, bw, bh) => arena.pushFighterOutOfRect(body, bx, by, bw, bh),
         creationColor: (owner, base) => arena.skinsKit.creationColor(owner, base),
         get abilityBars() { return arena.abilityBars; },
-        get masteryActive() { return arena.creationMasteryOn && arena.elementId === 'creation'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        get masteryActive() { return arena.creationMasteryOn && arena.playerIs('creation'); },
+        masteryBindFor: (slot) => arena.masteryBindForElement('creation', slot),
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'creation') PlayerData.addMasteryStat('creation', key, amount);
+          if (arena.playerIs('creation')) PlayerData.addMasteryStat('creation', key, amount);
         },
       };
       this.creationKit = new CreationKit(creationApi);
@@ -1290,36 +1331,36 @@ export class ArenaScene extends Phaser.Scene {
       const gravityApi: GravityArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get scene(): Phaser.Scene { return arena; },
         get projectiles() { return arena.projectiles; },
-        get eKey() { return arena.eKey; },
-        get fKey() { return arena.fKey; },
-        get rKey() { return arena.rKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('gravity', arena.eKey); },
+        get fKey() { return arena.keyFor('gravity', arena.fKey); },
+        get rKey() { return arena.keyFor('gravity', arena.rKey); },
+        get qKey() { return arena.keyFor('gravity', arena.qKey); },
         get wKey() { return arena.wKey; },
         get aKey() { return arena.aKey; },
         get sKey() { return arena.sKey; },
         get dKey() { return arena.dKey; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('gravity'); },
         get npcElementId() { return arena.npcElementId; },
         get aimX() { return arena.input.activePointer.worldX; },
         get aimY() { return arena.input.activePointer.worldY; },
         gravityColor: (owner, base) => arena.skinsKit.gravityColor(owner, base),
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('gravity', slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         spawnQuakeWave: (owner, x, y) => arena.earthKit.spawnQuakeWave(owner, x, y),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
-        get masteryActive() { return arena.gravityMasteryOn && arena.elementId === 'gravity'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        get masteryActive() { return arena.gravityMasteryOn && arena.playerIs('gravity'); },
+        masteryBindFor: (slot) => arena.masteryBindForElement('gravity', slot),
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'gravity') PlayerData.addMasteryStat('gravity', key, amount);
+          if (arena.playerIs('gravity')) PlayerData.addMasteryStat('gravity', key, amount);
         },
       };
       this.gravityKit = new GravityKit(gravityApi);
@@ -1334,23 +1375,23 @@ export class ArenaScene extends Phaser.Scene {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
         get scene(): Phaser.Scene { return arena; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get projectiles() { return arena.projectiles; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('growth'); },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get hpBarY() { return arena.hpBarY; },
         get hpBarW() { return arena.hpBarW; },
         get hpBarH() { return arena.hpBarH; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
-        get spaceKey() { return arena.spaceKey; },
+        get eKey() { return arena.keyFor('growth', arena.eKey); },
+        get rKey() { return arena.keyFor('growth', arena.rKey); },
+        get fKey() { return arena.keyFor('growth', arena.fKey); },
+        get qKey() { return arena.keyFor('growth', arena.qKey); },
+        get spaceKey() { return arena.keyFor('growth', arena.spaceKey); },
         get pointerWasDown() { return arena.pointerWasDown; },
         get nukeChanneling() { return arena.nukeChanneling; },
         get abilityBars() { return arena.abilityBars; },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('growth', slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         growthColor: (owner, base) => arena.skinsKit.growthColor(owner, base),
         getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
@@ -1360,15 +1401,15 @@ export class ArenaScene extends Phaser.Scene {
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'growth') PlayerData.addMasteryStat('growth', key, amount);
+          if (arena.playerIs('growth')) PlayerData.addMasteryStat('growth', key, amount);
         },
         recordMasteryBest: (key, value) => {
-          if (arena.elementId === 'growth') PlayerData.recordMasteryBest('growth', key, value);
+          if (arena.playerIs('growth')) PlayerData.recordMasteryBest('growth', key, value);
         },
         getMasteryStat: (key) => PlayerData.getMasteryStat('growth', key),
-        get masteryActive() { return arena.growthMasteryOn && arena.elementId === 'growth'; },
+        get masteryActive() { return arena.growthMasteryOn && arena.playerIs('growth'); },
         get npcMasteryActive() { return arena.npcMasteryActive && arena.npcElement.id === 'growth'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('growth', slot),
       };
       this.growthKit = new GrowthKit(growthApi);
     }
@@ -1378,7 +1419,9 @@ export class ArenaScene extends Phaser.Scene {
     // Each player always uses their own equipped upgrades — online too. The peer's
     // sim reproduces the opponent's upgraded abilities via the lobby handshake
     // (npcUpgrades → hasNpcUpgrade, honored in each kit's NPC replay path).
-    this.activeUpgrades = this.cityRun ? [] : PlayerData.getActiveUpgrades(this.elementId);
+    this.activeUpgrades = this.cityRun ? []
+      : this.playerLoadout ? upgradesFor(this.playerLoadout, this.elementId)
+      : PlayerData.getActiveUpgrades(this.elementId);
     this.playerElement = withAltUlt(this.playerElement, this.activeUpgrades);
     this.playerBurningUntil = 0;
     this.playerBurnTickAccum = 0;
@@ -1386,74 +1429,13 @@ export class ArenaScene extends Phaser.Scene {
     this.playerIntoxicationBar = null;
     this.fKeyHeldSince = 0;
     this.fKeyWasDown = false;
-    this.fireMasteryOn = PlayerData.isMasteryEnabled('fire');
-    this.masterySlotBinds = PlayerData.isMasteryEnabled(this.elementId) && !this.cityRun
+    // Quantum's binds are answered live by `quantumBindFor` rather than read from a table.
+    this.masterySlotBinds = PlayerData.isMasteryEnabled(this.elementId) && !this.cityRun && !this.playerLoadout
       ? PlayerData.getMasteryBinds(this.elementId)
       : {};
     this.fireBurstWindow = [];
     this.fireMasteryTrackedEnemies = new WeakSet<Fighter>();
-    this.waterMasteryOn = PlayerData.isMasteryEnabled('water');
-    this.airMasteryOn = PlayerData.isMasteryEnabled('air');
-    this.oilMasteryOn = PlayerData.isMasteryEnabled('oil');
-    this.lifeMasteryOn = PlayerData.isMasteryEnabled('life');
-    this.earthMasteryOn = PlayerData.isMasteryEnabled('earth');
-    this.metalMasteryOn = PlayerData.isMasteryEnabled('metal');
-    this.slimeMasteryOn = PlayerData.isMasteryEnabled('slime');
-    this.timeMasteryOn = PlayerData.isMasteryEnabled('sand');
-    this.echoMasteryOn = PlayerData.isMasteryEnabled('echo');
-    this.soulMasteryOn = PlayerData.isMasteryEnabled('soul');
-    this.lightMasteryOn = PlayerData.isMasteryEnabled('light');
-    this.shadowMasteryOn = PlayerData.isMasteryEnabled('shadow');
-    this.iceMasteryOn = PlayerData.isMasteryEnabled('ice');
-    this.crystalMasteryOn = PlayerData.isMasteryEnabled('crystal');
-    this.electricityMasteryOn = PlayerData.isMasteryEnabled('electricity');
-    this.gravityMasteryOn = PlayerData.isMasteryEnabled('gravity');
-    this.magicMasteryOn = PlayerData.isMasteryEnabled('magic');
-    this.creationMasteryOn = PlayerData.isMasteryEnabled('creation');
-    this.fateMasteryOn = PlayerData.isMasteryEnabled('fate');
-    this.rubberMasteryOn = PlayerData.isMasteryEnabled('rubber');
-    this.technologyMasteryOn = PlayerData.isMasteryEnabled('technology');
-    this.gunpowderMasteryOn = PlayerData.isMasteryEnabled('gunpowder');
-    this.growthMasteryOn = PlayerData.isMasteryEnabled('growth');
-    this.subterfugeMasteryOn = PlayerData.isMasteryEnabled('subterfuge');
-    this.plasmaMasteryOn = PlayerData.isMasteryEnabled('plasma');
-    this.huntMasteryOn = PlayerData.isMasteryEnabled('hunt');
-    // Sound's old mastery (Audience Participation) may have left the flag on; the drum major's must be earned.
-    this.soundMasteryOn = PlayerData.isMasteryEnabled('sound') && isMasteryComplete('sound');
-    this.silenceMasteryOn = PlayerData.isMasteryEnabled('silence');
-    this.illusionMasteryOn = PlayerData.isMasteryEnabled('illusion');
-    this.duneMasteryOn = PlayerData.isMasteryEnabled('dune');
-    // The charmer's old mastery may have left the flag on; only the priest's completes it now.
-    this.passionMasteryOn = PlayerData.isMasteryEnabled('passion') && isMasteryComplete('passion');
-    this.magmaMasteryOn = PlayerData.isMasteryEnabled('magma');
-    this.bindMasteryOn = PlayerData.isMasteryEnabled('bind');
-    this.deathMasteryOn = PlayerData.isMasteryEnabled('death');
-    this.chalkMasteryOn = PlayerData.isMasteryEnabled('chalk');
-    // Psychic's mastery was redone after the chess rework; the old one may have left the flag on.
-    this.psychicMasteryOn = PlayerData.isMasteryEnabled('psychic') && isMasteryComplete('psychic');
-    this.depthsMasteryOn = PlayerData.isMasteryEnabled('depths');
-    this.conquestMasteryOn = PlayerData.isMasteryEnabled('conquest');
-    this.ruinMasteryOn = PlayerData.isMasteryEnabled('ruin');
-    this.clothMasteryOn = PlayerData.isMasteryEnabled('cloth');
-    this.marrowMasteryOn = PlayerData.isMasteryEnabled('marrow');
-    this.waxMasteryOn = PlayerData.isMasteryEnabled('wax');
-    // Dream's old Dream Duel mastery may have left the flag on; the sandman's has to be earned.
-    this.dreamMasteryOn = PlayerData.isMasteryEnabled('dream') && isMasteryComplete('dream');
-    this.tempestMasteryOn = PlayerData.isMasteryEnabled('tempest');
-    this.mythMasteryOn = PlayerData.isMasteryEnabled('myth');
-    this.clayMasteryOn = PlayerData.isMasteryEnabled('clay');
-    this.gumMasteryOn = PlayerData.isMasteryEnabled('gum');
-    // The retired chef's mastery may have left `gluttony` switched on in an old save; Harvest's
-    // has its own requirements, so it also has to be earned.
-    this.gluttonyMasteryOn = PlayerData.isMasteryEnabled('gluttony') && isMasteryComplete('gluttony');
-    // Same for Gold: the retired shopkeeper's Battle Pass mastery may have left `fortune` switched on.
-    this.fortuneMasteryOn = PlayerData.isMasteryEnabled('fortune') && isMasteryComplete('fortune');
-    // And Magnet: the retired Metal Detector mastery may have left `magnet` switched on.
-    this.magnetMasteryOn = PlayerData.isMasteryEnabled('magnet') && isMasteryComplete('magnet');
-    // And Radiation: the retired Sniper's Instinct mastery may have left `radiation` switched on.
-    this.radiationMasteryOn = PlayerData.isMasteryEnabled('radiation') && isMasteryComplete('radiation');
-    this.paperMasteryOn = PlayerData.isMasteryEnabled('paper');
-    this.justiceMasteryOn = PlayerData.isMasteryEnabled('justice');
+    this.applyMasteryFlags();
     if (this.cityRun) this.setOwnMastery(false);
     this.waterKillWindow = [];
     this.waterMasteryTrackedEnemies = new WeakSet<Fighter>();
@@ -1466,23 +1448,23 @@ export class ArenaScene extends Phaser.Scene {
       const fireApi: FireArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get scene(): Phaser.Scene { return arena; },
         get projectiles() { return arena.projectiles; },
-        get eKey() { return arena.eKey; },
-        get fKey() { return arena.fKey; },
-        get rKey() { return arena.rKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('fire', arena.eKey); },
+        get fKey() { return arena.keyFor('fire', arena.fKey); },
+        get rKey() { return arena.keyFor('fire', arena.rKey); },
+        get qKey() { return arena.keyFor('fire', arena.qKey); },
         get nukeChanneling() { return arena.nukeChanneling; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
-        get masteryActive() { return arena.fireMasteryOn && arena.elementId === 'fire'; },
+        get masteryActive() { return arena.fireMasteryOn && arena.playerIs('fire'); },
         get isOnline() { return arena.isOnline; },
         get playerBurning() { return arena.playerBurningUntil > arena.time.now; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('fire', slot),
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         lockCaster: (ms) => { arena.nukeChanneling = true; arena.nukeChannelEnd = arena.time.now + ms; (arena.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0); },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('fire', slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         fireColor: (owner, base) => arena.skinsKit.fireColor(owner, base),
         skinId: (owner) => arena.skinsKit.skinId(owner),
@@ -1493,7 +1475,7 @@ export class ArenaScene extends Phaser.Scene {
         damagePlayerTargets: (cx, cy, r, d, col) => arena.damagePlayerTargets(cx, cy, r, d, col),
         dealFlameNukeDamage: (cx, cy, r, d) => arena.dealFlameNukeDamage(cx, cy, r, d),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'fire') PlayerData.addMasteryStat('fire', key, amount);
+          if (arena.playerIs('fire')) PlayerData.addMasteryStat('fire', key, amount);
         },
         setStatusIndicator: (id, status) => arena.setStatusIndicator(id, status),
         clearPlayerDots: () => {
@@ -1515,6 +1497,7 @@ export class ArenaScene extends Phaser.Scene {
         get npc() { return arena.npc; },
         get scene(): Phaser.Scene { return arena; },
         get projectiles() { return arena.projectiles; },
+        bodyLocked: (owner) => owner === 'player' ? !!arena.playerLoadout : arena.npcSelectedElementId === 'quantum',
       };
       this.skinsKit = new SkinsKit(skinsApi);
     }
@@ -1540,30 +1523,33 @@ export class ArenaScene extends Phaser.Scene {
       const waterApi: WaterArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get scene(): Phaser.Scene { return arena; },
         get projectiles() { return arena.projectiles; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
+        get isInvasion() { return arena.isInvasion; },
+        isTargetable: (f) => !arena.isInvasion || !(f instanceof Husk) || arena.invasionKit.isHuskTargetable(f),
+        dealAoeDamageFromOwner: (x, y, r, d, o, ex) => arena.dealAoeDamageFromOwner(x, y, r, d, o, ex),
+        get eKey() { return arena.keyFor('water', arena.eKey); },
+        get rKey() { return arena.keyFor('water', arena.rKey); },
+        get fKey() { return arena.keyFor('water', arena.fKey); },
+        get qKey() { return arena.keyFor('water', arena.qKey); },
         get geysers() { return arena.geysers; },
         get puddles() { return arena.puddles; },
         get nukeChanneling() { return arena.nukeChanneling; },
         get npcAimOffsetDeg() { return arena.npcDifficulty.aimOffsetDeg; },
-        get masteryActive() { return arena.waterMasteryOn && arena.elementId === 'water'; },
+        get masteryActive() { return arena.waterMasteryOn && arena.playerIs('water'); },
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('water', slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'water') PlayerData.addMasteryStat('water', key, amount);
+          if (arena.playerIs('water')) PlayerData.addMasteryStat('water', key, amount);
         },
-        isPlayerWater: () => arena.elementId === 'water',
+        isPlayerWater: () => arena.playerIs('water'),
         isNpcWater: () => arena.npcElement.id === 'water',
         waterColor: (owner, base) => arena.skinsKit.waterColor(owner, base),
         skinId: (owner) => arena.skinsKit.skinId(owner),
         unlockAchievement: (id) => arena.unlockAchievement(id),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('water', slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         lockCaster: (ms) => { arena.nukeChanneling = true; arena.nukeChannelEnd = arena.time.now + ms; (arena.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0); },
         releaseCaster: () => { arena.nukeChanneling = false; },
@@ -1586,17 +1572,17 @@ export class ArenaScene extends Phaser.Scene {
       const airApi: AirArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get scene(): Phaser.Scene { return arena; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('air', arena.eKey); },
+        get rKey() { return arena.keyFor('air', arena.rKey); },
+        get fKey() { return arena.keyFor('air', arena.fKey); },
+        get qKey() { return arena.keyFor('air', arena.qKey); },
         get nukeChanneling() { return arena.nukeChanneling; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
-        get masteryActive() { return arena.airMasteryOn && arena.elementId === 'air'; },
-        get isPlayerAir() { return arena.elementId === 'air'; },
+        get masteryActive() { return arena.airMasteryOn && arena.playerIs('air'); },
+        get isPlayerAir() { return arena.playerIs('air'); },
         get isNpcAir() { return arena.npcElement.id === 'air'; },
         // Sky Grapple drives the player's body itself, so it has to be able to *set* this.
         get isDodging() { return arena.isDodging; },
@@ -1605,10 +1591,10 @@ export class ArenaScene extends Phaser.Scene {
         get pointerY() { return arena.input.activePointer.worldY; },
         get worldBounds() { return arena.physics.world.bounds; },
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('air', slot),
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'air') PlayerData.addMasteryStat('air', key, amount);
+          if (arena.playerIs('air')) PlayerData.addMasteryStat('air', key, amount);
         },
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         spawnDamageNumber: (x, y, amount) => arena.spawnDamageNumber(x, y, amount),
@@ -1616,7 +1602,7 @@ export class ArenaScene extends Phaser.Scene {
         airColor: (owner, base) => arena.skinsKit.airColor(owner, base),
         skinId: (owner) => arena.skinsKit.skinId(owner),
         unlockAchievement: (id) => arena.unlockAchievement(id),
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('air', slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
       };
       this.airKit = new AirKit(airApi);
@@ -1630,23 +1616,23 @@ export class ArenaScene extends Phaser.Scene {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get projectiles() { return arena.projectiles; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
-        isPlayerLife: () => arena.elementId === 'life',
+        get eKey() { return arena.keyFor('life', arena.eKey); },
+        get rKey() { return arena.keyFor('life', arena.rKey); },
+        get fKey() { return arena.keyFor('life', arena.fKey); },
+        get qKey() { return arena.keyFor('life', arena.qKey); },
+        isPlayerLife: () => arena.playerIs('life'),
         isNpcLife: () => arena.npcElementId === 'life',
-        get masteryActive() { return arena.lifeMasteryOn && arena.elementId === 'life'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        get masteryActive() { return arena.lifeMasteryOn && arena.playerIs('life'); },
+        masteryBindFor: (slot) => arena.masteryBindForElement('life', slot),
         lifeColor: (owner, base) => arena.skinsKit.lifeColor(owner, base),
         skinId: (owner) => arena.skinsKit.skinId(owner),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'life') PlayerData.addMasteryStat('life', key, amount);
+          if (arena.playerIs('life')) PlayerData.addMasteryStat('life', key, amount);
         },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('life', slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
@@ -1663,17 +1649,17 @@ export class ArenaScene extends Phaser.Scene {
       const electricityApi: ElectricityArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get scene(): Phaser.Scene { return arena; },
         get projectiles() { return arena.projectiles; },
-        get eKey() { return arena.eKey; },
-        get fKey() { return arena.fKey; },
-        get rKey() { return arena.rKey; },
-        get qKey() { return arena.qKey; },
-        get elementId() { return arena.elementId; },
+        get eKey() { return arena.keyFor('electricity', arena.eKey); },
+        get fKey() { return arena.keyFor('electricity', arena.fKey); },
+        get rKey() { return arena.keyFor('electricity', arena.rKey); },
+        get qKey() { return arena.keyFor('electricity', arena.qKey); },
+        get elementId() { return arena.liveElementFor('electricity'); },
         get npcElementId() { return arena.npcElement.id; },
         get npcCastId() { return arena.npcCastId; },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('electricity', slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         electricityColor: (owner, base) => arena.skinsKit.electricityColor(owner, base),
         get playerSpeedMult() { return arena.playerSpeedMult; },
@@ -1682,15 +1668,15 @@ export class ArenaScene extends Phaser.Scene {
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
-        get masteryActive() { return arena.electricityMasteryOn && arena.elementId === 'electricity'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        get masteryActive() { return arena.electricityMasteryOn && arena.playerIs('electricity'); },
+        masteryBindFor: (slot) => arena.masteryBindForElement('electricity', slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'electricity') PlayerData.addMasteryStat('electricity', key, amount);
+          if (arena.playerIs('electricity')) PlayerData.addMasteryStat('electricity', key, amount);
         },
       };
       this.electricityKit = new ElectricityKit(electricityApi);
     }
-    this.electricityKit.reset(this.elementId === 'electricity');
+    this.electricityKit.reset(this.playerIs('electricity'));
 
     // SoundKit adapter
     if (this.soundKit) {
@@ -1700,20 +1686,20 @@ export class ArenaScene extends Phaser.Scene {
       const soundApi: SoundArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get scene(): Phaser.Scene { return arena; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('sound', arena.eKey); },
+        get rKey() { return arena.keyFor('sound', arena.rKey); },
+        get fKey() { return arena.keyFor('sound', arena.fKey); },
+        get qKey() { return arena.keyFor('sound', arena.qKey); },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
         get isOnline() { return arena.isOnline; },
         get npcLevel() { return arena.npcDifficulty?.level ?? 3; },
-        get masteryActive() { return arena.soundMasteryOn && arena.elementId === 'sound'; },
+        get masteryActive() { return arena.soundMasteryOn && arena.playerIs('sound'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'sound'; },
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
-        hasUpgrade: (owner, slot) => (owner === 'player' ? arena.hasUpgrade(slot) : arena.hasNpcUpgrade(slot)),
+        hasUpgrade: (owner, slot) => (owner === 'player' ? arena.hasUpgradeFor('sound', slot) : arena.hasNpcUpgrade(slot)),
         isSound: (owner) => (owner === 'player' ? arena.elementId : arena.npcElement.id) === 'sound',
         isTargetable: (f) => !arena.isInvasion || !(f instanceof Husk) || arena.invasionKit.isHuskTargetable(f),
         setStatusIndicator: (id, st) => arena.setStatusIndicator(id, st),
@@ -1721,10 +1707,10 @@ export class ArenaScene extends Phaser.Scene {
         soundColor: (owner, base) => arena.skinsKit.soundColor(owner, base),
         broadcastMasteryCast: (id) => arena.broadcastMasteryCast(id),
         get isInvasion() { return arena.isInvasion; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('sound', slot),
         npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'sound') PlayerData.addMasteryStat('sound', key, amount);
+          if (arena.playerIs('sound')) PlayerData.addMasteryStat('sound', key, amount);
         },
         get hpBarY() { return arena.hpBarY; },
         get hpBarH() { return arena.hpBarH; },
@@ -1742,12 +1728,12 @@ export class ArenaScene extends Phaser.Scene {
         get npc() { return arena.npc; },
         get scene(): Phaser.Scene { return arena; },
         get projectiles() { return arena.projectiles; },
-        get eKey() { return arena.eKey; },
-        get fKey() { return arena.fKey; },
-        get rKey() { return arena.rKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('light', arena.eKey); },
+        get fKey() { return arena.keyFor('light', arena.fKey); },
+        get rKey() { return arena.keyFor('light', arena.rKey); },
+        get qKey() { return arena.keyFor('light', arena.qKey); },
         get npcCastId() { return arena.npcCastId; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
         get hpBarY() { return arena.hpBarY; },
@@ -1756,14 +1742,15 @@ export class ArenaScene extends Phaser.Scene {
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('light', slot),
+        hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         lightColor: (owner, base) => arena.skinsKit.lightColor(owner, base),
-        get masteryActive() { return arena.lightMasteryOn && arena.elementId === 'light'; },
+        get masteryActive() { return arena.lightMasteryOn && arena.playerIs('light'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'light'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('light', slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'light') PlayerData.addMasteryStat('light', key, amount);
+          if (arena.playerIs('light')) PlayerData.addMasteryStat('light', key, amount);
         },
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
       };
@@ -1778,17 +1765,17 @@ export class ArenaScene extends Phaser.Scene {
       const iceApi: IceArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get scene(): Phaser.Scene { return arena; },
         get projectiles() { return arena.projectiles; },
-        get eKey() { return arena.eKey; },
-        get fKey() { return arena.fKey; },
-        get rKey() { return arena.rKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('ice', arena.eKey); },
+        get fKey() { return arena.keyFor('ice', arena.fKey); },
+        get rKey() { return arena.keyFor('ice', arena.rKey); },
+        get qKey() { return arena.keyFor('ice', arena.qKey); },
         get pointerWasDown() { return arena.pointerWasDown; },
         get nukeChanneling() { return arena.nukeChanneling; },
         get isInvasion() { return arena.isInvasion; },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('ice', slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         applyNpcSpeedMult: (f) => { arena.npcSpeedMult *= f; },
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
@@ -1796,10 +1783,10 @@ export class ArenaScene extends Phaser.Scene {
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         pointToSegmentDist: (px, py, ax, ay, bx, by) => arena.pointToSegmentDist(px, py, ax, ay, bx, by),
         iceColor: (owner, base) => arena.skinsKit.iceColor(owner, base),
-        get masteryActive() { return arena.iceMasteryOn && arena.elementId === 'ice'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        get masteryActive() { return arena.iceMasteryOn && arena.playerIs('ice'); },
+        masteryBindFor: (slot) => arena.masteryBindForElement('ice', slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'ice') PlayerData.addMasteryStat('ice', key, amount);
+          if (arena.playerIs('ice')) PlayerData.addMasteryStat('ice', key, amount);
         },
         setAbilityCardLabel: (id, name, description) => arena.setAbilityCardLabel(id, name, description),
       };
@@ -1814,26 +1801,26 @@ export class ArenaScene extends Phaser.Scene {
       const crystalApi: CrystalArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get scene(): Phaser.Scene { return arena; },
         get projectiles() { return arena.projectiles; },
-        get eKey() { return arena.eKey; },
-        get fKey() { return arena.fKey; },
-        get rKey() { return arena.rKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('crystal', arena.eKey); },
+        get fKey() { return arena.keyFor('crystal', arena.fKey); },
+        get rKey() { return arena.keyFor('crystal', arena.rKey); },
+        get qKey() { return arena.keyFor('crystal', arena.qKey); },
         get nukeChanneling() { return arena.nukeChanneling; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('crystal'); },
         get npcElementId() { return arena.npcElement.id; },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('crystal', slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         crystalColor: (owner, base) => arena.skinsKit.crystalColor(owner, base),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
-        get masteryActive() { return arena.crystalMasteryOn && arena.elementId === 'crystal'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        get masteryActive() { return arena.crystalMasteryOn && arena.playerIs('crystal'); },
+        masteryBindFor: (slot) => arena.masteryBindForElement('crystal', slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'crystal') PlayerData.addMasteryStat('crystal', key, amount);
+          if (arena.playerIs('crystal')) PlayerData.addMasteryStat('crystal', key, amount);
         },
       };
       this.crystalKit = new CrystalKit(crystalApi);
@@ -1848,14 +1835,14 @@ export class ArenaScene extends Phaser.Scene {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
         get scene(): Phaser.Scene { return arena; },
-        get enemies() { return arena.enemies; },
-        get eKey() { return arena.eKey; },
-        get fKey() { return arena.fKey; },
-        get rKey() { return arena.rKey; },
-        get qKey() { return arena.qKey; },
+        get enemies() { return arena.reachableEnemies; },
+        get eKey() { return arena.keyFor('earth', arena.eKey); },
+        get fKey() { return arena.keyFor('earth', arena.fKey); },
+        get rKey() { return arena.keyFor('earth', arena.rKey); },
+        get qKey() { return arena.keyFor('earth', arena.qKey); },
         get npcCastId() { return arena.npcCastId; },
         get pointerWasDown() { return arena.pointerWasDown; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('earth'); },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
@@ -1863,16 +1850,16 @@ export class ArenaScene extends Phaser.Scene {
         get abilityBars() { return arena.abilityBars; },
         get isDodging() { return arena.isDodging; },
         set isDodging(v: boolean) { arena.isDodging = v; },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('earth', slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
-        get masteryActive() { return arena.earthMasteryOn && arena.elementId === 'earth'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        get masteryActive() { return arena.earthMasteryOn && arena.playerIs('earth'); },
+        masteryBindFor: (slot) => arena.masteryBindForElement('earth', slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'earth') PlayerData.addMasteryStat('earth', key, amount);
+          if (arena.playerIs('earth')) PlayerData.addMasteryStat('earth', key, amount);
         },
         earthColor: (owner, base) => arena.skinsKit.earthColor(owner, base),
       };
@@ -1888,15 +1875,16 @@ export class ArenaScene extends Phaser.Scene {
       const shadowApi: ShadowArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get scene(): Phaser.Scene { return arena; },
-        get eKey() { return arena.eKey; },
-        get fKey() { return arena.fKey; },
-        get rKey() { return arena.rKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('shadow', arena.eKey); },
+        get fKey() { return arena.keyFor('shadow', arena.fKey); },
+        get rKey() { return arena.keyFor('shadow', arena.rKey); },
+        get qKey() { return arena.keyFor('shadow', arena.qKey); },
         get nukeChanneling() { return arena.nukeChanneling; },
         get pointerWasDown() { return arena.pointerWasDown; },
-        get elementId() { return arena.elementId; },
+        get isOnline() { return arena.isOnline; },
+        get elementId() { return arena.liveElementFor('shadow'); },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
@@ -1906,7 +1894,7 @@ export class ArenaScene extends Phaser.Scene {
         get hpBarY() { return arena.hpBarY; },
         get hpBarW() { return arena.hpBarW; },
         get hpBarH() { return arena.hpBarH; },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('shadow', slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         shadowColor: (owner, base) => arena.skinsKit.shadowColor(owner, base),
@@ -1915,11 +1903,11 @@ export class ArenaScene extends Phaser.Scene {
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
-        get masteryActive() { return arena.shadowMasteryOn && arena.elementId === 'shadow'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        get masteryActive() { return arena.shadowMasteryOn && arena.playerIs('shadow'); },
+        masteryBindFor: (slot) => arena.masteryBindForElement('shadow', slot),
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'shadow') PlayerData.addMasteryStat('shadow', key, amount);
+          if (arena.playerIs('shadow')) PlayerData.addMasteryStat('shadow', key, amount);
         },
       };
       this.shadowKit = new ShadowKit(shadowApi);
@@ -1932,31 +1920,31 @@ export class ArenaScene extends Phaser.Scene {
       const slimeApi: SlimeArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get scene(): Phaser.Scene { return arena; },
-        get eKey() { return arena.eKey; },
-        get fKey() { return arena.fKey; },
-        get rKey() { return arena.rKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('slime', arena.eKey); },
+        get fKey() { return arena.keyFor('slime', arena.fKey); },
+        get rKey() { return arena.keyFor('slime', arena.rKey); },
+        get qKey() { return arena.keyFor('slime', arena.qKey); },
         get pointerWasDown() { return arena.pointerWasDown; },
         get projectiles() { return arena.projectiles; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('slime'); },
         get npcElementId() { return arena.npcElement.id; },
         get npcCastId() { return arena.npcCastId; },
         acidColor: (owner, base) => arena.skinsKit.acidColor(owner, base),
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('slime', slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
-        get masteryActive() { return arena.slimeMasteryOn && arena.elementId === 'slime'; },
+        get masteryActive() { return arena.slimeMasteryOn && arena.playerIs('slime'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'slime'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('slime', slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'slime') PlayerData.addMasteryStat('slime', key, amount);
+          if (arena.playerIs('slime')) PlayerData.addMasteryStat('slime', key, amount);
         },
         recordMasteryBest: (key, value) => {
-          if (arena.elementId === 'slime') PlayerData.recordMasteryBest('slime', key, value);
+          if (arena.playerIs('slime')) PlayerData.recordMasteryBest('slime', key, value);
         },
       };
       this.slimeKit = new SlimeKit(slimeApi);
@@ -2112,16 +2100,16 @@ export class ArenaScene extends Phaser.Scene {
       const magnetApi: MagnetArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get scene(): Phaser.Scene { return arena; },
         get projectiles() { return arena.projectiles; },
-        get eKey() { return arena.eKey; },
-        get fKey() { return arena.fKey; },
-        get rKey() { return arena.rKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('magnet', arena.eKey); },
+        get fKey() { return arena.keyFor('magnet', arena.fKey); },
+        get rKey() { return arena.keyFor('magnet', arena.rKey); },
+        get qKey() { return arena.keyFor('magnet', arena.qKey); },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('magnet'); },
         get npcElementId() { return arena.npcElement.id; },
         get isOnline() { return arena.isOnline; },
         get isInvasion() { return arena.isInvasion; },
@@ -2130,19 +2118,19 @@ export class ArenaScene extends Phaser.Scene {
         isTargetable: (f) => !arena.isInvasion || !(f instanceof Husk) || arena.invasionKit.isHuskTargetable(f),
         blockHuskShot: (x, y, r) => arena.isInvasion && arena.invasionKit.blockShotNear(x, y, r),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
-        hasUpgrade: (owner, slot) => (owner === 'player' ? arena.hasUpgrade(slot) : arena.hasNpcUpgrade(slot)),
+        hasUpgrade: (owner, slot) => (owner === 'player' ? arena.hasUpgradeFor('magnet', slot) : arena.hasNpcUpgrade(slot)),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
         broadcast: (id) => arena.broadcastMasteryCast(id),
         magnetColor: (owner, base) => arena.skinsKit.magnetColor(owner, base),
         deflectHuskShots: (x, y, r, rad, seen) => (arena.isInvasion ? arena.invasionKit.deflectShotsNear(x, y, r, rad, seen) : 0),
-        get masteryActive() { return arena.magnetMasteryOn && arena.elementId === 'magnet'; },
+        get masteryActive() { return arena.magnetMasteryOn && arena.playerIs('magnet'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'magnet'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('magnet', slot),
         npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'magnet') PlayerData.addMasteryStat('magnet', key, amount);
+          if (arena.playerIs('magnet')) PlayerData.addMasteryStat('magnet', key, amount);
         },
       };
       this.magnetKit = new MagnetKit(magnetApi);
@@ -2156,30 +2144,30 @@ export class ArenaScene extends Phaser.Scene {
       const metalApi: MetalArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get scene(): Phaser.Scene { return arena; },
-        get eKey() { return arena.eKey; },
-        get fKey() { return arena.fKey; },
-        get rKey() { return arena.rKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('metal', arena.eKey); },
+        get fKey() { return arena.keyFor('metal', arena.fKey); },
+        get rKey() { return arena.keyFor('metal', arena.rKey); },
+        get qKey() { return arena.keyFor('metal', arena.qKey); },
         get pointerWasDown() { return arena.pointerWasDown; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('metal'); },
         get npcElementId() { return arena.npcElement.id; },
         get npcCastId() { return arena.npcCastId; },
         metalColor: (owner, base) => arena.skinsKit.metalColor(owner, base),
         skinId: (owner) => arena.skinsKit.skinId(owner),
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('metal', slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         get projectiles() { return arena.projectiles; },
-        get masteryActive() { return arena.metalMasteryOn && arena.elementId === 'metal'; },
+        get masteryActive() { return arena.metalMasteryOn && arena.playerIs('metal'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'metal'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('metal', slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'metal') PlayerData.addMasteryStat('metal', key, amount);
+          if (arena.playerIs('metal')) PlayerData.addMasteryStat('metal', key, amount);
         },
       };
       this.metalKit = new MetalKit(metalApi);
@@ -2193,33 +2181,33 @@ export class ArenaScene extends Phaser.Scene {
       const plasmaApi: PlasmaArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get scene(): Phaser.Scene { return arena; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('plasma', arena.eKey); },
+        get rKey() { return arena.keyFor('plasma', arena.rKey); },
+        get fKey() { return arena.keyFor('plasma', arena.fKey); },
+        get qKey() { return arena.keyFor('plasma', arena.qKey); },
         get nukeChanneling() { return arena.nukeChanneling; },
         get pointerWasDown() { return arena.pointerWasDown; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('plasma'); },
         get npcElementId() { return arena.npcElement.id; },
         get npcCastId() { return arena.npcCastId; },
         plasmaColor: (owner, base) => arena.skinsKit.plasmaColor(owner, base),
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('plasma', slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (mx, my) => arena.buildPlayerContext(mx, my),
         dealAoeDamage: (cx, cy, radius, damage, owner) => arena.dealAoeDamageFromOwner(cx, cy, radius, damage, owner),
-        get masteryActive() { return arena.plasmaMasteryOn && arena.elementId === 'plasma'; },
+        get masteryActive() { return arena.plasmaMasteryOn && arena.playerIs('plasma'); },
         get npcMasteryActive() { return arena.npcMasteryActive && arena.npcElement.id === 'plasma'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('plasma', slot),
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'plasma') PlayerData.addMasteryStat('plasma', key, amount);
+          if (arena.playerIs('plasma')) PlayerData.addMasteryStat('plasma', key, amount);
         },
       };
       this.plasmaKit = new PlasmaKit(plasmaApi);
@@ -2233,22 +2221,22 @@ export class ArenaScene extends Phaser.Scene {
       const gunpowderApi: GunpowderArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get scene(): Phaser.Scene { return arena; },
         get projectiles() { return arena.projectiles; },
-        get eKey() { return arena.eKey; },
-        get fKey() { return arena.fKey; },
-        get rKey() { return arena.rKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('gunpowder', arena.eKey); },
+        get fKey() { return arena.keyFor('gunpowder', arena.fKey); },
+        get rKey() { return arena.keyFor('gunpowder', arena.rKey); },
+        get qKey() { return arena.keyFor('gunpowder', arena.qKey); },
         get nukeChanneling() { return arena.nukeChanneling; },
         get pointerWasDown() { return arena.pointerWasDown; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('gunpowder'); },
         get npcElementId() { return arena.npcElement.id; },
         get npcCastId() { return arena.npcCastId; },
         gunpowderColor: (owner, base) => arena.skinsKit.gunpowderColor(owner, base),
         get isDodging() { return arena.isDodging; },
         set isDodging(v: boolean) { arena.isDodging = v; },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('gunpowder', slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         applyNpcSpeedMult: (f) => { arena.npcSpeedMult *= f; },
         applyPlayerSpeedMult: (f) => { arena.playerSpeedMult *= f; },
@@ -2259,15 +2247,15 @@ export class ArenaScene extends Phaser.Scene {
         dealAoeDamageFromOwner: (x, y, r, d, o, ex) => arena.dealAoeDamageFromOwner(x, y, r, d, o, ex),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
-        get masteryActive() { return arena.gunpowderMasteryOn && arena.elementId === 'gunpowder'; },
+        get masteryActive() { return arena.gunpowderMasteryOn && arena.playerIs('gunpowder'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'gunpowder'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('gunpowder', slot),
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'gunpowder') PlayerData.addMasteryStat('gunpowder', key, amount);
+          if (arena.playerIs('gunpowder')) PlayerData.addMasteryStat('gunpowder', key, amount);
         },
         recordMasteryBestStat: (key, value) => {
-          if (arena.elementId === 'gunpowder') PlayerData.recordMasteryBest('gunpowder', key, value);
+          if (arena.playerIs('gunpowder')) PlayerData.recordMasteryBest('gunpowder', key, value);
         },
         getMasteryStat: (key) => PlayerData.getMasteryStat('gunpowder', key),
       };
@@ -2283,14 +2271,14 @@ export class ArenaScene extends Phaser.Scene {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get projectiles() { return arena.projectiles; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('justice', arena.eKey); },
+        get rKey() { return arena.keyFor('justice', arena.rKey); },
+        get fKey() { return arena.keyFor('justice', arena.fKey); },
+        get qKey() { return arena.keyFor('justice', arena.qKey); },
         get pointerWasDown() { return arena.pointerWasDown; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('justice'); },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
@@ -2302,16 +2290,16 @@ export class ArenaScene extends Phaser.Scene {
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setHudForm: (form) => arena.justiceSetHudForm(form),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('justice', slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
-        get masteryActive() { return arena.justiceMasteryOn && arena.elementId === 'justice'; },
+        get masteryActive() { return arena.justiceMasteryOn && arena.playerIs('justice'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'justice'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('justice', slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'justice') PlayerData.addMasteryStat('justice', key, amount);
+          if (arena.playerIs('justice')) PlayerData.addMasteryStat('justice', key, amount);
         },
         recordMasteryBestStat: (key, value) => {
-          if (arena.elementId === 'justice') PlayerData.recordMasteryBest('justice', key, value);
+          if (arena.playerIs('justice')) PlayerData.recordMasteryBest('justice', key, value);
         },
       };
       this.justiceKit = new JusticeKit(justiceApi);
@@ -2326,12 +2314,12 @@ export class ArenaScene extends Phaser.Scene {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
-        get elementId() { return arena.elementId; },
+        get enemies() { return arena.reachableEnemies; },
+        get eKey() { return arena.keyFor('dream', arena.eKey); },
+        get rKey() { return arena.keyFor('dream', arena.rKey); },
+        get fKey() { return arena.keyFor('dream', arena.fKey); },
+        get qKey() { return arena.keyFor('dream', arena.qKey); },
+        get elementId() { return arena.liveElementFor('dream'); },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
@@ -2344,57 +2332,61 @@ export class ArenaScene extends Phaser.Scene {
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
         broadcast: (id) => arena.broadcastMasteryCast(id),
         relabelCard: (id, name, desc) => arena.relabelAbilityCard(id, name, desc),
-        hasUpgrade: (owner, slot) => (owner === 'player' ? arena.hasUpgrade(slot) : arena.hasNpcUpgrade(slot)),
-        get masteryActive() { return arena.dreamMasteryOn && arena.elementId === 'dream'; },
+        hasUpgrade: (owner, slot) => (owner === 'player' ? arena.hasUpgradeFor('dream', slot) : arena.hasNpcUpgrade(slot)),
+        get masteryActive() { return arena.dreamMasteryOn && arena.playerIs('dream'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'dream'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('dream', slot),
         npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'dream') PlayerData.addMasteryStat('dream', key, amount);
+          if (arena.playerIs('dream')) PlayerData.addMasteryStat('dream', key, amount);
         },
       };
       this.dreamKit = new DreamKit(dreamApi);
     }
 
-    // ── Chalk kit (test element) ──────────────────────────────
+    // ── Paint kit (element id `chalk`) ───────────────────────
     if (this.chalkKit) {
       this.chalkKit.reset();
     } else {
       const arena = this;
-      const chalkApi: ChalkArenaApi = {
+      const chalkApi: PaintArenaApi = {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
+        isTargetable: (f) => !arena.isInvasion || !(f instanceof Husk) || arena.invasionKit.isHuskTargetable(f),
         get projectiles() { return arena.projectiles; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('chalk', arena.eKey); },
+        get rKey() { return arena.keyFor('chalk', arena.rKey); },
+        get fKey() { return arena.keyFor('chalk', arena.fKey); },
+        get qKey() { return arena.keyFor('chalk', arena.qKey); },
         get pointerWasDown() { return arena.pointerWasDown; },
-        get elementId() { return arena.elementId; },
+        get rightPointerWasDown() { return arena.rightPointerWasDown; },
+        get elementId() { return arena.liveElementFor('chalk'); },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
-        chalkColor: (owner, base) => arena.skinsKit.chalkColor(owner, base),
+        get isInvasion() { return arena.isInvasion; },
+        get abilityBars() { return arena.abilityBars; },
+        paintColor: (owner, base) => arena.skinsKit.chalkColor(owner, base),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
-        get masteryActive() { return arena.chalkMasteryOn && arena.elementId === 'chalk'; },
+        get masteryActive() { return arena.chalkMasteryOn && arena.playerIs('chalk'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'chalk'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('chalk', slot),
         npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'chalk') PlayerData.addMasteryStat('chalk', key, amount);
+          if (arena.playerIs('chalk')) PlayerData.addMasteryStat('chalk', key, amount);
         },
-        broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         get isOnline() { return arena.isOnline; },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        sendPaintMsg: (msg) => Net.send(msg),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('chalk', slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
       };
-      this.chalkKit = new ChalkKit(chalkApi);
+      this.chalkKit = new PaintKit(chalkApi);
     }
 
     // ── Wax kit (test element) ────────────────────────────────
@@ -2406,13 +2398,13 @@ export class ArenaScene extends Phaser.Scene {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
+        get enemies() { return arena.reachableEnemies; },
+        get eKey() { return arena.keyFor('wax', arena.eKey); },
+        get rKey() { return arena.keyFor('wax', arena.rKey); },
+        get fKey() { return arena.keyFor('wax', arena.fKey); },
+        get qKey() { return arena.keyFor('wax', arena.qKey); },
         get pointerWasDown() { return arena.pointerWasDown; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('wax'); },
         get npcElementId() { return arena.npcElement.id; },
         get npcAutonomous() { return !arena.isOnline; },
         get width() { return arena.scale.width; },
@@ -2421,15 +2413,15 @@ export class ArenaScene extends Phaser.Scene {
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('wax', slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
         broadcastSpecialCast: (id) => arena.broadcastMasteryCast(id),
-        get masteryActive() { return arena.waxMasteryOn && arena.elementId === 'wax'; },
+        get masteryActive() { return arena.waxMasteryOn && arena.playerIs('wax'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'wax'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('wax', slot),
         npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'wax') PlayerData.addMasteryStat('wax', key, amount);
+          if (arena.playerIs('wax')) PlayerData.addMasteryStat('wax', key, amount);
         },
       };
       this.waxKit = new WaxKit(waxApi);
@@ -2444,15 +2436,15 @@ export class ArenaScene extends Phaser.Scene {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get projectiles() { return arena.projectiles; },
         get projectileRegistry() { return arena.techProjReg; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('clay', arena.eKey); },
+        get rKey() { return arena.keyFor('clay', arena.rKey); },
+        get fKey() { return arena.keyFor('clay', arena.fKey); },
+        get qKey() { return arena.keyFor('clay', arena.qKey); },
         get pointerWasDown() { return arena.pointerWasDown; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('clay'); },
         get npcElementId() { return arena.npcElement.id; },
         get npcAutonomous() { return !arena.isOnline; },
         get width() { return arena.scale.width; },
@@ -2462,14 +2454,14 @@ export class ArenaScene extends Phaser.Scene {
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
         purgeDebuffs: (f) => arena.purgeDebuffs(f),
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('clay', slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
-        get masteryActive() { return arena.clayMasteryOn && arena.elementId === 'clay'; },
+        get masteryActive() { return arena.clayMasteryOn && arena.playerIs('clay'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'clay'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('clay', slot),
         npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'clay') PlayerData.addMasteryStat('clay', key, amount);
+          if (arena.playerIs('clay')) PlayerData.addMasteryStat('clay', key, amount);
         },
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
       };
@@ -2485,15 +2477,15 @@ export class ArenaScene extends Phaser.Scene {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
-        get spaceKey() { return arena.spaceKey; },
+        get enemies() { return arena.reachableEnemies; },
+        get eKey() { return arena.keyFor('magma', arena.eKey); },
+        get rKey() { return arena.keyFor('magma', arena.rKey); },
+        get fKey() { return arena.keyFor('magma', arena.fKey); },
+        get qKey() { return arena.keyFor('magma', arena.qKey); },
+        get spaceKey() { return arena.keyFor('magma', arena.spaceKey); },
         get projectiles() { return arena.projectiles; },
         get pointerWasDown() { return arena.pointerWasDown; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('magma'); },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
@@ -2503,14 +2495,14 @@ export class ArenaScene extends Phaser.Scene {
         getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('magma', slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
-        get masteryActive() { return arena.magmaMasteryOn && arena.elementId === 'magma'; },
+        get masteryActive() { return arena.magmaMasteryOn && arena.playerIs('magma'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'magma'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('magma', slot),
         npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'magma') PlayerData.addMasteryStat('magma', key, amount);
+          if (arena.playerIs('magma')) PlayerData.addMasteryStat('magma', key, amount);
         },
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         get isOnline() { return arena.isOnline; },
@@ -2527,14 +2519,14 @@ export class ArenaScene extends Phaser.Scene {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get projectiles() { return arena.projectiles; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('illusion', arena.eKey); },
+        get rKey() { return arena.keyFor('illusion', arena.rKey); },
+        get fKey() { return arena.keyFor('illusion', arena.fKey); },
+        get qKey() { return arena.keyFor('illusion', arena.qKey); },
         get pointerWasDown() { return arena.pointerWasDown; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('illusion'); },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
@@ -2547,14 +2539,14 @@ export class ArenaScene extends Phaser.Scene {
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
         sendIllusionMsg: (msg) => Net.send(msg),
-        get masteryActive() { return arena.illusionMasteryOn && arena.elementId === 'illusion'; },
+        get masteryActive() { return arena.illusionMasteryOn && arena.playerIs('illusion'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'illusion'; },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('illusion', slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('illusion', slot),
         npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'illusion') PlayerData.addMasteryStat('illusion', key, amount);
+          if (arena.playerIs('illusion')) PlayerData.addMasteryStat('illusion', key, amount);
         },
       };
       this.illusionKit = new IllusionKit(illusionApi);
@@ -2569,14 +2561,14 @@ export class ArenaScene extends Phaser.Scene {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get projectiles() { return arena.projectiles; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('depths', arena.eKey); },
+        get rKey() { return arena.keyFor('depths', arena.rKey); },
+        get fKey() { return arena.keyFor('depths', arena.fKey); },
+        get qKey() { return arena.keyFor('depths', arena.qKey); },
         get pointerWasDown() { return arena.pointerWasDown; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('depths'); },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
@@ -2586,14 +2578,14 @@ export class ArenaScene extends Phaser.Scene {
         getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
-        get masteryActive() { return arena.depthsMasteryOn && arena.elementId === 'depths'; },
+        get masteryActive() { return arena.depthsMasteryOn && arena.playerIs('depths'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'depths'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('depths', slot),
         npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'depths') PlayerData.addMasteryStat('depths', key, amount);
+          if (arena.playerIs('depths')) PlayerData.addMasteryStat('depths', key, amount);
         },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('depths', slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
       };
       this.depthsKit = new DepthsKit(depthsApi);
@@ -2608,12 +2600,12 @@ export class ArenaScene extends Phaser.Scene {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
-        get elementId() { return arena.elementId; },
+        get enemies() { return arena.reachableEnemies; },
+        get eKey() { return arena.keyFor('gluttony', arena.eKey); },
+        get rKey() { return arena.keyFor('gluttony', arena.rKey); },
+        get fKey() { return arena.keyFor('gluttony', arena.fKey); },
+        get qKey() { return arena.keyFor('gluttony', arena.qKey); },
+        get elementId() { return arena.liveElementFor('gluttony'); },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
@@ -2625,16 +2617,16 @@ export class ArenaScene extends Phaser.Scene {
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
         broadcast: (id) => arena.broadcastMasteryCast(id),
-        hasUpgrade: (owner, slot) => (owner === 'player' ? arena.hasUpgrade(slot) : arena.hasNpcUpgrade(slot)),
-        get masteryActive() { return arena.gluttonyMasteryOn && arena.elementId === 'gluttony'; },
+        hasUpgrade: (owner, slot) => (owner === 'player' ? arena.hasUpgradeFor('gluttony', slot) : arena.hasNpcUpgrade(slot)),
+        get masteryActive() { return arena.gluttonyMasteryOn && arena.playerIs('gluttony'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'gluttony'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('gluttony', slot),
         npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'gluttony') PlayerData.addMasteryStat('gluttony', key, amount);
+          if (arena.playerIs('gluttony')) PlayerData.addMasteryStat('gluttony', key, amount);
         },
         recordMasteryBest: (key, value) => {
-          if (arena.elementId === 'gluttony') PlayerData.recordMasteryBest('gluttony', key, value);
+          if (arena.playerIs('gluttony')) PlayerData.recordMasteryBest('gluttony', key, value);
         },
       };
       this.gluttonyKit = new GluttonyKit(gluttonyApi);
@@ -2649,15 +2641,15 @@ export class ArenaScene extends Phaser.Scene {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get projectiles() { return arena.projectiles; },
         get projectileRegistry() { return arena.techProjReg; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('passion', arena.eKey); },
+        get rKey() { return arena.keyFor('passion', arena.rKey); },
+        get fKey() { return arena.keyFor('passion', arena.fKey); },
+        get qKey() { return arena.keyFor('passion', arena.qKey); },
         get pointerWasDown() { return arena.pointerWasDown; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('passion'); },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
@@ -2667,7 +2659,7 @@ export class ArenaScene extends Phaser.Scene {
         isTargetable: (f) => !arena.isInvasion || !(f instanceof Husk) || arena.invasionKit.isHuskTargetable(f),
         huskShotsNear: (x, y, r) => (arena.isInvasion ? arena.invasionKit.huskShotsNear(x, y, r) : []),
         passionColor: (owner, base) => arena.skinsKit.passionColor(owner, base),
-        hasUpgrade: (owner, slot) => (owner === 'player' ? arena.hasUpgrade(slot) : arena.hasNpcUpgrade(slot)),
+        hasUpgrade: (owner, slot) => (owner === 'player' ? arena.hasUpgradeFor('passion', slot) : arena.hasNpcUpgrade(slot)),
         purgeDebuffs: (f) => arena.purgeDebuffs(f),
         disarmHuskShotsNear: (x, y, r, dmg, spd, color) => (arena.isInvasion
           ? arena.invasionKit.disarmShotsNear(x, y, r, dmg, spd, color) : []),
@@ -2675,12 +2667,12 @@ export class ArenaScene extends Phaser.Scene {
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
-        get masteryActive() { return arena.passionMasteryOn && arena.elementId === 'passion'; },
+        get masteryActive() { return arena.passionMasteryOn && arena.playerIs('passion'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'passion'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('passion', slot),
         npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'passion') PlayerData.addMasteryStat('passion', key, amount);
+          if (arena.playerIs('passion')) PlayerData.addMasteryStat('passion', key, amount);
         },
         get pointer() { return { x: arena.input.activePointer.worldX, y: arena.input.activePointer.worldY }; },
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
@@ -2697,14 +2689,14 @@ export class ArenaScene extends Phaser.Scene {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get projectiles() { return arena.projectiles; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('ruin', arena.eKey); },
+        get rKey() { return arena.keyFor('ruin', arena.rKey); },
+        get fKey() { return arena.keyFor('ruin', arena.fKey); },
+        get qKey() { return arena.keyFor('ruin', arena.qKey); },
         get pointerWasDown() { return arena.pointerWasDown; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('ruin'); },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
@@ -2720,18 +2712,18 @@ export class ArenaScene extends Phaser.Scene {
           for (const p of found) arena.techProjReg.steal(p);
           return found.length;
         },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('ruin', slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
-        get masteryActive() { return arena.ruinMasteryOn && arena.elementId === 'ruin'; },
+        get masteryActive() { return arena.ruinMasteryOn && arena.playerIs('ruin'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'ruin'; },
         get isOnline() { return arena.isOnline && !arena.isInvasion; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('ruin', slot),
         npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'ruin') PlayerData.addMasteryStat('ruin', key, amount);
+          if (arena.playerIs('ruin')) PlayerData.addMasteryStat('ruin', key, amount);
         },
         recordMasteryBestStat: (key, value) => {
-          if (arena.elementId === 'ruin') PlayerData.recordMasteryBest('ruin', key, value);
+          if (arena.playerIs('ruin')) PlayerData.recordMasteryBest('ruin', key, value);
         },
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         revertForms: (f) => arena.revertFormsOn(f),
@@ -2748,14 +2740,14 @@ export class ArenaScene extends Phaser.Scene {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
-        get spaceKey() { return arena.spaceKey; },
+        get enemies() { return arena.reachableEnemies; },
+        get eKey() { return arena.keyFor('dune', arena.eKey); },
+        get rKey() { return arena.keyFor('dune', arena.rKey); },
+        get fKey() { return arena.keyFor('dune', arena.fKey); },
+        get qKey() { return arena.keyFor('dune', arena.qKey); },
+        get spaceKey() { return arena.keyFor('dune', arena.spaceKey); },
         get pointerWasDown() { return arena.pointerWasDown; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('dune'); },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
@@ -2764,15 +2756,15 @@ export class ArenaScene extends Phaser.Scene {
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('dune', slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
-        get masteryActive() { return arena.duneMasteryOn && arena.elementId === 'dune'; },
+        get masteryActive() { return arena.duneMasteryOn && arena.playerIs('dune'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'dune'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('dune', slot),
         npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'dune') PlayerData.addMasteryStat('dune', key, amount);
+          if (arena.playerIs('dune')) PlayerData.addMasteryStat('dune', key, amount);
         },
       };
       this.sandKit = new SandKit(sandApi);
@@ -2787,16 +2779,16 @@ export class ArenaScene extends Phaser.Scene {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get projectiles() { return arena.projectiles; },
         get projectileRegistry() { return arena.techProjReg; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('paper', arena.eKey); },
+        get rKey() { return arena.keyFor('paper', arena.rKey); },
+        get fKey() { return arena.keyFor('paper', arena.fKey); },
+        get qKey() { return arena.keyFor('paper', arena.qKey); },
         get pointerWasDown() { return arena.pointerWasDown; },
         get rightPointerWasDown() { return arena.rightPointerWasDown; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('paper'); },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
@@ -2807,19 +2799,19 @@ export class ArenaScene extends Phaser.Scene {
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
-        get masteryActive() { return arena.paperMasteryOn && arena.elementId === 'paper'; },
+        get masteryActive() { return arena.paperMasteryOn && arena.playerIs('paper'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'paper'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('paper', slot),
         npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'paper') PlayerData.addMasteryStat('paper', key, amount);
+          if (arena.playerIs('paper')) PlayerData.addMasteryStat('paper', key, amount);
         },
         recordMasteryBestStat: (key, value) => {
-          if (arena.elementId === 'paper') PlayerData.recordMasteryBest('paper', key, value);
+          if (arena.playerIs('paper')) PlayerData.recordMasteryBest('paper', key, value);
         },
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         get isOnline() { return arena.isOnline; },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('paper', slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
       };
       this.paperKit = new PaperKit(paperApi);
@@ -2834,15 +2826,15 @@ export class ArenaScene extends Phaser.Scene {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get projectiles() { return arena.projectiles; },
         get projectileRegistry() { return arena.techProjReg; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('death', arena.eKey); },
+        get rKey() { return arena.keyFor('death', arena.rKey); },
+        get fKey() { return arena.keyFor('death', arena.fKey); },
+        get qKey() { return arena.keyFor('death', arena.qKey); },
         get pointerWasDown() { return arena.pointerWasDown; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('death'); },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
@@ -2850,7 +2842,7 @@ export class ArenaScene extends Phaser.Scene {
         get isDodging() { return arena.isDodging; },
         set isDodging(v: boolean) { arena.isDodging = v; },
         deathColor: (owner, base) => arena.skinsKit.deathColor(owner, base),
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('death', slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
         elementColorOf: (owner) => (owner === 'player' ? arena.playerElement.color : arena.npcElement.color),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
@@ -2858,12 +2850,12 @@ export class ArenaScene extends Phaser.Scene {
         getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
-        get masteryActive() { return arena.deathMasteryOn && arena.elementId === 'death'; },
+        get masteryActive() { return arena.deathMasteryOn && arena.playerIs('death'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'death'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('death', slot),
         npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'death') PlayerData.addMasteryStat('death', key, amount);
+          if (arena.playerIs('death')) PlayerData.addMasteryStat('death', key, amount);
         },
       };
       this.deathKit = new DeathKit(deathApi);
@@ -2878,14 +2870,14 @@ export class ArenaScene extends Phaser.Scene {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get projectiles() { return arena.projectiles; },
         get projectileRegistry() { return arena.techProjReg; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
-        get elementId() { return arena.elementId; },
+        get eKey() { return arena.keyFor('fortune', arena.eKey); },
+        get rKey() { return arena.keyFor('fortune', arena.rKey); },
+        get fKey() { return arena.keyFor('fortune', arena.fKey); },
+        get qKey() { return arena.keyFor('fortune', arena.qKey); },
+        get elementId() { return arena.liveElementFor('fortune'); },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
@@ -2898,14 +2890,14 @@ export class ArenaScene extends Phaser.Scene {
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
         purgeSummons: (x, y, r, except, report) => arena.purgeSummonsInCircle(x, y, r, except, report),
-        hasUpgrade: (owner, slot) => (owner === 'player' ? arena.hasUpgrade(slot) : arena.hasNpcUpgrade(slot)),
+        hasUpgrade: (owner, slot) => (owner === 'player' ? arena.hasUpgradeFor('fortune', slot) : arena.hasNpcUpgrade(slot)),
         broadcastMasteryCast: (id) => arena.broadcastMasteryCast(id),
-        get masteryActive() { return arena.fortuneMasteryOn && arena.elementId === 'fortune'; },
+        get masteryActive() { return arena.fortuneMasteryOn && arena.playerIs('fortune'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'fortune'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('fortune', slot),
         npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'fortune') PlayerData.addMasteryStat('fortune', key, amount);
+          if (arena.playerIs('fortune')) PlayerData.addMasteryStat('fortune', key, amount);
         },
       };
       this.fortuneKit = new FortuneKit(fortuneApi);
@@ -2921,16 +2913,16 @@ export class ArenaScene extends Phaser.Scene {
         get isOnline() { return arena.isOnline && !arena.isInvasion; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get projectiles() { return arena.projectiles; },
         get projectileRegistry() { return arena.techProjReg; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
-        get spaceKey() { return arena.spaceKey; },
+        get eKey() { return arena.keyFor('cloth', arena.eKey); },
+        get rKey() { return arena.keyFor('cloth', arena.rKey); },
+        get fKey() { return arena.keyFor('cloth', arena.fKey); },
+        get qKey() { return arena.keyFor('cloth', arena.qKey); },
+        get spaceKey() { return arena.keyFor('cloth', arena.spaceKey); },
         get rightPointerWasDown() { return arena.rightPointerWasDown; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('cloth'); },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
@@ -2941,17 +2933,17 @@ export class ArenaScene extends Phaser.Scene {
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
         purgeSummons: (x, y, r, except) => arena.purgeSummonsInCircle(x, y, r, except),
         hasUpgrade: (owner, slot) => (owner === 'player'
-          ? arena.hasUpgrade(slot)
+          ? arena.hasUpgradeFor('cloth', slot)
           : arena.hasNpcUpgrade(slot)),
-        get masteryActive() { return arena.clothMasteryOn && arena.elementId === 'cloth'; },
+        get masteryActive() { return arena.clothMasteryOn && arena.playerIs('cloth'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'cloth'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('cloth', slot),
         npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
         addMasteryStat: (key, amount) => {
-          if (arena.elementId === 'cloth') PlayerData.addMasteryStat('cloth', key, amount);
+          if (arena.playerIs('cloth')) PlayerData.addMasteryStat('cloth', key, amount);
         },
         recordMasteryBest: (key, amount) => {
-          if (arena.elementId === 'cloth') PlayerData.recordMasteryBest('cloth', key, amount);
+          if (arena.playerIs('cloth')) PlayerData.recordMasteryBest('cloth', key, amount);
         },
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
       };
@@ -2967,20 +2959,20 @@ export class ArenaScene extends Phaser.Scene {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get projectiles() { return arena.projectiles; },
         get projectileRegistry() { return arena.techProjReg; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('marrow', arena.eKey); },
+        get rKey() { return arena.keyFor('marrow', arena.rKey); },
+        get fKey() { return arena.keyFor('marrow', arena.fKey); },
+        get qKey() { return arena.keyFor('marrow', arena.qKey); },
         get wKey() { return arena.wKey; },
         get aKey() { return arena.aKey; },
         get sKey() { return arena.sKey; },
         get dKey() { return arena.dKey; },
         get isOnline() { return arena.isOnline && !arena.isInvasion; },
         get isInvasion() { return arena.isInvasion; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('marrow'); },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
@@ -2991,14 +2983,14 @@ export class ArenaScene extends Phaser.Scene {
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
         purgeSummons: (x, y, r, except) => arena.purgeSummonsInCircle(x, y, r, except),
         hasUpgrade: (owner, slot) => (owner === 'player'
-          ? arena.hasUpgrade(slot)
+          ? arena.hasUpgradeFor('marrow', slot)
           : arena.hasNpcUpgrade(slot)),
-        get masteryActive() { return arena.marrowMasteryOn && arena.elementId === 'marrow'; },
+        get masteryActive() { return arena.marrowMasteryOn && arena.playerIs('marrow'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'marrow'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('marrow', slot),
         npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'marrow') PlayerData.addMasteryStat('marrow', key, amount);
+          if (arena.playerIs('marrow')) PlayerData.addMasteryStat('marrow', key, amount);
         },
         broadcast: (id) => arena.broadcastMasteryCast(id),
       };
@@ -3014,13 +3006,13 @@ export class ArenaScene extends Phaser.Scene {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get projectileRegistry() { return arena.techProjReg; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
-        get elementId() { return arena.elementId; },
+        get eKey() { return arena.keyFor('tempest', arena.eKey); },
+        get rKey() { return arena.keyFor('tempest', arena.rKey); },
+        get fKey() { return arena.keyFor('tempest', arena.fKey); },
+        get qKey() { return arena.keyFor('tempest', arena.qKey); },
+        get elementId() { return arena.liveElementFor('tempest'); },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
@@ -3030,13 +3022,13 @@ export class ArenaScene extends Phaser.Scene {
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
-        get masteryActive() { return arena.tempestMasteryOn && arena.elementId === 'tempest'; },
+        get masteryActive() { return arena.tempestMasteryOn && arena.playerIs('tempest'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'tempest'; },
-        hasUpgrade: (owner, slot) => (owner === 'player' ? arena.hasUpgrade(slot) : arena.hasNpcUpgrade(slot)),
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        hasUpgrade: (owner, slot) => (owner === 'player' ? arena.hasUpgradeFor('tempest', slot) : arena.hasNpcUpgrade(slot)),
+        masteryBindFor: (slot) => arena.masteryBindForElement('tempest', slot),
         npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'tempest') PlayerData.addMasteryStat('tempest', key, amount);
+          if (arena.playerIs('tempest')) PlayerData.addMasteryStat('tempest', key, amount);
         },
         broadcast: (id) => arena.broadcastMasteryCast(id),
         get isOnline() { return arena.isOnline && !arena.isInvasion; },
@@ -3053,18 +3045,18 @@ export class ArenaScene extends Phaser.Scene {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get projectiles() { return arena.projectiles; },
         get projectileRegistry() { return arena.techProjReg; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('myth', arena.eKey); },
+        get rKey() { return arena.keyFor('myth', arena.rKey); },
+        get fKey() { return arena.keyFor('myth', arena.fKey); },
+        get qKey() { return arena.keyFor('myth', arena.qKey); },
         get wKey() { return arena.wKey; },
         get aKey() { return arena.aKey; },
         get sKey() { return arena.sKey; },
         get dKey() { return arena.dKey; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('myth'); },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
@@ -3079,13 +3071,13 @@ export class ArenaScene extends Phaser.Scene {
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
         broadcastMasteryCast: (id) => arena.broadcastMasteryCast(id),
-        hasUpgrade: (owner, slot) => (owner === 'player' ? arena.hasUpgrade(slot) : arena.hasNpcUpgrade(slot)),
-        get masteryActive() { return arena.mythMasteryOn && arena.elementId === 'myth'; },
+        hasUpgrade: (owner, slot) => (owner === 'player' ? arena.hasUpgradeFor('myth', slot) : arena.hasNpcUpgrade(slot)),
+        get masteryActive() { return arena.mythMasteryOn && arena.playerIs('myth'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'myth'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('myth', slot),
         npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'myth') PlayerData.addMasteryStat('myth', key, amount);
+          if (arena.playerIs('myth')) PlayerData.addMasteryStat('myth', key, amount);
         },
       };
       this.mythKit = new MythKit(mythApi);
@@ -3100,12 +3092,12 @@ export class ArenaScene extends Phaser.Scene {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
-        get elementId() { return arena.elementId; },
+        get enemies() { return arena.reachableEnemies; },
+        get eKey() { return arena.keyFor('psychic', arena.eKey); },
+        get rKey() { return arena.keyFor('psychic', arena.rKey); },
+        get fKey() { return arena.keyFor('psychic', arena.fKey); },
+        get qKey() { return arena.keyFor('psychic', arena.qKey); },
+        get elementId() { return arena.liveElementFor('psychic'); },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
@@ -3119,21 +3111,21 @@ export class ArenaScene extends Phaser.Scene {
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
         sendPsychicMsg: (msg) => Net.send(msg),
         hasUpgrade: (owner, slot) => (owner === 'player'
-          ? arena.hasUpgrade(slot)
+          ? arena.hasUpgradeFor('psychic', slot)
           : arena.hasNpcUpgrade(slot)),
-        get masteryActive() { return arena.psychicMasteryOn && arena.elementId === 'psychic'; },
+        get masteryActive() { return arena.psychicMasteryOn && arena.playerIs('psychic'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'psychic'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('psychic', slot),
         npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'psychic') PlayerData.addMasteryStat('psychic', key, amount);
+          if (arena.playerIs('psychic')) PlayerData.addMasteryStat('psychic', key, amount);
         },
         get wKey() { return arena.wKey; },
         get aKey() { return arena.aKey; },
         get sKey() { return arena.sKey; },
         get dKey() { return arena.dKey; },
-        get spaceKey() { return arena.spaceKey; },
-        get pointer() { return arena.input.activePointer; },
+        get spaceKey() { return arena.keyFor('psychic', arena.spaceKey); },
+        get pointer() { return arena.pointerFor('psychic'); },
       };
       this.psychicKit = new PsychicKit(psychicApi);
     }
@@ -3147,12 +3139,12 @@ export class ArenaScene extends Phaser.Scene {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
-        get elementId() { return arena.elementId; },
+        get enemies() { return arena.reachableEnemies; },
+        get eKey() { return arena.keyFor('radiation', arena.eKey); },
+        get rKey() { return arena.keyFor('radiation', arena.rKey); },
+        get fKey() { return arena.keyFor('radiation', arena.fKey); },
+        get qKey() { return arena.keyFor('radiation', arena.qKey); },
+        get elementId() { return arena.liveElementFor('radiation'); },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
@@ -3162,7 +3154,7 @@ export class ArenaScene extends Phaser.Scene {
         blockHuskShot: (x, y, r) => arena.isInvasion && arena.invasionKit.blockShotNear(x, y, r),
         radiationColor: (owner, base) => arena.skinsKit.radiationColor(owner, base),
         hasUpgrade: (owner, slot) => (owner === 'player'
-          ? arena.hasUpgrade(slot)
+          ? arena.hasUpgradeFor('radiation', slot)
           : arena.hasNpcUpgrade(slot)),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
@@ -3170,12 +3162,12 @@ export class ArenaScene extends Phaser.Scene {
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
         get isInvasion() { return arena.isInvasion; },
         isTargetable: (f) => !arena.isInvasion || !(f instanceof Husk) || arena.invasionKit.isHuskTargetable(f),
-        get masteryActive() { return arena.radiationMasteryOn && arena.elementId === 'radiation'; },
+        get masteryActive() { return arena.radiationMasteryOn && arena.playerIs('radiation'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'radiation'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('radiation', slot),
         npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'radiation') PlayerData.addMasteryStat('radiation', key, amount);
+          if (arena.playerIs('radiation')) PlayerData.addMasteryStat('radiation', key, amount);
         },
         broadcast: (id) => arena.broadcastMasteryCast(id),
       };
@@ -3191,12 +3183,12 @@ export class ArenaScene extends Phaser.Scene {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
-        get elementId() { return arena.elementId; },
+        get enemies() { return arena.reachableEnemies; },
+        get eKey() { return arena.keyFor('bind', arena.eKey); },
+        get rKey() { return arena.keyFor('bind', arena.rKey); },
+        get fKey() { return arena.keyFor('bind', arena.fKey); },
+        get qKey() { return arena.keyFor('bind', arena.qKey); },
+        get elementId() { return arena.liveElementFor('bind'); },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
@@ -3205,16 +3197,16 @@ export class ArenaScene extends Phaser.Scene {
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
-        get masteryActive() { return arena.bindMasteryOn && arena.elementId === 'bind'; },
+        get masteryActive() { return arena.bindMasteryOn && arena.playerIs('bind'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'bind'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('bind', slot),
         npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'bind') PlayerData.addMasteryStat('bind', key, amount);
+          if (arena.playerIs('bind')) PlayerData.addMasteryStat('bind', key, amount);
         },
         purgeDebuffs: (f) => arena.purgeDebuffs(f),
         setAbilityCardLabel: (id, name, description) => arena.setAbilityCardLabel(id, name, description),
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('bind', slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
       };
       this.bindKit = new BindKit(bindApi);
@@ -3229,14 +3221,14 @@ export class ArenaScene extends Phaser.Scene {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get projectiles() { return arena.projectiles; },
         get projectileRegistry() { return arena.techProjReg; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
-        get elementId() { return arena.elementId; },
+        get eKey() { return arena.keyFor('gum', arena.eKey); },
+        get rKey() { return arena.keyFor('gum', arena.rKey); },
+        get fKey() { return arena.keyFor('gum', arena.fKey); },
+        get qKey() { return arena.keyFor('gum', arena.qKey); },
+        get elementId() { return arena.liveElementFor('gum'); },
         get npcElementId() { return arena.npcElement.id; },
         get isDodging() { return arena.isDodging; },
         get width() { return arena.scale.width; },
@@ -3246,14 +3238,14 @@ export class ArenaScene extends Phaser.Scene {
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
-        get masteryActive() { return arena.gumMasteryOn && arena.elementId === 'gum'; },
+        get masteryActive() { return arena.gumMasteryOn && arena.playerIs('gum'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'gum'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('gum', slot),
         npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'gum') PlayerData.addMasteryStat('gum', key, amount);
+          if (arena.playerIs('gum')) PlayerData.addMasteryStat('gum', key, amount);
         },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('gum', slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
       };
       this.gumKit = new GumKit(gumApi);
@@ -3268,19 +3260,19 @@ export class ArenaScene extends Phaser.Scene {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get projectiles() { return arena.projectiles; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('conquest', arena.eKey); },
+        get rKey() { return arena.keyFor('conquest', arena.rKey); },
+        get fKey() { return arena.keyFor('conquest', arena.fKey); },
+        get qKey() { return arena.keyFor('conquest', arena.qKey); },
         get pointerWasDown() { return arena.pointerWasDown; },
         get rightPointerWasDown() { return arena.rightPointerWasDown; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('conquest'); },
         get npcElementId() { return arena.npcElement.id; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('conquest', slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
         conquestColor: (owner, base) => arena.skinsKit.conquestColor(owner, base),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
@@ -3290,12 +3282,12 @@ export class ArenaScene extends Phaser.Scene {
         openUpgradeMenu: () => arena.openConquestMenu(),
         get npcIsNetReplica() { return arena.isOnline; },
         get isCoop() { return arena.isOnline && arena.isInvasion; },
-        get masteryActive() { return arena.conquestMasteryOn && arena.elementId === 'conquest'; },
+        get masteryActive() { return arena.conquestMasteryOn && arena.playerIs('conquest'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'conquest'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('conquest', slot),
         npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'conquest') PlayerData.addMasteryStat('conquest', key, amount);
+          if (arena.playerIs('conquest')) PlayerData.addMasteryStat('conquest', key, amount);
         },
       };
       this.conquestKit = new ConquestKit(conquestApi);
@@ -3309,16 +3301,16 @@ export class ArenaScene extends Phaser.Scene {
       const rubberApi: RubberArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get scene() { return arena as Phaser.Scene; },
         get projectiles() { return arena.projectiles; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
         get pointerWasDown() { return arena.pointerWasDown; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('rubber', arena.eKey); },
+        get rKey() { return arena.keyFor('rubber', arena.rKey); },
+        get fKey() { return arena.keyFor('rubber', arena.fKey); },
+        get qKey() { return arena.keyFor('rubber', arena.qKey); },
         setIsDodging: (v) => { arena.isDodging = v; },
         applyPlayerSpeedMult: (f) => { arena.playerSpeedMult *= f; },
         applyNpcSpeedMult: (f) => { arena.npcSpeedMult *= f; },
@@ -3327,18 +3319,18 @@ export class ArenaScene extends Phaser.Scene {
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('rubber', slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
-        get isPlayerRubber() { return arena.elementId === 'rubber'; },
+        get isPlayerRubber() { return arena.playerIs('rubber'); },
         get isNpcRubber() { return arena.npcElement?.id === 'rubber'; },
         rubberColor: (owner, base) => arena.skinsKit.rubberColor(owner, base),
         get isDodging() { return arena.isDodging; },
         setStatusIndicator: (id, status) => arena.setStatusIndicator(id, status),
-        get masteryActive() { return arena.rubberMasteryOn && arena.elementId === 'rubber'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        get masteryActive() { return arena.rubberMasteryOn && arena.playerIs('rubber'); },
+        masteryBindFor: (slot) => arena.masteryBindForElement('rubber', slot),
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'rubber') PlayerData.addMasteryStat('rubber', key, amount);
+          if (arena.playerIs('rubber')) PlayerData.addMasteryStat('rubber', key, amount);
         },
       };
       this.rubberKit = new RubberKit(rubberApi);
@@ -3351,16 +3343,16 @@ export class ArenaScene extends Phaser.Scene {
       const magicApi: MagicArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get isPlayerMagic() { return arena.elementId === 'magic'; },
+        get isPlayerMagic() { return arena.playerIs('magic'); },
         get isNpcMagic() { return arena.npcElement?.id === 'magic'; },
         magicColor: (owner, base) => arena.skinsKit.magicColor(owner, base),
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get scene(): Phaser.Scene { return arena; },
         get projectiles() { return arena.projectiles; },
-        get eKey() { return arena.eKey; },
-        get qKey() { return arena.qKey; },
-        get fKey() { return arena.fKey; },
-        get rKey() { return arena.rKey; },
+        get eKey() { return arena.keyFor('magic', arena.eKey); },
+        get qKey() { return arena.keyFor('magic', arena.qKey); },
+        get fKey() { return arena.keyFor('magic', arena.fKey); },
+        get rKey() { return arena.keyFor('magic', arena.rKey); },
         get leftKey() { return arena.dummyLeftKey; },
         get rightKey() { return arena.dummyRightKey; },
         get nukeChanneling() { return arena.nukeChanneling; },
@@ -3381,17 +3373,17 @@ export class ArenaScene extends Phaser.Scene {
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('magic', slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
-        get masteryActive() { return arena.magicMasteryOn && arena.elementId === 'magic'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        get masteryActive() { return arena.magicMasteryOn && arena.playerIs('magic'); },
+        masteryBindFor: (slot) => arena.masteryBindForElement('magic', slot),
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'magic') PlayerData.addMasteryStat('magic', key, amount);
+          if (arena.playerIs('magic')) PlayerData.addMasteryStat('magic', key, amount);
         },
         getMasteryStat: (key) => PlayerData.getMasteryStat('magic', key),
         recordMasteryBestStat: (key, value) => {
-          if (arena.elementId === 'magic') PlayerData.recordMasteryBest('magic', key, value);
+          if (arena.playerIs('magic')) PlayerData.recordMasteryBest('magic', key, value);
         },
       };
       this.magicKit = new MagicKit(magicApi);
@@ -3404,21 +3396,21 @@ export class ArenaScene extends Phaser.Scene {
       const techApi: TechArenaApi = {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get scene(): Phaser.Scene { return arena; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('technology'); },
         get npcElementId() { return arena.npcElement.id; },
         get isInvasion() { return arena.isInvasion; },
         get isOnline() { return arena.isOnline; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('technology', arena.eKey); },
+        get rKey() { return arena.keyFor('technology', arena.rKey); },
+        get fKey() { return arena.keyFor('technology', arena.fKey); },
+        get qKey() { return arena.keyFor('technology', arena.qKey); },
         get nukeChanneling() { return arena.nukeChanneling; },
         get projGroup() { return arena.projectiles; },
         get projReg() { return arena.techProjReg; },
         hasUpgrade: (owner, slot) => owner === 'player'
-          ? arena.hasUpgrade(slot)
+          ? arena.hasUpgradeFor('technology', slot)
           : arena.isOnline && arena.npcUpgrades.includes(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         sendTechMsg: (msg) => { if (arena.isOnline) Net.send(msg); },
@@ -3427,14 +3419,14 @@ export class ArenaScene extends Phaser.Scene {
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         spawnFloatingText: (x, y, t, c) => arena.spawnFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
-        get masteryActive() { return arena.technologyMasteryOn && arena.elementId === 'technology'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        get masteryActive() { return arena.technologyMasteryOn && arena.playerIs('technology'); },
+        masteryBindFor: (slot) => arena.masteryBindForElement('technology', slot),
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'technology') PlayerData.addMasteryStat('technology', key, amount);
+          if (arena.playerIs('technology')) PlayerData.addMasteryStat('technology', key, amount);
         },
         recordMasteryBest: (key, value) => {
-          if (arena.elementId === 'technology') PlayerData.recordMasteryBest('technology', key, value);
+          if (arena.playerIs('technology')) PlayerData.recordMasteryBest('technology', key, value);
         },
         setStatusIndicator: (id, status) => arena.setStatusIndicator(id, status),
         technologyColor: (owner, base) => arena.skinsKit.technologyColor(owner, base),
@@ -3449,16 +3441,16 @@ export class ArenaScene extends Phaser.Scene {
         get npc() { return arena.npc; },
         get scene(): Phaser.Scene { return arena; },
         get projectiles() { return arena.projectiles; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('sand'); },
         get npcElementId() { return arena.npcElement?.id ?? ''; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
+        get eKey() { return arena.keyFor('sand', arena.eKey); },
+        get rKey() { return arena.keyFor('sand', arena.rKey); },
+        get fKey() { return arena.keyFor('sand', arena.fKey); },
+        get qKey() { return arena.keyFor('sand', arena.qKey); },
         get nukeChanneling() { return arena.nukeChanneling; },
         get aimX() { return arena.input.activePointer.worldX; },
         get aimY() { return arena.input.activePointer.worldY; },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('sand', slot),
         sandColor: (owner, base) => arena.skinsKit.sandColor(owner, base),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
@@ -3467,12 +3459,12 @@ export class ArenaScene extends Phaser.Scene {
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
         dealAoeDamageFromOwner: (x, y, r, d, o) => arena.dealAoeDamageFromOwner(x, y, r, d, o),
-        get masteryActive() { return arena.timeMasteryOn && arena.elementId === 'sand'; },
+        get masteryActive() { return arena.timeMasteryOn && arena.playerIs('sand'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'sand'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('sand', slot),
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'sand') PlayerData.addMasteryStat('sand', key, amount);
+          if (arena.playerIs('sand')) PlayerData.addMasteryStat('sand', key, amount);
         },
         setStatusIndicator: (id, status) => arena.setStatusIndicator(id, status),
       };
@@ -3485,20 +3477,20 @@ export class ArenaScene extends Phaser.Scene {
         get player() { return arena.player as Fighter; },
         get npc() { return arena.npc; },
         get scene(): Phaser.Scene { return arena; },
-        get pointer() { return arena.input.activePointer; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
-        get spaceKey() { return arena.spaceKey; },
+        get pointer() { return arena.pointerFor('echo'); },
+        get eKey() { return arena.keyFor('echo', arena.eKey); },
+        get rKey() { return arena.keyFor('echo', arena.rKey); },
+        get fKey() { return arena.keyFor('echo', arena.fKey); },
+        get qKey() { return arena.keyFor('echo', arena.qKey); },
+        get spaceKey() { return arena.keyFor('echo', arena.spaceKey); },
         get projectiles() { return arena.projectiles; },
         get nukeChanneling() { return arena.nukeChanneling; },
         get npcElementId() { return arena.npcElement?.id ?? ''; },
         get npcCastId() { return arena.npcCastId; },
-        get masteryActive() { return arena.echoMasteryOn && arena.elementId === 'echo'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        get masteryActive() { return arena.echoMasteryOn && arena.playerIs('echo'); },
+        masteryBindFor: (slot) => arena.masteryBindForElement('echo', slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'echo') PlayerData.addMasteryStat('echo', key, amount);
+          if (arena.playerIs('echo')) PlayerData.addMasteryStat('echo', key, amount);
         },
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
@@ -3525,14 +3517,14 @@ export class ArenaScene extends Phaser.Scene {
         getSceneWidth: () => arena.scale.width,
         getSceneHeight: () => arena.scale.height,
         isEclipseRevealActive: () => arena.echoKit?.isEclipseRevealActive() ?? false,
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('echo', slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         echoColor: (owner, base) => arena.skinsKit.echoColor(owner, base),
       };
       this.echoKit = new EchoKit(echoApi);
     }
     // The kit owns the fog render texture; it only needs to know whether anyone is playing Echo.
-    this.echoKit.reset(this.elementId === 'echo' || this.npcElement?.id === 'echo');
+    this.echoKit.reset(this.playerIs('echo') || this.npcElement?.id === 'echo');
 
     // Subterfuge kit
     if (this.subterfugeKit) {
@@ -3548,18 +3540,18 @@ export class ArenaScene extends Phaser.Scene {
         get player() { return arena.player as Fighter; },
         get npc() { return arena.npc; },
         get scene(): Phaser.Scene { return arena; },
-        get pointer() { return arena.input.activePointer; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
+        get pointer() { return arena.pointerFor('subterfuge'); },
+        get eKey() { return arena.keyFor('subterfuge', arena.eKey); },
+        get rKey() { return arena.keyFor('subterfuge', arena.rKey); },
+        get fKey() { return arena.keyFor('subterfuge', arena.fKey); },
+        get qKey() { return arena.keyFor('subterfuge', arena.qKey); },
         get projectiles() { return arena.projectiles; },
         get nukeChanneling() { return arena.nukeChanneling; },
-        get elementId() { return arena.elementId; },
+        get elementId() { return arena.liveElementFor('subterfuge'); },
         get npcElementId() { return arena.npcElement.id; },
         get sceneWidth() { return arena.scale.width; },
         get sceneHeight() { return arena.scale.height; },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('subterfuge', slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
@@ -3596,15 +3588,15 @@ export class ArenaScene extends Phaser.Scene {
           else arena.magicKit.npcCastNecronomiconWedge(arena.player.x, arena.player.y);
         }),
         crystalClonePositions: (owner) => arena.crystalKit.getClonePositions(owner === 'player'),
-        get masteryActive() { return arena.subterfugeMasteryOn && arena.elementId === 'subterfuge'; },
+        get masteryActive() { return arena.subterfugeMasteryOn && arena.playerIs('subterfuge'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'subterfuge'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        masteryBindFor: (slot) => arena.masteryBindForElement('subterfuge', slot),
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'subterfuge') PlayerData.addMasteryStat('subterfuge', key, amount);
+          if (arena.playerIs('subterfuge')) PlayerData.addMasteryStat('subterfuge', key, amount);
         },
         recordMasteryBestStat: (key, value) => {
-          if (arena.elementId === 'subterfuge') PlayerData.recordMasteryBest('subterfuge', key, value);
+          if (arena.playerIs('subterfuge')) PlayerData.recordMasteryBest('subterfuge', key, value);
         },
         getMasteryStat: (key) => PlayerData.getMasteryStat('subterfuge', key),
         allElementIds: () => Object.keys(ELEMENT_MAP),
@@ -3624,13 +3616,13 @@ export class ArenaScene extends Phaser.Scene {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player as Fighter; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get projectiles() { return arena.projectiles; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
-        get elementId() { return arena.elementId; },
+        get eKey() { return arena.keyFor('quantum', arena.eKey); },
+        get rKey() { return arena.keyFor('quantum', arena.rKey); },
+        get fKey() { return arena.keyFor('quantum', arena.fKey); },
+        get qKey() { return arena.keyFor('quantum', arena.qKey); },
+        get elementId() { return arena.liveElementFor('quantum'); },
         get npcElementId() { return arena.npcElementId; },
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
@@ -3655,13 +3647,17 @@ export class ArenaScene extends Phaser.Scene {
         get height() { return arena.scale.height; },
         get elementId() { return arena.elementId; },
         get npcElementId() { return arena.npcElementId; },
+        get pointer() { return arena.input.activePointer; },
         get playerIsQuantum() { return arena.selectedElementId === 'quantum'; },
         get npcIsQuantum() { return arena.npcSelectedElementId === 'quantum'; },
         get npcDifficultyLevel() { return arena.npcDifficulty?.level ?? 3; },
-        get playerHasThirdState() { return PlayerData.isUpgradeActive('quantum', 'click'); },
         get isOnline() { return arena.isOnline; },
         applyPlayerElement: (id) => arena.applyPlayerElement(id),
         applyNpcElement: (id) => arena.applyNpcElement(id),
+        setLiveSlot: (slot) => arena.setQuantumLiveSlot(slot),
+        recordMasteryStat: (key, amount) => {
+          if (arena.selectedElementId === 'quantum') PlayerData.addMasteryStat('quantum', key, amount);
+        },
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         setStatusIndicator: (id, status) => arena.setStatusIndicator(id, status),
@@ -3671,8 +3667,8 @@ export class ArenaScene extends Phaser.Scene {
       };
       this.quantumKit = new QuantumKit(quantumApi, this.buildDormantTicks());
     }
-    if (this.playerBond) this.quantumKit.setPlayerBond(this.playerBond[0], this.playerBond[1]);
-    if (this.npcBond) this.quantumKit.setNpcBond(this.npcBond[0], this.npcBond[1]);
+    if (this.playerLoadout) this.quantumKit.setPlayerLoadout(this.playerLoadout);
+    if (this.npcQuantumForms) this.quantumKit.setNpcForms(this.npcQuantumForms);
 
     // Oil kit
     if (this.oilKit) {
@@ -3683,11 +3679,11 @@ export class ArenaScene extends Phaser.Scene {
         get player() { return arena.player as Fighter; },
         get npc() { return arena.npc; },
         get scene(): Phaser.Scene { return arena; },
-        get pointer() { return arena.input.activePointer; },
-        get eKey() { return arena.eKey; },
-        get rKey() { return arena.rKey; },
-        get fKey() { return arena.fKey; },
-        get qKey() { return arena.qKey; },
+        get pointer() { return arena.pointerFor('oil'); },
+        get eKey() { return arena.keyFor('oil', arena.eKey); },
+        get rKey() { return arena.keyFor('oil', arena.rKey); },
+        get fKey() { return arena.keyFor('oil', arena.fKey); },
+        get qKey() { return arena.keyFor('oil', arena.qKey); },
         get wKey() { return arena.wKey; },
         get aKey() { return arena.aKey; },
         get sKey() { return arena.sKey; },
@@ -3701,7 +3697,7 @@ export class ArenaScene extends Phaser.Scene {
         set npcNukeChanneling(v: boolean) { arena.npcNukeChanneling = v; },
         get npcNukeChannelEnd() { return arena.npcNukeChannelEnd; },
         set npcNukeChannelEnd(v: number) { arena.npcNukeChannelEnd = v; },
-        hasUpgrade: (slot) => arena.hasUpgrade(slot),
+        hasUpgrade: (slot) => arena.hasUpgradeFor('oil', slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
@@ -3711,11 +3707,11 @@ export class ArenaScene extends Phaser.Scene {
         pointToSegmentDist: (px, py, ax, ay, bx, by) => arena.pointToSegmentDist(px, py, ax, ay, bx, by),
         getSceneWidth: () => arena.scale.width,
         getSceneHeight: () => arena.scale.height,
-        get masteryActive() { return arena.oilMasteryOn && arena.elementId === 'oil'; },
-        masteryBindFor: (slot) => arena.masteryBindFor(slot),
+        get masteryActive() { return arena.oilMasteryOn && arena.playerIs('oil'); },
+        masteryBindFor: (slot) => arena.masteryBindForElement('oil', slot),
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'oil') PlayerData.addMasteryStat('oil', key, amount);
+          if (arena.playerIs('oil')) PlayerData.addMasteryStat('oil', key, amount);
         },
         oilColor: (owner, base) => arena.skinsKit.oilColor(owner, base),
       };
@@ -3730,7 +3726,7 @@ export class ArenaScene extends Phaser.Scene {
       const fApi: FateArenaApi = {
         get player() { return arena.player as Fighter; },
         get npc() { return arena.npc; },
-        get enemies() { return arena.enemies; },
+        get enemies() { return arena.reachableEnemies; },
         get scene(): Phaser.Scene { return arena; },
         get projectiles() { return arena.projectiles; },
         get eKey() { return arena.eKey; },
@@ -3739,15 +3735,15 @@ export class ArenaScene extends Phaser.Scene {
         get qKey() { return arena.qKey; },
         get nukeChanneling() { return arena.nukeChanneling; },
         get rightPointerWasDown() { return arena.rightPointerWasDown; },
-        get isPlayerFate() { return arena.elementId === 'fate'; },
+        get isPlayerFate() { return arena.playerIs('fate'); },
         fateColor: (owner, base) => arena.skinsKit.fateColor(owner, base),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         hasUpgrade: (slot) => arena.hasUpgrade(slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
-        get masteryActive() { return arena.fateMasteryOn && arena.elementId === 'fate'; },
+        get masteryActive() { return arena.fateMasteryOn && arena.playerIs('fate'); },
         masteryBindFor: (slot) => arena.masteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
-          if (arena.elementId === 'fate') PlayerData.addMasteryStat('fate', key, amount);
+          if (arena.playerIs('fate')) PlayerData.addMasteryStat('fate', key, amount);
         },
         applyPlayerSpeedMult: (f) => { arena.playerSpeedMult *= f; },
         applyNpcSpeedMult: (f) => { arena.npcSpeedMult *= f; },
@@ -3809,23 +3805,28 @@ export class ArenaScene extends Phaser.Scene {
     this.playerHealNumTimer = 0; this.npcHealNumTimer = 0;
     this.player.onHeal = (amt) => {
       this.playerHealNumAccum += amt;
-      if (this.elementId === 'life') PlayerData.addMasteryStat('life', 'selfHealed', Math.round(amt));
-      if (this.elementId === 'shadow') PlayerData.addMasteryStat('shadow', 'healedHp', Math.round(amt));
+      if (this.playerIs('life')) PlayerData.addMasteryStat('life', 'selfHealed', Math.round(amt));
+      if (this.playerIs('shadow')) PlayerData.addMasteryStat('shadow', 'healedHp', Math.round(amt));
       // Paper Mastery — "heal 150 by any means". Deliberately every heal in the game and not
       // just the element's own lotus, which is what "by any means" has to mean to be true.
-      if (this.elementId === 'paper') PlayerData.addMasteryStat('paper', 'healedHp', Math.round(amt));
+      if (this.playerIs('paper')) PlayerData.addMasteryStat('paper', 'healedHp', Math.round(amt));
     };
     this.player.onDamaged = (amt) => {
       // Block Up reduces incoming damage by 25% (a 0.75 multiplier folded into incomingDamageMultiplier);
       // the damage that 25% cut avoided is derived from the final post-mitigation amount: amt/0.75*0.25 = amt/3.
-      if (this.elementId === 'ice' && this.iceKit.isPlayerBlockUpActive()) {
+      if (this.playerIs('ice') && this.iceKit.isPlayerBlockUpActive()) {
         PlayerData.addMasteryStat('ice', 'blockUpDamageAvoided', Math.round(amt / 3));
       }
       // Rubber Mastery — Vulcanization cures off damage soaked.
-      if (this.elementId === 'rubber') this.rubberKit.onPlayerDamaged(amt);
+      if (this.playerIs('rubber')) this.rubberKit.onPlayerDamaged(amt);
     };
     this.npc = new NpcOpponent(this, W - 180, cy, this.npcElement, npcTexture, difficultyConfig);
     this.npc.onHeal = (amt) => { this.npcHealNumAccum += amt; };
+    // Ultimates are charged by fighting rather than by waiting — see `Fighter.ultCharge`. An
+    // online opponent is a replica whose casts its owner already paid for.
+    this.player.ultChargeEnabled = true;
+    this.npc.ultChargeEnabled = !this.isOnline;
+    Fighter.creditUltDamage = (victim, amount) => this.creditUltDamage(victim, amount);
     // True Nightmare: it dashes out of the way, and one cast in four goes twice.
     (this.npc as NpcOpponent).trueNightmare = this.secretMode === 'truenightmare';
     // In 1v1 the single opponent is tracked in enemies; invasion starts empty and fills via the InvasionKit
@@ -4061,7 +4062,7 @@ export class ArenaScene extends Phaser.Scene {
           return; // proj NOT deactivated — keeps flying through
         }
         // E+ shadow consume: immune to damage while consuming
-        if (this.elementId === 'shadow' && this.shadowKit.isConsumeActive()) {
+        if (this.playerIs('shadow') && this.shadowKit.isConsumeActive()) {
           proj.setActive(false).setVisible(false);
           (proj.body as Phaser.Physics.Arcade.Body).stop();
           return;
@@ -4070,7 +4071,7 @@ export class ArenaScene extends Phaser.Scene {
         // absorber by AirKit, so it covers area and tick damage too rather than projectiles
         // alone. A dodged projectile is stopped below when takeDamage reports nothing landed.
         // Gravity Mastery — Gravity Aura: 20% chance to catch the projectile instead of taking the hit.
-        if (this.elementId === 'gravity' && this.gravityKit.tryCatchProjectile(proj)) {
+        if (this.playerIs('gravity') && this.gravityKit.tryCatchProjectile(proj)) {
           return;
         }
         // Fighter.dodgeChance roll (stacks from Light upgrades and other sources)
@@ -4089,6 +4090,8 @@ export class ArenaScene extends Phaser.Scene {
         // Apply attacker's crit context before damage
         this.player.setIncomingCritContext(this.npc.critChance, this.npc.critMult);
         let _playerDmg = Math.round(proj.damage * this.npc.outgoingDamageMult);
+        // Paint's Still Life F+: a shot landing on a painted-red part of you hits harder.
+        if (this.player.paintZoneMult) _playerDmg = Math.round(_playerDmg * this.player.paintZoneMult(proj.x, proj.y));
         // Phantom: back-hit multiplier (2× base, 3× starred)
         if (this.mutations.has('phantom')) {
           const ptr = this.input.activePointer;
@@ -4113,6 +4116,8 @@ export class ArenaScene extends Phaser.Scene {
         }
         this.player.takeDamage(_playerDmg);
         this.spawnHitFlash(proj.x, proj.y, 0x00aaff);
+        // An opponent's Water Cut: Splashy's splash and Poseidon's shove.
+        if (proj.texture.key === 'proj-water' && this.npcElement.id === 'water') this.waterKit.onWaterCutHit(this.player, 'npc', proj);
         // Fate Infect: applies the poison DOT on top of the direct hit above
         if ((proj as any).fateInfectDps) {
           this.fateKit.applyPoison(this.player, (proj as any).fateInfectDps, this.time.now, (proj as any).fateInfectDurMs ?? 3000);
@@ -4194,7 +4199,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // Electricity: gain kinetic power on any damage; overcharge/auto-restart prevents death
     this.player.on('damaged', (amount: number) => {
-      if (this.elementId !== 'electricity' || amount <= 0) return;
+      if (!this.playerIs('electricity') || amount <= 0) return;
       this.electricityKit.onDamageReceived(amount, this.time.now);
     });
     // Time: accrue bounty when player takes damage (NPC is the time element)
@@ -4277,7 +4282,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // Metal: passive blood puddle every 50 damage dealt
     this.npc.on('damaged', (amount: number) => {
-      if (this.elementId !== 'metal' || amount <= 0) return;
+      if (!this.playerIs('metal') || amount <= 0) return;
       this.metalKit.onDamageDealt('player', amount);
     });
     this.player.on('damaged', (amount: number) => {
@@ -4342,22 +4347,23 @@ export class ArenaScene extends Phaser.Scene {
           spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
           showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
           endOnlineMatch: (won, reason) => arena.endOnlineMatch(won, reason),
-          isPlayerInvisible: () => (arena.elementId === 'silence' && arena.silenceKit.isInvisible('player'))
-            || (arena.elementId === 'technology' && (arena.techKit.isPlayerSheltered() || arena.techKit.isPlayerAdminInvisible()))
+          isPlayerInvisible: () => (arena.playerIs('silence') && arena.silenceKit.isInvisible('player'))
+            || (arena.playerIs('technology') && (arena.techKit.isPlayerSheltered() || arena.techKit.isPlayerAdminInvisible()))
             // Devotion: carried off by the chariot.
-            || (arena.elementId === 'passion' && arena.passionKit.isRiding('player'))
+            || (arena.playerIs('passion') && arena.passionKit.isRiding('player'))
             // Illusion: shrunk and hidden behind a Guise clone.
-            || (arena.elementId === 'illusion' && arena.illusionKit.isGuised('player'))
+            || (arena.playerIs('illusion') && arena.illusionKit.isGuised('player'))
             // Depths: Camo Fade has finished — the opponent must not see the ghost we see.
-            || (arena.elementId === 'depths' && arena.depthsKit.isCamoFull('player'))
+            || (arena.playerIs('depths') && arena.depthsKit.isCamoFull('player'))
             // Wax Mastery: standing in our own smoke.
             || arena.waxKit.isSmokeHidden('player'),
-          playerStealth: () => arena.elementId === 'silence' ? arena.silenceKit.getStealth('player') : 0,
+          playerStealth: () => arena.playerIs('silence') ? arena.silenceKit.getStealth('player') : 0,
           setRemoteStealth: (v) => arena.silenceKit.setNetStealth(v),
           onTechMsg: (msg) => arena.techKit.handleNetMsg(msg),
           onSilenceMsg: (msg) => arena.silenceKit.handleNetMsg(msg),
           onIllusionMsg: (msg) => arena.illusionKit.handleNetMsg(msg),
         onPsychicMsg: (msg) => arena.psychicKit.handleNetMsg(msg),
+        onPaintMsg: (msg) => arena.chalkKit.handleNetMsg(msg),
           conquestSnapshot: () => arena.conquestKit.netSnapshot(),
           onConquestSnapshot: (snap) => arena.conquestKit.applyNetSnapshot(snap),
           replayNpcMastery: (enhId, tx, ty) => arena.replayNpcMastery(enhId, tx, ty),
@@ -4395,7 +4401,7 @@ export class ArenaScene extends Phaser.Scene {
     });
     // Growth: Auxiliary Growth clone — inhabit it instead of dying
     this.player.on('damaged', (amount: number) => {
-      if (this.elementId !== 'growth' || amount <= 0) return;
+      if (!this.playerIs('growth') || amount <= 0) return;
       this.growthKit.onPlayerDamaged();
     });
     this.npc.on('damaged', (n: number) => {
@@ -4424,6 +4430,7 @@ export class ArenaScene extends Phaser.Scene {
     this.eKey     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.E);
     this.rKey     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.R);
     this.fKey     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.F);
+    this.gKey     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.G);
     this.spaceKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
     // Key objects outlive a scene restart; a City run seals R/F/Q, so every match unseals first.
     this.qKey.enabled = this.rKey.enabled = this.fKey.enabled = true;
@@ -4472,7 +4479,7 @@ export class ArenaScene extends Phaser.Scene {
     });
 
     // ── Creation: spawn nexus ──────────────────────────────────────
-    if (this.elementId === 'creation' || this.npcElementId === 'creation') {
+    if (this.playerIs('creation') || this.npcElementId === 'creation') {
       this.creationKit.spawnNexus(cx, cy);
     }
 
@@ -4507,18 +4514,18 @@ export class ArenaScene extends Phaser.Scene {
           unlockAchievement: (id) => arena.unlockAchievement(id),
           addFrostStackTo: (t) => arena.iceKit.addFrostStackTo(t),
           applyBleedVisual: (t) => arena.applyBleedVisualTo(t),
-          isSilencePlayerHidden: () => (arena.elementId === 'silence'
+          isSilencePlayerHidden: () => (arena.playerIs('silence')
             && (arena.silenceKit.isInvisible('player') || arena.silenceKit.isRunChaseActive()))
             // Wax Mastery — Smoke-out hides the player from husks the same way.
             || arena.waxKit.isSmokeHidden('player'),
-          silenceStalkerHunt: () => arena.elementId === 'silence'
+          silenceStalkerHunt: () => arena.playerIs('silence')
             && arena.silenceKit.isInvisible('player') && arena.silenceKit.stalkersAlive('player') > 0,
           tryHitSilenceStalker: (x, y, r) => arena.silenceKit.tryHitStalker(x, y, r, 'husk'),
           huskTargetsView: (list) => arena.radiationKit.huskTargetsView(arena.illusionKit.huskTargetsView(list)),
           absorbDecoyHit: (t, amount) => arena.illusionKit.absorbDecoyHit(t, amount)
             || arena.radiationKit.absorbDecoyHit(t, amount),
           tryHitIllusionClone: (x, y, r, damage) => arena.illusionKit.tryHitClone(x, y, r, damage),
-          notifyHuskDefeated: (h) => { if (arena.elementId === 'soul') arena.soulKit.onRealHuskKilled(h); },
+          notifyHuskDefeated: (h) => { if (arena.playerIs('soul')) arena.soulKit.onRealHuskKilled(h); },
           aim: () => {
             // Myth's Final Destiny aims down the first-person facing; the cursor is captured.
             const fps = arena.mythKit?.netAim();
@@ -4570,7 +4577,8 @@ export class ArenaScene extends Phaser.Scene {
           this.invasionCoopKit = new InvasionCoopKit(coopApi);
         }
         this.invasionCoopKit.reset(Net.isHost, invasionDifficulty,
-          this.cityRun ? { partySize: data.invasionParty ?? 2 } : null);
+          this.cityRun ? { partySize: data.invasionParty ?? 2 } : null,
+          { npcSlot: data.online?.npcSlot ?? (Net.isHost ? 1 : 0), extras: data.online?.extraAllies ?? [] });
         this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.invasionCoopKit?.detach());
       } else {
         // Solo: park the unused 1v1 opponent — invasion enemies are wave-spawned husks.
@@ -4878,15 +4886,15 @@ export class ArenaScene extends Phaser.Scene {
 
     // Soul: corpse-queue HUD is built lazily by SoulKit itself.
     // ElectricityKit creates its own HUD in reset() when isPlayerElement=true
-    if (this.elementId === 'slime') {
+    if (this.playerIs('slime')) {
       this.slimeKit.startMatch(W, H, true);
     }
     // Time element: charge bar rendered per-frame above player; no separate HUD text needed
     // Metal: arsenal HUD bar
-    if (this.elementId === 'metal') {
+    if (this.playerIs('metal')) {
       this.metalKit.initHud();
     }
-    if (this.elementId === 'gunpowder') {
+    if (this.playerIs('gunpowder')) {
       this.gunpowderKit.initArsenalHud(cx);
     }
 
@@ -4985,9 +4993,119 @@ export class ArenaScene extends Phaser.Scene {
     }
   }
 
+
+  /**
+   * Every element's mastery flag, from the save — or, for Quantum, from its loadout: a carried
+   * element's mastery is never its own page's call there (see `masteryOnFor`). Re-run on every
+   * routed key press in a Quantum fight, because the sixth slot's element is only mastered
+   * while it is the element reached through G.
+   */
+  private applyMasteryFlags(): void {
+    this.fireMasteryOn = this.masteryOnFor('fire');
+    this.waterMasteryOn = this.masteryOnFor('water');
+    this.airMasteryOn = this.masteryOnFor('air');
+    this.oilMasteryOn = this.masteryOnFor('oil');
+    this.lifeMasteryOn = this.masteryOnFor('life');
+    this.earthMasteryOn = this.masteryOnFor('earth');
+    this.metalMasteryOn = this.masteryOnFor('metal');
+    this.slimeMasteryOn = this.masteryOnFor('slime');
+    this.timeMasteryOn = this.masteryOnFor('sand');
+    this.echoMasteryOn = this.masteryOnFor('echo');
+    this.soulMasteryOn = this.masteryOnFor('soul');
+    this.lightMasteryOn = this.masteryOnFor('light');
+    this.shadowMasteryOn = this.masteryOnFor('shadow');
+    this.iceMasteryOn = this.masteryOnFor('ice');
+    this.crystalMasteryOn = this.masteryOnFor('crystal');
+    this.electricityMasteryOn = this.masteryOnFor('electricity');
+    this.gravityMasteryOn = this.masteryOnFor('gravity');
+    this.magicMasteryOn = this.masteryOnFor('magic');
+    this.creationMasteryOn = this.masteryOnFor('creation');
+    this.fateMasteryOn = this.masteryOnFor('fate');
+    this.rubberMasteryOn = this.masteryOnFor('rubber');
+    this.technologyMasteryOn = this.masteryOnFor('technology');
+    this.gunpowderMasteryOn = this.masteryOnFor('gunpowder');
+    this.growthMasteryOn = this.masteryOnFor('growth');
+    this.subterfugeMasteryOn = this.masteryOnFor('subterfuge');
+    this.plasmaMasteryOn = this.masteryOnFor('plasma');
+    this.huntMasteryOn = this.masteryOnFor('hunt');
+    // Sound's old mastery (Audience Participation) may have left the flag on; the drum major's must be earned.
+    this.soundMasteryOn = this.masteryOnFor('sound') && isMasteryComplete('sound');
+    this.silenceMasteryOn = this.masteryOnFor('silence');
+    this.illusionMasteryOn = this.masteryOnFor('illusion');
+    this.duneMasteryOn = this.masteryOnFor('dune');
+    // The charmer's old mastery may have left the flag on; only the priest's completes it now.
+    this.passionMasteryOn = this.masteryOnFor('passion') && isMasteryComplete('passion');
+    this.magmaMasteryOn = this.masteryOnFor('magma');
+    this.bindMasteryOn = this.masteryOnFor('bind');
+    this.deathMasteryOn = this.masteryOnFor('death');
+    this.chalkMasteryOn = this.masteryOnFor('chalk');
+    // Psychic's mastery was redone after the chess rework; the old one may have left the flag on.
+    this.psychicMasteryOn = this.masteryOnFor('psychic') && isMasteryComplete('psychic');
+    this.depthsMasteryOn = this.masteryOnFor('depths');
+    this.conquestMasteryOn = this.masteryOnFor('conquest');
+    this.ruinMasteryOn = this.masteryOnFor('ruin');
+    this.clothMasteryOn = this.masteryOnFor('cloth');
+    this.marrowMasteryOn = this.masteryOnFor('marrow');
+    this.waxMasteryOn = this.masteryOnFor('wax');
+    // Dream's old Dream Duel mastery may have left the flag on; the sandman's has to be earned.
+    this.dreamMasteryOn = this.masteryOnFor('dream') && isMasteryComplete('dream');
+    this.tempestMasteryOn = this.masteryOnFor('tempest');
+    this.mythMasteryOn = this.masteryOnFor('myth');
+    this.clayMasteryOn = this.masteryOnFor('clay');
+    this.gumMasteryOn = this.masteryOnFor('gum');
+    // has its own requirements, so it also has to be earned.
+    // The retired chef's mastery may have left `gluttony` switched on in an old save; Harvest's
+    this.gluttonyMasteryOn = this.masteryOnFor('gluttony') && isMasteryComplete('gluttony');
+    // Same for Gold: the retired shopkeeper's Battle Pass mastery may have left `fortune` switched on.
+    this.fortuneMasteryOn = this.masteryOnFor('fortune') && isMasteryComplete('fortune');
+    // And Magnet: the retired Metal Detector mastery may have left `magnet` switched on.
+    this.magnetMasteryOn = this.masteryOnFor('magnet') && isMasteryComplete('magnet');
+    // And Radiation: the retired Sniper's Instinct mastery may have left `radiation` switched on.
+    this.radiationMasteryOn = this.masteryOnFor('radiation') && isMasteryComplete('radiation');
+    this.paperMasteryOn = this.masteryOnFor('paper');
+    this.justiceMasteryOn = this.masteryOnFor('justice');
+  }
+
+  /**
+   * Whether an element's mastery is on for the player. Plain fights read the save. Quantum
+   * carries no element's mastery as such: the borrowed passive's element is always mastered,
+   * and the sixth key's element only while it is live *through* that key — kits gate both their
+   * passive and the cast of their bindable on one `masteryActive`, so this is as narrow as the
+   * borrowed ability can be made without touching fifty kits.
+   */
+  private masteryOnFor(elementId: string): boolean {
+    const lo = this.playerLoadout;
+    if (!lo) return PlayerData.isMasteryEnabled(elementId);
+    if (!lo.mastered) return false;
+    if (lo.passive === elementId) return true;
+    return lo.sixth?.elementId === elementId && this.quantumLiveSlot === 'x6';
+  }
+
+  /** QuantumKit reports which key the live element was reached through — see `quantumLiveSlot`. */
+  private setQuantumLiveSlot(slot: QuantumLiveSlot): void {
+    if (slot === this.quantumLiveSlot) return;
+    this.quantumLiveSlot = slot;
+    this.applyMasteryFlags();
+  }
+
+  /**
+   * Quantum's one mastery bind: the sixth key's ability, reported to its element's kit as bound
+   * over `sixth.over`. Static when that element does not also sit on that slot, so a kit that
+   * caches its bound slot still finds it; when it does — Fire on F and Fire's mastery ability
+   * on G — only while G is what the player pressed, so F still casts Fire's own F.
+   */
+  private quantumBindFor(elementId: string, slot: string): string | null {
+    const lo = this.playerLoadout;
+    const six = lo?.sixth;
+    if (!lo || !six || six.elementId !== elementId || six.over !== slot) return null;
+    if (lo.slots[slot as keyof typeof lo.slots] === elementId && this.quantumLiveSlot !== 'x6') return null;
+    return six.enhId;
+  }
+
   /** The mastery enhancement id bound over the given ability slot this match, or null. */
   private masteryBindFor(slot: string): string | null {
     if (slot === 'e') return null; // E is never replaceable, like Click
+    if (this.playerLoadout) return this.quantumBindFor(this.elementId, slot);
     return this.masterySlotBinds[slot] ?? null;
   }
 
@@ -5022,6 +5140,11 @@ export class ArenaScene extends Phaser.Scene {
     // wormhole, its catch and the last stand all travel the same way.
     if (enhId.startsWith('myth-')) {
       if (this.npcElement.id === 'myth') this.mythKit.replayNet(enhId, tx, ty);
+      return;
+    }
+    // Shadow: which trap the remote shadow's last (or next) R planted — see ShadowKit.trapKindFor.
+    if (enhId.startsWith('shadow-trap:')) {
+      this.shadowKit.noteNpcTrapKind(enhId.slice('shadow-trap:'.length), tx, ty);
       return;
     }
     // Tempest Mastery: Gale Uppercut runs off the kit's own clock.
@@ -5090,6 +5213,11 @@ export class ArenaScene extends Phaser.Scene {
     // Magnet Mastery: Mag-Lev is cast off the kit's own clock, and every patch of the track is
     // relayed with the cursor it was laid toward.
     if (enhId === 'mag-lev' || enhId.startsWith('maglev-step:')) {
+      if (this.npcElement.id === 'magnet') this.magnetKit.replayNet(enhId, tx, ty);
+      return;
+    }
+    // Magnet Q+ Salvage Salvo: each part picked while the scrap gathers.
+    if (enhId.startsWith('salvo-pick:')) {
       if (this.npcElement.id === 'magnet') this.magnetKit.replayNet(enhId, tx, ty);
       return;
     }
@@ -5171,11 +5299,8 @@ export class ArenaScene extends Phaser.Scene {
       case 'wax-detonate-self':
         if (this.npcElement.id === 'wax') this.waxKit.doNpcDetonate(true);
         break;
-      // Chalk Mastery — only the fact of it crosses the wire. What the opponent actually drew
-      // in the circle is three seconds of their mouse, so the replica is the base statline.
-      case 'living-chalk':
-        if (this.npcElement.id === 'chalk') this.chalkKit.doNpcLivingChalk(tx, ty);
-        break;
+      // Paint Mastery — Yin-Yang travels as its own `pnt` message (what was painted where), so
+      // there is nothing to replay here.
       // Magma Mastery — the saw is two signals: the motor on, and the motor off. The replica
       // runs its own eight-second heat clock, so the detonation needs no message of its own.
       case 'magma-saw':
@@ -5231,7 +5356,7 @@ export class ArenaScene extends Phaser.Scene {
       // Magnet: the presses that never touch a cooldown — holding coins, ripping nails out,
       // riding to a spike, and every key of the mech.
       case 'magnet-hover-on': case 'magnet-hover-off': case 'magnet-recall': case 'magnet-zip': case 'magnet-spike-land':
-      case 'mecha-smash': case 'mecha-rail': case 'mecha-avalanche': case 'mecha-cannon': case 'mecha-destruct':
+      case 'mecha-smash': case 'mecha-rail': case 'mecha-avalanche': case 'mecha-cannon': case 'mecha-destruct': case 'mecha-end':
         if (this.npcElement.id === 'magnet') this.magnetKit.replayNet(enhId, tx, ty);
         break;
       // Sand: one signal for both edges. Tempered Temptation is a toggle, and the kit's own
@@ -5306,6 +5431,25 @@ export class ArenaScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Ultimate charge for a hit that landed: whoever took it banks the damage, and so does
+   * whoever dealt it. The npc slot holds an ally in co-op, which never earns off the player.
+   */
+  private creditUltDamage(victim: Fighter, amount: number): void {
+    const npcHostile = !this.npc?.allyDamageBlocked;
+    if (victim === this.player) {
+      this.player.addUltCharge(amount);
+      if (npcHostile) this.npc?.addUltCharge(amount);
+    } else if (victim === this.npc) {
+      this.npc.addUltCharge(amount);
+      if (npcHostile) this.player?.addUltCharge(amount);
+    } else if (victim.lastDamageOwner === 'npc') {
+      this.npc?.addUltCharge(amount);
+    } else {
+      this.player?.addUltCharge(amount);
+    }
+  }
+
   // ── HUD ─────────────────────────────────────────────────────────
 
   private createHUD(W: number, H: number): void {
@@ -5321,16 +5465,33 @@ export class ArenaScene extends Phaser.Scene {
       if (!el) return [];
       return MULTI_FORM_ELEMENTS.includes(id) ? el.abilities.slice(0, 5) : el.abilities;
     };
-    const abilities = trayAbilities(this.elementId);
+    // Quantum: one tray, up to five elements — each card remembers whose it is, because the
+    // mastery bind and the cooldown read both have to be asked of that element, not the live one.
+    const lo = this.playerLoadout;
+    const cards: Array<{ ab: Ability; el: string }> = lo
+      ? QUANTUM_SLOTS.flatMap((k) => { const ab = slotAbility(lo.slots[k], k, lo.altQ); return ab ? [{ ab, el: lo.slots[k] }] : []; })
+      : trayAbilities(this.elementId).map((ab) => ({ ab, el: this.elementId }));
+    // Quantum Mastery's sixth key gets a card of its own: a stand-in ability carrying the
+    // enhancement's text, so the loop below can draw it like any other and the bind lookup
+    // (keyed off the G slot) gold-frames it.
+    const six = lo?.sixth;
+    const sixEnh = six ? getEnhancement(six.elementId, six.enhId) : undefined;
+    if (six && sixEnh) {
+      cards.push({
+        el: six.elementId,
+        ab: { id: sixEnh.id, name: sixEnh.name, description: sixEnh.description, displayKey: SIXTH_SLOT_KEY, cooldown: 0, cast: () => {} },
+      });
+    }
+    const abilities = cards.map((c) => c.ab);
 
     // Ability tray: a machined band, not a flat strip. Lit rule along the top
     // edge with etched ticks, so the bar reads as part of the same UI as the
     // menus rather than a black box taped to the screen.
     const trayTop = hudY - (cardH + 4) / 2;
-    const trayAccent = ELEMENT_MAP[this.elementId]?.color ?? UI.C.arcane;
+    const trayAccent = lo ? quantumElement.color : (ELEMENT_MAP[this.elementId]?.color ?? UI.C.arcane);
     UI.drawAbilityTrayBand(this.add.graphics().setDepth(20), W, trayTop, cardH + 4, trayAccent);
 
-    const totalWidth = 5 * cardW; // always 5-wide layout for consistency
+    const totalWidth = Math.max(5, abilities.length) * cardW; // 5-wide, or 6 for a mastered Quantum
     const startX = W / 2 - totalWidth / 2 + cardW / 2;
 
     const fillColors: Record<string, number> = {
@@ -5345,12 +5506,12 @@ export class ArenaScene extends Phaser.Scene {
       'wax-candle-mount':    0xf2c85b,
       'wax-hive-hearth':     0xe5a92f,
       'wax-sticky-bombs':    0x8d641c,
-      'chalk-ward':        0xf4f1e6,
-      'chalk-explosive':   0xff5f4a,
-      'chalk-perma':       0x5aa9ff,
-      'chalk-shield':      0xcfc9b8,
-      'chalk-masterpiece': 0x3fd9d1,
-      'living-chalk':      0x6fdc7c,
+      'paint-splotch':     0xe0457b,
+      'paint-orange':      0xff8a1f,
+      'paint-congeal':     0xb08a5a,
+      'paint-still-life':  0xf3ead6,
+      'paint-masterpiece': 0x2f7bff,
+      'yin-yang':          0xfaf8f0,
       'pre-move':          0xb98cff,
       'release-the-kraken': 0x6e3f8f,
       // Pale gold rather than the Expansion's own — both are money, and the mastery card has to
@@ -5471,6 +5632,7 @@ export class ArenaScene extends Phaser.Scene {
       'geyser':         0x00ffcc,
       'pressure-dagger': 0x0044bb,
       'pain-rain':      0x0033aa,
+      'bubble-barrage': 0x55ccff,
       'petal-shotgun':  0x66dd44,
       'plant':          0x22aa22,
       'grow':           0x44ff88,
@@ -5492,7 +5654,8 @@ export class ArenaScene extends Phaser.Scene {
       'drone-destroy':  0xff6600,
       'shield-gen':     0xff8800,
       'train-morph':    0xff4400,
-      'dark-drain':     0x660088,
+      'shadow-caltrop': 0x660088,
+      'grim-gloom':     0x440066,
       'tentacle':       0x440066,
       'snap-trap':      0x550077,
       'tentacle-wall':  0x220044,
@@ -5655,11 +5818,28 @@ export class ArenaScene extends Phaser.Scene {
       'quantum-parasite':       0x9de8ff,
     };
 
+    // What a card's face is told about its ability: the name the tags belong to, the tags, and
+    // whether it is an ultimate paid for in charge.
+    const cardNames = new Map<string, string>();
+    const resolveCard = (id: string): UI.CardFaceInfo => ({
+      name: cardNames.get(id),
+      tags: abilityTags(id),
+      ult: this.player.isChargedUltimateId(id),
+    });
+    // Quantum's Q card may belong to an element that is not live; the charge bank still has to
+    // know what it is saving toward.
+    this.player.ultExtraDefs = abilities.filter((a) => a.displayKey === 'Q');
+
     abilities.forEach((ab, i) => {
       const x = startX + i * cardW;
 
       // A bound mastery ability takes over this slot's card entirely — name, blurb, and cooldown id.
-      const boundEnh = getEnhancement(this.elementId, this.masteryBindFor(ab.displayKey.toLowerCase()) ?? '');
+      const cardEl = cards[i].el;
+      const slotKey = ab.displayKey.toLowerCase();
+      // Quantum's five slots carry no binds of their own; its one mastery ability is the sixth card.
+      const bind = lo ? (slotKey === SIXTH_SLOT_KEY.toLowerCase() ? lo.sixth?.enhId ?? null : null)
+        : this.masteryBindFor(slotKey);
+      const boundEnh = getEnhancement(cardEl, bind ?? '');
       const cardId = boundEnh ? boundEnh.id : ab.id;
       const cardColor = boundEnh ? 0xffaa00 : (fillColors[ab.id] ?? 0x4466aa);
 
@@ -5675,31 +5855,28 @@ export class ArenaScene extends Phaser.Scene {
         .setOrigin(0, 0.5)
         .setDepth(22);
 
-      const lbl = this.add.text(x, hudY - 7, `${ab.displayKey}  ${boundEnh ? boundEnh.name : ab.name}`, {
-        fontSize: '11px',
-        fontFamily: UI.FONT_DISPLAY,
-        color: boundEnh ? UI.T.gold : UI.T.bright,
-        letterSpacing: 0.5,
-      }).setOrigin(0.5, 0.5).setDepth(23);
+      // The label and sub-label are kept as hidden text: kits still rename cards by writing
+      // them, and the face reads the label back. The tray itself prints no descriptions.
+      const lbl = this.add.text(x, hudY, `${ab.displayKey}  ${boundEnh ? boundEnh.name : ab.name}`, {
+        fontSize: '11px', fontFamily: UI.FONT_DISPLAY,
+      }).setVisible(false);
+      const desc = this.add.text(x, hudY, boundEnh ? (boundEnh.hudDescription ?? boundEnh.description) : ab.description, {
+        fontSize: '9px', fontFamily: UI.FONT_UI,
+      }).setVisible(false);
+      cardNames.set(cardId, boundEnh ? boundEnh.name : ab.name);
+      const face = new UI.AbilityCardFace(this, px, py, cardW - 4, cardH - 4, cardColor,
+        ab.displayKey, !!boundEnh, resolveCard);
 
-      const desc = this.add.text(x, hudY + 8, boundEnh ? (boundEnh.hudDescription ?? boundEnh.description) : ab.description, {
-        fontSize: '9px',
-        fontFamily: UI.FONT_UI,
-        color: UI.T.dim,
-        wordWrap: { width: cardW - 12 },
-        maxLines: 2,
-        align: 'center',
-      }).setOrigin(0.5, 0.5).setDepth(23);
-
-      this.abilityBars.push({ fill, abilityId: cardId, maxWidth: cardW - 4, lbl, desc, baseFillColor: cardColor });
+      this.abilityBars.push({
+        fill, abilityId: cardId, maxWidth: cardW - 4, lbl, desc, baseFillColor: cardColor,
+        ability: lo && !boundEnh ? ab : undefined, face,
+      });
 
       if (this.elementId === 'hunt') {
-        this.huntNormalHudCards.push(bg, fill, lbl, desc);
+        this.huntNormalHudCards.push(bg, fill, ...face.objects());
       } else if (this.elementId === 'justice') {
-        this.justiceGroundHudCards.push(bg, fill, lbl, desc);
+        this.justiceGroundHudCards.push(bg, fill, ...face.objects());
       }
-      // Separate from the chain above on purpose: a bonded half can itself be one of those.
-      if (this.playerBond) this.quantumOwnHudCards.push(bg, fill, lbl, desc);
     });
 
     // Form-swapping elements get a hidden card row per extra form, built on the same plates
@@ -5721,20 +5898,22 @@ export class ArenaScene extends Phaser.Scene {
         UI.drawAbilityCardPlate(bg, px, py, cardW - 4, cardH - 4, cardColor, !!boundEnh);
         const fill = this.add.rectangle(px, hudY, 0, cardH - 4, cardColor, 0.45)
           .setOrigin(0, 0.5).setDepth(22).setVisible(false);
-        const lbl = this.add.text(x, hudY - 7, `${ab.displayKey}  ${boundEnh ? boundEnh.name : ab.name}`, {
+        const lbl = this.add.text(x, hudY, `${ab.displayKey}  ${boundEnh ? boundEnh.name : ab.name}`, {
           fontSize: '11px', fontFamily: UI.FONT_DISPLAY,
-          color: boundEnh ? UI.T.gold : UI.T.bright, letterSpacing: 0.5,
-        }).setOrigin(0.5, 0.5).setDepth(23).setVisible(false);
-        const desc = this.add.text(x, hudY + 8,
+        }).setVisible(false);
+        const desc = this.add.text(x, hudY,
           boundEnh ? (boundEnh.hudDescription ?? boundEnh.description) : ab.description, {
-            fontSize: '9px', fontFamily: UI.FONT_UI, color: UI.T.dim,
-            wordWrap: { width: cardW - 12 }, maxLines: 2, align: 'center',
-          }).setOrigin(0.5, 0.5).setDepth(23).setVisible(false);
+            fontSize: '9px', fontFamily: UI.FONT_UI,
+          }).setVisible(false);
+        cardNames.set(boundEnh ? boundEnh.id : ab.id, boundEnh ? boundEnh.name : ab.name);
+        const face = new UI.AbilityCardFace(this, px, py, cardW - 4, cardH - 4, cardColor,
+          ab.displayKey, !!boundEnh, resolveCard);
+        face.setVisible(false);
         fills.push({
           fill, abilityId: boundEnh ? boundEnh.id : ab.id,
-          maxWidth: cardW - 4, lbl, desc, baseFillColor: cardColor,
+          maxWidth: cardW - 4, lbl, desc, baseFillColor: cardColor, face,
         });
-        cards.push(bg, fill, lbl, desc);
+        cards.push(bg, fill, ...face.objects());
       });
     };
 
@@ -5748,23 +5927,6 @@ export class ArenaScene extends Phaser.Scene {
       // Vengeance is one ability sitting on one slot, and that slot exists in both stances.
       buildRow(this.playerElement.abilities.slice(5, 10), this.justiceFlightFills,
         this.justiceFlightHudCards, 0xa8ccff, 'justice');
-    }
-
-    // Quantum: both halves get a full tray, built here and toggled by `quantumSetHudForm`.
-    // Rebuilding on each swap would be simpler and wrong — the cards carry the live cooldown
-    // fills, and throwing them away mid-fight resets every bar to empty.
-    if (this.playerBond) {
-      this.quantumOwnFills = [...this.abilityBars];
-      const other = this.playerBond[1];
-      buildRow(trayAbilities(other), this.quantumOtherFills, this.quantumOtherHudCards,
-        ELEMENT_MAP[other]?.color ?? 0x7df9ff, other);
-      // Third State adds a stop that is Quantum itself, so it gets a row of its own. Built off
-      // `getPlayerForms` rather than the upgrade flag directly, so the tray and the cycle can
-      // never disagree about whether the third stop exists.
-      if (this.quantumKit.getPlayerForms().length > 2) {
-        buildRow(trayAbilities('quantum'), this.quantumCoreFills, this.quantumCoreHudCards,
-          quantumElement.color, 'quantum');
-      }
     }
 
     UI.drawDodgeKeycap(this.add.graphics().setDepth(21), W - 50, hudY, trayAccent);
@@ -5859,7 +6021,7 @@ export class ArenaScene extends Phaser.Scene {
   /** Fire Mastery — Nuclear Cleansing: same AoE as dealAoeDamage, but tracks the best single-detonation husk kill count. */
   private dealFlameNukeDamage(cx: number, cy: number, radius: number, damage: number): void {
     let kills = 0;
-    for (const t of this.enemies) {
+    for (const t of this.reachableEnemies) {
       if (!t.active || t.hp <= 0) continue;
       if (Phaser.Math.Distance.Between(cx, cy, t.x, t.y) <= radius) {
         t.takeDamage(damage);
@@ -5867,7 +6029,7 @@ export class ArenaScene extends Phaser.Scene {
         if (t.hp <= 0) kills++;
       }
     }
-    if (this.isInvasion && this.elementId === 'fire' && kills > 0) {
+    if (this.isInvasion && this.playerIs('fire') && kills > 0) {
       PlayerData.recordMasteryBest('fire', 'nukeZombieBest', kills);
     }
   }
@@ -5916,7 +6078,7 @@ export class ArenaScene extends Phaser.Scene {
       lifeColor: (base) => this.skinsKit.lifeColor('player', base),
       airColor: (base) => this.skinsKit.airColor('player', base),
       dealAoeDamage: (cx, cy, radius, damage) => {
-        for (const t of this.enemies) {
+        for (const t of this.reachableEnemies) {
           if (!t.active || t.hp <= 0) continue;
           if (Phaser.Math.Distance.Between(cx, cy, t.x, t.y) <= radius) {
             t.takeDamage(damage);
@@ -5980,7 +6142,7 @@ export class ArenaScene extends Phaser.Scene {
         const dirX = pointer.worldX - this.player.x;
         const dirY = pointer.worldY - this.player.y;
         const dirLen = Math.sqrt(dirX * dirX + dirY * dirY) || 1;
-        for (const t of this.enemies) {
+        for (const t of this.reachableEnemies) {
           if (!t.active || t.hp <= 0) continue;
           const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, t.x, t.y);
           if (dist > range) continue;
@@ -6005,7 +6167,9 @@ export class ArenaScene extends Phaser.Scene {
       launchDrone: (_x, _y) => { /* oil kit handles via handleInput */ },
       placeFirewall: (_x, _y) => { /* oil kit handles via handleInput */ },
       startOverdrive: (_x, _y) => { /* oil kit handles via handleInput */ },
-      launchDarkBomb: (x, y) => this.shadowKit.doLaunchDarkBomb(x, y, true),
+      throwCaltrop: (x, y) => this.shadowKit.doThrowCaltrop(x, y, true),
+      shadowGrimGloom: () => this.shadowKit.doGrimGloom('player'),
+      waterBubbleBarrage: () => this.waterKit.doBubbleBarrage('player', targetX, targetY),
       activateTentacle: (x, y) => this.shadowKit.doActivateTentacle(x, y, true),
       placeSnapTrap: () => this.shadowKit.doPlaceSnapTrap(true),
       summonTentacleWall: (x, y) => this.shadowKit.doSummonTentacleWall(x, y, true),
@@ -6180,11 +6344,11 @@ export class ArenaScene extends Phaser.Scene {
       clayClot: () => this.clayKit.doClot('player'),
       claySlink: (tx, ty) => this.clayKit.doSlink('player', tx, ty),
       clayFuse: () => this.clayKit.doFuse('player'),
-      chalkWard: () => this.chalkKit.doWard('player'),
-      chalkExplosive: () => this.chalkKit.doExplosive('player'),
-      chalkPerma: () => this.chalkKit.doPerma('player'),
-      chalkShield: () => this.chalkKit.doShield('player'),
-      chalkMasterpiece: () => this.chalkKit.doMasterpiece('player'),
+      paintSplotch: (tx, ty) => this.chalkKit.doSplotch('player', tx, ty),
+      paintOrange: () => this.chalkKit.doOrange('player'),
+      paintCongeal: () => this.chalkKit.doCongeal('player'),
+      paintStillLife: () => this.chalkKit.doStillLife('player'),
+      paintMasterpiece: () => this.chalkKit.doMasterpiece('player'),
       magmaPlume: (tx, ty) => this.magmaKit.doPlume('player', tx, ty),
       magmaVolcano: (tx, ty) => this.magmaKit.doVolcano('player', tx, ty),
       magmaBloat: () => this.magmaKit.doBloat('player'),
@@ -6383,9 +6547,11 @@ export class ArenaScene extends Phaser.Scene {
       // wall and the overdrive rig show up on this sim too.
       placeFirewall: (x, y) => this.oilKit.doPlaceFirewallNpc(x, y),
       startOverdrive: (x, y) => this.oilKit.doStartOverdrive(x, y, 'npc'),
-      launchDarkBomb: (x, y) => this.shadowKit.doLaunchDarkBomb(x, y, false),
+      throwCaltrop: (x, y) => this.shadowKit.doThrowCaltrop(x, y, false),
+      shadowGrimGloom: () => this.shadowKit.doGrimGloom('npc'),
+      waterBubbleBarrage: () => this.waterKit.doBubbleBarrage('npc', targetX, targetY),
       activateTentacle: (x, y) => this.shadowKit.doActivateTentacle(x, y, false),
-      placeSnapTrap: () => this.shadowKit.doPlaceSnapTrap(false),
+      placeSnapTrap: () => this.shadowKit.doPlaceSnapTrap(false, targetX, targetY),
       summonTentacleWall: (x, y) => this.shadowKit.doSummonTentacleWall(x, y, false),
       startBlackHole: (_x, _y) => { /* NPC does not use black hole */ },
       // Ice
@@ -6560,11 +6726,11 @@ export class ArenaScene extends Phaser.Scene {
       clayClot: () => this.clayKit.doClot('npc'),
       claySlink: (tx, ty) => this.clayKit.doSlink('npc', tx, ty),
       clayFuse: () => this.clayKit.doFuse('npc'),
-      chalkWard: () => this.chalkKit.doWard('npc'),
-      chalkExplosive: () => this.chalkKit.doExplosive('npc'),
-      chalkPerma: () => this.chalkKit.doPerma('npc'),
-      chalkShield: () => this.chalkKit.doShield('npc'),
-      chalkMasterpiece: () => this.chalkKit.doMasterpiece('npc'),
+      paintSplotch: (tx, ty) => this.chalkKit.doSplotch('npc', tx, ty),
+      paintOrange: () => this.chalkKit.doOrange('npc'),
+      paintCongeal: () => this.chalkKit.doCongeal('npc'),
+      paintStillLife: () => this.chalkKit.doStillLife('npc'),
+      paintMasterpiece: () => this.chalkKit.doMasterpiece('npc'),
       magmaPlume: (tx, ty) => this.magmaKit.doPlume('npc', tx, ty),
       magmaVolcano: (tx, ty) => this.magmaKit.doVolcano('npc', tx, ty),
       magmaBloat: () => this.magmaKit.doBloat('npc'),
@@ -6737,7 +6903,7 @@ export class ArenaScene extends Phaser.Scene {
       launchDrone: () => {},
       placeFirewall: () => {},
       startOverdrive: () => {},
-      launchDarkBomb: () => {},
+      throwCaltrop: () => {},
       activateTentacle: () => {},
       placeSnapTrap: () => {},
       summonTentacleWall: () => {},
@@ -6889,11 +7055,11 @@ export class ArenaScene extends Phaser.Scene {
       clayClot: () => {},
       claySlink: () => {},
       clayFuse: () => {},
-      chalkWard: () => {},
-      chalkExplosive: () => {},
-      chalkPerma: () => {},
-      chalkShield: () => {},
-      chalkMasterpiece: () => {},
+      paintSplotch: () => {},
+      paintOrange: () => {},
+      paintCongeal: () => {},
+      paintStillLife: () => {},
+      paintMasterpiece: () => {},
       magmaPlume: () => {},
       magmaVolcano: () => {},
       magmaBloat: () => {},
@@ -7007,7 +7173,7 @@ export class ArenaScene extends Phaser.Scene {
   // ── World effect helpers ─────────────────────────────────────────
 
   private createGeyser(x: number, y: number, owner: 'player' | 'npc'): void {
-    const ownerIsWater = (owner === 'player' && this.elementId === 'water') ||
+    const ownerIsWater = (owner === 'player' && this.playerIs('water')) ||
                          (owner === 'npc' && this.npcElement.id === 'water');
     // Water geysers are always permanent; cap at 2, remove oldest when placing a 3rd
     if (ownerIsWater) {
@@ -7073,6 +7239,106 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   /**
+   * `hasUpgrade` for a kit that knows which element it is. The same as `hasUpgrade` for the
+   * live element; for one of Quantum's *carried* elements it reads that element's own list,
+   * because a carried kit's passives keep running while another element is live.
+   */
+  private hasUpgradeFor(elementId: string, slot: string): boolean {
+    if (this.foreignCastSuppress) return false;
+    if (elementId === this.elementId || this.cityRun) return this.activeUpgrades.includes(slot);
+    return (this.loadoutUpgrades.get(elementId) ?? []).includes(slot);
+  }
+
+  /**
+   * Whether the player *is* this element, for every per-element gate in this file and every
+   * kit adapter. An exact `elementId` compare for anyone but Quantum, whose loadout makes it
+   * true for every element carried — that is what keeps a carried element's forms, auras,
+   * passives and mastery running while another one is live. The two places that must know the
+   * *live* element — the input dispatch and the speed-multiplier chain — read `elementId`.
+   */
+  private playerIs(elementId: string): boolean {
+    return this.elementId === elementId || this.loadoutSet.has(elementId);
+  }
+
+  /** What a kit's `elementId` getter reports: its own id while carried, else the live element. */
+  private liveElementFor(elementId: string): string {
+    return this.loadoutSet.has(elementId) ? elementId : this.elementId;
+  }
+
+  /** `masteryBindFor` for a kit that knows which element it is — a carried kit reads its own binds. */
+  private masteryBindForElement(elementId: string, slot: string): string | null {
+    if (slot === 'e') return null;
+    if (this.playerLoadout) return this.quantumBindFor(elementId, slot);
+    return this.masteryBindFor(slot);
+  }
+
+  /**
+   * The key a kit may read. The live element's kit gets the real key; one of Quantum's
+   * *carried* kits gets an inert stand-in that is never down, so a press meant for another
+   * slot's element cannot also drive a held or charged ability in a kit that reads keys from
+   * `update()` rather than `handleInput()`. Writes to the just-pressed flags are swallowed, so a
+   * `JustDown` against the stand-in cannot consume the real key's press either. Not a Quantum
+   * fight: always the real key.
+   */
+  private keyFor(elementId: string, key: Phaser.Input.Keyboard.Key): Phaser.Input.Keyboard.Key {
+    const lo = this.playerLoadout;
+    if (!lo) return key;
+    if (elementId === this.elementId) {
+      // The sixth slot: while its element is live through G, the kit is handed G in place of
+      // the key its mastery ability is "bound" over, so the one press reads as that key.
+      const six = lo.sixth;
+      if (six && this.quantumLiveSlot === 'x6' && six.elementId === elementId && key === this.slotKey(six.over)) {
+        return this.gKey;
+      }
+      return key;
+    }
+    let inert = this.inertKeys.get(key);
+    if (!inert) {
+      const dead: Record<string, unknown> = {
+        isDown: false, isUp: true, _justDown: false, _justUp: false, duration: 0, repeats: 0,
+        getDuration: () => 0,
+      };
+      inert = new Proxy(key, {
+        get: (t, k) => {
+          if (typeof k === 'string' && k in dead) return dead[k];
+          const v = Reflect.get(t, k);
+          return typeof v === 'function' ? v.bind(t) : v;
+        },
+        set: (t, k, v) => (typeof k === 'string' && k in dead) ? true : Reflect.set(t, k, v),
+      });
+      this.inertKeys.set(key, inert);
+    }
+    return inert;
+  }
+
+  /** The real key object for a slot name. */
+  private slotKey(slot: 'r' | 'f' | 'q' | 'e'): Phaser.Input.Keyboard.Key {
+    return slot === 'r' ? this.rKey : slot === 'f' ? this.fKey : slot === 'q' ? this.qKey : this.eKey;
+  }
+
+  /** The pointer a kit may read — see `keyFor`. The stand-in still aims (worldX/worldY) but no button is ever down. */
+  private pointerFor(elementId: string): Phaser.Input.Pointer {
+    const real = this.input.activePointer;
+    if (!this.playerLoadout || elementId === this.elementId) return real;
+    if (!this.inertPointer) {
+      const dead: Record<string, unknown> = {
+        isDown: false, primaryDown: false, buttons: 0,
+        leftButtonDown: () => false, rightButtonDown: () => false, middleButtonDown: () => false,
+        backButtonDown: () => false, forwardButtonDown: () => false, noButtonDown: () => true,
+        getDuration: () => 0,
+      };
+      this.inertPointer = new Proxy(real, {
+        get: (t, k) => {
+          if (typeof k === 'string' && k in dead) return dead[k];
+          const v = Reflect.get(t, k);
+          return typeof v === 'function' ? v.bind(t) : v;
+        },
+      });
+    }
+    return this.inertPointer;
+  }
+
+  /**
    * True when the opponent has the given upgrade slot equipped — a remote player's
    * handshake loadout online, or a Hard+ bot's difficulty loadout in solo 1v1. Kits call
    * this from their NPC paths (do*Abilities / npcCastId handlers) so the opponent's
@@ -7084,6 +7350,7 @@ export class ArenaScene extends Phaser.Scene {
 
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean {
     // A two-slot element's loadout arrives joined ("fire-blaze+fire-melt") — see PERK_SEP.
+    if (owner === 'player' && this.loadoutPerkIds.has(perkId)) return true;
     return splitPerkIds(owner === 'player' ? this.playerPerkId : this.npcPerkId).includes(perkId);
   }
 
@@ -7118,13 +7385,15 @@ export class ArenaScene extends Phaser.Scene {
     const mouseX = this.input.activePointer.worldX;
     const mouseY = this.input.activePointer.worldY;
     // Clay Mastery — Bedrock: a fused Space is a leap to the cursor ending in a stunning crash.
-    const bedrockLeap = this.elementId === 'clay' && this.clayKit.startBedrockLeap('player', mouseX, mouseY);
+    const bedrockLeap = this.playerIs('clay') && this.clayKit.startBedrockLeap('player', mouseX, mouseY);
 
     // A teleport and a dash are different moves and should not share a sound.
     Sfx.playAt(this.cardPsychoActive ? 'teleport' : 'dash', this.player.x);
 
     // Death Mastery — Delay The Inevitable: three times as far for the eight seconds.
-    const deathDash = this.elementId === 'death' ? this.deathKit.getDodgeLengthMult() : 1;
+    const deathDash = this.playerIs('death') ? this.deathKit.getDodgeLengthMult() : 1;
+    // Water — Poseidon: the dodge is a wave you ride, longer and a touch faster.
+    const waveRide = this.playerIs('water') && !bedrockLeap && !this.cardPsychoActive ? this.waterKit.startWaveRide() : null;
 
     // Card — Psycho: teleport to cursor; Card — Technique: extended dash length.
     if (bedrockLeap) {
@@ -7135,16 +7404,12 @@ export class ArenaScene extends Phaser.Scene {
       playerBody.reset(Math.max(pad, Math.min(width - pad, mouseX)), Math.max(pad, Math.min(height - pad, mouseY)));
       playerBody.setVelocity(0, 0);
     } else {
-      const len = 520 * this.cardDodgeLengthMult * deathDash;
+      const len = 520 * this.cardDodgeLengthMult * deathDash * (waveRide?.speedMult ?? 1);
       playerBody.setVelocity(dx * len, dy * len);
     }
 
-    // Quantum: the dodge *is* the swap. The dash still happens either way — a Quantum with
-    // no bond dodges like anyone else — and the collapse rides on top of it.
-    if (this.playerBond) this.quantumKit.swapPlayer();
-
     // Echo light trail on dodge (consumes a psychic eye if one is orbiting)
-    if (this.elementId === 'echo' && this.echoKit) {
+    if (this.playerIs('echo') && this.echoKit) {
       this.echoKit.tryConsumeEyeForDodge(this.player.x, this.player.y, dx, dy);
     }
 
@@ -7164,11 +7429,13 @@ export class ArenaScene extends Phaser.Scene {
     this.time.delayedCall(280, () => {
       if (this.player.active) {
         this.player.isInvincible = false;
-        this.isDodging = false;
+        // The i-frames stay 280ms; a Poseidon ride keeps the momentum going past them.
+        if (!waveRide) this.isDodging = false;
       }
     });
+    if (waveRide) this.time.delayedCall(waveRide.ms, () => { if (this.player.active) this.isDodging = false; });
     if (!bypassCooldown) {
-      const clayCd = this.elementId === 'clay' ? this.clayKit.getDodgeCooldownMult('player') : 1;
+      const clayCd = this.playerIs('clay') ? this.clayKit.getDodgeCooldownMult('player') : 1;
       this.time.delayedCall(Math.round(1000 * this.cardDodgeCdMult * clayCd), () => { this.dodgeOnCooldown = false; });
     }
   }
@@ -9434,7 +9701,7 @@ export class ArenaScene extends Phaser.Scene {
     // it under. Everything else counts, including online: a human Fire teaches you about Fire.
     // `recordJournalResult` ignores anything it has no entries for (the King, a dummy husk), so
     // the mode check is the only gate that has to live here.
-    if (this.elementId === 'paper' && !this.isInvasion) {
+    if (this.playerIs('paper') && !this.isInvasion) {
       const learned = recordJournalResult(this.npcElement.id, playerWon);
       learned.forEach((entry, i) => {
         this.time.delayedCall(220 + i * 420, () => {
@@ -9447,13 +9714,18 @@ export class ArenaScene extends Phaser.Scene {
     // Achievement — Swoon: put down an Expert Life bot while playing Metal. Bots only, so a
     // human opponent who happens to be Life can't hand it over.
     if (playerWon && !this.isOnline && !this.isInvasion
-        && this.elementId === 'metal' && this.npcElement.id === 'life'
+        && this.playerIs('metal') && this.npcElement.id === 'life'
         && this.npcDifficulty.level === EXPERT_DIFFICULTY_LEVEL) {
       this.unlockAchievement('swoon');
     }
 
     // Bond research: a win over a named element. Invasion has no single opponent element to
     // credit, and online wins are over a human rather than the element being studied.
+    // Quantum's own mastery grind: wins, and wins where every slot was pressed.
+    if (playerWon && this.playerLoadout) {
+      PlayerData.addMasteryStat('quantum', 'wins', 1);
+      if (this.quantumKit.playerSlotsUsed() >= QUANTUM_SLOTS.length) PlayerData.addMasteryStat('quantum', 'spreadWins', 1);
+    }
     if (playerWon && !this.isInvasion && !this.isOnline) {
       QuantumBonds.noteWin(this.elementId, this.npcElement.id);
       // Fired here rather than from the results screen, which is where the clear is *recorded*:
@@ -9790,7 +10062,8 @@ export class ArenaScene extends Phaser.Scene {
    * element pauses until it is swapped back in.
    */
   private buildDormantTicks(): DormantTicks {
-    const skip = (id: string): boolean => this.npcElement.id === id;
+    // Already ticked by the main dispatch when the npc wears it — or when the player carries it.
+    const skip = (id: string): boolean => this.npcElement.id === id || this.playerIs(id);
     return {
       fire: (t, d) => { if (!skip('fire')) this.fireKit.update(t, d, false, false); },
       shadow: (t, d) => { if (!skip('shadow')) this.shadowKit.update(t, d, false, false); },
@@ -9845,7 +10118,7 @@ export class ArenaScene extends Phaser.Scene {
 
   /** Flip the local player's own mastery flag (every one is `<id>MasteryOn`, Time's is `time…`). */
   private setOwnMastery(on: boolean): void {
-    const field = `${this.elementId === 'sand' ? 'time' : this.elementId}MasteryOn`;
+    const field = `${this.playerIs('sand') ? 'time' : this.elementId}MasteryOn`;
     if (field in this) (this as unknown as Record<string, boolean>)[field] = on;
   }
 
@@ -9904,26 +10177,24 @@ export class ArenaScene extends Phaser.Scene {
    * shields, same status effects, same cooldown timestamps.
    */
   private applyPlayerElement(id: string): void {
+    const lo = this.playerLoadout;
     this.elementId = id;
-    // Each half brings its own upgrades and its own mastery binds — bonding with an element
-    // means being it, not borrowing five keys off it.
-    this.activeUpgrades = PlayerData.getActiveUpgrades(id);
+    // What the element brings is the loadout's call: only the upgrades switched on for the
+    // slots it sits on, the one mastery bind Quantum grants, and no perk at all.
+    this.activeUpgrades = lo ? upgradesFor(lo, id) : PlayerData.getActiveUpgrades(id);
     this.playerElement = withAltUlt(ELEMENT_MAP[id] ?? fireElement, this.activeUpgrades);
     this.player.element = this.playerElement;
-    this.masterySlotBinds = PlayerData.isMasteryEnabled(id)
-      ? PlayerData.getMasteryBinds(id)
-      : {};
-    // The equipped perk belongs to the element too. Whoever launched the fight looked one up
-    // for `'quantum'`, which owns none, so a bonded fighter re-derives it per half instead.
-    this.playerPerkId = PlayerData.getEquippedPerk(id);
+    this.masterySlotBinds = {};
+    this.playerPerkId = null;
     this.skinsKit.setLoadouts(PlayerData.getEquippedSkin(id), this.npcSkinId);
-    this.quantumSetHudForm();
+    this.applyMasteryFlags();
     // Online: the peer's sim has a replica of us that has to become the same thing, and it
     // cannot derive any of this — our upgrades and binds live in our save, not on the wire.
     if (this.isOnline) {
+      const six = lo?.sixth;
+      const binds: Record<string, string> = six && six.elementId === id ? { [six.over]: six.enhId } : {};
       this.onlineKit?.sendQuantumSwap(
-        id, this.activeUpgrades, this.masterySlotBinds,
-        PlayerData.isMasteryEnabled(id), PlayerData.getEquippedSkin(id),
+        id, this.activeUpgrades, binds, this.masteryOnFor(id), PlayerData.getEquippedSkin(id),
       );
     }
   }
@@ -9945,29 +10216,6 @@ export class ArenaScene extends Phaser.Scene {
     this.npcMasteryOn = loadout.masteryOn;
     this.npcSkinId = loadout.skin;
     this.skinsKit.setLoadouts(PlayerData.getEquippedSkin(this.elementId), this.npcSkinId);
-  }
-
-  /**
-   * Swaps the ability tray to whichever half of the bond is live, on the same pre-built-rows
-   * model Hunt, Justice and Gluttony use — the cards for both halves are built once in
-   * `createHUD` and toggled, because rebuilding a tray mid-fight drops the cooldown fills.
-   */
-  private quantumSetHudForm(): void {
-    if (!this.playerBond || !this.quantumOwnFills.length) return;
-    // Which stop of the cycle is live. Third State makes this three-way, and the core row only
-    // exists when the upgrade built it — falling back to the first row keeps a save that somehow
-    // reaches Quantum without the upgrade from ending up with an empty tray.
-    const onCore = this.elementId === 'quantum' && this.quantumCoreFills.length > 0;
-    const onSecond = !onCore && this.elementId === this.playerBond[1];
-    const show = (objs: Phaser.GameObjects.GameObject[], on: boolean) => {
-      for (const o of objs) (o as unknown as { setVisible: (v: boolean) => void }).setVisible(on);
-    };
-    show(this.quantumOwnHudCards, !onSecond && !onCore);
-    show(this.quantumOtherHudCards, onSecond);
-    show(this.quantumCoreHudCards, onCore);
-    this.abilityBars = onCore ? this.quantumCoreFills
-      : onSecond ? this.quantumOtherFills
-      : this.quantumOwnFills;
   }
 
   /** Bleed aura + drips on any enemy Fighter. The per-frame loop repositions and expires it. */
@@ -10047,13 +10295,13 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── Fire per-frame ────────────────────────────────────────────
-    if (this.elementId === 'fire' || this.npcElement.id === 'fire') {
-      this.fireKit.update(time, delta, this.elementId === 'fire', this.npcElement.id === 'fire');
+    if (this.playerIs('fire') || this.npcElement.id === 'fire') {
+      this.fireKit.update(time, delta, this.playerIs('fire'), this.npcElement.id === 'fire');
     this.skinsKit.update();
     }
 
     // ── Fire Mastery progress tracking (accrues even before unlock) ──
-    if (this.elementId === 'fire') {
+    if (this.playerIs('fire')) {
       for (const t of this.enemies) {
         if (!t.active || this.fireMasteryTrackedEnemies.has(t)) continue;
         this.fireMasteryTrackedEnemies.add(t);
@@ -10077,7 +10325,7 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── Water Mastery progress tracking (accrues even before unlock) ──
-    if (this.elementId === 'water') {
+    if (this.playerIs('water')) {
       for (const t of this.enemies) {
         if (!t.active || this.waterMasteryTrackedEnemies.has(t)) continue;
         this.waterMasteryTrackedEnemies.add(t);
@@ -10094,12 +10342,13 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── Shadow Mastery progress tracking (accrues even before unlock) ──
-    if (this.elementId === 'shadow') {
+    if (this.playerIs('shadow')) {
       for (const t of this.enemies) {
         if (!t.active || this.shadowMasteryTrackedEnemies.has(t)) continue;
         this.shadowMasteryTrackedEnemies.add(t);
         t.once('defeated', () => {
-          if (this.shadowKit.isBlackHoleActive()) {
+          // Grim Gloom (the alternate Q) counts the same as Black Hole.
+          if (this.shadowKit.isBlackHoleActive() || this.shadowKit.isGloomActive('player')) {
             PlayerData.addMasteryStat('shadow', 'blackHoleKills', 1);
           }
         });
@@ -10107,7 +10356,7 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── Electricity per-frame ─────────────────────────────────────
-    if (this.elementId === 'electricity') {
+    if (this.playerIs('electricity')) {
       this.electricityKit.update(time, delta);
     } else if (this.npcElement.id === 'electricity') {
       // Online: opponent is electricity — advance only npc-owned effects (kinetic bombs).
@@ -10115,7 +10364,7 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── Slime per-frame ───────────────────────────────────────────
-    if (this.elementId === 'slime') {
+    if (this.playerIs('slime')) {
       this.slimeKit.update(time, delta);
     } else if (this.npcElement.id === 'slime') {
       // Online: opponent is acid — advance only their rig and the effects we can see.
@@ -10188,7 +10437,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── Geyser buff checks ────────────────────────────────────────
     // Water geysers: entry events + charge depletion handled by WaterKit.update()
-    if (this.elementId !== 'water') {
+    if (!this.playerIs('water')) {
       for (const g of this.geysers) {
         if (g.owner === 'player') {
           if (Phaser.Math.Distance.Between(g.x, g.y, this.player.x, this.player.y) <= g.radius) {
@@ -10263,7 +10512,7 @@ export class ArenaScene extends Phaser.Scene {
       this.playerSpeedMult *= this.airKit.getPlayerSpeedMult();
     } else if (this.elementId === 'technology') {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
-      // F+ Wheel of Fortune speed buff
+      // VPN mastery ramp + Adrenaline dose
       this.playerSpeedMult *= this.techKit.getPlayerSpeedMult();
     } else if (this.elementId === 'growth') {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
@@ -10276,7 +10525,7 @@ export class ArenaScene extends Phaser.Scene {
     // Silence: hallway/maze dread on a victim, plus Weep on a mastered Silence player.
     // Pulled here rather than pushed from SilenceKit.update(), which runs after player
     // movement has already resolved for the frame — see getPlayerSpeedMult().
-    if (this.elementId === 'silence' || this.npcElement.id === 'silence') {
+    if (this.playerIs('silence') || this.npcElement.id === 'silence') {
       this.playerSpeedMult *= this.silenceKit.getPlayerSpeedMult(time);
     }
 
@@ -10301,26 +10550,26 @@ export class ArenaScene extends Phaser.Scene {
       this.npcSpeedMult *= this.soundKit.getNpcSpeedMult();
     }
     // Time kit speed mults (puddles, bounty aura, speed aura)
-    if (this.elementId === 'sand' || this.npcElement.id === 'sand') {
-      if (this.elementId !== 'sand') this.playerSpeedMult *= this.timeKit.getPlayerSpeedMult();
+    if (this.playerIs('sand') || this.npcElement.id === 'sand') {
+      if (!this.playerIs('sand')) this.playerSpeedMult *= this.timeKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.timeKit.getNpcSpeedMult();
     }
 
     // Soul: clouds of decay (E+) slow anything standing in the rot.
-    if (this.elementId === 'soul' || this.npcElement.id === 'soul') {
+    if (this.playerIs('soul') || this.npcElement.id === 'soul') {
       this.playerSpeedMult *= this.soulKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.soulKit.getNpcSpeedMult();
     }
 
     // Life: a Frost Lily shard's chill, on whichever duelist it rimed. Pulled for the same
     // reason Soul's is — LifeKit.update() runs after the frame's movement has resolved.
-    if (this.elementId === 'life' || this.npcElement.id === 'life') {
+    if (this.playerIs('life') || this.npcElement.id === 'life') {
       this.playerSpeedMult *= this.lifeKit.getChillSpeedMult(this.player);
       this.npcSpeedMult *= this.lifeKit.getChillSpeedMult(this.npc);
     }
 
     // Oil puddle slows — managed by OilKit
-    if (this.elementId === 'oil' || this.npcElement.id === 'oil') {
+    if (this.playerIs('oil') || this.npcElement.id === 'oil') {
       this.npcSpeedMult *= this.oilKit.getNpcSpeedMult();
     }
     // Echo NPC speed (bat form, attach)
@@ -10328,7 +10577,7 @@ export class ArenaScene extends Phaser.Scene {
       this.npcSpeedMult *= this.echoKit.getNpcSpeedMult();
     }
     // Shadow String-perk tripline slows
-    if (this.elementId === 'shadow' || this.npcElement.id === 'shadow') {
+    if (this.playerIs('shadow') || this.npcElement.id === 'shadow') {
       this.npcSpeedMult *= this.shadowKit.getNpcSpeedMult(time);
       this.playerSpeedMult *= this.shadowKit.getPlayerSpeedMult(time);
     }
@@ -10351,101 +10600,101 @@ export class ArenaScene extends Phaser.Scene {
     // the mastery's stance, which either side can be wearing: the Fantasy book's stride, and the
     // Bible book's slow on whoever its holder is fighting. Pulled for the same reason Justice is:
     // PaperKit.update() runs long after movement has resolved.
-    if (this.elementId === 'paper' || this.npcElement.id === 'paper') {
+    if (this.playerIs('paper') || this.npcElement.id === 'paper') {
       this.playerSpeedMult *= this.paperKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.paperKit.getNpcSpeedMult();
     }
     // Justice: Sheer Will and Flight on whoever is wearing it, plus the flame pillar's
     // wade on whoever is standing in one. Pulled, not pushed — JusticeKit.update() runs
     // long after this block has already resolved the frame's movement.
-    if (this.elementId === 'justice' || this.npcElement.id === 'justice') {
+    if (this.playerIs('justice') || this.npcElement.id === 'justice') {
       this.playerSpeedMult *= this.justiceKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.justiceKit.getNpcSpeedMult();
     }
-    // Chalk: teal Masterpiece chalk, on whoever is standing on their own. Pulled for the
-    // same reason Justice is — ChalkKit.update() runs after the frame's movement resolves.
-    if (this.elementId === 'chalk' || this.npcElement.id === 'chalk') {
+    // Paint: blue paint and the slows it throws. Pulled for the same reason Justice is —
+    // PaintKit.update() runs after the frame's movement resolves.
+    if (this.playerIs('chalk') || this.npcElement.id === 'chalk') {
       this.playerSpeedMult *= this.chalkKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.chalkKit.getNpcSpeedMult();
     }
     // Conquest: Speedy Walls and Force Shield, on whoever is standing beside their own masonry.
     // Pulled for the same reason Justice is — ConquestKit.update() runs after movement resolves.
-    if (this.elementId === 'conquest' || this.npcElement.id === 'conquest') {
+    if (this.playerIs('conquest') || this.npcElement.id === 'conquest') {
       this.playerSpeedMult *= this.conquestKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.conquestKit.getNpcSpeedMult();
     }
     // Dream: a Good Dream's haste on the dreamer, and a Night Terror's exhaustion on whoever
     // came out of the corridor. Pulled for the same reason — DreamKit.update() runs after the
     // frame's movement has already resolved.
-    if (this.elementId === 'dream' || this.npcElement.id === 'dream') {
+    if (this.playerIs('dream') || this.npcElement.id === 'dream') {
       this.playerSpeedMult *= this.dreamKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.dreamKit.getNpcSpeedMult();
     }
     // Earth: Symbiosis' Ocean haste on its owner, and an enemy Ice quarter's slow on whoever
     // is standing in it. Pulled for the same reason — and kept alive past the Earth check
     // because Dark Treachery can leave weather behind with no Earth in the match.
-    if (this.elementId === 'earth' || this.npcElement.id === 'earth' || this.earthKit.hasActiveBiomeWorld()) {
+    if (this.playerIs('earth') || this.npcElement.id === 'earth' || this.earthKit.hasActiveBiomeWorld()) {
       this.playerSpeedMult *= this.earthKit.getPlayerBiomeSpeedMult();
       this.npcSpeedMult *= this.earthKit.getNpcBiomeSpeedMult();
     }
     // Clay: the fused body's haste on whoever is wearing it, and a slip puddle's slow on whoever
     // is standing in one. Pulled for the same reason — ClayKit.update() runs after movement.
-    if (this.elementId === 'clay' || this.npcElement.id === 'clay') {
+    if (this.playerIs('clay') || this.npcElement.id === 'clay') {
       this.playerSpeedMult *= this.clayKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.clayKit.getNpcSpeedMult();
     }
     // Depths: the lure's feeding frenzy and an icefish's chill, on whoever is wearing either.
     // Pulled for the same reason Chalk and Magma are — DepthsKit.update() runs after the
     // frame's movement has already resolved.
-    if (this.elementId === 'depths' || this.npcElement.id === 'depths') {
+    if (this.playerIs('depths') || this.npcElement.id === 'depths') {
       this.playerSpeedMult *= this.depthsKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.depthsKit.getNpcSpeedMult();
     }
     // Harvest: the speed Consume copied off a bitten body. Pulled for the same reason Depths is —
     // GluttonyKit.update() runs after movement has resolved.
-    if (this.elementId === 'gluttony' || this.npcElement.id === 'gluttony') {
+    if (this.playerIs('gluttony') || this.npcElement.id === 'gluttony') {
       this.playerSpeedMult *= this.gluttonyKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.gluttonyKit.getNpcSpeedMult();
     }
     // Ruin: Unstoppable Decay's 10%-per-stack slow, on whoever the rot is working against.
     // Pulled for the same reason Depths and Magma are — RuinKit.update() runs after the
     // frame's movement has already resolved.
-    if (this.elementId === 'ruin' || this.npcElement.id === 'ruin') {
+    if (this.playerIs('ruin') || this.npcElement.id === 'ruin') {
       this.playerSpeedMult *= this.ruinKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.ruinKit.getNpcSpeedMult();
     }
     // Death: a Styx brand's 15%-per-stack slow on whoever is wearing it, plus Disarm's and the
     // Deal's boosts on the reaper. Pulled for the same reason Ruin is — DeathKit.update() runs
     // after the frame's movement has already resolved.
-    if (this.elementId === 'death' || this.npcElement.id === 'death') {
+    if (this.playerIs('death') || this.npcElement.id === 'death') {
       this.playerSpeedMult *= this.deathKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.deathKit.getNpcSpeedMult();
     }
     // Illusion: a Phantom's blast leaves whoever it caught 30% slower. Pulled for the same
     // reason Death and Ruin are — IllusionKit.update() runs after movement has resolved.
-    if (this.elementId === 'illusion' || this.npcElement.id === 'illusion') {
+    if (this.playerIs('illusion') || this.npcElement.id === 'illusion') {
       this.playerSpeedMult *= this.illusionKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.illusionKit.getNpcSpeedMult();
     }
     // Cloth's fever is a haste on its own host and its NETs are a slow on whoever is standing
     // in one — both pulled here, after movement has resolved, because the kit's update runs last.
-    if (this.elementId === 'cloth' || this.npcElement.id === 'cloth') {
+    if (this.playerIs('cloth') || this.npcElement.id === 'cloth') {
       this.playerSpeedMult *= this.clothKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.clothKit.getNpcSpeedMult();
     }
     // Marrow's fever is a haste on its own host and its NETs are a slow on whoever is standing
     // in one — both pulled here, after movement has resolved, because the kit's update runs last.
-    if (this.elementId === 'marrow' || this.npcElement.id === 'marrow') {
+    if (this.playerIs('marrow') || this.npcElement.id === 'marrow') {
       this.playerSpeedMult *= this.marrowKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.marrowKit.getNpcSpeedMult();
     }
     // Tempest drifts at half speed in the air. Pulled for the same reason the kits above are.
-    if (this.elementId === 'tempest' || this.npcElement.id === 'tempest') {
+    if (this.playerIs('tempest') || this.npcElement.id === 'tempest') {
       this.playerSpeedMult *= this.tempestKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.tempestKit.getNpcSpeedMult();
     }
     // Myth: the flip's 20% and a World Shatter rift's 30%. Pulled for the same reason.
-    if (this.elementId === 'myth' || this.npcElement.id === 'myth') {
+    if (this.playerIs('myth') || this.npcElement.id === 'myth') {
       this.playerSpeedMult *= this.mythKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.mythKit.getNpcSpeedMult();
     }
@@ -10465,24 +10714,24 @@ export class ArenaScene extends Phaser.Scene {
     this.playerSpeedMult *= this.gumKit.getPlayerSpeedMult();
     this.npcSpeedMult *= this.gumKit.getNpcSpeedMult();
     // Growth Mastery — Sickness/Carrier slows on whoever is carrying the plague
-    if (this.elementId === 'growth' || this.npcElement.id === 'growth') {
+    if (this.playerIs('growth') || this.npcElement.id === 'growth') {
       this.playerSpeedMult *= this.growthKit.getSickSpeedMult(this.player);
       this.npcSpeedMult *= this.growthKit.getSickSpeedMult(this.npc);
     }
     // Ice: frost/permafrost slow, block-up slow, own-trail boost, Rink perk (NPC)
     this.npcSpeedMult *= this.iceKit.getNpcSpeedMultContribution(time);
     // Ice: frost/permafrost slow, block-up slow, skate-trail boost, Rink perk (player)
-    this.playerSpeedMult *= this.iceKit.getPlayerSpeedMultContribution(time, this.elementId === 'ice');
+    this.playerSpeedMult *= this.iceKit.getPlayerSpeedMultContribution(time, this.playerIs('ice'));
 
     // Hunt: form, trail, adrenaline, roar slows and the Beastling's own roar all arrive
     // as one number per side. Pulled here rather than pushed from HuntKit.update(), which
     // runs after player movement has already resolved for the frame.
-    if (this.elementId === 'hunt' || this.npcElement.id === 'hunt') {
+    if (this.playerIs('hunt') || this.npcElement.id === 'hunt') {
       this.playerSpeedMult *= this.huntKit.getPlayerSpeedMult(time);
       if (!this.isInvasion) this.npcSpeedMult *= this.huntKit.getNpcSpeedMult(time);
     }
     // Rage perk: standing in the tracks builds the meter, and 100 forces the beast out early.
-    if (this.elementId === 'hunt' && this.hasPerk('player', 'rage')) {
+    if (this.playerIs('hunt') && this.hasPerk('player', 'rage')) {
       if (this.huntKit.isPlayerOnOwnTrail()) {
         this.playerHuntRage = Math.min(100, this.playerHuntRage + 10 * (delta / 1000));
       }
@@ -10499,10 +10748,10 @@ export class ArenaScene extends Phaser.Scene {
     // Card — Cripple: 15% slow on NPC for 2s after any player hit
     if (this.cardCrippleActive && time < this.cardCrippleSlowUntil) this.npcSpeedMult *= 0.70;
     // Magic storm cloud slow + upgrade speed effects
-    if (this.elementId === 'magic' || this.npcElement.id === 'magic') {
+    if (this.playerIs('magic') || this.npcElement.id === 'magic') {
       this.playerSpeedMult *= this.magicKit.getPlayerSlowMult();
       this.npcSpeedMult *= this.magicKit.getNpcSlowMult();
-      if (this.elementId === 'magic') {
+      if (this.playerIs('magic')) {
         this.playerSpeedMult *= this.magicKit.getPlayerSpeedBoostMult();
           this.npcSpeedMult *= this.magicKit.getNpcDark80SlowMult();
       }
@@ -10593,17 +10842,17 @@ export class ArenaScene extends Phaser.Scene {
     // ── Player movement ─────────────────────────────────────────
     const playerBody = this.player.body as Phaser.Physics.Arcade.Body;
 
-    if (this.elementId === 'gravity' && this.gravityKit.drivesPlayerBody()) {
+    if (this.playerIs('gravity') && this.gravityKit.drivesPlayerBody()) {
       // Anti-Grav flight, the Moon Rider orbit and the dismount finale all place the
       // body themselves — WASD must not fight them for it.
-    } else if (this.elementId === 'gum' && !this.isDodging) {
+    } else if (this.playerIs('gum') && !this.isDodging) {
       // Slime has no legs. WASD does nothing at all; GumKit sets the velocity from the arm's
       // grip in its own update, which runs later this frame and therefore wins.
       playerBody.setVelocity(0, 0);
-    } else if (this.elementId === 'rubber' && this.rubberKit.isSlingActive() && !this.isDodging) {
+    } else if (this.playerIs('rubber') && this.rubberKit.isSlingActive() && !this.isDodging) {
       this.rubberKit.applySlingMovement(mouseX, mouseY);
     } else if (this.nukeChanneling &&
-               !(this.elementId === 'water' && this.waterKit.isDaggerCharging())) {
+               !(this.playerIs('water') && this.waterKit.isDaggerCharging())) {
       // Standard nuke: fully locked
       playerBody.setVelocity(0, 0);
     } else if (this.justiceKit.isLocked('player') || this.justiceKit.isOnTrial(this.player)) {
@@ -10621,7 +10870,7 @@ export class ArenaScene extends Phaser.Scene {
         * (this.isInvasion ? this.invasionKit.playerHazardSpeedMult(time) : 1);
       const v = this.mythKit.playerVelocity(this.player.speed * moveMult);
       playerBody.setVelocity(v.vx, v.vy);
-    } else if (this.elementId === 'ice' && this.iceKit.isPlayerSkaterActive() && !this.isDodging) {
+    } else if (this.playerIs('ice') && this.iceKit.isPlayerSkaterActive() && !this.isDodging) {
       // Skater mode: cursor-following movement overrides WASD
       const moveMult = this.playerSpeedMult * this.gauntletSpeedMult
         * (this.isInvasion ? this.invasionKit.playerHazardSpeedMult(time) : 1);
@@ -10682,7 +10931,7 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── Sound: locked on stage for the Call of the Void solo ──
-    if (this.elementId === 'sound' && this.soundKit.isPerforming() && !this.isDodging) {
+    if (this.playerIs('sound') && this.soundKit.isPerforming() && !this.isDodging) {
       playerBody.setVelocity(0, 0);
     }
 
@@ -10694,7 +10943,7 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── Magic thorn bind / prison (NPC cast) ─────────────────────
-    if ((this.elementId === 'magic' || this.npcElement.id === 'magic') && this.magicKit.isPlayerBound(time) && !this.isDodging) {
+    if ((this.playerIs('magic') || this.npcElement.id === 'magic') && this.magicKit.isPlayerBound(time) && !this.isDodging) {
       playerBody.setVelocity(0, 0);
     }
 
@@ -10711,8 +10960,16 @@ export class ArenaScene extends Phaser.Scene {
     // Conquest's upgrade modal runs over the live arena: it holds you still too, and the
     // Fighter menu guard cuts incoming damage to 5% while you read.
     if (this.scene.isActive('ConquestMenuScene')) playerBody.setVelocity(0, 0);
+    // Paint's Splotch canvas is a menu too (the kit owns its 5% guard).
+    if (this.elementId === 'chalk' && this.chalkKit.holdsPlayerStill()) playerBody.setVelocity(0, 0);
 
     // ── Player abilities ─────────────────────────────────────────
+    // Quantum: a fresh key press re-keys the player onto that slot's element *before* the
+    // context is built and the keys are dispatched, so the kit that owns the ability is the
+    // one that sees the press.
+    if (this.playerLoadout && !invasionDowned && !invasionProp && !this.mythKit.ownsPlayerInput()) {
+      this.quantumKit.routeInput({ e: this.eKey, r: this.rKey, f: this.fKey, q: this.qKey, x6: this.gKey }, pointer.isDown);
+    }
     const playerCtx = this.buildPlayerContext(mouseX, mouseY);
 
     if (invasionDowned || invasionProp) {
@@ -10882,7 +11139,7 @@ export class ArenaScene extends Phaser.Scene {
     this.rightPointerWasDown = pointer.rightButtonDown();
 
     // ── Water world effects (rig, pools, springs, Splash downpour) ───
-    if (this.elementId === 'water' || this.npcElement.id === 'water') {
+    if (this.playerIs('water') || this.npcElement.id === 'water') {
       this.waterKit.update(time, delta);
     }
 
@@ -10920,7 +11177,7 @@ export class ArenaScene extends Phaser.Scene {
         }
         continue; // skip normal slow/DoT
       }
-      const _puddleTargets = (p.owner === 'player' ? this.enemies : [this.player])
+      const _puddleTargets = (p.owner === 'player' ? this.reachableEnemies : [this.player])
         .filter(t => t.active && t.hp > 0 && Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) <= p.radius);
       if (_puddleTargets.length > 0) {
         p.tickAccum += delta;
@@ -10928,6 +11185,7 @@ export class ArenaScene extends Phaser.Scene {
           p.tickAccum -= 250;
           const dmg = p.kind === 'poison' ? 4 : p.kind === 'lava' ? 3 : p.kind === 'toxic' ? 4 : 2;
           const flashColor = p.kind === 'poison' ? 0x66cc22 : p.kind === 'lava' ? 0xff5522 : p.kind === 'toxic' ? 0x33cc22 : 0x0099ff;
+          this.waterKit.notifyAoe(p.x, p.y, p.radius, dmg, p.owner);
           for (const target of _puddleTargets) {
             target.takeDamage(dmg, { source: p, sourceX: p.x, sourceY: p.y }); this.spawnHitFlash(target.x, target.y, flashColor);
             if (p.kind === 'lava' && target === this.player) {
@@ -11000,8 +11258,8 @@ export class ArenaScene extends Phaser.Scene {
 
         if (s.owner === 'player') {
           // Water Mastery — Downpour: snapshot who this drop could kill, then count who died to it.
-          const inBlast = this.elementId === 'water'
-            ? this.enemies.filter((t) => t.active && t.hp > 0
+          const inBlast = this.playerIs('water')
+            ? this.reachableEnemies.filter((t) => t.active && t.hp > 0
                 && Phaser.Math.Distance.Between(s.x, s.y, t.x, t.y) <= s.hitRadius)
             : [];
           this.damagePlayerTargets(s.x, s.y, s.hitRadius, s.damage, s.color);
@@ -11023,15 +11281,15 @@ export class ArenaScene extends Phaser.Scene {
 
 
     // ── Shadow per-frame ─────────────────────────────────────────
-    if (this.elementId === 'shadow' || this.npcElement.id === 'shadow') {
-      this.shadowKit.update(time, delta, this.elementId === 'shadow', this.npcElement.id === 'shadow');
+    if (this.playerIs('shadow') || this.npcElement.id === 'shadow') {
+      this.shadowKit.update(time, delta, this.playerIs('shadow'), this.npcElement.id === 'shadow');
     }
 
     // ── Dodge (Space) ────────────────────────────────────────────
     // Sand has no dodge: Space is its vertical jump, and SandKit reads the key itself. Gated
     // here rather than inside the kit so one press can never be both a hop and a roll. The same
     // applies to anyone Sand has pulled onto a Final Trail course, whatever element they are.
-    if (this.elementId !== 'dune' && !this.sandKit.isTrailActive()
+    if (!this.playerIs('dune') && !this.sandKit.isTrailActive()
       // Magma's Space is the gangplank while its ship is up: off the deck, or back onto it.
       && !this.magmaKit.suppressesDodge()
       // Psychic's Queen has no legs — she only moves the way a queen moves.
@@ -11041,7 +11299,7 @@ export class ArenaScene extends Phaser.Scene {
       && !(this.reality?.kind === 'trials' && this.realityDungeonKit?.claimsSpace())
       && Phaser.Input.Keyboard.JustDown(this.spaceKey)
       // Clay's Slipstream (F+) banks dashes: a stored charge is the gate rather than the cooldown.
-      && ((this.elementId === 'clay' && this.hasUpgrade('f')) ? this.clayKit.hasSlipstreamCharge('player') : !this.dodgeOnCooldown)
+      && ((this.playerIs('clay') && this.hasUpgrade('f')) ? this.clayKit.hasSlipstreamCharge('player') : !this.dodgeOnCooldown)
       && !this.isDodging && !this.clayKit.isLeaping('player') && !this.nukeChanneling && !this.cardSluggishDisableDodge && !this.silenceKit.isPlayerControlLost() && time >= this.player.highGravityUntil
       && time >= this.player.mobilityBlockedUntil) {
       let dx = (this.dKey.isDown ? 1 : 0) - (this.aKey.isDown ? 1 : 0);
@@ -11059,7 +11317,7 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── Echo Q+ Hypersense: auto-dodge incoming attacks during the 4s reveal ──
-    if (this.elementId === 'echo' && this.echoKit.isHypersenseActive() && !this.isDodging
+    if (this.playerIs('echo') && this.echoKit.isHypersenseActive() && !this.isDodging
         && !this.nukeChanneling && !this.cardSluggishDisableDodge && !this.silenceKit.isPlayerControlLost()
         && time >= this.echoHypersenseNextDodgeAt) {
       const threat = this.findHypersenseThreat();
@@ -11104,6 +11362,8 @@ export class ArenaScene extends Phaser.Scene {
       earthBiomePoint: this.earthKit.npcBiomePoint() ?? undefined,
       oilDroneCount: this.oilKit.getNpcDroneCount(),
       shadowPlayerSnared: this.shadowKit.isPlayerSnared(time),
+      npcShadowGloomCaltropAim: this.shadowKit.npcGloomCaltropAim(),
+      npcWaterBubbleSplash: this.waterKit.npcBubbleSplashReady(),
       playerFrostStacks: this.iceKit.getPlayerFrostStacks(),
       iceBlockActive: this.iceKit.isNpcBlockUpActive(),
       npcGrowthDna: this.growthKit.getDna('npc'),
@@ -11132,16 +11392,16 @@ export class ArenaScene extends Phaser.Scene {
       npcGunpowderArsenalSize: this.gunpowderKit.getArsenalSize('npc'),
       // Radiation Mastery — X-Ray Vision: a radiologist bot sees an outline whether or not there is a body.
       targetInvisible: !this.radiationKit.seesInvisible('npc') && (
-        (this.elementId === 'silence' && this.silenceKit.isInvisible('player'))
-        || (this.elementId === 'technology' && (this.techKit.isPlayerSheltered() || this.techKit.isPlayerAdminInvisible()))
+        (this.playerIs('silence') && this.silenceKit.isInvisible('player'))
+        || (this.playerIs('technology') && (this.techKit.isPlayerSheltered() || this.techKit.isPlayerAdminInvisible()))
         || this.depthsKit.isCamoFull('player')
         // Paper Mastery — Restructure: there is no body there at all, only shards.
-        || (this.elementId === 'paper' && this.paperKit.isTorn('player'))
+        || (this.playerIs('paper') && this.paperKit.isTorn('player'))
         // Wax Mastery — Smoke-out: in the smoke, or behind it.
         || this.waxKit.hidesFrom('player', this.npc)
         // Myth Mastery — gone through the bot's own Wormhole.
         || this.mythKit.isTrapped(this.player)),
-      silenceStalkersPresent: this.elementId === 'silence' && this.silenceKit.stalkersAlive('player') > 0,
+      silenceStalkersPresent: this.playerIs('silence') && this.silenceKit.stalkersAlive('player') > 0,
       npcSilenceStealth: this.silenceKit.getStealth('npc'),
       npcSilenceStalkers: this.silenceKit.stalkersAlive('npc'),
       npcSilenceMatureStalker: this.silenceKit.getMatureStalkerPos('npc'),
@@ -11191,11 +11451,11 @@ export class ArenaScene extends Phaser.Scene {
       npcWaxSmokeSlot: this.waxKit.npcSmokeSlot(),
       waxSmokePoint: this.waxKit.smokePoint('npc') ?? undefined,
       npcWaxRangedClick: this.hasNpcUpgrade('click'),
-      npcChalkDrawing: this.chalkKit.isDrawing('npc'),
-      npcChalkShieldHp: this.chalkKit.getShieldHp('npc'),
-      npcChalkMasterpiece: this.chalkKit.isMasterpieceActive('npc'),
-      npcChalkMayPerma: this.npcElement.id === 'chalk' && !this.chalkKit.hasPerma('npc'),
-      npcChalkLivingSlot: this.chalkKit.npcLivingSlot(),
+      npcPaintBusy: this.chalkKit.isBusy('npc'),
+      npcPaintMasterpiece: this.chalkKit.isMasterpieceActive('npc'),
+      npcPaintTargetStilled: this.npcElement.id === 'chalk' && this.chalkKit.npcTargetStilled(),
+      npcPaintShotsIncoming: this.npcElement.id === 'chalk' ? this.chalkKit.npcShotsIncoming() : 0,
+      npcPaintYinYangSlot: this.chalkKit.npcYinYangSlot(),
       npcIllusionDancing: this.illusionKit.isDancing('npc'),
       npcIllusionHasVeil: this.illusionKit.hasVeil('npc'),
       npcIllusionGuised: this.illusionKit.isGuised('npc'),
@@ -11203,13 +11463,14 @@ export class ArenaScene extends Phaser.Scene {
       illusionSeekPoint: this.illusionKit.npcVeilWalkPoint() ?? undefined,
       npcIllusionDanceBombs: this.illusionKit.npcDanceRelocateReady(),
       // The player's Guise: their shots are invisible, so there is nothing for a bot to dodge.
-      playerShotsUnseen: this.elementId === 'illusion' && this.illusionKit.isGuised('player'),
+      playerShotsUnseen: this.playerIs('illusion') && this.illusionKit.isGuised('player'),
       npcIllusionMaskSlot: this.illusionKit.npcMaskSlot(),
       // Magic: is there a patch of our own conjurations dense enough to be worth 15 Darkness?
       // MagicKit owns the geometry and centres the field itself; this is only the go/no-go.
       magicMeditating: (this.magicKit.npcDupePoint()?.count ?? 0) >= 2,
       npcMagmaBloat: this.magmaKit.isBloatActive('npc'),
       npcMagmaVolcanoes: this.magmaKit.volcanoCount('npc'),
+      npcLightTrickRamp: this.npcElement.id === 'light' && this.lightKit.npcTrickRampReady(),
       npcMagmaChargeTarget: this.magmaKit.chargeTarget('npc') ?? undefined,
       npcMagmaBlunderCharges: this.magmaKit.blunderCharges('npc'),
       npcMagmaGaugePressure: this.magmaKit.npcGaugePressure(),
@@ -11497,19 +11758,19 @@ export class ArenaScene extends Phaser.Scene {
 
     // Earth and Light kit updates (after npcCastId is known). A borrowed Biome Builder can leave
     // its quarters behind with no Earth in the match, so the weather keeps the kit awake.
-    if (this.elementId === 'earth' || this.npcElement.id === 'earth' || this.earthKit.hasActiveBiomeWorld()) {
+    if (this.playerIs('earth') || this.npcElement.id === 'earth' || this.earthKit.hasActiveBiomeWorld()) {
       this.earthKit.update(time, delta);
     }
-    if (this.elementId === 'light' || this.npcElement.id === 'light') {
-      this.lightKit.update(time, delta, this.elementId === 'light', this.npcElement.id === 'light');
+    if (this.playerIs('light') || this.npcElement.id === 'light') {
+      this.lightKit.update(time, delta, this.playerIs('light'), this.npcElement.id === 'light');
     }
     // Shadow post-AI overrides (must run after doAI so drag velocities win)
-    if (this.elementId === 'shadow') {
+    if (this.playerIs('shadow')) {
       this.shadowKit.updateAfterAI(time, delta);
     }
     // Magic Mastery — Transmogrify chicken wander (must run after doAI so it wins).
     // Runs for either side so an opponent's chicken bolt wanders our local player online.
-    if (this.elementId === 'magic' || this.npcElement.id === 'magic') {
+    if (this.playerIs('magic') || this.npcElement.id === 'magic') {
       this.magicKit.updateAfterAI(time, delta);
     }
 
@@ -11520,10 +11781,10 @@ export class ArenaScene extends Phaser.Scene {
     this.airKit.handleNpcCastId(npcCastId);
     this.oilKit.handleNpcCastId(npcCastId);
     // ── Ice per-frame ─────────────────────────────────────────────
-    if (this.elementId === 'ice' || this.npcElement.id === 'ice') {
-      this.iceKit.update(time, delta, this.elementId === 'ice', this.npcElement.id === 'ice');
+    if (this.playerIs('ice') || this.npcElement.id === 'ice') {
+      this.iceKit.update(time, delta, this.playerIs('ice'), this.npcElement.id === 'ice');
       // Online: opponent is ice — replay their Icicle Impale dash + track its icicle on us.
-      if (this.elementId !== 'ice' && this.npcElement.id === 'ice') this.iceKit.updateNpc(time);
+      if (!this.playerIs('ice') && this.npcElement.id === 'ice') this.iceKit.updateNpc(time);
     }
 
     // ── Frozen NPC override (ice element) ────────────────────────
@@ -11584,12 +11845,12 @@ export class ArenaScene extends Phaser.Scene {
     this.crystalKit.update(time, delta, mouseX, mouseY);
 
     // ── Soul per-frame ─────────────────────────────────────────────
-    if (this.elementId === 'soul' || this.npcElement.id === 'soul') {
+    if (this.playerIs('soul') || this.npcElement.id === 'soul') {
       this.soulKit.update(time, delta);
     }
 
     // ── Hunt per-frame ───────────────────────────────────────────
-    if (this.elementId === 'hunt' || this.npcElement.id === 'hunt') {
+    if (this.playerIs('hunt') || this.npcElement.id === 'hunt') {
       this.huntKit.update(time, delta);
       // Rage perk: a meter above the HP bar that fills while you stand in the tracks.
       if (this.hasPerk('player', 'rage')) {
@@ -11625,8 +11886,8 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── Silence per-frame ────────────────────────────────────────
-    if (this.elementId === 'silence' || this.npcElement.id === 'silence') {
-      this.silenceKit.update(time, delta, this.elementId === 'silence', this.npcElement.id === 'silence');
+    if (this.playerIs('silence') || this.npcElement.id === 'silence') {
+      this.silenceKit.update(time, delta, this.playerIs('silence'), this.npcElement.id === 'silence');
     }
 
     // ── Mutation effects per-frame ───────────────────────────────
@@ -11668,17 +11929,17 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── Time per-frame ───────────────────────────────────────────
-    if (this.elementId === 'sand' || this.npcElement.id === 'sand') {
+    if (this.playerIs('sand') || this.npcElement.id === 'sand') {
       this.timeKit.update(time, delta);
     }
 
     // ── Gravity per-frame ────────────────────────────────────────
-    if (this.elementId === 'gravity' || this.npcElement.id === 'gravity') {
+    if (this.playerIs('gravity') || this.npcElement.id === 'gravity') {
       this.gravityKit.update(time, delta);
     }
 
     // ── Creation per-frame ────────────────────────────────────────
-    if (this.elementId === 'creation' || this.npcElement.id === 'creation') {
+    if (this.playerIs('creation') || this.npcElement.id === 'creation') {
       this.creationKit.update(time, delta);
     }
 
@@ -11696,64 +11957,64 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── Sound per-frame ──────────────────────────────────────────
-    if (this.elementId === 'sound' || this.npcElement.id === 'sound') {
-      this.soundKit.update(time, delta, this.elementId === 'sound', this.npcElement.id === 'sound');
+    if (this.playerIs('sound') || this.npcElement.id === 'sound') {
+      this.soundKit.update(time, delta, this.playerIs('sound'), this.npcElement.id === 'sound');
     }
 
     // ── Magnet per-frame ──────────────────────────────────────────
-    if (this.elementId === 'magnet' || this.npcElement.id === 'magnet') {
-      this.magnetKit.update(time, delta, this.elementId === 'magnet', this.npcElement.id === 'magnet');
+    if (this.playerIs('magnet') || this.npcElement.id === 'magnet') {
+      this.magnetKit.update(time, delta, this.playerIs('magnet'), this.npcElement.id === 'magnet');
     }
 
     // ── Metal per-frame ───────────────────────────────────────────
-    if (this.elementId === 'metal' || this.npcElement.id === 'metal') {
+    if (this.playerIs('metal') || this.npcElement.id === 'metal') {
       this.metalKit.update(time, delta);
     }
 
     // ── Plasma per-frame ─────────────────────────────────────────
-    if (this.elementId === 'plasma' || this.npcElement.id === 'plasma') {
+    if (this.playerIs('plasma') || this.npcElement.id === 'plasma') {
       this.plasmaKit.update(time, delta);
     }
 
     // ── Gunpowder per-frame ──────────────────────────────────────
-    if (this.elementId === 'gunpowder' || this.npcElement.id === 'gunpowder') {
+    if (this.playerIs('gunpowder') || this.npcElement.id === 'gunpowder') {
       this.gunpowderKit.update(time, delta);
     }
 
     // ── Justice per-frame ────────────────────────────────────────
-    if (this.elementId === 'justice' || this.npcElement.id === 'justice') {
+    if (this.playerIs('justice') || this.npcElement.id === 'justice') {
       this.justiceKit.update(time, delta);
     }
 
     // ── Dream per-frame ──────────────────────────────────────────
-    if (this.elementId === 'dream' || this.npcElement.id === 'dream') {
+    if (this.playerIs('dream') || this.npcElement.id === 'dream') {
       this.dreamKit.update(time, delta);
     }
     // Wax's bees, candles and bombs outlive a mid-match element swap, so the kit early-outs itself.
     this.waxKit.update(time, delta);
     // Clay's shards and creatures likewise; the kit early-outs itself.
     this.clayKit.update(time, delta);
-    if (this.elementId === 'chalk' || this.npcElement.id === 'chalk') {
+    if (this.playerIs('chalk') || this.npcElement.id === 'chalk') {
       this.chalkKit.update(time, delta);
     }
-    if (this.elementId === 'magma' || this.npcElement.id === 'magma') {
+    if (this.playerIs('magma') || this.npcElement.id === 'magma') {
       this.magmaKit.update(time, delta);
     }
     // Unconditional: a fold outlives the Illusion fighter that applied it, so the kit has to
     // keep ticking long enough to hand a victim's own body back. It early-outs on its own.
     this.illusionKit.update(time, delta);
-    if (this.elementId === 'depths' || this.npcElement.id === 'depths') {
+    if (this.playerIs('depths') || this.npcElement.id === 'depths') {
       this.depthsKit.update(time, delta);
     }
-    if (this.elementId === 'gluttony' || this.npcElement.id === 'gluttony') {
+    if (this.playerIs('gluttony') || this.npcElement.id === 'gluttony') {
       this.gluttonyKit.update(time, delta);
     }
-    if (this.elementId === 'ruin' || this.npcElement.id === 'ruin') {
+    if (this.playerIs('ruin') || this.npcElement.id === 'ruin') {
       this.ruinKit.update(time, delta);
     }
     // Also while a Final Trail is up: the race outlives a stance swap, and the rival it dragged
     // in may not be a Sand fighter at all.
-    if (this.elementId === 'dune' || this.npcElement.id === 'dune' || this.sandKit.isTrailActive()) {
+    if (this.playerIs('dune') || this.npcElement.id === 'dune' || this.sandKit.isTrailActive()) {
       this.sandKit.update(time, delta);
     }
     // Unconditional: a rider glued to a paper plane and the Journal's multipliers both outlive
@@ -11784,42 +12045,42 @@ export class ArenaScene extends Phaser.Scene {
     // Unconditional for the same reason Bind is: gum shells, wall glue, a swallowed shot and a
     // pile of slimeballs all outlive the slime that made them. It early-outs itself.
     this.gumKit.update(time, delta);
-    if (this.elementId === 'conquest' || this.npcElement.id === 'conquest') {
+    if (this.playerIs('conquest') || this.npcElement.id === 'conquest') {
       this.conquestKit.update(time, delta);
     }
-    if (this.elementId === 'passion' || this.npcElement.id === 'passion') {
+    if (this.playerIs('passion') || this.npcElement.id === 'passion') {
       this.passionKit.update(time, delta);
     }
 
     // ── Growth per-frame ──────────────────────────────────────────
-    if (this.elementId === 'growth' || this.npcElement.id === 'growth') {
+    if (this.playerIs('growth') || this.npcElement.id === 'growth') {
       this.growthKit.update(time, delta);
     }
 
     // ── Rubber per-frame ─────────────────────────────────────────
-    if (this.elementId === 'rubber' || this.npcElement.id === 'rubber') {
+    if (this.playerIs('rubber') || this.npcElement.id === 'rubber') {
       this.rubberKit.update(time, delta);
     }
 
     // ── Magic per-frame ───────────────────────────────────────────
-    if (this.elementId === 'magic' || this.npcElement.id === 'magic') {
+    if (this.playerIs('magic') || this.npcElement.id === 'magic') {
       this.magicKit.update(time, delta);
     }
 
     // ── Technology per-frame ──────────────────────────────────────
-    if (this.elementId === 'technology' || this.npcElement.id === 'technology') {
+    if (this.playerIs('technology') || this.npcElement.id === 'technology') {
       this.techKit.update(time, delta);
     }
 
     // ── Echo per-frame ────────────────────────────────────────────
-    if (this.elementId === 'echo' || this.npcElement.id === 'echo') {
+    if (this.playerIs('echo') || this.npcElement.id === 'echo') {
       this.echoKit.update(time, delta,
-        this.elementId === 'echo',
+        this.playerIs('echo'),
         this.npcElement.id === 'echo');
     }
 
     // ── Subterfuge per-frame ──────────────────────────────────────
-    if (this.elementId === 'subterfuge' || this.npcElement.id === 'subterfuge') {
+    if (this.playerIs('subterfuge') || this.npcElement.id === 'subterfuge') {
       this.subterfugeKit.update(time, delta);
     }
 
@@ -11832,9 +12093,9 @@ export class ArenaScene extends Phaser.Scene {
     this.quantumKit.update(time, delta);
 
     // ── Oil per-frame ─────────────────────────────────────────────
-    if (this.elementId === 'oil' || this.npcElement.id === 'oil') {
+    if (this.playerIs('oil') || this.npcElement.id === 'oil') {
       this.oilKit.update(time, delta,
-        this.elementId === 'oil',
+        this.playerIs('oil'),
         this.npcElement.id === 'oil',
         mouseX, mouseY);
       // Online: opponent is oil — run their replayed Turret against our local player.
@@ -11842,15 +12103,15 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── Fate per-frame ───────────────────────────────────────────
-    if (this.elementId === 'fate' || this.npcElement.id === 'fate') {
+    if (this.playerIs('fate') || this.npcElement.id === 'fate') {
       this.fateKit.update(time, delta,
-        this.elementId === 'fate',
+        this.playerIs('fate'),
         this.npcElement.id === 'fate');
     }
 
     // Air's Wind Breaker holds its captives by position, so the kit has to run
     // after NPC AI and husk movement have written their velocities for this frame.
-    if (this.elementId === 'air' || this.npcElement.id === 'air') this.airKit.update(time, delta);
+    if (this.playerIs('air') || this.npcElement.id === 'air') this.airKit.update(time, delta);
 
     // ── Puddle slow (post-AI) ─────────────────────────────────────
     if (this.puddles.length > 0) {
@@ -11922,7 +12183,7 @@ export class ArenaScene extends Phaser.Scene {
     for (const entry of this.abilityBars) {
       // Creation's Build Mode borrows all five slots for a second loadout with its own
       // timers, so it gets first refusal on every card before the per-ability chain below.
-      const buildRatio = this.elementId === 'creation'
+      const buildRatio = this.playerIs('creation')
         ? this.creationKit.buildModeBarRatio(entry.abilityId, time) : null;
       if (buildRatio !== null) {
         entry.fill.setSize(entry.maxWidth * buildRatio, entry.fill.height);
@@ -11955,7 +12216,7 @@ export class ArenaScene extends Phaser.Scene {
       } else if (entry.abilityId === 'breakdown') {
         entry.fill.setSize(entry.maxWidth * this.slimeKit.getBreakdownCooldownRatio(time), entry.fill.height);
       } else if ((entry.abilityId === 'growth-virus' || entry.abilityId === 'spore-spray')
-          && this.elementId === 'growth' && this.growthKit.hasSweating()) {
+          && this.playerIs('growth') && this.growthKit.hasSweating()) {
         entry.fill.setSize(entry.maxWidth * this.growthKit.getChargeBarRatio(entry.abilityId, time), entry.fill.height);
       } else if (entry.abilityId === 'test-dummy') {
         entry.fill.setSize(entry.maxWidth * this.radiationKit.getDummyCooldownRatio(), entry.fill.height);
@@ -11965,7 +12226,7 @@ export class ArenaScene extends Phaser.Scene {
         entry.fill.setSize(entry.maxWidth * this.soundKit.getPianoCooldownRatio(), entry.fill.height);
       } else if (entry.abilityId === 'mag-lev') {
         entry.fill.setSize(entry.maxWidth * this.magnetKit.getMagLevCooldownRatio(), entry.fill.height);
-      } else if (this.elementId === 'magnet' && entry.abilityId.startsWith('magnet-')) {
+      } else if (this.playerIs('magnet') && entry.abilityId.startsWith('magnet-')) {
         entry.fill.setSize(entry.maxWidth * this.magnetKit.getBarRatio(entry.abilityId), entry.fill.height);
       } else if (entry.abilityId === 'time-bomb') {
         entry.fill.setSize(entry.maxWidth * this.timeKit.getBombCooldownRatio(time), entry.fill.height);
@@ -12004,9 +12265,9 @@ export class ArenaScene extends Phaser.Scene {
       } else if (entry.abilityId.startsWith('dream-')) {
         // Sandmen's card is the magazine (or the reload), not a 125ms cooldown — the kit owns it.
         entry.fill.setSize(entry.maxWidth * this.dreamKit.getBarRatio(entry.abilityId, time), entry.fill.height);
-      } else if (entry.abilityId.startsWith('chalk-') || entry.abilityId === 'living-chalk') {
-        // Four of the five spend most of their life showing a drawing window, a shield's
-        // remaining board or the Masterpiece clock rather than a cooldown — the kit owns it.
+      } else if (entry.abilityId.startsWith('paint-') || entry.abilityId === 'yin-yang') {
+        // Paint's cards spend much of their life showing a painting window, a canvas clock or
+        // the Masterpiece rather than a cooldown — and Yin-Yang has no Fighter cooldown at all.
         entry.fill.setSize(entry.maxWidth * this.chalkKit.getBarRatio(entry.abilityId, time), entry.fill.height);
       } else if (entry.abilityId.startsWith('illusion-') || entry.abilityId === 'masquerade') {
         // The pane's remaining seconds, the dance's own clock and a mask that has no duration
@@ -12092,7 +12353,7 @@ export class ArenaScene extends Phaser.Scene {
       } else if (entry.abilityId === 'tarot-of-fate') {
         entry.fill.setSize(entry.maxWidth * this.fateKit.getTarotCooldownRatio(time), entry.fill.height);
       } else if ((entry.abilityId === 'fate-preserve' || entry.abilityId === 'fate-enchant')
-          && this.elementId === 'fate' && this.fateKit.isCurseLocked(entry.abilityId)) {
+          && this.playerIs('fate') && this.fateKit.isCurseLocked(entry.abilityId)) {
         // Purging curse holds these shut for 20s, well past their own cooldowns.
         entry.fill.setSize(entry.maxWidth * this.fateKit.getCurseLockRatio(entry.abilityId, time), entry.fill.height);
       } else if (entry.abilityId === 'flame-body') {
@@ -12131,17 +12392,17 @@ export class ArenaScene extends Phaser.Scene {
           ).setOrigin(0.5).setDepth(entry.fill.depth + 1);
         }
         entry.lockedIcon.setPosition(entry.fill.x, entry.fill.y);
-      } else if (entry.abilityId === 'magic-grimoire' && this.elementId === 'magic' && this.magicKit.isThunderCharged('e')) {
+      } else if (entry.abilityId === 'magic-grimoire' && this.playerIs('magic') && this.magicKit.isThunderCharged('e')) {
         entry.fill.setFillStyle(0xffee00, 0.55);
         entry.fill.setSize(entry.maxWidth, entry.fill.height);
-      } else if (entry.abilityId === 'magic-necronomicon' && this.elementId === 'magic' && this.magicKit.isThunderCharged('q')) {
+      } else if (entry.abilityId === 'magic-necronomicon' && this.playerIs('magic') && this.magicKit.isThunderCharged('q')) {
         entry.fill.setFillStyle(0xcc44ff, 0.55);
         entry.fill.setSize(entry.maxWidth, entry.fill.height);
       } else {
         if (entry.abilityId === 'magic-grimoire' || entry.abilityId === 'magic-necronomicon') {
           entry.fill.setFillStyle(entry.baseFillColor ?? 0x4466aa, 0.45);
         }
-        entry.fill.setSize(entry.maxWidth * this.player.getCooldownRatio(entry.abilityId), entry.fill.height);
+        entry.fill.setSize(entry.maxWidth * this.player.getCooldownRatio(entry.abilityId, entry.ability), entry.fill.height);
       }
     }
 
@@ -12288,6 +12549,8 @@ export class ArenaScene extends Phaser.Scene {
     // Apply attacker's crit context before damage
     target.setIncomingCritContext(this.player.critChance, this.player.critMult);
     let _npcDmg = Math.round(proj.damage * this.player.cardOutgoingDamageMult);
+    // Paint's Still Life F+: a shot landing on a painted-red part of the target hits harder.
+    if (target.paintZoneMult) _npcDmg = Math.round(_npcDmg * target.paintZoneMult(proj.x, proj.y));
     // Q+: Shatter Strike — next hit on frozen enemy deals 25% more
     if (target.frozenSolidAmpReady && target.frozenUntil > this.time.now) {
       _npcDmg = Math.round(_npcDmg * 1.25);
@@ -12303,21 +12566,21 @@ export class ArenaScene extends Phaser.Scene {
       _npcDmg = Math.max(1, Math.round(_npcDmg * (minMult + (1 - minMult) * t)));
     }
     // Water: apply dehydration + boiling damage multiplier
-    if (this.elementId === 'water') {
+    if (this.playerIs('water')) {
       _npcDmg = Math.round(_npcDmg * this.waterKit.computeOutgoingMultiplier(target, 'player'));
     }
     // Fireball: Blaze's bonus on burning targets, and the Flameshredder (Click+) burn — molten
     // fire instead when the shot is a Blaze fireball.
     if (proj.texture.key === 'proj-fire') _npcDmg = this.fireKit.onFireballHit(proj, target, _npcDmg, this.hasUpgrade('click'));
     target.takeDamage(_npcDmg);
-    if (this.elementId === 'water') this.waterKit.noteDamageDealtByPlayer(_npcDmg);
-    if (this.elementId === 'life') this.lifeKit.onPlayerProjectileHit(proj, target, _npcDmg);
-    if (this.elementId === 'gunpowder') this.gunpowderKit.onPlayerProjectileHit(proj, target);
+    if (this.playerIs('water')) this.waterKit.noteDamageDealtByPlayer(_npcDmg);
+    if (this.playerIs('life')) this.lifeKit.onPlayerProjectileHit(proj, target, _npcDmg);
+    if (this.playerIs('gunpowder')) this.gunpowderKit.onPlayerProjectileHit(proj, target);
     const isVoidIceHit = proj.texture.key === 'proj-ice' && this.iceKit.isPlayerBlackIceMorphActive();
     this.spawnHitFlash(proj.x, proj.y, isVoidIceHit ? 0x9900ff : 0xff6600);
     // Water-cut hit: apply dehydration (Click+ upgrade)
-    if (proj.texture.key === 'proj-water' && proj.isFromPlayer && this.elementId === 'water') {
-      this.waterKit.onWaterCutHit(target, 'player');
+    if (proj.texture.key === 'proj-water' && proj.isFromPlayer && this.playerIs('water')) {
+      this.waterKit.onWaterCutHit(target, 'player', proj);
     }
     // Ice spike: frost stacks + unfreeze bonus
     if (proj.texture.key === 'proj-ice') {
@@ -12339,7 +12602,7 @@ export class ArenaScene extends Phaser.Scene {
     // R+ Powerful Parry: fire DOT on NPC from rubber-reflected projectile
     // (kit-internal to the npc; reflected projectiles only exist in 1v1)
     const rubberParryFireDot = (proj as any).rubberParryFireDot as number | undefined;
-    if (isNpc && rubberParryFireDot && this.elementId === 'rubber') {
+    if (isNpc && rubberParryFireDot && this.playerIs('rubber')) {
       this.rubberKit.applyNpcFireDot(rubberParryFireDot);
     }
     // Demon perk dagger: pierce up to 2 additional enemies before being destroyed
@@ -12359,11 +12622,35 @@ export class ArenaScene extends Phaser.Scene {
     (proj.body as Phaser.Physics.Arcade.Body).stop();
   }
 
+  private reachableCache: Fighter[] = [];
+  private reachableFrame = -1;
+  private reachableSource: Fighter[] | null = null;
+  private reachableLen = -1;
+
+  /**
+   * The enemies the local player can actually touch. Everywhere but invasion that is simply
+   * `enemies`. In invasion, a husk in another room shares our screen coordinates but is out of
+   * sight and out of play — every kit and AoE reads this list (kit adapters' `enemies`), so an
+   * aura or a blast can't reach through the wall into a room a co-op partner is fighting in.
+   * Cached per frame; rebuilt if the array is swapped or grows mid-frame.
+   */
+  get reachableEnemies(): Fighter[] {
+    if (!this.isInvasion || !this.invasionKit) return this.enemies;
+    const frame = this.game.loop.frame;
+    if (frame !== this.reachableFrame || this.reachableSource !== this.enemies || this.reachableLen !== this.enemies.length) {
+      this.reachableFrame = frame;
+      this.reachableSource = this.enemies;
+      this.reachableLen = this.enemies.length;
+      this.reachableCache = this.enemies.filter((e) => !(e instanceof Husk) || this.invasionKit.isHuskTargetable(e));
+    }
+    return this.reachableCache;
+  }
+
   /** Returns the nearest active enemy to (fromX, fromY), or `this.npc` as a positional fallback. */
   private getNearestEnemy(fromX: number, fromY: number): Fighter {
     let best: Fighter = this.npc;
     let bestDist = Infinity;
-    for (const e of this.enemies) {
+    for (const e of this.reachableEnemies) {
       if (!e.active || e.hp <= 0) continue;
       const d = Phaser.Math.Distance.Between(fromX, fromY, e.x, e.y);
       if (d < bestDist) { bestDist = d; best = e; }
@@ -12422,7 +12709,8 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private damagePlayerTargets(cx: number, cy: number, radius: number, damage: number, color: number): void {
-    for (const t of this.enemies) {
+    this.waterKit.notifyAoe(cx, cy, radius, damage, 'player');
+    for (const t of this.reachableEnemies) {
       if (!t.active || t.hp <= 0) continue;
       if (Phaser.Math.Distance.Between(cx, cy, t.x, t.y) <= radius) {
         t.takeDamage(damage);
@@ -12437,7 +12725,8 @@ export class ArenaScene extends Phaser.Scene {
   ): { hits: number; kills: number } {
     let hits = 0;
     let kills = 0;
-    for (const t of this.enemies) {
+    this.waterKit.notifyAoe(cx, cy, radius, damage, 'player');
+    for (const t of this.reachableEnemies) {
       if (!t.active || t.hp <= 0) continue;
       if (Phaser.Math.Distance.Between(cx, cy, t.x, t.y) > radius) continue;
       t.takeDamage(damage);
@@ -12512,8 +12801,10 @@ export class ArenaScene extends Phaser.Scene {
     this.illusionKit.notifyAoe(cx, cy, radius, damage, owner);
     // ...and a Radiation Test Dummy, which is a hit on its owner down the link.
     this.radiationKit.notifyAoe(cx, cy, radius, damage, owner);
+    // ...and Bubble Barrage bubbles, which pass half of it on to whoever wears them.
+    this.waterKit.notifyAoe(cx, cy, radius, damage, owner);
     if (owner === 'player') {
-      for (const t of this.enemies) {
+      for (const t of this.reachableEnemies) {
         if (!t.active || t.hp <= 0 || t === except) continue;
         if (Phaser.Math.Distance.Between(cx, cy, t.x, t.y) <= radius) {
           // Kill credit — see Fighter.lastDamageOwner. The Graveyard's runic bars

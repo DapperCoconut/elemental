@@ -27,8 +27,11 @@ export interface EffectWorld {
   /** The room the local player is currently looking at — gates all drawing. */
   currentRoom(): number;
   showFloatingText(x: number, y: number, text: string, color: string): void;
-  /** Slow the local player's movement (mult < 1) for a short window. */
-  slowPlayer(mult: number, ms: number): void;
+  /**
+   * Slow `target`'s movement (mult < 1) for a short window. Only the local player's walk is
+   * ours to slow — an ally replica (who may be in another room entirely) is ignored.
+   */
+  slowPlayer(mult: number, ms: number, target: Fighter): void;
   /**
    * Spawn a child husk (splits, echoes, ghosts, decoys). Returns null when
    * the field is too crowded to allow it.
@@ -193,8 +196,8 @@ export class HuskEffectEngine {
         this.applyDot(target, 'plasma', 2 + p, 2500, '🔮', '#cc66ff');
         break;
       case 'ice':
-        this.world.slowPlayer(Math.max(0.45, 0.8 - p * 0.06), 1500);
-        this.world.showFloatingText(target.x, target.y - 30, '🧊 CHILLED', '#aaddff');
+        this.world.slowPlayer(Math.max(0.45, 0.8 - p * 0.06), 1500, target);
+        if (target.visible) this.world.showFloatingText(target.x, target.y - 30, '🧊 CHILLED', '#aaddff');
         break;
       case 'fate':
         if (Math.random() < 0.4) {
@@ -375,7 +378,7 @@ export class HuskEffectEngine {
       if (z.slowMult < 1) {
         for (const t of this.world.targetsInRoom(z.room)) {
           if (Phaser.Math.Distance.Between(z.x, z.y, t.x, t.y) <= z.r + 14) {
-            this.world.slowPlayer(z.slowMult, 150);
+            this.world.slowPlayer(z.slowMult, 150, t);
           }
         }
       }
@@ -604,7 +607,7 @@ export class HuskEffectEngine {
         if (time >= st.nextActionAt && nearest
           && Phaser.Math.Distance.Between(husk.x, husk.y, nearest.x, nearest.y) < 240) {
           st.nextActionAt = time + 4000;
-          this.world.slowPlayer(Math.max(0.45, 0.65 - p * 0.04), 1200);
+          this.world.slowPlayer(Math.max(0.45, 0.65 - p * 0.04), 1200, nearest);
           if (inView) this.world.showFloatingText(nearest.x, nearest.y - 30, '⛓️ SHACKLED', '#e0b743');
           st.buffUntil = time + 500; // chain draws for half a second
         }
