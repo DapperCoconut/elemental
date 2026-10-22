@@ -2219,12 +2219,12 @@ export class LifeKit {
       }
       if (g && (chilled || time < f.lifeFrailUntil) && f.alpha > 0.05) {
         // Rime: a ring of ice crystals slowly turning around the chilled.
-        g.fillStyle(LIFE.frost, 0.16);
+        g.fillStyle(this.colFor(f === player ? 'npc' : 'player')(LIFE.frost), 0.16);
         g.fillCircle(f.x, f.y, 22);
         for (let i = 0; i < 6; i++) {
           const a = t * 0.8 + (i / 6) * Math.PI * 2;
           const cx = f.x + Math.cos(a) * 20, cy = f.y + Math.sin(a) * 20;
-          g.fillStyle(LIFE.ice, 0.85);
+          g.fillStyle(this.colFor(f === player ? 'npc' : 'player')(LIFE.ice), 0.85);
           g.fillTriangle(cx, cy - 4, cx + 1.8, cy, cx, cy + 4);
           g.fillTriangle(cx, cy - 4, cx - 1.8, cy, cx, cy + 4);
         }
@@ -2240,7 +2240,7 @@ export class LifeKit {
         if (g && f.alpha > 0.05) {
           for (let i = 0; i < 4; i++) {
             const p = (t * 1.6 + i / 4) % 1;
-            g.fillStyle(i % 2 ? LIFE.ember : LIFE.flame, 0.85 * (1 - p));
+            g.fillStyle(i % 2 ? this.colFor(f === player ? 'npc' : 'player')(LIFE.ember) : this.colFor(f === player ? 'npc' : 'player')(LIFE.flame), 0.85 * (1 - p));
             g.fillCircle(f.x + Math.sin(t * 5 + i * 1.6) * 12, f.y + 10 - p * 34, 3.2 * (1 - p * 0.6));
           }
         }
@@ -2266,7 +2266,7 @@ export class LifeKit {
             const n = Math.min(8, 2 + Math.floor(f.lifePoisonStacks / 3));
             for (let i = 0; i < n; i++) {
               const p = (t * 0.9 + i / n) % 1;
-              g.fillStyle(LIFE.night, 0.7 * (1 - p));
+              g.fillStyle(this.colFor(f === player ? 'npc' : 'player')(LIFE.night), 0.7 * (1 - p));
               g.fillCircle(f.x + Math.sin(t * 3 + i * 2.2) * 14, f.y + 6 - p * 26, 2.4);
             }
           }

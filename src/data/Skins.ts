@@ -1,5 +1,29 @@
 import * as PlayerData from './PlayerData';
 import { getAchievementDef } from './Achievements';
+import { getProfile as getRankedProfile } from './RankedData';
+import { isCheatMode } from './Cheats';
+import { AMBER_SKIN } from './skins/amber';
+import { RAGE_SKIN } from './skins/rage';
+import { CYBORG_SKIN } from './skins/cyborg';
+import { WW2_SKIN } from './skins/ww2';
+import { ROCKET_SKIN } from './skins/rocket';
+import { JASON_SKIN } from './skins/jason';
+import { DOOM_SKIN } from './skins/doom';
+import { PASSION_SKIN } from './skins/passion';
+import { SAKURA_SKIN } from './skins/sakura';
+import { VAMPIRE_SKIN } from './skins/vampire';
+import { ROCKSTAR_SKIN } from './skins/rockstar';
+import { PIRATE_SKIN } from './skins/pirate';
+import { SNIPER_SKIN } from './skins/sniper';
+import { ORDER_SKIN } from './skins/order';
+import { WITCH_SKIN } from './skins/witch';
+import { ANIMATRONIC_SKIN } from './skins/animatronic';
+import { CELEBRATION_SKIN } from './skins/celebration';
+import { WARDEN_SKIN } from './skins/warden';
+import { HOLLOW_SKIN } from './skins/hollow';
+import { ANOMALY_SKIN } from './skins/anomaly';
+import { CONDUCTOR_SKIN } from './skins/conductor';
+import { MONKEY_SKIN } from './skins/monkey';
 
 /**
  * A **skin** is one element's alternate look. Two halves, and only two:
@@ -20,8 +44,11 @@ export interface SkinDef {
   name: string;
   description: string;
   elementId: string;
-  /** Achievement that unlocks this skin. */
-  achievementId: string;
+  /**
+   * Achievement that unlocks this skin. Absent means its achievement hasn't been written
+   * yet — the skin is free until then (see `isSkinUnlocked`).
+   */
+  achievementId?: string;
   /**
    * Key this skin's replacement character rig is registered under in `SkinAvatars.ts`.
    * A skin without one keeps the element's default rig and is a recolour only.
@@ -41,6 +68,19 @@ export interface SkinDef {
   palette?: Record<number, number>;
   /** Stand-in for palette entries the table above doesn't cover. */
   paletteFallback?: number;
+  /**
+   * A computed remap, for a skin that belongs to every element and so cannot carry a closed
+   * table (Victorious). Wins over `palette` when set.
+   */
+  remap?: (base: number) => number;
+}
+
+/** One drawn colour through a skin — the single lookup every renderer of a skin shares. */
+export function skinColor(def: SkinDef | undefined, base: number): number {
+  if (!def) return base;
+  if (def.remap) return def.remap(base);
+  if (!def.palette) return base;
+  return def.palette[base] ?? def.paletteFallback ?? base;
 }
 
 /**
@@ -272,26 +312,126 @@ export const SKINS: SkinDef[] = [
     palette: ANGELIC_PALETTE,
     paletteFallback: 0xd9a333,
   },
+  AMBER_SKIN,
+  RAGE_SKIN,
+  CYBORG_SKIN,
+  WW2_SKIN,
+  ROCKET_SKIN,
+  JASON_SKIN,
+  DOOM_SKIN,
+  PASSION_SKIN,
+  SAKURA_SKIN,
+  VAMPIRE_SKIN,
+  ROCKSTAR_SKIN,
+  PIRATE_SKIN,
+  SNIPER_SKIN,
+  ORDER_SKIN,
+  WITCH_SKIN,
+  ANIMATRONIC_SKIN,
+  CELEBRATION_SKIN,
+  WARDEN_SKIN,
+  HOLLOW_SKIN,
+  ANOMALY_SKIN,
+  CONDUCTOR_SKIN,
+  MONKEY_SKIN,
 ];
+
+// ── Victorious ────────────────────────────────────────────────────────────
+
+/** The ladder step of Excelsius, the summit (`RankedData`: 15 = Excelsius). */
+const EXCELSIUS_STEP = 15;
+
+/** Gold ramp, darkest to brightest — every colour lands on it by its own luminance. */
+const GOLD_RAMP: [number, number][] = [
+  [0.0, 0x1c1000],
+  [0.18, 0x4a3006],
+  [0.38, 0x8a6110],
+  [0.55, 0xc0901a],
+  [0.7, 0xe6b42c],
+  [0.84, 0xffd75a],
+  [0.94, 0xfff0a8],
+  [1.0, 0xfffbe8],
+];
+
+function rampAt(l: number): [number, number, number] {
+  for (let i = 1; i < GOLD_RAMP.length; i++) {
+    const [l1, c1] = GOLD_RAMP[i];
+    if (l <= l1) {
+      const [l0, c0] = GOLD_RAMP[i - 1];
+      const t = (l - l0) / (l1 - l0);
+      return [0, 8, 16].map((sh) => {
+        const a = (c0 >> (16 - sh)) & 0xff;
+        const b = (c1 >> (16 - sh)) & 0xff;
+        return a + (b - a) * t;
+      }) as [number, number, number];
+    }
+  }
+  const c = GOLD_RAMP[GOLD_RAMP.length - 1][1];
+  return [(c >> 16) & 0xff, (c >> 8) & 0xff, c & 0xff];
+}
+
+const goldCache = new Map<number, number>();
+
+/**
+ * Any colour → gold of the same brightness, so every layered effect keeps its shading.
+ * Only the highlights keep a memory of where they came from: above ~70% luminance the
+ * original hue bleeds back in, so a fire skin's hot tips still read warm and a water skin's
+ * foam still reads cool — but everything else is gilt.
+ */
+export function goldify(base: number): number {
+  const hit = goldCache.get(base);
+  if (hit !== undefined) return hit;
+  const r = (base >> 16) & 0xff, g = (base >> 8) & 0xff, b = base & 0xff;
+  const l = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  // Lift the darks a touch: a gold thing is never truly black.
+  const gold = rampAt(Math.min(1, 0.08 + l * 0.95));
+  const keep = 0.08 + Math.max(0, (l - 0.62) / 0.38) * 0.42;
+  const out = [r, g, b].map((v, i) => Math.round(gold[i] + (v - gold[i]) * keep));
+  const c = (out[0] << 16) | (out[1] << 8) | out[2];
+  goldCache.set(base, c);
+  return c;
+}
+
+/**
+ * Victorious: the one skin every element has. It keeps the element's own character and
+ * gilds it — body, rig and every attack — through a computed remap rather than a table, since
+ * it has to cover every element's palette at once. Unlocks on reaching Excelsius in Ranked.
+ */
+export const VICTORIOUS_SKIN: SkinDef = {
+  id: 'victorious',
+  name: 'Victorious!',
+  description: 'Reach Excelsius in Ranked. Everything turns to gold — only the highlights remember their old colours.',
+  elementId: '*',
+  bodyTint: [0xffe27a, 0xa87512],
+  projectileTint: [0xfff0a8, 0xc0901a],
+  remap: goldify,
+};
 
 export function getSkinDef(id: string | null | undefined): SkinDef | undefined {
   if (!id) return undefined;
+  if (id === VICTORIOUS_SKIN.id) return VICTORIOUS_SKIN;
   return SKINS.find((s) => s.id === id);
 }
 
+/** The element's own skins, then Victorious, which every element has. */
 export function getSkinsForElement(elementId: string): SkinDef[] {
-  return SKINS.filter((s) => s.elementId === elementId);
+  return [...SKINS.filter((s) => s.elementId === elementId), VICTORIOUS_SKIN];
 }
 
 export function isSkinUnlocked(id: string): boolean {
   const def = getSkinDef(id);
   if (!def) return false;
+  if (def === VICTORIOUS_SKIN) {
+    return isCheatMode() || getRankedProfile().peakStep >= EXCELSIUS_STEP;
+  }
+  if (!def.achievementId) return true;
   return PlayerData.isAchievementUnlocked(def.achievementId);
 }
 
-/** Achievement name shown on locked skin rows ("🔒 Oops"). */
+/** Unlock condition shown on locked skin rows ("🔒 Oops"). */
 export function skinUnlockHint(id: string): string {
   const def = getSkinDef(id);
-  const ach = def ? getAchievementDef(def.achievementId) : undefined;
+  if (def === VICTORIOUS_SKIN) return 'Reach Excelsius';
+  const ach = def?.achievementId ? getAchievementDef(def.achievementId) : undefined;
   return ach ? ach.name : '???';
 }

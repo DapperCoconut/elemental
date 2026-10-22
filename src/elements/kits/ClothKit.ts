@@ -15,6 +15,10 @@ import {
   CLT, ClothAvatar, ClothColorFn, ClothFx, OUTFITS, OUTFIT_COLOR, OUTFIT_EMOJI, OUTFIT_NAME,
   Outfit, anchorGlyph, jitter, loomCell, longpinGlyph, nailGlyph, pinGlyph, scarfRibbon, webGlyph,
 } from './ClothVisuals';
+import { BaseAvatar } from './ElementVisuals';
+import { makeSkinAvatar } from './skins/SkinAvatars';
+import { HollowAvatar } from './skins/HollowAvatar';
+import { HollowFx, charmCell, charmFrame, charmPanel, hollowCape, thrownNail } from './skins/HollowFx';
 
 type Owner = 'player' | 'npc';
 type MasterySlotId = 'e' | 'r' | 'f' | 'q';
@@ -344,6 +348,8 @@ export interface ClothArenaApi {
   get height(): number;
   /** Skins: maps a Cloth visual colour through that side's equipped skin. */
   clothColor(owner: Owner, base: number): number;
+  /** Skins: the equipped skin id for that side, or null. */
+  skinId(owner: Owner): string | null;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
@@ -370,8 +376,10 @@ export class ClothKit implements SummonPurgeTarget {
   private readonly ncol: ClothColorFn;
   private readonly pfx: ClothFx;
   private readonly nfx: ClothFx;
-  private playerAvatar: ClothAvatar | null = null;
-  private npcAvatar: ClothAvatar | null = null;
+  private playerAvatar: BaseAvatar | null = null;
+  private npcAvatar: BaseAvatar | null = null;
+  /** Hollow skin's transients (nail thrusts, void burst), lazily built. */
+  private hollowFx: HollowFx | null = null;
   /** Anchors, location pins and webs on the floor — under the fighters. */
   private groundGfx: Phaser.GameObjects.Graphics | null = null;
   /** The scarves themselves — above the floor, but under the tailor wearing them. */
@@ -415,8 +423,19 @@ export class ClothKit implements SummonPurgeTarget {
   private fx(owner: Owner): ClothFx { return owner === 'player' ? this.pfx : this.nfx; }
   private col(owner: Owner): ClothColorFn { return owner === 'player' ? this.pcol : this.ncol; }
   private other(owner: Owner): Owner { return owner === 'player' ? 'npc' : 'player'; }
-  private avatar(owner: Owner): ClothAvatar | null {
+  private avatar(owner: Owner): BaseAvatar | null {
     return owner === 'player' ? this.playerAvatar : this.npcAvatar;
+  }
+
+  /** The Hollow skin (visual only): nail stabs, a cloak for a scarf, a charm board, a void form. */
+  private hollow(owner: Owner): boolean { return this.api.skinId(owner) === 'hollow'; }
+  private hfx(): HollowFx {
+    if (!this.hollowFx) this.hollowFx = new HollowFx(this.api.scene);
+    return this.hollowFx;
+  }
+
+  private makeAvatar(owner: Owner): BaseAvatar {
+    return makeSkinAvatar(this.api.skinId(owner), this.api.scene) ?? new ClothAvatar(this.api.scene, this.col(owner));
   }
 
   private get left(): number { return ARENA_PAD; }
@@ -925,7 +944,8 @@ export class ClothKit implements SummonPurgeTarget {
       break;
     }
 
-    this.fx(owner).stab(
+    if (this.hollow(owner)) this.hfx().thrust(f.x, f.y, ang, reach, isEcho ? 0.7 : 1);
+    else this.fx(owner).stab(
       f.x + Math.cos(ang) * reach * 0.8, f.y + Math.sin(ang) * reach * 0.8, ang,
       isEcho ? 0.7 : 1,
     );
@@ -1707,7 +1727,8 @@ export class ClothKit implements SummonPurgeTarget {
     s.nextSwapAt = this.now + OUTFIT_SWAP_CD;
     const from = OUTFIT_COLOR[s.outfit];
     s.outfit = OUTFITS[(OUTFITS.indexOf(s.outfit) + 1) % OUTFITS.length];
-    this.avatar(owner)?.setOutfit(s.outfit);
+    const av = this.avatar(owner);
+    if (av instanceof ClothAvatar) av.setOutfit(s.outfit);
     this.fx(owner).shed(f.x, f.y, from, OUTFIT_COLOR[s.outfit]);
     Sfx.playAt('whip', f.x, { volume: 0.5, rate: 1.5 });
     if (owner === 'player') {
@@ -1731,10 +1752,13 @@ export class ClothKit implements SummonPurgeTarget {
     s.bleedInstalled = true;
     f.damageBudget = BLEED_CAP;
     this.avatar(owner)?.play('clap', 0, 400);
-    this.fx(owner).burst(f.x, f.y, 54, CLT.clothPale);
-    this.fx(owner).lint(f.x, f.y, 6, 22, 360, CLT.cloth);
+    if (this.hollow(owner)) this.hfx().voidBurst(f.x, f.y, 54);
+    else {
+      this.fx(owner).burst(f.x, f.y, 54, CLT.clothPale);
+      this.fx(owner).lint(f.x, f.y, 6, 22, 360, CLT.cloth);
+    }
     Sfx.playAt('whip', f.x, { volume: 0.65, rate: 1.25 });
-    this.api.showFloatingText(f.x, f.y - 52, '🩹 BLEED STOP', this.hex(CLT.clothPale));
+    this.api.showFloatingText(f.x, f.y - 52, this.hollow(owner) ? '🖤 VOID FORM' : '🩹 BLEED STOP', this.hex(CLT.clothPale));
     if (owner === 'player') this.api.broadcastMasteryCast('bleed-stop');
   }
 
@@ -1896,14 +1920,18 @@ export class ClothKit implements SummonPurgeTarget {
         continue;
       }
       if (!av) {
-        av = new ClothAvatar(this.api.scene, this.col(owner));
+        av = this.makeAvatar(owner);
         if (owner === 'player') this.playerAvatar = av; else this.npcAvatar = av;
       }
       const s = this.side(owner);
       av.setMastered(this.mastered(owner));
-      av.setOutfit(s.outfit);
-      av.setWound(f.maxHp > 0 ? f.hp / f.maxHp : 0);
-      av.setPinned(f.maxHp > 0 ? Math.min(1, f.pinnedHp / f.maxHp) : 0);
+      if (av instanceof ClothAvatar) {
+        av.setOutfit(s.outfit);
+        av.setWound(f.maxHp > 0 ? f.hp / f.maxHp : 0);
+        av.setPinned(f.maxHp > 0 ? Math.min(1, f.pinnedHp / f.maxHp) : 0);
+      } else if (av instanceof HollowAvatar) {
+        av.setVoid(this.now < s.bleedUntil);
+      }
       av.setFacing(Math.atan2(s.aimY - f.y, s.aimX - f.x));
       av.update(delta, f.x, f.y, f.alpha);
     }
@@ -1988,15 +2016,19 @@ export class ClothKit implements SummonPurgeTarget {
       const burn = this.now < s.burnUntil
         ? Phaser.Math.Clamp((this.now - s.burnStartedAt) / BURN_MS, 0, 0.7) : 0;
       const pinned = f.maxHp > 0 ? Math.min(1, f.pinnedHp / (f.maxHp * 0.4)) : 0;
+      const hollow = this.hollow(owner);
+      const voidK = hollow && this.now < s.bleedUntil ? 1 : 0;
       for (const strand of this.scarfStrands(owner)) {
-        scarfRibbon(g, tint, strand, SCARF_WIDTH, 0.97, { t, burn, pinned });
+        if (hollow) hollowCape(g, strand, SCARF_WIDTH, 0.97, { t, burn, pinned, voidK });
+        else scarfRibbon(g, tint, strand, SCARF_WIDTH, 0.97, { t, burn, pinned });
       }
     }
 
     // ── A frozen scarf, waiting to snap ──
     for (const sl of this.slices) {
       const tint = this.col(sl.owner);
-      scarfRibbon(g, tint, sl.pts, SCARF_WIDTH, 0.8, { t, ghost: true });
+      if (this.hollow(sl.owner)) hollowCape(g, sl.pts, SCARF_WIDTH, 0.8, { t, ghost: true });
+      else scarfRibbon(g, tint, sl.pts, SCARF_WIDTH, 0.8, { t, ghost: true });
       // Pins holding it to the floor.
       for (let i = 1; i < sl.pts.length; i += 3) {
         pinGlyph(g, tint, sl.pts[i].x, sl.pts[i].y, -Math.PI / 2, 14, 0.85, { head: 2 });
@@ -2015,7 +2047,7 @@ export class ClothKit implements SummonPurgeTarget {
       if (!this.isCloth(owner)) continue;
       const s = this.side(owner);
       const f = this.fighter(owner);
-      if (!this.alive(f) || this.now >= s.bleedUntil) continue;
+      if (!this.alive(f) || this.now >= s.bleedUntil || this.hollow(owner)) continue;
       const tint = this.col(owner);
       const spent = f.damageBudget >= 0 ? 1 - f.damageBudget / BLEED_CAP : 1;
       const fade = Phaser.Math.Clamp((s.bleedUntil - this.now) / 300, 0, 1);
@@ -2046,9 +2078,14 @@ export class ClothKit implements SummonPurgeTarget {
     for (const owner of BOTH) {
       const s = this.side(owner);
       const tint = this.col(owner);
-      if (s.flying) longpinGlyph(g, tint, s.flying.x, s.flying.y, s.flying.ang, 1, t);
+      const hollow = this.hollow(owner);
+      if (s.flying) {
+        if (hollow) thrownNail(g, s.flying.x, s.flying.y, s.flying.ang, 1, t, true);
+        else longpinGlyph(g, tint, s.flying.x, s.flying.y, s.flying.ang, 1, t);
+      }
       if (s.pin) {
-        longpinGlyph(g, tint, s.pin.x, s.pin.y, s.pin.ang, 0.95, t);
+        if (hollow) thrownNail(g, s.pin.x, s.pin.y, s.pin.ang, 0.95, t, false);
+        else longpinGlyph(g, tint, s.pin.x, s.pin.y, s.pin.ang, 0.95, t);
         // The thread still running back to the tailor — this is what the recall pulls on.
         const f = this.fighter(owner);
         if (this.alive(f)) {
@@ -2092,6 +2129,7 @@ export class ClothKit implements SummonPurgeTarget {
     ground: number, thread: number, t: number, alpha = 0.92,
   ): void {
     const tint = this.pcol;
+    if (this.hollow('player')) { charmPanel(g, x, y, w, h, tint(thread), t, alpha); return; }
     const zz = 3;
     const pts: Phaser.Geom.Point[] = [];
     const nx = Math.max(2, Math.round(w / (zz * 2)));
@@ -2254,42 +2292,53 @@ export class ClothKit implements SummonPurgeTarget {
     const lx = x + w + 18;
     const ly = y - 2;
     const lw = TAPESTRY_SIZE * lc;
-    g.fillStyle(0x000000, 0.35);
-    g.fillRoundedRect(lx - 7, ly - 8, lw + 16, lw + 18, 3);
-    // Posts.
-    g.fillStyle(tint(CLT.loom), 1);
-    g.fillRect(lx - 7, ly - 9, 5, lw + 18);
-    g.fillRect(lx + lw + 2, ly - 9, 5, lw + 18);
-    g.fillStyle(tint(CLT.loomLit), 0.8);
-    g.fillRect(lx - 7, ly - 9, 1.5, lw + 18);
-    g.fillRect(lx + lw + 2, ly - 9, 1.5, lw + 18);
-    // Beams.
-    for (const by of [ly - 8, ly + lw + 3]) {
-      g.fillStyle(tint(CLT.brassDark), 1);
-      g.fillRoundedRect(lx - 9, by, lw + 18, 5, 2.5);
-      g.fillStyle(tint(CLT.brass), 1);
-      g.fillRoundedRect(lx - 9, by, lw + 18, 3, 1.5);
-      g.fillStyle(tint(CLT.brassLit), 0.8);
-      g.fillCircle(lx - 6.5, by + 2.5, 1.2);
-      g.fillCircle(lx + lw + 6.5, by + 2.5, 1.2);
-    }
-    // Warp threads behind the cells.
-    for (let i = 0; i <= TAPESTRY_SIZE * 2; i++) {
-      g.lineStyle(0.6, tint(CLT.web), 0.35);
-      g.lineBetween(lx + i * (lw / (TAPESTRY_SIZE * 2)), ly - 3, lx + i * (lw / (TAPESTRY_SIZE * 2)), ly + lw + 3);
-    }
-    for (let gy = 0; gy < TAPESTRY_SIZE; gy++) {
-      for (let gx = 0; gx < TAPESTRY_SIZE; gx++) {
-        const id = s.tap.grid[gy * TAPESTRY_SIZE + gx];
-        loomCell(g, tint, lx + gx * lc, ly + gy * lc, lc - 1, id ? ARTWORK_MAP[id]?.color ?? CLT.cloth : null, 1);
+    if (this.hollow('player')) {
+      // The charm board: a black panel, notches along the foot, a round charm per sewn cell.
+      charmFrame(g, lx, ly, lw, usedCells(s.tap), TAPESTRY_SIZE * TAPESTRY_SIZE, t, false);
+      for (let gy = 0; gy < TAPESTRY_SIZE; gy++) {
+        for (let gx = 0; gx < TAPESTRY_SIZE; gx++) {
+          const id = s.tap.grid[gy * TAPESTRY_SIZE + gx];
+          charmCell(g, lx + gx * lc, ly + gy * lc, lc - 1, id ? tint(ARTWORK_MAP[id]?.color ?? CLT.cloth) : null, 1, t);
+        }
       }
+    } else {
+      g.fillStyle(0x000000, 0.35);
+      g.fillRoundedRect(lx - 7, ly - 8, lw + 16, lw + 18, 3);
+      // Posts.
+      g.fillStyle(tint(CLT.loom), 1);
+      g.fillRect(lx - 7, ly - 9, 5, lw + 18);
+      g.fillRect(lx + lw + 2, ly - 9, 5, lw + 18);
+      g.fillStyle(tint(CLT.loomLit), 0.8);
+      g.fillRect(lx - 7, ly - 9, 1.5, lw + 18);
+      g.fillRect(lx + lw + 2, ly - 9, 1.5, lw + 18);
+      // Beams.
+      for (const by of [ly - 8, ly + lw + 3]) {
+        g.fillStyle(tint(CLT.brassDark), 1);
+        g.fillRoundedRect(lx - 9, by, lw + 18, 5, 2.5);
+        g.fillStyle(tint(CLT.brass), 1);
+        g.fillRoundedRect(lx - 9, by, lw + 18, 3, 1.5);
+        g.fillStyle(tint(CLT.brassLit), 0.8);
+        g.fillCircle(lx - 6.5, by + 2.5, 1.2);
+        g.fillCircle(lx + lw + 6.5, by + 2.5, 1.2);
+      }
+      // Warp threads behind the cells.
+      for (let i = 0; i <= TAPESTRY_SIZE * 2; i++) {
+        g.lineStyle(0.6, tint(CLT.web), 0.35);
+        g.lineBetween(lx + i * (lw / (TAPESTRY_SIZE * 2)), ly - 3, lx + i * (lw / (TAPESTRY_SIZE * 2)), ly + lw + 3);
+      }
+      for (let gy = 0; gy < TAPESTRY_SIZE; gy++) {
+        for (let gx = 0; gx < TAPESTRY_SIZE; gx++) {
+          const id = s.tap.grid[gy * TAPESTRY_SIZE + gx];
+          loomCell(g, tint, lx + gx * lc, ly + gy * lc, lc - 1, id ? ARTWORK_MAP[id]?.color ?? CLT.cloth : null, 1);
+        }
+      }
+      // The shuttle, slowly passing across under the bottom beam.
+      const shx = lx + ((Math.sin(t * 0.8) + 1) / 2) * lw;
+      g.fillStyle(tint(CLT.brassDark), 1);
+      g.fillEllipse(shx, ly + lw + 11, 12, 4);
+      g.fillStyle(tint(CLT.cloth), 1);
+      g.fillEllipse(shx, ly + lw + 11, 5, 2.4);
     }
-    // The shuttle, slowly passing across under the bottom beam.
-    const shx = lx + ((Math.sin(t * 0.8) + 1) / 2) * lw;
-    g.fillStyle(tint(CLT.brassDark), 1);
-    g.fillEllipse(shx, ly + lw + 11, 12, 4);
-    g.fillStyle(tint(CLT.cloth), 1);
-    g.fillEllipse(shx, ly + lw + 11, 5, 2.4);
 
     if (!this.hudLabel) {
       this.hudLabel = this.api.scene.add.text(0, 0, '', {
@@ -2304,7 +2353,7 @@ export class ClothKit implements SummonPurgeTarget {
     this.hudLabel.setText(
       `🧣 ${Math.round(f.hp)}/${Math.round(f.maxHp)}`
       + (f.pinnedHp > 0 ? `   📍 ${Math.round(f.pinnedHp)}` : '')
-      + `   🧵 ${used}/25${outfit}`,
+      + (this.hollow('player') ? `   ◆ ${used}/25 notches${outfit}` : `   🧵 ${used}/25${outfit}`),
     );
 
     // ── The right-click card ──
@@ -2416,13 +2465,17 @@ export class ClothKit implements SummonPurgeTarget {
     const left = Math.max(0, DRAFT_MS - (this.now - d.openedAt));
     const title = this.draftTexts[0];
     title.setStyle({ fontSize: '20px', color: '#ffd98a', fontStyle: 'bold' });
-    title.setText(d.picked ? `🧵 SEW  ${d.picked.name}` : '🧵 CHOOSE AN ARTWORK');
+    const hk = this.hollow('player');
+    title.setText(hk
+      ? (d.picked ? `EQUIP  ${d.picked.name}` : 'CHARMS')
+      : (d.picked ? `🧵 SEW  ${d.picked.name}` : '🧵 CHOOSE AN ARTWORK'));
+    if (hk) title.setColor('#f1f3f7');
     title.setPosition(this.api.width / 2 - title.width / 2, 108);
 
     const sub = this.draftTexts[1];
     sub.setStyle({ fontSize: '12px', color: '#c9b3bb' });
     sub.setText(d.picked
-      ? 'Move the mouse over the loom, click to sew.'
+      ? (hk ? 'Move the mouse over the notches, click to equip.' : 'Move the mouse over the loom, click to sew.')
       : `Click a card or press 1 / 2 / 3.     ${(left / 1000).toFixed(1)}s`);
     sub.setPosition(this.api.width / 2 - sub.width / 2, 134);
 
@@ -2431,36 +2484,49 @@ export class ClothKit implements SummonPurgeTarget {
     // A real frame loom: two posts, brass-capped warp beams, and the warp threads strung
     // between them behind the cells.
     const LW = TAPESTRY_SIZE * cell;
-    g.fillStyle(0x000000, 0.4);
-    g.fillRoundedRect(lx - 14, ly - 16, LW + 32, LW + 36, 6);
-    g.fillStyle(tint(CLT.loom), 0.95);
-    g.fillRoundedRect(lx - 8, ly - 8, LW + 16, LW + 16, 7);
-    for (const px of [lx - 16, lx + LW + 6]) {
-      g.fillStyle(tint(CLT.loom), 1);
-      g.fillRect(px, ly - 20, 10, LW + 40);
-      g.fillStyle(tint(CLT.loomLit), 0.9);
-      g.fillRect(px, ly - 20, 3, LW + 40);
-      g.fillStyle(tint(CLT.ink), 0.6);
-      g.fillRect(px + 8, ly - 20, 2, LW + 40);
-    }
-    for (const by of [ly - 18, ly + LW + 8]) {
-      g.fillStyle(tint(CLT.brassDark), 1);
-      g.fillRoundedRect(lx - 20, by, LW + 40, 10, 5);
-      g.fillStyle(tint(CLT.brass), 1);
-      g.fillRoundedRect(lx - 20, by, LW + 40, 6, 3);
-      g.fillStyle(tint(CLT.brassLit), 0.7);
-      g.fillRect(lx - 16, by + 1, LW + 32, 1.5);
-    }
-    for (let i = 0; i <= TAPESTRY_SIZE * 4; i++) {
-      const wx = lx + (LW * i) / (TAPESTRY_SIZE * 4);
-      g.lineStyle(1, tint(CLT.web), 0.4);
-      g.lineBetween(wx, ly - 8, wx, ly + LW + 8);
-    }
-    for (let gy = 0; gy < TAPESTRY_SIZE; gy++) {
-      for (let gx = 0; gx < TAPESTRY_SIZE; gx++) {
-        const id = s.tap.grid[gy * TAPESTRY_SIZE + gx];
-        loomCell(g, tint, lx + gx * cell + 1, ly + gy * cell + 1, cell - 2,
-          id ? ARTWORK_MAP[id]?.color ?? CLT.cloth : null, 1);
+    const hollow = this.hollow('player');
+    if (hollow) {
+      // The charm menu: a black panel, the mask emblem, notches lit for each cell in use.
+      charmFrame(g, lx, ly, LW, usedCells(s.tap), TAPESTRY_SIZE * TAPESTRY_SIZE, this.vizT, true);
+      for (let gy = 0; gy < TAPESTRY_SIZE; gy++) {
+        for (let gx = 0; gx < TAPESTRY_SIZE; gx++) {
+          const id = s.tap.grid[gy * TAPESTRY_SIZE + gx];
+          charmCell(g, lx + gx * cell + 1, ly + gy * cell + 1, cell - 2,
+            id ? tint(ARTWORK_MAP[id]?.color ?? CLT.cloth) : null, 1, this.vizT);
+        }
+      }
+    } else {
+      g.fillStyle(0x000000, 0.4);
+      g.fillRoundedRect(lx - 14, ly - 16, LW + 32, LW + 36, 6);
+      g.fillStyle(tint(CLT.loom), 0.95);
+      g.fillRoundedRect(lx - 8, ly - 8, LW + 16, LW + 16, 7);
+      for (const px of [lx - 16, lx + LW + 6]) {
+        g.fillStyle(tint(CLT.loom), 1);
+        g.fillRect(px, ly - 20, 10, LW + 40);
+        g.fillStyle(tint(CLT.loomLit), 0.9);
+        g.fillRect(px, ly - 20, 3, LW + 40);
+        g.fillStyle(tint(CLT.ink), 0.6);
+        g.fillRect(px + 8, ly - 20, 2, LW + 40);
+      }
+      for (const by of [ly - 18, ly + LW + 8]) {
+        g.fillStyle(tint(CLT.brassDark), 1);
+        g.fillRoundedRect(lx - 20, by, LW + 40, 10, 5);
+        g.fillStyle(tint(CLT.brass), 1);
+        g.fillRoundedRect(lx - 20, by, LW + 40, 6, 3);
+        g.fillStyle(tint(CLT.brassLit), 0.7);
+        g.fillRect(lx - 16, by + 1, LW + 32, 1.5);
+      }
+      for (let i = 0; i <= TAPESTRY_SIZE * 4; i++) {
+        const wx = lx + (LW * i) / (TAPESTRY_SIZE * 4);
+        g.lineStyle(1, tint(CLT.web), 0.4);
+        g.lineBetween(wx, ly - 8, wx, ly + LW + 8);
+      }
+      for (let gy = 0; gy < TAPESTRY_SIZE; gy++) {
+        for (let gx = 0; gx < TAPESTRY_SIZE; gx++) {
+          const id = s.tap.grid[gy * TAPESTRY_SIZE + gx];
+          loomCell(g, tint, lx + gx * cell + 1, ly + gy * cell + 1, cell - 2,
+            id ? ARTWORK_MAP[id]?.color ?? CLT.cloth : null, 1);
+        }
       }
     }
     // The ghost of what is about to be sewn.
@@ -2470,9 +2536,14 @@ export class ClothKit implements SummonPurgeTarget {
         const px = lx + (d.gx + cx) * cell + 1;
         const py = ly + (d.gy + cy) * cell + 1;
         g.fillStyle(ok ? tint(d.picked.color) : 0x882222, 0.55 + Math.sin(this.vizT * 8) * 0.12);
-        g.fillRect(px, py, cell - 2, cell - 2);
         g.lineStyle(2, ok ? tint(CLT.clothPale) : 0xff5555, 0.9);
-        g.strokeRect(px, py, cell - 2, cell - 2);
+        if (hollow) {
+          g.fillCircle(px + (cell - 2) / 2, py + (cell - 2) / 2, (cell - 2) * 0.44);
+          g.strokeCircle(px + (cell - 2) / 2, py + (cell - 2) / 2, (cell - 2) * 0.44);
+        } else {
+          g.fillRect(px, py, cell - 2, cell - 2);
+          g.strokeRect(px, py, cell - 2, cell - 2);
+        }
       }
     }
 
@@ -2494,7 +2565,7 @@ export class ClothKit implements SummonPurgeTarget {
         g.lineStyle(2, tint(CLT.brassLit), 0.5 + 0.3 * Math.sin(this.vizT * 6));
         g.strokeRect(cx - 3, y0 - 3, cw + 6, 174);
       }
-      pinGlyph(g, tint, cx + cw - 16, y0 + 2, 2.3, 18, 1, { head: 3 });
+      if (!hollow) pinGlyph(g, tint, cx + cw - 16, y0 + 2, 2.3, 18, 1, { head: 3 });
 
       // The piece's shape, drawn full size so the player is choosing a shape as much as a stat.
       const sc = 17;
@@ -2503,11 +2574,12 @@ export class ClothKit implements SummonPurgeTarget {
       const sx = cx + cw / 2 - (w * sc) / 2;
       const sy = y0 + 30;
       for (const [ccx, ccy] of def.cells) {
-        loomCell(g, tint, sx + ccx * sc, sy + ccy * sc, sc - 2, def.color, 1);
+        if (hollow) charmCell(g, sx + ccx * sc, sy + ccy * sc, sc - 2, tint(def.color), 1, this.vizT);
+        else loomCell(g, tint, sx + ccx * sc, sy + ccy * sc, sc - 2, def.color, 1);
       }
 
       const label = this.draftTexts[4 + i];
-      label.setStyle({ fontSize: '12px', color: '#f7c3cc', wordWrap: { width: cw - 22 } });
+      label.setStyle({ fontSize: '12px', color: hollow ? '#dfe6f2' : '#f7c3cc', wordWrap: { width: cw - 22 } });
       label.setText(`${def.name}${def.kind === 'rightclick' ? '  🖱️' : ''}\n${def.blurb}`);
       label.setPosition(cx + 11, sy + h * sc + 10);
     }

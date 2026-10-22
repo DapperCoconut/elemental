@@ -1214,6 +1214,7 @@ export class ArenaScene extends Phaser.Scene {
         get aimX() { return arena.input.activePointer.worldX; },
         get aimY() { return arena.input.activePointer.worldY; },
         huntColor: (owner, base) => arena.skinsKit.huntColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
         hasUpgrade: (slot) => arena.hasUpgradeFor('hunt', slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
@@ -1280,6 +1281,7 @@ export class ArenaScene extends Phaser.Scene {
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         sendSilenceMsg: (msg) => { if (arena.isOnline) Net.send(msg); },
         silenceColor: (owner, base) => arena.skinsKit.silenceColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
       };
       this.silenceKit = new SilenceKit(silenceApi);
     }
@@ -1322,6 +1324,7 @@ export class ArenaScene extends Phaser.Scene {
         setStatusIndicator: (id, status) => arena.setStatusIndicator(id, status),
         pushFighterOutOfRect: (body, bx, by, bw, bh) => arena.pushFighterOutOfRect(body, bx, by, bw, bh),
         creationColor: (owner, base) => arena.skinsKit.creationColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
         get abilityBars() { return arena.abilityBars; },
         get masteryActive() { return arena.creationMasteryOn && arena.playerIs('creation'); },
         masteryBindFor: (slot) => arena.masteryBindForElement('creation', slot),
@@ -1382,6 +1385,7 @@ export class ArenaScene extends Phaser.Scene {
     } else {
       const arena = this;
       const growthApi: GrowthArenaApi = {
+        skinId: (owner) => arena.skinsKit.skinId(owner),
         get player() { return arena.player; },
         get npc() { return arena.npc; },
         get scene(): Phaser.Scene { return arena; },
@@ -1674,6 +1678,7 @@ export class ArenaScene extends Phaser.Scene {
         hasUpgrade: (slot) => arena.hasUpgradeFor('electricity', slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         electricityColor: (owner, base) => arena.skinsKit.electricityColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
         get playerSpeedMult() { return arena.playerSpeedMult; },
         set playerSpeedMult(v: number) { arena.playerSpeedMult = v; },
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
@@ -1717,6 +1722,7 @@ export class ArenaScene extends Phaser.Scene {
         setStatusIndicator: (id, st) => arena.setStatusIndicator(id, st),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         soundColor: (owner, base) => arena.skinsKit.soundColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
         broadcastMasteryCast: (id) => arena.broadcastMasteryCast(id),
         get isInvasion() { return arena.isInvasion; },
         masteryBindFor: (slot) => arena.masteryBindForElement('sound', slot),
@@ -1828,6 +1834,7 @@ export class ArenaScene extends Phaser.Scene {
         hasUpgrade: (slot) => arena.hasUpgradeFor('crystal', slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         crystalColor: (owner, base) => arena.skinsKit.crystalColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
@@ -2344,6 +2351,7 @@ export class ArenaScene extends Phaser.Scene {
         get isInvasion() { return arena.isInvasion; },
         isTargetable: (f) => !arena.isInvasion || !(f instanceof Husk) || arena.invasionKit.isHuskTargetable(f),
         dreamColor: (owner, base) => arena.skinsKit.dreamColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
@@ -2467,6 +2475,7 @@ export class ArenaScene extends Phaser.Scene {
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
         clayColor: (owner, base) => arena.skinsKit.clayColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
@@ -2507,6 +2516,7 @@ export class ArenaScene extends Phaser.Scene {
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
         magmaColor: (owner, base) => arena.skinsKit.magmaColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
@@ -2676,6 +2686,7 @@ export class ArenaScene extends Phaser.Scene {
         isTargetable: (f) => !arena.isInvasion || !(f instanceof Husk) || arena.invasionKit.isHuskTargetable(f),
         huskShotsNear: (x, y, r) => (arena.isInvasion ? arena.invasionKit.huskShotsNear(x, y, r) : []),
         passionColor: (owner, base) => arena.skinsKit.passionColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
         hasUpgrade: (owner, slot) => (owner === 'player' ? arena.hasUpgradeFor('passion', slot) : arena.hasNpcUpgrade(slot)),
         purgeDebuffs: (f) => arena.purgeDebuffs(f),
         disarmHuskShotsNear: (x, y, r, dmg, spd, color) => (arena.isInvasion
@@ -2718,6 +2729,7 @@ export class ArenaScene extends Phaser.Scene {
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
         ruinColor: (owner, base) => arena.skinsKit.ruinColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
@@ -2840,6 +2852,7 @@ export class ArenaScene extends Phaser.Scene {
     } else {
       const arena = this;
       const deathApi: DeathArenaApi = {
+        skinId: (owner) => arena.skinsKit.skinId(owner),
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
@@ -2944,6 +2957,7 @@ export class ArenaScene extends Phaser.Scene {
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
         clothColor: (owner, base) => arena.skinsKit.clothColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
@@ -3035,6 +3049,7 @@ export class ArenaScene extends Phaser.Scene {
         get height() { return arena.scale.height; },
         get bounds() { return arena.physics.world.bounds; },
         tempestColor: (owner, base) => arena.skinsKit.tempestColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
@@ -3083,6 +3098,7 @@ export class ArenaScene extends Phaser.Scene {
         get playerAbilities() { return arena.playerElement.abilities; },
         get abilityBars() { return arena.abilityBars; },
         mythColor: (owner, base) => arena.skinsKit.mythColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
@@ -3170,6 +3186,7 @@ export class ArenaScene extends Phaser.Scene {
         get projectiles() { return arena.projectiles; },
         blockHuskShot: (x, y, r) => arena.isInvasion && arena.invasionKit.blockShotNear(x, y, r),
         radiationColor: (owner, base) => arena.skinsKit.radiationColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
         hasUpgrade: (owner, slot) => (owner === 'player'
           ? arena.hasUpgradeFor('radiation', slot)
           : arena.hasNpcUpgrade(slot)),
@@ -3292,6 +3309,7 @@ export class ArenaScene extends Phaser.Scene {
         hasUpgrade: (slot) => arena.hasUpgradeFor('conquest', slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
         conquestColor: (owner, base) => arena.skinsKit.conquestColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
@@ -3341,6 +3359,7 @@ export class ArenaScene extends Phaser.Scene {
         get isPlayerRubber() { return arena.playerIs('rubber'); },
         get isNpcRubber() { return arena.npcElement?.id === 'rubber'; },
         rubberColor: (owner, base) => arena.skinsKit.rubberColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
         get isDodging() { return arena.isDodging; },
         setStatusIndicator: (id, status) => arena.setStatusIndicator(id, status),
         get masteryActive() { return arena.rubberMasteryOn && arena.playerIs('rubber'); },
@@ -3537,6 +3556,7 @@ export class ArenaScene extends Phaser.Scene {
         hasUpgrade: (slot) => arena.hasUpgradeFor('echo', slot),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         echoColor: (owner, base) => arena.skinsKit.echoColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
       };
       this.echoKit = new EchoKit(echoApi);
     }
@@ -3731,6 +3751,7 @@ export class ArenaScene extends Phaser.Scene {
           if (arena.playerIs('oil')) PlayerData.addMasteryStat('oil', key, amount);
         },
         oilColor: (owner, base) => arena.skinsKit.oilColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
       };
       this.oilKit = new OilKit(oilApi);
     }

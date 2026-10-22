@@ -1148,7 +1148,7 @@ export class SubterfugeKit {
       if (!t.active || t.hp <= 0) continue;
       if (this._pointToSegmentDist(t.x, t.y, sx, sy, ex, ey) <= 24) {
         t.takeDamage(dmg);
-        this.api.spawnHitFlash(t.x, t.y, color);
+        this.api.spawnHitFlash(t.x, t.y, this.col(owner)(color));
         this._addSprayAmmoFromDamage(owner, dmg);
         this._noteSmokeAttack(owner);
       }
@@ -1504,7 +1504,7 @@ export class SubterfugeKit {
         if ((l.owner === 'player') === (p.isFromPlayer === true)) continue;
         if (Phaser.Math.Distance.Between(p.x, p.y, l.x, l.y) <= 18) {
           p.destroy();
-          this.api.spawnHitFlash(l.x, l.y, 0xffdd33);
+          this.api.spawnHitFlash(l.x, l.y, this.col(l.owner)(0xffdd33));
           if (l.type === 'specialist') {
             this.api.showFloatingText(l.x, l.y - 28, '🛡️ Armored', '#aaaacc');
           } else {
@@ -1641,7 +1641,7 @@ export class SubterfugeKit {
     const dmg = this._lvlDmg(l, THUG_DMG);
     enemy.takeDamage(dmg);
     this._creditRecruitDamage(l, dmg);
-    this.api.spawnHitFlash(enemy.x, enemy.y, 0xdd2233);
+    this.api.spawnHitFlash(enemy.x, enemy.y, this.col(l.owner)(0xdd2233));
 
     const maxed = l.level >= XP_MAX_LEVEL;
     const stunMs = THUG_STUN_MS * (maxed ? 2 : 1);
@@ -1680,7 +1680,7 @@ export class SubterfugeKit {
       const dmg = this._lvlDmg(l, baseDmg);
       enemy.takeDamage(dmg);
       this._creditRecruitDamage(l, dmg);
-      this.api.spawnHitFlash(enemy.x, enemy.y, color);
+      this.api.spawnHitFlash(enemy.x, enemy.y, this.col(l.owner)(color));
     }
     this.fx(l.owner).tracer(sx, sy, ex, ey, { color, depth: D_WORLD, duration: 110, width: 1.4 });
   }
@@ -1934,7 +1934,7 @@ export class SubterfugeKit {
       const share = amount / own.length;
       for (const l of own) {
         l.loyaltyMs -= share * LINK_LOYALTY_MS_PER_DMG;
-        this.api.spawnHitFlash(l.x, l.y, 0x66ff66);
+        this.api.spawnHitFlash(l.x, l.y, this.col(l.owner)(0x66ff66));
       }
       this.api.showFloatingText(fighter.x, fighter.y - 30, 'Linked!', '#66ff66');
       return true;
@@ -2044,7 +2044,7 @@ export class SubterfugeKit {
           dmgAccum -= whole;
           if (whole > 0) {
             enemy.takeDamage(whole);
-            this.api.spawnHitFlash(enemy.x, enemy.y, 0x66ff33);
+            this.api.spawnHitFlash(enemy.x, enemy.y, this.col(owner)(0x66ff33));
           }
           if (owner === 'player') this.acidRainDmgAccum = dmgAccum;
           else this.npcAcidRainDmgAccum = dmgAccum;
@@ -2245,7 +2245,7 @@ export class SubterfugeKit {
       if (Phaser.Math.Distance.Between(d.x, d.y, t.x, t.y) <= 20) {
         d.hitSet.add(t);
         t.takeDamage(dmg);
-        this.api.spawnHitFlash(t.x, t.y, DAGGER_FILL[d.color]);
+        this.api.spawnHitFlash(t.x, t.y, this.col(d.owner)(DAGGER_FILL[d.color]));
         // The recall hits harder and cuts deeper, so it gets the bigger arc.
         this.fx(d.owner).cut(t.x, t.y, Math.atan2(d.dirY, d.dirX), dmg > DAGGER_THROW_DMG ? 42 : 30, {
           color: d.color === 'red' ? SUB.scarlet : SUB.steelHi,
@@ -2293,7 +2293,7 @@ export class SubterfugeKit {
       if (Phaser.Math.Distance.Between(ox, oy, enemy.x, enemy.y) <= 22) {
         o.nextHitAt = time + ORBIT_HIT_CD_MS;
         enemy.takeDamage(ORBIT_DMG);
-        this.api.spawnHitFlash(enemy.x, enemy.y, DAGGER_FILL[o.color]);
+        this.api.spawnHitFlash(enemy.x, enemy.y, this.col(o.owner)(DAGGER_FILL[o.color]));
         this.fx(o.owner).cut(enemy.x, enemy.y, o.angle + Math.PI / 2, 34, {
           color: o.color === 'red' ? SUB.scarlet : SUB.steelHi, scores: 2, depth: D_AIR,
         });

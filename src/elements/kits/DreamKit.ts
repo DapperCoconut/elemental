@@ -11,6 +11,8 @@ import {
   star, stuckFeather,
 } from './DreamVisuals';
 import { meterGain } from '../../combat/Meters';
+import { makeSkinAvatar } from './skins/SkinAvatars';
+import { smiler } from './skins/AnomalyFx';
 
 type Owner = 'player' | 'npc';
 
@@ -414,6 +416,7 @@ export interface DreamArenaApi {
   isTargetable(f: Fighter): boolean;
   /** Skins: maps a Dream visual colour through that side's equipped skin. */
   dreamColor(owner: Owner, base: number): number;
+  skinId(owner: Owner): string | null;
   spawnHitFlash(x: number, y: number, color: number): void;
   buildPlayerContext(x: number, y: number): CastContext;
   setStatusIndicator(id: string, status: CustomStatus | null): void;
@@ -536,6 +539,15 @@ export class DreamKit {
   private remote(owner: Owner): boolean { return owner === 'npc' && this.api.isOnline; }
   private alive(f: Fighter | null | undefined): f is Fighter { return !!f && f.active && f.hp > 0; }
   private avatar(owner: Owner): DreamAvatar | null { return owner === 'player' ? this.playerAvatar : this.npcAvatar; }
+  /** The owner's skin rig, or the sleepwalker. A Dream skin rig must extend `DreamAvatar` (it drives the guns). */
+  private makeAvatar(owner: Owner): DreamAvatar {
+    const skin = makeSkinAvatar(this.api.skinId(owner), this.api.scene);
+    if (skin instanceof DreamAvatar) return skin;
+    skin?.destroy();
+    return new DreamAvatar(this.api.scene, this.col(owner));
+  }
+  /** Anomaly skin: this side's dreams are all the Backrooms. */
+  private backrooms(owner: Owner): boolean { return this.api.skinId(owner) === 'anomaly'; }
 
   /** This side is a Dream and owns the upgrade for `slot`. */
   private up(owner: Owner, slot: string): boolean {
@@ -1060,8 +1072,9 @@ export class DreamKit {
     const local = this.api.player;
     if (f === local || victim === local) {
       this.view?.destroy();
-      this.view = new DreamWorldView(this.api.scene, this.col(owner), world, this.api.width, this.api.height, this.api.isInvasion);
-      const w = DREAM_WORLDS[world];
+      const br = this.backrooms(owner);
+      this.view = new DreamWorldView(this.api.scene, this.col(owner), world, this.api.width, this.api.height, this.api.isInvasion, br);
+      const w = br ? { name: 'The Backrooms', color: '#e8d36a' } : DREAM_WORLDS[world];
       const banner = this.api.scene.add.text(this.api.width / 2, 92, `💭 ${w.name.toUpperCase()}`, {
         fontSize: '22px', fontFamily: FONT_DISPLAY, color: w.color, stroke: '#0b0620', strokeThickness: 5,
       }).setOrigin(0.5).setDepth(24).setScrollFactor(0).setAlpha(0);
@@ -2002,6 +2015,8 @@ export class DreamKit {
       const realm = (['player', 'npc'] as Owner[]).map((o) => this.realms[o])
         .find((r) => !!r && (this.fighter(r.owner) === local || r.victim === local));
       this.view.setNightmare(!!realm && realm.victim.dreamParalysisUntil > this.now);
+      this.view.setOminous(!!realm && (realm.victim.dreamNightmareUntil > this.now
+        || this.beasts.some((b) => b.owner === realm.owner)));
     }
     this.view?.update(delta);
     this.fading = this.fading.filter((v) => {
@@ -2046,7 +2061,7 @@ export class DreamKit {
   }
 
   private updateAvatars(delta: number, playerIs: boolean, npcIs: boolean): void {
-    const { player, npc, scene } = this.api;
+    const { player, npc } = this.api;
     const drive = (owner: Owner, f: Fighter, on: boolean): void => {
       let av = this.avatar(owner);
       if (!on || !f?.active) {
@@ -2055,7 +2070,7 @@ export class DreamKit {
         return;
       }
       if (!av) {
-        av = new DreamAvatar(scene, this.col(owner));
+        av = this.makeAvatar(owner);
         if (owner === 'player') this.playerAvatar = av; else this.npcAvatar = av;
       }
       const aim = this.aimFor(owner);
@@ -2063,6 +2078,7 @@ export class DreamKit {
       av.setFacing(ang);
       const realm = this.realms[owner];
       av.setGuns(realm ? 'pistols' : 'sandmen');
+      av.setDreaming(!!realm);
       av.setSwing(realm ? 1 : 0);
       av.setIntensity(realm ? 1.2 : 1);
       av.setDrowsy(f.dreamAsleep ? 1 : Phaser.Math.Clamp(f.dreamDrowsy / DROWSY_MAX, 0, 1));
@@ -2193,7 +2209,8 @@ export class DreamKit {
     for (const b of this.beasts) {
       const step = Phaser.Math.Clamp((this.now - b.stepAt) / BEAST_STEP_MS, 0, 1);
       const left = (b.until - this.now) / BEAST_LIFE_MS;
-      nightmareBeast(g, this.col(b.owner), b.x, b.y, b.facing, t, Math.min(1, left * 4), step);
+      if (this.backrooms(b.owner)) smiler(g, b.x, b.y, b.facing, t, Math.min(1, left * 4), step);
+      else nightmareBeast(g, this.col(b.owner), b.x, b.y, b.facing, t, Math.min(1, left * 4), step);
     }
   }
 

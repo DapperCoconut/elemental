@@ -11,6 +11,12 @@ import {
   crucifixAura, crucifixPost, faithBar, firePillar, glory, halo, handGrenade, holyWaterPuddle,
   pillarCrosshair, skyPriest, vial, arkGround, arkOfCovenant, gazeThread, prayerSigil, blessingShell,
 } from './PassionVisuals';
+import { BaseAvatar } from './ElementVisuals';
+import { makeSkinAvatar } from './skins/SkinAvatars';
+import { LOVE_LINES, heartAura, heartChariot, heartStaff, loveArk, loveBar } from './skins/PassionSkinFx';
+
+/** The priest, or a skin's rig — which offers the same two hooks when it has them. */
+type DevotionAvatar = BaseAvatar & { setPreach?(v: number): void; handTip?(): { x: number; y: number } };
 import { meterGain } from '../../combat/Meters';
 import { measureDebuffs } from '../../combat/StatusEffects';
 
@@ -384,6 +390,8 @@ export interface PassionArenaApi {
   huskShotsNear(x: number, y: number, r: number): { key: object; from: Fighter | null }[];
   /** Skins: maps a Devotion visual colour through that side's equipped skin. */
   passionColor(owner: Owner, base: number): number;
+  /** Skins: the skin id that side has equipped, or null. */
+  skinId(owner: Owner): string | null;
   /** Shop upgrades: the local player's own, or the opponent's (online handshake / bot loadout). */
   hasUpgrade(owner: Owner, slot: string): boolean;
   /** Strips every discrete debuff off a fighter (the arena's one cleanse); returns how many. */
@@ -419,8 +427,8 @@ export class PassionKit implements SummonPurgeTarget {
   private readonly ncol: PassionColorFn;
   private readonly pfx: PassionFx;
   private readonly nfx: PassionFx;
-  private playerAvatar: PassionAvatar | null = null;
-  private npcAvatar: PassionAvatar | null = null;
+  private playerAvatar: DevotionAvatar | null = null;
+  private npcAvatar: DevotionAvatar | null = null;
   /** Puddles, crucifix auras, the Ascendance band — under the fighters. */
   private groundGfx: Phaser.GameObjects.Graphics | null = null;
   /** Crucifixes, bottles, grenades, the chariot — over the fighters. */
@@ -474,8 +482,17 @@ export class PassionKit implements SummonPurgeTarget {
   private fx(owner: Owner): PassionFx { return owner === 'player' ? this.pfx : this.nfx; }
   private col(owner: Owner): PassionColorFn { return owner === 'player' ? this.pcol : this.ncol; }
   private body(f: Fighter): Phaser.Physics.Arcade.Body { return f.body as Phaser.Physics.Arcade.Body; }
-  private avatar(owner: Owner): PassionAvatar | null {
+  private avatar(owner: Owner): DevotionAvatar | null {
     return owner === 'player' ? this.playerAvatar : this.npcAvatar;
+  }
+  private makeAvatar(owner: Owner): DevotionAvatar {
+    return makeSkinAvatar(this.api.skinId(owner), this.api.scene) ?? new PassionAvatar(this.api.scene, this.col(owner));
+  }
+  /** The Passion skin: love art in place of the holy art, for that owner only. Visual only. */
+  private isLove(owner: Owner): boolean { return this.api.skinId(owner) === 'passion'; }
+  /** A floating-text line in that owner's voice. */
+  private line(owner: Owner, text: string): string {
+    return this.isLove(owner) ? (LOVE_LINES[text] ?? text) : text;
   }
 
   private get left(): number { return ARENA_PAD; }
@@ -601,7 +618,7 @@ export class PassionKit implements SummonPurgeTarget {
     this.record(owner, 'souls');
     victim.devotionFaith = this.capOf(victim);
     this.fx(owner).convert(victim.x, victim.y);
-    this.api.showFloatingText(victim.x, victim.y - 56, '✝️ CONVERTED', this.hex(DEV.white));
+    this.api.showFloatingText(victim.x, victim.y - 56, this.line(owner, '✝️ CONVERTED'), this.hex(this.col(owner)(DEV.white)));
     this.api.spawnHitFlash(victim.x, victim.y, DEV.holy);
     Sfx.playAt('reward-big', victim.x, { volume: 0.9, rate: 0.8 });
     Sfx.playAt('crystal-chime', victim.x, { volume: 0.8, rate: 0.9 });
@@ -753,10 +770,10 @@ export class PassionKit implements SummonPurgeTarget {
 
     const av = this.avatar(owner);
     av?.play('punch', ang);
-    const tip = av?.handTip();
+    const tip = av?.handTip?.();
     this.fx(owner).preach(tip?.x ?? f.x + Math.cos(ang) * 20, tip?.y ?? f.y + Math.sin(ang) * 20, ang, charge);
     if (charge >= 0.99) {
-      this.api.showFloatingText(f.x, f.y - 50, '📖 GREAT SERMON', this.hex(DEV.white));
+      this.api.showFloatingText(f.x, f.y - 50, this.line(owner, '📖 GREAT SERMON'), this.hex(this.col(owner)(DEV.white)));
       Sfx.playAt('holy-chord', f.x, { volume: 0.6, rate: 1.1 });
     }
   }
@@ -801,7 +818,7 @@ export class PassionKit implements SummonPurgeTarget {
       explodeAt: this.now + GRENADE_FUSE_MS, stage: 0,
     });
     this.avatar(owner)?.play('slam', ang);
-    this.api.showFloatingText(f.x, f.y - 50, '💣 HALLELUJAH', this.hex(DEV.gold));
+    this.api.showFloatingText(f.x, f.y - 50, this.line(owner, '💣 HALLELUJAH'), this.hex(this.col(owner)(DEV.gold)));
     Sfx.playAt('whoosh', f.x, { volume: 0.6, rate: 0.9 });
   }
 
@@ -823,7 +840,7 @@ export class PassionKit implements SummonPurgeTarget {
     this.crucifixes.push({ owner, x, y, bornAt: this.now, flareUntil: 0, held: false, raised: false });
     this.avatar(owner)?.play('slam', ang);
     this.fx(owner).plant(x, y, AURA_R);
-    this.api.showFloatingText(x, y - 70, '✝️ CRUCIFIX', this.hex(DEV.holy));
+    this.api.showFloatingText(x, y - 70, this.line(owner, '✝️ CRUCIFIX'), this.hex(this.col(owner)(DEV.holy)));
     Sfx.playAt('stone-slam', x, { volume: 0.7, rate: 1.1 });
   }
 
@@ -844,7 +861,7 @@ export class PassionKit implements SummonPurgeTarget {
     s.struck = [];
     this.avatar(owner)?.play('raise');
     this.fx(owner).ring(f.x, f.y, 10, 90, DEV.fire, 700);
-    this.api.showFloatingText(f.x, f.y - 56, '🔥 ASCENDANCE', this.hex(DEV.fire));
+    this.api.showFloatingText(f.x, f.y - 56, this.line(owner, '🔥 ASCENDANCE'), this.hex(this.col(owner)(DEV.fire)));
     Sfx.playAt('holy-chord', f.x, { volume: 0.8, rate: 0.85 });
   }
 
@@ -895,7 +912,7 @@ export class PassionKit implements SummonPurgeTarget {
     this.fx(owner).sparkle(c.x, c.y - 40, 8, 30, DEV.pale, 500);
     c.held = true;
     c.raised = false;
-    this.api.showFloatingText(f.x, f.y - 56, '✝️ IN HAND', this.hex(DEV.holy));
+    this.api.showFloatingText(f.x, f.y - 56, this.line(owner, '✝️ IN HAND'), this.hex(this.col(owner)(DEV.holy)));
     Sfx.playAt('whoosh', f.x, { volume: 0.4, rate: 1.4 });
   }
 
@@ -911,7 +928,7 @@ export class PassionKit implements SummonPurgeTarget {
     c.bornAt = this.now;
     this.avatar(owner)?.play('slam');
     this.fx(owner).plant(c.x, c.y, AURA_R);
-    this.api.showFloatingText(c.x, c.y - 70, '✝️ SET DOWN', this.hex(DEV.holy));
+    this.api.showFloatingText(c.x, c.y - 70, this.line(owner, '✝️ SET DOWN'), this.hex(this.col(owner)(DEV.holy)));
     Sfx.playAt('stone-slam', c.x, { volume: 0.6, rate: 1.2 });
   }
 
@@ -924,7 +941,7 @@ export class PassionKit implements SummonPurgeTarget {
     if (raised) {
       c.bornAt = this.now;
       this.fx(owner).ring(f.x, f.y, 20, AURA_R, DEV.gold, 500);
-      this.api.showFloatingText(f.x, f.y - 60, '✝️ BEHOLD', this.hex(DEV.white));
+      this.api.showFloatingText(f.x, f.y - 60, this.line(owner, '✝️ BEHOLD'), this.hex(this.col(owner)(DEV.white)));
       Sfx.playAt('holy-chord', f.x, { volume: 0.5, rate: 1.25 });
     } else {
       this.fx(owner).sparkle(f.x, f.y - 30, 6, 26, DEV.pale, 420);
@@ -1158,7 +1175,7 @@ export class PassionKit implements SummonPurgeTarget {
     s.rideY = f.y;
     this.record(owner, 'chariotRides');
     this.fx(owner).liftOff(f.x, f.y);
-    this.api.showFloatingText(f.x, f.y - 56, s.skyRide ? '🙌 TAKEN UP · 🔥×3' : '🙌 TAKEN UP', this.hex(DEV.fireHot));
+    this.api.showFloatingText(f.x, f.y - 56, this.line(owner, s.skyRide ? '🙌 TAKEN UP · 🔥×3' : '🙌 TAKEN UP'), this.hex(this.col(owner)(DEV.fireHot)));
     if (owner === 'player' || !this.api.isOnline) {
       if (!f.isInvincible) { f.isInvincible = true; s.rideOwnsInvincible = true; }
     }
@@ -1207,7 +1224,7 @@ export class PassionKit implements SummonPurgeTarget {
     this.fx(owner).crash(x, y, CRASH_R);
     this.api.scene.cameras.main.shake(320, 0.009);
     Sfx.playAt('explosion-large', x, { volume: 1, rate: 0.75 });
-    this.api.showFloatingText(x, y - 60, '☄️ DESCENT', this.hex(DEV.fire));
+    this.api.showFloatingText(x, y - 60, this.line(owner, '☄️ DESCENT'), this.hex(this.col(owner)(DEV.fire)));
     // The burst lands with the comet, a beat after the body.
     this.api.scene.time.delayedCall(200, () => {
       for (const t of this.targetsOf(owner)) {
@@ -1240,7 +1257,7 @@ export class PassionKit implements SummonPurgeTarget {
         const f = this.fighter(l.owner);
         if (!this.alive(f) || !this.isDevotion(l.owner)) { this.letters.splice(i, 1); continue; }
         const av = this.avatar(l.owner);
-        const tip = av?.handTip();
+        const tip = av?.handTip?.();
         l.x = tip && Number.isFinite(tip.x) ? tip.x : f.x + Math.cos(l.ang) * 18;
         l.y = tip && Number.isFinite(tip.y) ? tip.y : f.y + Math.sin(l.ang) * 18;
         const v = LETTER_SPEED;
@@ -1633,7 +1650,7 @@ export class PassionKit implements SummonPurgeTarget {
         const shown = this.stages.get(t) ?? 0;
         if (stage <= shown) continue;
         this.stages.set(t, stage);
-        this.api.showFloatingText(t.x, t.y - 52, STAGE_LABEL[stage], this.hex(DEV.white));
+        this.api.showFloatingText(t.x, t.y - 52, this.line(owner, STAGE_LABEL[stage]), this.hex(this.col(owner)(DEV.white)));
         this.fx(owner).sparkle(t.x, t.y - 20, 4 + stage * 3, 24 + stage * 6, DEV.holy, 700);
         Sfx.playAt('crystal-chime', t.x, { volume: 0.5 + stage * 0.1, rate: 0.8 + stage * 0.15 });
       }
@@ -1655,9 +1672,8 @@ export class PassionKit implements SummonPurgeTarget {
   }
 
   private updateAvatars(delta: number, playerIs: boolean, npcIs: boolean): void {
-    const { scene } = this.api;
-    if (playerIs && !this.playerAvatar) this.playerAvatar = new PassionAvatar(scene, this.pcol);
-    if (npcIs && !this.npcAvatar) this.npcAvatar = new PassionAvatar(scene, this.ncol);
+    if (playerIs && !this.playerAvatar) this.playerAvatar = this.makeAvatar('player');
+    if (npcIs && !this.npcAvatar) this.npcAvatar = this.makeAvatar('npc');
 
     for (const owner of BOTH) {
       const av = this.avatar(owner);
@@ -1672,7 +1688,7 @@ export class PassionKit implements SummonPurgeTarget {
       av.setFacing(Math.atan2(target.y - f.y, target.x - f.x));
       const preach = s.chargeStartedAt > 0
         ? Phaser.Math.Clamp((this.now - s.chargeStartedAt) / SERMON_CHARGE_MS, 0, 1) : 0;
-      av.setPreach(preach);
+      av.setPreach?.(preach);
       const raised = this.crucifixes.some((c) => c.owner === owner && c.held && c.raised);
       // Mastery: hands pressed together for a moment as each prayer is said.
       av.setHold(s.chargeStartedAt > 0 || s.prayPoseUntil > this.now ? 'brace' : raised ? 'reach' : null);
@@ -1698,7 +1714,7 @@ export class PassionKit implements SummonPurgeTarget {
     for (const c of this.crucifixes) {
       if (c.held && (!c.raised || this.side(c.owner).rideUntil > 0)) continue;
       const rise = Phaser.Math.Clamp((now - c.bornAt) / 260, 0, 1);
-      crucifixAura(g, this.col(c.owner), c.x, c.y, AURA_R * rise, t, 1, c.flareUntil > now ? 1 : 0);
+      (this.isLove(c.owner) ? heartAura : crucifixAura)(g, this.col(c.owner), c.x, c.y, AURA_R * rise, t, 1, c.flareUntil > now ? 1 : 0);
     }
     for (const pl of this.pillars) {
       const drop = Phaser.Math.Clamp(1 - (pl.landAt - now) / PILLAR_DROP_MS, 0, 1);
@@ -1761,12 +1777,13 @@ export class PassionKit implements SummonPurgeTarget {
         if (!f || !f.active || s.rideUntil > 0) continue;
         const aimX = c.owner === 'player' ? s.aimX : this.api.player.x;
         const dir = aimX >= f.x ? 1 : -1;
-        if (c.raised) crucifixPost(g, this.col(c.owner), f.x + dir * 6, f.y - 24, f.alpha, t, 1, 0.55);
-        else crucifixPost(g, this.col(c.owner), f.x + dir * 20, f.y + 16, f.alpha, t, 1, 0.42);
+        const post = this.isLove(c.owner) ? heartStaff : crucifixPost;
+        if (c.raised) post(g, this.col(c.owner), f.x + dir * 6, f.y - 24, f.alpha, t, 1, 0.55);
+        else post(g, this.col(c.owner), f.x + dir * 20, f.y + 16, f.alpha, t, 1, 0.42);
         continue;
       }
       const rise = Phaser.Math.Clamp((this.now - c.bornAt) / 260, 0, 1);
-      crucifixPost(g, this.col(c.owner), c.x, c.y, 1, t, rise);
+      (this.isLove(c.owner) ? heartStaff : crucifixPost)(g, this.col(c.owner), c.x, c.y, 1, t, rise);
     }
     // Q+ pillars still falling: the shaft comes down over the fighters.
     for (const pl of this.pillars) {
@@ -1778,7 +1795,7 @@ export class PassionKit implements SummonPurgeTarget {
       const s = this.side(owner);
       const tint = this.col(owner);
       if (s.chariotAt > 0 && !s.chariotDone && time >= s.chariotAt) {
-        chariot(g, tint, s.chariotX, s.lineY, s.lineDir, t, 1, s.rideUntil > 0);
+        (this.isLove(owner) ? heartChariot : chariot)(g, tint, s.chariotX, s.lineY, s.lineDir, t, 1, s.rideUntil > 0);
       }
       // The ground mark where the priest will come down.
       if (s.rideUntil > 0 && !(owner === 'npc' && this.api.isOnline)) {
@@ -1816,7 +1833,7 @@ export class PassionKit implements SummonPurgeTarget {
         if (ratio <= 0) continue;
         const stage = this.stageOf(ratio);
         const a = v.alpha;
-        faithBar(g, tint, v.x, v.y + FAITH_BAR_Y, FAITH_BAR_W, FAITH_BAR_H, ratio, t);
+        (this.isLove(owner) ? loveBar : faithBar)(g, tint, v.x, v.y + FAITH_BAR_Y, FAITH_BAR_W, FAITH_BAR_H, ratio, t);
         const hy = v.y - 30;
         if (stage === 1) halo(g, tint, v.x, hy, 13, a * 0.9, 2.4, true, t);
         if (stage >= 2) halo(g, tint, v.x, hy, 13 + (stage - 2) * 2, a, 2.4);
@@ -2031,7 +2048,7 @@ export class PassionKit implements SummonPurgeTarget {
     this.arks.push({ owner, x, y, bornAt: this.now, diesAt: this.now + ARK_MS, stare: 0, nextText: new Map() });
     this.avatar(owner)?.play('slam', ang);
     this.fx(owner).arkLand(x, y);
-    this.api.showFloatingText(x, y - 64, '✨ ARK OF THE COVENANT', this.hex(DEV.gold));
+    this.api.showFloatingText(x, y - 64, this.line(owner, '✨ ARK OF THE COVENANT'), this.hex(this.col(owner)(DEV.gold)));
     Sfx.playAt('holy-chord', x, { volume: 0.75, rate: 0.75 });
     this.api.scene.time.delayedCall(220, () => Sfx.playAt('stone-slam', x, { volume: 0.6, rate: 0.9 }));
     if (owner === 'player') this.api.broadcastMasteryCast(ARK_ID);
@@ -2172,7 +2189,7 @@ export class PassionKit implements SummonPurgeTarget {
       const rise = (now - a.bornAt) / 260;
       const fade = Phaser.Math.Clamp((a.diesAt - now) / 500, 0, 1);
       arkGround(ground, this.col(a.owner), a.x, a.y, 34, rise, t, a.stare, fade);
-      arkOfCovenant(air, this.col(a.owner), a.x, a.y, rise, t, a.stare, fade);
+      (this.isLove(a.owner) ? loveArk : arkOfCovenant)(air, this.col(a.owner), a.x, a.y, rise, t, a.stare, fade);
     }
     for (const gz of this.gazes) {
       gazeThread(ground, this.col(gz.owner), gz.f.x, gz.f.y - 6, gz.ark.x, gz.ark.y - 14, gz.pull, t, gz.f.alpha);

@@ -632,7 +632,7 @@ export class JusticeKit {
     this.bites.delete(target);
     this.fx(owner).execution(target.x, target.y, angle + Math.PI / 2);
     this.announce(target.x, target.y - 56, '⚔️ EXECUTED', '#ffffff', 15, 1400);
-    this.api.spawnHitFlash(target.x, target.y, JUS.white);
+    this.api.spawnHitFlash(target.x, target.y, this.col(owner)(JUS.white));
     // Pierced so no shield, absorber or clotted layer gets to argue with a verdict. Five times
     // what is left rather than an arbitrary huge figure: enough to punch through any stack of
     // armour in the game, and small enough that the running damage tally stays meaningful for
@@ -1103,7 +1103,7 @@ export class JusticeKit {
 
       // …and the boot.
       t.takeDamage(this.boosted('player', IMPALE_DAMAGE));
-      this.api.spawnHitFlash(t.x, t.y, JUS.white);
+      this.api.spawnHitFlash(t.x, t.y, this.pcol(JUS.white));
       this.fx('player').shards(t.x, t.y, 10, 220, 520);
       Sfx.playAt('hit-heavy', t.x, { rate: 0.6, volume: 1 });
       v.phase = 'launch';
@@ -1176,7 +1176,7 @@ export class JusticeKit {
       this.awardStyle('vengeance-wall');
     }
     this.clampToArena(t);
-    this.api.spawnHitFlash(t.x, t.y, JUS.stone);
+    this.api.spawnHitFlash(t.x, t.y, this.pcol(JUS.stone));
     fx.rubble(t.x, t.y, 18, 56);
     fx.flash(t.x, t.y, 60, 9);
     Sfx.playAt('hit-heavy', t.x, { rate: 0.5, volume: 1 });
@@ -1254,7 +1254,7 @@ export class JusticeKit {
       if (!hit) continue;
       s.dead = true;
       hit.takeDamage(this.boosted('player', BARRAGE_DAMAGE));
-      this.api.spawnHitFlash(hit.x, hit.y, JUS.pale);
+      this.api.spawnHitFlash(hit.x, hit.y, this.pcol(JUS.pale));
       const n = (b.landed.get(hit) ?? 0) + 1;
       b.landed.set(hit, n);
       if (n === BARRAGE_CLUSTER) this.awardStyle('barrage-cluster');
@@ -1344,7 +1344,7 @@ export class JusticeKit {
       if (d > STAB_REACH + 20) continue;
       const off = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(t.y - f.y, t.x - f.x) - angle));
       if (off > STAB_ARC / 2) continue;
-      this.api.spawnHitFlash(t.x, t.y, JUS.bright);
+      this.api.spawnHitFlash(t.x, t.y, this.col(owner)(JUS.bright));
       fx.shards(t.x, t.y, 6, 130);
       this.meleeStrike(t, owner, dmg, angle);
     }
@@ -1383,7 +1383,7 @@ export class JusticeKit {
       if (d > AXE_REACH + 20) continue;
       const off = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(t.y - f.y, t.x - f.x) - angle));
       if (off > AXE_ARC / 2) continue;
-      this.api.spawnHitFlash(t.x, t.y, JUS.pale);
+      this.api.spawnHitFlash(t.x, t.y, this.col(owner)(JUS.pale));
       fx.shards(t.x, t.y, 4, 90, 300);
       this.meleeStrike(t, owner, dmg, angle);
     }
@@ -1902,7 +1902,7 @@ export class JusticeKit {
         const hx = c.x + Math.cos(ang) * COLISEUM_RADIUS;
         const hy = c.y + Math.sin(ang) * COLISEUM_RADIUS;
         this.fx(c.owner).shards(hx, hy, 4, 110, 380);
-        this.api.spawnHitFlash(hx, hy, JUS.marble);
+        this.api.spawnHitFlash(hx, hy, this.col(c.owner)(JUS.marble));
         // Objection: only a shot that was aimed at *you* is worth anything.
         if (c.owner === 'player' && !proj.isFromPlayer) this.awardStyle('coliseum-shot');
         proj.destroy();
@@ -1928,7 +1928,7 @@ export class JusticeKit {
         if (Phaser.Math.Distance.Between(c.x, c.y, t.x, t.y) > 26) continue;
         c.hit.add(t);
         t.takeDamage(this.boosted(c.owner, CHAIN_PIERCE_DAMAGE));
-        this.api.spawnHitFlash(t.x, t.y, JUS.gold);
+        this.api.spawnHitFlash(t.x, t.y, this.col(c.owner)(JUS.gold));
         this.fx(c.owner).shards(t.x, t.y, 5, 120, 360);
         // Strung Together: one throw, two bodies.
         if (c.hit.size >= 2) this.awardStyle('chain-pierce-two', c.owner);
@@ -1945,7 +1945,7 @@ export class JusticeKit {
         until: time + CHAIN_HOLD_MS,
       });
       this.fx(c.owner).shards(c.x, c.y, 7, 150, 420);
-      this.api.spawnHitFlash(c.x, c.y, JUS.gold);
+      this.api.spawnHitFlash(c.x, c.y, this.col(c.owner)(JUS.gold));
       const f = this.fighter(c.owner);
       this.api.showFloatingText(f.x, f.y - 44, '⛓️ HOOKED — press E', '#f0d68a');
     }
@@ -2040,7 +2040,7 @@ export class JusticeKit {
       for (const t of this.targetsOf(w.owner)) {
         t.takeDamage(dmg);
         this.stun(t, WALL_IMPACT_STUN_MS);
-        this.api.spawnHitFlash(t.x, t.y, JUS.stone);
+        this.api.spawnHitFlash(t.x, t.y, this.col(w.owner)(JUS.stone));
         // Compacted: rode it the whole way, and was still in front of it at the far side.
         if (this.wallTouches(w, t)) this.awardStyle('wall-impact', w.owner);
       }
@@ -2082,7 +2082,7 @@ export class JusticeKit {
     target.takeDamage(this.boosted(owner, SPIKE_DAMAGE));
     // Nailed to the World: the spikes took the last of them.
     if (target.hp <= 0) this.awardStyle('spike-kill', owner);
-    this.api.spawnHitFlash(target.x, target.y, JUS.willPale);
+    this.api.spawnHitFlash(target.x, target.y, this.col(owner)(JUS.willPale));
     const fx = this.fx(owner);
     fx.shards(target.x, target.y, 6, 140, 360);
     fx.motes(target.x, target.y, 4, 20, 420);
@@ -2176,7 +2176,7 @@ export class JusticeKit {
       for (const t of this.targetsOf(p.owner)) {
         if (Math.abs(t.x - p.x) > PILLAR_HALF_W + 16) continue;
         t.takeDamage(this.boosted(p.owner, PILLAR_DAMAGE_PER_TICK));
-        this.api.spawnHitFlash(t.x, t.y, JUS.flame);
+        this.api.spawnHitFlash(t.x, t.y, this.col(p.owner)(JUS.flame));
       }
     }
     const dead = this.pillars.filter((p) => time >= p.until);

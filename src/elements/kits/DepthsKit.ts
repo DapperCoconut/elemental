@@ -880,7 +880,7 @@ export class DepthsKit implements SummonPurgeTarget {
     for (const t of this.targetsOf(owner)) {
       if (this.distToSegment(f.x, f.y, ex, ey, t.x, t.y) > SLASH_HALF_WIDTH) continue;
       t.takeDamage(dmg);
-      this.api.spawnHitFlash(t.x, t.y, DPT.cyan);
+      this.api.spawnHitFlash(t.x, t.y, this.col(owner)(DPT.cyan));
       this.fx(owner).chomp(t.x, t.y, ang, 24, DPT.blood);
       const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
       if (d < victimDist) { victimDist = d; victim = t; }
@@ -1222,7 +1222,7 @@ export class DepthsKit implements SummonPurgeTarget {
       });
     }
     this.fx(owner).chomp(victim.x, victim.y, Math.random() * Math.PI * 2, 20, DPT.blood);
-    this.api.spawnHitFlash(victim.x, victim.y, DPT.blood);
+    this.api.spawnHitFlash(victim.x, victim.y, this.col(owner)(DPT.blood));
     Sfx.playAt('claw', victim.x, { volume: 0.5, rate: 1.4 });
   }
 
@@ -1355,7 +1355,7 @@ export class DepthsKit implements SummonPurgeTarget {
         d.tick -= 1000;
         d.victim.takeDamage(DROWN_DPS);
         this.record(d.owner, 'drownDamage', DROWN_DPS);
-        this.api.spawnHitFlash(d.victim.x, d.victim.y, DPT.trench);
+        this.api.spawnHitFlash(d.victim.x, d.victim.y, this.col(d.owner)(DPT.trench));
         this.fx(d.owner).bubbles(d.victim.x, d.victim.y - 10, 5, 18, DPT.cyan, 420, 9);
       }
     }
@@ -1581,7 +1581,7 @@ export class DepthsKit implements SummonPurgeTarget {
       });
     }
     this.fx(owner).chomp(victim.x, victim.y, Math.random() * Math.PI * 2, 26, DPT.blood);
-    this.api.spawnHitFlash(victim.x, victim.y, DPT.saw);
+    this.api.spawnHitFlash(victim.x, victim.y, this.col(owner)(DPT.saw));
     this.api.showFloatingText(victim.x, victim.y - 50, '🔪 STUCK', this.hex(DPT.saw));
     Sfx.playAt('claw', victim.x, { volume: 0.7, rate: 0.9 });
   }
@@ -1724,7 +1724,7 @@ export class DepthsKit implements SummonPurgeTarget {
           case 'icefish': {
             t.takeDamage(ICEFISH_DAMAGE);
             this.slowed.set(t, time + ICEFISH_SLOW_MS);
-            this.api.spawnHitFlash(t.x, t.y, DPT.ice);
+            this.api.spawnHitFlash(t.x, t.y, this.col(p.owner)(DPT.ice));
             this.fx(p.owner).bubbles(t.x, t.y, 7, 26, DPT.ice, 520, 9);
             this.api.showFloatingText(t.x, t.y - 44, '🧊 CHILLED', this.hex(DPT.ice));
             consumed = true;
@@ -1734,7 +1734,7 @@ export class DepthsKit implements SummonPurgeTarget {
             if (time - last < 400) break;
             p.hits.set(t, time);
             t.takeDamage(BARRACUDA_DAMAGE);
-            this.api.spawnHitFlash(t.x, t.y, DPT.barracuda);
+            this.api.spawnHitFlash(t.x, t.y, this.col(p.owner)(DPT.barracuda));
             this.fx(p.owner).chomp(t.x, t.y, Math.atan2(p.vy, p.vx), 22, DPT.blood);
             // Pierces: it keeps going, and can take the next body on the same line.
             break;
@@ -1743,7 +1743,7 @@ export class DepthsKit implements SummonPurgeTarget {
             if (time - last < PUFFER_REHIT_MS) break;
             p.hits.set(t, time);
             t.takeDamage(PUFFER_DAMAGE);
-            this.api.spawnHitFlash(t.x, t.y, DPT.puffer);
+            this.api.spawnHitFlash(t.x, t.y, this.col(p.owner)(DPT.puffer));
             this.fx(p.owner).bubbles(t.x, t.y, 6, 24, DPT.puffer, 420, 9);
             // Bounce off the body too, or it sits inside them chewing on the re-hit timer.
             const away = Math.atan2(p.y - t.y, p.x - t.x);
@@ -1774,7 +1774,7 @@ export class DepthsKit implements SummonPurgeTarget {
             if (time - last < 400) break;
             p.hits.set(t, time);
             t.takeDamage(SWORD_DAMAGE);
-            this.api.spawnHitFlash(t.x, t.y, DPT.sword);
+            this.api.spawnHitFlash(t.x, t.y, this.col(p.owner)(DPT.sword));
             this.fx(p.owner).slashArc(t.x, t.y, Math.atan2(p.vy, p.vx), 40, DPT.sword);
             this.api.showFloatingText(t.x, t.y - 48, '⚔️ RUN THROUGH', this.hex(DPT.sword));
             Sfx.playAt('claw', t.x, { volume: 0.8, rate: 0.7 });
@@ -1783,7 +1783,7 @@ export class DepthsKit implements SummonPurgeTarget {
           }
           case 'flyingfish': {
             t.takeDamage(FLYER_DAMAGE);
-            this.api.spawnHitFlash(t.x, t.y, DPT.flyer);
+            this.api.spawnHitFlash(t.x, t.y, this.col(p.owner)(DPT.flyer));
             this.fx(p.owner).chomp(t.x, t.y, Math.atan2(p.vy, p.vx), 20, DPT.flyer);
             // Not consumed — it turns around instead, and the clock is reset so the trip
             // home can't be cut short by the throw's own two seconds running out.
@@ -1810,7 +1810,7 @@ export class DepthsKit implements SummonPurgeTarget {
     for (const t of this.targetsOf(p.owner)) {
       if (Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) > BOMBFISH_R) continue;
       t.takeDamage(BOMBFISH_DAMAGE);
-      this.api.spawnHitFlash(t.x, t.y, DPT.bomb);
+      this.api.spawnHitFlash(t.x, t.y, this.col(p.owner)(DPT.bomb));
     }
   }
 
@@ -1894,7 +1894,7 @@ export class DepthsKit implements SummonPurgeTarget {
   /** One barb goes in. Two points, then five seconds of the parts that actually matter. */
   private stingBarb(b: Barb, t: Fighter): void {
     t.takeDamage(LION_BARB_DAMAGE);
-    this.api.spawnHitFlash(t.x, t.y, DPT.venom);
+    this.api.spawnHitFlash(t.x, t.y, this.col(b.owner)(DPT.venom));
     this.fx(b.owner).bubbles(t.x, t.y, 4, 18, DPT.venom, 420, 9);
 
     // Poison rides the generic toxic fields, so the status tray, the DOT tick and the network
@@ -1984,7 +1984,7 @@ export class DepthsKit implements SummonPurgeTarget {
         && Phaser.Math.Distance.Between(k.x, k.y, t.x, t.y) <= SKELE_R + 14) {
         k.biteAt = time + SKELE_BITE_MS;
         t.takeDamage(SKELE_BITE);
-        this.api.spawnHitFlash(t.x, t.y, DPT.skele);
+        this.api.spawnHitFlash(t.x, t.y, this.col(k.owner)(DPT.skele));
         this.fx(k.owner).chomp(t.x, t.y, Math.atan2(t.y - k.y, t.x - k.x), 22, DPT.blood);
         Sfx.playAt('claw', t.x, { volume: 0.55, rate: 1.5 });
       }
@@ -1998,7 +1998,7 @@ export class DepthsKit implements SummonPurgeTarget {
         if (!hostile) continue;
         if (Phaser.Math.Distance.Between(k.x, k.y, proj.x, proj.y) > SKELE_R + 10) continue;
         k.hp -= proj.damage;
-        this.api.spawnHitFlash(k.x, k.y, DPT.bone);
+        this.api.spawnHitFlash(k.x, k.y, this.col(k.owner)(DPT.bone));
         this.api.showFloatingText(k.x, k.y - 16, `${Math.round(proj.damage)}`, this.hex(DPT.bone));
         proj.destroy();
         break;
@@ -2215,7 +2215,7 @@ export class DepthsKit implements SummonPurgeTarget {
       for (const t of this.targetsOf(r.owner)) {
         if (Phaser.Math.Distance.Between(r.x, r.y, t.x, t.y) > REMORA_R + 12) continue;
         t.takeDamage(REMORA_DAMAGE);
-        this.api.spawnHitFlash(t.x, t.y, DPT.whale);
+        this.api.spawnHitFlash(t.x, t.y, this.col(r.owner)(DPT.whale));
         this.fx(r.owner).bubbles(t.x, t.y, 3, 14, DPT.foam, 320, 9);
         hit = true;
         break;
@@ -2304,7 +2304,7 @@ export class DepthsKit implements SummonPurgeTarget {
           if (a.bad && s.swallowed.length) this.record(s.owner, 'badAlgaeFeeds', 1);
           for (const f of s.swallowed) {
             f.takeDamage(SHARK_ALGAE_DAMAGE);
-            this.api.spawnHitFlash(f.x, f.y, DPT.blood);
+            this.api.spawnHitFlash(f.x, f.y, this.col(s.owner)(DPT.blood));
             this.api.showFloatingText(f.x, f.y - 54, '🦈 GROUND UP', this.hex(DPT.blood));
           }
           if (s.swallowed.length) Sfx.playAt('claw', mouthX, { volume: 0.8, rate: 0.6 });
@@ -2316,7 +2316,7 @@ export class DepthsKit implements SummonPurgeTarget {
         s.tick -= 1000;
         for (const f of s.swallowed) {
           f.takeDamage(SHARK_DPS);
-          this.api.spawnHitFlash(f.x, f.y, DPT.blood);
+          this.api.spawnHitFlash(f.x, f.y, this.col(s.owner)(DPT.blood));
         }
         if (s.swallowed.length) this.fx(s.owner).bubbles(mouthX, mouthY, 5, 26, DPT.blood, 480, 9);
       }

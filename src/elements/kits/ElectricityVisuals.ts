@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { AvatarSpec, ArmHold, ArmPose, BaseAvatar, ColorFn, FxBase, TAU, easeIn, easeOut } from './ElementVisuals';
+import { isRageTint, rageBlast, rageBolt, rageSteam } from './skins/RageFx';
 
 /**
  * Shared drawing kit for everything Electricity renders: the live-wire avatar (plasma ball arms,
@@ -189,6 +190,8 @@ export function boltLayered(
   opts: BoltLayerOpts = {},
 ): void {
   if (pts.length < 2) return;
+  // Rage skin: every bolt is drawn as a red-hot heat streak instead (same points, same timing).
+  if (isRageTint(tint)) { rageBolt(g, tint, tones, pts, width, alpha, opts); return; }
 
   const forks = opts.branches ? boltBranches(pts, opts.branches) : [];
   for (const f of forks) {
@@ -480,6 +483,7 @@ export class ElectricityFx extends FxBase {
       life: Math.round(dur * 1.3), fall: radius * 0.6, depth, tones,
     });
     this.smoke(x, y, Math.max(2, Math.round(radius / 34)), radius * 0.8, depth - 2, tones);
+    if (isRageTint(this.tint)) rageBlast(this, x, y, radius);
   }
 
   /** Recoil arc at the throwing hand — sells that a shot actually left a body. */
@@ -535,6 +539,13 @@ export class ElectricityFx extends FxBase {
     this.ring(x2, y2, 6, 44, tones.hot, 340, 4, depth);
     this.flash(x2, y2, 18, depth + 2, tones);
     this.sparks(x2, y2, 10, { speed: 190, size: 2.4, life: 380, depth, tones });
+    if (isRageTint(this.tint)) {
+      // Rage leaves a wake of steam down the whole path it barged along.
+      const n = Phaser.Math.Clamp(Math.round(Phaser.Math.Distance.Between(x1, y1, x2, y2) / 40), 2, 8);
+      for (let i = 0; i <= n; i++) {
+        rageSteam(this, x1 + (x2 - x1) * (i / n), y1 + (y2 - y1) * (i / n), 2, { spread: 8, size: 3.5, life: 600 });
+      }
+    }
   }
 
   /**

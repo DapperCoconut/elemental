@@ -866,7 +866,7 @@ export class ShadowKit {
   private treadOnCaltrop(c: Caltrop, v: Fighter, time: number, crippling: boolean): void {
     v.takeDamage(CALTROP_DAMAGE, { source: c, sourceX: c.x, sourceY: c.y });
     this.applyHopelessness(v, CALTROP_HOPELESS);
-    this.arena.spawnHitFlash(v.x, v.y, SHADOW.mauve);
+    this.arena.spawnHitFlash(v.x, v.y, this.col(c.owner)(SHADOW.mauve));
     this.fx(c.owner).tendrilBurst(c.x, c.y, 18, 4, 6);
     if (!crippling) return;
     const prev = this.crippled.get(v);
@@ -928,7 +928,7 @@ export class ShadowKit {
       const mark = b.mark;
       if (mark && mark.active && mark.hp > 0 && Phaser.Math.Distance.Between(b.toX, b.toY, mark.x, mark.y) <= 44) {
         this.multiplyHopelessness(mark, WATCHER_HOPELESS_MULT);
-        this.arena.spawnHitFlash(mark.x, mark.y, SHADOW.blood);
+        this.arena.spawnHitFlash(mark.x, mark.y, this.col(b.owner)(SHADOW.blood));
       }
     }
   }
@@ -967,7 +967,7 @@ export class ShadowKit {
         if (Phaser.Math.Distance.Between(player.x, player.y, t.x, t.y) <= hookRange) {
           t.takeDamage(10);
           this.applyHopelessness(t, WALL_TENTACLE_HOPELESS);
-          this.arena.spawnHitFlash(t.x, t.y, SHADOW.amethyst);
+          this.arena.spawnHitFlash(t.x, t.y, this.pcol(SHADOW.amethyst));
           this.pfx.tendrilBurst(t.x, t.y, 34, 6, 7);
         }
       }
@@ -985,7 +985,7 @@ export class ShadowKit {
       if (this.npcShadowTentacleHooked) {
         player.takeDamage(10);
         this.applyHopelessness(player, WALL_TENTACLE_HOPELESS);
-        this.arena.spawnHitFlash(player.x, player.y, SHADOW.violet);
+        this.arena.spawnHitFlash(player.x, player.y, this.ncol(SHADOW.violet));
         this.nfx.tendrilBurst(player.x, player.y, 34, 6, 7);
         // Pick initial random drag target
         const { width, height } = this.arena;
@@ -1689,7 +1689,7 @@ export class ShadowKit {
           if (Phaser.Math.Distance.Between(trap.x, trap.y, t.x, t.y) > MINE_RADIUS) continue;
           t.takeDamage(MINE_DAMAGE, { source: trap, sourceX: trap.x, sourceY: trap.y });
           this.applyHopelessness(t, MINE_HOPELESS);
-          this.arena.spawnHitFlash(t.x, t.y, SHADOW.blood);
+          this.arena.spawnHitFlash(t.x, t.y, this.col(owner)(SHADOW.blood));
           fx.tendrilBurst(t.x, t.y, 34, 8, 8);
         }
         // The charge itself: a hard shock front, then the dark it was packed with.
@@ -1711,7 +1711,7 @@ export class ShadowKit {
         this.applyHopelessness(victim, GRABBER_HOPELESS);
         fx.tendrilBurst(victim.x, victim.y, 36, 9, 8);
         fx.ring(trap.x, trap.y, 8, trap.radius * 2.2, SHADOW.lilac, 380, 4, 4);
-        this.arena.spawnHitFlash(victim.x, victim.y, SHADOW.lilac);
+        this.arena.spawnHitFlash(victim.x, victim.y, this.col(owner)(SHADOW.lilac));
         this.arena.showFloatingText(victim.x, victim.y - 34, '🦑 GRABBED!', '#cc88ff');
         break;
       }
@@ -1721,7 +1721,7 @@ export class ShadowKit {
         trap.triggered = true;
         victim.takeDamage(20, { source: trap, sourceX: trap.x, sourceY: trap.y });
         this.applyHopelessness(victim, 20);
-        this.arena.spawnHitFlash(victim.x, victim.y, SHADOW.mauve);
+        this.arena.spawnHitFlash(victim.x, victim.y, this.col(owner)(SHADOW.mauve));
         this.snapTrapBite(trap, victim);
         for (let i = 0; i < PLUME_CLOUDS; i++) {
           const a = (i / PLUME_CLOUDS) * Math.PI * 2 + trap.phase;
@@ -1739,7 +1739,7 @@ export class ShadowKit {
         victim.takeDamage(VENOM_DAMAGE, { source: trap, sourceX: trap.x, sourceY: trap.y });
         this.applyHopelessness(victim, VENOM_HOPELESS);
         this.venomed.set(victim, { until: time + Math.round(VENOM_DOT_MS * victim.statusDurMult), acc: 0, owner });
-        this.arena.spawnHitFlash(victim.x, victim.y, SHADOW.venom);
+        this.arena.spawnHitFlash(victim.x, victim.y, this.col(owner)(SHADOW.venom));
         this.snapTrapBite(trap, victim);
         fx.wisps(victim.x, victim.y, 8, { speed: 70, size: 3, life: 600, rise: -10, depth: 7, color: SHADOW.venom });
         this.arena.showFloatingText(victim.x, victim.y - 34, '🐍 VENOMED!', '#88dd44');
@@ -1754,7 +1754,7 @@ export class ShadowKit {
           if (!t.active || t.hp <= 0 || !this.inClaymoreSight(trap, t, CLAYMORE_BLAST)) continue;
           t.takeDamage(CLAYMORE_DAMAGE, { source: trap, sourceX: trap.x, sourceY: trap.y });
           this.applyHopelessness(t, CLAYMORE_HOPELESS);
-          this.arena.spawnHitFlash(t.x, t.y, SHADOW.blood);
+          this.arena.spawnHitFlash(t.x, t.y, this.col(owner)(SHADOW.blood));
           fx.tendrilBurst(t.x, t.y, 30, 7, 8);
         }
         // Shrapnel of night fanned down the cone.
@@ -1772,7 +1772,7 @@ export class ShadowKit {
         trap.triggered = true;
         victim.takeDamage(20, { source: trap, sourceX: trap.x, sourceY: trap.y });
         this.applyHopelessness(victim, 20);
-        this.arena.spawnHitFlash(victim.x, victim.y, SHADOW.mauve);
+        this.arena.spawnHitFlash(victim.x, victim.y, this.col(owner)(SHADOW.mauve));
         this.snapTrapBite(trap, victim);
         this.slowedUntil.set(victim, Math.max(this.slowedUntil.get(victim) ?? 0, time + Math.round(SHINOBI_SLOW_MS * victim.statusDurMult)));
         for (let i = 0; i < SHINOBI_BURST; i++) {
@@ -1789,7 +1789,7 @@ export class ShadowKit {
         trap.triggered = true;
         victim.takeDamage(20);
         this.applyHopelessness(victim, 20);
-        this.arena.spawnHitFlash(victim.x, victim.y, SHADOW.mauve);
+        this.arena.spawnHitFlash(victim.x, victim.y, this.col(owner)(SHADOW.mauve));
         this.snapTrapBite(trap, victim);
         stun(2000);
         break;
@@ -1955,7 +1955,7 @@ export class ShadowKit {
         }
         v.takeDamage(GLOOM_STRIKE_DAMAGE, { source: st, sourceX: st.x, sourceY: st.y });
         this.applyHopelessness(v, GLOOM_STRIKE_HOPELESS);
-        this.arena.spawnHitFlash(v.x, v.y, SHADOW.blood);
+        this.arena.spawnHitFlash(v.x, v.y, this.col(gl.owner)(SHADOW.blood));
         this.arena.showFloatingText(v.x, v.y - 36, '🦑 FROM BELOW!', '#cc3355');
       }
     }
@@ -2077,7 +2077,7 @@ export class ShadowKit {
           wall.lastHit.set(v, time);
           v.takeDamage(WALL_TENTACLE_DAMAGE + (wall.abyss ? ABYSS_SPIKE_DAMAGE : 0));
           this.applyHopelessness(v, WALL_TENTACLE_HOPELESS);
-          this.arena.spawnHitFlash(v.x, v.y, wall.abyss ? SHADOW.blood : SHADOW.orchid);
+          this.arena.spawnHitFlash(v.x, v.y, this.col(wall.owner)(wall.abyss ? SHADOW.blood : SHADOW.orchid));
           this.fx(wall.owner).wisps(v.x, v.y, 3, { speed: 70, size: 2.4, life: 340, rise: 14, depth: 7 });
           if (wall.abyss) this.abyssShove(v, t.x, t.y);
         }
@@ -2410,7 +2410,7 @@ export class ShadowKit {
         if (Phaser.Math.Distance.Between(b.dotX, b.dotY, v.x, v.y) > BEACON_BLAST_RADIUS) continue;
         v.takeDamage(BEACON_DAMAGE);
         this.applyHopelessness(v, BEACON_HOPELESS);
-        this.arena.spawnHitFlash(v.x, v.y, SHADOW.lilac);
+        this.arena.spawnHitFlash(v.x, v.y, this.col(b.owner)(SHADOW.lilac));
       }
     });
   }
@@ -2509,7 +2509,7 @@ export class ShadowKit {
         this.applyHopelessness(v, TRIPLINE_HOPELESS);
         this.slowedUntil.set(v, time + TRIPLINE_SLOW_MS);
         v.walkSpeedMult = Math.min(v.walkSpeedMult, TRIPLINE_SLOW_MULT);
-        this.arena.spawnHitFlash(v.x, v.y, SHADOW.mauve);
+        this.arena.spawnHitFlash(v.x, v.y, this.col(line.owner)(SHADOW.mauve));
         // The string snaps taut and drags the victim's feet out from under them.
         this.fx(line.owner).tendrilBurst(v.x, v.y, 30, 6, 7);
         this.arena.showFloatingText(v.x, v.y - 38, '🧵 TRIPPED', '#cc88ff');
@@ -2634,7 +2634,7 @@ export class ShadowKit {
             if (!t.active || t.hp <= 0) continue;
             if (Phaser.Math.Distance.Between(cloud.x, cloud.y, t.x, t.y) <= cloud.radius + 14) {
               t.takeDamage(2, { source: cloud, sourceX: cloud.x, sourceY: cloud.y });
-              this.arena.spawnHitFlash(t.x, t.y, SHADOW.orchid);
+              this.arena.spawnHitFlash(t.x, t.y, this.col(cloud.owner)(SHADOW.orchid));
             }
           }
         } else {
@@ -2757,7 +2757,7 @@ export class ShadowKit {
           if (this.shadowBlackHoleDamageAccum >= 1000) {
             this.shadowBlackHoleDamageAccum -= 1000;
             npc.takeDamage(5);
-            this.arena.spawnHitFlash(npc.x, npc.y, SHADOW.amethyst);
+            this.arena.spawnHitFlash(npc.x, npc.y, this.pcol(SHADOW.amethyst));
             this.pfx.wisps(npc.x, npc.y, 4, {
               angle: Math.atan2(this.shadowBlackHoleY - npc.y, this.shadowBlackHoleX - npc.x),
               spread: 0.6, speed: 100, size: 2.6, life: 420, rise: 0, depth: 7,
@@ -2926,7 +2926,7 @@ export class ShadowKit {
           for (const t of enemies) {
             if (!t.active || t.hp <= 0) continue;
             t.takeDamage(2);
-            this.arena.spawnHitFlash(t.x, t.y, SHADOW.amethyst);
+            this.arena.spawnHitFlash(t.x, t.y, this.pcol(SHADOW.amethyst));
           }
         }
       }

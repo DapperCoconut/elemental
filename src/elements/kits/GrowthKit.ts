@@ -34,6 +34,14 @@ import {
 } from '../../data/GrowthEvolve';
 import { meterGain } from '../../combat/Meters';
 import { FONT_DISPLAY, FONT_UI } from '../../ui/Theme';
+import { BaseAvatar } from './ElementVisuals';
+import { makeSkinAvatar } from './skins/SkinAvatars';
+import { MonkeyAvatar } from './skins/MonkeyAvatar';
+import {
+  MONKEY_NODES, MONKEY_PATH_LABEL, MONKEY_PATH_ORDER, MonkeyAnims, MonkeyExtraView, MonkeyPathView,
+  bloonColor, bloonLayer, buildDart, buildSpikePile, buildTacks, drawBloon, drawBloontoniumGauge,
+  renderUpgradePanel,
+} from './skins/MonkeyFx';
 
 // ── HUD drawing helpers (DNA helix chart) ───────────────────────────────
 
@@ -290,8 +298,14 @@ interface Bacterium {
   wigglePhase: number;
 }
 
+/** Body-tree nodes, longest name first — for swapping names inside a sentence. */
+const NODES_LONGEST_FIRST = [...GROWTH_EVOLVE_NODES].sort((x, y) => y.name.length - x.name.length);
+
+/** A virus's body: the stock capsid triangle, or the Monkey skin's drawn tacks / spike pile. */
+type VirusBody = Phaser.GameObjects.Triangle | Phaser.GameObjects.Graphics;
+
 interface VirusProj {
-  tri: Phaser.GameObjects.Triangle;
+  tri: VirusBody;
   owner: Owner;
   srcBody: BodyState;
   x: number; y: number; vx: number; vy: number;
@@ -308,7 +322,7 @@ interface Infection {
 }
 
 interface FloorVirus {
-  tri: Phaser.GameObjects.Triangle;
+  tri: VirusBody;
   owner: Owner;
   x: number; y: number;
   dmg: number;
@@ -362,6 +376,8 @@ interface SporeWall {
   maxHp: number;
   spawnedAt: number;
   matured: boolean;
+  /** Monkey skin: the bloon layer it showed last frame, so dropping one pops it off. */
+  bloonLayer?: number;
 }
 
 interface PendingSpore {
@@ -475,6 +491,8 @@ export interface GrowthArenaApi {
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
   /** Skins: maps a growth visual color through the owner's skin. */
   growthColor(owner: 'player' | 'npc', base: number): number;
+  /** Skins: the equipped skin id for that side, so a skin can swap in its own rig and art. */
+  skinId(owner: 'player' | 'npc'): string | null;
   getNearestEnemy(x: number, y: number): Fighter;
   spawnHitFlash(x: number, y: number, color: number): void;
   spawnDamageNumber(x: number, y: number, amount: number): void;
@@ -504,8 +522,10 @@ export class GrowthKit {
   private readonly pfx: GrowthFx;
   private readonly nfx: GrowthFx;
   /** The growth character rig (cell arms, eyes, budding crown) for each growth fighter. */
-  private playerAvatar: GrowthAvatar | null = null;
-  private npcAvatar: GrowthAvatar | null = null;
+  private playerAvatar: BaseAvatar | null = null;
+  private npcAvatar: BaseAvatar | null = null;
+  /** Monkey skin: pops for the bloons. */
+  private readonly monkeyAnims: MonkeyAnims;
   /** Last aim point, cached in handleInput so the per-frame avatar update can face it. */
   private aimX = 0;
   private aimY = 0;
@@ -579,6 +599,7 @@ export class GrowthKit {
   private fighterContactNext: Map<Fighter, number> = new Map();
 
   constructor(private arena: GrowthArenaApi) {
+    this.monkeyAnims = new MonkeyAnims(arena.scene);
     this.pcol = (base) => arena.growthColor('player', base);
     this.ncol = (base) => arena.growthColor('npc', base);
     this.pfx = new GrowthFx(arena.scene, this.pcol);
@@ -593,7 +614,7 @@ export class GrowthKit {
   /** Effect painter for a side. */
   private fx(owner: Owner): GrowthFx { return owner === 'player' ? this.pfx : this.nfx; }
   /** The rig that should react to a cast by this side, if that side is playing growth. */
-  private avatarOf(owner: Owner): GrowthAvatar | null {
+  private avatarOf(owner: Owner): BaseAvatar | null {
     return owner === 'player' ? this.playerAvatar : this.npcAvatar;
   }
 
@@ -707,6 +728,41 @@ export class GrowthKit {
 
   private lvl(body: BodyState, id: string): number { return body.levels[id] ?? 0; }
 
+  /** That side is wearing the Monkey skin. Drawing and wording only — the sim never reads it. */
+  private monkey(owner: Owner): boolean { return this.arena.skinId(owner) === 'monkey'; }
+
+  /** The rig for a side: the equipped skin's, else growth's own. */
+  private makeAvatar(owner: Owner): BaseAvatar {
+    return makeSkinAvatar(this.arena.skinId(owner), this.arena.scene)
+      ?? new GrowthAvatar(this.arena.scene, this.col(owner), owner === 'player' ? CULTURE_TONES : NPC_TONES);
+  }
+
+  /** Highest row bought on one body-tree path, 0–5 — the tier the Monkey rig dresses for. */
+  private pathTier(body: BodyState, path: string): number {
+    let tier = 0;
+    for (const n of GROWTH_EVOLVE_NODES) if (n.path === path && this.lvl(body, n.id) > 0) tier = Math.max(tier, n.row);
+    return tier;
+  }
+
+  private dressMonkey(av: BaseAvatar | null, body: BodyState): void {
+    if (av instanceof MonkeyAvatar) {
+      av.setPaths(this.pathTier(body, 'offense'), this.pathTier(body, 'efficiency'), this.pathTier(body, 'defense'));
+    }
+  }
+
+  /** Every Growth floating text goes through here, so the Monkey skin can speak its own nouns. */
+  private floatText(x: number, y: number, text: string, color: string): void {
+    if (this.monkey('player')) {
+      // Longest name first, so "More Teeth" is never caught as "Teeth".
+      for (const n of NODES_LONGEST_FIRST) {
+        const m = MONKEY_NODES[n.id];
+        if (m && text.includes(n.name)) { text = text.replace(n.name, m.name); break; }
+      }
+      text = text.replace(/DNA/g, 'Bloontonium').replace(/\u{1F9EC}|🧬/gu, '🧪');
+    }
+    this.arena.showFloatingText(x, y, text, color);
+  }
+
   private bodyFor(owner: Owner): BodyState { return owner === 'player' ? this.fighterBody : this.npcBody; }
 
   private fighterOf(owner: Owner): Fighter { return owner === 'player' ? this.arena.player : this.arena.npc; }
@@ -795,7 +851,7 @@ export class GrowthKit {
     const def = GROWTH_SECRET_UPGRADES.find((s) => s.id === id);
     if (!def || this.secretOwned.has(id)) return;
     if (this.playerDna < GROWTH_SECRET_COST) {
-      this.arena.showFloatingText(player.x, player.y - 30, 'Not enough DNA', '#ff6666');
+      this.floatText(player.x, player.y - 30, 'Not enough DNA', '#ff6666');
       return;
     }
     this.playerDna -= GROWTH_SECRET_COST;
@@ -813,7 +869,7 @@ export class GrowthKit {
       player.increaseMaxHp(K_SPEC_HP);
       player.heal(K_SPEC_HP);
     }
-    this.arena.showFloatingText(player.x, player.y - 30, `🧫 ${def.name}!`, '#ffdd66');
+    this.floatText(player.x, player.y - 30, `🧫 ${def.name}!`, '#ffdd66');
   }
 
   // ── Mastery: Syringe Shot / Sickness ─────────────────────────────────
@@ -872,12 +928,12 @@ export class GrowthKit {
     this.fx(owner).muzzleBud(ox + Math.cos(aim) * 18, oy + Math.sin(aim) * 18, aim, 1.2, 7, SICK_TONES);
 
     const container = scene.add.container(ox, oy).setDepth(7);
-    const needle = scene.add.rectangle(16, 0, 16, 2, 0xdde4ee, 1);
-    const tip = scene.add.triangle(25, 0, 0, -1.5, 5, 0, 0, 1.5, 0xffffff, 1);
-    const barrel = scene.add.rectangle(2, 0, 22, 9, 0xf0f6ff, 0.55).setStrokeStyle(1, 0xaabbcc, 0.9);
-    const fluid = scene.add.rectangle(4, 0, 15, 6, SYRINGE_COLOR, 0.95);
-    const stem = scene.add.rectangle(-14, 0, 12, 2.5, 0xdddddd, 1);
-    const thumb = scene.add.rectangle(-21, 0, 3, 11, 0xeeeeee, 1);
+    const needle = scene.add.rectangle(16, 0, 16, 2, this.col(owner)(0xdde4ee), 1);
+    const tip = scene.add.triangle(25, 0, 0, -1.5, 5, 0, 0, 1.5, this.col(owner)(0xffffff), 1);
+    const barrel = scene.add.rectangle(2, 0, 22, 9, this.col(owner)(0xf0f6ff), 0.55).setStrokeStyle(1, this.col(owner)(0xaabbcc), 0.9);
+    const fluid = scene.add.rectangle(4, 0, 15, 6, this.col(owner)(SYRINGE_COLOR), 0.95);
+    const stem = scene.add.rectangle(-14, 0, 12, 2.5, this.col(owner)(0xdddddd), 1);
+    const thumb = scene.add.rectangle(-21, 0, 3, 11, this.col(owner)(0xeeeeee), 1);
     container.add([needle, tip, barrel, fluid, stem, thumb]);
     container.setRotation(aim);
 
@@ -888,7 +944,7 @@ export class GrowthKit {
       durationMs: this.syringeDuration(owner),
       spawnedAt: scene.time.now,
     });
-    this.arena.showFloatingText(ox, oy - 34, '💉 SYRINGE', '#ff8899');
+    this.floatText(ox, oy - 34, '💉 SYRINGE', '#ff8899');
   }
 
   private updateSyringes(time: number, delta: number): void {
@@ -921,7 +977,7 @@ export class GrowthKit {
 
       // No damage of its own — the syringe only ever delivers the plague.
       this.applySickness(struck, s.owner, s.durationMs, true, time);
-      this.arena.spawnHitFlash(struck.x, struck.y, SYRINGE_COLOR);
+      this.arena.spawnHitFlash(struck.x, struck.y, this.col(s.owner)(SYRINGE_COLOR));
       // Snap on application, so Sickness has a moment as well as a state.
       this.fx(s.owner).ring(struck.x, struck.y, 6, 34, GROWTH.flush, 320, 3, 8);
       this.fx(s.owner).motes(struck.x, struck.y, 6, {
@@ -944,7 +1000,7 @@ export class GrowthKit {
     });
     for (let k = 0; k < 7; k++) {
       const a = Math.random() * Math.PI * 2;
-      const shard = scene.add.rectangle(struck.x, struck.y, 4, 1.5, 0xf0f6ff, 0.9).setDepth(7);
+      const shard = scene.add.rectangle(struck.x, struck.y, 4, 1.5, this.col(s.owner)(0xf0f6ff), 0.9).setDepth(7);
       shard.setRotation(a);
       scene.tweens.add({
         targets: shard, x: struck.x + Math.cos(a) * 46, y: struck.y + Math.sin(a) * 46, alpha: 0,
@@ -986,7 +1042,7 @@ export class GrowthKit {
     target.on('damaged', entry.onDamaged);
     target.sicknessUntil = entry.until;
     this.sicknesses.push(entry);
-    this.arena.showFloatingText(target.x, target.y - 44, '🩸 SICKNESS', '#ff5566');
+    this.floatText(target.x, target.y - 44, '🩸 SICKNESS', '#ff5566');
   }
 
   private detachSickness(s: Sickness): void {
@@ -1007,7 +1063,7 @@ export class GrowthKit {
         if (t.active && t.hp > 0 && this.sickTier(s.owner, 'carrier') > 0 && !t.sicknessCarrier) {
           t.sicknessCarrier = true;
           this.carriers.set(t, 0);
-          this.arena.showFloatingText(t.x, t.y - 44, '🦠 CARRIER', '#aadd55');
+          this.floatText(t.x, t.y - 44, '🦠 CARRIER', '#aadd55');
         }
         this.detachSickness(s);
         this.sicknesses.splice(i, 1);
@@ -1051,12 +1107,12 @@ export class GrowthKit {
     dmg = Math.round(dmg * this.dmgBoost(owner));
 
     t.takeDamage(dmg);
-    this.arena.spawnHitFlash(t.x, t.y, SYRINGE_COLOR);
+    this.arena.spawnHitFlash(t.x, t.y, this.col(owner)(SYRINGE_COLOR));
     this.registerDamage(owner, t, dmg);
 
     // Fatal (ultimate): once sickness has them on the ropes, it finishes the job.
     if (this.sickTier(owner, 'fatal') > 0 && t.active && t.hp > 0 && t.hp <= t.maxHp * FATAL_HP_RATIO) {
-      this.arena.showFloatingText(t.x, t.y - 40, '☠️ FATAL', '#ff2233');
+      this.floatText(t.x, t.y - 40, '☠️ FATAL', '#ff2233');
       t.takeDamage(9999, { pierce: true });
     }
   }
@@ -1102,7 +1158,7 @@ export class GrowthKit {
       angle: aim, spread: SNEEZE_HALF_ARC, speed: SNEEZE_RANGE * 1.5,
       size: 2.6, life: 420, rise: 6, depth: 7, tones: SICK_TONES,
     });
-    this.arena.showFloatingText(t.x, t.y - 30, '🤧', '#ccee88');
+    this.floatText(t.x, t.y - 30, '🤧', '#ccee88');
 
     for (const other of this.targetsOf(s.owner)) {
       if (other === t || !other.active || other.hp <= 0) continue;
@@ -1147,7 +1203,7 @@ export class GrowthKit {
       if (t === source || !t.active || t.hp <= 0) continue;
       if (Phaser.Math.Distance.Between(source.x, source.y, t.x, t.y) > COMPROMISE_RADIUS) continue;
       t.takeDamage(dmg);
-      this.arena.spawnHitFlash(t.x, t.y, GROWTH.flush);
+      this.arena.spawnHitFlash(t.x, t.y, this.col(owner)(GROWTH.flush));
       this.registerDamage(owner, t, dmg);
     }
     this.compromiseBusy = false;
@@ -1156,12 +1212,12 @@ export class GrowthKit {
   private spawnBloodPuddle(x: number, y: number, owner: Owner, infectMs: number, time: number): void {
     const { scene } = this.arena;
     const container = scene.add.container(x, y).setDepth(2);
-    container.add(scene.add.ellipse(0, 0, BLOOD_RADIUS * 2, BLOOD_RADIUS * 1.4, 0x8a0f1c, 0.75));
-    container.add(scene.add.ellipse(-8, 4, BLOOD_RADIUS, BLOOD_RADIUS * 0.7, 0xb31624, 0.8));
+    container.add(scene.add.ellipse(0, 0, BLOOD_RADIUS * 2, BLOOD_RADIUS * 1.4, this.col(owner)(0x8a0f1c), 0.75));
+    container.add(scene.add.ellipse(-8, 4, BLOOD_RADIUS, BLOOD_RADIUS * 0.7, this.col(owner)(0xb31624), 0.8));
     for (let i = 0; i < 4; i++) {
       const a = Math.random() * Math.PI * 2;
       const d = BLOOD_RADIUS * (0.7 + Math.random() * 0.5);
-      container.add(scene.add.circle(Math.cos(a) * d, Math.sin(a) * d * 0.6, 2 + Math.random() * 3, 0x8a0f1c, 0.7));
+      container.add(scene.add.circle(Math.cos(a) * d, Math.sin(a) * d * 0.6, 2 + Math.random() * 3, this.col(owner)(0x8a0f1c), 0.7));
     }
     this.bloodPuddles.push({ gfx: container, owner, x, y, infectMs, expiresAt: time + BLOOD_LIFESPAN });
   }
@@ -1283,9 +1339,9 @@ export class GrowthKit {
     if (syrSlot !== 'f' && Phaser.Input.Keyboard.JustDown(fKey)) this.castChargeable('spore-spray', time, mouseX, mouseY);
     if (syrSlot !== 'q' && Phaser.Input.Keyboard.JustDown(qKey)) {
       if (this.playerDna < AUX_COST) {
-        this.arena.showFloatingText(player.x, player.y - 30, 'Not enough DNA', '#ff6666');
+        this.floatText(player.x, player.y - 30, 'Not enough DNA', '#ff6666');
       } else if (this.cloneSlotsFull('player')) {
-        this.arena.showFloatingText(player.x, player.y - 30, 'Clone already active', '#ff6666');
+        this.floatText(player.x, player.y - 30, 'Clone already active', '#ff6666');
       } else {
         player.castAbility('auxiliary-growth', ctx());
       }
@@ -1300,7 +1356,7 @@ export class GrowthKit {
       const isR = abilityId === 'growth-virus';
       const charges = isR ? body.sweatR : body.sweatF;
       if (charges <= 0) {
-        this.arena.showFloatingText(player.x, player.y - 30, 'No charges', '#ff6666');
+        this.floatText(player.x, player.y - 30, 'No charges', '#ff6666');
         return;
       }
       if (isR) {
@@ -1358,7 +1414,8 @@ export class GrowthKit {
     const { player, npc, scene, elementId, npcElementId } = this.arena;
 
     if (elementId === 'growth' && player?.active) {
-      if (!this.playerAvatar) this.playerAvatar = new GrowthAvatar(scene, this.pcol, CULTURE_TONES);
+      if (!this.playerAvatar) this.playerAvatar = this.makeAvatar('player');
+      this.dressMonkey(this.playerAvatar, this.fighterBody);
       const aimX = this.aimX || player.x + 1;
       const aimY = this.aimY || player.y;
       this.playerAvatar.setFacing(Math.atan2(aimY - player.y, aimX - player.x));
@@ -1369,7 +1426,7 @@ export class GrowthKit {
       this.playerAvatar.setMastered(this.arena.masteryActive);
       this.playerAvatar.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
 
-      if (this.arena.masteryActive) {
+      if (this.arena.masteryActive && !this.monkey('player')) {
         if (!this.masteryCulture) this.masteryCulture = new GrowthCulture(scene, this.pcol, CULTURE_TONES, 44, 0.75, 2, 7);
         this.masteryCulture.update(delta, player.x, player.y, player.alpha);
       } else if (this.masteryCulture) {
@@ -1383,7 +1440,8 @@ export class GrowthKit {
     }
 
     if (npcElementId === 'growth' && npc?.active) {
-      if (!this.npcAvatar) this.npcAvatar = new GrowthAvatar(scene, this.ncol, NPC_TONES);
+      if (!this.npcAvatar) this.npcAvatar = this.makeAvatar('npc');
+      this.dressMonkey(this.npcAvatar, this.npcBody);
       this.npcAvatar.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
       this.npcAvatar.setIntensity(this.npcBody.chitinUp ? 1.35 : 1);
       this.npcAvatar.setMastered(this.arena.npcMasteryActive);
@@ -1425,11 +1483,11 @@ export class GrowthKit {
     const fighter = this.fighterOf(owner);
     const dna = owner === 'player' ? this.playerDna : this.npcDna;
     if (dna < AUX_COST) {
-      this.arena.showFloatingText(fighter.x, fighter.y - 30, 'Not enough DNA', '#ff6666');
+      this.floatText(fighter.x, fighter.y - 30, 'Not enough DNA', '#ff6666');
       return;
     }
     if (this.cloneSlotsFull(owner)) {
-      this.arena.showFloatingText(fighter.x, fighter.y - 30, 'Clone already active', '#ff6666');
+      this.floatText(fighter.x, fighter.y - 30, 'Clone already active', '#ff6666');
       return;
     }
     if (owner === 'player') this.playerDna -= AUX_COST; else this.npcDna -= AUX_COST;
@@ -1445,7 +1503,7 @@ export class GrowthKit {
       inherit = { ...this.puddles[pi].levels };
       this.puddles[pi].container.destroy();
       this.puddles.splice(pi, 1);
-      this.arena.showFloatingText(nx, ny - 26, '🧬 Soup absorbed!', '#88ff88');
+      this.floatText(nx, ny - 26, '🧬 Soup absorbed!', '#88ff88');
     }
 
     // Both arms thrust out and hold — the ultimate plants something, and the nest is
@@ -1459,7 +1517,7 @@ export class GrowthKit {
       spawnAt: scene.time.now,
       x: nx, y: ny, hp: 10, owner, inheritLevels: inherit,
     });
-    this.arena.showFloatingText(fighter.x, fighter.y - 40, '🥚 Nest planted', '#88bb22');
+    this.floatText(fighter.x, fighter.y - 40, '🥚 Nest planted', '#88bb22');
     if (owner === 'player') this.arena.recordMasteryStat('auxClones', 1);
   }
 
@@ -1483,7 +1541,7 @@ export class GrowthKit {
     }
     this.clones.splice(this.clones.indexOf(clone), 1);
     this.destroyCloneVisuals(clone);
-    this.arena.showFloatingText(fighter.x, fighter.y - 40, '🧟 INHABITED CLONE!', '#88ff44');
+    this.floatText(fighter.x, fighter.y - 40, '🧟 INHABITED CLONE!', '#88ff44');
     // Dying into a clone is the biggest thing this element does, so it gets the whole stack.
     const fx = this.fx(owner);
     fx.burst(fighter.x, fighter.y, 96, { pods: 16, haze: 3, duration: 560, tones: tonesFor(owner) });
@@ -1513,7 +1571,7 @@ export class GrowthKit {
     const home = this.clones.find((c) => c.owner === 'player' && !c.body.isCloneBody);
     if (!home) return [];
     this.swapBodies(home);
-    this.arena.showFloatingText(f.x, f.y - 56, '🔀 PUT BACK', '#aaff66');
+    this.floatText(f.x, f.y - 56, '🔀 PUT BACK', '#aaff66');
     return ['Body Swap'];
   }
 
@@ -1541,7 +1599,7 @@ export class GrowthKit {
     this.applyCloneTint(clone);
 
     if (!silent) {
-      this.arena.showFloatingText(p.x, p.y - 40, '🔀 BODY SWAP', '#aaff66');
+      this.floatText(p.x, p.y - 40, '🔀 BODY SWAP', '#aaff66');
       // Both ends of the swap bloom, and a creep of biofilm marks the line between them.
       this.pfx.bloom(p.x, p.y, 40, 10, 6, CULTURE_TONES);
       this.pfx.bloom(clone.sprite.x, clone.sprite.y, 40, 10, 6, CULTURE_TONES);
@@ -1650,12 +1708,25 @@ export class GrowthKit {
     const avatar = this.avatarOf(owner);
     avatar?.play('punch', aim);
     const hand = avatar?.castHand() ?? { x: ox, y: oy };
+    const container = scene.add.container(ox, oy).setDepth(6);
+    if (this.monkey(owner)) {
+      // A dart: no flagellum to wiggle, so the tail list stays empty.
+      container.add(buildDart(scene));
+      container.setRotation(aim);
+      this.bacteria.push({
+        container, tail: [], owner, srcBody,
+        x: ox, y: oy, vx: nx * speed, vy: ny * speed,
+        dmg: this.bacteriumDamage(srcBody, owner),
+        spawnedAt: scene.time.now,
+        wigglePhase: 0,
+      });
+      return;
+    }
     this.fx(owner).muzzleBud(hand.x, hand.y, aim, 1, 7, tonesFor(owner));
 
-    const color = owner === 'player' ? PLAYER_COLOR : NPC_COLOR;
-    const container = scene.add.container(ox, oy).setDepth(6);
+    const color = this.col(owner)(owner === 'player' ? PLAYER_COLOR : NPC_COLOR);
     const bodyGfx = scene.add.ellipse(0, 0, 16, 9, color, 0.95);
-    const nucleus = scene.add.circle(2, 0, 2.5, 0x1a4a1a, 1) as Phaser.GameObjects.Arc;
+    const nucleus = scene.add.circle(2, 0, 2.5, this.col(owner)(0x1a4a1a), 1) as Phaser.GameObjects.Arc;
     const tail: Phaser.GameObjects.Arc[] = [];
     for (let i = 0; i < 3; i++) {
       const seg = scene.add.circle(-10 - i * 4.5, 0, 2.4 - i * 0.5, color, 0.8) as Phaser.GameObjects.Arc;
@@ -1708,7 +1779,7 @@ export class GrowthKit {
       const angDiff = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(t.y - oy, t.x - ox) - aim));
       if (angDiff > CLAW_HALF_ARC) continue;
       t.takeDamage(dmg);
-      this.arena.spawnHitFlash(t.x, t.y, GROWTH.pollen);
+      this.arena.spawnHitFlash(t.x, t.y, this.col(owner)(GROWTH.pollen));
       this.fx(owner).motes(t.x, t.y, 5, { angle: aim, spread: 0.8, speed: 110, size: 2.4, life: 380, depth: 8, tones });
       this.registerDamage(owner, t, dmg);
       this.onClickDamage(owner, srcBody, dmg);
@@ -1765,7 +1836,7 @@ export class GrowthKit {
       angle: aim, spread: EMESIS_CONE_HALF, speed: 150, size: 3, life: 420, depth: 8,
       tones: SICK_TONES,
     });
-    this.arena.showFloatingText(f.x, f.y - 40, '🤢 …', '#88cc44');
+    this.floatText(f.x, f.y - 40, '🤢 …', '#88cc44');
 
     for (let i = 0; i < EMESIS_CLOUD_COUNT; i++) {
       if (this.vomitClouds.length >= EMESIS_MAX_CLOUDS) break;
@@ -1806,7 +1877,7 @@ export class GrowthKit {
           if (!t.active || t.hp <= 0) continue;
           if (Phaser.Math.Distance.Between(c.x, c.y, t.x, t.y) > EMESIS_CLOUD_RADIUS) continue;
           t.takeDamage(EMESIS_TICK_DAMAGE, { source: c, sourceX: c.x, sourceY: c.y });
-          this.arena.spawnHitFlash(t.x, t.y, GROWTH.lime);
+          this.arena.spawnHitFlash(t.x, t.y, this.col(c.owner)(GROWTH.lime));
           this.registerDamage(c.owner, t, EMESIS_TICK_DAMAGE);
           // Caught in it: they owe their own, and theirs will burn *us*.
           if (!this.forcedVomits.has(t)) {
@@ -1814,7 +1885,7 @@ export class GrowthKit {
               left: EMESIS_SPREAD_COUNT,
               nextAt: time + EMESIS_SPREAD_WINDOW_MS / (EMESIS_SPREAD_COUNT + 1),
             });
-            this.arena.showFloatingText(t.x, t.y - 46, '🤮 Sick!', '#aadd44');
+            this.floatText(t.x, t.y - 46, '🤮 Sick!', '#aadd44');
           }
         }
       }
@@ -1911,7 +1982,7 @@ export class GrowthKit {
         if (!t.active || t.hp <= 0) continue;
         if (Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) <= BACT_HIT_RADIUS) {
           t.takeDamage(b.dmg);
-          this.arena.spawnHitFlash(t.x, t.y, PLAYER_COLOR);
+          this.arena.spawnHitFlash(t.x, t.y, this.col(b.owner)(PLAYER_COLOR));
           this.registerDamage(b.owner, t, b.dmg);
           this.onClickDamage(b.owner, b.srcBody, b.dmg);
           hit = true;
@@ -1940,7 +2011,7 @@ export class GrowthKit {
   private healBody(owner: Owner, body: BodyState, amount: number): void {
     if (owner === 'player' && body === this.fighterBody) {
       this.arena.player.heal(amount);
-      this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 30, `+${amount} HP`, '#66dd66');
+      this.floatText(this.arena.player.x, this.arena.player.y - 30, `+${amount} HP`, '#66dd66');
       return;
     }
     if (owner === 'npc' && body === this.npcBody) {
@@ -1961,9 +2032,15 @@ export class GrowthKit {
     const aim = Math.atan2(dy, dx);
     // Hurled overhead — the virus is thrown down at the target, not flicked.
     this.avatarOf(owner)?.play('slam', aim);
-    this.fx(owner).muzzleBud(ox + Math.cos(aim) * 16, oy + Math.sin(aim) * 16, aim, 1.4, 7, tones);
-    const tri = scene.add.triangle(ox, oy, 0, -10, 9, 8, -9, 8, this.col(owner)(tones.cyto), 0.95).setDepth(6);
-    tri.setStrokeStyle(2, this.col(owner)(tones.spark), 0.9);
+    let tri: VirusBody;
+    if (this.monkey(owner)) {
+      tri = buildTacks(scene).setPosition(ox, oy).setDepth(6);
+    } else {
+      this.fx(owner).muzzleBud(ox + Math.cos(aim) * 16, oy + Math.sin(aim) * 16, aim, 1.4, 7, tones);
+      const capsid = scene.add.triangle(ox, oy, 0, -10, 9, 8, -9, 8, this.col(owner)(tones.cyto), 0.95).setDepth(6);
+      capsid.setStrokeStyle(2, this.col(owner)(tones.spark), 0.9);
+      tri = capsid;
+    }
     tri.setRotation(aim + Math.PI / 2);
     this.viruses.push({
       tri, owner, srcBody,
@@ -2000,7 +2077,7 @@ export class GrowthKit {
         if (!t.active || t.hp <= 0) continue;
         if (Phaser.Math.Distance.Between(v.x, v.y, t.x, t.y) <= VIRUS_HIT_RADIUS) {
           t.takeDamage(hitDmg);
-          this.arena.spawnHitFlash(t.x, t.y, GROWTH.shoot);
+          this.arena.spawnHitFlash(t.x, t.y, this.col(v.owner)(GROWTH.shoot));
           // The capsid ruptures and the payload takes root in the victim.
           this.fx(v.owner).burst(v.x, v.y, 54, {
             pods: 9, haze: 1, duration: 380, tones: tonesFor(v.owner),
@@ -2041,11 +2118,11 @@ export class GrowthKit {
       existing.srcBody = srcBody;
       return;
     }
-    const icon = this.arena.scene.add.triangle(target.x, target.y - 34, 0, -6, 5, 4, -5, 4, 0x77dd33, 0.95).setDepth(9);
-    icon.setStrokeStyle(1, 0xccffaa, 0.9);
+    const icon = this.arena.scene.add.triangle(target.x, target.y - 34, 0, -6, 5, 4, -5, 4, this.col(owner)(0x77dd33), 0.95).setDepth(9);
+    icon.setStrokeStyle(1, this.col(owner)(0xccffaa), 0.9);
     this.arena.scene.tweens.add({ targets: icon, scaleX: 1.35, scaleY: 1.35, yoyo: true, repeat: -1, duration: 380 });
     this.infections.push({ target, owner, srcBody, until: time + durationMs, nextExpelAt: time + this.expelIntervalFor(owner), icon });
-    this.arena.showFloatingText(target.x, target.y - 44,
+    this.floatText(target.x, target.y - 44,
       this.hasVirusPerk(owner) ? '🦠 PLAGUED' : '🦠 INFECTED', '#99ee55');
   }
 
@@ -2080,7 +2157,7 @@ export class GrowthKit {
       const fy = Phaser.Math.Clamp(t.y + Math.sin(ang) * dist, 20, scene.scale.height - 20);
       this.spawnFloorVirus(t.x, t.y, fx, fy, inf.owner, dropDmg, false, time);
     }
-    this.arena.spawnHitFlash(t.x, t.y, 0x77dd33);
+    this.arena.spawnHitFlash(t.x, t.y, this.col(inf.owner)(0x77dd33));
 
     // R+ : expulsions can also cough up a healing virus only the caster can take.
     if (inf.owner === 'player' && this.arena.hasUpgrade('r') && Math.random() < HEAL_VIRUS_CHANCE) {
@@ -2093,10 +2170,17 @@ export class GrowthKit {
 
   private spawnFloorVirus(fromX: number, fromY: number, x: number, y: number, owner: Owner, dmg: number, healing: boolean, time: number): void {
     const { scene } = this.arena;
-    const color = healing ? 0x22ee55 : owner === 'player' ? 0x99cc22 : 0xcc8833;
-    const tri = scene.add.triangle(fromX, fromY, 0, -8, 7, 6, -7, 6, color, 0.9).setDepth(4);
-    tri.setStrokeStyle(1.5, healing ? 0xaaffcc : 0xddffaa, 0.8);
-    tri.setRotation(Math.random() * Math.PI * 2);
+    let tri: VirusBody;
+    if (this.monkey(owner)) {
+      // A spike-factory pile: always lands point-up, so no spin.
+      tri = buildSpikePile(scene, healing).setPosition(fromX, fromY).setDepth(4);
+    } else {
+      const color = this.col(owner)(healing ? 0x22ee55 : owner === 'player' ? 0x99cc22 : 0xcc8833);
+      const capsid = scene.add.triangle(fromX, fromY, 0, -8, 7, 6, -7, 6, color, 0.9).setDepth(4);
+      capsid.setStrokeStyle(1.5, healing ? this.col(owner)(0xaaffcc) : this.col(owner)(0xddffaa), 0.8);
+      capsid.setRotation(Math.random() * Math.PI * 2);
+      tri = capsid;
+    }
     scene.tweens.add({ targets: tri, x, y, duration: 180, ease: 'Cubic.out' });
     if (healing) {
       scene.tweens.add({ targets: tri, alpha: 0.55, yoyo: true, repeat: -1, duration: 420 });
@@ -2118,11 +2202,11 @@ export class GrowthKit {
         if (caster.active && caster.hp > 0
             && Phaser.Math.Distance.Between(fv.x, fv.y, caster.x, caster.y) <= HEAL_VIRUS_PICKUP_RADIUS) {
           caster.heal(HEAL_VIRUS_AMOUNT);
-          this.arena.showFloatingText(caster.x, caster.y - 30, `+${HEAL_VIRUS_AMOUNT} HP`, '#44ff77');
+          this.floatText(caster.x, caster.y - 30, `+${HEAL_VIRUS_AMOUNT} HP`, '#44ff77');
           // Viral Consumption (secret): digesting a healthy virus fires you up briefly.
           if (fv.owner === 'player' && this.hasSecret('viral-consumption')) {
             this.viralBoostUntil = time + VIRAL_BOOST_MS;
-            this.arena.showFloatingText(caster.x, caster.y - 46, '🧬 +20% SPD/DMG', '#aaff66');
+            this.floatText(caster.x, caster.y - 46, '🧬 +20% SPD/DMG', '#aaff66');
           }
           fv.tri.destroy();
           this.floorViruses.splice(i, 1);
@@ -2134,7 +2218,7 @@ export class GrowthKit {
         if (!t.active || t.hp <= 0) continue;
         if (Phaser.Math.Distance.Between(fv.x, fv.y, t.x, t.y) <= FLOOR_VIRUS_HIT_RADIUS + 16) {
           t.takeDamage(fv.dmg, { source: fv, sourceX: fv.x, sourceY: fv.y });
-          this.arena.spawnHitFlash(t.x, t.y, 0x99cc22);
+          this.arena.spawnHitFlash(t.x, t.y, this.col(fv.owner)(0x99cc22));
           this.registerDamage(fv.owner, t, fv.dmg);
           // Pandemic (secret): the dropped virus takes hold, so the victim starts dropping their own.
           if (fv.owner === 'player' && this.hasSecret('pandemic')) {
@@ -2158,7 +2242,7 @@ export class GrowthKit {
     const aim = Math.atan2(ty - oy, tx - ox);
     // A spray, not a throw: hands forward along the aim, jetting spores out ahead.
     this.avatarOf(owner)?.play('sweep', aim);
-    this.fx(owner).sporeJet(ox, oy, aim, 90, 5, tonesFor(owner));
+    if (!this.monkey(owner)) this.fx(owner).sporeJet(ox, oy, aim, 90, 5, tonesFor(owner));
     const count = SPORE_COUNT + this.lvl(srcBody, 'gut-bacteria');
     const gutTier = this.lvl(srcBody, 'gut-bacteria');
     const spikedTier = this.lvl(srcBody, 'spiked-spores');
@@ -2192,7 +2276,8 @@ export class GrowthKit {
       hp: SPORE_BASE_HP, maxHp: SPORE_BASE_HP,
       spawnedAt: time, matured: false,
     });
-    // The sac isn't placed — it erupts out of the floor.
+    // The sac isn't placed — it erupts out of the floor. (A bloon just appears, inflated.)
+    if (this.monkey(owner)) return;
     this.fx(owner).ring(x, y, 3, 24, tonesFor(owner).lit, 340, 3, 4);
     this.fx(owner).motes(x, y, 4, { speed: 50, size: 2.2, life: 420, rise: 14, depth: 6, tones: tonesFor(owner) });
   }
@@ -2208,9 +2293,11 @@ export class GrowthKit {
       const age = time - s.spawnedAt;
 
       if (age >= SPORE_LIFESPAN || s.hp <= 0) {
-        if (s.hp <= 0) {
+        if (s.hp <= 0 && this.monkey(s.owner)) {
+          this.monkeyAnims.pop(s.x, s.y, this.sporeRadius(s), bloonColor(1));
+        } else if (s.hp <= 0) {
           // A popped sac dumps its contents; one that simply timed out just dries up.
-          this.arena.spawnHitFlash(s.x, s.y, GROWTH.lime);
+          this.arena.spawnHitFlash(s.x, s.y, this.col(s.owner)(GROWTH.lime));
           this.fx(s.owner).burst(s.x, s.y, this.sporeRadius(s) * 2.4, {
             pods: 8, haze: 1, duration: 340, tones: tonesFor(s.owner),
           });
@@ -2231,7 +2318,7 @@ export class GrowthKit {
         if (s.owner === 'player' && this.arena.hasUpgrade('f') && Math.random() < 0.25) {
           const ang = Math.random() * Math.PI * 2;
           this.spawnSpore(s.x + Math.cos(ang) * 34, s.y + Math.sin(ang) * 34, s.owner, s.spikedTier, s.gutTier, time);
-          this.arena.showFloatingText(s.x, s.y - 20, '🍄 Spore Cloud', '#88ee66');
+          this.floatText(s.x, s.y - 20, '🍄 Spore Cloud', '#88ee66');
         }
       }
 
@@ -2248,7 +2335,15 @@ export class GrowthKit {
       const radius = this.sporeRadius(s);
       s.gfx.clear();
       s.gfx.setAlpha(age > SPORE_LIFESPAN - 1000 ? (SPORE_LIFESPAN - age) / 1000 : 1);
-      GrowthFx.drawSporeWall(
+      if (this.monkey(s.owner)) {
+        // A bloon: its colour is its health, so a hit that drops a layer pops one off.
+        const layer = bloonLayer(s.hp);
+        if (s.bloonLayer !== undefined && layer < s.bloonLayer) {
+          this.monkeyAnims.pop(s.x, s.y, radius * 0.8, bloonColor(s.bloonLayer * 25 + 1), 220);
+        }
+        s.bloonLayer = layer;
+        drawBloon(s.gfx, s.x, s.y, radius, time / 1000, s.hp, s.spikedTier > 0);
+      } else GrowthFx.drawSporeWall(
         s.gfx, this.col(s.owner), tonesFor(s.owner), s.x, s.y, radius,
         time / 1000, Math.min(1, age / SPORE_GROW_MS), Phaser.Math.Clamp(s.hp / s.maxHp, 0, 1),
         s.spikedTier > 0,
@@ -2309,7 +2404,7 @@ export class GrowthKit {
 
   private absorbProjectileIntoSpore(s: SporeWall, damage: number): void {
     s.hp -= damage;
-    this.arena.spawnHitFlash(s.x, s.y, 0x66dd44);
+    this.arena.spawnHitFlash(s.x, s.y, this.col(s.owner)(0x66dd44));
     if (s.owner === 'player') this.arena.recordMasteryStat('sporeBlocks', 1);
     if (s.spikedTier > 0) {
       this.sporeSpikeAccum[s.owner] += damage;
@@ -2319,8 +2414,8 @@ export class GrowthKit {
         if (victim) {
           const dmg = 2 * s.spikedTier;
           victim.takeDamage(dmg);
-          this.arena.spawnHitFlash(victim.x, victim.y, 0xaaff44);
-          this.arena.showFloatingText(victim.x, victim.y - 26, `🌵 ${dmg}`, '#aaff66');
+          this.arena.spawnHitFlash(victim.x, victim.y, this.col(s.owner)(0xaaff44));
+          this.floatText(victim.x, victim.y - 26, `🌵 ${dmg}`, '#aaff66');
           this.registerDamage(s.owner, victim, dmg);
         }
       }
@@ -2362,7 +2457,7 @@ export class GrowthKit {
     const { scene } = this.arena;
     const sx = x + (Math.random() * 30 - 15);
     const sy = y + (Math.random() * 30 - 15);
-    const gfx = scene.add.text(sx, sy, '🧬', { fontSize: '16px' }).setOrigin(0.5).setDepth(9);
+    const gfx = scene.add.text(sx, sy, this.monkey(owner) ? '🧪' : '🧬', { fontSize: '16px' }).setOrigin(0.5).setDepth(9);
     const home = owner === 'player' ? this.arena.player : this.arena.npc;
     const flight = { t: 0 };
     const finish = () => {
@@ -2388,7 +2483,7 @@ export class GrowthKit {
     // Mitosis (secret): the strand copies itself on the way in.
     if (owner === 'player' && this.hasSecret('mitosis') && Math.random() < MITOSIS_CHANCE) {
       amount *= 2;
-      this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 36, '🧬 MITOSIS', '#66ffcc');
+      this.floatText(this.arena.player.x, this.arena.player.y - 36, '🧬 MITOSIS', '#66ffcc');
     }
     // Ruin's Combo Breaker halves every meter in the game — the DNA bar included.
     amount = meterGain(owner === 'player' ? this.arena.player : this.arena.npc, amount);
@@ -2416,7 +2511,12 @@ export class GrowthKit {
     g.fillRoundedRect(bx - 3, by - 5, w + 6, 10, 4);
     g.lineStyle(1, 0x2f6a44, 0.9);
     g.strokeRoundedRect(bx - 3, by - 5, w + 6, 10, 4);
-    drawDnaHelix(g, bx, by, w, 3.2, this.npcDna / DNA_CAP, this.arena.scene.time.now, 7, 1);
+    if (this.monkey('npc')) {
+      g.clear();
+      drawBloontoniumGauge(g, bx + 6, by, w - 12, 4, this.npcDna / DNA_CAP, this.arena.scene.time.now);
+    } else {
+      drawDnaHelix(g, bx, by, w, 3.2, this.npcDna / DNA_CAP, this.arena.scene.time.now, 7, 1);
+    }
   }
 
   /** DNA gauge pinned to the HUD, just below the top-of-screen HP bar (player only) — a
@@ -2450,6 +2550,16 @@ export class GrowthKit {
     const frac = Math.min(1, this.playerDna / DNA_CAP);
     const full = frac >= 1;
     g.clear();
+
+    if (this.monkey('player')) {
+      drawBloontoniumGauge(g, left, barY, barW, barH, frac, now, DNA_CAP);
+      if (this.dnaHudBarText) {
+        const bodyTag = this.fighterBody.isCloneBody ? '  \u00B7 CLONE BODY' : '';
+        this.dnaHudBarText.setText(`BLOONTONIUM ${this.playerDna} / ${DNA_CAP}${bodyTag}`);
+        this.dnaHudBarText.setColor(full ? '#e0ffd0' : '#9dff6a');
+      }
+      return;
+    }
 
     // Specimen-slide backing plate: dark glass with a lab-chart grid and bevelled rim.
     const px = left - 10, py = barY - barH / 2 - 4, pw = barW + 20, ph = barH + 8;
@@ -2567,12 +2677,12 @@ export class GrowthKit {
       if (fb.chitinUp && p.shieldHp <= 0) {
         fb.chitinUp = false;
         fb.chitinDownAt = time;
-        this.arena.showFloatingText(p.x, p.y - 40, '💔 Chitin shattered', '#cc8855');
+        this.floatText(p.x, p.y - 40, '💔 Chitin shattered', '#cc8855');
         this.applyFighterTint();
       } else if (!fb.chitinUp && time - fb.chitinDownAt >= CHITIN_REGEN_MS) {
         fb.chitinUp = true;
         p.shieldHp += CHITIN_SHIELD_HP;
-        this.arena.showFloatingText(p.x, p.y - 40, '🛡 Chitin regrown', '#ddaa66');
+        this.floatText(p.x, p.y - 40, '🛡 Chitin regrown', '#ddaa66');
         this.applyFighterTint();
       }
     }
@@ -2616,7 +2726,7 @@ export class GrowthKit {
       nextMap.set(t, time + CONTACT_TICK_MS);
       const dmg = 5 * tier;
       t.takeDamage(dmg);
-      this.arena.spawnHitFlash(t.x, t.y, 0x8a5a2b);
+      this.arena.spawnHitFlash(t.x, t.y, this.col(owner)(0x8a5a2b));
       this.registerDamage(owner, t, dmg);
     }
   }
@@ -2668,14 +2778,14 @@ export class GrowthKit {
     };
     this.clones.push(clone);
     this.applyCloneTint(clone);
-    this.arena.showFloatingText(caster.x, caster.y - 40, '🧬 Clone hatched!', '#88bb22');
+    this.floatText(caster.x, caster.y - 40, '🧬 Clone hatched!', '#88bb22');
   }
 
   private updateClones(time: number, delta: number): void {
     for (let i = this.clones.length - 1; i >= 0; i--) {
       const c = this.clones[i];
       if (c.hp <= 0) {
-        this.arena.spawnHitFlash(c.sprite.x, c.sprite.y, GROWTH.lime);
+        this.arena.spawnHitFlash(c.sprite.x, c.sprite.y, this.col(c.owner)(GROWTH.lime));
         // A dying clone doesn't pop — it liquefies into the soup it leaves behind.
         this.fx(c.owner).burst(c.sprite.x, c.sprite.y, 80, {
           pods: 14, haze: 3, duration: 520, tones: tonesFor(c.owner),
@@ -2743,7 +2853,7 @@ export class GrowthKit {
           c.hp -= dmg;
           p.setActive(false).setVisible(false);
           (p.body as Phaser.Physics.Arcade.Body).stop();
-          this.arena.spawnHitFlash(c.sprite.x, c.sprite.y, 0xff4444);
+          this.arena.spawnHitFlash(c.sprite.x, c.sprite.y, this.col(c.owner)(0xff4444));
           break;
         }
       }
@@ -2752,7 +2862,7 @@ export class GrowthKit {
       if (this.lvl(c.body, 'chitin-shell') > 0 && c.body.chitinUp) {
         if (!c.chitinRing) {
           c.chitinRing = this.arena.scene.add.circle(c.sprite.x, c.sprite.y, 24, 0x000000, 0)
-            .setStrokeStyle(3, CHITIN_TINT, 0.85).setDepth(6) as Phaser.GameObjects.Arc;
+            .setStrokeStyle(3, this.col(c.owner)(CHITIN_TINT), 0.85).setDepth(6) as Phaser.GameObjects.Arc;
         }
         c.chitinRing.setPosition(c.sprite.x, c.sprite.y);
       } else if (c.chitinRing) {
@@ -2768,28 +2878,28 @@ export class GrowthKit {
   private spawnSoupPuddle(x: number, y: number, owner: Owner, levels: Record<string, number>): void {
     const { scene } = this.arena;
     const container = scene.add.container(x, y).setDepth(2);
-    const base = scene.add.ellipse(0, 0, 62, 40, 0x3f7a1f, 0.85);
-    const blob1 = scene.add.ellipse(-18, 6, 26, 16, 0x4f8a2a, 0.8);
-    const blob2 = scene.add.ellipse(16, -8, 22, 14, 0x356a18, 0.8);
+    const base = scene.add.ellipse(0, 0, 62, 40, this.col(owner)(0x3f7a1f), 0.85);
+    const blob1 = scene.add.ellipse(-18, 6, 26, 16, this.col(owner)(0x4f8a2a), 0.8);
+    const blob2 = scene.add.ellipse(16, -8, 22, 14, this.col(owner)(0x356a18), 0.8);
     container.add([base, blob1, blob2]);
     // Random eyes staring out of the soup…
     for (let i = 0; i < 3; i++) {
       const ex = Phaser.Math.Between(-20, 20);
       const ey = Phaser.Math.Between(-12, 12);
-      const white = scene.add.circle(ex, ey, 3.2, 0xffffff, 0.95) as Phaser.GameObjects.Arc;
-      const pupil = scene.add.circle(ex + Phaser.Math.Between(-1, 1), ey + Phaser.Math.Between(-1, 1), 1.4, 0x111111, 1) as Phaser.GameObjects.Arc;
+      const white = scene.add.circle(ex, ey, 3.2, this.col(owner)(0xffffff), 0.95) as Phaser.GameObjects.Arc;
+      const pupil = scene.add.circle(ex + Phaser.Math.Between(-1, 1), ey + Phaser.Math.Between(-1, 1), 1.4, this.col(owner)(0x111111), 1) as Phaser.GameObjects.Arc;
       container.add([white, pupil]);
     }
     // …and stray teeth.
     for (let i = 0; i < 4; i++) {
       const tx = Phaser.Math.Between(-22, 22);
       const ty = Phaser.Math.Between(-13, 13);
-      const tooth = scene.add.triangle(tx, ty, 0, -4, 3, 3, -3, 3, 0xf5f0dd, 0.95);
+      const tooth = scene.add.triangle(tx, ty, 0, -4, 3, 3, -3, 3, this.col(owner)(0xf5f0dd), 0.95);
       tooth.setRotation(Math.random() * Math.PI * 2);
       container.add(tooth);
     }
     this.puddles.push({ container, x, y, owner, levels: { ...levels } });
-    this.arena.showFloatingText(x, y - 24, '🍲 Primordial soup', '#77cc55');
+    this.floatText(x, y - 24, '🍲 Primordial soup', '#77cc55');
   }
 
   // ── Evolve tree: buy / sell / UI ─────────────────────────────────────
@@ -2817,6 +2927,7 @@ export class GrowthKit {
     for (const l of this.evolveLabels) l.destroy();
     this.evolveLabels = [];
     this.evolveAreas = [];
+    if (this.monkey('player')) { this.renderMonkeyPanel(); return; }
 
     const { scene } = this.arena;
     const W = scene.scale.width, H = scene.scale.height;
@@ -2910,6 +3021,108 @@ export class GrowthKit {
         fontSize: '11px', fontFamily: FONT_UI, color: '#bfe8cf', stroke: '#000000', strokeThickness: 3,
       }).setOrigin(0.5).setDepth(41);
     this.evolveLabels.push(hint);
+  }
+
+  /**
+   * Monkey skin: the same two trees, drawn as the dart monkey's three-path upgrade panel. Every
+   * cost, lock and click id is computed exactly as the stock chart computes them, so
+   * `handleEvolveClick` and the buy/sell rules run unchanged underneath it.
+   */
+  private renderMonkeyPanel(): void {
+    const { scene } = this.arena;
+    const W = scene.scale.width, H = scene.scale.height;
+    const gfx = scene.add.graphics().setDepth(40);
+    this.evolveGfx = gfx;
+    const body = this.fighterBody;
+    const showTabs = this.hasSickTree();
+    if (!showTabs) this.evolveTab = 'body';
+    const sickTab = this.evolveTab === 'sickness';
+    const hasUlt = this.arena.hasUpgrade('e');
+    const fastTier = this.lvl(body, 'fast-evolution');
+    const apex = this.apexOwned();
+
+    const levelOf = (id: string) => (sickTab ? this.sickLevels[id] ?? 0 : this.lvl(body, id));
+    const nodes: GrowthNodeDef[] = sickTab ? GROWTH_SICK_NODES : GROWTH_EVOLVE_NODES;
+    const ultIds = sickTab ? GROWTH_SICK_ULTIMATE_IDS : GROWTH_EVOLVE_ULTIMATE_IDS;
+    const prereqOf = (path: string) => (sickTab
+      ? GROWTH_SICK_ULTIMATE_PREREQ[path as keyof typeof GROWTH_SICK_ULTIMATE_PREREQ]
+      : GROWTH_EVOLVE_ULTIMATE_PREREQ[path as keyof typeof GROWTH_EVOLVE_ULTIMATE_PREREQ]);
+    const pathDefs: { id: string; name: string; color: number }[] = sickTab
+      ? GROWTH_SICK_PATHS
+      : MONKEY_PATH_ORDER.map((id) => GROWTH_EVOLVE_PATHS.find((p) => p.id === id)!);
+
+    const paths: MonkeyPathView[] = pathDefs.map((path) => {
+      const prereqMaxed = levelOf(prereqOf(path.id)) >= GROWTH_EVOLVE_MAX_LEVEL;
+      const tiers = nodes.filter((n) => n.path === path.id).sort((a, b) => a.row - b.row).map((node) => {
+        const level = levelOf(node.id);
+        const maxLevel = node.isUltimate ? 1 : GROWTH_EVOLVE_MAX_LEVEL;
+        const cost = node.isUltimate
+          ? growthEvolveUltimateCost(fastTier, apex)
+          : growthEvolveNodeCost(level, node.row, fastTier, apex);
+        const prereqLocked = !!node.isUltimate && level < maxLevel && !prereqMaxed;
+        const otherChosen = !!node.isUltimate && level < maxLevel && prereqMaxed
+          && ultIds.some((oid) => oid !== node.id && levelOf(oid) > 0);
+        const m = sickTab ? null : MONKEY_NODES[node.id];
+        return {
+          id: node.id,
+          name: m?.name ?? node.name,
+          desc: m?.desc ?? node.description,
+          level, maxLevel, cost,
+          lockText: prereqLocked ? '🔒 T4' : otherChosen ? '🔒' : null,
+          isUltimate: !!node.isUltimate,
+          offered: !node.isUltimate || hasUlt,
+        };
+      });
+      return {
+        key: sickTab ? 'sick' : path.id,
+        label: sickTab ? path.name.toUpperCase() : MONKEY_PATH_LABEL[path.id],
+        color: path.color,
+        tiers,
+      };
+    });
+
+    const extras: MonkeyExtraView[] = [];
+    if (!sickTab && body.isCloneBody) {
+      const level = this.lvl(body, GROWTH_CLONE_MATURITY_ID);
+      const maxed = level >= GROWTH_CLONE_MATURITY_MAX_LEVEL;
+      extras.push({
+        id: GROWTH_CLONE_MATURITY_ID, name: `Monkey Village ${level}/${GROWTH_CLONE_MATURITY_MAX_LEVEL}`,
+        desc: GROWTH_CLONE_MATURITY_DESC.replace('clone bodies', 'sidekick monkeys'),
+        costText: maxed ? 'MAX' : `${GROWTH_CLONE_MATURITY_COST} 🧪`,
+        owned: maxed, affordable: !maxed && this.playerDna >= GROWTH_CLONE_MATURITY_COST,
+      });
+    }
+    if (!sickTab && this.arena.masteryActive) {
+      for (const id of this.secretRoll) {
+        const def = GROWTH_SECRET_UPGRADES.find((x) => x.id === id);
+        if (!def) continue;
+        const owned = this.secretOwned.has(id);
+        extras.push({
+          id: `__secret:${id}`, name: def.name, desc: def.description,
+          costText: owned ? 'OWNED' : `${GROWTH_SECRET_COST} 🧪`,
+          owned, affordable: !owned && this.playerDna >= GROWTH_SECRET_COST,
+        });
+      }
+    }
+
+    const code = MONKEY_PATH_ORDER.map((p) => this.pathTier(body, p)).join('-');
+    const { labels, areas } = renderUpgradePanel(scene, gfx, W, H, {
+      title: sickTab ? 'BLOON SICKNESS' : body.isCloneBody ? 'SIDEKICK MONKEY' : 'DART MONKEY',
+      currency: this.playerDna, cap: DNA_CAP,
+      tabs: showTabs ? [
+        { id: 'body', label: '🐒 MONKEY', on: !sickTab },
+        { id: 'sickness', label: '🎈 SICKNESS', on: sickTab },
+      ] : null,
+      paths,
+      extrasTitle: body.isCloneBody ? 'SIDEKICK' : 'MONKEY KNOWLEDGE',
+      extras,
+      hint: showTabs
+        ? 'Click: buy   Right-click: sell (needs Super Monkey Fan Club)   Click a tab to swap   [E] Close'
+        : 'Click: buy   Right-click: sell (needs Super Monkey Fan Club)   SPACE: swap monkeys   [E] Close',
+      crosspath: code,
+    });
+    this.evolveLabels = labels;
+    this.evolveAreas = areas;
   }
 
   private drawEvolveTabs(gfx: Phaser.GameObjects.Graphics, W: number, y: number): void {
@@ -3192,7 +3405,7 @@ export class GrowthKit {
         if (!isSell) this.evolveTab = area.id.slice(6) as 'body' | 'sickness';
       } else if (area.id.startsWith('__secret:')) {
         if (isSell) {
-          this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 30, 'Permanent — cannot sell', '#ff6666');
+          this.floatText(this.arena.player.x, this.arena.player.y - 30, 'Permanent — cannot sell', '#ff6666');
         } else {
           this.buySecretUpgrade(area.id.slice(9));
         }
@@ -3222,35 +3435,35 @@ export class GrowthKit {
     if (def.isUltimate) {
       if (level > 0) return;
       if ((this.sickLevels[GROWTH_SICK_ULTIMATE_PREREQ[def.path]] ?? 0) < GROWTH_EVOLVE_MAX_LEVEL) {
-        this.arena.showFloatingText(player.x, player.y - 30, 'Max Tier 4 first', '#ff6666');
+        this.floatText(player.x, player.y - 30, 'Max Tier 4 first', '#ff6666');
         return;
       }
       if (GROWTH_SICK_ULTIMATE_IDS.some((oid) => oid !== id && (this.sickLevels[oid] ?? 0) > 0)) {
-        this.arena.showFloatingText(player.x, player.y - 30, 'Already chose an Ultimate', '#ff6666');
+        this.floatText(player.x, player.y - 30, 'Already chose an Ultimate', '#ff6666');
         return;
       }
       const cost = growthEvolveUltimateCost(fastTier, apex);
       if (this.playerDna < cost) {
-        this.arena.showFloatingText(player.x, player.y - 30, 'Not enough DNA', '#ff6666');
+        this.floatText(player.x, player.y - 30, 'Not enough DNA', '#ff6666');
         return;
       }
       this.playerDna -= cost;
       this.sickLevels[id] = 1;
       this.arena.recordMasteryStat('upgrades', 1);
-      this.arena.showFloatingText(player.x, player.y - 30, `${def.name} unlocked!`, '#ffdd44');
+      this.floatText(player.x, player.y - 30, `${def.name} unlocked!`, '#ffdd44');
       return;
     }
 
     if (level >= GROWTH_EVOLVE_MAX_LEVEL) return;
     const cost = growthEvolveNodeCost(level, def.row, fastTier, apex);
     if (this.playerDna < cost) {
-      this.arena.showFloatingText(player.x, player.y - 30, 'Not enough DNA', '#ff6666');
+      this.floatText(player.x, player.y - 30, 'Not enough DNA', '#ff6666');
       return;
     }
     this.playerDna -= cost;
     this.sickLevels[id] = level + 1;
     this.arena.recordMasteryStat('upgrades', 1);
-    this.arena.showFloatingText(player.x, player.y - 30, `${def.name} ${level + 1}/3`, '#ff8899');
+    this.floatText(player.x, player.y - 30, `${def.name} ${level + 1}/3`, '#ff8899');
   }
 
   private sellSickNode(id: string): void {
@@ -3258,12 +3471,12 @@ export class GrowthKit {
     const def = GROWTH_SICK_NODES.find((n) => n.id === id);
     if (!def) return;
     if (def.isUltimate) {
-      this.arena.showFloatingText(player.x, player.y - 30, 'Permanent — cannot sell', '#ff6666');
+      this.floatText(player.x, player.y - 30, 'Permanent — cannot sell', '#ff6666');
       return;
     }
     const fastTier = this.lvl(this.fighterBody, 'fast-evolution');
     if (fastTier <= 0) {
-      this.arena.showFloatingText(player.x, player.y - 30, 'Need Fast Evolution', '#ff6666');
+      this.floatText(player.x, player.y - 30, 'Need Fast Evolution', '#ff6666');
       return;
     }
     const level = this.sickLevels[id] ?? 0;
@@ -3272,7 +3485,7 @@ export class GrowthKit {
     const refund = Math.floor(cost * growthEvolveSellRefundFraction(fastTier));
     this.sickLevels[id] = level - 1;
     this.playerDna = Math.min(DNA_CAP, this.playerDna + refund);
-    this.arena.showFloatingText(player.x, player.y - 30, `Sold, +${refund} \u{1F9EC}`, '#ffdd66');
+    this.floatText(player.x, player.y - 30, `Sold, +${refund} \u{1F9EC}`, '#ffdd66');
   }
 
   private buyEvolveNode(id: string): void {
@@ -3283,7 +3496,7 @@ export class GrowthKit {
       const level = this.lvl(body, id);
       if (level >= GROWTH_CLONE_MATURITY_MAX_LEVEL) return;
       if (this.playerDna < GROWTH_CLONE_MATURITY_COST) {
-        this.arena.showFloatingText(player.x, player.y - 30, 'Not enough DNA', '#ff6666');
+        this.floatText(player.x, player.y - 30, 'Not enough DNA', '#ff6666');
         return;
       }
       this.playerDna -= GROWTH_CLONE_MATURITY_COST;
@@ -3291,7 +3504,7 @@ export class GrowthKit {
       player.increaseMaxHp(GROWTH_CLONE_MATURITY_HP_PER_TIER);
       player.heal(GROWTH_CLONE_MATURITY_HP_PER_TIER);
       this.arena.recordMasteryStat('upgrades', 1);
-      this.arena.showFloatingText(player.x, player.y - 30, `${GROWTH_CLONE_MATURITY_NAME} ${level + 1}/3`, '#ffcc99');
+      this.floatText(player.x, player.y - 30, `${GROWTH_CLONE_MATURITY_NAME} ${level + 1}/3`, '#ffcc99');
       return;
     }
 
@@ -3303,14 +3516,14 @@ export class GrowthKit {
     if (level >= GROWTH_EVOLVE_MAX_LEVEL) return;
     const cost = growthEvolveNodeCost(level, def.row, this.lvl(body, 'fast-evolution'), this.apexOwned());
     if (this.playerDna < cost) {
-      this.arena.showFloatingText(player.x, player.y - 30, 'Not enough DNA', '#ff6666');
+      this.floatText(player.x, player.y - 30, 'Not enough DNA', '#ff6666');
       return;
     }
     this.playerDna -= cost;
     body.levels[id] = level + 1;
     this.onNodeChanged(id);
     this.arena.recordMasteryStat('upgrades', 1);
-    this.arena.showFloatingText(player.x, player.y - 30, `${def.name} ${level + 1}/3`, '#88ffaa');
+    this.floatText(player.x, player.y - 30, `${def.name} ${level + 1}/3`, '#88ffaa');
   }
 
   /** Ultimates: single tier, flat DNA cost, one per body per match, row-4 prereq maxed. */
@@ -3319,16 +3532,16 @@ export class GrowthKit {
     const body = this.fighterBody;
     if (this.lvl(body, def.id) > 0) return;
     if (this.lvl(body, GROWTH_EVOLVE_ULTIMATE_PREREQ[def.path]) < GROWTH_EVOLVE_MAX_LEVEL) {
-      this.arena.showFloatingText(player.x, player.y - 30, 'Max Tier 4 first', '#ff6666');
+      this.floatText(player.x, player.y - 30, 'Max Tier 4 first', '#ff6666');
       return;
     }
     if (GROWTH_EVOLVE_ULTIMATE_IDS.some((oid) => oid !== def.id && this.lvl(body, oid) > 0)) {
-      this.arena.showFloatingText(player.x, player.y - 30, 'Already chose an Ultimate', '#ff6666');
+      this.floatText(player.x, player.y - 30, 'Already chose an Ultimate', '#ff6666');
       return;
     }
     const cost = growthEvolveUltimateCost(this.lvl(body, 'fast-evolution'), this.apexOwned());
     if (this.playerDna < cost) {
-      this.arena.showFloatingText(player.x, player.y - 30, 'Not enough DNA', '#ff6666');
+      this.floatText(player.x, player.y - 30, 'Not enough DNA', '#ff6666');
       return;
     }
     this.playerDna -= cost;
@@ -3338,7 +3551,7 @@ export class GrowthKit {
     this.arena.recordMasteryBest(`finalUL_${def.id}`, 1);
     const distinctUltimates = GROWTH_EVOLVE_ULTIMATE_IDS.reduce((n, uid) => n + (this.arena.getMasteryStat(`finalUL_${uid}`) > 0 ? 1 : 0), 0);
     this.arena.recordMasteryBest('finalUpgrades', distinctUltimates);
-    this.arena.showFloatingText(player.x, player.y - 30, `${def.name} unlocked!`, '#ffdd44');
+    this.floatText(player.x, player.y - 30, `${def.name} unlocked!`, '#ffdd44');
   }
 
   private sellEvolveNode(id: string): void {
@@ -3346,13 +3559,13 @@ export class GrowthKit {
     const body = this.fighterBody;
     const def = GROWTH_EVOLVE_NODES.find((n) => n.id === id);
     if (def?.isUltimate || id === GROWTH_CLONE_MATURITY_ID) {
-      this.arena.showFloatingText(player.x, player.y - 30, 'Permanent — cannot sell', '#ff6666');
+      this.floatText(player.x, player.y - 30, 'Permanent — cannot sell', '#ff6666');
       return;
     }
     if (!def) return;
     const fastTier = this.lvl(body, 'fast-evolution');
     if (fastTier <= 0) {
-      this.arena.showFloatingText(player.x, player.y - 30, 'Need Fast Evolution', '#ff6666');
+      this.floatText(player.x, player.y - 30, 'Need Fast Evolution', '#ff6666');
       return;
     }
     const level = this.lvl(body, id);
@@ -3362,7 +3575,7 @@ export class GrowthKit {
     body.levels[id] = level - 1;
     this.onNodeChanged(id);
     this.playerDna = Math.min(DNA_CAP, this.playerDna + refund);
-    this.arena.showFloatingText(player.x, player.y - 30, `Sold, +${refund} \u{1F9EC}`, '#ffdd66');
+    this.floatText(player.x, player.y - 30, `Sold, +${refund} \u{1F9EC}`, '#ffdd66');
   }
 
   /** Apply immediate side effects of a node level change on the controlled body. */

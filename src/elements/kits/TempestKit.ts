@@ -7,10 +7,15 @@ import { Sfx } from '../../audio';
 import {
   TMP, HeraldBroadcast, TempestAvatar, TempestColorFn, TempestFx, boltPip, chevron, current as paintCurrent, fallGauge,
   frontLane, gustLayered, hailStone, iceShard, knockTag, lightning, liftShadow, rainPuddle, staticTrail, stormBank, stormSky, swirl,
-  thunderCloud,
+  thunderCloud, tintStyle,
 } from './TempestVisuals';
+import type { BaseAvatar } from './ElementVisuals';
+import { makeSkinAvatar } from './skins/SkinAvatars';
+import { rocketShot } from './skins/RocketFx';
 
 type Owner = 'player' | 'npc';
+/** Tempest's rig or a skin's: a skin rig may take the three storm tells, or ignore them. */
+type TempestRig = BaseAvatar & { setAir?(on: boolean): void; setFall?(v: number): void; setEye?(on: boolean): void };
 const BOTH: Owner[] = ['player', 'npc'];
 
 // ── The height sim ───────────────────────────────────────────────────────────
@@ -199,6 +204,8 @@ export interface TempestArenaApi {
   get bounds(): Phaser.Geom.Rectangle;
   /** Skins: maps a Tempest visual colour through that side's equipped skin. */
   tempestColor(owner: Owner, base: number): number;
+  /** Skins: the skin id this side has equipped for Tempest, or null. */
+  skinId(owner: Owner): string | null;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
@@ -446,8 +453,8 @@ export class TempestKit {
   private ncol: TempestColorFn;
   private pfx: TempestFx;
   private nfx: TempestFx;
-  private playerAvatar: TempestAvatar | null = null;
-  private npcAvatar: TempestAvatar | null = null;
+  private playerAvatar: TempestRig | null = null;
+  private npcAvatar: TempestRig | null = null;
   private groundGfx: Phaser.GameObjects.Graphics | null = null;
   private airGfx: Phaser.GameObjects.Graphics | null = null;
   /** Q+: the weather over the whole screen. */
@@ -455,8 +462,9 @@ export class TempestKit {
 
   constructor(api: TempestArenaApi) {
     this.api = api;
-    this.pcol = (base) => api.tempestColor('player', base);
-    this.ncol = (base) => api.tempestColor('npc', base);
+    // The `style` getter lets the shared painters swap shapes for a skin (see `tintStyle`).
+    this.pcol = Object.assign((base: number) => api.tempestColor('player', base), { style: () => api.skinId('player') });
+    this.ncol = Object.assign((base: number) => api.tempestColor('npc', base), { style: () => api.skinId('npc') });
     this.pfx = new TempestFx(api.scene, this.pcol);
     this.nfx = new TempestFx(api.scene, this.ncol);
   }
@@ -468,7 +476,7 @@ export class TempestKit {
   private fighter(owner: Owner): Fighter { return owner === 'player' ? this.api.player : this.api.npc; }
   private fx(owner: Owner): TempestFx { return owner === 'player' ? this.pfx : this.nfx; }
   private col(owner: Owner): TempestColorFn { return owner === 'player' ? this.pcol : this.ncol; }
-  private avatar(owner: Owner): TempestAvatar | null { return owner === 'player' ? this.playerAvatar : this.npcAvatar; }
+  private avatar(owner: Owner): TempestRig | null { return owner === 'player' ? this.playerAvatar : this.npcAvatar; }
   private is(owner: Owner): boolean {
     return owner === 'player' ? this.api.elementId === 'tempest' : this.api.npcElementId === 'tempest';
   }
@@ -508,13 +516,13 @@ export class TempestKit {
     const f = this.fighter(owner);
     this.refund(f, abilityId);
     if (owner !== 'player' || !this.alive(f)) return;
-    this.api.showFloatingText(f.x, f.y - 46, text, this.hex(TMP.gust));
+    this.api.showFloatingText(f.x, f.y - 46, text, this.hex(this.col(owner)(TMP.gust)));
     Sfx.playAt('ui-denied', f.x, { volume: 0.55 });
   }
 
   private text(owner: Owner, x: number, y: number, t: string, color = TMP.gust): void {
     if (owner !== 'player') return;
-    this.api.showFloatingText(x, y, t, this.hex(color));
+    this.api.showFloatingText(x, y, t, this.hex(this.col(owner)(color)));
   }
 
   /** Wall-adjacent: within `pad` of any bound. Returns the wall normal, or null. */
@@ -1899,7 +1907,7 @@ export class TempestKit {
         continue;
       }
       if (!av) {
-        av = new TempestAvatar(this.api.scene, this.col(owner));
+        av = makeSkinAvatar(this.api.skinId(owner), this.api.scene) ?? new TempestAvatar(this.api.scene, this.col(owner));
         if (owner === 'player') this.playerAvatar = av; else this.npcAvatar = av;
       }
       const s = this.sides[owner];
@@ -1908,10 +1916,10 @@ export class TempestKit {
         : (this.foes(owner)[0] ?? { x: s.aimX, y: s.aimY });
       av.setFacing(Math.atan2(aim.y - f.y, aim.x - f.x));
       av.setMastered(owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
-      av.setAir(s.airborne);
-      av.setFall(s.airborne && s.vz < 0 ? Math.min(1, -s.vz / LAND_SPEED_FULL) : 0);
+      av.setAir?.(s.airborne);
+      av.setFall?.(s.airborne && s.vz < 0 ? Math.min(1, -s.vz / LAND_SPEED_FULL) : 0);
       const eye = this.pongs.some((p) => p.owner === owner);
-      av.setEye(eye);
+      av.setEye?.(eye);
       s.eyeWasOpen = eye;
       // Arms out for balance in the air; the grapple's reach is set by `updateGrabs` each frame.
       if (!s.grab) av.setHold(s.airborne && !s.slam ? 'ride' : null);
@@ -1939,10 +1947,12 @@ export class TempestKit {
       staticTrail(g, this.col(st.owner), st.pts, STATIC_HALF_W, fade, t, st.seed);
     }
 
+    // Currents belong to the arena, not a side: paint them in the Tempest fighter's style.
+    const curCol = this.col(this.is('player') ? 'player' : 'npc');
     for (const c of this.currents) {
       const life = Phaser.Math.Clamp((c.diesAt - this.now) / 1200, 0, 1);
       const born = Phaser.Math.Clamp((this.now - c.bornAt) / 400, 0, 1);
-      paintCurrent(g, this.pcol, c.x, c.y, CURRENT_R * born, 0.5 + life * 0.5, { t, seed: c.seed, life });
+      paintCurrent(g, curCol, c.x, c.y, CURRENT_R * born, 0.5 + life * 0.5, { t, seed: c.seed, life });
     }
     for (const fr of this.fronts) {
       const fade = fr.fadeAt === 0 ? 1 : Phaser.Math.Clamp((fr.fadeAt - this.now) / FRONT_FADE_MS, 0, 1);
@@ -1981,6 +1991,8 @@ export class TempestKit {
         { phase: t * 10, seed: s.seed, curl: 0.6 });
       if (s.hail) {
         hailStone(g, this.col(s.owner), s.x, s.y, 8, t * 9 + s.seed, 1, s.seed);
+      } else if (tintStyle(this.col(s.owner)) === 'rocket') {
+        rocketShot(g, s.x, s.y, ang, t, s.seed);
       } else {
         g.fillStyle(this.col(s.owner)(TMP.white), 0.9);
         g.fillCircle(s.x, s.y, 5);
@@ -2022,10 +2034,14 @@ export class TempestKit {
         const c = this.col(owner);
         g.fillStyle(c(TMP.ink), 0.8);
         g.fillCircle(px, py, 13);
-        g.fillStyle(c(TMP.storm), 1);
-        g.fillCircle(px, py, 10);
-        g.fillStyle(c(TMP.sky), 1);
-        g.fillCircle(px - 2, py - 2, 6);
+        if (tintStyle(c) === 'rocket') {
+          rocketShot(g, px, py + 3, -Math.PI / 2, t, 0);
+        } else {
+          g.fillStyle(c(TMP.storm), 1);
+          g.fillCircle(px, py, 10);
+          g.fillStyle(c(TMP.sky), 1);
+          g.fillCircle(px - 2, py - 2, 6);
+        }
         for (let i = 0; i < 3; i++) {
           const k = (t * 1.5 + i / 3) % 1;
           chevron(g, c(TMP.white), px, py - 16 - k * 8, 6, 3, (1 - k) * 0.9, 2);

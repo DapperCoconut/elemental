@@ -1730,7 +1730,7 @@ export class SoulKit {
         if (!go.active || go.isFromPlayer !== wantFromPlayer) continue;
         if (Phaser.Math.Distance.Between(go.x, go.y, husk.x, husk.y) <= AMALGAM_PROJECTILE_HIT_RADIUS) {
           husk.takeDamage(go.damage);
-          this.arena.spawnHitFlash(husk.x, husk.y, 0xff6600);
+          this.arena.spawnHitFlash(husk.x, husk.y, this.col(rec.owner)(0xff6600));
           go.setActive(false).setVisible(false);
           (go.body as Phaser.Physics.Arcade.Body).stop();
           break;
@@ -2170,7 +2170,7 @@ export class SoulKit {
       for (const t of targets) {
         if (t.active && t.hp > 0 && Phaser.Math.Distance.Between(s.x, s.y, t.x, t.y) <= SOUL_SHOT_RADIUS + 16) {
           t.takeDamage(s.damage);
-          this.arena.spawnHitFlash(t.x, t.y, 0x9944cc);
+          this.arena.spawnHitFlash(t.x, t.y, this.col(s.owner)(0x9944cc));
           this.fx(s.owner).wisps(s.x, s.y, 4, {
             speed: 80, angle: Math.atan2(s.vy, s.vx) + Math.PI, spread: 1.1,
             size: 2.4, life: 380, rise: -16, depth: 7, tones: s.tones,
@@ -2259,7 +2259,7 @@ export class SoulKit {
       for (const f of this.foesOf(c.owner)) {
         if (Phaser.Math.Distance.Between(c.x, c.y, f.x, f.y) <= c.radius) {
           f.takeDamage(DECAY_DPS);
-          this.arena.spawnHitFlash(f.x, f.y, 0x33cc44);
+          this.arena.spawnHitFlash(f.x, f.y, this.col(c.owner)(0x33cc44));
         }
       }
       for (const gz of this.graveZombies) {

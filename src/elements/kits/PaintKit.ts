@@ -1564,7 +1564,7 @@ export class PaintKit implements SummonPurgeTarget {
       if (time < (this.blastGate.get(t) ?? 0)) continue;
       this.blastGate.set(t, time + BLAST_GATE_MS);
       this.hurt(t, ORANGE_DAMAGE);
-      this.api.spawnHitFlash(t.x, t.y, PNT.orange);
+      this.api.spawnHitFlash(t.x, t.y, this.col(d.owner)(PNT.orange));
       let seen = this.orangeCounted.get(d.stroke);
       if (!seen) { seen = new Set(); this.orangeCounted.set(d.stroke, seen); }
       if (!seen.has(t)) { seen.add(t); this.note(d.owner, 'orangeHits', 1); }
@@ -1695,7 +1695,7 @@ export class PaintKit implements SummonPurgeTarget {
       if (whole <= 0) continue;
       const wasAlive = t.hp > 0;
       this.hurt(t, whole);
-      if (Math.random() < 0.25) this.api.spawnHitFlash(t.x, t.y, PNT.red);
+      if (Math.random() < 0.25) this.api.spawnHitFlash(t.x, t.y, this.col(b.owner)(PNT.red));
       // Mastery: a Masterpiece kill. Credited to red Masterpiece paint specifically.
       if (wasAlive && t.hp <= 0 && this.topCoat(b.owner, t.x, t.y, this.bodyR(t)) === 'red') {
         this.note(b.owner, 'mpKills', 1);
@@ -1807,7 +1807,7 @@ export class PaintKit implements SummonPurgeTarget {
       const thrower = this.throwerOf(d.owner, x, y, vx, vy);
       if (thrower) {
         this.hurt(thrower, WALL_RED_THROWER_DMG);
-        this.api.spawnHitFlash(thrower.x, thrower.y, PNT.red);
+        this.api.spawnHitFlash(thrower.x, thrower.y, this.col(d.owner)(PNT.red));
       }
     } else if (d.kind === 'blue' && this.alive(f)) {
       this.side(d.owner).hasteUntil = Math.max(this.side(d.owner).hasteUntil, this.now + WALL_BLUE_HIT_MS);

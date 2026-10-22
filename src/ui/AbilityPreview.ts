@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { BaseAvatar, ColorFn, GfxSink } from '../elements/kits/ElementVisuals';
-import { getSkinDef, SkinDef } from '../data/Skins';
+import { getSkinDef, SkinDef, skinColor } from '../data/Skins';
 import { makeSkinAvatar } from '../elements/kits/skins/SkinAvatars';
 import * as PlayerData from '../data/PlayerData';
 import { C } from './Theme';
@@ -24,10 +24,8 @@ export function equippedSkin(elementId: string): SkinDef | undefined {
 /** The `palette` half of a skin, as the `ColorFn` every `Fx` and avatar takes. */
 export function skinnedColorFn(elementId: string): ColorFn {
   const def = equippedSkin(elementId);
-  if (!def?.palette) return (c) => c;
-  const palette = def.palette;
-  const fallback = def.paletteFallback;
-  return (base) => palette[base] ?? fallback ?? base;
+  if (!def?.palette && !def?.remap) return (c) => c;
+  return (base) => skinColor(def, base);
 }
 
 /**

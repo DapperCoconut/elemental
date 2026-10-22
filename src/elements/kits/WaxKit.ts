@@ -734,7 +734,7 @@ export class WaxKit implements SummonPurgeTarget {
       if (segmentDistanceSq(target.x, target.y, f.x, f.y, ex, ey) > width * width) continue;
       this.hit(b.owner, target, STINGER_DAMAGE, b, f.x, f.y);
       this.record(b.owner, 'stings');
-      this.api.spawnHitFlash(target.x, target.y, WAX.pale);
+      this.api.spawnHitFlash(target.x, target.y, (b.owner === 'player' ? this.pcol : this.ncol)(WAX.pale));
       b.hits.set(target, (b.hits.get(target) ?? 0) + 1);
     }
   }
@@ -752,7 +752,7 @@ export class WaxKit implements SummonPurgeTarget {
       this.applyPoison(b.owner, target);
       this.shoves.push({ target, vx: Math.cos(b.angle) * STINGER_SHOVE_SPEED, vy: Math.sin(b.angle) * STINGER_SHOVE_SPEED, until: this.now + SHOVE_MS });
       this.fx(b.owner).sting(target.x, target.y, b.angle);
-      this.api.spawnHitFlash(target.x, target.y, WAX.cream);
+      this.api.spawnHitFlash(target.x, target.y, (b.owner === 'player' ? this.pcol : this.ncol)(WAX.cream));
       this.announce(target.x, target.y - 44, '🐝 STUNG · POISONED', '#b6e85c');
     }
     Sfx.playAt('spear-hit', f.x, { rate: 1.15, volume: 0.75 });
@@ -803,7 +803,7 @@ export class WaxKit implements SummonPurgeTarget {
           v.hits.set(target, n);
           if (n === DART_COUNT && !v.grappled.has(target)) { v.grappled.add(target); this.launchGrapple(d.owner, target); }
         }
-        this.api.spawnHitFlash(target.x, target.y, d.kind === 'grapple' ? WAX.soot : WAX.pale);
+        this.api.spawnHitFlash(target.x, target.y, (d.owner === 'player' ? this.pcol : this.ncol)(d.kind === 'grapple' ? WAX.soot : WAX.pale));
         this.darts.splice(i, 1);
         continue;
       }
@@ -835,7 +835,7 @@ export class WaxKit implements SummonPurgeTarget {
         p.tickAt += POISON_TICK_MS;
         p.stacks = Math.min(POISON_MAX_STACKS, p.stacks + 1);
         this.hit(p.owner, p.target, POISON_DAMAGE, p, p.target.x, p.target.y, true);
-        this.api.spawnHitFlash(p.target.x, p.target.y, WAX.poison);
+        this.api.spawnHitFlash(p.target.x, p.target.y, (p.owner === 'player' ? this.pcol : this.ncol)(WAX.poison));
       }
     }
   }
@@ -1016,7 +1016,7 @@ export class WaxKit implements SummonPurgeTarget {
           bee.tickAt += BEE_TICK_MS;
           const dmg = (bee.elite ? ELITE_DAMAGE : BEE_DAMAGE) + (this.isPoisoned(target, time) ? 1 : 0);
           this.hit(bee.owner, target, dmg, bee, bee.x, bee.y, true);
-          this.api.spawnHitFlash(bee.x, bee.y, bee.elite ? WAX.elite : WAX.honeyLit);
+          this.api.spawnHitFlash(bee.x, bee.y, (bee.owner === 'player' ? this.pcol : this.ncol)(bee.elite ? WAX.elite : WAX.honeyLit));
         }
         continue;
       }
@@ -1075,7 +1075,7 @@ export class WaxKit implements SummonPurgeTarget {
           for (const t of this.targetsOf(p.owner)) {
             if (Phaser.Math.Distance.Between(t.x, t.y, p.x, p.y) > p.r) continue;
             this.hit(p.owner, t, HOT_WAX_DAMAGE, p, p.x, p.y, true);
-            this.api.spawnHitFlash(t.x, t.y, WAX.flame);
+            this.api.spawnHitFlash(t.x, t.y, (p.owner === 'player' ? this.pcol : this.ncol)(WAX.flame));
           }
         }
       }
@@ -1130,7 +1130,7 @@ export class WaxKit implements SummonPurgeTarget {
         b.vx = 0;
         b.vy = 0;
         this.fx(b.owner).droplets(target.x, target.y, 3, 70, WAX.honey, 260);
-        this.api.spawnHitFlash(target.x, target.y, WAX.wax);
+        this.api.spawnHitFlash(target.x, target.y, (b.owner === 'player' ? this.pcol : this.ncol)(WAX.wax));
         continue;
       }
       if (b.x < -20 || b.x > this.api.width + 20 || b.y < -20 || b.y > this.api.height + 20) this.bombs.splice(i, 1);
@@ -1166,7 +1166,7 @@ export class WaxKit implements SummonPurgeTarget {
       const damage = Math.round(BOMB_DAMAGE * bombs.length * (1 + BOMB_PER_STACK * bombs.length));
       this.hit(owner, target, damage, bombs[0], target.x, target.y);
       this.fx(owner).bombBlast(target.x, target.y, 48 + bombs.length * 6, bombs.length);
-      this.api.spawnHitFlash(target.x, target.y, WAX.cream);
+      this.api.spawnHitFlash(target.x, target.y, (owner === 'player' ? this.pcol : this.ncol)(WAX.cream));
       this.announce(target.x, target.y - 54, `💥 ×${bombs.length}`, '#ffdf7e', 12);
     }
     if (grouped.size > 0) {

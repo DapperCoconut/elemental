@@ -8,10 +8,19 @@ import {
   MAG, MagmaAvatar, MagmaColorFn, MagmaFx, breathCone, cannonball, lavaRock, magmaSaw,
   moltenPool, mortarShell, obsidianCoat, pirateShip, pirateSpirit, pressureGauge, volcanoCone,
 } from './MagmaVisuals';
+import type { BaseAvatar } from './ElementVisuals';
+import { makeSkinAvatar } from './skins/SkinAvatars';
+import {
+  CelebrationFx, candyGlob, candyPool, celebrationLine, gumball, paradeFloat, partyGoer,
+  partyPopper, pinata, popperPuff, wrappedCandy, RAINBOW,
+} from './skins/CelebrationFx';
 import { meterGain } from '../../combat/Meters';
 import { FONT_DISPLAY, FONT_UI } from '../../ui/Theme';
 
 type Owner = 'player' | 'npc';
+
+/** The rig a side wears: Magma's own pirate, or a skin's character that may share its hooks. */
+type MagmaRig = BaseAvatar & Partial<Pick<MagmaAvatar, 'setVenting' | 'setHelm' | 'setPendant'>>;
 
 /**
  * Magma — a melting pirate whose volcanoes are charged by his own attacks.
@@ -502,6 +511,8 @@ export interface MagmaArenaApi {
   get height(): number;
   /** Skins: maps a Magma visual colour through that side's equipped skin. */
   magmaColor(owner: Owner, base: number): number;
+  /** Skins: the equipped skin id on that side, for the skins that redraw Magma's abilities. */
+  skinId(owner: Owner): string | null;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   getNearestEnemy(fromX: number, fromY: number): Fighter;
@@ -533,8 +544,10 @@ export class MagmaKit {
   private readonly ncol: MagmaColorFn;
   private readonly pfx: MagmaFx;
   private readonly nfx: MagmaFx;
-  private playerAvatar: MagmaAvatar | null = null;
-  private npcAvatar: MagmaAvatar | null = null;
+  private playerAvatar: MagmaRig | null = null;
+  private npcAvatar: MagmaRig | null = null;
+  /** Celebration skin: confetti and candy one-shots, drawn in its own colours. */
+  private readonly cfx: CelebrationFx;
   /** Lava on the floor. Under the fighters — you stand *in* it. */
   private groundGfx: Phaser.GameObjects.Graphics | null = null;
   /** The ship's hull and deck: over the lava, under the fighters, because the captain stands on it. */
@@ -572,6 +585,7 @@ export class MagmaKit {
     this.ncol = (base) => api.magmaColor('npc', base);
     this.pfx = new MagmaFx(api.scene, this.pcol);
     this.nfx = new MagmaFx(api.scene, this.ncol);
+    this.cfx = new CelebrationFx(api.scene);
   }
 
   // ── Small helpers ──────────────────────────────────────────────────────────
@@ -611,7 +625,25 @@ export class MagmaKit {
     return t && t.active && t.hp > 0 ? t : null;
   }
 
-  private avatar(owner: Owner): MagmaAvatar | null {
+  /** True when that side wears the Celebration skin — the art below branches on it, never the play. */
+  private party(owner: Owner): boolean {
+    return this.api.skinId(owner) === 'celebration';
+  }
+
+  /** A floating callout, in the side's skin's words. */
+  private line(owner: Owner, text: string): string {
+    return this.party(owner) ? celebrationLine(text) : text;
+  }
+
+  private say(owner: Owner, x: number, y: number, text: string, color: string): void {
+    this.api.showFloatingText(x, y, this.line(owner, text), color);
+  }
+
+  private makeAvatar(owner: Owner): MagmaRig {
+    return makeSkinAvatar(this.api.skinId(owner), this.api.scene) ?? new MagmaAvatar(this.api.scene, this.col(owner));
+  }
+
+  private avatar(owner: Owner): MagmaRig | null {
     return owner === 'player' ? this.playerAvatar : this.npcAvatar;
   }
 
@@ -845,7 +877,7 @@ export class MagmaKit {
     fx.smoke(x, y - 26, 6, 900);
     fx.ember(x, y - 20, 10, 26, 700);
     this.avatar(owner)?.play('slam', Math.atan2(y - f.y, x - f.x));
-    this.api.showFloatingText(x, y - 74, '🌋 VOLCANO', this.hex(MAG.lava));
+    this.say(owner, x, y - 74, '🌋 VOLCANO', this.hex(MAG.lava));
     this.api.scene.cameras.main.shake(160, 0.004);
   }
 
@@ -857,7 +889,7 @@ export class MagmaKit {
     s.bloatUntil = this.now + BLOAT_MS;
     this.installAbsorber(owner);
     this.avatar(owner)?.play('flex');
-    this.avatar(owner)?.setVenting(true);
+    this.avatar(owner)?.setVenting?.(true);
     const fx = this.fx(owner);
     fx.shock(f.x, f.y, 10, 44, MAG.gold, 420);
     fx.ember(f.x, f.y - 6, 10, 30, 600);
@@ -917,7 +949,7 @@ export class MagmaKit {
     const ang = Math.atan2(ty - f.y, tx - f.x);
     const fx = this.fx(owner);
     this.avatar(owner)?.play('punch', ang);
-    this.avatar(owner)?.setVenting(true);
+    this.avatar(owner)?.setVenting?.(true);
 
     if (over) {
       this.gaugeBlast(owner, f);
@@ -934,7 +966,7 @@ export class MagmaKit {
         caught++;
         this.api.spawnHitFlash(t.x, t.y, this.col(owner)(MAG.lava));
         this.shove(t, ang, BLUNDER_ENEMY_SHOVE + pressure * 60);
-        this.api.showFloatingText(t.x, t.y - 44, `🔫 ${dmg}`, this.hex(MAG.lava));
+        this.say(owner, t.x, t.y - 44, `🔫 ${dmg}`, this.hex(MAG.lava));
       }
       this.record(owner, 'blunderHits', caught);
       // Same geometry as the damage, so a cone across your own volcano charges it.
@@ -942,8 +974,9 @@ export class MagmaKit {
       const midY = f.y + Math.sin(ang) * BLUNDER_RANGE * 0.55;
       this.feed(owner, midX, midY, BLUNDER_RANGE * 0.5, BLUNDER_FEED + GAUGE_DMG_BONUS * pressure);
       fx.erupt(f.x + Math.cos(ang) * 16, f.y + Math.sin(ang) * 16, 36 + pressure * 20, pressure > 0.6 ? MAG.white : MAG.lava);
+      if (this.party(owner)) this.cfx.confettiBurst(f.x + Math.cos(ang) * 40, f.y + Math.sin(ang) * 40, 50 + pressure * 30);
       fx.shock(f.x, f.y, 10, 54, MAG.gold, 380);
-      this.api.showFloatingText(f.x, f.y - 52,
+      this.say(owner, f.x, f.y - 52,
         pressure > 0.02 ? `💥 BLUNDER-BOIL ${Math.round(pressure * 100)}%` : '💥 BLUNDER-BOIL', this.hex(MAG.lava));
     }
 
@@ -1018,7 +1051,7 @@ export class MagmaKit {
       this.api.spawnHitFlash(t.x, t.y, this.col(owner)(MAG.white));
       this.fx(owner).erupt(t.x, t.y, 30, MAG.gold);
       this.shove(t, s.flyAng, 90);
-      this.api.showFloatingText(t.x, t.y - 44, `🏴‍☠️ ${GAUGE_CONTACT_DMG} — RAMMED`, this.hex(MAG.gold));
+      this.say(owner, t.x, t.y - 44, `🏴‍☠️ ${GAUGE_CONTACT_DMG} — RAMMED`, this.hex(MAG.gold));
     }
   }
 
@@ -1058,7 +1091,7 @@ export class MagmaKit {
     const f = this.fighter(owner);
     if (!f) return;
     if (s.ship) {
-      if (owner === 'player') this.api.showFloatingText(f.x, f.y - 52, "🏴‍☠️ SHIP'S OUT", '#8a8a8a');
+      if (owner === 'player') this.say(owner, f.x, f.y - 52, "🏴‍☠️ SHIP'S OUT", '#8a8a8a');
       return;
     }
     const fx = this.fx(owner);
@@ -1068,7 +1101,7 @@ export class MagmaKit {
       s.pendantPower = 0;
       s.taxCarry = 0;
       fx.smoke(f.x, f.y, 5, 700);
-      this.api.showFloatingText(f.x, f.y - 52, '📿 PENDANT OFF', '#8a8a8a');
+      this.say(owner, f.x, f.y - 52, '📿 PENDANT OFF', '#8a8a8a');
       return;
     }
     s.pendantOn = true;
@@ -1077,7 +1110,7 @@ export class MagmaKit {
     this.avatar(owner)?.play('raise');
     fx.shock(f.x, f.y, 8, 50, MAG.pendant, 520);
     fx.ember(f.x, f.y - 4, 8, 24, 640, MAG.pendantLit);
-    this.api.showFloatingText(f.x, f.y - 52, '📿 MOLTEN MUTINY', this.hex(MAG.pendantLit));
+    this.say(owner, f.x, f.y - 52, '📿 MOLTEN MUTINY', this.hex(MAG.pendantLit));
   }
 
   /** The pendant takes its cut. At fifty, the ship. */
@@ -1117,7 +1150,7 @@ export class MagmaKit {
     fx.smoke(f.x, f.y - 20, 12, 1400);
     fx.ember(f.x, f.y, 20, 70, 1000, MAG.gold);
     Sfx.playAt('roar', f.x, { volume: 0.8, rate: 0.75 });
-    this.api.showFloatingText(f.x, f.y - 64, '🏴‍☠️ THE SHIP RISES', this.hex(MAG.gold));
+    this.say(owner, f.x, f.y - 64, '🏴‍☠️ THE SHIP RISES', this.hex(MAG.gold));
     this.api.scene.cameras.main.shake(380, 0.009);
     this.record(owner, 'mutinies', 1);
   }
@@ -1129,10 +1162,10 @@ export class MagmaKit {
     if (!s.ship || s.ship.mounted || !f) return;
     s.ship.mounted = true;
     this.installShipAbsorber(owner);
-    this.avatar(owner)?.setHelm(true);
+    this.avatar(owner)?.setHelm?.(true);
     this.avatar(owner)?.play('raise');
     this.fx(owner).ember(f.x, f.y + 8, 6, 20, 480, MAG.gold);
-    if (owner === 'player') this.api.showFloatingText(f.x, f.y - 52, '⚓ ABOARD', this.hex(MAG.gold));
+    if (owner === 'player') this.say(owner, f.x, f.y - 52, '⚓ ABOARD', this.hex(MAG.gold));
   }
 
   /**
@@ -1145,7 +1178,7 @@ export class MagmaKit {
     if (!s.ship?.mounted) return;
     s.ship.mounted = false;
     this.uninstallShipAbsorber(owner);
-    this.avatar(owner)?.setHelm(false);
+    this.avatar(owner)?.setHelm?.(false);
     if (!f) return;
     if (why === 'jump') {
       // Over the side, toward the cursor, far enough to be clear of the hull.
@@ -1153,7 +1186,7 @@ export class MagmaKit {
       f.setPosition(this.clampX(s.ship.x + Math.cos(a) * (SHIP_HULL_R + 14)),
         this.clampY(s.ship.y + Math.sin(a) * (SHIP_HULL_R + 14)));
       this.fx(owner).ember(f.x, f.y + 8, 5, 18, 420);
-      if (owner === 'player') this.api.showFloatingText(f.x, f.y - 52, '🪂 OVER THE SIDE', '#8a8a8a');
+      if (owner === 'player') this.say(owner, f.x, f.y - 52, '🪂 OVER THE SIDE', '#8a8a8a');
     }
   }
 
@@ -1188,7 +1221,7 @@ export class MagmaKit {
     ship.flashUntil = this.now + 110;
     this.fx(ship.owner).ember(ship.x + (Math.random() - 0.5) * 40, ship.y + (Math.random() - 0.5) * 16, 3, 14, 420);
     if (ship.owner === 'player' || amount >= 8) {
-      this.api.showFloatingText(ship.x + (Math.random() - 0.5) * 30, ship.y - 46, `⚓ −${Math.round(amount)}`, this.hex(MAG.ash));
+      this.say(ship.owner, ship.x + (Math.random() - 0.5) * 30, ship.y - 46, `⚓ −${Math.round(amount)}`, this.hex(MAG.ash));
     }
   }
 
@@ -1238,7 +1271,7 @@ export class MagmaKit {
         this.api.spawnHitFlash(t.x, t.y, this.col(owner)(MAG.gold));
         this.shove(t, Math.atan2(t.y - ship.y, t.x - ship.x), SHIP_RAM_SHOVE);
         this.fx(owner).ember(t.x, t.y, 5, 18, 420, MAG.gold);
-        this.api.showFloatingText(t.x, t.y - 44, `⚓ ${SHIP_RAM_DMG} — RAMMED`, this.hex(MAG.gold));
+        this.say(owner, t.x, t.y - 44, `⚓ ${SHIP_RAM_DMG} — RAMMED`, this.hex(MAG.gold));
       }
     }
 
@@ -1279,7 +1312,7 @@ export class MagmaKit {
       this.addPool(owner, this.clampX(ship.x + Math.cos(a) * 34), this.clampY(ship.y + Math.sin(a) * 22),
         ship.x, ship.y - 10);
     }
-    this.api.showFloatingText(ship.x, ship.y - 60, '⚓ SHIP SUNK', this.hex(MAG.ash));
+    this.say(owner, ship.x, ship.y - 60, '⚓ SHIP SUNK', this.hex(MAG.ash));
     this.api.scene.cameras.main.shake(260, 0.007);
   }
 
@@ -1306,9 +1339,9 @@ export class MagmaKit {
     }
     while (this.cannonballs.length > MAX_CANNONBALLS) this.cannonballs.shift();
     this.avatar(owner)?.play('punch', Math.atan2(ty - ship.y, tx - ship.x));
-    this.avatar(owner)?.setVenting(true);
+    this.avatar(owner)?.setVenting?.(true);
     Sfx.playAt('explosion-small', ship.x, { volume: 0.8, rate: 0.75 });
-    this.api.showFloatingText(ship.x, ship.y - 56, '💣 BROADSIDE', this.hex(MAG.gold));
+    this.say(owner, ship.x, ship.y - 56, '💣 BROADSIDE', this.hex(MAG.gold));
     this.api.scene.cameras.main.shake(180, 0.006);
   }
 
@@ -1331,7 +1364,7 @@ export class MagmaKit {
         this.api.spawnHitFlash(victim.x, victim.y, this.col(b.owner)(MAG.gold));
         this.fx(b.owner).erupt(b.x, b.y, 26, MAG.gold);
         this.shove(victim, ang, CANNON_SHOVE);
-        this.api.showFloatingText(victim.x, victim.y - 44, `💣 ${CANNON_DMG}`, this.hex(MAG.gold));
+        this.say(b.owner, victim.x, victim.y - 44, `💣 ${CANNON_DMG}`, this.hex(MAG.gold));
         gone.push(b);
         continue;
       }
@@ -1342,7 +1375,7 @@ export class MagmaKit {
       if (v) {
         this.feed(b.owner, v.x, v.y, 1, Math.max(0, v.max - v.pressure) + 1);
         this.fx(b.owner).erupt(v.x, v.y - v.r, 40, MAG.gold);
-        this.api.showFloatingText(v.x, v.y - 90, '💣 LIT', this.hex(MAG.gold));
+        this.say(b.owner, v.x, v.y - 90, '💣 LIT', this.hex(MAG.gold));
         gone.push(b);
       }
     }
@@ -1362,7 +1395,7 @@ export class MagmaKit {
     const fx = this.fx(owner);
     fx.ember(ship.x, ship.y - 20, 10, 30, 700, MAG.gold);
     fx.smoke(ship.x, ship.y - 20, 4, 800);
-    this.api.showFloatingText(ship.x, ship.y - 70, '👻 ALL HANDS', this.hex(MAG.gold));
+    this.say(owner, ship.x, ship.y - 70, '👻 ALL HANDS', this.hex(MAG.gold));
   }
 
   /**
@@ -1408,7 +1441,7 @@ export class MagmaKit {
             this.api.spawnHitFlash(t.x, t.y, this.col(sp.owner)(MAG.gold));
             this.fx(sp.owner).erupt(t.x, t.y, 24, MAG.lava);
             this.shove(t, sp.facing, 50);
-            this.api.showFloatingText(t.x, t.y - 44, `👻 ${SPIRIT_DMG}`, this.hex(MAG.gold));
+            this.say(sp.owner, t.x, t.y - 44, `👻 ${SPIRIT_DMG}`, this.hex(MAG.gold));
             break;
           }
         }
@@ -1623,7 +1656,8 @@ export class MagmaKit {
     v.until = v.blowAt + 1;
     v.nextRockAt = this.now;
     fx.erupt(v.x, v.y - v.r, 60, MAG.gold);
-    this.api.showFloatingText(v.x, v.y - 78, '🌋 CRITICAL', this.hex(MAG.white));
+    if (this.party(v.owner)) this.cfx.confettiBurst(v.x, v.y - v.r, 50, 18);
+    this.api.showFloatingText(v.x, v.y - 78, this.line(v.owner, '🌋 CRITICAL'), this.hex(MAG.white));
     this.api.scene.cameras.main.shake(240, 0.006);
   }
 
@@ -1655,7 +1689,7 @@ export class MagmaKit {
     this.fx(owner).ember(f.x, f.y, 3, 14, 380);
     s.plumeLeft--;
     s.plumeNextAt = time + PLUME_GAP_MS;
-    this.avatar(owner)?.setVenting(true);
+    this.avatar(owner)?.setVenting?.(true);
   }
 
   private updatePools(time: number, dt: number): void {
@@ -1663,6 +1697,7 @@ export class MagmaKit {
     for (const p of landing) {
       const fx = this.fx(p.owner);
       fx.splat(p.x, p.y, p.r * 0.9);
+      if (this.party(p.owner)) this.cfx.sprinkleSplat(p.x, p.y, p.r * 0.9);
       fx.ember(p.x, p.y, 4, p.r * 0.7, 520);
       // Mag-Mortar: the round goes off where it lands. The pool it leaves behind is unchanged,
       // so the upgrade adds an opener rather than replacing the floor.
@@ -1774,6 +1809,7 @@ export class MagmaKit {
     const radius = VOLC_COLLAPSE_R + v.over * OVERFILL_R_PER;
     const fx = this.fx(v.owner);
     fx.erupt(v.x, v.y, radius * 0.7, MAG.magma);
+    if (this.party(v.owner)) this.cfx.candyBurst(v.x, v.y - v.r * 0.6, radius);
     fx.shock(v.x, v.y, 30, radius, MAG.gold, 720);
     if (v.over > 0) fx.shock(v.x, v.y, 22, radius * 1.15, MAG.white, 820);
     fx.smoke(v.x, v.y - 20, 12, 1400);
@@ -2077,7 +2113,7 @@ export class MagmaKit {
 
     const fx = this.fx(owner);
     fx.ember(f.x, f.y, 8, 26, 460, MAG.gold);
-    this.avatar(owner)?.setVenting(true);
+    this.avatar(owner)?.setVenting?.(true);
     Sfx.playAt('engine', f.x, { volume: 0.7, rate: 1.15 });
     this.api.showFloatingText(f.x, f.y - 52, '🪚 MAGMA SAW', this.hex(MAG.gold));
     if (owner === 'player' && this.api.isOnline) this.api.broadcastMasteryCast('magma-saw');
@@ -2276,8 +2312,6 @@ export class MagmaKit {
   // ── Avatars ────────────────────────────────────────────────────────────────
 
   private updateAvatars(delta: number, playerIs: boolean, npcIs: boolean): void {
-    const { scene } = this.api;
-
     for (const owner of ['player', 'npc'] as Owner[]) {
       const is = owner === 'player' ? playerIs : npcIs;
       let av = this.avatar(owner);
@@ -2287,14 +2321,14 @@ export class MagmaKit {
       }
       const f = this.fighter(owner);
       if (!av) {
-        av = new MagmaAvatar(scene, this.col(owner));
+        av = this.makeAvatar(owner);
         if (owner === 'player') this.playerAvatar = av; else this.npcAvatar = av;
       }
       const s = this.side(owner);
       av.setFacing(Math.atan2(s.curY - f.y, s.curX - f.x));
-      av.setVenting(s.plumeLeft > 0 || s.flyUntil > this.now);
-      av.setHelm(this.mounted(owner));
-      av.setPendant(s.pendantOn ? s.pendantPower / PENDANT_AWAKEN : -1);
+      av.setVenting?.(s.plumeLeft > 0 || s.flyUntil > this.now);
+      av.setHelm?.(this.mounted(owner));
+      av.setPendant?.(s.pendantOn ? s.pendantPower / PENDANT_AWAKEN : -1);
       av.setIntensity(this.mounted(owner) ? 1.25 : 1);
       av.setMastered(owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
       av.update(delta, f.x, f.y, f.active && f.hp > 0 ? f.alpha : 0);
@@ -2313,7 +2347,8 @@ export class MagmaKit {
       // Skins over as it dies, which is also the warning that it is about to stop hurting.
       const heat = Phaser.Math.Clamp(1 - age * 1.15, 0.05, 1);
       const fade = Phaser.Math.Clamp((p.until - time) / Math.min(900, p.life * 0.5), 0, 1);
-      moltenPool(g, this.col(p.owner), p.x, p.y, p.r, heat, this.vizT, p.seed, fade);
+      if (this.party(p.owner)) candyPool(g, p.x, p.y, p.r, heat, this.vizT, p.seed, fade);
+      else moltenPool(g, this.col(p.owner), p.x, p.y, p.r, heat, this.vizT, p.seed, fade);
     }
   }
 
@@ -2325,7 +2360,8 @@ export class MagmaKit {
     for (const owner of ['player', 'npc'] as Owner[]) {
       const ship = this.side(owner).ship;
       if (!ship) continue;
-      pirateShip(g, this.col(owner), ship.x, ship.y, ship.heading, this.vizT, ship.hp / SHIP_HP, ship.seed, 'hull');
+      if (this.party(owner)) paradeFloat(g, ship.x, ship.y, ship.heading, this.vizT, ship.hp / SHIP_HP, ship.seed, 'hull');
+      else pirateShip(g, this.col(owner), ship.x, ship.y, ship.heading, this.vizT, ship.hp / SHIP_HP, ship.seed, 'hull');
       if (ship.flashUntil > time) {
         g.fillStyle(this.col(owner)(MAG.white), ((ship.flashUntil - time) / 110) * 0.35);
         g.fillEllipse(ship.x, ship.y, 100, 44);
@@ -2357,6 +2393,8 @@ export class MagmaKit {
         // Mag-Mortar: a finned round, nose-down along its own flight path.
         const ang = Math.atan2(p.y - p.fromY, p.x - p.fromX) + Math.PI * 0.12;
         mortarShell(g, tint, x, y, ang, 1);
+      } else if (this.party(p.owner)) {
+        candyGlob(g, x, y, this.vizT, p.seed);
       } else {
         g.fillStyle(tint(MAG.magma), 0.3);
         g.fillCircle(x, y, 13);
@@ -2374,7 +2412,8 @@ export class MagmaKit {
 
     for (const v of this.vessels) {
       const tint = this.col(v.owner);
-      volcanoCone(g, tint, v.x, v.y + v.r * 0.5, v.r, v.pressure / v.max, this.vizT, v.seed);
+      if (this.party(v.owner)) pinata(g, v.x, v.y + v.r * 0.5, v.r, v.pressure / v.max, this.vizT, v.seed);
+      else volcanoCone(g, tint, v.x, v.y + v.r * 0.5, v.r, v.pressure / v.max, this.vizT, v.seed);
       if (v.flashUntil > time) {
         g.fillStyle(tint(MAG.white), ((v.flashUntil - time) / 110) * 0.45);
         g.fillCircle(v.x, v.y, v.r * 1.5);
@@ -2382,17 +2421,20 @@ export class MagmaKit {
     }
 
     for (const r of this.rocks) {
-      lavaRock(g, this.col(r.owner), r.x, r.y, 6, r.spin, r.seed);
+      if (this.party(r.owner)) wrappedCandy(g, r.x, r.y, 4, r.spin, RAINBOW[Math.floor(r.seed) % RAINBOW.length]);
+      else lavaRock(g, this.col(r.owner), r.x, r.y, 6, r.spin, r.seed);
     }
     for (const b of this.cannonballs) {
-      cannonball(g, this.col(b.owner), b.x, b.y, Math.atan2(b.vy, b.vx), this.vizT * 9 + b.seed, b.seed);
+      if (this.party(b.owner)) gumball(g, b.x, b.y, Math.atan2(b.vy, b.vx), this.vizT * 9 + b.seed, b.seed);
+      else cannonball(g, this.col(b.owner), b.x, b.y, Math.atan2(b.vy, b.vx), this.vizT * 9 + b.seed, b.seed);
     }
 
     // The rigging, over the fighters: masts fore and aft of where the captain stands.
     for (const owner of ['player', 'npc'] as Owner[]) {
       const ship = this.side(owner).ship;
       if (!ship) continue;
-      pirateShip(g, this.col(owner), ship.x, ship.y, ship.heading, this.vizT, ship.hp / SHIP_HP, ship.seed, 'rig');
+      if (this.party(owner)) paradeFloat(g, ship.x, ship.y, ship.heading, this.vizT, ship.hp / SHIP_HP, ship.seed, 'rig');
+      else pirateShip(g, this.col(owner), ship.x, ship.y, ship.heading, this.vizT, ship.hp / SHIP_HP, ship.seed, 'rig');
       // The hull's own gauge, aft of the stern lantern.
       pressureGauge(g, this.col(owner), ship.x, ship.y - 58, 70, ship.hp / SHIP_HP, MAG.gold);
     }
@@ -2415,8 +2457,9 @@ export class MagmaKit {
 
     for (const sp of this.spirits) {
       const dash = sp.dashUntil > time ? Phaser.Math.Clamp((time - sp.dashFrom) / SPIRIT_DASH_MS, 0, 1) : 0;
-      pirateSpirit(g, this.col(sp.owner), sp.x, sp.y - 16, sp.facing, this.vizT + sp.seed, sp.seed,
-        Phaser.Math.Clamp(sp.hp / SPIRIT_HP, 0, 1), dash);
+      const spHp = Phaser.Math.Clamp(sp.hp / SPIRIT_HP, 0, 1);
+      if (this.party(sp.owner)) partyGoer(g, sp.x, sp.y - 16, sp.facing, this.vizT + sp.seed, sp.seed, spHp, dash);
+      else pirateSpirit(g, this.col(sp.owner), sp.x, sp.y - 16, sp.facing, this.vizT + sp.seed, sp.seed, spHp, dash);
     }
 
     for (const owner of ['player', 'npc'] as Owner[]) {
@@ -2461,13 +2504,17 @@ export class MagmaKit {
         const fade = Phaser.Math.Clamp(1 - u * 1.6, 0, 1);
         if (fade > 0) {
           const ang = s.flyAng + Math.PI;
-          breathCone(g, tint,
+          if (this.party(owner)) {
+            partyPopper(g, s.flyX0 + Math.cos(ang) * 12, s.flyY0 + Math.sin(ang) * 12, ang,
+              BLUNDER_RANGE * (0.7 + u * 0.3), BLUNDER_HALF * (0.8 + u * 0.3), this.vizT, 3, s.flyHot > 0.6, fade);
+          } else breathCone(g, tint,
             s.flyX0 + Math.cos(ang) * 12, s.flyY0 + Math.sin(ang) * 12, ang,
             BLUNDER_RANGE * (0.7 + u * 0.3), BLUNDER_HALF * (0.8 + u * 0.3),
             this.vizT, 3, s.flyHot > 0.6 ? MAG.white : MAG.lava, MAG.magma, fade);
         }
         // The exhaust out of the barrel's back, which is the visual reason he is airborne.
-        for (let i = 0; i < 3; i++) {
+        if (this.party(owner)) popperPuff(g, f.x, f.y, s.flyAng + Math.PI, u, this.vizT);
+        else for (let i = 0; i < 3; i++) {
           const a = s.flyAng + Math.PI + (i - 1) * 0.3;
           const len = 16 + Math.sin(this.vizT * 22 + i * 2) * 6;
           g.fillStyle(tint(i === 1 ? MAG.white : MAG.gold), 0.5 * (1 - u));

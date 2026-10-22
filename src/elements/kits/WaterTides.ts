@@ -612,9 +612,9 @@ export class WaterTides {
       g.beginPath();
       g.arc(b.x, b.y, r * 0.72, sw, sw + 1.4);
       g.strokePath();
-      g.fillStyle(0xffffff, 0.85);
+      g.fillStyle(col(0xffffff), 0.85);
       g.fillEllipse(b.x - r * 0.38, b.y - r * 0.42, r * 0.55, r * 0.32);
-      g.fillStyle(0xffffff, 0.5);
+      g.fillStyle(col(0xffffff), 0.5);
       g.fillCircle(b.x + r * 0.35, b.y + r * 0.3, r * 0.12);
       if (b.host && b.hp < BUBBLE_HP) {
         g.lineStyle(2, col(WATER.pale), 0.85);

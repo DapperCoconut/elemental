@@ -790,15 +790,15 @@ export class WaterKit {
 
       if (sulphur) {
         // A brimstone crust over the pool, brightening as it loads, and a bubble ring on top.
-        g.fillStyle(0xccaa33, 0.2 + 0.35 * pressure);
+        g.fillStyle(tint(0xccaa33), 0.2 + 0.35 * pressure);
         g.fillCircle(gey.x, gey.y, gey.radius * 0.86);
-        g.lineStyle(2 + 2 * pressure, 0xffee44, 0.35 + 0.5 * pressure);
+        g.lineStyle(2 + 2 * pressure, tint(0xffee44), 0.35 + 0.5 * pressure);
         g.strokeCircle(gey.x, gey.y, gey.radius * (0.92 + Math.sin(this.worldT * 4) * 0.03));
         const bubbles = 3 + Math.round(pressure * 6);
         for (let i = 0; i < bubbles; i++) {
           const a = this.worldT * 1.4 + (i / bubbles) * Math.PI * 2;
           const rr = gey.radius * (0.25 + 0.5 * ((this.worldT * 0.5 + i / bubbles) % 1));
-          g.fillStyle(0xffff99, 0.5 * (1 - rr / gey.radius));
+          g.fillStyle(tint(0xffff99), 0.5 * (1 - rr / gey.radius));
           g.fillCircle(gey.x + Math.cos(a) * rr, gey.y + Math.sin(a) * rr * 0.6,
             1.6 + 1.8 * pressure);
         }
@@ -925,14 +925,15 @@ export class WaterKit {
   private spawnStalagmite(time: number, x: number, y: number, isLava: boolean, owner: 'player' | 'npc'): void {
     const { scene } = this.arena;
     const radius = isLava ? 54 : 36;
-    const color = isLava ? 0xff6600 : this.pcol(WATER.cyan);
+    const oc = owner === 'player' ? this.pcol : this.ncol;
+    const color = isLava ? oc(0xff6600) : oc(WATER.cyan);
     const g = scene.add.graphics().setDepth(3);
     // Wet base first so the spike looks driven up through standing water.
-    g.fillStyle(isLava ? 0x662200 : this.pcol(WATER.deep), 0.45);
+    g.fillStyle(isLava ? oc(0x662200) : oc(WATER.deep), 0.45);
     g.fillEllipse(x, y + radius * 0.3, radius * 1.5, radius * 0.5);
     g.fillStyle(color, isLava ? 0.85 : 0.8);
     g.fillTriangle(x, y - radius * 0.9, x - radius * 0.45, y + radius * 0.4, x + radius * 0.45, y + radius * 0.4);
-    g.fillStyle(isLava ? 0xffcc44 : this.pcol(WATER.foam), 0.9);
+    g.fillStyle(isLava ? oc(0xffcc44) : oc(WATER.foam), 0.9);
     g.fillTriangle(x - radius * 0.06, y - radius * 0.8, x - radius * 0.2, y + radius * 0.2, x + radius * 0.08, y + radius * 0.2);
 
     this.arena.puddles.push({

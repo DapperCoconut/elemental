@@ -521,7 +521,7 @@ export class GravityKit {
     const H = scene.scale.height;
     const targetY = H - 40;
     target.takeDamage(25);
-    this.arena.spawnHitFlash(target.x, target.y, 0x8844cc);
+    this.arena.spawnHitFlash(target.x, target.y, this.col(owner)(0x8844cc));
     // Driven straight down: the column of bent space they fall through, then the floor impact.
     this.avatar(owner)?.play('slam', Math.PI / 2);
     const fx = this.fx(owner);
@@ -681,7 +681,7 @@ export class GravityKit {
       if (Phaser.Math.Distance.Between(lx, ly, target.x, target.y) > ANTIGRAV_SLAM_RADIUS) continue;
       target.takeDamage(ANTIGRAV_SLAM_DAMAGE);
       this.noteTetherDamage(target, ANTIGRAV_SLAM_DAMAGE);
-      this.arena.spawnHitFlash(target.x, target.y, 0xaa66ff);
+      this.arena.spawnHitFlash(target.x, target.y, this.pcol(0xaa66ff));
       this.applyHighGravity(target, time);
     }
     if (this.arena.hasPerk('player', 'quake')) this.arena.spawnQuakeWave('player', lx, ly);
@@ -880,7 +880,7 @@ export class GravityKit {
       target.takeDamage(MOON_TOUCH_DAMAGE);
       this.arena.recordMasteryStat('moonRams', 1);
       this.noteTetherDamage(target, MOON_TOUCH_DAMAGE);
-      this.arena.spawnHitFlash(target.x, target.y, 0xccbbee);
+      this.arena.spawnHitFlash(target.x, target.y, this.pcol(0xccbbee));
       // Flung off the front of it, not merely bumped.
       const away = Math.atan2(target.y - this.gravMoonY, target.x - this.gravMoonX);
       const tb = target.body as Phaser.Physics.Arcade.Body;
@@ -912,7 +912,7 @@ export class GravityKit {
     tb.setVelocity(0, 0);
     target.takeDamage(MOON_SLAM_DAMAGE);
     this.noteTetherDamage(target, MOON_SLAM_DAMAGE);
-    this.arena.spawnHitFlash(tx, ty, 0xaa66ff);
+    this.arena.spawnHitFlash(tx, ty, this.pcol(0xaa66ff));
     this.pfx.rift(fromX, fromY, tx, ty, 340, 7, VOID_TONES);
     this.pfx.impact(tx, ty, 62, { tones: VOID_TONES, rocks: 6, dust: 2, duration: 380, crater: false });
     scene.cameras.main.shake(140, 0.005);
@@ -1028,7 +1028,7 @@ export class GravityKit {
       if (Phaser.Math.Distance.Between(cx, cy, target.x, target.y) > 130) continue;
       target.takeDamage(MOON_DISMOUNT_SLAM_DAMAGE);
       this.noteTetherDamage(target, MOON_DISMOUNT_SLAM_DAMAGE);
-      this.arena.spawnHitFlash(target.x, target.y, 0xaa66ff);
+      this.arena.spawnHitFlash(target.x, target.y, this.pcol(0xaa66ff));
     }
   }
 
@@ -1095,7 +1095,7 @@ export class GravityKit {
         victim.takeDamage(MOON_DISMOUNT_IMPACT_DAMAGE);
         this.noteTetherDamage(victim, MOON_DISMOUNT_IMPACT_DAMAGE);
         this.arena.recordMasteryStat('moonHits', 1);
-        this.arena.spawnHitFlash(victim.x, victim.y, 0xf2ecff);
+        this.arena.spawnHitFlash(victim.x, victim.y, this.pcol(0xf2ecff));
         this.applyHighGravity(victim, time);
       }
       this.pfx.impact(this.gravMoonX, this.gravMoonY, 120, {
@@ -1124,7 +1124,7 @@ export class GravityKit {
       victim.takeDamage(MOON_DISMOUNT_CRUSH_DAMAGE);
       this.noteTetherDamage(victim, MOON_DISMOUNT_CRUSH_DAMAGE);
       this.arena.recordMasteryStat('moonHits', 1);
-      this.arena.spawnHitFlash(victim.x, victim.y, 0xffffff);
+      this.arena.spawnHitFlash(victim.x, victim.y, this.pcol(0xffffff));
       this.applyHighGravity(victim, time);
       // Whatever is left of them comes back down with the debris.
       const vb = victim.body as Phaser.Physics.Arcade.Body;
@@ -1287,7 +1287,7 @@ export class GravityKit {
         if (!target.active || target.hp <= 0 || orb.hitSet.has(target)) continue;
         if (Phaser.Math.Distance.Between(orb.sprite.x, orb.sprite.y, target.x, target.y) <= 20) {
           target.takeDamage(10);
-          this.arena.spawnHitFlash(target.x, target.y, 0x8844cc);
+          this.arena.spawnHitFlash(target.x, target.y, this.col(orb.owner)(0x8844cc));
           this.applyGrounded(target, time);
           orb.hitSet.add(target);
         }
@@ -1306,7 +1306,7 @@ export class GravityKit {
           if (!target.active || target.hp <= 0) continue;
           if (Phaser.Math.Distance.Between(ix, iy, target.x, target.y) <= 45) {
             target.takeDamage(15);
-            this.arena.spawnHitFlash(target.x, target.y, 0xaa66ff);
+            this.arena.spawnHitFlash(target.x, target.y, this.col(orb.owner)(0xaa66ff));
             this.applyGrounded(target, time);
           }
         }
@@ -1523,7 +1523,7 @@ export class GravityKit {
         if (Phaser.Math.Distance.Between(mx, my, this.arena.npc.x, this.arena.npc.y) <= 100) {
           this.arena.npc.takeDamage(40);
           this.noteTetherDamage(this.arena.npc, 40);
-          this.arena.spawnHitFlash(this.arena.npc.x, this.arena.npc.y, 0x8844cc);
+          this.arena.spawnHitFlash(this.arena.npc.x, this.arena.npc.y, this.pcol(0x8844cc));
         }
         // The charged release: a full well collapsing, then everything it held blown out.
         this.playerAvatar?.play('slam', Math.atan2(my - player.y, mx - player.x));
@@ -1623,7 +1623,7 @@ export class GravityKit {
           if (d <= 40) {
             target.takeDamage(sl.damage);
             if (sl.owner === 'player') this.noteTetherDamage(target, sl.damage);
-            this.arena.spawnHitFlash(target.x, target.y, 0x8844cc);
+            this.arena.spawnHitFlash(target.x, target.y, this.col(sl.owner)(0x8844cc));
             const kx = sl.x2 - sl.x1;
             const ky = sl.y2 - sl.y1;
             const klen = Math.hypot(kx, ky) || 1;
@@ -1663,7 +1663,7 @@ export class GravityKit {
               this.arena.recordMasteryStat('meteorHits', 1);
               this.noteTetherDamage(target, dmg);
             }
-            this.arena.spawnHitFlash(target.x, target.y, 0xaa66ff);
+            this.arena.spawnHitFlash(target.x, target.y, this.col(ms.owner)(0xaa66ff));
           }
         }
         // E+: 15% chance to leave a fire pool on impact
@@ -1736,7 +1736,7 @@ export class GravityKit {
             this.arena.recordMasteryStat('moonHits', 1);
             this.noteTetherDamage(target, 60);
           }
-          this.arena.spawnHitFlash(target.x, target.y, 0xaa66ff);
+          this.arena.spawnHitFlash(target.x, target.y, this.col(this.gravLunarOwner)(0xaa66ff));
         }
       }
 
@@ -1790,7 +1790,7 @@ export class GravityKit {
           if (!this.gravMoonActive || !this.gravMoonSprite) return false;
           this.gravMoonHp -= amount;
           if (this.gravMoonHpBar) this.gravMoonHpBar.setSize(56 * Math.max(0, this.gravMoonHp / 100), 5);
-          this.arena.spawnHitFlash(this.gravMoonX, this.gravMoonY, 0xccbbee);
+          this.arena.spawnHitFlash(this.gravMoonX, this.gravMoonY, this.col(this.gravLunarOwner)(0xccbbee));
           if (this.gravMoonHp <= 0) this.destroyMoon();
           return true;
         };
@@ -1828,7 +1828,7 @@ export class GravityKit {
           for (const fTarget of fpTargets) {
             fTarget.takeDamage(4, { source: fp, sourceX: fp.x, sourceY: fp.y });
             if (fp.owner === 'player') this.noteTetherDamage(fTarget, 4);
-            this.arena.spawnHitFlash(fTarget.x, fTarget.y, 0xff6633);
+            this.arena.spawnHitFlash(fTarget.x, fTarget.y, this.col(fp.owner)(0xff6633));
           }
         }
       }

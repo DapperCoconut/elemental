@@ -1208,18 +1208,18 @@ const DEATH_AVATAR: AvatarSpec = {
  */
 export class DeathAvatar extends BaseAvatar {
   /** 0 = the minute has just started, 1 = midnight. Lerped so the change creeps in. */
-  private doom = 0;
+  protected doom = 0;
   private doomTarget = 0;
   /** 0 = katana resting upright, 1 = levelled along the aim. */
-  private guard = 0;
+  protected guard = 0;
   private guardTarget = 0;
   /** Ability tell: brightens the edge for a beat after every cast. */
-  private flare = 0;
+  protected flare = 0;
   /** Last colour pushed to the eyes, so the doom tell doesn't rebuild two arcs every frame. */
   private eyeColor = DEA.bone;
 
-  constructor(scene: Phaser.Scene, tint: DeathColorFn, depth = 6) {
-    super(scene, tint, depth, DEATH_AVATAR);
+  constructor(scene: Phaser.Scene, tint: DeathColorFn, depth = 6, spec: AvatarSpec = DEATH_AVATAR) {
+    super(scene, tint, depth, spec);
   }
 
   /** Fraction of the doomsday clock already spent, 0–1. */

@@ -1339,20 +1339,21 @@ const MYTH_AVATAR: AvatarSpec = {
  * staying open.
  */
 export class MythAvatar extends BaseAvatar {
-  private bladeOut = 0;
+  protected bladeOut = 0;
   private bladeTarget = 0;
-  private eyeOpen = 0;
-  private eyeTarget = 0;
-  private determined = 0;
+  protected eyeOpen = 0;
+  protected eyeTarget = 0;
+  protected determined = 0;
   private determinedTarget = 0;
-  private gunKind: GunKind | null = null;
-  private gunRecoil = 0;
+  protected gunKind: GunKind | null = null;
+  protected gunRecoil = 0;
   private flipT = 0;
   private flipDur = 0;
-  private sparkle = 0;
+  protected sparkle = 0;
 
-  constructor(scene: Phaser.Scene, tint: MythColorFn, depth = 6) {
-    super(scene, tint, depth, MYTH_AVATAR);
+  /** `spec` lets a skin rig (Doom) reuse every Myth hook the kit drives with its own hands. */
+  constructor(scene: Phaser.Scene, tint: MythColorFn, depth = 6, spec: AvatarSpec = MYTH_AVATAR) {
+    super(scene, tint, depth, spec);
   }
 
   /** Excalibur drawn (1) or carried behind the back (0). Lerped. */

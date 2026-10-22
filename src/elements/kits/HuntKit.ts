@@ -6,6 +6,8 @@ import {
   BEAST_TONES, HELL_TONES, HUNT, HUNTER_TONES, HuntAura, HuntAvatar, HuntColorFn, HuntForm,
   HuntFx, HuntTones, MOON_TONES, NPC_TONES, SILVER_TONES, WEAK_HALF_ANGLE,
 } from './HuntVisuals';
+import { makeSkinAvatar } from './skins/SkinAvatars';
+import { VampireFx } from './skins/VampireFx';
 
 /**
  * Hunt — the whole element: three forms, their fifteen abilities, every world object they
@@ -378,6 +380,7 @@ export interface HuntArenaApi {
   hasPerk(owner: Owner, perkId: string): boolean;
   /** Skins: maps a hunt visual colour through the owner's skin. */
   huntColor(owner: Owner, base: number): number;
+  skinId(owner: Owner): string | null;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   dealAoeDamageFromOwner(
@@ -404,6 +407,7 @@ export class HuntKit {
   private readonly ncol: HuntColorFn;
   private readonly pfx: HuntFx;
   private readonly nfx: HuntFx;
+  private readonly vfx: VampireFx;
   private playerAvatar: HuntAvatar | null = null;
   private npcAvatar: HuntAvatar | null = null;
   /** Blood Scent's aura, one per side. */
@@ -466,6 +470,18 @@ export class HuntKit {
     this.ncol = (base) => api.huntColor('npc', base);
     this.pfx = new HuntFx(api.scene, this.pcol);
     this.nfx = new HuntFx(api.scene, this.ncol);
+    this.vfx = new VampireFx(api.scene);
+  }
+
+  /** Vampire skin: stakes, garlic and bats in place of bolts, frags and the wolf. Visual only. */
+  private isVamp(owner: Owner): boolean { return this.api.skinId(owner) === 'vampire'; }
+
+  /** The rig for a side: the equipped skin's if it is a hunt rig, else hunt's own. */
+  private makeAvatar(owner: Owner): HuntAvatar {
+    const skin = makeSkinAvatar(this.api.skinId(owner), this.api.scene);
+    if (skin instanceof HuntAvatar) return skin;
+    skin?.destroy();
+    return new HuntAvatar(this.api.scene, this.col(owner), owner === 'player' ? HUNTER_TONES : NPC_TONES);
   }
 
   // ── Small helpers ──────────────────────────────────────────────────────────
@@ -1094,13 +1110,16 @@ export class HuntKit {
     const av = this.avatar(owner);
     av?.play('raise');
     av?.snap(1);
-    this.fx(owner).transformBeast(
+    if (this.isVamp(owner) && !hell) this.vfx.batBurst(f.x, f.y, 52, 14, 8);
+    else this.fx(owner).transformBeast(
       f.x, f.y, hell ? 44 : 52, hell ? HELL_TONES : s.alpha ? ALPHA_TONES : BEAST_TONES,
       this.leanOf(owner), 8,
     );
     this.api.scene.cameras.main.shake(360, 0.009);
     this.api.showFloatingText(f.x, f.y - 44,
-      hell ? '🐕‍🦺 HELLHOUND' : s.alpha ? '🐺 ALPHA' : permanent ? '🐺 GIVE IN' : '🐺 RELEASE THE BEAST',
+      hell ? '🐕‍🦺 HELLHOUND'
+        : this.isVamp(owner) ? (s.alpha ? '🦇 ELDER BLOOD' : permanent ? '🦇 EMBRACE THE NIGHT' : '🦇 THE THIRST')
+        : s.alpha ? '🐺 ALPHA' : permanent ? '🐺 GIVE IN' : '🐺 RELEASE THE BEAST',
       hell ? '#ff6600' : s.alpha ? '#ccd4dd' : '#ff3322');
     if (owner === 'player') this.api.setHudForm('beast');
   }
@@ -1119,8 +1138,9 @@ export class HuntKit {
     this.body(f).setCircle(22, 2, 2);
     f.setTexture('elem-hunt');
     f.clearTint();
-    this.fx(owner).transformRevert(f.x, f.y, 44, this.tones(owner), 8);
-    this.api.showFloatingText(f.x, f.y - 40, 'The beast lets go…', '#cc9977');
+    if (this.isVamp(owner)) this.vfx.garlicPuff(f.x, f.y, 44, 8);
+    else this.fx(owner).transformRevert(f.x, f.y, 44, this.tones(owner), 8);
+    this.api.showFloatingText(f.x, f.y - 40, this.isVamp(owner) ? 'The thirst fades…' : 'The beast lets go…', '#cc9977');
     if (owner === 'player') this.api.setHudForm('human');
   }
 
@@ -1139,9 +1159,10 @@ export class HuntKit {
     const av = this.avatar(owner);
     av?.play('raise');
     av?.snap(0.7);
-    this.fx(owner).transformBeast(f.x, f.y, 46, SILVER_TONES, this.leanOf(owner), 8);
+    if (this.isVamp(owner)) this.vfx.batBurst(f.x, f.y, 46, 8, 8);
+    else this.fx(owner).transformBeast(f.x, f.y, 46, SILVER_TONES, this.leanOf(owner), 8);
     this.api.scene.cameras.main.shake(240, 0.006);
-    this.api.showFloatingText(f.x, f.y - 44, '🐺 HYBRID FORM', '#ddddee');
+    this.api.showFloatingText(f.x, f.y - 44, this.isVamp(owner) ? '🦇 HALF-TURNED' : '🐺 HYBRID FORM', '#ddddee');
     if (owner === 'player') this.api.setHudForm('hybrid');
   }
 
@@ -1295,6 +1316,7 @@ export class HuntKit {
       smoke: heavy ? 5 : 3,
       duration: heavy ? 620 : 460,
     });
+    if (this.isVamp(g.owner)) this.vfx.garlicPuff(g.x, g.y, GRENADE_RADIUS * 0.6, 9);
     this.api.scene.cameras.main.shake(heavy ? 220 : 140, heavy ? 0.007 : 0.004);
     let hits = 0;
     for (const t of this.targetsOf(g.owner)) {
@@ -1907,6 +1929,10 @@ export class HuntKit {
 
     // ── Ground ──
     for (const c of this.trails) {
+      if (this.isVamp(c.owner)) {
+        VampireFx.drawBloodTrail(g, c.x, c.y, TRAIL_RADIUS, c.angle, t, (c.expiresAt - time) / c.durationMs);
+        continue;
+      }
       HuntFx.drawTrail(g, this.col(c.owner), this.tones(c.owner), c.x, c.y, TRAIL_RADIUS, c.angle,
         t, (c.expiresAt - time) / c.durationMs);
     }
@@ -1922,15 +1948,27 @@ export class HuntKit {
     }
     for (const gr of this.grenades) {
       if (gr.carried) continue;
+      if (this.isVamp(gr.owner)) {
+        VampireFx.drawGarlicBomb(a, gr.x, gr.y, t, gr.explodeAt - time, gr.spin, gr.stopped);
+        continue;
+      }
       HuntFx.drawGrenade(a, this.col(gr.owner), this.tones(gr.owner), gr.x, gr.y, t,
         gr.explodeAt - time, false, gr.spin, gr.stopped);
     }
     for (const b of this.bolts) {
+      if (this.isVamp(b.owner)) {
+        VampireFx.drawStake(a, b.x, b.y, Math.atan2(b.vy, b.vx), 1, 0, b.bomb);
+        continue;
+      }
       HuntFx.drawBolt(a, this.col(b.owner), this.tones(b.owner), b.x, b.y,
         Math.atan2(b.vy, b.vx), 1, 0, b.bomb);
     }
     for (const s of this.stuck) {
       const bite = Phaser.Math.Clamp((time - s.stuckAt) / 200, 0, 1);
+      if (this.isVamp(s.owner)) {
+        VampireFx.drawStake(a, s.victim.x + s.offX, s.victim.y + s.offY, s.angle, 0.85, bite, false);
+        continue;
+      }
       HuntFx.drawBolt(a, this.col(s.owner), this.tones(s.owner),
         s.victim.x + s.offX, s.victim.y + s.offY, s.angle, 0.85, bite, false);
     }
@@ -2004,7 +2042,7 @@ export class HuntKit {
     const time = this.now;
 
     if (this.api.elementId === 'hunt' && player?.active) {
-      if (!this.playerAvatar) this.playerAvatar = new HuntAvatar(scene, this.pcol, HUNTER_TONES);
+      if (!this.playerAvatar) this.playerAvatar = this.makeAvatar('player');
       const s = this.sides.player;
       const av = this.playerAvatar;
       av.setFacing(Math.atan2(this.api.aimY - player.y, this.api.aimX - player.x));
@@ -2024,7 +2062,7 @@ export class HuntKit {
     }
 
     if (this.api.npcElementId === 'hunt' && npc?.active) {
-      if (!this.npcAvatar) this.npcAvatar = new HuntAvatar(scene, this.ncol, NPC_TONES);
+      if (!this.npcAvatar) this.npcAvatar = this.makeAvatar('npc');
       const s = this.sides.npc;
       const av = this.npcAvatar;
       av.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));

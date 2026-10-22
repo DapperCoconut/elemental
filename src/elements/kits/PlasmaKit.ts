@@ -601,7 +601,7 @@ export class PlasmaKit {
         if (dA <= 20 || dB <= 20) {
           const hx = hitTarget.x, hy = hitTarget.y;
           hitTarget.takeDamage(10);
-          this.arena.spawnHitFlash(hitTarget.x, hitTarget.y, 0xcc44ff);
+          this.arena.spawnHitFlash(hitTarget.x, hitTarget.y, this.col(orb.owner)(0xcc44ff));
           this.fx(orb.owner).motes(hx, hy, 6, { speed: 220, size: 5, color: PLASMA.orchid, depth: 9 });
           this.arena.showFloatingText(hitTarget.x, hitTarget.y - 36, '💥 Chain Collapse!', '#cc44ff');
           this.doPlasmaCurrentExplode(orb);
@@ -662,7 +662,7 @@ export class PlasmaKit {
         if (d <= 20) {
           const hx = f.x, hy = f.y;
           f.takeDamage(8, side === blade.owner ? { selfInflicted: true } : undefined);
-          this.arena.spawnHitFlash(f.x, f.y, 0xff44ff);
+          this.arena.spawnHitFlash(f.x, f.y, this.col(blade.owner)(0xff44ff));
           // The blade biting: a fork through the victim and plasma spat out the far side.
           const bfx = this.fx(blade.owner);
           bfx.discharge(hx, hy, 34, 5, PLASMA.pink, 260, 9);
@@ -719,7 +719,7 @@ export class PlasmaKit {
         if (Phaser.Math.Distance.Between(orb.x, orb.y, f.x, f.y) <= 20) {
           const hx = orb.x, hy = orb.y;
           f.takeDamage(10, side === orb.owner ? { selfInflicted: true } : undefined);
-          this.arena.spawnHitFlash(f.x, f.y, 0xffaaff);
+          this.arena.spawnHitFlash(f.x, f.y, this.col(orb.owner)(0xffaaff));
           // Popped: the containment lets go and the charge sprays out of it.
           this.fx(orb.owner).discharge(hx, hy, 30, 6, PLASMA.blush, 250, 9);
           this.arena.showFloatingText(f.x, f.y - 36, '🌀 Chaos Orb!', '#ffaaff');
@@ -820,7 +820,7 @@ export class PlasmaKit {
           this.doPlasmaChainLightning(orb.x, orb.y, f.x, f.y);
           if (f === orbOwnerFighter) f.applySelfDamage(5);
           else f.takeDamage(5);
-          this.arena.spawnHitFlash(f.x, f.y, 0xdd66ff);
+          this.arena.spawnHitFlash(f.x, f.y, this.col(orb.owner)(0xdd66ff));
           this.arena.showFloatingText(f.x, f.y - 36, '⚡ Chaos Strike', '#dd66ff');
         }
       }
@@ -1067,7 +1067,7 @@ export class PlasmaKit {
     for (const target of hitSet) {
       const hx = target.x, hy = target.y;
       target.takeDamage(dmg);
-      this.arena.spawnHitFlash(target.x, target.y, 0xdd66ff);
+      this.arena.spawnHitFlash(target.x, target.y, this.col(owner)(0xdd66ff));
       fx.motes(hx, hy, 3, { speed: 150, size: 3.6, color: PLASMA.blush, depth: 9 });
     }
 
@@ -1085,7 +1085,7 @@ export class PlasmaKit {
             queue.push(target);
             this.doPlasmaChainLightning(cur.x, cur.y, target.x, target.y);
             target.takeDamage(dmg);
-            this.arena.spawnHitFlash(target.x, target.y, 0xdd66ff);
+            this.arena.spawnHitFlash(target.x, target.y, this.col(owner)(0xdd66ff));
           }
         }
       }
@@ -1100,7 +1100,7 @@ export class PlasmaKit {
     if (hitSet.size === 0) {
       this.doPlasmaChainLightning(tx, ty, caster.x, caster.y, PLASMA.red);
       caster.takeDamage(2, { selfInflicted: true });
-      this.arena.spawnHitFlash(caster.x, caster.y, 0xff2244);
+      this.arena.spawnHitFlash(caster.x, caster.y, this.col(owner)(0xff2244));
       fx.discharge(caster.x, caster.y, 22, 4, PLASMA.red, 220, 9);
       this.arena.showFloatingText(caster.x, caster.y - 30, '⚡ Missed!', '#ff4444');
     }
@@ -1346,7 +1346,7 @@ export class PlasmaKit {
     const orbOwnerFighter = orb.owner === 'player' ? this.arena.player : this.arena.npc;
     if (victim === orbOwnerFighter) victim.applySelfDamage(25);
     else victim.takeDamage(25);
-    this.arena.spawnHitFlash(victim.x, victim.y, 0xaa22ff);
+    this.arena.spawnHitFlash(victim.x, victim.y, this.col(orb.owner)(0xaa22ff));
     this.arena.showFloatingText(victim.x, victim.y - 40, '💥 CHAOS BURST!', '#ff88ff');
 
     // Player-sized orb, player-sized detonation.
@@ -1442,7 +1442,7 @@ export class PlasmaKit {
     // The storm wall is a stage hazard with no allegiance — it strikes a co-op
     // player through their friendly-fire block, same as it does solo.
     Fighter.asNonAllyDamage(() => victim.takeDamage(STORM_STRIKE_DAMAGE));
-    this.arena.spawnHitFlash(victim.x, victim.y, 0xff2f8f);
+    this.arena.spawnHitFlash(victim.x, victim.y, this.col(victim === this.arena.player ? 'npc' : 'player')(0xff2f8f));
     // The wall earthing itself through whoever touched it.
     this.pfx.discharge(victim.x, victim.y, 30, 5, PLASMA.hot, 260, 9);
     this.pfx.ring(victim.x, victim.y, 10, 34, PLASMA.rose, 260, 8, 2);
@@ -1652,12 +1652,12 @@ export class PlasmaKit {
       // Our own current still burns us in co-op; the ally's is friendly fire and is blocked.
       if (orb.owner === 'player') Fighter.asNonAllyDamage(() => player.takeDamage(10, { selfInflicted: true }));
       else player.takeDamage(10);
-      this.arena.spawnHitFlash(player.x, player.y, 0xcc44ff);
+      this.arena.spawnHitFlash(player.x, player.y, this.col(orb.owner)(0xcc44ff));
     }
     const npcDist = Phaser.Math.Distance.Between(cx, cy, npc.x, npc.y);
     if (npcDist <= radius) {
       npc.takeDamage(10, orb.owner === 'npc' ? { selfInflicted: true } : undefined);
-      this.arena.spawnHitFlash(npc.x, npc.y, 0xcc44ff);
+      this.arena.spawnHitFlash(npc.x, npc.y, this.col(orb.owner)(0xcc44ff));
     }
 
     orb.active = false;
@@ -1682,7 +1682,7 @@ export class PlasmaKit {
         const relayDist = Phaser.Math.Distance.Between(target.x, target.y, toX, toY);
         if (relayDist <= 100) {
           target.takeDamage(8);
-          this.arena.spawnHitFlash(target.x, target.y, 0xdd66ff);
+          this.arena.spawnHitFlash(target.x, target.y, this.col(vp.owner)(0xdd66ff));
           this.arena.showFloatingText(target.x, target.y - 36, '⚡ VOLT RELAY', '#dd66ff');
           if (owner === 'player') this.arena.recordMasteryStat('voltRelays', 1);
         }
@@ -1707,12 +1707,12 @@ export class PlasmaKit {
       // Our own collapsing floor still hits us in co-op; the ally's is blocked.
       if (arena.owner === 'player') Fighter.asNonAllyDamage(() => player.takeDamage(80, { selfInflicted: true }));
       else player.takeDamage(80);
-      this.arena.spawnHitFlash(player.x, player.y, 0xaa22ff);
+      this.arena.spawnHitFlash(player.x, player.y, this.col(arena.owner)(0xaa22ff));
     }
     const nDist = Phaser.Math.Distance.Between(arena.x, arena.y, npc.x, npc.y);
     if (nDist <= radius) {
       npc.takeDamage(80, arena.owner === 'npc' ? { selfInflicted: true } : undefined);
-      this.arena.spawnHitFlash(npc.x, npc.y, 0xaa22ff);
+      this.arena.spawnHitFlash(npc.x, npc.y, this.col(arena.owner)(0xaa22ff));
       // Mastery req: the floor crumbling under an enemy, not under you.
       if (arena.owner === 'player') this.arena.recordMasteryStat('arenaCrumbles', 1);
     }

@@ -20,6 +20,23 @@ import {
   wizardTroop,
 } from './ConquestVisuals';
 import { meterGain } from '../../combat/Meters';
+import { BaseAvatar } from './ElementVisuals';
+import { makeSkinAvatar } from './skins/SkinAvatars';
+import { WW2_CONQUEST_ART, WarTwoFx } from './skins/WarTwoFx';
+
+/** Every board primitive a skin may redraw — the WW2 skin swaps the whole table per owner. */
+const DEFAULT_ART = {
+  townCenterBody, barracksBody, turretBody, barricadeBody, marketBody,
+  soldier, barbarianKing, wizardTroop, fireballOrb, revengeBomb,
+};
+type ConquestArt = typeof DEFAULT_ART;
+
+/** The readouts the commander rig shows; a skin rig may or may not take them. */
+interface BannerRig {
+  setStanding(color: number): void;
+  setTowns(n: number): void;
+  setBanner(color: number): void;
+}
 
 type Owner = 'player' | 'npc';
 
@@ -446,6 +463,8 @@ export interface ConquestArenaApi {
   get height(): number;
   /** Skins: maps a Conquest visual colour through that side's equipped skin. */
   conquestColor(owner: Owner, base: number): number;
+  /** Skins: the skin id equipped by that side, or null. */
+  skinId(owner: Owner): string | null;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   getNearestEnemy(fromX: number, fromY: number): Fighter;
@@ -479,8 +498,8 @@ export class ConquestKit implements ConquestMenuHost {
   private readonly ncol: ConquestColorFn;
   private readonly pfx: ConquestFx;
   private readonly nfx: ConquestFx;
-  private playerAvatar: ConquestAvatar | null = null;
-  private npcAvatar: ConquestAvatar | null = null;
+  private playerAvatar: BaseAvatar | null = null;
+  private npcAvatar: BaseAvatar | null = null;
   /** The board and the territory wash. Repainted only when ownership changes. */
   private gridGfx: Phaser.GameObjects.Graphics | null = null;
   private gridDirty = true;
@@ -577,8 +596,18 @@ export class ConquestKit implements ConquestMenuHost {
     return this.api.npcIsNetReplica;
   }
 
-  private avatar(owner: Owner): ConquestAvatar | null {
+  private avatar(owner: Owner): BaseAvatar | null {
     return owner === 'player' ? this.playerAvatar : this.npcAvatar;
+  }
+
+  private makeAvatar(owner: Owner): BaseAvatar {
+    return makeSkinAvatar(this.api.skinId(owner), this.api.scene)
+      ?? new ConquestAvatar(this.api.scene, owner === 'player' ? this.pcol : this.ncol);
+  }
+
+  /** The board art for a side: the WW2 skin's when equipped, else Conquest's own. Visual only. */
+  private art(owner: Owner): ConquestArt {
+    return this.api.skinId(owner) === 'ww2' ? WW2_CONQUEST_ART : DEFAULT_ART;
   }
 
   // ── Shop upgrades ──────────────────────────────────────────────────────────
@@ -910,10 +939,10 @@ export class ConquestKit implements ConquestMenuHost {
       }).setDepth(23);
     }
     if (!this.playerAvatar && this.isConquest('player')) {
-      this.playerAvatar = new ConquestAvatar(this.api.scene, this.pcol);
+      this.playerAvatar = this.makeAvatar('player');
     }
     if (!this.npcAvatar && this.isConquest('npc')) {
-      this.npcAvatar = new ConquestAvatar(this.api.scene, this.ncol);
+      this.npcAvatar = this.makeAvatar('npc');
     }
   }
 
@@ -1396,7 +1425,8 @@ export class ConquestKit implements ConquestMenuHost {
     const color = banner?.color ?? townColor(owner, Math.max(0, this.standingTown(owner)));
 
     this.avatar(owner)?.play('punch', ang);
-    this.fx(owner).thrust(f.x, f.y, ang, PIKE_REACH, color);
+    if (this.api.skinId(owner) === 'ww2') new WarTwoFx(this.api.scene).thrust(f.x, f.y, ang, PIKE_REACH, this.col(owner)(color));
+    else this.fx(owner).thrust(f.x, f.y, ang, PIKE_REACH, color);
 
     // One target: a poke that swept a 260px line through everything would be the best
     // clear in the game rather than the worst basic attack. Soldiers are in the running for
@@ -3562,18 +3592,20 @@ export class ConquestKit implements ConquestMenuHost {
 
     for (const owner of ['player', 'npc'] as Owner[]) {
       const c = this.col(owner);
+      const art = this.art(owner);
       for (const t of this.side(owner).towns) {
-        townCenterBody(g, c, t.x, t.y, CELL, townColor(owner, t.index), this.vizT, 1);
+        art.townCenterBody(g, c, t.x, t.y, CELL, townColor(owner, t.index), this.vizT, 1);
       }
     }
 
     for (const b of this.buildings) {
       const c = this.col(b.owner);
       const col = townColor(b.owner, b.town);
-      if (b.kind === 'barracks') barracksBody(g, c, b.x, b.y, CELL, col, 1);
-      else if (b.kind === 'turret') turretBody(g, c, b.x, b.y, CELL, col, b.aimAng, b.recoil, 1);
+      const art = this.art(b.owner);
+      if (b.kind === 'barracks') art.barracksBody(g, c, b.x, b.y, CELL, col, 1);
+      else if (b.kind === 'turret') art.turretBody(g, c, b.x, b.y, CELL, col, b.aimAng, b.recoil, 1);
       else if (b.kind === 'market') {
-        marketBody(g, c, b.x, b.y, CELL, col, {
+        art.marketBody(g, c, b.x, b.y, CELL, col, {
           vault: b.vault,
           propaganda: this.marketStatsOf(b).propaganda,
           t: this.vizT,
@@ -3587,7 +3619,7 @@ export class ConquestKit implements ConquestMenuHost {
         }
       } else {
         const fort = this.empire(b.owner).fortressHp;
-        barricadeBody(g, c, b.x, b.y, CELL, col, barricadeStats(b.tiers, fort).spikes, 1);
+        art.barricadeBody(g, c, b.x, b.y, CELL, col, barricadeStats(b.tiers, fort).spikes, 1);
       }
     }
 
@@ -3596,9 +3628,10 @@ export class ConquestKit implements ConquestMenuHost {
       const col = townColor(t.owner, t.town);
       const x = this.troopX(t);
       const y = this.troopY(t);
-      if (t.king) barbarianKing(g, c, x, y, col, t.ang, t.march, t.enraged, 1);
-      else if (t.wizard) wizardTroop(g, c, x, y, col, t.ang, t.march, this.empire(t.owner).ash, 1);
-      else soldier(g, c, x, y, col, t.ang, t.march, 1, 1);
+      const art = this.art(t.owner);
+      if (t.king) art.barbarianKing(g, c, x, y, col, t.ang, t.march, t.enraged, 1);
+      else if (t.wizard) art.wizardTroop(g, c, x, y, col, t.ang, t.march, this.empire(t.owner).ash, 1);
+      else art.soldier(g, c, x, y, col, t.ang, t.march, 1, 1);
       // Shadow Cloak: a low shroud under a soldier that has not spent its free miss yet, so the
       // one that is still untouchable is the one you can pick out of a stack.
       if (t.cloak && !t.cloakUsed && !t.wizard) {
@@ -3648,9 +3681,10 @@ export class ConquestKit implements ConquestMenuHost {
 
     for (const p of this.bullets) {
       const c = this.col(p.owner);
-      if (p.kind === 'bomb') { revengeBomb(g, c, p.x, p.y, p.spin, 1); continue; }
+      const art = this.art(p.owner);
+      if (p.kind === 'bomb') { art.revengeBomb(g, c, p.x, p.y, p.spin, 1); continue; }
       if (p.kind === 'fireball') {
-        fireballOrb(g, c, p.x, p.y, this.vizT, 1.15, 1);
+        art.fireballOrb(g, c, p.x, p.y, this.vizT, 1.15, 1);
         // A tail, so a fireball in flight is unmistakably travelling rather than parked.
         for (let i = 1; i <= 3; i++) {
           g.fillStyle(c(CNQ.ember), 0.35 / i);
@@ -3667,7 +3701,7 @@ export class ConquestKit implements ConquestMenuHost {
       for (const t of this.side(owner).towns) {
         if (!t.fireReady || this.fireDrag === t) continue;
         const p = this.fireballPos(t);
-        fireballOrb(g, this.col(owner), p.x, p.y + Math.sin(this.vizT * 2.2) * 3, this.vizT, 1, 1);
+        this.art(owner).fireballOrb(g, this.col(owner), p.x, p.y + Math.sin(this.vizT * 2.2) * 3, this.vizT, 1, 1);
       }
     }
 
@@ -3676,7 +3710,7 @@ export class ConquestKit implements ConquestMenuHost {
       const p = this.fireballPos(this.fireDrag);
       g.lineStyle(2, this.pcol(CNQ.ember), 0.5);
       g.lineBetween(p.x, p.y, this.aimX, this.aimY);
-      fireballOrb(g, this.pcol, this.aimX, this.aimY, this.vizT, 1.25, 1);
+      this.art('player').fireballOrb(g, this.pcol, this.aimX, this.aimY, this.vizT, 1.25, 1);
     }
 
     // Building HP bars, but only for buildings that have actually been hit — twenty full bars
@@ -3844,9 +3878,10 @@ export class ConquestKit implements ConquestMenuHost {
       if (!a) continue;
       if (!this.alive(f)) { a.update(delta, -999, -999, 0); continue; }
       const town = this.standingTown(owner);
-      a.setStanding(town >= 0 ? townColor(owner, town) : 0);
-      a.setTowns(this.side(owner).towns.length);
-      a.setBanner(this.bannerOf(owner)?.color ?? 0);
+      const rig = a as BaseAvatar & Partial<BannerRig>;
+      rig.setStanding?.(town >= 0 ? townColor(owner, town) : 0);
+      rig.setTowns?.(this.side(owner).towns.length);
+      rig.setBanner?.(this.bannerOf(owner)?.color ?? 0);
       a.setMastered(owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
       const aim = owner === 'player'
         ? Math.atan2(this.aimY - f.y, this.aimX - f.x)

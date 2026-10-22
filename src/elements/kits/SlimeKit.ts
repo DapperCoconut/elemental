@@ -569,7 +569,7 @@ export class SlimeKit {
       if (distToSegment(t.x, t.y, a.x, a.y, b.x, b.y) > ELECTRO_LANE_HALF_W) continue;
       t.takeDamage(dmg, { source: a, sourceX: a.x, sourceY: a.y });
       this.electroJolted.set(t, time + ELECTRO_JOLT_MS);
-      this.arena.spawnHitFlash(t.x, t.y, surge ? ACID.glow : ACID.caustic);
+      this.arena.spawnHitFlash(t.x, t.y, this.pcol(surge ? ACID.glow : ACID.caustic));
       this.noteAcidHit(t);
       // Current going through a body throws the liquid off it.
       this.pfx.fizz(t.x, t.y, surge ? 8 : 5, 26, 8, VILE_TONES);
@@ -759,7 +759,7 @@ export class SlimeKit {
         if (!t.active || t.hp <= 0) continue;
         if (Phaser.Math.Distance.Between(x, y, t.x, t.y) <= RATTLING_RADIUS) {
           t.takeDamage(RATTLING_DAMAGE);
-          this.arena.spawnHitFlash(t.x, t.y, ACID.sting);
+          this.arena.spawnHitFlash(t.x, t.y, this.pcol(ACID.sting));
           this.pfx.splash(t.x, t.y, 34, { droplets: 6, fizz: 0, etch: false, depth: 8, tones: STING_TONES });
           this.drippingEnemies.set(t, { until: time + RATTLING_DRIP_MS, nextDripAt: time });
           // Mastery — "attack enemies by un-burrowing next to them".
@@ -1044,7 +1044,7 @@ export class SlimeKit {
             if (!t.active || t.hp <= 0) continue;
             if (Phaser.Math.Distance.Between(t.x, t.y, pool.x, pool.y) <= pool.radius) {
               t.takeDamage(RAIN_TICK_DAMAGE, { source: pool, sourceX: pool.x, sourceY: pool.y });
-              this.arena.spawnHitFlash(t.x, t.y, ACID.neon);
+              this.arena.spawnHitFlash(t.x, t.y, this.pcol(ACID.neon));
               this.noteAcidHit(t);
               this.pfx.splash(t.x, t.y, 30, { droplets: 5, fizz: 0, etch: false, depth: 8, tones: VILE_TONES });
             }
@@ -1299,7 +1299,7 @@ export class SlimeKit {
         if (!t.active || t.hp <= 0) continue;
         if (Phaser.Math.Distance.Between(t.x, t.y, fp.x, fp.y) <= fp.radius) {
           t.takeDamage(fp.damage, { source: fp, sourceX: fp.x, sourceY: fp.y });
-          this.arena.spawnHitFlash(t.x, t.y, 0x66ff33);
+          this.arena.spawnHitFlash(t.x, t.y, this.pcol(0x66ff33));
           this.noteAcidHit(t);
         }
       }

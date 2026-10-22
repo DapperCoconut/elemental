@@ -727,14 +727,14 @@ export class GunpowderKit {
         // Corruption: a hot barrel weeps rot into the dirt around it until it cools.
         if (!m.cooled && this.arena.hasPerk(m.owner, 'corruption')) {
           const wobble = 0.5 + 0.5 * Math.sin(t * 3 + m.droppedAt);
-          g.fillStyle(0x557722, 0.10 + 0.06 * wobble);
+          g.fillStyle(this.col(m.owner)(0x557722), 0.10 + 0.06 * wobble);
           g.fillCircle(m.x, m.y, ROT_FESTER_RADIUS);
           // Blisters of it bubbling up round the rim, each on its own phase.
           for (let b = 0; b < 5; b++) {
             const a = m.droppedAt + b * 1.257 + t * 0.5;
             const rr = ROT_FESTER_RADIUS * (0.45 + 0.4 * ((b * 0.37 + 0.2) % 1));
             const pop = (Math.sin(t * 4 + b * 2.1) + 1) / 2;
-            g.fillStyle(0x88bb33, 0.10 + 0.22 * pop);
+            g.fillStyle(this.col(m.owner)(0x88bb33), 0.10 + 0.22 * pop);
             g.fillCircle(m.x + Math.cos(a) * rr, m.y + Math.sin(a) * rr, 1.6 + 2.4 * pop);
           }
         }
@@ -945,7 +945,7 @@ export class GunpowderKit {
       if (time - (this.angerRamAt.get(t) ?? -99999) < ANGER_RAM_COOLDOWN_MS) continue;
       this.angerRamAt.set(t, time);
       t.takeDamage(ANGER_RAM_DAMAGE);
-      this.arena.spawnHitFlash(t.x, t.y, GUNPOWDER.chrome);
+      this.arena.spawnHitFlash(t.x, t.y, this.pcol(GUNPOWDER.chrome));
       this.pfx.sparks(t.x, t.y, 7, aim, 10);
       this.pfx.boom(t.x, t.y, 40, { petals: 5, shrapnel: 5, smoke: 1, duration: 300, mark: false });
       this.arena.showFloatingText(t.x, t.y - 34, '🔪 RUN THROUGH', '#ffdd33');
@@ -1255,7 +1255,7 @@ export class GunpowderKit {
       if (Math.abs(Phaser.Math.Angle.Wrap(ang - dir)) > half) continue;
       captured.push({ textureKey: p.texture.key, damage: p.damage });
       if (owner === 'player') this.arena.recordMasteryStat('bulletsVacuumed', 1);
-      this.arena.spawnHitFlash(p.x, p.y, BLUNDERBLAST_COLOR);
+      this.arena.spawnHitFlash(p.x, p.y, this.col(owner)(BLUNDERBLAST_COLOR));
       // Swallowed: it gets dragged down the throat of the funnel rather than blinking out.
       this.fx(owner).sparks(p.x, p.y, 3, Math.atan2(caster.y - p.y, caster.x - p.x), 10, GUNPOWDER.chrome);
       p.destroy();
@@ -1392,7 +1392,7 @@ export class GunpowderKit {
           const rd = Math.round(15 * target.incomingDamageMultiplier);
           const hx = target.x, hy = target.y;
           target.takeDamage(rd);
-          this.arena.spawnHitFlash(target.x, target.y, 0xdddddd);
+          this.arena.spawnHitFlash(target.x, target.y, this.col(owner)(0xdddddd));
           // A point-blank slash: a silver arc across the victim rather than a beam through them.
           this.fx(owner).shrapnel(hx, hy, 5, {
             speed: 240, angle, spread: 0.7, size: 6, color: GUNPOWDER.silver, depth: 10,
@@ -1545,7 +1545,7 @@ export class GunpowderKit {
           const rd = Math.round(10 * target.incomingDamageMultiplier);
           const hx = target.x, hy = target.y;
           target.takeDamage(rd);
-          this.arena.spawnHitFlash(target.x, target.y, 0xcccccc);
+          this.arena.spawnHitFlash(target.x, target.y, this.col(m.owner)(0xcccccc));
           // The bayonet going in: sparks off the steel and a spray of splinters.
           this.fx(m.owner).sparks(hx, hy, 6, m.angle, 10, GUNPOWDER.chrome);
           this.fx(m.owner).shrapnel(hx, hy, 4, {
@@ -1574,7 +1574,7 @@ export class GunpowderKit {
           && Phaser.Math.Distance.Between(m.x, m.y, target.x, target.y) <= 26) {
           const rd = Math.round(10 * target.incomingDamageMultiplier);
           target.takeDamage(rd);
-          this.arena.spawnHitFlash(target.x, target.y, 0xaaaaaa);
+          this.arena.spawnHitFlash(target.x, target.y, this.col(m.owner)(0xaaaaaa));
           this.fx(m.owner).sparks(m.x, m.y, 4, -Math.PI / 2, 10, GUNPOWDER.chrome);
           m.lastGroundHitAt = time;
         }
@@ -1591,7 +1591,7 @@ export class GunpowderKit {
             && time >= (m.lastOwnerBurnAt ?? 0) + OVERLOAD_BURN_INTERVAL_MS
             && Phaser.Math.Distance.Between(m.x, m.y, ownerFighter.x, ownerFighter.y) <= OVERLOAD_BURN_RADIUS) {
             ownerFighter.takeDamage(OVERLOAD_BURN_DAMAGE);
-            this.arena.spawnHitFlash(ownerFighter.x, ownerFighter.y, 0xff5522);
+            this.arena.spawnHitFlash(ownerFighter.x, ownerFighter.y, this.col(m.owner)(0xff5522));
             this.arena.showFloatingText(m.x, m.y - 22, '🔥 SCALDING', '#ff7733');
             m.lastOwnerBurnAt = time;
           }
@@ -1667,7 +1667,7 @@ export class GunpowderKit {
       if (hit) {
         const rd = Math.round(3 * target.incomingDamageMultiplier);
         target.takeDamage(rd);
-        this.arena.spawnHitFlash(target.x, target.y, 0xff6622);
+        this.arena.spawnHitFlash(target.x, target.y, this.col(c.owner)(0xff6622));
         this.fx(c.owner).smoke(c.x, c.y, 2, { radius: 6, life: 600, depth: 8, color: GUNPOWDER.char });
       }
       if (hit || time >= c.expiresAt) this.flameClouds.splice(i, 1);
@@ -1696,7 +1696,7 @@ export class GunpowderKit {
         const rd = Math.round(5 * target.incomingDamageMultiplier);
         const hx = target.x, hy = target.y;
         target.takeDamage(rd);
-        this.arena.spawnHitFlash(target.x, target.y, 0x33ff77);
+        this.arena.spawnHitFlash(target.x, target.y, this.col(b.owner)(0x33ff77));
         // Piercing straight through: a ring at the entry and a spray out the far side.
         this.fx(b.owner).ring(hx, hy, 6, 30, GUNPOWDER.orchid, 260, 9, 2);
         this.fx(b.owner).shrapnel(hx, hy, 4, {
@@ -2074,14 +2074,14 @@ export class GunpowderKit {
       const tg = r.target;
       if (!tg.active || tg.hp <= 0) continue;
       const breathe = 0.5 + 0.5 * Math.sin(t * 2.4 + r.stacks);
-      g.fillStyle(0x557722, 0.08 * r.stacks + 0.05 * breathe);
+      g.fillStyle(this.col(r.owner)(0x557722), 0.08 * r.stacks + 0.05 * breathe);
       g.fillCircle(tg.x, tg.y + 6, 20 + 5 * r.stacks);
       // Drips running off the edge of the slick — more of them the deeper the rot.
       for (let d = 0; d < r.stacks * 3; d++) {
         const a = d * 1.9 + t * 0.8;
         const rr = 14 + 6 * r.stacks;
         const sag = ((t * 22 + d * 13) % 14);
-        g.fillStyle(0x88bb33, 0.35 * (1 - sag / 14));
+        g.fillStyle(this.col(r.owner)(0x88bb33), 0.35 * (1 - sag / 14));
         g.fillCircle(tg.x + Math.cos(a) * rr, tg.y + 6 + Math.sin(a) * rr * 0.5 + sag, 1.8);
       }
     }
@@ -2198,7 +2198,7 @@ export class GunpowderKit {
       if (time < r.nextTickAt) continue;
       r.nextTickAt += ROT_TICK_MS;
       r.target.takeDamage(ROT_DPS_PER_STACK * r.stacks);
-      this.arena.spawnHitFlash(r.target.x, r.target.y, 0x88bb33);
+      this.arena.spawnHitFlash(r.target.x, r.target.y, this.col(r.owner)(0x88bb33));
     }
   }
 
@@ -2286,7 +2286,7 @@ export class GunpowderKit {
         if (!f.active || f.hp <= 0) continue;
         if (Phaser.Math.Distance.Between(s.x, s.y, f.x, f.y) > DEMON_SHOT_HIT_RADIUS) continue;
         f.takeDamage(s.damage);
-        this.arena.spawnHitFlash(f.x, f.y, 0xff3311);
+        this.arena.spawnHitFlash(f.x, f.y, this.col(s.owner)(0xff3311));
         this.fx(s.owner).sparks(s.x, s.y, 5, s.angle, 9, GUNPOWDER.ember);
         this.demonShots.splice(i, 1);
         break;

@@ -2408,33 +2408,33 @@ const HUNT_AVATAR: AvatarSpec = {
  * Blast — driven by `setWeapon` / `flashWeapon` / `setLoad` / `kick` / `rack` from the kit.
  */
 export class HuntAvatar extends BaseAvatar {
-  private fx: HuntFx;
-  private tones: HuntTones;
-  private form: HuntForm = 'human';
+  protected fx: HuntFx;
+  protected tones: HuntTones;
+  protected form: HuntForm = 'human';
   /** Eased toward the form (human 0, hybrid 0.55, beast 1) so ears grow rather than pop. */
-  private beastness = 0;
-  private moon = false;
+  protected beastness = 0;
+  protected moon = false;
   /** Hell (divine perk): wearing hellhound colours over the beast shape. */
-  private hell = false;
+  protected hell = false;
   /** Attacks pin the ears back; it relaxes on its own. */
-  private snarl = 0;
+  protected snarl = 0;
 
   /** The kit in his hands. Driven by the kit from the form. */
-  private weapon: HuntWeapon = 'crossbow';
+  protected weapon: HuntWeapon = 'crossbow';
   /** A weapon brought up for one ability, and how long it stays up. */
   private swap: HuntWeapon = null;
   private swapLeft = 0;
   /** 0 = just loosed, 1 = spanned and loaded. Read straight off the crossbow's cooldown. */
-  private load = 1;
+  protected load = 1;
   /** Shells showing in the shotgun's loops. */
-  private shells = 0;
+  protected shells = 0;
   /** Recoil impulse, kicked to 1 on every shot and bled off over ~150ms. */
-  private recoil = 0;
+  protected recoil = 0;
   /** Pump action, kicked when a shell is racked. */
-  private pump = 0;
+  protected pump = 0;
 
-  constructor(scene: Phaser.Scene, tint: HuntColorFn, tones: HuntTones = HUNTER_TONES, depth = 6) {
-    super(scene, tint, depth, HUNT_AVATAR);
+  constructor(scene: Phaser.Scene, tint: HuntColorFn, tones: HuntTones = HUNTER_TONES, depth = 6, spec: AvatarSpec = HUNT_AVATAR) {
+    super(scene, tint, depth, spec);
     this.fx = new HuntFx(scene, tint);
     this.tones = tones;
     if (tones !== HUNTER_TONES) {
@@ -2487,7 +2487,7 @@ export class HuntAvatar extends BaseAvatar {
     this.repaintHands();
   }
 
-  private repaintHands(): void {
+  protected repaintHands(): void {
     const tones = this.formTones();
     this.forEachHandLayer(1, (shell) => shell.setFillStyle(this.tint(tones.body), 0.95));
     this.forEachHandLayer(2, (core) => core.setFillStyle(this.tint(tones.lit), 1));
@@ -2499,14 +2499,14 @@ export class HuntAvatar extends BaseAvatar {
   setMoon(on: boolean): void { this.moon = on; }
 
   /** Colours for the shape alone, before a Blood Moon gets a say. */
-  private formTones(): HuntTones {
+  protected formTones(): HuntTones {
     if (this.form === 'beast') return this.hell ? HELL_TONES : BEAST_TONES;
     if (this.form === 'hybrid') return SILVER_TONES;
     return this.tones;
   }
 
   /** Colours for whatever the character is currently wearing. */
-  private activeTones(): HuntTones {
+  protected activeTones(): HuntTones {
     if (this.moon) return MOON_TONES;
     return this.formTones();
   }
@@ -2545,7 +2545,7 @@ export class HuntAvatar extends BaseAvatar {
   }
 
   /** Whatever is actually up right now — a one-ability swap beats the form's standing weapon. */
-  private heldWeapon(): HuntWeapon {
+  protected heldWeapon(): HuntWeapon {
     return this.swapLeft > 0 ? this.swap : this.weapon;
   }
 
@@ -2554,7 +2554,7 @@ export class HuntAvatar extends BaseAvatar {
    * height so the stock never crosses the face. Anchored to the live hands, so a gesture that
    * throws a fist forward makes the whole weapon lunge with it.
    */
-  private weaponAnchor(x: number, y: number): { x: number; y: number } {
+  protected weaponAnchor(x: number, y: number): { x: number; y: number } {
     const mx = (this.armX[0] + this.armX[1]) / 2;
     const my = (this.armY[0] + this.armY[1]) / 2;
     return {

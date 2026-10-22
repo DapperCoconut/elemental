@@ -5,6 +5,9 @@ import {
   ArmGesture, ECHO, EchoAura, EchoAuraStyle, EchoAvatar, EchoColorFn, EchoFx,
   chirpRing, echoChirpLayered, eyeGlyph, shockwaveHits,
 } from './EchoVisuals';
+import { BaseAvatar } from './ElementVisuals';
+import { makeSkinAvatar } from './skins/SkinAvatars';
+import { drawAmethystCluster, drawAmethystDart, drawSonicBoom } from './skins/WardenFx';
 
 // ── Arena API ────────────────────────────────────────────────────────────────
 
@@ -30,6 +33,8 @@ export interface EchoArenaApi {
   broadcastMasteryCast(enhId: string): void;
   /** `(owner, base) => displayed` — the owner's skin, or the identity. */
   echoColor(owner: 'player' | 'npc', base: number): number;
+  /** The owner's equipped skin id, or null. */
+  skinId(owner: 'player' | 'npc'): string | null;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   dealAoeDamageToNpc(cx: number, cy: number, radius: number, damage: number): void;
@@ -226,8 +231,8 @@ export class EchoKit {
   private readonly pfx: EchoFx;
   private readonly nfx: EchoFx;
   /** The bat-thing rig (membrane hands, eyes, crown wings) for each echo fighter. */
-  private playerAvatar: EchoAvatar | null = null;
-  private npcAvatar: EchoAvatar | null = null;
+  private playerAvatar: BaseAvatar | null = null;
+  private npcAvatar: BaseAvatar | null = null;
   /** Stance tells, per side where both can run one. */
   private auras: Partial<Record<`${'player' | 'npc'}:${EchoAuraStyle}`, EchoAura>> = {};
   /**
@@ -359,8 +364,17 @@ export class EchoKit {
     return owner === 'player' ? this.arena.player : this.arena.npc;
   }
   /** The rig for a side, if that side is playing Echo. */
-  private avatarFor(owner: 'player' | 'npc'): EchoAvatar | null {
+  private avatarFor(owner: 'player' | 'npc'): BaseAvatar | null {
     return owner === 'player' ? this.playerAvatar : this.npcAvatar;
+  }
+  /** The owner's skin rig if one is equipped, else the bat-thing. */
+  private makeAvatar(owner: 'player' | 'npc'): BaseAvatar {
+    const { scene } = this.arena;
+    return makeSkinAvatar(this.arena.skinId(owner), scene) ?? new EchoAvatar(scene, this.col(owner), owner);
+  }
+  /** True when this side wears the Warden skin — branches drawing only, never gameplay. */
+  private isWarden(owner: 'player' | 'npc'): boolean {
+    return this.arena.skinId(owner) === 'warden';
   }
 
   /**
@@ -399,6 +413,7 @@ export class EchoKit {
       aura = new EchoAura(this.arena.scene, this.col(owner), style, radius, style === 'biolum' ? 3 : 5);
       this.auras[key] = aura;
     }
+    aura.skin = this.arena.skinId(owner);
     aura.setIntensity(intensity);
     aura.setAngle(angle);
     aura.update(delta, f.x, f.y, f.forceInvisible ? 0 : f.alpha);
@@ -671,6 +686,8 @@ export class EchoKit {
 
   update(time: number, delta: number, isPlayer: boolean, isNpc: boolean): void {
     this.vizT += delta / 1000;
+    this.pfx.skin = this.arena.skinId('player');
+    this.nfx.skin = this.arena.skinId('npc');
     this.mirrorNpcCast();
     this.updateFog(time);
     this.updateEchoProjs(time, delta);
@@ -761,6 +778,10 @@ export class EchoKit {
       }
 
       for (const p of this.echoProjs) {
+        if (this.isWarden(p.owner)) {
+          drawSonicBoom(g, p.x, p.y, Math.atan2(p.vy, p.vx), p.bounceCount, t);
+          continue;
+        }
         EchoFx.drawBolt(g, this.col(p.owner), p.x, p.y, Math.atan2(p.vy, p.vx), p.bounceCount, t);
       }
       for (const s of this.echoSummons) {
@@ -822,10 +843,10 @@ export class EchoKit {
 
   /** Drive the rig for whichever sides are playing Echo. Built lazily; torn down when they aren't. */
   private updateAvatars(time: number, delta: number, isPlayer: boolean, isNpc: boolean): void {
-    const { player, npc, scene } = this.arena;
+    const { player, npc } = this.arena;
 
     if (isPlayer && player?.active) {
-      if (!this.playerAvatar) this.playerAvatar = new EchoAvatar(scene, this.pcol, 'player');
+      if (!this.playerAvatar) this.playerAvatar = this.makeAvatar('player');
       const aim = Math.atan2((this.lastAimY || player.y) - player.y, (this.lastAimX || player.x + 1) - player.x);
       this.playerAvatar.setFacing(aim);
       // Bat form and a live lantern both visibly swell the rig, so the buff reads off the
@@ -834,19 +855,22 @@ export class EchoKit {
       this.playerAvatar.setMastered(this.arena.masteryActive);
       // Hold priority: listening through a bloom beats everything else this rig can be doing.
       this.playerAvatar.setHold(this.viewing ? 'brace' : this.playerBatAttach ? 'draw' : null, aim);
-      this.playerAvatar.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
+      // The Warden has no bat-thing to shrink: in bat form the pixel bat aura is the whole body.
+      const pBat = this.isWarden('player') && (this.playerBatFormActive || !!this.playerBatAttach);
+      this.playerAvatar.update(delta, player.x, player.y, player.forceInvisible || pBat ? 0 : player.alpha);
     } else if (this.playerAvatar) {
       this.playerAvatar.destroy();
       this.playerAvatar = null;
     }
 
     if (isNpc && npc?.active) {
-      if (!this.npcAvatar) this.npcAvatar = new EchoAvatar(scene, this.ncol, 'npc');
+      if (!this.npcAvatar) this.npcAvatar = this.makeAvatar('npc');
       const aim = Math.atan2(player.y - npc.y, player.x - npc.x);
       this.npcAvatar.setFacing(aim);
       this.npcAvatar.setIntensity(this.npcBatFormActive ? 1.5 : this.npcLanternActive ? 1.25 : 1);
       this.npcAvatar.setHold(this.npcBatAttach ? 'draw' : null, aim);
-      this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
+      const nBat = this.isWarden('npc') && (this.npcBatFormActive || !!this.npcBatAttach);
+      this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible || nBat ? 0 : npc.alpha);
     } else if (this.npcAvatar) {
       this.npcAvatar.destroy();
       this.npcAvatar = null;
@@ -1881,7 +1905,8 @@ export class EchoKit {
       owner,
       trail: [],
     });
-    this.arena.showFloatingText(caster.x, caster.y - 36, '🌱 Seed', '#ccd4ff');
+    this.arena.showFloatingText(caster.x, caster.y - 36,
+      this.isWarden(owner) ? '💎 Amethyst' : '🌱 Seed', this.isWarden(owner) ? '#c59bff' : '#ccd4ff');
   }
 
   private plantBlossom(
@@ -2074,6 +2099,7 @@ export class EchoKit {
   private drawBloomSeed(g: Phaser.GameObjects.Graphics, s: BloomSeed, t: number): void {
     const col = this.col(s.owner);
     const a = Math.atan2(s.vy, s.vx);
+    if (this.isWarden(s.owner)) { drawAmethystDart(g, s.x, s.y, a, 9, 0.95, t, s.trail); return; }
     for (let i = 0; i < s.trail.length; i++) {
       const p = s.trail[i];
       const u = i / s.trail.length;
@@ -2126,6 +2152,18 @@ export class EchoKit {
     const scale = (0.35 + 0.65 * grow) * (active ? 1.18 : 1);
     const life = b.expiresAt === Infinity ? 1 : Phaser.Math.Clamp((b.expiresAt - time) / 1500, 0, 1);
     const alpha = 0.35 + 0.65 * life;
+
+    if (this.isWarden(b.owner)) {
+      const look = active
+        ? Math.atan2(this.arena.pointer.worldY - b.y, this.arena.pointer.worldX - b.x)
+        : null;
+      drawAmethystCluster(g, b.x, b.y, scale, alpha, time, b.swaySeed, terror, grow, look);
+      if (active) {
+        g.lineStyle(2, tint(ECHO.white), 0.5);
+        g.strokeCircle(b.x, b.y, 24 * scale);
+      }
+      return;
+    }
 
     g.fillStyle(tint(ECHO.voidBlack), 0.4 * alpha);
     g.fillEllipse(b.x, b.y + 11 * scale, 30 * scale, 10 * scale);
@@ -2253,6 +2291,7 @@ export class EchoKit {
     const terror = p.kind === 'terror';
     const color = terror ? TERROR_BLOOM_COLOR : ECHO_BLOOM_COLOR;
     const a = Math.atan2(p.vy, p.vx);
+    if (this.isWarden(p.owner)) { drawAmethystDart(g, p.x, p.y, a, 7, 0.95, t, [], terror); return; }
     for (let i = 2; i >= 1; i--) {
       echoChirpLayered(g, tint, p.x - Math.cos(a) * i * 7, p.y - Math.sin(a) * i * 7, a,
         4 + i * 2, 0.8, 5, color, 0.22 * (3 - i), 3, i, false);

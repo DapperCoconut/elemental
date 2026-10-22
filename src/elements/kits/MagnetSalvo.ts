@@ -317,13 +317,13 @@ export class SalvoCrates {
         const k = Phaser.Math.Clamp((now - c.dropAt) / CRATE_DROP_MS, 0, 1);
         ground.fillStyle(MAGNET.shadow, 0.2 + 0.35 * k);
         ground.fillEllipse(c.x, c.y + 10, 20 + 16 * k, (20 + 16 * k) * 0.4);
-        drawCrate(air, c.x, c.y - (1 - k * k) * 320, k * 4, t, false);
+        drawCrate(air, this.api.col(c.owner), c.x, c.y - (1 - k * k) * 320, k * 4, t, false);
         continue;
       }
       ground.fillStyle(MAGNET.shadow, 0.4);
       ground.fillEllipse(c.x, c.y + 12, 38, 13);
       const blink = c.state === 'ground' && c.until - now < 3000 && Math.sin(t * 14) > 0;
-      drawCrate(c.state === 'fly' ? air : ground, c.x, c.y, c.spin, t, blink);
+      drawCrate(c.state === 'fly' ? air : ground, this.api.col(c.owner), c.x, c.y, c.spin, t, blink);
     }
     for (const b of this.bomblets) {
       const k = Phaser.Math.Clamp((now - b.startAt) / Math.max(1, b.at - b.startAt), 0, 1);
@@ -332,41 +332,41 @@ export class SalvoCrates {
       const r = b.layer === 1 ? 6 : 4;
       ground.fillStyle(MAGNET.shadow, 0.3);
       ground.fillEllipse(b.lx, b.ly, r * 3, r * 1.2);
-      air.fillStyle(0x8a1a12, 1);
+      air.fillStyle(this.api.col(b.owner)(0x8a1a12), 1);
       air.fillCircle(x, y, r + 1.5);
-      air.fillStyle(0xd23a24, 1);
+      air.fillStyle(this.api.col(b.owner)(0xd23a24), 1);
       air.fillCircle(x, y, r);
-      air.fillStyle(Math.sin(t * 40 + b.seed) > 0 ? 0xffee88 : 0xff7a1a, 1);
+      air.fillStyle(Math.sin(t * 40 + b.seed) > 0 ? this.api.col(b.owner)(0xffee88) : this.api.col(b.owner)(0xff7a1a), 1);
       air.fillCircle(x + r * 0.6, y - r * 0.8, 2);
     }
   }
 }
 
 /** A wooden TNT crate with dynamite poking out of the lid and a sputtering fuse. */
-function drawCrate(g: Phaser.GameObjects.Graphics, x: number, y: number, rot: number, t: number, warn: boolean): void {
+function drawCrate(g: Phaser.GameObjects.Graphics, tint: MagnetColorFn, x: number, y: number, rot: number, t: number, warn: boolean): void {
   const s = CRATE_SIZE;
   const c = Math.cos(rot), n = Math.sin(rot);
   const p = (fx: number, fy: number) => ({ x: x + c * fx - n * fy, y: y + n * fx + c * fy });
-  g.fillStyle(0x2a1a10, 1);
+  g.fillStyle(tint(0x2a1a10), 1);
   fillPts(g, [p(-s - 2, -s - 2), p(s + 2, -s - 2), p(s + 2, s + 2), p(-s - 2, s + 2)]);
-  g.fillStyle(0x8a5a2b, 1);
+  g.fillStyle(tint(0x8a5a2b), 1);
   fillPts(g, [p(-s, -s), p(s, -s), p(s, s), p(-s, s)]);
   // Planks and the cross brace.
-  g.lineStyle(2, 0x5a3818, 1);
+  g.lineStyle(2, tint(0x5a3818), 1);
   for (const fy of [-s / 3, s / 3]) { const a = p(-s, fy), b = p(s, fy); g.lineBetween(a.x, a.y, b.x, b.y); }
-  g.lineStyle(3, 0x6a4420, 1);
+  g.lineStyle(3, tint(0x6a4420), 1);
   { const a = p(-s, -s), b = p(s, s); g.lineBetween(a.x, a.y, b.x, b.y); }
   // A red TNT band.
-  g.fillStyle(warn ? 0xffee88 : 0xd23a24, 1);
+  g.fillStyle(warn ? tint(0xffee88) : tint(0xd23a24), 1);
   fillPts(g, [p(-s, -4), p(s, -4), p(s, 4), p(-s, 4)]);
   // Sticks out of the top.
   for (let i = 0; i < 3; i++) {
     const fx = -8 + i * 8;
-    g.fillStyle(0xd23a24, 1);
+    g.fillStyle(tint(0xd23a24), 1);
     fillPts(g, [p(fx - 3, -s - 9), p(fx + 3, -s - 9), p(fx + 3, -s), p(fx - 3, -s)]);
   }
   const f = p(0, -s - 15);
-  g.fillStyle(Math.sin(t * 30 + x) > 0 ? 0xffee88 : 0xff7a1a, 1);
+  g.fillStyle(Math.sin(t * 30 + x) > 0 ? tint(0xffee88) : tint(0xff7a1a), 1);
   g.fillCircle(f.x, f.y, 3);
 }
 

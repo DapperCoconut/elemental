@@ -668,7 +668,7 @@ export class IllusionKit {
     if (!pierces) return false;
 
     target.takeDamage(SHOT_DAMAGE);
-    this.api.spawnHitFlash(target.x, target.y, ILL.crimson);
+    this.api.spawnHitFlash(target.x, target.y, this.col(s.owner)(ILL.crimson));
     const body = proj.body as Phaser.Physics.Arcade.Body | null;
     const through = body ? Math.atan2(body.velocity.y, body.velocity.x) : 0;
     this.fx(s.owner).pierceSpray(target.x, target.y, through);
@@ -847,7 +847,7 @@ export class IllusionKit {
     if (!target || !target.active || target.hp <= 0) return;
     fx.crackBeam(s.cloneX, s.cloneY, target.x, target.y, ILL.violet);
     target.takeDamage(amount);
-    this.api.spawnHitFlash(target.x, target.y, ILL.violet);
+    this.api.spawnHitFlash(target.x, target.y, this.col(owner)(ILL.violet));
     this.say(owner, target.x, target.y - 50, `🎭 ${amount} RETURNED`, this.hex(ILL.violet));
   }
 
@@ -859,7 +859,7 @@ export class IllusionKit {
     if (!this.guised(owner) || amount <= 0) return;
     const s = this.side(owner);
     if (!(owner === 'npc' && this.api.isOnline)) s.cloneStored += amount;
-    this.api.spawnHitFlash(s.cloneX, s.cloneY, ILL.violet);
+    this.api.spawnHitFlash(s.cloneX, s.cloneY, this.col(owner)(ILL.violet));
   }
 
   /** Whether a point is on this side's clone, with some slack for whatever is testing it. */
@@ -1071,7 +1071,7 @@ export class IllusionKit {
       // Re-marking refreshes rather than stacking: two Phantoms in five seconds is a longer
       // window on the same debuff, not a compounding one.
       this.marks.set(t, { owner: p.owner, until: this.now + PHANTOM_MARK_MS });
-      this.api.spawnHitFlash(t.x, t.y, ILL.crimson);
+      this.api.spawnHitFlash(t.x, t.y, this.col(p.owner)(ILL.crimson));
       this.api.showFloatingText(t.x, t.y - 44, '👻 UNDERSTUDIED', this.hex(ILL.crimson));
     }
   }
@@ -1293,7 +1293,7 @@ export class IllusionKit {
 
     if (this.side(victim).masked) { this.removeMask(victim, time); return; }
     gf.takeDamage(MASK_BACKFIRE);
-    this.api.spawnHitFlash(gf.x, gf.y, ILL.crimson);
+    this.api.spawnHitFlash(gf.x, gf.y, this.col(grabber)(ILL.crimson));
     this.api.showFloatingText(gf.x, gf.y - 50, '🤚 NOTHING THERE', this.hex(ILL.crimson));
   }
 
@@ -1482,7 +1482,7 @@ export class IllusionKit {
     if (!target) return;
     fx.crackBeam(x, y, target.x, target.y, ILL.crimson);
     target.takeDamage(CRACK_DAMAGE);
-    this.api.spawnHitFlash(target.x, target.y, ILL.crimson);
+    this.api.spawnHitFlash(target.x, target.y, this.col(owner)(ILL.crimson));
     // The splinter counts towards Off The Wall exactly as the bullet does — the requirement is
     // about landing the click, and this element gives the click two ways to land.
     if (owner === 'player') this.api.recordMasteryStat('crackShotHits', 1);
@@ -1584,7 +1584,7 @@ export class IllusionKit {
       proj.setRotation(ang);
 
       this.fx(v.owner).shards(proj.x, proj.y, 4, 14, ILL.warp, 300, 6);
-      if (!this.hides(v.owner)) this.api.spawnHitFlash(proj.x, proj.y, ILL.warp);
+      if (!this.hides(v.owner)) this.api.spawnHitFlash(proj.x, proj.y, this.col(v.owner)(ILL.warp));
       if (v.owner === 'player') this.api.recordMasteryStat('veilDeflects', 1);
     }
   }
@@ -1867,7 +1867,7 @@ export class IllusionKit {
     for (const t of this.targetsOf(b.owner)) {
       if (Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) > BOMB_AOE_R) continue;
       t.takeDamage(BOMB_DAMAGE);
-      this.api.spawnHitFlash(t.x, t.y, ILL.magenta);
+      this.api.spawnHitFlash(t.x, t.y, this.col(b.owner)(ILL.magenta));
       if (b.owner === 'player') this.api.recordMasteryStat('danceBladeHits', 1);
       this.turnAround(b.owner, t);
     }

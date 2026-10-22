@@ -1413,7 +1413,7 @@ export class PaperKit implements SummonPurgeTarget {
         if (time < (sh.gate.get(t) ?? 0)) continue;
         sh.gate.set(t, time + SHARD_GATE_MS);
         t.takeDamage(SHARD_DAMAGE);
-        this.api.spawnHitFlash(t.x, t.y, PAP.blood);
+        this.api.spawnHitFlash(t.x, t.y, this.col(sh.owner)(PAP.blood));
         this.fx(sh.owner).cut(t.x, t.y, 20, PAP.gilt);
         this.applyBleed(sh.owner, t, SHARD_BLEED_MS);
         Sfx.playAt('slash', t.x, { volume: 0.45, rate: 1.5 });
@@ -1769,7 +1769,7 @@ export class PaperKit implements SummonPurgeTarget {
       const across = Math.abs(-dx * Math.sin(ang) + dy * Math.cos(ang));
       if (across > this.reach(t, LASER_HALF_WIDTH)) continue;
       t.takeDamage(LASER_TICK_DAMAGE);
-      this.api.spawnHitFlash(t.x, t.y, PAP.beam);
+      this.api.spawnHitFlash(t.x, t.y, this.col(owner)(PAP.beam));
       this.fx(owner).splat(t.x, t.y, 16, PAP.beam);
       reach = Math.min(reach, along + 20);
     }
@@ -1801,7 +1801,7 @@ export class PaperKit implements SummonPurgeTarget {
         if (Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) > this.reach(t, 16)) continue;
         b.hits.add(t);
         t.takeDamage(BLADE_DAMAGE);
-        this.api.spawnHitFlash(t.x, t.y, PAP.spectre);
+        this.api.spawnHitFlash(t.x, t.y, this.col(b.owner)(PAP.spectre));
         this.fx(b.owner).cut(t.x, t.y, 24, PAP.spectre);
         Sfx.playAt('hit-medium', t.x, { volume: 0.7, rate: 1.1 });
         spent = true;
@@ -1836,7 +1836,7 @@ export class PaperKit implements SummonPurgeTarget {
 
       if (struck) {
         struck.takeDamage(SPIKE_DAMAGE);
-        this.api.spawnHitFlash(struck.x, struck.y, PAP.arcane);
+        this.api.spawnHitFlash(struck.x, struck.y, this.col(sp.owner)(PAP.arcane));
         this.fx(sp.owner).cut(struck.x, struck.y, 22, PAP.arcane);
         sp.strikes++;
         if (sp.strikes >= SPIKE_STRIKES) {
@@ -1898,7 +1898,7 @@ export class PaperKit implements SummonPurgeTarget {
         if (Phaser.Math.Distance.Between(pl.x, pl.y, t.x, t.y) > this.reach(t, PLANE_HIT_R)) continue;
         pl.hits.add(t);
         t.takeDamage(PLANE_DAMAGE);
-        this.api.spawnHitFlash(t.x, t.y, PAP.pulp);
+        this.api.spawnHitFlash(t.x, t.y, this.col(pl.owner)(PAP.pulp));
         this.fx(pl.owner).cut(t.x, t.y, 24, PAP.crease);
         // Plane Drill: the plane does not pass through, it picks them up. Anything that cannot be
         // moved is simply hit — a drill that silently fails to carry reads as a broken upgrade.
@@ -1955,7 +1955,7 @@ export class PaperKit implements SummonPurgeTarget {
     for (const t of this.targetsOf(pl.owner)) {
       if (Phaser.Math.Distance.Between(x, y, t.x, t.y) > DRILL_AOE_R + 8 * t.sizeMult) continue;
       t.takeDamage(DRILL_AOE_DAMAGE);
-      this.api.spawnHitFlash(t.x, t.y, PAP.crease);
+      this.api.spawnHitFlash(t.x, t.y, this.col(pl.owner)(PAP.crease));
     }
     this.fx(pl.owner).ripple(x, y, 10, DRILL_AOE_R, 380, 10, PAP.crease);
     this.fx(pl.owner).shred(x, y, 12, DRILL_AOE_R * 0.7, 460, 10);
@@ -2058,7 +2058,7 @@ export class PaperKit implements SummonPurgeTarget {
 
   private cutAndBleed(owner: Owner, t: Fighter): void {
     t.takeDamage(SHURIKEN_DAMAGE);
-    this.api.spawnHitFlash(t.x, t.y, PAP.blood);
+    this.api.spawnHitFlash(t.x, t.y, this.col(owner)(PAP.blood));
     this.fx(owner).splat(t.x, t.y, 24, PAP.blood);
     this.applyBleed(owner, t);
     // Mastery: the requirement is the pinwheel's cuts specifically, so the plain shuriken —
@@ -2122,7 +2122,7 @@ export class PaperKit implements SummonPurgeTarget {
           m.open = 0.6 + Math.sin(this.vizT * (m.enraged ? 16 : 8)) * 0.4;
           if (Phaser.Math.Distance.Between(m.x, m.y, t.x, t.y) <= this.reach(t, MACHE_BITE_R)) {
             t.takeDamage(damage);
-            this.api.spawnHitFlash(t.x, t.y, PAP.pulp);
+            this.api.spawnHitFlash(t.x, t.y, this.col(m.owner)(PAP.pulp));
             this.fx(m.owner).shred(t.x, t.y, 7, 22, 420, 10);
             this.api.showFloatingText(t.x, t.y - 36, '👹 CHOMP', this.hex(PAP.crease));
             Sfx.playAt('claw', t.x, { volume: 0.7, rate: m.enraged ? 1.15 : 1.35 });
@@ -2147,7 +2147,7 @@ export class PaperKit implements SummonPurgeTarget {
       for (const t of this.targetsOf(m.owner)) {
         if (Phaser.Math.Distance.Between(m.x, m.y, t.x, t.y) > this.reach(t, MACHE_BITE_R)) continue;
         t.takeDamage(MACHE_BITE_DAMAGE);
-        this.api.spawnHitFlash(t.x, t.y, PAP.pulp);
+        this.api.spawnHitFlash(t.x, t.y, this.col(m.owner)(PAP.pulp));
         this.fx(m.owner).shred(m.x, m.y, 6, 20, 400, 10);
         this.api.showFloatingText(t.x, t.y - 34, '👹 BITE', this.hex(PAP.crease));
         Sfx.playAt('trap-snap', t.x, { volume: 0.6, rate: 1.3 });
@@ -2222,7 +2222,7 @@ export class PaperKit implements SummonPurgeTarget {
           c.hits.add(t);
           t.takeDamage(CHARGE_DAMAGE);
           this.noteClimaxKill(c.owner, t);
-          this.api.spawnHitFlash(t.x, t.y, PAP.spectre);
+          this.api.spawnHitFlash(t.x, t.y, this.col(c.owner)(PAP.spectre));
           this.fx(c.owner).cut(t.x, t.y, 46, PAP.spectre);
           this.api.showFloatingText(t.x, t.y - 44, '⚔️ RIDDEN DOWN', this.hex(PAP.spectre));
           Sfx.playAt('hit-heavy', t.x, { volume: 1, rate: 0.9 });
@@ -2253,7 +2253,7 @@ export class PaperKit implements SummonPurgeTarget {
         if (Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) > BOMB_R + 8 * t.sizeMult) continue;
         t.takeDamage(BOMB_DAMAGE);
         this.noteClimaxKill(b.owner, t);
-        this.api.spawnHitFlash(t.x, t.y, PAP.beam);
+        this.api.spawnHitFlash(t.x, t.y, this.col(b.owner)(PAP.beam));
         this.stun(t, BOMB_STUN_MS);
       }
       this.bombs.splice(i, 1);
@@ -2321,7 +2321,7 @@ export class PaperKit implements SummonPurgeTarget {
         tr.gate.set(t, time + TRAIL_TICK_MS);
         t.takeDamage(TRAIL_DAMAGE);
         this.noteClimaxKill(tr.owner, t);
-        this.api.spawnHitFlash(t.x, t.y, PAP.flame);
+        this.api.spawnHitFlash(t.x, t.y, this.col(tr.owner)(PAP.flame));
       }
       if (time < tr.diesAt) continue;
       this.trails.splice(i, 1);
@@ -2353,7 +2353,7 @@ export class PaperKit implements SummonPurgeTarget {
         if (along > this.reach(t, SLAB_WIDTH * 0.5) || across > this.reach(t, SLAB_LEN * 0.5)) continue;
         sl.hits.add(t);
         t.takeDamage(SLAB_DAMAGE);
-        this.api.spawnHitFlash(t.x, t.y, PAP.halo);
+        this.api.spawnHitFlash(t.x, t.y, this.col(sl.owner)(PAP.halo));
         this.fx(sl.owner).cut(t.x, t.y, 30, PAP.halo);
         this.shove(t, sl.ang, SLAB_KNOCK);
         this.api.showFloatingText(t.x, t.y - 40, '📙 CAST OUT', this.hex(PAP.halo));

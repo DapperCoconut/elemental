@@ -1568,7 +1568,7 @@ export class FateKit {
       if (Phaser.Math.Distance.Between(x, y, v.x, v.y) > ASH_RADIUS) continue;
       v.takeDamage(ASH_DAMAGE);
       v.burningUntil = Math.max(v.burningUntil, time + Math.round(ASH_BURN_MS * v.statusDurMult));
-      this.arena.spawnHitFlash(v.x, v.y, FIRE.orange);
+      this.arena.spawnHitFlash(v.x, v.y, this.col(owner)(FIRE.orange));
       this.arena.showFloatingText(v.x, v.y - 34, '🌫️ ASH', '#ff8844');
     }
   }
@@ -1644,7 +1644,7 @@ export class FateKit {
       if (onBeam) {
         target.takeDamage(dmg);
         this.creditCardDamage(lid, dmg);
-        this.arena.spawnHitFlash(target.x, target.y, 0xff3333);
+        this.arena.spawnHitFlash(target.x, target.y, this.col(owner)(0xff3333));
         this.fx(owner).payout(target.x, target.y, 40, {
           cards: 5, chips: 2, litter: false, depth: 9, face: 0xff3333, tones: this.tones(owner),
         });
@@ -1786,7 +1786,7 @@ export class FateKit {
         cards: ep ? 16 : 9, chips: ep ? 8 : 4,
         duration: ep ? 620 : 400, depth: 9, face: 0xff8800, tones,
       });
-      this.arena.spawnHitFlash(tx, ty, 0xff4400);
+      this.arena.spawnHitFlash(tx, ty, this.col(owner)(0xff4400));
       scene.cameras.main.shake(ep ? 260 : 150, ep ? 0.008 : 0.004);
     });
   }
@@ -1931,7 +1931,7 @@ export class FateKit {
     if (target.active && target.hp > 0) {
       target.takeDamage(damage);
       this.creditCardDamage(c.ledgerId, damage);
-      this.arena.spawnHitFlash(target.x, target.y, 0xffee00);
+      this.arena.spawnHitFlash(target.x, target.y, this.col(c.owner)(0xffee00));
       fx.payout(target.x, target.y, partner ? 60 : 40, {
         cards: partner ? 10 : 5, chips: partner ? 6 : 3,
         litter: false, depth: 9, face: FATE.gold, tones,
@@ -2030,7 +2030,7 @@ export class FateKit {
       fx.payout(s.x, s.y, 70, {
         cards: 10, chips: 5, depth: 9, face: 0xffee44, tones: this.tones(s.owner),
       });
-      this.arena.spawnHitFlash(s.x, s.y, 0xffee44);
+      this.arena.spawnHitFlash(s.x, s.y, this.col(s.owner)(0xffee44));
       scene.cameras.main.shake(180, 0.005);
 
       for (const target of this.opponentsOf(s.owner)) {
@@ -2127,7 +2127,7 @@ export class FateKit {
       for (const sm of this.slotMachines) {
         if (Phaser.Math.Distance.Between(proj.x, proj.y, sm.x, sm.y) > 26) continue;
         if (proj.isFromPlayer) sm.cycleDmgPlayer += proj.damage; else sm.cycleDmgNpc += proj.damage;
-        this.arena.spawnHitFlash(sm.x, sm.y, 0xffcc44);
+        this.arena.spawnHitFlash(sm.x, sm.y, this.col(sm.owner)(0xffcc44));
         proj.setActive(false).setVisible(false);
         (proj.body as Phaser.Physics.Arcade.Body).stop();
         break;
@@ -2185,7 +2185,7 @@ export class FateKit {
     const fx = this.fx(owner);
     if (hit) {
       target.takeDamage(allIn.wager);
-      this.arena.spawnHitFlash(target.x, target.y, 0xffcc44);
+      this.arena.spawnHitFlash(target.x, target.y, this.col(owner)(0xffcc44));
       this.arena.showFloatingText(caster.x, caster.y - 50, `🎰 HIT! ${allIn.wager}`, '#ffee44');
       // Mastery "High Roller": only the player's landed wagers count.
       if (owner === 'player') this.arena.recordMasteryStat('allInHits', 1);
@@ -2259,7 +2259,7 @@ export class FateKit {
         b.hitAt.set(target, time);
         target.takeDamage(b.dmg);
         this.creditCardDamage(b.ledgerId, b.dmg);
-        this.arena.spawnHitFlash(target.x, target.y, 0xffe000);
+        this.arena.spawnHitFlash(target.x, target.y, this.col(b.owner)(0xffe000));
         this.fx(b.owner).payout(target.x, target.y, 34, {
           cards: 4, chips: 2, litter: false, depth: 9, face: 0xffe000, tones: this.tones(b.owner),
         });
@@ -2282,7 +2282,7 @@ export class FateKit {
       if (Math.abs(Phaser.Math.Angle.Wrap(to - ang)) > halfCone) continue;
       target.takeDamage(dmg);
       this.creditCardDamage(lid, dmg);
-      this.arena.spawnHitFlash(target.x, target.y, 0xff2222);
+      this.arena.spawnHitFlash(target.x, target.y, this.col(owner)(0xff2222));
       // F+ "Slash: applies a 50% slow for 5 seconds".
       if (ep) { this.applySlow(target, 0.5, 5000); this.arena.showFloatingText(target.x, target.y - 40, '🐌 SLOW', '#88ddff'); }
       this.fx(owner).payout(target.x, target.y, 34, {
@@ -2332,7 +2332,7 @@ export class FateKit {
       if (this.pointToSegmentDist(target.x, target.y, startX, startY, nx, ny) <= 28) {
         target.takeDamage(dmg);
         this.creditCardDamage(this.activeLedgerId, dmg);
-        this.arena.spawnHitFlash(target.x, target.y, 0x00c2c7);
+        this.arena.spawnHitFlash(target.x, target.y, this.col(owner)(0x00c2c7));
         this.fx(owner).payout(target.x, target.y, 32, {
           cards: 3, chips: 1, litter: false, depth: 9, face: 0x00c2c7, tones: this.tones(owner),
         });
@@ -2395,7 +2395,7 @@ export class FateKit {
       const ang = Math.atan2(target.y - caster.y, target.x - caster.x);
       const speed = 520 * kbMult;
       this.applyKnockback(target, Math.cos(ang) * speed, Math.sin(ang) * speed, 260);
-      this.arena.spawnHitFlash(target.x, target.y, 0x00a3ff);
+      this.arena.spawnHitFlash(target.x, target.y, this.col(owner)(0x00a3ff));
       // Cards blown off the target in the direction they were shoved.
       this.fx(owner).cards(target.x, target.y, 5, {
         speed: 220 * kbMult, angle: ang, spread: 0.7, size: 10, life: 460, depth: 9,
@@ -2501,7 +2501,7 @@ export class FateKit {
       hop++;
       cur.takeDamage(dmg);
       this.creditCardDamage(this.activeLedgerId, dmg);
-      this.arena.spawnHitFlash(cur.x, cur.y, 0x9b5cff);
+      this.arena.spawnHitFlash(cur.x, cur.y, this.col(owner)(0x9b5cff));
       pool.splice(pool.indexOf(cur), 1);
       fromX = cur.x; fromY = cur.y;
       let next: Fighter | null = null; best = chainRange;

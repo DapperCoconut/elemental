@@ -5,9 +5,11 @@ import { CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
 import { Sfx } from '../../audio';
 import {
-  RUI, RuinAvatar, RuinColorFn, RuinFx, chainRun, crackWeb, decayCoat, jitter,
-  padlock, rubyJewel, ruinCluster, ruinRing, rustySpike, shrapnelShard, shredWedge, skinShard,
+  RUI, RuinAvatar, RuinColorFn, RuinFx, crackWeb, jitter,
 } from './RuinVisuals';
+import { BaseAvatar } from './ElementVisuals';
+import { makeSkinAvatar } from './skins/SkinAvatars';
+import { ORDER_ART, OrderFx, RUIN_ART, RuinArt, orderBeam, orderFleck, orderLine, orderMedallion } from './skins/OrderFx';
 
 type Owner = 'player' | 'npc';
 
@@ -312,6 +314,8 @@ export interface RuinArenaApi {
   get height(): number;
   /** Skins: maps a Ruin visual colour through that side's equipped skin. */
   ruinColor(owner: Owner, base: number): number;
+  /** Skins: which skin (if any) that side has equipped for Ruin. */
+  skinId(owner: Owner): string | null;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   getNearestEnemy(fromX: number, fromY: number): Fighter;
@@ -356,8 +360,11 @@ export class RuinKit {
   private readonly ncol: RuinColorFn;
   private readonly pfx: RuinFx;
   private readonly nfx: RuinFx;
-  private playerAvatar: RuinAvatar | null = null;
-  private npcAvatar: RuinAvatar | null = null;
+  private playerAvatar: BaseAvatar | null = null;
+  private npcAvatar: BaseAvatar | null = null;
+  /** The Order skin's one-shots, used in place of `pfx`/`nfx` for a side wearing it. */
+  private readonly pOrderFx: OrderFx;
+  private readonly nOrderFx: OrderFx;
   /** Rings, cracks and shed flecks: on the floor, under the fighters. */
   private groundGfx: Phaser.GameObjects.Graphics | null = null;
   /** Wedges, the skewer, padlocks and the rot on a body — over the fighters. */
@@ -401,6 +408,8 @@ export class RuinKit {
     this.ncol = (base) => api.ruinColor('npc', base);
     this.pfx = new RuinFx(api.scene, this.pcol);
     this.nfx = new RuinFx(api.scene, this.ncol);
+    this.pOrderFx = new OrderFx(api.scene, this.pcol);
+    this.nOrderFx = new OrderFx(api.scene, this.ncol);
   }
 
   // ── Small helpers ──────────────────────────────────────────────────────────
@@ -408,7 +417,21 @@ export class RuinKit {
   private get now(): number { return this.api.scene.time.now; }
   private side(owner: Owner): Side { return this.sides[owner]; }
   private fighter(owner: Owner): Fighter { return owner === 'player' ? this.api.player : this.api.npc; }
-  private fx(owner: Owner): RuinFx { return owner === 'player' ? this.pfx : this.nfx; }
+  private fx(owner: Owner): RuinFx {
+    if (this.isOrder(owner)) return owner === 'player' ? this.pOrderFx : this.nOrderFx;
+    return owner === 'player' ? this.pfx : this.nfx;
+  }
+  /** Order skin: everything Ruin draws broken is drawn intact. Visual only. */
+  private isOrder(owner: Owner): boolean { return this.api.skinId(owner) === 'order'; }
+  private art(owner: Owner): RuinArt { return this.isOrder(owner) ? ORDER_ART : RUIN_ART; }
+  /** Floating text, through the owner's skin: its colour mapper, and Order's own call-outs. */
+  private say(owner: Owner, x: number, y: number, text: string, base: number): void {
+    this.api.showFloatingText(x, y, this.isOrder(owner) ? orderLine(text) : text, this.hex(this.col(owner)(base)));
+  }
+  private makeAvatar(owner: Owner): BaseAvatar {
+    return makeSkinAvatar(this.api.skinId(owner), this.api.scene)
+      ?? new RuinAvatar(this.api.scene, this.col(owner));
+  }
   private col(owner: Owner): RuinColorFn { return owner === 'player' ? this.pcol : this.ncol; }
   private body(f: Fighter): Phaser.Physics.Arcade.Body { return f.body as Phaser.Physics.Arcade.Body; }
 
@@ -452,7 +475,7 @@ export class RuinKit {
     return out;
   }
 
-  private avatar(owner: Owner): RuinAvatar | null {
+  private avatar(owner: Owner): BaseAvatar | null {
     return owner === 'player' ? this.playerAvatar : this.npcAvatar;
   }
 
@@ -614,14 +637,14 @@ export class RuinKit {
 
     if (!victim) {
       f.resetCooldown('ruin-lockdown');
-      this.api.showFloatingText(f.x, f.y - 46, '🔒 NOTHING IN REACH', this.hex(RUI.ash));
+      this.say(owner, f.x, f.y - 46, '🔒 NOTHING IN REACH', RUI.ash);
       return;
     }
 
     const abilityId = victim.lastCastAbilityId;
     if (!abilityId) {
       f.resetCooldown('ruin-lockdown');
-      this.api.showFloatingText(victim.x, victim.y - 46, '🔒 NOTHING TO LOCK', this.hex(RUI.ash));
+      this.say(owner, victim.x, victim.y - 46, '🔒 NOTHING TO LOCK', RUI.ash);
       return;
     }
 
@@ -637,8 +660,8 @@ export class RuinKit {
 
     this.avatar(owner)?.play('sweep', Math.atan2(victim.y - f.y, victim.x - f.x));
     this.fx(owner).lockSnap(f.x, f.y, victim.x, victim.y);
-    this.api.showFloatingText(victim.x, victim.y - 52, `🔒 ${abilityName.toUpperCase()}`, this.hex(RUI.rust));
-    this.api.showFloatingText(victim.x, victim.y - 32, 'LOCKED 20s', this.hex(RUI.red));
+    this.say(owner, victim.x, victim.y - 52, `🔒 ${abilityName.toUpperCase()}`, RUI.rust);
+    this.say(owner, victim.x, victim.y - 32, 'LOCKED 20s', RUI.red);
     Sfx.playAt('chain', victim.x, { volume: 0.9, rate: 0.8 });
 
     if (this.up(owner, 'e')) this.addLockjaw(owner, victim, abilityId, abilityName);
@@ -667,8 +690,8 @@ export class RuinKit {
     }
 
     this.fx(owner).shatter(victim.x, victim.y - 20, 6, 22, RUI.rust, 420, 11);
-    this.api.showFloatingText(victim.x, victim.y - 68,
-      `🦷 LOCKJAW ×${stacks} — ${abilityName.toUpperCase()}`, this.hex(RUI.ember));
+    this.say(owner, victim.x, victim.y - 68,
+      `🦷 LOCKJAW ×${stacks} — ${abilityName.toUpperCase()}`, RUI.ember);
   }
 
   /** Somebody used an ability the jaws are still on. */
@@ -680,7 +703,7 @@ export class RuinKit {
     // to land on a co-op ally carrying `allyDamageBlocked`.
     Fighter.asNonAllyDamage(() => victim.takeDamage(cost));
     this.fx(owner).bite(victim.x, victim.y, 24, RUI.rust);
-    this.api.showFloatingText(victim.x, victim.y - 56, `🦷 LOCKJAW ×${stacks}`, this.hex(RUI.ember));
+    this.say(owner, victim.x, victim.y - 56, `🦷 LOCKJAW ×${stacks}`, RUI.ember);
     Sfx.playAt('chain', victim.x, { volume: 0.55, rate: 1.35 });
   }
 
@@ -714,7 +737,7 @@ export class RuinKit {
 
     this.avatar(owner)?.play('dash', ang);
     this.fx(owner).rustPuff(f.x, f.y, 8, 26, 480, 9);
-    this.api.showFloatingText(f.x, f.y - 46, '🩸 RUSTY SKEWER', this.hex(RUI.rust));
+    this.say(owner, f.x, f.y - 46, '🩸 RUSTY SKEWER', RUI.rust);
     Sfx.playAt('whoosh', f.x, { volume: 0.8, rate: 0.7 });
   }
 
@@ -732,7 +755,7 @@ export class RuinKit {
     this.rings.push({ owner, x: f.x, y: f.y, startedAt: this.now, seed: Math.random() * 999 });
     this.avatar(owner)?.play('flex');
     this.fx(owner).ring(f.x, f.y, 12, RING_R, RUI.red, 520);
-    this.api.showFloatingText(f.x, f.y - 46, '🔻 SPIKES OF RUIN', this.hex(RUI.red));
+    this.say(owner, f.x, f.y - 46, '🔻 SPIKES OF RUIN', RUI.red);
     Sfx.playAt('trap-set', f.x, { volume: 0.85, rate: 0.7 });
   }
 
@@ -747,7 +770,7 @@ export class RuinKit {
     const s = this.side(owner);
 
     if (s.decay >= MAX_DECAY) {
-      this.api.showFloatingText(f.x, f.y - 46, '☠️ NOTHING LEFT TO ROT', this.hex(RUI.decay));
+      this.say(owner, f.x, f.y - 46, '☠️ NOTHING LEFT TO ROT', RUI.decay);
       return;
     }
     s.decay++;
@@ -757,9 +780,9 @@ export class RuinKit {
     fx.ring(f.x, f.y, 20, Math.max(this.api.width, this.api.height) * 0.75, RUI.decay, 900);
     for (const t of this.targetsOf(owner)) {
       fx.rustPuff(t.x, t.y, 12, 34, 700, 10);
-      this.api.showFloatingText(t.x, t.y - 44, `🦠 DECAY ×${s.decay}`, this.hex(RUI.decay));
+      this.say(owner, t.x, t.y - 44, `🦠 DECAY ×${s.decay}`, RUI.decay);
     }
-    this.api.showFloatingText(f.x, f.y - 56, '☠️ UNSTOPPABLE DECAY', this.hex(RUI.decay));
+    this.say(owner, f.x, f.y - 56, '☠️ UNSTOPPABLE DECAY', RUI.decay);
     Sfx.playAt('curse-cast', f.x, { volume: 0.95, rate: 0.65 });
 
     if (this.up(owner, 'q')) this.openCracks(owner);
@@ -782,8 +805,8 @@ export class RuinKit {
       fx.ring(spot.x, spot.y, 6, CRACK_R, RUI.ancient, 620);
       Sfx.playAt('quake', spot.x, { volume: 0.75, rate: 1.1 });
     }
-    this.api.showFloatingText(this.fighter(owner).x, this.fighter(owner).y - 74,
-      `🕳️ ${CRACKS_PER_CAST} RUIN CRACKS`, this.hex(RUI.ancient));
+    this.say(owner, this.fighter(owner).x, this.fighter(owner).y - 74,
+      `🕳️ ${CRACKS_PER_CAST} RUIN CRACKS`, RUI.ancient);
   }
 
   /**
@@ -865,7 +888,7 @@ export class RuinKit {
 
     if (this.skinLeft(owner) <= 0) {
       if (owner === 'player') {
-        this.api.showFloatingText(f.x, f.y - 50, '🦎 NOTHING LEFT TO SHED', this.hex(RUI.ash));
+        this.say(owner, f.x, f.y - 50, '🦎 NOTHING LEFT TO SHED', RUI.ash);
       }
       return false;
     }
@@ -928,9 +951,9 @@ export class RuinKit {
     this.avatar(owner)?.play('flex');
     fx.shed(f.x, f.y, wasR);
     fx.ring(f.x, f.y, 14, 90, RUI.bone, 480);
-    this.api.showFloatingText(f.x, f.y - 52, '🦎 SECOND SKIN', this.hex(RUI.bone));
-    this.api.showFloatingText(f.x, f.y - 34,
-      `${this.skinLeft(owner)} LAYER${this.skinLeft(owner) === 1 ? '' : 'S'} LEFT`, this.hex(RUI.ash));
+    this.say(owner, f.x, f.y - 52, '🦎 SECOND SKIN', RUI.bone);
+    this.say(owner, f.x, f.y - 34,
+      `${this.skinLeft(owner)} LAYER${this.skinLeft(owner) === 1 ? '' : 'S'} LEFT`, RUI.ash);
     Sfx.playAt('crystal-shatter', f.x, { volume: 0.9, rate: 0.55 });
     Sfx.playAt('whoosh', f.x, { volume: 0.7, rate: 1.3 });
   }
@@ -953,7 +976,7 @@ export class RuinKit {
         if (Phaser.Math.Distance.Between(sh.x, sh.y, t.x, t.y) > SKIN_HIT_R) continue;
         sh.volley.hits.add(t);
         t.takeDamage(SKIN_DAMAGE);
-        this.api.spawnHitFlash(t.x, t.y, RUI.bone);
+        this.api.spawnHitFlash(t.x, t.y, this.col(sh.owner)(RUI.bone));
         this.fx(sh.owner).bite(t.x, t.y, 24, RUI.bone);
         this.breakForms(sh.owner, t);
       }
@@ -976,11 +999,11 @@ export class RuinKit {
     const broken = this.api.revertForms(victim);
     if (broken.length === 0) return;
     this.fx(owner).unform(victim.x, victim.y, 42);
-    this.api.showFloatingText(victim.x, victim.y - 58,
-      `🦎 ${broken[0].toUpperCase()} BROKEN`, this.hex(RUI.bright));
+    this.say(owner, victim.x, victim.y - 58,
+      `🦎 ${broken[0].toUpperCase()} BROKEN`, RUI.bright);
     if (broken.length > 1) {
-      this.api.showFloatingText(victim.x, victim.y - 76,
-        `+${broken.length - 1} MORE`, this.hex(RUI.bone));
+      this.say(owner, victim.x, victim.y - 76,
+        `+${broken.length - 1} MORE`, RUI.bone);
     }
     Sfx.playAt('clang', victim.x, { volume: 0.85, rate: 1.3 });
   }
@@ -1123,7 +1146,7 @@ export class RuinKit {
         if (time - (c.bitAt.get(t) ?? -Infinity) < CRYSTAL_TOUCH_MS) continue;
         c.bitAt.set(t, time);
         t.takeDamage(CRYSTAL_TOUCH_DAMAGE);
-        this.api.spawnHitFlash(t.x, t.y, RUI.ruby);
+        this.api.spawnHitFlash(t.x, t.y, this.col(c.owner)(RUI.ruby));
         this.fx(c.owner).bite(t.x, t.y, 22, RUI.ruby);
       }
 
@@ -1156,8 +1179,8 @@ export class RuinKit {
       owner: c.owner, x0: c.x, y0: c.y, x1: victim.x, y1: victim.y,
       until: time + 180, seed: Math.random() * 999,
     });
-    this.api.spawnHitFlash(victim.x, victim.y, RUI.ancient);
-    this.api.showFloatingText(victim.x, victim.y - 50, '⚡ RUINIC LIGHTNING', this.hex(RUI.ancient));
+    this.api.spawnHitFlash(victim.x, victim.y, this.col(c.owner)(RUI.ancient));
+    this.say(c.owner, victim.x, victim.y - 50, '⚡ RUINIC LIGHTNING', RUI.ancient);
     Sfx.playAt('zap', victim.x, { volume: 0.7, rate: 0.85 });
   }
 
@@ -1212,8 +1235,8 @@ export class RuinKit {
     victim.weakHp += moved;
     const owner: Owner = this.isEnemyOf('player', victim) ? 'player' : 'npc';
     this.fx(owner).rustPuff(victim.x, victim.y, 8, 24, 480, 10);
-    this.api.spawnHitFlash(proj.x, proj.y, RUI.rust);
-    this.api.showFloatingText(victim.x, victim.y - 40, `⚙️ ${Math.round(moved)} RUSTED`, this.hex(RUI.rust));
+    this.api.spawnHitFlash(proj.x, proj.y, this.col(owner)(RUI.rust));
+    this.say(owner, victim.x, victim.y - 40, `⚙️ ${Math.round(moved)} RUSTED`, RUI.rust);
     Sfx.playAt('crystal-shatter', victim.x, { volume: 0.5, rate: 0.9 });
     proj.setActive(false).setVisible(false);
     (proj.body as Phaser.Physics.Arcade.Body | null)?.stop();
@@ -1244,7 +1267,7 @@ export class RuinKit {
     for (const t of this.targetsOf(c.owner)) {
       if (Phaser.Math.Distance.Between(c.x, c.y, t.x, t.y) > BLAST_R) continue;
       t.takeDamage(BLAST_DAMAGE);
-      this.api.spawnHitFlash(t.x, t.y, RUI.ruby);
+      this.api.spawnHitFlash(t.x, t.y, this.col(c.owner)(RUI.ruby));
     }
 
     // The spikes. Fanned off a random offset so two crystals going up together don't throw
@@ -1287,7 +1310,7 @@ export class RuinKit {
         if (Phaser.Math.Distance.Between(sp.x, sp.y, t.x, t.y) > SPIKE_HIT_R) continue;
         sp.hits.add(t);
         t.takeDamage(SPIKE_DAMAGE);
-        this.api.spawnHitFlash(t.x, t.y, RUI.ruby);
+        this.api.spawnHitFlash(t.x, t.y, this.col(sp.owner)(RUI.ruby));
         this.addBlunt(sp.owner, t);
       }
 
@@ -1323,8 +1346,8 @@ export class RuinKit {
     const stacks = Math.min(BLUNT_MAX, (rec.stacks.get(abilityId) ?? 0) + 1);
     if (stacks === rec.stacks.get(abilityId)) return;
     rec.stacks.set(abilityId, stacks);
-    this.api.showFloatingText(victim.x, victim.y - 70,
-      `🪓 ${this.nameOfAbility(victim, abilityId).toUpperCase()} −${stacks * 10}%`, this.hex(RUI.ruby));
+    this.say(owner, victim.x, victim.y - 70,
+      `🪓 ${this.nameOfAbility(victim, abilityId).toUpperCase()} −${stacks * 10}%`, RUI.ruby);
   }
 
   /**
@@ -1386,7 +1409,7 @@ export class RuinKit {
         if (Phaser.Math.Distance.Between(w.x, w.y, t.x, t.y) > SHRED_HIT_R) continue;
         w.hits.add(t);
         t.takeDamage(SHRED_DAMAGE);
-        this.api.spawnHitFlash(t.x, t.y, RUI.red);
+        this.api.spawnHitFlash(t.x, t.y, this.col(w.owner)(RUI.red));
         this.fx(w.owner).bite(t.x, t.y, 26, RUI.red);
         this.creditShredDamage(w.owner, SHRED_DAMAGE, t.x, t.y);
       }
@@ -1399,10 +1422,10 @@ export class RuinKit {
       if (!gone) continue;
 
       if (w.eaten > 0) {
-        this.api.showFloatingText(
+        this.say(w.owner,
           Phaser.Math.Clamp(w.x, this.left + 20, this.right - 20),
           Phaser.Math.Clamp(w.y, this.top + 20, this.bottom - 20),
-          `✂️ SHREDDED ×${w.eaten}`, this.hex(RUI.bright),
+          `✂️ SHREDDED ×${w.eaten}`, RUI.bright,
         );
       }
       this.fx(w.owner).rustPuff(w.x, w.y, 4, 14, 340, 9);
@@ -1515,7 +1538,7 @@ export class RuinKit {
       const fx = this.fx(s.owner);
       fx.shatter(c.x, c.y, 12, 34, RUI.ruby, 480, 11);
       fx.ring(c.x, c.y, 6, 40, RUI.ruby, 380);
-      this.api.showFloatingText(c.x, c.y - 30, '🩸 TRANSFUSION', this.hex(RUI.ruby));
+      this.say(s.owner, c.x, c.y - 30, '🩸 TRANSFUSION', RUI.ruby);
       Sfx.playAt('crystal-shatter', c.x, { volume: 0.9, rate: 0.6 });
       return;
     }
@@ -1539,7 +1562,7 @@ export class RuinKit {
       // damage path — shields, mitigation and all — rather than around it.
       const bled = Math.max(1, Math.round(victim.hp * TRANSFUSION_FRACTION));
       victim.takeDamage(bled);
-      this.api.showFloatingText(victim.x, victim.y - 56, `🩸 ${bled} TRANSFUSED`, this.hex(RUI.ruby));
+      this.say(s.owner, victim.x, victim.y - 56, `🩸 ${bled} TRANSFUSED`, RUI.ruby);
     } else if (!victim.netGhost && !victim.allyDamageBlocked) {
       // The conversion is a straight move between two health pools rather than damage, so it
       // walks past shields on purpose — and is skipped for a fighter whose HP isn't ours to
@@ -1547,14 +1570,14 @@ export class RuinKit {
       const rusted = Math.max(1, Math.round(victim.hp * SKEWER_RUST_FRACTION));
       victim.hp = Math.max(1, victim.hp - rusted);
       victim.weakHp += rusted;
-      this.api.showFloatingText(victim.x, victim.y - 56, `⚙️ ${rusted} RUSTED`, this.hex(RUI.rust));
+      this.say(s.owner, victim.x, victim.y - 56, `⚙️ ${rusted} RUSTED`, RUI.rust);
     }
 
     const fx = this.fx(s.owner);
     fx.bite(victim.x, victim.y, 32, s.fed ? RUI.ruby : RUI.blood);
     fx.rustPuff(victim.x, victim.y, 8, 26, 520, 10);
-    this.api.spawnHitFlash(victim.x, victim.y, RUI.blood);
-    this.api.showFloatingText(victim.x, victim.y - 38, '🩸 SKEWERED', this.hex(RUI.red));
+    this.api.spawnHitFlash(victim.x, victim.y, this.col(s.owner)(RUI.blood));
+    this.say(s.owner, victim.x, victim.y - 38, '🩸 SKEWERED', RUI.red);
     Sfx.playAt('stab', victim.x, { volume: 0.9, rate: 0.75 });
   }
 
@@ -1567,7 +1590,7 @@ export class RuinKit {
       const py = Phaser.Math.Clamp(f.y, this.top + 30, this.bottom - 30);
       this.body(f).reset(px, py);
       fx.shatter(px, py, 7, 34, RUI.blood, 460, 10);
-      this.api.showFloatingText(px, py - 42, onWall ? '🧱 TORN OFF' : '🩸 SLID FREE', this.hex(RUI.rust));
+      this.say(s.owner, px, py - 42, onWall ? '🧱 TORN OFF' : '🩸 SLID FREE', RUI.rust);
     }
     const ex = Phaser.Math.Clamp(s.x, this.left, this.right);
     const ey = Phaser.Math.Clamp(s.y, this.top, this.bottom);
@@ -1605,11 +1628,11 @@ export class RuinKit {
     for (const t of this.targetsOf(r.owner)) {
       if (Phaser.Math.Distance.Between(r.x, r.y, t.x, t.y) > RING_R) continue;
       t.takeDamage(RING_DAMAGE);
-      this.api.spawnHitFlash(t.x, t.y, RUI.red);
+      this.api.spawnHitFlash(t.x, t.y, this.col(r.owner)(RUI.red));
       fx.shatter(t.x, t.y, 6, 26, RUI.red, 420, 11);
       const converted = this.invertBuffs(t);
-      this.api.showFloatingText(t.x, t.y - 44,
-        converted > 0 ? `🔻 ${converted} BUFFS TURNED` : '🔻 RUINED', this.hex(RUI.bright));
+      this.say(r.owner, t.x, t.y - 44,
+        converted > 0 ? `🔻 ${converted} BUFFS TURNED` : '🔻 RUINED', RUI.bright);
     }
 
     // Anything either side built inside the circle is simply gone. Structures don't take
@@ -1617,7 +1640,7 @@ export class RuinKit {
     // its cooldown against the elements that put things on the board.
     const razed = this.api.purgeSummons(r.x, r.y, RING_R, r.owner);
     if (razed > 0) {
-      this.api.showFloatingText(r.x, r.y - 60, `🏚️ ${razed} RAZED`, this.hex(RUI.rust));
+      this.say(r.owner, r.x, r.y - 60, `🏚️ ${razed} RAZED`, RUI.rust);
       Sfx.playAt('explosion-medium', r.x, { volume: 0.8, rate: 0.6 });
     }
 
@@ -1632,7 +1655,7 @@ export class RuinKit {
       lit++;
     }
     if (lit > 0) {
-      this.api.showFloatingText(r.x, r.y - 78, `💥 CHAIN REACTION ×${lit}`, this.hex(RUI.ruby));
+      this.say(r.owner, r.x, r.y - 78, `💥 CHAIN REACTION ×${lit}`, RUI.ruby);
       Sfx.playAt('crystal-shatter', r.x, { volume: 0.8, rate: 0.7 });
     }
   }
@@ -1687,7 +1710,7 @@ export class RuinKit {
       if (time >= l.until || !this.alive(l.victim) || l.victim.lockRemaining(l.abilityId) <= 0) {
         if (this.alive(l.victim)) {
           this.fx(l.owner).shatter(l.victim.x, l.victim.y - 34, 5, 20, RUI.iron, 380, 11);
-          this.api.showFloatingText(l.victim.x, l.victim.y - 44, '🔓 UNLOCKED', this.hex(RUI.ash));
+          this.say(l.owner, l.victim.x, l.victim.y - 44, '🔓 UNLOCKED', RUI.ash);
         }
         this.locks.splice(i, 1);
       }
@@ -1783,16 +1806,14 @@ export class RuinKit {
   // ── Avatars ────────────────────────────────────────────────────────────────
 
   private updateAvatars(delta: number, playerIs: boolean, npcIs: boolean): void {
-    const { scene } = this.api;
-
     if (playerIs) {
       const f = this.api.player;
       const s = this.sides.player;
-      if (!this.playerAvatar) this.playerAvatar = new RuinAvatar(scene, this.pcol);
+      if (!this.playerAvatar) this.playerAvatar = this.makeAvatar('player');
       this.playerAvatar.setFacing(Math.atan2(s.aimY - f.y, s.aimX - f.x));
       this.playerAvatar.setIntensity(this.rings.some((r) => r.owner === 'player') ? 1.3 : 1);
       // He cracks apart as he loses health — the one honest thing about him.
-      this.playerAvatar.setRuinLevel(1 - Phaser.Math.Clamp(f.hp / f.maxHp, 0, 1));
+      if (this.playerAvatar instanceof RuinAvatar) this.playerAvatar.setRuinLevel(1 - Phaser.Math.Clamp(f.hp / f.maxHp, 0, 1));
       this.playerAvatar.setMastered(this.api.masteryActive);
       // Second Skin: the rig is the body anybody actually sees, so the permanent shrink has to
       // land on it as well as on the sprite's hitbox.
@@ -1806,10 +1827,10 @@ export class RuinKit {
     if (npcIs) {
       const f = this.api.npc;
       const s = this.sides.npc;
-      if (!this.npcAvatar) this.npcAvatar = new RuinAvatar(scene, this.ncol);
+      if (!this.npcAvatar) this.npcAvatar = this.makeAvatar('npc');
       this.npcAvatar.setFacing(Math.atan2(s.aimY - f.y, s.aimX - f.x));
       this.npcAvatar.setIntensity(this.rings.some((r) => r.owner === 'npc') ? 1.3 : 1);
-      this.npcAvatar.setRuinLevel(1 - Phaser.Math.Clamp(f.hp / f.maxHp, 0, 1));
+      if (this.npcAvatar instanceof RuinAvatar) this.npcAvatar.setRuinLevel(1 - Phaser.Math.Clamp(f.hp / f.maxHp, 0, 1));
       this.npcAvatar.setMastered(this.api.npcMasteryActive);
       this.npcAvatar.setRigScale(f.ruinSizeMult);
       this.npcAvatar.update(delta, f.x, f.y, this.alive(f) ? 1 : 0);
@@ -1832,6 +1853,7 @@ export class RuinKit {
     // teal seam of ruin running along the bottom, which is where a charged crystal is drinking.
     for (const k of this.cracks) {
       const tint = this.col(k.owner);
+      if (this.isOrder(k.owner)) { orderMedallion(g, tint, k.x, k.y, k.r, this.vizT, k.seed); continue; }
       const pulse = 0.9 + Math.sin(this.vizT * 2 + k.seed) * 0.05;
       g.fillStyle(tint(RUI.voidDark), 0.55);
       g.fillEllipse(k.x, k.y, k.r * 2 * pulse, k.r * 1.24 * pulse);
@@ -1855,20 +1877,22 @@ export class RuinKit {
       const fuse = c.blowAt > 0
         ? Phaser.Math.Clamp(1 - (c.blowAt - time) / CHAIN_DELAY_MS, 0, 1)
         : 0.25 + Math.sin(this.vizT * 2 + c.seed) * 0.06;
-      ruinCluster(g, tint, c.x, c.y, CRYSTAL_R * (0.6 + grow * 0.4), fuse, this.vizT, 0.7, c.seed);
+      this.art(c.owner).ruinCluster(g, tint, c.x, c.y, CRYSTAL_R * (0.6 + grow * 0.4), fuse, this.vizT, 0.7, c.seed);
       if (!c.charged) continue;
-      rubyJewel(g, tint, c.x, c.y - 4, CRYSTAL_R * 0.36, this.vizT, 0.85, c.seed);
+      this.art(c.owner).rubyJewel(g, tint, c.x, c.y - 4, CRYSTAL_R * 0.36, this.vizT, 0.85, c.seed);
       g.fillStyle(tint(RUI.ancient), 0.16 + Math.sin(this.vizT * 6 + c.seed) * 0.07);
       g.fillCircle(c.x, c.y, CRYSTAL_R * 1.7);
     }
 
     for (const r of this.rings) {
       const charge = Phaser.Math.Clamp((time - r.startedAt) / RING_FUSE_MS, 0, 1);
-      ruinRing(g, this.col(r.owner), r.x, r.y, RING_R, this.vizT, 1, charge, r.seed);
+      this.art(r.owner).ruinRing(g, this.col(r.owner), r.x, r.y, RING_R, this.vizT, 1, charge, r.seed);
     }
 
+    const orderFlecks = this.isOrder('player');
     for (const f of this.flecks) {
       const fade = Phaser.Math.Clamp((f.until - time) / 900, 0, 1);
+      if (orderFlecks) { orderFleck(g, this.pcol, f.x, f.y, fade); continue; }
       g.fillStyle(this.pcol(RUI.decay), fade * 0.5);
       g.fillRect(f.x, f.y, 2.6, 2.6);
       g.fillStyle(this.pcol(RUI.rust), fade * 0.35);
@@ -1889,26 +1913,26 @@ export class RuinKit {
       const r = 24 * f.sizeMult * f.shapeSizeMult;
       // Painted through the skin of whoever put it there, so a Ruin skin recolours its own rot.
       const owner: Owner = this.isEnemyOf('player', f) ? 'player' : 'npc';
-      decayCoat(g, this.col(owner), f.x, f.y, r, this.vizT, 1, stacks, f.x + f.y);
+      this.art(owner).decayCoat(g, this.col(owner), f.x, f.y, r, this.vizT, 1, stacks, f.x + f.y);
     }
 
     // ── Buffs turned inside out ──
     for (const f of this.everyone()) {
       if (time >= f.buffsInvertedUntil) continue;
       const fade = Phaser.Math.Clamp((f.buffsInvertedUntil - time) / 600, 0, 1);
-      crackWeb(g, this.pcol, f.x, f.y, 30, f.x, fade * 0.5, 1, { runs: 5, width: 1.6, color: RUI.bright });
+      this.art('player').crackWeb(g, this.pcol, f.x, f.y, 30, f.x, fade * 0.5, 1, { runs: 5, width: 1.6, color: RUI.bright });
     }
 
     // ── Shed skin in flight ──
     for (const sh of this.shards) {
       const fade = Phaser.Math.Clamp((sh.diesAt - time) / 260, 0, 1);
-      skinShard(g, this.col(sh.owner), sh.x, sh.y, Math.atan2(sh.vy, sh.vx),
+      this.art(sh.owner).skinShard(g, this.col(sh.owner), sh.x, sh.y, Math.atan2(sh.vy, sh.vx),
         SKIN_SHARD_LEN, fade, sh.spin, sh.seed);
     }
 
     // ── Ruin spikes in flight ──
     for (const sp of this.spikes) {
-      shrapnelShard(g, this.col(sp.owner), sp.x, sp.y, Math.atan2(sp.vy, sp.vx), SPIKE_LEN, 1, sp.seed);
+      this.art(sp.owner).shrapnelShard(g, this.col(sp.owner), sp.x, sp.y, Math.atan2(sp.vy, sp.vx), SPIKE_LEN, 1, sp.seed);
     }
 
     // ── Ruinic lightning ──
@@ -1917,6 +1941,7 @@ export class RuinKit {
     for (const b of this.bolts) {
       const tint = this.col(b.owner);
       const fade = Phaser.Math.Clamp((b.until - time) / 180, 0, 1);
+      if (this.isOrder(b.owner)) { orderBeam(g, tint, b.x0, b.y0, b.x1, b.y1, fade); continue; }
       const segs = 7;
       let px = b.x0;
       let py = b.y0;
@@ -1936,17 +1961,18 @@ export class RuinKit {
 
     // ── Wedges ──
     for (const w of this.wedges) {
-      shredWedge(g, this.col(w.owner), w.x, w.y, Math.atan2(w.vy, w.vx),
+      this.art(w.owner).shredWedge(g, this.col(w.owner), w.x, w.y, Math.atan2(w.vy, w.vx),
         SHRED_LEN, 1, w.spin, w.seed);
     }
 
     // ── The skewer, and whoever is on it ──
     for (const s of this.skewers) {
       const tint = this.col(s.owner);
+      const art = this.art(s.owner);
       const buttX = s.x - Math.cos(s.ang) * SKEWER_LEN * 0.5;
       const buttY = s.y - Math.sin(s.ang) * SKEWER_LEN * 0.5;
       // Drawn from the butt so the point lands where the tip maths says it does.
-      rustySpike(g, tint, buttX, buttY,
+      art.rustySpike(g, tint, buttX, buttY,
         s.ang, SKEWER_LEN, SKEWER_HALF_WIDTH, 1, { seed: s.seed, wear: 0.85, barbs: 4 });
       // Fed on a crystal: the whole shaft burns red down its length, which is the only tell
       // that this one is going to take fifteen percent rather than move ten.
@@ -1973,8 +1999,8 @@ export class RuinKit {
       const y = l.victim.y - 42;
       const fade = Phaser.Math.Clamp((l.until - time) / 600, 0, 1);
       // A short length of chain still hanging off it, so the lock reads as clamped *on*.
-      chainRun(g, tint, l.victim.x - 14, y - 8, l.victim.x + 14, y - 8, fade * 0.7, 4, l.seed);
-      padlock(g, tint, l.victim.x, y, 13, fade, l.snap, this.vizT * 2 + l.seed);
+      this.art(l.owner).chainRun(g, tint, l.victim.x - 14, y - 8, l.victim.x + 14, y - 8, fade * 0.7, 4, l.seed);
+      this.art(l.owner).padlock(g, tint, l.victim.x, y, 13, fade, l.snap, this.vizT * 2 + l.seed);
     }
   }
 

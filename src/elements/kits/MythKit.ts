@@ -13,6 +13,8 @@ import {
   trapPortal, wormDisc,
 } from './MythVisuals';
 import { MythView, ViewEntity } from './MythView';
+import { makeSkinAvatar } from './skins/SkinAvatars';
+import { bfgBall, doomBanter, doomLine } from './skins/DoomFx';
 
 type Owner = 'player' | 'npc';
 const BOTH: Owner[] = ['player', 'npc'];
@@ -248,6 +250,8 @@ export interface MythArenaApi {
   get abilityBars(): Array<{ abilityId: string; lbl?: Phaser.GameObjects.Text; desc?: Phaser.GameObjects.Text }>;
   /** Skins: maps a Myth visual colour through that side's equipped skin. */
   mythColor(owner: Owner, base: number): number;
+  /** The skin id equipped on that side, or null. */
+  skinId(owner: Owner): string | null;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
@@ -642,16 +646,25 @@ export class MythKit {
     const f = this.fighter(owner);
     if (abilityId) this.refund(f, abilityId);
     if (owner !== 'player' || !this.alive(f)) return;
-    this.api.showFloatingText(f.x, f.y - 46, text, this.hex(MYTH.haze));
-    this.toast(text, MYTH.haze);
+    text = this.voice(owner, text);
+    this.api.showFloatingText(f.x, f.y - 46, text, this.hex(this.col(owner)(MYTH.haze)));
+    this.toast(text, this.col(owner)(MYTH.haze));
     Sfx.playAt('ui-denied', f.x, { volume: 0.55 });
   }
 
   private text(owner: Owner, x: number, y: number, t: string, color = MYTH.haze): void {
     if (owner !== 'player') return;
-    this.api.showFloatingText(x, y, t, this.hex(color));
-    this.toast(t, color);
+    t = this.voice(owner, t);
+    this.api.showFloatingText(x, y, t, this.hex(this.col(owner)(color)));
+    this.toast(t, this.col(owner)(color));
   }
+
+  /** Doom's skin re-says every line in the marine's voice (visual only). */
+  private voice(owner: Owner, t: string): string {
+    return this.doom(owner) ? doomLine(t) : t;
+  }
+
+  private doom(owner: Owner): boolean { return this.api.skinId(owner) === 'doom'; }
 
   /** First person covers the world, so what the kit says to the player is printed in the frame. */
   private toast(t: string, color: number): void {
@@ -3035,6 +3048,7 @@ export class MythKit {
     }
     for (const r of this.rockets) {
       entities.push({ kind: 'draw', x: r.x, y: r.y, height: 20, draw: (g, sx, sy, sc) => {
+        if (this.doom(r.owner)) { bfgBall(g, sx, sy - 26 * sc, Math.max(4, 11 * sc), t, 1, r.seed); return; }
         voidDisc(g, tint, sx, sy - 26 * sc, Math.max(4, 11 * sc), 1, r.seed, t, 5);
         star(g, sx, sy - 26 * sc, Math.max(3, 6 * sc), tint(MYTH.red), 0.9, { points: 4, rot: t * 6 });
       } });
@@ -3117,6 +3131,7 @@ export class MythKit {
       } });
     }
     const cheering = this.now < this.cheerUntil || this.now < this.frenzyUntil;
+    this.view.setSkin(this.api.skinId('player'));
     this.view.render(delta, {
       x: p.x, y: p.y, yaw: s.yaw, pitch: s.pitch, bob: s.bob, bounds: this.api.bounds,
     }, entities, {
@@ -3202,7 +3217,9 @@ export class MythKit {
         continue;
       }
       if (!av) {
-        av = new MythAvatar(this.api.scene, this.col(owner));
+        const skinned = makeSkinAvatar(this.api.skinId(owner), this.api.scene);
+        if (skinned && !(skinned instanceof MythAvatar)) skinned.destroy();
+        av = skinned instanceof MythAvatar ? skinned : new MythAvatar(this.api.scene, this.col(owner));
         if (owner === 'player') this.playerAvatar = av; else this.npcAvatar = av;
         av.setEye(this.masteryOn(owner));
       }
@@ -3233,7 +3250,8 @@ export class MythKit {
     if (!p || !n || !p.active || !n.active) return;
     if (!this.banter) {
       const foeId = playerIs ? this.api.npcElementId : this.api.elementId;
-      this.banter = banterFor(playerIs && npcIs ? 'myth' : foeId);
+      const mythOwner: Owner = playerIs ? 'player' : 'npc';
+      this.banter = this.doom(mythOwner) ? doomBanter(foeId) : banterFor(playerIs && npcIs ? 'myth' : foeId);
     }
     // The three beats.
     const both = this.alive(p) && this.alive(n);
@@ -3292,8 +3310,9 @@ export class MythKit {
       ty = speaker.y - 34;
     }
     const isMyth = this.bubble.who === 'myth';
-    const fill = isMyth ? MYTH.deep : 0x1a1a24;
-    const stroke = isMyth ? MYTH.iris : 0xb9b9cc;
+    const mc = this.col(playerIs ? 'player' : 'npc');
+    const fill = isMyth ? mc(MYTH.deep) : 0x1a1a24;
+    const stroke = isMyth ? mc(MYTH.iris) : 0xb9b9cc;
     const g = this.bubbleGfx;
     g.clear();
     paintBubble(g, bx, by, w, h, tx, ty, fill, stroke, 1);
@@ -3462,6 +3481,16 @@ export class MythKit {
     }
     for (const r of this.rockets) {
       const a = Math.atan2(r.vy, r.vx);
+      if (this.doom(r.owner)) {
+        // Doom: the rocket is a BFG ball trailing green sparks (same footprint and path).
+        for (let i = 1; i <= 4; i++) {
+          const k = i / 4;
+          g.fillStyle(0x7dff4a, 0.6 - k * 0.45);
+          g.fillCircle(r.x - Math.cos(a) * 14 * i, r.y - Math.sin(a) * 14 * i, 5 * (1 - k) + 1.5);
+        }
+        bfgBall(g, r.x, r.y, 11, t, 1, r.seed);
+        continue;
+      }
       // A fat void shell with a red star nose and a trail of stars behind it.
       for (let i = 1; i <= 4; i++) {
         const k = i / 4;

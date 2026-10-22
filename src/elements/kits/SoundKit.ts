@@ -7,11 +7,21 @@ import {
   PIANO, PIANO_SEMIS, pianoKeyAt, drawPiano, drawPianoAirborne, drawPianoTarget, drawAutotuneToggle,
 } from './SoundVisuals';
 import { CustomStatus } from './StatusHudKit';
+import { BaseAvatar } from './ElementVisuals';
+import { makeSkinAvatar } from './skins/SkinAvatars';
+import { RockstarFx, drawGuitar, drawRockStage, drawGiantCymbal } from './skins/RockstarFx';
 import { meterGain } from '../../combat/Meters';
 import { Sfx } from '../../audio';
 import { FONT_DISPLAY } from '../../ui/Theme';
 
 type Owner = 'player' | 'npc';
+/** The rig the kit drives: the drum major, or a skin's character with the same optional surface. */
+type SoundRig = BaseAvatar & {
+  setSong?(color: number, pale: number): void;
+  setDance?(v: number): void;
+  setInstrument?(i: 'none' | 'bugle'): void;
+  drumHit?(big?: boolean): void;
+};
 const BOTH: Owner[] = ['player', 'npc'];
 
 // ── SoundArenaApi ─────────────────────────────────────────────────────────
@@ -45,6 +55,8 @@ export interface SoundArenaApi {
   buildPlayerContext(x: number, y: number): CastContext;
   /** `(owner, base) => displayed` — the owner's skin, or the identity. */
   soundColor(owner: Owner, base: number): number;
+  /** The owner's equipped skin id, or null. */
+  skinId(owner: Owner): string | null;
   /** Online: presses that are not cooldown casts travel as pseudo-cast ids. */
   broadcastMasteryCast(id: string): void;
   /** Which mastery enhancement each side dropped over an R/F/Q slot, or null. */
@@ -421,8 +433,10 @@ export class SoundKit {
   private readonly ncol: SoundColorFn;
   private readonly pfx: SoundFx;
   private readonly nfx: SoundFx;
-  private playerAvatar: SoundAvatar | null = null;
-  private npcAvatar: SoundAvatar | null = null;
+  private playerAvatar: SoundRig | null = null;
+  private npcAvatar: SoundRig | null = null;
+  /** Rockstar skin one-shots, one per side (lazily built). */
+  private rockFx: Partial<Record<Owner, RockstarFx>> = {};
   private groundGfx: Phaser.GameObjects.Graphics | null = null;
   private airGfx: Phaser.GameObjects.Graphics | null = null;
   private stageGfx: Phaser.GameObjects.Graphics | null = null;
@@ -588,6 +602,7 @@ export class SoundKit {
   reset(): void {
     this.playerAvatar?.destroy(); this.playerAvatar = null;
     this.npcAvatar?.destroy(); this.npcAvatar = null;
+    this.rockFx = {};
     for (const g of [this.groundGfx, this.airGfx, this.stageGfx, this.hudGfx]) g?.destroy();
     this.groundGfx = null; this.airGfx = null; this.stageGfx = null; this.hudGfx = null;
     for (const t of [this.hudLabel, this.songLabel, this.soloLabel, this.practiceLabel, this.autotuneLabel]) t?.destroy();
@@ -728,7 +743,13 @@ export class SoundKit {
       const big = id.endsWith(':big');
       const solo = s.solo;
       const { player } = this.arena;
-      if (solo && this.alive(player)) this.nfx.noteShot(solo.x + 30, solo.y - 26, player.x, player.y, SOUND.gold, big);
+      if (solo && this.alive(player)) {
+        if (this.rock('npc')) {
+          this.rfx('npc').crash(solo.x + 26, solo.y - 10, big);
+          this.rfx('npc').boltShot(solo.x + 26, solo.y - 10, player.x, player.y, this.ncol(SOUND.gold), big);
+          this.npcAvatar?.drumHit?.(big);
+        } else this.nfx.noteShot(solo.x + 30, solo.y - 26, player.x, player.y, SOUND.gold, big);
+      }
     }
   }
 
@@ -1442,8 +1463,13 @@ export class SoundKit {
     s.danceUntil = 0;
     s.dash = null;
     s.gong = null;
-    this.fx(owner).fanfare(f.x, f.y);
-    this.announce(f.x, f.y - 60, '🎺 CALL OF THE VOID', SOUND.goldHi, 13);
+    if (this.rock(owner)) {
+      this.rfx(owner).pyro(f.x, f.y);
+      this.announce(f.x, f.y - 60, '🥁 DRUM SOLO', SOUND.goldHi, 13);
+    } else {
+      this.fx(owner).fanfare(f.x, f.y);
+      this.announce(f.x, f.y - 60, '🎺 CALL OF THE VOID', SOUND.goldHi, 13);
+    }
     Sfx.playAt('train-horn', f.x, { rate: 1.5, volume: 0.6 });
   }
 
@@ -1491,7 +1517,7 @@ export class SoundKit {
     const gx = Phaser.Math.Clamp(f.x + dir * (60 + flair * 10), 50, W - 50);
     s.gong = { x: gx, y: f.y, dir, start: this.now, struck: false, flair };
     this.avatar(owner)?.play('raise', undefined, GONG_WINDUP_MS);
-    this.announce(f.x, f.y - 62, `🔔 BIG FINISH ×${solo2(1 + flair * (FLAIR_MAX_TEMPO - 1))}`, SOUND.goldRichHi, 12);
+    this.announce(f.x, f.y - 62, `${this.rock(owner) ? '⚡' : '🔔'} BIG FINISH ×${solo2(1 + flair * (FLAIR_MAX_TEMPO - 1))}`, SOUND.goldRichHi, 12);
   }
 
   private updateGong(owner: Owner, time: number): void {
@@ -1595,7 +1621,15 @@ export class SoundKit {
     const bellX = f.x + dir * 50, bellY = f.y - 2;
     if (target) {
       const tx = target.x, ty = target.y;
-      this.fx(owner).noteShot(bellX, bellY, tx, ty, big ? SOUND.goldHi : SONG_COLORS[s.song], big);
+      if (this.rock(owner)) {
+        // Off the crash cymbal rather than the bell; the strike itself is unchanged.
+        const cx = f.x + dir * 26, cy = f.y - 10;
+        this.rfx(owner).crash(cx, cy, big);
+        this.rfx(owner).boltShot(cx, cy, tx, ty, this.col(owner)(big ? SOUND.goldHi : SONG_COLORS[s.song]), big);
+        this.avatar(owner)?.drumHit?.(big);
+      } else {
+        this.fx(owner).noteShot(bellX, bellY, tx, ty, big ? SOUND.goldHi : SONG_COLORS[s.song], big);
+      }
       this.strike(owner, target, SOLO_NOTE_DMG, bellX, bellY);
     }
     if (owner === 'player') this.arena.broadcastMasteryCast(big ? 'sound-solo-hit:big' : 'sound-solo-hit');
@@ -2161,7 +2195,11 @@ export class SoundKit {
       if (!on || !f?.active) continue;
       const col = this.col(owner);
       if (s.trail.length > 1) SoundFx.drawMusicTrail(g, col, s.trail, time, DANCE_TRAIL_MS, SONG_COLORS[s.song]);
-      if (s.solo) SoundFx.drawStage(st, col, s.solo.x, s.solo.y + 16, this.vizT);
+      const rock = this.rock(owner);
+      if (s.solo) {
+        if (rock) drawRockStage(st, s.solo.x, s.solo.y + 16, this.vizT);
+        else SoundFx.drawStage(st, col, s.solo.x, s.solo.y + 16, this.vizT);
+      }
       // The leash, faint, so the reach of the baton is readable.
       if (owner === 'player' && !s.solo) {
         g.lineStyle(1, col(SOUND.maroonPale), 0.08);
@@ -2169,7 +2207,8 @@ export class SoundKit {
       }
       const vis = f.forceInvisible ? 0 : f.alpha;
       if (!s.solo) {
-        SoundFx.drawBaton(a, col, s.bx, s.by, s.rot, s.spin, this.vizT, vis, SONG_COLORS[s.song]);
+        if (rock) drawGuitar(a, s.bx, s.by, s.rot, s.spin, this.vizT, vis, col(SONG_COLORS[s.song]));
+        else SoundFx.drawBaton(a, col, s.bx, s.by, s.rot, s.spin, this.vizT, vis, SONG_COLORS[s.song]);
         if (owner === 'player') this.paintMiniBeat(a, time, s.bx, s.by + 24);
       }
       if (s.inTune) {
@@ -2177,14 +2216,17 @@ export class SoundKit {
         if (!s.solo) {
           g.lineStyle(1, col(SONG_PALE[s.song]), 0.18 * vis);
           g.strokeEllipse(f.x, f.y, ECHO_ORBIT_R * 2, ECHO_ORBIT_R * 1.6);
-          SoundFx.drawBaton(a, col, s.echoX, s.echoY, s.rot * 1.4 + 1.2, 0.8, this.vizT, vis * 0.6, SONG_PALE[s.song]);
+          if (rock) drawGuitar(a, s.echoX, s.echoY, s.rot * 1.4 + 1.2, 0.8, this.vizT, vis * 0.6, col(SONG_PALE[s.song]));
+          else SoundFx.drawBaton(a, col, s.echoX, s.echoY, s.rot * 1.4 + 1.2, 0.8, this.vizT, vis * 0.6, SONG_PALE[s.song]);
         }
       }
       if (s.gong) {
         const k = Phaser.Math.Clamp((time - s.gong.start) / GONG_WINDUP_MS, 0, 1);
         const ring = s.gong.struck ? time - s.gong.start - GONG_WINDUP_MS : 0;
         const fade = Phaser.Math.Clamp((s.gong.start + GONG_MS - time) / 300, 0, 1);
-        SoundFx.drawGong(st, col, s.gong.x, s.gong.y, s.gong.dir, this.vizT, k, Math.max(0.001, ring) * (s.gong.struck ? 1 : 0), s.gong.flair, fade);
+        const ringK = Math.max(0.001, ring) * (s.gong.struck ? 1 : 0);
+        if (rock) drawGiantCymbal(st, s.gong.x, s.gong.y, s.gong.dir, k, ringK, s.gong.flair, fade);
+        else SoundFx.drawGong(st, col, s.gong.x, s.gong.y, s.gong.dir, this.vizT, k, ringK, s.gong.flair, fade);
       }
       if (this.isDeaf(owner)) SoundFx.drawDeaf(a, col, f.x, f.y - 30, this.vizT, vis * Math.min(1, (s.deafUntil - time) / 400));
       if (s.piano) this.paintPiano(st, a, owner, s.piano, time);
@@ -2270,7 +2312,19 @@ export class SoundKit {
     g.fillCircle(nx, y, 2.4);
   }
 
-  private avatar(owner: Owner): SoundAvatar | null { return owner === 'player' ? this.playerAvatar : this.npcAvatar; }
+  private avatar(owner: Owner): SoundRig | null { return owner === 'player' ? this.playerAvatar : this.npcAvatar; }
+
+  /** Skin rig if one is equipped, else the drum major. */
+  private makeAvatar(owner: Owner): SoundRig {
+    return (makeSkinAvatar(this.arena.skinId(owner), this.arena.scene) as SoundRig | null)
+      ?? new SoundAvatar(this.arena.scene, this.col(owner), owner);
+  }
+
+  /** The Rockstar skin swaps the band's gear for concert gear — drawing only. */
+  private rock(owner: Owner): boolean { return this.arena.skinId(owner) === 'rockstar'; }
+  private rfx(owner: Owner): RockstarFx {
+    return (this.rockFx[owner] ??= new RockstarFx(this.arena.scene, this.col(owner)));
+  }
 
   private updateAvatars(delta: number, isPlayerSound: boolean, isNpcSound: boolean): void {
     const { scene } = this.arena;
@@ -2284,7 +2338,7 @@ export class SoundKit {
         continue;
       }
       if (!av) {
-        av = new SoundAvatar(scene, this.col(owner), owner);
+        av = this.makeAvatar(owner);
         if (owner === 'player') this.playerAvatar = av; else this.npcAvatar = av;
       }
       const s = this.sides[owner];
@@ -2293,10 +2347,13 @@ export class SoundKit {
         : Math.atan2(s.by - f.y, s.bx - f.x);
       av.setFacing(faceAt);
       av.setMastered(owner === 'player' ? this.arena.masteryActive : this.arena.npcMasteryActive);
-      av.setSong(SONG_COLORS[s.song], SONG_PALE[s.song]);
+      // A skin rig paints raw colours, so it is handed the song already through the owner's skin.
+      const skinned = !(av instanceof SoundAvatar);
+      const songC = SONG_COLORS[s.song], songP = SONG_PALE[s.song];
+      av.setSong?.(skinned ? this.col(owner)(songC) : songC, skinned ? this.col(owner)(songP) : songP);
       const dancing = now < s.danceUntil;
-      av.setDance(dancing ? Phaser.Math.Clamp((now - s.danceStart) / DANCE_MS, 0.3, 1) : 0);
-      av.setInstrument(s.solo ? 'bugle' : 'none');
+      av.setDance?.(dancing ? Phaser.Math.Clamp((now - s.danceStart) / DANCE_MS, 0.3, 1) : 0);
+      av.setInstrument?.(s.solo ? 'bugle' : 'none');
       av.setIntensity(s.solo ? 1.4 : dancing ? 1.25 : 1 + s.spin * 0.15);
       // The leading glove reaches toward the baton, conducting it.
       av.setHold(s.solo ? 'brace' : dancing ? 'ride' : s.spin > 0.05 || now < s.grabUntil ? 'reach' : null, faceAt);
@@ -2390,7 +2447,8 @@ export class SoundKit {
     }
     g.lineStyle(1, col(SOUND.brassHi), 0.5);
     g.beginPath(); g.arc(gx, gy, 11.5, Math.PI * 1.1, Math.PI * 1.7, false); g.strokePath();
-    SoundFx.drawBaton(g, col, gx, gy + 3, s.rot, s.spin, this.vizT, 0.95, songCol);
+    if (this.rock('player')) drawGuitar(g, gx, gy + 3, s.rot, s.spin, this.vizT, 0.95, col(songCol), 0.62, false);
+    else SoundFx.drawBaton(g, col, gx, gy + 3, s.rot, s.spin, this.vizT, 0.95, songCol);
     this.hudLabel.setPosition(gx, y + 11).setText(`${Math.round(s.spin * 100)}%`);
 
     // The beat bar, written as a stave: five lines, a clef, a moving note that lands on the

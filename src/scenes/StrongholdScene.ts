@@ -8,21 +8,27 @@ import {
 } from '../ui';
 import { Music, Sfx } from '../audio';
 import { TOWER_DEFS } from '../stronghold/StrongholdTowers';
-import { TowerSlot } from '../stronghold/StrongholdTypes';
+import {
+  BODY_LABEL, ROLE_LABEL, TARGET_MODES, TowerAbilityDef, TowerDef, TowerSlot,
+} from '../stronghold/StrongholdTypes';
 import { Tower } from '../stronghold/Tower';
 import { RoadHusk } from '../stronghold/RoadHusk';
 import { TowerCombat, TowerShot } from '../stronghold/TowerCombat';
+import { HuskRoadTraits } from '../stronghold/HuskRoadTraits';
 import {
-  drawMap, distToPath, inField, KEEP, TOWER_PATH_CLEARANCE, TOWER_SPACING, FIELD_BOTTOM,
+  drawMap, distToPath, inField, isHazard, isWater, keepPoint, setActiveMap, getStrongholdMap, StrongholdMapDef,
+  TOWER_PATH_CLEARANCE, TOWER_SPACING, FIELD_BOTTOM,
 } from '../stronghold/StrongholdMap';
 import {
-  getStrongholdDifficulty, planWave, shardsForRun, StrongholdDifficultyDef, StrongholdDifficultyId, WavePlan,
+  getStrongholdDifficulty, planWave, recordKey, shardsForRun, StrongholdDifficultyDef, StrongholdDifficultyId, WavePlan,
 } from '../stronghold/StrongholdWaves';
+import { HuskVariantDef } from '../invasion/HuskVariants';
 import { STRONGHOLD_ACCENT } from './StrongholdSetupScene';
 
 export interface StrongholdSceneData {
   elements: string[];
   difficulty: StrongholdDifficultyId;
+  map?: string;
 }
 
 type RunState = 'prep' | 'active' | 'over';
@@ -31,26 +37,36 @@ const FIRST_PREP_MS = 25000;
 const PREP_MS = 12000;
 const TRAY_Y = 606;
 const HUD_H = 56;
+const MAX_HUSKS = 150;
+/** Ability kinds Echo repeats — the instant ones, not the things that stay on the field. */
+const ECHOABLE = new Set(['bolt', 'splash', 'line', 'chain', 'nova', 'execute', 'beam']);
+
+const MODE_LABEL: Record<string, string> = { first: 'FIRST', last: 'LAST', strong: 'STRONG', close: 'CLOSE' };
 
 /**
  * Stronghold — the tower-defense mode.
  *
- * A single scene owns the run: the road, the husks walking it, the towers beside it, the gold
- * and the lives. Husks are the invasion's `Husk` bodies driven along the road here rather than
- * by their own AI; towers cast through `TowerCombat`. Nothing in here touches ArenaScene.
+ * A single scene owns the run: the map's roads, the husks walking them, the towers beside them,
+ * the gold and the lives. Husks are the invasion's `Husk` bodies (dressed as the dead element
+ * players they are in Invasion) driven along the roads here rather than by their own AI; each
+ * brand's road trait runs in `HuskRoadTraits`; towers cast through `TowerCombat`. Nothing in
+ * here touches ArenaScene.
  *
- * The sim is deliberately kept to plain data (lists of towers, husks, a wave plan with a
- * seeded RNG) so a host-authoritative multiplayer layer can sit on top of it later.
+ * The sim is kept to plain data (lists of towers, husks, a wave plan with an injectable RNG) so
+ * a host-authoritative multiplayer layer can sit on top of it later.
  */
 export class StrongholdScene extends Phaser.Scene {
   private loadout: string[] = [];
   private diff: StrongholdDifficultyDef = getStrongholdDifficulty('normal');
+  private map: StrongholdMapDef = getStrongholdMap('kingsroad');
 
   private towers: Tower[] = [];
   private husks: RoadHusk[] = [];
   private huskGroup!: Phaser.Physics.Arcade.Group;
   private projectiles!: Phaser.Physics.Arcade.Group;
   private combat!: TowerCombat;
+  private traits!: HuskRoadTraits;
+  private animateMap: ((time: number) => void) | null = null;
 
   private gold = 0;
   private lives = 0;
@@ -63,12 +79,19 @@ export class StrongholdScene extends Phaser.Scene {
   private spawnIdx = 0;
   private waveStartedAt = 0;
   private readonly rand = (): number => Math.random();
+  /** Husk families already introduced this run. */
+  private seenFamilies = new Set<string>();
+  private introQueue: Array<{ title: string; body: string; color: number }> = [];
+  private introUntil = 0;
+  private introObjs: Phaser.GameObjects.GameObject[] = [];
 
   // Interaction
   private selected: Tower | null = null;
   private placing: string | null = null;
+  private aiming: Tower | null = null;
   private ghostImg: Phaser.GameObjects.Image | null = null;
   private ghostG!: Phaser.GameObjects.Graphics;
+  private ghostText!: Phaser.GameObjects.Text;
   private hoverTower: Tower | null = null;
 
   // HUD
@@ -83,11 +106,11 @@ export class StrongholdScene extends Phaser.Scene {
   private panelTower: Tower | null = null;
   private panelTier = -1;
   private panelGold = -1;
+  private panelMode = '';
   private keepG!: Phaser.GameObjects.Graphics;
   private keepFlashUntil = 0;
   private bannerText: Phaser.GameObjects.Text | null = null;
   private pendingDmg = new Map<RoadHusk, { amount: number; at: number }>();
-  private readonly wasdKeys: Phaser.Input.Keyboard.Key[] = [];
 
   constructor() {
     super({ key: 'StrongholdScene' });
@@ -97,19 +120,27 @@ export class StrongholdScene extends Phaser.Scene {
     this.loadout = (data?.elements ?? ['fire']).filter((id) => !!TOWER_DEFS[id]).slice(0, 6);
     if (this.loadout.length === 0) this.loadout = ['fire'];
     this.diff = getStrongholdDifficulty(data?.difficulty);
+    this.map = getStrongholdMap(data?.map);
   }
 
   create(): void {
     Music.play('invasion', { intensity: 0.35 });
+    setActiveMap(this.map);
     this.towers = [];
     this.husks = [];
+    this.trayCards = [];
     this.selected = null;
     this.placing = null;
+    this.aiming = null;
     this.hoverTower = null;
     this.panelTower = null;
     this.panelTier = -1;
     this.panelGold = -1;
     this.pendingDmg.clear();
+    this.seenFamilies.clear();
+    this.introQueue = [];
+    this.introObjs = [];
+    this.introUntil = 0;
     this.gold = this.diff.startGold;
     this.lives = this.diff.lives;
     this.wave = 0;
@@ -121,27 +152,35 @@ export class StrongholdScene extends Phaser.Scene {
     this.nextWaveAt = this.time.now + FIRST_PREP_MS;
 
     this.cameras.main.setBackgroundColor('#0a0a14');
-    if (!this.textures.exists('sh-orb')) {
-      const g = this.make.graphics({ x: 0, y: 0 }, false);
-      g.fillStyle(0xffffff, 1); g.fillCircle(7, 7, 6);
-      g.fillStyle(0xffffff, 0.5); g.fillCircle(7, 7, 7);
-      g.generateTexture('sh-orb', 14, 14);
-      g.destroy();
-    }
+    this.makeTextures();
 
-    drawMap(this);
+    this.animateMap = drawMap(this).animate;
     this.keepG = this.add.graphics().setDepth(1.6);
 
     this.huskGroup = this.physics.add.group();
     this.projectiles = this.physics.add.group();
     const scene = this;
+    this.traits = new HuskRoadTraits({
+      scene,
+      husks: () => scene.husks,
+      towers: () => scene.towers,
+      spawnChild: (variant, track, pathDist, opts) => scene.spawnChild(variant, track, pathDist, opts),
+      floatText: (x, y, text, color, size) => scene.floatText(x, y, text, color, size),
+      eatShots: (x, y, r) => scene.combat.eatShots(x, y, r),
+      bendShots: (h, r) => scene.combat.bendShots(h, r),
+      hurtHusk: (h, amount) => scene.combat.hitHusk(h, amount, undefined, null, true, true, 'blast'),
+      ring: (x, y, r, color, ms) => scene.combat.ring(x, y, r, color, ms),
+      zap: (x1, y1, x2, y2, color) => scene.combat.zap(x1, y1, x2, y2, color),
+    });
     this.combat = new TowerCombat({
       scene,
       husks: () => scene.husks,
       towers: () => scene.towers,
       projectiles: this.projectiles,
+      traits: this.traits,
       floatText: (x, y, text, color, size) => scene.floatText(x, y, text, color, size),
       addGold: (amount, x, y) => { scene.gold += amount; scene.floatText(x, y, `+${amount} 🪙`, '#ffd700', 13); },
+      claimHusk: (h) => scene.onHuskKilled(h, true),
     });
     this.physics.add.overlap(this.projectiles, this.huskGroup, (a, b) => {
       const shot = a as TowerShot;
@@ -150,21 +189,65 @@ export class StrongholdScene extends Phaser.Scene {
     });
 
     this.ghostG = this.add.graphics().setDepth(9);
+    this.ghostText = this.add.text(0, 0, '', {
+      fontSize: '10px', fontFamily: FONT_DISPLAY, color: '#ff6b85', stroke: '#000000', strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(9.5);
     this.buildHud();
     this.buildTray();
     this.wireInput();
 
-    this.showBanner(`THE ROAD IS QUIET  —  BUILD`, STRONGHOLD_ACCENT, 2600);
+    this.showBanner(`${this.map.name}  —  BUILD`, STRONGHOLD_ACCENT, 2600);
+    if (this.map.tracks.length > 1) {
+      this.time.delayedCall(2800, () => this.showBanner('TWO ROADS  —  HOLD BOTH', C.blood, 2200));
+    }
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.teardown());
   }
 
   private teardown(): void {
     this.combat?.destroy();
+    this.traits?.destroy();
     for (const t of this.towers) t.destroy();
     this.towers = [];
     for (const h of this.husks) h.destroy();
     this.husks = [];
+  }
+
+  /** Procedural projectile looks. */
+  private makeTextures(): void {
+    const make = (key: string, w: number, h: number, draw: (g: Phaser.GameObjects.Graphics) => void): void => {
+      if (this.textures.exists(key)) return;
+      const g = this.make.graphics({ x: 0, y: 0 }, false);
+      draw(g);
+      g.generateTexture(key, w, h);
+      g.destroy();
+    };
+    make('sh-orb', 14, 14, (g) => { g.fillStyle(0xffffff, 1); g.fillCircle(7, 7, 6); g.fillStyle(0xffffff, 0.5); g.fillCircle(7, 7, 7); });
+    make('sh-dart', 18, 6, (g) => { g.fillStyle(0xffffff, 1); g.fillTriangle(0, 1, 0, 5, 18, 3); g.fillStyle(0xdddddd, 1); g.fillRect(0, 0, 4, 6); });
+    make('sh-needle', 22, 4, (g) => { g.fillStyle(0xffffff, 1); g.fillTriangle(0, 1, 0, 3, 22, 2); g.fillRect(0, 1, 16, 2); });
+    make('sh-fan', 18, 18, (g) => {
+      g.fillStyle(0xffffff, 1);
+      g.slice(9, 9, 9, Phaser.Math.DegToRad(200), Phaser.Math.DegToRad(340), false); g.fillPath();
+      g.lineStyle(1, 0x8899aa, 1); for (let i = 0; i < 5; i++) { const a = Phaser.Math.DegToRad(205 + i * 32); g.lineBetween(9, 9, 9 + Math.cos(a) * 8, 9 + Math.sin(a) * 8); }
+    });
+    make('sh-card', 10, 14, (g) => { g.fillStyle(0xffffff, 1); g.fillRoundedRect(0, 0, 10, 14, 2); g.fillStyle(0xcc2244, 1); g.fillTriangle(5, 3, 2, 7, 5, 11); g.fillTriangle(5, 3, 8, 7, 5, 11); });
+    make('sh-shell', 12, 12, (g) => { g.fillStyle(0x222222, 1); g.fillCircle(6, 6, 6); g.fillStyle(0xffffff, 0.5); g.fillCircle(4, 4, 2); });
+    make('sh-star', 16, 16, (g) => {
+      g.fillStyle(0xffffff, 1);
+      const pts: Phaser.Types.Math.Vector2Like[] = [];
+      for (let i = 0; i < 10; i++) { const r = i % 2 ? 3 : 8; const a = -Math.PI / 2 + i * Math.PI / 5; pts.push({ x: 8 + Math.cos(a) * r, y: 8 + Math.sin(a) * r }); }
+      g.fillPoints(pts, true);
+    });
+    make('sh-note', 12, 16, (g) => { g.fillStyle(0xffffff, 1); g.fillEllipse(4, 12, 8, 6); g.fillRect(7, 1, 2, 12); g.fillTriangle(8, 1, 12, 4, 8, 6); });
+    make('sh-coin', 12, 12, (g) => { g.fillStyle(0xffffff, 1); g.fillCircle(6, 6, 6); g.lineStyle(1, 0x999999, 1); g.strokeCircle(6, 6, 4); });
+    make('sh-bubble', 14, 14, (g) => { g.lineStyle(2, 0xffffff, 1); g.strokeCircle(7, 7, 6); g.fillStyle(0xffffff, 0.6); g.fillCircle(5, 5, 2); });
+    make('sh-feather', 18, 8, (g) => { g.fillStyle(0xffffff, 1); g.fillEllipse(9, 4, 18, 6); g.lineStyle(1, 0x999999, 1); g.lineBetween(0, 4, 18, 4); });
+    make('sh-bone', 18, 8, (g) => { g.fillStyle(0xffffff, 1); g.fillRect(3, 3, 12, 2); g.fillCircle(3, 2.5, 2.5); g.fillCircle(3, 5.5, 2.5); g.fillCircle(15, 2.5, 2.5); g.fillCircle(15, 5.5, 2.5); });
+    make('sh-shard', 16, 8, (g) => { g.fillStyle(0xffffff, 1); g.fillTriangle(0, 4, 6, 0, 16, 4); g.fillStyle(0xdddddd, 1); g.fillTriangle(0, 4, 6, 8, 16, 4); });
+    make('sh-bolt', 22, 6, (g) => { g.fillStyle(0xffffff, 1); g.fillRoundedRect(0, 1, 22, 4, 2); g.fillStyle(0xffffff, 0.4); g.fillRoundedRect(0, 0, 22, 6, 3); });
+    make('sh-plane', 18, 14, (g) => { g.fillStyle(0xffffff, 1); g.fillTriangle(0, 0, 18, 7, 0, 14); g.fillStyle(0xcccccc, 1); g.fillTriangle(0, 7, 18, 7, 4, 10); });
+    make('sh-bee', 14, 10, (g) => { g.fillStyle(0xffffff, 1); g.fillEllipse(7, 6, 12, 8); g.fillStyle(0x222222, 1); g.fillRect(5, 2, 2, 8); g.fillRect(9, 2, 2, 8); g.fillStyle(0xffffff, 0.6); g.fillEllipse(6, 1, 6, 3); });
+    make('sh-pawn', 10, 14, (g) => { g.fillStyle(0xffffff, 1); g.fillCircle(5, 4, 3.5); g.fillTriangle(1, 13, 9, 13, 5, 5); g.fillRect(0, 12, 10, 2); });
   }
 
   // ── HUD ───────────────────────────────────────────────────────────
@@ -172,7 +255,6 @@ export class StrongholdScene extends Phaser.Scene {
   private buildHud(): void {
     const { width, height } = this.scale;
     this.hudG = this.add.graphics().setDepth(DEPTH.content);
-    // Top band and tray band.
     fillNotched(this.hudG, 0, 0, width, HUD_H - 4, mix(C.bg, STRONGHOLD_ACCENT, 0.06), 0.97, 0, ALL_CORNERS);
     this.hudG.lineStyle(1, mix(STRONGHOLD_ACCENT, C.line, 0.5), 0.8);
     this.hudG.lineBetween(0, HUD_H - 4, width, HUD_H - 4);
@@ -205,7 +287,7 @@ export class StrongholdScene extends Phaser.Scene {
       depth: DEPTH.content + 1,
       onClick: () => this.confirmLeave(),
     });
-    this.add.text(width - 16, FIELD_BOTTOM + 16, `${this.diff.label}  ·  ${this.loadout.length} TOWER TYPES`, {
+    this.add.text(width - 16, FIELD_BOTTOM + 16, `${this.map.name}  ·  ${this.diff.label}`, {
       fontSize: '8px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 2,
     }).setOrigin(1, 0.5).setDepth(DEPTH.content + 1);
   }
@@ -222,13 +304,15 @@ export class StrongholdScene extends Phaser.Scene {
     } else if (this.state === 'active') {
       const total = this.plan?.spawns.length ?? 0;
       const left = total - this.spawnIdx + this.husks.length;
-      this.waveText.setText(`WAVE ${this.wave}${this.plan?.isBoss ? '  ·  BOSS' : ''}`);
+      const tag = this.plan?.isBoss ? '  ·  BOSS' : this.plan?.theme ? `  ·  ${this.plan.theme.title}` : '';
+      this.waveText.setText(`WAVE ${this.wave}${tag}`);
       this.remainText.setText(`🧟 ${left} remaining`);
       this.nextWaveBtn.setLabel('IN PROGRESS');
       this.nextWaveBtn.setDisabled(true);
     }
     for (const c of this.trayCards) c.paint(this.gold);
-    if (this.panelTower && (this.panelTower.tier !== this.panelTier || this.gold !== this.panelGold)) this.renderPanel();
+    const t = this.panelTower;
+    if (t && (t.tier !== this.panelTier || this.gold !== this.panelGold || t.targetMode !== this.panelMode)) this.renderPanel();
   }
 
   private earlyBonus(): number {
@@ -240,7 +324,7 @@ export class StrongholdScene extends Phaser.Scene {
   private buildTray(): void {
     const { width } = this.scale;
     const n = this.loadout.length;
-    const slotW = 130, gap = 10;
+    const slotW = 136, gap = 8;
     const x0 = width / 2 - ((slotW + gap) * n - gap) / 2 + slotW / 2;
     this.loadout.forEach((id, i) => {
       const def = TOWER_DEFS[id];
@@ -250,17 +334,20 @@ export class StrongholdScene extends Phaser.Scene {
       const y = TRAY_Y;
       const g = this.add.graphics().setDepth(DEPTH.content);
       const tex = `elem-${id}`;
-      const img = this.textures.exists(tex) ? this.add.image(x - 42, y, tex).setScale(0.68).setDepth(DEPTH.content + 1) : null;
-      const name = this.add.text(x - 20, y - 12, (el?.name ?? id).toUpperCase(), {
+      const img = this.textures.exists(tex) ? this.add.image(x - 44, y, tex).setScale(0.66).setDepth(DEPTH.content + 1) : null;
+      const name = this.add.text(x - 22, y - 15, (el?.name ?? id).toUpperCase(), {
         fontSize: '11px', fontFamily: FONT_DISPLAY, color: hex(mix(color, 0xffffff, 0.45)), letterSpacing: 1,
       }).setOrigin(0, 0.5).setDepth(DEPTH.content + 1);
-      const cost = this.add.text(x - 20, y + 8, `🪙 ${def.cost}`, {
+      const role = this.add.text(x - 22, y, `${ROLE_LABEL[def.role]} · ${BODY_LABEL[def.body.kind]}`, {
+        fontSize: '7px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 1,
+      }).setOrigin(0, 0.5).setDepth(DEPTH.content + 1);
+      void role;
+      const cost = this.add.text(x - 22, y + 14, `🪙 ${def.cost}`, {
         fontSize: '11px', fontFamily: FONT_MONO, color: T.gold,
       }).setOrigin(0, 0.5).setDepth(DEPTH.content + 1);
-      const key = this.add.text(x + slotW / 2 - 10, y - slotW / 8 - 6, `${i + 1}`, {
+      this.add.text(x + slotW / 2 - 8, y - 20, `${i + 1}`, {
         fontSize: '10px', fontFamily: FONT_DISPLAY, color: T.faint,
       }).setOrigin(1, 0.5).setDepth(DEPTH.content + 1);
-      void key;
       let lastState = '';
       const paint = (gold: number): void => {
         const can = gold >= def.cost;
@@ -280,7 +367,7 @@ export class StrongholdScene extends Phaser.Scene {
       zone.on('pointerdown', (p: Phaser.Input.Pointer) => { if (p.rightButtonDown()) return; this.beginPlacing(id); });
       this.trayCards.push({ id, paint, zone });
     });
-    this.add.text(16, FIELD_BOTTOM + 16, 'CLICK A TOWER OR PRESS 1–6, THEN CLICK THE FIELD  ·  RIGHT-CLICK CANCELS  ·  CLICK A PLACED TOWER TO UPGRADE', {
+    this.add.text(16, FIELD_BOTTOM + 16, 'PRESS 1–6 OR CLICK A TOWER, THEN THE FIELD  ·  NAVAL TOWERS BUILD IN WATER  ·  CLICK A TOWER TO UPGRADE', {
       fontSize: '8px', fontFamily: FONT_DISPLAY, color: T.ghost, letterSpacing: 1,
     }).setOrigin(0, 0.5).setDepth(DEPTH.content + 1);
   }
@@ -294,6 +381,7 @@ export class StrongholdScene extends Phaser.Scene {
       kb.on(`keydown-${['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX'][i]}`, () => this.beginPlacing(this.loadout[i]));
     }
     kb.on('keydown-ESC', () => {
+      if (this.aiming) { this.aiming = null; return; }
       if (this.placing) { this.cancelPlacing(); return; }
       if (this.selected) { this.select(null); return; }
       this.confirmLeave();
@@ -301,19 +389,32 @@ export class StrongholdScene extends Phaser.Scene {
     kb.on('keydown-SPACE', () => { if (this.state === 'prep') this.callWave(); });
     kb.on('keydown-U', () => { if (this.selected) this.upgradeSelected(); });
     kb.on('keydown-X', () => { if (this.selected) this.sellSelected(); });
+    kb.on('keydown-TAB', (e: KeyboardEvent) => { e.preventDefault?.(); if (this.selected) this.cycleMode(this.selected); });
   }
 
   private onPointerDown(p: Phaser.Input.Pointer): void {
     if (this.state === 'over') return;
     p.updateWorldPoint(this.cameras.main);
     const x = p.worldX, y = p.worldY;
-    if (p.rightButtonDown()) { this.cancelPlacing(); this.select(null); return; }
-    if (y < HUD_H || y > FIELD_BOTTOM + 6) return; // HUD and tray handle their own clicks
+    if (p.rightButtonDown()) { this.aiming = null; this.cancelPlacing(); this.select(null); return; }
+    if (y < HUD_H || y > FIELD_BOTTOM + 6) return;
+    if (this.aiming) { this.setAim(this.aiming, x, y); return; }
     if (this.placing) { this.tryPlace(this.placing, x, y); return; }
-    // Clicking the open panel must not fall through to the field.
     if (this.panelTower && this.pointInPanel(x, y)) return;
     const hit = this.towers.find((t) => t.contains(x, y)) ?? null;
     this.select(hit);
+  }
+
+  private setAim(t: Tower, x: number, y: number): void {
+    if (Math.hypot(x - t.padX, y - t.padY) > t.range) {
+      Sfx.denied();
+      this.floatText(x, y - 16, 'OUT OF RANGE', '#ff6b85', 11);
+      return;
+    }
+    t.aimPoint = { x, y };
+    this.aiming = null;
+    this.combat.ring(x, y, 24, t.color, 400);
+    Sfx.click();
   }
 
   private beginPlacing(id: string): void {
@@ -321,6 +422,7 @@ export class StrongholdScene extends Phaser.Scene {
     const def = TOWER_DEFS[id];
     if (this.gold < def.cost) { Sfx.denied(); showToast(this, `${findElementDef(id)?.name ?? id} costs ${def.cost} gold.`, { accent: C.blood, y: 520 }); return; }
     this.select(null);
+    this.aiming = null;
     this.placing = id;
     this.ghostImg?.destroy();
     const tex = `elem-${id}`;
@@ -335,20 +437,29 @@ export class StrongholdScene extends Phaser.Scene {
     this.ghostImg?.destroy();
     this.ghostImg = null;
     this.ghostG.clear();
+    this.ghostText.setText('');
     for (const c of this.trayCards) c.paint(this.gold);
   }
 
-  private placementValid(x: number, y: number): boolean {
-    if (!inField(x, y)) return false;
-    if (distToPath(x, y) < TOWER_PATH_CLEARANCE) return false;
-    if (Math.hypot(x - KEEP.x - 10, y - KEEP.y) < 70) return false;
-    for (const t of this.towers) if (Math.hypot(t.x - x, t.y - y) < TOWER_SPACING) return false;
-    return true;
+  /** Why a tower can't stand here, or null when it can. */
+  private placementProblem(def: TowerDef, x: number, y: number): string | null {
+    if (!inField(x, y)) return 'OUT OF BOUNDS';
+    if (distToPath(x, y) < TOWER_PATH_CLEARANCE) return 'TOO CLOSE TO THE ROAD';
+    const k = keepPoint();
+    if (Math.hypot(x - k.x - 10, y - k.y) < 70) return 'TOO CLOSE TO THE KEEP';
+    for (const t of this.towers) if (Math.hypot(t.padX - x, t.padY - y) < TOWER_SPACING) return 'TOO CLOSE TO A TOWER';
+    if (isHazard(x, y)) return 'LAVA';
+    const wet = isWater(x, y, 4);
+    const kind = def.body.kind;
+    if (kind === 'water' && !wet) return 'NAVAL — BUILD IN WATER';
+    if (kind !== 'water' && kind !== 'amphibious' && isWater(x, y, -6)) return 'NOT IN WATER';
+    return null;
   }
 
   private tryPlace(id: string, x: number, y: number): void {
     const def = TOWER_DEFS[id];
-    if (!this.placementValid(x, y)) { Sfx.denied(); this.floatText(x, y - 20, 'CAN\'T BUILD HERE', '#ff6b85', 11); return; }
+    const why = this.placementProblem(def, x, y);
+    if (why) { Sfx.denied(); this.floatText(x, y - 20, why, '#ff6b85', 11); return; }
     if (this.gold < def.cost) { Sfx.denied(); this.cancelPlacing(); return; }
     this.gold -= def.cost;
     const tower = new Tower(this, id, def, x, y);
@@ -356,7 +467,6 @@ export class StrongholdScene extends Phaser.Scene {
     this.combat.ring(x, y, 36, tower.color, 420);
     this.floatText(x, y - 40, `${tower.name.toUpperCase()}  ·  ${tower.tierName}`, hex(mix(tower.color, 0xffffff, 0.5)), 11);
     Sfx.playAt('stone-rise', x, { volume: 0.6 });
-    // Keep placing if the same tower is still affordable — classic TD flow.
     if (this.gold < def.cost) this.cancelPlacing();
   }
 
@@ -366,6 +476,13 @@ export class StrongholdScene extends Phaser.Scene {
     this.selected = t;
     t?.setSelected(true);
     if (t) Sfx.click();
+    this.renderPanel();
+  }
+
+  private cycleMode(t: Tower): void {
+    const i = TARGET_MODES.indexOf(t.targetMode);
+    t.targetMode = TARGET_MODES[(i + 1) % TARGET_MODES.length];
+    Sfx.click();
     this.renderPanel();
   }
 
@@ -390,6 +507,8 @@ export class StrongholdScene extends Phaser.Scene {
     this.gold += t.sellValue;
     this.floatText(t.x, t.y - 30, `SOLD  +${t.sellValue} 🪙`, '#ffd700', 12);
     this.towers = this.towers.filter((x) => x !== t);
+    this.combat.dropTower(t);
+    if (this.aiming === t) this.aiming = null;
     t.destroy();
     this.select(null);
     Sfx.play('shard-gain');
@@ -412,10 +531,11 @@ export class StrongholdScene extends Phaser.Scene {
     if (!t) { this.panelRect = { x: 0, y: 0, w: 0, h: 0 }; return; }
     this.panelTier = t.tier;
     this.panelGold = this.gold;
+    this.panelMode = t.targetMode;
 
-    const w = 262, h = 400;
-    const x = t.x > this.scale.width / 2 ? 14 : this.scale.width - w - 14;
-    const y = HUD_H + 8;
+    const w = 270, h = 476;
+    const x = t.padX > this.scale.width / 2 ? 12 : this.scale.width - w - 12;
+    const y = HUD_H + 6;
     this.panelRect = { x, y, w, h };
     const depth = 40;
     const g = this.add.graphics().setDepth(depth);
@@ -423,54 +543,68 @@ export class StrongholdScene extends Phaser.Scene {
     strokeNotched(g, x, y, w, h, t.color, 0.8, 1.5, 10, ALL_CORNERS);
     this.panelObjects.push(g);
 
-    const add = (o: Phaser.GameObjects.GameObject): void => { this.panelObjects.push(o); };
+    const add = <O extends Phaser.GameObjects.GameObject>(o: O): O => { this.panelObjects.push(o); return o; };
     const tx = x + 14;
     add(this.add.text(tx, y + 16, t.name.toUpperCase(), {
       fontSize: '16px', fontFamily: FONT_DISPLAY, color: hex(mix(t.color, 0xffffff, 0.45)), letterSpacing: 2,
     }).setOrigin(0, 0.5).setDepth(depth + 1));
-    add(this.add.text(x + w - 14, y + 16, `TIER ${t.tier + 1}`, {
-      fontSize: '10px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 2,
+    add(this.add.text(x + w - 14, y + 16, `${ROLE_LABEL[t.def.role]} · ${BODY_LABEL[t.def.body.kind]}`, {
+      fontSize: '8px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 1,
     }).setOrigin(1, 0.5).setDepth(depth + 1));
-    add(this.add.text(tx, y + 34, t.tierName.toUpperCase(), {
+    add(this.add.text(tx, y + 33, t.tierName.toUpperCase(), {
       fontSize: '10px', fontFamily: FONT_DISPLAY, color: T.gold, letterSpacing: 2,
     }).setOrigin(0, 0.5).setDepth(depth + 1));
-    // Tier pips.
-    const pg = this.add.graphics().setDepth(depth + 1);
+    const pg = add(this.add.graphics().setDepth(depth + 1));
     for (let i = 0; i < 5; i++) {
       pg.fillStyle(i <= t.tier ? t.color : C.line, 1);
-      pg.fillCircle(x + w - 14 - (4 - i) * 12, y + 34, 4);
+      pg.fillCircle(x + w - 14 - (4 - i) * 12, y + 33, 4);
     }
-    add(pg);
-    add(this.add.text(tx, y + 50, `range ${Math.round(t.range)}  ·  kills ${t.kills}  ·  dealt ${Math.round(t.damageDealt)}`, {
+    add(this.add.text(tx, y + 48, `range ${Math.round(t.baseRange)}  ·  kills ${t.kills}  ·  dealt ${Math.round(t.damageDealt)}${t.detect ? '  ·  DETECTS' : ''}`, {
       fontSize: '9px', fontFamily: FONT_MONO, color: T.dim,
     }).setOrigin(0, 0.5).setDepth(depth + 1));
+    // Signature.
+    add(this.add.text(tx, y + 60, `✦ ${t.def.signature.name}: ${t.def.signature.desc}`, {
+      fontSize: '8px', fontFamily: FONT_UI, color: hex(mix(t.color, 0xffffff, 0.55)), wordWrap: { width: w - 28 }, lineSpacing: 1,
+    }).setOrigin(0, 0).setDepth(depth + 1));
+
+    // Targeting and aiming.
+    const by0 = y + 98;
+    add(addButton(this, {
+      x: tx + 60, y: by0, w: 120, h: 24,
+      label: `TARGET  ${MODE_LABEL[t.targetMode]}`, accent: STRONGHOLD_ACCENT, variant: 'ghost', fontSize: 9, cut: 6, depth: depth + 2,
+      onClick: () => this.cycleMode(t),
+    }).container);
+    if (t.def.role === 'artillery') {
+      add(addButton(this, {
+        x: tx + 186, y: by0, w: 100, h: 24,
+        label: t.aimPoint ? 'MOVE TARGET' : 'SET TARGET', accent: C.blood, variant: this.aiming === t ? 'solid' : 'ghost', fontSize: 9, cut: 6, depth: depth + 2,
+        onClick: () => { this.aiming = t; this.floatText(t.x, t.y - 50, 'CLICK THE FIELD', '#ffffff', 11); },
+      }).container);
+    }
 
     // Ability rows.
-    let ry = y + 70;
+    let ry = y + 116;
     for (const s of t.slotInfo()) {
-      const rowH = s.upgradeName ? 46 : 38;
-      const rg = this.add.graphics().setDepth(depth + 1);
+      const rowH = s.upgradeName ? 50 : 42;
+      const rg = add(this.add.graphics().setDepth(depth + 1));
       fillNotched(rg, tx, ry, w - 28, rowH - 4, s.unlocked ? mix(C.well, t.color, 0.08) : C.well, s.unlocked ? 0.9 : 0.5, 6, ALL_CORNERS);
-      // Key cap.
       fillNotched(rg, tx + 6, ry + 7, 34, 18, s.unlocked ? t.color : C.line, s.unlocked ? 0.9 : 0.6, 4, ALL_CORNERS);
-      add(rg);
       add(this.add.text(tx + 23, ry + 16, s.key.toUpperCase(), {
         fontSize: '9px', fontFamily: FONT_DISPLAY, color: s.unlocked ? '#0a0a14' : T.faint,
       }).setOrigin(0.5).setDepth(depth + 2));
       add(this.add.text(tx + 48, ry + 10, s.name, {
         fontSize: '11px', fontFamily: FONT_DISPLAY, color: s.unlocked ? T.bright : T.faint,
       }).setOrigin(0, 0.5).setDepth(depth + 2));
-      add(this.add.text(tx + 48, ry + 24, s.unlocked ? s.desc : `Unlocks at ${s.unlocksAt}`, {
+      add(this.add.text(tx + 48, ry + 19, s.unlocked ? s.desc : `Unlocks at ${s.unlocksAt}`, {
         fontSize: '8px', fontFamily: FONT_UI, color: s.unlocked ? T.normal : T.ghost, wordWrap: { width: w - 90 },
-      }).setOrigin(0, 0.5).setDepth(depth + 2));
+      }).setOrigin(0, 0).setDepth(depth + 2));
       if (s.upgradeName) {
-        add(this.add.text(tx + 48, ry + 36, `★ ${s.upgradeName} — ${s.upgradeNote}`, {
+        add(this.add.text(tx + 48, ry + rowH - 12, `★ ${s.upgradeName} — ${s.upgradeNote}`, {
           fontSize: '8px', fontFamily: FONT_UI, color: T.gold, wordWrap: { width: w - 90 },
         }).setOrigin(0, 0.5).setDepth(depth + 2));
       }
       ry += rowH;
     }
-    // Mastery and perk lines.
     const extras: string[] = [];
     if (t.masteryOn && t.def.mastery) extras.push(`M  ${t.def.mastery.name}: ${t.def.mastery.desc}`);
     if (t.perkName) extras.push(`✦  Perk ${t.perkName}: +10% damage, +6% range, faster casts`);
@@ -480,24 +614,23 @@ export class StrongholdScene extends Phaser.Scene {
       }).setOrigin(0, 0).setDepth(depth + 2));
     }
 
-    // Buttons.
-    const by = y + h - 28;
+    const by = y + h - 24;
     if (!t.isMaxed) {
       const can = this.gold >= t.nextTierCost;
       add(addButton(this, {
-        x: x + 14 + 78, y: by, w: 156, h: 34,
+        x: x + 14 + 82, y: by, w: 164, h: 32,
         label: `UPGRADE  →  ${t.def.tiers[t.tier + 1].toUpperCase()}`, trailing: `${t.nextTierCost} 🪙`,
         trailingColor: can ? T.gold : T.bad,
         accent: can ? C.verdant : C.steel, variant: can ? 'solid' : 'ghost', fontSize: 10, cut: 8, depth: depth + 2,
         onClick: () => this.upgradeSelected(),
       }).container);
     } else {
-      add(this.add.text(x + 14 + 78, by, 'FULLY BUILT', {
+      add(this.add.text(x + 14 + 82, by, 'FULLY BUILT', {
         fontSize: '11px', fontFamily: FONT_DISPLAY, color: T.gold, letterSpacing: 2,
       }).setOrigin(0.5).setDepth(depth + 2));
     }
     add(addButton(this, {
-      x: x + w - 14 - 40, y: by, w: 80, h: 34,
+      x: x + w - 14 - 40, y: by, w: 80, h: 32,
       label: `SELL ${t.sellValue}`, accent: C.blood, variant: 'quiet', fontSize: 10, cut: 8, depth: depth + 2,
       onClick: () => this.sellSelected(),
     }).container);
@@ -514,11 +647,16 @@ export class StrongholdScene extends Phaser.Scene {
 
   private startWave(): void {
     this.wave++;
-    this.plan = planWave(this.wave, this.diff, this.rand);
+    this.plan = planWave(this.wave, this.diff, this.map, this.rand);
     this.spawnIdx = 0;
     this.waveStartedAt = this.time.now;
     this.state = 'active';
-    this.showBanner(this.plan.isBoss ? `WAVE ${this.wave}  —  A BOSS WALKS` : `WAVE ${this.wave}`, this.plan.isBoss ? C.blood : STRONGHOLD_ACCENT, 1800);
+    const th = this.plan.theme;
+    if (this.plan.isBoss) this.showBanner(`WAVE ${this.wave}  —  A BOSS WALKS`, C.blood, 1800);
+    else if (th) {
+      this.showBanner(`WAVE ${this.wave}  —  ${th.title}`, C.gold, 2200);
+      showToast(this, th.hint, { accent: C.gold, y: 500, holdMs: 3200 });
+    } else this.showBanner(`WAVE ${this.wave}`, STRONGHOLD_ACCENT, 1800);
     Sfx.play(this.plan.isBoss ? 'boss-intro' : 'countdown-go');
     Music.play('invasion', { intensity: Math.min(1, 0.35 + this.wave * 0.03) });
   }
@@ -528,24 +666,82 @@ export class StrongholdScene extends Phaser.Scene {
     if (!plan) return;
     while (this.spawnIdx < plan.spawns.length && plan.spawns[this.spawnIdx].at <= time - this.waveStartedAt) {
       const s = plan.spawns[this.spawnIdx++];
-      const h = new RoadHusk(this, s.variant, s.hp, s.speed, s.bounty, s.breach);
-      this.husks.push(h);
-      this.huskGroup.add(h);
-      h.on('damaged', (amt: number) => this.queueDamageNumber(h, amt));
-      h.once('defeated', () => this.onHuskKilled(h));
+      const h = this.addHusk(new RoadHusk(this, s.variant, s.hp, s.speed, s.bounty, s.breach, s.track, 0));
       if (s.variant.isBoss) {
         this.floatText(h.x + 60, h.y - 40, `${s.variant.name.toUpperCase()}`, hex(mix(s.variant.color, 0xffffff, 0.4)), 14);
-      } else if (s.variant.tier && s.variant.tier >= 2) {
-        this.floatText(h.x + 50, h.y - 36, `${s.variant.emoji ?? ''} ${s.variant.name}`, hex(mix(s.variant.color, 0xffffff, 0.4)), 10);
       }
     }
   }
 
-  private onHuskKilled(h: RoadHusk): void {
+  private addHusk(h: RoadHusk): RoadHusk {
+    this.husks.push(h);
+    this.huskGroup.add(h);
+    h.on('damaged', (amt: number) => this.queueDamageNumber(h, amt));
+    h.once('defeated', () => this.onHuskKilled(h));
+    this.traits.onSpawn(h);
+    this.introduce(h.variant, h);
+    return h;
+  }
+
+  /** A child husk (splits, echoes, decoys, a boss's court). */
+  private spawnChild(variant: HuskVariantDef, track: number, pathDist: number, opts: { hp: number; noReward?: boolean; alpha?: number }): RoadHusk | null {
+    if (this.husks.length >= MAX_HUSKS) return null;
+    const speed = Math.min(200, 84 * variant.speedMult * this.diff.speedMult * (1 + this.wave * 0.012));
+    const bounty = opts.noReward ? 0 : 3;
+    const h = new RoadHusk(this, variant, Math.max(1, Math.round(opts.hp)), speed, bounty, variant.tier === 3 ? 2 : 1, track, pathDist);
+    if (opts.noReward) h.noRewardKill = true;
+    if (opts.alpha !== undefined) h.setAlpha(opts.alpha);
+    return this.addHusk(h);
+  }
+
+  /** The first time a branded family shows up this run, say what it does. */
+  private introduce(v: HuskVariantDef, h: RoadHusk): void {
+    const tr = h.trait;
+    if (!tr || tr.id === 'decoy' || this.seenFamilies.has(tr.id)) return;
+    this.seenFamilies.add(tr.id);
+    const who = v.isBoss ? v.name : v.name.replace(/ (II|III)$/, '');
+    this.introQueue.push({ title: `${who.toUpperCase()}  ·  ${tr.name.toUpperCase()}`, body: tr.desc, color: v.color });
+  }
+
+  private tickIntro(time: number): void {
+    if (time < this.introUntil) return;
+    for (const o of this.introObjs) o.destroy();
+    this.introObjs = [];
+    const next = this.introQueue.shift();
+    if (!next) return;
+    this.introUntil = time + 4200;
+    const w = 300, h = 54, x = 14, y = FIELD_BOTTOM - h - 10;
+    const g = this.add.graphics().setDepth(36);
+    fillNotched(g, x, y, w, h, mix(C.plate, next.color, 0.15), 0.94, 8, ALL_CORNERS);
+    strokeNotched(g, x, y, w, h, next.color, 0.85, 1.5, 8, ALL_CORNERS);
+    const tag = this.add.text(x + 12, y + 12, 'NEW HUSK', { fontSize: '8px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 2 }).setOrigin(0, 0.5).setDepth(37);
+    const title = this.add.text(x + 74, y + 12, next.title, { fontSize: '10px', fontFamily: FONT_DISPLAY, color: hex(mix(next.color, 0xffffff, 0.5)), letterSpacing: 1 }).setOrigin(0, 0.5).setDepth(37);
+    const body = this.add.text(x + 12, y + 24, next.body, { fontSize: '9px', fontFamily: FONT_UI, color: T.normal, wordWrap: { width: w - 24 } }).setOrigin(0, 0).setDepth(37);
+    this.introObjs = [g, tag, title, body];
+    for (const o of this.introObjs) (o as unknown as Phaser.GameObjects.Components.Alpha).setAlpha?.(0);
+    this.tweens.add({ targets: this.introObjs, alpha: 1, duration: 220 });
+    this.tweens.add({ targets: this.introObjs, alpha: 0, delay: 3800, duration: 350 });
+  }
+
+  private onHuskKilled(h: RoadHusk, claimed = false): void {
     if (!this.husks.includes(h)) return;
+    const time = this.time.now;
     this.kills++;
-    this.gold += h.bounty;
-    this.floatText(h.x, h.y - 48, `+${h.bounty} 🪙`, '#ffd700', 12);
+    let bounty = h.bounty;
+    if (h.goldMarkUntil > time) bounty = Math.round(bounty * h.goldMarkMult);
+    // Harvest's plunder: the richest nearby plunderer takes its cut.
+    let plunder = 0;
+    for (const t of this.towers) {
+      const p = t.def.traits.plunder;
+      if (p && Math.hypot(t.x - h.x, t.y - h.y) <= t.range + 30) plunder = Math.max(plunder, p);
+    }
+    bounty = Math.round(bounty * (1 + plunder));
+    this.gold += bounty;
+    if (bounty > 0) this.floatText(h.x, h.y - 48, `+${bounty} 🪙`, h.goldMarkUntil > time ? '#ffee66' : '#ffd700', 12);
+    if (!claimed) {
+      this.combat.onHuskDeath(h);
+      this.traits.onDeath(h);
+    }
     this.removeHusk(h, true);
   }
 
@@ -564,11 +760,15 @@ export class StrongholdScene extends Phaser.Scene {
   }
 
   private onBreach(h: RoadHusk): void {
-    this.lives = Math.max(0, this.lives - h.breach);
-    this.keepFlashUntil = this.time.now + 500;
-    this.cameras.main.shake(180, 0.004);
-    this.floatText(KEEP.x + 10, KEEP.y - 80, `-${h.breach} ❤`, '#ff6b85', 16);
-    Sfx.play('low-health', { volume: 0.7 });
+    const loss = this.traits.breachFor(h);
+    if (loss > 0) {
+      this.lives = Math.max(0, this.lives - loss);
+      this.keepFlashUntil = this.time.now + 500;
+      this.cameras.main.shake(180, 0.004);
+      const k = keepPoint();
+      this.floatText(k.x + 10, k.y - 80, `-${loss} ❤`, '#ff6b85', 16);
+      Sfx.play('low-health', { volume: 0.7 });
+    }
     this.removeHusk(h, false);
     if (this.lives <= 0) this.endRun();
   }
@@ -576,13 +776,29 @@ export class StrongholdScene extends Phaser.Scene {
   private waveCleared(): void {
     const plan = this.plan!;
     this.wavesCleared = this.wave;
-    this.gold += plan.clearBonus;
+    let pay = plan.clearBonus;
+    // Gardens and banks pay out.
+    let income = 0;
+    let interestRate = 0;
+    for (const t of this.towers) {
+      const inc = t.def.traits.income;
+      if (inc) {
+        const amt = inc.perWave + inc.perTier * t.tier;
+        income += amt;
+        this.floatText(t.x, t.y - 46, `+${amt} 🪙`, '#ffd700', 12);
+      }
+      if (t.def.traits.interest) interestRate = Math.max(interestRate, t.def.traits.interest + t.tier * 0.01);
+    }
+    const interest = Math.min(50 + this.wave * 2, Math.round(this.gold * interestRate));
+    pay += income + interest;
+    this.gold += pay;
     this.state = 'prep';
     this.nextWaveAt = this.time.now + PREP_MS;
-    this.showBanner(`WAVE ${this.wave} CLEARED   +${plan.clearBonus} 🪙`, C.verdant, 2000);
+    const extra = income + interest > 0 ? `  (+${income + interest} INCOME)` : '';
+    this.showBanner(`WAVE ${this.wave} CLEARED   +${pay} 🪙${extra}`, C.verdant, 2000);
     Sfx.play('victory', { volume: 0.5 });
     if (this.wave % 10 === 0) {
-      const shards = shardsForRun(this.wavesCleared, this.diff);
+      const shards = shardsForRun(this.wavesCleared, this.diff, this.map);
       this.floatText(this.scale.width / 2, HUD_H + 60, `${shards} 💎 BANKED SO FAR`, '#ffc44d', 13);
     }
   }
@@ -594,34 +810,33 @@ export class StrongholdScene extends Phaser.Scene {
     this.state = 'over';
     this.cancelPlacing();
     this.select(null);
-    const shards = shardsForRun(this.wavesCleared, this.diff);
+    const shards = shardsForRun(this.wavesCleared, this.diff, this.map);
     if (shards > 0) PlayerData.addShards(shards);
-    const record = PlayerData.recordStrongholdBest(this.diff.id, this.wavesCleared);
+    const record = PlayerData.recordStrongholdBest(recordKey(this.map.id, this.diff.id), this.wavesCleared);
     Sfx.play('defeat');
     this.cameras.main.flash(400, 120, 0, 20);
 
     const { width, height } = this.scale;
-    const modal = addModal(this, {
-      w: 520, h: 330, accent: C.blood, title: 'THE STRONGHOLD HAS FALLEN', glow: 0.5, scrimAlpha: 0.7,
-    });
-    void modal;
+    addModal(this, { w: 520, h: 330, accent: C.blood, title: 'THE STRONGHOLD HAS FALLEN', glow: 0.5, scrimAlpha: 0.7 });
     const cx = width / 2, cy = height / 2;
     const line = (dy: number, text: string, color: string, size = 14, font = FONT_UI): Phaser.GameObjects.Text => this.add.text(cx, cy + dy, text, {
       fontSize: `${size}px`, fontFamily: font, color, align: 'center',
     }).setOrigin(0.5).setDepth(DEPTH.modalContent);
-    line(-70, `${this.diff.label}  ·  ${this.loadout.map((id) => findElementDef(id)?.name ?? id).join(' / ')}`, T.dim, 11, FONT_DISPLAY);
+    line(-82, `${this.map.name}  ·  ${this.diff.label}`, T.dim, 11, FONT_DISPLAY);
+    line(-64, this.loadout.map((id) => findElementDef(id)?.name ?? id).join(' / '), T.faint, 10, FONT_DISPLAY);
     line(-36, `WAVES CLEARED   ${this.wavesCleared}`, T.bright, 22, FONT_DISPLAY);
     line(-4, `${this.kills} husks put down  ·  ${this.towers.length} towers standing`, T.normal, 12);
     line(28, shards > 0 ? `+${shards} 💎 SHARDS BANKED` : 'No shards — clear a wave to earn some.', shards > 0 ? T.gold : T.faint, 15, FONT_DISPLAY);
-    if (record) line(54, '★  NEW RECORD FOR THIS DIFFICULTY', T.good, 11, FONT_DISPLAY);
+    if (record) line(54, '★  NEW RECORD FOR THIS MAP AND DIFFICULTY', T.good, 11, FONT_DISPLAY);
 
+    const data: StrongholdSceneData = { elements: this.loadout, difficulty: this.diff.id, map: this.map.id };
     addButton(this, {
       x: cx - 150, y: cy + 110, w: 150, h: 40, label: 'RETRY', iconArt: 'refresh', accent: C.verdant, variant: 'solid', fontSize: 13, cut: 8, depth: DEPTH.modalContent,
-      onClick: () => this.scene.restart({ elements: this.loadout, difficulty: this.diff.id }),
+      onClick: () => this.scene.restart(data),
     });
     addButton(this, {
       x: cx, y: cy + 110, w: 150, h: 40, label: 'LOADOUT', iconArt: 'castle', accent: STRONGHOLD_ACCENT, variant: 'ghost', fontSize: 13, cut: 8, depth: DEPTH.modalContent,
-      onClick: () => this.scene.start('StrongholdSetupScene', { picks: this.loadout, difficulty: this.diff.id }),
+      onClick: () => this.scene.start('StrongholdSetupScene', { picks: this.loadout, difficulty: this.diff.id, map: this.map.id }),
     });
     addButton(this, {
       x: cx + 150, y: cy + 110, w: 150, h: 40, label: 'TITLE', accent: C.steel, variant: 'quiet', fontSize: 13, cut: 8, depth: DEPTH.modalContent,
@@ -636,7 +851,7 @@ export class StrongholdScene extends Phaser.Scene {
     const objs: Phaser.GameObjects.GameObject[] = [];
     const modal = addModal(this, { w: 420, h: 190, accent: C.blood, title: 'ABANDON THE ROAD?', glow: 0.4, scrimAlpha: 0.6, onScrimClick: () => close() });
     objs.push(modal.scrim, ...modal.objects);
-    const shards = shardsForRun(this.wavesCleared, this.diff);
+    const shards = shardsForRun(this.wavesCleared, this.diff, this.map);
     objs.push(this.add.text(cx, cy - 10, `You keep what ${this.wavesCleared} cleared wave${this.wavesCleared === 1 ? '' : 's'} earned: ${shards} 💎`, {
       fontSize: '12px', fontFamily: FONT_UI, color: T.normal, align: 'center',
     }).setOrigin(0.5).setDepth(DEPTH.modalContent));
@@ -654,6 +869,7 @@ export class StrongholdScene extends Phaser.Scene {
   // ── Frame ─────────────────────────────────────────────────────────
 
   update(time: number, delta: number): void {
+    this.animateMap?.(time);
     if (this.state === 'over') {
       for (const t of this.towers) t.update(time, delta);
       this.combat.draw(time);
@@ -664,17 +880,22 @@ export class StrongholdScene extends Phaser.Scene {
     if (this.state === 'prep' && time >= this.nextWaveAt) this.startWave();
     if (this.state === 'active') this.spawnDue(time);
 
+    // Husk traits act before they walk (sprints, blinks, dives).
+    this.traits.update(time, dt);
+
     // Husks walk.
     for (const h of this.husks.slice()) {
       if (!h.active || h.hp <= 0) continue;
       const statusMult = h.tickStatus(time, dt);
-      if (!h.active || h.hp <= 0) continue; // a DOT finished it
+      if (!h.active || h.hp <= 0) continue;
       let mult = statusMult * h.modeSpeedMult(time);
-      const barrier = this.combat.barrierAhead(h);
+      const confused = h.confusedUntil > time;
+      const barrier = confused ? null : this.combat.barrierAhead(h);
       h.blocked = !!barrier;
-      if (barrier) { mult = 0; this.combat.chew(h, barrier, time, dt); }
+      if (barrier) { mult = 0; this.combat.chew(h, barrier, dt); }
       if (mult > 0) {
-        h.pathDist += h.roadSpeed * mult * (dt / 1000);
+        const step = h.roadSpeed * mult * (dt / 1000);
+        h.pathDist = confused ? Math.max(0, h.pathDist - step * 0.6) : h.pathDist + step;
         h.place();
       } else {
         (h.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
@@ -683,20 +904,27 @@ export class StrongholdScene extends Phaser.Scene {
     }
     if ((this.state as RunState) === 'over') return;
 
+    this.applyAuras();
+
     // Towers act.
     for (const t of this.towers) {
+      this.steer(t, time);
       t.update(time, dt);
-      const target = this.firstInRange(t);
+      if (t.stunned) continue;
+      const target = this.pickTarget(t, time);
       if (!target) continue;
+      const aim = t.def.role === 'artillery' && t.aimPoint ? t.aimPoint : undefined;
       for (const slot of t.unlockedSlots()) {
         if (time < t.readyAt[slot]) continue;
-        const a = t.resolve(slot, time);
-        this.combat.cast(t, slot, a, target, time);
+        let a = t.resolve(slot, time);
+        if (slot === 'click' && t.def.traits.mimic) a = this.mimicFor(t, time) ?? a;
+        this.combat.cast(t, slot, a, target, time, aim);
         t.readyAt[slot] = time + a.cooldown;
+        this.echo(t, slot, a, target, aim);
       }
       if (time >= t.masteryReadyAt) {
         const m = t.resolveMastery(time);
-        if (m) { this.combat.cast(t, 'mastery', m, target, time); t.masteryReadyAt = time + m.cooldown; }
+        if (m) { this.combat.cast(t, 'mastery', m, target, time, aim); t.masteryReadyAt = time + m.cooldown; }
       }
     }
 
@@ -705,43 +933,147 @@ export class StrongholdScene extends Phaser.Scene {
     this.flushDamageNumbers(time);
     this.drawGhost();
     this.drawKeep(time);
+    this.tickIntro(time);
 
     if (this.state === 'active' && this.plan && this.spawnIdx >= this.plan.spawns.length && this.husks.length === 0) this.waveCleared();
     this.refreshHud();
   }
 
-  /** The husk furthest down the road that this tower can reach. */
-  private firstInRange(t: Tower): RoadHusk | null {
-    let best: RoadHusk | null = null;
+  /** Support auras: every tower's buffs from the aura towers around it, rebuilt each frame. */
+  private applyAuras(): void {
+    for (const t of this.towers) { t.auraFireRate = 1; t.auraDamage = 1; t.auraRange = 1; t.auraDetect = false; t.auraPierce = 0; }
+    for (const src of this.towers) {
+      const a = src.def.traits.aura;
+      if (!a) continue;
+      const r = a.radius * (1 + src.tier * 0.08);
+      for (const t of this.towers) {
+        if (Math.hypot(t.padX - src.padX, t.padY - src.padY) > r) continue;
+        if (a.fireRate) t.auraFireRate = Math.max(t.auraFireRate, a.fireRate + (t === src ? 0 : src.tier * 0.02));
+        if (a.damage) t.auraDamage = Math.max(t.auraDamage, a.damage + src.tier * 0.02);
+        if (a.range) t.auraRange = Math.max(t.auraRange, a.range);
+        if (a.detect) t.auraDetect = true;
+        if (a.pierce) t.auraPierce = Math.max(t.auraPierce, a.pierce);
+      }
+    }
+  }
+
+  /** Where hover, drift and roam towers head this frame. */
+  private steer(t: Tower, time: number): void {
+    const k = t.def.body.kind;
+    if (k !== 'heli' && k !== 'drift' && k !== 'roam') return;
+    const leash = (t.def.body.leash ?? 150) + t.baseRange;
+    let goal: { x: number; y: number } | null = null;
+    if (k === 'drift') {
+      // The thickest knot of husks within reach of the pad.
+      let best = 0;
+      for (const h of this.husks) {
+        if (!h.targetable(time, true) || Math.hypot(h.x - t.padX, h.y - t.padY) > leash) continue;
+        let n = 0;
+        for (const o of this.husks) if (Math.hypot(o.x - h.x, o.y - h.y) < 80) n++;
+        if (n > best) { best = n; goal = { x: h.x, y: h.y }; }
+      }
+    } else {
+      let lead: RoadHusk | null = null;
+      for (const h of this.husks) {
+        if (!h.targetable(time, t.detect) || Math.hypot(h.x - t.padX, h.y - t.padY) > leash) continue;
+        if (!lead || h.pathDist > lead.pathDist) lead = h;
+      }
+      if (lead) goal = { x: lead.x, y: lead.y };
+    }
+    t.setGoal(goal);
+  }
+
+  /** Pick a target by the tower's mode, among husks it can see and reach. */
+  private pickTarget(t: Tower, time: number): RoadHusk | null {
     const r = t.range;
+    const detect = t.detect;
+    const mode = t.effectiveMode;
+    let best: RoadHusk | null = null;
+    let bestScore = -Infinity;
     for (const h of this.husks) {
-      if (!h.active || h.hp <= 0) continue;
-      if (Math.hypot(h.x - t.x, h.y - t.y) > r + 20 * h.sizeMult) continue;
-      if (!best || h.pathDist > best.pathDist) best = h;
+      if (!h.targetable(time, detect)) continue;
+      const d = Math.hypot(h.x - t.x, h.y - t.y);
+      if (d > r + 20 * h.sizeMult) continue;
+      const progress = h.pathDist / Math.max(1, h.track.length);
+      const score = mode === 'first' ? progress
+        : mode === 'last' ? -progress
+          : mode === 'strong' ? h.hp + h.shieldHp + (h.variant.isBoss ? 1e6 : 0)
+            : -d;
+      if (score > bestScore) { bestScore = score; best = h; }
     }
     return best;
+  }
+
+  /** Illusion's Click: the nearest other tower's Click, cast as its own. */
+  private mimicFor(t: Tower, time: number): TowerAbilityDef | null {
+    let near: Tower | null = null, bd = Infinity;
+    for (const o of this.towers) {
+      if (o === t || o.def.traits.mimic) continue;
+      const d = Math.hypot(o.padX - t.padX, o.padY - t.padY);
+      if (d < bd) { bd = d; near = o; }
+    }
+    if (!near || bd > 260) return null;
+    const src = near.def.abilities.click;
+    return t.resolveForeign({ ...src, cooldown: Math.max(400, src.cooldown) }, time);
+  }
+
+  /** Echo's signature: repeat an instant cast a beat later at reduced strength. */
+  private echo(t: Tower, slot: TowerSlot, a: TowerAbilityDef, target: RoadHusk, aim?: { x: number; y: number }): void {
+    const e = t.def.traits.echo;
+    if (!e || !ECHOABLE.has(a.fx.kind)) return;
+    this.time.delayedCall(e.delayMs, () => {
+      if (this.state === 'over' || !this.towers.includes(t)) return;
+      const tgt = target.active && target.hp > 0 ? target : this.pickTarget(t, this.time.now);
+      if (!tgt) return;
+      this.combat.cast(t, slot, { ...a, damage: a.damage * e.mult }, tgt, this.time.now, aim);
+    });
   }
 
   private drawGhost(): void {
     const g = this.ghostG;
     g.clear();
     const p = this.input.activePointer;
-    // Between events the pointer's cached world point is in backbuffer pixels (the
-    // supersampled camera); ArenaScene refreshes it the same way every frame.
     p.updateWorldPoint(this.cameras.main);
     const x = p.worldX, y = p.worldY;
-    if (this.placing) {
-      const def = TOWER_DEFS[this.placing];
-      const ok = this.placementValid(x, y) && y > HUD_H && y < FIELD_BOTTOM;
-      const color = ok ? (findElementDef(this.placing)?.color ?? 0xffffff) : 0xff4455;
-      this.ghostImg?.setPosition(x, y).setVisible(y > HUD_H && y < FIELD_BOTTOM + 6).setTint(ok ? 0xffffff : 0xff6677);
-      g.fillStyle(color, 0.08); g.fillCircle(x, y, def.range);
-      g.lineStyle(1.5, color, 0.6); g.strokeCircle(x, y, def.range);
-      g.lineStyle(2, color, 0.9); g.strokeCircle(x, y, 26);
-      if (!ok) { g.lineStyle(3, 0xff4455, 0.9); g.lineBetween(x - 12, y - 12, x + 12, y + 12); g.lineBetween(x + 12, y - 12, x - 12, y + 12); }
+    // Mortar reticles.
+    for (const t of this.towers) {
+      if (!t.aimPoint) continue;
+      const sel = t === this.selected;
+      g.lineStyle(sel ? 2 : 1, t.color, sel ? 0.9 : 0.4);
+      g.strokeCircle(t.aimPoint.x, t.aimPoint.y, 14);
+      g.lineBetween(t.aimPoint.x - 20, t.aimPoint.y, t.aimPoint.x - 8, t.aimPoint.y);
+      g.lineBetween(t.aimPoint.x + 8, t.aimPoint.y, t.aimPoint.x + 20, t.aimPoint.y);
+      g.lineBetween(t.aimPoint.x, t.aimPoint.y - 20, t.aimPoint.x, t.aimPoint.y - 8);
+      g.lineBetween(t.aimPoint.x, t.aimPoint.y + 8, t.aimPoint.x, t.aimPoint.y + 20);
+    }
+    if (this.aiming) {
+      const t = this.aiming;
+      const ok = Math.hypot(x - t.padX, y - t.padY) <= t.range;
+      g.lineStyle(1.5, ok ? t.color : 0xff4455, 0.6); g.strokeCircle(t.padX, t.padY, t.range);
+      g.lineStyle(2, ok ? 0xffffff : 0xff4455, 0.9); g.strokeCircle(x, y, 16);
+      g.lineBetween(x - 22, y, x + 22, y); g.lineBetween(x, y - 22, x, y + 22);
+      this.ghostText.setPosition(x, y - 30).setText(ok ? 'SET TARGET' : 'OUT OF RANGE').setColor(ok ? '#ffffff' : '#ff6b85');
       return;
     }
-    // Hover ring on towers.
+    if (this.placing) {
+      const def = TOWER_DEFS[this.placing];
+      const inBand = y > HUD_H && y < FIELD_BOTTOM;
+      const why = inBand ? this.placementProblem(def, x, y) : 'OUT OF BOUNDS';
+      const ok = !why;
+      const color = ok ? (findElementDef(this.placing)?.color ?? 0xffffff) : 0xff4455;
+      this.ghostImg?.setPosition(x, y).setVisible(inBand).setTint(ok ? 0xffffff : 0xff6677);
+      const reach = def.range > 900 ? 60 : def.range;
+      g.fillStyle(color, 0.08); g.fillCircle(x, y, reach);
+      g.lineStyle(1.5, color, 0.6); g.strokeCircle(x, y, reach);
+      const k = def.body.kind;
+      if (k === 'ace') { g.lineStyle(1, color, 0.35); g.strokeEllipse(x, y, (def.body.leash ?? 120) * 2, (def.body.leash ?? 120) * 0.9); }
+      if (k === 'heli' || k === 'drift' || k === 'roam') { g.lineStyle(1, color, 0.3); g.strokeCircle(x, y, def.body.leash ?? 150); }
+      g.lineStyle(2, color, 0.9); g.strokeCircle(x, y, 26);
+      if (!ok) { g.lineStyle(3, 0xff4455, 0.9); g.lineBetween(x - 12, y - 12, x + 12, y + 12); g.lineBetween(x + 12, y - 12, x - 12, y + 12); }
+      this.ghostText.setPosition(x, y + 36).setText(inBand && why ? why : '').setColor('#ff6b85');
+      return;
+    }
+    this.ghostText.setText('');
     const hov = this.towers.find((t) => t.contains(x, y)) ?? null;
     if (hov !== this.hoverTower) {
       if (this.hoverTower && this.hoverTower !== this.selected) this.hoverTower.setSelected(false);
@@ -753,11 +1085,12 @@ export class StrongholdScene extends Phaser.Scene {
   private drawKeep(time: number): void {
     const g = this.keepG;
     g.clear();
+    const k = keepPoint();
     const ratio = this.lives / this.diff.lives;
-    drawMeter(g, KEEP.x - 30, KEEP.y - 132, 80, 7, ratio, ratio > 0.5 ? C.verdant : ratio > 0.25 ? C.gold : C.blood);
+    drawMeter(g, k.x - 30, k.y - 132, 80, 7, ratio, ratio > 0.5 ? C.verdant : ratio > 0.25 ? C.gold : C.blood);
     if (this.keepFlashUntil > time) {
       g.fillStyle(0xff2244, 0.35 * ((this.keepFlashUntil - time) / 500));
-      g.fillRect(KEEP.x - 26, KEEP.y - 70, 72, 110);
+      g.fillRect(k.x - 26, k.y - 70, 72, 110);
     }
   }
 

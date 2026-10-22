@@ -11,6 +11,10 @@ import {
 } from './SilenceVisuals';
 import { meterGain } from '../../combat/Meters';
 import { SilenceMaze } from './SilenceMaze';
+import type { BaseAvatar } from './ElementVisuals';
+import { makeSkinAvatar } from './skins/SkinAvatars';
+import { JasonAvatar } from './skins/JasonAvatar';
+import { JasonFx } from './skins/JasonFx';
 
 // ── SilenceArenaApi ────────────────────────────────────────────────────────
 
@@ -49,6 +53,8 @@ export interface SilenceArenaApi {
   sendSilenceMsg(msg: NetSilenceMsg): void;
   /** Owner's skin applied to one Silence palette value. */
   silenceColor(owner: Owner, base: number): number;
+  /** Owner's equipped skin id, or null. */
+  skinId(owner: Owner): string | null;
   /** Silence Mastery is enabled and the local player is actually playing Silence. */
   readonly masteryActive: boolean;
   /** The opponent's Silence Mastery — a remote mastered player or a Nightmare bot. Drives its Weep. */
@@ -629,8 +635,10 @@ export class SilenceKit {
   private readonly ncol: SilenceColorFn;
   private readonly pfx: SilenceFx;
   private readonly nfx: SilenceFx;
-  private playerAvatar: SilenceAvatar | null = null;
-  private npcAvatar: SilenceAvatar | null = null;
+  private playerAvatar: BaseAvatar | null = null;
+  private npcAvatar: BaseAvatar | null = null;
+  /** Jason skin art, built on first use per side. */
+  private jasonFx: { player: JasonFx | null; npc: JasonFx | null } = { player: null, npc: null };
   private auras = new Map<string, SilenceAura>();
   /** Shared per-frame paint layers, one per depth band. Rebuilt lazily after a reset. */
   private layers = new Map<number, Phaser.GameObjects.Graphics>();
@@ -736,8 +744,34 @@ export class SilenceKit {
   /** Colour mapper for a side. */
   private col(owner: Owner): SilenceColorFn { return owner === 'player' ? this.pcol : this.ncol; }
   /** The rig for a side, if that side is playing Silence. */
-  private avatarFor(owner: Owner): SilenceAvatar | null {
+  private avatarFor(owner: Owner): BaseAvatar | null {
     return owner === 'player' ? this.playerAvatar : this.npcAvatar;
+  }
+
+  /** The owner's skin rig, or the stock watcher. */
+  private makeAvatar(owner: Owner): BaseAvatar {
+    return makeSkinAvatar(this.arena.skinId(owner), this.arena.scene)
+      ?? new SilenceAvatar(this.arena.scene, this.col(owner), owner);
+  }
+
+  /** Jason skin: the owner's machete/camp-lake painter, or null when they wear something else. */
+  private jason(owner: Owner): JasonFx | null {
+    if (this.arena.skinId(owner) !== 'jason') return null;
+    return this.jasonFx[owner] ??= new JasonFx(this.arena.scene, this.col(owner));
+  }
+
+  /** Per-frame rig state shared by both sides: meters, and Jason's burning Q form. */
+  private driveAvatar(av: BaseAvatar, owner: Owner, f: Fighter): void {
+    const stealth = this.stealth[owner] / STEALTH_MAX;
+    if (av instanceof SilenceAvatar) {
+      av.setStealth(stealth);
+      av.setTerror(this.hasTerrorBar(owner) ? this.terror[owner] / TERROR_MAX : 0);
+    } else if (av instanceof JasonAvatar) {
+      av.setStealth(stealth);
+      const q = this.run?.caster === owner;
+      av.setForm(q ? 'flaming' : 'normal');
+      av.setRigScale(q && this.run!.phase === 'chase' ? f.scaleX : 1);
+    }
   }
 
   /** Fire one arm gesture on the rig of whichever side cast. */
@@ -789,6 +823,7 @@ export class SilenceKit {
     // Avatars and auras are GameObjects: a scene restart already killed the old ones, so they
     // are dropped here and rebuilt lazily by update().
     if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
+    this.jasonFx = { player: null, npc: null };
     if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
     for (const a of this.auras.values()) a.destroy();
     this.auras.clear();
@@ -1205,6 +1240,8 @@ export class SilenceKit {
         // over the mouth from behind, and the wound opening under it.
         fx.rupture(foe.x, foe.y, 44, { bloody: true, claws: 8, rings: 2, duration: 420 });
         this.arena.scene.cameras.main.shake(160, 0.004);
+      } else if (this.jason(owner)) {
+        this.jason(owner)!.machete(foe.x, foe.y, ang, 46, 0.9, { bloody: true, cuts: 1, duration: 220 });
       } else {
         fx.slash(foe.x, foe.y, ang, 46, 0.9, { bloody: true, scores: 2, duration: 220 });
       }
@@ -1238,9 +1275,16 @@ export class SilenceKit {
     // meter looks like the 45-damage strike it is.
     const charge = spent / STEALTH_MAX;
     fx.lunge(startX, startY, endX, endY, { color: SILENCE.plum, duration: 300 + charge * 140 });
-    fx.slash(endX, endY, ang, STAB_LANE_HALF_W * (1 + charge * 0.5), 0.75 + charge * 0.35, {
-      scores: 3 + Math.round(charge * 2), duration: 240 + charge * 120,
-    });
+    const jfx = this.jason(owner);
+    if (jfx) {
+      jfx.machete(endX, endY, ang, STAB_LANE_HALF_W * (1 + charge * 0.5), 0.75 + charge * 0.35, {
+        cuts: 1 + Math.round(charge * 2), duration: 240 + charge * 120,
+      });
+    } else {
+      fx.slash(endX, endY, ang, STAB_LANE_HALF_W * (1 + charge * 0.5), 0.75 + charge * 0.35, {
+        scores: 3 + Math.round(charge * 2), duration: 240 + charge * 120,
+      });
+    }
   }
 
   /** Click+ Sacrifice: shockwave from a stabbed watcher + 5s maturity setback. */
@@ -1374,7 +1418,9 @@ export class SilenceKit {
     this.gesture(owner, 'silence-ritual', Math.atan2(ty - caster.y, tx - caster.x));
     // The one-second wind-up is a tooth ring closing over the spot with fingers converging
     // on it, so the delay reads as something being cornered rather than as a pause.
-    this.fx(owner).dread(tx, ty, RITUAL_RADIUS, RITUAL_DELAY_MS, { depth: DEPTH_GROUND_FX + 1 });
+    const jfx = this.jason(owner);
+    if (jfx) jfx.stakes(tx, ty, RITUAL_RADIUS, RITUAL_DELAY_MS, DEPTH_GROUND_FX + 1);
+    else this.fx(owner).dread(tx, ty, RITUAL_RADIUS, RITUAL_DELAY_MS, { depth: DEPTH_GROUND_FX + 1 });
     // Matured seekers caught in the circle freeze mid-air so the strike can land.
     for (const s of this.stalkers) {
       if (s.owner !== owner || s.kind !== 'seeker') continue;
@@ -2594,7 +2640,8 @@ export class SilenceKit {
         SilenceFx.drawHymnRing(g, this.col(s.owner), s.x, s.y, HYMN_RADIUS, t, s.seed, holding,
           maturity >= 1 ? 0 : Phaser.Math.Clamp(s.hymnHeldMs / HYMN_MATURE_MS, 0, 1));
       }
-      SilenceFx.drawWatcher(g, flash ? () => SILENCE.white : this.col(s.owner),
+      const drawWatcher = this.jason(s.owner) ? JasonFx.drawWatcher : SilenceFx.drawWatcher;
+      drawWatcher(g, flash ? () => SILENCE.white : this.col(s.owner),
         s.x, s.y, maturity, s.kind === 'seeker', t + s.seed, 1, ownerSees);
     }
   }
@@ -2605,7 +2652,8 @@ export class SilenceKit {
     for (const gr of this.grabbers) {
       const col = this.col(gr.owner);
       const pop = Phaser.Math.Clamp((time - gr.bornAt) / 300, 0, 1);
-      SilenceFx.drawGrabber(world, col, gr.x, gr.y, gr.seed, t, pop, gr.grab !== null);
+      const drawGrabber = this.jason(gr.owner) ? JasonFx.drawGrabber : SilenceFx.drawGrabber;
+      drawGrabber(world, col, gr.x, gr.y, gr.seed, t, pop, gr.grab !== null);
       const grab = gr.grab;
       if (!grab || !grab.victim.active) continue;
       // The arm, and how tight the hand is: a reaching grab is open, a dragging one is shut.
@@ -2791,7 +2839,10 @@ export class SilenceKit {
     if (!caster.active) return;
     // In the maze it has to fit the corridors, so it is drawn at its collision size.
     const r = run.maze ? MAZE_BLOB_RADIUS * 1.5 : 48 * caster.scaleX;
-    SilenceFx.drawBlob(g, this.col(run.caster), caster.x, caster.y, r, t, 1);
+    // Jason skin: no blob — the rig stays up, burning, over a ring of fire on the hall floor
+    // (above the floor and maze walls, under the fighter sprite).
+    if (this.jason(run.caster)) JasonFx.drawInferno(this.layer(DEPTH_HALL_FLOOR + 0.7), caster.x, caster.y, r, t, 1);
+    else SilenceFx.drawBlob(g, this.col(run.caster), caster.x, caster.y, r, t, 1);
   }
 
   /**
@@ -2924,16 +2975,16 @@ export class SilenceKit {
     const { player, npc, scene } = this.arena;
 
     if (this.playerIsSilence && player?.active && player.hp > 0) {
-      if (!this.playerAvatar) this.playerAvatar = new SilenceAvatar(scene, this.pcol, 'player');
+      if (!this.playerAvatar) this.playerAvatar = this.makeAvatar('player');
       const av = this.playerAvatar;
       av.setFacing(player.facingAngle);
       av.setMastered(this.arena.masteryActive);
-      av.setStealth(this.stealth.player / STEALTH_MAX);
-      av.setTerror(this.hasTerrorBar('player') ? this.terror.player / TERROR_MAX : 0);
+      this.driveAvatar(av, 'player', player);
       // A striker is visibly bigger and further gone; a blob or a possession is not the rig at all.
       av.setIntensity(this.strikers.player ? 1.4 : 1);
       av.setHold(this.isInvisible('player') ? 'brace' : null, player.facingAngle);
-      const hideRig = (this.run?.caster === 'player' && this.run.phase === 'chase')
+      // Jason does not become the blob — he stays himself, on fire.
+      const hideRig = (this.run?.caster === 'player' && this.run.phase === 'chase' && !this.jason('player'))
         || this.awakened.npc?.host === player;
       av.update(delta, player.x, player.y, hideRig ? 0 : player.forceInvisible ? 0 : player.alpha);
     } else if (this.playerAvatar) {
@@ -2942,15 +2993,14 @@ export class SilenceKit {
     }
 
     if (this.npcIsSilence && npc?.active && npc.hp > 0) {
-      if (!this.npcAvatar) this.npcAvatar = new SilenceAvatar(scene, this.ncol, 'npc');
+      if (!this.npcAvatar) this.npcAvatar = this.makeAvatar('npc');
       const av = this.npcAvatar;
       av.setFacing(npc.facingAngle);
       av.setMastered(this.arena.npcMasteryActive);
-      av.setStealth(this.stealth.npc / STEALTH_MAX);
-      av.setTerror(this.hasTerrorBar('npc') ? this.terror.npc / TERROR_MAX : 0);
+      this.driveAvatar(av, 'npc', npc);
       av.setIntensity(this.strikers.npc ? 1.4 : 1);
       av.setHold(this.isInvisible('npc') ? 'brace' : null, npc.facingAngle);
-      const hideRig = (this.run?.caster === 'npc' && this.run.phase === 'chase')
+      const hideRig = (this.run?.caster === 'npc' && this.run.phase === 'chase' && !this.jason('npc'))
         || this.awakened.player?.host === npc;
       av.update(delta, npc.x, npc.y, hideRig ? 0 : npc.forceInvisible ? 0 : npc.alpha);
     } else if (this.npcAvatar) {
@@ -4002,7 +4052,9 @@ export class SilenceKit {
 
     // Three curved claw scores raked through the front arc, plus the claws themselves.
     const fx = this.fx(owner);
-    fx.slash(caster.x, caster.y, ang, SLASH_RANGE, SLASH_ARC_HALF_RAD, {
+    const jfx = this.jason(owner);
+    if (jfx) jfx.machete(caster.x, caster.y, ang, SLASH_RANGE, SLASH_ARC_HALF_RAD, { bloody: true, cuts: 2, duration: 230 });
+    else fx.slash(caster.x, caster.y, ang, SLASH_RANGE, SLASH_ARC_HALF_RAD, {
       bloody: true, scores: 3, duration: 230,
     });
     fx.claws(caster.x + Math.cos(ang) * 30, caster.y + Math.sin(ang) * 30, 4, {

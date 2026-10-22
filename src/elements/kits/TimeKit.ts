@@ -1264,7 +1264,7 @@ export class TimeKit {
   onLassoHitNpc(proj: Projectile): void {
     const { npc, player, scene } = this.arena;
     npc.takeDamage(20);
-    this.arena.spawnHitFlash(npc.x, npc.y, 0xffdd44);
+    this.arena.spawnHitFlash(npc.x, npc.y, this.pcol(0xffdd44));
     this.arena.recordMasteryStat('lassos', 1);
     this.arena.showFloatingText(npc.x, npc.y - 24, '20', '#ffdd44');
 
@@ -1303,7 +1303,7 @@ export class TimeKit {
       this.npcPlayerTeleportFromX = player.x; this.npcPlayerTeleportFromY = player.y;
       this.npcPlayerTeleportToX = best.x; this.npcPlayerTeleportToY = best.y;
       this.npcPlayerTeleportPuddleAccum = 0;
-      this.arena.spawnHitFlash(player.x, player.y, 0xffdd44);
+      this.arena.spawnHitFlash(player.x, player.y, this.ncol(0xffdd44));
     }
     proj.setActive(false).setVisible(false);
     (proj.body as Phaser.Physics.Arcade.Body).stop();
@@ -1582,7 +1582,7 @@ export class TimeKit {
     for (const beam of this.rifleBeams) {
       if (ptSegDist(npc.x, npc.y, beam.fromX, beam.fromY, beam.toX, beam.toY) <= 30) {
         npc.takeDamage(beam.damage);
-        this.arena.spawnHitFlash(npc.x, npc.y, 0xff4444);
+        this.arena.spawnHitFlash(npc.x, npc.y, this.pcol(0xff4444));
         // Time resumes and the round arrives all at once.
         this.pfx.detonate(npc.x, npc.y, 54, { tones: HEAT_TONES, shells: 3, smoke: 2, duration: 420, burn: false });
         this.arena.recordMasteryStat('rifleHits', 1);
@@ -1858,7 +1858,7 @@ export class TimeKit {
     const fx = this.fx(b.owner);
     fx.flash(b.x, b.y, 16, 11, NOON_TONES);
     fx.ring(b.x, b.y, 8, 40, TIME.gold, 320, 2, 11);
-    this.arena.spawnHitFlash(victim.x, victim.y, TIME.gold);
+    this.arena.spawnHitFlash(victim.x, victim.y, this.col(b.owner)(TIME.gold));
     this.arena.showFloatingText(victim.x, victim.y - 40, '⏱️ STUCK!', '#ffdd44');
   }
 

@@ -6,6 +6,31 @@ import { CustomStatus } from './StatusHudKit';
 import {
   ArmGesture, RUBBER, RubberAura, RubberAuraStyle, RubberAvatar, RubberColorFn, RubberFx,
 } from './RubberVisuals';
+import { BaseAvatar } from './ElementVisuals';
+import { makeSkinAvatar } from './skins/SkinAvatars';
+import { PirateFx } from './skins/PirateFx';
+
+/** The per-frame ability painters a skin may redraw (PirateFx mirrors these signatures). */
+type RubberPainter = Pick<typeof RubberFx,
+  'drawPunchArm' | 'drawSlingV' | 'drawBounceForm' | 'drawBand' | 'drawAnchor'
+  | 'drawBazookaArm' | 'drawFreeAnchor' | 'drawRageBall'>;
+
+/** Pirate skin callouts, keyed by the element's own line. */
+const PIRATE_LINES: Record<string, string> = {
+  '🪀 SLING SET': 'GUM-GUM ROCKET',
+  '🔲 BOUNCE FORM': 'GUM-GUM BALLOON',
+  '⚫ ANCHOR SET': '👒 HAT PLANTED',
+  '🔴 RUBBERAGE!': 'GUM-GUM GATLING!',
+  '↩ SNAP!': 'GUM-GUM SNAP!',
+  '⬅ REEL IN!': '👒 REEL IN!',
+  '💥 SHATTERED': '👒 HAT KNOCKED',
+  '🥊 BAZOOKA!': 'GUM-GUM BAZOOKA!',
+  '💠 BOUNCE COMBO!': 'GUM-GUM BOUNCE!',
+  '🔵 BOING!': '👒 BOING!',
+  '🪀 UBER-GEAR MAXED': 'GEAR MAXED!',
+  '🔥 VULCANIZED!': 'RED HAWK!',
+  '⚛ ATOM-NHILEGO!': 'GUM-GUM THUNDERCLOUD!',
+};
 import { meterGain } from '../../combat/Meters';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -159,6 +184,8 @@ export interface RubberArenaApi {
   readonly isNpcRubber: boolean;
   /** `(owner, base) => displayed` — the owner's skin, or the identity. */
   rubberColor(owner: 'player' | 'npc', base: number): number;
+  /** The owner's equipped skin id for this element, or null. */
+  skinId(owner: 'player' | 'npc'): string | null;
   /** True while the player is mid-dodge/dash (Space dodge, sling launch, or band recall). */
   readonly isDodging: boolean;
   setIsDodging(v: boolean): void;
@@ -248,8 +275,8 @@ export class RubberKit {
   private readonly pfx: RubberFx;
   private readonly nfx: RubberFx;
   /** The gum-creature rig (glossy fists, eyes, crown coil) for each rubber fighter. */
-  private playerAvatar: RubberAvatar | null = null;
-  private npcAvatar: RubberAvatar | null = null;
+  private playerAvatar: BaseAvatar | null = null;
+  private npcAvatar: BaseAvatar | null = null;
   /** Stance tells, per side where both can run one. */
   private auras: Partial<Record<`${'player' | 'npc'}:${RubberAuraStyle}`, RubberAura>> = {};
   /**
@@ -427,8 +454,23 @@ export class RubberKit {
   /** Colour mapper for a side. */
   private col(owner: 'player' | 'npc'): RubberColorFn { return owner === 'player' ? this.pcol : this.ncol; }
   /** The rig for a side, if that side is playing Rubber. */
-  private avatarFor(owner: 'player' | 'npc'): RubberAvatar | null {
+  private avatarFor(owner: 'player' | 'npc'): BaseAvatar | null {
     return owner === 'player' ? this.playerAvatar : this.npcAvatar;
+  }
+  /** The owner's rig: their skin's character if one is equipped, else the gum creature. */
+  private makeAvatar(owner: 'player' | 'npc'): BaseAvatar {
+    const scene = this.arena.scene;
+    return makeSkinAvatar(this.arena.skinId(owner), scene) ?? new RubberAvatar(scene, this.col(owner), owner);
+  }
+  /** Per-frame ability painters for a side: the Pirate skin redraws every one as gum-gum art. */
+  private painter(owner: 'player' | 'npc'): RubberPainter {
+    return this.arena.skinId(owner) === 'pirate' ? PirateFx : RubberFx;
+  }
+  /** Floating callout, renamed for a skin that calls its moves by other names. */
+  private say(owner: 'player' | 'npc', x: number, y: number, text: string, color: string): void {
+    const line = this.arena.skinId(owner) === 'pirate' ? PIRATE_LINES[text] : undefined;
+    if (line) this.arena.showFloatingText(x, y, line, '#ffd47a');
+    else this.arena.showFloatingText(x, y, text, color);
   }
   private fighter(owner: 'player' | 'npc'): Fighter {
     return owner === 'player' ? this.arena.player : this.arena.npc;
@@ -937,32 +979,32 @@ export class RubberKit {
     // The wound-back fist, still tethered to the shoulder by the arm it will fire out of.
     if (this.punchHolding) {
       const over = this.punchOverRatio;
-      RubberFx.drawPunchArm(g, this.pcol, player.x, player.y, this.punchFistX, this.punchFistY,
+      this.painter('player').drawPunchArm(g, this.pcol, player.x, player.y, this.punchFistX, this.punchFistY,
         Phaser.Math.Clamp(Phaser.Math.Distance.Between(player.x, player.y, this.punchFistX, this.punchFistY) / PUNCH_MAX_PULL, 0, 1),
         hot || over >= 1, t);
     }
     if (this.punchStretching) {
-      RubberFx.drawPunchArm(g, this.pcol, player.x, player.y, this.punchArmFistX, this.punchArmFistY,
+      this.painter('player').drawPunchArm(g, this.pcol, player.x, player.y, this.punchArmFistX, this.punchArmFistY,
         this.punchArmReach / PUNCH_REACH, hot, t);
     }
     if (this.npcPunchStretching) {
-      RubberFx.drawPunchArm(g, this.ncol, npc.x, npc.y, this.npcPunchArmFistX, this.npcPunchArmFistY,
+      this.painter('npc').drawPunchArm(g, this.ncol, npc.x, npc.y, this.npcPunchArmFistX, this.npcPunchArmFistY,
         this.npcPunchArmReach / PUNCH_REACH, false, t);
     }
 
     if (this.slingState === 'pulling') {
       const pull = Phaser.Math.Distance.Between(player.x, player.y, this.slingRestX, this.slingRestY);
-      RubberFx.drawSlingV(g, this.pcol, player.x, player.y,
+      this.painter('player').drawSlingV(g, this.pcol, player.x, player.y,
         this.slingAnchorLX, this.slingAnchorLY, this.slingAnchorRX, this.slingAnchorRY,
         Phaser.Math.Clamp(pull / SLING_MAX_PULL, 0, 1), t);
     }
 
     if (this.bounceFormActive) {
-      RubberFx.drawBounceForm(g, this.pcol, player.x, player.y,
+      this.painter('player').drawBounceForm(g, this.pcol, player.x, player.y,
         Math.atan2(this.punchMouseY - player.y, this.punchMouseX - player.x), t);
     }
     if (this.npcBounceFormActive) {
-      RubberFx.drawBounceForm(g, this.ncol, npc.x, npc.y,
+      this.painter('npc').drawBounceForm(g, this.ncol, npc.x, npc.y,
         Math.atan2(player.y - npc.y, player.x - npc.x), t);
     }
 
@@ -975,16 +1017,16 @@ export class RubberKit {
       const ay = isP ? this.bandAnchorY : this.npcBandAnchorY;
       const tension = Phaser.Math.Clamp(
         Phaser.Math.Distance.Between(ax, ay, caster.x, caster.y) / BAND_MAX_STRETCH, 0, 1);
-      RubberFx.drawBand(g, this.col(owner), ax, ay, caster.x, caster.y, tension, t);
-      RubberFx.drawAnchor(g, this.col(owner), ax, ay, BAND_ANCHOR_RADIUS,
+      this.painter(owner).drawBand(g, this.col(owner), ax, ay, caster.x, caster.y, tension, t);
+      this.painter(owner).drawAnchor(g, this.col(owner), ax, ay, BAND_ANCHOR_RADIUS,
         isP && bouncy, isP && hot, t * 3, t);
     }
 
     for (const b of this.bazookas) {
-      RubberFx.drawBazookaArm(g, this.pcol, player.x, player.y, b.path, b.x, b.y, hot, t);
+      this.painter('player').drawBazookaArm(g, this.pcol, player.x, player.y, b.path, b.x, b.y, hot, t);
     }
     if (this.freeAnchor) {
-      RubberFx.drawFreeAnchor(g, this.pcol, this.freeAnchor.x, this.freeAnchor.y,
+      this.painter('player').drawFreeAnchor(g, this.pcol, this.freeAnchor.x, this.freeAnchor.y,
         this.freeAnchor.vx, this.freeAnchor.vy, BAND_ANCHOR_RADIUS);
     }
 
@@ -992,7 +1034,7 @@ export class RubberKit {
       const balls = owner === 'player' ? this.rubberageBalls : this.npcRubberageBalls;
       const swarmHot = owner === 'player' && hot;
       for (const b of balls) {
-        RubberFx.drawRageBall(g, this.col(owner), b.x, b.y, b.vx, b.vy,
+        this.painter(owner).drawRageBall(g, this.col(owner), b.x, b.y, b.vx, b.vy,
           RUBBERAGE_RADIUS, swarmHot, RUBBERAGE_MAX_SPEED, t);
       }
     }
@@ -1022,7 +1064,7 @@ export class RubberKit {
     // Bounce Form hides the fighter entirely — the paddle is the character while it is up, so
     // the rig has to go with it rather than floating next to a body that isn't there.
     if (this.arena.isPlayerRubber && player?.active && !this.bounceFormActive) {
-      if (!this.playerAvatar) this.playerAvatar = new RubberAvatar(scene, this.pcol, 'player');
+      if (!this.playerAvatar) this.playerAvatar = this.makeAvatar('player');
       this.playerAvatar.setFacing(Math.atan2(this.punchMouseY - player.y, this.punchMouseX - player.x));
       // The cure visibly inflates the rig, so the passive reads off the character alone.
       this.playerAvatar.setIntensity(1 + 0.4 * this.vulcK() + (this.fireballFlight ? 0.3 : 0));
@@ -1036,7 +1078,7 @@ export class RubberKit {
     }
 
     if (this.arena.isNpcRubber && npc?.active && !this.npcBounceFormActive) {
-      if (!this.npcAvatar) this.npcAvatar = new RubberAvatar(scene, this.ncol, 'npc');
+      if (!this.npcAvatar) this.npcAvatar = this.makeAvatar('npc');
       this.npcAvatar.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
       this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
     } else if (this.npcAvatar) {
@@ -1085,7 +1127,7 @@ export class RubberKit {
       this.pfx.boing(hx, hy, 4, 26, RUBBER.pink, 300, 8, 4);
       this.pfx.motes(hx, hy, 5, { speed: 90, size: 2, life: 400 });
     }
-    this.arena.showFloatingText(player.x, player.y - 40, '🪀 SLING SET', '#ff5577');
+    this.say(owner, player.x, player.y - 40, '🪀 SLING SET', '#ff5577');
   }
 
   doRubberSlingShotRelease(_vx: number, _vy: number, _owner: 'player' | 'npc'): void {
@@ -1112,7 +1154,7 @@ export class RubberKit {
       this.bounceFormActive = true;
       // Vulcanization holds the ball together longer.
       this.bounceFormEnd = time + BOUNCE_FORM_MS * (1 + VULC_BOUNCE_FORM * this.vulcK());
-      this.arena.showFloatingText(caster.x, caster.y - 40, '🔲 BOUNCE FORM', '#ff5577');
+      this.say(owner, caster.x, caster.y - 40, '🔲 BOUNCE FORM', '#ff5577');
     } else {
       this.npcBounceFormActive = true;
       this.npcBounceFormEnd = time + BOUNCE_FORM_MS;
@@ -1140,7 +1182,7 @@ export class RubberKit {
       this.bandFHoldStart = 0;
       this.bandPullTriggeredThisPress = false;
       this.bandAnchorFlying = false;
-      this.arena.showFloatingText(caster.x, caster.y - 40, '⚫ ANCHOR SET', '#ff5577');
+      this.say(owner, caster.x, caster.y - 40, '⚫ ANCHOR SET', '#ff5577');
     } else {
       this.npcBandActive = true;
       this.npcBandAnchorX = caster.x; this.npcBandAnchorY = caster.y;
@@ -1193,7 +1235,7 @@ export class RubberKit {
       this.rubberageBalls = balls;
       this.rubberageEnd = time + duration;
       this.rubberageDmg = dmg;
-      this.arena.showFloatingText(caster.x, caster.y - 40, '🔴 RUBBERAGE!', '#ff5577');
+      this.say(owner, caster.x, caster.y - 40, '🔴 RUBBERAGE!', '#ff5577');
       // Q+ : the player joins the swarm as a purple rubber ball.
       if (this.arena.hasUpgrade('q')) this.startPlayerBall();
     } else {
@@ -1637,7 +1679,7 @@ export class RubberKit {
       // The band takes up all its slack at once and drags you down it.
       this.pfx.smear(startX, startY, anchorX, anchorY, { color: RUBBER.blush, width: 18, duration: 300 });
       this.pfx.boing(startX, startY, 6, 34, RUBBER.blush, 300, 7, 4);
-      this.arena.showFloatingText(caster.x, caster.y - 40, '↩ SNAP!', '#ff5577');
+      this.say(owner, caster.x, caster.y - 40, '↩ SNAP!', '#ff5577');
 
       // F+ Reinforced Band: contact damage to anything along the snap path
       if (this.bandReinforced) {
@@ -1683,7 +1725,7 @@ export class RubberKit {
     // The anchor tears free and comes at you, harder the more tension it was under.
     this.pfx.boing(anchorX, anchorY, 6, 30 + 26 * tension, RUBBER.blush, 340, 8, 4);
     this.pfx.scuff(anchorX, anchorY, 18 + 12 * tension, 3);
-    this.arena.showFloatingText(player.x, player.y - 40, '⬅ REEL IN!', '#ff77aa');
+    this.say('player', player.x, player.y - 40, '⬅ REEL IN!', '#ff77aa');
   }
 
   private updateBand(time: number, delta: number, owner: 'player' | 'npc'): void {
@@ -1822,7 +1864,7 @@ export class RubberKit {
     const anchorX = owner === 'player' ? this.bandAnchorX : this.npcBandAnchorX;
     const anchorY = owner === 'player' ? this.bandAnchorY : this.npcBandAnchorY;
     this.expireBand(owner);
-    if (owner === 'player') this.arena.showFloatingText(anchorX, anchorY - 20, '💥 SHATTERED', '#ffaacc');
+    if (owner === 'player') this.say(owner, anchorX, anchorY - 20, '💥 SHATTERED', '#ffaacc');
     // A hard anchor doesn't deform, it comes apart — chunks of cured rubber everywhere.
     this.fx(owner).boom(anchorX, anchorY, 52, {
       color: RUBBER.cured, shreds: 10, rings: 2, duration: 460,
@@ -1957,7 +1999,7 @@ export class RubberKit {
       speed: 260, angle: Math.atan2(dirY, dirX), spread: 1.1, size: 2.6, life: 560, color: RUBBER.gold,
     });
     scene.cameras.main.shake(180, 0.005);
-    this.arena.showFloatingText(player.x, player.y - 44, '🥊 BAZOOKA!', '#ff5577');
+    this.say('player', player.x, player.y - 44, '🥊 BAZOOKA!', '#ff5577');
   }
 
   private updateBazookas(time: number, delta: number): void {
@@ -2069,7 +2111,7 @@ export class RubberKit {
       { color: RUBBER.sky, width: 18 });
     scene.cameras.main.shake(150, 0.005);
     this.arena.recordMasteryStat('bounceCombos', 1);
-    this.arena.showFloatingText(player.x, player.y - 44, '💠 BOUNCE COMBO!', '#5588ff');
+    this.say('player', player.x, player.y - 44, '💠 BOUNCE COMBO!', '#5588ff');
   }
 
   private updateFreeAnchor(time: number, delta: number): void {
@@ -2222,7 +2264,7 @@ export class RubberKit {
     this.pfx.motes(this.bandAnchorX, this.bandAnchorY, 4 + Math.round(k * 8), {
       speed: 120 + k * 180, angle: Math.atan2(dirY, dirX), spread: 1, size: 2.2, life: 420, color: RUBBER.ice,
     });
-    this.arena.showFloatingText(this.bandAnchorX, this.bandAnchorY - 24, '🔵 BOING!', '#88ccff');
+    this.say('player', this.bandAnchorX, this.bandAnchorY - 24, '🔵 BOING!', '#88ccff');
   }
 
   /**
@@ -2302,7 +2344,7 @@ export class RubberKit {
       before + meterGain(owner === 'player' ? this.arena.player : this.arena.npc, UBER_GAIN_PER_HIT));
     if (before < UBER_MAX && this.uber[owner] >= UBER_MAX) {
       const f = owner === 'player' ? this.arena.player : this.arena.npc;
-      this.arena.showFloatingText(f.x, f.y - 52, '🪀 UBER-GEAR MAXED', '#ff88aa');
+      this.say(owner, f.x, f.y - 52, '🪀 UBER-GEAR MAXED', '#ff88aa');
     }
   }
 
@@ -2362,7 +2404,7 @@ export class RubberKit {
       this.pfx.heatBurst(player.x, player.y, 52);
       this.pfx.shreds(player.x, player.y, 12, { speed: 240, size: 8, life: 700, color: RUBBER.cured });
       this.arena.scene.cameras.main.shake(240, 0.006);
-      this.arena.showFloatingText(player.x, player.y - 50, '🔥 VULCANIZED!', '#ff7733');
+      this.say('player', player.x, player.y - 50, '🔥 VULCANIZED!', '#ff7733');
     }
   }
 
@@ -2455,7 +2497,7 @@ export class RubberKit {
       const { player } = this.arena;
       this.avatarFor('player')?.play('flex');
       this.pfx.boing(player.x, player.y, 10, 70, RUBBER.orchid, 460, 7, 5);
-      this.arena.showFloatingText(player.x, player.y - 40, '⚛ ATOM-NHILEGO!', '#cc88ff');
+      this.say(owner, player.x, player.y - 40, '⚛ ATOM-NHILEGO!', '#cc88ff');
     } else {
       this.npcNhilegoRadius = NHILEGO_START_RADIUS;
       this.npcNhilegoHits = 0;

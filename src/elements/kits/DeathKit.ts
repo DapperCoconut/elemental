@@ -12,9 +12,31 @@ import {
   weaponCore,
 } from './DeathVisuals';
 import { FONT_DISPLAY, FONT_UI } from '../../ui/Theme';
+import { BaseAvatar } from './ElementVisuals';
+import { makeSkinAvatar } from './skins/SkinAvatars';
+import {
+  ConductorAnims, TRAIN_LEN, departureBoard, goggles, stopSign, ticket, train, umbrellaSwipe,
+} from './skins/ConductorFx';
 import { meterStep } from '../../combat/Meters';
 
 type Owner = 'player' | 'npc';
+
+/**
+ * Conductor skin: the express that runs down whoever midnight is for. Its nose position is a
+ * pure function of the clock while it approaches, so it reaches the victim on the exact frame
+ * the clock strikes — the skin moves no timing at all.
+ */
+interface ConductorTrain {
+  victim: Fighter;
+  y: number;
+  dir: number;
+  frontX: number;
+  struckAt: number | null;
+}
+/** How long before midnight the express comes into view. */
+const TRAIN_LEAD_MS = 1100;
+/** How fast it keeps going after it has been through them. */
+const TRAIN_SPEED_AFTER = 1300;
 
 const ARENA_PAD = 32;
 const BOTH: Owner[] = ['player', 'npc'];
@@ -495,6 +517,8 @@ export interface DeathArenaApi {
   isDodging: boolean;
   /** Skins: maps a Death visual colour through that side's equipped skin. */
   deathColor(owner: Owner, base: number): number;
+  /** Skins: the equipped skin id for that side, so a skin can swap in its own rig and art. */
+  skinId(owner: Owner): string | null;
   /** Shop upgrades, this side's and — online — the opponent's. */
   hasUpgrade(slot: string): boolean;
   hasNpcUpgrade(slot: string): boolean;
@@ -540,6 +564,10 @@ export class DeathKit {
   private pickRows: Phaser.GameObjects.Text[] = [];
   private pickHint: Phaser.GameObjects.Text | null = null;
   private vizT = 0;
+  /** Conductor skin: the express in flight, per Death side, and the layer it is drawn on. */
+  private trains: Record<Owner, ConductorTrain | null> = { player: null, npc: null };
+  private trainGfx: Phaser.GameObjects.Graphics | null = null;
+  private readonly conductorAnims: ConductorAnims;
 
   // ── Sim ──
   private sides: Record<Owner, Side> = { player: makeSide('player'), npc: makeSide('npc') };
@@ -593,6 +621,7 @@ export class DeathKit {
     this.ncol = (base) => api.deathColor('npc', base);
     this.pfx = new DeathFx(api.scene, this.pcol);
     this.nfx = new DeathFx(api.scene, this.ncol);
+    this.conductorAnims = new ConductorAnims(api.scene);
     this.setupKeys();
   }
 
@@ -627,6 +656,11 @@ export class DeathKit {
 
   private alive(f: Fighter | null | undefined): boolean {
     return !!f && f.active && f.hp > 0;
+  }
+
+  /** That side is wearing the Conductor skin. Drawing only — nothing in the sim reads it. */
+  private conductor(owner: Owner): boolean {
+    return this.api.skinId(owner) === 'conductor';
   }
 
   private isDeath(owner: Owner): boolean {
@@ -870,6 +904,8 @@ export class DeathKit {
     this.pickHint?.destroy(); this.pickHint = null;
     for (const r of this.pickRows) r.destroy();
     this.pickRows = [];
+    this.trainGfx?.destroy(); this.trainGfx = null;
+    this.trains = { player: null, npc: null };
 
     // The scene's keyboard plugin is torn down between runs, so the Keys have to be re-taken.
     this.setupKeys();
@@ -1140,7 +1176,7 @@ export class DeathKit {
       const to = Math.atan2(t.y - f.y, t.x - f.x);
       if (Math.abs(Phaser.Math.Angle.Wrap(to - ang)) > DISARM_HALF) continue;
       hits++;
-      this.api.spawnHitFlash(t.x, t.y, DEA.after);
+      this.api.spawnHitFlash(t.x, t.y, this.col(owner)(DEA.after));
       this.fx(owner).spark(t.x, t.y, ang);
 
       // Out of a full sheath the swing itself has weight: whatever it touches leaves the ground.
@@ -1294,7 +1330,7 @@ export class DeathKit {
 
     const ang = Math.atan2(victim.y - this.fighter(owner).y, victim.x - this.fighter(owner).x);
     this.fx(owner).amputate(victim.x, victim.y, ang, isLeg(limb));
-    this.api.spawnHitFlash(victim.x, victim.y, DEA.blood);
+    this.api.spawnHitFlash(victim.x, victim.y, this.col(owner)(DEA.blood));
     this.api.showFloatingText(victim.x, victim.y - 56, `🗡️ ${LIMB_EMOJI[limb]} ${LIMB_LABEL[limb]} TAKEN`, this.hex(DEA.blood));
     const lines: string[] = [];
     if (legs > 0) lines.push(`−${Math.round((1 - AMP_LEG_SPEED[legs]) * 100)}% SPEED`);
@@ -1341,7 +1377,7 @@ export class DeathKit {
         if (d.hit.has(t)) continue;
         if (Phaser.Math.Distance.Between(x, y, t.x, t.y) > AMP_HIT_R + 14 * t.sizeMult) continue;
         d.hit.add(t);
-        this.api.spawnHitFlash(t.x, t.y, DEA.blade);
+        this.api.spawnHitFlash(t.x, t.y, this.col(owner)(DEA.blade));
         this.fx(owner).spark(t.x, t.y, Math.atan2(d.y1 - d.y0, d.x1 - d.x0));
         // Exsanguination is paid for by the *pass*, not by the limb: a body with nothing left
         // to take is still opened up by a blade going through it.
@@ -1458,6 +1494,7 @@ export class DeathKit {
 
     this.updateSides(time, delta, playerIs, npcIs);
     this.updateClocks(delta, playerIs, npcIs);
+    this.updateTrains(delta);
     this.updateSheath();
     this.updateVolleys();
     this.updateShots(delta);
@@ -1487,6 +1524,7 @@ export class DeathKit {
 
     this.paintGround();
     this.paintAir();
+    this.paintTrains();
     this.paintClock(playerIs, npcIs);
     this.paintPicker(playerIs);
     this.pushStatuses(playerIs, npcIs);
@@ -1513,6 +1551,8 @@ export class DeathKit {
     // the nooses go over, because a katana that passes behind a body stops being a threat.
     if (!this.groundGfx) this.groundGfx = scene.add.graphics().setDepth(4);
     if (!this.airGfx) this.airGfx = scene.add.graphics().setDepth(8);
+    // The express goes over everybody — it is the one thing on screen bigger than the fight.
+    if (!this.trainGfx) this.trainGfx = scene.add.graphics().setDepth(14);
   }
 
   private updateSides(time: number, delta: number, playerIs: boolean, npcIs: boolean): void {
@@ -1560,12 +1600,59 @@ export class DeathKit {
         const mine = owner === 'player';
         this.fx(owner).toll(f.x, f.y, 16, 70 + (30 - Math.min(30, mark)) * 2, 520, 10,
           mine ? DEA.gold : DEA.blood);
-        this.api.showFloatingText(f.x, f.y - 58, `🕛 ${mark}`, this.hex(mine ? DEA.gold : DEA.blood));
+        this.api.showFloatingText(f.x, f.y - 58, `${this.conductor(owner) ? '🚂' : '🕛'} ${mark}`, this.hex(mine ? DEA.gold : DEA.blood));
         Sfx.playAt('clock-tick', f.x, { volume: 0.5 + (1 - mark / 30) * 0.4, rate: 0.7 + (1 - mark / 30) * 0.6 });
       }
 
       if (s.clockMs > 0) continue;
       this.strikeMidnight(owner);
+    }
+  }
+
+  /** The express enters from the far side of the arena from the victim, so it crosses most of it. */
+  private trainDir(victim: Fighter): number {
+    const wb = this.api.scene.physics.world.bounds;
+    return victim.x > (wb.left + wb.right) / 2 ? 1 : -1;
+  }
+
+  /**
+   * Conductor skin. In the last `TRAIN_LEAD_MS` the express rolls in along the victim's row,
+   * its nose placed from the clock alone so it meets them on the stroke; afterwards it keeps
+   * going until it is off the far edge. Purely drawing — `strikeMidnight` still does the kill.
+   */
+  private updateTrains(delta: number): void {
+    const wb = this.api.scene.physics.world.bounds;
+    for (const owner of BOTH) {
+      let tr = this.trains[owner];
+      if (tr && tr.struckAt !== null) {
+        tr.frontX += tr.dir * TRAIN_SPEED_AFTER * delta / 1000;
+        const gone = tr.dir > 0 ? tr.frontX - TRAIN_LEN > wb.right + 40 : tr.frontX + TRAIN_LEN < wb.left - 40;
+        if (gone) this.trains[owner] = null;
+        continue;
+      }
+      const s = this.sides[owner];
+      const approaching = this.conductor(owner) && this.isDeath(owner) && !s.clockSpent
+        && this.alive(this.fighter(owner)) && s.clockMs <= TRAIN_LEAD_MS;
+      const victim = approaching ? this.primaryVictim(owner) : null;
+      if (!victim || !this.alive(victim)) { this.trains[owner] = null; continue; }
+      if (!tr || tr.victim !== victim) {
+        tr = this.trains[owner] = { victim, y: victim.y, dir: this.trainDir(victim), frontX: 0, struckAt: null };
+        Sfx.playAt('train-horn', victim.x, { volume: 0.8, rate: 0.9 });
+      }
+      tr.y += (victim.y - tr.y) * Math.min(1, delta / 120);
+      const start = tr.dir > 0 ? wb.left - 80 : wb.right + 80;
+      const k = Phaser.Math.Clamp(1 - s.clockMs / TRAIN_LEAD_MS, 0, 1);
+      tr.frontX = start + (victim.x - start) * k;
+    }
+  }
+
+  private paintTrains(): void {
+    const g = this.trainGfx;
+    if (!g) return;
+    g.clear();
+    for (const owner of BOTH) {
+      const tr = this.trains[owner];
+      if (tr) train(g, tr.frontX, tr.y, tr.dir, this.vizT);
     }
   }
 
@@ -1582,10 +1669,22 @@ export class DeathKit {
     }
 
     const fx = this.fx(owner);
-    fx.reap(victim.x, victim.y, 120, 900, 12);
+    if (this.conductor(owner)) {
+      // The express arrives on the stroke: whatever was approaching is now through them.
+      let tr = this.trains[owner];
+      if (!tr || tr.victim !== victim) {
+        tr = this.trains[owner] = { victim, y: victim.y, dir: this.trainDir(victim), frontX: victim.x, struckAt: null };
+      }
+      tr.frontX = victim.x;
+      tr.struckAt = this.now;
+      this.conductorAnims.impact(victim.x, victim.y, tr.dir);
+      Sfx.playAt('train-horn', victim.x, { volume: 1 });
+    } else {
+      fx.reap(victim.x, victim.y, 120, 900, 12);
+    }
     fx.toll(f.x, f.y, 10, 220, 900, 11, DEA.blood);
-    this.api.spawnHitFlash(victim.x, victim.y, DEA.blood);
-    this.api.showFloatingText(victim.x, victim.y - 60, '🕛 MIDNIGHT', this.hex(DEA.blood));
+    this.api.spawnHitFlash(victim.x, victim.y, this.col(owner)(DEA.blood));
+    this.api.showFloatingText(victim.x, victim.y - 60, this.conductor(owner) ? '🚂 ALL ABOARD' : '🕛 MIDNIGHT', this.hex(DEA.blood));
     Sfx.playAt('judgement', victim.x, { volume: 1, rate: 0.55 });
     Sfx.playAt('death-npc', victim.x, { volume: 0.9, rate: 0.7 });
 
@@ -1640,7 +1739,7 @@ export class DeathKit {
 
     const pct = Math.round(STYX_STEP * stacks * 100);
     this.fx(owner).brand(victim.x, victim.y, 24, 10);
-    this.api.spawnHitFlash(victim.x, victim.y, DEA.styx);
+    this.api.spawnHitFlash(victim.x, victim.y, this.col(owner)(DEA.styx));
     this.api.showFloatingText(victim.x, victim.y - 40, `🌊 STYX ×${stacks}`, this.hex(DEA.styx));
     this.api.showFloatingText(victim.x, victim.y - 24, `−${pct}% SPEED · −${pct}% DAMAGE`, this.hex(DEA.deep));
     Sfx.playAt('status-slow', victim.x, { volume: 0.6, rate: 1 + stacks * 0.12 });
@@ -2222,7 +2321,7 @@ export class DeathKit {
     if (this.scars.length > SCAR_MAX) this.scars.shift();
 
     this.fx(owner).spark(x, y, inAng + Math.PI);
-    this.api.spawnHitFlash(x, y, DEA.blood);
+    this.api.spawnHitFlash(x, y, this.col(owner)(DEA.blood));
     const pct = Math.round(DISHONOR_STEP * list.length * 100);
     this.api.showFloatingText(x, y - 18, `⚖️ DISHONOR ×${list.length}`, this.hex(DEA.blood));
     this.api.showFloatingText(victim.x, victim.y - 42, `−${pct}% DAMAGE`, this.hex(DEA.ash));
@@ -2276,7 +2375,7 @@ export class DeathKit {
     for (const t of this.targetsOf(owner)) {
       if (Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) > SHOCK_R + 14 * t.sizeMult) continue;
       this.shocks[owner].set(t, { until: this.now + SHOCK_MS, pct });
-      this.api.spawnHitFlash(t.x, t.y, DEA.blade);
+      this.api.spawnHitFlash(t.x, t.y, this.col(owner)(DEA.blade));
       this.api.showFloatingText(t.x, t.y - 38, `🐌 −${Math.round(this.amped(t, pct) * 100)}% SPEED`, this.hex(DEA.blade));
       Sfx.playAt('status-slow', t.x, { volume: 0.7, rate: 0.7 });
     }
@@ -2541,7 +2640,9 @@ export class DeathKit {
       const f = this.fighter(owner);
       const s = this.sides[owner];
       if (!av) {
-        av = new DeathAvatar(scene, this.col(owner));
+        const skinned = makeSkinAvatar(this.api.skinId(owner), scene);
+        av = skinned instanceof DeathAvatar ? skinned : new DeathAvatar(scene, this.col(owner));
+        if (skinned && skinned !== av) (skinned as BaseAvatar).destroy();
         if (owner === 'player') this.playerAvatar = av; else this.npcAvatar = av;
       }
       const guarding = this.now < s.guardUntil;
@@ -2574,6 +2675,22 @@ export class DeathKit {
     g.clear();
 
     this.paintWalls(g);
+
+    // Conductor: the line the express is coming down, laid across the arena under everybody.
+    const wb = this.api.scene.physics.world.bounds;
+    for (const owner of BOTH) {
+      const tr = this.trains[owner];
+      if (!tr) continue;
+      const ty = tr.y + 30;
+      const fade = tr.struckAt === null ? 0.85 : 0.5;
+      for (let sx = wb.left; sx < wb.right; sx += 26) {
+        g.fillStyle(0x5a3a20, fade);
+        g.fillRect(sx, ty - 14, 9, 28);
+      }
+      g.lineStyle(3, 0x9aa3ae, fade);
+      g.lineBetween(wb.left, ty - 9, wb.right, ty - 9);
+      g.lineBetween(wb.left, ty + 9, wb.right, ty + 9);
+    }
 
     // ── Death by 1000 Cuts ──
     // On the floor, under everybody: they are gashes in the ground, and a body standing in them
@@ -2635,6 +2752,10 @@ export class DeathKit {
     // and the person standing stunned inside it are the same picture.
     for (const im of this.afterimages) {
       const k = Phaser.Math.Clamp((this.now - im.bornAt) / (im.diesAt - im.bornAt), 0, 1);
+      if (this.conductor(im.owner)) {
+        umbrellaSwipe(g, im.x, im.y, im.ang, DISARM_HALF, DISARM_REACH * 0.42, DISARM_REACH, (1 - k) * 0.75);
+        continue;
+      }
       slashArc(g, this.col(im.owner), im.x, im.y, im.ang, DISARM_HALF,
         DISARM_REACH * 0.42, DISARM_REACH, (1 - k) * 0.75,
         { color: DEA.after, seed: im.seed, lines: 3 });
@@ -2644,6 +2765,15 @@ export class DeathKit {
     for (const sh of this.shots) {
       const tint = this.col(sh.owner);
       const ang = Math.atan2(sh.vy, sh.vx);
+      if (this.conductor(sh.owner)) {
+        // Tickets: two ghosts fluttering behind the one in flight, tumbling slower than a star.
+        for (let i = 2; i >= 1; i--) {
+          const d = i * 10;
+          ticket(g, sh.x - Math.cos(ang) * d, sh.y - Math.sin(ang) * d, sh.spin * 0.35 - i * 0.4, 9, 0.28 - i * 0.08, sh.seed);
+        }
+        ticket(g, sh.x, sh.y, sh.spin * 0.35, 10, 0.97, sh.seed);
+        continue;
+      }
       // The wake: a smear of river behind the star, so a fan of three reads as a fan.
       g.fillStyle(shade(tint(DEA.deep), 1), 0.24);
       g.fillPoints([
@@ -2722,6 +2852,14 @@ export class DeathKit {
       const tint = this.col(owner);
       const s = this.sides[owner];
       const k = Phaser.Math.Clamp((s.guardUntil - this.now) / RIPOSTE_MS, 0, 1);
+      if (this.conductor(owner)) {
+        // Held out at arm's length, flushing from white to red as it goes up.
+        const red = Phaser.Math.Clamp((RIPOSTE_MS - (s.guardUntil - this.now)) / 380, 0, 1);
+        const sx = seg.ax + (seg.bx - seg.ax) * 0.62;
+        const sy = seg.ay + (seg.by - seg.ay) * 0.62;
+        stopSign(g, sx, sy, seg.ang, RIPOSTE_R * 0.82, red, Math.min(1, k * 6), this.vizT);
+        continue;
+      }
       const shimmer = 0.3 + 0.2 * Math.sin(this.vizT * 9);
       g.lineStyle(RIPOSTE_R * 1.4, tint(DEA.blade), 0.06 + k * 0.05);
       g.lineBetween(seg.ax, seg.ay, seg.bx, seg.by);
@@ -2769,7 +2907,9 @@ export class DeathKit {
         tentacle(g, tint, f.x + Math.cos(base) * 6, f.y + 4 + Math.sin(base) * 4, ang, len, 0.9,
           { seed: i * 37 + 5, t: this.vizT, curl: 1.1, thick: 7 });
       }
-      if (s.maskCharges > 0) {
+      if (s.maskCharges > 0 && this.conductor(owner)) {
+        goggles(g, f.x, f.y - 5, 6.5, MASK_CHARGES - s.maskCharges, 0.97, this.vizT);
+      } else if (s.maskCharges > 0) {
         deathMask(g, tint, f.x, f.y - 6, 9, MASK_CHARGES - s.maskCharges, 0.97,
           { seed: 3, t: this.vizT });
       }
@@ -2892,18 +3032,31 @@ export class DeathKit {
 
     const g = this.hudGfx.setVisible(true);
     g.clear();
-    this.paintCoffin(g, cx, cy, accent, late, tick);
+    if (this.conductor(owner)) {
+      departureBoard(g, cx, cy, frac, late, tick, !mine, this.vizT);
+      this.hudTitle.setVisible(true).setPosition(cx + 6, cy - 33)
+        .setColor(this.hex(mine ? 0xffd84a : 0xff6a5a))
+        .setText(mine ? 'NEXT TRAIN IN' : 'YOUR TRAIN IN');
+      const mm = Math.floor(secs / 60);
+      const ss = String(secs % 60).padStart(2, '0');
+      this.hudCount.setVisible(true).setPosition(cx, cy - 3)
+        .setColor(secs <= 10 ? '#ff6a5a' : '#ffd84a')
+        .setScale(1 + tick * (secs <= 10 ? 0.12 : 0.04))
+        .setText(s.clockSpent ? '— —' : `${mm}:${ss}`);
+      return;
+    }
+    this.paintCoffin(g, cx, cy, this.col(owner)(accent), late, tick, this.col(owner));
     clockFace(g, this.col(owner), cx, cy, CLOCK_R, frac, 1,
       { hostile: !mine || frac < 0.08, seed: 7 });
     // Mastery: the eight seconds this dial was just given, ringed in gold around it — the number
     // under the face went *up*, and that has never happened before in this element.
     if (this.now < s.delayUntil) {
-      g.lineStyle(3, DEA.gold, 0.35 + 0.3 * Math.sin(this.vizT * 5));
+      g.lineStyle(3, this.col(owner)(DEA.gold), 0.35 + 0.3 * Math.sin(this.vizT * 5));
       g.strokeCircle(cx, cy, CLOCK_R + 6 + Math.sin(this.vizT * 5) * 1.5);
     }
     // Twin hourglasses flank the count, their sand the same minute as the dial.
-    this.paintHourglass(g, cx - 30, cy + CLOCK_R + 7, frac, accent, 0);
-    this.paintHourglass(g, cx + 30, cy + CLOCK_R + 7, frac, accent, 0.5);
+    this.paintHourglass(g, cx - 30, cy + CLOCK_R + 7, frac, this.col(owner)(accent), 0, this.col(owner));
+    this.paintHourglass(g, cx + 30, cy + CLOCK_R + 7, frac, this.col(owner)(accent), 0.5, this.col(owner));
 
     this.hudTitle.setVisible(true).setPosition(cx, cy - CLOCK_R - 13)
       .setColor(this.hex(accent))
@@ -2919,78 +3072,78 @@ export class DeathKit {
    * its shoulders, a little skull capping the lid and a row of ribs along the foot. It reddens
    * and throbs in the last quarter of the minute.
    */
-  private paintCoffin(g: Phaser.GameObjects.Graphics, cx: number, cy: number, accent: number, late: number, tick: number): void {
+  private paintCoffin(g: Phaser.GameObjects.Graphics, cx: number, cy: number, accent: number, late: number, tick: number, tint: DeathColorFn): void {
     const P = (x: number, y: number) => new Phaser.Geom.Point(cx + x, cy + y);
     const lid = [P(-28, -62), P(28, -62), P(55, -22), P(40, 64), P(-40, 64), P(-55, -22)];
     const inner = [P(-25, -57), P(25, -57), P(50, -22), P(36, 59), P(-36, 59), P(-50, -22)];
     // Drop shadow, then the plate in two tones so it reads as a raised lid.
-    g.fillStyle(DEA.void_, 0.5);
+    g.fillStyle(tint(DEA.void_), 0.5);
     g.fillPoints(lid.map((q) => new Phaser.Geom.Point(q.x + 3, q.y + 4)), true);
-    g.fillStyle(DEA.void_, 0.92);
+    g.fillStyle(tint(DEA.void_), 0.92);
     g.fillPoints(lid, true);
-    g.fillStyle(DEA.shroud, 0.95);
+    g.fillStyle(tint(DEA.shroud), 0.95);
     g.fillPoints(inner, true);
-    g.fillStyle(DEA.ash, 0.35);
+    g.fillStyle(tint(DEA.ash), 0.35);
     g.fillPoints([P(-25, -57), P(25, -57), P(50, -22), P(-50, -22)], true);
     if (late > 0) {
-      g.fillStyle(DEA.blood, (0.08 + 0.1 * Math.sin(this.vizT * 8)) * late);
+      g.fillStyle(tint(DEA.blood), (0.08 + 0.1 * Math.sin(this.vizT * 8)) * late);
       g.fillPoints(inner, true);
     }
     // Bone frame: a dim outer line and a bright inner hairline, like a carved moulding.
-    g.lineStyle(2.4, DEA.pale, 0.55);
+    g.lineStyle(2.4, tint(DEA.pale), 0.55);
     g.strokePoints(lid, true, true);
-    g.lineStyle(1, late > 0 ? DEA.blood : accent, 0.45 + 0.35 * tick + late * 0.3);
+    g.lineStyle(1, late > 0 ? tint(DEA.blood) : accent, 0.45 + 0.35 * tick + late * 0.3);
     g.strokePoints(inner, true, true);
     // Brass studs at the shoulders and the foot.
     for (const [sx, sy] of [[-55, -22], [55, -22], [-40, 64], [40, 64], [-28, -62], [28, -62]]) {
-      g.fillStyle(DEA.brass, 1);
+      g.fillStyle(tint(DEA.brass), 1);
       g.fillCircle(cx + sx, cy + sy, 2.6);
-      g.fillStyle(DEA.gold, 0.9);
+      g.fillStyle(tint(DEA.gold), 0.9);
       g.fillCircle(cx + sx - 0.6, cy + sy - 0.6, 1.1);
     }
     // A small skull hung from the foot of the lid (the head of the corner is the status tray's).
     const kx = cx;
     const ky = cy + 71;
     // Crossed bones behind the skull.
-    g.lineStyle(2.2, DEA.pale, 0.8);
+    g.lineStyle(2.2, tint(DEA.pale), 0.8);
     g.lineBetween(kx - 12, ky - 5, kx + 12, ky + 6);
     g.lineBetween(kx + 12, ky - 5, kx - 12, ky + 6);
     for (const [bx, by] of [[-12, -5], [12, 6], [12, -5], [-12, 6]]) {
-      g.fillStyle(DEA.bone, 0.9);
+      g.fillStyle(tint(DEA.bone), 0.9);
       g.fillCircle(kx + bx, by + ky - 1, 1.6);
       g.fillCircle(kx + bx, by + ky + 1, 1.6);
     }
-    g.fillStyle(DEA.void_, 0.9);
+    g.fillStyle(tint(DEA.void_), 0.9);
     g.fillCircle(kx, ky, 7.4);
-    g.fillStyle(DEA.bone, 1);
+    g.fillStyle(tint(DEA.bone), 1);
     g.fillCircle(kx, ky - 0.6, 6);
     g.fillRect(kx - 3.4, ky + 3, 6.8, 3.4);
-    g.fillStyle(DEA.pale, 0.8);
+    g.fillStyle(tint(DEA.pale), 0.8);
     g.fillEllipse(kx, ky + 2.6, 9, 3);
-    g.fillStyle(late > 0 ? DEA.blood : DEA.void_, 1);
+    g.fillStyle(late > 0 ? tint(DEA.blood) : tint(DEA.void_), 1);
     g.fillCircle(kx - 2.3, ky - 0.6, 1.7);
     g.fillCircle(kx + 2.3, ky - 0.6, 1.7);
     g.fillTriangle(kx - 0.8, ky + 2.4, kx + 0.8, ky + 2.4, kx, ky + 1);
-    g.lineStyle(0.8, DEA.void_, 0.9);
+    g.lineStyle(0.8, tint(DEA.void_), 0.9);
     for (let i = -1; i <= 1; i++) g.lineBetween(kx + i * 1.6, ky + 3.6, kx + i * 1.6, ky + 6.2);
     // A shroud ring behind the dial so it never sits on the lid's highlight.
-    g.fillStyle(DEA.void_, 0.6);
+    g.fillStyle(tint(DEA.void_), 0.6);
     g.fillCircle(cx, cy, CLOCK_R + 5);
   }
 
   /** A little hourglass: top bulb draining as `frac` falls, a grain stream between the bulbs. */
-  private paintHourglass(g: Phaser.GameObjects.Graphics, x: number, y: number, frac: number, accent: number, phase: number): void {
+  private paintHourglass(g: Phaser.GameObjects.Graphics, x: number, y: number, frac: number, accent: number, phase: number, tint: DeathColorFn): void {
     const hw = 5;
     const hh = 8;
     // Frame caps.
-    g.fillStyle(DEA.brass, 1);
+    g.fillStyle(tint(DEA.brass), 1);
     g.fillRect(x - hw - 1.5, y - hh - 2, hw * 2 + 3, 2);
     g.fillRect(x - hw - 1.5, y + hh, hw * 2 + 3, 2);
-    g.lineStyle(1, DEA.brass, 0.9);
+    g.lineStyle(1, tint(DEA.brass), 0.9);
     g.lineBetween(x - hw - 1, y - hh, x - hw - 1, y + hh);
     g.lineBetween(x + hw + 1, y - hh, x + hw + 1, y + hh);
     // Glass.
-    g.fillStyle(DEA.void_, 0.85);
+    g.fillStyle(tint(DEA.void_), 0.85);
     g.fillTriangle(x - hw, y - hh, x + hw, y - hh, x, y);
     g.fillTriangle(x - hw, y + hh, x + hw, y + hh, x, y);
     // Sand: top bulb holds what is left, bottom what is spent.
@@ -3013,11 +3166,11 @@ export class DeathKit {
     }
     if (top > 0.01) {
       const u = (this.vizT * 2 + phase) % 1;
-      g.fillStyle(DEA.bone, 0.9);
+      g.fillStyle(tint(DEA.bone), 0.9);
       g.fillRect(x - 0.5, y, 1, hh * 0.9);
       g.fillCircle(x, y + u * hh * 0.9, 0.9);
     }
-    g.lineStyle(1, DEA.pale, 0.7);
+    g.lineStyle(1, tint(DEA.pale), 0.7);
     g.strokeTriangle(x - hw, y - hh, x + hw, y - hh, x, y);
     g.strokeTriangle(x - hw, y + hh, x + hw, y + hh, x, y);
   }
@@ -3199,13 +3352,13 @@ export class DeathKit {
     // The minute, from both ends. Yours sits with the passives; theirs sits at the very top of
     // the tray, because there is nothing on the screen that matters more.
     this.api.setStatusIndicator('death-midnight', playerIs ? {
-      name: 'Midnight', emoji: '🕛', color: DEA.gold,
+      name: this.conductor('player') ? 'Next Train' : 'Midnight', emoji: this.conductor('player') ? '🚂' : '🕛', color: DEA.gold,
       description: 'Your doomsday clock. When it reaches zero your enemy dies where they stand, with no catch. Honouring a Deal with Death takes 10 seconds off it.',
       count: Math.ceil(s.clockMs / 1000), suffix: 's', priority: 152,
     } : null);
 
     this.api.setStatusIndicator('death-doomed', npcIs && !foe.clockSpent ? {
-      name: 'Doomed', emoji: '⏳', color: DEA.blood,
+      name: this.conductor('npc') ? 'Last Train' : 'Doomed', emoji: this.conductor('npc') ? '🚂' : '⏳', color: DEA.blood,
       description: 'Their clock is running. When it strikes midnight you die instantly — there is no save and no counterplay except killing them first.',
       count: Math.ceil(foe.clockMs / 1000), suffix: 's', priority: 0,
     } : null);

@@ -11,6 +11,9 @@ import {
   CLAY, ClayAvatar, ClayColorFn, ClayFx, clayShard, drawClayBar, drawClayPuddle, drawClayRope, drawCreature,
   drawGolem, drawGuide, drawSlipPips, drawTether, drawWallSmear,
 } from './ClayVisuals';
+import { BaseAvatar } from './ElementVisuals';
+import { makeSkinAvatar } from './skins/SkinAvatars';
+import { drawGoldenBear } from './skins/AnimatronicFx';
 
 /**
  * Clay — the shaper's kit.
@@ -217,6 +220,8 @@ export interface ClayArenaApi {
   get height(): number;
   /** `SkinsKit.clayColor` — one owner's skin, or the identity. */
   clayColor(owner: ClayOwner, base: number): number;
+  /** The owner's equipped skin id, or null. */
+  skinId(owner: ClayOwner): string | null;
   spawnHitFlash(x: number, y: number, color: number): void;
   buildPlayerContext(x: number, y: number): CastContext;
   setStatusIndicator(id: string, status: CustomStatus | null): void;
@@ -237,8 +242,8 @@ export class ClayKit implements SummonPurgeTarget, FormRevertTarget {
   private readonly ncol: ClayColorFn;
   private readonly pfx: ClayFx;
   private readonly nfx: ClayFx;
-  private playerAvatar: ClayAvatar | null = null;
-  private npcAvatar: ClayAvatar | null = null;
+  private playerAvatar: BaseAvatar | null = null;
+  private npcAvatar: BaseAvatar | null = null;
   private sides: Record<ClayOwner, Side> = { player: makeSide(), npc: makeSide() };
   private shards: Shard[] = [];
   private orbitShards: OrbitShard[] = [];
@@ -266,7 +271,7 @@ export class ClayKit implements SummonPurgeTarget, FormRevertTarget {
   private fighter(owner: ClayOwner): Fighter { return owner === 'player' ? this.api.player : this.api.npc; }
   private fx(owner: ClayOwner): ClayFx { return owner === 'player' ? this.pfx : this.nfx; }
   private tint(owner: ClayOwner): ClayColorFn { return owner === 'player' ? this.pcol : this.ncol; }
-  private avatar(owner: ClayOwner): ClayAvatar | null { return owner === 'player' ? this.playerAvatar : this.npcAvatar; }
+  private avatar(owner: ClayOwner): BaseAvatar | null { return owner === 'player' ? this.playerAvatar : this.npcAvatar; }
   private body(f: Fighter): Phaser.Physics.Arcade.Body { return f.body as Phaser.Physics.Arcade.Body; }
   private isClay(owner: ClayOwner): boolean {
     return owner === 'player' ? this.api.elementId === 'clay' : this.api.npcElementId === 'clay';
@@ -553,6 +558,16 @@ export class ClayKit implements SummonPurgeTarget, FormRevertTarget {
     return Math.atan2(a.y - f.y, a.x - f.x);
   }
 
+  private makeAvatar(owner: ClayOwner, scene: Phaser.Scene): BaseAvatar {
+    return makeSkinAvatar(this.api.skinId(owner), scene) ?? new ClayAvatar(scene, this.tint(owner));
+  }
+
+  /** The golem, or — under the Animatronic skin — the golden bear standing in for it. Visual only. */
+  private paintGolem(owner: ClayOwner, g: Phaser.GameObjects.Graphics, x: number, y: number, t: number, seed: number, scale: number, bed: boolean, mood: 'idle' | 'rush' | 'slam'): void {
+    if (this.api.skinId(owner) === 'animatronic') drawGoldenBear(g, x, y, t, seed, scale, bed, mood);
+    else drawGolem(g, this.tint(owner), x, y, t, seed, scale, bed, mood);
+  }
+
   private updateAvatars(time: number, delta: number): void {
     void time;
     const { player, npc, scene } = this.api;
@@ -560,16 +575,16 @@ export class ClayKit implements SummonPurgeTarget, FormRevertTarget {
       const f = owner === 'player' ? player : npc;
       const have = owner === 'player' ? this.playerAvatar : this.npcAvatar;
       if (this.isClay(owner) && f?.active) {
-        const av = have ?? new ClayAvatar(scene, this.tint(owner));
+        const av = have ?? this.makeAvatar(owner, scene);
         if (!have) { if (owner === 'player') this.playerAvatar = av; else this.npcAvatar = av; }
         const s = this.side(owner);
         av.setFacing(this.aimAngle(owner));
         av.setMastered(this.mastered(owner));
-        av.setFused(s.fused, s.hitsLeft, FUSE_HITS);
+        (av as BaseAvatar & { setFused?(on: boolean, layers: number, max: number): void }).setFused?.(s.fused, s.hitsLeft, FUSE_HITS);
         av.setRigScale(f.claySizeMult);
         av.setIntensity(s.fused ? 1.2 : 1);
         if (s.slink === 'wall') av.setHold('ride', this.wallHeading(s));
-        else if (!s.drawing && !s.lifeDrawing) av.releaseHold();
+        else if (!s.drawing && !s.lifeDrawing) av.setHold(null);
         // On the wall the smear *is* the body; the rig hides with the sprite.
         const alpha = f.forceInvisible || s.slink !== 'none' ? 0 : f.alpha;
         av.update(delta, f.x, f.y, alpha);
@@ -770,7 +785,7 @@ export class ClayKit implements SummonPurgeTarget, FormRevertTarget {
     s.shieldAngle = 0;
     s.drawing = null;
     const f = this.fighter(owner);
-    this.avatar(owner)?.releaseHold();
+    this.avatar(owner)?.setHold(null);
     if (s.shield.length) {
       this.announce(f.x, f.y - 50, `CLAY SET · ${s.shield.length}`, '#9fd0ff');
       for (const n of s.shield.filter((_, i) => i % 4 === 0)) { const p = this.shieldWorld(owner, n); this.fx(owner).clods(p.x, p.y, 1, 40, 260); }
@@ -900,7 +915,7 @@ export class ClayKit implements SummonPurgeTarget, FormRevertTarget {
     if (s.slink === 'wall') this.fx(owner).clods(f.x, f.y, 6, 120, 400);
     s.slink = 'none';
     this.body(f).stop();
-    this.avatar(owner)?.releaseHold();
+    this.avatar(owner)?.setHold(null);
   }
 
   // ── Fuse ──────────────────────────────────────────────────────────────────
@@ -1136,7 +1151,7 @@ export class ClayKit implements SummonPurgeTarget, FormRevertTarget {
     if (time < s.lifeDrawing.until && s.lifeDrawing.budget > 0) return;
     const d = s.lifeDrawing;
     s.lifeDrawing = null;
-    this.avatar(owner)?.releaseHold();
+    this.avatar(owner)?.setHold(null);
     if (d.nodes.length < CREATURE_MIN_NODES) { this.announce(d.cx, d.cy - 30, 'TOO LITTLE CLAY', '#9a7b68'); return; }
     // Sharp means strong: the total turning of the stroke; round means fast: a closed, even loop.
     // Every closed loop turns through 2π in total, so what counts is how much of that turning
@@ -1250,7 +1265,7 @@ export class ClayKit implements SummonPurgeTarget, FormRevertTarget {
       const bed = this.mastered(owner);
       if (!s.fused && g.hiddenUntil <= time) {
         drawTether(ground, tint, f.x, f.y + 6, g.x, g.y + 20, t);
-        drawGolem(golemG, tint, g.x, g.y, t + g.seed, g.seed, s.fusing ? 1.1 : 1, bed, g.mood);
+        this.paintGolem(owner, golemG, g.x, g.y, t + g.seed, g.seed, s.fusing ? 1.1 : 1, bed, g.mood);
         if (bed) {
           ground.lineStyle(1.5, tint(CLAY.seam), 0.25 + Math.sin(t * 2) * 0.08);
           ground.strokeCircle(g.x, g.y, BEDROCK_RANGE);
@@ -1294,7 +1309,7 @@ export class ClayKit implements SummonPurgeTarget, FormRevertTarget {
         ground.fillStyle(tint(CLAY.wet), 0.4);
         ground.fillEllipse(f.x, f.y + 18, 50 - lift * 0.4, 16 - lift * 0.14);
         // The rig stays on the body; the body itself is drawn lifted.
-        drawGolem(air, tint, f.x, f.y - lift, t, 7, 0.9, bed, 'rush');
+        this.paintGolem(owner, air, f.x, f.y - lift, t, 7, 0.9, bed, 'rush');
       }
     }
 

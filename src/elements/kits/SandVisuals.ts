@@ -970,14 +970,14 @@ export function cursedSlab(
   x: number, y: number, r: number, t: number, alpha: number,
 ): void {
   const pulse = 0.5 + 0.5 * Math.sin(t * 6);
-  g.fillStyle(0x5b1f8c, alpha * (0.5 + pulse * 0.2));
+  g.fillStyle(tint(0x5b1f8c), alpha * (0.5 + pulse * 0.2));
   g.fillEllipse(x, y, r * 2, r * 1.32);
-  g.lineStyle(2.5, 0x9b4dff, alpha * (0.55 + pulse * 0.35));
+  g.lineStyle(2.5, tint(0x9b4dff), alpha * (0.55 + pulse * 0.35));
   g.strokeEllipse(x, y, r * 2, r * 1.32);
   // Veins of the curse crawling out to the rim.
   for (let i = 0; i < 7; i++) {
     const a = (i / 7) * TAU + t * 0.4;
-    g.lineStyle(1.4, 0xc48bff, alpha * 0.4);
+    g.lineStyle(1.4, tint(0xc48bff), alpha * 0.4);
     g.lineBetween(x, y, x + Math.cos(a) * r * 0.92, y + Math.sin(a) * r * 0.6);
   }
   // The eye. Sclera, a yellow iris that widens with the pulse, and a slit pupil.
@@ -985,16 +985,16 @@ export function cursedSlab(
   const ey = y - r * 0.06;
   const ew = r * 0.78;
   const eh = r * 0.4;
-  g.fillStyle(0x1a0a26, alpha * 0.9);
+  g.fillStyle(tint(0x1a0a26), alpha * 0.9);
   g.fillEllipse(ex, ey, ew * 2, eh * 2);
-  g.fillStyle(SND.gold, alpha * (0.85 + pulse * 0.15));
+  g.fillStyle(tint(SND.gold), alpha * (0.85 + pulse * 0.15));
   g.fillEllipse(ex, ey, ew * 1.15, eh * 1.5);
-  g.fillStyle(0x1a0a26, alpha);
+  g.fillStyle(tint(0x1a0a26), alpha);
   g.fillEllipse(ex, ey, ew * 0.3, eh * (1.2 - pulse * 0.3));
-  g.fillStyle(SND.goldHot, alpha * 0.8);
+  g.fillStyle(tint(SND.goldHot), alpha * 0.8);
   g.fillCircle(ex - ew * 0.28, ey - eh * 0.35, 1.6);
   // Lids, so it reads as an eye rather than as a marble.
-  g.lineStyle(2, 0x3b1257, alpha * 0.9);
+  g.lineStyle(2, tint(0x3b1257), alpha * 0.9);
   g.strokeEllipse(ex, ey, ew * 2, eh * 2);
   void tint;
 }

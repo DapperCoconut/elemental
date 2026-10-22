@@ -8,6 +8,10 @@ import {
 } from './ElectricityVisuals';
 import { FONT_DISPLAY } from '../../ui/Theme';
 import { meterGain } from '../../combat/Meters';
+import { BaseAvatar } from './ElementVisuals';
+import { makeSkinAvatar } from './skins/SkinAvatars';
+import { RageAvatar } from './skins/RageAvatar';
+import { drawRageMeter, isRageTint, rageSteam } from './skins/RageFx';
 
 interface StormCloud {
   /** Redrawn every frame — the boiling mass, its interior flicker and its sagging underside. */
@@ -109,6 +113,17 @@ const NPC_GESTURES: Record<string, ArmGesture> = {
   'kinetic-bomb': 'punch',
 };
 
+/** What Rage shouts in place of electricity's callouts. Damage numbers are left alone. */
+const RAGE_LINES: Record<string, string> = {
+  'OVERCHARGED!': 'ENRAGED!',
+  'RESTARTED!': 'TOO ANGRY TO DIE!',
+  'AUTO-RESTARTED!': 'TOO ANGRY TO DIE!',
+  'JUMPSTART!': 'BOILING OVER!',
+  'Regen cancelled': 'Simmer cancelled',
+  '⚡ KINETIC BOMB': '💢 FURY BOMB',
+  '⚡ LATCHED': '💢 LATCHED ON',
+};
+
 // ── ElectricityArenaApi ───────────────────────────────────────────────────
 
 export interface ElectricityArenaApi {
@@ -129,6 +144,8 @@ export interface ElectricityArenaApi {
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
   /** Skins: maps an electric visual color through the owner's skin. */
   electricityColor(owner: 'player' | 'npc', base: number): number;
+  /** Equipped skin id for that side, or null. */
+  skinId(owner: 'player' | 'npc'): string | null;
   get playerSpeedMult(): number;
   set playerSpeedMult(v: number);
   spawnHitFlash(x: number, y: number, color: number): void;
@@ -152,8 +169,8 @@ export class ElectricityKit {
   private readonly pfx: ElectricityFx;
   private readonly nfx: ElectricityFx;
   /** The live-wire character rig (plasma arms, eyes, lightning rod) for each electric fighter. */
-  private playerAvatar: ElectricityAvatar | null = null;
-  private npcAvatar: ElectricityAvatar | null = null;
+  private playerAvatar: BaseAvatar | null = null;
+  private npcAvatar: BaseAvatar | null = null;
   /** Last aim point, cached in handleInput so the per-frame avatar update can face it. */
   private aimX = 0;
   private aimY = 0;
@@ -242,6 +259,30 @@ export class ElectricityKit {
   /** Effect painter for a side. */
   private fx(owner: 'player' | 'npc'): ElectricityFx { return owner === 'player' ? this.pfx : this.nfx; }
 
+  /** The equipped skin's rig, or electricity's own live wire. */
+  private makeAvatar(owner: 'player' | 'npc'): BaseAvatar {
+    const scene = this.arena.scene;
+    return makeSkinAvatar(this.arena.skinId(owner), scene)
+      ?? new ElectricityAvatar(scene, owner === 'player' ? this.pcol : this.ncol,
+        owner === 'player' ? LIVE_TONES : NPC_TONES);
+  }
+
+  /** Rage skin on the player's side — reskins the meter and the player's callouts. */
+  private get playerRage(): boolean { return isRageTint(this.pcol); }
+
+  /** Rage voices the player's callouts: its own words and its own colours. */
+  private say(x: number, y: number, text: string, color: string, owner: 'player' | 'npc' = 'player'): void {
+    if (owner === 'player' && this.playerRage) {
+      text = RAGE_LINES[text] ?? text.replace('⚡', '💢').replace('BALL LIGHTNING', 'BALL OF FURY');
+      color = '#' + this.pcol(parseInt(color.slice(1), 16)).toString(16).padStart(6, '0');
+    }
+    this.arena.showFloatingText(x, y, text, color);
+  }
+
+  private hitFlash(x: number, y: number, color: number, owner: 'player' | 'npc' = 'player'): void {
+    this.arena.spawnHitFlash(x, y, (owner === 'player' ? this.pcol : this.ncol)(color));
+  }
+
   // ── Lifecycle ─────────────────────────────────────────────────────────
 
   // isPlayerElement: only true when the player picked electricity
@@ -324,7 +365,7 @@ export class ElectricityKit {
     // Cancel regen if hit while regenerating
     if (this.electricRegenActive) {
       this.electricRegenActive = false;
-      this.arena.showFloatingText(player.x, player.y - 20, 'Regen cancelled', '#ffee00');
+      this.say(player.x, player.y - 20, 'Regen cancelled', '#ffee00');
     }
 
     // Overcharge: prevent death (intercept before 'defeated' fires)
@@ -336,7 +377,7 @@ export class ElectricityKit {
       this.kineticPower = 0;
       this.updateHud(cap);
       this.arena.recordMasteryStat('revives', 1);
-      this.arena.showFloatingText(player.x, player.y - 30, 'RESTARTED!', '#ffee00');
+      this.say(player.x, player.y - 30, 'RESTARTED!', '#ffee00');
       this.paintRevive(player.x, player.y);
       if (this.arena.hasPerk('player', 'phoenix')) this._activatePhoenix(time);
       return;
@@ -350,7 +391,7 @@ export class ElectricityKit {
         this.kineticPower = 0;
         this.updateHud(cap);
         this.arena.recordMasteryStat('revives', 1);
-        this.arena.showFloatingText(player.x, player.y - 30, 'AUTO-RESTARTED!', '#ffee00');
+        this.say(player.x, player.y - 30, 'AUTO-RESTARTED!', '#ffee00');
         this.paintRevive(player.x, player.y);
         if (this.arena.hasPerk('player', 'phoenix')) this._activatePhoenix(time);
       }
@@ -428,8 +469,8 @@ export class ElectricityKit {
               shockData.last = time;
               this.electroShockTimers.set(proj, shockData);
               t.takeDamage(4);
-              this.arena.spawnHitFlash(t.x, t.y, ELECTRIC.volt);
-              this.arena.showFloatingText(t.x, t.y - 20, '4', '#ffee00');
+              this.hitFlash(t.x, t.y, ELECTRIC.volt);
+              this.say(t.x, t.y - 20, '4', '#ffee00');
               this.pfx.chain(proj.x, proj.y, t.x, t.y, LIVE_TONES);
             }
           }
@@ -488,7 +529,8 @@ export class ElectricityKit {
     const { player, npc, scene, elementId, npcElementId } = this.arena;
 
     if (elementId === 'electricity' && player?.active) {
-      if (!this.playerAvatar) this.playerAvatar = new ElectricityAvatar(scene, this.pcol, LIVE_TONES);
+      if (!this.playerAvatar) this.playerAvatar = this.makeAvatar('player');
+      if (this.playerAvatar instanceof RageAvatar) this.playerAvatar.setHealth(player.hp, player.maxHp);
       const aimX = this.aimX || player.x + 1;
       const aimY = this.aimY || player.y;
       this.playerAvatar.setFacing(Math.atan2(aimY - player.y, aimX - player.x));
@@ -508,7 +550,8 @@ export class ElectricityKit {
     }
 
     if (npcElementId === 'electricity' && npc?.active) {
-      if (!this.npcAvatar) this.npcAvatar = new ElectricityAvatar(scene, this.ncol, NPC_TONES);
+      if (!this.npcAvatar) this.npcAvatar = this.makeAvatar('npc');
+      if (this.npcAvatar instanceof RageAvatar) this.npcAvatar.setHealth(npc.hp, npc.maxHp);
       this.npcAvatar.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
       this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
     } else if (this.npcAvatar) {
@@ -550,6 +593,10 @@ export class ElectricityKit {
       fx.sparks(proj.x, proj.y, 2, {
         speed: 60, spread: 0.5, angle: back, size: 1.8, life: 240, fall: 8, depth: 5, tones,
       });
+      // Rage's shots are too hot to fly clean: they hiss steam off their back.
+      if (Math.random() < 0.35 && isRageTint(proj.isFromPlayer ? this.pcol : this.ncol)) {
+        rageSteam(fx, proj.x, proj.y, 1, { spread: 3, rise: 14, size: 2.6, life: 380, depth: 5 });
+      }
     }
   }
 
@@ -623,8 +670,8 @@ export class ElectricityKit {
             bl.lastHitByEnemy.set(target, time);
             const dmgTable = [18, 28, 40, 55];
             target.takeDamage(dmgTable[bl.tier - 1]);
-            this.arena.spawnHitFlash(target.x, target.y, ELECTRIC.plasma);
-            this.arena.showFloatingText(target.x, target.y - 20, `${dmgTable[bl.tier - 1]}`, '#cc88ff');
+            this.hitFlash(target.x, target.y, ELECTRIC.plasma);
+            this.say(target.x, target.y - 20, `${dmgTable[bl.tier - 1]}`, '#cc88ff');
             this.pfx.discharge(target.x, target.y, 40 + bl.tier * 8, {
               arms: 5 + bl.tier, sparks: 8 + bl.tier * 2, scorch: false, depth: 7, tones: PLASMA_TONES,
             });
@@ -644,8 +691,8 @@ export class ElectricityKit {
           if (!target.active || target.hp <= 0) continue;
           if (Phaser.Math.Distance.Between(bl.x, bl.y, target.x, target.y) <= sRadius) {
             target.takeDamage(4);
-            this.arena.spawnHitFlash(target.x, target.y, ELECTRIC.volt);
-            this.arena.showFloatingText(target.x, target.y - 20, '4', '#ffee00');
+            this.hitFlash(target.x, target.y, ELECTRIC.volt);
+            this.say(target.x, target.y - 20, '4', '#ffee00');
             this.pfx.chain(bl.x, bl.y, target.x, target.y, PLASMA_TONES);
           }
         }
@@ -678,8 +725,8 @@ export class ElectricityKit {
           if (!target.active || target.hp <= 0) continue;
           if (Phaser.Math.Distance.Between(sc.x, sc.y, target.x, target.y) <= 70) {
             target.takeDamage(18, { source: sc, sourceX: sc.x, sourceY: sc.y });
-            this.arena.spawnHitFlash(target.x, target.y, ELECTRIC.sky);
-            this.arena.showFloatingText(target.x, target.y - 20, '18', '#88ccff');
+            this.hitFlash(target.x, target.y, ELECTRIC.sky);
+            this.say(target.x, target.y - 20, '18', '#88ccff');
             this.pfx.chain(sc.x, sc.y, target.x, target.y, STORM_TONES);
           }
         }
@@ -697,7 +744,7 @@ export class ElectricityKit {
         this.playerPhoenixUntil = 0;
         player.damageAbsorber = null;
         this.arena.playerSpeedMult = this.playerPhoenixSpeedBaseline;
-        this.arena.showFloatingText(player.x, player.y - 30, 'PHOENIX END', '#ff9900');
+        this.say(player.x, player.y - 30, 'PHOENIX END', '#ff9900');
         this.pfx.ring(player.x, player.y, 44, 10, ELECTRIC.ember, 340, 3, 4);
       } else {
         this.playerPhoenixFlameAccum += delta;
@@ -725,7 +772,7 @@ export class ElectricityKit {
         const tick = () => {
           if (remaining <= 0 || !player.active) return;
           player.heal(5);
-          this.arena.showFloatingText(player.x, player.y - 24, '🔥 +5', '#ff6600');
+          this.say(player.x, player.y - 24, '🔥 +5', '#ff6600');
           remaining--;
           if (remaining > 0) this.arena.scene.time.delayedCall(1000, tick);
         };
@@ -794,7 +841,7 @@ export class ElectricityKit {
         if (!v?.active || v.hp <= 0) continue;
         if (Phaser.Math.Distance.Between(s.x, s.y, v.x, v.y) > COPPER_SPARK_RADIUS) continue;
         v.takeDamage(s.dmg);
-        this.arena.spawnHitFlash(v.x, v.y, ELECTRIC.current);
+        this.hitFlash(v.x, v.y, ELECTRIC.current);
         // No tweened bolt per bite: a whole field of these can tick in the same frame, so the
         // spark just flares in the shared Graphics for a moment instead.
         s.flareUntil = time + 160;
@@ -945,8 +992,8 @@ export class ElectricityKit {
           const closestY = startY + tParam * segDY;
           if (Phaser.Math.Distance.Between(closestX, closestY, et.x, et.y) <= 45) {
             et.takeDamage(15);
-            this.arena.spawnHitFlash(et.x, et.y, ELECTRIC.volt);
-            this.arena.showFloatingText(et.x, et.y - 20, '15', '#ffee00');
+            this.hitFlash(et.x, et.y, ELECTRIC.volt);
+            this.say(et.x, et.y - 20, '15', '#ffee00');
             this.arena.recordMasteryStat('dashHits', 1);
             // Every body the corridor ran through gets its own earthing arc.
             this.pfx.chain(closestX, closestY, et.x, et.y, LIVE_TONES);
@@ -989,8 +1036,8 @@ export class ElectricityKit {
           if (!t.active || t.hp <= 0) continue;
           if (Phaser.Math.Distance.Between(mouseX, mouseY, t.x, t.y) <= 100) {
             t.takeDamage(dmg);
-            this.arena.spawnHitFlash(t.x, t.y, ELECTRIC.volt);
-            if (dmg > 0) this.arena.showFloatingText(t.x, t.y - 20, `${dmg}`, '#ffee00');
+            this.hitFlash(t.x, t.y, ELECTRIC.volt);
+            if (dmg > 0) this.say(t.x, t.y - 20, `${dmg}`, '#ffee00');
             this.pfx.chain(mouseX, mouseY, t.x, t.y, LIVE_TONES);
           }
         }
@@ -1038,15 +1085,15 @@ export class ElectricityKit {
         const nearest = this.arena.getNearestEnemy(player.x, player.y);
         if (nearest && nearest.active && Phaser.Math.Distance.Between(player.x, player.y, nearest.x, nearest.y) <= 200) {
           nearest.takeDamage(20);
-          this.arena.spawnHitFlash(nearest.x, nearest.y, ELECTRIC.volt);
-          this.arena.showFloatingText(nearest.x, nearest.y - 20, '20', '#ffee00');
+          this.hitFlash(nearest.x, nearest.y, ELECTRIC.volt);
+          this.say(nearest.x, nearest.y - 20, '20', '#ffee00');
           this.pfx.chain(player.x, player.y, nearest.x, nearest.y, LIVE_TONES);
           this.pfx.discharge(nearest.x, nearest.y, 44, { arms: 6, sparks: 10, scorch: false, tones: LIVE_TONES });
         }
         this.electricRegenActive = true;
         this.electricRegenSecondsLeft = 6;
         this.electricRegenAccum = 0;
-        this.arena.showFloatingText(player.x, player.y - 30, 'JUMPSTART!', '#ffee00');
+        this.say(player.x, player.y - 30, 'JUMPSTART!', '#ffee00');
         this.pfx.ignite(player.x, player.y, 34, 5, LIVE_TONES);
         this.playerAvatar?.play('punch', aim);
       } else {
@@ -1057,8 +1104,8 @@ export class ElectricityKit {
             if (!t.active || t.hp <= 0) continue;
             if (Phaser.Math.Distance.Between(player.x, player.y, t.x, t.y) <= 120) {
               t.takeDamage(blastDmg);
-              this.arena.spawnHitFlash(t.x, t.y, ELECTRIC.current);
-              this.arena.showFloatingText(t.x, t.y - 20, `${blastDmg}`, '#ffaa00');
+              this.hitFlash(t.x, t.y, ELECTRIC.current);
+              this.say(t.x, t.y - 20, `${blastDmg}`, '#ffaa00');
               this.pfx.chain(player.x, player.y, t.x, t.y, LIVE_TONES);
             }
           }
@@ -1087,7 +1134,7 @@ export class ElectricityKit {
         player.triggerCooldown('restart');
         this.overchargeActive = true;
         this.overchargeUntil = time + 5000;
-        this.arena.showFloatingText(player.x, player.y - 30, 'OVERCHARGED!', '#ffee00');
+        this.say(player.x, player.y - 30, 'OVERCHARGED!', '#ffee00');
         this.pfx.ignite(player.x, player.y, 44, 5, LIVE_TONES);
         this.pfx.ring(player.x, player.y, 10, 90, ELECTRIC.volt, 460, 5, 5);
         this.playerAvatar?.play('raise', -Math.PI / 2, 900);
@@ -1121,18 +1168,24 @@ export class ElectricityKit {
     this.playerPhoenixFlameAccum = 0;
     this.pfx.ignite(player.x, player.y, 40, 5, PHOENIX_TONES);
     this.pfx.ring(player.x, player.y, 8, 80, ELECTRIC.ember, 440, 4, 5);
-    this.arena.showFloatingText(player.x, player.y - 44, '🔥 PHOENIX MODE', '#ff6600');
+    this.say(player.x, player.y - 44, '🔥 PHOENIX MODE', '#ff6600');
   }
 
   private updateHud(cap: number): void {
     if (this.kineticPowerText) {
-      this.kineticPowerText.setText(`⚡ ${Math.floor(this.kineticPower)}/${cap}`);
+      this.kineticPowerText.setText(`${this.playerRage ? 'RAGE' : '⚡'} ${Math.floor(this.kineticPower)}/${cap}`);
+      this.kineticPowerText.setStroke(this.playerRage ? '#3d0808' : '#3a2a00', 4);
     }
     if (this.kineticHudGfx && this.kineticPowerText) {
       const g = this.kineticHudGfx;
       g.clear();
-      drawKineticBattery(g, this.pcol, LIVE_TONES, this.kineticPowerText.x, 54,
-        this.kineticPower / cap, this.arena.scene.time.now / 1000, this.arena.masteryActive);
+      if (this.playerRage) {
+        drawRageMeter(g, this.kineticPowerText.x, 54,
+          this.kineticPower / cap, this.arena.scene.time.now / 1000, this.arena.masteryActive);
+      } else {
+        drawKineticBattery(g, this.pcol, LIVE_TONES, this.kineticPowerText.x, 54,
+          this.kineticPower / cap, this.arena.scene.time.now / 1000, this.arena.masteryActive);
+      }
     }
   }
 
@@ -1163,7 +1216,7 @@ export class ElectricityKit {
     this.pfx.ignite(fromX, fromY, 26 + tier * 6, 6, PLASMA_TONES);
     this.pfx.ring(fromX, fromY, 6, 40 + tier * 14, ELECTRIC.plasma, 380, 3.5, 5);
     this.pfx.sparks(fromX, fromY, 8 + tier * 4, { speed: 180, size: 2.6, life: 460, depth: 6, tones: PLASMA_TONES });
-    this.arena.showFloatingText(fromX, fromY - 34, `⚡ BALL LIGHTNING ${'I'.repeat(tier)}`, '#cc88ff');
+    this.say(fromX, fromY - 34, `⚡ BALL LIGHTNING ${'I'.repeat(tier)}`, '#cc88ff');
   }
 
   // ── Electricity Mastery: Kinetic Bomb ─────────────────────────────────
@@ -1195,7 +1248,7 @@ export class ElectricityKit {
     this.playerAvatar?.play('punch', ang);
     const hand = this.playerAvatar?.castHand() ?? { x: player.x, y: player.y };
     this.pfx.muzzleArc(hand.x, hand.y, ang, 1.3, 7, LIVE_TONES);
-    this.arena.showFloatingText(player.x, player.y - 30, '⚡ KINETIC BOMB', '#ffaa00');
+    this.say(player.x, player.y - 30, '⚡ KINETIC BOMB', '#ffaa00');
     // Note: cast is already broadcast online via player.triggerCooldown('kinetic-bomb').
   }
 
@@ -1259,8 +1312,8 @@ export class ElectricityKit {
           kb.detonateAt = time + KINETIC_BOMB_ATTACH_MS;
           kb.lastHp = hitTarget.hp;
           kb.damageTaken = 0;
-          this.arena.spawnHitFlash(hitTarget.x, hitTarget.y, ELECTRIC.volt);
-          this.arena.showFloatingText(hitTarget.x, hitTarget.y - 30, '⚡ LATCHED', '#ffee00');
+          this.hitFlash(hitTarget.x, hitTarget.y, ELECTRIC.volt, kb.owner);
+          this.say(hitTarget.x, hitTarget.y - 30, '⚡ LATCHED', '#ffee00', kb.owner);
           fx.ring(hitTarget.x, hitTarget.y, 34, 12, tones.hot, 300, 3, 6);
           fx.sparks(hitTarget.x, hitTarget.y, 8, { speed: 130, size: 2.2, life: 340, depth: 7, tones });
         }
@@ -1305,8 +1358,8 @@ export class ElectricityKit {
       if (!t.active || t.hp <= 0) continue;
       if (Phaser.Math.Distance.Between(x, y, t.x, t.y) <= KINETIC_BOMB_EXPLOSION_RADIUS) {
         t.takeDamage(dmg);
-        this.arena.spawnHitFlash(t.x, t.y, ELECTRIC.volt);
-        this.arena.showFloatingText(t.x, t.y - 20, `${dmg}`, '#ffee00');
+        this.hitFlash(t.x, t.y, ELECTRIC.volt, kb.owner);
+        this.say(t.x, t.y - 20, `${dmg}`, '#ffee00', kb.owner);
         fx.chain(x, y, t.x, t.y, tones);
       }
     }

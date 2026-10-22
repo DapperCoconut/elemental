@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { AvatarSpec, BaseAvatar, ColorFn, FxBase, TAU, easeOut } from './ElementVisuals';
+import { BackroomsView } from './skins/AnomalyFx';
 
 /**
  * Everything Dream draws: the sleepwalker rig and its two little Sandmen guns, the overhead
@@ -1163,6 +1164,9 @@ export class DreamWorldView {
   private evil: Phaser.GameObjects.Graphics | null = null;
   private dread = 0;
   private dreadOn = false;
+  /** Anomaly skin: every dream is the Backrooms, painted by the skin instead of `world`. */
+  private backrooms: BackroomsView | null = null;
+  private omenOn = false;
 
   constructor(
     private scene: Phaser.Scene,
@@ -1171,13 +1175,18 @@ export class DreamWorldView {
     private W: number,
     private H: number,
     veil: boolean,
+    backrooms = false,
   ) {
     this.sceneryAlpha = veil ? 0.32 : 1;
     this.stat = scene.add.graphics().setDepth(0.5).setScrollFactor(0);
     this.anim = scene.add.graphics().setDepth(0.6).setScrollFactor(0);
     this.mist = scene.add.graphics().setDepth(13).setScrollFactor(0);
-    this.paintStatic();
+    if (backrooms) this.backrooms = new BackroomsView(scene, W, H, this.sceneryAlpha, this.stat, this.anim, this.mist);
+    else this.paintStatic();
   }
+
+  /** A nightmare is loose in this dream (only the Backrooms answer to it — it darkens as it holds). */
+  setOminous(on: boolean): void { this.omenOn = on; }
 
   /** Start fading out; `update` returns false once it is gone. */
   close(): void { this.closing = true; }
@@ -1196,6 +1205,10 @@ export class DreamWorldView {
     this.grow = Phaser.Math.Clamp(this.grow + (this.closing ? -1 : 1) * delta / 420, 0, 1);
     this.dread = Phaser.Math.Clamp(this.dread + (this.dreadOn ? 1 : -1) * delta / 650, 0, 1);
     const k = easeOut(this.grow);
+    if (this.backrooms) {
+      this.backrooms.update(delta, k, this.dreadOn || this.omenOn);
+      return !(this.closing && this.grow <= 0);
+    }
     const n = this.dread;
     this.stat.setAlpha(k * (1 - n));
     this.evil?.setAlpha(k * n);
@@ -1212,6 +1225,7 @@ export class DreamWorldView {
     this.anim.destroy();
     this.mist.destroy();
     this.evil?.destroy();
+    this.backrooms?.destroy();
   }
 
   private c(color: number): number { return this.tint(color); }
@@ -2047,23 +2061,27 @@ const DREAM_AVATAR: AvatarSpec = {
  * hold them. "Asleep on its feet" is colour and silhouette (the rig dims, the cap droops).
  */
 export class DreamAvatar extends BaseAvatar {
-  private guns: 'sandmen' | 'pistols' | null = 'sandmen';
-  private gunKick = [0, 0];
-  private drowsy = 0;
+  protected guns: 'sandmen' | 'pistols' | null = 'sandmen';
+  protected gunKick = [0, 0];
+  protected drowsy = 0;
   private drowsyTarget = 0;
-  private swing = 0;
+  protected swing = 0;
   private swingTarget = 0;
   /** The nightcap's tip lags the body on its own spring, so walking makes it flop. */
   private capAng = -Math.PI / 2;
   private capVel = 0;
   /** Mastery: the dreams caught in the dreamcatcher on its back, each 0–1 through digestion. */
-  private beads: { bad: boolean; k: number }[] = [];
+  protected beads: { bad: boolean; k: number }[] = [];
   /** Mastery: 0–1 how far the music box is wound, or -1 when there is none in hand. */
-  private winding = -1;
+  protected winding = -1;
 
-  constructor(scene: Phaser.Scene, tint: DreamColorFn, depth = 6) {
-    super(scene, tint, depth, DREAM_AVATAR);
+  /** Skins (which must extend this class so the kit can still drive the guns) pass their own spec. */
+  constructor(scene: Phaser.Scene, tint: DreamColorFn, depth = 6, spec: AvatarSpec = DREAM_AVATAR) {
+    super(scene, tint, depth, spec);
   }
+
+  /** The owner is inside their own dream. Only a skin that transforms there listens. */
+  setDreaming(_on: boolean): void {}
 
   /** 0–1 — how close this character is to falling asleep itself. */
   setDrowsy(v: number): void { this.drowsyTarget = Phaser.Math.Clamp(v, 0, 1); }
@@ -2286,6 +2304,24 @@ export class DreamAvatar extends BaseAvatar {
       zzz(g, this.tint, x + 14, y - 26, 5.5, alpha * (this.drowsy - 0.55) * 2.2, this.t);
     }
 
+    this.drawHeld(g, alpha);
+
+    // ── Mastery: a ring of moons turning overhead ──
+    if (this.mastered) {
+      for (let i = 0; i < 4; i++) {
+        const p = this.t * 0.9 + (i / 4) * TAU;
+        const cx = x + Math.cos(p) * 22;
+        const cy = y - 32 + Math.sin(p) * 6;
+        g.fillStyle(this.tint(DRM.star), alpha * 0.85);
+        g.fillCircle(cx, cy, 3.4);
+        g.fillStyle(this.tint(DRM.night), alpha * 0.85);
+        g.fillCircle(cx + 1.5, cy - 0.5, 2.9);
+      }
+    }
+  }
+
+  /** What is in the hands: the guns, and the mastery music box. Shared with skins. */
+  protected drawHeld(g: Phaser.GameObjects.Graphics, alpha: number): void {
     // ── The guns, one in each ball hand, pointing where the eyes look ──
     if (this.guns) {
       for (const side of [0, 1] as const) {
@@ -2308,19 +2344,6 @@ export class DreamAvatar extends BaseAvatar {
       g.beginPath();
       g.arc(hx, hy, 16, -Math.PI / 2, -Math.PI / 2 + this.winding * TAU, false);
       g.strokePath();
-    }
-
-    // ── Mastery: a ring of moons turning overhead ──
-    if (this.mastered) {
-      for (let i = 0; i < 4; i++) {
-        const p = this.t * 0.9 + (i / 4) * TAU;
-        const cx = x + Math.cos(p) * 22;
-        const cy = y - 32 + Math.sin(p) * 6;
-        g.fillStyle(this.tint(DRM.star), alpha * 0.85);
-        g.fillCircle(cx, cy, 3.4);
-        g.fillStyle(this.tint(DRM.night), alpha * 0.85);
-        g.fillCircle(cx + 1.5, cy - 0.5, 2.9);
-      }
     }
   }
 }

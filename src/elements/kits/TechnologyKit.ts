@@ -1258,7 +1258,7 @@ export class TechnologyKit {
 
       if (hitTarget) {
         hitTarget.takeDamage(c.damage);
-        this.arena.spawnHitFlash(hitTarget.x, hitTarget.y, 0x33ff88);
+        this.arena.spawnHitFlash(hitTarget.x, hitTarget.y, this.col(c.owner)(0x33ff88));
         this.bumpCruncher(c.owner, true);
         this.noteCruncherResolved(c.owner, true);
         this.removeCruncher(i);
@@ -1268,7 +1268,7 @@ export class TechnologyKit {
           this.firewallCharges[c.owner]--;
           const fx = Phaser.Math.Clamp(c.x, 10, W - 10);
           const fy = Phaser.Math.Clamp(c.y, 10, H - 10);
-          this.arena.spawnHitFlash(fx, fy, 0xff8822);
+          this.arena.spawnHitFlash(fx, fy, this.col(c.owner)(0xff8822));
           if (c.owner === 'player') {
             this.arena.spawnFloatingText(fx, fy, '🧱 absorbed', '#ff9944');
           }
@@ -1316,7 +1316,7 @@ export class TechnologyKit {
         const { width: W, height: H } = this.arena.scene.scale;
         const alpha = 0.25 + 0.15 * charges;
         const gfx = this.arena.scene.add.graphics().setDepth(6);
-        gfx.lineStyle(5, 0xff8822, alpha);
+        gfx.lineStyle(5, this.pcol(0xff8822), alpha);
         gfx.strokeRect(6, 6, W - 12, H - 12);
         this.firewallObjs.push(gfx);
         for (let i = 0; i < 14; i++) {
@@ -1656,7 +1656,7 @@ export class TechnologyKit {
         const d = this.gooseMoveToward(g, enemy.x, enemy.y, GOOSE_CHASE_SPEED, delta);
         if (d < 34) {
           enemy.takeDamage(GOOSE_POKE_DMG);
-          this.arena.spawnHitFlash(enemy.x, enemy.y, 0xeeeecc);
+          this.arena.spawnHitFlash(enemy.x, enemy.y, this.col(g.owner)(0xeeeecc));
           this.arena.spawnFloatingText(enemy.x, enemy.y - 44, '🪿 HONK!', '#eeeecc');
           this.gooseBackToWander(g, time);
         }
@@ -1747,7 +1747,7 @@ export class TechnologyKit {
       const hit = this.enemiesOf(b.owner).find((f) => Phaser.Math.Distance.Between(b.x, b.y, f.x, f.y) <= 22);
       if (hit) {
         hit.takeDamage(b.damage);
-        this.arena.spawnHitFlash(hit.x, hit.y, 0xffee66);
+        this.arena.spawnHitFlash(hit.x, hit.y, this.col(b.owner)(0xffee66));
         this.thrownBullets.splice(i, 1);
       } else if (b.x < -20 || b.x > W + 20 || b.y < -20 || b.y > H + 20) {
         this.thrownBullets.splice(i, 1);
@@ -1811,7 +1811,7 @@ export class TechnologyKit {
       m.qText.setText('WRONG. >:(');
       for (const f of this.enemiesOf(m.owner)) {
         f.takeDamage(CLIPPY_FAIL_DMG);
-        this.arena.spawnHitFlash(f.x, f.y, 0xbb88ff);
+        this.arena.spawnHitFlash(f.x, f.y, this.col(m.owner)(0xbb88ff));
         this.arena.spawnFloatingText(f.x, f.y - 44, '📎 -20', '#cc66ff');
       }
     }
@@ -1859,7 +1859,7 @@ export class TechnologyKit {
         if (time - last < PONG_HIT_CD_MS) continue;
         b.lastHitAt.set(f, time);
         f.takeDamage(PONG_DMG);
-        this.arena.spawnHitFlash(f.x, f.y, 0xffffff);
+        this.arena.spawnHitFlash(f.x, f.y, this.col(m.owner)(0xffffff));
         this.arena.spawnFloatingText(f.x, f.y - 44, '🏓 -10', '#ffffff');
       }
     }
@@ -1954,7 +1954,7 @@ export class TechnologyKit {
         const hit = hitTarget();
         if (hit) {
           this.applyBoxed(hit, owner, time);
-          this.arena.spawnHitFlash(hit.x, hit.y, 0xff3355);
+          this.arena.spawnHitFlash(hit.x, hit.y, this.col(owner)(0xff3355));
           this.destroyCord(owner);
           continue;
         }
@@ -1967,7 +1967,7 @@ export class TechnologyKit {
         const hit = hitTarget();
         if (hit) {
           this.applyBoxed(hit, owner, time);
-          this.arena.spawnHitFlash(hit.x, hit.y, 0xff3355);
+          this.arena.spawnHitFlash(hit.x, hit.y, this.col(owner)(0xff3355));
           this.destroyCord(owner);
           continue;
         }
@@ -2307,7 +2307,7 @@ export class TechnologyKit {
     const target = this.nearestEnemyOf('player', player.x, player.y);
     if (target) {
       target.takeDamage(n);
-      this.arena.spawnHitFlash(target.x, target.y, 0xff3355);
+      this.arena.spawnHitFlash(target.x, target.y, this.pcol(0xff3355));
     }
     const sx = this.browserX + PAIN_SKULL_DX + (fromClick ? Phaser.Math.Between(-24, 24) : 0);
     const sy = this.browserY + PAIN_SKULL_DY - 40;
@@ -2547,7 +2547,7 @@ export class TechnologyKit {
     }
     if (points >= ADMIN_TIERS[2]) {
       enemy.takeDamage(35);
-      this.arena.spawnHitFlash(enemy.x, enemy.y, 0xff4444);
+      this.arena.spawnHitFlash(enemy.x, enemy.y, this.col(owner)(0xff4444));
       lines.push(';kill');
     }
     if (points >= ADMIN_TIERS[3]) {
@@ -2906,7 +2906,7 @@ export class TechnologyKit {
     for (const target of this.enemiesOf(b.owner)) {
       if (Phaser.Math.Distance.Between(b.x, b.y, target.x, target.y) > BYTE_BOMB_BLAST_RADIUS) continue;
       target.takeDamage(BYTE_BOMB_DAMAGE, { source: b, sourceX: b.x, sourceY: b.y });
-      this.arena.spawnHitFlash(target.x, target.y, 0x33aaee);
+      this.arena.spawnHitFlash(target.x, target.y, this.col(b.owner)(0x33aaee));
       this.applyLag(target, time);
     }
   }
@@ -3022,17 +3022,17 @@ export class TechnologyKit {
     g.clear();
     g.fillStyle(0x04121e, 0.75);
     g.fillCircle(cx, cy, R + 4);
-    g.lineStyle(3, 0x1b4a6b, 0.9);
+    g.lineStyle(3, this.col(f === this.arena.player ? 'npc' : 'player')(0x1b4a6b), 0.9);
     g.strokeCircle(cx, cy, R);
     // Tail: three arc segments dimming away from the head of the sweep.
     for (let i = 0; i < 3; i++) {
       const a = st.spinnerAngle - i * 0.45;
-      g.lineStyle(3, 0x66ddff, 0.9 - i * 0.28);
+      g.lineStyle(3, this.col(f === this.arena.player ? 'npc' : 'player')(0x66ddff), 0.9 - i * 0.28);
       g.beginPath();
       g.arc(cx, cy, R, a - 0.4, a, false);
       g.strokePath();
     }
-    g.fillStyle(0xaaffff, 1);
+    g.fillStyle(this.col(f === this.arena.player ? 'npc' : 'player')(0xaaffff), 1);
     g.fillCircle(cx + Math.cos(st.spinnerAngle) * R, cy + Math.sin(st.spinnerAngle) * R, 2.6);
   }
 

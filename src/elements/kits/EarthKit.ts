@@ -729,11 +729,11 @@ export class EarthKit {
                 const shielded = this.earthShieldHp > 0;
                 if (shielded) {
                   t.takeDamage(this.damageFor('player', this.earthBashShieldDmg));
-                  this.arena.spawnHitFlash(t.x, t.y, EARTH.clay);
+                  this.arena.spawnHitFlash(t.x, t.y, this.pcol(EARTH.clay));
                   this.arena.showFloatingText(t.x, t.y - 20, `🛡 BASH ${this.earthBashShieldDmg}`, '#ccaa66');
                 } else {
                   t.takeDamage(this.damageFor('player', this.earthBashStabDmg));
-                  this.arena.spawnHitFlash(t.x, t.y, EARTH.clay);
+                  this.arena.spawnHitFlash(t.x, t.y, this.pcol(EARTH.clay));
                   this.arena.showFloatingText(t.x, t.y - 20, `🗡 STAB ${this.earthBashStabDmg}`, '#aa8844');
                 }
                 // The collision itself: a slab of shield driven through someone. Scales with
@@ -780,7 +780,7 @@ export class EarthKit {
             const d = Phaser.Math.Distance.Between(rock.sprite.x, rock.sprite.y, t.x, t.y);
             if (d < 22) {
               t.takeDamage(this.damageFor('player', 8));
-              this.arena.spawnHitFlash(t.x, t.y, lavaRocks ? EARTH.ember : EARTH.clay);
+              this.arena.spawnHitFlash(t.x, t.y, this.pcol(lavaRocks ? EARTH.ember : EARTH.clay));
               this.arena.showFloatingText(t.x, t.y - 20, '🪨 8', '#aa8844');
               // A glancing blow: chips off the rock, not a full detonation.
               this.pfx.debris(rock.sprite.x, rock.sprite.y, 4, {
@@ -827,7 +827,7 @@ export class EarthKit {
           if (d < 28) {
             const launchDmg = lavaRocks ? 60 : 40;
             t.takeDamage(this.damageFor('player', launchDmg));
-            this.arena.spawnHitFlash(t.x, t.y, lavaRocks ? EARTH.ember : EARTH.clay);
+            this.arena.spawnHitFlash(t.x, t.y, this.pcol(lavaRocks ? EARTH.ember : EARTH.clay));
             this.arena.showFloatingText(t.x, t.y - 20, lavaRocks ? `🔥 LAVA HIT ${launchDmg}` : `🪨 LAUNCH STUN ${launchDmg}`, '#ffcc44');
             t.earthStunnedUntil = Math.max(t.earthStunnedUntil, time + 3000);
             // A boulder at 500px/s meeting a body: the full detonation stack, upgraded to the
@@ -873,7 +873,7 @@ export class EarthKit {
           if (t.lavaRockBurnAccum >= 500) {
             t.lavaRockBurnAccum -= 500;
             t.takeDamage(this.damageFor('player', 2));
-            this.arena.spawnHitFlash(t.x, t.y, EARTH.ember);
+            this.arena.spawnHitFlash(t.x, t.y, this.pcol(EARTH.ember));
             // A continuous tell, so the burn is readable on the victim between ticks.
             this.pfx.grit(t.x, t.y - 6, 2, {
               speed: 26, size: 1.8, life: 420, fall: -18, depth: 8, molten: true,
@@ -904,7 +904,7 @@ export class EarthKit {
             const d = Phaser.Math.Distance.Between(this.earthQuakeX, this.earthQuakeY, t.x, t.y);
             if (d < quakeRadius && time > (this.earthQuakeStunUntil ?? 0) && Math.random() < 0.35) {
               t.takeDamage(this.damageFor('player', tripDmg), { source: this.earthQuakeSprite, sourceX: this.earthQuakeX, sourceY: this.earthQuakeY });
-              this.arena.spawnHitFlash(t.x, t.y, this.earthQuakeMagmified ? EARTH.ember : EARTH.clay);
+              this.arena.spawnHitFlash(t.x, t.y, this.pcol(this.earthQuakeMagmified ? EARTH.ember : EARTH.clay));
               this.arena.showFloatingText(t.x, t.y - 20, this.earthQuakeMagmified ? `🌋 MAGMA ${tripDmg}` : `⚡ TRIP ${tripDmg}`, '#ccaa66');
               // Tripped: a plate kicks up under their feet and dumps them off it.
               this.pfx.pillar(t.x, t.y + 6, 12, this.earthQuakeMagmified ? 34 : 24, 7);
@@ -974,7 +974,7 @@ export class EarthKit {
           const wd = Phaser.Math.Distance.Between(wave.sprite.x, wave.sprite.y, t.x, t.y);
           if (wd < waveHitRadius) {
             t.takeDamage(this.damageFor(waveOwner, waveDamage));
-            this.arena.spawnHitFlash(t.x, t.y, EARTH.dust);
+            this.arena.spawnHitFlash(t.x, t.y, (wave.owner === 'player' ? this.pcol : this.ncol)(EARTH.dust));
             this.pfx.impact(t.x, t.y, 52, { shards: 7, dust: 1, crater: false, depth: 7, duration: 340 });
             const tb = t.body as Phaser.Physics.Arcade.Body;
             tb.setVelocity(wave.vx * 0.8, wave.vy * 0.8);
@@ -1090,11 +1090,11 @@ export class EarthKit {
             const shielded = this.npcEarthShieldHp > 0;
             if (shielded) {
               player.takeDamage(this.damageFor('npc', this.npcEarthBashShieldDmg));
-              this.arena.spawnHitFlash(player.x, player.y, EARTH.clay);
+              this.arena.spawnHitFlash(player.x, player.y, this.ncol(EARTH.clay));
               this.arena.showFloatingText(player.x, player.y - 20, `🛡 BASH ${this.npcEarthBashShieldDmg}`, '#ccaa66');
             } else {
               player.takeDamage(this.damageFor('npc', this.npcEarthBashStabDmg));
-              this.arena.spawnHitFlash(player.x, player.y, EARTH.clay);
+              this.arena.spawnHitFlash(player.x, player.y, this.ncol(EARTH.clay));
               this.arena.showFloatingText(player.x, player.y - 20, `🗡 STAB ${this.npcEarthBashStabDmg}`, '#aa8844');
             }
             const bashAng = Math.atan2(player.y - npc.y, player.x - npc.x);
@@ -1127,7 +1127,7 @@ export class EarthKit {
           const d = Phaser.Math.Distance.Between(rock.sprite.x, rock.sprite.y, player.x, player.y);
           if (d < 22) {
             player.takeDamage(this.damageFor('npc', 8));
-            this.arena.spawnHitFlash(player.x, player.y, EARTH.clay);
+            this.arena.spawnHitFlash(player.x, player.y, this.ncol(EARTH.clay));
             this.arena.showFloatingText(player.x, player.y - 20, '🪨 8', '#aa8844');
             this.nfx.debris(rock.sprite.x, rock.sprite.y, 4,
               { angle: ang, spread: 1.1, speed: 130, size: 2.6, life: 420, fall: 70, depth: 8 });
@@ -1154,7 +1154,7 @@ export class EarthKit {
         const expired = time - lr.spawnedAt > 1200;
         if (d < 28) {
           player.takeDamage(this.damageFor('npc', 40));
-          this.arena.spawnHitFlash(player.x, player.y, EARTH.clay);
+          this.arena.spawnHitFlash(player.x, player.y, this.ncol(EARTH.clay));
           this.arena.showFloatingText(player.x, player.y - 20, '🪨 LAUNCH STUN 40', '#ffcc44');
           this.playerEarthStunnedUntil = Math.max(this.playerEarthStunnedUntil, time + 3000);
           this.nfx.impact(player.x, player.y, 74, { shards: 11, dust: 3, depth: 7, duration: 420 });
@@ -1180,7 +1180,7 @@ export class EarthKit {
           const d = Phaser.Math.Distance.Between(this.npcEarthQuakeX, this.npcEarthQuakeY, player.x, player.y);
           if (d < 80 && time > (this.npcEarthQuakeStunUntil ?? 0) && Math.random() < 0.35) {
             player.takeDamage(this.damageFor('npc', 5), { source: this.npcEarthQuakeSprite, sourceX: this.npcEarthQuakeX, sourceY: this.npcEarthQuakeY });
-            this.arena.spawnHitFlash(player.x, player.y, EARTH.clay);
+            this.arena.spawnHitFlash(player.x, player.y, this.ncol(EARTH.clay));
             this.arena.showFloatingText(player.x, player.y - 20, '⚡ TRIP 5', '#ccaa66');
             this.nfx.pillar(player.x, player.y + 6, 12, 24, 7);
             this.nfx.debris(player.x, player.y, 4, { speed: 120, size: 3, life: 460, fall: 90, depth: 7 });
@@ -1773,7 +1773,7 @@ export class EarthKit {
           if (time < next) continue;
           tr.nextHit.set(t, time + 1000);       // 1s collision cooldown per target
           t.takeDamage(15);
-          this.arena.spawnHitFlash(t.x, t.y, EARTH.magma);
+          this.arena.spawnHitFlash(t.x, t.y, this.pcol(EARTH.magma));
           this.arena.showFloatingText(t.x, t.y - 26, '⛰ TREMOR', '#ffaa55');
           this.shake(180, 0.012);
         }
@@ -1791,7 +1791,7 @@ export class EarthKit {
         if (!w.hit.has(t)) {
           w.hit.add(t);
           t.takeDamage(25);
-          this.arena.spawnHitFlash(t.x, t.y, 0x88ddff);
+          this.arena.spawnHitFlash(t.x, t.y, this.pcol(0x88ddff));
           this.arena.showFloatingText(t.x, t.y - 26, '🌊 TITAN TSUNAMI', '#88ddff');
         }
         // Shoved along the wall of water.
@@ -1807,7 +1807,7 @@ export class EarthKit {
           if (t.x < W - 170) continue;
           t.takeDamage(30);
           t.earthStunnedUntil = Math.max(t.earthStunnedUntil, time + 700);
-          this.arena.spawnHitFlash(t.x, t.y, 0x88ddff);
+          this.arena.spawnHitFlash(t.x, t.y, this.pcol(0x88ddff));
           this.arena.showFloatingText(t.x, t.y - 40, '💥 SLAMMED INTO THE WALL', '#aaeeff');
           // Crushed against the far wall: the wall itself gives way behind them.
           this.pfx.impact(W - 20, t.y, 96, { shards: 14, dust: 3, crater: false, depth: 20, duration: 480 });
@@ -1843,7 +1843,7 @@ export class EarthKit {
           for (const t of this.titanTargets()) {
             if (this.distToSegment(t.x, t.y, W / 2, TITAN_MOUTH_Y, b.x, b.y) > 34) continue;
             t.takeDamage(5);
-            this.arena.spawnHitFlash(t.x, t.y, EARTH.magma);
+            this.arena.spawnHitFlash(t.x, t.y, this.pcol(EARTH.magma));
           }
         }
         if (time >= b.nextScorchAt) {
@@ -1868,7 +1868,7 @@ export class EarthKit {
           const burning = this.titanScorch.some(s => Phaser.Math.Distance.Between(t.x, t.y, s.x, s.y) <= s.r);
           if (!burning) continue;
           t.takeDamage(5);
-          this.arena.spawnHitFlash(t.x, t.y, EARTH.ember);
+          this.arena.spawnHitFlash(t.x, t.y, this.pcol(EARTH.ember));
         }
       }
     }
@@ -2073,19 +2073,19 @@ export class EarthKit {
     const t = time / 1000;
 
     // Body: deep water behind, lighter toward the front.
-    g.fillStyle(0x1d4f6b, 0.68);
+    g.fillStyle(this.pcol(0x1d4f6b), 0.68);
     g.fillRect(w.x - 200, top, 260, bot - top);
-    g.fillStyle(0x2f7d9e, 0.72);
+    g.fillStyle(this.pcol(0x2f7d9e), 0.72);
     g.fillRect(w.x - 100, top, 170, bot - top);
 
     // Crest: a boiling column of foam lobes at the leading edge, so the front churns.
     for (let y = top; y <= bot; y += 22) {
       const bulge = Math.sin(y / 40 + t * 6) * 11 + Math.sin(y / 17 - t * 9) * 5;
-      g.fillStyle(0xcdf3ff, 0.5);
+      g.fillStyle(this.pcol(0xcdf3ff), 0.5);
       g.fillCircle(w.x + 66 + bulge, y, 17);
-      g.fillStyle(0x88ddff, 0.65);
+      g.fillStyle(this.pcol(0x88ddff), 0.65);
       g.fillCircle(w.x + 54 + bulge * 0.7, y + 8, 13);
-      g.fillStyle(0xffffff, 0.42);
+      g.fillStyle(this.pcol(0xffffff), 0.42);
       g.fillCircle(w.x + 72 + bulge, y - 5, 7);
     }
 
@@ -2093,12 +2093,12 @@ export class EarthKit {
     for (let i = 0; i < 16; i++) {
       const y = top + ((i * 97 + Math.floor(t * 220)) % (bot - top));
       const lead = ((i * 53 + Math.floor(t * 300)) % 60);
-      g.fillStyle(0xcdf3ff, 0.5 * (1 - lead / 60));
+      g.fillStyle(this.pcol(0xcdf3ff), 0.5 * (1 - lead / 60));
       g.fillCircle(w.x + 78 + lead, y, 4 - lead / 22);
     }
 
     // Undertow streaks raking backward through the body.
-    g.lineStyle(3, 0x88ddff, 0.3);
+    g.lineStyle(3, this.pcol(0x88ddff), 0.3);
     for (let i = 0; i < 7; i++) {
       const y = top + ((i / 7) * (bot - top)) + Math.sin(t * 3 + i) * 14;
       g.lineBetween(w.x - 190, y, w.x + 40, y + 10);
@@ -2205,7 +2205,7 @@ export class EarthKit {
     for (const t of this.titanTargets()) {
       if (Phaser.Math.Distance.Between(arm.targetX, arm.targetY, t.x, t.y) > 96) continue;
       t.takeDamage(20);
-      this.arena.spawnHitFlash(t.x, t.y, EARTH.stone);
+      this.arena.spawnHitFlash(t.x, t.y, this.pcol(EARTH.stone));
       hit = true;
     }
     this.arena.showFloatingText(arm.targetX, arm.targetY - 40, hit ? '🖐 TITAN SMASH' : '🖐 SMASH', '#ccaa66');
@@ -2307,7 +2307,7 @@ export class EarthKit {
     for (const t of this.titanTargets()) {
       if (Phaser.Math.Distance.Between(r.lx, r.ly, t.x, t.y) > r.radius) continue;
       t.takeDamage(r.dmg);
-      this.arena.spawnHitFlash(t.x, t.y, EARTH.sand);
+      this.arena.spawnHitFlash(t.x, t.y, this.pcol(EARTH.sand));
       this.arena.showFloatingText(t.x, t.y - 26, '🪨 ROCKFALL', '#ccaa66');
     }
   }
@@ -2348,7 +2348,7 @@ export class EarthKit {
     for (const t of this.titanTargets()) {
       if (Phaser.Math.Distance.Between(x, y, t.x, t.y) > 76) continue;
       t.takeDamage(20);
-      this.arena.spawnHitFlash(t.x, t.y, EARTH.magma);
+      this.arena.spawnHitFlash(t.x, t.y, this.pcol(EARTH.magma));
       this.arena.showFloatingText(t.x, t.y - 30, '🌋 ERUPTION', '#ff9955');
     }
     this.spawnTitanScorch(x, y, 46, time + 9000);
@@ -2379,7 +2379,8 @@ export class EarthKit {
     else             { vy = impactY < H / 2 ? speed : -speed; }
 
     // Drawn once around its own origin as a line of tilted slabs, then translated.
-    const violet: EarthColorFn = (base) => (base === EARTH.stone ? 0x8844cc
+    const ownCol = owner === 'player' ? this.pcol : this.ncol;
+    const violet: EarthColorFn = (base) => ownCol(base === EARTH.stone ? 0x8844cc
       : base === EARTH.sand ? 0xcc88ff
       : base === EARTH.umber ? 0x3a1a55
       : base === EARTH.dust ? 0xe0b8ff : base);
@@ -3012,7 +3013,7 @@ export class EarthKit {
         if (!this.earthGolemActive) return false;
         const half = Math.ceil(amount * 0.5);
         this.earthGolemHp = Math.max(0, this.earthGolemHp - half);
-        this.arena.spawnHitFlash(this.earthGolemX, this.earthGolemY, EARTH.stone);
+        this.arena.spawnHitFlash(this.earthGolemX, this.earthGolemY, this.pcol(EARTH.stone));
         player.hp = Math.max(0, player.hp - (amount - half));
         player.emit('damaged', amount - half);
         if (player.hp <= 0) player.emit('defeated');
@@ -3129,7 +3130,7 @@ export class EarthKit {
       };
       this.arena.showFloatingText(midX, midY - 20, '⛰ FAULT LINE', '#ccaa66');
       target.takeDamage(25);
-      this.arena.spawnHitFlash(target.x, target.y, EARTH.clay);
+      this.arena.spawnHitFlash(target.x, target.y, (owner === this.arena.player ? this.pcol : this.ncol)(EARTH.clay));
       golemSprite?.swing('pound');
       fx.debris(midX, midY, 10, {
         angle: wallAngle, spread: 0.5, speed: 190, size: 4, life: 640, fall: 150, depth: 8,
@@ -3148,7 +3149,7 @@ export class EarthKit {
     } else if (dist < 90 && time >= poundCdUntil) {
       // Pound: heavy AoE close range
       target.takeDamage(45);
-      this.arena.spawnHitFlash(target.x, target.y, EARTH.clay);
+      this.arena.spawnHitFlash(target.x, target.y, (owner === this.arena.player ? this.pcol : this.ncol)(EARTH.clay));
       golemSprite?.swing('pound');
       fx.impact(moveX, moveY, 92, { shards: 13, dust: 3, depth: 6, duration: 460 });
       this.arena.scene.cameras.main.shake(320, 0.016);
@@ -3157,7 +3158,7 @@ export class EarthKit {
     } else if (dist < 90 && time >= punchCdUntil) {
       // Punch: quick melee hit
       target.takeDamage(18);
-      this.arena.spawnHitFlash(target.x, target.y, EARTH.clay);
+      this.arena.spawnHitFlash(target.x, target.y, (owner === this.arena.player ? this.pcol : this.ncol)(EARTH.clay));
       golemSprite?.swing('punch');
       fx.debris(target.x, target.y, 5, {
         angle: Math.atan2(target.y - moveY, target.x - moveX), spread: 0.7,
@@ -3364,7 +3365,7 @@ export class EarthKit {
           const dist = Phaser.Math.Distance.Between(player.x, player.y, this.arena.npc.x, this.arena.npc.y);
           if (dist < 120) {
             this.arena.npc.takeDamage(this.damageFor('player', aoeDmg));
-            this.arena.spawnHitFlash(this.arena.npc.x, this.arena.npc.y, EARTH.ember);
+            this.arena.spawnHitFlash(this.arena.npc.x, this.arena.npc.y, this.pcol(EARTH.ember));
             this.arena.showFloatingText(this.arena.npc.x, this.arena.npc.y - 20, `💥 SPLINTER ${aoeDmg}`, '#ff4444');
             if (this.arena.npc.hp <= 0) this.arena.recordMasteryStat('splinterKills', 1);
           }

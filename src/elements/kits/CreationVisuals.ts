@@ -11,9 +11,9 @@ import { ArmHold, ArmPose, AvatarSpec, BaseAvatar, ColorFn, FxBase, TAU, easeIn,
  * ElementVisuals.ts and are shared with the other elements. What stays here is what makes
  * Creation Creation: the forged shard, the riveted plank, the gear, and the palette.
  *
- * Colours must come from the CREATION palette below. There is no Creation skin
- * yet, but every call still routes through the owner's `creationColor` mapper, so the day one
- * lands it is a table edit in SkinsKit rather than a sweep through this file.
+ * Colours must come from the CREATION palette below. The Witch skin swaps whole painters (see
+ * skins/WitchFx.ts); everything else still routes through the owner's `creationColor` mapper, so a
+ * palette skin is a table edit in SkinsKit rather than a sweep through this file.
  *
  * The one deliberate exception is the six potion colours: those are recipe identity (they key
  * the status tray and the info panel too), not element palette, so they are passed through raw.
@@ -1302,16 +1302,16 @@ export class CreationFx extends FxBase {
  * to being looked at — hence its own class with its own clock rather than a stack of tweens.
  */
 export class CreationNexus {
-  private g: Phaser.GameObjects.Graphics;
-  private t = 0;
-  private brewing = false;
-  private load = 0;
-  private awakened = false;
-  private arcSeeds = Array.from({ length: 6 }, () => Math.random());
+  protected g: Phaser.GameObjects.Graphics;
+  protected t = 0;
+  protected brewing = false;
+  protected load = 0;
+  protected awakened = false;
+  protected arcSeeds = Array.from({ length: 6 }, () => Math.random());
 
   constructor(
     scene: Phaser.Scene,
-    private tint: CreationColorFn,
+    protected tint: CreationColorFn,
     public readonly x: number,
     public readonly y: number,
     depth = 3,
@@ -1921,22 +1921,22 @@ function drawMechArmHand(
  * and the exhaust) and `aim` (where the pilot is looking, which swings both arms).
  */
 export class CreationMechRig {
-  private back: Phaser.GameObjects.Graphics;
-  private front: Phaser.GameObjects.Graphics;
-  private fx: CreationFx;
-  private t = 0;
-  private stride = 0;
-  private gait = 0;
-  private aim = 0;
-  private mounted = false;
+  protected back: Phaser.GameObjects.Graphics;
+  protected front: Phaser.GameObjects.Graphics;
+  protected fx: CreationFx;
+  protected t = 0;
+  protected stride = 0;
+  protected gait = 0;
+  protected aim = 0;
+  protected mounted = false;
   /** 0 = standing ready, 1 = folded down dormant. Eased, so waking up is a movement. */
-  private crouch = 1;
-  private smokeAccum = 0;
-  private arms: [MechArmView, MechArmView] = [emptyMechArm(), emptyMechArm()];
+  protected crouch = 1;
+  protected smokeAccum = 0;
+  protected arms: [MechArmView, MechArmView] = [emptyMechArm(), emptyMechArm()];
 
   constructor(
-    private scene: Phaser.Scene,
-    private tint: CreationColorFn,
+    protected scene: Phaser.Scene,
+    protected tint: CreationColorFn,
     depth = 5,
   ) {
     this.back = scene.add.graphics().setDepth(depth - 2);

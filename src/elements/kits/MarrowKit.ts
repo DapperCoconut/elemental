@@ -994,7 +994,7 @@ export class MarrowKit implements SummonPurgeTarget {
       t.takeDamage(DEND_DAMAGE);
       v.hits.set(t, (v.hits.get(t) ?? 0) + 1);
       struck = true;
-      this.api.spawnHitFlash(t.x, t.y, MRW.marrowLit);
+      this.api.spawnHitFlash(t.x, t.y, this.col(v.owner)(MRW.marrowLit));
     }
 
     this.lashes.push({
@@ -1184,7 +1184,7 @@ export class MarrowKit implements SummonPurgeTarget {
       for (const t of this.targetsOf(s.owner)) {
         if (Phaser.Math.Distance.Between(s.x, s.y, t.x, t.y) > ANTI_R + 12 * t.sizeMult) continue;
         t.takeDamage(ANTI_DAMAGE);
-        this.api.spawnHitFlash(t.x, t.y, MRW.bone);
+        this.api.spawnHitFlash(t.x, t.y, this.col(s.owner)(MRW.bone));
         this.attachAntibody(s.owner, t);
         landed = true;
         break;
@@ -1404,7 +1404,7 @@ export class MarrowKit implements SummonPurgeTarget {
           this.api.showFloatingText(home.x, home.y - 44, `💉 +${feed}`, this.hex(MRW.serum));
         }
       }
-      this.api.spawnHitFlash(t.x, t.y, MRW.macroLit);
+      this.api.spawnHitFlash(t.x, t.y, this.col(c.owner)(MRW.macroLit));
       this.fx(c.owner).bite(t.x, t.y, c.ang, 22 * this.cellSize(c));
       Sfx.playAt('bone', t.x, { volume: 0.5, rate: 0.85 });
       return;
@@ -1413,7 +1413,7 @@ export class MarrowKit implements SummonPurgeTarget {
     if (c.kind === 'killer') {
       c.nextActionAt = this.now + KILLER_ATTACK_MS * rate;
       this.strike(c, t, KILLER_DAMAGE * power * coatMult);
-      this.api.spawnHitFlash(t.x, t.y, MRW.killerLit);
+      this.api.spawnHitFlash(t.x, t.y, this.col(c.owner)(MRW.killerLit));
       this.fx(c.owner).spray(t.x, t.y, MRW.killerLit, 8, 26);
       Sfx.playAt('stab', t.x, { volume: 0.7, rate: 0.85 });
       return;
@@ -1421,7 +1421,7 @@ export class MarrowKit implements SummonPurgeTarget {
 
     c.nextActionAt = this.now + NEUT_ATTACK_MS * rate;
     this.strike(c, t, NEUT_DAMAGE * power * coatMult);
-    this.api.spawnHitFlash(t.x, t.y, MRW.neutLit);
+    this.api.spawnHitFlash(t.x, t.y, this.col(c.owner)(MRW.neutLit));
     this.fx(c.owner).spray(t.x, t.y, MRW.neut, 7, 24);
     Sfx.playAt('stab', t.x, { volume: 0.6, rate: 1.25 });
   }
@@ -1442,7 +1442,7 @@ export class MarrowKit implements SummonPurgeTarget {
     if (this.alive(home) && home !== t
         && Phaser.Math.Distance.Between(c.x, c.y, home.x, home.y) <= r + 8 * home.sizeMult) {
       home.takeDamage(splash, { selfInflicted: true });
-      this.api.spawnHitFlash(home.x, home.y, MRW.inflame);
+      this.api.spawnHitFlash(home.x, home.y, this.col(c.owner)(MRW.inflame));
     }
     for (const o of [...this.summons]) {
       if (o === c || o.owner !== c.owner) continue;
@@ -1477,7 +1477,7 @@ export class MarrowKit implements SummonPurgeTarget {
       const near = Phaser.Geom.Line.GetNearestPoint(seg, new Phaser.Geom.Point(v.x, v.y));
       if (Phaser.Math.Distance.Between(near.x, near.y, v.x, v.y) > KILLER_DASH_R + 8 * v.sizeMult) continue;
       v.takeDamage(dmg, v === this.fighter(c.owner) ? { selfInflicted: true } : undefined);
-      this.api.spawnHitFlash(v.x, v.y, MRW.killerLit);
+      this.api.spawnHitFlash(v.x, v.y, this.col(c.owner)(MRW.killerLit));
     }
     this.fx(c.owner).lunge(x0, y0, c.x, c.y);
     Sfx.playAt('whoosh', c.x, { volume: 0.7, rate: 0.9 });
@@ -1680,7 +1680,7 @@ export class MarrowKit implements SummonPurgeTarget {
       for (const t of this.targetsOf(b.owner)) {
         if (Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) > BCELL_R + 12 * t.sizeMult) continue;
         t.takeDamage(BCELL_DAMAGE * (this.isAuto(b.owner) ? AUTO_DAMAGE : 1));
-        this.api.spawnHitFlash(t.x, t.y, MRW.bcellLit);
+        this.api.spawnHitFlash(t.x, t.y, this.col(b.owner)(MRW.bcellLit));
         spent = true;
         break;
       }
@@ -1718,7 +1718,7 @@ export class MarrowKit implements SummonPurgeTarget {
         if (Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) > CYTO_R + 10 * t.sizeMult) continue;
         t.takeDamage(CYTO_DAMAGE * (this.isAuto(p.owner) ? AUTO_DAMAGE : 1));
         this.markVuln(t);
-        this.api.spawnHitFlash(t.x, t.y, MRW.neutLit);
+        this.api.spawnHitFlash(t.x, t.y, this.col(p.owner)(MRW.neutLit));
         hit = true;
         break;
       }
@@ -1791,7 +1791,7 @@ export class MarrowKit implements SummonPurgeTarget {
     for (const t of this.targetsOf(m.owner)) {
       if (Phaser.Math.Distance.Between(m.x, m.y, t.x, t.y) > MAST_BLAST_R + 8 * t.sizeMult) continue;
       t.takeDamage(dmg);
-      this.api.spawnHitFlash(t.x, t.y, MRW.mastLit);
+      this.api.spawnHitFlash(t.x, t.y, this.col(m.owner)(MRW.mastLit));
       // Mastery stat: the blast is what put them down.
       if (t.hp <= 0) this.record(m.owner, 'mastacreKills');
     }
@@ -1801,7 +1801,7 @@ export class MarrowKit implements SummonPurgeTarget {
       if (this.alive(home)
           && Phaser.Math.Distance.Between(m.x, m.y, home.x, home.y) <= MAST_BLAST_R + 8 * home.sizeMult) {
         home.takeDamage(dmg * AUTO_SPLASH, { selfInflicted: true });
-        this.api.spawnHitFlash(home.x, home.y, MRW.inflame);
+        this.api.spawnHitFlash(home.x, home.y, this.col(m.owner)(MRW.inflame));
       }
       for (const c of [...this.summons]) {
         if (c.owner !== m.owner) continue;

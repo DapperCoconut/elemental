@@ -1122,7 +1122,7 @@ export class SandKit implements SummonPurgeTarget {
         for (const t of this.targetsOf(owner)) {
           if (Phaser.Math.Distance.Between(spot.x, spot.y, t.x, t.y) > REMAINS_RADIUS) continue;
           t.takeDamage(REMAINS_DAMAGE);
-          this.api.spawnHitFlash(t.x, t.y, SND.lavaHot);
+          this.api.spawnHitFlash(t.x, t.y, this.col(owner)(SND.lavaHot));
         }
       });
     });
@@ -1165,7 +1165,7 @@ export class SandKit implements SummonPurgeTarget {
     for (const t of this.targetsOf(attacker)) {
       if (Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) > COLLAPSE_RADIUS) continue;
       t.takeDamage(COLLAPSE_DAMAGE);
-      this.api.spawnHitFlash(t.x, t.y, SND.deep);
+      this.api.spawnHitFlash(t.x, t.y, this.col(attacker)(SND.deep));
     }
     this.dropOrphanedRiders();
   }
@@ -1279,7 +1279,7 @@ export class SandKit implements SummonPurgeTarget {
     if (hitFighter) {
       const full = this.shotDamage(owner);
       hitFighter.takeDamage(full * mult);
-      this.api.spawnHitFlash(hitFighter.x, hitFighter.y, golden ? SND.gold : SND.sand);
+      this.api.spawnHitFlash(hitFighter.x, hitFighter.y, this.col(owner)(golden ? SND.gold : SND.sand));
       this.fx(owner).ping(endX, endY, 20, golden ? SND.gold : SND.sand);
       // Sand Mastery: the top of the curve, and only the top of it — in the air, off something
       // you built. A tempered burst still counts, because the tier is about where you fired
@@ -1346,7 +1346,7 @@ export class SandKit implements SummonPurgeTarget {
         if (fr.inside.has(t)) continue;
         // A shooter walking into their own crack is being careless, not being attacked.
         t.takeDamage(FRACTURE_DAMAGE, { selfInflicted: o === fr.owner });
-        this.api.spawnHitFlash(t.x, t.y, SND.lavaHot);
+        this.api.spawnHitFlash(t.x, t.y, this.col(fr.owner)(SND.lavaHot));
         this.fx(fr.owner).ping(t.x, t.y, 20, SND.lava);
         Sfx.playAt('stone-slam', t.x, { rate: 1.35, volume: 0.5 });
         if (o === 'player') this.api.showFloatingText(t.x, t.y - 40, 'FRACTURE', this.hex(SND.lava));
@@ -1883,7 +1883,7 @@ export class SandKit implements SummonPurgeTarget {
         const f = this.fighter(o);
         if (!this.alive(f)) continue;
         f.takeDamage(CURSE_TICK_DAMAGE);
-        this.api.spawnHitFlash(f.x, f.y, 0xc48bff);
+        this.api.spawnHitFlash(f.x, f.y, this.col(p.cursedBy)(0xc48bff));
         this.fx(p.cursedBy).ping(f.x, f.y, 18, SND.maw);
         if (o === 'player') this.api.showFloatingText(f.x, f.y - 44, 'CURSED', '#c48bff');
       }
@@ -1951,7 +1951,7 @@ export class SandKit implements SummonPurgeTarget {
         s.poisonIn = inIt;
         s.poisonNextTickAt = time + POISON_TICK_MS;
         f.takeDamage(POISON_BITE, { selfInflicted: mine });
-        this.api.spawnHitFlash(f.x, f.y, SND.poison);
+        this.api.spawnHitFlash(f.x, f.y, this.col(inIt.owner)(SND.poison));
         this.fx(inIt.owner).ping(f.x, f.y, 22, SND.poison);
         Sfx.playAt('slime-splat', f.x, { rate: 1.1, volume: 0.55 });
         if (o === 'player') this.api.showFloatingText(f.x, f.y - 40, 'POISON', this.hex(SND.poison));
@@ -1960,7 +1960,7 @@ export class SandKit implements SummonPurgeTarget {
       if (time < s.poisonNextTickAt) continue;
       s.poisonNextTickAt = time + POISON_TICK_MS;
       f.takeDamage(POISON_DAMAGE, { selfInflicted: mine });
-      this.api.spawnHitFlash(f.x, f.y, SND.poison);
+      this.api.spawnHitFlash(f.x, f.y, this.col(inIt.owner)(SND.poison));
     }
   }
 
@@ -1986,7 +1986,7 @@ export class SandKit implements SummonPurgeTarget {
         bornAt: time, golden: true, seed: Math.random() * 999,
       });
       best.takeDamage(PYRAMID_SHOT_DAMAGE);
-      this.api.spawnHitFlash(best.x, best.y, SND.goldHot);
+      this.api.spawnHitFlash(best.x, best.y, this.col(o)(SND.goldHot));
       this.fx(o).ping(best.x, best.y, 18, SND.gold);
       Sfx.playAt('beam-fire', s.pyramidX, { rate: 1.25, volume: 0.5 });
     }
@@ -2320,7 +2320,7 @@ export class SandKit implements SummonPurgeTarget {
         bit = true;
         // Your own course's flames are a cost you chose; somebody else's are an attack.
         t.takeDamage(FLAME_DAMAGE, { selfInflicted: o === j.owner });
-        this.api.spawnHitFlash(t.x, t.y, SND.flameHot);
+        this.api.spawnHitFlash(t.x, t.y, this.col(j.owner)(SND.flameHot));
         this.fx(j.owner).ping(t.x, t.y, 20, SND.flame);
         if (o === 'player') this.api.showFloatingText(t.x, t.y - 40, 'SCORCHED', this.hex(SND.flame));
       }
@@ -2422,7 +2422,7 @@ export class SandKit implements SummonPurgeTarget {
         bornAt: time, golden: false, seed: Math.random() * 999,
       });
       best.takeDamage(MINI_IDOL_DAMAGE);
-      this.api.spawnHitFlash(best.x, best.y, SND.glassLit);
+      this.api.spawnHitFlash(best.x, best.y, this.col(m.owner)(SND.glassLit));
       this.fx(m.owner).ping(best.x, best.y, 14, SND.glass);
       Sfx.playAt('beam-fire', at.x, { rate: 1.6, volume: 0.32 });
     }
@@ -2439,7 +2439,7 @@ export class SandKit implements SummonPurgeTarget {
     const f = this.fighter(owner);
     s.glassUntil = 0;
     this.fx(owner).shatter(f.x, f.y, 70, true);
-    this.api.spawnHitFlash(f.x, f.y, SND.glassLit);
+    this.api.spawnHitFlash(f.x, f.y, this.col(owner)(SND.glassLit));
     this.api.showFloatingText(f.x, f.y - 48, 'SHATTERED', this.hex(SND.glassLit));
     Sfx.playAt('crystal-shatter', f.x, { rate: 0.5, volume: 1 });
     // Self-inflicted: nobody did this to you. You tempered, and then you fell.

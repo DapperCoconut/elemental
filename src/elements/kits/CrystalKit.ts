@@ -6,6 +6,9 @@ import {
   ATTUNED_TONES, CLEAR_TONES, CRYSTAL, CrystalAvatar, CrystalColorFn, CrystalFx, CrystalHalo,
   CrystalTones, NPC_TONES, tonesFor,
 } from './CrystalVisuals';
+import { BaseAvatar } from './ElementVisuals';
+import { makeSkinAvatar } from './skins/SkinAvatars';
+import { CyborgBulletLayer, CyborgFx, drawCyborgCoin } from './skins/CyborgFx';
 
 /**
  * Every crystal ability — the player's and the NPC's alike — is cast through the `do*`-style
@@ -92,6 +95,8 @@ export interface CrystalArenaApi {
   hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
   /** Skins: maps a crystal visual color through the owner's skin. */
   crystalColor(owner: 'player' | 'npc', base: number): number;
+  /** Equipped skin id for a side, or null. */
+  skinId(owner: 'player' | 'npc'): string | null;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
@@ -146,8 +151,11 @@ export class CrystalKit {
   private readonly pfx: CrystalFx;
   private readonly nfx: CrystalFx;
   /** The crystal character rig (gem arms, eyes, prism crown) for each crystal fighter. */
-  private playerAvatar: CrystalAvatar | null = null;
-  private npcAvatar: CrystalAvatar | null = null;
+  private playerAvatar: BaseAvatar | null = null;
+  private npcAvatar: BaseAvatar | null = null;
+  /** Cyborg skin: bespoke muzzle/ricochet/coin effects, and the layer that paints kites as bullets. */
+  private cyborgFx: CyborgFx | null = null;
+  private bulletLayer: CyborgBulletLayer | null = null;
   /** Last aim point, cached in handleInput so the per-frame avatar update can face it. */
   private aimX = 0;
   private aimY = 0;
@@ -216,10 +224,15 @@ export class CrystalKit {
       if (go instanceof Projectile && go.active && go.texture.key === 'proj-crystal-kite' && go.isFromPlayer) {
         go.damage = Math.round(go.damage * 1.5);
         this.arena.spawnHitFlash(go.x, go.y, CRYSTAL.prism);
-        // A wall bounce is a reflection, so it flares like one.
-        this.pfx.glint(go.x, go.y, 34, 9, CLEAR_TONES);
-        this.pfx.shards(go.x, go.y, 4, { speed: 120, size: 2.4, life: 340, fall: 20, depth: 8 });
-        this.arena.showFloatingText(go.x, go.y - 16, '💎 ×1.5', '#88eeff');
+        if (this.cyborg('player')) {
+          this.cyFx().ricochet(go.x, go.y);
+          this.arena.showFloatingText(go.x, go.y - 16, 'RICOCHET ×1.5', '#ffd34a');
+        } else {
+          // A wall bounce is a reflection, so it flares like one.
+          this.pfx.glint(go.x, go.y, 34, 9, CLEAR_TONES);
+          this.pfx.shards(go.x, go.y, 4, { speed: 120, size: 2.4, life: 340, fall: 20, depth: 8 });
+          this.arena.showFloatingText(go.x, go.y - 16, '💎 ×1.5', '#88eeff');
+        }
         const st = this.kiteState.get(go);
         if (st) st.bounceCount = (st.bounceCount ?? 0) + 1;
         // One wall bounce only — disable further wall collision so the next time it
@@ -246,7 +259,7 @@ export class CrystalKit {
     const { player, npc, scene, elementId, npcElementId } = this.arena;
 
     if (elementId === 'crystal' && player?.active) {
-      if (!this.playerAvatar) this.playerAvatar = new CrystalAvatar(scene, this.pcol, CLEAR_TONES);
+      if (!this.playerAvatar) this.playerAvatar = this.makeAvatar('player');
       const aimX = this.aimX || player.x + 1;
       const aimY = this.aimY || player.y;
       this.playerAvatar.setFacing(Math.atan2(aimY - player.y, aimX - player.x));
@@ -269,7 +282,7 @@ export class CrystalKit {
     }
 
     if (npcElementId === 'crystal' && npc?.active) {
-      if (!this.npcAvatar) this.npcAvatar = new CrystalAvatar(scene, this.ncol, NPC_TONES);
+      if (!this.npcAvatar) this.npcAvatar = this.makeAvatar('npc');
       this.npcAvatar.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
       this.npcAvatar.setIntensity(this.npcCrystalClones.length > 0 ? 1.35 : 1);
       this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
@@ -277,6 +290,31 @@ export class CrystalKit {
       this.npcAvatar.destroy();
       this.npcAvatar = null;
     }
+  }
+
+  /** The skin's character rig if the side has one equipped, otherwise the gem avatar. */
+  private makeAvatar(owner: 'player' | 'npc'): BaseAvatar {
+    const scene = this.arena.scene;
+    return makeSkinAvatar(this.arena.skinId(owner), scene)
+      ?? new CrystalAvatar(scene, this.col(owner), owner === 'player' ? CLEAR_TONES : NPC_TONES);
+  }
+
+  /** Cyborg skin on this side — gates its bespoke drawing (never any gameplay). */
+  private cyborg(owner: 'player' | 'npc'): boolean { return this.arena.skinId(owner) === 'cyborg'; }
+
+  private cyFx(): CyborgFx {
+    if (!this.cyborgFx) this.cyborgFx = new CyborgFx(this.arena.scene);
+    return this.cyborgFx;
+  }
+
+  /** Repaints every cyborg-owned kite as a revolver round (built lazily, only when needed). */
+  private updateBullets(time: number): void {
+    if (!this.cyborg('player') && !this.cyborg('npc')) {
+      if (this.bulletLayer) { this.bulletLayer.destroy(); this.bulletLayer = null; }
+      return;
+    }
+    if (!this.bulletLayer) this.bulletLayer = new CyborgBulletLayer(this.arena.scene);
+    this.bulletLayer.paint(this.arena.projectiles.getChildren(), (o) => this.cyborg(o), time / 1000);
   }
 
   /** Every live Diamond Shard twinkles as it flies, so a screen full of them still reads. */
@@ -289,6 +327,7 @@ export class CrystalKit {
       if (!proj.active || proj.texture?.key !== 'proj-crystal-kite') continue;
       // Only a fraction each tick — glinting every shard every tick is a light show, not a tell.
       if (Math.random() > 0.35) continue;
+      if (this.cyborg(proj.isFromPlayer ? 'player' : 'npc')) continue; // bullets carry their own tracer
       const fx = proj.isFromPlayer ? this.pfx : this.nfx;
       fx.dust(proj.x, proj.y, 1, 8, 5, proj.isFromPlayer ? CLEAR_TONES : NPC_TONES);
     }
@@ -302,6 +341,8 @@ export class CrystalKit {
     if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
     if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
     if (this.masteryHalo) { this.masteryHalo.destroy(); this.masteryHalo = null; }
+    if (this.bulletLayer) { this.bulletLayer.destroy(); this.bulletLayer = null; }
+    this.cyborgFx = null;
     this.aimX = 0;
     this.aimY = 0;
     this.kiteGlintAccum = 0;
@@ -408,6 +449,7 @@ export class CrystalKit {
     const { player, npc, scene } = this.arena;
     this.updateAvatars(delta);
     this.updateKiteGlints(delta);
+    this.updateBullets(time);
     const allCrystals = [...this.crystalNodes, ...this.npcCrystalNodes];
     const allActiveProj = this.arena.projectiles.getChildren();
 
@@ -516,6 +558,11 @@ export class CrystalKit {
     // Every node and gate is repainted from scratch once their positions have settled.
     for (const node of allCrystals) {
       node.gfx.clear();
+      if (this.cyborg(node.owner)) {
+        drawCyborgCoin(node.gfx, node.x, node.y, node.angleRad, node.w, node.h, time / 1000,
+          node.isGateway ?? false, node.attuned ?? false, node.owner === 'player' ? 1 : 0.85);
+        continue;
+      }
       const tones = node.attuned ? ATTUNED_TONES : tonesFor(node.owner);
       CrystalFx.drawNode(
         node.gfx, this.col(node.owner), tones,
@@ -840,7 +887,8 @@ export class CrystalKit {
       const playerNodes = this.crystalNodes.filter((n) => n.owner === 'player');
       if (playerNodes.length >= 6) {
         // The oldest lance is pushed out of the lattice, and it breaks rather than blinking out.
-        this.pfx.shatter(playerNodes[0].x, playerNodes[0].y, 44, { shards: 7, dust: 1, duration: 300, splinter: false });
+        if (this.cyborg('player')) this.cyFx().coinPop(playerNodes[0].x, playerNodes[0].y);
+        else this.pfx.shatter(playerNodes[0].x, playerNodes[0].y, 44, { shards: 7, dust: 1, duration: 300, splinter: false });
         playerNodes[0].gfx.destroy();
         this.crystalNodes.splice(this.crystalNodes.indexOf(playerNodes[0]), 1);
       }
@@ -852,7 +900,8 @@ export class CrystalKit {
       this.playerAvatar?.play('sweep', angleRad);
       const moving = this.arena.hasUpgrade('e');
       const sx = moving ? player.x : tx, sy = moving ? player.y : ty;
-      this.pfx.bloom(sx, sy, nH * 0.45, 8, 4, CLEAR_TONES);
+      if (this.cyborg('player')) this.cyFx().coinToss(player.x, player.y, sx, sy);
+      else this.pfx.bloom(sx, sy, nH * 0.45, 8, 4, CLEAR_TONES);
       const dist = Math.sqrt(dx * dx + dy * dy) || 1;
       const speed = 134;
       this.crystalNodes.push({
@@ -868,6 +917,7 @@ export class CrystalKit {
       if (isGW) this.arena.showFloatingText(sx, sy - 20, '🌀 GATEWAY', '#aaeeff');
     } else {
       if (this.npcCrystalNodes.length >= 3) {
+        if (this.cyborg('npc')) this.cyFx().coinPop(this.npcCrystalNodes[0].x, this.npcCrystalNodes[0].y);
         this.npcCrystalNodes[0].gfx.destroy();
         this.npcCrystalNodes.shift();
       }
@@ -876,7 +926,8 @@ export class CrystalKit {
       const isNpcGW = this.arena.hasPerk('npc', 'gateway');
       const [npcNW, npcNH] = isNpcGW ? [9, 84] : [6, 56];
       this.npcAvatar?.play('sweep', Math.atan2(ndy, ndx));
-      this.nfx.bloom(npc.x, npc.y, npcNH * 0.45, 8, 4, NPC_TONES);
+      if (this.cyborg('npc')) this.cyFx().coinToss(npc.x, npc.y, npc.x, npc.y);
+      else this.nfx.bloom(npc.x, npc.y, npcNH * 0.45, 8, 4, NPC_TONES);
       this.npcCrystalNodes.push({
         gfx: scene.add.graphics().setDepth(4),
         angleRad: Math.atan2(ndy, ndx), w: npcNW, h: npcNH,
@@ -1039,7 +1090,12 @@ export class CrystalKit {
     const dx = tx - x, dy = ty - y;
     const dist = Math.sqrt(dx * dx + dy * dy) || 1;
     const owner: 'player' | 'npc' = isFromPlayer ? 'player' : 'npc';
-    this.fx(owner).muzzlePrism(x, y, Math.atan2(dy, dx), 0.9, 7, tonesFor(owner));
+    if (this.cyborg(owner)) {
+      this.cyFx().muzzleFlash(x, y, Math.atan2(dy, dx), 7);
+      this.cyFx().casing(x, y, Math.atan2(dy, dx));
+    } else {
+      this.fx(owner).muzzlePrism(x, y, Math.atan2(dy, dx), 0.9, 7, tonesFor(owner));
+    }
     const speed = 520;
     const vx = (dx / dist) * speed, vy = (dy / dist) * speed;
     const proj = new Projectile(scene, x, y, 'proj-crystal-kite', damage, isFromPlayer);
@@ -1183,7 +1239,8 @@ export class CrystalKit {
           proj.damage = Math.round(proj.damage * 1.5); // every crystal hit (bounce or gateway) scales damage, matching prior laser convention
           this.arena.spawnHitFlash(cp.x, cp.y, CRYSTAL.prism);
           // The struck face flares — the single clearest read that a bounce happened.
-          this.fx(node.owner).glint(cp.x, cp.y, 34, 9, node.attuned ? ATTUNED_TONES : tonesFor(node.owner), node.angleRad);
+          if (this.cyborg(node.owner)) this.cyFx().ricochet(cp.x, cp.y, 9, (proj as any).kitePierce || node.moving);
+          else this.fx(node.owner).glint(cp.x, cp.y, 34, 9, node.attuned ? ATTUNED_TONES : tonesFor(node.owner), node.angleRad);
           if (node.isGateway) {
             // Gateway: pass straight through, no direction change
             this.arena.showFloatingText(node.x, node.y - 18, '+BOOST', '#aaeeff');

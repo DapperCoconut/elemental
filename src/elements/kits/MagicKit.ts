@@ -1020,7 +1020,7 @@ export class MagicKit {
           if (Phaser.Math.Distance.Between(l.x, l.y, e.x, e.y) > 24) continue;
           l.hit = true;
           e.takeDamage(10);
-          this.api.spawnHitFlash(e.x, e.y, MAGIC.granite);
+          this.api.spawnHitFlash(e.x, e.y, this.col(w.owner)(MAGIC.granite));
           if (!e.knockbackImmune) {
             const a = Math.atan2(l.vy, l.vx);
             (e.body as Phaser.Physics.Arcade.Body).setVelocity(Math.cos(a) * 520, Math.sin(a) * 520);
@@ -1349,17 +1349,17 @@ export class MagicKit {
         const left = Phaser.Math.Clamp(remaining / 2, 0, 1);
         const rx = this.api.player.x, ry = this.api.player.y - 54;
         ring.clear();
-        ring.fillStyle(MAGIC.ink, 0.55);
+        ring.fillStyle(this.pcol(MAGIC.ink), 0.55);
         ring.fillCircle(rx, ry, 21);
-        ring.lineStyle(3, MAGIC.violet, 0.6);
+        ring.lineStyle(3, this.pcol(MAGIC.violet), 0.6);
         ring.strokeCircle(rx, ry, 19);
-        ring.lineStyle(3, MAGIC.orchid, 0.95);
+        ring.lineStyle(3, this.pcol(MAGIC.orchid), 0.95);
         ring.beginPath();
         ring.arc(rx, ry, 19, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * left, false);
         ring.strokePath();
         for (let k = 0; k < 6; k++) {
           const a = time / 600 + (k / 6) * Math.PI * 2;
-          ring.fillStyle(MAGIC.blush, 0.85);
+          ring.fillStyle(this.pcol(MAGIC.blush), 0.85);
           ring.fillCircle(rx + Math.cos(a) * 24, ry + Math.sin(a) * 24, 1.3);
         }
       }
@@ -1518,7 +1518,7 @@ export class MagicKit {
           while (c.tickAccum >= c.tickInterval) {
             for (const t of targets) {
               t.takeDamage(c.tickDmg, { source: c, sourceX: c.x, sourceY: c.y });
-              this.api.spawnHitFlash(t.x, t.y, MAGIC.cursed);
+              this.api.spawnHitFlash(t.x, t.y, this.col(c.owner)(MAGIC.cursed));
               this.fx(c.owner).sigils(t.x, t.y, 2, {
                 speed: 90, size: 5, life: 340, color: MAGIC.corrupt, points: 4,
               });
@@ -1542,7 +1542,7 @@ export class MagicKit {
           if (Phaser.Math.Distance.Between(c.x, c.y, t.x, t.y) > c.radius + 14) continue;
           t.takeDamage(15, { source: c, sourceX: c.x, sourceY: c.y });
           t.burningUntil = Math.max(t.burningUntil, time + c.burnDuration);
-          this.api.spawnHitFlash(t.x, t.y, MAGIC.ember);
+          this.api.spawnHitFlash(t.x, t.y, this.col(c.owner)(MAGIC.ember));
           this.fx(c.owner).boom(c.x, c.y, 44, { color: MAGIC.ember, sigils: 7, rings: 1, duration: 420 });
           this.api.showFloatingText(t.x, t.y - 30, '🔥 BURNED', '#ff8844');
           this.flameClouds.splice(i, 1);
@@ -1588,7 +1588,7 @@ export class MagicKit {
           }
           if (c.pulseDmg > 0) {
             t.takeDamage(c.pulseDmg, { source: c, sourceX: c.x, sourceY: c.y });
-            this.api.spawnHitFlash(t.x, t.y, c.isAcidCloud ? MAGIC.acid : MAGIC.stormHi);
+            this.api.spawnHitFlash(t.x, t.y, this.col(c.owner)(c.isAcidCloud ? MAGIC.acid : MAGIC.stormHi));
           }
         }
         if (c.nextPulseAt > c.expireAt) c.nextPulseAt = 0; // no more pulses
@@ -1624,7 +1624,7 @@ export class MagicKit {
         p.tickAccum -= 500;
         for (const t of victims) {
           t.takeDamage(p.tickDmg / 2, { source: p, sourceX: p.x, sourceY: p.y });
-          this.api.spawnHitFlash(t.x, t.y, p.putrid ? MAGIC.acid : MAGIC.stormHi);
+          this.api.spawnHitFlash(t.x, t.y, this.col(p.owner)(p.putrid ? MAGIC.acid : MAGIC.stormHi));
         }
       }
     }
@@ -1643,7 +1643,7 @@ export class MagicKit {
         if (Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) > 18) continue;
         trodden = true;
         t.takeDamage(3);
-        this.api.spawnHitFlash(t.x, t.y, MAGIC.leaf);
+        this.api.spawnHitFlash(t.x, t.y, this.col(b.owner)(MAGIC.leaf));
         if (b.owner === 'player') this.npcStormSlowUntil = Math.max(this.npcStormSlowUntil, time + 1500);
         else this.playerStormSlowUntil = Math.max(this.playerStormSlowUntil, time + 1500);
         this.api.showFloatingText(t.x, t.y - 26, '🌿 SLOWED', '#66dd77');
@@ -1719,7 +1719,7 @@ export class MagicKit {
           if (tr.owner !== h.owner) continue;
           if (this._distToTrail(h.target.x, h.target.y, tr) > 30) continue;
           h.target.takeDamage(4);
-          this.api.spawnHitFlash(h.target.x, h.target.y, MAGIC.thunder);
+          this.api.spawnHitFlash(h.target.x, h.target.y, this.col(tr.owner)(MAGIC.thunder));
           this.fx(h.owner).sigils(h.target.x, h.target.y, 2, {
             speed: 90, size: 5, life: 300, color: MAGIC.thunderHi, points: 4,
           });
@@ -1770,7 +1770,7 @@ export class MagicKit {
             if (!enemy.active || enemy.hp <= 0) continue;
             if (Phaser.Math.Distance.Between(ox, oy, enemy.x, enemy.y) <= 22) {
               enemy.takeDamage(orb.dmg);
-              this.api.spawnHitFlash(enemy.x, enemy.y, MAGIC.sand);
+              this.api.spawnHitFlash(enemy.x, enemy.y, this.col(owner)(MAGIC.sand));
               orb.lastHitAt = time;
               if (orb.canCrack && !orb.cracked) {
                 orb.cracked = true;
@@ -1855,7 +1855,7 @@ export class MagicKit {
           .filter(e => e.active && e.hp > 0 && Phaser.Math.Distance.Between(t.x, t.y, e.x, e.y) <= t.radius + 28);
         for (const e of targets) {
           e.takeDamage(t.tickDmg);
-          this.api.spawnHitFlash(e.x, e.y, MAGIC.wind);
+          this.api.spawnHitFlash(e.x, e.y, this.col(t.owner)(MAGIC.wind));
           this.fx(t.owner).sigils(e.x, e.y, 2, {
             speed: 130, angle: Math.atan2(e.y - t.y, e.x - t.x), spread: 0.6,
             size: 5, life: 340, color: MAGIC.gust, points: 4,
@@ -1912,7 +1912,7 @@ export class MagicKit {
       tp.dotAccum += delta;
       while (tp.dotAccum >= 1000) {
         captive.takeDamage(3);
-        this.api.spawnHitFlash(captive.x, captive.y, MAGIC.vine);
+        this.api.spawnHitFlash(captive.x, captive.y, this.col(owner)(MAGIC.vine));
         tp.dotAccum -= 1000;
       }
       // End condition
@@ -1967,7 +1967,7 @@ export class MagicKit {
           const diff4 = Phaser.Math.Angle.Wrap(ang4 - this.playerHurricaneGaleAngle);
           if (Math.abs(diff4) <= Math.PI / 4) {
             enemy.takeDamage(12);
-            this.api.spawnHitFlash(enemy.x, enemy.y, MAGIC.ash);
+            this.api.spawnHitFlash(enemy.x, enemy.y, this.pcol(MAGIC.ash));
           }
         }
       }
@@ -2019,7 +2019,7 @@ export class MagicKit {
             if (!enemy.active || enemy.hp <= 0) continue;
             if (Phaser.Math.Distance.Between(ox, oy, enemy.x, enemy.y) <= 24) {
               enemy.takeDamage(ts.contactDmg);
-              this.api.spawnHitFlash(enemy.x, enemy.y, MAGIC.sand);
+              this.api.spawnHitFlash(enemy.x, enemy.y, this.col(ts.owner)(MAGIC.sand));
               this.fx(ts.owner).ring(ox, oy, 6, 34, MAGIC.stone, 320, 9, 2);
               orb.lastHitAt = time;
               if (ts.stunMs > 0) {
@@ -2119,30 +2119,30 @@ export class MagicKit {
     const barW = 60, barH = 7;
     const frac = Phaser.Math.Clamp(this.darkness / 100, 0, 1);
     const hot = this.darkness >= 75;
-    const fill = hot ? MAGIC.blood : this.darkness >= 40 ? MAGIC.magenta : MAGIC.darkPlum;
+    const fill = hot ? this.pcol(MAGIC.blood) : this.darkness >= 40 ? this.pcol(MAGIC.magenta) : this.pcol(MAGIC.darkPlum);
     g.clear();
     // cradle shadow + leather strap
-    g.fillStyle(MAGIC.ink, 0.55);
+    g.fillStyle(this.pcol(MAGIC.ink), 0.55);
     g.fillRoundedRect(bx - 4, by - 2, barW + 12, barH + 4, 4);
     // glass body
-    g.fillStyle(MAGIC.voidInk, 0.85);
+    g.fillStyle(this.pcol(MAGIC.voidInk), 0.85);
     g.fillRoundedRect(bx, by, barW, barH, 3.5);
     if (frac > 0) {
       const fw = Math.max(3, barW * frac);
       if (hot) {
-        g.fillStyle(MAGIC.blood, 0.25 + 0.15 * Math.sin(t * 8));
+        g.fillStyle(this.pcol(MAGIC.blood), 0.25 + 0.15 * Math.sin(t * 8));
         g.fillRoundedRect(bx - 2, by - 2, fw + 4, barH + 4, 4);
       }
       g.fillStyle(fill, 0.95);
       g.fillRoundedRect(bx, by, fw, barH, 3.5);
       // swirl: two darker eddies sliding along the ink
-      g.fillStyle(MAGIC.voidInk, 0.45);
+      g.fillStyle(this.pcol(MAGIC.voidInk), 0.45);
       for (let k = 0; k < 2; k++) {
         const sx = bx + ((t * 14 + k * 30) % Math.max(1, fw));
         g.fillEllipse(sx, by + barH / 2, 8, 3);
       }
       // rising bubbles
-      g.fillStyle(MAGIC.orchid, 0.75);
+      g.fillStyle(this.pcol(MAGIC.orchid), 0.75);
       for (let k = 0; k < 3; k++) {
         const ph = (t * 0.9 + k / 3) % 1;
         const px = bx + 4 + ((k * 37) % Math.max(4, fw - 6));
@@ -2150,23 +2150,23 @@ export class MagicKit {
       }
     }
     // glass highlight + rim
-    g.fillStyle(MAGIC.white, 0.28);
+    g.fillStyle(this.pcol(MAGIC.white), 0.28);
     g.fillRect(bx + 3, by + 1.2, barW - 6, 1.2);
-    g.lineStyle(1.2, MAGIC.lilac, 0.75);
+    g.lineStyle(1.2, this.pcol(MAGIC.lilac), 0.75);
     g.strokeRoundedRect(bx, by, barW, barH, 3.5);
     // brass end-caps and the cork with its skull seal
-    g.fillStyle(MAGIC.brass, 1);
+    g.fillStyle(this.pcol(MAGIC.brass), 1);
     g.fillRect(bx - 3, by - 1, 3, barH + 2);
-    g.fillStyle(MAGIC.stone, 1);
+    g.fillStyle(this.pcol(MAGIC.stone), 1);
     g.fillRoundedRect(bx + barW, by + 0.5, 6, barH - 1, 1.5);
-    g.fillStyle(MAGIC.parchment, 0.95);
+    g.fillStyle(this.pcol(MAGIC.parchment), 0.95);
     g.fillCircle(bx + barW + 9, by + barH / 2, 3.4);
-    g.fillStyle(MAGIC.ink, 1);
+    g.fillStyle(this.pcol(MAGIC.ink), 1);
     g.fillCircle(bx + barW + 8, by + barH / 2 - 0.6, 0.8);
     g.fillCircle(bx + barW + 10, by + barH / 2 - 0.6, 0.8);
     g.fillRect(bx + barW + 8.4, by + barH / 2 + 1.2, 1.2, 1);
     // quarter ticks
-    g.lineStyle(1, MAGIC.parchment, 0.4);
+    g.lineStyle(1, this.pcol(MAGIC.parchment), 0.4);
     for (const q of [0.25, 0.5, 0.75]) {
       g.beginPath(); g.moveTo(bx + barW * q, by + barH - 2); g.lineTo(bx + barW * q, by + barH); g.strokePath();
     }
@@ -2910,7 +2910,7 @@ export class MagicKit {
       if (Phaser.Math.Distance.Between(m.x, m.y, m.target.x, m.target.y) > 20) continue;
       this.missiles.splice(i, 1);
       m.target.takeDamage(2);
-      this.api.spawnHitFlash(m.target.x, m.target.y, MAGIC.orchid);
+      this.api.spawnHitFlash(m.target.x, m.target.y, this.col(m.owner)(MAGIC.orchid));
       this.fx(m.owner).sigils(m.x, m.y, 3, { speed: 80, size: 5, life: 320, color: MAGIC.blush, points: 4 });
     }
   }
@@ -3374,7 +3374,7 @@ export class MagicKit {
    * collision call sites. If one ever fires, treat it as a barb being trodden on.
    */
   onThornVineHit(target: Fighter, owner: 'player' | 'npc'): void {
-    this.api.spawnHitFlash(target.x, target.y, MAGIC.leaf);
+    this.api.spawnHitFlash(target.x, target.y, this.col(owner)(MAGIC.leaf));
     this.fx(owner).sigils(target.x, target.y, 3, {
       speed: 80, size: 5, life: 340, color: MAGIC.leaf, points: 4,
     });
@@ -3417,7 +3417,7 @@ export class MagicKit {
       if (!t.active || t.hp <= 0) continue;
       if (this._pointToSegDist(t.x, t.y, castX, castY, endX, endY) > 96) continue;
       t.takeDamage(6);
-      this.api.spawnHitFlash(t.x, t.y, MAGIC.gust);
+      this.api.spawnHitFlash(t.x, t.y, this.col(owner)(MAGIC.gust));
       this.gustHauls.push({
         target: t, toX: castX, toY: castY,
         expireAt: now + 1300, tickAccum: 0, owner,
@@ -3590,7 +3590,7 @@ export class MagicKit {
   /** Anything that damages a familiar routes through here, so one place handles it dying. */
   private hurtSummon(s: Summon, amount: number): void {
     s.hp -= amount;
-    this.api.spawnHitFlash(s.x, s.y, MAGIC.lilac);
+    this.api.spawnHitFlash(s.x, s.y, this.col(s.owner)(MAGIC.lilac));
     if (s.hp > 0) return;
     const i = this.summons.indexOf(s);
     if (i >= 0) this.summons.splice(i, 1);
@@ -3856,11 +3856,11 @@ export class MagicKit {
         if (b.kind === 'fire') {
           t.takeDamage(8);
           t.burningUntil = Math.max(t.burningUntil, time + 2000);
-          this.api.spawnHitFlash(t.x, t.y, MAGIC.ember);
+          this.api.spawnHitFlash(t.x, t.y, this.col(b.owner)(MAGIC.ember));
         } else {
           // Life's vine dart: a light hit, and legs that stop working properly.
           t.takeDamage(4);
-          this.api.spawnHitFlash(t.x, t.y, MAGIC.leaf);
+          this.api.spawnHitFlash(t.x, t.y, this.col(b.owner)(MAGIC.leaf));
           if (b.owner === 'player') this.npcStormSlowUntil = Math.max(this.npcStormSlowUntil, time + 1500);
           else this.playerStormSlowUntil = Math.max(this.playerStormSlowUntil, time + 1500);
           this.api.showFloatingText(t.x, t.y - 26, '🌿 SLOWED', '#66dd77');
@@ -3884,7 +3884,7 @@ export class MagicKit {
         if (Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) > 36) continue;
         t.takeDamage(12);
         t.burningUntil = Math.max(t.burningUntil, time + 2000);
-        this.api.spawnHitFlash(t.x, t.y, MAGIC.ember);
+        this.api.spawnHitFlash(t.x, t.y, this.col(p.owner)(MAGIC.ember));
         this.api.showFloatingText(t.x, t.y - 30, '🔥 -12', '#ff8844');
       }
       this.fx(p.owner).flash(p.x, p.y, 30, 10, MAGIC.flameHi);
@@ -3901,7 +3901,7 @@ export class MagicKit {
         if (!t.active || t.hp <= 0) continue;
         if (Phaser.Math.Distance.Between(l.x, l.y, t.x, t.y) > 44) continue;
         t.takeDamage(12);
-        this.api.spawnHitFlash(t.x, t.y, MAGIC.thunder);
+        this.api.spawnHitFlash(t.x, t.y, this.col(l.owner)(MAGIC.thunder));
         this.api.showFloatingText(t.x, t.y - 30, '⚡ -12', '#ffee44');
       }
       this.api.scene.cameras.main.shake(120, 0.003);
@@ -3978,7 +3978,7 @@ export class MagicKit {
         if (Phaser.Math.Distance.Between(w.x, w.y, t.x, t.y) > 46) continue;
         if (this.waveSlams.some(ws => ws.target === t)) continue;
         t.takeDamage(4);
-        this.api.spawnHitFlash(t.x, t.y, MAGIC.stormHi);
+        this.api.spawnHitFlash(t.x, t.y, this.col(w.owner)(MAGIC.stormHi));
         this.waveSlams.push({
           target: t,
           vx: (w.vx / wlen) * 620, vy: (w.vy / wlen) * 620,
@@ -4017,7 +4017,7 @@ export class MagicKit {
         if (!((dx <= ARM && dy <= HALF) || (dy <= ARM && dx <= HALF))) continue;
         t.takeDamage(18);
         t.burningUntil = Math.max(t.burningUntil, time + 3000);
-        this.api.spawnHitFlash(t.x, t.y, MAGIC.flameHi);
+        this.api.spawnHitFlash(t.x, t.y, this.col(b.owner)(MAGIC.flameHi));
       }
       fx.flash(b.x, b.y, 44, 10, MAGIC.flameHi);
       for (const ang of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
@@ -4039,7 +4039,7 @@ export class MagicKit {
         if (Phaser.Math.Distance.Between(r.x, r.y, t.x, t.y) > 30) continue;
         t.takeDamage(3);
         t.earthStunnedUntil = Math.max(t.earthStunnedUntil, time + 2500);
-        this.api.spawnHitFlash(t.x, t.y, MAGIC.leaf);
+        this.api.spawnHitFlash(t.x, t.y, this.col(r.owner)(MAGIC.leaf));
         this.api.showFloatingText(t.x, t.y - 34, '🌿 ROOTED', '#66dd77');
       }
       this.fx(r.owner).sigils(r.x, r.y, 3, { speed: 70, size: 6, life: 340, color: MAGIC.leaf, points: 4 });

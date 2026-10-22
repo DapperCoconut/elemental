@@ -973,7 +973,7 @@ export class FireKit {
       // Molten DOT
       if (t.moltenUntil > time) {
         if (!t.moltenAura) {
-          t.moltenAura = scene.add.circle(t.x, t.y, 28, 0xff9900, 0.38).setDepth(7);
+          t.moltenAura = scene.add.circle(t.x, t.y, 28, this.arena.fireColor(t === this.arena.player ? 'npc' : 'player', 0xff9900), 0.38).setDepth(7);
         }
         t.moltenAura.setPosition(t.x, t.y);
         // Molten targets steam constantly, not just on the tick, so the debuff reads at a glance.
@@ -982,7 +982,7 @@ export class FireKit {
         if (t.moltenTickAccum >= 1000) {
           t.moltenTickAccum -= 1000;
           t.takeDamage(Math.round(MOLTEN_DAMAGE_PER_SEC * t.statusDmgMult), { fireDot: true });
-          this.arena.spawnHitFlash(t.x, t.y, 0xff9900);
+          this.arena.spawnHitFlash(t.x, t.y, this.arena.fireColor(t === this.arena.player ? 'npc' : 'player', 0xff9900));
         }
         this.moltenDripAccum += delta;
         if (this.moltenDripAccum >= 140) {
@@ -1192,7 +1192,7 @@ export class FireKit {
         if (Phaser.Math.Distance.Between(p.x, p.y, v.x, v.y) > p.radius + 10) continue;
         v.takeDamage(p.damage, { source: p, sourceX: p.x, sourceY: p.y, fireDot: true });
         v.burningUntil = Math.max(v.burningUntil, time + Math.round(1500 * v.statusDurMult));
-        this.arena.spawnHitFlash(v.x, v.y, 0xff6600);
+        this.arena.spawnHitFlash(v.x, v.y, this.arena.fireColor(p.owner, 0xff6600));
       }
     }
   }
@@ -1209,7 +1209,7 @@ export class FireKit {
     const r = p.radius * grow;
     const t = time / 1000 + p.seed;
     // Scorched rim, then the bed.
-    g.fillStyle(0x1a0804, 0.45 * fade);
+    g.fillStyle(this.arena.fireColor(p.owner, 0x1a0804), 0.45 * fade);
     g.fillEllipse(p.x, p.y + 2, r * 2.15, r * 1.5);
     g.fillStyle(c(FIRE.ember), 0.75 * fade);
     g.fillEllipse(p.x, p.y, r * 1.9, r * 1.3);
@@ -1348,7 +1348,7 @@ export class FireKit {
         if (Phaser.Math.Distance.Between(p.x, p.y, v.x, v.y) > p.radius) continue;
         v.takeDamage(this.scaled(p.owner, BOOZE_BURN_DAMAGE), { source: p, sourceX: p.x, sourceY: p.y, fireDot: true });
         v.burningUntil = Math.max(v.burningUntil, time + Math.round(2000 * v.statusDurMult));
-        this.arena.spawnHitFlash(v.x, v.y, 0xff6600);
+        this.arena.spawnHitFlash(v.x, v.y, this.arena.fireColor(p.owner, 0xff6600));
       }
     }
     // The drift: continuous time inside, reset the moment they step out.
@@ -1374,22 +1374,22 @@ export class FireKit {
     const fade = Math.min(1, (p.expiresAt - time) / 900);
     const r = p.radius * grow;
     const t = time / 1000 + p.seed;
-    g.fillStyle(0x5a3510, 0.4 * fade);
+    g.fillStyle(this.arena.fireColor(p.owner, 0x5a3510), 0.4 * fade);
     g.fillEllipse(p.x, p.y + 1, r * 2.1, r * 1.45);
-    g.fillStyle(0xc97a3a, 0.45 * fade);
+    g.fillStyle(this.arena.fireColor(p.owner, 0xc97a3a), 0.45 * fade);
     g.fillEllipse(p.x, p.y, r * 1.9, r * 1.28);
     // Ripples spreading from the middle.
     for (let k = 0; k < 2; k++) {
       const ph = (t * 0.6 + k * 0.5) % 1;
-      g.lineStyle(1.2, 0xffd9a0, 0.35 * (1 - ph) * fade);
+      g.lineStyle(1.2, this.arena.fireColor(p.owner, 0xffd9a0), 0.35 * (1 - ph) * fade);
       g.strokeEllipse(p.x, p.y, r * 1.8 * ph, r * 1.2 * ph);
     }
     // Sheen.
-    g.fillStyle(0xfff0d0, 0.35 * fade);
+    g.fillStyle(this.arena.fireColor(p.owner, 0xfff0d0), 0.35 * fade);
     g.fillEllipse(p.x - r * 0.3 + Math.sin(t) * r * 0.15, p.y - r * 0.2, r * 0.55, r * 0.18);
     if (!p.ignited) return;
     // Burning: a blue alcohol flame hugging the surface, orange tongues above it.
-    g.fillStyle(0x4466ff, (0.28 + 0.1 * Math.sin(t * 11)) * fade);
+    g.fillStyle(this.arena.fireColor(p.owner, 0x4466ff), (0.28 + 0.1 * Math.sin(t * 11)) * fade);
     g.fillEllipse(p.x, p.y, r * 1.7, r * 1.1);
     const n = Math.max(5, Math.round(r / 6));
     for (let k = 0; k < n; k++) {

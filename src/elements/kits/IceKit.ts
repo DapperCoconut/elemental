@@ -530,7 +530,7 @@ export class IceKit {
       if (t.voidFrostTickAccum >= 1000) {
         t.voidFrostTickAccum -= 1000;
         t.takeDamage(vfDps);
-        this.arena.spawnHitFlash(t.x, t.y, ICE.voidGlow);
+        this.arena.spawnHitFlash(t.x, t.y, this.pcol(ICE.voidGlow));
         // Void frost visibly eats its host between ticks, not just on the tick.
         this.pfx.shards(t.x, t.y, 2, { speed: 26, size: 2.2, life: 620, fall: 26, depth: 7, isVoid: true });
         this.arena.recordMasteryStat('voidFrostDamage', vfDps);
@@ -825,7 +825,7 @@ export class IceKit {
       if (isBlackIce ? t.voidFrostStacks === 0 : t.frostStacks === 0) continue;
       const d = this.arena.pointToSegmentDist(t.x, t.y, player.x, player.y, endX, endY);
       if (d > 32) continue;
-      this.arena.spawnHitFlash(t.x, t.y, isBlackIce ? ICE.voidGlow : ICE.sky);
+      this.arena.spawnHitFlash(t.x, t.y, this.pcol(isBlackIce ? ICE.voidGlow : ICE.sky));
       // Stacks being spent are worth a real break, scaled by how many were on the target.
       const spent = isBlackIce ? t.voidFrostStacks : t.frostStacks;
       this.pfx.shatter(t.x, t.y, 50 + spent * 12, {
@@ -980,11 +980,11 @@ export class IceKit {
       if (diff <= Math.PI / 8) {
         if (t.frozenUntil > time) {
           t.frozenUntil = 0;
-          this.arena.spawnHitFlash(t.x, t.y, isBlackIce ? ICE.voidGlow : ICE.sky);
+          this.arena.spawnHitFlash(t.x, t.y, this.pcol(isBlackIce ? ICE.voidGlow : ICE.sky));
           if (!noFrostStacks) { for (let fi = 0; fi < 3; fi++) this.addFrostStackTo(t); }
         } else {
           t.frozenUntil = time + 3000;
-          this.arena.spawnHitFlash(t.x, t.y, isBlackIce ? ICE.voidGlow : ICE.sky);
+          this.arena.spawnHitFlash(t.x, t.y, this.pcol(isBlackIce ? ICE.voidGlow : ICE.sky));
           if (this.arena.hasUpgrade('q')) t.frozenSolidAmpReady = true;
         }
       }
@@ -1023,7 +1023,7 @@ export class IceKit {
     const d = this.arena.pointToSegmentDist(player.x, player.y, npc.x, npc.y, endX, endY);
     if (d <= 32) {
       player.takeDamage(Math.round(this.playerFrostStacks * 7.5));
-      this.arena.spawnHitFlash(player.x, player.y, ICE.sky);
+      this.arena.spawnHitFlash(player.x, player.y, this.ncol(ICE.sky));
       this.nfx.shatter(player.x, player.y, 50 + this.playerFrostStacks * 12, {
         shards: 8 + this.playerFrostStacks * 3, vapor: 1, duration: 340 + this.playerFrostStacks * 40,
       });
@@ -1087,7 +1087,7 @@ export class IceKit {
         if (!noFrostStacks) { for (let fi = 0; fi < 3; fi++) this.addFrostStack('player'); }
       } else {
         this.playerFrozenUntil = time + 3000;
-        this.arena.spawnHitFlash(player.x, player.y, ICE.sky);
+        this.arena.spawnHitFlash(player.x, player.y, this.ncol(ICE.sky));
       }
     }
     // Rink perk: tile the cone with icy trails lasting 8s
@@ -1251,7 +1251,7 @@ export class IceKit {
       if (dot < halfAngleCos) continue;
 
       t.takeDamage(damage);
-      this.arena.spawnHitFlash(t.x, t.y, isBlackIce ? ICE.voidGlow : ICE.sky);
+      this.arena.spawnHitFlash(t.x, t.y, this.pcol(isBlackIce ? ICE.voidGlow : ICE.sky));
 
       if (isBlackIce) {
         if (t.voidFrostStackTimers.length > 0) {
@@ -1586,7 +1586,7 @@ export class IceKit {
         if (ball.owner === 'player') { this.addFrostStackTo(struck); this.recordBigHit(SNOW_BALL_DAMAGE); }
         else this.addFrostStack('player');
         this.snowSlowUntil.set(struck, Math.max(this.snowSlowUntil.get(struck) ?? 0, time + SNOW_SLOW_MS));
-        this.arena.spawnHitFlash(struck.x, struck.y, ICE.pale);
+        this.arena.spawnHitFlash(struck.x, struck.y, this.col(ball.owner)(ICE.pale));
         this.fx(ball.owner).shatter(struck.x, struck.y, 40, { shards: 8, vapor: 2, rime: false, duration: 300 });
         this.arena.showFloatingText(struck.x, struck.y - 30, '⛄ SNOWBALL! -50%', '#cceeff');
       }
@@ -1815,7 +1815,7 @@ export class IceKit {
 
     const tones = tonesFor(bomb.isVoid);
     const fx = this.fx(bomb.owner);
-    this.arena.spawnHitFlash(hitX, hitY, bomb.isVoid ? ICE.voidGlow : ICE.frost);
+    this.arena.spawnHitFlash(hitX, hitY, this.col(bomb.owner)(bomb.isVoid ? ICE.voidGlow : ICE.frost));
     fx.shards(bomb.x, bomb.y, 5, {
       angle, spread: 0.7, speed: 110, size: 2.6, life: 340, fall: 24, depth: 7, isVoid: bomb.isVoid,
     });
@@ -1860,7 +1860,7 @@ export class IceKit {
       if (!t.active || t.hp <= 0) continue;
       if (Phaser.Math.Distance.Between(bomb.x, bomb.y, t.x, t.y) > CURLING_BOMB_BLAST_RADIUS) continue;
       t.takeDamage(CURLING_BOMB_DAMAGE);
-      this.arena.spawnHitFlash(t.x, t.y, bomb.isVoid ? ICE.voidGlow : ICE.sky);
+      this.arena.spawnHitFlash(t.x, t.y, this.col(bomb.owner)(bomb.isVoid ? ICE.voidGlow : ICE.sky));
       this.catchInBlast(t, bomb);
     }
   }

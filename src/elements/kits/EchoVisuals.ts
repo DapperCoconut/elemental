@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { AvatarSpec, ArmHold, ArmPose, BaseAvatar, ColorFn, FxBase, TAU, easeIn, easeOut } from './ElementVisuals';
+import { drawPixelBat } from './skins/WardenFx';
 
 /**
  * Shared drawing kit for everything Echo renders: the bat-thing rig (membrane hands, tracking
@@ -364,6 +365,9 @@ export interface EchoBoomOpts {
  * mapper.
  */
 export class EchoFx extends FxBase {
+  /** The owner's equipped skin id, kept current by EchoKit. Branches drawing only. */
+  skin: string | null = null;
+
   constructor(scene: Phaser.Scene, tint: EchoColorFn = (c) => c) {
     super(scene, tint);
   }
@@ -502,6 +506,10 @@ export class EchoFx extends FxBase {
         const d = p.v * easeOut(lt) * (life / 1000);
         const px = x + Math.cos(p.a) * d - Math.sin(p.a) * wobble;
         const py = y + Math.sin(p.a) * d + Math.cos(p.a) * wobble;
+        if (this.skin === 'warden') {
+          drawPixelBat(g, px, py, p.s, Math.sin(p.beat + lt * 22), 0.9 * (1 - lt * lt), Math.cos(p.a) >= 0);
+          continue;
+        }
         batSilhouette(g, this.tint, px, py, p.a, p.s, Math.sin(p.beat + lt * 22),
           color, 0.9 * (1 - lt * lt));
       }
@@ -876,6 +884,8 @@ export class EchoAura {
   private t = 0;
   private intensity = 1;
   private angle = 0;
+  /** The owner's equipped skin id, kept current by EchoKit. Branches drawing only. */
+  skin: string | null = null;
 
   constructor(
     scene: Phaser.Scene,
@@ -904,6 +914,12 @@ export class EchoAura {
 
     switch (this.style) {
       case 'bat': {
+        if (this.skin === 'warden') {
+          // A blocky Minecraft bat flapping in place of the wingbeat blur.
+          drawPixelBat(g, x, y - 2 + Math.sin(t * 9) * 2, r * 0.62, Math.sin(t * 17), alpha,
+            Math.cos(this.angle) >= 0);
+          break;
+        }
         // Wingbeats blurred around a body that is barely there — four ghosts of the same beat.
         for (let i = 0; i < 4; i++) {
           const lag = i * 0.09;
@@ -959,8 +975,12 @@ export class EchoAura {
           echoChirpLayered(g, this.tint, x, y, a + Math.PI, r * (1.6 - p * 1.1), 0.4,
             8 * p, ECHO.terror, alpha * 0.6 * p, 3, i, false);
         }
-        batSilhouette(g, this.tint, x + Math.cos(this.angle) * r * 0.5, y + Math.sin(this.angle) * r * 0.5,
-          this.angle + Math.PI, r * 0.45, Math.sin(t * 20), ECHO.umbra, alpha * 0.95, true);
+        if (this.skin === 'warden') {
+          drawPixelBat(g, x, y, r * 0.55, Math.sin(t * 20), alpha * 0.95, Math.cos(this.angle) >= 0);
+        } else {
+          batSilhouette(g, this.tint, x + Math.cos(this.angle) * r * 0.5, y + Math.sin(this.angle) * r * 0.5,
+            this.angle + Math.PI, r * 0.45, Math.sin(t * 20), ECHO.umbra, alpha * 0.95, true);
+        }
         g.lineStyle(2, this.tint(ECHO.terrorHi), alpha * (0.35 + 0.3 * Math.sin(t * 9)));
         g.strokeCircle(x, y, r);
         break;

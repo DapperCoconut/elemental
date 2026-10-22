@@ -4,6 +4,7 @@ import { Fighter } from '../../entities/Fighter';
 import { AIR, AirAvatar, AirColorFn, AirDraft, AirFx, ArmGesture, ArmHold } from './AirVisuals';
 import { BaseAvatar } from './ElementVisuals';
 import { makeSkinAvatar } from './skins/SkinAvatars';
+import { SakuraDraft, SakuraFx } from './skins/SakuraFx';
 import { meterGain } from '../../combat/Meters';
 import { Sfx } from '../../audio';
 
@@ -319,6 +320,9 @@ export class AirKit {
   private readonly ncol: AirColorFn;
   private readonly pfx: AirFx;
   private readonly nfx: AirFx;
+  /** Sakura skin: the same effects drawn as cherry blossom and ninja steel. Visual only. */
+  private readonly psak: SakuraFx;
+  private readonly nsak: SakuraFx;
   private playerAvatar: BaseAvatar | null = null;
   private npcAvatar: BaseAvatar | null = null;
   /** Everything airborne — shears, glaives, the hawk. Over the fighters. */
@@ -362,6 +366,8 @@ export class AirKit {
     this.ncol = (base) => arena.airColor('npc', base);
     this.pfx = new AirFx(arena.scene, this.pcol);
     this.nfx = new AirFx(arena.scene, this.ncol);
+    this.psak = new SakuraFx(arena.scene, this.pcol);
+    this.nsak = new SakuraFx(arena.scene, this.ncol);
   }
 
   reset(): void {
@@ -403,7 +409,11 @@ export class AirKit {
   // ── Small helpers ────────────────────────────────────────────────────────
 
   private get now(): number { return this.arena.scene.time.now; }
-  private fx(owner: Owner): AirFx { return owner === 'player' ? this.pfx : this.nfx; }
+  private fx(owner: Owner): AirFx {
+    const sak = this.sakura(owner);
+    return owner === 'player' ? (sak ? this.psak : this.pfx) : (sak ? this.nsak : this.nfx);
+  }
+  private sakura(owner: Owner): boolean { return this.arena.skinId(owner) === 'sakura'; }
   private col(owner: Owner): AirColorFn { return owner === 'player' ? this.pcol : this.ncol; }
   private fighter(owner: Owner): Fighter { return owner === 'player' ? this.arena.player : this.arena.npc; }
   private avatar(owner: Owner): BaseAvatar | null {
@@ -706,7 +716,7 @@ export class AirKit {
   // would pin the parameter to that one literal and refuse every other palette key.
   private strike(owner: Owner, t: Fighter, base: number, color: number = AIR.frost): void {
     t.takeDamage(base + this.eyeBonus(owner));
-    this.arena.spawnHitFlash(t.x, t.y, color);
+    this.arena.spawnHitFlash(t.x, t.y, this.col(owner)(color));
     this.fx(owner).featherPuff(t.x, t.y, 4);
   }
 
@@ -1088,9 +1098,9 @@ export class AirKit {
       // fresh damage dealt and refill the ledger it just spent — every grapple paying for
       // the next one, compounding as long as they keep landing.
       this.ledgerSeen.set(t, t.rawDamageTaken);
-      this.arena.spawnHitFlash(t.x, t.y, AIR.white);
-      this.pfx.gustBurst(t.x, t.y, 72, { duration: 420, dust: false });
-      this.pfx.featherPuff(t.x, t.y, 8);
+      this.arena.spawnHitFlash(t.x, t.y, this.pcol(AIR.white));
+      this.fx('player').gustBurst(t.x, t.y, 72, { duration: 420, dust: false });
+      this.fx('player').featherPuff(t.x, t.y, 8);
       this.arena.showFloatingText(t.x, t.y - 44, '🕊️ FINAL FLIGHT!', '#ffffff');
 
       if (!t.knockbackImmune) {
@@ -1544,19 +1554,19 @@ export class AirKit {
     this.dodgeDraft = wire(
       'player', this.dodgeDraft,
       this.arena.isPlayerAir && this.sides.player.dodge > 0,
-      () => new AirDraft(scene, this.pcol, 26, 1.1, 3, 7, AIR.frost),
+      () => new (this.sakura('player') ? SakuraDraft : AirDraft)(scene, this.pcol, 26, 1.1, 3, 7, AIR.frost),
       0.5 + Math.min(1.5, this.sides.player.dodge) * 0.8,
     );
     this.npcDodgeDraft = wire(
       'npc', this.npcDodgeDraft,
       this.arena.isNpcAir && this.sides.npc.dodge > 0,
-      () => new AirDraft(scene, this.ncol, 26, 1.1, 3, 7, AIR.frost),
+      () => new (this.sakura('npc') ? SakuraDraft : AirDraft)(scene, this.ncol, 26, 1.1, 3, 7, AIR.frost),
       0.5 + Math.min(1.5, this.sides.npc.dodge) * 0.8,
     );
     this.momentumDraft = wire(
       'player', this.momentumDraft,
       this.arena.isPlayerAir && this.arena.masteryActive && this.sides.player.momentum > 0,
-      () => new AirDraft(scene, this.pcol, 32, 1, 2, 9, AIR.sky),
+      () => new (this.sakura('player') ? SakuraDraft : AirDraft)(scene, this.pcol, 32, 1, 2, 9, AIR.sky),
       0.55 + (this.sides.player.momentum / MOMENTUM_MAX) * 0.95,
     );
   }
@@ -1572,10 +1582,10 @@ export class AirKit {
     ground.clear();
 
     for (const sh of this.shears) {
-      AirFx.drawShear(air, this.col(sh.owner), sh.x, sh.y, Math.atan2(sh.vy, sh.vx), sh.t);
+      (this.sakura(sh.owner) ? SakuraFx : AirFx).drawShear(air, this.col(sh.owner), sh.x, sh.y, Math.atan2(sh.vy, sh.vx), sh.t);
     }
     for (const g of this.glaives) {
-      AirFx.drawGlaive(air, this.col(g.owner), g.x, g.y, 26, g.spin, 1, g.phase === 'phantom');
+      (this.sakura(g.owner) ? SakuraFx : AirFx).drawGlaive(air, this.col(g.owner), g.x, g.y, 26, g.spin, 1, g.phase === 'phantom');
     }
 
     // The funnel itself, under the fighters so a captive is visible turning inside it.
@@ -1586,13 +1596,13 @@ export class AirKit {
       if (!this.alive(f)) continue;
       const left = s.tornadoUntil - this.now;
       const alpha = left < 400 ? Math.max(0, left / 400) : 1;
-      AirFx.drawTornado(ground, this.weatherCol(owner), f.x, f.y, TORNADO_RADIUS * 0.72, this.vizT, alpha);
+      (this.sakura(owner) ? SakuraFx : AirFx).drawTornado(ground, this.weatherCol(owner), f.x, f.y, TORNADO_RADIUS * 0.72, this.vizT, alpha);
     }
 
     for (const h of this.hawks) {
       if (h.g.active) {
         h.g.clear();
-        AirFx.drawHawk(h.g, this.pcol, h.x, h.y, Math.atan2(h.vy, h.vx), h.t);
+        (this.sakura('player') ? SakuraFx : AirFx).drawHawk(h.g, this.pcol, h.x, h.y, Math.atan2(h.vy, h.vx), h.t);
       }
     }
 
@@ -1603,9 +1613,9 @@ export class AirKit {
       if (!this.alive(f)) continue;
       if (s.weatherUntil > 0 && this.now < s.weatherUntil) {
         const progress = 1 - (s.weatherUntil - this.now) / WEATHER_RECORD_MS;
-        AirFx.drawWeatherRing(air, this.col(owner), f.x, f.y, 52, this.vizT, progress, false, 1);
+        (this.sakura(owner) ? SakuraFx : AirFx).drawWeatherRing(air, this.col(owner), f.x, f.y, 52, this.vizT, progress, false, 1);
       } else if (s.weatherReplay) {
-        AirFx.drawWeatherRing(air, this.col(owner), f.x, f.y, 58, this.vizT, 1, true, 0.9);
+        (this.sakura(owner) ? SakuraFx : AirFx).drawWeatherRing(air, this.col(owner), f.x, f.y, 58, this.vizT, 1, true, 0.9);
       }
     }
   }
@@ -1626,7 +1636,7 @@ export class AirKit {
       expireAt: this.arena.scene.time.now + 1500,
       t: 0,
     });
-    this.pfx.muzzleGust(player.x, player.y, Math.atan2(dy, dx), 1.3);
+    this.fx('player').muzzleGust(player.x, player.y, Math.atan2(dy, dx), 1.3);
     this.playPlayerGesture('punch', Math.atan2(dy, dx));
     this.arena.showFloatingText(player.x, player.y - 30, '🦅 HAWK!', '#ffcc44');
   }
@@ -1649,15 +1659,15 @@ export class AirKit {
         const elen = Phaser.Math.Distance.Between(target.x, target.y, this.hawkDragX, this.hawkDragY);
         this.hawkDragUntil = time + (elen / 1200) * 1000 + 250;
         this.arena.showFloatingText(target.x, target.y - 30, '🦅 SNATCHED!', '#ffcc44');
-        this.arena.spawnHitFlash(h.x, h.y, AIR.charge);
-        this.pfx.gustBurst(h.x, h.y, 64, { duration: 340, dust: false });
+        this.arena.spawnHitFlash(h.x, h.y, this.pcol(AIR.charge));
+        this.fx('player').gustBurst(h.x, h.y, 64, { duration: 340, dust: false });
         h.g.destroy();
         this.hawks.splice(i, 1);
         continue;
       }
 
       if (time >= h.expireAt) {
-        this.pfx.motes(h.x, h.y, 6, { speed: 90, size: 2.6, life: 420, swirl: 2, depth: 6 });
+        this.fx('player').motes(h.x, h.y, 6, { speed: 90, size: 2.6, life: 420, swirl: 2, depth: 6 });
         h.g.destroy();
         this.hawks.splice(i, 1);
       }
@@ -1681,13 +1691,13 @@ export class AirKit {
       target.setPosition(this.hawkDragX, this.hawkDragY);
       eb.reset(this.hawkDragX, this.hawkDragY);
       this.hawkDragUntil = 0;
-      this.pfx.bloom(this.hawkDragX, this.hawkDragY, 58, 10, 5);
-      this.pfx.dustMark(this.hawkDragX, this.hawkDragY, 42);
+      this.fx('player').bloom(this.hawkDragX, this.hawkDragY, 58, 10, 5);
+      this.fx('player').dustMark(this.hawkDragX, this.hawkDragY, 42);
       return;
     }
     eb.setVelocity((dx / dist) * 1200, (dy / dist) * 1200);
     if (Math.random() < 0.35) {
-      this.pfx.motes(target.x, target.y, 1, {
+      this.fx('player').motes(target.x, target.y, 1, {
         angle: Math.atan2(-dy, -dx), spread: 0.5, speed: 70, size: 2.4, life: 340, depth: 5,
       });
     }

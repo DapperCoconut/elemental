@@ -9,6 +9,14 @@ import {
   dummyLink, falloutBunker, falloutPuddle, doseCells, flareRound, geigerDial, geigerTracer, lockReticle,
   testDummy, trefoil, uraniumRod, xrayOutline,
 } from './RadiationVisuals';
+import { BaseAvatar } from './ElementVisuals';
+import { makeSkinAvatar } from './skins/SkinAvatars';
+import {
+  SniperFx, jarRound, jarateMark, kukriSwing, laserDot, scopeCone, scopeReticle, sniperNest, sniperRound,
+} from './skins/SniperFx';
+
+/** A Radiation rig, or a skin's: the dose / ping hooks are optional on a skin rig. */
+type RadRig = BaseAvatar & { setDose?(v: number): void; ping?(): void };
 
 type Owner = 'player' | 'npc';
 
@@ -332,6 +340,8 @@ export interface RadiationArenaApi {
   blockHuskShot(x: number, y: number, r: number): boolean;
   /** Skins: maps a Radiation visual colour through that side's equipped skin. */
   radiationColor(owner: Owner, base: number): number;
+  /** Skins: the skin id that side has equipped, or null. */
+  skinId(owner: Owner): string | null;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
@@ -384,8 +394,11 @@ export class RadiationKit {
   private readonly ncol: RadiationColorFn;
   private readonly pfx: RadiationFx;
   private readonly nfx: RadiationFx;
-  private playerAvatar: RadiationAvatar | null = null;
-  private npcAvatar: RadiationAvatar | null = null;
+  private playerAvatar: RadRig | null = null;
+  private npcAvatar: RadRig | null = null;
+  /** The Sniper skin's one-shots, used for whichever side has it equipped. */
+  private readonly psfx: SniperFx;
+  private readonly nsfx: SniperFx;
   /** Bunkers and the airdrop's footprint — under the fighters. */
   private groundGfx: Phaser.GameObjects.Graphics | null = null;
   /** Rounds in the air, stuck tracers, cones, rods and counters — over everything. */
@@ -417,6 +430,8 @@ export class RadiationKit {
     this.ncol = (base) => api.radiationColor('npc', base);
     this.pfx = new RadiationFx(api.scene, this.pcol);
     this.nfx = new RadiationFx(api.scene, this.ncol);
+    this.psfx = new SniperFx(api.scene, this.pcol);
+    this.nsfx = new SniperFx(api.scene, this.ncol);
   }
 
   // ── Small helpers ──────────────────────────────────────────────────────────
@@ -424,7 +439,12 @@ export class RadiationKit {
   private get now(): number { return this.api.scene.time.now; }
   private side(owner: Owner): Side { return this.sides[owner]; }
   private fighter(owner: Owner): Fighter { return owner === 'player' ? this.api.player : this.api.npc; }
-  private fx(owner: Owner): RadiationFx { return owner === 'player' ? this.pfx : this.nfx; }
+  private fx(owner: Owner): RadiationFx {
+    if (this.sniper(owner)) return owner === 'player' ? this.psfx : this.nsfx;
+    return owner === 'player' ? this.pfx : this.nfx;
+  }
+  /** Sniper skin: that side's art is the bushman's (visual only). */
+  private sniper(owner: Owner): boolean { return this.api.skinId(owner) === 'sniper'; }
   private col(owner: Owner): RadiationColorFn { return owner === 'player' ? this.pcol : this.ncol; }
   private body(f: Fighter): Phaser.Physics.Arcade.Body { return f.body as Phaser.Physics.Arcade.Body; }
 
@@ -445,7 +465,7 @@ export class RadiationKit {
     return owner === 'player' ? this.api.elementId === 'radiation' : this.api.npcElementId === 'radiation';
   }
 
-  private avatar(owner: Owner): RadiationAvatar | null {
+  private avatar(owner: Owner): RadRig | null {
     return owner === 'player' ? this.playerAvatar : this.npcAvatar;
   }
 
@@ -556,10 +576,10 @@ export class RadiationKit {
   private ensureAvatars(): void {
     const { scene } = this.api;
     if (this.isRadiation('player') && !this.playerAvatar) {
-      this.playerAvatar = new RadiationAvatar(scene, this.pcol);
+      this.playerAvatar = makeSkinAvatar(this.api.skinId('player'), scene) ?? new RadiationAvatar(scene, this.pcol);
     }
     if (this.isRadiation('npc') && !this.npcAvatar) {
-      this.npcAvatar = new RadiationAvatar(scene, this.ncol);
+      this.npcAvatar = makeSkinAvatar(this.api.skinId('npc'), scene) ?? new RadiationAvatar(scene, this.ncol);
     }
   }
 
@@ -578,12 +598,12 @@ export class RadiationKit {
     // The inversion is silent inside `Fighter.heal`, and a heal that quietly hurt would read as
     // a bug — so the pop-up is hung off the fighter for as long as the dose lasts.
     victim.onHealInverted = (harm) => {
-      this.api.showFloatingText(victim.x, victim.y - 40, `☢ ${harm} REJECTED`, this.hex(RAD.neon));
+      this.api.showFloatingText(victim.x, victim.y - 40, this.sniper(by) ? `${harm} JARATE'D` : `☢ ${harm} REJECTED`, this.hex(this.col(by)(RAD.neon)));
     };
     if (quiet) return;
     this.fx(by).dose(victim.x, victim.y);
     if (!prev) {
-      this.api.showFloatingText(victim.x, victim.y - 48, '☢ IRRADIATED', this.hex(RAD.neon));
+      this.api.showFloatingText(victim.x, victim.y - 48, this.sniper(by) ? 'JARATE' : '☢ IRRADIATED', this.hex(this.col(by)(RAD.neon)));
       Sfx.playAt('status-poison', victim.x, { rate: 1.25, volume: 0.8 });
     }
   }
@@ -683,7 +703,7 @@ export class RadiationKit {
       Sfx.playAt('musket', f.x, { rate: 1.6, volume: 0.6 });
     }
     this.avatar(owner)?.play('punch', ang);
-    this.avatar(owner)?.ping();
+    this.avatar(owner)?.ping?.();
   }
 
   /**
@@ -797,7 +817,7 @@ export class RadiationKit {
 
     s.flares = { ammo: FLARE_AMMO, hits: new Map(), inFlight: 0, expiresAt: this.now + FLARE_WINDOW_MS };
     this.avatar(owner)?.play('raise');
-    this.avatar(owner)?.ping();
+    this.avatar(owner)?.ping?.();
     this.api.showFloatingText(f.x, f.y - 58, `☢ ${FLARE_AMMO} FLARES · ONE TARGET`, this.hex(RAD.neon));
     Sfx.playAt('reload', f.x, { rate: 0.9, volume: 1 });
   }
@@ -893,7 +913,7 @@ export class RadiationKit {
     const ang = Math.atan2(victim.y - m.y, victim.x - m.x);
     this.fx(owner).rail(m.x, m.y, victim.x, victim.y);
     this.fx(owner).railHit(victim.x, victim.y, ang);
-    this.avatar(owner)?.ping();
+    this.avatar(owner)?.ping?.();
 
     victim.takeDamage(RAIL_DAMAGE);
     this.record(owner, 'snipes');
@@ -1565,7 +1585,7 @@ export class RadiationKit {
     this.decoys[owner] = null;
 
     this.avatar(owner)?.play('punch', a, 320);
-    this.avatar(owner)?.ping();
+    this.avatar(owner)?.ping?.();
     this.api.showFloatingText(f.x, f.y - 52, '🎯 TEST DUMMY', this.hex(RAD.hazard));
     Sfx.playAt('whoosh', f.x, { rate: 0.8, volume: 0.7 });
     if (owner === 'player') this.api.broadcast(DUMMY_ID);
@@ -1823,13 +1843,15 @@ export class RadiationKit {
       const bk = this.side(owner).bunker;
       if (!bk) continue;
       const fade = Phaser.Math.Clamp((bk.until - this.now) / 500, 0, 1);
-      falloutBunker(g, this.col(owner), bk.x, bk.y, BUNKER_R, 0.95 * fade, this.vizT, {
+      const nest = {
         hp: bk.hp / BUNKER_HP,
         built: Phaser.Math.Clamp((this.now - bk.builtAt) / BUNKER_BUILD_MS, 0, 1),
         occupied: this.sheltered(owner),
         hit: bk.hit,
         seed: bk.seed,
-      });
+      };
+      if (this.sniper(owner)) sniperNest(g, bk.x, bk.y, BUNKER_R, 0.95 * fade, this.vizT, nest);
+      else falloutBunker(g, this.col(owner), bk.x, bk.y, BUNKER_R, 0.95 * fade, this.vizT, nest);
       const built = Phaser.Math.Clamp((this.now - bk.builtAt) / BUNKER_BUILD_MS, 0, 1);
       for (const tr of bk.turrets ?? []) {
         const at = this.turretPos(bk, tr);
@@ -1870,6 +1892,11 @@ export class RadiationKit {
       if (!this.alive(f)) continue;
       const tint = this.col(owner);
       const lock = this.lockProgress(b);
+      if (this.sniper(owner)) {
+        scopeCone(g, f.x, f.y, b.ang, this.coneHalf(b), BARRAGE_RANGE, 0.9, this.vizT, { lock, locked: !!b.victim });
+        if (b.victim && this.alive(b.victim)) scopeReticle(g, b.victim.x, b.victim.y, lock, 0.95, this.vizT);
+        continue;
+      }
       barrageCone(g, tint, f.x, f.y, b.ang, this.coneHalf(b), BARRAGE_RANGE, 0.9, this.vizT,
         { lock, locked: !!b.victim });
       if (b.victim && this.alive(b.victim)) lockReticle(g, tint, b.victim.x, b.victim.y, lock, 0.95, this.vizT);
@@ -1878,6 +1905,11 @@ export class RadiationKit {
     // ── Rounds in the air ──
     for (const r of this.rounds) {
       const tint = this.col(r.owner);
+      if (this.sniper(r.owner)) {
+        if (r.kind === 'flare') jarRound(g, r.x, r.y, r.ang, 1, this.vizT);
+        else sniperRound(g, r.x, r.y, r.ang, 1, !!r.spiked);
+        continue;
+      }
       if (r.kind === 'flare') flareRound(g, tint, r.x, r.y, r.ang, 1, this.vizT);
       else geigerTracer(g, tint, r.x, r.y, r.ang + this.vizT * 9, 1, { lamp: 0.5, spiked: r.spiked });
     }
@@ -1891,6 +1923,10 @@ export class RadiationKit {
         const blink = 0.4 + 0.6 * Math.abs(Math.sin(this.vizT * (3 + n * 2.6)));
         for (let i = 0; i < n; i++) {
           const a = this.vizT * 1.6 + (i / TRACERS_TO_CONFIRM) * TAU;
+          if (this.sniper(owner)) {
+            laserDot(g, v.x + Math.cos(a) * 20, v.y + Math.sin(a) * 20 - 2, 0.95, blink);
+            continue;
+          }
           geigerTracer(g, tint, v.x + Math.cos(a) * 20, v.y + Math.sin(a) * 20 - 2,
             a + Math.PI / 2, 0.95, { lamp: blink, legs: true, scale: 0.85 });
         }
@@ -1925,6 +1961,10 @@ export class RadiationKit {
       const e = 1 - (1 - t) * (1 - t);
       const a = s.swing.ang - ROD_ARC + e * ROD_ARC * 2;
       const tint = this.col(owner);
+      if (this.sniper(owner)) {
+        kukriSwing(g, ox, oy, s.swing.ang - ROD_ARC, a, ROD_REACH, t, s.swing.hot);
+        continue;
+      }
       // A faint trail of where the rod has been this swing.
       g.lineStyle(10, tint(s.swing.hot ? RAD.hazard : RAD.neon), 0.18 * (1 - t));
       g.beginPath();
@@ -1940,6 +1980,10 @@ export class RadiationKit {
       if (!this.alive(v)) continue;
       const left = Phaser.Math.Clamp((d.until - this.now) / Math.max(1, d.full), 0, 1);
       const tint = this.col(d.by);
+      if (this.sniper(d.by)) {
+        jarateMark(g, v.x, v.y, left, this.vizT, 0.95, 0.37);
+        continue;
+      }
       geigerDial(g, tint, v.x, v.y - 27, 11, left, this.vizT + v.x * 0.01, 0.95);
     }
   }
@@ -1965,7 +2009,7 @@ export class RadiationKit {
       const b = s.barrage;
       av.setFacing(b && (!b.shotsLeft || b.firingSince > 0) ? b.ang : Math.atan2(s.aimY - f.y, s.aimX - f.x));
       // The suit runs warm at rest and hot while a lock is closing.
-      av.setDose(b ? 0.5 + this.lockProgress(b) * 0.5 : 0.5);
+      av.setDose?.(b ? 0.5 + this.lockProgress(b) * 0.5 : 0.5);
       av.update(delta, f.x, f.y, f.alpha);
     }
   }
@@ -1976,7 +2020,8 @@ export class RadiationKit {
 
     const dose = this.irradiated.get(p);
     this.api.setStatusIndicator('radiation-irradiated', dose ? {
-      name: 'Irradiated', emoji: '☢️', color: RAD.neon, priority: 5,
+      name: this.sniper(dose.by) ? 'Jarate' : 'Irradiated', emoji: this.sniper(dose.by) ? '🫙' : '☢️',
+      color: this.col(dose.by)(RAD.neon), priority: 5,
       description: 'Every point of healing aimed at you from any source lands as damage instead. Radiation\'s Barrage hits you for 8 a round instead of 5, and its Rod Baton stuns you.',
       until: dose.until,
     } : null);

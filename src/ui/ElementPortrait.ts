@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { ArmGesture, BaseAvatar, ColorFn } from '../elements/kits/ElementVisuals';
 import { elementBodyTexture, makeElementAvatar } from '../elements/kits/ElementAvatars';
 import { makeSkinAvatar } from '../elements/kits/skins/SkinAvatars';
-import { getSkinDef } from '../data/Skins';
+import { getSkinDef, skinColor } from '../data/Skins';
 import { equippedSkin, skinnedColorFn } from './AbilityPreview';
 
 /**
@@ -92,7 +92,7 @@ export class ElementPortrait {
     const skin = this.opts.skinId !== undefined ? getSkinDef(this.opts.skinId) : equippedSkin(elementId);
     const tint: ColorFn = this.opts.skinId === undefined
       ? skinnedColorFn(elementId)
-      : skin?.palette ? ((base) => skin.palette![base] ?? skin.paletteFallback ?? base) : ((c) => c);
+      : (skin?.palette || skin?.remap) ? ((base) => skinColor(skin, base)) : ((c) => c);
 
     // The body sprite first, so the rig's hands and eyes land on top of a torso rather than
     // hanging in the air. Two elements paint their own body instead and have no texture.

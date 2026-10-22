@@ -101,7 +101,7 @@ const BASE_STATS: MechStats = {
   cooldowns: MECH_COOLDOWNS,
   smashDamage: 20, smashRadius: 96, smashDebris: 3,
   debrisDamage: 10,
-  railDamage: 15, railHalfW: 26,
+  railDamage: 15, railHalfW: 52,
   avalancheDamage: 25, avalancheSlamDamage: 30, avalancheStunMs: 700, rainDamage: 12,
   cannonTickDamage: 5, cannonHalfW: 34, slagTickDamage: 5,
   blasts: 20, blastDamage: 20, blastRadius: 76,
@@ -112,7 +112,7 @@ export const MEGA_STATS: MechStats = {
   cooldowns: { smash: 1000, rail: 4000, avalanche: 11000, cannon: 8500 },
   smashDamage: 30, smashRadius: 120, smashDebris: 5,
   debrisDamage: 14,
-  railDamage: 22, railHalfW: 38,
+  railDamage: 22, railHalfW: 76,
   avalancheDamage: 35, avalancheSlamDamage: 45, avalancheStunMs: 1200, rainDamage: 16,
   cannonTickDamage: 7, cannonHalfW: 46, slagTickDamage: 7,
   blasts: 30, blastDamage: 25, blastRadius: 90,
@@ -804,7 +804,7 @@ export class MagnetMech {
         const w = this.toWorld(a.fistX, a.fistY);
         fg.fillStyle(tint(MAGNET.shadow), 0.4);
         fg.fillEllipse(w.x, w.y + 6, SAW_RADIUS * 1.6, SAW_RADIUS * 0.7);
-        fg.lineStyle(2, MAGNET.amber, 0.55 + 0.25 * Math.sin(t * 30));
+        fg.lineStyle(2, tint(MAGNET.amber), 0.55 + 0.25 * Math.sin(t * 30));
         fg.strokeCircle(w.x, w.y, SAW_RADIUS);
         continue;
       }
@@ -820,17 +820,17 @@ export class MagnetMech {
     // Furnace puddles: a crust of slag with flame tongues licking off it.
     for (const fl of this.flames) {
       const life = Phaser.Math.Clamp((fl.until - time) / 900, 0, 1);
-      fg.fillStyle(0x3a0c04, 0.65 * life);
+      fg.fillStyle(tint(0x3a0c04), 0.65 * life);
       fg.fillCircle(fl.x, fl.y, fl.r);
-      fg.fillStyle(0xff4a12, (0.45 + 0.15 * Math.sin(t * 9 + fl.seed)) * life);
+      fg.fillStyle(tint(0xff4a12), (0.45 + 0.15 * Math.sin(t * 9 + fl.seed)) * life);
       fg.fillCircle(fl.x, fl.y, fl.r * 0.74);
-      fg.fillStyle(0xffc24a, (0.45 + 0.25 * Math.sin(t * 13 + fl.seed * 2)) * life);
+      fg.fillStyle(tint(0xffc24a), (0.45 + 0.25 * Math.sin(t * 13 + fl.seed * 2)) * life);
       fg.fillCircle(fl.x + Math.sin(t * 3 + fl.seed) * fl.r * 0.15, fl.y, fl.r * 0.36);
       for (let i = 0; i < 5; i++) {
         const a = fl.seed + (i / 5) * Math.PI * 2 + t * 0.6;
         const bx = fl.x + Math.cos(a) * fl.r * 0.6, by = fl.y + Math.sin(a) * fl.r * 0.45;
         const h = (10 + 8 * Math.sin(t * 11 + i * 1.7 + fl.seed)) * life;
-        fg.fillStyle(0xff7a1a, 0.7 * life);
+        fg.fillStyle(tint(0xff7a1a), 0.7 * life);
         fillPts(fg, [{ x: bx - 5, y: by }, { x: bx + 5, y: by }, { x: bx + Math.sin(t * 7 + i) * 3, y: by - h }]);
       }
     }
@@ -841,7 +841,7 @@ export class MagnetMech {
       fg.fillStyle(tint(MAGNET.shadow), 0.15 + 0.35 * k);
       fg.fillEllipse(r.lx, r.ly, 14 + 18 * k, (14 + 18 * k) * 0.45);
       if (!r.fromSky) continue;
-      fg.lineStyle(2, MAGNET.amber, 0.35 + 0.55 * k);
+      fg.lineStyle(2, tint(MAGNET.amber), 0.35 + 0.55 * k);
       fg.strokeCircle(r.lx, r.ly, r.radius);
       fg.lineBetween(r.lx - r.radius * 0.5, r.ly, r.lx + r.radius * 0.5, r.ly);
       fg.lineBetween(r.lx, r.ly - r.radius * 0.5, r.lx, r.ly + r.radius * 0.5);
@@ -1038,16 +1038,16 @@ export class MagnetMech {
       const glow = 0.65 + 0.35 * Math.sin(t * 7);
       g.fillStyle(tint(MAGNET.oil), 1);
       g.fillRoundedRect(cx - 64, vy + 64, 128, 40, 8);
-      g.fillStyle(0xff5a14, glow);
+      g.fillStyle(tint(0xff5a14), glow);
       g.fillRoundedRect(cx - 58, vy + 69, 116, 30, 6);
-      g.fillStyle(0xffd060, 0.5 * glow);
+      g.fillStyle(tint(0xffd060), 0.5 * glow);
       g.fillEllipse(cx, vy + 88, 90, 14);
       g.fillStyle(tint(MAGNET.gunMid), 1);
       for (let i = 0; i < 6; i++) g.fillRect(cx - 55 + i * 21, vy + 66, 6, 36);
       // Embers spat out of the grate.
       for (let i = 0; i < 4; i++) {
         const p = (t * 0.9 + i / 4) % 1;
-        g.fillStyle(0xffaa33, 0.8 * (1 - p));
+        g.fillStyle(tint(0xffaa33), 0.8 * (1 - p));
         g.fillCircle(cx - 40 + i * 26 + Math.sin(t * 3 + i) * 6, vy + 104 + p * 40, 3 - p * 2);
       }
       for (const s of [-1, 1]) {
@@ -1084,7 +1084,7 @@ export class MagnetMech {
       [160, 120, 50, 30, 0x4b5a2a], [-200, 120, 46, 40, 0x6b6a3a], [20, 60, 40, 22, 0x3a4624],
     ];
     for (const [ox, oy, w, h, c] of blots) {
-      g.fillStyle(c, 0.85);
+      g.fillStyle(this.api.tint(c), 0.85);
       g.fillEllipse(cx + ox, cy + oy, w, h);
       g.fillEllipse(cx + ox + w * 0.3, cy + oy + h * 0.25, w * 0.6, h * 0.7);
     }
@@ -1092,16 +1092,16 @@ export class MagnetMech {
       const rx = cx + s * 214, ry = vy - 30;
       g.fillStyle(this.api.tint(MAGNET.oil), 1);
       g.fillRect(rx - 30, ry - 6, 60, 50);
-      g.fillStyle(0x4b5a2a, 1);
+      g.fillStyle(this.api.tint(0x4b5a2a), 1);
       g.fillRect(rx - 27, ry - 3, 54, 44);
       // Three tubes; a lit warhead in each that is not empty.
       const since = (this.api.scene.time.now - (this.nextBarrageAt - CAMO_GAP_MS)) / CAMO_GAP_MS;
       for (let i = 0; i < 3; i++) {
         const tx = rx - 17 + i * 17;
         g.fillStyle(this.api.tint(MAGNET.oil), 1); g.fillCircle(tx, ry + 30, 7);
-        if (since > 0.25) { g.fillStyle(MAGNET.red, 1); g.fillCircle(tx, ry + 30, 4.5); }
+        if (since > 0.25) { g.fillStyle(this.api.tint(MAGNET.red), 1); g.fillCircle(tx, ry + 30, 4.5); }
       }
-      g.fillStyle(MAGNET.amber, Math.sin(t * 5 + s) > 0 ? 0.9 : 0.3);
+      g.fillStyle(this.api.tint(MAGNET.amber), Math.sin(t * 5 + s) > 0 ? 0.9 : 0.3);
       g.fillCircle(rx + s * 22, ry + 4, 3);
     }
   }
@@ -1118,7 +1118,7 @@ export class MagnetMech {
     g.fillStyle(tint(MAGNET.gunHi), 1);
     fillPts(g, plate);
     for (let i = 0; i < 6; i++) {
-      g.fillStyle(i % 2 === 0 ? MAGNET.amber : tint(MAGNET.oil), 0.9);
+      g.fillStyle(i % 2 === 0 ? tint(MAGNET.amber) : tint(MAGNET.oil), 0.9);
       fillPts(g, [
         { x: cx + 66 + i * 22, y: cy + 10 + i * 4 }, { x: cx + 80 + i * 22, y: cy + 13 + i * 4 },
         { x: cx + 72 + i * 22, y: cy + 50 + i * 4 }, { x: cx + 58 + i * 22, y: cy + 47 + i * 4 },
@@ -1127,17 +1127,17 @@ export class MagnetMech {
     // TNT bundle on the left cheek, fuse sputtering.
     const bx = cx - 222, by = vy - 34;
     for (let i = 0; i < 3; i++) {
-      g.fillStyle(0x8a1a12, 1);
+      g.fillStyle(tint(0x8a1a12), 1);
       g.fillRoundedRect(bx - 22 + i * 15, by, 13, 46, 4);
-      g.fillStyle(0xd23a24, 1);
+      g.fillStyle(tint(0xd23a24), 1);
       g.fillRoundedRect(bx - 20 + i * 15, by + 2, 9, 42, 3);
     }
-    g.fillStyle(0xd9c27a, 1);
+    g.fillStyle(tint(0xd9c27a), 1);
     g.fillRect(bx - 24, by + 18, 48, 8);
-    g.lineStyle(2, 0x2a1a10, 1);
+    g.lineStyle(2, tint(0x2a1a10), 1);
     g.lineBetween(bx, by, bx + 6, by - 14);
     const sp = Math.sin(t * 30) > 0;
-    g.fillStyle(sp ? 0xffee88 : 0xff7a1a, 1);
+    g.fillStyle(sp ? tint(0xffee88) : tint(0xff7a1a), 1);
     g.fillCircle(bx + 6, by - 15, sp ? 4 : 3);
   }
 
@@ -1288,10 +1288,10 @@ export class MagnetMech {
         g.fillStyle(tint(MAGNET.oil), 1); g.fillCircle(tx, ty, 13);
         g.fillStyle(tint(MAGNET.cobalt), 1); g.fillCircle(tx, ty, 10);
         if (loaded) {
-          g.fillStyle(MAGNET.red, 1); g.fillCircle(tx, ty, 7);
-          g.fillStyle(MAGNET.white, 0.5); g.fillCircle(tx - 2, ty - 2, 2.5);
+          g.fillStyle(tint(MAGNET.red), 1); g.fillCircle(tx, ty, 7);
+          g.fillStyle(tint(MAGNET.white), 0.5); g.fillCircle(tx - 2, ty - 2, 2.5);
         } else {
-          g.fillStyle(0xff7a1a, 0.5 + 0.4 * Math.sin(t * 30 + col)); g.fillCircle(tx, ty, 6);
+          g.fillStyle(tint(0xff7a1a), 0.5 + 0.4 * Math.sin(t * 30 + col)); g.fillCircle(tx, ty, 6);
         }
       }
     }
@@ -1332,7 +1332,7 @@ export class MagnetMech {
     if (a.phase === 'grind') {
       for (let i = 0; i < 6; i++) {
         const ang = time / 30 + i * 1.3;
-        g.fillStyle(MAGNET.goldHi, 0.85);
+        g.fillStyle(tint(MAGNET.goldHi), 0.85);
         g.fillCircle(a.fistX + Math.cos(ang) * (r + 14 + (i * 7) % 20), a.fistY + Math.sin(ang) * (r + 14 + (i * 7) % 20), 3);
       }
     }
@@ -1342,19 +1342,21 @@ export class MagnetMech {
     const tint = this.api.tint;
     const top = PAD, bot = this.api.height - PAD;
     const life = Phaser.Math.Clamp((rl.until - this.api.scene.time.now) / 800, 0, 1);
+    // Track art is drawn at the base 26 half-width and scaled to the live hit width.
+    const k = this.stats.railHalfW / 26;
     // Sleepers, then the twin rails, then the arcs crawling between them.
     g.fillStyle(tint(MAGNET.gun), 0.9 * life);
-    for (let y = top + 8; y < bot; y += 26) g.fillRect(rl.x - 28, y, 56, 9);
+    for (let y = top + 8; y < bot; y += 26) g.fillRect(rl.x - 28 * k, y, 56 * k, 9);
     for (const s of [-1, 1]) {
-      g.fillStyle(tint(MAGNET.oil), life); g.fillRect(rl.x + s * 12 - 4, top, 8, bot - top);
-      g.fillStyle(tint(MAGNET.plateHi), life); g.fillRect(rl.x + s * 12 - 2, top, 3, bot - top);
+      g.fillStyle(tint(MAGNET.oil), life); g.fillRect(rl.x + s * 12 * k - 4 * k, top, 8 * k, bot - top);
+      g.fillStyle(tint(MAGNET.plateHi), life); g.fillRect(rl.x + s * 12 * k - 2 * k, top, 3 * k, bot - top);
     }
     g.fillStyle(tint(MAGNET.cobalt), 0.18 * life);
     g.fillRect(rl.x - this.stats.railHalfW, top, this.stats.railHalfW * 2, bot - top);
     for (let i = 0; i < 9; i++) {
       const y = top + (((i * 97) + t * 420) % (bot - top));
       g.fillStyle(tint(i % 2 === 0 ? MAGNET.visor : MAGNET.neon), 0.85 * life);
-      fieldArc(g, rl.x - 12, y, rl.x + 12, y + 14, (i % 2 === 0 ? 1 : -1) * 10, 3, 10);
+      fieldArc(g, rl.x - 12 * k, y, rl.x + 12 * k, y + 14, (i % 2 === 0 ? 1 : -1) * 10 * k, 3, 10);
     }
   }
 
@@ -1422,15 +1424,15 @@ function drawRocket(g: Phaser.GameObjects.Graphics, tint: MagnetColorFn, x: numb
   const c = Math.cos(ang), n = Math.sin(ang);
   const p = (fx: number, fy: number): Pt => ({ x: x + c * fx * s - n * fy * s, y: y + n * fx * s + c * fy * s });
   const flick = 0.75 + 0.25 * Math.sin(t * 40 + x);
-  g.fillStyle(0xff7a1a, 0.8);
+  g.fillStyle(tint(0xff7a1a), 0.8);
   fillPts(g, [p(-9, -3.5), p(-9 - 14 * flick, 0), p(-9, 3.5)]);
-  g.fillStyle(0xffe08a, 0.9);
+  g.fillStyle(tint(0xffe08a), 0.9);
   fillPts(g, [p(-9, -2), p(-9 - 7 * flick, 0), p(-9, 2)]);
   g.fillStyle(tint(MAGNET.gunHi), 1);
   fillPts(g, [p(-10, -6), p(-5, -3.5), p(-5, 3.5), p(-10, 6)]);
   g.fillStyle(tint(MAGNET.steel), 1);
   fillPts(g, [p(-9, -3.5), p(6, -3.5), p(6, 3.5), p(-9, 3.5)]);
-  g.fillStyle(MAGNET.red, 1);
+  g.fillStyle(tint(MAGNET.red), 1);
   fillPts(g, [p(6, -3.5), p(12, 0), p(6, 3.5)]);
   g.lineStyle(1, tint(MAGNET.oil), 0.9);
   strokePts(g, [p(-9, -3.5), p(6, -3.5), p(12, 0), p(6, 3.5), p(-9, 3.5)], true);

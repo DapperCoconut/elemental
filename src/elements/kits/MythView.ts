@@ -3,6 +3,7 @@ import {
   GunKind, MYTH, MythColorFn, crosshair, crowdFigure, gun, jitter, muzzleFlash, pinpricks, star,
 } from './MythVisuals';
 import { FONT_DISPLAY } from '../../ui/Theme';
+import { DOOM_GUN_NAMES, doomGun } from './skins/DoomFx';
 
 /**
  * Final Destiny's first-person frame.
@@ -125,6 +126,8 @@ export class MythView {
   private stars: SkyStar[] = [];
   private t = 0;
   private open = false;
+  /** The player's equipped Myth skin: Doom swaps the guns and the labels (visual only). */
+  private skin: string | null = null;
 
   constructor(scene: Phaser.Scene, tint: MythColorFn, width: number, height: number) {
     this.scene = scene;
@@ -137,6 +140,8 @@ export class MythView {
   }
 
   isOpen(): boolean { return this.open; }
+
+  setSkin(id: string | null): void { this.skin = id; }
 
   /** Build the layers. Idempotent. */
   show(): void {
@@ -436,7 +441,8 @@ export class MythView {
     g.fillEllipse(gx - 70, gy - 70, 360, 220);
     g.fillStyle(this.tint(MYTH.haze), 0.06);
     g.fillEllipse(gx - 60, gy - 60, 240, 140);
-    const m = gun(g, this.tint, hud.gun, gx, gy, hud.butt > 0 ? 0 : hud.recoil, this.t, GUN_SCALE, swing * 1.5);
+    const doom = this.skin === 'doom';
+    const m = (doom ? doomGun : gun)(g, this.tint, hud.gun, gx, gy, hud.butt > 0 ? 0 : hud.recoil, this.t, GUN_SCALE, swing * 1.5);
     if (hud.butt > 0 && hud.butt < 0.7) {
       // The connect: speed lines raking in toward the crosshair and a white crack under it.
       const k = 1 - hud.butt / 0.7;
@@ -533,9 +539,10 @@ export class MythView {
     }
     star(g, L - 7, 64.5, 4, this.tint(MYTH.gold), 0.9, { points: 4 });
     star(g, L + bw + 7, 64.5, 4, this.tint(MYTH.gold), 0.9, { points: 4 });
-    this.timerText?.setText(`FINAL DESTINY  ${hud.secondsLeft.toFixed(1)}s`);
-    const name = { pistol: 'PISTOL', shotgun: 'SHOTGUN', launcher: 'GRENADE BARRAGE', rifle: 'HUNTER RIFLE', rocket: 'SHADOW ROCKET' }[hud.gun];
-    this.gunText?.setText(`${name}${hud.rapid ? '  · RAPID' : ''}${hud.chain ? '  · CHAIN' : ''}`);
+    this.timerText?.setText(`${doom ? 'RIP AND TEAR' : 'FINAL DESTINY'}  ${hud.secondsLeft.toFixed(1)}s`);
+    const name = doom ? DOOM_GUN_NAMES[hud.gun] : { pistol: 'PISTOL', shotgun: 'SHOTGUN', launcher: 'GRENADE BARRAGE', rifle: 'HUNTER RIFLE', rocket: 'SHADOW ROCKET' }[hud.gun];
+    this.gunText?.setText(`${name}${hud.rapid ? '  · RAPID' : ''}${hud.chain ? '  · CHAIN' : ''}`)
+      .setColor(`#${this.tint(MYTH.haze).toString(16).padStart(6, '0')}`);
     // A void plate under the gun's name, edged in violet with a gold star on the leading end.
     if (this.gunText) {
       const tw = this.gunText.width;

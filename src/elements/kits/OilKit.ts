@@ -4,6 +4,9 @@ import { Projectile } from '../../combat/Projectile';
 import {
   ArmGesture, DroneArrayLattice, OilAvatar, OilCoat, OilColorFn, OilFx, oilFlame, OIL,
 } from './OilVisuals';
+import { BaseAvatar } from './ElementVisuals';
+import { makeSkinAvatar } from './skins/SkinAvatars';
+import { AmberFx } from './skins/AmberFx';
 
 // ── Oil Mastery constants ────────────────────────────────────────────────────
 
@@ -83,6 +86,8 @@ export interface OilArenaApi {
   recordMasteryStat(key: string, amount: number): void;
   /** Skins: maps an oil visual color through the owner's skin. */
   oilColor(owner: 'player' | 'npc', base: number): number;
+  /** Skins: the equipped skin id for that owner, or null. */
+  skinId(owner: 'player' | 'npc'): string | null;
 }
 
 // ── Internal types ───────────────────────────────────────────────────────────
@@ -229,8 +234,8 @@ export class OilKit {
   private readonly pfx: OilFx;
   private readonly nfx: OilFx;
   /** The oil character rig (crude hands, lamp eyes, wellhead/stacks) for each oil fighter. */
-  private playerAvatar: OilAvatar | null = null;
-  private npcAvatar: OilAvatar | null = null;
+  private playerAvatar: BaseAvatar | null = null;
+  private npcAvatar: BaseAvatar | null = null;
   /** The Oily coating, built for whichever fighter is currently wearing the debuff. */
   private playerCoat: OilCoat | null = null;
   private npcCoat: OilCoat | null = null;
@@ -632,7 +637,7 @@ export class OilKit {
     const { player, npc, scene } = this.arena;
 
     if (isPlayer && player?.active) {
-      if (!this.playerAvatar) this.playerAvatar = new OilAvatar(scene, this.pcol);
+      if (!this.playerAvatar) this.playerAvatar = this.makeAvatar('player');
       const aim = this.aimFrom(player, this.lastMouseX || player.x + 1, this.lastMouseY || player.y);
       this.playerAvatar.setFacing(aim);
       // Overdrive and the coal-stoked train both visibly swell the rig, so the buff reads off
@@ -653,7 +658,7 @@ export class OilKit {
     }
 
     if (isNpc && npc?.active) {
-      if (!this.npcAvatar) this.npcAvatar = new OilAvatar(scene, this.ncol);
+      if (!this.npcAvatar) this.npcAvatar = this.makeAvatar('npc');
       this.npcAvatar.setFacing(this.aimFrom(npc, player.x, player.y));
       this.npcAvatar.setIntensity(this.npcOverdriveActive ? 1.35 : 1);
       this.npcAvatar.setHold(this.npcBarrel?.ridden ? 'ride' : null);
@@ -674,6 +679,18 @@ export class OilKit {
       this.arrayLattice = null;
     }
     void time;
+  }
+
+  /** The equipped skin's rig, or oil's own. */
+  private makeAvatar(owner: 'player' | 'npc'): BaseAvatar {
+    const scene = this.arena.scene;
+    return makeSkinAvatar(this.arena.skinId(owner), scene)
+      ?? new OilAvatar(scene, owner === 'player' ? this.pcol : this.ncol);
+  }
+
+  /** Amber skin: drones become pterosaurs, the train a rex stampede. Visual only. */
+  private isAmber(owner: 'player' | 'npc'): boolean {
+    return this.arena.skinId(owner) === 'amber';
   }
 
   /** Keeps rotors turning on drones that have left the orbit and are mid-tween. */
@@ -802,10 +819,14 @@ export class OilKit {
     const g = drone.gfx;
     if (!g.active) return;
     g.clear();
-    OilFx.drawDrone(
-      g, drone.owner === 'player' ? this.pcol : this.ncol,
-      drone.aim, drone.spin, drone.shotsLeft, drone.maxShots, 1, drone.overcharged,
-    );
+    if (this.isAmber(drone.owner)) {
+      AmberFx.drawPterosaur(g, drone.aim, drone.spin, drone.shotsLeft, drone.maxShots, drone.overcharged);
+    } else {
+      OilFx.drawDrone(
+        g, drone.owner === 'player' ? this.pcol : this.ncol,
+        drone.aim, drone.spin, drone.shotsLeft, drone.maxShots, 1, drone.overcharged,
+      );
+    }
     if (drone.kind !== 'standard') {
       OilFx.drawDroneBadge(g, drone.owner === 'player' ? this.pcol : this.ncol, drone.kind, drone.spin);
     }
@@ -885,7 +906,11 @@ export class OilKit {
         drone.gfx.x + Math.cos(shotAngle) * 6, drone.gfx.y + Math.sin(shotAngle) * 6,
         shotAngle, 0.55, 9,
       );
-      fx.beam(drone.gfx.x, drone.gfx.y, tx, ty, { width: 2.6, duration: 200, impact: 9, depth: 8 });
+      // Amber's pterosaurs fire red from the eyes; oil's drones fire gold.
+      fx.beam(drone.gfx.x, drone.gfx.y, tx, ty, {
+        width: 2.6, duration: 200, impact: 9, depth: 8,
+        color: this.isAmber(owner) ? OIL.ember : undefined,
+      });
 
       // A laser landing on an Oily enemy burns the oil straight off them.
       if (foe.hp > 0 && foe.oilyUntil > scene.time.now &&
@@ -1443,10 +1468,12 @@ export class OilKit {
       // blinking away, so a floor covered in them drains instead of popping.
       const left = p.expiresAt - time;
       p.gfx.clear();
+      const puddleAlpha = left < 600 ? Math.max(0, left / 600) : 1;
       OilFx.drawPuddle(
         p.gfx, tint, p.x, p.y, p.radius, this.worldT,
-        left < 600 ? Math.max(0, left / 600) : 1, p.seed, p.ignited,
+        puddleAlpha, p.seed, p.ignited,
       );
+      if (this.isAmber(owner)) AmberFx.drawInclusion(p.gfx, p.x, p.y, p.radius, p.seed, puddleAlpha);
 
       // Ignited: instant fire DOT when enemy steps in, plus slow tick damage
       if (p.ignited) {
@@ -1926,7 +1953,7 @@ export class OilKit {
     this.pfx.smoke(p.x, p.y, 5, 26, 4);
     this.pfx.sparks(p.x, p.y, 14, { speed: 240, life: 420, depth: 9 });
     this.arena.scene.cameras.main.shake(200, 0.005);
-    this.arena.showFloatingText(p.x, p.y - 40, 'Train Morph!', '#ff8800');
+    this.arena.showFloatingText(p.x, p.y - 40, this.isAmber('player') ? 'Stampede!' : 'Train Morph!', '#ff8800');
   }
 
   private updateTrain(time: number, delta: number): void {
@@ -1973,12 +2000,15 @@ export class OilKit {
     if (this.playerTrainGfx) {
       const g = this.playerTrainGfx;
       g.clear();
+      const amber = this.isAmber('player');
       for (let i = this.playerTrainSegments.length - 1; i >= 0; i--) {
         const seg = this.playerTrainSegments[i];
-        OilFx.drawTrainCar(g, this.pcol, seg.x, seg.y, seg.angle, this.worldT, false, this.trainQPlusActive, i);
+        if (amber) AmberFx.drawStampeder(g, seg.x, seg.y, seg.angle, this.worldT, this.trainQPlusActive, i);
+        else OilFx.drawTrainCar(g, this.pcol, seg.x, seg.y, seg.angle, this.worldT, false, this.trainQPlusActive, i);
       }
       const headAngle = Math.atan2(this.playerTrainDirY, this.playerTrainDirX);
-      OilFx.drawTrainCar(g, this.pcol, player.x, player.y, headAngle, this.worldT, true, this.trainQPlusActive, 0);
+      if (amber) AmberFx.drawRexMount(g, player.x, player.y, headAngle, this.worldT, this.trainQPlusActive);
+      else OilFx.drawTrainCar(g, this.pcol, player.x, player.y, headAngle, this.worldT, true, this.trainQPlusActive, 0);
     }
 
     // Drop oil puddle every 2s (Q+ halves interval)
@@ -2022,7 +2052,8 @@ export class OilKit {
     for (const coal of this.coalPickups) {
       if (coal.collected) continue;
       coal.gfx.clear();
-      OilFx.drawCoal(coal.gfx, this.pcol, this.worldT, coal.seed);
+      if (this.isAmber('player')) AmberFx.drawMeat(coal.gfx, this.worldT, coal.seed);
+      else OilFx.drawCoal(coal.gfx, this.pcol, this.worldT, coal.seed);
       if (Phaser.Math.Distance.Between(player.x, player.y, coal.x, coal.y) <= 20) {
         coal.collected = true;
         coal.gfx.destroy();
@@ -2033,7 +2064,7 @@ export class OilKit {
         this.pfx.sparks(coal.x, coal.y, 9, { speed: 130, life: 380, depth: 9 });
         this.pfx.ring(coal.x, coal.y, 3, 26, OIL.gold, 300, 3, 4);
         this.pfx.smoke(player.x, player.y - 6, 2, 10, 4);
-        this.arena.showFloatingText(coal.x, coal.y - 20, '🔥 Coal!', '#ffa500');
+        this.arena.showFloatingText(coal.x, coal.y - 20, this.isAmber('player') ? '🍖 Meat!' : '🔥 Coal!', '#ffa500');
 
         // Q+ upgrade: all 5 collected
         if (this.playerTrainCollectedCoal >= 5 && this.arena.hasUpgrade('q') && !this.trainQPlusActive) {
@@ -2046,7 +2077,7 @@ export class OilKit {
           this.pfx.ring(player.x, player.y, 10, 130, OIL.flame, 520, 6, 8);
           this.pfx.smoke(player.x, player.y, 5, 26, 4);
           this.arena.scene.cameras.main.shake(280, 0.008);
-          this.arena.showFloatingText(player.x, player.y - 50, 'Train Overload!', '#ff4400');
+          this.arena.showFloatingText(player.x, player.y - 50, this.isAmber('player') ? 'Primal Roar!' : 'Train Overload!', '#ff4400');
         }
       }
     }
@@ -2079,7 +2110,7 @@ export class OilKit {
     const player = this.arena.player;
     this.pfx.smoke(player.x, player.y, 4, 20, 4);
     player.startCooldown('train-morph');
-    this.arena.showFloatingText(player.x, player.y - 40, 'Train Over', '#ff8800');
+    this.arena.showFloatingText(player.x, player.y - 40, this.isAmber('player') ? 'Stampede Over' : 'Train Over', '#ff8800');
   }
 
   private clearTrain(): void {

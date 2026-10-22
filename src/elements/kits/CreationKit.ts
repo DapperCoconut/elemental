@@ -12,6 +12,12 @@ import {
   wrenchShape, drawMechHpGauge, drawNexusPlaque, drawNexusRuin, drawSelfDestructRemote, scrapShard,
 } from './CreationVisuals';
 import { FONT_DISPLAY } from '../../ui/Theme';
+import { BaseAvatar } from './ElementVisuals';
+import { makeSkinAvatar } from './skins/SkinAvatars';
+import {
+  WITCH_SKIN_ID, WitchCauldron, WitchFx, WitchSpellRig, drawCrow, drawWitchFamiliar,
+  drawWitchHexDraft, drawWitchHexPad, drawWitchHexPanel, drawWitchThornHex,
+} from './skins/WitchFx';
 import { Sfx } from '../../audio';
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -416,6 +422,8 @@ export interface CreationArenaApi {
   pushFighterOutOfRect(body: Phaser.Physics.Arcade.Body, bx: number, by: number, bw: number, bh: number): void;
   /** `(base) => displayed` through the owner's skin. */
   creationColor(owner: 'player' | 'npc', base: number): number;
+  /** Equipped skin id for a side, or null — the Witch skin swaps the art, never the logic. */
+  skinId(owner: 'player' | 'npc'): string | null;
   /** HUD ability cards, so Build Mode can re-label them the way Earth's Titan Form does. */
   readonly abilityBars: Array<{ lbl?: Phaser.GameObjects.Text; desc?: Phaser.GameObjects.Text }>;
   /** True only when the player is creation AND Creation Mastery is switched on. */
@@ -437,8 +445,10 @@ export class CreationKit {
   private readonly pfx: CreationFx;
   private readonly nfx: CreationFx;
   /** The artisan rig (forge hands, gripped hammer, gear crown) for each creation fighter. */
-  private playerAvatar: CreationAvatar | null = null;
-  private npcAvatar: CreationAvatar | null = null;
+  private playerAvatar: BaseAvatar | null = null;
+  private npcAvatar: BaseAvatar | null = null;
+  /** Feathers off the Witch skin's crows (identity colours — the skin art owns its palette). */
+  private readonly witchFx: WitchFx;
   /**
    * The always-on tell for live potions and mortar hexes: one Graphics per side carrying a
    * little bottle per effect. The status tray only covers the local player, and only in the
@@ -582,6 +592,25 @@ export class CreationKit {
     this.ncol = (base) => api.creationColor('npc', base);
     this.pfx = new CreationFx(api.scene, this.pcol);
     this.nfx = new CreationFx(api.scene, this.ncol);
+    this.witchFx = new WitchFx(api.scene);
+  }
+
+  /** True when this side wears the Witch skin — gates drawing only, never gameplay. */
+  private isWitch(owner: 'player' | 'npc'): boolean {
+    return this.api.skinId(owner) === WITCH_SKIN_ID;
+  }
+
+  /**
+   * The Nexus is one shared object built with the player's mapper, so it is a cauldron when
+   * the player is a witch, or when only the npc is Creation and it is the witch.
+   */
+  private get nexusIsWitch(): boolean {
+    return this.isWitch('player') || (this.api.elementId !== 'creation' && this.isWitch('npc'));
+  }
+
+  private makeAvatar(owner: 'player' | 'npc'): BaseAvatar {
+    return makeSkinAvatar(this.api.skinId(owner), this.scene)
+      ?? new CreationAvatar(this.scene, owner === 'player' ? this.pcol : this.ncol);
   }
 
   /** Colour mapper for a side. */
@@ -589,7 +618,7 @@ export class CreationKit {
   /** Effect painter for a side. */
   private fx(owner: 'player' | 'npc'): CreationFx { return owner === 'player' ? this.pfx : this.nfx; }
   /** Character rig for a side, if that side is creation this match. */
-  private avatar(owner: 'player' | 'npc'): CreationAvatar | null {
+  private avatar(owner: 'player' | 'npc'): BaseAvatar | null {
     return owner === 'player' ? this.playerAvatar : this.npcAvatar;
   }
 
@@ -725,11 +754,14 @@ export class CreationKit {
     this.nexusY = cy;
     // The whole machine — riveted plinth, counter-rotating gears, caged core — is one
     // self-driving rig (see CreationNexus); the kit just tells it what it is doing.
-    this.nexusRig = new CreationNexus(this.scene, this.pcol, cx, cy, 3);
+    const witch = this.nexusIsWitch;
+    this.nexusRig = witch
+      ? new WitchCauldron(this.scene, this.pcol, cx, cy, 3)
+      : new CreationNexus(this.scene, this.pcol, cx, cy, 3);
     this.nexusPlaque?.destroy();
     this.nexusPlaque = this.add.graphics().setDepth(3.9);
     drawNexusPlaque(this.nexusPlaque, this.pcol, cx, cy + 52, 52);
-    this.nexusLabel = this.add.text(cx, cy + 52, 'NEXUS',
+    this.nexusLabel = this.add.text(cx, cy + 52, witch ? 'CAULDRON' : 'NEXUS',
       { fontSize: '9px', fontFamily: FONT_DISPLAY, color: '#4a1430', stroke: '#ffdd99', strokeThickness: 1 }).setOrigin(0.5).setDepth(4);
     // It powers on rather than blinking into being.
     this.pfx.gearPulse(cx, cy, 46, 700, CREATION.nexusLit, 5);
@@ -748,7 +780,7 @@ export class CreationKit {
     for (let i = 0; i < count; i++) {
       const a = baseAngle + (i - (count - 1) / 2) * spread;
       const spr = this.add.graphics().setDepth(7);
-      drawDagger(spr, tint);
+      if (this.isWitch(owner)) drawCrow(spr, i * 0.21); else drawDagger(spr, tint);
       spr.setPosition(fromX, fromY).setRotation(a);
       this.creatDaggers.push({
         sprite: spr, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
@@ -845,14 +877,16 @@ export class CreationKit {
     this.pfx.gearPulse(x, y, 70, 760, CREATION.ember, 8);
     this.pfx.ring(x, y, 12, 120, CREATION.spark, 620, 6, 8);
     this.scene.cameras.main.shake(260, 0.007);
-    this.api.showFloatingText(x, y - 70, '⚙️ NEXUS AWAKENS', '#ffaa44');
+    this.api.showFloatingText(x, y - 70, this.isWitch('player') ? 'HEHEHEHE! THE SPELL AWAKENS' : '⚙️ NEXUS AWAKENS', '#ffaa44');
 
     this.buildMech(x, y, kinds.map((k) => CREATION_POTION_ARM[k]));
   }
 
   /** Stand a dormant mech up at `x,y` with the given arms welded on. */
   private buildMech(x: number, y: number, kinds: MechArmKind[]): void {
-    const rig = new CreationMechRig(this.scene, this.pcol, 5);
+    const rig = this.isWitch('player')
+      ? new WitchSpellRig(this.scene, this.pcol, 5)
+      : new CreationMechRig(this.scene, this.pcol, 5);
     const arms: CreationMechArm[] = kinds.slice(0, 2).map((kind, i) => {
       const view = rig.arm(i as 0 | 1);
       view.kind = kind;
@@ -914,7 +948,7 @@ export class CreationKit {
     this.pfx.gearPulse(this.player.x, this.player.y, 46, 620, CREATION.brass, 7);
     this.pfx.ring(this.player.x, this.player.y, 10, 90, CREATION.spark, 460, 5, 7);
     this.pfx.hammerStrike(this.player.x, this.player.y + 20, -Math.PI / 2, 1.3);
-    this.api.showFloatingText(this.player.x, this.player.y - 56, '🤖 MECH ONLINE', '#ffaa44');
+    this.api.showFloatingText(this.player.x, this.player.y - 56, this.isWitch('player') ? '🔮 SPELL BOUND' : '🤖 MECH ONLINE', '#ffaa44');
     return true;
   }
 
@@ -1008,10 +1042,12 @@ export class CreationKit {
     const steel = owner === 'player' && this.mechOverclocked;
     const maxHp = steel ? 125 * STEEL_PLATE_HP_MULT : 125;
     const rect = this.add.graphics().setDepth(4);
-    plankPanel(rect, this.col(owner), w, h, 0.92, { steel });
+    if (this.isWitch(owner)) drawWitchHexPanel(rect, w, h, 0.92, steel);
+    else plankPanel(rect, this.col(owner), w, h, 0.92, { steel });
     rect.setPosition(cx, cy);
-    const hpBg = this.add.rectangle(cx, cy - h / 2 - 6, w, 4, CREATION.soot, 0.92).setDepth(5).setStrokeStyle(1, CREATION.brass, 0.85);
-    const hpBar = this.add.rectangle(cx - w / 2, cy - h / 2 - 6, w, 4, CREATION.tan).setDepth(6).setOrigin(0, 0.5);
+    const tint = this.col(owner);
+    const hpBg = this.add.rectangle(cx, cy - h / 2 - 6, w, 4, tint(CREATION.soot), 0.92).setDepth(5).setStrokeStyle(1, tint(CREATION.brass), 0.85);
+    const hpBar = this.add.rectangle(cx - w / 2, cy - h / 2 - 6, w, 4, tint(CREATION.tan)).setDepth(6).setOrigin(0, 0.5);
     this.creatBlockers.push({ rect, x: cx, y: cy, w, h, hp: maxHp, maxHp, owner, hpBar, hpBg });
     // Halves left by Blade Split were already standing — only a fresh build gets assembled.
     if (countAsBuild) {
@@ -1132,7 +1168,7 @@ export class CreationKit {
     const epoch = this.sdEpoch;
     this.gesture(owner, 'raise', undefined, SD_REMOTE_MS + 260);
     this.sdRemotes.push({ gfx: this.add.graphics().setDepth(12), owner, start: this.scene.time.now });
-    this.api.showFloatingText(caster.x, caster.y - 58, '📡 SELF-DESTRUCT', '#ff4455');
+    this.api.showFloatingText(caster.x, caster.y - 58, this.isWitch(owner) ? 'HEHEHEHE!' : '📡 SELF-DESTRUCT', '#ff4455');
 
     this.scene.time.delayedCall(SD_REMOTE_MS, () => {
       if (epoch !== this.sdEpoch) return;
@@ -1882,7 +1918,7 @@ export class CreationKit {
   private spawnSpringboardPad(x: number, y: number, time: number): void {
     const w = SPRINGBOARD_PAD_W, h = SPRINGBOARD_PAD_H;
     const rect = this.add.graphics().setDepth(4);
-    drawSpeedPad(rect, this.pcol, w, h);
+    if (this.isWitch('player')) drawWitchHexPad(rect, w, h); else drawSpeedPad(rect, this.pcol, w, h);
     rect.setPosition(x, y);
     const hpBg = this.add.rectangle(x, y - h / 2 - 6, w, 4, CREATION.soot, 0.92).setDepth(5).setStrokeStyle(1, CREATION.brass, 0.85);
     const hpBar = this.add.rectangle(x - w / 2, y - h / 2 - 6, w, 4, CREATION.steel, 0.9).setDepth(6).setOrigin(0, 0.5);
@@ -1902,10 +1938,10 @@ export class CreationKit {
    * The player faces the cursor; the npc faces whoever it is fighting.
    */
   private updateAvatars(time: number, delta: number): void {
-    const { scene, player, npc, elementId, npcElementId } = this.api;
+    const { player, npc, elementId, npcElementId } = this.api;
 
     if (elementId === 'creation' && player?.active) {
-      if (!this.playerAvatar) this.playerAvatar = new CreationAvatar(scene, this.pcol);
+      if (!this.playerAvatar) this.playerAvatar = this.makeAvatar('player');
       const av = this.playerAvatar;
       av.setFacing(Math.atan2(this.api.aimY - player.y, this.api.aimX - player.x));
       // A mech at your back is the smith at full stretch.
@@ -1918,7 +1954,7 @@ export class CreationKit {
     }
 
     if (npcElementId === 'creation' && npc?.active) {
-      if (!this.npcAvatar) this.npcAvatar = new CreationAvatar(scene, this.ncol);
+      if (!this.npcAvatar) this.npcAvatar = this.makeAvatar('npc');
       const av = this.npcAvatar;
       av.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
       av.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
@@ -1954,7 +1990,7 @@ export class CreationKit {
       this.fx(owner).gearPulse(ax, ay, 20, 420, CREATION.brass, 6);
     }
     if (owner === 'player') {
-      this.api.showFloatingText(fromX, fromY - 64, `🤖 ${count} AUTOMATONS`, '#c9a0ff');
+      this.api.showFloatingText(fromX, fromY - 64, this.isWitch(owner) ? `🐈‍⬛ ${count} FAMILIARS` : `🤖 ${count} AUTOMATONS`, '#c9a0ff');
     }
   }
 
@@ -1985,7 +2021,8 @@ export class CreationKit {
         this.fx(a.owner).gearPulse(a.x, a.y, 26, 380, CREATION.gold, 6);
         this.api.showFloatingText(a.x, a.y - 24, '🔧 WOUND UP', '#d9a066');
       }
-      drawAutomaton(a.gfx, this.col(a.owner), a.t);
+      if (this.isWitch(a.owner)) drawWitchFamiliar(a.gfx, a.t);
+      else drawAutomaton(a.gfx, this.col(a.owner), a.t);
       a.gfx.setPosition(a.x, a.y);
       // Contact damage
       const enemy = a.owner === 'player' ? this.npc : this.player;
@@ -2230,7 +2267,7 @@ export class CreationKit {
     for (let i = 0; i < count; i++) {
       const a = aim + (i - (count - 1) / 2) * 0.34;
       const spr = this.add.graphics().setDepth(9);
-      drawBolt(spr, this.pcol, 'silver');
+      if (this.isWitch('player')) drawCrow(spr, i * 0.27, 1.15); else drawBolt(spr, this.pcol, 'silver');
       const sx = mech.x + Math.cos(a) * 26, sy = mech.y + Math.sin(a) * 18;
       spr.setPosition(sx, sy).setRotation(a);
       this.creatBolts.push({
@@ -2241,7 +2278,7 @@ export class CreationKit {
       });
       this.pfx.muzzleFlash(sx, sy, a, 0.9, 9);
     }
-    this.api.showFloatingText(mech.x, mech.y - 62, '🚀 BARRAGE', '#99ff66');
+    this.api.showFloatingText(mech.x, mech.y - 62, this.isWitch('player') ? 'CROWS!' : '🚀 BARRAGE', '#99ff66');
   }
 
   /** Med core arm: scatter repair orbs around the mech for the pilot to drive over. */
@@ -2535,7 +2572,10 @@ export class CreationKit {
           const g = this.creatBuildNewBlockPreview;
           g.clear();
           g.setPosition(rx, ry);
-          if (rw > 2 && rh > 2) blueprintFrame(g, this.pcol, rw, rh, 1, time / 40);
+          if (rw > 2 && rh > 2) {
+            if (this.isWitch('player')) drawWitchHexDraft(g, rw, rh, 1, time / 40);
+            else blueprintFrame(g, this.pcol, rw, rh, 1, time / 40);
+          }
           this.hold('player', 'sow', Math.atan2(ry - this.player.y, rx - this.player.x));
         }
       }
@@ -2626,7 +2666,7 @@ export class CreationKit {
         const pw = 60, ph = 20;
         const padHp = this.mechOverclocked ? 40 * STEEL_PLATE_HP_MULT : 40;
         const padSpr = this.add.graphics().setDepth(4);
-        drawSpeedPad(padSpr, this.pcol, pw, ph);
+        if (this.isWitch('player')) drawWitchHexPad(padSpr, pw, ph); else drawSpeedPad(padSpr, this.pcol, pw, ph);
         padSpr.setPosition(mouseX, mouseY);
         const padHpBg = this.add.rectangle(mouseX, mouseY - ph / 2 - 6, pw, 4, CREATION.soot, 0.92).setDepth(5).setStrokeStyle(1, CREATION.brass, 0.85);
         const padHpBar = this.add.rectangle(mouseX - pw / 2, mouseY - ph / 2 - 6, pw, 4, CREATION.steel, 0.9).setDepth(6).setOrigin(0, 0.5);
@@ -2652,7 +2692,8 @@ export class CreationKit {
         const spkSteel = this.mechOverclocked;
         const spkHp = spkSteel ? 50 * STEEL_PLATE_HP_MULT : 50;
         const spkSpr = this.add.graphics().setDepth(4);
-        drawSpikedPanel(spkSpr, this.pcol, sw, sh, false, spkSteel);
+        if (this.isWitch('player')) drawWitchThornHex(spkSpr, sw, sh, false, spkSteel);
+        else drawSpikedPanel(spkSpr, this.pcol, sw, sh, false, spkSteel);
         spkSpr.setPosition(mouseX, mouseY);
         const spkHpBg = this.add.rectangle(mouseX, mouseY - sh / 2 - 6, sw, 4, CREATION.soot, 0.92).setDepth(5).setStrokeStyle(1, CREATION.brass, 0.85);
         const spkHpBar = this.add.rectangle(mouseX - sw / 2, mouseY - sh / 2 - 6, sw, 4, CREATION.rust, 0.9).setDepth(6).setOrigin(0, 0.5);
@@ -2693,7 +2734,10 @@ export class CreationKit {
           const g = this.creatBlockPreview;
           g.clear();
           g.setPosition(rx, ry);
-          if (rw > 2 && rh > 2) blueprintFrame(g, this.pcol, rw, rh, 1, time / 40);
+          if (rw > 2 && rh > 2) {
+            if (this.isWitch('player')) drawWitchHexDraft(g, rw, rh, 1, time / 40);
+            else blueprintFrame(g, this.pcol, rw, rh, 1, time / 40);
+          }
           this.hold('player', 'sow', Math.atan2(ry - this.player.y, rx - this.player.x));
         }
         if (!this.api.fKey.isDown && this.creatBlockDragging) {
@@ -2835,8 +2879,11 @@ export class CreationKit {
         continue;
       }
       // Glint shed out of the back of the blade, so a fan of five reads as five moving objects.
+      const crow = this.isWitch(d.owner);
+      if (crow) drawCrow(d.sprite, time / 1000 + i * 0.21);
       if (emitTrails) {
-        this.fx(d.owner).emberTrail(d.sprite.x, d.sprite.y, Math.atan2(-d.vy, -d.vx), CREATION.silver);
+        if (crow) this.witchFx.feather(d.sprite.x, d.sprite.y, Math.atan2(-d.vy, -d.vx));
+        else this.fx(d.owner).emberTrail(d.sprite.x, d.sprite.y, Math.atan2(-d.vy, -d.vx), CREATION.silver);
       }
       for (const dTarget of (d.owner === 'player' ? this.api.enemies : [this.player])) {
         if (!dTarget.active || dTarget.hp <= 0) continue;
@@ -2881,8 +2928,11 @@ export class CreationKit {
         this.creatBolts.splice(i, 1);
         continue;
       }
+      const crowRocket = b.isRocket && this.isWitch(b.owner);
+      if (crowRocket) drawCrow(b.sprite, time / 1000 + i * 0.27, 1.15);
       if (emitTrails) {
-        this.fx(b.owner).emberTrail(b.sprite.x, b.sprite.y, Math.atan2(-b.vy, -b.vx),
+        if (crowRocket) this.witchFx.feather(b.sprite.x, b.sprite.y, Math.atan2(-b.vy, -b.vx));
+        else this.fx(b.owner).emberTrail(b.sprite.x, b.sprite.y, Math.atan2(-b.vy, -b.vx),
           b.isRocket ? CREATION.ember : CREATION_TIER_COLORS[b.tier]);
       }
       // Rockets: explode at target position instead of entering the nexus

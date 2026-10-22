@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { Projectile } from '../../combat/Projectile';
-import { getSkinDef, SkinDef } from '../../data/Skins';
+import { getSkinDef, SkinDef, skinColor } from '../../data/Skins';
 
 // ── SkinsArenaApi ─────────────────────────────────────────────────────────
 
@@ -63,9 +63,7 @@ export class SkinsKit {
    * serves every element's mapper — hence the identical one-liners below.
    */
   private remap(owner: Owner, base: number): number {
-    const def = this.def(owner);
-    if (!def?.palette) return base;
-    return def.palette[base] ?? def.paletteFallback ?? base;
+    return skinColor(this.def(owner), base);
   }
 
   // ── Per-element colour mappers ──────────────────────────────────────────

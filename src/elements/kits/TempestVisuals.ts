@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import {
   ArmGesture, ArmHold, ArmPose, AvatarSpec, BaseAvatar, ColorFn, FxBase, TAU, easeOut,
 } from './ElementVisuals';
+import { ROCKET_HERALD, RocketFx, launchPad, rocketFlame, rocketLaneBed } from './skins/RocketFx';
 
 /**
  * Everything Tempest draws.
@@ -21,6 +22,21 @@ import {
  */
 
 export type TempestColorFn = ColorFn;
+
+/**
+ * A colour fn that also says which skin is drawing. The kit builds each owner's mapper with a
+ * live `style` getter (the owner's equipped skin id), so the shared primitives below — and every
+ * `TempestFx` holding that mapper — can swap whole shapes for a skin that re-draws the wind
+ * (Rocket: gusts → flame jets, currents → launch pads) without a flag threaded through every call.
+ */
+export type TempestStyledFn = TempestColorFn & { style?: () => string | null };
+
+/** The skin id riding on a colour fn, or null for the plain storm. */
+export function tintStyle(tint: TempestColorFn): string | null {
+  return (tint as TempestStyledFn).style?.() ?? null;
+}
+
+const isRocket = (tint: TempestColorFn): boolean => tintStyle(tint) === 'rocket';
 
 export const TMP = {
   /** Under everything. */
@@ -114,6 +130,7 @@ export function gustLayered(
   x: number, y: number, ang: number, len: number, halfW: number, alpha: number,
   o: { phase?: number; seed?: number; curl?: number; hot?: number } = {},
 ): void {
+  if (isRocket(tint)) { rocketFlame(g, x, y, ang, len, halfW, alpha, o); return; }
   const hot = o.hot ?? 0;
   gust(g, tint(TMP.gust), x, y, ang, len, halfW * 1.45, alpha * 0.32, o);
   gust(g, tint(TMP.white), x, y, ang, len * 0.96, halfW * 0.9, alpha * 0.78, o);
@@ -201,10 +218,14 @@ export function frontLane(
   { t = 0, seed = 0 } = {},
 ): void {
   const pts = frontPoints(x, y, ang, len, halfW);
-  g.fillStyle(tint(TMP.sky), alpha * 0.14);
-  g.fillPoints(pts, true);
-  g.lineStyle(1.6, tint(TMP.gust), alpha * 0.5);
-  g.strokePoints(pts, true);
+  if (isRocket(tint)) {
+    rocketLaneBed(g, x, y, ang, len, halfW, alpha, t);
+  } else {
+    g.fillStyle(tint(TMP.sky), alpha * 0.14);
+    g.fillPoints(pts, true);
+    g.lineStyle(1.6, tint(TMP.gust), alpha * 0.5);
+    g.strokePoints(pts, true);
+  }
   // Gusts marching along the lane: six of them, spaced by phase so they flow continuously.
   const ca = Math.cos(ang);
   const sa = Math.sin(ang);
@@ -236,6 +257,7 @@ export function current(
   x: number, y: number, r: number, alpha: number,
   { t = 0, seed = 0, life = 1 } = {},
 ): void {
+  if (isRocket(tint)) { launchPad(g, x, y, r, alpha, { t, seed, life }); return; }
   g.fillStyle(tint(TMP.sky), alpha * 0.1);
   g.fillEllipse(x, y, r * 2.2, r * 1.3);
   g.lineStyle(1.5, tint(TMP.gust), alpha * 0.45);
@@ -542,6 +564,7 @@ export class HeraldBroadcast extends FxBase {
     const x0 = 0;
     const left = screenW / 2 - (W * scale) / 2;
     const tint = this.tint;
+    const copy = isRocket(tint) ? ROCKET_HERALD : null;
     const g = this.gfx(depth).setScrollFactor(0).setScale(scale);
     const txt = (s: string, size: number, color: string, extra: Phaser.Types.GameObjects.Text.TextStyle = {}): Phaser.GameObjects.Text => {
       const o = this.scene.add.text(0, 0, s, {
@@ -550,15 +573,15 @@ export class HeraldBroadcast extends FxBase {
       this.sink?.(o);
       return o;
     };
-    const channel = txt('⛈ TEMPEST 7  STORM WATCH', 11, '#f4f9ff');
+    const channel = txt(copy?.channel ?? '⛈ TEMPEST 7  STORM WATCH', 11, '#f4f9ff');
     const live = txt('● LIVE', 10, '#ff4a3d');
-    const headline = txt('EXTENDED FORECAST', 12, '#fff3a6');
-    const days = ['MON', 'TUE', 'WED', 'THU', 'FRI'].map((d) => txt(d, 9, '#c9e3ff').setOrigin(0.5));
-    const deaths = days.map(() => txt('DEATH', 9, '#ff4a3d').setOrigin(0.5));
+    const headline = txt(copy?.headline ?? 'EXTENDED FORECAST', 12, '#fff3a6');
+    const days = (copy?.days ?? ['MON', 'TUE', 'WED', 'THU', 'FRI']).map((d) => txt(d, 9, '#c9e3ff').setOrigin(0.5));
+    const deaths = days.map(() => txt(copy?.verdict ?? 'DEATH', 9, '#ff4a3d').setOrigin(0.5));
     const breaking = txt('BREAKING', 10, '#ffffff');
     // The crawl is one Text per word: Phaser's Text renderer ignores crops, so a word is simply
     // hidden whenever it is not wholly inside the band.
-    const words = HERALD_TICKER.split(' ').filter(Boolean).map((w) => txt(w, 10, '#ffffff', { fontFamily: 'Arial' }));
+    const words = (copy?.ticker ?? HERALD_TICKER).split(' ').filter(Boolean).map((w) => txt(w, 10, '#ffffff', { fontFamily: 'Arial' }));
     const wordX: number[] = [];
     let tickerW = 0;
     for (const w of words) { wordX.push(tickerW); tickerW += w.width + 4; }
@@ -703,8 +726,17 @@ export class HeraldBroadcast extends FxBase {
 // ── TempestFx — one-shot effects ─────────────────────────────────────────
 
 export class TempestFx extends FxBase {
+  private rocketFx: RocketFx | null = null;
+
   constructor(scene: Phaser.Scene, tint: TempestColorFn = (c) => c) {
     super(scene, tint);
+  }
+
+  /** The Rocket skin's bespoke one-shots, when this owner wears it — sharing this Fx's sink. */
+  private rocket(): RocketFx | null {
+    if (!isRocket(this.tint)) return null;
+    this.rocketFx ??= new RocketFx(this.scene);
+    return this.rocketFx.setSink(this.sink);
   }
 
   /** A jittered expanding ring; segment count scales with radius so a big blast stays round. */
@@ -728,6 +760,8 @@ export class TempestFx extends FxBase {
 
   /** A puff of dust off the floor. */
   dust(x: number, y: number, count: number, spread: number, ms: number, depth = 4): void {
+    const rocket = this.rocket();
+    if (rocket) { rocket.smoke(x, y, count, spread, ms, depth); return; }
     const seeds = Array.from({ length: count }, (_, i) => ({
       a: (i / count) * TAU + Math.random() * 0.6, d: spread * (0.4 + Math.random() * 0.6), r: 3 + Math.random() * 4,
     }));
@@ -848,6 +882,8 @@ export class TempestFx extends FxBase {
 
   /** The launch out of a current: a column of rings and chevrons climbing off the floor. */
   launch(x: number, y: number): void {
+    const rocket = this.rocket();
+    if (rocket) { rocket.launch(x, y); return; }
     const seed = Math.random() * 999;
     this.flashIn(x, y, 22, TMP.white, TMP.sky, 9);
     this.anim(9, 650, (g, t) => {
