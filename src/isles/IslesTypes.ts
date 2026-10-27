@@ -45,7 +45,19 @@ export type NpcHat =
   /** A brass diving helmet with a round faceplate (the face shows through the glass). */
   | 'diving'
   /** An oilskin sou'wester — the fisher's rain hat, brim longer at the back. */
-  | 'souwester';
+  | 'souwester'
+  /** A ring of wildflowers worn as a crown (gardeners, petal-folk). */
+  | 'wreath'
+  /** A stag's antlers (hunters, the wild). */
+  | 'antlers'
+  /** A broad spotted mushroom cap (spore-folk). */
+  | 'mushroom'
+  /** A leather flying cap with ear-flaps and goggles pushed up on it (aeronauts, kite-folk). */
+  | 'aviator'
+  /** A long floppy nightcap with a pompom at the tip (sleepers, dreamers). */
+  | 'nightcap'
+  /** A soft cap with one long feather swept back from it (bards, storytellers, heralds). */
+  | 'plume';
 
 export type NpcTrait =
   | 'apron' | 'beard' | 'cane' | 'satchel' | 'pipe' | 'scarf' | 'glasses' | 'eyepatch'
@@ -216,7 +228,9 @@ export type WorldHazard =
 export interface WorldGate {
   rect: Rect;
   open: Cond;
-  look: 'portcullis' | 'grate' | 'wax' | 'rubble' | 'barrier' | 'ice' | 'coral' | 'sluice';
+  look: 'portcullis' | 'grate' | 'wax' | 'rubble' | 'barrier' | 'ice' | 'coral' | 'sluice'
+    | 'thorn' | 'roots' | 'bone' | 'candy'
+    | 'cloud' | 'lightning' | 'orrery' | 'veil' | 'book';
   label?: string;
 }
 
@@ -241,9 +255,17 @@ export interface AreaPainter {
 /**
  * Ambient particles over an area. `spray` is sea spray blown in off the breakers, `fog` slow
  * banks of sea mist, `bubbles` rising air (underwater places), `ink` drifting black flecks.
+ * `pollen` golden dust, `spores` slow rising puffs, `petals` tumbling pink petals, `leaves` falling
+ * leaves, `sugar` glittering pastel flakes, `fireflies` blinking lights (best in dark places).
+ * `wind` fast streaks blown sideways, `clouds` low cloud puffs drifting across, `feathers` tumbling
+ * down-feathers, `stars` a twinkling night sky with the odd shooting star (an overlay — best for
+ * places under permanent night), `storm` slanting rain with lightning flashes, `dreams` slow rising
+ * soap-bubble dreams and drifting zzz.
  */
 export type WeatherKind = 'none' | 'ash' | 'embers' | 'steam' | 'smoke' | 'sparks' | 'wax' | 'rain' | 'snow' | 'motes'
-  | 'spray' | 'fog' | 'bubbles' | 'ink';
+  | 'spray' | 'fog' | 'bubbles' | 'ink'
+  | 'pollen' | 'spores' | 'petals' | 'leaves' | 'sugar' | 'fireflies'
+  | 'wind' | 'clouds' | 'feathers' | 'stars' | 'storm' | 'dreams';
 
 export interface AreaDef {
   id: string;
@@ -274,6 +296,8 @@ export interface AreaDef {
   gates?: WorldGate[];
   /** Respawn points for hazards; the last one you walked within 60px of is used. */
   checkpoints?: Pt[];
+  /** A stand-in from `content/placeholder.ts` while its builder works; the validator skips it. */
+  placeholder?: boolean;
 }
 
 // ── Fights ─────────────────────────────────────────────────────────────
@@ -470,7 +494,9 @@ export interface FisheryDef {
   id: string;
   name: string;
   /** Water look for the bobber splash. */
-  kind: 'sea' | 'lava' | 'pond' | 'wax' | 'steam' | 'oil' | 'ice' | 'ink' | 'abyss';
+  kind: 'sea' | 'lava' | 'pond' | 'wax' | 'steam' | 'oil' | 'ice' | 'ink' | 'abyss' | 'bog' | 'syrup'
+    /** Fishing off a cliff edge down into the cloud sea; `aurora` a pool of cooling starlight. Both need the skyline rod. */
+    | 'cloud' | 'aurora';
 }
 
 export interface RodDef {
@@ -631,6 +657,35 @@ export interface CourtBundle {
   bakeries?: BakeryDef[];
   fish?: FishDef[];
   fisheries?: FisheryDef[];
+  /** A stand-in from `content/placeholder.ts` while its builder works; the validator skips it. */
+  placeholder?: boolean;
+}
+
+/** An isle's port, as its builder exports it (`<ISLE>_PORT`); the isle's `isle/index.ts` folds it in. */
+export interface PortBundle {
+  area: AreaDef;
+  wanderer: WandererDef;
+  quests: QuestDef[];
+  items: IsleItemDef[];
+  scripts: Record<string, ItemScriptFactory>;
+  shops: ShopDef[];
+  bakeries: BakeryDef[];
+  fish: FishDef[];
+  fisheries: FisheryDef[];
+  rods: RodDef[];
+  /** Arena backdrop for the port's quest duels (registered under the port's area id). */
+  floor: ArenaFloor;
+}
+
+/** An isle's dungeon + monarch, as its builder exports it (`<ISLE>_DUNGEON`). */
+export interface DungeonBundle {
+  area: AreaDef;
+  encounters: EncounterDef[];
+  gimmicks: GimmickDef[];
+  boss: import('../boss/framework/BossDefs').WorldBossDef;
+  floor: ArenaFloor;
+  items: IsleItemDef[];
+  scripts: Record<string, ItemScriptFactory>;
 }
 
 /** Everything one isle contributes. */

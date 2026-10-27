@@ -36,6 +36,28 @@ const ISLE_LAYOUT: Record<string, { pos: Record<string, Pt>; roads: [string, str
       ['tidewater', 'inkwell'], ['tidewater', 'rimefast'], ['inkwell', 'sailmaker'], ['rimefast', 'slickharbor'], ['abyssal', 'undertow'],
     ],
   },
+  life: {
+    pos: {
+      heartwood: { x: 480, y: 178 }, glasshouse: { x: 480, y: 104 },
+      spore: { x: 300, y: 300 }, bloom: { x: 480, y: 310 }, ossuary: { x: 660, y: 300 },
+      confection: { x: 300, y: 450 }, mossgate: { x: 480, y: 486 }, wildhunt: { x: 660, y: 450 },
+    },
+    roads: [
+      ['mossgate', 'bloom'], ['mossgate', 'confection'], ['mossgate', 'wildhunt'], ['bloom', 'heartwood'],
+      ['bloom', 'spore'], ['bloom', 'ossuary'], ['spore', 'confection'], ['ossuary', 'wildhunt'], ['heartwood', 'glasshouse'],
+    ],
+  },
+  air: {
+    pos: {
+      starfall: { x: 480, y: 178 }, lung: { x: 480, y: 104 },
+      slumber: { x: 300, y: 300 }, galeward: { x: 480, y: 310 }, stormeye: { x: 660, y: 300 },
+      fable: { x: 300, y: 450 }, windlass: { x: 480, y: 486 }, orbit: { x: 660, y: 450 },
+    },
+    roads: [
+      ['windlass', 'galeward'], ['windlass', 'fable'], ['windlass', 'orbit'], ['galeward', 'starfall'],
+      ['galeward', 'slumber'], ['galeward', 'stormeye'], ['slumber', 'fable'], ['stormeye', 'orbit'], ['starfall', 'lung'],
+    ],
+  },
 };
 
 export class IslesMapScene extends Phaser.Scene {
@@ -164,6 +186,27 @@ export class IslesMapScene extends Phaser.Scene {
       }
       g.fillStyle(0x0a1a2a, 1); g.fillCircle(480, 104, 6);
       g.fillStyle(0x7aa8b8, 0.35); g.fillEllipse(480, 520, 360, 50);
+    } else if (here === 'life') {
+      // The Heartwood: one colossal tree on the crown, the Glasshouse dome glinting in its branches.
+      g.fillStyle(0x5a3a1e, 1); g.fillRect(470, 150, 20, 60);
+      for (const [dx, dy, r] of [[0, -36, 52], [-40, -14, 34], [42, -16, 36], [-18, -60, 30], [22, -58, 28]] as const) {
+        g.fillStyle(0x4a7a3a, 1); g.fillCircle(480 + dx, 150 + dy, r);
+        g.fillStyle(0x6a9a4a, 0.6); g.fillCircle(480 + dx - r * 0.25, 150 + dy - r * 0.25, r * 0.5);
+      }
+      g.fillStyle(0xd8f0f0, 0.75 + Math.sin(t * 2) * 0.15); g.fillEllipse(480, 104, 34, 18);
+      g.lineStyle(1, 0x3a4a3a, 1); g.strokeEllipse(480, 104, 34, 18); g.lineBetween(480, 95, 480, 113);
+    } else if (here === 'air') {
+      // The spire: one needle of rock through a ring of cloud, the Lung's windmill sails turning on top.
+      g.fillStyle(0x7a7a84, 1); g.fillTriangle(452, 236, 508, 236, 480, 112);
+      g.fillStyle(0x9a9aa4, 1); g.fillTriangle(466, 236, 486, 236, 480, 120);
+      for (let i = 0; i < 7; i++) {
+        const cx = 400 + i * 27, cy = 196 + Math.sin(i * 1.9) * 5;
+        g.fillStyle(0xffffff, 0.85); g.fillCircle(cx + Math.sin(t * 0.6 + i) * 3, cy, 14 + (i % 3) * 3);
+      }
+      g.fillStyle(0x5a4a3a, 1); g.fillRect(476, 100, 8, 14);
+      g.lineStyle(2.5, 0xe8e0d0, 1);
+      for (let k = 0; k < 4; k++) { const a = t * 1.2 + k * Math.PI / 2; g.lineBetween(480, 104, 480 + Math.cos(a) * 18, 104 + Math.sin(a) * 18); }
+      g.fillStyle(0x3a3a42, 1); g.fillCircle(480, 104, 3);
     } else {
       // Volcano
       g.fillStyle(0x6a4a30, 1); g.fillTriangle(400, 210, 560, 210, 480, 90);

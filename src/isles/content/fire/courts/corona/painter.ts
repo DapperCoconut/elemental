@@ -649,7 +649,7 @@ function strokeRingHalf(g: G, pts: { x: number; y: number; z: number }[], cx: nu
 
 function drawSunAndCage(g: G, t: number): void {
   const { x: cx, y: cy, r } = SUN_CAGE;
-  const s = t / 1000;
+  const s = t;
   const rings = [
     ringPoints(r + 52, 1.25, s * 0.35),            // the ecliptic band, slowly precessing
     ringPoints(r + 66, 0.0, s * 0.22 + 1.1),       // the meridian, turning about the vertical
@@ -810,7 +810,7 @@ export const CORONA_PAINTER: AreaPainter = {
   ],
 
   animate(g, t, view) {
-    const s = t / 1000;
+    const s = t;
     // Conduit pulses: violet-white slugs of plasma riding out from the palace.
     CONDUIT_CACHE.forEach((c, ci) => {
       const speed = 150 + ci * 12;

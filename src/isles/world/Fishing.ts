@@ -19,7 +19,8 @@ const GAUGE_H = 260;
 
 const WATER_TINT: Record<FisheryDef['kind'], number> = {
   sea: 0x6ac8ff, lava: 0xff7a2f, pond: 0x7ad8c8, wax: 0xffe2a8, steam: 0xd8e8f0, oil: 0x6a5a3a,
-  ice: 0xc8f0ff, ink: 0x2a2a3a, abyss: 0x3a6ab8,
+  ice: 0xc8f0ff, ink: 0x2a2a3a, abyss: 0x3a6ab8, bog: 0x6a7a3a, syrup: 0xd88a3a,
+  cloud: 0xf4f8ff, aurora: 0x8ae8d8,
 };
 
 export class Fishing {
@@ -63,7 +64,10 @@ export class Fishing {
     const rod = getRod(rodId);
     if (!rod?.kinds.includes(fy.kind)) {
       return fy.kind === 'lava' ? 'Your rod would melt in that. Only an obsidian rod fishes lava.'
-        : fy.kind === 'abyss' ? 'The line runs out before it finds the bottom. Only a whalebone rod reaches the trench.' : `Your ${rod?.name ?? 'rod'} can't handle ${fy.kind} water.`;
+        : fy.kind === 'abyss' ? 'The line runs out before it finds the bottom. Only a whalebone rod reaches the trench.'
+        : fy.kind === 'syrup' ? 'Your line gums up and sets solid. Only a briarwood rod fishes syrup.'
+        : fy.kind === 'cloud' ? 'The line just blows sideways in the updraft. Only a skyline rod casts into cloud.'
+        : fy.kind === 'aurora' ? 'Your line frays to light the moment it touches. Only a skyline rod holds in starlight.' : `Your ${rod?.name ?? 'rod'} can't handle ${fy.kind} water.`;
     }
     return null;
   }

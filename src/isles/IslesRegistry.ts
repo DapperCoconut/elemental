@@ -9,6 +9,8 @@ import { isCheatMode } from '../data/Cheats';
 import { registerBossResolver } from '../boss/bosses';
 import { FIRE_ISLE } from './content/fire';
 import { WATER_ISLE } from './content/water';
+import { LIFE_ISLE } from './content/life';
+import { AIR_ISLE } from './content/air';
 import { BOATS, DOCK_UPGRADES } from './content/sea';
 
 /**
@@ -16,7 +18,7 @@ import { BOATS, DOCK_UPGRADES } from './content/sea';
  * `BUNDLES`; nothing else in the engine names an isle.
  */
 
-const BUNDLES: IsleBundle[] = [FIRE_ISLE, WATER_ISLE];
+const BUNDLES: IsleBundle[] = [FIRE_ISLE, WATER_ISLE, LIFE_ISLE, AIR_ISLE];
 
 export const ISLES: IsleDef[] = BUNDLES.map((b) => b.isle);
 

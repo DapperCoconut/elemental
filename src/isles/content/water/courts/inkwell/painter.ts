@@ -840,7 +840,7 @@ export const INKWELL_PAINTER: AreaPainter = {
   ],
 
   animate(g, t, view) {
-    const s = t / 1000;
+    const s = t;
     for (let i = 0; i < CANAL_RECTS.length; i++) canalRipples(g, CANAL_RECTS[i], view, s, i + 1);
     for (let i = 0; i < 4; i++) floatingDecree(g, s, i, view);
     // The pens: squids bobbing, puffing, the water inside the nets stirred.
@@ -873,7 +873,7 @@ export const INKWELL_PAINTER: AreaPainter = {
   },
 
   animateOver(g, t, view) {
-    const s = t / 1000;
+    const s = t;
     // Decrees drying on the lines: each sheet swings on its peg in the canal wind.
     LINES.forEach((l, li) => {
       const mx = (l.a.x + l.b.x) / 2, my = (l.a.y + l.b.y) / 2 - 62;

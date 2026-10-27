@@ -64,8 +64,8 @@ export const SEA_FISH_ITEMS: IsleItemDef[] = [
 /** The three rods. Control widens the catch bar; kinds are the waters the line survives. */
 export const RODS: RodDef[] = [
   { id: 'rod-driftwood', name: 'Driftwood Rod', control: 1, kinds: ['sea', 'pond'] },
-  { id: 'rod-iron', name: 'Iron-Ringed Rod', control: 1.3, kinds: ['sea', 'pond', 'steam', 'wax', 'oil', 'ice', 'ink'] },
-  { id: 'rod-obsidian', name: 'Obsidian Rod', control: 1.6, kinds: ['sea', 'pond', 'steam', 'wax', 'oil', 'ice', 'ink', 'lava'] },
+  { id: 'rod-iron', name: 'Iron-Ringed Rod', control: 1.3, kinds: ['sea', 'pond', 'steam', 'wax', 'oil', 'ice', 'ink', 'bog'] },
+  { id: 'rod-obsidian', name: 'Obsidian Rod', control: 1.6, kinds: ['sea', 'pond', 'steam', 'wax', 'oil', 'ice', 'ink', 'bog', 'lava'] },
 ];
 
 export const ROD_ITEMS: IsleItemDef[] = [

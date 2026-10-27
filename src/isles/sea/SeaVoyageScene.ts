@@ -29,12 +29,16 @@ const COAST_M = 480;
  * and only surfaces once you have landed on that isle. `shot` tints its spit; `spawn` is what
  * its third attack throws on the water.
  */
-const BEASTS: Record<string, { name: string; shot: number; bar: number; spawn: 'driftwall' | 'whirls' }> = {
+const BEASTS: Record<string, { name: string; shot: number; bar: number; spawn: 'driftwall' | 'whirls' | 'brambles' | 'gusts' }> = {
   magmaw: { name: 'THE MAGMAW', shot: 0xff5a1a, bar: 0xff6a2a, spawn: 'driftwall' },
   wyrm: { name: 'THE MAELSTROM WYRM', shot: 0x6ad8ff, bar: 0x4ab8ff, spawn: 'whirls' },
+  brambleback: { name: 'THE BRAMBLEBACK', shot: 0x9ad84a, bar: 0x7ac83a, spawn: 'brambles' },
+  skyray: { name: 'THE SKYRAY', shot: 0xe8f8ff, bar: 0x9ad8ff, spawn: 'gusts' },
 };
 
-type HazardKind = 'rock' | 'reef' | 'mine' | 'whirl' | 'drift' | 'tentacle' | 'spout';
+/** `bramble`: a floating mat of thorn-vine the Brambleback sheds; it snags (stops your drift) and scratches, but can be shot apart. */
+/** `gust`: a gust front the Skyray's wake throws across the water — a band the width of the sea that shoves the boat toward `seed`'s sign; it cannot be shot. */
+type HazardKind = 'rock' | 'reef' | 'mine' | 'whirl' | 'drift' | 'tentacle' | 'spout' | 'bramble' | 'gust';
 interface Hazard { kind: HazardKind; x: number; y: number; r: number; hp: number; maxHp: number; t: number; seed: number; dead: boolean; armed?: number }
 interface Loot { kind: 'crate' | 'barrel' | 'orb' | 'bottle'; x: number; y: number; t: number; taken: boolean }
 interface Shot { x: number; y: number; vx: number; vy: number; dmg: number; life: number; big?: boolean; foe?: boolean }
@@ -158,7 +162,8 @@ export class SeaVoyageScene extends Phaser.Scene {
     this.bvx *= Math.pow(0.12, dt);
     this.bx = Phaser.Math.Clamp(this.bx + this.bvx * dt, 40, 920);
     this.heading = Phaser.Math.Clamp(this.bvx / 400, -0.5, 0.5);
-    const fwd = this.speed * (1 + trim * 0.25);
+    this.sailT += dt;
+    const fwd = this.speed * (1 + trim * 0.25) * (this.sailT < 1.1 ? 1.7 : 1);
     this.by = Phaser.Math.Linear(this.by, 500 - trim * 40, 0.04);
     this.dist += fwd * dt / 10;
 
@@ -215,7 +220,7 @@ export class SeaVoyageScene extends Phaser.Scene {
       this.cameras.main.shake(200, 0.006);
       const ring = this.add.circle(this.bx, this.by, 170, this.elementColor, 0.25).setScale(0.2);
       this.tweens.add({ targets: ring, scale: 1, alpha: 0, duration: 380, onComplete: () => ring.destroy() });
-      for (const h of this.hazards) if (Math.hypot(h.x - this.bx, h.y - this.by) < 170 && h.kind !== 'reef') this.damageHazard(h, 4);
+      for (const h of this.hazards) if (Math.hypot(h.x - this.bx, h.y - this.by) < 170 && h.kind !== 'reef' && h.kind !== 'gust') this.damageHazard(h, 4);
       if (this.beast && Math.hypot(this.beast.x - this.bx, this.beast.y - this.by) < 230) this.hitBeast(6);
     }
     this.bowWaveT += dt;
@@ -229,7 +234,7 @@ export class SeaVoyageScene extends Phaser.Scene {
         continue;
       }
       for (const h of this.hazards) {
-        if (h.dead || h.kind === 'whirl' || h.kind === 'reef') continue;
+        if (h.dead || h.kind === 'whirl' || h.kind === 'reef' || h.kind === 'gust') continue;
         if (Math.hypot(sh.x - h.x, sh.y - h.y) < h.r + 6) { this.damageHazard(h, sh.dmg); sh.life = 0; break; }
       }
       if (this.beast && sh.life > 0 && this.beast.phase === 'fight' && Math.hypot(sh.x - this.beast.x, sh.y - this.beast.y) < 56) { this.hitBeast(sh.dmg); sh.life = 0; }
@@ -250,6 +255,15 @@ export class SeaVoyageScene extends Phaser.Scene {
       if (h.kind === 'tentacle') {
         if (h.t > 1.1 && h.t < 1.6 && d < h.r + 16) this.damageBoat(2);
         if (h.t > 2.2) h.dead = true;
+        continue;
+      }
+      if (h.kind === 'bramble') {
+        if (d < h.r + 14) { this.bvx *= 0.2; this.damageBoat(1); }
+        continue;
+      }
+      if (h.kind === 'gust') {
+        if (Math.abs(h.y - this.by) < h.r) this.bvx += h.seed * 1100 * dt;
+        if (h.t > 6) h.dead = true;
         continue;
       }
       if (h.kind === 'mine' && d < 90 && h.armed === undefined) h.armed = 0.6;
@@ -334,7 +348,8 @@ export class SeaVoyageScene extends Phaser.Scene {
     this.cameras.main.shake(180, 0.008);
     this.cameras.main.flash(120, 255, 60, 40);
     Sfx.play('hit-heavy');
-    if (this.hull <= 0) this.sink();
+    if (this.hull <= 0) { this.sink(); return; }
+    if (Save.S().boat.uber === 'uber-greenwood') this.thornBurst();
   }
 
   private explode(x: number, y: number, r: number): void {
@@ -351,8 +366,55 @@ export class SeaVoyageScene extends Phaser.Scene {
     const uber = Save.S().boat.uber;
     if (uber === 'uber-brazier') this.uberTurret();
     else if (uber === 'uber-figurehead') this.uberBowWave();
+    else if (uber === 'uber-greenwood') this.uberRegrow();
+    else if (uber === 'uber-windcatcher') this.uberSail();
     else this.turretCd = 99;
   }
+
+  /** Seconds since the Windcatcher Sail last filled (speed burst while < 1.1; drawn as a billow). */
+  private sailT = 9;
+
+  /**
+   * The Windcatcher Sail fills every few seconds: a burst of speed forward, and every foe shot
+   * close to the boat is blown back along the way it came — as the boat's own shot.
+   */
+  private uberSail(): void {
+    this.sailT = 0;
+    this.turretCd = 4.2;
+    let turned = 0;
+    for (const sh of this.shots) {
+      if (!sh.foe || Math.hypot(sh.x - this.bx, sh.y - this.by) > 240) continue;
+      sh.vx = -sh.vx * 1.4; sh.vy = -sh.vy * 1.4; sh.foe = false; sh.dmg = 2; sh.life = 2; turned++;
+    }
+    if (turned) this.float(this.bx, this.by - 40, `blown back ×${turned}`, '#e8f8ff');
+    Sfx.play('gust');
+  }
+
+  /** The Greenwood Keel regrows: one hull back every ten seconds while it is damaged. */
+  private uberRegrow(): void {
+    this.turretCd = 10;
+    if (this.hull >= this.maxHull) return;
+    this.hull += 1;
+    this.float(this.bx, this.by - 30, 'the keel regrows +1', '#9dffb0');
+    Sfx.play('heal');
+  }
+
+  /**
+   * The Greenwood Keel's other half: whenever the hull is struck, thorns burst out of the living
+   * wood — every rock, drift, mine and bramble mat close by is torn, and a near beast is raked.
+   */
+  private thornBurst(): void {
+    const R = 150;
+    for (const h of this.hazards) {
+      if (h.dead || h.kind === 'whirl' || h.kind === 'reef' || h.kind === 'tentacle' || h.kind === 'spout' || h.kind === 'gust') continue;
+      if (Math.hypot(h.x - this.bx, h.y - this.by) < R + h.r) this.damageHazard(h, 3);
+    }
+    if (this.beast?.phase === 'fight' && Math.hypot(this.beast.x - this.bx, this.beast.y - this.by) < 260) this.hitBeast(4);
+    this.thornT = 0;
+    Sfx.play('thorn');
+  }
+
+  private thornT = 9;
 
   /**
    * The Undertow Figurehead: every few seconds the carved queen on the bow throws a wave ahead.
@@ -368,7 +430,7 @@ export class SeaVoyageScene extends Phaser.Scene {
       if (dy > -20 || dy < -reach || Math.abs(dx) > 70 + (-dy) * 0.45) continue;
       any = true;
       if (h.kind === 'whirl') { h.dead = true; this.explode(h.x, h.y, h.r * 1.6); continue; }
-      if (h.kind === 'reef' || h.kind === 'tentacle' || h.kind === 'spout') continue;
+      if (h.kind === 'reef' || h.kind === 'tentacle' || h.kind === 'spout' || h.kind === 'gust') continue;
       h.x = Phaser.Math.Clamp(h.x + (Math.sign(dx) || 1) * 70, 30, 930);
       this.damageHazard(h, 2);
     }
@@ -385,7 +447,7 @@ export class SeaVoyageScene extends Phaser.Scene {
   private uberTurret(): void {
     let best: { x: number; y: number } | null = null, bd = 380;
     for (const h of this.hazards) {
-      if (h.dead || h.kind === 'whirl' || h.kind === 'reef' || h.kind === 'spout' || h.kind === 'tentacle' || h.y > this.by) continue;
+      if (h.dead || h.kind === 'whirl' || h.kind === 'reef' || h.kind === 'spout' || h.kind === 'tentacle' || h.kind === 'gust' || h.y > this.by) continue;
       const d = Math.hypot(h.x - this.bx, h.y - this.by);
       if (d < bd) { bd = d; best = h; }
     }
@@ -464,12 +526,25 @@ export class SeaVoyageScene extends Phaser.Scene {
           const a = Math.atan2(this.by - b.y, this.bx - b.x) + i * 0.22;
           this.shots.push({ x: b.x, y: b.y + 30, vx: Math.cos(a) * 240, vy: Math.sin(a) * 240, dmg: 1, life: 3, foe: true });
         }
-        Sfx.play(b.kind === 'wyrm' ? 'water-jet' : 'fireball');
+        Sfx.play(b.kind === 'wyrm' ? 'water-jet' : b.kind === 'brambleback' ? 'thorn' : b.kind === 'skyray' ? 'whoosh' : 'fireball');
       }
       if (b.attack === 'slam' && b.attackT > 1.0 && b.attackT - dt <= 1.0) {
         for (let i = 0; i < 3; i++) this.hazards.push({ kind: 'tentacle', x: Phaser.Math.Clamp(this.bx + (i - 1) * 110, 60, 900), y: this.by - 20, r: 26, hp: 999, maxHp: 999, t: 0, seed: i, dead: false });
       }
-      if (b.attack === 'wave' && b.attackT > 0.8 && b.attackT - dt <= 0.8 && BEASTS[b.kind]?.spawn === 'whirls') {
+      if (b.attack === 'wave' && b.attackT > 0.8 && b.attackT - dt <= 0.8 && BEASTS[b.kind]?.spawn === 'gusts') {
+        // The Skyray's wake: two gust fronts rolling down the sea, each shoving the other way —
+        // ride them out by steering against the push.
+        const dir = this.rng() < 0.5 ? -1 : 1;
+        this.hazards.push({ kind: 'gust', x: 480, y: -40, r: 34, hp: 999, maxHp: 999, t: 0, seed: dir, dead: false });
+        this.hazards.push({ kind: 'gust', x: 480, y: -230, r: 34, hp: 999, maxHp: 999, t: 0, seed: -dir, dead: false });
+        Sfx.play('gust');
+      } else if (b.attack === 'wave' && b.attackT > 0.8 && b.attackT - dt <= 0.8 && BEASTS[b.kind]?.spawn === 'brambles') {
+        // The Brambleback sheds the thicket off its shell: a staggered line of thorn mats with one
+        // gap, drifting down at the boat. They can be shot apart, but slowly.
+        const gap = 120 + this.rng() * 720;
+        for (let x = 70; x < 920; x += 110) if (Math.abs(x - gap) > 90) this.hazards.push({ kind: 'bramble', x: x + (this.rng() - 0.5) * 30, y: -40 - this.rng() * 60, r: 34, hp: 3, maxHp: 3, t: 0, seed: x, dead: false });
+        Sfx.play('thorn');
+      } else if (b.attack === 'wave' && b.attackT > 0.8 && b.attackT - dt <= 0.8 && BEASTS[b.kind]?.spawn === 'whirls') {
         // The Wyrm's coils stir the sea into a pair of whirlpools that close on the boat.
         for (const side of [-1, 1]) this.hazards.push({ kind: 'whirl', x: Phaser.Math.Clamp(this.bx + side * (150 + this.rng() * 60), 60, 900), y: this.by - 260, r: 30, hp: 999, maxHp: 999, t: 0, seed: side, dead: false });
         Sfx.play('tornado');
@@ -587,7 +662,29 @@ export class SeaVoyageScene extends Phaser.Scene {
     if (this.crossing && this.toLand() < COAST_M + 200) this.drawCoast(g, t);
     for (const l of this.loot) this.drawLoot(g, l, t);
     for (const h of this.hazards) this.drawHazard(g, h, t);
-    if (this.beast) { if (this.beast.kind === 'wyrm') this.drawWyrm(g, this.beast, t); else this.drawBeast(g, this.beast, t); }
+    if (this.beast) {
+      if (this.beast.kind === 'wyrm') this.drawWyrm(g, this.beast, t);
+      else if (this.beast.kind === 'brambleback') this.drawBrambleback(g, this.beast, t);
+      else if (this.beast.kind === 'skyray') this.drawSkyray(g, this.beast, t);
+      else this.drawBeast(g, this.beast, t);
+    }
+    if (this.thornT < 0.45) {
+      this.thornT += 1 / 60;
+      const k = this.thornT / 0.45;
+      for (let i = 0; i < 14; i++) {
+        const a = (i / 14) * Math.PI * 2, r0 = 22 + k * 40, r1 = r0 + 18 + k * 70;
+        g.lineStyle(3 * (1 - k) + 1, 0x7aa83a, 1 - k);
+        g.lineBetween(this.bx + Math.cos(a) * r0, this.by + Math.sin(a) * r0, this.bx + Math.cos(a) * r1, this.by + Math.sin(a) * r1);
+      }
+    }
+    if (this.sailT < 0.7) {
+      // The Windcatcher fills: wind streaks rush past the boat from astern.
+      const k = this.sailT / 0.7;
+      for (let i = 0; i < 10; i++) {
+        const sx = this.bx + (i - 4.5) * 22, sy = this.by + 40 - k * 220 - (i % 3) * 18;
+        g.lineStyle(2, 0xffffff, 0.6 * (1 - k)); g.lineBetween(sx, sy, sx, sy + 40);
+      }
+    }
     if (this.bowWaveT < 0.6) {
       const k = this.bowWaveT / 0.6;
       g.lineStyle(6 * (1 - k) + 2, 0xd8f4ff, 0.7 * (1 - k));
@@ -646,6 +743,24 @@ export class SeaVoyageScene extends Phaser.Scene {
       g.fillStyle(0xd8c8a0, 1); g.fillCircle(fh2.x, fh2.y, 4.5);
       g.fillStyle(0x6ac8a8, 1); g.fillTriangle(fh2.x - 4, fh2.y - 3, fh2.x + 4, fh2.y - 3, fh2.x, fh2.y - 9);
     }
+    if (Save.S().boat.uber === 'uber-greenwood') {
+      // Living wood: green shoots along the gunwales, a leafy crown on the bow.
+      for (let i = -2; i <= 2; i++) for (const side of [-1, 1]) {
+        const p0 = pt(side * L * 0.27, i * L * 0.16), p1 = pt(side * (L * 0.27 + 7), i * L * 0.16 - 5 + Math.sin(t * 3 + i) * 2);
+        g.lineStyle(2, 0x5a8a2a, 1); g.lineBetween(p0.x, p0.y, p1.x, p1.y);
+        g.fillStyle(0x8ad84a, 1); g.fillEllipse(p1.x, p1.y, 6, 4);
+      }
+      const crown = pt(0, -L / 2 - 6);
+      g.fillStyle(0x6ab83a, 1); g.fillCircle(crown.x, crown.y, 6); g.fillStyle(0xa8e86a, 1); g.fillCircle(crown.x - 2, crown.y - 2, 3);
+    }
+    if (Save.S().boat.uber === 'uber-windcatcher') {
+      // A wing-shaped sail of grey ray-skin stretched over the deck; it bellies out when it fills.
+      const fill = this.sailT < 1.1 ? 1 - this.sailT / 1.1 : 0;
+      const l = pt(-L * 0.62, L * 0.05), r = pt(L * 0.62, L * 0.05), tip = pt(0, -L * 0.36 - fill * 10), tail = pt(0, L * 0.2);
+      g.fillStyle(0x8aa0b8, 0.75); g.fillTriangle(l.x, l.y, tip.x, tip.y, tail.x, tail.y); g.fillTriangle(r.x, r.y, tip.x, tip.y, tail.x, tail.y);
+      g.lineStyle(1.5, 0xe8f4ff, 0.8 + fill * 0.2); g.lineBetween(l.x, l.y, tip.x, tip.y); g.lineBetween(r.x, r.y, tip.x, tip.y);
+      g.fillStyle(0xffffff, 0.8); g.fillCircle(pt(-L * 0.18, -L * 0.06).x, pt(-L * 0.18, -L * 0.06).y, 1.6); g.fillCircle(pt(L * 0.18, -L * 0.06).x, pt(L * 0.18, -L * 0.06).y, 1.6);
+    }
     // The captain: a dot of your element at the tiller.
     const cap = pt(0, L * 0.4);
     g.fillStyle(this.elementColor, 1); g.fillCircle(cap.x, cap.y, 5);
@@ -696,6 +811,33 @@ export class SeaVoyageScene extends Phaser.Scene {
           g.fillStyle(0x5a1a2a, 1);
           g.fillTriangle(x - r * 0.6, y + 10, x + r * 0.6, y + 10, x + Math.sin(h.seed) * 10, y - 70 * k);
           for (let i = 0; i < 4; i++) { g.fillStyle(0xd88a9a, 1); g.fillCircle(x + Math.sin(h.seed) * 10 * (i / 4), y - 60 * k * (i / 4) + 4, 3); }
+        }
+        break;
+      }
+      case 'bramble': {
+        // A floating knot of thorn-vine: a dark mat, looping stems, pale hooked thorns.
+        g.fillStyle(0xffffff, 0.12); g.fillEllipse(x, y + 6, r * 2.4, r * 0.9);
+        g.fillStyle(0x23361a, 0.95); g.fillEllipse(x, y, r * 2.1, r * 1.3);
+        for (let i = 0; i < 7; i++) {
+          const a = h.seed + i * 0.9;
+          g.lineStyle(3, i % 2 ? 0x4a6a2a : 0x3a5a22, 1);
+          g.beginPath(); g.arc(x + Math.cos(a) * r * 0.45, y + Math.sin(a) * r * 0.28, r * 0.4, a, a + 3.2, false); g.strokePath();
+          g.fillStyle(0xe8dcb0, 1);
+          const tx = x + Math.cos(a) * r * 0.85, ty = y + Math.sin(a) * r * 0.5;
+          g.fillTriangle(tx - 3, ty + 2, tx + 3, ty + 2, tx + Math.cos(a) * 6, ty + Math.sin(a) * 5 - 3);
+        }
+        if (h.hp < h.maxHp) { g.fillStyle(0x8ad84a, 0.6); g.fillCircle(x + Math.sin(t * 9) * 6, y, 3); }
+        break;
+      }
+      case 'gust': {
+        // A gust front: a band of flattened, ruffled water racing across, streaks showing the push.
+        const dir = h.seed;
+        g.fillStyle(0xd8f0ff, 0.08); g.fillRect(0, y - r, 960, r * 2);
+        g.lineStyle(1, 0xffffff, 0.35); g.lineBetween(0, y - r, 960, y - r); g.lineBetween(0, y + r, 960, y + r);
+        for (let i = 0; i < 26; i++) {
+          const sx = ((i * 83 + h.t * 520 * dir) % 1000 + 1000) % 1000 - 20, sy = y - r + 6 + ((i * 37) % (r * 2 - 12));
+          g.lineStyle(2, 0xffffff, 0.55); g.lineBetween(sx, sy, sx - dir * 34, sy);
+          g.lineBetween(sx, sy, sx - dir * 7, sy - 4); g.lineBetween(sx, sy, sx - dir * 7, sy + 4);
         }
         break;
       }
@@ -756,6 +898,89 @@ export class SeaVoyageScene extends Phaser.Scene {
     for (let x = 0; x <= W; x += 40) {
       g.fillStyle(0xffffff, 0.5 + Math.sin(t * 3 + x) * 0.2);
       g.fillEllipse(x + Math.sin(t + x) * 6, shore + Math.sin(x * 0.012 + 1.3) * 22 + 6, 30, 5);
+    }
+  }
+
+  /**
+   * The Brambleback: a sea turtle the size of a hill, its shell grown over with a thorn forest
+   * (trees, briars and a ruined shrine on top); a beaked head with mossy eyes pushes out in front.
+   */
+  private drawBrambleback(g: Phaser.GameObjects.Graphics, b: Beast, t: number): void {
+    const { x, y } = b;
+    const shell = 0x4a3a22, moss = 0x3a6a2a, leaf = 0x6aa83a;
+    for (const side of [-1, 1]) {
+      const sw = Math.sin(t * 1.6 + side) * 0.4;
+      g.fillStyle(0x5a6a3a, 1); g.fillEllipse(x + side * 92, y + 20 + sw * 20, 70, 26);
+    }
+    g.fillStyle(0xffffff, 0.16); g.fillEllipse(x, y + 46, 230, 40);
+    g.fillStyle(0x000000, 0.3); g.fillEllipse(x, y + 30, 210, 70);
+    g.fillStyle(shell, 1); g.fillEllipse(x, y, 190, 116);
+    g.lineStyle(2, 0x2a2014, 0.8);
+    for (let i = -2; i <= 2; i++) g.strokeEllipse(x + i * 34, y - 4 + Math.abs(i) * 6, 40, 34);
+    g.fillStyle(moss, 1); g.fillEllipse(x, y - 14, 150, 70);
+    // The forest on its back.
+    for (let i = 0; i < 9; i++) {
+      const tx = x - 66 + i * 16.5, ty = y - 24 - Math.sin(i * 1.7) * 14;
+      const sway = Math.sin(t * 1.1 + i) * 2;
+      g.fillStyle(0x3a2a18, 1); g.fillRect(tx - 1.5, ty - 4, 3, 12);
+      g.fillStyle(i % 2 ? leaf : 0x4a8a2e, 1); g.fillCircle(tx + sway, ty - 10, 9 + (i % 3) * 2);
+    }
+    g.fillStyle(0xb8b0a0, 1); g.fillRect(x - 8, y - 46, 16, 14); g.fillTriangle(x - 11, y - 46, x + 11, y - 46, x, y - 56);
+    // Briars round the shell rim.
+    g.lineStyle(2, 0x2a3a1a, 1);
+    for (let i = 0; i < 16; i++) { const a = (i / 16) * Math.PI * 2; g.lineBetween(x + Math.cos(a) * 92, y + Math.sin(a) * 56, x + Math.cos(a) * 104, y + Math.sin(a) * 64); }
+    // Head, beak and mossy eyes.
+    const open = b.attack === 'spit' ? Math.min(1, b.attackT * 2) : 0.1 + Math.sin(t * 2) * 0.06;
+    const hy = y + 62;
+    g.fillStyle(0x6a7a4a, 1); g.fillEllipse(x, hy, 70, 46);
+    g.fillStyle(0x3a2a1a, 1); g.fillTriangle(x - 16, hy + 10, x + 16, hy + 10, x, hy + 26 + open * 6);
+    g.fillStyle(0x1a1208, 1); g.fillEllipse(x, hy + 16, 28, 4 + open * 16);
+    g.fillStyle(0xd8ff7a, 0.8 + Math.sin(t * 3) * 0.2); g.fillCircle(x - 20, hy - 6, 6); g.fillCircle(x + 20, hy - 6, 6);
+    g.fillStyle(0x1a1208, 1); g.fillCircle(x - 20, hy - 6, 2.5); g.fillCircle(x + 20, hy - 6, 2.5);
+    if (b.attack === 'slam') { g.lineStyle(3, 0x9ad84a, 0.6); g.strokeCircle(this.bx, this.by - 20, 60 + Math.sin(t * 20) * 6); }
+    if (b.phase === 'fight') {
+      g.fillStyle(0x000000, 0.6); g.fillRect(280, 70, 400, 12);
+      g.fillStyle(BEASTS.brambleback.bar, 1); g.fillRect(282, 72, 396 * Math.max(0, b.hp / b.maxHp), 8);
+    }
+  }
+
+  /**
+   * The Skyray: a manta as wide as a sail-field. Every few seconds it leaps clear of the sea and
+   * glides — its shadow stays on the water while the body lifts, wings rippling, whip tail behind.
+   */
+  private drawSkyray(g: Phaser.GameObjects.Graphics, b: Beast, t: number): void {
+    const { x, y } = b;
+    const leap = Math.max(0, Math.sin(t * 0.9)) ** 2 * 70;
+    const flap = Math.sin(t * 3.2) * (0.25 + leap / 140);
+    g.fillStyle(0x000000, 0.28 - leap / 500); g.fillEllipse(x, y + 26, 300 - leap * 0.6, 70 - leap * 0.2);
+    if (leap < 8) { g.lineStyle(3, 0xffffff, 0.35); g.strokeEllipse(x, y + 18, 280, 60); }
+    const by = y - leap;
+    const span = 150, belly = 0xe8eef4, back = 0x3a4a62;
+    // Wings: two curved triangles whose tips rise and fall.
+    for (const side of [-1, 1]) {
+      const tipX = x + side * span, tipY = by - 10 - flap * 40;
+      g.fillStyle(back, 1);
+      g.beginPath(); g.moveTo(x, by - 34); g.lineTo(x + side * span * 0.55, by - 22 - flap * 20); g.lineTo(tipX, tipY);
+      g.lineTo(x + side * span * 0.5, by + 18); g.lineTo(x, by + 30); g.closePath(); g.fillPath();
+      g.lineStyle(1.5, 0x8ab0d8, 0.6);
+      g.lineBetween(x, by - 10, tipX - side * 18, tipY + 6); g.lineBetween(x, by + 8, tipX - side * 30, tipY + 14);
+      g.fillStyle(0xe8f4ff, 0.5); g.fillCircle(x + side * span * 0.42, by - 6 - flap * 14, 3);
+    }
+    g.fillStyle(0x4a5c78, 1); g.fillEllipse(x, by - 2, 74, 76);
+    g.fillStyle(belly, 0.25); g.fillEllipse(x, by + 8, 50, 40);
+    // Cephalic fins curling forward, and eyes.
+    for (const side of [-1, 1]) {
+      g.fillStyle(back, 1); g.fillEllipse(x + side * 20, by + 40, 12, 26);
+      g.fillStyle(0xd8f4ff, 0.9); g.fillCircle(x + side * 26, by + 22, 4); g.fillStyle(0x0a1020, 1); g.fillCircle(x + side * 26, by + 23, 2);
+    }
+    // Whip tail streaming back (up the screen, away from the boat).
+    g.lineStyle(3, back, 1); g.beginPath(); g.moveTo(x, by - 36);
+    for (let i = 1; i <= 8; i++) g.lineTo(x + Math.sin(t * 4 + i * 0.7) * i * 2.4, by - 36 - i * 11);
+    g.strokePath();
+    if (b.attack === 'spit') { g.fillStyle(0xe8f8ff, 0.4 + 0.3 * Math.sin(t * 20)); g.fillCircle(x, by + 46, 10 + b.attackT * 8); }
+    if (b.phase === 'fight') {
+      g.fillStyle(0x000000, 0.6); g.fillRect(280, 70, 400, 12);
+      g.fillStyle(BEASTS.skyray.bar, 1); g.fillRect(282, 72, 396 * Math.max(0, b.hp / b.maxHp), 8);
     }
   }
 

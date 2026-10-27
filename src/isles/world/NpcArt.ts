@@ -252,6 +252,78 @@ function drawHat(g: G, L: NpcLook, cx: number, cy: number, R: number, s: number,
       g.beginPath(); g.arc(cx, cy - R * 0.25, R * 0.98, Math.PI * 1.05, Math.PI * 1.95, false); g.closePath(); g.fillPath();
       g.fillStyle(lit(a, 0.35), 1); g.fillRect(cx - R * 0.5, top + R * 0.05, R * 0.5, R * 0.12);
       return;
+    case 'aviator': {
+      // Leather flying cap: a close dome, ear-flaps down the cheeks, goggles pushed up on the brow.
+      const leather = 0x7a4a2a;
+      g.fillStyle(leather, 1);
+      g.beginPath(); g.arc(cx, cy - R * 0.15, R * 1.04, Math.PI, 0, false); g.closePath(); g.fillPath();
+      g.fillRoundedRect(cx - R * 1.06, cy - R * 0.2, R * 0.32, R * 0.85, R * 0.12);
+      g.fillRoundedRect(cx + R * 0.74, cy - R * 0.2, R * 0.32, R * 0.85, R * 0.12);
+      g.lineStyle(1.5 * s, dim(leather, 0.35), 1); g.lineBetween(cx, top - R * 0.05, cx, top + R * 0.45);
+      g.fillStyle(0x3a2a20, 1); g.fillRect(cx - R * 0.98, top + R * 0.2, R * 1.96, R * 0.16);
+      g.fillStyle(0xb8b0a0, 1); g.fillCircle(cx - R * 0.34, top + R * 0.24, R * 0.25); g.fillCircle(cx + R * 0.34, top + R * 0.24, R * 0.25);
+      g.fillStyle(a, 0.85); g.fillCircle(cx - R * 0.34, top + R * 0.24, R * 0.16); g.fillCircle(cx + R * 0.34, top + R * 0.24, R * 0.16);
+      g.fillStyle(0xffffff, 0.7); g.fillCircle(cx - R * 0.4, top + R * 0.19, R * 0.05); g.fillCircle(cx + R * 0.28, top + R * 0.19, R * 0.05);
+      return;
+    }
+    case 'nightcap': {
+      // A long floppy cone that flops over to one side, a pompom swinging at its tip.
+      g.fillStyle(lit(a, 0.15), 1); g.fillRect(cx - R * 1.0, top + R * 0.28, R * 2.0, R * 0.22);
+      g.fillStyle(a, 1);
+      g.beginPath(); g.moveTo(cx - R * 0.98, top + R * 0.32); g.lineTo(cx + R * 0.98, top + R * 0.32);
+      g.lineTo(cx + R * 0.55, top - R * 0.55); g.lineTo(cx + R * 1.35, top - R * 0.15); g.lineTo(cx + R * 0.2, top - R * 0.8);
+      g.closePath(); g.fillPath();
+      g.lineStyle(1.2 * s, lit(a, 0.35), 0.8);
+      for (const k of [-0.5, 0, 0.5]) g.lineBetween(cx + R * k, top + R * 0.3, cx + R * (0.3 + k * 0.3), top - R * 0.5);
+      g.fillStyle(0xfff8ee, 1); g.fillCircle(cx + R * 1.42, top - R * 0.08, R * 0.22);
+      return;
+    }
+    case 'plume': {
+      // A soft velvet cap with a long feather swept back over the crown.
+      g.fillStyle(a, 1); g.fillEllipse(cx, top + R * 0.12, R * 1.95, R * 0.7);
+      g.fillStyle(dim(a, 0.25), 1); g.fillRect(cx - R * 0.95, top + R * 0.25, R * 1.9, R * 0.14);
+      const fx0 = cx + R * 0.35, fy0 = top - R * 0.05;
+      g.lineStyle(1.4 * s, 0xf0e8d8, 1);
+      g.beginPath(); g.moveTo(fx0, fy0);
+      for (let k = 1; k <= 8; k++) { const u = k / 8; g.lineTo(fx0 - R * 1.8 * u, fy0 - R * 1.0 * Math.sin(u * 2.2)); }
+      g.strokePath();
+      for (let k = 1; k <= 7; k++) {
+        const u = k / 8, px = fx0 - R * 1.8 * u, py = fy0 - R * 1.0 * Math.sin(u * 2.2), w = R * 0.32 * Math.sin(u * Math.PI);
+        g.fillStyle(k % 2 ? 0xfff6e8 : 0xe8dcc8, 1); g.fillEllipse(px, py - w * 0.4, w * 1.4, w * 0.9);
+      }
+      return;
+    }
+    case 'wreath': {
+      // Wildflowers round the brow: a leafy band studded with blooms in the accent colour.
+      g.lineStyle(3 * s, 0x5a8a3a, 1); g.strokeEllipse(cx, top + R * 0.12, R * 1.9, R * 0.5);
+      for (let k = 0; k < 7; k++) {
+        const an = Math.PI + (k / 6) * Math.PI, fx = cx + Math.cos(an) * R * 0.95, fy = top + R * 0.12 + Math.sin(an) * R * 0.25;
+        g.fillStyle(k % 2 ? a : 0xfff0f6, 1); g.fillCircle(fx, fy, R * 0.16);
+        g.fillStyle(0xffd84a, 1); g.fillCircle(fx, fy, R * 0.06);
+      }
+      return;
+    }
+    case 'antlers': {
+      const bone = 0xd8c8a0;
+      g.lineStyle(3.2 * s, bone, 1);
+      for (const d of [-1, 1]) {
+        const bx = cx + d * R * 0.45, by = top + R * 0.1;
+        g.lineBetween(bx, by, bx + d * R * 0.7, by - R * 1.2);
+        g.lineBetween(bx + d * R * 0.28, by - R * 0.48, bx + d * R * 0.05, by - R * 0.95);
+        g.lineBetween(bx + d * R * 0.52, by - R * 0.88, bx + d * R * 1.05, by - R * 1.05);
+        g.lineBetween(bx + d * R * 0.62, by - R * 1.05, bx + d * R * 0.45, by - R * 1.45);
+      }
+      return;
+    }
+    case 'mushroom': {
+      g.fillStyle(dim(a, 0.3), 1); g.fillEllipse(cx, top + R * 0.25, R * 2.3, R * 0.5);
+      g.fillStyle(a, 1);
+      g.beginPath(); g.arc(cx, top + R * 0.25, R * 1.15, Math.PI, Math.PI * 2, false); g.closePath(); g.fillPath();
+      g.fillStyle(0xfff6e8, 1);
+      g.fillCircle(cx - R * 0.5, top - R * 0.2, R * 0.18); g.fillCircle(cx + R * 0.15, top - R * 0.55, R * 0.22);
+      g.fillCircle(cx + R * 0.65, top - R * 0.05, R * 0.14); g.fillCircle(cx - R * 0.1, top + R * 0.05, R * 0.1);
+      return;
+    }
     case 'candle': {
       g.fillStyle(0xf2e6c8, 1); g.fillRect(cx - R * 0.22, top - R * 0.9, R * 0.44, R * 1.0);
       g.fillStyle(0xe8d8b0, 1); g.fillEllipse(cx, top - R * 0.9, R * 0.5, R * 0.18);

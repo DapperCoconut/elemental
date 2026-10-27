@@ -96,6 +96,7 @@ export interface SignatureMove {
   /** Shown over the Sovereign's head during the wind-up. */
   tell?: string;
   cast(time: number): void;
+  /** `time` in ms, `dt` in seconds. */
   update?(time: number, dt: number): void;
   /** Under the fighters — telegraphs and floor. */
   drawGround?(g: Phaser.GameObjects.Graphics, time: number): void;

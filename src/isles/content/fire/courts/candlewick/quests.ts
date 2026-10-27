@@ -108,7 +108,7 @@ export const CANDLEWICK_QUESTS: QuestDef[] = [
       {
         objective: {
           kind: 'collect', area: 'candlewick', label: 'votive stub', emoji: '🕯️', color: 0xfff1cf,
-          spots: [{ x: 600, y: 606 }, { x: 676, y: 648 }, { x: 902, y: 604 }, { x: 1012, y: 590 }, { x: 1098, y: 610 }, { x: 840, y: 654 }],
+          spots: [{ x: 600, y: 606 }, { x: 676, y: 648 }, { x: 902, y: 604 }, { x: 1012, y: 590 }, { x: 1098, y: 610 }, { x: 812, y: 662 }],
         },
         hint: 'Gather 6 snuffed votive stubs around the cathedral steps',
       },

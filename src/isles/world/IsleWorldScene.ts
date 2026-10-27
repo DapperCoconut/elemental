@@ -97,6 +97,14 @@ interface Interactable {
 /** Per-session talk counters so repeat chats rotate through what someone has to say. */
 const TALKS = new Map<string, number>();
 
+/** How each isle's dungeon hazards throw you back to the last checkpoint. */
+const DUNGEON_CATCH: Record<string, { flash: [number, number, number]; sfx: string; text: string }> = {
+  fire: { flash: [255, 90, 20], sfx: 'status-burn', text: '🔥 Scorched!' },
+  water: { flash: [90, 180, 255], sfx: 'splash', text: '🌊 Swept under!' },
+  life: { flash: [120, 220, 90], sfx: 'thorn', text: '🌿 Snared!' },
+  air: { flash: [230, 245, 255], sfx: 'gust', text: '💨 Blown off your feet!' },
+};
+
 export class IsleWorldScene extends Phaser.Scene {
   private def!: AreaDef;
   private px = 0;
@@ -1034,6 +1042,108 @@ export class IsleWorldScene extends Phaser.Scene {
         }
         break;
       case 'ink': motes(g, view, t, 45, 0x14141c, 6, 22, 1.7, 12); break;
+      case 'pollen': motes(g, view, t, 70, 0xffe27a, 6, 34, 1.2, 13); motes(g, view, t, 20, 0xfff6c0, -4, 20, 0.8, 14); break;
+      case 'spores': motes(g, view, t, 34, 0xc8d8a8, -10, 18, 3.2, 15); motes(g, view, t, 18, 0xe8f0d0, -16, 10, 1.6, 16); break;
+      case 'petals':
+        for (let i = 0; i < 44; i++) {
+          const x = view.x + ((i * 131 + t * 26) % view.w) + Math.sin(t * 1.6 + i) * 18, y = view.y + ((i * 71 + t * (34 + (i % 4) * 8)) % view.h);
+          const sp = Math.cos(t * 3 + i * 1.7);
+          g.fillStyle(i % 3 ? 0xf8a8c8 : 0xffd8e8, 0.85); g.fillEllipse(x, y, 5 * Math.abs(sp) + 1.5, 3.2);
+        }
+        break;
+      case 'leaves':
+        for (let i = 0; i < 34; i++) {
+          const x = view.x + ((i * 149 + t * 40) % view.w) + Math.sin(t * 1.2 + i) * 24, y = view.y + ((i * 83 + t * (40 + (i % 5) * 7)) % view.h);
+          const sp = Math.cos(t * 2.4 + i * 1.3);
+          g.fillStyle([0x8aa83a, 0xc8a03a, 0xb85a2a][i % 3], 0.85); g.fillEllipse(x, y, 7 * Math.abs(sp) + 2, 4);
+        }
+        break;
+      case 'sugar':
+        for (let i = 0; i < 60; i++) {
+          const x = view.x + ((i * 97 + t * 8) % view.w), y = view.y + ((i * 59 + t * 22) % view.h);
+          const tw = 0.4 + 0.6 * Math.abs(Math.sin(t * 4 + i));
+          g.fillStyle([0xffffff, 0xffc8e8, 0xc8f0ff, 0xfff0a8][i % 4], tw); g.fillRect(x - 1, y - 1, 2.2, 2.2);
+        }
+        break;
+      case 'fireflies':
+        for (let i = 0; i < 36; i++) {
+          const x = view.x + ((i * 173) % view.w) + Math.sin(t * 0.7 + i * 2.1) * 40, y = view.y + ((i * 97) % view.h) + Math.cos(t * 0.9 + i * 1.3) * 30;
+          const on = Math.max(0, Math.sin(t * 2.2 + i * 2.7));
+          if (on < 0.05) continue;
+          g.fillStyle(0xd8ff7a, 0.18 * on); g.fillCircle(x, y, 7); g.fillStyle(0xf0ffb0, on); g.fillCircle(x, y, 1.6);
+        }
+        break;
+      case 'wind':
+        // Long thin streaks racing sideways, gusting in waves; a few torn leaves of paper ride them.
+        for (let i = 0; i < 40; i++) {
+          const gust = 0.6 + 0.4 * Math.sin(t * 0.8 + i * 0.3);
+          const x = view.x + ((i * 157 + t * (420 + (i % 5) * 60)) % (view.w + 200)) - 100, y = view.y + ((i * 67) % view.h) + Math.sin(t * 2 + i) * 6;
+          const len = 30 + (i % 4) * 16;
+          g.lineStyle(1, 0xffffff, 0.22 * gust); g.lineBetween(x, y, x - len, y + 2);
+        }
+        motes(g, view, t, 10, 0xf0ece0, 260, 8, 1.8, 17);
+        break;
+      case 'clouds':
+        // Low cloud puffs drifting across — soft clusters, the odd one passing right over you.
+        for (let i = 0; i < 7; i++) {
+          const x = view.x + ((i * 389 + t * (16 + (i % 3) * 6)) % (view.w + 500)) - 250, y = view.y + ((i * 211) % view.h);
+          g.fillStyle(0xffffff, 0.09);
+          g.fillEllipse(x, y, 260, 70); g.fillEllipse(x - 70, y + 6, 150, 56); g.fillEllipse(x + 80, y + 4, 170, 60); g.fillEllipse(x + 10, y - 22, 140, 60);
+        }
+        break;
+      case 'feathers':
+        // Down-feathers rocking side to side as they settle.
+        for (let i = 0; i < 26; i++) {
+          const fall = view.y + ((i * 79 + t * (16 + (i % 4) * 5)) % view.h);
+          const rock = Math.sin(t * 1.8 + i * 1.9);
+          const x = view.x + ((i * 167 + t * 10) % view.w) + rock * 22;
+          const ang = rock * 0.7, ca = Math.cos(ang) * 7, sa = Math.sin(ang) * 7;
+          g.lineStyle(1, 0xd8d0c0, 0.8); g.lineBetween(x - ca, fall - sa, x + ca, fall + sa);
+          g.fillStyle(0xfffaf0, 0.75); g.fillEllipse(x, fall - 1, 12, 4.5);
+        }
+        break;
+      case 'stars': {
+        // A night sky laid over the place: fixed twinkling points, and every few seconds a shooting star.
+        for (let i = 0; i < 70; i++) {
+          const x = view.x + ((i * 233 + Math.floor(view.x / 997) * 31) % view.w), y = view.y + ((i * 149) % view.h);
+          const tw = 0.25 + 0.75 * Math.max(0, Math.sin(t * (1 + (i % 5) * 0.4) + i * 2.3));
+          g.fillStyle(i % 9 ? 0xf0f4ff : 0xffe8a8, 0.6 * tw); g.fillRect(x - 0.8, y - 0.8, 1.6, 1.6);
+          if (i % 13 === 0) { g.lineStyle(1, 0xf0f4ff, 0.3 * tw); g.lineBetween(x - 4, y, x + 4, y); g.lineBetween(x, y - 4, x, y + 4); }
+        }
+        const k = (t % 4.5) / 0.7;
+        if (k < 1) {
+          const n = Math.floor(t / 4.5), sx = view.x + ((n * 431) % view.w), sy = view.y + ((n * 197) % (view.h * 0.6));
+          const hx = sx + k * 260, hy = sy + k * 120;
+          g.lineStyle(2, 0xffffff, 0.8 * (1 - k)); g.lineBetween(hx, hy, hx - 70, hy - 32);
+          g.fillStyle(0xffffff, 1 - k); g.fillCircle(hx, hy, 2);
+        }
+        break;
+      }
+      case 'storm': {
+        // Hard slanting rain and, every few seconds, a lightning flash over everything.
+        for (let i = 0; i < 120; i++) {
+          const x = view.x + ((i * 97 + t * 260) % view.w), y = view.y + ((i * 53 + t * 900) % view.h);
+          g.lineStyle(1, 0xb8d0e8, 0.45); g.lineBetween(x, y, x - 9, y + 16);
+        }
+        const ph = t % 5.3;
+        if (ph < 0.09 || (ph > 0.16 && ph < 0.22)) { g.fillStyle(0xeef4ff, 0.22); g.fillRect(view.x, view.y, view.w, view.h); }
+        break;
+      }
+      case 'dreams':
+        // Soap-bubble dreams rising slowly, a faint rainbow skin on each, and the odd drifting zzz.
+        for (let i = 0; i < 22; i++) {
+          const x = view.x + ((i * 139) % view.w) + Math.sin(t * 0.9 + i * 1.7) * 26, y = view.y + view.h - ((i * 97 + t * (14 + (i % 4) * 5)) % view.h);
+          const r = 4 + (i % 5) * 2.2;
+          g.lineStyle(1, [0xd8c8ff, 0xc8f0ff, 0xffd8f0][i % 3], 0.55); g.strokeCircle(x, y, r);
+          g.fillStyle(0xffffff, 0.5); g.fillCircle(x - r * 0.35, y - r * 0.35, r * 0.22);
+        }
+        for (let i = 0; i < 5; i++) {
+          const k = ((t * 0.25 + i / 5) % 1), x = view.x + ((i * 353) % view.w) + k * 40, y = view.y + view.h * (0.85 - k * 0.7);
+          g.lineStyle(1.4, 0xe8e0ff, 0.5 * Math.sin(k * Math.PI));
+          const z = 5 + k * 4;
+          g.lineBetween(x, y, x + z, y); g.lineBetween(x + z, y, x, y + z); g.lineBetween(x, y + z, x + z, y + z);
+        }
+        break;
       default: break;
     }
   }
@@ -1104,7 +1214,10 @@ export class IsleWorldScene extends Phaser.Scene {
       const r = gt.rect;
       if (!inView(view, r.x + r.w / 2, r.y + r.h / 2) && !inView(view, r.x, r.y)) continue;
       const col = gt.look === 'wax' ? 0xe8d8a8 : gt.look === 'rubble' ? 0x5a4a40 : gt.look === 'barrier' ? 0xff7a2f
-        : gt.look === 'ice' ? 0xbfe8f8 : gt.look === 'coral' ? 0xe87a8a : gt.look === 'sluice' ? 0x4a5a5a : 0x3a3a42;
+        : gt.look === 'ice' ? 0xbfe8f8 : gt.look === 'coral' ? 0xe87a8a : gt.look === 'sluice' ? 0x4a5a5a
+        : gt.look === 'thorn' ? 0x3a5a2a : gt.look === 'roots' ? 0x6a4a2a : gt.look === 'bone' ? 0xe8e0c8 : gt.look === 'candy' ? 0xff8ac8
+        : gt.look === 'cloud' ? 0xf4f8ff : gt.look === 'lightning' ? 0x9ad8ff : gt.look === 'orrery' ? 0xc8a050
+        : gt.look === 'veil' ? 0xc8b0ff : gt.look === 'book' ? 0x7a2a3a : 0x3a3a42;
       if (gt.look === 'portcullis' || gt.look === 'grate' || gt.look === 'sluice') {
         g.fillStyle(0x1a1a1e, 0.6); g.fillRect(r.x, r.y, r.w, r.h);
         g.lineStyle(4, col, 1);
@@ -1118,6 +1231,92 @@ export class IsleWorldScene extends Phaser.Scene {
         g.fillStyle(dim(col, 0.35), 1); g.fillRoundedRect(r.x, r.y, r.w, r.h, 10);
         g.fillStyle(col, 1);
         for (let x = r.x + 8; x < r.x + r.w; x += 16) for (let y = r.y + 8; y < r.y + r.h; y += 16) g.fillCircle(x + ((y / 16) % 2) * 6, y, 5);
+      } else if (gt.look === 'thorn') {
+        // A briar hedge: dark tangle, curling stems, hooked thorns.
+        g.fillStyle(dim(col, 0.4), 1); g.fillRoundedRect(r.x, r.y, r.w, r.h, 12);
+        g.lineStyle(3, col, 1);
+        for (let x = r.x + 6; x < r.x + r.w; x += 18) for (let y = r.y + 10; y < r.y + r.h; y += 22) {
+          g.beginPath(); g.arc(x, y, 8, 0.4, 3.6, ((x + y) / 18) % 2 > 1); g.strokePath();
+          g.fillStyle(0xd8c8a0, 1); g.fillTriangle(x + 6, y - 2, x + 12, y - 4, x + 7, y + 2);
+        }
+      } else if (gt.look === 'roots') {
+        // Thick knotted roots grown across the way.
+        g.fillStyle(dim(col, 0.45), 1); g.fillRect(r.x, r.y, r.w, r.h);
+        for (let i = 0; i < 6; i++) {
+          g.lineStyle(7 - (i % 3), lit(col, (i % 3) * 0.12), 1);
+          const y0 = r.y + ((i + 0.5) / 6) * r.h;
+          g.beginPath(); g.moveTo(r.x, y0);
+          for (let k = 1; k <= 6; k++) g.lineTo(r.x + (k / 6) * r.w, y0 + Math.sin(k * 1.9 + i) * Math.min(14, r.h / 6));
+          g.strokePath();
+        }
+      } else if (gt.look === 'bone') {
+        // A palisade of long bones lashed together, knuckle-ends up.
+        g.fillStyle(0x2a2420, 0.55); g.fillRect(r.x, r.y, r.w, r.h);
+        for (let x = r.x + 7; x < r.x + r.w; x += 14) {
+          g.fillStyle(col, 1); g.fillRect(x - 3, r.y + 4, 6, r.h - 8);
+          g.fillCircle(x - 3, r.y + 5, 4); g.fillCircle(x + 3, r.y + 5, 4); g.fillCircle(x - 3, r.y + r.h - 5, 4); g.fillCircle(x + 3, r.y + r.h - 5, 4);
+        }
+        g.lineStyle(3, 0x6a4a2a, 1); g.lineBetween(r.x, r.y + r.h * 0.35, r.x + r.w, r.y + r.h * 0.35); g.lineBetween(r.x, r.y + r.h * 0.7, r.x + r.w, r.y + r.h * 0.7);
+      } else if (gt.look === 'cloud') {
+        // A cloud bank sat across the way: heaped puffs, breathing slowly.
+        g.fillStyle(0xc8d8e8, 0.5); g.fillRoundedRect(r.x, r.y + r.h * 0.3, r.w, r.h * 0.7, 14);
+        for (let x = r.x + 14; x < r.x + r.w; x += 26) for (let y = r.y + 14; y < r.y + r.h; y += 26) {
+          const p = Math.sin(t * 1.3 + x * 0.05 + y * 0.07) * 2.5;
+          g.fillStyle(col, 0.92); g.fillCircle(x + ((y / 26) % 2) * 11, y, 15 + p);
+          g.fillStyle(0xffffff, 0.8); g.fillCircle(x + ((y / 26) % 2) * 11 - 4, y - 5, 7 + p * 0.5);
+        }
+      } else if (gt.look === 'lightning') {
+        // A fence of rods with live arcs jumping between them.
+        g.fillStyle(0x10182a, 0.45); g.fillRect(r.x, r.y, r.w, r.h);
+        const posts: number[] = [];
+        for (let x = r.x + 6; x <= r.x + r.w - 6; x += Math.max(24, (r.w - 12) / Math.max(1, Math.round((r.w - 12) / 60)))) posts.push(x);
+        for (const x of posts) { g.fillStyle(0x5a5a6a, 1); g.fillRect(x - 3, r.y, 6, r.h); g.fillStyle(0xd8e8ff, 1); g.fillCircle(x, r.y + 2, 4); }
+        const flick = Math.floor(t * 14);
+        for (let i = 0; i + 1 < posts.length; i++) for (let k = 0; k < 3; k++) {
+          const y0 = r.y + ((k + 0.5) / 3) * r.h;
+          g.lineStyle(2, k === flick % 3 ? 0xffffff : col, 0.9);
+          g.beginPath(); g.moveTo(posts[i], y0);
+          for (let j = 1; j < 5; j++) g.lineTo(posts[i] + (j / 5) * (posts[i + 1] - posts[i]), y0 + Math.sin(flick * 1.7 + j * 2.3 + i + k) * 7);
+          g.lineTo(posts[i + 1], y0); g.strokePath();
+        }
+      } else if (gt.look === 'orrery') {
+        // Interlocking brass rings, slowly turning, a small planet riding each.
+        g.fillStyle(0x2a2418, 0.5); g.fillRect(r.x, r.y, r.w, r.h);
+        const step = Math.max(40, Math.min(r.w, r.h));
+        for (let cx2 = r.x + step / 2; cx2 < r.x + r.w; cx2 += step * 0.8) for (let cy2 = r.y + step / 2; cy2 < r.y + r.h; cy2 += step * 0.8) {
+          const rr = step * 0.42;
+          g.lineStyle(4, col, 1); g.strokeCircle(cx2, cy2, rr);
+          g.lineStyle(2, lit(col, 0.3), 1); g.strokeEllipse(cx2, cy2, rr * 2, rr * 0.8);
+          const an = t * 0.8 + cx2 * 0.01 + cy2 * 0.013;
+          g.fillStyle(0x7ab8e8, 1); g.fillCircle(cx2 + Math.cos(an) * rr, cy2 + Math.sin(an) * rr, 5);
+          g.fillStyle(0x1a1a1a, 1); g.fillCircle(cx2, cy2, 5);
+        }
+      } else if (gt.look === 'veil') {
+        // A shimmering dream-curtain: soft vertical folds, colours sliding through it.
+        for (let x = r.x; x < r.x + r.w; x += 8) {
+          const k = Math.sin(t * 1.4 + x * 0.06);
+          g.fillStyle([0xc8b0ff, 0xb0d8ff, 0xffc8f0][Math.floor(x / 8) % 3], 0.35 + 0.15 * k);
+          g.fillRect(x + k * 2, r.y, 7, r.h);
+        }
+        g.lineStyle(2, 0xffffff, 0.35 + 0.2 * Math.sin(t * 3)); g.strokeRect(r.x, r.y, r.w, r.h);
+      } else if (gt.look === 'book') {
+        // A giant closed book lying across the way: leather boards, gilt corners, the page block between.
+        g.fillStyle(dim(col, 0.4), 1); g.fillRoundedRect(r.x, r.y, r.w, r.h, 6);
+        g.fillStyle(col, 1); g.fillRoundedRect(r.x + 3, r.y + 3, r.w - 6, r.h - 6, 5);
+        g.fillStyle(0xf4ead2, 1); g.fillRect(r.x + 8, r.y + r.h * 0.42, r.w - 16, r.h * 0.16);
+        g.lineStyle(1, 0xc8b898, 1);
+        for (let x = r.x + 10; x < r.x + r.w - 10; x += 4) g.lineBetween(x, r.y + r.h * 0.43, x, r.y + r.h * 0.57);
+        g.fillStyle(0xe8c050, 1);
+        for (const [cx2, cy2] of [[r.x + 8, r.y + 8], [r.x + r.w - 8, r.y + 8], [r.x + 8, r.y + r.h - 8], [r.x + r.w - 8, r.y + r.h - 8]]) g.fillCircle(cx2, cy2, 5);
+        g.lineStyle(3, 0xe8c050, 1); g.lineBetween(r.x + r.w / 2, r.y + 4, r.x + r.w / 2, r.y + r.h - 4);
+      } else if (gt.look === 'candy') {
+        // Candy-cane bars, red-and-white striped.
+        g.fillStyle(0xfff0f6, 0.5); g.fillRect(r.x, r.y, r.w, r.h);
+        for (let x = r.x + 8; x < r.x + r.w; x += 16) {
+          g.fillStyle(0xffffff, 1); g.fillRoundedRect(x - 4, r.y, 8, r.h, 4);
+          g.lineStyle(3, 0xe83a5a, 1);
+          for (let y = r.y + 4; y < r.y + r.h - 4; y += 10) g.lineBetween(x - 4, y + 4, x + 4, y);
+        }
       } else if (gt.look === 'barrier') {
         g.fillStyle(col, 0.25 + Math.sin(t * 5) * 0.1); g.fillRect(r.x, r.y, r.w, r.h);
         g.lineStyle(2, 0xffd27a, 0.8); g.strokeRect(r.x, r.y, r.w, r.h);
@@ -1347,11 +1546,11 @@ export class IsleWorldScene extends Phaser.Scene {
     if (!hit) return;
     const cp = this.lastCheckpoint ?? this.def.spawn;
     // Each isle's dungeon catches you its own way.
-    const wet = isleOf(this.def.id) === 'water';
-    if (wet) this.cameras.main.flash(220, 90, 180, 255); else this.cameras.main.flash(220, 255, 90, 20);
+    const caught = DUNGEON_CATCH[isleOf(this.def.id) ?? 'fire'] ?? DUNGEON_CATCH.fire;
+    this.cameras.main.flash(220, caught.flash[0], caught.flash[1], caught.flash[2]);
     this.cameras.main.shake(160, 0.006);
-    Sfx.play(wet ? 'splash' : 'status-burn');
-    this.toast(wet ? '🌊 Swept under! Back to the last checkpoint.' : '🔥 Scorched! Back to the last checkpoint.');
+    Sfx.play(caught.sfx);
+    this.toast(`${caught.text} Back to the last checkpoint.`);
     this.px = cp.x; this.py = cp.y;
     this.graceUntil = now + 500;
   }

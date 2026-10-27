@@ -68,7 +68,7 @@ export const SEA_FISH_ITEMS: IsleItemDef[] = [
 export const RODS: RodDef[] = [
   {
     id: 'rod-whalebone', name: 'Whalebone Rod', control: 1.75,
-    kinds: ['sea', 'pond', 'wax', 'steam', 'oil', 'ice', 'ink', 'abyss'],
+    kinds: ['sea', 'pond', 'wax', 'steam', 'oil', 'ice', 'ink', 'bog', 'abyss'],
   },
 ];
 

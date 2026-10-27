@@ -1,7 +1,7 @@
 // Validates the Stronghold tower table: shape, path rules, costs, ids, decos and fx fields.
 //   node .check-stronghold-towers.mjs            → every tower
 //   node .check-stronghold-towers.mjs fire water → just those
-// Also prints a rough DPS-per-gold line per tower so balance outliers stand out.
+//   node .check-stronghold-towers.mjs --dps      → also print a rough DPS-per-gold line per tower (balance outliers)
 import { build } from 'esbuild';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -33,7 +33,8 @@ const FX_FIELDS = {
 const PATCH_FIELDS = new Set(Object.values(FX_FIELDS).flat());
 const UTILITY = new Set(['rally', 'gold', 'overclock', 'barrier', 'mend']);
 
-const want = process.argv.slice(2);
+const SHOW_DPS = process.argv.includes('--dps');
+const want = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 const ids = want.length ? want : Object.keys(TOWER_DEFS);
 let errors = 0, warns = 0;
 const err = (id, m) => { errors++; console.log(`  ✗ ${id}: ${m}`); };
@@ -126,7 +127,7 @@ for (const id of ids) {
   });
   const base = Object.values(d.attacks).reduce((s, a) => s + dps(a), 0);
   const pathsStr = [0, 1, 2].map((pi) => tierLines.filter((t) => t.pi === pi).map((t) => `${Math.round(t.dps)}`).join('/')).join('  |  ');
-  console.log(`${id.padEnd(12)} cost ${String(d.cost).padStart(4)}  range ${String(d.range).padStart(4)}  base dps ${base.toFixed(1).padStart(6)}  (${(base / d.cost * 100).toFixed(1)}/100g)  paths dps ${pathsStr}`);
+  if (SHOW_DPS) console.log(`${id.padEnd(12)} cost ${String(d.cost).padStart(4)}  range ${String(d.range).padStart(4)}  base dps ${base.toFixed(1).padStart(6)}  (${(base / d.cost * 100).toFixed(1)}/100g)  paths dps ${pathsStr}`);
   void attacks; void order;
 }
 console.log(`\n${ids.length} towers, ${errors} errors, ${warns} warnings`);

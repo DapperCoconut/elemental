@@ -429,7 +429,7 @@ function animateOver(g: G, t: number, view: Rect): void {
 
 const POIS: Poi[] = [
   {
-    kind: 'door', at: { x: 900, y: 2530 }, to: 'caldera', arrive: { x: 1200, y: 300 },
+    kind: 'door', at: { x: 900, y: 2530 }, to: 'caldera', arrive: { x: 1200, y: 345 },
     label: 'The barge door — back to the Caldera rim',
   },
   { kind: 'lever', at: { x: 1440, y: 2400 }, flag: 'kiln-lever-1', label: 'Quench Lever' },

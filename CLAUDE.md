@@ -57,28 +57,17 @@ The `CastContext` (defined in `src/elements/Ability.ts`) is a large object passe
 
 ### Element Selection Screens
 
-Four screens pick an element for a fight: `MenuScene`, `CampaignElementSelectScene`, `GauntletElementSelectScene` and `OnlineLobbyScene`. They must never hand-copy the roster — that is what left the campaign and gauntlet years out of date. Instead:
-
-- `src/data/ElementRoster.ts` — the roster tables plus `unlockedExtraElements()`, `allSelectableElements()` and `findElementDef()`.
-- `src/ui/ElementSelectGrid.ts` — `renderElementGrid(scene, opts)` draws the paged card grid. Each card is a leaning plate carrying a complexity star rating, the name + archetype, a live character portrait, a one-line blurb, and the select prompt, with ℹ info / M mastery / CUSTOMIZE hanging off it. **No emoji on a card** — the portrait is the element's identity. Returns the objects it made; the caller destroys them on its next render.
-- `src/data/ElementProfiles.ts` — the per-element `archetype`, `blurb` and 1–5 `complexity` rating the cards print. A new element needs an entry here or it falls back to an "unknown" dossier.
-- `src/ui/ElementPortrait.ts` — the live portrait: the real `elem-<id>` body with the element's real rig standing on it (mastered silhouette and equipped skin included), inside a scaled, masked container. Not a GameObject — the grid hands it out on a Zone handle that destroys it.
-- `src/elements/kits/ElementAvatars.ts` — element id → its `BaseAvatar` factory, for anything that must build a rig for an id it does not know at author time. Mind the id traps: `sand` is Time and `dune` is Sand; `slime` is Acid and `gum` is Slime; `chalk` is Paint.
-- `src/ui/ElementPanels.ts` — the four full-screen overlays behind those buttons. Construct one per scene with a redraw callback: `new ElementPanels(this, () => this.renderElements())`.
-
-The lobby draws its own compact tile grid (it lives inside a panel), but still reads `allSelectableElements()`.
+Menu, campaign, gauntlet and online lobby all read `src/data/ElementRoster.ts` — **never hand-copy the roster**.
+Cards come from `src/ui/ElementSelectGrid.ts` (no emoji on a card; live portrait), profiles from
+`src/data/ElementProfiles.ts` (a new element needs an entry). Id traps: `sand` is Time, `dune` is Sand, `slime`
+is Venom, `gum` is Savor, `chalk` is Paint. Details: `docs/claude/element-selection.md`.
 
 ### Menu Dioramas
 
-The workshop menus are drawn rooms with a character in them, not plates of text: the Shop (a goblin behind his counter, wares standing on shelves, hanging arrow signs to page, a floor vent down to the boss door), the Lab and the Disgraced Lab (an alchemist — the King's is his ghost — pouring vials into a flask that explodes on a bad mix), the Vault (a keeper at his lectern), the Entanglement Lab, the trophy hall and the campaign kit bag. They share:
-
-- `src/ui/Woodwork.ts` — planks, shelves, hanging signs, price tags.
-- `src/ui/SpeechBubble.ts` — the typewriter bubble (non-blocking; `place`, `offsetX/Y`) and `addHoverLabel`.
-- `src/ui/ItemArt.ts` — procedural wares: `itemKindFor(slot, name)` picks a silhouette per ability slot, tinted by the element.
-- `src/ui/Glassware.ts` + `src/ui/LabBench.ts` — ten vial shapes keyed by element (`VIAL_SHAPE_FOR`), the flask, and the pour → heat → succeed/explode flow both labs run on.
-- `src/ui/characters/` — `MenuCharacter` (update loop, mood, talk flag, blink, pointer-look, `flip`) and the rigs: `Shopkeeper`, `Alchemist` (`spectral` for the ghost), `VaultKeeper`.
-
-**Dialogue is business only.** A character states prices, what a thing does, asks whether to buy, and reports results ("Fire + Water → Oil. One nucleus spent, 3 left."). No banter, jokes or lore. `.shot-menu.mjs <Scene> '<init json>' <tag> [steps.json]` screenshots a menu with deterministic frames for checking layout.
+The workshop menus (Shop, Labs, Vault, trophy hall, kit bag) are drawn rooms with a character, built from
+`src/ui/{Woodwork,SpeechBubble,ItemArt,Glassware,LabBench}.ts` + `src/ui/characters/`. **Dialogue there is
+business only** (prices, effects, "buy?", results — no banter). Details and the `.shot-menu.mjs` screenshot
+tool: `docs/claude/menu-dioramas.md`.
 
 ### ElementKit Pattern
 
@@ -122,13 +111,11 @@ this.[element]Kit.update(dt);
 
 ### Quantum and the `playerIs` gate
 
-Quantum is a five-slot loadout: each key carries one *entangled* element's ability for that same key, and a key press re-keys the player onto that slot's element before the kit sees it (`QuantumKit.routeInput`). Every element in the loadout is **live at once** for passives, forms, auras and mastery, so:
-
-- In ArenaScene, a per-element gate is `this.playerIs('x')` (true for the live element *and* anything Quantum carries), never `this.elementId === 'x'`. The only two places that must know the *live* element — the `handleInput` else-if chain and the speed-multiplier chain — read `elementId` directly.
-- A kit adapter reports `get elementId() { return arena.liveElementFor('x'); }`, `hasUpgrade: (slot) => arena.hasUpgradeFor('x', slot)` and `masteryBindFor: (slot) => arena.masteryBindForElement('x', slot)`, so a carried kit sees itself as the player's element and reads its own upgrades and binds. Keys and the pointer go through `arena.keyFor('x', arena.eKey)` / `arena.pointerFor('x')`: the live element's kit gets the real input, a carried kit gets an inert stand-in (never down, aim still valid), so a press for one slot cannot also drive a held ability in another kit's `update()`.
-- **What a slot brings is Quantum's call, never the element's own page** (`QuantumLoadout.ts` resolves it): plain Quantum carries base abilities only — no upgrades, no perks, no masteries (`loadoutPerkIds` is empty, `playerPerkId` null). Third State (Quantum's one shop upgrade, `hasThirdState()`) adds a per-slot upgrade switch (`upgradesFor(lo, id)` is what `hasUpgradeFor` and `activeUpgrades` read) and makes Quantum's own kit slottable. Quantum Mastery (`MASTERY_DEFS.quantum`, `lo.mastered`) adds: a borrowed passive (`lo.passive`, that element joins `carriedElements` and `masteryOnFor` reports it mastered), a **sixth key G** (`lo.sixth = {elementId, enhId, over}`, routed by `QuantumKit.routeInput` as live slot `'x6'`; `quantumBindFor` reports the enhancement bound over `over` and `keyFor` hands that kit `gKey` in place of its `over` key while `quantumLiveSlot === 'x6'`), and an alternate-Q toggle (`lo.altQ`, rides as `alt-q` in `upgradesFor`). Mastery flags are set by `applyMasteryFlags()` and re-run on every routed press, because the sixth key's element is only mastered while reached through G.
-- Rigs: every carried kit stands a player rig up; `BaseAvatar.rigFilter` (installed by ArenaScene) hides all but the body element's. Kit HUDs are not yet de-conflicted — that is the open follow-up.
-- Entanglement research lives in `src/data/QuantumBonds.ts` (per element, three quests) and `QuantumLabScene`; the loadout in `src/data/QuantumLoadout.ts`; the customization page is `ElementPanels.showQuantumCustomizeScreen` (abilities + upgrade switches + ultimate + mastery, with chip pickers), separate from the generic per-element page.
+Quantum carries several elements live at once. In ArenaScene a per-element gate is **`this.playerIs('x')`, never
+`this.elementId === 'x'`** (only the `handleInput` chain and the speed-mult chain read `elementId`). Kit adapters
+report `liveElementFor('x')`, `hasUpgradeFor`, `masteryBindFor`, and read keys via `arena.keyFor('x', key)` /
+`arena.pointerFor('x')`. Read `docs/claude/quantum.md` before touching Quantum, a kit adapter, or any
+element gate.
 
 ### NPC AI
 
@@ -170,7 +157,8 @@ All mutable state must be reset in `create()` (which runs on every match start).
 
 ### Ability Tray
 
-The in-match tray prints no descriptions: each card is a keycap, the name, and RMB / HOLD / RECAST tags from `src/data/AbilityTags.ts` (keep it current when an ability's controls change), plus a charge readout on a charged ultimate. `UI.AbilityCardFace` draws it; kits still write the hidden `lbl`/`desc` texts and the face re-reads `lbl` ("E  Name" / "[E] Name"), so tags only show while the card carries its own ability's name.
+Cards print keycap, name and RMB / HOLD / RECAST tags from `src/data/AbilityTags.ts` — keep it current when an
+ability's controls change. Details: `docs/claude/ability-tray.md`.
 
 ### Data Layer
 
@@ -178,3 +166,9 @@ The in-match tray prints no descriptions: each card is a keycap, the name, and R
 - **`Upgrades.ts`**: Upgrade definitions with `elementId`, `slot` (`click/e/r/f/q`), name, and `shardCost`. Only base elements (fire, water, life, air, earth) have upgrades.
 - **`Mutations.ts`**: Modifiers active for a single match. Stored in a module-level `Set` cleared at `MenuScene` creation. Each mutation has a `rewardMult` and optionally modifies difficulty parameters.
 - **`Recipes.ts`**: Eight order-independent element fusion recipes.
+
+### Ten Isles (the campaign)
+
+`src/isles/` — design overview `docs/ten-isles.md`, one file per isle in `docs/ten-isles/`, content builder brief
+(with the kickoff checklist) `docs/ten-isles-builder-brief.md`, API cheat sheet `docs/isles-api.md`. Run
+`node .check-isles.mjs` after any Isles content change.
